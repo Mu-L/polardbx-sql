@@ -1,0 +1,166 @@
+SQL:
+  - sql: |
+      select count(1) from lineitem
+    plan: |
+      routing type: htap
+      optimizer type: smp
+      hashagg(count(1)="sum(count(1))")
+        gather(concurrent=true)
+          logicalview(tables="lineitem[p1,p2]", shardcount=2, sql="select count(*) as `count(1)` from `lineitem` as `lineitem`")
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_PUSH_AGG=false)*/ select count(1) from lineitem
+    plan: |
+      routing type: htap
+      optimizer type: smp
+      hashagg(count(1)="sum(count(1))")
+        gather(concurrent=true)
+          logicalview(tables="lineitem[p1,p2]", shardcount=2, sql="select count(*) as `count(1)` from `lineitem` as `lineitem`")
+  - sql: |
+      # switch columnar optimizer
+      /*+TDDL:cmd_extra(ENABLE_COLUMNAR_OPTIMIZER=false)*/ select count(1) from lineitem
+    plan: |
+      routing type: htap
+      optimizer type: smp
+      hashagg(count(1)="sum(count(1))")
+        gather(concurrent=true)
+          logicalview(tables="lineitem[p1,p2]", shardcount=2, sql="select count(*) as `count(1)` from `lineitem` as `lineitem`")
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_COLUMNAR_OPTIMIZER=true)*/ select count(1) from lineitem
+    plan: |
+      routing type: htap
+      optimizer type: smp
+      hashagg(count(1)="sum(count(1))")
+        gather(concurrent=true)
+          logicalview(tables="lineitem[p1,p2]", shardcount=2, sql="select count(*) as `count(1)` from `lineitem` as `lineitem`")
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_COLUMNAR_OPTIMIZER_WITH_COLUMNAR=false)*/ select count(1) from lineitem
+    plan: |
+      routing type: htap
+      optimizer type: smp
+      hashagg(count(1)="sum(count(1))")
+        gather(concurrent=true)
+          logicalview(tables="lineitem[p1,p2]", shardcount=2, sql="select count(*) as `count(1)` from `lineitem` as `lineitem`")
+  - sql: |
+      # switch optimizer type
+      /*+TDDL:cmd_extra(OPTIMIZER_TYPE=MPP)*/ select count(1) from lineitem
+    plan: |
+      routing type: htap
+      optimizer type: mpp
+      hashagg(count(1)="sum(count(1))")
+        exchange(distribution=single, collation=[])
+          logicalview(tables="lineitem[p1,p2]", shardcount=2, sql="select count(*) as `count(1)` from `lineitem` as `lineitem`")
+  - sql: |
+      /*+TDDL:cmd_extra(OPTIMIZER_TYPE=COLUMNAR)*/ select count(1) from lineitem
+    plan: |
+      routing type: htap
+      optimizer type: columnar
+      hashagg(count(1)="sum(count(1))")
+        exchange(distribution=single, collation=[])
+          partialhashagg(count(1)="count()")
+            osstablescan(tables="lineitem_col_index[p1,p2,p3]", shardcount=3, partition=[remote], sql="select `l_orderkey` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      # switch manual routing
+      /*+TDDL:cmd_extra(ENABLE_MANUAL_ROUTING=false)*/ select count(1) from lineitem
+    plan: |
+      routing type: null
+      optimizer type: smp
+      hashagg(count(1)="sum(count(1))")
+        gather(concurrent=true)
+          logicalview(tables="lineitem[p1,p2]", shardcount=2, sql="select count(*) as `count(1)` from `lineitem` as `lineitem`")
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_MANUAL_ROUTING=true)*/ select count(1) from lineitem
+    plan: |
+      routing type: htap
+      optimizer type: smp
+      hashagg(count(1)="sum(count(1))")
+        gather(concurrent=true)
+          logicalview(tables="lineitem[p1,p2]", shardcount=2, sql="select count(*) as `count(1)` from `lineitem` as `lineitem`")
+  - sql: |
+      # switch mpp
+      /*+TDDL:cmd_extra(ENABLE_MPP=false)*/ select count(1) from lineitem
+    plan: |
+      routing type: htap
+      optimizer type: smp
+      hashagg(count(1)="sum(count(1))")
+        gather(concurrent=true)
+          logicalview(tables="lineitem[p1,p2]", shardcount=2, sql="select count(*) as `count(1)` from `lineitem` as `lineitem`")
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_MPP=true)*/ select count(1) from lineitem
+    plan: |
+      routing type: htap
+      optimizer type: smp
+      hashagg(count(1)="sum(count(1))")
+        gather(concurrent=true)
+          logicalview(tables="lineitem[p1,p2]", shardcount=2, sql="select count(*) as `count(1)` from `lineitem` as `lineitem`")
+  - sql: |
+      # switch workload type
+      /*+TDDL:cmd_extra(WORKLOAD_TYPE=TP)*/ select count(1) from lineitem
+    plan: |
+      routing type: htap
+      optimizer type: smp
+      hashagg(count(1)="sum(count(1))")
+        gather(concurrent=true)
+          logicalview(tables="lineitem[p1,p2]", shardcount=2, sql="select count(*) as `count(1)` from `lineitem` as `lineitem`")
+  - sql: |
+      /*+TDDL:cmd_extra(WORKLOAD_TYPE=AP)*/ select count(1) from lineitem
+    plan: |
+      routing type: htap
+      optimizer type: columnar
+      hashagg(count(1)="sum(count(1))")
+        exchange(distribution=single, collation=[])
+          partialhashagg(count(1)="count()")
+            osstablescan(tables="lineitem_col_index[p1,p2,p3]", shardcount=3, partition=[remote], sql="select `l_orderkey` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      /*+TDDL:cmd_extra(WORKLOAD_TYPE=AP ENABLE_COLUMNAR_OPTIMIZER=false)*/ select count(1) from lineitem
+    plan: |
+      routing type: htap
+      optimizer type: mpp
+      hashagg(count(1)="sum(count(1))")
+        exchange(distribution=single, collation=[])
+          logicalview(tables="lineitem[p1,p2]", shardcount=2, sql="select count(*) as `count(1)` from `lineitem` as `lineitem`")
+  - sql: |
+      # switch sample percentage
+      /*+TDDL:cmd_extra(SAMPLE_PERCENTAGE=2)*/ select count(1) from lineitem
+    plan: |
+      routing type: htap
+      optimizer type: smp
+      hashagg(count(1)="sum(count(1))")
+        gather(concurrent=true)
+          logicalview(tables="lineitem[p1,p2]", shardcount=2, sql="select count(*) as `count(1)` from `lineitem` as `lineitem`")
+  - sql: |
+      select 1 from lineitem
+    plan: |
+      routing type: null
+      optimizer type: smp
+      gather(concurrent=true)
+        logicalview(tables="lineitem[p1,p2]", shardcount=2, sql="select ? as `1` from `lineitem` as `lineitem`")
+  - sql: |
+      select count(1) from lineitem force index(lineitem_col_index)
+    plan: |
+      routing type: htap
+      optimizer type: smp
+      hashagg(count(1)="count()")
+        gather(concurrent=true)
+          osstablescan(tables="lineitem_col_index[p1,p2,p3]", shardcount=3, sql="select `l_orderkey` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      select count(1) from lineitem force index(primary)
+    plan: |
+      routing type: htap
+      optimizer type: smp
+      hashagg(count(1)="sum(count(1))")
+        gather(concurrent=true)
+          logicalview(tables="lineitem[p1,p2]", shardcount=2, sql="select count(*) as `count(1)` from `lineitem` as `lineitem` force index(primary)")
+DDL:
+  lineitem:
+    CREATE TABLE IF NOT EXISTS `lineitem` (  `l_orderkey` bigint(20) NOT NULL,  `l_partkey` int(11) NOT NULL,  `l_suppkey` int(11) NOT NULL,  `l_linenumber` bigint(20) NOT NULL,  `l_quantity` decimal(15, 2) NOT NULL,  `l_extendedprice` decimal(15, 2) NOT NULL,  `l_discount` decimal(15, 2) NOT NULL,  `l_tax` decimal(15, 2) NOT NULL,  `l_returnflag` varchar(1) NOT NULL,  `l_linestatus` varchar(1) NOT NULL,  `l_shipdate` date NOT NULL,  `l_commitdate` date NOT NULL,  `l_receiptdate` date NOT NULL,  `l_shipinstruct` varchar(25) NOT NULL,  `l_shipmode` varchar(10) NOT NULL,  `l_comment` varchar(44) NOT NULL,  PRIMARY KEY (`l_orderkey`, `l_linenumber`),  CLUSTERED COLUMNAR INDEX `lineitem_col_index`(`l_shipdate`, `l_orderkey`) PARTITION BY HASH (`l_orderkey`) PARTITIONS 3 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`l_orderkey`) PARTITIONS 2;
+
+STATISTICS:
+  lineitem:
+    10
+CONFIG:
+  ENABLE_COLUMNAR_OPTIMIZER:
+    false
+  ENABLE_MPP:
+    false
+  defaltxxAPPName.isNew:
+    true

@@ -17,8 +17,6 @@
 package com.alibaba.polardbx.executor.ddl.job.task.storagepool;
 
 import com.alibaba.fastjson.annotation.JSONCreator;
-import com.alibaba.polardbx.executor.common.StorageInfoManager;
-import com.alibaba.polardbx.executor.ddl.job.factory.storagepool.StoragePoolUtils;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.sync.AlterStoragePoolSyncAction;
@@ -31,85 +29,55 @@ import com.alibaba.polardbx.gms.topology.StorageInfoExtraFieldJSON;
 import com.alibaba.polardbx.gms.topology.StorageInfoRecord;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.locality.StoragePoolManager;
+import com.alibaba.polardbx.optimizer.locality.StoragePoolUtils;
 import lombok.Getter;
 import org.apache.commons.lang.StringUtils;
 
 import java.sql.Connection;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-import static com.alibaba.polardbx.executor.ddl.job.factory.storagepool.StoragePoolUtils.RECYCLE_STORAGE_POOL;
+import static com.alibaba.polardbx.optimizer.locality.StoragePoolUtils.RECYCLE_STORAGE_POOL;
+import static com.alibaba.polardbx.optimizer.locality.StoragePoolUtils.buildStringFromStorageInstList;
 
 @Getter
 @TaskName(name = "AppendStorageInfoTask")
-// here is add meta to complex_task_outline table, no need to update tableVersion,
-// so no need to extends from BaseGmsTask
-public class AppendStorageInfoTask extends BaseDdlTask {
-
-    String schemaName;
-
-    String instId;
-
-    List<String> dnIds;
+public class AppendStorageInfoTask extends BaseStoragePoolInfoTask {
 
     Map<String, StorageInfoRecord> originalStorageInfoMap;
-
-    String undeletableDnId;
-    String storagePoolName;
 
     @JSONCreator
     public AppendStorageInfoTask(String schemaName, String instId,
                                  Map<String, StorageInfoRecord> originalStorageInfoMap,
                                  List<String> dnIds, String undeletableDnId, String storagePoolName) {
-        super(schemaName);
-        this.schemaName = schemaName;
-        this.instId = instId;
+        super(schemaName, instId, dnIds, undeletableDnId, storagePoolName);
         this.originalStorageInfoMap = originalStorageInfoMap;
-        this.dnIds = dnIds;
-        this.undeletableDnId = undeletableDnId;
-        this.storagePoolName = storagePoolName;
     }
 
     public void executeImpl(Connection metaDbConnection, ExecutionContext executionContext) {
-        StorageInfoAccessor storageInfoAccessor = new StorageInfoAccessor();
-        storageInfoAccessor.setConnection(metaDbConnection);
-        List<StorageInfoRecord> storageInfoRecords = storageInfoAccessor.getStorageInfosByInstId(instId);
-        List<StorageInfoRecord> originalStorageInfoRecords =
-            storageInfoRecords.stream().filter(o -> dnIds.contains(o.storageInstId)).collect(Collectors.toList());
-        Boolean shrinkRecycleStoragePool = false;
-        Boolean notifyStorageInfo = false;
-        for (StorageInfoRecord record : originalStorageInfoRecords) {
-            int status = record.status;
-            StorageInfoExtraFieldJSON extras =
-                Optional.ofNullable(record.extras).orElse(new StorageInfoExtraFieldJSON());
-            if (extras.storagePoolName.equalsIgnoreCase(RECYCLE_STORAGE_POOL)) {
-                shrinkRecycleStoragePool = true;
+        initBaseStoragePoolInfoTask(metaDbConnection);
+
+        // update storage inst as ready.
+        StoragePoolTaskUtils.updateStorageStatus(storageInfoAccessor, dnIds, StorageInfoRecord.STORAGE_STATUS_READY);
+
+        // update storage pool name
+        StoragePoolTaskUtils.updateStoragePoolName(storageInfoAccessor, filteredStorageInfoRecords, storagePoolName);
+
+        if (!storagePoolName.equalsIgnoreCase(RECYCLE_STORAGE_POOL)) {
+            if (StringUtils.isEmpty(undeletableDnId)) {
+                undeletableDnId = dnIds.get(0);
             }
-            if (status != StorageInfoRecord.STORAGE_STATUS_READY) {
-                notifyStorageInfo = true;
-                storageInfoAccessor.updateStorageStatus(record.storageInstId, StorageInfoRecord.STORAGE_STATUS_READY);
-            }
-            extras.setStoragePoolName(storagePoolName);
-            storageInfoAccessor.updateStoragePoolName(record.storageInstId, extras);
+            // shrink recycle storage pool because we put it into other storage pool.
+            storagePoolManager.shrinkStoragePoolSimply(metaDbConnection, RECYCLE_STORAGE_POOL, dnIdStr);
         }
-        StoragePoolManager storagePoolManager = StoragePoolManager.getInstance();
-        String dnIdStr = StringUtils.join(this.dnIds, ",");
-        if (!storagePoolName.equalsIgnoreCase(RECYCLE_STORAGE_POOL) && StringUtils.isEmpty(
-            undeletableDnId)) {
-            undeletableDnId = dnIds.get(0);
-        }
-        storagePoolManager.appendStoragePool(storagePoolName, dnIdStr, undeletableDnId);
-        if (shrinkRecycleStoragePool && !storagePoolName.equalsIgnoreCase(RECYCLE_STORAGE_POOL)) {
-            storagePoolManager.shrinkStoragePoolSimply(RECYCLE_STORAGE_POOL, dnIdStr);
-        }
-        if (notifyStorageInfo) {
-            // update op-version
-            MetaDbConfigManager.getInstance()
-                .notify(MetaDbDataIdBuilder.getStorageInfoDataId(instId), metaDbConnection);
-        }
+        // append storage pool
+        storagePoolManager.appendStoragePool(metaDbConnection, storagePoolName, dnIdStr, undeletableDnId);
+
+        // update op-version
+        MetaDbConfigManager.getInstance()
+            .notify(MetaDbDataIdBuilder.getStorageInfoDataId(instId), metaDbConnection);
     }
 
     @Override
@@ -117,53 +85,40 @@ public class AppendStorageInfoTask extends BaseDdlTask {
         executeImpl(metaDbConnection, executionContext);
     }
 
+    void recoverStorageInfoByOriginalRecord(StorageInfoRecord newRecord, StorageInfoRecord oldRecord) {
+        int oldStatus = oldRecord.status;
+        storageInfoAccessor.updateStorageStatus(newRecord.storageInstId, oldStatus);
+        storageInfoAccessor.updateStoragePoolName(newRecord.storageInstId, oldRecord.extras);
+    }
+
     @Override
     protected void duringRollbackTransaction(Connection metaDbConnection, ExecutionContext executionContext) {
         //        executeImpl(metaDbConnection, executionContext);
-        StorageInfoAccessor storageInfoAccessor = new StorageInfoAccessor();
-        storageInfoAccessor.setConnection(metaDbConnection);
-        List<StorageInfoRecord> storageInfoRecords = storageInfoAccessor.getStorageInfosByInstId(instId)
-            .stream().filter(o -> dnIds.contains(o.storageInstId)).collect(Collectors.toList());
-        Boolean notifyStorageInfo = false;
+        initBaseStoragePoolInfoTask(metaDbConnection);
+
         for (StorageInfoRecord record : storageInfoRecords) {
-            StorageInfoExtraFieldJSON extras =
-                Optional.ofNullable(record.extras).orElse(new StorageInfoExtraFieldJSON());
-//            String originalStoragePool = originalStoragePoolMap.get(record.storageInstId);
-            StorageInfoRecord originalStorageInfoRecord = originalStorageInfoMap.get(record.storageInstId);
-            String originalStoragePool =
-                Optional.ofNullable(originalStorageInfoRecord.extras).orElse(new StorageInfoExtraFieldJSON())
-                    .getStoragePoolName();
-            int originalStatus = originalStorageInfoRecord.status;
-            extras.setStoragePoolName(originalStoragePool);
-            storageInfoAccessor.updateStoragePoolName(record.storageInstId, extras);
-            if (originalStatus != StorageInfoRecord.STORAGE_STATUS_READY) {
-                notifyStorageInfo = true;
-                storageInfoAccessor.updateStorageStatus(record.storageInstId, originalStatus);
-            }
-//            if(record.storageInstId.equals(undeletableDnId)){
-//                storageInfoAccessor.updateStorageInfoDeletable(undeletableDnId, false);
-//            }
+            recoverStorageInfoByOriginalRecord(record, originalStorageInfoMap.get(record.storageInstId));
         }
 
-        if (notifyStorageInfo) {
-            // update op-version
-            MetaDbConfigManager.getInstance()
-                .notify(MetaDbDataIdBuilder.getStorageInfoDataId(instId), metaDbConnection);
-
+        // shrink storage pool, all the dn will be returned to recycle.
+        if (storagePoolManager.removeDnListFromOriginalStoragePoolInfo(dnIdStr, storagePoolName).isEmpty()) {
+            undeletableDnId = "";
         }
-        StoragePoolManager storagePoolManager = StoragePoolManager.getInstance();
-        String dnIdStr = StringUtils.join(this.dnIds, ",");
-        storagePoolManager.shrinkStoragePool(storagePoolName, dnIdStr, undeletableDnId);
+
+        storagePoolManager.shrinkStoragePool(metaDbConnection, storagePoolName, dnIdStr, undeletableDnId);
+
+        // update op-version
+        MetaDbConfigManager.getInstance().notify(MetaDbDataIdBuilder.getStorageInfoDataId(instId), metaDbConnection);
     }
 
     @Override
     protected void onRollbackSuccess(ExecutionContext executionContext) {
-        SyncManagerHelper.sync(new AlterStoragePoolSyncAction("", ""), SyncScope.ALL);
+        SyncManagerHelper.syncThrowExceptions(new AlterStoragePoolSyncAction("", ""), SyncScope.ALL);
     }
 
     @Override
     protected void onExecutionSuccess(ExecutionContext executionContext) {
-        SyncManagerHelper.sync(new AlterStoragePoolSyncAction("", ""), SyncScope.ALL);
+        SyncManagerHelper.syncThrowExceptions(new AlterStoragePoolSyncAction("", ""), SyncScope.ALL);
     }
 
 }

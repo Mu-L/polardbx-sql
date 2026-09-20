@@ -1,10 +1,10 @@
 package com.alibaba.polardbx.qatest.storagepool.importDatabase;
 
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
-import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.gms.topology.StorageInfoRecord;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.collect.ImmutableList;
+import org.junit.Assert;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -280,7 +280,7 @@ public class ImportTableTest extends ImportDatabaseBase {
                 result = rs.getString("STATE");
             }
 
-            Assert.assertTrue(result != null && result.equalsIgnoreCase("ALL SUCCESS"));
+            Assert.assertTrue((result != null ? result : ""), result != null && result.equalsIgnoreCase("ALL SUCCESS"));
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
         }
@@ -316,7 +316,7 @@ public class ImportTableTest extends ImportDatabaseBase {
                 result = rs.getString("STATE");
             }
 
-            Assert.assertTrue(result != null && result.equalsIgnoreCase("ALL SUCCESS"));
+            Assert.assertTrue((result != null ? result : ""), result != null && result.equalsIgnoreCase("ALL SUCCESS"));
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
         }
@@ -341,7 +341,7 @@ public class ImportTableTest extends ImportDatabaseBase {
                 result = rs.getString("STATE");
             }
 
-            Assert.assertTrue(result != null && result.equalsIgnoreCase("ALL SUCCESS"));
+            Assert.assertTrue((result != null ? result : ""), result != null && result.equalsIgnoreCase("ALL SUCCESS"));
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
         }
@@ -375,7 +375,7 @@ public class ImportTableTest extends ImportDatabaseBase {
             String result = null;
             while (rs.next()) {
                 result = rs.getString("STATE");
-                Assert.assertTrue("fail".equalsIgnoreCase(result));
+                Assert.assertTrue((result != null ? result : ""), "fail".equalsIgnoreCase(result));
             }
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);

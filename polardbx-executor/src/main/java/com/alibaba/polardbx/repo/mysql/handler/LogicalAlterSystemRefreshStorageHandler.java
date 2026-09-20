@@ -57,7 +57,7 @@ public class LogicalAlterSystemRefreshStorageHandler extends HandlerCommon {
 
     private void syncRefreshStorage(String dnId, String vipAddr, String user, String encPasswd) {
         try {
-            SyncManagerHelper.sync(new AlterSystemRefreshStorageSyncAction(dnId, vipAddr, user, encPasswd),
+            SyncManagerHelper.syncThrowExceptions(new AlterSystemRefreshStorageSyncAction(dnId, vipAddr, user, encPasswd),
                 SyncScope.ALL);
         } catch (Throwable e) {
             logger.error(e);

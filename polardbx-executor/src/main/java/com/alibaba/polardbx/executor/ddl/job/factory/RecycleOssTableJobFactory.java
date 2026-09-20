@@ -16,15 +16,14 @@
 
 package com.alibaba.polardbx.executor.ddl.job.factory;
 
-import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.ddl.job.converter.PhysicalPlanData;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameTableAddMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameTablePhyDdlTask;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameTableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameTableUpdateMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameTableValidateTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.SubJobTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.TablesSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.oss.UnBindingArchiveTableMetaDirectTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.ValidateTableVersionTask;
 import com.alibaba.polardbx.executor.ddl.job.validator.GsiValidator;
@@ -36,6 +35,7 @@ import com.alibaba.polardbx.optimizer.archive.CheckOSSArchiveUtil;
 import com.alibaba.polardbx.optimizer.archive.TtlSourceInfo;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 
 import java.util.HashMap;
@@ -115,6 +115,7 @@ public class RecycleOssTableJobFactory extends DdlJobFactory {
                 String ttlTmpTbl = x.getTtlInfoRecord().getArcTmpTblName();
                 String dropSql = String.format("DROP TABLE IF EXISTS `%s`.`%s`", ttlTmpSchema, ttlTmpTbl);
                 SubJobTask dropTtlTmpTblTask = new SubJobTask(ttlTmpSchema, dropSql, "");
+                dropTtlTmpTblTask.setParentAcquireResource(true);
                 tasks.add(dropTtlTmpTblTask);
             }
 
@@ -123,7 +124,8 @@ public class RecycleOssTableJobFactory extends DdlJobFactory {
         DdlTask phyDdlTask = new RenameTablePhyDdlTask(schemaName, physicalPlanData);
         DdlTask updateMetaTask =
             new RenameTableUpdateMetaTask(schemaName, logicalTableName, newLogicalTableName, needRenamePhyTable);
-        DdlTask syncTask = new RenameTableSyncTask(schemaName, logicalTableName, newLogicalTableName);
+        DdlTask syncTask =
+            new TablesSyncTask(schemaName, ImmutableList.of(logicalTableName, newLogicalTableName), true);
         TableSyncTask tableSyncTask = new TableSyncTask(schemaName, logicalTableName);
         tasks.add(addMetaTask);
         if (needRenamePhyTable) {

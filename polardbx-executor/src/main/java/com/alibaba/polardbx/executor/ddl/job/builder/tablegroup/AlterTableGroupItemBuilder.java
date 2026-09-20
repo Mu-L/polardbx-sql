@@ -22,7 +22,6 @@ import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.ddl.job.builder.DdlPhyPlanBuilder;
 import com.alibaba.polardbx.executor.partitionmanagement.AlterTableGroupUtils;
 import com.alibaba.polardbx.gms.tablegroup.PartitionGroupRecord;
-import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -35,7 +34,6 @@ import com.alibaba.polardbx.optimizer.partition.common.PartitionLocation;
 import org.apache.calcite.rel.core.DDL;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -103,7 +101,7 @@ public class AlterTableGroupItemBuilder extends DdlPhyPlanBuilder {
                                 && subPartBy.isUseSubPartTemplate() && subPartitionSpec.getTemplateName()
                                 .equalsIgnoreCase(oldPartitionName))) {
                                 PartitionLocation location = subPartitionSpec.getLocation();
-                                if(!sourcePhyTables.containsKey(location.getGroupKey())) {
+                                if (!sourcePhyTables.containsKey(location.getGroupKey())) {
                                     sourcePhyTables.put(location.getGroupKey(), new HashSet<>());
                                 }
                                 sourcePhyTables.get(location.getGroupKey()).add(location.getPhyTableName());
@@ -117,14 +115,14 @@ public class AlterTableGroupItemBuilder extends DdlPhyPlanBuilder {
                         if (partitionSpec.isLogical()) {
                             for (PartitionSpec subPart : partitionSpec.getSubPartitions()) {
                                 PartitionLocation location = subPart.getLocation();
-                                if(!sourcePhyTables.containsKey(location.getGroupKey())) {
+                                if (!sourcePhyTables.containsKey(location.getGroupKey())) {
                                     sourcePhyTables.put(location.getGroupKey(), new HashSet<>());
                                 }
                                 sourcePhyTables.get(location.getGroupKey()).add(location.getPhyTableName());
                             }
                         } else {
                             PartitionLocation location = partitionSpec.getLocation();
-                            if(!sourcePhyTables.containsKey(location.getGroupKey())) {
+                            if (!sourcePhyTables.containsKey(location.getGroupKey())) {
                                 sourcePhyTables.put(location.getGroupKey(), new HashSet<>());
                             }
                             sourcePhyTables.get(location.getGroupKey()).add(location.getPhyTableName());
@@ -156,7 +154,7 @@ public class AlterTableGroupItemBuilder extends DdlPhyPlanBuilder {
         for (String newPhyTableName : preparedData.getNewPhyTables()) {
             PartitionGroupRecord partitionGroupRecord = invisiblePartitionGroups.get(i++);
             //TODO need review by taokun
-            String groupName = GroupInfoUtil.buildGroupNameFromPhysicalDb(partitionGroupRecord.getPhy_db());
+            String groupName = partitionGroupRecord.getGroup_Name();
             List<String> phyTables = new ArrayList<>();
             phyTables.add(newPhyTableName);
             /**
@@ -184,12 +182,12 @@ public class AlterTableGroupItemBuilder extends DdlPhyPlanBuilder {
                 tableTopology.put(groupName, new ArrayList<>());
             }
             tableTopology.get(groupName).add(phyTables);
-            if(!targetPhyTables.containsKey(groupName)) {
+            if (!targetPhyTables.containsKey(groupName)) {
                 targetPhyTables.put(groupName, new HashSet<>());
             }
             targetPhyTables.get(groupName).add(newPhyTableName);
             orderedTargetTableLocations.put(partitionGroupRecord.partition_name, Pair.of(newPhyTableName, groupName));
-            buildAlterPartitionReferenceTableTopology(schemaName, tableName);
+//            buildAlterPartitionReferenceTableTopology(schemaName, tableName);
         }
     }
 
@@ -198,7 +196,7 @@ public class AlterTableGroupItemBuilder extends DdlPhyPlanBuilder {
         PartitionLocation location = preparedData.getDefaultPartitionSpec().getLocation();
         String createTableStr = AlterTableGroupUtils
             .fetchCreateTableDefinition(relDdl, executionContext, location.getGroupKey(), location.getPhyTableName(),
-                preparedData.getSchemaName());
+                preparedData.getSchemaName(), true);
         sqlTemplate = AlterTableGroupUtils.getSqlTemplate(preparedData.getSchemaName(), preparedData.getTableName(),
             createTableStr, executionContext);
     }

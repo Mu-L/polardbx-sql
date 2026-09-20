@@ -40,7 +40,7 @@ import java.util.function.BiFunction;
 public class OSSBackFillExecutor {
 
     private static final Logger logger = LoggerFactory
-        .getLogger("oss");
+        .getLogger("mpp_log");
 
     private Engine sourceEngine;
     private Engine targetEngine;

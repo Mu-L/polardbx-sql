@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.executor.accumulator.state;
 
 import com.alibaba.polardbx.common.datatype.Decimal;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.executor.accumulator.datastruct.LongSegmentArrayList;
 import org.openjdk.jol.info.ClassLayout;
 
@@ -35,6 +36,14 @@ public class NullableDecimalLongGroupState extends NullableDecimalGroupState {
     public NullableDecimalLongGroupState(int capacity) {
         super(capacity);
         this.longValues = new LongSegmentArrayList(capacity);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(longValues)
+            + FastMemoryCounter.sizeOf(valueIsNull)
+            + FastMemoryCounter.sizeOf(decimals);
     }
 
     public void set(int groupId, Decimal decimalVal, long longValue) {

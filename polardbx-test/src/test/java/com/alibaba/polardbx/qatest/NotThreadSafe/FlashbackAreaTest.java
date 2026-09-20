@@ -56,19 +56,26 @@ public class FlashbackAreaTest extends CrudBasedLockTestCase {
             + "  local index idx(a)\n"
             + ") partition by key(id)";
         long beforeCreateTableTso = getTso();
+        System.out.println("get tso before create table: " + beforeCreateTableTso);
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTableSql);
+        System.out.println("insert 1");
         JdbcUtil.executeUpdateSuccess(tddlConnection, "begin");
         JdbcUtil.executeUpdateSuccess(tddlConnection, "insert into " + tableName + " values(1,1)");
         JdbcUtil.executeUpdateSuccess(tddlConnection, "commit");
         long beforeInsert100TableTso = getTso();
+        System.out.println("get tso before insert 100 table: " + beforeInsert100TableTso);
+        System.out.println("insert 100");
         JdbcUtil.executeUpdateSuccess(tddlConnection, "begin");
         JdbcUtil.executeUpdateSuccess(tddlConnection, "insert into " + tableName + " values(100,100)");
         JdbcUtil.executeUpdateSuccess(tddlConnection, "commit");
         long beforeUpdate100TableTso = getTso();
+        System.out.println("get tso before update 100 table: " + beforeUpdate100TableTso);
+        System.out.println("update 100");
         JdbcUtil.executeUpdateSuccess(tddlConnection, "begin");
         JdbcUtil.executeUpdateSuccess(tddlConnection, "update " + tableName + " set a = 200 where id = 100");
         JdbcUtil.executeUpdateSuccess(tddlConnection, "commit");
         long afterTso = getTso();
+        System.out.println("get tso after all operations: " + afterTso);
 
         ResultSet rs = JdbcUtil.executeQuerySuccess(tddlConnection,
             "select * from " + tableName + " as of tso " + beforeCreateTableTso);
@@ -167,6 +174,8 @@ public class FlashbackAreaTest extends CrudBasedLockTestCase {
             sql = "insert into " + tableName + " values (100,100), (101,101)";
             JdbcUtil.executeUpdateSuccess(connection, sql);
 
+            // Use explicit transaction to avoid autocommit path
+            JdbcUtil.executeUpdateSuccess(connection, "begin");
             ResultSet rs = JdbcUtil.executeQuerySuccess(connection,
                 "select * from " + tableName + " as of tso " + tso + " order by id");
             Assert.assertTrue(rs.next());
@@ -176,19 +185,24 @@ public class FlashbackAreaTest extends CrudBasedLockTestCase {
             Assert.assertEquals(1, rs.getInt("id"));
             Assert.assertEquals(1, rs.getInt("a"));
             Assert.assertFalse(false);
+            JdbcUtil.executeUpdateSuccess(connection, "commit");
 
             Thread.sleep(5000);
 
             JdbcUtil.executeUpdate(connection, "SET ENABLE_FLASHBACK_AREA = FALSE");
 
             try {
+                JdbcUtil.executeUpdateSuccess(connection, "begin");
                 JdbcUtil.executeQuerySuccess(connection,
                     "select * from " + tableName + " as of tso " + tso + " order by id");
+                JdbcUtil.executeUpdateSuccess(connection, "commit");
             } catch (Throwable t) {
                 System.out.println(t.getMessage());
+                JdbcUtil.executeUpdate(connection, "rollback");
                 Assert.assertTrue(t.getMessage().contains("Snapshot too old"));
 
                 JdbcUtil.executeUpdate(connection, "SET ENABLE_FLASHBACK_AREA = TRUE");
+                JdbcUtil.executeUpdateSuccess(connection, "begin");
                 rs = JdbcUtil.executeQuerySuccess(connection,
                     "select * from " + tableName + " as of tso " + tso + " order by id");
                 Assert.assertTrue(rs.next());
@@ -198,6 +212,7 @@ public class FlashbackAreaTest extends CrudBasedLockTestCase {
                 Assert.assertEquals(1, rs.getInt("id"));
                 Assert.assertEquals(1, rs.getInt("a"));
                 Assert.assertFalse(false);
+                JdbcUtil.executeUpdateSuccess(connection, "commit");
 
                 return true;
             }

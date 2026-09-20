@@ -124,7 +124,7 @@ public class AlterComplexTaskUpdateJobStatusTask extends BaseGmsTask {
         PreemptiveTime preemptiveTime =
             PreemptiveTime.getPreemptiveTimeFromExecutionContext(executionContext,
                 ConnectionParams.PREEMPTIVE_MDL_INITWAIT, ConnectionParams.PREEMPTIVE_MDL_INTERVAL);
-        SyncManagerHelper.sync(
+        SyncManagerHelper.syncThrowExceptions(
             new TablesMetaChangePreemptiveSyncAction(schemaName, relatedLogicalTables, preemptiveTime), SyncScope.ALL);
     }
 

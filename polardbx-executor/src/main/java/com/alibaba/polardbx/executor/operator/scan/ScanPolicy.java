@@ -24,7 +24,9 @@ public enum ScanPolicy {
 
     FILTER_PRIORITY(2),
 
-    MERGE_IO(3);
+    MERGE_IO(3),
+
+    ADAPTIVE(4);
 
     private final int policyId;
 
@@ -43,8 +45,9 @@ public enum ScanPolicy {
         case 3:
             return MERGE_IO;
         case 1:
-        default:
             return IO_PRIORITY;
+        default:
+            return ADAPTIVE;
         }
     }
 }

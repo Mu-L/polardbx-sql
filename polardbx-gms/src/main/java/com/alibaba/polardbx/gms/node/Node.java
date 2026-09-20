@@ -40,6 +40,8 @@ public interface Node {
 
     String getInstId();
 
+    String getSubInstId();
+
     String getNodeIdentifier();
 
     String getVersion();

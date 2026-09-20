@@ -28,6 +28,7 @@ import com.alibaba.polardbx.druid.sql.visitor.SQLASTVisitor;
 public class MySqlStartSlaveStatement extends SQLStatementImpl {
     private SQLCharExpr channel;
     private SQLCharExpr subChannel;
+    private boolean ddlLoad;
 
     @Override
     protected void accept0(SQLASTVisitor v) {
@@ -54,5 +55,13 @@ public class MySqlStartSlaveStatement extends SQLStatementImpl {
 
     public void setSubChannel(SQLCharExpr subChannel) {
         this.subChannel = subChannel;
+    }
+
+    public boolean isDdlLoad() {
+        return ddlLoad;
+    }
+
+    public void setDdlLoad(boolean ddlLoad) {
+        this.ddlLoad = ddlLoad;
     }
 }

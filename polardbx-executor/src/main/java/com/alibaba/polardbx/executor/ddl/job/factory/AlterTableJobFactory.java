@@ -17,17 +17,21 @@
 package com.alibaba.polardbx.executor.ddl.job.factory;
 
 import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.ddl.Attribute;
 import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.Pair;
+import com.alibaba.polardbx.druid.DbType;
+import com.alibaba.polardbx.druid.sql.SQLUtils;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableItem;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableRenameColumn;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLCreateTableStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLExprTableSource;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlAlterTableLock;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlAlterTableOption;
 import com.alibaba.polardbx.executor.ddl.job.converter.PhysicalPlanData;
 import com.alibaba.polardbx.executor.ddl.job.factory.util.FactoryUtils;
@@ -40,11 +44,16 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.AlterTableInsertColumnsM
 import com.alibaba.polardbx.executor.ddl.job.task.basic.AlterTablePhyDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.AlterTableValidateTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.DropEntitySecurityAttrTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.SubJobTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
+import com.alibaba.polardbx.executor.ddl.job.task.columnar.CleanBlobCacheForTableSyncTask;
+import com.alibaba.polardbx.executor.ddl.job.task.columnar.DropBlobColumnMappingByColumnTask;
+import com.alibaba.polardbx.executor.ddl.job.task.columnar.RegisterBlobColumnMappingTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.spec.AlterTableRollbacker;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcAlterTableRewrittenDdlMarkTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcDdlMarkTask;
 import com.alibaba.polardbx.executor.ddl.job.task.factory.GsiTaskFactory;
+import com.alibaba.polardbx.executor.ddl.job.task.omc.OmcPhyDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.shared.EmptyTask;
 import com.alibaba.polardbx.executor.ddl.job.task.twophase.CommitTwoPhaseDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.twophase.CompensationPhyDdlTask;
@@ -58,14 +67,18 @@ import com.alibaba.polardbx.executor.ddl.newengine.job.DdlExceptionAction;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4AlterTable;
 import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
+import com.alibaba.polardbx.executor.ddl.omc.OmcUtils;
 import com.alibaba.polardbx.executor.ddl.twophase.TwoPhaseDdlManager;
 import com.alibaba.polardbx.executor.ddl.twophase.TwoPhaseDdlUtils;
 import com.alibaba.polardbx.executor.shadowtable.ShadowTableUtils;
 import com.alibaba.polardbx.gms.lbac.LBACSecurityEntity;
-import com.alibaba.polardbx.gms.lbac.LBACSecurityManager;
 import com.alibaba.polardbx.gms.lbac.LBACSecurityLabel;
+import com.alibaba.polardbx.gms.lbac.LBACSecurityManager;
+import com.alibaba.polardbx.gms.metadb.table.ColumnsRecord;
+import com.alibaba.polardbx.gms.metadb.table.ExternalizedColumnInfo;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
@@ -81,6 +94,7 @@ import com.alibaba.polardbx.optimizer.partition.common.LocalPartitionDefinitionI
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
 import com.google.common.collect.Lists;
 import org.apache.calcite.sql.SqlIdentifier;
+import org.apache.calcite.sql.SqlTableOptions;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.StringUtils;
 
@@ -91,6 +105,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.common.properties.ConnectionParams.CHECK_TABLE_BEFORE_PHY_DDL;
@@ -131,7 +146,19 @@ public class AlterTableJobFactory extends DdlJobFactory {
 
     static final String INSTANT_ALGORITHM = "INSTANT";
 
+    static final String OMC_ALGORITHM = "OMC";
+
     static final String ALGORITHM = "ALGORITHM";
+
+    static final String LOCK_TYPE_NONE = "NONE";
+
+    static final String LOCK_TYPE_SHARED = "SHARED";
+
+    static final String LOCK_TYPE_EXCLUSIVE = "EXCLUSIVE";
+
+    static final String LOCK_TYPE_DEFAULT = "DEFAULT";
+
+    static final String LOCK_TYPE = "LOCK";
 
     private enum DdlAlgorithmType {
         INPLACE_ADD_DROP_COLUMN_INDEX,
@@ -186,6 +213,36 @@ public class AlterTableJobFactory extends DdlJobFactory {
 
     @Override
     protected ExecutableDdlJob doCreate() {
+        // Externalized column ADD: tag the new addr columns with FLAG_EXTERNALIZED_COLUMN
+        // BEFORE any task constructor reads prepareData.specialDefaultValueFlags. The
+        // DDL framework persists task state to MetaDB at submit-time, so mutating the
+        // flags map later in this method has no effect on the executed task.
+        {
+            Set<String> newExtCols0 = logicalAlterTable.getNewExternalizedLogicalColumns();
+            if (newExtCols0 != null && !newExtCols0.isEmpty()) {
+                // FLAG and DEFAULT-VALUE maps must BOTH be populated: the
+                // MetaDB writer (TableInfoManager.updateSpecialColumnDefaults)
+                // early-returns when specialDefaultValues is empty and never
+                // applies the flag. Mirror LogicalCreateTable.preparePrimaryData
+                // which sets both for CREATE TABLE EXTERNALIZE columns.
+                Map<String, Long> flags0 = prepareData.getSpecialDefaultValueFlags();
+                if (flags0 == null) {
+                    flags0 = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+                    prepareData.setSpecialDefaultValueFlags(flags0);
+                }
+                Map<String, String> vals0 = prepareData.getSpecialDefaultValues();
+                if (vals0 == null) {
+                    vals0 = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+                    prepareData.setSpecialDefaultValues(vals0);
+                }
+                for (String logicalName : newExtCols0) {
+                    String addrColumnName = ExternalizedColumnInfo.toAddrColumnName(logicalName);
+                    flags0.put(addrColumnName, ColumnsRecord.FLAG_EXTERNALIZED_COLUMN);
+                    vals0.put(addrColumnName, "''");
+                }
+            }
+        }
+
         boolean isNewPart = DbInfoManager.getInstance().isNewPartitionDb(schemaName);
 
         TableGroupConfig tableGroupConfig = isNewPart ? physicalPlanData.getTableGroupConfig() : null;
@@ -256,7 +313,22 @@ public class AlterTableJobFactory extends DdlJobFactory {
         }
 
         Boolean generateTwoPhaseDdlTask = supportTwoPhaseDdl;
-        DdlTask phyDdlTask = new AlterTablePhyDdlTask(schemaName, logicalTableName, physicalPlanData);
+
+        // GHOST OMC
+        DdlTask phyDdlTask;
+        SqlTableOptions sqlTableOptions = logicalAlterTable.getSqlAlterTable().getTableOptions();
+        if (sqlTableOptions != null && sqlTableOptions.getAlgorithm() != null &&
+            sqlTableOptions.getAlgorithm().getSimple().equalsIgnoreCase(Attribute.ALTER_TABLE_ALGORITHM_OMC)) {
+            Map<String, List<Pair<String, String>>> tableTopology =
+                OmcUtils.buildPhysicalTableTopology(schemaName, physicalPlanData.getTableTopology());
+            String origSqlTemplate = OmcUtils.rewriteAlterTableSql(logicalAlterTable.getSqlAlterTable().getSourceSql());
+            phyDdlTask = new OmcPhyDdlTask(schemaName, logicalTableName, origSqlTemplate,
+                executionContext.getOriginSql(), tableTopology, false);
+            generateTwoPhaseDdlTask = false;
+        } else {
+            phyDdlTask = new AlterTablePhyDdlTask(schemaName, logicalTableName, physicalPlanData);
+        }
+
         if (this.repartition) {
             ((AlterTablePhyDdlTask) phyDdlTask).setSourceSql(logicalAlterTable.getNativeSql());
             generateTwoPhaseDdlTask = false;
@@ -275,9 +347,19 @@ public class AlterTableJobFactory extends DdlJobFactory {
             logicalTableName)) {
             cdcDdlMarkTask = null;
         } else if (this.logicalAlterTable.isRewrittenAlterSql()) {
-            // Use rewritten sql to mark cdc instead of sql in ddl context
-            cdcDdlMarkTask = new CdcAlterTableRewrittenDdlMarkTask(schemaName, physicalPlanData,
-                logicalAlterTable.getBytesSql().toString(), isForeignKeyCdcMark);
+            // Use rewritten sql to mark cdc instead of sql in ddl context.
+            // The rewritten marker stays physical. For external-column ADD/DROP, the mark task stores the user SQL
+            // as canonical originalDdl for CDC logical replay.
+            String cdcLogicalSql = logicalAlterTable.getCdcOverrideSql() != null
+                ? logicalAlterTable.getCdcOverrideSql()
+                : logicalAlterTable.getBytesSql().toString();
+            CdcAlterTableRewrittenDdlMarkTask rewrittenDdlMarkTask =
+                new CdcAlterTableRewrittenDdlMarkTask(schemaName, physicalPlanData,
+                    cdcLogicalSql, isForeignKeyCdcMark);
+            rewrittenDdlMarkTask.setExternalColumnDdl(
+                CollectionUtils.isNotEmpty(logicalAlterTable.getNewExternalizedLogicalColumns())
+                    || CollectionUtils.isNotEmpty(logicalAlterTable.getDroppedExternalizedLogicalColumns()));
+            cdcDdlMarkTask = rewrittenDdlMarkTask;
         } else {
             if (ignoreMarkCdcDDL()) {
                 cdcDdlMarkTask = null;
@@ -320,7 +402,9 @@ public class AlterTableJobFactory extends DdlJobFactory {
                 prepareData.getTableRowFormat(),
                 physicalPlanData.getSequence(),
                 prepareData.isOnlineModifyColumnIndexTask(),
-                prepareData.getDdlVersionId());
+                prepareData.getDdlVersionId(),
+                prepareData.getAddConstraints(),
+                prepareData.getDropConstraints());
         } else {
             // only add columns
             updateMetaTask = new AlterTableInsertColumnsMetaTask(
@@ -423,6 +507,27 @@ public class AlterTableJobFactory extends DdlJobFactory {
                 beforeUpdateMetaTask = twoPhaseDdlTasks.get(twoPhaseDdlTasks.size() - 1);
             }
         }
+        // External-column mapping mutations are bracketed by ALL-CN resolver-cache
+        // cleanup tasks. Forward execution ends with the post cleaner after the
+        // mapping commit; reverse execution ends with the pre cleaner after mapping
+        // rollback. Ordinary ALTERs do not add either cleaner.
+        List<DdlTask> externalColumnMappingTasks = new ArrayList<>();
+        Set<String> newExtCols = logicalAlterTable.getNewExternalizedLogicalColumns();
+        if (newExtCols != null && !newExtCols.isEmpty()) {
+            externalColumnMappingTasks.add(new RegisterBlobColumnMappingTask(
+                schemaName, logicalTableName, new ArrayList<>(newExtCols)));
+        }
+
+        Set<String> droppedExtCols = logicalAlterTable.getDroppedExternalizedLogicalColumns();
+        if (droppedExtCols != null && !droppedExtCols.isEmpty()) {
+            // Keep the existing DROP-before-REGISTER order when one ALTER contains both.
+            externalColumnMappingTasks.add(0, new DropBlobColumnMappingByColumnTask(
+                schemaName, logicalTableName, new ArrayList<>(droppedExtCols)));
+        }
+        addExternalColumnMappingTasks(taskList, updateMetaTask, schemaName, logicalTableName,
+            externalColumnMappingTasks);
+
+        taskList.add(new TableSyncTask(schemaName, logicalTableName));
         taskList.addAll(alterGsiMetaTasks);
 
         if (isForeignKeysDdl) {
@@ -454,6 +559,21 @@ public class AlterTableJobFactory extends DdlJobFactory {
         executableDdlJob.setTableSyncTask((TableSyncTask) tableSyncTaskAfterShowing);
 
         return executableDdlJob;
+    }
+
+    static void addExternalColumnMappingTasks(List<DdlTask> taskList, DdlTask updateMetaTask,
+                                              String schemaName, String logicalTableName,
+                                              List<DdlTask> mappingTasks) {
+        if (mappingTasks == null || mappingTasks.isEmpty()) {
+            return;
+        }
+        int updateMetaIndex = updateMetaTask == null ? -1 : taskList.indexOf(updateMetaTask);
+        int insertionIndex = updateMetaIndex >= 0 ? updateMetaIndex + 1 : taskList.size();
+        List<DdlTask> guardedTasks = new ArrayList<>(mappingTasks.size() + 2);
+        guardedTasks.add(new CleanBlobCacheForTableSyncTask(schemaName, logicalTableName, true));
+        guardedTasks.addAll(mappingTasks);
+        guardedTasks.add(new CleanBlobCacheForTableSyncTask(schemaName, logicalTableName, true));
+        taskList.addAll(insertionIndex, guardedTasks);
     }
 
     private DropEntitySecurityAttrTask createDropESATask(
@@ -591,7 +711,7 @@ public class AlterTableJobFactory extends DdlJobFactory {
         SQLAlterTableStatement alterTable = (SQLAlterTableStatement) FastsqlUtils.parseSql(origSql).get(0);
         List<SQLAlterTableItem> alterTableItems = alterTable.getItems();
         for (SQLAlterTableItem alterTableItem : alterTableItems) {
-            if(alterTableItem instanceof SQLAlterTableRenameColumn){
+            if (alterTableItem instanceof SQLAlterTableRenameColumn) {
                 return true;
             }
         }
@@ -644,11 +764,15 @@ public class AlterTableJobFactory extends DdlJobFactory {
 
     protected Pair<DdlAlgorithmType, Long> alterTableViaDefaultAlgorithm(Boolean generateTwoPhaseDdlTask,
                                                                          Boolean isModifyColumn) {
+        Long twoPhaseDdlId = TwoPhaseDdlManager.generateTwoPhaseDdlManagerId(schemaName, logicalTableName);
+        DdlAlgorithmType algorithmType;
+        if (!generateTwoPhaseDdlTask) {
+            algorithmType = DdlAlgorithmType.UNKNOWN_ALGORITHM;
+            return Pair.of(algorithmType, twoPhaseDdlId);
+        }
         Boolean supportTwoPhaseDdlOnDn =
             TwoPhaseDdlManager.checkEnableTwoPhaseDdlOnDn(schemaName, logicalTableName, executionContext);
-        Long twoPhaseDdlId = TwoPhaseDdlManager.generateTwoPhaseDdlManagerId(schemaName, logicalTableName);
         String origSqlTemplate = logicalAlterTable.getNativeSql();
-        DdlAlgorithmType algorithmType;
         if (!supportTwoPhaseDdlOnDn || !generateTwoPhaseDdlTask) {
             algorithmType = DdlAlgorithmType.UNKNOWN_ALGORITHM;
         } else if (isModifyColumn) {
@@ -908,11 +1032,14 @@ public class AlterTableJobFactory extends DdlJobFactory {
             OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(logicalTableName).hasForeignKey();
         Boolean withCci =
             OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(logicalTableName).withCci();
+        Boolean singleDrdsTable = OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTddlRuleManager()
+            .isTableInSingleDb(logicalTableName) && !DbInfoManager.getInstance().isNewPartitionDb(schemaName);
+
         Boolean supportTwoPhaseDdl = false;
         Boolean checkTableOk = true;
         Boolean checkTable = executionContext.getParamManager().getBoolean(CHECK_TABLE_BEFORE_PHY_DDL);
         if (isAddColumnOrAddIndex || isModifyColumn || isDropColumnOrDropIndex) {
-            if (alterNums <= 1 && !withPhysicalPartition && !withForeignKey && !withCci) {
+            if (alterNums <= 1 && !withPhysicalPartition && !withForeignKey && !withCci && !singleDrdsTable) {
                 if (checkTable) {
                     checkTableOk = checkTableOk(schemaName, logicalTableName);
                 }
@@ -922,5 +1049,309 @@ public class AlterTableJobFactory extends DdlJobFactory {
             }
         }
         return supportTwoPhaseDdl;
+    }
+
+    @Override
+    protected void updateOnlineDdlInfo(OnlineDdlInfo onlineDdlInfo) {
+        if (!executionContext.getDdlContext().isExplainOnlineDdl() && !executionContext.getDdlContext()
+            .isExplainOnlineDdlAdvisor()) {
+            return;
+        }
+
+        String originSql = executionContext.getOriginSql();
+        String origSqlTemplate = logicalAlterTable.getNativeSql();
+        OnlineDdlInfo.PhysicalDdlAlgorithmType algorithmType = getOnlineDdlAlgorithm(origSqlTemplate);
+
+        switch (algorithmType) {
+        case INSTANT:
+            onlineDdlInfo.setOnlineDdlType(OnlineDdlInfo.DdlType.ONLINE_DDL);
+            onlineDdlInfo.setOnlineDdlAlgorithm(OnlineDdlInfo.DdlAlgorithm.INSTANT);
+            onlineDdlInfo.setAdviceOnlineDdlSql(String.format("%s", originSql));
+            break;
+        case INPLACE_AND_NONE:
+            onlineDdlInfo.setOnlineDdlType(OnlineDdlInfo.DdlType.ONLINE_DDL);
+            onlineDdlInfo.setOnlineDdlAlgorithm(OnlineDdlInfo.DdlAlgorithm.INPLACE);
+            onlineDdlInfo.setAdviceOnlineDdlSql(String.format("%s", originSql));
+            break;
+        case INPLACE_AND_LOCK:
+            onlineDdlInfo.setOnlineDdlType(OnlineDdlInfo.DdlType.LOCK_TABLE);
+            onlineDdlInfo.setOnlineDdlAlgorithm(OnlineDdlInfo.DdlAlgorithm.INPLACE);
+            break;
+        case COPY:
+            onlineDdlInfo.setOnlineDdlType(OnlineDdlInfo.DdlType.LOCK_TABLE);
+            onlineDdlInfo.setOnlineDdlAlgorithm(OnlineDdlInfo.DdlAlgorithm.COPY);
+            break;
+        case DEFAULT:
+            onlineDdlInfo.setOnlineDdlType(OnlineDdlInfo.DdlType.NONE);
+            onlineDdlInfo.setOnlineDdlAlgorithm(OnlineDdlInfo.DdlAlgorithm.DEFAULT);
+            break;
+        case CONVERT_TO_OMC20:
+        case CONVERT_TO_OMC30:
+            SQLAlterTableStatement alterTableStatement =
+                (SQLAlterTableStatement) FastsqlUtils.parseSql(originSql).get(0);
+            MySqlAlterTableOption omcOption = new MySqlAlterTableOption(ALGORITHM, "OMC");
+            alterTableStatement.addItem(omcOption);
+            String adviseSql =
+                SQLUtils.toSQLString(alterTableStatement, DbType.mysql, new SQLUtils.FormatOption(true, false));
+
+            onlineDdlInfo.setDdlType(OnlineDdlInfo.DdlType.LOCK_TABLE);
+            onlineDdlInfo.setAlgorithm(OnlineDdlInfo.DdlAlgorithm.COPY);
+            onlineDdlInfo.setAdviceDdlType(OnlineDdlInfo.DdlType.ONLINE_DDL);
+            if (algorithmType == OnlineDdlInfo.PhysicalDdlAlgorithmType.CONVERT_TO_OMC20) {
+                onlineDdlInfo.setAdviceAlgorithm(OnlineDdlInfo.DdlAlgorithm.OMC20);
+            } else {
+                onlineDdlInfo.setAdviceAlgorithm(OnlineDdlInfo.DdlAlgorithm.OMC30);
+            }
+            onlineDdlInfo.setAdviceOnlineDdlSql(String.format("%s", adviseSql));
+            break;
+        case OMC:
+            onlineDdlInfo.setDdlType(OnlineDdlInfo.DdlType.ONLINE_DDL);
+            onlineDdlInfo.setAlgorithm(OnlineDdlInfo.DdlAlgorithm.OMC30);
+            onlineDdlInfo.setAdviceDdlType(OnlineDdlInfo.DdlType.ONLINE_DDL);
+            onlineDdlInfo.setAdviceAlgorithm(OnlineDdlInfo.DdlAlgorithm.OMC30);
+            onlineDdlInfo.setAdviceOnlineDdlSql(String.format("%s", originSql));
+            break;
+        default:
+            break;
+        }
+    }
+
+    protected MySqlAlterTableOption getAlterTableAlgorithmType(SQLAlterTableStatement alterTable) {
+        List<MySqlAlterTableOption> alterTableItems = alterTable.getItems().stream()
+            .filter(o -> o instanceof MySqlAlterTableOption)
+            .map(o -> (MySqlAlterTableOption) o)
+            .filter(o -> o.getName().equalsIgnoreCase(ALGORITHM))
+            .collect(Collectors.toList());
+
+        if (alterTableItems.isEmpty()) {
+            return null;
+        }
+
+        // 兼容 mysql 逻辑：最后指定的 algorithm 生效
+        return alterTableItems.get(alterTableItems.size() - 1);
+    }
+
+    protected MySqlAlterTableLock getAlterTableLockType(SQLAlterTableStatement alterTable) {
+        List<MySqlAlterTableLock> alterTableItems = alterTable.getItems().stream()
+            .filter(o -> o instanceof MySqlAlterTableLock)
+            .map(o -> (MySqlAlterTableLock) o)
+            .collect(Collectors.toList());
+
+        if (alterTableItems.isEmpty()) {
+            return null;
+        }
+
+        // 兼容 mysql 逻辑：最后指定的 algorithm 生效
+        return alterTableItems.get(alterTableItems.size() - 1);
+    }
+
+    protected OnlineDdlInfo.PhysicalDdlAlgorithmType getOnlineDdlAlgorithm(String origSql) {
+        List<String> supportedAlgorithms =
+            Arrays.asList(INPLACE_ALGORITHM, COPY_ALGORITHM, INSTANT_ALGORITHM, DEFAULT_ALGORITHM);
+        List<String> supportedLockTypes =
+            Arrays.asList(LOCK_TYPE_NONE, LOCK_TYPE_SHARED, LOCK_TYPE_EXCLUSIVE, LOCK_TYPE_DEFAULT);
+
+        OnlineDdlInfo.PhysicalDdlAlgorithmType algorithmType = OnlineDdlInfo.PhysicalDdlAlgorithmType.DEFAULT;
+        Long id = TwoPhaseDdlManager.generateTwoPhaseDdlManagerId(schemaName, logicalTableName);
+        String shadowTableName = ShadowTableUtils.generateShadowTableName(logicalTableName, id);
+        String groupName = physicalPlanData.getDefaultDbIndex();
+        String originalTableName = physicalPlanData.getDefaultPhyTableName();
+        try {
+            ShadowTableUtils.createShadowTable(executionContext, schemaName, logicalTableName, groupName,
+                originalTableName,
+                shadowTableName);
+
+            SQLAlterTableStatement alterTable = (SQLAlterTableStatement) FastsqlUtils.parseSql(origSql).get(0);
+            MySqlAlterTableOption algorithm = getAlterTableAlgorithmType(alterTable);
+            MySqlAlterTableLock lockType = getAlterTableLockType(alterTable);
+            boolean algorithmSpecified =
+                algorithm != null && !StringUtils.equalsIgnoreCase(algorithm.getValue().toString().toUpperCase(),
+                    DEFAULT_ALGORITHM);
+            boolean lockSpecified =
+                lockType != null && !StringUtils.equalsIgnoreCase(lockType.getLockType().toString().toUpperCase(),
+                    LOCK_TYPE_DEFAULT);
+
+            if (algorithmSpecified && StringUtils.equalsIgnoreCase(algorithm.getValue().toString().toUpperCase(),
+                OMC_ALGORITHM)) {
+                return OnlineDdlInfo.PhysicalDdlAlgorithmType.OMC;
+            }
+
+            if (algorithmSpecified && !supportedAlgorithms.contains(algorithm.getValue().toString().toUpperCase())) {
+                throw new TddlRuntimeException(ErrorCode.ERR_INVALID_DDL_PARAMS,
+                    String.format("Unknown ALGORITHM '%s'", algorithm.getValue().toString()));
+            } else if (lockSpecified && !supportedLockTypes.contains(lockType.getLockType().toString().toUpperCase())) {
+                throw new TddlRuntimeException(ErrorCode.ERR_INVALID_DDL_PARAMS,
+                    String.format("Unknown LOCK type '%s'", lockType.getLockType().toString()));
+            }
+
+            alterTable.setTableSource(
+                new SQLExprTableSource(new SQLIdentifierExpr(SqlIdentifier.surroundWithBacktick(shadowTableName))));
+            alterTable.setTargetImplicitTableGroup(null);
+            alterTable.getIndexTableGroupPair().clear();
+            String orgAlterTableStmt = alterTable.toString();
+
+            if (!algorithmSpecified && !lockSpecified) {
+                // instant
+                algorithm = new MySqlAlterTableOption(ALGORITHM, INSTANT_ALGORITHM);
+                alterTable.addItem(algorithm);
+                String alterTableStmt = alterTable.toString();
+                if (explainPhysicalDdl(shadowTableName, alterTableStmt, groupName)) {
+                    return OnlineDdlInfo.PhysicalDdlAlgorithmType.INSTANT;
+                }
+
+                // inplace and none
+                algorithm.setValue(new SQLIdentifierExpr(INPLACE_ALGORITHM));
+                lockType = new MySqlAlterTableLock();
+                lockType.setLockType(new SQLIdentifierExpr(LOCK_TYPE_NONE));
+                alterTable.addItem(lockType);
+                alterTableStmt = alterTable.toString();
+                if (explainPhysicalDdl(shadowTableName, alterTableStmt, groupName)) {
+                    return OnlineDdlInfo.PhysicalDdlAlgorithmType.INPLACE_AND_NONE;
+                }
+
+                // inplace and lock
+                lockType.setLockType(new SQLIdentifierExpr(LOCK_TYPE_SHARED));
+                alterTableStmt = alterTable.toString();
+                if (explainPhysicalDdl(shadowTableName, alterTableStmt, groupName)) {
+                    algorithmType = OnlineDdlInfo.PhysicalDdlAlgorithmType.INPLACE_AND_LOCK;
+                } else {
+                    // copy
+                    algorithm.setValue(new SQLIdentifierExpr(COPY_ALGORITHM));
+                    lockType.setLockType(new SQLIdentifierExpr(LOCK_TYPE_EXCLUSIVE));
+                    alterTableStmt = alterTable.toString();
+                    if (explainPhysicalDdl(shadowTableName, alterTableStmt, groupName)) {
+                        algorithmType = OnlineDdlInfo.PhysicalDdlAlgorithmType.COPY;
+                    } else {
+                        explainPhysicalDdlWithException(shadowTableName, orgAlterTableStmt, groupName);
+                    }
+                }
+            } else if (!lockSpecified) {
+                String algorithmStr = algorithm.getValue().toString().toUpperCase();
+                if (StringUtils.equalsIgnoreCase(algorithmStr, INSTANT_ALGORITHM)) {
+                    String alterTableStmt = alterTable.toString();
+                    explainPhysicalDdlWithException(shadowTableName, alterTableStmt, groupName);
+                    return OnlineDdlInfo.PhysicalDdlAlgorithmType.INSTANT;
+                } else if (StringUtils.equalsIgnoreCase(algorithmStr, INPLACE_ALGORITHM)) {
+                    lockType = new MySqlAlterTableLock();
+                    lockType.setLockType(new SQLIdentifierExpr(LOCK_TYPE_NONE));
+                    alterTable.addItem(lockType);
+                    String alterTableStmt = alterTable.toString();
+                    if (explainPhysicalDdl(shadowTableName, alterTableStmt, groupName)) {
+                        return OnlineDdlInfo.PhysicalDdlAlgorithmType.INPLACE_AND_NONE;
+                    }
+
+                    lockType.setLockType(new SQLIdentifierExpr(LOCK_TYPE_SHARED));
+                    alterTableStmt = alterTable.toString();
+                    if (explainPhysicalDdl(shadowTableName, alterTableStmt, groupName)) {
+                        return OnlineDdlInfo.PhysicalDdlAlgorithmType.INPLACE_AND_LOCK;
+                    } else {
+                        explainPhysicalDdlWithException(shadowTableName, orgAlterTableStmt, groupName);
+                    }
+                } else if (StringUtils.equalsIgnoreCase(algorithmStr, COPY_ALGORITHM)) {
+                    explainPhysicalDdlWithException(shadowTableName, orgAlterTableStmt, groupName);
+                    return OnlineDdlInfo.PhysicalDdlAlgorithmType.COPY;
+                }
+            } else if (!algorithmSpecified) {
+                String lockTypeStr = lockType.getLockType().toString().toUpperCase();
+                if (StringUtils.containsIgnoreCase(lockTypeStr, LOCK_TYPE_NONE)) {
+                    algorithm = new MySqlAlterTableOption(ALGORITHM, INSTANT_ALGORITHM);
+                    alterTable.addItem(algorithm);
+                    String alterTableStmt = alterTable.toString();
+                    if (explainPhysicalDdl(shadowTableName, alterTableStmt, groupName)) {
+                        return OnlineDdlInfo.PhysicalDdlAlgorithmType.INSTANT;
+                    }
+
+                    algorithm.setValue(new SQLIdentifierExpr(INPLACE_ALGORITHM));
+                    alterTableStmt = alterTable.toString();
+                    if (explainPhysicalDdl(shadowTableName, alterTableStmt, groupName)) {
+                        return OnlineDdlInfo.PhysicalDdlAlgorithmType.INPLACE_AND_NONE;
+                    } else {
+                        explainPhysicalDdlWithException(shadowTableName, orgAlterTableStmt, groupName);
+                    }
+                } else {
+                    algorithm = new MySqlAlterTableOption(ALGORITHM, INPLACE_ALGORITHM);
+                    alterTable.addItem(algorithm);
+                    String alterTableStmt = alterTable.toString();
+                    if (explainPhysicalDdl(shadowTableName, alterTableStmt, groupName)) {
+                        return OnlineDdlInfo.PhysicalDdlAlgorithmType.INPLACE_AND_LOCK;
+                    }
+
+                    algorithm.setValue(new SQLIdentifierExpr(COPY_ALGORITHM));
+                    alterTableStmt = alterTable.toString();
+                    if (explainPhysicalDdl(shadowTableName, alterTableStmt, groupName)) {
+                        return OnlineDdlInfo.PhysicalDdlAlgorithmType.COPY;
+                    } else {
+                        explainPhysicalDdlWithException(shadowTableName, orgAlterTableStmt, groupName);
+                    }
+                }
+            } else {
+                // 执行下看看是否报错
+                // 不报错的话，根据 algorithm 和 lock 进行返回
+                explainPhysicalDdlWithException(shadowTableName, orgAlterTableStmt, groupName);
+
+                if (StringUtils.equalsIgnoreCase(lockType.getLockType().toString().toUpperCase(), LOCK_TYPE_NONE)) {
+                    if (StringUtils.equalsIgnoreCase(algorithm.getValue().toString().toUpperCase(),
+                        INSTANT_ALGORITHM)) {
+                        return OnlineDdlInfo.PhysicalDdlAlgorithmType.INSTANT;
+                    } else {
+                        return OnlineDdlInfo.PhysicalDdlAlgorithmType.INPLACE_AND_NONE;
+                    }
+                } else {
+                    if (StringUtils.equalsIgnoreCase(algorithm.getValue().toString().toUpperCase(),
+                        INPLACE_ALGORITHM)) {
+                        return OnlineDdlInfo.PhysicalDdlAlgorithmType.INPLACE_AND_LOCK;
+                    } else {
+                        return OnlineDdlInfo.PhysicalDdlAlgorithmType.COPY;
+                    }
+                }
+            }
+
+            // 判断是否可以转 omc 执行
+            if (OnlineDdlInfo.isLockTableAlgorithmType(algorithmType)) {
+                try {
+                    boolean enableOmc30 = OmcUtils.supportOmc30(executionContext, logicalAlterTable.getSchemaName(),
+                        logicalAlterTable.getTableName());
+                    if (logicalAlterTable.isOnlineModifyColumn20(executionContext, enableOmc30, true)) {
+                        algorithmType = OnlineDdlInfo.PhysicalDdlAlgorithmType.CONVERT_TO_OMC20;
+                    } else {
+                        algorithmType = OnlineDdlInfo.PhysicalDdlAlgorithmType.CONVERT_TO_OMC30;
+                    }
+                } catch (TddlRuntimeException e) {
+                    // ignore
+                }
+            }
+        } finally {
+            ShadowTableUtils.clearShadowTable(executionContext, schemaName, logicalTableName, groupName,
+                shadowTableName);
+        }
+
+        return algorithmType;
+    }
+
+    protected boolean explainPhysicalDdl(String shadowTableName, String alterTableStmt, String groupName) {
+        try {
+            SQLRecorderLogger.ddlLogger.info(
+                String.format("<ExplainOnlineDdl>trace physical table %s with ddl %s", shadowTableName,
+                    alterTableStmt));
+            ShadowTableUtils.alterShadowTable(executionContext, schemaName, logicalTableName, groupName,
+                shadowTableName,
+                alterTableStmt);
+        } catch (Exception exception) {
+            return false;
+        }
+        return true;
+    }
+
+    protected void explainPhysicalDdlWithException(String shadowTableName, String alterTableStmt, String groupName) {
+        try {
+            SQLRecorderLogger.ddlLogger.info(
+                String.format("<ExplainOnlineDdl>trace physical table %s with ddl %s", shadowTableName,
+                    alterTableStmt));
+            ShadowTableUtils.alterShadowTable(executionContext, schemaName, logicalTableName, groupName,
+                shadowTableName,
+                alterTableStmt);
+        } catch (Exception exception) {
+            throw new RuntimeException(exception.getCause().getMessage());
+        }
     }
 }

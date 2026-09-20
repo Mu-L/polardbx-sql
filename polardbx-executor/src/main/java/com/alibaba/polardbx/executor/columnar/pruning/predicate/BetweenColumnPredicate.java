@@ -19,6 +19,7 @@ package com.alibaba.polardbx.executor.columnar.pruning.predicate;
 import com.alibaba.polardbx.executor.columnar.pruning.index.BitMapRowGroupIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.BloomFilterIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.IndexPruneContext;
+import com.alibaba.polardbx.executor.columnar.pruning.index.MultiSortKeyIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.SortKeyIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.ZoneMapIndex;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
@@ -61,7 +62,7 @@ public class BetweenColumnPredicate extends ColumnPredicate {
         if (arg1 == null && arg2 == null) {
             return;
         }
-        sortKeyIndex.pruneRange(arg1, arg2, cur);
+        sortKeyIndex.pruneRange(arg1, arg2, cur, ipc);
     }
 
     @Override
@@ -92,7 +93,23 @@ public class BetweenColumnPredicate extends ColumnPredicate {
         if (arg1 == null && arg2 == null) {
             return;
         }
-        zoneMapIndex.prune(colId, arg1, true, arg2, true, cur);
+        zoneMapIndex.prune(colId, arg1, true, arg2, true, cur, ipc);
+    }
+
+    @Override
+    public void multiSortKey(@NotNull MultiSortKeyIndex multiSortKeyIndex, IndexPruneContext ipc,
+                             @NotNull RoaringBitmap cur) {
+        if (!multiSortKeyIndex.checkSupport(colId, type)) {
+            return;
+        }
+        // get args
+        Object arg1 = getArg(multiSortKeyIndex.getColumnDataType(colId), type, paramIndex1, paramObj1, ipc);
+        Object arg2 = getArg(multiSortKeyIndex.getColumnDataType(colId), type, paramIndex2, paramObj2, ipc);
+
+        if (arg1 == null && arg2 == null) {
+            return;
+        }
+        multiSortKeyIndex.prune(colId, arg1, true, arg2, true, cur, ipc);
     }
 
     @Override
@@ -104,8 +121,8 @@ public class BetweenColumnPredicate extends ColumnPredicate {
     public StringBuilder display(String[] columns, IndexPruneContext ipc) {
         Preconditions.checkArgument(columns != null && columns.length > colId, "error column meta");
         // get args
-        Object arg1 = getArg(DataTypes.StringType, SqlTypeName.VARCHAR, paramIndex1, null, ipc);
-        Object arg2 = getArg(DataTypes.StringType, SqlTypeName.VARCHAR, paramIndex2, null, ipc);
+        Object arg1 = getArg(DataTypes.StringType, SqlTypeName.VARCHAR, paramIndex1, paramObj1, ipc);
+        Object arg2 = getArg(DataTypes.StringType, SqlTypeName.VARCHAR, paramIndex2, paramObj2, ipc);
         StringBuilder sb = new StringBuilder();
         sb.append(columns[colId])
             .append("_")

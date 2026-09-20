@@ -16,6 +16,9 @@
 
 package com.alibaba.polardbx.gms.tablegroup;
 
+import com.alibaba.polardbx.gms.util.GroupInfoUtil;
+import org.apache.commons.lang.StringUtils;
+
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
@@ -32,6 +35,10 @@ public class PartitionGroupExtRecord extends PartitionGroupRecord {
         this.tg_id = rs.getLong("tg_id");
         this.phy_db = rs.getString("phy_db");
         this.phy_tb_cnt = rs.getLong("phy_tb_cnt");
+        this.group_Name = rs.getString("group_name");
+        if (StringUtils.isEmpty(group_Name)) {
+            this.group_Name = buildGroupNameInner(phy_db);
+        }
         return this;
     }
 }

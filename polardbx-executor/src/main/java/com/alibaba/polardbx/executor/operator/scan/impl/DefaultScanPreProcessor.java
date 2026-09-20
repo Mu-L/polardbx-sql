@@ -16,10 +16,14 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.Parameters;
+import com.alibaba.polardbx.common.orc.PreheatFileMeta;
+import com.alibaba.polardbx.common.orc.PreheatMetaManager;
 import com.alibaba.polardbx.common.oss.ColumnarFileType;
-import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
@@ -29,16 +33,14 @@ import com.alibaba.polardbx.executor.columnar.pruning.index.IndexPruneContext;
 import com.alibaba.polardbx.executor.columnar.pruning.index.IndexPruner;
 import com.alibaba.polardbx.executor.columnar.pruning.predicate.ColumnPredicatePruningInf;
 import com.alibaba.polardbx.executor.gms.ColumnarManager;
-import com.alibaba.polardbx.executor.operator.scan.ORCMetaReader;
 import com.alibaba.polardbx.executor.operator.scan.ScanPreProcessor;
+import com.alibaba.polardbx.gms.engine.OssGeneralCacheOverrideFileSystem;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.statis.ColumnarTracer;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.google.common.base.Preconditions;
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
-import com.google.common.cache.CacheStats;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.SettableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
 import org.apache.calcite.rex.RexNode;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
@@ -47,21 +49,22 @@ import org.apache.orc.StripeInformation;
 import org.apache.orc.impl.OrcTail;
 import org.roaringbitmap.RoaringBitmap;
 
-import java.io.IOException;
+import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
-import java.util.TreeSet;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 import static com.alibaba.polardbx.executor.columnar.pruning.data.PruneUtils.transformRexToIndexMergeTree;
-import static com.alibaba.polardbx.gms.engine.FileStoreStatistics.CACHE_STATS_FIELD_COUNT;
 
 /**
  * A mocked implementation of ScanPreProcessor that can generate
@@ -69,19 +72,12 @@ import static com.alibaba.polardbx.gms.engine.FileStoreStatistics.CACHE_STATS_FI
  */
 public class DefaultScanPreProcessor implements ScanPreProcessor {
 
-    private static final String PREHEATED_CACHE_NAME = "PREHEATED_CACHE";
-
-    private static final long PREHEATED_CACHE_MAX_ENTRY = DynamicConfig.getInstance().getPreheatedCacheMaxEntries();
-
     private static final Logger logger = LoggerFactory.getLogger(DefaultScanPreProcessor.class);
-
-    protected static final Cache<Path, PreheatFileMeta> PREHEATED_CACHE =
-        CacheBuilder.newBuilder().maximumSize(PREHEATED_CACHE_MAX_ENTRY).recordStats().build();
 
     /**
      * File path participated in preprocessor.
      */
-    protected final Set<Path> filePaths;
+    protected final List<Path> filePaths;
 
     /**
      * A shared configuration object to avoid initialization of large parameter list.
@@ -91,7 +87,14 @@ public class DefaultScanPreProcessor implements ScanPreProcessor {
     /**
      * The filesystem storing the files in file path list.
      */
-    private final FileSystem fileSystem;
+    protected final FileSystem fileSystem;
+
+    /**
+     * Per-statement GeneralCache override extracted from {@link #fileSystem} when it is a
+     * {@link OssGeneralCacheOverrideFileSystem}. Null means the current statement did not
+     * set the HINT and dynamic config should be used.
+     */
+    protected final Boolean generalCacheOverride;
 
     /**
      * To enable index pruning.
@@ -142,10 +145,7 @@ public class DefaultScanPreProcessor implements ScanPreProcessor {
      */
     private final List<Long> columnFieldIdList;
 
-    /**
-     * Mapping from file path to its preheated file meta.
-     */
-    protected final Map<Path, PreheatFileMeta> preheatFileMetaMap;
+    protected final boolean useParallelPreheatFileMeta;
 
     /**
      * The future will be null if preparation has not been invoked.
@@ -169,6 +169,12 @@ public class DefaultScanPreProcessor implements ScanPreProcessor {
 
     protected IndexPruneContext indexPruneContext;
 
+    protected List<OrderByOption> sortKeys;
+
+    protected VersionStorageStatistics versionStorageStatistics;
+
+    protected ListenableFuture<?> preheatCloseFuture;
+
     public DefaultScanPreProcessor(Configuration configuration,
                                    FileSystem fileSystem,
 
@@ -188,11 +194,20 @@ public class DefaultScanPreProcessor implements ScanPreProcessor {
                                    // for columnar mode.
                                    ColumnarManager columnarManager,
                                    Long tso,
-                                   List<Long> columnFieldIdList) {
+                                   List<Long> columnFieldIdList,
+                                   List<OrderByOption> sortKeys,
+                                   boolean useParallelPreheatFileMeta,
+                                   VersionStorageStatistics versionStorageStatistics,
+                                   ListenableFuture<?> preheatCloseFuture,
+                                   ZoneId zoneId) {
+        this.useParallelPreheatFileMeta = useParallelPreheatFileMeta;
 
-        this.filePaths = new TreeSet<>();
+        this.filePaths = new ArrayList<>();
         this.configuration = configuration;
         this.fileSystem = fileSystem;
+        this.generalCacheOverride = (fileSystem instanceof OssGeneralCacheOverrideFileSystem)
+            ? ((OssGeneralCacheOverrideFileSystem) fileSystem).isGeneralCacheEnabled()
+            : null;
 
         // for pruning.
         this.enableIndexPruning = enableIndexPruning;
@@ -203,6 +218,7 @@ public class DefaultScanPreProcessor implements ScanPreProcessor {
         this.rexList = rexList;
         this.indexPruneContext = new IndexPruneContext();
         indexPruneContext.setParameters(new Parameters(params));
+        indexPruneContext.setZoneId(zoneId);
 
         // for mock
         this.deletionRatio = deletionRatio;
@@ -214,9 +230,11 @@ public class DefaultScanPreProcessor implements ScanPreProcessor {
         this.tso = tso;
         this.columnFieldIdList = columnFieldIdList;
 
-        this.preheatFileMetaMap = new HashMap<>();
         this.rowGroupMatrix = new HashMap<>();
         this.deletions = new HashMap<>();
+        this.sortKeys = sortKeys;
+        this.preheatCloseFuture = preheatCloseFuture;
+        this.versionStorageStatistics = versionStorageStatistics;
     }
 
     @Override
@@ -226,16 +244,76 @@ public class DefaultScanPreProcessor implements ScanPreProcessor {
 
     @Override
     public ListenableFuture<?> prepare(ExecutorService executor, String traceId, ColumnarTracer tracer) {
-        SettableFuture<?> future = SettableFuture.create();
+        return prepare(executor, executor, traceId, tracer);
+    }
+
+    @Override
+    public ListenableFuture<?> prepare(ExecutorService executor, ExecutorService ioExecutor, String traceId,
+                                       ColumnarTracer tracer) {
+        BlockingFuture<?> future = BlockingFuture.create(BlockingReason.WAIT_FOR_PRE_PREPROCESSOR);
         indexPruneContext.setPruneTracer(tracer);
+        final long futureStartTime = System.nanoTime();
+
+        // for statistics
+        final long futureStartTimeInMillis = System.currentTimeMillis();
+
+        // The ORC meta preheat tasks are issued in parallel to avoid executing multiple meta
+        // fetch I/Os sequentially within a single columnar scan execution.
+        Map<Path, CompletableFuture<PreheatFileMeta>> preheatFileMetaFutures = new HashMap<>();
+        if (useParallelPreheatFileMeta) {
+            for (int filePathIndex = 0; filePathIndex < filePaths.size(); filePathIndex++) {
+                final Path filePath = filePaths.get(filePathIndex);
+                if (filePath == null || filePath.getName() == null
+                    || !filePath.getName().toUpperCase().endsWith(ColumnarFileType.ORC.name())) {
+                    // only preheat orc file meta
+                    continue;
+                }
+
+                CompletableFuture<PreheatFileMeta> fileMetaCompletableFuture =
+                    CompletableFuture.supplyAsync(() -> {
+                            try {
+                                if (preheatCloseFuture.isDone()) {
+                                    if (logger.isDebugEnabled()) {
+                                        logger.debug(
+                                            "scan thread has existed, therefore pre-processor thread need to be cancelled in advance");
+                                    }
+                                    throw new RuntimeException("ColumnarScanExec has existed");
+                                }
+                                PreheatFileMeta preheatFileMeta =
+                                    PreheatMetaManager.getInstance().get(filePath, fileSystem);
+                                return preheatFileMeta;
+                            } catch (Throwable e) {
+                                throw new RuntimeException(e);
+                            }
+                        }, ioExecutor)
+                        .exceptionally(ex -> {
+                            // Exception will caught by future.get()
+                            throw GeneralUtil.nestedException(ex);
+                        });
+
+                preheatFileMetaFutures.put(filePath, fileMetaCompletableFuture);
+            }
+        }
+
         // Is there a more elegant execution mode?
-        executor.submit(
+        Future<?> sequentialPreheatFuture = executor.submit(
             () -> {
                 int stripeNum = 0;
                 int rgNum = 0;
                 int pruneRgLeft = 0;
                 int orcFileNum = 0;
+
+                // for metrics
+                long maxPreheatRt = Long.MIN_VALUE;
+                long minPreheatRt = Long.MAX_VALUE;
+                long sumPreheatRt = 0;
+                int preheatRtCount = 0;
+
                 try {
+                    if (versionStorageStatistics != null) {
+                        VersionStorageStatistics.setThreadLocalStatistics(versionStorageStatistics);
+                    }
+
                     // rex+pc -> distribution segment condition + indexes merge tree
                     ColumnPredicatePruningInf columnPredicate =
                         transformRexToIndexMergeTree(rexList, indexPruneContext);
@@ -245,37 +323,92 @@ public class DefaultScanPreProcessor implements ScanPreProcessor {
                                 columnPredicate, columns, indexPruneContext));
                     }
 
-                    for (Path filePath : filePaths) {
+                    for (int filePathIndex = 0; filePathIndex < filePaths.size(); filePathIndex++) {
+                        Path filePath = filePaths.get(filePathIndex);
                         boolean needGenerateDeletion = true;
-
+                        //if query is killed, we need to cancel in advance
+                        if (preheatCloseFuture.isDone()) {
+                            if (logger.isDebugEnabled()) {
+                                logger.debug(
+                                    "scan thread has existed, therefore pre-processor thread need to be cancelled in advance");
+                            }
+                            throw new RuntimeException("ColumnarScanExec has existed");
+                        }
                         // only preheat orc file meta
                         if (filePath.getName().toUpperCase().endsWith(ColumnarFileType.ORC.name())) {
                             orcFileNum++;
-                            // preheat all meta from orc file.
-                            PreheatFileMeta preheat =
-                                PREHEATED_CACHE.get(filePath, () -> preheat(filePath));
-
-                            preheatFileMetaMap.put(filePath, preheat);
 
                             if (enableIndexPruning && columnPredicate != null && tso != null
                                 && columnFieldIdList != null) {
                                 // prune the row-groups.
                                 long loadIndexStart = System.nanoTime();
                                 // TODO support multi columns for sort key
-                                List<Integer> sortKeys =
-                                    columnarManager.getSortKeyColumns(tso, schemaName, logicalTableName);
                                 Map<Long, Integer> orcIndexesMap =
                                     columnarManager.getPhysicalColumnIndexes(filePath.getName());
+
+                                // mapping of physical column
+                                List<Integer> orcIndexes = columnFieldIdList.stream()
+                                    .map(field -> {
+                                        Integer orcIndex = orcIndexesMap.get(field);
+                                        return orcIndex == null ? null : orcIndex + 1;
+                                    })
+                                    .collect(Collectors.toList());
+
+                                // sort key columns
+                                Set<Integer> sortKeyColumns = sortKeys.stream()
+                                    .map(OrderByOption::getIndex)
+                                    .map(orcIndexes::get).collect(Collectors.toSet());
+
+                                // preheat all meta from orc file.
+                                PreheatFileMeta preheat;
+                                if (useParallelPreheatFileMeta) {
+                                    CompletableFuture<PreheatFileMeta> preheatFileMetaFuture =
+                                        preheatFileMetaFutures.get(filePath);
+
+                                    if (preheatFileMetaFuture != null) {
+                                        preheat = preheatFileMetaFuture.get(); // wait
+
+                                        // metrics
+                                        long rt = System.currentTimeMillis() - futureStartTimeInMillis;
+                                        preheatRtCount++;
+                                        maxPreheatRt = Math.max(maxPreheatRt, rt);
+                                        minPreheatRt = Math.min(minPreheatRt, rt);
+                                        sumPreheatRt += rt;
+
+                                    } else {
+                                        long startTime = System.currentTimeMillis();
+                                        try {
+                                            preheat = PreheatMetaManager.getInstance()
+                                                .get(filePath, fileSystem, sortKeyColumns); // invoke IO
+                                        } finally {
+                                            // metrics
+                                            long rt = System.currentTimeMillis() - startTime;
+                                            preheatRtCount++;
+                                            maxPreheatRt = Math.max(maxPreheatRt, rt);
+                                            minPreheatRt = Math.min(minPreheatRt, rt);
+                                            sumPreheatRt += rt;
+                                        }
+                                    }
+                                } else {
+                                    long startTime = System.currentTimeMillis();
+
+                                    try {
+                                        preheat = PreheatMetaManager.getInstance()
+                                            .get(filePath, fileSystem, sortKeyColumns); // invoke IO
+                                    } finally {
+                                        // metrics
+                                        long rt = System.currentTimeMillis() - startTime;
+                                        preheatRtCount++;
+                                        maxPreheatRt = Math.max(maxPreheatRt, rt);
+                                        minPreheatRt = Math.min(minPreheatRt, rt);
+                                        sumPreheatRt += rt;
+                                    }
+                                }
+
                                 IndexPruner indexPruner =
                                     ColumnarPruneManager.getIndexPruner(
-                                        filePath, preheat, columns, sortKeys.get(0),
-                                        columnFieldIdList.stream()
-                                            .map(field -> {
-                                                Integer orcIndex = orcIndexesMap.get(field);
-                                                return orcIndex == null ? null : orcIndex + 1;
-                                            })
-                                            .collect(Collectors.toList()),
-                                        enableOssCompatible
+                                        filePath, preheat, columns, sortKeys,
+                                        orcIndexes, enableOssCompatible
                                     );
 
                                 if (tracer != null) {
@@ -323,15 +456,28 @@ public class DefaultScanPreProcessor implements ScanPreProcessor {
                                 + "," + pruneRgLeft);
                     }
 
-                } catch (Exception e) {
-                    throwable = e;
-                    future.set(null);
+                } catch (Throwable t) {
+                    throwable = t;
+                    future.complete(null);
                     return;
+                } finally {
+                    if (versionStorageStatistics != null) {
+                        // for metrics
+                        versionStorageStatistics.updatePreheatStatisticsInBatch(
+                            minPreheatRt, maxPreheatRt, sumPreheatRt, preheatRtCount
+                        );
+
+                        VersionStorageStatistics.removeThreadLocalStatistics();
+                    }
                 }
-                future.set(null);
+                future.complete(null);
             }
 
         );
+
+        if (preheatCloseFuture != null) {
+            preheatCloseFuture.addListener(() -> sequentialPreheatFuture.cancel(true), MoreExecutors.directExecutor());
+        }
 
         this.future = future;
         return future;
@@ -354,7 +500,12 @@ public class DefaultScanPreProcessor implements ScanPreProcessor {
     public PreheatFileMeta getPreheated(Path filePath) {
         throwIfFailed();
         Preconditions.checkArgument(isPrepared());
-        return preheatFileMetaMap.get(filePath);
+        Set<Integer> sortKeyColumns = getSortKeyColumn(filePath);
+        try {
+            return PreheatMetaManager.getInstance().get(filePath, fileSystem, sortKeyColumns);
+        } catch (Throwable e) {
+            throw GeneralUtil.nestedException(e);
+        }
     }
 
     @Override
@@ -378,26 +529,15 @@ public class DefaultScanPreProcessor implements ScanPreProcessor {
             bitmap = new RoaringBitmap();
         } else {
             // in columnar mode.
-            bitmap = columnarManager.getDeleteBitMapOf(tso, filePath.getName());
+            bitmap = columnarManager.getDeleteBitMapOf(tso, filePath.getName(), generalCacheOverride);
         }
         deletions.put(filePath, bitmap);
         return bitmap;
     }
 
-    protected PreheatFileMeta preheat(Path filePath) throws IOException {
-        ORCMetaReader metaReader = null;
-        try {
-            metaReader = ORCMetaReader.create(configuration, fileSystem);
-            PreheatFileMeta preheatFileMeta = metaReader.preheat(filePath);
-
-            return preheatFileMeta;
-        } finally {
-            metaReader.close();
-        }
-    }
-
-    protected void generateFullMatrix(Path filePath) {
-        PreheatFileMeta preheatFileMeta = preheatFileMetaMap.get(filePath);
+    protected void generateFullMatrix(Path filePath) throws Throwable {
+        Set<Integer> sortKeyColumns = getSortKeyColumn(filePath);
+        PreheatFileMeta preheatFileMeta = PreheatMetaManager.getInstance().get(filePath, fileSystem, sortKeyColumns);
         OrcTail orcTail = preheatFileMeta.getPreheatTail();
 
         int indexStride = orcTail.getFooter().getRowIndexStride();
@@ -418,28 +558,33 @@ public class DefaultScanPreProcessor implements ScanPreProcessor {
         rowGroupMatrix.put(filePath, matrix);
     }
 
-    public static byte[][] getCacheStat() {
-        CacheStats cacheStats = PREHEATED_CACHE.stats();
+    protected Set<Integer> getSortKeyColumn(Path filePath) {
+        if (tso == null) {
+            return null;
+        }
 
-        byte[][] results = new byte[CACHE_STATS_FIELD_COUNT][];
-        int pos = 0;
-        results[pos++] = PREHEATED_CACHE_NAME.getBytes();
-        results[pos++] = String.valueOf(-1).getBytes();
-        results[pos++] = String.valueOf(PREHEATED_CACHE.size()).getBytes();
-        results[pos++] = String.valueOf(-1).getBytes();
-        results[pos++] = String.valueOf(cacheStats.hitCount()).getBytes();
-        results[pos++] = String.valueOf(-1).getBytes();
-        results[pos++] = String.valueOf(cacheStats.missCount()).getBytes();
-        results[pos++] = String.valueOf(-1).getBytes();
-        results[pos++] = String.valueOf(-1).getBytes();
-        results[pos++] = "IN MEMORY".getBytes();
-        results[pos++] = String.valueOf(-1).getBytes();
-        results[pos++] = String.valueOf(PREHEATED_CACHE_MAX_ENTRY).getBytes();
-        results[pos++] = new StringBuilder().append(-1).append(" BYTES").toString().getBytes();
-        return results;
+        Set<Integer> sortKeyColumns = new HashSet<>();
+
+        Map<Long, Integer> orcIndexesMap = columnarManager.getPhysicalColumnIndexes(filePath.getName());
+
+        if (sortKeys == null || sortKeys.isEmpty()) {
+            throw new IllegalArgumentException("Sort keys cannot be null or empty");
+        }
+
+        for (int i = 0; i < sortKeys.size(); i++) {
+            int firstSortKeyPosition = sortKeys.get(i).getIndex();
+            if (firstSortKeyPosition < 0 || firstSortKeyPosition >= columnFieldIdList.size()) {
+                throw new IndexOutOfBoundsException("Sort key position out of bounds");
+            }
+
+            Long fieldId = columnFieldIdList.get(firstSortKeyPosition);
+            Integer orcIndex = orcIndexesMap.get(fieldId);
+            if (orcIndex != null) {
+                sortKeyColumns.add(orcIndex + 1);
+            }
+        }
+
+        return sortKeyColumns;
     }
 
-    public static long getCacheSize() {
-        return PREHEATED_CACHE.size();
-    }
 }

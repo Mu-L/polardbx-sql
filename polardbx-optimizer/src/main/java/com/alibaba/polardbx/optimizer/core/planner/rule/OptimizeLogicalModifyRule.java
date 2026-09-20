@@ -24,9 +24,11 @@ import com.alibaba.polardbx.optimizer.config.table.GeneratedColumnUtil;
 import com.alibaba.polardbx.optimizer.config.table.GlobalIndexMeta;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.SelectWithLockVisitor;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalModify;
 import com.alibaba.polardbx.optimizer.core.rel.dml.DistinctWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.WriterFactory;
 import com.alibaba.polardbx.optimizer.utils.BuildPlanUtils;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
@@ -54,6 +56,8 @@ import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
+
+import static com.alibaba.polardbx.optimizer.utils.CheckModifyLimitation.checkModifyBlackHole;
 
 /**
  * @author chenmo.cm
@@ -90,7 +94,17 @@ public class OptimizeLogicalModifyRule extends RelOptRule {
             .collect(Collectors.toMap(p -> p.left, p -> p.right));
 
         if (modify.isUpdate()) {
-            optimizeUpdate(call, modify, tableGsiMap, ec);
+            if (!ExternalizedDmlRewriter.needsInPlaceUpdateInputRewrite(modify, ec)) {
+                // Ordinary UPDATE, and UPDATEs that do not target an externalized content column, retain the
+                // baseline writer construction and Project unchanged.
+                optimizeUpdate(call, modify, tableGsiMap, ec);
+                return;
+            }
+            final ExternalizedDmlRewriter.InPlaceUpdateInputRewrite inputRewrite =
+                ExternalizedDmlRewriter.rewriteInPlaceUpdateInput(modify, ec);
+            final LogicalModify rewrittenModify = inputRewrite.getModify();
+            rewrittenModify.setExternalizedUpdateReuseColumns(inputRewrite.getReuseExistingAddrColumns());
+            optimizeUpdate(call, rewrittenModify, tableGsiMap, ec);
         } else if (modify.isDelete()) {
             optimizeDelete(call, modify, tableGsiMap, ec);
         }
@@ -119,6 +133,7 @@ public class OptimizeLogicalModifyRule extends RelOptRule {
         final Map<Integer, Mapping> setColumnSourceMappings = new HashMap<>();
         final Map<Integer, List<ColumnMeta>> setColumnMetas = new HashMap<>();
         final Map<DistinctWriter, Integer> needCompareWriters = new HashMap<>();
+        final Map<DistinctWriter, Integer> primaryWriterToPrimaryIndex = new HashMap<>();
 
         /*
          * Build writer for primary
@@ -133,85 +148,51 @@ public class OptimizeLogicalModifyRule extends RelOptRule {
             final Pair<String, String> qn = RelUtils.getQualifiedTableName(primary);
             final OptimizerContext oc = OptimizerContext.getContext(qn.left);
             assert oc != null;
+            DistinctWriter distinctWriter = null;
             if (!ec.getSchemaManager(qn.left).getTable(qn.right).isHasPrimaryKey()) {
                 // Create PkUpdateWriter on table without primary key will cause exception
                 modifyPrimaryWithoutPk.getAndSet(true);
-            } else if (oc.getRuleManager().isBroadCast(qn.right) && GeneralUtil.isNotEmpty(
+            } else if (oc.getRuleManager().isBroadCastOrReplicas(qn.right) && GeneralUtil.isNotEmpty(
                 (modify.getExtraTargetColumns()))) {
                 // 广播表，包含默认添加的填充列，例如 ON UPDATE TIMESTAMP 列
-                final String schemaName = RelUtils.getSchemaName(primary);
-                final List<Integer> setSrc = mapping.stream().map(i -> offset + i).collect(Collectors.toList());
-                final Map<String, Integer> columnIndexMap = modify.getSourceColumnIndexMap().get(primaryIndex);
-
-                DistinctWriter distinctWriter = WriterFactory
+                distinctWriter = WriterFactory
                     .createBroadcastOrSingleUpdateWriter(modify, primary, primaryIndex, updateColumns, mapping,
-                        oc.getRuleManager().isBroadCast(qn.right), oc.getRuleManager().isTableInSingleDb(qn.right), ec);
+                        oc.getRuleManager().isBroadCastOrReplicas(qn.right),
+                        oc.getRuleManager().isTableInSingleDb(qn.right), ec);
 
                 primaryModifyWriters.add(distinctWriter);
 
-                final String primaryLogicalName = RelUtils.getQualifiedTableName(primary).right;
-                final TableMeta primaryTableMeta =
-                    plannerContext.getExecutionContext().getSchemaManager(schemaName).getTable(primaryLogicalName);
+                buildneedCompareWriters(primary, updateColumns, mapping, offset, modify, setColumnTargetMappings,
+                    setColumnSourceMappings, setColumnMetas, needCompareWriters, primaryIndex, fieldCount,
+                    distinctWriter, plannerContext);
+                primaryWriterToPrimaryIndex.put(distinctWriter, primaryIndex);
 
-                Set<String> autoUpdateColumns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-                autoUpdateColumns.addAll(
-                    primaryTableMeta.getAutoUpdateColumns().stream().map(ColumnMeta::getName).collect(
-                        Collectors.toList()));
-                Set<String> generatedColumns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-                generatedColumns.addAll(primaryTableMeta.getLogicalGeneratedColumnNames());
-
-                final AtomicInteger extraIndex = new AtomicInteger(fieldCount);
-                if (GeneralUtil.isNotEmpty((modify.getExtraTargetColumns()))) {
-                    extraIndex.addAndGet(-modify.getExtraTargetColumns().size());
-                }
-                Set<String> addedAutoUpdateColumns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-                Ord.zip(updateColumns).forEach(o -> {
-                    if (autoUpdateColumns.contains(o.e) && setSrc.get(o.i) >= extraIndex.get()) {
-                        addedAutoUpdateColumns.add(o.e);
-                    }
-                });
-
-                //如果包含自动修改列，如ON UPDATE TIMESTAMP列，记录列位置信息，用于后续比较，相同值不执行，以防ON UPDATE TIMESTAMP列下推修改
-                if (!addedAutoUpdateColumns.isEmpty()) {
-                    // For primary writer, we build all set column mapping to check if this column has updated or not in handler
-                    final Map<String, Integer> setColumnTargetMap = new LinkedHashMap<>();
-                    final Map<String, Integer> setColumnSourceMap = new LinkedHashMap<>();
-
-                    Ord.zip(updateColumns).forEach(o -> {
-                        // If it's an auto update column and added by us, or generated columns, we should ignore it when
-                        // comparing two rows
-                        if (!(autoUpdateColumns.contains(o.e) && setSrc.get(o.i) >= extraIndex.get())
-                            && !generatedColumns.contains(o.e)) {
-                            setColumnTargetMap.put(o.e, columnIndexMap.get(o.e));
-                            setColumnSourceMap.put(o.e, setSrc.get(o.i));
-                        }
-                    });
-
-                    setColumnTargetMappings.put(primaryIndex,
-                        Mappings.source(ImmutableList.copyOf(setColumnTargetMap.values()), fieldCount));
-                    setColumnSourceMappings.put(primaryIndex,
-                        Mappings.source(ImmutableList.copyOf(setColumnSourceMap.values()), fieldCount));
-                    setColumnMetas.put(primaryIndex,
-                        setColumnSourceMap.keySet().stream().map(primaryTableMeta::getColumn)
-                            .collect(Collectors.toList()));
-                    needCompareWriters.put(distinctWriter, primaryIndex);
-                }
-
-            } else if (oc.getRuleManager().isBroadCast(qn.right) || oc.getRuleManager().isTableInSingleDb(qn.right)) {
-                primaryModifyWriters.add(WriterFactory
+            } else if (oc.getRuleManager().isBroadCastOrReplicas(qn.right) || oc.getRuleManager()
+                .isTableInSingleDb(qn.right)) {
+                distinctWriter = WriterFactory
                     .createBroadcastOrSingleUpdateWriter(modify, primary, primaryIndex, updateColumns, mapping,
-                        oc.getRuleManager().isBroadCast(qn.right), oc.getRuleManager().isTableInSingleDb(qn.right),
-                        ec));
+                        oc.getRuleManager().isBroadCastOrReplicas(qn.right),
+                        oc.getRuleManager().isTableInSingleDb(qn.right),
+                        ec);
+                primaryModifyWriters.add(distinctWriter);
             } else {
-                primaryModifyWriters.add(
-                    WriterFactory.createUpdateWriter(modify, primary, primaryIndex, updateColumns, mapping, ec));
+                distinctWriter =
+                    WriterFactory.createUpdateWriter(modify, primary, primaryIndex, updateColumns, mapping, ec);
+                primaryModifyWriters.add(distinctWriter);
+
+                buildneedCompareWriters(primary, updateColumns, mapping, offset, modify, setColumnTargetMappings,
+                    setColumnSourceMappings, setColumnMetas, needCompareWriters, primaryIndex, fieldCount,
+                    distinctWriter, plannerContext);
+            }
+            if (distinctWriter != null) {
+                primaryWriterToPrimaryIndex.put(distinctWriter, primaryIndex);
             }
         });
 
         /*
          * Build writer for GSI
          */
-        final List<DistinctWriter> gsiModifyWriters = new ArrayList<>();
+        final Map<Integer, List<DistinctWriter>> gsiModifyWritersMap = new HashMap<>();
         final AtomicBoolean modifyGsi = new AtomicBoolean(false);
         final AtomicBoolean withGsi = new AtomicBoolean(false);
         gsiUpdateColumnMappings.forEach((primaryIndex, mappings) -> {
@@ -247,22 +228,24 @@ public class OptimizeLogicalModifyRule extends RelOptRule {
                 final OptimizerContext oc = OptimizerContext.getContext(qn.left);
 
                 // Currently do not allow create gsi on table without primary key
-                gsiModifyWriters.add(
-                    WriterFactory.createUpdateGsiWriter(
-                        modify,
-                        gsiTable,
-                        primaryIndex,
-                        updateColumns,
-                        mapping,
-                        gsiMeta, ec));
+
+                gsiModifyWritersMap.computeIfAbsent(primaryIndex, k -> new ArrayList<>());
+                gsiModifyWritersMap.get(primaryIndex).add(WriterFactory.createUpdateGsiWriter(
+                    modify,
+                    gsiTable,
+                    primaryIndex,
+                    updateColumns,
+                    mapping,
+                    gsiMeta, ec));
             });
         });
 
         final LogicalModify newModify = (LogicalModify) modify.accept(new SelectWithLockVisitor(true));
         newModify.setPrimaryModifyWriters(primaryModifyWriters);
-        newModify.setGsiModifyWriters(gsiModifyWriters);
+        newModify.setGsiModifyWritersMap(gsiModifyWritersMap);
         newModify.setWithoutPk(modifyPrimaryWithoutPk.get());
         GeneratedColumnUtil.buildGeneratedColumnInfoForModify(newModify, ec);
+        newModify.setPrimaryWriterToPrimaryIndex(primaryWriterToPrimaryIndex);
         newModify.setNeedCompareWriters(needCompareWriters);
         newModify.setSetColumnSourceMappings(setColumnSourceMappings);
         newModify.setSetColumnTargetMappings(setColumnTargetMappings);
@@ -271,10 +254,84 @@ public class OptimizeLogicalModifyRule extends RelOptRule {
         call.transformTo(newModify);
     }
 
+    private void buildneedCompareWriters(RelOptTable primary, List<String> updateColumns, List<Integer> mapping,
+                                         int offset, LogicalModify modify,
+                                         Map<Integer, Mapping> setColumnTargetMappings,
+                                         Map<Integer, Mapping> setColumnSourceMappings,
+                                         Map<Integer, List<ColumnMeta>> setColumnMetas,
+                                         Map<DistinctWriter, Integer> needCompareWriters, int primaryIndex,
+                                         int fieldCount, DistinctWriter shardingModifyWriter,
+                                         PlannerContext plannerContext) {
+        final String schemaName = RelUtils.getSchemaName(primary);
+        final List<Integer> setSrc = mapping.stream().map(i -> offset + i).collect(Collectors.toList());
+        final Map<String, Integer> columnIndexMap = modify.getSourceColumnIndexMap().get(primaryIndex);
+
+        final String primaryLogicalName = RelUtils.getQualifiedTableName(primary).right;
+        final TableMeta primaryTableMeta =
+            plannerContext.getExecutionContext().getSchemaManager(schemaName).getTable(primaryLogicalName);
+
+        Set<String> autoUpdateColumns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        autoUpdateColumns.addAll(
+            primaryTableMeta.getAutoUpdateColumns().stream().map(ColumnMeta::getName).collect(
+                Collectors.toList()));
+        Set<String> generatedColumns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        generatedColumns.addAll(primaryTableMeta.getLogicalGeneratedColumnNames());
+
+        final AtomicInteger extraIndex = new AtomicInteger(fieldCount);
+        if (GeneralUtil.isNotEmpty((modify.getExtraTargetColumns()))) {
+            extraIndex.addAndGet(-modify.getExtraTargetColumns().size());
+        }
+        Set<String> addedAutoUpdateColumns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        Ord.zip(updateColumns).forEach(o -> {
+            if (autoUpdateColumns.contains(o.e) && setSrc.get(o.i) >= extraIndex.get()) {
+                addedAutoUpdateColumns.add(o.e);
+            }
+        });
+
+        //如果包含自动修改列，如ON UPDATE TIMESTAMP列，记录列位置信息，用于后续比较，相同值不执行，以防ON UPDATE TIMESTAMP列下推修改
+        if (!addedAutoUpdateColumns.isEmpty()) {
+            // For primary writer, we build all set column mapping to check if this column has updated or not in handler
+            final Map<String, Integer> setColumnTargetMap = new LinkedHashMap<>();
+            final Map<String, Integer> setColumnSourceMap = new LinkedHashMap<>();
+            AtomicBoolean isSafeCompare = new AtomicBoolean(true);
+
+            Ord.zip(updateColumns).forEach(o -> {
+                // MCE appends an internal addr SET slot that is derived from the new content value.
+                // It has no old-row source index and must not participate in logical row comparison.
+                if (primaryTableMeta.isMceAddrColumnName(o.e) && setSrc.get(o.i) >= extraIndex.get()) {
+                    return;
+                }
+                // If it's an auto update column and added by us, or generated columns, we should ignore it when
+                // comparing two rows
+                // do compare only if all changed cols are safe to compare data type
+                if (!DataTypeUtil.ifSafeCompareDataType(primaryTableMeta.getColumn(o.e).getDataType())) {
+                    isSafeCompare.set(false);
+                }
+                if (!(autoUpdateColumns.contains(o.e) && setSrc.get(o.i) >= extraIndex.get())
+                    && !generatedColumns.contains(o.e)) {
+                    setColumnTargetMap.put(o.e, columnIndexMap.get(o.e));
+                    setColumnSourceMap.put(o.e, setSrc.get(o.i));
+                }
+            });
+
+            setColumnTargetMappings.put(primaryIndex,
+                Mappings.source(ImmutableList.copyOf(setColumnTargetMap.values()), fieldCount));
+            setColumnSourceMappings.put(primaryIndex,
+                Mappings.source(ImmutableList.copyOf(setColumnSourceMap.values()), fieldCount));
+            setColumnMetas.put(primaryIndex,
+                setColumnSourceMap.keySet().stream().map(primaryTableMeta::getColumn)
+                    .collect(Collectors.toList()));
+            if (isSafeCompare.get()) {
+                needCompareWriters.put(shardingModifyWriter, primaryIndex);
+            }
+        }
+    }
+
     private void optimizeDelete(RelOptRuleCall call, LogicalModify modify, Map<Integer, List<TableMeta>> tableGsiMap,
                                 ExecutionContext ec) {
         final List<Integer> targetTableIndexes = modify.getTargetTableIndexes();
         final List<TableModify.TableInfoNode> srcInfos = modify.getTableInfo().getSrcInfos();
+        final boolean modifyBlackHole = checkModifyBlackHole(modify, ec);
 
         /*
          * Build writer for primary
@@ -289,7 +346,10 @@ public class OptimizeLogicalModifyRule extends RelOptRule {
             if (!ec.getSchemaManager(qn.left).getTable(qn.right).isHasPrimaryKey()) {
                 // Create PkUpdateWriter on table without primary key will cause exception
                 modifyPrimaryWithoutPk.getAndSet(true);
-            } else if (oc.getRuleManager().isBroadCast(qn.right)) {
+            } else if (modifyBlackHole) {
+                primaryModifyWriters.add(
+                    WriterFactory.createBlackHoleDeleteWriter(modify, targetTable, targetIndex, ec));
+            } else if (oc.getRuleManager().isBroadCastOrReplicas(qn.right)) {
                 primaryModifyWriters
                     .add(WriterFactory.createBroadcastDeleteWriter(modify, targetTable, targetIndex, ec));
             } else if (oc.getRuleManager().isTableInSingleDb(qn.right)) {

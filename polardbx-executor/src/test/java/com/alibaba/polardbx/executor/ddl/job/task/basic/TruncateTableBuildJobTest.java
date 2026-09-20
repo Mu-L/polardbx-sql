@@ -6,17 +6,14 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.executor.gms.util.SequenceUtil;
 import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
-import com.alibaba.polardbx.gms.metadb.seq.SequenceRecord;
 import com.alibaba.polardbx.gms.sync.IGmsSyncAction;
 import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.sequence.SequenceManagerProxy;
 import com.google.common.collect.ImmutableList;
-import org.apache.calcite.sql.SequenceBean;
 import org.junit.Ignore;
 import org.junit.Test;
 
-import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
@@ -46,7 +43,7 @@ public class TruncateTableBuildJobTest {
                 .thenAnswer(invocation -> {
                     return null;
                 });
-            mockedSyncManagerHelper.when(() -> SyncManagerHelper.sync(
+            mockedSyncManagerHelper.when(() -> SyncManagerHelper.syncThrowExceptions(
                     any(IGmsSyncAction.class), anyString(), any(SyncScope.class)
                 )
             ).thenReturn(ImmutableList.of());
@@ -70,7 +67,7 @@ public class TruncateTableBuildJobTest {
                 .thenAnswer(invocation -> {
                     return null;
                 });
-            mockedSyncManagerHelper.when(() -> SyncManagerHelper.sync(
+            mockedSyncManagerHelper.when(() -> SyncManagerHelper.syncThrowExceptions(
                     any(IGmsSyncAction.class), anyString(), any(SyncScope.class)
                 )
             ).thenThrow(new TddlNestableRuntimeException());

@@ -84,7 +84,8 @@ public class ShowTransStatsHandler extends HandlerCommon {
         }
 
         final String schema = executionContext.getSchemaName();
-        List<List<Map<String, Object>>> results = SyncManagerHelper.sync(syncAction, schema, SyncScope.CURRENT_ONLY);
+        List<List<Map<String, Object>>> results =
+            SyncManagerHelper.syncIgnoreExceptions(syncAction, schema, SyncScope.CURRENT_ONLY);
 
         List<Object[]> allStats = new ArrayList<>();
 

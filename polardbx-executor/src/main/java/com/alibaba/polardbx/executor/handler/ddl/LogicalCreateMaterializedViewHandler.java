@@ -49,6 +49,7 @@ import com.alibaba.polardbx.optimizer.core.datatype.Blob;
 import com.alibaba.polardbx.optimizer.core.dialect.DbType;
 import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
 import com.alibaba.polardbx.optimizer.core.planner.Planner;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalCreateMaterializedView;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalCreateTable;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
@@ -76,6 +77,8 @@ import org.apache.calcite.sql.TDDLSqlSelect;
 import java.sql.PreparedStatement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcMarkUtil.buildExtendParameter;
 import static com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx.BLOCK_SIZE;
@@ -84,6 +87,12 @@ public class LogicalCreateMaterializedViewHandler extends LogicalCreateTableHand
 
     public LogicalCreateMaterializedViewHandler(IRepository repo) {
         super(repo);
+    }
+
+    @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
     }
 
     @Override
@@ -375,7 +384,8 @@ public class LogicalCreateMaterializedViewHandler extends LogicalCreateTableHand
                     + "write");
 
         }
-        SyncManagerHelper.sync(new CreateViewSyncAction(schemaName, viewName), schemaName, SyncScope.CURRENT_ONLY);
+        SyncManagerHelper.syncThrowExceptions(new CreateViewSyncAction(schemaName, viewName), schemaName,
+            SyncScope.CURRENT_ONLY);
     }
 
     //TODO cdc@shengyu

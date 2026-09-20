@@ -17,7 +17,7 @@
 package com.alibaba.polardbx.planner.htap;
 
 import com.alibaba.polardbx.optimizer.PlannerContext;
-import com.alibaba.polardbx.optimizer.workload.WorkloadType;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadType;
 import com.alibaba.polardbx.planner.common.PlanTestCommon;
 import org.apache.calcite.rel.RelNode;
 import org.junit.Assert;

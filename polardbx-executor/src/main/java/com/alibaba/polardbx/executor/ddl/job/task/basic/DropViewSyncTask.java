@@ -43,7 +43,8 @@ public class DropViewSyncTask extends BaseDdlTask {
     @Override
     protected void onExecutionSuccess(ExecutionContext executionContext) {
         try {
-            SyncManagerHelper.sync(new DropViewSyncAction(schemaName, Collections.singletonList(viewName)), schemaName, SyncScope.ALL);
+            SyncManagerHelper.syncThrowExceptions(
+                new DropViewSyncAction(schemaName, Collections.singletonList(viewName)), schemaName, SyncScope.ALL);
         } catch (Throwable ignore) {
             LOGGER.error(
                 "error occurs while execute DropViewSyncTask"

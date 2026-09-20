@@ -20,6 +20,7 @@ import com.alibaba.druid.proxy.jdbc.ResultSetMetaDataProxy;
 import com.alibaba.polardbx.common.charset.CharsetName;
 import com.alibaba.polardbx.common.encdb.EncdbException;
 import com.alibaba.polardbx.common.exception.NotSupportException;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.matrix.jdbc.TResultSetMetaData;
 import com.alibaba.polardbx.net.buffer.ByteBufferHolder;
 import com.alibaba.polardbx.net.compress.IPacketOutputProxy;
@@ -143,7 +144,7 @@ public class BinaryResultSetUtil {
             }
 
             BinaryRowDataPacket row =
-                getRowDataPacket(rs, charset, headerPacket, undecidedTypeIndexes, existUndecidedType);
+                getRowDataPacket(rs, charset, c, headerPacket, undecidedTypeIndexes, existUndecidedType);
 
             if (existUndecidedType && undecidedTypeIndexes.size() == 0) {
                 existUndecidedType = false;
@@ -185,6 +186,9 @@ public class BinaryResultSetUtil {
         throws SQLException, IllegalAccessException {
         java.sql.ResultSetMetaData metaData = rs.getMetaData();
         int columnCount = metaData.getColumnCount();
+        final boolean useUtf8mb4JsonTargetCharset =
+            DynamicConfig.getInstance().isEnableJsonResultCharsetCompatibility()
+                && c.isCharacterSetResultsNullOrBinary();
 
         synchronized (packet) {
             if (packet.resultHead == null) {
@@ -254,6 +258,13 @@ public class BinaryResultSetUtil {
                         } else {
                             packet.fieldPackets[i].charsetIndex = charsetIndex;
                         }
+                        if (DataTypeUtil.equalsSemantically(meta.getDataType(), DataTypes.JsonType)
+                            && DynamicConfig.getInstance().isEnableJsonResultCharsetCompatibility()) {
+                            final Integer collationIndex = meta.getField().getCollationIndex();
+                            if ((collationIndex != null && collationIndex == 63) || useUtf8mb4JsonTargetCharset) {
+                                packet.fieldPackets[i].charsetIndex = 63;
+                            }
+                        }
 
                         int sqlType = ((TResultSetMetaData) metaData).getColumnType(j, true);
                         if (sqlType != DataType.UNDECIDED_SQL_TYPE) {
@@ -300,7 +311,7 @@ public class BinaryResultSetUtil {
                     break;
                 }
                 final BinaryRowDataPacket row =
-                    getRowDataPacket(rs, charset, headerPacket, undecidedTypeIndexes, existUndecidedType);
+                    getRowDataPacket(rs, charset, c, headerPacket, undecidedTypeIndexes, existUndecidedType);
 
                 // 如果出现未决类型，而且结果集有数据，则先输出header
                 if (existUndecidedType && undecidedTypeIndexes.size() == 0) {
@@ -343,25 +354,31 @@ public class BinaryResultSetUtil {
     /**
      * Get a single row of data from the result set.
      */
-    private static BinaryRowDataPacket getRowDataPacket(ResultSet rs, String charset,
+    private static BinaryRowDataPacket getRowDataPacket(ResultSet rs, String charset, ServerConnection c,
                                                         MysqlBinaryResultSetPacket headerPacket,
                                                         Set<Integer> undecidedTypeIndexes,
                                                         boolean existUndecidedType) throws SQLException {
         final int columnCount = headerPacket.resultHead.fieldCount;
         final BinaryRowDataPacket row = new BinaryRowDataMultiPacket(columnCount);
+        final boolean useUtf8mb4JsonTargetCharset =
+            DynamicConfig.getInstance().isEnableJsonResultCharsetCompatibility()
+                && c.isCharacterSetResultsNullOrBinary();
         for (int i = 0; i < columnCount; i++) {
             int j = i + 1;
             if (existUndecidedType && undecidedTypeIndexes.contains(i)) {
                 ResultSetUtil.resetUndecidedType(rs, i, headerPacket, undecidedTypeIndexes);
             }
 
+            final int mysqlType = MysqlDefs.MySQLTypeUInt(headerPacket.fieldPackets[i].type);
+            final String targetCharset =
+                useUtf8mb4JsonTargetCharset && mysqlType == MysqlDefs.FIELD_TYPE_JSON ? "utf8mb4" : charset;
             byte[] bytes = MysqlDefs.resultSetToByte(
                 rs,
                 j,
-                MysqlDefs.MySQLTypeUInt(headerPacket.fieldPackets[i].type),
+                mysqlType,
                 ResultSetUtil.isUnsigned(headerPacket.fieldPackets[i].flags),
                 ResultSetUtil.isBinary(headerPacket.fieldPackets[i].charsetIndex),
-                charset);
+                targetCharset);
 
             row.fieldValues.add(bytes);
         }

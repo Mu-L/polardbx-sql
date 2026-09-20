@@ -72,6 +72,7 @@
     <SystemTable name="routines">
         <Create><![CDATA[
             create table if not exists `routines` (
+                `id` bigint unsigned not null auto_increment primary key,
                 `SPECIFIC_NAME` varchar(64) NOT NULL DEFAULT '',
                 `ROUTINE_CATALOG` varchar(512) NOT NULL DEFAULT '',
                 `ROUTINE_SCHEMA` varchar(64) NOT NULL DEFAULT '',
@@ -95,8 +96,8 @@
                 `SQL_DATA_ACCESS` varchar(64) NOT NULL DEFAULT '',
                 `SQL_PATH` varchar(64) DEFAULT NULL,
                 `SECURITY_TYPE` varchar(7) NOT NULL DEFAULT '',
-                `CREATED` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
-                `LAST_ALTERED` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+                `CREATED` datetime NOT NULL DEFAULT current_timestamp,
+                `LAST_ALTERED` datetime NOT NULL DEFAULT current_timestamp,
                 `SQL_MODE` varchar(8192) NOT NULL DEFAULT '',
                 `ROUTINE_COMMENT` longtext NOT NULL,
                 `DEFINER` varchar(93) NOT NULL DEFAULT '',
@@ -108,10 +109,14 @@
                 index i_name(ROUTINE_NAME)
             ) charset=utf8
         ]]></Create>
+        <Change><![CDATA[
+           alter table routines add column `id` bigint unsigned not null auto_increment primary key;
+        ]]></Change>
     </SystemTable>
     <SystemTable name="parameters">
         <Create><![CDATA[
             create table if not exists `parameters` (
+                  `id` bigint unsigned not null auto_increment primary key,
                   `SPECIFIC_CATALOG` varchar(512) NOT NULL DEFAULT '',
                   `SPECIFIC_SCHEMA` varchar(64) NOT NULL DEFAULT '',
                   `SPECIFIC_NAME` varchar(64) NOT NULL DEFAULT '',
@@ -131,6 +136,9 @@
                   unique key u_schema_name(SPECIFIC_SCHEMA, SPECIFIC_NAME, PARAMETER_NAME)
             ) charset=utf8
         ]]></Create>
+        <Change><![CDATA[
+           alter table parameters add column `id` bigint unsigned not null auto_increment primary key;
+        ]]></Change>
     </SystemTable>
     <SystemTable name="java_functions">
         <Create><![CDATA[
@@ -172,6 +180,45 @@
                 PRIMARY KEY (`id`),
                 KEY gmt_modified_idx (`gmt_created`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        ]]></Create>
+    </SystemTable>
+    <SystemTable name="sub_clusters">
+        <Create><![CDATA[
+            CREATE TABLE IF NOT EXISTS `sub_clusters` (
+                `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
+                `inst_id` VARCHAR(255),
+                `node` VARCHAR(255),
+                `sub_cluster` VARCHAR(255),
+                `gmt_created` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY gmt_modified_idx (`gmt_created`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        ]]></Create>
+    </SystemTable>
+    <SystemTable name="load_weight">
+        <Create><![CDATA[
+            CREATE TABLE IF NOT EXISTS `load_weight` (
+                `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
+                `inst_id` VARCHAR(255),
+                `node` VARCHAR(255),
+                `load_weight` VARCHAR(255),
+                `gmt_created` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY gmt_modified_idx (`gmt_created`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        ]]></Create>
+    </SystemTable>
+    <SystemTable name="db_status">
+        <Create><![CDATA[
+            CREATE TABLE IF NOT EXISTS `db_status` (
+                `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
+                `status_key` VARCHAR(255),
+                `status_value` LONGTEXT COMMENT 'in json format',
+                `gmt_created` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY (`status_key`(191))
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 ROW_FORMAT=DYNAMIC;
         ]]></Create>
     </SystemTable>
 </SystemTables>

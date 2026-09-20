@@ -23,13 +23,16 @@ import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
-import com.google.common.base.Preconditions;
+import com.alibaba.polardbx.optimizer.utils.TimestampUtils;
 import com.google.common.collect.ImmutableList;
+import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.SettableFuture;
 import org.apache.calcite.rex.RexNode;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 
+import java.time.ZoneId;
 import java.util.BitSet;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -45,7 +48,7 @@ public class ColumnarSpecifiedScanExec extends ColumnarScanExec {
     public ColumnarSpecifiedScanExec(OSSTableScan ossTableScan,
                                      ExecutionContext context,
                                      List<DataType> outputDataTypes) {
-        super(ossTableScan, context, outputDataTypes);
+        super(ossTableScan, context, outputDataTypes, null, null);
     }
 
     @Override
@@ -85,7 +88,8 @@ public class ColumnarSpecifiedScanExec extends ColumnarScanExec {
                 tableMeta,
                 fileSystem,
                 configuration,
-                columnarManager
+                columnarManager,
+                preheatCloseFuture
             );
         } else if (preProcessor instanceof SpecifiedDeleteBitmapPreProcessor) {
             if (null != deltaReadOption && null != deltaReadOption.getDelFiles()) {
@@ -216,7 +220,8 @@ public class ColumnarSpecifiedScanExec extends ColumnarScanExec {
                                                       TableMeta tableMeta,
                                                       FileSystem fileSystem,
                                                       Configuration configuration,
-                                                      ColumnarManager columnarManager) {
+                                                      ColumnarManager columnarManager,
+                                                      ListenableFuture<?> isClosed) {
         final SpecifiedOssSplit.DeltaReadWithPositionOption deltaReadOption =
             (SpecifiedOssSplit.DeltaReadWithPositionOption) ossSplit.getDeltaReadOption();
         List<String> delFiles = null == deltaReadOption ? null : deltaReadOption.getDelFiles();
@@ -224,6 +229,7 @@ public class ColumnarSpecifiedScanExec extends ColumnarScanExec {
         List<Long> delEndPos = null == deltaReadOption ? null : deltaReadOption.getDelEndPos();
         long tableId = null == deltaReadOption ? -1 : deltaReadOption.getTableId();
         Engine engine = tableMeta.getEngine();
+        ZoneId zoneId = TimestampUtils.getZoneId(context);
         return new SpecifiedDeleteBitmapPreProcessor(
             configuration, fileSystem,
 
@@ -242,14 +248,17 @@ public class ColumnarSpecifiedScanExec extends ColumnarScanExec {
             // for columnar mode.
             columnarManager,
             ossSplit.getCheckpointTso(),
-            tableMeta.getColumnarFieldIdList(),
+            tableMeta.getColumnarFieldIdList(tableId),
+            tableMeta.getColumnarSortKeys(tableId),
 
             // specified delete bitmap
             delFiles,
             delBeginPos,
             delEndPos,
             engine,
-            tableId
+            tableId,
+            isClosed,
+            zoneId
         );
     }
 }

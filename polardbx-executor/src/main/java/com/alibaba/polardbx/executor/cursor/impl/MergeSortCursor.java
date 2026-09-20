@@ -20,7 +20,7 @@ import com.alibaba.polardbx.executor.cursor.AbstractCursor;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.mpp.operator.WorkProcessor;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
-import com.alibaba.polardbx.executor.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.google.common.collect.AbstractIterator;

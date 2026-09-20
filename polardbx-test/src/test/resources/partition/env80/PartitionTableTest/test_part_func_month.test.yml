@@ -2,7 +2,7 @@
 drop table if exists tbl;
 CREATE TABLE `tbl` (
 `a` datetime NOT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY RANGE(MONTH(a))
 (PARTITION p1 VALUES LESS THAN (2) ENGINE = InnoDB,
 PARTITION p2 VALUES LESS THAN (3) ENGINE = InnoDB,
@@ -53,7 +53,7 @@ select part_route('', 't1', dt) as part from t1;
   ## test hash
 CREATE TABLE `m1` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(MONTH(`d`))
 PARTITIONS 16;
 show create table m1;
@@ -83,7 +83,7 @@ explain select * from m1 where d > '2021-03-01' and d <= '2022-01-01' order by d
   ## test range
 CREATE TABLE `m2` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY RANGE(MONTH(`d`))
 (PARTITION p0 VALUES LESS THAN(3),
 PARTITION p1 VALUES LESS THAN(6),
@@ -116,7 +116,7 @@ explain select * from m2 where d > '2020-02-01' and d < '2020-06-01' order by d;
   ## test list
 CREATE TABLE `m3` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY LIST(MONTH(`d`))
 (PARTITION p0 VALUES IN(1,2,3),
 PARTITION p1 VALUES IN(4,5,6),

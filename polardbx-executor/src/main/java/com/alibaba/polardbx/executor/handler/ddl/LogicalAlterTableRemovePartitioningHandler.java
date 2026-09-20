@@ -32,6 +32,7 @@ import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.IndexMeta;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableRemovePartitioning;
@@ -66,6 +67,19 @@ public class LogicalAlterTableRemovePartitioningHandler extends LogicalCommonDdl
 
     public LogicalAlterTableRemovePartitioningHandler(IRepository repo) {
         super(repo);
+    }
+
+    @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        String tableName = logicalDdlPlan.getTableName();
+        exclusiveResources.add(concatWithDot(logicalDdlPlan.getSchemaName(), tableName));
+        TableMeta tableMeta =
+            executionContext.getSchemaManager(logicalDdlPlan.getSchemaName()).getTableWithNull(tableName);
+        if (tableMeta != null) {
+            tableVersions.put(tableName, tableMeta.getVersion());
+        }
     }
 
     @Override
@@ -109,7 +123,8 @@ public class LogicalAlterTableRemovePartitioningHandler extends LogicalCommonDdl
                 executionContext).build();
             indexTablePreparedDataMap.put(createGsiPreparedData.getIndexTableName(), createGsiPreparedData);
             globalIndexPrepareData.put(createGsiPreparedData, builder.genPhysicalPlanData());
-            PhysicalPlanData phyPlanBuilderForLocalIndex = DdlPhyPlanBuilder.getPhysicalPlanDataForLocalIndex(builder, false);
+            PhysicalPlanData phyPlanBuilderForLocalIndex =
+                DdlPhyPlanBuilder.getPhysicalPlanDataForLocalIndex(builder, false);
             globalIndexPrepareDataForLocalIndex.put(createGsiPreparedData, phyPlanBuilderForLocalIndex);
         }
 

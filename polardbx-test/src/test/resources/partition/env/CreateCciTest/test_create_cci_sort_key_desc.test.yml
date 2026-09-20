@@ -1,0 +1,108 @@
+drop table if exists `sort_key_desc_0`;
+
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/
+CREATE TABLE `sort_key_desc_0` (
+`id` bigint(11) NOT NULL AUTO_INCREMENT,
+`k` int(11) NOT NULL DEFAULT '0',
+`k2` int(11) NOT NULL DEFAULT '0',
+`k3` int(11) NOT NULL DEFAULT '0',
+`order_id` varchar(20) DEFAULT NULL,
+`buyer_id` varchar(20) DEFAULT NULL,
+`seller_id` varchar(20) DEFAULT NULL,
+`order_snapshot` longtext,
+`order_detail` longtext,
+`gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+`rint` double(10, 2),
+PRIMARY KEY (`id`),
+CLUSTERED COLUMNAR INDEX `sort_key_desc_0_cci`(`id`, `k` desc, `order_id` desc, `k2` asc) PARTITION BY HASH(id) PARTITIONS 2
+) ENGINE = InnoDB DEFAULT CHARSET = utf8 PARTITION BY KEY(`id`) PARTITIONS 4;
+
+
+show create table `sort_key_desc_0`;
+
+show full create table `sort_key_desc_0`;
+
+drop table if exists `sort_key_desc_0`;
+
+drop table if exists `sort_key_desc_1`;
+
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/
+CREATE TABLE `sort_key_desc_1` (
+`id` bigint(11) NOT NULL AUTO_INCREMENT,
+`k` int(11) NOT NULL DEFAULT '0',
+`k2` int(11) NOT NULL DEFAULT '0',
+`k3` int(11) NOT NULL DEFAULT '0',
+`order_id` varchar(20) DEFAULT NULL,
+`buyer_id` varchar(20) DEFAULT NULL,
+`seller_id` varchar(20) DEFAULT NULL,
+`order_snapshot` longtext,
+`order_detail` longtext,
+`gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+`rint` double(10, 2),
+PRIMARY KEY (`id`),
+CLUSTERED COLUMNAR INDEX `sort_key_desc_1_cci`(`id`, `k` desc, `order_id` desc, `k2`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8 PARTITION BY KEY(`id`) PARTITIONS 4;
+
+show create table `sort_key_desc_1`;
+
+show full create table `sort_key_desc_1`;
+
+drop table if exists `sort_key_desc_1`;
+
+
+drop table if exists `sort_key_desc_2`;
+
+CREATE TABLE `sort_key_desc_2` (
+`id` bigint(11) NOT NULL AUTO_INCREMENT,
+`k` int(11) NOT NULL DEFAULT '0',
+`k2` int(11) NOT NULL DEFAULT '0',
+`k3` int(11) NOT NULL DEFAULT '0',
+`order_id` varchar(20) DEFAULT NULL,
+`buyer_id` varchar(20) DEFAULT NULL,
+`seller_id` varchar(20) DEFAULT NULL,
+`order_snapshot` longtext,
+`order_detail` longtext,
+`gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+`rint` double(10, 2),
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8 PARTITION BY KEY(`id`) PARTITIONS 4;
+
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/
+CREATE CLUSTERED COLUMNAR INDEX `sort_key_desc_2_cci` on `sort_key_desc_2`(`id`, `k` desc, `order_id` desc, `k2`);
+
+show create table `sort_key_desc_2`;
+
+show full create table `sort_key_desc_2`;
+
+drop index `sort_key_desc_2_cci` on `sort_key_desc_2`;
+
+
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/
+Alter table `sort_key_desc_2` ADD CLUSTERED COLUMNAR INDEX `sort_key_desc_2_cci_2`(`id` desc, `k` asc, `order_id` desc, `k2`);
+
+show create table `sort_key_desc_2`;
+
+show full create table `sort_key_desc_2`;
+
+drop index `sort_key_desc_2_cci_2` on `sort_key_desc_2`;
+
+
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/
+CREATE CLUSTERED COLUMNAR INDEX `sort_key_desc_2_cci_3` on `sort_key_desc_2`(`id`, `k` desc, `order_id` desc, `k2`) PARTITION BY HASH(id) PARTITIONS 2;
+
+show create table `sort_key_desc_2`;
+
+show full create table `sort_key_desc_2`;
+
+drop index `sort_key_desc_2_cci_3` on `sort_key_desc_2`;
+
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/
+Alter table `sort_key_desc_2` ADD CLUSTERED COLUMNAR INDEX `sort_key_desc_2_cci_4` (`id` desc, `k` asc, `order_id` desc, `k2`) PARTITION BY HASH(id) PARTITIONS 2;
+
+show create table `sort_key_desc_2`;
+
+show full create table `sort_key_desc_2`;
+
+drop index `sort_key_desc_2_cci_4` on `sort_key_desc_2`;
+
+drop table if exists `sort_key_desc_2`;

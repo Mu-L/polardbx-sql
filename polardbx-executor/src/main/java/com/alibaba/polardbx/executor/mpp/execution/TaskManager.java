@@ -127,4 +127,6 @@ public interface TaskManager {
     void abortTaskResults(TaskId taskId, OutputBuffers.OutputBufferId bufferId);
 
     List<SqlTask> getAllTasks();
+
+    SqlTaskExecutionFactory getSqlTaskExecutionFactory();
 }

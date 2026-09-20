@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.accumulator.state;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.executor.accumulator.datastruct.BooleanSegmentArrayList;
 import com.alibaba.polardbx.executor.accumulator.datastruct.DoubleSegmentArrayList;
 import org.openjdk.jol.info.ClassLayout;
@@ -35,6 +36,13 @@ public class NullableDoubleGroupState implements GroupState {
     public NullableDoubleGroupState(int capacity) {
         this.values = new DoubleSegmentArrayList(capacity);
         this.valueIsNull = new BooleanSegmentArrayList(capacity);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(values)
+            + FastMemoryCounter.sizeOf(valueIsNull);
     }
 
     public void set(int groupId, double value) {

@@ -24,7 +24,8 @@ public class SQLCheck extends SQLConstraintImpl implements SQLTableElement, SQLT
 
     private SQLExpr expr;
     private boolean withEnforced;
-    private boolean enforced;
+    private boolean enforced = true;
+    private String forcedHint;
 
     public SQLCheck() {
 
@@ -79,7 +80,11 @@ public class SQLCheck extends SQLConstraintImpl implements SQLTableElement, SQLT
         super.cloneTo(x);
 
         if (expr != null) {
-            expr = expr.clone();
+            x.expr = expr.clone();
+        }
+
+        if (forcedHint != null) {
+            x.forcedHint = forcedHint;
         }
     }
 
@@ -106,5 +111,12 @@ public class SQLCheck extends SQLConstraintImpl implements SQLTableElement, SQLT
             return true;
         }
         return false;
+    }
+
+    public String getForcedHint() {
+        return forcedHint;
+    }
+    public void setForcedHint(String forcedHint) {
+        this.forcedHint = forcedHint;
     }
 }

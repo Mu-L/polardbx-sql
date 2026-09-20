@@ -107,6 +107,9 @@ public class TablesExtAccessor extends AbstractAccessor {
         UPDATE_TABLES_EXT + "`table_name` = ?, `table_type` = ?, `flag` = ?, `version` = `version` + 1"
             + WHERE_SCHEMA_TABLE;
 
+    private static final String UPDATE_TABLES_EXT_FULL_SCAN_FLAG =
+        UPDATE_TABLES_EXT + "`full_table_scan` = ?" + WHERE_SCHEMA_TABLE;
+
     private static final String DELETE_TABLES_EXT = "delete from " + TABLES_EXT_TABLE + WHERE_SCHEMA_TABLE;
 
     private static final String DELETE_TABLES_EXT_ALL = "delete from " + TABLES_EXT_TABLE + WHERE_SCHEMA;
@@ -179,6 +182,10 @@ public class TablesExtAccessor extends AbstractAccessor {
 
     public int updateVersion(String tableSchema, String tableName, long newOpVersion) {
         return update(UPDATE_TABLES_EXT_VERSION, TABLES_EXT_TABLE, tableSchema, tableName, newOpVersion);
+    }
+
+    public int updateFullTableScanFlag(String tableSchema, String tableName, int newFlag) {
+        return update(UPDATE_TABLES_EXT_FULL_SCAN_FLAG, TABLES_EXT_TABLE, tableSchema, tableName, newFlag);
     }
 
     public int updateStatus(String tableSchema, String tableName, int newStatus) {

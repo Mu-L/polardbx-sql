@@ -1,19 +1,3 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.repo.mysql.handler;
 
 import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
@@ -26,13 +10,14 @@ import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
-import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.cursor.impl.ArrayResultCursor;
+import com.alibaba.polardbx.executor.ddl.job.meta.CommonMetaChanger;
 import com.alibaba.polardbx.executor.handler.HandlerCommon;
 import com.alibaba.polardbx.executor.handler.LogicalCheckLocalPartitionHandler;
+import com.alibaba.polardbx.executor.handler.ddl.LogicalCheckPhysicalTableHandler;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.gms.engine.FileSystemGroup;
 import com.alibaba.polardbx.gms.engine.FileSystemManager;
@@ -68,6 +53,7 @@ import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.function.calc.scalar.CanAccessTable;
+import com.alibaba.polardbx.optimizer.core.planner.Planner;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import com.alibaba.polardbx.optimizer.core.rel.dal.LogicalDal;
 import com.alibaba.polardbx.optimizer.core.row.Row;
@@ -86,7 +72,6 @@ import com.alibaba.polardbx.repo.mysql.checktable.TableDescription;
 import com.alibaba.polardbx.repo.mysql.spi.MyRepository;
 import com.alibaba.polardbx.rule.TableRule;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.sql.SqlCheckTable;
@@ -113,6 +98,7 @@ import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
+import static com.alibaba.polardbx.common.properties.ConnectionParams.CHECK_PHYSICAL_TABLE;
 import static com.alibaba.polardbx.gms.util.GroupInfoUtil.buildPhysicalDbNameFromGroupName;
 import static com.alibaba.polardbx.optimizer.partition.PartitionInfoUtil.buildTargetTablesFromPartitionInfo;
 
@@ -142,6 +128,11 @@ public class LogicalCheckTableHandler extends HandlerCommon {
         final LogicalDal dal = (LogicalDal) logicalPlan;
         final SqlCheckTable checkTable = (SqlCheckTable) dal.getNativeSqlNode();
 
+        if (checkTable.isPhysical() || executionContext.getParamManager().getBoolean(CHECK_PHYSICAL_TABLE)) {
+            RelNode plan = Planner.getInstance()
+                .plan("optimize table " + checkTable.getTableNames().get(0).toString(), executionContext).getPlan();
+            return new LogicalCheckPhysicalTableHandler(repo).handle(plan, executionContext);
+        }
         if (checkTable.isWithLocalPartitions()) {
             return new LogicalCheckLocalPartitionHandler(repo).handle(logicalPlan, executionContext);
         }
@@ -192,6 +183,7 @@ public class LogicalCheckTableHandler extends HandlerCommon {
                         doCheckForOnePartTableLocalIndex(schemaName, table, executionContext, result, false);
                         doCheckForOnePartTableGsi(schemaName, table, executionContext, result);
                         doCheckForOnePartTableForeignKeys(schemaName, table, executionContext, result);
+                        doCheckForPhysicalTableReadOnlyStatus(schemaName, table, executionContext, result);
                     } catch (SQLException e) {
                         throw new TddlRuntimeException(ErrorCode.ERR_GMS_GET_CONNECTION,
                             " we have failed to execute query on metadb, you can try it again! the cause is "
@@ -270,18 +262,22 @@ public class LogicalCheckTableHandler extends HandlerCommon {
             if (checkLogicalColumnOrder) {
                 List<String> columnNames =
                     logicalColumnsRecord.stream().map(o -> o.columnName).collect(Collectors.toList());
+
                 TGroupDataSource dataSource =
                     (TGroupDataSource) ExecutorContext.getContext(schemaName).getTopologyExecutor()
                         .getGroupExecutor(physicalGroupName).getDataSource();
                 List<ColumnsInfoSchemaRecord> physicalColumnsInfo;
                 Map<String, Map<String, Object>> columnsJdbcExtInfo;
                 try (Connection phyDbConn = dataSource.getConnection()) {
-                    String physicalDbName = buildPhysicalDbNameFromGroupName(dataSource.getDbGroupKey());
+                    String physicalDbName = buildPhysicalDbNameFromGroupName(schemaName, dataSource.getDbGroupKey());
                     physicalColumnsInfo =
                         tableInfoManager.fetchColumnInfoSchema(physicalDbName, physicalTableName, columnNames,
                             phyDbConn);
-                    columnsJdbcExtInfo = tableInfoManager.fetchColumnJdbcExtInfo(
-                        physicalDbName, physicalTableName, dataSource);
+
+                    TableInfoManager.PhyInfoSchemaContext context =
+                        CommonMetaChanger.getPhyInfoSchemaContext(schemaName, logicalTableName,
+                            dataSource.getDbGroupKey(), physicalTableName);
+                    columnsJdbcExtInfo = tableInfoManager.fetchColumnJdbcExtInfo(context);
                 } catch (SQLException e) {
                     logger.error(String.format(
                         "error occurs while checking table column, schemaName: %s, tableName: %s", schemaName,
@@ -473,7 +469,7 @@ public class LogicalCheckTableHandler extends HandlerCommon {
         }
         Map<String, Map<String, Map<String, IndexDescription>>> localIndexes = new ConcurrentHashMap<>();
         for (String groupName : tableTopology.keySet()) {
-            String phyDbName = buildPhysicalDbNameFromGroupName(groupName);
+            String phyDbName = buildPhysicalDbNameFromGroupName(schemaName, groupName);
             List<String> phyTableLists =
                 tableTopology.get(groupName).stream().map(o -> o.get(0).toLowerCase()).collect(Collectors.toList());
             Map<String, Map<String, IndexDescription>> localIndexesOnGroup =
@@ -697,7 +693,9 @@ public class LogicalCheckTableHandler extends HandlerCommon {
         if (!hasTableRule) {
             // 如果不是拆分表，检查默认库是否存在这个单表
             // 如果单表，则获取defaultDbIndex, 并获取单表的schema
-            doCheckForSingleTable(schemaName, defaultDbIndex, logicalTableName, logicalTableName, result);
+            doCheckForSingleTable(schemaName, defaultDbIndex, logicalTableName, logicalTableName, executionContext,
+                result,
+                false);
 
         } else {
 
@@ -769,13 +767,15 @@ public class LogicalCheckTableHandler extends HandlerCommon {
                 }
 
             } else {
-                if (isSingleTable) {
+                if (isSingleTable && ConfigDataMode.isPolarDbX()) {
                     // A single table only exists in the single group in PolarDB-X mode.
                     doCheckForSingleTable(schemaName,
                         groupNameForSingleTable,
                         logicalTableName,
                         tableNameForSingleTable,
-                        result);
+                        executionContext,
+                        result,
+                        true);
                     return;
                 }
 
@@ -873,7 +873,7 @@ public class LogicalCheckTableHandler extends HandlerCommon {
 
             if (isStatusOK) {
                 statusText = "status";
-                result.addRow(new Object[] {tableText, opText, statusText, "OK"});
+                result.addRow(new Object[] {tableText, opText, statusText, statusOK});
             }
         }
     }
@@ -1167,7 +1167,8 @@ public class LogicalCheckTableHandler extends HandlerCommon {
     protected void doCheckForSingleTable(String schemaName, String groupName,
                                          String logicalTableName,
                                          String physicalTableName,
-                                         ArrayResultCursor result) {
+                                         ExecutionContext executionContext, ArrayResultCursor result,
+                                         boolean checkDdlJob) {
 
         TGroupDataSource tGroupDataSource =
             (TGroupDataSource) ExecutorContext.getContext(schemaName).getTopologyExecutor()
@@ -1227,7 +1228,7 @@ public class LogicalCheckTableHandler extends HandlerCommon {
         Map<String, Set<String>> partTblTopology = partInfo.getTopology();
         List<String> columns = data.columns;
         for (String groupName : partTblTopology.keySet()) {
-            String phyDbName = buildPhysicalDbNameFromGroupName(groupName);
+            String phyDbName = buildPhysicalDbNameFromGroupName(schemaName, groupName);
             List<String> phyTableLists =
                 partTblTopology.get(groupName).stream().map(String::toLowerCase).collect(Collectors.toList());
             List<String> phyRefTable = new ArrayList<>();
@@ -1280,6 +1281,53 @@ public class LogicalCheckTableHandler extends HandlerCommon {
         }
         if (flag) {
             result.addRow(new Object[] {tableText, opText, statusText, msgText});
+        }
+    }
+
+    /**
+     * Check physical table readonly status for auto mode partitioned table.
+     * A physical table is readonly if its SECONDARY_ENGINE_ATTRIBUTE in information_schema.TABLES_EXTENSIONS
+     * contains "polarx.readonly": true.
+     * Only output readonly tables if found.
+     */
+    protected void doCheckForPhysicalTableReadOnlyStatus(String schemaName, String logicalTableName,
+                                                         ExecutionContext executionContext, ArrayResultCursor result) {
+        if (null == executionContext) {
+            throw new TddlRuntimeException(ErrorCode.ERR_UNKNOWN_DATABASE, schemaName);
+        }
+
+        TddlRuleManager tddlRuleManager = OptimizerContext.getContext(schemaName).getRuleManager();
+        PartitionInfo partInfo = tddlRuleManager.getPartitionInfoManager().getPartitionInfo(logicalTableName);
+        if (partInfo == null) {
+            return;
+        }
+
+        String tableText = String.format("%s.%s:ReadOnly Status", schemaName, logicalTableName);
+        String opText = "check";
+
+        Map<String, Set<String>> partTblTopology = partInfo.getTopology();
+        List<String> readOnlyTables = new ArrayList<>();
+
+        for (String groupName : partTblTopology.keySet()) {
+            String phyDbName = buildPhysicalDbNameFromGroupName(schemaName, groupName);
+            List<String> phyTableLists =
+                partTblTopology.get(groupName).stream().map(String::toLowerCase).collect(Collectors.toList());
+
+            Map<String, Boolean> readOnlyMap =
+                CheckTableUtil.getReadOnlyPhysicalTables(schemaName, groupName, phyTableLists, phyDbName);
+
+            for (Map.Entry<String, Boolean> entry : readOnlyMap.entrySet()) {
+                if (entry.getValue()) {
+                    readOnlyTables.add(String.format("%s.%s", phyDbName, entry.getKey()));
+                }
+            }
+        }
+
+        // Only output if there are readonly tables
+        if (!readOnlyTables.isEmpty()) {
+            String msgText = String.format("Found %d readonly physical partition(s): %s",
+                readOnlyTables.size(), StringUtils.join(readOnlyTables, ", "));
+            result.addRow(new Object[] {tableText, opText, MsgType.warning.name(), msgText});
         }
     }
 }

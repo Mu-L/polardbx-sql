@@ -1,0 +1,106 @@
+SET ENABLE_PUSH_DOWN_AUTO_INCREMENT = true
+USE __cdc__
+DROP TABLE IF EXISTS `__cdc_ddl_record_test__`
+DROP TABLE IF EXISTS `t1`
+DROP TABLE IF EXISTS `t2`
+CREATE TABLE `__cdc_ddl_record_test__` (
+	`ID` bigint(20) NOT NULL AUTO_INCREMENT,
+	`JOB_ID` bigint(20) DEFAULT NULL,
+	`SQL_KIND` varchar(50) NOT NULL,
+	`SCHEMA_NAME` varchar(200) NOT NULL,
+	`TABLE_NAME` varchar(200) DEFAULT NULL,
+	`GMT_CREATED` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	`DDL_SQL` mediumtext NOT NULL,
+	`META_INFO` mediumtext,
+	`VISIBILITY` bigint(10) NOT NULL,
+	`EXT` text,
+	PRIMARY KEY (`ID`),
+	KEY `idx_job_id` (`JOB_ID`)
+) BROADCAST ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+CREATE TABLE t1 (
+	a int PRIMARY KEY AUTO_INCREMENT,
+	b int
+)
+DBPARTITION BY hash(b)
+CREATE TABLE t2 (
+	a int PRIMARY KEY AUTO_INCREMENT,
+	b int
+) SINGLE
+SHOW CREATE TABLE `__cdc_ddl_record_test__`
+Table,Create Table
+__cdc_ddl_record_test__,CREATE TABLE `__cdc_ddl_record_test__` (
+	`ID` bigint(20) NOT NULL AUTO_INCREMENT BY NEW,
+	`JOB_ID` bigint(20) DEFAULT NULL,
+	`SQL_KIND` varchar(50) NOT NULL,
+	`SCHEMA_NAME` varchar(200) NOT NULL,
+	`TABLE_NAME` varchar(200) DEFAULT NULL,
+	`GMT_CREATED` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	`DDL_SQL` mediumtext NOT NULL,
+	`META_INFO` mediumtext,
+	`VISIBILITY` bigint(10) NOT NULL,
+	`EXT` text,
+	PRIMARY KEY (`ID`),
+	KEY `idx_job_id` (`JOB_ID`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4  broadcast
+INSERT INTO `__cdc_ddl_record_test__` (`JOB_ID`, `SQL_KIND`, `SCHEMA_NAME`, `TABLE_NAME`, `GMT_CREATED`
+	, `DDL_SQL`, `META_INFO`, `VISIBILITY`, `EXT`)
+VALUES (1, 'CREATE_SEQUENCE', 'wumu', 'test3', '2025-05-15 16:58:32'
+	, 'create sequence test3', NULL, 2, '{}')
+INSERT INTO `__cdc_ddl_record_test__` (`JOB_ID`, `SQL_KIND`, `SCHEMA_NAME`, `TABLE_NAME`, `GMT_CREATED`
+	, `DDL_SQL`, `META_INFO`, `VISIBILITY`, `EXT`)
+VALUES (2, 'CREATE_SEQUENCE', 'wumu', 'test3', '2025-05-15 16:58:32'
+	, 'create sequence test3', NULL, 2, '{}')
+INSERT INTO `__cdc_ddl_record_test__` (`JOB_ID`, `SQL_KIND`, `SCHEMA_NAME`, `TABLE_NAME`, `GMT_CREATED`
+	, `DDL_SQL`, `META_INFO`, `VISIBILITY`, `EXT`)
+VALUES (3, 'CREATE_SEQUENCE', 'wumu', 'test3', '2025-05-15 16:58:32'
+	, 'create sequence test3', NULL, 2, '{}')
+SELECT *
+FROM `__cdc_ddl_record_test__`
+ORDER BY id
+ID,JOB_ID,SQL_KIND,SCHEMA_NAME,TABLE_NAME,GMT_CREATED,DDL_SQL,META_INFO,VISIBILITY,EXT
+1,1,CREATE_SEQUENCE,wumu,test3,2025-05-15 16:58:32.0,create sequence test3,null,2,{}
+2,2,CREATE_SEQUENCE,wumu,test3,2025-05-15 16:58:32.0,create sequence test3,null,2,{}
+3,3,CREATE_SEQUENCE,wumu,test3,2025-05-15 16:58:32.0,create sequence test3,null,2,{}
+DROP TABLE `__cdc_ddl_record_test__`
+SHOW CREATE TABLE t1
+Table,Create Table
+t1,CREATE TABLE `t1` (
+	`a` int(11) NOT NULL AUTO_INCREMENT BY NEW,
+	`b` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4  dbpartition by hash(`b`)
+INSERT INTO t1 (b)
+VALUES (1),
+	(2),
+	(3),
+	(4)
+SELECT *
+FROM t1
+ORDER BY a
+a,b
+1,1
+2,2
+3,3
+4,4
+SHOW CREATE TABLE t2
+Table,Create Table
+t2,CREATE TABLE `t2` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+INSERT INTO t2 (b)
+VALUES (1),
+	(2),
+	(3),
+	(4)
+SELECT *
+FROM t2
+ORDER BY a
+a,b
+1,1
+2,2
+3,3
+4,4
+DROP TABLE t1;

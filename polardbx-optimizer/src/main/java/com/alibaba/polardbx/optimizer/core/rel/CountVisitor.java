@@ -16,25 +16,28 @@
 
 package com.alibaba.polardbx.optimizer.core.rel;
 
+import com.clearspring.analytics.util.Lists;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelShuttleImpl;
 import org.apache.calcite.rel.core.JoinRelType;
+import org.apache.calcite.rel.logical.LogicalCTEConsumer;
 import org.apache.calcite.rel.logical.LogicalJoin;
 import org.apache.calcite.rel.logical.LogicalSemiJoin;
 import org.apache.calcite.rel.logical.LogicalSort;
 import org.apache.calcite.rel.logical.LogicalTableLookup;
+import org.apache.calcite.rel.logical.LogicalUnion;
 
-import java.util.Stack;
+import java.util.List;
 
 public class CountVisitor extends RelShuttleImpl {
+    List<CountVisitor> subVisitors = Lists.newArrayList();
     private int joinCount = 0;
-    private int maxContinuousInnerJoinCount = 0;
-    private Stack<Integer> maxContinuousInnerJoinCountStack = new Stack<>();
+    private int maxContinuousJoinCount = 0;
     private int outerJoinCount = 0;
-
     private int semiJoinCount = 0;
     private int sortCount = 0;
     private int limitCount = 0;
+    boolean built = false;
 
     public CountVisitor() {
     }
@@ -55,32 +58,31 @@ public class CountVisitor extends RelShuttleImpl {
     }
 
     @Override
+    public RelNode visit(LogicalUnion union) {
+        for (RelNode input : union.getInputs()) {
+            CountVisitor countVisitor = new CountVisitor();
+            this.subVisitors.add(countVisitor);
+            input.accept(countVisitor);
+            countVisitor.build();
+        }
+        return union;
+    }
+
+    @Override
     public RelNode visit(LogicalJoin join) {
         joinCount++;
+        maxContinuousJoinCount++;
         if (join.getJoinType() == JoinRelType.LEFT || join.getJoinType() == JoinRelType.RIGHT) {
             outerJoinCount++;
         }
         visitChildren(join);
-        assert maxContinuousInnerJoinCountStack.size() >= 0 && maxContinuousInnerJoinCountStack.size() <= 2;
-        int joinCount = 0;
-        while (maxContinuousInnerJoinCountStack.size() > 0) {
-            joinCount += maxContinuousInnerJoinCountStack.pop();
-        }
-        if (join.getJoinType() == JoinRelType.INNER) {
-            joinCount++;
-            maxContinuousInnerJoinCountStack.push(joinCount);
-            maxContinuousInnerJoinCount = Math.max(joinCount, maxContinuousInnerJoinCount);
-        } else {
-            maxContinuousInnerJoinCountStack.push(0);
-        }
         return join;
     }
 
     public RelNode visit(LogicalSemiJoin join) {
         joinCount++;
+        maxContinuousJoinCount++;
         semiJoinCount++;
-        maxContinuousInnerJoinCountStack.clear();
-        maxContinuousInnerJoinCountStack.push(0);
         visitChildren(join);
         return join;
     }
@@ -102,37 +104,58 @@ public class CountVisitor extends RelShuttleImpl {
         return tableLookup;
     }
 
-    public int getMaxContinuousInnerJoinCount() {
-        return maxContinuousInnerJoinCount;
+    @Override
+    public RelNode visit(LogicalCTEConsumer cteConsumer) {
+        return cteConsumer;
+    }
+
+    public void build() {
+        for (CountVisitor subVisitor : subVisitors) {
+            this.joinCount += subVisitor.getJoinCount();
+            this.outerJoinCount += subVisitor.getOuterJoinCount();
+            this.semiJoinCount += subVisitor.getSemiJoinCount();
+            this.sortCount += subVisitor.getSortCount();
+            this.limitCount += subVisitor.getLimitCount();
+            this.maxContinuousJoinCount =
+                Math.max(this.maxContinuousJoinCount, subVisitor.getMaxContinuousJoinCount());
+        }
+        this.subVisitors.clear();
+        this.built = true;
+    }
+
+    private void checkBuild() {
+        if (!built) {
+            build();
+        }
     }
 
     public int getJoinCount() {
+        checkBuild();
         return joinCount;
     }
 
     public int getOuterJoinCount() {
+        checkBuild();
         return outerJoinCount;
     }
 
     public int getSemiJoinCount() {
+        checkBuild();
         return semiJoinCount;
     }
 
     public int getSortCount() {
+        checkBuild();
         return sortCount;
     }
 
     public int getLimitCount() {
+        checkBuild();
         return limitCount;
     }
 
-    public void resetJoinCount() {
-        joinCount = 0;
-        semiJoinCount = 0;
-        outerJoinCount = 0;
-        maxContinuousInnerJoinCount = 0;
-        sortCount = 0;
-        limitCount = 0;
-        maxContinuousInnerJoinCountStack.clear();
+    public int getMaxContinuousJoinCount() {
+        checkBuild();
+        return maxContinuousJoinCount;
     }
 }

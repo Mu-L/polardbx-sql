@@ -63,7 +63,9 @@ public class GmsSystemTables {
     public static final String TABLE_GROUP = "table_group";
     public static final String PARTITION_GROUP = "partition_group";
     public static final String PARTITION_GROUP_DELTA = "partition_group_delta";
+    public static final String PARTITION_GROUP_ARCHIVE = "partition_group_archive";
     public static final String TABLE_PARTITIONS_DELTA = "table_partitions_delta";
+    public static final String TABLE_PARTITIONS_ARCHIVE = "table_partitions_archive";
     public static final String FILES = "files";
     public static final String COLUMNAR_CHECKPOINTS = "columnar_checkpoints";
     public static final String COLUMNAR_FILE_MAPPING = "columnar_file_mapping";
@@ -74,16 +76,26 @@ public class GmsSystemTables {
     public static final String COLUMNAR_TABLE_EVOLUTION = "columnar_table_evolution";
     public static final String COLUMNAR_COLUMN_EVOLUTION = "columnar_column_evolution";
     public static final String COLUMNAR_PARTITION_EVOLUTION = "columnar_partition_evolution";
+    public static final String COLUMNAR_INDEX_EVOLUTION = "columnar_index_evolution";
     public static final String COLUMNAR_CONFIG = "columnar_config";
     public static final String COLUMNAR_LEASE = "columnar_lease";
     public static final String COLUMNAR_DUPLICATES = "columnar_duplicates";
     public static final String COLUMNAR_TASK = "columnar_task";
     public static final String COLUMNAR_TASK_CONFIG = "columnar_task_config";
     public static final String COLUMNAR_PURGE_HISTORY = "columnar_purge_history";
+    public static final String COLUMNAR_TABLE_ID_VERSION = "columnar_table_id_version";
+    public static final String EXT_STAGING_META = "ext_staging_meta";
+    public static final String EXT_COLUMN_TABLE_STATS = "ext_column_table_stats";
+    public static final String EXT_COLUMN_MAPPING = "ext_column_mapping";
     public static final String FILE_STORAGE_INFO = "file_storage_info";
+    public static final String EXTERNAL_CATALOG_INFO = "external_catalog_info";
+    public static final String EXTERNAL_SECRET = "external_secret";
+    public static final String POLARDBX_GLOBAL_CHAIN = "polardbx_global_chain";
 
     public static final String STORAGE_POOL_INFO = "storage_pool_info";
     public static final String FILE_STORAGE_FILES_META = "file_storage_files_meta";
+    public static final String COLUMNAR_WARMUP = "columnar_warmup";
+
     public static final String FOREIGN_KEY = "foreign_key";
     public static final String FOREIGN_KEY_COLS = "foreign_key_cols";
 
@@ -95,6 +107,7 @@ public class GmsSystemTables {
     public static final String TABLE_LOCAL_PARTITIONS = "table_local_partitions";
     public static final String JOIN_GROUP_INFO = "join_group_info";
     public static final String JOIN_GROUP_TABLE_DETAIL = "join_group_table_detail";
+    public static final String PHY_RECYCLE_BIN_INFO = "phy_recycle_bin_info";
 
     /**
      * ttl20
@@ -121,6 +134,7 @@ public class GmsSystemTables {
     public static final String PHYSICAL_BACKFILL_OBJECTS = "physical_backfill_objects";
 
     public static final String IMPORT_TABLESPACE_INFO_STAT = "import_tablespace_info_stat";
+    public static final String DDL_PHYSICAL_LOCK_STAT = "ddl_physical_lock_stat";
     public static final String FILE_STORAGE_BACKFILL_OBJECTS = "file_storage_backfill_objects";
     public static final String CHECKER_REPORTS = "checker_reports";
 
@@ -128,6 +142,19 @@ public class GmsSystemTables {
      * Change Set for scale in/out
      */
     public static final String CHANGESET_OBJECT = "changeset_objects";
+
+    public static final String OMC_RECORD = "omc_record";
+
+    /**
+     * MCE (Modify Column Externalize): per-column transient migration state + resumable backfill checkpoint.
+     * Only holds rows for columns currently mid-migration (DUAL_WRITE / READ_ADDR); cleared on completion.
+     */
+    public static final String MCE_COLUMN_STATE = "mce_column_state";
+
+    /**
+     * Expand partition tasks: tracks progress of ALTER TABLE ... EXPAND PARTITIONS TO N
+     */
+    public static final String EXPAND_PARTITION_TASKS = "expand_partition_tasks";
 
     /**
      * Plan Management
@@ -148,6 +175,7 @@ public class GmsSystemTables {
      * DDL Job Engine
      */
     public static final String READ_WRITE_LOCK = "read_write_lock";
+    public static final String READ_WRITE_LOCK_WAITING = "read_write_lock_waiting";
     public static final String DDL_JOBS = "ddl_jobs";
     public static final String DDL_ENGINE = "ddl_engine";
     public static final String DDL_ENGINE_TASK = "ddl_engine_task";
@@ -180,6 +208,7 @@ public class GmsSystemTables {
     public static final String CONFIG_LISTENER = "config_listener";
     public static final String SERVER_INFO = "server_info";
     public static final String STORAGE_INFO = "storage_info";
+    public static final String STORAGE_INFO_MAPPING = "storage_info_mapping";
     public static final String DB_INFO = "db_info";
     public static final String DB_GROUP_INFO = "db_group_info";
     public static final String GROUP_DETAIL_INFO = "group_detail_info";
@@ -187,6 +216,7 @@ public class GmsSystemTables {
     public static final String INST_CONFIG = "inst_config";
     public static final String INST_DB_CONFIG = "inst_db_config";
     public static final String INST_LOCK = "inst_lock";
+    public static final String SUB_INST_CONFIG = "sub_inst_config";
 
     /**
      * Privileges
@@ -200,7 +230,6 @@ public class GmsSystemTables {
     public static final String USER_LOGIN_ERROR_LIMIT = "user_login_error_limit";
     public static final String LOCALITY_INFO = "locality_info";
     public static final String VARIABLE_CONFIG = "variable_config";
-
     /**
      * LBAC Security
      */
@@ -226,8 +255,12 @@ public class GmsSystemTables {
      * SQL Filter
      */
     public static final String CONCURRENCY_CONTROL_RULE = "concurrency_control_rule";
-    public static final String CONCURRENCY_CONTROL_TRIGGER = "concurrency_control_trigger";
+    public static final String CONCURRENCY_CONTROL_BLOCKER = "concurrency_control_blocker";
 
+    /**
+     * HTAP ROUTING
+     */
+    public static final String ROUTING_RULE = "routing_rule";
     /**
      * Feature Statistics
      */
@@ -252,6 +285,7 @@ public class GmsSystemTables {
     public final static String RPL_SYNC_POINT_TABLE = "rpl_sync_point";
 
     public final static String DDL_PLAN = "ddl_plan";
+    public final static String DDL_TABLE_META_INFO = "ddl_table_meta_info";
     public final static String LEASE = "lease";
 
     public final static String PARTITIONS_HEATMAP = "partitions_heatmap";
@@ -267,11 +301,49 @@ public class GmsSystemTables {
 
     public final static String DEADLOCKS = "deadlocks";
 
+    public final static String DB_STATUS = "db_status";
+
     public final static String ENCDB_RULE = "encdb_rule";
 
     public final static String ENCDB_KEY = "encdb_key";
 
     public final static String CDC_SYNC_POINT_META = "cdc_sync_point_meta";
+
+    public final static String DDL_TASK_BARRIER = "ddl_task_barrier";
+
+    public final static String SUB_CLUSTERS = "sub_clusters";
+
+    public final static String LOAD_WEIGHT = "load_weight";
+
+    public final static String COLUMN_PRIV = "COLUMN_PRIV";
+
+    public final static String ROLLBACK_TASK_CONFIG = "rollback_task_config";
+
+    /**
+     * AI Model Config
+     */
+    public static final String AI_MODEL_CONFIG = "ai_model_config";
+
+    public static final String AI_FUNCTION_CONFIG = "ai_function_config";
+
+    /**
+     * AI Skill Config
+     */
+    public static final String AI_SKILL_CONFIG = "ai_skill_config";
+    public static final String AI_SKILL_REFERENCE = "ai_skill_reference";
+
+    /**
+     * block chain
+     */
+    public final static String BLOCK_GLOBAL_CHAIN = "polardbx_global_chain";
+    public final static String DDL_LOAD_META_INFO_TABLE = "ddl_load_meta_info";
+
+    /**
+     * Cache Service
+     */
+    public static final String CACHE_USER = "cache_user";
+    public static final String CACHE_PEER = "cache_peer";
+    public static final String CACHE_FILE_MAPPING = "cache_file_mapping";
 
     static {
         register(DUAL);
@@ -298,12 +370,18 @@ public class GmsSystemTables {
         register(COLUMNAR_TABLE_EVOLUTION);
         register(COLUMNAR_COLUMN_EVOLUTION);
         register(COLUMNAR_PARTITION_EVOLUTION);
+        register(COLUMNAR_INDEX_EVOLUTION);
         register(COLUMNAR_CONFIG);
         register(COLUMNAR_LEASE);
         register(COLUMNAR_DUPLICATES);
         register(COLUMNAR_PURGE_HISTORY);
+        register(COLUMNAR_TABLE_ID_VERSION);
+        register(EXT_COLUMN_MAPPING);
         register(FILE_STORAGE_INFO);
+        register(EXTERNAL_CATALOG_INFO);
+        register(EXTERNAL_SECRET);
         register(STORAGE_POOL_INFO);
+        register(POLARDBX_GLOBAL_CHAIN);
         register(COLUMNS);
         register(INDEXES);
         register(KEY_COLUMN_USAGE);
@@ -322,6 +400,9 @@ public class GmsSystemTables {
         register(REBALANCE_EXTERNAL_SOLUTION);
         register(FILE_STORAGE_BACKFILL_OBJECTS);
         register(CHANGESET_OBJECT);
+        register(OMC_RECORD);
+        register(MCE_COLUMN_STATE);
+        register(EXPAND_PARTITION_TASKS);
         register(BASELINE_INFO);
         register(SPM_BASELINE);
         register(CHECKER_REPORTS);
@@ -332,6 +413,7 @@ public class GmsSystemTables {
         register(DDL_ENGINE_ARCHIVE);
         register(DDL_ENGINE_TASK_ARCHIVE);
         register(READ_WRITE_LOCK);
+        register(READ_WRITE_LOCK_WAITING);
         register(TABLE_STATISTICS);
         register(NDV_SKETCH_STATISTICS);
         register(PLAN_INFO);
@@ -347,23 +429,26 @@ public class GmsSystemTables {
         register(SERVER_INFO);
         register(STORAGE_INFO);
         register(DB_INFO);
+        register(STORAGE_INFO_MAPPING);
         register(DB_GROUP_INFO);
         register(GROUP_DETAIL_INFO);
         register(STORAGE_INST_CONFIG);
         register(INST_CONFIG);
+        register(SUB_INST_CONFIG);
         register(INST_DB_CONFIG);
         register(INST_LOCK);
         register(QUARANTINE_CONFIG);
         register(USER_PRIV);
         register(DB_PRIV);
         register(TABLE_PRIV);
+        register(ROUTING_RULE);
         register(ROLE_PRIV);
         register(DEFAULT_ROLE_STATE);
         register(SCALEOUT_OUTLINE);
         register(SCALEOUT_BACKFILL_OBJECTS);
         register(SCALEOUT_CHECKER_REPORTS);
         register(CONCURRENCY_CONTROL_RULE);
-        register(CONCURRENCY_CONTROL_TRIGGER);
+        register(CONCURRENCY_CONTROL_BLOCKER);
         register(FEATURE_USAGE_STATISTICS);
         register(USER_LOGIN_ERROR_LIMIT);
         register(AUDIT_LOG);
@@ -377,7 +462,9 @@ public class GmsSystemTables {
         register(COMPLEX_TASK_OUTLINE);
         register(VARIABLE_CONFIG);
         register(DDL_PLAN);
+        register(DDL_TABLE_META_INFO);
         register(FILE_STORAGE_FILES_META);
+        register(COLUMNAR_WARMUP);
         register(LEASE);
         register(COLUMN_MAPPING);
         register(COLUMN_EVOLUTION);
@@ -393,13 +480,34 @@ public class GmsSystemTables {
         register(FOREIGN_KEY_COLS);
         register(PHYSICAL_BACKFILL_OBJECTS);
         register(IMPORT_TABLESPACE_INFO_STAT);
+        register(DDL_PHYSICAL_LOCK_STAT);
         register(TRX_LOG_STATUS);
         register(DEADLOCKS);
+        register(DB_STATUS);
         register(LOCKING_FUNCTIONS);
         register(ENCDB_RULE);
         register(ENCDB_KEY);
         register(CDC_SYNC_POINT_META);
         register(TTL_INFO);
+        register(PHY_RECYCLE_BIN_INFO);
+        register(DDL_TASK_BARRIER);
+        register(SUB_CLUSTERS);
+        register(LOAD_WEIGHT);
+        register(COLUMN_PRIV);
+        register(TABLE_PARTITIONS_ARCHIVE);
+        register(PARTITION_GROUP_ARCHIVE);
+        register(DDL_LOAD_META_INFO_TABLE);
+        register(ROLLBACK_TASK_CONFIG);
+        register(AI_MODEL_CONFIG);
+        register(AI_FUNCTION_CONFIG);
+        register(CACHE_USER);
+        register(CACHE_PEER);
+        register(CACHE_FILE_MAPPING);
+        register(EXT_STAGING_META);
+        register(EXT_COLUMN_TABLE_STATS);
+
+        register(AI_SKILL_CONFIG);
+        register(AI_SKILL_REFERENCE);
     }
 
     private static void register(String systemTableName) {

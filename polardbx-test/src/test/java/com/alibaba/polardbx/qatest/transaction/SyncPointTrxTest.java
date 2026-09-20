@@ -16,10 +16,6 @@ public class SyncPointTrxTest extends CrudBasedLockTestCase {
 
     @Test
     public void test() throws SQLException, InterruptedException {
-        if (isMySQL80()) {
-            return;
-        }
-        JdbcUtil.executeUpdateSuccess(tddlConnection, "set global enable_polarx_sync_point = true");
         Thread.sleep(1000);
         ResultSet rs = JdbcUtil.executeQuerySuccess(metaDbConn, QUERY_SYNC_POINT_META_COUNT);
         Assert.assertTrue("Not found count of sync point meta", rs.next());
@@ -32,7 +28,7 @@ public class SyncPointTrxTest extends CrudBasedLockTestCase {
         rs = JdbcUtil.executeQuerySuccess(metaDbConn, QUERY_SYNC_POINT_META_COUNT);
         Assert.assertTrue("Not found count of sync point meta", rs.next());
         long after = rs.getLong(1);
-        Assert.assertTrue(after > before);
+        Assert.assertTrue("after " + after + ", before " + before, after > before);
     }
 
     private void triggerSyncPoint() throws SQLException {
@@ -40,6 +36,6 @@ public class SyncPointTrxTest extends CrudBasedLockTestCase {
             "call polardbx.trigger_sync_point_trx()");
         Assert.assertTrue("Not found result of sync point trigger", rs.next());
         String result = rs.getString(1);
-        Assert.assertEquals("OK", result);
+        Assert.assertTrue("Got < 0 tso: " + Long.parseLong(result), Long.parseLong(result) > 0);
     }
 }

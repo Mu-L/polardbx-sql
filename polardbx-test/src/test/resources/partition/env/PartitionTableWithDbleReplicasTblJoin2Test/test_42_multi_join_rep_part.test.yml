@@ -1,0 +1,390 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+set ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING=true;
+set ENABLE_REPLICAS_RANDOM_READ= false;
+
+
+use polardbx;
+drop database if exists repjoin42_db;
+## USE_DN_LIST_MSG
+create database if not exists `repjoin42_db` CHARSET = `utf8mb4` COLLATE = `utf8mb4_general_ci` MODE = 'auto'
+LOCALITY = 'dble_config={"group_config":{
+  "repjoin42_db_g0":["$dn1","repjoin42_db_g0"],
+  "repjoin42_db_g1":["$dn2","repjoin42_db_g1"],
+  "repjoin42_db_g2":["$dn1","repjoin42_db_g2"],
+  "repjoin42_db_g3":["$dn2","repjoin42_db_g3"],
+  "repjoin42_db_g4":["$dn1","repjoin42_db_g4"],
+  "repjoin42_db_g5":["$dn2","repjoin42_db_g5"]
+}}';
+use repjoin42_db;
+  
+
+
+DROP TABLE IF EXISTS `rep_t1_g0g1g2`;
+CREATE TABLE IF NOT EXISTS `rep_t1_g0g1g2` (
+  `id` bigint(20) NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin42_db_g0,repjoin42_db_g1,repjoin42_db_g2'
+;
+  
+DROP TABLE IF EXISTS `rep_t2_g0g1g2`;
+CREATE TABLE IF NOT EXISTS  `rep_t2_g0g1g2` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin42_db_g0,repjoin42_db_g1,repjoin42_db_g2'
+;
+
+DROP TABLE IF EXISTS `rep_t3_g1g2`;
+CREATE TABLE IF NOT EXISTS `rep_t3_g1g2` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin42_db_g1,repjoin42_db_g2'
+;
+
+DROP TABLE IF EXISTS `rep_t4_g2g3`;
+CREATE TABLE IF NOT EXISTS `rep_t4_g2g3` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin42_db_g2,repjoin42_db_g3'
+;
+
+DROP TABLE IF EXISTS `rep_t5_g3g4`;
+CREATE TABLE IF NOT EXISTS `rep_t5_g3g4` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin42_db_g3,repjoin42_db_g4'
+;
+
+DROP TABLE IF EXISTS `rep_t6_g5`;
+CREATE TABLE IF NOT EXISTS `rep_t6_g5` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin42_db_g5'
+;
+  
+DROP TABLE IF EXISTS `rep_t7_g0g3g4`;
+CREATE TABLE IF NOT EXISTS `rep_t7_g0g3g4` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin42_db_g0,repjoin42_db_g3,repjoin42_db_g4'
+;
+
+DROP TABLE IF EXISTS `rep_t8_g1g3g4`;
+CREATE TABLE IF NOT EXISTS `rep_t8_g1g3g4` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin42_db_g1,repjoin42_db_g3,repjoin42_db_g4'
+;
+
+  
+DROP TABLE IF EXISTS `part_t1_g0g1g2`;
+CREATE TABLE IF NOT EXISTS `part_t1_g0g1g2` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 3
+LOCALITY='db_pools=repjoin42_db_g0,repjoin42_db_g1,repjoin42_db_g2'
+;
+  
+DROP TABLE IF EXISTS `part_t2_g0g1g2`;
+CREATE TABLE IF NOT EXISTS `part_t2_g0g1g2` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 3
+LOCALITY='db_pools=repjoin42_db_g0,repjoin42_db_g1,repjoin42_db_g2'
+;
+  
+DROP TABLE IF EXISTS `part_t3_g3g4`;
+CREATE TABLE IF NOT EXISTS `part_t3_g3g4` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 2
+LOCALITY='db_pools=repjoin42_db_g3,repjoin42_db_g4'
+;
+
+DROP TABLE IF EXISTS `part_t4_g3g4`;
+CREATE TABLE IF NOT EXISTS `part_t4_g3g4` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 2
+LOCALITY='db_pools=repjoin42_db_g3,repjoin42_db_g4'
+;
+  
+  
+  
+DROP TABLE IF EXISTS `part_t5_g2`;
+CREATE TABLE IF NOT EXISTS `part_t5_g2` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 1
+LOCALITY='db_pools=repjoin42_db_g2'
+;
+  
+DROP TABLE IF EXISTS `part_t6_g5`;
+CREATE TABLE IF NOT EXISTS `part_t6_g5` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 1
+LOCALITY='db_pools=repjoin42_db_g5'
+;
+
+DROP TABLE IF EXISTS `bro_tbl1`;
+CREATE TABLE IF NOT EXISTS `bro_tbl1` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+BROADCAST
+;
+  
+DROP TABLE IF EXISTS `bro_tbl2`;
+CREATE TABLE IF NOT EXISTS `bro_tbl2` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+BROADCAST
+;
+
+insert into rep_t1_g0g1g2 values (1),(2),(3),(4),(5);
+insert into rep_t2_g0g1g2 values (1),(2),(3),(4),(5);
+insert into rep_t3_g1g2 values (1),(2),(3),(4),(5);
+insert into rep_t4_g2g3 values (1),(2),(3),(4),(5);
+insert into rep_t5_g3g4 values (1),(2),(3),(4),(5);
+insert into rep_t6_g5 values (1),(2),(3),(4),(5);
+insert into rep_t7_g0g3g4 values (1),(2),(3),(4),(5);
+insert into rep_t8_g1g3g4 values (1),(2),(3),(4),(5);
+
+insert into part_t1_g0g1g2 values (1),(2),(3),(4),(5);
+insert into part_t2_g0g1g2 values (1),(2),(3),(4),(5);
+insert into part_t3_g3g4 values (1),(2),(3),(4),(5);
+insert into part_t4_g3g4 values (1),(2),(3),(4),(5);
+insert into part_t5_g2 values (1),(2),(3),(4),(5);
+insert into part_t6_g5 values (1),(2),(3),(4),(5);
+  
+insert into bro_tbl1 values (1),(2),(3),(4),(5);
+insert into bro_tbl2 values (1),(2),(3),(4),(5);
+
+  ## join pushdown1-0: all rep tbl cover all groupKey of all part tbl
+explain select rt1.id 
+from 
+rep_t1_g0g1g2 rt1 
+join part_t1_g0g1g2 pt1 on pt1.id = rt1.id 
+join part_t2_g0g1g2 pt2 on pt2.id = rt1.id
+order by rt1.id;
+explain select rt1.id
+from
+rep_t1_g0g1g2 rt1
+join part_t1_g0g1g2 pt1 on pt1.id = rt1.id
+join part_t2_g0g1g2 pt2 on pt2.id = rt1.id
+join rep_t2_g0g1g2 rt2 on rt2.id = rt1.id
+order by rt1.id;
+
+explain select rt1.id
+from
+rep_t1_g0g1g2 rt1
+join part_t1_g0g1g2 pt1 on pt1.id = rt1.id 
+join part_t2_g0g1g2 pt2 on pt2.id = rt1.id
+join rep_t2_g0g1g2 rt2 on rt2.id = rt1.id
+order by rt1.id;
+select rt1.id
+from
+rep_t1_g0g1g2 rt1
+join part_t1_g0g1g2 pt1 on pt1.id = rt1.id
+join part_t2_g0g1g2 pt2 on pt2.id = rt1.id
+join rep_t2_g0g1g2 rt2 on rt2.id = rt1.id
+order by rt1.id;
+
+explain select rt7.id
+from
+rep_t7_g0g3g4 rt7
+join part_t3_g3g4 pt3 on pt3.id = rt7.id
+join part_t4_g3g4 pt4 on pt4.id = rt7.id
+join rep_t8_g1g3g4 rt8 on rt8.id = rt7.id
+order by rt7.id;
+select rt7.id
+from
+rep_t7_g0g3g4 rt7
+join part_t3_g3g4 pt3 on pt3.id = rt7.id
+join part_t4_g3g4 pt4 on pt4.id = rt7.id
+join rep_t8_g1g3g4 rt8 on rt8.id = rt7.id
+order by rt7.id;
+  
+explain select rt7.id
+from
+rep_t7_g0g3g4 rt7
+join part_t3_g3g4 pt3 on pt3.id = rt7.id and rt7.id=1
+join part_t4_g3g4 pt4 on pt4.id = rt7.id
+join rep_t8_g1g3g4 rt8 on rt8.id = rt7.id
+order by rt7.id;
+select rt7.id
+from
+rep_t7_g0g3g4 rt7
+join part_t3_g3g4 pt3 on pt3.id = rt7.id and rt7.id=1
+join part_t4_g3g4 pt4 on pt4.id = rt7.id
+join rep_t8_g1g3g4 rt8 on rt8.id = rt7.id
+order by rt7.id;
+
+  ## join pushdown2-0: not all rep tbl cover all groupKey of all part tbl
+#explain select rt1.id
+#from
+#rep_t1_g0g1g2 rt1
+#join part_t1_g0g1g2 pt1 on pt1.id = rt1.id
+#join rep_t5_g3g4 rt5 on rt5.id = pt1.id
+#join part_t4_g3g4 pt4 on pt4.id = rt5.id
+#order by rt1.id;
+select rt1.id
+from
+rep_t1_g0g1g2 rt1
+join part_t1_g0g1g2 pt1 on pt1.id = rt1.id
+join rep_t5_g3g4 rt5 on rt5.id = pt1.id
+join part_t4_g3g4 pt4 on pt4.id = rt5.id
+order by rt1.id;
+  
+explain select rt8.id
+from
+rep_t8_g1g3g4 rt8
+join part_t3_g3g4 pt3 on pt3.id = rt8.id
+join part_t4_g3g4 pt4 on pt4.id = rt8.id
+join rep_t6_g5 rt6 on rt6.id = pt4.id
+order by rt8.id;
+select rt8.id
+from
+rep_t8_g1g3g4 rt8
+join part_t3_g3g4 pt3 on pt3.id = rt8.id
+join part_t4_g3g4 pt4 on pt4.id = rt8.id
+join rep_t6_g5 rt6 on rt6.id = pt4.id
+order by rt8.id;
+  
+  ## outer-join/cross-join non-pushdown
+explain select t1.id from rep_t8_g1g3g4 t1 
+left join part_t3_g3g4 t2 on t1.id = t2.id order by t1.id;
+
+  ## outer-join/cross-join pushdown with single_group sharding
+explain select rt1.id as rt1_id,rt2.id as rt2_id
+from rep_t1_g0g1g2 rt1
+left join rep_t1_g0g1g2 rt2  on rt2.id=rt1.id
+left join part_t1_g0g1g2 pt1 on pt1.id = rt2.id and pt1.id=1 
+order by rt1_id;
+explain select rt1.id as rt1_id,rt2.id as rt2_id
+from rep_t1_g0g1g2 rt1
+left join part_t1_g0g1g2 pt1 on pt1.id = rt1.id and pt1.id=1
+left join rep_t1_g0g1g2 rt2 on rt2.id=rt1.id
+order by rt1_id;
+explain select rt1.id as rt1_id,rt2.id as rt2_id
+from rep_t1_g0g1g2 rt1
+left join part_t1_g0g1g2 pt1 on pt1.id = rt1.id and pt1.id=1
+right join rep_t1_g0g1g2 rt2 on rt2.id=rt1.id
+order by rt1_id;
+explain select rt1.id as rt1_id,rt2.id as rt2_id
+from rep_t1_g0g1g2 rt1
+left join part_t1_g0g1g2 pt1 on pt1.id = rt1.id and pt1.id in (1,3)
+right join rep_t1_g0g1g2 rt2 on rt2.id=rt1.id
+order by rt1_id;
+  
+  ## outer-join/cross-join non-pushdown with multi-group sharding
+explain select rt1.id as rt1_id
+from rep_t1_g0g1g2 rt1
+left join part_t1_g0g1g2 pt1 on pt1.id = rt1.id and pt1.id in (1,3)
+order by rt1_id;
+  ## join non-pushdown because of un-full-cover group key
+explain select rt1.id from 
+rep_t3_g1g2 rt1 
+join part_t1_g0g1g2 pt1 on pt1.id = rt1.id
+join part_t2_g0g1g2 pt2 on pt2.id = pt1.id order by rt1.id;
+  ## join non-pushdown because of un-full-cover group key
+explain select rt1.id from
+rep_t3_g1g2 rt1
+join part_t1_g0g1g2 pt1 on pt1.id = rt1.id and pt1.id in (1,3)
+join part_t2_g0g1g2 pt2 on pt2.id = pt1.id order by rt1.id;
+  
+  ## filterSubquery pushdown 
+explain select pt1.id from part_t1_g0g1g2 pt1 
+where pt1.id in (select rt1.id from rep_t1_g0g1g2 rt1) 
+and pt1.id in (select rt2.id from rep_t2_g0g1g2 rt2)
+order by pt1.id;
+  ## filterSubquery pushdown 
+explain select pt1.id from part_t1_g0g1g2 pt1
+where exists (select rt1.id from rep_t1_g0g1g2 rt1 where pt1.id=rt1.id)
+and exists (select rt2.id from rep_t2_g0g1g2 rt2 where pt1.id=rt2.id)
+order by pt1.id;
+  ## filterSubquery pushdown 
+explain select pt1.id from part_t1_g0g1g2 pt1
+where exists (select rt1.id from rep_t1_g0g1g2 rt1 where pt1.id=rt1.id)
+and exists (select rt2.id from rep_t2_g0g1g2 rt2 where pt1.id=rt2.id)
+order by pt1.id;
+  ## filterSubquery non-pushdown because of no correlated join column
+explain select pt1.id from part_t1_g0g1g2 pt1
+where exists (select rt1.id from bro_tbl1 rt1)
+and exists (select rt2.id from bro_tbl2 rt2)
+order by pt1.id;;
+  ## filterSubquery non-pushdown because of un-full-cover group key
+explain select pt1.id from part_t1_g0g1g2 pt1
+where exists (select rt1.id from rep_t3_g1g2 rt1 where pt1.id=rt1.id)
+and exists (select rt2.id from rep_t2_g0g1g2 rt2 where pt1.id=rt2.id)
+order by pt1.id;
+
+  ## columnSubquery pushdown 
+explain select pt1.id,
+(select rt1.id from rep_t1_g0g1g2 rt1 where rt1.id=pt1.id) as rt1_id,
+(select rt2.id from rep_t2_g0g1g2 rt2 where rt2.id=pt1.id) as rt2_id
+from part_t1_g0g1g2 pt1 
+order by pt1.id;
+  ## columnSubquery pushdown 
+explain select pt3.id,
+(select rt7.id from rep_t7_g0g3g4 rt7 where rt7.id=pt3.id) as rt7_id,
+(select rt5.id from rep_t5_g3g4 rt5 where rt5.id=pt3.id) as rt5_id
+from part_t3_g3g4 pt3
+order by pt3.id;
+  ## columnSubquery non-pushdown because of no correlated join column
+explain select pt3.id,
+(select rt7.id from rep_t7_g0g3g4 rt7) as rt7_id,
+(select rt5.id from rep_t5_g3g4 rt5) as rt5_id
+from part_t3_g3g4 pt3
+order by pt3.id;
+  ## columnSubquery non-pushdown because of un-full-cover group key
+explain select pt3.id,
+(select rt7.id from rep_t7_g0g3g4 rt7 where rt7.id=pt3.id) as rt7_id,
+(select rt4.id from rep_t4_g2g3 rt4 where rt4.id=pt3.id) as rt4_id
+from part_t3_g3g4 pt3
+order by pt3.id;
+
+  ## union non-pushdown
+explain select id from part_t1_g0g1g2 where id=3
+union all (select rt1.id from rep_t1_g0g1g2 rt1)
+union all (select rt2.id from rep_t2_g0g1g2 rt2)
+order by id;
+  
+use polardbx;
+drop database if exists repjoin42_db;

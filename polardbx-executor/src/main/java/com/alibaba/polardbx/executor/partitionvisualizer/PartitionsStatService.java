@@ -86,7 +86,7 @@ public class PartitionsStatService {
         schemaNames.addAll(StatsUtils.getDistinctSchemaNames());
         List<TableGroupConfig> allTableGroupConfigs = StatsUtils.getTableGroupConfigs(schemaNames);
 
-        Map<String/**phyDbName**/, Pair<String/**storageInstId**/, String/**groupName**/>> storageInstIdGroupNames
+        Map<String/**groupName**/, Pair<String/**storageInstId**/, String/**phyDbName**/>> groupstorageInstIdPhyDbs
             = new HashMap<>();
         // get all phy tables(partitions) info from all DNs
         Map<String/** phyDbName **/, Map<String/** phyTbName **/, List<Object>/** statics **/>>
@@ -102,10 +102,10 @@ public class PartitionsStatService {
                 if (PHY_TABLE_ROWS_MAP.isEmpty() || !usePhyTableRowsCache || HAS_CHANGED_COLLECTION_ONLY_PARAM) {
                     PHY_TABLE_ROWS_MAP = new HashMap<>();
                     phyDbTablesInfoForHeatmap = StatsUtils.queryTableSchemaStatsForHeatmap(schemaNames, anyTables,
-                        storageInstIdGroupNames, maxScan, maxSingleLogicSchemaCount, PHY_TABLE_ROWS_MAP);
+                        groupstorageInstIdPhyDbs, maxScan, maxSingleLogicSchemaCount, PHY_TABLE_ROWS_MAP);
                 } else {
                     phyDbTablesInfoForHeatmap = StatsUtils.queryTableSchemaStaticsWithoutRowsForHeatmap(schemaNames,
-                        anyTables, storageInstIdGroupNames, maxScan, maxSingleLogicSchemaCount, PHY_TABLE_ROWS_MAP);
+                        anyTables, groupstorageInstIdPhyDbs, maxScan, maxSingleLogicSchemaCount, PHY_TABLE_ROWS_MAP);
                 }
             } else {
                 //only schemas
@@ -124,7 +124,7 @@ public class PartitionsStatService {
                         tables.addAll(anyTables);
                     }
                     phyDbTablesInfoForHeatmap.putAll(StatsUtils.queryTableSchemaStatsForHeatmap(schemaSet, tables,
-                        storageInstIdGroupNames, maxScan, maxSingleLogicSchemaCount, PHY_TABLE_ROWS_MAP));
+                        groupstorageInstIdPhyDbs, maxScan, maxSingleLogicSchemaCount, PHY_TABLE_ROWS_MAP));
                 }
                 schemaNames = schemaNamesNew;
             }
@@ -132,10 +132,10 @@ public class PartitionsStatService {
             if (PHY_TABLE_ROWS_MAP.isEmpty() || !usePhyTableRowsCache || HAS_CHANGED_COLLECTION_ONLY_PARAM) {
                 PHY_TABLE_ROWS_MAP = new HashMap<>();
                 phyDbTablesInfoForHeatmap = StatsUtils.queryTableSchemaStatsForHeatmap(schemaNames, null,
-                    storageInstIdGroupNames, maxScan, maxSingleLogicSchemaCount, PHY_TABLE_ROWS_MAP);
+                    groupstorageInstIdPhyDbs, maxScan, maxSingleLogicSchemaCount, PHY_TABLE_ROWS_MAP);
             } else {
                 phyDbTablesInfoForHeatmap = StatsUtils.queryTableSchemaStaticsWithoutRowsForHeatmap(schemaNames,
-                    null, storageInstIdGroupNames, maxScan, maxSingleLogicSchemaCount, PHY_TABLE_ROWS_MAP);
+                    null, groupstorageInstIdPhyDbs, maxScan, maxSingleLogicSchemaCount, PHY_TABLE_ROWS_MAP);
             }
         }
 
@@ -180,10 +180,10 @@ public class PartitionsStatService {
                 continue;
             }
             List<PartitionGroupRecord> partitionGroupRecords = tableGroupConfig.getPartitionGroupRecords();
-            Map<String, String> partitionPyhDbMap = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+            Map<String, String> partitionGroupMap = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
             if (CollectionUtils.isNotEmpty(partitionGroupRecords)) {
-                partitionPyhDbMap.putAll(partitionGroupRecords.stream().collect(Collectors.toMap(
-                    PartitionGroupRecord::getPartition_name, PartitionGroupRecord::getPhy_db)));
+                partitionGroupMap.putAll(partitionGroupRecords.stream().collect(Collectors.toMap(
+                    PartitionGroupRecord::getPartition_name, PartitionGroupRecord::getGroup_Name)));
             }
             for (String logicalTableName : tableGroupConfig.getAllTables()) {
                 logicalTableName = logicalTableName.toLowerCase();
@@ -221,8 +221,8 @@ public class PartitionsStatService {
                     }
                     tableRowList.add(tableRow);
 
-                    String phyDb = partitionPyhDbMap.get(record.getName());
-                    Pair<String/**storageInstId**/, String/**groupName**/> pair = storageInstIdGroupNames.get(phyDb);
+                    String groupName = partitionGroupMap.get(record.getName());
+                    Pair<String/**storageInstId**/, String/**physicalDb**/> pair = groupstorageInstIdPhyDbs.get(groupName);
                     String storageInstId = pair.getKey();
 
                     partitionsNum++;

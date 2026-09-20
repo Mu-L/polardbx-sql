@@ -158,7 +158,9 @@ public class AlterTableGroupMergePartitionPreparedData extends AlterTableGroupBa
                     partitionGroupRecord.partition_name = getNewPartitionNames().get(0) + newTemplatePartName;
                     partitionGroupRecord.tg_id = tableGroupId;
 
-                    partitionGroupRecord.phy_db = targetGroupDetailInfoExRecords.get(i % targetDbCount).phyDbName;
+                    partitionGroupRecord.setPhy_db(targetGroupDetailInfoExRecords.get(i % targetDbCount).phyDbName);
+                    partitionGroupRecord.setGroup_Name(
+                        targetGroupDetailInfoExRecords.get(i % targetDbCount).getGroupName());
 
                     partitionGroupRecord.locality = "";
                     partitionGroupRecord.pax_group_id = 0L;
@@ -174,7 +176,9 @@ public class AlterTableGroupMergePartitionPreparedData extends AlterTableGroupBa
                 partitionGroupRecord.pax_group_id = 0L;
 
                 LocalityDesc defaultLocalityDesc = tableGroupConfig.getLocalityDesc();
-                partitionGroupRecord.phy_db = targetGroupDetailInfoExRecords.get(i % targetDbCount).phyDbName;
+                partitionGroupRecord.setPhy_db(targetGroupDetailInfoExRecords.get(0).phyDbName);
+                partitionGroupRecord.setGroup_Name(
+                    targetGroupDetailInfoExRecords.get(0).getGroupName());
                 partitionGroupRecord.locality = targetLocality.toString();
                 inVisiblePartitionGroups.add(partitionGroupRecord);
             }
@@ -191,14 +195,17 @@ public class AlterTableGroupMergePartitionPreparedData extends AlterTableGroupBa
             do {
                 for (String newPartitionName : getNewPartitionNames()) {
                     PartitionGroupRecord partitionGroupRecord = new PartitionGroupRecord();
-                    if (isUseTemplatePart() && getLogicalParts().size() > 0) {
+                    if (isUseTemplatePart() && !getLogicalParts().isEmpty()) {
                         partitionGroupRecord.partition_name = getLogicalParts().get(j) + newPartitionName;
                     } else {
                         partitionGroupRecord.partition_name = newPartitionName;
                     }
                     partitionGroupRecord.visible = 0;
                     partitionGroupRecord.tg_id = tableGroupId;
-                    partitionGroupRecord.phy_db = targetGroupDetailInfoExRecords.get(i % targetDbCount).phyDbName;
+                    partitionGroupRecord.setPhy_db(
+                        targetGroupDetailInfoExRecords.get(i % targetDbCount).getPhyDbName());
+                    partitionGroupRecord.setGroup_Name(
+                        targetGroupDetailInfoExRecords.get(i % targetDbCount).getGroupName());
                     partitionGroupRecord.locality = targetLocality.toString();
                     i++;
                     partitionGroupRecord.pax_group_id = 0L;

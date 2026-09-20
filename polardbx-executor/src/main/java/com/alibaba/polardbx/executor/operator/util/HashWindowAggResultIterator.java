@@ -16,30 +16,40 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableIntArrayList;
+import com.alibaba.polardbx.common.collection.MemoryCountableObjectArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.google.common.base.Preconditions;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
+import org.openjdk.jol.info.ClassLayout;
 
-import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class HashWindowAggResultIterator implements AggResultIterator {
-    private final List<Chunk> valueChunks;
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(HashWindowAggResultIterator.class).instanceSize();
 
     private final AtomicInteger current = new AtomicInteger();
     private final int inputChunkSize;
 
-    private final List<Chunk> inputChunks;
-    private final List<IntArrayList> groupIds;
+    private final MemoryCountableObjectArrayList<Chunk> valueChunks;
 
+    // reference
+    @FieldMemoryCounter(value = false)
+    private final MemoryCountableObjectArrayList<Chunk> inputChunks;
+    @FieldMemoryCounter(value = false)
+    private final MemoryCountableObjectArrayList<MemoryCountableIntArrayList> groupIds;
+    @FieldMemoryCounter(value = false)
     private BlockBuilder[] valueBlockBuilders;
 
     private final int chunkSize;
 
-    public HashWindowAggResultIterator(List<Chunk> valueChunks,
-                                       List<Chunk> inputChunks, List<IntArrayList> groupIds,
+    public HashWindowAggResultIterator(MemoryCountableObjectArrayList<Chunk> valueChunks,
+                                       MemoryCountableObjectArrayList<Chunk> inputChunks,
+                                       MemoryCountableObjectArrayList<MemoryCountableIntArrayList> groupIds,
                                        BlockBuilder[] blockBuilders, int chunkSize) {
         Preconditions.checkArgument(groupIds.size() == inputChunks.size(),
             "size of input chunk should be same with group id list");
@@ -49,6 +59,13 @@ public class HashWindowAggResultIterator implements AggResultIterator {
         this.inputChunkSize = inputChunks.size();
         this.valueBlockBuilders = blockBuilders;
         this.chunkSize = chunkSize;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(current)
+            + FastMemoryCounter.sizeOf(valueChunks);
     }
 
     @Override

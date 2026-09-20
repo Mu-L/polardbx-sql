@@ -794,6 +794,7 @@ public class MySqlLexer extends Lexer {
 
             for (; ; ) {
                 if (ch == '\r') {
+                    line++;
                     if (charAt(pos + 1) == '\n') {
                         bufPos += 2;
                         scanChar();
@@ -806,6 +807,7 @@ public class MySqlLexer extends Lexer {
                 }
 
                 if (ch == '\n') {
+                    line++;
                     scanChar();
                     bufPos++;
                     break;

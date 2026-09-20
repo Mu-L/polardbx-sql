@@ -1,6 +1,6 @@
 package com.alibaba.polardbx.executor.ddl.job.task.columnar;
 
-import com.alibaba.polardbx.executor.columnar.checker.ICciChecker;
+import com.alibaba.polardbx.executor.columnar.checker.AbstractCciChecker;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.CheckCciPrepareData;
 import com.google.common.collect.ImmutableList;
@@ -31,7 +31,7 @@ public class CheckCciSnapshotTaskTest {
         Assert.assertEquals(index, task.getIndexName());
 
         ExecutionContext ec = new ExecutionContext();
-        ICciChecker checker = mock(ICciChecker.class);
+        AbstractCciChecker checker = mock(AbstractCciChecker.class);
         when(checker.getCheckReports(any())).then(
             invocation -> {
                 Collection<String> reports = invocation.getArgument(0);
@@ -61,8 +61,8 @@ public class CheckCciSnapshotTaskTest {
         Assert.assertEquals(index, task.getIndexName());
 
         ExecutionContext ec = new ExecutionContext();
-        ICciChecker checker = mock(ICciChecker.class);
-        doThrow(new RuntimeException("testFailWithException")).when(checker).check(ec);
+        AbstractCciChecker checker = mock(AbstractCciChecker.class);
+        doThrow(new RuntimeException("testFailWithException")).when(checker).checkSnapshot(ec);
 
         task.setJobId(0L);
         task.doCheck(ec, checker);

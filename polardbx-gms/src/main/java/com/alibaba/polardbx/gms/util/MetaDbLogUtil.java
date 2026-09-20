@@ -41,7 +41,7 @@ public class MetaDbLogUtil {
      *      11. db type of server (such as DRDS/PolarDB-X)
      * </pre>
      */
-    public static final Logger START_UP_LOG = LoggerFactory.getLogger("START_UP_LOG");
+    public static final Logger START_UP_LOG = LoggerFactory.getLogger(MetaDbLogUtil.class);
 
     /**
      * Print all dynamic configs from the change of opVersion of data_id
@@ -54,8 +54,19 @@ public class MetaDbLogUtil {
     public static final Logger META_DB_LOG = LoggerFactory.getLogger("META_DB_LOG");
 
     /**
+     * Logger of ddl_meta_log
+     */
+    public static final Logger DDL_META_LOG = LoggerFactory.getLogger("DDL_META_LOG");
+
+    /**
+     * Logger of ddl_engine_log
+     */
+    public static final Logger DDL_ENGINE_LOG = LoggerFactory.getLogger("DDL_ENGINE_LOG");
+
+
+    /**
      * Print all the check ha result of ha checker
      */
-    public static final Logger CHECK_HA_LOG = LoggerFactory.getLogger("CHECK_HA_LOG");
+    public static final Logger CHECK_HA_LOG = LoggerFactory.getLogger("META_DB_LOG");
 
 }

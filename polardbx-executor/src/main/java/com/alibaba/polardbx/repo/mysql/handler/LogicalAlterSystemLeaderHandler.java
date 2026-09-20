@@ -57,7 +57,7 @@ public class LogicalAlterSystemLeaderHandler extends HandlerCommon {
         int resultCount = 0;
         List<List<Map<String, Object>>> results;
         try {
-            results = SyncManagerHelper.sync(
+            results = SyncManagerHelper.syncThrowExceptions(
                 new AlterSystemReloadLeaderSyncAction(nodeId), SyncScope.MASTER_ONLY);
         } catch (Throwable e) {
             logger.error(e);

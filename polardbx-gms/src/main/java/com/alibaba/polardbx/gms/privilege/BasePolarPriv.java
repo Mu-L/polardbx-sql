@@ -139,6 +139,12 @@ public abstract class BasePolarPriv {
         privileges.put(kind, true);
     }
 
+    public void copyPriv(BasePolarPriv polarPriv) {
+        if (polarPriv != null) {
+            this.privileges.putAll(polarPriv.privileges);
+        }
+    }
+
     public boolean canCover(BasePolarPriv privToCover, boolean checkGrant) {
         // check if current priv can cover all the privileges of other
         for (PrivilegeKind kind : privToCover.privileges.keySet()) {

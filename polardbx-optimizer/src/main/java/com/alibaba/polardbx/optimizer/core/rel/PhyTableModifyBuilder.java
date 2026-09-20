@@ -41,6 +41,7 @@ import org.apache.calcite.sql.SqlBasicCall;
 import org.apache.calcite.sql.SqlDelete;
 import org.apache.calcite.sql.SqlDynamicParam;
 import org.apache.calcite.sql.SqlIdentifier;
+import org.apache.calcite.sql.SqlInsert;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
@@ -106,6 +107,29 @@ public class PhyTableModifyBuilder extends PhyOperationBuilderCommon {
 
         // Build PhyTableOperation for insert
         return phyTableInsertbuilder.build(shardResults);
+    }
+
+    /**
+     * Build primary INSERT plans from the shard result already used by a route-dependent write hook.
+     *
+     * <p>For an externalized relocate row, the routing pass sees the logical row, then the hook replaces its body with
+     * a BlobRef. Re-running {@code shardValues()} after that replacement would create a second routing decision. This
+     * method keeps the original route authoritative while rebuilding only the batch parameters consumed by the
+     * physical INSERT.</p>
+     */
+    public static List<RelNode> buildInsertByShardResults(
+        LogicalInsert insert,
+        List<List<Object>> values,
+        ExecutionContext insertEc,
+        SqlInsert sqlTemplate,
+        List<PhyTableInsertSharder.PhyTableShardResult> shardResults) {
+        if (values == null || values.isEmpty()) {
+            return new ArrayList<>();
+        }
+        insertEc.getParams().setBatchParams(BuildPlanUtils.buildInsertBatchParam(values));
+        final PhyTableInsertBuilder builder = new PhyTableInsertBuilder(sqlTemplate, insertEc, insert,
+            insert.getDbType(), insert.getSchemaName());
+        return builder.build(shardResults);
     }
 
     /**

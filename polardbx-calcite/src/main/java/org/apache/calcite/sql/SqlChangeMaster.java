@@ -23,9 +23,7 @@ import org.apache.commons.lang.StringUtils;
 import java.util.List;
 
 /**
- * @Author ShuGuang
- * @Description
- * @Date 2021/3/4 11:41 上午
+ *
  */
 
 public class SqlChangeMaster extends SqlReplicationBase {
@@ -36,15 +34,22 @@ public class SqlChangeMaster extends SqlReplicationBase {
         keyWord = "CHANGE MASTER TO";
     }
 
+    private boolean ddlLoad = false;
+
     public SqlChangeMaster(SqlParserPos pos, List<Pair<SqlNode, SqlNode>> options, SqlNode channel,
-                           SqlNode subChannel) {
+                           SqlNode subChannel, boolean ddlLoad) {
         super(pos, options, channel, subChannel);
+        this.ddlLoad = ddlLoad;
     }
 
     @Override
     protected void parseParams(String k, String v) {
         k = StringUtils.upperCase(k);
         params.put(k, v);
+    }
+
+    public boolean isDdlLoad() {
+        return ddlLoad;
     }
 
     public static class SqlChangeMasterOperator extends SqlReplicationOperator {

@@ -91,6 +91,7 @@ import com.alibaba.polardbx.optimizer.core.rel.dal.PhyShow;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalCreateDatabase;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalDropDatabase;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
 import com.alibaba.polardbx.optimizer.core.rel.mpp.MppExchange;
 import com.alibaba.polardbx.optimizer.hint.operator.BaseHintOperator;
 import com.alibaba.polardbx.optimizer.hint.operator.HintCmdNode;
@@ -110,7 +111,9 @@ import com.alibaba.polardbx.optimizer.parse.custruct.FastSqlConstructUtils;
 import com.alibaba.polardbx.optimizer.parse.hint.SimpleHintParser;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfoManager;
+import com.alibaba.polardbx.optimizer.partition.PartitionInfoUtil;
 import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
+import com.alibaba.polardbx.optimizer.partition.common.PartitionTableType;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartPrunedResult;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruneStep;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruneStepBuilder;
@@ -200,7 +203,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
-import java.util.BitSet;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -457,6 +459,7 @@ public class HintPlanner extends TddlSqlToRelConverter {
         // replace table name
         ReplaceTblWithPhyTblVisitor visitor = new ReplaceTblWithPhyTblVisitor(schemaName, ec, hasDirectHint);
         ast = ast.accept(visitor);
+
         if (visitor.getUniqGroupName() != null) {
             finalGroups.add(visitor.getUniqGroupName());
         } else {
@@ -765,6 +768,7 @@ public class HintPlanner extends TddlSqlToRelConverter {
             // replace table name
             ReplaceTblWithPhyTblVisitor visitor = new ReplaceTblWithPhyTblVisitor(schemaName, ec, hasDirectHint);
             SqlNode ast = originAst.accept(visitor);
+
             if (visitor.getUniqGroupName() != null) {
                 finalGroups.add(visitor.getUniqGroupName());
             } else {
@@ -1125,6 +1129,17 @@ public class HintPlanner extends TddlSqlToRelConverter {
                     schemaName = lv.getSchemaName();
                 } // end of else
             } // end of if
+
+            // Block SCAN while an externalized-column write rewrite is required, including MCE migration states.
+            if (cmdBean.isScan()) {
+                for (String tb : tableNames) {
+                    TableMeta tbMeta = ec.getSchemaManager(schemaName).getTableWithNull(tb);
+                    if (ExternalizedDmlRewriter.needsHandling(tbMeta)) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
+                            "SCAN hint on table with externalized columns: " + tb);
+                    }
+                }
+            }
 
             /**
              * build target table
@@ -1542,7 +1557,7 @@ public class HintPlanner extends TddlSqlToRelConverter {
                 PartPrunedResult tbPrunedResult = PartitionPruner.doPruningByStepInfo(pruneStepInfo, ec);
                 allTbPrunedResults.add(tbPrunedResult);
             }
-            return PartitionPrunerUtils.buildTargetTablesByPartPrunedResults(allTbPrunedResults);
+            return PartitionPrunerUtils.buildTargetTablesByPartPrunedResults(allTbPrunedResults, ec);
         } else {
             Map<String, List<List<String>>> tmpTargetTable;
             Map<String, Map<String, Comparative>> comparatives = new HashMap<>();
@@ -1768,6 +1783,16 @@ public class HintPlanner extends TddlSqlToRelConverter {
         CursorMeta cursorMeta = executionPlan.getCursorMeta();
 
         List<String> logTables = logTbls;
+        Map<String, Set<String>> replicaLogTbGroupNameMap = new HashMap<>();
+        for (String logTb : logTbls) {
+            TableMeta tableMeta = ec.getSchemaManager(schemaName).getTable(logTb);
+            if (tableMeta != null
+                && tableMeta.getPartitionInfo() != null
+                && tableMeta.getPartitionInfo().getTableType() == PartitionTableType.REPLICAS_TABLE) {
+                replicaLogTbGroupNameMap.put(logTb, PartitionInfoUtil.getTableTopology(schemaName, logTb).keySet());
+            }
+        }
+
         BytesSql sql = RelUtils.toNativeBytesSql(clonedAst, DbType.MYSQL);
 
         List<RelNode> phyTbOps = new ArrayList<>();
@@ -1776,9 +1801,15 @@ public class HintPlanner extends TddlSqlToRelConverter {
 
         boolean containLogTbls = !logTables.isEmpty();
 
+        loop:
         for (int i = 0; i < finalGroups.size(); i++) {
             String targetDb = finalGroups.get(i);
-
+            for (Map.Entry<String, Set<String>> entry : replicaLogTbGroupNameMap.entrySet()) {
+                //复制表并不一定存在于所有group
+                if (!entry.getValue().contains(targetDb)) {
+                    continue loop;
+                }
+            }
             if (!onlyContainsBroTbl && singlePhyGrp != null) {
                 if (!targetDb.equals(singlePhyGrp)) {
                     continue;
@@ -2075,7 +2106,7 @@ public class HintPlanner extends TddlSqlToRelConverter {
                                           ExecutionContext ec) {
         // calculate target tables
         Map<String, Map<String, Comparative>> comparative = new HashMap<>();
-        ConditionExtractor.partitioningConditionFrom(logicalView).extract().allCondition(comparative, null, ec);
+        ConditionExtractor.partitioningConditionFrom(logicalView).extract().allCondition(comparative, ec, false);
         logicalView.setComparativeHintCache(comparative);
     }
 

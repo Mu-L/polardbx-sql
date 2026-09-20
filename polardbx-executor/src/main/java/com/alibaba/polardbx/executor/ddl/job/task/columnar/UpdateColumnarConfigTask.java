@@ -13,7 +13,6 @@ import com.alibaba.polardbx.gms.metadb.table.ColumnarConfigRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingRecord;
 import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
-import com.alibaba.polardbx.gms.util.DdlMetaLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import lombok.Getter;
@@ -94,6 +93,16 @@ public class UpdateColumnarConfigTask extends BaseGmsTask {
                     tmpRecord.configValue = ColumnarConfig.getValue(tmpRecord.configKey, null, globalConfig);
                     configRecords.add(tmpRecord);
                 }
+                // Force backup.
+                {
+                    ColumnarConfigRecord tmpRecord = new ColumnarConfigRecord();
+                    tmpRecord.tableId = tableId;
+                    tmpRecord.configKey = ColumnarOptions.COLUMNAR_BACKUP_ENABLE;
+                    tmpRecord.configValue = "true";
+                    configRecords.add(tmpRecord);
+                }
+            } else if (ColumnarConfig.ARCHIVE.equalsIgnoreCase(record.configValue)) {
+                // This columnar index is an archive.
                 // Force backup.
                 {
                     ColumnarConfigRecord tmpRecord = new ColumnarConfigRecord();

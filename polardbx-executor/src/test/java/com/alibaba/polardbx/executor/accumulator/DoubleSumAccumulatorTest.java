@@ -1,5 +1,6 @@
 package com.alibaba.polardbx.executor.accumulator;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.DoubleBlock;
 import com.alibaba.polardbx.executor.chunk.DoubleBlockBuilder;
@@ -24,10 +25,11 @@ public class DoubleSumAccumulatorTest {
     public void before() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new SumV2(), DataTypes.DoubleType, new DataType[] {DataTypes.DoubleType}, COUNT,
-                new ExecutionContext());
+                new ExecutionContext(), null);
 
         this.accumulator = (DoubleSumAccumulator) accumulator;
         Assert.assertEquals(1, accumulator.getInputTypes().length);
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
 
         this.random = new Random();
     }
@@ -48,13 +50,14 @@ public class DoubleSumAccumulatorTest {
         for (int i = 0; i < block.getPositionCount(); i++) {
             accumulator.accumulate(0, block, i);
         }
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
 
         DoubleBlockBuilder resultBuilder = new DoubleBlockBuilder(COUNT);
         accumulator.writeResultTo(0, resultBuilder);
         Block resultBlock = resultBuilder.build();
         Assert.assertEquals(1, resultBlock.getPositionCount());
         Assert.assertEquals(result, resultBlock.getDouble(0), 1e-10);
-
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
         long size = accumulator.estimateSize();
         Assert.assertTrue(size > 0);
     }

@@ -1,8 +1,8 @@
 package com.alibaba.polardbx.qatest.ddl.cdc.entity;
 
-import com.alibaba.polardbx.cdc.CdcManager;
-import com.alibaba.polardbx.cdc.entity.LogicMeta;
 import com.alibaba.polardbx.common.cdc.entity.DDLExtInfo;
+import com.alibaba.polardbx.gms.metadb.cdc.entity.LogicMeta;
+import com.alibaba.polardbx.gms.metadb.cdc.entity.MetaInfo;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import lombok.AllArgsConstructor;
@@ -35,7 +35,7 @@ public class DdlRecordInfo {
     private String sqlKind;
     private int visibility;
     private DDLExtInfo ddlExtInfo;
-    private CdcManager.MetaInfo metaInfo;
+    private MetaInfo metaInfo;
 
     public String getEffectiveSql() {
         return StringUtils.isNotBlank(ddlExtInfo.getOriginalDdl()) ? ddlExtInfo.getOriginalDdl() : ddlSql;

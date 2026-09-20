@@ -89,9 +89,17 @@ public class ColumnarDirectPlanTest extends DDLBaseNewDBTestCase {
         checkNoOSSTableScan(sql);
         sql = String.format("explain simple select * from %s force index(%s)", tb1, colIdxA);
         checkAllOSSTableScan(sql);
-        sql = String.format("explain simple insert into %s select * from %s force index(%s)", tb2, tb1, colIdxA);
+        sql = COL_OPT + String.format("explain simple insert into %s select * from %s force index(%s)", tb2, tb1,
+            colIdxA);
         checkOSSTableScanAndLogicalInsert(sql);
-        sql = String.format("explain simple replace into %s select * from %s force index(%s)", tb2, tb1, colIdxA);
+        sql =
+            APHINT + String.format("explain simple insert into %s select * from %s force index(%s)", tb2, tb1, colIdxA);
+        checkOSSTableScanAndLogicalInsert(sql);
+        sql = String.format("explain simple replace into %s select * from %s force index(%s)", tb2, tb1,
+            colIdxA);
+        checkOSSTableScanAndLogicalInsert(sql);
+        sql = COL_OPT + String.format("explain simple replace into %s select * from %s force index(%s)", tb2, tb1,
+            colIdxA);
         checkOSSTableScanAndLogicalInsert(sql);
 
         sql = String.format("explain simple select * from %s", tb3);
@@ -107,15 +115,15 @@ public class ColumnarDirectPlanTest extends DDLBaseNewDBTestCase {
         sql = APHINT + String.format("explain simple update %s set b = 1 where a= 1", tb3);
         checkNoOSSTableScan(sql);
         sql = String.format("explain simple delete from %s force index(%s) where a = 1", tb1, colIdxA);
-        checkNoOSSTableScan(sql);
+        checkCantUse(sql);
 
         // subquery
         sql = String.format("explain simple select *,(select 1 from %s limit 1) from %s", tb1, tb2);
         checkNoOSSTableScan(sql);
         sql = APHINT + String.format("explain simple select *,(select 1 from %s limit 1) from %s", tb1, tb2);
-        checkNoOSSTableScan(sql);
+        checkAllOSSTableScan(sql);
         sql = APHINT + String.format("explain simple select *,(select 1 from %s limit 1) from %s", tb1, tb3);
-        checkNoOSSTableScan(sql);
+        checkAllOSSTableScan(sql);
         sql = COL_OPT + String.format("explain simple select *,(select 1 from %s limit 1) from %s", tb1, tb3);
         checkNoOSSTableScan(sql);
 
@@ -129,7 +137,7 @@ public class ColumnarDirectPlanTest extends DDLBaseNewDBTestCase {
         checkOSSTableScanAndLogicalView(sql);
         sql = APHINT + String.format("explain simple select *,(select 1 from %s force index(%s) limit 1) from %s", tb1,
             colIdxA, tb2);
-        checkOSSTableScanAndLogicalView(sql);
+        checkAllOSSTableScan(sql);
         sql =
             COL_OPT + String.format("explain simple select *,(select 1 from %s force index(%s) limit 1) from %s",
                 tb1, colIdxA, tb2);
@@ -160,11 +168,11 @@ public class ColumnarDirectPlanTest extends DDLBaseNewDBTestCase {
         sql = APHINT + String.format(
             "explain simple select *,(select 1 from %s force index(%s) limit 1) from %s", tb1,
             colIdxA, tb3);
-        checkOSSTableScanAndLogicalView(sql);
+        checkAllOSSTableScan(sql);
 
         sql = APHINT + String.format(
             "explain simple select *,(select 1 from %s limit 1) from %s ignore index(idx_c)", tb1, tb2);
-        checkNoOSSTableScan(sql);
+        checkAllOSSTableScan(sql);
         sql = APHINT + String.format(
             "explain simple select *,(select 1 from %s ignore index(%s) limit 1) from %s ignore index(idx_c)", tb1,
             colIdxA, tb2);
@@ -192,6 +200,10 @@ public class ColumnarDirectPlanTest extends DDLBaseNewDBTestCase {
                 .stream().flatMap(Collection::stream).map(Object::toString).collect(Collectors.joining(""));
         assertWithMessage(sql).that(explain).contains("OSSTableScan");
         assertWithMessage(sql).that(explain).contains("LogicalView");
+    }
+
+    void checkCantUse(String sql) {
+        JdbcUtil.executeQueryFaied(tddlConnection, sql, "ERR_FORCE_COLUMNAR_INDEX");
     }
 
     void checkOSSTableScanAndLogicalInsert(String sql) {

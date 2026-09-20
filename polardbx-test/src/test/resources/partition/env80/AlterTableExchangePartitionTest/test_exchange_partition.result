@@ -1,0 +1,136 @@
+## DISABLE_FAST_SQL_PARSER
+CREATE TABLE `part1` (
+`a` int DEFAULT NULL,
+`b` int DEFAULT NULL,
+KEY `auto_shard_key_a` USING BTREE (`a`),
+KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+SUBPARTITION BY KEY(`b`)
+SUBPARTITIONS 3
+insert into part1(a,b) values(1,1),(2,2),(3,3),(1,2),(1,3),(2,1),(2,3),(3,1),(3,2)
+CREATE TABLE `single1` (
+`a` int DEFAULT NULL,
+`b` int DEFAULT NULL,
+KEY `auto_shard_key_a` USING BTREE (`a`),
+KEY `auto_shard_key_b` USING BTREE (`b`)
+) single
+alter table part1 exchange subpartition p1sp1 with table single1
+select * from single1 order by a,b asc
+a,b
+2,2
+2,3
+3,2
+3,3
+select * from part1  order by a,b asc
+a,b
+1,1
+1,2
+1,3
+2,1
+3,1
+alter table part1 exchange subpartition p1sp1 with table single1
+select * from single1 order by a,b asc
+a,b
+select * from part1 order by a,b asc
+a,b
+1,1
+1,2
+1,3
+2,1
+2,2
+2,3
+3,1
+3,2
+3,3
+CREATE TABLE `part2` (
+`a` int DEFAULT NULL,
+`b` int DEFAULT NULL,
+KEY `auto_shard_key_a` USING BTREE (`a`),
+KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB
+PARTITION BY KEY(`a`)
+PARTITIONS 3
+insert into part2(a,b) values(1,1),(2,2),(3,3),(1,2),(1,3),(2,1),(2,3),(3,1),(3,2)
+CREATE TABLE `single2` (
+`a` int DEFAULT NULL,
+`b` int DEFAULT NULL,
+KEY `auto_shard_key_a` USING BTREE (`a`),
+KEY `auto_shard_key_b` USING BTREE (`b`)
+) single
+alter table part2 exchange partition p1 with table single2
+select * from part2 order by a,b asc
+a,b
+1,1
+1,2
+1,3
+select * from single2 order by a,b asc
+a,b
+2,1
+2,2
+2,3
+3,1
+3,2
+3,3
+alter table part2 exchange partition p1 with table single2
+select * from part2 order by a,b asc
+a,b
+1,1
+1,2
+1,3
+2,1
+2,2
+2,3
+3,1
+3,2
+3,3
+select * from single2 order by a,b asc
+a,b
+CREATE TABLE `single3` (
+`a` int DEFAULT NULL,
+`b` int DEFAULT NULL,
+`c` int DEFAULT NULL,
+KEY `auto_shard_key_a` USING BTREE (`a`),
+KEY `auto_shard_key_b` USING BTREE (`b`)
+) single
+CREATE TABLE `single4` (
+`a` int DEFAULT NULL,
+`b` int DEFAULT NULL,
+`c` int DEFAULT NULL,
+KEY `auto_shard_key_a` USING BTREE (`a`),
+KEY `auto_shard_key_b` USING BTREE (`b`)
+) single
+## error_msg: $# Only one partition is permitted to be exchanged #$
+alter table part2 exchange partition p1,p2 with table single3
+Only one partition is permitted to be exchanged
+## error_msg: $# partition p2 is not exist #$
+alter table single2 exchange partition p2 with table single3
+partition p2 is not exist
+## error_msg: $# the definition of single2 and single3 is not equal #$
+alter table single2 exchange partition p1 with table single3
+the definition of single2 and single3 is not equal
+alter table single4 exchange partition p1 with table single3;
+drop database if exists d_test_exchg_part_rand1;
+create database d_test_exchg_part_rand1 mode=auto;
+use d_test_exchg_part_rand1;
+CREATE TABLE `single5` (
+`a` int DEFAULT NULL,
+`b` int DEFAULT NULL,
+`c` int DEFAULT NULL,
+KEY `auto_shard_key_a` USING BTREE (`a`),
+KEY `auto_shard_key_b` USING BTREE (`b`)
+) single;
+drop database if exists d_test_exchg_part_rand2;
+create database d_test_exchg_part_rand2 mode=auto;
+use d_test_exchg_part_rand2;
+CREATE TABLE `single6` (
+`a` int DEFAULT NULL,
+`b` int DEFAULT NULL,
+`c` int DEFAULT NULL,
+KEY `auto_shard_key_a` USING BTREE (`a`),
+KEY `auto_shard_key_b` USING BTREE (`b`)
+) single;
+## error_msg: $# It is not allowed to execute exchange partition command cross database #$
+alter table d_test_exchg_part_rand1.single5 exchange partition p1 with table d_test_exchg_part_rand2.single6;
+It is not allowed to execute exchange partition command cross database

@@ -34,24 +34,25 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.InsertIntoTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.StoreTableLocalityTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcDdlMarkTask;
+import com.alibaba.polardbx.executor.ddl.job.task.columnar.RegisterBlobColumnMappingTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlExceptionAction;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4CreateSelect;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4CreateTable;
-import com.alibaba.polardbx.gms.locality.LocalityDesc;
 import com.alibaba.polardbx.gms.lbac.LBACSecurityEntity;
 import com.alibaba.polardbx.gms.lbac.LBACSecurityManager;
+import com.alibaba.polardbx.gms.locality.LocalityDesc;
+import com.alibaba.polardbx.gms.metadb.table.ColumnsRecord;
+import com.alibaba.polardbx.gms.metadb.table.ExternalizedColumnInfo;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.LikeTableInfo;
 import com.google.common.collect.Lists;
 import org.apache.commons.collections.CollectionUtils;
 
-import java.sql.Connection;
 import java.util.List;
 import java.util.ArrayList;
-import java.sql.Connection;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -145,6 +146,9 @@ public class CreateTableJobFactory extends DdlJobFactory {
         CdcDdlMarkTask cdcDdlMarkTask = new CdcDdlMarkTask(schemaName, physicalPlanData, !fromTruncateTable,
             CollectionUtils.isNotEmpty(addedForeignKeys), versionId);
         cdcDdlMarkTask.setUseOriginalDDl(!fromTruncateTable);
+        cdcDdlMarkTask.setExternalColumnDdl(specialDefaultValueFlags != null
+            && specialDefaultValueFlags.values().stream().anyMatch(flags -> flags != null
+            && (flags & ColumnsRecord.FLAG_EXTERNALIZED_COLUMN) != 0L));
         CreateTableAddTablesMetaTask addTableMetaTask =
             new CreateTableAddTablesMetaTask(schemaName, logicalTableName, physicalPlanData.getDefaultDbIndex(),
                 physicalPlanData.getDefaultPhyTableName(), physicalPlanData.getSequence(),
@@ -169,6 +173,9 @@ public class CreateTableJobFactory extends DdlJobFactory {
         CreateTableShowTableMetaTask showTableMetaTask =
             new CreateTableShowTableMetaTask(schemaName, logicalTableName);
 
+        RegisterBlobColumnMappingTask registerBlobTask = buildRegisterBlobColumnMappingTask();
+
+        TableSyncTask showTableSyncTask = new TableSyncTask(schemaName, logicalTableName);
         TableSyncTask tableSyncTask = new TableSyncTask(schemaName, logicalTableName);
 
         ExecutableDdlJob4CreateTable result = new ExecutableDdlJob4CreateTable();
@@ -182,8 +189,10 @@ public class CreateTableJobFactory extends DdlJobFactory {
             addExtMetaTask,
             phyDdlTask,
             addTableMetaTask,
+            registerBlobTask,
             cdcDdlMarkTask,
             showTableMetaTask,
+            showTableSyncTask,
             storeLocalityTask,
             cesaTask,
             tableSyncTask);
@@ -233,6 +242,22 @@ public class CreateTableJobFactory extends DdlJobFactory {
         return result;
     }
 
+    protected RegisterBlobColumnMappingTask buildRegisterBlobColumnMappingTask() {
+        if (specialDefaultValueFlags == null) {
+            return null;
+        }
+        List<String> externalizedColumnNames = new ArrayList<>();
+        for (Map.Entry<String, Long> entry : specialDefaultValueFlags.entrySet()) {
+            if ((entry.getValue() & ColumnsRecord.FLAG_EXTERNALIZED_COLUMN) != 0) {
+                externalizedColumnNames.add(ExternalizedColumnInfo.toLogicalColumnName(entry.getKey()));
+            }
+        }
+        if (externalizedColumnNames.isEmpty()) {
+            return null;
+        }
+        return new RegisterBlobColumnMappingTask(schemaName, logicalTableName, externalizedColumnNames);
+    }
+
     protected CreateEntitySecurityAttrTask createCESATask() {
         List<LBACSecurityEntity> esaList = new ArrayList<>();
         if (physicalPlanData.getTableESA() != null) {
@@ -272,5 +297,8 @@ public class CreateTableJobFactory extends DdlJobFactory {
 
     @Override
     protected void sharedResources(Set<String> resources) {
+        if (likeTableInfo != null) {
+            resources.add(likeTableInfo.getSchemaName());
+        }
     }
 }

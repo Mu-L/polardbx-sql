@@ -5,10 +5,10 @@ package com.alibaba.polardbx.qatest.storagepool.importDatabase;
  */
 
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
-import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.gms.topology.StorageInfoRecord;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.collect.ImmutableList;
+import org.junit.Assert;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -134,7 +134,7 @@ public class ImportDatabaseRebalanceTest extends ImportDatabaseBase {
                 result = rs.getString("STATE");
             }
 
-            Assert.assertTrue(result != null && result.equalsIgnoreCase("ALL SUCCESS"));
+            Assert.assertTrue((result != null ? result : ""), result != null && result.equalsIgnoreCase("ALL SUCCESS"));
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
         }
@@ -157,7 +157,7 @@ public class ImportDatabaseRebalanceTest extends ImportDatabaseBase {
             String result = null;
             while (rs.next()) {
                 result = rs.getString("STATE");
-                Assert.assertTrue("ALL SUCCESS".equalsIgnoreCase(result));
+                Assert.assertTrue((result != null ? result : ""), "ALL SUCCESS".equalsIgnoreCase(result));
             }
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
@@ -197,7 +197,7 @@ public class ImportDatabaseRebalanceTest extends ImportDatabaseBase {
         List<String> distinctInstName =
             storageInstList.stream().map(x -> x.storageInstId).distinct().collect(Collectors.toList());
         final int instNum = distinctInstName.size();
-        Assert.assertTrue(instNum > 6);
+        Assert.assertTrue(String.valueOf(instNum), instNum > 6);
         Map<String, String> phyDbAndInstName = new TreeMap<>(String::compareToIgnoreCase);
         for (int i = 1; i < 5; i++) {
             phyDbAndInstName.put(schameNames.get(i), distinctInstName.get(i - 1));
@@ -234,7 +234,7 @@ public class ImportDatabaseRebalanceTest extends ImportDatabaseBase {
                 String result = null;
                 while (rs.next()) {
                     result = rs.getString("STATE");
-                    Assert.assertTrue("ALL SUCCESS".equalsIgnoreCase(result));
+                    Assert.assertTrue((result != null ? result : ""), "ALL SUCCESS".equalsIgnoreCase(result));
                 }
             } catch (Exception e) {
                 throw new TddlNestableRuntimeException(e);

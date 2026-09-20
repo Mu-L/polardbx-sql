@@ -70,7 +70,7 @@ public class InformationSchemaQueryInfoHandler extends BaseVirtualViewSubClassHa
             throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, e, e.getMessage());
         }
 
-        List<List<Map<String, Object>>> results = SyncManagerHelper.sync(showQueryListSyncAction,
+        List<List<Map<String, Object>>> results = SyncManagerHelper.syncIgnoreExceptions(showQueryListSyncAction,
             executionContext.getSchemaName(), SyncScope.ALL);
 
         for (List<Map<String, Object>> nodeRows : results) {

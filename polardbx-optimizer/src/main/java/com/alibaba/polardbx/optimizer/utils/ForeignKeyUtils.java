@@ -20,10 +20,9 @@ import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
 import com.alibaba.polardbx.common.ddl.newengine.DdlType;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
-import com.alibaba.polardbx.common.utils.CaseInsensitive;
-import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.TreeMaps;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
+import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
@@ -73,19 +72,22 @@ import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.mapping.Mapping;
 import org.apache.commons.collections.ListUtils;
 
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+
+import static org.apache.calcite.sql.SqlIdentifier.surroundWithBacktick;
 
 /**
  * @author wenki
@@ -520,38 +522,51 @@ public class ForeignKeyUtils {
         return refUpdateColumnList;
     }
 
+    public static void updateFkRelatedTableVersion(Connection metaDbConnection, String schemaName,
+                                                   String logicalTableName, String fkName)
+        throws SQLException {
+        TableMeta tableMeta =
+            OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTableWithNull(logicalTableName);
+        if (tableMeta == null) {
+            return;
+        }
+        Map<String, ForeignKeyData> foreignKeys = tableMeta.getForeignKeys();
+        for (Map.Entry<String, ForeignKeyData> e : foreignKeys.entrySet()) {
+            if (e.getValue().constraint.equalsIgnoreCase(fkName)) {
+                TableInfoManager.updateTableVersionWithoutDataId(e.getValue().refSchema, e.getValue().refTableName,
+                    metaDbConnection);
+            }
+        }
+    }
+
+    public static void updateFkRelatedTablesVersion(Connection metaDbConnection, String schemaName,
+                                                    String logicalTableName)
+        throws SQLException {
+        Map<String, Set<String>> fkTables =
+            ForeignKeyUtils.getAllForeignKeyRelatedTables(schemaName,
+                logicalTableName);
+        for (Map.Entry<String, Set<String>> entry : fkTables.entrySet()) {
+            for (String table : entry.getValue()) {
+                TableInfoManager.updateTableVersionWithoutDataId(entry.getKey(), table, metaDbConnection);
+            }
+        }
+    }
+
     public static Map<String, Set<String>> getAllForeignKeyRelatedTables(String schemaName, String tableName) {
-        Map<String, Set<String>> tables = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        Map<String, Set<String>> tables = new HashMap<>();
 
         TableMeta tableMeta =
             OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTableWithNull(tableName);
         if (tableMeta == null) {
             return tables;
         }
-        LinkedList<ForeignKeyData> fkQueue = new LinkedList<>(tableMeta.getForeignKeys().values());
-
-        while (!fkQueue.isEmpty()) {
-            ForeignKeyData data = fkQueue.remove();
-            String refSchemaName = data.refSchema;
-            String refTableName = data.refTableName;
-
-            Set<String> t =
-                tables.computeIfAbsent(refSchemaName, x -> new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER));
-            t.add(refTableName);
-
-            TableMeta refTableMeta =
-                OptimizerContext.getContext(refSchemaName).getLatestSchemaManager().getTableWithNull(refTableName);
-            if (refTableMeta == null) {
-                continue;
-            }
-
-            for (ForeignKeyData fk : refTableMeta.getForeignKeys().values()) {
-                if (GeneralUtil.isNotEmpty(tables.get(fk.refSchema)) &&
-                    tables.get(fk.refSchema).contains(fk.refTableName)) {
-                    continue;
-                }
-                fkQueue.push(fk);
-            }
+        Map<String, ForeignKeyData> foreignKeys = tableMeta.getForeignKeys();
+        for (Map.Entry<String, ForeignKeyData> e : foreignKeys.entrySet()) {
+            tables.computeIfAbsent(e.getValue().refSchema, x -> new HashSet<>()).add(e.getValue().refTableName);
+        }
+        Map<String, ForeignKeyData> refForeignKeys = tableMeta.getReferencedForeignKeys();
+        for (Map.Entry<String, ForeignKeyData> e : refForeignKeys.entrySet()) {
+            tables.computeIfAbsent(e.getValue().schema, x -> new HashSet<>()).add(e.getValue().tableName);
         }
         return tables;
     }
@@ -724,4 +739,47 @@ public class ForeignKeyUtils {
         return buffer.toString();
     }
 
+    public static void prepareForeignKeyData(TableMeta tableMeta, List<ForeignKeyData> modifyForeignKeys,
+                                             List<com.alibaba.polardbx.common.utils.Pair<String, String>> addForeignKeySql,
+                                             List<com.alibaba.polardbx.common.utils.Pair<String, String>> dropForeignKeySql) {
+        Set<ForeignKeyData> addFks = new HashSet<>();
+        Set<ForeignKeyData> removeFks = new HashSet<>();
+
+        addFks.addAll(tableMeta.getForeignKeys().values());
+        addFks.addAll(tableMeta.getReferencedForeignKeys().values());
+        removeFks.addAll(tableMeta.getForeignKeys().values());
+        removeFks.addAll(tableMeta.getReferencedForeignKeys().values());
+        modifyForeignKeys.addAll(tableMeta.getForeignKeys().values());
+
+        genAddForeignKeySql(addFks, addForeignKeySql);
+        genDropForeignKeySql(removeFks, dropForeignKeySql);
+    }
+
+    public static void genAddForeignKeySql(Set<ForeignKeyData> foreignKeys,
+                                           List<com.alibaba.polardbx.common.utils.Pair<String, String>> addForeignKeySql) {
+        String sql;
+        String rollbackSql;
+        for (ForeignKeyData data : foreignKeys) {
+            sql = String.format("ALTER TABLE %s.%s ADD ",
+                surroundWithBacktick(data.schema), surroundWithBacktick(data.tableName)) + data + PARTITION_FK_SUB_JOB;
+            rollbackSql = String.format("ALTER TABLE %s.%s DROP FOREIGN KEY %s",
+                surroundWithBacktick(data.schema), surroundWithBacktick(data.tableName),
+                surroundWithBacktick(data.constraint)) + PARTITION_FK_SUB_JOB;
+            addForeignKeySql.add(new com.alibaba.polardbx.common.utils.Pair<>(sql, rollbackSql));
+        }
+    }
+
+    public static void genDropForeignKeySql(Set<ForeignKeyData> foreignKeys,
+                                            List<com.alibaba.polardbx.common.utils.Pair<String, String>> dropForeignKeySql) {
+        String sql;
+        String rollbackSql;
+        for (ForeignKeyData data : foreignKeys) {
+            sql = String.format("ALTER TABLE %s.%s DROP FOREIGN KEY %s",
+                surroundWithBacktick(data.schema), surroundWithBacktick(data.tableName),
+                surroundWithBacktick(data.constraint)) + PARTITION_FK_SUB_JOB;
+            rollbackSql = String.format("ALTER TABLE %s.%s ADD ",
+                surroundWithBacktick(data.schema), surroundWithBacktick(data.tableName)) + data + PARTITION_FK_SUB_JOB;
+            dropForeignKeySql.add(new com.alibaba.polardbx.common.utils.Pair<>(sql, rollbackSql));
+        }
+    }
 }

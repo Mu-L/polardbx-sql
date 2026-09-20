@@ -176,7 +176,9 @@ public class CorrelateExec extends AbstractExecutor {
     @Override
     public synchronized void forceClose() {
         try {
-            left.close();
+            if (left != null) {
+                left.close();
+            }
         } catch (Exception ex) {
             logger.error("Failed to close correlate left node", ex);
         } finally {

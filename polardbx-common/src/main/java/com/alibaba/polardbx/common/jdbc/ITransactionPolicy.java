@@ -31,6 +31,11 @@ public interface ITransactionPolicy {
         TSO,
 
         /**
+         * TSO trx with optimization of trx log.
+         */
+        TSO_OPT,
+
+        /**
          * PolarDB-X TSO Async Commit 事务
          */
         TSO_ASYNC_COMMIT,
@@ -65,6 +70,8 @@ public interface ITransactionPolicy {
 
         COLUMNAR_READ_ONLY_TRANSACTION,
 
+        COLUMNAR_RO_EXPLICIT_TRANSACTION,
+
         AUTO_COMMIT,
 
         AUTO_COMMIT_TSO,
@@ -76,10 +83,21 @@ public interface ITransactionPolicy {
             return set.contains(this);
         }
 
+        /**
+         * Whether this class represents an auto-commit transaction, including optimized variants.
+         */
+        public boolean isAutoCommit() {
+            return this == AUTO_COMMIT
+                || this == AUTO_COMMIT_TSO
+                || this == AUTO_COMMIT_SINGLE_SHARD;
+        }
+
         public static final EnumSet<TransactionClass> DISTRIBUTED_TRANSACTION = EnumSet
             .of(TransactionClass.XA,
                 TransactionClass.XA_TSO,
                 TransactionClass.TSO,
+                TransactionClass.TSO_OPT,
+                TransactionClass.TSO_ASYNC_COMMIT,
                 TransactionClass.TSO_READONLY,
                 TransactionClass.AUTO_COMMIT_SINGLE_SHARD,
                 TSO_2PC_OPT,
@@ -90,14 +108,22 @@ public interface ITransactionPolicy {
             .of(TransactionClass.XA,
                 TransactionClass.XA_TSO,
                 TransactionClass.TSO,
+                TransactionClass.TSO_OPT,
+                TransactionClass.TSO_ASYNC_COMMIT,
                 TransactionClass.ALLOW_READ_CROSS_DB,
                 TransactionClass.COBAR_STYLE,
                 TSO_2PC_OPT,
                 TransactionClass.ARCHIVE,
                 TransactionClass.IGNORE_BINLOG_TRANSACTION);
 
+        public static final EnumSet<TransactionClass> COLUMNAR_TRANSACTION = EnumSet
+            .of(TransactionClass.COLUMNAR_READ_ONLY_TRANSACTION,
+                TransactionClass.COLUMNAR_RO_EXPLICIT_TRANSACTION);
+
         public static final EnumSet<TransactionClass> TSO_TRANSACTION = EnumSet
             .of(TransactionClass.TSO,
+                TransactionClass.TSO_OPT,
+                TransactionClass.TSO_ASYNC_COMMIT,
                 TransactionClass.TSO_READONLY,
                 TransactionClass.AUTO_COMMIT_SINGLE_SHARD,
                 TSO_2PC_OPT);
@@ -106,7 +132,10 @@ public interface ITransactionPolicy {
             .of(TransactionClass.AUTO_COMMIT,
                 TransactionClass.TSO_READONLY,
                 TransactionClass.AUTO_COMMIT_SINGLE_SHARD,
-                TransactionClass.MPP_READ_ONLY_TRANSACTION);
+                TransactionClass.MPP_READ_ONLY_TRANSACTION,
+                TransactionClass.TSO,
+                TransactionClass.XA,
+                TransactionClass.XA_TSO);
 
         public static final EnumSet<TransactionClass> SUPPORT_INVENTORY_TRANSACTION = EnumSet
             .of(TransactionClass.XA,
@@ -119,7 +148,9 @@ public interface ITransactionPolicy {
                 TransactionClass.TSO,
                 TSO_2PC_OPT,
                 TransactionClass.ARCHIVE,
-                TransactionClass.IGNORE_BINLOG_TRANSACTION);
+                TransactionClass.IGNORE_BINLOG_TRANSACTION,
+                TransactionClass.TSO_OPT,
+                TransactionClass.TSO_ASYNC_COMMIT);
 
         public static final EnumSet<TransactionClass> SUPPORT_PARALLEL_GET_CONNECTION_TRANSACTION = EnumSet
             .of(TransactionClass.XA,
@@ -130,7 +161,9 @@ public interface ITransactionPolicy {
                 TransactionClass.AUTO_COMMIT_TSO,
                 TransactionClass.TSO_READONLY,
                 TransactionClass.ARCHIVE,
-                TransactionClass.IGNORE_BINLOG_TRANSACTION);
+                TransactionClass.IGNORE_BINLOG_TRANSACTION,
+                TransactionClass.TSO_OPT,
+                TransactionClass.TSO_ASYNC_COMMIT);
 
         public static final EnumSet<TransactionClass> ALLOW_GROUP_PARALLELISM_WITHOUT_SHARE_READVIEW_TRANSACTION =
             EnumSet.of(TransactionClass.AUTO_COMMIT,
@@ -155,6 +188,8 @@ public interface ITransactionPolicy {
     Archive ARCHIVE = new Archive();
     // 10. IGNORE_BINLOG_TRANSACTION
     DefaultPolicy IGNORE_BINLOG_TRANSACTION = new DefaultPolicy(TransactionClass.IGNORE_BINLOG_TRANSACTION, 10);
+    // 11. COLUMNAR_TRANSACTION
+    ColumnarTransaction COLUMNAR_TRANSACTION = new ColumnarTransaction();
 
     /**
      * If isAutoCommit is true but isForbidAutoCommitTrx is true,
@@ -323,6 +358,31 @@ public interface ITransactionPolicy {
         }
     }
 
+    class ColumnarTransaction implements ITransactionPolicy {
+        @Override
+        public TransactionClass getTransactionType(boolean isAutoCommit, boolean isReadOnly, boolean isSingleShard,
+                                                   boolean isForbidAutoCommitTrx) {
+            if (!isReadOnly) {
+                throw new TddlRuntimeException(ErrorCode.ERR_CONFIG,
+                    "Columnar transaction policy only support read only transaction");
+            }
+            if (isAutoCommit && !isForbidAutoCommitTrx) {
+                return TransactionClass.COLUMNAR_READ_ONLY_TRANSACTION;
+            }
+            return TransactionClass.COLUMNAR_RO_EXPLICIT_TRANSACTION;
+        }
+
+        @Override
+        public int getIntPolicy() {
+            return 11;
+        }
+
+        @Override
+        public String toString() {
+            return "COLUMNAR_TRANSACTION";
+        }
+    }
+
     static ITransactionPolicy of(String name) {
         if (TStringUtil.isEmpty(name)) {
             return null;
@@ -346,6 +406,8 @@ public interface ITransactionPolicy {
             return ITransactionPolicy.ARCHIVE;
         case "IGNORE_BINLOG_TRANSACTION":
             return ITransactionPolicy.IGNORE_BINLOG_TRANSACTION;
+        case "COLUMNAR_TRANSACTION":
+            return ITransactionPolicy.COLUMNAR_TRANSACTION;
         default:
             throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, "Unknown transaction policy: " + name);
         }
@@ -370,6 +432,8 @@ public interface ITransactionPolicy {
             return ITransactionPolicy.ARCHIVE;
         case 10: // IGNORE_BINLOG_TRANSACTION
             return ITransactionPolicy.IGNORE_BINLOG_TRANSACTION;
+        case 11: // COLUMNAR_TRANSACTION
+            return ITransactionPolicy.COLUMNAR_TRANSACTION;
         default:
             throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, "Unknown transaction policy: " + intPolicy);
         }

@@ -28,6 +28,7 @@ public class TableGroupNameUtil {
     public static final String BROADCAST_TG_NAME_TEMPLATE = "broadcast_tg";
     public static final String SINGLE_DEFAULT_TG_NAME_TEMPLATE = "single_tg";
     static final String SINGLE_NON_DEFAULT_TG_NAME_TEMPLATE = "single_tg%s";
+    static final String REPLICAS_TG_NAME_TEMPLATE = "replicas_tg%s";
     public static final String OSS_TG_NAME_TEMPLATE = "oss_tg%s";
     public static final String COLUMNAR_TG_NAME_TEMPLATE = "columnar_tg%s";
 
@@ -43,6 +44,8 @@ public class TableGroupNameUtil {
             tgName = String.format(OSS_TG_NAME_TEMPLATE, tgId);
         } else if (tgType == TableGroupRecord.TG_TYPE_COLUMNAR_TBL_TG) {
             tgName = String.format(COLUMNAR_TG_NAME_TEMPLATE, tgId);
+        } else if (tgType == TableGroupRecord.TG_TYPE_REPLICAS_TBL_TG) {
+            tgName = String.format(REPLICAS_TG_NAME_TEMPLATE, tgId);
         } else {
             tgName = String.format(TG_NAME_TEMPLATE, tgId);
         }

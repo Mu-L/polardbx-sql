@@ -34,6 +34,7 @@ import com.alibaba.polardbx.executor.mpp.deploy.ServiceProvider;
 import com.alibaba.polardbx.executor.mpp.execution.QueryManager;
 import com.alibaba.polardbx.executor.mpp.execution.SqlQueryLocalExecution;
 import com.alibaba.polardbx.executor.mpp.operator.Driver;
+import com.alibaba.polardbx.executor.mpp.operator.LocalBufferExec;
 import com.alibaba.polardbx.executor.operator.CacheCursor;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.gms.node.MPPQueryMonitor;
@@ -48,14 +49,15 @@ import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.MergeSort;
 import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
 import com.alibaba.polardbx.optimizer.core.rel.dal.BaseDalOperation;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadType;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadUtil;
 import com.alibaba.polardbx.optimizer.memory.MemoryEstimator;
 import com.alibaba.polardbx.optimizer.memory.MemoryManager;
 import com.alibaba.polardbx.optimizer.spill.QuerySpillSpaceMonitor;
+import com.alibaba.polardbx.optimizer.ttl.query.TtlQueryType;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.alibaba.polardbx.optimizer.utils.mppchecker.MppPlanCheckers;
 import com.alibaba.polardbx.optimizer.view.VirtualView;
-import com.alibaba.polardbx.optimizer.workload.WorkloadType;
-import com.alibaba.polardbx.optimizer.workload.WorkloadUtil;
 import org.apache.calcite.rel.AbstractRelNode;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.DDL;
@@ -141,6 +143,38 @@ public class ExecutorHelper {
         }
     }
 
+    // Execute local execution and return the buffer execution instance
+    public static LocalBufferExec executeLocalExec(String queryId, RelNode plan, ExecutionContext context) {
+        // Set parallelism to 1 if it is not already set and mode is TP_LOCAL
+        if (context.getExecuteMode() == ExecutorMode.TP_LOCAL &&
+            context.getParamManager().getInt(ConnectionParams.PARALLELISM) == -1) {
+            context.getExtraCmds().put(ConnectionProperties.PARALLELISM, 1);
+        }
+
+        // Initialize the query context
+        initQueryContext(context);
+
+        // Create a new session with the query ID and context
+        Session session = new Session(queryId, context);
+        session.setCacheOutput(true);
+
+        // Get the original SQL query or use the query ID if it is null
+        String query = context.getOriginSql();
+        if (query == null) {
+            query = queryId;
+        }
+
+        session.setLocalResultIsSync(true);
+
+        // Retrieve the query manager instance and create a local query execution
+        QueryManager queryManager = ServiceProvider.getInstance().getServer().getQueryManager();
+        SqlQueryLocalExecution queryExecution =
+            (SqlQueryLocalExecution) queryManager.createLocalQuery(session, query, plan);
+
+        // Return the result buffer execution
+        return queryExecution.getResultBufferExec();
+    }
+
     public static Cursor executeCluster(RelNode plan, ExecutionContext context) {
         context.setExecuteMode(ExecutorMode.MPP);
         initQueryContext(context);
@@ -219,9 +253,16 @@ public class ExecutorHelper {
     public static void selectExecutorMode(RelNode plan, ExecutionContext context, boolean enableMpp) {
         ExecutorMode executorMode = ExecutorMode.valueOf(
             context.getParamManager().getString(ConnectionParams.EXECUTOR_MODE).toUpperCase());
+        WorkloadType workloadType = context.getWorkloadType();
+        //hybrid ttl query need mpp
+        if (executorMode == ExecutorMode.NONE
+            && TtlQueryType.needHybridSchedule(context.getTtlQueryType())
+            && context.getParamManager().getBoolean(ConnectionParams.ENABLE_TTL_HYBRID_SCHEDULE)
+            && workloadType == WorkloadType.AP) {
+            executorMode = ExecutorMode.MPP;
+        }
         if (executorMode == ExecutorMode.NONE) {
             PlannerContext plannerContext = PlannerContext.getPlannerContext(plan);
-            WorkloadType workloadType = context.getWorkloadType();
             ExecutorMode targetMode = null;
             if (useCursorExecutorMode(plan)) {
                 targetMode = ExecutorMode.CURSOR;
@@ -249,7 +290,7 @@ public class ExecutorHelper {
             boolean allowMppMode = ExecUtils.allowMppMode(context);
 
             if (allowMppMode &&
-                MppPlanCheckers.supportsMppPlan(plan, plannerContext, context, input -> enableMpp,
+                MppPlanCheckers.supportsMppPlan(plan, plannerContext, context, null, input -> enableMpp,
                     MppPlanCheckers.BASIC_CHECKERS,
                     MppPlanCheckers.TRANSACTION_CHECKER,
                     MppPlanCheckers.UPDATE_CHECKER,
@@ -262,7 +303,7 @@ public class ExecutorHelper {
             context.setExecuteMode(targetMode);
         } else if (executorMode == ExecutorMode.MPP) {
             PlannerContext plannerContext = PlannerContext.getPlannerContext(plan);
-            if (MppPlanCheckers.supportsMppPlan(plan, plannerContext, context, input -> enableMpp,
+            if (MppPlanCheckers.supportsMppPlan(plan, plannerContext, context, null, input -> enableMpp,
                 MppPlanCheckers.BASIC_CHECKERS, MppPlanCheckers.TRANSACTION_CHECKER, MppPlanCheckers.UPDATE_CHECKER)) {
                 context.setExecuteMode(ExecutorMode.MPP);
             } else {

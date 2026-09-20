@@ -89,7 +89,7 @@ public class GsiUpdateIndexVisibilityTask extends BaseGmsTask {
             beforeVisibility
         );
 
-        SyncManagerHelper.sync(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
+        SyncManagerHelper.syncThrowExceptions(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
 
         LOGGER.info(
             String.format("Rollback Update GSI table visibility. schema:%s, table:%s, index:%s, from:%s to:%s",

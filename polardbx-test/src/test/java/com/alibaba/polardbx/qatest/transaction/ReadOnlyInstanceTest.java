@@ -62,6 +62,80 @@ public class ReadOnlyInstanceTest extends CrudBasedLockTestCase {
         Assert.assertTrue(exception.getMessage().contains("not supported"));
     }
 
+    @Test
+    public void testSelectReadOnlyWhenFalse() throws Exception {
+        if (!checkReadOnlyInstance()) {
+            return;
+        }
+
+        tddlConnection.setReadOnly(false);
+        tddlConnection.setAutoCommit(false);
+
+        try (Statement stmt = tddlConnection.createStatement();) {
+
+            ResultSet rs = stmt.executeQuery("select @@read_only");
+            Assert.assertTrue(rs.next());
+            boolean readOnly = rs.getBoolean(1);
+            Assert.assertTrue("@@read_only on ReadOnly instance should be true", readOnly);
+            rs.close();
+            tddlConnection.commit();
+
+            rs = stmt.executeQuery("select @@SESSION.TRANSACTION_READ_ONLY");
+            Assert.assertTrue(rs.next());
+            boolean trxReadOnly = rs.getBoolean(1);
+            Assert.assertFalse("@@SESSION.TRANSACTION_READ_ONLY should be false when this is not a readonly trx",
+                trxReadOnly);
+            rs.close();
+            tddlConnection.commit();
+
+            rs = stmt.executeQuery("select @@SESSION.TX_READ_ONLY");
+            Assert.assertTrue(rs.next());
+            boolean txReadOnly = rs.getBoolean(1);
+            Assert.assertFalse("@@SESSION.TX_READ_ONLY should be false when this is not a readonly trx",
+                txReadOnly);
+            rs.close();
+
+            tddlConnection.commit();
+        }
+    }
+
+    @Test
+    public void testSelectReadOnlyWhenTrue() throws Exception {
+        if (!checkReadOnlyInstance()) {
+            return;
+        }
+
+        tddlConnection.setReadOnly(true);
+        tddlConnection.setAutoCommit(false);
+
+        try (Statement stmt = tddlConnection.createStatement();) {
+
+            ResultSet rs = stmt.executeQuery("select @@read_only");
+            Assert.assertTrue(rs.next());
+            boolean readOnly = rs.getBoolean(1);
+            Assert.assertTrue("@@read_only on ReadOnly instance should be true", readOnly);
+            rs.close();
+            tddlConnection.commit();
+
+            rs = stmt.executeQuery("select @@SESSION.TRANSACTION_READ_ONLY");
+            Assert.assertTrue(rs.next());
+            boolean trxReadOnly = rs.getBoolean(1);
+            Assert.assertTrue("@@SESSION.TRANSACTION_READ_ONLY should be true when this is a readonly trx",
+                trxReadOnly);
+            rs.close();
+            tddlConnection.commit();
+
+            rs = stmt.executeQuery("select @@SESSION.TX_READ_ONLY");
+            Assert.assertTrue(rs.next());
+            boolean txReadOnly = rs.getBoolean(1);
+            Assert.assertTrue("@@SESSION.TX_READ_ONLY should be true when this is a readonly trx",
+                txReadOnly);
+            rs.close();
+
+            tddlConnection.commit();
+        }
+    }
+
     private boolean checkReadOnlyInstance() throws SQLException {
         try (Statement stmt = tddlConnection.createStatement();
             ResultSet rs = stmt.executeQuery("show variables like 'polardbx_instance_role'")) {

@@ -3,6 +3,9 @@ package com.alibaba.polardbx.optimizer.ttl;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 
+import java.util.HashMap;
+import java.util.Map;
+
 public class TtlConfigUtil {
 
     /**
@@ -98,6 +101,36 @@ public class TtlConfigUtil {
     public static volatile int ttlScheduledJobMaxParallelism = 2;
 
     /**
+     * Label if perform archive data one by one for arc by part
+     */
+    public static volatile boolean ttlScheduleJobOneByOneForArcByPart =
+        Boolean.valueOf(ConnectionParams.TTL_SCHEDULE_JOB_ARCHIVED_BY_PARTITION_ONE_BY_ONE.getDefault());
+    /**
+     * The retry time for fired-scheudled-Ttl-Job to restart paused the ddl job of cleanup expired data
+     */
+    public static volatile int ttlMaxRetryTimeForPausedCleanupDdlJob =
+        Integer.valueOf(ConnectionParams.TTL_MAX_RETRY_TIME_FOR_PAUSED_CLEANUP_DDL_JOB.getDefault());
+
+    /**
+     * The wait time before retry each ddl-stmt of cleanup expired data. Unit: ms
+     */
+    public static volatile int ttlWaitTimeBeforeEachDdlStmtRetry =
+        Integer.valueOf(ConnectionParams.TTL_WAIT_TIME_BEFORE_EACH_DDL_STMT_RETRY.getDefault());
+
+    /**
+     * Label if enable split cci partition from the nearest existing range partition
+     */
+    public static volatile boolean enableCciSplitFromNearestPart =
+        Boolean.valueOf(ConnectionParams.TTL_ENABLE_CCI_SPLIT_FROM_NEAREST_PART.getDefault());
+
+    /**
+     * The gap count (in units of arc-part-interval) beyond current time that identifies
+     * user-reserved range partitions not managed by TTL. Default -1 means infinity.
+     */
+    public static volatile int cciReservedPartGapCount =
+        Integer.valueOf(ConnectionParams.TTL_CCI_RESERVED_PART_GAP_COUNT.getDefault());
+
+    /**
      * The max thread count of threadpool of select sql of ttl job
      */
     public static volatile int ttlGlobalSelectWorkerCount =
@@ -154,7 +187,7 @@ public class TtlConfigUtil {
     /**
      * The query hint for delete stmt of deleting expired data, format is /TDDL: cmd_extra(k1=v1,k2=v2,...)/
      */
-    public static String queryHintForDeleteExpiredData = "/*+TDDL:cmd_extra(SOCKET_TIMEOUT=1800000)*/";
+    public static String queryHintForDeleteExpiredData = ConnectionParams.TTL_DELETE_STMT_HINT.getDefault();
 
     /**
      * The query hint for insert-select stmt of preparing expired data, format is /TDDL: cmd_extra(k1=v1,k2=v2,...)/
@@ -170,13 +203,12 @@ public class TtlConfigUtil {
     /**
      * The query hint for alter table add parts for ttl-tbl / cci
      */
-    public static String queryHintForAutoAddParts = "/*+TDDL:cmd_extra(SOCKET_TIMEOUT=1800000)*/";
+    public static String queryHintForAutoAddParts = ConnectionParams.TTL_ALTER_ADD_PART_STMT_HINT.getDefault();
 
     /**
      * The query hint for alter table add parts for ttl-tbl / cci
      */
-    public static String queryHintForAutoDropParts =
-        "/*+TDDL:cmd_extra(SOCKET_TIMEOUT=1800000, ENABLE_DROP_TRUNCATE_CCI_PARTITION=true, TTL_MARK_DROP_PARTITION_AS_ARCHIVE_CLEANUP_FOR_CDC=true)*/";
+    public static String queryHintForAutoDropParts = ConnectionParams.TTL_ALTER_DROP_PART_STMT_HINT.getDefault();
 
     /**
      * The default group_parallelism of conn of select stmt, 0 means use the default val of inst_config
@@ -221,7 +253,7 @@ public class TtlConfigUtil {
      *     if trigger by manually :
      *          all the intra task of ttl job should ignore the maintain time windows,
      *          because it will exec pause/stop  ddl cmd from users.
-     *     if trigger by manually :
+     *     if trigger by auto of scheduler :
      *          all the intra task of ttl job should ignore the maintain time windows,
      *          because it will auto exec "pause/stop ddl" job cmd from scheduler
      *          if curr ttl-job is out of maintain time windows.
@@ -255,6 +287,25 @@ public class TtlConfigUtil {
      */
     public static int ttlGlobalWorkerDnRatio =
         Integer.valueOf(ConnectionParams.TTL_GLOBAL_WORKER_DN_RATIO.getDefault());
+
+    /**
+     * The warning threshold of pre-built part count of arc tbl,
+     * if pre-built part count is less than the threshold,
+     * it will log a warning
+     */
+    public static Map<Integer, Integer> ttlTimeUnitToPrePartCntWarning = new HashMap<>();
+
+    static {
+        ttlTimeUnitToPrePartCntWarning.put(TtlTimeUnit.UNDEFINED.getUnitCode(), 0);
+        ttlTimeUnitToPrePartCntWarning.put(TtlTimeUnit.YEAR.getUnitCode(), 1);
+        ttlTimeUnitToPrePartCntWarning.put(TtlTimeUnit.MONTH.getUnitCode(), 1);
+        ttlTimeUnitToPrePartCntWarning.put(TtlTimeUnit.WEEK.getUnitCode(), 2);
+        ttlTimeUnitToPrePartCntWarning.put(TtlTimeUnit.DAY.getUnitCode(), 3);
+        ttlTimeUnitToPrePartCntWarning.put(TtlTimeUnit.HOUR.getUnitCode(), 6);
+        ttlTimeUnitToPrePartCntWarning.put(TtlTimeUnit.MINUTE.getUnitCode(), 30);
+        ttlTimeUnitToPrePartCntWarning.put(TtlTimeUnit.SECOND.getUnitCode(), 30);
+        ttlTimeUnitToPrePartCntWarning.put(TtlTimeUnit.NUMBER.getUnitCode(), 30);
+    }
 
     /**
      * ===========================
@@ -347,6 +398,22 @@ public class TtlConfigUtil {
     public static void setEnablePerformAutoOptiTtlTableAfterArchiving(
         boolean enablePerformAutoOptiTtlTableAfterArchiving) {
         TtlConfigUtil.enablePerformAutoOptiTtlTableAfterArchiving = enablePerformAutoOptiTtlTableAfterArchiving;
+    }
+
+    public static boolean isEnableCciSplitFromNearestPart() {
+        return enableCciSplitFromNearestPart;
+    }
+
+    public static void setEnableCciSplitFromNearestPart(boolean enableCciSplitFromNearestPart) {
+        TtlConfigUtil.enableCciSplitFromNearestPart = enableCciSplitFromNearestPart;
+    }
+
+    public static int getCciReservedPartGapCount() {
+        return cciReservedPartGapCount;
+    }
+
+    public static void setCciReservedPartGapCount(int cciReservedPartGapCount) {
+        TtlConfigUtil.cciReservedPartGapCount = cciReservedPartGapCount;
     }
 
     public static long getMaxDataFreePercentOfTtlTable() {
@@ -650,5 +717,33 @@ public class TtlConfigUtil {
 
     public static void setTtlJobMaintenanceTimeEnd(String ttlJobMaintenanceTimeEnd) {
         TtlConfigUtil.ttlJobMaintenanceTimeEnd = ttlJobMaintenanceTimeEnd;
+    }
+
+    public static boolean isTtlScheduleJobOneByOneForArcByPart() {
+        return ttlScheduleJobOneByOneForArcByPart;
+    }
+
+    public static void setTtlScheduleJobOneByOneForArcByPart(boolean ttlScheduleJobOneByOneForArcByPart) {
+        TtlConfigUtil.ttlScheduleJobOneByOneForArcByPart = ttlScheduleJobOneByOneForArcByPart;
+    }
+
+    public static int getTtlMaxRetryTimeForPausedCleanupDdlJob() {
+        return ttlMaxRetryTimeForPausedCleanupDdlJob;
+    }
+
+    public static void setTtlMaxRetryTimeForPausedCleanupDdlJob(int ttlMaxRetryTimeForPausedCleanupDdlJob) {
+        TtlConfigUtil.ttlMaxRetryTimeForPausedCleanupDdlJob = ttlMaxRetryTimeForPausedCleanupDdlJob;
+    }
+
+    public static int getTtlWaitTimeBeforeEachDdlStmtRetry() {
+        return ttlWaitTimeBeforeEachDdlStmtRetry;
+    }
+
+    public static void setTtlWaitTimeBeforeEachDdlStmtRetry(int ttlWaitTimeBeforeEachDdlStmtRetry) {
+        TtlConfigUtil.ttlWaitTimeBeforeEachDdlStmtRetry = ttlWaitTimeBeforeEachDdlStmtRetry;
+    }
+
+    public static Map<Integer, Integer> getTtlTimeUnitToPrePartCntWarning() {
+        return ttlTimeUnitToPrePartCntWarning;
     }
 }

@@ -52,6 +52,8 @@ public class COLLogicalWindowToHashWindowRule extends LogicalWindowToHashWindowR
             implementationList.add(Pair.of(RelDistributions.SINGLETON, RelDistributions.SINGLETON));
         } else {
             if (PlannerContext.getPlannerContext(window).getParamManager()
+                .getBoolean(ConnectionParams.ENABLE_PARTITION_WISE)
+                && PlannerContext.getPlannerContext(window).getParamManager()
                 .getBoolean(ConnectionParams.ENABLE_PARTITION_WISE_WINDOW)) {
                 int inputLoc = -1;
                 for (int i = 0; i < groupIndex.cardinality(); i++) {

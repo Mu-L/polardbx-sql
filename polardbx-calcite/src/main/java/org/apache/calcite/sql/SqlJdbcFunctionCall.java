@@ -16,6 +16,8 @@
  */
 package org.apache.calcite.sql;
 
+import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableMap;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.fun.SqlTrimFunction;
@@ -24,9 +26,6 @@ import org.apache.calcite.sql.type.OperandTypes;
 import org.apache.calcite.sql.validate.SqlValidator;
 import org.apache.calcite.sql.validate.SqlValidatorImpl;
 import org.apache.calcite.sql.validate.SqlValidatorScope;
-
-import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableMap;
 
 import java.util.Map;
 
@@ -370,7 +369,7 @@ public class SqlJdbcFunctionCall extends SqlFunction {
   private static final String STRING_FUNCTIONS = constructFuncList(
       "ASCII", "CHAR", "CONCAT", "DIFFERENCE", "INSERT", "LCASE",
       "LEFT", "LENGTH", "LOCATE", "LTRIM", "REPEAT", "REPLACE",
-      "RIGHT", "RTRIM", "SOUNDEX", "SPACE", "SUBSTRING", "UCASE", "UPDATEXML", "EXTRACTVALUE");
+      "RIGHT", "RTRIM", "SOUNDEX", "SPACE", "SUBSTRING", "UCASE", "UPDATEXML", "EXTRACTVALUE", "REGEXP_REPLACE");
       // "ASCII", "CHAR", "DIFFERENCE", "LOWER",
       // "LEFT", "TRIM", "REPEAT", "REPLACE",
       // "RIGHT", "SPACE", "SUBSTRING", "UPPER", "INITCAP", "OVERLAY"
@@ -732,6 +731,7 @@ public class SqlJdbcFunctionCall extends SqlFunction {
           });
       map.put("SUBSTRING", simple(SqlStdOperatorTable.SUBSTRING));
       map.put("REPLACE", simple(SqlStdOperatorTable.REPLACE));
+      map.put("REGEXP_REPLACE", simple(SqlStdOperatorTable.REGEXP_REPLACE));
       map.put("UCASE", simple(SqlStdOperatorTable.UPPER));
       map.put("CURDATE", simple(SqlStdOperatorTable.CURRENT_DATE));
       map.put("CURTIME", simple(SqlStdOperatorTable.LOCALTIME));

@@ -18,6 +18,7 @@ package com.alibaba.polardbx.group.config;
 
 import com.alibaba.polardbx.atom.TAtomDataSource;
 import com.alibaba.polardbx.common.jdbc.MasterSlave;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.logger.Logger;
@@ -90,7 +91,10 @@ public class MasterSlaveGroupDataSourceHolder implements GroupDataSourceHolder {
                 }
                 return followerDataSources.get(random.nextInt(followerDataSources.size()));
             }
-            return masterDataSource;
+            if (DynamicConfig.getInstance().supportBackMasterForFollowRead()) {
+                return masterDataSource;
+            }
+            throw new RuntimeException("all followers shutdown, so can't continue using the follower connection!");
         case SLAVE_FIRST:
             if (GeneralUtil.isEmpty(slaveDataSources)) {
                 return masterDataSource;
@@ -98,6 +102,9 @@ public class MasterSlaveGroupDataSourceHolder implements GroupDataSourceHolder {
             return selectLowDelaySlaveDataSource(true);
         case SLAVE_ONLY:
             if (GeneralUtil.isEmpty(slaveDataSources)) {
+                return masterDataSource;
+            }
+            if (!existLearner && !DynamicConfig.getInstance().enableFollowReadForPolarDBX()) {
                 return masterDataSource;
             }
             if (slaveDataSources.size() == 1) {

@@ -20,10 +20,15 @@ import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.server.ServerConnection;
 import com.alibaba.polardbx.server.handler.ColumnarConfigHandler;
+import org.apache.calcite.sql.SqlKind;
 
 import java.sql.Connection;
 import java.util.List;
 import java.util.stream.Collectors;
+
+import static com.alibaba.polardbx.common.columnar.ColumnarUtils.AddCDCMarkEventForColumnar;
+import static com.alibaba.polardbx.server.handler.pl.inner.InnerProcedureUtils.COLUMNAR_SET_CONFIG;
+import static com.alibaba.polardbx.server.handler.pl.inner.InnerProcedureUtils.POLARDBX_INNER_PROCEDURE;
 
 /**
  * @author lijiu
@@ -35,7 +40,6 @@ public class ColumnarSetConfigProcedure extends BaseInnerProcedure {
         List<SQLExpr> params = statement.getParameters();
         //参数解析
         ColumnarOption.Param param = checkParameters(params, statement);
-        param.serverConnection = c;
         fillTableId(param);
 
         // Validate and handle.
@@ -46,6 +50,19 @@ public class ColumnarSetConfigProcedure extends BaseInnerProcedure {
             ColumnarConfigHandler.setColumnarConfig(param);
         } else {
             option.handle(param);
+        }
+
+        if (param.key.equalsIgnoreCase("TYPE")) {
+            long tableId = checkParameters4SetConfig(params, statement);
+            String sql =
+                "call " + POLARDBX_INNER_PROCEDURE + "." + COLUMNAR_SET_CONFIG + "(" + tableId + ", '" + param.key
+                    + "', '"
+                    + param.value + "')";
+            Long tso = AddCDCMarkEventForColumnar(sql, SqlKind.PROCEDURE_CALL.name());
+
+            if (tso == null || tso <= 0) {
+                throw new RuntimeException(sql + " is failed, because tso: " + tso);
+            }
         }
 
         buildResultCursor(cursor, param);
@@ -68,7 +85,8 @@ public class ColumnarSetConfigProcedure extends BaseInnerProcedure {
             cursor.addColumn("index_id", DataTypes.LongType);
             cursor.addColumn("key", DataTypes.StringType);
             cursor.addColumn("value", DataTypes.StringType);
-            cursor.addRow(new Object[] {param.schemaName, param.tableName, param.indexName,
+            cursor.addRow(new Object[] {
+                param.schemaName, param.tableName, param.indexName,
                 param.tableId, param.key, param.value});
         }
     }
@@ -183,6 +201,73 @@ public class ColumnarSetConfigProcedure extends BaseInnerProcedure {
             }
 
         }
+    }
+
+    /**
+     * 检查参数，返回正确的列存索引ID，未找到则报错
+     *
+     * @return 列存索引ID
+     */
+    private long checkParameters4SetConfig(List<SQLExpr> params, SQLCallStatement statement) {
+        //2个参数不需要进该函数
+        if (!(params.size() == 3 || params.size() == 5)) {
+            throw new IllegalArgumentException(statement.toString() + " parameters is not match 2/3/5 parameters");
+        }
+
+        if (params.size() == 3) {
+            //3个参数，第一个代表列存索引ID
+            if (!(params.get(0) instanceof SQLNumericLiteralExpr)) {
+                throw new IllegalArgumentException(
+                    statement.toString() + " first parameters need Long number when hava 1 parameters");
+            }
+            long indexId = ((SQLNumericLiteralExpr) params.get(0)).getNumber().longValue();
+
+            try (Connection metaDbConn = MetaDbUtil.getConnection()) {
+                ColumnarTableMappingAccessor accessor = new ColumnarTableMappingAccessor();
+                accessor.setConnection(metaDbConn);
+                List<ColumnarTableMappingRecord> records = accessor.queryTableId(indexId);
+                if (records.isEmpty()) {
+                    throw new IllegalArgumentException(
+                        statement.toString() + " indexId: " + indexId + " not found columnar index");
+                }
+                if (!ColumnarTableStatus.PUBLIC.name().equalsIgnoreCase(records.get(0).status)) {
+                    throw new IllegalArgumentException(
+                        statement.toString() + " indexId: " + indexId + " is not PUBLIC columnar index, status is "
+                            + records.get(0).status);
+                }
+                return records.get(0).tableId;
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        } else {
+            //前3个参数，schemaName, tableName, indexName，通过库名、表名、索引名匹配
+            if (!(params.get(0) instanceof SQLCharExpr)
+                || !(params.get(1) instanceof SQLCharExpr)
+                || !(params.get(2) instanceof SQLCharExpr)) {
+                throw new IllegalArgumentException(
+                    statement.toString() + " first/second/third parameters need String when hava 3 parameters");
+            }
+
+            String schemaName = ((SQLCharExpr) params.get(0)).getText();
+            String tableName = ((SQLCharExpr) params.get(1)).getText();
+            String indexName = ((SQLCharExpr) params.get(2)).getText();
+
+            try (Connection metaDbConn = MetaDbUtil.getConnection()) {
+                ColumnarTableMappingAccessor accessor = new ColumnarTableMappingAccessor();
+                accessor.setConnection(metaDbConn);
+                List<ColumnarTableMappingRecord> records = accessor.queryBySchemaTableIndexLike(schemaName,
+                    tableName, indexName + '%', ColumnarTableStatus.PUBLIC.name());
+                if (records.isEmpty()) {
+                    throw new IllegalArgumentException(
+                        String.format(" %s.%s index like %s not found columnar index", schemaName, tableName,
+                            indexName));
+                }
+                return records.get(0).tableId;
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+
     }
 
 }

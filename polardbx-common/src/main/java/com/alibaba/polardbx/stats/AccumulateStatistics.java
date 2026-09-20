@@ -28,6 +28,9 @@ public class AccumulateStatistics {
     public long countXARW = 0L;
     public long countXARO = 0L;
     public long countTSO = 0L;
+    public long countXATSO = 0L;
+    public long countAsyncCommit = 0L;
+    public long countTsoOpt = 0L;
     public long countTSORW = 0L;
     public long countTSORO = 0L;
     public long countCrossGroup = 0L;

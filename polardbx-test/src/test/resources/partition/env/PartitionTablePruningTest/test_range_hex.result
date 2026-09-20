@@ -14,7 +14,7 @@ FROM rc_char16_gbk_utf8
 WHERE c1 = 0xE4B896E7958C;
 Logical ExecutionPlan
 Gather(concurrent=true)
-  LogicalView(tables="rc_char16_gbk_utf8[p0]", sql="SELECT `c1`, `c2` FROM `rc_char16_gbk_utf8` AS `rc_char16_gbk_utf8` WHERE (`c1` = CONVERT(? USING 'GBK'))")
+  LogicalView(tables="rc_char16_gbk_utf8[p0]", sql="SELECT `c1`, `c2` FROM `rc_char16_gbk_utf8` AS `rc_char16_gbk_utf8` WHERE (`c1` = CONVERT(? USING 'GBK')  collate 'GBK_CHINESE_CI')")
 DROP TABLE IF EXISTS rc_varchar16_gbk_utf8;
 CREATE TABLE IF NOT EXISTS rc_varchar16_gbk_utf8 (
 	c1 varchar(16) CHARACTER SET gbk DEFAULT NULL,
@@ -31,4 +31,4 @@ FROM rc_varchar16_gbk_utf8
 WHERE c1 = 0xE4B896E7958C;
 Logical ExecutionPlan
 Gather(concurrent=true)
-  LogicalView(tables="rc_varchar16_gbk_utf8[p0]", sql="SELECT `c1`, `c2` FROM `rc_varchar16_gbk_utf8` AS `rc_varchar16_gbk_utf8` WHERE (`c1` = CONVERT(? USING 'GBK'))")
+  LogicalView(tables="rc_varchar16_gbk_utf8[p0]", sql="SELECT `c1`, `c2` FROM `rc_varchar16_gbk_utf8` AS `rc_varchar16_gbk_utf8` WHERE (`c1` = CONVERT(? USING 'GBK')  collate 'GBK_CHINESE_CI')")

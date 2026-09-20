@@ -22,6 +22,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -34,6 +35,7 @@ import java.util.stream.Collectors;
  */
 public class PolarDbPriv extends BasePolarPriv {
 
+    private String catalogName = "";
     private String dbName;
 
     public PolarDbPriv() {
@@ -42,7 +44,8 @@ public class PolarDbPriv extends BasePolarPriv {
 
     static Collection<PolarAccountInfo> loadDbPrivs(Connection conn, Collection<PolarAccount> accounts)
         throws SQLException {
-        final String sql = String.format("SELECT * FROM %s WHERE %s = ? and %s = ?", PolarPrivUtil.DB_PRIV_TABLE, PolarPrivUtil.USER_NAME, PolarPrivUtil.HOST);
+        final String sql = String.format("SELECT * FROM %s WHERE %s = ? and %s = ?", PolarPrivUtil.DB_PRIV_TABLE,
+            PolarPrivUtil.USER_NAME, PolarPrivUtil.HOST);
         List<PolarAccountInfo> accountInfos = new ArrayList<>(accounts.size());
         try (PreparedStatement stmt = conn.prepareStatement(sql)) {
             for (PolarAccount account : accounts) {
@@ -65,6 +68,7 @@ public class PolarDbPriv extends BasePolarPriv {
         while (rs.next()) {
             PolarDbPriv dbPriv = new PolarDbPriv();
             BasePolarPriv.loadBasePriv(rs, dbPriv);
+            dbPriv.setCatalogName(rs.getString("catalog_name"));
             dbPriv.setDbName(rs.getString(PolarPrivUtil.DB_NAME));
             consumer.accept(dbPriv);
 
@@ -82,6 +86,7 @@ public class PolarDbPriv extends BasePolarPriv {
     public PolarDbPriv deepCopy() {
         PolarDbPriv clone = new PolarDbPriv();
         copy(this, clone);
+        clone.catalogName = this.catalogName;
         clone.dbName = this.dbName;
         return clone;
     }
@@ -92,23 +97,33 @@ public class PolarDbPriv extends BasePolarPriv {
 
     @Override
     public String getIdentifier() {
+        if (isCatalogPriv()) {
+            return catalogName.toLowerCase() + "." + dbName.toLowerCase();
+        }
         return dbName.toLowerCase();
     }
 
     @Override
     public String toInsertNewSql() {
-        return String.format("INSERT IGNORE INTO %s(%s, %s, %s) VALUES ('%s', '%s', '%s')",
+        return String.format("INSERT IGNORE INTO %s(%s, %s, catalog_name, %s) VALUES ('%s', '%s', '%s', '%s')",
             PolarPrivUtil.DB_PRIV_TABLE,
             PolarPrivUtil.USER_NAME,
             PolarPrivUtil.HOST,
             PolarPrivUtil.DB_NAME,
             userName,
             host,
+            catalogName,
             dbName);
     }
 
     public Optional<String> showGrantsResult(PolarAccount user) {
-        return super.showGrantsResult(user, getIdentifier() + ".*", false);
+        String displayTarget;
+        if (isCatalogPriv()) {
+            displayTarget = catalogName.toLowerCase() + "." + dbName.toLowerCase() + ".*";
+        } else {
+            displayTarget = getIdentifier() + ".*";
+        }
+        return super.showGrantsResult(user, displayTarget, false);
     }
 
     public String getDbName() {
@@ -117,6 +132,18 @@ public class PolarDbPriv extends BasePolarPriv {
 
     public void setDbName(String dbName) {
         this.dbName = dbName;
+    }
+
+    public String getCatalogName() {
+        return catalogName;
+    }
+
+    public void setCatalogName(String catalogName) {
+        this.catalogName = catalogName;
+    }
+
+    public boolean isCatalogPriv() {
+        return catalogName != null && !catalogName.isEmpty();
     }
 
     @Override
@@ -128,23 +155,29 @@ public class PolarDbPriv extends BasePolarPriv {
             return false;
         }
         PolarDbPriv that = (PolarDbPriv) o;
-        return Objects.equals(getDbName(), that.getDbName());
+        return Objects.equals(getCatalogName(), that.getCatalogName())
+            && Objects.equals(getDbName(), that.getDbName());
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(getDbName());
+        return Objects.hash(getCatalogName(), getDbName());
     }
 
     @Override
     public String toString() {
+        if (isCatalogPriv()) {
+            return "PolarDbPriv(catalogName=" + this.getCatalogName() + ", dbName=" + this.getDbName() + ")";
+        }
         return "PolarDbPriv(dbName=" + this.getDbName() + ")";
     }
 
     public Optional<String> toUpdatePrivilegeSql(boolean grant) {
         return toSetPrivilegeSql(grant)
-            .map(setSql -> String.format("update %s set %s where %s = '%s' and %s = '%s' and %s = '%s'",
-                PolarPrivUtil.DB_PRIV_TABLE, setSql, PolarPrivUtil.USER_NAME, userName, PolarPrivUtil.HOST, host, PolarPrivUtil.DB_NAME, dbName));
+            .map(setSql -> String.format(
+                "update %s set %s where %s = '%s' and %s = '%s' and catalog_name = '%s' and %s = '%s'",
+                PolarPrivUtil.DB_PRIV_TABLE, setSql, PolarPrivUtil.USER_NAME, userName, PolarPrivUtil.HOST, host,
+                catalogName, PolarPrivUtil.DB_NAME, dbName));
     }
 
     public static PolarDbPriv toInformationSchemaPriv(PolarAccount account) {
@@ -159,6 +192,10 @@ public class PolarDbPriv extends BasePolarPriv {
 
     @Override
     public List<Permission> toPermissions() {
+        if (isCatalogPriv()) {
+            // Catalog privileges live in a separate namespace and must not be mapped to local database permissions.
+            return Collections.emptyList();
+        }
         return getGrantedPrivileges()
             .stream()
             .map(privilege -> Permission.databasePermission(getDbName(), privilege))

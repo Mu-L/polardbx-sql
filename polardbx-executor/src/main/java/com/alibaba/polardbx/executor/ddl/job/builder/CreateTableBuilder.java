@@ -20,6 +20,7 @@ import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.config.ConfigDataMode;
@@ -172,6 +173,8 @@ public class CreateTableBuilder extends DdlPhyPlanBuilder {
 
         sqlTemplate.setIsAddLogicalForeignKeyOnly(isAddLogicalForeignKeyOnly());
 
+        sqlTemplate.setEnableAutoShardKeyIndex(executionContext.getParamManager()
+            .getBoolean(ConnectionParams.ENABLE_AUTO_SHARD_KEY_INDEX));
         MySqlCreateTableStatement stmt = (MySqlCreateTableStatement) sqlTemplate.rewrite();
         if (sqlTemplate.getEncryption() == null
             && checkDatabaseEncryption(preparedData.getSchemaName())) {

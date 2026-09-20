@@ -16,15 +16,17 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableObjectArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.utils.memory.SizeOf;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.ChunkBuilder;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
-
-import java.util.ArrayList;
-import java.util.BitSet;
-import java.util.List;
+import org.openjdk.jol.info.ClassLayout;
+import org.openjdk.jol.util.VMSupport;
 
 /**
  * Appendable buffer for arbitrary data types
@@ -33,19 +35,30 @@ import java.util.List;
  * @see ChunksIndex
  */
 public class DefaultTypedBuffer implements TypedBuffer {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(DefaultTypedBuffer.class).instanceSize();
 
     private BlockBuilder[] blockBuilders;
     private final int chunkSize;
 
     private int currentSize;
-    private final List<Chunk> chunks = new ArrayList<>();
+    private MemoryCountableObjectArrayList<Chunk> chunks = new MemoryCountableObjectArrayList<>();
     private long estimateSize = 0;
+
+    @FieldMemoryCounter(value = false)
     private ExecutionContext context;
 
     DefaultTypedBuffer(BlockBuilder[] blockBuilders, int chunkSize, ExecutionContext context) {
         this.blockBuilders = blockBuilders;
         this.chunkSize = chunkSize;
         this.context = context;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        long size = INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(blockBuilders)
+            + FastMemoryCounter.sizeOf(chunks);
+        return size;
     }
 
     @Override
@@ -94,8 +107,8 @@ public class DefaultTypedBuffer implements TypedBuffer {
     }
 
     @Override
-    public List<Chunk> buildChunks() {
-        ArrayList<Chunk> allChunks = new ArrayList<>(this.chunks);
+    public MemoryCountableObjectArrayList<Chunk> buildChunks() {
+        MemoryCountableObjectArrayList<Chunk> allChunks = new MemoryCountableObjectArrayList<>(this.chunks);
         if (currentSize > 0) {
             allChunks.add(getBuildingChunk());
         }

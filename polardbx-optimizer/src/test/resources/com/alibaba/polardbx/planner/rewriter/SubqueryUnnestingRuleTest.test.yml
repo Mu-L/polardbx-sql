@@ -155,7 +155,7 @@
     select * from emp a where empno = ANY (select DEPTNO from dept b)
 
   plan: |
-    LogicalView(tables="[0000-0003].emp_[00-27],dept_[00-27]", shardCount=28, sql="SELECT `EMPNO`, `ENAME`, `JOB`, `MGR`, `HIREDATE`, `SAL`, `COMM`, `DEPTNO`, `SLACKER` FROM `emp` AS `emp` WHERE (`EMPNO` = SOME (SELECT `DEPTNO` FROM `dept` AS `dept`))")
+    logicalview(tables="[0000-0003].emp_[00-27],dept_[00-27]", shardcount=28, sql="select `empno`, `ename`, `job`, `mgr`, `hiredate`, `sal`, `comm`, `deptno`, `slacker` from `emp` as `emp` where (`empno` in (select `deptno` from `dept` as `dept`))")
 
 - sql: |
     select * from emp a where empno > ALL (select DEPTNO from dept b where a.JOB = b.name and b.deptno>10 or b.DEPTNO=10)

@@ -16,6 +16,12 @@
 
 package com.alibaba.polardbx.optimizer.core.rel.ddl.data;
 
+import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
+import com.alibaba.polardbx.common.utils.Pair;
+import lombok.Getter;
+
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -36,4 +42,15 @@ public class MoveDatabaseItemPreparedData extends DdlPreparedData {
     public Map<String, String> getSourceTargetGroupMap() {
         return sourceTargetGroupMap;
     }
+
+    /**
+     * change foreign key to physical or logical when repartition
+     * Foreign key.
+     */
+    @Getter
+    private List<ForeignKeyData> modifyForeignKeys = new ArrayList<>();
+    @Getter
+    private List<Pair<String, String>> addForeignKeySql = new ArrayList<>();
+    @Getter
+    private List<Pair<String, String>> dropForeignKeySql = new ArrayList<>();
 }

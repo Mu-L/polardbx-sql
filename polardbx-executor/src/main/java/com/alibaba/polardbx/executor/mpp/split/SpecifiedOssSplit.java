@@ -161,7 +161,7 @@ public class SpecifiedOssSplit extends OssSplit {
 
             columnMetas.add(tableMeta.getColumn(columnName));
 
-            long fieldId = tableMeta.getColumnarFieldId(columnIndex);
+            long fieldId = tableMeta.getColumnarFieldId(tableId, columnIndex);
             Integer actualColumnIndex = columnIndexMap.get(fieldId);
             if (actualColumnIndex != null) {
                 fileColumnMetas.add(fileMeta.getColumnMetas().get(actualColumnIndex));

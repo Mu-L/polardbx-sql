@@ -20,7 +20,11 @@ import com.alibaba.polardbx.Capabilities;
 import com.alibaba.polardbx.common.DefaultSchema;
 import com.alibaba.polardbx.common.MergedStorageInfo;
 import com.alibaba.polardbx.common.SQLMode;
+import com.alibaba.polardbx.common.async.GroupTaskExecutor;
 import com.alibaba.polardbx.common.charset.CharsetName;
+import com.alibaba.polardbx.common.columnar.ColumnarScanMetrics;
+import com.alibaba.polardbx.common.columnar.ExternalColumnStatistics;
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
@@ -44,6 +48,7 @@ import com.alibaba.polardbx.common.utils.timezone.InternalTimeZone;
 import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.druid.sql.ast.SqlType;
 import com.alibaba.polardbx.druid.sql.parser.ByteString;
+import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.metadb.columnar.ColumnarSnapshotCacheManager;
 import com.alibaba.polardbx.gms.metadb.columnar.FlashbackColumnarManager;
 import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
@@ -52,12 +57,21 @@ import com.alibaba.polardbx.gms.privilege.PolarPrivManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.ccl.common.CclContext;
 import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
+import com.alibaba.polardbx.optimizer.external.files.EphemeralFilesSchemaManager;
 import com.alibaba.polardbx.optimizer.core.function.calc.AbstractScalarFunction;
 import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
+import com.alibaba.polardbx.optimizer.core.planner.PlanCache;
+import com.alibaba.polardbx.optimizer.core.rel.dml.DmlWriteContext;
 import com.alibaba.polardbx.optimizer.core.profiler.RuntimeStat;
 import com.alibaba.polardbx.optimizer.core.row.Row;
+import com.alibaba.polardbx.optimizer.deepage.DeepPageCache;
+import com.alibaba.polardbx.optimizer.htaprouting.HtapTrace;
+import com.alibaba.polardbx.optimizer.htaprouting.PlanType;
+import com.alibaba.polardbx.optimizer.htaprouting.RoutingType;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadType;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
 import com.alibaba.polardbx.optimizer.memory.QueryMemoryPoolHolder;
+import com.alibaba.polardbx.optimizer.parse.bean.SqlParameterized;
 import com.alibaba.polardbx.optimizer.parse.privilege.PrivilegeContext;
 import com.alibaba.polardbx.optimizer.planmanager.PlanManager;
 import com.alibaba.polardbx.optimizer.planmanager.PreparedStmtCache;
@@ -67,10 +81,10 @@ import com.alibaba.polardbx.optimizer.statis.ColumnarTracer;
 import com.alibaba.polardbx.optimizer.statis.SQLRecorder;
 import com.alibaba.polardbx.optimizer.statis.SQLTracer;
 import com.alibaba.polardbx.optimizer.statis.XplanStat;
+import com.alibaba.polardbx.optimizer.ttl.query.TtlQueryType;
 import com.alibaba.polardbx.optimizer.utils.ExecutionPlanProperties;
 import com.alibaba.polardbx.optimizer.utils.ExplainResult;
 import com.alibaba.polardbx.optimizer.utils.ITransaction;
-import com.alibaba.polardbx.optimizer.workload.WorkloadType;
 import com.alibaba.polardbx.rpc.perf.SwitchoverPerfCollection;
 import com.alibaba.polardbx.stats.MatrixStatistics;
 import com.alibaba.polardbx.util.ValueHolder;
@@ -103,6 +117,10 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -142,6 +160,8 @@ public class ExecutionContext {
      * schema manager used in this query
      */
     private Map<String, SchemaManager> schemaManagers = new ConcurrentHashMap<>();
+
+    private EphemeralFilesSchemaManager filesSchemaManager;
 
     /**
      * schema manager of this schema used in this query
@@ -226,6 +246,8 @@ public class ExecutionContext {
 
     private String originSql;
 
+    private SqlParameterized sqlParameterized;
+
     private boolean isPrivilegeMode;
 
     // INSERT SELECT or UPDATE / DELETE that cannot be pushed down
@@ -263,6 +285,13 @@ public class ExecutionContext {
     private boolean internalSystemSql = true;
     private String sqlTemplateId = null;
     private RuntimeStat runtimeStatistics = null;
+    private VersionStorageStatistics versionStorageStatistics = null;
+    private ColumnarScanMetrics columnarScanMetrics = null;
+    private volatile ExternalColumnStatistics extColStats = null;
+
+    @Getter
+    @Setter
+    private DmlWriteContext dmlWriteContext;
 
     /**
      * Only use physical sql cache when it is a query from external user.
@@ -275,6 +304,17 @@ public class ExecutionContext {
 
     private QueryMemoryPoolHolder memoryPoolHolder = new QueryMemoryPoolHolder();
     private boolean doingBatchInsertBySpliter = false;
+
+    /**
+     * Auto-set by rescheduleIfSwitchover after its first successful invocation
+     * within a single executeSQL call. Subsequent executeQuery calls within the
+     * same executeSQL will see this flag as true and skip the reschedule check.
+     * This prevents reschedule from replaying the entire original SQL when some
+     * batches have already been committed (e.g., InsertSplitter sub-SQLs),
+     * which would cause data duplication.
+     * Reset to false at the start of each executeSQL call.
+     */
+    private boolean internalSubExecution = false;
 
     /**
      * 当前的的SQL执行是否是正在在apply子查询的操作，默认是false
@@ -331,6 +371,32 @@ public class ExecutionContext {
     private boolean randomPhyTableEnabled = true;
     private boolean phyTableRenamed = true;
     private boolean runOnNewDdlEngine = false;
+
+    @Getter
+    @Setter
+    private Long ddlInitialJobId = null;
+
+    @Getter
+    @Setter
+    private Set<String> exclusiveResources = null;
+
+    @Getter
+    @Setter
+    private Set<String> sharedResources = null;
+
+    /**
+     * Boxed type on purpose: registered as a STMT-lifecycle property, which is
+     * nulled out by cleanAfterStmt() (same pattern as isWarmup).
+     */
+    private Boolean hasDdlInitialJob = false;
+
+    /**
+     * Signal shared with DdlContext (see DdlContext#create) so that KILL can be
+     * perceived by the DDL thread during the whole two-phase locking procedure.
+     * Also used as the monitor object serializing INITIAL job upgrade (updateFull)
+     * against INITIAL job removal triggered by KILL.
+     */
+    private AtomicReference<Boolean> ddlClientConnectionReset = new AtomicReference<>(false);
     // End of DDL Related Parameters
 
     private TableInfoManager tableInfoManager = null;
@@ -347,9 +413,17 @@ public class ExecutionContext {
 
     private boolean flashbackArea = false;
 
+    private boolean asOfCrossDdl = false;
+
+    private boolean containsBlockChainTable = false;
+    private String blockChainSchema = null;
+    private String blockChainTable = null;
+
     private long txId = 0L;
     private long connId;
     private String clientIp;
+    private int port;
+    private String user;
     private boolean testMode = false;
     private boolean useHint;
     private boolean readOnly;
@@ -376,7 +450,11 @@ public class ExecutionContext {
 
     private String backfillReturning = null;
 
+    private String returningAll = null;
+    private ReturningFlagForCdc returningFlagForCdc = ReturningFlagForCdc.NO_SPECIAL;
+
     private boolean optimizedWithReturning = false;
+
     /**
      * For DirectShardingKeyTableOperation
      */
@@ -388,32 +466,22 @@ public class ExecutionContext {
 
     private volatile XplanStat xplanStat = null;
     private volatile Integer blockBuilderCapacity = null;
-    private volatile Boolean enableOssCompatible = null;
     private volatile Boolean enableOssDelayMaterializationOnExchange = null;
 
     private int columnarMaxShard = -1;
-    private boolean useColumnar = false;
+    private PlanType planType = PlanType.ROW;
     private boolean columnarPlanCache = false;
+
+    // routing type for current sql, not null only if the following condition is met :
+    // current sql hits manually HTAP routing rules
+    private RoutingType routingType;
 
     private boolean executingPreparedStmt = false;
     private PreparedStmtCache preparedStmtCache = null;
 
-    private Map<Pair<String, List<String>>, Parameters> pruneRawStringMap = null;
+    private TtlQueryType ttlQueryType = null;
 
-    /**
-     * True means in cursor-fetch mode.
-     */
-    private boolean cursorFetchMode = false;
-
-    public void setCursorFetchMode(boolean cursorFetchMode) {
-        this.cursorFetchMode = cursorFetchMode;
-    }
-
-    public boolean isCursorFetchMode() {
-        return cursorFetchMode;
-    }
-
-    public boolean getForbidBuildLocalIndexLater() {
+    public Boolean getForbidBuildLocalIndexLater() {
         return forbidBuildLocalIndexLater;
     }
 
@@ -421,9 +489,11 @@ public class ExecutionContext {
         this.forbidBuildLocalIndexLater = forbidBuildLocalIndexLater;
     }
 
-    private boolean forbidBuildLocalIndexLater = false;
+    private Boolean forbidBuildLocalIndexLater = false;
 
     private CalcitePlanOptimizerTrace calcitePlanOptimizerTrace;
+
+    private HtapTrace htapTrace;
 
     private String partitionHint;
 
@@ -435,19 +505,25 @@ public class ExecutionContext {
 
     private Map<String, List<Object[]>> driverStatistics;
 
-    private boolean checkingCci = false;
-
     private Map<String, Set<String>> readOrcFiles = null;
 
     private Map<String, IDeltaReadOption> readDeltaFiles = null;
 
+    private ExecutorService parallelStatisticExecutor;
+
+    private GroupTaskExecutor hllExecutor;
+
     private Map<List<Object>, FlashbackColumnarManager> fcManager = new HashMap<>();
+
+    private Boolean isWarmup = false;
+
+    private Boolean grayWorkload = null;
 
     @Getter
     @Setter
     private Function<String, MergedStorageInfo> storageInfoSupplier;
 
-    private long pruningTime = 0L;
+    private Long pruningTime = null;
 
     public boolean isOverrideDdlParams() {
         return overrideDdlParams;
@@ -484,9 +560,33 @@ public class ExecutionContext {
     @Setter
     private boolean checkSwitchoverWhenGetConnection = false;
 
+    /**
+     * Record whether supportsReturningAll for explain
+     */
+    @Getter
+    @Setter
+    private boolean checkSupportsReturningAll = false;
+
+    /**
+     * Record whether isAllDnUseXDataSource for explain
+     */
+    @Getter
+    @Setter
+    private boolean checkIsAllDnUseXDataSource = false;
+
+    private Map<PlanCache.CacheKey, DeepPageCache> deepPageCacheMap;
+
+    @Getter
+    private final AtomicBoolean rescheduleStmtDone = new AtomicBoolean(false);
+    @Setter
+    @Getter
+    private FutureTask<Boolean> rescheduleStmtFuture = null;
     @Setter
     @Getter
     private boolean multiStmtHasMore = false;
+    @Getter
+    @Setter
+    private boolean innerConnection = false;
 
     public ExecutionContext() {
     }
@@ -845,6 +945,49 @@ public class ExecutionContext {
         this.flashbackArea = flashbackArea;
     }
 
+    public ReturningFlagForCdc getReturningFlagForCdc() {
+        return returningFlagForCdc;
+    }
+
+    public void setReturningFlagForCdc(ReturningFlagForCdc returningFlagForCdc) {
+        this.returningFlagForCdc = returningFlagForCdc;
+    }
+
+    public boolean isAsOfCrossDdl() {
+        return asOfCrossDdl;
+    }
+
+    public void setAsOfCrossDdl(boolean asOfCrossDdl) {
+        if (null != this.getParamManager()) {
+            asOfCrossDdl = asOfCrossDdl && this.getParamManager().getBoolean(ConnectionParams.ENABLE_AS_OF_CROSS_DDL);
+        }
+        this.asOfCrossDdl = asOfCrossDdl;
+    }
+
+    public boolean isContainsBlockChainTable() {
+        return containsBlockChainTable;
+    }
+
+    public void setContainsBlockChainTable(boolean containsBlockChainTable) {
+        this.containsBlockChainTable = containsBlockChainTable;
+    }
+
+    public String getBlockChainSchema() {
+        return blockChainSchema;
+    }
+
+    public void setBlockChainSchema(String blockChainSchema) {
+        this.blockChainSchema = blockChainSchema;
+    }
+
+    public String getBlockChainTable() {
+        return blockChainTable;
+    }
+
+    public void setBlockChainTable(String blockChainTable) {
+        this.blockChainTable = blockChainTable;
+    }
+
     public void renewMemoryPoolHolder() {
         memoryPoolHolder.destroy();
         this.memoryPoolHolder = new QueryMemoryPoolHolder();
@@ -977,12 +1120,24 @@ public class ExecutionContext {
         this.columnarTracer = columnarTracer;
     }
 
-    public long getPruningTime() {
+    public Long getPruningTime() {
         return pruningTime;
     }
 
     public void addPruningTime(long pruningTime) {
-        this.pruningTime += pruningTime;
+        if (this.pruningTime == null) {
+            this.pruningTime = pruningTime;
+        } else {
+            this.pruningTime += pruningTime;
+        }
+    }
+
+    public Boolean getGrayWorkload() {
+        return grayWorkload;
+    }
+
+    public void setGrayWorkload(Boolean grayWorkload) {
+        this.grayWorkload = grayWorkload;
     }
 
     public static class ErrorMessage {
@@ -1031,6 +1186,14 @@ public class ExecutionContext {
      */
     public void setOriginSql(String originSql) {
         this.originSql = originSql;
+    }
+
+    public SqlParameterized getSqlParameterized() {
+        return sqlParameterized;
+    }
+
+    public void setSqlParameterized(SqlParameterized sqlParameterized) {
+        this.sqlParameterized = sqlParameterized;
     }
 
     public boolean isPrivilegeMode() {
@@ -1208,6 +1371,40 @@ public class ExecutionContext {
         return runtimeStatistics;
     }
 
+    public void setVersionStorageStatistics(VersionStorageStatistics versionStorageStatistics) {
+        this.versionStorageStatistics = versionStorageStatistics;
+    }
+
+    public VersionStorageStatistics getVersionStorageStatistics() {
+        return versionStorageStatistics;
+    }
+
+    public void setColumnarScanMetrics(ColumnarScanMetrics columnarScanMetrics) {
+        this.columnarScanMetrics = columnarScanMetrics;
+    }
+
+    public ColumnarScanMetrics getColumnarScanMetrics() {
+        return columnarScanMetrics;
+    }
+
+    public ExternalColumnStatistics getOrCreateExtColStats() {
+        ExternalColumnStatistics statistics = extColStats;
+        if (statistics == null) {
+            synchronized (this) {
+                statistics = extColStats;
+                if (statistics == null) {
+                    statistics = new ExternalColumnStatistics();
+                    extColStats = statistics;
+                }
+            }
+        }
+        return statistics;
+    }
+
+    public com.alibaba.polardbx.common.columnar.ExternalColumnStatistics getExtColStats() {
+        return extColStats;
+    }
+
     public AsyncDDLContext getAsyncDDLContext() {
         return asyncDDLContext;
     }
@@ -1238,6 +1435,26 @@ public class ExecutionContext {
 
     public Long getDdlJobId() {
         return getDdlContext() == null ? null : getDdlContext().getJobId();
+    }
+
+    public AtomicReference<Boolean> getDdlClientConnectionReset() {
+        return ddlClientConnectionReset;
+    }
+
+    public boolean isDdlClientConnectionReset() {
+        return ddlClientConnectionReset.get();
+    }
+
+    public void setDdlClientConnectionResetAsTrue() {
+        ddlClientConnectionReset.set(true);
+    }
+
+    public boolean isHasDdlInitialJob() {
+        return Boolean.TRUE.equals(hasDdlInitialJob);
+    }
+
+    public void setHasDdlInitialJob(boolean hasDdlInitialJob) {
+        this.hasDdlInitialJob = hasDdlInitialJob;
     }
 
     public MultiDdlContext getMultiDdlContext() {
@@ -1338,6 +1555,7 @@ public class ExecutionContext {
         ec.extraServerVariables = getExtraServerVariables();
         ec.userDefVariables = getUserDefVariables();
         ec.originSql = getOriginSql();
+        ec.sqlParameterized = getSqlParameterized();
         ec.isPrivilegeMode = isPrivilegeMode();
         ec.modifySelect = isModifySelect();
         ec.modifySelectParallel = isModifySelectParallel();
@@ -1349,9 +1567,19 @@ public class ExecutionContext {
         ec.sqlType = getSqlType();
         ec.planProperties = copyPlanProperties();
         ec.runtimeStatistics = getRuntimeStatistics();
+        ec.versionStorageStatistics = getVersionStorageStatistics();
+        ec.columnarScanMetrics = getColumnarScanMetrics();
+        ec.extColStats = getOrCreateExtColStats();
+        ec.dmlWriteContext = dmlWriteContext;
         ec.sqlTemplateId = getSqlTemplateId();
         ec.asyncDDLContext = getAsyncDDLContext();
         ec.ddlContext = getDdlContext();
+        ec.ddlInitialJobId = getDdlInitialJobId();
+        ec.exclusiveResources = getExclusiveResources() == null ? null : new HashSet<>(getExclusiveResources());
+        ec.sharedResources = getSharedResources() == null ? null : new HashSet<>(getSharedResources());
+        ec.hasDdlInitialJob = isHasDdlInitialJob();
+        // Share the reference on purpose: the copied context must see the same KILL signal.
+        ec.ddlClientConnectionReset = getDdlClientConnectionReset();
         ec.forbidBuildLocalIndexLater = getForbidBuildLocalIndexLater();
         ec.phyDdlExecutionRecord = getPhyDdlExecutionRecord();
         ec.multiDdlContext = getMultiDdlContext();
@@ -1372,9 +1600,11 @@ public class ExecutionContext {
         ec.distinctKeyCnt = getDistinctKeyCnt();
         ec.onlyUseTmpTblPool = isOnlyUseTmpTblPool();
         ec.doingBatchInsertBySpliter = isDoingBatchInsertBySpliter();
+        ec.internalSubExecution = isInternalSubExecution();
         ec.internalSystemSql = isInternalSystemSql();
         ec.usingPhySqlCache = isUsingPhySqlCache();
         ec.runtimeStatistics = getRuntimeStatistics();
+        ec.versionStorageStatistics = getVersionStorageStatistics();
         ec.isApplyingSubquery = isApplyingSubquery();
         ec.subqueryId = getSubqueryId();
         ec.xplanStat = getXplanStat();
@@ -1386,18 +1616,27 @@ public class ExecutionContext {
         ec.txId = getTxId();
         ec.ignoredGsiSet = getIgnoredGsi();
         ec.clientIp = getClientIp();
+        ec.port = getPort();
+        ec.user = getUser();
         ec.flashbackArea = isFlashbackArea();
+        ec.asOfCrossDdl = isAsOfCrossDdl();
+        ec.containsBlockChainTable = isContainsBlockChainTable();
+        ec.blockChainTable = getBlockChainTable();
+        ec.blockChainSchema = getBlockChainSchema();
         ec.connId = getConnId();
         ec.rescheduled = isRescheduled();
         ec.testMode = isTestMode();
         ec.useHint = isUseHint();
         ec.loadDataContext = getLoadDataContext();
         ec.schemaManagers = new ConcurrentHashMap<>(this.schemaManagers);
+        ec.filesSchemaManager = this.filesSchemaManager;
         ec.currentSchemaManager = this.currentSchemaManager;
         ec.finalPlan = getFinalPlan();
         ec.parameterNlsStrings = getParameterNlsStrings();
         ec.unOptimizedPlan = getUnOptimizedPlan();
-        ec.querySpillSpaceMonitor = getQuerySpillSpaceMonitor();
+        if (option.isShareQuerySpillMonitor()) {
+            ec.querySpillSpaceMonitor = getQuerySpillSpaceMonitor();
+        }
         ec.shareReadView = isShareReadView();
         ec.groupParallelism = getGroupParallelism();
         ec.point = getPoint();
@@ -1407,13 +1646,14 @@ public class ExecutionContext {
         ec.planSource = getPlanSource();
         ec.returning = getReturning();
         ec.backfillReturning = getBackfillReturning();
+        ec.returningAll = getReturningAll();
+        ec.returningFlagForCdc = getReturningFlagForCdc();
         ec.optimizedWithReturning = isOptimizedWithReturning();
         ec.readOnly = isReadOnly();
         ec.backfillId = getBackfillId();
         ec.taskId = getTaskId();
         ec.clientFoundRows = isClientFoundRows();
         ec.blockBuilderCapacity = getBlockBuilderCapacity();
-        ec.enableOssCompatible = isEnableOssCompatible();
         ec.enableOssDelayMaterializationOnExchange = isEnableOssDelayMaterializationOnExchange();
         ec.executingPreparedStmt = isExecutingPreparedStmt();
         ec.preparedStmtCache = getPreparedStmtCache();
@@ -1422,16 +1662,22 @@ public class ExecutionContext {
         ec.needAutoSavepoint = isNeedAutoSavepoint();
         ec.setColumnarTracer(getColumnarTracer());
         ec.columnarMaxShard = getColumnarMaxShard();
-        ec.useColumnar = isUseColumnar();
+        ec.planType = getPlanType();
         ec.columnarPlanCache = isColumnarPlanCache();
         ec.storageInfoSupplier = getStorageInfoSupplier();
         ec.pruningTime = getPruningTime();
         ec.overrideDdlParams = isOverrideDdlParams();
         ec.userSql = isUserSql();
+
         ec.firstSwitchoverWaitTime = getFirstSwitchoverWaitTime();
         synchronized (switchoverPerfCollections) {
             ec.switchoverPerfCollections.addAll(switchoverPerfCollections);
         }
+        ec.isWarmup = isWarmup();
+        ec.deepPageCacheMap = getDeepPageCacheMap();
+        ec.checkSupportsReturningAll = isCheckSupportsReturningAll();
+        ec.checkIsAllDnUseXDataSource = isCheckIsAllDnUseXDataSource();
+        ec.ttlQueryType = getTtlQueryType();
         return ec;
     }
 
@@ -1488,6 +1734,10 @@ public class ExecutionContext {
         return hintCmds;
     }
 
+    public void setHintCmds(Map<String, Object> hintCmds) {
+        this.hintCmds = hintCmds;
+    }
+
     public Map<String, Object> getDefaultExtraCmds() {
         return defaultExtraCmds;
     }
@@ -1533,6 +1783,14 @@ public class ExecutionContext {
 
     public void setDoingBatchInsertBySpliter(boolean doingBatchInsertBySpliter) {
         this.doingBatchInsertBySpliter = doingBatchInsertBySpliter;
+    }
+
+    public boolean isInternalSubExecution() {
+        return internalSubExecution;
+    }
+
+    public void setInternalSubExecution(boolean internalSubExecution) {
+        this.internalSubExecution = internalSubExecution;
     }
 
     public boolean isApplyingSubquery() {
@@ -1649,6 +1907,22 @@ public class ExecutionContext {
         this.clientIp = clientIp;
     }
 
+    public int getPort() {
+        return port;
+    }
+
+    public void setPort(int port) {
+        this.port = port;
+    }
+
+    public String getUser() {
+        return user;
+    }
+
+    public void setUser(String user) {
+        this.user = user;
+    }
+
     public int getExecutorChunkLimit() {
         return getParamManager().getInt(ConnectionParams.CHUNK_SIZE);
     }
@@ -1684,6 +1958,9 @@ public class ExecutionContext {
     }
 
     public MergedStorageInfo getStorageInfo(String schemaName) {
+        if (storageInfoSupplier == null) {
+            return null;
+        }
         return storageInfoSupplier.apply(schemaName);
     }
 
@@ -1738,6 +2015,14 @@ public class ExecutionContext {
         return this;
     }
 
+    public EphemeralFilesSchemaManager getOrCreateFilesSchemaManager() {
+        if (filesSchemaManager == null) {
+            filesSchemaManager = new EphemeralFilesSchemaManager();
+            schemaManagers.put(EphemeralFilesSchemaManager.SCHEMA_NAME, filesSchemaManager);
+        }
+        return filesSchemaManager;
+    }
+
     public boolean isReadOnly() {
         return readOnly;
     }
@@ -1758,6 +2043,8 @@ public class ExecutionContext {
         private final ValueHolder<Parameters> params = new ValueHolder<>();
         private final ValueHolder<QueryMemoryPoolHolder> memoryPoolHolder = new ValueHolder<>();
         //private final ValueHolder<Map<String, Object>> extraCmds = new ValueHolder<>();
+        // false: copy uses its own QuerySpillSpaceMonitor
+        private boolean shareQuerySpillMonitor = true;
 
         public CopyOption setParameters(Parameters params) {
             this.params.set(params);
@@ -1778,6 +2065,14 @@ public class ExecutionContext {
             return this;
         }
 
+        public boolean isShareQuerySpillMonitor() {
+            return shareQuerySpillMonitor;
+        }
+
+        public CopyOption setShareQuerySpillMonitor(boolean shareQuerySpillMonitor) {
+            this.shareQuerySpillMonitor = shareQuerySpillMonitor;
+            return this;
+        }
     }
 
     public static Map<String, Object> deepCopyExtraCmds(Map<String, Object> extraCmds) {
@@ -1919,26 +2214,26 @@ public class ExecutionContext {
         cacheRefs.clear();
         cacheRelNodeIds.clear();
 
-        // clear params to release memory
-        params = null;
-
         calcitePlanOptimizerTrace = null;
 
         flashbackArea = false;
 
+        asOfCrossDdl = false;
+
+        containsBlockChainTable = false;
+
         // reset use hint flag
         useHint = false;
         xplanStat = null;
-        pruningTime = 0L;
         ignoredGsiSet = null;
 
         // clear tid
-        sqlTemplateId = null;
         columnarMaxShard = -1;
-        useColumnar = false;
+        planType = PlanType.ROW;
         columnarPlanCache = false;
 
         planProperties = new ConcurrentHashSet<>();
+        isWarmup = false;
     }
 
     /**
@@ -1952,8 +2247,6 @@ public class ExecutionContext {
         if (lastFailedMessage != null) {
             getExtraDatas().put(ExecutionContext.LAST_FAILED_MESSAGE, lastFailedMessage);
         }
-        defaultExtraCmds = null;
-        hintCmds = null;
         schemaManagers = new ConcurrentHashMap<>();
         currentSchemaManager = null;
         parameterNlsStrings = null;
@@ -1976,14 +2269,12 @@ public class ExecutionContext {
         sessionCharset = null;
         physicalRecorder = null;
         recorder = null;
-        tracer = null;
         enableTrace = false;
         enableDdlTrace = false;
         enableFeedBackWorkload = false;
         stressTestValid = false;
         socketTimeout = -1;
         stats = null;
-        originSql = null;
         isPrivilegeMode = false;
         modifySelect = false;
         correlateRowMap = Maps.newHashMap();
@@ -1998,17 +2289,20 @@ public class ExecutionContext {
         onlyUseTmpTblPool = true;
         internalSystemSql = true;
         runtimeStatistics = null;
+        versionStorageStatistics = null;
+        columnarScanMetrics = null;
+        extColStats = null;
+        dmlWriteContext = null;
         usingPhySqlCache = false;
         doingBatchInsertBySpliter = false;
+        internalSubExecution = false;
         isApplyingSubquery = false;
         subqueryId = null;
         blockBuilderCapacity = null;
-        enableOssCompatible = null;
         enableOssDelayMaterializationOnExchange = null;
         finalPlan = null;
         unOptimizedPlan = null;
         timeZone = null;
-        traceId = null;
         phySqlId = null;
         sqlId = null;
         cluster = null;
@@ -2033,6 +2327,8 @@ public class ExecutionContext {
         txId = 0L;
         connId = 0L;
         clientIp = null;
+        port = -1;
+        user = null;
         testMode = false;
         useHint = false;
         readOnly = false;
@@ -2050,14 +2346,50 @@ public class ExecutionContext {
         executingPreparedStmt = false;
 
         blockBuilderCapacity = null;
-        enableOssCompatible = null;
         enableOssDelayMaterializationOnExchange = null;
 
         fcManager = null;
+        scManager = null;
+
+        checkIsAllDnUseXDataSource = false;
+        checkSupportsReturningAll = false;
+    }
+
+    public void cleanAfterStmt() {
+        hintCmds = null;
+        defaultExtraCmds = null;
+        traceId = null;
+        tracer = null;
+        pruningTime = null;
+        sqlTemplateId = null;
+        originSql = null;
+        sqlParameterized = null;
+        params = null;
+        parallelStatisticExecutor = null;
+        hllExecutor = null;
+        isWarmup = null;
+        versionStorageStatistics = null;
+        columnarScanMetrics = null;
+        extColStats = null;
+        dmlWriteContext = null;
+        htapTrace = null;
+        routingType = null;
+        grayWorkload = null;
+        ttlQueryType = null;
+        if (filesSchemaManager != null) {
+            schemaManagers.remove(EphemeralFilesSchemaManager.SCHEMA_NAME);
+            filesSchemaManager = null;
+        }
+        ddlInitialJobId = null;
+        exclusiveResources = null;
+        sharedResources = null;
+        hasDdlInitialJob = null;
+        // Reset the value but keep the reference shared with DdlContext.
+        ddlClientConnectionReset.set(false);
     }
 
     public boolean useReturning() {
-        return null != returning || null != backfillReturning;
+        return null != returning || null != backfillReturning || null != returningAll;
     }
 
     public String getReturning() {
@@ -2074,6 +2406,14 @@ public class ExecutionContext {
 
     public void setBackfillReturning(String backfillReturning) {
         this.backfillReturning = backfillReturning;
+    }
+
+    public String getReturningAll() {
+        return returningAll;
+    }
+
+    public void setReturningAll(String returningAll) {
+        this.returningAll = returningAll;
     }
 
     public boolean isOptimizedWithReturning() {
@@ -2140,8 +2480,20 @@ public class ExecutionContext {
         return runOnNewDdlEngine;
     }
 
+    public void setRunOnNewDdlEngine(boolean runOnNewDdlEngine) {
+        this.runOnNewDdlEngine = runOnNewDdlEngine;
+    }
+
     public void setClientFoundRows(boolean clientFoundRows) {
         this.clientFoundRows = clientFoundRows;
+    }
+
+    public boolean isWarmup() {
+        return isWarmup;
+    }
+
+    public void setWarmup(boolean warmup) {
+        isWarmup = warmup;
     }
 
     public long getCapabilityFlags() {
@@ -2165,14 +2517,13 @@ public class ExecutionContext {
     }
 
     public boolean isEnableOssCompatible() {
-        if (enableOssCompatible == null) {
-            enableOssCompatible = paramManager.getBoolean(ConnectionParams.ENABLE_OSS_COMPATIBLE);
-        }
-        return enableOssCompatible;
+        return paramManager.getBoolean(ConnectionParams.ENABLE_OSS_COMPATIBLE);
     }
 
     public void setEnableOssCompatible(Boolean enableOssCompatible) {
-        this.enableOssCompatible = enableOssCompatible;
+        Map<String, Object> ossComp = Maps.newHashMap();
+        ossComp.put(ConnectionProperties.ENABLE_OSS_COMPATIBLE, enableOssCompatible);
+        putAllHintCmds(ossComp);
     }
 
     public boolean isEnableOssDelayMaterializationOnExchange() {
@@ -2191,12 +2542,26 @@ public class ExecutionContext {
         this.columnarMaxShard = columnarMaxShard;
     }
 
+    @Deprecated
     public boolean isUseColumnar() {
-        return useColumnar;
+        // todo : replace isUseColumnar by getPlanType
+        return planType == PlanType.COLUMNAR;
     }
 
-    public void setUseColumnar(boolean useColumnar) {
-        this.useColumnar = useColumnar;
+    public PlanType getPlanType() {
+        return planType;
+    }
+
+    public void setPlanType(PlanType planType) {
+        this.planType = planType;
+    }
+
+    public RoutingType getRoutingType() {
+        return routingType;
+    }
+
+    public void setRoutingType(RoutingType routingType) {
+        this.routingType = routingType;
     }
 
     public boolean isColumnarPlanCache() {
@@ -2248,6 +2613,18 @@ public class ExecutionContext {
         }
     }
 
+    public boolean supportPushdownRangeLimit() {
+        if (!InstanceVersion.isMYSQL80()) {
+            return false;
+        }
+        Object switchVariable = getServerVariables().get(ConnectionProperties.PUSHDOWN_RANGE_LIMIT.toLowerCase());
+        if (switchVariable instanceof Boolean) {
+            return (boolean) switchVariable;
+        }
+        // Return global config value.
+        return InstConfUtil.getBool(ConnectionParams.PUSHDOWN_RANGE_LIMIT);
+    }
+
     public boolean dmlReplaceImplicitDefault() {
         return this.getParamManager().getBoolean(ConnectionParams.DML_REPLACE_IMPLICIT_DEFAULT);
     }
@@ -2261,11 +2638,15 @@ public class ExecutionContext {
     }
 
     public boolean isGod() {
-        return this.getPrivilegeContext().getPolarUserInfo().getAccountType().isGod();
+        return this.innerConnection || this.getPrivilegeContext().getPolarUserInfo().getAccountType().isGod();
     }
 
     public boolean isSuperUserOrAllPrivileges() {
         try {
+            if (innerConnection) {
+                return true;
+            }
+
             final AccountType accountType = this.getPrivilegeContext().getPolarUserInfo().getAccountType();
             if (accountType.isGod() || accountType.isDBA()) {
                 return true;
@@ -2300,6 +2681,14 @@ public class ExecutionContext {
         this.calcitePlanOptimizerTrace = calcitePlanOptimizerTrace;
     }
 
+    public Optional<HtapTrace> getHtapTrace() {
+        return Optional.ofNullable(htapTrace);
+    }
+
+    public void setHtapTrace(HtapTrace htapTrace) {
+        this.htapTrace = htapTrace;
+    }
+
     public boolean isUserSql() {
         return userSql;
     }
@@ -2330,10 +2719,26 @@ public class ExecutionContext {
             .getBoolean(ConnectionParams.ENABLE_FORCE_PRIMARY_FOR_GROUP_BY);
     }
 
-    public boolean enableAsyncCommit() {
+    public boolean enableAsyncCommit80() {
         // Return false by default.
-        return null != this.getParamManager()
-            && this.getParamManager().getBoolean(ConnectionParams.ENABLE_ASYNC_COMMIT);
+        if (null == getParamManager()) {
+            return false;
+        }
+        if (InstanceVersion.isMYSQL80() && getParamManager().getBoolean(ConnectionParams.ENABLE_ASYNC_COMMIT_80)) {
+            return true;
+        }
+        return false;
+    }
+
+    public boolean enableAsyncCommit57() {
+        // Return false by default.
+        if (null == getParamManager()) {
+            return false;
+        }
+        if (!InstanceVersion.isMYSQL80() && getParamManager().getBoolean(ConnectionParams.ENABLE_ASYNC_COMMIT_57)) {
+            return true;
+        }
+        return false;
     }
 
     public boolean omitPrepareTs() {
@@ -2419,17 +2824,17 @@ public class ExecutionContext {
     }
 
     public boolean isCheckingCci() {
-        if (checkingCci) {
-            return true;
-        }
         if (null != this.getParamManager()) {
             return this.getParamManager().getBoolean(ConnectionParams.FORCE_CCI_VISIBLE);
         }
         return false;
     }
 
-    public void setCheckingCci(boolean checkingCci) {
-        this.checkingCci = checkingCci;
+    public boolean isEnableCciNaiveCheckIfFastCheckerFailed() {
+        if (null != this.getParamManager()) {
+            return this.getParamManager().getBoolean(ConnectionParams.ENABLE_CCI_NAIVE_CHECK_IF_FAST_CHECKER_FAILED);
+        }
+        return false;
     }
 
     public boolean isEnableOrcDeletedScan() {
@@ -2576,4 +2981,122 @@ public class ExecutionContext {
                 scManager.getFlashbackColumnarManager(tso, logicalSchema, logicalTable, autoPosition));
     }
 
+    public boolean isEnableTsoOpt() {
+        if (null != this.getParamManager()) {
+            return getParamManager().getBoolean(ConnectionParams.ENABLE_TSO_OPT);
+        }
+        return false;
+    }
+
+    public GroupTaskExecutor getHllExecutor() {
+        return hllExecutor;
+    }
+
+    public void setHllExecutor(GroupTaskExecutor hllExecutor) {
+        this.hllExecutor = hllExecutor;
+    }
+
+    public ExecutorService getParallelStatisticExecutor() {
+        return parallelStatisticExecutor;
+    }
+
+    public void setParallelStatisticExecutor(ExecutorService parallelStatisticExecutor) {
+        this.parallelStatisticExecutor = parallelStatisticExecutor;
+    }
+
+    public Map<PlanCache.CacheKey, DeepPageCache> getDeepPageCacheMap() {
+        return deepPageCacheMap;
+    }
+
+    public void setDeepPageCacheMap(Map<PlanCache.CacheKey, DeepPageCache> deepPageCacheMap) {
+        this.deepPageCacheMap = deepPageCacheMap;
+    }
+
+    public boolean isSubJob() {
+        return null != getDdlContext() && getDdlContext().isSubJob();
+    }
+
+    public boolean isEnableCloseConnectionWhenTrxFatal() {
+        if (null != this.getParamManager()) {
+            return getParamManager().getBoolean(ConnectionParams.ENABLE_CLOSE_CONNECTION_WHEN_TRX_FATAL);
+        }
+        return false;
+    }
+
+    public boolean isEnableTrxFatalOnAnyError() {
+        if (null != this.getParamManager()) {
+            return getParamManager().getBoolean(ConnectionParams.ENABLE_TRX_FATAL_ON_ANY_ERROR);
+        }
+        return false;
+    }
+
+    public boolean isForbiddenCrossGroupWriteForExplicitTrx() {
+        if (null != this.getParamManager()) {
+            // Never forbid cross group write for broadcast dml.
+            // Even for multi-table update which updates other tables and broadcast table.
+            return getParamManager().getBoolean(ConnectionParams.FORBID_CROSS_GROUP_WRITE_FOR_EXPLICIT_TRX)
+                && isUserSql() && !isModifyBroadcastTable();
+        }
+        return false;
+    }
+
+    public boolean isOptimizeForbidCrossGroupCheckForPushDownPlan() {
+        if (null != this.getParamManager()) {
+            return isUserSql() && getParamManager().getBoolean(
+                ConnectionParams.OPTIMIZE_FORBID_CROSS_GROUP_CHECK_FOR_PUSH_DOWN_PLAN);
+        }
+        return false;
+    }
+
+    public boolean isOptimizeForbidCrossGroupCheckForNonPushDownPlan() {
+        if (null != this.getParamManager()) {
+            return isUserSql() && getParamManager()
+                .getBoolean(ConnectionParams.OPTIMIZE_FORBID_CROSS_GROUP_CHECK_FOR_NON_PUSH_DOWN_PLAN) && isUserSql();
+        }
+        return false;
+    }
+
+    public boolean isForbidTrxContinueAfterCrossGroup() {
+        if (null != this.getParamManager()) {
+            return getParamManager().getBoolean(ConnectionParams.FORBID_TRX_CONTINUE_AFTER_CROSS_GROUP);
+        }
+        return false;
+    }
+
+    public boolean isEnableZeroGroupAsBroadcastFirstGroup() {
+        if (null != this.getParamManager()) {
+            return getParamManager().getBoolean(ConnectionParams.ENABLE_ZERO_GROUP_AS_BROADCAST_FIRST_GROUP)
+                && isModifyBroadcastTable();
+        }
+        return false;
+    }
+
+    public TtlQueryType getTtlQueryType() {
+        return ttlQueryType;
+    }
+
+    public void setTtlQueryType(TtlQueryType ttlQueryType) {
+        this.ttlQueryType = ttlQueryType;
+    }
+
+    public String getReadonlyDnList() {
+        if (null != this.getParamManager()) {
+            return getParamManager().getString(ConnectionParams.READONLY_DN_LIST);
+        }
+        return ConnectionParams.READONLY_DN_LIST.getDefault();
+    }
+
+    public boolean isAllowBroadcastWriteForReadonlyDn() {
+        if (null != this.getParamManager()) {
+            return getParamManager().getBoolean(ConnectionParams.ALLOW_BROADCAST_WRITE_FOR_READONLY_DN);
+        }
+        return Boolean.parseBoolean(ConnectionParams.ALLOW_BROADCAST_WRITE_FOR_READONLY_DN.getDefault());
+    }
+
+    public boolean isForbidTrxContinueAfterWriteReadonly() {
+        if (null != this.getParamManager()) {
+            return getParamManager().getBoolean(ConnectionParams.FORBID_TRX_CONTINUE_AFTER_WRITE_READONLY);
+        }
+        return Boolean.parseBoolean(ConnectionParams.FORBID_TRX_CONTINUE_AFTER_WRITE_READONLY.getDefault());
+    }
 }

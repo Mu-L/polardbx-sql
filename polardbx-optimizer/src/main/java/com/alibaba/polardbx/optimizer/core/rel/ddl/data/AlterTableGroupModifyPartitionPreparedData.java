@@ -244,7 +244,9 @@ public class AlterTableGroupModifyPartitionPreparedData extends AlterTableGroupB
             partitionGroupRecord.partition_name = oldPartitionName;
             partitionGroupRecord.tg_id = tableGroupId;
 
-            partitionGroupRecord.phy_db = getTargetGroupDetailInfoExRecords().get(i % targetDbCount).phyDbName;
+            partitionGroupRecord.setPhy_db(getTargetGroupDetailInfoExRecords().get(i % targetDbCount).getPhyDbName());
+            partitionGroupRecord.setGroup_Name(
+                getTargetGroupDetailInfoExRecords().get(i % targetDbCount).getGroupName());
 
             partitionGroupRecord.locality = "";
             partitionGroupRecord.pax_group_id = 0L;

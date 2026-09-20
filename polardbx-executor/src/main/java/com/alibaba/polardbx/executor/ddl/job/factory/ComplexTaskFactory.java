@@ -16,17 +16,23 @@
 
 package com.alibaba.polardbx.executor.ddl.job.factory;
 
+import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.ddl.job.builder.DdlPhyPlanBuilder;
+import com.alibaba.polardbx.executor.ddl.job.builder.DropForeignKeyPhyTableBuilder;
 import com.alibaba.polardbx.executor.ddl.job.builder.DropPhyTableBuilder;
+import com.alibaba.polardbx.executor.ddl.job.builder.RenamePhyTableBuilder;
 import com.alibaba.polardbx.executor.ddl.job.converter.DdlJobDataConverter;
 import com.alibaba.polardbx.executor.ddl.job.converter.PhysicalPlanData;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.backfill.AlterTableGroupBackFillTask;
 import com.alibaba.polardbx.executor.ddl.job.task.backfill.MoveTableBackFillTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.DropFkPhyTableDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.DropTablePhyDdlWithCheckTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.MoveDatabaseCleanupTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.MoveDatabaseSwitchDataSourcesTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameUselessPhyTableDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TablesSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.UpdateTablesVersionTask;
@@ -39,11 +45,14 @@ import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterTableChangeTop
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterTableGroupCleanupTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterTableGroupMovePartitionRefreshMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterTableGroupRefreshMetaBaseTask;
+import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterTableGroupReleaseBarrierTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterTableSetTableGroupRefreshMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.CleanupEmptyTableGroupTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupSyncTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
+import com.alibaba.polardbx.gms.topology.DbInfoManager;
+import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ComplexTaskMetaManager;
 import com.alibaba.polardbx.optimizer.config.table.PreemptiveTime;
@@ -51,14 +60,15 @@ import com.alibaba.polardbx.optimizer.config.table.ScaleOutPlanUtil;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.PhyDdlTableOperation;
-import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableDropPartitionPreparedData;
-import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableGroupDropPartitionPreparedData;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.MoveDatabasePreparedData;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
+import com.alibaba.polardbx.optimizer.utils.PlannerUtils;
+import com.alibaba.polardbx.rule.TableRule;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.util.Pair;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -96,7 +106,7 @@ public class ComplexTaskFactory {
                 ConnectionParams.PREEMPTIVE_MDL_INITWAIT, ConnectionParams.PREEMPTIVE_MDL_INTERVAL);
         TableMeta tableMeta = executionContext.getSchemaManager(schemaName).getTable(logicalTableName);
         List<String> relatedTables = new ArrayList<>();
-        if (tableMeta.isGsi()) {
+        if (tableMeta.isGsi() || tableMeta.isColumnar()) {
             //all the gsi table version change will be behavior by primary table
             assert
                 tableMeta.getGsiTableMetaBean() != null && tableMeta.getGsiTableMetaBean().gsiMetaBean != null;
@@ -168,8 +178,16 @@ public class ComplexTaskFactory {
         }
 
         if (!skipBackFill) {
+            Map<String, List<String>> ptbGroupMapList = null;
+            if (ptbGroupMap != null) {
+                ptbGroupMapList = new HashMap<>();
+                for (Map.Entry<String, org.apache.calcite.util.Pair<String, String>> e : ptbGroupMap.entrySet()) {
+                    ptbGroupMapList.put(e.getKey(),
+                        Arrays.asList(e.getValue().getKey(), e.getValue().getValue()));
+                }
+            }
             taskList
-                .add(new AlterTableGroupBackFillTask(schemaName, logicalTableName, ptbGroupMap, sourcePhyTables,
+                .add(new AlterTableGroupBackFillTask(schemaName, logicalTableName, ptbGroupMapList, sourcePhyTables,
                     targetPhyTables,
                     isBroadcast, ComplexTaskMetaManager.ComplexTaskType.MOVE_PARTITION == taskType, false, false));
         }
@@ -190,6 +208,7 @@ public class ComplexTaskFactory {
     public static List<DdlTask> bringUpAlterTableGroup(String schemaName,
                                                        String tableGroupName,
                                                        String tableName,
+                                                       List<String> oldPartitions,
                                                        ComplexTaskMetaManager.ComplexTaskType complexTaskType,
                                                        Long versionId,
                                                        ExecutionContext executionContext) {
@@ -204,7 +223,7 @@ public class ComplexTaskFactory {
         if (complexTaskType != ComplexTaskMetaManager.ComplexTaskType.SET_TABLEGROUP) {
             for (String logicalTable : tableGroupConfig.getAllTables()) {
                 TableMeta tableMeta = executionContext.getSchemaManager(schemaName).getTable(logicalTable);
-                if (tableMeta.isGsi()) {
+                if (tableMeta.isGsi() || tableMeta.isColumnar()) {
                     //all the gsi table version change will be behavior by primary table
                     assert
                         tableMeta.getGsiTableMetaBean() != null && tableMeta.getGsiTableMetaBean().gsiMetaBean != null;
@@ -264,7 +283,7 @@ public class ComplexTaskFactory {
         List<BaseDdlTask> synTableGroupTasks = new ArrayList<>();
         if (complexTaskType == ComplexTaskMetaManager.ComplexTaskType.MOVE_PARTITION) {
             alterTableGroupRefreshTableGroupMetaTask =
-                new AlterTableGroupMovePartitionRefreshMetaTask(schemaName, tableGroupName, versionId);
+                new AlterTableGroupMovePartitionRefreshMetaTask(schemaName, tableGroupName, oldPartitions, versionId);
             BaseDdlTask synTableGroup =
                 new TableGroupSyncTask(schemaName, tableGroupName);
             synTableGroupTasks.add(synTableGroup);
@@ -326,7 +345,7 @@ public class ComplexTaskFactory {
         if (hasColumnar) {
             // mark after refresh meta
             CdcColumnarTableGroupDdlMark cdcColumnarTableGroupDdlMark =
-                new CdcColumnarTableGroupDdlMark(tableGroupName, schemaName, columnarTables, versionId);
+                new CdcColumnarTableGroupDdlMark(schemaName, columnarTables, versionId);
             taskList.add(cdcColumnarTableGroupDdlMark);
             // wait until alter partition success
             boolean skipTask =
@@ -343,6 +362,7 @@ public class ComplexTaskFactory {
         taskList
             .add(new TablesSyncTask(schemaName, logicalTableNames, enablePreemptiveMdl, preemptiveTime));
         if (complexTaskType == ComplexTaskMetaManager.ComplexTaskType.MOVE_PARTITION) {
+            taskList.add(new AlterTableGroupReleaseBarrierTask(schemaName, tableGroupName.toLowerCase()));
             taskList.add(new EmptyLogTask(schemaName,
                 String.format("schema %s group %s stop double write", schemaName, tableGroupName)));
         }
@@ -356,6 +376,7 @@ public class ComplexTaskFactory {
                                                                 String targetTableGroupName,
                                                                 String tableName,
                                                                 ComplexTaskMetaManager.ComplexTaskType complexTaskType,
+                                                                Long versionId,
                                                                 ExecutionContext executionContext) {
 
         List<String> logicalTableNames = new ArrayList<>();
@@ -365,7 +386,7 @@ public class ComplexTaskFactory {
         // for alter table set tableGroup, only need to care about the table in "alter table" only
         String logicalTable = tableName;
         TableMeta tableMeta = executionContext.getSchemaManager(schemaName).getTable(logicalTable);
-        if (tableMeta.isGsi()) {
+        if (tableMeta.isGsi() || tableMeta.isColumnar()) {
             //all the gsi table version change will be behavior by primary table
             assert
                 tableMeta.getGsiTableMetaBean() != null && tableMeta.getGsiTableMetaBean().gsiMetaBean != null;
@@ -431,7 +452,7 @@ public class ComplexTaskFactory {
             complexTaskType == ComplexTaskMetaManager.ComplexTaskType.MODIFY_PARTITION) {
             alterTableRefreshMetaTask =
                 new AlterTableChangeTopologyRefreshMetaTask(schemaName, sourceTableGroup, targetTableGroupName,
-                    tableName);
+                    tableName, versionId);
         }
 
         CleanupEmptyTableGroupTask cleanupEmptyTableGroupTask =
@@ -454,6 +475,22 @@ public class ComplexTaskFactory {
             .add(new TablesSyncTask(schemaName, logicalTableNames, enablePreemptiveMdl, preemptiveTime));
 
         taskList.add(alterTableRefreshMetaTask);
+
+        if (tableMeta.isColumnar()) {
+            List<String> columnarTables = new ArrayList<>();
+            columnarTables.add(tableName);
+            // mark after refresh meta
+            CdcColumnarTableGroupDdlMark cdcColumnarTableGroupDdlMark =
+                new CdcColumnarTableGroupDdlMark(schemaName, columnarTables, versionId);
+            taskList.add(cdcColumnarTableGroupDdlMark);
+            // wait until alter partition success
+            boolean skipTask =
+                executionContext.skipDdlTasks().contains(WaitColumnarTableAlterPartitionTask.class.getSimpleName());
+            WaitColumnarTableAlterPartitionTask waitColumnarTableAlterPartitionTask =
+                new WaitColumnarTableAlterPartitionTask(schemaName, columnarTables, skipTask);
+            taskList.add(waitColumnarTableAlterPartitionTask);
+        }
+
         taskList.addAll(synTableGroupTasks);
         DdlTask updateTablesVersionTask = new UpdateTablesVersionTask(schemaName, logicalTableNames);
         taskList.add(updateTablesVersionTask);
@@ -648,7 +685,30 @@ public class ComplexTaskFactory {
         return taskList;
     }
 
-    public static DdlTask CreateDropUselessPhyTableTask(String schemaName, String logicalTableName,
+    public static DdlTask cleanUpUselessPhyTableTask(String schemaName, String logicalTableName,
+                                                     Map<String, Set<String>> sourceTables,
+                                                     Map<String, Set<String>> targetTables,
+                                                     List<DdlTask> dropForeignKeyTasksBeforeRename,
+                                                     ExecutionContext executionContext) {
+        boolean recycleBinEnable = ScaleOutPlanUtil.isPhyRecyclebinEnable(executionContext);
+        TableMeta tableMeta = null;
+        boolean hasForeignKey = false;
+        try {
+            tableMeta = executionContext.getSchemaManager(schemaName).getTable(logicalTableName);
+            hasForeignKey = tableMeta.hasForeignKey();
+        } catch (Exception ex) {
+            // pass
+        }
+        if (recycleBinEnable && !hasForeignKey) {
+            return createRenameUselessPhyTableTask(schemaName, logicalTableName, sourceTables, targetTables,
+                dropForeignKeyTasksBeforeRename, false, executionContext);
+        } else {
+            return createDropUselessPhyTableTask(schemaName, logicalTableName, sourceTables, targetTables,
+                executionContext);
+        }
+    }
+
+    public static DdlTask createDropUselessPhyTableTask(String schemaName, String logicalTableName,
                                                         Map<String, Set<String>> sourceTables,
                                                         Map<String, Set<String>> targetTables,
                                                         ExecutionContext executionContext) {
@@ -679,6 +739,101 @@ public class ComplexTaskFactory {
             DdlJobDataConverter.convertToPhysicalPlanData(tableTopology, physicalPlans, executionContext);
 
         return new DropTablePhyDdlWithCheckTask(schemaName, physicalPlanData, targetTables);
+    }
+
+    public static DdlTask createRenameUselessPhyTableTask(String schemaName, String logicalTableName,
+                                                          Map<String, Set<String>> sourceTables,
+                                                          Map<String, Set<String>> targetTables,
+                                                          List<DdlTask> dropForeignKeyTasksBeforeRename,
+                                                          boolean isMoveDrdsDb,
+                                                          ExecutionContext executionContext) {
+
+        //PartitionInfo partitionInfo =
+        //        executionContext.getSchemaManager(schemaName).getTable(logicalTableName).getPartitionInfo();
+
+        TreeMap<String, List<List<String>>> tableTopology = new TreeMap<>();
+        TreeMap<String, HashMap<String, String>> srcAndRenamedTbMap = new TreeMap<>(String::compareToIgnoreCase);
+
+        for (Map.Entry<String, Set<String>> entry : sourceTables.entrySet()) {
+            String groupName = isMoveDrdsDb ? GroupInfoUtil.buildScaleOutGroupName(entry.getKey()) : entry.getKey();
+            srcAndRenamedTbMap.put(groupName, new HashMap<>());
+            for (String val : entry.getValue()) {
+                List<String> phyTable = new ArrayList<>();
+                phyTable.add(val);
+                tableTopology.computeIfAbsent(groupName, o -> new ArrayList<>()).add(phyTable);
+                srcAndRenamedTbMap.get(groupName).put(val, ScaleOutPlanUtil.genenateUniqueTbName());
+            }
+        }
+
+        DdlPhyPlanBuilder renamePhyTableBuilder =
+            RenamePhyTableBuilder.createBuilder(schemaName, logicalTableName, tableTopology, executionContext)
+                .build();
+        List<PhyDdlTableOperation> physicalPlans = renamePhyTableBuilder.getPhysicalPlans();
+        //physicalPlans.forEach(o -> o.setPartitionInfo(partitionInfo));
+
+        PhysicalPlanData physicalPlanData =
+            DdlJobDataConverter.convertToPhysicalPlanData(tableTopology, physicalPlans, executionContext);
+
+        Map<String, String> map = ScaleOutPlanUtil.buildGroup2StorageInstMapping(schemaName);
+        TreeMap<String, String> groupAndStorageInMap = new TreeMap<>(String::compareToIgnoreCase);
+        for (Map.Entry<String, String> entry : map.entrySet()) {
+            String groupName = isMoveDrdsDb ? GroupInfoUtil.buildScaleOutGroupName(entry.getKey()) : entry.getKey();
+            if (srcAndRenamedTbMap.containsKey(groupName)) {
+                groupAndStorageInMap.put(groupName, entry.getValue());
+            }
+        }
+
+        boolean dropFk = false;
+        Set<String> fkSet = new TreeSet<>(String::compareToIgnoreCase);
+        boolean isAutoMode = DbInfoManager.getInstance().isNewPartitionDb(schemaName);
+        TableMeta tableMeta = null;
+        try {
+            tableMeta = executionContext.getSchemaManager(schemaName).getTable(logicalTableName);
+        } catch (Exception ex) {
+            // pass
+        }
+        if (tableMeta != null && tableMeta.hasForeignKey()) {
+            if (isAutoMode && (tableMeta.getPartitionInfo().isGsiSingleOrSingleTable()
+                || tableMeta.getPartitionInfo().isGsiBroadcastOrBroadcast())) {
+                dropFk = true;
+            }
+            if (!isAutoMode) {
+                OptimizerContext optimizerContext = OptimizerContext.getContext(schemaName);
+                TableRule tableRule = optimizerContext.getRuleManager().getTddlRule().getTable(logicalTableName);
+                if (PlannerUtils.isSingleTable(tableRule) || tableRule.isBroadcast()) {
+                    dropFk = true;
+                }
+            }
+            if (dropFk && GeneralUtil.isNotEmpty(tableMeta.getForeignKeys())) {
+                for (ForeignKeyData foreignKeyData : tableMeta.getForeignKeys().values()) {
+                    if (foreignKeyData.isPushDown()) {
+                        fkSet.add(foreignKeyData.getConstraint());
+                    }
+                }
+            }
+        }
+        if (dropFk) {
+            for (String foreignKey : GeneralUtil.emptyIfNull(fkSet)) {
+                dropForeignKeyTasksBeforeRename.add(createDropForeignKeyTask(schemaName,
+                    logicalTableName, tableTopology, foreignKey, executionContext));
+            }
+        }
+
+        return new RenameUselessPhyTableDdlTask(schemaName, physicalPlanData, groupAndStorageInMap, srcAndRenamedTbMap);
+    }
+
+    private static DdlTask createDropForeignKeyTask(String schemaName, String logicalTableName,
+                                                    TreeMap<String, List<List<String>>> tableTopology,
+                                                    String foreignKey,
+                                                    ExecutionContext executionContext) {
+        DdlPhyPlanBuilder dropForeignKeyPhyTableBuilder =
+            DropForeignKeyPhyTableBuilder.createBuilder(schemaName, logicalTableName,
+                foreignKey, tableTopology, executionContext).build();
+        List<PhyDdlTableOperation> physicalPlans = dropForeignKeyPhyTableBuilder.getPhysicalPlans();
+        PhysicalPlanData physicalPlanData =
+            DdlJobDataConverter.convertToPhysicalPlanData(tableTopology, physicalPlans, executionContext);
+        return new DropFkPhyTableDdlTask(schemaName, physicalPlanData);
+
     }
 
     public static boolean hasColumnarTable(TableGroupConfig tableGroupConfig, List<String> columnarTables,

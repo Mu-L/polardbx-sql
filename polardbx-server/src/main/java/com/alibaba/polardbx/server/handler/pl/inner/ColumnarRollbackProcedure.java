@@ -1,6 +1,8 @@
 package com.alibaba.polardbx.server.handler.pl.inner;
 
+import com.alibaba.polardbx.common.ColumnarOptions;
 import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.columnar.ColumnarOption;
 import com.alibaba.polardbx.common.ddl.newengine.DdlType;
 import com.alibaba.polardbx.common.utils.AddressUtils;
 import com.alibaba.polardbx.common.utils.logger.Logger;
@@ -27,6 +29,7 @@ import com.alibaba.polardbx.gms.privilege.PolarPrivUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.server.ServerConnection;
+import com.alibaba.polardbx.server.handler.ColumnarConfigHandler;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -39,7 +42,7 @@ import java.util.List;
  */
 public class ColumnarRollbackProcedure extends BaseInnerProcedure {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger("COLUMNAR_TRANS");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     //特殊值，用于标识rollback的pid
     private static final long ROLLBACK_PID = 1;
@@ -52,7 +55,10 @@ public class ColumnarRollbackProcedure extends BaseInnerProcedure {
         //参数解析
         long tso = checkParameters(params, statement);
 
-        columnarRollback(tso);
+        //新版本改成列存侧执行rollback
+        //columnarRollback(tso);
+        ColumnarConfigHandler.setColumnarConfig(
+            new ColumnarOption.Param(ColumnarOptions.COLUMNAR_ROLLBACK_TSO, String.valueOf(tso)));
 
         //返回结果
         cursor.addColumn("ROLLBACK_TSO", DataTypes.LongType);

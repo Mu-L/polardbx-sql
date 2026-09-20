@@ -1,5 +1,6 @@
 package com.alibaba.polardbx.gms.config;
 
+import com.alibaba.polardbx.common.eventlogger.EventType;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import org.apache.commons.lang.StringUtils;
@@ -32,6 +33,18 @@ public class SqlEngineAlert {
         if (StringUtils.isNotEmpty(event) && StringUtils.isNotEmpty(detail)) {
             this.alterMap.put(event.toLowerCase(), detail.length() < DETAIL_MAX_LEN ?
                 detail : detail.substring(0, DETAIL_MAX_LEN));
+        }
+    }
+
+    public void putColumnarRead(String alertMsg) {
+        if (InstConfUtil.getBool(ConnectionParams.ENABLE_SQL_ENGINE_ALERT_COLUMNAR_READ)) {
+            SqlEngineAlert.getInstance().putNormal(EventType.COLUMNAR_READ_ALERT.name() + " " + alertMsg);
+        }
+    }
+
+    public void putColumnarWarmUp(String alertMsg) {
+        if (InstConfUtil.getBool(ConnectionParams.ENABLE_SQL_ENGINE_ALERT_COLUMNAR_WARMUP)) {
+            SqlEngineAlert.getInstance().putMajor(EventType.COLUMNAR_WARMUP.name() + " " + alertMsg);
         }
     }
 

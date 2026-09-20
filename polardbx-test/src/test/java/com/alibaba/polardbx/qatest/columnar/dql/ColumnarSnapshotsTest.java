@@ -26,6 +26,7 @@ public class ColumnarSnapshotsTest extends ColumnarReadBaseTestCase {
         + ") partition by key(id)";
     private static final String CALL_COLUMNAR_FLUSH = "CALL polardbx.columnar_flush('%s', '%s', '%s')";
     private static final String CALL_COLUMNAR_FLUSH_GLOBAL = "CALL polardbx.columnar_flush()";
+    private static final String MODIFY_COLUMN_REBUILD_CCI = "ALTER TABLE " + TABLE_NAME + " MODIFY COLUMN a %s";
 
     @Before
     public void setUp() {
@@ -50,7 +51,7 @@ public class ColumnarSnapshotsTest extends ColumnarReadBaseTestCase {
     @Test
     public void testSimple() throws SQLException, InterruptedException {
         String sql = "create clustered columnar index cci on " + TABLE_NAME + "(a) partition by key(id) "
-            + " engine='EXTERNAL_DISK' "
+            + " "
             + " columnar_options='{"
             + "     \"type\":\"snapshot\", "
             + "     \"snapshot_retention_days\":\"7\""
@@ -121,13 +122,98 @@ public class ColumnarSnapshotsTest extends ColumnarReadBaseTestCase {
     }
 
     @Test
+    public void testSimpleWithCciRebuild() throws SQLException, InterruptedException {
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "SET FORBID_DDL_WITH_CCI = false");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "SET MAX_CCI_COUNT = 10");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "SET ENABLE_MODIFY_CCI_CRITICAL_COLUMN = true");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "SET REBUILD_CCI_STRATEGY = 0");
+
+        // 顺便测试一下CCI名称中夹杂大小写的影响
+        String sql = "create clustered columnar index cci_UPPER on " + TABLE_NAME + "(a) partition by key(id) "
+            + " "
+            + " columnar_options='{"
+            + "     \"type\":\"snapshot\", "
+            + "     \"snapshot_retention_days\":\"7\""
+            + " }'";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        ResultSet rs = JdbcUtil.executeQuerySuccess(tddlConnection, "show full create table " + TABLE_NAME);
+        String tableDef = null;
+        if (rs.next()) {
+            tableDef = rs.getString(2);
+        }
+        System.out.println(tableDef);
+        Assert.assertNotNull(tableDef);
+        Assert.assertTrue(tableDef.contains("\"TYPE\":\"SNAPSHOT\""));
+        Assert.assertTrue(tableDef.contains("\"SNAPSHOT_RETENTION_DAYS\":\"7\""));
+        Assert.assertTrue(tableDef.contains("\"AUTO_GEN_COLUMNAR_SNAPSHOT_INTERVAL\":\"-1\""));
+
+        sql = "INSERT INTO " + TABLE_NAME + " (id, a) values (0, 0), (1, 0)";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "set transaction_policy = TSO");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "begin");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "commit");
+
+        rs = JdbcUtil.executeQuerySuccess(tddlConnection,
+            String.format(CALL_COLUMNAR_FLUSH, DB_NAME, TABLE_NAME, "cci_UPPER"));
+        Assert.assertTrue(rs.next());
+        long tso0 = rs.getLong(1);
+        waitColumnarFlush(tso0);
+
+        // rebuild cci
+        JdbcUtil.executeUpdateSuccess(tddlConnection, String.format(MODIFY_COLUMN_REBUILD_CCI, "bigint"));
+
+        sql = "UPDATE " + TABLE_NAME + " SET a = 100 where 1=1";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "set transaction_policy = TSO");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "begin");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "commit");
+
+        rs = JdbcUtil.executeQuerySuccess(tddlConnection, CALL_COLUMNAR_FLUSH_GLOBAL);
+        Assert.assertTrue(rs.next());
+        long tso1 = rs.getLong(1);
+        waitColumnarFlush(tso1);
+
+        // rebuild cci
+        JdbcUtil.executeUpdateSuccess(tddlConnection, String.format(MODIFY_COLUMN_REBUILD_CCI, "int"));
+
+        sql = "UPDATE " + TABLE_NAME + " SET a = 200 where 1=1";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "begin");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "commit");
+
+        rs = JdbcUtil.executeQuerySuccess(tddlConnection, "select sum(a) from " + TABLE_NAME
+            + " as of tso " + tso0 + " force index(cci_UPPER)");
+        Assert.assertTrue(rs.next());
+        Assert.assertEquals(0, rs.getLong(1));
+
+        rs = JdbcUtil.executeQuerySuccess(tddlConnection, "select sum(a) from " + TABLE_NAME
+            + " as of tso " + tso1 + " force index(cci_UPPER)");
+        Assert.assertTrue(rs.next());
+        Assert.assertEquals(200, rs.getLong(1));
+
+        sql = "INSERT INTO " + TMP_TABLE_NAME + " SELECT * FROM " + TABLE_NAME
+            + " AS OF TSO " + tso1 + " FORCE INDEX (cci_UPPER)";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+
+        rs = JdbcUtil.executeQuerySuccess(tddlConnection, "SELECT sum(a) FROM " + TMP_TABLE_NAME);
+        Assert.assertTrue(rs.next());
+        Assert.assertEquals(200, rs.getLong(1));
+
+        rs = JdbcUtil.executeQuerySuccess(tddlConnection, "call polardbx.columnar_snapshot_files(" + tso0 + ")");
+        Assert.assertTrue(rs.next());
+
+        rs = JdbcUtil.executeQuerySuccess(tddlConnection, "call polardbx.columnar_snapshot_files(" + tso1 + ")");
+        Assert.assertTrue(rs.next());
+    }
+
+    @Test
     public void testFailPoint() throws SQLException {
-        JdbcUtil.executeUpdateSuccess(tddlConnection, "SET @fp_clear = true");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "SET @FP_FAILED_TABLE_SYNC = NULL");
         JdbcUtil.executeUpdateSuccess(tddlConnection, "SET FP_FAILED_TABLE_SYNC = true");
         JdbcUtil.executeUpdateSuccess(tddlConnection, "SET @FP_FAILED_TABLE_SYNC = 'true'");
         String sql = "/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS='WaitColumnarTableCreationTask')*/"
             + " create clustered columnar index cci on " + TABLE_NAME + "(a) partition by key(id) "
-            + " engine='EXTERNAL_DISK' "
+            + " "
             + " columnar_options='{"
             + "     \"type\":\"snapshot\", "
             + "     \"snapshot_retention_days\":\"7\""
@@ -143,7 +229,7 @@ public class ColumnarSnapshotsTest extends ColumnarReadBaseTestCase {
         Assert.assertFalse(tableDef.contains("\"TYPE\":\"SNAPSHOT\""));
         Assert.assertFalse(tableDef.contains("\"SNAPSHOT_RETENTION_DAYS\":\"7\""));
         Assert.assertFalse(tableDef.contains("\"AUTO_GEN_COLUMNAR_SNAPSHOT_INTERVAL\":\"-1\""));
-        JdbcUtil.executeUpdateSuccess(tddlConnection, "SET @fp_clear = true");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "SET @FP_FAILED_TABLE_SYNC = NULL");
         JdbcUtil.executeUpdateSuccess(tddlConnection, "SET FP_FAILED_TABLE_SYNC = false");
         rs = JdbcUtil.executeQuerySuccess(tddlConnection,
             "select job_id from metadb.ddl_engine where ddl_type = 'CREATE_INDEX' and state = 'PAUSED' and object_name = 'ColumnarSnapshotTest_t1'");
@@ -203,6 +289,8 @@ public class ColumnarSnapshotsTest extends ColumnarReadBaseTestCase {
     }
 
     private void waitColumnarFlush(long tso0) throws InterruptedException, SQLException {
+        long tso = ((tso0 >> 6) + 1) << 6;
+        System.out.println("try to wait tso " + tso0 + ", tso + 1 = " + tso);
         ResultSet rs;
         int retry = 10;
         boolean succeed = false;
@@ -210,14 +298,26 @@ public class ColumnarSnapshotsTest extends ColumnarReadBaseTestCase {
             // Wait columnar to process flush.
             Thread.sleep(1000);
             rs = JdbcUtil.executeQuerySuccess(tddlConnection,
-                "select tso from information_schema.columnar_snapshots where tso <= " + tso0
+                "select tso from information_schema.columnar_snapshots where tso <= " + tso
                     + " order by tso desc limit 1");
-            if (rs.next() && rs.getLong(1) == tso0) {
-                succeed = true;
-                break;
+            if (rs.next()) {
+                long tmp = rs.getLong(1);
+                if (tmp == tso0) {
+                    succeed = true;
+                    break;
+                } else {
+                    rs = JdbcUtil.executeQuerySuccess(tddlConnection,
+                        "select max(tso) from information_schema.columnar_snapshots");
+                    long maxTso = -1;
+                    if (rs.next()) {
+                        maxTso = rs.getLong(1);
+                    }
+                    long latency = JdbcUtil.getColumnarLatency(tddlConnection);
+                    System.out.println("tso :" + tmp + ", max tso: " + maxTso + ", columnar latency: " + latency);
+                }
             }
         }
 
-        Assert.assertTrue(succeed);
+        Assert.assertTrue("wait columnar flush failed, can not get expected columnar flush tso", succeed);
     }
 }

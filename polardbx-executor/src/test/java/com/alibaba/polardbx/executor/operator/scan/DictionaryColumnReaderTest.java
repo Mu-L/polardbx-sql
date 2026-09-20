@@ -1,5 +1,6 @@
 package com.alibaba.polardbx.executor.operator.scan;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.RandomAccessBlock;
@@ -14,6 +15,7 @@ import org.apache.orc.OrcProto;
 import org.apache.orc.StripeInformation;
 import org.apache.orc.impl.InStream;
 import org.apache.orc.impl.OrcIndex;
+import org.apache.orc.impl.PositionProviderBuilder;
 import org.apache.orc.impl.StreamName;
 import org.junit.Assert;
 import org.junit.Test;
@@ -236,7 +238,7 @@ public class DictionaryColumnReaderTest extends TpchColumnTestBase {
         throws IOException {
 
         final StripeInformation stripeInformation = stripeInformationMap.get(stripeId);
-        final OrcIndex orcIndex = preheatFileMeta.getOrcIndex(
+        final PositionProviderBuilder orcIndex = preheatFileMeta.getPositionProviderBuilder(
             stripeInformation.getStripeId()
         );
         final OrcProto.ColumnEncoding[] encodings = encodingMap.get(stripeId);
@@ -272,7 +274,12 @@ public class DictionaryColumnReaderTest extends TpchColumnTestBase {
 
             // Use async mode and wait for completion of stripe loader.
             columnReader = createColumnReader(columnId, orcIndex, runtimeMetrics, stripeLoader, encodings);
+
+            MemoryCountable.checkDeviation(columnReader, 0d, true);
+
             columnReader.open(loadFuture, false, rowGroupIncluded);
+
+            MemoryCountable.checkDeviation(columnReader, 0d, true);
 
             for (ScanTestBase.BlockLocation location : locationList) {
                 // block builder matched with raw orc data.
@@ -281,7 +288,12 @@ public class DictionaryColumnReaderTest extends TpchColumnTestBase {
 
                 // move index of column-reader and start reading from this index.
                 columnReader.startAt(location.rowGroupId, location.startPosition);
+
+                MemoryCountable.checkDeviation(columnReader, 0d, true);
+
                 columnReader.next((RandomAccessBlock) block, location.positionCount);
+
+                MemoryCountable.checkDeviation(columnReader, 0d, true);
 
                 Slice slice = ((SliceBlock) block).getData();
                 int bytesSize = ((byte[]) slice.getBase()).length;

@@ -3,15 +3,20 @@ package com.alibaba.polardbx.executor.mpp.operator;
 import com.alibaba.polardbx.executor.mpp.execution.DriverSplitRunner;
 import com.alibaba.polardbx.executor.mpp.execution.PipelineContext;
 import com.alibaba.polardbx.executor.mpp.execution.TaskContext;
+import com.alibaba.polardbx.executor.mpp.execution.TaskId;
+import com.alibaba.polardbx.executor.mpp.execution.TaskStateMachine;
 import com.alibaba.polardbx.executor.mpp.operator.factory.PipelineFactory;
 import com.alibaba.polardbx.executor.operator.ConsumerExecutor;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.memory.MemoryManager;
+import com.google.common.util.concurrent.MoreExecutors;
 import org.apache.commons.lang.StringUtils;
 import org.mockito.Mockito;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 
 import static org.junit.Assert.assertEquals;
 
@@ -40,10 +45,12 @@ public class PlanFragmentTopologyChecker extends AbstractPlanFragmentTester {
         List<DriverSplitRunner> driverSplitRunners = new ArrayList<>();
 
         StringBuilder executionTopology = new StringBuilder();
+        TaskId taskId = new TaskId("1985e6ee8e800000", 0, 0);
         for (PipelineFactory pipelineFactory : pipelineFactories) {
             List<Driver> drivers = new ArrayList<>();
 
             for (int i = 0; i < pipelineFactory.getParallelism(); i++) {
+
                 TaskContext taskContext = Mockito.mock(TaskContext.class);
                 Mockito.when(taskContext.isSpillable()).thenReturn(true);
                 Mockito.when(taskContext.getPipelineDepTree()).thenReturn(pipelineDepTree);
@@ -53,6 +60,7 @@ public class PlanFragmentTopologyChecker extends AbstractPlanFragmentTester {
 
                 DriverContext driverContext = Mockito.mock(DriverContext.class);
                 Mockito.when(driverContext.getPipelineContext()).thenReturn(pipelineContext);
+                Mockito.when(driverContext.getTaskId()).thenReturn(taskId);
 
                 DriverExec driverExec = pipelineFactory.createDriverExec(executionContext, driverContext, i);
                 Driver driver = new Driver(driverContext, driverExec);

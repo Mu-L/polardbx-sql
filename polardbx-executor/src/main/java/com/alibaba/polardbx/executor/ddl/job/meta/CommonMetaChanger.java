@@ -63,6 +63,7 @@ public class CommonMetaChanger {
         phyInfoSchemaContext.tableName = logicalTableName;
         phyInfoSchemaContext.phyTableSchema = phyTableSchema;
         phyInfoSchemaContext.phyTableName = phyTableName;
+        phyInfoSchemaContext.dnId = DdlHelper.getDnId(dataSource);
 
         return phyInfoSchemaContext;
     }
@@ -138,39 +139,50 @@ public class CommonMetaChanger {
 //    }
 
     private static void removeTableStatistic(String schemaName, String logicalTableName) {
-        SyncManagerHelper.sync(new RemoveTableStatisticSyncAction(schemaName, logicalTableName), schemaName,
+        SyncManagerHelper.syncThrowExceptions(new RemoveTableStatisticSyncAction(schemaName, logicalTableName),
+            schemaName,
             SyncScope.ALL);
     }
 
     private static void invalidateAlterTableColumnStatistic(String schemaName, String logicalTableName,
                                                             List<String> columnList) {
-        SyncManagerHelper.sync(new RemoveColumnStatisticSyncAction(schemaName, logicalTableName, columnList),
+        SyncManagerHelper.syncThrowExceptions(
+            new RemoveColumnStatisticSyncAction(schemaName, logicalTableName, columnList),
             schemaName, SyncScope.ALL);
     }
 
     private static void renameStatistic(String schemaName, String logicalTableName, String newLogicalTableName) {
-        SyncManagerHelper.sync(new RenameStatisticSyncAction(schemaName, logicalTableName, newLogicalTableName),
+        SyncManagerHelper.syncThrowExceptions(
+            new RenameStatisticSyncAction(schemaName, logicalTableName, newLogicalTableName),
             schemaName, SyncScope.ALL);
     }
 
     public static void invalidateBufferPool() {
-        SyncManagerHelper.sync(new InvalidateBufferPoolSyncAction(), DefaultDbSchema.NAME, SyncScope.ALL);
+        SyncManagerHelper.syncThrowExceptions(new InvalidateBufferPoolSyncAction(), DefaultDbSchema.NAME,
+            SyncScope.ALL);
     }
 
     public static void invalidateBufferPool(String schemaName) {
         invalidateBufferPool(schemaName, null);
     }
 
+    public static void invalidateBufferPoolCurrentNodeOnly(String schemaName) {
+        InvalidateBufferPoolSyncAction action = new InvalidateBufferPoolSyncAction(schemaName, null);
+        action.sync();
+    }
+
     private static void invalidateBufferPool(String schemaName, String logicalTableName) {
-        SyncManagerHelper.sync(new InvalidateBufferPoolSyncAction(schemaName, logicalTableName), schemaName,
+        SyncManagerHelper.syncThrowExceptions(new InvalidateBufferPoolSyncAction(schemaName, logicalTableName),
+            schemaName,
             SyncScope.ALL);
     }
 
     public static void clearFileSystemCache(@Nullable Engine engine, boolean all) {
-        SyncManagerHelper.sync(new ClearFileSystemCacheSyncAction(engine, all), DefaultDbSchema.NAME, SyncScope.ALL);
+        SyncManagerHelper.syncThrowExceptions(new ClearFileSystemCacheSyncAction(engine, all), DefaultDbSchema.NAME,
+            SyncScope.ALL);
     }
 
     public static void clearOSSFileSystemCache(List<String> paths, String schema) {
-        SyncManagerHelper.sync(new DeleteOssFileSyncAction(paths), schema, SyncScope.ALL);
+        SyncManagerHelper.syncThrowExceptions(new DeleteOssFileSyncAction(paths), schema, SyncScope.ALL);
     }
 }

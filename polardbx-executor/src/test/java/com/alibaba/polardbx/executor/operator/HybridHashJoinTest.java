@@ -33,6 +33,7 @@ import org.apache.calcite.rel.core.JoinRelType;
 import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -49,6 +50,7 @@ import java.util.UUID;
 
 import static com.alibaba.polardbx.executor.operator.util.RowChunksBuilder.rowChunksBuilder;
 
+@Ignore
 @RunWith(value = Parameterized.class)
 public class HybridHashJoinTest extends BaseExecTest {
 

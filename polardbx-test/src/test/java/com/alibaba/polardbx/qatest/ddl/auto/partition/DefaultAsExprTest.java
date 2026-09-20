@@ -1,5 +1,6 @@
 package com.alibaba.polardbx.qatest.ddl.auto.partition;
 
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.ConnectionManager;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import org.junit.Assert;
@@ -13,7 +14,7 @@ import java.sql.ResultSet;
 import java.util.List;
 import java.util.regex.Matcher;
 
-@RunWith(value = Parameterized.class)
+@IcbcIgnore(ignoreReason = "explicit_defaults_for_timestamp")
 public class DefaultAsExprTest extends PartitionAutoLoadSqlTestBase {
 
     public DefaultAsExprTest(AutoLoadSqlTestCaseParams parameter) {
@@ -50,9 +51,9 @@ public class DefaultAsExprTest extends PartitionAutoLoadSqlTestBase {
                 conn = ConnectionManager.getInstance().newPolarDBXConnection();
                 JdbcUtil.dropDatabase(conn, dbName);
                 JdbcUtil.createPartDatabase(conn, dbName);
-                applyResourceFileIfExists(dbName, tcName.toLowerCase(), testClass);
+                applyResourceFileIfExists(conn, dbName, tcName.toLowerCase(), udfDelimiter, testClass);
                 testResult = runTestBySourceSql(tcName.toLowerCase(), supportAutoPart, testClass, dbName, conn,
-                    s -> applySubstitute(s), resultOptions);
+                    s -> applySubstitute(s), resultOptions, false);
                 JdbcUtil.dropDatabase(conn, dbName);
             } catch (Throwable ex) {
                 throw ex;

@@ -123,8 +123,9 @@ public class MysqlSchemaViewManager extends ViewManager {
                 "Table_priv",
                 "Column_priv",
             },
-            "select host, db_name, user_name, table_name, grantor, gmt_modified, NULL, NULL from " + MetaDbSchema.NAME
-                + ".table_priv");
+            "select host, db_name, user_name, table_name, grant_priv, gmt_modified, NULL, NULL from "
+                + MetaDbSchema.NAME
+                + ".table_priv where catalog_name = ''");
 
         defineView("db", new String[] {
                 "Host",
@@ -153,7 +154,7 @@ public class MysqlSchemaViewManager extends ViewManager {
             "select host, db_name, user_name, select_priv, insert_priv, update_priv, delete_priv, create_priv, drop_priv, grant_priv, NULL, "
                 +
                 "index_priv, alter_priv, NULL, NULL, create_view_priv, NULL, NULL, NULL, NULL, NULL, NULL from "
-                + MetaDbSchema.NAME + ".db_priv");
+                + MetaDbSchema.NAME + ".db_priv where catalog_name = ''");
 
         //DataGrip use this view to judge whether connection if keep alive
         defineView("procs_priv", new String[] {
@@ -169,6 +170,20 @@ public class MysqlSchemaViewManager extends ViewManager {
             "select NULL, routine_schema, NULL, routine_name, routine_type, NULL, NULL, created from "
                 + MetaDbSchema.NAME
                 + ".routines");
+
+        //sigyog use this view to query user
+        defineView("columns_priv", new String[] {
+                "Host",
+                "Db",
+                "User",
+                "Table_name",
+                "Column_name",
+                "Timestamp",
+                "Column_priv",
+            },
+            "select Host, Db, User, Table_name, Column_name, Timestamp, Column_priv from "
+                + MetaDbSchema.NAME
+                + ".column_priv");
     }
 
     @Override

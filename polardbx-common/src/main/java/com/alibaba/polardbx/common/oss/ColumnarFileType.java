@@ -20,16 +20,18 @@ import java.util.HashMap;
 import java.util.Map;
 
 public enum ColumnarFileType {
-    ORC, CSV, DEL, SET,
+    ORC, CSV, DEL, SET, BLOB,
     /**
-     * PK IDX log and meta(one record per partition, used as meta lock)
+     * PK IDX log and meta(one record per table, used as meta lock)
      */
     PK_IDX_LOG,
     PK_IDX_LOG_META,
     PK_IDX_SNAPSHOT,
     PK_IDX_LOCK,
     PK_IDX_SST,
-    PK_IDX_BF;
+    PK_IDX_BF,
+    PK_IDX_FILTER,
+    PK_IDX_FILTER_META;
 
     static Map<String, ColumnarFileType> COLUMAR_FILE_TYPE_MAP = new HashMap<>();
 

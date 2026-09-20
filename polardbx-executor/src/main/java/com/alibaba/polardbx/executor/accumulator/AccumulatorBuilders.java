@@ -17,16 +17,43 @@
 package com.alibaba.polardbx.executor.accumulator;
 
 import com.alibaba.polardbx.common.datatype.Decimal;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.expression.calc.Aggregator;
 import org.apache.calcite.sql.SqlKind;
 
+import java.sql.Date;
+
 public abstract class AccumulatorBuilders {
+    public static Accumulator createNoGroupBy(Aggregator aggregator, DataType aggValueType, DataType[] inputType,
+                                              int capacity, ExecutionContext context, OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        Class clazz = aggValueType.getDataClass();
+        if (aggregator.getSqlKind() == SqlKind.MAX || aggregator.getSqlKind() == SqlKind.MIN) {
+            if (clazz == Date.class) {
+                final boolean isMin = aggregator.getSqlKind() == SqlKind.MIN;
+                DateMaxMinNoGroupByAccumulator accumulator = new DateMaxMinNoGroupByAccumulator(aggregator.getSqlKind());
+                accumulator.setMemoryOwnerId(operatorMemoryOwnerId);
+                return accumulator;
+            }
+            return null;
+        }
+        return null;
+    }
 
     public static Accumulator create(Aggregator aggregator, DataType aggValueType, DataType[] inputType, int capacity,
-                                     ExecutionContext context) {
+                                     ExecutionContext context, OperatorMemoryOwnerId memoryOwnerId) {
+
+        Accumulator accumulator = doCreate(aggregator, aggValueType, inputType, capacity, context);
+        if (accumulator instanceof AbstractAccumulator && memoryOwnerId != null) {
+            ((AbstractAccumulator) accumulator).setMemoryOwnerId(memoryOwnerId);
+        }
+        return accumulator;
+    }
+
+    private static Accumulator doCreate(Aggregator aggregator, DataType aggValueType, DataType[] inputType, int capacity,
+                                        ExecutionContext context) {
         Class clazz = aggValueType.getDataClass();
         if (aggregator.getSqlKind() == SqlKind.COUNT) {
             assert clazz == Long.class;

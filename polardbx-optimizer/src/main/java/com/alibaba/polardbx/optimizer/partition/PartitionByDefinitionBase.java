@@ -16,9 +16,6 @@
 
 package com.alibaba.polardbx.optimizer.partition;
 
-import com.alibaba.polardbx.common.charset.CharsetName;
-import com.alibaba.polardbx.common.charset.CollationName;
-import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.Field;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
@@ -34,13 +31,12 @@ import com.alibaba.polardbx.optimizer.partition.pruning.PartitionRouter;
 import com.alibaba.polardbx.optimizer.partition.pruning.SearchDatumComparator;
 import com.alibaba.polardbx.optimizer.partition.pruning.SearchDatumHasher;
 import com.alibaba.polardbx.optimizer.partition.pruning.SearchDatumInfo;
-import groovy.sql.Sql;
+import com.alibaba.polardbx.optimizer.partition.pruning.UdfHashPartRouter;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.sql.SqlCollation;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlOperator;
-import org.apache.calcite.sql.type.SqlTypeUtil;
 
 import java.nio.charset.Charset;
 import java.util.ArrayList;
@@ -429,6 +425,7 @@ public abstract class PartitionByDefinitionBase {
                                                           SearchDatumHasher partHasher,
                                                           PartitionStrategy partStrategy,
                                                           List<ColumnMeta> partFldList,
+                                                          List<SqlNode> partExprList,
                                                           PartitionIntFunction[] partFuncArr,
                                                           List<PartitionSpec> partitions) {
 
@@ -447,7 +444,6 @@ public abstract class PartitionByDefinitionBase {
             router = PartitionRouter.createByDirectHasher(partitions.size());
         } else if (strategy.isHashed()) {
             // Extract hash value for hash-partition
-
             if (!strategy.isKey() || (strategy.isKey() && partFields.size() == 1)) {
                 Object[] datumArr = partitions.stream()
                     .map(part -> extractHashCodeFromPartitionBound(part.getBoundSpec())).toArray();
@@ -485,7 +481,10 @@ public abstract class PartitionByDefinitionBase {
             Object[] datumArr = partitions.stream()
                 .map(part -> extractHashCodeFromPartitionBound(part.getBoundSpec())).toArray();
             router = PartitionRouter.createByHasher(strategy, datumArr, hasher, null/*use Long Comp*/);
-
+            UdfHashPartRouter udfHashPartRouter = (UdfHashPartRouter) router;
+            udfHashPartRouter.setPartExprList(partExprList);
+            udfHashPartRouter.setPartColMetaList(partFldList);
+            udfHashPartRouter.initRouter();
         } else if (strategy.isCoHashed()) {
             Object[] datumArr = partitions.stream()
                 .map(part -> extractHashCodeFromPartitionBound(part.getBoundSpec())).toArray();
@@ -517,4 +516,5 @@ public abstract class PartitionByDefinitionBase {
     public void setPartFuncArr(PartitionIntFunction[] partFuncArr) {
         this.partFuncArr = partFuncArr;
     }
+
 }

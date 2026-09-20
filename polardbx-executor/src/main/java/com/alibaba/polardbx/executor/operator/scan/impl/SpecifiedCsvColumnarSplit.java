@@ -9,6 +9,7 @@ import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.gms.ColumnarManager;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFManager;
 import com.alibaba.polardbx.executor.operator.scan.BlockCacheManager;
+import com.alibaba.polardbx.executor.operator.scan.ColumnarMemoryPermitManager;
 import com.alibaba.polardbx.executor.operator.scan.ColumnarSplit;
 import com.alibaba.polardbx.executor.operator.scan.LazyEvaluator;
 import com.alibaba.polardbx.executor.operator.scan.ScanPreProcessor;
@@ -175,6 +176,12 @@ public class SpecifiedCsvColumnarSplit extends CsvColumnarSplit {
         @Override
         public ColumnarSplitBuilder ioExecutor(ExecutorService ioExecutor) {
             return this;
+        }
+
+        @Override
+        public ColumnarSplitBuilder columnarMemoryPermitManager(
+            ColumnarMemoryPermitManager columnarMemoryPermitManager) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

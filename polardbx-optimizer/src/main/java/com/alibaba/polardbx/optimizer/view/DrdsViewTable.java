@@ -55,9 +55,12 @@ public class DrdsViewTable extends ViewTable {
     private RelRoot expandView(DrdsViewExpander drdsViewExpander,
                                RelOptTableImpl relOptTable) {
         try {
-            PlannerContext.getPlannerContext(drdsViewExpander.getCluster()).addView(
+            PlannerContext pc = PlannerContext.getPlannerContext(drdsViewExpander.getCluster());
+            pc.addView(
                 CBOUtil.getDrdsViewTable(relOptTable).getRow().getSchemaName(),
                 CBOUtil.getDrdsViewTable(relOptTable).getRow().getViewName());
+
+            pc.setHasView(true);
 
             RelRoot root =
                 drdsViewExpander.expandDrdsView(relOptTable.getRowType(), relOptTable, getSchemaPath(), getViewPath());

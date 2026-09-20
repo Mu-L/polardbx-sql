@@ -81,12 +81,11 @@
 
   plan: |
 
-    project(id="id0", name="name0", create_time="create_time", id0="id", name0="name")
-      bkajoin(condition="id = id", type="inner")
-        gather(concurrent=true)
-          logicalview(tables="[0000-0003].t_shard_business_id", shardcount=4, sql="select (`id` + 1) as `id`, `name` from `t_shard_business_id` as `t_shard_business_id`")
-        gather(concurrent=true)
-          logicalview(tables="[0000-0003].t_shard_id1", shardcount=4, sql="select `id`, `name`, `create_time` from `t_shard_id1` as `t_shard_id1` force index(`primary`) where (`id` in (...))")
+    hashjoin(condition="id = id", type="inner")
+      gather(concurrent=true)
+        logicalview(tables="[0000-0003].t_shard_id1", shardcount=4, sql="select `id`, `name`, `create_time` from `t_shard_id1` as `t_shard_id1`")
+      gather(concurrent=true)
+        logicalview(tables="[0000-0003].t_shard_business_id", shardcount=4, sql="select (`id` + 1) as `id`, `name` from `t_shard_business_id` as `t_shard_business_id`")
 
 - sql: |
     /*+TDDL:BKA_JOIN(t_shard_business_id,t_shard_id1)*/ select * from t_shard_id1 a join (select count(*) as id, name from t_shard_business_id group by name) b on a.name = b.name ;
@@ -132,7 +131,7 @@
       bkajoin(condition="id = id and name = id1", type="inner")
         gather(concurrent=true)
           logicalview(tables="[0000-0003].t_shard_name", shardcount=4, sql="select `id`, `name` from `t_shard_name` as `t_shard_name` force index(`primary`) where (`id` = 'a')")
-        logicalview(tables="optest_0000.t_composite_pk_shard_id", sql="select `id`, `id1` from `t_composite_pk_shard_id` as `t_composite_pk_shard_id` where ((`id` = 'a') and (((`id`, `id1`)) in (...)))")
+        logicalview(tables="optest_0000.t_composite_pk_shard_id", sql="select `id`, `id1` from `t_composite_pk_shard_id` as `t_composite_pk_shard_id` force index(`primary`) where ((`id` = 'a') and (`id1` in (...)))")
 
 - sql: |
     /*+TDDL:BKA_JOIN(t_shard_name, t_composite_pk_shard_id)*/ select a.id
@@ -147,7 +146,7 @@
     project(id="id0")
       bkajoin(condition="id = id and id1 = name", type="right")
         gather(concurrent=true)
-          logicalview(tables="[0000-0003].t_shard_name", shardcount=4, sql="select `id`, `name` from `t_shard_name` as `t_shard_name` force index(`primary`) where ((`id` = 'a') and (((`id`, `name`)) in (...)))")
+          logicalview(tables="[0000-0003].t_shard_name", shardcount=4, sql="select `id`, `name` from `t_shard_name` as `t_shard_name` force index(`primary`) where ((`id` = 'a') and (`name` in (...)))")
         logicalview(tables="optest_0000.t_composite_pk_shard_id", sql="select `id`, `id1` from `t_composite_pk_shard_id` as `t_composite_pk_shard_id` force index(`auto_shard_key_id`) where (`id` = 'a')")
 
 - sql: |
@@ -203,10 +202,10 @@
     gather(concurrent=true)
       logicalview(tables="optest_0001.tt", sql="select `c1`, `c2` from `tt` as `tt` where ((`c2` in(3, 4)) and (`c1` in(1, 1)))")
 
-
 - sql: |
     select tt.c1 from tt left join tt_broadcast on tt.c1=tt_broadcast.c1 where tt_broadcast.c1 is null;
 
   plan: |
+
     gather(concurrent=true)
       logicalview(tables="[0000-0003].tt,tt_broadcast", shardcount=4, sql="select `tt`.`c1` from `tt` as `tt` left join `tt_broadcast` as `tt_broadcast` on (`tt`.`c1` = `tt_broadcast`.`c1`) where (`tt_broadcast`.`c1` is null)")

@@ -86,7 +86,7 @@ public class GsiStatisticScheduledJob extends SchedulerExecutor {
     }
 
     protected void persistGsiStatistics() {
-        SyncManagerHelper.sync(
+        SyncManagerHelper.syncIgnoreExceptions(
             new GsiStatisticsSyncAction(null, null, null, GsiStatisticsSyncAction.WRITE_BACK_ALL_SCHEMA),
             SyncScope.ALL);
     }

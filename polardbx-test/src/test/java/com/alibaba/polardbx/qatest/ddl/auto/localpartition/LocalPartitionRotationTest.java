@@ -221,7 +221,11 @@ public class LocalPartitionRotationTest extends LocalPartitionBaseTest {
 
     @Test
     public void testRotation4() throws SQLException {
-        LocalDate now = LocalDate.now();
+        // Keep monthly arithmetic deterministic: dates at the end of a month may be normalized by plusMonths
+        // (for example, July 31 plus 26 months becomes September 30), which changes the allocation boundary and
+        // makes the fixed partition-count assertions differ by one. Use day 1 as the baseline for the later
+        // FP_OVERRIDE_NOW pivots so every monthly interval keeps the same day of month.
+        LocalDate now = LocalDate.now().withDayOfMonth(1);
         LocalDate startWithDate = now.minusMonths(12L);
 
         String createTableSql = String.format("CREATE TABLE %s (\n"
@@ -272,10 +276,14 @@ public class LocalPartitionRotationTest extends LocalPartitionBaseTest {
             String.format("ALTER TABLE %s EXPIRE LOCAL PARTITION", primaryTableName)
         );
         validateLocalPartitionCount(tddlConnection, primaryTableName, 1);
+        // When only pmax remains, allocation starts from the real NOW() instead of FP_OVERRIDE_NOW. Since the fake
+        // pivot is anchored to day 1, the allocation range contains one more monthly partition only on day 1.
+        final LocalDate allocationDate = LocalDate.now();
         JdbcUtil.executeSuccess(tddlConnection,
             String.format("ALTER TABLE %s ALLOCATE LOCAL PARTITION", primaryTableName)
         );
-        validateLocalPartitionCount(tddlConnection, primaryTableName, 33);
+        validateLocalPartitionCount(tddlConnection, primaryTableName,
+            allocationDate.getDayOfMonth() == 1 ? 33 : 32);
         JdbcUtil.executeSuccess(tddlConnection,
             String.format("ALTER TABLE %s EXPIRE LOCAL PARTITION", primaryTableName)
         );

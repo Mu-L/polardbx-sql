@@ -34,6 +34,7 @@ import com.alibaba.polardbx.common.utils.time.core.TimeStorage;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.gms.metadb.table.IndexStatus;
 import com.alibaba.polardbx.gms.module.LogLevel;
 import com.alibaba.polardbx.gms.module.LogPattern;
@@ -94,6 +95,7 @@ import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.common.properties.ConnectionParams.CACHELINE_COMPENSATION_BLACKLIST;
 import static com.alibaba.polardbx.common.properties.ConnectionParams.CACHELINE_INDICATE_UPDATE_TIME;
+import static com.alibaba.polardbx.common.properties.ConnectionParams.COMPENSATION_REDUNDANCY_TIME;
 import static com.alibaba.polardbx.common.properties.ConnectionParams.ENABLE_CACHELINE_COMPENSATION;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.ENABLE_STATISTIC_FEEDBACK;
 import static com.alibaba.polardbx.common.utils.GeneralUtil.unixTimeStamp;
@@ -114,6 +116,7 @@ import static com.alibaba.polardbx.optimizer.view.VirtualViewType.COLUMN_STATIST
 import static com.alibaba.polardbx.optimizer.view.VirtualViewType.STATISTICS;
 import static com.alibaba.polardbx.optimizer.view.VirtualViewType.STATISTICS_DATA;
 import static com.alibaba.polardbx.optimizer.view.VirtualViewType.VIRTUAL_STATISTIC;
+import static com.alibaba.polardbx.stats.metric.FeatureStatsItem.DATETIME_COMPENSATION_NUM;
 import static com.alibaba.polardbx.stats.metric.FeatureStatsItem.HLL_TASK_FAIL;
 import static com.alibaba.polardbx.stats.metric.FeatureStatsItem.HLL_TASK_SUCC;
 
@@ -173,7 +176,7 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
                 LogPattern.START_OVER, new String[] {Module.STATISTICS.name()},
                 LogLevel.NORMAL);
         long end = System.currentTimeMillis();
-        logger.info("StatisticManager init consuming " + (end - start) / 1000.0 + " seconds");
+        logger.warn("StatisticManager init consuming " + (end - start) / 1000.0 + " seconds");
     }
 
     @Override
@@ -271,6 +274,10 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
             return logicalTableName;
         }
         int idx = logicalTableName.indexOf(CandidateIndex.WHAT_IF_GSI_INFIX);
+        if (idx != -1) {
+            logicalTableName = logicalTableName.substring(0, idx);
+        }
+        idx = logicalTableName.indexOf(CandidateIndex.WHAT_IF_CCI_INFIX);
         if (idx != -1) {
             logicalTableName = logicalTableName.substring(0, idx);
         }
@@ -424,11 +431,21 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
                         -1, "") : null;
                 return StatisticResult.build(NULL).setValue(-1L, statisticTrace);
             } else {
+                StatisticResultSource source = CACHE_LINE;
+                if (cacheLine.getCardinalitySourceMap() != null && cacheLine.getCardinalitySourceMap()
+                    .containsKey(columnName.toLowerCase())) {
+                    try {
+                        source = StatisticResultSource.valueOf(
+                            cacheLine.getCardinalitySourceMap().get(columnName.toLowerCase()));
+                    } catch (Throwable t) {
+                        // ignore
+                    }
+                }
                 StatisticTrace statisticTrace = isNeedTrace ?
                     StatisticUtils.buildTrace(schema + "," + logicalTableName + "," + columnName,
-                        "getCardinality", cardinality, CACHE_LINE,
+                        "getCardinality", cardinality, source,
                         cacheLine.lastModifyTime, "") : null;
-                return StatisticResult.build(CACHE_LINE).setValue(cardinality, statisticTrace);
+                return StatisticResult.build(source).setValue(cardinality, statisticTrace);
             }
         } else {
             StatisticTrace statisticTrace = isNeedTrace ?
@@ -479,13 +496,11 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
             return StatisticResult.build(NULL).setValue(-1L, statisticTrace);
         }
 
-        // Taking performance into consideration. if the number of row value list is too much,
-        // then use (rowCount/ndv)*row_size instead of calculating frequency for each row value.
-        if (rowValue.size() > DynamicConfig.getInstance().getInDegradationNum()) {
-            StatisticResult rowCount = getRowCount(schema, logicalTableName, isNeedTrace);
-            StatisticResult ndv = getCardinality(schema, logicalTableName, columnName, true, isNeedTrace);
-            return handleInFrequencyDegradation(rowCount, ndv, schema, logicalTableName, columnName, rowValue,
-                isNeedTrace, frequency);
+        StatisticResult degradation =
+            tryFrequencyDegradation(schema, logicalTableName, columnName, rowValue.size(), isNeedTrace);
+
+        if (degradation != null) {
+            return degradation;
         }
         StatisticResultSource source = null;
         List<StatisticTrace> childStatisticTraces = Lists.newArrayList();
@@ -518,29 +533,44 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
         return StatisticResult.build(source).setValue(frequency, statisticTrace);
     }
 
-    static protected StatisticResult handleInFrequencyDegradation(StatisticResult rowCount,
-                                                                  StatisticResult ndv,
-                                                                  String schema,
-                                                                  String logicalTableName,
-                                                                  String columnName,
-                                                                  List rowValue,
-                                                                  boolean isNeedTrace,
-                                                                  long frequency) {
+    public StatisticResult tryFrequencyDegradation(String schema,
+                                                   String table,
+                                                   String columnName,
+                                                   int rowSize,
+                                                   boolean isNeedTrace) {
+        // Taking performance into consideration. if the number of row value list is too much,
+        // then use (rowCount/ndv)*row_size instead of calculating frequency for each row value.
+        if (rowSize > DynamicConfig.getInstance().getInDegradationNum()) {
+            StatisticResult rowCount = getRowCount(schema, table, isNeedTrace);
+            StatisticResult ndv = getCardinality(schema, table, columnName, true, isNeedTrace);
+            return handleInFrequencyDegradation(rowCount, ndv, schema, table, columnName, rowSize, isNeedTrace);
+        }
+        return null;
+    }
+
+    public static StatisticResult handleInFrequencyDegradation(StatisticResult rowCount,
+                                                               StatisticResult ndv,
+                                                               String schema,
+                                                               String logicalTableName,
+                                                               String columnName,
+                                                               int rowSize,
+                                                               boolean isNeedTrace) {
+        long frequency = 0L;
         if (rowCount.getLongValue() <= 0L || ndv.getLongValue() <= 0L) {
             StatisticTrace statisticTrace = isNeedTrace ?
                 StatisticUtils.buildTrace(
-                    schema + "," + logicalTableName + "," + columnName + "," + digestForStatisticTrace(rowValue),
+                    schema + "," + logicalTableName + "," + columnName + ", in(" + rowSize + ")",
                     "getFrequency", frequency, CACHE_LINE, -1L, "rowCount <= 0 or ndv <= 0") : null;
             return StatisticResult.build(CACHE_LINE).setValue(0L, statisticTrace);
         }
         long average = rowCount.getLongValue() / ndv.getLongValue();
-        frequency = rowValue.size() * average;
+        frequency = rowSize * average;
         StatisticTrace statisticTrace = isNeedTrace ?
             StatisticUtils.buildTrace(
-                schema + "," + logicalTableName + "," + columnName + "," + digestForStatisticTrace(rowValue),
+                schema + "," + logicalTableName + "," + columnName + ", in(" + rowSize + ")",
                 "getFrequency", frequency, CACHE_LINE, -1L,
                 "(rowCount/ndv)*row_size = (" + rowCount.getLongValue() + "/" + ndv.getLongValue() + ")*"
-                    + rowValue.size()) : null;
+                    + rowSize) : null;
         if (statisticTrace != null) {
             statisticTrace.addChild(rowCount.getTrace());
             statisticTrace.addChild(ndv.getTrace());
@@ -820,10 +850,11 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
                                                     boolean isNeedTrace,
                                                     DataType dataType,
                                                     StatisticResult statisticResult) {
-        long now = getNowTimeMillis();
+        long compensationTimeMillis = getCompensationTimeMillis();
         CacheLine cacheLine = getCacheLine(schema, logicalTableName);
         // current max val in statistic
         long dataUpValue = maxStatisticVal(cacheLine, columnName);
+        long dataLowerValue = minStatisticVal(cacheLine, columnName);
         if (dataUpValue == -1L) {
             return statisticResult;
         }
@@ -835,13 +866,21 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
         } else if (start == -1L) {
             start = dataUpValue;
         } else if (end == -1L) {
-            end = dataUpValue + now - update;
+            end = dataUpValue + compensationTimeMillis - update;
         }
 
+        // If the target interval does not intersect with the estimated interval, exit the estimation.
+        if (start > dataUpValue + dataUpValue - dataLowerValue ||
+            end < dataUpValue) {
+            return statisticResult;
+        }
+
+        long compensationPeriod = Math.min(dataUpValue - dataLowerValue, compensationTimeMillis - update);
+
         long startMax = Math.max(start, dataUpValue);
-        long endMin = Math.min(end, dataUpValue + now - update);
-        long finalStart = startMax - now + update;
-        long finalEnd = endMin - now + update;
+        long endMin = Math.min(end, dataUpValue + compensationPeriod);
+        long finalStart = startMax - compensationPeriod;
+        long finalEnd = endMin - compensationPeriod;
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
         String compensationStart = sdf.format(new Date(finalStart));
         String compensationEnd = sdf.format(new Date(finalEnd));
@@ -850,9 +889,9 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
                 logicalTableName,
                 columnName,
                 compensationStart,
-                lowerInclusive,
+                true,
                 compensationEnd,
-                upperInclusive,
+                true,
                 isNeedTrace);
         if (statisticCompensation.getLongValue() <= 1L) {
             return statisticResult;
@@ -865,20 +904,24 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
                     "\ncompensation value " + compensationStart + "_"
                     + compensationEnd + ":"
                     + statisticCompensation.getLongValue()) : null;
+        FeatureStats.getInstance().increment(DATETIME_COMPENSATION_NUM);
         statisticResult.setValue(finalCount, statisticTrace);
         return statisticResult;
     }
 
-    private long getNowTimeMillis() {
+    protected static long getCompensationTimeMillis() {
         // for testing and manual intervention
         long cacheLineUpdateTime = InstConfUtil.getLong(CACHELINE_INDICATE_UPDATE_TIME);
         if (cacheLineUpdateTime > 0L) {
             return cacheLineUpdateTime * 1000 + 3 * 24 * 60 * 60 * 1000L;
         }
-        return System.currentTimeMillis();
+
+        // add 3 days to current time for compensation by default
+        long compensationTimeMillis = InstConfUtil.getLong(COMPENSATION_REDUNDANCY_TIME);
+        return System.currentTimeMillis() + compensationTimeMillis;
     }
 
-    private long getStatisticUpdateTime(CacheLine cacheLine) {
+    public static long getStatisticUpdateTime(CacheLine cacheLine) {
         long update = cacheLine.getLastModifyTime() * 1000;
 
         // for testing and manual intervention
@@ -894,7 +937,7 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
      *
      * @param obj Object to be transformed
      */
-    private long transformDateToUnixTimestamp(Object obj, DataType dataType) {
+    public static long transformDateToUnixTimestamp(Object obj, DataType dataType) {
         if (DataTypeUtil.equalsSemantically(dataType, DataTypes.DatetimeType) ||
             DataTypeUtil.equalsSemantically(dataType, DataTypes.TimestampType)) {
             Timestamp timestamp = (Timestamp) dataType.convertFrom(obj);
@@ -912,10 +955,13 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
         return -1L;
     }
 
-    private long maxStatisticVal(CacheLine cacheLine, String columnName) {
+    /**
+     * only for datetime types
+     */
+    protected static long maxStatisticVal(CacheLine cacheLine, String columnName) {
         Map<String, Histogram> histogramMap = cacheLine.getHistogramMap();
         TopN topN = cacheLine.getTopN(columnName);
-        if (histogramMap == null || topN == null) {
+        if (histogramMap == null && topN == null) {
             return -1L;
         }
         Histogram histogram = histogramMap.get(columnName);
@@ -926,25 +972,66 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
         long dataUpValue = -1L;
         if (buckets.size() != 0) {
             Histogram.Bucket lastBucket = buckets.get(buckets.size() - 1);
-            if (!(lastBucket.getUpper() instanceof Long)) {
+            if (!(lastBucket.getUpper() instanceof Number)) {
                 return -1L;
             }
-            dataUpValue = (long) lastBucket.getUpper();
+            dataUpValue = ((Number) lastBucket.getUpper()).longValue();
         }
 
-        for (Object obj : topN.getValueArr()) {
-            // obj should be packed long value
-            if (!(obj instanceof Long)) {
-                return -1L;
-            }
-            Long tmp = (Long) obj;
-            if (dataUpValue < tmp) {
-                dataUpValue = tmp;
+        // if topn is null, just ignore it
+        if (topN != null) {
+            for (Object obj : topN.getValueArr()) {
+                // obj should be packed long value
+                if (!(obj instanceof Number)) {
+                    return -1L;
+                }
+                Long tmp = ((Number) obj).longValue();
+                if (dataUpValue < tmp) {
+                    dataUpValue = tmp;
+                }
             }
         }
 
         dataUpValue = TimeStorage.readTimestamp(dataUpValue).toEpochMillsForDatetime();
         return dataUpValue;
+    }
+
+    /**
+     * only for datetime types
+     */
+    protected static long minStatisticVal(CacheLine cacheLine, String columnName) {
+        Map<String, Histogram> histogramMap = cacheLine.getHistogramMap();
+        TopN topN = cacheLine.getTopN(columnName);
+
+        Histogram histogram = histogramMap.get(columnName);
+        if (histogram == null) {
+            return -1L;
+        }
+        List<Histogram.Bucket> buckets = histogram.getBuckets();
+        long dataLowerValue = -1L;
+        if (buckets.size() != 0) {
+            Histogram.Bucket lastBucket = buckets.get(0);
+            if (!(lastBucket.getLower() instanceof Number)) {
+                return -1L;
+            }
+            dataLowerValue = ((Number) lastBucket.getLower()).longValue();
+        }
+
+        if (topN != null) {
+            for (Object obj : topN.getValueArr()) {
+                // obj should be packed long value
+                if (!(obj instanceof Number)) {
+                    return -1L;
+                }
+                Long tmp = ((Number) obj).longValue();
+                if (dataLowerValue > tmp) {
+                    dataLowerValue = tmp;
+                }
+            }
+        }
+
+        dataLowerValue = TimeStorage.readTimestamp(dataLowerValue).toEpochMillsForDatetime();
+        return dataLowerValue;
     }
 
     /**
@@ -1057,9 +1144,10 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
      * return range count of column value of logicalTable
      * if not exists return -1
      */
-    private StatisticResult getRangeCountInner(String schema, String logicalTableName, String columnName, Object lower,
-                                               boolean lowerInclusive,
-                                               Object upper, boolean upperInclusive, boolean isNeedTrace) {
+    protected StatisticResult getRangeCountInner(String schema, String logicalTableName, String columnName,
+                                                 Object lower,
+                                                 boolean lowerInclusive,
+                                                 Object upper, boolean upperInclusive, boolean isNeedTrace) {
         // try corrections first
         StatisticResult sr =
             getCorrectionResult(
@@ -1226,6 +1314,26 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
         List<String> tbls = Lists.newArrayList();
         tbls.add(logicalTableName);
         getSds().removeLogicalTableList(schema, tbls);
+    }
+
+    /**
+     * Drops the row counts cached for every schema of one external catalog. External
+     * statistics are only ever held in memory for cost estimation, so there is nothing to
+     * delete from the metadb here.
+     * <p>
+     * Deliberately does not go through {@link #getInstance()}: that would boot the whole
+     * statistics subsystem from a DDL path, and if it was never booted there is nothing
+     * cached to drop.
+     *
+     * @param catalogName the external catalog name
+     */
+    public static void removeExternalSchemaStatistics(String catalogName) {
+        StatisticManager instance = sm;
+        if (instance == null) {
+            return;
+        }
+        instance.statisticCache.keySet()
+            .removeIf(schema -> ExternalNameValidator.belongsToCatalog(schema, catalogName));
     }
 
     /**
@@ -1475,9 +1583,12 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
     public static class CacheLine {
         public static final String SKEW_COLS = "SKEW_COLS";
 
+        public static final String CARDINALITY_SOURCE = "CARDINALITY_SOURCE";
+
         private long originRowCount = 0;
         private AtomicLong updateRowCount = new AtomicLong(0);
         private Map<String, Long> cardinalityMap = Maps.newHashMap();
+        private Map<String, String> cardinalitySourceMap = Maps.newHashMap();
         private Map<String, Long> nullCountMap = Maps.newHashMap();
         private Map<String, Histogram> histogramMap = Maps.newHashMap();
         private Map<String, TopN> topNMap = Maps.newHashMap();
@@ -1538,6 +1649,17 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
                 this.cardinalityMap = new HashMap<>();
             }
             this.cardinalityMap.put(columnName.toLowerCase(), cardinality);
+        }
+
+        public void setCardinalitySource(String columnName, String cardinalitySource) {
+            if (this.cardinalitySourceMap == null) {
+                this.cardinalitySourceMap = new HashMap<>();
+            }
+            this.cardinalitySourceMap.put(columnName.toLowerCase(), cardinalitySource);
+        }
+
+        public Map<String, String> getCardinalitySourceMap() {
+            return cardinalitySourceMap;
         }
 
         public Map<String, Long> getNullCountMap() {
@@ -1745,8 +1867,6 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
 
         public void setSkewCols(List<Set<String>> map) {
             skewCols = map;
-            // refresh extend
-            setExtend(encodeExtend());
         }
 
         /**
@@ -1761,7 +1881,8 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
                 return;
             }
             this.skewCols = Lists.newArrayList();
-            JSONArray jsonArray = JSON.parseObject(extend).getJSONArray(SKEW_COLS);
+            JSONObject extendJson = JSON.parseObject(extend);
+            JSONArray jsonArray = extendJson.getJSONArray(SKEW_COLS);
             if (jsonArray != null) {
                 for (int i = 0; i < jsonArray.size(); i++) {
                     JSONArray columnJson = jsonArray.getJSONArray(i);
@@ -1772,9 +1893,18 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
                     skewCols.add(columns);
                 }
             }
+            JSONObject cardinalitySourceMapJson = extendJson.getJSONObject(CARDINALITY_SOURCE);
+            this.cardinalitySourceMap = Maps.newHashMap();
+            if (cardinalitySourceMapJson != null) {
+                for (String columnName : cardinalitySourceMapJson.keySet()) {
+                    columnName = columnName.toLowerCase(Locale.ROOT);
+                    cardinalitySourceMap.put(columnName, cardinalitySourceMapJson.getString(columnName));
+                }
+            }
         }
 
         public String getExtend() {
+            setExtend(encodeExtend());
             return extend;
         }
 
@@ -1787,6 +1917,7 @@ public class StatisticManager extends AbstractLifecycle implements StatisticServ
 
             Map<String, Object> extendMap = Maps.newHashMap();
             extendMap.put(SKEW_COLS, skewCols);
+            extendMap.put(CARDINALITY_SOURCE, cardinalitySourceMap);
             return jsonBuilder.toJsonString(extendMap);
         }
 

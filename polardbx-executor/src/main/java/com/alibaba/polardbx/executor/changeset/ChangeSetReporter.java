@@ -19,6 +19,7 @@ package com.alibaba.polardbx.executor.changeset;
 import org.apache.commons.lang.StringUtils;
 
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.List;
 import java.util.Map;
@@ -45,7 +46,8 @@ public class ChangeSetReporter {
     public void initChangeSetMeta(long changeSetId, long jobId, long rootJobId,
                                   String tableSchema, String tableName,
                                   String indexSchema, String indexName,
-                                  Map<String, Set<String>> sourcePhyTables) {
+                                  Map<String, Set<String>> sourcePhyTables,
+                                  Map<String, String> groupNameToPhysicalDb) {
         List<ChangeSetMetaManager.ChangeSetObjectRecord> records = sourcePhyTables.entrySet()
             .stream()
             .flatMap(e -> e.getValue()
@@ -53,9 +55,21 @@ public class ChangeSetReporter {
                 .map(phyTable -> ChangeSetMetaManager.ChangeSetObjectRecord.create(
                     jobId, changeSetId, rootJobId,
                     tableSchema, tableName, indexSchema, indexName,
-                    e.getKey(), phyTable)))
+                    groupNameToPhysicalDb.get(e.getKey()), phyTable)))
             .collect(Collectors.toList());
 
+        changeSetMetaManager.initChangeSetMeta(records);
+    }
+
+    public void initChangeSetMeta(long changeSetId, long jobId, long rootJobId,
+                                  String tableSchema, String tableName,
+                                  String indexSchema, String indexName,
+                                  String phyDbName, String phyTableName) {
+        List<ChangeSetMetaManager.ChangeSetObjectRecord> records = new ArrayList<>(2);
+        records.add(ChangeSetMetaManager.ChangeSetObjectRecord.create(
+            jobId, changeSetId, rootJobId,
+            tableSchema, tableName, indexSchema, indexName,
+            phyDbName, phyTableName));
         changeSetMetaManager.initChangeSetMeta(records);
     }
 
@@ -72,7 +86,7 @@ public class ChangeSetReporter {
                 ChangeSetMetaManager.ChangeSetStatus.SUCCESS : ChangeSetMetaManager.ChangeSetStatus.RUNNING;
 
         ChangeSetMetaManager.ChangeSetObjectRecord record = changeSetBean.getRecord(
-            meta.getSourceDbGroupName(),
+            meta.getSourcePhysicalDb(),
             meta.getSourcePhysicalTable()
         );
 
@@ -86,9 +100,9 @@ public class ChangeSetReporter {
         );
     }
 
-    public void updateCatchUpStart(String sourceGroup, String phyTableName) {
+    public void updateCatchUpStart(String physicalDb, String phyTableName) {
         ChangeSetMetaManager.ChangeSetObjectRecord record = changeSetBean.getRecord(
-            sourceGroup,
+            physicalDb,
             phyTableName
         );
 
@@ -100,20 +114,20 @@ public class ChangeSetReporter {
         changeSetMetaManager.updateChangeSetObject(record, ChangeSetMetaManager.START_CATCHUP);
     }
 
-    public boolean needReCatchUp(String sourceGroup, String phyTableName) {
+    public boolean needReCatchUp(String physicalDb, String phyTableName) {
 
         ChangeSetMetaManager.ChangeSetObjectRecord record = changeSetBean.getRecord(
-            sourceGroup,
+            physicalDb,
             phyTableName
         );
 
         return StringUtils.equalsIgnoreCase(record.getMessage(), ChangeSetMetaManager.START_CATCHUP);
     }
 
-    public boolean isFinished(String sourceGroup, String phyTableName) {
+    public boolean isFinished(String physicalDb, String phyTableName) {
 
         ChangeSetMetaManager.ChangeSetObjectRecord record = changeSetBean.getRecord(
-            sourceGroup,
+            physicalDb,
             phyTableName
         );
 

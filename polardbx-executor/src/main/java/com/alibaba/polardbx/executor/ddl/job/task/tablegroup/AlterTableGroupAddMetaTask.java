@@ -17,10 +17,18 @@
 package com.alibaba.polardbx.executor.ddl.job.task.tablegroup;
 
 import com.alibaba.fastjson.annotation.JSONCreator;
+import com.alibaba.polardbx.common.eventlogger.EventLogger;
+import com.alibaba.polardbx.common.eventlogger.EventType;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
+import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
+import com.alibaba.polardbx.executor.sync.TablesMetaChangePreemptiveSyncAction;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
+import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.gms.tablegroup.ComplexTaskOutlineRecord;
 import com.alibaba.polardbx.gms.tablegroup.PartitionGroupAccessor;
 import com.alibaba.polardbx.gms.tablegroup.PartitionGroupRecord;
@@ -28,6 +36,7 @@ import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupUtils;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ComplexTaskMetaManager;
+import com.alibaba.polardbx.optimizer.config.table.PreemptiveTime;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import lombok.Getter;
 
@@ -35,8 +44,10 @@ import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 
 @Getter
 @TaskName(name = "AlterTableGroupAddMetaTask")
@@ -50,21 +61,61 @@ public class AlterTableGroupAddMetaTask extends BaseDdlTask {
     protected Long tableGroupId; //source tablegroup id
     protected int status;
     protected Set<Long> outDataPartitionGroupIds;
-    protected List<String> targetDbList;
+    protected List<Pair<String, String>> targetDbList;
     protected List<String> newPartitions;
     protected List<String> localities;
+    protected Map<String, Long> tablesVersion;
+    protected boolean inplaceBackfill;
 
     public AlterTableGroupAddMetaTask(String schemaName, String tableGroupName, Long tableGroupId, String sourceSql,
                                       int status, int type, Set<Long> outDataPartitionGroupIds,
-                                      List<String> targetDbList, List<String> newPartitions) {
+                                      List<Pair<String, String>> targetDbList, List<String> newPartitions) {
         this(schemaName, tableGroupName, tableGroupId, sourceSql, status, type,
-            outDataPartitionGroupIds, targetDbList, newPartitions, Collections.nCopies(newPartitions.size(), ""));
+            outDataPartitionGroupIds, targetDbList, newPartitions, Collections.nCopies(newPartitions.size(), ""), null);
+    }
+
+    public AlterTableGroupAddMetaTask(String schemaName,
+                                      String tableGroupName,
+                                      Long tableGroupId,
+                                      String sourceSql,
+                                      int status,
+                                      int type,
+                                      Set<Long> outDataPartitionGroupIds,
+                                      List<Pair<String, String>> targetDbList,
+                                      List<String> newPartitions,
+                                      List<String> localities) {
+        this(schemaName, tableGroupName, tableGroupId, sourceSql, status, type,
+            outDataPartitionGroupIds, targetDbList, newPartitions, localities, null);
+    }
+
+    public AlterTableGroupAddMetaTask(String schemaName,
+                                      String tableGroupName,
+                                      Long tableGroupId,
+                                      String sourceSql,
+                                      int status,
+                                      int type,
+                                      Set<Long> outDataPartitionGroupIds,
+                                      List<Pair<String, String>> targetDbList,
+                                      List<String> newPartitions,
+                                      List<String> localities,
+                                      Map<String, Long> tablesVersion) {
+        this(schemaName, tableGroupName, tableGroupId, sourceSql, status, type,
+            outDataPartitionGroupIds, targetDbList, newPartitions, localities, tablesVersion, false);
     }
 
     @JSONCreator
-    public AlterTableGroupAddMetaTask(String schemaName, String tableGroupName, Long tableGroupId, String sourceSql,
-                                      int status, int type, Set<Long> outDataPartitionGroupIds,
-                                      List<String> targetDbList, List<String> newPartitions, List<String> localities) {
+    public AlterTableGroupAddMetaTask(String schemaName,
+                                      String tableGroupName,
+                                      Long tableGroupId,
+                                      String sourceSql,
+                                      int status,
+                                      int type,
+                                      Set<Long> outDataPartitionGroupIds,
+                                      List<Pair<String, String>> targetDbList,
+                                      List<String> newPartitions,
+                                      List<String> localities,
+                                      Map<String, Long> tablesVersion,
+                                      boolean inplaceBackfill) {
         super(schemaName);
         this.tableGroupName = tableGroupName;
         this.sourceSql = sourceSql;
@@ -75,11 +126,13 @@ public class AlterTableGroupAddMetaTask extends BaseDdlTask {
         this.targetDbList = targetDbList;
         this.newPartitions = newPartitions;
         this.localities = localities;
+        this.tablesVersion = tablesVersion;
+        this.inplaceBackfill = inplaceBackfill;
         assert newPartitions.size() == targetDbList.size();
     }
 
     public void executeImpl(Connection metaDbConnection, ExecutionContext executionContext) {
-        List<String> relatedParts = new ArrayList<>();
+        Set<String> relatedParts = new TreeSet<>(String::compareToIgnoreCase);
         OptimizerContext oc =
             Objects.requireNonNull(OptimizerContext.getContext(schemaName), schemaName + " corrupted");
         TableGroupConfig tableGroupConfig = oc.getTableGroupInfoManager().getTableGroupConfigById(tableGroupId);
@@ -95,16 +148,25 @@ public class AlterTableGroupAddMetaTask extends BaseDdlTask {
             TableGroupUtils.insertOldDatedPartitionGroupToDeltaTable(outDataPartitionGroups, metaDbConnection);
         }
         relatedParts.addAll(newPartitions);
-        for (String relatedPart : relatedParts) {
-            ComplexTaskOutlineRecord complexTaskOutlineRecord = new ComplexTaskOutlineRecord();
-            complexTaskOutlineRecord.setObjectName(relatedPart);
-            complexTaskOutlineRecord.setJob_id(getJobId());
-            complexTaskOutlineRecord.setTableSchema(getSchemaName());
-            complexTaskOutlineRecord.setTableGroupName(tableGroupName);
-            complexTaskOutlineRecord.setSubTask(0);
-            complexTaskOutlineRecord.setType(type);
-            complexTaskOutlineRecord.setStatus(status);
-            ComplexTaskMetaManager.insertComplexTask(complexTaskOutlineRecord, metaDbConnection);
+        if (!inplaceBackfill) {
+            for (String relatedPart : relatedParts) {
+                ComplexTaskOutlineRecord complexTaskOutlineRecord = new ComplexTaskOutlineRecord();
+                complexTaskOutlineRecord.setObjectName(relatedPart);
+                complexTaskOutlineRecord.setJob_id(getJobId());
+                complexTaskOutlineRecord.setTableSchema(getSchemaName());
+                complexTaskOutlineRecord.setTableGroupName(tableGroupName);
+                complexTaskOutlineRecord.setSubTask(0);
+                complexTaskOutlineRecord.setType(type);
+                complexTaskOutlineRecord.setStatus(status);
+                ComplexTaskMetaManager.insertComplexTask(complexTaskOutlineRecord, metaDbConnection);
+            }
+        } else {
+            List<String> tables = tableGroupConfig.getTables();
+            String logicalTableName = GeneralUtil.isNotEmpty(tables) ? tables.get(0) : "";
+            EventLogger.log(EventType.DDL_INFO,
+                "Inplace split partition start, schema: " + schemaName + ", table: " + logicalTableName + ", job_id: "
+                    + jobId + ", sql: \"" + sourceSql + "\"");
+
         }
 
         addNewPartitionGroup(metaDbConnection);
@@ -113,7 +175,7 @@ public class AlterTableGroupAddMetaTask extends BaseDdlTask {
     }
 
     public void rollbackImpl(Connection metaDbConnection, ExecutionContext executionContext) {
-        List<String> relatedParts = new ArrayList<>();
+        Set<String> relatedParts = new TreeSet<>(String::compareToIgnoreCase);
         OptimizerContext oc =
             Objects.requireNonNull(OptimizerContext.getContext(schemaName), schemaName + " corrupted");
         TableGroupConfig tableGroupConfig = oc.getTableGroupInfoManager().getTableGroupConfigById(tableGroupId);
@@ -137,6 +199,16 @@ public class AlterTableGroupAddMetaTask extends BaseDdlTask {
             TableGroupUtils
                 .deleteNewPartitionGroupFromDeltaTableByTgIDAndPartNames(tableGroupId, newPartitions, metaDbConnection);
         }
+        if (ComplexTaskMetaManager.ComplexTaskType.MOVE_PARTITION.getValue() == type
+            && GeneralUtil.isNotEmpty(tablesVersion)) {
+            for (String primaryTable : tablesVersion.keySet()) {
+                try {
+                    TableInfoManager.updateTableVersionWithoutDataId(schemaName, primaryTable, metaDbConnection);
+                } catch (Exception e) {
+                    throw GeneralUtil.nestedException(e);
+                }
+            }
+        }
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
     }
@@ -154,6 +226,14 @@ public class AlterTableGroupAddMetaTask extends BaseDdlTask {
     @Override
     protected void onRollbackSuccess(ExecutionContext executionContext) {
         //ComplexTaskMetaManager.getInstance().reload();
+        if (ComplexTaskMetaManager.ComplexTaskType.MOVE_PARTITION.getValue() == type
+            && GeneralUtil.isNotEmpty(tablesVersion)) {
+            PreemptiveTime preemptiveTime = PreemptiveTime.getPreemptiveTimeFromExecutionContext(executionContext,
+                ConnectionParams.PREEMPTIVE_MDL_INITWAIT, ConnectionParams.PREEMPTIVE_MDL_INTERVAL);
+            SyncManagerHelper.syncThrowExceptions(
+                new TablesMetaChangePreemptiveSyncAction(schemaName, new ArrayList<String>(tablesVersion.keySet()),
+                    preemptiveTime), SyncScope.ALL);
+        }
     }
 
     @Override
@@ -189,11 +269,15 @@ public class AlterTableGroupAddMetaTask extends BaseDdlTask {
             partitionGroupRecord.partition_name = newPartitions.get(i);
             partitionGroupRecord.tg_id = tableGroupId;
 
-            partitionGroupRecord.phy_db = targetDbList.get(i);
+            partitionGroupRecord.setPhy_db(targetDbList.get(i).getKey());
+            partitionGroupRecord.setGroup_Name(targetDbList.get(i).getValue());
             partitionGroupRecord.locality = localities.get(i);
 
             partitionGroupRecord.pax_group_id = 0L;
             partitionGroupAccessor.addNewPartitionGroup(partitionGroupRecord, true);
+        }
+        if (ComplexTaskMetaManager.ComplexTaskType.MOVE_PARTITION.getValue() == type) {
+            partitionGroupAccessor.archivePartitionGroups(tableGroupId, getTaskId());
         }
     }
 

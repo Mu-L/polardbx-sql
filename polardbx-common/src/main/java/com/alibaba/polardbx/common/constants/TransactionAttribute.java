@@ -17,18 +17,28 @@
 package com.alibaba.polardbx.common.constants;
 
 import com.alibaba.polardbx.common.jdbc.ITransactionPolicy;
+import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 
 import java.util.concurrent.atomic.AtomicLong;
 
 public class TransactionAttribute {
+    // xid, n_branch, n_local_branch, pre_gcn
+    public final static String AC_PREPARE_80 = "CALL DBMS_XA.AC_PREPARE(%s, %s, %s, %s)";
+    // xid, commit_gcn, uuid, main_trx_id, main_uba
+    public final static String AC_COMMIT_80 = "CALL DBMS_XA.AC_COMMIT(%s, %s, '%s', %s, %s)";
+    // xid
+    public final static String FIND_BY_XID = "CALL DBMS_XA.FIND_BY_XID(%s)";
+
     public enum FormatId {
+        // TSO, XA, XA_TSO, 57 Async Commit
         NORMAL(1),
         RECOVER(2),
         ARCHIVE(3),
         IGNORE_BINLOG(4),
-        TSO_OPT_SR(5),
-        TSO_OPT(6),
-        ASYNC_COMMIT(7);
+        NORMAL_V2(10001),
+        TSO_OPT(10002),
+        // 8032 Async Commit
+        ASYNC_COMMIT(10003);
 
         private final int id;
 
@@ -50,8 +60,12 @@ public class TransactionAttribute {
         }
 
         public static boolean isUserTransaction(int id) {
-            return id == NORMAL.id || id == ARCHIVE.id || id == IGNORE_BINLOG.id || id == TSO_OPT_SR.id
-                || id == TSO_OPT.id || id == ASYNC_COMMIT.id;
+            return id == NORMAL.id
+                || id == ARCHIVE.id
+                || id == IGNORE_BINLOG.id
+                || id == TSO_OPT.id
+                || id == ASYNC_COMMIT.id
+                || id == NORMAL_V2.id;
         }
     }
 
@@ -118,6 +132,8 @@ public class TransactionAttribute {
     public static final AtomicLong LAST_LOG_TRX_LOG_V2 = new AtomicLong(0);
     public static final AtomicLong LAST_LOG_XA_TSO = new AtomicLong(0);
     public static final AtomicLong LAST_LOG_AUTO_COMMIT_TSO = new AtomicLong(0);
+    public static final AtomicLong LAST_LOG_TSO_OPT = new AtomicLong(0);
+    public static final AtomicLong LAST_LOG_AC = new AtomicLong(0);
 
     /**
      * Default Columnar TSO purge Interval in milliseconds: 1 min
@@ -128,5 +144,13 @@ public class TransactionAttribute {
      * Default Columnar TSO update Interval in milliseconds: 3 seconds
      */
     public static final int DEFAULT_COLUMNAR_TSO_UPDATE_INTERVAL = 3000;
+
+    public static String getPushMaxSeqMemory(long tso) {
+        if (InstanceVersion.isMYSQL80()) {
+            return "call dbms_xa.advance_gcn_no_flush(" + tso + ")";
+        } else {
+            return "SET GLOBAL innodb_push_seq = " + tso;
+        }
+    }
 
 }

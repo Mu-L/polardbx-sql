@@ -94,6 +94,8 @@ public class PlanFragment {
 
     private final boolean pruneExchangePartition;
 
+    private boolean allOss;
+
     public PlanFragment(
         Integer id,
         RelNode root,
@@ -108,7 +110,8 @@ public class PlanFragment {
         List<Integer> produceFilterIds,
         Boolean localPairWise,
         Map<String, Integer> splitCountMap,
-        boolean pruneExchangePartition) {
+        boolean pruneExchangePartition,
+        boolean allOss) {
         this.id = id;
         this.root = root;
         this.partitioning = partitioning;
@@ -124,6 +127,7 @@ public class PlanFragment {
         this.localPairWise = localPairWise;
         this.splitCountMap = splitCountMap;
         this.pruneExchangePartition = pruneExchangePartition;
+        this.allOss = allOss;
     }
 
     @JsonCreator
@@ -146,7 +150,8 @@ public class PlanFragment {
         @JsonProperty("localPartitionCount") Integer localPartitionCount,
         @JsonProperty("totalPartitionCount") Integer totalPartitionCount,
         @JsonProperty("splitCountMap") Map<String, Integer> splitCountMap,
-        @JsonProperty("pruneExchangePartition") boolean pruneExchangePartition) {
+        @JsonProperty("pruneExchangePartition") boolean pruneExchangePartition,
+        @JsonProperty("allOss") boolean allOss) {
         this.id = requireNonNull(id, "id is null");
         this.relNodeJson = requireNonNull(relNodeJson, "relNodeJson is null");
         this.outputTypes = outputTypes;
@@ -166,6 +171,7 @@ public class PlanFragment {
         this.totalPartitionCount = totalPartitionCount;
         this.splitCountMap = splitCountMap;
         this.pruneExchangePartition = pruneExchangePartition;
+        this.allOss = allOss;
     }
 
     @JsonProperty
@@ -299,6 +305,11 @@ public class PlanFragment {
         return partitioningScheme;
     }
 
+    @JsonProperty
+    public boolean isAllOss() {
+        return allOss;
+    }
+
     public RelNode getSerRootNode(String schema, PlannerContext plannerContext) {
         if (root == null) {
             SqlConverter sqlConverter = SqlConverter.getInstance(new ExecutionContext(schema));
@@ -384,6 +395,18 @@ public class PlanFragment {
             toString.add("partitioningScheme", partitioningScheme);
         }
         return toString.toString();
+    }
+
+    public PlanFragment copy() {
+        PlanFragment result =
+            new PlanFragment(id, root, outputTypes, partitioning.copy(), remotePairWise, partitionSources,
+                expandSources,
+                partitioningScheme, bkaJoinParallelism, consumeFilterIds, produceFilterIds, localPairWise,
+                splitCountMap,
+                pruneExchangePartition, allOss);
+
+        result.setDriverParallelism(driverParallelism);
+        return result;
     }
 
     public Integer getAllSplitNums() {

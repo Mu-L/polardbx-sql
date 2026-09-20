@@ -24,25 +24,23 @@ import com.alibaba.polardbx.druid.sql.ast.statement.SQLNotNullConstraint;
 import com.alibaba.polardbx.gms.metadb.table.ColumnStatus;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
-import com.alibaba.polardbx.optimizer.utils.RelUtils;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
 import com.google.common.collect.ImmutableList;
-import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.rel.type.RelDataType;
-import org.apache.calcite.sql.SqlBasicCall;
+import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlDataTypeSpec;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlInsert;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
-import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.SqlTypeName;
-import org.apache.calcite.util.Pair;
+import org.apache.calcite.sql.util.SqlShuttle;
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang3.RandomStringUtils;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -71,6 +69,22 @@ import static org.apache.calcite.sql.type.SqlTypeName.UNSIGNED;
 public class TableColumnUtils {
     final public static int MAX_TMP_INDEX_NAME_LENGTH = 64;
 
+    public static boolean hasExternalizedColumn(ExecutionContext ec, String schemaName, String tableName) {
+        try {
+            if (StringUtils.isEmpty(schemaName)) {
+                schemaName = ec.getSchemaName();
+            }
+            SchemaManager sm = ec.getSchemaManager(schemaName);
+            if (sm == null) {
+                return false;
+            }
+            TableMeta tm = sm.getTableWithNull(tableName);
+            return tm != null && tm.hasExternalizedColumn();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     public static boolean isHiddenColumn(ExecutionContext ec, String schemaName, String tableName, String columnName) {
         SchemaManager sm = ec.getSchemaManager(schemaName);
         if (sm == null) {
@@ -84,6 +98,10 @@ public class TableColumnUtils {
         ColumnMeta columnMeta = tableMeta.getColumn(columnName);
         if (columnMeta == null || columnMeta.getStatus() == ColumnStatus.MULTI_WRITE_TARGET) {
             // Not in table meta's all column list, must be hidden
+            return true;
+        }
+
+        if (tableMeta.isMceAddrColumnName(columnName)) {
             return true;
         }
 
@@ -290,13 +308,68 @@ public class TableColumnUtils {
         SqlNodeList updateList = sqlInsert.getUpdateList();
         if (updateList != null && updateList.size() > 0) {
             for (int i = 0; i < updateList.size(); ++i) {
-                if (columnMapping.containsKey(updateList.get(i).toString().toLowerCase())) {
-                    updateList.set(i,
-                        new SqlIdentifier(columnMapping.get(updateList.get(i).toString().toLowerCase()),
-                            SqlParserPos.ZERO));
+                SqlNode node = updateList.get(i);
+                if (node instanceof SqlCall) {
+                    // Each update item is an assignment (e.g. content = VALUES(content)).
+                    // Walk the entire expression to rewrite column identifiers on both sides.
+                    SqlNode rewritten = node.accept(new SqlShuttle() {
+                        @Override
+                        public SqlNode visit(SqlIdentifier id) {
+                            if (id.isSimple()) {
+                                String mapped = columnMapping.get(id.getSimple().toLowerCase());
+                                if (mapped != null) {
+                                    return new SqlIdentifier(mapped, id.getParserPosition());
+                                }
+                            }
+                            return id;
+                        }
+                    });
+                    updateList.set(i, rewritten);
                 }
             }
         }
+    }
+
+    /**
+     * Build externalized column name mapping: logical column name -> physical column name
+     * (e.g. content -> content_addr_)
+     */
+    public static Map<String, String> buildExternalizedColumnMapping(TableMeta tableMeta) {
+        // Only rename columns in the terminal EXTERNALIZED state. Columns mid-migration
+        // (DUAL_WRITE / READ_ADDR) have their addr column APPENDED, not renamed; including them
+        // here would duplicate the addr column in the physical column list. Delegated to
+        // ExternalizedDmlRewriter as the single source of truth for write-path rewrite decisions.
+        return ExternalizedDmlRewriter.buildRenameMapping(tableMeta);
+    }
+
+    /**
+     * Rewrite column identifiers in any SqlNode tree using a column name mapping.
+     * Used to replace logical column names with physical names (e.g. content -> content_addr_).
+     */
+    public static SqlNode rewriteSqlNodeColumnNames(SqlNode sqlNode, Map<String, String> columnMapping) {
+        if (sqlNode == null || columnMapping.isEmpty()) {
+            return sqlNode;
+        }
+        return sqlNode.accept(new SqlShuttle() {
+            @Override
+            public SqlNode visit(SqlIdentifier id) {
+                if (id.isSimple()) {
+                    String physicalName = columnMapping.get(id.getSimple());
+                    if (physicalName != null) {
+                        return new SqlIdentifier(physicalName, id.getParserPosition());
+                    }
+                } else if (id.names.size() == 2) {
+                    String colName = id.names.get(1);
+                    String physicalName = columnMapping.get(colName);
+                    if (physicalName != null) {
+                        return new SqlIdentifier(
+                            Arrays.asList(id.names.get(0), physicalName),
+                            id.getParserPosition());
+                    }
+                }
+                return id;
+            }
+        });
     }
 
     public static final List<SqlTypeName> SIGNED_INT_TYPES = ImmutableList.of(

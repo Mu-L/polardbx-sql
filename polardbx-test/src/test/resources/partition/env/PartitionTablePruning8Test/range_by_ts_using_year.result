@@ -1,0 +1,74 @@
+## DISABLE_FAST_SQL_PARSER
+set ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION=true
+set time_zone='+08:00'
+DROP TABLE IF EXISTS `rng_ts_using_year`
+CREATE /*+TDDL:cmd_extra(ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION=true)*/ TABLE IF NOT EXISTS `rng_ts_using_year` (
+`a` varchar(8) DEFAULT NULL,
+`b` timestamp default current_timestamp
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+PARTITION BY range(year(b))
+(
+PARTITION p2021 VALUES LESS THAN (year('2022-01-01 00:00:00')),
+PARTITION p2022 VALUES LESS THAN (year('2023-01-01 00:00:00')),
+PARTITION p2023 VALUES LESS THAN (year('2024-01-01 00:00:00')),
+PARTITION p2024 VALUES LESS THAN (year('2025-01-01 00:00:00')),
+PARTITION p2025 VALUES LESS THAN (year('2026-01-01 00:00:00')),
+PARTITION pmax VALUES LESS THAN (maxvalue)
+)
+DROP TABLE IF EXISTS `rng_dt_using_year`
+CREATE /*+TDDL:cmd_extra(ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION=true)*/ TABLE IF NOT EXISTS`rng_dt_using_year` (
+`a` varchar(8) DEFAULT NULL,
+`b` datetime default current_timestamp
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+PARTITION BY range(year(b))
+(
+PARTITION p2021 VALUES LESS THAN (year('2022-01-01 00:00:00')),
+PARTITION p2022 VALUES LESS THAN (year('2023-01-01 00:00:00')),
+PARTITION p2023 VALUES LESS THAN (year('2024-01-01 00:00:00')),
+PARTITION p2024 VALUES LESS THAN (year('2025-01-01 00:00:00')),
+PARTITION p2025 VALUES LESS THAN (year('2026-01-01 00:00:00')),
+PARTITION pmax VALUES LESS THAN (maxvalue)
+)
+set time_zone='+08:00'
+explain select a,b from rng_dt_using_year where b='2025-01-01 02:00:00'
+Logical ExecutionPlan
+PhyTableOperation(tables="rng_dt_using_year[p2025]", sql="SELECT `rng_dt_using_year`.`a` AS `a`, `rng_dt_using_year`.`b` AS `b` FROM ? AS `rng_dt_using_year` WHERE (`rng_dt_using_year`.`b` = ?)", params="2025-01-01 02:00:00")
+set time_zone='+00:00'
+explain select a,b from rng_dt_using_year where b='2024-12-31 18:00:00'
+Logical ExecutionPlan
+PhyTableOperation(tables="rng_dt_using_year[p2024]", sql="SELECT `rng_dt_using_year`.`a` AS `a`, `rng_dt_using_year`.`b` AS `b` FROM ? AS `rng_dt_using_year` WHERE (`rng_dt_using_year`.`b` = ?)", params="2024-12-31 18:00:00")
+## All timestamp datatype roting by using time_zone of '+08:00'
+## '2025-01-01 02:00:00TZ08:00' == '2024-12-31 18:00:00TZ00:00'
+set time_zone='+08:00'
+explain select a,b from rng_ts_using_year where b='2025-01-01 02:00:00'
+Logical ExecutionPlan
+PhyTableOperation(tables="rng_ts_using_year[p2025]", sql="SELECT `rng_ts_using_year`.`a` AS `a`, `rng_ts_using_year`.`b` AS `b` FROM ? AS `rng_ts_using_year` WHERE (`rng_ts_using_year`.`b` = ?)", params="2025-01-01 02:00:00")
+set time_zone='+00:00'
+explain select a,b from rng_ts_using_year where b='2024-12-31 18:00:00'
+Logical ExecutionPlan
+PhyTableOperation(tables="rng_ts_using_year[p2025]", sql="SELECT `rng_ts_using_year`.`a` AS `a`, `rng_ts_using_year`.`b` AS `b` FROM ? AS `rng_ts_using_year` WHERE (`rng_ts_using_year`.`b` = ?)", params="2024-12-31 18:00:00")
+set time_zone='+08:00'
+explain  select a,b from rng_dt_using_year where b between '2022-01-01 02:00:00' and '2025-01-01 02:00:00'
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="rng_dt_using_year[p2022,p2023,p2024,p2025]", shardCount=4, sql="SELECT `a`, `b` FROM `rng_dt_using_year` AS `rng_dt_using_year` WHERE (`b` BETWEEN ? AND ?)")
+set time_zone='+00:00'
+explain  select a,b from rng_dt_using_year where b between '2021-12-31 18:00:00' and '2024-12-31 18:00:00'
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="rng_dt_using_year[p2021,p2022,p2023,p2024]", shardCount=4, sql="SELECT `a`, `b` FROM `rng_dt_using_year` AS `rng_dt_using_year` WHERE (`b` BETWEEN ? AND ?)")
+## All timestamp datatype roting by using time_zone of '+08:00'
+## '2022-01-01 02:00:00TZ08:00' == '2021-12-31 18:00:00TZ00:00'
+## '2025-01-01 02:00:00TZ08:00' == '2024-12-31 18:00:00TZ00:00'
+set time_zone='+08:00'
+explain  select a,b from rng_ts_using_year where b between '2022-01-01 02:00:00' and '2025-01-01 02:00:00'
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="rng_ts_using_year[p2022,p2023,p2024,p2025]", shardCount=4, sql="SELECT `a`, `b` FROM `rng_ts_using_year` AS `rng_ts_using_year` WHERE (`b` BETWEEN ? AND ?)")
+set time_zone='+00:00'
+explain  select a,b from rng_ts_using_year where b between '2021-12-31 18:00:00' and '2024-12-31 18:00:00'
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="rng_ts_using_year[p2022,p2023,p2024,p2025]", shardCount=4, sql="SELECT `a`, `b` FROM `rng_ts_using_year` AS `rng_ts_using_year` WHERE (`b` BETWEEN ? AND ?)")
+DROP TABLE IF EXISTS `rng_ts_using_year`
+DROP TABLE IF EXISTS `rng_dt_using_year`;

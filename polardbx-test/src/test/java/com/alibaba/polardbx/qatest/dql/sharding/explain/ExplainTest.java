@@ -17,9 +17,13 @@
 package com.alibaba.polardbx.qatest.dql.sharding.explain;
 
 import com.alibaba.polardbx.common.utils.Assert;
+import com.alibaba.polardbx.optimizer.core.rel.LogicalModifyView;
+import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
+import com.alibaba.polardbx.optimizer.core.rel.PhyTableOperation;
 import com.alibaba.polardbx.qatest.FileStoreIgnore;
 import com.alibaba.polardbx.qatest.ReadBaseTestCase;
 import com.alibaba.polardbx.qatest.data.ExecuteTableSelect;
+import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.server.util.StringUtil;
 import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.Table;
@@ -311,25 +315,70 @@ public class ExplainTest extends ReadBaseTestCase {
             }
         });
 
+        testCases.put("keyword", "explain keyword ", (ResultSet rs, String explainSql) -> {
+            try {
+                ResultSetMetaData rsmd = rs.getMetaData();
+                assertWithMessage("sql: " + explainSql + "\nshould have 1 column")
+                    .that(rsmd.getColumnCount()).isEqualTo(1);
+                boolean existSelect = rs.getString(1).contains("'select'");
+                boolean existFrom = rs.getString(1).contains("'from'");
+                assertWithMessage("sql: " + explainSql + "\nshould contain 'select'")
+                    .that(existSelect).isTrue();
+                assertWithMessage("sql: " + explainSql + "\nshould contain 'from'")
+                    .that(existFrom).isTrue();
+            } catch (SQLException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
         testCases.put("optimizer", "explain optimizer ", (ResultSet rs, String explainSql) -> {
             try {
                 ResultSetMetaData rsmd = rs.getMetaData();
-                assertWithMessage("sql: " + explainSql + "\nshould have 2 columns")
-                    .that(rsmd.getColumnCount()).isEqualTo(2);
-                assertWithMessage("sql: " + explainSql + "\nshould have column 'STAGE'")
-                    .that(rsmd.getColumnName(1).toLowerCase()).isEqualTo("stage");
+                assertWithMessage("sql: " + explainSql + "\nshould have 1 columns")
+                    .that(rsmd.getColumnCount()).isEqualTo(1);
+                assertWithMessage("sql: " + explainSql + "\nshould have column 'optimizer trace'")
+                    .that(rsmd.getColumnName(1).toLowerCase()).isEqualTo("optimizer trace");
+                String expectedSummary = "Phase Summary";
                 String expectedStart = "Start";
                 String expectedEnd = "End";
+                boolean existSummary = rs.getString(1).contains(expectedSummary);
                 boolean existStart = rs.getString(1).contains(expectedStart);
                 boolean existEnd = rs.getString(1).contains(expectedEnd);
                 while (rs.next()) {
+                    existSummary |= rs.getString(1).contains(expectedSummary);
                     existStart |= rs.getString(1).contains(expectedStart);
                     existEnd |= rs.getString(1).contains(expectedEnd);
                 }
+                assertWithMessage("sql: " + explainSql + "\nshould contain 'Phase Summary'")
+                    .that(existSummary).isTrue();
                 assertWithMessage("sql: " + explainSql + "\nshould contain 'Start'")
                     .that(existStart).isTrue();
                 assertWithMessage("sql: " + explainSql + "\nshould contain 'End'")
                     .that(existEnd).isTrue();
+            } catch (SQLException e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        testCases.put("optimizer detail", "explain optimizer detail ", (ResultSet rs, String explainSql) -> {
+            try {
+                ResultSetMetaData rsmd = rs.getMetaData();
+                assertWithMessage("sql: " + explainSql + "\nshould have 1 columns")
+                    .that(rsmd.getColumnCount()).isEqualTo(1);
+                assertWithMessage("sql: " + explainSql + "\nshould have column 'optimizer trace'")
+                    .that(rsmd.getColumnName(1).toLowerCase()).isEqualTo("optimizer trace");
+                String expectedCount = "Rule counts:";
+                String expectedApply = "Rules applied:";
+                boolean existCount = rs.getString(1).contains(expectedCount);
+                boolean existApply = rs.getString(1).contains(expectedApply);
+                while (rs.next()) {
+                    existCount |= rs.getString(1).contains(expectedCount);
+                    existApply |= rs.getString(1).contains(expectedApply);
+                }
+                assertWithMessage(String.format("sql: %s\n should contain '%s'", explainSql, expectedCount))
+                    .that(existCount).isTrue();
+                assertWithMessage(String.format("sql: %s\n should contain '%s'", explainSql, expectedApply))
+                    .that(existApply).isTrue();
             } catch (SQLException e) {
                 throw new RuntimeException(e);
             }
@@ -397,16 +446,6 @@ public class ExplainTest extends ReadBaseTestCase {
             }
         });
 
-        testCases.put("advisor", "explain advisor ", (ResultSet rs, String explainSql) -> {
-            try {
-                ResultSetMetaData rsmd = rs.getMetaData();
-                assertWithMessage("sql: " + explainSql + "\nshould have column 'IMPROVE_VALUE'")
-                    .that(rsmd.getColumnName(1).toLowerCase()).isEqualTo("improve_value");
-            } catch (SQLException e) {
-                throw new RuntimeException(e);
-            }
-        });
-
         testCases.put("json", "explain json_plan ", (ResultSet rs, String explainSql) -> {
             try {
                 ResultSetMetaData rsmd = rs.getMetaData();
@@ -420,4 +459,40 @@ public class ExplainTest extends ReadBaseTestCase {
         });
         return testCases;
     }
+
+    @Test
+    public void testShowPhysicalPlan() throws Exception {
+
+        List<String> sqls = new ArrayList<>();
+        sqls.add(String.format("select * from %s", baseOneTableName));
+        sqls.add(String.format("select * from %s where pk = 1", baseOneTableName));
+        sqls.add(String.format("select * from %s where pk > 10", baseOneTableName));
+        sqls.add(String.format("select * from %s where pk > 10 and pk < 20", baseOneTableName));
+        sqls.add(
+            String.format("select * from %s t1 join %s t2 on t1.pk = t2.pk where t1.pk > 10 and t2.integer_test = 10",
+                baseOneTableName, baseTwoTableName));
+        sqls.add(String.format("select * from %s where pk in (10, 20)", baseOneTableName));
+
+        List<String> options = new ArrayList<>();
+        options.add("");
+        options.add("cost");
+        options.add("analyze");
+
+        for (String sql : sqls) {
+            for (String option : options) {
+                List<List<Object>> explainResult =
+                    JdbcUtil.getAllResult(JdbcUtil.executeQuery("explain " + option + " " + sql, tddlConnection));
+                for (List<Object> row : explainResult) {
+                    String node = row.get(0).toString();
+                    if (node.contains(LogicalView.class.getSimpleName())
+                        || node.contains(PhyTableOperation.class.getSimpleName())
+                        || node.contains(LogicalModifyView.class.getSimpleName())
+                        || node.contains("DirectShardingKeyOperation")) {
+                        Assert.assertTrue(node.contains("physicalPlan"), node);
+                    }
+                }
+            }
+        }
+    }
+
 }

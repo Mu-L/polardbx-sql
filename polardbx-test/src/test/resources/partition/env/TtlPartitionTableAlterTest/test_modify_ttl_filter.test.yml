@@ -1,0 +1,46 @@
+## DISABLE_FAST_SQL_PARSER
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+
+drop table if exists test_ttl_filter;
+## create table
+create table test_ttl_filter(
+a int not null,
+b datetime,
+c int,
+primary key(a)
+)
+partition by key(`a`)
+partitions 4;
+
+alter table test_ttl_filter
+modify ttl set
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_filter = cond_expr( `c` in (1,2,3) )
+;
+show create table test_ttl_filter;
+
+insert into test_ttl_filter values (1,'2025-05-01', 1);
+insert into test_ttl_filter values (2,'2025-05-02', 2);
+insert into test_ttl_filter values (3,'2025-05-04', 3);
+insert into test_ttl_filter values (4,'2025-05-05', 4);
+insert into test_ttl_filter values (5,'2025-05-06', 4);
+
+select * from test_ttl_filter order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-06 12:00:00';
+alter table test_ttl_filter cleanup expired data;
+select * from test_ttl_filter order by a,b,c;
+
+alter table test_ttl_filter cleanup expired data;
+select * from test_ttl_filter order by a,b,c;
+
+drop table if exists test_ttl_filter;
+
+

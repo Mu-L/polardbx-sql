@@ -3,6 +3,7 @@ package com.alibaba.polardbx.transaction.async;
 import com.alibaba.polardbx.common.trx.ISyncPointExecutor;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
 
@@ -21,7 +22,7 @@ public class SyncPointTask implements Runnable {
         }
 
         ISyncPointExecutor executor = ExecutorContext.getContext(DEFAULT_DB_NAME).getSyncPointExecutor();
-        boolean success = executor.execute();
+        boolean success = executor.execute(0) > 0;
         if (!success) {
             logger.warn("Trigger sync point trx failed.");
         }

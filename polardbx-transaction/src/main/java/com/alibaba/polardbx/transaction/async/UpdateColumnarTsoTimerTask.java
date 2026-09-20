@@ -27,13 +27,20 @@ import com.alibaba.polardbx.executor.sync.ColumnarSnapshotUpdateSyncAction;
 import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
 import com.alibaba.polardbx.gms.config.SqlEngineAlert;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingAccessor;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingRecord;
 import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
+import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.gms.util.SyncUtil;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.List;
 
 public class UpdateColumnarTsoTimerTask implements Runnable {
 
-    private static final Logger logger = LoggerFactory.getLogger("COLUMNAR_TRANS");
+    private static final Logger logger = LoggerFactory.getLogger("mpp_log");
 
     @Override
     public void run() {
@@ -53,13 +60,13 @@ public class UpdateColumnarTsoTimerTask implements Runnable {
             long lastTsoMs = ColumnarManager.getInstance().latestTso() >> 22;
             long delayThreshold = InstConfUtil.getInt(ConnectionParams.COLUMNAR_DELAY_WARNING_THRESHOLD);
             long currentDelay = System.currentTimeMillis() - lastTsoMs;
-            if (currentDelay > delayThreshold) {
-                String alertMsg =
-                    String.format("Current columnar read delay is %d ms, which is beyond the threshold %d ms",
-                        currentDelay, delayThreshold);
-                EventLogger.log(EventType.COLUMNAR_READ_ALERT, alertMsg);
-                if (InstConfUtil.getBool(ConnectionParams.ENABLE_SQL_ENGINE_ALERT_COLUMNAR_READ)) {
-                    SqlEngineAlert.getInstance().putNormal(EventType.COLUMNAR_READ_ALERT.name() + " " + alertMsg);
+            if (currentDelay > delayThreshold && latestTso != null && latestTso != Long.MIN_VALUE) {
+                if (cciExists()) {
+                    String alertMsg =
+                        String.format("Current columnar read delay is %d ms, which is beyond the threshold %d ms",
+                            currentDelay, delayThreshold);
+                    EventLogger.log(EventType.COLUMNAR_READ_ALERT, alertMsg);
+                    SqlEngineAlert.getInstance().putColumnarRead(alertMsg);
                 }
             }
 
@@ -68,7 +75,7 @@ public class UpdateColumnarTsoTimerTask implements Runnable {
             if (latestTso != null) {
                 try {
                     ColumnarManager.getInstance().setLatestTso(latestTso);
-                    SyncManagerHelper.sync(new ColumnarSnapshotUpdateSyncAction(latestTso),
+                    SyncManagerHelper.syncThrowExceptions(new ColumnarSnapshotUpdateSyncAction(latestTso),
                         SystemDbHelper.DEFAULT_DB_NAME, SyncScope.CURRENT_ONLY);
                 } catch (Throwable t) {
                     logger.error(String.format("Failed to update columnar tso: %d", latestTso), t);
@@ -76,6 +83,15 @@ public class UpdateColumnarTsoTimerTask implements Runnable {
             }
         } catch (Throwable t) {
             logger.error("Columnar tso update task failed unexpectedly!", t);
+        }
+    }
+
+    private static boolean cciExists() throws SQLException {
+        try (Connection connection = MetaDbUtil.getConnection()) {
+            ColumnarTableMappingAccessor accessor = new ColumnarTableMappingAccessor();
+            accessor.setConnection(connection);
+            List<ColumnarTableMappingRecord> records = accessor.queryLimitOne();
+            return !records.isEmpty();
         }
     }
 }

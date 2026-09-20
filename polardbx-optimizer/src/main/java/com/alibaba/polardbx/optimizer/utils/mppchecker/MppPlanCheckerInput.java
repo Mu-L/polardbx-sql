@@ -18,17 +18,21 @@ package com.alibaba.polardbx.optimizer.utils.mppchecker;
 
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.htaprouting.RoutingType;
 import org.apache.calcite.rel.RelNode;
 
 public class MppPlanCheckerInput {
     private final RelNode originalPlan;
     private final PlannerContext plannerContext;
     private final ExecutionContext executionContext;
+    private final RoutingType routingType;
 
-    public MppPlanCheckerInput(RelNode originalPlan, PlannerContext plannerContext, ExecutionContext executionContext) {
+    public MppPlanCheckerInput(RelNode originalPlan, PlannerContext plannerContext, ExecutionContext executionContext,
+                               RoutingType routingType) {
         this.originalPlan = originalPlan;
         this.plannerContext = plannerContext;
         this.executionContext = executionContext;
+        this.routingType = routingType;
     }
 
     public RelNode getOriginalPlan() {
@@ -41,5 +45,27 @@ public class MppPlanCheckerInput {
 
     public ExecutionContext getExecutionContext() {
         return executionContext;
+    }
+
+    public boolean enableColumnar() {
+        return RoutingType.containsColumnar(routingType);
+    }
+
+    public String getHintVariable(String param) {
+        if (executionContext == null) {
+            return null;
+        }
+        if (!executionContext.isUseHint()) {
+            return null;
+        }
+        Object obj = executionContext.getHintCmds().get(param);
+        if (obj == null) {
+            return null;
+        }
+        return String.valueOf(obj);
+    }
+
+    public RoutingType getRoutingType() {
+        return routingType;
     }
 }

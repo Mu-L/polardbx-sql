@@ -16,17 +16,25 @@
 
 package com.alibaba.polardbx.qatest.dql.sharding.select;
 
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.ReadBaseTestCase;
 import com.alibaba.polardbx.qatest.data.ExecuteTableSelect;
+import com.alibaba.polardbx.qatest.util.ConnectionManager;
+import com.alibaba.polardbx.qatest.util.JdbcUtil;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 import org.junit.runners.Parameterized.Parameters;
 
+import java.sql.Connection;
 import java.util.Arrays;
 import java.util.List;
 
+import static com.alibaba.polardbx.qatest.util.PropertiesUtil.mysqlDBName1;
+import static com.alibaba.polardbx.qatest.util.PropertiesUtil.polardbXShardingDBName1;
 import static com.alibaba.polardbx.qatest.validator.DataValidator.selectContentSameAssert;
 import static com.alibaba.polardbx.qatest.validator.DataValidator.selectErrorAssert;
 import static com.alibaba.polardbx.qatest.validator.DataValidator.selectOrderAssert;
@@ -38,7 +46,7 @@ import static com.alibaba.polardbx.qatest.validator.DataValidator.selectOrderAss
  * @since 5.1.17
  */
 
-
+@IcbcIgnore(ignoreReason = "SQL_MODE=ONLY_FULL_GROUP_BY")
 public class SelectGroupByTest extends ReadBaseTestCase {
 
     @Parameters(name = "{index}:table0={0}")
@@ -52,6 +60,53 @@ public class SelectGroupByTest extends ReadBaseTestCase {
 
     @Rule
     public ExpectedException thrown = ExpectedException.none();
+
+    private static final String GROUP_BY_ALIAS_SUBQUERY_TABLE = "ai_82724735_group_by_alias_subquery_tb";
+
+    /**
+     * AONE-82724735 回归测试专用表：自建自清理，避免依赖环境中未预置的共享 fixture 表。
+     */
+    @BeforeClass
+    public static void prepareGroupByAliasSubQueryData() throws Exception {
+        String dropTable =
+            "/*+TDDL:cmd_extra(ENABLE_ASYNC_DDL=false)*/drop table if exists " + GROUP_BY_ALIAS_SUBQUERY_TABLE;
+        String createSqlBody = "CREATE TABLE if not exists `" + GROUP_BY_ALIAS_SUBQUERY_TABLE + "` (\n"
+            + "\t`pk` int(10) NOT NULL,\n"
+            + "\t`integer_test` int(10) DEFAULT NULL,\n"
+            + "\tPRIMARY KEY (`pk`)\n"
+            + ") ";
+        String insertSql = "insert into " + GROUP_BY_ALIAS_SUBQUERY_TABLE + " values "
+            + "(1, 10), (2, 10), (3, 20), (4, 20), (5, 30)";
+
+        try (Connection tddlConnection = ConnectionManager.getInstance().getDruidPolardbxConnection()) {
+            JdbcUtil.useDb(tddlConnection, polardbXShardingDBName1());
+            JdbcUtil.executeUpdateSuccess(tddlConnection, dropTable);
+            JdbcUtil.executeUpdateSuccess(tddlConnection,
+                "/*+TDDL:cmd_extra(ENABLE_ASYNC_DDL=false)*/" + createSqlBody + " single");
+            JdbcUtil.executeUpdateSuccess(tddlConnection, insertSql);
+        }
+
+        try (Connection mysqlConnection = ConnectionManager.getInstance().getDruidMysqlConnection()) {
+            JdbcUtil.useDb(mysqlConnection, mysqlDBName1());
+            JdbcUtil.executeUpdateSuccess(mysqlConnection, dropTable);
+            JdbcUtil.executeUpdateSuccess(mysqlConnection, createSqlBody);
+            JdbcUtil.executeUpdateSuccess(mysqlConnection, insertSql);
+        }
+    }
+
+    @AfterClass
+    public static void dropGroupByAliasSubQueryData() throws Exception {
+        String dropTable =
+            "/*+TDDL:cmd_extra(ENABLE_ASYNC_DDL=false)*/drop table if exists " + GROUP_BY_ALIAS_SUBQUERY_TABLE;
+        try (Connection tddlConnection = ConnectionManager.getInstance().getDruidPolardbxConnection()) {
+            JdbcUtil.useDb(tddlConnection, polardbXShardingDBName1());
+            JdbcUtil.executeUpdateSuccess(tddlConnection, dropTable);
+        }
+        try (Connection mysqlConnection = ConnectionManager.getInstance().getDruidMysqlConnection()) {
+            JdbcUtil.useDb(mysqlConnection, mysqlDBName1());
+            JdbcUtil.executeUpdateSuccess(mysqlConnection, dropTable);
+        }
+    }
 
     /**
      * @since 5.1.17
@@ -155,6 +210,20 @@ public class SelectGroupByTest extends ReadBaseTestCase {
     public void groupByWithSubQueryAndDoubleFunction() throws Exception {
         String sql = "select pk, sum(tmp) from (select pk, avg(integer_test) as tmp from " + baseOneTableName
             + " group by pk) as a group by floor(pk/3)";
+        selectContentSameAssert(sql, null, mysqlConnection, tddlConnection);
+    }
+
+    /**
+     * AONE-82724735: GROUP BY 引用含关联子查询的别名，下推 SQL 应使用序号引用而不是把
+     * 完整子查询表达式展开进 GROUP BY（MySQL 不支持 GROUP BY 中出现子查询）。
+     */
+    @Test
+    public void groupByAliasWithCorrelatedSubQueryTest() throws Exception {
+        String sql = "select pk, integer_test as groupKey, "
+            + "(select max(b.integer_test) from " + GROUP_BY_ALIAS_SUBQUERY_TABLE
+            + " b where b.pk = " + GROUP_BY_ALIAS_SUBQUERY_TABLE + ".pk) as pauseReason, count(*) as cnt "
+            + "from " + GROUP_BY_ALIAS_SUBQUERY_TABLE
+            + " group by pk, groupKey, pauseReason";
         selectContentSameAssert(sql, null, mysqlConnection, tddlConnection);
     }
 

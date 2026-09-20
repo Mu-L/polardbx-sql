@@ -17,7 +17,6 @@
 package com.alibaba.polardbx.qatest;
 
 import com.alibaba.polardbx.common.utils.ClassFinder;
-import com.alibaba.polardbx.qatest.ddl.auto.columnar.ColumnarSetConfigTest;
 import com.alibaba.polardbx.qatest.ddl.auto.columnar.CreateCciTest;
 import com.google.common.collect.ImmutableList;
 
@@ -60,17 +59,22 @@ public class ClassHelper {
         return fileStorageTestCases;
     }
 
+    /**
+     * Get all columnar test cases.
+     */
     public static ImmutableList<Class> getColumnarTestCases() {
         if (columnarTestCases == null) {
             synchronized (ClassHelper.class) {
                 if (columnarTestCases == null) {
                     columnarTestCases = ImmutableList.<Class>builder().addAll(fileStorageTestCases.stream()
-                        .filter(klass -> klass.getAnnotation(TestFileStorage.class) == null)
-                        .collect(Collectors.toList()))
+                            .filter(klass -> klass.getAnnotation(TestFileStorage.class) == null)
+                            .collect(Collectors.toList()))
+                        .addAll(getColumnarMetaDdlCase().stream()
+                            .filter(klass -> klass.getAnnotation(ColumnarRelatedMetaTest.class) != null)
+                            .collect(Collectors.toList()))
                         .addAll(getColumnarDqlCase())
                         .add(CreateCciTest.class)
-                        .addAll(getColumnarDdlCase()).add(CreateCciTest.class)
-                        .add(ColumnarSetConfigTest.class)
+                        .addAll(getColumnarDdlCase())
                         .build();
                 }
             }
@@ -98,5 +102,9 @@ public class ClassHelper {
 
     private static List<Class> getColumnarDdlCase() {
         return ClassFinder.findClassesInPackage("com.alibaba.polardbx.qatest.columnar.ddl", CLASS_FILTER);
+    }
+
+    private static List<Class> getColumnarMetaDdlCase() {
+        return ClassFinder.findClassesInPackage("com.alibaba.polardbx.qatest.ddl.auto.columnar", CLASS_FILTER);
     }
 }

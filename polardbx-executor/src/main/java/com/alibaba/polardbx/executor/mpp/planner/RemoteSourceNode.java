@@ -21,6 +21,8 @@ import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.AbstractRelNode;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelCollationTraitDef;
+import org.apache.calcite.rel.RelDistribution;
+import org.apache.calcite.rel.RelDistributionTraitDef;
 import org.apache.calcite.rel.RelInput;
 import org.apache.calcite.rel.RelWriter;
 import org.apache.calcite.rel.externalize.RelDrdsWriter;
@@ -97,6 +99,18 @@ public class RemoteSourceNode extends AbstractRelNode {
             throw new IllegalStateException("RemoteSourceNode's rowCount is NULL!");
         }
         return rowCount;
+    }
+
+    public String getExplainOutput() {
+        StringBuilder stringBuilder = new StringBuilder();
+        stringBuilder.append("sourceIds=[");
+        for (int i = 0; i < sourceFragmentIds.size() - 1; i++) {
+            stringBuilder.append(sourceFragmentIds.get(i)).append(',');
+        }
+        stringBuilder.append(sourceFragmentIds.get(sourceFragmentIds.size() - 1)).append(']');
+        RelDistribution distribution = traitSet.getTrait(RelDistributionTraitDef.INSTANCE);
+        stringBuilder.append(",distribution=").append(distribution);
+        return stringBuilder.toString();
     }
 }
 

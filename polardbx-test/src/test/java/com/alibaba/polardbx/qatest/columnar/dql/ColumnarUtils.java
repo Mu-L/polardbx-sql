@@ -19,7 +19,7 @@ public class ColumnarUtils {
     public static void createColumnarIndex(Connection tddlConnection, String indexName, String tableName,
                                            String sortKey, String partKey, int partCount) {
         final String createColumnarIdx = "create clustered columnar index %s on %s(%s) "
-            + " engine='EXTERNAL_DISK' partition by hash(%s) partitions %s";
+            + " partition by hash(%s) partitions %s";
         JdbcUtil.executeSuccess(tddlConnection,
             String.format(createColumnarIdx, indexName, tableName, sortKey, partKey, partCount));
     }
@@ -29,7 +29,7 @@ public class ColumnarUtils {
                                                          String dicColumns) {
         Assert.assertTrue(dicColumns != null);
         final String createColumnarIdx = "create clustered columnar index %s on %s(%s) "
-            + " engine='EXTERNAL_DISK' partition by hash(%s) partitions %s dictionary_columns = '%s'";
+            + " partition by hash(%s) partitions %s dictionary_columns = '%s'";
         JdbcUtil.executeSuccess(tddlConnection,
             String.format(createColumnarIdx, indexName, tableName, sortKey, partKey, partCount, dicColumns));
     }
@@ -50,25 +50,45 @@ public class ColumnarUtils {
         return JdbcUtil.executeQuery(sql, tddlConnection);
     }
 
-    public static void waitColumnarOffset(Connection tddlConnection) {
-        Pair<Long, Long> offsets = getInnodbAndColumnarOffset(tddlConnection);
-        long innodbOffset = offsets.getKey(), columnarOffset = offsets.getValue();
+    /**
+     * Flush the columnar snapshot and block until the resulting TSO is visible to CN
+     * queries (i.e. {@code CN_MIN_LATENCY >= flushTso}).
+     *
+     * @return the flushed TSO. Once this method returns, the columnar node has caught up
+     * past it and {@code metadb.columnar_checkpoints} contains a STREAM/HEARTBEAT/DDL row
+     * with {@code cp_tso >= flushTso}, so callers can safely use the returned value as a
+     * flashback target without hitting {@code ERR_COLUMNAR_SNAPSHOT}.
+     */
+    public static long waitColumnarOffset(Connection tddlConnection) {
+        // Get the COMMIT_TSO from columnar_flush — this is the point-in-time we need to wait for
+        long flushTso;
+        try {
+            flushTso = columnarFlushAndGetTso(tddlConnection);
+        } catch (SQLException e) {
+            throw new RuntimeException("columnar_flush failed", e);
+        }
+        if (flushTso <= 0) {
+            throw new RuntimeException("columnar_flush returned invalid TSO: " + flushTso);
+        }
 
-        for (int retry = 0; retry <= RETRY_COUNT && columnarOffset < innodbOffset; retry++) {
+        // Poll until CN_MIN_LATENCY TSO >= flushTso, meaning the snapshot is visible to CN queries
+        for (int retry = 0; retry <= RETRY_COUNT; retry++) {
+            long cnMinTso = getCnMinLatencyTso(tddlConnection);
+            if (cnMinTso >= flushTso) {
+                return flushTso;
+            }
             try {
                 Thread.sleep(RETRY_INTERVAL);
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
-            columnarOffset = getColumnarOffset(tddlConnection);
         }
 
-        if (columnarOffset < innodbOffset) {
-            throw new RuntimeException(
-                String.format(
-                    "wait columnar offset failed, retry time is %s, retry interval is %s, innodb offset is %s, columnar offset is %s",
-                    RETRY_COUNT, RETRY_INTERVAL, innodbOffset, columnarOffset));
-        }
+        long finalTso = getCnMinLatencyTso(tddlConnection);
+        throw new RuntimeException(
+            String.format(
+                "wait columnar offset failed, retry time is %s, retry interval is %s, flush tso is %s, cn_min_latency tso is %s",
+                RETRY_COUNT, RETRY_INTERVAL, flushTso, finalTso));
     }
 
     public static long getColumnarOffset(Connection tddlConnection) {
@@ -99,6 +119,21 @@ public class ColumnarUtils {
             throw new RuntimeException(e);
         }
         throw new RuntimeException("get columnar offset failed");
+    }
+
+    public static long getCnMinLatencyTso(Connection tddlConnection) {
+        try (ResultSet rs = JdbcUtil.executeQuery(SHOW_COLUMNAR_OFFSET, tddlConnection)) {
+            while (rs.next()) {
+                String type = rs.getString("type");
+                long tso = rs.getLong("tso");
+                if (type.equalsIgnoreCase("cn_min_latency")) {
+                    return tso;
+                }
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+        throw new RuntimeException("get cn_min_latency tso failed");
     }
 
     static public long columnarFlushAndGetTso(Statement stmt) throws SQLException {

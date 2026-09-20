@@ -110,7 +110,7 @@ public final class SQLIdentifierExpr extends SQLExprImpl implements SQLName, Com
     public long hashCode64() {
         if (hashCode64 == 0
             && name != null) {
-            hashCode64 = FnvHash.hashCode64(name);
+            hashCode64 = FnvHash.hashCode64(SQLUtils.normalizeNoTrim(name));
         }
         return hashCode64;
     }

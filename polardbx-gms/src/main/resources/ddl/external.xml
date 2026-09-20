@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SystemTables>
+    <SystemTable name="external_catalog_info">
+        <Create><![CDATA[
+            CREATE TABLE IF NOT EXISTS `external_catalog_info` (
+                `id` bigint NOT NULL AUTO_INCREMENT,
+                `name` varchar(128) NOT NULL,
+                `connector` varchar(64) NOT NULL,
+                `properties` blob DEFAULT NULL,
+                `secret_name` varchar(128) DEFAULT NULL,
+                `comment` varchar(512) DEFAULT NULL,
+                `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_name` (`name`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ]]></Create>
+    </SystemTable>
+
+    <SystemTable name="external_secret">
+        <Create><![CDATA[
+            CREATE TABLE IF NOT EXISTS `external_secret` (
+                `id` bigint NOT NULL AUTO_INCREMENT,
+                `name` varchar(128) NOT NULL,
+                `type` varchar(64) DEFAULT NULL,
+                `encrypted_kv` blob NOT NULL,
+                `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_name` (`name`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ]]></Create>
+    </SystemTable>
+</SystemTables>

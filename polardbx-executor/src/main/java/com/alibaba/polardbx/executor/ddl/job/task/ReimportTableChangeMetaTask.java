@@ -55,6 +55,7 @@ public class ReimportTableChangeMetaTask extends BaseDdlTask {
     private List<ForeignKeyData> addedForeignKeys;
     private Map<String, String> specialDefaultValues;
     private Map<String, Long> specialDefaultValueFlags;
+    private long oldVersion;
 
     @JSONCreator
     public ReimportTableChangeMetaTask(String schemaName, String logicalTableName, String dbIndex, String phyTableName,
@@ -63,7 +64,8 @@ public class ReimportTableChangeMetaTask extends BaseDdlTask {
                                        List<ForeignKeyData> addedForeignKeys,
                                        boolean hasTimestampColumnDefault,
                                        Map<String, String> specialDefaultValues,
-                                       Map<String, Long> specialDefaultValueFlags) {
+                                       Map<String, Long> specialDefaultValueFlags,
+                                       long oldVersion) {
         super(schemaName);
         this.dbIndex = dbIndex;
         this.phyTableName = phyTableName;
@@ -77,6 +79,7 @@ public class ReimportTableChangeMetaTask extends BaseDdlTask {
         this.specialDefaultValues = specialDefaultValues;
         this.specialDefaultValueFlags = specialDefaultValueFlags;
         this.logicalTableName = logicalTableName;
+        this.oldVersion = oldVersion;
         onExceptionTryRecoveryThenRollback();
     }
 
@@ -85,7 +88,9 @@ public class ReimportTableChangeMetaTask extends BaseDdlTask {
         //query old meta's table version
         TableInfoManager tableInfoManager = new TableInfoManager();
         tableInfoManager.setConnection(metaDbConnection);
-        long oldVersion = tableInfoManager.getVersionForUpdate(schemaName, logicalTableName);
+        if (oldVersion <= 0) {
+            oldVersion = tableInfoManager.getVersionForUpdate(schemaName, logicalTableName);
+        }
 
         TableMetaChanger.removeTableMetaWithoutNotify(metaDbConnection, schemaName, logicalTableName, false,
             executionContext);

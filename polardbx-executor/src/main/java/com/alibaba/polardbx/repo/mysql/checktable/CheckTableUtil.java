@@ -50,8 +50,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import static com.alibaba.druid.util.JdbcUtils.executeQuery;
 import static com.alibaba.polardbx.gms.util.GroupInfoUtil.buildPhysicalDbNameFromGroupName;
+import static com.alibaba.druid.util.JdbcUtils.executeQuery;
 import static com.alibaba.polardbx.repo.mysql.checktable.IndexDescription.parseGppOption;
 
 /**
@@ -171,6 +171,59 @@ public class CheckTableUtil {
             }
         }
         return false;
+    }
+
+    /**
+     * Get readonly physical tables from information_schema.TABLES_EXTENSIONS.
+     * A table is readonly if its SECONDARY_ENGINE_ATTRIBUTE contains "polarx.readonly": "true".
+     *
+     * @param schemaName logical schema name
+     * @param groupName group name
+     * @param tableNames physical table names
+     * @param phyDbName physical database name
+     * @return map of tableName -> readonly status (true if readonly)
+     */
+    public static Map<String, Boolean> getReadOnlyPhysicalTables(String schemaName, String groupName,
+                                                                 List<String> tableNames, String phyDbName) {
+        TGroupDataSource tGroupDataSource =
+            (TGroupDataSource) ExecutorContext.getContext(schemaName).getTopologyExecutor()
+                .getGroupExecutor(groupName).getDataSource();
+
+        Map<String, Boolean> readOnlyMap = new HashMap<>();
+        // Initialize all tables as not readonly
+        for (String tableName : tableNames) {
+            readOnlyMap.put(tableName, false);
+        }
+
+        if (tableNames.isEmpty()) {
+            return readOnlyMap;
+        }
+
+        List<String> tableNameStrs =
+            tableNames.stream().map(o -> String.format("'%s'", esapceStringInQuota(o))).collect(Collectors.toList());
+        String tableNameStr = StringUtils.join(tableNameStrs, ",");
+
+        String sql = String.format(
+            "SELECT table_name, secondary_engine_attribute FROM information_schema.TABLES_EXTENSIONS " +
+                "WHERE table_schema = '%s' AND table_name IN (%s)",
+            esapceStringInQuota(phyDbName), tableNameStr);
+
+        Throwable ex = null;
+        try (Connection conn = tGroupDataSource.getConnection();
+            ResultSet rs = conn.createStatement().executeQuery(sql)) {
+            while (rs.next()) {
+                String tableName = rs.getString("table_name");
+                String attribute = rs.getString("secondary_engine_attribute");
+                if (attribute != null && attribute.contains("\"polarx.readonly\": true")) {
+                    readOnlyMap.put(tableName, true);
+                }
+            }
+        } catch (Exception e) {
+            // Log the error but don't throw - this feature is optional
+            logger.warn("Failed to check readonly status for tables in " + phyDbName, e);
+        }
+
+        return readOnlyMap;
     }
 
     public static Map<String, List<String>> getTableForeignKeyColumns(String schemaName, String groupName,
@@ -297,7 +350,7 @@ public class CheckTableUtil {
         TGroupDataSource tGroupDataSource =
             (TGroupDataSource) ExecutorContext.getContext(schemaName).getTopologyExecutor()
                 .getGroupExecutor(groupName).getDataSource();
-        String physicalDbName = buildPhysicalDbNameFromGroupName(groupName);
+        String physicalDbName = buildPhysicalDbNameFromGroupName(schemaName, groupName);
         Throwable ex = null;
         String sql = "select * from information_schema.partitions where table_name=? and TABLE_SCHEMA=?";
         try (Connection conn = tGroupDataSource.getConnection()) {

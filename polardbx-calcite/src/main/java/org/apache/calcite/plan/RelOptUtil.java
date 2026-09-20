@@ -33,6 +33,7 @@ import org.apache.calcite.rel.RelHomogeneousShuttle;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelRoot;
 import org.apache.calcite.rel.RelShuttle;
+import org.apache.calcite.rel.RelShuttleImpl;
 import org.apache.calcite.rel.RelVisitor;
 import org.apache.calcite.rel.RelWriter;
 import org.apache.calcite.rel.core.Aggregate;
@@ -41,9 +42,11 @@ import org.apache.calcite.rel.core.Calc;
 import org.apache.calcite.rel.core.Correlate;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.Filter;
+import org.apache.calcite.rel.core.RecursiveCTE;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.core.Project;
+import org.apache.calcite.rel.core.RecursiveCTEAnchor;
 import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.core.SemiJoin;
 import org.apache.calcite.rel.core.Sort;
@@ -100,11 +103,14 @@ import org.apache.calcite.schema.ModifiableView;
 import org.apache.calcite.sql.SqlBasicCall;
 import org.apache.calcite.sql.SqlExplainFormat;
 import org.apache.calcite.sql.SqlExplainLevel;
+import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
+import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlSelect;
+import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.MultisetSqlType;
 import org.apache.calcite.sql.type.SqlTypeName;
@@ -137,6 +143,7 @@ import java.util.SortedMap;
 import java.util.SortedSet;
 import java.util.TreeSet;
 
+import static java.util.Objects.requireNonNull;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.AND;
 
 /**
@@ -3479,7 +3486,20 @@ public abstract class RelOptUtil {
       }
 
       //child is a filter
-      if (child instanceof LogicalFilter) {
+      /**
+       * Change context:
+       * - Before: this generic filter(filter()) merge unconditionally AND-combined an outer
+       *   Filter's condition into its child Filter, regardless of what the child Filter sat on.
+       * - Path impact: LogicalSemiJoin.getPushDownRelNode() now deliberately keeps a correlated
+       *   condition as a separate outer Filter above a subquery's own HAVING Filter(Aggregate) to
+       *   avoid pushing an out-of-scope outer-table reference into the pushed-down derived table's
+       *   HAVING clause (see LogicalSemiJoin for details). Without this guard, enable_lv_subquery_unwrap's
+       *   call into filterProject() would re-merge those two filters here and reintroduce the same
+       *   illegal-HAVING bug. Filter(Filter(non-Aggregate)) merging elsewhere is unaffected.
+       * - Capability regression: None; only merging across a Filter directly on an Aggregate is
+       *   skipped, so filter-reorder/simplification for all other filter chains is unchanged.
+       */
+      if (child instanceof LogicalFilter && !(((LogicalFilter) child).getInput() instanceof Aggregate)) {
         //merge the two filters
         LogicalFilter childFilter = (LogicalFilter) child;
         RexBuilder rb = relBuilder.getRexBuilder();
@@ -3507,7 +3527,38 @@ public abstract class RelOptUtil {
     }
     return relNode;
   }
-    /** Policies for handling two- and three-valued boolean logic. */
+
+    /**
+     * Finds all CTEs (Common Table Expressions) used by a relational expression or its children.
+     *
+     * @param rel the relational expression to search
+     * @return any cte exists
+     */
+    public static boolean anyCte(RelNode rel) {
+        return !findAllCte(rel).isEmpty();
+    }
+
+    /**
+     * Returns a list of all CTE nodes used by this expression or its children.
+     *
+     * @param rel the relational expression to search
+     * @return a list of CTE RelNodes
+     */
+    public static List<RelNode> findAllCte(RelNode rel) {
+        final Multimap<Class<? extends RelNode>, RelNode> nodes =
+            rel.getCluster().getMetadataQuery().getNodeTypes(rel);
+        final List<RelNode> cteNodes = new ArrayList<>();
+        for (Entry<Class<? extends RelNode>, Collection<RelNode>> e : nodes.asMap().entrySet()) {
+            if (RecursiveCTE.class.isAssignableFrom(e.getKey()) ||
+                RecursiveCTEAnchor.class.isAssignableFrom(e.getKey())) {
+                for (RelNode node : e.getValue()) {
+                    cteNodes.add(node);
+                }
+            }
+        }
+        return cteNodes;
+    }
+
   public enum Logic {
     /** Three-valued boolean logic. */
     TRUE_FALSE_UNKNOWN,
@@ -4241,6 +4292,82 @@ public abstract class RelOptUtil {
       }
     }
 
+  }
+    /**
+     * Visitor for RelNodes which applies specified {@link RexShuttle} visitor
+     * for every node in the tree.
+     */
+    public static class RelNodesExprsHandler extends RelHomogeneousShuttle {
+        private final RexShuttle rexVisitor;
+
+        public RelNodesExprsHandler(RexShuttle rexVisitor) {
+            this.rexVisitor = rexVisitor;
+        }
+
+        @Override
+        public RelNode visit(RelNode other) {
+            if (other instanceof HepRelVertex) {
+                return visit(((HepRelVertex) other).getCurrentRel());
+            }
+            return super.visit(other).accept(rexVisitor);
+        }
+    }
+
+  /**
+   * Visitor for RexNodes which replaces {@link RexCorrelVariable} with specified.
+   */
+  public static class RexFieldAccessReplacer extends RexShuttle {
+    private final RexBuilder builder;
+    private final CorrelationId rexCorrelVariableToReplace;
+    private final RexCorrelVariable rexCorrelVariable;
+    private final Map<Integer, Integer> requiredColsMap;
+
+    public RexFieldAccessReplacer(
+        CorrelationId rexCorrelVariableToReplace,
+        RexCorrelVariable rexCorrelVariable,
+        RexBuilder builder,
+        Map<Integer, Integer> requiredColsMap) {
+      this.rexCorrelVariableToReplace = rexCorrelVariableToReplace;
+      this.rexCorrelVariable = rexCorrelVariable;
+      this.builder = builder;
+      this.requiredColsMap = requiredColsMap;
+    }
+
+    @Override
+    public RexNode visitCorrelVariable(RexCorrelVariable variable) {
+      if (variable.getId().equals(rexCorrelVariableToReplace)) {
+        return rexCorrelVariable;
+      }
+      return variable;
+    }
+
+    @Override
+    public RexNode visitFieldAccess(RexFieldAccess fieldAccess) {
+      RexNode refExpr = fieldAccess.getReferenceExpr().accept(this);
+      // creates new RexFieldAccess instance for the case when referenceExpr was replaced.
+      // Otherwise calls super method.
+      if (refExpr == rexCorrelVariable) {
+        int fieldIndex = fieldAccess.getField().getIndex();
+        return builder.makeFieldAccess(
+            refExpr,
+            requireNonNull(requiredColsMap.get(fieldIndex),
+                () -> "no entry for field " + fieldIndex + " in " + requiredColsMap));
+      }
+      return super.visitFieldAccess(fieldAccess);
+    }
+
+    @Override
+    public RexNode visitSubQuery(RexSubQuery subQuery) {
+      RelNode newSub = subQuery.rel.accept(new RelOptUtil.RelNodesExprsHandler(this));
+      boolean[] update = {newSub != subQuery.rel};
+      List<RexNode> clonedOperands = visitList(subQuery.operands, update);
+      if (update[0]) {
+        return new RexSubQuery(subQuery.getType(), subQuery.getOperator(),
+            ImmutableList.copyOf(clonedOperands), newSub).setHasOptimized(subQuery.isHasOptimized());
+      } else {
+        return subQuery;
+      }
+    }
   }
 
   /** Shuttle that finds correlation variables inside a given relational

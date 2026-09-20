@@ -22,7 +22,9 @@ import com.alibaba.polardbx.common.ddl.newengine.DdlConstants;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.utils.BlackHoleUtils;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.common.RecycleBin;
 import com.alibaba.polardbx.executor.common.RecycleBinManager;
 import com.alibaba.polardbx.executor.ddl.job.builder.DdlPhyPlanBuilder;
@@ -54,6 +56,7 @@ import com.alibaba.polardbx.gms.ttl.TtlInfoRecord;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.archive.CheckOSSArchiveUtil;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalDropTable;
@@ -87,6 +90,14 @@ public class LogicalDropTableHandler extends LogicalCommonDdlHandler {
     }
 
     @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        String tableName = logicalDdlPlan.getTableName();
+        exclusiveResources.add(concatWithDot(logicalDdlPlan.getSchemaName(), tableName));
+    }
+
+    @Override
     protected DdlJob buildDdlJob(BaseDdlOperation logicalDdlPlan, ExecutionContext executionContext) {
         LogicalDropTable logicalDropTable = (LogicalDropTable) logicalDdlPlan;
 
@@ -104,11 +115,11 @@ public class LogicalDropTableHandler extends LogicalCommonDdlHandler {
             return buildDropArchiveTableViewForTtlTableJob(logicalDropTable, executionContext);
         }
 
-        if (executionContext.getParamManager().getBoolean(ConnectionParams.PURGE_FILE_STORAGE_TABLE)
-            && logicalDropTable.isPurge()) {
-            LogicalRenameTableHandler.makeTableVisible(logicalDropTable.getSchemaName(),
-                logicalDropTable.getTableName(), executionContext);
-        }
+//        if (executionContext.getParamManager().getBoolean(ConnectionParams.PURGE_FILE_STORAGE_TABLE)
+//            && logicalDropTable.isPurge()) {
+//            LogicalRenameTableHandler.makeTableVisible(logicalDropTable.getSchemaName(),
+//                logicalDropTable.getTableName(), executionContext);
+//        }
 
         boolean enableBin = executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_RECYCLEBIN);
         boolean crossDb = !targetSchemaName.equalsIgnoreCase(executionContext.getSchemaName());
@@ -142,6 +153,14 @@ public class LogicalDropTableHandler extends LogicalCommonDdlHandler {
         logicalDropTable.setDdlVersionId(versionId);
 
         boolean isNewPartDb = DbInfoManager.getInstance().isNewPartitionDb(logicalDropTable.getSchemaName());
+        if (!isNewPartDb && !logicalDropTable.isPurge()) {
+            TableMeta tableMeta = OptimizerContext.getContext(logicalDropTable.getSchemaName())
+                .getLatestSchemaManager().getTable(logicalDropTable.getTableName());
+            if (tableMeta.hasExternalizedColumn() || tableMeta.hasColumnInMceLifecycle()) {
+                throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
+                    "DROP TABLE on an externalized DRDS table requires PURGE; use DROP TABLE ... PURGE");
+            }
+        }
         CheckOSSArchiveUtil.checkWithoutOSS(logicalDropTable.getSchemaName(), logicalDropTable.getTableName());
         if (!isNewPartDb) {
             if (logicalDropTable.isWithGsi()) {
@@ -153,7 +172,8 @@ public class LogicalDropTableHandler extends LogicalCommonDdlHandler {
                 }
                 return buildDropTableWithGsiJob(logicalDropTable, executionContext);
             } else {
-                if (isAvailableForRecycleBin(logicalDropTable.getTableName(), executionContext) &&
+                if (isAvailableForRecycleBin(logicalDropTable.getSchemaName(), logicalDropTable.getTableName(),
+                    executionContext) &&
                     !logicalDropTable.isPurge()) {
                     return handleRecycleBin(logicalDropTable, executionContext);
                 } else {
@@ -167,6 +187,7 @@ public class LogicalDropTableHandler extends LogicalCommonDdlHandler {
                 }
             }
         } else {
+            DdlJob dropJob;
             if (logicalDropTable.isWithGsi()) {
                 if (enableBin) {
                     throw new TddlRuntimeException(ERR_RECYCLEBIN_EXECUTE,
@@ -174,7 +195,7 @@ public class LogicalDropTableHandler extends LogicalCommonDdlHandler {
                             + "use hint /*TDDL:ENABLE_RECYCLEBIN=false*/ "
                             + "to disable recycle bin");
                 }
-                return buildDropPartitionTableWithGsiJob(logicalDropTable, executionContext);
+                dropJob = buildDropPartitionTableWithGsiJob(logicalDropTable, executionContext);
             } else {
                 Engine engine = OptimizerContext.getContext(logicalDropTable.getSchemaName()).getLatestSchemaManager()
                     .getTable(logicalDropTable.getTableName()).getEngine();
@@ -184,7 +205,7 @@ public class LogicalDropTableHandler extends LogicalCommonDdlHandler {
                         return buildDropPartitionTableJob(logicalDropTable, executionContext);
                     } else {
                         // don't drop table for oss table in recycle bin
-                        RecycleBin bin = RecycleBinManager.instance.getByAppName(executionContext.getAppName());
+                        RecycleBin bin = RecycleBinManager.getInstance().getByAppName(executionContext.getAppName());
                         if (bin.get(logicalDropTable.getTableName()) != null) {
                             throw new TddlRuntimeException(ErrorCode.ERR_DROP_RECYCLE_BIN,
                                 logicalDropTable.getTableName());
@@ -192,8 +213,8 @@ public class LogicalDropTableHandler extends LogicalCommonDdlHandler {
                         return buildRecycleFileStorageTableJob(logicalDropTable, executionContext);
                     }
                 } else {
-                    if (isAvailableForRecycleBin(logicalDropTable.getTableName(), executionContext) &&
-                        !logicalDropTable.isPurge()) {
+                    if (isAvailableForRecycleBin(logicalDropTable.getSchemaName(), logicalDropTable.getTableName(),
+                        executionContext) && !logicalDropTable.isPurge()) {
                         return handleRecycleBin(logicalDropTable, executionContext);
                     } else {
                         if (enableBin && !logicalDropTable.isPurge()) {
@@ -202,15 +223,19 @@ public class LogicalDropTableHandler extends LogicalCommonDdlHandler {
                                     + "use hint /*TDDL:ENABLE_RECYCLEBIN=false*/ "
                                     + "to disable recycle bin");
                         }
-                        return buildDropPartitionTableJob(logicalDropTable, executionContext);
+                        dropJob = buildDropPartitionTableJob(logicalDropTable, executionContext);
                     }
                 }
             }
+            // Drop shadow table if the table engine is pure columnar (COLUMNAR or BLACKHOLE)
+            appendDropShadowTableSubJobIfNeeded(
+                logicalDropTable.getSchemaName(), logicalDropTable.getTableName(), (ExecutableDdlJob) dropJob);
+            return dropJob;
         }
     }
 
-    private static void tryForbidDropTableOperationIfNeed(ExecutionContext executionContext, String targetSchemaName,
-                                                          String targetTableName) {
+    protected static void tryForbidDropTableOperationIfNeed(ExecutionContext executionContext, String targetSchemaName,
+                                                            String targetTableName) {
         boolean allowDropTblOp =
             TtlUtil.checkIfAllowedDropTableOperation(targetSchemaName, targetTableName, executionContext);
         if (!allowDropTblOp) {
@@ -285,14 +310,14 @@ public class LogicalDropTableHandler extends LogicalCommonDdlHandler {
         ValidateTableVersionTask validateTableVersionTask =
             new ValidateTableVersionTask(dropTablePreparedData.getSchemaName(), tableVersions);
 
-        ExecutableDdlJob result = new DropTableJobFactory(physicalPlanData).create();
+        ExecutableDdlJob result = new DropTableJobFactory(physicalPlanData, executionContext).create();
         result.addTask(validateTableVersionTask);
         result.addTaskRelationship(validateTableVersionTask, result.getHead());
 
         return result;
     }
 
-    private DdlJob handleRecycleBin(LogicalDropTable logicalDropTable, ExecutionContext executionContext) {
+    protected DdlJob handleRecycleBin(LogicalDropTable logicalDropTable, ExecutionContext executionContext) {
         RecycleBin recycleBin = RecycleBinManager.instance.getByAppName(executionContext.getAppName());
         String binName = recycleBin.genName();
 
@@ -328,8 +353,8 @@ public class LogicalDropTableHandler extends LogicalCommonDdlHandler {
         return new RenameTableJobFactory(physicalPlanData, executionContext, versionId).create();
     }
 
-    private DdlJob buildRecycleFileStorageTableJob(LogicalDropTable logicalDropTable,
-                                                   ExecutionContext executionContext) {
+    protected DdlJob buildRecycleFileStorageTableJob(LogicalDropTable logicalDropTable,
+                                                     ExecutionContext executionContext) {
         RecycleBin recycleBin = RecycleBinManager.instance.getByAppName(executionContext.getAppName());
         String fileStorageBinName = recycleBin.genFileStorageBinName();
 
@@ -394,7 +419,7 @@ public class LogicalDropTableHandler extends LogicalCommonDdlHandler {
         return result;
     }
 
-    private DdlJob buildDropTableWithGsiJob(LogicalDropTable logicalDropTable, ExecutionContext executionContext) {
+    protected DdlJob buildDropTableWithGsiJob(LogicalDropTable logicalDropTable, ExecutionContext executionContext) {
         DropTableWithGsiPreparedData dropTableWithGsiPreparedData = logicalDropTable.getDropTableWithGsiPreparedData();
 
         return new DropTableWithGsiJobFactory(
@@ -404,8 +429,8 @@ public class LogicalDropTableHandler extends LogicalCommonDdlHandler {
         ).create();
     }
 
-    private DdlJob buildDropPartitionTableWithGsiJob(LogicalDropTable logicalDropTable,
-                                                     ExecutionContext executionContext) {
+    protected DdlJob buildDropPartitionTableWithGsiJob(LogicalDropTable logicalDropTable,
+                                                       ExecutionContext executionContext) {
         DropTableWithGsiPreparedData dropTableWithGsiPreparedData = logicalDropTable.getDropTableWithGsiPreparedData();
 
         return new DropPartitionTableWithGsiJobFactory(
@@ -413,6 +438,34 @@ public class LogicalDropTableHandler extends LogicalCommonDdlHandler {
             dropTableWithGsiPreparedData,
             executionContext
         ).create();
+    }
+
+    /**
+     * If the table being dropped has a pure columnar engine (COLUMNAR or BLACKHOLE),
+     * try to drop its shadow table as well via a SubJobTask.
+     */
+    private void appendDropShadowTableSubJobIfNeeded(String schemaName, String tableName, ExecutableDdlJob result) {
+        OptimizerContext oc = OptimizerContext.getContext(schemaName);
+        if (oc == null) {
+            return;
+        }
+        TableMeta tableMeta = oc.getLatestSchemaManager().getTableWithNull(tableName);
+        if (tableMeta == null) {
+            return;
+        }
+        Engine engine = tableMeta.getEngine();
+        if (!Engine.isPureColumnar(engine)) {
+            return;
+        }
+        String shadowTableName = BlackHoleUtils.getInsertToDeleteBlackHoleTableName(tableName);
+        TableMeta shadowTableMeta =
+            OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTableWithNull(shadowTableName);
+        if (shadowTableMeta != null) {
+            String dropShadowTableSql = String.format("DROP TABLE IF EXISTS `%s`", shadowTableName);
+            SubJobTask dropShadowTableSubJob = new SubJobTask(schemaName, dropShadowTableSql, "");
+            dropShadowTableSubJob.setParentAcquireResource(true);
+            result.appendTask(dropShadowTableSubJob);
+        }
     }
 
     private DdlJob buildDropArchiveTableViewForTtlTableJob(LogicalDropTable logicalDropTable,
@@ -457,9 +510,9 @@ public class LogicalDropTableHandler extends LogicalCommonDdlHandler {
         executableDdlJob.addSequentialTasks(taskList);
         Set<String> resources = new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
         resources.add(ttlTblSchema);
-        resources.add(ttlTblName);
+        resources.add(concatWithDot(ttlTblSchema, ttlTblName));
         resources.add(arcTblSchema);
-        resources.add(arcTblName);
+        resources.add(concatWithDot(arcTblSchema, arcTblName));
 
         executableDdlJob.addExcludeResources(resources);
 

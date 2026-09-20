@@ -43,13 +43,10 @@ import com.alibaba.polardbx.gms.ha.impl.StorageInstHaContext;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbConfigManager;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
-import com.alibaba.polardbx.gms.node.GmsNodeManager;
 import com.alibaba.polardbx.gms.topology.DbGroupInfoAccessor;
 import com.alibaba.polardbx.gms.topology.DbGroupInfoManager;
 import com.alibaba.polardbx.gms.topology.DbGroupInfoRecord;
-import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.gms.topology.DbTopologyManager;
-import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.gms.util.MetaDbLogUtil;
 import com.alibaba.polardbx.group.jdbc.TGroupDataSource;
@@ -74,7 +71,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.text.MessageFormat;
 import java.time.Instant;
 import java.util.*;
@@ -102,6 +98,9 @@ public class ScaleOutUtils {
 
     private static final String CHECK_TABLE_EXISTENCE =
         "SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ?  AND TABLE_NAME = ?";
+
+    private static final String CHECK_DB_EXISTENCE =
+        "show databases like '%s'";
 
     private static SqlNode getSqlTemplate(String primaryTableDefinition, ExecutionContext ec) {
         final SqlCreateTable primaryTableNode = (SqlCreateTable) new FastsqlParser()
@@ -369,16 +368,49 @@ public class ScaleOutUtils {
 
     }
 
-    /**
-     * Min(NumCpuCores, Max(8, NumStorageNodes * 2)) * NumComputeNodes
-     */
-    private static int getScaleoutTaskParallelismImpl(ExecutionContext ec, LongConfigParam param) {
-        long parallelism = ec.getParamManager().getLong(param);
-        int numComputeNode = GsiUtils.getAvaliableNodeNum(null, null,
-            ec);
-        if ((parallelism > 0 && numComputeNode < 2) || parallelism > 32) {
-            return (int) parallelism;
+    public static boolean checkPhyDbExistence(String schemaName, String groupName, String physicalDb) {
+        IGroupExecutor ge = null;
+        try {
+            ExecutorContext ec = ExecutorContext.getContext(schemaName);
+            ge = ec.getTopologyExecutor().getGroupExecutor(groupName);
+        } catch (Throwable e) {
+            throw GeneralUtil.nestedException(
+                String.format("query group %s with check database %s existence failed: %s", groupName, physicalDb,
+                    e.getMessage()), e);
         }
+
+        try (Connection conn = ge.getDataSource().getConnection();
+            PreparedStatement pstmt = conn.prepareStatement(String.format(CHECK_DB_EXISTENCE, physicalDb))) {
+            pstmt.setQueryTimeout(QUERY_TIMEOUT);
+
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    return true;
+                }
+            }
+        } catch (Throwable e) {
+            // 注意：这里对异常信息的处理应避免泄露过多细节，特别是在线上环境中
+            throw GeneralUtil.nestedException("Error checking database existence for " + physicalDb, e);
+        }
+
+        return false;
+
+    }
+
+    /**
+     * if you set a large parall for job, then I would take it as the final paral
+     * otherwise it would compute a reasonable parallism via node num and cpu cores.
+     */
+    private static int getScaleoutTaskParallelismImpl(ExecutionContext ec, LongConfigParam paramForJob) {
+        long paralForJob = ec.getParamManager().getLong(paramForJob);
+        int numComputeNode = GsiUtils.getAvaliableNodeNum(null, null,
+            ec, ConnectionParams.DISABLE_REBALANCE_MPP);
+        if ((paralForJob > 0 && numComputeNode < 2) || paralForJob > 64) {
+            // if you set a large paralForJob, then we would take it as the final paral.
+            return (int) paralForJob;
+        }
+
+        long maxParam = ec.getParamManager().getLong(ConnectionParams.TABLEGROUP_TASK_MAX_PARALLELISM);
         int numCpuCores = ThreadCpuStatUtil.NUM_CORES;
         numCpuCores = Math.max(numCpuCores, 1);
         int numStorageNodes = (int) StorageHaManager.getInstance().getStorageHaCtxCache().values().stream()
@@ -386,10 +418,22 @@ public class ScaleOutUtils {
             .filter(StorageInstHaContext::isAllReplicaReady)
             .count();
         numStorageNodes = Math.max(1, numStorageNodes);
-        final int minParallelism = 10;
-        final int maxParallelism = 16;
-        return Math.min(Math.max(numCpuCores, minParallelism), maxParallelism) * Math.max(numComputeNode,
-            numStorageNodes);
+        return computeScaleoutTaskParallelism(numCpuCores, numComputeNode, numStorageNodes, maxParam);
+    }
+
+    /*
+     * parallelism for each node: the closest number to numCpuCores in [10, 16]
+     * number of node: max(cn, dn)
+     * final param: min(numNode * parallelismForEachNode, maxParam)
+     */
+    public static int computeScaleoutTaskParallelism(int numCpuCores, int numComputeNode, int numStorageNodes,
+                                                     long maxParallelism) {
+        final int minParallelismForEachNode = 10;
+        final int maxParallelismForEachNode = 16;
+        int parallelismForEachNode =
+            Math.min(Math.max(numCpuCores, minParallelismForEachNode), maxParallelismForEachNode);
+        int numNode = Math.max(numComputeNode, numStorageNodes);
+        return Math.toIntExact(Math.min((long) numNode * parallelismForEachNode, maxParallelism));
     }
 
     public static int getTaskPipelineSize(ExecutionContext ec) {

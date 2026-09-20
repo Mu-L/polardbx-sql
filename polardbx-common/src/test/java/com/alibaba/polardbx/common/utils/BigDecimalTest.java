@@ -63,7 +63,7 @@ public class BigDecimalTest {
         BigDecimal bigDecimal = new BigDecimal(new BigInteger(value), scale);
 
         try {
-            byte[] expectedBytes = bigDecimal.toString().getBytes();
+            byte[] expectedBytes = bigDecimal.toPlainString().getBytes();
             byte[] fastBytes;
             fastBytes = BigDecimalUtil.fastGetBigDecimalStringBytes(value.getBytes(), scale);
             Assert.assertArrayEquals(String.format("Failed at: %s, scale: %d", value, scale),

@@ -95,6 +95,8 @@ public class PolarDbXSystemTableColumnStatistic implements SystemTableColumnStat
 
     private static final int batchSize = 30;
 
+    private static final int retryTimesIfNeed = 3;
+
     @Override
     public void createTableIfNotExist() {
         if (!canWrite()) {
@@ -297,14 +299,50 @@ public class PolarDbXSystemTableColumnStatistic implements SystemTableColumnStat
         return rows;
     }
 
+    public static Collection<Row> selectBySchemaAndTable(String schema, String table, Connection conn) {
+        Collection<Row> rows = Lists.newLinkedList();
+        PreparedStatement ps = null;
+        ResultSet rs = null;
+        try {
+            ps = conn.prepareStatement(
+                String.format(SELECT_SQL + " where SCHEMA_NAME='%s' and TABLE_NAME='%s'", schema, table));
+            rs = ps.executeQuery();
+            while (rs.next()) {
+                try {
+                    SystemTableColumnStatistic.Row row = new SystemTableColumnStatistic.Row(
+                        rs.getString("SCHEMA_NAME"),
+                        rs.getString("TABLE_NAME"),
+                        rs.getString("COLUMN_NAME"),
+                        rs.getLong("CARDINALITY"),
+                        Histogram.deserializeFromJson(rs.getString("HISTOGRAM")),
+                        TopN.deserializeFromJson(rs.getString("TOPN")),
+                        rs.getLong("NULL_COUNT"),
+                        rs.getFloat("SAMPLE_RATE"),
+                        rs.getLong("UNIX_TIME"),
+                        rs.getString("EXTEND_FIELD"));
+
+                    rows.add(row);
+                } catch (Exception e) {
+                    logger.error("parse row of " + TABLE_NAME + " error", e);
+                }
+            }
+        } catch (Exception e) {
+            logger.error("select " + TABLE_NAME + " error", e);
+        } finally {
+            JdbcUtils.close(rs);
+            JdbcUtils.close(ps);
+        }
+        return rows;
+    }
+
     @Override
     public void batchReplace(final List<SystemTableColumnStatistic.Row> rowList) throws SQLException {
         if (FailPoint.isKeyEnable(FailPointKey.FP_INJECT_IGNORE_PERSIST_COLUMN_STATISTIC)) {
             throw new SQLException("ignore persist column statistic");
         }
-        if (!innerBatchReplace(rowList)) {
+        if (!innerBatchReplaceAndRetryIfNeed(rowList, retryTimesIfNeed)) {
             createTableIfNotExist();
-            innerBatchReplace(rowList);
+            innerBatchReplaceAndRetryIfNeed(rowList, retryTimesIfNeed);
         }
     }
 
@@ -312,7 +350,7 @@ public class PolarDbXSystemTableColumnStatistic implements SystemTableColumnStat
      * @param rowList the row list that need to replace
      * @return return false when COLUMN_STATISTICS doesn't exist, otherwise return true
      */
-    private boolean innerBatchReplace(final List<SystemTableColumnStatistic.Row> rowList) throws SQLException {
+    private boolean innerBatchReplaceAndRetryIfNeed(final List<SystemTableColumnStatistic.Row> rowList, int retryTimes) throws SQLException {
         if (!canWrite()) {
             return false;
         }
@@ -322,8 +360,11 @@ public class PolarDbXSystemTableColumnStatistic implements SystemTableColumnStat
         Connection conn = null;
         PreparedStatement pps = null;
         String sql = "";
+        int originTransactionLevel = -1;
         try {
             conn = MetaDbUtil.getConnection();
+            originTransactionLevel = conn.getTransactionIsolation();
+            conn.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
             int index = 0;
             while (index < rowList.size()) {
                 StringBuilder sqlBuilder = new StringBuilder(REPLACE_SQL);
@@ -370,6 +411,18 @@ public class PolarDbXSystemTableColumnStatistic implements SystemTableColumnStat
             logger.debug("batchReplace with " + ((rowList.size() - 1) / batchSize + 1) + " sql");
             return true;
         } catch (SQLException e) {
+            if (e.getMessage() != null && e.getMessage().toLowerCase().contains("deadlock") && retryTimes > 0){
+                return innerBatchReplaceAndRetryIfNeed(rowList, retryTimes - 1);
+            }
+            if (e.getMessage() != null
+                    && e.getMessage().toLowerCase().contains("duplicate entry")
+                    && e.getMessage().toLowerCase().contains("for key 'primary'")
+                    && retryTimes > 0){
+                //在mysql57中，由于GMS主备切换或者备份恢复，可能导致系统表的sequence小于主键中的最大值
+                long maxId = MetaDbUtil.getMaxId(conn, TABLE_NAME);
+                MetaDbUtil.alterAutoIncrement(conn, TABLE_NAME, maxId + 1);
+                return innerBatchReplaceAndRetryIfNeed(rowList, retryTimes - 1);
+            }
             if (e.getErrorCode() == 1146) {
                 logger.error("batch replace " + TABLE_NAME + " error, we will try again", e);
             } else {
@@ -377,8 +430,20 @@ public class PolarDbXSystemTableColumnStatistic implements SystemTableColumnStat
             }
             throw e;
         } finally {
-            JdbcUtils.close(pps);
-            JdbcUtils.close(conn);
+            if (pps != null) {
+                JdbcUtils.close(pps);
+            }
+            if (conn != null) {
+                if (originTransactionLevel >= 0) {
+                    try {
+                        conn.setTransactionIsolation(originTransactionLevel);
+                    } catch (SQLException e) {
+                        //ignore
+                    }
+                }
+                JdbcUtils.close(conn);
+            }
+
         }
     }
 

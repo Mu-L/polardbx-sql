@@ -1,0 +1,156 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI=false;
+
+use polardbx;
+drop database if exists test_rename_ttl_db3;
+create database if not exists test_rename_ttl_db3 mode='auto';
+use test_rename_ttl_db3;
+
+create table t1_with_arc(
+t1_a int not null auto_increment,
+b datetime default current_timestamp,
+primary key(t1_a)
+)
+partition by key(t1_a) 
+partitions 2;
+
+create table t2_with_arc(
+t2_a int not null auto_increment,
+b datetime default current_timestamp,
+primary key(t2_a)
+)
+partition by key(t2_a)
+partitions 2;
+
+create table t3_without_arc(
+t3_a int not null auto_increment,
+b datetime default current_timestamp,
+primary key(t3_a)
+)
+partition by key(t3_a)
+partitions 2;
+
+create table t4_without_arc(
+t4_a int not null auto_increment,
+b datetime default current_timestamp,
+primary key(t4_a)
+)
+partition by key(t4_a)
+partitions 2;
+
+create table t5_normal(
+t5_a int not null auto_increment,
+b datetime default current_timestamp,
+primary key(t5_a)
+)
+partition by key(t5_a)
+partitions 2;
+
+create table t6_normal(
+t6_a int not null auto_increment,
+b datetime default current_timestamp,
+primary key(t6_a)
+)
+partition by key(t6_a)
+partitions 2;
+
+
+alter table t1_with_arc
+modify ttl
+set
+ttl_enable = 'on',
+ttl_expr = `b` expire after 2 month timezone '+08:00',
+ttl_job = cron '0 0 1 */2 * ? *' timezone '+08:00',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2
+;
+create table t1_with_arc_bk like t1_with_arc engine='columnar' archive_mode='ttl';
+alter table t1_with_arc cleanup expired data;
+show create table t1_with_arc;
+show create view t1_with_arc_bk;
+
+alter table t2_with_arc
+modify ttl
+set
+ttl_enable = 'on',
+ttl_expr = `b` expire after 2 month timezone '+08:00',
+ttl_job = cron '0 0 1 */2 * ? *' timezone '+08:00',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2
+;
+create table t2_with_arc_bk like t2_with_arc engine='columnar' archive_mode='ttl';
+alter table t2_with_arc cleanup expired data;
+show create table t2_with_arc;
+show create view t2_with_arc_bk;
+
+alter table t3_without_arc
+modify ttl
+set
+ttl_enable = 'on',
+ttl_expr = `b` expire after 2 month timezone '+08:00',
+ttl_job = cron '0 0 1 */2 * ? *' timezone '+08:00',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2
+;
+
+alter table t4_without_arc
+modify ttl
+set
+ttl_enable = 'on',
+ttl_expr = `b` expire after 2 month timezone '+08:00',
+ttl_job = cron '0 0 1 */2 * ? *' timezone '+08:00',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2
+;
+
+## 
+## t1_with_arc->t2_with_arc
+## t2_with_arc->t1_with_arc
+##
+rename table
+t1_with_arc to tmp1,
+t2_with_arc to t1_with_arc,
+tmp1 to t2_with_arc
+;
+  
+## 
+## t3_without_arc->t4_without_arc
+## t4_without_arc->t3_without_arc
+##
+rename table
+t3_without_arc to tmp2,
+t4_without_arc to t3_without_arc,
+tmp2 to t4_without_arc
+;
+  
+## 
+## t5_normal->t6_normal
+## t6_normal->t5_normal
+##
+rename table
+t5_normal to tmp3,
+t6_normal to t5_normal,
+tmp3 to t6_normal
+;
+
+
+show create table t1_with_arc;
+show create view t1_with_arc_bk;
+
+show create table t2_with_arc;
+show create view t2_with_arc_bk;
+
+show create table t3_without_arc;
+show create table t4_without_arc;
+show create table t5_normal;
+show create table t6_normal;
+
+use polardbx;
+drop database if exists test_rename_ttl_db3;
+

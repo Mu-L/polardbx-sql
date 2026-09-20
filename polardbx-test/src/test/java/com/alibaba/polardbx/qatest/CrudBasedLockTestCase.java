@@ -74,6 +74,15 @@ public class CrudBasedLockTestCase extends BaseTestCase {
         }
     }
 
+    protected void dropViewOnMysqlAndTddl(String viewName) {
+        String sql = "drop view if exists " + viewName;
+        try {
+            JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        } finally {
+            JdbcUtil.executeUpdateSuccess(mysqlConnection, sql);
+        }
+    }
+
     private void unlock() {
         if (this.lockSuccessful.compareAndSet(true, false)) {
             synchronized (tableSets) {
@@ -122,7 +131,7 @@ public class CrudBasedLockTestCase extends BaseTestCase {
         unlock();
     }
 
-    public void setSqlMode(String mode, Connection conn) {
+    public static void setSqlMode(String mode, Connection conn) {
         String sql = "SET session sql_mode = '" + mode + "'";
         JdbcUtil.updateDataTddl(conn, sql, null);
     }
@@ -134,4 +143,3 @@ public class CrudBasedLockTestCase extends BaseTestCase {
         return "/*+TDDL:CMD_EXTRA(" + String.join(",", params) + ")*/";
     }
 }
-

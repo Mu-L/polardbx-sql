@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.accumulator;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.executor.accumulator.state.NullableHyperLogLogGroupState;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
@@ -23,8 +25,11 @@ import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.statistic.ndv.HyperLogLogUtil;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.expression.calc.Aggregator;
+import org.openjdk.jol.info.ClassLayout;
 
-public class FinalHyperLogLogAccumulator implements Accumulator {
+public class FinalHyperLogLogAccumulator extends AbstractAccumulator {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(FinalHyperLogLogAccumulator.class).instanceSize();
+    @FieldMemoryCounter(value = false)
     private final DataType[] inputTypes;
 
     private final NullableHyperLogLogGroupState groupState;
@@ -36,6 +41,11 @@ public class FinalHyperLogLogAccumulator implements Accumulator {
             inputTypes[i] = rowInputType[inputColumnIndexes[i]];
         }
         this.groupState = new NullableHyperLogLogGroupState(capacity);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(groupState);
     }
 
     @Override

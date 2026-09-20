@@ -16,24 +16,24 @@
 
 package com.alibaba.polardbx.server.handler.privileges.polar;
 
-import com.alibaba.polardbx.server.ServerConnection;
-import com.alibaba.polardbx.druid.sql.ast.statement.SQLExprTableSource;
-import com.alibaba.polardbx.druid.sql.ast.statement.SQLGrantStatement;
-import com.alibaba.polardbx.druid.sql.parser.ByteString;
 import com.alibaba.polardbx.common.audit.AuditAction;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLExprTableSource;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLGrantStatement;
+import com.alibaba.polardbx.druid.sql.parser.ByteString;
 import com.alibaba.polardbx.gms.privilege.PolarAccountInfo;
 import com.alibaba.polardbx.gms.privilege.PolarPrivManager;
 import com.alibaba.polardbx.gms.privilege.PrivilegeKind;
+import com.alibaba.polardbx.server.ServerConnection;
 import org.apache.calcite.sql.SqlKind;
 
 import java.util.ArrayList;
 import java.util.List;
 
 import static com.alibaba.polardbx.server.handler.privileges.polar.PolarHandlerCommon.checkDrdsRoot;
-import static com.alibaba.polardbx.gms.privilege.audit.AuditPrivilege.polarAudit;
+import static com.alibaba.polardbx.server.util.AuditPrivilege.polarAudit;
 
 /**
  * Handle grant privileges statement.
@@ -46,6 +46,8 @@ public class PolarGrantPrivilegeHandler extends AbstractPrivilegeCommandHandler 
     private static final Logger logger = LoggerFactory.getLogger(PolarGrantPrivilegeHandler.class);
 
     private final SQLGrantStatement stmt;
+
+    private boolean catalog = false;
 
     public PolarGrantPrivilegeHandler(ByteString sql,
                                       ServerConnection serverConn,
@@ -61,13 +63,17 @@ public class PolarGrantPrivilegeHandler extends AbstractPrivilegeCommandHandler 
         try {
             SQLExprTableSource sqlExprTableSource = (SQLExprTableSource) stmt.getResource();
             grantees = PolarHandlerCommon.getGrantees(sqlExprTableSource, stmt.getUsers(),
-                stmt.getPrivileges(), c);
+                stmt.getPrivileges(), c, true);
             if (stmt.getWithGrantOption()) {
                 for (PolarAccountInfo grantee : grantees) {
                     if (grantee.getFirstDbPriv() != null) {
                         grantee.getFirstDbPriv().grantPrivilege(PrivilegeKind.GRANT_OPTION);
+                    } else if (grantee.getFirstCatalogDbPriv() != null) {
+                        grantee.getFirstCatalogDbPriv().grantPrivilege(PrivilegeKind.GRANT_OPTION);
                     } else if (grantee.getFirstTbPriv() != null) {
                         grantee.getFirstTbPriv().grantPrivilege(PrivilegeKind.GRANT_OPTION);
+                    } else if (grantee.getFirstCatalogTbPriv() != null) {
+                        grantee.getFirstCatalogTbPriv().grantPrivilege(PrivilegeKind.GRANT_OPTION);
                     } else {
                         grantee.getInstPriv().grantPrivilege(PrivilegeKind.GRANT_OPTION);
                     }
@@ -90,11 +96,18 @@ public class PolarGrantPrivilegeHandler extends AbstractPrivilegeCommandHandler 
         ServerConnection c = getServerConn();
         List<PolarAccountInfo> grantees = getGrantees(getServerConn());
         checkGrantees(grantees);
+        this.catalog = grantees.stream().anyMatch(g ->
+            g.getFirstCatalogDbPriv() != null || g.getFirstCatalogTbPriv() != null);
 
         PolarAccountInfo granter = getGranter();
 
         PolarPrivManager.getInstance().grantPrivileges(granter, c.getActiveRoles(), grantees);
-        polarAudit(getServerConn().getConnectionInfo(), getSql().toString(), AuditAction.GRANT);
+        polarAudit(getServerConn(), getSql().toString(), AuditAction.GRANT);
+    }
+
+    @Override
+    protected boolean isCatalog() {
+        return catalog;
     }
 
     @Override

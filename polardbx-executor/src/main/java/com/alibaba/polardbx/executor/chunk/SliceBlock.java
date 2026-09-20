@@ -46,38 +46,38 @@ import static com.alibaba.polardbx.common.CrcAccumulator.NULL_TAG;
 import static com.alibaba.polardbx.common.utils.memory.SizeOf.sizeOf;
 
 public class SliceBlock extends AbstractCommonBlock {
-    private static final long INSTANCE_SIZE = ClassLayout.parseClass(SliceBlock.class).instanceSize();
+    protected static final long INSTANCE_SIZE = ClassLayout.parseClass(SliceBlock.class).instanceSize();
 
-    private static final byte[] EMPTY_BYTES = new byte[] {};
+    protected static final byte[] EMPTY_BYTES = new byte[] {};
     /**
      * If compatible is true, use collation to handle sorting, comparing and hashing.
      */
-    private final boolean compatible;
+    protected final boolean compatible;
 
     @FieldMemoryCounter(false)
-    private SliceType dataType;
+    protected SliceType dataType;
     /**
      * In direct mode, storing the bytes' data.
      */
-    private Slice data;
+    protected Slice data;
     /**
      * In direct mode, storing the offsets of each slot.
      */
-    private int[] offsets;
+    protected int[] offsets;
     /**
      * In dictionary mode, storing the dict data.
      */
     @FieldMemoryCounter(false)
-    private BlockDictionary dictionary;
+    protected BlockDictionary dictionary;
     /**
      * In dictionary mode, storing the dict id.
      * the id = -1 means null value.
      */
-    private int[] dictIds;
+    protected int[] dictIds;
     /**
      * Hold the effective position in this block.
      */
-    private int[] selection;
+    protected int[] selection;
 
     // construct the slice block using dictionary.
     public SliceBlock(SliceType dataType, int arrayOffset, int positionCount, boolean[] valueIsNull,
@@ -615,8 +615,10 @@ public class SliceBlock extends AbstractCommonBlock {
             int endOffset = endOffsetInner(position);
 
             for (int i = 0; i < those.length; i++) {
-                if (this.data.compareTo(
-                    beginOffset, endOffset - beginOffset, (Slice) those[i], 0, ((Slice) those[i]).length()) == 0) {
+                if (this.data.equals(
+                    beginOffset, endOffset - beginOffset,
+                    (Slice) those[i],
+                    0, ((Slice) those[i]).length())) {
                     return 1;
                 }
             }
@@ -685,6 +687,68 @@ public class SliceBlock extends AbstractCommonBlock {
                     return BlockComparator.SLICE_BLOCK_DICT_SLICE_BLOCK_DICT.compareTo(
                         this, position, other, otherPosition
                     ) == 0;
+                }
+            }
+        }
+
+        throw new AssertionError();
+
+    }
+
+    @Override
+    public int compareAssertedSameType(int position, Block other, int otherPosition) {
+        position = realPositionOf(position);
+
+        boolean isNullLeft = isNullInner(position);
+        boolean isNullRight = other.isNull(otherPosition);
+        if (isNullLeft && isNullRight) {
+            return 0;
+        } else if (isNullLeft) {
+            return -1;
+        } else if (isNullRight) {
+            return 1;
+        }
+
+        if (compatible) {
+            if (other instanceof SliceBlock) {
+                return compareAssertedSameTypeInner(position, other.cast(SliceBlock.class), otherPosition);
+            } else if (other instanceof SliceBlockBuilder) {
+                return compareAssertedSameTypeInner(position, (SliceBlockBuilder) other, otherPosition);
+            } else {
+                throw new AssertionError();
+            }
+        }
+
+        if (this.dictionary == null) {
+            if (other instanceof SliceBlockBuilder) {
+                return BlockComparator.SLICE_BLOCK_NO_DICT_SLICE_BLOCK_BUILDER.compareTo(
+                    this, position, other, otherPosition
+                );
+            } else if (other instanceof SliceBlock) {
+                if (((SliceBlock) other).dictionary == null) {
+                    return BlockComparator.SLICE_BLOCK_NO_DICT_SLICE_BLOCK_NO_DICT.compareTo(
+                        this, position, other, otherPosition
+                    );
+                } else {
+                    return BlockComparator.SLICE_BLOCK_NO_DICT_SLICE_BLOCK_DICT.compareTo(
+                        this, position, other, otherPosition
+                    );
+                }
+            }
+        } else {
+            if (other instanceof SliceBlockBuilder) {
+                return BlockComparator.SLICE_BLOCK_DICT_SLICE_BLOCK_BUILDER.compareTo(
+                    this, position, other, otherPosition
+                );
+            } else if (other instanceof SliceBlock) {
+                if (((SliceBlock) other).dictionary == null) {
+                    return BlockComparator.SLICE_BLOCK_DICT_SLICE_BLOCK_NO_DICT.compareTo(
+                        this, position, other, otherPosition
+                    );
+                } else {
+                    return BlockComparator.SLICE_BLOCK_DICT_SLICE_BLOCK_DICT.compareTo(
+                        this, position, other, otherPosition
+                    );
                 }
             }
         }
@@ -878,6 +942,32 @@ public class SliceBlock extends AbstractCommonBlock {
             return dataType.compare(region1, region2) == 0;
         } else {
             return region1.equals(region2);
+        }
+    }
+
+    private int compareAssertedSameTypeInner(int realPosition, SliceBlock other, int otherPosition) {
+
+        // by collation
+        Slice region1 = getRegionInner(realPosition);
+        Slice region2 = other.getRegion(otherPosition);
+
+        if (compatible) {
+            return dataType.compare(region1, region2);
+        } else {
+            return region1.compareTo(region2);
+        }
+    }
+
+    private int compareAssertedSameTypeInner(int realPosition, SliceBlockBuilder other, int otherPosition) {
+
+        // by collation
+        Slice region1 = getRegionInner(realPosition);
+        Slice region2 = other.getRegion(otherPosition);
+
+        if (compatible) {
+            return dataType.compare(region1, region2);
+        } else {
+            return region1.compareTo(region2);
         }
     }
 

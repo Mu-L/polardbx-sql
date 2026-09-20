@@ -28,6 +28,7 @@ public enum DdlType {
 
     CREATE_INDEX,
     DROP_INDEX,
+    CREATE_INDEX_IN_DATABASE,
 
     CREATE_FUNCTION,
     DROP_FUNCTION,
@@ -65,6 +66,20 @@ public enum DdlType {
 
     MERGE_TABLEGROUP,
 
+    ANALYZE_TABLE,
+
+    OPTIMIZE_TABLE,
+
+    GHOST_TYPE,
+
+    CREATE_SECRET,
+    DROP_SECRET,
+    ALTER_SECRET,
+
+    CREATE_EXTERNAL_CATALOG,
+    DROP_EXTERNAL_CATALOG,
+    ALTER_EXTERNAL_CATALOG,
+
     /**
      * 忽略的ddl类型，实际不是ddl
      */
@@ -88,10 +103,38 @@ public enum DdlType {
         case CREATE_FUNCTION:
         case DROP_FUNCTION:
         case PUSH_DOWN_UDF:
+        case CREATE_SECRET:
+        case DROP_SECRET:
+        case ALTER_SECRET:
+        case CREATE_EXTERNAL_CATALOG:
+        case DROP_EXTERNAL_CATALOG:
+        case ALTER_EXTERNAL_CATALOG:
             return false;
         default:
             return true;
         }
     }
 
+    public static boolean needShowDdlProgress(DdlType type) {
+        if (type == null) {
+            return true;
+        }
+        switch (type) {
+        case ALTER_TABLE:
+        case CREATE_TABLE:
+        case DROP_TABLE:
+        case TRUNCATE_TABLE:
+        case CREATE_INDEX:
+        case DROP_INDEX:
+        case CREATE_GLOBAL_INDEX:
+        case ALTER_GLOBAL_INDEX:
+        case DROP_GLOBAL_INDEX:
+        case RENAME_GLOBAL_INDEX:
+        case ANALYZE_TABLE:
+        case OPTIMIZE_TABLE:
+            return true;
+        default:
+            return false;
+        }
+    }
 }

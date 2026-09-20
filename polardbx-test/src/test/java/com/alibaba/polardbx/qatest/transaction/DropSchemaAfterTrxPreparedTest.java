@@ -43,9 +43,12 @@ public class DropSchemaAfterTrxPreparedTest extends CrudBasedLockTestCase {
             } catch (Throwable t) {
                 t.printStackTrace();
             }
+            System.out.println("End trx.");
+
             // Drop db1.
             JdbcUtil.executeUpdateSuccess(tddlConnection, String.format(dropDB, db1Name));
             JdbcUtil.executeUpdateSuccess(tddlConnection, "use " + db2Name);
+            System.out.println("End drop db.");
 
             // Let recover task rollback the prepared trx in db2.
             Thread.sleep(10 * 1000);

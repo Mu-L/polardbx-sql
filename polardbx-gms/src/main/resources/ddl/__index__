@@ -12,6 +12,7 @@ sequence.xml
 topology.xml
 statistics.xml
 schema_evolution.xml
+routing_rule.xml
 ccl_rule.xml
 cdc.xml
 table_group.xml
@@ -19,3 +20,6 @@ columnar.xml
 foreign_key.xml
 spm.xml
 ttl.xml
+ai.xml
+cache.xml
+external.xml

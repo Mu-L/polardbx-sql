@@ -19,6 +19,7 @@ package com.alibaba.polardbx.executor.utils;
 import com.alibaba.polardbx.common.constants.SequenceAttribute;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
+import com.alibaba.polardbx.druid.sql.ast.AutoIncrementType;
 import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
 
 import java.util.HashMap;
@@ -45,6 +46,23 @@ public class DrdsToAutoSequenceUtil {
             return String.format(createSql, SQLUtils.encloseWithUnquote(seqName)) + String.format(startWith,
                 startWithNum);
         }
+    }
+
+    protected static String generateGroupSequenceSql(String seqName, Long startWithNum, int unitCount, int unitIndex) {
+        final String createSql = "create group sequence %s ";
+        final String startWith = "start with %s ";
+        String createSequenceSql;
+        if (startWithNum == null) {
+            createSequenceSql = String.format(createSql, SQLUtils.encloseWithUnquote(seqName));
+        } else {
+            createSequenceSql =
+                String.format(createSql, SQLUtils.encloseWithUnquote(seqName)) + String.format(startWith,
+                    startWithNum);
+        }
+        if (unitCount > 1) {
+            createSequenceSql = createSequenceSql + String.format(" UNIT COUNT %d INDEX %d", unitCount, unitIndex);
+        }
+        return createSequenceSql;
     }
 
     protected static String generateRaiseNewSeqSql(String seqName, Long newStartWith) {
@@ -75,6 +93,16 @@ public class DrdsToAutoSequenceUtil {
     }
 
     public static String handleDrdsSequence(String schemaName, String name, String type, boolean generateNewSeq) {
+        return handleDrdsSequence(schemaName, name, type, "", "", generateNewSeq, false);
+    }
+
+    public static String handleDrdsSequence(String schemaName,
+                                            String name,
+                                            String type,
+                                            String unitCountStr,
+                                            String unitIndexStr,
+                                            boolean generateNewSeq,
+                                            boolean useGroupSeqAsDefault) {
         Long newSeqVal = null;
         if (type.equalsIgnoreCase("time")) {
             Long val = getNextValueOfSeq(schemaName, name);
@@ -88,13 +116,26 @@ public class DrdsToAutoSequenceUtil {
         }
 
         if (generateNewSeq) {
-            return generateNewSequenceSql(name, newSeqVal);
+            if (useGroupSeqAsDefault && type.equalsIgnoreCase("group")) {
+                int unitCount = 1;
+                int unitIndex = 0;
+                try {
+                    unitCount = Integer.parseInt(unitCountStr);
+                    unitIndex = Integer.parseInt(unitIndexStr);
+                } catch (Exception e) {
+                    // do nothing
+                }
+                return generateGroupSequenceSql(name, newSeqVal, unitCount, unitIndex);
+            } else {
+                return generateNewSequenceSql(name, newSeqVal);
+            }
         } else {
             return generateRaiseNewSeqSql(name, newSeqVal);
         }
     }
 
-    public static Map<String, String> convertAllDrdsSequences(List<String> allTableNames, String schemaName) {
+    public static Map<String, String> convertAllDrdsSequences(List<String> allTableNames, String schemaName,
+                                                              boolean useGroupSeqAsDefault) {
         final String querySql = "show sequences";
         Set<String> possibleAutoSeqName = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
         Map<String, String> result = new HashMap<>();
@@ -111,8 +152,11 @@ public class DrdsToAutoSequenceUtil {
         for (Map<String, Object> seqRec : allSeqRec) {
             String name = (String) seqRec.get("NAME");
             String type = (String) seqRec.get("TYPE");
+            String unitCount = (String) seqRec.get("UNIT_COUNT");
+            String unitIndex = (String) seqRec.get("UNIT_INDEX");
             boolean generateNew = (!possibleAutoSeqName.contains(name));
-            result.put(name, handleDrdsSequence(schemaName, name, type, generateNew));
+            result.put(name,
+                handleDrdsSequence(schemaName, name, type, unitCount, unitIndex, generateNew, useGroupSeqAsDefault));
         }
 
         return result;

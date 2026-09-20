@@ -1,0 +1,349 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+use polardbx;
+drop database if exists newttldb7_4;
+create database if not exists newttldb7_4 mode='auto';
+use newttldb7_4;
+drop table if exists arc_date_by_year;
+create table if not exists arc_date_by_year(
+a int not null auto_increment,
+b date,
+primary key(a)
+)
+partition by range columns(`b`)
+(
+partition p1 values less than ('2025-01-01'),
+partition p2 values less than ('2026-01-01'),
+partition p3 values less than ('2027-01-01')
+);
+alter table arc_date_by_year
+modify ttl
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 year timezone '+08:00',
+ttl_part_interval = interval(1, year),
+archive_type = 'partition',
+archive_table_pre_allocate = 4
+archive_table_post_allocate = 2;
+show create table arc_date_by_year;
+Table,Create Table
+arc_date_by_year,CREATE TABLE `arc_date_by_year` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 year TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, YEAR), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p1 VALUES LESS THAN ('2025-01-01') ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN ('2026-01-01') ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN ('2027-01-01') ENGINE = InnoDB)
+set TTL_DEBUG_CURRENT_DATETIME='2026-06-27 00:00:00';
+alter table arc_date_by_year cleanup expired data;
+show create table arc_date_by_year;
+Table,Create Table
+arc_date_by_year,CREATE TABLE `arc_date_by_year` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 year TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, YEAR), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p2 VALUES LESS THAN ('2026-01-01') ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN ('2027-01-01') ENGINE = InnoDB,
+ PARTITION p20280101 VALUES LESS THAN ('2028-01-01') ENGINE = InnoDB,
+ PARTITION p20290101 VALUES LESS THAN ('2029-01-01') ENGINE = InnoDB,
+ PARTITION p20300101 VALUES LESS THAN ('2030-01-01') ENGINE = InnoDB,
+ PARTITION p20310101 VALUES LESS THAN ('2031-01-01') ENGINE = InnoDB)
+set TTL_DEBUG_CURRENT_DATETIME='2027-06-27 00:00:00';
+alter table arc_date_by_year cleanup expired data;
+show create table arc_date_by_year;
+Table,Create Table
+arc_date_by_year,CREATE TABLE `arc_date_by_year` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 year TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, YEAR), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p3 VALUES LESS THAN ('2027-01-01') ENGINE = InnoDB,
+ PARTITION p20280101 VALUES LESS THAN ('2028-01-01') ENGINE = InnoDB,
+ PARTITION p20290101 VALUES LESS THAN ('2029-01-01') ENGINE = InnoDB,
+ PARTITION p20300101 VALUES LESS THAN ('2030-01-01') ENGINE = InnoDB,
+ PARTITION p20310101 VALUES LESS THAN ('2031-01-01') ENGINE = InnoDB,
+ PARTITION p20320101 VALUES LESS THAN ('2032-01-01') ENGINE = InnoDB)
+set TTL_DEBUG_CURRENT_DATETIME='2028-06-27 00:00:00';
+alter table arc_date_by_year cleanup expired data;
+show create table arc_date_by_year;
+Table,Create Table
+arc_date_by_year,CREATE TABLE `arc_date_by_year` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 year TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, YEAR), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p20280101 VALUES LESS THAN ('2028-01-01') ENGINE = InnoDB,
+ PARTITION p20290101 VALUES LESS THAN ('2029-01-01') ENGINE = InnoDB,
+ PARTITION p20300101 VALUES LESS THAN ('2030-01-01') ENGINE = InnoDB,
+ PARTITION p20310101 VALUES LESS THAN ('2031-01-01') ENGINE = InnoDB,
+ PARTITION p20320101 VALUES LESS THAN ('2032-01-01') ENGINE = InnoDB,
+ PARTITION p20330101 VALUES LESS THAN ('2033-01-01') ENGINE = InnoDB)
+drop table if exists arc_date_by_month;
+create table if not exists arc_date_by_month(
+a int not null auto_increment,
+b date,
+primary key(a)
+)
+partition by range columns(`b`)
+(
+partition p1 values less than ('2025-01-01'),
+partition p2 values less than ('2025-02-01'),
+partition p3 values less than ('2025-03-01')
+);
+alter table arc_date_by_month
+modify ttl
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 month timezone '+08:00',
+ttl_part_interval = interval(1, month),
+archive_type = 'partition',
+archive_table_pre_allocate = 4
+archive_table_post_allocate = 2;
+show create table arc_date_by_month;
+Table,Create Table
+arc_date_by_month,CREATE TABLE `arc_date_by_month` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 month TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p1 VALUES LESS THAN ('2025-01-01') ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN ('2025-02-01') ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN ('2025-03-01') ENGINE = InnoDB)
+set TTL_DEBUG_CURRENT_DATETIME='2025-02-20 00:00:00';
+alter table arc_date_by_month cleanup expired data;
+show create table arc_date_by_month;
+Table,Create Table
+arc_date_by_month,CREATE TABLE `arc_date_by_month` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 month TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p2 VALUES LESS THAN ('2025-02-01') ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN ('2025-03-01') ENGINE = InnoDB,
+ PARTITION p20250401 VALUES LESS THAN ('2025-04-01') ENGINE = InnoDB,
+ PARTITION p20250501 VALUES LESS THAN ('2025-05-01') ENGINE = InnoDB,
+ PARTITION p20250601 VALUES LESS THAN ('2025-06-01') ENGINE = InnoDB,
+ PARTITION p20250701 VALUES LESS THAN ('2025-07-01') ENGINE = InnoDB)
+set TTL_DEBUG_CURRENT_DATETIME='2025-03-20 00:00:00';
+alter table arc_date_by_month cleanup expired data;
+show create table arc_date_by_month;
+Table,Create Table
+arc_date_by_month,CREATE TABLE `arc_date_by_month` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 month TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p3 VALUES LESS THAN ('2025-03-01') ENGINE = InnoDB,
+ PARTITION p20250401 VALUES LESS THAN ('2025-04-01') ENGINE = InnoDB,
+ PARTITION p20250501 VALUES LESS THAN ('2025-05-01') ENGINE = InnoDB,
+ PARTITION p20250601 VALUES LESS THAN ('2025-06-01') ENGINE = InnoDB,
+ PARTITION p20250701 VALUES LESS THAN ('2025-07-01') ENGINE = InnoDB,
+ PARTITION p20250801 VALUES LESS THAN ('2025-08-01') ENGINE = InnoDB)
+set TTL_DEBUG_CURRENT_DATETIME='2025-04-20 00:00:00';
+alter table arc_date_by_month cleanup expired data;
+show create table arc_date_by_month;
+Table,Create Table
+arc_date_by_month,CREATE TABLE `arc_date_by_month` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 month TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p20250401 VALUES LESS THAN ('2025-04-01') ENGINE = InnoDB,
+ PARTITION p20250501 VALUES LESS THAN ('2025-05-01') ENGINE = InnoDB,
+ PARTITION p20250601 VALUES LESS THAN ('2025-06-01') ENGINE = InnoDB,
+ PARTITION p20250701 VALUES LESS THAN ('2025-07-01') ENGINE = InnoDB,
+ PARTITION p20250801 VALUES LESS THAN ('2025-08-01') ENGINE = InnoDB,
+ PARTITION p20250901 VALUES LESS THAN ('2025-09-01') ENGINE = InnoDB)
+drop table if exists arc_date_by_week;
+create table if not exists arc_date_by_week(
+a int not null auto_increment,
+b date,
+primary key(a)
+)
+partition by range columns(`b`)
+(
+partition p1 values less than ('2025-05-04'),
+partition p2 values less than ('2025-05-11'),
+partition p3 values less than ('2025-05-18')
+);
+alter table arc_date_by_week
+modify ttl
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 7 day timezone '+08:00',
+ttl_part_interval = interval(1, week),
+archive_type = 'partition',
+archive_table_pre_allocate = 4
+archive_table_post_allocate = 2;
+show create table arc_date_by_week;
+Table,Create Table
+arc_date_by_week,CREATE TABLE `arc_date_by_week` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 7 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, WEEK), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p1 VALUES LESS THAN ('2025-05-04') ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN ('2025-05-11') ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN ('2025-05-18') ENGINE = InnoDB)
+set TTL_DEBUG_CURRENT_DATETIME='2025-05-14 00:00:00';
+alter table arc_date_by_week cleanup expired data;
+show create table arc_date_by_week;
+Table,Create Table
+arc_date_by_week,CREATE TABLE `arc_date_by_week` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 7 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, WEEK), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p2 VALUES LESS THAN ('2025-05-11') ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN ('2025-05-18') ENGINE = InnoDB,
+ PARTITION p20250525 VALUES LESS THAN ('2025-05-25') ENGINE = InnoDB,
+ PARTITION p20250601 VALUES LESS THAN ('2025-06-01') ENGINE = InnoDB,
+ PARTITION p20250608 VALUES LESS THAN ('2025-06-08') ENGINE = InnoDB,
+ PARTITION p20250615 VALUES LESS THAN ('2025-06-15') ENGINE = InnoDB)
+set TTL_DEBUG_CURRENT_DATETIME='2025-05-21 00:00:00';
+alter table arc_date_by_week cleanup expired data;
+show create table arc_date_by_week;
+Table,Create Table
+arc_date_by_week,CREATE TABLE `arc_date_by_week` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 7 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, WEEK), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p3 VALUES LESS THAN ('2025-05-18') ENGINE = InnoDB,
+ PARTITION p20250525 VALUES LESS THAN ('2025-05-25') ENGINE = InnoDB,
+ PARTITION p20250601 VALUES LESS THAN ('2025-06-01') ENGINE = InnoDB,
+ PARTITION p20250608 VALUES LESS THAN ('2025-06-08') ENGINE = InnoDB,
+ PARTITION p20250615 VALUES LESS THAN ('2025-06-15') ENGINE = InnoDB,
+ PARTITION p20250622 VALUES LESS THAN ('2025-06-22') ENGINE = InnoDB)
+set TTL_DEBUG_CURRENT_DATETIME='2025-05-28 00:00:00';
+alter table arc_date_by_week cleanup expired data;
+show create table arc_date_by_week;
+Table,Create Table
+arc_date_by_week,CREATE TABLE `arc_date_by_week` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 7 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, WEEK), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p20250525 VALUES LESS THAN ('2025-05-25') ENGINE = InnoDB,
+ PARTITION p20250601 VALUES LESS THAN ('2025-06-01') ENGINE = InnoDB,
+ PARTITION p20250608 VALUES LESS THAN ('2025-06-08') ENGINE = InnoDB,
+ PARTITION p20250615 VALUES LESS THAN ('2025-06-15') ENGINE = InnoDB,
+ PARTITION p20250622 VALUES LESS THAN ('2025-06-22') ENGINE = InnoDB,
+ PARTITION p20250629 VALUES LESS THAN ('2025-06-29') ENGINE = InnoDB)
+drop table if exists arc_date_by_day;
+create table if not exists arc_date_by_day(
+a int not null auto_increment,
+b date,
+primary key(a)
+)
+partition by range columns(`b`)
+(
+partition p1 values less than ('2025-05-01'),
+partition p2 values less than ('2025-05-02'),
+partition p3 values less than ('2025-05-03')
+);
+alter table arc_date_by_day
+modify ttl
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_part_interval = interval(1, day),
+archive_type = 'partition',
+archive_table_pre_allocate = 4
+archive_table_post_allocate = 2;
+show create table arc_date_by_day;
+Table,Create Table
+arc_date_by_day,CREATE TABLE `arc_date_by_day` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p1 VALUES LESS THAN ('2025-05-01') ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN ('2025-05-02') ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN ('2025-05-03') ENGINE = InnoDB)
+set TTL_DEBUG_CURRENT_DATETIME='2025-05-02 10:00:00';
+alter table arc_date_by_day cleanup expired data;
+show create table arc_date_by_day;
+Table,Create Table
+arc_date_by_day,CREATE TABLE `arc_date_by_day` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p2 VALUES LESS THAN ('2025-05-02') ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN ('2025-05-03') ENGINE = InnoDB,
+ PARTITION p20250504 VALUES LESS THAN ('2025-05-04') ENGINE = InnoDB,
+ PARTITION p20250505 VALUES LESS THAN ('2025-05-05') ENGINE = InnoDB,
+ PARTITION p20250506 VALUES LESS THAN ('2025-05-06') ENGINE = InnoDB,
+ PARTITION p20250507 VALUES LESS THAN ('2025-05-07') ENGINE = InnoDB)
+set TTL_DEBUG_CURRENT_DATETIME='2025-05-03 10:00:00';
+alter table arc_date_by_day cleanup expired data;
+show create table arc_date_by_day;
+Table,Create Table
+arc_date_by_day,CREATE TABLE `arc_date_by_day` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p3 VALUES LESS THAN ('2025-05-03') ENGINE = InnoDB,
+ PARTITION p20250504 VALUES LESS THAN ('2025-05-04') ENGINE = InnoDB,
+ PARTITION p20250505 VALUES LESS THAN ('2025-05-05') ENGINE = InnoDB,
+ PARTITION p20250506 VALUES LESS THAN ('2025-05-06') ENGINE = InnoDB,
+ PARTITION p20250507 VALUES LESS THAN ('2025-05-07') ENGINE = InnoDB,
+ PARTITION p20250508 VALUES LESS THAN ('2025-05-08') ENGINE = InnoDB)
+set TTL_DEBUG_CURRENT_DATETIME='2025-05-04 10:00:00';
+alter table arc_date_by_day cleanup expired data;
+show create table arc_date_by_day;
+Table,Create Table
+arc_date_by_day,CREATE TABLE `arc_date_by_day` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p20250504 VALUES LESS THAN ('2025-05-04') ENGINE = InnoDB,
+ PARTITION p20250505 VALUES LESS THAN ('2025-05-05') ENGINE = InnoDB,
+ PARTITION p20250506 VALUES LESS THAN ('2025-05-06') ENGINE = InnoDB,
+ PARTITION p20250507 VALUES LESS THAN ('2025-05-07') ENGINE = InnoDB,
+ PARTITION p20250508 VALUES LESS THAN ('2025-05-08') ENGINE = InnoDB,
+ PARTITION p20250509 VALUES LESS THAN ('2025-05-09') ENGINE = InnoDB)
+use polardbx;
+drop database if exists newttldb7_4;

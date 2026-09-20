@@ -1,0 +1,1194 @@
+SQL:
+  - sql: |
+      # scalar 
+      select 1 from lineitem where l_orderkey > (select max(p_partkey) from part) or 1 > (select max(p_partkey) from part);
+    plan: |
+      project(1="?0")
+        filter(condition="l_orderkey > max(p_partkey) or ?1 > max(p_partkey)0")
+          project(l_orderkey="l_orderkey", max(p_partkey)="max(p_partkey)", max(p_partkey)0="max(p_partkey)0")
+            logicaljoin(condition="true", type="left")
+              logicaljoin(condition="true", type="left")
+                logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+                logicalagg(max(p_partkey)="max(p_partkey)")
+                  project(p_partkey="p_partkey")
+                    logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+              logicalagg(max(p_partkey)="max(p_partkey)")
+                project(p_partkey="p_partkey")
+                  logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+  - sql: |
+      select 1 from lineitem where 1 = (select max(c_address) from customer where c_mktsegment <> l_receiptdate)
+        and l_orderkey < (select max(c_address) from customer where c_mktsegment <> l_receiptdate);
+    plan: |
+      project(1="?0")
+        filter(condition="l_orderkey < max(c_address)0")
+          project(l_orderkey="l_orderkey", max(c_address)0="max(c_address)")
+            colcorrelate(cor=$cor4, type=left)
+              project(l_orderkey="l_orderkey", l_receiptdate="l_receiptdate")
+                filter(condition="?1 = max(c_address)")
+                  colcorrelate(cor=$cor5, type=left)
+                    project(l_orderkey="l_orderkey", l_receiptdate="l_receiptdate")
+                      logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+                    project(max(c_address)="max(c_address)")
+                      logicalagg(max(c_address)="max(c_address)")
+                        project(c_address="c_address")
+                          filter(condition="c_mktsegment <> $cor5.l_receiptdate")
+                            project(c_address="c_address", c_mktsegment="c_mktsegment")
+                              logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+              project(max(c_address)="max(c_address)")
+                logicalagg(max(c_address)="max(c_address)")
+                  project(c_address="c_address")
+                    filter(condition="c_mktsegment <> $cor4.l_receiptdate")
+                      project(c_address="c_address", c_mktsegment="c_mktsegment")
+                        logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # scalar uncorrelated single
+      select 1 from lineitem where (select max(c_address) from customer where c_mktsegment+1 > 10) > 1;
+    plan: |
+      project(1="?0")
+        logicaljoin(condition="max(c_address) > ?3", type="inner")
+          logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          logicalagg(max(c_address)="max(c_address)")
+            project(c_address="c_address")
+              filter(condition="cast(c_mktsegment) + ?1 > ?2")
+                project(c_address="c_address", c_mktsegment="c_mktsegment")
+                  logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # scalar uncorrelated not-single
+      select 1 from lineitem where (select c_address from customer where c_mktsegment+1 <> 10) > 1;
+    plan: |
+      project(1="?0")
+        logicaljoin(condition="$f0 > ?3", type="inner")
+          logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          logicalagg($f0="single_value(c_address)")
+            project(c_address="c_address")
+              filter(condition="cast(c_mktsegment) + ?1 <> ?2")
+                project(c_address="c_address", c_mktsegment="c_mktsegment")
+                  logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # scalar correlated not-single
+      select 1 from lineitem where (select c_address from customer where c_mktsegment+1 <> l_receiptdate) > 1;
+    plan: |
+      project(1="?0")
+        filter(condition="$f0 > ?2")
+          project($f0="$f0")
+            colcorrelate(cor=$cor2, type=left)
+              project(l_receiptdate="l_receiptdate")
+                logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              project($f0="$f0")
+                logicalagg($f0="single_value(c_address)")
+                  project(c_address="c_address")
+                    filter(condition="cast(c_mktsegment) + ?1 <> $cor2.l_receiptdate")
+                      project(c_address="c_address", c_mktsegment="c_mktsegment")
+                        logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # scalar correlated single
+      select 1 from lineitem where (select max(c_address) from customer where c_mktsegment+1 <> l_receiptdate) > 1;
+    plan: |
+      project(1="?0")
+        filter(condition="max(c_address) > ?2")
+          project(max(c_address)="max(c_address)")
+            colcorrelate(cor=$cor2, type=left)
+              project(l_receiptdate="l_receiptdate")
+                logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              project(max(c_address)="max(c_address)")
+                logicalagg(max(c_address)="max(c_address)")
+                  project(c_address="c_address")
+                    filter(condition="cast(c_mktsegment) + ?1 <> $cor2.l_receiptdate")
+                      project(c_address="c_address", c_mktsegment="c_mktsegment")
+                        logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # exists uncorrelated two value
+      select 1 from lineitem where exists (select c_address from customer where c_mktsegment >1)
+    plan: |
+      project(1="?0")
+        logicalsemijoin(condition="true", type="semi")
+          logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          filter(condition="c_mktsegment > ?1")
+            logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # exists uncorrelated three value
+      select 1 from lineitem where exists (select c_address from customer where c_mktsegment >1) or l_orderkey > 1
+    plan: |
+      project(1="?0")
+        filter(condition="is not null(i) or l_orderkey > ?2")
+          project(l_orderkey="l_orderkey", i="i")
+            logicaljoin(condition="true", type="left")
+              logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              logicalagg(group="i")
+                project(i="true")
+                  filter(condition="c_mktsegment > ?1")
+                    project(c_mktsegment="c_mktsegment")
+                      logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # exists correlated two value
+      select 1 from lineitem where exists (select c_address from customer where c_mktsegment <> l_receiptdate)
+    plan: |
+      project(1="?0")
+        colcorrelate(cor=$cor2, type=semi)
+          project(l_receiptdate="l_receiptdate")
+            logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          project
+            filter(condition="c_mktsegment <> $cor2.l_receiptdate")
+              project(c_mktsegment="c_mktsegment")
+                logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # exists correlated three value
+      select 1 from lineitem where exists (select c_address from customer where c_mktsegment <> l_receiptdate) or l_orderkey > 1
+    plan: |
+      project(1="?0")
+        filter(condition="is not null(i) or l_orderkey > ?1")
+          project(l_orderkey="l_orderkey", i="i")
+            colcorrelate(cor=$cor2, type=left)
+              project(l_orderkey="l_orderkey", l_receiptdate="l_receiptdate")
+                logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              project(i="i")
+                logicalagg(group="i")
+                  project(i="true")
+                    filter(condition="c_mktsegment <> $cor2.l_receiptdate")
+                      project(c_mktsegment="c_mktsegment")
+                        logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # not exists uncorrelated two value
+      select 1 from lineitem where not exists (select c_address from customer where c_mktsegment >1)
+    plan: |
+      project(1="?0")
+        logicalsemijoin(condition="true", type="anti")
+          logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          filter(condition="c_mktsegment > ?1")
+            logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # not exists uncorrelated three value
+      select 1 from lineitem where not exists (select c_address from customer where c_mktsegment >1) or l_orderkey > 1
+    plan: |
+      project(1="?0")
+        filter(condition="is null(i) or l_orderkey > ?2")
+          project(l_orderkey="l_orderkey", i="i")
+            logicaljoin(condition="true", type="left")
+              logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              logicalagg(group="i")
+                project(i="true")
+                  filter(condition="c_mktsegment > ?1")
+                    project(c_mktsegment="c_mktsegment")
+                      logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # not exists correlated two value
+      select 1 from lineitem where not exists (select c_address from customer where c_mktsegment <> l_receiptdate)
+    plan: |
+      project(1="?0")
+        colcorrelate(cor=$cor2, type=anti)
+          project(l_receiptdate="l_receiptdate")
+            logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          project
+            filter(condition="c_mktsegment <> $cor2.l_receiptdate")
+              project(c_mktsegment="c_mktsegment")
+                logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # not exists correlated three value
+      select 1 from lineitem where not exists (select c_address from customer where c_mktsegment <> l_receiptdate) or l_orderkey > 1
+    plan: |
+      project(1="?0")
+        filter(condition="is null(i) or l_orderkey > ?1")
+          project(l_orderkey="l_orderkey", i="i")
+            colcorrelate(cor=$cor2, type=left)
+              project(l_orderkey="l_orderkey", l_receiptdate="l_receiptdate")
+                logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              project(i="i")
+                logicalagg(group="i")
+                  project(i="true")
+                    filter(condition="c_mktsegment <> $cor2.l_receiptdate")
+                      project(c_mktsegment="c_mktsegment")
+                        logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # any
+      select 1 from lineitem where l_orderkey = any(select max(c_address) from customer where c_mktsegment <> l_receiptdate)
+           or 1 >= any(select p_partkey from part);
+    plan: |
+      project(1="?0")
+        filter(condition="cast(is not null(max(c_address))) or cast(case(or(is null($2), =($2, 0)), false, is null(?1), null, >=(?1, $1), true, >($2, $3), null, false))")
+          project(max(c_address)="max(c_address)", m="m", c="c", d="d")
+            logicaljoin(condition="true", type="left")
+              colcorrelate(cor=$cor1, type=left)
+                logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+                filter(condition="$cor1.l_orderkey = max(c_address)")
+                  logicalagg(max(c_address)="max(c_address)")
+                    project(c_address="c_address")
+                      filter(condition="c_mktsegment <> $cor1.l_receiptdate")
+                        project(c_address="c_address", c_mktsegment="c_mktsegment")
+                          logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+              logicalagg(m="min(p_partkey)", c="count()", d="count(p_partkey)")
+                project(p_partkey="p_partkey")
+                  logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+  - sql: |
+      select 1 from lineitem where 1 < any(select c_address from customer where c_mktsegment <> l_receiptdate)
+        and l_orderkey <> any(select c_address from customer);
+    plan: |
+      project(1="?0")
+        filter(condition="true and true")
+          project(l_orderkey="l_orderkey")
+            logicalsemijoin(condition="l_orderkey <> l or l_orderkey <> u", type="semi")
+              colcorrelate(cor=$cor1, type=semi)
+                logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+                filter(condition="?1 < m")
+                  logicalagg(m="max(c_address)")
+                    project(c_address="c_address")
+                      filter(condition="c_mktsegment <> $cor1.l_receiptdate")
+                        project(c_address="c_address", c_mktsegment="c_mktsegment")
+                          logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+              logicalagg(l="min(c_address)", u="max(c_address)")
+                project(c_address="c_address")
+                  logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # some
+      select 1 from lineitem where 1 <= some(select c_address from customer where c_mktsegment <> l_receiptdate)
+                and l_orderkey <> some(select c_address from customer where c_mktsegment = l_receiptdate);
+    plan: |
+      project(1="?0")
+        filter(condition="true and true")
+          project(l_orderkey="l_orderkey")
+            colcorrelate(cor=$cor4, type=semi)
+              colcorrelate(cor=$cor5, type=semi)
+                project(l_orderkey="l_orderkey", l_receiptdate="l_receiptdate")
+                  logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+                project
+                  filter(condition="?1 <= m")
+                    logicalagg(m="max(c_address)")
+                      project(c_address="c_address")
+                        filter(condition="c_mktsegment <> $cor5.l_receiptdate")
+                          project(c_address="c_address", c_mktsegment="c_mktsegment")
+                            logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+              project
+                filter(condition="$cor4.l_orderkey <> l or $cor4.l_orderkey <> u")
+                  logicalagg(l="min(c_address)", u="max(c_address)")
+                    project(c_address="c_address")
+                      filter(condition="c_mktsegment = $cor4.l_receiptdate")
+                        project(c_address="c_address", c_mktsegment="c_mktsegment")
+                          logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # some ordering uncorrelated two value
+      select 1 from lineitem where 1 <= some(select c_address from customer where c_mktsegment <> 1)
+    plan: |
+      project(1="?0")
+        logicalsemijoin(condition="?1 <= m", type="semi")
+          logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          logicalagg(m="max(c_address)")
+            project(c_address="c_address")
+              filter(condition="c_mktsegment <> ?2")
+                project(c_address="c_address", c_mktsegment="c_mktsegment")
+                  logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # some ordering correlated two value
+       select 1 from lineitem where 1 <= some(select c_address from customer where c_mktsegment <> l_receiptdate)
+    plan: |
+      project(1="?0")
+        colcorrelate(cor=$cor2, type=semi)
+          project(l_receiptdate="l_receiptdate")
+            logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          project
+            filter(condition="?1 <= m")
+              logicalagg(m="max(c_address)")
+                project(c_address="c_address")
+                  filter(condition="c_mktsegment <> $cor2.l_receiptdate")
+                    project(c_address="c_address", c_mktsegment="c_mktsegment")
+                      logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # some ordering uncorrelated three value
+      select 1 from lineitem where 1 <= some(select c_address from customer where c_mktsegment <> 1) or l_orderkey<1
+    plan: |
+      project(1="?0")
+        filter(condition="cast(case(or(is null($2), =($2, 0)), false, is null(?1), null, <=(?1, $1), true, >($2, $3), null, false)) or l_orderkey < ?3")
+          project(l_orderkey="l_orderkey", m="m", c="c", d="d")
+            logicaljoin(condition="true", type="left")
+              logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              logicalagg(m="max(c_address)", c="count()", d="count(c_address)")
+                project(c_address="c_address")
+                  filter(condition="c_mktsegment <> ?2")
+                    project(c_address="c_address", c_mktsegment="c_mktsegment")
+                      logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # some ordering correlated three value
+      select 1 from lineitem where 1 <= some(select c_address from customer where c_mktsegment <> l_receiptdate)  or l_orderkey<1
+    plan: |
+      project(1="?0")
+        filter(condition="cast(case(or(is null($2), =($2, 0)), false, is null(?1), null, <=(?1, $1), true, >($2, $3), null, false)) or l_orderkey < ?2")
+          project(l_orderkey="l_orderkey", m="m", c="c", d="d")
+            colcorrelate(cor=$cor2, type=left)
+              project(l_orderkey="l_orderkey", l_receiptdate="l_receiptdate")
+                logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              project(m="m", c="c", d="d")
+                logicalagg(m="max(c_address)", c="count()", d="count(c_address)")
+                  project(c_address="c_address")
+                    filter(condition="c_mktsegment <> $cor2.l_receiptdate")
+                      project(c_address="c_address", c_mktsegment="c_mktsegment")
+                        logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # some unequal uncorrelated two value
+      select 1 from lineitem where 1 <> some(select c_address from customer where c_mktsegment <> 1)
+    plan: |
+      project(1="?0")
+        logicalsemijoin(condition="?1 <> l or ?1 <> u", type="semi")
+          logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          logicalagg(l="min(c_address)", u="max(c_address)")
+            project(c_address="c_address")
+              filter(condition="c_mktsegment <> ?2")
+                project(c_address="c_address", c_mktsegment="c_mktsegment")
+                  logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # some unequal correlated two value
+       select 1 from lineitem where 1 <> some(select c_address from customer where c_mktsegment <> l_receiptdate)
+    plan: |
+      project(1="?0")
+        colcorrelate(cor=$cor2, type=semi)
+          project(l_receiptdate="l_receiptdate")
+            logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          project
+            filter(condition="?1 <> l or ?1 <> u")
+              logicalagg(l="min(c_address)", u="max(c_address)")
+                project(c_address="c_address")
+                  filter(condition="c_mktsegment <> $cor2.l_receiptdate")
+                    project(c_address="c_address", c_mktsegment="c_mktsegment")
+                      logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # some unequal uncorrelated three value
+      select 1 from lineitem where 1 <> some(select c_address from customer where c_mktsegment <> 1) or l_orderkey<1
+    plan: |
+      project(1="?0")
+        filter(condition="cast(case(or(is null($1), =($1, 0)), false, is null(?1), null, and(is not null($3), or(<>(?1, $3), <>(?1, $4))), true, and(=($1, $2), =(?1, $3)), false, null)) or l_orderkey < ?3")
+          project(l_orderkey="l_orderkey", c="c", d="d", l="l", u="u")
+            logicaljoin(condition="true", type="left")
+              logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              logicalagg(c="count()", d="count(c_address)", l="min(c_address)", u="max(c_address)")
+                project(c_address="c_address")
+                  filter(condition="c_mktsegment <> ?2")
+                    project(c_address="c_address", c_mktsegment="c_mktsegment")
+                      logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # some unequal correlated three value
+      select 1 from lineitem where 1 <> some(select c_address from customer where c_mktsegment <> l_receiptdate)  or l_orderkey<1
+    plan: |
+      project(1="?0")
+        filter(condition="cast(case(or(is null($1), =($1, 0)), false, is null(?1), null, and(is not null($3), or(<>(?1, $3), <>(?1, $4))), true, and(=($1, $2), =(?1, $3)), false, null)) or l_orderkey < ?2")
+          project(l_orderkey="l_orderkey", c="c", d="d", l="l", u="u")
+            colcorrelate(cor=$cor2, type=left)
+              project(l_orderkey="l_orderkey", l_receiptdate="l_receiptdate")
+                logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              project(c="c", d="d", l="l", u="u")
+                logicalagg(c="count()", d="count(c_address)", l="min(c_address)", u="max(c_address)")
+                  project(c_address="c_address")
+                    filter(condition="c_mktsegment <> $cor2.l_receiptdate")
+                      project(c_address="c_address", c_mktsegment="c_mktsegment")
+                        logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # some equal uncorrelated two value
+      select 1 from lineitem where 1 = some(select c_address from customer where c_mktsegment <> 1)
+    plan: |
+      project(1="?0")
+        logicalsemijoin(condition="?1 = c_address", type="semi")
+          logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          project(c_address="c_address")
+            filter(condition="c_mktsegment <> ?2")
+              project(c_address="c_address", c_mktsegment="c_mktsegment")
+                logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # some equal correlated two value
+       select 1 from lineitem where 1 = some(select c_address from customer where c_mktsegment <> l_receiptdate)
+    plan: |
+      project(1="?0")
+        colcorrelate(cor=$cor2, type=semi)
+          project(l_receiptdate="l_receiptdate")
+            logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          project
+            filter(condition="c_mktsegment <> $cor2.l_receiptdate and ?1 = c_address")
+              project(c_address="c_address", c_mktsegment="c_mktsegment")
+                logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # some equal uncorrelated three value
+      select 1 from lineitem where 1 = some(select c_address from customer where c_mktsegment <> 1) or l_orderkey<1
+    plan: |
+      project(1="?0")
+        filter(condition="cast(is not null(c_address)) or l_orderkey < ?3")
+          project(l_orderkey="l_orderkey", c_address="c_address")
+            logicaljoin(condition="true", type="left")
+              logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              logicalagg(group="c_address")
+                project(c_address="c_address")
+                  filter(condition="c_mktsegment <> ?2 and ?1 = c_address")
+                    project(c_address="c_address", c_mktsegment="c_mktsegment")
+                      logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # some equal correlated three value
+      select 1 from lineitem where 1 = some(select c_address from customer where c_mktsegment <> l_receiptdate)  or l_orderkey<1
+    plan: |
+      project(1="?0")
+        filter(condition="cast(is not null(c_address)) or l_orderkey < ?2")
+          project(l_orderkey="l_orderkey", c_address="c_address")
+            colcorrelate(cor=$cor2, type=left)
+              project(l_orderkey="l_orderkey", l_receiptdate="l_receiptdate")
+                logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              project(c_address="c_address")
+                logicalagg(group="c_address")
+                  project(c_address="c_address")
+                    filter(condition="c_mktsegment <> $cor2.l_receiptdate and ?1 = c_address")
+                      project(c_address="c_address", c_mktsegment="c_mktsegment")
+                        logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # all
+      select 1 from lineitem where l_orderkey = all(select max(c_address) from customer where c_mktsegment <> l_receiptdate)
+           or 1 >= all(select p_partkey from part where l_returnflag=p_comment)
+                and l_orderkey <> all(select ps_supplycost from partsupp where ps_partkey = l_receiptdate);
+    plan: |
+      project(1="?0")
+        filter(condition="cast(case(or(is null($1), =($1, 0)), true, and(=($1, $2), =($3, $4), =($0, $3)), true, and(=($3, $4), =($0, $3)), null, >($2, 0), false, null)) or (cast(case(or(is null($6), =($6, 0)), true, is null(?1), null, and(=($6, $7), >=(?1, $5)), true, or(is null($5), >=(?1, $5)), null, false)) and cast(case(or(is null($8), =($8, 0)), true, =($9, 1), false, =($10, 1), null, true)))")
+          project(l_orderkey="l_orderkey", c="c", d="d", l="l", u="u", m="m", c0="c0", d0="d0", c1="c1", strict="strict", possible="possible")
+            colcorrelate(cor=$cor6, type=left)
+              project(l_orderkey="l_orderkey", l_receiptdate="l_receiptdate", c="c", d="d", l="l", u="u", m="m", c0="c0", d0="d0")
+                colcorrelate(cor=$cor7, type=left)
+                  colcorrelate(cor=$cor8, type=left)
+                    project(l_orderkey="l_orderkey", l_returnflag="l_returnflag", l_receiptdate="l_receiptdate")
+                      logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+                    project(c="c", d="d", l="l", u="u")
+                      logicalagg(c="count()", d="count(max(c_address))", l="min(max(c_address))", u="max(max(c_address))")
+                        logicalagg(max(c_address)="max(c_address)")
+                          project(c_address="c_address")
+                            filter(condition="c_mktsegment <> $cor8.l_receiptdate")
+                              project(c_address="c_address", c_mktsegment="c_mktsegment")
+                                logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+                  project(m="m", c="c", d="d")
+                    logicalagg(m="max(p_partkey)", c="count()", d="count(p_partkey)")
+                      project(p_partkey="p_partkey")
+                        filter(condition="$cor7.l_returnflag = p_comment")
+                          project(p_partkey="p_partkey", p_comment="p_comment")
+                            logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+              project(c="c", strict="strict", possible="possible")
+                logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+                  project(s_case="case(is true(=($cor6.l_orderkey, $1)), 1, 0)", p_case="case(=($cor6.l_orderkey, $1), 1, 0)")
+                    filter(condition="ps_partkey = $cor6.l_receiptdate")
+                      project(ps_partkey="ps_partkey", ps_supplycost="ps_supplycost")
+                        logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+  - sql: |
+      # all ordering uncorrelated two value
+      select 1 from lineitem where 1 <= all(select c_address from customer where c_mktsegment <> 1)
+    plan: |
+      project(1="?0")
+        logicalsemijoin(condition="c = 0 or ?1 <= m", type="semi")
+          logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          logicalagg(m="min(c_address)", c="count()")
+            project(c_address="c_address")
+              filter(condition="c_mktsegment <> ?2")
+                project(c_address="c_address", c_mktsegment="c_mktsegment")
+                  logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # all ordering correlated two value
+       select 1 from lineitem where 1 <= all(select c_address from customer where c_mktsegment <> l_receiptdate)
+    plan: |
+      project(1="?0")
+        colcorrelate(cor=$cor2, type=semi)
+          project(l_receiptdate="l_receiptdate")
+            logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          project
+            filter(condition="c = 0 or ?1 <= m")
+              logicalagg(m="min(c_address)", c="count()")
+                project(c_address="c_address")
+                  filter(condition="c_mktsegment <> $cor2.l_receiptdate")
+                    project(c_address="c_address", c_mktsegment="c_mktsegment")
+                      logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # all ordering uncorrelated three value
+      select 1 from lineitem where 1 <= all(select c_address from customer where c_mktsegment <> 1) or l_orderkey<1
+    plan: |
+      project(1="?0")
+        filter(condition="cast(case(or(is null($2), =($2, 0)), true, is null(?1), null, and(=($2, $3), <=(?1, $1)), true, or(is null($1), <=(?1, $1)), null, false)) or l_orderkey < ?3")
+          project(l_orderkey="l_orderkey", m="m", c="c", d="d")
+            logicaljoin(condition="true", type="left")
+              logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              logicalagg(m="min(c_address)", c="count()", d="count(c_address)")
+                project(c_address="c_address")
+                  filter(condition="c_mktsegment <> ?2")
+                    project(c_address="c_address", c_mktsegment="c_mktsegment")
+                      logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # all ordering correlated three value
+      select 1 from lineitem where 1 <= all(select c_address from customer where c_mktsegment <> l_receiptdate)  or l_orderkey<1
+    plan: |
+      project(1="?0")
+        filter(condition="cast(case(or(is null($2), =($2, 0)), true, is null(?1), null, and(=($2, $3), <=(?1, $1)), true, or(is null($1), <=(?1, $1)), null, false)) or l_orderkey < ?2")
+          project(l_orderkey="l_orderkey", m="m", c="c", d="d")
+            colcorrelate(cor=$cor2, type=left)
+              project(l_orderkey="l_orderkey", l_receiptdate="l_receiptdate")
+                logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              project(m="m", c="c", d="d")
+                logicalagg(m="min(c_address)", c="count()", d="count(c_address)")
+                  project(c_address="c_address")
+                    filter(condition="c_mktsegment <> $cor2.l_receiptdate")
+                      project(c_address="c_address", c_mktsegment="c_mktsegment")
+                        logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # all unequal uncorrelated two value
+      select 1 from lineitem where 1 <> all(select c_address from customer where c_mktsegment <> 1)
+    plan: |
+      project(1="?0")
+        filter(condition="cast(case(or(is null($0), =($0, 0)), true, =($1, 1), false, =($2, 1), null, true))")
+          project(c="c", strict="strict", possible="possible")
+            logicaljoin(condition="true", type="left")
+              logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+                project(s_case="case(is true(=(?1, $0)), 1, 0)", p_case="case(or(=(?1, $0), is null(?1)), 1, 0)")
+                  filter(condition="c_mktsegment <> ?2")
+                    project(c_address="c_address", c_mktsegment="c_mktsegment")
+                      logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # all unequal correlated two value
+       select 1 from lineitem where 1 <> all(select c_address from customer where c_mktsegment <> l_receiptdate)
+    plan: |
+      project(1="?0")
+        filter(condition="cast(case(or(is null($0), =($0, 0)), true, =($1, 1), false, =($2, 1), null, true))")
+          project(c="c", strict="strict", possible="possible")
+            colcorrelate(cor=$cor2, type=left)
+              project(l_receiptdate="l_receiptdate")
+                logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              project(c="c", strict="strict", possible="possible")
+                logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+                  project(s_case="case(is true(=(?1, $0)), 1, 0)", p_case="case(or(=(?1, $0), is null(?1)), 1, 0)")
+                    filter(condition="c_mktsegment <> $cor2.l_receiptdate")
+                      project(c_address="c_address", c_mktsegment="c_mktsegment")
+                        logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # all unequal uncorrelated three value
+      select 1 from lineitem where 1 <> all(select c_address from customer where c_mktsegment <> 1) or l_orderkey<1
+    plan: |
+      project(1="?0")
+        filter(condition="cast(case(or(is null($1), =($1, 0)), true, =($2, 1), false, =($3, 1), null, true)) or l_orderkey < ?3")
+          project(l_orderkey="l_orderkey", c="c", strict="strict", possible="possible")
+            logicaljoin(condition="true", type="left")
+              logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+                project(s_case="case(is true(=(?1, $0)), 1, 0)", p_case="case(or(=(?1, $0), is null(?1)), 1, 0)")
+                  filter(condition="c_mktsegment <> ?2")
+                    project(c_address="c_address", c_mktsegment="c_mktsegment")
+                      logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # all unequal correlated three value
+      select 1 from lineitem where 1 <> all(select c_address from customer where c_mktsegment <> l_receiptdate)  or l_orderkey<1
+    plan: |
+      project(1="?0")
+        filter(condition="cast(case(or(is null($1), =($1, 0)), true, =($2, 1), false, =($3, 1), null, true)) or l_orderkey < ?2")
+          project(l_orderkey="l_orderkey", c="c", strict="strict", possible="possible")
+            colcorrelate(cor=$cor2, type=left)
+              project(l_orderkey="l_orderkey", l_receiptdate="l_receiptdate")
+                logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              project(c="c", strict="strict", possible="possible")
+                logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+                  project(s_case="case(is true(=(?1, $0)), 1, 0)", p_case="case(or(=(?1, $0), is null(?1)), 1, 0)")
+                    filter(condition="c_mktsegment <> $cor2.l_receiptdate")
+                      project(c_address="c_address", c_mktsegment="c_mktsegment")
+                        logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # all equal uncorrelated two value
+      select 1 from lineitem where 1 = all(select c_address from customer where c_mktsegment <> 1)
+    plan: |
+      project(1="?0")
+        logicalsemijoin(condition="c = 0 or (l = u and ?1 = l)", type="semi")
+          logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          logicalagg(l="min(c_address)", u="max(c_address)", c="count()")
+            project(c_address="c_address")
+              filter(condition="c_mktsegment <> ?2")
+                project(c_address="c_address", c_mktsegment="c_mktsegment")
+                  logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # all equal correlated two value
+       select 1 from lineitem where 1 = all(select c_address from customer where c_mktsegment <> l_receiptdate)
+    plan: |
+      project(1="?0")
+        colcorrelate(cor=$cor2, type=semi)
+          project(l_receiptdate="l_receiptdate")
+            logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          project
+            filter(condition="c = 0 or (l = u and ?1 = l)")
+              logicalagg(l="min(c_address)", u="max(c_address)", c="count()")
+                project(c_address="c_address")
+                  filter(condition="c_mktsegment <> $cor2.l_receiptdate")
+                    project(c_address="c_address", c_mktsegment="c_mktsegment")
+                      logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # all equal uncorrelated three value
+      select 1 from lineitem where 1 = all(select c_address from customer where c_mktsegment <> 1) or l_orderkey<1
+    plan: |
+      project(1="?0")
+        filter(condition="cast(case(or(is null($1), =($1, 0)), true, is null(?1), null, and(=($1, $2), =($3, $4), =(?1, $3)), true, and(=($3, $4), =(?1, $3)), null, >($2, 0), false, null)) or l_orderkey < ?3")
+          project(l_orderkey="l_orderkey", c="c", d="d", l="l", u="u")
+            logicaljoin(condition="true", type="left")
+              logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              logicalagg(c="count()", d="count(c_address)", l="min(c_address)", u="max(c_address)")
+                project(c_address="c_address")
+                  filter(condition="c_mktsegment <> ?2")
+                    project(c_address="c_address", c_mktsegment="c_mktsegment")
+                      logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # all equal correlated three value
+      select 1 from lineitem where 1 = all(select c_address from customer where c_mktsegment <> l_receiptdate)  or l_orderkey<1
+    plan: |
+      project(1="?0")
+        filter(condition="cast(case(or(is null($1), =($1, 0)), true, is null(?1), null, and(=($1, $2), =($3, $4), =(?1, $3)), true, and(=($3, $4), =(?1, $3)), null, >($2, 0), false, null)) or l_orderkey < ?2")
+          project(l_orderkey="l_orderkey", c="c", d="d", l="l", u="u")
+            colcorrelate(cor=$cor2, type=left)
+              project(l_orderkey="l_orderkey", l_receiptdate="l_receiptdate")
+                logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              project(c="c", d="d", l="l", u="u")
+                logicalagg(c="count()", d="count(c_address)", l="min(c_address)", u="max(c_address)")
+                  project(c_address="c_address")
+                    filter(condition="c_mktsegment <> $cor2.l_receiptdate")
+                      project(c_address="c_address", c_mktsegment="c_mktsegment")
+                        logicalview(tables="customer[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer` as `customer`")
+  - sql: |
+      # in 
+      select 1 from lineitem where 1 in (select p_partkey from part);
+    plan: |
+      project(1="?0")
+        logicalsemijoin(condition="?1 = p_partkey", type="semi")
+          logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          project(p_partkey="p_partkey")
+            logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+  - sql: |
+      select 1 from lineitem where 1 in (select p_partkey from part) or (1,l_suppkey) in (select p_partkey,p_mfgr from part);
+    plan: |
+      project(1="?0")
+        filter(condition="cast(is not null(p_partkey)) or cast(is not null(f1))")
+          project(p_partkey="p_partkey", f1="f1")
+            colcorrelate(cor=$cor2, type=left)
+              project(l_suppkey="l_suppkey", p_partkey="p_partkey")
+                logicaljoin(condition="true", type="left")
+                  logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+                  filter(condition="?1 = p_partkey")
+                    project(p_partkey="p_partkey")
+                      logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+              project(f1="f1")
+                project(f1="p_partkey")
+                  filter(condition="?2 = p_partkey and $cor2.l_suppkey = p_mfgr")
+                    project(p_partkey="p_partkey", p_mfgr="p_mfgr")
+                      logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+  - sql: |
+      select 1 from lineitem where l_suppkey*2 in (select p_partkey from part where l_returnflag=p_comment);
+    plan: |
+      project(1="?0")
+        colcorrelate(cor=$cor2, type=semi)
+          project(l_suppkey="l_suppkey", l_returnflag="l_returnflag")
+            logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          project
+            filter(condition="$cor2.l_suppkey * ?1 = p_partkey")
+              project(p_partkey="p_partkey")
+                filter(condition="$cor2.l_returnflag = p_comment")
+                  project(p_partkey="p_partkey", p_comment="p_comment")
+                    logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+  - sql: |
+      select 1 from lineitem where 1 in (select p_partkey from part) or (1,l_suppkey*2) in (select p_partkey,p_mfgr from part);
+    plan: |
+      project(1="?0")
+        filter(condition="cast(is not null(p_partkey)) or cast(is not null(f1))")
+          project(p_partkey="p_partkey", f1="f1")
+            colcorrelate(cor=$cor2, type=left)
+              project(l_suppkey="l_suppkey", p_partkey="p_partkey")
+                logicaljoin(condition="true", type="left")
+                  logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+                  filter(condition="?1 = p_partkey")
+                    project(p_partkey="p_partkey")
+                      logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+              project(f1="f1")
+                project(f1="p_partkey")
+                  filter(condition="?2 = p_partkey and $cor2.l_suppkey * ?3 = p_mfgr")
+                    project(p_partkey="p_partkey", p_mfgr="p_mfgr")
+                      logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+  - sql: |
+      select 1 from lineitem where (1,l_suppkey*2) in (select p_partkey,p_mfgr from part);
+    plan: |
+      project(1="?0")
+        logicalsemijoin(condition="?1 = p_partkey and l_suppkey * ?2 = p_mfgr", type="semi")
+          logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          project(p_partkey="p_partkey", p_mfgr="p_mfgr")
+            logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+  - sql: |
+      select 1 from lineitem where (1,l_suppkey*2) in (select p_partkey,l_orderkey from part);
+    plan: |
+      project(1="?0")
+        colcorrelate(cor=$cor2, type=semi)
+          project(l_orderkey="l_orderkey", l_suppkey="l_suppkey")
+            logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          project
+            filter(condition="?1 = p_partkey and $cor2.l_suppkey * ?2 = l_orderkey")
+              project(p_partkey="p_partkey", l_orderkey="$cor2.l_orderkey")
+                logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+  - sql: |
+      select 1 in (select p_partkey from part);
+    plan: |
+      project(1 in ( select p_partkey from part )="cast(case(or(is null($1), =($1, 0)), false, =($2, 1), true, =($3, 1), null, false))")
+        logicaljoin(condition="true", type="left")
+          values(table="dual")
+          logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+            project(s_case="case(is true(=(?0, $0)), 1, 0)", p_case="case(or(=(?0, $0), is null(?0)), 1, 0)")
+              logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+  - sql: |
+      select  (l_partkey+1, l_suppkey + l_orderkey) in (select p_partkey,s_name+s_address from part, supplier) from lineitem;
+    plan: |
+      project((l_partkey + 1, l_suppkey + l_orderkey) in ( select p_partkey, s_name + s_address from part, supplier )="cast(case(or(is null($3), $4), false, $5, true, $6, null, false))")
+        colcorrelate(cor=$cor2, type=left)
+          project(l_orderkey="l_orderkey", l_partkey="l_partkey", l_suppkey="l_suppkey")
+            logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          project(c="c", =="c = 0", =2="strict = 1", =3="possible = 1")
+            logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+              project(s_case="case(and(is true(=(+($cor2.l_partkey, ?0), $0)), is true(=(+($cor2.l_suppkey, $cor2.l_orderkey), +(cast($10):double not null, cast($11):double not null)))), 1, 0)", p_case="case(and(or(=(+($cor2.l_partkey, ?0), $0), is null(+($cor2.l_partkey, ?0))), or(=(+($cor2.l_suppkey, $cor2.l_orderkey), +(cast($10):double not null, cast($11):double not null)), is null(+(cast($10):double not null, cast($11):double not null)), is null(+($cor2.l_suppkey, $cor2.l_orderkey)))), 1, 0)")
+                logicaljoin(condition="true", type="inner")
+                  logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+                  logicalview(tables="supplier[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `s_suppkey`, `s_name`, `s_address`, `s_nationkey`, `s_phone`, `s_acctbal`, `s_comment` from `supplier` as `supplier`")
+  - sql: |
+      # multi in uncorrelated two value
+      select o_custkey from orders where (1,o_clerk) in (select ps_suppkey, ps_availqty from partsupp where ps_partkey > 10)
+    plan: |
+      project(o_custkey="o_custkey")
+        logicalsemijoin(condition="?0 = ps_suppkey and o_clerk = ps_availqty", type="semi")
+          logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+          project(ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+            filter(condition="ps_partkey > ?1")
+              project(ps_partkey="ps_partkey", ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+                logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+  - sql: |
+      # multi in correlated two value
+      select o_custkey from orders where (1,o_clerk) in (select ps_suppkey, ps_availqty from partsupp where ps_partkey > o_shippriority)
+    plan: |
+      project(o_custkey="o_custkey")
+        colcorrelate(cor=$cor2, type=semi)
+          project(o_custkey="o_custkey", o_clerk="o_clerk", o_shippriority="o_shippriority")
+            logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+          project
+            filter(condition="?0 = ps_suppkey and $cor2.o_clerk = ps_availqty")
+              project(ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+                filter(condition="ps_partkey > $cor2.o_shippriority")
+                  project(ps_partkey="ps_partkey", ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+                    logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+  - sql: |
+      # multi in uncorrelated or two value
+      select o_custkey from orders where (o_comment,o_clerk) in (select ps_suppkey, ps_availqty from partsupp where ps_partkey > 10) or o_shippriority > 11
+    plan: |
+      project(o_custkey="o_custkey")
+        filter(condition="cast(is not null(f1)) or o_shippriority > ?1")
+          project(o_custkey="o_custkey", o_shippriority="o_shippriority", f1="f1")
+            colcorrelate(cor=$cor2, type=left)
+              project(o_custkey="o_custkey", o_clerk="o_clerk", o_shippriority="o_shippriority", o_comment="o_comment")
+                logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+              project(f1="f1")
+                logicalagg(group="f1")
+                  project(f1="ps_suppkey")
+                    filter(condition="$cor2.o_comment = ps_suppkey and $cor2.o_clerk = ps_availqty")
+                      project(ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+                        filter(condition="ps_partkey > ?0")
+                          project(ps_partkey="ps_partkey", ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+                            logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+  - sql: |
+      # multi in uncorrelated or two value
+      select o_custkey from orders where (o_comment,o_clerk) in (select ps_suppkey, ps_availqty from partsupp where ps_partkey > o_shippriority) or o_shippriority > 11
+    plan: |
+      project(o_custkey="o_custkey")
+        filter(condition="cast(is not null(f1)) or o_shippriority > ?0")
+          project(o_custkey="o_custkey", o_shippriority="o_shippriority", f1="f1")
+            colcorrelate(cor=$cor2, type=left)
+              project(o_custkey="o_custkey", o_clerk="o_clerk", o_shippriority="o_shippriority", o_comment="o_comment")
+                logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+              project(f1="f1")
+                logicalagg(group="f1")
+                  project(f1="ps_suppkey")
+                    filter(condition="$cor2.o_comment = ps_suppkey and $cor2.o_clerk = ps_availqty")
+                      project(ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+                        filter(condition="ps_partkey > $cor2.o_shippriority")
+                          project(ps_partkey="ps_partkey", ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+                            logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+  - sql: |
+      # multi in uncorrelated three value
+      select (o_comment,o_clerk) in (select ps_suppkey, ps_availqty from partsupp where ps_partkey > 10) from orders
+    plan: |
+      project((o_comment, o_clerk) in ( select ps_suppkey, ps_availqty from partsupp where ps_partkey > 10 )="cast(case(or(is null($2), $3), false, $4, true, $5, null, false))")
+        colcorrelate(cor=$cor2, type=left)
+          project(o_clerk="o_clerk", o_comment="o_comment")
+            logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+          project(c="c", =="c = 0", =2="strict = 1", =3="possible = 1")
+            logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+              project(s_case="case(and(is true(=($cor2.o_comment, $1)), is true(=($cor2.o_clerk, $2))), 1, 0)", p_case="case(and(=($cor2.o_comment, $1), =($cor2.o_clerk, $2)), 1, 0)")
+                filter(condition="ps_partkey > ?0")
+                  project(ps_partkey="ps_partkey", ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+                    logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+  - sql: |
+      # multi in uncorrelated three value
+      select (o_comment,o_clerk) in (select ps_suppkey, ps_availqty from partsupp where ps_partkey > o_shippriority) from orders
+    plan: |
+      project((o_comment, o_clerk) in ( select ps_suppkey, ps_availqty from partsupp where ps_partkey > o_shippriority )="cast(case(or(is null($3), $4), false, $5, true, $6, null, false))")
+        colcorrelate(cor=$cor2, type=left)
+          project(o_clerk="o_clerk", o_shippriority="o_shippriority", o_comment="o_comment")
+            logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+          project(c="c", =="c = 0", =2="strict = 1", =3="possible = 1")
+            logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+              project(s_case="case(and(is true(=($cor2.o_comment, $1)), is true(=($cor2.o_clerk, $2))), 1, 0)", p_case="case(and(=($cor2.o_comment, $1), =($cor2.o_clerk, $2)), 1, 0)")
+                filter(condition="ps_partkey > $cor2.o_shippriority")
+                  project(ps_partkey="ps_partkey", ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+                    logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+  - sql: |
+      # multi in uncorrelated three value
+      select (o_comment,o_clerk) in (select ps_suppkey, ps_availqty from partsupp where ps_partkey > o_shippriority) from orders_null
+    plan: |
+      project((o_comment, o_clerk) in ( select ps_suppkey, ps_availqty from partsupp where ps_partkey > o_shippriority )="cast(case(or(is null($3), $4), false, $5, true, $6, null, false))")
+        colcorrelate(cor=$cor2, type=left)
+          project(o_clerk="o_clerk", o_shippriority="o_shippriority", o_comment="o_comment")
+            logicalview(tables="orders_null[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders_null` as `orders_null`")
+          project(c="c", =="c = 0", =2="strict = 1", =3="possible = 1")
+            logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+              project(s_case="case(and(is true(=($cor2.o_comment, $1)), is true(=($cor2.o_clerk, $2))), 1, 0)", p_case="case(and(=($cor2.o_comment, $1), or(=($cor2.o_clerk, $2), is null($cor2.o_clerk))), 1, 0)")
+                filter(condition="ps_partkey > $cor2.o_shippriority")
+                  project(ps_partkey="ps_partkey", ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+                    logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+  - sql: |
+      # not in 
+      select 1 from lineitem where 1 not in (select p_partkey from part);
+    plan: |
+      project(1="?0")
+        filter(condition="cast(case(or(is null($0), =($0, 0)), true, =($1, 1), false, =($2, 1), null, true))")
+          project(c="c", strict="strict", possible="possible")
+            logicaljoin(condition="true", type="left")
+              logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+                project(s_case="case(is true(=(?1, $0)), 1, 0)", p_case="case(or(=(?1, $0), is null(?1)), 1, 0)")
+                  logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+  - sql: |
+      select not(null not in (select p_partkey from part));
+    plan: |
+      project(not null not in ( select p_partkey from part )="not(cast(case(or(is null($1), =($1, 0)), true, =($2, 1), false, =($3, 1), null, true)))")
+        logicaljoin(condition="true", type="left")
+          values(table="dual")
+          logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+            project(s_case="case(is true(=(null, $0)), 1, 0)", p_case="case(or(=(null, $0), is null(null)), 1, 0)")
+              logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+  - sql: |
+      select  (l_partkey+1, l_suppkey + l_orderkey) not in (select p_partkey,s_name+s_address from part, supplier) from lineitem;
+    plan: |
+      project((l_partkey + 1, l_suppkey + l_orderkey) not in ( select p_partkey, s_name + s_address from part, supplier )="cast(case(or(is null($3), $4), true, $5, false, $6, null, true))")
+        colcorrelate(cor=$cor2, type=left)
+          project(l_orderkey="l_orderkey", l_partkey="l_partkey", l_suppkey="l_suppkey")
+            logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          project(c="c", =="c = 0", =2="strict = 1", =3="possible = 1")
+            logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+              project(s_case="case(and(is true(=(+($cor2.l_partkey, ?0), $0)), is true(=(+($cor2.l_suppkey, $cor2.l_orderkey), +(cast($10):double not null, cast($11):double not null)))), 1, 0)", p_case="case(and(or(=(+($cor2.l_partkey, ?0), $0), is null(+($cor2.l_partkey, ?0))), or(=(+($cor2.l_suppkey, $cor2.l_orderkey), +(cast($10):double not null, cast($11):double not null)), is null(+(cast($10):double not null, cast($11):double not null)), is null(+($cor2.l_suppkey, $cor2.l_orderkey)))), 1, 0)")
+                logicaljoin(condition="true", type="inner")
+                  logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+                  logicalview(tables="supplier[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `s_suppkey`, `s_name`, `s_address`, `s_nationkey`, `s_phone`, `s_acctbal`, `s_comment` from `supplier` as `supplier`")
+  - sql: |
+      # multi not in uncorrelated two value
+      select o_custkey from orders where (1,o_clerk) not in (select ps_suppkey, ps_availqty from partsupp where ps_partkey > 10)
+    plan: |
+      project(o_custkey="o_custkey")
+        filter(condition="cast(case(or(is null($1), =($1, 0)), true, =($2, 1), false, =($3, 1), null, true))")
+          project(o_custkey="o_custkey", c="c", strict="strict", possible="possible")
+            colcorrelate(cor=$cor2, type=left)
+              project(o_custkey="o_custkey", o_clerk="o_clerk")
+                logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+              project(c="c", strict="strict", possible="possible")
+                logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+                  project(s_case="case(and(is true(=(?0, $1)), is true(=($cor2.o_clerk, $2))), 1, 0)", p_case="case(and(or(=(?0, $1), is null(?0)), =($cor2.o_clerk, $2)), 1, 0)")
+                    filter(condition="ps_partkey > ?1")
+                      project(ps_partkey="ps_partkey", ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+                        logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+  - sql: |
+      # multi not in correlated two value
+      select o_custkey from orders where (1,o_clerk) not in (select ps_suppkey, ps_availqty from partsupp where ps_partkey > o_shippriority)
+    plan: |
+      project(o_custkey="o_custkey")
+        filter(condition="cast(case(or(is null($1), =($1, 0)), true, =($2, 1), false, =($3, 1), null, true))")
+          project(o_custkey="o_custkey", c="c", strict="strict", possible="possible")
+            colcorrelate(cor=$cor2, type=left)
+              project(o_custkey="o_custkey", o_clerk="o_clerk", o_shippriority="o_shippriority")
+                logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+              project(c="c", strict="strict", possible="possible")
+                logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+                  project(s_case="case(and(is true(=(?0, $1)), is true(=($cor2.o_clerk, $2))), 1, 0)", p_case="case(and(or(=(?0, $1), is null(?0)), =($cor2.o_clerk, $2)), 1, 0)")
+                    filter(condition="ps_partkey > $cor2.o_shippriority")
+                      project(ps_partkey="ps_partkey", ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+                        logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+  - sql: |
+      # multi not in uncorrelated or two value
+      select o_custkey from orders where (o_comment,o_clerk) not in (select ps_suppkey, ps_availqty from partsupp where ps_partkey > 10) or o_shippriority > 11
+    plan: |
+      project(o_custkey="o_custkey")
+        filter(condition="cast(case(or(is null($2), =($2, 0)), true, =($3, 1), false, =($4, 1), null, true)) or o_shippriority > ?1")
+          project(o_custkey="o_custkey", o_shippriority="o_shippriority", c="c", strict="strict", possible="possible")
+            colcorrelate(cor=$cor2, type=left)
+              project(o_custkey="o_custkey", o_clerk="o_clerk", o_shippriority="o_shippriority", o_comment="o_comment")
+                logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+              project(c="c", strict="strict", possible="possible")
+                logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+                  project(s_case="case(and(is true(=($cor2.o_comment, $1)), is true(=($cor2.o_clerk, $2))), 1, 0)", p_case="case(and(=($cor2.o_comment, $1), =($cor2.o_clerk, $2)), 1, 0)")
+                    filter(condition="ps_partkey > ?0")
+                      project(ps_partkey="ps_partkey", ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+                        logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+  - sql: |
+      # multi not in uncorrelated or two value
+      select o_custkey from orders where (o_comment,o_clerk) not in (select ps_suppkey, ps_availqty from partsupp where ps_partkey > o_shippriority) or o_shippriority > 11
+    plan: |
+      project(o_custkey="o_custkey")
+        filter(condition="cast(case(or(is null($2), =($2, 0)), true, =($3, 1), false, =($4, 1), null, true)) or o_shippriority > ?0")
+          project(o_custkey="o_custkey", o_shippriority="o_shippriority", c="c", strict="strict", possible="possible")
+            colcorrelate(cor=$cor2, type=left)
+              project(o_custkey="o_custkey", o_clerk="o_clerk", o_shippriority="o_shippriority", o_comment="o_comment")
+                logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+              project(c="c", strict="strict", possible="possible")
+                logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+                  project(s_case="case(and(is true(=($cor2.o_comment, $1)), is true(=($cor2.o_clerk, $2))), 1, 0)", p_case="case(and(=($cor2.o_comment, $1), =($cor2.o_clerk, $2)), 1, 0)")
+                    filter(condition="ps_partkey > $cor2.o_shippriority")
+                      project(ps_partkey="ps_partkey", ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+                        logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+  - sql: |
+      # multi not in uncorrelated three value
+      select (o_comment,o_clerk) not in (select ps_suppkey, ps_availqty from partsupp where ps_partkey > 10) from orders
+    plan: |
+      project((o_comment, o_clerk) not in ( select ps_suppkey, ps_availqty from partsupp where ps_partkey > 10 )="cast(case(or(is null($2), $3), true, $4, false, $5, null, true))")
+        colcorrelate(cor=$cor2, type=left)
+          project(o_clerk="o_clerk", o_comment="o_comment")
+            logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+          project(c="c", =="c = 0", =2="strict = 1", =3="possible = 1")
+            logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+              project(s_case="case(and(is true(=($cor2.o_comment, $1)), is true(=($cor2.o_clerk, $2))), 1, 0)", p_case="case(and(=($cor2.o_comment, $1), =($cor2.o_clerk, $2)), 1, 0)")
+                filter(condition="ps_partkey > ?0")
+                  project(ps_partkey="ps_partkey", ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+                    logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+  - sql: |
+      # multi not in uncorrelated three value
+      select (o_comment,o_clerk) not in (select ps_suppkey, ps_availqty from partsupp where ps_partkey > o_shippriority) from orders
+    plan: |
+      project((o_comment, o_clerk) not in ( select ps_suppkey, ps_availqty from partsupp where ps_partkey > o_shippriority )="cast(case(or(is null($3), $4), true, $5, false, $6, null, true))")
+        colcorrelate(cor=$cor2, type=left)
+          project(o_clerk="o_clerk", o_shippriority="o_shippriority", o_comment="o_comment")
+            logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+          project(c="c", =="c = 0", =2="strict = 1", =3="possible = 1")
+            logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+              project(s_case="case(and(is true(=($cor2.o_comment, $1)), is true(=($cor2.o_clerk, $2))), 1, 0)", p_case="case(and(=($cor2.o_comment, $1), =($cor2.o_clerk, $2)), 1, 0)")
+                filter(condition="ps_partkey > $cor2.o_shippriority")
+                  project(ps_partkey="ps_partkey", ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+                    logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+  - sql: |
+      # multi in uncorrelated three value
+      select (o_comment,o_clerk) not in (select ps_suppkey, ps_availqty from partsupp where ps_partkey > o_shippriority) from orders_null
+    plan: |
+      project((o_comment, o_clerk) not in ( select ps_suppkey, ps_availqty from partsupp where ps_partkey > o_shippriority )="cast(case(or(is null($3), $4), true, $5, false, $6, null, true))")
+        colcorrelate(cor=$cor2, type=left)
+          project(o_clerk="o_clerk", o_shippriority="o_shippriority", o_comment="o_comment")
+            logicalview(tables="orders_null[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders_null` as `orders_null`")
+          project(c="c", =="c = 0", =2="strict = 1", =3="possible = 1")
+            logicalagg(c="count()", strict="max(s_case)", possible="max(p_case)")
+              project(s_case="case(and(is true(=($cor2.o_comment, $1)), is true(=($cor2.o_clerk, $2))), 1, 0)", p_case="case(and(=($cor2.o_comment, $1), or(=($cor2.o_clerk, $2), is null($cor2.o_clerk))), 1, 0)")
+                filter(condition="ps_partkey > $cor2.o_shippriority")
+                  project(ps_partkey="ps_partkey", ps_suppkey="ps_suppkey", ps_availqty="ps_availqty")
+                    logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+  - sql: |
+      # nested
+      select 1 from lineitem where l_partkey in (select p_partkey + ps_partkey from 
+      (select * from part where p_mfgr > l_shipdate), partsupp 
+      where p_type = l_returnflag + 1 or ps_comment+ l_orderkey> any(select s_name from supplier where s_phone > p_type-l_tax order by s_nationkey))
+    plan: |
+      project(1="?0")
+        colcorrelate(cor=$cor7, type=semi)
+          project(l_orderkey="l_orderkey", l_partkey="l_partkey", l_tax="l_tax", l_returnflag="l_returnflag", l_shipdate="l_shipdate")
+            logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          project
+            filter(condition="$cor7.l_partkey = p_partkey + ps_partkey")
+              project(p_partkey + ps_partkey="p_partkey + ps_partkey")
+                filter(condition="p_type = cast($cor7.l_returnflag) + ?1 or cast(case(or(is null($5), =($5, 0)), false, is null(+(cast($3):double not null, $cor7.l_orderkey)), null, >(+(cast($3):double not null, $cor7.l_orderkey), $4), true, >($5, $6), null, false))")
+                  colcorrelate(cor=$cor8, type=left)
+                    project(p_partkey="p_partkey", p_type="p_type", ps_partkey="ps_partkey", ps_comment="ps_comment")
+                      logicaljoin(condition="true", type="inner")
+                        filter(condition="p_mfgr > $cor7.l_shipdate")
+                          logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+                        logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+                    project(m="m", c="c", d="d")
+                      logicalagg(m="min(s_name)", c="count()", d="count(s_name)")
+                        project(s_name="s_name")
+                          logicalsort(sort="s_nationkey asc")
+                            project(s_name="s_name", s_nationkey="s_nationkey")
+                              filter(condition="s_phone > cast($cor8.p_type) - $cor7.l_tax")
+                                project(s_name="s_name", s_nationkey="s_nationkey", s_phone="s_phone")
+                                  logicalview(tables="supplier[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `s_suppkey`, `s_name`, `s_address`, `s_nationkey`, `s_phone`, `s_acctbal`, `s_comment` from `supplier` as `supplier`")
+  - sql: |
+      select 1 from lineitem where l_partkey in (select p_partkey + ps_partkey from 
+      (select * from part where p_mfgr > l_shipdate) join
+      partsupp 
+      on p_retailprice=ps_supplycost
+      where p_type = l_returnflag + 1 or ps_comment+ l_orderkey> any(select s_name from supplier where s_phone > p_type-l_tax order by s_nationkey))
+    plan: |
+      project(1="?0")
+        colcorrelate(cor=$cor7, type=semi)
+          project(l_orderkey="l_orderkey", l_partkey="l_partkey", l_tax="l_tax", l_returnflag="l_returnflag", l_shipdate="l_shipdate")
+            logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          project
+            filter(condition="$cor7.l_partkey = p_partkey + ps_partkey")
+              project(p_partkey + ps_partkey="p_partkey + ps_partkey")
+                filter(condition="p_type = cast($cor7.l_returnflag) + ?1 or cast(case(or(is null($5), =($5, 0)), false, is null(+(cast($3):double not null, $cor7.l_orderkey)), null, >(+(cast($3):double not null, $cor7.l_orderkey), $4), true, >($5, $6), null, false))")
+                  colcorrelate(cor=$cor8, type=left)
+                    project(p_partkey="p_partkey", p_type="p_type", ps_partkey="ps_partkey", ps_comment="ps_comment")
+                      logicaljoin(condition="p_retailprice = ps_supplycost", type="inner")
+                        filter(condition="p_mfgr > $cor7.l_shipdate")
+                          logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+                        logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+                    project(m="m", c="c", d="d")
+                      logicalagg(m="min(s_name)", c="count()", d="count(s_name)")
+                        project(s_name="s_name")
+                          logicalsort(sort="s_nationkey asc")
+                            project(s_name="s_name", s_nationkey="s_nationkey")
+                              filter(condition="s_phone > cast($cor8.p_type) - $cor7.l_tax")
+                                project(s_name="s_name", s_nationkey="s_nationkey", s_phone="s_phone")
+                                  logicalview(tables="supplier[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `s_suppkey`, `s_name`, `s_address`, `s_nationkey`, `s_phone`, `s_acctbal`, `s_comment` from `supplier` as `supplier`")
+  - sql: |
+      # INNER JOIN ON contains scalar sub-query that references BOTH sides
+      select 1 from lineitem join orders on l_orderkey = o_orderkey
+        and (select max(p_retailprice) from part where p_partkey = l_partkey + o_custkey) > 1
+    plan: |
+      project(1="?0")
+        filter(condition="max(p_retailprice) > ?1")
+          project(max(p_retailprice)="max(p_retailprice)")
+            colcorrelate(cor=$cor3, type=left)
+              project(l_partkey="l_partkey", o_custkey="o_custkey")
+                logicaljoin(condition="l_orderkey = o_orderkey", type="inner")
+                  logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+                  logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+              project(max(p_retailprice)="max(p_retailprice)")
+                logicalagg(max(p_retailprice)="max(p_retailprice)")
+                  project(p_retailprice="p_retailprice")
+                    filter(condition="p_partkey = $cor3.l_partkey + $cor3.o_custkey")
+                      project(p_partkey="p_partkey", p_retailprice="p_retailprice")
+                        logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+  - sql: |
+      # INNER JOIN ON contains EXISTS sub-query that references BOTH sides
+      select 1 from lineitem join orders on l_orderkey = o_orderkey
+        and exists (select 1 from part where p_partkey = l_partkey and p_retailprice > o_totalprice)
+    plan: |
+      project(1="?0")
+        colcorrelate(cor=$cor3, type=semi)
+          project(l_partkey="l_partkey", o_totalprice="o_totalprice")
+            logicaljoin(condition="l_orderkey = o_orderkey", type="inner")
+              logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+          project
+            filter(condition="p_partkey = $cor3.l_partkey and p_retailprice > $cor3.o_totalprice")
+              project(p_partkey="p_partkey", p_retailprice="p_retailprice")
+                logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+  - sql: |
+      # INNER JOIN ON contains IN sub-query whose expression references BOTH sides
+      select 1 from lineitem join orders on l_orderkey = o_orderkey
+        and l_partkey + o_custkey in (select p_partkey from part where p_retailprice > l_extendedprice)
+    plan: |
+      project(1="?0")
+        colcorrelate(cor=$cor2, type=semi)
+          project(l_partkey="l_partkey", l_extendedprice="l_extendedprice", o_custkey="o_custkey")
+            logicaljoin(condition="l_orderkey = o_orderkey", type="inner")
+              logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+              logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+          project
+            filter(condition="$cor2.l_partkey + $cor2.o_custkey = p_partkey")
+              project(p_partkey="p_partkey")
+                filter(condition="p_retailprice > $cor2.l_extendedprice")
+                  project(p_partkey="p_partkey", p_retailprice="p_retailprice")
+                    logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+  - sql: |
+      # INNER JOIN ON contains independent scalar sub-query (references neither side)
+      select 1 from lineitem join orders on l_orderkey = o_orderkey
+        and (select max(p_retailprice) from part) > 1
+    plan: |
+      project(1="?0")
+        logicaljoin(condition="l_orderkey = o_orderkey and max(p_retailprice) > ?1", type="inner")
+          logicaljoin(condition="true", type="left")
+            logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+            logicalagg(max(p_retailprice)="max(p_retailprice)")
+              project(p_retailprice="p_retailprice")
+                logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+          logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+  - sql: |
+      # INNER JOIN ON contains scalar sub-query that references RIGHT side only
+      select 1 from lineitem join orders on l_orderkey = o_orderkey
+        and (select max(p_retailprice) from part where p_partkey = o_custkey) > 1
+    plan: |
+      project(1="?0")
+        logicaljoin(condition="l_orderkey = o_orderkey and max(p_retailprice) > ?1", type="inner")
+          logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          colcorrelate(cor=$cor1, type=left)
+            logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+            logicalagg(max(p_retailprice)="max(p_retailprice)")
+              project(p_retailprice="p_retailprice")
+                filter(condition="p_partkey = $cor1.o_custkey")
+                  project(p_partkey="p_partkey", p_retailprice="p_retailprice")
+                    logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+  - sql: |
+      # LEFT JOIN ON contains scalar sub-query that references RIGHT side only
+      select 1 from lineitem left join orders on l_orderkey = o_orderkey
+        and (select max(p_retailprice) from part where p_partkey = o_custkey) > 1
+    plan: |
+      project(1="?0")
+        logicaljoin(condition="l_orderkey = o_orderkey and max(p_retailprice) > ?1", type="left")
+          logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          colcorrelate(cor=$cor1, type=left)
+            logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+            logicalagg(max(p_retailprice)="max(p_retailprice)")
+              project(p_retailprice="p_retailprice")
+                filter(condition="p_partkey = $cor1.o_custkey")
+                  project(p_partkey="p_partkey", p_retailprice="p_retailprice")
+                    logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+  - sql: |
+      # INNER JOIN ON contains EXISTS sub-query that references RIGHT side only
+      select 1 from lineitem join orders on l_orderkey = o_orderkey
+        and exists (select 1 from part where p_partkey = o_custkey)
+    plan: |
+      project(1="?0")
+        logicaljoin(condition="l_orderkey = o_orderkey and true", type="inner")
+          logicalview(tables="lineitem[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem`")
+          colcorrelate(cor=$cor1, type=semi)
+            logicalview(tables="orders[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders`")
+            filter(condition="p_partkey = $cor1.o_custkey")
+              logicalview(tables="part[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
+DDL:
+  customer:
+    CREATE TABLE IF NOT EXISTS `customer` (  `c_custkey` int(11) NOT NULL,  `c_name` varchar(25) NOT NULL,  `c_address` varchar(40) NOT NULL,  `c_nationkey` int(11) NOT NULL,  `c_phone` varchar(15) NOT NULL,  `c_acctbal` decimal(15, 2) NOT NULL,  `c_mktsegment` varchar(10) NOT NULL,  `c_comment` varchar(117) NOT NULL,  PRIMARY KEY (`c_custkey`),  CLUSTERED COLUMNAR INDEX `customer_col_index`(`c_custkey`) PARTITION BY HASH (`c_custkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`c_custkey`) PARTITIONS 8;
+  lineitem:
+    CREATE TABLE IF NOT EXISTS `lineitem` (  `l_orderkey` bigint(20) NOT NULL,  `l_partkey` int(11) NOT NULL,  `l_suppkey` int(11) NOT NULL,  `l_linenumber` bigint(20) NOT NULL,  `l_quantity` decimal(15, 2) NOT NULL,  `l_extendedprice` decimal(15, 2) NOT NULL,  `l_discount` decimal(15, 2) NOT NULL,  `l_tax` decimal(15, 2) NOT NULL,  `l_returnflag` varchar(1) NOT NULL,  `l_linestatus` varchar(1) NOT NULL,  `l_shipdate` date NOT NULL,  `l_commitdate` date NOT NULL,  `l_receiptdate` date NOT NULL,  `l_shipinstruct` varchar(25) NOT NULL,  `l_shipmode` varchar(10) NOT NULL,  `l_comment` varchar(44) NOT NULL,  PRIMARY KEY (`l_orderkey`, `l_linenumber`),  CLUSTERED COLUMNAR INDEX `lineitem_col_index`(`l_shipdate`, `l_orderkey`) PARTITION BY HASH (`l_orderkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`l_orderkey`) PARTITIONS 8;
+  orders:
+    CREATE TABLE IF NOT EXISTS `orders` (  `o_orderkey` bigint(20) NOT NULL,  `o_custkey` int(11) NOT NULL,  `o_orderstatus` varchar(1) NOT NULL,  `o_totalprice` decimal(15, 2) NOT NULL,  `o_orderdate` date NOT NULL,  `o_orderpriority` varchar(15) NOT NULL,  `o_clerk` varchar(15) NOT NULL,  `o_shippriority` bigint(20) NOT NULL,  `o_comment` varchar(79) NOT NULL,  PRIMARY KEY (`o_orderkey`),  CLUSTERED COLUMNAR INDEX `orders_col_index`(`o_orderdate`, `o_orderkey`) PARTITION BY HASH (`o_orderkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`o_orderkey`) PARTITIONS 8;
+  part:
+    CREATE TABLE IF NOT EXISTS `part` (  `p_partkey` int(11) NOT NULL,  `p_name` varchar(55) NOT NULL,  `p_mfgr` varchar(25) NOT NULL,  `p_brand` varchar(10) NOT NULL,  `p_type` varchar(25) NOT NULL,  `p_size` int(11) NOT NULL,  `p_container` varchar(10) NOT NULL,  `p_retailprice` decimal(15, 2) NOT NULL,  `p_comment` varchar(23) NOT NULL,  PRIMARY KEY (`p_partkey`),  CLUSTERED COLUMNAR INDEX `part_col_index`(`p_size`) PARTITION BY HASH (`p_partkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`p_partkey`) PARTITIONS 8;
+  partsupp:
+    CREATE TABLE IF NOT EXISTS `partsupp` (  `ps_partkey` int(11) NOT NULL,  `ps_suppkey` int(11) NOT NULL,  `ps_availqty` int(11) NOT NULL,  `ps_supplycost` decimal(15, 2) NOT NULL,  `ps_comment` varchar(199) NOT NULL,  PRIMARY KEY (`ps_partkey`, `ps_suppkey`),  CLUSTERED COLUMNAR INDEX `partsupp_col_index`(`ps_partkey`) PARTITION BY HASH (`ps_partkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`ps_partkey`) PARTITIONS 8;
+  supplier:
+    CREATE TABLE IF NOT EXISTS `supplier` (  `s_suppkey` int(11) NOT NULL,  `s_name` varchar(25) NOT NULL,  `s_address` varchar(40) NOT NULL,  `s_nationkey` int(11) NOT NULL,  `s_phone` varchar(15) NOT NULL,  `s_acctbal` decimal(15, 2) NOT NULL,  `s_comment` varchar(101) NOT NULL,  PRIMARY KEY (`s_suppkey`),  CLUSTERED COLUMNAR INDEX `supplier_col_index`(`s_suppkey`) PARTITION BY HASH (`s_suppkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`s_suppkey`) PARTITIONS 8;
+  orders_null:
+    CREATE TABLE IF NOT EXISTS `orders_null` (  `o_orderkey` bigint(20) NOT NULL,  `o_custkey` int(11) DEFAULT NULL,  `o_orderstatus` varchar(1) DEFAULT NULL,  `o_totalprice` decimal(15, 2) DEFAULT NULL,  `o_orderdate` date DEFAULT NULL,  `o_orderpriority` varchar(15) DEFAULT NULL,  `o_clerk` varchar(15) DEFAULT NULL,  `o_shippriority` bigint(20) DEFAULT NULL,  `o_comment` varchar(79) NOT NULL,  PRIMARY KEY (`o_orderkey`),  CLUSTERED COLUMNAR INDEX `orders_col_index`(`o_orderdate`, `o_orderkey`) PARTITION BY HASH (`o_orderkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`o_orderkey`) PARTITIONS 8;
+STATISTICS:
+  customer:
+    16648768
+  lineitem:
+    660984320
+  nation:
+    25
+  orders:
+    1660557312
+  orders_null:
+    1660557312
+  part:
+    220466800
+  partsupp:
+    883230464
+  region:
+    5
+  supplier:
+    10826645
+CONFIG:
+  ENABLE_MPP:
+    true
+  ENABLE_COLUMNAR_OPTIMIZER:
+    true
+  OPTIMIZER_TYPE:
+    columnar
+  WORKLOAD_TYPE:
+    AP
+  FORCE_HOLISTIC_SUBQUERY_UNNEST:
+    true
+  ENABLE_POST_PLANNER:
+    false
+  defaltxxAPPName.isNew:
+    true

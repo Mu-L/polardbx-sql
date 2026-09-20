@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.qatest.dql.sharding.functions;
 
 import com.alibaba.polardbx.common.utils.encrypt.aes.BlockEncryptionMode;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.ReadBaseTestCase;
 import com.alibaba.polardbx.qatest.data.ExecuteTableName;
 import com.alibaba.polardbx.qatest.data.ExecuteTableSelect;
@@ -362,6 +363,7 @@ public class FunctionTest extends ReadBaseTestCase {
         selectContentSameAssert(sql, null, mysqlConnection, tddlConnection);
     }
 
+    @IcbcIgnore(ignoreReason = "test_conflict_with_NO_ZERO_DATE")
     @Test
     public void strToDateTest() throws Exception {
         String sql = "SELECT STR_TO_DATE('01,5,2013','%d,%m,%Y')";

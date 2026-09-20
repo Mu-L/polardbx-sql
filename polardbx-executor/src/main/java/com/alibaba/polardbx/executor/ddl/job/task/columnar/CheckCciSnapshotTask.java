@@ -3,9 +3,9 @@ package com.alibaba.polardbx.executor.ddl.job.task.columnar;
 import com.alibaba.fastjson.annotation.JSONCreator;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
-import com.alibaba.polardbx.executor.columnar.checker.CciSnapshotChecker;
+import com.alibaba.polardbx.executor.columnar.checker.CciSnapshotNaiveChecker;
 import com.alibaba.polardbx.executor.columnar.checker.CciSnapshotFastChecker;
-import com.alibaba.polardbx.executor.columnar.checker.ICciChecker;
+import com.alibaba.polardbx.executor.columnar.checker.AbstractCciChecker;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.gsi.CheckerManager;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
@@ -54,19 +54,19 @@ public class CheckCciSnapshotTask extends CheckCciBaseTask {
     @Override
     protected void beforeTransaction(ExecutionContext executionContext) {
         // Check.
-        ICciChecker checker;
+        AbstractCciChecker checker;
         if (executionContext.isEnableCciFastChecker() && ExecUtils.canUseCciFastChecker(schemaName, indexName)) {
             checker = new CciSnapshotFastChecker(schemaName, tableName, indexName, primaryTso, columnarTso);
         } else {
-            checker = new CciSnapshotChecker(schemaName, tableName, indexName, primaryTso, columnarTso);
+            checker = new CciSnapshotNaiveChecker(schemaName, tableName, indexName, primaryTso, columnarTso);
         }
 
         doCheck(executionContext, checker);
     }
 
-    protected void doCheck(ExecutionContext executionContext, ICciChecker checker) {
+    protected void doCheck(ExecutionContext executionContext, AbstractCciChecker checker) {
         try {
-            checker.check(executionContext);
+            checker.checkSnapshot(executionContext);
         } catch (Throwable t) {
             reports.add(
                 createReportRecord(

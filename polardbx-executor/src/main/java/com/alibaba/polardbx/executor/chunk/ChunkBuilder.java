@@ -16,6 +16,11 @@
 
 package com.alibaba.polardbx.executor.chunk;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.mpp.operator.DriverContext;
 import com.alibaba.polardbx.executor.operator.util.BatchBlockWriter;
@@ -23,20 +28,33 @@ import com.alibaba.polardbx.executor.operator.util.ObjectPools;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.List;
 
-public class ChunkBuilder {
+public class ChunkBuilder implements MemoryCountable {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(ChunkBuilder.class).instanceSize();
 
     private final BlockBuilder[] blockBuilders;
+
+    @FieldMemoryCounter(value = false)
     private final List<DataType> types;
     private int declaredPositions;
     private final int chunkLimit;
+
+    @FieldMemoryCounter(value = false)
     private ExecutionContext context;
     private final boolean enableBlockBuilderBatchWriting;
     private final boolean enableOssCompatible;
     private final boolean useBlockWriter;
+
+    @FieldMemoryCounter(value = false)
     private ObjectPools objectPools;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(blockBuilders);
+    }
 
     public ChunkBuilder(List<DataType> types, int chunkLimit, ExecutionContext context, ObjectPools objectPools) {
         this.types = types;
@@ -124,6 +142,11 @@ public class ChunkBuilder {
             for (int i = 0; i < blockBuilders.length; i++) {
                 blockBuilders[i] = blockBuilders[i].newBlockBuilder();
             }
+        }
+
+        OperatorMemoryOwnerId operatorMemoryOwnerId = MemoryTrackerManager.getCurrentMemoryOwner();
+        if (operatorMemoryOwnerId != null) {
+            MemoryTrackerManager.tryReverseReference(operatorMemoryOwnerId, FastMemoryCounter.sizeOf(blockBuilders));
         }
 
     }

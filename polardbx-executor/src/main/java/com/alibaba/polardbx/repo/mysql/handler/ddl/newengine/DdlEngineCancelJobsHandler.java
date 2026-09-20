@@ -19,25 +19,19 @@ package com.alibaba.polardbx.repo.mysql.handler.ddl.newengine;
 import com.alibaba.polardbx.common.ddl.newengine.DdlConstants;
 import com.alibaba.polardbx.common.ddl.newengine.DdlPlanState;
 import com.alibaba.polardbx.common.ddl.newengine.DdlState;
-import com.alibaba.polardbx.common.ddl.newengine.DdlTaskState;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
-import com.alibaba.polardbx.common.properties.ConfigParam;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
-import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.cursor.impl.AffectRowCursor;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.SubJobTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.spec.AlterTableRollbacker;
 import com.alibaba.polardbx.executor.ddl.newengine.DdlEngineRequester;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlExceptionAction;
-import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlEngineAccessorDelegate;
 import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
 import com.alibaba.polardbx.executor.partitionmanagement.rebalance.RebalanceDdlPlanManager;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineRecord;
-import com.alibaba.polardbx.gms.metadb.misc.DdlEngineTaskRecord;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.dal.LogicalDal;
 import org.apache.calcite.sql.SqlCancelDdlJob;
@@ -47,7 +41,6 @@ import org.apache.commons.lang3.StringUtils;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.common.ddl.newengine.DdlPlanState.EXECUTING;
@@ -164,11 +157,10 @@ public class DdlEngineCancelJobsHandler extends DdlEngineJobsHandler {
         if (!asyncMode) {
             respond(record.schemaName, record.jobId, executionContext, false, true);
         }
-
         return new AffectRowCursor(rollbackJobs.size());
     }
 
-    private void cancelJob(DdlEngineRecord record, boolean subJob, List<Long> rollbackJobs, List<String> traceIds) {
+    public void cancelJob(DdlEngineRecord record, boolean subJob, List<Long> rollbackJobs, List<String> traceIds) {
         if (MOVE_DATABASE.name().equalsIgnoreCase(record.ddlType)
             || ALTER_TABLEGROUP.name().equalsIgnoreCase(record.ddlType)) {
             if (!record.isSupportCancel()) {
@@ -184,9 +176,15 @@ public class DdlEngineCancelJobsHandler extends DdlEngineJobsHandler {
 
                 rollbackJobs.add(record.jobId);
                 traceIds.add(record.traceId);
+                //演示用代码
+//                try {
+//                    Thread.sleep(100);
+//                } catch (InterruptedException e) {
+//                    // ignore
+//                }
 
                 // 先中断父任务
-                DdlHelper.interruptJobs(record.schemaName, Collections.singletonList(record.jobId));
+                DdlHelper.interruptJobs(record.schemaName, Collections.singletonList(record.jobId), true);
                 DdlHelper.killActivePhyDDLs(record.schemaName, record.traceId);
 
                 if (subJob) {
@@ -202,7 +200,7 @@ public class DdlEngineCancelJobsHandler extends DdlEngineJobsHandler {
 
                 rollbackJobs.add(record.jobId);
 
-                DdlHelper.interruptJobs(record.schemaName, Collections.singletonList(record.jobId));
+                DdlHelper.interruptJobs(record.schemaName, Collections.singletonList(record.jobId), true);
             }
         }
     }
@@ -238,9 +236,9 @@ public class DdlEngineCancelJobsHandler extends DdlEngineJobsHandler {
 
         List<DdlEngineRecord> records = schedulerManager.fetchRecords(subJobIds);
         for (DdlEngineRecord subJobRecord : GeneralUtil.emptyIfNull(records)) {
-            if (MOVE_DATABASE.name().equalsIgnoreCase(record.ddlType)
-                || ALTER_TABLEGROUP.name().equalsIgnoreCase(record.ddlType)) {
-                if (!record.isSupportCancel()) {
+            if (MOVE_DATABASE.name().equalsIgnoreCase(subJobRecord.ddlType)
+                || ALTER_TABLEGROUP.name().equalsIgnoreCase(subJobRecord.ddlType)) {
+                if (!subJobRecord.isSupportCancel()) {
                     continue;
                 }
             }

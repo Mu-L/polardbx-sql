@@ -89,6 +89,7 @@ public class SqlCastFunction extends SqlFunction {
       DrdsTypeName.DATETIME,
       DrdsTypeName.TIME,
       DrdsTypeName.JSON,
+      DrdsTypeName.VECTOR,
       DrdsTypeName.DECIMAL,
       DrdsTypeName.NCHAR,
       DrdsTypeName.UNSIGNED,

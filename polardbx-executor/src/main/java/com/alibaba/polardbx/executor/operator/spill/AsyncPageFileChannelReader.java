@@ -29,6 +29,8 @@
  */
 package com.alibaba.polardbx.executor.operator.spill;
 
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.chunk.Chunk;
@@ -38,7 +40,6 @@ import com.alibaba.polardbx.optimizer.spill.SpillMonitor;
 import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.SettableFuture;
 import io.airlift.slice.InputStreamSliceInput;
 import io.airlift.slice.SliceInput;
 
@@ -399,7 +400,7 @@ public class AsyncPageFileChannelReader {
         implements IORequest.ReadIORequest, ReadCallback {
         private final List<Chunk> pageBuffers = new LinkedList<>();
 
-        private SettableFuture<List<Chunk>> future;
+        private BlockingFuture<List<Chunk>> future;
 
         private Iterator<Chunk> pageIterator;
 
@@ -408,7 +409,7 @@ public class AsyncPageFileChannelReader {
         private boolean closed;
 
         public PagesListReadRequest() {
-            future = SettableFuture.create();
+            future = BlockingFuture.create(BlockingReason.WAIT_FOR_SPILL_READ);
         }
 
         public ListenableFuture<List<Chunk>> getReadFuture() {
@@ -447,7 +448,7 @@ public class AsyncPageFileChannelReader {
         //ReadCallback
         @Override
         public void onSuccessful() {
-            this.future.set(pageBuffers);
+            this.future.complete(pageBuffers);
         }
 
         @Override

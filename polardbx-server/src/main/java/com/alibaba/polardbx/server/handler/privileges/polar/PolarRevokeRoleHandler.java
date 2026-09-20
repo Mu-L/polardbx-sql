@@ -26,7 +26,7 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.privilege.PolarAccountInfo;
 import com.alibaba.polardbx.gms.privilege.PolarPrivManager;
 import com.alibaba.polardbx.gms.privilege.PolarRolePrivilege;
-import com.alibaba.polardbx.gms.privilege.audit.AuditPrivilege;
+import com.alibaba.polardbx.server.util.AuditPrivilege;
 import org.apache.calcite.sql.SqlKind;
 
 import java.util.List;
@@ -64,9 +64,12 @@ public class PolarRevokeRoleHandler extends AbstractPrivilegeCommandHandler {
             .collect(Collectors.toList());
         getPrivManager().checkModifyReservedAccounts(getGranter(), fromAccounts, false);
 
-        for (PolarAccountInfo fromUser : fromAccounts) {
-            for (PolarAccountInfo role : roles) {
-                fromUser.checkRoleGranted(role.getAccount());
+        // If IF EXISTS is specified, skip role granted check
+        if (!stmt.isIfExists()) {
+            for (PolarAccountInfo fromUser : fromAccounts) {
+                for (PolarAccountInfo role : roles) {
+                    fromUser.checkRoleGranted(role.getAccount());
+                }
             }
         }
 
@@ -83,7 +86,7 @@ public class PolarRevokeRoleHandler extends AbstractPrivilegeCommandHandler {
                     throw new TddlRuntimeException(ERR_SERVER, "Failed to persist account data!", t);
                 }
             });
-        AuditPrivilege.polarAudit(getServerConn().getConnectionInfo(), getSql().toString(), AuditAction.REVOKE_ROLE);
+        AuditPrivilege.polarAudit(getServerConn(), getSql().toString(), AuditAction.REVOKE_ROLE);
         getPrivManager().triggerReload();
     }
 

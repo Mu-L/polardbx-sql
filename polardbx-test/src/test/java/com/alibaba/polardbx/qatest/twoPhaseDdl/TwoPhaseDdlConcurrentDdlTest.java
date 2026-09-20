@@ -55,6 +55,7 @@ public class TwoPhaseDdlConcurrentDdlTest extends DDLBaseNewDBTestCase {
 
     @Before
     public void init() {
+        this.schemaPrefix = "current_ddl_";
         this.tableName = schemaPrefix + randomTableName("two_phase", 4);
     }
 

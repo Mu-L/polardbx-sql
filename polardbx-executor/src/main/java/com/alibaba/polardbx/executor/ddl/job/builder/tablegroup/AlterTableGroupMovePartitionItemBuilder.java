@@ -17,7 +17,11 @@
 package com.alibaba.polardbx.executor.ddl.job.builder.tablegroup;
 
 import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.executor.ddl.util.ChangeSetUtils;
+import com.alibaba.polardbx.executor.partitionmanagement.AlterTableGroupUtils;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.config.table.ComplexTaskMetaManager;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableGroupItemPreparedData;
 import com.alibaba.polardbx.optimizer.partition.PartitionByDefinition;
@@ -25,17 +29,27 @@ import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
 import com.alibaba.polardbx.optimizer.partition.common.PartitionLocation;
 import org.apache.calcite.rel.core.DDL;
+import org.apache.calcite.sql.SqlCreateTable;
+import org.apache.calcite.sql.SqlNode;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 public class AlterTableGroupMovePartitionItemBuilder extends AlterTableGroupItemBuilder {
 
+    private Map<String, SqlNode> phyTbsDefinition = new TreeMap<>(String::compareToIgnoreCase);
+    private final boolean usePhysicalBackfill;
+    private boolean containPhysicalPartition = false;
+
     public AlterTableGroupMovePartitionItemBuilder(DDL ddl,
                                                    AlterTableGroupItemPreparedData preparedData,
+                                                   boolean usePhysicalBackfill,
                                                    ExecutionContext executionContext) {
         super(ddl, preparedData, executionContext);
+        this.usePhysicalBackfill = usePhysicalBackfill;
     }
 
     @Override
@@ -80,4 +94,40 @@ public class AlterTableGroupMovePartitionItemBuilder extends AlterTableGroupItem
         return sourcePhyTables;
     }
 
+    public Map<String, SqlNode> getGroupPhyTbDefinition() {
+        TableMeta tableMeta =
+            executionContext.getSchemaManager(preparedData.getSchemaName()).getTable(preparedData.getTableName());
+        if (GeneralUtil.isEmpty(phyTbsDefinition) && usePhysicalBackfill && ChangeSetUtils.supportUseChangeSet(
+            ComplexTaskMetaManager.ComplexTaskType.MOVE_PARTITION, tableMeta)) {
+            Map<String, Map<String, SqlNode>> groupPhyTbDefinition =
+                AlterTableGroupUtils.buildSqlTemplateForEachPhyTable(relDdl, preparedData.getSchemaName(),
+                    preparedData.getTableName(), getSourcePhyTables(), executionContext);
+            for (Map.Entry<String, Map<String, SqlNode>> entry : groupPhyTbDefinition.entrySet()) {
+                phyTbsDefinition.putAll(entry.getValue());
+            }
+        }
+        return phyTbsDefinition;
+    }
+
+    @Override
+    public SqlNode getSqlTemplate(String groupKey, List<String> phyTableNames) {
+        Map<String, SqlNode> allPhyTbDef = getGroupPhyTbDefinition();
+        if (GeneralUtil.isNotEmpty(phyTableNames) && phyTableNames.size() == 1) {
+            return allPhyTbDef.containsKey(phyTableNames.get(0)) ? allPhyTbDef.get(phyTableNames.get(0)) :
+                getSqlTemplate();
+        }
+        SqlNode sqlTemplate = getSqlTemplate();
+        if (!isContainPhysicalPartition() && ((SqlCreateTable) sqlTemplate).getSqlPartition() != null) {
+            setContainPhysicalPartition(true);
+        }
+        return sqlTemplate;
+    }
+
+    public boolean isContainPhysicalPartition() {
+        return containPhysicalPartition;
+    }
+
+    public void setContainPhysicalPartition(boolean containPhysicalPartition) {
+        this.containPhysicalPartition = containPhysicalPartition;
+    }
 }

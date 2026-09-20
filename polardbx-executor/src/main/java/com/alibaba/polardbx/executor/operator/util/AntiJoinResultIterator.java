@@ -16,21 +16,27 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.executor.chunk.Chunk;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.List;
 
-public class AntiJoinResultIterator {
+public class AntiJoinResultIterator implements MemoryCountable {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(AntiJoinResultIterator.class).instanceSize();
+
+    // ----- 1. shared references from join exec. -----
+    @FieldMemoryCounter(value = false)
     private List<Integer> matchedPosition;
-
+    @FieldMemoryCounter(value = false)
     private ChunksIndex buildChunk;
-
+    @FieldMemoryCounter(value = false)
     BlockBuilder[] blockBuilders;
 
     private final int chunkLimit;
-
     private volatile int buildPosition;
 
     /**
@@ -46,6 +52,11 @@ public class AntiJoinResultIterator {
         this.buildPosition = startOffset;
         this.blockBuilders = blockBuilders;
         this.endOffset = endOffset;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE;
     }
 
     public Chunk nextChunk() {

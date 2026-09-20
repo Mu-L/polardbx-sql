@@ -32,7 +32,7 @@ import com.alibaba.polardbx.optimizer.ccl.service.impl.CclConfigService;
 import com.alibaba.polardbx.optimizer.ccl.service.impl.CclService;
 import com.alibaba.polardbx.optimizer.ccl.service.ICclConfigService;
 import com.alibaba.polardbx.optimizer.ccl.service.ICclService;
-import com.alibaba.polardbx.optimizer.ccl.service.ICclTriggerService;
+import com.alibaba.polardbx.optimizer.ccl.service.ICclBlockerService;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
 import com.alibaba.polardbx.optimizer.core.planner.PlanCache;
@@ -154,7 +154,7 @@ public class CclManagerTest {
 
         cclConfigService = new CclConfigService() {
             @Override
-            public void init(ICclService cclService, ICclTriggerService cclTriggerService) {
+            public void init(ICclService cclService, ICclBlockerService cclBlockerService) {
                 this.cclService = cclService;
             }
         };
@@ -691,7 +691,7 @@ public class CclManagerTest {
         service.end(executionContext2);
         service.begin(executionContext2);
         service.end(executionContext2);
-        Assert.assertEquals(service.getCacheStats().get(2).intValue(), 1);
+        Assert.assertEquals(1, service.getCacheStats().get(2).intValue());
     }
 
     @Test(expected = TddlRuntimeException.class)

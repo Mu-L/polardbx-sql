@@ -53,9 +53,18 @@ public class LimitExec extends AbstractExecutor {
     void doOpen() {
         if (limit > 0) {
             createBlockBuilders();
-            for (Executor input : inputs) {
-                input.open();
+
+            // In many scenarios, if the input to a limit operator is a top-n operator
+            // and the top-n operator itself has utilized the limited-fetch optimization,
+            // then the limit operator does not need to consider skipping any elements.
+            if (inputs.size() == 1
+                && inputs.get(0) instanceof SpilledTopNExec
+                && ((SpilledTopNExec) inputs.get(0)).useLimitedFetch()) {
+                this.skipped = 0;
             }
+        }
+        for (Executor input : inputs) {
+            input.open();
         }
     }
 

@@ -21,12 +21,15 @@ import com.alibaba.polardbx.common.datatype.DecimalRoundMod;
 import com.alibaba.polardbx.common.datatype.DecimalStructure;
 import com.alibaba.polardbx.common.datatype.DecimalTypeBase;
 import com.alibaba.polardbx.common.datatype.FastDecimalUtils;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.executor.accumulator.state.NullableDecimalLongGroupState;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.Optional;
 
@@ -35,7 +38,9 @@ import static com.alibaba.polardbx.common.datatype.DecimalTypeBase.E_DEC_DIV_ZER
 import static com.alibaba.polardbx.common.datatype.DecimalTypeBase.MAX_DECIMAL_SCALE;
 
 public class DecimalAvgAccumulator extends AbstractAccumulator {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(DecimalAvgAccumulator.class).instanceSize();
 
+    @FieldMemoryCounter(value = false)
     private static final DataType[] INPUT_TYPES = new DataType[] {DataTypes.DecimalType};
 
     private final NullableDecimalLongGroupState state;
@@ -56,6 +61,11 @@ public class DecimalAvgAccumulator extends AbstractAccumulator {
             .map(i -> Math.min(i, MAX_DECIMAL_SCALE))
             .orElse(DecimalTypeBase.getDefaultDivPrecisionIncrement());
         this.cache = new Decimal();
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(state) + FastMemoryCounter.sizeOf(cache);
     }
 
     public void appendInitValue() {

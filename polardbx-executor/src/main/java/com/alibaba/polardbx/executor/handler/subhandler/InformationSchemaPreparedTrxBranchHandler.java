@@ -16,20 +16,26 @@
 
 package com.alibaba.polardbx.executor.handler.subhandler;
 
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.cursor.impl.ArrayResultCursor;
 import com.alibaba.polardbx.executor.handler.VirtualViewHandler;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.gms.topology.DbTopologyManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
-import com.alibaba.polardbx.optimizer.view.InformationSchemaPolardbxTrx;
+import com.alibaba.polardbx.optimizer.utils.OptimizerHelper;
 import com.alibaba.polardbx.optimizer.view.InformationSchemaPreparedTrxBranch;
 import com.alibaba.polardbx.optimizer.view.VirtualView;
 import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.ArrayUtils;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * @author yaozhili
@@ -51,6 +57,7 @@ public class InformationSchemaPreparedTrxBranchHandler extends BaseVirtualViewSu
             if (StringUtils.containsIgnoreCase(dnId, "pxc-xdb-m-")) {
                 continue;
             }
+            Map<String, List<String>> schemaAndGroupsCache = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
             try (Connection conn = DbTopologyManager.getConnectionForStorage(dnId);
                 Statement stmt = conn.createStatement()) {
                 final ResultSet rs = stmt.executeQuery("XA RECOVER");
@@ -59,7 +66,28 @@ public class InformationSchemaPreparedTrxBranchHandler extends BaseVirtualViewSu
                     final String gtridLength = rs.getString("gtrid_length");
                     final String bqualLength = rs.getString("bqual_length");
                     final String data = rs.getString("data");
-                    cursor.addRow(new Object[] {dnId, formatId, gtridLength, bqualLength, data});
+
+                    String transId = null;
+                    String primarySchema = null;
+                    String primaryGroup = null;
+                    final byte[] gtridData = Arrays.copyOfRange(data.getBytes(), 0, Integer.parseInt(gtridLength));
+                    if (ExecUtils.checkGtridPrefix(gtridData)) {
+                        int atSymbolIndex = ArrayUtils.indexOf(gtridData, (byte) '@');
+                        transId = new String(gtridData, 5, atSymbolIndex - 5);
+                        String primaryGroupUid =
+                            new String(gtridData, atSymbolIndex + 1, gtridData.length - atSymbolIndex - 1);
+                        Pair<String, String> schemaAndGroup =
+                            OptimizerHelper.getServerConfigManager()
+                                .findGroupByUniqueId(Long.parseUnsignedLong(primaryGroupUid, 16), schemaAndGroupsCache);
+                        if (null != schemaAndGroup) {
+                            primarySchema = schemaAndGroup.getKey();
+                            primaryGroup = schemaAndGroup.getValue();
+                        }
+                    }
+
+                    cursor.addRow(new Object[] {
+                        dnId, formatId, gtridLength, bqualLength, data,
+                        transId, primarySchema, primaryGroup});
                 }
             } catch (Exception e) {
                 throw new RuntimeException(

@@ -327,7 +327,7 @@ public class RelMdPredicates
     final RelNode left = semiJoin.getInput(0);
     final RelNode right = semiJoin.getInput(1);
     if (semiJoin.getJoinType() == JoinRelType.ANTI) {
-      return RelOptPredicateList.EMPTY;
+      return mq.getPulledUpPredicates(left);
     }
     final RelOptPredicateList leftInfo = mq.getPulledUpPredicates(left);
     final RelOptPredicateList rightInfo = mq.getPulledUpPredicates(right);

@@ -55,8 +55,20 @@ public class LogicalShowIndexHandlerTest {
                 //mock Table MetaDB Utils
                 try (MockedStatic<MetaDbUtil> mockedMetaDbUtil = mockStatic(MetaDbUtil.class)) {
                     List<IndexesInfoSchemaRecord> tables = new ArrayList<>();
-                    tables.add(mock(IndexesInfoSchemaRecord.class));
-                    tables.add(mock(IndexesInfoSchemaRecord.class));
+                    IndexesInfoSchemaRecord ordinaryIndex = new IndexesInfoSchemaRecord();
+                    ordinaryIndex.tableName = tableName;
+                    ordinaryIndex.indexName = "idx_normal";
+                    ordinaryIndex.indexType = "BTREE";
+                    ordinaryIndex.comment = "ordinary-comment";
+                    ordinaryIndex.indexComment = "ordinary-index-comment";
+                    tables.add(ordinaryIndex);
+                    IndexesInfoSchemaRecord vectorIndex = new IndexesInfoSchemaRecord();
+                    vectorIndex.tableName = tableName;
+                    vectorIndex.indexName = "idx_vector";
+                    vectorIndex.indexType = "VECTOR";
+                    vectorIndex.comment = "";
+                    vectorIndex.indexComment = "M=6, DISTANCE=EUCLIDEAN, EF_CONSTRUCTION=40, DIM=3";
+                    tables.add(vectorIndex);
                     mockedMetaDbUtil.when(() -> MetaDbUtil.query(anyString(), any(), any(), any()))
                         .thenReturn(tables);
                     //verify
@@ -67,6 +79,13 @@ public class LogicalShowIndexHandlerTest {
                     Cursor result = (Cursor) method.invoke(logicalShowIndexHandler, logicalPlan, ec, schemaName);
                     Assert.assertTrue(
                         result instanceof ArrayResultCursor && ((ArrayResultCursor) result).getRows().size() == 2);
+                    ArrayResultCursor resultCursor = (ArrayResultCursor) result;
+                    Object[] ordinaryRow = resultCursor.getRows().get(0).getValues().toArray();
+                    org.junit.Assert.assertEquals("ordinary-comment", ordinaryRow[11]);
+                    org.junit.Assert.assertEquals("ordinary-index-comment", ordinaryRow[12]);
+                    Object[] vectorRow = resultCursor.getRows().get(1).getValues().toArray();
+                    org.junit.Assert.assertEquals("", vectorRow[11]);
+                    org.junit.Assert.assertEquals(vectorIndex.indexComment, vectorRow[12]);
                 }
             }
         }

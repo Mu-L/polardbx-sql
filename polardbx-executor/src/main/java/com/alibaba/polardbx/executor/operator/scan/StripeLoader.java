@@ -16,10 +16,15 @@
 
 package com.alibaba.polardbx.executor.operator.scan;
 
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
 import org.apache.orc.impl.InStream;
 import org.apache.orc.impl.StreamName;
 
 import java.io.Closeable;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -31,8 +36,17 @@ import java.util.function.Supplier;
  * <p>
  * These methods should be called by ColumnReader or some external IO task scheduler.
  */
-public interface StripeLoader extends Closeable {
+public interface StripeLoader extends MemoryCountable {
+
+    void setOperatorMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId);
+
+    void setVersionStorageStatistics(VersionStorageStatistics versionStorageStatistics);
+
     void open();
+
+    void close() throws IOException;
+
+    void release();
 
     /**
      * Load several columns with different row group bitmaps.
@@ -65,6 +79,8 @@ public interface StripeLoader extends Closeable {
 
     CompletableFuture<Map<StreamName, InStream>> load(int columnId, boolean[] targetRowGroups,
                                                       Supplier<Boolean> controller);
+
+    long getIOMemoryUsage(List<Integer> columnIds, Map<Integer, boolean[]> rowGroupBitmaps);
 
     /**
      * Clear the memory resources of given stream.

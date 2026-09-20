@@ -21,9 +21,13 @@ import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.optimizer.PlannerContext;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.core.TddlOperatorTable;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalIndexScan;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.util.LogicalViewCommonGroupInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfoUtil;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
@@ -49,10 +53,12 @@ import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexUtil;
+import org.apache.calcite.rex.RexVisitorImpl;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.SqlSelect;
+import org.apache.calcite.util.Util;
 import org.apache.commons.collections.ListUtils;
 import org.apache.commons.lang.StringUtils;
 
@@ -129,10 +135,13 @@ public class PushJoinRule extends RelOptRule {
         // 连接的左表一定是最后下推下去的，位于LeftView的最右
         String leftTable = leftView.getShardingTable();
         String rightTable = rightView.getShardingTable();
+
         final PlannerContext plannerContext = PlannerContext.getPlannerContext(join);
+        ParamManager paramManager = plannerContext.getParamManager();
         final Map<String, Object> extraCmds = plannerContext.getExtraCmds();
-        boolean enableGroupParallelism = plannerContext.getExecutionContext().getGroupParallelism() > 1;
-        boolean autoCommit = plannerContext.getExecutionContext().isAutoCommit();
+        ExecutionContext executionContext = plannerContext.getExecutionContext();
+        boolean enableGroupParallelism = executionContext.getGroupParallelism() > 1;
+        boolean autoCommit = executionContext.isAutoCommit();
 
         SqlKind sqlKind = plannerContext.getSqlKind();
         String pushPolicy = null;
@@ -153,46 +162,68 @@ public class PushJoinRule extends RelOptRule {
 
         // 全部使用引用，而非列名来判断，列名不可靠，不可靠，不可靠
         final List<Integer> lShardColumnRef = new ArrayList<>();
+
         final List<Integer> rShardColumnRef = new ArrayList<>();
+        TableMeta leftTableMeta = executionContext.getSchemaManager(schemaName).getTable(leftTable);
+        TableMeta rightTableMeta = executionContext.getSchemaManager(schemaName).getTable(rightTable);
         if (leftView.isNewPartDbTbl() && rightView.isNewPartDbTbl()) {
-            PartitionInfo leftPartitionInfo = tddlRuleManager.getPartitionInfoManager().getPartitionInfo(leftTable);
-            PartitionInfo rightPartitionInfo = tddlRuleManager.getPartitionInfoManager().getPartitionInfo(rightTable);
+            PartitionInfo leftPartitionInfo = leftTableMeta.getPartitionInfo();
+            PartitionInfo rightPartitionInfo = rightTableMeta.getPartitionInfo();
+
+            /**
+             * Check if need pushjoin for any replicas table exists in join sql
+             */
+            if (!checkIfAllowPushJoinWhenExistsReplicasTable(
+                executionContext,
+                sqlKind,
+                leftView,
+                rightView,
+                leftPartitionInfo,
+                rightPartitionInfo)) {
+                return false;
+            }
 
             /**
              * If any broadcast tbl use partition selection syntax like 'xxx_bro partition(p1)',
              * then forbid pushing join
              */
             if (leftPartitionInfo.isBroadcastTable()) {
+                /**
+                 * leftPartitionInfo is broadcast, then leftView must are all broadcast tables,
+                 * because the leftPartitionInfo the partInfo of from leftView.getShardingTable();
+                 */
                 if (leftView.useSelectPartitions()) {
                     return false;
                 }
 
                 if (!rightPartitionInfo.isBroadcastTable()) {
-                    if (leftView.getLockMode() != SqlSelect.LockMode.UNDEF || sqlKind.belongsTo(SqlKind.DML)) {
-                        if (enableGroupParallelism) {
-                            boolean allowPushDown = checkIfAllowPushDownBroTblJoin(leftView, sqlKind, autoCommit);
-                            if (!allowPushDown) {
-                                return false;
-                            }
-                        }
+                    if (!PlannerUtils.checkAllowPushJoinForBroadcastTblAndOtherOtherTbl(leftPartitionInfo,
+                        rightPartitionInfo)) {
+                        return false;
+                    }
+
+                    if (!checkIfAllowPushJoinWithLock(leftView, sqlKind, enableGroupParallelism, autoCommit)) {
+                        return false;
                     }
                 }
 
             }
             if (rightPartitionInfo.isBroadcastTable()) {
+                /**
+                 * rightPartitionInfo is broadcast, then rightView must are all broadcast tables,
+                 * because the rightPartitionInfo the partInfo of from rightView.getShardingTable();
+                 */
                 if (rightView.useSelectPartitions()) {
                     return false;
                 }
 
                 if (!leftPartitionInfo.isBroadcastTable()) {
-                    if (rightView.getLockMode() != SqlSelect.LockMode.UNDEF || sqlKind.belongsTo(SqlKind.DML)) {
-                        if (enableGroupParallelism) {
-//                            return false;
-                            boolean allowPushDown = checkIfAllowPushDownBroTblJoin(rightView, sqlKind, autoCommit);
-                            if (!allowPushDown) {
-                                return false;
-                            }
-                        }
+                    if (!PlannerUtils.checkAllowPushJoinForBroadcastTblAndOtherOtherTbl(rightPartitionInfo,
+                        leftPartitionInfo)) {
+                        return false;
+                    }
+                    if (!checkIfAllowPushJoinWithLock(rightView, sqlKind, enableGroupParallelism, autoCommit)) {
+                        return false;
                     }
                 }
             }
@@ -200,6 +231,9 @@ public class PushJoinRule extends RelOptRule {
             switch (joinType) {
             case INNER:
                 if (leftPartitionInfo.isBroadcastTable() || rightPartitionInfo.isBroadcastTable()) {
+                    return true;
+                }
+                if (leftPartitionInfo.isReplicasTable() || rightPartitionInfo.isReplicasTable()) {
                     return true;
                 }
                 break;
@@ -210,10 +244,45 @@ public class PushJoinRule extends RelOptRule {
                 if (rightPartitionInfo.isBroadcastTable()) {
                     return true;
                 }
+                if (rightPartitionInfo.isReplicasTable()) {
+                    return true;
+                }
+                if (paramManager.getBoolean(ConnectionParams.ENABLE_PUSH_SINGLE_GROUP_JOIN)) {
+                    boolean rightViewIsSingleGroup = rightView.isSingleGroup();
+                    if (leftPartitionInfo.isBroadcastTable() && rightViewIsSingleGroup) {
+                        return true;
+                    }
+                    boolean isLeftLvContainReplicas = leftView.containAnyReplicasTables(executionContext);
+                    if (isLeftLvContainReplicas) {
+                        LogicalViewCommonGroupInfo leftGrpKeyInfo =
+                            leftView.calcCommonGroupKeyInfoForAutoDbTables(executionContext);
+                        if (leftGrpKeyInfo.isAllowRandomSelected() && rightViewIsSingleGroup) {
+                            return true;
+                        }
+                    }
+                }
                 break;
             case RIGHT:
                 if (leftPartitionInfo.isBroadcastTable()) {
                     return true;
+                }
+                if (leftPartitionInfo.isReplicasTable()) {
+                    return true;
+                }
+                if (paramManager.getBoolean(ConnectionParams.ENABLE_PUSH_SINGLE_GROUP_JOIN)) {
+                    boolean leftViewIsSingleGroup = leftView.isSingleGroup();
+                    if (rightPartitionInfo.isBroadcastTable() && leftViewIsSingleGroup) {
+                        return true;
+                    }
+
+                    boolean isRightLvContainReplicas = rightView.containAnyReplicasTables(executionContext);
+                    if (isRightLvContainReplicas) {
+                        LogicalViewCommonGroupInfo rightGrpKeyInfo =
+                            rightView.calcCommonGroupKeyInfoForAutoDbTables(executionContext);
+                        if (rightGrpKeyInfo.isAllowRandomSelected() && leftViewIsSingleGroup) {
+                            return true;
+                        }
+                    }
                 }
                 break;
             case FULL:
@@ -250,7 +319,7 @@ public class PushJoinRule extends RelOptRule {
                  * 基于单表/广播表判断下推
                  */
                 if (TableTopologyUtil.supportPushSingleOrBroadcastDrdsTable(
-                    leftTable, rightTable, tddlRuleManager, joinType)) {
+                    leftTable, rightTable, tddlRuleManager, joinType, leftView, rightView, paramManager)) {
                     return true;
                 }
 
@@ -281,8 +350,34 @@ public class PushJoinRule extends RelOptRule {
         return findShardColumnMatch(rel, rel, lShardColumnRef, rShardColumnRef);
     }
 
-    private static boolean checkIfAllowPushDownBroTblJoin(LogicalView lv, SqlKind sqlKind,
-                                                          boolean autoCommit) {
+    private static boolean checkIfAllowPushJoinWithLock(LogicalView logicalView,
+                                                        SqlKind sqlKind,
+                                                        boolean enableGroupParallelism,
+                                                        boolean autoCommit) {
+        if (logicalView.getLockMode() != SqlSelect.LockMode.UNDEF || sqlKind.belongsTo(SqlKind.DML)) {
+            if (enableGroupParallelism) {
+                /**
+                 * <pre>
+                 * For broadcast/replicas table, each physical Group has only one phyTbl,
+                 * so if the broadcast/replicas table join partitioned table with "for update",
+                 * should not allow pushjoin if group parallelism is enabled(group_parallelism > 0).
+                 * because ecch the pushdown stmt of "partPhyTbl join Concurrent locking for update"
+                 * will causing concurrent locking on the phyTbl of Concurrent locking
+                 * </pre>
+                 *
+                 */
+                boolean allowPushDown = checkIfAllowPushDownJoinWithinDml(logicalView, sqlKind, autoCommit);
+                if (!allowPushDown) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean checkIfAllowPushDownJoinWithinDml(LogicalView lv,
+                                                             SqlKind sqlKind,
+                                                             boolean autoCommit) {
         boolean allowPushDown = false;
         if (lv.getLockMode() != SqlSelect.LockMode.UNDEF) {
             allowPushDown = false;
@@ -311,7 +406,12 @@ public class PushJoinRule extends RelOptRule {
             }
         }
 
-        // 将条件分为三部分：ON中的条件，作用于左孩子的条件和作用于右孩子的条件
+        // FETCH_BLOB is CN-only (fetches blob from OSS), must never reach DN.
+        // Check unconditionally, regardless of IGNORE_UN_PUSHABLE_FUNC_IN_JOIN flag.
+        if (containsCnOnlyFunction(joinCondition)) {
+            return;
+        }
+
         List<RexNode> leftFilters = new ArrayList<>();
         List<RexNode> rightFilters = new ArrayList<>();
         boolean ignoreNonPushFuncInJoin = Optional.ofNullable(PlannerContext.getPlannerContext(rel)).map(
@@ -624,5 +724,120 @@ public class PushJoinRule extends RelOptRule {
         }
 
         return true;
+    }
+
+    protected boolean checkIfAllowPushJoinWhenExistsReplicasTable(ExecutionContext executionContext,
+                                                                  SqlKind sqlKind,
+                                                                  LogicalView leftView,
+                                                                  LogicalView rightView,
+                                                                  PartitionInfo leftPartitionInfo,
+                                                                  PartitionInfo rightPartitionInfo) {
+
+        boolean enableGroupParallelism = executionContext.getGroupParallelism() > 1;
+        boolean autoCommit = executionContext.isAutoCommit();
+
+        /**
+         *
+         * <pre>
+         * Come here check two special cases:
+         *  1. leftLv are all replicas table and rightLv are all replicas table:
+         *      should push join by their common groupKeySet
+         *
+         *  2. both leftLv and rightLv are all replicas tables or dble partition tables;
+         *      if groupKeySet of the replicas-tables can cover the groupKeySet of  all the partition-tables,
+         *      then should push join by the groupKeySet of  all the partition-tables
+         * </pre>
+         *
+         */
+        boolean isLeftLvContainReplicas = leftView.containAnyReplicasTables(executionContext);
+        boolean isRightLvContainReplicas = rightView.containAnyReplicasTables(executionContext);
+
+        if (!isLeftLvContainReplicas && !isRightLvContainReplicas) {
+            // no found any replicas table, so ignore
+            return true;
+        }
+
+        boolean leftViewAreAllReplicasOrBroadcast =
+            leftPartitionInfo.isBroadcastTable() || leftPartitionInfo.isReplicasTable();
+        boolean leftViewUseSelectPartitions = leftView.useSelectPartitions();
+        boolean rightViewAreAllReplicasOrBroadcast =
+            rightPartitionInfo.isBroadcastTable() || rightPartitionInfo.isReplicasTable();
+        boolean rightViewUseSelectPartitions = rightView.useSelectPartitions();
+        if (leftViewAreAllReplicasOrBroadcast) {
+            if (leftViewUseSelectPartitions) {
+                return false;
+            }
+            if (!rightViewAreAllReplicasOrBroadcast) {
+                if (!checkIfAllowPushJoinWithLock(rightView, sqlKind, enableGroupParallelism, autoCommit)) {
+                    return false;
+                }
+            }
+        }
+
+        if (rightViewAreAllReplicasOrBroadcast) {
+            if (rightViewUseSelectPartitions) {
+                return false;
+            }
+            if (!leftViewAreAllReplicasOrBroadcast) {
+                if (!checkIfAllowPushJoinWithLock(leftView, sqlKind, enableGroupParallelism, autoCommit)) {
+                    return false;
+                }
+            }
+        }
+
+        LogicalViewCommonGroupInfo commonGroupKeyInfoOfLeftLv =
+            leftView.calcCommonGroupKeyInfoForAutoDbTables(executionContext);
+        LogicalViewCommonGroupInfo commonGroupKeyInfoOfRightLv =
+            rightView.calcCommonGroupKeyInfoForAutoDbTables(executionContext);
+
+        if (commonGroupKeyInfoOfLeftLv.isAllowRandomSelected() && commonGroupKeyInfoOfRightLv.isAllowRandomSelected()) {
+            Set<String> commonGroupKeySet = new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+            commonGroupKeySet.addAll(commonGroupKeyInfoOfLeftLv.getCommonGroupKeySet());
+            commonGroupKeySet.retainAll(commonGroupKeyInfoOfRightLv.getCommonGroupKeySet());
+            if (commonGroupKeySet.isEmpty()) {
+                return false;
+            }
+        } else if (!commonGroupKeyInfoOfLeftLv.isAllowRandomSelected()
+            && commonGroupKeyInfoOfRightLv.isAllowRandomSelected()) {
+            Set<String> commonGroupKeySet = new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+            commonGroupKeySet.addAll(commonGroupKeyInfoOfRightLv.getCommonGroupKeySet());
+            if (!commonGroupKeySet.containsAll(commonGroupKeyInfoOfLeftLv.getCommonGroupKeySet())) {
+                return false;
+            }
+        } else if (commonGroupKeyInfoOfLeftLv.isAllowRandomSelected()
+            && !commonGroupKeyInfoOfRightLv.isAllowRandomSelected()) {
+            Set<String> commonGroupKeySet = new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+            commonGroupKeySet.addAll(commonGroupKeyInfoOfLeftLv.getCommonGroupKeySet());
+            if (!commonGroupKeySet.containsAll(commonGroupKeyInfoOfRightLv.getCommonGroupKeySet())) {
+                return false;
+            }
+        } else {
+            if (!commonGroupKeyInfoOfLeftLv.getForceMatchTgId()
+                .equals(commonGroupKeyInfoOfRightLv.getForceMatchTgId())) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static boolean containsCnOnlyFunction(RexNode node) {
+        if (node == null) {
+            return false;
+        }
+        try {
+            node.accept(new RexVisitorImpl<Void>(true) {
+                @Override
+                public Void visitCall(RexCall call) {
+                    if (call.op == TddlOperatorTable.FETCH_BLOB) {
+                        throw new Util.FoundOne(call);
+                    }
+                    return super.visitCall(call);
+                }
+            });
+            return false;
+        } catch (Util.FoundOne e) {
+            return true;
+        }
     }
 }

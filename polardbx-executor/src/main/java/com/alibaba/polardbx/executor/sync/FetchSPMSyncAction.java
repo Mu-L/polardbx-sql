@@ -99,19 +99,22 @@ public class FetchSPMSyncAction implements ISyncAction {
         result.addColumn("HINT", DataTypes.StringType);
         result.addColumn("USE_POST_PLANNER", DataTypes.StringType);
         result.addColumn("HOT_EVOLVED", DataTypes.StringType);
+        result.addColumn("VERSION", DataTypes.StringType);
+        result.addColumn("GRAY_PERCENTAGE", DataTypes.IntegerType);
+        result.addColumn("IS_GRAY_STATUS", DataTypes.StringType);
 
         if (baselineMap == null) {
             return result;
         }
         String instId = ServerInstIdManager.getInstance().getInstId();
-        String host = TddlNode.getHost();
+        String hostAndPort = TddlNode.getHost() + ":" + TddlNode.getPort();
         for (Map.Entry<String, BaselineInfo> entry : baselineMap.entrySet()) {
             String paramSql = entry.getKey();
             BaselineInfo baselineInfo = entry.getValue();
             Set<Point> points = baselineInfo.getPointSet();
             if (baselineInfo.isRebuildAtLoad()) {
                 result.addRow(new Object[] {
-                    host,
+                    hostAndPort,
                     instId,
                     baselineInfo.getId(),
                     schemaName,
@@ -131,7 +134,11 @@ public class FetchSPMSyncAction implements ISyncAction {
                     baselineInfo.isRebuildAtLoad() + "",
                     baselineInfo.getHint(),
                     baselineInfo.isUsePostPlanner() + "",
-                    String.valueOf(baselineInfo.isHotEvolution())
+                    String.valueOf(baselineInfo.isHotEvolution()),
+                    "",
+                    "",
+                    0,
+                    "NO"
                 });
             }
             for (PlanInfo planInfo : baselineInfo.getPlans()) {
@@ -146,7 +153,7 @@ public class FetchSPMSyncAction implements ISyncAction {
                 Point point = findPoint(points, planInfo.getId());
                 NumberFormat numberFormat = NumberFormat.getPercentInstance();
                 result.addRow(new Object[] {
-                    host,
+                    hostAndPort,
                     instId,
                     baselineInfo.getId(),
                     schemaName,
@@ -164,9 +171,12 @@ public class FetchSPMSyncAction implements ISyncAction {
                     paramSql,
                     planExplain,
                     baselineInfo.isRebuildAtLoad() + "",
-                    baselineInfo.getHint(),
+                    planInfo.getFixHint(),
                     baselineInfo.isUsePostPlanner() + "",
-                    String.valueOf(baselineInfo.isHotEvolution())
+                    String.valueOf(baselineInfo.isHotEvolution()),
+                    planInfo.getVersion(),
+                    planInfo.getGrayPercentage(),
+                    planInfo.isInGrayStatus() ? "YES" : "NO"
                 });
             }
         }

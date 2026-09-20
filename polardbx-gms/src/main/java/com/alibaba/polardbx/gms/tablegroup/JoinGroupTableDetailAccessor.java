@@ -43,7 +43,7 @@ public class JoinGroupTableDetailAccessor extends AbstractAccessor {
     private static final String ALL_COLUMNS =
         "`id`,`gmt_create`,`gmt_modified`,`table_schema`,`join_group_id`,`table_Name`";
 
-    private static final String ALL_VALUES = " (null,null,now(),?,?,?)";
+    private static final String ALL_VALUES = " (null,now(),now(),?,?,?)";
 
     private static final String INSERT_JOINGROUP_TABLE_DETAIL = "insert into " + GmsSystemTables.JOIN_GROUP_TABLE_DETAIL
         + "(" + ALL_COLUMNS + " ) VALUES " + ALL_VALUES;

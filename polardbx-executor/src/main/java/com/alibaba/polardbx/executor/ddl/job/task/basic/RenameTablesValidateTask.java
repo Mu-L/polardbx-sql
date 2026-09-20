@@ -58,6 +58,8 @@ public class RenameTablesValidateTask extends BaseValidateTask {
             TableValidator.validateTableName(newTableName);
             TableValidator.validateTableNameLength(newTableName);
             TableValidator.validateTableWithCCI(schemaName, tableName, executionContext, SqlKind.RENAME_TABLE);
+            TableValidator.validateTableWithPureColumnar(schemaName, tableName, executionContext, SqlKind.RENAME_TABLE);
+            TableValidator.validateTableWithExternalizedColumn(schemaName, tableName, SqlKind.RENAME_TABLE);
 
             TableValidator.validateRenamesTableNotContainsFk(schemaName, tableName, executionContext);
 
@@ -75,6 +77,8 @@ public class RenameTablesValidateTask extends BaseValidateTask {
             if (!allTableNamesTmp.contains(newTableName)) {
                 TableValidator.validateTableNamesForRename(schemaName, tableName, newTableName);
             }
+
+            TableValidator.validateConstraintName(schemaName, tableName, newTableName, executionContext);
         }
     }
 

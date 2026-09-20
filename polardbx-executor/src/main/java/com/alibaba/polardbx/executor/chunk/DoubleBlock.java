@@ -103,6 +103,21 @@ public class DoubleBlock extends AbstractBlock {
     }
 
     @Override
+    public int compareAssertedSameType(int position, Block otherBlock, int otherPosition) {
+        boolean isNullLeft = isNull(position);
+        boolean isNullRight = otherBlock.isNull(otherPosition);
+        if (isNullLeft && isNullRight) {
+            return 0;
+        } else if (isNullLeft) {
+            return -1;
+        } else if (isNullRight) {
+            return 1;
+        } else {
+            return Double.compare(getDouble(position), otherBlock.getDouble(otherPosition));
+        }
+    }
+
+    @Override
     public void writePositionTo(int position, BlockBuilder blockBuilder) {
         if (isNull(position)) {
             blockBuilder.appendNull();

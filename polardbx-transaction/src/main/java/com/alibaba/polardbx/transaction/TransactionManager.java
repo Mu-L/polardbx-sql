@@ -34,17 +34,20 @@ import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.common.StorageInfoManager;
 import com.alibaba.polardbx.executor.spi.ITransactionManager;
-import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
-import com.alibaba.polardbx.optimizer.utils.ITimestampOracle;
+import com.alibaba.polardbx.optimizer.utils.IColumnarTransaction;
+import com.alibaba.polardbx.common.trx.ITimestampOracle;
 import com.alibaba.polardbx.optimizer.utils.ITransaction;
 import com.alibaba.polardbx.optimizer.utils.ITransactionManagerUtil;
+import com.alibaba.polardbx.transaction.async.AcRecoverTaskWrapper;
 import com.alibaba.polardbx.transaction.async.AsyncTaskQueue;
+import com.alibaba.polardbx.transaction.async.BaseTimerTaskWrapper;
 import com.alibaba.polardbx.transaction.async.DeadlockDetectionTaskWrapper;
 import com.alibaba.polardbx.transaction.async.MdlDeadlockDetectionTask;
 import com.alibaba.polardbx.transaction.async.RotateGlobalTxLogTaskWrapper;
+import com.alibaba.polardbx.transaction.async.CCLExecutionTimeTaskWrapper;
 import com.alibaba.polardbx.transaction.async.SyncPointTaskWrapper;
 import com.alibaba.polardbx.transaction.async.TransactionIdleTimeoutTaskWrapper;
 import com.alibaba.polardbx.transaction.async.TransactionStatisticsTaskWrapper;
@@ -58,11 +61,14 @@ import com.alibaba.polardbx.transaction.trx.AutoCommitTransaction;
 import com.alibaba.polardbx.transaction.trx.AutoCommitTsoTransaction;
 import com.alibaba.polardbx.transaction.trx.BestEffortTransaction;
 import com.alibaba.polardbx.transaction.trx.CobarStyleTransaction;
+import com.alibaba.polardbx.transaction.trx.ColumnarExplicitTransaction;
+import com.alibaba.polardbx.transaction.trx.ColumnarTransaction;
 import com.alibaba.polardbx.transaction.trx.ITsoTransaction;
 import com.alibaba.polardbx.transaction.trx.IgnoreBinlogTransaction;
 import com.alibaba.polardbx.transaction.trx.MppReadOnlyTransaction;
 import com.alibaba.polardbx.transaction.trx.ReadOnlyTsoTransaction;
 import com.alibaba.polardbx.transaction.trx.SyncPointTransaction;
+import com.alibaba.polardbx.transaction.trx.TsoOptTransaction;
 import com.alibaba.polardbx.transaction.trx.TsoTransaction;
 import com.alibaba.polardbx.transaction.trx.XATransaction;
 import com.alibaba.polardbx.transaction.trx.XATsoTransaction;
@@ -117,13 +123,17 @@ public class TransactionManager extends AbstractLifecycle implements ITransactio
 
     private RotateGlobalTxLogTaskWrapper cleanTask;
 
-    private static DeadlockDetectionTaskWrapper deadlockDetectionTask;
+    private static BaseTimerTaskWrapper deadlockDetectionTask;
 
-    private static TransactionStatisticsTaskWrapper transactionStatisticsTask;
+    private static BaseTimerTaskWrapper transactionStatisticsTask;
 
-    private static TransactionIdleTimeoutTaskWrapper transactionIdleTimeoutTask;
+    private static BaseTimerTaskWrapper transactionIdleTimeoutTask;
 
-    private static SyncPointTaskWrapper syncPointTask;
+    private static CCLExecutionTimeTaskWrapper CCLExecutionTimeTaskWrapper;
+
+    private static BaseTimerTaskWrapper syncPointTask;
+
+    private static BaseTimerTaskWrapper acRecoverTask;
 
     private static TimerTask mdlDeadlockDetectionTask;
     private TimerTask killTimeoutTransactionTask;
@@ -154,6 +164,7 @@ public class TransactionManager extends AbstractLifecycle implements ITransactio
     static {
         timestampOracle = new ClusterTimestampOracle();
         timestampOracle.init();
+        ITimestampOracle.setInstance(timestampOracle);
     }
 
     @Override
@@ -251,7 +262,6 @@ public class TransactionManager extends AbstractLifecycle implements ITransactio
         switch (trxConfig) {
         case XA:
             // 如果启用了 DRDS XA 事务，定期检查 XA RECOVER
-            enableXaRecoverScan();
             if ((supportXaTso() || InstanceVersion.isMYSQL80())
                 && executionContext.isEnableXaTso()) {
                 trx = new XATsoTransaction(executionContext, this);
@@ -260,10 +270,20 @@ public class TransactionManager extends AbstractLifecycle implements ITransactio
             }
             break;
         case TSO:
-            if (storageManager.isSupportSyncPoint() && executionContext.isMarkSyncPoint()) {
+            // Priority:
+            // sync point transaction
+            // async commit transaction
+            // tso opt transaction
+            // default tso transaction
+            if ((InstanceVersion.isMYSQL80() || storageManager.isSupportSyncPoint())
+                && executionContext.isMarkSyncPoint()) {
                 trx = new SyncPointTransaction(executionContext, this);
-            } else if (executionContext.enableAsyncCommit() && supportAsyncCommit()) {
-                trx = new AsyncCommitTransaction(executionContext, this);
+            } else if (executionContext.enableAsyncCommit80() && supportAsyncCommit8032()) {
+                trx = new AsyncCommitTransaction(executionContext, this, false);
+            } else if (executionContext.enableAsyncCommit57() && supportAsyncCommit57()) {
+                trx = new AsyncCommitTransaction(executionContext, this, true);
+            } else if (storageManager.isSupportTsoOpt() && executionContext.isEnableTsoOpt()) {
+                trx = new TsoOptTransaction(executionContext, this);
             } else {
                 trx = new TsoTransaction(executionContext, this);
             }
@@ -298,6 +318,9 @@ public class TransactionManager extends AbstractLifecycle implements ITransactio
         case COLUMNAR_READ_ONLY_TRANSACTION:
             trx = new ColumnarTransaction(executionContext, this);
             break;
+        case COLUMNAR_RO_EXPLICIT_TRANSACTION:
+            trx = new ColumnarExplicitTransaction(executionContext, this);
+            break;
         case ARCHIVE:
             trx = new ArchiveTransaction(executionContext, this);
             break;
@@ -307,6 +330,9 @@ public class TransactionManager extends AbstractLifecycle implements ITransactio
         default:
             throw new AssertionError("TransactionType: " + trxConfig.name() + " not supported");
         }
+
+        // 仅在具体事务对象完整构造完成后再注册，避免构造期 this 逃逸。
+        register(trx);
 
         // 配置会在执行器里设置
         return trx;
@@ -369,6 +395,22 @@ public class TransactionManager extends AbstractLifecycle implements ITransactio
         }
     }
 
+    private void scheduleAcRecoverTask() {
+        // Schedule deadlock detection task if it is null.
+        if (null == acRecoverTask) {
+            synchronized (TransactionManager.class) {
+                if (null == acRecoverTask) {
+                    try {
+                        acRecoverTask = new AcRecoverTaskWrapper(properties, executor.getAsyncQueue());
+                    } catch (Throwable t) {
+                        acRecoverTask = null;
+                        TransactionLogger.warn("Failed to init ac recover task. " + t.getMessage());
+                    }
+                }
+            }
+        }
+    }
+
     private void scheduleTransactionIdleTimeoutTask() {
         // Schedule deadlock detection task if it is null.
         if (null == transactionIdleTimeoutTask) {
@@ -380,6 +422,23 @@ public class TransactionManager extends AbstractLifecycle implements ITransactio
                     } catch (Throwable t) {
                         transactionIdleTimeoutTask = null;
                         TransactionLogger.warn("Failed to init transaction idle timeout task.");
+                    }
+                }
+            }
+        }
+    }
+
+    private void scheduleCCLExecutionTimeScanTask() {
+        // Schedule sql timeout task
+        if (CCLExecutionTimeTaskWrapper == null) {
+            synchronized (TransactionManager.class) {
+                if (CCLExecutionTimeTaskWrapper == null) {
+                    try {
+                        CCLExecutionTimeTaskWrapper =
+                            new CCLExecutionTimeTaskWrapper(properties, executor.getAsyncQueue());
+                    } catch (Throwable t) {
+                        CCLExecutionTimeTaskWrapper = null;
+                        TransactionLogger.warn("Failed to init MaxStatementTimeScan.");
                     }
                 }
             }
@@ -429,8 +488,8 @@ public class TransactionManager extends AbstractLifecycle implements ITransactio
             synchronized (this) {
                 if (null == xaRecoverTask) {
                     try {
-                        xaRecoverTask = new XARecoverTaskWrapper(properties, executor.getAsyncQueue(),schemaName,
-                            executor, supportAsyncCommit());
+                        xaRecoverTask = new XARecoverTaskWrapper(properties, executor.getAsyncQueue(), schemaName,
+                            executor, supportAsyncCommit57());
                     } catch (Throwable t) {
                         xaRecoverTask = null;
                         TransactionLogger.warn("Failed to init xa recover task.");
@@ -615,9 +674,9 @@ public class TransactionManager extends AbstractLifecycle implements ITransactio
     public long getColumnarMinSnapshotSeq() {
         long minSnapshotSeq = Long.MAX_VALUE;
         for (ITransaction transaction : trans.values()) {
-            if (transaction instanceof ColumnarTransaction) {
-                if (!((ITsoTransaction) transaction).snapshotSeqIsEmpty()) {
-                    minSnapshotSeq = Math.min(minSnapshotSeq, ((ITsoTransaction) transaction).getSnapshotSeq());
+            if (transaction instanceof IColumnarTransaction) {
+                if (!((IColumnarTransaction) transaction).snapshotSeqIsEmpty()) {
+                    minSnapshotSeq = Math.min(minSnapshotSeq, ((IColumnarTransaction) transaction).getSnapshotSeq());
                 }
             }
         }
@@ -702,10 +761,22 @@ public class TransactionManager extends AbstractLifecycle implements ITransactio
                 transactionIdleTimeoutTask.resetTask();
             }
 
+            if (null == CCLExecutionTimeTaskWrapper) {
+                scheduleCCLExecutionTimeScanTask();
+            } else {
+                CCLExecutionTimeTaskWrapper.resetTask();
+            }
+
             if (null == syncPointTask) {
                 scheduleSyncPointTask();
             } else {
                 syncPointTask.resetTask();
+            }
+
+            if (null == acRecoverTask) {
+                scheduleAcRecoverTask();
+            } else {
+                acRecoverTask.resetTask();
             }
         }
     }
@@ -728,13 +799,17 @@ public class TransactionManager extends AbstractLifecycle implements ITransactio
     }
 
     @Override
-    public boolean supportAsyncCommit() {
-        return storageManager.supportAsyncCommit();
+    public boolean supportAsyncCommit57() {
+        return storageManager.supportAsyncCommit57();
+    }
+
+    public boolean supportAsyncCommit8032() {
+        return storageManager.isSupportAsyncCommit8032();
     }
 
 
     public static boolean isExceedAsyncCommitTaskLimit() {
-        return asyncCommitTasks.get() >= InstConfUtil.getInt(ConnectionParams.ASYNC_COMMIT_TASK_LIMIT);
+        return asyncCommitTasks.get() >= DynamicConfig.getInstance().getAsyncCommitTaskLimit();
     }
 
     public static void addAsyncCommitTask() {
@@ -765,11 +840,13 @@ public class TransactionManager extends AbstractLifecycle implements ITransactio
         scheduleDeadlockDetectionTask();
         scheduleTransactionStatisticsTask();
         scheduleTransactionIdleTimeoutTask();
+        scheduleCCLExecutionTimeScanTask();
         scheduleSyncPointTask();
+        scheduleAcRecoverTask();
     }
 
     @Override
     public boolean supportXaTso() {
-        return storageManager.isSupportMarkDistributed();
+        return InstanceVersion.isMYSQL80() || storageManager.isSupportMarkDistributed();
     }
 }

@@ -37,10 +37,10 @@ public class MySqlAlterUserTest extends MysqlTest {
 
         MySqlSchemaStatVisitor visitor = new MySqlSchemaStatVisitor();
         stmt.accept(visitor);
-        
+
         String output = SQLUtils.toMySqlString(stmt);
         Assert.assertEquals("ALTER USER 'jeffrey'@'localhost' PASSWORD EXPIRE;", //
-                            output);
+            output);
 
         Assert.assertEquals(0, visitor.getTables().size());
         Assert.assertEquals(0, visitor.getColumns().size());
@@ -68,7 +68,8 @@ public class MySqlAlterUserTest extends MysqlTest {
 
         SQLStatement statement = SQLUtils.parseSingleMysqlStatement(sql);
 
-        assertEquals("ALTER USER IF EXISTS user1 IDENTIFIED BY 'auth_string' PASSWORD EXPIRE DEFAULT", statement.toString());
+        assertEquals("ALTER USER IF EXISTS user1 IDENTIFIED BY 'auth_string' PASSWORD EXPIRE DEFAULT",
+            statement.toString());
     }
 
     public void test_4() throws Exception {
@@ -76,7 +77,8 @@ public class MySqlAlterUserTest extends MysqlTest {
 
         SQLStatement statement = SQLUtils.parseSingleMysqlStatement(sql);
 
-        assertEquals("ALTER USER IF EXISTS user1 IDENTIFIED BY 'auth_string' PASSWORD EXPIRE NEVER", statement.toString());
+        assertEquals("ALTER USER IF EXISTS user1 IDENTIFIED BY 'auth_string' PASSWORD EXPIRE NEVER",
+            statement.toString());
     }
 
     public void test_5() throws Exception {
@@ -84,14 +86,27 @@ public class MySqlAlterUserTest extends MysqlTest {
 
         SQLStatement statement = SQLUtils.parseSingleMysqlStatement(sql);
 
-        assertEquals("ALTER USER IF EXISTS user1 IDENTIFIED BY 'auth_string' PASSWORD EXPIRE INTERVAL 5 DAY", statement.toString());
+        assertEquals("ALTER USER IF EXISTS user1 IDENTIFIED BY 'auth_string' PASSWORD EXPIRE INTERVAL 5 DAY",
+            statement.toString());
     }
 
     public void test_6() throws Exception {
-        String sql = "alter user IF EXISTS user1 IDENTIFIED BY 'auth_string', user2 IDENTIFIED BY 'auth_string' PASSWORD EXPIRE INTERVAL 5 DAY";
+        String sql =
+            "alter user IF EXISTS user1 IDENTIFIED BY 'auth_string', user2 IDENTIFIED BY 'auth_string' PASSWORD EXPIRE INTERVAL 5 DAY";
 
         SQLStatement statement = SQLUtils.parseSingleMysqlStatement(sql);
 
-        assertEquals("ALTER USER IF EXISTS user1 IDENTIFIED BY 'auth_string', user2 IDENTIFIED BY 'auth_string' PASSWORD EXPIRE INTERVAL 5 DAY", statement.toString());
+        assertEquals(
+            "ALTER USER IF EXISTS user1 IDENTIFIED BY 'auth_string', user2 IDENTIFIED BY 'auth_string' PASSWORD EXPIRE INTERVAL 5 DAY",
+            statement.toString());
+    }
+
+    public void test_7() throws Exception {
+        String sql = "alter user IF EXISTS user1 READ_STRATEGY NONE";
+        SQLStatement statement = SQLUtils.parseSingleMysqlStatement(sql);
+        assertEquals("ALTER USER IF EXISTS user1 READ_STRATEGY NONE", statement.toString());
+        sql = "alter user user1 READ_STRATEGY FOLlower";
+        statement = SQLUtils.parseSingleMysqlStatement(sql);
+        assertEquals("ALTER USER user1 READ_STRATEGY FOLLOWER", statement.toString());
     }
 }

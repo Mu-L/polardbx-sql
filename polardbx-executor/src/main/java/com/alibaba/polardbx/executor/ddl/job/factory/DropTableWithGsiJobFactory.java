@@ -95,8 +95,11 @@ public class DropTableWithGsiJobFactory extends DdlJobFactory {
             DdlJobDataConverter.convertToPhysicalPlanData(primaryTableTopology, primaryTablePhysicalPlans,
                 executionContext);
         ExecutableDdlJob4DropTable dropPrimaryTableJob =
-            (ExecutableDdlJob4DropTable) new DropTableJobFactory(physicalPlanData).create();
+            (ExecutableDdlJob4DropTable) new DropTableJobFactory(physicalPlanData, executionContext).create();
         result.combineTasks(dropPrimaryTableJob);
+        DdlTask dropGsiTaskAnchor = dropPrimaryTableJob.getDropGsiTaskAnchor() == null
+            ? dropPrimaryTableJob.getCdcDdlMarkTask()
+            : dropPrimaryTableJob.getDropGsiTaskAnchor();
 
         Map<String, DropGlobalIndexPreparedData> gsiPreparedDataMap = preparedData.getIndexTablePreparedDataMap();
         for (Map.Entry<String, DropGlobalIndexPreparedData> entry : gsiPreparedDataMap.entrySet()) {
@@ -112,7 +115,7 @@ public class DropTableWithGsiJobFactory extends DdlJobFactory {
                 null);
 
             result.addTaskRelationship(dropGsiJob.getValidateTask(), dropPrimaryTableJob.getRemoveMetaTask());
-            result.addSequentialTasksAfter(dropPrimaryTableJob.getCdcDdlMarkTask(),
+            result.addSequentialTasksAfter(dropGsiTaskAnchor,
                 Lists.newArrayList(
                     dropGsiJob.getDropGsiPhyDdlTask(),
                     dropGsiJob.getDropGsiTableRemoveMetaTask(),

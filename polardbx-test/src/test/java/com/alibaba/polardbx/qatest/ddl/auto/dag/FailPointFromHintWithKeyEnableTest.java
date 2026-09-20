@@ -29,7 +29,7 @@ public class FailPointFromHintWithKeyEnableTest {
 
     @Test
     public void testInjectExceptionFromHintWithKeyEnableCheck() {
-        String key = "key1";
+        String key = "FailPointFromHintWithKeyEnableTestKey1";
         FailPoint.disable(key);
         FailPoint.injectExceptionFromHintWithKeyEnableCheck(key, executionContext);
         addHint(key, "123");
@@ -38,7 +38,7 @@ public class FailPointFromHintWithKeyEnableTest {
 
     @Test(expected = RuntimeException.class)
     public void testInjectExceptionFromHintWithKeyEnableCheck2() {
-        String key = "key1";
+        String key = "FailPointFromHintWithKeyEnableTestKey1";
         addHint(key, "123");
         FailPoint.enable(key, "true");
         FailPoint.injectExceptionFromHintWithKeyEnableCheck(key, executionContext);
@@ -46,7 +46,7 @@ public class FailPointFromHintWithKeyEnableTest {
 
     @Test
     public void testInjectExceptionWithTableName() {
-        String key = "key2";
+        String key = "FailPointFromHintWithKeyEnableTestKey2";
         FailPoint.injectExceptionWithTableName("t1", key, executionContext);
         addHint(key, "t2");
         FailPoint.injectExceptionWithTableName("t1", key, executionContext);
@@ -55,7 +55,7 @@ public class FailPointFromHintWithKeyEnableTest {
 
     @Test(expected = RuntimeException.class)
     public void testInjectExceptionWithTableName2() {
-        String key = "key2";
+        String key = "FailPointFromHintWithKeyEnableTestKey2";
         FailPoint.injectExceptionWithTableName("t1", key, executionContext);
         addHint(key, "t1");
         FailPoint.injectExceptionWithTableName("t1", key, executionContext);

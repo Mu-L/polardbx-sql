@@ -1,5 +1,6 @@
 package com.alibaba.polardbx.executor.accumulator;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.LongBlock;
 import com.alibaba.polardbx.executor.chunk.LongBlockBuilder;
@@ -26,11 +27,11 @@ public class LongMaxMinAccumulatorTest {
         Accumulator minAccumulator =
             AccumulatorBuilders.create(new MinV2(), DataTypes.LongType, new DataType[] {DataTypes.LongType},
                 COUNT,
-                new ExecutionContext());
+                new ExecutionContext(), null);
         Accumulator maxAccumulator =
             AccumulatorBuilders.create(new MaxV2(), DataTypes.LongType, new DataType[] {DataTypes.LongType},
                 COUNT,
-                new ExecutionContext());
+                new ExecutionContext(), null);
 
         this.minAccumulator = (LongMaxMinAccumulator) minAccumulator;
         this.maxAccumulator = (LongMaxMinAccumulator) maxAccumulator;
@@ -38,6 +39,8 @@ public class LongMaxMinAccumulatorTest {
 
         Assert.assertEquals(1, minAccumulator.getInputTypes().length);
         Assert.assertEquals(1, maxAccumulator.getInputTypes().length);
+        MemoryCountable.checkDeviation(minAccumulator, 0d, true);
+        MemoryCountable.checkDeviation(maxAccumulator, 0d, true);
     }
 
     /**
@@ -72,6 +75,8 @@ public class LongMaxMinAccumulatorTest {
             minAccumulator.accumulate(0, block, i);
             maxAccumulator.accumulate(0, block, i);
         }
+        MemoryCountable.checkDeviation(minAccumulator, 0d, true);
+        MemoryCountable.checkDeviation(maxAccumulator, 0d, true);
 
         LongBlockBuilder minResultBuilder = new LongBlockBuilder(COUNT);
         LongBlockBuilder maxResultBuilder = new LongBlockBuilder(COUNT);
@@ -83,6 +88,8 @@ public class LongMaxMinAccumulatorTest {
         Assert.assertEquals(2, minResultBlock.getPositionCount());
         Block maxResultBlock = maxResultBuilder.build();
         Assert.assertEquals(2, maxResultBuilder.getPositionCount());
+        MemoryCountable.checkDeviation(minAccumulator, 0d, true);
+        MemoryCountable.checkDeviation(maxAccumulator, 0d, true);
 
         Assert.assertEquals(min, minResultBlock.getLong(0));
         Assert.assertEquals(max, maxResultBlock.getLong(0));

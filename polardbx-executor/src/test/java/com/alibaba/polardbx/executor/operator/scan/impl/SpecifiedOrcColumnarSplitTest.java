@@ -131,7 +131,7 @@ public class SpecifiedOrcColumnarSplitTest extends ScanWorkTest {
 
             // get status
             IOStatus<Chunk> ioStatus = scanWork.getIOStatus();
-            scanWork.invoke(SCAN_WORK_EXECUTOR);
+            scanWork.invoke(SCAN_WORK_EXECUTOR, null);
 
             // Get chunks according to state.
             boolean isCompleted = false;

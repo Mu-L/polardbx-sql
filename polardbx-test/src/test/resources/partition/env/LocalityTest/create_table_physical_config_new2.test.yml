@@ -1,0 +1,139 @@
+storageList: [$dn1, $dn2]
+dbName: "test_locality_db_physical_config_new2"
+testCases:
+  - prepareDDls:
+      - "use polardbx"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ drop database if exists test_locality_db_physical_config_new2 "
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create database test_locality_db_physical_config_new2 mode = auto LOCALITY='db_config={\"tkn[1-2]\":[\"set2\",\"tkn_0[1,2]\"],\"tkn[3,4]\":[\"set1\",\"tkn_0[3-4]\"]}';"
+      - "use test_locality_db_physical_config_new2;"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table t1(x int  AUTO_INCREMENT primary key, y int) partition by hash(x) partitions 2 locality='db_pools=tkn1,tkn4';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table t2(x int  AUTO_INCREMENT primary key, y int) partition by hash(x) partitions 2 locality='db_pools=tkn[1,3]';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table t3(x int  AUTO_INCREMENT primary key, y int) partition by hash(x) partitions 2 locality='db_pools=tkn2,tkn3';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table t4(x int  AUTO_INCREMENT primary key, y int) partition by hash(x) partitions 2 locality='db_pools=tkn[1,4]';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table t5(x int  AUTO_INCREMENT primary key, y int) partition by hash(x) partitions 2 locality='db_pools=tkn1,tkn3';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table t6(x int  AUTO_INCREMENT primary key, y int) partition by hash(x) partitions 2 locality='db_pools=tkn[2,3]';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table c1(x int  AUTO_INCREMENT primary key, y int) single locality='db_pools=tkn1';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table c2(x int  AUTO_INCREMENT primary key, y int) single locality='db_pools=tkn2';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table c3(x int  AUTO_INCREMENT primary key, y int) single locality='db_pools=tkn3';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table c4(x int  AUTO_INCREMENT primary key, y int) single locality='db_pools=tkn4';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table b1(x int  AUTO_INCREMENT primary key, y int) broadcast locality='db_pools=tkn1,tkn2,tkn3';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table b2(x int  AUTO_INCREMENT primary key, y int) broadcast locality='db_pools=tkn[1-3]';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table b3(x int  AUTO_INCREMENT primary key, y int) broadcast locality='db_pools=tkn[1,2, 3]';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table t14(x int  AUTO_INCREMENT primary key, y int) partition by hash(x) partitions 2 locality='db_pools=tkn3,tkn4';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table t15(x int  AUTO_INCREMENT primary key, y int) partition by hash(x) partitions 2 locality='db_pools=tkn[3-4]';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table r1(x int  AUTO_INCREMENT primary key, y int) replicas locality='db_set=tkn1,tkn2,tkn3';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table r2(x int  AUTO_INCREMENT primary key, y int) replicas locality='db_set=tkn[2,1,3]';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table r3(x int  AUTO_INCREMENT primary key, y int) replicas locality='db_set=tkn3,tkn2';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table r4(x int  AUTO_INCREMENT primary key, y int) replicas locality='db_set=tkn[3,2]';"
+      - "/*+TDDL:cmd_extra(BLOCK_LOGICAL_DDL=true)*/ create table t16 like t15;"
+    rejectDDls:
+      - ddl: "create table e1(x int  AUTO_INCREMENT primary key, y int) partition by hash(x) partitions 4 locality = 'db_pools=tkn1,tkn4'"
+        message: "partition number is more than valid group name"
+#      - ddl: "create table rx(x int  AUTO_INCREMENT primary key, y int) replicas locality = 'db_pools=tkn1,tkn4'"
+#        message: "unable to create non-locality or db_pools locality"
+      - ddl: "create table e2(x int  AUTO_INCREMENT primary key, y int) broadcast locality='db_pools=tkn1'"
+        message: "the locality of broadcast table is not compatible with exist tablegroup"
+      - ddl: "create table t201(a int, b int) partition by hash(a) partitions 2 locality = 'db_pools=tknx,tkny'"
+        message: "invalid locality specification for db_pools"
+      - ddl: "create table t202(a int, b int) replicas locality = 'db_pools=qkx,qky'"
+        message: "invalid locality specification for db_pools"
+      - ddl: "create database test_locality_db_xxyy2 mode = auto locality = 'db_config={\"tkn[1-2]\":[\"set1\",\"tkn_xxx\"]}'"
+        message: "invalid locality specification"
+      - ddl: "create database test_locality_db_xxyy3 mode = auto locality = 'db_config={\"tknx\":[\"set1\",\"tkn_01\"]}'"
+        message: "there has been duplicate physical db or group key"
+      - ddl: "create database test_locality_db_xxyy4 mode = auto locality = 'db_config={\"tkn[1-2]\":[\"set1\",\"tkn_xxx\"]}'"
+        message: "invalid locality specification"
+      - ddl: "create database test_locality_db_xxyy5 mode = auto locality = 'db_config={\"tknx\":[\"setx\",\"tkn_xxx\"]}'"
+        message: "storageInstLabel not found"
+      - ddl: "create database test_locality_db_xxyy6 mode = auto locality = 'db_config={\"tkn[1-2]\":[\"set[1,1]\",\"tkn_xxx\"]}'"
+        message: "invalid locality specification"
+      - ddl: "create database test_locality_db_xxyy7 mode = auto locality = 'db_config={\"tkn[2-1]\":[\"set[1,2]\",\"tkn_xxx[1,2]\"]}'"
+        message: "invalid locality specification"
+      - ddl: "create table t203(a int, b int)"
+        message: "requires partition definitions"
+      - ddl: "create table t204(a int, b int) locality='db_pools=tkn1'"
+        message: "requires partition definitions"
+    cleanupDDls:
+      - "use polardbx;"
+      - "use polardbx;"
+    checkActions:
+      localityValueCheck:
+        - t1 table ""
+        - t2 table ""
+        - t3 table ""
+        - t4 table ""
+        - t5 table ""
+        - t6 table ""
+        - t14 table ""
+        - t15 table ""
+        - c1 table ""
+        - c2 table ""
+        - c3 table ""
+        - c4 table ""
+        - b1 table ""
+        - b2 table ""
+        - b3 table ""
+        - r1 table ""
+        - r2 table ""
+        - r3 table ""
+        - r4 table ""
+      tableGroupMatchCheck:
+        - t1,t4 $tg1 ""
+        - t2,t5 $tg2 ""
+        - t3,t6 $tg3 ""
+        - t14,t15 $tg9 ""
+        - c1 $tg4 ""
+        - c2 $tg5 ""
+        - c3 $tg6 ""
+        - c4 $tg7 ""
+        - b1,b2,b3 $tg8 "";
+        - r1,r2 $tg20 "";
+        - r3,r4 $tg21 "";
+      # second pass;
+      # auto generate create table, tablegroup.
+      topologyCheck:
+        - c1.p1 partition $dn2
+        - c2.p1 partition $dn2
+        - c3.p1 partition $dn1
+        - c4.p1 partition $dn1
+        - t1.p1 partition $dn2
+        - t1.p2 partition $dn1
+        - t2.p1 partition $dn2
+        - t2.p2 partition $dn1
+        - t3.p1 partition $dn2
+        - t3.p2 partition $dn1
+        - t4.p1 partition $dn2
+        - t4.p2 partition $dn1
+        - t5.p1 partition $dn2
+        - t5.p2 partition $dn1
+        - t6.p1 partition $dn2
+        - t6.p2 partition $dn1
+        - b1.p1 partition $dn2
+        - b1.p2 partition $dn2
+        - b1.p3 partition $dn1
+        - b2.p1 partition $dn2
+        - b2.p2 partition $dn2
+        - b2.p3 partition $dn1
+        - b3.p1 partition $dn2
+        - b3.p2 partition $dn2
+        - b3.p3 partition $dn1
+        - t14.p1 partition $dn1
+        - t14.p2 partition $dn1
+        - t15.p1 partition $dn1
+        - t15.p2 partition $dn1
+        - r1.p1 partition $dn2
+        - r1.p2 partition $dn2
+        - r1.p3 partition $dn1
+        - r2.p1 partition $dn2
+        - r2.p2 partition $dn2
+        - r2.p3 partition $dn1
+        - r3.p1 partition $dn2
+        - r3.p2 partition $dn1
+        - r4.p1 partition $dn2
+        - r4.p2 partition $dn1
+        #  auto generate by locality value check.
+        #  auto generate by partition locality check. with each table.
+cleanupDDls:
+  - "use polardbx;"
+  - "use polardbx;"
+#  - "drop database if exists test_locality_db_physical_config_new2;"

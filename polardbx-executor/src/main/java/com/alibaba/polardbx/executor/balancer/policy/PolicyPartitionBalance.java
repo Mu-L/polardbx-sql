@@ -27,6 +27,8 @@ import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.executor.balancer.BalanceOptions;
+import com.alibaba.polardbx.executor.balancer.action.ActionDrainDatabase;
+import com.alibaba.polardbx.executor.balancer.action.ActionExpandDatabase;
 import com.alibaba.polardbx.executor.balancer.action.ActionInitPartitionDb;
 import com.alibaba.polardbx.executor.balancer.action.ActionLockResource;
 import com.alibaba.polardbx.executor.balancer.action.ActionMoveGroup;
@@ -67,6 +69,7 @@ import com.alibaba.polardbx.optimizer.locality.StoragePoolManager;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 import org.apache.calcite.sql.SqlRebalance;
+import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.commons.collections.CollectionUtils;
 
 import java.util.AbstractMap;
@@ -210,25 +213,30 @@ public class PolicyPartitionBalance implements BalancePolicy {
 
         // Initialize new storage instance if needed
         List<DbInfoRecord> dbRecords = DbTopologyManager.getNewPartDbInfoFromMetaDb();
-        boolean refreshTopology = false;
         if (CollectionUtils.isNotEmpty(dbRecords)) {
             ActionInitPartitionDb actionInit = new ActionInitPartitionDb(ec.getSchemaName());
             result.add(actionInit);
-            refreshTopology = true;
         }
 
+        List<ActionExpandDatabase> expandDatabases = new ArrayList<>();
         // Balance each database
         for (String schema : schemaNameList) {
-            for (BalanceAction action : applyToDb(ec, stats.get(schema), options, schema)) {
-                if (!action.getName().equals(ActionInitPartitionDb.getActionName())) {
-                    result.add(action);
-                } else if (!refreshTopology) {
-                    result.add(action);
-                    refreshTopology = true;
-                }
-            }
+            SqlRebalance node = new SqlRebalance(SqlParserPos.ZERO);
+            node.setRebalanceDatabase();
+            node.setPolicy(options.policy);
+            node.setLogicalDdl(false);
+            node.setAsync(options.async);
+            node.setDebug(options.debug);
+            node.setExplain(options.explain);
+            node.setMaxActions(options.maxActions);
+            node.setMaxPartitionSize((int) options.maxPartitionSize);
+            node.setMaxTaskUnitRows(options.maxTaskUnitRows.intValue());
+            node.setMaxTaskUnitSize(options.maxTaskUnitSize.intValue());
+            node.setShuffleDataDist(options.shuffleDataDistribution);
+            expandDatabases.add(new ActionExpandDatabase(schema, node.toString(), stats.get(schema)));
         }
-
+        expandDatabases.sort(ActionExpandDatabase::compareTo);
+        result.addAll(expandDatabases);
         return result;
     }
 

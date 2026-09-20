@@ -1,4 +1,32 @@
 - sql: |
+    select * from t3 where t3.id > 100;
+  plan: |
+    osstablescan(tables="cci_t3[p1,p2,p3,...p12]", shardcount=12, partition=[remote], sql="select `id`, `name`, `create_time` from `cci_t3` as `cci_t3` where (`id` > ?)")
+
+
+- sql: |
+    select count(*) from t3 where t3.id > 100;
+  plan: |
+    hashagg(count(*)="sum(count(*))")
+      exchange(distribution=single, collation=[])
+        partialhashagg(count(*)="count()")
+          osstablescan(tables="cci_t3[p1,p2,p3,...p12]", shardcount=12, partition=[remote], sql="select `id` from `cci_t3` as `cci_t3` where (`id` > ?)")
+
+- sql: |
+    /*+TDDL:ENABLE_PARTITION_WISE=false*/ select * from t3 where t3.id > 100;
+  plan: |
+    osstablescan(tables="cci_t3[p1,p2,p3,...p12]", shardcount=12, sql="select `id`, `name`, `create_time` from `cci_t3` as `cci_t3` where (`id` > ?)")
+
+
+- sql: |
+    /*+TDDL:ENABLE_PARTITION_WISE=false*/ select count(*) from t3 where t3.id > 100;
+  plan: |
+    hashagg(count(*)="sum(count(*))")
+      exchange(distribution=single, collation=[])
+        partialhashagg(count(*)="count()")
+          osstablescan(tables="cci_t3[p1,p2,p3,...p12]", shardcount=12, sql="select `id` from `cci_t3` as `cci_t3` where (`id` > ?)")
+
+- sql: |
     select * from t3 where t3.id in (select col from (values (0018708),(10019015),(10031444)) as tmp1(col));
   plan: |
 
@@ -11,12 +39,12 @@
     select * from t4 where exists (select * from t3 where t3.id = t4.id or t3.id > 10);
   plan: |
 
-    project(id="id", name="name", create_time="create_time")
-      filter(condition="apply_boolean")
-        correlateapply(cor=$cor0, leftconditions=[], opkind=null, type=semi)
-          logicalview(tables="t4[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `name`, `create_time` from `t4` as `t4`")
-          logicalview(tables="t3[p1,p2,p3,...p12]", shardcount=12, sql="select `id`, `name`, `create_time` from `t3` as `t3` where ((`id` = `id`) or (`id` > ?))")
-
+    semihashjoin(condition="id = id", type="semi", build="outer")
+      osstablescan(tables="cci_t4[p1,p2,p3,...p16]", shardcount=16, partition=[remote], sql="select `id`, `name`, `create_time` from `cci_t4` as `cci_t4`")
+      nljoin(condition="id = id or id > ?0", type="inner")
+        osstablescan(tables="cci_t4[p1,p2,p3,...p16]", shardcount=16, partition=[remote], sql="select `id` from `cci_t4` as `cci_t4`")
+        exchange(distribution=broadcast, collation=[])
+          osstablescan(tables="cci_t3[p1,p2,p3,...p12]", shardcount=12, sql="select `id`, `name`, `create_time` from `cci_t3` as `cci_t3`")
 - sql: |
     select *
     from
@@ -28,13 +56,15 @@
                   limit 1
                 )
   plan: |
-
-    logicalview(tables="ts[p1]", sql="select `id`, `name`, `create_time` from `ts` as `ts` where (`id` = ?)")
-    
-    >> individual scalar subquery :
-    mergesort(sort="", offset=0, fetch=?0)
-      logicalview(tables="t5[p1,p2,p3,...p20]", shardcount=20, sql="select `id` from `t5` as `t5` limit (? + 0)")
-
+    project(id="id", name="name", create_time="create_time")
+      hashjoin(condition="$f0 = id", type="inner")
+        osstablescan(tables="cci_t8[p1,p2,p3,...p32]", shardcount=32, partition=[remote], sql="select `id`, `name`, `create_time` from `cci_t8` as `cci_t8`")
+        exchange(distribution=hash[0]32, collation=[])
+          hashagg($f0="single_value(id)")
+            limit(offset=0, fetch=?0)
+              exchange(distribution=single, collation=[])
+                limit(fetch=?0)
+                  osstablescan(tables="cci_t5[p1,p2,p3,...p28]", shardcount=28, sql="select `id` from `cci_t5` as `cci_t5`")
 - sql: |
     /*+TDDL:cmd_extra(enable_direct_plan=false enable_post_planner=false)*/select *
     from
@@ -46,9 +76,15 @@
                   limit 1
                 )
   plan: |
-
-    logicalview(tables="ts[p1],ts[p1]", sql="select `id`, `name`, `create_time` from `ts` as `ts` where (`id` = (((select `id` from `ts` as `ts0` limit ? offset 0))))")
-
+    project(id="id", name="name", create_time="create_time")
+      hashjoin(condition="$f0 = id", type="inner")
+        osstablescan(tables="cci_t8[p1,p2,p3,...p32]", shardcount=32, partition=[remote], sql="select `id`, `name`, `create_time` from `cci_t8` as `cci_t8`")
+        exchange(distribution=hash[0]32, collation=[])
+          hashagg($f0="single_value(id)")
+            limit(offset=0, fetch=?0)
+              exchange(distribution=single, collation=[])
+                limit(fetch=?0)
+                  osstablescan(tables="cci_t8[p1,p2,p3,...p32]", shardcount=32, sql="select `id` from `cci_t8` as `cci_t8`")
 - sql: |
     select *,
     (
@@ -59,13 +95,14 @@
     from
       t5
   plan: |
-
-    logicalview(tables="t5[p1,p2,p3,...p20]", shardcount=20, sql="select `id`, `name`, `create_time`, ? as `$f3` from `t5` as `t5`")
-    
-    >> individual scalar subquery :
-    mergesort(sort="", offset=0, fetch=?0)
-      logicalview(tables="t5[p1,p2,p3,...p20]", shardcount=20, sql="select `id` from `t5` as `t5` limit (? + 0)")
-
+    nljoin(condition="true", type="left")
+      osstablescan(tables="cci_t5[p1,p2,p3,...p28]", shardcount=28, partition=[remote], sql="select `id`, `name`, `create_time` from `cci_t5` as `cci_t5`")
+      exchange(distribution=broadcast, collation=[])
+        hashagg($f0="single_value(id)")
+          limit(offset=0, fetch=?0)
+            exchange(distribution=single, collation=[])
+              limit(fetch=?0)
+                osstablescan(tables="cci_t5[p1,p2,p3,...p28]", shardcount=28, sql="select `id` from `cci_t5` as `cci_t5`")
 - sql: |
     /*+TDDL:cmd_extra(enable_direct_plan=false enable_post_planner=false)*/select *,
     (
@@ -76,9 +113,14 @@
     from
       ts
   plan: |
-
-    logicalview(tables="ts[p1],ts[p1]", sql="select `id`, `name`, `create_time`, (((select `id` from `ts` as `ts0` limit ? offset 0))) as `$f3` from `ts` as `ts`")
-
+    nljoin(condition="true", type="left")
+      osstablescan(tables="cci_t8[p1,p2,p3,...p32]", shardcount=32, partition=[remote], sql="select `id`, `name`, `create_time` from `cci_t8` as `cci_t8`")
+      exchange(distribution=broadcast, collation=[])
+        hashagg($f0="single_value(id)")
+          limit(offset=0, fetch=?0)
+            exchange(distribution=single, collation=[])
+              limit(fetch=?0)
+                osstablescan(tables="cci_t8[p1,p2,p3,...p32]", shardcount=32, sql="select `id` from `cci_t8` as `cci_t8`")
 - sql: |
     select * from t4 where exists (select * from t3 where t3.id = t4.id);
   plan: |
@@ -117,7 +159,7 @@
 
     limit(offset=0, fetch=?0)
       exchange(distribution=single, collation=[])
-        limit(fetch=+(?0, 0))
+        limit(fetch=?0)
           osstablescan(tables="cci_t4[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `name`, `create_time` from `cci_t4` as `cci_t4`")
 
 - sql: |
@@ -206,7 +248,6 @@
     /*+TDDL:cmd_extra(ENABLE_OUTER_JOIN_REORDER=false enable_broadcast_join=false)*/ 
     select count(1) from t4 a left join t4 b on a.id = b.id join t4 c on b.id = c.id;
   plan: |
-
     hashagg(count(1)="sum(count(1))")
       exchange(distribution=single, collation=[])
         partialhashagg(count(1)="count()")
@@ -336,6 +377,15 @@
         osstablescan(tables="cci_v4[p1,p2,p3,...p16]", shardcount=16, partition=[remote], sql="select `id` from `cci_v4` as `cci_v4`")
 
 - sql: |
+    /*+TDDL:cmd_extra(PARTITION_WISE_THRESHOLD=8)*/select 1 from t_shard_id2 group by id-3;
+  plan: |
+    project(1="?0")
+      hashagg(group="$f0")
+        exchange(distribution=hash[0]20, collation=[])
+          partialhashagg(group="$f0")
+            project($f0="id - ?1")
+              osstablescan(tables="cci_t_shard_id2[p1,p2,p3,p4]", shardcount=4, sql="select `id` from `cci_t_shard_id2` as `cci_t_shard_id2`")
+- sql: |
     select 1 from t_shard_id2 group by id-3;
   plan: |
 
@@ -440,6 +490,46 @@
                                   osstablescan(tables="cci_l6[p1,p2,p3,...p24]", shardcount=24, sql="select `id` from `cci_l6` as `cci_l6`")
                                 exchange(distribution=single, collation=[])
                                   osstablescan(tables="cci_l5[p1,p2,p3,...p20]", shardcount=20, sql="select `id` from `cci_l5` as `cci_l5`")
+- sql: |
+    /*+TDDL:cmd_extra(ENABLE_BKA_JOIN=false,enable_broadcast_join=false) HASH_JOIN(fact,l6) HASH_JOIN((fact,l6),l5) HASH_JOIN((fact,l6,l5),l4) HASH_JOIN((fact,l6,l5,l4),l3) HASH_JOIN((fact,l6,l5,l4,l3),l2) HASH_JOIN((fact,l6,l5,l4,l3,l2),l1) */
+    SELECT *
+    FROM  fact left join l1 on l1.id = fact.id1
+    left join l2 on l2.id = fact.id2
+    left join l3 on l3.id = fact.id3
+    left join l4 on l4.id = fact.id4
+    left join l5 on l5.id = fact.id5
+    left join l6 on l6.id = fact.id6
+  plan: |
+    project(id="id0", id1="id1", id2="id2", id3="id3", id4="id4", id5="id5", id6="id6", id7="id7", id8="id8", id9="id9", id10="id10", id0="id00", name="name0", create_time="create_time0", id11="id11", name0="name00", create_time0="create_time00", id12="id12", name1="name1", create_time1="create_time1", id13="id13", name2="name2", create_time2="create_time2", id15="id", name4="name", create_time4="create_time", id14="id14", name3="name3", create_time3="create_time3")
+      hashjoin(condition="id = id5", type="right")
+        exchange(distribution=hash[0]40, collation=[])
+          osstablescan(tables="cci_l5[p1,p2,p3,...p20]", shardcount=20, sql="select `id`, `name`, `create_time` from `cci_l5` as `cci_l5`")
+        exchange(distribution=hash[5]40, collation=[])
+          project(id="id0", id1="id1", id2="id2", id3="id3", id4="id4", id5="id5", id6="id6", id7="id7", id8="id8", id9="id9", id10="id10", id0="id00", name="name0", create_time="create_time0", id11="id11", name0="name00", create_time0="create_time00", id12="id12", name1="name1", create_time1="create_time1", id14="id", name3="name", create_time3="create_time", id13="id13", name2="name2", create_time2="create_time2")
+            hashjoin(condition="id = id4", type="right", build="right")
+              exchange(distribution=hash[0]40, collation=[])
+                osstablescan(tables="cci_l4[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `name`, `create_time` from `cci_l4` as `cci_l4`")
+              exchange(distribution=hash[4]40, collation=[])
+                project(id="id0", id1="id1", id2="id2", id3="id3", id4="id4", id5="id5", id6="id6", id7="id7", id8="id8", id9="id9", id10="id10", id0="id00", name="name0", create_time="create_time0", id11="id12", name0="name1", create_time0="create_time1", id13="id", name2="name", create_time2="create_time", id12="id11", name1="name00", create_time1="create_time00")
+                  hashjoin(condition="id = id3", type="right", build="right")
+                    exchange(distribution=hash[0]40, collation=[])
+                      osstablescan(tables="cci_l3[p1,p2,p3,...p12]", shardcount=12, sql="select `id`, `name`, `create_time` from `cci_l3` as `cci_l3`")
+                    project(id="id0", id1="id1", id2="id2", id3="id3", id4="id4", id5="id5", id6="id6", id7="id7", id8="id8", id9="id9", id10="id10", id0="id00", name="name0", create_time="create_time0", id12="id", name1="name", create_time1="create_time", id11="id11", name0="name00", create_time0="create_time00")
+                      exchange(distribution=hash[6]40, collation=[])
+                        hashjoin(condition="id = id2", type="right")
+                          exchange(distribution=hash[0]40, collation=[])
+                            osstablescan(tables="cci_l2[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `name`, `create_time` from `cci_l2` as `cci_l2`")
+                          project(id="id0", id1="id1", id2="id2", id3="id3", id4="id4", id5="id5", id6="id6", id7="id7", id8="id8", id9="id9", id10="id10", id11="id", name0="name", create_time0="create_time", id0="id00", name="name0", create_time="create_time0")
+                            exchange(distribution=hash[5]40, collation=[])
+                              hashjoin(condition="id = id1", type="right")
+                                exchange(distribution=hash[0]40, collation=[])
+                                  osstablescan(tables="cci_l1[p1,p2,p3,p4,p5]", shardcount=5, sql="select `id`, `name`, `create_time` from `cci_l1` as `cci_l1`")
+                                exchange(distribution=hash[1]40, collation=[])
+                                  hashjoin(condition="id = id6", type="left")
+                                    exchange(distribution=hash[6]40, collation=[])
+                                      osstablescan(tables="cci_fact[p1,p2,p3,...p40]", shardcount=40, sql="select `id`, `id1`, `id2`, `id3`, `id4`, `id5`, `id6`, `id7`, `id8`, `id9`, `id10` from `cci_fact` as `cci_fact`")
+                                    exchange(distribution=hash[0]40, collation=[])
+                                      osstablescan(tables="cci_l6[p1,p2,p3,...p24]", shardcount=24, sql="select `id`, `name`, `create_time` from `cci_l6` as `cci_l6`")
 
 - sql: |
     /*+TDDL: cmd_extra(ENABLE_BKA_JOIN=false,enable_broadcast_join=false) HASH_JOIN(v1,v3) HASH_JOIN(v4,v2) HASH_JOIN((v1,v3),(v4,v2)) */
@@ -659,14 +749,12 @@
     project(count(*)="count(*)")
       exchange(distribution=single, collation=[0 asc-nulls-first])
         memsort(sort="name3 asc")
-          hashagg(group="name3", count(*)="sum(count(*))")
-            exchange(distribution=hash[0]12, collation=[])
-              partialhashagg(group="name3", count(*)="count()")
-                semihashjoin(condition="id = id", type="semi", build="inner")
-                  osstablescan(tables="cci_v3[p11]", partition=[remote], sql="select `id`, `name3` from `cci_v3` as `cci_v3` where (`id` = ?)")
-                  exchange(distribution=hash[0]12, collation=[])
-                    osstablescan(tables="cci_v2[p7]", sql="select `id` from `cci_v2` as `cci_v2` where (`id` = ?)")
-
+          hashagg(group="name3", count(*)="count()")
+            semihashjoin(condition="id = id", type="semi", build="inner")
+              exchange(distribution=hash[1]12, collation=[])
+                osstablescan(tables="cci_v3[p11]", sql="select `id`, `name3` from `cci_v3` as `cci_v3` where (`id` = ?)")
+              exchange(distribution=broadcast, collation=[])
+                osstablescan(tables="cci_v2[p7]", sql="select `id` from `cci_v2` as `cci_v2` where (`id` = ?)")
 - sql: |
     /*+TDDL:cmd_extra(ENABLE_BKA_JOIN=false,enable_broadcast_join=false,enable_nl_join=false, enable_sort_merge_join=false) HASH_JOIN(v2, v3)*/
     select * from v2 left join v3 on v2.id = v3.id limit 2
@@ -676,9 +764,9 @@
       exchange(distribution=single, collation=[])
         hashjoin(condition="id = id", type="left")
           exchange(distribution=hash[0]12, collation=[])
-            limit(fetch=+(?0, 0))
+            limit(fetch=?0)
               exchange(distribution=single, collation=[])
-                limit(fetch=+(?0, 0))
+                limit(fetch=?0)
                   osstablescan(tables="cci_v2[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `v2_k`, `name2`, `create_time` from `cci_v2` as `cci_v2`")
           osstablescan(tables="cci_v3[p1,p2,p3,...p12]", shardcount=12, partition=[remote], sql="select `id`, `v3_k`, `name3`, `create_time` from `cci_v3` as `cci_v3`")
 
@@ -692,9 +780,9 @@
         memsort(sort="id asc")
           hashjoin(condition="id = v3_k", type="left")
             exchange(distribution=hash[0]12, collation=[])
-              topn(sort="id asc", fetch=+(?0, 0))
+              topn(sort="id asc", fetch=?0)
                 exchange(distribution=single, collation=[0 asc-nulls-first])
-                  topn(sort="id asc", fetch=+(?0, 0))
+                  topn(sort="id asc", fetch=?0)
                     osstablescan(tables="cci_v2[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `v2_k`, `name2`, `create_time` from `cci_v2` as `cci_v2`")
             exchange(distribution=hash[1]12, collation=[])
               osstablescan(tables="cci_v3[p1,p2,p3,...p12]", shardcount=12, sql="select `id`, `v3_k`, `name3`, `create_time` from `cci_v3` as `cci_v3`")
@@ -709,9 +797,9 @@
         memsort(sort="id asc")
           hashjoin(condition="id = id", type="left")
             exchange(distribution=hash[0]12, collation=[])
-              topn(sort="id asc", fetch=+(?0, 0))
+              topn(sort="id asc", fetch=?0)
                 exchange(distribution=single, collation=[0 asc-nulls-first])
-                  topn(sort="id asc", fetch=+(?0, 0))
+                  topn(sort="id asc", fetch=?0)
                     osstablescan(tables="cci_v2[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `v2_k`, `name2`, `create_time` from `cci_v2` as `cci_v2`")
             osstablescan(tables="cci_v3[p1,p2,p3,...p12]", shardcount=12, partition=[remote], sql="select `id`, `v3_k`, `name3`, `create_time` from `cci_v3` as `cci_v3`")
 
@@ -746,7 +834,7 @@
   plan: |
 
     project(count(*) over (partition by id )="f3w0$o0", max(create_time) over (partition by id )="f4w0$o1", id="id")
-      hashwindow(id="id", create_time="create_time", f2w0$o0="window#0count()", f3w0$o1="window#0max($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [count(), max($1)])", partition=[local])
+      hashwindow(id="id", create_time="create_time", f3w0$o0="window#0count()", f4w0$o1="window#0max($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [count(), max($1)])", partition=[local])
         osstablescan(tables="cci_t_shard_id2[p1,p2,p3,p4]", shardcount=4, partition=[local, remote], sql="select `id`, `create_time` from `cci_t_shard_id2` as `cci_t_shard_id2`")
 
 - sql: |
@@ -754,7 +842,7 @@
   plan: |
 
     project(count(*) over (partition by id, name )="f3w0$o0", max(create_time) over (partition by id )="f4w1$o0", id="id")
-      hashwindow(id="id", create_time="create_time", f3w0$o0="f3w0$o0", f3w0$o0="window#0max($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [max($1)])")
+      hashwindow(id="id", create_time="create_time", f3w0$o0="f3w0$o0", f4w1$o0="window#0max($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [max($1)])")
         project(id="id", create_time="create_time", f3w0$o0="f3w0$o0")
           hashwindow(id="id", name="name", create_time="create_time", f3w0$o0="window#0count()", reference windows="window#0=window(partition {0, 1} order by [] range between unbounded preceding and unbounded following aggs [count()])", partition=[local])
             osstablescan(tables="cci_t_shard_id2[p1,p2,p3,p4]", shardcount=4, partition=[local, remote], sql="select `id`, `name`, `create_time` from `cci_t_shard_id2` as `cci_t_shard_id2`")
@@ -764,7 +852,7 @@
   plan: |
 
     project(count(*) over (partition by id, name )="f3w0$o0", max(create_time) over (partition by id )="f4w1$o0", id="id")
-      hashwindow(id="id", create_time="create_time", f3w0$o0="f3w0$o0", f3w0$o0="window#0max($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [max($1)])")
+      hashwindow(id="id", create_time="create_time", f3w0$o0="f3w0$o0", f4w1$o0="window#0max($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [max($1)])")
         exchange(distribution=hash[0], collation=[])
           project(id="id", create_time="create_time", f3w0$o0="f3w0$o0")
             hashwindow(id="id", name="name", create_time="create_time", f3w0$o0="window#0count()", reference windows="window#0=window(partition {0, 1} order by [] range between unbounded preceding and unbounded following aggs [count()])")
@@ -776,7 +864,7 @@
   plan: |
 
     project(max(create_time) over (partition by id )="f3w0$o0", count(*) over (partition by id, name )="f4w1$o0", id="id")
-      hashwindow(id="id", name="name", f3w0$o0="f3w0$o0", f3w0$o0="window#0count()", reference windows="window#0=window(partition {0, 1} order by [] range between unbounded preceding and unbounded following aggs [count()])")
+      hashwindow(id="id", name="name", f3w0$o0="f3w0$o0", f4w1$o0="window#0count()", reference windows="window#0=window(partition {0, 1} order by [] range between unbounded preceding and unbounded following aggs [count()])")
         project(id="id", name="name", f3w0$o0="f3w0$o0")
           hashwindow(id="id", name="name", create_time="create_time", f3w0$o0="window#0max($2)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [max($2)])", partition=[local])
             osstablescan(tables="cci_t_shard_id2[p1,p2,p3,p4]", shardcount=4, partition=[local, remote], sql="select `id`, `name`, `create_time` from `cci_t_shard_id2` as `cci_t_shard_id2`")
@@ -784,21 +872,19 @@
 - sql: |
     /*+TDDL:cmd_extra(ENABLE_PARTITION_WISE_WINDOW=false)*/ select max(create_time) over(partition by id), count(*) over(partition by id, name), id from t_shard_id2;
   plan: |
-
     project(max(create_time) over (partition by id )="f3w0$o0", count(*) over (partition by id, name )="f4w1$o0", id="id")
-      hashwindow(id="id", name="name", f3w0$o0="f3w0$o0", f3w0$o0="window#0count()", reference windows="window#0=window(partition {0, 1} order by [] range between unbounded preceding and unbounded following aggs [count()])")
+      hashwindow(id="id", name="name", f3w0$o0="f3w0$o0", f4w1$o0="window#0count()", reference windows="window#0=window(partition {0, 1} order by [] range between unbounded preceding and unbounded following aggs [count()])")
         exchange(distribution=hash[0, 1], collation=[])
           project(id="id", name="name", f3w0$o0="f3w0$o0")
-            sortwindow(id="id", name="name", create_time="create_time", f3w0$o0="window#0max($2)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [max($2)])")
-              memsort(sort="id asc")
-                osstablescan(tables="cci_t_shard_id2[p1,p2,p3,p4]", shardcount=4, partition=[remote], sql="select `id`, `name`, `create_time` from `cci_t_shard_id2` as `cci_t_shard_id2`")
-
+            hashwindow(id="id", name="name", create_time="create_time", f3w0$o0="window#0max($2)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [max($2)])")
+              exchange(distribution=hash[0], collation=[])
+                osstablescan(tables="cci_t_shard_id2[p1,p2,p3,p4]", shardcount=4, sql="select `id`, `name`, `create_time` from `cci_t_shard_id2` as `cci_t_shard_id2`")
 - sql: |
     select max(create_time) over(partition by id), count(*) over(partition by name), id from t_shard_id2;
   plan: |
 
     project(max(create_time) over (partition by id )="f3w0$o0", count(*) over (partition by name )="f4w1$o0", id="id")
-      hashwindow(id="id", name="name", f3w0$o0="f3w0$o0", f3w0$o0="window#0count()", reference windows="window#0=window(partition {1} order by [] range between unbounded preceding and unbounded following aggs [count()])")
+      hashwindow(id="id", name="name", f3w0$o0="f3w0$o0", f4w1$o0="window#0count()", reference windows="window#0=window(partition {1} order by [] range between unbounded preceding and unbounded following aggs [count()])")
         exchange(distribution=hash[1]4, collation=[])
           project(id="id", name="name", f3w0$o0="f3w0$o0")
             hashwindow(id="id", name="name", create_time="create_time", f3w0$o0="window#0max($2)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [max($2)])", partition=[local])
@@ -809,7 +895,7 @@
   plan: |
 
     project(max(create_time) over ()="f3w0$o0", count(*) over ()="f4w0$o1", id="id")
-      hashwindow(id="id", create_time="create_time", f2w0$o0="window#0max($1)", f3w0$o1="window#0count()", reference windows="window#0=window(partition {} order by [] range between unbounded preceding and unbounded following aggs [max($1), count()])")
+      hashwindow(id="id", create_time="create_time", f3w0$o0="window#0max($1)", f4w0$o1="window#0count()", reference windows="window#0=window(partition {} order by [] range between unbounded preceding and unbounded following aggs [max($1), count()])")
         exchange(distribution=single, collation=[])
           osstablescan(tables="cci_t_shard_id2[p1,p2,p3,p4]", shardcount=4, sql="select `id`, `create_time` from `cci_t_shard_id2` as `cci_t_shard_id2`")
 
@@ -818,10 +904,10 @@
   plan: |
 
     project(max(create_time) over (partition by id )="f3w0$o0", count(*) over ()="f4w1$o0", id="id")
-      hashwindow(id="id", f3w0$o0="f3w0$o0", f2w0$o0="window#0count()", reference windows="window#0=window(partition {} order by [] range between unbounded preceding and unbounded following aggs [count()])")
+      hashwindow(id="id", f3w0$o0="f3w0$o0", f4w1$o0="window#0count()", reference windows="window#0=window(partition {} order by [] range between unbounded preceding and unbounded following aggs [count()])")
         exchange(distribution=single, collation=[])
           project(id="id", f3w0$o0="f3w0$o0")
-            hashwindow(id="id", create_time="create_time", f2w0$o0="window#0max($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [max($1)])", partition=[local])
+            hashwindow(id="id", create_time="create_time", f3w0$o0="window#0max($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [max($1)])", partition=[local])
               osstablescan(tables="cci_t_shard_id2[p1,p2,p3,p4]", shardcount=4, partition=[local, remote], sql="select `id`, `create_time` from `cci_t_shard_id2` as `cci_t_shard_id2`")
 
 - sql: |
@@ -847,7 +933,7 @@
   plan: |
 
     project(sum(id) over (partition by name  rows between unbounded preceding and unbounded following)="f3w0$o0", count(*) over (partition by name  rows between unbounded preceding and unbounded following)="f4w0$o1", id="id")
-      hashwindow(id="id", name="name", f2w0$o0="window#0sum($0)", f3w0$o1="window#0count()", reference windows="window#0=window(partition {1} order by [] rows between unbounded preceding and unbounded following aggs [sum($0), count()])")
+      hashwindow(id="id", name="name", f3w0$o0="window#0sum($0)", f4w0$o1="window#0count()", reference windows="window#0=window(partition {1} order by [] rows between unbounded preceding and unbounded following aggs [sum($0), count()])")
         exchange(distribution=hash[1]4, collation=[])
           osstablescan(tables="cci_t_shard_id2[p1,p2,p3,p4]", shardcount=4, sql="select `id`, `name` from `cci_t_shard_id2` as `cci_t_shard_id2`")
 
@@ -878,18 +964,18 @@
   plan: |
 
     hashagg(group="id", count(*)="count()")
-      hashwindow(id="id", create_time="create_time", f2w0$o0="window#0max($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [max($1)])", partition=[local])
+      hashwindow(id="id", create_time="create_time", f3w0$o0="window#0max($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [max($1)])", partition=[local])
         osstablescan(tables="cci_t_shard_id2[p1,p2,p3,p4]", shardcount=4, partition=[local, remote], sql="select `id`, `create_time` from `cci_t_shard_id2` as `cci_t_shard_id2`")
 
 - sql: |
     /*+TDDL:cmd_extra(ENABLE_PARTITION_WISE_WINDOW=false)*/ select id, count(*) from( select create_time, id, max(create_time) over(partition by id) as max_time from t_shard_id2) t group by id;
   plan: |
-
-    hashagg(group="id", count(*)="count()")
-      sortwindow(id="id", create_time="create_time", f2w0$o0="window#0max($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [max($1)])")
-        memsort(sort="id asc")
-          osstablescan(tables="cci_t_shard_id2[p1,p2,p3,p4]", shardcount=4, partition=[remote], sql="select `id`, `create_time` from `cci_t_shard_id2` as `cci_t_shard_id2`")
-
+    hashagg(group="id", count(*)="sum(count(*))")
+      exchange(distribution=hash[0]4, collation=[])
+        partialhashagg(group="id", count(*)="count()")
+          hashwindow(id="id", create_time="create_time", f3w0$o0="window#0max($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [max($1)])")
+            exchange(distribution=hash[0], collation=[])
+              osstablescan(tables="cci_t_shard_id2[p1,p2,p3,p4]", shardcount=4, sql="select `id`, `create_time` from `cci_t_shard_id2` as `cci_t_shard_id2`")
 - sql: |
     /*+TDDL:cmd_extra(ENABLE_SORT_WINDOW=FALSE ENABLE_PARTITION_WISE_WINDOW=false)*/ select id, count(*) from( select create_time, id, max(create_time) over(partition by id) as max_time from t_shard_id2) t group by id;
   plan: |
@@ -897,7 +983,7 @@
     hashagg(group="id", count(*)="sum(count(*))")
       exchange(distribution=hash[0]4, collation=[])
         partialhashagg(group="id", count(*)="count()")
-          hashwindow(id="id", create_time="create_time", f2w0$o0="window#0max($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [max($1)])")
+          hashwindow(id="id", create_time="create_time", f3w0$o0="window#0max($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [max($1)])")
             exchange(distribution=hash[0], collation=[])
               osstablescan(tables="cci_t_shard_id2[p1,p2,p3,p4]", shardcount=4, sql="select `id`, `create_time` from `cci_t_shard_id2` as `cci_t_shard_id2`")
 
@@ -910,3 +996,8 @@
         exchange(distribution=hash[0]4, collation=[])
           partialhashagg(group="create_time", check_sum(id)="check_sum(id)", check_sum_v2(id)="check_sum_v2(id)")
             osstablescan(tables="cci_t_shard_id2[p1,p2,p3,p4]", shardcount=4, sql="select `id`, `create_time` from `cci_t_shard_id2` as `cci_t_shard_id2`")
+- sql: |
+    /*+TDDL:cmd_extra()*/select 1+3<4,create_time > now() + INTERVAL -3 DAY  as a from t_shard_id2 where  create_time > CURDATE() + INTERVAL -3 DAY
+  plan: |
+    project(1 + 3 < 4="0", a="create_time > date_add(cast(?3), interval_primary(-3, day))")
+      osstablescan(tables="cci_t_shard_id2[p1,p2,p3,p4]", shardcount=4, partition=[remote], sql="select `create_time` from `cci_t_shard_id2` as `cci_t_shard_id2` where (`create_time` > date_add(curdate(), interval -3 day))")

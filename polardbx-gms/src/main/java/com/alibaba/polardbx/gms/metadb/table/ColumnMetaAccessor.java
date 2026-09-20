@@ -36,7 +36,7 @@ import java.util.Map;
 import java.util.Set;
 
 public class ColumnMetaAccessor extends AbstractAccessor {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     private static final String COLUMN_META_TABLE = wrap(GmsSystemTables.COLUMN_METAS);
 

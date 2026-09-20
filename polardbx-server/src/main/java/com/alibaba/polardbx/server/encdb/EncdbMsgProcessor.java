@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.server.encdb;
 
 import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import com.alibaba.polardbx.PolarPrivileges;
 import com.alibaba.polardbx.common.encdb.EncdbException;
@@ -109,7 +110,7 @@ public class EncdbMsgProcessor {
             default:
                 throw new UnsupportedOperationException();
             }
-            result = success(resBody);
+            result = success(resBody.toString());
         } catch (Exception e) {
             logger.error(e.getMessage(), e);
             result = fail(e);
@@ -118,10 +119,10 @@ public class EncdbMsgProcessor {
 
     }
 
-    public static JSONObject success(JSONObject body) {
+    public static JSONObject success(Object obj) {
         JSONObject result = new JSONObject();
         result.put(MsgKeyConstants.STATUS, 0);
-        result.put(MsgKeyConstants.BODY, body.toString());
+        result.put(MsgKeyConstants.BODY, obj);
         return result;
     }
 

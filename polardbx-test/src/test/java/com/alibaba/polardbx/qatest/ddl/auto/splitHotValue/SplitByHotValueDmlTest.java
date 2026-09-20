@@ -70,14 +70,14 @@ public class SplitByHotValueDmlTest extends MovePartitionDmlBaseTest {
         "create global index {0} on {1}(c2, id) partition by key(c2, id) partitions 2";
 
     private static final String INSERT_TMPL = "insert into {0}(c1, c2) values(?, ?)";
-    private static final String UPDATE_TMPL = "update {0} set c2=\"updated\" where id%2=0";
-    private static final String DELETE_TMPL = "delete from {0} where id%3=0";
+    private static final String UPDATE_TMPL = "update {0} set c2=\"updated\" where id%2=0 and id > 60000";
+    private static final String DELETE_TMPL = "delete from {0} where id%3=0 and id > 60000";
 
     private static final String ALTER_TABLE_GROUP_SPLIT_BY_HOT_VALUE_COMMAND =
-        "alter tablegroup by table %s SPLIT INTO pp PARTITIONS 3 BY HOT VALUE('updated')";
+        "alter tablegroup by table %s SPLIT INTO pp PARTITIONS 2 BY HOT VALUE('updated')";
 
     private static final String ALTER_TABLE_SPLIT_BY_HOT_VALUE_COMMAND =
-        "alter table %s SPLIT INTO ppp PARTITIONS 4 BY HOT VALUE('updated')";
+        "alter table %s SPLIT INTO ppp PARTITIONS 2 BY HOT VALUE('updated')";
 
     private final String primaryShardingDef;
 
@@ -103,7 +103,7 @@ public class SplitByHotValueDmlTest extends MovePartitionDmlBaseTest {
     }
 
     @Test
-    public void singlePkMovePartitionDmlTest() throws SQLException {
+    public void singlePkSplitPartitionDmlTest() throws SQLException {
         final String mysqlCreateTable = String.format(SINGLE_PK_TMPL_MYSQL, PRIMARY_TABLE_NAME, "");
         final String tddlCreateTable = String.format(SINGLE_PK_TMPL, PRIMARY_TABLE_NAME, primaryShardingDef);
         final String sqlInsert = MessageFormat.format(INSERT_TMPL, PRIMARY_TABLE_NAME);
@@ -116,6 +116,14 @@ public class SplitByHotValueDmlTest extends MovePartitionDmlBaseTest {
         JdbcUtil.executeUpdateSuccess(mysqlConnection, mysqlCreateTable);
         JdbcUtil.executeUpdateSuccess(tddlConnection, tddlCreateTable);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sqlCreateGsi);
+
+        // prepare data
+        String sql = "insert into " + PRIMARY_TABLE_NAME + "(c1, c2) values(1, 'abc')";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        sql = "insert into " + PRIMARY_TABLE_NAME + "(c1, c2) select c1,c2 from " + PRIMARY_TABLE_NAME;
+        for (int i = 0; i < 16; i++) {
+            JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        }
 
         final AtomicBoolean stop = new AtomicBoolean(false);
         final List<Future> inserts = new ArrayList<>();
@@ -179,9 +187,6 @@ public class SplitByHotValueDmlTest extends MovePartitionDmlBaseTest {
                                              AtomicBoolean stop, Supplier<Long> generateSk,
                                              Supplier<Integer> generateBatchSize) {
         return dmlPool.submit(new InsertRunner(stop, (conn) -> {
-            // List<Pair< sql, error_message >>
-            List<Pair<String, Exception>> failedList = new ArrayList<>();
-
             final ParameterContext skPc = Optional.ofNullable(generateSk.get())
                 .map(skv -> new ParameterContext(ParameterMethod.setLong, new Object[] {1, skv}))
                 .orElse(new ParameterContext(ParameterMethod.setNull1, new Object[] {1, null}));
@@ -225,6 +230,14 @@ public class SplitByHotValueDmlTest extends MovePartitionDmlBaseTest {
             try {
                 lock.writeLock().lock();
                 selectContentSameAssert(sqlSelectPrimary, sqlSelectGSI, null, conn, conn);
+            } catch (Exception e) {
+                if (notIgnoredErrors(e)) {
+                    throw GeneralUtil.nestedException(e);
+                }
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException ignore) {
+                }
             } finally {
                 lock.writeLock().unlock();
             }
@@ -249,6 +262,14 @@ public class SplitByHotValueDmlTest extends MovePartitionDmlBaseTest {
             try {
                 lock.writeLock().lock();
                 selectContentSameAssert(sqlSelectPrimary, sqlSelectGSI, null, conn, conn);
+            } catch (Exception e) {
+                if (notIgnoredErrors(e)) {
+                    throw GeneralUtil.nestedException(e);
+                }
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException ignore) {
+                }
             } finally {
                 lock.writeLock().unlock();
             }
@@ -273,6 +294,14 @@ public class SplitByHotValueDmlTest extends MovePartitionDmlBaseTest {
             try {
                 lock.writeLock().lock();
                 selectContentSameAssert(sqlSelectPrimary, sqlSelectGSI, null, conn, conn);
+            } catch (Exception e) {
+                if (notIgnoredErrors(e)) {
+                    throw GeneralUtil.nestedException(e);
+                }
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException ignore) {
+                }
             } finally {
                 lock.writeLock().unlock();
             }

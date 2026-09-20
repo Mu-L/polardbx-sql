@@ -68,7 +68,7 @@ public class InformationSchemaProcesslistHandler extends BaseVirtualViewSubClass
             throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, e, e.getMessage());
         }
 
-        List<List<Map<String, Object>>> results = SyncManagerHelper.sync(showProcesslistSyncAction,
+        List<List<Map<String, Object>>> results = SyncManagerHelper.syncIgnoreExceptions(showProcesslistSyncAction,
             executionContext.getSchemaName(), SyncScope.CURRENT_ONLY);
         for (List<Map<String, Object>> nodeRows : results) {
             if (nodeRows == null) {

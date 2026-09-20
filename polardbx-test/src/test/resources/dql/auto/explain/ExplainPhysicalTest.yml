@@ -1,0 +1,57 @@
+# MPP tests
+- sql: |
+    explain physical /*+ TDDL:  WORKLOAD_TYPE=AP EXECUTOR_MODE=MPP MPP_PARALLELISM=2 MPP_NODE_SIZE=1*/
+    select t1.pk from select_base_one_multi_db_multi_tb t1;
+  plan: |
+    ExecutorMode: MPP
+    The Query's MaxConcurrentParallelism: 2
+    MPP node size: 1
+    Fragment=0 Parallelism=2
+      Output partitioning: SINGLE \[\]
+        pipeline=0 dependency=\[\] parallelism=2\(per node\)
+          \[Producer\]: TableScanExec\(drds_polarx1_part_qatest_app.select_base_one_multi_db_multi_tb\)
+          \[Consumer\]: SingleExchanger --> LocalBufferExec
+
+- sql: |
+    explain physical /*+ TDDL:  WORKLOAD_TYPE=AP EXECUTOR_MODE=MPP MPP_PARALLELISM=2 MPP_NODE_SIZE=1*/
+    select t1.pk from select_base_one_multi_db_multi_tb t1 order by t1.pk;
+  plan: |
+    ExecutorMode: MPP
+    The Query's MaxConcurrentParallelism: 3
+    MPP node size: 1
+    Fragment=1 Parallelism=1
+      Output partitioning: SINGLE \[\]
+        pipeline=0 dependency=\[\] parallelism=1\(per node\)
+          \[Producer\]: RemoteSource.*
+          \[Consumer\]: SingleExchanger --> LocalBufferExec
+    Fragment=0 Parallelism=2
+      Output partitioning: SINGLE \[\]
+        pipeline=0 dependency=\[\] parallelism=1\(per node\)
+          \[Producer\]: TableScanSortExec\(drds_polarx1_part_qatest_app.select_base_one_multi_db_multi_tb\)
+          \[Consumer\]: SingleExchanger --> LocalBufferExec
+
+- sql: |
+    explain physical /*+ TDDL: ENABLE_PUSH_JOIN=false ENABLE_BROADCAST_JOIN=false ENABLE_CBO_PUSH_JOIN=false BKA_JOIN(select_base_one_multi_db_multi_tb,select_base_one_multi_db_one_tb) HASH_JOIN(select_base_one_multi_db_multi_tb,select_base_one_multi_db_one_tb) WORKLOAD_TYPE=AP EXECUTOR_MODE=MPP*/
+    select * from select_base_one_multi_db_multi_tb t1 join select_base_one_multi_db_one_tb t2 on t1.pk = t2.pk join select_base_one_one_db_one_tb t3 on t1.pk=t3.pk where t2.integer_test < 50;
+  plan: |
+    ExecutorMode: MPP
+    The Query's MaxConcurrentParallelism: .*
+    MPP node size: .*
+    Fragment=2 Parallelism=.*
+      Output partitioning: SINGLE \[\]
+        pipeline=0 dependency=\[\] parallelism=.*
+          \[Producer\]: RemoteSource.*
+          \[Consumer\]: RandomExchanger --> ParallelHashJoinExec
+        pipeline=1 dependency=\[0\] parallelism=.*
+          \[Producer\]: ParallelHashJoinExec <-- ExchangeExec
+          \[Consumer\]: SingleExchanger --> LocalBufferExec
+    Fragment=0 Parallelism=.*
+      Output partitioning: FIXED .*
+        pipeline=0 dependency=\[\] parallelism=.*
+          \[Producer\]: TableScanExec\(drds_polarx1_part_qatest_app.select_base_one_one_db_one_tb\)
+          \[Consumer\]: SingleExchanger --> LocalBufferExec
+    Fragment=1 Parallelism=.*
+      Output partitioning: FIXED .*
+        pipeline=0 dependency=\[\] parallelism=.*
+          \[Producer\]: LookupJoinExec <-- LookupTableScanExec\(drds_polarx1_part_qatest_app.select_base_one_multi_db_one_tb\) <-- TableScanExec\(drds_polarx1_part_qatest_app.select_base_one_multi_db_multi_tb\)
+          \[Consumer\]: SingleExchanger --> LocalBufferExec

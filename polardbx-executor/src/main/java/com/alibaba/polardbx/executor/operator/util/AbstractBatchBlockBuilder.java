@@ -105,6 +105,11 @@ public abstract class AbstractBatchBlockBuilder implements BlockBuilder {
         throw new UnsupportedOperationException();
     }
 
+    @Override
+    public int compareAssertedSameType(int position, Block otherBlock, int otherPosition) {
+        throw new UnsupportedOperationException();
+    }
+
     protected int getCapacity() {
         return initialCapacity;
     }

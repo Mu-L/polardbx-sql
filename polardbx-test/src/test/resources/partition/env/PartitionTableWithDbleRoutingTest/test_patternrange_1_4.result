@@ -1,0 +1,176 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+set ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC=true;
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=true;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+create table patternrange_table (
+  id int
+  )
+  partition by UDF_HASH(
+  `id` with udf_params(
+  'dble/patternrange',
+  '{
+"defaultNode" : "3",
+"patternValue" : "1000",
+"mapFile" :
+  "
+         0-255=0
+		256-500=1
+		501-755=2
+		756-1000=3
+        "
+}'
+  )
+)
+partitions 4;
+select part_route('','patternrange_table',null);
+part_route('', 'patternrange_table', NULL)
+p4
+select part_route('','patternrange_table',-1);
+part_route('', 'patternrange_table', -1)
+p4
+select part_route('','patternrange_table',0);
+part_route('', 'patternrange_table', 0)
+p1
+select part_route('','patternrange_table',255);
+part_route('', 'patternrange_table', 255)
+p1
+select part_route('','patternrange_table',256);
+part_route('', 'patternrange_table', 256)
+p2
+select part_route('','patternrange_table',500);
+part_route('', 'patternrange_table', 500)
+p2
+select part_route('','patternrange_table',501);
+part_route('', 'patternrange_table', 501)
+p3
+select part_route('','patternrange_table',755);
+part_route('', 'patternrange_table', 755)
+p3
+select part_route('','patternrange_table',756);
+part_route('', 'patternrange_table', 756)
+p4
+select part_route('','patternrange_table',1000);
+part_route('', 'patternrange_table', 1000)
+p1
+select part_route('','patternrange_table',1001);
+part_route('', 'patternrange_table', 1001)
+p1
+create table patternrange_table_1 (
+  id int
+  )
+  partition by UDF_HASH(
+  `id` with udf_params(
+  'dble/patternrange',
+  '{
+"patternValue" : "1000",
+"mapFile" :
+  "
+         0-255=0
+		256-500=1
+		501-755=2
+		756-1000=3
+        "
+}'
+  )
+  )
+  partitions 4;
+select part_route('','patternrange_table_1',0);
+part_route('', 'patternrange_table_1', 0)
+p1
+select part_route('','patternrange_table_1',255);
+part_route('', 'patternrange_table_1', 255)
+p1
+select part_route('','patternrange_table_1',256);
+part_route('', 'patternrange_table_1', 256)
+p2
+select part_route('','patternrange_table_1',500);
+part_route('', 'patternrange_table_1', 500)
+p2
+select part_route('','patternrange_table_1',501);
+part_route('', 'patternrange_table_1', 501)
+p3
+select part_route('','patternrange_table_1',755);
+part_route('', 'patternrange_table_1', 755)
+p3
+select part_route('','patternrange_table_1',756);
+part_route('', 'patternrange_table_1', 756)
+p4
+select part_route('','patternrange_table_1',1000);
+part_route('', 'patternrange_table_1', 1000)
+p1
+select part_route('','patternrange_table_1',1001);
+part_route('', 'patternrange_table_1', 1001)
+p1
+## error_msg: $# server error by can't find any valid data node: nodeIndex is null #$
+select part_route('','patternrange_table_1',null);
+server error by can't find any valid data node: nodeIndex is null
+## error_msg: $# server error by can't find any valid data node: nodeIndex is null #$
+select part_route('','patternrange_table_1',-1);
+server error by can't find any valid data node: nodeIndex is null
+## error_msg: $# server error by can't find any valid data node: nodeIndex is null #$
+select part_route('','patternrange_table_1',-2);
+server error by can't find any valid data node: nodeIndex is null
+create table patternrange_table_2 (
+  id int
+  )
+  partition by UDF_HASH(
+  `id` with udf_params(
+  'dble/patternrange',
+  '{
+"defaultNode" : "3",
+"patternValue" : "1000",
+"mapFile" :
+  "
+         0-255=0
+		256-600=1
+		501-755=2
+		756-1000=3
+        "
+}'
+  )
+  )
+  partitions 4;
+select part_route('','patternrange_table_2',null);
+part_route('', 'patternrange_table_2', NULL)
+p4
+## error_msg: $# server error by For input string: "" #$
+select part_route('','patternrange_table_2','');
+server error by For input string: ""
+select part_route('','patternrange_table_2',2000);
+part_route('', 'patternrange_table_2', 2000)
+p1
+select part_route('','patternrange_table_2',550);
+part_route('', 'patternrange_table_2', 550)
+p2
+create table patternrange_table_3 (
+  id int
+  )
+  partition by UDF_HASH(
+  `id` with udf_params(
+  'dble/patternrange',
+  '{        "patternValue" : "10000",
+"mapFile" :
+  "
+         0-255=0
+		256-600=1
+		501-755=2
+		756-1000=3
+        "
+}'
+  )
+  )
+  partitions 4;
+## error_msg: $# server error by can't find any valid data node #$
+select part_route('','patternrange_table_3',null);
+server error by can't find any valid data node
+## error_msg: $# server error by For input string: "" #$
+select part_route('','patternrange_table_3','');
+server error by For input string: ""
+## error_msg: $# server error by can't find any valid data node #$
+select part_route('','patternrange_table_3',2000);
+server error by can't find any valid data node
+select part_route('','patternrange_table_3',550);
+part_route('', 'patternrange_table_3', 550)
+p2

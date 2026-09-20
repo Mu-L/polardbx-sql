@@ -18,6 +18,7 @@ package com.alibaba.polardbx.executor.columnar.pruning.index;
 
 import com.alibaba.polardbx.executor.columnar.pruning.data.PruneUtils;
 import com.alibaba.polardbx.executor.columnar.pruning.index.builder.BitMapRowGroupIndexBuilder;
+import com.alibaba.polardbx.executor.columnar.pruning.index.builder.MultiSortKeyIndexBuilder;
 import com.alibaba.polardbx.executor.columnar.pruning.index.builder.SortKeyIndexBuilder;
 import com.alibaba.polardbx.executor.columnar.pruning.index.builder.ZoneMapIndexBuilder;
 import com.alibaba.polardbx.executor.columnar.pruning.predicate.ColumnPredicatePruningInf;
@@ -56,9 +57,10 @@ public class IndexPruner {
      * Total number of row groups in this orc file.
      */
     private final long rgNum;
-    private SortKeyIndex sortKeyIndex;
+    SortKeyIndex sortKeyIndex;
     private BitMapRowGroupIndex bitMapRowGroupIndex;
     private ZoneMapIndex zoneMapIndex;
+    private MultiSortKeyIndex multiSortKeyIndex;
     private BloomFilterIndex bloomFilterIndex;
     /**
      * The i-th strip contains stripeRgNum[i] row groups.
@@ -116,6 +118,9 @@ public class IndexPruner {
                                IndexPruneContext ipc) {
         RoaringBitmap pruneResult = RoaringBitmap.bitmapOfRange(0, rgNum);
         pruneIndex(table, cpp, ipc, PruneAction.SORT_KEY_INDEX_PRUNE, sortKeyIndex, pruneResult, columns);
+
+        pruneIndex(table, cpp, ipc, PruneAction.MULTI_SORT_KEY_INDEX_PRUNE, multiSortKeyIndex, pruneResult, columns);
+
 //        pruneIndex(table, cpp, ipc, PruneAction.BITMAP_INDEX_PRUNE, bitMapRowGroupIndex, pruneResult, columns);
         pruneIndex(table, cpp, ipc, PruneAction.ZONE_MAP_INDEX_PRUNE, zoneMapIndex, pruneResult, columns);
         // TODO bloom filter pruning
@@ -127,13 +132,13 @@ public class IndexPruner {
         return new RoaringBitmap();
     }
 
-    private void pruneIndex(String table,
-                            @NotNull ColumnPredicatePruningInf cpp,
-                            IndexPruneContext ipc,
-                            PruneAction pruneAction,
-                            ColumnIndex columnIndex,
-                            RoaringBitmap cur,
-                            List<ColumnMeta> columns) {
+    void pruneIndex(String table,
+                    @NotNull ColumnPredicatePruningInf cpp,
+                    IndexPruneContext ipc,
+                    PruneAction pruneAction,
+                    ColumnIndex columnIndex,
+                    RoaringBitmap cur,
+                    List<ColumnMeta> columns) {
         if (columnIndex == null) {
             return;
         }
@@ -147,6 +152,7 @@ public class IndexPruner {
         if (columnarTracer != null) {
             switch (pruneAction) {
             case SORT_KEY_INDEX_PRUNE:
+            case MULTI_SORT_KEY_INDEX_PRUNE:
                 columnarTracer.tracePruneIndex(table, PruneUtils.display(cpp, columns, ipc), before - after, 0, 0);
                 break;
             case ZONE_MAP_INDEX_PRUNE:
@@ -180,6 +186,7 @@ public class IndexPruner {
         private final String filePath;
         private final SortKeyIndexBuilder sortKeyIndexBuilder = new SortKeyIndexBuilder();
         private final ZoneMapIndexBuilder zoneMapIndexBuilder = new ZoneMapIndexBuilder();
+        private final MultiSortKeyIndexBuilder multiSortKeyIndexBuilder = new MultiSortKeyIndexBuilder();
         private final BitMapRowGroupIndexBuilder bitMapRowGroupIndexBuilder = new BitMapRowGroupIndexBuilder();
         private final List<Integer> stripeRgNum = Lists.newArrayList();
         private int curRgNum;
@@ -200,6 +207,7 @@ public class IndexPruner {
             indexPruner.setOrcFile(filePath);
             indexPruner.sortKeyIndex = sortKeyIndexBuilder.build();
             indexPruner.bitMapRowGroupIndex = bitMapRowGroupIndexBuilder.build();
+            indexPruner.multiSortKeyIndex = multiSortKeyIndexBuilder.build();
             indexPruner.zoneMapIndex = zoneMapIndexBuilder.build();
             indexPruner.bloomFilterIndex = bloomFilterIndex;
             indexPruner.stripeRgNum = stripeRgNum;
@@ -209,6 +217,18 @@ public class IndexPruner {
 
         public IndexPrunerBuilder appendSortKeyIndex(OrcProto.ColumnStatistics columnStatistics) {
             sortKeyIndexBuilder.appendDataEntry(columnStatistics);
+            curRgNum++;
+            return this;
+        }
+
+        public IndexPrunerBuilder appendSortKeyIndex(String min, String max) {
+            sortKeyIndexBuilder.appendDataEntry(min, max);
+            curRgNum++;
+            return this;
+        }
+
+        public IndexPrunerBuilder appendSortKeyIndex(long min, long max) {
+            sortKeyIndexBuilder.appendDataEntry(min, max);
             curRgNum++;
             return this;
         }
@@ -226,6 +246,10 @@ public class IndexPruner {
 
         public void setSortKeyDataType(DataType dt) {
             sortKeyIndexBuilder.setDt(dt);
+        }
+
+        public void setSortKeyAsc(boolean isAsc) {
+            sortKeyIndexBuilder.setAsc(isAsc);
         }
 
         public void stripeEnd() {
@@ -249,6 +273,10 @@ public class IndexPruner {
             zoneMapIndexBuilder.appendLongData(columnId, min).appendLongData(columnId, max);
         }
 
+        public void appendZoneMap(int columnId, int min, int max) {
+            zoneMapIndexBuilder.appendIntegerData(columnId, min).appendIntegerData(columnId, max);
+        }
+
         public void appendZoneMap(int columnId, OrcProto.DateStatistics dateStatistics) {
             Integer min = dateStatistics.getMinimum();
             Integer max = dateStatistics.getMaximum();
@@ -259,11 +287,7 @@ public class IndexPruner {
             zoneMapIndexBuilder.appendIntegerData(columnId, min).appendIntegerData(columnId, max);
         }
 
-        public void appendZoneMap(int columnId, Long min, Long max) {
-            Preconditions.checkArgument(
-                columnId > 0 &&
-                    min != null && max != null,
-                "bad data for zone map index:" + columnId + ", int type," + min + "," + max);
+        public void appendZoneMap(int columnId, long min, long max) {
             zoneMapIndexBuilder.appendLongData(columnId, min).appendLongData(columnId, max);
         }
 
@@ -278,6 +302,61 @@ public class IndexPruner {
             Preconditions.checkArgument(columnId >= 0 && dataType != null,
                 "bad data for zone map index:" + columnId + "," + dataType);
             zoneMapIndexBuilder.appendColumn(columnId, dataType);
+        }
+
+        public void appendMultiSortKeyColumn(int columnId, OrcProto.IntegerStatistics intStatistics) {
+            Long min = intStatistics.getMinimum();
+            Long max = intStatistics.getMaximum();
+            Preconditions.checkArgument(
+                columnId >= 0 &&
+                    min != null && max != null &&
+                    min >= Long.MIN_VALUE && min <= Long.MAX_VALUE &&
+                    max >= Long.MIN_VALUE && max <= Long.MAX_VALUE,
+                "bad data for multi sort key index:" + columnId + ", int type," + min + "," + max);
+            multiSortKeyIndexBuilder.appendLongData(columnId, min).appendLongData(columnId, max);
+        }
+
+        public void appendMultiSortKeyColumn(int columnId, long min, long max) {
+            multiSortKeyIndexBuilder.appendLongData(columnId, min).appendLongData(columnId, max);
+        }
+
+        public void appendMultiSortKeyColumn(int columnId, OrcProto.StringStatistics stringStatistics) {
+            String min = stringStatistics.getMinimum().isEmpty() ? stringStatistics.getLowerBound() :
+                stringStatistics.getMinimum();
+            String max = stringStatistics.getMaximum().isEmpty() ? stringStatistics.getUpperBound() :
+                stringStatistics.getMaximum();
+            multiSortKeyIndexBuilder.appendStringData(columnId, min).appendStringData(columnId, max);
+        }
+
+        public void appendMultiSortKeyColumn(int columnId, String min, String max) {
+            multiSortKeyIndexBuilder.appendStringData(columnId, min).appendStringData(columnId, max);
+        }
+
+        public void appendMultiSortKeyColumn(int columnId, OrcProto.DateStatistics dateStatistics) {
+            Integer min = dateStatistics.getMinimum();
+            Integer max = dateStatistics.getMaximum();
+            Preconditions.checkArgument(
+                columnId >= 0 &&
+                    min != null && max != null,
+                "bad data for multi sort key index:" + columnId + ", int type," + min + "," + max);
+            multiSortKeyIndexBuilder.appendIntegerData(columnId, min).appendIntegerData(columnId, max);
+        }
+
+        public void appendMultiSortKeyColumn(int columnId, int min, int max) {
+            multiSortKeyIndexBuilder.appendIntegerData(columnId, min).appendIntegerData(columnId, max);
+        }
+
+        public void appendMultiSortKeyColumn(int columnId, boolean hasNull) {
+            Preconditions.checkArgument(
+                columnId >= 0,
+                "bad data for multi sort key index:" + columnId);
+            multiSortKeyIndexBuilder.appendNull(columnId, hasNull);
+        }
+
+        public void appendMultiSortKeyColumn(int columnId, DataType dataType) {
+            Preconditions.checkArgument(columnId >= 0 && dataType != null,
+                "bad data for multi sort key index:" + columnId + "," + dataType);
+            multiSortKeyIndexBuilder.appendColumn(columnId, dataType);
         }
 
         public void setRgNum(int rgNum) {
@@ -312,7 +391,7 @@ public class IndexPruner {
         return estimatedSizeInBytes;
     }
 
-    private void updateSizeInfo() {
+    void updateSizeInfo() {
         long size = INSTANCE_SIZE;
         if (sortKeyIndex != null) {
             size += sortKeyIndex.getSizeInBytes();
@@ -330,5 +409,9 @@ public class IndexPruner {
             size += (long) stripeRgNum.size() * Integer.BYTES;
         }
         this.estimatedSizeInBytes = size;
+    }
+
+    public MultiSortKeyIndex getMultiSortKeyIndex() {
+        return multiSortKeyIndex;
     }
 }

@@ -1,0 +1,382 @@
+SQL:
+  - sql: |
+      select 1 from x where x.id = 1 group by x.id;
+    plan: |
+      project(1="?0")
+        hashagg(group="id")
+          exchange(distribution=hash[0], collation=[])
+            partialhashagg(group="id")
+              osstablescan(tables="cci_x[p1,p2,p3,...p16]", shardcount=16, sql="select `id` from `cci_x` as `cci_x` where (`id` = ?)")
+  - sql: |
+      select 1 from x where x.id in (12,3,4,5) group by x.id;
+    plan: |
+      project(1="?0")
+        hashagg(group="id")
+          exchange(distribution=hash[0], collation=[])
+            partialhashagg(group="id")
+              osstablescan(tables="cci_x[p1,p2,p3,...p16]", shardcount=16, sql="select `id` from `cci_x` as `cci_x` where (`id` in(?))")
+  - sql: |
+      select 1 from x where x.id in (12,3,4,5,6,7) group by x.id;
+    plan: |
+      project(1="?0")
+        hashagg(group="id")
+          exchange(distribution=hash[0]16, collation=[])
+            partialhashagg(group="id")
+              osstablescan(tables="cci_x[p1,p2,p3,...p16]", shardcount=16, sql="select `id` from `cci_x` as `cci_x` where (`id` in(?))")
+  - sql: |
+      select 1 from x where x.b in (12,3,4,5) group by x.b,x.id;
+    plan: |
+      project(1="?0")
+        hashagg(group="b,id")
+          exchange(distribution=hash[1]16, collation=[])
+            project(b="b", id="id")
+              partialhashagg(group="id,b")
+                osstablescan(tables="cci_x[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `b` from `cci_x` as `cci_x` where (`b` in(?))")
+  - sql: |
+      /*+TDDL:cmd_extra(PREFER_PARTIAL_AGG=false)*/select 1 from x where x.a in (12,3,4,5) group by x.a;
+    plan: |
+      project(1="?0")
+        hashagg(group="a")
+          exchange(distribution=hash[0], collation=[])
+            partialhashagg(group="a")
+              osstablescan(tables="cci_x[p1,p2,p5,p16]", shardcount=4, sql="select `a` from `cci_x` as `cci_x` where (`a` in(?))", pruninginfo="all size:4*4(part), pruning size:12")
+  - sql: |
+      select 1 from x join (select * from x limit 1) y on x.a = y.a and x.id = y.id and x.id = 1;
+    plan: |
+      project(1="?0")
+        hashjoin(condition="a = a and id = id", type="inner")
+          osstablescan(tables="cci_x[p1,p2,p3,...p16]", shardcount=16, partition=[remote], sql="select `id`, `a` from `cci_x` as `cci_x` where (`id` = ?)")
+          exchange(distribution=broadcast, collation=[])
+            filter(condition="id = ?2")
+              limit(offset=0, fetch=?1)
+                exchange(distribution=single, collation=[])
+                  limit(fetch=?1)
+                    osstablescan(tables="cci_x[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `a` from `cci_x` as `cci_x`")
+  - sql: |
+      select 1 from x join (select * from x limit 1) y on x.id = y.id and x.id = 1;
+    plan: |
+      project(1="?0")
+        hashjoin(condition="id = id", type="inner")
+          osstablescan(tables="cci_x[p1,p2,p3,...p16]", shardcount=16, partition=[remote], sql="select `id` from `cci_x` as `cci_x` where (`id` = ?)")
+          exchange(distribution=broadcast, collation=[])
+            filter(condition="id = ?2")
+              limit(offset=0, fetch=?1)
+                exchange(distribution=single, collation=[])
+                  limit(fetch=?1)
+                    osstablescan(tables="cci_x[p1,p2,p3,...p16]", shardcount=16, sql="select `id` from `cci_x` as `cci_x`")
+  - sql: |
+      select 1 from x join (select * from x) y on x.id = y.id and x.id = 1;
+    plan: |
+      project(1="?0")
+        hashjoin(condition="id = id", type="inner")
+          osstablescan(tables="cci_x[p1,p2,p3,...p16]", shardcount=16, partition=[remote], sql="select `id` from `cci_x` as `cci_x` where (`id` = ?)")
+          exchange(distribution=broadcast, collation=[])
+            osstablescan(tables="cci_x[p1,p2,p3,...p16]", shardcount=16, sql="select `id` from `cci_x` as `cci_x` where (`id` = ?)")
+  - sql: |
+      select 1 from x join (select * from x) y on x.a = y.a and x.a = 1;
+    plan: |
+      project(1="?0")
+        hashjoin(condition="a = a", type="inner")
+          exchange(distribution=hash[0], collation=[])
+            osstablescan(tables="cci_x[p14]", sql="select `a` from `cci_x` as `cci_x` where (`a` = ?)")
+          exchange(distribution=hash[0], collation=[])
+            osstablescan(tables="cci_x[p14]", sql="select `a` from `cci_x` as `cci_x` where (`a` = ?)")
+  - sql: |
+      select 1 from x join (select * from x) y on x.a = y.a;
+    plan: |
+      project(1="?0")
+        hashjoin(condition="a = a", type="inner")
+          exchange(distribution=hash[0], collation=[])
+            osstablescan(tables="cci_x[p1,p2,p3,...p16]", shardcount=16, sql="select `a` from `cci_x` as `cci_x`")
+          exchange(distribution=hash[0], collation=[])
+            osstablescan(tables="cci_x[p1,p2,p3,...p16]", shardcount=16, sql="select `a` from `cci_x` as `cci_x`")
+  - sql: |
+      select 1 from x join (select * from x limit 1) y on x.a = y.a;
+    plan: |
+      project(1="?0")
+        hashjoin(condition="a = a", type="inner")
+          osstablescan(tables="cci_x[p1,p2,p3,...p16]", shardcount=16, partition=[remote], sql="select `a` from `cci_x` as `cci_x`")
+          exchange(distribution=broadcast, collation=[])
+            limit(offset=0, fetch=?1)
+              exchange(distribution=single, collation=[])
+                limit(fetch=?1)
+                  osstablescan(tables="cci_x[p1,p2,p3,...p16]", shardcount=16, sql="select `a` from `cci_x` as `cci_x`")
+  - sql: |
+      select 1 from x join (select * from x limit 1) y on x.a = y.a and x.b = y.b where (x.a,x.b) =(1,2);
+    plan: |
+      project(1="?0")
+        hashjoin(condition="a = a and b = b", type="inner")
+          exchange(distribution=random, collation=[])
+            osstablescan(tables="cci_x[p14]", sql="select `a`, `b` from `cci_x` as `cci_x` where ((?, ?) =(`a`, `b`))")
+          exchange(distribution=broadcast, collation=[])
+            filter(condition="row(?2, ?3) = row(a, b)")
+              limit(offset=0, fetch=?1)
+                exchange(distribution=single, collation=[])
+                  limit(fetch=?1)
+                    osstablescan(tables="cci_x[p1,p2,p3,...p16]", shardcount=16, sql="select `a`, `b` from `cci_x` as `cci_x`")
+  - sql: |
+      select * from x join (select * from x ) y on x.a = y.a and x.b = y.b where x.a=1 and x.b =2;
+    plan: |
+      hashjoin(condition="a = a and b = b", type="inner")
+        exchange(distribution=hash[1, 2], collation=[])
+          osstablescan(tables="cci_x[p14]", sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where ((`a` = ?) and (`b` = ?))")
+        exchange(distribution=hash[1, 2], collation=[])
+          osstablescan(tables="cci_x[p14]", sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where ((`a` = ?) and (`b` = ?))")
+  - sql: |
+      select * from x join (select * from x ) y on x.a = y.a and x.id = y.id where (x.a,x.id) =(1,2);
+    plan: |
+      hashjoin(condition="a = a and id = id", type="inner")
+        exchange(distribution=hash[1, 0], collation=[])
+          osstablescan(tables="cci_x[p14]", sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where ((`a`, `id`) =(?, ?))")
+        exchange(distribution=hash[1, 0], collation=[])
+          osstablescan(tables="cci_x[p14]", sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where ((`a`, `id`) =(?, ?))")
+  - sql: |
+      select * from x join (select * from x ) y on x.a = y.a and x.b = y.b where (x.a,x.id) =(1,2);
+    plan: |
+      project(id="id0", a="a0", b="b0", id0="id", a0="a", b0="b")
+        hashjoin(condition="a = a and b = b", type="inner")
+          exchange(distribution=hash[1, 2], collation=[])
+            osstablescan(tables="cci_x[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `a`, `b` from `cci_x` as `cci_x`")
+          exchange(distribution=hash[1, 2], collation=[])
+            osstablescan(tables="cci_x[p14]", sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where ((`a`, `id`) =(?, ?))")
+  - sql: |
+      select * from x join (select * from x ) y on x.a = y.a and x.id = y.id where (x.a,x.id) in((1,2),(3,4));
+    plan: |
+      hashjoin(condition="a = a and id = id", type="inner")
+        exchange(distribution=hash[1, 0], collation=[])
+          osstablescan(tables="cci_x[p2,p14]", shardcount=2, sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where (((`a`, `id`)) in(?))", pruninginfo="all size:2*2(part), pruning size:2")
+        exchange(distribution=hash[1, 0], collation=[])
+          osstablescan(tables="cci_x[p2,p14]", shardcount=2, sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where (((`a`, `id`)) in(?))", pruninginfo="all size:2*2(part), pruning size:2")
+  - sql: |
+      select * from x join (select * from x ) y on x.a = y.a and x.b = y.b where (x.a,x.b) =(1,2);
+    plan: |
+      hashjoin(condition="a = a and b = b", type="inner")
+        exchange(distribution=hash[1, 2], collation=[])
+          osstablescan(tables="cci_x[p14]", sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where ((`a`, `b`) =(?, ?))")
+        exchange(distribution=hash[1, 2], collation=[])
+          osstablescan(tables="cci_x[p14]", sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where ((`a`, `b`) =(?, ?))")
+  - sql: |
+      select * from x join (select * from x ) y on x.a = y.a where x.a in(1,2,3,4,5) and x.a > 1;
+    plan: |
+      hashjoin(condition="a = a", type="inner", partition=[local])
+        osstablescan(tables="cci_x[p1,p2,p5,p14,p16]", shardcount=5, partition=[local, remote], sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where ((`a` > ?) and (`a` in(?)))", pruninginfo="all size:5*5(part), pruning size:20")
+        osstablescan(tables="cci_x[p1,p2,p5,p14,p16]", shardcount=5, partition=[local, remote], sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where ((`a` > ?) and (`a` in(?)))", pruninginfo="all size:5*5(part), pruning size:20")
+  - sql: |
+      /*+TDDL:cmd_extra(PARTITION_WISE_GROUP_THRESHOLD=6)*/
+      select * from x join (select * from x ) y on x.a = y.a where x.a in(1,2,3,4,5) and x.a > 1;
+    plan: |
+      hashjoin(condition="a = a", type="inner")
+        exchange(distribution=hash[1], collation=[])
+          osstablescan(tables="cci_x[p1,p2,p5,p14,p16]", shardcount=5, sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where ((`a` > ?) and (`a` in(?)))", pruninginfo="all size:5*5(part), pruning size:20")
+        exchange(distribution=hash[1], collation=[])
+          osstablescan(tables="cci_x[p1,p2,p5,p14,p16]", shardcount=5, sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where ((`a` > ?) and (`a` in(?)))", pruninginfo="all size:5*5(part), pruning size:20")
+  - sql: |
+      select * from x left join (select * from y  where  id<10 ) y on x.a = y.a and x.b = y.b where x.a = 1;
+    plan: |
+      hashjoin(condition="a = a and b = b", type="left")
+        exchange(distribution=random, collation=[])
+          osstablescan(tables="cci_x[p14]", sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where (`a` = ?)")
+        exchange(distribution=broadcast, collation=[])
+          osstablescan(tables="cci_y[p14]", sql="select `id`, `a`, `b` from `cci_y` as `cci_y` where ((`id` < ?) and (`a` = ?))")
+  - sql: |
+      /*+TDDL:cmd_extra(enable_broadcast_join=false)*/ select * from x left join (select * from y  where  id<10 ) y on x.a = y.a and x.b = y.b where x.a = 1;
+    plan: |
+      hashjoin(condition="a = a and b = b", type="left")
+        exchange(distribution=hash[1, 2], collation=[])
+          osstablescan(tables="cci_x[p14]", sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where (`a` = ?)")
+        exchange(distribution=hash[1, 2], collation=[])
+          osstablescan(tables="cci_y[p14]", sql="select `id`, `a`, `b` from `cci_y` as `cci_y` where ((`id` < ?) and (`a` = ?))")
+  - sql: |
+      select * from x,y where x.a = y.a and x.id = y.id and x.a = 1 order by x.id desc limit 100;
+    plan: |
+      topn(sort="id desc", offset=0, fetch=?1)
+        exchange(distribution=single, collation=[0 desc-nulls-last])
+          topn(sort="id desc", fetch=?1)
+            hashjoin(condition="a = a and id = id", type="inner")
+              exchange(distribution=hash[0]16, collation=[])
+                osstablescan(tables="cci_x[p14]", sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where (`a` = ?)")
+              exchange(distribution=hash[0]16, collation=[])
+                osstablescan(tables="cci_y[p14]", sql="select `id`, `a`, `b` from `cci_y` as `cci_y` where (`a` = ?)")
+  - sql: |
+      select * from x,(select * from y  where  id<10 ) y where  x.a = y.a and x.id = y.id and x.a = 1 order by x.id desc limit 100;
+    plan: |
+      project(id="id0", a="a0", b="b0", id0="id", a0="a", b0="b")
+        limit(offset=0, fetch=?2)
+          exchange(distribution=single, collation=[3 desc-nulls-last])
+            memsort(sort="id0 desc")
+              hashjoin(condition="a = a and id = id", type="inner")
+                exchange(distribution=hash[0]16, collation=[])
+                  osstablescan(tables="cci_y[p14]", sql="select `id`, `a`, `b` from `cci_y` as `cci_y` where ((`id` < ?) and (`a` = ?))")
+                exchange(distribution=hash[0]16, collation=[])
+                  osstablescan(tables="cci_x[p14]", sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where ((`id` < ?) and (`a` = ?))")
+  - sql: |
+      select * from x  left join (select * from y  where  id=10 ) y on x.a = y.a and x.id = y.id  left join (select * from y  where  id<10 ) z on x.a = z.a and x.id = z.id   where x.a = 1 order by x.id+y.id desc limit 10;
+    plan: |
+      project(id="id", a="a", b="b", id0="id0", a0="a0", b0="b0", id1="id1", a1="a1", b1="b1")
+        topn(sort="(x.id + y.id) desc", offset=0, fetch=?3)
+          exchange(distribution=single, collation=[9 desc-nulls-last])
+            topn(sort="(x.id + y.id) desc", fetch=?3)
+              project(id="id0", a="a0", b="b0", id0="id00", a0="a00", b0="b00", id1="id", a1="a", b1="b", (x.id + y.id)="id0 + id00")
+                hashjoin(condition="a = a and id = id", type="right")
+                  exchange(distribution=hash[0]16, collation=[])
+                    osstablescan(tables="cci_y[p14]", sql="select `id`, `a`, `b` from `cci_y` as `cci_y` where ((`id` < ?) and (`a` = ?))")
+                  hashjoin(condition="a = a and id = id", type="left")
+                    exchange(distribution=hash[0]16, collation=[])
+                      osstablescan(tables="cci_x[p14]", sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where (`a` = ?)")
+                    exchange(distribution=hash[0]16, collation=[])
+                      osstablescan(tables="cci_y[p14]", sql="select `id`, `a`, `b` from `cci_y` as `cci_y` where ((`id` = ?) and (`a` = ?))")
+  - sql: |
+      select count(*) from x 
+      left join (select * from y  where  id=10 ) y on x.a = y.a and x.id = y.id 
+      left join (select * from y  where  id<10 ) z on x.a = z.a and x.id = z.id  
+      left join (select * from y  where  id=10 ) y1 on x.a = y1.a and x.id = y1.id
+      left join (select * from y  where  id=10 ) y2 on x.a = y2.a and x.id = y2.id
+      left join (select * from y  where  id=10 ) y3 on x.a = y3.a and x.id = y3.id
+      left join (select * from y  where  id=10 ) y4 on x.a = y4.a and x.id = y4.id
+      where x.a = 1 group by x.a;
+    plan: |
+      project(count(*)="count(*)")
+        hashagg(group="a", count(*)="sum(count(*))")
+          exchange(distribution=hash[0], collation=[])
+            partialhashagg(group="a", count(*)="count()")
+              hashjoin(condition="a = a and id = id", type="left")
+                hashjoin(condition="a = a and id = id", type="left")
+                  hashjoin(condition="a = a and id = id", type="left")
+                    hashjoin(condition="a = a and id = id", type="left")
+                      hashjoin(condition="a = a and id = id", type="left")
+                        hashjoin(condition="a = a and id = id", type="left")
+                          exchange(distribution=hash[0]16, collation=[])
+                            osstablescan(tables="cci_x[p14]", sql="select `id`, `a` from `cci_x` as `cci_x` where (`a` = ?)")
+                          exchange(distribution=hash[0]16, collation=[])
+                            osstablescan(tables="cci_y[p14]", sql="select `id`, `a` from `cci_y` as `cci_y` where ((`id` = ?) and (`a` = ?))")
+                        exchange(distribution=hash[0]16, collation=[])
+                          osstablescan(tables="cci_y[p14]", sql="select `id`, `a` from `cci_y` as `cci_y` where ((`id` < ?) and (`a` = ?))")
+                      exchange(distribution=hash[0]16, collation=[])
+                        osstablescan(tables="cci_y[p14]", sql="select `id`, `a` from `cci_y` as `cci_y` where ((`id` = ?) and (`a` = ?))")
+                    exchange(distribution=hash[0]16, collation=[])
+                      osstablescan(tables="cci_y[p14]", sql="select `id`, `a` from `cci_y` as `cci_y` where ((`id` = ?) and (`a` = ?))")
+                  exchange(distribution=hash[0]16, collation=[])
+                    osstablescan(tables="cci_y[p14]", sql="select `id`, `a` from `cci_y` as `cci_y` where ((`id` = ?) and (`a` = ?))")
+                exchange(distribution=hash[0]16, collation=[])
+                  osstablescan(tables="cci_y[p14]", sql="select `id`, `a` from `cci_y` as `cci_y` where ((`id` = ?) and (`a` = ?))")
+  - sql: |
+      select count(*) from x 
+      left join (select * from y  where  id=10 ) y on x.a = y.a and x.id = y.id 
+      left join (select * from y  where  id<10 ) z on x.a = z.a and x.id = z.b  
+      left join (select * from y  where  id=10 ) y1 on x.a = y1.a and x.id = y1.b
+      left join (select * from y  where  id=10 ) y2 on x.a = y2.a and x.id = y2.b
+      left join (select * from y  where  id=10 ) y3 on x.a = y3.a and x.b = y3.id
+      left join (select * from y  where  id=10 ) y4 on x.a = y4.a and x.b = y4.id
+      where x.a = 1 group by x.a;
+    plan: |
+      project(count(*)="count(*)")
+        hashagg(group="a", count(*)="sum(count(*))")
+          exchange(distribution=hash[0], collation=[])
+            partialhashagg(group="a", count(*)="count()")
+              hashjoin(condition="a = a and b = id", type="left")
+                hashjoin(condition="a = a and b = id", type="left")
+                  hashjoin(condition="a = a and id = b", type="left")
+                    hashjoin(condition="a = a and id = b", type="left")
+                      hashjoin(condition="a = a and id = b", type="left")
+                        hashjoin(condition="a = a and id = id", type="left")
+                          exchange(distribution=hash[0]16, collation=[])
+                            osstablescan(tables="cci_x[p14]", sql="select `id`, `a`, `b` from `cci_x` as `cci_x` where (`a` = ?)")
+                          exchange(distribution=hash[0]16, collation=[])
+                            osstablescan(tables="cci_y[p14]", sql="select `id`, `a` from `cci_y` as `cci_y` where ((`id` = ?) and (`a` = ?))")
+                        exchange(distribution=hash[1]16, collation=[])
+                          osstablescan(tables="cci_y[p14]", sql="select `a`, `b` from `cci_y` as `cci_y` where ((`id` < ?) and (`a` = ?))")
+                      exchange(distribution=hash[1]16, collation=[])
+                        osstablescan(tables="cci_y[p14]", sql="select `a`, `b` from `cci_y` as `cci_y` where ((`id` = ?) and (`a` = ?))")
+                    exchange(distribution=hash[1]16, collation=[])
+                      osstablescan(tables="cci_y[p14]", sql="select `a`, `b` from `cci_y` as `cci_y` where ((`id` = ?) and (`a` = ?))")
+                  exchange(distribution=broadcast, collation=[])
+                    osstablescan(tables="cci_y[p14]", sql="select `id`, `a` from `cci_y` as `cci_y` where ((`id` = ?) and (`a` = ?))")
+                exchange(distribution=broadcast, collation=[])
+                  osstablescan(tables="cci_y[p14]", sql="select `id`, `a` from `cci_y` as `cci_y` where ((`id` = ?) and (`a` = ?))")
+DDL:
+  x:
+    CREATE TABLE `x` ( 	`id` int(11) NOT NULL AUTO_INCREMENT, 	`a` int(11) NOT NULL, 	`b` int(11) DEFAULT NULL, 	PRIMARY KEY (`id`, `a`), 	CLUSTERED COLUMNAR INDEX `cci_x`(`a`) PARTITION BY HASH (`a`) PARTITIONS 16 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 PARTITION BY KEY (`id`) PARTITIONS 16;
+  y:
+    CREATE TABLE `y` ( 	`id` int(11) NOT NULL AUTO_INCREMENT, 	`a` int(11) NOT NULL, 	`b` int(11) DEFAULT NULL, 	PRIMARY KEY (`id`, `a`), 	CLUSTERED COLUMNAR INDEX `cci_y`(`a`) PARTITION BY HASH (`a`) PARTITIONS 16 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 PARTITION BY KEY (`id`) PARTITIONS 16;
+STATISTICS:
+  x:
+    176519336
+  y:
+    2453928
+  x.a.TOPN:
+    { "countArr": [ 88457 ],"valueArr": [ 1 ],"type": "Int","sampleRate": 1.0 }
+  x.a.cardinality:
+    1
+  x.a.histogram:
+    { "buckets": [ ],"maxBucketSize": 64,"type": "Int","sampleRate": 1.0 }
+  x.a.null_count:
+    0
+  x.a.sample_rate:
+    5.665102E-4
+  x.b.TOPN:
+    { "countArr": [ 88457 ],"valueArr": [ 4 ],"type": "Int","sampleRate": 1.0 }
+  x.b.cardinality:
+    1
+  x.b.histogram:
+    { "buckets": [ ],"maxBucketSize": 64,"type": "Int","sampleRate": 1.0 }
+  x.b.null_count:
+    0
+  x.b.sample_rate:
+    5.665102E-4
+  x.id.TOPN:
+    null
+  x.id.cardinality:
+    24401151
+  x.id.histogram:
+    { "buckets": [ { "ndv": 1383,"upper": "1718556","lower": "536975","count": 1383,"preSum": 0 },{ "ndv": 1383,"upper": "4395489","lower": "1718576","count": 1383,"preSum": 1383 },{ "ndv": 1383,"upper": "8264772","lower": "4395490","count": 1383,"preSum": 2766 },{ "ndv": 1383,"upper": "10508138","lower": "8264774","count": 1383,"preSum": 4149 },{ "ndv": 1383,"upper": "14642165","lower": "10508144","count": 1383,"preSum": 5532 },{ "ndv": 1383,"upper": "17084001","lower": "14642166","count": 1383,"preSum": 6915 },{ "ndv": 1383,"upper": "17975513","lower": "17084011","count": 1383,"preSum": 8298 },{ "ndv": 1383,"upper": "19373390","lower": "17975514","count": 1383,"preSum": 9681 },{ "ndv": 1383,"upper": "24762346","lower": "19373418","count": 1383,"preSum": 11064 },{ "ndv": 1383,"upper": "27011857","lower": "24762347","count": 1383,"preSum": 12447 },{ "ndv": 1383,"upper": "28262370","lower": "27011859","count": 1383,"preSum": 13830 },{ "ndv": 1383,"upper": "30690827","lower": "28262371","count": 1383,"preSum": 15213 },{ "ndv": 1383,"upper": "36351269","lower": "30690871","count": 1383,"preSum": 16596 },{ "ndv": 1383,"upper": "36495909","lower": "36351285","count": 1383,"preSum": 17979 },{ "ndv": 1383,"upper": "37881646","lower": "36495911","count": 1383,"preSum": 19362 },{ "ndv": 1383,"upper": "41300430","lower": "37881671","count": 1383,"preSum": 20745 },{ "ndv": 1383,"upper": "44514070","lower": "41300431","count": 1383,"preSum": 22128 },{ "ndv": 1383,"upper": "46087097","lower": "44514087","count": 1383,"preSum": 23511 },{ "ndv": 1383,"upper": "46912783","lower": "46087109","count": 1383,"preSum": 24894 },{ "ndv": 1383,"upper": "48584295","lower": "46912789","count": 1383,"preSum": 26277 },{ "ndv": 1383,"upper": "51111566","lower": "48584301","count": 1383,"preSum": 27660 },{ "ndv": 1383,"upper": "57146816","lower": "51111582","count": 1383,"preSum": 29043 },{ "ndv": 1383,"upper": "58989114","lower": "57146817","count": 1383,"preSum": 30426 },{ "ndv": 1383,"upper": "61662830","lower": "58989121","count": 1383,"preSum": 31809 },{ "ndv": 1383,"upper": "68498579","lower": "61662839","count": 1383,"preSum": 33192 },{ "ndv": 1383,"upper": "72258645","lower": "68498613","count": 1383,"preSum": 34575 },{ "ndv": 1383,"upper": "73998681","lower": "72258662","count": 1383,"preSum": 35958 },{ "ndv": 1383,"upper": "75541923","lower": "73998713","count": 1383,"preSum": 37341 },{ "ndv": 1383,"upper": "75980227","lower": "75541927","count": 1383,"preSum": 38724 },{ "ndv": 1383,"upper": "77537131","lower": "75980255","count": 1383,"preSum": 40107 },{ "ndv": 1383,"upper": "79057808","lower": "77537137","count": 1383,"preSum": 41490 },{ "ndv": 1383,"upper": "81406238","lower": "79057809","count": 1383,"preSum": 42873 },{ "ndv": 1383,"upper": "84633565","lower": "81406247","count": 1383,"preSum": 44256 },{ "ndv": 1383,"upper": "88869166","lower": "84633572","count": 1383,"preSum": 45639 },{ "ndv": 1383,"upper": "93396941","lower": "88869170","count": 1383,"preSum": 47022 },{ "ndv": 1383,"upper": "95683047","lower": "93396942","count": 1383,"preSum": 48405 },{ "ndv": 1383,"upper": "98183884","lower": "95683088","count": 1383,"preSum": 49788 },{ "ndv": 1383,"upper": "99180040","lower": "98183885","count": 1383,"preSum": 51171 },{ "ndv": 1383,"upper": "100674344","lower": "99180044","count": 1383,"preSum": 52554 },{ "ndv": 1383,"upper": "102277948","lower": "100674346","count": 1383,"preSum": 53937 },{ "ndv": 1383,"upper": "104735918","lower": "102277960","count": 1383,"preSum": 55320 },{ "ndv": 1383,"upper": "108531022","lower": "104735936","count": 1383,"preSum": 56703 },{ "ndv": 1383,"upper": "109398630","lower": "108531023","count": 1383,"preSum": 58086 },{ "ndv": 1383,"upper": "111250658","lower": "109398644","count": 1383,"preSum": 59469 },{ "ndv": 1383,"upper": "111765896","lower": "111250659","count": 1383,"preSum": 60852 },{ "ndv": 1383,"upper": "115966187","lower": "111765926","count": 1383,"preSum": 62235 },{ "ndv": 1383,"upper": "118397589","lower": "115966237","count": 1383,"preSum": 63618 },{ "ndv": 1383,"upper": "119451109","lower": "118397615","count": 1383,"preSum": 65001 },{ "ndv": 1383,"upper": "120074304","lower": "119451128","count": 1383,"preSum": 66384 },{ "ndv": 1383,"upper": "122777606","lower": "120074327","count": 1383,"preSum": 67767 },{ "ndv": 1383,"upper": "124798449","lower": "122777622","count": 1383,"preSum": 69150 },{ "ndv": 1383,"upper": "128410278","lower": "124798450","count": 1383,"preSum": 70533 },{ "ndv": 1383,"upper": "130258159","lower": "128410284","count": 1383,"preSum": 71916 },{ "ndv": 1383,"upper": "130744265","lower": "130258180","count": 1383,"preSum": 73299 },{ "ndv": 1383,"upper": "134401670","lower": "130744266","count": 1383,"preSum": 74682 },{ "ndv": 1383,"upper": "136405770","lower": "134401689","count": 1383,"preSum": 76065 },{ "ndv": 1383,"upper": "137766152","lower": "136405771","count": 1383,"preSum": 77448 },{ "ndv": 1383,"upper": "140715166","lower": "137766160","count": 1383,"preSum": 78831 },{ "ndv": 1383,"upper": "141184467","lower": "140715179","count": 1383,"preSum": 80214 },{ "ndv": 1383,"upper": "142843859","lower": "141184468","count": 1383,"preSum": 81597 },{ "ndv": 1383,"upper": "144779788","lower": "142843860","count": 1383,"preSum": 82980 },{ "ndv": 1383,"upper": "146302552","lower": "144779797","count": 1383,"preSum": 84363 },{ "ndv": 1383,"upper": "148179119","lower": "146302570","count": 1383,"preSum": 85746 },{ "ndv": 1328,"upper": "149837763","lower": "148179227","count": 1328,"preSum": 87129 } ],"maxBucketSize": 64,"type": "Int","sampleRate": 1.0 }
+  x.id.null_count:
+    0
+  x.id.sample_rate:
+    5.665102E-4
+  y.a.TOPN:
+    { "countArr": [ 99219 ],"valueArr": [ 1 ],"type": "Int","sampleRate": 1.0 }
+  y.a.cardinality:
+    1
+  y.a.histogram:
+    { "buckets": [ ],"maxBucketSize": 64,"type": "Int","sampleRate": 1.0 }
+  y.a.null_count:
+    0
+  y.a.sample_rate:
+    0.04075099
+  y.b.TOPN:
+    { "countArr": [ 99219 ],"valueArr": [ 4 ],"type": "Int","sampleRate": 1.0 }
+  y.b.cardinality:
+    1
+  y.b.histogram:
+    { "buckets": [ ],"maxBucketSize": 64,"type": "Int","sampleRate": 1.0 }
+  y.b.null_count:
+    0
+  y.b.sample_rate:
+    0.04075099
+  y.id.TOPN:
+    null
+  y.id.cardinality:
+    2425777
+  y.id.histogram:
+    { "buckets": [ { "ndv": 1551,"upper": "40976","lower": "19","count": 1551,"preSum": 0 },{ "ndv": 1551,"upper": "71596","lower": "40983","count": 1551,"preSum": 1551 },{ "ndv": 1551,"upper": "125130","lower": "71608","count": 1551,"preSum": 3102 },{ "ndv": 1551,"upper": "142915","lower": "125131","count": 1551,"preSum": 4653 },{ "ndv": 1551,"upper": "177828","lower": "142940","count": 1551,"preSum": 6204 },{ "ndv": 1551,"upper": "218141","lower": "177837","count": 1551,"preSum": 7755 },{ "ndv": 1551,"upper": "256229","lower": "218146","count": 1551,"preSum": 9306 },{ "ndv": 1551,"upper": "320755","lower": "256255","count": 1551,"preSum": 10857 },{ "ndv": 1551,"upper": "362990","lower": "320756","count": 1551,"preSum": 12408 },{ "ndv": 1551,"upper": "406423","lower": "362991","count": 1551,"preSum": 13959 },{ "ndv": 1551,"upper": "466489","lower": "406437","count": 1551,"preSum": 15510 },{ "ndv": 1551,"upper": "491286","lower": "466500","count": 1551,"preSum": 17061 },{ "ndv": 1551,"upper": "528362","lower": "491291","count": 1551,"preSum": 18612 },{ "ndv": 1551,"upper": "575677","lower": "528363","count": 1551,"preSum": 20163 },{ "ndv": 1551,"upper": "604546","lower": "575678","count": 1551,"preSum": 21714 },{ "ndv": 1551,"upper": "634458","lower": "604549","count": 1551,"preSum": 23265 },{ "ndv": 1551,"upper": "675996","lower": "634460","count": 1551,"preSum": 24816 },{ "ndv": 1551,"upper": "708451","lower": "675999","count": 1551,"preSum": 26367 },{ "ndv": 1551,"upper": "739711","lower": "708468","count": 1551,"preSum": 27918 },{ "ndv": 1551,"upper": "798890","lower": "739727","count": 1551,"preSum": 29469 },{ "ndv": 1551,"upper": "822555","lower": "798907","count": 1551,"preSum": 31020 },{ "ndv": 1551,"upper": "904198","lower": "822580","count": 1551,"preSum": 32571 },{ "ndv": 1551,"upper": "917751","lower": "904244","count": 1551,"preSum": 34122 },{ "ndv": 1551,"upper": "974189","lower": "917756","count": 1551,"preSum": 35673 },{ "ndv": 1551,"upper": "1056504","lower": "974208","count": 1551,"preSum": 37224 },{ "ndv": 1551,"upper": "1074187","lower": "1056512","count": 1551,"preSum": 38775 },{ "ndv": 1551,"upper": "1097763","lower": "1074190","count": 1551,"preSum": 40326 },{ "ndv": 1551,"upper": "1116459","lower": "1097764","count": 1551,"preSum": 41877 },{ "ndv": 1551,"upper": "1146792","lower": "1116461","count": 1551,"preSum": 43428 },{ "ndv": 1551,"upper": "1200360","lower": "1146794","count": 1551,"preSum": 44979 },{ "ndv": 1551,"upper": "1224497","lower": "1200361","count": 1551,"preSum": 46530 },{ "ndv": 1551,"upper": "1272773","lower": "1224508","count": 1551,"preSum": 48081 },{ "ndv": 1551,"upper": "1330544","lower": "1272793","count": 1551,"preSum": 49632 },{ "ndv": 1551,"upper": "1356103","lower": "1330555","count": 1551,"preSum": 51183 },{ "ndv": 1551,"upper": "1393500","lower": "1356110","count": 1551,"preSum": 52734 },{ "ndv": 1551,"upper": "1414933","lower": "1393507","count": 1551,"preSum": 54285 },{ "ndv": 1551,"upper": "1445691","lower": "1414934","count": 1551,"preSum": 55836 },{ "ndv": 1551,"upper": "1479172","lower": "1445725","count": 1551,"preSum": 57387 },{ "ndv": 1551,"upper": "1543083","lower": "1479190","count": 1551,"preSum": 58938 },{ "ndv": 1551,"upper": "1574417","lower": "1543086","count": 1551,"preSum": 60489 },{ "ndv": 1551,"upper": "1599745","lower": "1574431","count": 1551,"preSum": 62040 },{ "ndv": 1551,"upper": "1641880","lower": "1599746","count": 1551,"preSum": 63591 },{ "ndv": 1551,"upper": "1710558","lower": "1641908","count": 1551,"preSum": 65142 },{ "ndv": 1551,"upper": "1742526","lower": "1710588","count": 1551,"preSum": 66693 },{ "ndv": 1551,"upper": "1766463","lower": "1742552","count": 1551,"preSum": 68244 },{ "ndv": 1551,"upper": "1788393","lower": "1766483","count": 1551,"preSum": 69795 },{ "ndv": 1551,"upper": "1827453","lower": "1788394","count": 1551,"preSum": 71346 },{ "ndv": 1551,"upper": "1896101","lower": "1827460","count": 1551,"preSum": 72897 },{ "ndv": 1551,"upper": "1932368","lower": "1896118","count": 1551,"preSum": 74448 },{ "ndv": 1551,"upper": "1971752","lower": "1932386","count": 1551,"preSum": 75999 },{ "ndv": 1551,"upper": "2038186","lower": "1971800","count": 1551,"preSum": 77550 },{ "ndv": 1551,"upper": "2078918","lower": "2038190","count": 1551,"preSum": 79101 },{ "ndv": 1551,"upper": "2129689","lower": "2078930","count": 1551,"preSum": 80652 },{ "ndv": 1551,"upper": "2152792","lower": "2129691","count": 1551,"preSum": 82203 },{ "ndv": 1551,"upper": "2189894","lower": "2152805","count": 1551,"preSum": 83754 },{ "ndv": 1551,"upper": "2252173","lower": "2189895","count": 1551,"preSum": 85305 },{ "ndv": 1551,"upper": "2278485","lower": "2252193","count": 1551,"preSum": 86856 },{ "ndv": 1551,"upper": "2291999","lower": "2278494","count": 1551,"preSum": 88407 },{ "ndv": 1551,"upper": "2319515","lower": "2292008","count": 1551,"preSum": 89958 },{ "ndv": 1551,"upper": "2378520","lower": "2319528","count": 1551,"preSum": 91509 },{ "ndv": 1551,"upper": "2396903","lower": "2378522","count": 1551,"preSum": 93060 },{ "ndv": 1551,"upper": "2454152","lower": "2396960","count": 1551,"preSum": 94611 },{ "ndv": 1551,"upper": "2467424","lower": "2454157","count": 1551,"preSum": 96162 },{ "ndv": 1506,"upper": "2492164","lower": "2467430","count": 1506,"preSum": 97713 } ],"maxBucketSize": 64,"type": "Int","sampleRate": 1.0 }
+  y.id.null_count:
+    0
+  y.id.sample_rate:
+    0.04075099
+  x.a,id.composite_cardinality:
+    150693814
+  x.id.composite_cardinality:
+    150027277
+  y.a,id.composite_cardinality:
+    2468844
+  y.id.composite_cardinality:
+    2498793
+CONFIG:
+  WORKLOAD_TYPE:
+    AP
+  ENABLE_MPP:
+    true
+  ENABLE_COLUMNAR_OPTIMIZER:
+    true
+  defaltxxAPPName.isNew:
+    true

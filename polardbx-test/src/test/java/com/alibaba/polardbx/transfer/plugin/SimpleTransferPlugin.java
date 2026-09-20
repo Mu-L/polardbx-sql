@@ -17,6 +17,7 @@ public class SimpleTransferPlugin extends BasePlugin {
     private static final Logger logger = LoggerFactory.getLogger(SimpleTransferPlugin.class);
     private final boolean injectCommitFailure;
     private final double injectCommitFailureProb;
+    private final long sleepMillis;
     private final SecureRandom random = new SecureRandom();
 
     public SimpleTransferPlugin() {
@@ -26,12 +27,14 @@ public class SimpleTransferPlugin extends BasePlugin {
             enabled = false;
             injectCommitFailure = false;
             injectCommitFailureProb = 0;
+            sleepMillis = 0;
             return;
         }
         enabled = config.getBoolean("enabled", false);
         threads = Math.toIntExact(config.getLong("threads", 1L));
         injectCommitFailure = config.getBoolean("inject_commit_failure", false);
         injectCommitFailureProb = config.getDouble("inject_commit_failure_prob", 0.1);
+        sleepMillis = config.getLong("sleep_millis", 0L);
     }
 
     @Override
@@ -53,6 +56,13 @@ public class SimpleTransferPlugin extends BasePlugin {
     }
 
     private void transfer(SecureRandom random, Statement stmt, long src, long dst) throws SQLException {
+        if (sleepMillis > 0) {
+            try {
+                Thread.sleep(sleepMillis);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }
         // begin
         stmt.execute("begin");
         boolean injectError = false;
@@ -85,7 +95,7 @@ public class SimpleTransferPlugin extends BasePlugin {
             stmt.execute("commit");
         } catch (SQLException e) {
             if (!injectError && !e.getMessage().contains("Deadlock found when trying to get lock")) {
-                logger.error("Transfer simple error.", e);
+                throw e;
             }
             stmt.execute("rollback ");
         }

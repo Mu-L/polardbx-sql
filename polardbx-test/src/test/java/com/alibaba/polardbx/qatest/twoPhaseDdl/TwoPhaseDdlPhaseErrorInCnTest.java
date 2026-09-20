@@ -53,6 +53,7 @@ public class TwoPhaseDdlPhaseErrorInCnTest extends DDLBaseNewDBTestCase {
 
     @Before
     public void init() {
+        this.schemaPrefix = "pause_error_in_cn_";
         this.tableName = schemaPrefix + randomTableName("pushdown", 4);
     }
 

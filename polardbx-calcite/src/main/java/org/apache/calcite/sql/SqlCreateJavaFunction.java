@@ -37,14 +37,17 @@ public class SqlCreateJavaFunction extends SqlDdl {
     protected String javaCode;
     protected String returnType;
     protected List<String> inputTypes;
+    protected boolean ifNotExists = false;
 
     private String tableName;
 
     private boolean noState;
     public SqlCreateJavaFunction(SqlParserPos pos, String funcName,
+                                 boolean isNotExists,
                                  String returnType, List<String> inputTypes, String javaCode, boolean noState) {
         super(OPERATOR, pos);
         this.funcName = funcName;
+        this.ifNotExists = isNotExists;
         this.returnType = returnType;
         this.inputTypes = inputTypes;
         this.javaCode = javaCode;
@@ -55,6 +58,10 @@ public class SqlCreateJavaFunction extends SqlDdl {
     @Override
     public void unparse(SqlWriter writer, int lefPrec, int rightPrec) {
         writer.keyword("CREATE JAVA FUNCTION");
+
+        if (ifNotExists) {
+            writer.keyword("IF NOT EXISTS");
+        }
 
         writer.literal(funcName);
 
@@ -109,6 +116,14 @@ public class SqlCreateJavaFunction extends SqlDdl {
     @Override
     public List<SqlNode> getOperandList() {
         return ImmutableList.of();
+    }
+
+    public boolean isIfNotExists() {
+        return ifNotExists;
+    }
+
+    public void setIfNotExists(boolean ifNotExists) {
+        this.ifNotExists = ifNotExists;
     }
 
     public static class SqlCreateJavaFunctionOperator extends SqlSpecialOperator {

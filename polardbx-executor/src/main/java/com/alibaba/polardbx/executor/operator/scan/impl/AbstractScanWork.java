@@ -16,8 +16,14 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableIntArrayList;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.common.utils.memory.SizeOf;
 import com.alibaba.polardbx.executor.archive.reader.OSSColumnTransformer;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
@@ -43,6 +49,7 @@ import org.apache.orc.ColumnStatistics;
 import org.apache.orc.impl.InStream;
 import org.apache.orc.impl.StreamName;
 import org.jetbrains.annotations.Nullable;
+import org.openjdk.jol.util.VMSupport;
 import org.roaringbitmap.RoaringBitmap;
 
 import java.io.IOException;
@@ -65,6 +72,7 @@ public abstract class AbstractScanWork implements ScanWork<ColumnarSplit, Chunk>
      * IO status to manage the output and state of scan work.
      */
     protected final IOStatus<Chunk> ioStatus;
+    protected final long ioStatusIsFullMaxWait;
 
     /**
      * The unique identifier of this work.
@@ -74,6 +82,7 @@ public abstract class AbstractScanWork implements ScanWork<ColumnarSplit, Chunk>
     /**
      * The runtime metrics of this scan-work.
      */
+    @FieldMemoryCounter(value = false)
     protected final RuntimeMetrics metrics;
 
     protected final boolean enableMetrics;
@@ -86,24 +95,27 @@ public abstract class AbstractScanWork implements ScanWork<ColumnarSplit, Chunk>
     /**
      * Deletion bitmap for this columnar file in this query session.
      */
+    @FieldMemoryCounter(value = false)
     protected final RoaringBitmap deletionBitmap;
 
     /**
      * To evaluate the chunks produced from RowGroupIterator.
      */
+    @FieldMemoryCounter(value = false)
     protected final LazyEvaluator<Chunk, BitSet> lazyEvaluator;
 
+    @FieldMemoryCounter(value = false)
     protected final MorselColumnarSplit.ScanRange scanRange;
 
     /**
      * The reference number for filter.
      */
-    protected final List<Integer> inputRefsForFilter;
+    protected final MemoryCountableIntArrayList inputRefsForFilter;
 
     /**
      * The reference number for projection.
      */
-    protected final List<Integer> inputRefsForProject;
+    protected final MemoryCountableIntArrayList inputRefsForProject;
 
     /**
      * Mapping from ref to chunk index.
@@ -111,13 +123,16 @@ public abstract class AbstractScanWork implements ScanWork<ColumnarSplit, Chunk>
      * then we get the chunkRefMap: {(3, 0), (5, 1), (7, 2), (8, 3)}
      */
     protected final int[] chunkRefMap;
+
+    @FieldMemoryCounter(value = false)
     protected final SortedSet<Integer> refSet;
 
-    protected boolean isCanceled;
+    protected volatile boolean isCanceled;
 
     /**
      * To count the time cost of evaluation in scan work.
      */
+    @FieldMemoryCounter(value = false)
     protected Counter evaluationTimer;
 
     protected int partNum;
@@ -130,7 +145,11 @@ public abstract class AbstractScanWork implements ScanWork<ColumnarSplit, Chunk>
      */
     protected AtomicBoolean isIOCanceled;
 
+    @FieldMemoryCounter(value = false)
     protected OSSColumnTransformer columnTransformer;
+
+    @FieldMemoryCounter(value = false)
+    protected OperatorMemoryOwnerId memoryOwnerId;
 
     public AbstractScanWork(String workId,
                             RuntimeMetrics metrics, boolean enableMetrics,
@@ -142,17 +161,23 @@ public abstract class AbstractScanWork implements ScanWork<ColumnarSplit, Chunk>
                             List<Integer> inputRefsForProject,
                             int partNum,
                             int nodePartCount,
-                            OSSColumnTransformer columnTransformer) {
+                            OSSColumnTransformer columnTransformer,
+                            int ioStatusBoundSize, long ioStatusIsFullMaxWait) {
+
         this.workId = workId;
         this.metrics = metrics;
         this.enableMetrics = enableMetrics;
         this.lazyEvaluator = lazyEvaluator;
-        this.ioStatus = IOStatusImpl.create(workId);
+        this.ioStatus = IOStatus.createBounded(workId, ioStatusBoundSize);
+        this.ioStatusIsFullMaxWait = ioStatusIsFullMaxWait;
         this.rgIterator = rgIterator;
+
         this.deletionBitmap = deletionBitmap;
         this.scanRange = scanRange;
-        this.inputRefsForFilter = inputRefsForFilter.stream().sorted().collect(Collectors.toList());
-        this.inputRefsForProject = inputRefsForProject.stream().sorted().collect(Collectors.toList());
+        this.inputRefsForFilter =
+            new MemoryCountableIntArrayList(inputRefsForFilter.stream().sorted().collect(Collectors.toList()));
+        this.inputRefsForProject =
+            new MemoryCountableIntArrayList(inputRefsForProject.stream().sorted().collect(Collectors.toList()));
 
         refSet = new TreeSet<>();
         refSet.addAll(inputRefsForFilter);
@@ -177,19 +202,45 @@ public abstract class AbstractScanWork implements ScanWork<ColumnarSplit, Chunk>
 
         this.isIOCanceled = new AtomicBoolean(false);
         this.columnTransformer = columnTransformer;
+
+    }
+
+    public AbstractScanWork(String workId,
+                            RuntimeMetrics metrics, boolean enableMetrics,
+                            LazyEvaluator<Chunk, BitSet> lazyEvaluator,
+                            RowGroupIterator<Block, ColumnStatistics> rgIterator,
+                            RoaringBitmap deletionBitmap,
+                            MorselColumnarSplit.ScanRange scanRange,
+                            List<Integer> inputRefsForFilter,
+                            List<Integer> inputRefsForProject,
+                            int partNum,
+                            int nodePartCount,
+                            OSSColumnTransformer columnTransformer) {
+        this(workId, metrics, enableMetrics, lazyEvaluator, rgIterator,
+            deletionBitmap, scanRange, inputRefsForFilter, inputRefsForProject,
+            partNum, nodePartCount, columnTransformer,
+            Integer.valueOf(ConnectionParams.IO_STATUS_BOUND_SIZE.getDefault()),
+            Long.valueOf(ConnectionParams.IO_STATUS_IS_FULL_MAX_WAIT_MS.getDefault()));
     }
 
     abstract protected void handleNextWork() throws Throwable;
 
     @Override
-    public void invoke(ExecutorService executor) {
+    public void invoke(ExecutorService executor, OperatorMemoryOwnerId memoryOwnerId) {
+        this.memoryOwnerId = memoryOwnerId;
+
         executor.submit(() -> {
             try {
+                // must open it here.
+                this.rgIterator.open(memoryOwnerId);
+
+                MemoryTrackerManager.setCurrentMemoryOwner(memoryOwnerId);
                 handleNextWork();
             } catch (Throwable e) {
-                e.printStackTrace();
                 ioStatus.addException(e);
                 LOGGER.error("fail to execute sequential scan work: " + e);
+            } finally {
+                MemoryTrackerManager.removeCurrentMemoryOwner();
             }
         });
     }
@@ -479,6 +530,8 @@ public abstract class AbstractScanWork implements ScanWork<ColumnarSplit, Chunk>
     }
 
     protected int[] selectionOf(boolean[] bitmap, int selectCount) {
+        MemoryTrackerManager.tryAllocate(memoryOwnerId,
+            VMSupport.align((int) SizeOf.sizeOfIntArray(selectCount)));
         int[] selection = new int[selectCount];
         int selSize = 0;
         for (int i = 0; i < bitmap.length; i++) {
@@ -490,7 +543,9 @@ public abstract class AbstractScanWork implements ScanWork<ColumnarSplit, Chunk>
         return selection;
     }
 
-    protected int[] selectionOf(BitSet bitmap) {
+    public int[] selectionOf(BitSet bitmap) {
+        MemoryTrackerManager.tryAllocate(memoryOwnerId,
+            VMSupport.align((int) SizeOf.sizeOfIntArray(bitmap.cardinality())));
         int[] selection = new int[bitmap.cardinality()];
         int selSize = 0;
         for (int i = bitmap.nextSetBit(0); i >= 0; i = bitmap.nextSetBit(i + 1)) {
@@ -498,6 +553,50 @@ public abstract class AbstractScanWork implements ScanWork<ColumnarSplit, Chunk>
         }
 
         return selection;
+    }
+
+    public static int firstReadablePosition(int[] batchRange, RoaringBitmap deletion) {
+        if (deletion == null || deletion.isEmpty()) {
+            // all positions are readable.
+            return 0;
+        }
+        final int startPosition = batchRange[0];
+        final int positionCount = batchRange[1];
+
+        long cardinality = deletion.rangeCardinality(startPosition, startPosition + positionCount);
+        if (cardinality == 0) {
+            // no position is readable.
+            return -1;
+        }
+
+        for (int i = 0; i < positionCount; i++) {
+            if (!deletion.contains(i + startPosition)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    public static int lastReadablePosition(int[] batchRange, RoaringBitmap deletion) {
+        final int startPosition = batchRange[0];
+        final int positionCount = batchRange[1];
+        if (deletion == null || deletion.isEmpty()) {
+            // all positions are readable.
+            return positionCount - 1;
+        }
+
+        long cardinality = deletion.rangeCardinality(startPosition, startPosition + positionCount);
+        if (cardinality == 0) {
+            // no position is readable.
+            return -1;
+        }
+
+        for (int i = positionCount - 1; i >= 0; i--) {
+            if (!deletion.contains(i + startPosition)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**

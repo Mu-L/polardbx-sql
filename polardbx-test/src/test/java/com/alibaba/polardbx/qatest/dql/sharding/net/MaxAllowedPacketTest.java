@@ -52,7 +52,7 @@ public class MaxAllowedPacketTest extends ReadBaseTestCase {
             + "  `pk` int(11) NOT NULL AUTO_INCREMENT,\n"
             + "  `detail` longtext,\n"
             + "  PRIMARY KEY (`pk`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4", null);
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE utf8mb4_general_ci", null);
 
         final Random r = new Random();
         byte[] unit8m = new byte[8000000];

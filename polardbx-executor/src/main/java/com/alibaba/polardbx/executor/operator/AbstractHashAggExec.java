@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.operator.util.AggHashMap;
 import com.alibaba.polardbx.executor.operator.util.AggResultIterator;
@@ -29,8 +30,10 @@ import java.util.List;
 
 public abstract class AbstractHashAggExec extends AbstractExecutor {
 
+    @FieldMemoryCounter(value = false)
     protected final List<Aggregator> aggregators;
 
+    @FieldMemoryCounter(value = false)
     protected final List<DataType> outputColumnMeta;
 
     protected final int[] groups;
@@ -39,8 +42,10 @@ public abstract class AbstractHashAggExec extends AbstractExecutor {
 
     AggResultIterator resultIterator;
 
+    @FieldMemoryCounter(value = false)
     MemoryPool memoryPool;
 
+    @FieldMemoryCounter(value = false)
     OperatorMemoryAllocatorCtx memoryAllocator;
 
     protected boolean finished = false;

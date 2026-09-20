@@ -68,7 +68,7 @@ public class InspectSeqRangeHandler extends AbstractDalHandler {
 
         // Get current ranges from all servers.
         List<List<Map<String, Object>>> resultSets =
-            SyncManagerHelper.sync(new InspectSeqRangeSyncAction(schemaName, seqName), schemaName,
+            SyncManagerHelper.syncThrowExceptions(new InspectSeqRangeSyncAction(schemaName, seqName), schemaName,
                 SyncScope.ALL);
         for (List<Map<String, Object>> resultSet : resultSets) {
             if (resultSet != null) {

@@ -16,7 +16,9 @@
 
 package com.alibaba.polardbx.qatest.dml.auto.basecrud;
 
+import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.qatest.AutoCrudBasedLockTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.data.ExecuteTableName;
 import com.alibaba.polardbx.qatest.entity.ColumnEntity;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
@@ -33,6 +35,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import static com.alibaba.polardbx.qatest.data.ExecuteTableName.ONE_DB_ONE_TB_SUFFIX;
 import static com.alibaba.polardbx.qatest.validator.DataOperator.executeBatchOnMysqlAndTddl;
 import static com.alibaba.polardbx.qatest.validator.DataOperator.executeErrorAssert;
 import static com.alibaba.polardbx.qatest.validator.DataOperator.executeOnMysqlAndTddl;
@@ -390,6 +393,7 @@ public class InsertSelectTest extends AutoCrudBasedLockTestCase {
     /**
      * @since 5.1.25-SNAPSHOT
      */
+    @IcbcIgnore(ignoreReason = "SQL_MODE=ONLY_FULL_GROUP_BY")
     @Test
     public void insertSelectWithGroupByTest() {
 
@@ -1067,6 +1071,122 @@ public class InsertSelectTest extends AutoCrudBasedLockTestCase {
             String uuidTemp = rs.getString(1);
             Assert.assertNotEquals(uuidTemp, uuid);
             uuid = uuidTemp;
+        }
+    }
+
+    /**
+     * INSERT SELECT with subquery in JOIN ON clause
+     */
+    @Test
+    public void insertSelectWithJoinOnSubqueryTest() {
+        String sql = HINT + String
+            .format(
+                "insert into %s(integer_test, pk, varchar_test, float_test, date_test, datetime_test, timestamp_test, blob_test) "
+                    + "select a.integer_test, a.pk + 2000, a.varchar_test, a.float_test, a.date_test, a.datetime_test, a.timestamp_test, a.blob_test "
+                    + "from %s a join %s b "
+                    + "on a.pk = (select min(c.pk) from %s c where c.integer_test = b.integer_test) "
+                    + "where b.pk > 10",
+                baseTwoTableName, baseOneTableName, baseOneTableName, baseOneTableName);
+        executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
+
+        String cnSql = "select * from " + tableNameForCheck2;
+        String dnSql = "select * from " + baseTwoTableName;
+        assertBroadcastTableSame(dnSql, cnSql);
+        selectContentSameAssert(dnSql, null, mysqlConnection, tddlConnection);
+    }
+
+    @Test
+    public void insertWithSelectCteTest() throws Exception {
+        final String targetTableName = "insert_with_select_cte_test_target";
+        final String sqlCreateTargetTable = "CREATE TABLE IF NOT EXISTS `" + targetTableName + "` (\n"
+            + "\t`YEARMONTH` varchar(6) NOT NULL,\n"
+            + "\t`STORE_CODE` varchar(15) NOT NULL DEFAULT 'N/A',\n"
+            + "\t`VARCHAR_INDEX1` varchar(100) NOT NULL DEFAULT 'N/A',\n"
+            + "\tPRIMARY KEY (`YEARMONTH`, `STORE_CODE`)\n"
+            + ") ENGINE = InnoDB\n"
+            + "SINGLE";
+        JdbcUtil.executeSuccess(tddlConnection, sqlCreateTargetTable);
+        final String selectWithCte = "WITH Q1 AS (SELECT varchar_test\n"
+            + "                FROM " + baseOneTableName + "\n"
+            + "                WHERE integer_test = '0' AND varchar_test <>'N/A'\n"
+            + "                  AND year_test = 2025\n"
+            + "                GROUP BY varchar_test),\n"
+            + "         Q2 AS (SELECT varchar_test\n"
+            + "                FROM " + baseTwoTableName + "\n"
+            + "                WHERE integer_test = '0' AND varchar_test <>'N/A'\n"
+            + "                  AND year_test = 2025 - 1\n"
+            + "                GROUP BY varchar_test)\n"
+            + "    SELECT 202507 AS YEARMONTH,\n"
+            + "           Q1.varchar_test,\n"
+            + "           IF(Q2.varchar_test IS NULL, 'xxx', 'yyy') AS SIGN_TYPE\n"
+            + "    FROM Q1 LEFT JOIN Q2 ON Q1.varchar_test = Q2.varchar_test;\n";
+        final String insertSelectWithCte =
+            " INSERT INTO " + targetTableName + "(YEARMONTH, STORE_CODE, VARCHAR_INDEX1)\n"
+                + "    WITH Q1 AS (SELECT varchar_test\n"
+                + "                FROM " + baseOneTableName + "\n"
+                + "                WHERE integer_test = '0' AND varchar_test <>'N/A'\n"
+                + "                  AND year_test = 2025\n"
+                + "                GROUP BY varchar_test),\n"
+                + "         Q2 AS (SELECT varchar_test\n"
+                + "                FROM " + baseTwoTableName + "\n"
+                + "                WHERE integer_test = '0' AND varchar_test <>'N/A'\n"
+                + "                  AND year_test = 2025 - 1\n"
+                + "                GROUP BY varchar_test)\n"
+                + "    SELECT 202507 AS YEARMONTH,\n"
+                + "           Q1.varchar_test,\n"
+                + "           IF(Q2.varchar_test IS NULL, 'xxx', 'yyy') AS SIGN_TYPE\n"
+                + "    FROM Q1 LEFT JOIN Q2 ON Q1.varchar_test = Q2.varchar_test;\n";
+        boolean selectWithCteSuccess = JdbcUtil.isQuerySuccess(selectWithCte, tddlConnection);
+        if (selectWithCteSuccess) {
+            JdbcUtil.executeSuccess(tddlConnection, insertSelectWithCte);
+        }
+        // single table
+        if (TStringUtil.containsIgnoreCase(baseOneTableName, ONE_DB_ONE_TB_SUFFIX)) {
+            final String sourceTableName = "insert_with_select_cte_test_source";
+            final String sqlCreateSourceTable = "CREATE TABLE IF NOT EXISTS `" + sourceTableName + "` (\n"
+                + "\t`PROTOCOL_ID` varchar(19) NOT NULL,\n"
+                + "\t`ITEM_ID` varchar(19) NOT NULL,\n"
+                + "\t`STORE_CODE` varchar(15) NOT NULL,\n"
+                + "\t`DEL_FLAG` varchar(2) NOT NULL,\n"
+                + "\t`PROTOCOL_YEAR` varchar(4) NOT NULL,\n"
+                + "\tPRIMARY KEY (`PROTOCOL_ID`, `ITEM_ID`)\n"
+                + ") ENGINE = InnoDB\n"
+                + "SINGLE\n";
+            JdbcUtil.executeSuccess(tddlConnection, sqlCreateSourceTable);
+            final String selectWithCte1 = "    WITH Q1 AS (SELECT STORE_CODE\n"
+                + "                FROM " + sourceTableName + "\n"
+                + "                WHERE DEL_FLAG = '0' AND STORE_CODE <>'N/A'\n"
+                + "                  AND PROTOCOL_YEAR = 2025\n"
+                + "                GROUP BY STORE_CODE),\n"
+                + "         Q2 AS (SELECT STORE_CODE\n"
+                + "                FROM " + sourceTableName + "\n"
+                + "                WHERE DEL_FLAG = '0' AND STORE_CODE <>'N/A'\n"
+                + "                  AND PROTOCOL_YEAR = 2025 - 1\n"
+                + "                GROUP BY STORE_CODE)\n"
+                + "    SELECT 202507 AS YEARMONTH,\n"
+                + "           Q1.STORE_CODE,\n"
+                + "           IF(Q2.STORE_CODE IS NULL, 'xxx', 'yyy') AS SIGN_TYPE\n"
+                + "    FROM Q1 LEFT JOIN Q2 ON Q1.STORE_CODE = Q2.STORE_CODE;\n";
+            final String insertSelectWithCte1 =
+                "INSERT INTO " + targetTableName + "(YEARMONTH, STORE_CODE, VARCHAR_INDEX1)\n"
+                    + "    WITH Q1 AS (SELECT STORE_CODE\n"
+                    + "                FROM " + sourceTableName + "\n"
+                    + "                WHERE DEL_FLAG = '0' AND STORE_CODE <>'N/A'\n"
+                    + "                  AND PROTOCOL_YEAR = 2025\n"
+                    + "                GROUP BY STORE_CODE),\n"
+                    + "         Q2 AS (SELECT STORE_CODE\n"
+                    + "                FROM " + sourceTableName + "\n"
+                    + "                WHERE DEL_FLAG = '0' AND STORE_CODE <>'N/A'\n"
+                    + "                  AND PROTOCOL_YEAR = 2025 - 1\n"
+                    + "                GROUP BY STORE_CODE)\n"
+                    + "    SELECT 202507 AS YEARMONTH,\n"
+                    + "           Q1.STORE_CODE,\n"
+                    + "           IF(Q2.STORE_CODE IS NULL, 'xxx', 'yyy') AS SIGN_TYPE\n"
+                    + "    FROM Q1 LEFT JOIN Q2 ON Q1.STORE_CODE = Q2.STORE_CODE;\n";
+            selectWithCteSuccess = JdbcUtil.isQuerySuccess(selectWithCte1, tddlConnection);
+            if (selectWithCteSuccess) {
+                JdbcUtil.executeSuccess(tddlConnection, insertSelectWithCte1);
+            }
         }
     }
 

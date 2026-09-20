@@ -16,8 +16,12 @@
 
 package com.alibaba.polardbx.optimizer.config.meta;
 
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
+import com.alibaba.polardbx.optimizer.core.rel.ExternalTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.GroupTopN;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.MysqlTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.PhysicalCTEConsumer;
 import com.alibaba.polardbx.optimizer.sql.sql2rel.TddlSqlToRelConverter;
 import com.google.common.collect.ImmutableSet;
 import com.alibaba.polardbx.optimizer.view.ViewPlan;
@@ -28,6 +32,8 @@ import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.AggregateCall;
+import org.apache.calcite.rel.core.CTEAnchor;
+import org.apache.calcite.rel.core.CTEProducer;
 import org.apache.calcite.rel.core.Correlate;
 import org.apache.calcite.rel.core.Exchange;
 import org.apache.calcite.rel.core.Filter;
@@ -38,6 +44,7 @@ import org.apache.calcite.rel.core.Sort;
 import org.apache.calcite.rel.core.TableFunctionScan;
 import org.apache.calcite.rel.core.TableLookup;
 import org.apache.calcite.rel.core.TableScan;
+import org.apache.calcite.rel.logical.LogicalCTEConsumer;
 import org.apache.calcite.rel.metadata.BuiltInMetadata;
 import org.apache.calcite.rel.metadata.MetadataDef;
 import org.apache.calcite.rel.metadata.MetadataHandler;
@@ -247,6 +254,58 @@ public class DrdsRelMdDmlColumnNames implements MetadataHandler<BuiltInMetadata.
         return mq.getDmlColumnNames(rel.getProject());
     }
 
+    public List<Set<RelColumnOrigin>> getDmlColumnNames(GroupTopN rel, RelMetadataQuery mq) {
+        return mq.getDmlColumnNames(rel.getInput());
+    }
+
+    public List<Set<RelColumnOrigin>> getDmlColumnNames(CTEAnchor rel, RelMetadataQuery mq) {
+        return mq.getDmlColumnNames(rel.getRight());
+    }
+
+    public List<Set<RelColumnOrigin>> getDmlColumnNames(CTEProducer rel, RelMetadataQuery mq) {
+        return mq.getDmlColumnNames(rel.getInput());
+    }
+
+    public List<Set<RelColumnOrigin>> getDmlColumnNames(LogicalCTEConsumer rel, RelMetadataQuery mq) {
+        return mq.getDmlColumnNames(rel.getInnerRel());
+    }
+
+    public List<Set<RelColumnOrigin>> getDmlColumnNames(PhysicalCTEConsumer rel, RelMetadataQuery mq) {
+        List<RexNode> projects = rel.getProjects();
+        if (projects != null && !projects.isEmpty()) {
+            List<Set<RelColumnOrigin>> producerNames = mq.getDmlColumnNames(CBOUtil.getCteProducer(rel));
+            if (producerNames == null) {
+                return null;
+            }
+            List<Set<RelColumnOrigin>> result = new ArrayList<>();
+            for (RexNode project : projects) {
+                if (project instanceof RexInputRef) {
+                    int idx = ((RexInputRef) project).getIndex();
+                    if (idx < producerNames.size()) {
+                        result.add(producerNames.get(idx));
+                    } else {
+                        result.add(ImmutableSet.of());
+                    }
+                } else {
+                    Set<RelColumnOrigin> set = new HashSet<>();
+                    RexVisitor<Void> visitor = new RexVisitorImpl<Void>(true) {
+                        @Override
+                        public Void visitInputRef(RexInputRef inputRef) {
+                            if (inputRef.getIndex() < producerNames.size()) {
+                                set.addAll(producerNames.get(inputRef.getIndex()));
+                            }
+                            return null;
+                        }
+                    };
+                    project.accept(visitor);
+                    result.add(set);
+                }
+            }
+            return result;
+        }
+        return mq.getDmlColumnNames(CBOUtil.getCteProducer(rel));
+    }
+
     public List<Set<RelColumnOrigin>> getDmlColumnNames(Filter rel, RelMetadataQuery mq) {
         return mq.getDmlColumnNames(rel.getInput());
     }
@@ -265,6 +324,11 @@ public class DrdsRelMdDmlColumnNames implements MetadataHandler<BuiltInMetadata.
 
     public List<Set<RelColumnOrigin>> getDmlColumnNames(MysqlTableScan rel, RelMetadataQuery mq) {
         return mq.getDmlColumnNames(rel.getNodeForMetaQuery());
+    }
+
+    public List<Set<RelColumnOrigin>> getDmlColumnNames(
+        ExternalTableScan rel, RelMetadataQuery mq) {
+        return rel.getDmlColumnNames(mq);
     }
 
     public List<Set<RelColumnOrigin>> getDmlColumnNames(TableFunctionScan rel, RelMetadataQuery mq) {
@@ -352,7 +416,7 @@ public class DrdsRelMdDmlColumnNames implements MetadataHandler<BuiltInMetadata.
 
     public List<Set<RelColumnOrigin>> columnOriginForSubquery(RelNode rel) {
         return Ord.zip(rel.getRowType()
-            .getFieldList())
+                .getFieldList())
             .stream()
             .map(o -> ImmutableSet.<RelColumnOrigin>of(new RelDmlColumnOrigin(rel, o.i, o.e.getName())))
             .collect(Collectors.toList());

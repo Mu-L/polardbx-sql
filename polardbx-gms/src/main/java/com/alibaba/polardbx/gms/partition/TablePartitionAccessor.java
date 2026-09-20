@@ -36,6 +36,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import static com.alibaba.polardbx.gms.partition.TablePartitionRecord.PARTITION_TABLE_TYPE_PARTITION_TABLE;
 
@@ -51,7 +52,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
     private static final String ALL_COLUMNS =
         "`id`,`parent_id`,`create_time`,`update_time`,`table_schema`,`table_name`,`sp_temp_flag`,`group_id`,`meta_version`,`auto_flag`,`tbl_type`,`part_name`,`part_temp_name`,`part_level`,`next_level`,`part_status`,`part_position`,`part_method`,`part_expr`,`part_desc`,`part_comment`,`part_engine`,`part_extras`,`part_flags`,`phy_table`";
 
-    private static final String ALL_VALUES = "(null,?,null,now(),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+    private static final String ALL_VALUES = "(null,?,now(),now(),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
     private static final String ALL_VALUES_WITH_ID = "(?,?,?,now(),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
 
     private static final String INSERT_IGNORE_TABLE_PARTITIONS =
@@ -128,7 +129,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
     private static final String UPDATE_TABLE_PARTITIONS_TYPE_BY_UK =
         "update table_partitions set part_expr=?,part_desc=?,tbl_type=?,group_id=?  where table_schema=? and table_name=? and part_name =? ";
 
-    private static final String UPDATE_TABLE_PARTITIONS_TTL_STATE_BY_ID =
+    private static final String UPDATE_TABLE_PARTITIONS_EXTRAS_BY_ID =
         "update table_partitions set part_extras=?  where table_schema=? and id=? ";
 
     private static final String DELETE_TABLE_PARTITIONS_BY_TABLE_AND_PARTITION =
@@ -143,6 +144,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
 
     private static final String UPDATE_TABLE_PARTITIONS_ADD_SHARD_COLUMNS =
         "update table_partitions set part_expr=? , part_desc = ? where id = ? ";
+
+    private static final String UPDATE_TABLE_PARTITIONS_PART_EXPR =
+        "update table_partitions set part_expr=? where id = ? ";
 
     private static final String UPDATE_TABLE_PARTITIONS_CHANGE_GROUP_ID =
         "update table_partitions set group_id =? where id = ? ";
@@ -194,9 +198,35 @@ public class TablePartitionAccessor extends AbstractAccessor {
         "insert ignore into " + GmsSystemTables.TABLE_PARTITIONS_DELTA + " (" + ALL_COLUMNS + ") VALUES "
             + ALL_VALUES_FOR_DELTA_TABLE;
 
+    private static final String INSERT_IGNORE_TABLE_PARTITIONS_ARCHIVE =
+        "insert ignore into " + GmsSystemTables.TABLE_PARTITIONS_ARCHIVE + " (`task_id`," + ALL_COLUMNS
+            + ", insert_time) "
+            + "select ?, " + ALL_COLUMNS + ",? from " + GmsSystemTables.TABLE_PARTITIONS
+            + " where table_schema=? and table_name=? ";
+
     private static final String GET_TABLE_PARTITIONS_BY_DB_TB_LEVEL_FROM_DELTA_TABLE =
         "select " + ALL_COLUMNS + " from " + GmsSystemTables.TABLE_PARTITIONS_DELTA
             + " where table_schema=? and table_name=? and part_level=? order by parent_id, part_position asc";
+
+    private static final String SELECT_FOR_UPDATE_FROM_DELTA_TABLE_BY_SCH_TGID =
+        "select " + ALL_COLUMNS + ", `ref_count` from " + GmsSystemTables.TABLE_PARTITIONS_DELTA
+            + " where table_schema=? and group_id=? and part_level=0 for update";
+
+    private static final String SELECT_FOR_UPDATE_FROM_DELTA_TABLE_BY_SCH_TB =
+        "select " + ALL_COLUMNS + ", `ref_count` from " + GmsSystemTables.TABLE_PARTITIONS_DELTA
+            + " where table_schema=? and table_name=? and part_level=0 for update";
+
+    private static final String DECREASE_REF_COUNT_BY_SCH_TGID_FROM_DELTA_TABLE =
+        "update " + GmsSystemTables.TABLE_PARTITIONS_DELTA
+            + " set ref_count=ref_count-1 where table_schema=? and group_id=? and part_level=0";
+
+    private static final String DECREASE_REF_COUNT_BY_SCH_TB_FROM_DELTA_TABLE =
+        "update " + GmsSystemTables.TABLE_PARTITIONS_DELTA
+            + " set ref_count=ref_count-1 where table_schema=? and table_name=? and part_level=0";
+
+    private static final String INCREASE_REF_COUNT_BY_SCH_TABLE_FROM_DELTA_TABLE =
+        "update " + GmsSystemTables.TABLE_PARTITIONS_DELTA
+            + " set ref_count=ref_count+1 where table_schema=? and table_name=? and part_level=0";
 
     private static final String DELETE_TABLE_PARTITIONS_BY_SCHEMA_NAME_FROM_DELTA_TABLE =
         "delete from " + GmsSystemTables.TABLE_PARTITIONS_DELTA + " where table_schema=?";
@@ -257,6 +287,12 @@ public class TablePartitionAccessor extends AbstractAccessor {
     private static final String DELETE_PARTITION_BY_SCH_TB_PART_l1 =
         "delete from table_partitions where table_schema=? and table_name=? and part_name=? and part_level=1 and part_status=-1";
 
+    private static final String DELETE_OUTDATE_ARCHIVE = "delete from " + GmsSystemTables.TABLE_PARTITIONS_ARCHIVE
+        + " where insert_time <= ? limit 10000";
+
+    private static final String UPDATE_PART_FLAG_FOR_LOGICAL_TABLE =
+        "update table_partitions set part_flags=? where table_schema=? and table_name=? and part_level=0";
+
     public List<TablePartitionRecord> getTablePartitionsByDbNameTbNameLevel(String dbName, String tbName, int level,
                                                                             boolean from_delta_table) {
         try {
@@ -275,8 +311,62 @@ public class TablePartitionAccessor extends AbstractAccessor {
             return records;
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
+            // Change context:
+            // - Before: every ERR_GMS_ACCESS_TO_SYSTEM_TABLE throw in this class passed only
+            //   e.getMessage(), but the message template "Failed to {0} the system table {1}.
+            //   Caused by: {2}." requires 3 params; the missing {1}/{2} were left as literal
+            //   placeholders in the final error text, unlike AbstractAccessor which always
+            //   passes action + table name + cause.
+            // - Path impact: applies to all ~55 catch blocks in this class that throw this
+            //   error code; only the varargs passed to the exception constructor changed, no
+            //   control flow or SQL execution path is affected.
+            // - Capability regression: None; this only restores the intended error message
+            //   format and does not change exception type, error code, or behavior.
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
+        }
+    }
+
+    public List<TablePartitionDeltaRecord> getTablePartitionsFromDeltaBySchTgIdForUpdate(String dbName, Long tgId) {
+        try {
+
+            List<TablePartitionDeltaRecord> records;
+            Map<Integer, ParameterContext> params = new HashMap<>();
+
+            assert dbName != null;
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setString, dbName);
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, tgId);
+            records =
+                MetaDbUtil.query(SELECT_FOR_UPDATE_FROM_DELTA_TABLE_BY_SCH_TGID, params,
+                    TablePartitionDeltaRecord.class, connection);
+
+            return records;
+        } catch (Exception e) {
+            logger.error("Failed to query the system table 'table_partitions'", e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
+                "query", "table_partitions", e.getMessage());
+        }
+    }
+
+    public List<TablePartitionDeltaRecord> getTablePartitionsFromDeltaBySchTbForUpdate(String dbName,
+                                                                                       String tableName) {
+        try {
+
+            List<TablePartitionDeltaRecord> records;
+            Map<Integer, ParameterContext> params = new HashMap<>();
+
+            assert dbName != null;
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setString, dbName);
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setString, tableName);
+            records =
+                MetaDbUtil.query(SELECT_FOR_UPDATE_FROM_DELTA_TABLE_BY_SCH_TB, params, TablePartitionDeltaRecord.class,
+                    connection);
+
+            return records;
+        } catch (Exception e) {
+            logger.error("Failed to query the system table 'table_partitions'", e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -296,7 +386,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -319,7 +409,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -342,7 +432,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -365,7 +455,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -385,7 +475,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -407,7 +497,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -431,7 +521,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -452,7 +542,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -478,7 +568,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -501,7 +591,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -517,9 +607,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(RENEW_GROUP_ID, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -535,9 +625,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(RENEW_GROUP_ID_BY_ID, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -554,9 +644,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(RENEW_GROUP_ID_AND_PART_NAME_BY_ID, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                GmsSystemTables.TABLE_PARTITIONS,
+                "update", GmsSystemTables.TABLE_PARTITIONS,
                 e.getMessage());
         }
     }
@@ -574,9 +664,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(UPDATE_STATUS_FOR_LOGICAL_TABLE, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -593,9 +683,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(UPDATE_PART_BOUND_DESC_FOR_ONE_PARTITION, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -611,9 +701,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(UPDATE_PARTITION_NAME_BY_GROUPID, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -629,9 +719,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(UPDATE_META_VERSION_FOR_LOGICAL_TABLE, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -646,9 +736,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(UPDATE_TABLE_PARTITIONS_SWITCH_NAME_TYPE, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -686,7 +776,27 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
+        }
+    }
+
+    public void updatePartExpr(String dbName, String tbName, String newPartExpr) {
+        List<TablePartitionRecord> partitionRecords = getTablePartitionsByDbNameTbNameLevel(dbName, tbName,
+            TablePartitionRecord.PARTITION_LEVEL_PARTITION, false);
+        try {
+            List<Map<Integer, ParameterContext>> paramsBatch = new ArrayList<>();
+
+            for (TablePartitionRecord partitionRecord : partitionRecords) {
+                Map<Integer, ParameterContext> params = new HashMap<>();
+                MetaDbUtil.setParameter(1, params, ParameterMethod.setString, newPartExpr);
+                MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, partitionRecord.id);
+                paramsBatch.add(params);
+            }
+            MetaDbUtil.update(UPDATE_TABLE_PARTITIONS_PART_EXPR, paramsBatch, this.connection);
+        } catch (Exception e) {
+            logger.error("Failed to update the system table 'table_partitions'", e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -731,7 +841,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -747,9 +857,60 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(UPDATE_TABLE_PARTITIONS_PART_FLAG, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
+        }
+    }
+
+    public void decreaseRefCountBySchTgidFromDeltaTable(String tableSchema, Long groupId) {
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>();
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setString, tableSchema);
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, groupId);
+
+            DdlMetaLogUtil.logSql(DECREASE_REF_COUNT_BY_SCH_TGID_FROM_DELTA_TABLE, params);
+
+            MetaDbUtil.update(DECREASE_REF_COUNT_BY_SCH_TGID_FROM_DELTA_TABLE, params, connection);
+            return;
+        } catch (Exception e) {
+            logger.error("Failed to update the system table 'table_partitions'", e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
+                "update", "table_partitions", e.getMessage());
+        }
+    }
+
+    public void decreaseRefCountBySchTbFromDeltaTable(String tableSchema, String tableName) {
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>();
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setString, tableSchema);
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setString, tableName);
+
+            DdlMetaLogUtil.logSql(DECREASE_REF_COUNT_BY_SCH_TB_FROM_DELTA_TABLE, params);
+
+            MetaDbUtil.update(DECREASE_REF_COUNT_BY_SCH_TB_FROM_DELTA_TABLE, params, connection);
+            return;
+        } catch (Exception e) {
+            logger.error("Failed to update the system table 'table_partitions'", e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
+                "update", "table_partitions", e.getMessage());
+        }
+    }
+
+    public void increaseRefCountBySchTbFromDeltaTable(String tableSchema, String tableName) {
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>();
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setString, tableSchema);
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setString, tableName);
+
+            DdlMetaLogUtil.logSql(INCREASE_REF_COUNT_BY_SCH_TABLE_FROM_DELTA_TABLE, params);
+
+            MetaDbUtil.update(INCREASE_REF_COUNT_BY_SCH_TABLE_FROM_DELTA_TABLE, params, connection);
+            return;
+        } catch (Exception e) {
+            logger.error("Failed to update the system table 'table_partitions'", e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -783,7 +944,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -807,7 +968,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -825,7 +986,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -842,7 +1003,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -864,7 +1025,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -881,7 +1042,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -1037,7 +1198,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
             //-----logical table------
             // sp_temp_flag
             MetaDbUtil.setParameter(j++, params, ParameterMethod.setString, dbName);
-            MetaDbUtil.setParameter(j++, params, ParameterMethod.setLong, tableName);
+            MetaDbUtil.setParameter(j++, params, ParameterMethod.setString, tableName);
             // table_schema
             List<TablePartitionRecord> tablePartitionRecords =
                 MetaDbUtil.query(sql, params, TablePartitionRecord.class, connection);
@@ -1124,10 +1285,10 @@ public class TablePartitionAccessor extends AbstractAccessor {
             tablePartition.partExtras.setArcState(newTtlState);
         }
 
-        updateTablePartitionsTtlState(tablePartitionRecords);
+        updateTablePartitionsPartextras(tablePartitionRecords);
     }
 
-    public void updateTablePartitionsTtlState(List<TablePartitionRecord> tablePartitionRecordList)
+    public void updateTablePartitionsPartextras(List<TablePartitionRecord> tablePartitionRecordList)
         throws SQLException {
         List<Map<Integer, ParameterContext>> paramsBatch = new ArrayList<>();
         for (int i = 0; i < tablePartitionRecordList.size(); i++) {
@@ -1144,10 +1305,22 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.setParameter(j++, params, ParameterMethod.setLong, tpRecord.id);
             paramsBatch.add(params);
         }
-        String sql = UPDATE_TABLE_PARTITIONS_TTL_STATE_BY_ID;
+        String sql = UPDATE_TABLE_PARTITIONS_EXTRAS_BY_ID;
 
         DdlMetaLogUtil.logSql(sql, paramsBatch);
         MetaDbUtil.update(sql, paramsBatch, this.connection);
+    }
+
+    public int[] addNewTablePartitionsInfo(List<TablePartitionRecord> tablePartitionsRecordList, boolean isUpsert,
+                                           boolean toDeltaTable) {
+        try {
+            return addNewTablePartitions(tablePartitionsRecordList, isUpsert, toDeltaTable);
+        } catch (Throwable e) {
+            logger.error("Failed to query the system table 'table_partitions'", e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
+                "query", "table_partitions", e.getMessage());
+        }
+
     }
 
     public int[] addNewTablePartitions(List<TablePartitionRecord> tablePartitionsRecordList, boolean isUpsert,
@@ -1318,7 +1491,29 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Throwable e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
+        }
+    }
+
+    public void addNewTablePartitionsArchive(String tableSchema, String tableName, long taskId) {
+        Map<Integer, ParameterContext> params = new HashMap<>();
+
+        try {
+            long currentTimestamp = System.currentTimeMillis();
+            int j = 1;
+            MetaDbUtil.setParameter(j++, params, ParameterMethod.setLong, taskId);
+            MetaDbUtil.setParameter(j++, params, ParameterMethod.setLong, currentTimestamp);
+            MetaDbUtil.setParameter(j++, params, ParameterMethod.setString, tableSchema);
+            // table_name
+            MetaDbUtil.setParameter(j++, params, ParameterMethod.setString, tableName);
+
+            String sql = INSERT_IGNORE_TABLE_PARTITIONS_ARCHIVE;
+            DdlMetaLogUtil.logSql(sql, params);
+            MetaDbUtil.insert(sql, params, this.connection);
+        } catch (Throwable e) {
+            logger.error("Failed to query the system table 'table_partitions'", e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -1456,9 +1651,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(UPDATE_TABLES_RENAME, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -1470,9 +1665,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(UPDATE_RENAME_PHYSICAL_TABLE, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -1583,7 +1778,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -1607,7 +1802,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
 
     }
@@ -1628,7 +1823,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -1651,7 +1846,7 @@ public class TablePartitionAccessor extends AbstractAccessor {
         } catch (Exception e) {
             logger.error("Failed to query the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "query", "table_partitions", e.getMessage());
         }
     }
 
@@ -1666,9 +1861,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(DISABLE_STATUS_FOR_PARTITION_BY_SCH_GID_l2, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -1684,9 +1879,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(DISABLE_STATUS_FOR_PARTITION_BY_SCH_TB_GID_l2, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -1702,9 +1897,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(DISABLE_STATUS_FOR_PARTITION_BY_SCH_TB_TEMP_PART_l2, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -1720,9 +1915,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(DISABLE_STATUS_FOR_PARTITION_BY_SCH_TB_PART_l1, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -1737,9 +1932,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(DELETE_PARTITION_BY_SCH_GID_l2, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -1755,9 +1950,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(DELETE_PARTITION_BY_SCH_TB_GID_l2, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -1773,9 +1968,9 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(DELETE_PARTITION_BY_SCH_TB_TEMP_PART_l2, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
         }
     }
 
@@ -1791,9 +1986,41 @@ public class TablePartitionAccessor extends AbstractAccessor {
             MetaDbUtil.update(DELETE_PARTITION_BY_SCH_TB_PART_l1, params, connection);
             return;
         } catch (Exception e) {
-            logger.error("Failed to query the system table 'table_partitions'", e);
+            logger.error("Failed to update the system table 'table_partitions'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
-                e.getMessage());
+                "update", "table_partitions", e.getMessage());
+        }
+    }
+
+    public int deleteTablePartitionsArchive(Long minutes) {
+        try {
+
+            long outdateTime = System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(minutes);
+            Map<Integer, ParameterContext> params = new HashMap<>();
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, outdateTime);
+            DdlMetaLogUtil.logSql(DELETE_OUTDATE_ARCHIVE, params);
+
+            return MetaDbUtil.update(DELETE_OUTDATE_ARCHIVE, params, connection);
+        } catch (Exception e) {
+            logger.error("Failed to update the system table " + GmsSystemTables.TABLE_PARTITIONS_ARCHIVE, e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
+                "update", GmsSystemTables.TABLE_PARTITIONS_ARCHIVE, e.getMessage());
+        }
+    }
+
+    public int updatePartFlagsBySchTb(String tableSchema, String tableName, long flag) {
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>();
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, flag);
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setString, tableSchema);
+            MetaDbUtil.setParameter(3, params, ParameterMethod.setString, tableName);
+            DdlMetaLogUtil.logSql(UPDATE_PART_FLAG_FOR_LOGICAL_TABLE, params);
+
+            return MetaDbUtil.update(UPDATE_PART_FLAG_FOR_LOGICAL_TABLE, params, connection);
+        } catch (Exception e) {
+            logger.error("Failed to update the system table " + GmsSystemTables.TABLE_PARTITIONS, e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
+                "update", GmsSystemTables.TABLE_PARTITIONS, e.getMessage());
         }
     }
 }

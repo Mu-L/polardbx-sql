@@ -17,12 +17,14 @@
 package com.alibaba.polardbx.optimizer.hint.util;
 
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
+import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.model.Group;
 import com.alibaba.polardbx.common.model.Group.GroupType;
 import com.alibaba.polardbx.common.model.sqljep.Comparative;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.druid.sql.parser.ByteString;
+import com.alibaba.polardbx.gms.locality.LocalityDesc;
 import com.alibaba.polardbx.gms.topology.DbGroupInfoManager;
 import com.alibaba.polardbx.gms.topology.DbGroupInfoRecord;
 import com.alibaba.polardbx.gms.util.GroupInfoUtil;
@@ -51,7 +53,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.optimizer.utils.PlannerUtils.convertTargetDB;
@@ -140,7 +141,7 @@ public class HintUtil {
         StringBuilder sql = new StringBuilder("SELECT * FROM ");
 
         if (TStringUtil.isNotBlank(table)) {
-            sql.append(table);
+            sql.append(quoteTableName(table));
         } else {
             sql.append("DUAL");
         }
@@ -150,6 +151,33 @@ public class HintUtil {
         }
 
         return sql.toString();
+    }
+
+    private static String quoteTableName(String table) {
+        if (table.startsWith("`")) {
+            return table;
+        }
+        if (table.contains(" ") || table.contains(",")) {
+            return table;
+        }
+        int dotIndex = table.indexOf('.');
+        if (dotIndex > 0) {
+            return quoteIdentifier(table.substring(0, dotIndex)) + "." + quoteIdentifier(table.substring(dotIndex + 1));
+        }
+        return quoteIdentifier(table);
+    }
+
+    private static String quoteIdentifier(String name) {
+        if (name.isEmpty()) {
+            return name;
+        }
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            if (!Character.isLetterOrDigit(c) && c != '_' && c != '$') {
+                return "`" + name + "`";
+            }
+        }
+        return name;
     }
 
     public static ByteString convertSimpleHint(ByteString sql, Map<String, Object> extraCmds) {
@@ -271,13 +299,16 @@ public class HintUtil {
         final BitSet partitionIntersection = partitionIntersection(allTbPrunedResults);
         filterPartition(allTbPrunedResults, partitionIntersection);
 
-        return PartitionPrunerUtils.buildTargetTablesByPartPrunedResults(allTbPrunedResults);
+        return PartitionPrunerUtils.buildTargetTablesByPartPrunedResults(allTbPrunedResults, ec);
     }
 
     public static void filterPartition(List<PartPrunedResult> allTbPrunedResults, BitSet partIntersection) {
         for (PartPrunedResult partPrunedResult : allTbPrunedResults) {
             PartitionInfo partitionInfo = partPrunedResult.getPartInfo();
             if (partitionInfo.isBroadcastTable()) {
+                continue;
+            }
+            if (partitionInfo.isReplicasTable()) {
                 continue;
             }
 
@@ -318,6 +349,21 @@ public class HintUtil {
         return result;
     }
 
+    public static List<String> allGroup(String schemaName, LocalityDesc localityDesc) {
+        final List<Group> allGroups = OptimizerContext.getContext(schemaName).getMatrix().getGroups();
+        List<String> result = new LinkedList<>();
+        for (Group group : allGroups) {
+            DbGroupInfoRecord dbGroupInfoRecord =
+                DbGroupInfoManager.getInstance().queryGroupInfo(schemaName, group.getName());
+            if (dbGroupInfoRecord != null && (localityDesc == null || localityDesc.isEmpty()
+                || localityDesc.matchGroupKey(
+                dbGroupInfoRecord.groupName))) {
+                result.add(group.getName());
+            }
+        }
+        return result;
+    }
+
     public static List<String> allGroup(String schemaName, boolean forSingleTable) {
         if (forSingleTable) {
             return allGroup(schemaName).stream()
@@ -351,11 +397,18 @@ public class HintUtil {
     }
 
     public static boolean forbidPushDmlWithHint() {
-        if (enableForbidPushDmlWithHint) {
-            return true;
-        } else {
-            return false;
+        return forbidPushDmlWithHint(null);
+    }
+
+    public static boolean forbidPushDmlWithHint(ExecutionContext ec) {
+        // Check session-level setting from extraCmds first
+        if (ec != null && ec.getExtraCmds() != null
+            && ec.getExtraCmds().containsKey(ConnectionProperties.ENABLE_FORBID_PUSH_DML_WITH_HINT)) {
+            return Boolean.parseBoolean(String.valueOf(
+                ec.getExtraCmds().get(ConnectionProperties.ENABLE_FORBID_PUSH_DML_WITH_HINT)));
         }
+        // Fall back to global default
+        return enableForbidPushDmlWithHint;
     }
 
     public static String findTestTableName(String name, boolean testMode, Map<String, String> tables) {

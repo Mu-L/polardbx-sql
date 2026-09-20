@@ -1,0 +1,9 @@
+## DISABLE_FAST_SQL_PARSER
+
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=false;
+
+select jumpstrc2hs00('');
+select jumpstrc2hs00(null);
+
+
+

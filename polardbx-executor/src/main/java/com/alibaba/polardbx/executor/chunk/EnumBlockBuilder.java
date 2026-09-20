@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.chunk;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableCharArrayList;
+import com.alibaba.polardbx.common.collection.MemoryCountableIntArrayList;
 import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.optimizer.core.datatype.EnumType;
 import com.alibaba.polardbx.optimizer.core.expression.bean.EnumValue;

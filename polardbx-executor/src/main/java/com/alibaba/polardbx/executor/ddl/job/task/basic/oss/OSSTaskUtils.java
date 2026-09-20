@@ -20,7 +20,6 @@ import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.common.partition.MurmurHashUtils;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.Pair;
-import com.alibaba.polardbx.common.utils.timezone.TimestampUtils;
 import com.alibaba.polardbx.executor.archive.writer.OSSBackFillWriterTask;
 import com.alibaba.polardbx.executor.ddl.job.builder.DropPartitionTableBuilder;
 import com.alibaba.polardbx.executor.ddl.job.builder.DropTableBuilder;
@@ -54,11 +53,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.TimeZone;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
-
-import static com.alibaba.polardbx.optimizer.utils.ITimestampOracle.BITS_LOGICAL_TIME;
 
 public class OSSTaskUtils {
     private static final ImmutableList<String> ENDPOINTS = ImmutableList.of(
@@ -92,10 +88,12 @@ public class OSSTaskUtils {
         );
 
     public static boolean checkEndpoint(String endpoint) {
-        if (endpoint == null) {
-            return false;
-        }
-        return ENDPOINTS.contains(endpoint);
+        //可能还有专有云环境，不限制endpoint
+        return true;
+//        if (endpoint == null) {
+//            return false;
+//        }
+//        return ENDPOINTS.contains(endpoint);
     }
 
     public static Pair<String, String> getSingleTopology(String sourceLogicalSchema, String sourceLogicalTable, TableMeta sourceTableMeta) {
@@ -209,7 +207,7 @@ public class OSSTaskUtils {
 
     public static int getMppParallelism(ExecutionContext executionContext, TableMeta primaryTableMeta) {
         int parallelism = OSSTaskUtils.getArchiveParallelism(executionContext);
-        if (TableTopologyUtil.isShard(primaryTableMeta)) {
+        if (TableTopologyUtil.isShard(primaryTableMeta, executionContext)) {
             return Math.min(parallelism, primaryTableMeta.getPartitionInfo().getAllPhysicalPartitionCount());
         }
 
@@ -268,8 +266,11 @@ public class OSSTaskUtils {
          */
         tasks.add(validateTask);
         tasks.add(dropLocality);
+        tasks.add(new TableSyncTask(schemaName, logicalTableName));
         tasks.add(dropTableHideTableMetaTask);
+        tasks.add(new TableSyncTask(schemaName, logicalTableName));
         tasks.add(dropOssFilesTask);
+        tasks.add(new TableSyncTask(schemaName, logicalTableName));
         tasks.add(phyDdlTask);
         tasks.add(removeMetaTask);
         if (syncTableGroup != null) {

@@ -154,24 +154,28 @@ public class GroupKey implements Comparable {
                 dataType = charBinaryCollation; // Use cached collation.
             }
             Object thisObject = this.groupKeys[i];
-            if (thisObject != null && that.groupKeys[i] != null &&
-                thisObject.getClass() != that.groupKeys[i].getClass()) {
+            Object thatObject = that.groupKeys[i];
+            if (thisObject != null && thatObject != null &&
+                thisObject.getClass() != thatObject.getClass()) {
                 // TODO: Implicit type convert & compare should use field store.
                 if (thisObject instanceof Number && (dataType instanceof VarcharType || dataType instanceof CharType)) {
                     thisObject = columns.get(i).getDataType().convertFrom(thisObject); // Force to string.
                 }
+                if (thatObject instanceof Number && (dataType instanceof VarcharType || dataType instanceof CharType)) {
+                    thatObject = columns.get(i).getDataType().convertFrom(thatObject); // Force to string.
+                }
             }
             // both of them are string or null, compared by string comparing
             if ((null == thisObject || thisObject instanceof String) &&
-                (null == that.groupKeys[i] || that.groupKeys[i] instanceof String)
+                (null == thatObject || thatObject instanceof String)
                 // we should not compare string when type is json
                 && (checkJsonByStringCompare || !(dataType instanceof JsonType))) {
-                if ((thisObject != null && !thisObject.equals(that.groupKeys[i])) ||
-                    (that.groupKeys[i] != null && !that.groupKeys[i].equals(thisObject))) {
+                if ((thisObject != null && !thisObject.equals(thatObject)) ||
+                    (thatObject != null && !thatObject.equals(thisObject))) {
                     return false;
                 }
                 // or continue check others
-            } else if (ExecUtils.comp(thisObject, that.groupKeys[i], dataType, true) != 0) {
+            } else if (ExecUtils.comp(thisObject, thatObject, dataType, true) != 0) {
                 return false;
             }
         }

@@ -3,26 +3,17 @@ package com.alibaba.polardbx.executor.handler.subhandler;
 import com.alibaba.polardbx.common.exception.NotSupportException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
-import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.cursor.impl.ArrayResultCursor;
-import com.alibaba.polardbx.executor.ddl.job.task.ttl.scheduler.TtlScheduledJobStatManager;
 import com.alibaba.polardbx.executor.handler.VirtualViewHandler;
-import com.alibaba.polardbx.executor.scheduler.ScheduledJobsManager;
 import com.alibaba.polardbx.executor.sync.ISyncAction;
 import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
-import com.alibaba.polardbx.gms.scheduler.ScheduleDateTimeConverter;
-import com.alibaba.polardbx.gms.scheduler.ScheduledJobExecutorType;
-import com.alibaba.polardbx.gms.scheduler.ScheduledJobsRecord;
 import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
-import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
-import com.alibaba.polardbx.optimizer.core.function.calc.scalar.CanAccessTable;
 import com.alibaba.polardbx.optimizer.view.InformationSchemaTtlSchedule;
 import com.alibaba.polardbx.optimizer.view.VirtualView;
 
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -73,7 +64,7 @@ public class InformationSchemaTtlScheduleHandler extends BaseVirtualViewSubClass
         }
 
         List<List<Map<String, Object>>> resultsOfAllNodes =
-            SyncManagerHelper.sync(ttlScheduleSyncAction, SyncScope.MASTER_ONLY);
+            SyncManagerHelper.syncIgnoreExceptions(ttlScheduleSyncAction, SyncScope.MASTER_ONLY);
 
         if (resultsOfAllNodes == null) {
             return cursor;

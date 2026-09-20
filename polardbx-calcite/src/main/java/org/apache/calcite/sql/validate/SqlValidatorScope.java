@@ -202,6 +202,12 @@ public interface SqlValidatorScope {
    * warrants it. */
   RelDataType nullifyType(SqlNode node, RelDataType type);
 
+    /** Returns whether this scope is enclosed within {@code scope2} in such
+     * a way that it can see the contents of {@code scope2}. */
+    default boolean isWithin(SqlValidatorScope scope2)  {
+        return this == scope2;
+    }
+
   /** Callback from {@link SqlValidatorScope#resolve}. */
   interface Resolved {
     void found(SqlValidatorNamespace namespace, boolean nullable,

@@ -97,6 +97,21 @@ public class IntegerBlock extends AbstractBlock {
     }
 
     @Override
+    public int compareAssertedSameType(int position, Block otherBlock, int otherPosition) {
+        boolean isNullLeft = isNull(position);
+        boolean isNullRight = otherBlock.isNull(otherPosition);
+        if (isNullLeft && isNullRight) {
+            return 0;
+        } else if (isNullLeft) {
+            return -1;
+        } else if (isNullRight) {
+            return 1;
+        } else {
+            return Integer.compare(getInt(position), otherBlock.getInt(otherPosition));
+        }
+    }
+
+    @Override
     public void addLongToBloomFilter(int totalPartitionCount, RFBloomFilter[] RFBloomFilters) {
         for (int pos = 0; pos < positionCount; pos++) {
 
@@ -708,6 +723,21 @@ public class IntegerBlock extends AbstractBlock {
     @Override
     public void copyToIntArray(int positionOffset, int positionCount, int[] targetArray, int targetOffset,
                                DictionaryMapping dictionaryMapping) {
+        Preconditions.checkArgument(positionOffset + positionCount <= this.positionCount);
+        if (selection != null) {
+            for (int i = positionOffset; i < positionOffset + positionCount; i++) {
+                int j = selection[i];
+                targetArray[targetOffset++] = values[j + arrayOffset];
+            }
+        } else {
+            for (int i = positionOffset; i < positionOffset + positionCount; i++) {
+                targetArray[targetOffset++] = values[i + arrayOffset];
+            }
+        }
+    }
+
+    @Override
+    public void copyToLongArray(int positionOffset, int positionCount, long[] targetArray, int targetOffset) {
         Preconditions.checkArgument(positionOffset + positionCount <= this.positionCount);
         if (selection != null) {
             for (int i = positionOffset; i < positionOffset + positionCount; i++) {

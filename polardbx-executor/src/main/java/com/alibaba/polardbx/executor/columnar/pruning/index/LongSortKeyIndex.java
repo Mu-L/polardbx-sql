@@ -40,15 +40,18 @@ public class LongSortKeyIndex extends SortKeyIndex {
      */
     private long[] data;
 
-    private LongSortKeyIndex(long rgNum, int colId, DataType dt) {
-        super(rgNum, colId, dt);
+    private LongSortKeyIndex(long rgNum, int colId, DataType dt, boolean isAsc) {
+        super(rgNum, colId, dt, isAsc);
     }
 
-    public static LongSortKeyIndex build(int colId, long[] data, DataType dt) {
+    public static LongSortKeyIndex build(int colId, long[] data, DataType dt, boolean isAsc) {
         Preconditions.checkArgument(data != null && data.length > 0 && data.length % 2 == 0, "bad sort key index");
-        LongSortKeyIndex longSortKeyIndex = new LongSortKeyIndex(data.length / 2, colId, dt);
+        LongSortKeyIndex longSortKeyIndex = new LongSortKeyIndex(data.length / 2, colId, dt, isAsc);
 
         longSortKeyIndex.data = data;
+        if (!isAsc) {
+            reverseLong(longSortKeyIndex.data);
+        }
         return longSortKeyIndex;
     }
 
@@ -59,11 +62,11 @@ public class LongSortKeyIndex extends SortKeyIndex {
      * @return pruneRange result for the same value
      */
     @Override
-    public void pruneEqual(Object param, RoaringBitmap cur) {
+    public void pruneEqual(Object param, RoaringBitmap cur, IndexPruneContext ipc) {
         if (param == null) {
             return;
         }
-        pruneRange(param, param, cur);
+        pruneRange(param, param, cur, ipc);
     }
 
     /**
@@ -72,15 +75,15 @@ public class LongSortKeyIndex extends SortKeyIndex {
      * - prune by long range values
      */
     @Override
-    public void pruneRange(Object startObj, Object endObj, RoaringBitmap cur) {
+    public void pruneRange(Object startObj, Object endObj, RoaringBitmap cur, IndexPruneContext ipc) {
         Preconditions.checkArgument(!(startObj == null && endObj == null), "null val");
         Long start;
         Long end;
 
         //startObj/endObj == null means lowerBound/upperBound is unlimited
         // paramTransform() == null means type of startObj is unsupported
-        start = (startObj == null) ? data[0] : paramTransform(startObj, dt, Long.class);
-        end = (endObj == null) ? data[data.length - 1] : paramTransform(endObj, dt, Long.class);
+        start = (startObj == null) ? data[0] : paramTransform(startObj, dt, ipc, Long.class);
+        end = (endObj == null) ? data[data.length - 1] : paramTransform(endObj, dt, ipc, Long.class);
         if (start == null || end == null) {
             return;
         }
@@ -100,31 +103,19 @@ public class LongSortKeyIndex extends SortKeyIndex {
         Pair<Integer, Boolean> sIndex = binarySearchLowerBound(start);
         // get upper bound rg index
         Pair<Integer, Boolean> eIndex = binarySearchUpperBound(end);
-        int startRgIndex;
-        int endRgIndex;
 
-        // if lower rg index was not included, plus it was different from upper index, then add 1 to lower rg index
-        if (!sIndex.getValue() && !Objects.equals(sIndex.getKey(), eIndex.getKey())) {
-            startRgIndex = sIndex.getKey() + 1;
-        } else {
-            startRgIndex = sIndex.getKey();
-        }
-        if (eIndex.getValue()) {
-            endRgIndex = eIndex.getKey() + 1;
-        } else {
-            endRgIndex = eIndex.getKey();
-        }
+        Pair<Integer, Integer> interval = handleInterval(sIndex, eIndex);
 
-        cur.and(RoaringBitmap.bitmapOfRange(startRgIndex, endRgIndex));
+        cur.and(RoaringBitmap.bitmapOfRange(interval.getKey(), interval.getValue()));
     }
 
     /**
      * binary search target value from data array
-     * - if data array wasn't contains target value, then check odd or even.
-     * odd meaning target is inside of one row group. even meaning target isn't
+     * - if data array wasn't contains target value, then check false or true.
+     * true meaning target is inside of one row group. false meaning target isn't
      * belong any row group.
-     * data [1, 10, 50, 100] and target 5 will return (0,true)
-     * data [1, 10, 50, 100] and target 20 will return (0,false)
+     * data [1, 10, 50, 100] and target 5 will return (0, true) (5 in rg0[1, 10])
+     * data [1, 10, 50, 100] and target 20 will return (1, false) (20 < rg1[50, 100])
      * - if data array contains target value, try to find the upper bound value
      * for the same target value
      * data [1, 10, 50, 100, 100, 100] and target 100 will return (3,true)
@@ -159,11 +150,11 @@ public class LongSortKeyIndex extends SortKeyIndex {
 
     /**
      * binary search target value from data array
-     * - if data array wasn't contains target value, then check odd or even.
-     * odd meaning target is inside of one row group. even meaning target isn't
+     * - if data array wasn't contains target value, then check false or true.
+     * true meaning target is inside of one row group. false meaning target isn't
      * belong any row group.
-     * data [1, 10, 50, 100] and target 5 will return (0,false)
-     * data [1, 10, 50, 100] and target 20 will return (0,true)
+     * data [1, 10, 50, 100] and target 5 will return (0, true) (5 in rg0[1, 10])
+     * data [1, 10, 50, 100] and target 20 will return (0, false) (rg0[1, 10] < 20)
      * - if data array contains target value, try to find the lower bound value
      * for the same target value
      * data [1, 10, 50, 100, 100, 100] and target 100 will return (3,true)
@@ -216,6 +207,25 @@ public class LongSortKeyIndex extends SortKeyIndex {
 
     public long[] getData() {
         return data;
+    }
+
+    //[3, 4, 1, 2] => [1, 2, 3, 4]
+    private static void reverseLong(long[] array) {
+        for (int i = 0; i < array.length; i += 2) {
+            long temp = array[i];
+            array[i] = array[i + 1];
+            array[i + 1] = temp;
+        }
+        int left = 0;
+        int right = array.length - 1;
+
+        while (left < right) {
+            long temp = array[left];
+            array[left] = array[right];
+            array[right] = temp;
+            left++;
+            right--;
+        }
     }
 
     @Override

@@ -1,0 +1,88 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+use polardbx;
+drop database if exists mydbledbxx1;
+  ## USE_DN_LIST_MSG
+create database if not exists mydbledbxx1 charset = utf8 collate = utf8_general_ci mode = 'auto' locality='dble_config={"group_config":{"mydbledbxx1_g1":["$dn1","mydbledbxx1_00"],"mydbledbxx1_g2":["$dn2","mydbledbxx1_01"] }}';
+use mydbledbxx1;
+create table t1(a int,b int, primary key(a)) partition by udf_hash() locality='db_pools=mydbledbxx1_g1,mydbledbxx1_g2';
+explain select * from t1;
+explain select * from t1 where a=1;
+explain select * from t1 where a=1 and b=1;
+explain select * from t1 where a=1 or b=1;
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t1 where a in (1);
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t1 where a in (1,2,3,4,5,6,7,8,9,10,11);
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t1 where a in (1) and a=1;
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t1 where a in (1,2,3,4,5,6,7,8,9,10,11) and a=2;
+show create table t1;
+show rule from t1;
+select count(1) from information_schema.table_group where TABLE_SCHEMA='mydbledbxx1';
+## error_msg: $# No found any columns in Creating Table #$
+create table t2(a int,b int, primary key(a)) partition by udf_hash();
+create table t3 like t1;
+create table t4 like t3;
+show create table t4;
+select count(1) from information_schema.table_group where TABLE_SCHEMA='mydbledbxx1';
+## error_msg: $# because it does not have a partition key #$
+insert into t1 values(1,1);
+## error_msg: $# because it does not have a partition key #$
+update t1 set a=2 where a=1;
+## error_msg: $# because it does not have a partition key #$
+delete from t1 where a=2;
+create table t5(a int,b int, primary key(a)) broadcast locality='db_pools=mydbledbxx1_g1,mydbledbxx1_g2';
+insert into t5 values(1,1);
+insert into t5 values(2,2);
+insert into t5 values(3,2);
+insert into t5 values(4,2);
+unregister table if exists t5;
+register table t5(a int,b int, primary key(a)) partition by udf_hash() locality='db_pools=mydbledbxx1_g1,mydbledbxx1_g2';
+select * from t5 where a=1;
+select * from t5 where a in (1,2) order by a;
+select * from t5 where b=2 order by a;
+select count(1) from t5;
+create table t6(a int,b int, primary key(a,b)) partition by udf_hash() locality='db_pools=mydbledbxx1_g1,mydbledbxx1_g2';
+explain select * from t6;
+explain select * from t6 where a=1;
+explain select * from t6 where a=1 and b=1;
+explain select * from t6 where a=1 or b=1;
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t6 where b in (1);
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t6 where b in (1,2,3,4,5,6,7,8,9,10,11);
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t6 where b in (1) and b=1;
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t6 where b in (1,2,3,4,5,6,7,8,9,10,11) and b=2;
+show create table t6;
+show rule from t6;
+create table t7(a int,b int, primary key(a,b)) broadcast locality='db_pools=mydbledbxx1_g1,mydbledbxx1_g2';
+insert into t7 values(1,1);
+insert into t7 values(2,2);
+insert into t7 values(3,2);
+insert into t7 values(4,2);
+unregister table if exists t7;
+register table t7(a int,b int, primary key(a,b)) partition by udf_hash() locality='db_pools=mydbledbxx1_g1,mydbledbxx1_g2';
+select * from t7 where a=1;
+select * from t7 where b in (1,2) order by b;
+select * from t7 where b=2 order by a;
+select count(1) from t7;
+create table t8(a int,b int, primary key(a,b)) broadcast locality='db_pools=mydbledbxx1_g1,mydbledbxx1_g2';
+insert into t8 values(1,1);
+insert into t8 values(2,2);
+insert into t8 values(3,2);
+insert into t8 values(4,2);
+unregister table if exists t8;
+register table t8(a int,b int, primary key(a,b)) partition by udf_hash() locality='db_pools=mydbledbxx1_g1,mydbledbxx1_g2';
+alter table t8 change column a aa bigint, change column b bb bigint;
+select * from t8 where aa=1;
+select * from t8 where bb in (1,2) order by bb;
+select * from t8 where bb=2 order by aa;
+select count(1) from t8;
+show create table t8;
+explain select * from t8;
+explain select * from t8 where aa=1;
+explain select * from t8 where aa=1 and bb=1;
+explain select * from t8 where aa=1 or bb=1;
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t8 where bb in (1);
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t8 where bb in (1,2,3,4,5,6,7,8,9,10,11);
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t8 where bb in (1) and bb=1;
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t8 where bb in (1,2,3,4,5,6,7,8,9,10,11) and bb=2;
+use polardbx;
+drop database mydbledbxx1;

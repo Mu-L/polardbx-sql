@@ -35,6 +35,8 @@ import com.alibaba.polardbx.gms.ha.impl.StorageNodeHaInfo;
 import com.alibaba.polardbx.gms.ha.impl.StorageRole;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineTaskAccessor;
+import com.alibaba.polardbx.gms.metadb.misc.RollbackTaskConfigAccessor;
+import com.alibaba.polardbx.gms.metadb.misc.RollbackTaskConfigRecord;
 import com.alibaba.polardbx.gms.node.StorageStatus;
 import com.alibaba.polardbx.gms.node.StorageStatusManager;
 import com.alibaba.polardbx.gms.partition.PhysicalBackfillDetailInfoFieldJSON;
@@ -46,6 +48,7 @@ import com.alibaba.polardbx.gms.topology.DbTopologyManager;
 import com.alibaba.polardbx.gms.topology.GroupDetailInfoExRecord;
 import com.alibaba.polardbx.gms.topology.ServerInstIdManager;
 import com.alibaba.polardbx.gms.topology.StorageInfoRecord;
+import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.gms.util.PasswdUtil;
 import com.alibaba.polardbx.group.jdbc.TGroupDataSource;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
@@ -58,6 +61,7 @@ import com.alibaba.polardbx.optimizer.core.rel.PhyTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableOperationFactory;
 import com.alibaba.polardbx.rpc.compatible.XDataSource;
 import com.alibaba.polardbx.rpc.pool.XConnection;
+import com.alibaba.polardbx.rpc.pool.XConnectionManager;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
@@ -82,7 +86,9 @@ import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -98,8 +104,8 @@ import java.util.stream.Collectors;
  */
 public class PhysicalBackfillUtils {
     public final static int MAX_RETRY = 3;
-    private static final Map<String, XDataSource> dataSourcePool = new ConcurrentHashMap<>();
-    private static final String CHECK_TABLE = "select 1 from %s limit 1";
+    //key:jobId, value:<DN, XDataSource>
+    private static final Map<Long, Map<String, XDataSource>> dataSourcePool = new ConcurrentHashMap<>();
     private static final String SELECT_PHY_PARTITION_NAMES =
         "SELECT partition_name FROM INFORMATION_SCHEMA.PARTITIONS WHERE TABLE_NAME = '%s' and table_schema='%s' and partition_name is not null";
     private static final String TABLESPACE_IS_DISCARD = "Tablespace has been discarded";
@@ -121,22 +127,71 @@ public class PhysicalBackfillUtils {
     private final static long INIT_TSO = 0;
     private final static PhysicalBackfillRateLimiter rateLimiter = new PhysicalBackfillRateLimiter();
 
-    public static XDataSource initializeDataSource(String host, int port, String username, String password,
+    public static XDataSource initializeDataSource(Long jobId, String host, int port, String username, String password,
                                                    String defaultDB, String name) {
         synchronized (dataSourcePool) {
+            Map<String, XDataSource> jobDataSources =
+                dataSourcePool.computeIfAbsent(jobId, key -> new ConcurrentHashMap<>());
             final XDataSource clientPool =
-                dataSourcePool
-                    .computeIfAbsent(digest(host, port, username + "@" + defaultDB),
+                jobDataSources
+                    .computeIfAbsent(digest(host, port, username, defaultDB),
                         key -> {
                             //todo for log
                             SQLRecorderLogger.ddlLogger.info(
-                                String.format("host:%s,port:%d,u:%s,mask:%s,defaultDB:%s,name:%s", host,
+                                String.format("host:%s,port:%d,u:%s,mask:%s,defaultDB:%s,name:%s, jobId:%d", host,
                                     port, username, password.substring(0, Math.min(3, password.length())) + "****",
-                                    defaultDB, name));
+                                    defaultDB, name, jobId));
 
                             return new XDataSource(host, port, username, password, defaultDB, name);
                         });
             return clientPool;
+        }
+    }
+
+    public static void destroyDataSources(Long jobId) {
+        if (dataSourcePool.isEmpty()) {
+            return;
+        }
+        synchronized (dataSourcePool) {
+            //double check
+            if (dataSourcePool.isEmpty()) {
+                return;
+            }
+            String msg = new StringBuilder()
+                .append("Begin to destroy physical backfill data sources for job ID: ")
+                .append(jobId)
+                .append(". PhysicalBackfill DataSourcePool contains: ")
+                .append(dataSourcePool != null ? dataSourcePool.keySet() : "null")
+                .toString();
+            SQLRecorderLogger.ddlLogger.info(msg);
+
+            if (GeneralUtil.isEmpty(dataSourcePool.get(jobId))) {
+                return;
+            }
+            Map<String, XDataSource> jobDataSources = dataSourcePool.get(jobId);
+            boolean allClosed = true;
+            Iterator<Map.Entry<String, XDataSource>> iterator = jobDataSources.entrySet().iterator();
+            while (iterator.hasNext()) {
+                boolean isClosed = false;
+                Map.Entry<String, XDataSource> dataSourceEntry = iterator.next();
+                try {
+                    dataSourceEntry.getValue().close();
+                    isClosed = true;
+                } catch (Exception e) {
+                    allClosed = false;
+                    SQLRecorderLogger.ddlLogger.warn("Failed to close dataSource for key: " + dataSourceEntry.getKey(),
+                        e);
+                } finally {
+                    if (isClosed) {
+                        // Remove the entry immediately after attempting to close
+                        iterator.remove();
+                    }
+                }
+            }
+            // Only remove the entire job from the pool after all data sources have been processed
+            if (allClosed) {
+                dataSourcePool.remove(jobId);
+            }
         }
     }
 
@@ -152,6 +207,8 @@ public class PhysicalBackfillUtils {
         } catch (Exception ex) {
             SQLRecorderLogger.ddlLogger.info("destroy physicalBackfillDataSources fail:" + ex);
         }
+        SQLRecorderLogger.ddlLogger.info(
+            "destroy physicalBackfillDataSources existPhysicalBackfillTask:" + existPhysicalBackfillTask);
         if (existPhysicalBackfillTask) {
             return;
         }
@@ -171,45 +228,59 @@ public class PhysicalBackfillUtils {
             if (!existPhysicalBackfillTask) {
                 String msg = "begin to destroy physicalBackfillDataSources";
                 SQLRecorderLogger.ddlLogger.info(msg);
-                for (Map.Entry<String, XDataSource> entry : dataSourcePool.entrySet()) {
-                    entry.getValue().close();
+                // 使用Iterator来遍历并逐个关闭数据源
+                boolean allClosed = true;
+                Iterator<Map.Entry<Long, Map<String, XDataSource>>> outerIterator =
+                    dataSourcePool.entrySet().iterator();
+                while (outerIterator.hasNext()) {
+                    Map.Entry<Long, Map<String, XDataSource>> entry = outerIterator.next();
+                    Long jobId = entry.getKey();
+                    Map<String, XDataSource> jobDataSources = entry.getValue();
+
+                    boolean thisJobAllClosed = true;
+                    // 逐个关闭jobDataSources中的数据源
+                    Iterator<Map.Entry<String, XDataSource>> innerIterator = jobDataSources.entrySet().iterator();
+                    while (innerIterator.hasNext()) {
+                        boolean closed = false;
+                        Map.Entry<String, XDataSource> dataSourceEntry = innerIterator.next();
+                        try {
+                            dataSourceEntry.getValue().close();
+                            closed = true;
+                        } catch (Exception e) {
+                            SQLRecorderLogger.ddlLogger.warn(
+                                "Failed to close dataSource for key: " + dataSourceEntry.getKey() + " in job ID: "
+                                    + jobId, e);
+                            allClosed = false;
+                            thisJobAllClosed = false;
+                        } finally {
+                            if (closed) {
+                                // 关闭一个就remove一个item
+                                innerIterator.remove();
+                            }
+                        }
+                    }
+
+                    if (thisJobAllClosed) {
+                        // 所有都close后才remove整个key
+                        outerIterator.remove();
+                    }
                 }
-                dataSourcePool.clear();
+
+                // 所有key都remove，才调用clear
+                if (allClosed) {
+                    dataSourcePool.clear();
+                } else if (!allClosed) {
+                    SQLRecorderLogger.ddlLogger.warn("Failed to close all dataSources in destroyDataSources()");
+                }
             } else {
                 SQLRecorderLogger.ddlLogger.info("ignore destroy physicalBackfillDataSources due to task is running");
             }
         }
     }
 
-    public static String digest(String host, int port, String username) {
-        return username + "@" + host + ":" + port;
-    }
-
-    public static PhyTableOperation generateTableOperation(String schemaName, String logicalName, String dbIndex,
-                                                           String phyTableName, String sqlTemplate,
-                                                           ExecutionContext ec) {
-        final RelOptCluster cluster = SqlConverter.getInstance(schemaName, ec).createRelOptCluster();
-        RelTraitSet traitSet = RelTraitSet.createEmpty();
-        RelDataTypeFactory typeFactory = new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
-        RelDataType rowType = RelOptUtil.createDmlRowType(SqlKind.OTHER_DDL, typeFactory);
-
-        PhyTableOpBuildParams buildParams = new PhyTableOpBuildParams();
-        buildParams.setSchemaName(schemaName);
-        buildParams.setLogTables(ImmutableList.of(logicalName));
-        buildParams.setGroupName(dbIndex);
-        buildParams.setPhyTables(ImmutableList.of(ImmutableList.of(phyTableName)));
-        buildParams.setSqlKind(SqlKind.OTHER_DDL);
-        buildParams.setLockMode(SqlSelect.LockMode.UNDEF);
-
-        buildParams.setLogicalPlan(null);
-        buildParams.setCluster(cluster);
-        buildParams.setTraitSet(traitSet);
-        buildParams.setRowType(rowType);
-        buildParams.setCursorMeta(null);
-
-        buildParams.setBytesSql(BytesSql.getBytesSql(sqlTemplate));
-        buildParams.setDbType(DbType.MYSQL);
-        return PhyTableOperationFactory.getInstance().buildPhyTblOpByParams(buildParams);
+    public static String digest(String host, int port, String username, String defaultDB) {
+        //不同的库，必须创建不同的XDataSource
+        return username + "@" + defaultDB + "@" + host + ":" + port;
     }
 
     /*
@@ -217,7 +288,7 @@ public class PhysicalBackfillUtils {
      * type = 1; delete source files only
      * type = 2; delete target files only
      * */
-    public static void rollbackCopyIbd(Long backfillId, String tableSchema, String tableName, int type,
+    public static void rollbackCopyIbd(Long rootJobId, Long backfillId, String tableSchema, String tableName, int type,
                                        ExecutionContext ec) {
         PhysicalBackfillManager physicalBackfillManager = new PhysicalBackfillManager(tableSchema);
         List<PhysicalBackfillManager.BackfillObjectRecord> backfillObjectRecords =
@@ -227,7 +298,27 @@ public class PhysicalBackfillUtils {
                 PhysicalBackfillDetailInfoFieldJSON.fromJson(record.getDetailInfo());
             if (detailInfoFieldJSON.getSourceHostAndPort() != null) {
                 if (type != 2) {
-                    deleteInnodbDataFiles(tableSchema, detailInfoFieldJSON.getSourceHostAndPort(),
+                    Pair<String, Integer> srcHostAndPort = detailInfoFieldJSON.getSourceHostAndPort();
+                    try (Connection conn = MetaDbUtil.getConnection()) {
+                        RollbackTaskConfigAccessor accessor = new RollbackTaskConfigAccessor();
+                        accessor.setConnection(conn);
+                        List<RollbackTaskConfigRecord> records =
+                            accessor.queryByJobIdAndType(rootJobId, RollbackTaskConfigRecord.DN_REBUILT);
+                        if (GeneralUtil.isNotEmpty(records)) {
+                            for (RollbackTaskConfigRecord rollbackTaskConfigRecord : records) {
+                                Pair<String, Integer> oldHostInfo =
+                                    AddressUtils.getIpPortPairByAddrStr(rollbackTaskConfigRecord.getOld_value());
+                                Pair<String, Integer> newHostInfo =
+                                    AddressUtils.getIpPortPairByAddrStr(rollbackTaskConfigRecord.getNew_value());
+                                if (srcHostAndPort.equals(oldHostInfo)) {
+                                    srcHostAndPort = newHostInfo;
+                                }
+                            }
+                        }
+                    } catch (SQLException e) {
+                        SQLRecorderLogger.ddlLogger.info(e.getMessage());
+                    }
+                    deleteInnodbDataFiles(rootJobId, tableSchema, srcHostAndPort,
                         record.getSourceDirName(), record.getSourceGroupName(), record.getPhysicalDb(), true, ec);
                 }
 
@@ -237,37 +328,68 @@ public class PhysicalBackfillUtils {
 
                     Pair<String, String> targetDbAndGroup =
                         Pair.of(tarDbGroupInfoRecord.phyDbName.toLowerCase(), tarDbGroupInfoRecord.groupName);
-                    for (Pair<String, Integer> pair : GeneralUtil.emptyIfNull(
-                        detailInfoFieldJSON.getTargetHostAndPorts())) {
-                        deleteInnodbDataFiles(tableSchema, pair, record.getTargetDirName(), record.getTargetGroupName(),
-                            targetDbAndGroup.getKey(), true, ec);
+                    if (GeneralUtil.isNotEmpty(detailInfoFieldJSON.getTargetHostAndPorts())) {
+                        List<Pair<String, Integer>> targetHostsIpAndPort = detailInfoFieldJSON.getTargetHostAndPorts();
+                        try (Connection conn = MetaDbUtil.getConnection()) {
+                            RollbackTaskConfigAccessor accessor = new RollbackTaskConfigAccessor();
+                            accessor.setConnection(conn);
+                            List<RollbackTaskConfigRecord> records =
+                                accessor.queryByJobIdAndType(rootJobId, RollbackTaskConfigRecord.DN_REBUILT);
+                            if (GeneralUtil.isNotEmpty(records)) {
+                                for (RollbackTaskConfigRecord rollbackTaskConfigRecord : records) {
+                                    Pair<String, Integer> oldHostInfo =
+                                        AddressUtils.getIpPortPairByAddrStr(rollbackTaskConfigRecord.getOld_value());
+                                    Pair<String, Integer> newHostInfo =
+                                        AddressUtils.getIpPortPairByAddrStr(rollbackTaskConfigRecord.getNew_value());
+                                    ListIterator<Pair<String, Integer>> iterator = targetHostsIpAndPort.listIterator();
+                                    while (iterator.hasNext()) {
+                                        Pair<String, Integer> p = iterator.next();
+                                        if (oldHostInfo.equals(p)) {
+                                            iterator.set(newHostInfo); // 使用迭代器安全替换
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (SQLException e) {
+                            SQLRecorderLogger.ddlLogger.info(e.getMessage());
+                        }
+
+                        for (Pair<String, Integer> pair : GeneralUtil.emptyIfNull(
+                            targetHostsIpAndPort)) {
+                            deleteInnodbDataFiles(rootJobId, tableSchema, pair, record.getTargetDirName(),
+                                record.getTargetGroupName(),
+                                targetDbAndGroup.getKey(), true, ec);
+                        }
                     }
                 }
             }
         }
     }
 
-    public static void deleteInnodbDataFiles(String schemaName, Pair<String, Integer> hostInfo, String dir,
+    public static void deleteInnodbDataFiles(Long jobId, String schemaName, Pair<String, Integer> hostInfo, String dir,
                                              String groupName, String physicalDb,
                                              boolean couldIgnore,
                                              ExecutionContext ec) {
-        PhysicalBackfillUtils.deleteInnodbDataFile(schemaName, groupName, physicalDb,
+        PhysicalBackfillUtils.deleteInnodbDataFile(jobId, schemaName, groupName, physicalDb,
             hostInfo.getKey(),
             hostInfo.getValue(),
             PhysicalBackfillUtils.convertToCfgFileName(dir, CFG), couldIgnore, ec);
-        PhysicalBackfillUtils.deleteInnodbDataFile(schemaName, groupName, physicalDb,
+        PhysicalBackfillUtils.deleteInnodbDataFile(jobId, schemaName, groupName, physicalDb,
             hostInfo.getKey(),
             hostInfo.getValue(),
             PhysicalBackfillUtils.convertToCfgFileName(dir, CFP), couldIgnore, ec);
-        PhysicalBackfillUtils.deleteInnodbDataFile(schemaName, groupName, physicalDb,
+        PhysicalBackfillUtils.deleteInnodbDataFile(jobId, schemaName, groupName, physicalDb,
             hostInfo.getKey(),
             hostInfo.getValue(), dir, true, ec);
     }
 
-    public static void deleteInnodbDataFile(String schemaName, String groupName, String phyDb, String host, int port,
-                                            String tempFilePath, boolean couldIgnore, ExecutionContext ec) {
+    public static void deleteInnodbDataFile(Long jobId, String schemaName, String groupName,
+                                            String phyDb, String host,
+                                            int port, String tempFilePath,
+                                            boolean couldIgnore, ExecutionContext ec) {
 
-        String msg = "begin to delete the idb file " + tempFilePath + " in " + host + ":" + port + " group" + groupName;
+        String msg =
+            "begin to delete the idb file " + tempFilePath + " in " + host + ":" + port + " group" + groupName;
         SQLRecorderLogger.ddlLogger.info(msg);
         String storageInstId = DbTopologyManager.getStorageInstIdByGroupName(schemaName, groupName);
         Pair<String, String> userInfo = getUserPasswd(storageInstId);
@@ -279,8 +401,8 @@ public class PhysicalBackfillUtils {
             ec.getParamManager().getBoolean(ConnectionParams.PHYSICAL_BACKFILL_STORAGE_HEALTHY_CHECK);
 
         do {
-            try (XConnection conn = (XConnection) (PhysicalBackfillUtils.getXConnectionForStorage(phyDb, host, port,
-                userInfo.getKey(), userInfo.getValue(), -1))) {
+            try (XConnection conn = (XConnection) (PhysicalBackfillUtils.getXConnectionForStorage(jobId, phyDb, host,
+                port, userInfo.getKey(), userInfo.getValue(), -1))) {
                 PolarxPhysicalBackfill.FileManageOperator.Builder builder =
                     PolarxPhysicalBackfill.FileManageOperator.newBuilder();
 
@@ -290,7 +412,8 @@ public class PhysicalBackfillUtils {
                 tableInfoBuilder.setTableName("");
                 tableInfoBuilder.setPartitioned(false);
 
-                PolarxPhysicalBackfill.FileInfo.Builder fileInfoBuilder = PolarxPhysicalBackfill.FileInfo.newBuilder();
+                PolarxPhysicalBackfill.FileInfo.Builder fileInfoBuilder =
+                    PolarxPhysicalBackfill.FileInfo.newBuilder();
                 fileInfoBuilder.setTempFile(true);
                 fileInfoBuilder.setFileName("");
                 fileInfoBuilder.setDirectory(tempFilePath);
@@ -299,14 +422,15 @@ public class PhysicalBackfillUtils {
                 tableInfoBuilder.addFileInfo(fileInfoBuilder.build());
 
                 builder.setTableInfo(tableInfoBuilder);
-                builder.setOperatorType(PolarxPhysicalBackfill.FileManageOperator.Type.DELETE_IBD_FROM_TEMP_DIR_IN_SRC);
+                builder.setOperatorType(
+                    PolarxPhysicalBackfill.FileManageOperator.Type.DELETE_IBD_FROM_TEMP_DIR_IN_SRC);
 
                 conn.execDeleteTempIbdFile(builder);
                 success = true;
             } catch (Exception ex) {
                 if (tryTime > MAX_RETRY) {
-                    if (couldIgnore && ex != null && ex.toString() != null
-                        && ex.toString().indexOf("connect fail") != -1) {
+                    if (couldIgnore && ex.toString() != null
+                        && ex.toString().contains("connect fail")) {
                         List<Pair<String, Integer>> hostsIpAndPort =
                             PhysicalBackfillUtils.getMySQLServerNodeIpAndPorts(storageInstId, healthyCheck);
                         Optional<Pair<String, Integer>> targetHostOpt =
@@ -337,12 +461,12 @@ public class PhysicalBackfillUtils {
         SQLRecorderLogger.ddlLogger.info(msg);
     }
 
-    public static Connection getXConnectionForStorage(String schema, String host, int port, String user, String passwd,
+    public static Connection getXConnectionForStorage(Long jobId, String schema, String host, int port, String user,
+                                                      String passwd,
                                                       int socketTimeout) throws SQLException {
-        XDataSource dataSource = initializeDataSource(host, port, user, passwd, schema, "importTableDataSource");
+        XDataSource dataSource = initializeDataSource(jobId, host, port, user, passwd, schema, "importTableDataSource");
         //dataSource.setDefaultQueryTimeoutMillis();
-        Connection conn = dataSource.getConnection();
-        return conn;
+        return dataSource.getConnection();
     }
 
     public static List<Pair<String, Integer>> getMySQLServerNodeIpAndPorts(String storageInstId,
@@ -367,12 +491,15 @@ public class PhysicalBackfillUtils {
             if (haInfo.getRole() == StorageRole.LOGGER) {
                 loggerList.add(Pair.of(ip, xport));
                 masterNodesNormPortList.add(nodeIpPort);
+                SQLRecorderLogger.ddlLogger.info("LOGGER node:(" + ip + ":" + xport + ")");
             } else if (haInfo.getRole() == StorageRole.LEARNER) {
                 learnerList.add(Pair.of(ip, xport));
                 learnerNodesNormPortList.add(nodeIpPort);
+                SQLRecorderLogger.ddlLogger.info("LEARNER node:(" + ip + ":" + xport + ")");
             } else {
                 hostInfos.add(Pair.of(ip, xport));
                 masterNodesNormPortList.add(nodeIpPort);
+                SQLRecorderLogger.ddlLogger.info("FOLLOWER/LEARNER node:(" + ip + ":" + xport + ")");
             }
         }
         if (healthCheck && !nodeHealthCheck(storageInstId, masterNodesNormPortList)) {
@@ -418,7 +545,8 @@ public class PhysicalBackfillUtils {
         Map<String, StorageInstHaContext> storageInstHaCtxCache =
             StorageHaManager.getInstance().getStorageHaCtxCache();
         List<StorageInfoRecord> nodesInfoFromMetadb =
-            storageInstHaCtxCache.get(storageInstId).getStorageNodeInfos().values().stream().filter(o -> o.isVip != 1)
+            storageInstHaCtxCache.get(storageInstId).getStorageNodeInfos().values().stream()
+                .filter(o -> o.isVip != 1)
                 .collect(
                     Collectors.toList());
         if (nodesInfoFromMetadb.size() != masterNodesList.size()) {
@@ -457,7 +585,8 @@ public class PhysicalBackfillUtils {
     }
 
     public static Pair<String, Integer> getSrcMySQLHostForCloneTask(String storageInstId, ExecutionContext ec) {
-        boolean fromLeader = ec.getParamManager().getBoolean(ConnectionParams.PHYSICAL_BACKFILL_CLONE_DATA_FROM_LEADER);
+        boolean fromLeader =
+            ec.getParamManager().getBoolean(ConnectionParams.PHYSICAL_BACKFILL_CLONE_DATA_FROM_LEADER);
         if (fromLeader) {
             return getMySQLLeaderIpAndPort(storageInstId);
         } else {
@@ -485,7 +614,8 @@ public class PhysicalBackfillUtils {
             }
         }
         if (followerNodeHaInfo != null) {
-            Pair<String, Integer> follerNodeIpPort = AddressUtils.getIpPortPairByAddrStr(followerNodeHaInfo.getAddr());
+            Pair<String, Integer> follerNodeIpPort =
+                AddressUtils.getIpPortPairByAddrStr(followerNodeHaInfo.getAddr());
             return new Pair<>(follerNodeIpPort.getKey(), followerNodeHaInfo.getXPort());
         } else {
             return leaderIpPort;
@@ -496,7 +626,8 @@ public class PhysicalBackfillUtils {
         TopologyHandler topologyHandler = ExecutorContext.getContext(schemaName).getTopologyHandler();
         IGroupExecutor srcGroupExecutor = topologyHandler.get(group);
         if (srcGroupExecutor == null) {
-            throw new TddlRuntimeException(ErrorCode.ERR_SCALEOUT_EXECUTE, String.format("invalid group:%s", group));
+            throw new TddlRuntimeException(ErrorCode.ERR_SCALEOUT_EXECUTE,
+                String.format("invalid group:%s", group));
         }
 
         TGroupDataSource groupDataSource = (TGroupDataSource) srcGroupExecutor.getDataSource();
@@ -504,7 +635,8 @@ public class PhysicalBackfillUtils {
             Long lsn =
                 GroupingFetchLSN.getInstance().groupingLsn(groupDataSource.getOneAtomDs(true).getDnId(), INIT_TSO);
             String lsnDetail =
-                String.format("the latest lsn in dn.group:[%s.%s] is %s", groupDataSource.getOneAtomDs(true).getDnId(),
+                String.format("the latest lsn in dn.group:[%s.%s] is %s",
+                    groupDataSource.getOneAtomDs(true).getDnId(),
                     group, lsn.toString());
             SQLRecorderLogger.ddlLogger.info(lsnDetail);
             return lsn;
@@ -516,7 +648,7 @@ public class PhysicalBackfillUtils {
         }
     }
 
-    public static Map<String, Long> waitLsn(String schemaName, Map<String, String> groupAndStorageIdMap,
+    public static Map<String, Long> waitLsn(Long rootJobId, String schemaName, Map<String, String> groupAndStorageIdMap,
                                             boolean rollback,
                                             ExecutionContext ec) {
         Map<String, Long> groupAndLsnMap = new HashMap<>();
@@ -545,7 +677,8 @@ public class PhysicalBackfillUtils {
                     long maxRetry = OptimizerContext.getContext(schemaName).getParamManager().getLong(
                         ConnectionParams.PHYSICAL_BACKFILL_MAX_RETRY_WAIT_FOLLOWER_TO_LSN);
                     String cmd = String.format("SET read_lsn = %d", masterLsn);
-                    try (Connection conn = getXConnectionForStorage(dbGroupInfoRecord.phyDbName, pair.getKey(),
+                    try (Connection conn = getXConnectionForStorage(rootJobId, dbGroupInfoRecord.phyDbName,
+                        pair.getKey(),
                         pair.getValue(), userInfo.getKey(), userInfo.getValue(), -1)) {
                         try (Statement stmt = conn.createStatement()) {
                             SQLRecorderLogger.ddlLogger.info(cmd);
@@ -560,7 +693,8 @@ public class PhysicalBackfillUtils {
                                     pair.getValue(), retryTime));
                         }
                         SQLRecorderLogger.ddlLogger.info(
-                            "fail to execute:" + cmd + " in " + pair.getKey() + ":" + pair.getValue() + " for schema:"
+                            "fail to execute:" + cmd + " in " + pair.getKey() + ":" + pair.getValue()
+                                + " for schema:"
                                 + schemaName + " group:" + entry.getKey() + " " + ex);
                     }
                 } while (!success);
@@ -595,7 +729,7 @@ public class PhysicalBackfillUtils {
         return maxLatency;
     }
 
-    public static double netWorkSpeedTest(ExecutionContext ec) {
+    public static double netWorkSpeedTest(Long jobId, ExecutionContext ec) {
 
         List<DbInfoRecord> dbInfoList = DbInfoManager.getInstance().getDbInfoList();
         List<String> schemaList = dbInfoList.stream()
@@ -604,6 +738,7 @@ public class PhysicalBackfillUtils {
         boolean enableSpeedTest = ec.getParamManager().getBoolean(ConnectionParams.PHYSICAL_BACKFILL_SPEED_TEST);
 
         if (GeneralUtil.isEmpty(schemaList) || !enableSpeedTest) {
+            SQLRecorderLogger.ddlLogger.info("skip netWorkSpeedTest, enableSpeedTest:" + enableSpeedTest);
             return 0.00;
         }
         //先写一个batch，然后读、写读写
@@ -634,7 +769,7 @@ public class PhysicalBackfillUtils {
                 .filter(o -> !o.storageInstId.equalsIgnoreCase(srcGroupDetailInfo.storageInstId))
                 .findFirst();
         GroupDetailInfoExRecord tarGroupDetailInfo =
-            optTarGroupDetailInfo.isPresent() ? optTarGroupDetailInfo.get() : srcGroupDetailInfo;
+            optTarGroupDetailInfo.orElse(srcGroupDetailInfo);
 
         Map<String, String> groupStorageInsts = new HashMap<>();
         Map<String, Pair<String, String>> storageInstAndUserInfos = new HashMap<>();
@@ -665,12 +800,14 @@ public class PhysicalBackfillUtils {
         do {
             PolarxPhysicalBackfill.TransferFileDataOperator transferFileData;
             try (XConnection conn = (XConnection) (PhysicalBackfillUtils.getXConnectionForStorage(
-                srcGroupDetailInfo.getPhyDbName(),
-                sourceHost.getKey(), sourceHost.getValue(), srcUserAndPwd.getKey(), srcUserAndPwd.getValue(), -1))) {
+                jobId, srcGroupDetailInfo.getPhyDbName(),
+                sourceHost.getKey(), sourceHost.getValue(), srcUserAndPwd.getKey(), srcUserAndPwd.getValue(),
+                -1))) {
                 PolarxPhysicalBackfill.TransferFileDataOperator.Builder readBuilder =
                     PolarxPhysicalBackfill.TransferFileDataOperator.newBuilder();
 
-                readBuilder.setOperatorType(PolarxPhysicalBackfill.TransferFileDataOperator.Type.GET_DATA_FROM_SRC_IBD);
+                readBuilder.setOperatorType(
+                    PolarxPhysicalBackfill.TransferFileDataOperator.Type.GET_DATA_FROM_SRC_IBD);
                 PolarxPhysicalBackfill.FileInfo.Builder srcFileInfoBuilder =
                     PolarxPhysicalBackfill.FileInfo.newBuilder();
                 srcFileInfoBuilder.setFileName(TEST_SPEED_SRC_DIR);
@@ -703,28 +840,6 @@ public class PhysicalBackfillUtils {
 
     }
 
-    public static boolean checkTableSpace(String schemaName, String group, String phyTableName) {
-        boolean tableSpaceExists = true;
-        TopologyHandler topologyHandler = ExecutorContext.getContext(schemaName).getTopologyHandler();
-        IGroupExecutor executor = topologyHandler.get(group);
-        if (executor == null) {
-            throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR, String.format("invalid group:%s", group));
-        }
-
-        TGroupDataSource groupDataSource = (TGroupDataSource) executor.getDataSource();
-        try (Connection connection = groupDataSource.getConnection(); Statement stmt = connection.createStatement();) {
-            ResultSet rs = stmt.executeQuery(String.format(CHECK_TABLE, phyTableName));
-            rs.next();
-
-        } catch (SQLException ex) {
-            if (ex != null && ex.getMessage() != null && ex.getMessage().contains(TABLESPACE_IS_DISCARD)) {
-                tableSpaceExists = false;
-            }
-            // ignore
-        }
-        return tableSpaceExists;
-    }
-
     public static List<String> getPhysicalPartitionNames(String schemaName, String group, String phyDb,
                                                          String phyTableName) {
         List<String> phyPartNames = new ArrayList<>();
@@ -735,7 +850,8 @@ public class PhysicalBackfillUtils {
         }
 
         TGroupDataSource groupDataSource = (TGroupDataSource) executor.getDataSource();
-        try (Connection connection = groupDataSource.getConnection(); Statement stmt = connection.createStatement();) {
+        try (Connection connection = groupDataSource.getConnection();
+            Statement stmt = connection.createStatement();) {
             ResultSet rs = stmt.executeQuery(String.format(SELECT_PHY_PARTITION_NAMES, phyTableName, phyDb));
             while (rs.next()) {
                 phyPartNames.add(rs.getString("partition_name"));
@@ -761,16 +877,19 @@ public class PhysicalBackfillUtils {
         return Pair.of(user, passwd);
     }
 
-    public static Map<String, Pair<String, String>> getSourceTableInfo(Pair<String, String> userInfo, String phyDbName,
+    public static Map<String, Pair<String, String>> getSourceTableInfo(Long jobId, Pair<String, String> userInfo,
+                                                                       String phyDbName,
                                                                        String physicalTableName,
                                                                        List<String> phyPartNames,
                                                                        boolean hasNoPhyPart,
                                                                        Pair<String, Integer> sourceIpAndPort) {
-        String msg = "begin to get the source table[" + phyDbName + "." + physicalTableName + ":]'s innodb data file";
+        String msg =
+            "begin to get the source table[" + phyDbName + "." + physicalTableName + ":]'s innodb data file";
         SQLRecorderLogger.ddlLogger.info(msg);
 
         PolarxPhysicalBackfill.GetFileInfoOperator getFileInfoOperator =
-            checkFileExistence(userInfo, phyDbName, physicalTableName, phyPartNames, hasNoPhyPart, sourceIpAndPort);
+            checkFileExistence(jobId, userInfo, phyDbName, physicalTableName, phyPartNames, hasNoPhyPart,
+                sourceIpAndPort);
         Map<String, Pair<String, String>> srcFileAndDirs = new HashMap<>();
         for (PolarxPhysicalBackfill.FileInfo fileInfo : getFileInfoOperator.getTableInfo().getFileInfoList()) {
             Pair<String, String> srcFileAndDir = Pair.of(fileInfo.getFileName(), fileInfo.getDirectory());
@@ -781,7 +900,8 @@ public class PhysicalBackfillUtils {
         return srcFileAndDirs;
     }
 
-    public static PolarxPhysicalBackfill.GetFileInfoOperator checkFileExistence(Pair<String, String> userInfo,
+    public static PolarxPhysicalBackfill.GetFileInfoOperator checkFileExistence(Long jobId,
+                                                                                Pair<String, String> userInfo,
                                                                                 String phyDbName,
                                                                                 String physicalTableName,
                                                                                 List<String> phyPartNames,
@@ -792,8 +912,9 @@ public class PhysicalBackfillUtils {
         int tryTime = 1;
         boolean isPartitioned = !hasNoPhyPart;
         do {
-            try (XConnection conn = (XConnection) (getXConnectionForStorage(phyDbName,
-                sourceIpAndPort.getKey(), sourceIpAndPort.getValue(), userInfo.getKey(), userInfo.getValue(), -1))) {
+            try (XConnection conn = (XConnection) (getXConnectionForStorage(jobId, phyDbName,
+                sourceIpAndPort.getKey(), sourceIpAndPort.getValue(), userInfo.getKey(), userInfo.getValue(),
+                -1))) {
                 PolarxPhysicalBackfill.GetFileInfoOperator.Builder builder =
                     PolarxPhysicalBackfill.GetFileInfoOperator.newBuilder();
 
@@ -820,7 +941,8 @@ public class PhysicalBackfillUtils {
         return getFileInfoOperator;
     }
 
-    public static long fetchPhysicalTableSize(String schemaName,
+    public static long fetchPhysicalTableSize(Long jobId,
+                                              String schemaName,
                                               String group,
                                               String phyDb,
                                               String phyTableName,
@@ -829,11 +951,12 @@ public class PhysicalBackfillUtils {
         long dataSize = 0;
         List<String> physicalPartitionNames = getPhysicalPartitionNames(schemaName, group, phyDb, phyTableName);
 
-        String sourceStorageId = mapGroupToDNIds.computeIfAbsent(group, key -> DbTopologyManager.getStorageInstIdByGroupName(schemaName, group));
+        String sourceStorageId = mapGroupToDNIds.computeIfAbsent(group,
+            key -> DbTopologyManager.getStorageInstIdByGroupName(schemaName, group));
         Pair<String, String> srcDnUserAndPasswd = storageInstAndUserInfos.computeIfAbsent(sourceStorageId,
             key -> PhysicalBackfillUtils.getUserPasswd(sourceStorageId));
         PolarxPhysicalBackfill.GetFileInfoOperator fileInfoOperator =
-            PhysicalBackfillUtils.checkFileExistence(srcDnUserAndPasswd, phyDb,
+            PhysicalBackfillUtils.checkFileExistence(jobId, srcDnUserAndPasswd, phyDb,
                 phyTableName.toLowerCase(),
                 GeneralUtil.isEmpty(physicalPartitionNames) ? ImmutableList.of("") : physicalPartitionNames,
                 GeneralUtil.isEmpty(physicalPartitionNames),
@@ -844,7 +967,7 @@ public class PhysicalBackfillUtils {
         return dataSize;
     }
 
-    public static Pair<String, String> getTempIbdFileInfo(Pair<String, String> userInfo,
+    public static Pair<String, String> getTempIbdFileInfo(Long jobId, Pair<String, String> userInfo,
                                                           Pair<String, Integer> sourceHost,
                                                           Pair<String, String> srcDbAndGroup,
                                                           String physicalTableName,
@@ -854,7 +977,8 @@ public class PhysicalBackfillUtils {
                                                           List<Pair<Long, Long>> offsetAndSize) {
 
         String tempIbdDir =
-            fullTempDir ? srcFileAndDir.getValue() : srcFileAndDir.getValue() + PhysicalBackfillUtils.TEMP_FILE_POSTFIX;
+            fullTempDir ? srcFileAndDir.getValue() :
+                srcFileAndDir.getValue() + PhysicalBackfillUtils.TEMP_FILE_POSTFIX;
         String msg = "begin to get the temp ibd file:" + tempIbdDir;
         SQLRecorderLogger.ddlLogger.info(msg);
 
@@ -865,7 +989,8 @@ public class PhysicalBackfillUtils {
         int tryTime = 1;
         do {
             try (
-                XConnection conn = (XConnection) (PhysicalBackfillUtils.getXConnectionForStorage(srcDbAndGroup.getKey(),
+                XConnection conn = (XConnection) (PhysicalBackfillUtils.getXConnectionForStorage(
+                    jobId, srcDbAndGroup.getKey(),
                     sourceHost.getKey(), sourceHost.getValue(), userInfo.getKey(), userInfo.getValue(), -1))) {
                 PolarxPhysicalBackfill.GetFileInfoOperator.Builder builder =
                     PolarxPhysicalBackfill.GetFileInfoOperator.newBuilder();
@@ -877,7 +1002,8 @@ public class PhysicalBackfillUtils {
                 tableInfoBuilder.setTableName(physicalTableName);
                 tableInfoBuilder.setPartitioned(false);
 
-                PolarxPhysicalBackfill.FileInfo.Builder fileInfoBuilder = PolarxPhysicalBackfill.FileInfo.newBuilder();
+                PolarxPhysicalBackfill.FileInfo.Builder fileInfoBuilder =
+                    PolarxPhysicalBackfill.FileInfo.newBuilder();
                 fileInfoBuilder.setTempFile(true);
                 fileInfoBuilder.setFileName(srcFileAndDir.getKey());
                 fileInfoBuilder.setPartitionName(phyPartitionName);

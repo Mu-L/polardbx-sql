@@ -62,7 +62,8 @@ public class RelocateGsiWriter extends RelocateWriter implements GsiWriter {
             skSourceMapping,
             skMetas,
             modifySkOnly,
-            usePartFieldChecker);
+            usePartFieldChecker,
+            false);
         this.gsiMeta = gsiMeta;
         this.forceRelocate = forceRelocate;
     }
@@ -83,37 +84,32 @@ public class RelocateGsiWriter extends RelocateWriter implements GsiWriter {
         if (GlobalIndexMeta.canWrite(ec, gsiMeta)) {
             // WRITE_ONLY or PUBLIC
             List<RelNode> inputs = getModifyWriter().getInput(ec, (w) -> modifyRows);
-            outModifyPlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                Collectors.toList()));
+            addPhaseExecutionPlans(inputs, outModifyPlans);
             replicateOutModifyPlans
                 .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                     Collectors.toList()));
 
             inputs = getDeleteWriter().getInput(ec, (w) -> relocateRows);
-            outDeletePlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                Collectors.toList()));
+            addPhaseExecutionPlans(inputs, outDeletePlans);
             replicateOutDeletePlans
                 .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                     Collectors.toList()));
 
             inputs = getInsertWriter().getInput(insertEc, (w) -> relocateRows);
-            outInsertPlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                Collectors.toList()));
+            addPhaseExecutionPlans(inputs, outInsertPlans);
             replicateOutInsertPlans
                 .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                     Collectors.toList()));
         } else if (GlobalIndexMeta.canDelete(ec, gsiMeta)) {
             // DELETE_ONLY
             List<RelNode> inputs = getDeleteWriter().getInput(ec, (w) -> modifyRows);
-            outDeletePlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                Collectors.toList()));
+            addPhaseExecutionPlans(inputs, outDeletePlans);
             replicateOutDeletePlans.addAll(
                 inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                     Collectors.toList()));
 
             inputs = getDeleteWriter().getInput(ec, (w) -> relocateRows);
-            outDeletePlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                Collectors.toList()));
+            addPhaseExecutionPlans(inputs, outDeletePlans);
             replicateOutDeletePlans.addAll(
                 inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                     Collectors.toList()));

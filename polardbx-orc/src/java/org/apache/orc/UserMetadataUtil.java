@@ -27,7 +27,7 @@ import java.util.List;
 
 public class UserMetadataUtil {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     public static final String ENABLE_DECIMAL_64 = "ENABLE_DECIMAL_64";
 

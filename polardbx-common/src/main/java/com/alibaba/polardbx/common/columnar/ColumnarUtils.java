@@ -5,6 +5,7 @@ import com.alibaba.polardbx.common.cdc.CdcDdlMarkVisibility;
 import com.alibaba.polardbx.common.cdc.CdcManagerHelper;
 import com.alibaba.polardbx.common.ddl.newengine.DdlType;
 import com.alibaba.polardbx.config.ConfigDataMode;
+import lombok.Getter;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -39,5 +40,25 @@ public class ColumnarUtils {
         }
 
         return context.getCommitTso();
+    }
+
+    @Getter
+    public enum REBUILD_CCI_STRATEGY {
+        /**
+         * -1: 不允许修改
+         * 0: 允许修改，自动判断是否重建
+         * 1: 允许修改，强制不重建CCI，是普通列变更DDL
+         * 2: 允许修改，强制重建CCI，会丢失schema历史
+         */
+        DISABLED(-1),
+        AUTO(0),
+        NO_REBUILD(1),
+        REBUILD(2);
+        private final int value;
+
+        REBUILD_CCI_STRATEGY(int value) {
+            this.value = value;
+        }
+
     }
 }

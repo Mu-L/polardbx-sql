@@ -63,7 +63,7 @@ public class CreateViewJobFactory extends DdlJobFactory {
         boolean isReplace = logicalCreateView.isReplace();
         boolean isAlter = logicalCreateView.isAlter();
         List<String> columnList = logicalCreateView.getColumnList();
-        String viewDefinition = RelUtils.toNativeSql(logicalCreateView.getDefinition(), DbType.MYSQL);
+        String viewDefinition = RelUtils.toNativeSqlView(logicalCreateView.getDefinition(), DbType.MYSQL);
         String planString = null;
         String planType = null;
 

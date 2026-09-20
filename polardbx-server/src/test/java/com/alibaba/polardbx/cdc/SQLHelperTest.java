@@ -20,9 +20,16 @@ import com.alibaba.polardbx.druid.DbType;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
 import com.alibaba.polardbx.druid.sql.ast.SQLStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableStatement;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLCreateDatabaseStatement;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLDropDatabaseStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateRoleStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateTableStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateUserStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlRevokeRoleStatement;
 import com.alibaba.polardbx.druid.sql.parser.SQLParserUtils;
 import com.alibaba.polardbx.druid.sql.parser.SQLStatementParser;
+import com.alibaba.polardbx.druid.sql.visitor.SQLASTOutputVisitor;
+import com.alibaba.polardbx.druid.sql.visitor.VisitorFeature;
 import com.google.common.collect.Lists;
 import org.apache.commons.lang.StringUtils;
 import org.junit.Assert;
@@ -225,5 +232,174 @@ public class SQLHelperTest {
         SQLStatement statement =
             SQLParserUtils.createSQLStatementParser(sql, DbType.mysql, SQL_PARSE_FEATURES).parseStatementList().get(0);
         Assert.assertEquals("SET PASSWORD FOR 'user'@'%' = '123456'", statement.toString());
+    }
+
+    @Test
+    public void testAlterTableWithDryRun() {
+        String sql = "ALTER TABLE dry_run_test_single\n"
+            + "\tADD COLUMN x1 int dryrun = true";
+        SQLStatement statement =
+            SQLParserUtils.createSQLStatementParser(sql, DbType.mysql, SQL_PARSE_FEATURES).parseStatementList().get(0);
+        Assert.assertEquals("ALTER TABLE dry_run_test_single\n"
+            + "\tADD COLUMN x1 int DRYRUN = true", statement.toString());
+    }
+
+    @Test
+    public void testCreateDataBaseWithDryRun() {
+        String sql = "create database if not exists dbledb1 mode = 'auto' "
+            + " locality='dble_config={\"group_config\":{\"dbledb1_g1\":[\"xsync-ddl-250516100149-44fa-pqpz-dn-0\",\"dbledb1_00\"],\"dbledb1_g2\":[\"xsync-ddl-250516100149-44fa-pqpz-dn-1\",\"dbledb1_01\"] }}'  "
+            + " dryrun = true";
+        SQLCreateDatabaseStatement statement = (SQLCreateDatabaseStatement) SQLParserUtils.createSQLStatementParser(
+            sql, DbType.mysql, SQL_PARSE_FEATURES).parseStatementList().get(0);
+        String expectSql =
+            "CREATE DATABASE IF NOT EXISTS dbledb1 "
+                + "LOCALITY = 'dble_config={\"group_config\":{\"dbledb1_g1\":[\"xsync-ddl-250516100149-44fa-pqpz-dn-0\",\"dbledb1_00\"],\"dbledb1_g2\":[\"xsync-ddl-250516100149-44fa-pqpz-dn-1\",\"dbledb1_01\"] }}' "
+                + "MODE 'auto' DRYRUN = true";
+        Assert.assertEquals(expectSql, statement.toString());
+        SQLParserUtils.createSQLStatementParser(
+            expectSql, DbType.mysql, SQL_PARSE_FEATURES).parseStatementList().get(0);
+
+        sql = "create database if not exists dbledb1 mode = 'auto' "
+            + " locality='dble_config={\"group_config\":{\"dbledb1_g1\":[\"xsync-ddl-250516100149-44fa-pqpz-dn-0\",\"dbledb1_00\"],\"dbledb1_g2\":[\"xsync-ddl-250516100149-44fa-pqpz-dn-1\",\"dbledb1_01\"] }}'";
+        statement = (SQLCreateDatabaseStatement) SQLParserUtils.createSQLStatementParser(
+            sql, DbType.mysql, SQL_PARSE_FEATURES).parseStatementList().get(0);
+        statement.setDryrun(true);
+        Assert.assertEquals(expectSql, statement.toString());
+    }
+
+    @Test
+    public void testDropDataBaseWithDryRun() {
+        String sql = "drop database if exists dbledb1 dryrun = true";
+        SQLDropDatabaseStatement statement = (SQLDropDatabaseStatement) SQLParserUtils.createSQLStatementParser(
+            sql, DbType.mysql, SQL_PARSE_FEATURES).parseStatementList().get(0);
+        String expectSql = "DROP DATABASE IF EXISTS dbledb1 DRYRUN = true";
+        Assert.assertEquals(expectSql, statement.toString());
+
+        sql = "drop database if exists dbledb1";
+        statement = (SQLDropDatabaseStatement) SQLParserUtils.createSQLStatementParser(
+            sql, DbType.mysql, SQL_PARSE_FEATURES).parseStatementList().get(0);
+        statement.setDryrun(true);
+        Assert.assertEquals(expectSql, statement.toString());
+    }
+
+    @Test
+    public void testCreateUser_CreateRole_RevokeRole_SqlType() {
+        String sql = "create user test_set_global_user@'%' identified by '123456'";
+        SQLStatement stmt = SQLParserUtils.createSQLStatementParser(
+            sql, DbType.mysql, SQL_PARSE_FEATURES).parseStatementList().get(0);
+        Assert.assertTrue(stmt instanceof MySqlCreateUserStatement);
+
+        sql = "CREATE ROLE TruncateWithRoleTest@'%'";
+        stmt = SQLParserUtils.createSQLStatementParser(
+            sql, DbType.mysql, SQL_PARSE_FEATURES).parseStatementList().get(0);
+        Assert.assertTrue(stmt instanceof MySqlCreateRoleStatement);
+
+        sql = "REVOKE TruncateWithRoleTest@'%' FROM 'test_set_global_user'@'%'";
+        stmt = SQLParserUtils.createSQLStatementParser(
+            sql, DbType.mysql, SQL_PARSE_FEATURES).parseStatementList().get(0);
+        Assert.assertTrue(stmt instanceof MySqlRevokeRoleStatement);
+    }
+
+    @Test
+    public void testOutputHyphenLineCommentAsBlockComment() {
+        Assert.assertEquals("/* ===== Regular BJ tables =====*/",
+            printComment("-- ===== Regular BJ tables =====", false, true));
+        Assert.assertEquals("-- ===== Regular BJ tables =====",
+            printComment("-- ===== Regular BJ tables =====", false, false));
+        Assert.assertEquals("-- ===== Regular BJ tables =====",
+            printComment("-- ===== Regular BJ tables =====", true, true));
+    }
+
+    @Test
+    public void testOutputHashLineCommentAsBlockComment() {
+        Assert.assertEquals("/* ===== hash line comment =====*/",
+            printComment("# ===== hash line comment =====", false, true));
+        Assert.assertEquals("/* ===== hash line comment =====*/",
+            printComment("# ===== hash line comment =====\n", false, true));
+        Assert.assertEquals("/* ===== hash line comment crlf =====*/",
+            printComment("# ===== hash line comment crlf =====\r\n", false, true));
+        Assert.assertEquals("/**/",
+            printComment("#", false, true));
+        Assert.assertEquals("# ===== hash line comment =====",
+            printComment("# ===== hash line comment =====", false, false));
+        Assert.assertEquals("# ===== hash line comment =====",
+            printComment("# ===== hash line comment =====", true, true));
+    }
+
+    @Test
+    public void testOutputLineCommentWithEndBlockMarker() {
+        Assert.assertEquals("/* comment with * / inside*/",
+            printComment("-- comment with */ inside", false, true));
+    }
+
+    @Test
+    public void testOutputHyphenLineCommentWithoutSpace() {
+        Assert.assertEquals("/* comment without space*/",
+            printComment("--comment without space", false, true));
+        Assert.assertEquals("-- comment without space",
+            printComment("--comment without space", false, false));
+    }
+
+    @Test
+    public void testToSQLStringOutputHyphenLineCommentAsBlockComment() {
+        String sql = "/*DDL_ID=7481263829662302272*/\n"
+            + "-- ===== Regular BJ tables =====\n"
+            + "/*+TDDL:cmd_extra(SEQUENTIAL_CONCURRENT_POLICY=true)*/\n"
+            + "ALTER TABLE t_line_comment ADD COLUMN data_source TINYINT NOT NULL DEFAULT 0 COMMENT 'test'";
+        String result = parseAndFormatSingleLine(sql, true);
+
+        Assert.assertFalse("result should be single-line: " + result, result.contains("\n"));
+        Assert.assertFalse("result should not contain -- line comment: " + result,
+            result.contains("-- ===== Regular BJ tables ====="));
+        Assert.assertTrue("hyphen line comment should be converted: " + result,
+            result.contains("/* ===== Regular BJ tables =====*/"));
+        Assert.assertTrue("ALTER TABLE should be preserved: " + result,
+            result.contains("ALTER TABLE t_line_comment"));
+    }
+
+    @Test
+    public void testToSQLStringOutputHashLineCommentAsBlockComment() {
+        String sql = "/*DDL_ID=7481263829662302272*/\n"
+            + "# ===== hash line comment =====\n"
+            + "/*+TDDL:cmd_extra(SEQUENTIAL_CONCURRENT_POLICY=true)*/\n"
+            + "ALTER TABLE t_hash_comment ADD COLUMN data_source TINYINT NOT NULL DEFAULT 0 COMMENT 'test'";
+        String result = parseAndFormatSingleLine(sql, true);
+
+        Assert.assertFalse("result should be single-line: " + result, result.contains("\n"));
+        Assert.assertFalse("result should not contain # line comment: " + result,
+            result.contains("# ===== hash line comment ====="));
+        Assert.assertTrue("hash line comment should be converted: " + result,
+            result.contains("/* ===== hash line comment =====*/"));
+        Assert.assertTrue("ALTER TABLE should be preserved: " + result,
+            result.contains("ALTER TABLE t_hash_comment"));
+    }
+
+    @Test
+    public void testToSQLStringDoesNotOutputBlockCommentWhenFeatureDisabled() {
+        String sql = "/*DDL_ID=7481263829662302272*/\n"
+            + "-- ===== Regular BJ tables =====\n"
+            + "ALTER TABLE t_line_comment ADD COLUMN c1 INT";
+        String result = parseAndFormatSingleLine(sql, false);
+
+        Assert.assertFalse("line comment should not be converted when feature disabled: " + result,
+            result.contains("/* ===== Regular BJ tables =====*/"));
+        Assert.assertTrue("ALTER TABLE should be preserved: " + result,
+            result.contains("ALTER TABLE t_line_comment"));
+    }
+
+    private static String parseAndFormatSingleLine(String sql, boolean lineCommentAsBlockComment) {
+        SQLStatement statement = SQLUtils.parseSingleStatement(sql, DbType.mysql, true);
+        SQLUtils.FormatOption formatOption = new SQLUtils.FormatOption(true, false);
+        formatOption.config(VisitorFeature.OutputLineCommentAsBlockComment, lineCommentAsBlockComment);
+        return SQLUtils.toSQLString(statement, DbType.mysql, formatOption);
+    }
+
+    private static String printComment(String comment, boolean prettyFormat, boolean lineCommentAsBlockComment) {
+        StringBuilder builder = new StringBuilder();
+        SQLASTOutputVisitor visitor = new SQLASTOutputVisitor(builder);
+        visitor.setPrettyFormat(prettyFormat);
+        visitor.config(VisitorFeature.OutputLineCommentAsBlockComment, lineCommentAsBlockComment);
+        visitor.printComment(comment);
+        return builder.toString();
     }
 }

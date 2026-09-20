@@ -23,6 +23,7 @@ import com.alibaba.polardbx.common.oss.filesystem.GuavaFileSystemRateLimiter;
 import com.alibaba.polardbx.common.oss.filesystem.GuavaFileSystemRateLimiter;
 import com.alibaba.polardbx.common.oss.filesystem.OSSFileSystem;
 import com.alibaba.polardbx.common.oss.filesystem.cache.CachingFileSystem;
+import com.alibaba.polardbx.common.oss.filesystem.cache.FileMergeCachingFileSystem;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
@@ -34,7 +35,6 @@ import com.alibaba.polardbx.gms.topology.ServerInstIdManager;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PositionedReadable;
@@ -136,9 +136,59 @@ public class FileSystemUtils {
      */
     public static void readFile(String fileName, int offset, int length, byte[] output, Engine engine,
                                 boolean isColumnar) {
+        readFile(fileName, offset, length, output, engine, isColumnar, null);
+    }
+
+    /**
+     * Read file from the offset honoring a per-statement GeneralCache override.
+     *
+     * @param cacheOverride non-null to force on/off for the current read; null keeps dynamic config behavior
+     */
+    public static void readFile(String fileName, int offset, int length, byte[] output, Engine engine,
+                                boolean isColumnar, Boolean cacheOverride) {
         FileSystem fileSystem = FileSystemManager.getFileSystemGroup(engine).getMaster();
-        try (InputStream in = fileSystem.open(buildPath(fileSystem, fileName, isColumnar))) {
-            ((PositionedReadable) in).readFully(offset, output, 0, length);
+        Path path = buildPath(fileSystem, fileName, isColumnar);
+        try {
+            // Check if fileSystem is FileMergeCachingFileSystem and its dataTier is OSSFileSystem
+            if (fileSystem instanceof FileMergeCachingFileSystem) {
+                FileMergeCachingFileSystem cachingFileSystem = (FileMergeCachingFileSystem) fileSystem;
+                // If dataTier is OSSFileSystem, use the optimized open method
+                if (cachingFileSystem.getDataTier() instanceof OSSFileSystem) {
+                    // When cacheOverride forces off, bypass the FileMergeCachingFileSystem entirely
+                    // and read directly from the OSSFileSystem with an explicit override.
+                    if (cacheOverride != null && !cacheOverride) {
+                        OSSFileSystem ossFs = (OSSFileSystem) cachingFileSystem.getDataTier();
+                        try (FSDataInputStream in = ossFs.uncheckedOpen(path, offset + length, Boolean.FALSE)) {
+                            in.readFully(offset, output, 0, length);
+                            return;
+                        }
+                    }
+                    try (FSDataInputStream in = cachingFileSystem.open(path, offset, length)) {
+                        in.readFully(output);
+                        return;
+                    }
+                }
+            } else if (fileSystem instanceof OSSFileSystem) {
+                // When GeneralCache is enabled, fileSystem is OSSFileSystem directly
+                try (FSDataInputStream in = ((OSSFileSystem) fileSystem).uncheckedOpen(path, offset + length,
+                    cacheOverride)) {
+                    in.readFully(offset, output, 0, length);
+                    return;
+                }
+            }
+
+            // Fallback to the original implementation. Honor the override via the 3-arg
+            // DynamicCacheFileSystem.open overload so the decision is centralized there.
+            if (cacheOverride != null && fileSystem instanceof DynamicCacheFileSystem) {
+                int bufSize = fileSystem.getConf().getInt("io.file.buffer.size", 4096);
+                try (InputStream in = ((DynamicCacheFileSystem) fileSystem).open(path, bufSize, cacheOverride)) {
+                    ((PositionedReadable) in).readFully(offset, output, 0, length);
+                }
+                return;
+            }
+            try (InputStream in = fileSystem.open(path)) {
+                ((PositionedReadable) in).readFully(offset, output, 0, length);
+            }
         } catch (IOException e) {
             throw GeneralUtil.nestedException(e);
         }
@@ -150,11 +200,14 @@ public class FileSystemUtils {
         try {
             if (engine == Engine.OSS) {
                 // This will bypass cache filesystem for OSS
-                OSSFileSystem ossFileSystem = (OSSFileSystem) ((CachingFileSystem) fileSystem).getDataTier();
-                return ossFileSystem.open(filePath);
-            } else {
-                return fileSystem.open(filePath);
+                if (fileSystem instanceof CachingFileSystem) {
+                    OSSFileSystem ossFileSystem = (OSSFileSystem) ((CachingFileSystem) fileSystem).getDataTier();
+                    return ossFileSystem.open(filePath);
+                } else if (fileSystem instanceof OSSFileSystem) {
+                    return fileSystem.open(filePath);
+                }
             }
+            return fileSystem.open(filePath);
         } catch (IOException e) {
             throw GeneralUtil.nestedException(e);
         }
@@ -188,7 +241,7 @@ public class FileSystemUtils {
         return ColdDataStatus.of(status);
     }
 
-    private static String getColumnarDirectory() {
+    public static String getColumnarDirectory() {
         String columnarDirectory = DynamicConfig.getInstance().getColumnarOssDirectory();
         return StringUtils.isEmpty(columnarDirectory) ? ServerInstIdManager.getInstance().getMasterInstId() :
             columnarDirectory;

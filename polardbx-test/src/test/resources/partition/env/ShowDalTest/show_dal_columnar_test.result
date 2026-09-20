@@ -115,15 +115,3 @@ name,varchar(10),YES,,null,
 user_id,bigint(20),NO,PRI,null,
 DROP INDEX `g_i_name` ON user;
 DROP TABLE IF EXISTS user;
-/*+TDDL:ENABLE_LOGICAL_TABLE_META=true*/SHOW ENGINES
-Engine,Support,Comment,Transaction,XA,Savepoints
-CSV,YES,CSV storage engine,NO,NO,NO
-MRG_MYISAM,YES,Collection of identical MyISAM tables,NO,NO,NO
-PERFORMANCE_SCHEMA,YES,Performance Schema,NO,NO,NO
-BLACKHOLE,YES,/dev/null storage engine (anything you write to it disappears),NO,NO,NO
-MyISAM,YES,MyISAM storage engine,NO,NO,NO
-MEMORY,YES,Hash based, stored in memory, useful for temporary tables,NO,NO,NO
-ARCHIVE,YES,Archive storage engine,NO,NO,NO
-InnoDB,DEFAULT,Supports transactions, row-level locking, and foreign keys,YES,YES,YES
-FEDERATED,NO,Federated MySQL storage engine,null,null,null
-Sequence,YES,Sequence Storage Engine Helper,NO,NO,NO

@@ -21,8 +21,13 @@ import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.utils.Pair;
+import com.alibaba.polardbx.config.ConfigDataMode;
+import com.alibaba.polardbx.druid.sql.ast.SqlType;
+import com.alibaba.polardbx.druid.sql.parser.ByteString;
+import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.net.compress.PacketOutputProxyFactory;
 import com.alibaba.polardbx.net.handler.QueryHandler;
+import com.alibaba.polardbx.optimizer.parse.mysql.ansiquote.MySQLANSIQuoteTransformer;
 import com.alibaba.polardbx.server.handler.BalanceHandler;
 import com.alibaba.polardbx.server.handler.BeginHandler;
 import com.alibaba.polardbx.server.handler.ClearHandler;
@@ -39,6 +44,7 @@ import com.alibaba.polardbx.server.handler.ShardingAdvisorHandler;
 import com.alibaba.polardbx.server.handler.ShowHandler;
 import com.alibaba.polardbx.server.handler.StartHandler;
 import com.alibaba.polardbx.server.handler.UseHandler;
+import com.alibaba.polardbx.server.handler.NaturalLanguageHandler;
 import com.alibaba.polardbx.server.handler.pl.PlCommandHandlers;
 import com.alibaba.polardbx.server.handler.privileges.polar.PrivilegeCommandHandlers;
 import com.alibaba.polardbx.server.parser.ServerParse;
@@ -46,17 +52,17 @@ import com.alibaba.polardbx.server.response.AlterSystemHandler;
 import com.alibaba.polardbx.server.response.KillHandler;
 import com.alibaba.polardbx.server.response.PurgeTransHandler;
 import com.alibaba.polardbx.server.response.ReloadHandler;
+import com.alibaba.polardbx.server.response.ShardingAdvice;
 import com.alibaba.polardbx.server.response.ShowHelp;
 import com.alibaba.polardbx.server.util.LogUtils;
 import com.alibaba.polardbx.server.util.PacketUtil;
-import com.alibaba.polardbx.druid.sql.parser.ByteString;
-import com.alibaba.polardbx.config.ConfigDataMode;
-import com.alibaba.polardbx.executor.common.ExecutorContext;
-import com.alibaba.polardbx.optimizer.parse.mysql.ansiquote.MySQLANSIQuoteTransformer;
+import com.alibaba.polardbx.optimizer.parse.FastsqlUtils;
 
 import java.nio.charset.Charset;
 import java.sql.SQLSyntaxErrorException;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Future;
 
 /**
  * @author xianmao.hexm
@@ -105,12 +111,22 @@ public class ServerQueryHandler implements QueryHandler {
             return;
         }
 
+        if (NaturalLanguageHandler.isEnabled(c) && isNaturalLanguageStatement(sql)) {
+            NaturalLanguageHandler.handle(c, sql, false);
+            return;
+        }
+
         // Split multi-statement into single ones
         List<ByteString> statements;
         try {
             MultiStatementSplitter splitter = new MultiStatementSplitter(sql);
             statements = splitter.split();
         } catch (Exception e) {
+            // Split failed - check if this might be natural language input
+            if (NaturalLanguageHandler.isEnabled(c)) {
+                NaturalLanguageHandler.handle(c, sql, false);
+                return;
+            }
             c.handleError(ErrorCode.ERR_HANDLE_DATA, e, sql.toString(), false);
             return;
         }
@@ -121,24 +137,31 @@ public class ServerQueryHandler implements QueryHandler {
             return;
         }
 
-        for (int i = 0; i < statements.size(); i++) {
-            if (!executeStatement(c, statements.get(i), i < statements.size() - 1)) {
-                // stop executing multi statements if one statement has an error.
-                break;
+        try {
+            for (int i = 0; i < statements.size(); i++) {
+                final boolean hasMore = i < statements.size() - 1;
+                final Future<Boolean> future = executeStatement(c, statements.get(i), hasMore);
+                if (hasMore && !future.get()) {
+                    // stop executing multi statements if one statement has an error.
+                    break;
+                }
             }
+        } catch (Exception e) {
+            throw new RuntimeException(e);
         }
     }
 
     /**
      * @return success
      */
-    private boolean executeStatement(ServerConnection c, ByteString sql, boolean hasMore) {
+    Future<Boolean> executeStatement(ServerConnection c, ByteString sql, boolean hasMore) {
         c.genTraceId();
 
         c.resetTrxLastActiveTime();
 
         boolean recordSql = true;
         boolean success = true;
+        long trxStartTimeNano = c.getTrxStartTimeNano();
         try {
             int rs = ServerParse.parse(sql);
             int commandCode = rs & 0xff;
@@ -152,6 +175,9 @@ public class ServerQueryHandler implements QueryHandler {
 
             switch (commandCode) {
             case ServerParse.SET:
+                if (c.getExecutionContext() != null) {
+                    c.getExecutionContext().setSqlType(SqlType.SET_STATEMENT);
+                }
                 success = SetHandler.handleV2(sql, c, rs >>> 8, hasMore);
                 break;
             case ServerParse.SHOW:
@@ -210,7 +236,19 @@ public class ServerQueryHandler implements QueryHandler {
                 success = PrivilegeCommandHandlers.handle(commandCode, c, sql, hasMore, false);
                 break;
             case ServerParse.PURGE_TRANS:
-                success = new PurgeTransHandler(sql.toString(), rs >>> 8, c).execute();
+                // Change context:
+                // - Before: sql.toString() converted the byte-indexed ByteString into a
+                //   char-indexed String before handing it to PurgeTransHandler, while the
+                //   offset (rs >>> 8) was computed by ServerParse on the original ByteString
+                //   using byte semantics. The two coordinate systems only agreed when the SQL
+                //   prefix was pure ASCII.
+                // - Path impact: PurgeTransHandler now consumes the ByteString directly with
+                //   its own byte-indexed charAt/substring, matching the offset's coordinate
+                //   system regardless of multi-byte comment prefixes. Other ServerParse/offset
+                //   consumers (e.g. COLLECT) already operate on ByteString and are unaffected.
+                // - Capability regression: None; behavior for ASCII-only prefixes is unchanged
+                //   since byte and char offsets coincide in that case.
+                success = new PurgeTransHandler(sql, rs >>> 8, c).execute();
                 break;
             case ServerParse.BALANCE:
                 success = BalanceHandler.handle(sql, c);
@@ -233,7 +271,7 @@ public class ServerQueryHandler implements QueryHandler {
                 recordSql = false;
                 break;
             case ServerParse.SHARDING_ADVISE:
-                success = ShardingAdvisorHandler.handle(sql, c, hasMore);
+                success = ShardingAdvice.response(c, hasMore, null, null);
                 break;
             case ServerParse.FLUSH:
                 success = FlushHandler.handle(sql, c, rs >>> 8, hasMore);
@@ -249,17 +287,26 @@ public class ServerQueryHandler implements QueryHandler {
                 recordSql = false;
                 break;
             default:
-                success = c.execute(sql, hasMore);
+                // For OTHER/unrecognized commands, check if this is natural language input
+                // Note: commandCode = rs & 0xff, so OTHER(-1) becomes 0xff(255)
+                if (NaturalLanguageHandler.isEnabled(c) && !tryParseSql(sql)) {
+                    // Druid parser also cannot parse - likely natural language
+                    NaturalLanguageHandler.handle(c, sql, hasMore);
+                    recordSql = false;
+                    return CompletableFuture.completedFuture(false);
+                }
+                final Future<Boolean> future = c.executeFuture(sql, hasMore);
                 recordSql = false;
+                return future;
             }
 
-            return success;
+            return CompletableFuture.completedFuture(success);
         } catch (Throwable ex) {
             success = false;
             throw ex;
         } finally {
             if (recordSql) {
-                LogUtils.recordSql(c, sql, success);
+                LogUtils.recordSql(c, sql, success, trxStartTimeNano);
             }
             c.setTrxLastActiveTime();
         }
@@ -272,6 +319,7 @@ public class ServerQueryHandler implements QueryHandler {
 
         boolean recordSql = true;
         boolean success = true;
+        long trxStartTimeNano = c.getTrxStartTimeNano();
         try {
             int rs = ServerParse.parse(sql);
             int commandCode = rs & 0xff;
@@ -313,11 +361,30 @@ public class ServerQueryHandler implements QueryHandler {
         } catch (Throwable ex) {
             success = false;
             throw new TddlRuntimeException(com.alibaba.polardbx.common.exception.code.ErrorCode.ERR_PROCEDURE_EXECUTE,
-                ex);
+                ex, ex.getMessage());
         } finally {
             if (recordSql) {
-                LogUtils.recordSql(c, sql, success);
+                LogUtils.recordSql(c, sql, success, trxStartTimeNano);
             }
+        }
+    }
+
+    private static boolean isNaturalLanguageStatement(ByteString sql) {
+        int rs = ServerParse.parse(sql);
+        int commandCode = rs & 0xff;
+        return commandCode == (ServerParse.OTHER & 0xff) && !tryParseSql(sql);
+    }
+
+    /**
+     * Try to parse the input as SQL using Druid parser.
+     * Returns true if parsing succeeds (valid SQL), false otherwise (likely natural language).
+     */
+    private static boolean tryParseSql(ByteString sql) {
+        try {
+            FastsqlUtils.parseSql(sql);
+            return true;
+        } catch (Exception e) {
+            return false;
         }
     }
 }

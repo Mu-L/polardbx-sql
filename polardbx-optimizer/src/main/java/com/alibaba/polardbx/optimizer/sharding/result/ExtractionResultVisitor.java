@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.optimizer.sharding.result;
 
+import com.alibaba.polardbx.optimizer.sharding.label.CTEConsumerLabel;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
@@ -145,6 +146,17 @@ public class ExtractionResultVisitor extends LabelShuttleImpl {
     }
 
     @Override
+    public Label visit(CTEConsumerLabel cteConsumerLabel) {
+        super.visit(cteConsumerLabel);
+        final ResultBean resultBean = ResultBean.create(cteConsumerLabel);
+
+        relLabelMap.putIfAbsent(cteConsumerLabel.getRel(), cteConsumerLabel);
+        resultStack.push(resultBean);
+
+        return cteConsumerLabel;
+    }
+
+    @Override
     public Label visit(SubqueryLabel subqueryLabel) {
         return super.visit(subqueryLabel);
     }
@@ -204,6 +216,10 @@ public class ExtractionResultVisitor extends LabelShuttleImpl {
         }
 
         public static ResultBean create(ValuesLabel label) {
+            return EMPTY;
+        }
+
+        public static ResultBean create(CTEConsumerLabel label) {
             return EMPTY;
         }
 

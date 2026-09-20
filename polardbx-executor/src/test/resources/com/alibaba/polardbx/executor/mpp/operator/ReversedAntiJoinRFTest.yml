@@ -1,9 +1,9 @@
 - sql: |
-    select s_name, count(*) as numwait from supplier, lineitem l1, orders, nation where s_suppkey = l1.l_suppkey and o_orderkey = l1.l_orderkey and o_orderstatus = 'F' and l1.l_receiptdate > l1.l_commitdate and exists ( select * from lineitem l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey ) and not exists ( select * from lineitem l3 where l3.l_orderkey = l1.l_orderkey and l3.l_suppkey <> l1.l_suppkey and l3.l_receiptdate > l3.l_commitdate ) and s_nationkey = n_nationkey and n_name = 'ARGENTINA' group by s_name order by numwait desc, s_name limit 100;
+    /*+TDDL:cmd_extra(PARTITION_WISE_THRESHOLD=4)*/select s_name, count(*) as numwait from supplier, lineitem l1, orders, nation where s_suppkey = l1.l_suppkey and o_orderkey = l1.l_orderkey and o_orderstatus = 'F' and l1.l_receiptdate > l1.l_commitdate and exists ( select * from lineitem l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey ) and not exists ( select * from lineitem l3 where l3.l_orderkey = l1.l_orderkey and l3.l_suppkey <> l1.l_suppkey and l3.l_receiptdate > l3.l_commitdate ) and s_nationkey = n_nationkey and n_name = 'ARGENTINA' group by s_name order by numwait desc, s_name limit 100;
   plan: |
     topn(sort="numwait desc,s_name asc", offset=0, fetch=?2)
       exchange(distribution=single, collation=[1 desc-nulls-last, 0 asc-nulls-first])
-        topn(sort="numwait desc,s_name asc", fetch=+(?2, 0))
+        topn(sort="numwait desc,s_name asc", fetch=?2)
           hashagg(group="s_name", numwait="sum(numwait)")
             exchange(distribution=hash[0]4, collation=[])
               partialhashagg(group="s_name", numwait="count()")

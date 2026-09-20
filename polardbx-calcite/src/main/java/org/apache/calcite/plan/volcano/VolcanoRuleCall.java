@@ -24,6 +24,7 @@ import org.apache.calcite.rel.PhysicalNode;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.rules.SubstitutionRule;
 import org.apache.calcite.rel.rules.TransformationRule;
+import org.apache.calcite.util.trace.CalcitePlanOptimizerTrace;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -219,6 +220,7 @@ public class VolcanoRuleCall extends RelOptRuleCall {
         getRule().onMatch(this);
       } finally {
         volcanoPlanner.ruleCallStack.pop();
+        CalcitePlanOptimizerTrace.countRuleFromContext(this, volcanoPlanner.getContext());
         if (volcanoPlanner.ruleCounter != null) {
           volcanoPlanner.ruleCounter.compute(getRule().toString(), (k, v) -> v == null ? 1 : v + 1);
         }

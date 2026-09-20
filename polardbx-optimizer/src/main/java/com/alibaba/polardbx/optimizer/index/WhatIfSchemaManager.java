@@ -20,7 +20,6 @@ import com.alibaba.polardbx.common.model.lifecycle.AbstractLifecycle;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.gms.metadb.table.IndexStatus;
 import com.alibaba.polardbx.gms.metadb.table.IndexVisibility;
-import com.alibaba.polardbx.gms.metadb.table.IndexVisibility;
 import com.alibaba.polardbx.gms.metadb.table.LackLocalIndexStatus;
 import com.alibaba.polardbx.gms.metadb.table.TableStatus;
 import com.alibaba.polardbx.gms.partition.TablePartitionRecord;
@@ -40,6 +39,7 @@ import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
 import com.alibaba.polardbx.optimizer.utils.TableRuleUtil;
 import com.alibaba.polardbx.rule.TableRule;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
 import org.apache.calcite.sql.SqlAddIndex;
 import org.apache.calcite.sql.SqlAlterTable;
 import org.apache.calcite.sql.SqlIndexDefinition;
@@ -176,13 +176,18 @@ public class WhatIfSchemaManager extends AbstractLifecycle implements SchemaMana
     }
 
     private static List<IndexMeta> getSecondaryIndexesWithWhatIf(TableMeta tableMeta,
-                                                                 Set<CandidateIndex> candidateIndexSet) {
+                                                                 Set<CandidateIndex> candidateIndexSet,
+                                                                 Map<String, ColumnMeta> columnsMap) {
         List<IndexMeta> whatIfIndexMetaList = candidateIndexSet.stream()
             .filter(candidateIndex -> !candidateIndex.isGsi())
             .filter(candidateIndex -> candidateIndex.getSchemaName().equalsIgnoreCase(tableMeta.getSchemaName()) &&
                 candidateIndex.getTableName().equals(tableMeta.getTableName()))
-            .map(candidateIndex -> candidateIndex.getIndexMeta()).collect(Collectors.toList());
-        List<IndexMeta> indexMetaList = tableMeta.getSecondaryIndexes();
+            .map(candidateIndex -> candidateIndex.getIndexMeta())
+            .map(indexMeta -> new IndexMeta(indexMeta, columnsMap)).collect(Collectors.toList());
+        List<IndexMeta> indexMetaList = Lists.newArrayList();
+        for (IndexMeta indexMeta : tableMeta.getSecondaryIndexes()) {
+            indexMetaList.add(new IndexMeta(indexMeta, columnsMap));
+        }
         indexMetaList.addAll(whatIfIndexMetaList);
         return indexMetaList;
     }
@@ -223,8 +228,8 @@ public class WhatIfSchemaManager extends AbstractLifecycle implements SchemaMana
                 candidateGsi.getIndexName(),
                 IndexStatus.PUBLIC,
                 Long.MAX_VALUE,
-                false,
-                false,
+                candidateGsi.isCci(),
+                candidateGsi.isCci(),
                 IndexVisibility.VISIBLE,
                 LackLocalIndexStatus.NO_LACKIING
             );
@@ -263,15 +268,29 @@ public class WhatIfSchemaManager extends AbstractLifecycle implements SchemaMana
         indexColumns.addAll(candidateGsi.getColumnNames());
         indexColumns.addAll(candidateGsi.getCoveringColumns());
 
-        List<IndexMeta> gsiSecondaryIndexes = whatIfTableMeta.getSecondaryIndexes();
-        gsiSecondaryIndexes.add(candidateGsi.getIndexMeta());
+        Map<String, ColumnMeta> columnsMap = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+        List<ColumnMeta> newColumns = Lists.newArrayList();
+        for (ColumnMeta columnMeta : whatIfTableMeta.getPhysicalColumns()) {
+            ColumnMeta newColumnMeta = new ColumnMeta(columnMeta);
+            columnsMap.put(columnMeta.getName().toLowerCase(), newColumnMeta);
+            newColumns.add(newColumnMeta);
+        }
+
+        List<IndexMeta> gsiSecondaryIndexes = Lists.newArrayList();
+        for (IndexMeta indexMeta : whatIfTableMeta.getSecondaryIndexes()) {
+            gsiSecondaryIndexes.add(new IndexMeta(indexMeta, columnsMap));
+        }
+        gsiSecondaryIndexes.add(new IndexMeta(candidateGsi.getIndexMeta(), columnsMap));
 
         TableMeta gsiTableMeta = new TableMeta(
             schemaName,
             candidateGsi.getIndexName(),
-            indexColumns.stream().map(name -> whatIfTableMeta.getColumnIgnoreCase(name))
-                .collect(Collectors.toList()),
-            whatIfTableMeta.getPrimaryIndex(), gsiSecondaryIndexes,
+            candidateGsi.isCci() ? newColumns :
+                indexColumns.stream().map(name -> columnsMap.get(whatIfTableMeta.getColumnIgnoreCase(name).getName()))
+                    .collect(Collectors.toList()),
+            whatIfTableMeta.getPrimaryIndex() == null ? null :
+                new IndexMeta(whatIfTableMeta.getPrimaryIndex(), columnsMap),
+            gsiSecondaryIndexes,
             whatIfTableMeta.isHasPrimaryKey(), TableStatus.PUBLIC, Long.MAX_VALUE, 1);
 
         GsiMetaManager.GsiTableMetaBean gsiTableMetaBean =
@@ -279,7 +298,7 @@ public class WhatIfSchemaManager extends AbstractLifecycle implements SchemaMana
                 "def",
                 schemaName,
                 candidateGsi.getIndexName(),
-                GsiMetaManager.TableType.GSI,
+                candidateGsi.isCci() ? GsiMetaManager.TableType.COLUMNAR : GsiMetaManager.TableType.GSI,
                 candidateGsi.getDbPartitionKey(),
                 candidateGsi.getDbPartitionPolicy(),
                 candidateGsi.getDbPartitionCount(),
@@ -299,12 +318,20 @@ public class WhatIfSchemaManager extends AbstractLifecycle implements SchemaMana
         String schemaName = actualSchemaManager.getSchemaName();
         String tableName = tableMeta.getTableName();
 
+        Map<String, ColumnMeta> columnsMap = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+        List<ColumnMeta> newColumns = Lists.newArrayList();
+        for (ColumnMeta columnMeta : tableMeta.getPhysicalColumns()) {
+            ColumnMeta newColumnMeta = new ColumnMeta(columnMeta);
+            columnsMap.put(columnMeta.getName().toLowerCase(), newColumnMeta);
+            newColumns.add(newColumnMeta);
+        }
+
         TableMeta whatIfTableMeta = new TableMeta(
             schemaName,
             tableMeta.getTableName(),
-            tableMeta.getAllColumns(),
-            tableMeta.getPrimaryIndex(),
-            getSecondaryIndexesWithWhatIf(tableMeta, candidateIndexSet),
+            newColumns,
+            tableMeta.getPrimaryIndex() == null ? null : new IndexMeta(tableMeta.getPrimaryIndex(), columnsMap),
+            getSecondaryIndexesWithWhatIf(tableMeta, candidateIndexSet, columnsMap),
             tableMeta.isHasPrimaryKey(),
             tableMeta.getStatus(),
             tableMeta.getVersion(),
@@ -360,7 +387,7 @@ public class WhatIfSchemaManager extends AbstractLifecycle implements SchemaMana
                             null,
                             null,
                             gsiTableMeta.getAllColumns(),
-                            PartitionTableType.GSI_TABLE,
+                            candidateGsi.isCci() ? PartitionTableType.COLUMNAR_TABLE : PartitionTableType.GSI_TABLE,
                             executionContext);
                     partitionInfo.setStatus(TablePartitionRecord.PARTITION_STATUS_LOGICAL_TABLE_PUBLIC);
                     gsiTableMeta.setPartitionInfo(partitionInfo);

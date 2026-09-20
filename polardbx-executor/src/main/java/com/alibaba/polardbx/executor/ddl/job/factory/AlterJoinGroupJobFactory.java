@@ -25,15 +25,15 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.TablesSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcAlterJoinGroupMarkTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterJoinGroupAddMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterJoinGroupValidateTask;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.config.table.PreemptiveTime;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterJoinGroupPreparedData;
 import com.google.common.collect.Lists;
 
-import java.util.ArrayList;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -43,13 +43,14 @@ import java.util.stream.Collectors;
  *
  * @author luoyanxin
  */
-public class AlterJoinGroupJobFactory extends DdlJobFactory {
+public class AlterJoinGroupJobFactory extends OnlineDdlJobFactory {
 
     protected final AlterJoinGroupPreparedData preparedData;
     protected final ExecutionContext executionContext;
 
     public AlterJoinGroupJobFactory(AlterJoinGroupPreparedData preparedData,
                                     ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.META_ONLY);
         this.preparedData = preparedData;
         this.executionContext = executionContext;
     }

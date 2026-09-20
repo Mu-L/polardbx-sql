@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.ORCMemoryCounterUtil;
 import com.alibaba.polardbx.executor.chunk.BigIntegerBlock;
 import com.alibaba.polardbx.executor.chunk.BigIntegerBlockBuilder;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
@@ -25,20 +27,39 @@ import com.alibaba.polardbx.executor.operator.scan.metrics.RuntimeMetrics;
 import com.google.common.base.Preconditions;
 import org.apache.orc.OrcProto;
 import org.apache.orc.impl.OrcIndex;
+import org.openjdk.jol.info.ClassLayout;
+import org.apache.orc.impl.PositionProviderBuilder;
 
 import java.io.IOException;
 import java.math.BigInteger;
 import java.util.Arrays;
 
 public class BigBitColumnReader extends AbstractLongColumnReader {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(BigBitColumnReader.class).instanceSize();
 
     private static final byte[] EMPTY_PACKET = new byte[BigIntegerBlock.LENGTH];
 
-    public BigBitColumnReader(int columnId, boolean isPrimaryKey, StripeLoader stripeLoader, OrcIndex orcIndex,
+    public BigBitColumnReader(int columnId, boolean isPrimaryKey, StripeLoader stripeLoader,
+                              PositionProviderBuilder orcIndex,
                               RuntimeMetrics metrics,
                               OrcProto.ColumnEncoding.Kind kind, int indexStride,
                               boolean enableMetrics) {
         super(columnId, isPrimaryKey, stripeLoader, orcIndex, metrics, kind, indexStride, enableMetrics);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            // from AbstractColumnReader
+            + FastMemoryCounter.sizeOf(refCount)
+            + FastMemoryCounter.sizeOf(isClosed)
+            + FastMemoryCounter.sizeOf(hasNoMoreBlocks)
+            // from AbstractLongColumnReader
+            + FastMemoryCounter.sizeOf(openFailed)
+            + FastMemoryCounter.sizeOf(initializeOnlyOnce)
+            + FastMemoryCounter.sizeOf(isOpened)
+            + ORCMemoryCounterUtil.sizeOfBitFieldReader(present)
+            + ORCMemoryCounterUtil.sizeOfIntegerReader(data);
     }
 
     @Override

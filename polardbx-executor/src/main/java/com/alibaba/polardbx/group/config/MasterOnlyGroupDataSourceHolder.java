@@ -18,6 +18,7 @@ package com.alibaba.polardbx.group.config;
 
 import com.alibaba.polardbx.atom.TAtomDataSource;
 import com.alibaba.polardbx.common.jdbc.MasterSlave;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
@@ -27,14 +28,24 @@ public class MasterOnlyGroupDataSourceHolder implements GroupDataSourceHolder {
     private static final Logger logger = LoggerFactory.getLogger(MasterOnlyGroupDataSourceHolder.class);
 
     private final TAtomDataSource masterDataSource;
+    private final boolean isBuildInSchema;
 
-    public MasterOnlyGroupDataSourceHolder(TAtomDataSource masterDataSource) {
+    public MasterOnlyGroupDataSourceHolder(TAtomDataSource masterDataSource, boolean isBuildInSchema) {
         this.masterDataSource = masterDataSource;
+        this.isBuildInSchema = isBuildInSchema;
     }
 
     @Override
     public TAtomDataSource getDataSource(MasterSlave masterSlave) {
-        return this.masterDataSource;
+        switch (masterSlave) {
+        case FOLLOWER_ONLY:
+            if (isBuildInSchema || DynamicConfig.getInstance().supportBackMasterForFollowRead()) {
+                return masterDataSource;
+            }
+            throw new RuntimeException("all followers shutdown, so can't continue using the follower connection!!");
+        default:
+            return this.masterDataSource;
+        }
     }
 
     @Override

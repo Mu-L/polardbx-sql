@@ -44,7 +44,11 @@ public class RenameTableValidateTask extends BaseValidateTask {
         TableValidator.validateTableExistence(schemaName, logicalTableName, executionContext);
         TableValidator.validateTableNonExistence(schemaName, newLogicalTableName, executionContext);
         TableValidator.validateTableWithCCI(schemaName, logicalTableName, executionContext, SqlKind.RENAME_TABLE);
+        TableValidator.validateTableWithPureColumnar(schemaName, logicalTableName, executionContext,
+            SqlKind.RENAME_TABLE);
+        TableValidator.validateTableWithExternalizedColumn(schemaName, logicalTableName, SqlKind.RENAME_TABLE);
         GsiValidator.validateAllowRenameOnTable(schemaName, logicalTableName, executionContext);
+        TableValidator.validateConstraintName(schemaName, logicalTableName, newLogicalTableName, executionContext);
     }
 
     @Override

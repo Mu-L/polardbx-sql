@@ -25,6 +25,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.regex.Matcher;
@@ -34,6 +35,18 @@ import java.util.regex.Pattern;
  * @author wuzhe
  */
 public class Utils {
+    private static boolean usePolarDBXJDBC = false;
+    private static final AtomicBoolean stopSignal = new AtomicBoolean(true);
+
+    static {
+        try {
+            Class.forName("com.alibaba.polardbx.Driver");
+            Class.forName("com.mysql.jdbc.Driver");
+        } catch (Throwable t) {
+            // ignore
+        }
+    }
+
     private static final Logger logger = LoggerFactory.getLogger(Utils.class);
 
     // '${user_name}:${password}@tcp(${ip}:${port})/${db_name}'
@@ -48,14 +61,40 @@ public class Utils {
             String host = matcher.group(3);
             String port = matcher.group(4);
             String dbname = matcher.group(5);
-            String url = "jdbc:mysql://" + host + ":" + port + "/" + dbname;
-            if (null != props) {
-                url += "?" + props;
+            Connection conn;
+            if (usePolarDBXJDBC) {
+                String url = "jdbc:polardbx://" + host + ":" + port + "/" + dbname;
+                if (null != props) {
+                    url += "?" + props;
+                }
+
+                try {
+                    conn = DriverManager.getConnection(url, username, password);
+                } catch (Throwable t) {
+                    t.printStackTrace();
+                    // fall back to normal jdbc
+                    url = "jdbc:mysql://" + host + ":" + port + "/" + dbname;
+                    if (null != props) {
+                        url += "?" + props;
+                    }
+                    conn = DriverManager.getConnection(url, username, password);
+                }
+            } else {
+                String url = "jdbc:mysql://" + host + ":" + port + "/" + dbname;
+                if (null != props) {
+                    url += "?" + props;
+                }
+                conn = DriverManager.getConnection(url, username, password);
             }
-            return DriverManager.getConnection(url, username, password);
+
+            return conn;
         }
         throw new RuntimeException("Invalid dsn format, " +
             "should be like '${user_name}:${password}@tcp(${ip}:${port})/${db_name}'");
+    }
+
+    public static void setUsePolarDBXJDBC(boolean usePolarDBXJDBC) {
+        Utils.usePolarDBXJDBC = usePolarDBXJDBC;
     }
 
     public static void prepare() throws Exception {
@@ -126,7 +165,7 @@ public class Utils {
         }
     }
 
-    private static void prepareAllTypesTest(Toml config) throws Exception {
+    public static void prepareAllTypesTest(Toml config) throws Exception {
         String dsn = config.getString("dsn");
         String props = config.getString("conn_properties");
         int rowCount = Math.toIntExact(config.getLong("row_count"));
@@ -278,11 +317,16 @@ public class Utils {
 
     public static List<Account> getAccounts(String hint, Statement stmt)
         throws SQLException {
+        return getAccounts(hint, stmt, false);
+    }
+
+    public static List<Account> getAccounts(String hint, Statement stmt, boolean forceOrderBy)
+        throws SQLException {
         SecureRandom random = new SecureRandom();
         List<Account> accounts = new ArrayList<>();
         // read all accounts
         ResultSet rs;
-        if (random.nextBoolean()) {
+        if (forceOrderBy || random.nextBoolean()) {
             // check secondary index
             rs = stmt.executeQuery(hint + "select id, balance, version from accounts order by balance");
         } else {
@@ -319,12 +363,12 @@ public class Utils {
     }
 
     public static void findIncorrectColumns() throws Exception {
-        String dsn = "";
+        String dsn = "polardbx_root:123456@tcp(127.0.0.1:8527)/all_types_test";
         String props = "";
         try (Connection conn = getConnection(dsn, props);
             Statement stmt = conn.createStatement()) {
             Collection<String> columns = AllTypesTestUtils.getColumns();
-            String sql = "select check_sum_v2(%s) from full_types";
+            String sql = "select check_sum_v2(%s) from all_types";
             String hint =
                 "/*+TDDL:WORKLOAD_TYPE=AP ENABLE_MPP=true ENABLE_MASTER_MPP=true ENABLE_COLUMNAR_OPTIMIZER=true OPTIMIZER_TYPE='columnar' ENABLE_HTAP=true */";
             for (String column : columns) {
@@ -346,7 +390,68 @@ public class Utils {
         }
     }
 
+    public static void findIncorrectData() throws Exception {
+        String dsn = "polardbx_root:123456@tcp(127.0.0.1:8527)/all_types_test";
+        long minId = 0;
+        long maxId = 100010;
+
+        List<String> incorrectColumns = new ArrayList<>();
+        try (Connection conn = getConnection(dsn, "");
+            Statement stmt = conn.createStatement()) {
+            Collection<String> columns = AllTypesTestUtils.getColumns();
+            String sql = "select check_sum_v2(%s) from all_types";
+            String hint =
+                "/*+TDDL:WORKLOAD_TYPE=AP ENABLE_MPP=true ENABLE_MASTER_MPP=true ENABLE_COLUMNAR_OPTIMIZER=true OPTIMIZER_TYPE='columnar' ENABLE_HTAP=true */";
+            for (String column : columns) {
+                String finalSql = String.format(sql, column);
+                // Row store.
+                ResultSet rs = stmt.executeQuery(finalSql);
+                rs.next();
+                long rowChecksum = rs.getLong(1);
+
+                // Columnar store.
+                rs = stmt.executeQuery(hint + finalSql);
+                rs.next();
+                long columnarChecksum = rs.getLong(1);
+
+                if (rowChecksum != columnarChecksum) {
+                    System.out.println(column);
+                    incorrectColumns.add(column);
+                }
+            }
+
+            sql = "select check_sum_v2(%s) from all_types where id >= %s and id <= %s";
+            for (String incorrectColumn : incorrectColumns) {
+                long i = minId, j = maxId;
+                while (i < j) {
+                    long mid = i + (j - i) / 2;
+                    String finalSql = String.format(sql, incorrectColumn, i, mid);
+                    // Row store.
+                    ResultSet rs = stmt.executeQuery(finalSql);
+                    rs.next();
+                    long rowChecksum = rs.getLong(1);
+
+                    // Columnar store.
+                    rs = stmt.executeQuery(hint + finalSql);
+                    rs.next();
+                    long columnarChecksum = rs.getLong(1);
+
+                    if (rowChecksum != columnarChecksum) {
+                        j = mid - 1;
+                    } else {
+                        i = mid + 1;
+                    }
+                }
+                System.out.println(incorrectColumn + " " + i);
+            }
+        }
+    }
+
     public static void main(String[] args) throws Exception {
-        findIncorrectColumns();
+        findIncorrectData();
+    }
+
+    public static AtomicBoolean getStopSignal() {
+        return stopSignal;
     }
 }

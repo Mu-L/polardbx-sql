@@ -17,11 +17,13 @@
 package com.alibaba.polardbx.config.loader;
 
 import com.alibaba.polardbx.CobarServer;
-import com.alibaba.polardbx.common.TddlNode;
+import com.alibaba.polardbx.cache.statistics.CacheStatisticsCollector;
+import com.alibaba.polardbx.common.cache.CacheLogger;
 import com.alibaba.polardbx.common.constants.IsolationLevel;
 import com.alibaba.polardbx.common.constants.TransactionAttribute;
 import com.alibaba.polardbx.common.model.lifecycle.AbstractLifecycle;
 import com.alibaba.polardbx.common.model.lifecycle.Lifecycle;
+import com.alibaba.polardbx.common.oss.filesystem.cache.GeneralCacheConfig;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.properties.MppConfig;
@@ -36,12 +38,14 @@ import com.alibaba.polardbx.executor.balancer.Balancer;
 import com.alibaba.polardbx.executor.common.CciMetaManager;
 import com.alibaba.polardbx.executor.common.GsiStatisticsManager;
 import com.alibaba.polardbx.executor.utils.SchemaMetaUtil;
+import com.alibaba.polardbx.gms.cache.CacheInitializer;
 import com.alibaba.polardbx.gms.config.impl.ConnPoolConfigManager;
 import com.alibaba.polardbx.gms.config.impl.MetaDbInstConfigManager;
 import com.alibaba.polardbx.gms.ha.impl.StorageHaManager;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbConfigManager;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
 import com.alibaba.polardbx.gms.metadb.schema.SchemaChangeManager;
+import com.alibaba.polardbx.gms.node.CCLDetectManager;
 import com.alibaba.polardbx.gms.node.ServerInfoHelper;
 import com.alibaba.polardbx.gms.privilege.PolarPrivManager;
 import com.alibaba.polardbx.gms.topology.DbTopologyManager;
@@ -189,7 +193,7 @@ public final class ServerLoader extends AbstractLifecycle implements Lifecycle {
 
         // mock by env or mock by meta db
         if (!mockByEnv()) {
-            initPolarDbXComponents();
+            initPolarDbXComponents(serverProps);
         }
 
         /**
@@ -205,12 +209,11 @@ public final class ServerLoader extends AbstractLifecycle implements Lifecycle {
         logger.info("Global memory pool size: " + FileUtils.byteCountToDisplaySize(system.getGlobalMemoryLimit()));
     }
 
-    private void initPolarDbXComponents() {
+    private void initPolarDbXComponents(Properties serverProps) {
         // Set private protocol port first(or we will fail to connect metaDB with Xproto).
         XConnectionManager.getInstance().setMetaDbPort(this.system.getMetaDbXprotoPort());
         XConnectionManager.getInstance().setStorageDbPort(this.system.getStorageDbXprotoPort());
-        XConnectionManager.getInstance().getInstId()
-            .set(ConfigDataMode.isPolarDbX() ? InstIdUtil.getInstId() : TddlNode.getInstId());
+        XConnectionManager.getInstance().getInstId().set(InstIdUtil.getInstId());
 
         // Init metadb datasource
         MetaDbDataSource
@@ -278,6 +281,22 @@ public final class ServerLoader extends AbstractLifecycle implements Lifecycle {
 
         //Init the cci meta manager
         CciMetaManager.getInstance();
+
+        //Init the CCL Detect manager
+        CCLDetectManager.getInstance();
+
+        // General cache system
+        try {
+            final CacheStatisticsCollector collector =
+                new CacheStatisticsCollector("RPC", new CacheLogger("RPC_CACHE_QUERY"),
+                    new CacheLogger("RPC_CACHE_STATISTICS"));
+            collector.start();
+            GeneralCacheConfig cacheConfig = GeneralCacheConfig.fromProperties(serverProps);
+            CacheInitializer.initialize(cacheConfig, collector);
+        } catch (Exception e) {
+            logger.error("Init cache system failed", e);
+            throw GeneralUtil.nestedException(e);
+        }
     }
 
     protected void initPortInfoAndInstId() {
@@ -788,11 +807,11 @@ public final class ServerLoader extends AbstractLifecycle implements Lifecycle {
         System.setProperty("cclRescheduleTimeoutCheckPeriod",
             String.valueOf(this.system.getCclRescheduleTimeoutCheckPeriod()));
 
-        String processCclTriggerPeriod = serverProps.getProperty("processCclTriggerPeriod");
-        if (!StringUtil.isEmpty(processCclTriggerPeriod)) {
-            this.system.setProcessCclTriggerPeriod(Integer.parseInt(processCclTriggerPeriod));
+        String processCclBlockerPeriod = serverProps.getProperty("processCclBlockerPeriod");
+        if (!StringUtil.isEmpty(processCclBlockerPeriod)) {
+            this.system.setProcessCclBlockerPeriod(Integer.parseInt(processCclBlockerPeriod));
         }
-        System.setProperty("processCclTriggerPeriod", String.valueOf(this.system.getProcessCclTriggerPeriod()));
+        System.setProperty("processCclBlockerPeriod", String.valueOf(this.system.getProcessCclBlockerPeriod()));
 
         String enableLogicalDbWarmmingUpStr = serverProps.getProperty("enableLogicalDbWarmmingUp");
         if (!StringUtil.isEmpty(enableLogicalDbWarmmingUpStr)) {

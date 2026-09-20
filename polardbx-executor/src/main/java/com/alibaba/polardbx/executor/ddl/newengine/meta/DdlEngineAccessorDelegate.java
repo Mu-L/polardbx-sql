@@ -23,6 +23,8 @@ import com.alibaba.polardbx.gms.metadb.delegate.MetaDbAccessorWrapper;
 import com.alibaba.polardbx.gms.metadb.misc.BackfillSampleRowsAccessor;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineAccessor;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineTaskAccessor;
+import com.alibaba.polardbx.gms.partition.TablePartitionAccessor;
+import com.alibaba.polardbx.gms.tablegroup.PartitionGroupAccessor;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
 
@@ -36,12 +38,17 @@ public abstract class DdlEngineAccessorDelegate<T> extends MetaDbAccessorWrapper
     protected final DdlEngineAccessor engineAccessor;
     protected final DdlEngineTaskAccessor engineTaskAccessor;
     protected final BackfillSampleRowsAccessor backfillSampleRowsAccessor;
+    protected final TablePartitionAccessor tablePartitionAccessor;
+    protected final PartitionGroupAccessor partitionGroupAccessor;
+
     protected Connection connection;
 
     public DdlEngineAccessorDelegate() {
         this.engineAccessor = new DdlEngineAccessor();
         this.engineTaskAccessor = new DdlEngineTaskAccessor();
         this.backfillSampleRowsAccessor = new BackfillSampleRowsAccessor();
+        this.tablePartitionAccessor = new TablePartitionAccessor();
+        this.partitionGroupAccessor = new PartitionGroupAccessor();
     }
 
     @Override
@@ -49,6 +56,8 @@ public abstract class DdlEngineAccessorDelegate<T> extends MetaDbAccessorWrapper
         this.engineAccessor.setConnection(metaDbConn);
         this.engineTaskAccessor.setConnection(metaDbConn);
         this.backfillSampleRowsAccessor.setConnection(metaDbConn);
+        this.tablePartitionAccessor.setConnection(metaDbConn);
+        this.partitionGroupAccessor.setConnection(metaDbConn);
         this.connection = metaDbConn;
     }
 
@@ -87,6 +96,8 @@ public abstract class DdlEngineAccessorDelegate<T> extends MetaDbAccessorWrapper
         this.engineAccessor.setConnection(null);
         this.engineTaskAccessor.setConnection(null);
         this.backfillSampleRowsAccessor.setConnection(null);
+        this.tablePartitionAccessor.setConnection(null);
+        this.partitionGroupAccessor.setConnection(null);
     }
 
     public Connection getConnection() {

@@ -127,6 +127,7 @@ public class Keywords {
         map.put("SEQUENCE", Token.SEQUENCE);
         map.put("TRIGGER", Token.TRIGGER);
         map.put("USER", Token.USER);
+        map.put("DBA_USER", Token.DBA_USER);
         map.put("ROLE", Token.ROLE);
 
         map.put("WHEN", Token.WHEN);

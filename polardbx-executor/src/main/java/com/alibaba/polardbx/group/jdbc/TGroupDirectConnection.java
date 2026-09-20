@@ -127,7 +127,9 @@ public class TGroupDirectConnection implements IConnection {
 
         TAtomDataSource atomDataSource = groupDataSource.getConfigManager().getDataSource(master);
         // only block when smooth switchover is enabled and all allocated write connections are good
-        if (DynamicConfig.getInstance().isEnableSmoothSwitchover() && allocated != null) {
+        // and datasource is master
+        if (DynamicConfig.getInstance().isEnableSmoothSwitchover() && allocated != null
+            && atomDataSource.isMasterDB()) {
             // wait if switch in progress
             final long startWaitTime = System.currentTimeMillis();
             boolean waited = false;

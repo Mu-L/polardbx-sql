@@ -27,6 +27,7 @@ import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
 import com.alibaba.polardbx.gms.metadb.seq.SequenceBaseRecord;
 import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
 import com.alibaba.polardbx.gms.sync.SyncScope;
+import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
 import lombok.Getter;
@@ -53,23 +54,23 @@ public class CreateTableShowTableMetaTask extends BaseGmsTask {
 
         SequenceBaseRecord sequenceRecord =
             tableInfoManager.fetchSequence(schemaName, AUTO_SEQ_PREFIX + logicalTableName);
-        TableMetaChanger.triggerSchemaChange(metaDbConnection, schemaName, logicalTableName, sequenceRecord,
-            tableInfoManager);
+        tableInfoManager.showTable(schemaName, logicalTableName, sequenceRecord);
 
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
-        SyncManagerHelper.syncWithDefaultDB(new BaselinePlanValidCheckSyncAction(), SyncScope.ALL);
-    }
-
-    @Override
-    protected void onExecutionSuccess(ExecutionContext executionContext) {
-        TableMetaChanger.afterNewTableMeta(schemaName, logicalTableName);
+        SyncManagerHelper.syncIgnoreExceptions(new BaselinePlanValidCheckSyncAction(), SystemDbHelper.DEFAULT_DB_NAME,
+            SyncScope.ALL);
     }
 
     @Override
     public void rollbackImpl(Connection metaDbConnection, ExecutionContext executionContext) {
         TableMetaChanger.hideTableMeta(metaDbConnection, schemaName, logicalTableName);
-        SyncManagerHelper.sync(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
+        SyncManagerHelper.syncThrowExceptions(new TableMetaChangeSyncAction(schemaName, logicalTableName),
+            SyncScope.ALL);
     }
 
+    @Override
+    protected String remark() {
+        return "|tableName: " + logicalTableName;
+    }
 }

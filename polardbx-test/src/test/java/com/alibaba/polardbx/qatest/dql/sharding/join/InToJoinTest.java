@@ -42,7 +42,7 @@ public class InToJoinTest extends ReadBaseTestCase {
             + "`c1` int(11) DEFAULT NULL,\n"
             + "\t`c2` int(11) DEFAULT NULL,\n"
             + "\tKEY `auto_shard_key_c1` USING BTREE (`c1`)\n"
-            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4  dbpartition by hash(`c1`)";
+            + ") ENGINE = InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci  dbpartition by hash(`c1`)";
         JdbcUtil.executeSuccess(tddlConnection, String.format(createTable, TABLE_NAME));
     }
 

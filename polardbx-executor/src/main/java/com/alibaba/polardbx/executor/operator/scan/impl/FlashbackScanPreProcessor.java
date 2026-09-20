@@ -1,16 +1,20 @@
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.BlockingFuture;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.gms.ColumnarManager;
 import com.alibaba.polardbx.executor.gms.FlashbackDeleteBitmapManager;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
+import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.calcite.rex.RexNode;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.roaringbitmap.RoaringBitmap;
 
+import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,9 +36,12 @@ public class FlashbackScanPreProcessor extends DefaultScanPreProcessor {
                                      double groupsRatio, double deletionRatio,
                                      ColumnarManager columnarManager, Long tso,
                                      List<Long> columnFieldIdList,
-                                     Map<String, List<Pair<String, Long>>> allDelPositions) {
+                                     List<OrderByOption> sortKeys,
+                                     Map<String, List<Pair<String, Long>>> allDelPositions,
+                                     ListenableFuture<?> isClosed, ZoneId zoneId) {
         super(configuration, fileSystem, schemaName, logicalTableName, enableIndexPruning, enableOssCompatible, columns,
-            rexList, params, groupsRatio, deletionRatio, columnarManager, tso, columnFieldIdList);
+            rexList, params, groupsRatio, deletionRatio, columnarManager, tso, columnFieldIdList, sortKeys, false, null,
+            isClosed, zoneId);
         this.allDelPositions = allDelPositions;
     }
 

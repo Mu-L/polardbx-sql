@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.optimizer.sharding;
 
 import com.alibaba.polardbx.optimizer.sharding.label.AggregateLabel;
+import com.alibaba.polardbx.optimizer.sharding.label.CTEConsumerLabel;
 import com.alibaba.polardbx.optimizer.sharding.label.CorrelateLabel;
 import com.alibaba.polardbx.optimizer.sharding.label.JoinLabel;
 import com.alibaba.polardbx.optimizer.sharding.label.Label;
@@ -97,6 +98,11 @@ public class LabelShuttleImpl implements LabelShuttle {
     @Override
     public Label visit(ValuesLabel valuesLabel) {
         return visitChildren(valuesLabel);
+    }
+
+    @Override
+    public Label visit(CTEConsumerLabel cteConsumerLabel) {
+        return visitChildren(cteConsumerLabel);
     }
 
     @Override

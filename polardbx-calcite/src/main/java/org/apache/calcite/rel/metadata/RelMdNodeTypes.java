@@ -27,6 +27,8 @@ import org.apache.calcite.rel.core.Intersect;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.Minus;
 import org.apache.calcite.rel.core.Project;
+import org.apache.calcite.rel.core.RecursiveCTE;
+import org.apache.calcite.rel.core.RecursiveCTEAnchor;
 import org.apache.calcite.rel.core.SemiJoin;
 import org.apache.calcite.rel.core.Sort;
 import org.apache.calcite.rel.core.TableScan;
@@ -138,6 +140,16 @@ public class RelMdNodeTypes
   public Multimap<Class<? extends RelNode>, RelNode> getNodeTypes(Correlate rel,
                                                                   RelMetadataQuery mq) {
     return getNodeTypes(rel, Correlate.class, mq);
+  }
+
+  public Multimap<Class<? extends RelNode>, RelNode> getNodeTypes(RecursiveCTE rel,
+                                                                  RelMetadataQuery mq) {
+    return getNodeTypes(rel, RecursiveCTE.class, mq);
+  }
+
+  public Multimap<Class<? extends RelNode>, RelNode> getNodeTypes(RecursiveCTEAnchor rel,
+                                                                  RelMetadataQuery mq) {
+    return getNodeTypes(rel, RecursiveCTEAnchor.class, mq);
   }
 
   private static Multimap<Class<? extends RelNode>, RelNode> getNodeTypes(RelNode rel,

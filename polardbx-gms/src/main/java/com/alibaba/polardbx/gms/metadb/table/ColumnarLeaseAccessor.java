@@ -32,23 +32,25 @@ import static com.alibaba.polardbx.gms.metadb.GmsSystemTables.COLUMNAR_LEASE;
 public class ColumnarLeaseAccessor extends AbstractAccessor {
     private static final String COLUMNAR_LEASE_TABLE = wrap(COLUMNAR_LEASE);
 
-    private static final String INIT = "insert into " + COLUMNAR_LEASE_TABLE
-        + " (`id`, `owner`, `lease`) values (1, ?, ?)";
+    private static final String ALL_COLUMNS = "`id`, `owner`, `lease`, `fencing_token`";
 
-    // 抢占租期，如果当前时间大于上个租期结束时间+500ms（时钟漂移）或者owner没有变更，即可抢占
+    private static final String INIT = "insert into " + COLUMNAR_LEASE_TABLE
+        + " ( " + ALL_COLUMNS + " ) values (1, ?, ?, 1)";
+
+    // 抢占租期，如果当前时间大于上个租期结束时间+500ms（时钟漂移）或者owner没有变更，即可抢占， token+=1
     private static final String ELECT = "update " + COLUMNAR_LEASE_TABLE
-        + " set `owner` = ?, `lease` = ?"
+        + " set `owner` = ?, `lease` = ?, `fencing_token` = `fencing_token` + 1"
         + " where `id` = 1 and (`lease` + 500 < ? or `owner` = ?)";
 
-    // 强制抢占租期
+    // 强制抢占租期, token+=1
     private static final String FORCE_ELECT = "update " + COLUMNAR_LEASE_TABLE
-        + " set `owner` = ?, `lease` = ?"
+        + " set `owner` = ?, `lease` = ?, `fencing_token` = 1"
         + " where `id` = 1";
 
     // 取消租期
     private static final String FORCE_CANCEL = "delete from " + COLUMNAR_LEASE_TABLE + "where `id` = 1 and `owner` = ?";
 
-    // 续租，当前的leader续租自己的租期，只允许lease增长
+    // 续租，当前的leader续租自己的租期，只允许lease增长, token不变
     private static final String RENEW = "update " + COLUMNAR_LEASE_TABLE
         + " set `lease` = ?"
         + " where `id` = 1 and `owner` = ? and `lease` < ?";
@@ -67,12 +69,14 @@ public class ColumnarLeaseAccessor extends AbstractAccessor {
         + " where `id` != 1 and `lease` < ?";
 
     // get now nodes
-    private static final String GET_NODES = "select `id`, `owner`, `lease` from " + COLUMNAR_LEASE_TABLE
+    private static final String GET_NODES = "select " + ALL_COLUMNS + " from " + COLUMNAR_LEASE_TABLE
         + " where `id` != 1 and `lease` >= ?";
 
     // 加锁查询上次的leader的lease时间
-    private static final String LOCK_LEADER_LEASE = "select `id`, `owner`, `lease` from " + COLUMNAR_LEASE_TABLE
+    private static final String LOCK_LEADER_LEASE = "select " + ALL_COLUMNS + " from " + COLUMNAR_LEASE_TABLE
         + " where `id` = 1 for update";
+
+    private static final String GET_ALL = "select  " + ALL_COLUMNS + " from " + COLUMNAR_LEASE_TABLE;
 
     public boolean elect(final String owner, final long nowUTC, final long leaseMs) {
         try {
@@ -194,6 +198,14 @@ public class ColumnarLeaseAccessor extends AbstractAccessor {
             final Map<Integer, ParameterContext> params = new HashMap<>(2);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, owner);
             return MetaDbUtil.delete(FORCE_CANCEL, params, connection);
+        } catch (Exception e) {
+            throw GeneralUtil.nestedException(e);
+        }
+    }
+
+    public List<ColumnarLeaseRecord> getAllNodes() {
+        try {
+            return MetaDbUtil.query(GET_ALL, ColumnarLeaseRecord.class, connection);
         } catch (Exception e) {
             throw GeneralUtil.nestedException(e);
         }

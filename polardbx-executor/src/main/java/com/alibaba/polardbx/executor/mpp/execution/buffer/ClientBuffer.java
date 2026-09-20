@@ -16,6 +16,10 @@
 
 package com.alibaba.polardbx.executor.mpp.execution.buffer;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableObjectArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.mpp.OutputBuffers;
@@ -24,13 +28,13 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 import io.airlift.units.DataSize;
+import org.openjdk.jol.info.ClassLayout;
 
 import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.Immutable;
 import javax.annotation.concurrent.ThreadSafe;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -46,7 +50,8 @@ import static java.lang.Math.toIntExact;
 import static java.util.Objects.requireNonNull;
 
 @ThreadSafe
-public class ClientBuffer {
+public class ClientBuffer implements MemoryCountable {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(ClientBuffer.class).instanceSize();
 
     private static final Logger log = LoggerFactory.getLogger(ClientBuffer.class);
 
@@ -54,7 +59,11 @@ public class ClientBuffer {
         AtomicLongFieldUpdater.newUpdater(ClientBuffer.class, "bufferedBytesLong");
     private static final AtomicLongFieldUpdater<ClientBuffer> currentSequenceIdUpdater =
         AtomicLongFieldUpdater.newUpdater(ClientBuffer.class, "currentSequenceIdLong");
+
+    @FieldMemoryCounter(value = false)
     private final String taskInstanceId;
+
+    @FieldMemoryCounter(value = false)
     private final OutputBuffers.OutputBufferId bufferId;
 
     private volatile long bufferedBytesLong = 0L;
@@ -65,7 +74,8 @@ public class ClientBuffer {
     private volatile long currentSequenceIdLong = 0L;
 
     @GuardedBy("this")
-    private final LinkedList<SerializedChunkReference> pages = new LinkedList<>();
+    private final MemoryCountableObjectArrayList<SerializedChunkReference> pages =
+        new MemoryCountableObjectArrayList<>();
 
     @GuardedBy("this")
     private boolean noMorePages;
@@ -79,7 +89,15 @@ public class ClientBuffer {
     private final AtomicBoolean destroyed = new AtomicBoolean();
 
     @GuardedBy("this")
+    @FieldMemoryCounter(value = false)
     private PendingRead pendingRead;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(pages)
+            + FastMemoryCounter.sizeOf(destroyed);
+    }
 
     public ClientBuffer(String taskInstanceId, OutputBuffers.OutputBufferId bufferId) {
         this.taskInstanceId = requireNonNull(taskInstanceId, "taskInstanceId is null");
@@ -337,10 +355,12 @@ public class ClientBuffer {
 
             long bytesRemoved = 0;
             for (int i = 0; i < pagesToRemove; i++) {
-                SerializedChunkReference removedPage = pages.removeFirst();
+                SerializedChunkReference removedPage = pages.get(i);
                 removedPages.add(removedPage);
                 bytesRemoved += removedPage.getRetainedSizeInBytes();
             }
+
+            pages.removeElements(0, pagesToRemove);
 
             // update current sequence id
             verify(currentSequenceIdUpdater
@@ -408,10 +428,20 @@ public class ClientBuffer {
     }
 
     @ThreadSafe
-    static class SerializedChunkReference {
+    static class SerializedChunkReference implements MemoryCountable {
+        private static final int INSTANCE_SIZE = ClassLayout.parseClass(SerializedChunkReference.class).instanceSize();
         private final SerializedChunk serializedPage;
         private final AtomicInteger referenceCount;
+
+        @FieldMemoryCounter(value = false)
         private final Runnable onDereference;
+
+        @Override
+        public long getMemoryUsage() {
+            return INSTANCE_SIZE
+                + FastMemoryCounter.sizeOf(serializedPage)
+                + FastMemoryCounter.sizeOf(referenceCount);
+        }
 
         public SerializedChunkReference(SerializedChunk serializedPage, int referenceCount, Runnable onDereference) {
             this.serializedPage = requireNonNull(serializedPage, "page is null");

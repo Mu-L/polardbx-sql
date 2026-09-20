@@ -113,7 +113,9 @@ public class AlterTableGroupReorgPartitionPreparedData extends AlterTableGroupBa
                 partitionGroupRecord.visible = 0;
                 partitionGroupRecord.partition_name = newPartitionName;
                 partitionGroupRecord.tg_id = tableGroupId;
-                partitionGroupRecord.phy_db = targetGroupDetailInfoExRecords.get(i % targetDbCount).phyDbName;
+                partitionGroupRecord.setPhy_db(targetGroupDetailInfoExRecords.get(i % targetDbCount).getPhyDbName());
+                partitionGroupRecord.setGroup_Name(
+                    targetGroupDetailInfoExRecords.get(i % targetDbCount).getGroupName());
                 partitionGroupRecord.locality = "";
                 partitionGroupRecord.pax_group_id = 0L;
                 inVisiblePartitionGroups.add(partitionGroupRecord);

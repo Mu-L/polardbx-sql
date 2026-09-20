@@ -1,10 +1,10 @@
 ## DISABLE_FAST_SQL_PARSER
 CREATE PARTITION TABLE `test` (
-`iD` bigint(20) NOT NULL,
+`id` bigint(20) NOT NULL,
 `boolean_test` tinyint(4) DEFAULT NULL,
 `BYTE_test` tinyint(4) DEFAULT NULL,
 `short_test` smallint(6) DEFAULT NULL,
-`INT_TEST` int(11) DEFAULT NULL,
+`int_test` int(11) DEFAULT NULL,
 `long_test` bigint(20) DEFAULT NULL,
 `multivalue_test` varchar(255) DEFAULT NULL,
 `multivalue_string` varchar(255) DEFAULT NULL,
@@ -21,8 +21,8 @@ CREATE PARTITION TABLE `test` (
 PRIMARY KEY (`iD`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8
 PARTITION BY KEY(`iD`)
-PARTITIONS 3;
-insert into test(id,int_test) values (1,972),(3,972);
+PARTITIONS 3
+insert into test(id,int_test) values (1,972),(3,972)
 CREATE PARTITION TABLE `student` (
 `id` bigint(20) NOT NULL,
 `name` varchar(255) DEFAULT NULL,
@@ -31,8 +31,8 @@ CREATE PARTITION TABLE `student` (
 PRIMARY KEY (`id`, `unit`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8
 PARTITION BY KEY(`id`,`unit`)
-PARTITIONS 3;
-insert into student(id,name,unit) values (1,'a',1),(3,'c',3);
+PARTITIONS 3
+insert into student(id,name,unit) values (1,'a',1),(3,'c',3)
 CREATE PARTITION TABLE `grade` (
 `id` bigint(20) NOT NULL,
 `sid` bigint(20) DEFAULT NULL,
@@ -43,8 +43,8 @@ CREATE PARTITION TABLE `grade` (
 PRIMARY KEY (`id`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8
 PARTITION BY KEY(`id`)
-PARTITIONS 3;
-insert into grade(id,sid) values (100,1),(300,3);
+PARTITIONS 3
+insert into grade(id,sid) values (100,1),(300,3)
 CREATE PARTITION TABLE `elective` (
 `id` bigint(20) NOT NULL,
 `stuid` bigint(20) NOT NULL,
@@ -53,8 +53,8 @@ CREATE PARTITION TABLE `elective` (
 PRIMARY KEY (`clist`, `id`, `stuid`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8
 PARTITION BY KEY(`clist`,`id`,`stuid`)
-PARTITIONS 3;
-insert into elective(id,stuid,clist) values (1,1,100),(3,3,300);
+PARTITIONS 3
+insert into elective(id,stuid,clist) values (1,1,100),(3,3,300)
 ## exec sql no error
-select int_test,id from test where int_test=972 and  id in(select g1.id from  student g1 left join grade on g1.id =grade.sid left join elective on elective.id=g1.id order by g1.id limit 2,5) ORDER BY int_test,id,timestamp_test;
+select int_test,id from test where int_test=972 and  id in(select g1.id from  student g1 left join grade on g1.id =grade.sid left join elective on elective.id=g1.id order by g1.id limit 2,5) ORDER BY int_test,id,timestamp_test
 int_test,id

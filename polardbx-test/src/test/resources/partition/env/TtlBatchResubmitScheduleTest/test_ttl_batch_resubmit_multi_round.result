@@ -1,0 +1,56 @@
+## DISABLE_FAST_SQL_PARSER
+## Test: batch-resubmit mode with small batch size triggers multi-round resubmit.
+##
+## Covered code paths:
+##   - CleanAndPrepareExpiredDataTask.runOneBatchAndResubmitIfNeeded (L450-557)
+##     - L550-552: deleteRows >= batchCnt => resubmit self to thread pool
+##     - L547-549: partitionFinished => pendingPartCount.decrementAndGet()
+##   - submitWorkerTasksInBatchResubmitMode (L203-260): full path
+##   - checkIfAllTaskFinished batch-resubmit branch (L182-191)
+##   - logBatchResubmitPartProgress (L1132-1183)
+##   - CleanupExpiredDataLogInfo new fields (L43-62)
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00'
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false
+use polardbx
+drop database if exists test_ttl_br_multi_db
+create database if not exists test_ttl_br_multi_db mode='auto'
+use test_ttl_br_multi_db
+## Set small batch size to trigger multi-round resubmit
+set global TTL_JOB_DEFAULT_BATCH_SIZE = 2
+drop table if exists ttl_br_t1
+create table ttl_br_t1(
+  a int not null auto_increment,
+  b datetime,
+  primary key(a)
+)
+partition by key(a)
+partitions 4
+## Insert 20 expired rows (ensure each partition has >2 rows for multi-round)
+insert into ttl_br_t1(b) values
+('2024-05-01'),('2024-05-02'),('2024-05-03'),('2024-05-04'),('2024-05-05'),
+('2024-05-06'),('2024-05-07'),('2024-05-08'),('2024-05-09'),('2024-05-10'),
+('2024-05-11'),('2024-05-12'),('2024-05-13'),('2024-05-14'),('2024-05-15'),
+('2024-05-16'),('2024-05-17'),('2024-05-18'),('2024-05-19'),('2024-05-20')
+## Insert 4 non-expired rows (should survive cleanup)
+insert into ttl_br_t1(b) values
+('2024-06-27'),('2024-06-28'),('2024-06-29'),('2024-06-30')
+alter table ttl_br_t1
+modify ttl
+  ttl_enable = 'on',
+  ttl_cleanup = 'on',
+  ttl_expr = `b` expire after 1 day timezone '+08:00',
+  ttl_job = cron '0 0 0 1 1 ? */1' timezone '+08:00',
+  archive_table_pre_allocate=2,
+  archive_table_post_allocate=4
+select count(*) as total_before from ttl_br_t1
+total_before
+24
+/*+TDDL:cmd_extra(TTL_ENABLE_BATCH_RESUBMIT_SCHEDULE=true)*/alter table ttl_br_t1 cleanup expired data
+## Restore batch size
+set global TTL_JOB_DEFAULT_BATCH_SIZE = 1024
+use polardbx
+drop database if exists test_ttl_br_multi_db
+use polardbx;

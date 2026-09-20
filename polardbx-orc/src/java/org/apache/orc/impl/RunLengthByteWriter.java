@@ -27,7 +27,7 @@ import java.util.function.Consumer;
  */
 public class RunLengthByteWriter {
   static final int MIN_REPEAT_SIZE = 3;
-  static final int MAX_LITERAL_SIZE = 128;
+  public static final int MAX_LITERAL_SIZE = 128;
   static final int MAX_REPEAT_SIZE= 127 + MIN_REPEAT_SIZE;
   private final PositionedOutputStream output;
   private final byte[] literals = new byte[MAX_LITERAL_SIZE];

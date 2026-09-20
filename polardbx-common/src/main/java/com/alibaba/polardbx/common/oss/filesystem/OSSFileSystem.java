@@ -16,12 +16,11 @@
 
 package com.alibaba.polardbx.common.oss.filesystem;
 
+import com.alibaba.polardbx.common.orc.FileStatusManager;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.aliyun.oss.model.OSSObjectSummary;
 import com.aliyun.oss.model.ObjectListing;
 import com.aliyun.oss.model.ObjectMetadata;
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
 import com.google.common.util.concurrent.MoreExecutors;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -52,10 +51,9 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 import static com.alibaba.polardbx.common.oss.filesystem.Constants.FS_OSS_BLOCK_SIZE_DEFAULT;
 import static com.alibaba.polardbx.common.oss.filesystem.Constants.FS_OSS_BLOCK_SIZE_KEY;
@@ -70,7 +68,6 @@ import static com.alibaba.polardbx.common.oss.filesystem.Constants.UPLOAD_ACTIVE
 import static com.alibaba.polardbx.common.oss.filesystem.OSSUtils.intOption;
 import static com.alibaba.polardbx.common.oss.filesystem.OSSUtils.longOption;
 import static com.alibaba.polardbx.common.oss.filesystem.OSSUtils.objectRepresentsDirectory;
-import static java.util.concurrent.TimeUnit.SECONDS;
 
 /**
  * To access OSS blob system in a filesystem style.
@@ -86,10 +83,10 @@ public class OSSFileSystem extends FileSystem implements RateLimitable {
     private OSSFileSystemStore store;
     private int maxKeys;
     private int maxConcurrentCopyTasksPerDir;
-    private ExecutorService boundedThreadPool;
-    private ExecutorService boundedCopyThreadPool;
-    private Cache<Path, FileStatus> metaCache;
-    private boolean enableCache;
+    private BlockingThreadPoolExecutorService boundedThreadPool;
+    private BlockingThreadPoolExecutorService boundedCopyThreadPool;
+
+    private FileStatusManager fileStatusManager;
 
     /**
      * Limit the rate of file input-stream and output-stream
@@ -103,13 +100,9 @@ public class OSSFileSystem extends FileSystem implements RateLimitable {
         }
     };
 
-    public OSSFileSystem(boolean enableCache, FileSystemRateLimiter rateLimiter) {
+    public OSSFileSystem(FileStatusManager fileStatusManager, FileSystemRateLimiter rateLimiter) {
+        this.fileStatusManager = fileStatusManager;
         this.rateLimiter = rateLimiter;
-        this.enableCache = enableCache;
-        this.metaCache = CacheBuilder.newBuilder()
-            .maximumSize(4096)
-            .expireAfterAccess(300, SECONDS)
-            .build();
     }
 
     @Override
@@ -205,8 +198,6 @@ public class OSSFileSystem extends FileSystem implements RateLimitable {
         } catch (FileNotFoundException e) {
             LOG.debug("Couldn't delete {} - does not exist", path);
             return false;
-        } finally {
-            metaCache.invalidate(path);
         }
     }
 
@@ -292,17 +283,15 @@ public class OSSFileSystem extends FileSystem implements RateLimitable {
 
     @Override
     public FileStatus getFileStatus(Path path) throws IOException {
-        final Callable<FileStatus> valueLoader = () -> {
-            return getFileStatusImpl(path);
-        };
         FileStatus fileStatus;
         try {
-            if (enableCache) {
-                fileStatus = metaCache.get(path, valueLoader);
-            } else {
+
+            fileStatus = fileStatusManager.getFileStatus(path);
+            if (fileStatus == null) {
                 fileStatus = getFileStatusImpl(path);
             }
-        } catch (ExecutionException ex) {
+
+        } catch (Throwable t) {
             fileStatus = getFileStatusImpl(path);
         }
         return fileStatus;
@@ -384,6 +373,21 @@ public class OSSFileSystem extends FileSystem implements RateLimitable {
         return null;
     }
 
+    static String trimSlash(String path) {
+        if (null == path || path.isEmpty()) {
+            return path;
+        }
+        // 去除前缀 /
+        while (path.startsWith("/")) {
+            path = path.substring(1);
+        }
+        // 去除后缀 /
+        while (path.endsWith("/")) {
+            path = path.substring(0, path.length() - 1);
+        }
+        return path;
+    }
+
     /**
      * Initialize new FileSystem.
      *
@@ -408,12 +412,9 @@ public class OSSFileSystem extends FileSystem implements RateLimitable {
         store.initialize(name, conf, username, statistics);
         maxKeys = conf.getInt(MAX_PAGING_KEYS_KEY, MAX_PAGING_KEYS_DEFAULT);
 
-        int threadNum = OSSUtils.intPositiveOption(conf,
-            Constants.MULTIPART_DOWNLOAD_THREAD_NUMBER_KEY,
-            Constants.MULTIPART_DOWNLOAD_THREAD_NUMBER_DEFAULT);
+        int threadNum = DynamicConfig.getInstance().ossTransferPoolSize();
 
-        int totalTasks = OSSUtils.intPositiveOption(conf,
-            Constants.MAX_TOTAL_TASKS_KEY, Constants.MAX_TOTAL_TASKS_DEFAULT);
+        int totalTasks = DynamicConfig.getInstance().ossTransferPoolSize();
 
         this.boundedThreadPool = BlockingThreadPoolExecutorService.newInstance(
             threadNum, totalTasks, keepAliveTime, TimeUnit.SECONDS,
@@ -436,6 +437,25 @@ public class OSSFileSystem extends FileSystem implements RateLimitable {
             TimeUnit.SECONDS, "oss-copy-unbounded");
 
         setConf(conf);
+
+        // Register OSS client with OSSCacheAdapter (replaces old OSSGeneralCacheProxy + synchronized block)
+        final OSSCacheAdapter adapter = OSSCacheAdapter.getInstanceOrNull();
+        if (adapter != null) {
+            final String configuredDir = trimSlash(conf.get(Constants.GENERAL_CACHE_WORKING_DIR));
+            // Dynamic columnar dir supplier: prefer DynamicConfig, fallback to configured value
+            final Supplier<String> columnarDirSupplier = () -> {
+                String dynamicDir = DynamicConfig.getInstance().getColumnarOssDirectory();
+                if (dynamicDir != null && !dynamicDir.isEmpty()) {
+                    return dynamicDir;
+                }
+                if (configuredDir != null && !configuredDir.isEmpty()) {
+                    return configuredDir;
+                }
+                return "";
+            };
+            adapter.registerRemoteStorage(
+                store.getOssClient(), bucket, store.getServerSideEncryptionAlgorithm(), columnarDirSupplier);
+        }
     }
 
     /**
@@ -630,20 +650,114 @@ public class OSSFileSystem extends FileSystem implements RateLimitable {
         } while (fPart != null);
     }
 
+    private static final String CACHE_BYPASS_PREFIX = "[CACHE_BYPASS_DETECTED] ";
+
     @Override
     public FSDataInputStream open(Path path, int bufferSize) throws IOException {
+        return open(path, bufferSize, null);
+    }
+
+    /**
+     * Variant that accepts a per-statement override of the GeneralCache switch.
+     * When {@code cacheOverride} is non-null, it takes precedence over
+     * {@link OSSCacheAdapter#isEnabled()} (which is driven by DynamicConfig) and
+     * decides whether to go through the GeneralCache path or directly read OSS.
+     */
+    public FSDataInputStream open(Path path, int bufferSize, Boolean cacheOverride) throws IOException {
         final FileStatus fileStatus = getFileStatus(path);
         if (fileStatus.isDirectory()) {
             throw new FileNotFoundException("Can't open " + path +
                 " because it is a directory");
         }
 
+        final String key = pathToKey(path);
         int maxReadAheadPartNumber = DynamicConfig.getInstance().getOssMaxReadAheadPartNumber();
+
+        // Try cache path
+        OSSCacheAdapter adapter = OSSCacheAdapter.getInstanceOrNull();
+        boolean cacheActive = (cacheOverride != null)
+            ? (cacheOverride && adapter != null && adapter.getCache().getRemoteStorageService() != null)
+            : (adapter != null && adapter.isEnabled());
+        if (cacheActive) {
+            FSDataInputStream cached = adapter.tryOpenCachedStream(
+                key, fileStatus.getLen(), getConf(), boundedThreadPool, maxReadAheadPartNumber, statistics);
+            if (cached != null) {
+                return cached;
+            }
+            // Cache enabled but key not in any registered prefix — bypass detected
+            if (OSSCacheAdapter.isBypassDetectionEnabled()) {
+                throw new IllegalStateException(
+                    CACHE_BYPASS_PREFIX + "File not in any registered cache prefix. "
+                        + "key=" + key + ". Register the prefix or disable cache.");
+            }
+            // Detection disabled (e.g. Columnar mode): silently fall through to direct OSS read
+        }
+
+        // Cache not available, fallback to OSSInputStream. When a per-statement
+        // HINT explicitly turns GeneralCache off (cacheOverride=false), pass
+        // allowBypass=true so the downstream guards in OSSInputStream and
+        // OSSFileSystemStore.retrieve do not throw even though DynamicConfig is
+        // still on.
+        boolean allowBypass = (cacheOverride != null && !cacheOverride);
         return new FSDataInputStream(new OSSInputStream(getConf(),
             new SemaphoredDelegatingExecutor(
                 boundedThreadPool, maxReadAheadPartNumber, true),
-            maxReadAheadPartNumber, store, pathToKey(path), fileStatus.getLen(),
-            statistics, rateLimiter));
+            maxReadAheadPartNumber, store, key, fileStatus.getLen(),
+            statistics, rateLimiter, allowBypass));
+    }
+
+    /**
+     * Open an FSDataInputStream at the indicated Path with specified buffer size and range.
+     *
+     * @param path the file to open
+     * @param contentLength the position to start reading from
+     * @return FSDataInputStream
+     */
+    public FSDataInputStream uncheckedOpen(Path path, long contentLength) throws IOException {
+        return uncheckedOpen(path, contentLength, null);
+    }
+
+    /**
+     * Variant of {@link #uncheckedOpen(Path, long)} that accepts a per-statement
+     * override of the GeneralCache switch.
+     */
+    public FSDataInputStream uncheckedOpen(Path path, long contentLength, Boolean cacheOverride) throws IOException {
+        // Validate position and length
+        if (contentLength < 0) {
+            throw new IllegalArgumentException("ContentLength must be non-negative");
+        }
+
+        final String key = pathToKey(path);
+        int maxReadAheadPartNumber = DynamicConfig.getInstance().getOssMaxReadAheadPartNumber();
+
+        // Try cache path
+        OSSCacheAdapter adapter = OSSCacheAdapter.getInstanceOrNull();
+        boolean cacheActive = (cacheOverride != null)
+            ? (cacheOverride && adapter != null && adapter.getCache().getRemoteStorageService() != null)
+            : (adapter != null && adapter.isEnabled());
+        if (cacheActive) {
+            FSDataInputStream cached = adapter.tryOpenCachedStream(
+                key, contentLength, getConf(), boundedThreadPool, maxReadAheadPartNumber, statistics);
+            if (cached != null) {
+                return cached;
+            }
+            // Cache enabled but key not in any registered prefix — bypass detected
+            if (OSSCacheAdapter.isBypassDetectionEnabled()) {
+                throw new IllegalStateException(
+                    CACHE_BYPASS_PREFIX + "File not in any registered cache prefix. "
+                        + "key=" + key + ". Register the prefix or disable cache.");
+            }
+            // Detection disabled (e.g. Columnar mode): silently fall through to direct OSS read
+        }
+
+        // Cache not available, fallback to OSSInputStream. See 3-arg open() above
+        // for the allowBypass rationale.
+        boolean allowBypass = (cacheOverride != null && !cacheOverride);
+        return new FSDataInputStream(new OSSInputStream(getConf(),
+            new SemaphoredDelegatingExecutor(
+                boundedThreadPool, maxReadAheadPartNumber, true),
+            maxReadAheadPartNumber, store, key, contentLength,
+            statistics, rateLimiter, allowBypass));
     }
 
     @Override
@@ -709,8 +823,6 @@ public class OSSFileSystem extends FileSystem implements RateLimitable {
         } else {
             succeed = copyFile(srcPath, srcStatus.getLen(), dstPath);
         }
-        metaCache.invalidate(srcPath);
-        metaCache.invalidate(dstPath);
 
         return srcPath.equals(dstPath) || (succeed && delete(srcPath, true));
     }
@@ -805,7 +917,7 @@ public class OSSFileSystem extends FileSystem implements RateLimitable {
         return store;
     }
 
-    public Cache<Path, FileStatus> getMetaCache() {
-        return metaCache;
+    public BlockingThreadPoolExecutorService getBoundedThreadPool() {
+        return boundedThreadPool;
     }
 }

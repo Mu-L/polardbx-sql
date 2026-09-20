@@ -23,8 +23,9 @@ import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.oss.CreateFileStorageTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.oss.OSSTaskUtils;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.gms.engine.FileStorageInfoKey;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 
@@ -33,8 +34,8 @@ import java.util.Set;
 
 import static com.alibaba.polardbx.gms.topology.SystemDbHelper.DEFAULT_DB_NAME;
 
-public class CreateFileStorageJobFactory extends DdlJobFactory {
-    private static final Logger logger = LoggerFactory.getLogger("oss");
+public class CreateFileStorageJobFactory extends OnlineDdlJobFactory {
+    private static final Logger logger = LoggerFactory.getLogger("mpp_log");
 
     private ExecutionContext executionContext;
     private Engine engine;
@@ -45,6 +46,7 @@ public class CreateFileStorageJobFactory extends DdlJobFactory {
         Engine engine, Map<FileStorageInfoKey, String> items,
         Map<FileStorageInfoKey.AzureConnectionStringKey, String> azureItems,
         ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.META_ONLY);
         this.executionContext = executionContext;
         this.engine = engine;
         this.items = items;

@@ -111,6 +111,11 @@ public interface Capabilities {
 
     int CLIENT_CONNECT_ATTRS = 0x00100000;
 
+    // 客户端支持 session-track 协议扩展（MySQL 5.7+）
+    // 当客户端在握手阶段声明该能力位后，服务端可以在 OK 包中携带
+    // session_state_changes，主动告知客户端当前 schema / 系统变量等会话状态变化。
+    int CLIENT_SESSION_TRACK = 1 << 23;
+
     // 客户端不需要EOF包，使用OK包来替代EOF包
     int CLIENT_DEPRECATE_EOF = 1 << 24;
 }

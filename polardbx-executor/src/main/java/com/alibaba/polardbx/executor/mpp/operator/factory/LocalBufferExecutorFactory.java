@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.mpp.operator.factory;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.mpp.deploy.ServiceProvider;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.OutputBufferMemoryManager;
 import com.alibaba.polardbx.executor.mpp.operator.LocalAllBufferExec;
@@ -77,6 +78,7 @@ public class LocalBufferExecutorFactory extends ExecutorFactory {
 
     private synchronized List<Executor> createAllExecutor(ExecutionContext context) {
         if (executors.isEmpty()) {
+            long waitNotEmptyInMillis = context.getParamManager().getLong(ConnectionParams.WAIT_FOR_NOT_EMPTY_MS);
             for (int i = 0; i < parallelism; i++) {
                 LocalBufferExec bufferExec;
                 if (spillOutput) {
@@ -84,7 +86,8 @@ public class LocalBufferExecutorFactory extends ExecutorFactory {
                         outputBufferMemoryManager, columnMetaList,
                         ServiceProvider.getInstance().getServer().getSpillerFactory());
                 } else {
-                    bufferExec = new LocalBufferExec(outputBufferMemoryManager, columnMetaList, syncMode);
+                    bufferExec =
+                        new LocalBufferExec(outputBufferMemoryManager, columnMetaList, syncMode, waitNotEmptyInMillis);
                 }
                 executors.add(bufferExec);
             }

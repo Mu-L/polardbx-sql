@@ -11,6 +11,8 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
+import static java.lang.Thread.sleep;
+
 public class DdlFailedTest extends DDLBaseNewDBTestCase {
     static private final String DATABASE_NAME = "DdlFailedTest";
 
@@ -49,7 +51,7 @@ public class DdlFailedTest extends DDLBaseNewDBTestCase {
 
         sql1 =
             "/*+TDDL:cmd_extra(FP_STATISTIC_SAMPLE_ERROR=true)*/alter table t1 add global index gsi1(a) partition by key(a) partitions 5";
-        JdbcUtil.executeUpdateFailed(tddlConnection, sql1, "failed with state PAUSED");
+        JdbcUtil.executeUpdateFailed(tddlConnection, sql1, "FP_STATISTIC_SAMPLE_ERROR");
 
         Long jobId = getDDLJobId(tddlConnection);
         sql1 = "rollback ddl " + jobId;
@@ -68,7 +70,7 @@ public class DdlFailedTest extends DDLBaseNewDBTestCase {
 
         sql1 = "/*+TDDL:cmd_extra(SKIP_DDL_RESPONSE=true,FP_STATISTIC_SAMPLE_ERROR=true)*/"
             + "alter table t1 add global index gsi1(a) partition by key(a) partitions 5";
-        JdbcUtil.executeUpdateFailed(tddlConnection, sql1, "failed with state PAUSED");
+        JdbcUtil.executeUpdateFailed(tddlConnection, sql1, "FP_STATISTIC_SAMPLE_ERROR");
 
         Long jobId = getDDLJobId(tddlConnection);
         sql1 = "rollback ddl " + jobId;
@@ -103,6 +105,93 @@ public class DdlFailedTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateFailed(tddlConnection, sql1, "injected failure from FP_CREATE_PROCEDURE_ERROR");
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+    }
+
+    @Test
+    public void testCheckTableMetaVersionAndReloadTable() throws SQLException {
+        String sql1 = "drop table if exists t100";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql1);
+
+        sql1 = "create table t100(a int) partition by key(a) partitions 2";
+        JdbcUtil.executeSuccess(tddlConnection, sql1);
+
+        sql1 = String.format(
+            "/*+TDDL:node('__META_DB__')*/ update tables set version=version+1 where table_schema='%s' and table_name='%s'",
+            DATABASE_NAME, "t100");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql1);
+
+        sql1 = "alter table t100 add column b int";
+        JdbcUtil.executeUpdateFailed(tddlConnection, sql1, "ERR_CHECK_TABLE_META_VERSION");
+
+        sql1 = "reload table";
+        JdbcUtil.executeUpdateFailed(tddlConnection, sql1, "table name can not be empty");
+
+        sql1 = "reload table t100";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql1);
+
+        Long jobId = getDDLJobId(tddlConnection);
+        sql1 = "continue ddl " + jobId;
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql1);
+    }
+
+    @Test
+    public void testCheckTableMetaVersionErrorMsg() throws SQLException {
+        String sql1 = "drop table if exists t102";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql1);
+
+        sql1 = "create table t102(a int) partition by key(a) partitions 2";
+        JdbcUtil.executeSuccess(tddlConnection, sql1);
+
+        sql1 = String.format(
+            "/*+TDDL:node('__META_DB__')*/ update tables set version=version+1 where table_schema='%s' and table_name='%s'",
+            DATABASE_NAME, "t102");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql1);
+
+        sql1 = "alter table t102 add column b int";
+        // the version-check failure must surface the precise version comparison info,
+        // not only the generic "failed to check tableMeta version" wrapper message
+        String errMsg = JdbcUtil.executeUpdateFailedReturn(tddlConnection, sql1);
+        Assert.assertTrue(errMsg.contains("ERR_CHECK_TABLE_META_VERSION"), errMsg);
+        Assert.assertTrue(errMsg.contains("not equal to the version"), errMsg);
+
+        sql1 = "reload table t102";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql1);
+
+        Long jobId = getDDLJobId(tddlConnection);
+        sql1 = "continue ddl " + jobId;
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql1);
+    }
+
+    @Test
+    public void testCheckTableMetaVersionWithSubJob() throws SQLException {
+        String sql1 = "drop table if exists t101";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql1);
+
+        sql1 = "create table t101(a int) partition by key(a) partitions 2";
+        JdbcUtil.executeSuccess(tddlConnection, sql1);
+
+        sql1 = String.format(
+            "/*+TDDL:node('__META_DB__')*/ update tables set version=version+1 where table_schema='%s' and table_name='%s'",
+            DATABASE_NAME, "t101");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql1);
+
+        sql1 = "alter table t101 partition by key(a) partitions 27";
+        JdbcUtil.executeUpdateFailed(tddlConnection, sql1, "ERR_CHECK_TABLE_META_VERSION");
+
+        try {
+            sleep(2000);
+        } catch (InterruptedException e) {
+            // ignore
+        }
+
+        JobInfo jobInfo = fetchCurrentJob("t101");
+        Assert.assertTrue(jobInfo == null);
+
+        sql1 = "reload table t101";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql1);
+
+        sql1 = "alter table t101 partition by key(a) partitions 27";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql1);
     }
 
     private static Long getDDLJobId(Connection connection) throws SQLException {

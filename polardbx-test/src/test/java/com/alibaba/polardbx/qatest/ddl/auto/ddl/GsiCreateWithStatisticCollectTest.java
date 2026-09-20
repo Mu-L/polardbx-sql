@@ -11,6 +11,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Timestamp;
+import java.util.Random;
 
 /**
  * @author fangwu
@@ -21,9 +22,9 @@ public class GsiCreateWithStatisticCollectTest extends BaseTestCase {
 
     private static String CREATE_TABLE = "CREATE TABLE IF NOT EXISTS %s (\n"
         + "  `id` bigint(11) NOT NULL AUTO_INCREMENT,\n"
-        + "  `order_id` varchar(20) DEFAULT NULL,\n"
-        + "  `buyer_id` varchar(20) DEFAULT NULL,\n"
-        + "  `seller_id` varchar(20) DEFAULT NULL,\n"
+        + "  `order_id` bigint(11) DEFAULT 0,\n"
+        + "  `buyer_id` bigint(11) DEFAULT 0,\n"
+        + "  `seller_id` bigint(11) DEFAULT 0,\n"
         + "  PRIMARY KEY (`id`),\n"
         + "  KEY `l_i_order` (`order_id`)\n"
         + ") ENGINE=InnoDB DEFAULT CHARSET=utf8 partition by hash(`order_id`) partitions 16;";
@@ -67,10 +68,11 @@ public class GsiCreateWithStatisticCollectTest extends BaseTestCase {
             // insert table
             String insertSql = String.format(INSERT_TABLE, TB_NAME);
             PreparedStatement ps = c.prepareStatement(insertSql);
+            Random r = new Random();
             for (int i = 0; i < 1000; i++) {
-                ps.setString(1, StringUtil.getRandomString(10));
-                ps.setString(2, StringUtil.getRandomString(10));
-                ps.setString(3, StringUtil.getRandomString(10));
+                ps.setLong(1, r.nextInt(1000));
+                ps.setLong(2, r.nextInt(1000));
+                ps.setLong(3, r.nextInt(1000));
                 ps.addBatch();
             }
             ps.executeBatch();

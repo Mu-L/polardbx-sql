@@ -56,7 +56,7 @@ public interface ITransactionManager extends Lifecycle, ITransactionManagerUtil 
 
     void unregister(long txid);
 
-    default boolean supportAsyncCommit() {
+    default boolean supportAsyncCommit57() {
         return false;
     }
 

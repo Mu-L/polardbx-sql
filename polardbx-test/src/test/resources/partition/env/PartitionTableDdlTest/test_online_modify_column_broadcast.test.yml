@@ -3,17 +3,11 @@ drop table if exists b2;
 drop table if exists b3;
 drop table if exists b4;
 
-drop tablegroup if exists broadcast1;
-drop tablegroup if exists broadcast2;
+create table b1(a int primary key, b int) broadcast;
+create table b2(a bit(10) primary key, b int) broadcast;
 
-create tablegroup broadcast1;
-create tablegroup broadcast2;
-
-create table b1(a int primary key, b int) single tablegroup = broadcast1;
-create table b2(a bit(10) primary key, b int) single tablegroup = broadcast1;
-
-create table b3(a int primary key, b int) single tablegroup = broadcast2;
-create table b4(a bit(10) primary key, b int) single tablegroup = broadcast2;
+create table b3(a int primary key, b int) broadcast;
+create table b4(a bit(10) primary key, b int) broadcast;
 
 insert into b1 values(1,1);
 insert into b2 values(2,2);

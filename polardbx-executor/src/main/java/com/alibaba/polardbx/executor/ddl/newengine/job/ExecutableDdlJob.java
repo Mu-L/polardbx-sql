@@ -16,10 +16,13 @@
 
 package com.alibaba.polardbx.executor.ddl.newengine.job;
 
+import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.ddl.newengine.dag.DirectedAcyclicGraph;
 import com.alibaba.polardbx.executor.mpp.metadata.NotNull;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import org.apache.commons.collections.CollectionUtils;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -31,6 +34,16 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ExecutableDdlJob extends AbstractDdlJob {
 
     private transient final Map<String, DdlTask> labeledTasks = new ConcurrentHashMap<>();
+
+    public List<String> getMppNodeList() {
+        return mppNodeList;
+    }
+
+    public void setMppNodeList(List<String> mppNodeList) {
+        this.mppNodeList = mppNodeList;
+    }
+
+    public transient List<String> mppNodeList = new ArrayList<>();
 
     public ExecutableDdlJob() {
         super();
@@ -44,8 +57,23 @@ public class ExecutableDdlJob extends AbstractDdlJob {
         synchronized (taskGraph) {
             taskGraph.addGraph(ddlJob.taskGraph);
             this.addExcludeResources(ddlJob.getExcludeResources());
+            this.addSharedResources(ddlJob.getSharedResources());
         }
         return this;
+    }
+
+    @Override
+    public List<String> getExtraExplainInfo(ExecutionContext ec) {
+        List<String> result = new ArrayList<>();
+        String MPP_NODE_LIST = " MPP_NODE: %s ";
+        String mppNodeStr = "";
+        if (GeneralUtil.isEmpty(mppNodeList)) {
+            mppNodeStr = String.format(MPP_NODE_LIST, "LOCAL");
+        } else {
+            mppNodeStr = String.format(MPP_NODE_LIST, mppNodeList);
+        }
+        result.add(mppNodeStr);
+        return result;
     }
 
     /**
@@ -78,6 +106,7 @@ public class ExecutableDdlJob extends AbstractDdlJob {
 
         // combine resources
         this.excludeResources.addAll(job.getExcludeResources());
+        this.sharedResources.addAll(job.getSharedResources());
         return this;
     }
 
@@ -98,6 +127,7 @@ public class ExecutableDdlJob extends AbstractDdlJob {
         addTaskRelationship(predecessor, job.getHead());
 
         this.excludeResources.addAll(job.getExcludeResources());
+        this.sharedResources.addAll(job.getSharedResources());
         return this;
     }
 
@@ -115,6 +145,7 @@ public class ExecutableDdlJob extends AbstractDdlJob {
 
         // combine resources
         this.excludeResources.addAll(job.getExcludeResources());
+        this.sharedResources.addAll(job.getSharedResources());
         return this;
     }
 
@@ -130,6 +161,7 @@ public class ExecutableDdlJob extends AbstractDdlJob {
 
         // combine resources
         this.excludeResources.addAll(job.getExcludeResources());
+        this.sharedResources.addAll(job.getSharedResources());
         return this;
     }
 
@@ -142,6 +174,7 @@ public class ExecutableDdlJob extends AbstractDdlJob {
 
         // combine resources
         this.excludeResources.addAll(job.getExcludeResources());
+        this.sharedResources.addAll(job.getSharedResources());
         return this;
     }
 

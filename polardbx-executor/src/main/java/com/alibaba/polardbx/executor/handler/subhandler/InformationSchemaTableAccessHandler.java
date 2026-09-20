@@ -97,10 +97,12 @@ public class InformationSchemaTableAccessHandler extends BaseVirtualViewSubClass
         }
 
         List<List<Map<String, Object>>> results =
-            SyncManagerHelper.sync(showTableAccessAction, executionContext.getSchemaName(), SyncScope.ALL);
+            SyncManagerHelper.syncIgnoreExceptions(showTableAccessAction, executionContext.getSchemaName(),
+                SyncScope.ALL);
 
         List<List<Map<String, Object>>> joinClosureResults =
-            SyncManagerHelper.sync(showTableJoinClosureAction, executionContext.getSchemaName(), SyncScope.ALL);
+            SyncManagerHelper.syncIgnoreExceptions(showTableJoinClosureAction, executionContext.getSchemaName(),
+                SyncScope.ALL);
         List<PlanAccessStat.PlanJoinClosureStatInfo> joinClosureStatInfos =
             PlanAccessStat.collectTableJoinClosureStat(joinClosureResults);
 

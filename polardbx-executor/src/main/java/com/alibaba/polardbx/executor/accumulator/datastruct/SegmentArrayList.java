@@ -16,13 +16,18 @@
 
 package com.alibaba.polardbx.executor.accumulator.datastruct;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+
 /**
  * Interface of Segmented Array List
  *
  * @author Eric Fu
  */
-public interface SegmentArrayList {
+public interface SegmentArrayList extends MemoryCountable {
 
     long estimateSize();
 
+    default long estimateGrowthMemoryUsage() {
+        return 0L;
+    }
 }

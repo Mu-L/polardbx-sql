@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.server.handler.privileges.polar;
 
+import com.alibaba.polardbx.druid.sql.ast.SqlType;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsGrantSecurityLabelStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsRevokeSecurityLabelStatement;
 import com.alibaba.polardbx.druid.sql.parser.SQLParserFeature;
@@ -45,6 +46,7 @@ import com.alibaba.polardbx.net.compress.PacketOutputProxyFactory;
 import com.alibaba.polardbx.net.packet.OkPacket;
 import com.alibaba.polardbx.optimizer.parse.FastsqlUtils;
 import com.alibaba.polardbx.server.ServerConnection;
+import com.alibaba.polardbx.server.parser.ServerParse;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -52,6 +54,7 @@ import java.lang.invoke.MethodType;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import static com.alibaba.polardbx.common.exception.code.ErrorCode.ERR_SERVER;
 import static com.alibaba.polardbx.server.parser.ServerParse.CREATE_ROLE;
@@ -108,7 +111,31 @@ public class PrivilegeCommandHandlers {
             FastsqlUtils.parseSql(sql, SQLParserFeature.IgnoreNameQuotes);
         stmtList.removeIf(s -> s instanceof MySqlHintStatement);
         SQLStatement stmt = stmtList.get(0);
-
+        if (conn.getExecutionContext() != null) {
+            switch (commandCode) {
+            case ServerParse.GRANT:
+                conn.getExecutionContext().setSqlType(SqlType.GRANT);
+                break;
+            case ServerParse.REVOKE:
+                conn.getExecutionContext().setSqlType(SqlType.REVOKE);
+                break;
+            case ServerParse.CREATE_USER:
+                conn.getExecutionContext().setSqlType(SqlType.CREATE_USER);
+                break;
+            case ServerParse.DROP_USER:
+                conn.getExecutionContext().setSqlType(SqlType.DROP_USER);
+                break;
+            case ServerParse.CREATE_ROLE:
+                conn.getExecutionContext().setSqlType(SqlType.CREATE_ROLE);
+                break;
+            case ServerParse.DROP_ROLE:
+                conn.getExecutionContext().setSqlType(SqlType.DROP_ROLE);
+                break;
+            case ServerParse.SET_PASSWORD:
+                conn.getExecutionContext().setSqlType(SqlType.SET_PASSWORD);
+                break;
+            }
+        }
         if (stmt instanceof DrdsGrantSecurityLabelStatement
             || stmt instanceof DrdsRevokeSecurityLabelStatement) {
             return conn.execute(sql, hasMore);

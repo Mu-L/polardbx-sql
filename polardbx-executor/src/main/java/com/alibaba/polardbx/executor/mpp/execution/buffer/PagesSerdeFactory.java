@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.mpp.execution.buffer;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import io.airlift.compress.lz4.Lz4Compressor;
@@ -41,7 +42,9 @@ public class PagesSerdeFactory {
     }
 
     public PagesSerde createPagesSerde(List<DataType> types, ExecutionContext context) {
-        if (compressionEnabled) {
+        boolean configCompressionEnable =
+            context.getParamManager().getBoolean(ConnectionParams.ENABLE_MPP_SERIALIZED_CHUNK_COMPRESSION);
+        if (compressionEnabled || configCompressionEnable) {
             return new PagesSerde(Optional.of(new Lz4Compressor()), Optional.of(new Lz4Decompressor()), types, context);
         } else {
             return new PagesSerde(Optional.empty(), Optional.empty(), types, context);

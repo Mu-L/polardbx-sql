@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.common.utils.bloomfilter.RFBloomFilter;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFItem;
@@ -23,9 +24,11 @@ import com.alibaba.polardbx.executor.mpp.planner.FragmentRFItemKey;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFManager;
 import com.alibaba.polardbx.executor.operator.scan.LazyEvaluator;
 import com.alibaba.polardbx.executor.operator.scan.RFEfficiencyChecker;
+import com.alibaba.polardbx.executor.operator.util.TopNThresholdFilter;
 import com.alibaba.polardbx.executor.vectorized.VectorizedExpression;
 import com.alibaba.polardbx.optimizer.statis.OperatorStatistics;
 import com.google.common.base.Preconditions;
+import org.openjdk.jol.info.ClassLayout;
 import org.roaringbitmap.RoaringBitmap;
 
 import java.util.Arrays;
@@ -33,15 +36,28 @@ import java.util.BitSet;
 import java.util.Map;
 
 public class RFLazyEvaluator implements LazyEvaluator<Chunk, BitSet> {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(RFLazyEvaluator.class).instanceSize();
 
+    @FieldMemoryCounter(value = false)
     private final FragmentRFManager manager;
+    @FieldMemoryCounter(value = false)
     private final OperatorStatistics operatorStatistics;
+    @FieldMemoryCounter(value = false)
     private final RFEfficiencyChecker efficiencyChecker;
+    @FieldMemoryCounter(value = false)
     private final Map<FragmentRFItemKey, RFBloomFilter[]> rfBloomFilterMap;
 
     private final int itemSize;
+
+    @FieldMemoryCounter(value = false)
     private final FragmentRFItemKey[] itemKeys;
+    @FieldMemoryCounter(value = false)
     private final FragmentRFItem[] items;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE;
+    }
 
     public RFLazyEvaluator(FragmentRFManager manager, OperatorStatistics operatorStatistics,
                            Map<FragmentRFItemKey, RFBloomFilter[]> rfBloomFilterMap) {
@@ -107,6 +123,10 @@ public class RFLazyEvaluator implements LazyEvaluator<Chunk, BitSet> {
             boolean useXXHashInFilter = item.useXXHashInFilter();
 
             FragmentRFItemKey itemKey = itemKeys[i];
+            if (!itemKey.isValid()) {
+                continue;
+            }
+
             RFBloomFilter[] rfBloomFilters = rfBloomFilterMap.get(itemKey);
 
             // We have not received the runtime filter of this item key from build side.
@@ -114,33 +134,42 @@ public class RFLazyEvaluator implements LazyEvaluator<Chunk, BitSet> {
                 continue;
             }
 
-            // check runtime filter efficiency.
-            if (!efficiencyChecker.check(itemKey)) {
-                continue;
-            }
-
             final int originalCount = selectedCount;
             switch (item.getRFType()) {
             case BROADCAST: {
-                selectedCount = chunk.getBlock(filterChannel).mightContainsLong(rfBloomFilters[0], bitmap, true);
+                if (efficiencyChecker.check(itemKey)) {
+                    selectedCount = chunk.getBlock(filterChannel).mightContainsLong(rfBloomFilters[0], bitmap, true);
+                    // sample the filter ratio of runtime filter.
+                    efficiencyChecker.sample(itemKey, originalCount, selectedCount);
+                }
+
                 break;
             }
             case LOCAL: {
-                if (useXXHashInFilter) {
-                    selectedCount =
-                        chunk.getBlock(filterChannel).mightContainsLong(totalPartitionCount, rfBloomFilters, bitmap,
-                            true, true);
-                } else {
-                    selectedCount =
-                        chunk.getBlock(filterChannel).mightContainsInt(totalPartitionCount, rfBloomFilters, bitmap,
-                            false, true);
+                if (efficiencyChecker.check(itemKey)) {
+                    if (useXXHashInFilter) {
+                        selectedCount =
+                            chunk.getBlock(filterChannel).mightContainsLong(totalPartitionCount, rfBloomFilters, bitmap,
+                                true, true);
+                    } else {
+                        selectedCount =
+                            chunk.getBlock(filterChannel).mightContainsInt(totalPartitionCount, rfBloomFilters, bitmap,
+                                false, true);
+                    }
+
+                    // sample the filter ratio of runtime filter.
+                    efficiencyChecker.sample(itemKey, originalCount, selectedCount);
+                }
+
+                break;
+            }
+            case TOP_N_THRESHOLD: {
+                if (rfBloomFilters[0] instanceof TopNThresholdFilter && rfBloomFilters[0].isInitialized()) {
+                    selectedCount = chunk.getBlock(filterChannel).mightContainsLong(rfBloomFilters[0], bitmap, true);
                 }
                 break;
             }
             }
-
-            // sample the filter ratio of runtime filter.
-            efficiencyChecker.sample(itemKey, originalCount, selectedCount);
         }
 
         // statistics for filtered rows by runtime filter.

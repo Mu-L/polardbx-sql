@@ -52,11 +52,15 @@ import java.util.stream.Collectors;
  */
 public class CandidateIndex {
 
+    public static final String WHAT_IF_CCI_INFIX = "__what_if_cci_";
+
     public static final String WHAT_IF_GSI_INFIX = "__what_if_gsi_";
 
     public static final String WHAT_IF_INDEX_INFIX = "__what_if_";
 
     public static final String WHAT_IF_AUTO_INDEX_INFIX = "__what_if_auto_shard_key_";
+
+    private static final String ADVISE_CCI_PREFIX = "__advise_index_cci_";
 
     private static final String ADVISE_GSI_PREFIX = "__advise_index_gsi_";
 
@@ -77,9 +81,13 @@ public class CandidateIndex {
 
     private boolean gsi;
 
+    private boolean cci;
+
     private PartitionByDefinition partitionByDefinition;
 
     private PartitionInfo originPartitionInfo;
+
+    private List<String> partColumns;
 
     private Set<String> coveringColumns;
 
@@ -118,10 +126,17 @@ public class CandidateIndex {
 
     public CandidateIndex(String schemaName, String tableName, List<String> columnNames,
                           boolean gsi, Set<String> coveringColumns) {
+        this(schemaName, tableName, columnNames, null, gsi, false, coveringColumns);
+    }
+
+    public CandidateIndex(String schemaName, String tableName, List<String> columnNames, List<String> partColumns,
+                          boolean gsi, boolean cci, Set<String> coveringColumns) {
         this.schemaName = schemaName;
         this.tableName = tableName;
         this.columnNames = columnNames;
+        this.partColumns = partColumns;
         this.gsi = gsi;
+        this.cci = cci;
         if (coveringColumns == null) {
             coveringColumns = new HashSet<>();
         }
@@ -154,14 +169,17 @@ public class CandidateIndex {
 //            this.partitionByDefinition.setStrategy(PartitionStrategy.KEY);
 //            this.partitionByDefinition.setPartitions(new ArrayList<>());
             List<String> newGsiAllCols = new ArrayList<>();
-            newGsiAllCols.addAll(columnNames);
-            newGsiAllCols.addAll(coveringColumns);
+            newGsiAllCols.addAll(this.columnNames);
+            newGsiAllCols.addAll(this.coveringColumns);
             TableMeta primaryTblMeta =
                 OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(tableName);
             long hashPartCnt = primaryTblMeta.getPartitionInfo().getPartitionBy().getPartitions().size();
+            if (cci) {
+                hashPartCnt = InstConfUtil.getInt(ConnectionParams.CCI_ADVISOR_DEFAULT_PARTITIONS);
+            }
             PartitionInfo newGsiPartInfo =
                 PartitionInfoBuilder.buildPartInfoWithKeyStrategyForNewGsiMeta(schemaName, tableName, primaryTblMeta,
-                    newGsiAllCols, columnNames, hashPartCnt);
+                    newGsiAllCols, partColumns == null ? columnNames : partColumns, hashPartCnt);
             this.partitionByDefinition = newGsiPartInfo.getPartitionBy();
 
             // clear dbpartition and tbpartition
@@ -237,7 +255,9 @@ public class CandidateIndex {
     }
 
     public String getIndexName() {
-        if (gsi) {
+        if (cci) {
+            return tableName + WHAT_IF_CCI_INFIX + String.join("_", columnNames);
+        } else if (gsi) {
             return tableName + WHAT_IF_GSI_INFIX + String.join("_", columnNames);
         } else {
             return getLocalIndexName();
@@ -245,7 +265,9 @@ public class CandidateIndex {
     }
 
     public String getIndexNameForUser() {
-        if (gsi) {
+        if (cci) {
+            return ADVISE_CCI_PREFIX + tableName + "_" + String.join("_", columnNames);
+        } else if (gsi) {
             return ADVISE_GSI_PREFIX + tableName + "_" + String.join("_", columnNames);
         } else {
             return ADVISE_INDEX_PREFIX + tableName + "_" + String.join("_", columnNames);
@@ -259,14 +281,22 @@ public class CandidateIndex {
 
         // for gsi, the index table will add suffix "_$xxxx" automatically
         sql.append(schemaName)
-            .append("`.`").append(tableName).append("` ADD ").append(gsi ? "GLOBAL" : "").append(" INDEX `")
+            .append("`.`").append(tableName).append("` ADD ");
+
+        if (cci) {
+            sql.append("CLUSTERED COLUMNAR");
+        } else if (gsi) {
+            sql.append("GLOBAL");
+        }
+
+        sql.append(" INDEX `")
             .append(indexNameForUser.substring(0, Math.min(INDEX_LENGTH, indexNameForUser.length()))).append("`(")
             .append(String.join(",",
                 columnNames.stream().map(name -> "`" + name + "`").collect(Collectors.toList())))
             .append(")");
 
         if (gsi) {
-            if (coveringColumns != null && !coveringColumns.isEmpty()) {
+            if (coveringColumns != null && !coveringColumns.isEmpty() && !cci) {
                 sql.append(" COVERING(")
                     .append(String.join(",",
                         coveringColumns.stream().map(name -> "`" + name + "`").collect(Collectors.toList())))
@@ -274,7 +304,7 @@ public class CandidateIndex {
             }
 
             if (partitionByDefinition != null) {
-                sql.append(" ").append(partitionByDefinition.toString());
+                sql.append(" ").append(partitionByDefinition.toString().replace("\n", " "));
             } else {
                 sql.append(" DBPARTITION BY ").append(getDbPartitionPolicy().toUpperCase());
                 if (getDbPartitionPolicy().indexOf("(") != -1) {
@@ -320,7 +350,7 @@ public class CandidateIndex {
 
         // reject low cardinality sharding key for gsi
         if (isGsi() || getTableMeta().isAutoPartition()) {
-            String columnName = columnNames.get(0);
+            String columnName = partColumns == null ? columnNames.get(0) : partColumns.get(0);
             StatisticResult statisticResult =
                 StatisticManager.getInstance().getCardinality(schemaName, tableName, columnName, true, false);
             long cardinality = statisticResult.getLongValue();
@@ -370,6 +400,9 @@ public class CandidateIndex {
         return true;
     }
 
+    /**
+     * 对于列存索引先不进行处理
+     */
     public boolean alreadyExist() {
         TableMeta tableMeta = getTableMeta();
         if (gsi) {
@@ -710,8 +743,17 @@ public class CandidateIndex {
                 return null;
             }
         }
-        CandidateIndex newCandidateIndex = new CandidateIndex(schemaName, tableName, columnNames, true,
-            coveringColumns);
+        CandidateIndex newCandidateIndex =
+            new CandidateIndex(schemaName, tableName, columnNames, partColumns, true, cci,
+                coveringColumns);
         return newCandidateIndex;
+    }
+
+    public boolean isCci() {
+        return cci;
+    }
+
+    public List<String> getPartColumns() {
+        return partColumns;
     }
 }

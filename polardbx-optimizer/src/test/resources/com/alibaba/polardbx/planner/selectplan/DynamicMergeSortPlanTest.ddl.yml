@@ -1,0 +1,43 @@
+test_bill:
+  CREATE TABLE `test_bill` (
+  `id` bigint(20) NOT NULL,
+  `user_id` bigint(20) NOT NULL DEFAULT '0',
+  `broker_id` int(11) NOT NULL DEFAULT '0',
+  `s_id` bigint(20) DEFAULT '0',
+  `biz_id` tinyint(4) NOT NULL,
+  `index_id` int(11) NOT NULL DEFAULT '0',
+  `instrument_id` bigint(20) NOT NULL DEFAULT '0',
+  `coin_id` int(11) NOT NULL DEFAULT '0',
+  `type` int(11) NOT NULL DEFAULT '0',
+  `size` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000',
+  `partition_time` datetime(3) NOT NULL,
+  `create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `modify_time` timestamp(3) NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `created_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `modified_at` timestamp(3) NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  KEY `idx_modified_at` (`modified_at`),
+  KEY `indx2` (`user_id`, `broker_id`, `type`, `id`, `instrument_id`, `biz_id`, `s_id`, `create_time`),
+  KEY `idx_refer_id` (`user_id`, `id`, `type`, `instrument_id`, `biz_id`, `s_id`, `create_time`),
+  KEY `auto_shard_key_partition_time` USING BTREE (`partition_time`),
+  KEY `idx_refer_id1` (`user_id`, `id`, `type`, `instrument_id`, `biz_id`, `s_id`, `partition_time`),
+  KEY `idx_modified_at1` (`user_id`, `modified_at`)
+  ) ENGINE = InnoDB 
+  PARTITION BY KEY(`user_id`)
+  PARTITIONS 64
+  SUBPARTITION BY RANGE(TO_DAYS(`partition_time`))
+  (SUBPARTITION `p202309` VALUES LESS THAN (739159),
+  SUBPARTITION `p202310` VALUES LESS THAN (739190),
+  SUBPARTITION `p202311` VALUES LESS THAN (739220),
+  SUBPARTITION `p202312` VALUES LESS THAN (739251),
+  SUBPARTITION `p202401` VALUES LESS THAN (739282),
+  SUBPARTITION `p202402` VALUES LESS THAN (739311),
+  SUBPARTITION `p202403` VALUES LESS THAN (739342),
+  SUBPARTITION `p202404` VALUES LESS THAN (739372),
+  SUBPARTITION `p202405` VALUES LESS THAN (739403),
+  SUBPARTITION `p202406` VALUES LESS THAN (739433),
+  SUBPARTITION `p202407` VALUES LESS THAN (739464),
+  SUBPARTITION `p202408` VALUES LESS THAN (739495),
+  SUBPARTITION `p202409` VALUES LESS THAN (739525),
+  SUBPARTITION `p202410` VALUES LESS THAN (739556),
+  SUBPARTITION `p202411` VALUES LESS THAN (739586));

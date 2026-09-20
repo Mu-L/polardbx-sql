@@ -423,7 +423,7 @@ public class SubJobTask extends BaseDdlTask implements CostEstimableDdlTask {
     }
 
     @Override
-    public List<String> explainInfo() {
+    public List<String> explainInfo(ExecutionContext ec) {
         return new ArrayList<>();
 
     }

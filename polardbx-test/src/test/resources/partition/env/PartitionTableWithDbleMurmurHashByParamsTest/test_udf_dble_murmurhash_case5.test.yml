@@ -1,0 +1,24 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+drop table if exists dblemur_t5;
+create table dblemur_t5
+  (a varchar(64)，b bigint)
+  partition by udf_hash(
+  `a` with udf_params (
+  'dble/unitmurmurhash',
+  '{"partitionCount": "2","isDigitCheck": "0","leftPaddingChar": "A","shardingValueMaxLength": "20"}'
+  )
+  )
+ partitions 2;
+
+
+insert into dblemur_t5 values ('2', 2);
+select * from dblemur_t5 where a='2';
+select part_route('','dblemur_t5', '2');
+  ## error_msg: $# check routeKey is legal #$
+select part_route('','dblemur_t5', '');
+select part_route('','dblemur_t5', '123456789012345678901');
+select part_route('','dblemur_t5', 'aaa');
+
+drop table dblemur_t5;

@@ -23,11 +23,14 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.archive.schemaevolution.ColumnMetaWithTs;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarColumnEvolutionAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarColumnEvolutionRecord;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarIndexEvolutionAccessor;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarIndexEvolutionRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarPartitionEvolutionAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarPartitionEvolutionRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableEvolutionAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableEvolutionRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnsRecord;
+import com.alibaba.polardbx.gms.metadb.table.IndexesRecord;
 import com.alibaba.polardbx.gms.partition.TablePartitionRecord;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
@@ -38,24 +41,19 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import org.apache.calcite.sql.type.SqlTypeName;
-import org.eclipse.jetty.util.ConcurrentHashSet;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
-import java.util.SortedMap;
 import java.util.SortedSet;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.ExecutionException;
@@ -67,7 +65,7 @@ import java.util.stream.IntStream;
 import static com.alibaba.polardbx.optimizer.config.table.OrcMetaUtils.TYPE_FACTORY;
 
 public class MultiVersionColumnarTableMeta implements Purgeable {
-    private static final Logger LOGGER = LoggerFactory.getLogger("COLUMNAR_TRANS");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
     // this size is based on columnar schema compaction frequency
     private static final int MAX_VERSION_SCHEMA_CACHE_SIZE = 16;
 
@@ -84,7 +82,7 @@ public class MultiVersionColumnarTableMeta implements Purgeable {
     // schema_ts -> version_id
     // THE schema_ts COULD BE NULL, which means that the columnar has not processed with this version
     // notice that only schema_ts is ordered, while version_id may be not
-    private final SortedMap<Long, Long> versionIdMap = new ConcurrentSkipListMap<>();
+    private final ConcurrentNavigableMap<Long, Long> versionIdMap = new ConcurrentSkipListMap<>();
 
     // version_id -> [column_id1 ...]
     // notice that columnar_table_evolution stores id rather than field_id of columnar_column_evolution
@@ -93,6 +91,12 @@ public class MultiVersionColumnarTableMeta implements Purgeable {
     // version_id -> [partition_id ...]
     private final Map<Long, List<Long>> multiVersionPartitions = new ConcurrentHashMap<>();
 
+    // version_id -> [index_id ...]
+    private final Map<Long, List<Long>> multiVersionPrimaryKeyIds = new ConcurrentHashMap<>();
+
+    // version_id -> [index_id ...]
+    private final Map<Long, List<Long>> multiVersionSortKeyIds = new ConcurrentHashMap<>();
+
     // for columnar_column_evoluion: id -> field_id
     private final Map<Long, Long> columnFieldIdMap = new ConcurrentHashMap<>();
 
@@ -100,9 +104,22 @@ public class MultiVersionColumnarTableMeta implements Purgeable {
     private final Map<Long, SortedSet<Long>> multiVersionColumnIds = new ConcurrentHashMap<>();
 
     // schema_ts -> partition_info
-    private final SortedMap<Long, PartitionInfo> multiVersionPartitionInfos = new ConcurrentSkipListMap<>();
+    private final ConcurrentNavigableMap<Long, PartitionInfo> multiVersionPartitionInfos =
+        new ConcurrentSkipListMap<>();
+
+    // schema_ts -> primary_key
+    private final ConcurrentNavigableMap<Long, List<String>> multiVersionPrimaryKeys = new ConcurrentSkipListMap<>();
+
+    // schema_ts -> sort_key
+    private final ConcurrentNavigableMap<Long, List<String>> multiVersionSortKeys = new ConcurrentSkipListMap<>();
+
+    // schema_ts -> column_meta
+    private final ConcurrentNavigableMap<Long, List<ColumnMeta>> multiVersionColumnMetas =
+        new ConcurrentSkipListMap<>();
 
     private final Map<Long, TablePartitionRecord> allPartitions = new ConcurrentHashMap<>();
+
+    private final Map<Long, IndexesRecord> allIndexes = new ConcurrentHashMap<>();
 
     private final LoadingCache<Long, List<ColumnMeta>> columnMetaListByTso;
     private final LoadingCache<Long, Map<Long, Integer>> fieldIdMapByTso;
@@ -112,10 +129,10 @@ public class MultiVersionColumnarTableMeta implements Purgeable {
     public MultiVersionColumnarTableMeta(long tableId) {
         this.tableId = tableId;
 
-        String tableName = String.valueOf(this.tableId);
-        TSO_COLUMN = new ColumnMeta(tableName, "tso", null,
+        String tableIdName = String.valueOf(this.tableId);
+        TSO_COLUMN = new ColumnMeta(tableIdName, "tso", null,
             new Field(TYPE_FACTORY.createSqlType(SqlTypeName.BIGINT)));
-        POSITION_COLUMN = new ColumnMeta(tableName, "position", null,
+        POSITION_COLUMN = new ColumnMeta(tableIdName, "position", null,
             new Field(TYPE_FACTORY.createSqlType(SqlTypeName.BIGINT)));
 
         columnMetaListByTso = CacheBuilder.newBuilder()
@@ -211,6 +228,30 @@ public class MultiVersionColumnarTableMeta implements Purgeable {
     }
 
     @Nullable
+    public List<ColumnMeta> getColumnMetasByAnyTso(long schemaTso) {
+        Long validSchemaTso = multiVersionColumnMetas.headMap(schemaTso + 1).lastKey();
+        return multiVersionColumnMetas.get(validSchemaTso);
+    }
+
+    @Nullable
+    public List<String> getPrimaryKeyColumnsByAnyTso(long schemaTso) {
+        Long validSchemaTso = multiVersionPrimaryKeys.headMap(schemaTso + 1).lastKey();
+        return multiVersionPrimaryKeys.get(validSchemaTso);
+    }
+
+    @Nullable
+    public List<String> getSortKeyColumnsByAnyTso(long schemaTso) {
+        Long validSchemaTso = multiVersionSortKeys.headMap(schemaTso + 1).lastKey();
+        return multiVersionSortKeys.get(validSchemaTso);
+    }
+
+    @Nullable
+    public PartitionInfo getPartitionInfoByAnyTso(long schemaTso) {
+        Long validSchemaTso = multiVersionPartitionInfos.headMap(schemaTso + 1).lastKey();
+        return multiVersionPartitionInfos.get(validSchemaTso);
+    }
+
+    @Nullable
     public PartitionInfo getPartitionInfoByTso(long schemaTso) {
         if (versionIdMap.isEmpty() || versionIdMap.lastKey() < schemaTso) {
             return null;
@@ -221,7 +262,7 @@ public class MultiVersionColumnarTableMeta implements Purgeable {
     }
 
     @Nullable
-    public SortedMap<Long, PartitionInfo> getPartitionInfos(long schemaTso) {
+    public ConcurrentNavigableMap<Long, PartitionInfo> getPartitionInfos(long schemaTso) {
         if (versionIdMap.isEmpty() || versionIdMap.lastKey() < schemaTso) {
             return null;
         }
@@ -263,6 +304,7 @@ public class MultiVersionColumnarTableMeta implements Purgeable {
         List<ColumnarTableEvolutionRecord> tableEvolutionRecordList;
         List<ColumnarColumnEvolutionRecord> columnEvolutionRecordList;
         List<ColumnarPartitionEvolutionRecord> partitionEvolutionRecordList;
+        List<ColumnarIndexEvolutionRecord> indexEvolutionRecordList;
 
         try (Connection connection = MetaDbUtil.getConnection()) {
             ColumnarTableEvolutionAccessor accessor = new ColumnarTableEvolutionAccessor();
@@ -291,6 +333,17 @@ public class MultiVersionColumnarTableMeta implements Purgeable {
                     .collect(Collectors.toList())
             );
 
+            ColumnarIndexEvolutionAccessor indexAccessor = new ColumnarIndexEvolutionAccessor();
+            indexAccessor.setConnection(connection);
+            indexEvolutionRecordList = indexAccessor.queryTableIdAndVersionIdsOrderById(
+                tableId,
+                tableEvolutionRecordList.stream()
+                    // For those versions which have not been loaded
+                    .filter(r -> !multiVersionPrimaryKeyIds.containsKey(r.versionId))
+                    .map(r -> r.versionId)
+                    .collect(Collectors.toList())
+            );
+
         } catch (SQLException e) {
             throw new TddlRuntimeException(ErrorCode.ERR_COLUMNAR_SNAPSHOT, e,
                 String.format("Failed to generate columnar schema of tso: %d", schemaTso));
@@ -304,7 +357,8 @@ public class MultiVersionColumnarTableMeta implements Purgeable {
                 columnsRecord,
                 tableEvolutionRecordList.get(0).indexName,
                 columnsRecord.collationName,
-                columnsRecord.characterSetName);
+                columnsRecord.characterSetName,
+                true);
             ColumnMetaWithTs columnMetaWithTs = new ColumnMetaWithTs(columnEvolutionRecord.create, columnMeta);
             if ("PRI".equalsIgnoreCase(columnsRecord.columnKey)) {
                 primaryKeySet.add(id);
@@ -329,11 +383,19 @@ public class MultiVersionColumnarTableMeta implements Purgeable {
             allPartitions.put(id, partitionRecord);
         }
 
+        for (ColumnarIndexEvolutionRecord indexEvolutionRecord : indexEvolutionRecordList) {
+            Long id = indexEvolutionRecord.id;
+            IndexesRecord indexesRecord = indexEvolutionRecord.indexRecord;
+            allIndexes.put(id, indexesRecord);
+        }
+
         for (ColumnarTableEvolutionRecord tableRecord : tableEvolutionRecordList) {
             long commitTs = tableRecord.commitTs;
             long versionId = tableRecord.versionId;
             multiVersionColumns.putIfAbsent(versionId, tableRecord.columns);
             multiVersionPartitions.putIfAbsent(versionId, tableRecord.partitions);
+            multiVersionPrimaryKeyIds.putIfAbsent(versionId, tableRecord.primaryKeys);
+            multiVersionSortKeyIds.putIfAbsent(versionId, tableRecord.sortKeys);
 
             if (commitTs != Long.MAX_VALUE) {
                 versionIdMap.put(commitTs, versionId);
@@ -345,7 +407,38 @@ public class MultiVersionColumnarTableMeta implements Purgeable {
                 if (lastPartitions == null ||
                     (lastPartitions != tableRecord.partitions &&
                         !lastPartitions.equals(tableRecord.partitions))) {
-                    multiVersionPartitionInfos.put(commitTs, buildPartitionInfo(commitTs, tableRecord.partitions));
+                    PartitionInfo partitionInfo = buildPartitionInfo(commitTs, tableRecord.partitions);
+                    partitionInfo.setColumnarSchemaTso(commitTs);
+                    multiVersionPartitionInfos.put(commitTs, partitionInfo);
+                }
+
+                List<Long> lastColumnMetas =
+                    latestTso != Long.MIN_VALUE ? multiVersionColumns.get(versionIdMap.get(latestTso)) : null;
+                if (lastColumnMetas == null ||
+                    (lastColumnMetas != tableRecord.columns &&
+                        !lastPartitions.equals(tableRecord.columns))) {
+                    try {
+                        multiVersionColumnMetas.put(commitTs, columnMetaListByTso.get(commitTs));
+                    } catch (Exception e) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_COLUMNAR_SNAPSHOT, e,
+                            String.format("Failed to generate columnar schema of tso: %d", commitTs));
+                    }
+                }
+
+                List<Long> lastPrimaryKeys =
+                    latestTso != Long.MIN_VALUE ? multiVersionPrimaryKeyIds.get(versionIdMap.get(latestTso)) : null;
+                if (lastPrimaryKeys == null ||
+                    (lastPrimaryKeys != tableRecord.primaryKeys &&
+                        !lastPartitions.equals(tableRecord.primaryKeys))) {
+                    multiVersionPrimaryKeys.put(commitTs, buildIndexColumnNames(tableRecord.primaryKeys));
+                }
+
+                List<Long> lastSortKeys =
+                    latestTso != Long.MIN_VALUE ? multiVersionSortKeyIds.get(versionIdMap.get(latestTso)) : null;
+                if (lastSortKeys == null ||
+                    (lastSortKeys != tableRecord.sortKeys &&
+                        !lastPartitions.equals(tableRecord.sortKeys))) {
+                    multiVersionSortKeys.put(commitTs, buildIndexColumnNames(tableRecord.sortKeys));
                 }
 
                 latestTso = commitTs;
@@ -377,5 +470,11 @@ public class MultiVersionColumnarTableMeta implements Purgeable {
             false,
             false
         );
+    }
+
+    private List<String> buildIndexColumnNames(List<Long> ids) {
+        return ids.stream()
+            .map(id -> allIndexes.get(id).columnName)
+            .collect(Collectors.toList());
     }
 }

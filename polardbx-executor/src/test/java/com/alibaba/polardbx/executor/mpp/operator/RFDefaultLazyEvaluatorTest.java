@@ -69,6 +69,7 @@ public class RFDefaultLazyEvaluatorTest {
         int buildIndex = 0;
         int probeIndex = 0;
         FragmentRFItemKey itemKey = new FragmentRFItemKey(buildColumnName, probeColumnName, buildIndex, probeIndex);
+        itemKey.setValid(true);
 
         // Initialize a new FragmentRFItem.
         boolean useXXHashInBuild = true;
@@ -168,6 +169,7 @@ public class RFDefaultLazyEvaluatorTest {
         // create FragmentRFItemKey
         FragmentRFItemKey itemKey = new FragmentRFItemKey(
             "build_col_1", "probe_col_1", 0, 0);
+        itemKey.setValid(true);
 
         // Initialize a new local FragmentRFItem.
         FragmentRFManager.RFType rfType = FragmentRFManager.RFType.LOCAL;

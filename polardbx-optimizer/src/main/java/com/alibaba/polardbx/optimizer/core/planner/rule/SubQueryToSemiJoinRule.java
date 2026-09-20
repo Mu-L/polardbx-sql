@@ -52,6 +52,7 @@ import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.logical.LogicalAggregate;
+import org.apache.calcite.rel.logical.LogicalCTEProducer;
 import org.apache.calcite.rel.logical.LogicalCorrelate;
 import org.apache.calcite.rel.logical.LogicalFilter;
 import org.apache.calcite.rel.logical.LogicalJoin;
@@ -94,6 +95,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static com.alibaba.polardbx.common.properties.ConnectionParams.ENABLE_SUBQUERY_IGNORE_LIMIT;
 import static com.alibaba.polardbx.optimizer.core.planner.rule.SubQueryToSemiJoinRule.NOT_SUPPORT_SUBQUERY_WITH_BLOCK_NODE;
 import static com.alibaba.polardbx.optimizer.core.planner.rule.SubQueryToSemiJoinRule.NOT_SUPPORT_SUBQUERY_WITH_CORRELATE_COLUMN_WAY_TOO_DEEP;
 import static com.alibaba.polardbx.optimizer.core.planner.rule.SubQueryToSemiJoinRule.NOT_SUPPORT_SUBQUERY_WITH_FORM;
@@ -130,6 +132,9 @@ public abstract class SubQueryToSemiJoinRule extends RelOptRule {
     public static final String NOT_SUPPORT_SCALAR_SUBQUERY_WITH_LIMIT =
         "scalar subquery of correlate in project with limit.";
 
+    public static final String NOT_TRANSPORT_SCALAR_SUBQUERY_TO_SEMI_WITH_EMPTY_CONDITION =
+        "scalar subquery with empty correlate condition";
+
     public static final SubQueryToSemiJoinRule PROJECT = new SubQueryToSemiJoinRule(operand(Project.class,
         null,
         RexUtil.SubQueryFinder.PROJECT_PREDICATE,
@@ -159,6 +164,22 @@ public abstract class SubQueryToSemiJoinRule extends RelOptRule {
         RexNode target = null;
         RexSubQuery replace = e;
         try {
+            /*
+             * Change context:
+             * - Before: handleProject always attempted SemiJoin/left-join conversion for
+             *   scalar subqueries in the projection list, with no per-query override; only
+             *   handleFilter (filter-position subqueries) honored DISABLE_SUBQUERY_TO_SEMI_JOIN.
+             * - Path impact: When DISABLE_SUBQUERY_TO_SEMI_JOIN=true, projection-position
+             *   subqueries are now also routed to buildCorrelateNode (CorrelateApply), matching
+             *   the filter-position behavior. Callers with hint=false are unaffected.
+             * - Capability regression: None with the default (false). When hint=true,
+             *   SemiJoin optimizations are intentionally skipped; semantics are preserved
+             *   via the correlate execution path.
+             */
+            if (PlannerContext.getPlannerContext(e.rel).getParamManager()
+                .getBoolean(ConnectionParams.DISABLE_SUBQUERY_TO_SEMI_JOIN)) {
+                throw new NotSupportException("DISABLE_SUBQUERY_TO_SEMI_JOIN hint");
+            }
             target = applyColumnSub(e,
                 project.getVariablesSet() == null ? ImmutableSet.<CorrelationId>of() : project.getVariablesSet(),
                 builder,
@@ -398,6 +419,21 @@ public abstract class SubQueryToSemiJoinRule extends RelOptRule {
                     if (relWithOverFunc != null) {
                         call.transformTo(relWithOverFunc);
                         return;
+                    }
+                    /*
+                     * Change context:
+                     * - Before: SubQueryToSemiJoinRule always attempted SemiJoin/Join conversion for
+                     *   non-OR correlated subqueries; there was no per-query override.
+                     * - Path impact: When DISABLE_SUBQUERY_TO_SEMI_JOIN=true, all IN/EXISTS/scalar
+                     *   subqueries in this branch are routed to buildCorrelateNode (CorrelateApply).
+                     *   The OR-subquery branch and all other callers with hint=false are unaffected.
+                     * - Capability regression: None with the default (false). When hint=true,
+                     *   SemiJoin optimizations are intentionally skipped; semantics are preserved
+                     *   via the correlate execution path.
+                     */
+                    if (PlannerContext.getPlannerContext(e.rel).getParamManager()
+                        .getBoolean(ConnectionParams.DISABLE_SUBQUERY_TO_SEMI_JOIN)) {
+                        throw new NotSupportException("DISABLE_SUBQUERY_TO_SEMI_JOIN hint");
                     }
                     target = apply(e, variablesSet, builder, 1, builder.peek().getRowType().getFieldCount());
                     final RexShuttle shuttle = new ReplaceSubQueryShuttle(e, target == null ? replaceRex : target);
@@ -688,16 +724,19 @@ public abstract class SubQueryToSemiJoinRule extends RelOptRule {
          */
         List<RexNode> prosWithFuncs = Lists.newArrayList();
         for (AggregateCall aggregateCall : ((LogicalAggregate) agg).getAggCallList()) {
+            List<Integer> transformedIndex = transformIndex(aggregateCall.getArgList(),
+                ((LogicalAggregate) agg).getInput(), rmq, tNode);
+            if (transformedIndex == null) {
+                return null;
+            }
             RexNode overFunc = builder.getRexBuilder()
                 .makeOver(aggregateCall.type,
                     aggregateCall.getAggregation(),
-                    toRexInput(transformIndex(aggregateCall.getArgList(),
-                        ((LogicalAggregate) agg).getInput(),
-                        rmq,
-                        tNode), builder, tNode),
+                    toRexInput(transformedIndex, builder, tNode),
                     partitionKeys,
                     RexWindowBound.create(SqlWindow.createUnboundedPreceding(SqlParserPos.ZERO), null),
-                    RexWindowBound.create(SqlWindow.createUnboundedFollowing(SqlParserPos.ZERO), null));
+                    RexWindowBound.create(SqlWindow.createUnboundedFollowing(SqlParserPos.ZERO), null),
+                    true);
             final RexShuttle shuttle =
                 new RelOptUtil.ReplaceRexInputToCallShuttle(((LogicalAggregate) agg).getGroupCount(),
                     builder.getRexBuilder(),
@@ -816,11 +855,20 @@ public abstract class SubQueryToSemiJoinRule extends RelOptRule {
         List<Integer> rs = Lists.newLinkedList();
         for (Integer index : argList) {
             RelColumnOrigin relColumnOrigin = rmq.getColumnOrigin(input, index);
+            if (relColumnOrigin == null) {
+                return null;
+            }
+            boolean found = false;
             for (int i = 0; i < target.getRowType().getFieldCount(); i++) {
-                if (rmq.getColumnOrigin(target, i).equals(relColumnOrigin)) {
+                RelColumnOrigin targetColumnOrigin = rmq.getColumnOrigin(target, i);
+                if (targetColumnOrigin != null && targetColumnOrigin.equals(relColumnOrigin)) {
                     rs.add(i);
+                    found = true;
                     break;
                 }
+            }
+            if (!found) {
+                return null;
             }
         }
         return rs;
@@ -1064,8 +1112,35 @@ public abstract class SubQueryToSemiJoinRule extends RelOptRule {
         /**
          * throw subquery of correlate with limit or orderby to APPLY subquery.
          */
-        if (RelOptUtil.containsLimit(e.rel)) {
-            throw new NotSupportException(NOT_SUPPORT_SCALAR_SUBQUERY_WITH_LIMIT);
+        boolean transformLimitToApply = PlannerContext.getPlannerContext(e.rel).getExecutionContext().getParamManager()
+            .getBoolean(ENABLE_SUBQUERY_IGNORE_LIMIT);
+
+        // Check if there is a limit in the relational expression
+        boolean hasLimit = RelOptUtil.containsLimit(e.rel);
+
+        // Determine if the subquery is scalar
+        boolean isScalar = e.getKind() == SCALAR_QUERY;
+
+        // Check if there are correlated columns
+        boolean hasCorrelateColumn = false;
+        if (variablesSet != null) {
+            for (CorrelationId correlationId : variablesSet) {
+                if (!RelOptUtil.correlationColumns(correlationId, e.rel).isEmpty()) {
+                    hasCorrelateColumn = true;
+                    break;
+                }
+            }
+        }
+
+        if (hasLimit) {
+            // If the query has a limit, and it's either a scalar query or has correlated columns, throw an exception
+            if (isScalar || hasCorrelateColumn) {
+                throw new NotSupportException(NOT_SUPPORT_SCALAR_SUBQUERY_WITH_LIMIT);
+            }
+            // If transforming limits to apply is not enabled, throw an exception
+            if (!transformLimitToApply) {
+                throw new NotSupportException(NOT_SUPPORT_SCALAR_SUBQUERY_WITH_LIMIT);
+            }
         }
 
         switch (e.getKind()) {
@@ -1087,6 +1162,16 @@ public abstract class SubQueryToSemiJoinRule extends RelOptRule {
                     correlateRexNodeList,
                     false,
                     offset);
+            }
+
+            // In columnar storage, unrelated subqueries are preferentially converted to semi joins,
+            // whereas in row storage, they are preferentially converted to Apply.
+            boolean pushCorrelate = PlannerContext.getPlannerContext(e.rel).getParamManager()
+                .getBoolean(ConnectionParams.ENABLE_PUSH_CORRELATE_DOWN);
+            boolean emptyCondition = conditions == null || conditions.isEmpty();
+
+            if (emptyCondition && pushCorrelate) {
+                throw new NotSupportException(NOT_TRANSPORT_SCALAR_SUBQUERY_TO_SEMI_WITH_EMPTY_CONDITION);
             }
 
             if (isJASubquery(e.rel)) {
@@ -1339,11 +1424,6 @@ public abstract class SubQueryToSemiJoinRule extends RelOptRule {
             pairList.add(Pair.of(p.getKey(), RexUtil.shift(p.getValue(), shiftMap)));
         }
 
-        /**
-         * if newRel is a aggregate or join , the adding columns might has affected ref from uprel
-         * so, need to build a project based on shift map of top level.
-         */
-
         for (RexCall rexCall : fieldAccessPairFinder.getRexCalls()) {
             ReplaceFieldAccessShuttle replaceFieldAccessShuttle = new ReplaceFieldAccessShuttle(rexCall,
                 builder.getRexBuilder().makeLiteral(true));
@@ -1439,7 +1519,9 @@ public abstract class SubQueryToSemiJoinRule extends RelOptRule {
                     ReplaceFieldAccessShuttle replaceFieldAccessShuttle = new ReplaceFieldAccessShuttle(rexCall,
                         replacement);
                     RexNode r = filter.getCondition().accept(replaceFieldAccessShuttle);
-                    return LogicalFilter.create(visit(filter.getInput()),
+                    RelNode rel = filter.getInput();
+                    RelNode newRel = rel.accept(this);
+                    return LogicalFilter.create(newRel,
                         r,
                         (ImmutableSet<CorrelationId>) filter.getVariablesSet());
                 }
@@ -1772,7 +1854,7 @@ class FieldAccessPairFinder extends RexVisitorImpl<Void> {
                 addMap,
                 isNeedRevertOrder);
             filter.getCondition().accept(fieldAccessPairFinder);
-            hasOr = fieldAccessPairFinder.hasOr;
+            hasOr = hasOr || fieldAccessPairFinder.hasOr;
             return visitChild(filter, 0, filter.getInput());
         }
 
@@ -1801,7 +1883,7 @@ class FieldAccessPairFinder extends RexVisitorImpl<Void> {
             if (fieldAccessPairFinder.getRexCalls().size() > corRexCount) {
                 throw new TddlRuntimeException(ErrorCode.ERR_SUBQUERY_WITH_CORRELATE_CALL_IN_JOIN_CONDITION);
             }
-            hasOr = fieldAccessPairFinder.hasOr;
+            hasOr = hasOr || fieldAccessPairFinder.hasOr;
             return super.visit(join);
         }
 
@@ -1815,6 +1897,9 @@ class FieldAccessPairFinder extends RexVisitorImpl<Void> {
                 boolean bskip = PlannerContext.getPlannerContext(parent).getParamManager()
                     .getBoolean(ConnectionParams.ENABLE_SIMPLIFY_SUBQUERY_SQL);
                 if (!bskip) {
+                    if (child instanceof LogicalCTEProducer) {
+                        return parent;
+                    }
                     RelNode child2 = child.accept(this);
                     if (child2 != child) {
                         final List<RelNode> newInputs = new ArrayList<>(parent.getInputs());

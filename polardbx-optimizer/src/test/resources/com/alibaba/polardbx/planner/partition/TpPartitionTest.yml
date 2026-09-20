@@ -107,12 +107,11 @@
     select * from orders where exists (select * from lineitem where l_orderkey = o_orderkey and l_partkey = 1 and L_SUPPKEY = 2);
 
   plan: |
-    MaterializedSemiJoin(condition="l_orderkey = o_orderkey", type="semi")
-      Gather(concurrent=true)
-        LogicalView(tables="orders[p1,p2,p3,p4]", shardCount=4, sql="SELECT `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` FROM `orders` AS `orders` WHERE (`o_orderkey` IN (...))")
-      Gather(concurrent=true)
-        LogicalView(tables="lineitem[p1,p2,p3,p4]", shardCount=4, sql="SELECT `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` FROM `lineitem` AS `lineitem` WHERE ((`l_partkey` = 1) AND (`l_suppkey` = 2))")
-
+    materializedsemijoin(condition="l_orderkey = o_orderkey", type="semi")
+      gather(concurrent=true)
+        logicalview(tables="orders[p1,p2,p3,p4]", shardcount=4, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders` as `orders` where (`o_orderkey` in (...))")
+      gather(concurrent=true)
+        logicalview(tables="lineitem[p1,p2,p3,p4]", shardcount=4, sql="select `l_orderkey` from `lineitem` as `lineitem` where ((`l_partkey` = 1) and (`l_suppkey` = 2))")
 - sql: |
     select * from X join Y on X.b = Y.b where X.id = 1 and Y.a = 2
 

@@ -88,6 +88,7 @@ public enum HintType {
     CMD_NO_JOIN(Values.NO_JOIN),
     CMD_ANTI_HASH_JOIN(Values.ANTI_HASH_JOIN),
     CMD_HASH_GROUP_JOIN(Values.HASH_GROUP_JOIN),
+    CMD_DATA_NODE(Values.CMD_DATA_NODE),
 
     /**
      * SPM PLAN
@@ -191,6 +192,7 @@ public enum HintType {
         VALUE_TO_OPERATOR.put(Values.ROLLBACK_ON_FAIL, INVENTORY_ROLLBACK_ON_FAIL);
         VALUE_TO_OPERATOR.put(Values.TARGET_AFFECT_ROW, INVENTORY_TARGET_AFFECT_ROW);
         VALUE_TO_OPERATOR.put(Values.HASH_GROUP_JOIN, CMD_HASH_GROUP_JOIN);
+        VALUE_TO_OPERATOR.put(Values.CMD_DATA_NODE, CMD_DATA_NODE);
     }
 
     private final String value;
@@ -247,6 +249,7 @@ public enum HintType {
         static final String CMD_MERGE_UNION_SIZE = "MERGE_UNION_SIZE";
         static final String CMD_MPP = "MPP";
         static final String CMD_QUERY_BLOCK_NAME = "QB_NAME";
+        static final String CMD_DATA_NODE = "DATANODE";
         static final String INDEX = "INDEX";
         static final String PAGING_INDEX = "PAGING_INDEX";
         static final String BKA_JOIN = "BKA_JOIN";

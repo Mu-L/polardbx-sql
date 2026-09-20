@@ -17,6 +17,7 @@
 package org.apache.calcite.util;
 
 import com.alibaba.polardbx.common.jdbc.Parameters;
+import com.alibaba.polardbx.common.properties.ParamManager;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.util.trace.CalcitePlanOptimizerTrace;
 
@@ -38,9 +39,15 @@ public interface PlannerContextWithParam {
 
     public Optional<CalcitePlanOptimizerTrace> getCalcitePlanOptimizerTrace();
 
+    public void checkTimeOut();
+
     /**
      * Return the ExecutionContext of Planner
      * @return
      */
     public Object getExecContext();
+
+    default ParamManager getParamManager() {
+        return null;
+    }
 }

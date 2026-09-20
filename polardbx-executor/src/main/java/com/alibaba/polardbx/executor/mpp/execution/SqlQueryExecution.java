@@ -55,10 +55,14 @@ import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
+import com.alibaba.polardbx.optimizer.partition.PartitionByDefinition;
+import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
+import com.alibaba.polardbx.optimizer.partition.common.PartitionStrategy;
 import com.alibaba.polardbx.optimizer.utils.TableTopologyUtil;
 import com.google.common.base.Throwables;
 import com.google.inject.Inject;
 import io.airlift.units.Duration;
+import lombok.Getter;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelShuttleImpl;
 import org.apache.calcite.rel.core.TableScan;
@@ -184,6 +188,11 @@ public class SqlQueryExecution extends QueryExecution {
     }
 
     private void optimizeScheduleUnderColumnar(ColumnarNodeSelector nodeSelector) {
+        optimizeScheduleUnderColumnar(session, physicalPlan, nodeSelector);
+    }
+
+    public static void optimizeScheduleUnderColumnar(Session session, RelNode physicalPlan,
+                                                     ColumnarNodeSelector nodeSelector) {
         if (ExecUtils.needPutIfAbsent(session.getClientContext(), ConnectionProperties.SCHEDULE_BY_PARTITION)) {
             PartScheduleChecker checker = new PartScheduleChecker(nodeSelector.getOrderedNode().size());
             physicalPlan.accept(checker);
@@ -234,7 +243,15 @@ public class SqlQueryExecution extends QueryExecution {
         @Override
         public RelNode visit(TableScan scan) {
             if (scan instanceof OSSTableScan) {
+                if (((OSSTableScan) scan).isSingleGroupForExecutor()) {
+                    schedulerByPart = false;
+                    return scan;
+                }
                 TableMeta tm = CBOUtil.getTableMeta(scan.getTable());
+                if (!isDirectHash(tm)) {
+                    schedulerByPart = false;
+                    return scan;
+                }
                 int shard = TableTopologyUtil.isShard(tm) ?
                     tm.getPartitionInfo().getPartitionBy().getPartitions().size()
                     : -1;
@@ -243,9 +260,14 @@ public class SqlQueryExecution extends QueryExecution {
             }
             return scan;
         }
+
+        private static boolean isDirectHash(TableMeta tm) {
+            return Optional.ofNullable(tm).map(TableMeta::getPartitionInfo).map(PartitionInfo::getPartitionBy).map(
+                PartitionByDefinition::getStrategy).map(PartitionStrategy::isDirectHash).orElse(Boolean.FALSE);
+        }
     }
 
-    public StageExecutionPlan getStagePlan(SubPlan plan, List<PlanFragment> planFragmentList) {
+    public static StageExecutionPlan getStagePlan(SubPlan plan, List<PlanFragment> planFragmentList) {
         List<StageExecutionPlan> subStages = new ArrayList<>();
         planFragmentList.add(plan.getFragment());
         for (SubPlan subPlan : plan.getChildren()) {
@@ -409,6 +431,7 @@ public class SqlQueryExecution extends QueryExecution {
         return null;
     }
 
+    @Getter
     public static class SqlQueryExecutionFactory implements QueryExecutionFactory<SqlQueryExecution> {
 
         private LocationFactory locationFactory;
@@ -455,6 +478,7 @@ public class SqlQueryExecution extends QueryExecution {
                 }
             }
         }
+
     }
 
     public static class NullExecutionFactory extends SqlQueryExecutionFactory {

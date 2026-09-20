@@ -78,6 +78,7 @@ public class RefreshTopologyFactory extends DdlJobFactory {
             executableDdlJob.addTaskRelationship(emptyTask, dbExecDdlJob.getHead());
             executableDdlJob.addTaskRelationship(dbExecDdlJob.getTail(), refreshTopologyfinalTask);
             executableDdlJob.getExcludeResources().addAll(dbExecDdlJob.getExcludeResources());
+            executableDdlJob.getSharedResources().addAll(dbExecDdlJob.getSharedResources());
         }
         return executableDdlJob;
     }

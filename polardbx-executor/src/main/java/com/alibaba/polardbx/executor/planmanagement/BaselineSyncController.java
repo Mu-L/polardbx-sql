@@ -18,15 +18,14 @@ package com.alibaba.polardbx.executor.planmanagement;
 
 import com.alibaba.polardbx.executor.scheduler.ScheduledJobsManager;
 import com.alibaba.polardbx.executor.sync.BaselineDeleteSyncAction;
+import com.alibaba.polardbx.executor.sync.BaselineGraySyncAction;
 import com.alibaba.polardbx.executor.sync.BaselineUpdateSyncAction;
-import com.alibaba.polardbx.executor.sync.DeleteBaselineSyncAction;
 import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
 import com.alibaba.polardbx.gms.scheduler.ScheduledJobExecutorType;
 import com.alibaba.polardbx.gms.scheduler.ScheduledJobsRecord;
 import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.optimizer.planmanager.BaselineInfo;
 import com.alibaba.polardbx.optimizer.planmanager.IBaselineSyncController;
-import com.alibaba.polardbx.optimizer.planmanager.PlanInfo;
 import com.clearspring.analytics.util.Lists;
 import com.google.common.collect.Maps;
 
@@ -41,12 +40,12 @@ public class BaselineSyncController implements IBaselineSyncController {
         List<String> baselineJson = Lists.newArrayList();
         baselineJson.add(BaselineInfo.serializeToJson(baselineInfo, false));
         baselineMap.put(schemaName, baselineJson);
-        SyncManagerHelper.syncWithDefaultDB(new BaselineUpdateSyncAction(baselineMap), SyncScope.CURRENT_ONLY);
+        SyncManagerHelper.syncWithDefaultDb(new BaselineUpdateSyncAction(baselineMap), SyncScope.CURRENT_ONLY);
     }
 
     @Override
     public void deleteBaseline(String schemaName, Integer baselineId) {
-        SyncManagerHelper.syncWithDefaultDB(
+        SyncManagerHelper.syncWithDefaultDb(
             new BaselineDeleteSyncAction(
                 schemaName,
                 baselineId),
@@ -55,11 +54,18 @@ public class BaselineSyncController implements IBaselineSyncController {
 
     @Override
     public void deletePlan(String schemaName, Integer baselineId, Integer planId) {
-        SyncManagerHelper.syncWithDefaultDB(
+        SyncManagerHelper.syncWithDefaultDb(
             new BaselineDeleteSyncAction(
                 schemaName,
                 baselineId,
                 planId),
+            SyncScope.CURRENT_ONLY);
+    }
+
+    @Override
+    public void grayPlan(String schemaName, Integer baselineId, Integer planId, int grayRatio) {
+        SyncManagerHelper.syncWithDefaultDb(
+            new BaselineGraySyncAction(schemaName, baselineId, planId, grayRatio),
             SyncScope.CURRENT_ONLY);
     }
 

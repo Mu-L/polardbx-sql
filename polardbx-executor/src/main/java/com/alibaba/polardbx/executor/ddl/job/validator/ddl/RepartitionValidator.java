@@ -190,6 +190,18 @@ public class RepartitionValidator {
     }
 
     /**
+     * validate for alter table remove auto partition
+     */
+    public static boolean validateRemoveAutoPartition(String schemaName, String sourceTableName) {
+        if (!DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
+            return false;
+        }
+        TableMeta tableMeta =
+            OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(sourceTableName);
+        return tableMeta.isAutoPartition();
+    }
+
+    /**
      * validate for alter table remove partitioning
      */
     public static boolean validateRemovePartitioning(String schemaName,

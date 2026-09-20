@@ -20,6 +20,8 @@ import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.IndexMeta;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
+import com.alibaba.polardbx.optimizer.core.rel.ExternalTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.GroupTopN;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.MysqlTableScan;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
@@ -27,6 +29,9 @@ import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.prepare.RelOptTableImpl;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
+import org.apache.calcite.rel.core.CTEAnchor;
+import org.apache.calcite.rel.core.CTEConsumer;
+import org.apache.calcite.rel.core.CTEProducer;
 import org.apache.calcite.rel.core.Exchange;
 import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.GroupJoin;
@@ -94,12 +99,10 @@ public class DrdsRelMdFunctionalDependency
             if (iOutputColumns.get(i)) {
                 existsGroupSetBuilder.set(i);
                 existsGroupSetInputBuilder.set(i1);
-                mapInToOutPos.put(i, i1);
+                mapInToOutPos.put(i1, i);
             }
         }
         //nesting sub node
-        final Collection<Integer> values = mapInToOutPos.values();
-        existsGroupSetInputBuilder.addAll(values);
         final Map<ImmutableBitSet, ImmutableBitSet> childUniqueKeyMap =
             mq.getFunctionalDependency(rel.getInput(), existsGroupSetInputBuilder.build());
         //convert to current node FD
@@ -265,6 +268,34 @@ public class DrdsRelMdFunctionalDependency
         return fd;
     }
 
+    public Map<ImmutableBitSet, ImmutableBitSet> getFunctionalDependency(GroupTopN rel,
+                                                                         RelMetadataQuery mq,
+                                                                         ImmutableBitSet iOutputColumns) {
+        Map<ImmutableBitSet, ImmutableBitSet> fd = new LinkedHashMap<>();
+        return fd;
+    }
+
+    public Map<ImmutableBitSet, ImmutableBitSet> getFunctionalDependency(CTEAnchor rel,
+                                                                         RelMetadataQuery mq,
+                                                                         ImmutableBitSet iOutputColumns) {
+        Map<ImmutableBitSet, ImmutableBitSet> fd = new LinkedHashMap<>();
+        return fd;
+    }
+
+    public Map<ImmutableBitSet, ImmutableBitSet> getFunctionalDependency(CTEProducer rel,
+                                                                         RelMetadataQuery mq,
+                                                                         ImmutableBitSet iOutputColumns) {
+        Map<ImmutableBitSet, ImmutableBitSet> fd = new LinkedHashMap<>();
+        return fd;
+    }
+
+    public Map<ImmutableBitSet, ImmutableBitSet> getFunctionalDependency(CTEConsumer rel,
+                                                                         RelMetadataQuery mq,
+                                                                         ImmutableBitSet iOutputColumns) {
+        Map<ImmutableBitSet, ImmutableBitSet> fd = new LinkedHashMap<>();
+        return fd;
+    }
+
     public Map<ImmutableBitSet, ImmutableBitSet> getFunctionalDependency(LogicalView rel, RelMetadataQuery mq,
                                                                          ImmutableBitSet iOutputColumns) {
         return rel.getFunctionalDependency(mq, iOutputColumns);
@@ -274,6 +305,12 @@ public class DrdsRelMdFunctionalDependency
                                                                          ImmutableBitSet iOutputColumns) {
         Map<ImmutableBitSet, ImmutableBitSet> fd = new LinkedHashMap<>();
         return mq.getFunctionalDependency(rel.getNodeForMetaQuery(), iOutputColumns);
+    }
+
+    public Map<ImmutableBitSet, ImmutableBitSet> getFunctionalDependency(
+        ExternalTableScan rel,
+        RelMetadataQuery mq, ImmutableBitSet iOutputColumns) {
+        return rel.getFunctionalDependency(mq, iOutputColumns);
     }
 
     public Map<ImmutableBitSet, ImmutableBitSet> getFunctionalDependency(Project rel,
@@ -294,11 +331,12 @@ public class DrdsRelMdFunctionalDependency
         final ImmutableBitSet inputBitSet = inputSet.build();
         final Map<ImmutableBitSet, ImmutableBitSet> functionalDependency =
             mq.getFunctionalDependency(rel.getInput(), inputBitSet);
-        if (functionalDependency != null || functionalDependency.size() > 0) {
+        if (functionalDependency != null && functionalDependency.size() > 0) {
             for (ImmutableBitSet keySet : functionalDependency.keySet()) {
                 final ImmutableBitSet.Builder keyBuilder = ImmutableBitSet.builder();
                 final ImmutableBitSet.Builder valueBuilder = ImmutableBitSet.builder();
                 final ImmutableBitSet valuesSet = functionalDependency.get(keySet);
+
                 for (int i = keySet.nextSetBit(0); i >= 0; i = keySet.nextSetBit(i + 1)) {
                     final Integer integer = mapInToOutPos.get(i);
                     keyBuilder.set(integer);
@@ -381,7 +419,7 @@ public class DrdsRelMdFunctionalDependency
         String innerSchemaName = qualifiedName.get(0);
         String tableName = Util.last(qualifiedName);
         OptimizerContext optimizerContext = OptimizerContext.getContext(innerSchemaName);
-        if (optimizerContext == null) {
+        if (optimizerContext == null || optimizerContext.isExternalSchema()) {
             return keyLists;
         }
         final TddlRuleManager rule = optimizerContext.getRuleManager();
@@ -394,10 +432,6 @@ public class DrdsRelMdFunctionalDependency
         if (shards != null && shards.size() > 0) {
             //sharding keys to lower
             shards = shards.stream().map(String::toLowerCase).collect(Collectors.toList());
-        }
-
-        if (originTable == null) {
-            return keyLists;
         }
         if (originTable instanceof RelOptTableImpl) {
             //primary keys

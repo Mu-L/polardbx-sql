@@ -16,7 +16,9 @@
 
 package com.alibaba.polardbx.executor.handler.ddl;
 
+import com.alibaba.polardbx.common.IdGenerator;
 import com.alibaba.polardbx.common.ddl.newengine.DdlConstants;
+import com.alibaba.polardbx.common.ddl.newengine.DdlState;
 import com.alibaba.polardbx.common.ddl.newengine.DdlType;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
@@ -32,10 +34,15 @@ import com.alibaba.polardbx.druid.sql.ast.SQLName;
 import com.alibaba.polardbx.druid.sql.ast.SQLStatement;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLMethodInvokeExpr;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableAddColumn;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableAddConstraint;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableAddIndex;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableItem;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableStatement;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLCheck;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnCheck;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnConstraint;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnDefinition;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLConstraint;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLConstraintImpl;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLTableElement;
@@ -59,18 +66,30 @@ import com.alibaba.polardbx.executor.ddl.newengine.DdlEngineRequester;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJob;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.TransientDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlEngineAccessorDelegate;
+import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlEngineResourceManager;
+import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlJobManager;
 import com.alibaba.polardbx.executor.ddl.newengine.serializable.SerializableClassMapper;
+import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
 import com.alibaba.polardbx.executor.handler.HandlerCommon;
 import com.alibaba.polardbx.executor.spi.IRepository;
+import com.alibaba.polardbx.executor.utils.DdlUtils;
+import com.alibaba.polardbx.executor.utils.ExecUtils;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
+import com.alibaba.polardbx.gms.metadb.misc.DdlEngineAccessor;
+import com.alibaba.polardbx.gms.metadb.misc.DdlEngineRecord;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.rel.dal.PhyShow;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
-import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTable;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableGhost;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalCreateTable;
 import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.alibaba.polardbx.optimizer.parse.FastsqlParser;
@@ -79,9 +98,12 @@ import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfoManager;
 import com.alibaba.polardbx.optimizer.partition.common.PartitionLocation;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
+import com.alibaba.polardbx.optimizer.utils.ConstraintUtils;
 import com.alibaba.polardbx.optimizer.utils.ForeignKeyUtils;
+import com.alibaba.polardbx.optimizer.utils.PlannerUtils;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.alibaba.polardbx.rule.model.TargetDB;
+import com.google.common.base.Function;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.sql.SqlAddForeignKey;
 import org.apache.calcite.sql.SqlAddPrimaryKey;
@@ -101,20 +123,21 @@ import org.apache.calcite.util.EqualsContext;
 import org.apache.calcite.util.Litmus;
 import org.apache.commons.collections.CollectionUtils;
 
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-import java.util.TreeSet;
+import java.sql.Connection;
+import java.util.*;
 
 import static com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcSqlUtils.SQL_PARSE_FEATURES;
+import static com.alibaba.polardbx.executor.ddl.newengine.meta.DdlEngineResourceManager.checkIfSqlIdBeforeCheckPoint;
 import static com.alibaba.polardbx.executor.handler.LogicalShowCreateTableHandler.reorgLogicalColumnOrder;
 import static com.alibaba.polardbx.executor.handler.ddl.LogicalCreateTableHandler.generateCreateTableSqlForLike;
+import static com.alibaba.polardbx.gms.metadb.table.TableInfoManager.PhyInfoSchemaContext.isValidSqlId;
 import static com.alibaba.polardbx.optimizer.sql.sql2rel.TddlSqlToRelConverter.unwrapGsiName;
 
 public abstract class LogicalCommonDdlHandler extends HandlerCommon {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(LogicalCommonDdlHandler.class);
+
+    public static final IdGenerator ID_GENERATOR = DdlJobManager.ID_GENERATOR;
 
     public LogicalCommonDdlHandler(IRepository repo) {
         super(repo);
@@ -128,6 +151,8 @@ public abstract class LogicalCommonDdlHandler extends HandlerCommon {
 
         // Validate the plan on file storage first
         TableValidator.validateTableEngine(logicalDdlPlan, executionContext);
+        // Reject DDL on external catalog schemas (cat$$db)
+        ExternalNameValidator.rejectDDLIfExternalSchema(logicalDdlPlan.getSchemaName());
         // Validate the plan first and then return immediately if needed.
         boolean returnImmediately = validatePlan(logicalDdlPlan, executionContext);
 
@@ -138,7 +163,6 @@ public abstract class LogicalCommonDdlHandler extends HandlerCommon {
         } else {
             setDbIndexAndPhyTable(logicalDdlPlan);
         }
-
         // Build a specific DDL job by subclass.
         DdlJob ddlJob = returnImmediately ?
             new TransientDdlJob() :
@@ -146,6 +170,18 @@ public abstract class LogicalCommonDdlHandler extends HandlerCommon {
 
         // Validate the DDL job before request.
         validateJob(logicalDdlPlan, ddlJob, executionContext);
+
+        if (executionContext.getDdlContext().isExplainOnlineDdlAdvisor()) {
+            return buildExplainOnlineDdlAdvisiorResultCursor(logicalDdlPlan, ddlJob, executionContext);
+        }
+
+        if (executionContext.getDdlContext().isExplainOnlineDdl()) {
+            return buildExplainOnlineDdlResultCursor(logicalDdlPlan, ddlJob, executionContext);
+        }
+
+        if (executionContext.getDdlContext().isExplainDag()) {
+            return buildExplainDagResultCursor(logicalDdlPlan, ddlJob, executionContext);
+        }
 
         if (executionContext.getDdlContext().getExplain()) {
             return buildExplainResultCursor(logicalDdlPlan, ddlJob, executionContext);
@@ -157,7 +193,45 @@ public abstract class LogicalCommonDdlHandler extends HandlerCommon {
         if (executionContext.getDdlContext().isSubJob()) {
             return buildSubJobResultCursor(ddlJob, executionContext);
         }
+
+        // check the table version after the ddl is completed
+        DdlUtils.checkTableMetaVersion(executionContext, logicalDdlPlan.getSchemaName(),
+            logicalDdlPlan.getTableName());
+
         return buildResultCursor(logicalDdlPlan, ddlJob, executionContext);
+    }
+
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+    }
+
+    /**
+     * Check whether the table meta changed between plan optimization and phase-1 DDL lock
+     * acquisition, in which case the plan should be rebuilt. Handlers whose statement may
+     * involve tables across multiple schemas (e.g. OPTIMIZE TABLE) should override this.
+     */
+    public boolean tableVersionChanged(BaseDdlOperation logicalDdlPlan, ExecutionContext executionContext,
+                                       Map<String, Long> tableVersions, String schemaName) {
+        if (tableVersions.isEmpty()) {
+            SchemaManager ecSchemaManager = executionContext.getSchemaManager();
+            SchemaManager latestSchemaManager =
+                OptimizerContext.getContext(executionContext.getSchemaName()).getLatestSchemaManager();
+            return ecSchemaManager != latestSchemaManager;
+        }
+
+        SchemaManager schemaManager = OptimizerContext.getContext(schemaName).getLatestSchemaManager();
+        for (Map.Entry<String, Long> tableVersion : tableVersions.entrySet()) {
+            long oldVersion = tableVersion.getValue();
+            if (oldVersion > 0) {
+                TableMeta tableMeta = schemaManager.getTableWithNull(tableVersion.getKey());
+                if (tableMeta == null || tableMeta.getVersion() > oldVersion) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -191,9 +265,49 @@ public abstract class LogicalCommonDdlHandler extends HandlerCommon {
         ArrayResultCursor result = new ArrayResultCursor("Logical ExecutionPlan");
         result.addColumn("Execution Plan", DataTypes.StringType);
         result.initMeta();
-        for (String row : ddlJob.getExplainInfo()) {
+        for (String row : ddlJob.getExplainInfo(ec)) {
             result.addRow(new String[] {row});
         }
+        return result;
+    }
+
+    /**
+     * Build a cursor for EXPLAIN DDL_DAG that generates job_id and task_ids
+     * without actually executing the DDL, and returns the DAG visualization.
+     */
+    protected Cursor buildExplainDagResultCursor(BaseDdlOperation baseDdl, DdlJob ddlJob, ExecutionContext ec) {
+        // Generate job_id and task_ids without actually executing
+        DdlEngineRequester requester = DdlEngineRequester.create(ddlJob, ec);
+        requester.generateIds();
+
+        // Get the DAG visualization
+        String dagVisualization = ddlJob.visualizeTasks();
+
+        ArrayResultCursor result = new ArrayResultCursor("DDL DAG");
+        result.addColumn("JOB_ID", DataTypes.LongType);
+        result.addColumn("DAG", DataTypes.StringType);
+        result.initMeta();
+        result.addRow(new Object[] {ec.getDdlContext().getJobId(), dagVisualization});
+        return result;
+    }
+
+    protected Cursor buildExplainOnlineDdlAdvisiorResultCursor(BaseDdlOperation baseDdl, DdlJob ddlJob,
+                                                               ExecutionContext ec) {
+        ArrayResultCursor result = new ArrayResultCursor("Logical ExecutionPlan");
+        result.addColumn("DDL TYPE", DataTypes.StringType);
+        result.addColumn("ADVICE ONLINE DDL", DataTypes.StringType);
+        result.addColumn("ALGORITHM", DataTypes.StringType);
+        result.initMeta();
+        result.addRow(ddlJob.getExplainOnlineDdlInfo().getAdvisorResult());
+        return result;
+    }
+
+    protected Cursor buildExplainOnlineDdlResultCursor(BaseDdlOperation baseDdl, DdlJob ddlJob, ExecutionContext ec) {
+        ArrayResultCursor result = new ArrayResultCursor("Logical ExecutionPlan");
+        result.addColumn("DDL TYPE", DataTypes.StringType);
+        result.addColumn("ALGORITHM", DataTypes.StringType);
+        result.initMeta();
+        result.addRow(ddlJob.getExplainOnlineDdlInfo().getResult());
         return result;
     }
 
@@ -221,6 +335,7 @@ public abstract class LogicalCommonDdlHandler extends HandlerCommon {
     }
 
     protected void validateJob(BaseDdlOperation logicalDdlPlan, DdlJob ddlJob, ExecutionContext executionContext) {
+        CommonValidator.blockLogicalDdlJob(logicalDdlPlan.getSchemaName(), logicalDdlPlan, ddlJob, executionContext);
         if (ddlJob instanceof TransientDdlJob) {
             return;
         }
@@ -231,6 +346,11 @@ public abstract class LogicalCommonDdlHandler extends HandlerCommon {
     }
 
     protected void initDdlContext(BaseDdlOperation logicalDdlPlan, ExecutionContext executionContext) {
+        Long gdnDdlSqlId = executionContext.getParamManager().getLong(ConnectionParams.ASYNC_LOAD_GDN_DDL_SQL_ID);
+        if (isValidSqlId(gdnDdlSqlId)) {
+            checkIfSqlIdBeforeCheckPoint(gdnDdlSqlId);
+        }
+
         String schemaName = logicalDdlPlan.getSchemaName();
         if (TStringUtil.isEmpty(schemaName)) {
             schemaName = executionContext.getSchemaName();
@@ -238,6 +358,10 @@ public abstract class LogicalCommonDdlHandler extends HandlerCommon {
 
         DdlType ddlType = logicalDdlPlan.getDdlType();
         String objectName = getObjectName(logicalDdlPlan);
+
+        // Failpoint: suspend before DdlContext creation to widen the TOCTOU window
+        // where isDdlStatement=true but getDdlJobId()=null
+        FailPoint.injectSuspendFromHint(FailPointKey.FP_SUSPEND_BEFORE_DDL_JOB_CREATED, executionContext);
 
         DdlContext ddlContext =
             DdlContext.create(schemaName, objectName, ddlType, executionContext);
@@ -251,6 +375,8 @@ public abstract class LogicalCommonDdlHandler extends HandlerCommon {
         if (ddlJob instanceof TransientDdlJob) {
             return;
         }
+        // Failpoint: suspend after DdlContext creation and before phase-2 lock acquisition
+        FailPoint.injectSuspendFromHint(FailPointKey.FP_DDL_BEFORE_PHASE_2_LOCK, executionContext);
         DdlContext ddlContext = executionContext.getDdlContext();
         ddlContext.setDdlJobFactoryName(ddlJob.getDdlJobFactoryName());
         if (ddlContext.isSubJob()) {
@@ -346,12 +472,36 @@ public abstract class LogicalCommonDdlHandler extends HandlerCommon {
         }
     }
 
-    public static boolean isAvailableForRecycleBin(String tableName, ExecutionContext executionContext) {
+    /**
+     * Check if a table is available to be put into recycle bin.
+     *
+     * @param schema the schema name
+     * @param tableName the table name
+     * @param executionContext the execution context
+     * @return true if the table can be put into recycle bin, false otherwise
+     */
+    public static boolean isAvailableForRecycleBin(String schema, String tableName, ExecutionContext executionContext) {
         final String appName = executionContext.getAppName();
-        final RecycleBin recycleBin = RecycleBinManager.instance.getByAppName(appName);
+        final RecycleBin recycleBin = RecycleBinManager.getInstance().getByAppName(appName);
+        if (StringUtils.isEmpty(schema)) {
+            schema = executionContext.getSchemaName();
+        }
+        // Check if schema is empty or using physical database configurations
+        boolean isDBleOrSchemaIsNull =
+            StringUtils.isEmpty(schema) ||
+                PlannerUtils.checkIfUseSchemaUsePhyDbConfigs(schema);
+
+        // Table can be put into recycle bin only when:
+        // 1. Recycle bin feature is enabled
+        // 2. Table name is not already a recycle bin table name
+        // 3. Recycle bin instance exists
+        // 4. Table has no foreign key constraint
+        // 5. Schema is not empty and not using physical database configurations
         return executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_RECYCLEBIN) &&
             !RecycleBin.isRecyclebinTable(tableName) &&
-            recycleBin != null && !recycleBin.hasForeignConstraint(appName, tableName);
+            recycleBin != null &&
+            !recycleBin.hasForeignConstraint(appName, tableName) &&
+            !isDBleOrSchemaIsNull;
     }
 
     // rewrite sql for cdc, @see com.alibaba.polardbx.cdc.ImplicitTableGroupUtil
@@ -361,6 +511,11 @@ public abstract class LogicalCommonDdlHandler extends HandlerCommon {
         // some sql has no schema name.
         // e.g. rebalance database policy='partition_balance'
         if (StringUtils.isEmpty(logicalDdlPlan.getSchemaName())) {
+            return;
+        }
+
+        // ghost ddl
+        if (logicalDdlPlan instanceof LogicalAlterTableGhost) {
             return;
         }
 
@@ -474,6 +629,7 @@ public abstract class LogicalCommonDdlHandler extends HandlerCommon {
                 tableMeta.getGsiTableMetaBean().indexMap.forEach((k, v) -> existsNames.add(unwrapGsiName(k)));
             }
 
+            Set<String> constraintNames = new TreeSet<>(String::compareToIgnoreCase);
             for (final SQLAlterTableItem item : stmt.getItems()) {
                 if (item instanceof SQLAlterTableAddIndex) {
                     SQLName indexName = ((SQLAlterTableAddIndex) item).getName();
@@ -519,6 +675,26 @@ public abstract class LogicalCommonDdlHandler extends HandlerCommon {
                             existsNames.add(realName);
                         }
                         ((SQLAlterTableAddConstraint) item).getConstraint().setName(new SQLIdentifierExpr(realName));
+                    } else if (constraint instanceof SQLCheck && (null == indexName || null == indexName.getSimpleName()
+                        || indexName.getSimpleName().isEmpty())) {
+                        String checkNameStr =
+                            ConstraintUtils.getCheckConstraintName(constraintNames, schemaName, tableName);
+                        ((SQLAlterTableAddConstraint) item).getConstraint()
+                            .setName(new SQLIdentifierExpr(checkNameStr));
+                    }
+                } else if (item instanceof SQLAlterTableAddColumn) {
+                    SQLAlterTableAddColumn addColumn = (SQLAlterTableAddColumn) item;
+                    for (SQLColumnDefinition columnDefinition : addColumn.getColumns()) {
+                        for (SQLColumnConstraint constraints : columnDefinition.getConstraints()) {
+                            if (constraints instanceof SQLColumnCheck) {
+                                SQLColumnCheck check = (SQLColumnCheck) constraints;
+                                if (check.getName() == null) {
+                                    String checkName =
+                                        ConstraintUtils.getCheckConstraintName(constraintNames, schemaName, tableName);
+                                    check.setName(checkName);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -528,5 +704,12 @@ public abstract class LogicalCommonDdlHandler extends HandlerCommon {
             );
             ec.getDdlContext().setCdcRewriteDdlStmt(cdcRewriteDdlStmt);
         }
+    }
+
+    public static String concatWithDot(String schemaName, String tableName) {
+        if (org.apache.commons.lang3.StringUtils.isEmpty(schemaName)) {
+            return tableName;
+        }
+        return schemaName + "." + tableName;
     }
 }

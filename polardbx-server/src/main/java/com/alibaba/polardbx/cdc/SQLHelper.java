@@ -152,6 +152,9 @@ public class SQLHelper {
             SQLStatementParser parser1 =
                 SQLParserUtils.createSQLStatementParser(ddlSql, DbType.mysql, SQL_PARSE_FEATURES);
             List<SQLStatement> statementList1 = parser1.parseStatementList();
+            if (statementList1.isEmpty()) {
+                return;
+            }
             SQLStatement statement1 = statementList1.get(0);
             parserResult = statement1.toString();
 

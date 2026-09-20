@@ -118,6 +118,7 @@ public class InformationSchemaStorageHandler extends BaseVirtualViewSubClassHand
             dnInfos.stream().forEach(dnInfo -> {
                 String storageInstId = dnInfo.getStorageInstId();
                 String storageMasterInstId = dnInfo.getStorageMasterInstId();
+                String storageInstLabel = dnInfo.getStorageInstLabel();
                 StorageInstHaContext ctx = dnInfo;
                 String leaderNode = ctx.getCurrAvailableNodeAddr();
                 boolean isLeaderHealthy = ctx.isCurrAvailableNodeAddrHealthy();
@@ -148,6 +149,7 @@ public class InformationSchemaStorageHandler extends BaseVirtualViewSubClassHand
                 storageInstInfoMap.put("groupCnt", String.valueOf(dbCntAndGrpCnt.getValue()));
                 storageInstInfoMap.put("status", statusStr);
                 storageInstInfoMap.put("deletable", BooleanUtils.toStringTrueFalse(deletable));
+                storageInstInfoMap.put("storageInstLabel", storageInstLabel);
 
                 if (showReplicas) {
                     storageInstInfoMap.put("replicas", dnInfo.getReplicaString());
@@ -187,6 +189,7 @@ public class InformationSchemaStorageHandler extends BaseVirtualViewSubClassHand
             String storageRwInstId = storageInstInfoMap.get("storageRwInstId");
             row.add(storageRwInstId);
         }
+        row.add(storageInstInfoMap.get("storageInstLabel"));
         rowVal = row.stream().toArray();
         return rowVal;
     }
@@ -230,6 +233,7 @@ public class InformationSchemaStorageHandler extends BaseVirtualViewSubClassHand
                 storageInstInfoMap.put("isHealthy", isLeaderHealthy);
                 storageInstInfoMap.put("isVip", leaderAddrVipFlag);
                 storageInstInfoMap.put("info_from", StorageHaManager.AREA_TYPE_HA_SWITCHER);
+                storageInstInfoMap.put("storageInstLabel", ctx.getStorageInstLabel());
                 storageInstInfoMaps.add(storageInstInfoMap);
             }
 
@@ -259,6 +263,7 @@ public class InformationSchemaStorageHandler extends BaseVirtualViewSubClassHand
                 storageInstInfoMap.put("isHealthy", isNodeHealthy);
                 storageInstInfoMap.put("isVip", nodeAddrVipFlag);
                 storageInstInfoMap.put("info_from", StorageHaManager.AREA_TYPE_HA_CHECKER);
+                storageInstInfoMap.put("storageInstLabel", ctx.getStorageInstLabel());
                 storageInstInfoMaps.add(storageInstInfoMap);
             }
 
@@ -282,6 +287,7 @@ public class InformationSchemaStorageHandler extends BaseVirtualViewSubClassHand
                 storageInstInfoMap.put("isHealthy", "");
                 storageInstInfoMap.put("isVip", "true");
                 storageInstInfoMap.put("info_from", StorageHaManager.AREA_TYPE_META_DB);
+                storageInstInfoMap.put("storageInstLabel", ctx.getStorageInstLabel());
                 storageInstInfoMaps.add(storageInstInfoMap);
             }
             for (Map.Entry<String, StorageInfoRecord> nodeRecItem : nodeInfoInMetaDb.entrySet()) {
@@ -305,6 +311,7 @@ public class InformationSchemaStorageHandler extends BaseVirtualViewSubClassHand
                 storageInstInfoMap.put("isHealthy", "");
                 storageInstInfoMap.put("isVip", "false");
                 storageInstInfoMap.put("info_from", StorageHaManager.AREA_TYPE_META_DB);
+                storageInstInfoMap.put("storageInstLabel", ctx.getStorageInstLabel());
                 storageInstInfoMaps.add(storageInstInfoMap);
             }
         });
@@ -327,6 +334,7 @@ public class InformationSchemaStorageHandler extends BaseVirtualViewSubClassHand
         row.add(storageInstInfoMap.get("isHealthy"));
         row.add(storageInstInfoMap.get("isVip"));
         row.add(storageInstInfoMap.get("info_from"));
+        row.add(storageInstInfoMap.get("storageInstLabel"));
         rowVal = row.stream().toArray();
         return rowVal;
     }

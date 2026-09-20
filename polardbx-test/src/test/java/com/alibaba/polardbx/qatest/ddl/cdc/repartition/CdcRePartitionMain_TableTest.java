@@ -114,7 +114,7 @@ public class CdcRePartitionMain_TableTest extends CdcRePartitionBaseTest {
         String tokenHints = buildTokenHints();
         String sql = tokenHints + " alter table " + tableName + " split into partitions 20 by hot value(88)";
         stmt.execute(sql);
-        checkAfterAlterTablePartition(checkContext, sql, tableName);
+        checkAfterAlterTablePartition(checkContext, sql, tableName, 2);
     }
 
     private void testSplitTablePartition(Statement stmt, PartitionType partitionType)
@@ -223,13 +223,14 @@ public class CdcRePartitionMain_TableTest extends CdcRePartitionBaseTest {
                 + "BY HOT VALUE(1000)", tableName);
             stmt.execute(sql);
             checkAfterAlterTablePartition(checkContext,
-                String.format("ALTER TABLE %s SPLIT INTO hp1 PARTITIONS 1 BY HOT VALUE(1000)", tableName), tableName);
+                String.format("ALTER TABLE %s SPLIT INTO hp1 PARTITIONS 1 BY HOT VALUE(1000)", tableName), tableName,
+                2);
 
             tokenHints = buildTokenHints();
             sql = tokenHints + String.format("ALTER TABLE %s SPLIT INTO hp2 PARTITIONS 5 "
                 + "BY HOT VALUE(2000)", tableName);
             stmt.execute(sql);
-            checkAfterAlterTablePartition(checkContext, sql, tableName);
+            checkAfterAlterTablePartition(checkContext, sql, tableName, 2);
 
         } else {
             throw new RuntimeException("not supported partition type : " + partitionType);

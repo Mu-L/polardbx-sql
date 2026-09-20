@@ -47,13 +47,13 @@ public class CreateJavaFunctionSyncTask extends BaseDdlTask {
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
         updateTaskStateInNewTxn(DdlTaskState.DIRTY);
-        SyncManagerHelper.sync(new CreateJavaFunctionSyncAction(functionName),
+        SyncManagerHelper.syncThrowExceptions(new CreateJavaFunctionSyncAction(functionName),
             TddlConstants.INFORMATION_SCHEMA, SyncScope.ALL);
     }
 
     @Override
     protected void beforeRollbackTransaction(ExecutionContext executionContext) {
-        SyncManagerHelper.sync(new DropJavaFunctionSyncAction(functionName),
+        SyncManagerHelper.syncThrowExceptions(new DropJavaFunctionSyncAction(functionName),
             TddlConstants.INFORMATION_SCHEMA, SyncScope.ALL);
     }
 }

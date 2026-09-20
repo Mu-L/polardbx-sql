@@ -2,9 +2,11 @@ package com.alibaba.polardbx.executor.ddl.job.factory.ttl;
 
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.common.model.Group;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.SubJobTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.CheckAndPerformingOptiTtlTableTask;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.CheckAndPrepareAddPartsForCciSqlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.CheckAndPrepareAddPartsForTtlTblSqlTask;
@@ -12,9 +14,12 @@ import com.alibaba.polardbx.executor.ddl.job.task.ttl.CheckAndPrepareDropPartsFo
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.CleanAndPrepareExpiredDataTask;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.FinishCleaningUpAndLogTask;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.PrepareCleanupIntervalTask;
+import com.alibaba.polardbx.executor.ddl.job.task.ttl.CheckAndPrepareCleanupDataByRebuildPolicyTask;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.PreparingFormattedCurrDatetimeTask;
+import com.alibaba.polardbx.executor.ddl.job.task.ttl.TtlArchiveBoundCommitTask;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.TtlJobContext;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.TtlTaskSqlBuilder;
+import com.alibaba.polardbx.executor.ddl.newengine.job.DdlExceptionAction;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
@@ -23,7 +28,6 @@ import com.alibaba.polardbx.gms.ttl.TtlInfoRecord;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
-import com.alibaba.polardbx.optimizer.ttl.TtlArchiveKind;
 import com.alibaba.polardbx.optimizer.ttl.TtlConfigUtil;
 import com.alibaba.polardbx.optimizer.ttl.TtlDefinitionInfo;
 import org.apache.calcite.rel.core.DDL;
@@ -31,6 +35,7 @@ import org.apache.calcite.sql.SqlAlterTableCleanupExpiredData;
 import org.apache.calcite.sql.SqlNode;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
@@ -73,6 +78,11 @@ public class CleanupExpiredDataJobFactory extends DdlJobFactory {
 
         IRepository repository = ExecutorContext.getContext(schemaName).getTopologyHandler()
             .getRepositoryHolder().get(Group.GroupType.MYSQL_JDBC.toString());
+
+        ExecutionContext ec = executionContext;
+        Boolean forceStopCleanupData = ec.getParamManager().getBoolean(ConnectionParams.TTL_STOP_CLEANUP_DATA);
+        Boolean skipPreparingCleanupInterval =
+            ec.getParamManager().getBoolean(ConnectionParams.TTL_SKIP_PREPARING_CLEANUP_INTERVAL);
 
         SqlNode ttlCleanupAst = sqlAlterTableCleanupExpiredData.getTtlCleanup();
         String ttlCleanupStr = null;
@@ -136,6 +146,8 @@ public class CleanupExpiredDataJobFactory extends DdlJobFactory {
                 TtlTaskSqlBuilder.buildSubJobTaskNameForAddPartsFroTtlTblBySpecifySubJobStmt();
             SubJobTask performAddPartSubJobTaskForTtlTbl =
                 new SubJobTask(ttlTableSchema, ddlStmtForTtlTbl, "");
+            performAddPartSubJobTaskForTtlTbl.setExceptionAction(
+                DdlExceptionAction.TRY_WAIT_AND_RECOVERY_THEN_ROLLBACK);
             performAddPartSubJobTaskForTtlTbl.setParentAcquireResource(true);
 
             taskList.add(prepareAddPartsForTtlTblSqlTask);
@@ -164,6 +176,8 @@ public class CleanupExpiredDataJobFactory extends DdlJobFactory {
                 TtlTaskSqlBuilder.buildSubJobTaskNameForAddPartsFroActTmpCciBySpecifySubJobStmt();
             SubJobTask performAddPartSubJobTaskForArcCciTbl =
                 new SubJobTask(arcTmpTableSchema, ddlStmtForArcCciTmpTbl, "");
+            performAddPartSubJobTaskForArcCciTbl.setExceptionAction(
+                DdlExceptionAction.TRY_WAIT_AND_RECOVERY_THEN_ROLLBACK);
             performAddPartSubJobTaskForArcCciTbl.setParentAcquireResource(true);
 
             taskList.add(prepareAddPartsForCciSqlTask);
@@ -174,24 +188,67 @@ public class CleanupExpiredDataJobFactory extends DdlJobFactory {
         if (foreTtlCleanupVal != null) {
             enableCleanup = foreTtlCleanupVal;
         }
+        if (forceStopCleanupData) {
+            enableCleanup = false;
+        }
         if (!archivedByPartitions) {
 
-            boolean specifyExpiredInterval = ttlInfo.isExpireIntervalSpecified();
-            if (specifyExpiredInterval) {
-                /**
-                 * Prepare basic job context info for the row-level ttl-job
-                 * <pre>
-                 *     for example
-                 *     the ttl_min_val
-                 * </pre>
-                 */
-                PrepareCleanupIntervalTask prepareClearIntervalTask =
-                    new PrepareCleanupIntervalTask(tableSchema, tableName);
-                prepareClearIntervalTask.setJobContext(jobContext);
-                taskList.add(prepareClearIntervalTask);
+            if (!skipPreparingCleanupInterval || enableCleanup) {
+                boolean specifyExpiredInterval = ttlInfo.isExpireIntervalSpecified();
+                if (specifyExpiredInterval) {
+                    /**
+                     * Prepare basic job context info for the row-level ttl-job
+                     * <pre>
+                     *     for example
+                     *     the ttl_min_val
+                     * </pre>
+                     */
+                    PrepareCleanupIntervalTask prepareClearIntervalTask =
+                        new PrepareCleanupIntervalTask(tableSchema, tableName);
+                    prepareClearIntervalTask.setJobContext(jobContext);
+                    taskList.add(prepareClearIntervalTask);
+                }
             }
 
             if (enableCleanup) {
+
+                if (executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_TRANSPARENT_TTL)) {
+                    /**
+                     * commit ttl query bound
+                     */
+                    TtlArchiveBoundCommitTask ttlArchiveBoundCommitTask =
+                        new TtlArchiveBoundCommitTask(tableSchema, tableName, archivedByPartitions);
+                    ttlArchiveBoundCommitTask.setJobContext(jobContext);
+                    taskList.add(ttlArchiveBoundCommitTask);
+
+                    /**
+                     * change ttl query bound
+                     */
+                    TableSyncTask tableSyncTask = new TableSyncTask(tableSchema, tableName);
+                    taskList.add(tableSyncTask);
+                }
+
+                /**
+                 * Archive by row-level ttl
+                 */
+
+                /**
+                 * Decide if need use rebuild policy to finish cleaning up expired data
+                 */
+                CheckAndPrepareCleanupDataByRebuildPolicyTask
+                    checkAndPrepareCleanupPolicyTask =
+                    new CheckAndPrepareCleanupDataByRebuildPolicyTask(tableSchema, tableName);
+                checkAndPrepareCleanupPolicyTask.setJobContext(jobContext);
+                String ddlStmtForRebuildTbl =
+                    TtlTaskSqlBuilder.buildSubJobTaskNameForCleanupByRebuildTableSubJobStmt();
+                SubJobTask performCleanupByOmcRebuild =
+                    new SubJobTask(tableSchema, ddlStmtForRebuildTbl, "");
+                performCleanupByOmcRebuild.setExceptionAction(
+                    DdlExceptionAction.TRY_WAIT_AND_RECOVERY_THEN_ROLLBACK);
+                performCleanupByOmcRebuild.setParentAcquireResource(true);
+                taskList.add(checkAndPrepareCleanupPolicyTask);
+                taskList.add(performCleanupByOmcRebuild);
+
                 /**
                  * Perform cleaning up expired data by deleting stmt
                  */
@@ -199,6 +256,7 @@ public class CleanupExpiredDataJobFactory extends DdlJobFactory {
                     clearAndPrepareExpiredDataTask = new CleanAndPrepareExpiredDataTask(tableSchema, tableName);
                 clearAndPrepareExpiredDataTask.setJobContext(jobContext);
                 taskList.add(clearAndPrepareExpiredDataTask); // perform insert-select + delete
+
             }
 
             /**
@@ -233,6 +291,22 @@ public class CleanupExpiredDataJobFactory extends DdlJobFactory {
                 checkAndPrepareDropPartsForTtlTblSqlTask.setArchiveByPartitions(true);
                 checkAndPrepareDropPartsForTtlTblSqlTask.setJobContext(jobContext);
                 taskList.add(checkAndPrepareDropPartsForTtlTblSqlTask);
+
+                if (executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_TRANSPARENT_TTL)) {
+                    /**
+                     * commit ttl query bound
+                     */
+                    TtlArchiveBoundCommitTask ttlArchiveBoundCommitTask =
+                        new TtlArchiveBoundCommitTask(tableSchema, tableName, archivedByPartitions);
+                    ttlArchiveBoundCommitTask.setJobContext(jobContext);
+                    taskList.add(ttlArchiveBoundCommitTask);
+
+                    /**
+                     * change ttl query bound
+                     */
+                    TableSyncTask tableSyncTask = new TableSyncTask(tableSchema, tableName);
+                    taskList.add(tableSyncTask);
+                }
 
                 String ttlTableSchema = ttlInfo.getTtlInfoRecord().getTableSchema();
                 String ddlStmtForTtlTbl =

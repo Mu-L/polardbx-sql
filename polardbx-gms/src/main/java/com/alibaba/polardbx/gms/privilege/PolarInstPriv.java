@@ -41,6 +41,8 @@ public class PolarInstPriv extends BasePolarPriv {
 //    private boolean createUserPriv;
 //    private boolean metaDbPriv;
 
+    private boolean accountLocked;
+
     static Collection<PolarAccountInfo> loadInstPrivs(Connection conn, Collection<PolarAccount> accounts)
         throws SQLException {
         final String sql = String.format("SELECT * FROM %s WHERE %s = ? and %s = ?", PolarPrivUtil.USER_PRIV_TABLE,
@@ -65,6 +67,8 @@ public class PolarInstPriv extends BasePolarPriv {
     static PolarAccountInfo loadInstPriv(ResultSet rs) throws SQLException {
         PolarInstPriv instPriv = new PolarInstPriv();
         loadBasePriv(rs, instPriv);
+        instPriv.setAccountLocked(rs.getInt(PolarPrivUtil.ACCOUNT_LOCKED) == 1);
+
         Long accountId = rs.getLong(PolarPrivUtil.ACCOUNT_ID);
 
         String password = rs.getString(PolarPrivUtil.PASSWORD);
@@ -97,6 +101,7 @@ public class PolarInstPriv extends BasePolarPriv {
         copy(this, clone);
 //        clone.createUserPriv = this.createUserPriv;
 //        clone.metaDbPriv = this.metaDbPriv;
+        clone.accountLocked = this.accountLocked;
         return clone;
     }
 
@@ -166,5 +171,13 @@ public class PolarInstPriv extends BasePolarPriv {
         }
 
         return privs;
+    }
+
+    public boolean isAccountLocked() {
+        return accountLocked;
+    }
+
+    public void setAccountLocked(boolean accountLocked) {
+        this.accountLocked = accountLocked;
     }
 }

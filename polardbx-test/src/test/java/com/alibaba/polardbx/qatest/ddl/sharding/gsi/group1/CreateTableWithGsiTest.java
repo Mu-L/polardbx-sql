@@ -694,7 +694,7 @@ public class CreateTableWithGsiTest extends DDLBaseNewDBTestCase {
             + "(`rbac_tenant_id`) COVERING (`id`, `product_key`) DBPARTITION BY HASH(`rbac_tenant_id`),\n"
             + "        UNIQUE GLOBAL " + gsiTestUkName
             + " (`iot_id`) COVERING (`id`, `product_key`, `is_deleted`, `thing_type`) DBPARTITION BY HASH(`iot_id`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 100000000 CHARSET = utf8mb4 COMMENT '设备表' dbpartition by hash"
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 100000000 CHARSET = utf8mb4 COLLATE utf8mb4_general_ci COMMENT '设备表' dbpartition by hash"
             + "(`product_key`) tbpartition by hash(`product_key`) tbpartitions 20";
 
         try {
@@ -747,7 +747,7 @@ public class CreateTableWithGsiTest extends DDLBaseNewDBTestCase {
             + "` (`rbac_tenant_id`) COVERING (`id`, `product_key`) DBPARTITION BY HASH(`rbac_tenant_id`),\n"
             + "        UNIQUE GLOBAL `" + gsiTestUkName
             + "` (`iot_id`) COVERING (`id`, `product_key`, `is_deleted`, `thing_type`) DBPARTITION BY HASH(`iot_id`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 100000000 CHARSET = utf8mb4 COMMENT '设备表' dbpartition by hash"
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 100000000 CHARSET = utf8mb4 COLLATE utf8mb4_general_ci COMMENT '设备表' dbpartition by hash"
             + "(`product_key`) tbpartition by hash(`product_key`) tbpartitions 20";
 
         try {
@@ -805,7 +805,7 @@ public class CreateTableWithGsiTest extends DDLBaseNewDBTestCase {
             + " DBPARTITION BY HASH(`vary_long_column_name_abc`) TBPARTITION BY HASH(`finally_one_column_with_the_vary_length_of_45`) TBPARTITIONS 3,\n"
             + "        UNIQUE GLOBAL `" + gsiTestUkName
             + "` (`finally_one_column_with_the_vary_length_of_64_aaaaaaaaaaaaaaaaaa`) COVERING (`id`, `product_key`, `is_deleted`, `thing_type`) DBPARTITION BY HASH(`finally_one_column_with_the_vary_length_of_64_aaaaaaaaaaaaaaaaaa`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 100000000 CHARSET = utf8mb4 COMMENT '设备表' dbpartition by hash"
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 100000000 CHARSET = utf8mb4 COLLATE utf8mb4_general_ci COMMENT '设备表' dbpartition by hash"
             + "(`product_key`) tbpartition by hash(`product_key`) tbpartitions 20";
 
         try {
@@ -859,7 +859,7 @@ public class CreateTableWithGsiTest extends DDLBaseNewDBTestCase {
             + " (`rbac_tenant_id`) COVERING (`id`, `product_key`) DBPARTITION BY HASH(`rbac_tenant_id`),\n"
             + "        UNIQUE GLOBAL " + quoteSpecialName(gsiTestUkName)
             + " (`iot_id`) COVERING (`id`, `product_key`, `is_deleted`, `thing_type`) DBPARTITION BY HASH(`iot_id`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 100000000 CHARSET = utf8mb4 COMMENT '设备表' dbpartition by hash"
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 100000000 CHARSET = utf8mb4 COLLATE utf8mb4_general_ci COMMENT '设备表' dbpartition by hash"
             + "(`product_key`) tbpartition by hash(`product_key`) tbpartitions 20";
 
         try {
@@ -1146,7 +1146,7 @@ public class CreateTableWithGsiTest extends DDLBaseNewDBTestCase {
             + "` (`rbac_tenant_id`) COVERING (`id`, `product_key`) DBPARTITION BY HASH(`rbac_tenant_id`),\n"
             + "        UNIQUE GLOBAL `" + gsiTestUkName
             + "` (`iot_id`) COVERING (`id`, `product_key`, `is_deleted`, `thing_type`) DBPARTITION BY HASH(`iot_id`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 100000000 CHARSET = utf8mb4 COMMENT '设备表' dbpartition by hash"
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 100000000 CHARSET = utf8mb4 COLLATE utf8mb4_general_ci COMMENT '设备表' dbpartition by hash"
             + "(`product_key`) tbpartition by hash(`product_key`) tbpartitions 20";
 
         dropTableWithGsi(gsiTestTableName, ImmutableList.of(gsiTestKeyName, gsiTestUkName));

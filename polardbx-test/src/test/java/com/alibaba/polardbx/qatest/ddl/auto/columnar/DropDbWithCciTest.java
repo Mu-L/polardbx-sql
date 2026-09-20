@@ -30,10 +30,11 @@ import java.util.Random;
 public class DropDbWithCciTest extends PartitionTestBase {
     private static final String dataBaseNameBase = "test_db_drop_db_with_cci";
     private static final String PRIMARY_TABLE_NAME1 = "drop_table_prim";
-    private static final String INDEX_NAME1 = "drop_table_cci";
+    private static final String INDEX_NAME1 = "drop_table_cci_1";
+    private static final String INDEX_NAME2 = "drop_table_cci_2";
 
     @Test
-    public void testDrop_table_with_cci_check_cdc_mark() {
+    public void testDrop_db_with_cci_check_cdc_mark() {
         final Random random = new Random();
         final Formatter formatter = new Formatter();
         final String suffix = "__" + formatter.format("%04x", random.nextInt(0x10000));
@@ -67,6 +68,58 @@ public class DropDbWithCciTest extends PartitionTestBase {
                 dataBaseName,
                 PRIMARY_TABLE_NAME1,
                 INDEX_NAME1,
+                DdlType.DROP_INDEX,
+                ColumnarTableStatus.DROP);
+
+        } catch (Exception e) {
+            throw new RuntimeException("sql statement execution failed!", e);
+        }
+    }
+
+    @Test
+    public void testDrop_db_with_multi_cci_check_cdc_mark() {
+        final Random random = new Random();
+        final Formatter formatter = new Formatter();
+        final String suffix = "__" + formatter.format("%04x", random.nextInt(0x10000));
+        final String dataBaseName = dataBaseNameBase + suffix;
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "CREATE DATABASE IF NOT EXISTS " + dataBaseName + " MODE = AUTO");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "use " + dataBaseName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "SET MAX_CCI_COUNT = 2");
+
+        try {
+            final String creatTableTmpl = "CREATE TABLE `%s` ( \n"
+                + "    `id` bigint(11) NOT NULL AUTO_INCREMENT BY GROUP, \n"
+                + "    `order_id` varchar(20) DEFAULT NULL, \n"
+                + "    `buyer_id` varchar(20) DEFAULT NULL, \n"
+                + "    `order_snapshot` longtext, \n"
+                + "    PRIMARY KEY (`id`), \n"
+                + "    CLUSTERED COLUMNAR INDEX `%s`(`buyer_id`) PARTITION BY KEY(`id`),\n"
+                + "    CLUSTERED COLUMNAR INDEX `%s`(`id`) PARTITION BY KEY(`id`)\n"
+                + ") ENGINE = InnoDB CHARSET = utf8 PARTITION BY KEY(`order_id`);\n";
+            final String sqlCreateTable1 = String.format(
+                creatTableTmpl,
+                PRIMARY_TABLE_NAME1,
+                INDEX_NAME1,
+                INDEX_NAME2);
+
+            // Create table with cci
+            dropTableIfExists(PRIMARY_TABLE_NAME1);
+            createCciSuccess(sqlCreateTable1);
+
+            // Drop database
+            final String sqlDdl1 = String.format("drop database if exists %s ", dataBaseName);
+            JdbcUtil.executeUpdateSuccess(tddlConnection, sqlDdl1);
+            JdbcUtil.executeUpdateSuccess(tddlConnection, "use " + getDdlSchema());
+            checkLatestColumnarMappingRecordByDropDbSql(sqlDdl1,
+                dataBaseName,
+                PRIMARY_TABLE_NAME1,
+                INDEX_NAME1,
+                DdlType.DROP_INDEX,
+                ColumnarTableStatus.DROP);
+            checkLatestColumnarMappingRecordByDropDbSql(sqlDdl1,
+                dataBaseName,
+                PRIMARY_TABLE_NAME1,
+                INDEX_NAME2,
                 DdlType.DROP_INDEX,
                 ColumnarTableStatus.DROP);
 

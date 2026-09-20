@@ -1,0 +1,4 @@
+test_dble_hash_ubigint
+test_dble_stringhash_bigint
+test_dble_stringhash_ubigint
+test_dble_stringhash_decimal

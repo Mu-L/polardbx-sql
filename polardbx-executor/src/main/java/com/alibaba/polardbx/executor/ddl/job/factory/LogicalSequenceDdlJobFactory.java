@@ -21,9 +21,10 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.LogicalSequenceValidateT
 import com.alibaba.polardbx.executor.ddl.job.task.basic.SequenceClearPlanCacheSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.SequenceSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcLogicalSequenceMarkTask;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.google.common.collect.ImmutableList;
 import org.apache.calcite.sql.SequenceBean;
@@ -37,7 +38,7 @@ import java.util.Set;
  *
  * @author zhuqiwei
  */
-public class LogicalSequenceDdlJobFactory extends DdlJobFactory {
+public class LogicalSequenceDdlJobFactory extends OnlineDdlJobFactory {
     protected final SequenceBean sequenceBean;
     protected final ExecutionContext executionContext;
     protected final String schemName;
@@ -46,6 +47,7 @@ public class LogicalSequenceDdlJobFactory extends DdlJobFactory {
 
     public LogicalSequenceDdlJobFactory(String schemaName, String tableName, SequenceBean sequenceBean,
                                         ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.META_ONLY);
         this.sequenceBean = sequenceBean;
         this.executionContext = executionContext;
         this.schemName = schemaName;
@@ -73,7 +75,7 @@ public class LogicalSequenceDdlJobFactory extends DdlJobFactory {
         LogicalSequenceValidateTask logicalSequenceValidateTask =
             new LogicalSequenceValidateTask(schemName, sequenceBean);
         LogicalHandleSequenceTask logicalHandleSequenceTask =
-            new LogicalHandleSequenceTask(schemName, tableName, sequenceBean);
+            new LogicalHandleSequenceTask(schemName, sequenceBean);
         CdcLogicalSequenceMarkTask cdcMarkTask =
             new CdcLogicalSequenceMarkTask(schemName, sequenceBean.getName(), executionContext.getOriginSql(),
                 sequenceBean.getKind());

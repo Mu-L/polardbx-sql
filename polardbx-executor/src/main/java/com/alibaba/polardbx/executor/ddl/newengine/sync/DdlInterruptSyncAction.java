@@ -31,11 +31,30 @@ public class DdlInterruptSyncAction implements IGmsSyncAction {
 
     private DdlRequest ddlRequest;
 
+    public Boolean getPauseElseTransition() {
+        return pauseElseTransition;
+    }
+
+    public void setPauseElseTransition(Boolean pauseElseTransition) {
+        this.pauseElseTransition = pauseElseTransition;
+    }
+
+    private Boolean pauseElseTransition = true;
+
     public DdlInterruptSyncAction() {
     }
 
-    public DdlInterruptSyncAction(DdlRequest request) {
+    public DdlInterruptSyncAction(DdlRequest request, Boolean pauseElseTransition) {
+        this.pauseElseTransition = pauseElseTransition;
         this.ddlRequest = request;
+        if (pauseElseTransition != null && request != null) {
+            logger.info(
+                String.format("Creating DdlInterruptSyncAction instance. " +
+                        "DDL Job ID: %s, Schema: %s, PauseElseTransition: %s",
+                    request.getJobIds(),
+                    request.getSchemaName(),
+                    pauseElseTransition));
+        }
     }
 
     @Override
@@ -51,9 +70,15 @@ public class DdlInterruptSyncAction implements IGmsSyncAction {
                 logger.warn(
                     String.format("The ddl job %s on schema %s does not exits", jobId, schemaName));
             } else {
+                logger.info(
+                    String.format("pauseElseTransition is [%s]", pauseElseTransition));
+                if (!pauseElseTransition) {
+                    ddlEngineDagExecutor.updateDdlContextFromRecord();
+                }
                 ddlEngineDagExecutor.interrupt();
                 logger.warn(
-                    String.format("The ddl job %s on schema %s has been interrupted by DdlInterruptSyncAction", jobId,
+                    String.format("The ddl job %s on schema %s has been interrupted by DdlInterruptSyncAction",
+                        jobId,
                         schemaName));
             }
             List<DdlEngineDagExecutor>

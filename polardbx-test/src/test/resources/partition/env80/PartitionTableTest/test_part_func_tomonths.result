@@ -2,7 +2,7 @@
 ## test create table(date)
 CREATE TABLE `m1` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(TO_MONTHS(`d`))
 PARTITIONS 16;
 show create table m1;
@@ -10,7 +10,7 @@ Table,Create Table
 m1,CREATE TABLE `m1` (
 	`d` date DEFAULT NULL,
 	KEY `auto_shard_key_d` USING BTREE (`d`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(TO_MONTHS(`d`))
 PARTITIONS 16
 ## prepare data
@@ -77,7 +77,7 @@ MergeSort(sort="d ASC")
 ## test range
 CREATE TABLE `m2` (
 `dt` datetime DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY RANGE(TO_MONTHS(`dt`))
 (PARTITION p0 VALUES LESS THAN(3),
 PARTITION p1 VALUES LESS THAN(6),
@@ -88,7 +88,7 @@ Table,Create Table
 m2,CREATE TABLE `m2` (
 	`dt` datetime DEFAULT NULL,
 	KEY `auto_shard_key_dt` USING BTREE (`dt`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY RANGE(TO_MONTHS(`dt`))
 (PARTITION p0 VALUES LESS THAN (3) ENGINE = InnoDB,
  PARTITION p1 VALUES LESS THAN (6) ENGINE = InnoDB,
@@ -118,7 +118,7 @@ dt
 ## test list
 CREATE TABLE `m3` (
 `dt` datetime DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY LIST(TO_MONTHS(`dt`))
 (PARTITION p0 VALUES IN(1,2,3,4,5),
 PARTITION p1 VALUES IN(6,7,8,9,10),
@@ -141,7 +141,7 @@ dt
 ## test span years
 create table `m4`(
 `dt` date
-)ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+)ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 partition by hash(to_months(`dt`)) partitions 128;
 ## prepare data
 insert into m4 values('2021-12-31'),('2022-01-01'),('2022-12-31');

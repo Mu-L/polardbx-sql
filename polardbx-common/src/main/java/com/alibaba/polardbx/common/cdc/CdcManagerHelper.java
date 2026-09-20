@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.common.cdc;
 
+import com.alibaba.polardbx.common.cdc.entity.DdlLoadStatusInfo;
 import com.alibaba.polardbx.common.ddl.Job;
 import com.alibaba.polardbx.common.ddl.newengine.DdlType;
 import com.alibaba.polardbx.common.model.lifecycle.AbstractLifecycle;
@@ -48,7 +49,8 @@ public class CdcManagerHelper {
         cdcManager = ExtensionLoader.load(ICdcManager.class);
     }
 
-    public void initialize() {
+    public void initialize(int serverPort) {
+        cdcManager.setServerPort(serverPort);
         if (cdcManager instanceof AbstractLifecycle) {
             ((AbstractLifecycle) cdcManager).init();
         }
@@ -141,6 +143,26 @@ public class CdcManagerHelper {
         return cdcManager.getDdlRecord(context);
     }
 
+    public CdcDdlRecord queryDdlById(Long id) {
+        CdcDDLContext context = new CdcDDLContext(
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            true,
+            null,
+            null,
+            false,
+            null,
+            null,
+            null);
+        return cdcManager.getDdlRecordById(context, id);
+    }
+
     //新ddl引擎打标方法
     public void notifyDdlNew(String schemaName, String tableName, String sqlKind, String ddlSql, DdlType ddlType,
                              Long jobId, Long taskId, CdcDdlMarkVisibility visibility, Map<String, Object> extendParams,
@@ -203,5 +225,17 @@ public class CdcManagerHelper {
 
     public void checkCdcBeforeStorageRemove(Set<String> storageInstIds, String identifier) {
         cdcManager.checkCdcBeforeStorageRemove(storageInstIds, identifier);
+    }
+
+    public CdcDdlRecord getMaxIdCdcDdlRecord() {
+        return cdcManager.getMaxDdlIdCdcDdlRecord();
+    }
+
+    public DdlLoadStatusInfo getDdlLoadStatusInfo() {
+        return cdcManager.getDdlLoadStatusInfo();
+    }
+
+    public void resetCdcDdlRecordAutoIncrementSeq() {
+        cdcManager.resetCdcDdlRecordAutoIncrementSeq();
     }
 }

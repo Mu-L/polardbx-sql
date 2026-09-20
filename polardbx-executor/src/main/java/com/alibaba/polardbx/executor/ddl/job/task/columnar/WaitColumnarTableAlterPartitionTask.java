@@ -82,7 +82,8 @@ public class WaitColumnarTableAlterPartitionTask extends BaseDdlTask {
                     ColumnarTableMappingRecord record = records.get(0);
 
                     ColumnarTableEvolutionRecord evolutionRecord =
-                        tableInfoManager.queryColumnarTableEvolutionByVersionId(record.latestVersionId);
+                        tableInfoManager.queryColumnarTableEvolutionByVersionIdAndTableId(record.latestVersionId,
+                            record.tableId);
 
                     List<ColumnarCheckpointsRecord> checkpointsRecords =
                         tableInfoManager.queryColumnarCheckpointsByCommitTs(evolutionRecord.commitTs);

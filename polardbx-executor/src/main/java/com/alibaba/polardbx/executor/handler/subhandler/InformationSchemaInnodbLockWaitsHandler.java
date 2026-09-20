@@ -26,6 +26,7 @@ import com.alibaba.polardbx.executor.utils.transaction.TrxLookupSet;
 import com.alibaba.polardbx.group.jdbc.TGroupDataSource;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.utils.OptimizerHelper;
 import com.alibaba.polardbx.optimizer.view.InformationSchemaInnodbLockWaits;
 import com.alibaba.polardbx.optimizer.view.VirtualView;
 
@@ -70,7 +71,7 @@ public class InformationSchemaInnodbLockWaitsHandler extends BaseVirtualViewSubC
 
     @Override
     public Cursor handle(VirtualView virtualView, ExecutionContext executionContext, ArrayResultCursor cursor) {
-        Set<String> schemaNames = OptimizerContext.getActiveSchemaNames();
+        List<String> schemaNames = OptimizerHelper.getServerConfigManager().getLoadedSchemas();
         TrxLookupSet lookupSet = TransactionUtils.getTrxLookupSet(schemaNames);
         Map<String, List<TGroupDataSource>> instId2GroupList = ExecUtils.getInstId2GroupList(schemaNames);
 

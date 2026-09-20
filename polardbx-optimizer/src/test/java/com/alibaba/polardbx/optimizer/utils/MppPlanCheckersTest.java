@@ -13,13 +13,16 @@ import static com.alibaba.polardbx.common.utils.Assert.assertTrue;
 import static com.alibaba.polardbx.druid.sql.ast.SqlType.SELECT;
 import static com.alibaba.polardbx.druid.sql.ast.SqlType.SELECT_FOR_UPDATE;
 import static com.alibaba.polardbx.optimizer.utils.mppchecker.MppPlanCheckers.COLUMNAR_TRANSACTION_CHECKER;
-import static com.alibaba.polardbx.optimizer.utils.mppchecker.MppPlanCheckers.ENABLE_COLUMNAR_CHECKER;
+import static com.alibaba.polardbx.optimizer.utils.mppchecker.MppPlanCheckers.COLUMNAR_ENABLE_CHECKER;
 import static com.alibaba.polardbx.optimizer.utils.mppchecker.MppPlanCheckers.EXPLAIN_EXECUTE_CHECKER;
 import static com.alibaba.polardbx.optimizer.utils.mppchecker.MppPlanCheckers.EXPLAIN_STATISTICS_CHECKER;
+import static com.alibaba.polardbx.optimizer.utils.mppchecker.MppPlanCheckers.EXTERNAL_CHECKER;
 import static com.alibaba.polardbx.optimizer.utils.mppchecker.MppPlanCheckers.INTERNAL_SYSTEM_SQL_CHECKER;
 import static com.alibaba.polardbx.optimizer.utils.mppchecker.MppPlanCheckers.MPP_ENABLED_CHECKER;
 import static com.alibaba.polardbx.optimizer.utils.mppchecker.MppPlanCheckers.TRANSACTION_CHECKER;
 import static com.alibaba.polardbx.optimizer.utils.mppchecker.MppPlanCheckers.UPDATE_CHECKER;
+
+import static org.junit.Assert.assertFalse;
 
 /**
  * @author fangwu
@@ -37,7 +40,7 @@ public class MppPlanCheckersTest {
         ExecutionContext ec2 = new ExecutionContext();
         ec2.getParamManager().getProps().put(ENABLE_MPP, "true");
 
-        MppPlanCheckerInput input = new MppPlanCheckerInput(null, plannerContext, ec2);
+        MppPlanCheckerInput input = new MppPlanCheckerInput(null, plannerContext, ec2, null);
 
         assertTrue(MPP_ENABLED_CHECKER.supportsMpp(input));
 
@@ -56,7 +59,7 @@ public class MppPlanCheckersTest {
         ExecutionContext ec2 = new ExecutionContext();
         ec2.setAutoCommit(true);
 
-        MppPlanCheckerInput input = new MppPlanCheckerInput(null, plannerContext, ec2);
+        MppPlanCheckerInput input = new MppPlanCheckerInput(null, plannerContext, ec2, null);
 
         assertTrue(TRANSACTION_CHECKER.supportsMpp(input));
 
@@ -75,7 +78,7 @@ public class MppPlanCheckersTest {
         ExecutionContext ec2 = new ExecutionContext();
         ec2.setAutoCommit(true);
 
-        MppPlanCheckerInput input = new MppPlanCheckerInput(null, plannerContext, ec2);
+        MppPlanCheckerInput input = new MppPlanCheckerInput(null, plannerContext, ec2, null);
 
         assertTrue(COLUMNAR_TRANSACTION_CHECKER.supportsMpp(input));
 
@@ -94,7 +97,7 @@ public class MppPlanCheckersTest {
         ExecutionContext ec2 = new ExecutionContext();
         ec2.setSqlType(SELECT_FOR_UPDATE);
 
-        MppPlanCheckerInput input = new MppPlanCheckerInput(null, plannerContext, ec2);
+        MppPlanCheckerInput input = new MppPlanCheckerInput(null, plannerContext, ec2, null);
 
         assertTrue(!UPDATE_CHECKER.supportsMpp(input));
 
@@ -113,7 +116,7 @@ public class MppPlanCheckersTest {
         ExecutionContext ec2 = new ExecutionContext();
         ec2.setInternalSystemSql(true);
 
-        MppPlanCheckerInput input = new MppPlanCheckerInput(null, plannerContext, ec2);
+        MppPlanCheckerInput input = new MppPlanCheckerInput(null, plannerContext, ec2, null);
 
         assertTrue(!INTERNAL_SYSTEM_SQL_CHECKER.supportsMpp(input));
 
@@ -134,7 +137,7 @@ public class MppPlanCheckersTest {
         ec2.setExplain(new ExplainResult());
         ec2.getExplain().explainMode = ExplainResult.ExplainMode.OPTIMIZER;
 
-        MppPlanCheckerInput input = new MppPlanCheckerInput(null, plannerContext, ec2);
+        MppPlanCheckerInput input = new MppPlanCheckerInput(null, plannerContext, ec2, null);
 
         assertTrue(EXPLAIN_EXECUTE_CHECKER.supportsMpp(input));
 
@@ -155,13 +158,28 @@ public class MppPlanCheckersTest {
         ec2.setExplain(new ExplainResult());
         ec2.getExplain().explainMode = ExplainResult.ExplainMode.OPTIMIZER;
 
-        MppPlanCheckerInput input = new MppPlanCheckerInput(null, plannerContext, ec2);
+        MppPlanCheckerInput input = new MppPlanCheckerInput(null, plannerContext, ec2, null);
 
         assertTrue(EXPLAIN_STATISTICS_CHECKER.supportsMpp(input));
 
         ec2.getExplain().explainMode = ExplainResult.ExplainMode.STATISTICS;
 
         assertTrue(!EXPLAIN_STATISTICS_CHECKER.supportsMpp(input));
+    }
+
+    @Test
+    public void testExternalChecker() {
+        PlannerContext plannerContext = new PlannerContext();
+        ExecutionContext ec = new ExecutionContext();
+        plannerContext.setExecutionContext(ec);
+
+        MppPlanCheckerInput input = new MppPlanCheckerInput(null, plannerContext, ec, null);
+
+        assertTrue(EXTERNAL_CHECKER.supportsMpp(input));
+
+        plannerContext.setHasExternalTableOperation(true);
+
+        assertFalse(EXTERNAL_CHECKER.supportsMpp(input));
     }
 
     @Test
@@ -175,13 +193,13 @@ public class MppPlanCheckersTest {
         ExecutionContext ec2 = new ExecutionContext();
         ec2.getParamManager().getProps().put(ENABLE_COLUMNAR_OPTIMIZER, "true");
 
-        MppPlanCheckerInput input = new MppPlanCheckerInput(null, plannerContext, ec2);
+        MppPlanCheckerInput input = new MppPlanCheckerInput(null, plannerContext, ec2, null);
 
-        assertTrue(ENABLE_COLUMNAR_CHECKER.supportsMpp(input));
+        assertTrue(COLUMNAR_ENABLE_CHECKER.supportsMpp(input));
 
         ec2.getParamManager().getProps().put(ENABLE_COLUMNAR_OPTIMIZER, "false");
 
-        assertTrue(!ENABLE_COLUMNAR_CHECKER.supportsMpp(input));
+        assertTrue(!COLUMNAR_ENABLE_CHECKER.supportsMpp(input));
 
         ec2.getParamManager().getProps().put(ENABLE_COLUMNAR_OPTIMIZER, "false");
 
@@ -189,12 +207,12 @@ public class MppPlanCheckersTest {
         try {
             ec2.getParamManager().getProps().put(ENABLE_COLUMNAR_OPTIMIZER_WITH_COLUMNAR, "true");
             DynamicConfig.getInstance().existColumnarNodes(true);
-            assertTrue(ENABLE_COLUMNAR_CHECKER.supportsMpp(input));
+            assertTrue(COLUMNAR_ENABLE_CHECKER.supportsMpp(input));
             ec2.getParamManager().getProps().put(ENABLE_COLUMNAR_OPTIMIZER_WITH_COLUMNAR, "false");
-            assertTrue(!ENABLE_COLUMNAR_CHECKER.supportsMpp(input));
+            assertTrue(!COLUMNAR_ENABLE_CHECKER.supportsMpp(input));
             ec2.getParamManager().getProps().put(ENABLE_COLUMNAR_OPTIMIZER_WITH_COLUMNAR, "true");
             DynamicConfig.getInstance().existColumnarNodes(false);
-            assertTrue(!ENABLE_COLUMNAR_CHECKER.supportsMpp(input));
+            assertTrue(!COLUMNAR_ENABLE_CHECKER.supportsMpp(input));
         } finally {
             DynamicConfig.getInstance().existColumnarNodes(orig);
         }

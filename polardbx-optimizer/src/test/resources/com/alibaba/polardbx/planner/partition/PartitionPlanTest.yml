@@ -8,8 +8,8 @@
     select * from lineitem where l_orderkey in (1,2,3);
 
   plan: |
-   gather(concurrent=true)
-     logicalview(tables="lineitem[p1,p4]", shardcount=2, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem` where (`l_orderkey` in(1, 2, 3))")
+    gather(concurrent=true)
+      logicalview(tables="lineitem[p1,p4]", shardcount=2, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem` as `lineitem` where (`l_orderkey` in(1, 2, 3))")
 
 - sql: |
     select * from lineitem where l_orderkey between 8 and 11
@@ -82,12 +82,11 @@
     select * from t_ab_range join t_ab_hash on t_ab_range.a = t_ab_hash.a and t_ab_range.b = t_ab_hash.b
 
   plan: |
-    BKAJoin(condition="a = a AND b = b", type="inner")
-      Gather(concurrent=true)
-        LogicalView(tables="t_ab_range[p0,p1,p2]", shardCount=3, sql="SELECT `a`, `b` FROM `t_ab_range` AS `t_ab_range`")
-      Gather(concurrent=true)
-        LogicalView(tables="t_ab_hash[p1,p2,p3,p4]", shardCount=4, sql="SELECT `a`, `b` FROM `t_ab_hash` AS `t_ab_hash` WHERE (((`a`, `b`)) IN (...))")
-
+    hashjoin(condition="a = a and b = b", type="inner")
+      gather(concurrent=true)
+        logicalview(tables="t_ab_range[p0,p1,p2]", shardcount=3, sql="select `a`, `b` from `t_ab_range` as `t_ab_range`")
+      gather(concurrent=true)
+        logicalview(tables="t_ab_hash[p1,p2,p3,p4]", shardcount=4, sql="select `a`, `b` from `t_ab_hash` as `t_ab_hash`")
 - sql: |
     select * from t_hash_varchar where varchar_test = 'k'
 

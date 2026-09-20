@@ -99,7 +99,7 @@ public class LogicalAlterDatabaseSetLocalityFactory extends DdlJobFactory {
         String originalLocality = LocalityManager.getInstance().getLocalityOfDb(schemaName).getLocality();
         LocalityDesc originalLocalityDesc = LocalityInfoUtils.parse(originalLocality);
         if (!originalLocalityDesc.hasStoragePoolDefinition()) {
-            Set<String> originalDnSet = originalLocalityDesc.getDnSet();
+            Set<String> originalDnSet = StoragePoolManager.getInstance().getDefaultLocalityDesc().getDnSet();
             Set<String> targetDnSet = targetLocalityDesc.getDnSet();
             Set<String> fullDnSet = getAllStorageInstIds(instId);
             Set<String> dnSet = new HashSet<>();

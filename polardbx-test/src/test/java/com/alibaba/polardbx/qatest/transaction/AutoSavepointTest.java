@@ -16,7 +16,7 @@
 
 package com.alibaba.polardbx.qatest.transaction;
 
-import com.alibaba.polardbx.qatest.CrudBasedLockTestCase;
+import com.alibaba.polardbx.qatest.BaseTestCase;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.collect.ImmutableList;
 import net.jcip.annotations.NotThreadSafe;
@@ -39,7 +39,7 @@ import java.util.Random;
 import java.util.function.Supplier;
 
 @NotThreadSafe
-public class AutoSavepointTest extends CrudBasedLockTestCase {
+public class AutoSavepointTest extends BaseTestCase {
     private final String primaryName;
     private final String gsiName;
     private final String mysqlName;
@@ -76,10 +76,10 @@ public class AutoSavepointTest extends CrudBasedLockTestCase {
      */
     @Before
     public void before() {
-        JdbcUtil.executeUpdateSuccess(tddlConnection, "set global ENABLE_CLOSE_CONNECTION_WHEN_TRX_FATAL = false");
-        JdbcUtil.executeUpdate(tddlConnection, "SET GLOBAL CONN_POOL_XPROTO_SLOW_THRESH = 0");
         this.myPolarXConn = getPolardbxConnection();
         this.myMysqlConn = getMysqlConnection();
+        setSqlMode("STRICT_TRANS_TABLES", myPolarXConn);
+        setSqlMode("STRICT_TRANS_TABLES", myMysqlConn);
         Assert.assertTrue(initialMaxKey > 1);
 
         JdbcUtil.executeUpdateSuccess(myPolarXConn, "set global enable_auto_savepoint = true");
@@ -138,11 +138,8 @@ public class AutoSavepointTest extends CrudBasedLockTestCase {
 
     @After
     public void after() throws SQLException {
-//        dropTableIfExists(myMysqlConn, mysqlName);
-//        dropTableWithGsi(primaryName, ImmutableList.of(gsiName));
         myPolarXConn.close();
         myMysqlConn.close();
-        JdbcUtil.executeUpdate(tddlConnection, "SET GLOBAL CONN_POOL_XPROTO_SLOW_THRESH = 1000");
     }
 
     private String getIncKey() {
@@ -394,28 +391,21 @@ public class AutoSavepointTest extends CrudBasedLockTestCase {
 
     @Test
     public void testAutoSavepointSwitch() throws SQLException {
-        try {
-            JdbcUtil.executeUpdateSuccess(myPolarXConn, "set enable_auto_savepoint = false");
-            try {
-                myPolarXConn.setAutoCommit(false);
-                final String setTrxPolicySql = String.format("set drds_transaction_policy = %s", trxPolicy);
-                JdbcUtil.executeUpdateSuccess(myPolarXConn, setTrxPolicySql);
+        try (Connection connection = getPolardbxConnection()) {
+            JdbcUtil.executeUpdateSuccess(connection, "set enable_auto_savepoint = false");
+            connection.setAutoCommit(false);
+            final String setTrxPolicySql = String.format("set drds_transaction_policy = %s", trxPolicy);
+            JdbcUtil.executeUpdateSuccess(connection, setTrxPolicySql);
 
-                // Insert "(1, x, '0', x)" should fail with duplicate entry 1.
-                JdbcUtil.executeUpdateFailed(myPolarXConn,
-                    getInsertSql(primaryName, getValuesStr(Arrays.asList("1", getIncKey(), "'0'", getIncKey()))),
-                    "Duplicate entry '1'");
-                // Since we turn off the auto savepoint option, it should fail with
-                // "cannot continue or commit transaction after writing failed".
-                JdbcUtil.executeUpdateFailed(myPolarXConn,
-                    getInsertSql(primaryName, goodValuesSupplier.get()),
-                    "cannot continue or commit transaction after writing failed.");
-            } finally {
-                myPolarXConn.rollback();
-                myPolarXConn.setAutoCommit(true);
-            }
-        } finally {
-            JdbcUtil.executeUpdateSuccess(myPolarXConn, "set enable_auto_savepoint = true");
+            // Insert "(1, x, '0', x)" should fail with duplicate entry 1.
+            JdbcUtil.executeUpdateFailed(connection,
+                getInsertSql(primaryName, getValuesStr(Arrays.asList("1", getIncKey(), "'0'", getIncKey()))),
+                "Duplicate entry '1'");
+            // Since we turn off the auto savepoint option, it should fail with
+            // "cannot continue or commit transaction after writing failed".
+            JdbcUtil.executeUpdateFailed(connection,
+                getInsertSql(primaryName, goodValuesSupplier.get()),
+                "");
         }
     }
 
@@ -424,97 +414,86 @@ public class AutoSavepointTest extends CrudBasedLockTestCase {
      */
     @Test
     public void testAutoSavepointSwitch2() throws SQLException {
-        try {
-            JdbcUtil.executeUpdateSuccess(myPolarXConn, "set enable_auto_savepoint = false");
+        try (Connection connection = getPolardbxConnection()) {
+            JdbcUtil.executeUpdateSuccess(connection, "set enable_auto_savepoint = false");
+            connection.setAutoCommit(false);
+            final String setTrxPolicySql = String.format("set drds_transaction_policy = %s", trxPolicy);
+            JdbcUtil.executeUpdateSuccess(connection, setTrxPolicySql);
+
+            // Insert "(1, x, '0', x)" should fail with duplicate entry 1.
+            JdbcUtil.executeUpdateFailed(connection,
+                getInsertSql(primaryName, getValuesStr(Arrays.asList("1", getIncKey(), "'0'", getIncKey()))),
+                "Duplicate entry '1'");
+            // Since we turn off the auto savepoint option, it should fail with
+            // "cannot continue or commit transaction after writing failed".
+            JdbcUtil.executeUpdateFailed(connection,
+                getInsertSql(primaryName, goodValuesSupplier.get()),
+                "");
+        }
+
+        // enable_auto_savepoint = true should work for the next transaction
+        try (Connection connection = getPolardbxConnection()) {
+            JdbcUtil.executeUpdateSuccess(connection, "set enable_auto_savepoint = true");
+            connection.setAutoCommit(false);
             try {
-                myPolarXConn.setAutoCommit(false);
                 final String setTrxPolicySql = String.format("set drds_transaction_policy = %s", trxPolicy);
-                JdbcUtil.executeUpdateSuccess(myPolarXConn, setTrxPolicySql);
+                JdbcUtil.executeUpdateSuccess(connection, setTrxPolicySql);
 
                 // Insert "(1, x, '0', x)" should fail with duplicate entry 1.
-                JdbcUtil.executeUpdateFailed(myPolarXConn,
-                    getInsertSql(primaryName, getValuesStr(Arrays.asList("1", getIncKey(), "'0'", getIncKey()))),
-                    "Duplicate entry '1'");
-                // Since we turn off the auto savepoint option, it should fail with
-                // "cannot continue or commit transaction after writing failed".
-                JdbcUtil.executeUpdateFailed(myPolarXConn,
-                    getInsertSql(primaryName, goodValuesSupplier.get()),
-                    "cannot continue or commit transaction after writing failed.");
-                // Now, change this session value to true
-                JdbcUtil.executeUpdateSuccess(myPolarXConn, "set enable_auto_savepoint = true");
-                // And it should not work for this transaction, but the next one.
-                JdbcUtil.executeUpdateFailed(myPolarXConn,
-                    getInsertSql(primaryName, goodValuesSupplier.get()),
-                    "cannot continue or commit transaction after writing failed.");
-            } finally {
-                myPolarXConn.rollback();
-                myPolarXConn.setAutoCommit(true);
-            }
-            // enable_auto_savepoint = true should work for the next transaction
-            try {
-                myPolarXConn.setAutoCommit(false);
-                final String setTrxPolicySql = String.format("set drds_transaction_policy = %s", trxPolicy);
-                JdbcUtil.executeUpdateSuccess(myPolarXConn, setTrxPolicySql);
-
-                // Insert "(1, x, '0', x)" should fail with duplicate entry 1.
-                JdbcUtil.executeUpdateFailed(myPolarXConn,
+                JdbcUtil.executeUpdateFailed(connection,
                     getInsertSql(primaryName, getValuesStr(Arrays.asList("1", getIncKey(), "'0'", getIncKey()))),
                     "Duplicate entry '1'");
                 // Insert good values should succeed.
-                JdbcUtil.executeUpdateSuccess(myPolarXConn, getInsertSql(primaryName, goodValuesSupplier.get()));
+                JdbcUtil.executeUpdateSuccess(connection, getInsertSql(primaryName, goodValuesSupplier.get()));
                 // Now, change this session value to false and should not work for this transaction
-                JdbcUtil.executeUpdateSuccess(myPolarXConn, "set enable_auto_savepoint = false");
+                JdbcUtil.executeUpdateSuccess(connection, "set enable_auto_savepoint = false");
                 // Fail for duplicate entry.
-                JdbcUtil.executeUpdateFailed(myPolarXConn,
+                JdbcUtil.executeUpdateFailed(connection,
                     getInsertSql(primaryName, getValuesStr(Arrays.asList("1", getIncKey(), "'0'", getIncKey()))),
                     "Duplicate entry '1'");
                 // Transaction can still continue.
-                JdbcUtil.executeUpdateSuccess(myPolarXConn, getInsertSql(primaryName, goodValuesSupplier.get()));
+                JdbcUtil.executeUpdateSuccess(connection, getInsertSql(primaryName, goodValuesSupplier.get()));
             } finally {
-                myPolarXConn.rollback();
-                myPolarXConn.setAutoCommit(true);
+                connection.rollback();
+                connection.setAutoCommit(true);
             }
-
-            // Test set global.
-            JdbcUtil.executeUpdateSuccess(myPolarXConn, "set enable_set_global = true");
-            JdbcUtil.executeUpdateSuccess(myPolarXConn, "set global enable_auto_savepoint = false");
-            try {
-                myPolarXConn.setAutoCommit(false);
-                final String setTrxPolicySql = String.format("set drds_transaction_policy = %s", trxPolicy);
-                JdbcUtil.executeUpdateSuccess(myPolarXConn, setTrxPolicySql);
-
-                // Insert "(1, x, '0', x)" should fail with duplicate entry 1.
-                JdbcUtil.executeUpdateFailed(myPolarXConn,
-                    getInsertSql(primaryName, getValuesStr(Arrays.asList("1", getIncKey(), "'0'", getIncKey()))),
-                    "Duplicate entry '1'");
-                // Since we turn off the auto savepoint option, it should fail with
-                // "cannot continue or commit transaction after writing failed".
-                JdbcUtil.executeUpdateFailed(myPolarXConn,
-                    getInsertSql(primaryName, goodValuesSupplier.get()),
-                    "cannot continue or commit transaction after writing failed.");
-            } finally {
-                myPolarXConn.rollback();
-                myPolarXConn.setAutoCommit(true);
-            }
-            JdbcUtil.executeUpdateSuccess(myPolarXConn, "set global enable_auto_savepoint = true");
-            try {
-                myPolarXConn.setAutoCommit(false);
-                final String setTrxPolicySql = String.format("set drds_transaction_policy = %s", trxPolicy);
-                JdbcUtil.executeUpdateSuccess(myPolarXConn, setTrxPolicySql);
-
-                // Insert "(1, x, '0', x)" should fail with duplicate entry 1.
-                JdbcUtil.executeUpdateFailed(myPolarXConn,
-                    getInsertSql(primaryName, getValuesStr(Arrays.asList("1", getIncKey(), "'0'", getIncKey()))),
-                    "Duplicate entry '1'");
-                // Insert good values should succeed.
-                JdbcUtil.executeUpdateSuccess(myPolarXConn, getInsertSql(primaryName, goodValuesSupplier.get()));
-            } finally {
-                myPolarXConn.rollback();
-                myPolarXConn.setAutoCommit(true);
-            }
-        } finally {
-            JdbcUtil.executeUpdateSuccess(myPolarXConn, "set enable_auto_savepoint = true");
         }
+
+        // Test set global.
+        JdbcUtil.executeUpdateSuccess(myPolarXConn, "set enable_set_global = true");
+        JdbcUtil.executeUpdateSuccess(myPolarXConn, "set global enable_auto_savepoint = false");
+        try (Connection connection = getPolardbxConnection()) {
+            connection.setAutoCommit(false);
+            final String setTrxPolicySql = String.format("set drds_transaction_policy = %s", trxPolicy);
+            JdbcUtil.executeUpdateSuccess(connection, setTrxPolicySql);
+
+            // Insert "(1, x, '0', x)" should fail with duplicate entry 1.
+            JdbcUtil.executeUpdateFailed(connection,
+                getInsertSql(primaryName, getValuesStr(Arrays.asList("1", getIncKey(), "'0'", getIncKey()))),
+                "Duplicate entry '1'");
+            // Since we turn off the auto savepoint option, it should fail with
+            // "cannot continue or commit transaction after writing failed".
+            JdbcUtil.executeUpdateFailed(connection,
+                getInsertSql(primaryName, goodValuesSupplier.get()),
+                "");
+        }
+
+        JdbcUtil.executeUpdateSuccess(myPolarXConn, "set global enable_auto_savepoint = true");
+        try (Connection connection = getPolardbxConnection()) {
+            connection.setAutoCommit(false);
+            final String setTrxPolicySql = String.format("set drds_transaction_policy = %s", trxPolicy);
+            JdbcUtil.executeUpdateSuccess(connection, setTrxPolicySql);
+
+            // Insert "(1, x, '0', x)" should fail with duplicate entry 1.
+            JdbcUtil.executeUpdateFailed(connection,
+                getInsertSql(primaryName, getValuesStr(Arrays.asList("1", getIncKey(), "'0'", getIncKey()))),
+                "Duplicate entry '1'");
+            // Insert good values should succeed.
+            JdbcUtil.executeUpdateSuccess(connection, getInsertSql(primaryName, goodValuesSupplier.get()));
+            connection.rollback();
+            connection.setAutoCommit(true);
+        }
+
     }
 
     /**

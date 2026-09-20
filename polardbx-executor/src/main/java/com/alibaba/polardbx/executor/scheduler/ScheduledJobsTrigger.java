@@ -23,6 +23,7 @@ import com.alibaba.polardbx.gms.scheduler.ScheduledJobsRecord;
 import org.apache.commons.lang3.StringUtils;
 
 import java.time.ZonedDateTime;
+import java.util.Map;
 import java.util.Optional;
 
 public interface ScheduledJobsTrigger {
@@ -54,5 +55,11 @@ public interface ScheduledJobsTrigger {
      * 立刻调度一次定时任务，不影响getNextFireTime
      */
     boolean fireOnceNow();
+
+    /**
+     * Force to fire once now,
+     * the state of fired_scheduled_job is RUNNING
+     */
+    boolean forceFireOnceNow(Long fireTimeTs, Map<String, Object> cmdExtraParams);
 
 }

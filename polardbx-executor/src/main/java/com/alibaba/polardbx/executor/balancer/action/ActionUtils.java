@@ -154,7 +154,7 @@ public class ActionUtils {
         if (ddl instanceof AlterTableGroupSplitPartition) {
             LogicalAlterTableGroupSplitPartition splitPartition = LogicalAlterTableGroupSplitPartition.create(ddl);
             splitPartition.setSchemaName(schema);
-            splitPartition.preparedData(ec);
+            splitPartition.preparedData(ec, false);
             ddlContext.setDdlType(splitPartition.getDdlType());
             return AlterTableGroupSplitPartitionJobFactory.create(ddl, splitPartition.getPreparedData(), ec);
         } else if (ddl instanceof AlterTableGroupMergePartition) {
@@ -235,6 +235,10 @@ public class ActionUtils {
 
     public static Boolean isMovePartitionAction(BalanceAction action) {
         return action instanceof ActionMovePartition || action instanceof ActionMovePartitions;
+    }
+
+    public static Boolean isExpandDatabaseAction(BalanceAction action) {
+        return action instanceof ActionExpandDatabase;
     }
 
     public static ActionMovePartitions mergeActionMovePartitions(String schema,

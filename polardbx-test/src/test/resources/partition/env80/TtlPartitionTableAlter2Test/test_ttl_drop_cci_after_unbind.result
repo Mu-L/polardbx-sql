@@ -1,0 +1,105 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = true;
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+USE polardbx;
+DROP DATABASE IF EXISTS test_ttl_drop_cci_db;
+CREATE DATABASE IF NOT EXISTS test_ttl_drop_cci_db mode='auto' DEFAULT DEFAULT COLLATE utf8mb4_bin;
+USE test_ttl_drop_cci_db;
+## Step1: Create TTL table with archive binding (simulates normal state)
+CREATE TABLE ttl_cci_t1(
+a int not null auto_increment,
+b datetime default current_timestamp,
+c varchar(64) default 'hello',
+primary key(a)
+)
+TTL = TTL_DEFINITION(
+TTL_ENABLE = 'OFF',
+TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00',
+TTL_JOB = CRON '*/1 * * * * ?' TIMEZONE '+08:00',
+ARCHIVE_TYPE = 'ROW',
+ARCHIVE_TABLE_NAME = 'arc_ttl_cci_t1'
+)
+partition by key(a) partitions 2;
+show create table ttl_cci_t1;
+Table,Create Table
+ttl_cci_t1,CREATE TABLE `ttl_cci_t1` (
+	`a` int NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT CURRENT_TIMESTAMP,
+	`c` varchar(64) COLLATE utf8mb4_bin DEFAULT 'hello',
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00', TTL_JOB = CRON '*/1 * * * * ?', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 12, ARCHIVE_TABLE_POST_ALLOCATE = 64 )
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+## Step2: Create a GSI (simulates CCI under TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL)
+CREATE GLOBAL INDEX idx_cci_t1_b ON ttl_cci_t1(b) partition by key(b) partitions 2;
+show create table ttl_cci_t1;
+Table,Create Table
+ttl_cci_t1,CREATE TABLE `ttl_cci_t1` (
+	`a` int NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT CURRENT_TIMESTAMP,
+	`c` varchar(64) COLLATE utf8mb4_bin DEFAULT 'hello',
+	PRIMARY KEY (`a`),
+	GLOBAL INDEX `idx_cci_t1_b` (`b`)
+		PARTITION BY KEY(`b`)
+		PARTITIONS 2
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00', TTL_JOB = CRON '*/1 * * * * ?', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 12, ARCHIVE_TABLE_POST_ALLOCATE = 64 )
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+## Step3: Unbind archive table -> arc_tmp_tbl_name becomes null
+ALTER TABLE ttl_cci_t1 MODIFY TTL SET ARCHIVE_TABLE_NAME = '', ARCHIVE_TYPE = '';
+show create table ttl_cci_t1;
+Table,Create Table
+ttl_cci_t1,CREATE TABLE `ttl_cci_t1` (
+	`a` int NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT CURRENT_TIMESTAMP,
+	`c` varchar(64) COLLATE utf8mb4_bin DEFAULT 'hello',
+	PRIMARY KEY (`a`),
+	GLOBAL INDEX `idx_cci_t1_b` (`b`)
+		PARTITION BY KEY(`b`)
+		PARTITIONS 2
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00', TTL_JOB = CRON '*/1 * * * * ?', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 12, ARCHIVE_TABLE_POST_ALLOCATE = 64 )
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+## Step4: DROP the GSI AFTER unbind
+## B2 fix: checkIfDropCciOfArcTblView should return false safely when arcTmpTblName is null
+## Before fix: this would NPE at arcTmpTblName.toLowerCase()
+DROP INDEX idx_cci_t1_b ON ttl_cci_t1;
+show create table ttl_cci_t1;
+Table,Create Table
+ttl_cci_t1,CREATE TABLE `ttl_cci_t1` (
+	`a` int NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT CURRENT_TIMESTAMP,
+	`c` varchar(64) COLLATE utf8mb4_bin DEFAULT 'hello',
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00', TTL_JOB = CRON '*/1 * * * * ?', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 12, ARCHIVE_TABLE_POST_ALLOCATE = 64 )
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+## Step5: Re-bind without specifying schema (tests archiveTableSchema auto-fill fix)
+ALTER TABLE ttl_cci_t1 MODIFY TTL SET ARCHIVE_TABLE_NAME = 'arc_ttl_cci_t1_v2', ARCHIVE_TYPE = 'ROW';
+show create table ttl_cci_t1;
+Table,Create Table
+ttl_cci_t1,CREATE TABLE `ttl_cci_t1` (
+	`a` int NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT CURRENT_TIMESTAMP,
+	`c` varchar(64) COLLATE utf8mb4_bin DEFAULT 'hello',
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00', TTL_JOB = CRON '*/1 * * * * ?', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 12, ARCHIVE_TABLE_POST_ALLOCATE = 64 )
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+## Step6: Create another GSI and drop it while archive IS bound (normal path)
+CREATE GLOBAL INDEX idx_cci_t1_c ON ttl_cci_t1(c) partition by key(c) partitions 2;
+DROP INDEX idx_cci_t1_c ON ttl_cci_t1;
+show create table ttl_cci_t1;
+Table,Create Table
+ttl_cci_t1,CREATE TABLE `ttl_cci_t1` (
+	`a` int NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT CURRENT_TIMESTAMP,
+	`c` varchar(64) COLLATE utf8mb4_bin DEFAULT 'hello',
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00', TTL_JOB = CRON '*/1 * * * * ?', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 12, ARCHIVE_TABLE_POST_ALLOCATE = 64 )
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+## cleanup
+USE polardbx;
+DROP DATABASE IF EXISTS test_ttl_drop_cci_db;

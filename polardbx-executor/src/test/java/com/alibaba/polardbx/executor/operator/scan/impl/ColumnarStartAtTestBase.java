@@ -1,12 +1,14 @@
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
-import com.alibaba.polardbx.executor.operator.scan.ORCMetaReader;
+import com.alibaba.polardbx.common.orc.ORCMetaReader;
+import com.alibaba.polardbx.common.orc.PreheatFileMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.memory.MemoryManager;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
 import com.alibaba.polardbx.optimizer.memory.MemoryPoolUtils;
-import com.alibaba.polardbx.optimizer.workload.WorkloadUtil;
+import com.alibaba.polardbx.optimizer.statis.OperatorStatistics;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadUtil;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -18,11 +20,13 @@ import org.apache.orc.StripeInformation;
 import org.apache.orc.TypeDescription;
 import org.apache.orc.impl.OrcIndex;
 import org.apache.orc.impl.OrcTail;
+import org.apache.orc.impl.PositionProviderBuilder;
 import org.apache.orc.impl.reader.ReaderEncryption;
 
 import java.io.IOException;
 import java.net.URL;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
@@ -59,7 +63,7 @@ public class ColumnarStartAtTestBase {
     // need preheating
     protected PreheatFileMeta preheatFileMeta;
     protected MemoryAllocatorCtx memoryAllocatorCtx;
-    protected OrcIndex orcIndex;
+    protected PositionProviderBuilder orcIndex;
     protected AsyncStripeLoader stripeLoader;
     protected boolean[] rowGroupIncluded;
     protected boolean[] columnIncluded;
@@ -78,6 +82,9 @@ public class ColumnarStartAtTestBase {
         OrcConf.USE_ZEROCOPY.setBoolean(configuration, true);
         OrcConf.STRIPE_SIZE.setLong(configuration, 64 * 1024 * 1024); // 64MB
 
+        OrcConf.USE_REDUNDANT_META_DATA.setBoolean(configuration, true);
+        OrcConf.USE_BINARY_META_DATA.setBoolean(configuration, true);
+
         Path workDir = new Path(this.getClass().getClassLoader().getResource(".").toString());
 
         filePath = new Path(workDir, orcFileName);
@@ -91,7 +98,7 @@ public class ColumnarStartAtTestBase {
         // preheat
         ORCMetaReader metaReader = null;
         try {
-            metaReader = ORCMetaReader.create(configuration, fileSystem);
+            metaReader = ORCMetaReader.create(configuration, fileSystem, Collections.singleton(0));
             preheatFileMeta = metaReader.preheat(filePath);
         } finally {
             metaReader.close();
@@ -113,7 +120,7 @@ public class ColumnarStartAtTestBase {
         ));
 
         final StripeInformation stripeInformation = stripeInformationMap.get(stripeId);
-        orcIndex = preheatFileMeta.getOrcIndex(stripeInformation.getStripeId());
+        orcIndex = preheatFileMeta.getPositionProviderBuilder(stripeInformation.getStripeId());
 
         fileSchema = orcTail.getSchema();
         version = orcTail.getWriterVersion();
@@ -139,9 +146,7 @@ public class ColumnarStartAtTestBase {
         maxDiskRangeChunkLimit = OrcConf.ORC_MAX_DISK_RANGE_CHUNK_LIMIT.getInt(configuration);
         maxMergeDistance = OrcConf.MAX_MERGE_DISTANCE.getLong(configuration);
 
-        encodings = StaticStripePlanner.buildEncodings(
-            encryption, columnIncluded, preheatFileMeta.getStripeFooter(stripeId)
-        );
+        encodings = preheatFileMeta.getColumnEncodings(stripeId);
 
         ExecutionContext context = new ExecutionContext();
         context.setTraceId("mock_trace_id");
@@ -171,7 +176,7 @@ public class ColumnarStartAtTestBase {
             encodings, ignoreNonUtf8BloomFilter,
             maxBufferSize,
             maxDiskRangeChunkLimit, maxMergeDistance, null,
-            false, memoryAllocatorCtx);
+            false, memoryAllocatorCtx, new OperatorStatistics());
 
         stripeLoader.open();
 

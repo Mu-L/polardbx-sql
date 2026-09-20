@@ -19,7 +19,7 @@ package com.alibaba.polardbx.optimizer.core.function.calc.scalar;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.function.calc.AbstractScalarFunction;
-import com.alibaba.polardbx.optimizer.utils.ITimestampOracle;
+import com.alibaba.polardbx.common.trx.ITimestampOracle;
 
 import java.util.List;
 

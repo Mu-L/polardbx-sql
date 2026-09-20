@@ -21,12 +21,8 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
-import com.alibaba.polardbx.executor.balancer.stats.TableGroupStat;
 import com.alibaba.polardbx.executor.ddl.job.task.shared.EmptyTask;
-import com.alibaba.polardbx.executor.ddl.newengine.dag.DirectedAcyclicGraph;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
-import com.alibaba.polardbx.gms.partition.TablePartRecordInfoContext;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
@@ -35,19 +31,15 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.tablegroup.TableGroupInfoManager;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
 import com.aliyun.oss.common.utils.CaseInsensitiveMap;
-import com.google.common.collect.Sets;
-import org.apache.calcite.sql.SqlSavepoint;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
 
@@ -134,7 +126,9 @@ public class ActionMovePartitions implements BalanceAction, Comparable<ActionMov
     @Override
     public ExecutableDdlJob toDdlJob(ExecutionContext ec) {
         ExecutableDdlJob job = new ExecutableDdlJob();
-        job.setMaxParallelism(ec.getParamManager().getInt(ConnectionParams.REBALANCE_TASK_PARALISM));
+        job.setMaxParallelism(ec.getParamManager().getInt(ConnectionParams.REBALANCE_DB_PARALLELISM));
+        Boolean allowConcurrentMovePartition = ec.getParamManager()
+            .getBoolean(ConnectionParams.ALLOW_SCHEDULE_CONCURRENT_MOVE_PARTITION_INSIDE_TABLEGROUP);
         EmptyTask headTask = new EmptyTask(schema);
         EmptyTask tailTask = new EmptyTask(schema);
         job.addTask(headTask);
@@ -148,6 +142,8 @@ public class ActionMovePartitions implements BalanceAction, Comparable<ActionMov
                 .add(toGroupActions.getValue());
         }
 
+        // level-order traversal the dependency between gsi and primary table.
+        // get an N level tablegroup list => List<List<String>> sequentialTableGroupNames
         TreeSet<String> tableGroupNames = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
         tableGroupNames.addAll(actionTableGroups.keySet());
         Map<String, Set<String>> relatedTableGroupMap = buildRelatedTableGroupMap(ec, schema);
@@ -163,6 +159,9 @@ public class ActionMovePartitions implements BalanceAction, Comparable<ActionMov
 
         Map<String, List<ExecutableDdlJob>> tableGroupSubJobMap = new HashMap<>();
 
+        // convert all actions to subjobs.
+        // add relationship from head to all subJobs
+        // add relationship among subjob inside the same tablegroup if not allow concurrent move pg.
         for (String tableGroup : actionTableGroups.keySet()) {
             List<List<ActionMovePartition>> actions = actionTableGroups.get(tableGroup);
             List<ExecutableDdlJob> subJobs = new ArrayList<>();
@@ -172,9 +171,15 @@ public class ActionMovePartitions implements BalanceAction, Comparable<ActionMov
             for (ExecutableDdlJob subJob : subJobs) {
                 job.appendJobAfterHead(headTask, subJob);
             }
+            if (!allowConcurrentMovePartition) {
+                for (int i = 0; i < subJobs.size() - 1; i++) {
+                    job.addTaskRelationship(subJobs.get(i).getTail(), subJobs.get(i + 1).getHead());
+                }
+            }
             tableGroupSubJobMap.put(tableGroup, subJobs);
         }
 
+        // add relationship from subjob of layer k to subjob of layer k + 1.
         Set<String> allTableGroups = new TreeSet<>(actionTableGroups.keySet());
         for (List<String> tableGroups : sequentialTableGroupNames) {
             for (String tableGroup : tableGroups) {
@@ -191,12 +196,14 @@ public class ActionMovePartitions implements BalanceAction, Comparable<ActionMov
             }
         }
 
+        // add relationShip from subjob of layer N to tail.
         for (String tableGroup : sequentialTableGroupNames.get(sequentialTableGroupNames.size() - 1)) {
             for (ExecutableDdlJob subJob : tableGroupSubJobMap.get(tableGroup)) {
                 job.addTaskRelationship(subJob.getTail(), tailTask);
             }
         }
 
+        // remove redundancy relationship
         job.removeRedundancyRelations();
         return job;
     }

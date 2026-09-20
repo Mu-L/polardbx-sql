@@ -1,0 +1,128 @@
+## DISABLE_FAST_SQL_PARSER
+use polardbx
+drop database if exists test_warning_scan_db2
+create database if not exists test_warning_scan_db2 mode='auto'
+use test_warning_scan_db2
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set ENABLE_DROP_TRUNCATE_CCI_PARTITION =true
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00'
+set TTL_DEBUG_WARNING_SCAN_TTLINFO_MODIFIED_TIME='2024-05-27 00:00:00'
+set TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true
+set TTL_ONLY_WARNING_FOR_THE_LAST_PART=true
+set TTL_WARNING_DELAY_SECONDS_AFTER_TTL_MODIFIED=1
+set TTL_DEBUG_WARNING_SCAN_TARGET_SCHEMA='test_warning_scan_db2'
+## case 0: datetime + day
+drop table if exists ttl_key_t0
+create table ttl_key_t0(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by key(a)
+partitions 4
+alter table ttl_key_t0 modify ttl set TTL_ENABLE='ON', TTL_EXPR = `b` EXPIRE AFTER 2 DAY TIMEZONE '+08:00',ARCHIVE_TABLE_PRE_ALLOCATE = 7,ARCHIVE_TABLE_POST_ALLOCATE = 2, ARCHIVE_TYPE='ROW'
+create table ttl_key_t0_arc like ttl_key_t0 engine='columnar' archive_mode='ttl'
+show create table ttl_key_t0
+Table,Create Table
+ttl_key_t0,CREATE TABLE `ttl_key_t0` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_ttl_key_t0_arc` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20240625 VALUES LESS THAN ('2024-06-25 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240626 VALUES LESS THAN ('2024-06-26 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240627 VALUES LESS THAN ('2024-06-27 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240628 VALUES LESS THAN ('2024-06-28 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240629 VALUES LESS THAN ('2024-06-29 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240630 VALUES LESS THAN ('2024-06-30 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240701 VALUES LESS THAN ('2024-07-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240702 VALUES LESS THAN ('2024-07-02 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240703 VALUES LESS THAN ('2024-07-03 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240704 VALUES LESS THAN ('2024-07-04 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240705 VALUES LESS THAN ('2024-07-05 00:00:00') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 2 DAY TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'ttl_key_t0_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 7, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY KEY(`a`)
+PARTITIONS 4
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_key_t0'
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_key_t0
+WARNING_TABLE,WARNING_MSG
+alter table ttl_key_t0 modify ttl set ARCHIVE_TABLE_PRE_ALLOCATE = 40
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_key_t0'
+set TTL_ONLY_WARNING_FOR_THE_LAST_PART=false
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00'
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_key_t0
+WARNING_TABLE,WARNING_MSG
+`test_warning_scan_db2`.`ttl_key_t0`,Only [3] parts left for current_time[2024-06-27 00:00:00], warnings count is [10], checkForArcCci=true
+alter table ttl_key_t0 modify ttl set ARCHIVE_TABLE_PRE_ALLOCATE = 20
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_key_t0'
+set TTL_ONLY_WARNING_FOR_THE_LAST_PART=false
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_key_t0
+WARNING_TABLE,WARNING_MSG
+set TTL_DEBUG_CURRENT_DATETIME='2024-07-06 00:00:00'
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_key_t0'
+set TTL_ONLY_WARNING_FOR_THE_LAST_PART=true
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_key_t0
+WARNING_TABLE,WARNING_MSG
+`test_warning_scan_db2`.`ttl_key_t0`,The last maxvalue part is using for current_time[2024-07-06 00:00:00], checkForArcCci=true
+drop table if exists ttl_key_t0
+## case 1: timestamp + day
+drop table if exists ttl_key_t1
+create table ttl_key_t1(
+a int not null auto_increment,
+b timestamp not null default current_timestamp,
+primary key(a)
+)
+partition by key(a)
+partitions 4
+alter table ttl_key_t1 modify ttl set TTL_ENABLE='ON', TTL_EXPR = `b` EXPIRE AFTER 2 DAY TIMEZONE '+08:00',ARCHIVE_TABLE_PRE_ALLOCATE = 7,ARCHIVE_TABLE_POST_ALLOCATE = 2, ARCHIVE_TYPE='ROW'
+create table ttl_key_t1_arc like ttl_key_t1 engine='columnar' archive_mode='ttl'
+show create table ttl_key_t1
+Table,Create Table
+ttl_key_t1,CREATE TABLE `ttl_key_t1` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_ttl_key_t1_arc` (`b`)
+		PARTITION BY RANGE(UNIX_TIMESTAMP(`b`))
+		(PARTITION p20240704 VALUES LESS THAN (1720022400) ENGINE = Columnar,
+		 PARTITION p20240705 VALUES LESS THAN (1720108800) ENGINE = Columnar,
+		 PARTITION p20240706 VALUES LESS THAN (1720195200) ENGINE = Columnar,
+		 PARTITION p20240707 VALUES LESS THAN (1720281600) ENGINE = Columnar,
+		 PARTITION p20240708 VALUES LESS THAN (1720368000) ENGINE = Columnar,
+		 PARTITION p20240709 VALUES LESS THAN (1720454400) ENGINE = Columnar,
+		 PARTITION p20240710 VALUES LESS THAN (1720540800) ENGINE = Columnar,
+		 PARTITION p20240711 VALUES LESS THAN (1720627200) ENGINE = Columnar,
+		 PARTITION p20240712 VALUES LESS THAN (1720713600) ENGINE = Columnar,
+		 PARTITION p20240713 VALUES LESS THAN (1720800000) ENGINE = Columnar,
+		 PARTITION p20240714 VALUES LESS THAN (1720886400) ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 2 DAY TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'ttl_key_t1_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 7, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY KEY(`a`)
+PARTITIONS 4
+set TTL_ONLY_WARNING_FOR_THE_LAST_PART=true
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_key_t1
+WARNING_TABLE,WARNING_MSG
+alter table ttl_key_t1 modify ttl set ARCHIVE_TABLE_PRE_ALLOCATE = 40
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_key_t1'
+set TTL_ONLY_WARNING_FOR_THE_LAST_PART=false
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_key_t1
+WARNING_TABLE,WARNING_MSG
+`test_warning_scan_db2`.`ttl_key_t1`,Only [3] parts left for current_time[2024-07-06 00:00:00], warnings count is [10], checkForArcCci=true
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_key_t1'
+set TTL_ONLY_WARNING_FOR_THE_LAST_PART=true
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_key_t1
+WARNING_TABLE,WARNING_MSG
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_key_t1'
+set TTL_DEBUG_CURRENT_DATETIME='2024-07-15 00:00:00'
+set TTL_ONLY_WARNING_FOR_THE_LAST_PART=true
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_key_t1
+WARNING_TABLE,WARNING_MSG
+`test_warning_scan_db2`.`ttl_key_t1`,The last maxvalue part is using for current_time[2024-07-15 00:00:00], checkForArcCci=true
+drop table if exists ttl_key_t1
+use polardbx
+drop database if exists test_warning_scan_db2
+use polardbx;

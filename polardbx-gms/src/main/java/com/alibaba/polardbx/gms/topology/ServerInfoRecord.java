@@ -56,6 +56,7 @@ public class ServerInfoRecord implements SystemTableRecord {
     public int cpuCore;
     public int memSize;
     public String extras;
+    public String subInstId;
 
     @Override
     public ServerInfoRecord fill(ResultSet rs) throws SQLException {
@@ -76,6 +77,7 @@ public class ServerInfoRecord implements SystemTableRecord {
         this.cpuCore = rs.getInt("cpu_core");
         this.memSize = rs.getInt("mem_size"); // Unit: MB
         this.extras = rs.getString("extras");
+        this.subInstId = rs.getString("sub_inst_id");
         return this;
     }
 }

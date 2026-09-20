@@ -11,3 +11,204 @@
   plan: |
 
     err-code: [pxc-4006][err_table_not_exist] table 'drds1' doesn't exist.
+
+- sql: |
+    SELECT * FROM t1
+                     WHERE t1.v4 IN (
+                       SELECT v1 FROM (SELECT t0.v1, t0.v2, t1.v6 FROM t0 JOIN t1 ON t0.v2 = t1.v5) as cte_j
+                       WHERE cte_j.v2 = t1.v5 OR cte_j.v6 = t1.v6
+                     );
+  plan: |
+    project(v4="v4", v5="v5", v6="v6")
+      filter(condition="apply_boolean")
+        correlateapply(cor=$cor1, leftconditions=[$0], opkind=equals, type=semi)
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+          project(v1="v1")
+            filter(condition="v2 = $cor1.v5 or v6 = $cor1.v6")
+              project(v1="v1", v2="v2", v6="v6")
+                hashjoin(condition="v5 = v2", type="inner")
+                  gather(concurrent=true)
+                    logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v5`, `v6` from `t1` as `t1`")
+                  gather(concurrent=true)
+                    logicalview(tables="[0000-0003].t0", shardcount=4, sql="select `v1`, `v2` from `t0` as `t0`")
+    cache node:
+
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+    project(v1="v1", v2="v2", v6="v6")
+      hashjoin(condition="v5 = v2", type="inner")
+        gather(concurrent=true)
+          logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v5`, `v6` from `t1` as `t1`")
+        gather(concurrent=true)
+          logicalview(tables="[0000-0003].t0", shardcount=4, sql="select `v1`, `v2` from `t0` as `t0`")
+
+# Case: EXISTS subquery - OR in WHERE of derived table, JOIN inside derived table
+# Tests the same hasOr accumulation fix (Filter-then-Join visit order) but with EXISTS
+- sql: |
+    SELECT * FROM t1
+    WHERE EXISTS (
+      SELECT 1 FROM (SELECT t0.v1, t0.v2, ti.v6 FROM t0 JOIN t1 ti ON t0.v2 = ti.v5) AS cte_j
+      WHERE cte_j.v2 = t1.v5 OR cte_j.v6 = t1.v6
+    );
+
+  plan: |
+    project(v4="v4", v5="v5", v6="v6")
+      filter(condition="apply_boolean")
+        correlateapply(cor=$cor, leftconditions=[], opkind=null, type=semi)
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+          filter(condition="v2 = $cor.v5 or v6 = $cor.v6")
+            project(v1="v1", v2="v2", v6="v6")
+              hashjoin(condition="v5 = v2", type="inner")
+                gather(concurrent=true)
+                  logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v5`, `v6` from `t1` as `t1`")
+                gather(concurrent=true)
+                  logicalview(tables="[0000-0003].t0", shardcount=4, sql="select `v1`, `v2` from `t0` as `t0`")
+    cache node:
+
+    project(v1="v1", v2="v2", v6="v6")
+      hashjoin(condition="v5 = v2", type="inner")
+        gather(concurrent=true)
+          logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v5`, `v6` from `t1` as `t1`")
+        gather(concurrent=true)
+          logicalview(tables="[0000-0003].t0", shardcount=4, sql="select `v1`, `v2` from `t0` as `t0`")
+
+# Case: NOT IN subquery - OR in WHERE of derived table, JOIN inside derived table
+# Tests anti-semijoin path with the hasOr accumulation fix
+- sql: |
+    SELECT * FROM t1
+    WHERE t1.v4 NOT IN (
+      SELECT v1 FROM (SELECT t0.v1, t0.v2, ti.v6 FROM t0 JOIN t1 ti ON t0.v2 = ti.v5) AS cte_j
+      WHERE cte_j.v2 = t1.v5 OR cte_j.v6 = t1.v6
+    );
+
+  plan: |
+    project(v4="v4", v5="v5", v6="v6")
+      filter(condition="apply_boolean")
+        correlateapply(cor=$cor, leftconditions=[$0], opkind=not_equals, type=anti)
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+          project(v1="v1")
+            filter(condition="v2 = $cor.v5 or v6 = $cor.v6")
+              project(v1="v1", v2="v2", v6="v6")
+                hashjoin(condition="v5 = v2", type="inner")
+                  gather(concurrent=true)
+                    logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v5`, `v6` from `t1` as `t1`")
+                  gather(concurrent=true)
+                    logicalview(tables="[0000-0003].t0", shardcount=4, sql="select `v1`, `v2` from `t0` as `t0`")
+    cache node:
+
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+    project(v1="v1", v2="v2", v6="v6")
+      hashjoin(condition="v5 = v2", type="inner")
+        gather(concurrent=true)
+          logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v5`, `v6` from `t1` as `t1`")
+        gather(concurrent=true)
+          logicalview(tables="[0000-0003].t0", shardcount=4, sql="select `v1`, `v2` from `t0` as `t0`")
+
+# Case: AND + OR combo - OR with correlated ref wrapped in AND
+# Tests that the OR flag is detected even when mixed with AND predicates
+- sql: |
+    SELECT * FROM t1
+    WHERE t1.v4 IN (
+      SELECT v1 FROM (SELECT t0.v1, t0.v2, ti.v6 FROM t0 JOIN t1 ti ON t0.v2 = ti.v5) AS cte_j
+      WHERE (cte_j.v2 = t1.v5 OR cte_j.v6 = t1.v6) AND cte_j.v1 > 0
+    );
+
+  plan: |
+    project(v4="v4", v5="v5", v6="v6")
+      filter(condition="apply_boolean")
+        correlateapply(cor=$cor, leftconditions=[$0], opkind=equals, type=semi)
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+          project(v1="v1")
+            filter(condition="v1 > 0 and (v2 = $cor.v5 or v6 = $cor.v6)")
+              project(v1="v1", v2="v2", v6="v6")
+                hashjoin(condition="v5 = v2", type="inner")
+                  gather(concurrent=true)
+                    logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v5`, `v6` from `t1` as `t1`")
+                  gather(concurrent=true)
+                    logicalview(tables="[0000-0003].t0", shardcount=4, sql="select `v1`, `v2` from `t0` as `t0`")
+    cache node:
+
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+    project(v1="v1", v2="v2", v6="v6")
+      hashjoin(condition="v5 = v2", type="inner")
+        gather(concurrent=true)
+          logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v5`, `v6` from `t1` as `t1`")
+        gather(concurrent=true)
+          logicalview(tables="[0000-0003].t0", shardcount=4, sql="select `v1`, `v2` from `t0` as `t0`")
+
+# Case: Deeper nesting - non-correlated filter inside derived table before OR filter
+# Tests: outer Filter(OR correlated) -> Join -> inner Filter(non-correlated)
+# hasOr must not be reset to false when inner Filter has no correlated OR
+- sql: |
+    SELECT * FROM t1
+    WHERE t1.v4 IN (
+      SELECT v1 FROM (
+        SELECT t0.v1, t0.v2, ti.v6
+        FROM t0 JOIN t1 ti ON t0.v2 = ti.v5
+        WHERE t0.v3 > 0
+      ) AS cte_j
+      WHERE cte_j.v2 = t1.v5 OR cte_j.v6 = t1.v6
+    );
+
+  plan: |
+    project(v4="v4", v5="v5", v6="v6")
+      filter(condition="apply_boolean")
+        correlateapply(cor=$cor, leftconditions=[$0], opkind=equals, type=semi)
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+          project(v1="v1")
+            filter(condition="v2 = $cor.v5 or v6 = $cor.v6")
+              project(v1="v1", v2="v2", v6="v6")
+                hashjoin(condition="v5 = v2", type="inner")
+                  gather(concurrent=true)
+                    logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v5`, `v6` from `t1` as `t1`")
+                  gather(concurrent=true)
+                    logicalview(tables="[0000-0003].t0", shardcount=4, sql="select `v1`, `v2` from `t0` as `t0` where (`v3` > 0)")
+    cache node:
+
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+    project(v1="v1", v2="v2", v6="v6")
+      hashjoin(condition="v5 = v2", type="inner")
+        gather(concurrent=true)
+          logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v5`, `v6` from `t1` as `t1`")
+        gather(concurrent=true)
+          logicalview(tables="[0000-0003].t0", shardcount=4, sql="select `v1`, `v2` from `t0` as `t0` where (`v3` > 0)")
+
+# Case: OR references two different columns from outer table
+# Tests that all correlated OR branches are handled correctly
+- sql: |
+    SELECT * FROM t1
+    WHERE t1.v4 IN (
+      SELECT v1 FROM (SELECT t0.v1, t0.v2, ti.v5, ti.v6 FROM t0 JOIN t1 ti ON t0.v2 = ti.v5) AS cte_j
+      WHERE cte_j.v2 = t1.v5 OR cte_j.v5 = t1.v6
+    );
+
+  plan: |
+    project(v4="v4", v5="v5", v6="v6")
+      filter(condition="apply_boolean")
+        correlateapply(cor=$cor, leftconditions=[$0], opkind=equals, type=semi)
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+          project(v1="v1")
+            filter(condition="v2 = $cor.v5 or v5 = $cor.v6")
+              hashjoin(condition="v5 = v2", type="inner")
+                gather(concurrent=true)
+                  logicalview(tables="[0000-0003].t0", shardcount=4, sql="select `v1`, `v2` from `t0` as `t0`")
+                gather(concurrent=true)
+                  logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v5` from `t1` as `t1`")
+    cache node:
+
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+    hashjoin(condition="v5 = v2", type="inner")
+      gather(concurrent=true)
+        logicalview(tables="[0000-0003].t0", shardcount=4, sql="select `v1`, `v2` from `t0` as `t0`")
+      gather(concurrent=true)
+        logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `v5` from `t1` as `t1`")

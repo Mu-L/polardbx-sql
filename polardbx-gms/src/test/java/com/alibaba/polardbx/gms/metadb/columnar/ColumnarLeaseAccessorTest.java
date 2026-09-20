@@ -64,6 +64,21 @@ public class ColumnarLeaseAccessorTest {
             ColumnarLeaseAccessor accessor = new ColumnarLeaseAccessor();
             List<ColumnarLeaseRecord> result = accessor.forceElectSelectForUpdate();
             Assert.assertEquals(1, result.size());
+
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(),
+                Mockito.eq(ColumnarLeaseRecord.class), Mockito.any())).thenReturn(recordList);
+
+            result = accessor.getAllNodes();
+            Assert.assertEquals(1, result.size());
+
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(),
+                Mockito.eq(ColumnarLeaseRecord.class), Mockito.any())).thenThrow(new RuntimeException("mock"));
+
+            try {
+                result = accessor.getAllNodes();
+                Assert.fail();
+            } catch (Exception ignored) {
+            }
         }
     }
 

@@ -36,6 +36,7 @@ import com.alibaba.polardbx.transaction.jdbc.SavePoint;
 import com.alibaba.polardbx.transaction.log.GlobalTxLogManager;
 import com.alibaba.polardbx.transaction.log.RedoLogManager;
 
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.SQLIntegrityConstraintViolationException;
 import java.sql.Statement;
@@ -110,6 +111,7 @@ public class BestEffortTransaction extends AbstractTransaction {
             checkCanContinue();
 
             if (!isCrossGroup) {
+                Connection primaryConnection = primaryHeldConn.getRawConnection();
                 if (primaryConnection != null) {
                     if (inventoryMode != null && inventoryMode.isCommitOnSuccess()) {
                         connectionHolder.closeAllConnections();
@@ -148,7 +150,7 @@ public class BestEffortTransaction extends AbstractTransaction {
          */
         try {
             GlobalTxLogManager.appendWithSocketTimeout(id, getType(), TransactionState.SUCCEED, connectionContext,
-                primaryConnection);
+                primaryHeldConn.getRawConnection());
         } catch (SQLIntegrityConstraintViolationException ex) {
             // 被抢占 Rollback 了，停止提交
             throw new TddlRuntimeException(ErrorCode.ERR_TRANS, "Transaction ID exists. Commit interrupted");
@@ -168,7 +170,7 @@ public class BestEffortTransaction extends AbstractTransaction {
             forEachHeldConnection(new TransactionConnectionHolder.Action() {
                 @Override
                 public boolean condition(TransactionConnectionHolder.HeldConnection heldConn) {
-                    return heldConn.getRawConnection() != primaryConnection;
+                    return heldConn != primaryHeldConn;
                 }
 
                 @Override
@@ -200,14 +202,14 @@ public class BestEffortTransaction extends AbstractTransaction {
             /*
              * Step 2. 提交 primary group 来更新事务状态（标志着事务的成功）
              */
-            try (Statement stmt = primaryConnection.createStatement()) {
+            try (Statement stmt = primaryHeldConn.getRawConnection().createStatement()) {
                 beforePrimaryCommit();
                 commitState = TransactionCommitState.UNKNOWN;
                 duringPrimaryCommit();
                 stmt.execute("commit");
                 afterPrimaryCommit();
                 commitState = TransactionCommitState.SUCCESS;
-                primaryConnection.close();
+                primaryHeldConn.getRawConnection().close();
             } catch (Throwable ex) {
                 String message = MessageFormat
                     .format("Failed to commit primary group {0}: {1}, TRANS_ID = {2}", primaryGroup, ex.getMessage(),
@@ -225,7 +227,7 @@ public class BestEffortTransaction extends AbstractTransaction {
              */
             forEachHeldConnection((heldConn) -> {
                 final IConnection conn = heldConn.getRawConnection();
-                if (conn != primaryConnection) {
+                if (conn != primaryHeldConn.getRawConnection()) {
                     try (Statement stmt = conn.createStatement()) {
                         stmt.execute("commit");
                         conn.close();
@@ -257,7 +259,7 @@ public class BestEffortTransaction extends AbstractTransaction {
              * Delete the redo-logs if primary connection commit failed
              */
             forEachHeldConnection((heldConn) -> {
-                if (heldConn.getRawConnection() != primaryConnection) {
+                if (heldConn != primaryHeldConn) {
                     RedoLogManager.clean(id, dataSourceCache.get(heldConn.getGroup()));
                 }
             });

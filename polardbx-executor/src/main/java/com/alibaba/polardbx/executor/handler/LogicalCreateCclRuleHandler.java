@@ -136,7 +136,8 @@ public class LogicalCreateCclRuleHandler extends HandlerCommon {
             cclRuleRecord.queueSize = CclRuleRecord.DEFAULT_QUEUE_SIZE;
             cclRuleRecord.waitTimeout = CclRuleRecord.DEFAULT_WAIT_TIMEOUT;
             cclRuleRecord.fastMatch = CclRuleRecord.DEFAULT_FAST_MATCH;
-            cclRuleRecord.triggerPriority = CclRuleRecord.DEFAULT_TRIGGER_PRIORITY;
+            cclRuleRecord.dryRun = CclRuleRecord.DEFAULT_DRY_RUN;
+            cclRuleRecord.blockerPriority = CclRuleRecord.DEFAULT_BLOCKER_PRIORITY;
             cclRuleRecord.lightWait = CclRuleRecord.DEFAULT_LIGHT_WAIT;
 
             //convert keywords to json string
@@ -158,6 +159,9 @@ public class LogicalCreateCclRuleHandler extends HandlerCommon {
                 String variableName = ((SqlIdentifier) pair.left).getSimple();
                 int value = ((SqlNumericLiteral) pair.right).intValue(true);
                 switch (variableName.toUpperCase()) {
+                case "DRY_RUN":
+                    cclRuleRecord.dryRun = value;
+                    break;
                 case "MAX_CONCURRENCY":
                     cclRuleRecord.parallelism = value;
                     hasMaxConcurrencyOption = true;
@@ -182,7 +186,7 @@ public class LogicalCreateCclRuleHandler extends HandlerCommon {
                 throw new TddlNestableRuntimeException("with MAX_CONCURRENCY option must be provided.");
             }
             if (cclRuleRecord.queueSize < 0 || cclRuleRecord.parallelism < 0 || cclRuleRecord.waitTimeout < 0
-                || cclRuleRecord.fastMatch < 0 || cclRuleRecord.lightWait < 0) {
+                || cclRuleRecord.fastMatch < 0 || cclRuleRecord.dryRun < 0 || cclRuleRecord.lightWait < 0) {
                 throw new TddlNestableRuntimeException("Invalid number of WAIT_QUEUE_SIZE or parallelism or ");
             }
 

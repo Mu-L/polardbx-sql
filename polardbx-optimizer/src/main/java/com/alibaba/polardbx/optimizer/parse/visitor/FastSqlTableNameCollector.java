@@ -16,11 +16,18 @@
 
 package com.alibaba.polardbx.optimizer.parse.visitor;
 
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
+import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLMethodInvokeExpr;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLExprTableSource;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLFilesTableSource;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLNativeQueryTableSource;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlDeleteStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.visitor.MySqlASTVisitorAdapter;
-import com.alibaba.polardbx.common.utils.Pair;
+import com.alibaba.polardbx.gms.metadb.external.ExternalCatalogManager;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameNormalizer;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -28,11 +35,66 @@ import java.util.Set;
 public class FastSqlTableNameCollector extends MySqlASTVisitorAdapter {
 
     final Set<Pair<String, String>> schemaTables = new HashSet<>();
+    private boolean referencesExternalTable;
 
     @Override
     public boolean visit(SQLExprTableSource x) {
-        schemaTables.add(Pair.of(SQLUtils.normalizeNoTrim(x.getSchema()), SQLUtils.normalizeNoTrim(x.getTableName())));
+        if (isExternalNativeQuery(x.getExpr())) {
+            referencesExternalTable = true;
+            return false;
+        }
+
+        Pair<String, String> externalTable = tryCollectExternalThreePartTable(x);
+        if (externalTable != null) {
+            schemaTables.add(externalTable);
+            referencesExternalTable = true;
+            return false;
+        }
+
+        String schema = SQLUtils.normalizeNoTrim(x.getSchema());
+        schemaTables.add(Pair.of(schema, SQLUtils.normalizeNoTrim(x.getTableName())));
+        if (schema != null && ExternalNameValidator.isExternalSchema(schema)) {
+            referencesExternalTable = true;
+        }
         return false;
+    }
+
+    @Override
+    public boolean visit(SQLFilesTableSource x) {
+        referencesExternalTable = true;
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLNativeQueryTableSource x) {
+        String catalogName = SQLUtils.normalizeNoTrim(x.getCatalogName());
+        if (catalogName != null && ExternalCatalogManager.getInstance().exists(catalogName)) {
+            referencesExternalTable = true;
+        }
+        return false;
+    }
+
+    private boolean isExternalNativeQuery(SQLExpr expr) {
+        if (!(expr instanceof SQLMethodInvokeExpr)) {
+            return false;
+        }
+        SQLMethodInvokeExpr methodInvokeExpr = (SQLMethodInvokeExpr) expr;
+        if (!"native_query".equalsIgnoreCase(methodInvokeExpr.getMethodName())
+            || methodInvokeExpr.getOwner() == null) {
+            return false;
+        }
+        String catalogName = SQLUtils.normalizeNoTrim(methodInvokeExpr.getOwner().toString());
+        return catalogName != null && ExternalCatalogManager.getInstance().exists(catalogName);
+    }
+
+    private Pair<String, String> tryCollectExternalThreePartTable(SQLExprTableSource tableSource) {
+        ExternalNameNormalizer.ThreePartName name =
+            ExternalNameNormalizer.resolveExternalTable(tableSource.getExpr());
+        if (name == null) {
+            return null;
+        }
+        return Pair.of(ExternalNameValidator.encodeSchemaName(name.getCatalogName(), name.getDbName()),
+            name.getTableName());
     }
 
     @Override
@@ -70,5 +132,9 @@ public class FastSqlTableNameCollector extends MySqlASTVisitorAdapter {
 
     public Set<Pair<String, String>> getTables() {
         return this.schemaTables;
+    }
+
+    public boolean isReferencesExternalTable() {
+        return referencesExternalTable;
     }
 }

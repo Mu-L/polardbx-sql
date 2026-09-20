@@ -22,14 +22,11 @@ import com.alibaba.polardbx.executor.ExecutorHelper;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseBackfillTask;
 import com.alibaba.polardbx.executor.ddl.job.task.RemoteExecutableDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
-import com.alibaba.polardbx.executor.physicalbackfill.PhysicalBackfillUtils;
 import com.alibaba.polardbx.executor.gsi.GsiBackfillManager;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
-import com.alibaba.polardbx.optimizer.core.rel.PhysicalBackfill;
 import com.alibaba.polardbx.optimizer.core.rel.MoveTableBackfill;
 import lombok.Getter;
-import org.apache.calcite.rel.RelNode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -105,10 +102,11 @@ public class MoveTableBackFillTask extends BaseBackfillTask implements RemoteExe
         return "MoveTableBackFillTask";
     }
 
-    public List<String> explainInfo() {
-        String backfillTask = "LOGICAL_BACKFILL_AND_CHECK(" + logicalTableName + ")";
+    public List<String> explainInfo(ExecutionContext ec) {
+        String backfillTask = "LOGICAL_BACKFILL(" + logicalTableName + ")";
         List<String> command = new ArrayList<>(1);
         command.add(backfillTask);
         return command;
     }
+
 }

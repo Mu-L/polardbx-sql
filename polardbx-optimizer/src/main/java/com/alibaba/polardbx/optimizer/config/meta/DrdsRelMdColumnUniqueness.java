@@ -19,20 +19,30 @@ package com.alibaba.polardbx.optimizer.config.meta;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
+import com.alibaba.polardbx.optimizer.core.rel.ExternalTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.GroupTopN;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.MysqlTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.PhysicalCTEConsumer;
 import com.alibaba.polardbx.optimizer.view.ViewPlan;
 import org.apache.calcite.plan.volcano.RelSubset;
+import org.apache.calcite.rel.core.CTEAnchor;
+import org.apache.calcite.rel.core.CTEProducer;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.core.SemiJoin;
+import org.apache.calcite.rel.logical.LogicalCTEConsumer;
 import org.apache.calcite.rel.logical.LogicalTableScan;
 import org.apache.calcite.rel.metadata.ReflectiveRelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMdColumnUniqueness;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
+import org.apache.calcite.rex.RexInputRef;
+import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.util.BuiltInMethod;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.Util;
+
+import java.util.List;
 
 import static com.alibaba.polardbx.optimizer.config.table.statistic.StatisticUtils.isColumnsUnique;
 
@@ -57,6 +67,12 @@ public class DrdsRelMdColumnUniqueness extends RelMdColumnUniqueness {
         return mq.areColumnsUnique(rel.getNodeForMetaQuery(), columns, ignoreNulls);
     }
 
+    public Boolean areColumnsUnique(
+        ExternalTableScan rel,
+        RelMetadataQuery mq, ImmutableBitSet columns, boolean ignoreNulls) {
+        return rel.areColumnsUnique(mq, columns, ignoreNulls);
+    }
+
     public Boolean areColumnsUnique(LogicalTableScan rel, RelMetadataQuery mq, ImmutableBitSet columns,
                                     boolean ignoreNulls) {
         TableMeta tableMeta = CBOUtil.getTableMeta(rel.getTable());
@@ -70,6 +86,49 @@ public class DrdsRelMdColumnUniqueness extends RelMdColumnUniqueness {
     public Boolean areColumnsUnique(RelSubset subset, RelMetadataQuery mq, ImmutableBitSet columns,
                                     boolean ignoreNulls) {
         return mq.areColumnsUnique(Util.first(subset.getBest(), subset.getOriginal()), columns, ignoreNulls);
+    }
+
+    public Boolean areColumnsUnique(GroupTopN rel, RelMetadataQuery mq,
+                                    ImmutableBitSet columns, boolean ignoreNulls) {
+        return mq.areColumnsUnique(rel.getInput(), columns, ignoreNulls);
+    }
+
+    public Boolean areColumnsUnique(CTEAnchor rel, RelMetadataQuery mq,
+                                    ImmutableBitSet columns, boolean ignoreNulls) {
+        return mq.areColumnsUnique(rel.getRight(), columns, ignoreNulls);
+    }
+
+    public Boolean areColumnsUnique(CTEProducer rel, RelMetadataQuery mq,
+                                    ImmutableBitSet columns, boolean ignoreNulls) {
+        return mq.areColumnsUnique(rel.getInput(), columns, ignoreNulls);
+    }
+
+    public Boolean areColumnsUnique(LogicalCTEConsumer rel, RelMetadataQuery mq,
+                                    ImmutableBitSet columns, boolean ignoreNulls) {
+        return mq.areColumnsUnique(rel.getInnerRel(), columns, ignoreNulls);
+    }
+
+    public Boolean areColumnsUnique(PhysicalCTEConsumer rel, RelMetadataQuery mq,
+                                    ImmutableBitSet columns, boolean ignoreNulls) {
+        List<RexNode> projects = rel.getProjects();
+        if (projects != null && !projects.isEmpty()) {
+            ImmutableBitSet.Builder mappedColumns = ImmutableBitSet.builder();
+            for (int bit : columns) {
+                if (bit < projects.size()) {
+                    RexNode project = projects.get(bit);
+                    if (project instanceof RexInputRef) {
+                        mappedColumns.set(((RexInputRef) project).getIndex());
+                    } else {
+                        // Complex expression cannot guarantee uniqueness
+                        return null;
+                    }
+                } else {
+                    return null;
+                }
+            }
+            return mq.areColumnsUnique(CBOUtil.getCteProducer(rel), mappedColumns.build(), ignoreNulls);
+        }
+        return mq.areColumnsUnique(CBOUtil.getCteProducer(rel), columns, ignoreNulls);
     }
 
     public Boolean areColumnsUnique(SemiJoin rel, RelMetadataQuery mq,

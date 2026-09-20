@@ -59,7 +59,7 @@ public class CreateGsiPhyDdlTask extends BasePhyDdlTask {
     }
 
     @Override
-    public List<String> explainInfo() {
+    public List<String> explainInfo(ExecutionContext ec) {
         if (this.physicalPlanData != null) {
             return this.physicalPlanData.explainInfo();
         } else {

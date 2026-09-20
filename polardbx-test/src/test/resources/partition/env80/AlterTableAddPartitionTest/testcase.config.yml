@@ -7,3 +7,7 @@ test_add_partition
 test_add_partition_group
 test_add_range_ntp
 test_add_range_tp
+test_rand_placement_on
+test_rand_placement_off
+test_rand_placement_on_for_list
+test_rand_placement_off_for_list

@@ -28,6 +28,8 @@ public class MySqlStopSlaveStatement extends SQLStatementImpl {
     private SQLCharExpr channel;
     private SQLCharExpr subChannel;
 
+    private boolean ddlLoad;
+
     @Override
     protected void accept0(SQLASTVisitor v) {
         v.visit(this);
@@ -53,5 +55,13 @@ public class MySqlStopSlaveStatement extends SQLStatementImpl {
 
     public void setSubChannel(SQLCharExpr subChannel) {
         this.subChannel = subChannel;
+    }
+
+    public void setDdlLoad(boolean ddlLoad) {
+        this.ddlLoad = ddlLoad;
+    }
+
+    public boolean isDdlLoad() {
+        return ddlLoad;
     }
 }

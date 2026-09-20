@@ -34,7 +34,7 @@ public class AbstractIOEstimator extends RexVisitorImpl<Double> {
 
     public final RelMetadataQuery metadataQuery;
     private final RexBuilder rexBuilder;
-    private final double maxIO;
+    protected double maxIO;
     protected final PlannerContext plannerContext;
 
     public AbstractIOEstimator(RelMetadataQuery metadataQuery, RexBuilder rexBuilder, double maxIO,

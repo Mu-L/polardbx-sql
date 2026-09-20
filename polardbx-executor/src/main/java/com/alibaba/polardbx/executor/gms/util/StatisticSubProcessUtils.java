@@ -1,12 +1,18 @@
 package com.alibaba.polardbx.executor.gms.util;
 
+import com.alibaba.fastjson.JSON;
+import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.jdbc.IConnection;
+import com.alibaba.polardbx.common.jdbc.IDataSource;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.LoggerUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.thread.ExecutorUtil;
+import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.ddl.newengine.cross.CrossEngineValidator;
+import com.alibaba.polardbx.executor.statistic.ndv.NDVShardSketch;
 import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
 import com.alibaba.polardbx.executor.sync.UpdateStatisticSyncAction;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
@@ -19,23 +25,30 @@ import com.alibaba.polardbx.gms.module.StatisticModuleLogUtil;
 import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
+import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.config.table.statistic.StatisticManager;
+import com.alibaba.polardbx.optimizer.config.table.statistic.inf.StatisticResultSource;
 import com.alibaba.polardbx.optimizer.config.table.statistic.inf.SystemTableColumnStatistic;
 import com.alibaba.polardbx.optimizer.config.table.statistic.inf.SystemTableTableStatistic;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertType;
 import com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertUtil;
 import com.google.common.collect.Maps;
+import org.apache.commons.lang.StringUtils;
 import org.glassfish.jersey.internal.guava.Sets;
 
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import java.util.Set;
 import java.util.concurrent.ThreadPoolExecutor;
 
@@ -45,6 +58,7 @@ import static com.alibaba.polardbx.executor.gms.util.StatisticUtils.buildSkew;
 import static com.alibaba.polardbx.executor.gms.util.StatisticUtils.buildTopnAndHistogram;
 import static com.alibaba.polardbx.executor.gms.util.StatisticUtils.checkFailPoint;
 import static com.alibaba.polardbx.executor.gms.util.StatisticUtils.collectRowCountAll;
+import static com.alibaba.polardbx.executor.gms.util.StatisticUtils.getBoolFromEcIfNotNull;
 import static com.alibaba.polardbx.executor.gms.util.StatisticUtils.getFileStoreStatistic;
 import static com.alibaba.polardbx.executor.gms.util.StatisticUtils.getHistogramBucketSize;
 import static com.alibaba.polardbx.executor.gms.util.StatisticUtils.getIndexInfoFromGsi;
@@ -75,6 +89,118 @@ public class StatisticSubProcessUtils {
 
     // Statistics logger
     public final static Logger logger = LoggerUtil.statisticsLogger;
+
+    public static void collectCardinalityFromDn(String schemaName, String logicalTableName, ExecutionContext ec) {
+        try {
+            checkFailPoint(FailPointKey.FP_INJECT_IGNORE_STATISTIC_COLLECT_FROM_DN_EXCEPTION);
+
+            //获取主表的统计信息
+            StatisticManager.CacheLine cacheLine =
+                StatisticManager.getInstance().getCacheLine(schemaName, logicalTableName, false);
+            if (cacheLine == null) {
+                return;
+            }
+            OptimizerContext op = OptimizerContext.getContext(schemaName);
+            if (op == null) {
+                return;
+            }
+            TableMeta tableMeta = op.getLatestSchemaManager().getTable(logicalTableName);
+            if (tableMeta == null) {
+                return;
+            }
+            //只支持单列一级分区
+            List<List<String>> allLevelTableActualPartCols = tableMeta.getPartitionInfo().getAllLevelActualPartCols();
+            String shardColumnName = null;
+            if (allLevelTableActualPartCols != null && allLevelTableActualPartCols.size() >= 1
+                && allLevelTableActualPartCols.get(0).size() == 1) {
+                for (int i = 1; i < allLevelTableActualPartCols.size(); i++) {
+                    if (!allLevelTableActualPartCols.get(i).isEmpty()) {
+                        return;
+                    }
+                }
+                shardColumnName = allLevelTableActualPartCols.get(0).get(0);
+            }
+            if (shardColumnName == null) {
+                return;
+            }
+
+            if (isFileStore(schemaName, logicalTableName)) {
+                return;
+            } else {
+                Map<String, Set<String>> topologyMap = NDVShardSketch.getTopology(schemaName, logicalTableName, op);
+                if (topologyMap == null) {
+                    String errMsg = schemaName + "," + logicalTableName + " topology is null";
+                    OptimizerAlertUtil.statisticsAlert(schemaName, logicalTableName,
+                        OptimizerAlertType.STATISTIC_COLLECT_CARDINALITY_FROM_DN_FAIL, ec, errMsg);
+                    return;
+                }
+                StatisticModuleLogUtil.logNormal(PROCESS_START,
+                    new String[] {"collect cardinality from dn", schemaName + "," + logicalTableName});
+
+                Map<String, Long> columnNdv = new HashMap<>();
+                for (Map.Entry<String, Set<String>> topologyEntry : topologyMap.entrySet()) {
+                    String groupName = topologyEntry.getKey();
+                    Set<String> physicalTableNames = topologyEntry.getValue();
+                    IDataSource ds =
+                        ExecutorContext.getContext(schemaName).getTopologyHandler().get(groupName).getDataSource();
+                    try (IConnection connection = ds.getConnection()) {
+                        for (String physicalTableName : physicalTableNames) {
+                            Map<String, Long> columnNdvInPhyTb = new HashMap<>();
+                            String showIndexStatSql = String.format("show index from %s", physicalTableName);
+                            ResultSet rs = connection.createStatement().executeQuery(showIndexStatSql);
+                            while (rs.next()) {
+                                if (rs.getInt("Seq_in_index") != 1) {
+                                    continue;
+                                }
+                                String columnName = rs.getString("Column_name");
+                                if (columnName == null) {
+                                    continue;
+                                }
+                                columnName = columnName.toLowerCase().trim();
+                                long ndv = rs.getLong("Cardinality");
+                                if (rs.wasNull()) {
+                                    continue;
+                                }
+                                columnNdvInPhyTb.putIfAbsent(columnName, ndv);
+                                columnNdvInPhyTb.put(columnName, Math.max(columnNdvInPhyTb.get(columnName), ndv));
+                            }
+                            for (Map.Entry<String, Long> entry : columnNdvInPhyTb.entrySet()) {
+                                String columnName = entry.getKey();
+                                long ndv = entry.getValue();
+                                if (StringUtils.equalsIgnoreCase(entry.getKey(), shardColumnName)) {
+                                    columnNdv.put(columnName, ndv + columnNdv.getOrDefault(columnName, 0L));
+                                } else {
+                                    columnNdv.putIfAbsent(columnName, ndv);
+                                    columnNdv.put(columnName, Math.max(columnNdv.get(columnName), ndv));
+                                }
+                            }
+                        }
+                    } catch (SQLException e) {
+                        throw new TddlNestableRuntimeException(e);
+                    }
+                }
+                Map<String, Long> oldCardinalityMap = cacheLine.getCardinalityMap();
+                for (Map.Entry<String, Long> entry : columnNdv.entrySet()) {
+                    String columnName = entry.getKey();
+                    long ndv = entry.getValue();
+                    Long oldNdv = oldCardinalityMap != null ? oldCardinalityMap.get(columnName) : null;
+                    if (oldNdv == null || oldNdv < ndv) {
+                        cacheLine.setCardinality(columnName, ndv);
+                        cacheLine.setCardinalitySource(columnName, StatisticResultSource.DN_STAT.name());
+                    }
+                }
+                StatisticModuleLogUtil.logNormal(PROCESS_END,
+                    new String[] {
+                        "collect cardinality from dn",
+                        schemaName + "," + logicalTableName + "," + JSON.toJSONString(columnNdv)});
+            }
+        } catch (Throwable e) {
+            OptimizerAlertUtil.statisticsAlert(schemaName, logicalTableName,
+                OptimizerAlertType.STATISTIC_COLLECT_CARDINALITY_FROM_DN_FAIL, ec, e);
+            throw e;
+        }
+
+    }
 
     /**
      * sample table process
@@ -129,11 +255,38 @@ public class StatisticSubProcessUtils {
                 scanAnalyze(schemaName, logicalTableName, analyzeColumnList, sampleRate, maxSampleSize, rows, true);
 
             // build statistic from sample rows, and set to cache line
-            buildCardinalityAndNullCount(schemaName, logicalTableName, analyzeColumnList, rows, ec, rowCount);
-            buildSkew(schemaName, logicalTableName, analyzeColumnList, rows, sampleRate);
-            buildTopnAndHistogram(schemaName, logicalTableName, analyzeColumnList, rows, ec, sampleRate, sampleRateUp,
-                histogramBucketSize, collectCharHistogram);
+            if (!FailPoint.isKeyEnable(FailPointKey.FP_INJECT_IGNORE_STATISTIC_SAMPLE_SKETCH)) {
+                buildCardinalityAndNullCount(schemaName, logicalTableName, analyzeColumnList, rows, ec, rowCount);
+                buildSkew(schemaName, logicalTableName, analyzeColumnList, rows, sampleRate);
+                buildTopnAndHistogram(schemaName, logicalTableName, analyzeColumnList, rows, ec, sampleRate,
+                    sampleRateUp,
+                    histogramBucketSize, collectCharHistogram);
+            }
             cacheLine.setSampleRate(sampleRate);
+
+            if (getBoolFromEcIfNotNull(ec, ConnectionParams.ENABLE_COLLECT_CARDINALITY_FROM_DN)) {
+                //利用dn的统计信息进行优化
+                try {
+                    collectCardinalityFromDn(schemaName, logicalTableName, ec);
+                    TableMeta tableMeta =
+                        OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(logicalTableName);
+                    if (getBoolFromEcIfNotNull(ec, ConnectionParams.ENABLE_COLLECT_CARDINALITY_FROM_DN_FOR_GSI)
+                        && tableMeta.getGsiPublished() != null) {
+                        for (Map.Entry<String, GsiMetaManager.GsiIndexMetaBean> entry : tableMeta.getGsiPublished()
+                            .entrySet()) {
+                            collectCardinalityFromDn(schemaName, entry.getKey(), ec);
+                        }
+                    }
+
+                } catch (Throwable e) {
+                    logger.error(e);
+                    if (FailPoint.isKeyEnable(FailPointKey.FP_INJECT_IGNORE_STATISTIC_COLLECT_FROM_DN_EXCEPTION)) {
+                        throw e;
+                    }
+                }
+
+            }
+
             cacheLine.setLastModifyTime(unixTimeStamp());
 
             StatisticModuleLogUtil.logNormal(PROCESS_END,
@@ -248,7 +401,7 @@ public class StatisticSubProcessUtils {
                     sketchHllExecutor = ExecutorUtil.createExecutor("SketchHllExecutor", hllParallelism);
                 }
             }
-            logger.info(
+            logger.warn(
                 String.format("Sketch table %s.%s with parallelism: %d", schema, logicalTableName, hllParallelism));
 
             /**
@@ -261,6 +414,7 @@ public class StatisticSubProcessUtils {
             Map<String, Set<String>> indexColsMap = new HashMap<>();
             getIndexInfoFromLocalIndex(tableMeta, colDoneSet, indexColsMap);
             getIndexInfoFromGsi(tableMeta, colDoneSet, indexColsMap);
+            getIndexInfoFromColumnarIndex(schema, logicalTableName, ec, tableMeta, colDoneSet, indexColsMap);
 
             try {
                 for (Set<String> cols : indexColsMap.values()) {
@@ -305,6 +459,43 @@ public class StatisticSubProcessUtils {
             OptimizerAlertUtil.statisticsAlert(schema, logicalTableName, OptimizerAlertType.STATISTIC_HLL_FAIL, ec, e);
             throw e;
         }
+    }
+
+    public static void getIndexInfoFromColumnarIndex(String schema,
+                                                     String table,
+                                                     ExecutionContext ec,
+                                                     TableMeta tableMeta,
+                                                     Set<String> colDoneSet,
+                                                     Map<String, Set<String>> indexColsMap) {
+        // handle all columns for columnar index
+        List<String> columnarIndexNames = CBOUtil.getColumnarIndexNamesWithoutArchive(table, schema, ec);
+        if (columnarIndexNames == null || columnarIndexNames.isEmpty()) {
+            return;
+        }
+
+        // Get all column information from table meta with null check
+        List<ColumnMeta> allColumns = tableMeta.getAllColumns();
+        if (allColumns == null || allColumns.isEmpty()) {
+            return;
+        }
+
+        // Use stream processing to optimize column filtering logic for better performance
+        // Skip externalized columns — their physical storage is blob_addr (BIGINT),
+        // collecting HLL on addresses yields meaningless NDV ≈ row_count
+        Set<String> availableColumns = allColumns.stream()
+            .filter(col -> !col.isExternalizedColumn())
+            .map(ColumnMeta::getName)
+            .filter(columnName -> !colDoneSet.contains(columnName))
+            .collect(Collectors.toSet());
+
+        // Return early if no available columns
+        if (availableColumns.isEmpty()) {
+            return;
+        }
+
+        // Use only the first columnar index for configuration
+        String indexName = columnarIndexNames.iterator().next();
+        indexColsMap.put(indexName, availableColumns);
     }
 
     /**

@@ -103,7 +103,7 @@ public abstract class PruneEmptyRules {
                     true));
             break;
           default:
-            builder.push(LogicalUnion.create(newInputs, union.all));
+            builder.push(union.copy(union.getTraitSet(), newInputs, union.all));
             break;
           }
           call.transformTo(builder.build());

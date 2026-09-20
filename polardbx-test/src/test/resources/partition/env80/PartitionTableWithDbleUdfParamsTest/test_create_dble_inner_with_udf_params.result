@@ -1,0 +1,178 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+## ======== hash =========
+drop table if exists dble_hash_0_p8;
+create table dble_hash_0_p8
+  (a bigint，b bigint)
+partition by udf_hash (
+    `a` with udf_params (
+      'dble/hash',
+      '{"partitionCount" : "4,4","partitionLength" : "128,256"}'
+     )
+  )
+  partitions 8;
+insert into dble_hash_0_p8 values (100,100),(200,200),(300,300);
+select a,b from dble_hash_0_p8 where a=200;
+a,b
+200,200
+drop table if exists dble_hash_0_p8;
+## ======== stringhash =========
+drop table if exists dble_strhash_0_p8;
+create table dble_strhash_0_p8
+  (a varchar(32)，b bigint)
+  partition by udf_hash (
+    `a` with udf_params (
+      'dble/stringhash',
+      '{"partitionCount" : "4,4", "partitionLength" : "128,256","hashSlice" : "0:8"}'
+      )
+  )
+  partitions 8;
+insert into dble_strhash_0_p8 values ('100',100),('200',200),('300',300);
+select a,b from dble_strhash_0_p8 where a='200';
+a,b
+200,200
+drop table if exists dble_strhash_0_p8;
+## ======== enum =========
+drop table if exists dble_enum_0_p5;
+create table dble_enum_0_p5
+ (a bigint，b bigint)
+partition by udf_hash(
+  `a` with udf_params (
+  'dble/enum',
+  '{
+      "defaultNode" : "0",
+      "type" : "0",　
+      "mapFile" :
+      "
+        10000=0
+        10010=1
+        10020=2
+        10030=3
+        10040=4
+      "
+    }')
+  )
+  partitions 5;
+insert into dble_enum_0_p5 values (10000,10000),(10020,10020),(10030,10030);
+select a,b from dble_enum_0_p5 where a=10030;
+a,b
+10030,10030
+drop table if exists dble_enum_0_p5;
+## ======== numberrange =========
+drop table if exists dble_numrng_0_p5;
+create table dble_numrng_0_p5
+(a bigint，b bigint)
+partition by udf_hash(
+    `a` with
+    udf_params (
+      'dble/numberrange',
+      '{
+        "defaultNode" : "0",
+        "mapFile" :
+        "
+          0-200M=0
+          200M1-400M=1
+          400M1-600M=2
+          600M1-800M=3
+          800M1-1000M=4
+        "
+      }'
+  )
+)
+partitions 5;
+insert into dble_numrng_0_p5 values (2000000,2000000),(4000000,4000000);
+select a,b from dble_numrng_0_p5 where a=2000000;
+a,b
+2000000,2000000
+drop table if exists dble_numrng_0_p5;
+## ========= patternrange ========
+drop table if exists dble_pttr_0_p5;
+create table dble_pttr_0_p5
+(a bigint，b bigint)
+partition by udf_hash(
+    `a` with
+    udf_params (
+      'dble/patternrange',
+      '{
+        "defaultNode" : "0",
+        "patternValue" : "1024",
+        "mapFile" :
+        "
+          0-32=0
+          33-64=1
+          65-96=2
+          97-128=3
+          129-160=4
+          161-192=5
+          193-224=6
+          225-256=7
+        "
+      }')
+  )
+  partitions 8;
+insert into dble_pttr_0_p5 values (33,33),(96,96),(225,225);
+select * from dble_pttr_0_p5 where a=225;
+a,b
+225,225
+drop table if exists dble_pttr_0_p5;
+## ========= date ========
+drop table if exists dble_date_0_p8;
+create table dble_date_0_p8
+  (a datetime，b bigint)
+  partition by udf_hash (
+  `a` with udf_params (
+    'dble/date',
+    '{
+          "defaultNode" : "0",
+          "sBeginDate" : "2014-01-01",
+          "sEndDate" : "2014-01-31",
+          "partitionDay" : "10",
+          "dateFormat" : "yyyy-MM-dd"
+    }'
+  )
+  )
+  partitions 8;
+insert into dble_date_0_p8 values ('2014-01-11',1),('2014-01-21',2);
+select * from dble_date_0_p8 where a='2014-01-11';
+a,b
+2014-01-11 00:00:00.0,1
+drop table if exists dble_date_0_p8;
+## ========= jumpstringhash ========
+drop table if exists dble_jumpstr_0_p8;
+create table dble_jumpstr_0_p8
+  (a varchar(4)，b bigint)
+  partition by udf_hash (
+  `a` with udf_params (
+   'dble/jumpstringhash',
+   '{"partitionCount" : "8", "hashSlice" : "0:8"}'
+  )
+  )
+  partitions 8;
+insert into dble_jumpstr_0_p8 values ('ab',1),('bc',2);
+select * from dble_jumpstr_0_p8 where a='ab';
+a,b
+ab,1
+drop table if exists dble_jumpstr_0_p8;
+## ========= unitmurmurhash ========
+drop table if exists dble_murhash_0_p4;
+create table dble_murhash_0_p4
+(a bigint，b bigint)
+partition by udf_hash(
+    `a` with
+    udf_params (
+      'dble/unitmurmurhash',
+      '{
+          "partitionCount": "4",
+          "isDigitCheck" : "1",
+          "leftPaddingChar" : "NO",
+          "shardingValueMaxLength" : "15"
+      }'
+  )
+  )
+  partitions 4;
+insert into dble_murhash_0_p4 values (100,100),(200,200);
+select * from dble_murhash_0_p4 where a=100;
+a,b
+100,100
+drop table if exists dble_murhash_0_p4;

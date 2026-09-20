@@ -17,6 +17,9 @@
 package com.alibaba.polardbx.optimizer.config.table;
 
 import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.gms.metadb.table.VectorIndexMeta;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
+import com.google.common.collect.Lists;
 import org.apache.calcite.util.Util;
 import org.apache.commons.lang.StringUtils;
 
@@ -69,10 +72,16 @@ public class IndexMeta implements Serializable, Cloneable {
      */
     private final boolean isUniqueIndex;
 
+    private final boolean isFunctionIndex;
     /**
      * 物理表上的 index name
      */
     private final String physicalIndexName;
+
+    /**
+     * Resolved DN metadata for a VECTOR index. Ordinary indexes keep this field null.
+     */
+    private final VectorIndexMeta vectorIndexMeta;
 
     // ================== 冗余字段 ==============
 
@@ -87,15 +96,30 @@ public class IndexMeta implements Serializable, Cloneable {
      */
     private Map<String, ColumnMeta> columnsMap;
 
+    private int userDefinedKeyParts;
+
+    private int actualKeyParts;
+
     public IndexMeta(String tableName, List<ColumnMeta> keys, List<ColumnMeta> values, IndexType indexType,
                      Relationship relationship, boolean isStronglyConsistent, boolean isPrimaryKeyIndex,
                      boolean isUniqueIndex, String physicalIndexName) {
+        this(tableName, keys, values, indexType, relationship, isStronglyConsistent, isPrimaryKeyIndex,
+            isUniqueIndex, physicalIndexName, null);
+    }
+
+    public IndexMeta(String tableName, List<ColumnMeta> keys, List<ColumnMeta> values, IndexType indexType,
+                     Relationship relationship, boolean isStronglyConsistent, boolean isPrimaryKeyIndex,
+                     boolean isUniqueIndex, String physicalIndexName, VectorIndexMeta vectorIndexMeta) {
         this.tableName = tableName;
         this.keyColumns = uniq(keys);
         this.keyColumnsExt = new ArrayList<>(this.keyColumns.size());
+        int loc = 0;
         for (ColumnMeta meta : this.keyColumns) {
-            this.keyColumnsExt.add(new IndexColumnMeta(meta, 0)); // Default no sub-part.
+            this.keyColumnsExt.add(new IndexColumnMeta(meta, 0,
+                new OrderByOption(loc++, true, false))); // Default no sub-part and direction.
         }
+        this.actualKeyParts = this.keyColumnsExt.size();
+        this.userDefinedKeyParts = this.actualKeyParts;
         this.valueColumns = uniq(values);
         this.indexType = indexType;
         this.relationship = relationship;
@@ -103,28 +127,82 @@ public class IndexMeta implements Serializable, Cloneable {
         this.isStronglyConsistent = isStronglyConsistent;
         this.isUniqueIndex = isUniqueIndex;
         this.physicalIndexName = physicalIndexName;
+        this.vectorIndexMeta = vectorIndexMeta;
         this.name = buildName(tableName, keys);
         this.columnsMap = buildColumnsMap();
+        this.isFunctionIndex = false;
     }
 
     public IndexMeta(String tableName, List<IndexColumnMeta> keys, List<ColumnMeta> values, IndexType indexType,
-                     Relationship relationship, boolean isStronglyConsistent, boolean isUniqueIndex,
-                     String physicalIndexName) {
+                     Relationship relationship, boolean isStronglyConsistent, boolean isPrimaryKeyIndex,
+                     boolean isUniqueIndex,
+                     boolean isFunctionIndex, String physicalIndexName) {
+        this(tableName, keys, values, indexType, relationship, isStronglyConsistent, isPrimaryKeyIndex,
+            isUniqueIndex, isFunctionIndex, physicalIndexName, null);
+    }
+
+    public IndexMeta(String tableName, List<IndexColumnMeta> keys, List<ColumnMeta> values, IndexType indexType,
+                     Relationship relationship, boolean isStronglyConsistent, boolean isPrimaryKeyIndex,
+                     boolean isUniqueIndex, boolean isFunctionIndex, String physicalIndexName,
+                     VectorIndexMeta vectorIndexMeta) {
         this.tableName = tableName;
         this.keyColumnsExt = uniqExt(keys);
         this.keyColumns = new ArrayList<>(this.keyColumnsExt.size());
         for (IndexColumnMeta meta : this.keyColumnsExt) {
-            this.keyColumns.add(meta.getColumnMeta());
+            if (meta.hasColumn()) {
+                this.keyColumns.add(meta.getColumnMeta());
+            }
         }
+        this.actualKeyParts = this.keyColumnsExt.size();
+        this.userDefinedKeyParts = this.actualKeyParts;
         this.valueColumns = uniq(values);
         this.indexType = indexType;
         this.relationship = relationship;
-        this.isPrimaryKeyIndex = false;
+        this.isPrimaryKeyIndex = isPrimaryKeyIndex;
         this.isStronglyConsistent = isStronglyConsistent;
         this.isUniqueIndex = isUniqueIndex;
         this.physicalIndexName = physicalIndexName;
+        this.vectorIndexMeta = vectorIndexMeta;
         this.name = buildName(tableName, this.keyColumns);
         this.columnsMap = buildColumnsMap();
+        this.isFunctionIndex = isFunctionIndex;
+    }
+
+    /**
+     * copy constructor for advisor only
+     *
+     * @param im source index meta
+     * @param columnsMap source column to copied column meta map
+     */
+    public IndexMeta(IndexMeta im, Map<String, ColumnMeta> columnsMap) {
+        this.tableName = im.getTableName();
+        this.keyColumnsExt = Lists.newArrayList();
+        for (IndexColumnMeta icm : im.getKeyColumnsExt()) {
+            ColumnMeta cm = icm.getColumnMeta();
+            this.keyColumnsExt.add(new IndexColumnMeta(
+                cm == null ? null : columnsMap.get(cm.getName()),
+                icm.getSubPart(),
+                icm.getOrderByOption()));
+        }
+        this.keyColumns = new ArrayList<>(this.keyColumnsExt.size());
+        for (IndexColumnMeta meta : this.keyColumnsExt) {
+            if (meta.hasColumn()) {
+                this.keyColumns.add(meta.getColumnMeta());
+            }
+        }
+        this.actualKeyParts = this.keyColumnsExt.size();
+        this.userDefinedKeyParts = this.actualKeyParts;
+        this.valueColumns = im.getValueColumns();
+        this.indexType = im.getIndexType();
+        this.relationship = im.getRelationship();
+        this.isPrimaryKeyIndex = im.isPrimaryKeyIndex();
+        this.isStronglyConsistent = im.isStronglyConsistent();
+        this.isUniqueIndex = im.isUniqueIndex;
+        this.physicalIndexName = im.getPhysicalIndexName();
+        this.vectorIndexMeta = im.getVectorIndexMeta();
+        this.name = buildName(tableName, this.keyColumns);
+        this.columnsMap = buildColumnsMap();
+        this.isFunctionIndex = im.isFunctionIndex();
     }
 
     private Map<String, ColumnMeta> buildColumnsMap() {
@@ -173,12 +251,37 @@ public class IndexMeta implements Serializable, Cloneable {
         }
     }
 
+    public boolean isSpecialIndex() {
+        return indexType == IndexType.FULLTEXT || indexType == IndexType.SPATIAL || isFunctionIndex;
+    }
+
+    public boolean isFullTextIndexOrSpatialIndex() {
+        return indexType == IndexType.FULLTEXT || indexType == IndexType.SPATIAL;
+    }
+
+    public boolean isFunctionIndex() {
+        return isFunctionIndex;
+    }
+
+    @Deprecated // missing null column for function index, use getKeyColumnsExt instead
     public List<ColumnMeta> getKeyColumns() {
         return keyColumns;
     }
 
     public List<IndexColumnMeta> getKeyColumnsExt() {
         return keyColumnsExt;
+    }
+
+    public int getUserDefinedKeyParts() {
+        return userDefinedKeyParts;
+    }
+
+    public int getActualKeyParts() {
+        return actualKeyParts;
+    }
+
+    public void addActualKeyParts() {
+        actualKeyParts++;
     }
 
     public List<ColumnMeta> getValueColumns() {
@@ -211,6 +314,10 @@ public class IndexMeta implements Serializable, Cloneable {
 
     public String getPhysicalIndexName() {
         return physicalIndexName;
+    }
+
+    public VectorIndexMeta getVectorIndexMeta() {
+        return vectorIndexMeta;
     }
 
     public String getNameWithOutDot() {

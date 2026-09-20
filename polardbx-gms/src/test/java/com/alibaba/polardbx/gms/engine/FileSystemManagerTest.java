@@ -22,6 +22,7 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.mock.MockUtils;
 import com.alibaba.polardbx.common.oss.filesystem.NFSFileSystem;
 import com.alibaba.polardbx.common.oss.filesystem.OSSFileSystem;
+import com.alibaba.polardbx.common.oss.filesystem.cache.CachingFileSystem;
 import com.alibaba.polardbx.common.oss.filesystem.cache.FileMergeCachingFileSystem;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.engine.decorator.FileSystemDecorator;
@@ -45,6 +46,8 @@ import org.mockito.Mockito;
 import org.mockito.junit.MockitoJUnitRunner;
 
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 
 @RunWith(MockitoJUnitRunner.class)
 public class FileSystemManagerTest {
@@ -113,6 +116,7 @@ public class FileSystemManagerTest {
         mockedInstConf.when(InstConfUtil::fetchLongConfigs).thenReturn(Maps.newHashMap());
         ServerInstIdManager mockedServerInstIdManager = Mockito.mock(ServerInstIdManager.class);
         mockedServerInstId.when(ServerInstIdManager::getInstance).thenReturn(mockedServerInstIdManager);
+        Mockito.when(mockedServerInstIdManager.getMasterInstId()).thenReturn("mock-master-inst-id");
 
         nfs3MockedConstruction = Mockito.mockConstruction(Nfs3.class);
 
@@ -179,8 +183,8 @@ public class FileSystemManagerTest {
     @Test
     public void buildFileSystem() throws IOException {
         FileSystem fs = FileSystemManager.buildFileSystem(MOCK_OSS_RECORD);
-        Assert.assertTrue(fs instanceof FileMergeCachingFileSystem);
-        FileSystem dataTier = ((FileMergeCachingFileSystem) fs).getDataTier();
+        Assert.assertTrue(fs instanceof CachingFileSystem);
+        FileSystem dataTier = ((CachingFileSystem) fs).getDataTier();
         Assert.assertTrue(dataTier instanceof OSSFileSystem);
         Assert.assertEquals("oss", dataTier.getScheme());
         fs.close();
@@ -233,6 +237,87 @@ public class FileSystemManagerTest {
         );
 
         Assert.assertEquals(ErrorCode.ERR_EXECUTE_ON_OSS.getCode(), exception.getErrorCode());
+    }
+
+    @Test
+    public void buildFileSystemWithPrivateCloud() throws IOException {
+        FileStorageInfoRecord privateCloudRecord = new FileStorageInfoRecord();
+        privateCloudRecord.engine = Engine.OSS.name();
+        privateCloudRecord.externalEndpoint
+            = privateCloudRecord.internalClassicEndpoint
+            = privateCloudRecord.internalVpcEndpoint
+            = "oss-cn-hangzhou.aliyuncs.com";
+        privateCloudRecord.accessKeyId = MOCK_AK;
+        privateCloudRecord.accessKeySecret = PasswdUtil.encrypt(MOCK_SK);
+        privateCloudRecord.fileUri = "oss://polardbx-bucket-name/";
+        privateCloudRecord.fileSystemConf = "{\"is_private_cloud\":1}";
+
+        FileSystem fs = FileSystemManager.buildFileSystem(privateCloudRecord);
+        Assert.assertTrue(fs instanceof FileMergeCachingFileSystem);
+        FileSystem dataTier = ((FileMergeCachingFileSystem) fs).getDataTier();
+        Assert.assertTrue(dataTier instanceof OSSFileSystem);
+        Assert.assertEquals("oss", dataTier.getScheme());
+        fs.close();
+    }
+
+    @Test
+    public void buildFileSystemWithNonPrivateCloud() throws IOException {
+        FileStorageInfoRecord nonPrivateCloudRecord = new FileStorageInfoRecord();
+        nonPrivateCloudRecord.engine = Engine.OSS.name();
+        nonPrivateCloudRecord.externalEndpoint
+            = nonPrivateCloudRecord.internalClassicEndpoint
+            = nonPrivateCloudRecord.internalVpcEndpoint
+            = "oss-cn-hangzhou.aliyuncs.com";
+        nonPrivateCloudRecord.accessKeyId = MOCK_AK;
+        nonPrivateCloudRecord.accessKeySecret = PasswdUtil.encrypt(MOCK_SK);
+        nonPrivateCloudRecord.fileUri = "oss://polardbx-bucket-name/";
+        nonPrivateCloudRecord.fileSystemConf = "{\"is_private_cloud\":0}";
+
+        FileSystem fs = FileSystemManager.buildFileSystem(nonPrivateCloudRecord);
+        Assert.assertTrue(fs instanceof FileMergeCachingFileSystem);
+        FileSystem dataTier = ((FileMergeCachingFileSystem) fs).getDataTier();
+        Assert.assertTrue(dataTier instanceof OSSFileSystem);
+        fs.close();
+    }
+
+    @Test
+    public void testParsePrivateCloudFromConf() throws Exception {
+        Method method = FileSystemManager.class.getDeclaredMethod("parsePrivateCloudFromConf", String.class);
+        method.setAccessible(true);
+
+        // null input
+        Assert.assertFalse((boolean) method.invoke(null, (String) null));
+
+        // empty string
+        Assert.assertFalse((boolean) method.invoke(null, ""));
+
+        // is_private_cloud = 1
+        Assert.assertTrue((boolean) method.invoke(null, "{\"is_private_cloud\":1}"));
+
+        // is_private_cloud = 0
+        Assert.assertFalse((boolean) method.invoke(null, "{\"is_private_cloud\":0}"));
+
+        // no is_private_cloud field
+        Assert.assertFalse((boolean) method.invoke(null, "{\"other_field\":\"value\"}"));
+
+        // empty json object
+        Assert.assertFalse((boolean) method.invoke(null, "{}"));
+    }
+
+    @Test
+    public void testParsePrivateCloudFromConfWithInvalidJson() throws Exception {
+        Method method = FileSystemManager.class.getDeclaredMethod("parsePrivateCloudFromConf", String.class);
+        method.setAccessible(true);
+
+        try {
+            method.invoke(null, "invalid json");
+            Assert.fail("Expected TddlRuntimeException for invalid JSON");
+        } catch (InvocationTargetException e) {
+            Assert.assertTrue(e.getCause() instanceof TddlRuntimeException);
+            TddlRuntimeException cause = (TddlRuntimeException) e.getCause();
+            Assert.assertEquals(ErrorCode.ERR_CONFIG.getCode(), cause.getErrorCode());
+            Assert.assertTrue(cause.getMessage().contains("Failed to parse file_system_conf"));
+        }
     }
 
     @Test

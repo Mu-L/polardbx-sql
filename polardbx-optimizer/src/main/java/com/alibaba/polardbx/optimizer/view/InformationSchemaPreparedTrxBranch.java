@@ -43,11 +43,15 @@ public class InformationSchemaPreparedTrxBranch extends VirtualView {
     protected RelDataType deriveRowType() {
         final RelDataTypeFactory typeFactory = getCluster().getTypeFactory();
         List<RelDataTypeFieldImpl> columns = new LinkedList<>();
-        columns.add(new RelDataTypeFieldImpl("DN_INSTANCE_ID", 0, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
-        columns.add(new RelDataTypeFieldImpl("FORMAT_ID", 1, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
-        columns.add(new RelDataTypeFieldImpl("GTRID_LENGTH", 2, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
-        columns.add(new RelDataTypeFieldImpl("BQUAL_LENGTH", 3, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
-        columns.add(new RelDataTypeFieldImpl("DATA", 4, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
+        int i = 0;
+        columns.add(new RelDataTypeFieldImpl("DN_INSTANCE_ID", i++, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
+        columns.add(new RelDataTypeFieldImpl("FORMAT_ID", i++, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
+        columns.add(new RelDataTypeFieldImpl("GTRID_LENGTH", i++, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
+        columns.add(new RelDataTypeFieldImpl("BQUAL_LENGTH", i++, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
+        columns.add(new RelDataTypeFieldImpl("DATA", i++, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
+        columns.add(new RelDataTypeFieldImpl("TRANS_ID", i++, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
+        columns.add(new RelDataTypeFieldImpl("PRIMARY_SCHEMA", i++, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
+        columns.add(new RelDataTypeFieldImpl("PRIMARY_GROUP", i++, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
         return typeFactory.createStructType(columns);
     }
 }

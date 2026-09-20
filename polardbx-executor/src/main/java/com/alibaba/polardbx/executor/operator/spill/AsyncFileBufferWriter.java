@@ -29,6 +29,8 @@
  */
 package com.alibaba.polardbx.executor.operator.spill;
 
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
 import com.alibaba.polardbx.common.datatype.UInt64;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
@@ -43,7 +45,6 @@ import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.alibaba.polardbx.optimizer.spill.SpillMonitor;
 import com.google.common.primitives.Bytes;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.SettableFuture;
 import io.airlift.slice.Slice;
 import org.apache.calcite.sql.OutFileParams;
 
@@ -78,7 +79,7 @@ public class AsyncFileBufferWriter {
     private final Set<Integer> notNumberTypeIndex = new HashSet<>();
 
     @GuardedBy("lock")
-    private SettableFuture<?> writeFuture = null;
+    private BlockingFuture<?> writeFuture = null;
     @GuardedBy("lock")
     private IOException iex;
     /**
@@ -198,7 +199,7 @@ public class AsyncFileBufferWriter {
     }
 
     private void notifyListener(IOException ioe) {
-        SettableFuture toSetFuture = null;
+        BlockingFuture<?> toSetFuture = null;
         synchronized (lock) {
             if (writeFuture != null) {
                 toSetFuture = writeFuture;
@@ -206,7 +207,7 @@ public class AsyncFileBufferWriter {
             }
         }
         if (toSetFuture != null) {
-            toSetFuture.set(ioe);
+            toSetFuture.complete(null);
         }
     }
 
@@ -264,7 +265,7 @@ public class AsyncFileBufferWriter {
             if (null == outFileParams) {
                 checkState(writeFuture == null, "writeFuture already set");
             }
-            writeFuture = SettableFuture.create();
+            writeFuture = BlockingFuture.create(BlockingReason.WAIT_FOR_SPILL_WRITE);
             returnFuture = writeFuture;
         }
         return returnFuture;

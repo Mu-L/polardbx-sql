@@ -16,16 +16,26 @@
 
 package com.alibaba.polardbx.executor.accumulator;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 
-public interface Accumulator {
+public interface Accumulator extends MemoryCountable {
 
     /**
      * Get expected input types. Returns null if any type(s) are accepted
      */
     DataType[] getInputTypes();
+
+    /**
+     * If adding one more element would trigger expansion,
+     * return the memory required for the next expansion; otherwise return 0L
+     */
+    default long estimatedGrowSize() {
+        return 0L;
+    }
 
     /**
      * Append a new group with initial value
@@ -36,6 +46,18 @@ public interface Accumulator {
      * Accumulate a value into group
      */
     void accumulate(int groupId, Chunk inputChunk, int position);
+
+    //noGroupBy
+    default void accumulate(Chunk aggChunk, Chunk inputChunk) {
+        //for count(), aggInputChunk initialized with positionCount() == 0
+        if (aggChunk.getPositionCount() == 0) {
+            accumulate(0, inputChunk, 0, inputChunk.getPositionCount());
+        } else {
+            for (int i = 0; i < aggChunk.getPositionCount(); i++) {
+                accumulate(0, aggChunk, i);
+            }
+        }
+    }
 
     default void accumulate(int groupId, Chunk inputChunk, int[] groupIdSelection, int selSize) {
         // Fall back to normal processing if method is not override.

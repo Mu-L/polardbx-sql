@@ -194,9 +194,9 @@ public class AllNodes {
         return count;
     }
 
-    public List<Node> getAllCoordinators() {
-        List<Node> coordinators = new ArrayList<>();
-        for (Node node : activeNodes) {
+    public List<InternalNode> getAllCoordinators() {
+        List<InternalNode> coordinators = new ArrayList<>();
+        for (InternalNode node : activeNodes) {
             if (node.isCoordinator()) {
                 coordinators.add(node);
             }

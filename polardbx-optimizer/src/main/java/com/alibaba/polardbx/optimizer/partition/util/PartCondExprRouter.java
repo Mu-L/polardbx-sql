@@ -2,6 +2,8 @@ package com.alibaba.polardbx.optimizer.partition.util;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.jdbc.BytesSql;
+import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.common.model.lifecycle.AbstractLifecycle;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
@@ -80,8 +82,10 @@ public class PartCondExprRouter extends AbstractLifecycle {
         List<String> partCols = partInfo.getPartitionColumns();
         String selectSql = buildSelectPartTblByWhereCondExpr(tblSchema, tblName, partCols, condExprString);
         try {
-            SqlParameterized sqlParameterized = SqlParameterizeUtils.parameterize(selectSql);
-            ExecutionPlan plan = Planner.getInstance().doBuildPlan(sqlParameterized, context);
+            if (context.getParams() == null) {
+                context.setParams(new Parameters());
+            }
+            ExecutionPlan plan = Planner.getInstance().plan(selectSql, context);
             RelNode planRel = plan.getPlan();
             LogicalView tarLv = null;
             if (planRel instanceof LogicalView) {
@@ -96,7 +100,7 @@ public class PartCondExprRouter extends AbstractLifecycle {
         } catch (Throwable ex) {
             throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER,
                 String.format("Failed to build LogicalView for select by using the condition expression: %s ",
-                    condExprString));
+                    condExprString), ex);
         }
     }
 

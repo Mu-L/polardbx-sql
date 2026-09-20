@@ -42,12 +42,10 @@ public interface ConditionResult {
 
     List<RexNode> toRexNodes();
 
-    Map<String, Comparative> toPartitionCondition(ExecutionContext executionContext);
-
-    Map<String, Comparative> toFullPartitionCondition(ExecutionContext executionContext);
+    Map<String, Comparative> toPartitionCondition(ExecutionContext executionContext, boolean enableConstExpr);
 
     Map<Integer, BitSet> toColumnEquality();
 
-    Map<String, Comparative> toColumnCondition(List<String> columns);
+    Map<String, Comparative> toColumnCondition(List<String> columns, ExecutionContext context);
 
 }

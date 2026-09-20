@@ -1,0 +1,27 @@
+## DISABLE_FAST_SQL_PARSER
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00'
+set sql_mode=''
+set TTL_ADD_MAXVAL_PART_ON_CCI_CREATING=true
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false
+set MAX_CCI_COUNT=2
+DROP DATABASE IF EXISTS ttldb8_db
+CREATE DATABASE IF NOT EXISTS ttldb8_db MODE='auto'
+use ttldb8_db
+CREATE TABLE `ttl8_t1` (
+`a` int(11) NOT NULL AUTO_INCREMENT,
+`c` int(11) NOT NULL,
+`b` timestamp(3),
+PRIMARY KEY(a)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+ALTER TABLE ttl8_t1 MODIFY TTL SET TTL_EXPR =`b` EXPIRE AFTER 30 DAY TIMEZONE '+08:00',ARCHIVE_TABLE_PRE_ALLOCATE = 12, ARCHIVE_TABLE_POST_ALLOCATE = 12
+ALTER TABLE ttl8_t1 MODIFY TTL SET TTL_ENABLE ='ON'
+SELECT table_schema,table_name,schedule_name FROM information_schema.schedule_jobs where table_schema='ttldb8_db' and table_name='ttl8_t1'
+table_schema,table_name,schedule_name
+ttldb8_db,ttl8_t1,TTL_JOB:ttldb8_db.ttl8_t1
+USE polardbx
+DROP DATABASE `ttldb8_db`;

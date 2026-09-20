@@ -1,0 +1,155 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+## test dble_db
+
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+set ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING=true;
+set ENABLE_RANDOM_PHY_TABLE_NAME=false;
+set ENABLE_REPLICAS_RANDOM_READ= false;
+set GROUP_PARALLELISM=1;
+
+use polardbx;
+drop database if exists mydbledb4;
+ 
+  ## USE_DN_LIST_MSG
+create database if not exists mydbledb4 mode = 'auto'
+locality='dble_config={"group_config":{"mydbledb4_g1":["$dn1","mydbledb4_01"],"mydbledb4_g2":["$dn2","mydbledb4_02"],"mydbledb4_g3":["$dn1","mydbledb4_03"],"mydbledb4_g4":["$dn2","mydbledb4_04"], "mydbledb4_g5":["$dn1","mydbledb4_05"], "mydbledb4_g6":["$dn2","mydbledb4_06"] }}';
+use mydbledb4;
+
+CREATE TABLE `r_dml_g1g2_t1` (
+`a` int not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb4_g1,mydbledb4_g2';
+
+show create table r_dml_g1g2_t1;
+
+CREATE TABLE `r_dml_g1g2_t2` (
+`a` int  not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb4_g2,mydbledb4_g1';
+
+show create table r_dml_g1g2_t2;
+
+CREATE TABLE `s_dml_g2_t1` (
+`a` int  not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+SINGLE
+LOCALITY='db_set=mydbledb4_g2';
+
+show create table s_dml_g2_t1;
+
+CREATE TABLE `s_dml_g1_t1` (
+`a` int  not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+SINGLE
+LOCALITY='db_set=mydbledb4_g1';
+
+show create table s_dml_g1_t1;
+
+CREATE TABLE `b_dml_t1` (
+`a` int  not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+BROADCAST
+;
+
+show create table b_dml_t1;
+
+CREATE TABLE `r_dml_g2g3_t1` (
+`a` int  not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb4_g2,mydbledb4_g3';
+
+show create table r_dml_g2g3_t1;
+
+CREATE TABLE `r_dml_g1tog4` (
+`a` int  not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb4_g1,mydbledb4_g2,mydbledb4_g3,mydbledb4_g4';
+
+show create table r_dml_g1tog4;
+
+
+CREATE TABLE `part_dml_g1g2_t1` (
+`a` int not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+LOCALITY='db_pools=mydbledb4_g1,mydbledb4_g2';
+
+CREATE TABLE `part_dml_g2g3_t1` (
+`a` int not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+LOCALITY='db_pools=mydbledb4_g2,mydbledb4_g3';
+
+
+ ##==== insert & select ====
+insert into r_dml_g1g2_t1 values (null,10),(null,20);
+select * from r_dml_g1g2_t1 order by b desc;
+
+set PARTITION_HINT='p1';
+select * from r_dml_g1g2_t1 order by b desc;
+
+set PARTITION_HINT='p2';
+select * from r_dml_g1g2_t1 order by b desc;
+
+set PARTITION_HINT='';
+
+insert into part_dml_g1g2_t1 values (null,10),(null,20);
+select * from part_dml_g1g2_t1 partition (p1) order by b desc;
+select * from part_dml_g1g2_t1 partition (p2) order by b desc;
+
+select t1.b from part_dml_g1g2_t1 partition (p2) as t1 inner join r_dml_g1g2_t1 t2 on t1.a=t2.a order by t1.b desc;
+select t1.b from part_dml_g1g2_t1 partition (p1) as t1 inner join r_dml_g1g2_t1 t2 on t1.a=t2.a order by t1.b desc;
+select t1.b from part_dml_g1g2_t1 as t1 inner join r_dml_g1g2_t1 t2 on t1.a=t2.a order by t1.b desc;
+
+explain insert into r_dml_g1g2_t2 select * from r_dml_g1g2_t1;
+insert into r_dml_g1g2_t2 select * from r_dml_g1g2_t1;
+select t1.b from part_dml_g1g2_t1 as t1 inner join r_dml_g1g2_t2 t2 on t1.a=t2.a order by t1.b desc;
+
+explain insert into r_dml_g2g3_t1 select * from r_dml_g1g2_t1;
+insert into r_dml_g2g3_t1 select * from r_dml_g1g2_t1;
+select t1.b from part_dml_g1g2_t1 as t1 inner join r_dml_g2g3_t1 t2 on t1.a=t2.a order by t1.b desc;
+
+
+  ##==== update/delete ====
+update r_dml_g2g3_t1 set b=30 where a=1;
+select t2.a,t2.b from part_dml_g1g2_t1 as t1 inner join r_dml_g2g3_t1 t2 on t1.a=t2.a order by t1.b desc;
+
+  ##==== alter ddl ====
+alter table r_dml_g2g3_t1 add column c int;
+alter table r_dml_g2g3_t1 modify column c bigint;
+create index idx_c on r_dml_g2g3_t1(c);
+show create table r_dml_g2g3_t1;
+check table r_dml_g2g3_t1;
+alter table r_dml_g2g3_t1 drop index idx_c;
+
+use polardbx;
+drop database mydbledb4;

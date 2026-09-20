@@ -99,7 +99,6 @@ public class GlobalTxLogManager extends AbstractLifecycle {
     private TransactionExecutor executor;
 
     private static final AtomicLong appendV2FailedCnt = new AtomicLong(0);
-    private static final AtomicLong appendV2FailedLastTime = new AtomicLong(0);
 
     @Override
     public void doInit() {
@@ -260,35 +259,7 @@ public class GlobalTxLogManager extends AbstractLifecycle {
             ps.executeUpdate();
         } catch (SQLException e) {
             EventLogger.log(EventType.TRX_LOG_ERR, "Append trx log v2 failed, caused by " + e.getMessage());
-            try {
-                handleV2LogError();
-            } catch (Throwable t) {
-                EventLogger.log(EventType.TRX_LOG_ERR, "Handle trx log v2 error failed, "
-                    + "caused by " + e.getMessage());
-                logger.error("Handle trx log v2 error failed", t);
-            }
             throw e;
-        }
-    }
-
-    private static void handleV2LogError() throws SQLException {
-        long lastErrTime = appendV2FailedLastTime.get();
-        if ((System.nanoTime() - lastErrTime) / 1000000000 > 600
-            && appendV2FailedLastTime.compareAndSet(lastErrTime, System.nanoTime())) {
-            // First error in 10 min, reset err cnt.
-            appendV2FailedCnt.set(0);
-        }
-        // 100 errors occur in the last 10 min, switch to legacy method for safety.
-        if (appendV2FailedCnt.incrementAndGet() == 100) {
-            try {
-                if (0 == DynamicConfig.getInstance().getTrxLogMethod()) {
-                    return;
-                }
-
-                turnOffNewTrxLogMethod();
-            } finally {
-                appendV2FailedCnt.set(0);
-            }
         }
     }
 

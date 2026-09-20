@@ -16,15 +16,16 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.executor.chunk.Chunk;
-import com.alibaba.polardbx.executor.mpp.operator.DriverContext;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 
 /**
  * Basic interface for consumer-operator which only receive the chunk.
  */
-public interface ConsumerExecutor {
+public interface ConsumerExecutor extends MemoryCountable {
 
     ListenableFuture<?> NOT_BLOCKED = Futures.immediateFuture(null);
 
@@ -74,5 +75,9 @@ public interface ConsumerExecutor {
     default ListenableFuture<?> consumeIsBlocked() {
         return NOT_BLOCKED;
     }
+
+    void setConsumerOperatorMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId);
+
+    OperatorMemoryOwnerId getConsumerMemoryOwnerId();
 
 }

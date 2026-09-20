@@ -62,6 +62,7 @@ public class TablePartitionRecord implements SystemTableRecord {
     public final static int PARTITION_TABLE_TYPE_GSI_BROADCAST_TABLE = 5;
     public final static int PARTITION_TABLE_TYPE_OSS_TABLE = 6;
     public final static int PARTITION_TABLE_TYPE_COLUMNAR_TABLE = 7;
+    public final static int PARTITION_TABLE_TYPE_REPLICAS_TABLE = 8;
 
     public final static String PARTITION_ENGINE_INNODB = "InnoDB";
     public final static String PARTITION_ENGINE_COLUMNAR = "Columnar";
@@ -138,8 +139,17 @@ public class TablePartitionRecord implements SystemTableRecord {
      * flags values for part_flags
      */
     public final static long FLAG_LOCK = 0x1;
-    public final static long FLAG_AUTO_PARTITION = 0x2;// label if a part-table is auto-partitioned table
-    public final static long FLAG_TTL_TEMPORARY_TABLE = 0x4; // label if a part-table is a ttl-tmp table
+    // label if a part-table is auto-partitioned table
+    public final static long FLAG_AUTO_PARTITION = 0x2;
+    // label if a part-table is a ttl-tmp table
+    public final static long FLAG_TTL_TEMPORARY_TABLE = 0x4;
+    // label if a part-table is a no-partition-key table
+    public final static long FLAG_NO_PARTITION_KEY_TABLE = 0x8;
+    // label if a part-table is a block-full-table-scan table
+    public final static long FLAG_BLOCK_FULL_TABLE_SCAN = 0x10;
+
+    public TablePartitionRecord() {
+    }
 
     @Override
     public TablePartitionRecord fill(ResultSet rs) throws SQLException {
@@ -457,13 +467,14 @@ public class TablePartitionRecord implements SystemTableRecord {
             '}';
     }
 
+    // USER FOR COLUMNAR
     public static boolean isPartitionRecordEqual(TablePartitionRecord record1, TablePartitionRecord record2) {
         return Objects.equals(record1.parentId, record2.parentId) &&
             Objects.equals(record1.tableSchema, record2.tableSchema) &&
             Objects.equals(record1.tableName, record2.tableName) &&
             Objects.equals(record1.spTempFlag, record2.spTempFlag) &&
             Objects.equals(record1.groupId, record2.groupId) &&
-            Objects.equals(record1.metaVersion, record2.metaVersion) &&
+//            Objects.equals(record1.metaVersion, record2.metaVersion) &&
             Objects.equals(record1.autoFlag, record2.autoFlag) &&
             Objects.equals(record1.tblType, record2.tblType) &&
             Objects.equals(record1.partName, record2.partName) &&
@@ -471,13 +482,12 @@ public class TablePartitionRecord implements SystemTableRecord {
             Objects.equals(record1.partLevel, record2.partLevel) &&
             Objects.equals(record1.nextLevel, record2.nextLevel) &&
             Objects.equals(record1.partStatus, record2.partStatus) &&
-            Objects.equals(record1.partPosition, record2.partPosition) &&
             Objects.equals(record1.partMethod, record2.partMethod) &&
             Objects.equals(record1.partExpr, record2.partExpr) &&
             Objects.equals(record1.partDesc, record2.partDesc) &&
             Objects.equals(record1.partComment, record2.partComment) &&
             Objects.equals(record1.partEngine, record2.partEngine) &&
-            Objects.equals(record1.partFlags, record2.partFlags) &&
-            Objects.equals(record1.phyTable, record2.phyTable);
+            Objects.equals(record1.partFlags, record2.partFlags);
+//            Objects.equals(record1.phyTable, record2.phyTable);
     }
 }

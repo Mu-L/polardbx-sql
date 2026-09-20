@@ -48,6 +48,7 @@ public class LocalityTestCaseTask {
         if (storageList.size() < this.localityTestCaseBean.getStorageList().size()) {
             return;
         }
+        LocalityTestUtils.flushStorageLabel(storageList, tddlConnection);
         this.nodeMap = LocalityTestUtils.generateNodeMap(storageList, this.localityTestCaseBean.getStorageList());
         for (LocalityTestCaseBean.SingleTestCase singleTestCase : localityTestCaseBean.testCases) {
             LocalitySingleTaskCaseTask singleTestCaseTask = LocalitySingleTaskCaseTask.loadFrom(singleTestCase);

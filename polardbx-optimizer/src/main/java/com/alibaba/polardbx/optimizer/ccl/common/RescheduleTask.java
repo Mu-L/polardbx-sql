@@ -58,6 +58,11 @@ public class RescheduleTask {
     private boolean isSwitchoverReschedule;
 
     /**
+     * 是否是多语句有更多后续语句的场景
+     */
+    private boolean isMultiStmtHasMore;
+
+    /**
      * 是否被激活
      */
     private AtomicBoolean activation;

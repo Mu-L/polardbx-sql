@@ -16,11 +16,16 @@
 
 package com.alibaba.polardbx.qatest.dql.auto.explain;
 
+import com.alibaba.polardbx.common.utils.Assert;
+import com.alibaba.polardbx.optimizer.core.rel.LogicalModifyView;
+import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
+import com.alibaba.polardbx.optimizer.core.rel.PhyTableOperation;
+import com.alibaba.polardbx.qatest.CdcIgnore;
 import com.alibaba.polardbx.qatest.FileStoreIgnore;
 import com.alibaba.polardbx.qatest.ReadBaseTestCase;
-import com.alibaba.polardbx.qatest.CdcIgnore;
 import com.alibaba.polardbx.qatest.data.ExecuteTableSelect;
 import com.alibaba.polardbx.qatest.dql.sharding.explain.ExplainTest;
+import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.collect.Table;
 import org.junit.Test;
 import org.junit.runners.Parameterized;
@@ -107,6 +112,40 @@ public class ExplainAutoTest extends ReadBaseTestCase {
                 ExplainTest.RunExplainInsertTest(testCases, sql, statement);
             } catch (Exception e) {
                 throw new RuntimeException(e);
+            }
+        }
+    }
+
+    @Test
+    public void testShowPhysicalPlan() throws Exception {
+
+        List<String> sqls = new ArrayList<>();
+        sqls.add(String.format("select * from %s", baseOneTableName));
+        sqls.add(String.format("select * from %s where pk = 1", baseOneTableName));
+        sqls.add(String.format("select * from %s where pk > 10", baseOneTableName));
+        sqls.add(String.format("select * from %s where pk > 10 and pk < 20", baseOneTableName));
+        sqls.add(
+            String.format("select * from %s t1 join %s t2 on t1.pk = t2.pk where t1.pk > 10 and t2.integer_test = 10",
+                baseOneTableName, baseTwoTableName));
+        sqls.add(String.format("select * from %s where pk in (10, 20)", baseOneTableName));
+
+        List<String> options = new ArrayList<>();
+        options.add("");
+        options.add("cost");
+        options.add("analyze");
+
+        for (String sql : sqls) {
+            for (String option : options) {
+                List<List<Object>> explainResult =
+                    JdbcUtil.getAllResult(JdbcUtil.executeQuery("explain " + option + " " + sql, tddlConnection));
+                for (List<Object> row : explainResult) {
+                    String node = row.get(0).toString();
+                    if (node.contains(LogicalView.class.getSimpleName())
+                        || node.contains(PhyTableOperation.class.getSimpleName())
+                        || node.contains(LogicalModifyView.class.getSimpleName())) {
+                        Assert.assertTrue(node.contains("physicalPlan"), node);
+                    }
+                }
             }
         }
     }

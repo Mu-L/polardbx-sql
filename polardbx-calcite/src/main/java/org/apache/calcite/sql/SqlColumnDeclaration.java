@@ -33,6 +33,7 @@ import java.util.List;
  * column_definition:
  *     data_type [NOT NULL | NULL] [DEFAULT {literal | (expr)} ]
  *       [AUTO_INCREMENT] [UNIQUE [KEY]] [[PRIMARY] KEY]
+ *       [CHECK (expr)]
  *       [COMMENT 'string']
  *       [COLLATE collation_name]
  *       [COLUMN_FORMAT {FIXED|DYNAMIC|DEFAULT}]
@@ -63,7 +64,14 @@ public class SqlColumnDeclaration extends SqlCall {
      * [UNIQUE [KEY]] [[PRIMARY] KEY]
      */
     private final SpecialIndex specialIndex;
+    private final SqlCheck check;
     private final SqlLiteral comment;
+
+    /**
+     * [PRIMARY_KEY] [UNIQUE] [FOREIGN_KEY] [CHECK]
+     * FOREIGN_KEY is not used, because it can't be declared in column definition.
+     */
+    private final Constraint constraint;
     /**
      * for MySQL NDB only
      */
@@ -89,6 +97,8 @@ public class SqlColumnDeclaration extends SqlCall {
 
     private String securedWith;
 
+    private boolean externalize = false;
+
     /**
      * <pre>
      * data_type [NOT NULL | NULL] [DEFAULT {literal | (expr)} ]
@@ -106,7 +116,7 @@ public class SqlColumnDeclaration extends SqlCall {
                                 Storage storage, SqlReferenceDefinition referenceDefinition,
                                 boolean onUpdateCurrentTimestamp, Type autoIncrementType, int unitCount, int unitIndex,
                                 int innerStep, boolean generatedAlways, boolean generatedAlwaysLogical,
-                                SqlCall generatedAlwaysExpr) {
+                                SqlCall generatedAlwaysExpr, SqlCheck check, Constraint constraint) {
         super(pos);
         this.name = name;
         this.dataType = dataType;
@@ -128,6 +138,8 @@ public class SqlColumnDeclaration extends SqlCall {
         this.generatedAlwaysLogical = generatedAlwaysLogical;
         this.generatedAlwaysExpr = generatedAlwaysExpr;
         this.strategy = null;
+        this.check = check;
+        this.constraint = constraint;
     }
 
     /**
@@ -142,7 +154,7 @@ public class SqlColumnDeclaration extends SqlCall {
     public SqlColumnDeclaration(SqlParserPos pos, SqlIdentifier name, SqlDataTypeSpec dataType,
                                 boolean generatedAlways, boolean generatedAlwaysLogical, SqlCall generatedAlwaysExpr,
                                 ColumnStrategy columnStrategy, ColumnNull notNull, SpecialIndex specialIndex,
-                                SqlLiteral comment) {
+                                SqlLiteral comment, SqlCheck check, Constraint constraint) {
         super(pos);
         this.name = name;
         this.dataType = dataType;
@@ -164,6 +176,8 @@ public class SqlColumnDeclaration extends SqlCall {
         this.generatedAlwaysLogical = generatedAlwaysLogical;
         this.generatedAlwaysExpr = generatedAlwaysExpr;
         this.strategy = columnStrategy;
+        this.check = check;
+        this.constraint = constraint;
     }
 
     @Override
@@ -184,7 +198,8 @@ public class SqlColumnDeclaration extends SqlCall {
             SqlUtil.wrapSqlLiteralSymbol(storage),
             referenceDefinition,
             generatedAlwaysExpr,
-            SqlUtil.wrapSqlLiteralSymbol(strategy));
+            SqlUtil.wrapSqlLiteralSymbol(strategy),
+            check);
     }
 
     public boolean isAutoIncrement() {
@@ -224,6 +239,10 @@ public class SqlColumnDeclaration extends SqlCall {
                     defaultExpr.unparse(writer, leftPrec, rightPrec);
                     writer.endList(frame);
                 }
+            }
+
+            if (null != check) {
+                check.unparse(writer, leftPrec, rightPrec);
             }
 
             if (autoIncrement) {
@@ -317,6 +336,10 @@ public class SqlColumnDeclaration extends SqlCall {
         PRIMARY, UNIQUE,
     }
 
+    public static enum Constraint {
+        PRIMARY_KEY, UNIQUE, FOREIGN_KEY, CHECK,
+    }
+
     public static enum ColumnFormat {
         FIXED, DYNAMIC, DEFAULT,
     }
@@ -354,6 +377,10 @@ public class SqlColumnDeclaration extends SqlCall {
 
     public SpecialIndex getSpecialIndex() {
         return specialIndex;
+    }
+
+    public Constraint getConstraint() {
+        return constraint;
     }
 
     public SqlLiteral getComment() {
@@ -398,6 +425,18 @@ public class SqlColumnDeclaration extends SqlCall {
 
     public void setSecuredWith(String securedWith) {
         this.securedWith = securedWith;
+    }
+
+    public SqlCheck getCheck() {
+        return check;
+    }
+
+    public boolean isExternalize() {
+        return externalize;
+    }
+
+    public void setExternalize(boolean externalize) {
+        this.externalize = externalize;
     }
 }
 

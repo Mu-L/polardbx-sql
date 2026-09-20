@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.gms.tablegroup;
 
 import com.alibaba.polardbx.gms.metadb.record.SystemTableRecord;
+import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import org.apache.commons.lang.StringUtils;
 
 import java.sql.ResultSet;
@@ -34,7 +35,8 @@ public class PartitionGroupRecord implements SystemTableRecord {
     public Long tg_id;
     public Date gmt_create;
     public Date gmt_modified;
-    public String phy_db;
+    protected String phy_db;
+    protected String group_Name;
     public String locality;
     public String primary_zone;
     public Long pax_group_id = 0L;
@@ -52,6 +54,10 @@ public class PartitionGroupRecord implements SystemTableRecord {
         this.gmt_create = rs.getTimestamp("gmt_create");
         this.gmt_modified = rs.getTimestamp("gmt_modified");
         this.phy_db = rs.getString("phy_db");
+        this.group_Name = rs.getString("group_name");
+        if (StringUtils.isEmpty(group_Name)) {
+            this.group_Name = buildGroupNameInner(phy_db);
+        }
         this.locality = rs.getString("locality");
         if (StringUtils.isEmpty(this.locality)) {
             this.locality = StringUtils.EMPTY;
@@ -151,6 +157,14 @@ public class PartitionGroupRecord implements SystemTableRecord {
         this.visible = visible;
     }
 
+    public String getGroup_Name() {
+        return group_Name;
+    }
+
+    public void setGroup_Name(String group_Name) {
+        this.group_Name = group_Name;
+    }
+
     public String digest() {
         StringBuilder sb = new StringBuilder();
         sb.append("\n");
@@ -162,7 +176,14 @@ public class PartitionGroupRecord implements SystemTableRecord {
         sb.append(tg_id);
         sb.append(" phyDb:");
         sb.append(phy_db);
+        sb.append(" groupName:");
+        sb.append(group_Name);
         return sb.toString();
+    }
+
+    protected String buildGroupNameInner(String physicalDb) {
+        String groupName = physicalDb + "_group";
+        return groupName.toUpperCase();
     }
 
     public PartitionGroupRecord copy() {
@@ -173,6 +194,7 @@ public class PartitionGroupRecord implements SystemTableRecord {
         copy.gmt_create = this.gmt_create;
         copy.gmt_modified = this.gmt_modified;
         copy.phy_db = this.phy_db;
+        copy.group_Name = this.group_Name;
         copy.locality = this.locality;
         copy.primary_zone = this.primary_zone;
         copy.pax_group_id = this.pax_group_id;

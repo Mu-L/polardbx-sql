@@ -16,26 +16,14 @@
 
 package com.alibaba.polardbx.planner.common;
 
-import com.alibaba.polardbx.common.properties.ConnectionProperties;
-import com.alibaba.polardbx.common.properties.ParamManager;
-import com.alibaba.polardbx.druid.sql.SQLUtils;
-import com.alibaba.polardbx.druid.sql.ast.SqlType;
-import com.alibaba.polardbx.druid.sql.ast.statement.SQLCreateJavaFunctionStatement;
-import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateTableStatement;
-import com.alibaba.polardbx.druid.util.JdbcConstants;
-import com.alibaba.polardbx.gms.metadb.table.JavaFunctionRecord;
-import com.alibaba.polardbx.optimizer.config.table.statistic.MockStatisticDatasource;
-import com.alibaba.polardbx.optimizer.context.DdlContext;
-import com.alibaba.polardbx.optimizer.core.expression.JavaFunctionManager;
-import com.alibaba.polardbx.optimizer.locality.LocalityManager;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.ImmutableMap.Builder;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
+import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.gms.metadb.external.ExternalCatalogInfo;
+import com.alibaba.polardbx.gms.metadb.external.ExternalCatalogManager;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.common.ddl.Job;
 import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.common.model.Group;
@@ -43,6 +31,7 @@ import com.alibaba.polardbx.common.model.Matrix;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.properties.ParamManager;
+import com.alibaba.polardbx.common.properties.PropUtil;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.TStringUtil;
@@ -62,6 +51,7 @@ import com.alibaba.polardbx.gms.topology.DbGroupInfoRecord;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.PlannerContext;
+import com.alibaba.polardbx.optimizer.config.meta.CostModelWeight;
 import com.alibaba.polardbx.optimizer.config.server.IServerConfigManager;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager.GsiIndexMetaBean;
@@ -77,6 +67,7 @@ import com.alibaba.polardbx.optimizer.config.table.statistic.StatisticManager;
 import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.expression.JavaFunctionManager;
+import com.alibaba.polardbx.optimizer.core.planner.PlanCache;
 import com.alibaba.polardbx.optimizer.core.planner.SqlConverter;
 import com.alibaba.polardbx.optimizer.core.rel.ToDrdsRelVisitor;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalCreateTable;
@@ -95,6 +86,8 @@ import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
 import com.alibaba.polardbx.optimizer.sequence.SequenceManagerProxy;
 import com.alibaba.polardbx.optimizer.sharding.DataNodeChooser;
 import com.alibaba.polardbx.optimizer.tablegroup.TableGroupInfoManager;
+import com.alibaba.polardbx.optimizer.ttl.TtlDefinitionInfo;
+import com.alibaba.polardbx.optimizer.ttl.TtlUtil;
 import com.alibaba.polardbx.optimizer.utils.GsiUtils;
 import com.alibaba.polardbx.optimizer.utils.OptimizerHelper;
 import com.alibaba.polardbx.optimizer.utils.OptimizerUtils;
@@ -102,6 +95,11 @@ import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.alibaba.polardbx.optimizer.utils.TableRuleUtil;
 import com.alibaba.polardbx.optimizer.variable.MockVariableManager;
 import com.alibaba.polardbx.optimizer.view.MockViewManager;
+import com.alibaba.polardbx.optimizer.external.connector.ConnectorDescriptor;
+import com.alibaba.polardbx.optimizer.external.connector.ConnectorRegistry;
+import com.alibaba.polardbx.optimizer.external.connector.InMemoryConnectorDescriptor;
+import com.alibaba.polardbx.optimizer.external.connector.InMemoryConnectorMetadata;
+import com.alibaba.polardbx.optimizer.external.connector.PushdownCapability;
 import com.alibaba.polardbx.rule.TableRule;
 import com.alibaba.polardbx.rule.TddlRule;
 import com.alibaba.polardbx.rule.VirtualTableRoot;
@@ -129,6 +127,7 @@ import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlPartitionBy;
 import org.apache.calcite.sql.SqlTableOptions;
 import org.apache.calcite.sql.parser.SqlParserPos;
+import org.apache.calcite.sql.validate.SqlValidatorException;
 import org.apache.calcite.sql2rel.SqlToRelConverter;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Util;
@@ -150,6 +149,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLSyntaxErrorException;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -167,6 +167,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import static com.alibaba.polardbx.common.properties.ConnectionProperties.ENABLE_GSI_LOOKUP_OPTIMIZE;
 import static com.alibaba.polardbx.optimizer.config.table.GsiMetaManager.GsiMetaBean.mergeIndexRecords;
 import static com.alibaba.polardbx.optimizer.config.table.GsiMetaManager.GsiMetaBean.mergeTableRecords;
 import static com.alibaba.polardbx.optimizer.utils.PlannerUtils.convertTargetDB;
@@ -182,9 +183,12 @@ import static org.junit.Assert.assertEquals;
 public abstract class BasePlannerTest {
 
     /**
-     * when set this flag,
+     * when set this flag, output result yml in directory polardbx-optimizer
      */
     private static final boolean fixFlag = true;
+
+    private static final InMemoryConnectorMetadata SHARED_METADATA = new InMemoryConnectorMetadata();
+    private static EnumSet<PushdownCapability> registeredCapabilities = null;
 
     private Map<String, String> ddlMaps = new HashMap<>();
 
@@ -418,10 +422,12 @@ public abstract class BasePlannerTest {
     }
 
     protected void initExecutionContext() {
+        ec.getExtraCmds().put(ENABLE_GSI_LOOKUP_OPTIMIZE, true);
     }
 
     public synchronized void initAppNameConfig(String appName) {
         ConfigDataMode.setMode(ConfigDataMode.Mode.MOCK);
+        CostModelWeight.setVersion(PropUtil.COST_MODEL_LATEST);
         OptimizerContext context = getContextByAppName(appName);
         if (context != null) {
             OptimizerContext.setContext(context);
@@ -506,6 +512,7 @@ public abstract class BasePlannerTest {
         TddlRuleManager rule = new TddlRuleManager(tddlRule, partInfoMgr, tableGroupInfoManager, appName);
 
         Map<String, DbGroupInfoRecord> groupInfoRecordMap = new HashMap<>();
+        Map<String, DbGroupInfoManager> phyDbInfoRecordMap = new HashMap<>();
         List<Group> groups = new LinkedList<>();
         for (int i = 0; i < dbNumber; i++) {
             if (useNewPartDb) {
@@ -515,6 +522,7 @@ public abstract class BasePlannerTest {
                 final String groupKey = appName + String.format("_%06d_group", i);
                 groups.add(fakeGroup(appName, groupKey));
                 groupInfoRecordMap.put(groupKey, fakeGroupInfo(appName, groupKey));
+//                phyDbInfoRecordMap.put(phyDb, fakeGroupInfo(appName, groupKey));
             } else {
                 groups.add(fakeGroup(appName, appName + String.format("_%04d", i)));
             }
@@ -660,6 +668,13 @@ public abstract class BasePlannerTest {
             }
         }
 
+        TtlDefinitionInfo ttlDefinitionInfo =
+            TtlUtil.createTtlDefinitionInfoBySqlCreateTable(sqlCreateTable,
+                tm, null, ec, null);
+        if (ttlDefinitionInfo != null) {
+            tm.setTtlDefinitionInfo(ttlDefinitionInfo);
+        }
+
         final boolean useSequence = checkUseSequence(sqlCreateTable, tr);
 
         storeTable(appName, tr, tm, useSequence);
@@ -722,8 +737,27 @@ public abstract class BasePlannerTest {
                 Maps.newTreeMap(String.CASE_INSENSITIVE_ORDER);
             final ImmutableMap<String, String> indexTableRelation =
                 mergeIndexRecords(allIndexRecords, tmpTableIndexMap).build();
+
             final ImmutableMap<String, GsiTableMetaBean> tableMetaBean = mergeTableRecords(allTableRecords,
                 tmpTableIndexMap).build();
+
+            //update cci option
+            if (sqlCreateTable.getColumnarKeys() != null) {
+                for (Pair<SqlIdentifier, SqlIndexDefinition> pair : sqlCreateTable.getColumnarKeys()) {
+                    String tableName = RelUtils.lastStringValue(sqlCreateTable.getTargetTable()).toLowerCase();
+                    String cciName = RelUtils.lastStringValue(pair.left).toLowerCase();
+                    GsiIndexMetaBean gsiIndexMetaBean = null;
+                    if (tmpTableIndexMap.containsKey(tableName)) {
+                        gsiIndexMetaBean = tmpTableIndexMap.get(tableName).get(cciName);
+                    }
+                    Map<String, String> options = pair.getValue().getColumnarOptions();
+                    if (options == null || options.isEmpty() || gsiIndexMetaBean == null) {
+                        continue;
+                    }
+                    gsiIndexMetaBean.updateColumnarOptionsForTest(options);
+                }
+            }
+
             tm.setGsiTableMetaBean(tableMetaBean.get(logicalTableName));
         }
 
@@ -922,7 +956,7 @@ public abstract class BasePlannerTest {
                 PartitionInfo indexPartitionInfo = PartitionInfoBuilder
                     .buildPartitionInfoByPartDefAst(schema, indexTableName, null, false, null,
                         (SqlPartitionBy) createGlobalIndexPreparedData.getIndexDefinition().getPartitioning(),
-                        createGlobalIndexPreparedData.getPartBoundExprInfo(),
+                        createGlobalIndexPreparedData.getIndexTablePreparedData().getPartBoundExprInfo(),
                         pkColMetas, allColMetas, PartitionTableType.GSI_TABLE,
                         ec);
 
@@ -942,6 +976,10 @@ public abstract class BasePlannerTest {
                 indexTm.setHasPrimaryKey(true);
                 indexTm.setHasPrimaryKey(!useNewPartDb || indexTm.getPrimaryIndex() != null);
                 indexTm.setSchemaName(schema);
+            }
+
+            if (cci) {
+                indexTm.setEngine(Engine.OSS);
             }
 
             final List<IndexRecord> indexRecords = new ArrayList<>();
@@ -1060,13 +1098,37 @@ public abstract class BasePlannerTest {
             return;
         }
         try {
-            ExecutionContext executionContext = new ExecutionContext();
-            executionContext.setSchemaName(appName);
-            this.cluster = SqlConverter.getInstance(appName, executionContext).createRelOptCluster();
+            ec.getParamManager().getProps().put(ConnectionProperties.MAX_CCI_COUNT, "100");//support multi-cci
+
+            registerTestConnector();
+            this.cluster = SqlConverter.getInstance(appName, new ExecutionContext()).createRelOptCluster();
+
+            // Pre-pass: register connector and external schemas before main iteration
             for (Entry<String, String> ddlItem : ddlMaps.entrySet()) {
+                String key = ddlItem.getKey();
+                int dotIdx = key.lastIndexOf('.');
+                if (dotIdx <= 0) {
+                    continue;
+                }
+                String possibleSchema = key.substring(0, dotIdx);
+                String[] parts = ExternalNameValidator.splitSchemaName(possibleSchema);
+                if (parts != null) {
+                    String catalogName = parts[0];
+                    String tableName = key.substring(dotIdx + 1);
+                    initExternalSchemaConfig(possibleSchema, catalogName);
+                    buildExternalTable(possibleSchema, tableName, ddlItem.getValue());
+                }
+            }
+
+            // Main pass: handle normal tables
+            for (Entry<String, String> ddlItem : ddlMaps.entrySet()) {
+                String key = ddlItem.getKey();
                 String createTbDdl = ddlItem.getValue();
-                if (ddlItem.getKey().contains(".")) {
-                    String additionalSchema = ddlItem.getKey().split("\\.")[0];
+                if (ExternalNameValidator.isExternalSchema(key)) {
+                    continue;
+                }
+                if (key.contains(".")) {
+                    String additionalSchema = key.split("\\.")[0];
                     initAppNameConfig(additionalSchema);
                     buildTable(additionalSchema, createTbDdl);
                     continue;
@@ -1084,6 +1146,78 @@ public abstract class BasePlannerTest {
         String fileName = String.format("%s.ddl.yml", targetEnvFile);
         ddlFlag.add(fileName);
 
+    }
+
+    /**
+     * Returns the connector type for external catalog registration.
+     * Override in subclasses to use a different connector type.
+     */
+    protected String getConnectorType() {
+        return InMemoryConnectorDescriptor.TYPE;
+    }
+
+    /**
+     * Returns the push-down capabilities the test connector should advertise.
+     * Override to add SORT, AGG, etc.
+     */
+    protected EnumSet<PushdownCapability> getCapabilities() {
+        return EnumSet.of(PushdownCapability.PROJECT, PushdownCapability.FILTER);
+    }
+
+    /**
+     * Returns the default row count for external tables without explicit statistics.
+     */
+    protected long getDefaultRowCount() {
+        return 10000L;
+    }
+
+    protected void registerTestConnector() {
+        EnumSet<PushdownCapability> needed = getCapabilities();
+        if (needed.equals(registeredCapabilities)) {
+            return;
+        }
+        ConnectorDescriptor factory = new InMemoryConnectorDescriptor(
+            SHARED_METADATA, needed, getDefaultRowCount(), new HashMap<>());
+        ConnectorRegistry.getInstance().register(factory);
+        registeredCapabilities = EnumSet.copyOf(needed);
+    }
+
+    private void initExternalSchemaConfig(String externalSchema, String catalogName) {
+        if (appNameOptiContextMaps.containsKey(externalSchema)) {
+            return;
+        }
+        ExternalCatalogInfo info = new ExternalCatalogInfo(
+            catalogName, getConnectorType(), new HashMap<>(), null, null);
+        ExternalCatalogManager.getInstance().register(info);
+
+        OptimizerContext context = new OptimizerContext(externalSchema);
+        Matrix matrix = new Matrix();
+        matrix.setGroups(new ArrayList<>());
+        context.setMatrix(matrix);
+        context.setSchemaManager(new SimpleSchemaManager(externalSchema, null));
+        context.setFinishInit(true);
+        OptimizerContext.loadContext(context);
+        appNameOptiContextMaps.put(externalSchema, context);
+    }
+
+    private void buildExternalTable(String schema, String tableName, String ddl) {
+        try {
+            final MySqlCreateTableStatement stat = (MySqlCreateTableStatement)
+                FastsqlUtils.parseSql(ddl).get(0);
+            final TableMeta tm = new TableMetaParser().parse(stat);
+            tm.setSchemaName(schema);
+            tm.setEngine(Engine.EXTERNAL);
+            String[] schemaParts = ExternalNameValidator.splitSchemaName(schema);
+            if (schemaParts != null) {
+                tm.setExternalCatalogName(schemaParts[0]);
+            }
+            OptimizerContext oc = getContextByAppName(schema);
+            if (oc != null) {
+                oc.getLatestSchemaManager().putTable(tableName, tm);
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to build external table: " + schema + "." + tableName, e);
+        }
     }
 
     private void prepareJavaUdf() {
@@ -1136,6 +1270,9 @@ public abstract class BasePlannerTest {
             IOUtils.closeQuietly(in);
         } else {
             this.configMaps = (Map<String, Object>) totalMap.get(this.getClass()).get("CONFIG");
+            if (this.configMaps == null) {
+                this.configMaps = new HashMap<>();
+            }
         }
     }
 
@@ -1149,6 +1286,9 @@ public abstract class BasePlannerTest {
             IOUtils.closeQuietly(in);
         } else {
             this.ddlMaps = (Map<String, String>) totalMap.get(this.getClass()).get("DDL");
+            if (this.ddlMaps == null) {
+                this.ddlMaps = new HashMap<>();
+            }
         }
 
     }
@@ -1166,6 +1306,9 @@ public abstract class BasePlannerTest {
             IOUtils.closeQuietly(in);
         } else {
             this.javaUdfMaps = (Map<String, String>) totalMap.get(this.getClass()).get("UDF");
+            if (this.javaUdfMaps == null) {
+                this.javaUdfMaps = new HashMap<>();
+            }
         }
 
     }
@@ -1186,6 +1329,9 @@ public abstract class BasePlannerTest {
                 IOUtils.closeQuietly(in);
             } else {
                 this.statisticMaps = (Map<String, Object>) totalMap.get(this.getClass()).get("STATISTICS");
+                if (this.statisticMaps == null) {
+                    this.statisticMaps = new HashMap<>();
+                }
             }
         } catch (Exception e) {
             // pass
@@ -1194,6 +1340,18 @@ public abstract class BasePlannerTest {
         //classify statistics
         statisticsClassifier.put(getAppName(), new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER));
         for (Entry<String, String> ddlItem : ddlMaps.entrySet()) {
+            if (ExternalNameValidator.isExternalSchema(ddlItem.getKey())) {
+                int dotIdx = ddlItem.getKey().lastIndexOf('.');
+                String externalSchema = ddlItem.getKey().substring(0, dotIdx);
+                String tableName = ddlItem.getKey().substring(dotIdx + 1);
+                if (!statisticsClassifier.containsKey(externalSchema)) {
+                    statisticsClassifier.put(externalSchema,
+                        new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER));
+                }
+                statisticsClassifier.get(externalSchema).put(tableName,
+                    new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER));
+                continue;
+            }
             // there are two cases 1:table 2:schema.table
             String[] nameSplit = ddlItem.getKey().split("\\.");
             switch (nameSplit.length) {
@@ -1382,10 +1540,22 @@ public abstract class BasePlannerTest {
                                         String expect, String nodetree) {
         String planStr;
         try {
+            ec.getExtraCmds().put(ENABLE_GSI_LOOKUP_OPTIMIZE, true);
             planStr = getPlan(targetSql);
         } catch (Throwable e) {
             e.printStackTrace();
-            planStr = e.getMessage();
+            SqlValidatorException v = PlanCache.unwrapValidatorException(e);
+            if (v != null) {
+                planStr = new TddlRuntimeException(ErrorCode.ERR_VALIDATE, v, v.getMessage()).getMessage();
+            } else {
+                TddlRuntimeException t = PlanCache.unwrapTddlException(e);
+                if (t != null) {
+                    planStr = t.getMessage();
+                } else {
+                    planStr = e.getMessage();
+                }
+            }
+
             if (TStringUtil.isBlank(planStr)) {
                 StringWriter w = new StringWriter();
                 PrintWriter pw = new PrintWriter(w);
@@ -1616,6 +1786,7 @@ public abstract class BasePlannerTest {
         if (preparedData.getLocality() != null) {
             partitionInfo.setTableGroupId(Long.valueOf(preparedData.getLocality().toString().hashCode()));
             partitionInfo.setLocality(preparedData.getLocality().toString());
+            partitionInfo.setLocalityDesc(preparedData.getLocality());
         }
 
         // Set auto partition flag only on primary table.

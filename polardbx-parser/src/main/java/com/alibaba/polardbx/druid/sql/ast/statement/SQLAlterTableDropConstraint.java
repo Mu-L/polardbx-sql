@@ -20,11 +20,13 @@ import com.alibaba.polardbx.druid.sql.ast.SQLObjectImpl;
 import com.alibaba.polardbx.druid.sql.visitor.SQLASTVisitor;
 
 public class SQLAlterTableDropConstraint extends SQLObjectImpl implements SQLAlterTableItem {
-
+    private SQLName schemaName;
     private SQLName constraintName;
 
     protected boolean cascade = false;
     protected boolean restrict = false;
+
+    protected ConstraintType constraintType;
 
     public boolean isCascade() {
         return cascade;
@@ -50,12 +52,58 @@ public class SQLAlterTableDropConstraint extends SQLObjectImpl implements SQLAlt
         visitor.endVisit(this);
     }
 
+    public String getSchemaName() {
+        SQLName name = schemaName;
+        if (name == null) {
+            return null;
+        }
+
+        return name.getSimpleName();
+    }
+
+    public void setSchemaName(SQLName schemaName) {
+        this.schemaName = schemaName;
+    }
+
     public SQLName getConstraintName() {
         return constraintName;
     }
 
     public void setConstraintName(SQLName constraintName) {
         this.constraintName = constraintName;
+    }
+
+    public ConstraintType getConstraintType() {
+        return constraintType;
+    }
+
+    public void setConstraintType(ConstraintType constraintType) {
+        this.constraintType = constraintType;
+    }
+
+    public enum ConstraintType {
+        PRIMARY_KEY("PRIMARY KEY"), UNIQUE("UNIQUE"), FOREIGN_KEY("FOREIGN KEY"), CHECK("CHECK");
+
+        public final String name;
+        public final String name_lcase;
+
+        ConstraintType(String name) {
+            this.name = name;
+            this.name_lcase = name.toLowerCase();
+        }
+
+        public String getText() {
+            return name;
+        }
+
+        public static ConstraintType fromString(String text) {
+            for (ConstraintType v : ConstraintType.values()) {
+                if (v.name.equalsIgnoreCase(text)) {
+                    return v;
+                }
+            }
+            return null;
+        }
     }
 
 }

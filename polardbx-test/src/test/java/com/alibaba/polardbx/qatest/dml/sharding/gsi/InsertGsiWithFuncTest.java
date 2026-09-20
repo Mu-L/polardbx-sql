@@ -82,6 +82,9 @@ public class InsertGsiWithFuncTest extends GsiDMLTest {
         UNSUPPORTED_FUNCTION.add("SESSION_USER");
         UNSUPPORTED_FUNCTION.add("SYSTEM_USER");
         UNSUPPORTED_FUNCTION.add("TSO_TIMESTAMP");
+        UNSUPPORTED_FUNCTION.add("NODE_ID");
+        UNSUPPORTED_FUNCTION.add("DDL_JOB_ID");
+        UNSUPPORTED_FUNCTION.add("DDL_PLAN_ID");
 
         // locking functions
         UNSUPPORTED_FUNCTION.add("GET_LOCK");

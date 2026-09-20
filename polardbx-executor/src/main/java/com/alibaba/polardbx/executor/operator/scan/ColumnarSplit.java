@@ -21,11 +21,13 @@ import com.alibaba.polardbx.executor.archive.reader.OSSColumnTransformer;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.gms.ColumnarManager;
+import com.alibaba.polardbx.executor.mpp.planner.EarlyStopManager;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFManager;
 import com.alibaba.polardbx.executor.mpp.spi.ConnectorSplit;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.statis.OperatorStatistics;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -46,6 +48,10 @@ public interface ColumnarSplit extends ConnectorSplit, Comparable<ColumnarSplit>
      */
     int getFileId();
 
+    default String getFilePrefix() {
+        return "";
+    }
+
     /**
      * Get the next executable scan work.
      * It must record the inner states including the last IO position.
@@ -62,11 +68,11 @@ public interface ColumnarSplit extends ConnectorSplit, Comparable<ColumnarSplit>
         return null;
     }
 
-    ColumnarSplitPriority getPriority();
+    int getPriority();
 
     @Override
     default int compareTo(ColumnarSplit split) {
-        return Integer.compare(getPriority().getValue(), split.getPriority().getValue());
+        return Integer.compare(getPriority(), split.getPriority());
     }
 
     interface ColumnarSplitBuilder {
@@ -75,6 +81,8 @@ public interface ColumnarSplit extends ConnectorSplit, Comparable<ColumnarSplit>
         ColumnarSplitBuilder executionContext(ExecutionContext context);
 
         ColumnarSplitBuilder ioExecutor(ExecutorService ioExecutor);
+
+        ColumnarSplitBuilder columnarMemoryPermitManager(ColumnarMemoryPermitManager columnarMemoryPermitManager);
 
         ColumnarSplitBuilder fileSystem(FileSystem fileSystem, Engine engine);
 
@@ -117,6 +125,16 @@ public interface ColumnarSplit extends ConnectorSplit, Comparable<ColumnarSplit>
         ColumnarSplitBuilder memoryAllocator(MemoryAllocatorCtx memoryAllocatorCtx);
 
         ColumnarSplitBuilder fragmentRFManager(FragmentRFManager fragmentRFManager);
+
+        default ColumnarSplitBuilder earlyStopManager(EarlyStopManager earlyStopManager,
+                                                      List<OrderByOption> scanOrderByOptions,
+                                                      List<Integer> orderByInProjects) {
+            return this;
+        }
+
+        default ColumnarSplitBuilder useDescending(boolean useDescending) {
+            return this;
+        }
 
         ColumnarSplitBuilder operatorStatistic(OperatorStatistics operatorStatistics);
 

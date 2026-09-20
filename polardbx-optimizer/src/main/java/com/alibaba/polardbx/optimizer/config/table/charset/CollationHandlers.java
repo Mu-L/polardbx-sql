@@ -94,4 +94,10 @@ public class CollationHandlers {
         new Gb18030CharsetHandler(CollationName.GB18030_BIN).getCollationHandler();
     public final static CollationHandler COLLATION_HANDLER_GB18030_UNICODE_520_CI =
         new Gb18030CharsetHandler(CollationName.GB18030_UNICODE_520_CI).getCollationHandler();
+    public final static CollationHandler COLLATION_HANDLER_GB18030_2022_CHINESE_CI =
+        new Gb180302022CharsetHandler(CollationName.GB18030_2022_CHINESE_CI).getCollationHandler();
+    public final static CollationHandler COLLATION_HANDLER_GB18030_2022_BIN =
+        new Gb180302022CharsetHandler(CollationName.GB18030_2022_BIN).getCollationHandler();
+    public final static CollationHandler COLLATION_HANDLER_GB18030_2022_UNICODE_520_CI =
+        new Gb180302022CharsetHandler(CollationName.GB18030_2022_UNICODE_520_CI).getCollationHandler();
 }

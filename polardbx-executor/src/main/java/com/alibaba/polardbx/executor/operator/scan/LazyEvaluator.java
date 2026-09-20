@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.operator.scan;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.vectorized.VectorizedExpression;
 import org.roaringbitmap.RoaringBitmap;
@@ -28,7 +29,7 @@ import java.util.BitSet;
  * @param <BATCH> class of column batch
  * @param <BITMAP> class of bitmap to store the filtered positions.
  */
-public interface LazyEvaluator<BATCH, BITMAP> {
+public interface LazyEvaluator<BATCH, BITMAP> extends MemoryCountable {
 
     /**
      * Get bound vectorized expression tree.

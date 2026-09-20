@@ -16,8 +16,8 @@
 
 package com.alibaba.polardbx.executor.chunk;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableShortArrayList;
 import com.google.common.base.Preconditions;
-import it.unimi.dsi.fastutil.shorts.ShortArrayList;
 import org.openjdk.jol.info.ClassLayout;
 
 /**

@@ -16,10 +16,10 @@
 
 package com.alibaba.polardbx.executor.chunk;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableLongArrayList;
 import com.alibaba.polardbx.common.datatype.UInt64;
 import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.google.common.base.Preconditions;
-import it.unimi.dsi.fastutil.longs.LongArrayList;
 import org.openjdk.jol.info.ClassLayout;
 
 import java.math.BigInteger;

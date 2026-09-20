@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.gms.privilege;
 
+import com.alibaba.polardbx.gms.privilege.authorize.PolarAuthorizer;
 import com.google.common.base.Preconditions;
 import com.taobao.tddl.common.privilege.AuthPlugin;
 import org.apache.commons.lang.StringUtils;
@@ -24,6 +25,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,6 +47,8 @@ public class PolarAccountInfo {
     private PolarInstPriv instPriv;
     private TreeMap<String, PolarDbPriv> dbPrivMap;
     private TreeMap<String, PolarTbPriv> tbPrivMap;
+    private TreeMap<String, PolarDbPriv> catalogDbPrivMap;
+    private TreeMap<String, PolarTbPriv> catalogTbPrivMap;
 
     public PolarAccountInfo(PolarAccount account) {
         Preconditions.checkNotNull(account, "Account can't be null!");
@@ -53,6 +57,8 @@ public class PolarAccountInfo {
         this.instPriv = new PolarInstPriv();
         this.dbPrivMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         this.tbPrivMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        this.catalogDbPrivMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        this.catalogTbPrivMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
     }
 
     public static Collection<PolarAccountInfo> loadPolarAccounts(Connection conn, Collection<PolarAccount> accounts)
@@ -69,6 +75,7 @@ public class PolarAccountInfo {
             PolarAccountInfo info = accountInfoMap.get(identifier);
             if (info != null) {
                 info.dbPrivMap = dbInfo.dbPrivMap;
+                info.catalogDbPrivMap = dbInfo.catalogDbPrivMap;
             }
         }
 
@@ -77,6 +84,7 @@ public class PolarAccountInfo {
             PolarAccountInfo info = accountInfoMap.get(identifier);
             if (info != null) {
                 info.tbPrivMap = tableInfo.tbPrivMap;
+                info.catalogTbPrivMap = tableInfo.catalogTbPrivMap;
             }
         }
 
@@ -130,14 +138,22 @@ public class PolarAccountInfo {
 
     public void addDbPriv(PolarDbPriv dbPriv) {
         if (dbPriv != null && StringUtils.isNotBlank(dbPriv.getIdentifier())) {
-            dbPrivMap.put(dbPriv.getIdentifier(), dbPriv);
+            if (dbPriv.isCatalogPriv()) {
+                catalogDbPrivMap.put(dbPriv.getIdentifier(), dbPriv);
+            } else {
+                dbPrivMap.put(dbPriv.getIdentifier(), dbPriv);
+            }
         }
     }
 
     public void addTbPriv(PolarTbPriv tbPriv) {
         if (tbPriv != null && StringUtils.isNotBlank(tbPriv.getDbName()) && StringUtils
             .isNotBlank(tbPriv.getTbName())) {
-            tbPrivMap.put(tbPriv.getIdentifier(), tbPriv);
+            if (tbPriv.isCatalogPriv()) {
+                catalogTbPrivMap.put(tbPriv.getIdentifier(), tbPriv);
+            } else {
+                tbPrivMap.put(tbPriv.getIdentifier(), tbPriv);
+            }
         }
     }
 
@@ -181,6 +197,10 @@ public class PolarAccountInfo {
         return getAccount().getAccountType();
     }
 
+    public boolean isGod() {
+        return getAccountType() == AccountType.GOD;
+    }
+
     public TreeMap<String, PolarDbPriv> getDbPrivMap() {
         return dbPrivMap;
     }
@@ -189,38 +209,43 @@ public class PolarAccountInfo {
         return tbPrivMap;
     }
 
+    public TreeMap<String, PolarDbPriv> getCatalogDbPrivMap() {
+        return catalogDbPrivMap;
+    }
+
+    public TreeMap<String, PolarTbPriv> getCatalogTbPrivMap() {
+        return catalogTbPrivMap;
+    }
+
+    public PolarDbPriv getCatalogDbPriv(String catalog, String db) {
+        return catalogDbPrivMap.get((catalog + "." + db).toLowerCase());
+    }
+
+    public PolarTbPriv getCatalogTbPriv(String catalog, String db, String tb) {
+        return catalogTbPrivMap.get((catalog + "." + db + "@" + tb).toLowerCase());
+    }
+
+    public PolarDbPriv getFirstCatalogDbPriv() {
+        if (catalogDbPrivMap.values().iterator().hasNext()) {
+            return catalogDbPrivMap.values().iterator().next();
+        }
+        return null;
+    }
+
+    public PolarTbPriv getFirstCatalogTbPriv() {
+        if (catalogTbPrivMap.values().iterator().hasNext()) {
+            return catalogTbPrivMap.values().iterator().next();
+        }
+        return null;
+    }
+
     public void clearAllPrivileges() {
         instPriv.revokeAllPrivileges();
         dbPrivMap.clear();
         tbPrivMap.clear();
+        catalogDbPrivMap.clear();
+        catalogTbPrivMap.clear();
         rolePrivileges.deleteAllRoles();
-    }
-
-    public boolean canCover(PolarAccountInfo grantee, PrivManageLevel level, boolean checkGrant) {
-        boolean res = false;
-        PolarDbPriv dbPriv = null;
-        PolarTbPriv tbPriv = null;
-
-        switch (level) {
-        case INST:
-            return instPriv.canCover(grantee.getInstPriv(), checkGrant);
-        case DB:
-            PolarDbPriv granteeDbPriv = grantee.getFirstDbPriv();
-            dbPriv = getDbPriv(granteeDbPriv.getIdentifier());
-            res |= instPriv.canCover(granteeDbPriv, checkGrant);
-            res |= dbPriv != null && dbPriv.canCover(granteeDbPriv, checkGrant);
-            return res;
-        case TABLE:
-            PolarTbPriv granteeTbPriv = grantee.getFirstTbPriv();
-            dbPriv = getDbPriv(granteeTbPriv.getDbName());
-            tbPriv = getTbPriv(granteeTbPriv.getDbName(), granteeTbPriv.getTbName());
-            res |= instPriv.canCover(granteeTbPriv, checkGrant);
-            res |= dbPriv != null && dbPriv.canCover(granteeTbPriv, checkGrant);
-            res |= tbPriv != null && tbPriv.canCover(granteeTbPriv, checkGrant);
-            return res;
-        default:
-            return res;
-        }
     }
 
     public boolean hasUsageOnDb(String db) {
@@ -265,6 +290,15 @@ public class PolarAccountInfo {
 
     public boolean canGrantOrRevokeRole(PolarAccountInfo role) {
         if (instPriv.hasPrivilege(PrivilegeKind.CREATE_USER)) {
+            return true;
+        }
+
+        //check role privilege
+        if (PolarPrivManager.getInstance().checkPermission(
+            new PermissionCheckContext(
+                getAccountId(),
+                new ActiveRoles(ActiveRoles.ActiveRoleSpec.ALL, Collections.emptySet()),
+                Permission.instancePermission(PrivilegeKind.CREATE_USER)))) {
             return true;
         }
 
@@ -316,6 +350,15 @@ public class PolarAccountInfo {
             .map(Optional::get)
             .forEach(result::add);
 
+        getCatalogDbPrivMap().values().stream()
+            .map(dbPrivilege -> dbPrivilege.showGrantsResult(getAccount()))
+            .filter(Optional::isPresent).map(Optional::get)
+            .forEach(result::add);
+        getCatalogTbPrivMap().values().stream()
+            .map(tbPrivilege -> tbPrivilege.showGrantsResult(getAccount()))
+            .filter(Optional::isPresent).map(Optional::get)
+            .forEach(result::add);
+
         result.addAll(getRolePrivileges().showGrantResult(accountPrivilegeData));
 
         return result;
@@ -330,7 +373,17 @@ public class PolarAccountInfo {
             .map(PolarDbPriv::deepCopy)
             .forEach(result::addDbPriv);
 
+        getCatalogDbPrivMap().values()
+            .stream()
+            .map(PolarDbPriv::deepCopy)
+            .forEach(result::addDbPriv);
+
         getTbPrivMap().values()
+            .stream()
+            .map(PolarTbPriv::deepCopy)
+            .forEach(result::addTbPriv);
+
+        getCatalogTbPrivMap().values()
             .stream()
             .map(PolarTbPriv::deepCopy)
             .forEach(result::addTbPriv);
@@ -353,6 +406,16 @@ public class PolarAccountInfo {
             }
         }
 
+        for (String dbKey : other.getCatalogDbPrivMap().keySet()) {
+            PolarDbPriv cur = catalogDbPrivMap.get(dbKey);
+            PolarDbPriv oth = other.catalogDbPrivMap.get(dbKey);
+            if (cur == null) {
+                catalogDbPrivMap.put(dbKey, oth);
+            } else {
+                cur.mergePriv(oth, PrivManageType.GRANT_PRIVILEGE);
+            }
+        }
+
         for (String tableKey : other.getTbPrivMap().keySet()) {
             PolarTbPriv curTablePriv = tbPrivMap.get(tableKey);
             PolarTbPriv otherTablePriv = other.tbPrivMap.get(tableKey);
@@ -361,6 +424,16 @@ public class PolarAccountInfo {
                 tbPrivMap.put(tableKey, otherTablePriv);
             } else {
                 curTablePriv.mergePriv(otherTablePriv, PrivManageType.GRANT_PRIVILEGE);
+            }
+        }
+
+        for (String tbKey : other.getCatalogTbPrivMap().keySet()) {
+            PolarTbPriv cur = catalogTbPrivMap.get(tbKey);
+            PolarTbPriv oth = other.catalogTbPrivMap.get(tbKey);
+            if (cur == null) {
+                catalogTbPrivMap.put(tbKey, oth);
+            } else {
+                cur.mergePriv(oth, PrivManageType.GRANT_PRIVILEGE);
             }
         }
     }
@@ -375,7 +448,19 @@ public class PolarAccountInfo {
                 .ifPresent(ret::add);
         }
 
+        for (PolarDbPriv dbPriv : catalogDbPrivMap.values()) {
+            ret.add(dbPriv.toInsertNewSql());
+            dbPriv.toUpdatePrivilegeSql(grant)
+                .ifPresent(ret::add);
+        }
+
         for (PolarTbPriv tbPriv : tbPrivMap.values()) {
+            ret.add(tbPriv.toInsertNewSql());
+            tbPriv.toUpdatePrivilegeSql(grant)
+                .ifPresent(ret::add);
+        }
+
+        for (PolarTbPriv tbPriv : catalogTbPrivMap.values()) {
             ret.add(tbPriv.toInsertNewSql());
             tbPriv.toUpdatePrivilegeSql(grant)
                 .ifPresent(ret::add);
@@ -384,6 +469,12 @@ public class PolarAccountInfo {
         return ret;
     }
 
+    /**
+     * 返回内部库权限列表，供 PolarAuthorizer 责任链使用。
+     * <p>不包含 catalogDbPrivMap/catalogTbPrivMap 中的外部 catalog 权限，
+     * 因为 catalog 权限不走 PolarAuthorizer，而是在 checkPermission()/verifyPrivilege() 中提前短路。</p>
+     * <p>如需获取包含 catalog 在内的全部权限，应新增 toAllPermissions() 方法。</p>
+     */
     public List<Permission> toPermissions() {
         List<Permission> permissions = new ArrayList<>(instPriv.toPermissions());
 
@@ -410,10 +501,20 @@ public class PolarAccountInfo {
             .filter(PolarDbPriv::hasAnyPrivilege)
             .forEach(dbPriv -> dbPriv.grantPrivilege(PrivilegeKind.GRANT_OPTION));
 
+        catalogDbPrivMap.values()
+            .stream()
+            .filter(PolarDbPriv::hasAnyPrivilege)
+            .forEach(p -> p.grantPrivilege(PrivilegeKind.GRANT_OPTION));
+
         tbPrivMap.values()
             .stream()
             .filter(PolarTbPriv::hasAnyPrivilege)
             .forEach(tbPrivMap -> tbPrivMap.grantPrivilege(PrivilegeKind.GRANT_OPTION));
+
+        catalogTbPrivMap.values()
+            .stream()
+            .filter(PolarTbPriv::hasAnyPrivilege)
+            .forEach(p -> p.grantPrivilege(PrivilegeKind.GRANT_OPTION));
     }
 
     private static boolean checkSpecialCases(Permission permission) {

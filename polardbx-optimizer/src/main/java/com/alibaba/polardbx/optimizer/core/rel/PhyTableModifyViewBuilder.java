@@ -23,6 +23,8 @@ import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.dialect.DbType;
+import com.alibaba.polardbx.optimizer.core.rel.dml.DmlWriteContext;
+import com.alibaba.polardbx.optimizer.core.rel.dml.PhysicalRoute;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.utils.OptimizerUtils;
 import com.alibaba.polardbx.optimizer.utils.PlannerUtils;
@@ -119,7 +121,8 @@ public class PhyTableModifyViewBuilder extends PhyOperationBuilderCommon {
                     phyTableScans,
                     group,
                     subTableNames,
-                    prunedParameters != null ? prunedParameters.get(Pair.of(group, subTableNames)) : null);
+                    prunedParameters != null ? prunedParameters.get(Pair.of(group, subTableNames)) : null,
+                    context);
             }
         }
         if (buildForPushDownOneShardOnly && phyTableScans.size() > 1) {
@@ -133,29 +136,24 @@ public class PhyTableModifyViewBuilder extends PhyOperationBuilderCommon {
     /**
      * 构建 SQL 对应的参数信息
      */
-    private Map<Integer, ParameterContext> buildParams(List<String> tableNames, Parameters pruned) {
+    private Map<Integer, ParameterContext> buildParams(String group, List<String> tableNames, Parameters pruned,
+                                                       ExecutionContext executionContext) {
         Preconditions.checkArgument(CollectionUtils.isNotEmpty(tableNames));
-        return PlannerUtils.buildParam(tableNames, pruned == null ? this.params : pruned.getCurrentParameter(),
-            paramIndex);
+        Map<Integer, ParameterContext> parameters = pruned == null ? this.params : pruned.getCurrentParameter();
+        DmlWriteContext writeContext = executionContext.getDmlWriteContext();
+        if (writeContext != null) {
+            Preconditions.checkArgument(tableNames.size() == 1,
+                "LogicalModifyView materialization requires exactly one physical table per branch");
+            parameters = writeContext.materializeModifyViewParameters(
+                new PhysicalRoute(schemaName, group, tableNames.get(0)), parameters, executionContext);
+        }
+        return PlannerUtils.buildParam(tableNames, parameters, paramIndex);
     }
 
     private void buildOnePhyTableOperatorForModify(BytesSql sqlTemplateStr, MemoryAllocatorCtx maOfPlanBuildingPool,
                                                    List<RelNode> phyTableScans, String group,
-                                                   List<String> subTableNames, Parameters pruned) {
-
-//        PhyTableOperation phyTableModify =
-//            new PhyTableOperation(parent.getCluster(), parent.getTraitSet(), parent.getRowType(), null, parent);
-//        phyTableModify.setDbIndex(group);
-//        phyTableModify.setLogicalTableNames(logicalTableNames);
-//        phyTableModify.setTableNames(ImmutableList.of(subTableNames));
-//        phyTableModify.setKind(sqlTemplate.getKind());
-//        phyTableModify.setSchemaName(schemaName);
-//        phyTableModify.setBytesSql(sqlTemplateStr);
-//        phyTableModify.setNativeSqlNode(sqlTemplate);
-//        phyTableModify.setDbType(dbType);
-//        phyTableModify.setParam(buildParams(subTableNames));
-//        phyTableModify.setMemoryAllocator(maOfPlanBuildingPool);
-
+                                                   List<String> subTableNames, Parameters pruned,
+                                                   ExecutionContext executionContext) {
         PhyTableOpBuildParams buildParams = new PhyTableOpBuildParams();
         buildParams.setSchemaName(schemaName);
         buildParams.setLogTables(logicalTableNames);
@@ -177,7 +175,7 @@ public class PhyTableModifyViewBuilder extends PhyOperationBuilderCommon {
 
         buildParams.setBytesSql(sqlTemplateStr);
         buildParams.setDbType(dbType);
-        buildParams.setDynamicParams(buildParams(subTableNames, pruned));
+        buildParams.setDynamicParams(buildParams(group, subTableNames, pruned, executionContext));
         buildParams.setBatchParameters(null);
 
         PhyTableOperation phyTableModify = PhyTableOperationFactory.getInstance().buildPhyTblOpByParams(buildParams);

@@ -5,7 +5,6 @@ import com.alibaba.polardbx.qatest.util.ConnectionManager;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.qatest.util.PropertiesUtil;
 import com.alibaba.polardbx.qatest.validator.DataValidator;
-import com.google.common.collect.Lists;
 import org.apache.commons.lang.StringUtils;
 import org.junit.AfterClass;
 import org.junit.Before;
@@ -15,9 +14,8 @@ import org.junit.runners.Parameterized;
 
 import java.sql.Connection;
 import java.sql.SQLException;
-import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.qatest.util.PropertiesUtil.mysqlDBName1;
 
@@ -30,7 +28,7 @@ public class OuterJoinPartitionPruningTest extends ColumnarReadBaseTestCase {
 
     private static final String PARTITION_INFO = "partition by key(c1)";
 
-    private static final String DISABLE_BROADCAST_JOIN = "/*+TDDL:cmd_extra(ENABLE_BROADCAST_JOIN=false)*/";
+    private static final String DISABLE_BROADCAST_JOIN = "/*+TDDL:cmd_extra(PARTITION_WISE_THRESHOLD=4 ENABLE_PARTITION_WISE_GROUP_OPT=false ENABLE_BROADCAST_JOIN=false)*/";
 
     private static final String TEMPLATE_SQL =
         DISABLE_BROADCAST_JOIN + "select * from %s a %s join %s b on a.%s = b.%s %s";
@@ -77,29 +75,30 @@ public class OuterJoinPartitionPruningTest extends ColumnarReadBaseTestCase {
 
     @Parameterized.Parameters(name = "{index}:{0},{1},{2},{3},{4}")
     public static List<Object[]> getParameters() {
-        return cartesianProduct(
-            tableNames(),
-            tableNames(),
-            joinTypes(),
-            joinColumns(),
-            filters());
-    }
-
-    public static List<Object[]> cartesianProduct(Object[]... arrays) {
-        List[] lists = Arrays.stream(arrays)
-            .map(Arrays::asList)
-            .toArray(List[]::new);
-        List<List<Object>> result = Lists.cartesianProduct(lists);
-        return result.stream()
-            .map(List::toArray)
-            .collect(Collectors.toList());
-    }
-
-    public static Object[] tableNames() {
-        return new Object[] {
-            TABLE_1,
-            TABLE_2
+        List<Object[]> params = new ArrayList<>();
+        String[] condition1List = new String[] {
+            "",
+            "where b.c1 = 1",
+            "where b.c1 = 0",
+            "where b.c1 = 10",
+            "where b.c1 in (1, 2)",
         };
+        String[] condition2List = new String[] {
+            "",
+            "where b.c2 = 1",
+            "where b.c2 = 0",
+            "where b.c2 = 10",
+            "where b.c2 in (1, 2)"
+        };
+        for (Object joinType : joinTypes()) {
+            for (String condition1 : condition1List) {
+                params.add(new Object[] { TABLE_1, TABLE_2, joinType, "c2", condition1 });
+            }
+            for (String condition2 : condition2List) {
+                params.add(new Object[] { TABLE_1, TABLE_2, joinType, "c1", condition2 });
+            }
+        }
+        return params;
     }
 
     public static Object[] joinTypes() {
@@ -107,27 +106,6 @@ public class OuterJoinPartitionPruningTest extends ColumnarReadBaseTestCase {
             "inner",
             "left",
             "right"
-        };
-    }
-
-    public static Object[] joinColumns() {
-        return new Object[] {
-            "c1",
-            "c2"
-        };
-    }
-
-    public static Object[] filters() {
-        return new Object[] {
-            "",
-            "where b.c1 = 1",
-            "where b.c1 = 0",
-            "where b.c1 = 10",
-            "where b.c1 in (1, 2)",
-            "where b.c2 = 1",
-            "where b.c2 = 0",
-            "where b.c2 = 10",
-            "where b.c2 in (1, 2)"
         };
     }
 

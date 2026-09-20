@@ -93,6 +93,7 @@ public class SliceBlockTest extends BaseBlockTest {
 
         for (int i = 0; i < CHUNK_SIZE; i++) {
             Assert.assertTrue(sliceBlock.equals(i, block, i));
+            Assert.assertTrue(sliceBlock.compareAssertedSameType(i, block, i) == 0);
             Assert.assertEquals(sliceBlock.checksum(i), block.checksum(i));
             Assert.assertEquals(sliceBlock.hashCode(i), block.hashCode(i));
             Assert.assertEquals(sliceBlock.hashCodeUseXxhash(i), block.hashCodeUseXxhash(i));
@@ -144,6 +145,9 @@ public class SliceBlockTest extends BaseBlockTest {
         for (int i = 0; i < resultBlock.positionCount; i++) {
             Assert.assertTrue("Failed in copying with selection and useSelection=false",
                 resultBlock.equals(i, sourceBlock, selection[i]));
+
+            Assert.assertTrue("Failed in copying with selection and useSelection=false",
+                resultBlock.compareAssertedSameType(i, sourceBlock, selection[i]) == 0);
         }
     }
 

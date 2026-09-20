@@ -62,10 +62,17 @@ public class Length extends AbstractScalarFunction {
             return null;
         }
         DataType operandType = operandTypes.get(0);
+        if (DataTypeUtil.equalsSemantically(operandType, DataTypes.VectorType)) {
+            return ((byte[]) arg).length;
+        }
         if (operandType instanceof VarcharType
             && operandType.getCharsetName() == CharsetName.BINARY) {
             byte[] bytes = ((Slice) args[0]).getBytes();
             return bytes.length;
+        }
+        if (operandType instanceof VarcharType
+            && operandType.getCharsetName() == CharsetName.UTF8MB4) {
+            return ((Slice) args[0]).length();
         }
         if (DataTypeUtil.equalsSemantically(DataTypes.BlobType, operandType)) {
             Blob blob = DataTypes.BlobType.convertFrom(args[0]);

@@ -33,6 +33,8 @@ import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.planner.Planner;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
+import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPrunerUtils;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
 import com.alibaba.polardbx.optimizer.utils.PlannerUtils;
@@ -73,6 +75,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
 
+import static com.alibaba.polardbx.common.TddlConstants.IMPLICIT_COL_NAME;
+
 /**
  * 将计划中的 LogicalView / LogicalInsert 节点替换为 SingleTableOperation
  *
@@ -112,6 +116,17 @@ public class BuildFinalPlanVisitor extends RelShuttleImpl {
         OptimizerContext oc = OptimizerContext.getContext(lv.getSchemaName());
         TddlRuleManager or = oc.getRuleManager();
         List<String> tableNames = lv.getTableNames();
+
+        // ToDrdsRelVisitor has placed a CN-only FETCH_BLOB Project above this LogicalView, and buildSqlTemplate()
+        // resolves its scan fields to physical addr names. SingleTableOperation would bypass those LogicalView
+        // contracts, so retain the existing node. Ordinary tables continue through the original fast path.
+        String schemaName = lv.getSchemaName();
+        String logicalTableName = lv.getLogicalTableName();
+        TableMeta tableMeta = pc.getExecutionContext().getSchemaManager(schemaName).getTableWithNull(logicalTableName);
+        if (tableMeta != null && tableMeta.hasExternalizedColumn()) {
+            return scan;
+        }
+
         /**
          * 如果仅下发至单库单表,替换为 SingleTableOperation
          */
@@ -130,12 +145,6 @@ public class BuildFinalPlanVisitor extends RelShuttleImpl {
 
     private RelNode buildSingleTableScan(OptimizerContext oc, LogicalView lv, TddlRuleManager or,
                                          boolean removeSchema) {
-
-        if (removeSchema) {
-            RemoveSchemaNameVisitor visitor = new RemoveSchemaNameVisitor(lv.getSchemaName());
-            this.sqlTemplate = this.sqlTemplate.accept(visitor);
-        }
-
         String tableName = lv.getLogicalTableName();
         String schemaName = lv.getSchemaName();
 
@@ -146,6 +155,11 @@ public class BuildFinalPlanVisitor extends RelShuttleImpl {
             final TableMeta tMeta = this.pc.getExecutionContext().getSchemaManager(schemaName).getTable(tableName);
             RemoveIndexNodeVisitor removeIndexNodeVisitor = new RemoveIndexNodeVisitor(tMeta);
             this.sqlTemplate = this.sqlTemplate.accept(removeIndexNodeVisitor);
+        }
+
+        if (removeSchema) {
+            RemoveSchemaNameVisitor visitor = new RemoveSchemaNameVisitor(lv.getSchemaName());
+            this.sqlTemplate = this.sqlTemplate.accept(visitor);
         }
 
         replaceTableNameWithQuestionMark(oc.getSchemaName());
@@ -207,6 +221,15 @@ public class BuildFinalPlanVisitor extends RelShuttleImpl {
          */
         if (lv.getScalarList().size() > 0) {
             return null;
+        }
+
+        if (DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
+            SchemaManager schemaManager = pc.getExecutionContext().getSchemaManager(schemaName);
+            TableMeta tableMeta = schemaManager.getTable(tableName);
+            PartitionInfo partitionInfo = tableMeta.getPartitionInfo();
+            if (partitionInfo.isNoPartitionKeyTable()) {
+                return null;
+            }
         }
 
         List<Integer> paramIndex = PlannerUtils.getDynamicParamIndex(sqlTemplate);
@@ -275,7 +298,7 @@ public class BuildFinalPlanVisitor extends RelShuttleImpl {
 
         TddlRuleManager or = OptimizerContext.getContext(schemaName).getRuleManager();
         // broadcast? single table?
-        if (or.isTableInSingleDb(tableName) || or.isBroadCast(tableName)) {
+        if (or.isTableInSingleDb(tableName) || or.isBroadCastOrReplicas(tableName)) {
             return buildLogicalModify(logicalInsert);
         }
 
@@ -300,10 +323,18 @@ public class BuildFinalPlanVisitor extends RelShuttleImpl {
             return buildLogicalModify(logicalInsert);
         }
 
+        // Tables with externalized columns (column rewrite + value transformation) OR in MCE
+        // dual-write state (addr column BlobRef fill) must go through LogicalInsertHandler,
+        // so skip SingleTableOperation optimization.
+        if (ExternalizedDmlRewriter.needsHandling(table)) {
+            return buildLogicalModify(logicalInsert);
+        }
+
         // all values can be pushed down?
         TreeSet<String> specialColumns = new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
         specialColumns.addAll(or.getSharedColumns(tableName));
         specialColumns.addAll(tableMeta.getAutoIncrementColumns());
+        specialColumns.addAll(tableMeta.getLocalAutoIncrementColumns());
         List<String> fieldNames = values.getRowType().getFieldNames();
         List<RexNode> row = values.getTuples().get(0);
         for (int i = 0; i < row.size(); i++) {
@@ -423,6 +454,13 @@ public class BuildFinalPlanVisitor extends RelShuttleImpl {
             return logicalModifyView;
         }
 
+        // Tables with externalized columns or MCE dual-write need column name rewriting and value
+        // transformation which are handled in LogicalModifyViewHandler, so skip SingleTableOperation
+        TableMeta extTableMeta = ec.getSchemaManager(schemaName).getTable(tableName);
+        if (ExternalizedDmlRewriter.needsHandling(extTableMeta)) {
+            return logicalModifyView;
+        }
+
         if (logicalModifyView.isSingleGroup() && !buildPlanForScaleOut) {
             OptimizerContext context = OptimizerContext.getContext(schemaName);
             TddlRuleManager or = context.getRuleManager();
@@ -472,12 +510,48 @@ public class BuildFinalPlanVisitor extends RelShuttleImpl {
         TableMeta tableMeta = ec.getSchemaManager(schemaName).getTable(tableName);
         SqlNodeList columnList = ((SqlInsert) sqlTemplate).getTargetColumnList();
 
+        if (ec.getParamManager().getBoolean(ConnectionParams.DML_INSERT_PUSH_DOWN_WITH_COLUMN_LIST)) {
+            if (columnList == null || GeneralUtil.isEmpty(columnList.getList())) {
+                List<String> localAutoIncrementColumns = tableMeta.getLocalAutoIncrementColumns();
+                if (!localAutoIncrementColumns.isEmpty() && localAutoIncrementColumns.get(0)
+                    .equalsIgnoreCase(IMPLICIT_COL_NAME)) {
+                    // for local autoInc columns and user does not specify columns
+                    // we need to add column names
+                    SqlNodeList sqlNodeList = ((SqlInsert) logicalInsert.getSqlTemplate()).getTargetColumnList();
+                    SqlNodeList insertListWithOutImplicitPk = new SqlNodeList(sqlNodeList.getParserPosition());
+                    for (SqlNode sqlNode : sqlNodeList) {
+                        if (!sqlNode.toString().equalsIgnoreCase(IMPLICIT_COL_NAME)) {
+                            insertListWithOutImplicitPk.add(sqlNode);
+                        }
+                    }
+                    ((SqlInsert) sqlTemplate).setOperand(3, insertListWithOutImplicitPk);
+                } else {
+                    SqlNodeList sqlNodeList = ((SqlInsert) logicalInsert.getSqlTemplate()).getTargetColumnList();
+                    ((SqlInsert) sqlTemplate).setOperand(3, sqlNodeList);
+                }
+            }
+        } else {
+            List<String> localAutoIncrementColumns = tableMeta.getLocalAutoIncrementColumns();
+            if (!localAutoIncrementColumns.isEmpty() && localAutoIncrementColumns.get(0)
+                .equalsIgnoreCase(IMPLICIT_COL_NAME) && columnList == null) {
+                // for local autoInc columns and user does not specify columns
+                // we need to add column names
+                SqlNodeList sqlNodeList = ((SqlInsert) logicalInsert.getSqlTemplate()).getTargetColumnList();
+                SqlNodeList insertListWithOutImplicitPk = new SqlNodeList(sqlNodeList.getParserPosition());
+                for (SqlNode sqlNode : sqlNodeList) {
+                    if (!sqlNode.toString().equalsIgnoreCase(IMPLICIT_COL_NAME)) {
+                        insertListWithOutImplicitPk.add(sqlNode);
+                    }
+                }
+                ((SqlInsert) sqlTemplate).setOperand(3, insertListWithOutImplicitPk);
+            }
+
         // We must add column names if we are doing column multi-write
         boolean isColumnMultiWrite = TableColumnUtils.isModifying(schemaName, tableName, ec);
         if ((tableMeta.requireLogicalColumnOrder() || isColumnMultiWrite) && (columnList == null || GeneralUtil.isEmpty(
             columnList.getList()))) {
             SqlNodeList sqlNodeList = ((SqlInsert) logicalInsert.getSqlTemplate()).getTargetColumnList();
-            ((SqlInsert) sqlTemplate).setOperand(3, sqlNodeList);
+            ((SqlInsert) sqlTemplate).setOperand(3, sqlNodeList);}
         }
 
         SingleTableOperation singleTableOperation = new SingleTableOperation(logicalInsert,

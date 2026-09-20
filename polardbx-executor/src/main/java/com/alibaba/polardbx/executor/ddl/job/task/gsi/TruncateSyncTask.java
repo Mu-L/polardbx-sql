@@ -90,7 +90,7 @@ public class TruncateSyncTask extends BaseSyncTask {
                 String targetTableGroup = tableGroupConfig.getTableGroupRecord().tg_name;
                 try {
                     SyncManagerHelper
-                        .sync(new TableGroupSyncAction(schemaName, targetTableGroup), SyncScope.ALL);
+                        .syncThrowExceptions(new TableGroupSyncAction(schemaName, targetTableGroup), SyncScope.ALL);
                 } catch (Throwable t) {
                     LOGGER.error(String.format(
                         "error occurs while sync table group, schemaName:%s, tableGroupName:%s", schemaName,

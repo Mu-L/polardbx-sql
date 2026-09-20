@@ -41,15 +41,19 @@ public class IndexableColumnRelFinder extends RelVisitor {
 
     private IndexableColumnSet indexableColumnSet;
 
-    public IndexableColumnRelFinder(RelMetadataQuery mq) {
+    private IndexAdvisor.AdviseType adviseType;
+
+    public IndexableColumnRelFinder(RelMetadataQuery mq, IndexAdvisor.AdviseType adviseType) {
         this.mq = mq;
         this.indexableColumnSet = new IndexableColumnSet();
+        this.adviseType = adviseType;
     }
 
     public IndexableColumnRelFinder(RelMetadataQuery mq,
-                                    IndexableColumnSet indexableColumnSet) {
+                                    IndexableColumnSet indexableColumnSet, IndexAdvisor.AdviseType adviseType) {
         this.mq = mq;
         this.indexableColumnSet = indexableColumnSet;
+        this.adviseType = adviseType;
     }
 
     public IndexableColumnSet getIndexableColumnSet() {
@@ -61,48 +65,64 @@ public class IndexableColumnRelFinder extends RelVisitor {
         if (node instanceof LogicalJoin) {
             LogicalJoin logicalJoin = (LogicalJoin) node;
             IndexableColumnRexFinder
-                indexableColumnRexFinder = new IndexableColumnRexFinder(mq, logicalJoin, indexableColumnSet);
+                indexableColumnRexFinder =
+                new IndexableColumnRexFinder(mq, logicalJoin, indexableColumnSet, adviseType);
             logicalJoin.getCondition().accept(indexableColumnRexFinder);
         } else if (node instanceof LogicalSemiJoin) {
             LogicalSemiJoin logicalSemiJoin = (LogicalSemiJoin) node;
             IndexableColumnRexFinder
-                indexableColumnRexFinder = new IndexableColumnRexFinder(mq, logicalSemiJoin, indexableColumnSet);
+                indexableColumnRexFinder =
+                new IndexableColumnRexFinder(mq, logicalSemiJoin, indexableColumnSet, adviseType);
             logicalSemiJoin.getCondition().accept(indexableColumnRexFinder);
         } else if (node instanceof Filter) {
             Filter filter = (Filter) node;
             IndexableColumnRexFinder
-                indexableColumnRexFinder = new IndexableColumnRexFinder(mq, filter, indexableColumnSet);
+                indexableColumnRexFinder = new IndexableColumnRexFinder(mq, filter, indexableColumnSet, adviseType);
             filter.getCondition().accept(indexableColumnRexFinder);
         } else if (node instanceof Project) {
             Project project = (Project) node;
             IndexableColumnRexFinder
-                indexableColumnRexFinder = new IndexableColumnRexFinder(mq, project.getInput(), indexableColumnSet);
+                indexableColumnRexFinder =
+                new IndexableColumnRexFinder(mq, project.getInput(), indexableColumnSet, adviseType);
             for (RexNode rex : project.getProjects()) {
                 if (rex instanceof RexDynamicParam) {
                     rex.accept(indexableColumnRexFinder);
                 }
             }
         } else if (node instanceof LogicalSort) {
-            LogicalSort logicalSort = (LogicalSort) node;
-            for (RelFieldCollation fieldCollation : logicalSort.getCollation().getFieldCollations()) {
-                RelColumnOrigin columnOrigin = mq.getColumnOrigin(logicalSort, fieldCollation.getFieldIndex());
-                indexableColumnSet.addIndexableColumn(columnOrigin);
-            }
-        } else if (node instanceof LogicalAggregate) {
-            LogicalAggregate logicalAggregate = (LogicalAggregate) node;
-
-            for (Integer idx : logicalAggregate.getGroupSet()) {
-                RelColumnOrigin columnOrigin = mq.getColumnOrigin(logicalAggregate.getInput(), idx);
-                indexableColumnSet.addIndexableColumn(columnOrigin);
-            }
-
-            for (AggregateCall aggregateCall : logicalAggregate.getAggCallList()) {
-                if (aggregateCall.getAggregation().getKind().belongsTo(SqlKind.MIN_MAX_AGG)) {
-                    RelColumnOrigin columnOrigin = mq.getColumnOrigin(logicalAggregate.getInput(),
-                        aggregateCall.getArgList().get(0));
+            //order by列在索引推荐中无法生效，列存执行计划无法体现分区有序的优越性
+            if (adviseType != IndexAdvisor.AdviseType.COLUMNAR_INDEX) {
+                LogicalSort logicalSort = (LogicalSort) node;
+                for (RelFieldCollation fieldCollation : logicalSort.getCollation().getFieldCollations()) {
+                    RelColumnOrigin columnOrigin = mq.getColumnOrigin(logicalSort, fieldCollation.getFieldIndex());
                     indexableColumnSet.addIndexableColumn(columnOrigin);
                 }
             }
+        } else if (node instanceof LogicalAggregate) {
+            if (adviseType != IndexAdvisor.AdviseType.COLUMNAR_INDEX) {
+                LogicalAggregate logicalAggregate = (LogicalAggregate) node;
+
+                for (Integer idx : logicalAggregate.getGroupSet()) {
+                    RelColumnOrigin columnOrigin = mq.getColumnOrigin(logicalAggregate.getInput(), idx);
+                    indexableColumnSet.addIndexableColumn(columnOrigin);
+                }
+
+                for (AggregateCall aggregateCall : logicalAggregate.getAggCallList()) {
+                    if (aggregateCall.getAggregation().getKind().belongsTo(SqlKind.MIN_MAX_AGG)) {
+                        RelColumnOrigin columnOrigin = mq.getColumnOrigin(logicalAggregate.getInput(),
+                            aggregateCall.getArgList().get(0));
+                        indexableColumnSet.addIndexableColumn(columnOrigin);
+                    }
+                }
+            }
+//            else {
+//                //列存索引，只将group by 列加入候选分区键
+//                LogicalAggregate logicalAggregate = (LogicalAggregate) node;
+//                for (Integer idx : logicalAggregate.getGroupSet()) {
+//                    RelColumnOrigin columnOrigin = mq.getColumnOrigin(logicalAggregate.getInput(), idx);
+//                    indexableColumnSet.addIndexableColumn(columnOrigin, true);
+//                }
+//            }
         }
         node.childrenAccept(this);
     }

@@ -494,6 +494,12 @@ public class ModifyPartitionKeyTest extends DDLBaseNewDBTestCase {
             String.format("create table %s (a int primary key, b int) partition by hash(a) partitions 3", tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 
+        // insert rows
+        for (int i = 0; i < 10; i++) {
+            sql = String.format("insert into %s values (%d,%d)", tableName, i, i);
+            JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        }
+
         sql = String.format("analyze table %s", tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 

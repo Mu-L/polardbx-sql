@@ -16,8 +16,11 @@
 
 package com.alibaba.polardbx.optimizer.core.planner.rule.mpp;
 
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.optimizer.PlannerContext;
+import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.rel.RelCollation;
@@ -35,6 +38,7 @@ import org.apache.calcite.rel.type.RelRecordType;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexDynamicParam;
 import org.apache.calcite.rex.RexInputRef;
+import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlCollation;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
@@ -151,22 +155,44 @@ public abstract class RuleUtils {
     public static RexNode getPartialFetch(Sort sort) {
         RexBuilder builder = sort.getCluster().getRexBuilder();
         RexNode fetch = sort.fetch;
-        if (sort.offset != null && sort.fetch != null) {
-            Map<Integer, ParameterContext> parameterContextMap = PlannerContext.getPlannerContext(
-                sort).getParams().getCurrentParameter();
-
-            if (sort.fetch instanceof RexDynamicParam || sort.offset instanceof RexDynamicParam) {
+        RexNode offset = sort.offset;
+        Map<Integer, ParameterContext> parameterContextMap = PlannerContext.getPlannerContext(
+            sort).getParams().getCurrentParameter();
+        // If offset is literal 0, treat it as null to avoid creating redundant ?+0 expression
+        if (offset instanceof RexLiteral) {
+            if (DataTypes.ULongType.convertFrom(((RexLiteral) offset).getValue()).longValue() == 0) {
+                offset = null;
+            }
+        }
+        if (offset == null && sort.fetch != null) {
+            // Validate a lone negative LIMIT fetch (no OFFSET) here too, same as
+            // CBOUtil#calPushDownFetch, so it is rejected on the MPP path instead of failing
+            // later as an opaque "MPP Sql could not be implemented" error. When OFFSET is
+            // present, sign validation is instead performed by the branch below.
+            CBOUtil.validateNonNegativeFetch(sort.fetch, parameterContextMap);
+        }
+        if (offset != null && sort.fetch != null) {
+            if (sort.fetch instanceof RexDynamicParam || offset instanceof RexDynamicParam) {
                 /**
                  * fetch or offset be parameterized.
                  */
-                fetch = builder.makeCall(SqlStdOperatorTable.PLUS, fetch, sort.offset);
+                fetch = builder.makeCall(SqlStdOperatorTable.PLUS, fetch, offset);
 
             } else {
                 long fetchVal = CBOUtil.getRexParam(sort.fetch, parameterContextMap);
-                long offsetVal = CBOUtil.getRexParam(sort.offset, parameterContextMap);
+                long offsetVal = CBOUtil.getRexParam(offset, parameterContextMap);
                 if (offsetVal == Long.MAX_VALUE || fetchVal == Long.MAX_VALUE) {
                     fetch = builder.makeBigIntLiteral(Long.MAX_VALUE);
                 } else {
+                    // Restore the negative sign check for the literal offset+fetch case,
+                    // mirroring CBOUtil#calPushDownFetch, otherwise a negative offset or
+                    // fetch would be silently summed here instead of being rejected.
+                    if (offsetVal < 0) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER, "get rex " + offsetVal);
+                    }
+                    if (fetchVal < 0) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER, "get rex " + fetchVal);
+                    }
                     /**
                      * fetch or offset be parameterized.
                      */

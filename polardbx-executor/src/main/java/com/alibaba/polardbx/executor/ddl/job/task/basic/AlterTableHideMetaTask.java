@@ -56,7 +56,7 @@ public class AlterTableHideMetaTask extends BaseGmsTask {
     protected void rollbackImpl(Connection metaDbConnection, ExecutionContext executionContext) {
         TableMetaChanger.showTableMeta(metaDbConnection, schemaName, logicalTableName, columnNames, indexNames);
         // Refresh table meta to make hidden columns visible after rollback.
-        SyncManagerHelper.sync(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
+        SyncManagerHelper.syncThrowExceptions(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
         executionContext.refreshTableMeta();
     }
 

@@ -26,7 +26,7 @@ import org.apache.calcite.plan.RelOptCost;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptRuleOperand;
 import org.apache.calcite.plan.RelOptUtil;
-import org.apache.calcite.plan.volcano.RelSubset;
+import org.apache.calcite.rel.AbstractRelNode;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.logical.LogicalJoin;
 import org.apache.calcite.rex.RexNode;
@@ -35,14 +35,14 @@ public class SMPLogicalJoinToBKAJoinRule extends LogicalJoinToBKAJoinRule {
 
     public static final LogicalJoinToBKAJoinRule LOGICALVIEW_NOT_RIGHT = new SMPLogicalJoinToBKAJoinRule(
         operand(LogicalJoin.class, null, JOIN_NOT_RIGHT,
-            operand(RelSubset.class, any()),
+            operand(AbstractRelNode.class, any()),
             operand(LogicalView.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION, any())),
         "LOGICALVIEW:NOT_RIGHT");
 
     public static final LogicalJoinToBKAJoinRule LOGICALVIEW_RIGHT = new SMPLogicalJoinToBKAJoinRule(
         operand(LogicalJoin.class, null, JOIN_RIGHT,
             operand(LogicalView.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION, any()),
-            operand(RelSubset.class, any())), "LOGICALVIEW:RIGHT");
+            operand(AbstractRelNode.class, any())), "LOGICALVIEW:RIGHT");
 
     SMPLogicalJoinToBKAJoinRule(RelOptRuleOperand operand, String desc) {
         super(operand, "SMP_" + desc);
@@ -71,7 +71,7 @@ public class SMPLogicalJoinToBKAJoinRule extends LogicalJoinToBKAJoinRule {
             bkaJoin.setFixedCost(fixedCost);
         }
         inner.setIsMGetEnabled(true);
-        inner.setJoin(bkaJoin);
+        inner.setLookupInfo(bkaJoin);
         call.transformTo(bkaJoin);
     }
 }

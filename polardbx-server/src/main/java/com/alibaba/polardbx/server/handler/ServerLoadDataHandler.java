@@ -450,9 +450,7 @@ public final class ServerLoadDataHandler implements LoadDataHandler {
 
         List<SQLExpr> columnsListExpr = statement.getColumns();
         List<String> columnsList = new ArrayList<>();
-        for (int i = 0; i < columnsListExpr.size(); i++) {
-            columnsList.add(columnsListExpr.get(i).toString());
-        }
+        handleColumnName(columnsListExpr, columnsList);
 
         loadData.setReplace(statement.isReplicate());
         loadData.setIgnore(statement.isIgnore());
@@ -532,6 +530,27 @@ public final class ServerLoadDataHandler implements LoadDataHandler {
         }
         loadData.setColumnMetas(loadColumnMetas);
         loadData.setLocal(statement.isLocal());
+    }
+
+    /**
+     * Handles column names by converting each SQL expression to a normalized string and adding it to the target list.
+     *
+     * @param columnsListExpr List of SQL expression objects
+     * @param columnsList Target list to store processed column names
+     */
+    public static void handleColumnName(List<SQLExpr> columnsListExpr, List<String> columnsList) {
+        // Iterate over all SQL expression objects
+        for (SQLExpr columnExpr : columnsListExpr) {
+            try {
+                // Convert SQL expression to a normalized string
+                String columnName = SQLUtils.normalizeNoTrim(columnExpr.toString());
+                // Add to the target list
+                columnsList.add(columnName);
+            } catch (Exception e) {
+                // Exception handling, log or take other measures
+                logger.error("Error processing column expression: " + e.getMessage(), e);
+            }
+        }
     }
 
     private boolean containIgnoreCase(List<String> source, String target) {

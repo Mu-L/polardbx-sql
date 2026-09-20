@@ -137,6 +137,9 @@ public class SystemDefaultPropertyHelper {
         sysDefaultProperties.put(ConnectionProperties.DATABASE_DEFAULT_SINGLE, String.valueOf(
             ConnectionParams.DATABASE_DEFAULT_SINGLE.getDefault()));
 
+        sysDefaultProperties.put(ConnectionProperties.ENABLE_JAVA_UDF, String.valueOf(
+            ConnectionParams.ENABLE_JAVA_UDF.getDefault()));
+
         // Prepare some default properties for partition management
         prepareDefaultPropertiesForPartitionManagementProperties(sysDefaultProperties);
 

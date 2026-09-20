@@ -5,10 +5,10 @@ package com.alibaba.polardbx.qatest.storagepool.importDatabase;
  */
 
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
-import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.gms.topology.StorageInfoRecord;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.collect.ImmutableList;
+import org.junit.Assert;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -56,7 +56,7 @@ public class RepartitionTest extends ImportDatabaseBase {
             String result = null;
             while (rs.next()) {
                 result = rs.getString("STATE");
-                Assert.assertTrue("ALL SUCCESS".equalsIgnoreCase(result));
+                Assert.assertTrue((result != null ? result : ""), "ALL SUCCESS".equalsIgnoreCase(result));
             }
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
@@ -90,7 +90,7 @@ public class RepartitionTest extends ImportDatabaseBase {
             String result = null;
             while (rs.next()) {
                 result = rs.getString("STATE");
-                Assert.assertTrue("ALL SUCCESS".equalsIgnoreCase(result));
+                Assert.assertTrue((result != null ? result : ""), "ALL SUCCESS".equalsIgnoreCase(result));
             }
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
@@ -174,7 +174,7 @@ public class RepartitionTest extends ImportDatabaseBase {
             String result = null;
             while (rs.next()) {
                 result = rs.getString("STATE");
-                Assert.assertTrue("ALL SUCCESS".equalsIgnoreCase(result));
+                Assert.assertTrue((result != null ? result : ""), "ALL SUCCESS".equalsIgnoreCase(result));
             }
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
@@ -198,7 +198,7 @@ public class RepartitionTest extends ImportDatabaseBase {
             String result = null;
             while (rs.next()) {
                 result = rs.getString("STATE");
-                Assert.assertTrue("ALL SUCCESS".equalsIgnoreCase(result));
+                Assert.assertTrue((result != null ? result : ""), "ALL SUCCESS".equalsIgnoreCase(result));
             }
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
@@ -324,7 +324,7 @@ public class RepartitionTest extends ImportDatabaseBase {
             if (rs.next()) {
                 result = rs.getLong(1);
             }
-            Assert.assertTrue(dataSum.equals(result));
+            Assert.assertTrue("dataSum is " + dataSum + " but result is " + result, dataSum.equals(result));
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
         }
@@ -335,7 +335,7 @@ public class RepartitionTest extends ImportDatabaseBase {
             if (rs.next()) {
                 result = rs.getLong(1);
             }
-            Assert.assertTrue(dataRows.equals(result));
+            Assert.assertTrue("dataRows is " + dataRows + " but result is " + result, dataRows.equals(result));
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
         }
@@ -359,7 +359,7 @@ public class RepartitionTest extends ImportDatabaseBase {
             if (rs.next()) {
                 result = rs.getLong(1);
             }
-            Assert.assertTrue(pkId.equals(result));
+            Assert.assertTrue("pkId is " + pkId + " but result is " + result, pkId.equals(result));
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
         }
@@ -372,7 +372,8 @@ public class RepartitionTest extends ImportDatabaseBase {
             if (rs.next()) {
                 result = rs.getLong(1);
             }
-            Assert.assertTrue(result != null && result.equals(pkId + 1));
+            Assert.assertTrue("pkId+1 is " + (pkId + 1) + " but result is " + result,
+                result != null && result.equals(pkId + 1));
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
         }
@@ -386,7 +387,7 @@ public class RepartitionTest extends ImportDatabaseBase {
             if (rs.next()) {
                 result = rs.getLong(1);
             }
-            Assert.assertTrue(result == null);
+            Assert.assertTrue("result is not null", result == null);
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
         }

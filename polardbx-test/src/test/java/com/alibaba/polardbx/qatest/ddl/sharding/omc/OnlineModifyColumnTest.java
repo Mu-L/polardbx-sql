@@ -18,6 +18,7 @@ package com.alibaba.polardbx.qatest.ddl.sharding.omc;
 
 import com.alibaba.polardbx.executor.common.StorageInfoManager;
 import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
+import com.alibaba.polardbx.qatest.ReplicaIgnore;
 import com.alibaba.polardbx.qatest.util.ConnectionManager;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.qatest.util.RandomUtils;
@@ -38,6 +39,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static com.google.common.truth.Truth.assertWithMessage;
 
+@ReplicaIgnore(ignoreReason = "set session variables")
 public class OnlineModifyColumnTest extends DDLBaseNewDBTestCase {
     private final boolean supportsAlterType =
         StorageInfoManager.checkSupportAlterType(ConnectionManager.getInstance().getMysqlDataSource());
@@ -45,6 +47,7 @@ public class OnlineModifyColumnTest extends DDLBaseNewDBTestCase {
     @Before
     public void beforeMethod() {
         org.junit.Assume.assumeTrue(supportsAlterType);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "set ENABLE_OMC_30 = false");
     }
 
     private static final String USE_OMC_ALGORITHM = " ALGORITHM=OMC ";
@@ -170,6 +173,7 @@ public class OnlineModifyColumnTest extends DDLBaseNewDBTestCase {
 
     @Test
     public void testOnlineModifyColumnRollback() {
+        setSqlMode("STRICT_TRANS_TABLES", tddlConnection);
         String tableName = "omc_rollback_test_tbl" + RandomUtils.getStringBetween(1, 5);
         dropTableIfExists(tableName);
         String sql = String.format(
@@ -213,6 +217,7 @@ public class OnlineModifyColumnTest extends DDLBaseNewDBTestCase {
 
     @Test
     public void testOnlineModifyColumnLocalIndexRollback() {
+        setSqlMode("STRICT_TRANS_TABLES", tddlConnection);
         String tableName = "omc_rollback_li_test_tbl" + RandomUtils.getStringBetween(1, 5);
         String indexName = "omc_rollback_li_test_tbl_idx" + RandomUtils.getStringBetween(1, 5);
         dropTableIfExists(tableName);

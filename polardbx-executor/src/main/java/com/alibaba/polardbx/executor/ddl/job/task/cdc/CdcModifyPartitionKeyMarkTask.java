@@ -33,6 +33,7 @@ import org.apache.calcite.sql.SqlKind;
 import java.sql.Connection;
 import java.util.Map;
 
+import static com.alibaba.polardbx.common.cdc.ICdcManager.DDL_ID;
 import static com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcMarkUtil.buildExtendParameter;
 
 /**
@@ -73,6 +74,8 @@ public class CdcModifyPartitionKeyMarkTask extends BaseCdcTask {
         param.put(ICdcManager.ALTER_TRIGGER_TOPOLOGY_CHANGE_FLAG, "");
         param.put(ICdcManager.REFRESH_CREATE_SQL_4_PHY_TABLE, "true");
         param.put(ICdcManager.EXCHANGE_NAMES_MAPPING, exchangeNamesMapping);
+        // 必须设置DDL_ID，否则CDC打标中的originalSql将忽略versionId
+        param.put(DDL_ID, versionId);
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
 

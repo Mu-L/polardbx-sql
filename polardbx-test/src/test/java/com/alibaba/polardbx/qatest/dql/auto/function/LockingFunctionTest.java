@@ -106,6 +106,11 @@ public class LockingFunctionTest extends ReadBaseTestCase {
                 .selectContentSameAssert("SELECT RELEASE_LOCK('lock1')", null, mysqlConnection1, tddlConnection1);
             DataValidator
                 .selectContentSameAssert("SELECT RELEASE_LOCK('lock2')", null, mysqlConnection1, tddlConnection1);
+            DataValidator
+                    .selectContentSameAssert("SELECT GET_LOCK('lock3',0)", null, mysqlConnection1, tddlConnection1);
+            DataValidator
+                    .selectContentSameAssert("SELECT RELEASE_LOCK('lock3')", null, mysqlConnection1, tddlConnection1);
+
         }
     }
 

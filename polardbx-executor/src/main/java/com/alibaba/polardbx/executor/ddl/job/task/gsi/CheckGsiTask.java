@@ -41,6 +41,7 @@ import com.alibaba.polardbx.executor.gsi.corrector.GsiReporter;
 import com.alibaba.polardbx.executor.gsi.fastchecker.GsiFastChecker;
 import com.alibaba.polardbx.executor.gsi.fastchecker.OmcFastChecker;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalCheckGsi;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.CheckGsiPrepareData;
@@ -171,7 +172,7 @@ public class CheckGsiTask extends BaseBackfillTask {
         }
     }
 
-    private Checker buildChecker(ExecutionContext ec) {
+    public Checker buildChecker(ExecutionContext ec) {
         return GsiChecker.create(
             schemaName, tableName, indexName,
             this.checkParams,
@@ -224,7 +225,7 @@ public class CheckGsiTask extends BaseBackfillTask {
 
     // TODO(moyi) do not execute task directly
     public void checkInBackfill(ExecutionContext ec) {
-        if (isUseFastChecker(ec) && fastCheck(ec)) {
+        if (isUseFastChecker(ec) && fastCheckWithCatchEx(ec)) {
             return;
         }
 
@@ -233,7 +234,7 @@ public class CheckGsiTask extends BaseBackfillTask {
                 "Fast checker failed. Please try to rollback/recover this job");
         }
 
-        if (MapUtils.isNotEmpty(srcCheckColumnMap) || MapUtils.isNotEmpty(dstCheckColumnMap)) {
+        if (MapUtils.isNotEmpty(getSrcCheckColumnMap()) || MapUtils.isNotEmpty(getDstCheckColumnMap())) {
             throw GeneralUtil.nestedException(
                 "Fast checker failed. Please try to rollback/recover this job");
         }
@@ -241,7 +242,7 @@ public class CheckGsiTask extends BaseBackfillTask {
         Checker checker = buildChecker(ec);
         checker.setInBackfill(true);
         checker.setJobId(ec.getDdlJobId());
-        Reporter reporter = new Reporter(checkParams.getEarlyFailNumber());
+        Reporter reporter = new Reporter(getCheckParams().getEarlyFailNumber());
         ExecutionContext checkerEc = ec.copy();
 
         try {
@@ -264,14 +265,15 @@ public class CheckGsiTask extends BaseBackfillTask {
             throw GeneralUtil.nestedException(
                 "GSI checker found error when creating GSI. Please try to rollback/recover this job");
         }
+        FailPoint.injectExceptionFromHint(FailPointKey.FB_CHECK_IN_BACK_FILL, ec);
     }
 
-    private boolean isUseFastChecker(ExecutionContext ec) {
+    public boolean isUseFastChecker(ExecutionContext ec) {
         return FastChecker.isSupported(schemaName) &&
             ec.getParamManager().getBoolean(ConnectionParams.GSI_BACKFILL_USE_FASTCHECKER);
     }
 
-    private boolean isOnlyUseFastChecker(ExecutionContext ec) {
+    public boolean isOnlyUseFastChecker(ExecutionContext ec) {
         return ec.getParamManager().getBoolean(ConnectionParams.GSI_BACKFILL_ONLY_USE_FASTCHECKER);
     }
 

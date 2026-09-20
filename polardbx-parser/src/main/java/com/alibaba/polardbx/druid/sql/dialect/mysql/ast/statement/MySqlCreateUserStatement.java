@@ -23,12 +23,20 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.MySqlObjectImpl;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.expr.MySqlUserName;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.visitor.MySqlASTVisitor;
 
+import javax.annotation.Nonnull;
 import java.util.ArrayList;
 import java.util.List;
 
 public class MySqlCreateUserStatement extends MySqlStatementImpl implements SQLCreateStatement {
 
+    public enum UserAccountType {
+        NORMAL,
+        DBA
+    }
+
     private List<UserSpecification> users = new ArrayList<UserSpecification>(2);
+
+    private UserAccountType accountType = UserAccountType.NORMAL;
 
     private boolean ifNotExists = false;
 
@@ -49,6 +57,18 @@ public class MySqlCreateUserStatement extends MySqlStatementImpl implements SQLC
             user.setParent(this);
         }
         this.users.add(user);
+    }
+
+    public @Nonnull UserAccountType getAccountType() {
+        return accountType;
+    }
+
+    public void setAccountType(UserAccountType accountType) {
+        if (accountType == null) {
+            this.accountType = UserAccountType.NORMAL;
+        } else {
+            this.accountType = accountType;
+        }
     }
 
     @Override

@@ -24,12 +24,7 @@ import com.alibaba.polardbx.executor.scheduler.executor.SchedulerExecutor;
 import com.alibaba.polardbx.gms.module.Module;
 import com.alibaba.polardbx.gms.module.ModuleLogInfo;
 import com.alibaba.polardbx.gms.scheduler.ExecutableScheduledJob;
-import com.alibaba.polardbx.gms.topology.DbTopologyManager;
 
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.ZonedDateTime;
 import java.util.Map;
 

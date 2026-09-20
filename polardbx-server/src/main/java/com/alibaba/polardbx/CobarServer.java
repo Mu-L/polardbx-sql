@@ -17,15 +17,20 @@
 package com.alibaba.polardbx;
 
 import com.alibaba.polardbx.common.TddlConstants;
+import com.alibaba.polardbx.common.ColumnarOptions;
 import com.alibaba.polardbx.common.TddlConstants;
 import com.alibaba.polardbx.common.TddlNode;
 import com.alibaba.polardbx.common.cdc.CdcManagerHelper;
+import com.alibaba.polardbx.common.columnar.ColumnarOption;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.model.lifecycle.AbstractLifecycle;
 import com.alibaba.polardbx.common.model.lifecycle.Lifecycle;
+import com.alibaba.polardbx.common.properties.ColumnarConfig;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
+import com.alibaba.polardbx.common.properties.MppConfig;
+import com.alibaba.polardbx.common.properties.PropUtil;
 import com.alibaba.polardbx.common.utils.AddressUtils;
 import com.alibaba.polardbx.common.utils.ExecutorMode;
 import com.alibaba.polardbx.common.utils.Pair;
@@ -39,19 +44,23 @@ import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.config.SchemaConfig;
 import com.alibaba.polardbx.config.SystemConfig;
+import com.alibaba.polardbx.executor.columnar.ExtColumnMappingManager;
+import com.alibaba.polardbx.executor.external.ConnectorRuntimeManager;
 import com.alibaba.polardbx.executor.mpp.deploy.LocalServer;
 import com.alibaba.polardbx.executor.mpp.deploy.MppServer;
 import com.alibaba.polardbx.executor.mpp.deploy.Server;
 import com.alibaba.polardbx.executor.mpp.deploy.ServiceProvider;
 import com.alibaba.polardbx.executor.mpp.server.DrdsContextHandler;
 import com.alibaba.polardbx.executor.mpp.server.TaskResource;
+import com.alibaba.polardbx.executor.utils.DdlUtils;
 import com.alibaba.polardbx.gms.config.impl.MetaDbInstConfigManager;
 import com.alibaba.polardbx.gms.ha.impl.StorageHaManager;
 import com.alibaba.polardbx.gms.ha.impl.StorageInstHaContext;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarConfigAccessor;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarConfigRecord;
 import com.alibaba.polardbx.gms.node.LeaderStatusBridge;
 import com.alibaba.polardbx.gms.node.NodeStatusManager;
-import com.alibaba.polardbx.gms.topology.DbInfoAccessor;
 import com.alibaba.polardbx.gms.topology.InstConfigAccessor;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.gms.topology.VariableConfigAccessor;
@@ -75,6 +84,7 @@ import com.alibaba.polardbx.server.ServerConnectionFactory;
 import com.alibaba.polardbx.server.handler.ColumnarConfigHandler;
 import com.alibaba.polardbx.ssl.SslContextFactory;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableList;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.StringUtils;
 
@@ -88,6 +98,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.ResourceBundle;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
@@ -95,6 +106,8 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import static com.alibaba.polardbx.gms.util.MetaDbUtil.isNewInstance;
 
 /**
  * @author agapple 2014年9月25日 下午4:40:25
@@ -225,7 +238,9 @@ public class CobarServer extends AbstractLifecycle implements Lifecycle {
             System.getProperties().put(this.serverHostKey, this.serverHost);
             System.getProperties().put(this.serverPortKey, this.serverPort);
 
-            // 需要rpcClient先启动
+            // External columns are optional. Run their potentially slow MetaDB migration outside the critical
+            // startup path so a failure or lock wait cannot prevent CN from listening on the MySQL port.
+            submitExtColumnMappingInitialization(serverExecutor);
             this.config.init();
 
             // startup processors
@@ -242,6 +257,11 @@ public class CobarServer extends AbstractLifecycle implements Lifecycle {
 
             // warming up jar package
             warmup();
+
+            // Load external connector plugins from the connectors directory
+            ConnectorRuntimeManager connectorRuntimeManager = new ConnectorRuntimeManager();
+            ConnectorRuntimeManager.setInstance(connectorRuntimeManager);
+            connectorRuntimeManager.init();
 
             if ((system.isMppServer() || system.isMppWorker()) && system.getRpcPort() > 0) {
                 // startup native mpp service
@@ -261,7 +281,7 @@ public class CobarServer extends AbstractLifecycle implements Lifecycle {
             NodeStatusManager nodeStatusManager = ServiceProvider.getInstance().getServer().getStatusManager();
             LeaderStatusBridge.getInstance().setUpNodeStatusManager(nodeStatusManager);
             CdcRpcClient.buildCdcRpcClient();
-            tryStartCdcManager();
+            tryStartCdcManager(system);
             try {
                 tryInitServerVariables();
             } catch (Throwable t) {
@@ -276,6 +296,25 @@ public class CobarServer extends AbstractLifecycle implements Lifecycle {
             this.startupTime = TimeUtil.currentTimeMillis();
         } catch (Throwable e) {
             throw new TddlRuntimeException(ErrorCode.ERR_SERVER, e, "start failed");
+        }
+    }
+
+    static void submitExtColumnMappingInitialization(Executor executor) {
+        try {
+            executor.execute(CobarServer::initializeExtColumnMappingManagerSafely);
+        } catch (Throwable t) {
+            logger.error("Failed to submit external column mapping initialization; "
+                + "external-column operations remain unavailable, but CN startup continues", t);
+        }
+    }
+
+    static void initializeExtColumnMappingManagerSafely() {
+        try {
+            ExtColumnMappingManager.getInstance().initialize();
+            logger.info("External column mapping manager initialized");
+        } catch (Throwable t) {
+            logger.error("External column mapping initialization failed; "
+                + "external-column operations remain unavailable, but CN startup continues", t);
         }
     }
 
@@ -295,13 +334,31 @@ public class CobarServer extends AbstractLifecycle implements Lifecycle {
             cnProperties.setProperty(ConnectionProperties.ENABLE_INFO_SCHEMA_TABLES_STAT_COLLECTION, "true");
             // Enable auto force index
             cnProperties.setProperty(ConnectionProperties.ENABLE_AUTO_FORCE_INDEX, "true");
-            cnProperties.setProperty(ConnectionProperties.IGNORE_TRANSACTION_POLICY_NO_TRANSACTION, "true");
+            cnProperties.setProperty(ConnectionProperties.ENABLE_AUTO_PAGINATION_INDEX, "true");
+            cnProperties.setProperty(ConnectionProperties.ENABLE_AUTO_PAGINATION_UNION, "true");
+
+            cnProperties.setProperty(ConnectionProperties.ENABLE_JOIN_SUBQUERY_UNNEST, "true");
+
+            cnProperties.setProperty(ConnectionProperties.CONVERTER_IN_ONE_RELSET, "true");
+            // bigger join limit for new instance
+            cnProperties.setProperty(ConnectionProperties.COLUMNAR_CBO_TOO_MANY_JOIN_LIMIT, "20");
+
             // Disable full table scan for duplicate check of upsert on table without UGSI
             cnProperties.setProperty(ConnectionProperties.DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN, "false");
+            // Enable partition pruning for LOCAL UK duplicate check.
+            cnProperties.setProperty(ConnectionProperties.DML_PARTITION_LOCAL_UK_DUP_CHECK, "true");
+            // Enable partition pruning for LOCAL PK duplicate check.
+            cnProperties.setProperty(ConnectionProperties.DML_PARTITION_LOCAL_PK_DUP_CHECK, "true");
             cnProperties.setProperty(ConnectionProperties.DML_GET_DUP_FOR_PK_FROM_PRIMARY_ONLY, "false");
-            cnProperties.setProperty(ConnectionProperties.DML_CHECK_UPSERT_DYNAMIC_IMPLICIT_WITH_COLUMN_REF, "true");
             // Enable dml replace dynamic implicit default only
             cnProperties.setProperty(ConnectionProperties.DML_REPLACE_DYNAMIC_IMPLICIT_DEFAULT, "true");
+            cnProperties.setProperty(ConnectionProperties.DML_CHECK_UPSERT_DYNAMIC_IMPLICIT_WITH_COLUMN_REF, "false");
+            // Enable optimize replace by returning
+            cnProperties.setProperty(ConnectionProperties.OPTIMIZE_REPLACE_BY_RETURNING, "true");
+            // Enable optimize relocate by returning
+            cnProperties.setProperty(ConnectionProperties.OPTIMIZE_RELOCATE_BY_RETURNING, "true");
+            // enable update subquery
+            cnProperties.setProperty(ConnectionProperties.DML_FORBID_UPDATE_WITH_SUBQUERY_IN_SET, "false");
 
             //忽略事务情况下，DML串行执行
             cnProperties.setProperty(ConnectionProperties.ENABLE_DML_GROUP_CONCURRENT_IN_TRANSACTION, "true");
@@ -309,13 +366,51 @@ public class CobarServer extends AbstractLifecycle implements Lifecycle {
             //Disable udf
             cnProperties.setProperty(TddlConstants.ENABLE_JAVA_UDF, "false");
 
+            cnProperties.setProperty(ConnectionProperties.ENABLE_CTE_REUSE, "true");
+
             cnProperties.setProperty(ConnectionProperties.ENABLE_LOWER_CASE_TABLE_NAMES, "true");
+
+            cnProperties.setProperty(ConnectionProperties.COST_MODEL_VERSION, PropUtil.COST_MODEL_LATEST);
 
             // enable strict set global
             cnProperties.setProperty(TddlConstants.ENABLE_STRICT_SET_GLOBAL, "true");
 
             // enable auto close connection when trx got fatal error
             cnProperties.setProperty(ConnectionProperties.ENABLE_CLOSE_CONNECTION_WHEN_TRX_FATAL, "true");
+
+            // Allow an ERR packet to terminate a partial result set for compatible clients.
+            cnProperties.setProperty(ConnectionProperties.ENABLE_ERR_PACKET_AFTER_PARTIAL_RESULT, "true");
+
+            // enable consistent error code with MySQL
+            cnProperties.setProperty(ConnectionProperties.ENABLE_CONSISTENT_ERRORCODE, "true");
+
+            // Keep the current transaction when switching to the current database.
+            cnProperties.setProperty(ConnectionProperties.ENABLE_SAME_DB_SWITCH_NOOP, "true");
+
+            cnProperties.setProperty(ConnectionProperties.ENABLE_DRDS_REX_ROUTE, "true");
+            cnProperties.setProperty(ConnectionProperties.ENABLE_DRDS_OPTIMIZE_REX_ROUTE, "true");
+            cnProperties.setProperty(ConnectionProperties.ENBALE_BIND_COLLATE, "true");
+
+            cnProperties.setProperty(ConnectionProperties.CHECK_PRIVILEGE_IN_PREPARE_MODE, "0");
+
+            cnProperties.setProperty(ConnectionProperties.ENABLE_MULTI_TABLE_UPDATE_MODIFY_GSI_SHARDING_KEY, "false");
+            cnProperties.setProperty(ConnectionProperties.ENABLE_GSI_LOOKUP_OPTIMIZE, "true");
+
+            // Disable block cache memory on master instance by default,
+            // since master instances primarily serve row-store OLTP queries
+            // and rarely benefit from columnar block cache.
+            if (ConfigDataMode.isMasterMode()) {
+                cnProperties.setProperty(ConnectionProperties.BLOCK_CACHE_MEMORY_SIZE_FACTOR, "0");
+            }
+
+            // Enable AS OF cross-DDL flashback by default for new instances.
+            cnProperties.setProperty(ConnectionProperties.ENABLE_AS_OF_CROSS_DDL, "true");
+
+            // Do not send TSO for non-consistent follower reads to reduce TSO service overhead.
+            cnProperties.setProperty(ConnectionProperties.SEND_TSO_FOR_NON_CONSISTENT_REPLICA_READ, "false");
+
+            // Fold typed table-source VALUES into columnar RawString parameters.
+            cnProperties.setProperty(ConnectionProperties.ENABLE_DYNAMIC_VALUES_OPTIMIZATION, "true");
 
             // Update inst config using insert ignore.
             try (Connection metaDbConn = MetaDbDataSource.getInstance().getConnection()) {
@@ -327,10 +422,48 @@ public class CobarServer extends AbstractLifecycle implements Lifecycle {
             } catch (Throwable t) {
                 logger.error("Try init server variables failed.", t);
             }
+
+            // For Columnar:
+            try {
+                ColumnarConfig.get(ColumnarOptions.ENABLE_COLUMNAR_CDC_CLIENT)
+                    .handle(new ColumnarOption.Param(ColumnarOptions.ENABLE_COLUMNAR_CDC_CLIENT, "true"));
+                ColumnarConfig.get(ColumnarOptions.COLUMNAR_CDC_CLIENT_PARALLELISM)
+                    .handle(new ColumnarOption.Param(ColumnarOptions.COLUMNAR_CDC_CLIENT_PARALLELISM, "2"));
+                ColumnarConfig.get(ColumnarOptions.ENABLE_OPTIMIZED_STREAMING)
+                    .handle(new ColumnarOption.Param(ColumnarOptions.ENABLE_OPTIMIZED_STREAMING, "true"));
+                ColumnarConfig.get(ColumnarOptions.OPTIMIZE_CDC_CLIENT_FILTER)
+                    .handle(new ColumnarOption.Param(ColumnarOptions.OPTIMIZE_CDC_CLIENT_FILTER, "true"));
+            } catch (Throwable t) {
+                logger.error("Try init columnar config failed.", t);
+            }
+
         }
 
         // Turn off some incompatible variables if necessary.
         checkCompatible();
+
+        //列存特殊参数设置
+        initColumnarSpecialConfigSet();
+    }
+
+    static void initColumnarSpecialConfigSet() {
+        try {
+            try (Connection metaDbConn = MetaDbDataSource.getInstance().getConnection()) {
+                ColumnarConfigAccessor accessor = new ColumnarConfigAccessor();
+                accessor.setConnection(metaDbConn);
+                ColumnarConfigRecord record = new ColumnarConfigRecord();
+
+                //orc tail不写入metaDB，为兼容旧版本，这里需要写入columnar config
+                record.tableId = 0L;
+                record.configKey = ColumnarOptions.COLUMNAR_ORC_TAIL_WRITE_TO_METADB;
+                record.configValue = "false";
+                accessor.insertIgnore(ImmutableList.of(record));
+            }
+
+        } catch (Exception e) {
+            logger.error("Try init columnar config failed.", e);
+            //忽略报错
+        }
     }
 
     @VisibleForTesting
@@ -339,7 +472,7 @@ public class CobarServer extends AbstractLifecycle implements Lifecycle {
         try (Connection metaDbConn = MetaDbDataSource.getInstance().getConnection()) {
             VariableConfigAccessor variableConfigAccessor = new VariableConfigAccessor();
             variableConfigAccessor.setConnection(metaDbConn);
-            dnVar = variableConfigAccessor.queryAll();
+            dnVar = variableConfigAccessor.getAllVariableConfigsByInstId(InstIdUtil.getInstId());
         } catch (Throwable t) {
             logger.error("Try init server variables failed.", t);
         }
@@ -363,24 +496,6 @@ public class CobarServer extends AbstractLifecycle implements Lifecycle {
 
     private static boolean isOn(String paramValue) {
         return "on".equalsIgnoreCase(paramValue) || "true".equalsIgnoreCase(paramValue);
-    }
-
-    protected static boolean isNewInstance() {
-        try (Connection metaDbConn = MetaDbDataSource.getInstance().getConnection()) {
-            InstConfigAccessor instConfigAccessor = new InstConfigAccessor();
-            instConfigAccessor.setConnection(metaDbConn);
-            int result = instConfigAccessor.isOldestRecordCreatedWithinOneDay();
-            if (1 == result) {
-                return true;
-            }
-            // Use db_info to check.
-            DbInfoAccessor dbInfoAccessor = new DbInfoAccessor();
-            dbInfoAccessor.setConnection(metaDbConn);
-            return !dbInfoAccessor.existsUserDb();
-        } catch (Throwable t) {
-            logger.warn("Check if is new instance failed", t);
-        }
-        return false;
     }
 
     private void startupServer(SystemConfig system) throws IOException {
@@ -409,20 +524,20 @@ public class CobarServer extends AbstractLifecycle implements Lifecycle {
         logger.info(manager.getName() + " is started and listening on " + manager.getPort());
     }
 
-    private void tryStartCdcManager() {
+    private void tryStartCdcManager(SystemConfig systemConfig) {
         if (ConfigDataMode.isMasterMode()) {
             // startup cdc center client && cdc manager
             String CDC_STARTUP_MODE =
                 MetaDbInstConfigManager.getInstance().getInstProperty(ConnectionProperties.CDC_STARTUP_MODE);
             if (Integer.parseInt(CDC_STARTUP_MODE) == 1) {
                 logger.info("Start cdc synchronously: initialize cdc");
-                CdcManagerHelper.getInstance().initialize();
+                CdcManagerHelper.getInstance().initialize(systemConfig.getServerPort());
             } else if (Integer.parseInt(CDC_STARTUP_MODE) == 2) {
                 Thread t = new Thread(() -> {
                     logger.info("Start cdc asynchronously: checking cdcDb");
                     SystemDbHelper.checkOrCreateCdcDb(MetaDbDataSource.getInstance());
                     logger.info("Start cdc asynchronously: initialize cdc");
-                    CdcManagerHelper.getInstance().initialize();
+                    CdcManagerHelper.getInstance().initialize(systemConfig.getServerPort());
                 });
                 t.start();
             } else {
@@ -859,7 +974,7 @@ public class CobarServer extends AbstractLifecycle implements Lifecycle {
             }
 
         }
-        MetaDbLogUtil.START_UP_LOG.info(logInfoSb.toString());
+        MetaDbLogUtil.START_UP_LOG.warn(logInfoSb.toString());
     }
 
     public int getConnectionCount() {

@@ -1,0 +1,83 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+use polardbx;
+drop database if exists test_omc30_rb_thr_db;
+create database if not exists test_omc30_rb_thr_db mode='auto' default character set utf8mb4 default collate utf8mb4_bin;
+use test_omc30_rb_thr_db;
+
+## case1 (TC-C): auto mode - expired ratio below threshold, stays with row-delete
+## 2 expired rows out of 10 total, threshold set to 80 -> no rebuild
+drop table if exists rb_thr_low_t1;
+create table rb_thr_low_t1(
+  a int not null,
+  b datetime not null,
+  c varchar(32),
+  primary key(a)
+) default character set utf8mb4 default collate utf8mb4_bin
+partition by hash(a) partitions 4;
+
+alter table rb_thr_low_t1 modify ttl set
+  TTL_ENABLE='on',
+  TTL_CLEANUP='on',
+  TTL_EXPR=`b` expire after 1 day timezone '+08:00';
+
+insert into rb_thr_low_t1 values(1, '2020-01-01 00:00:00', 'expired1');
+insert into rb_thr_low_t1 values(2, '2020-01-02 00:00:00', 'expired2');
+insert into rb_thr_low_t1 values(3, '2030-01-01 00:00:00', 'valid1');
+insert into rb_thr_low_t1 values(4, '2030-01-02 00:00:00', 'valid2');
+insert into rb_thr_low_t1 values(5, '2030-01-03 00:00:00', 'valid3');
+insert into rb_thr_low_t1 values(6, '2030-01-04 00:00:00', 'valid4');
+insert into rb_thr_low_t1 values(7, '2030-01-05 00:00:00', 'valid5');
+insert into rb_thr_low_t1 values(8, '2030-01-06 00:00:00', 'valid6');
+insert into rb_thr_low_t1 values(9, '2030-01-07 00:00:00', 'valid7');
+insert into rb_thr_low_t1 values(10, '2030-01-08 00:00:00', 'valid8');
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-01-01 00:00:00';
+## auto mode: enable rebuild policy but high threshold=80 min_row=0 low-ratio so row-delete path is taken
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=true,TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY=0,TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY=80)*/alter table rb_thr_low_t1 cleanup expired data;
+
+## verify: expired rows removed, valid rows remain
+select a, c from rb_thr_low_t1 order by a;
+
+drop table if exists rb_thr_low_t1;
+
+## case2 (TC-D): auto mode - expired ratio above threshold, auto-switch to rebuild policy
+## 8 expired rows out of 10 total, threshold set to 30 -> rebuild
+drop table if exists rb_thr_high_t1;
+create table rb_thr_high_t1(
+  a int not null,
+  b datetime not null,
+  c varchar(32),
+  primary key(a)
+) default character set utf8mb4 default collate utf8mb4_bin
+partition by hash(a) partitions 4;
+
+alter table rb_thr_high_t1 modify ttl set
+  TTL_ENABLE='on',
+  TTL_CLEANUP='on',
+  TTL_EXPR=`b` expire after 1 day timezone '+08:00';
+
+insert into rb_thr_high_t1 values(1, '2020-01-01 00:00:00', 'expired1');
+insert into rb_thr_high_t1 values(2, '2020-01-02 00:00:00', 'expired2');
+insert into rb_thr_high_t1 values(3, '2020-01-03 00:00:00', 'expired3');
+insert into rb_thr_high_t1 values(4, '2020-01-04 00:00:00', 'expired4');
+insert into rb_thr_high_t1 values(5, '2020-01-05 00:00:00', 'expired5');
+insert into rb_thr_high_t1 values(6, '2020-01-06 00:00:00', 'expired6');
+insert into rb_thr_high_t1 values(7, '2020-01-07 00:00:00', 'expired7');
+insert into rb_thr_high_t1 values(8, '2020-01-08 00:00:00', 'expired8');
+insert into rb_thr_high_t1 values(9, '2030-01-01 00:00:00', 'valid1');
+insert into rb_thr_high_t1 values(10, '2030-01-02 00:00:00', 'valid2');
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-01-01 00:00:00';
+## auto mode: enable rebuild policy low threshold=30 min_row=0 high-ratio so rebuild path is taken
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=true,TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY=0,TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY=30)*/alter table rb_thr_high_t1 cleanup expired data;
+
+## verify: only valid rows remain (rebuild policy cleaned up expired rows)
+select a, c from rb_thr_high_t1 order by a;
+
+drop table if exists rb_thr_high_t1;
+
+use polardbx;
+drop database if exists test_omc30_rb_thr_db;
+use polardbx;

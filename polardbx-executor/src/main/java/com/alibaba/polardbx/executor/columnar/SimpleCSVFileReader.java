@@ -17,7 +17,10 @@
 package com.alibaba.polardbx.executor.columnar;
 
 import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.oss.filesystem.InputStreamWithBackup;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.common.utils.logger.Logger;
+import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.archive.columns.ColumnProvider;
 import com.alibaba.polardbx.executor.archive.columns.ColumnProviders;
 import com.alibaba.polardbx.executor.chunk.Block;
@@ -28,6 +31,9 @@ import com.alibaba.polardbx.gms.engine.FileSystemUtils;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
+import com.alibaba.polardbx.rpc.ColumnarDeltaRpcClient;
+import com.alibaba.polardbx.rpc.ColumnarDeltaStream;
+import com.alibaba.polardbx.rpc.columnar.ColumnarDeltaRequest;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.ByteArrayInputStream;
@@ -38,9 +44,12 @@ import java.util.stream.Collectors;
 
 /**
  * Simple implementation of csv file reader.
- * It will load all .csv file bytes into memory, and parse bytes into blocks line by line.
+ * Try to load csv file from RPC stream first.
+ * If failed, load from file system.
  */
 public class SimpleCSVFileReader implements CSVFileReader {
+    private static final Logger logger = LoggerFactory.getLogger(SimpleCSVFileReader.class);
+
     private int fieldNum;
     private InputStream inputStream;
     private List<ColumnProvider> columnProviders;
@@ -50,6 +59,11 @@ public class SimpleCSVFileReader implements CSVFileReader {
     private int chunkLimit;
     private int offset;
     private int length;
+    // Track statistics
+    private final CSVFileStatistics statistics = CSVFileStatistics.getInstance();
+    private boolean isColumnarAccess;
+    // Track if fallback occurred for columnar access
+    private InputStreamWithBackup statisticsInputStreamWithBackup;
 
     @Override
     public void open(ExecutionContext context,
@@ -59,15 +73,62 @@ public class SimpleCSVFileReader implements CSVFileReader {
                      String csvFileName,
                      int offset,
                      int length) throws IOException {
+        open(context, columnMetas, chunkLimit, engine, csvFileName, offset, length, false);
+    }
+
+    public void open(ExecutionContext context,
+                     List<ColumnMeta> columnMetas,
+                     int chunkLimit,
+                     Engine engine,
+                     String csvFileName,
+                     int offset,
+                     int length,
+                     boolean loadFromColumnar) throws IOException {
         this.chunkLimit = chunkLimit;
         this.context = context;
         this.fieldNum = columnMetas.size();
-
-        byte[] buffer = new byte[length];
-        FileSystemUtils.readFile(csvFileName, offset, length, buffer, engine, true);
         this.length = length;
+        this.isColumnarAccess = loadFromColumnar;
 
-        this.inputStream = new ByteArrayInputStream(buffer);
+        if (loadFromColumnar) {
+            try {
+                ColumnarDeltaStream deltaStream = new ColumnarDeltaStream(
+                    ColumnarDeltaRpcClient.getInstance(),
+                    ColumnarDeltaRequest.newBuilder()
+                        .setFileName(csvFileName)
+                        .setOffset(offset)
+                        .setLength(length)
+                        .build(),
+                    context.getTraceId()
+                );
+                // Create a statistics-aware InputStreamWithBackup
+                this.statisticsInputStreamWithBackup = new InputStreamWithBackup(
+                    deltaStream,
+                    (bytesRead) -> {
+                        // Record columnar statistics when fallback occurs
+                        long columnarReadTimeMs = statisticsInputStreamWithBackup.getIOTimeFromColumnarMs();
+                        statistics.recordReadOperation(bytesRead, true, columnarReadTimeMs);
+                        // Reset start time for file system read
+                        // Set fallback occurred flag
+                        if (statisticsInputStreamWithBackup != null) {
+                            statisticsInputStreamWithBackup.setFallbackOccurred();
+                        }
+                        return readFromFileSystem(engine, csvFileName, offset + bytesRead, length - bytesRead);
+                    },
+                    csvFileName
+                );
+                this.inputStream = this.statisticsInputStreamWithBackup;
+            } catch (Throwable t) {
+                if (inputStream != null) {
+                    inputStream.close();
+                }
+                logger.error("load failed from columnar rpc, fallback to OSS", t);
+                this.inputStream = readFromFileSystem(engine, csvFileName, offset, length);
+                this.isColumnarAccess = false; // Fallback to file system
+            }
+        } else {
+            this.inputStream = readFromFileSystem(engine, csvFileName, offset, length);
+        }
         this.columnProviders = columnMetas.stream()
             .map(ColumnProviders::getProvider).collect(Collectors.toList());
         this.columnMetas = columnMetas;
@@ -77,6 +138,22 @@ public class SimpleCSVFileReader implements CSVFileReader {
         int[] reusableOffsets = new int[fieldNum];
 
         this.rowReader = new ByteCSVReader(csvFileName, inputStream, this.length, reusableNulls, reusableOffsets);
+    }
+
+    private InputStream readFromFileSystem(Engine engine, String csvFileName, int offset, int length) {
+        long startTime = System.currentTimeMillis();
+        try {
+            byte[] buffer = new byte[length];
+            FileSystemUtils.readFile(csvFileName, offset, length, buffer, engine, true);
+            long endTime = System.currentTimeMillis();
+            // Record file system statistics
+            statistics.recordReadOperation(length, false, endTime - startTime);
+            return new ByteArrayInputStream(buffer);
+        } catch (Exception e) {
+            long endTime = System.currentTimeMillis();
+            statistics.recordReadOperation(0, false, endTime - startTime);
+            throw e;
+        }
     }
 
     @Override
@@ -147,6 +224,17 @@ public class SimpleCSVFileReader implements CSVFileReader {
     public void close() throws IOException {
         if (inputStream != null) {
             inputStream.close();
+        }
+
+        // Record statistics when closing the reader (only for non-fallback cases)
+        if (isColumnarAccess && inputStream instanceof InputStreamWithBackup) {
+            InputStreamWithBackup statisticsInputStreamWithBackup = (InputStreamWithBackup) inputStream;
+            if (statisticsInputStreamWithBackup.isFallbackOccurred()) {
+                return;
+            }
+            long bytesRead = statisticsInputStreamWithBackup.getBytesRead();
+            long readTimeMs = statisticsInputStreamWithBackup.getIOTimeFromColumnarMs();
+            statistics.recordReadOperation(bytesRead, isColumnarAccess, readTimeMs);
         }
     }
 

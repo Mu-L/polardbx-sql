@@ -79,6 +79,11 @@ public class SQLIndexDefinition extends SQLObjectImpl implements SQLIndex {
      */
     private final Map<String, String> columnarOptions = new HashMap<>();
 
+    // for columnar
+    private SQLName dbName;
+    private boolean in;
+    private boolean defaultCci;
+
     public Map<String, String> getColumnarOptions() {
         return columnarOptions;
     }
@@ -152,6 +157,30 @@ public class SQLIndexDefinition extends SQLObjectImpl implements SQLIndex {
 
     public void setColumnar(boolean columnar) {
         this.columnar = columnar;
+    }
+
+    public SQLName getDbName() {
+        return dbName;
+    }
+
+    public void setDbName(SQLName dbName) {
+        this.dbName = dbName;
+    }
+
+    public boolean isIn() {
+        return in;
+    }
+
+    public void setIn(boolean in) {
+        this.in = in;
+    }
+
+    public boolean isDefaultCci() {
+        return defaultCci;
+    }
+
+    public void setDefaultCci(boolean defaultCci) {
+        this.defaultCci = defaultCci;
     }
 
     public String getType() {
@@ -414,6 +443,8 @@ public class SQLIndexDefinition extends SQLObjectImpl implements SQLIndex {
         definition.key = key;
         definition.visible = visible;
         definition.columnar = columnar;
+        definition.dbName = dbName;
+        definition.in = in;
         if (name != null) {
             definition.name = name.clone();
             definition.name.setParent(parent);
@@ -560,6 +591,46 @@ public class SQLIndexDefinition extends SQLObjectImpl implements SQLIndex {
         }
 
         return expr.toString();
+    }
+
+    public String getDistance() {
+        SQLExpr expr = getOption(FnvHash.Constants.DISTANCE);
+        if (expr == null) {
+            return null;
+        }
+
+        return expr.toString();
+    }
+
+    /**
+     * Get the M parameter for HNSW vector index.
+     * M is the max number of connections per node in the HNSW graph.
+     */
+    public Integer getM() {
+        SQLExpr expr = getOption(FnvHash.Constants.M);
+        if (expr == null) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(expr.toString());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Get the EF_CONSTRUCTION parameter for an HNSW vector index.
+     */
+    public Integer getEfConstruction() {
+        SQLExpr expr = getOption(FnvHash.Constants.EF_CONSTRUCTION);
+        if (expr == null) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(expr.toString());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     public String getAlgorithm() {

@@ -55,7 +55,7 @@ public class ReimportTableJobFactory extends CreatePartitionTableJobFactory {
                 physicalPlanData.getTablesExtRecord(), physicalPlanData.isPartitioned(),
                 physicalPlanData.isIfNotExists(), physicalPlanData.getKind(), addedForeignKeys,
                 hasTimestampColumnDefault,
-                specialDefaultValues, specialDefaultValueFlags);
+                specialDefaultValues, specialDefaultValueFlags, -1);
 
         TableSyncTask tableSyncTask = new TableSyncTask(schemaName, logicalTableName);
 

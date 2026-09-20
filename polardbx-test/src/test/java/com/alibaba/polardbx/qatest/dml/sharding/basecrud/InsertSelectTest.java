@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.qatest.dml.sharding.basecrud;
 
 import com.alibaba.polardbx.qatest.CrudBasedLockTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.data.ExecuteTableName;
 import com.alibaba.polardbx.qatest.entity.ColumnEntity;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
@@ -389,6 +390,7 @@ public class InsertSelectTest extends CrudBasedLockTestCase {
     /**
      * @since 5.1.25-SNAPSHOT
      */
+    @IcbcIgnore(ignoreReason = "SQL_MODE=ONLY_FULL_GROUP_BY")
     @Test
     public void insertSelectWithGroupByTest() {
 

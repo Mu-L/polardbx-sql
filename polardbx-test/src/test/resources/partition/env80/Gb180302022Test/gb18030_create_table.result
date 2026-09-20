@@ -1,0 +1,54 @@
+CREATE PARTITION TABLE `test_sk` (
+	`id` int NOT NULL AUTO_INCREMENT,
+	`c1` varchar(192) DEFAULT NULL,
+	PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = gb18030_2022
+PARTITION BY KEY (`c1`) PARTITIONS 3
+SHOW FULL CREATE TABLE `test_sk`
+Table,Create Table
+test_sk,CREATE PARTITION TABLE `test_sk` (
+	`id` int NOT NULL AUTO_INCREMENT,
+	`c1` varchar(192) DEFAULT NULL,
+	PRIMARY KEY (`id`),
+	LOCAL KEY `auto_shard_key_c1` USING BTREE (`c1`(191))
+) ENGINE = InnoDB DEFAULT CHARSET = gb18030_2022
+PARTITION BY KEY(`c1`)
+PARTITIONS 3
+/* tablegroup = `tg` */
+INSERT INTO `test_sk` (`c1`)
+VALUES ('𬺰𬺱'),
+	('𬺲𬺳𬺴𬺵𬺶𬺷𬺸𬺹𬺺𬺻'),
+	('𬺼𬺽𬺾𬺿𬻀𬻁𬻂𬻃𬻄𬻅'),
+	('𬻆𬻇𬻈𬻉𬻊𬻋𬻌𬻍𬻎𬻏')
+SELECT `c1`
+FROM `test_sk`
+ORDER BY `c1`
+c1
+𬺰𬺱
+𬺲𬺳𬺴𬺵𬺶𬺷𬺸𬺹𬺺𬺻
+𬺼𬺽𬺾𬺿𬻀𬻁𬻂𬻃𬻄𬻅
+𬻆𬻇𬻈𬻉𬻊𬻋𬻌𬻍𬻎𬻏
+SELECT `c1`
+FROM `test_sk`
+WHERE `c1` = '𬺰𬺱'
+c1
+𬺰𬺱
+CREATE TABLE `test_sk_2` (
+	`id` int NOT NULL AUTO_INCREMENT,
+	`c1` varchar(192) CHARACTER SET gb18030_2022 DEFAULT NULL,
+	PRIMARY KEY (`id`)
+) DEFAULT CHARSET = gb18030_2022
+PARTITION BY KEY (`c1`) PARTITION NUM 3
+SHOW FULL CREATE TABLE `test_sk_2`
+Table,Create Table
+test_sk_2,CREATE TABLE `test_sk_2` (
+	`id` int NOT NULL AUTO_INCREMENT,
+	`c1` varchar(192) CHARACTER SET gb18030_2022 COLLATE gb18030_2022_chinese_ci DEFAULT NULL,
+	PRIMARY KEY (`id`),
+	LOCAL KEY `auto_shard_key_c1` USING BTREE (`c1`(191))
+) ENGINE = InnoDB DEFAULT CHARSET = gb18030_2022
+PARTITION BY KEY(`c1`)
+PARTITIONS 3
+/* tablegroup = `tg` */
+DROP TABLE `test_sk`
+DROP TABLE `test_sk_2`;

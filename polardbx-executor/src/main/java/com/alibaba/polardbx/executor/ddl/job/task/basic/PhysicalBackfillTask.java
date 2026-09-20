@@ -16,15 +16,17 @@
 
 package com.alibaba.polardbx.executor.ddl.job.task.basic;
 
+import com.alibaba.fastjson.annotation.JSONCreator;
 import com.alibaba.polardbx.common.ddl.newengine.DdlTaskState;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.utils.AddressUtils;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.backfill.BatchConsumer;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
-import com.alibaba.polardbx.executor.ddl.job.task.RemoteExecutableDdlTask;
+import com.alibaba.polardbx.executor.ddl.job.task.RemoteExecutableDdlRebalanceTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.ddl.newengine.cross.CrossEngineValidator;
 import com.alibaba.polardbx.executor.ddl.newengine.resource.DdlEngineResources;
@@ -33,9 +35,14 @@ import com.alibaba.polardbx.executor.ddl.workqueue.PriorityFIFOTask;
 import com.alibaba.polardbx.executor.physicalbackfill.PhysicalBackfillManager;
 import com.alibaba.polardbx.executor.physicalbackfill.PhysicalBackfillUtils;
 import com.alibaba.polardbx.executor.physicalbackfill.physicalBackfillLoader;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
+import com.alibaba.polardbx.gms.metadb.misc.RollbackTaskConfigAccessor;
+import com.alibaba.polardbx.gms.metadb.misc.RollbackTaskConfigRecord;
 import com.alibaba.polardbx.gms.partition.PhysicalBackfillDetailInfoFieldJSON;
 import com.alibaba.polardbx.gms.topology.DbGroupInfoRecord;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
+import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ScaleOutPlanUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -48,6 +55,8 @@ import io.airlift.slice.DataSize;
 import lombok.Getter;
 import org.apache.commons.lang3.StringUtils;
 
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -55,10 +64,9 @@ import java.util.BitSet;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -78,11 +86,13 @@ import static com.alibaba.polardbx.executor.ddl.newengine.utils.DdlResourceManag
  */
 @Getter
 @TaskName(name = "PhysicalBackfillTask")
-public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutableDdlTask {
+public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutableDdlRebalanceTask {
 
+    public final static String TASK_NAME = "PhysicalBackfillTask";
     private final String schemaName;
     private final String logicalTableName;
-    private final Long backfillId;// use the taskId of CloneTableDataFileTask
+    // use the taskId of CloneTableDataFileTask
+    private final Long backfillId;
     private final long batchSize;
     private final long dataSize;
 
@@ -98,13 +108,17 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
     private final boolean encrypted;
 
     //don't serialize those parameters
-    private transient long lastUpdateTime = 0l;
+    private transient long lastUpdateTime = 0L;
     private transient Object lock = new Object();
     private transient volatile long curSpeedLimit;
     private transient PhysicalBackfillManager backfillManager;
+    private int injectFailTime;
+    private int execTime;
+    private boolean raiseException;
 
     //todo broadcast table 1对N(新DN) N对M M=N*k k=副本数
     //type 不能是REFRESH_TOPOLOGY 需要是move table
+    @JSONCreator
     public PhysicalBackfillTask(String schemaName,
                                 Long backfillId,
                                 String logicalTableName,
@@ -118,7 +132,10 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
                                 long parallelism,
                                 long minUpdateBatch,
                                 boolean waitLsn,
-                                boolean encrypted) {
+                                boolean encrypted,
+                                int injectFailTime,
+                                int execTime,
+                                boolean raiseException) {
         super(schemaName);
         this.schemaName = schemaName;
         this.backfillId = backfillId;
@@ -135,8 +152,13 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
         this.waitLsn = waitLsn;
         this.encrypted = encrypted;
 
-        this.curSpeedLimit = OptimizerContext.getContext(schemaName).getParamManager()
-            .getLong(ConnectionParams.PHYSICAL_BACKFILL_SPEED_LIMIT);
+        OptimizerContext optimizerContext = OptimizerContext.getContext(schemaName);
+        if (optimizerContext != null) {
+            this.curSpeedLimit = optimizerContext.getParamManager()
+                .getLong(ConnectionParams.PHYSICAL_BACKFILL_SPEED_LIMIT);
+        } else {
+            this.curSpeedLimit = 250 * 1024 * 1024L;
+        }
         this.newPartitionDb = DbInfoManager.getInstance().isNewPartitionDb(schemaName);
         if (!newPartitionDb && sourceTargetGroup == null) {
             throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
@@ -144,6 +166,28 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
         }
         this.setResourceAcquired(buildResourceRequired(sourceTargetDnId, dataSize));
         backfillManager = new PhysicalBackfillManager(schemaName);
+        this.injectFailTime = injectFailTime;
+        this.execTime = execTime;
+        this.raiseException = raiseException;
+    }
+
+    public PhysicalBackfillTask(String schemaName,
+                                Long backfillId,
+                                String logicalTableName,
+                                String physicalTableName,
+                                List<String> phyPartitionNames,
+                                Pair<String, String> sourceTargetGroup,
+                                Pair<String, String> sourceTargetDnId,
+                                Map<String, Pair<String, String>> storageInstAndUserInfos,
+                                long batchSize,
+                                long dataSize,
+                                long parallelism,
+                                long minUpdateBatch,
+                                boolean waitLsn,
+                                boolean encrypted) {
+        this(schemaName, backfillId, logicalTableName, physicalTableName, phyPartitionNames, sourceTargetGroup,
+            sourceTargetDnId, storageInstAndUserInfos, batchSize, dataSize, parallelism, minUpdateBatch, waitLsn,
+            encrypted, 0, 1, true);
     }
 
     DdlEngineResources buildResourceRequired(Pair<String, String> sourceTargetDnId, long dataSize) {
@@ -176,7 +220,13 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
     }
 
     public void executeImpl(ExecutionContext ec) {
+        FailPoint.injectRandomExceptionFromHint(FailPointKey.FP_PHYSICAL_BACKFILL_TASK_RANDOM_FAIL, ec);
+        FailPoint.injectRandomSuspendFromHint(ec);
+        FailPoint.injectSuspendFromHint(FailPointKey.FP_PHYSICAL_BACKFILL_TASK_SUSPEND, ec);
         physicalBackfillLoader loader = new physicalBackfillLoader(schemaName, logicalTableName);
+        String msg = String.format("exec PhysicalBackfillTask attempt = %d ", execTime);
+        execTime++;
+        SQLRecorderLogger.ddlLogger.info(msg);
 
         doExtract(ec, new BatchConsumer() {
             @Override
@@ -209,20 +259,44 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
 
             PhysicalBackfillManager.BackfillBean physicalBackfillRecord =
                 backfillManager.loadBackfillMeta(backfillId, schemaName,
-                        srcDbGroupInfoRecord.phyDbName.toLowerCase(), physicalTableName,
-                        GeneralUtil.isEmpty(phyPartitionNames) ? "" : phyPartitionNames.get(0));
+                    srcDbGroupInfoRecord.phyDbName.toLowerCase(), physicalTableName,
+                    GeneralUtil.isEmpty(phyPartitionNames) ? "" : phyPartitionNames.get(0));
 
             PhysicalBackfillDetailInfoFieldJSON detailInfoFieldJSON = physicalBackfillRecord.backfillObject.detailInfo;
             final String targetStorageId = sourceTargetDnId.getValue();
             Pair<String, String> userAndPasswd = storageInstAndUserInfos.get(targetStorageId);
             boolean healthyCheck =
                 ec.getParamManager().getBoolean(ConnectionParams.PHYSICAL_BACKFILL_STORAGE_HEALTHY_CHECK);
-            for (Pair<String, Integer> targetHost : detailInfoFieldJSON.getTargetHostAndPorts()) {
+
+            List<Pair<String, Integer>> targetHostsIpAndPort = detailInfoFieldJSON.getTargetHostAndPorts();
+            try (Connection conn = MetaDbUtil.getConnection()) {
+                RollbackTaskConfigAccessor accessor = new RollbackTaskConfigAccessor();
+                accessor.setConnection(conn);
+                List<RollbackTaskConfigRecord> records =
+                    accessor.queryByJobIdAndType(getRootJobId(), RollbackTaskConfigRecord.DN_REBUILT);
+                if (GeneralUtil.isNotEmpty(records)) {
+                    for (RollbackTaskConfigRecord record : records) {
+                        Pair<String, Integer> oldHostInfo = AddressUtils.getIpPortPairByAddrStr(record.getOld_value());
+                        Pair<String, Integer> newHostInfo = AddressUtils.getIpPortPairByAddrStr(record.getNew_value());
+                        ListIterator<Pair<String, Integer>> iterator = targetHostsIpAndPort.listIterator();
+                        while (iterator.hasNext()) {
+                            Pair<String, Integer> p = iterator.next();
+                            if (oldHostInfo.equals(p)) {
+                                iterator.set(newHostInfo);
+                            }
+                        }
+                    }
+                }
+            } catch (SQLException e) {
+                SQLRecorderLogger.ddlLogger.info(e.getMessage());
+            }
+
+            for (Pair<String, Integer> targetHost : targetHostsIpAndPort) {
                 ignore = false;
                 try (
-                    XConnection conn = (XConnection) (PhysicalBackfillUtils.getXConnectionForStorage(
+                    XConnection conn = (XConnection) (PhysicalBackfillUtils.getXConnectionForStorage(getRootJobId(),
                         tarDbGroupInfoRecord.phyDbName.toLowerCase(), targetHost.getKey(),
-                            targetHost.getValue(), userAndPasswd.getKey(), userAndPasswd.getValue(),
+                        targetHost.getValue(), userAndPasswd.getKey(), userAndPasswd.getValue(),
                         -1))) {
                     try {
                         //disable sql_lon_bin
@@ -247,7 +321,7 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
                         conn.setSessionVariables(variables);
                     }
                 } catch (Exception ex) {
-                    if (ex != null && ex.toString() != null && ex.toString().indexOf("connect fail") != -1) {
+                    if (ex.toString() != null && ex.toString().contains("connect fail")) {
                         List<Pair<String, Integer>> hostsIpAndPort =
                             PhysicalBackfillUtils.getMySQLServerNodeIpAndPorts(targetStorageId, healthyCheck);
                         Optional<Pair<String, Integer>> targetHostOpt =
@@ -263,14 +337,14 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
             }
         } catch (Exception ex) {
             SQLRecorderLogger.ddlLogger.info(
-                "drop physical table error:" + ex == null ? "" : ex.toString() + " ignore=" + ignore);
+                "drop physical table error:" + ((ex.toString() == null) ? "" : ex.toString()) + " ignore=" + ignore);
             if (ignore) {
             } else {
                 throw new TddlRuntimeException(ErrorCode.ERR_SCALEOUT_EXECUTE, ex, "drop physical table error");
             }
         }
 
-        PhysicalBackfillUtils.rollbackCopyIbd(backfillId, schemaName, logicalTableName, 2, ec);
+        PhysicalBackfillUtils.rollbackCopyIbd(getRootJobId(), backfillId, schemaName, logicalTableName, 2, ec);
     }
 
     @Override
@@ -279,7 +353,7 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
             SQLRecorderLogger.ddlLogger.info("begin wait lsn when rollback PhysicalBackfillTask");
             Map<String, String> targetGroupAndStorageIdMap = new HashMap<>();
             targetGroupAndStorageIdMap.put(sourceTargetGroup.getValue(), sourceTargetDnId.getValue());
-            PhysicalBackfillUtils.waitLsn(schemaName, targetGroupAndStorageIdMap, true, ec);
+            PhysicalBackfillUtils.waitLsn(getRootJobId(), schemaName, targetGroupAndStorageIdMap, true, ec);
             SQLRecorderLogger.ddlLogger.info("finish wait lsn when rollback PhysicalBackfillTask");
         }
         rollbackImpl(ec);
@@ -356,7 +430,8 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
         targetFileAndDir =
             Pair.of(initBean.backfillObject.targetFileName, initBean.backfillObject.targetDirName);
         //update the offsetAndSize
-        PhysicalBackfillUtils.getTempIbdFileInfo(srcUserInfo, sourceHost, srcDbAndGroup, physicalTableName,
+        PhysicalBackfillUtils.getTempIbdFileInfo(getRootJobId(), srcUserInfo, sourceHost, srcDbAndGroup,
+            physicalTableName,
             phyPartName, srcFileAndDir, batchSize,
             true, offsetAndSize);
 
@@ -382,38 +457,32 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
 
         // copy the .cfg/.cfp file before .ibd file
 
-        copyCfgFile(srcFileAndDir, srcDbAndGroup, sourceHostIpAndPort,
-            targetFileAndDir, targetDbAndGroup, targetHost, consumer, !initBean.isEmpty(), ec);
-
+        boolean firstInit = false;
         if (bitSetPosMark == null || bitSetPosMark.length == 0) {
             bitSet = new BitSet(offsetAndSize.size());
+            copyCfgFile(srcFileAndDir, srcDbAndGroup, sourceHostIpAndPort,
+                targetFileAndDir, targetDbAndGroup, targetHost, consumer, !initBean.isEmpty(), ec);
+            firstInit = true;
         } else {
             bitSet = BitSet.valueOf(bitSetPosMark);
         }
 
-        long fileSize = 0l;
+        long fileSize = 0L;
         if (offsetAndSize.size() > 0) {
             Pair<Long, Long> lastBatch = offsetAndSize.get(offsetAndSize.size() - 1);
             fileSize = lastBatch.getKey() + lastBatch.getValue();
         }
-        fallocateIbdFile(ec, targetFileAndDir, targetDbAndGroup, targetHost, physicalTableName, "", fileSize);
-
-        // Use a bounded blocking queue to control the parallelism.
-        BlockingQueue<Object> blockingQueue = new ArrayBlockingQueue<>((int) parallelism);
-
+        if (firstInit) {
+            fallocateIbdFile(ec, targetFileAndDir, targetDbAndGroup, targetHost, physicalTableName, "", fileSize);
+        }
         AtomicInteger startPos = new AtomicInteger(0);
 
         for (int i = 0; i < parallelism; i++) {
             FutureTask<Void> task = new FutureTask<>(() -> {
-                try {
-                    doWork(srcDbAndGroup, targetDbAndGroup, tempFileAndDir,
-                        targetFileAndDir, offsetAndSize, startPos, bitSet, batchSize, successBatch,
-                        minUpdateBatch, phyPartName,
-                        sourceHostIpAndPort, targetHost, consumer, ec, interrupted, excep);
-                } finally {
-                    // Poll in finally to prevent dead lock on putting blockingQueue.
-                    blockingQueue.poll();
-                }
+                doWork(srcDbAndGroup, targetDbAndGroup, tempFileAndDir,
+                    targetFileAndDir, offsetAndSize, startPos, bitSet, batchSize, successBatch,
+                    minUpdateBatch, phyPartName,
+                    sourceHostIpAndPort, targetHost, consumer, ec, interrupted, excep);
                 return null;
             });
             futures.add(task);
@@ -451,6 +520,7 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
                 interrupted.set(true);
             }
         }
+
         PhysicalBackfillManager.BackfillBean bfb =
             backfillManager.loadBackfillMeta(backfillId, schemaName, srcDbAndGroup.getKey(), physicalTableName,
                 phyPartName);
@@ -472,6 +542,15 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
             backfillManager.updateBackfillObject(ImmutableList.of(bor));
             throw GeneralUtil.nestedException(excep.get());
         }
+        int maxInjectFailTime = ec.getParamManager().getInt(ConnectionParams.PHYSICAL_BACKFILL_TASK_INJECT_FAIL_TIME);
+        //only inject once
+        if (maxInjectFailTime > 0 && raiseException) {
+            injectFailTime++;
+            raiseException = false;
+            msg = String.format("INJECTION_FAIL: simulated failure, attempt = %d ", injectFailTime);
+            SQLRecorderLogger.ddlLogger.error(msg);
+            throw new RuntimeException(msg);
+        }
         bfb.backfillObject.detailInfo.setBitSet(null);
         bfb.backfillObject.detailInfo.setMsg("");
         bor.setStatus((int) PhysicalBackfillManager.BackfillStatus.SUCCESS.getValue());
@@ -480,7 +559,7 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
 
         Pair<String, Integer> ipPortPair = bfb.backfillObject.detailInfo.getSourceHostAndPort();
 
-        PhysicalBackfillUtils.deleteInnodbDataFiles(schemaName, ipPortPair,
+        PhysicalBackfillUtils.deleteInnodbDataFiles(getRootJobId(), schemaName, ipPortPair,
             tempFileAndDir.getValue(), srcDbAndGroup.getValue(), srcDbAndGroup.getKey(), false, ec);
 
         // After all physical table finished
@@ -558,7 +637,7 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
                         }
                         try (
                             XConnection conn = (XConnection) (PhysicalBackfillUtils.getXConnectionForStorage(
-                                srcDbAndGroup.getKey(),
+                                getRootJobId(), srcDbAndGroup.getKey(),
                                 sourceHost.getKey(), sourceHost.getValue(), srcUserInfo.getKey(),
                                 srcUserInfo.getValue(),
                                 -1))) {
@@ -636,6 +715,16 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
                                     + df.format(PhysicalBackfillUtils.getRateLimiter().getRate() / 1024) + "KB/s";
                             SQLRecorderLogger.ddlLogger.info(msg);
                             lastUpdateTime = System.currentTimeMillis();
+                            int maxInjectFailTime =
+                                ec.getParamManager().getInt(ConnectionParams.PHYSICAL_BACKFILL_TASK_INJECT_FAIL_TIME);
+                            if (injectFailTime < maxInjectFailTime) {
+                                injectFailTime++;
+                                msg = String.format(
+                                    "INJECTION_FAIL: simulated failure after curSuccessBatch=%d, attempt = %d ",
+                                    curSuccessBatch, injectFailTime);
+                                SQLRecorderLogger.ddlLogger.error(msg);
+                                throw new RuntimeException(msg);
+                            }
                         }
                     }
                 }
@@ -658,7 +747,7 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
             do {
                 PhysicalBackfillUtils.checkInterrupted(ec, null);
                 try (XConnection conn = (XConnection) (PhysicalBackfillUtils.getXConnectionForStorage(
-                    tarDbAndGroup.getKey(),
+                    getRootJobId(), tarDbAndGroup.getKey(),
                     targetHost.getKey(), targetHost.getValue(), userInfo.getKey(), userInfo.getValue(), -1))) {
                     PolarxPhysicalBackfill.FileManageOperator.Builder builder =
                         PolarxPhysicalBackfill.FileManageOperator.newBuilder();
@@ -734,7 +823,8 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
 
         for (Pair<String, Integer> pair : GeneralUtil.emptyIfNull(
             targetHosts)) {
-            PhysicalBackfillUtils.deleteInnodbDataFile(schemaName, tarDbAndGroup.getValue(), tarDbAndGroup.getKey(),
+            PhysicalBackfillUtils.deleteInnodbDataFile(getRootJobId(), schemaName, tarDbAndGroup.getValue(),
+                tarDbAndGroup.getKey(),
                 pair.getKey(), pair.getValue(), targetDataFileAndDir.getValue(), true, ec);
         }
         PolarxPhysicalBackfill.TransferFileDataOperator transferFileData = null;
@@ -743,13 +833,13 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
         Pair<String, String> tarUserInfo = storageInstAndUserInfos.get(sourceTargetDnId.getValue());
 
         for (Pair<String, String> srcTarDir : srcTargetFilePair) {
-            long offset = 0l;
+            long offset = 0L;
             do {
                 boolean success = false;
                 int tryTime = 0;
                 do {
                     try (XConnection conn = (XConnection) (PhysicalBackfillUtils.getXConnectionForStorage(
-                        srcDbAndGroup.getKey(),
+                        getRootJobId(), srcDbAndGroup.getKey(),
                         sourceHostIpAndPort.getKey(), sourceHostIpAndPort.getValue(), srcUserInfo.getKey(),
                         srcUserInfo.getValue(), -1))) {
 
@@ -787,8 +877,8 @@ public class PhysicalBackfillTask extends BaseDdlTask implements RemoteExecutabl
         }
     }
 
-   @Override
-    public List<String> explainInfo() {
+    @Override
+    public List<String> explainInfo(ExecutionContext ec) {
         String explainInfo = "PHYSICAL_BACKFILL(" + getPhysicalTableName() + ") datasize:" + dataSize;
         List<String> command = new ArrayList<>(1);
         command.add(explainInfo);

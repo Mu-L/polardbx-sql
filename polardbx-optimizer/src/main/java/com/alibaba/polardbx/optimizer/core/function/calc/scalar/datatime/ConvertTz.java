@@ -1,19 +1,3 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.optimizer.core.function.calc.scalar.datatime;
 
 import com.alibaba.polardbx.common.utils.time.MySQLTimeTypeUtil;
@@ -41,13 +25,12 @@ import java.util.TimeZone;
  * zone given by to_tz and returns the resulting value.
  */
 public class ConvertTz extends AbstractScalarFunction {
+    public ConvertTz() {
+    }
+
     public ConvertTz(List<DataType> operandTypes, DataType resultType) {
         super(operandTypes, resultType);
     }
-
-    private ZoneId cachedFromZoneId;
-    private ZoneId cachedToZoneId;
-    private TimeZone cachedToTimezone;
 
     @Override
     public Object compute(Object[] args, ExecutionContext ec) {
@@ -57,44 +40,49 @@ public class ConvertTz extends AbstractScalarFunction {
             }
 
         }
-        if (cachedFromZoneId == null || cachedToZoneId == null) {
-            String fromTimezoneId = DataTypes.StringType.convertFrom(args[1]);
-            String toTimezoneId = DataTypes.StringType.convertFrom(args[2]);
 
-            cachedFromZoneId = TimeZoneUtils.zoneIdOf(fromTimezoneId);
-            cachedToZoneId = TimeZoneUtils.zoneIdOf(toTimezoneId);
+        String fromTimezoneId = DataTypes.StringType.convertFrom(args[1]);
+        String toTimezoneId = DataTypes.StringType.convertFrom(args[2]);
 
-            if (cachedFromZoneId == null || cachedToZoneId == null) {
-                return null;
-            }
-            cachedToTimezone = Optional.of(cachedToZoneId)
-                .map(ZoneId::getId)
-                .map(TimeZoneUtils::convertFromMySqlTZ)
-                .map(InternalTimeZone::getTimeZone)
-                .orElse(InternalTimeZone.DEFAULT_TIME_ZONE);
+        ZoneId fromZoneId = TimeZoneUtils.zoneIdOf(fromTimezoneId);
+        ZoneId toZoneId = TimeZoneUtils.zoneIdOf(toTimezoneId);
+
+        if (fromZoneId == null || toZoneId == null) {
+            return null;
         }
-        ZoneId fromTz = cachedFromZoneId;
-        ZoneId toTz = cachedToZoneId;
+        TimeZone toTimeZone = TimeZone.getTimeZone(toTimezoneId);
 
         Object timeObj = args[0];
         MysqlDateTime t =
             DataTypeUtil.toMySQLDatetimeByFlags(timeObj, Types.TIMESTAMP, TimeParserFlags.FLAG_TIME_NO_ZERO_DATE);
 
         // interpret the datetime to From_Timezone.
-        ZonedDateTime zonedDateTime = MySQLTimeTypeUtil.toZonedDatetime(t, fromTz);
+        ZonedDateTime zonedDateTime = MySQLTimeTypeUtil.toZonedDatetime(t, fromZoneId);
         if (zonedDateTime == null) {
             return null;
         }
 
         // convert to To_Timezone
-        zonedDateTime = zonedDateTime.withZoneSameInstant(toTz);
+        zonedDateTime = zonedDateTime.withZoneSameInstant(toZoneId);
         MysqlDateTime ret = MySQLTimeTypeUtil.fromZonedDatetime(zonedDateTime);
 
-        return DataTypeUtil.fromMySQLDatetime(resultType, ret, cachedToTimezone);
+        return DataTypeUtil.fromMySQLDatetime(getReturnType(), ret, toTimeZone);
     }
 
     @Override
     public String[] getFunctionNames() {
         return new String[] {"CONVERT_TZ"};
+    }
+
+    /**
+     * AbstractScalarFunction 仅按 resultType 推导返回类型，而调用方也可能只设置 resultField，
+     * 因此优先取 resultField，避免返回类型为 null 时退化成字符串。
+     */
+    @Override
+    public DataType getReturnType() {
+        if (resultField != null) {
+            return resultField.getDataType();
+        }
+        return super.getReturnType();
     }
 }

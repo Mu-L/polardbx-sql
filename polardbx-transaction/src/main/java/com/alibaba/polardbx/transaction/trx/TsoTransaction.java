@@ -19,6 +19,7 @@ package com.alibaba.polardbx.transaction.trx;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.IConnection;
+import com.alibaba.polardbx.common.jdbc.IDataSource;
 import com.alibaba.polardbx.common.jdbc.ITransactionPolicy;
 import com.alibaba.polardbx.common.jdbc.MasterSlave;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
@@ -29,7 +30,6 @@ import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.group.jdbc.TGroupDirectConnection;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
-import com.alibaba.polardbx.rpc.client.XSession;
 import com.alibaba.polardbx.rpc.pool.XConnection;
 import com.alibaba.polardbx.transaction.TransactionLogger;
 import com.alibaba.polardbx.transaction.TransactionManager;
@@ -38,13 +38,13 @@ import com.alibaba.polardbx.transaction.connection.TransactionConnectionHolder;
 import com.alibaba.polardbx.transaction.jdbc.SavePoint;
 
 import java.sql.Connection;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLIntegrityConstraintViolationException;
 import java.sql.Statement;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static com.alibaba.polardbx.common.exception.code.ErrorCode.ERR_TRANS_COMMIT;
+import static com.alibaba.polardbx.transaction.connection.TransactionConnectionHolder.needReadLsn;
 
 /**
  * TSO Transaction, with global MVCC support
@@ -55,7 +55,7 @@ public class TsoTransaction extends ShareReadViewTransaction implements ITsoTran
 
     private final static String TRX_LOG_PREFIX = "[" + ITransactionPolicy.TransactionClass.TSO + "]";
     protected long commitTimestamp = -1L;
-    private long snapshotTimestamp = -1L;
+    protected long snapshotTimestamp = -1L;
 
     private boolean useExternalSnapshotTimestamp = false;
 
@@ -93,38 +93,40 @@ public class TsoTransaction extends ShareReadViewTransaction implements ITsoTran
     }
 
     @Override
-    public void beginNonParticipant(String group, IConnection conn) throws SQLException {
+    public void beginNonParticipant(String schema, String group, IConnection conn, MasterSlave masterSlave)
+        throws SQLException {
         if (snapshotTimestamp < 0) {
+            long oldTime = stat.getTsoTime;
             snapshotTimestamp = nextTimestamp(t -> stat.getTsoTime += t);
+            long gapTime = stat.getTsoTime - oldTime;
+            if (this.getExecutionContext().getRuntimeStatistics() != null) {
+                this.getExecutionContext().getRuntimeStatistics().addFetchTSOTimecost(gapTime);
+            }
         }
 
-        super.beginNonParticipant(group, conn);
+        super.beginNonParticipant(schema, group, conn, masterSlave);
+        if (needReadLsn(this, schema, masterSlave, getConsistentReplicaRead())) {
+            super.sendLsn(conn, schema, group, masterSlave, () -> snapshotTimestamp);
+        }
         sendSnapshotSeq(conn);
     }
 
     @Override
     public void begin(String schema, String group, IConnection conn) throws SQLException {
         if (snapshotTimestamp < 0) {
+            long oldTime = stat.getTsoTime;
             snapshotTimestamp = nextTimestamp(t -> stat.getTsoTime += t);
-        }
-        String xid = getXid(group, conn);
-        try {
-            final XConnection xConnection;
-            if (conn.isWrapperFor(XConnection.class) &&
-                (xConnection = conn.unwrap(XConnection.class)).supportMessageTimestamp()) {
-                conn.flushUnsent();
-                if (shareReadView) {
-                    xConnection.execUpdate(TURN_ON_TXN_GROUP_SQL, null, true);
-                }
-                xConnection.execUpdate("XA START " + xid, null, true);
-            } else {
-                if (shareReadView) {
-                    conn.executeLater(TURN_ON_TXN_GROUP_SQL);
-                }
-                conn.executeLater("XA START " + xid);
+            long gapTime = stat.getTsoTime - oldTime;
+            if (this.getExecutionContext().getRuntimeStatistics() != null) {
+                this.getExecutionContext().getRuntimeStatistics().addFetchTSOTimecost(gapTime);
             }
+        }
+        try {
+            // Send xa start.
+            xaStart(getXid(group, conn), conn);
+            // Send snapshot tso.
             sendSnapshotSeq(conn);
-
+            // Send user savepoint.
             for (String savepoint : savepoints) {
                 SavePoint.setLater(conn, savepoint);
             }
@@ -145,7 +147,12 @@ public class TsoTransaction extends ShareReadViewTransaction implements ITsoTran
         }
 
         if (snapshotTimestamp < 0) {
+            long oldTime = stat.getTsoTime;
             snapshotTimestamp = nextTimestamp(t -> stat.getTsoTime += t);
+            long gapTime = stat.getTsoTime - oldTime;
+            if (this.getExecutionContext().getRuntimeStatistics() != null) {
+                this.getExecutionContext().getRuntimeStatistics().addFetchTSOTimecost(gapTime);
+            }
         }
 
         try {
@@ -158,18 +165,34 @@ public class TsoTransaction extends ShareReadViewTransaction implements ITsoTran
     }
 
     @Override
-    public void updateSnapshotTimestamp() {
+    public void updateSnapshotTimestamp(long tso) {
+        if (tso > 0) {
+            snapshotTimestamp = tso;
+            useExternalSnapshotTimestamp = true;
+            return;
+        }
+
         if (isolationLevel != Connection.TRANSACTION_READ_COMMITTED || useExternalSnapshotTimestamp) {
             return;
         }
 
+        long oldTime = stat.getTsoTime;
         snapshotTimestamp = nextTimestamp(t -> stat.getTsoTime += t);
+        long gapTime = stat.getTsoTime - oldTime;
+        if (this.getExecutionContext().getRuntimeStatistics() != null) {
+            this.getExecutionContext().getRuntimeStatistics().addFetchTSOTimecost(gapTime);
+        }
     }
 
     @Override
     public void resendSnapshotTimestamp() {
         // Update with a new snapshot seq.
+        long oldTime = stat.getTsoTime;
         snapshotTimestamp = nextTimestamp(t -> stat.getTsoTime += t);
+        long gapTime = stat.getTsoTime - oldTime;
+        if (this.getExecutionContext().getRuntimeStatistics() != null) {
+            this.getExecutionContext().getRuntimeStatistics().addFetchTSOTimecost(gapTime);
+        }
         // Send to existed connections.
         forEachHeldConnection(new TransactionConnectionHolder.Action() {
             @Override
@@ -220,48 +243,17 @@ public class TsoTransaction extends ShareReadViewTransaction implements ITsoTran
         // XA transaction must be 'ACTIVE' state here.
         try {
             String xid = getXid(group, conn);
-            try (Statement stmt = conn.createStatement()) {
-                if (DynamicConfig.getInstance().isEnableTrxDebugMode()) {
-                    printDebugInfo(conn, xid, stmt);
-                }
-                stmt.execute("XA END " + xid + ';' + " XA PREPARE " + xid);
-            }
+            xaEndAndPrepare(xid, conn);
         } catch (Throwable e) {
             throw new TddlRuntimeException(ERR_TRANS_COMMIT, e,
                 "XA PREPARE failed: " + getXid(group, conn));
         }
-
-    }
-
-    private void printDebugInfo(IConnection conn, String xid, Statement stmt) throws SQLException {
-        Long xSessionId = null;
-        if (conn.isWrapperFor(XConnection.class)) {
-            XSession xSession = conn.unwrap(XConnection.class).getSession();
-            xSession.setChunkResult(false);
-            xSessionId = xSession.getSessionId();
-        }
-        ResultSet rs = stmt.executeQuery("SELECT trx_id, trx_mysql_thread_id "
-            + "FROM information_schema.innodb_trx "
-            + "WHERE trx_mysql_thread_id = CONNECTION_ID()");
-        StringBuilder sb = new StringBuilder();
-        while (rs.next()) {
-            sb.append("dn trx id: ").append(rs.getString(1)).append(", ")
-                .append("dn conn id: ").append(rs.getString(2)).append(". ");
-        }
-        logger.warn(this.getClass().getSimpleName()
-            + " cn trx id: " + Long.toHexString(id)
-            + ", xid: " + xid
-            + "x-session id: " + xSessionId
-            + ", trx info: "
-            + sb);
     }
 
     @Override
     protected void innerCommitOneShardTrx(String group, IConnection conn) throws SQLException {
-        try (Statement stmt = conn.createStatement()) {
-            String xid = getXid(group, conn);
-            stmt.execute(getXACommitOnePhaseSqls(xid));
-        }
+        String xid = getXid(group, conn);
+        xaEndAndCommitOnePhase(xid, conn);
     }
 
     @Override
@@ -275,20 +267,33 @@ public class TsoTransaction extends ShareReadViewTransaction implements ITsoTran
             // XA PREPARE on all groups
             prepareConnections();
             stat.prepareTime = System.nanoTime() - prepareStartTime;
+            if (this.getExecutionContext().getRuntimeStatistics() != null) {
+                this.getExecutionContext().getRuntimeStatistics().addCommitPrepareTimecost(stat.prepareTime);
+            }
             TransactionLogger.info(id, "[TSO] Prepared");
 
             this.prepared = true;
             this.state = State.PREPARED;
 
             // Get commit timestamp and Write commit log via an external connection
+            long oldTime = stat.getTsoTime;
             commitTimestamp = nextTimestamp(t -> stat.getTsoTime += t);
+            long gapTime = stat.getTsoTime - oldTime;
+            if (this.getExecutionContext().getRuntimeStatistics() != null) {
+                this.getExecutionContext().getRuntimeStatistics().addCommitTsoTimecost(gapTime);
+            }
 
             if (!executionContext.getParamManager().getBoolean(ConnectionParams.TSO_OMIT_GLOBAL_TX_LOG)
                 && isCrossGroup) {
                 long logStartTime = System.nanoTime();
                 // only wait when not wait when reschedule
                 TGroupDirectConnection.threadParam.set(executionContext.getTraceId());
-                try (IConnection logConn = dataSourceCache.get(primaryGroup).getConnection(MasterSlave.MASTER_ONLY,
+                IDataSource primaryDs = dataSourceCache.get(primaryGroup);
+                if (primaryDs == null) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_TRANS_LOG,
+                        "Primary group DataSource not found in cache: " + primaryGroup);
+                }
+                try (IConnection logConn = primaryDs.getConnection(MasterSlave.MASTER_ONLY,
                     executionContext.isCheckSwitchoverWhenGetConnection() ? connectionHolder.getAllConnection() :
                         null)) {
                     beforePrimaryCommit();
@@ -307,6 +312,9 @@ public class TsoTransaction extends ShareReadViewTransaction implements ITsoTran
                         "Failed to write commit state on group: " + primaryGroup);
                 }
                 stat.trxLogTime = System.nanoTime() - logStartTime;
+                if (this.getExecutionContext().getRuntimeStatistics() != null) {
+                    this.getExecutionContext().getRuntimeStatistics().addCommitLoggerTimecost(stat.trxLogTime);
+                }
             }
 
             commitState = TransactionCommitState.SUCCESS;
@@ -331,11 +339,17 @@ public class TsoTransaction extends ShareReadViewTransaction implements ITsoTran
             /*
              * XA 提交成功：XA COMMIT 提交刚才 PREPARE 的其他连接
              */
+            long commitStartTime = System.nanoTime();
             TransactionLogger.info(id, "[TSO] Commit Point");
 
             commitConnections();
 
             TransactionLogger.info(id, "[TSO] Committed");
+
+            if (this.getExecutionContext().getRuntimeStatistics() != null) {
+                this.getExecutionContext().getRuntimeStatistics()
+                    .addCommitCommitTimecost(System.nanoTime() - commitStartTime);
+            }
         } else {
             /*
              * Transaction state is unknown so we cannot do anything unless we
@@ -362,7 +376,7 @@ public class TsoTransaction extends ShareReadViewTransaction implements ITsoTran
             @Override
             public boolean condition(TransactionConnectionHolder.HeldConnection heldConn) {
                 // Ignore non-participant connections. They were committed during prepare phase.
-                return heldConn.isParticipated();
+                return heldConn.isParticipated() && !heldConn.isCommitted();
             }
 
             @Override
@@ -381,7 +395,8 @@ public class TsoTransaction extends ShareReadViewTransaction implements ITsoTran
             @Override
             public boolean condition(TransactionConnectionHolder.HeldConnection heldConn) {
                 // Ignore non-participant connections. They were committed during prepare phase.
-                return heldConn.isParticipated() && flag.compareAndSet(false, true);
+                return heldConn.isParticipated() && !heldConn.isCommitted()
+                    && flag.compareAndSet(false, true);
             }
 
             @Override
@@ -392,17 +407,9 @@ public class TsoTransaction extends ShareReadViewTransaction implements ITsoTran
     }
 
     /**
-     * Before sending commit_seq and xa commit, do something in this connection.
-     * Useful for some trx with TSO features.
-     */
-    protected void beforeCommitOneBranchHook(TransactionConnectionHolder.HeldConnection heldConn) {
-    }
-
-    /**
      * Commit a single trx branch in a connection.
      */
     protected void commitOneBranch(TransactionConnectionHolder.HeldConnection heldConn) {
-        beforeCommitOneBranchHook(heldConn);
         IConnection conn = heldConn.getRawConnection();
         // XA transaction must be 'PREPARED' state here.
         String xid = getXid(heldConn.getGroup(), conn);
@@ -434,10 +441,7 @@ public class TsoTransaction extends ShareReadViewTransaction implements ITsoTran
             (xConnection = conn.unwrap(XConnection.class)).supportMessageTimestamp()) {
             conn.flushUnsent();
             xConnection.setLazyCommitSeq(commitTimestamp);
-            xConnection.execUpdate("XA COMMIT " + xid);
-            if (shareReadView) {
-                xConnection.execUpdate(TURN_OFF_TXN_GROUP_SQL, null, true);
-            }
+            xaCommit(xid, conn);
         } else {
             stmt.execute(getXACommitWithTsoSql(xid));
         }
@@ -448,8 +452,15 @@ public class TsoTransaction extends ShareReadViewTransaction implements ITsoTran
      */
     protected String getXACommitWithTsoSql(String xid) {
         final StringBuilder sb = new StringBuilder();
-        // Set commit timestamp and XA commit.
-        sb.append("SET innodb_commit_seq = ").append(commitTimestamp).append("; XA COMMIT ").append(xid).append("; ");
+        if (DynamicConfig.getInstance().isenableDrdsTraceForXa()) {
+            String hint = getTraceHintString();
+            sb.append("SET innodb_commit_seq = ").append(commitTimestamp).append("; ")
+                .append(hint).append("XA COMMIT ").append(xid).append("; ");
+        } else {
+            // Set commit timestamp and XA commit.
+            sb.append("SET innodb_commit_seq = ").append(commitTimestamp).append("; ")
+                .append("XA COMMIT ").append(xid).append("; ");
+        }
 
         // Reset share review flag.
         if (shareReadView) {
@@ -464,6 +475,7 @@ public class TsoTransaction extends ShareReadViewTransaction implements ITsoTran
         return ITransactionPolicy.TransactionClass.TSO;
     }
 
+    @Override
     public long getCommitTso() {
         return commitTimestamp;
     }

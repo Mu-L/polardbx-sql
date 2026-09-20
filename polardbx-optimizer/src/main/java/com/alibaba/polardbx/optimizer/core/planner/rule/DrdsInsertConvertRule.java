@@ -23,6 +23,7 @@ import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.core.DrdsConvention;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalInsert;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelNode;
@@ -33,15 +34,20 @@ import com.alibaba.polardbx.optimizer.PlannerContext;
  * @author chenmo.cm
  */
 public class DrdsInsertConvertRule extends ConverterRule {
-    public static final DrdsInsertConvertRule INSTANCE = new DrdsInsertConvertRule();
+    public static final DrdsInsertConvertRule SMP_INSTANCE = new DrdsInsertConvertRule(DrdsConvention.INSTANCE);
 
-    DrdsInsertConvertRule() {
-        super(LogicalInsert.class, Convention.NONE, DrdsConvention.INSTANCE, "DrdsInsertConvertRule");
+    public static final DrdsInsertConvertRule COL_INSTANCE = new DrdsInsertConvertRule(CBOUtil.getColConvention());
+
+    private final Convention outConvention;
+
+    DrdsInsertConvertRule(Convention outConvention) {
+        super(LogicalInsert.class, Convention.NONE, outConvention, "DrdsInsertConvertRule");
+        this.outConvention = outConvention;
     }
 
     @Override
     public Convention getOutConvention() {
-        return DrdsConvention.INSTANCE;
+        return outConvention;
     }
 
     @Override
@@ -54,7 +60,11 @@ public class DrdsInsertConvertRule extends ConverterRule {
                 throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT, "dml in file store");
             }
         RelTraitSet relTraitSet = logicalInsert.getTraitSet().simplify();
-        return logicalInsert.copy(relTraitSet.replace(DrdsConvention.INSTANCE),
-            convertList(logicalInsert.getInputs(), DrdsConvention.INSTANCE));
+        LogicalInsert newLogicalInsert = (LogicalInsert) logicalInsert.copy(relTraitSet.replace(outConvention),
+            convertList(logicalInsert.getInputs(), outConvention));
+        if (CBOUtil.isColumnarOptimizer(newLogicalInsert) && !ExternalizedDmlRewriter.needsHandling(tableMeta)) {
+            newLogicalInsert.setInsertSelectMode(LogicalInsert.InsertSelectMode.MPP);
+        }
+        return newLogicalInsert;
     }
 }

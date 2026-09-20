@@ -30,8 +30,10 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.BaseQueryOperation;
 import com.alibaba.polardbx.optimizer.core.rel.BaseTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.dml.Writer;
+import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.TableModify.Operation;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -133,6 +135,19 @@ public abstract class AbstractWriter implements Writer {
                     "");
         LOGGER.info(scaleOutSqlLog);
 
+    }
+
+    /**
+     * Only primary business plans may be used as replica templates.
+     */
+    protected static List<RelNode> primaryWritePlans(List<RelNode> inputs) {
+        final List<RelNode> primaryPlans = new ArrayList<>();
+        for (RelNode input : inputs) {
+            if (((BaseQueryOperation) input).isPrimaryWriteRelNode()) {
+                primaryPlans.add(input);
+            }
+        }
+        return primaryPlans;
     }
 
     @Override

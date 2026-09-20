@@ -16,18 +16,13 @@
 
 package com.alibaba.polardbx.executor.ddl.job.converter;
 
-import com.alibaba.polardbx.common.exception.TddlRuntimeException;
-import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.BytesSql;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
-import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnDefinition;
-import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.gms.util.TableMetaUtil;
 import com.alibaba.polardbx.gms.metadb.table.TablesExtRecord;
 import com.alibaba.polardbx.gms.partition.TablePartRecordInfoContext;
 import com.alibaba.polardbx.gms.partition.TablePartitionRecord;
 import com.alibaba.polardbx.gms.tablegroup.PartitionGroupRecord;
-import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupDetailConfig;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupRecord;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
@@ -67,9 +62,9 @@ public class DdlJobDataConverter {
 
     public static PhysicalPlanData convertToPhysicalPlanData(TreeMap<String, List<List<String>>> tableTopology,
                                                              List<PhyDdlTableOperation> physicalPlans,
-                                                             boolean isGsi, boolean isAutoPartition,
+                                                             boolean isMirrorCopy, boolean isAutoPartition,
                                                              ExecutionContext ec) {
-        return convertToPhysicalPlanData(tableTopology, physicalPlans, isGsi, isAutoPartition, false, false, ec);
+        return convertToPhysicalPlanData(tableTopology, physicalPlans, isMirrorCopy, isAutoPartition, false, false, ec);
     }
 
     /**
@@ -78,7 +73,8 @@ public class DdlJobDataConverter {
      */
     public static PhysicalPlanData convertToPhysicalPlanData(TreeMap<String, List<List<String>>> tableTopology,
                                                              List<PhyDdlTableOperation> physicalPlans,
-                                                             boolean isGsi, boolean isAutoPartition, boolean isOSS,
+                                                             boolean isMirrorCopy, boolean isAutoPartition,
+                                                             boolean isOSS,
                                                              boolean pushDownFk, ExecutionContext ec) {
         PhysicalPlanData data = new PhysicalPlanData();
 
@@ -123,6 +119,15 @@ public class DdlJobDataConverter {
         data.setKind(physicalPlan.getKind());
 
         data.setSqlTemplate(physicalPlan.getBytesSql().toString(null));
+        for (PhyDdlTableOperation phyPlan : physicalPlans) {
+            String sqlTemplate = phyPlan.getBytesSql().toString(null);
+            // only move partitions will has multiple sqlTemplate(i.e one create table sqlTemplate for each physical table)
+            if (isMirrorCopy) {
+                data.getSqlTemplateMap().put(phyPlan.getTableNames().get(0).get(0), sqlTemplate);
+            } else if (!data.getSqlTemplateMap().containsValue(sqlTemplate)) {
+                data.getSqlTemplateMap().put(phyPlan.getTableNames().get(0).get(0), sqlTemplate);
+            }
+        }
 
         List<Map<Integer, ParameterContext>> paramsList = new ArrayList<>();
         for (PhyDdlTableOperation phyDdlTableOperation : physicalPlans) {
@@ -136,7 +141,7 @@ public class DdlJobDataConverter {
 
         if (physicalPlan.getNativeSqlNode() instanceof SqlCreateTable) {
             data.setIfNotExists(physicalPlan.isIfNotExists());
-            if(!CollectionUtils.isEmpty(((SqlCreateTable) physicalPlan.getNativeSqlNode()).getLocalIndexes())){
+            if (!CollectionUtils.isEmpty(((SqlCreateTable) physicalPlan.getNativeSqlNode()).getLocalIndexes())) {
                 data.setPopLocalIndex(true);
             }
         } else if (physicalPlan.getNativeSqlNode() instanceof SqlDropTable) {
@@ -169,7 +174,8 @@ public class DdlJobDataConverter {
                 for (String phyTableName : phyTablesNames) {
                     String hashCodeForDdl = genHashCodeForPhyTableDDL(data.getSchemaName(), groupName,
                         SqlIdentifier.surroundWithBacktick(phyTableName), 0);
-                    String fullPhyTableName = buildPhyDbTableNameFromGroupNameAndPhyTableName(groupName, phyTableName);
+                    String fullPhyTableName =
+                        buildPhyDbTableNameFromGroupNameAndPhyTableName(data.getSchemaName(), groupName, phyTableName);
                     if (!hashCodeForDdlBefore.get(fullPhyTableName).equals(hashCodeForDdl)) {
                         physicalDoneTables.add(fullPhyTableName);
                     }
@@ -202,7 +208,7 @@ public class DdlJobDataConverter {
                 }
 
                 List<String> fullPhyTableNames = phyTableNames.stream()
-                    .map(o -> buildPhyDbTableNameFromGroupNameAndPhyTableName(groupName, o))
+                    .map(o -> buildPhyDbTableNameFromGroupNameAndPhyTableName(data.getSchemaName(), groupName, o))
                     .collect(Collectors.toList());
                 if (donePhysicalTables.containsAll(fullPhyTableNames)) {
                     index++;
@@ -212,7 +218,13 @@ public class DdlJobDataConverter {
 
                 phyDdlTableOperation.setKind(data.getKind());
 
-                phyDdlTableOperation.setBytesSql(BytesSql.getBytesSql(data.getSqlTemplate()));
+                if (data.getSqlTemplateMap().size() <= 1) {
+                    phyDdlTableOperation.setBytesSql(BytesSql.getBytesSql(data.getSqlTemplate()));
+                } else {
+                    phyDdlTableOperation.setBytesSql(
+                        BytesSql.getBytesSql(data.getSqlTemplateMap().get(phyTableNames.get(0))));
+                }
+
                 phyDdlTableOperation.setParam(data.getParamsList().get(index++));
 
                 phyDdlTableOperation.setNativeSqlNode(null);
@@ -254,7 +266,8 @@ public class DdlJobDataConverter {
         }
 
         partitionGroupRecords =
-            PartitionInfoUtil.prepareRecordForPartitionGroups(partitionInfo.getPartitionBy().getPhysicalPartitions());
+            PartitionInfoUtil.prepareRecordForPartitionGroups(partitionInfo.getTableSchema(),
+                partitionInfo.getPartitionBy().getPhysicalPartitions(), false);
         partitionGroupRecords.forEach(o -> o.tg_id = partitionInfo.getTableGroupId());
 
         TablePartRecordInfoContext tablePartRecordInfoContext = new TablePartRecordInfoContext();

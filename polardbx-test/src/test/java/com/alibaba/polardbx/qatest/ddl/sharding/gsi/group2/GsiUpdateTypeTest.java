@@ -9,12 +9,15 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import org.apache.calcite.util.Pair;
+import org.junit.After;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized.Parameters;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.text.MessageFormat;
+import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -53,18 +56,26 @@ import static com.alibaba.polardbx.qatest.constant.TableConstant.timeType;
 import static com.alibaba.polardbx.qatest.data.ExecuteTableSelect.DEFAULT_PARTITIONING_DEFINITION;
 import static com.google.common.truth.Truth.assertWithMessage;
 
+@RunWith(ParallelGsiRunner.class)
 public class GsiUpdateTypeTest extends DDLBaseNewDBTestCase {
 
-    private static final String PRIMARY_TABLE_NAME = "gsi_update_type_test_primary";
-    private static final String INDEX_TABLE_NAME = "gsi_update_type_test_gsi";
+    /**
+     * 模板表名, 仅用于静态初始化 SQL 模板; 运行时按用例替换为 {@link #PRIMARY_TABLE_NAME}
+     */
+    private static final String PRIMARY_TABLE_TEMPLATE = "gsi_update_type_test_primary";
+    private static final String INDEX_TABLE_TEMPLATE = "gsi_update_type_test_gsi";
     private static final ImmutableMap<String, List<String>> GSI_FULL_TYPE_TEST_INSERTS =
-        GsiConstant.buildGsiFullTypeTestInserts(PRIMARY_TABLE_NAME);
-    private static final String UPSERT_INIT_DATA = "insert into " + PRIMARY_TABLE_NAME + "(`id`) values (1)";
-    private static final String DELETE_DATA = "delete from " + PRIMARY_TABLE_NAME;
+        GsiConstant.buildGsiFullTypeTestInserts(PRIMARY_TABLE_TEMPLATE);
+    private static final String UPSERT_INIT_DATA_TEMPLATE =
+        "insert into " + PRIMARY_TABLE_TEMPLATE + "(`id`) values (1)";
+    private static final String DELETE_DATA_TEMPLATE = "delete from " + PRIMARY_TABLE_TEMPLATE;
+    private static final String LOCAL_UK_FULL_SCAN_HINT =
+        "/*+TDDL:CMD_EXTRA(DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=true)*/ ";
 
     private static final String FULL_TYPE_TABLE =
-        ExecuteTableSelect.getFullTypeTableDef(PRIMARY_TABLE_NAME, DEFAULT_PARTITIONING_DEFINITION);
-    private static final String FULL_TYPE_TABLE_MYSQL = ExecuteTableSelect.getFullTypeTableDef(PRIMARY_TABLE_NAME, "");
+        ExecuteTableSelect.getFullTypeTableDef(PRIMARY_TABLE_TEMPLATE, DEFAULT_PARTITIONING_DEFINITION);
+    private static final String FULL_TYPE_TABLE_MYSQL =
+        ExecuteTableSelect.getFullTypeTableDef(PRIMARY_TABLE_TEMPLATE, "");
 
     private static final Set<String> CN_UNSUPPORTED_FUNC_TYPE = new HashSet<>();
     private static final Set<String> UK_WITH_LENGTH_TYPE = new HashSet<>();
@@ -91,13 +102,40 @@ public class GsiUpdateTypeTest extends DDLBaseNewDBTestCase {
 
     private String dataColumn = null;
 
+    /**
+     * 每用例(参数x方法)独立的表名, initTables() 按当前方法名延迟赋值, 避免共享表导致并发互踩
+     */
+    private String PRIMARY_TABLE_NAME;
+    private String INDEX_TABLE_NAME;
+    private String UPSERT_INIT_DATA;
+    private String DELETE_DATA;
+
     public GsiUpdateTypeTest(String indexSk) {
         this.dataColumn = indexSk;
     }
 
     @Parameters(name = "{index}:indexSk={0}")
     public static List<String[]> prepareDate() {
-        return FULL_TYPE_TABLE_COLUMNS.stream().map(c -> new String[] {c}).collect(Collectors.toList());
+        final List<String> columns = filterColumns(FULL_TYPE_TABLE_COLUMNS);
+        return columns.stream().map(c -> new String[] {c}).collect(Collectors.toList());
+    }
+
+    /**
+     * 支持 -Dgsi.test.columns=c_datetime;c_timestamp 只跑列子集(本地冒烟验证), 分号分隔、按子串匹配;
+     * 不设置时全量执行, 保持线上行为不变。
+     */
+    private static List<String> filterColumns(List<String> allColumns) {
+        final String filter = System.getProperty("gsi.test.columns", "").trim();
+        if (filter.isEmpty()) {
+            return allColumns;
+        }
+        final List<String> patterns = Arrays.stream(filter.split(";"))
+            .map(String::trim).filter(p -> !p.isEmpty()).collect(Collectors.toList());
+        final List<String> selected = allColumns.stream()
+            .filter(c -> patterns.stream().anyMatch(c::contains))
+            .collect(Collectors.toList());
+        assertWithMessage("gsi.test.columns=" + filter + " matched no column").that(selected).isNotEmpty();
+        return selected;
     }
 
     public void initTables() throws SQLException {
@@ -110,11 +148,61 @@ public class GsiUpdateTypeTest extends DDLBaseNewDBTestCase {
         // out of range for BIT_64 in JDBC
         org.junit.Assume.assumeFalse(!useXproto() && dataColumn.equalsIgnoreCase(C_BIT_64));
 
-        JdbcUtil.executeUpdateSuccess(mysqlConnection, "DROP TABLE IF EXISTS " + PRIMARY_TABLE_NAME);
-        JdbcUtil.executeUpdateSuccess(mysqlConnection, FULL_TYPE_TABLE_MYSQL);
+        // 每个用例(参数x方法)使用独立表名, 避免共享表导致的用例间锁级联
+        PRIMARY_TABLE_NAME = PRIMARY_TABLE_TEMPLATE + "_" + dataColumn + "_" + methodTag();
+        INDEX_TABLE_NAME = INDEX_TABLE_TEMPLATE + "_" + dataColumn + "_" + methodTag();
+        // 保持模板原文, 由 initData/clearData 在运行时统一 replace, 避免二次替换叠加后缀
+        UPSERT_INIT_DATA = UPSERT_INIT_DATA_TEMPLATE;
+        DELETE_DATA = DELETE_DATA_TEMPLATE;
 
-        JdbcUtil.executeUpdateSuccess(tddlConnection, "DROP TABLE IF EXISTS " + PRIMARY_TABLE_NAME);
-        JdbcUtil.executeUpdateSuccess(tddlConnection, FULL_TYPE_TABLE);
+        // 先清理本类表遗留的非终态 DDL job, 按模板前缀匹配覆盖所有方法变体表,
+        // 避免遗留 job 的 schema 级锁阻塞后续 DDL
+        GsiParallelDdlSupport.cancelLegacyDdlJobs(tddlConnection, tddlDatabase1,
+            ImmutableSet.of(PRIMARY_TABLE_TEMPLATE + "_", INDEX_TABLE_TEMPLATE + "_"));
+
+        // 所有 DDL 均带超时执行, 即使服务端挂死也最多阻塞 60 秒
+        GsiParallelDdlSupport.dropTableIfPresent(mysqlConnection, PRIMARY_TABLE_NAME);
+        GsiParallelDdlSupport.executeUpdateWithTimeout(mysqlConnection,
+            FULL_TYPE_TABLE_MYSQL.replace(PRIMARY_TABLE_TEMPLATE, PRIMARY_TABLE_NAME));
+
+        GsiParallelDdlSupport.dropTableIfPresent(tddlConnection, PRIMARY_TABLE_NAME);
+        GsiParallelDdlSupport.executeUpdateWithTimeout(tddlConnection,
+            FULL_TYPE_TABLE.replace(PRIMARY_TABLE_TEMPLATE, PRIMARY_TABLE_NAME));
+    }
+
+    @After
+    public void after() {
+        // 尽力清理本用例的表; 若清理本身失败, 交给下一轮 before 的超时 DROP 与 job 清理兜底
+        if (PRIMARY_TABLE_NAME == null) {
+            return;
+        }
+        try {
+            GsiParallelDdlSupport.dropTableIfPresent(mysqlConnection, PRIMARY_TABLE_NAME);
+        } catch (Throwable ignored) {
+        }
+        try {
+            GsiParallelDdlSupport.dropTableIfPresent(tddlConnection, PRIMARY_TABLE_NAME);
+            GsiParallelDdlSupport.dropTableIfPresent(tddlConnection, INDEX_TABLE_NAME);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 方法名缩写, 保证表名总长度不超过 MySQL 64 字符上限;
+     * 参数化测试的方法名带 "[index:param]" 后缀, 因此用前缀匹配
+     */
+    private String methodTag() {
+        final String m = testName.getMethodName();
+        if (m.startsWith("testPushDownDML")) {
+            return "pd";
+        }
+        if (m.startsWith("testLogicalDMLWithGsiUk")) {
+            return "luk";
+        }
+        if (m.startsWith("testLogicalUpdateWithGsiSK")) {
+            return "lsk";
+        }
+        return "ld";
     }
 
     private void initData(List<String> inserts) throws SQLException {
@@ -123,7 +211,8 @@ public class GsiUpdateTypeTest extends DDLBaseNewDBTestCase {
 
         // Prepare data
         for (String insert : inserts) {
-            gsiExecuteUpdate(tddlConnection, mysqlConnection, insert, failedList, true, true);
+            gsiExecuteUpdate(tddlConnection, mysqlConnection, insert.replace(PRIMARY_TABLE_TEMPLATE,
+                PRIMARY_TABLE_NAME), failedList, true, true);
         }
 
         System.out.println("Failed inserts: ");
@@ -139,7 +228,8 @@ public class GsiUpdateTypeTest extends DDLBaseNewDBTestCase {
         List<Pair<String, Exception>> failedList = new ArrayList<>();
 
         // Delete data
-        gsiExecuteUpdate(tddlConnection, mysqlConnection, DELETE_DATA, failedList, true, true);
+        gsiExecuteUpdate(tddlConnection, mysqlConnection, DELETE_DATA.replace(PRIMARY_TABLE_TEMPLATE,
+            PRIMARY_TABLE_NAME), failedList, true, true);
 
         System.out.println("Failed delete: ");
         failedList.forEach(p -> System.out.println(p.left));
@@ -205,7 +295,7 @@ public class GsiUpdateTypeTest extends DDLBaseNewDBTestCase {
         String createGsi = MessageFormat.format(
             "CREATE GLOBAL INDEX {0} ON {1}(`id`) {2} DBPARTITION BY HASH(`id`) TBPARTITION BY HASH(`id`) TBPARTITIONS 7",
             INDEX_TABLE_NAME, PRIMARY_TABLE_NAME, covering);
-        JdbcUtil.executeUpdateSuccess(tddlConnection, createGsi);
+        GsiParallelDdlSupport.executeUpdateWithTimeout(tddlConnection, createGsi);
 
         // Update
         List<String> values = new ArrayList<>(GsiConstant.FULL_TYPE_TEST_VALUES.get(dataColumn));
@@ -311,7 +401,7 @@ public class GsiUpdateTypeTest extends DDLBaseNewDBTestCase {
                 "CREATE GLOBAL INDEX {0} ON {1}({2}) DBPARTITION BY HASH({3}) TBPARTITION BY HASH({4}) TBPARTITIONS 7",
                 INDEX_TABLE_NAME, PRIMARY_TABLE_NAME, dataColumn, dataColumn, dataColumn);
         }
-        boolean unsupportedSkType = JdbcUtil.executeUpdateSuccessIgnoreErr(tddlConnection, createGsi,
+        boolean unsupportedSkType = GsiParallelDdlSupport.executeUpdateIgnoreErrWithTimeout(tddlConnection, createGsi,
             ImmutableSet.of("Rule generator dataType is not supported!", "Invalid type for a sharding key"));
 
         List<String> values = new ArrayList<>(GsiConstant.FULL_TYPE_TEST_VALUES.get(dataColumn));
@@ -403,7 +493,7 @@ public class GsiUpdateTypeTest extends DDLBaseNewDBTestCase {
         String createGsi = MessageFormat.format(
             "CREATE GLOBAL INDEX {0} ON {1}(`id`) {2} DBPARTITION BY HASH(`id`) TBPARTITION BY HASH(`id`) TBPARTITIONS 7",
             INDEX_TABLE_NAME, PRIMARY_TABLE_NAME, covering);
-        JdbcUtil.executeUpdateSuccess(tddlConnection, createGsi);
+        GsiParallelDdlSupport.executeUpdateWithTimeout(tddlConnection, createGsi);
 
         // Create a local unique index
         String localUk = "local_uk";
@@ -412,8 +502,8 @@ public class GsiUpdateTypeTest extends DDLBaseNewDBTestCase {
         String createUk =
             MessageFormat.format("CREATE LOCAL UNIQUE INDEX {0} on {1}({2}{3})", localUk, PRIMARY_TABLE_NAME,
                 dataColumn, ukLength);
-        JdbcUtil.executeUpdateSuccess(tddlConnection, createUk);
-        JdbcUtil.executeUpdateSuccess(mysqlConnection, createUk.replace("LOCAL", ""));
+        GsiParallelDdlSupport.executeUpdateWithTimeout(tddlConnection, createUk);
+        GsiParallelDdlSupport.executeUpdateWithTimeout(mysqlConnection, createUk.replace("LOCAL", ""));
 
         // Update
         List<String> values = new ArrayList<>(GsiConstant.FULL_TYPE_TEST_VALUES.get(dataColumn));
@@ -443,23 +533,23 @@ public class GsiUpdateTypeTest extends DDLBaseNewDBTestCase {
                 failedList = new ArrayList<>();
                 update = MessageFormat.format("INSERT INTO {0}(`{1}`) VALUES ({2}) ON DUPLICATE KEY UPDATE {1}={2}",
                     PRIMARY_TABLE_NAME, dataColumn, value);
-                gsiExecuteUpdate(tddlConnection, mysqlConnection, update, "TRACE " + update, failedList, true, true,
-                    false);
+                gsiExecuteUpdate(tddlConnection, mysqlConnection, update,
+                    "TRACE " + LOCAL_UK_FULL_SCAN_HINT + update, failedList, true, true, false);
                 gsiIntegrityCheck(PRIMARY_TABLE_NAME, INDEX_TABLE_NAME, dataColumn);
 
                 // set from insert value
                 update =
                     MessageFormat.format("INSERT INTO {0}(`{1}`) VALUES ({2}) ON DUPLICATE KEY UPDATE {1}=values({3})",
                         PRIMARY_TABLE_NAME, dataColumn, value, dataColumn);
-                gsiExecuteUpdate(tddlConnection, mysqlConnection, update, "TRACE " + update, failedList, true, true,
-                    false);
+                gsiExecuteUpdate(tddlConnection, mysqlConnection, update,
+                    "TRACE " + LOCAL_UK_FULL_SCAN_HINT + update, failedList, true, true, false);
                 gsiIntegrityCheck(PRIMARY_TABLE_NAME, INDEX_TABLE_NAME, dataColumn);
 
                 // set from select value
                 update = MessageFormat.format("INSERT INTO {0}(`{1}`) VALUES ({2}) ON DUPLICATE KEY UPDATE {1}={3}",
                     PRIMARY_TABLE_NAME, dataColumn, value, dataColumn);
-                gsiExecuteUpdate(tddlConnection, mysqlConnection, update, "TRACE " + update, failedList, true, true,
-                    false);
+                gsiExecuteUpdate(tddlConnection, mysqlConnection, update,
+                    "TRACE " + LOCAL_UK_FULL_SCAN_HINT + update, failedList, true, true, false);
                 gsiIntegrityCheck(PRIMARY_TABLE_NAME, INDEX_TABLE_NAME, dataColumn);
             }
         }
@@ -486,6 +576,8 @@ public class GsiUpdateTypeTest extends DDLBaseNewDBTestCase {
             update =
                 MessageFormat.format("REPLACE INTO {0}(`id`,{1}) VALUES (NULL,{2})", PRIMARY_TABLE_NAME, dataColumn,
                     value);
+            // 这里和mysql对比校验固化了local索引的全局唯一性，加hint防止走returning路径
+            update = LOCAL_UK_FULL_SCAN_HINT + update;
             gsiExecuteUpdate(tddlConnection, mysqlConnection, update, update, failedList, true, true, false);
             gsiIntegrityCheck(PRIMARY_TABLE_NAME, INDEX_TABLE_NAME, dataColumn);
         }

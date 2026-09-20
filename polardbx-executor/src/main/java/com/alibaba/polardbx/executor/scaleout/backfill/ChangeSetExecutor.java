@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.scaleout.backfill;
 
+import com.alibaba.polardbx.common.async.AsyncTask;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
@@ -34,6 +35,7 @@ import com.alibaba.polardbx.executor.gsi.GsiBackfillManager;
 import com.alibaba.polardbx.executor.gsi.GsiUtils;
 import com.alibaba.polardbx.executor.gsi.PhysicalPlanBuilder;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableOpBuildParams;
@@ -52,6 +54,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -370,6 +373,9 @@ public class ChangeSetExecutor extends Extractor {
             return;
         }
 
+        boolean asyncLog =
+            OptimizerContext.getContext(schemaName).getParamManager().getBoolean(ConnectionParams.BACKFILL_ASYNC_LOG);
+
         // For status recording
         List<ParameterContext> beforeLastPk = lastPk;
 
@@ -385,8 +391,28 @@ public class ChangeSetExecutor extends Extractor {
         boolean finished = lastBatch.size() != actualBatchSize;
 
         // Update position mark
-        reporter.updatePositionMark(ec, backfillObjects, successRowCount, lastPk, beforeLastPk, finished,
-            primaryKeysIdMap);
+        if (asyncLog) {
+            // 异步写日志
+            long finalSuccessRowCount = successRowCount;
+            List<ParameterContext> finalLastPk1 = lastPk;
+            boolean finalFinished = finished;
+            FutureTask<Void> futureTask = new FutureTask<>(
+                () -> {
+                    reporter.updatePositionMark(ec,
+                        backfillObjects,
+                        finalSuccessRowCount,
+                        finalLastPk1,
+                        beforeLastPk,
+                        finalFinished,
+                        primaryKeysIdMap
+                    );
+                }, null);
+            ec.getExecutorService().submit(ec.getSchemaName(), ec.getTraceId(), AsyncTask.build(futureTask));
+        } else {
+            reporter.updatePositionMark(ec, backfillObjects, successRowCount, lastPk, beforeLastPk, finished,
+                primaryKeysIdMap);
+        }
+
         ec.getStats().backfillRows.addAndGet(lastBatch.size());
         DdlEngineStats.METRIC_BACKFILL_ROWS_FINISHED.update(lastBatch.size());
 

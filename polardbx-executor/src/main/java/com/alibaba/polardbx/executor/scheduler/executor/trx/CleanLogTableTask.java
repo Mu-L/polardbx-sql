@@ -16,7 +16,6 @@
 
 package com.alibaba.polardbx.executor.scheduler.executor.trx;
 
-import com.alibaba.polardbx.common.async.AsyncTask;
 import com.alibaba.polardbx.common.constants.SystemTables;
 import com.alibaba.polardbx.common.eventlogger.EventLogger;
 import com.alibaba.polardbx.common.eventlogger.EventType;
@@ -30,10 +29,10 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.druid.util.lang.Consumer;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.spi.ITopologyExecutor;
+import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.ha.impl.StorageHaManager;
-import com.alibaba.polardbx.gms.ha.impl.StorageInstHaContext;
 import com.alibaba.polardbx.gms.metadb.trx.TrxLogStatusAccessor;
 import com.alibaba.polardbx.gms.metadb.trx.TrxLogStatusRecord;
 import com.alibaba.polardbx.gms.topology.DbTopologyManager;
@@ -44,13 +43,10 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.Executor;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -85,15 +81,7 @@ public class CleanLogTableTask {
     private static final Logger logger = LoggerFactory.getLogger(CleanLogTableTask.class);
 
     public static long run(boolean force, StringBuffer remark) throws SQLException {
-        Set<String> dnIds = new HashSet<>();
-        Set<String> addresses = new HashSet<>();
-        for (StorageInstHaContext ctx : StorageHaManager.getInstance().getMasterStorageList()) {
-            // Filter same host:port.
-            if (addresses.add(ctx.getCurrAvailableNodeAddr())) {
-                dnIds.add(ctx.getStorageInstId());
-            }
-        }
-
+        Set<String> dnIds = StorageHaManager.getAllDnId(true);
         TrxLogStatusAccessor accessor = new TrxLogStatusAccessor();
         AtomicLong purged = new AtomicLong(0);
         boolean updateRemark = true;
@@ -245,7 +233,7 @@ public class CleanLogTableTask {
         }
         ConcurrentLinkedQueue<Exception> exceptions = new ConcurrentLinkedQueue<>();
         AtomicBoolean shouldClean = new AtomicBoolean(false);
-        Collection<Future> futures = forEachDn(dnIds, (dnId) -> {
+        Collection<Future> futures = ExecUtils.forEachDn(dnIds, (dnId) -> {
             try (Connection conn = DbTopologyManager.getConnectionForStorage(dnId);
                 Statement stmt = conn.createStatement()) {
                 conn.setNetworkTimeout(TGroupDirectConnection.socketTimeoutExecutor, TRX_LOG_SOCKET_TIMEOUT);
@@ -279,7 +267,7 @@ public class CleanLogTableTask {
     private static void createTmpTable(Set<String> dnIds) {
         ConcurrentLinkedQueue<Exception> exceptions = new ConcurrentLinkedQueue<>();
         AtomicBoolean lock = new AtomicBoolean(false);
-        Collection<Future> futures = forEachDn(dnIds, (dnId) -> {
+        Collection<Future> futures = ExecUtils.forEachDn(dnIds, (dnId) -> {
             try (Connection conn = DbTopologyManager.getConnectionForStorage(dnId);
                 Statement stmt = conn.createStatement()) {
                 conn.setNetworkTimeout(TGroupDirectConnection.socketTimeoutExecutor, TRX_LOG_SOCKET_TIMEOUT);
@@ -331,7 +319,8 @@ public class CleanLogTableTask {
          */
         ConcurrentLinkedQueue<Exception> exceptions = new ConcurrentLinkedQueue<>();
         AtomicBoolean lock = new AtomicBoolean(false);
-        Collection<Future> futures = forEachDn(dnIds, (dnId) -> execWithLockWaitTimeout(dnId, exceptions, (stmt) -> {
+        Collection<Future> futures =
+            ExecUtils.forEachDn(dnIds, (dnId) -> execWithLockWaitTimeout(dnId, exceptions, (stmt) -> {
             try {
                 ResultSet rs = stmt.executeQuery(SHOW_ALL_GLOBAL_TX_TABLE_V2);
                 boolean existsA = false, existsB = false, existsTmp = false;
@@ -396,7 +385,7 @@ public class CleanLogTableTask {
 
     private static void dropTable(Set<String> dnIds, StringBuffer remark, AtomicLong purged) {
         // Check support async commit variables.
-        boolean dn57 = ExecutorContext.getContext(CDC_DB_NAME).getStorageInfoManager().supportAsyncCommit();
+        boolean dn57 = ExecutorContext.getContext(CDC_DB_NAME).getStorageInfoManager().supportAsyncCommit57();
         // Max time 4 * 5 = 20s
         int retry = 0, maxRetry = 4, sleepSecond = 5;
         ConcurrentLinkedQueue<Exception> exceptions = new ConcurrentLinkedQueue<>();
@@ -417,7 +406,7 @@ public class CleanLogTableTask {
             // Find max trx id in archive table.
             AtomicLong maxTrxId = new AtomicLong(Long.MIN_VALUE);
             Collection<Future> futures =
-                forEachDn(dnIds, (dnId) -> execWithLockWaitTimeout(dnId, exceptions, (stmt) -> {
+                ExecUtils.forEachDn(dnIds, (dnId) -> execWithLockWaitTimeout(dnId, exceptions, (stmt) -> {
                     try {
                         stmt.execute("begin");
                         if (dn57) {
@@ -459,7 +448,7 @@ public class CleanLogTableTask {
             if (minTrxId.get() > maxTrxId.get()) {
                 // Safe to delete archive table.
                 AtomicBoolean lock = new AtomicBoolean(false);
-                futures = forEachDn(dnIds, (dnId) -> execWithLockWaitTimeout(dnId, exceptions, (stmt) -> {
+                futures = ExecUtils.forEachDn(dnIds, (dnId) -> execWithLockWaitTimeout(dnId, exceptions, (stmt) -> {
                     try {
                         ResultSet rs = stmt.executeQuery(SHOW_ALL_GLOBAL_TX_TABLE_V2);
                         boolean existsB = false;
@@ -526,16 +515,6 @@ public class CleanLogTableTask {
             retry++;
         }
         throw new TddlRuntimeException(ErrorCode.ERR_TRANS_LOG, "Max retry exceeds.");
-    }
-
-    private static Collection<Future> forEachDn(Set<String> dnIds, Consumer<String> task) {
-        List<Future> futures = new ArrayList<>();
-        ITopologyExecutor executor = ExecutorContext.getContext(DEFAULT_DB_NAME).getTopologyExecutor();
-        for (String dnId : dnIds) {
-            futures.add(executor.getExecutorService().submit(null, null,
-                AsyncTask.build(() -> task.accept(dnId))));
-        }
-        return futures;
     }
 
     private static void execWithLockWaitTimeout(String dnId,

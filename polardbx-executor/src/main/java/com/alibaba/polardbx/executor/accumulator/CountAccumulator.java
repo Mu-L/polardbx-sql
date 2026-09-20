@@ -16,17 +16,24 @@
 
 package com.alibaba.polardbx.executor.accumulator;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.executor.accumulator.state.NullableLongGroupState;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
+import org.openjdk.jol.info.ClassLayout;
 
-public class CountAccumulator implements Accumulator {
-
+public class CountAccumulator extends AbstractAccumulator {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(CountAccumulator.class).instanceSize();
     private final NullableLongGroupState state;
 
     public CountAccumulator(int capacity) {
         this.state = new NullableLongGroupState(capacity);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(state);
     }
 
     @Override
@@ -39,7 +46,7 @@ public class CountAccumulator implements Accumulator {
         if (inputChunk.getBlockCount() == 1) {
             inputChunk.getBlock(0).count(groupIds, probePositions, selSize, state);
         } else {
-            Accumulator.super.accumulate(groupIds, inputChunk, probePositions, selSize);
+            super.accumulate(groupIds, inputChunk, probePositions, selSize);
         }
     }
 

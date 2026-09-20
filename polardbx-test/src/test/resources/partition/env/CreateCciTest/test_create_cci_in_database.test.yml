@@ -1,0 +1,139 @@
+create database if not exists test_create_cci_in_database mode = auto;
+use test_create_cci_in_database;
+
+# clean
+drop table if exists `t_order_0`;
+drop table if exists `t_order_1`;
+drop table if exists `t_order_single`;
+drop table if exists `t_order_broadcast`;
+drop table if exists `t_order_single_1`;
+drop table if exists `t_order_broadcast_1`;
+
+CREATE TABLE `t_order_0` (
+`id` bigint(11) NOT NULL AUTO_INCREMENT,
+`order_id` varchar(20) DEFAULT NULL,
+`buyer_id` varchar(20) DEFAULT NULL,
+`seller_id` varchar(20) DEFAULT NULL,
+`order_snapshot` longtext,
+`order_detail` longtext,
+`gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+`rint` double(10, 2),
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8;
+
+CREATE TABLE `t_order_1` (
+`id` bigint(11) NOT NULL,
+`order_id` varchar(20) DEFAULT NULL,
+`buyer_id` varchar(20) DEFAULT NULL,
+`seller_id` varchar(20) DEFAULT NULL,
+`order_snapshot` longtext,
+`order_detail` longtext,
+`gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+`rint` double(10, 2)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8;
+
+CREATE TABLE `t_order_single` (
+`id` bigint(11) NOT NULL AUTO_INCREMENT,
+`order_id` varchar(20) DEFAULT NULL,
+`buyer_id` varchar(20) DEFAULT NULL,
+`seller_id` varchar(20) DEFAULT NULL,
+`order_snapshot` longtext,
+`order_detail` longtext,
+`gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+`rint` double(10, 2),
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8 single;
+
+CREATE TABLE `t_order_broadcast` (
+`id` bigint(11) NOT NULL AUTO_INCREMENT,
+`order_id` varchar(20) DEFAULT NULL,
+`buyer_id` varchar(20) DEFAULT NULL,
+`seller_id` varchar(20) DEFAULT NULL,
+`order_snapshot` longtext,
+`order_detail` longtext,
+`gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+`rint` double(10, 2),
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8 broadcast;
+
+CREATE TABLE `t_order_single_1` (
+`id` bigint(11) NOT NULL,
+`order_id` varchar(20) DEFAULT NULL,
+`buyer_id` varchar(20) DEFAULT NULL,
+`seller_id` varchar(20) DEFAULT NULL,
+`order_snapshot` longtext,
+`order_detail` longtext,
+`gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+`rint` double(10, 2)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8 single;
+
+CREATE TABLE `t_order_broadcast_1` (
+`id` bigint(11) NOT NULL,
+`order_id` varchar(20) DEFAULT NULL,
+`buyer_id` varchar(20) DEFAULT NULL,
+`seller_id` varchar(20) DEFAULT NULL,
+`order_snapshot` longtext,
+`order_detail` longtext,
+`gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+`rint` double(10, 2)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8 broadcast;
+
+  # create default cci in database (will return error because of pk)
+## error_msg: $# Do not support create Clustered Columnar Index on table without primary key #$
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/
+CREATE COLUMNAR INDEX FOR TABLES IN `test_create_cci_in_database`;
+
+  # create default cci in database (using implicit pk)
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask",ENABLE_CCI_ON_TABLE_WITH_IMPLICIT_PK=true)*/
+CREATE COLUMNAR INDEX FOR TABLES IN `test_create_cci_in_database`;
+
+show full create table `t_order_0`;
+check columnar index `cci_t_order_0_id` on `t_order_0` meta;
+
+show full create table `t_order_1`;
+check columnar index `cci_t_order_1__drds_implicit_id_` on `t_order_1` meta;
+
+show full create table `t_order_broadcast`;
+check columnar index `cci_t_order_broadcast_id` on `t_order_broadcast` meta;
+
+show full create table `t_order_broadcast_1`;
+check columnar index `cci_t_order_broadcast_1__drds_implicit_id_` on `t_order_broadcast_1` meta;
+
+show full create table `t_order_single`;
+check columnar index `cci_t_order_single_id` on `t_order_single` meta;
+
+show full create table `t_order_single_1`;
+check columnar index `cci_t_order_single_1__drds_implicit_id_` on `t_order_single_1` meta;
+
+  # create default cci in database (will return error because cci already exists on all tables)
+## error_msg: $# All tables in database 'test_create_cci_in_database' have Clustered Columnar Indexes #$
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask",ENABLE_CCI_ON_TABLE_WITH_IMPLICIT_PK=true)*/
+CREATE COLUMNAR INDEX FOR TABLES IN `test_create_cci_in_database`;
+
+  # create default cci in database (only create default cci on table without cci)
+DROP INDEX `cci_t_order_0_id` on `t_order_0`;
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask",ENABLE_CCI_ON_TABLE_WITH_IMPLICIT_PK=true)*/
+CREATE COLUMNAR INDEX FOR TABLES IN `test_create_cci_in_database`;
+show full create table `t_order_0`;
+check columnar index `cci_t_order_0_id` on `t_order_0` meta;
+  
+  # drop all cci in database (all tables have cci)
+DROP COLUMNAR INDEX FOR TABLES IN `test_create_cci_in_database`;
+SHOW COLUMNAR INDEXES;
+
+  # drop all cci in database (some of tables have cci)
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/
+CREATE CLUSTERED COLUMNAR INDEX `cci_seller_id` ON `t_order_single`(`seller_id`);
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/
+CREATE CLUSTERED COLUMNAR INDEX `cci_seller_id` ON `t_order_0`(`seller_id`) PARTITION BY HASH (`id`);
+DROP COLUMNAR INDEX FOR TABLES IN `test_create_cci_in_database`;
+SHOW COLUMNAR INDEXES;
+
+  
+  # cleanup
+drop table if exists `t_order_0`;
+drop table if exists `t_order_1`;
+drop table if exists `t_order_single`;
+drop table if exists `t_order_broadcast`;
+drop table if exists `t_order_single_1`;
+drop table if exists `t_order_broadcast_1`;

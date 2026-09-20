@@ -1,0 +1,30 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+set ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC=true;
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=true;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+  
+create table dblemurhash_tbl_3_1 (
+  id bigint not null primary key
+  )
+  partition by UDF_HASH(
+  `id` with udf_params(
+  'dble/unitmurmurhash',
+  '{
+"partitionCount" : "4",
+"isDigitCheck" : "1",
+"leftPaddingChar" : "NO",
+"shardingValueMaxLength" : "16"
+}'
+  )
+) 
+partitions 4;
+
+## error_msg: $# Please check routeKey is legal #$
+select part_route('','dblemurhash_tbl_3_1',null);
+## error_msg: $# Please check routeKey is legal #$
+select part_route('','dblemurhash_tbl_3_1','');
+
+
+

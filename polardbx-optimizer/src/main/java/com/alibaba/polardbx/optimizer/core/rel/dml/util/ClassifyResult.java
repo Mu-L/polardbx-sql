@@ -43,4 +43,9 @@ public class ClassifyResult {
     // For UPDATE use
     public List<List<Object>> modifyRows = new ArrayList<>();
     public List<List<Object>> relocateRows = new ArrayList<>();
+
+    // For UPDATE Returning use
+    public List<List<Object>> modifyBeforeRows = new ArrayList<>();
+    public List<List<Object>> relocateReturningBeforeRows = new ArrayList<>();
+    public List<List<Object>> relocateReturningAfterRows = new ArrayList<>();
 }

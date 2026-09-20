@@ -74,6 +74,12 @@
             <groupId>com.clearspring.analytics</groupId>
             <artifactId>stream</artifactId>
             <version>${stream.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>it.unimi.dsi</groupId>
+                    <artifactId>fastutil</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>org.mockito</groupId>
@@ -96,6 +102,7 @@
         <dependency>
             <groupId>com.alibaba.polardbx</groupId>
             <artifactId>polardbx-calcite</artifactId>
+            <version>${project.version}</version>
             <exclusions>
                 <exclusion>
                     <artifactId>commons-logging</artifactId>
@@ -167,6 +174,12 @@
             <version>${mockito.verison}</version>
             <scope>test</scope>
         </dependency>
+        <!-- https://mvnrepository.com/artifact/io.airlift/joni -->
+        <dependency>
+            <groupId>io.airlift</groupId>
+            <artifactId>joni</artifactId>
+            <version>${io.airlift.joni}</version>
+        </dependency>
 
         <dependency>
             <groupId>com.google.truth</groupId>
@@ -174,6 +187,5 @@
             <version>${truth.version}</version>
             <scope>test</scope>
         </dependency>
-
     </dependencies>
 </project>

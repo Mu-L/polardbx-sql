@@ -23,3 +23,18 @@ customer_test:
   `c_comment` varchar(117) NOT NULL,
   PRIMARY KEY (`c_custkey`)
   ) ENGINE=InnoDB DEFAULT CHARSET=latin1 PARTITION BY HASH(c_nationkey) PARTITIONS 4;
+
+random_1000_6_tab4:
+  CREATE TABLE `random_1000_6_tab4` (
+  `pk` int(11) NOT NULL,
+  `col0` int(11) DEFAULT NULL,
+  `col1` float DEFAULT NULL,
+  `col2` text,
+  `col3` int(11) DEFAULT NULL,
+  `col4` float DEFAULT NULL,
+  `col5` text,
+  PRIMARY KEY (`pk`),
+  INDEX `idx_tab4_1` (`col0`),
+  LOCAL KEY `idx_tab4_3` (`col4`)
+  ) ENGINE = InnoDB DEFAULT CHARSET = utf8
+  PARTITION BY KEY(`pk`) PARTITIONS 4;

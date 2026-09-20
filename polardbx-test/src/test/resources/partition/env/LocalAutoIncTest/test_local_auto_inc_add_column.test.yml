@@ -1,0 +1,62 @@
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT = true;
+set @sql_mode_tmp1 = @@sql_mode;
+set sql_mode='';
+
+drop table if exists test_local_inc_not_as_pk;
+drop table if exists test_local_inc_not_as_pk_broadcast;
+drop table if exists test_local_inc_not_as_pk_single;
+
+CREATE TABLE `test_local_inc_not_as_pk` (
+`a` int(11) NOT NULL,
+`b` int(11) DEFAULT NULL,
+PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`b`)
+PARTITIONS 3;
+
+alter table test_local_inc_not_as_pk add column c int unique auto_increment;
+show create table test_local_inc_not_as_pk;
+
+insert into test_local_inc_not_as_pk(a,b) values(1,1);
+select last_insert_id();
+select * from test_local_inc_not_as_pk where a = 1 and b = 1;
+insert into test_local_inc_not_as_pk(a,b) values(2,1);
+select last_insert_id();
+select * from test_local_inc_not_as_pk where a = 2 and b = 1;
+insert into test_local_inc_not_as_pk(a,b) values(1,2);
+select last_insert_id();
+select * from test_local_inc_not_as_pk where a = 1 and b = 2;
+select * from test_local_inc_not_as_pk order by a,b;
+
+CREATE TABLE `test_local_inc_not_as_pk_broadcast` (
+`a` int(11) NOT NULL,
+`b` int(11) DEFAULT NULL,
+PRIMARY KEY (`a`)
+) broadcast;
+
+alter table test_local_inc_not_as_pk_broadcast add column c int unique auto_increment;
+show create table test_local_inc_not_as_pk_broadcast;
+
+insert into test_local_inc_not_as_pk_broadcast(a,b) values(1,1);
+select last_insert_id();
+replace into test_local_inc_not_as_pk_broadcast(a,b) values(2,1);
+select last_insert_id();
+select * from test_local_inc_not_as_pk_broadcast force index(primary);
+
+CREATE TABLE `test_local_inc_not_as_pk_single` (
+`a` int(11) NOT NULL,
+`b` int(11) DEFAULT NULL,
+PRIMARY KEY (`a`)
+) single;
+
+alter table test_local_inc_not_as_pk_single add column c int unique auto_increment;
+show create table test_local_inc_not_as_pk_single;
+
+insert into test_local_inc_not_as_pk_single(a,b) values(1,1);
+select last_insert_id();
+replace into test_local_inc_not_as_pk_single(a,b) values(2,1);
+select last_insert_id();
+select * from test_local_inc_not_as_pk_single force index(primary);
+
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT = false;
+set sql_mode = @sql_mode_tmp1;

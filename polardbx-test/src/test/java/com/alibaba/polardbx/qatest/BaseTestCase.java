@@ -44,6 +44,7 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
+import org.junit.rules.TestName;
 import org.junit.runner.RunWith;
 
 import javax.net.ssl.SSLException;
@@ -54,6 +55,8 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
@@ -62,11 +65,15 @@ import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
@@ -85,7 +92,7 @@ public class BaseTestCase implements BaseTestMode {
         Arrays.asList("int", "char");
 
     private final String CREATE_COLUMNAR_INDEX =
-        "create clustered columnar index %s on %s(%s) engine='EXTERNAL_DISK' partition by hash(%s) partitions %s";
+        "create clustered columnar index %s on %s(%s) partition by hash(%s) partitions %s";
 
     private static Cache<Engine, Object> engines = CacheBuilder.newBuilder().build();
 
@@ -94,12 +101,27 @@ public class BaseTestCase implements BaseTestMode {
     private List<ConnectionWrap> mysqlConnectionsSecond = new ArrayList<>();
     private List<ConnectionWrap> metaDBConnections = new ArrayList<>();
     protected String hint;
+    /**
+     * record all params from inst_config and variables_config
+     * map should be case-sensitive
+     */
+    private static Lock lock = new ReentrantLock();
+    // params before running all test cases
+    private static volatile Map<String, String> baseParams = null;
+    // case name -> params before running this case
+    private Map<String, Map<String, String>> params = new ConcurrentHashMap<>();
+    final String queryInstConfig = "select param_key, param_val, gmt_modified from inst_config order by id";
+    final String queryVariableConfig = "select param_key, param_val, gmt_modified from variable_config order by id";
 
     @Rule
     public FailFastTestWatcher failFastTestWatcher = new FailFastTestWatcher(ColumnarIndexNotInitedException.class);
 
+    @Rule
+    public TestName testName = new TestName();
+
     @Before
-    public void initializeFileStorage() throws ColumnarIndexNotInitedException {
+    public void setUpBaseTestCase() throws ColumnarIndexNotInitedException, SQLException {
+        // initialize file storage
         boolean useFileStorageMode = PropertiesUtil.useFileStorage()
             && usingNewPartDb()
             && ClassHelper.getFileStorageTestCases().contains(getClass());
@@ -115,13 +137,96 @@ public class BaseTestCase implements BaseTestMode {
 
         boolean skipColumnarIndex = PropertiesUtil.skipCreateColumnarIndex();
 
-        if (!skipColumnarIndex && columnarMode && !initedColumnar()) {
+        boolean columnarRelatedMetaTest = this.getClass().getAnnotation(ColumnarRelatedMetaTest.class) != null;
+
+        // Ensure columnar service engine aligns with CN's default engine (OSS if available).
+        // This covers the case where lab infra sets columnar_engine=EXTERNAL_DISK in startup
+        // config but CN has OSS in file_storage_info (making getDefaultColumnarEngine() = OSS).
+        if (columnarMode && !skipColumnarIndex) {
+            ensureColumnarEngineAligned();
+        }
+
+        if (!skipColumnarIndex && columnarMode && !initedColumnar() && !columnarRelatedMetaTest) {
             try {
                 createColumnarIndex();
                 prepareColumnarVars();
             } catch (Throwable t) {
                 throw new ColumnarIndexNotInitedException(t);
             }
+        }
+
+        // record param before test
+        StringBuilder sb = new StringBuilder();
+        boolean changed = false;
+        try (Connection connection = getMetaConnection()) {
+            if (null == baseParams) {
+                lock.lock();
+                try {
+                    if (null == baseParams) {
+                        baseParams = new HashMap<>();
+                        // One-time global tuning: lower staging rotate threshold so that
+                        // staging rotation paths get exercised more often during tests.
+                        // Done here (under the same once-only lock) so it runs exactly
+                        // once per test JVM and before any param snapshots are recorded.
+                        try (Connection cnConn = getPolardbxConnection("information_schema")) {
+                            JdbcUtil.executeUpdate(cnConn,
+                                "SET GLOBAL EXT_STAGING_ROTATE_MAX_ROWS = 10");
+                        } catch (Throwable e) {
+                            log.warn("Failed to SET GLOBAL EXT_STAGING_ROTATE_MAX_ROWS", e);
+                        }
+
+                        sb.append("All cn base params: ");
+                        ResultSet rs = JdbcUtil.executeQuerySuccess(connection, queryInstConfig);
+                        while (rs.next()) {
+                            baseParams.put(rs.getString(1), rs.getString(2));
+                            sb.append(rs.getString(1)).append("|").append(rs.getString(2)).append("|")
+                                .append(rs.getString(3)).append(",");
+                        }
+                        sb.append("\nAll dn base params: ");
+                        rs = JdbcUtil.executeQuerySuccess(connection, queryVariableConfig);
+                        while (rs.next()) {
+                            baseParams.put(rs.getString(1), rs.getString(2));
+                            sb.append(rs.getString(1)).append("|").append(rs.getString(2)).append("|")
+                                .append(rs.getString(3)).append(",");
+                        }
+                        System.out.println(sb);
+                        sb = new StringBuilder();
+                    }
+                } finally {
+                    lock.unlock();
+                }
+            }
+
+            // find diff params
+            sb.append("All cn params differ from base params: ");
+            Map<String, String> tmpParams = params.computeIfAbsent(testName.getMethodName(), k -> new HashMap<>());
+            ResultSet rs = JdbcUtil.executeQuerySuccess(connection, queryInstConfig);
+            while (rs.next()) {
+                tmpParams.put(rs.getString(1), rs.getString(2));
+                if (!StringUtils.equals(rs.getString(2), baseParams.get(rs.getString(1)))) {
+                    changed = true;
+                    sb.append(rs.getString(1)).append("|").append(rs.getString(2)).append("|")
+                        .append(rs.getString(3)).append(",");
+                }
+            }
+            if (changed) {
+                System.out.println(sb);
+            }
+            changed = false;
+            sb = new StringBuilder();
+            sb.append("All dn params differ from base params: ");
+            rs = JdbcUtil.executeQuerySuccess(connection, queryVariableConfig);
+            while (rs.next()) {
+                tmpParams.put(rs.getString(1), rs.getString(2));
+                if (!StringUtils.equals(rs.getString(2), baseParams.get(rs.getString(1)))) {
+                    changed = true;
+                    sb.append(rs.getString(1)).append("|").append(rs.getString(2)).append("|")
+                        .append(rs.getString(3)).append(",");
+                }
+            }
+        }
+        if (changed) {
+            System.out.println(sb);
         }
     }
 
@@ -169,6 +274,49 @@ public class BaseTestCase implements BaseTestMode {
             return rs.next();
         } catch (Throwable t) {
             throw new RuntimeException(t);
+        }
+    }
+
+    /**
+     * One-time alignment: if CN has OSS in file_storage_info, dynamically tell
+     * the columnar service to also use OSS as its default engine (overriding any
+     * startup-level columnar_engine=EXTERNAL_DISK from config.properties / env var).
+     * This makes CN read-side engine (tables.engine) and columnar write-side engine
+     * (files.engine) consistent, preventing FileNotFoundException on TTL archive
+     * tables whose CCI DDL doesn't specify ENGINE explicitly.
+     */
+    private static volatile boolean columnarEngineAligned = false;
+
+    private void ensureColumnarEngineAligned() {
+        if (columnarEngineAligned) {
+            return;
+        }
+        synchronized (BaseTestCase.class) {
+            if (columnarEngineAligned) {
+                return;
+            }
+            try (Connection conn = getPolardbxConnection()) {
+                Statement stmt = conn.createStatement();
+                // Check if OSS is registered in file_storage_info
+                ResultSet rs = stmt.executeQuery("show filestorage");
+                boolean hasOss = false;
+                while (rs.next()) {
+                    if ("OSS".equalsIgnoreCase(rs.getString("ENGINE"))) {
+                        hasOss = true;
+                        break;
+                    }
+                }
+                if (hasOss) {
+                    // Tell columnar service to use OSS as default engine
+                    stmt.execute("call polardbx.columnar_set_config(0, 'columnar_engine', 'OSS')");
+                    // Wait for ConfigWatchdog to pick up (3s poll interval + margin)
+                    Thread.sleep(5000);
+                    log.info("[ensureColumnarEngineAligned] Set columnar_engine=OSS, waited 5s for ConfigWatchdog.");
+                }
+            } catch (Throwable t) {
+                log.warn("[ensureColumnarEngineAligned] Failed to align columnar engine: " + t.getMessage(), t);
+            }
+            columnarEngineAligned = true;
         }
     }
 
@@ -419,6 +567,7 @@ public class BaseTestCase implements BaseTestMode {
             this.polardbxConnections.add(connectionWrap);
             useDb(connectionWrap, db);
             setSqlMode(ConnectionManager.getInstance().getPolardbxMode(), connectionWrap);
+            setNoNeedPkIn80(connectionWrap);
             return connectionWrap;
         } catch (SQLException t) {
             log.error("get PolardbxConnection error!", t);
@@ -487,6 +636,34 @@ public class BaseTestCase implements BaseTestMode {
             Connection connection = ConnectionManager.getInstance().getDruidMysqlConnection();
             ConnectionWrap connectionWrap = new ConnectionWrap(connection);
             this.mysqlConnections.add(connectionWrap);
+            useDb(connectionWrap, db);
+            setSqlMode(ConnectionManager.getInstance().getMysqlMode(), connectionWrap);
+//            setSqlModeEmpty(connectionWrap);
+            setNoNeedPkIn80(connectionWrap);
+            return connectionWrap;
+        } catch (SQLException t) {
+            log.error("get MysqlConnection error!", t);
+            throw new RuntimeException(t);
+        }
+    }
+
+    public static synchronized Connection getMysqlConnection0() {
+        try {
+            Connection connection = ConnectionManager.getInstance().getDruidMysqlConnection();
+            ConnectionWrap connectionWrap = new ConnectionWrap(connection);
+            useDb(connectionWrap, PropertiesUtil.mysqlDBName1());
+            setSqlMode(ConnectionManager.getInstance().getMysqlMode(), connectionWrap);
+            return connectionWrap;
+        } catch (SQLException t) {
+            log.error("get MysqlConnection error!", t);
+            throw new RuntimeException(t);
+        }
+    }
+
+    public static synchronized Connection getMysqlConnection0(String db) {
+        try {
+            Connection connection = ConnectionManager.getInstance().getDruidMysqlConnection();
+            ConnectionWrap connectionWrap = new ConnectionWrap(connection);
             useDb(connectionWrap, db);
             setSqlMode(ConnectionManager.getInstance().getMysqlMode(), connectionWrap);
             return connectionWrap;
@@ -660,6 +837,41 @@ public class BaseTestCase implements BaseTestMode {
 
     @After
     public void afterBaseTestCase() {
+        StringBuilder sb = new StringBuilder();
+        boolean changed = false;
+        try (Connection connection = getMetaConnection()) {
+            // find diff params
+            sb.append("All cn params differ from params before running cases: ");
+            Map<String, String> tmpParams = params.computeIfAbsent(testName.getMethodName(), k -> new HashMap<>());
+            ResultSet rs = JdbcUtil.executeQuerySuccess(connection, queryInstConfig);
+            while (rs.next()) {
+                if (!StringUtils.equals(rs.getString(2), tmpParams.get(rs.getString(1)))) {
+                    changed = true;
+                    sb.append(rs.getString(1)).append("|").append(rs.getString(2)).append("|")
+                        .append(rs.getString(3)).append(",");
+                }
+            }
+            if (changed) {
+                System.out.println(sb);
+            }
+            changed = false;
+            sb = new StringBuilder();
+            sb.append("\nAll dn params differ from params before running cases: ");
+            rs = JdbcUtil.executeQuerySuccess(connection, queryVariableConfig);
+            while (rs.next()) {
+                if (!StringUtils.equals(rs.getString(2), tmpParams.get(rs.getString(1)))) {
+                    changed = true;
+                    sb.append(rs.getString(1)).append("|").append(rs.getString(2)).append("|")
+                        .append(rs.getString(3)).append(",");
+                }
+            }
+            if (changed) {
+                System.out.println(sb);
+            }
+        } catch (Throwable t) {
+            t.printStackTrace();
+        }
+
         Throwable throwable = null;
         for (ConnectionWrap connection : polardbxConnections) {
             if (!connection.isClosed()) {
@@ -809,8 +1021,25 @@ public class BaseTestCase implements BaseTestMode {
         Assert.assertTrue(result.get(result.size() - 1).contains("OK"));
     }
 
-    public void setSqlMode(String mode, Connection conn) {
+    public static void setSqlMode(String mode, Connection conn) {
         String sql = "SET session sql_mode = '" + mode + "'";
+        JdbcUtil.updateDataTddl(conn, sql, null);
+    }
+
+    public static void setSqlModeEmpty(Connection conn) {
+        String sql = "SET session sql_mode = ''";
+        JdbcUtil.updateDataTddl(conn, sql, null);
+    }
+
+    public static void setNoNeedPkIn80(Connection conn) {
+        // set sql_require_primary_key = false in mysql 80
+        if (isMySQL80()) {
+            setVariable("sql_require_primary_key", "OFF", conn);
+        }
+    }
+
+    public static void setVariable(String variable, String value, Connection conn) {
+        String sql = "set @@session." + variable + " = '" + value + "'";
         JdbcUtil.updateDataTddl(conn, sql, null);
     }
 
@@ -880,7 +1109,8 @@ public class BaseTestCase implements BaseTestMode {
             }
 
             final String[] splited = StringUtils.split(headerHint, "/");
-            Assert.assertEquals("Unexpected header hint for physical sql: " + headerHint, 6, splited.length);
+            // for CCLDetect, splited.length == 12 else splited.length == 11
+            Assert.assertTrue("Unexpected header hint for physical sql: " + headerHint, splited.length >= 11);
             final String phySqlId = splited[3];
 
             phySqlGroups.computeIfAbsent(phySqlId, (k) -> new ArrayList<>()).add(token);
@@ -895,6 +1125,35 @@ public class BaseTestCase implements BaseTestMode {
                 Assert.assertEquals("Different physical type with same phySqlId: " + phySqlId, sqlType, phySqlType);
             }
         }
+    }
+
+    public static FutureTask<Collection<String>> checkInvalidTrx(AtomicBoolean stop) {
+        return new FutureTask<>(() -> {
+            List<String> invalidTrx = new ArrayList<>();
+            final String queryPolardbxTrx =
+                "select trx_id, start_time, trx_type from information_schema.polardbx_trx where start_time < '2025-01-01 00:00:00'";
+            final String queryInnodbTrx =
+                "select trx_id, trx_started, trx_mysql_thread_id from information_schema.innodb_trx where trx_started < '2025-01-01 00:00:00'";
+            try (Connection connection = getPolardbxConnection0()) {
+                while (!stop.get()) {
+                    ResultSet rs = JdbcUtil.executeQuerySuccess(connection, queryPolardbxTrx);
+                    while (rs.next()) {
+                        invalidTrx.add(rs.getString(1) + ", " + rs.getString(2) + ", " + rs.getString(3));
+                    }
+                    rs.close();
+                    rs = JdbcUtil.executeQuerySuccess(connection, queryInnodbTrx);
+                    while (rs.next()) {
+                        invalidTrx.add(rs.getString(1) + ", " + rs.getString(2) + ", " + rs.getString(3));
+                    }
+                    rs.close();
+                    Thread.sleep(1000);
+                }
+            } catch (SQLException e) {
+                e.printStackTrace();
+                invalidTrx.add(e.getMessage());
+            }
+            return invalidTrx;
+        });
     }
 
     protected static void checkPhySqlOrder(List<List<String>> trace) {
@@ -913,8 +1172,9 @@ public class BaseTestCase implements BaseTestMode {
                 token = lexer.token();
             }
 
-            final String[] splited = StringUtils.split(headerHint, "/");
-            Assert.assertEquals("Unexpected header hint for physical sql: " + headerHint, 6, splited.length);
+            String strippedHeaderHint = StringUtils.strip(headerHint, "/");
+            final String[] splited = StringUtils.splitPreserveAllTokens(strippedHeaderHint, "/");
+            Assert.assertEquals("Unexpected header hint for physical sql: " + headerHint, 12, splited.length);
             final int phySqlId = Integer.valueOf(splited[3]);
             Assert.assertTrue(currentPhySqlId <= phySqlId);
             currentPhySqlId = phySqlId;
@@ -1171,8 +1431,8 @@ public class BaseTestCase implements BaseTestMode {
     }
 
     protected void turnOffColdData() throws SQLException {
-        // In columnar mode test case, oss engine is external disk now
-        Engine engine = PropertiesUtil.columnarMode() ? Engine.EXTERNAL_DISK : PropertiesUtil.engine();
+        // Use default columnar engine (OSS if available, EXTERNAL_DISK otherwise)
+        Engine engine = PropertiesUtil.columnarMode() ? Engine.OSS : PropertiesUtil.engine();
         String instanceId = PropertiesUtil.configProp.getProperty("instanceId");
         try (Connection metaDbConn = getMetaConnection();
             Statement stmt = metaDbConn.createStatement()) {
@@ -1187,5 +1447,66 @@ public class BaseTestCase implements BaseTestMode {
             stmt.execute("commit");
         }
         JdbcUtil.executeSuccess(getPolardbxConnection(), String.format("CLEAR FILESTORAGE '%s'", engine.name()));
+    }
+
+    public List<Connection> getMySQLPhysicalConnectionList(String db) {
+        List<Connection> physicalDbConnList = new ArrayList<>();
+        DefaultDBInfo.ShardGroupInfo groupInfos =
+            DefaultDBInfo.getInstance().getShardGroupListByMetaDb(db, usingNewPartDb()).getValue();
+        List<String> grpNameList = new ArrayList<>(groupInfos.groupAndPhyDbMaps.keySet());
+        Collections.sort(grpNameList);
+
+        if (PropertiesUtil.dnCount > 1) {
+            for (String grpName : grpNameList) {
+                String storageAddress = getStorageAddressByGroupName(grpName);
+                String phyDbName = groupInfos.groupAndPhyDbMaps.get(grpName);
+                Connection shardDbConn = getMysqlConnectionByAddress(storageAddress, phyDbName);
+                physicalDbConnList.add(shardDbConn);
+            }
+        } else {
+            for (String grpName : grpNameList) {
+                String phyDbName = groupInfos.groupAndPhyDbMaps.get(grpName);
+                Connection shardDbConn = getMysqlConnection(phyDbName);
+                physicalDbConnList.add(shardDbConn);
+            }
+        }
+        return physicalDbConnList;
+    }
+
+    public Connection getMySQLPhysicalConnectionByGroupName(String db, String grpName) {
+        DefaultDBInfo.ShardGroupInfo groupInfos =
+            DefaultDBInfo.getInstance().getShardGroupListByMetaDb(db, usingNewPartDb()).getValue();
+        String storageAddress = getStorageAddressByGroupName(grpName);
+        String phyDbName = groupInfos.groupAndPhyDbMaps.get(grpName);
+        Connection shardDbConn = getMysqlConnectionByAddress(storageAddress, phyDbName);
+        return shardDbConn;
+    }
+
+    private String getStorageAddressByGroupName(String grpName) {
+        try (Connection metaDbConn = ConnectionManager.getInstance().getDruidMetaConnection()) {
+            JdbcUtil.useDb(metaDbConn, PropertiesUtil.getMetaDB);
+            String instanceId = PropertiesUtil.configProp.getProperty("instanceId");
+            try (Statement stmt = metaDbConn.createStatement()) {
+                stmt.execute(String.format("select s.ip,s.port from group_detail_info d,storage_info s where "
+                        + "d.storage_inst_id = s.storage_inst_id and  d.group_name = '%s' and d.inst_id = '%s'"
+                        + " and is_vip = 1",
+                    grpName, instanceId));
+                try (ResultSet rs = stmt.getResultSet()) {
+                    while (rs.next()) {
+                        String ip = rs.getString("ip");
+                        String port = rs.getString("port");
+                        return ip + ":" + port;
+                    }
+
+                } catch (Throwable ex) {
+                    throw ex;
+                }
+            } catch (Throwable ex) {
+                throw ex;
+            }
+        } catch (Throwable ex) {
+            throw new RuntimeException(ex);
+        }
+        throw new RuntimeException("can`t find storage info for group " + grpName);
     }
 }

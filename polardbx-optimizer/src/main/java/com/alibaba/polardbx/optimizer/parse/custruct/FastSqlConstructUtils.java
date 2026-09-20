@@ -48,6 +48,7 @@ import com.alibaba.polardbx.druid.sql.ast.expr.SQLMethodInvokeExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLNumberExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLVariantRefExpr;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLCharacterDataType;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnCheck;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnConstraint;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnDefinition;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnPrimaryKey;
@@ -97,6 +98,7 @@ import org.apache.calcite.sql.SequenceBean;
 import org.apache.calcite.sql.SqlBasicCall;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlCharStringLiteral;
+import org.apache.calcite.sql.SqlCheck;
 import org.apache.calcite.sql.SqlColumnDeclaration;
 import org.apache.calcite.sql.SqlColumnDeclaration.ColumnNull;
 import org.apache.calcite.sql.SqlColumnDeclaration.SpecialIndex;
@@ -206,6 +208,84 @@ public final class FastSqlConstructUtils {
                 final ImmutableList.Builder<SqlLiteral> builder = ImmutableList.builder();
 
                 for (SQLExpr arg : sqlDataType.getArguments()) {
+                    final SqlLiteral value = (SqlLiteral) FastSqlConstructUtils.convertToSqlNode(arg, context, ec);
+                    builder.add(value);
+                }
+
+                collectionVals = builder.build();
+            }
+        }
+
+        return new SqlDataTypeSpec(SqlParserPos.ZERO,
+            typeName,
+            unsigned,
+            zerofill,
+            binary,
+            length,
+            decimals,
+            charSet,
+            collation,
+            SqlUtil.wrapSqlNodeList(collectionVals),
+            fsp);
+    }
+
+    /**
+     * Convert SQLDataTypeImpl directly to SqlDataTypeSpec.
+     * This method extracts the core data type conversion logic from convertDataType method.
+     *
+     * @param columnType the SQLDataTypeImpl to convert
+     * @param context the context parameters
+     * @param ec the execution context
+     * @return the converted SqlDataTypeSpec
+     */
+    public static SqlDataTypeSpec convertDataTypeImpl(SQLDataTypeImpl columnType, ContextParameters context,
+                                                      ExecutionContext ec) {
+        final SqlIdentifier typeName = new SqlIdentifier(columnType.getName(), SqlParserPos.ZERO);
+        final boolean unsigned = columnType.isUnsigned();
+        final boolean zerofill = columnType.isZerofill();
+        /** for text only */
+        boolean binary = false;
+        SqlLiteral length = null;
+        SqlLiteral decimals = null;
+        SqlLiteral charSet = null;
+        SqlLiteral collation = null;
+        List<SqlLiteral> collectionVals = null;
+        SqlLiteral fsp = null;
+
+        if (columnType instanceof SQLCharacterDataType) {
+            final SQLCharacterDataType charDataType = (SQLCharacterDataType) columnType;
+
+            binary = charDataType.isHasBinary();
+
+            if (null != charDataType.getCharSetName()) {
+                charSet = SqlLiteral.createCharString(charDataType.getCharSetName(), SqlParserPos.ZERO);
+            }
+
+            if (null != charDataType.getCollate()) {
+                collation = SqlLiteral.createCharString(charDataType.getCollate(), SqlParserPos.ZERO);
+            }
+        }
+
+        final SqlDataTypeSpec.DrdsTypeName dataType =
+            SqlDataTypeSpec.DrdsTypeName.from(columnType.getName().toUpperCase());
+        if (null != dataType && GeneralUtil.isNotEmpty(columnType.getArguments())) {
+            if (dataType.isA(SqlDataTypeSpec.DrdsTypeName.TYPE_WITH_LENGTH) ||
+                dataType.isA(SqlDataTypeSpec.DrdsTypeName.TYPE_WITH_LENGTH_STRING)) {
+                length =
+                    (SqlLiteral) FastSqlConstructUtils.convertToSqlNode(columnType.getArguments().get(0), context, ec);
+
+                if (dataType.isA(SqlDataTypeSpec.DrdsTypeName.TYPE_WITH_LENGTH_DECIMALS)
+                    && columnType.getArguments().size() == 2) {
+                    decimals = (SqlLiteral) FastSqlConstructUtils.convertToSqlNode(columnType.getArguments().get(1),
+                        context, ec);
+                }
+            } else if (dataType.isA(SqlDataTypeSpec.DrdsTypeName.TYPE_WITH_FSP)) {
+                fsp =
+                    (SqlLiteral) FastSqlConstructUtils.convertToSqlNode(columnType.getArguments().get(0), context, ec);
+            } else if (dataType == SqlDataTypeSpec.DrdsTypeName.ENUM || dataType == SqlDataTypeSpec.DrdsTypeName.SET) {
+                final ImmutableList.Builder<SqlLiteral> builder = ImmutableList.builder();
+
+                for (SQLExpr arg : columnType.getArguments()) {
                     final SqlLiteral value = (SqlLiteral) FastSqlConstructUtils.convertToSqlNode(arg, context, ec);
                     builder.add(value);
                 }
@@ -908,17 +988,29 @@ public final class FastSqlConstructUtils {
 
         final List<SqlIndexColumnName> result = new ArrayList<>();
         for (SQLSelectOrderByItem column : columns) {
+            Boolean asc = null;
+            if (null != column.getType()) {
+                switch (column.getType()) {
+                case ASC:
+                    asc = true;
+                    break;
+                case DESC:
+                    asc = false;
+                    break;
+                default:
+                    break;
+                }
+            }
             if (column.getExpr() instanceof SQLIdentifierExpr) {
                 SqlIdentifier columnName = new SqlIdentifier(((SQLIdentifierExpr) column.getExpr()).normalizedName(),
                     SqlParserPos.ZERO);
-                result.add(new SqlIndexColumnName(SqlParserPos.ZERO, columnName, null, null));
+                result.add(new SqlIndexColumnName(SqlParserPos.ZERO, columnName, null, asc));
             } else if (column.getExpr() instanceof SQLMethodInvokeExpr) {
                 final SQLMethodInvokeExpr columnCall = (SQLMethodInvokeExpr) column.getExpr();
                 final SqlIdentifier columnName = new SqlIdentifier(SQLUtils.normalizeNoTrim(columnCall.getMethodName()),
                     SqlParserPos.ZERO);
 
                 SqlLiteral length = null;
-                Boolean asc = null;
                 if (columnCall.getArguments() != null) {
                     for (SQLExpr arg : columnCall.getArguments()) {
                         if (arg instanceof SQLIntegerExpr) {
@@ -932,19 +1024,6 @@ public final class FastSqlConstructUtils {
                                 asc = true;
                             }
                         }
-                    }
-                }
-
-                if (null != column.getType()) {
-                    switch (column.getType()) {
-                    case ASC:
-                        asc = true;
-                        break;
-                    case DESC:
-                        asc = false;
-                        break;
-                    default:
-                        break;
                     }
                 }
 
@@ -986,6 +1065,8 @@ public final class FastSqlConstructUtils {
         ColumnNull columnNull = null;
         SpecialIndex specialIndex = null;
         SqlReferenceDefinition referenceDefinition = null;
+        SqlCheck check = null;
+        SqlColumnDeclaration.Constraint constraint = null;
         final List<SQLColumnConstraint> constraints = tableColumn.getConstraints();
         if (constraints != null && constraints.size() > 0) {
             for (int j = 0; j < constraints.size(); j++) {
@@ -998,10 +1079,15 @@ public final class FastSqlConstructUtils {
                     columnNull = ColumnNull.NULL;
                 } else if (sqlColumnConstraint instanceof SQLColumnPrimaryKey) {
                     specialIndex = SpecialIndex.PRIMARY;
+                    constraint = SqlColumnDeclaration.Constraint.PRIMARY_KEY;
                 } else if (sqlColumnConstraint instanceof SQLColumnUniqueKey) {
                     specialIndex = SpecialIndex.UNIQUE;
+                    constraint = SqlColumnDeclaration.Constraint.UNIQUE;
                 } else if (sqlColumnConstraint instanceof SQLColumnReference) {
                     referenceDefinition = (SqlReferenceDefinition) convertToSqlNode(sqlColumnConstraint, context, ec);
+                } else if (sqlColumnConstraint instanceof SQLColumnCheck) {
+                    check = (SqlCheck) convertToSqlNode(sqlColumnConstraint, context, ec);
+                    constraint = SqlColumnDeclaration.Constraint.CHECK;
                 }
             }
         }
@@ -1124,10 +1210,16 @@ public final class FastSqlConstructUtils {
             innerStep,
             generatedAlways,
             generatedAlwaysLogical,
-            generatedAlwaysExpr);
+            generatedAlwaysExpr,
+            check,
+            constraint);
 
         if (tableColumn.getSecuredWith() != null) {
             decl.setSecuredWith(tableColumn.getSecuredWith().getSimpleName().toLowerCase());
+        }
+
+        if (tableColumn.isExternalize()) {
+            decl.setExternalize(true);
         }
 
         return decl;
@@ -1453,4 +1545,27 @@ public final class FastSqlConstructUtils {
 
     }
 
+    public static String getGhostDdlDataNode(SqlNodeList sqlNodes) {
+        if (sqlNodes == null) {
+            return null;
+        }
+        for (SqlNode node : sqlNodes) {
+            if (node instanceof SqlNodeList) {
+                String dataNode = getGhostDdlDataNode((SqlNodeList) node);
+                if (dataNode != null) {
+                    return dataNode;
+                }
+            }
+            if (node instanceof SqlCall) {
+                SqlCall call = (SqlCall) node;
+                if (call.getOperator().getName().equalsIgnoreCase(HintType.CMD_DATA_NODE.getValue().toLowerCase())) {
+                    if (call.getOperandList().size() > 1) {
+                        throw new IllegalArgumentException("wrong args num in datanode hint");
+                    }
+                    return call.getOperandList().get(0).toString();
+                }
+            }
+        }
+        return null;
+    }
 }

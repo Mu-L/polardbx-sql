@@ -607,7 +607,7 @@ public class SequenceLoadFromDBManager extends AbstractSequenceManager {
                 long minValueInAllRanges = getMinValueFromAllRanges(seqName);
                 boolean needSync = groupSeq.updateValueRegularly(minValueInAllRanges);
                 if (needSync) {
-                    SyncManagerHelper.sync(new SequenceSyncAction(schemaName, seqName), schemaName,
+                    SyncManagerHelper.syncThrowExceptions(new SequenceSyncAction(schemaName, seqName), schemaName,
                         SyncScope.ALL);
                 }
             }
@@ -620,7 +620,7 @@ public class SequenceLoadFromDBManager extends AbstractSequenceManager {
         long minValue = DEFAULT_INNER_STEP;
         try {
             List<List<Map<String, Object>>> resultSets =
-                SyncManagerHelper.sync(new InspectGroupSeqMinValueSyncAction(schemaName, seqName), schemaName,
+                SyncManagerHelper.syncThrowExceptions(new InspectGroupSeqMinValueSyncAction(schemaName, seqName), schemaName,
                     SyncScope.ALL);
             if (resultSets != null && resultSets.size() > 0) {
                 for (List<Map<String, Object>> resultSet : resultSets) {

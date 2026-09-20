@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.mpp.operator.factory;
 
+import com.alibaba.polardbx.common.utils.ExecutorMode;
 import com.alibaba.polardbx.executor.operator.Executor;
 import com.alibaba.polardbx.executor.operator.LookupJoinExec;
 import com.alibaba.polardbx.executor.operator.LookupJoinGsiExec;
@@ -24,10 +25,14 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.expression.calc.IExpression;
 import com.alibaba.polardbx.optimizer.core.join.EquiJoinKey;
 import com.alibaba.polardbx.optimizer.core.join.EquiJoinUtils;
+import com.alibaba.polardbx.optimizer.core.rel.BKAJoin;
+import com.alibaba.polardbx.optimizer.core.rel.Gather;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.SemiBKAJoin;
 import com.alibaba.polardbx.optimizer.utils.RexUtils;
-import com.alibaba.polardbx.statistics.RuntimeStatHelper;
+import com.alibaba.polardbx.stats.metric.FeatureStats;
+import com.alibaba.polardbx.stats.metric.FeatureStatsItem;
+import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rex.RexCall;
@@ -84,13 +89,16 @@ public class LookupJoinExecFactory extends ExecutorFactory {
         }
 
         boolean isLookUpGsi = existLookupGsiSide(join);
+        boolean isAdaptiveLookupOptimizationReady = isAdaptiveLookupOptimizationReady(join, context, parallelism);
 
         inner = getInputs().get(0).createExecutor(context, index);
         IExpression otherCondition = convertExpression(join.getCondition(), context);
 
         if (!isLookUpGsi) {
+            FeatureStats.getInstance().increment(FeatureStatsItem.GSI_LOOKUP_TIMES);
             ret = new LookupJoinExec(outer, inner, join.getJoinType(), maxOneRow, allJoinKeys, allJoinKeys,
-                otherCondition, context, shardCount, parallelism, allowMultiReadConn);
+                otherCondition, context, shardCount, parallelism, allowMultiReadConn,
+                isAdaptiveLookupOptimizationReady);
         } else {
             ret = new LookupJoinGsiExec(outer, inner, join.getJoinType(), maxOneRow, allJoinKeys, allJoinKeys,
                 otherCondition, context, shardCount, parallelism, allowMultiReadConn);
@@ -98,6 +106,75 @@ public class LookupJoinExecFactory extends ExecutorFactory {
 
         registerRuntimeStat(ret, join, context);
         return ret;
+    }
+
+    public static boolean isAdaptiveLookupOptimizationReady(Join join, ExecutionContext ec, int parallelism) {
+        // Early return for non-BKAJoin types
+        if (!(join instanceof BKAJoin)) {
+            return false;
+        }
+        if (parallelism > 1) {
+            return false;
+        }
+        if (ec.getExecuteMode() == ExecutorMode.MPP) {
+            return false;
+        }
+
+        BKAJoin bkaJoin = (BKAJoin) join;
+
+        // If already computed, return cached result
+        Boolean cachedResult = bkaJoin.isAdaptiveLookupOptimizationReady();
+        if (cachedResult != null) {
+            return cachedResult;
+        }
+
+        // Compute the result
+        boolean isReady = computeAdaptiveLookupOptimizationReadiness(bkaJoin);
+
+        // Cache and return the result
+        return bkaJoin.setAdaptiveLookupOptimizationReady(isReady);
+    }
+
+    /**
+     * Computes whether adaptive lookup optimization is ready for the given BKAJoin.
+     *
+     * @param bkaJoin the BKA join to check
+     * @return true if adaptive lookup optimization is ready, false otherwise
+     */
+    private static boolean computeAdaptiveLookupOptimizationReadiness(BKAJoin bkaJoin) {
+        // join must be switched, which meaning that all column join returned must be from main table relation
+        if (!bkaJoin.isHasSwitched()) {
+            return false;
+        }
+
+        // Extract LogicalView from inner relation
+        LogicalView logicalView = extractLogicalView(bkaJoin.getInner());
+        if (logicalView == null) {
+            return false;
+        }
+
+        // Check if lookup info exists and has GSI local index
+        return logicalView.getLookupInfo() != null
+            && logicalView.getLookupInfo().isPrimaryHasGsiLocalIndex();
+    }
+
+    /**
+     * Extracts LogicalView from RelNode, handling both direct LogicalView and Gather wrapping
+     *
+     * @param relNode the relation node to extract from
+     * @return LogicalView if found, null otherwise
+     */
+    private static LogicalView extractLogicalView(RelNode relNode) {
+        if (relNode instanceof LogicalView) {
+            return (LogicalView) relNode;
+        }
+
+        if (relNode instanceof Gather) {
+            RelNode input = ((Gather) relNode).getInput();
+            return input instanceof LogicalView ? (LogicalView) input : null;
+        }
+
+        return null;
     }
 
     private IExpression convertExpression(RexNode rexNode, ExecutionContext context) {

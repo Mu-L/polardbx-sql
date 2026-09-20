@@ -490,6 +490,7 @@ public class RenameTableTest extends DDLBaseNewDBTestCase {
     public void testRecycleBinWithFlashback() throws SQLException {
         // Run once only
         if (TStringUtil.isEmpty(schemaPrefix) && originTableName.endsWith(AUTO_SUFFIX)) {
+            purgeDDLTable();
             for (String tableName : recycleBinTableEntityMap.keySet()) {
                 ShowCreateTableResult oldRes = execShowCreateTable(tableName);
 
@@ -501,8 +502,12 @@ public class RenameTableTest extends DDLBaseNewDBTestCase {
 
                 String recyclebinTableName = null;
                 try (ResultSet rs = JdbcUtil.executeQuerySuccess(tddlConnection, "show recyclebin")) {
-                    if (rs.next()) {
-                        recyclebinTableName = rs.getString("NAME");
+                    while (rs.next()) {
+                        String originName = rs.getString("ORIGINAL_NAME");
+                        if (originName.equalsIgnoreCase(tableName)) {
+                            recyclebinTableName = rs.getString("NAME");
+                            break;
+                        }
                     }
                 }
                 Assert.assertTrue(TStringUtil.isNotEmpty(recyclebinTableName));

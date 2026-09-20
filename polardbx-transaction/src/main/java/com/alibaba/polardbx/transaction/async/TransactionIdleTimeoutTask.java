@@ -18,12 +18,14 @@ package com.alibaba.polardbx.transaction.async;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.spi.ITransactionManager;
 import com.alibaba.polardbx.executor.sync.ISyncAction;
 import com.alibaba.polardbx.optimizer.utils.ITransaction;
 import com.alibaba.polardbx.optimizer.utils.OptimizerHelper;
 import com.alibaba.polardbx.transaction.TransactionLogger;
+import com.alibaba.polardbx.transaction.trx.TsoTransaction;
 
 import java.util.Collection;
 
@@ -63,6 +65,29 @@ public class TransactionIdleTimeoutTask implements Runnable {
                     timeout = tran.getIdleROTimeout();
                 }
 
+                boolean exceedMaxTrxAffectRows = false;
+                int maxTrxAffectRows = tran.getExecutionContext().getParamManager().getInt(
+                    ConnectionParams.MAX_TRX_AFFECT_ROWS);
+                if (maxTrxAffectRows > 0 && tran.getStat().writeAffectRows > maxTrxAffectRows) {
+                    exceedMaxTrxAffectRows = true;
+                }
+
+                if (exceedMaxTrxAffectRows) {
+                    long connId = tran.getExecutionContext().getConnId();
+                    ISyncAction killSyncAction;
+                    try {
+                        TransactionLogger.warn(
+                            "kill big trx " + Long.toHexString(tran.getId()) + ", conn id" + connId);
+                        killSyncAction =
+                            (ISyncAction) killSyncActionClass
+                                .getConstructor(String.class, Long.TYPE, Boolean.TYPE, Boolean.TYPE, ErrorCode.class)
+                                // KillSyncAction(String user, long id, boolean killQuery, boolean skipValidation, ErrorCode cause)
+                                .newInstance("", connId, false, true, ErrorCode.ERR_LARGE_TRANS);
+                    } catch (Exception e) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, e, e.getMessage());
+                    }
+                    killSyncAction.sync();
+                }
                 if (timeout == 0L) {
                     // 0 means never timeout.
                     continue;

@@ -20,10 +20,15 @@ import com.alibaba.polardbx.executor.ddl.job.factory.AlterTableGroupSplitPartiti
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJob;
 import com.alibaba.polardbx.executor.partitionmanagement.AlterTableGroupUtils;
 import com.alibaba.polardbx.executor.spi.IRepository;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableGroupSplitPartition;
 import org.apache.calcite.sql.SqlAlterTableGroup;
+import org.apache.calcite.sql.SqlIdentifier;
+
+import java.util.Map;
+import java.util.Set;
 
 public class LogicalAlterTableGroupSplitPartitionHandler extends LogicalCommonDdlHandler {
 
@@ -32,10 +37,19 @@ public class LogicalAlterTableGroupSplitPartitionHandler extends LogicalCommonDd
     }
 
     @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        SqlAlterTableGroup sqlAlterTableGroup = (SqlAlterTableGroup) logicalDdlPlan.getNativeSqlNode();
+        String tableGroupName = ((SqlIdentifier) sqlAlterTableGroup.getTableGroupName()).getLastName();
+        exclusiveResources.add(concatWithDot(logicalDdlPlan.getSchemaName(), tableGroupName));
+    }
+
+    @Override
     protected DdlJob buildDdlJob(BaseDdlOperation logicalDdlPlan, ExecutionContext executionContext) {
         LogicalAlterTableGroupSplitPartition alterTableGroupSplitPartition =
             (LogicalAlterTableGroupSplitPartition) logicalDdlPlan;
-        alterTableGroupSplitPartition.preparedData(executionContext);
+        alterTableGroupSplitPartition.preparedData(executionContext, true);
         return AlterTableGroupSplitPartitionJobFactory
             .create(alterTableGroupSplitPartition.relDdl, alterTableGroupSplitPartition.getPreparedData(),
                 executionContext);

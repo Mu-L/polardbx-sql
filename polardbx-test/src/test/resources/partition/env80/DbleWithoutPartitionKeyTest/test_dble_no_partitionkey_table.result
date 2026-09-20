@@ -1,0 +1,257 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+use polardbx;
+drop database if exists mydbledbxx1;
+## USE_DN_LIST_MSG
+create database if not exists mydbledbxx1 charset = utf8 collate = utf8_general_ci mode = 'auto' locality='dble_config={"group_config":{"mydbledbxx1_g1":["$dn1","mydbledbxx1_00"],"mydbledbxx1_g2":["$dn2","mydbledbxx1_01"] }}';
+use mydbledbxx1;
+create table t1(a int,b int, primary key(a)) partition by udf_hash() locality='db_pools=mydbledbxx1_g1,mydbledbxx1_g2';
+explain select * from t1;
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t1[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `t1` AS `t1`")
+explain select * from t1 where a=1;
+Logical ExecutionPlan
+LogicalView(tables="t1[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `t1` AS `t1` WHERE (`a` = ?)")
+explain select * from t1 where a=1 and b=1;
+Logical ExecutionPlan
+LogicalView(tables="t1[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `t1` AS `t1` WHERE ((`a` = ?) AND (`b` = ?))")
+explain select * from t1 where a=1 or b=1;
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t1[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `t1` AS `t1` WHERE ((`a` = ?) OR (`b` = ?))")
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t1 where a in (1);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t1[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `t1` AS `t1` WHERE (`a` IN(?))")
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t1 where a in (1,2,3,4,5,6,7,8,9,10,11);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t1[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `t1` AS `t1` WHERE (`a` IN(?))")
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t1 where a in (1) and a=1;
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t1[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `t1` AS `t1` WHERE ((`a` = ?) AND (`a` IN(?)))")
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t1 where a in (1,2,3,4,5,6,7,8,9,10,11) and a=2;
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t1[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `t1` AS `t1` WHERE ((`a` = ?) AND (`a` IN(?)))")
+show create table t1;
+Table,Create Table
+t1,CREATE TABLE `t1` (
+	`a` int NOT NULL,
+	`b` int DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+/* LOCALITY='db_pools=mydbledbxx1_g1,mydbledbxx1_g2' */
+PARTITION BY UDF_HASH()
+show rule from t1;
+ID,TABLE_NAME,BROADCAST,DB_PARTITION_KEY,DB_PARTITION_POLICY,DB_PARTITION_COUNT,TB_PARTITION_KEY,TB_PARTITION_POLICY,TB_PARTITION_COUNT
+0,t1,0,,,,,UDF_HASH,2
+select count(1) from information_schema.table_group where TABLE_SCHEMA='mydbledbxx1';
+count(1)
+1
+## error_msg: $# No found any columns in Creating Table #$
+create table t2(a int,b int, primary key(a)) partition by udf_hash();
+No found any columns in Creating Table
+create table t3 like t1;
+create table t4 like t3;
+show create table t4;
+Table,Create Table
+t4,CREATE TABLE `t4` (
+	`a` int NOT NULL,
+	`b` int DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+/* LOCALITY='db_pools=mydbledbxx1_g1,mydbledbxx1_g2' */
+PARTITION BY UDF_HASH()
+select count(1) from information_schema.table_group where TABLE_SCHEMA='mydbledbxx1';
+count(1)
+3
+## error_msg: $# because it does not have a partition key #$
+insert into t1 values(1,1);
+because it does not have a partition key
+## error_msg: $# because it does not have a partition key #$
+update t1 set a=2 where a=1;
+because it does not have a partition key
+## error_msg: $# because it does not have a partition key #$
+delete from t1 where a=2;
+because it does not have a partition key
+create table t5(a int,b int, primary key(a)) broadcast locality='db_pools=mydbledbxx1_g1,mydbledbxx1_g2';
+insert into t5 values(1,1);
+insert into t5 values(2,2);
+insert into t5 values(3,2);
+insert into t5 values(4,2);
+unregister table if exists t5;
+register table t5(a int,b int, primary key(a)) partition by udf_hash() locality='db_pools=mydbledbxx1_g1,mydbledbxx1_g2';
+select * from t5 where a=1;
+a,b
+1,1
+1,1
+select * from t5 where a in (1,2) order by a;
+a,b
+1,1
+1,1
+2,2
+2,2
+select * from t5 where b=2 order by a;
+a,b
+2,2
+2,2
+3,2
+3,2
+4,2
+4,2
+select count(1) from t5;
+count(1)
+8
+create table t6(a int,b int, primary key(a,b)) partition by udf_hash() locality='db_pools=mydbledbxx1_g1,mydbledbxx1_g2';
+explain select * from t6;
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t6[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `t6` AS `t6`")
+explain select * from t6 where a=1;
+Logical ExecutionPlan
+LogicalView(tables="t6[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `t6` AS `t6` WHERE (`a` = ?)")
+explain select * from t6 where a=1 and b=1;
+Logical ExecutionPlan
+LogicalView(tables="t6[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `t6` AS `t6` WHERE ((`a` = ?) AND (`b` = ?))")
+explain select * from t6 where a=1 or b=1;
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t6[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `t6` AS `t6` WHERE ((`a` = ?) OR (`b` = ?))")
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t6 where b in (1);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t6[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `t6` AS `t6` WHERE (`b` IN(?))")
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t6 where b in (1,2,3,4,5,6,7,8,9,10,11);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t6[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `t6` AS `t6` WHERE (`b` IN(?))")
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t6 where b in (1) and b=1;
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t6[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `t6` AS `t6` WHERE ((`b` IN(?)) AND (`b` = ?))")
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t6 where b in (1,2,3,4,5,6,7,8,9,10,11) and b=2;
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t6[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `t6` AS `t6` WHERE ((`b` IN(?)) AND (`b` = ?))")
+show create table t6;
+Table,Create Table
+t6,CREATE TABLE `t6` (
+	`a` int NOT NULL,
+	`b` int NOT NULL,
+	PRIMARY KEY (`a`, `b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+/* LOCALITY='db_pools=mydbledbxx1_g1,mydbledbxx1_g2' */
+PARTITION BY UDF_HASH()
+show rule from t6;
+ID,TABLE_NAME,BROADCAST,DB_PARTITION_KEY,DB_PARTITION_POLICY,DB_PARTITION_COUNT,TB_PARTITION_KEY,TB_PARTITION_POLICY,TB_PARTITION_COUNT
+0,t6,0,,,,,UDF_HASH,2
+create table t7(a int,b int, primary key(a,b)) broadcast locality='db_pools=mydbledbxx1_g1,mydbledbxx1_g2';
+insert into t7 values(1,1);
+insert into t7 values(2,2);
+insert into t7 values(3,2);
+insert into t7 values(4,2);
+unregister table if exists t7;
+register table t7(a int,b int, primary key(a,b)) partition by udf_hash() locality='db_pools=mydbledbxx1_g1,mydbledbxx1_g2';
+select * from t7 where a=1;
+a,b
+1,1
+1,1
+select * from t7 where b in (1,2) order by b;
+a,b
+1,1
+1,1
+2,2
+2,2
+3,2
+3,2
+4,2
+4,2
+select * from t7 where b=2 order by a;
+a,b
+2,2
+2,2
+3,2
+3,2
+4,2
+4,2
+select count(1) from t7;
+count(1)
+8
+create table t8(a int,b int, primary key(a,b)) broadcast locality='db_pools=mydbledbxx1_g1,mydbledbxx1_g2';
+insert into t8 values(1,1);
+insert into t8 values(2,2);
+insert into t8 values(3,2);
+insert into t8 values(4,2);
+unregister table if exists t8;
+register table t8(a int,b int, primary key(a,b)) partition by udf_hash() locality='db_pools=mydbledbxx1_g1,mydbledbxx1_g2';
+alter table t8 change column a aa bigint, change column b bb bigint;
+select * from t8 where aa=1;
+aa,bb
+1,1
+1,1
+select * from t8 where bb in (1,2) order by bb;
+aa,bb
+1,1
+1,1
+2,2
+2,2
+3,2
+3,2
+4,2
+4,2
+select * from t8 where bb=2 order by aa;
+aa,bb
+2,2
+2,2
+3,2
+3,2
+4,2
+4,2
+select count(1) from t8;
+count(1)
+8
+show create table t8;
+Table,Create Table
+t8,CREATE TABLE `t8` (
+	`aa` bigint NOT NULL,
+	`bb` bigint NOT NULL,
+	PRIMARY KEY (`aa`, `bb`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+/* LOCALITY='db_pools=mydbledbxx1_g1,mydbledbxx1_g2' */
+PARTITION BY UDF_HASH()
+explain select * from t8;
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t8[p1,p2]", shardCount=2, sql="SELECT `aa`, `bb` FROM `t8` AS `t8`")
+explain select * from t8 where aa=1;
+Logical ExecutionPlan
+LogicalView(tables="t8[p1,p2]", shardCount=2, sql="SELECT `aa`, `bb` FROM `t8` AS `t8` WHERE (`aa` = ?)")
+explain select * from t8 where aa=1 and bb=1;
+Logical ExecutionPlan
+LogicalView(tables="t8[p1,p2]", shardCount=2, sql="SELECT `aa`, `bb` FROM `t8` AS `t8` WHERE ((`aa` = ?) AND (`bb` = ?))")
+explain select * from t8 where aa=1 or bb=1;
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t8[p1,p2]", shardCount=2, sql="SELECT `aa`, `bb` FROM `t8` AS `t8` WHERE ((`aa` = ?) OR (`bb` = ?))")
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t8 where bb in (1);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t8[p1,p2]", shardCount=2, sql="SELECT `aa`, `bb` FROM `t8` AS `t8` WHERE (`bb` IN(?))")
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t8 where bb in (1,2,3,4,5,6,7,8,9,10,11);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t8[p1,p2]", shardCount=2, sql="SELECT `aa`, `bb` FROM `t8` AS `t8` WHERE (`bb` IN(?))")
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t8 where bb in (1) and bb=1;
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t8[p1,p2]", shardCount=2, sql="SELECT `aa`, `bb` FROM `t8` AS `t8` WHERE ((`bb` IN(?)) AND (`bb` = ?))")
+explain /*TDDL:cmd_extra(IN_SUB_QUERY_THRESHOLD=10000)*/ select * from t8 where bb in (1,2,3,4,5,6,7,8,9,10,11) and bb=2;
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="t8[p1,p2]", shardCount=2, sql="SELECT `aa`, `bb` FROM `t8` AS `t8` WHERE ((`bb` IN(?)) AND (`bb` = ?))")
+use polardbx;
+drop database mydbledbxx1;

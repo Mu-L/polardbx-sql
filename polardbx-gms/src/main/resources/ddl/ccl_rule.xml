@@ -10,13 +10,14 @@
                 `user_name` char(32) COLLATE utf8_unicode_ci,
                 `client_ip` char(60) COLLATE utf8_unicode_ci NOT NULL,
                 `parallelism` int(11) NOT NULL DEFAULT 0  comment 'value of MAX_CONCURRENCY in the CREATE CCL_RULE statement',
-                `keywords` varchar(512) DEFAULT NULL,
+                `keywords` text,
                 `template_id` text,
                 `queue_size` int(11) NOT NULL DEFAULT 0 comment 'value of WAIT_QUEUE_SIZE in the CREATE CCL_RULE statement',
                 `priority` int(11) NOT NULL AUTO_INCREMENT,
-                `trigger_priority` int(11) NOT NULL,
+                `blocker_priority` int(11) NOT NULL,
                 `wait_timeout` int(11) NOT NULL DEFAULT 600,
                 `fast_match` int(11) NOT NULL DEFAULT 0,
+                `dry_run` int(11) NOT NULL DEFAULT 0,
                 `light_wait` int(11) NOT NULL DEFAULT 0,
                 `query` text,
                 `params` text,
@@ -73,12 +74,41 @@
            alter table `concurrency_control_rule` modify column `inst_id` varchar(128) NOT NULL
         ]]></Change>
 
+        <Change><![CDATA[
+           alter table `concurrency_control_rule` add column `dry_run` int(11) NOT NULL DEFAULT 0
+        ]]></Change>
+
+        <Change><![CDATA[
+           alter table `concurrency_control_rule` change column `trigger_priority` `blocker_priority` int(11)
+        ]]></Change>
+
+        <!--
+        Change context:
+        - Before: keywords was varchar(512) since the table was first introduced, when CCL keyword
+          lists were assumed to be short. The keyword JSON is written verbatim by
+          LogicalCreateCclRuleHandler and read back by CclRuleInfo, so long keyword lists were
+          silently truncated under non-strict sql_mode or rejected with "Data too long" under
+          strict sql_mode, breaking keyword matching and SHOW CCL_RULES output.
+        - Path impact: only affects the MetaDB concurrency_control_rule schema. New installations
+          get the text column from the Create statement above; existing instances are widened by
+          this change at CN upgrade time via SchemaChangeManager. The CCL write/read/match paths
+          (CreateCclRule, ShowCclRules, CclRuleInfo.create) keep using String payloads and need no
+          code change; business tables and other system tables are untouched.
+        - Capability regression: None. Widening varchar(512) to text is compatible with every
+          existing reader/writer of this column and all previously stored values remain valid.
+        -->
+        <Change><![CDATA[
+           alter table `concurrency_control_rule` modify column `keywords` text
+        ]]></Change>
+
     </SystemTable>
 
-    <SystemTable name="concurrency_control_trigger">
+    <SystemTable name="concurrency_control_blocker">
         <Create><![CDATA[
-                CREATE TABLE IF NOT EXISTS `concurrency_control_trigger` (
+                CREATE TABLE IF NOT EXISTS `concurrency_control_blocker` (
                   `id` char(50) CHARACTER SET utf8 COLLATE utf8_unicode_ci NOT NULL,
+                  `user` char(64) COLLATE utf8_unicode_ci NOT NULL,
+                  `host` char(64) COLLATE utf8_unicode_ci NOT NULL,
                   `priority` int(11) NOT NULL AUTO_INCREMENT,
                   `conditions` text,
                   `rule_config` text,
@@ -96,9 +126,16 @@
         ]]></Create>
 
         <Change><![CDATA[
-           alter table `concurrency_control_trigger` modify column `inst_id` varchar(128) NOT NULL
+           alter table `concurrency_control_blocker` modify column `inst_id` varchar(128) NOT NULL
         ]]></Change>
 
+        <Change><![CDATA[
+            alter table `concurrency_control_blocker` add column `user` char(64) COLLATE utf8_unicode_ci NOT NULL
+        ]]></Change>
+
+        <Change><![CDATA[
+            alter table `concurrency_control_blocker` add column `host` char(64) COLLATE utf8_unicode_ci NOT NULL
+        ]]></Change>
 
     </SystemTable>
 

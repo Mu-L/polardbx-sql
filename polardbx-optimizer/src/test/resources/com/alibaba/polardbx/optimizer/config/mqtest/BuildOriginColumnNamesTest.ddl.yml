@@ -1,0 +1,28 @@
+wxorder_order:
+  CREATE TABLE wxorder_order(
+  id bigint not null auto_increment,
+  ware_id bigint,
+  channel_id bigint,
+  tenant_id bigint,
+  control_status varchar(10),
+  primary key(id)
+  )
+  PARTITION BY KEY(id)
+  PARTITIONS 4;
+
+wxorder_ware:
+  CREATE TABLE wxorder_ware(
+  id bigint not null auto_increment,
+  tenant_id bigint,
+  type varchar(10),
+  primary key(id)
+  )
+  PARTITION BY KEY(id)
+  PARTITIONS 4;
+
+users:
+  CREATE TABLE users(
+  id bigint not null,
+  name varchar(64),
+  primary key(id)
+  ) SINGLE;

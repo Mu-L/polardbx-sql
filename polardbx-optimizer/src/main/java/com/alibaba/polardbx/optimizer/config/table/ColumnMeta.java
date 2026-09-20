@@ -24,8 +24,11 @@ import com.alibaba.polardbx.gms.metadb.table.ColumnsRecord;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
+import org.apache.calcite.util.ImmutableBitSet;
 
 import java.io.Serializable;
+
+import static com.alibaba.polardbx.gms.metadb.table.ColumnsRecord.FLAG_LOCAL_AUTO_INCREMENT;
 
 /**
  * Column 的元信息描述
@@ -35,34 +38,51 @@ import java.io.Serializable;
 public class ColumnMeta implements Serializable {
 
     private static final long serialVersionUID = 1748510851861759314L;
-
-    /**
-     * 表名
-     */
-    private String tableName;
-
     /**
      * 列名
      */
     protected final String name;
-
     /**
      * 当前列的别名
      */
     protected final String alias;
-
-    private String fullName;
-
-    private Field field;
-
-    private final ColumnStatus status;
-
-    private final long flag;
-
     /**
      * 映射列名 online change column
      */
     private final String mappingName;
+    /**
+     * For externalized columns: the original SQL type name (e.g. "longtext", "longblob").
+     * Null for normal columns.
+     */
+    private final String originalTypeName;
+    /**
+     * 表名
+     */
+    private String tableName;
+    private String fullName;
+    private Field field;
+    private ColumnStatus status;
+    private long flag;
+
+    // Keys that includes this field except of prefix keys.
+    private ImmutableBitSet partOfKey;
+
+    // keys usable for sorting
+    private ImmutableBitSet partOfSortKey;
+
+    // Prefix keys
+    private ImmutableBitSet partOfPrefixKey;
+
+    // builder for partOfKey
+    private ImmutableBitSet.Builder partOfKeyBuilder;
+
+    // builder for partOfSortKey
+    private ImmutableBitSet.Builder partOfSortKeyBuilder;
+
+    // builder for partOfPrefixKey
+    private ImmutableBitSet.Builder partOfPrefixKeyBuilder;
+
+    private boolean partOfBuilt = false;
 
     public ColumnMeta(String tableName, String name, String alias, Field field) {
         this.tableName = (tableName);
@@ -72,10 +92,20 @@ public class ColumnMeta implements Serializable {
         this.status = ColumnStatus.PUBLIC;   //兼容以前
         this.flag = 0;
         this.mappingName = null;
+        this.originalTypeName = null;
+        this.partOfKeyBuilder = ImmutableBitSet.builder();
+        this.partOfSortKeyBuilder = ImmutableBitSet.builder();
+        this.partOfPrefixKeyBuilder = ImmutableBitSet.builder();
+        this.partOfBuilt = false;
     }
 
     public ColumnMeta(String tableName, String name, String alias, Field field, ColumnStatus status, long flag,
                       String mappingName) {
+        this(tableName, name, alias, field, status, flag, mappingName, null);
+    }
+
+    public ColumnMeta(String tableName, String name, String alias, Field field, ColumnStatus status, long flag,
+                      String mappingName, String originalTypeName) {
         this.tableName = (tableName);
         this.name = (name);
         this.alias = alias;
@@ -83,10 +113,40 @@ public class ColumnMeta implements Serializable {
         this.status = status;
         this.flag = flag;
         this.mappingName = mappingName;
+        this.originalTypeName = originalTypeName;
+        this.partOfKeyBuilder = ImmutableBitSet.builder();
+        this.partOfSortKeyBuilder = ImmutableBitSet.builder();
+        this.partOfPrefixKeyBuilder = ImmutableBitSet.builder();
+        this.partOfBuilt = false;
+    }
+
+    /**
+     * copy constructor for advisor only
+     *
+     * @param cm source column meta
+     */
+    public ColumnMeta(ColumnMeta cm) {
+        this.name = cm.getName();
+        this.alias = cm.getAlias();
+        this.mappingName = cm.getMappingName();
+        this.originalTypeName = cm.getOriginalTypeName();
+        this.tableName = cm.getTableName();
+        this.fullName = cm.getFullName();
+        this.field = cm.getField();
+        this.status = cm.getStatus();
+        this.flag = cm.getFlag();
+        this.partOfKeyBuilder = ImmutableBitSet.builder();
+        this.partOfSortKeyBuilder = ImmutableBitSet.builder();
+        this.partOfPrefixKeyBuilder = ImmutableBitSet.builder();
+        this.partOfBuilt = false;
     }
 
     public String getTableName() {
         return tableName;
+    }
+
+    public void setTableName(String tableName) {
+        this.tableName = tableName;
     }
 
     public String getName() {
@@ -107,6 +167,10 @@ public class ColumnMeta implements Serializable {
 
     public boolean isAutoIncrement() {
         return field.isAutoIncrement();
+    }
+
+    public boolean isLocalAutoIncrement() {
+        return (flag & FLAG_LOCAL_AUTO_INCREMENT) != 0;
     }
 
     public String getOriginTableName() {
@@ -218,10 +282,6 @@ public class ColumnMeta implements Serializable {
         return field.getLength();
     }
 
-    public void setTableName(String tableName) {
-        this.tableName = tableName;
-    }
-
     public Field getField() {
         return this.field;
     }
@@ -256,8 +316,71 @@ public class ColumnMeta implements Serializable {
             && !isGeneratedColumn();
     }
 
+    public boolean isExternalizedColumn() {
+        return (flag & ColumnsRecord.FLAG_EXTERNALIZED_COLUMN) != 0L;
+    }
+
+    public void setPartOfKey(int loc) {
+        partOfKeyBuilder.set(loc);
+    }
+
+    public void setPartOfSortKey(int loc) {
+        partOfSortKeyBuilder.set(loc);
+    }
+
+    public void setPartOfPrefixKey(int loc) {
+        partOfPrefixKeyBuilder.set(loc);
+    }
+
+    public void clearPartOfKey(int loc) {
+        partOfKeyBuilder.clear(loc);
+    }
+
+    public void clearPartOfSortKey(int loc) {
+        partOfSortKeyBuilder.clear(loc);
+    }
+
+    void buildKeyPartInfo() {
+        this.partOfKey = partOfKeyBuilder.build();
+        this.partOfSortKey = partOfSortKeyBuilder.build();
+        this.partOfPrefixKey = partOfPrefixKeyBuilder.build();
+        this.partOfKeyBuilder = null;
+        this.partOfSortKeyBuilder = null;
+        this.partOfPrefixKeyBuilder = null;
+        this.partOfBuilt = true;
+    }
+
+    public boolean isPartOfBuilt() {
+        return partOfBuilt;
+    }
+
+    public ImmutableBitSet getPartOfKey() {
+        if (!partOfBuilt) {
+            buildKeyPartInfo();
+        }
+        return partOfKey;
+    }
+
+    public ImmutableBitSet getPartOfSortKey() {
+        if (!partOfBuilt) {
+            buildKeyPartInfo();
+        }
+        return partOfSortKey;
+    }
+
+    public ImmutableBitSet getPartOfPrefixKey() {
+        if (!partOfBuilt) {
+            buildKeyPartInfo();
+        }
+        return partOfPrefixKey;
+    }
+
     public String getMappingName() {
         return mappingName;
+    }
+
+    public String getOriginalTypeName() {
+        return originalTypeName;
     }
 
     public boolean isAutoUpdateColumn() {

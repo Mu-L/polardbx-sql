@@ -18,13 +18,16 @@ package com.alibaba.polardbx.executor.accumulator;
 
 import com.alibaba.polardbx.common.datatype.Decimal;
 import com.alibaba.polardbx.common.datatype.FastDecimalUtils;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.executor.accumulator.state.NullableDecimalGroupState;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
+import org.openjdk.jol.info.ClassLayout;
 
 public class DecimalMaxMinAccumulator extends AbstractAccumulator {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(DecimalMaxMinAccumulator.class).instanceSize();
 
     private static final DataType[] INPUT_TYPES = new DataType[] {DataTypes.DecimalType};
 
@@ -34,6 +37,11 @@ public class DecimalMaxMinAccumulator extends AbstractAccumulator {
     public DecimalMaxMinAccumulator(int capacity, boolean isMin) {
         this.state = new NullableDecimalGroupState(capacity);
         this.isMin = isMin;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(state);
     }
 
     @Override

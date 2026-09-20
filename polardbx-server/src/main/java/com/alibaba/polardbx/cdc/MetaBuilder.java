@@ -17,19 +17,28 @@
 package com.alibaba.polardbx.cdc;
 
 import com.alibaba.fastjson.JSONObject;
-import com.alibaba.polardbx.cdc.entity.LogicMeta;
 import com.alibaba.polardbx.common.cdc.TableMode;
 import com.alibaba.polardbx.common.cdc.TablesExtInfo;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.utils.Pair;
+import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
+import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
 import com.alibaba.polardbx.executor.spi.IGroupExecutor;
+import com.alibaba.polardbx.gms.metadb.cdc.entity.LogicMeta;
+import com.alibaba.polardbx.gms.metadb.table.ColumnsAccessor;
+import com.alibaba.polardbx.gms.metadb.table.ColumnsInfoSchemaRecord;
+import com.alibaba.polardbx.gms.metadb.table.IndexesAccessor;
+import com.alibaba.polardbx.gms.metadb.table.IndexesInfoSchemaRecord;
+import com.alibaba.polardbx.gms.metadb.table.TableConstraintsAccessor;
+import com.alibaba.polardbx.gms.metadb.table.TableConstraintsRecord;
 import com.alibaba.polardbx.gms.metadb.table.TableStatus;
 import com.alibaba.polardbx.gms.metadb.table.TablesAccessor;
 import com.alibaba.polardbx.gms.metadb.table.TablesExtAccessor;
 import com.alibaba.polardbx.gms.metadb.table.TablesExtRecord;
+import com.alibaba.polardbx.gms.metadb.table.TablesInfoSchemaRecord;
 import com.alibaba.polardbx.gms.metadb.table.TablesRecord;
 import com.alibaba.polardbx.gms.partition.TablePartitionAccessor;
 import com.alibaba.polardbx.gms.partition.TablePartitionRecord;
@@ -50,6 +59,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import lombok.extern.slf4j.Slf4j;
 
+import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -105,7 +115,7 @@ public class MetaBuilder {
                 TableMode tableMode = tablesInfo.get(m.getKey()).getValue().tableMode;
                 logicDbMeta.getLogicTableMetas().add(
                     buildLogicTableMetaInternal(schemaName, tableMode, m.getKey(), m.getValue(),
-                        tablesInfo.get(m.getKey()), group2PhyDbMapping, group2StorageInstMapping));
+                        tablesInfo.get(m.getKey()), group2PhyDbMapping, group2StorageInstMapping, false));
             }
         }
         return logicDbMeta;
@@ -113,7 +123,8 @@ public class MetaBuilder {
 
     static LogicMeta.LogicTableMeta buildLogicTableMeta(TableMode tableMode, String schemaName, String tableName,
                                                         List<TargetDB> targetDbList,
-                                                        Pair<String, TablesExtInfo> tableMetaRecords)
+                                                        Pair<String, TablesExtInfo> tableMetaRecords,
+                                                        boolean buildDetailMeta)
         throws SQLException {
         Map<String, String> group2PhyDbMapping = buildGroup2PhyDbMapping(schemaName);
         Map<String, String> group2StorageInstMapping = buildGroup2StorageInstMapping(schemaName);
@@ -123,12 +134,14 @@ public class MetaBuilder {
             return buildLogicTableMetaInternal(schemaName, tableMode, tableName, targetDbList,
                 new Pair<>(record, tableMetaRecords.getValue()),
                 group2PhyDbMapping,
-                group2StorageInstMapping);
+                group2StorageInstMapping,
+                buildDetailMeta);
         } else {
             return buildLogicTableMetaInternal(schemaName, tableMode, tableName, targetDbList,
                 buildOneTablesInfo(tableMode, schemaName, tableName),
                 group2PhyDbMapping,
-                group2StorageInstMapping);
+                group2StorageInstMapping,
+                buildDetailMeta);
         }
     }
 
@@ -261,16 +274,23 @@ public class MetaBuilder {
         });
     }
 
-    static Connection getPhyConnection(String schemaName, String groupName)
-        throws SQLException {
+    static DataSource getPhyDataSource(String schemaName, String groupName) {
         ExecutorContext executorContext = ExecutorContext.getContext(schemaName);
         if (executorContext != null) {
             IGroupExecutor groupExecutor = executorContext.getTopologyHandler().get(groupName);
             if (groupExecutor != null && groupExecutor.getDataSource() instanceof TGroupDataSource) {
-                TGroupDataSource dataSource = (TGroupDataSource) groupExecutor.getDataSource();
-                TGroupDirectConnection connection = dataSource.getConnection();
-                return connection == null ? null : preparePhyConnection(connection);
+                return groupExecutor.getDataSource();
             }
+        }
+        return null;
+    }
+
+    static Connection getPhyConnection(String schemaName, String groupName)
+        throws SQLException {
+        TGroupDataSource dataSource = (TGroupDataSource) getPhyDataSource(schemaName, groupName);
+        if (dataSource != null) {
+            TGroupDirectConnection connection = dataSource.getConnection();
+            return connection == null ? null : preparePhyConnection(connection);
         }
         return null;
     }
@@ -288,8 +308,8 @@ public class MetaBuilder {
                                                                         List<TargetDB> targetDbList,
                                                                         Pair<TablesRecord, TablesExtInfo> tableInfo,
                                                                         Map<String, String> group2PhyDbMapping,
-                                                                        Map<String, String> group2StorageInstMapping) {
-
+                                                                        Map<String, String> group2StorageInstMapping,
+                                                                        boolean buildDetailMeta) {
         LogicMeta.LogicTableMeta logicTableMeta = new LogicMeta.LogicTableMeta();
         logicTableMeta.setTableName(tableName);
         logicTableMeta.setTableMode(tableMode.getValue());
@@ -308,16 +328,123 @@ public class MetaBuilder {
             logicTableMeta.getPhySchemas().add(phySchema);
         });
 
+        if (buildDetailMeta) {
+            buildLogicalTableMetaDetail(schemaName, targetDbList, logicTableMeta, group2PhyDbMapping);
+        }
+
         return logicTableMeta;
+    }
+
+    static void buildLogicalTableMetaDetail(String schemaName,
+                                            List<TargetDB> targetDbList,
+                                            LogicMeta.LogicTableMeta logicTableMeta,
+                                            Map<String, String> group2PhyDbMapping) {
+        TargetDB targetDBDelegate = targetDbList.stream()
+            .filter(t -> t.getTableNames() != null && !t.getTableNames().isEmpty()).findFirst().get();
+        String phyTableSchemaDelegate = group2PhyDbMapping.get(targetDBDelegate.getDbIndex());
+        String phyTableNameDelegate = targetDBDelegate.getTableNames().stream().findFirst().get();
+
+        TablesInfoSchemaRecord tablesInfoSchemaRecord = buildTablesInfoSchemaRecord(schemaName,
+            phyTableSchemaDelegate, phyTableNameDelegate, targetDBDelegate.getDbIndex());
+        List<ColumnsInfoSchemaRecord> columnsInfoSchemaRecords = buildColumnsInfoSchemaRecord(schemaName,
+            phyTableSchemaDelegate, phyTableNameDelegate, targetDBDelegate.getDbIndex());
+        Map<String, Map<String, Object>> columnsJdbcExtInfo = buildColumnJdbcExtInfo(schemaName,
+            phyTableSchemaDelegate, phyTableNameDelegate, targetDBDelegate.getDbIndex());
+        List<IndexesInfoSchemaRecord> indexesInfoSchemaRecords = buildIndexesInfoSchemaRecord(schemaName,
+            phyTableSchemaDelegate, phyTableNameDelegate, targetDBDelegate.getDbIndex());
+        List<TableConstraintsRecord> tableConstraintsRecords = buildTableConstraintsRecord(schemaName,
+            phyTableSchemaDelegate, phyTableNameDelegate, targetDBDelegate.getDbIndex());
+
+        LogicMeta.LogicalTableMetaDetail detail = new LogicMeta.LogicalTableMetaDetail();
+        detail.setTablesInfoSchemaRecord(tablesInfoSchemaRecord);
+        detail.setColumnsInfoSchemaRecords(columnsInfoSchemaRecords);
+        detail.setColumnsJdbcExtInfo(columnsJdbcExtInfo);
+        detail.setIndexesInfoSchemaRecords(indexesInfoSchemaRecords);
+        detail.setTableConstraintsRecords(tableConstraintsRecords);
+
+        logicTableMeta.setTableMetaDetail(detail);
+    }
+
+    static TablesInfoSchemaRecord buildTablesInfoSchemaRecord(String logicalSchemaName, String phyTableSchema,
+                                                              String phyTableName,
+                                                              String dbIndex) {
+        TablesAccessor tablesAccessor = new TablesAccessor();
+        TablesInfoSchemaRecord infoSchemaRecord = tablesAccessor.queryInfoSchema(
+            phyTableSchema, phyTableName, getPhyDataSource(logicalSchemaName, dbIndex));
+
+        if (infoSchemaRecord == null) {
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_UNEXPECTED, "fetch",
+                "Not found any information_schema.tables record for " + phyTableSchema + "." + phyTableName
+                    + " in group " + dbIndex);
+        }
+        return infoSchemaRecord;
+    }
+
+    static List<ColumnsInfoSchemaRecord> buildColumnsInfoSchemaRecord(String logicalSchemaName, String phyTableSchema,
+                                                                      String phyTableName,
+                                                                      String dbIndex) {
+        ColumnsAccessor columnsAccessor = new ColumnsAccessor();
+        List<ColumnsInfoSchemaRecord> infoSchemaRecords =
+            columnsAccessor.queryInfoSchema(phyTableSchema, phyTableName, getPhyDataSource(logicalSchemaName, dbIndex));
+
+        if (infoSchemaRecords == null || infoSchemaRecords.isEmpty()) {
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_UNEXPECTED, "fetch",
+                "CDC Meta Building: Not found any information_schema.columns record for "
+                    + phyTableSchema + "." + phyTableName);
+        }
+
+        return infoSchemaRecords;
+    }
+
+    static Map<String, Map<String, Object>> buildColumnJdbcExtInfo(String logicalSchemaName, String phyTableSchema,
+                                                                   String phyTableName,
+                                                                   String dbIndex) {
+        ColumnsAccessor columnsAccessor = new ColumnsAccessor();
+        return columnsAccessor.queryColumnJdbcExtInfo(phyTableSchema, phyTableName,
+            DdlHelper.getDnId((TGroupDataSource) getPhyDataSource(logicalSchemaName, dbIndex)));
+    }
+
+    static List<IndexesInfoSchemaRecord> buildIndexesInfoSchemaRecord(String logicalSchemaName, String phyTableSchema,
+                                                                      String phyTableName,
+                                                                      String dbIndex) {
+        IndexesAccessor indexesAccessor = new IndexesAccessor();
+        return indexesAccessor.queryInfoSchema(phyTableSchema, phyTableName,
+            getPhyDataSource(logicalSchemaName, dbIndex));
+    }
+
+    static List<TableConstraintsRecord> buildTableConstraintsRecord(String logicalSchemaName, String phyTableSchema,
+                                                                    String phyTableName,
+                                                                    String dbIndex) {
+        TableConstraintsAccessor tableConstraintsAccessor = new TableConstraintsAccessor();
+        DataSource dataSource = getPhyDataSource(logicalSchemaName, dbIndex);
+        List<TableConstraintsRecord> infoSchemaRecord;
+
+        if (InstanceVersion.isMYSQL80()) {
+            infoSchemaRecord = tableConstraintsAccessor.queryInfoSchema(phyTableSchema, phyTableName, dataSource);
+        } else {
+            infoSchemaRecord = tableConstraintsAccessor.queryInfoSchema57(phyTableSchema, phyTableName, dataSource);
+        }
+
+        if (infoSchemaRecord == null) {
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_UNEXPECTED, "fetch",
+                "CDC Meta Building: Not found any information_schema.tables record for "
+                    + phyTableSchema + "." + phyTableName);
+        }
+
+        return infoSchemaRecord;
     }
 
     private static List<TargetDB> tryFilterTargetDb(String schemaName, Pair<TablesRecord, TablesExtInfo> tableInfo,
                                                     List<TargetDB> parameter) {
         //新分区表模式下的广播表的拓扑，获取到的是所有group的信息，需要特殊处理，只保留一个(老的sharding表不存在这个问题)
         int tableType = tableInfo.getValue().tableType;
-        if (DbInfoManager.getInstance().isNewPartitionDb(schemaName) && tableType == PartitionTableType.BROADCAST_TABLE
-            .getTableTypeIntValue() && !parameter.isEmpty()) {
-            return Lists.newArrayList(parameter.stream().min(Comparator.comparing(TargetDB::getDbIndex)).get());
+        if (tableType == PartitionTableType.BROADCAST_TABLE
+            .getTableTypeIntValue()) {
+            if (DbInfoManager.getInstance().isNewPartitionDb(schemaName) && !parameter.isEmpty()) {
+                return Lists.newArrayList(parameter.stream().min(Comparator.comparing(TargetDB::getDbIndex)).get());
+            } else {
+                return parameter;
+            }
         } else {
             return parameter;
         }

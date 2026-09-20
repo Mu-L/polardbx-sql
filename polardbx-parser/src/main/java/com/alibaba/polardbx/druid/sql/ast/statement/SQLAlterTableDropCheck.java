@@ -16,10 +16,10 @@
 package com.alibaba.polardbx.druid.sql.ast.statement;
 
 import com.alibaba.polardbx.druid.sql.ast.SQLName;
-import com.alibaba.polardbx.druid.sql.ast.SQLObjectImpl;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
 import com.alibaba.polardbx.druid.sql.visitor.SQLASTVisitor;
 
-public class SQLAlterTableDropCheck extends SQLObjectImpl implements SQLAlterTableItem {
+public class SQLAlterTableDropCheck extends SQLAlterTableDropConstraint implements SQLAlterTableItem {
 
     private SQLName checkName;
 
@@ -37,5 +37,9 @@ public class SQLAlterTableDropCheck extends SQLObjectImpl implements SQLAlterTab
 
     public void setCheckName(SQLName checkName) {
         this.checkName = checkName;
+    }
+
+    public void setCheckName(String checkName) {
+        this.setCheckName(new SQLIdentifierExpr(checkName));
     }
 }

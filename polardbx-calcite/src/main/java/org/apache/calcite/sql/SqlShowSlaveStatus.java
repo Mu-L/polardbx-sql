@@ -16,15 +16,13 @@
 
 package org.apache.calcite.sql;
 
-
-import java.util.List;
-
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.util.Pair;
 
+import java.util.List;
+
 /**
  * @author shicai.xsc 2021/3/5 13:09
- * @desc
  * @since 5.0.0.0
  */
 public class SqlShowSlaveStatus extends SqlReplicationBase {
@@ -35,14 +33,21 @@ public class SqlShowSlaveStatus extends SqlReplicationBase {
         keyWord = "SHOW SLAVE STATUS";
     }
 
+    private boolean ddlLoad = false;
+
     public SqlShowSlaveStatus(SqlParserPos pos, List<Pair<SqlNode, SqlNode>> options, SqlNode channel,
-                              SqlNode subChannel){
+                              SqlNode subChannel, boolean ddlLoad) {
         super(pos, options, channel, subChannel);
+        this.ddlLoad = ddlLoad;
+    }
+
+    public boolean isDdlLoad() {
+        return ddlLoad;
     }
 
     public static class SqlShowSlaveStatusOperator extends SqlReplicationOperator {
 
-        public SqlShowSlaveStatusOperator(){
+        public SqlShowSlaveStatusOperator() {
             super(SqlKind.SHOW_SLAVE_STATUS);
         }
     }

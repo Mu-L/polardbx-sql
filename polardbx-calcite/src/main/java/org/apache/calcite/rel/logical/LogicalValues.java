@@ -30,6 +30,7 @@ import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.sql.SqlDynamicParam;
+import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.sql.type.SqlTypeName;
 
 import java.math.BigDecimal;
@@ -186,6 +187,7 @@ public class LogicalValues extends Values {
     if (dynamicIndex != null) {
       pw.item("dynamicIndex", dynamicIndex);
     }
+    pw.itemIf("id", id, pw.getDetailLevel() == SqlExplainLevel.DIGEST_ATTRIBUTES);
     return pw;
   }
 }

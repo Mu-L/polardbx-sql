@@ -18,9 +18,11 @@
 
 package com.alibaba.polardbx.executor.ddl.job.task.columnar;
 
+import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.ddl.job.meta.TableMetaChanger;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseGmsTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
+import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import lombok.Getter;
 import java.sql.Connection;
@@ -39,5 +41,10 @@ public class TruncateColumnarTableTask extends BaseGmsTask {
     protected void executeImpl(Connection metaDbConnection, ExecutionContext executionContext) {
         TableMetaChanger.truncateColumnarTable(metaDbConnection, schemaName, logicalTableName, versionId
             , jobId);
+    }
+
+    @Override
+    protected void updateTableVersion(Connection metaDbConnection) {
+        // 如果需要更新 CN 元数据，那么去掉该方法，并在后面加上 tableSyncTask
     }
 }

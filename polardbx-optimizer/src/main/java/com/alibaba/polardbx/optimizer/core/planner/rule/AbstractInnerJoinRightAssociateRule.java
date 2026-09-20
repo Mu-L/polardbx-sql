@@ -56,13 +56,12 @@ public abstract class AbstractInnerJoinRightAssociateRule extends RelOptRule {
         final LogicalJoin inputTopJoin = call.rel(0);
         final LogicalProject logicalProject = call.rel(1);
         final LogicalJoin bottomJoin = call.rel(2);
-        final RelNode relC = call.rel(3);
 
         LogicalJoin beforeProjectPullUpJoin = inputTopJoin.copy(
             inputTopJoin.getTraitSet(),
             inputTopJoin.getCondition(),
             logicalProject,
-            relC,
+            inputTopJoin.getRight(),
             inputTopJoin.getJoinType(),
             inputTopJoin.isSemiJoinDone());
 

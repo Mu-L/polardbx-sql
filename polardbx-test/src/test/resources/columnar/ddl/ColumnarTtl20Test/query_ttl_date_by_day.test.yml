@@ -9,7 +9,7 @@ a int not null auto_increment,
 b date default '0000-00-00',
 primary key(a)
 )
-ttl = ttl_definition( TTL_ENABLE = 'OFF' TTL_EXPR = `b` EXPIRE AFTER 2 DAY TIMEZONE '+08:00' TTL_JOB = CRON '0 0 1 */2 * ? *' TIMEZONE '+08:00' ARCHIVE_TABLE_PRE_ALLOCATE = 2 ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+ttl = ttl_definition( TTL_ENABLE = 'OFF' TTL_CLEANUP='ON' TTL_EXPR = `b` EXPIRE AFTER 2 DAY TIMEZONE '+08:00' TTL_JOB = CRON '0 0 1 */2 * ? *' TIMEZONE '+08:00' ARCHIVE_TABLE_PRE_ALLOCATE = 2 ARCHIVE_TABLE_POST_ALLOCATE = 2 )
 partition by key(a) partitions 2;
 show create table test_cci_date_by_day;
 create table test_cci_date_by_day_bk like test_cci_date_by_day engine='columnar' archive_mode='ttl';

@@ -17,13 +17,24 @@
 package com.alibaba.polardbx.server.encdb;
 
 import com.alibaba.polardbx.common.encdb.EncdbException;
-import com.alibaba.polardbx.common.encdb.cipher.CipherForMySQL;
+import com.alibaba.polardbx.common.utils.logger.Logger;
+import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.gms.metadb.encdb.mask.EncdbMaskAlgo;
+import com.alibaba.polardbx.matrix.jdbc.TResultSetMetaData;
+import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
+import com.alibaba.polardbx.optimizer.config.table.Field;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.core.CursorMeta;
+import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
+import com.alibaba.polardbx.optimizer.core.row.ArrayRow;
+import com.alibaba.polardbx.server.encdb.mask.EncdbMaskUtil;
 import org.bouncycastle.crypto.CryptoException;
 
 import java.io.InputStream;
 import java.io.Reader;
 import java.math.BigDecimal;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Array;
 import java.sql.Blob;
@@ -42,6 +53,7 @@ import java.sql.Time;
 import java.sql.Timestamp;
 import java.util.Base64;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.Map;
 
 import static com.alibaba.polardbx.server.encdb.EncdbUtils.*;
@@ -49,27 +61,57 @@ import static com.alibaba.polardbx.server.encdb.EncdbUtils.*;
 /**
  * @author pangzhaoxing
  */
-public class EncdbResultSet implements ResultSet {
+public class EncdbResultSet implements ResultSet, EncryptedResultSet {
+
+    private static final Logger logger = LoggerFactory.getLogger(EncdbResultSet.class);
 
     private ResultSet rs;
 
     private ResultSetMetaData metaData;
 
     private boolean[] colEncBitmap;
+
+    private EncdbMaskAlgo[] encdbMaskAlgoList;
+
+    private ExecutionContext ec;
     private EncdbSessionState encState;
 
-    public EncdbResultSet(ResultSet rs, boolean[] colEncBitmap, EncdbSessionState encState) throws SQLException {
+    public EncdbResultSet(ResultSet rs, boolean[] colEncBitmap, EncdbMaskAlgo[] colMaskAlgoList,
+                          ExecutionContext ec, EncdbSessionState encState) throws SQLException {
         this.rs = rs;
         this.metaData = rs.getMetaData();
         this.colEncBitmap = colEncBitmap;
+        this.encdbMaskAlgoList = colMaskAlgoList;
+        this.ec = ec;
         this.encState = encState;
+        if (colEncBitmap != null && encState == null) {
+            throw new IllegalArgumentException("the encState can not be null");
+        }
+
+    }
+    @Override
+    public boolean isEncrypted(int columnIndex) {
+        return colEncBitmap != null && colEncBitmap[columnIndex - 1];
+    }
+
+    @Override
+    public boolean isMasked(int columnIndex) {
+        return encdbMaskAlgoList != null && encdbMaskAlgoList[columnIndex - 1] != null;
     }
 
     private byte[] encrypt(byte[] bytes, int columnIndex) throws SQLException {
+        if (bytes == null) {
+            return null;
+        }
 
-        CipherForMySQL cipher = CipherForMySQL.buildCipher(
-            sqlType2MysqlType(metaData.getColumnType(columnIndex), metaData.getScale(columnIndex)),
-            encState.getEncAlgo());
+        int type;
+        if (metaData instanceof TResultSetMetaData) {
+            type = sqlType2MysqlType(((TResultSetMetaData)metaData).getColumnType(columnIndex, true), metaData.getScale(columnIndex));
+        } else {
+            type = sqlType2MysqlType(metaData.getColumnType(columnIndex), metaData.getScale(columnIndex));
+        }
+        EncdbSessionCipher cipher = new EncdbSessionCipher(type, encState);
+
         try {
             byte[] encrypted = Base64.getEncoder().encode(
                 cipher.encrypt(encState.getCcFlags(), encState.getDek(), bytes, encState.getNonce()));
@@ -79,23 +121,61 @@ public class EncdbResultSet implements ResultSet {
         }
     }
 
+    private byte[] mask(byte[] bytes, int columnIndex) throws SQLException {
+        try {
+            EncdbMaskAlgo maskAlgo = encdbMaskAlgoList[columnIndex - 1];
+
+            int type = sqlType2MysqlType(metaData.getColumnType(columnIndex), metaData.getScale(columnIndex));
+            Object maskData = EncdbMaskUtil.mask(bytes, maskAlgo, type,
+                metaData.getColumnTypeName(columnIndex), metaData.getPrecision(columnIndex),
+                metaData.getScale(columnIndex));
+
+            if (maskData instanceof String) {
+                return ((String) maskData).getBytes(StandardCharsets.UTF_8);
+            }
+
+            CursorMeta cursorMeta = null;
+            if (metaData instanceof TResultSetMetaData) {
+                TResultSetMetaData tResultSetMetaData = (TResultSetMetaData) metaData;
+                cursorMeta = CursorMeta.build(
+                    Collections.singletonList(tResultSetMetaData.getColumnMetas().get(columnIndex - 1)));
+            } else {
+                cursorMeta = CursorMeta.build(Collections.singletonList(
+                    new ColumnMeta(metaData.getTableName(columnIndex), metaData.getColumnName(columnIndex), null,
+                        new Field(DataTypeUtil.getTypeOfObject(maskData)))
+                ));
+            }
+            ArrayRow arrayRow = new ArrayRow(cursorMeta, new Object[] {maskData});
+            return arrayRow.getBytes(0);
+        } catch (Throwable e) {
+            logger.error("data mask failed !", e);
+            return bytes;
+        }
+    }
+
+    public byte[] mayEncryptOrMask(byte[] bytes, int columnIndex) throws SQLException {
+
+        if (encdbMaskAlgoList != null && encdbMaskAlgoList[columnIndex - 1] != null) {
+            bytes = mask(bytes, columnIndex);
+        }
+
+        if (colEncBitmap != null && colEncBitmap[columnIndex - 1]) {
+            bytes = encrypt(bytes, columnIndex);
+        }
+        return bytes;
+    }
+
     @Override
     public byte[] getBytes(int columnIndex) throws SQLException {
         byte[] bytes = rs.getBytes(columnIndex);
-        if (bytes == null) {
-            return null;
-        }
-        return colEncBitmap[columnIndex - 1] ? encrypt(bytes, columnIndex) : bytes;
+        return mayEncryptOrMask(bytes, columnIndex);
     }
 
     @Override
     public byte[] getBytes(String columnLabel) throws SQLException {
         int columnIndex = rs.findColumn(columnLabel);
         byte[] bytes = rs.getBytes(columnLabel);
-        if (bytes == null) {
-            return null;
-        }
-        return colEncBitmap[columnIndex - 1] ? encrypt(bytes, columnIndex) : bytes;
+        return mayEncryptOrMask(bytes, columnIndex);
     }
 
     @Override

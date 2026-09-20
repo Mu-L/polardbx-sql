@@ -16,18 +16,33 @@
 
 package com.alibaba.polardbx.optimizer.config.meta;
 
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
+import com.alibaba.polardbx.optimizer.core.rel.ExternalTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.GroupTopN;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.MysqlTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.PhysicalCTEConsumer;
 import com.alibaba.polardbx.optimizer.view.ViewPlan;
 import org.apache.calcite.plan.RelOptPredicateList;
+import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.core.CTEAnchor;
+import org.apache.calcite.rel.core.CTEProducer;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.core.SemiJoin;
 import org.apache.calcite.rel.core.TableLookup;
+import org.apache.calcite.rel.logical.LogicalCTEConsumer;
+import org.apache.calcite.rel.logical.LogicalProject;
 import org.apache.calcite.rel.metadata.ReflectiveRelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMdPredicates;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
+import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.util.BuiltInMethod;
+
+import com.google.common.collect.ImmutableList;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public class DrdsRelMdPredicates extends RelMdPredicates {
 
@@ -70,11 +85,60 @@ public class DrdsRelMdPredicates extends RelMdPredicates {
         }
     }
 
+    public RelOptPredicateList getPredicates(GroupTopN rel, RelMetadataQuery mq) {
+        return mq.getPulledUpPredicates(rel.getInput());
+    }
+
+    public RelOptPredicateList getPredicates(CTEAnchor rel, RelMetadataQuery mq) {
+        return mq.getPulledUpPredicates(rel.getRight());
+    }
+
+    public RelOptPredicateList getPredicates(CTEProducer rel, RelMetadataQuery mq) {
+        return mq.getPulledUpPredicates(rel.getInput());
+    }
+
+    public RelOptPredicateList getPredicates(LogicalCTEConsumer rel, RelMetadataQuery mq) {
+        return mq.getPulledUpPredicates(rel.getInnerRel());
+    }
+
+    public RelOptPredicateList getPredicates(PhysicalCTEConsumer rel, RelMetadataQuery mq) {
+        RelNode producer = CBOUtil.getCteProducer(rel);
+        RelOptPredicateList producerPredicates = mq.getPulledUpPredicates(producer);
+        List<RexNode> conditions = rel.getConditions();
+        List<RexNode> projects = rel.getProjects();
+
+        // Merge producer predicates with conditions (both in producer column space)
+        RelOptPredicateList sourcePredicates = producerPredicates;
+        if (conditions != null && !conditions.isEmpty()) {
+            List<RexNode> allPredicates = new ArrayList<>();
+            if (producerPredicates != null && producerPredicates.pulledUpPredicates != null) {
+                allPredicates.addAll(producerPredicates.pulledUpPredicates);
+            }
+            allPredicates.addAll(conditions);
+            sourcePredicates = RelOptPredicateList.of(
+                rel.getCluster().getRexBuilder(), allPredicates);
+        }
+
+        // If projects exist, remap predicates through project expressions to consumer output column space
+        if (projects != null && !projects.isEmpty()) {
+            LogicalProject tempProject =
+                LogicalProject.create(producer, projects, rel.getRowType(), rel.getRowType());
+            return RelMdPredicates.pullUpPredicates(tempProject, sourcePredicates);
+        }
+
+        return sourcePredicates;
+    }
+
     public RelOptPredicateList getPredicates(ViewPlan rel, RelMetadataQuery mq) {
         return mq.getPulledUpPredicates(rel.getPlan());
     }
 
     public RelOptPredicateList getPredicates(MysqlTableScan rel, RelMetadataQuery mq) {
         return mq.getPulledUpPredicates(rel.getNodeForMetaQuery());
+    }
+
+    public RelOptPredicateList getPredicates(
+        ExternalTableScan rel, RelMetadataQuery mq) {
+        return rel.getPredicates(mq);
     }
 }

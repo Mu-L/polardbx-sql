@@ -34,8 +34,8 @@ public class DropColumnarTableRemoveMetaTask extends BaseGmsTask {
     private final String columnarTableName;
 
     @JSONCreator
-    public DropColumnarTableRemoveMetaTask(String schemaName, String logicalTableName, String columnarTableName) {
-        super(schemaName, logicalTableName);
+    public DropColumnarTableRemoveMetaTask(String schemaName, String columnarTableName) {
+        super(schemaName, columnarTableName);
         this.columnarTableName = columnarTableName;
     }
 

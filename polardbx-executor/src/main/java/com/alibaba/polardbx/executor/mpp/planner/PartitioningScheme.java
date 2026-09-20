@@ -16,7 +16,7 @@
 
 package com.alibaba.polardbx.executor.mpp.planner;
 
-import com.alibaba.polardbx.executor.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 

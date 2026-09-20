@@ -136,6 +136,7 @@ public class ReplaceCallWithLiteralVisitor extends RelShuttleImpl {
             logicalInsert.isPushableForeignConstraintCheck(),
             logicalInsert.isModifyForeignKey(),
             logicalInsert.isUkContainsAllSkAndGsiContainsAllUk(),
+            logicalInsert.isCanSkipPkCheck(),
             logicalInsert.getDynamicImplicitDefaultParams(),
             logicalInsert.getUnoptimizedDynamicImplicitDefaultParams());
         return newInsert;
@@ -168,16 +169,67 @@ public class ReplaceCallWithLiteralVisitor extends RelShuttleImpl {
             logicalModify.getExtraTargetColumns(),
             logicalModify.getPrimaryModifyWriters(),
             logicalModify.getGsiModifyWriters(),
+            logicalModify.getGsiModifyWritersMap(),
             logicalModify.isWithoutPk(),
             logicalModify.isModifyForeignKey(),
             logicalModify.getModifyTopNInfo(),
             logicalModify.getMultiWriteInfo());
     }
 
+    public LogicalRelocate visit(LogicalRelocate logicalRelocate) {
+        RelNode input = logicalRelocate.getInput();
+        // WHERE clause
+        input = input.accept(this);
+
+        List<RexNode> updateList = logicalRelocate.getSourceExpressionList();
+        if (updateList != null && !updateList.isEmpty()) {
+            updateList = visitUpdateList(updateList);
+        }
+
+        LogicalRelocate newRelocate = new LogicalRelocate(logicalRelocate.getCluster(),
+            logicalRelocate.getTraitSet(),
+            logicalRelocate.getTable(),
+            logicalRelocate.getCatalogReader(),
+            input,
+            logicalRelocate.getOperation(),
+            logicalRelocate.getUpdateColumnList(),
+            updateList,
+            logicalRelocate.isFlattened(),
+            logicalRelocate.getKeywords(),
+            logicalRelocate.getBatchSize(),
+            logicalRelocate.getAppendedColumnIndex(),
+            logicalRelocate.getHints(),
+            logicalRelocate.getTableInfo(),
+            logicalRelocate.getSchemaName(),
+            logicalRelocate.getAutoIncColumns(),
+            logicalRelocate.getRelocateWriterMap(),
+            logicalRelocate.getModifyWriterMap(),
+            logicalRelocate.getSetColumnTargetMappings(),
+            logicalRelocate.getSetColumnSourceMappings(),
+            logicalRelocate.getSetColumnMetas(),
+            logicalRelocate.getModifyOnlySafeCompareMap(),
+            logicalRelocate.getPrimaryDistinctWriter(),
+            logicalRelocate.getPrimaryRelocateWriter(),
+            logicalRelocate.getGsiRelocateByReturningWriterMap(),
+            logicalRelocate.getGsiModifyByReturningWriterMap(),
+            logicalRelocate.getPrimaryRelocateByReturningWriter(),
+            logicalRelocate.getAddedAutoUpdateColumnMap(),
+            logicalRelocate.getOriginalSqlNode());
+        newRelocate.setEvalRowColumnMetas(logicalRelocate.getEvalRowColumnMetas());
+        newRelocate.setInputToEvalFieldMappings(logicalRelocate.getInputToEvalFieldMappings());
+        newRelocate.setGenColRexNodes(logicalRelocate.getGenColRexNodes());
+        newRelocate.setExternalizedExactRowTransforms(logicalRelocate.getExternalizedExactRowTransforms());
+        newRelocate.setRelocateInfo(logicalRelocate.getRelocateInfo());
+        return newRelocate;
+    }
+
     @Override
     public RelNode visit(RelNode other) {
         if (other instanceof LogicalDynamicValues) {
             return visit((LogicalDynamicValues) other);
+        }
+        if (other instanceof LogicalRelocate) {
+            return visit((LogicalRelocate) other);
         }
         return super.visit(other);
     }
@@ -306,28 +358,33 @@ public class ReplaceCallWithLiteralVisitor extends RelShuttleImpl {
     @Override
     public RelNode visit(LogicalProject project) {
         final LogicalProject visited = (LogicalProject) super.visit(project);
+        final List<RexNode> newProjects = replaceProjectExpressions(visited.getProjects());
+        return newProjects == visited.getProjects() ? visited
+            : visited.copy(visited.getTraitSet(), visited.getInput(), newProjects, visited.getRowType());
+    }
 
-        final List<RexNode> projects = visited.getProjects();
-
-        boolean updated = false;
-        final List<RexNode> newProjects = new ArrayList<>(projects.size());
-        for (RexNode rex : projects) {
-            if (rex instanceof RexCall && !notReplaceWhenProject((RexCall) rex)) {
-                final RexNode newRex = rexVisitor.mayCompute(rex);
-
-                newProjects.add(newRex);
-                updated |= (newRex != rex);
-            } else {
-                newProjects.add(rex);
+    /**
+     * Evaluate statement constants in a Project expression list without changing the input layout.
+     * Subclasses use this helper for execution-only Project implementations; the base visitor continues to dispatch
+     * automatically only for LogicalProject.
+     */
+    protected final List<RexNode> replaceProjectExpressions(List<RexNode> projects) {
+        List<RexNode> newProjects = null;
+        for (int ordinal = 0; ordinal < projects.size(); ordinal++) {
+            final RexNode rex = projects.get(ordinal);
+            if (!(rex instanceof RexCall) || notReplaceWhenProject((RexCall) rex)) {
+                continue;
             }
+            final RexNode newRex = rexVisitor.mayCompute(rex);
+            if (newRex == rex) {
+                continue;
+            }
+            if (newProjects == null) {
+                newProjects = new ArrayList<>(projects);
+            }
+            newProjects.set(ordinal, newRex);
         }
-
-        if (updated) {
-            return visited.copy(visited.getTraitSet(), visited.getInput(), newProjects, visited.getRowType());
-        } else {
-            return visited;
-        }
-
+        return newProjects == null ? projects : newProjects;
     }
 
     private boolean notReplaceWhenProject(RexCall call) {

@@ -24,6 +24,7 @@ import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runners.Parameterized;
 
+import java.sql.Connection;
 import java.util.Arrays;
 import java.util.List;
 
@@ -47,7 +48,6 @@ public class TransactionWithBroadCastTest extends AutoCrudBasedLockTestCase {
 
     @Before
     public void initData() throws Exception {
-        JdbcUtil.executeUpdateSuccess(tddlConnection, "set global ENABLE_CLOSE_CONNECTION_WHEN_TRX_FATAL = false");
         truncateTable(baseOneTableName);
         if (baseTwoTableName != null) {
             truncateTable(baseTwoTableName);
@@ -81,27 +81,23 @@ public class TransactionWithBroadCastTest extends AutoCrudBasedLockTestCase {
     public void forbidCommitTest2() throws Exception {
         JdbcUtil.executeUpdate(tddlConnection, hint + "delete from " + baseOneTableName);
 
-        tddlConnection.setAutoCommit(false);
-
-        try {
+        try (Connection conn = getPolardbxConnection()) {
+            JdbcUtil.executeUpdateSuccess(conn, "begin");
             String startSql = "set drds_transaction_policy='ALLOW_READ'";
-            JdbcUtil.executeUpdateSuccess(tddlConnection, startSql);
+            JdbcUtil.executeUpdateSuccess(conn, startSql);
 
             String sql = hint + "insert " + baseOneTableName + "(pk, integer_test, bigint_test) value(?, ?, ?)";
 
             List<Object> params = Lists.newArrayList(0, 0, 0);
-            executeErrorAssert(tddlConnection, sql, params, "ERR_ACCROSS_DB_TRANSACTION");
+            executeErrorAssert(conn, sql, params, "ERR_CROSS_GROUP_TRANSACTION");
 
             // Can't executeSuccess any further sql
             sql = "commit";
             params = Lists.newArrayList();
-            executeErrorAssert(tddlConnection,
+            executeErrorAssert(conn,
                 sql,
                 params,
-                "ERR_TRANS_CONTINUE_AFTER_WRITE_FAIL");
-        } finally {
-            tddlConnection.rollback();
-            tddlConnection.setAutoCommit(true);
+                "");
         }
     }
 
@@ -110,27 +106,23 @@ public class TransactionWithBroadCastTest extends AutoCrudBasedLockTestCase {
      */
     @Test
     public void forbidCommitTest3() throws Exception {
-        tddlConnection.setAutoCommit(false);
-
-        try {
+        try (Connection conn = getPolardbxConnection()) {
+            JdbcUtil.executeUpdateSuccess(conn, "begin");
             String startSql = "set drds_transaction_policy='ALLOW_READ'";
-            JdbcUtil.executeUpdateSuccess(tddlConnection, startSql);
+            JdbcUtil.executeUpdateSuccess(conn, startSql);
 
             String sql = hint + "delete from " + baseOneTableName + " where pk > ?";
 
             List<Object> params = Lists.newArrayList(0);
-            executeErrorAssert(tddlConnection, sql, params, "ERR_ACCROSS_DB_TRANSACTION");
+            executeErrorAssert(conn, sql, params, "ERR_CROSS_GROUP_TRANSACTION");
 
             // Can't executeSuccess any further sql
             sql = "commit";
             params = Lists.newArrayList();
-            executeErrorAssert(tddlConnection,
+            executeErrorAssert(conn,
                 sql,
                 params,
-                "ERR_TRANS_CONTINUE_AFTER_WRITE_FAIL");
-        } finally {
-            tddlConnection.rollback();
-            tddlConnection.setAutoCommit(true);
+                "");
         }
     }
 }

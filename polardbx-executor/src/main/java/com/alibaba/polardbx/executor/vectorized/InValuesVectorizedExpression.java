@@ -16,23 +16,29 @@
 
 package com.alibaba.polardbx.executor.vectorized;
 
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.time.core.OriginalDate;
 import com.alibaba.polardbx.common.utils.time.core.OriginalTimestamp;
 import com.alibaba.polardbx.common.utils.time.core.TimeStorage;
+import com.alibaba.polardbx.executor.utils.fastutil.MemoryCountableIntOpenHashSet;
+import com.alibaba.polardbx.executor.utils.fastutil.MemoryCountableLongOpenHashSet;
+import com.alibaba.polardbx.executor.utils.fastutil.MemoryCountableObjectHashSet;
 import com.alibaba.polardbx.optimizer.config.table.Field;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.datatype.DateTimeType;
+import com.alibaba.polardbx.optimizer.core.datatype.SliceType;
 import com.google.common.base.Preconditions;
-import it.unimi.dsi.fastutil.ints.IntOpenHashSet;
-import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import io.airlift.slice.Slice;
+import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
+import org.openjdk.jol.info.ClassLayout;
 
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -198,25 +204,39 @@ public class InValuesVectorizedExpression extends AbstractVectorizedExpression {
 
     }
 
-    public static class InValueSet {
+    public static class InValueSet implements MemoryCountable {
+
+        private static final int INSTANCE_SIZE =
+            ClassLayout.parseClass(InValueSet.class).instanceSize();
+
+        @FieldMemoryCounter(false)
         private final DataType dataType;
+        @FieldMemoryCounter(false)
         private final SetType setType;
-        private Set<Object> set = null;
-        private IntOpenHashSet intHashSet = null;
-        private LongOpenHashSet longHashSet = null;
+        /**
+         * TODO: Slice hash set
+         */
+        private MemoryCountableObjectHashSet<Object> objSet = null;
+        private MemoryCountableIntOpenHashSet intHashSet = null;
+        private MemoryCountableLongOpenHashSet longHashSet = null;
+
+        private boolean isSliceType;
 
         public InValueSet(DataType<?> dataType, int capacity) {
             this.dataType = dataType;
             this.setType = getSetType(dataType);
             switch (setType) {
             case INT:
-                this.intHashSet = new IntOpenHashSet(capacity);
+                this.intHashSet = new MemoryCountableIntOpenHashSet(capacity);
+                this.isSliceType = false;
                 break;
             case LONG:
-                this.longHashSet = new LongOpenHashSet(capacity);
+                this.longHashSet = new MemoryCountableLongOpenHashSet(capacity);
+                this.isSliceType = false;
                 break;
             case OTHERS:
-                this.set = new HashSet<>(capacity);
+                this.objSet = new MemoryCountableObjectHashSet<>(capacity);
+                this.isSliceType = dataType instanceof SliceType;
                 break;
             default:
                 throw new UnsupportedOperationException("Unsupported in value set type: " + setType);
@@ -234,7 +254,8 @@ public class InValuesVectorizedExpression extends AbstractVectorizedExpression {
         }
 
         /**
-         * skip type check
+         * skip type check and null check
+         * @param value not null
          */
         public void add(Object value) {
             switch (setType) {
@@ -245,11 +266,18 @@ public class InValuesVectorizedExpression extends AbstractVectorizedExpression {
                 longHashSet.add((long) value);
                 break;
             case OTHERS:
-                set.add(value);
+                if (!(value instanceof Slice)) {
+                    this.isSliceType = false;
+                }
+                objSet.add(value);
                 break;
             default:
                 throw new UnsupportedOperationException("Unsupported in value set type: " + setType);
             }
+        }
+
+        public boolean isSliceType() {
+            return isSliceType;
         }
 
         public boolean contains(int value) {
@@ -259,7 +287,7 @@ public class InValuesVectorizedExpression extends AbstractVectorizedExpression {
             case LONG:
                 return longHashSet.contains(value);
             case OTHERS:
-                return set.contains(dataType.convertFrom(value));
+                return objSet.contains(dataType.convertFrom(value));
             default:
                 throw new UnsupportedOperationException("Unsupported in value set type: " + setType);
             }
@@ -276,7 +304,7 @@ public class InValuesVectorizedExpression extends AbstractVectorizedExpression {
             case LONG:
                 return longHashSet.contains(value);
             case OTHERS:
-                return set.contains(dataType.convertFrom(value));
+                return objSet.contains(dataType.convertFrom(value));
             default:
                 throw new UnsupportedOperationException("Unsupported in value set type: " + setType);
             }
@@ -292,7 +320,7 @@ public class InValuesVectorizedExpression extends AbstractVectorizedExpression {
             case LONG:
                 return longHashSet.contains(dataType.convertFrom(value));
             case OTHERS:
-                return set.contains(dataType.convertFrom(value));
+                return objSet.contains(dataType.convertFrom(value));
             default:
                 throw new UnsupportedOperationException("Unsupported in value set type: " + setType);
             }
@@ -300,6 +328,27 @@ public class InValuesVectorizedExpression extends AbstractVectorizedExpression {
 
         public DataType getDataType() {
             return dataType;
+        }
+
+        @Override
+        public long getMemoryUsage() {
+            long size = INSTANCE_SIZE;
+            switch (setType) {
+            case INT:
+                size += intHashSet.getMemoryUsage();
+                break;
+            case LONG:
+                size += longHashSet.getMemoryUsage();
+                break;
+            case OTHERS:
+                size += objSet.getMemoryUsage();
+                break;
+            }
+            return size;
+        }
+
+        public ObjectOpenHashSet<Object> getObjSet() {
+            return objSet;
         }
 
         enum SetType {

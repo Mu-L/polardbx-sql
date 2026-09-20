@@ -16,9 +16,10 @@
 
 package com.alibaba.polardbx.executor.operator.scan;
 
-import com.alibaba.polardbx.executor.operator.scan.impl.PreheatFileMeta;
+import com.alibaba.polardbx.common.orc.PreheatFileMeta;
 import com.alibaba.polardbx.optimizer.statis.ColumnarTracer;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.SettableFuture;
 import org.apache.hadoop.fs.Path;
 import org.roaringbitmap.RoaringBitmap;
 
@@ -35,7 +36,12 @@ public interface ScanPreProcessor {
     /**
      * Prepare necessary data, like pruning
      */
-    ListenableFuture<?> prepare(ExecutorService executor, String traceId, ColumnarTracer tracer);
+    ListenableFuture<?> prepare(ExecutorService scanExecutor, String traceId, ColumnarTracer tracer);
+
+    default ListenableFuture<?> prepare(ExecutorService scanExecutor, ExecutorService ioExecutor, String traceId,
+                                        ColumnarTracer tracer) {
+        return prepare(scanExecutor, traceId, tracer);
+    }
 
     /**
      * Check if preparation is done.

@@ -2,6 +2,7 @@ package com.alibaba.polardbx.executor.accumulator;
 
 import com.alibaba.polardbx.common.CrcAccumulator;
 import com.alibaba.polardbx.common.OrderInvariantHasher;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.LongBlock;
@@ -28,11 +29,12 @@ public class CheckSumAccumulatorTest {
         Accumulator accumulator =
             AccumulatorBuilders.create(new CheckSum(new int[] {0}, -1), DataTypes.LongType,
                 new DataType[] {DataTypes.LongType},
-                COUNT, new ExecutionContext());
+                COUNT, new ExecutionContext(), null);
 
         this.accumulator = (CheckSumAccumulator) accumulator;
         this.random = new Random();
         Assert.assertEquals(1, accumulator.getInputTypes().length);
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 
     @Test
@@ -64,6 +66,7 @@ public class CheckSumAccumulatorTest {
         for (int i = 0; i < block.getPositionCount(); i++) {
             accumulator.accumulate(0, chunk, i);
         }
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
 
         LongBlockBuilder resultBuilder = new LongBlockBuilder(COUNT);
         accumulator.writeResultTo(0, resultBuilder);
@@ -73,6 +76,7 @@ public class CheckSumAccumulatorTest {
 
         long size = accumulator.estimateSize();
         Assert.assertTrue(size > 0);
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 
     @Test

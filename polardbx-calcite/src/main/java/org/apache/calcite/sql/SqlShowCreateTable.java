@@ -36,27 +36,36 @@ public class SqlShowCreateTable extends SqlShow {
     private static final SqlSpecialOperator OPERATOR = new SqlShowCreateTableOperator();
     private SqlNode tableName;
     private boolean full;
+    private boolean forExport;
 
     public SqlShowCreateTable(SqlParserPos pos, List<SqlSpecialIdentifier> specialIdentifiers, List<SqlNode> operands,
-                              SqlNode tableName, boolean full) {
+                              SqlNode tableName, boolean full, boolean forExport) {
         super(pos, specialIdentifiers, operands, null, null, null, null,
             specialIdentifiers.size() + operands.size() - 1);
         this.tableName = tableName;
         this.full = full;
+        this.forExport = forExport;
     }
 
     public static SqlShowCreateTable create(SqlParserPos pos, SqlNode tableName, boolean full) {
         return new SqlShowCreateTable(pos,
             ImmutableList.of(SqlSpecialIdentifier.CREATE, SqlSpecialIdentifier.TABLE),
             ImmutableList.of(tableName),
-            tableName, full);
+            tableName, full, false);
+    }
+
+    public static SqlShowCreateTable create(SqlParserPos pos, SqlNode tableName, boolean full, boolean forExport) {
+        return new SqlShowCreateTable(pos,
+            ImmutableList.of(SqlSpecialIdentifier.CREATE, SqlSpecialIdentifier.TABLE),
+            ImmutableList.of(tableName),
+            tableName, full, forExport);
     }
 
     public static SqlShowCreateTable create(SqlParserPos pos, SqlNode tableName) {
         return new SqlShowCreateTable(pos,
             ImmutableList.of(SqlSpecialIdentifier.CREATE, SqlSpecialIdentifier.TABLE),
             ImmutableList.of(tableName),
-            tableName, false);
+            tableName, false, false);
     }
 
     @Override
@@ -71,6 +80,10 @@ public class SqlShowCreateTable extends SqlShow {
 
     public boolean isFull() {
         return full;
+    }
+
+    public boolean isForExport() {
+        return forExport;
     }
 
     @Override

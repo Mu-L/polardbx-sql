@@ -45,6 +45,9 @@ public class TransStatsColumn {
     public static final String TRANS_COUNT_XA_RW = "TRANS_COUNT_XA_RW";
     public static final String TRANS_COUNT_XA_RO = "TRANS_COUNT_XA_RO";
     public static final String TRANS_COUNT_TSO = "TRANS_COUNT_TSO";
+    public static final String TRANS_COUNT_XA_TSO = "TRANS_COUNT_XA_TSO";
+    public static final String TRANS_COUNT_ASYNC_COMMIT = "TRANS_COUNT_ASYNC_COMMIT";
+    public static final String TRANS_COUNT_TSO_OPT = "TRANS_COUNT_TSO_OPT";
     public static final String TRANS_COUNT_TSO_RW = "TRANS_COUNT_TSO_RW";
     public static final String TRANS_COUNT_TSO_RO = "TRANS_COUNT_TSO_RO";
     public static final String TRANS_COUNT_CROSS_GROUP = "TRANS_COUNT_CROSS_GROUP";
@@ -226,6 +229,36 @@ public class TransStatsColumn {
                         ((SchemaTransactionStatistics) stat).countCrossGroup.get(),
                     (stat, data) -> stat.countCrossGroup += (Long) data[indexOf(TRANS_COUNT_CROSS_GROUP)],
                     (stat, data) -> data[indexOf(TRANS_COUNT_CROSS_GROUP)] = stat.countCrossGroup
+                ))
+
+            .put(TRANS_COUNT_XA_TSO,
+                new ColumnDef(TRANS_COUNT_XA_TSO, i++,
+                    ColumnDef.ColumnType.LONG,
+                    false,
+                    (stat, data) -> data[indexOf(TRANS_COUNT_XA_TSO)] =
+                        ((SchemaTransactionStatistics) stat).countXATSO.get(),
+                    (stat, data) -> stat.countXATSO += (Long) data[indexOf(TRANS_COUNT_XA_TSO)],
+                    (stat, data) -> data[indexOf(TRANS_COUNT_XA_TSO)] = stat.countXATSO
+                ))
+
+            .put(TRANS_COUNT_ASYNC_COMMIT,
+                new ColumnDef(TRANS_COUNT_ASYNC_COMMIT, i++,
+                    ColumnDef.ColumnType.LONG,
+                    false,
+                    (stat, data) -> data[indexOf(TRANS_COUNT_ASYNC_COMMIT)] =
+                        ((SchemaTransactionStatistics) stat).countAsyncCommit.get(),
+                    (stat, data) -> stat.countAsyncCommit += (Long) data[indexOf(TRANS_COUNT_ASYNC_COMMIT)],
+                    (stat, data) -> data[indexOf(TRANS_COUNT_ASYNC_COMMIT)] = stat.countAsyncCommit
+                ))
+
+            .put(TRANS_COUNT_TSO_OPT,
+                new ColumnDef(TRANS_COUNT_TSO_OPT, i++,
+                    ColumnDef.ColumnType.LONG,
+                    false,
+                    (stat, data) -> data[indexOf(TRANS_COUNT_TSO_OPT)] =
+                        ((SchemaTransactionStatistics) stat).countTsoOpt.get(),
+                    (stat, data) -> stat.countTsoOpt += (Long) data[indexOf(TRANS_COUNT_TSO_OPT)],
+                    (stat, data) -> data[indexOf(TRANS_COUNT_TSO_OPT)] = stat.countTsoOpt
                 ))
 
             .put(LOCAL_DEADLOCK_COUNT,

@@ -17,10 +17,8 @@
 package com.alibaba.polardbx.optimizer.core.rel.ddl;
 
 import com.alibaba.polardbx.common.TddlConstants;
-import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
-import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
@@ -54,7 +52,15 @@ import org.apache.calcite.rel.ddl.AlterTablePartitionCount;
 import org.apache.calcite.rel.ddl.AlterTableRemovePartitioning;
 import org.apache.calcite.rel.ddl.AlterTableRepartition;
 import org.apache.calcite.rex.RexNode;
-import org.apache.calcite.sql.*;
+import org.apache.calcite.sql.SqlAddIndex;
+import org.apache.calcite.sql.SqlAddUniqueIndex;
+import org.apache.calcite.sql.SqlAlterTablePartitionCount;
+import org.apache.calcite.sql.SqlAlterTableRemovePartitioning;
+import org.apache.calcite.sql.SqlAlterTableRepartition;
+import org.apache.calcite.sql.SqlCreateTable;
+import org.apache.calcite.sql.SqlIdentifier;
+import org.apache.calcite.sql.SqlIndexDefinition;
+import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.commons.lang.StringUtils;
 
@@ -68,7 +74,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.TreeSet;
 import java.util.stream.Collectors;
 
 import static org.apache.calcite.sql.SqlCreateTable.getIndexColumnName;
@@ -621,53 +626,6 @@ public class LogicalAlterTableRepartition extends LogicalTableOperation {
 
     private boolean isAutoPartition() {
         return OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(tableName).isAutoPartition();
-    }
-
-    public void prepareForeignKeyData(TableMeta tableMeta, SqlAlterTableRepartition ast) {
-        if (repartitionPrepareData == null) {
-            repartitionPrepareData = new RepartitionPrepareData();
-        }
-
-        Set<ForeignKeyData> addFks = new HashSet<>();
-        Set<ForeignKeyData> removeFks = new HashSet<>();
-
-        addFks.addAll(tableMeta.getForeignKeys().values());
-        addFks.addAll(tableMeta.getReferencedForeignKeys().values());
-        removeFks.addAll(tableMeta.getForeignKeys().values());
-        removeFks.addAll(tableMeta.getReferencedForeignKeys().values());
-        repartitionPrepareData.getModifyForeignKeys().addAll(tableMeta.getForeignKeys().values());
-
-        genAddForeignKeySql(addFks);
-        genDropForeignKeySql(removeFks);
-    }
-
-    public void genAddForeignKeySql(Set<ForeignKeyData> foreignKeys) {
-        String sql;
-        String rollbackSql;
-        for (ForeignKeyData data : foreignKeys) {
-            sql = String.format("ALTER TABLE %s.%s ADD ",
-                surroundWithBacktick(data.schema), surroundWithBacktick(data.tableName)) + data + PARTITION_FK_SUB_JOB;
-            rollbackSql = String.format("ALTER TABLE %s.%s DROP FOREIGN KEY %s",
-                surroundWithBacktick(data.schema), surroundWithBacktick(data.tableName),
-                surroundWithBacktick(data.constraint)) + PARTITION_FK_SUB_JOB;
-            repartitionPrepareData.getAddForeignKeySql().add(new Pair<>(sql, rollbackSql));
-        }
-    }
-
-    public void genDropForeignKeySql(Set<ForeignKeyData> foreignKeys) {
-        String sql;
-        String rollbackSql;
-        for (ForeignKeyData data : foreignKeys) {
-            sql = String.format("ALTER TABLE %s.%s DROP FOREIGN KEY %s",
-                surroundWithBacktick(data.schema), surroundWithBacktick(data.tableName),
-                surroundWithBacktick(data.constraint)) + PARTITION_FK_SUB_JOB;
-            rollbackSql = String.format("ALTER TABLE %s.%s ADD ",
-                surroundWithBacktick(data.schema), surroundWithBacktick(data.tableName)) + data + PARTITION_FK_SUB_JOB;
-            repartitionPrepareData.getDropForeignKeySql().add(new Pair<>(sql, rollbackSql));
-            Set<String> tables = repartitionPrepareData.getForeignKeyChildTable()
-                .computeIfAbsent(data.schema, x -> new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER));
-            tables.add(data.tableName);
-        }
     }
 
     private void genAddCciSql(String indexName, GsiMetaManager.GsiIndexMetaBean indexDetail,

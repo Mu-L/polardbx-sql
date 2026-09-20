@@ -20,6 +20,7 @@ import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.optimizer.partition.common.PartitionLocation;
 import com.alibaba.polardbx.optimizer.partition.common.PartitionTableType;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -193,4 +194,17 @@ public class PartSpecSearcher {
         return subPartTempNameToSpecMap.get(subPartTempName);
     }
 
+    public Set<String> getGroupKeySetOfAllPhyPartSpecs() {
+        return this.phyInfoSpecMap.keySet();
+    }
+
+    public List<PartitionSpec> getPhyPartSpecListByGroupKey(String grpKey) {
+        Map<String, PartitionSpec> phyTbToSpecMapOfOneGroup = phyInfoSpecMap.get(grpKey);
+        if (phyTbToSpecMapOfOneGroup == null) {
+            return null;
+        }
+        List<PartitionSpec> phyPartSpecList = new ArrayList<>();
+        phyPartSpecList.addAll(phyTbToSpecMapOfOneGroup.values());
+        return phyPartSpecList;
+    }
 }

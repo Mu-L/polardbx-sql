@@ -16,28 +16,46 @@
 
 package com.alibaba.polardbx.optimizer.core.rel;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
+import com.alibaba.polardbx.optimizer.config.table.ComplexTaskPlanUtils;
+import com.alibaba.polardbx.optimizer.config.table.GlobalIndexMeta;
+import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager;
+import com.alibaba.polardbx.optimizer.config.table.TableColumnUtils;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.dml.DistinctWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.BroadCastReplaceScaleOutWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.InsertWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.ReplaceRelocateWriter;
+import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
+import com.alibaba.polardbx.rule.TableRule;
+import com.alibaba.polardbx.rule.TddlRule;
 import com.google.common.collect.ImmutableList;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.prepare.Prepare;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.RelWriter;
+import org.apache.calcite.rel.externalize.RelDrdsWriter;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexCallParam;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlNodeList;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * REPLACE on sharding table
@@ -51,15 +69,18 @@ public class LogicalReplace extends LogicalInsertIgnore {
     private final BroadCastReplaceScaleOutWriter broadCastReplaceScaleOutWriter;
 
     private final boolean hasJsonColumn;
+    private final boolean canUseReturning;
 
     public LogicalReplace(LogicalInsert insert,
                           InsertWriter primaryInsertWriter,
                           ReplaceRelocateWriter primaryRelocateWriter,
                           List<InsertWriter> gsiInsertWriters,
                           List<ReplaceRelocateWriter> gsiRelocateWriters,
+                          DistinctWriter primaryDeleteWriter,
+                          List<DistinctWriter> gsiDeleteWriters,
                           BroadCastReplaceScaleOutWriter broadCastReplaceScaleOutWriter,
                           List<String> selectListForDuplicateCheck,
-                          boolean hasJsonColumn
+                          boolean hasJsonColumn, boolean canUseReturning
     ) {
         super(insert.getCluster(),
             insert.getTraitSet(),
@@ -97,13 +118,17 @@ public class LogicalReplace extends LogicalInsertIgnore {
             insert.isPushableForeignConstraintCheck(),
             insert.isModifyForeignKey(),
             insert.isUkContainsAllSkAndGsiContainsAllUk(),
+            insert.isCanSkipPkCheck(),
             insert.getDynamicImplicitDefaultParams(),
             insert.getUnoptimizedDynamicImplicitDefaultParams()
         );
         this.primaryRelocateWriter = primaryRelocateWriter;
+        this.canUseReturning = canUseReturning;
         this.primaryInsertWriter = primaryInsertWriter;
         this.gsiRelocateWriters = gsiRelocateWriters;
         this.gsiInsertWriters = gsiInsertWriters;
+        this.primaryDeleteWriter = primaryDeleteWriter;
+        this.gsiDeleteWriters = gsiDeleteWriters;
         this.broadCastReplaceScaleOutWriter = broadCastReplaceScaleOutWriter;
         this.hasJsonColumn = hasJsonColumn;
     }
@@ -135,8 +160,9 @@ public class LogicalReplace extends LogicalInsertIgnore {
                              List<RexNode> defaultExprColRexNodes, List<Integer> defaultExprEvalFieldsMapping,
                              boolean pushablePrimaryKeyCheck, boolean pushableForeignConstraintCheck,
                              boolean modifyForeignKey, boolean ukContainsAllSkAndGsiContainsAllUk,
+                             boolean canSkipPkCheck,
                              List<RexCallParam> dynamicImplicitDefaultParams,
-                             List<RexCallParam> unoptimizedDynamicImplicitDefaultParams) {
+                             List<RexCallParam> unoptimizedDynamicImplicitDefaultParams, boolean canUseReturning) {
         super(cluster, traitSet, table, catalogReader, input, operation, flattened, insertRowType, keywords,
             duplicateKeyUpdateList, batchSize, appendedColumnIndex, hints, tableInfo, primaryInsertWriter,
             gsiInsertWriters, autoIncParamIndex, ukColumnNamesList, beforeUkMapping, afterUkMapping, afterUgsiUkMapping,
@@ -147,11 +173,13 @@ public class LogicalReplace extends LogicalInsertIgnore {
             gsiDeleteWriters, usePartFieldChecker, columnMetaMap, ukContainGeneratedColumn, evalRowColMetas,
             genColRexNodes, inputToEvalFieldsMapping, defaultExprColMetas, defaultExprColRexNodes,
             defaultExprEvalFieldsMapping, pushablePrimaryKeyCheck, pushableForeignConstraintCheck, modifyForeignKey,
-            ukContainsAllSkAndGsiContainsAllUk, dynamicImplicitDefaultParams, unoptimizedDynamicImplicitDefaultParams);
+            ukContainsAllSkAndGsiContainsAllUk, canSkipPkCheck, dynamicImplicitDefaultParams,
+            unoptimizedDynamicImplicitDefaultParams);
         this.primaryRelocateWriter = primaryRelocateWriter;
         this.gsiRelocateWriters = gsiRelocateWriters;
         this.broadCastReplaceScaleOutWriter = broadCastReplaceScaleOutWriter;
         this.hasJsonColumn = hasJsonColumn;
+        this.canUseReturning = canUseReturning;
     }
 
     @Override
@@ -214,8 +242,11 @@ public class LogicalReplace extends LogicalInsertIgnore {
             isPushableForeignConstraintCheck(),
             isModifyForeignKey(),
             isUkContainsAllSkAndGsiContainsAllUk(),
+            isCanSkipPkCheck(),
             getDynamicImplicitDefaultParams(),
-            getUnoptimizedDynamicImplicitDefaultParams());
+            getUnoptimizedDynamicImplicitDefaultParams(),
+            canUseReturning);
+        newLogicalReplace.getCandidateUkChecks().putAll(getCandidateUkChecks());
         return newLogicalReplace;
     }
 
@@ -279,8 +310,11 @@ public class LogicalReplace extends LogicalInsertIgnore {
             isPushableForeignConstraintCheck(),
             isModifyForeignKey(),
             isUkContainsAllSkAndGsiContainsAllUk(),
+            isCanSkipPkCheck(),
             dynamicImplicitDefaultParams,
-            getUnoptimizedDynamicImplicitDefaultParams());
+            getUnoptimizedDynamicImplicitDefaultParams(),
+            canUseReturning);
+        newLogicalReplace.getCandidateUkChecks().putAll(getCandidateUkChecks());
         return newLogicalReplace;
     }
 
@@ -298,7 +332,7 @@ public class LogicalReplace extends LogicalInsertIgnore {
 
     @Override
     public <R extends LogicalInsert> List<RelNode> getPhyPlanForDisplay(ExecutionContext executionContext,
-                                                                           R replace) {
+                                                                        R replace) {
         final InsertWriter primaryWriter = replace.getPrimaryInsertWriter();
         final LogicalInsert insert = primaryWriter.getInsert();
         final LogicalInsert copied = new LogicalInsert(insert.getCluster(), insert.getTraitSet(), insert.getTable(),
@@ -310,6 +344,7 @@ public class LogicalReplace extends LogicalInsertIgnore {
             insert.getInputToEvalFieldsMapping(), insert.getDefaultExprColMetas(), insert.getDefaultExprColRexNodes(),
             insert.getDefaultExprEvalFieldsMapping(), insert.isPushablePrimaryKeyCheck(),
             insert.isPushableForeignConstraintCheck(), isModifyForeignKey(), isUkContainsAllSkAndGsiContainsAllUk(),
+            isCanSkipPkCheck(),
             getDynamicImplicitDefaultParams(), getUnoptimizedDynamicImplicitDefaultParams());
 
         final InsertWriter replaceWriter = new InsertWriter(primaryWriter.getTargetTable(), copied);
@@ -322,7 +357,153 @@ public class LogicalReplace extends LogicalInsertIgnore {
             .orElseGet(() -> getPrimaryRelocateWriter().getModifyWriter().unwrap(InsertWriter.class));
     }
 
+    private List<String> getPrimaryKeys(TableMeta tableMeta) {
+        return tableMeta.getPrimaryKey().stream().map(ColumnMeta::getName).map(String::toLowerCase)
+            .collect(Collectors.toList());
+    }
+
+    private List<String> getPrimaryShardingKeys(TableMeta tableMeta, ExecutionContext executionContext,
+                                                String schemaName,
+                                                String tableName) {
+        if (tableMeta.getPartitionInfo() != null) {
+            // for auto
+            return tableMeta.getPartitionInfo().getPartitionColumns().stream().map(String::toLowerCase)
+                .collect(Collectors.toList());
+        } else {
+            // for drds
+            TddlRule tddlRule = executionContext.getSchemaManager(schemaName).getTddlRuleManager().getTddlRule();
+            TableRule tableRule = tddlRule.getTable(tableName);
+            return tableRule.getShardColumns().stream().map(String::toLowerCase).collect(Collectors.toList());
+        }
+    }
+
+    private void populateGsiShardingKeys(TableMeta tableMeta, Map<String, List<String>> gsiShardingKeys,
+                                         LinkedHashSet<String> deduplicatedColumns) {
+        tableMeta.getGsiPublished().forEach((indexName, gsiIndexMetaBean) -> {
+            gsiShardingKeys.put(indexName.toLowerCase(),
+                Objects.requireNonNull(OptimizerContext.getContext(gsiIndexMetaBean.tableSchema)).getRuleManager()
+                    .getSharedColumns(gsiIndexMetaBean.indexName));
+            deduplicatedColumns.addAll(gsiShardingKeys.get(indexName.toLowerCase()));
+        });
+    }
+
+    private List<String> populatePkSkColumns(TableMeta tableMeta, ExecutionContext executionContext, String schemaName,
+                                             String tableName) {
+        // 从tableMeta中拿到主键、分区键以及所有GSI的分区键
+        final List<String> primaryKeys = getPrimaryKeys(tableMeta);
+        List<String> primaryShardingKeys = getPrimaryShardingKeys(tableMeta, executionContext, schemaName, tableName);
+
+        // index name -> gsi sharding keys
+        final Map<String, List<String>> gsiShardingKeys = new HashMap<>();
+
+        // 所有期望拿回的列
+        final LinkedHashSet<String> deduplicatedColumns = new LinkedHashSet<>(primaryKeys);
+        deduplicatedColumns.addAll(primaryShardingKeys);
+
+        // put all gsi sharding key to deduplicatedColumns
+        populateGsiShardingKeys(tableMeta, gsiShardingKeys, deduplicatedColumns);
+
+        return new ArrayList<>(deduplicatedColumns);
+    }
+
+    private boolean checkGsiCoverAllSk(TableMeta tableMeta, ExecutionContext ec) {
+
+        String schemaName = tableMeta.getSchemaName();
+        String tableName = tableMeta.getTableName();
+        if (tableMeta.getGsiPublished() == null || tableMeta.getGsiPublished().size() <= 1) {
+            // 如果没有GSI或只有一个GSI，则不需要检查
+            return true;
+        }
+
+        final List<String> returningColumns = populatePkSkColumns(tableMeta, ec, schemaName, tableName);
+        // 检查每个GSI是否都包含所有returningColumns
+        for (GsiMetaManager.GsiIndexMetaBean gsiIndexMetaBean : tableMeta.getGsiPublished().values()) {
+            List<String> gsiColumns =
+                gsiIndexMetaBean.getIndexColumns().stream().map(GsiMetaManager.GsiIndexColumnMetaBean::getColumnName)
+                    .map(String::toLowerCase)
+                    .collect(Collectors.toList());
+            gsiColumns.addAll(
+                gsiIndexMetaBean.getCoveringColumns().stream().map(GsiMetaManager.GsiIndexColumnMetaBean::getColumnName)
+                    .map(String::toLowerCase)
+                    .collect(Collectors.toList()));
+            if (!new HashSet<>(gsiColumns).containsAll(returningColumns)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    public String explainNodeName() {
+        if (isReplace()) {
+            return "LogicalReplace";
+        } else if (withDuplicateKeyUpdate()) {
+            return "LogicalUpsert";
+        }
+        return "LogicalInsertIgnore";
+    }
+
+    @Override
+    public RelWriter explainTermsForDisplay(RelWriter pw) {
+        ExecutionContext executionContext = null;
+        if (pw instanceof RelDrdsWriter) {
+            executionContext = (ExecutionContext) ((RelDrdsWriter) pw).getExecutionContext();
+        }
+
+        TableMeta tableMeta =
+            executionContext.getSchemaManager(this.getSchemaName()).getTable(this.getLogicalTableName());
+        final boolean checkForeignKey =
+            executionContext.foreignKeyChecks() && (tableMeta.hasForeignKey() || tableMeta.hasReferencedForeignKey());
+        final TddlRuleManager or = OptimizerContext.getContext(this.getSchemaName()).getRuleManager();
+        final boolean isBroadcast = or.isBroadCastOrReplicas(this.getLogicalTableName());
+
+        // for replace returning, gsi can use returning only on published state
+        final boolean gsiCanUseReturning = GlobalIndexMeta
+            .isAllGsi(this.getTargetTables().get(0), executionContext, GlobalIndexMeta::isPublished);
+        final boolean isColumnMultiWriting =
+            TableColumnUtils.isModifying(this.getSchemaName(), this.getLogicalTableName(), executionContext);
+        final boolean checkPrimaryKey =
+            executionContext.getParamManager().getBoolean(ConnectionParams.PRIMARY_KEY_CHECK);
+        final boolean gsiCoverAllSk = checkGsiCoverAllSk(tableMeta, executionContext);
+
+        boolean canUseReturning =
+            this.isCanUseReturning() && executionContext.isCheckSupportsReturningAll()
+                && !ComplexTaskPlanUtils.canWrite(tableMeta)
+                && gsiCoverAllSk
+                && gsiCanUseReturning
+                && executionContext.isCheckIsAllDnUseXDataSource()
+                && !checkForeignKey
+                && !checkPrimaryKey && !isColumnMultiWriting && !isBroadcast
+                && !ExternalizedDmlRewriter.isReturningForbidden(tableMeta);
+
+        pw.item(RelDrdsWriter.REL_NAME, "LogicalReplace");
+
+        final boolean isSourceSelect = isSourceSelect();
+        if (isSourceSelect) {
+            pw.item("table", getLogicalTableName());
+            pw.item("columns", getInsertRowType());
+        } else {
+            pw.item("sql", getSqlTemplate().toString().replace("\n", " "));
+        }
+        if (canUseReturning) {
+            pw.item("isReturning", true);
+        }
+        if (!canUseReturning) {
+            pw.item("uniqueKeySelect",
+                ukGroupByTable.entrySet().stream().map(e -> "select " + e.getValue() + " on " + e.getKey())
+                    .collect(Collectors.toList()));
+        }
+        if (isSourceSelect) {
+            pw.item("mode", insertSelectMode);
+        }
+        return pw;
+    }
+
     public boolean isHasJsonColumn() {
         return hasJsonColumn;
+    }
+
+    public boolean isCanUseReturning() {
+        return canUseReturning;
     }
 }

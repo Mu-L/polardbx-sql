@@ -46,7 +46,7 @@ public class SqlSingleValueAggFunction extends SqlAggFunction {
         "SINGLE_VALUE",
         null,
         SqlKind.SINGLE_VALUE,
-        ReturnTypes.ARG0,
+        ReturnTypes.ARG0_NULLABLE_IF_EMPTY,
         null,
         OperandTypes.ANY,
         SqlFunctionCategory.SYSTEM,

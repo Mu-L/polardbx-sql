@@ -1,0 +1,54 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+use polardbx;
+drop database if exists test_omc30_rb_edge_db;
+create database if not exists test_omc30_rb_edge_db mode='auto' default character set utf8mb4 default collate utf8mb4_bin;
+use test_omc30_rb_edge_db;
+## case1 (TC-H): empty table - rebuild policy on empty table must complete without error
+drop table if exists rb_edge_empty_t1;
+create table rb_edge_empty_t1(
+  a int not null,
+  b datetime not null,
+  c varchar(32),
+  primary key(a)
+) default character set utf8mb4 default collate utf8mb4_bin
+partition by hash(a) partitions 4;
+alter table rb_edge_empty_t1 modify ttl set
+  TTL_ENABLE='on',
+  TTL_CLEANUP='on',
+  TTL_EXPR=`b` expire after 1 day timezone '+08:00';
+set TTL_DEBUG_CURRENT_DATETIME='2025-01-01 00:00:00';
+## empty table: rebuild policy must not crash, table stays empty
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=true,TTL_FORCE_USE_REBUILD_POLICY_FOR_CLEANUP_EXPIRED_DATA=true,TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY=0,TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY=0)*/alter table rb_edge_empty_t1 cleanup expired data;
+## verify: table still empty, no error
+select a, c from rb_edge_empty_t1 order by a;
+a,c
+drop table if exists rb_edge_empty_t1;
+## case2 (TC-G): all rows expired - rebuild policy cleans up everything, table becomes empty
+drop table if exists rb_edge_allexp_t1;
+create table rb_edge_allexp_t1(
+  a int not null,
+  b datetime not null,
+  c varchar(32),
+  primary key(a)
+) default character set utf8mb4 default collate utf8mb4_bin
+partition by hash(a) partitions 4;
+alter table rb_edge_allexp_t1 modify ttl set
+  TTL_ENABLE='on',
+  TTL_CLEANUP='on',
+  TTL_EXPR=`b` expire after 1 day timezone '+08:00';
+insert into rb_edge_allexp_t1 values(1, '2020-01-01 00:00:00', 'expired1');
+insert into rb_edge_allexp_t1 values(2, '2020-01-02 00:00:00', 'expired2');
+insert into rb_edge_allexp_t1 values(3, '2020-01-03 00:00:00', 'expired3');
+insert into rb_edge_allexp_t1 values(4, '2020-01-04 00:00:00', 'expired4');
+insert into rb_edge_allexp_t1 values(5, '2020-01-05 00:00:00', 'expired5');
+set TTL_DEBUG_CURRENT_DATETIME='2025-01-01 00:00:00';
+## all rows expired: rebuild policy must produce empty table
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=true,TTL_FORCE_USE_REBUILD_POLICY_FOR_CLEANUP_EXPIRED_DATA=true,TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY=0,TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY=0)*/alter table rb_edge_allexp_t1 cleanup expired data;
+## verify: table is now empty (all expired rows cleaned via rebuild)
+select a, c from rb_edge_allexp_t1 order by a;
+a,c
+drop table if exists rb_edge_allexp_t1;
+use polardbx;
+drop database if exists test_omc30_rb_edge_db;
+use polardbx;

@@ -16,6 +16,7 @@ import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.gms.partition.ExtraFieldJSON;
 import com.alibaba.polardbx.gms.ttl.TtlInfoRecord;
 import com.alibaba.polardbx.gms.util.TtlEventLogUtil;
+import com.alibaba.polardbx.optimizer.config.server.IServerConfigManager;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -24,7 +25,6 @@ import com.alibaba.polardbx.optimizer.parse.visitor.FastSqlToCalciteNodeVisitor;
 import com.alibaba.polardbx.optimizer.partition.PartitionByDefinition;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import org.apache.calcite.avatica.util.TimeUnit;
-import org.apache.calcite.sql.SqlBasicCall;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlCharStringLiteral;
 import org.apache.calcite.sql.SqlCreateTable;
@@ -34,8 +34,13 @@ import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNumericLiteral;
 import org.apache.calcite.sql.SqlTimeToLiveExpr;
 import org.apache.calcite.sql.SqlTimeToLiveJobExpr;
+import org.jetbrains.annotations.Nullable;
+import org.apache.commons.collections.CollectionUtils;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.StringJoiner;
+import java.util.stream.Collectors;
 
 public class TtlDefinitionInfo {
 
@@ -49,6 +54,11 @@ public class TtlDefinitionInfo {
      */
     protected boolean ttlColUseFuncExpr = false;
     protected TtlColFuncExprInfo ttlColFuncExprInfo = null;
+
+//    protected SQLExpr ttlColEncoderExpr = null;
+//    protected SQLExpr ttlColDecoderExpr = null;
+
+    protected boolean ttlColUseExprEncoding = false;
 
     public TtlDefinitionInfo() {
     }
@@ -108,18 +118,22 @@ public class TtlDefinitionInfo {
         TtlDefinitionInfo ttlDefinitionInfo = new TtlDefinitionInfo();
         ttlDefinitionInfo.setTtlInfoRecord(ttlInfoRecord);
         String ttlExprStr = ttlInfoRecord.getTtlExpr();
+        String ttlColEncoder = ttlInfoRecord.getTtlColEncoder();
+        String ttlColDecoder = ttlInfoRecord.getTtlColDecoder();
+//        initTtlColFuncExprInfoIfNeed(ttlExprStr, ttlColEncoder, ttlColDecoder, ttlDefinitionInfo);
+
         try {
             ByteString ttlExprByteStr = ByteString.from(ttlExprStr);
             MySqlExprParser exprParser = new MySqlExprParser(ttlExprByteStr);
             SQLTimeToLiveExpr ttlExprAst =
                 MySqlCreateTableParser.parseTimeToLiveExpr(exprParser, exprParser.getLexer());
             SQLExpr ttlColExpr = ttlExprAst.getColumn();
-
             FastSqlToCalciteNodeVisitor visitor =
                 new FastSqlToCalciteNodeVisitor(new ContextParameters(false), new ExecutionContext());
             SqlNode ttlColExprAst = visitor.convertToSqlNode(ttlColExpr);
 
-            TtlColFuncExprInfo funcExprInfo = TtlColFuncExprInfo.buildTtlColFuncExprInfoByTtlColAst(ttlColExprAst);
+            TtlColFuncExprInfo funcExprInfo = tryFetchTtlColNameAndTtlColFuncExprInfoIfNeed(ttlColExprAst,
+                ttlColEncoder, ttlColDecoder, null, null);
             ttlDefinitionInfo.setTtlColFuncExprInfo(funcExprInfo);
             ttlDefinitionInfo.setTtlColUseFuncExpr(funcExprInfo != null);
 
@@ -129,6 +143,60 @@ public class TtlDefinitionInfo {
         }
 
         return ttlDefinitionInfo;
+    }
+
+//    protected static void initTtlColFuncExprInfoIfNeed(String ttlExprStr,
+//                                                       String ttlColEncoder,
+//                                                       String ttlColDecoder,
+//                                                       TtlDefinitionInfo ttlDefinitionInfo) {
+//        try {
+//            ByteString ttlExprByteStr = ByteString.from(ttlExprStr);
+//            MySqlExprParser exprParser = new MySqlExprParser(ttlExprByteStr);
+//            SQLTimeToLiveExpr ttlExprAst =
+//                MySqlCreateTableParser.parseTimeToLiveExpr(exprParser, exprParser.getLexer());
+//            SQLExpr ttlColExpr = ttlExprAst.getColumn();
+//            FastSqlToCalciteNodeVisitor visitor =
+//                new FastSqlToCalciteNodeVisitor(new ContextParameters(false), new ExecutionContext());
+//            SqlNode ttlColExprAst = visitor.convertToSqlNode(ttlColExpr);
+//
+//            TtlColFuncExprInfo funcExprInfo = tryFetchTtlColNameAndTtlColFuncExprInfoIfNeed(ttlColExprAst,
+//                ttlColEncoder, ttlColDecoder, null, null);
+//            ttlDefinitionInfo.setTtlColFuncExprInfo(funcExprInfo);
+//            ttlDefinitionInfo.setTtlColUseFuncExpr(funcExprInfo != null);
+//
+//        } catch (Throwable ex) {
+//            throw new TddlRuntimeException(ErrorCode.ERR_TTL_PARAMS,
+//                "Failed to init ttl func expr from ttl info record");
+//        }
+//    }
+
+    protected static @Nullable TtlColFuncExprInfo tryFetchTtlColNameAndTtlColFuncExprInfoIfNeed(SqlNode ttlColExprAst,
+                                                                                                String ttlColEncoder,
+                                                                                                String ttlColDecoder,
+                                                                                                SqlNode[] ttlColNodeOutput,
+                                                                                                String[] ttlColNameOutput
+    ) {
+        TtlUtil.TtlColumnFinder ttlColumnFinder = new TtlUtil.TtlColumnFinder();
+        boolean findTtlCol = ttlColumnFinder.find(ttlColExprAst);
+        TtlColFuncExprInfo funcExprInfo = null;
+        if (findTtlCol) {
+            if (ttlColNodeOutput != null && ttlColNodeOutput.length > 0) {
+                ttlColNodeOutput[0] = ttlColumnFinder.getTtlColumn();
+            }
+
+            if (ttlColNameOutput != null && ttlColNameOutput.length > 0) {
+                ttlColNameOutput[0] = SQLUtils.normalize(ttlColumnFinder.getTtlColumn().getLastName()).trim();
+            }
+
+            boolean useFuncExprDef = ttlColumnFinder.ttlColUseFuncExpr();
+            boolean useTtlColExprEncoding = !StringUtils.isEmpty(ttlColEncoder) && !StringUtils.isEmpty(ttlColDecoder);
+            if (useFuncExprDef || useTtlColExprEncoding) {
+                SqlNode ttlColFuncExpr = ttlColExprAst;
+                funcExprInfo =
+                    TtlColFuncExprInfo.buildTtlColFuncExprInfoByTtlColAst(ttlColFuncExpr, ttlColEncoder, ttlColDecoder);
+            }
+        }
+        return funcExprInfo;
     }
 
     public static Integer getArcKindByEngine(String tableEngine) {
@@ -162,6 +230,8 @@ public class TtlDefinitionInfo {
         String ttlEnable = buildParams.getTtlEnable();
         SqlTimeToLiveExpr ttlExpr = buildParams.getTtlExpr();
         SqlTimeToLiveJobExpr ttlJob = buildParams.getTtlJob();
+        String ttlColEncoder = buildParams.getTtlColEncoder();
+        String ttlColDecoder = buildParams.getTtlColDecoder();
         String ttlFilter = buildParams.getTtlFilter();
         String ttlCleanup = buildParams.getTtlCleanup();
         SqlNode ttlPartInterval = buildParams.getTtlPartInterval();
@@ -172,6 +242,7 @@ public class TtlDefinitionInfo {
         Integer arcPostAllocateCount = buildParams.getArcPostAllocateCount();
         TableMeta ttlTableMeta = buildParams.getTtlTableMeta();
         ExecutionContext ec = buildParams.getEc();
+        IServerConfigManager svrMgr = buildParams.getServerConfigManager();
 
         TtlDefinitionInfo oldTtlInfo = buildParams.getOldTtlInfo();
         boolean buildForModifyExistsTtl = oldTtlInfo != null;
@@ -199,6 +270,28 @@ public class TtlDefinitionInfo {
         }
         ttlDefRec.setTableSchema(tableSchemaVal);
         ttlDefRec.setTableName(tableNameVal);
+
+        //====== ttl_col_encoder =======
+        String ttlColEncoderStrVal = null;
+        if (ttlColEncoder != null) {
+            ttlColEncoderStrVal = SQLUtils.normalizeNoTrim(ttlColEncoder.toString());
+        } else {
+            if (buildForModifyExistsTtl) {
+                ttlColEncoderStrVal = oldTtlRec.getTtlColEncoder();
+            }
+        }
+        ttlDefRec.setTtlColEncoder(ttlColEncoderStrVal);
+
+        //====== ttl_decoder =======
+        String ttlColDecoderStrVal = null;
+        if (ttlColDecoder != null) {
+            ttlColDecoderStrVal = SQLUtils.normalizeNoTrim(ttlColDecoder.toString());
+        } else {
+            if (buildForModifyExistsTtl) {
+                ttlColDecoderStrVal = oldTtlRec.getTtlColDecoder();
+            }
+        }
+        ttlDefRec.setTtlColDecoder(ttlColDecoderStrVal);
 
         //====== ttl_filter =======
         String ttlFilterStrVal = null;
@@ -267,7 +360,7 @@ public class TtlDefinitionInfo {
             modifiedCleanupVal = true;
         }
 
-        //======= ttl_expr & ttl_col ========
+        //======= ttl_expr & ttl_col && ttl_col_encoder/ttl_col_decoder ========
         TtlArchivePartMode expirePolicy = TtlArchivePartMode.EXPIRE_AFTER_TIME_INTERVAL;
         String ttlExprStrVal = null;
         Integer expireAfter = null;
@@ -277,29 +370,44 @@ public class TtlDefinitionInfo {
         String ttlExprTimezoneVal = null;
         Integer expireAfterTimeUnitCode = TtlTimeUnit.UNDEFINED.getUnitCode();
         String columnName = null;
+        SqlIdentifier columnNode = null;
         boolean ttlColUseFuncExpr = false;
         TtlColFuncExprInfo ttlColFuncExprInfo = null;
+        boolean oldTtlColUseFuncExpr = false;
+        TtlColFuncExprInfo oldTtlColFuncExprInfo = null;
 
         if (ttlExpr != null) {
 
             ttlExprStrVal = ttlExpr.toString();
 
             //===== ttl_col of ttl_expr ========
-            SqlNode ttlColNodeAst = ttlExpr.getColumn();
-            TtlUtil.TtlColumnFinder ttlColumnFinder = new TtlUtil.TtlColumnFinder();
             SqlNode columnNodeAst = ttlExpr.getColumn();
-            boolean findTtlCol = ttlColumnFinder.find(columnNodeAst);
-            SqlIdentifier columnNode = null;
-            if (findTtlCol) {
-                columnNode = ttlColumnFinder.getTtlColumn();
-                columnName = SQLUtils.normalize(columnNode.getLastName()).trim();
 
-                boolean useFuncExprDef = ttlColumnFinder.ttlColUseFuncExpr();
-                if (useFuncExprDef) {
-                    SqlBasicCall ttlColFuncExpr = (SqlBasicCall) ttlColNodeAst;
-                    ttlColFuncExprInfo = TtlColFuncExprInfo.buildTtlColFuncExprInfoByTtlColAst(ttlColFuncExpr);
-                }
-            }
+//            TtlUtil.TtlColumnFinder ttlColumnFinder = new TtlUtil.TtlColumnFinder();
+//            boolean findTtlCol = ttlColumnFinder.find(columnNodeAst);
+//            if (findTtlCol) {
+//                columnNode = ttlColumnFinder.getTtlColumn();
+//                columnName = SQLUtils.normalize(columnNode.getLastName()).trim();
+//
+//                boolean useFuncExprDef = ttlColumnFinder.ttlColUseFuncExpr();
+//                boolean useTtlColExprEncoding = !StringUtils.isEmpty(ttlColEncoder) && !StringUtils.isEmpty(ttlColDecoder);
+//                if (useFuncExprDef || useTtlColExprEncoding) {
+//                    SqlNode ttlColFuncExpr = ttlColNodeAst;
+//                    ttlColFuncExprInfo =
+//                        TtlColFuncExprInfo.buildTtlColFuncExprInfoByTtlColAst(ttlColFuncExpr, ttlColEncoder, ttlColDecoder);
+//                }
+//            }
+
+            SqlIdentifier[] columnNodeOutput = new SqlIdentifier[1];
+            String[] columnNameOutput = new String[1];
+            ttlColFuncExprInfo = tryFetchTtlColNameAndTtlColFuncExprInfoIfNeed(
+                columnNodeAst,
+                ttlColEncoder,
+                ttlColDecoder,
+                columnNodeOutput,
+                columnNameOutput);
+            columnNode = columnNodeOutput[0];
+            columnName = columnNameOutput[0];
             ttlColUseFuncExpr = ttlColFuncExprInfo != null;
 
             //===== ttl_time_zone of ttl_expr ========
@@ -433,10 +541,40 @@ public class TtlDefinitionInfo {
             if (buildForModifyExistsTtl) {
                 ttlExprStrVal = oldTtlRec.getTtlExpr();
                 columnName = oldTtlRec.getTtlCol();
-                ttlColUseFuncExpr = oldTtlInfo.isTtlColUseFuncExpr();
-                if (ttlColUseFuncExpr) {
-                    ttlColFuncExprInfo = oldTtlInfo.getTtlColFuncExprInfo().copy();
+
+                oldTtlColUseFuncExpr = oldTtlInfo.isTtlColUseFuncExpr();
+                if (oldTtlColUseFuncExpr) {
+                    oldTtlColFuncExprInfo = oldTtlInfo.getTtlColFuncExprInfo().copy();
                 }
+
+                boolean usingTtlColEncoderDecoder =
+                    !StringUtils.isEmpty(ttlColEncoderStrVal) && !StringUtils.isEmpty(ttlColDecoderStrVal);
+                if (usingTtlColEncoderDecoder) {
+                    try {
+                        ByteString ttlExprByteStr = ByteString.from(ttlExprStrVal);
+                        MySqlExprParser exprParser = new MySqlExprParser(ttlExprByteStr);
+                        SQLTimeToLiveExpr ttlExprAst =
+                            MySqlCreateTableParser.parseTimeToLiveExpr(exprParser, exprParser.getLexer());
+                        SQLExpr ttlColExpr = ttlExprAst.getColumn();
+                        FastSqlToCalciteNodeVisitor visitor =
+                            new FastSqlToCalciteNodeVisitor(new ContextParameters(false), new ExecutionContext());
+                        SqlNode ttlColExprAst = visitor.convertToSqlNode(ttlColExpr);
+
+                        ttlColFuncExprInfo = tryFetchTtlColNameAndTtlColFuncExprInfoIfNeed(ttlColExprAst,
+                            ttlColEncoderStrVal, ttlColDecoderStrVal, null, null);
+                        ttlColUseFuncExpr = ttlColFuncExprInfo != null;
+
+                    } catch (Throwable ex) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_TTL_PARAMS,
+                            "Failed to init ttl func expr from ttl info record");
+                    }
+                } else {
+                    if (oldTtlColUseFuncExpr) {
+                        ttlColFuncExprInfo = oldTtlColFuncExprInfo;
+                        ttlColUseFuncExpr = true;
+                    }
+                }
+
                 ttlExprTimezoneVal = oldTtlRec.getTtlTimezone();
                 expirePolicy = TtlArchivePartMode.of(oldTtlRec.getArcPartMode());
                 expireAfterIntervalVal = oldTtlRec.getTtlInterval();
@@ -460,7 +598,7 @@ public class TtlDefinitionInfo {
                         enableCleanup = false;
                         modifiedCleanupVal = true;
                         ttlExprTimezoneVal = TtlInfoRecord.TTL_EXPR_EXPIRE_DEFAULT_TIME_ZONE;
-                        ;
+
                         expirePolicy = TtlArchivePartMode.UNDEFINED;
                         expireAfterIntervalVal = TtlInfoRecord.TTL_EXPIRE_AFTER_UNDEFINED;
                         expireAfterTimeUnitCode = TtlTimeUnit.UNDEFINED.getUnitCode();
@@ -507,7 +645,7 @@ public class TtlDefinitionInfo {
         Integer arcPostAllocateCountVal = arcPostAllocateCount;
         if (arcPostAllocateCountVal == null) {
             if (buildForModifyExistsTtl) {
-                arcPostAllocateCountVal = oldTtlRec.getArcPrePartCnt();
+                arcPostAllocateCountVal = oldTtlRec.getArcPostPartCnt();
             } else {
                 arcPostAllocateCountVal =
                     ec.getParamManager().getInt(ConnectionParams.TTL_DEFAULT_ARC_POST_ALLOCATE_COUNT);
@@ -703,8 +841,24 @@ public class TtlDefinitionInfo {
             arcTmpTblSchemaVal = archiveTableSchemaVal;
         } else {
             if (buildForModifyExistsTtl) {
-                archiveTableSchemaVal = oldTtlRec.getArcTblSchema();
-                arcTmpTblSchemaVal = oldTtlRec.getArcTmpTblSchema();
+                if (isPerformBindingArcTblName) {
+                    /**
+                     * archiveTableSchema is null (not specified in SQL) but archiveTableName is specified,
+                     * and this is a modify-existing-ttl operation that is binding a new archive table.
+                     * If old record has no archive schema, auto-fill with tableSchema.
+                     */
+                    String oldSchema = oldTtlRec.getArcTblSchema();
+                    if (StringUtils.isEmpty(oldSchema)) {
+                        archiveTableSchemaVal = tableSchema;
+                        arcTmpTblSchemaVal = tableSchema;
+                    } else {
+                        archiveTableSchemaVal = oldSchema;
+                        arcTmpTblSchemaVal = oldTtlRec.getArcTmpTblSchema();
+                    }
+                } else {
+                    archiveTableSchemaVal = oldTtlRec.getArcTblSchema();
+                    arcTmpTblSchemaVal = oldTtlRec.getArcTmpTblSchema();
+                }
             } else {
                 if (isPerformBindingArcTblName) {
                     archiveTableSchemaVal = tableSchema;
@@ -717,7 +871,19 @@ public class TtlDefinitionInfo {
         ttlDefRec.setArcTblSchema(archiveTableSchemaVal);
         ttlDefRec.setArcTmpTblSchema(arcTmpTblSchemaVal);
 
-        ExtraFieldJSON extraJsonFld = new ExtraFieldJSON();
+        ExtraFieldJSON extraJsonFld = buildForModifyExistsTtl ? oldTtlRec.getExtra().copy() : new ExtraFieldJSON();
+        SqlNode ttlRefColListSqlNode = buildParams.getTtlRefColList();
+        SqlNode ttlHybridSqlNode = buildParams.getTtlHybrid();
+        if (ttlRefColListSqlNode != null) {
+            String ttlRefColListStrVal = SQLUtils.normalize(ttlRefColListSqlNode.toString().toLowerCase());
+            List<String> ttlRefColList =
+                Arrays.stream(ttlRefColListStrVal.split(",")).map(SQLUtils::normalize).collect(Collectors.toList());
+            extraJsonFld.setTtlRefColList(ttlRefColList);
+        }
+        if (ttlHybridSqlNode != null) {
+            String ttlHybridStrVal = SQLUtils.normalize(ttlHybridSqlNode.toString().toLowerCase());
+            extraJsonFld.setTtlHybrid(Boolean.valueOf(ttlHybridStrVal));
+        }
         ttlDefRec.setExtra(extraJsonFld);
 
         TtlDefinitionInfo newTtlInfoToBeReturn = null;
@@ -726,8 +892,13 @@ public class TtlDefinitionInfo {
         newTtlInfoToBeReturn.setTtlColUseFuncExpr(ttlColUseFuncExpr);
         newTtlInfoToBeReturn.setTtlColFuncExprInfo(ttlColFuncExprInfo);
 
-        TtlMetaValidationUtil.validateTtlDefinition(newTtlInfoToBeReturn, ttlTableMeta, newCreatedTblPartInfo,
-            sqlCreateTableAst, ec);
+        TtlMetaValidationUtil.validateTtlDefinition(
+            newTtlInfoToBeReturn,
+            ttlTableMeta,
+            newCreatedTblPartInfo,
+            sqlCreateTableAst,
+            ec,
+            svrMgr);
 
         return newTtlInfoToBeReturn;
     }
@@ -741,6 +912,8 @@ public class TtlDefinitionInfo {
         String ttlEnable = modifyTtlInfoParams.getTtlEnable();
         SqlTimeToLiveExpr ttlExpr = modifyTtlInfoParams.getTtlExpr();
         SqlTimeToLiveJobExpr ttlJob = modifyTtlInfoParams.getTtlJob();
+        String ttlColEncoder = modifyTtlInfoParams.getTtlColEncoder();
+        String ttlColDecoder = modifyTtlInfoParams.getTtlColDecoder();
         String ttlFilter = modifyTtlInfoParams.getTtlFilter();
         String ttlCleanup = modifyTtlInfoParams.getTtlCleanup();
         SqlNode ttlPartInterval = modifyTtlInfoParams.getTtlPartInterval();
@@ -751,15 +924,22 @@ public class TtlDefinitionInfo {
         Integer arcPostAllocateCount = modifyTtlInfoParams.getArcPostAllocateCount();
         TableMeta ttlTableMeta = modifyTtlInfoParams.getTtlTableMeta();
         ExecutionContext ec = modifyTtlInfoParams.getEc();
+        IServerConfigManager svrMgr = modifyTtlInfoParams.getServerConfigManager();
+        SqlNode ttlRefColList = modifyTtlInfoParams.getTtlRefColList();
+        SqlNode ttlHybrid = modifyTtlInfoParams.getTtlHybrid();
 
         BuildTtlInfoParams buildParams = new BuildTtlInfoParams();
         buildParams.setTableSchema(tableSchema);
         buildParams.setTableName(tableName);
         buildParams.setTtlTableMeta(ttlTableMeta);
         buildParams.setEc(ec);
+        buildParams.setServerConfigManager(svrMgr);
         buildParams.setTtlEnable(ttlEnable);
         buildParams.setTtlExpr(ttlExpr);
         buildParams.setTtlJob(ttlJob);
+        buildParams.setTtlColEncoder(ttlColEncoder);
+        buildParams.setTtlColDecoder(ttlColDecoder);
+
         buildParams.setTtlFilter(ttlFilter);
         buildParams.setTtlCleanup(ttlCleanup);
         buildParams.setTtlPartInterval(ttlPartInterval);
@@ -768,6 +948,8 @@ public class TtlDefinitionInfo {
         buildParams.setArchiveTableName(archiveTableName);
         buildParams.setArcPreAllocateCount(arcPreAllocateCount);
         buildParams.setArcPostAllocateCount(arcPostAllocateCount);
+        buildParams.setTtlRefColList(ttlRefColList);
+        buildParams.setTtlHybrid(ttlHybrid);
         buildParams.setOldTtlInfo(oldTtlInfo);
 
         TtlDefinitionInfo newTtlInfo = createNewTtlInfoInner(buildParams, null, null);
@@ -890,6 +1072,12 @@ public class TtlDefinitionInfo {
             options += String.format("TTL_EXPR = %s, ", ttlInfoRecord.getTtlExpr());
             options += String.format("TTL_JOB = CRON '%s', ", ttlInfoRecord.getTtlCron(),
                 ttlInfoRecord.getTtlTimezone());
+            if (!StringUtils.isEmpty(ttlInfoRecord.getTtlColEncoder())) {
+                options += String.format("TTL_COL_ENCODER = %s, ", ttlInfoRecord.getTtlColEncoder());
+            }
+            if (!StringUtils.isEmpty(ttlInfoRecord.getTtlColDecoder())) {
+                options += String.format("TTL_COL_DECODER = %s, ", ttlInfoRecord.getTtlColDecoder());
+            }
             if (!StringUtils.isEmpty(ttlInfoRecord.getTtlFilter())) {
                 options += String.format("TTL_FILTER = COND_EXPR(%s), ", ttlInfoRecord.getTtlFilter());
             }
@@ -905,6 +1093,18 @@ public class TtlDefinitionInfo {
             options += String.format("TTL_PART_INTERVAL = INTERVAL(%s,%s), ", ttlInfoRecord.getArcPartInterval(),
                 TtlTimeUnit.of(ttlInfoRecord.getArcPartUnit()).getUnitName());
 
+            if (ttlInfoRecord.getExtra().getTtlRefColList() != null) {
+                StringJoiner sj = new StringJoiner(",");
+                for (String refCol : ttlInfoRecord.getExtra().getTtlRefColList()) {
+                    sj.add(refCol);
+                }
+                options += String.format("TTL_REF_COL_LIST = '%s', ", sj.toString());
+            }
+
+            if (ttlInfoRecord.getExtra().getTtlHybrid() != null) {
+                options += String.format("TTL_HYBRID = '%s', ", ttlInfoRecord.getExtra().getTtlHybrid());
+            }
+
             options += String.format("ARCHIVE_TYPE = '%s', ",
                 TtlArchiveKind.of(ttlInfoRecord.getArcKind()).getArchiveKindStr());
             String ttlTblSchema = ttlInfoRecord.getTableSchema();
@@ -918,20 +1118,11 @@ public class TtlDefinitionInfo {
             options += String.format("ARCHIVE_TABLE_NAME = '%s', ",
                 ttlInfoRecord.getArcTblName() == null ? "" : ttlInfoRecord.getArcTblName());
             options += String.format("ARCHIVE_TABLE_PRE_ALLOCATE = %s, ", ttlInfoRecord.getArcPrePartCnt());
-            options += String.format("ARCHIVE_TABLE_POST_ALLOCATE = %s", ttlInfoRecord.getArcPostPartCnt());
+            options += String.format("ARCHIVE_TABLE_POST_ALLOCATE = %s ", ttlInfoRecord.getArcPostPartCnt());
 
             options += String.format(")");
         }
         return options;
-    }
-
-    public boolean alreadyBoundArchiveTable() {
-        boolean res = false;
-        if (!StringUtils.isEmpty(this.getTtlInfoRecord().getArcTblSchema())
-            || !StringUtils.isEmpty(this.getTtlInfoRecord().getArcTblName())) {
-            return false;
-        }
-        return res;
     }
 
     public TtlDefinitionInfo copy() {
@@ -944,6 +1135,14 @@ public class TtlDefinitionInfo {
         if (ttlColFuncExprInfo != null) {
             newTtlInfo.setTtlColFuncExprInfo(this.ttlColFuncExprInfo.copy());
         }
+
+//        if (ttlColEncoderExpr != null) {
+//            ttlColEncoderExpr = newTtlInfo.getTtlColEncoderExpr().clone();
+//        }
+//
+//        if (ttlColDecoderExpr != null) {
+//            ttlColDecoderExpr = newTtlInfo.getTtlColDecoderExpr().clone();
+//        }
 
         return newTtlInfo;
     }
@@ -1040,5 +1239,29 @@ public class TtlDefinitionInfo {
     public void setTtlColFuncExprInfo(TtlColFuncExprInfo ttlColFuncExprInfo) {
         this.ttlColFuncExprInfo = ttlColFuncExprInfo;
     }
+
+    public boolean isTtlColUseExprEncoding() {
+        return ttlColUseExprEncoding;
+    }
+
+    public void setTtlColUseExprEncoding(boolean ttlColUseExprEncoding) {
+        this.ttlColUseExprEncoding = ttlColUseExprEncoding;
+    }
+
+//    public SQLExpr getTtlColEncoderExpr() {
+//        return ttlColEncoderExpr;
+//    }
+//
+//    public void setTtlColEncoderExpr(SQLExpr ttlColEncoderExpr) {
+//        this.ttlColEncoderExpr = ttlColEncoderExpr;
+//    }
+//
+//    public SQLExpr getTtlColDecoderExpr() {
+//        return ttlColDecoderExpr;
+//    }
+//
+//    public void setTtlColDecoderExpr(SQLExpr ttlColDecoderExpr) {
+//        this.ttlColDecoderExpr = ttlColDecoderExpr;
+//    }
 }
 

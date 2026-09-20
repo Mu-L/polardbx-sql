@@ -18,6 +18,9 @@ package com.alibaba.polardbx.gms.partition;
 
 import com.alibaba.fastjson.JSON;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Extensible extra fields for table_partitions
  */
@@ -46,6 +49,14 @@ public class ExtraFieldJSON {
      * </pre>
      */
     protected Integer arcState;
+
+    protected String arcBound;
+
+    protected List<String> ttlRefColList;
+
+    protected List<String> ttlRefColValueList;
+
+    protected Boolean ttlHybrid;
 
     public ExtraFieldJSON() {
     }
@@ -112,5 +123,53 @@ public class ExtraFieldJSON {
 
     public void setArcState(Integer arcState) {
         this.arcState = arcState;
+    }
+
+    public String getArcBound() {
+        return arcBound;
+    }
+
+    public void setArcBound(String arcBound) {
+        this.arcBound = arcBound;
+    }
+
+    public List<String> getTtlRefColList() {
+        return ttlRefColList;
+    }
+
+    public void setTtlRefColList(List<String> ttlRefColList) {
+        this.ttlRefColList = ttlRefColList;
+    }
+
+    public List<String> getTtlRefColValueList() {
+        return ttlRefColValueList;
+    }
+
+    public void setTtlRefColValueList(List<String> ttlRefColValueList) {
+        this.ttlRefColValueList = ttlRefColValueList;
+    }
+
+    public Boolean getTtlHybrid() {
+        return ttlHybrid;
+    }
+
+    public void setTtlHybrid(Boolean ttlHybrid) {
+        this.ttlHybrid = ttlHybrid;
+    }
+
+    public ExtraFieldJSON copy() {
+        ExtraFieldJSON extraFieldJSON = new ExtraFieldJSON();
+        extraFieldJSON.setPartitionPattern(this.partitionPattern);
+        extraFieldJSON.setLocality(this.locality);
+        extraFieldJSON.setTimeZone(this.timeZone);
+        extraFieldJSON.setCharset(this.charset);
+        extraFieldJSON.setCollation(this.collation);
+        extraFieldJSON.setArcState(this.arcState);
+        extraFieldJSON.setArcBound(this.arcBound);
+        extraFieldJSON.setTtlRefColList(this.ttlRefColList == null ? null : new ArrayList<>(this.ttlRefColList));
+        extraFieldJSON.setTtlRefColValueList(
+            this.ttlRefColValueList == null ? null : new ArrayList<>(this.ttlRefColValueList));
+        extraFieldJSON.setTtlHybrid(this.ttlHybrid);
+        return extraFieldJSON;
     }
 }

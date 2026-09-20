@@ -269,6 +269,11 @@ public class LogicalCreateIndex extends LogicalTableOperation {
         SchemaManager sm = OptimizerContext.getContext(schemaName).getLatestSchemaManager();
         TableMeta tableMeta = sm.getTable(tableName);
         preparedData.setTableVersion(tableMeta.getVersion());
+        if (sqlCreateIndex.getConstraintType() == SqlCreateIndex.SqlIndexConstraintType.FULLTEXT
+            || sqlCreateIndex.getConstraintType() == SqlCreateIndex.SqlIndexConstraintType.SPATIAL) {
+            preparedData.setLock(true);
+        }
+
         createLocalIndexPreparedDataList.add(preparedData);
 
         prepareStandaloneLocalIndexDataForFileStorage();

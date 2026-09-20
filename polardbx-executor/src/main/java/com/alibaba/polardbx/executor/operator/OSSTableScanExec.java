@@ -34,8 +34,9 @@ import com.alibaba.polardbx.optimizer.core.TddlOperatorTable;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.field.SessionProperties;
 import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.SettableFuture;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexNode;
@@ -76,7 +77,7 @@ public class OSSTableScanExec extends AbstractOSSTableScanExec {
     private List<DataType<?>> inProjectDataTypeList;
 
     RexNode bloomFilterCondition;
-    private volatile SettableFuture<?> waitBloomFilterFuture = null;
+    private volatile BlockingFuture<?> waitBloomFilterFuture = null;
     private volatile ScheduledFuture<?> monitorWaitBloomFilterFuture = null;
     private volatile boolean needWaitBloomFilter;
     private volatile Map<Integer, BloomFilterInfo> bloomFilterInfos = null;
@@ -286,7 +287,7 @@ public class OSSTableScanExec extends AbstractOSSTableScanExec {
 
     public synchronized void initWaitFuture(ListenableFuture<List<BloomFilterInfo>> listListenableFuture) {
         if (this.waitBloomFilterFuture == null) {
-            this.waitBloomFilterFuture = SettableFuture.create();
+            this.waitBloomFilterFuture = BlockingFuture.create(BlockingReason.WAIT_FOR_BLOOM_FILTER);
 
             int waitTimeout = context.getParamManager().getInt(WAIT_BLOOM_FILTER_TIMEOUT_MS);
             monitorWaitBloomFilterFuture = ServiceProvider.getInstance().getTimerTaskExecutor().schedule(() -> {
@@ -299,7 +300,7 @@ public class OSSTableScanExec extends AbstractOSSTableScanExec {
                         synchronized (lock) {
                             registerBloomFilter(listListenableFuture.get());
                         }
-                        waitBloomFilterFuture.set(null);
+                        waitBloomFilterFuture.complete(null);
                         monitorWaitBloomFilterFuture.cancel(false);
                     } catch (Throwable t) {
                         setException(new TddlRuntimeException(ERR_EXECUTE_MPP,
@@ -338,5 +339,10 @@ public class OSSTableScanExec extends AbstractOSSTableScanExec {
             this.exception = exception;
         }
         isFinished = true;
+    }
+
+    @Override
+    public String getSourceName() {
+        return ossTableScan.getSchemaName() + "." + ossTableScan.getLogicalTableName();
     }
 }

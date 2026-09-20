@@ -27,6 +27,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ScheduledFuture;
 
@@ -39,8 +40,8 @@ public abstract class NodeStatusManager {
     public final static int STATUS_SHUTDOWN = 2;
     //临时非激活状态，1分钟内不允许激活
     public final static int STATUS_TEMP_INACTIVE = 3;
-    public final static long ACTIVE_LEASE = 30L;
-    public final static long KEEPALIVE_INTERVAR = 15L;
+    public final static long ACTIVE_LEASE = 5L;
+    public final static long KEEPALIVE_INTERVAR = 2L;
 
     //是否是worker
     public final static int ROLE_WORKER = 1;
@@ -77,7 +78,7 @@ public abstract class NodeStatusManager {
         this.localNode = localNode;
         this.tableName = tableName;
         this.selectSql =
-            "select `NODEID`,`VERSION`,`CLUSTER`,`INST_ID`,`IP`,`PORT`,`RPC_PORT`,`ROLE`,`STATUS`,TIMESTAMPDIFF(SECOND, "
+            "select `NODEID`,`VERSION`,`CLUSTER`,`INST_ID`, `SUB_INST_ID`,`IP`,`PORT`,`RPC_PORT`,`ROLE`,`STATUS`,TIMESTAMPDIFF(SECOND, "
                 + "`GMT_MODIFIED`,CURRENT_TIMESTAMP) as `TIMEALIVE` from "
                 + tableName + " where cluster='" + localNode.getCluster() + "'";
 
@@ -142,15 +143,16 @@ public abstract class NodeStatusManager {
         }
     }
 
-    private String injectNode(ResultSet rs, Set<InternalNode> currentActiveNodes,
-                              Set<InternalNode> remoteActiveRowNodes, Set<InternalNode> remoteActiveColumnarNodes,
-                              Set<InternalNode> inactiveNodes, Set<InternalNode> shuttingDownNodes)
+    public String injectNode(ResultSet rs, Set<InternalNode> currentActiveNodes,
+                             Set<InternalNode> remoteActiveRowNodes, Set<InternalNode> remoteActiveColumnarNodes,
+                             Set<InternalNode> inactiveNodes, Set<InternalNode> shuttingDownNodes)
         throws SQLException {
         String leaderId = null;
         String nodeId = rs.getString("NODEID");
         String version = rs.getString("VERSION");
         String cluster = rs.getString("CLUSTER");
         String instId = rs.getString("INST_ID");
+        String subInstId = rs.getString("SUB_INST_ID");
         String host = rs.getString("IP");
         int port = rs.getInt("PORT");
         int rpcPort = rs.getInt("RPC_PORT");
@@ -158,10 +160,11 @@ public abstract class NodeStatusManager {
         int status = rs.getInt("STATUS");
         long timeAlive = rs.getLong("TIMEALIVE");
 
-        InternalNode node = new InternalNode(nodeId, cluster, instId, host, port, rpcPort, new NodeVersion(version),
-            (role & ROLE_COORDINATOR) == ROLE_COORDINATOR, (role & ROLE_WORKER) == ROLE_WORKER,
-            (role & ROLE_BLACKLIST) == ROLE_BLACKLIST, (role & ROLE_HTAP) == ROLE_HTAP ||
-            (role & ROLE_COLUMNAR) == ROLE_COLUMNAR);
+        InternalNode node =
+            new InternalNode(nodeId, cluster, instId, subInstId, host, port, rpcPort, new NodeVersion(version),
+                (role & ROLE_COORDINATOR) == ROLE_COORDINATOR, (role & ROLE_WORKER) == ROLE_WORKER,
+                (role & ROLE_BLACKLIST) == ROLE_BLACKLIST, (role & ROLE_HTAP) == ROLE_HTAP ||
+                (role & ROLE_COLUMNAR) == ROLE_COLUMNAR);
 
         if ((role & ROLE_MASTER) == ROLE_MASTER) {
             node.setMaster(true);
@@ -186,7 +189,9 @@ public abstract class NodeStatusManager {
             if (!node.isInBlacklist()) {
                 if (localNode.getInstId().equalsIgnoreCase(instId)) {
                     //主实例或者当前节点是只读实例，取这个只读实例相同instId的节点
-                    currentActiveNodes.add(node);
+                    if (Objects.equals(localNode.getSubInstId(), subInstId)) {
+                        currentActiveNodes.add(node);
+                    }
                 } else if (ConfigDataMode.isMasterMode() && (role & ROLE_HTAP) == ROLE_HTAP) {
                     //当前处理是主实例，且获取的节点开启了HTAP节点
                     remoteActiveRowNodes.add(node);
@@ -253,15 +258,32 @@ public abstract class NodeStatusManager {
         }
     }
 
+    public boolean checkValidNode(Node node) {
+        if (!GmsNodeManager.getInstance().isEmptyCurrentSet()) {
+            GmsNodeManager.GmsNode localNode = GmsNodeManager.getInstance().getLocalNode();
+            boolean ret = false;
+            if (localNode != null && localNode.getHostPort().equalsIgnoreCase(node.getHostPort())) {
+                ret = true;
+            }
+            return ret;
+        } else {
+            // The current node is valid if the server_info system table has no nodes.
+            // This convention is mainly for testing environment needs.
+            return true;
+        }
+    }
+
     protected String insertOrUpdateTableMetaSql(Node node, int role) {
         return "insert into " + tableName
-            + " (`CLUSTER`, `INST_ID`, `NODEID`, `VERSION`, `IP`, `PORT`, `RPC_PORT`, `ROLE`, `STATUS`) "
-            + "values ('" + node.getCluster() + "', '" + node.getInstId() + "', '" + node.getNodeIdentifier() + "', '"
+            + " (`CLUSTER`, `INST_ID`, `SUB_INST_ID`, `NODEID`, `VERSION`, `IP`, `PORT`, `RPC_PORT`, `ROLE`, `STATUS`) "
+            + "values ('" + node.getCluster() + "', '" + node.getInstId() + "', '" + node.getSubInstId() + "', '"
+            + node.getNodeIdentifier() + "', '"
             + node.getVersion() + "', '" + node.getHost()
             + "', " + node.getPort() + ", " + node.getRpcPort() + ", " + (getRole(node) | role) + ", " + STATUS_ACTIVE
             + ")" + " ON DUPLICATE KEY UPDATE " +
             " `VERSION` = '" + node.getVersion() + "', " +
             " `INST_ID` = '" + node.getInstId() + "', " +
+            " `SUB_INST_ID` = '" + node.getSubInstId() + "', " +
             " `IP` = '" + node.getHost() + "', " +
             " `PORT` = '" + node.getPort() + "', " +
             " `RPC_PORT` = '" + node.getRpcPort() + "', " +
@@ -317,7 +339,9 @@ public abstract class NodeStatusManager {
                 synchronized (this) {
                     if (!localNode.isLeader()) {
                         //避免和tryMarkLeader地方有并发安全问题
-                        doExecuteUpdate(insertOrUpdateTableMetaSql(localNode, 0), conn);
+                        if (checkValidNode(localNode)) {
+                            doExecuteUpdate(insertOrUpdateTableMetaSql(localNode, 0), conn);
+                        }
                     }
                 }
             }

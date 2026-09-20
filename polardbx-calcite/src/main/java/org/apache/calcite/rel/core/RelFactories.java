@@ -24,6 +24,7 @@ import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.logical.LogicalAggregate;
+import org.apache.calcite.rel.logical.LogicalColCorrelate;
 import org.apache.calcite.rel.logical.LogicalCorrelate;
 import org.apache.calcite.rel.logical.LogicalFilter;
 import org.apache.calcite.rel.logical.LogicalIntersect;
@@ -336,6 +337,10 @@ public class RelFactories {
     RelNode createCorrelate(RelNode left, RelNode right,
         CorrelationId correlationId, ImmutableBitSet requiredColumns,
         List<RexNode> leftConditions, SqlKind opKind, SemiJoinType joinType);
+
+    RelNode createColCorrelate(RelNode left, RelNode right,
+                            CorrelationId correlationId, ImmutableBitSet requiredColumns,
+                            SemiJoinType joinType);
   }
 
   /**
@@ -348,6 +353,13 @@ public class RelFactories {
         List<RexNode> leftConditions, SqlKind opKind, SemiJoinType joinType) {
       return LogicalCorrelate.create(left, right, correlationId,
           requiredColumns, leftConditions, opKind, joinType);
+    }
+
+    public RelNode createColCorrelate(RelNode left, RelNode right,
+         CorrelationId correlationId, ImmutableBitSet requiredColumns,
+         SemiJoinType joinType) {
+      return LogicalColCorrelate.create(left, right, correlationId,
+          requiredColumns, joinType);
     }
   }
 

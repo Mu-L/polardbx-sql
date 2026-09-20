@@ -16,12 +16,15 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.ChunkConverter;
 import com.alibaba.polardbx.executor.chunk.Converters;
-import com.alibaba.polardbx.executor.mpp.execution.TaskExecutor;
 import com.alibaba.polardbx.executor.operator.spill.MemoryRevoker;
 import com.alibaba.polardbx.executor.operator.spill.SpillerFactory;
 import com.alibaba.polardbx.executor.operator.util.AggOpenHashMap;
@@ -34,24 +37,49 @@ import com.alibaba.polardbx.optimizer.core.expression.calc.aggfunctions.AvgV2;
 import com.alibaba.polardbx.optimizer.memory.MemoryPoolUtils;
 import com.alibaba.polardbx.optimizer.memory.OperatorMemoryAllocatorCtx;
 import com.google.common.util.concurrent.ListenableFuture;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.text.MessageFormat;
 import java.util.List;
 
 public class HashAggExec extends AbstractHashAggExec implements ConsumerExecutor, MemoryRevoker {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(HashAggExec.class).instanceSize();
     private static final Logger LOGGER = LoggerFactory.getLogger(HashAggExec.class);
 
+    @FieldMemoryCounter(value = false)
+    protected OperatorMemoryOwnerId consumerMemoryOwnerId = null;
+
+    @FieldMemoryCounter(value = false)
     protected final ChunkConverter inputKeyChunkGetter;
 
+    @FieldMemoryCounter(value = false)
     private final DataType[] groupKeyType;
+
+    @FieldMemoryCounter(value = false)
     private final DataType[] aggValueType;
+
+    @FieldMemoryCounter(value = false)
     private final DataType[] inputType;
 
     private final int expectedGroups;
 
+    @FieldMemoryCounter(value = false)
     private SpillerFactory spillerFactory;
 
     private long needMemoryAllocated = 0;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            // for AbstractHashAggExec
+            + FastMemoryCounter.sizeOf(groups)
+            + FastMemoryCounter.sizeOf(hashTable)
+            + FastMemoryCounter.sizeOf(resultIterator)
+
+            // for AbstractExecutor
+            + FastMemoryCounter.sizeOf(blockBuilders)
+            + FastMemoryCounter.sizeOf(executorName);
+    }
 
     public HashAggExec(
         List<DataType> inputDataTypes,
@@ -95,7 +123,6 @@ public class HashAggExec extends AbstractHashAggExec implements ConsumerExecutor
         this.aggValueType = aggValueType;
         this.inputType = AggregateUtils.collectDataTypes(inputDataTypes);
         this.inputKeyChunkGetter = Converters.createChunkConverter(inputDataTypes, groups, groupKeyType, context);
-
     }
 
     @Override
@@ -110,16 +137,75 @@ public class HashAggExec extends AbstractHashAggExec implements ConsumerExecutor
         memoryPool =
             MemoryPoolUtils.createOperatorTmpTablePool(getExecutorName(), context.getMemoryPool());
         memoryAllocator = new OperatorMemoryAllocatorCtx(memoryPool, spillEnabled);
+
+        // base memory usage
+        memoryAllocator.allocateReservedMemory(INSTANCE_SIZE);
+
         if (!memoryAllocator.isRevocable()) {
             hashTable =
                 new AggOpenHashMap(groupKeyType, aggregators, aggValueType, inputType, expectedGroups, chunkLimit,
-                    context, memoryAllocator);
+                    context, memoryAllocator, null);
         } else {
             hashTable = new SpillableAggHashMap(groupKeyType, aggregators, aggValueType, outputColumnMeta, inputType,
                 expectedGroups, chunkLimit, context, memoryAllocator, spillerFactory);
         }
-        //FIXME The allocate memory for the initial hashMap can't be release in fact!
-        //memoryAllocator.allocateReservedMemory(hashTable.estimateSize());
+
+        MemoryTrackerManager.adjustMemoryUsage(consumerMemoryOwnerId);
+    }
+
+    @Override
+    public void consumeChunk(Chunk inputChunk) {
+        Chunk inputKeyChunk;
+        if (groups.length == 0) { // no group by
+            inputKeyChunk = inputChunk;
+        } else {
+            inputKeyChunk = inputKeyChunkGetter.apply(inputChunk);
+        }
+
+        MemoryTrackerManager.setCurrentMemoryOwner(consumerMemoryOwnerId);
+        try {
+            hashTable.putChunk(inputKeyChunk, inputChunk, null);
+        } finally {
+            MemoryTrackerManager.removeCurrentMemoryOwner();
+        }
+
+        // release input chunk
+        inputChunk.recycle();
+    }
+
+    @Override
+    public void buildConsume() {
+        long start = System.nanoTime();
+        if (hashTable != null) {
+            resultIterator = hashTable.buildChunks();
+        }
+
+        MemoryTrackerManager.adjustMemoryUsage(consumerMemoryOwnerId);
+
+        long end = System.nanoTime();
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug(MessageFormat.format("HashAggExec: {0} build consume time cost = {1} ns, "
+                + "start = {2}, end = {3}", this.toString(), (end - start), start, end));
+        }
+    }
+
+    @Override
+    void doOpen() {
+
+    }
+
+    @Override
+    Chunk doNextChunk() {
+        Chunk ret = resultIterator.nextChunk();
+        if (ret == null) {
+            finished = true;
+        }
+        return ret;
+    }
+
+    @Override
+    void doClose() {
+        closeConsume(true);
     }
 
     @Override
@@ -134,44 +220,6 @@ public class HashAggExec extends AbstractHashAggExec implements ConsumerExecutor
             collectMemoryUsage(memoryPool);
             memoryPool.destroy();
         }
-    }
-
-    @Override
-    public void consumeChunk(Chunk inputChunk) {
-        Chunk inputKeyChunk;
-        if (groups.length == 0) { // no group by
-            inputKeyChunk = inputChunk;
-        } else {
-            inputKeyChunk = inputKeyChunkGetter.apply(inputChunk);
-        }
-        long beforeEstimateSize = hashTable.estimateSize();
-        hashTable.putChunk(inputKeyChunk, inputChunk, null);
-        long afterEstimateSize = hashTable.estimateSize();
-        this.needMemoryAllocated = Math.max(afterEstimateSize - beforeEstimateSize, 0);
-
-        // release input chunk
-        inputChunk.recycle();
-    }
-
-    @Override
-    void doOpen() {
-
-    }
-
-    @Override
-    void doClose() {
-        closeConsume(true);
-    }
-
-    @Override
-    public void buildConsume() {
-        long start = System.nanoTime();
-        if (hashTable != null) {
-            resultIterator = hashTable.buildChunks();
-        }
-        long end = System.nanoTime();
-        LOGGER.debug(MessageFormat.format("HashAggExec: {0} build consume time cost = {1} ns, "
-            + "start = {2}, end = {3}", this.toString(), (end - start), start, end));
     }
 
     @Override
@@ -226,5 +274,15 @@ public class HashAggExec extends AbstractHashAggExec implements ConsumerExecutor
     @Override
     public ListenableFuture<?> produceIsBlocked() {
         return ProducerExecutor.NOT_BLOCKED;
+    }
+
+    @Override
+    public void setConsumerOperatorMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        this.consumerMemoryOwnerId = operatorMemoryOwnerId;
+    }
+
+    @Override
+    public OperatorMemoryOwnerId getConsumerMemoryOwnerId() {
+        return consumerMemoryOwnerId;
     }
 }

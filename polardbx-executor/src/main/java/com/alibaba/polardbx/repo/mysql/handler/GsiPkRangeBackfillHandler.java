@@ -1,30 +1,25 @@
 package com.alibaba.polardbx.repo.mysql.handler;
 
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.properties.MetricLevel;
-import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.executor.backfill.Loader;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.cursor.impl.AffectRowCursor;
-import com.alibaba.polardbx.executor.ddl.job.task.gsi.CheckGsiTask;
 import com.alibaba.polardbx.executor.gsi.BackfillExecutor;
-import com.alibaba.polardbx.executor.gsi.corrector.GsiChecker;
 import com.alibaba.polardbx.executor.handler.HandlerCommon;
 import com.alibaba.polardbx.executor.spi.IRepository;
-import com.alibaba.polardbx.optimizer.OptimizerContext;
-import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.GsiPkRangeBackfill;
-import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.alibaba.polardbx.optimizer.utils.PhyTableOperationUtil;
 import com.alibaba.polardbx.optimizer.utils.QueryConcurrencyPolicy;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
 import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.sql.SqlSelect;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -51,12 +46,8 @@ public class GsiPkRangeBackfillHandler extends HandlerCommon {
         String schemaName = backfill.getSchemaName();
         String baseTableName = backfill.getBaseTableName();
         List<String> indexNames = backfill.getIndexNames();
-        List<String> columnsName = backfill.getColumns();
         int totalThreadCount = backfill.getTotalThreadCount();
-        Map<String, String> virtualColumnMap = backfill.getSrcCheckColumnMap();
-        Map<String, String> backfillColumnMap = backfill.getDstCheckColumnMap();
         List<String> modifyStringColumns = backfill.getModifyStringColumns();
-        boolean useChangeSet = backfill.isUseChangeSet();
         boolean modifyColumn = backfill.isOnlineModifyColumn();
         Pair<Map<Integer, ParameterContext>, Map<Integer, ParameterContext>> pkRange = backfill.getPkRange();
 
@@ -98,58 +89,17 @@ public class GsiPkRangeBackfillHandler extends HandlerCommon {
         // Force master first and following will copy this EC.
         executionContext.getExtraCmds().put(ConnectionProperties.MASTER, true);
         int affectRows;
-        if (backfill.isAddColumnsBackfill()) {
-            // Add column on clustered GSI.
-            assert indexNames.size() > 0;
-            affectRows = backfillExecutor
-                .addColumnsBackfill(schemaName, baseTableName, indexNames, columnsName, executionContext);
-        } else if (backfill.isMirrorCopy()) {
-            // Normal creating GSI.
-            assert 1 == indexNames.size();
-            affectRows =
-                backfillExecutor.mirrorCopyGsiBackfill(schemaName, baseTableName, indexNames.get(0), useChangeSet,
-                    useBinary, modifyColumn, executionContext);
+        if (backfill.isAddColumnsBackfill() || backfill.isMirrorCopy() || backfill.isUseChangeSet()) {
+            throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, "backfill by partition is not support here!");
         } else {
             // Normal creating GSI.
             assert 1 == indexNames.size();
             affectRows =
-                backfillExecutor.backfill(schemaName, baseTableName, indexNames.get(0), useBinary, useChangeSet,
-                    canUseReturning, modifyStringColumns, pkRange, null, modifyColumn, totalThreadCount, executionContext);
-        }
-
-        // Check GSI immediately after creation by default.
-        final ParamManager pm = executionContext.getParamManager();
-        boolean check = pm.getBoolean(ConnectionParams.GSI_CHECK_AFTER_CREATION) && !useChangeSet;
-        if (!check) {
-            return new AffectRowCursor(affectRows);
-        }
-
-        String lockMode = SqlSelect.LockMode.UNDEF.toString();
-        GsiChecker.Params params = GsiChecker.Params.buildFromExecutionContext(executionContext);
-
-        for (String indexName : indexNames) {
-            baseTableName = getPrimaryTableName(schemaName, baseTableName, backfill.isMirrorCopy(), executionContext);
-            boolean isPrimaryBroadCast =
-                OptimizerContext.getContext(schemaName).getRuleManager().isBroadCast(baseTableName);
-            boolean isGsiBroadCast = OptimizerContext.getContext(schemaName).getRuleManager().isBroadCast(indexName);
-//            CheckGsiTask checkTask =
-//                new CheckGsiTask(schemaName, baseTableName, indexName, lockMode, lockMode, params, false, "",
-//                    isPrimaryBroadCast, isGsiBroadCast, virtualColumnMap, backfillColumnMap);
-//
-//            checkTask.checkInBackfill(executionContext);
+                backfillExecutor.backfill(schemaName, baseTableName, indexNames.get(0), useBinary, false,
+                    canUseReturning, modifyStringColumns, pkRange, null, modifyColumn, totalThreadCount,
+                    executionContext);
         }
 
         return new AffectRowCursor(affectRows);
     }
-
-    public static String getPrimaryTableName(String schemaName, String baseTableName, boolean mirrorCopy,
-                                             ExecutionContext executionContext) {
-        String primaryTableName = baseTableName;
-        TableMeta sourceTableMeta = executionContext.getSchemaManager(schemaName).getTable(baseTableName);
-        if (mirrorCopy && sourceTableMeta.isGsi()) {
-            primaryTableName = sourceTableMeta.getGsiTableMetaBean().gsiMetaBean.tableName;
-        }
-        return primaryTableName;
-    }
-
 }

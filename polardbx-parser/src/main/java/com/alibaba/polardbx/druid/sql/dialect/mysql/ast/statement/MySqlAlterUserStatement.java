@@ -88,6 +88,10 @@ public class MySqlAlterUserStatement extends MySqlStatementImpl implements SQLAl
         private SQLExpr user;
         private AuthOption authOption;
 
+        private Boolean lock = null;
+
+        private ReadStrategy readStrategy;
+
         public SQLExpr getUser() {
             return user;
         }
@@ -102,6 +106,22 @@ public class MySqlAlterUserStatement extends MySqlStatementImpl implements SQLAl
 
         public void setAuthOption(AuthOption authOption) {
             this.authOption = authOption;
+        }
+
+        public Boolean getLock() {
+            return lock;
+        }
+
+        public void setLock(Boolean lock) {
+            this.lock = lock;
+        }
+
+        public ReadStrategy getReadStrategy() {
+            return readStrategy;
+        }
+
+        public void setReadStrategy(ReadStrategy readStrategy) {
+            this.readStrategy = readStrategy;
         }
     }
 
@@ -124,6 +144,12 @@ public class MySqlAlterUserStatement extends MySqlStatementImpl implements SQLAl
         public void setIntervalDays(SQLIntegerExpr intervalDays) {
             this.intervalDays = intervalDays;
         }
+    }
+
+    public enum ReadStrategy {
+        NONE,
+        FOLLOWER,
+        STALE
     }
 
     public enum PasswordExpire {

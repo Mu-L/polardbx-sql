@@ -19,9 +19,8 @@ package com.alibaba.polardbx.optimizer.partition.pruning;
 import com.alibaba.polardbx.common.exception.NotSupportException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.utils.TreeMaps;
-import com.alibaba.polardbx.common.utils.logger.Logger;
-import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.time.calculator.MySQLIntervalType;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
@@ -31,9 +30,9 @@ import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.field.TypeConversionStatus;
-import com.alibaba.polardbx.optimizer.partition.FullScanTableBlackListManager;
 import com.alibaba.polardbx.optimizer.partition.PartitionByDefinition;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
+import com.alibaba.polardbx.optimizer.partition.PartitionInfoBuilder;
 import com.alibaba.polardbx.optimizer.partition.common.PartKeyLevel;
 import com.alibaba.polardbx.optimizer.partition.common.PartitionTableType;
 import com.alibaba.polardbx.optimizer.partition.datatype.PartitionField;
@@ -47,6 +46,7 @@ import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.sql.SqlCall;
+import org.apache.calcite.sql.SqlColumnWithUdfParamsExpr;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
@@ -56,6 +56,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -133,15 +134,9 @@ public class PartitionPruneStepBuilder {
     }
 
     /**
-     * Only use for build prune step for single/broadcast table
+     * Only use for build prune step for single/broadcast/replicas table
      */
     protected static PartitionPruneStep genFirstPartScanOnlyPruneStepInfoInner(PartitionInfo partInfo) {
-        /**
-         * When scanFirstPartOnly=true, forceFullScan will be ignored
-         */
-//        PartitionPruneStep finalStep =
-//            buildStepOp(null, partInfo, null, null, partInfo.getPartitionBy().getPhysicalPartLevel(), false, false, true);
-
         /**
          * When scanFirstPartOnly=true, forceFullScan && isConflict will be ignored
          */
@@ -306,79 +301,25 @@ public class PartitionPruneStepBuilder {
                                                                        RexNode partPredInfo,
                                                                        ExecutionContext ec) {
         if (partInfo.getTableType() == PartitionTableType.BROADCAST_TABLE
-            || partInfo.getTableType() == PartitionTableType.SINGLE_TABLE) {
+            || partInfo.getTableType() == PartitionTableType.SINGLE_TABLE
+            || partInfo.getTableType() == PartitionTableType.REPLICAS_TABLE) {
             return genFirstPartScanOnlyPruneStepInfoInner(partInfo);
         }
         PartitionPruneStep finalStep = genCompletedPartPruneSteps(partInfo, relRowType, partPredInfo, ec);
         return finalStep;
-
-//        //========== old builder ========
-//
-//        AtomicInteger constExprIdGenerator = new AtomicInteger(0);
-//        ExprContextProvider exprCtxProvider = new ExprContextProvider();
-//        PartPruneStepBuildingContext stepContext =
-//            PartPruneStepBuildingContext
-//                .getNewPartPruneStepContext(partInfo, PartKeyLevel.PARTITION_KEY, constExprIdGenerator, exprCtxProvider, ec);
-//
-//        /**
-//         * Rewrite partition predicate & toDnf
-//         */
-//        if (ec != null && ec.getParams() != null) {
-//            partPredInfo = RexUtil.recoverInExpr(partPredInfo, ec.getParams().getCurrentParameter());
-//        }
-//        RexNode rewrotePartPred =
-//            PartPredRewriter.rewritePartPredicate(partInfo, relRowType, partPredInfo, stepContext);
-//
-//        /**
-//         * Check If the predicate expr is two complex and its OpSteps are too many,
-//         * then it will lead to giving up pruning and return  full scan step
-//         */
-//        boolean needGiveUpPruning = checkIfNeedGiveUpPruning(partInfo, stepContext, rewrotePartPred);
-//        if (needGiveUpPruning) {
-//            return generateFullScanPruneStepInfo(partInfo,partInfo.getPartitionBy().getPhysicalPartLevel());
-//        }
-//
-//        /**
-//         *
-//         * Simplify the predicates which have been finishing DNF conversion, include:
-//         *
-//         *      1. all the opExpr in OR/AND which contains NOT any partition columns will treated as Always-True expr;
-//         *      2. all the opExpr in OR Expr which partitionKey is NOT the first partition columns is treated as Always-True expr;
-//         *      3. all opExpr in a AND Expr which partitionKeys DOES NOT contains the first partition column are treated as Always-True expr;
-//         *
-//         * <pre>
-//         *
-//         * pre process the predicate and
-//         * convert predicateInfo to the uniform PartClauseItem
-//         * which PartClauseItem will be using as prefix predicate enumeration
-//         *
-//         *
-//         * </pre>
-//         */
-//        PartClauseItem clauseItem =
-//            PartClauseInfoPreProcessor.convertToPartClauseItem(partInfo.getPartitionBy(), relRowType, rewrotePartPred, stepContext);
-//
-//        /**
-//         * Build the PartPruneStep by the PartClauseItem rewrited from rexnode
-//         */
-//        PartitionPruneStep pruneStep = genPartPruneStepsInner(partInfo, relRowType, clauseItem, stepContext);
-//        if (pruneStep == null) {
-//            pruneStep = generateFullScanPruneStepInfo(partInfo,partInfo.getPartitionBy().getPhysicalPartLevel());
-//        }
-//        return pruneStep;
     }
 
     /**
      * If the predicate expr is two complex and its OpSteps are too many, then it will lead to giving up pruning and return  full scan step
      */
-    protected static boolean checkIfNeedGiveUpPruning(PartitionInfo partInfo,
-                                                      PartPruneStepBuildingContext buildingContext,
-                                                      RexNode partPred) {
+    protected static boolean checkIfNeedGiveUpPruning(PartPruneStepBuildingContext buildingContext,
+                                                      RexNode partPred,
+                                                      Map<Integer, ParameterContext> params) {
 
         if (partPred == null) {
             return true;
         }
-        PartOpPredCounter counter = new PartOpPredCounter();
+        PartOpPredCounter counter = new PartOpPredCounter(params);
         partPred.accept(counter);
         int opPredCnt = counter.getOpPredCnt();
         if (opPredCnt > buildingContext.getPruneStepOpCountLimit()) {
@@ -943,25 +884,25 @@ public class PartitionPruneStepBuilder {
         return newStepOp;
     }
 
-    protected static SqlCall getPartFuncCall(PartKeyLevel level, int partKeyIndex, PartitionInfo partInfo) {
-        List<SqlNode> partColExprList = new ArrayList<>();
-        if (level == PartKeyLevel.PARTITION_KEY) {
-            partColExprList = partInfo.getPartitionBy().getPartitionExprList();
-        } else if (level == PartKeyLevel.SUBPARTITION_KEY) {
-            partColExprList = partInfo.getPartitionBy().getSubPartitionBy().getPartitionExprList();
-        }
-        SqlNode partKeyExpr = partColExprList.get(partKeyIndex);
-        if (partKeyExpr instanceof SqlIdentifier) {
-            // The part col is only
-            // so ignore.
-            return null;
-        } else if (partKeyExpr instanceof SqlCall) {
-            SqlCall partKeyExprSqlCall = (SqlCall) partKeyExpr;
-            return partKeyExprSqlCall;
-        } else {
-            throw new NotSupportException("should not be here");
-        }
-    }
+//    protected static SqlCall getPartFuncCall(PartKeyLevel level, int partKeyIndex, PartitionInfo partInfo) {
+//        List<SqlNode> partColExprList = new ArrayList<>();
+//        if (level == PartKeyLevel.PARTITION_KEY) {
+//            partColExprList = partInfo.getPartitionBy().getPartitionExprList();
+//        } else if (level == PartKeyLevel.SUBPARTITION_KEY) {
+//            partColExprList = partInfo.getPartitionBy().getSubPartitionBy().getPartitionExprList();
+//        }
+//        SqlNode partKeyExpr = partColExprList.get(partKeyIndex);
+//        if (partKeyExpr instanceof SqlIdentifier) {
+//            // The part col is only
+//            // so ignore.
+//            return null;
+//        } else if (partKeyExpr instanceof SqlCall) {
+//            SqlCall partKeyExprSqlCall = (SqlCall) partKeyExpr;
+//            return partKeyExprSqlCall;
+//        } else {
+//            throw new NotSupportException("should not be here");
+//        }
+//    }
 
     protected static SqlOperator getPartFuncSqlOperation(PartKeyLevel level, int partKeyIndex, PartitionInfo partInfo) {
         List<SqlNode> partColExprList = new ArrayList<>();
@@ -980,6 +921,10 @@ public class PartitionPruneStepBuilder {
             SqlCall partKeyExprSqlCall = (SqlCall) partKeyExpr;
             SqlOperator op = partKeyExprSqlCall.getOperator();
             return op;
+        } else if (partKeyExpr instanceof SqlColumnWithUdfParamsExpr) {
+            // The part col with udf_params should treated as a part_col
+            // so ignore.
+            return null;
         } else {
             throw new NotSupportException("should not be here");
         }
@@ -1258,7 +1203,9 @@ public class PartitionPruneStepBuilder {
             return false;
         }
 
-        if (partBy.getPartIntFunc() != null) {
+        boolean useEnumIntervalByPartFunc = PartitionInfoBuilder.useEnumIntervalByPartFunc(partBy.getStrategy(),
+            partBy.getPartIntFunc());
+        if (partBy.getPartIntFunc() != null && useEnumIntervalByPartFunc) {
             /**
              * All the part int func is time func
              */
@@ -1276,7 +1223,6 @@ public class PartitionPruneStepBuilder {
                 inclMin = true;
                 inclMax = true;
             }
-
         }
 
         isBoundInclude[0] = inclMin;
@@ -1688,17 +1634,19 @@ public class PartitionPruneStepBuilder {
         /**
          * Rewrite partition predicate & toDnf
          */
+        Map<Integer, ParameterContext> params = null;
         if (ec != null && ec.getParams() != null) {
-            partPredInfo = RexUtil.recoverInExpr(partPredInfo, ec.getParams().getCurrentParameter());
+            params = ec.getParams().getCurrentParameter();
+            partPredInfo = RexUtil.recoverInExpr(partPredInfo, params);
         }
         RexNode rewrotePartPred =
-            PartPredRewriter.rewritePartPredicate(partInfo, relRowType, partPredInfo, stepContext);
+            PartPredRewriter.rewritePartPredicate(partInfo, relRowType, partPredInfo, stepContext, params);
 
         /**
          * Check If the predicate expr is two complex and its OpSteps are too many,
          * then it will lead to giving up pruning and return  full scan step
          */
-        boolean needGiveUpPruning = checkIfNeedGiveUpPruning(partInfo, stepContext, rewrotePartPred);
+        boolean needGiveUpPruning = checkIfNeedGiveUpPruning(stepContext, rewrotePartPred, null);
         if (needGiveUpPruning) {
             return genFullScanPruneStepInfoInner(partInfo, stepContext.getPartLevel(), false);
         }

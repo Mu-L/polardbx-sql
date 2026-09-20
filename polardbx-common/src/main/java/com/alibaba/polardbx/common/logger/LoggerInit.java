@@ -24,7 +24,7 @@ public class LoggerInit {
 
     public static final Logger TDDL_DYNAMIC_CONFIG = LoggerFactory.getLogger("TDDL_DYNAMIC_CONFIG");
 
-    public static final Logger TDDL_SEQUENCE_LOG = LoggerFactory.getLogger("TDDL_SEQUENCE_LOG");
+    public static final Logger TDDL_SEQUENCE_LOG = LoggerFactory.getLogger("TDDL_DYNAMIC_CONFIG");
 
     static {
         initTddlLog();

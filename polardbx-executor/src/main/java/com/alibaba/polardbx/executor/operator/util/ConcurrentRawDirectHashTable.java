@@ -16,19 +16,24 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableIntArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.google.common.base.Preconditions;
+import io.airlift.slice.SizeOf;
 import it.unimi.dsi.fastutil.Hash;
+import it.unimi.dsi.fastutil.HashCommon;
 import org.openjdk.jol.info.ClassLayout;
+import org.openjdk.jol.util.VMSupport;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicIntegerArray;
 
 /**
  * An concurrent hash table implementation for marking position
  */
-public class ConcurrentRawDirectHashTable implements Hash {
+public class ConcurrentRawDirectHashTable implements Hash, MemoryCountable {
 
     private static final long INSTANCE_SIZE = ClassLayout.parseClass(ConcurrentRawDirectHashTable.class).instanceSize();
 
@@ -49,10 +54,16 @@ public class ConcurrentRawDirectHashTable implements Hash {
         Preconditions.checkArgument(size >= 0, "The number of elements must be non-negative");
 
         this.n = size;
+        this.keys = new AtomicIntegerArray(n, NOT_EXISTS);
+    }
 
-        int[] keys = new int[n];
-        Arrays.fill(keys, NOT_EXISTS);
-        this.keys = new AtomicIntegerArray(keys);
+    public static long estimateSizeInBytes(int size) {
+        return INSTANCE_SIZE + AtomicIntegerArray.INSTANCE_SIZE + VMSupport.align((int) SizeOf.sizeOfIntArray(size));
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(keys);
     }
 
     /**
@@ -89,8 +100,8 @@ public class ConcurrentRawDirectHashTable implements Hash {
         return keys.length();
     }
 
-    public List<Integer> getNotMarkedPosition() {
-        List<Integer> notMarkedPosition = new ArrayList<>();
+    public MemoryCountableIntArrayList getNotMarkedPosition() {
+        MemoryCountableIntArrayList notMarkedPosition = new MemoryCountableIntArrayList();
         int length = keys.length();
         for (int pos = 0; pos < length; ++pos) {
             if (keys.get(pos) == NOT_EXISTS) {

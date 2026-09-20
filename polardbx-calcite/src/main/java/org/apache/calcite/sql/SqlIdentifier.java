@@ -236,7 +236,21 @@ public class SqlIdentifier extends SqlNode {
   }
 
   public String toStringWithBacktick() {
-    return surroundWithBacktick(toString());
+    // Backtick-quote each component separately to produce `schema`.`table`
+    // instead of `schema.table`
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < names.size(); i++) {
+      if (i > 0) {
+        sb.append('.');
+      }
+      String name = names.get(i);
+      if (name.contains("`")) {
+        sb.append('`').append(name.replaceAll("`", "``")).append('`');
+      } else {
+        sb.append('`').append(name).append('`');
+      }
+    }
+    return sb.toString();
   }
 
   public static String surroundWithBacktick(String identifier) {
@@ -411,6 +425,11 @@ public class SqlIdentifier extends SqlNode {
           }
         }
       }
+    }
+
+    if (null != partitions && writer.forView()) {
+      writer.keyword("PARTITION");
+      partitions.unparse(writer, leftPrec, rightPrec);
     }
 
     if (null != collation) {

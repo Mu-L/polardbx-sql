@@ -25,6 +25,7 @@ import com.alibaba.polardbx.executor.mpp.Threads;
 import com.alibaba.polardbx.executor.mpp.client.MppMediaTypes;
 import com.alibaba.polardbx.executor.mpp.deploy.MppServer;
 import com.alibaba.polardbx.executor.mpp.deploy.ServiceProvider;
+import com.alibaba.polardbx.executor.mpp.execution.MppMetricsCounters;
 import com.alibaba.polardbx.executor.mpp.execution.TaskManager;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.BufferResult;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.SerializedChunk;
@@ -69,6 +70,7 @@ import java.util.List;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
@@ -149,19 +151,80 @@ public final class HttpPageBufferClient
         AtomicIntegerFieldUpdater.newUpdater(HttpPageBufferClient.class, "pagesReceivedInt");
     private static final AtomicLongFieldUpdater<HttpPageBufferClient> rowsRejectedUpdater =
         AtomicLongFieldUpdater.newUpdater(HttpPageBufferClient.class, "rowsRejectedLong");
+    private static final AtomicLongFieldUpdater<HttpPageBufferClient> bytesReceivedUpdater =
+        AtomicLongFieldUpdater.newUpdater(HttpPageBufferClient.class, "bytesReceivedLong");
     private static final AtomicIntegerFieldUpdater<HttpPageBufferClient> requestsScheduledUpdater =
         AtomicIntegerFieldUpdater.newUpdater(HttpPageBufferClient.class, "requestsScheduledInt");
     private static final AtomicIntegerFieldUpdater<HttpPageBufferClient> requestsCompletedUpdater =
         AtomicIntegerFieldUpdater.newUpdater(HttpPageBufferClient.class, "requestsCompletedInt");
     private static final AtomicIntegerFieldUpdater<HttpPageBufferClient> requestsFailedUpdater =
         AtomicIntegerFieldUpdater.newUpdater(HttpPageBufferClient.class, "requestsFailedInt");
+    private static final AtomicLongFieldUpdater<HttpPageBufferClient> totalWaitConnectionTimeUpdater =
+        AtomicLongFieldUpdater.newUpdater(HttpPageBufferClient.class, "totalWaitConnectionTimeLong");
 
     private volatile long rowsReceivedLong = 0L;
     private volatile int pagesReceivedInt = 0;
     private volatile long rowsRejectedLong = 0L;
+    private volatile long bytesReceivedLong = 0L;
     private volatile int requestsScheduledInt = 0;
     private volatile int requestsCompletedInt = 0;
     private volatile int requestsFailedInt = 0;
+    private volatile long totalWaitConnectionTimeLong = 0L;
+
+    /**
+     * 滑动窗口响应时间统计器
+     * 使用固定大小的环形缓冲区存储最近 N 次请求的响应时间
+     */
+    private static class SlidingWindowResponseTimeTracker {
+        private static final int WINDOW_SIZE = 100;  // 窗口大小：最近 100 次请求
+
+        private final long[] responseTimes;
+        private final java.util.concurrent.atomic.AtomicInteger writeIndex =
+            new java.util.concurrent.atomic.AtomicInteger(0);
+        private final java.util.concurrent.atomic.AtomicInteger count =
+            new java.util.concurrent.atomic.AtomicInteger(0);
+
+        public SlidingWindowResponseTimeTracker() {
+            this.responseTimes = new long[WINDOW_SIZE];
+        }
+
+        /**
+         * 记录一次响应时间
+         */
+        public void record(long responseTimeMs) {
+            int index = writeIndex.getAndIncrement() % WINDOW_SIZE;
+            responseTimes[index] = responseTimeMs;
+
+            // count 最多到 WINDOW_SIZE
+            int currentCount = count.get();
+            if (currentCount < WINDOW_SIZE) {
+                count.compareAndSet(currentCount, currentCount + 1);
+            }
+        }
+
+        /**
+         * 获取滑动窗口内的平均响应时间
+         */
+        public long getAverageResponseTimeMs() {
+            int validCount = count.get();
+            if (validCount == 0) {
+                return 0;
+            }
+
+            long sum = 0;
+            for (int i = 0; i < validCount; i++) {
+                sum += responseTimes[i];
+            }
+
+            return sum / validCount;
+        }
+    }
+
+    // 响应时间滑动窗口统计器
+    private final SlidingWindowResponseTimeTracker responseTimeTracker = new SlidingWindowResponseTimeTracker();
+
+    // 记录 executeAsync 调用时间，用于统计连接等待时间
+    private volatile long executeAsyncStartTime = 0L;
 
     public HttpPageBufferClient(
         HttpClient httpClient,
@@ -331,6 +394,9 @@ public final class HttpPageBufferClient
         //final HttpClient.HttpResponseFuture<PagesResponse> resultFuture;
         final ListenableFuture<PagesResponse> resultFuture;
 
+        // 记录请求开始时间，用于计算响应时间
+        final long requestStartTime = System.currentTimeMillis();
+
         if (log.isDebugEnabled()) {
             log.debug("start to sendGetResults uri[" + uri.toString() + "] , isLocal=" + location.isLocal()
                 + ", preferLocalExchange=" + preferLocalExchange);
@@ -338,6 +404,9 @@ public final class HttpPageBufferClient
 
         if (preferLocalExchange && location.isLocal()) {
             TaskManager taskManager = ((MppServer) ServiceProvider.getInstance().getServer()).getTaskManager();
+
+            // 本地交换没有连接等待时间
+            executeAsyncStartTime = 0L;
 
             ListenableFuture<BufferResult> bufferResultFuture = taskManager
                 .getTaskResults(location.getTaskId(), true, new OutputBuffers.OutputBufferId(location.getBufferId()),
@@ -357,6 +426,9 @@ public final class HttpPageBufferClient
             }, directExecutor());
 
         } else {
+            // 远程请求：记录 executeAsync 调用时间，用于统计连接等待时间
+            executeAsyncStartTime = System.currentTimeMillis();
+
             //System.out.println("getRemoteResult:preferLocalExchange="+preferLocalExchange+",location="+location);
             resultFuture = httpClient.executeAsync(
                 prepareGet()
@@ -369,6 +441,21 @@ public final class HttpPageBufferClient
             @Override
             public void onSuccess(PagesResponse result) {
                 checkNotHoldsLock();
+
+                MppMetricsCounters counters = MppMetricsCounters.getInstance();
+
+                // 计算并记录响应时间到滑动窗口
+                long responseTime = System.currentTimeMillis() - requestStartTime;
+                responseTimeTracker.record(responseTime);
+                counters.recordResponseTimeMs(responseTime);
+
+                // 计算并记录连接等待时间（从 executeAsync 调用到收到响应）
+                if (executeAsyncStartTime > 0) {
+                    long waitTime = System.currentTimeMillis() - executeAsyncStartTime;
+                    totalWaitConnectionTimeUpdater.addAndGet(HttpPageBufferClient.this, waitTime);
+                    counters.recordWaitConnectionTimeMs(waitTime);
+                    executeAsyncStartTime = 0L;  // 重置
+                }
 
                 backoff.success();
 
@@ -408,8 +495,22 @@ public final class HttpPageBufferClient
                 try {
                     // add pages
                     if (clientCallback.addPages(HttpPageBufferClient.this, pages)) {
+                        long rowCount = countPagesPositionCount(pages);
+                        long byteCount = 0;
+                        for (SerializedChunk page : pages) {
+                            // 只统计序列化的 page（来自远程网络，page.getPage() == null）
+                            if (page.getPage() == null) {
+                                byteCount += page.getRetainedSizeInBytes();
+                            }
+                        }
+
                         pagesReceivedUpdater.addAndGet(HttpPageBufferClient.this, pages.size());
-                        rowsReceivedUpdater.addAndGet(HttpPageBufferClient.this, countPagesPositionCount(pages));
+                        rowsReceivedUpdater.addAndGet(HttpPageBufferClient.this, rowCount);
+                        bytesReceivedUpdater.addAndGet(HttpPageBufferClient.this, byteCount);
+
+                        counters.addInputPages(pages.size());
+                        counters.addInputRows(rowCount);
+                        counters.addIoBytes(byteCount);
                     } else {
                         pagesReceivedUpdater.addAndGet(HttpPageBufferClient.this, pages.size());
                         rowsRejectedUpdater.addAndGet(HttpPageBufferClient.this, countPagesPositionCount(pages));
@@ -430,7 +531,9 @@ public final class HttpPageBufferClient
                     }
                     lastUpdate = DateTime.now();
                 }
+
                 requestsCompletedUpdater.incrementAndGet(HttpPageBufferClient.this);
+                counters.addRequestCompleted();
                 clientCallback.requestComplete(HttpPageBufferClient.this);
             }
 
@@ -505,12 +608,23 @@ public final class HttpPageBufferClient
                     lastUpdate = DateTime.now();
                 }
                 requestsCompletedUpdater.incrementAndGet(HttpPageBufferClient.this);
+                MppMetricsCounters.getInstance().addRequestCompleted();
                 clientCallback.clientFinished(HttpPageBufferClient.this);
             }
 
             @Override
             public void onFailure(Throwable t) {
                 checkNotHoldsLock();
+
+                // DELETE request cancellation is a normal side-effect of close()/client cleanup,
+                // downgrade it to debug to avoid flooding error logs during query termination.
+                if (t instanceof CancellationException) {
+                    if (log.isDebugEnabled()) {
+                        log.debug(String.format("Request to delete %s was cancelled", location));
+                    }
+                    handleFailure(t, resultFuture);
+                    return;
+                }
 
                 log.error(String.format("Request to delete %s failed %s", location, t), t);
                 if (!(t instanceof TddlRuntimeException) && backoff.failure()) {
@@ -539,6 +653,7 @@ public final class HttpPageBufferClient
 
         requestsFailedUpdater.incrementAndGet(this);
         requestsCompletedUpdater.incrementAndGet(this);
+        MppMetricsCounters.getInstance().addRequestCompleted();
 
         if (t instanceof TddlRuntimeException) {
             clientCallback.clientFailed(HttpPageBufferClient.this, t);
@@ -599,6 +714,31 @@ public final class HttpPageBufferClient
             return new PageTooLargeException();
         }
         return t;
+    }
+
+    /**
+     * 获取接收的字节数（仅统计来自远程网络的序列化 page）
+     */
+    public long getBytesReceived() {
+        return bytesReceivedUpdater.get(this);
+    }
+
+    /**
+     * 获取滑动窗口内的平均响应时间（毫秒）
+     */
+    public long getAverageResponseTimeMs() {
+        return responseTimeTracker.getAverageResponseTimeMs();
+    }
+
+    /**
+     * 获取平均连接等待时间（毫秒）
+     */
+    public long getAverageWaitConnectionTimeMs() {
+        int completed = requestsCompletedUpdater.get(this);
+        if (completed == 0) {
+            return 0;
+        }
+        return totalWaitConnectionTimeLong / completed;
     }
 
     public static class PageResponseHandler

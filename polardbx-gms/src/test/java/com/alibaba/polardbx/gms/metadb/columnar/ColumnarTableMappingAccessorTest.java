@@ -23,15 +23,22 @@ import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableStatus;
 import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
+import com.google.common.collect.ImmutableList;
 import org.junit.Assert;
 import org.junit.Test;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
+import java.sql.ResultSet;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.when;
 
 public class ColumnarTableMappingAccessorTest {
 
@@ -80,6 +87,52 @@ public class ColumnarTableMappingAccessorTest {
                 accessor.updateStatusAndLastVersionIdByTableIdAndStatus(10L, 10L, ColumnarTableStatus.DROP.name(),
                     ColumnarTableStatus.PURGE.name());
             Assert.assertEquals(10, count);
+        }
+    }
+
+    @Test
+    public void testUpdate() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.update(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.any())).thenReturn(1);
+            ColumnarTableMappingAccessor accessor = new ColumnarTableMappingAccessor();
+            int count =
+                accessor.updateInfoByTableId(10L, "info");
+            Assert.assertEquals(1, count);
+        }
+    }
+
+    @Test
+    public void testRecord() throws Exception {
+        ResultSet rs = mock(ResultSet.class);
+        when(rs.getLong("table_id")).thenReturn(100L);
+        when(rs.getString("table_schema")).thenReturn("db");
+        when(rs.getString("table_name")).thenReturn("table");
+        when(rs.getString("index_name")).thenReturn("index");
+        when(rs.getLong("latest_version_id")).thenReturn(100L);
+        when(rs.getString("status")).thenReturn("ok");
+        when(rs.getString("info")).thenReturn("info");
+        when(rs.getString("extra")).thenReturn("extra");
+        when(rs.getString("type")).thenReturn("type");
+
+        ColumnarTableMappingRecord record = new ColumnarTableMappingRecord().fill(rs);
+        Assert.assertEquals(100L, record.tableId);
+        Assert.assertEquals("db", record.tableSchema);
+        Assert.assertEquals("table", record.tableName);
+        Assert.assertEquals("index", record.indexName);
+        Assert.assertEquals(100L, record.latestVersionId);
+        Assert.assertEquals("ok", record.status);
+        Assert.assertEquals("info", record.info);
+        Assert.assertEquals("extra", record.extra);
+        Assert.assertEquals("type", record.type);
+
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            metaDbUtilMockedStatic.when(
+                    () -> MetaDbUtil.executeBatch(anyString(), anyList(), any()))
+                .thenReturn(new int[] {1});
+
+            final ColumnarTableMappingAccessor accessor = new ColumnarTableMappingAccessor();
+            accessor.insert(ImmutableList.of(record));
         }
     }
 }

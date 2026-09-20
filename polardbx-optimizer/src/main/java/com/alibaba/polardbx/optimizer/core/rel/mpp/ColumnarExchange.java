@@ -148,11 +148,18 @@ public class ColumnarExchange extends Exchange {
         }
         double rowCount = mq.getRowCount(this);
         long rowSize = TableScanIOEstimator.estimateRowSize(getInput().getRowType());
-        RelOptCostFactory costFactory = planner.getCostFactory();
         int parallelism =
             PlannerContext.getPlannerContext(this).getParamManager()
                 .getInt(ConnectionParams.BROADCAST_SHUFFLE_PARALLELISM);
+        return ColumnarExchange.computeSelfCost(planner, this.distribution,
+            rowCount, rowSize, parallelism);
+    }
+
+    public static RelOptCost computeSelfCost(RelOptPlanner planner, RelDistribution distribution,
+                                             double rowCount, long rowSize, int parallelism) {
+        RelOptCostFactory costFactory = planner.getCostFactory();
         double cpuCost;
+        // we assume partition_wise_join < random_shuffle < hash_shuffle
         switch (distribution.getType()) {
         case SINGLETON:
             cpuCost = (SINGLETON_CPU_COST + SERIALIZE_DESERIALIZE_CPU_COST) * rowCount;
@@ -160,29 +167,34 @@ public class ColumnarExchange extends Exchange {
         case RANDOM_DISTRIBUTED:
             cpuCost = (RANDOM_CPU_COST + SERIALIZE_DESERIALIZE_CPU_COST) * rowCount;
             break;
-        case RANGE_DISTRIBUTED:
-            cpuCost = (RANGE_PARTITION_CPU_COST + SERIALIZE_DESERIALIZE_CPU_COST) * rowCount;
-            break;
         case BROADCAST_DISTRIBUTED:
             cpuCost = parallelism * SERIALIZE_DESERIALIZE_CPU_COST * rowCount;
             rowCount *= parallelism;
             break;
         case HASH_DISTRIBUTED:
-            cpuCost =
-                (HASH_CPU_COST + Math.exp(1.0 / distribution.getKeys().size() - 1) + SERIALIZE_DESERIALIZE_CPU_COST)
-                    * rowCount;
-            break;
-        case ROUND_ROBIN_DISTRIBUTED:
-            cpuCost = (ROUND_ROBIN_CPU_COST + SERIALIZE_DESERIALIZE_CPU_COST) * rowCount;
+            if (distribution.isShardWise()) {
+                cpuCost = (SERIALIZE_DESERIALIZE_CPU_COST) * rowCount;
+            } else {
+                cpuCost =
+                    (HASH_CPU_COST + Math.exp(1.0 / distribution.getKeys().size() - 1) + SERIALIZE_DESERIALIZE_CPU_COST)
+                        * rowCount;
+            }
             break;
         case ANY:
             cpuCost = SERIALIZE_DESERIALIZE_CPU_COST * rowCount;
             break;
+        case RANGE_DISTRIBUTED:
+            cpuCost = (RANGE_PARTITION_CPU_COST + SERIALIZE_DESERIALIZE_CPU_COST) * rowCount;
+            break;
+        case ROUND_ROBIN_DISTRIBUTED:
+            cpuCost = (ROUND_ROBIN_CPU_COST + SERIALIZE_DESERIALIZE_CPU_COST) * rowCount;
+            break;
         default:
             cpuCost = SERIALIZE_DESERIALIZE_CPU_COST * rowCount;
         }
-        return costFactory.makeCost(rowCount, cpuCost, 0, 0,
-            Math.ceil(rowSize * rowCount / CostModelWeight.NET_BUFFER_SIZE)).multiplyBy(COLUMNAR_EXCHANGE_FACTOR);
+        double net = Math.ceil(rowSize * rowCount / CostModelWeight.NET_BUFFER_SIZE);
+        net *= CostModelWeight.INSTANCE.getColNetWeight() / CostModelWeight.INSTANCE.getNetWeight();
+        return costFactory.makeCost(rowCount, cpuCost, 0, 0, net).multiplyBy(COLUMNAR_EXCHANGE_FACTOR);
     }
 
     @Override

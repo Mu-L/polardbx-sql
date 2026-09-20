@@ -18,18 +18,22 @@ package com.alibaba.polardbx.executor.sync;
 
 import com.alibaba.polardbx.executor.cursor.ResultCursor;
 import com.alibaba.polardbx.executor.cursor.impl.ArrayResultCursor;
+import com.alibaba.polardbx.gms.sync.IGmsSyncAction;
 import com.alibaba.polardbx.gms.topology.ServerInstIdManager;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.planmanager.PlanManager;
 
-public class BaselineQueryAllSyncAction implements ISyncAction {
+/**
+ * @author jilong.ljl
+ */
+public class BaselineQueryAllSyncAction implements IGmsSyncAction {
 
     public BaselineQueryAllSyncAction() {
     }
 
     @Override
     public ResultCursor sync() {
-        String jsonString = PlanManager.getBaselineAsJson(PlanManager.getInstance().getBaselineMap());
+        String jsonString = PlanManager.getInstance().getFullBaselineJson();
 
         ArrayResultCursor result = new ArrayResultCursor("baselines");
         result.addColumn("inst_id", DataTypes.StringType);

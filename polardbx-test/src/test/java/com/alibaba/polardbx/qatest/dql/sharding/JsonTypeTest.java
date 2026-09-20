@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.qatest.dql.sharding;
 
 import com.alibaba.polardbx.qatest.CrudBasedLockTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.data.ExecuteTableName;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import org.junit.After;
@@ -35,6 +36,7 @@ import java.util.List;
 import static com.alibaba.polardbx.qatest.validator.DataValidator.selectContentIgnoreJsonFormatSameAssert;
 import static com.alibaba.polardbx.qatest.validator.DataValidator.selectContentSameAssert;
 import static com.alibaba.polardbx.qatest.validator.DataValidator.selectErrorAssert;
+import static com.alibaba.polardbx.qatest.validator.DataValidator.selectStringContentSameAssert;
 
 /**
  * @author wuheng.zxy 2016-4-17 上午10:45:30
@@ -87,6 +89,7 @@ public class JsonTypeTest extends CrudBasedLockTestCase {
         selectContentSameAssert(sql, null, mysqlConnection, tddlConnection);
     }
 
+    @IcbcIgnore(ignoreReason = "SQL_MODE=ONLY_FULL_GROUP_BY")
     @Test
     public void testGroup() throws Exception {
         String sql = String.format(
@@ -114,6 +117,7 @@ public class JsonTypeTest extends CrudBasedLockTestCase {
         selectContentSameAssert(sql, null, mysqlConnection, tddlConnection);
     }
 
+    @IcbcIgnore(ignoreReason = "SQL_MODE=ONLY_FULL_GROUP_BY")
     @Test
     public void testSelect() {
         String sql = String.format(
@@ -146,6 +150,19 @@ public class JsonTypeTest extends CrudBasedLockTestCase {
             "select t220.app_gmt_create as m1017 from %s t220 where json_data->>'$.cost_detail' = '花费'",
             baseOneTableName);
         selectContentSameAssert(sql, null, mysqlConnection, tddlConnection);
+    }
+
+    /**
+     * ->> 操作符后紧跟加引号的字符串字面量作为隐式列别名，
+     * 解析器不应将别名字面量与 JSON 路径字面量拼接。
+     */
+    @Test
+    public void testJsonExtractWithQuotedAlias() {
+        String sql = String.format(
+            "select json_data ->> '$.categories' 'm1' from %s", baseOneTableName);
+        // Use string-based comparison: MySQL JDBC 5.1 returns ->>/JSON_UNQUOTE results as LONGBLOB
+        // (byte[]), while PolarDB-X returns VARCHAR. rs.getString() decodes both consistently.
+        selectStringContentSameAssert(sql, sql, null, mysqlConnection, tddlConnection, false, false);
     }
 
     @Test

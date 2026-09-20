@@ -18,17 +18,19 @@ package com.alibaba.polardbx.optimizer.partition.pruning;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
-import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.partition.PartitionByDefinition;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
+import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
 import com.alibaba.polardbx.optimizer.partition.boundspec.PartitionBoundValueKind;
 import com.alibaba.polardbx.optimizer.partition.common.PartKeyLevel;
 import com.alibaba.polardbx.optimizer.partition.util.Rex2ExprStringVisitor;
 
-import java.net.ConnectException;
+import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * @author chenghui.lch
@@ -221,6 +223,44 @@ public class PartitionPruneStepOp implements PartitionPruneStep {
 
         Integer parentPartPosi =
             parentPartPosiSet == null || parentPartPosiSet.isEmpty() ? null : parentPartPosiSet.get(0);
+
+        boolean isReplicasOrBroadcast = partInfo.isReplicasTable() || partInfo.isBroadcastTable();
+        PartPruneStepPruningExtraInfo pruningExtraInfo = pruningCtx.getExtraInfo();
+        boolean onlyScanPartOnCommonGroupKeySet = pruningExtraInfo != null;
+        if (onlyScanPartOnCommonGroupKeySet && isReplicasOrBroadcast) {
+            /**
+             * For replicas/broadcast table, only scan partitions on commonGroupKeySet if commonGroupKeySet exists
+             */
+            Set<String> targetGroupKeySet = pruningExtraInfo.getCommonGroupKeyInfo().getCommonGroupKeySet();
+            if (targetGroupKeySet.isEmpty()) {
+                targetGroupKeySet = partInfo.getPartSpecSearcher().getGroupKeySetOfAllPhyPartSpecs();
+            }
+
+            /**
+             * Scan the first common group key as default if randomReadTargetGroupKey is not specified
+             */
+            List<String> targetGroupKeyList = new ArrayList<>(targetGroupKeySet);
+            String targetGroupKey = targetGroupKeyList.get(0);
+            if (!StringUtils.isEmpty(pruningExtraInfo.getRandomReadTargetGroupKey())) {
+                targetGroupKey = pruningExtraInfo.getRandomReadTargetGroupKey();
+            }
+            List<PartitionSpec> phyPartSpecList =
+                partInfo.getPartSpecSearcher().getPhyPartSpecListByGroupKey(targetGroupKey);
+            PartitionSpec partitionSpec = phyPartSpecList.get(0);
+            int partIdx = partitionSpec.getPosition().intValue() - 1;
+
+            PartitionRouter router =
+                PartRouteFunction.getRouterByPartInfo(this.partKeyMatchLevel, parentPartPosi, this.partInfo);
+            BitSet partBitSet = PartitionPrunerUtils.buildEmptyPartitionsBitSetByPartRouter(router);
+            partBitSet.set(partIdx, true);
+            PartPrunedResult rs =
+                PartPrunedResult.buildPartPrunedResult(partInfo, partBitSet, this.partKeyMatchLevel, parentPartPosi,
+                    false);
+            rs.setPruningExtraInfo(pruningExtraInfo);
+            PartitionPrunerUtils.collateStepExplainInfo(this, context, rs, pruningCtx);
+            return rs;
+        }
+
         if (isScanFirstPartOnly) {
             PartitionRouter router =
                 PartRouteFunction.getRouterByPartInfo(this.partKeyMatchLevel, parentPartPosi, this.partInfo);
@@ -336,6 +376,7 @@ public class PartitionPruneStepOp implements PartitionPruneStep {
         StringBuilder digestBuilder = new StringBuilder("");
         if (isScanFirstPartOnly) {
             digestBuilder.append("(firstPartScanOnly)");
+            return digestBuilder.toString();
         } else {
             if (forceFullScan) {
                 String fullScanType = "fullScan";

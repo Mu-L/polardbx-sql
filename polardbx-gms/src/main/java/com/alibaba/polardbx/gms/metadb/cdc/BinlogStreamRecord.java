@@ -33,6 +33,7 @@ public class BinlogStreamRecord implements SystemTableRecord {
     private long position;
     private String host;
     private int port;
+    private int status;
 
     @SuppressWarnings("unchecked")
     @Override
@@ -52,7 +53,21 @@ public class BinlogStreamRecord implements SystemTableRecord {
             this.host = ep.getString("host");
             this.port = ep.getInteger("port");
         }
+
+        if (containsColumn("status", rs)) {
+            this.status = rs.getInt("status");
+        }
         return this;
+    }
+
+    private boolean containsColumn(String columnName, ResultSet rs) throws SQLException {
+        int count = rs.getMetaData().getColumnCount();
+        for (int i = 1; i <= count; i++) {
+            if (columnName.equals(rs.getMetaData().getColumnName(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public String getGroupName() {
@@ -77,5 +92,9 @@ public class BinlogStreamRecord implements SystemTableRecord {
 
     public int getPort() {
         return port;
+    }
+
+    public int getStatus() {
+        return status;
     }
 }

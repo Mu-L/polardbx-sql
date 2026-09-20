@@ -22,10 +22,13 @@ import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupAccessor;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupRecord;
+import com.alibaba.polardbx.gms.topology.GroupDetailInfoExRecord;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.gms.util.PartitionNameUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableGroupItemPreparedData;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableGroupSplitPartitionItemPreparedData;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableGroupSplitPartitionPreparedData;
 import com.alibaba.polardbx.optimizer.partition.PartitionByDefinition;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
@@ -96,5 +99,24 @@ public class AlterTableGroupSplitPartitionBuilder extends AlterTableGroupBaseBui
             }
         }
         super.generateNewPhysicalTableNames(allLogicalTableNames);
+    }
+
+    @Override
+    public AlterTableGroupItemPreparedData createAlterTableGroupItemPreparedData(String tableName,
+                                                                                 List<GroupDetailInfoExRecord> groupDetailInfoExRecords) {
+        AlterTableGroupItemPreparedData alterTableGroupItemPreparedData =
+            new AlterTableGroupSplitPartitionItemPreparedData(preparedData.getSchemaName(), tableName);
+        prepareAlterTableGroupItemPreparedData(tableName, groupDetailInfoExRecords, alterTableGroupItemPreparedData);
+        return alterTableGroupItemPreparedData;
+    }
+
+    @Override
+    public AlterTableGroupItemBuilder createAlterTableGroupItemBuilder(DDL ddl,
+                                                                       AlterTableGroupItemPreparedData preparedData,
+                                                                       ExecutionContext executionContext) {
+        AlterTableGroupSplitPartitionItemBuilder builder =
+            new AlterTableGroupSplitPartitionItemBuilder(ddl, preparedData, executionContext);
+        builder.setParentPreparedData((AlterTableGroupSplitPartitionPreparedData) this.preparedData);
+        return builder;
     }
 }

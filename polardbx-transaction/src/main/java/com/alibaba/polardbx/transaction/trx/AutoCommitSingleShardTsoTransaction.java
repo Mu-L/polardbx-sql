@@ -24,7 +24,7 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.type.TransactionType;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
-import com.alibaba.polardbx.optimizer.utils.ITimestampOracle;
+import com.alibaba.polardbx.common.trx.ITimestampOracle;
 import com.alibaba.polardbx.optimizer.utils.ITransaction;
 import com.alibaba.polardbx.transaction.TransactionManager;
 import com.alibaba.polardbx.transaction.jdbc.DeferredConnection;
@@ -83,7 +83,7 @@ public class AutoCommitSingleShardTsoTransaction extends AutoCommitTransaction i
         conn = new DeferredConnection(conn, ec.getParamManager().getBoolean(
             ConnectionParams.USING_RDS_RESULT_SKIP));
 
-        conn = sendLsn(conn, schemaName, group, masterSlave, this::getSnapshotSeq);
+        conn = getConnectionWithLsn(conn, schemaName, group, masterSlave, this::getSnapshotSeq);
 
         // For replica read, get snapshot_seq before getting LSN, and send it to replica to ensure consistency.
         if (omitTso && snapshotSeqIsEmpty()) {
@@ -92,8 +92,12 @@ public class AutoCommitSingleShardTsoTransaction extends AutoCommitTransaction i
             sendSnapshotSeq(conn);
         }
 
-        boolean needSetFlashbackArea = executionContext.isFlashbackArea() && rw == ITransaction.RW.READ;
-        return conn.enableFlashbackArea(needSetFlashbackArea);
+        boolean needSetFlashbackArea = executionContext.isFlashbackArea() && rw == ITransaction.RW.READ
+            && executionContext.getStorageInfo(schemaName).isSupportFlashbackArea();
+        boolean needSetAsOfCrossDdl = executionContext.isAsOfCrossDdl() && rw == ITransaction.RW.READ
+            && executionContext.getStorageInfo(schemaName).isSupportAsOfCrossDdl();
+        return conn.enableFlashbackArea(needSetFlashbackArea)
+            .enableAsOfCrossDdl(needSetAsOfCrossDdl);
     }
 
     @Override

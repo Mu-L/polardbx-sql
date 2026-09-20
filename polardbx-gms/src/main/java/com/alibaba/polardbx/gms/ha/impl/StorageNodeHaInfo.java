@@ -32,6 +32,7 @@ public class StorageNodeHaInfo {
     protected String user;
     protected String encPasswd;
     protected final boolean isVip;
+    protected int electionWeight;
 
     public StorageNodeHaInfo(String addr,
                              StorageRole role,
@@ -39,7 +40,8 @@ public class StorageNodeHaInfo {
                              int xPort,
                              String user,
                              String passwd,
-                             boolean isVip) {
+                             boolean isVip,
+                             int electionWeight) {
         this.addr = addr;
         this.role = role;
         this.isHealthy = isHealthy;
@@ -47,6 +49,7 @@ public class StorageNodeHaInfo {
         this.user = user;
         this.encPasswd = PasswdUtil.encrypt(passwd);
         this.isVip = isVip;
+        this.electionWeight = electionWeight;
     }
 
     public String getAddr() {
@@ -100,6 +103,20 @@ public class StorageNodeHaInfo {
     }
 
     @Override
+    public String toString() {
+        return "StorageNodeHaInfo{" +
+            "addr='" + addr + '\'' +
+            ", role=" + role +
+            ", isHealthy=" + isHealthy +
+            ", xPort=" + xPort +
+            ", user='" + user + '\'' +
+            ", encPasswd='" + encPasswd + '\'' +
+            ", isVip=" + isVip +
+            ", electionWeight=" + electionWeight +
+            '}';
+    }
+
+    @Override
     public int hashCode() {
         return Objects.hash(addr, role, isHealthy, xPort, user, encPasswd, isVip);
     }
@@ -122,5 +139,9 @@ public class StorageNodeHaInfo {
 
     public boolean isVip() {
         return isVip;
+    }
+
+    public int getElectionWeight() {
+        return electionWeight;
     }
 }

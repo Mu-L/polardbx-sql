@@ -4,7 +4,7 @@ SQL:
     plan: |
       topn(sort="order_id asc", offset=0, fetch=?0)
         exchange(distribution=single, collation=[1 asc-nulls-first])
-          topn(sort="order_id asc", fetch=+(?0, 0))
+          topn(sort="order_id asc", fetch=?0)
             osstablescan(tables="cc_i_seller[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `order_snapshot`, `order_detail` from `cc_i_seller` as `cc_i_seller`")
   - sql: |
       /*+TDDL:cmd_extra(ENABLE_TOPN=false)*/select * from t_order order by order_id limit 10;
@@ -29,24 +29,32 @@ SQL:
   - sql: |
      /*+TDDL:cmd_extra(ENABLE_TOPN=false ENABLE_LIMIT=false)*/select * from t_order limit 10;
     plan: |
-      columnar sql could not be implemented
+      limit(offset=0, fetch=?0)
+        exchange(distribution=single, collation=[])
+          limit(fetch=?0)
+            osstablescan(tables="cc_i_seller[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `order_snapshot`, `order_detail` from `cc_i_seller` as `cc_i_seller`")
+
   - sql: |
       /*+TDDL:cmd_extra(ENABLE_LIMIT=false)*/select * from t_order limit 10;
     plan: |
-      columnar sql could not be implemented
+      limit(offset=0, fetch=?0)
+        exchange(distribution=single, collation=[])
+          limit(fetch=?0)
+            osstablescan(tables="cc_i_seller[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `order_snapshot`, `order_detail` from `cc_i_seller` as `cc_i_seller`")
+
   - sql: |
       select * from (select * from t_order order by order_id) limit 10;
     plan: |
       limit(offset=0, fetch=?0)
         exchange(distribution=single, collation=[])
-          limit(fetch=+(?0, 0))
+          limit(fetch=?0)
             osstablescan(tables="cc_i_seller[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `order_snapshot`, `order_detail` from `cc_i_seller` as `cc_i_seller`")
   - sql: |
       select * from (select * from t_order order by order_id)  order by id limit 10;
     plan: |
       topn(sort="id asc", offset=0, fetch=?0)
         exchange(distribution=single, collation=[0 asc-nulls-first])
-          topn(sort="id asc", fetch=+(?0, 0))
+          topn(sort="id asc", fetch=?0)
             osstablescan(tables="cc_i_seller[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `order_snapshot`, `order_detail` from `cc_i_seller` as `cc_i_seller`")
   - sql: |
       select * from (select * from t_order order by order_id limit 20 )  order by id limit 10;
@@ -55,7 +63,7 @@ SQL:
         memsort(sort="id asc")
           topn(sort="order_id asc", offset=0, fetch=?0)
             exchange(distribution=single, collation=[1 asc-nulls-first])
-              topn(sort="order_id asc", fetch=+(?0, 0))
+              topn(sort="order_id asc", fetch=?0)
                 osstablescan(tables="cc_i_seller[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `order_snapshot`, `order_detail` from `cc_i_seller` as `cc_i_seller`")
   - sql: |
       select * from (select * from t_order limit 20 )  order by id limit 10;
@@ -64,7 +72,7 @@ SQL:
         memsort(sort="id asc")
           limit(offset=0, fetch=?0)
             exchange(distribution=single, collation=[])
-              limit(fetch=+(?0, 0))
+              limit(fetch=?0)
                 osstablescan(tables="cc_i_seller[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `order_snapshot`, `order_detail` from `cc_i_seller` as `cc_i_seller`")
   - sql: |
       select * from (select * from t_order order by order_id limit 20 ) limit 10;
@@ -72,7 +80,7 @@ SQL:
       limit(offset=0, fetch=?1)
         topn(sort="order_id asc", offset=0, fetch=?0)
           exchange(distribution=single, collation=[1 asc-nulls-first])
-            topn(sort="order_id asc", fetch=+(?0, 0))
+            topn(sort="order_id asc", fetch=?0)
               osstablescan(tables="cc_i_seller[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `order_snapshot`, `order_detail` from `cc_i_seller` as `cc_i_seller`")
   - sql: |
       select * from (select * from t_order order by order_id limit 20 ) order by id;
@@ -80,7 +88,7 @@ SQL:
       memsort(sort="id asc")
         topn(sort="order_id asc", offset=0, fetch=?0)
           exchange(distribution=single, collation=[1 asc-nulls-first])
-            topn(sort="order_id asc", fetch=+(?0, 0))
+            topn(sort="order_id asc", fetch=?0)
               osstablescan(tables="cc_i_seller[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `order_snapshot`, `order_detail` from `cc_i_seller` as `cc_i_seller`")
 DDL:
   t_order:

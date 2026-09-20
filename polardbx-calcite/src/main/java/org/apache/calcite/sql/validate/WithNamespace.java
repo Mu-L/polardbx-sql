@@ -17,6 +17,8 @@
 package org.apache.calcite.sql.validate;
 
 import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.sql.SqlCall;
+import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlWith;
 import org.apache.calcite.sql.SqlWithItem;
@@ -50,7 +52,10 @@ public class WithNamespace extends AbstractNamespace {
 
   protected RelDataType validateImpl(RelDataType targetRowType) {
     for (SqlNode withItem : with.withList) {
-      validator.validateWithItem((SqlWithItem) withItem, with.isRecursive.booleanValue());
+        // need to check recursive flag of the entire with clause,
+        // but not the whole with clause flag
+        boolean isRecursive = isWithItemRecursive((SqlWithItem) withItem);
+        validator.validateWithItem((SqlWithItem) withItem, isRecursive);
     }
     final SqlValidatorScope scope2 =
         validator.getWithScope(Util.last(with.withList.getList()));
@@ -60,9 +65,55 @@ public class WithNamespace extends AbstractNamespace {
     return rowType;
   }
 
+    /**
+     * check if the single withItem is recursive
+     *
+     * @param withItem CTE item
+     * @return if the single withItem is recursive
+     */
+    private boolean isWithItemRecursive(SqlWithItem withItem) {
+        // if the entire WITH clause is not recursive, all items are not recursive
+        if (!with.isRecursive.booleanValue()) {
+            return false;
+        }
+
+        // if the entire WITH clause is recursive,
+        // need to further check if the single item is really recursive
+        return hasSelfReference(withItem, withItem.query);
+    }
+
+    /**
+     * Check whether the specified CTE name is referenced in the query (self-reference detection)
+     *
+     * @return whether self-reference exists
+     */
+    public static boolean hasSelfReference(SqlWithItem withItem, SqlNode node) {
+        if (node == null) {
+            return false;
+        }
+
+        if (node instanceof SqlIdentifier) {
+            SqlIdentifier identifier = (SqlIdentifier) node;
+            // check whether the CTE name is referenced
+            if (identifier.names.size() == 1 &&
+                identifier.names.get(0).equals(withItem.name.getSimple())) {
+                return true;
+            }
+        } else if (node instanceof SqlCall) {
+            SqlCall call = (SqlCall) node;
+            // check all operands
+            for (SqlNode operand : call.getOperandList()) {
+                if (hasSelfReference(withItem, operand)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
   public SqlNode getNode() {
-    return with;
-  }
+        return with;
+    }
 }
 
 // End WithNamespace.java

@@ -31,8 +31,9 @@ import com.alibaba.polardbx.executor.mpp.metadata.DefinedJsonSerde;
 import com.alibaba.polardbx.executor.mpp.split.JdbcSplit;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.htaprouting.PlanType;
 import com.alibaba.polardbx.optimizer.utils.ITransaction;
-import com.alibaba.polardbx.optimizer.workload.WorkloadType;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadType;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JavaType;
@@ -106,12 +107,16 @@ public class ParameterContextJSONTest {
             -1,
             new InternalTimeZone(TimeZone.getDefault(), "test"),
             1,
-            false,
+            PlanType.ROW_COLUMNAR,
+            "",
+            true,
             new HashMap<>(),
             false,
             false,
             true,
             WorkloadType.TP,
+            true,
+            0L,
             null);
 
         String json = objectMapper.writeValueAsString(sessionRepresentation);
@@ -119,6 +124,8 @@ public class ParameterContextJSONTest {
         SessionRepresentation target = objectMapper.readValue(json, sessionRepresentation.getClass());
         Assert.assertTrue(target.getDnLsnMap() != null);
         Assert.assertTrue(target.getUseColumnarTracer());
+        Assert.assertTrue(target.getIsWarmup());
+        Assert.assertTrue(target.getPlanType() == PlanType.ROW_COLUMNAR);
     }
 
     @Test
@@ -131,7 +138,7 @@ public class ParameterContextJSONTest {
         BytesSql bytesSql = BytesSql.getBytesSql(sql);
         JdbcSplit source =
             new JdbcSplit(
-                "ca", "sc", "db0", hint, bytesSql, null, null, "127.1", null, ITransaction.RW.WRITE,
+                "ca", "sc", "db0", hint, bytesSql, null, null, null, "127.1", null, ITransaction.RW.WRITE,
                 true, 1L, null, false, null, null);
 
         String json = objectMapper.writeValueAsString(source);

@@ -41,6 +41,7 @@ public class TimeParserFlags {
     public static final int FLAG_TIME_WARN_ZERO_DATE = 8;
     public static final int FLAG_TIME_NOTE_TRUNCATED = 16;
     public static final int FLAG_TIME_WARN_ZERO_IN_DATE = 32;
+    public static final int FLAG_TIME_TRUNCATE_FRACTIONAL = 64;
 
     public static boolean check(int flags, int toCheck) {
         return (flags & toCheck) != 0;

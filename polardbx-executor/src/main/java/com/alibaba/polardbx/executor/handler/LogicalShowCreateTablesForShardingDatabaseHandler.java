@@ -1,3 +1,4 @@
+package com.alibaba.polardbx.executor.handler;
 /*
  * Copyright [2013-2021], Alibaba Group Holding Limited
  *
@@ -14,7 +15,6 @@
  * limitations under the License.
  */
 
-package com.alibaba.polardbx.executor.handler;
 
 import com.alibaba.polardbx.common.constants.SequenceAttribute;
 import com.alibaba.polardbx.common.constants.SequenceAttribute.Type;
@@ -26,6 +26,7 @@ import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
 import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
 import com.alibaba.polardbx.druid.sql.ast.SQLName;
@@ -40,6 +41,7 @@ import com.alibaba.polardbx.druid.sql.ast.expr.SQLIntegerExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLMethodInvokeExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLNumberExpr;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAssignItem;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLCheck;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnDefinition;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLExprTableSource;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLSelectOrderByItem;
@@ -318,7 +320,7 @@ public class LogicalShowCreateTablesForShardingDatabaseHandler extends HandlerCo
                         show.getTraitSet(),
                         SqlShowCreateTable.create(SqlParserPos.ZERO,
                             TStringUtil.isEmpty(show.getPhyTable()) ? phyTbSqlId :
-                                show.getPhyTableNode()),
+                                show.getPhyTableNode(), false, showCreateTable.isForExport()),
                         show.getRowType(),
                         show.getDbIndex(),
                         show.getPhyTable(),
@@ -662,8 +664,9 @@ public class LogicalShowCreateTablesForShardingDatabaseHandler extends HandlerCo
                         if (sqlColumnDefinition.isAutoIncrement()) {
                             containAutoIncrement = true;
                         }
-                        String columnName = SQLUtils.normalizeNoTrim(sqlColumnDefinition.getColumnName());
-                        ColumnMeta columnMeta = tableMeta.getColumnIgnoreCase(columnName);
+                        ColumnMeta columnMeta =
+                            ExternalizedColumnShowCreateHelper.restoreExternalizedColumn(sqlColumnDefinition,
+                                tableMeta);
                         if (columnMeta != null && columnMeta.isBinaryDefault()) {
                             // handle binary default value
                             SQLHexExpr newDefaultVal = new SQLHexExpr(columnMeta.getField().getDefault());
@@ -779,6 +782,14 @@ public class LogicalShowCreateTablesForShardingDatabaseHandler extends HandlerCo
                             ((MysqlForeignKey) sqlTableElement).setPushDown(
                                 MysqlForeignKey.PushDown.fromBoolean(foreignKeyData.isPushDown()));
                         }
+                    }
+
+                    if (sqlTableElement instanceof SQLCheck) {
+                        SQLCheck check = (SQLCheck) sqlTableElement;
+                        String constraintName = SQLUtils.normalizeNoTrim(check.getName().getSimpleName());
+                        int len = constraintName.length();
+                        String unwrapName = constraintName.substring(0, len - 9);
+                        check.setName(SqlIdentifier.surroundWithBacktick(unwrapName));
                     }
                 }
                 createTable.getTableElementList().removeAll(toRemove);
@@ -960,8 +971,27 @@ public class LogicalShowCreateTablesForShardingDatabaseHandler extends HandlerCo
                                 sequence != null && sequence.size() == 1 ? Type.fromString(sequence.get(0).type) :
                                     Type.NA;
                             if (seqType != Type.NA) {
+                                boolean isGroup = (seqType == Type.GROUP);
+                                SequencesRecord seq = sequence.get(0);
+                                String unitCountStr = seq.unitCount;
+                                String unitIndexStr = seq.unitIndex;
+                                boolean isUnitGroup = false;
+                                if (isGroup) {
+                                    try {
+                                        int unitCount = Integer.parseInt(unitCountStr);
+                                        isUnitGroup = unitCount > 1;
+                                    } catch (Exception ignore) {
+                                        // do nothing
+                                    }
+                                }
                                 // Replace it with extended syntax.
-                                String replacement = SequenceAttribute.EXTENDED_AUTO_INC_SYNTAX + seqType;
+                                String replacement;
+                                if (!isUnitGroup) {
+                                    replacement = SequenceAttribute.EXTENDED_AUTO_INC_SYNTAX + seqType;
+                                } else {
+                                    replacement = SequenceAttribute.EXTENDED_AUTO_INC_SYNTAX + seqType +
+                                        String.format(" UNIT COUNT %s INDEX %s", unitCountStr, unitIndexStr);
+                                }
                                 sql = StringUtils.replaceOnce(sql,
                                     SequenceAttribute.NATIVE_AUTO_INC_SYNTAX,
                                     replacement);
@@ -972,27 +1002,40 @@ public class LogicalShowCreateTablesForShardingDatabaseHandler extends HandlerCo
                     }
                 }
 
-                LocalityManager lm = LocalityManager.getInstance();
-                LocalityInfo localityInfo = lm.getLocalityOfTable(tableMeta.getId());
-                if (localityInfo != null) {
-                    LocalityDesc localityDesc = LocalityInfoUtils.parse(localityInfo.getLocality());
-                    if (!localityDesc.holdEmptyDnList()) {
-                        sql += "\n" + localityDesc.showCreate();
+                if (ConfigDataMode.isPolarDbX()) {
+                    LocalityManager lm = LocalityManager.getInstance();
+                    LocalityInfo localityInfo = lm.getLocalityOfTable(tableMeta.getId());
+                    if (localityInfo != null) {
+                        LocalityDesc localityDesc = LocalityInfoUtils.parse(localityInfo.getLocality());
+                        if (!localityDesc.holdEmptyDnList()) {
+                            if (executionContext.getParamManager()
+                                .getBoolean(ConnectionParams.OUTPUT_LOCALITY_WITHOUT_COMMENT)) {
+                                sql += "\n" + localityDesc.showCreateWithoutComment(schemaName);
+                            } else {
+                                sql += "\n" + localityDesc.showCreate(schemaName);
+                            }
+                        }
                     }
                 }
+
+                // Output the table name in lowercase only when the dedicated switch
+                // ENABLE_LOWER_CASE_TABLE_NAME_OUTPUT is on. The switch defaults to
+                // false so existing instances keep the original case after upgrade;
+                // ENABLE_LOWER_CASE_TABLE_NAMES no longer controls this behavior.
+                String outputTableName = getTableNameForOutput(tableName, executionContext);
 
                 // Have to replace twice for compatibility with
                 // 'lower_case_table_names' settings.
                 String replacedDDL = StringUtils.replaceOnce(sql,
                     "`" + StringUtils.replace(table.toLowerCase(), "`", "``") + "`",
-                    "`" + StringUtils.replace(tableName.toLowerCase(), "`", "``") + "`")
+                    "`" + StringUtils.replace(outputTableName.toLowerCase(), "`", "``") + "`")
                     + " ";
                 replacedDDL = StringUtils.replaceOnce(replacedDDL,
                     "`" + StringUtils.replace(table, "`", "``") + "`",
-                    "`" + StringUtils.replace(tableName, "`", "``") + "`") + " ";
+                    "`" + StringUtils.replace(outputTableName, "`", "``") + "`") + " ";
 
                 replacedDDL = replacedDDL + appender.toString();
-                result.addRow(new Object[] {tableName, replacedDDL});
+                result.addRow(new Object[] {outputTableName, replacedDDL});
             }
 
             return result;
@@ -1034,6 +1077,8 @@ public class LogicalShowCreateTablesForShardingDatabaseHandler extends HandlerCo
     public List<SQLTableElement> buildGsiDefs(String schemaName, GsiMetaBean gsiMeta, String mainTableName,
                                               boolean full) {
         final GsiMetaManager.GsiTableMetaBean mainTableMeta = gsiMeta.getTableMeta().get(mainTableName);
+        final TableMeta primaryTableMeta = OptimizerContext.getContext(schemaName).getLatestSchemaManager()
+            .getTable(mainTableName);
         List<SQLTableElement> gsiDefs = new ArrayList<>(mainTableMeta.indexMap.size());
         for (Map.Entry<String, GsiMetaManager.GsiIndexMetaBean> entry : mainTableMeta.indexMap.entrySet()) {
             final String indexName = entry.getKey();
@@ -1082,7 +1127,10 @@ public class LogicalShowCreateTablesForShardingDatabaseHandler extends HandlerCo
                     continue;
                 }
 
-                SQLName covering = new SQLIdentifierExpr("`" + coveringColumn.columnName + "`");
+                String displayName =
+                    ExternalizedColumnShowCreateHelper.toLogicalColumnName(coveringColumn.columnName,
+                        primaryTableMeta);
+                SQLName covering = new SQLIdentifierExpr("`" + displayName + "`");
                 coveringColumns.add(covering);
             }
 

@@ -21,11 +21,14 @@ import com.alibaba.polardbx.executor.ExecutorHelper;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseBackfillTask;
 import com.alibaba.polardbx.executor.ddl.job.task.RemoteExecutableDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
+import com.alibaba.polardbx.executor.gsi.BackfillParameterManager;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.GsiBackfill;
 import lombok.Getter;
+import org.apache.commons.lang.StringUtils;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -80,6 +83,40 @@ public class LogicalTableBackFillTask extends BaseBackfillTask implements Remote
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
         ExecutorHelper.execute(backFillPlan, executionContext);
+    }
+
+    public List<String> getPerfModeParameters(ExecutionContext ec) {
+        BackfillParameterManager.BackfillConcurrencyParameter backfillConcurrencyParameter =
+            BackfillParameterManager.newBackfillParameter(ec, schemaName, sourceTableName);
+        return backfillConcurrencyParameter.showParameter();
+    }
+
+    public List<String> fillExplainContent(ExecutionContext ec) {
+        List<String> result = new ArrayList<>();
+        Boolean isModifyColumn = this.modifyColumn;
+        if (isModifyColumn) {
+            String sourceColumnString = String.format("    SRC_CHECK_COLUMN_SET: %s.[%s]", sourceTableName,
+                StringUtils.join(srcCheckColumnMap.keySet(), ","));
+            String dstColumnString = String.format("    DST_CHECK_COLUMN_SET: %s.[%s]", sourceTableName,
+                StringUtils.join(dstCheckColumnMap.keySet(), ","));
+            String modifyColumn = String.format("    MODIFY_COLUMN: %s", isModifyColumn);
+            result.add(sourceColumnString);
+            result.add(dstColumnString);
+            result.add(modifyColumn);
+        }
+        if (!mirrorCopy) {
+            List<String> perfModeParameters = getPerfModeParameters(ec);
+            result.addAll(perfModeParameters);
+        }
+        return result;
+    }
+
+    public List<String> explainInfo(ExecutionContext ec) {
+        List<String> result = new ArrayList<>();
+        result.add("LOGICAL_BACKFILL(");
+        result.addAll(fillExplainContent(ec));
+        result.add(")");
+        return result;
     }
 
 }

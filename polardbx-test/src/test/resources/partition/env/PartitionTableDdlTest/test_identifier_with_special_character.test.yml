@@ -1,3 +1,4 @@
+## DISABLE_FAST_SQL_PARSER
 drop table if exists `t``1`;
 
 CREATE TABLE `t``1` (

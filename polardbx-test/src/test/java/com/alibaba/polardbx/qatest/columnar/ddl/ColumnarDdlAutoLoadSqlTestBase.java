@@ -159,7 +159,9 @@ public abstract class ColumnarDdlAutoLoadSqlTestBase extends PartitionTestBase {
                 .replaceAll("tablegroup = `tg[0-9]{1,}` \\*/", "tablegroup = `tg` */");
 
             testResult = (params.ignoreAutoIncrement ?
-                testResult.replaceAll("AUTO_INCREMENT = [0-9]{1,}", "AUTO_INCREMENT = ignore_val") : testResult);
+                testResult.replaceAll(" ?AUTO_INCREMENT = [0-9]+", "") : testResult);
+            exceptedResult = (params.ignoreAutoIncrement ?
+                exceptedResult.replaceAll(" ?AUTO_INCREMENT = (ignore_val|[0-9]+)", "") : exceptedResult);
 
             exceptedResult =
                 params.supportAutoPart ? exceptedResult.replaceAll("#@#", "" + params.defaultPartitions) :
@@ -298,7 +300,8 @@ public abstract class ColumnarDdlAutoLoadSqlTestBase extends PartitionTestBase {
             //String sql = "create table if not exists tbl (a int not null)\npartition by hash(a)\npartitions 4;show create table tbl;explain select * from tbl where a=100;insert into tbl values (10),(99),(100),(101);select * from tbl order by a;explain select * from tbl where a>100;";
             String sql = loadTestSqlByTestName(testCaseName, testClass);
 
-            return runTestBySql(testCaseName, sql, isSupportAutoPart, testClass, db, testConn, applySubstitute, null);
+            return runTestBySql(testCaseName, sql, isSupportAutoPart, testClass, db, testConn, applySubstitute, null,
+                false);
         } catch (Throwable e) {
             e.printStackTrace();
             ByteArrayOutputStream baos = new ByteArrayOutputStream();

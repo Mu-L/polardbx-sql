@@ -37,7 +37,7 @@ import com.alibaba.polardbx.optimizer.memory.MemoryManager;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
 import com.alibaba.polardbx.optimizer.memory.QueryMemoryPool;
 import com.alibaba.polardbx.optimizer.spill.QuerySpillSpaceMonitor;
-import com.alibaba.polardbx.optimizer.workload.WorkloadUtil;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadUtil;
 import com.google.common.base.Preconditions;
 
 import java.util.Map;
@@ -54,6 +54,7 @@ public final class QueryContext {
     private QuerySpillSpaceMonitor querySpillSpaceMonitor;
     private final Map<String, MemoryPool> taskMemoryPools = new ConcurrentHashMap<>();
     protected boolean reNewQueryPool;
+    private String originalSql; // maybe null.
 
     public QueryContext(
         ScheduledExecutorService yieldExecutor,
@@ -74,10 +75,19 @@ public final class QueryContext {
         return queryId;
     }
 
+    public String getOriginalSql() {
+        return originalSql;
+    }
+
     public TaskContext createTaskContext(
         TaskStateMachine taskStateMachine, Session session) {
         TaskContext taskContext = new TaskContext(yieldExecutor, taskStateMachine, session.getClientContext(),
             taskStateMachine.getTaskId());
+
+        if (session.getClientContext() != null) {
+            this.originalSql = session.getClientContext().getOriginSql();
+        }
+
         taskStateMachine.addStateChangeListener(newState -> {
             if (newState.isDone()) {
                 taskContext.end();

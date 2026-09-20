@@ -16,8 +16,6 @@
 
 package com.alibaba.polardbx.optimizer.core.rel.dml.writer;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
 import com.alibaba.polardbx.optimizer.config.table.GlobalIndexMeta;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -25,7 +23,8 @@ import com.alibaba.polardbx.optimizer.core.rel.dml.BroadcastWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.DistinctWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.GsiWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.Writer;
-import com.alibaba.polardbx.rule.TableRule;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.TableModify.Operation;

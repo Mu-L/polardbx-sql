@@ -19,6 +19,7 @@ package com.alibaba.polardbx.executor.vectorized.math;
 import com.alibaba.polardbx.common.datatype.DecimalStructure;
 import com.alibaba.polardbx.common.datatype.DecimalTypeBase;
 import com.alibaba.polardbx.common.datatype.FastDecimalUtils;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.MathUtils;
 import com.alibaba.polardbx.executor.chunk.DecimalBlock;
 import com.alibaba.polardbx.executor.chunk.MutableChunk;
@@ -42,9 +43,11 @@ import static com.alibaba.polardbx.executor.vectorized.metadata.ExpressionPriori
 public class FastSubDecimalColDecimalColVectorizedExpression extends AbstractVectorizedExpression {
 
     static final int MAX_SCALE_DIFF = 8;
+    boolean enableDecimal128;
 
     public FastSubDecimalColDecimalColVectorizedExpression(int outputIndex, VectorizedExpression[] children) {
         super(DataTypes.DecimalType, outputIndex, children);
+        this.enableDecimal128 = DynamicConfig.getInstance().enableDecimal128();
     }
 
     @Override
@@ -170,9 +173,15 @@ public class FastSubDecimalColDecimalColVectorizedExpression extends AbstractVec
             }
         }
         if (overflow) {
-            return doDecimal64SameScaleSubTo128(batchSize, isSelectionInUse, sel, leftInputVectorSlot,
-                rightInputVectorSlot,
-                outputVectorSlot);
+            if (enableDecimal128) {
+                return doDecimal64SameScaleSubTo128(batchSize, isSelectionInUse, sel, leftInputVectorSlot,
+                    rightInputVectorSlot,
+                    outputVectorSlot);
+            } else {
+                outputVectorSlot.deallocateDecimal64();
+                return false;
+            }
+
         }
         return true;
     }

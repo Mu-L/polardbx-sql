@@ -52,6 +52,8 @@ public class GsiUniqueKeyDefaultValueTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateSuccess(mysqlConnection, "DROP TABLE IF EXISTS " + PRIMARY_NAME);
 //      // JdbcUtil.executeUpdateSuccess(tddlConnection, "DROP TABLE IF EXISTS " + PRIMARY_NAME);
         dropTableWithGsi(PRIMARY_NAME, ImmutableList.of(GSI_NAME));
+        setSqlMode("STRICT_TRANS_TABLES", tddlConnection);
+        setSqlMode("STRICT_TRANS_TABLES", mysqlConnection);
     }
 
     /**

@@ -103,6 +103,7 @@ public class RelMetadataQuery {
   private BuiltInMetadata.ExpressionLineage.Handler expressionLineageHandler;
   private BuiltInMetadata.TableReferences.Handler tableReferencesHandler;
   private BuiltInMetadata.ColumnUniqueness.Handler columnUniquenessHandler;
+  private BuiltInMetadata.ColumnGroupSize.Handler columnGroupSizeHandler;
   private BuiltInMetadata.CompositePk.Handler compositePkHandler;
   private BuiltInMetadata.CumulativeCost.Handler cumulativeCostHandler;
   private BuiltInMetadata.DistinctRowCount.Handler distinctRowCountHandler;
@@ -147,6 +148,7 @@ public class RelMetadataQuery {
     this.coveringIndexHandler = prototype.coveringIndexHandler;
     this.expressionLineageHandler = prototype.expressionLineageHandler;
     this.tableReferencesHandler = prototype.tableReferencesHandler;
+    this.columnGroupSizeHandler = prototype.columnGroupSizeHandler;
     this.columnUniquenessHandler = prototype.columnUniquenessHandler;
     this.compositePkHandler = prototype.compositePkHandler;
     this.cumulativeCostHandler = prototype.cumulativeCostHandler;
@@ -216,6 +218,7 @@ public class RelMetadataQuery {
     this.expressionLineageHandler = initialHandler(BuiltInMetadata.ExpressionLineage.Handler.class);
     this.tableReferencesHandler = initialHandler(BuiltInMetadata.TableReferences.Handler.class);
     this.columnUniquenessHandler = initialHandler(BuiltInMetadata.ColumnUniqueness.Handler.class);
+    this.columnGroupSizeHandler = initialHandler(BuiltInMetadata.ColumnGroupSize.Handler.class);
     this.compositePkHandler = initialHandler(BuiltInMetadata.CompositePk.Handler.class);
     this.cumulativeCostHandler = initialHandler(BuiltInMetadata.CumulativeCost.Handler.class);
     this.distinctRowCountHandler = initialHandler(BuiltInMetadata.DistinctRowCount.Handler.class);
@@ -649,6 +652,35 @@ public class RelMetadataQuery {
     }
   }
 
+
+  /**
+   * Returns whether the rows of a given relational expression are distinct,
+   * optionally ignoring NULL values.
+   *
+   * <p>This is derived by applying the
+   * {@link BuiltInMetadata.ColumnUniqueness#areColumnsUnique(org.apache.calcite.util.ImmutableBitSet, boolean)}
+   * statistic over all columns. If
+   * {@link BuiltInMetadata.MaxRowCount#getMaxRowCount()}
+   * is less than or equal to one, we shortcut the process and declare the rows
+   * unique.
+   *
+   * @param rel     the relational expression
+   * @param ignoreNulls if true, ignore null values when determining column
+   *                    uniqueness
+   *
+   * @return whether the rows are unique, or
+   * null if not enough information is available to make that determination
+   */
+  public @Nullable Boolean areRowsUnique(RelNode rel, boolean ignoreNulls) {
+    Double maxRowCount = this.getMaxRowCount(rel);
+    if (maxRowCount != null && maxRowCount <= 1D) {
+      return true;
+    }
+    final ImmutableBitSet columns =
+        ImmutableBitSet.range(rel.getRowType().getFieldCount());
+    return areColumnsUnique(rel, columns, ignoreNulls);
+  }
+
   /**
    * Returns whether the rows of a given relational expression are distinct.
    * This is derived by applying the
@@ -715,6 +747,17 @@ public class RelMetadataQuery {
       } catch (JaninoRelMetadataProvider.NoHandler e) {
         columnUniquenessHandler =
             revise(e.relClass, BuiltInMetadata.ColumnUniqueness.DEF);
+      }
+    }
+  }
+
+  public Integer getColumnsGroupSize(RelNode rel, ImmutableBitSet columns) {
+    for (;;) {
+      try {
+        return columnGroupSizeHandler.getColumnsGroupSize(rel, this, columns);
+      } catch (JaninoRelMetadataProvider.NoHandler e) {
+        columnGroupSizeHandler =
+            revise(e.relClass, BuiltInMetadata.ColumnGroupSize.DEF);
       }
     }
   }

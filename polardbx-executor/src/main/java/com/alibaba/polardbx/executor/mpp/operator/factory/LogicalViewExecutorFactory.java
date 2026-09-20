@@ -37,12 +37,14 @@ import com.alibaba.polardbx.executor.mpp.planner.FragmentRFItem;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFItemKey;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFManager;
 import com.alibaba.polardbx.executor.mpp.planner.PipelineFragment;
+import com.alibaba.polardbx.executor.mpp.planner.RangeScanUtils;
 import com.alibaba.polardbx.executor.operator.AbstractOSSTableScanExec;
 import com.alibaba.polardbx.executor.operator.AdaptiveRangeScanClient;
 import com.alibaba.polardbx.executor.operator.ColumnarScanExec;
 import com.alibaba.polardbx.executor.operator.ColumnarSpecifiedScanExec;
 import com.alibaba.polardbx.executor.operator.DrivingStreamTableScanExec;
 import com.alibaba.polardbx.executor.operator.DrivingStreamTableScanSortExec;
+import com.alibaba.polardbx.executor.operator.DynamicMergeSortTableScanClient;
 import com.alibaba.polardbx.executor.operator.Executor;
 import com.alibaba.polardbx.executor.operator.LookupTableScanExec;
 import com.alibaba.polardbx.executor.operator.LookupTableSortRangeScanExec;
@@ -50,14 +52,16 @@ import com.alibaba.polardbx.executor.operator.LookupTableSortScanExec;
 import com.alibaba.polardbx.executor.operator.MergeSortTableScanClient;
 import com.alibaba.polardbx.executor.operator.MergeSortWithBufferTableScanClient;
 import com.alibaba.polardbx.executor.operator.NormalRangeScanClient;
+import com.alibaba.polardbx.executor.operator.RangeScanClientBase;
 import com.alibaba.polardbx.executor.operator.RangeScanSortExec;
 import com.alibaba.polardbx.executor.operator.ResumeTableScanExec;
 import com.alibaba.polardbx.executor.operator.ResumeTableScanSortExec;
-import com.alibaba.polardbx.executor.operator.SerializeRangeScanClient;
 import com.alibaba.polardbx.executor.operator.TableScanClient;
 import com.alibaba.polardbx.executor.operator.TableScanExec;
 import com.alibaba.polardbx.executor.operator.TableScanSortExec;
 import com.alibaba.polardbx.executor.operator.lookup.LookupConditionBuilder;
+import com.alibaba.polardbx.executor.operator.scan.ColumnarMemoryPermitManager;
+import com.alibaba.polardbx.executor.operator.scan.impl.ColumnarMemoryPermitManagerImpl;
 import com.alibaba.polardbx.executor.operator.spill.SpillerFactory;
 import com.alibaba.polardbx.executor.operator.util.bloomfilter.BloomFilterConsume;
 import com.alibaba.polardbx.executor.operator.util.bloomfilter.BloomFilterExpression;
@@ -68,29 +72,33 @@ import com.alibaba.polardbx.executor.vectorized.build.InExpressionParamRewriter;
 import com.alibaba.polardbx.executor.vectorized.build.InputRefTypeChecker;
 import com.alibaba.polardbx.executor.vectorized.build.Rex2VectorizedExpressionVisitor;
 import com.alibaba.polardbx.executor.vectorized.build.VectorizedExpressionBuilder;
+import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.CursorMeta;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
-import com.alibaba.polardbx.optimizer.core.join.EquiJoinUtils;
+import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.join.LookupEquiJoinKey;
 import com.alibaba.polardbx.optimizer.core.join.LookupPredicate;
-import com.alibaba.polardbx.optimizer.core.join.LookupPredicateBuilder;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
 import com.alibaba.polardbx.optimizer.core.rel.OrcTableScan;
 import com.alibaba.polardbx.optimizer.utils.CalciteUtils;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.statistics.RuntimeStatHelper;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableList;
+import org.apache.calcite.rel.RelCollation;
+import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.Sort;
-import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexNode;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class LogicalViewExecutorFactory extends ExecutorFactory {
@@ -120,17 +128,18 @@ public class LogicalViewExecutorFactory extends ExecutorFactory {
     private List<LookupEquiJoinKey> allJoinKeys; // including null-safe equal (`<=>`)
     private LookupPredicate predicates;
     private List<DataType> dataTypeList;
-    private boolean randomSplits;
 
     private RangeScanMode rangeScanMode;
 
     private Map<Integer, Map<String, List>> rewriterParams;
+    private ExecutorService scanExecutor;
+    private ColumnarMemoryPermitManager columnarMemoryPermitManager;
 
     public LogicalViewExecutorFactory(
         PipelineFragment fragment, LogicalView logicalView,
         int totalPrefetch, int parallelism, long maxRowCount, boolean bSort, Sort sort,
         long fetch, long skip, SpillerFactory spillerFactory, Map<Integer, BloomFilterExpression> bloomFilters,
-        boolean enableRuntimeFilter, boolean randomSplits, RangeScanMode rangeScanMode) {
+        boolean enableRuntimeFilter, RangeScanMode rangeScanMode) {
         this.fragment = fragment;
         this.logicalView = logicalView;
         this.totalPrefetch = totalPrefetch;
@@ -142,15 +151,11 @@ public class LogicalViewExecutorFactory extends ExecutorFactory {
         this.fetch = fetch;
         this.skip = skip;
         this.spillerFactory = spillerFactory;
-        this.randomSplits = randomSplits;
         this.rangeScanMode = rangeScanMode;
 
-        if (logicalView.getJoin() != null) {
-            Join join = logicalView.getJoin();
-            this.allJoinKeys = EquiJoinUtils.buildLookupEquiJoinKeys(join, join.getOuter(), join.getInner(),
-                (RexCall) join.getCondition(), join.getJoinType());
-            List<String> columnOrigins = logicalView.getColumnOrigins();
-            this.predicates = new LookupPredicateBuilder(join, columnOrigins).build(allJoinKeys);
+        if (logicalView.isLookupTable()) {
+            this.allJoinKeys = ImmutableList.copyOf(logicalView.getLookupInfo().getAllJoinKeys());
+            this.predicates = logicalView.getLookupInfo().getPredicates();
         }
 
         if (enableRuntimeFilter) {
@@ -167,6 +172,42 @@ public class LogicalViewExecutorFactory extends ExecutorFactory {
         this.dataTypeList = CalciteUtils.getTypes(logicalView.getRowType());
     }
 
+    /**
+     * Pre-build the row-store SQL template for tables with externalized columns so logical-to-physical
+     * column name rewriting happens before execution. OSSTableScan exposes logical values directly.
+     */
+    public void adjustDataTypesForExternalizedColumns(ExecutionContext context) {
+        if (logicalView instanceof OSSTableScan) {
+            return;
+        }
+
+        String schemaName = logicalView.getSchemaName();
+        if (schemaName == null || schemaName.isEmpty()) {
+            schemaName = context.getSchemaName();
+        }
+        SchemaManager sm = context.getSchemaManager(schemaName);
+        if (sm == null) {
+            return;
+        }
+        TableMeta tableMeta = sm.getTableWithNull(logicalView.getLogicalTableName());
+        if (tableMeta == null) {
+            return;
+        }
+
+        if (!tableMeta.hasExternalizedColumn()) {
+            return;
+        }
+
+        // Ensure buildSqlTemplate has run so FETCH_BLOB descriptors are available.
+        logicalView.getSqlTemplate(context);
+
+        // NOTE: We intentionally do NOT change dataTypeList to LongType here.
+        // The columnar file meta (via buildColumnMeta forColumnar=true) already stores
+        // the physical VARCHAR(64) type, and projectCsvChunk() passes it through
+        // for pipeline compatibility. The pipeline operators (Sort, Project) use
+        // VarcharType from the Calcite plan, so dataTypeList must stay VarcharType.
+    }
+
     @Override
     public Executor createExecutor(ExecutionContext context, int index) {
         if (logicalView instanceof OSSTableScan) {
@@ -179,8 +220,7 @@ public class LogicalViewExecutorFactory extends ExecutorFactory {
     @NotNull
     private Executor buildTableScanExec(ExecutionContext context) {
         TableScanExec scanExec;
-        Join join = logicalView.getJoin();
-        if (join != null) {
+        if (logicalView.isLookupTable()) {
             boolean canShard = false;
             if (context.getParamManager().getBoolean(ConnectionParams.ENABLE_BKA_PRUNING)) {
                 LogicalView lv = this.getLogicalView();
@@ -196,8 +236,17 @@ public class LogicalViewExecutorFactory extends ExecutorFactory {
                 if (rangeScanMode != null) {
                     this.scanClient = getRangeScanClient(context, useTransactionConnection);
                 } else {
+                    boolean dynamicSort = RangeScanUtils.isDynamicMergeSort(logicalView);
                     long limit = context.getParamManager().getLong(ConnectionParams.MERGE_SORT_BUFFER_SIZE);
-                    if (limit > 0 && logicalView.pushedRelNodeIsSort()) {
+                    if (dynamicSort) {
+                        Sort sort = (Sort) logicalView.getOptimizedPushedRelNodeForMetaQuery();
+                        RelCollation collation = sort.getCollation();
+                        List<RelFieldCollation> sortList = collation.getFieldCollations();
+                        List<OrderByOption> orderByOptions = ExecUtils.convertFrom(sortList);
+                        this.scanClient = new DynamicMergeSortTableScanClient(
+                            context, meta, useTransactionConnection, totalPrefetch, orderByOptions, logicalView,
+                            skip + fetch);
+                    } else if (limit > 0 && logicalView.pushedRelNodeIsSort()) {
                         this.scanClient = new MergeSortWithBufferTableScanClient(
                             context, meta, useTransactionConnection, totalPrefetch);
                     } else {
@@ -222,10 +271,6 @@ public class LogicalViewExecutorFactory extends ExecutorFactory {
             }
 
             scanExec = buildTableScanExec(scanClient, context);
-
-            if (randomSplits) {
-                scanExec.setRandomSplits(randomSplits);
-            }
         }
         registerRuntimeStat(scanExec, logicalView, context);
 
@@ -259,10 +304,36 @@ public class LogicalViewExecutorFactory extends ExecutorFactory {
 
         // Use columnar table scan exec.
         if (context.getParamManager().getBoolean(ConnectionParams.ENABLE_COLUMNAR_SCAN_EXEC)) {
-            ColumnarScanExec exec = new ColumnarScanExec(ossTableScan, context, dataTypeList);
+            ColumnarScanExec exec;
+
+            String groupName = logicalView.getDigest();
+
+            if (scanExecutor == null) {
+                scanExecutor = ColumnarScanExec.SCAN_EXECUTOR.acquireGroup(groupName, parallelism);
+            }
+
+            if (columnarMemoryPermitManager == null) {
+                float columnarMemoryPermitRatio =
+                    context.getParamManager().getFloat(ConnectionParams.COLUMNAR_SCAN_MAXIMUM_MEMORY_PERMITS_RATIO);
+
+                long columnarMemoryPermit = (long) (Runtime.getRuntime().maxMemory() * columnarMemoryPermitRatio);
+
+                columnarMemoryPermitManager = new ColumnarMemoryPermitManagerImpl(columnarMemoryPermit);
+            }
+
+            // handle early stop manager.
+            if (fragment.getEarlyStopManager() != null && fragment.getEarlyStopManager().isEnabled()) {
+                exec = new ColumnarScanExec(ossTableScan, context, dataTypeList, fragment.getEarlyStopManager(),
+                    scanExecutor, columnarMemoryPermitManager);
+            } else {
+                exec = new ColumnarScanExec(ossTableScan, context, dataTypeList,
+                    scanExecutor, columnarMemoryPermitManager);
+            }
+
             registerRuntimeStat(exec, logicalView, context);
 
-            if (context.getParamManager().getBoolean(ConnectionParams.ENABLE_IN_VALUE_LIST_REWRITE) && rewriterParams == null) {
+            if (context.getParamManager().getBoolean(ConnectionParams.ENABLE_IN_VALUE_LIST_REWRITE)
+                && rewriterParams == null) {
                 rewriterParams = InExpressionParamRewriter.rewriterParams(ossTableScan, context);
             }
             exec.setRewriterParams(rewriterParams);
@@ -278,10 +349,14 @@ public class LogicalViewExecutorFactory extends ExecutorFactory {
                     String probeColumnName = item.getProbeColumnName();
 
                     // inspect the filter channel according to registered RF columns.
-                    List<String> fieldNames = logicalView.getRowType().getFieldNames();
-                    final int outProjectIndex = fieldNames.indexOf(probeColumnName);
+                    List<String> fieldNames = ossTableScan.getOutputColumnOriginalNames();
+                    int indexOfRowType = fieldNames.indexOf(probeColumnName);
+                    Integer outProjectIndex = null;
+                    if (indexOfRowType >= 0 && indexOfRowType < ossTableScan.getOrcNode().getOutProjects().size()) {
+                        outProjectIndex = ossTableScan.getOrcNode().getOutProjects().get(indexOfRowType);
+                    }
 
-                    if (outProjectIndex == -1) {
+                    if (outProjectIndex == null) {
                         if (MPP_LOGGER.isDebugEnabled()) {
                             MPP_LOGGER.debug(
                                 "Cannot find the filter channel according to registered RF columns "
@@ -297,6 +372,7 @@ public class LogicalViewExecutorFactory extends ExecutorFactory {
 
                         // register column scan exec in all threads into fragment RF manager.
                         item.registerSource(exec);
+                        itemKey.setValid(true);
                     }
                 }
 
@@ -417,8 +493,17 @@ public class LogicalViewExecutorFactory extends ExecutorFactory {
                     logicalView, context, scanClient.incrementSourceExec(), maxRowCount, skip, fetch,
                     spillerFactory, dataTypeList);
             } else {
-                this.scanClient = new MergeSortTableScanClient(
-                    context, meta, useTransaction, totalPrefetch);
+                boolean dynamicSort = RangeScanUtils.isDynamicMergeSort(logicalView);
+                if (dynamicSort) {
+                    Sort sort = (Sort) logicalView.getOptimizedPushedRelNodeForMetaQuery();
+                    RelCollation collation = sort.getCollation();
+                    List<RelFieldCollation> sortList = collation.getFieldCollations();
+                    List<OrderByOption> orderByOptions = ExecUtils.convertFrom(sortList);
+                    this.scanClient = new DynamicMergeSortTableScanClient(
+                        context, meta, useTransaction, totalPrefetch, orderByOptions, logicalView, skip + fetch);
+                } else {
+                    this.scanClient = new MergeSortTableScanClient(context, meta, useTransaction, totalPrefetch);
+                }
                 scanExec = new LookupTableSortScanExec(
                     logicalView, context, scanClient.incrementSourceExec(), maxRowCount, skip, fetch, spillerFactory,
                     dataTypeList);
@@ -478,14 +563,15 @@ public class LogicalViewExecutorFactory extends ExecutorFactory {
                     "prefetch under serialize mode should be 1, but was %s, and trace id is %s",
                     totalPrefetch, context.getTraceId()));
             }
-            this.scanClient = new SerializeRangeScanClient(context, meta, useTransactionConnection);
+            this.scanClient = new RangeScanClientBase(
+                context, meta, useTransactionConnection, 1, rangeScanMode, logicalView);
         } else if (rangeScanMode == RangeScanMode.NORMAL) {
             this.scanClient =
                 new NormalRangeScanClient(context, meta, useTransactionConnection, totalPrefetch,
-                    RangeScanMode.NORMAL);
+                    RangeScanMode.NORMAL, logicalView);
         } else {
             this.scanClient =
-                new AdaptiveRangeScanClient(context, meta, useTransactionConnection, totalPrefetch);
+                new AdaptiveRangeScanClient(context, meta, useTransactionConnection, totalPrefetch, logicalView);
         }
         return scanClient;
     }

@@ -1,0 +1,609 @@
+package com.alibaba.polardbx.qatest.cdc.random;
+
+import com.alibaba.polardbx.qatest.CommonCaseRunner;
+import com.alibaba.polardbx.qatest.util.ConnectionManager;
+import com.alibaba.polardbx.qatest.util.JdbcUtil;
+import com.google.common.collect.Lists;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.tuple.Pair;
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Random;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import static com.alibaba.polardbx.qatest.cdc.random.SqlConstants.T_RANDOM_CREATE_SQL;
+import static com.alibaba.polardbx.qatest.cdc.random.SqlConstants.T_RANDOM_INSERT_SQL;
+import static com.alibaba.polardbx.qatest.cdc.random.SqlConstants.T_RANDOM_TABLE_PREFIX;
+import static com.alibaba.polardbx.qatest.twoPhaseDdl.TwoPhaseDdlTestUtils.DataManipulateUtil.getPolardbxConnection;
+
+/**
+ * created by ziyang.lb
+ **/
+@Slf4j
+@RunWith(CommonCaseRunner.class)
+public class DdlDmlRandomTest {
+    private static final String DB_NAME = "cdc_reformat_test_mode_two";
+    private static final AtomicBoolean INITIALIZED = new AtomicBoolean(false);
+
+    // ---------------------------------------- dml types ------------------------------------------
+    private final ArrayList<DmlType> insertTypes = Lists.newArrayList(
+        DmlType.INSERT, DmlType.INSERT, DmlType.INSERT, DmlType.INSERT, DmlType.INSERT,
+        DmlType.INSERT, DmlType.INSERT, DmlType.INSERT, DmlType.INSERT, DmlType.INSERT);
+
+    private final ArrayList<DmlType> updateTypes = Lists.newArrayList(
+        DmlType.UPDATE, DmlType.UPDATE, DmlType.UPDATE, DmlType.UPDATE, DmlType.UPDATE,
+        DmlType.UPDATE, DmlType.UPDATE, DmlType.UPDATE, DmlType.UPDATE, DmlType.UPDATE);
+
+    private final ArrayList<DmlType> deleteTypes = Lists.newArrayList(
+        DmlType.DELETE, DmlType.DELETE, DmlType.DELETE, DmlType.DELETE, DmlType.DELETE);
+
+    private final ArrayList<DmlType> insertBatchTypes = Lists.newArrayList(
+        DmlType.INSERT_BATCH, DmlType.INSERT_BATCH, DmlType.INSERT_BATCH);
+
+    private final ArrayList<DmlType> updateBatchTypes = Lists.newArrayList(
+        DmlType.UPDATE_BATCH, DmlType.UPDATE_BATCH, DmlType.UPDATE_BATCH);
+
+    private final ArrayList<DmlType> deleteBatchTypes = Lists.newArrayList(
+        DmlType.DELETE_BATCH, DmlType.DELETE_BATCH, DmlType.DELETE_BATCH);
+
+    private final ArrayList<DmlType> dmlTypes = Lists.newArrayList();
+
+    // ---------------------------------------- ddl types ------------------------------------------
+    private final ArrayList<DdlType> addColumnTypes = Lists.newArrayList(
+        DdlType.AddColumn, DdlType.AddColumn, DdlType.AddColumn, DdlType.AddColumn);
+
+    private final ArrayList<DdlType> dropColumnTypes = Lists.newArrayList(
+        DdlType.DropColumn, DdlType.DropColumn);
+
+    private final ArrayList<DdlType> modifyColumnTypes = Lists.newArrayList(
+        DdlType.ModifyColumn, DdlType.ModifyColumn, DdlType.ModifyColumn,
+        DdlType.ModifyColumn, DdlType.ModifyColumn, DdlType.ModifyColumn);
+
+    private final ArrayList<DdlType> alterTableCharsetTypes = Lists.newArrayList(
+        DdlType.AlterTableCharset, DdlType.AlterTableCharset);
+
+    private final ArrayList<DdlType> createIndexTypes = Lists.newArrayList(
+        DdlType.CreateIndex, DdlType.CreateIndex
+    );
+    private final ArrayList<DdlType> dropIndexTypes = Lists.newArrayList(
+        DdlType.DropIndex, DdlType.DropIndex
+    );
+    private final ArrayList<DdlType> ddlTypes = Lists.newArrayList();
+
+    // ----------------------------------------- parameters -----------------------------------------
+    private final int stage;
+    private final String tableName;
+    private final AtomicBoolean isDdlExecuting;
+    private Thread dmlThread;
+    private Thread ddlThread;
+
+    private final ColumnSeeds columnSeeds;
+    private final DmlSqlBuilder dmlSqlBuilder;
+    private final DdlSqlBuilder ddlSqlBuilder;
+
+    private int testTimeMinutes;
+    private int dmlBatchLimitNum;
+    private long dmlIntervalMs;
+    private long ddlIntervalMs;
+    private boolean useRandomColumn4Dml;
+
+    public DdlDmlRandomTest(String stageId) {
+        this.stage = Integer.parseInt(stageId);
+        this.tableName = T_RANDOM_TABLE_PREFIX + stageId;
+        this.isDdlExecuting = new AtomicBoolean(false);
+
+        this.columnSeeds = new ColumnSeeds(DB_NAME, tableName);
+        this.dmlSqlBuilder = new DmlSqlBuilder(DB_NAME, tableName, columnSeeds, stage == 1);
+        this.ddlSqlBuilder = new DdlSqlBuilder(tableName, columnSeeds,
+            stage == 2,
+            stage == 2,
+            stage == 2,
+            stage == 2,
+            stage == 1,
+            stage == 1);
+    }
+
+    @Before
+    public void bootStrap() throws SQLException {
+        if (INITIALIZED.compareAndSet(false, true)) {
+            prepareTestDatabase(DB_NAME);
+        }
+
+        prepareTables();
+        buildParameters();
+        buildDmlTypes();
+        buildDdlTypes();
+    }
+
+    @Parameterized.Parameters
+    public static List<String[]> getTestParameters() {
+        return Arrays.asList(new String[][] {{"1"}, {"2"}});
+    }
+
+    @Test
+    public void testRandomDmlWithDdl() throws InterruptedException {
+        execute();
+        Metrics.getInstance().print();
+        Metrics.getInstance().check();
+    }
+
+    public void prepareTestDatabase(String database) throws SQLException {
+        try (Connection polardbxConnection = ConnectionManager.getInstance().getDruidPolardbxConnection()) {
+            JdbcUtil.executeSuccess(polardbxConnection, "DROP DATABASE IF EXISTS `" + database + "`");
+            log.info("/*MASTER*/DROP DATABASE IF EXISTS `" + database + "`");
+
+            JdbcUtil.executeSuccess(polardbxConnection, "CREATE DATABASE IF NOT EXISTS `" + database + "`");
+            log.info("/*MASTER*/CREATE DATABASE IF NOT EXISTS `" + database + "`");
+        }
+    }
+
+    public void setSqlMode(String mode, Connection conn) {
+        String sql = "SET session sql_mode = '" + mode + "'";
+        JdbcUtil.updateDataTddl(conn, sql, null);
+    }
+
+    private void execute() throws InterruptedException {
+        AtomicBoolean dmlRunningFlag = new AtomicBoolean(true);
+        AtomicBoolean ddlRunningFlag = new AtomicBoolean(true);
+
+        dmlThread = buildDmlThread(dmlRunningFlag);
+        ddlThread = buildDdlThread(ddlRunningFlag);
+
+        dmlThread.start();
+        ddlThread.start();
+
+        new Thread(() -> {
+            try {
+                sleep(testTimeMinutes * 60 * 1000);
+            } catch (Throwable t) {
+                log.error("background thread meet an error!", t);
+            } finally {
+                dmlThread.interrupt();
+                ddlThread.interrupt();
+                dmlRunningFlag.compareAndSet(true, false);
+                ddlRunningFlag.compareAndSet(true, false);
+            }
+        }).start();
+
+        dmlThread.join();
+        ddlThread.join();
+        log.info("random dml&ddl is successfully executed for stage " + stage);
+    }
+
+    private void prepareTables() throws SQLException {
+        JdbcUtil.executeUpdate(getPolardbxConnection(DB_NAME), String.format(T_RANDOM_CREATE_SQL, tableName));
+        JdbcUtil.executeUpdate(getPolardbxConnection(DB_NAME), String.format(T_RANDOM_INSERT_SQL, tableName));
+        columnSeeds.buildColumnSeeds();
+    }
+
+    private void buildParameters() {
+        testTimeMinutes = Integer.parseInt(System.getProperty("testTimeMinutes", "30"));
+        dmlIntervalMs = Long.parseLong(System.getProperty("dmlIntervalMs", "1"));
+        ddlIntervalMs = Long.parseLong(System.getProperty("ddlIntervalMs", "1"));
+
+        if (stage == 1) {
+            useRandomColumn4Dml = false;
+            //数量太大可能导致比较高的延迟
+            dmlBatchLimitNum = Integer.parseInt(System.getProperty("dmlBatchLimitNum1", "10"));
+        } else {
+            useRandomColumn4Dml = true;
+            dmlBatchLimitNum = Integer.parseInt(System.getProperty("dmlBatchLimitNum2", "20"));
+        }
+    }
+
+    private void buildDmlTypes() {
+        String dmlTypeConfig;
+        if (stage == 1) {
+            dmlTypeConfig = "INSERT,INSERT_BATCH,UPDATE,UPDATE_BATCH";
+        } else {
+            dmlTypeConfig = "INSERT,INSERT_BATCH,UPDATE,UPDATE_BATCH,DELETE,DELETE_BATCH";
+        }
+
+        String[] tokens = StringUtils.split(dmlTypeConfig, ",");
+        for (String token : tokens) {
+            if (DmlType.INSERT.name().equals(token)) {
+                dmlTypes.addAll(insertTypes);
+            } else if (DmlType.INSERT_BATCH.name().equals(token)) {
+                dmlTypes.addAll(insertBatchTypes);
+            } else if (DmlType.UPDATE.name().equals(token)) {
+                dmlTypes.addAll(updateTypes);
+            } else if (DmlType.UPDATE_BATCH.name().equals(token)) {
+                dmlTypes.addAll(updateBatchTypes);
+            } else if (DmlType.DELETE.name().equals(token)) {
+                dmlTypes.addAll(deleteTypes);
+            } else if (DmlType.DELETE_BATCH.name().equals(token)) {
+                dmlTypes.addAll(deleteBatchTypes);
+            }
+        }
+    }
+
+    private void buildDdlTypes() {
+        String ddlTypeConfig = System.getProperty("ddlTypes",
+            "AddColumn,DropColumn,ModifyColumn,AlterTableCharset,CreateIndex,DropIndex");
+        String[] tokens = StringUtils.split(ddlTypeConfig, ",");
+        for (String token : tokens) {
+            if (DdlType.AddColumn.name().equals(token)) {
+                ddlTypes.addAll(addColumnTypes);
+            } else if (DdlType.DropColumn.name().equals(token)) {
+                ddlTypes.addAll(dropColumnTypes);
+            } else if (DdlType.ModifyColumn.name().equals(token)) {
+                ddlTypes.addAll(modifyColumnTypes);
+            } else if (DdlType.AlterTableCharset.name().equals(token)) {
+                ddlTypes.addAll(alterTableCharsetTypes);
+            } else if (DdlType.CreateIndex.name().equals(token)) {
+                ddlTypes.addAll(createIndexTypes);
+            } else if (DdlType.DropIndex.name().equals(token)) {
+                ddlTypes.addAll(dropIndexTypes);
+            }
+        }
+    }
+
+    private Thread buildDmlThread(AtomicBoolean running) {
+        return new Thread(() -> {
+
+            while (running.get()) {
+                try {
+                    if (Thread.currentThread().isInterrupted()) {
+                        log.error("dml thread is interrupted!");
+                        break;
+                    }
+
+                    int index = new Random().nextInt(dmlTypes.size());
+                    DmlType dmlType = dmlTypes.get(index);
+
+                    switch (dmlType) {
+                    case INSERT:
+                        insertSingle();
+                        break;
+                    case UPDATE:
+                        updateSingle();
+                        break;
+                    case DELETE:
+                        deleteSingle();
+                        break;
+                    case INSERT_BATCH:
+                        insertBatch();
+                        break;
+                    case UPDATE_BATCH:
+                        updateBatch();
+                        break;
+                    case DELETE_BATCH:
+                        deleteBatch();
+                        break;
+                    default:
+                        throw new RuntimeException("invalid dml type " + dmlType);
+                    }
+
+                    if (!isDdlExecuting.get()) {
+                        sleep(dmlIntervalMs);
+                    }
+                } catch (Throwable t) {
+                    log.error("execute dml failed!, go to next execute.", t);
+                }
+            }
+            log.info("dml thread finished!");
+        });
+    }
+
+    private Thread buildDdlThread(AtomicBoolean running) {
+        return new Thread(() -> {
+            while (running.get()) {
+                if (Thread.currentThread().isInterrupted()) {
+                    return;
+                }
+
+                try {
+                    isDdlExecuting.set(true);
+                    int index = new Random().nextInt(ddlTypes.size());
+                    DdlType ddlType = ddlTypes.get(index);
+                    switch (ddlType) {
+                    case AddColumn:
+                        addColumn();
+                        break;
+                    case DropColumn:
+                        dropColumn();
+                        break;
+                    case ModifyColumn:
+                        modifyColumn();
+                        break;
+                    case AlterTableCharset:
+                        alterTableCharset();
+                        break;
+                    case CreateIndex:
+                        createIndex();
+                        break;
+                    case DropIndex:
+                        dropIndex();
+                        break;
+                    default:
+                        throw new RuntimeException("invalid ddl type " + ddlType);
+                    }
+                    sleep(ddlIntervalMs);
+                } catch (Throwable t) {
+                    log.error("ddl execute error! go to next execute!", t);
+                } finally {
+                    isDdlExecuting.set(false);
+                }
+            }
+            log.info("ddl thread finished!");
+        });
+    }
+
+    private long lastSqlModeUpdateTime;
+
+    private static final String[] SQL_MODE_ARRAY = {
+        "",
+        "REAL_AS_FLOAT"
+    };
+
+    private static long currentIdx = 0;
+
+    private String randomSqlMode() {
+        long now = System.currentTimeMillis();
+        long diff = now - lastSqlModeUpdateTime;
+        if (diff >= TimeUnit.SECONDS.toMillis(30)) {
+            lastSqlModeUpdateTime = now;
+            currentIdx++;
+        }
+        return SQL_MODE_ARRAY[(int) (currentIdx % 2)];
+    }
+
+    private void addColumn() {
+        String columnName = RandomUtil.randomIdentifier();
+        Pair<String, String> pair = ddlSqlBuilder.buildAddColumnSql(columnName);
+
+        try (Connection connection = getPolardbxConnection(DB_NAME)) {
+            setSqlMode(randomSqlMode(), connection);
+            Statement stmt = connection.createStatement();
+            stmt.execute(pair.getValue());
+            columnSeeds.COLUMN_NAME_COLUMN_TYPE_MAPPING.put(columnName, pair.getKey());
+            Metrics.getInstance().getAddColumnSuccess().incrementAndGet();
+        } catch (Throwable t) {
+            Metrics.getInstance().getAddColumnFail().incrementAndGet();
+            log.error("add column error!! \r\nsql : " + pair.getValue(), t);
+        }
+    }
+
+    private void dropColumn() {
+        String columnName = ddlSqlBuilder.findSeedColumn4Drop();
+        String sql = ddlSqlBuilder.buildDropColumnSql(columnName);
+        columnSeeds.COLUMN_NAME_COLUMN_TYPE_MAPPING.remove(columnName);
+
+        try (Connection connection = getPolardbxConnection(DB_NAME)) {
+            setSqlMode("", connection);
+            Statement stmt = connection.createStatement();
+            stmt.execute(sql);
+            Metrics.getInstance().getDropColumnSuccess().incrementAndGet();
+        } catch (Throwable t) {
+            Metrics.getInstance().getDropColumnFail().incrementAndGet();
+            log.error("drop column error!! \r\n sql : " + sql, t);
+        }
+    }
+
+    private void modifyColumn() {
+        Pair<Pair<String, String>, String> pair = ddlSqlBuilder.buildModifyColumnSql();
+        String columnName = pair.getKey().getKey();
+        String columnType = pair.getKey().getValue();
+        String sql = pair.getValue();
+
+        try (Connection connection = getPolardbxConnection(DB_NAME)) {
+            setSqlMode(randomSqlMode(), connection);
+            Statement stmt = connection.createStatement();
+            stmt.execute(sql);
+            columnSeeds.COLUMN_NAME_COLUMN_TYPE_MAPPING.put(columnName, columnType);
+            Metrics.getInstance().getModifyColumnSuccess().incrementAndGet();
+        } catch (Throwable t) {
+            Metrics.getInstance().getModifyColumnFail().incrementAndGet();
+            log.error("modify column error!! \r\nsql : " + sql, t);
+        }
+    }
+
+    private void alterTableCharset() {
+        String alterTableCharsetSql = ddlSqlBuilder.buildAlterTableCharsetSql();
+
+        try (Connection connection = getPolardbxConnection(DB_NAME)) {
+            setSqlMode("", connection);
+            Statement stmt = connection.createStatement();
+            stmt.execute(alterTableCharsetSql);
+            Metrics.getInstance().getAlterCharsetSuccess().incrementAndGet();
+        } catch (Throwable t) {
+            Metrics.getInstance().getAlterCharsetFail().incrementAndGet();
+            log.error("alter table charset error!! \r\nsql : " + alterTableCharsetSql, t);
+        }
+    }
+
+    private void createIndex() {
+        Pair<String, String> pair = ddlSqlBuilder.buildCreateIndexSql();
+
+        try (Connection connection = getPolardbxConnection(DB_NAME)) {
+            setSqlMode("", connection);
+            Statement stmt = connection.createStatement();
+            stmt.execute(pair.getValue());
+            columnSeeds.INDEX_SET.add(pair.getKey());
+            Metrics.getInstance().getAddIndexSuccess().incrementAndGet();
+        } catch (Throwable t) {
+            Metrics.getInstance().getAddIndexFail().incrementAndGet();
+            log.error("create index error!! \r\nsql : " + pair.getValue(), t);
+        }
+    }
+
+    private void dropIndex() {
+        Pair<String, String> pair = ddlSqlBuilder.buildDropIndexSql();
+
+        try (Connection connection = getPolardbxConnection(DB_NAME)) {
+            setSqlMode("", connection);
+            Statement stmt = connection.createStatement();
+            stmt.execute(pair.getValue());
+            columnSeeds.INDEX_SET.remove(pair.getKey());
+            Metrics.getInstance().getDropIndexSuccess().incrementAndGet();
+        } catch (Throwable t) {
+            Metrics.getInstance().getDropIndexFail().incrementAndGet();
+            log.error("drop index error!! \r\nsql : " + pair.getValue(), t);
+        }
+    }
+
+    private void insertSingle() {
+        Pair<String, List<Pair<String, Object>>> insertSqlPair = dmlSqlBuilder.buildInsertSql(useRandomColumn4Dml);
+
+        try (Connection connection = getPolardbxConnection(DB_NAME)) {
+            setSqlMode("", connection);
+            PreparedStatement statement = connection.prepareStatement(insertSqlPair.getKey());
+            List<Pair<String, Object>> parameters = insertSqlPair.getValue();
+
+            for (int i = 0; i < parameters.size(); i++) {
+                statement.setObject(i + 1, parameters.get(i).getValue());
+            }
+            statement.execute();
+            Metrics.getInstance().getInsertSingleSuccess().incrementAndGet();
+        } catch (Throwable t) {
+            Metrics.getInstance().getInsertSingleFail().incrementAndGet();
+            log.error("insert single error!! \r\n sql : " + insertSqlPair.getKey() + " \r\nparameter : ignore"
+                /*+ JSONObject.toJSONString(insertSqlPair.getValue(), true)*/, t);
+        }
+    }
+
+    private void insertBatch() {
+        if (stage == 2) {
+            insertBatch1();
+        } else {
+            insertBatch2();
+        }
+    }
+
+    private void insertBatch1() {
+        try (Connection connection = getPolardbxConnection(DB_NAME)) {
+            setSqlMode("", connection);
+            String sql = dmlSqlBuilder.buildInsertBatchSql(useRandomColumn4Dml, dmlBatchLimitNum);
+            Statement stmt = connection.createStatement();
+            stmt.execute(sql);
+            Metrics.getInstance().getInsertBatchSuccess().incrementAndGet();
+        } catch (Throwable t) {
+            Metrics.getInstance().getInsertBatchFail().incrementAndGet();
+            log.error("insert batch error!!", t);
+        }
+    }
+
+    private void insertBatch2() {
+        Pair<String, List<Pair<String, Object>>> insertSqlPair =
+            dmlSqlBuilder.buildInsertBatchSql2(false, dmlBatchLimitNum);
+
+        try (Connection connection = getPolardbxConnection(DB_NAME)) {
+            setSqlMode("", connection);
+            PreparedStatement statement = connection.prepareStatement(insertSqlPair.getKey());
+            List<Pair<String, Object>> parameters = insertSqlPair.getValue();
+
+            for (int i = 0; i < parameters.size(); i++) {
+                statement.setObject(i + 1, parameters.get(i).getValue());
+            }
+            statement.execute();
+            Metrics.getInstance().getInsertBatchSuccess().incrementAndGet();
+        } catch (Throwable t) {
+            Metrics.getInstance().getInsertBatchFail().incrementAndGet();
+            log.error("insert batch error!! \r\n sql : " + insertSqlPair.getKey() + " \r\nparameter : ignore"
+                /*+ JSONObject.toJSONString(insertSqlPair.getValue(), true)*/, t);
+        }
+    }
+
+    private void updateSingle() {
+        Pair<String, List<Pair<String, Object>>> updateSqlPair = dmlSqlBuilder.buildUpdateSql(useRandomColumn4Dml);
+        try {
+            update(updateSqlPair);
+            Metrics.getInstance().getUpdateSingleSuccess().incrementAndGet();
+        } catch (Throwable t) {
+            Metrics.getInstance().getUpdateSingleFail().incrementAndGet();
+            log.error("update single error!! \r\n sql : " + updateSqlPair.getKey() + "  \r\n parameter : ignore"
+                /*+ JSONObject.toJSONString(updateSqlPair.getValue(), true)*/, t);
+        }
+    }
+
+    private void updateBatch() {
+        if (stage == 2) {
+            updateBatch1();
+        } else {
+            updateBatch2();
+        }
+    }
+
+    private void updateBatch1() {
+        try {
+            Pair<String, List<Pair<String, Object>>> updateSqlPair =
+                dmlSqlBuilder.buildUpdateBatchSql(useRandomColumn4Dml, dmlBatchLimitNum);
+            update(updateSqlPair);
+            Metrics.getInstance().getUpdateBatchSuccess().incrementAndGet();
+        } catch (Throwable t) {
+            Metrics.getInstance().getUpdateBatchFail().incrementAndGet();
+            log.error("update batch error!!", t);
+        }
+    }
+
+    private void updateBatch2() {
+        try {
+            Pair<String, List<Pair<String, Object>>> updateSqlPair =
+                dmlSqlBuilder.buildUpdateBatchSql2(useRandomColumn4Dml, dmlBatchLimitNum);
+            update(updateSqlPair);
+            Metrics.getInstance().getUpdateBatchSuccess().incrementAndGet();
+        } catch (Throwable t) {
+            Metrics.getInstance().getUpdateBatchFail().incrementAndGet();
+            log.error("update batch error!!", t);
+        }
+    }
+
+    private void deleteSingle() {
+        try (Connection connection = getPolardbxConnection(DB_NAME)) {
+            setSqlMode("", connection);
+            String sql = dmlSqlBuilder.buildDeleteSql();
+            Statement stmt = connection.createStatement();
+            stmt.execute(sql);
+            Metrics.getInstance().getDeleteSingleSuccess().incrementAndGet();
+        } catch (Throwable t) {
+            Metrics.getInstance().getDeleteSingleFail().incrementAndGet();
+            log.error("delete single error!!", t);
+        }
+    }
+
+    private void deleteBatch() {
+        try (Connection connection = getPolardbxConnection(DB_NAME)) {
+            setSqlMode("", connection);
+            String sql = dmlSqlBuilder.buildDeleteBatchSql(dmlBatchLimitNum);
+            Statement stmt = connection.createStatement();
+            stmt.execute(sql);
+            Metrics.getInstance().getDeleteBatchSuccess().incrementAndGet();
+        } catch (Throwable t) {
+            Metrics.getInstance().getDeleteBatchFail().incrementAndGet();
+            log.error("delete batch error!!", t);
+        }
+    }
+
+    private void update(Pair<String, List<Pair<String, Object>>> updateSqlPair) throws SQLException {
+        try (Connection connection = getPolardbxConnection(DB_NAME)) {
+            setSqlMode("", connection);
+            PreparedStatement statement = connection.prepareStatement(updateSqlPair.getKey());
+            List<Pair<String, Object>> parameters = updateSqlPair.getValue();
+
+            for (int i = 0; i < parameters.size(); i++) {
+                statement.setObject(i + 1, parameters.get(i).getValue());
+            }
+            statement.execute();
+        }
+    }
+
+    private void sleep(long mills) {
+        try {
+            Thread.sleep(mills);
+        } catch (InterruptedException e) {
+
+        }
+    }
+}

@@ -16,11 +16,16 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.operator.scan.CacheReader;
 import com.alibaba.polardbx.executor.operator.scan.SeekableIterator;
 import com.google.common.base.Preconditions;
+import io.airlift.slice.SizeOf;
+import org.openjdk.jol.info.ClassLayout;
+import org.openjdk.jol.util.VMSupport;
 
 import java.util.Arrays;
 import java.util.Map;
@@ -30,6 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Cached block reader in scope of stripe.
  */
 public class CacheReaderImpl implements CacheReader<Block> {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(CacheReaderImpl.class).instanceSize();
     // The stripe id.
     private final int stripeId;
 
@@ -43,9 +49,18 @@ public class CacheReaderImpl implements CacheReader<Block> {
     private AtomicBoolean isInitialized;
 
     // For initialization.
+    @FieldMemoryCounter(value = false)
     private Map<Integer, SeekableIterator<Block>> allValidCaches;
+    @FieldMemoryCounter(value = false)
     private Map<Integer, SeekableIterator<Block>> inFlightCaches;
+    @FieldMemoryCounter(value = false)
     private boolean[] cachedRowGroupBitmap;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(isInitialized);
+    }
 
     public CacheReaderImpl(int stripeId, int columnId, int rowGroupCount) {
         this.stripeId = stripeId;

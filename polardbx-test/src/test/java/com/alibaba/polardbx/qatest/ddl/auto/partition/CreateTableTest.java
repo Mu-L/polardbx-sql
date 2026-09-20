@@ -484,7 +484,7 @@ public class CreateTableTest extends PartitionTestBase {
                 + "\t`c2` int(11) DEFAULT NULL,\n"
                 + "\tPRIMARY KEY (`id`, `gmt_modified`),\n"
                 + "\tINDEX `idx` (`seller_id`)\n"
-                + ") ENGINE = InnoDB AUTO_INCREMENT = 100014 DEFAULT CHARSET = utf8mb4\n"
+                + ") ENGINE = InnoDB AUTO_INCREMENT = 100014 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci\n"
                 + "LOCAL PARTITION BY RANGE (gmt_modified)\n"
                 + "INTERVAL 1 MONTH\n"
                 + "EXPIRE AFTER 12\n"
@@ -697,5 +697,21 @@ public class CreateTableTest extends PartitionTestBase {
         sql = String.format("alter tablegroup %s drop partition p1", tgName);
         JdbcUtil.executeUpdateFailed(tddlConnection, sql,
             String.format("it's not support to drop partition/subpartition when table[%s] with GSI", tableName));
+    }
+
+    @Test
+    public void testBug69572894() {
+        String sql =
+            "CREATE TABLE `data_keys`(\n"
+                + "\t`a` varchar(100) CHARSET `utf8mb4` COLLATE `utf8mb4_unicode_ci` NOT NULL,\n"
+                + "\t`b` tinyint(1) NOT NULL,\n"
+                + "\t`c` varchar(30) CHARSET `utf8mb4` COLLATE `utf8mb4_unicode_ci` NOT NULL,\n"
+                + "\t`d` varchar(50) CHARSET `utf8mb4` COLLATE `utf8mb4_unicode_ci` NOT NULL,\n"
+                + "\t`e` blob NOT NULL,\n"
+                + "\t`f` datetime NOT NULL,\n"
+                + "\t`g` datetime NOT NULL,\n"
+                + "\tPRIMARY KEY (`a`)\n"
+                + ") engine = InnoDB DEFAULT COLLATE `utf8mb4_unicode_ci`";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
     }
 }

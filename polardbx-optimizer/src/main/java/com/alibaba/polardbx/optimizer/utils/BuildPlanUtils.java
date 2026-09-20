@@ -29,6 +29,7 @@ import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.gms.locality.LocalityDesc;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
@@ -111,8 +112,10 @@ public class BuildPlanUtils {
         PartitionInfo partitionInfo =
             executionContext.getSchemaManager(schemaName).getTable(logicalTableName).getPartitionInfo();
         final String physicalTableName;
+        LocalityDesc localityDesc = null;
         if (partitionInfo != null) {
             physicalTableName = partitionInfo.getTopology().values().stream().findFirst().get().iterator().next();
+            localityDesc = partitionInfo.getLocalityDesc();
         } else {
             OptimizerContext optimizerContext = OptimizerContext.getContext(schemaName);
             TddlRuleManager or = optimizerContext.getRuleManager();
@@ -120,7 +123,7 @@ public class BuildPlanUtils {
             physicalTableName = tr.getTbNamePattern();
         }
 
-        List<String> groupNames = HintUtil.allGroup(schemaName);
+        List<String> groupNames = HintUtil.allGroup(schemaName, localityDesc);
         // May use jingwei to sync broadcast table
         Map<String, Object> extraCmd = executionContext.getExtraCmds();
         boolean enableBroadcast = extraCmd == null
@@ -164,7 +167,7 @@ public class BuildPlanUtils {
         ExecutionContext ec,
         boolean isGetShardResultForReplicationTable) {
         // targetDb: { targetTb: [{ rowIndex, [pk1, pk2] }] }
-        final Map<String, Map<String, List<org.apache.calcite.util.Pair<Integer, List<Object>>>>> result =
+        final Map<String, Map<String, List<Pair<Integer, List<Object>>>>> result =
             new HashMap<>();
 
         // Foreach row to be updated or deleted
@@ -189,7 +192,7 @@ public class BuildPlanUtils {
             List<Object> primaryKeyValues = Mappings.permute(row, pkMapping);
             result.computeIfAbsent(dbAndTable.getKey(), b -> new HashMap<>())
                 .computeIfAbsent(dbAndTable.getValue(), b -> new ArrayList<>())
-                .add(org.apache.calcite.util.Pair.of(i, primaryKeyValues));
+                .add(Pair.of(i, primaryKeyValues));
         }
 
         return result;
@@ -361,14 +364,10 @@ public class BuildPlanUtils {
             shardingKeyValues,
             shardingKeyNames);
         Partitioner partitioner = OptimizerContext.getContext(schemaName).getPartitioner();
-        Map<String, Comparative> fullComparative = partitioner.getInsertFullComparative(comparatives);
 
         // construct calcParams
         Map<String, Object> calcParams = Maps.newHashMap();
         calcParams.put(CalcParamsAttribute.SHARD_FOR_EXTRA_DB, false);
-        Map<String, Map<String, Comparative>> stringMapMap = Maps.newHashMap();
-        stringMapMap.put(logicalTableName, fullComparative);
-        calcParams.put(CalcParamsAttribute.COM_DB_TB, stringMapMap);
         calcParams.put(CalcParamsAttribute.CONN_TIME_ZONE, executionContext.getTimeZone());
         calcParams.put(CalcParamsAttribute.EXECUTION_CONTEXT, executionContext);
         List<TargetDB> targetDBS =
@@ -1278,13 +1277,14 @@ public class BuildPlanUtils {
         Parameters parameters,
         List<Integer> shardingKeyIndexes,
         List<ColumnMeta> shardingKeyMetas,
+        PartitionInfo newPartitionInfo,
         ExecutionContext ec) {
 
         boolean isPartTable = DbInfoManager.getInstance().isNewPartitionDb(schemaName);
         if (isPartTable) {
 
             TableMeta tableMeta = ec.getSchemaManager(schemaName).getTable(logicalTableName);
-            PartitionInfo partitionInfo = tableMeta.getNewPartitionInfo();
+            PartitionInfo partitionInfo = newPartitionInfo == null ? tableMeta.getNewPartitionInfo() : newPartitionInfo;
             PartitionTupleRoutingContext routingContext = PartitionTupleRoutingContext
                 .buildPartitionTupleRoutingContext(schemaName, logicalTableName, partitionInfo, shardingKeyMetas);
 
@@ -1303,6 +1303,7 @@ public class BuildPlanUtils {
     public static Map<String, Map<String, Parameters>> getShardResults(String schemaName,
                                                                        String tableName,
                                                                        Parameters parameters,
+                                                                       PartitionInfo newPartitionInfo,
                                                                        ExecutionContext ec) {
 
         TableMeta tableMeta = ec.getSchemaManager(schemaName).getTable(tableName);
@@ -1322,6 +1323,6 @@ public class BuildPlanUtils {
         }
 
         return buildResultForChangeSetApply(schemaName, tableMeta.getTableName(), parameters, shardingKeyIndexes,
-            shardingKeyMetas, ec);
+            shardingKeyMetas, newPartitionInfo, ec);
     }
 }

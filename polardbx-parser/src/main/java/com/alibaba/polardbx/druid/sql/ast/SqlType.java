@@ -49,7 +49,22 @@ public enum SqlType {
     GENERIC_DDL(85),
     UNARCHIVE(86),
     ARCHIVE(86),
-    CHECK_TABLEGROUP(87);
+    CHECK_TABLEGROUP(87),
+
+    /**
+     * SET GLOBAL
+     */
+    SET_STATEMENT(90),
+    /**
+     * DCL
+     */
+    GRANT(100),
+    REVOKE(101),
+    CREATE_USER(102),
+    DROP_USER(103),
+    CREATE_ROLE(104),
+    DROP_ROLE(105),
+    SET_PASSWORD(106);
 
     private int i;
 
@@ -89,5 +104,4 @@ public enum SqlType {
             || sqlType.equals(GENERIC_DDL)
             || sqlType.equals(UNARCHIVE));
     }
-
 }

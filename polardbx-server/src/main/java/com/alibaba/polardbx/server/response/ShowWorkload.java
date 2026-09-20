@@ -102,7 +102,7 @@ public final class ShowWorkload {
         }
 
         OptimizerContext.setContext(ds.getConfigHolder().getOptimizerContext());
-        List<List<Map<String, Object>>> results = SyncManagerHelper.sync(new ShowWorkLoadSyncAction(
+        List<List<Map<String, Object>>> results = SyncManagerHelper.syncIgnoreExceptions(new ShowWorkLoadSyncAction(
             c.getSchema()), c.getSchema(), CURRENT_ONLY);
         long tpLoad = 0;
         long apLoad = 0;

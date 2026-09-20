@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class BuildAllPartSpecsFromAstParams {
 
     protected List<ColumnMeta> partColMetaList;
+    protected List<SqlNode> partExprList;
     protected PartKeyLevel partKeyLevel;
     protected PartitionIntFunction partIntFunc;
     protected SearchDatumComparator pruningSpaceComparator;
@@ -51,6 +52,7 @@ public class BuildAllPartSpecsFromAstParams {
     protected PartitionSpec parentPartSpec;
     protected AtomicInteger phyPartCounter;
     protected boolean ttlTemporary = false;
+    protected boolean noPartitionKeyTable = false;
 
     public BuildAllPartSpecsFromAstParams() {
     }
@@ -199,5 +201,21 @@ public class BuildAllPartSpecsFromAstParams {
 
     public void setTtlTemporary(boolean ttlTemporary) {
         this.ttlTemporary = ttlTemporary;
+    }
+
+    public boolean isNoPartitionKeyTable() {
+        return noPartitionKeyTable;
+    }
+
+    public void setNoPartitionKeyTable(boolean noPartitionKeyTable) {
+        this.noPartitionKeyTable = noPartitionKeyTable;
+    }
+
+    public List<SqlNode> getPartExprList() {
+        return partExprList;
+    }
+
+    public void setPartExprList(List<SqlNode> partExprList) {
+        this.partExprList = partExprList;
     }
 }

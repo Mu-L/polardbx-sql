@@ -1,0 +1,117 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+## test dble_db
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+set ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING=true;
+use polardbx;
+drop database if exists mydbledb5;
+## USE_DN_LIST_MSG
+create database if not exists mydbledb5 mode = 'auto'
+locality='dble_config={"group_config":{"mydbledb5_g1":["$dn1","mydbledb5_01"],"mydbledb5_g2":["$dn2","mydbledb5_02"],"mydbledb5_g3":["$dn1","mydbledb5_03"],"mydbledb5_g4":["$dn2","mydbledb5_04"], "mydbledb5_g5":["$dn1","mydbledb5_05"], "mydbledb5_g6":["$dn2","mydbledb5_06"] }}';
+use mydbledb5;
+CREATE TABLE `r_dml_g1tog4` (
+`a` int  not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb5_g1,mydbledb5_g2,mydbledb5_g3,mydbledb5_g4';
+show create table r_dml_g1tog4;
+Table,Create Table
+r_dml_g1tog4,CREATE TABLE `r_dml_g1tog4` (
+	`a` int NOT NULL AUTO_INCREMENT,
+	`b` int DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+/* LOCALITY='db_set=mydbledb5_g1,mydbledb5_g2,mydbledb5_g3,mydbledb5_g4' */
+REPLICAS
+insert into r_dml_g1tog4 values (null,10),(null,20);
+alter table r_dml_g1tog4 add column c int;
+show create table r_dml_g1tog4;
+Table,Create Table
+r_dml_g1tog4,CREATE TABLE `r_dml_g1tog4` (
+	`a` int NOT NULL AUTO_INCREMENT,
+	`b` int DEFAULT NULL,
+	`c` int DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+/* LOCALITY='db_set=mydbledb5_g1,mydbledb5_g2,mydbledb5_g3,mydbledb5_g4' */
+REPLICAS
+alter table r_dml_g1tog4 modify column c bigint, modify column b bigint;
+show create table r_dml_g1tog4;
+Table,Create Table
+r_dml_g1tog4,CREATE TABLE `r_dml_g1tog4` (
+	`a` int NOT NULL AUTO_INCREMENT,
+	`b` bigint DEFAULT NULL,
+	`c` bigint DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+/* LOCALITY='db_set=mydbledb5_g1,mydbledb5_g2,mydbledb5_g3,mydbledb5_g4' */
+REPLICAS
+alter table r_dml_g1tog4 drop column c;
+show create table r_dml_g1tog4;
+Table,Create Table
+r_dml_g1tog4,CREATE TABLE `r_dml_g1tog4` (
+	`a` int NOT NULL AUTO_INCREMENT,
+	`b` bigint DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+/* LOCALITY='db_set=mydbledb5_g1,mydbledb5_g2,mydbledb5_g3,mydbledb5_g4' */
+REPLICAS
+alter table r_dml_g1tog4 add index idx_b(b), add index idx_a(a);
+show create table r_dml_g1tog4;
+Table,Create Table
+r_dml_g1tog4,CREATE TABLE `r_dml_g1tog4` (
+	`a` int NOT NULL AUTO_INCREMENT,
+	`b` bigint DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `idx_b` (`b`),
+	KEY `idx_a` (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+/* LOCALITY='db_set=mydbledb5_g1,mydbledb5_g2,mydbledb5_g3,mydbledb5_g4' */
+REPLICAS
+alter table r_dml_g1tog4 drop index idx_b;
+show create table r_dml_g1tog4;
+Table,Create Table
+r_dml_g1tog4,CREATE TABLE `r_dml_g1tog4` (
+	`a` int NOT NULL AUTO_INCREMENT,
+	`b` bigint DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `idx_a` (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+/* LOCALITY='db_set=mydbledb5_g1,mydbledb5_g2,mydbledb5_g3,mydbledb5_g4' */
+REPLICAS
+alter table r_dml_g1tog4 modify column a bigint;
+## error_msg: $# not allowed to repartition #$
+alter table r_dml_g1tog4 add global index gsi_a(a) partition by key(a) partitions 4;
+not allowed to repartition
+## error_msg: $# not allowed to repartition #$
+alter table r_dml_g1tog4 partition by key(a) partitions 4;
+not allowed to repartition
+## error_msg: $# mismatch the table group #$
+alter table r_dml_g1tog4 drop primary key, add primary key(b);
+mismatch the table group
+## error_msg: $# mismatch the table group #$
+/*+TDDL:cmd_extra(enable_omc_30=false)*/alter table r_dml_g1tog4 modify column b int, algorithm=omc;
+mismatch the table group
+alter table r_dml_g1tog4 change column b c int;
+show create table r_dml_g1tog4;
+Table,Create Table
+r_dml_g1tog4,CREATE TABLE `r_dml_g1tog4` (
+	`a` bigint NOT NULL,
+	`c` int DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `idx_a` (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+/* LOCALITY='db_set=mydbledb5_g1,mydbledb5_g2,mydbledb5_g3,mydbledb5_g4' */
+REPLICAS
+select * from r_dml_g1tog4 order by a desc;
+a,c
+2,20
+1,10
+truncate table r_dml_g1tog4;
+select * from r_dml_g1tog4 order by a desc;
+a,c

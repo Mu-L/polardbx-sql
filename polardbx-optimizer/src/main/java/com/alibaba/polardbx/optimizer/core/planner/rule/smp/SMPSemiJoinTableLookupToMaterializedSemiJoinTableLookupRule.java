@@ -25,7 +25,6 @@ import com.alibaba.polardbx.optimizer.hint.util.CheckJoinHint;
 import org.apache.calcite.plan.RelOptCost;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptRuleOperand;
-import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.logical.LogicalSemiJoin;
 import org.apache.calcite.rel.logical.LogicalTableLookup;
@@ -39,8 +38,7 @@ public class SMPSemiJoinTableLookupToMaterializedSemiJoinTableLookupRule
             operand(LogicalSemiJoin.class,
                 operand(LogicalTableLookup.class, null,
                     JoinTableLookupTransposeRule.INNER_TABLE_LOOKUP_RIGHT_IS_LOGICALVIEW,
-                    operand(LogicalIndexScan.class, none())),
-                operand(RelSubset.class, any())), "INSTANCE");
+                    operand(LogicalIndexScan.class, none()))), "INSTANCE");
 
     SMPSemiJoinTableLookupToMaterializedSemiJoinTableLookupRule(RelOptRuleOperand operand, String desc) {
         super(operand, "SMP_" + desc);
@@ -64,7 +62,7 @@ public class SMPSemiJoinTableLookupToMaterializedSemiJoinTableLookupRule
             materializedSemiJoin.setFixedCost(fixedCost);
         }
         logicalIndexScan.setIsMGetEnabled(true);
-        logicalIndexScan.setJoin(materializedSemiJoin);
+        logicalIndexScan.setLookupInfo(materializedSemiJoin);
         call.transformTo(materializedSemiJoin);
     }
 }

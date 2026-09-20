@@ -24,10 +24,10 @@ import com.alibaba.polardbx.optimizer.hint.operator.HintType;
 import com.alibaba.polardbx.optimizer.hint.util.CheckJoinHint;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.google.common.collect.ImmutableList;
+import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelOptCost;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptRuleOperand;
-import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.logical.LogicalSemiJoin;
 import org.apache.calcite.rel.logical.LogicalTableLookup;
@@ -39,7 +39,7 @@ public class SMPSemiJoinTableLookupToSemiBKAJoinTableLookupRule
     public static final SemiJoinTableLookupToSemiBKAJoinTableLookupRule
         INSTANCE = new SMPSemiJoinTableLookupToSemiBKAJoinTableLookupRule(
         operand(LogicalSemiJoin.class,
-            operand(RelSubset.class, any()),
+            operand(RelNode.class, Convention.NONE, any()),
             operand(LogicalTableLookup.class, null,
                 JoinTableLookupTransposeRule.INNER_TABLE_LOOKUP_RIGHT_IS_LOGICALVIEW,
                 operand(LogicalIndexScan.class, none()))), "INSTANCE");
@@ -71,7 +71,7 @@ public class SMPSemiJoinTableLookupToSemiBKAJoinTableLookupRule
             bkaJoin.setFixedCost(fixedCost);
         }
         newLogicalIndexScan.setIsMGetEnabled(true);
-        newLogicalIndexScan.setJoin(bkaJoin);
+        newLogicalIndexScan.setLookupInfo(bkaJoin);
         RelUtils.changeRowType(bkaJoin, join.getRowType());
         call.transformTo(bkaJoin);
     }

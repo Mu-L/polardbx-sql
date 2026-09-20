@@ -16,9 +16,11 @@
 
 package com.alibaba.polardbx.executor.ddl.job.factory;
 
+import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
+import com.alibaba.polardbx.common.utils.BlackHoleUtils;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.TStringUtil;
@@ -38,25 +40,27 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.SubJobTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcDdlMarkTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupsSyncTask;
+import com.alibaba.polardbx.executor.ddl.job.task.ttl.TtlJobUtil;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlExceptionAction;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4CreatePartitionTable;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4CreateSelect;
+import com.alibaba.polardbx.executor.utils.ExecUtils;
+import com.alibaba.polardbx.gms.metadb.table.ColumnsRecord;
 import com.alibaba.polardbx.gms.partition.TablePartRecordInfoContext;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupDetailConfig;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupRecord;
 import com.alibaba.polardbx.gms.util.TableGroupNameUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
-import com.alibaba.polardbx.optimizer.config.table.TableMeta;
+import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.CreateTablePreparedData;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.LikeTableInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.common.LocalPartitionDefinitionInfo;
 import com.alibaba.polardbx.optimizer.ttl.TtlDefinitionInfo;
-import com.alibaba.polardbx.optimizer.ttl.TtlUtil;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
 import com.google.common.collect.Lists;
@@ -68,6 +72,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -84,6 +89,12 @@ public class CreatePartitionTableJobFactory extends CreateTableJobFactory {
     private boolean checkBroadcastTgNotExists = false;
 
     private PartitionInfo partitionInfo;
+
+    private boolean withCci = false;
+
+    public void setWithCci(boolean withCci) {
+        this.withCci = withCci;
+    }
 
     public CreatePartitionTableJobFactory(boolean autoPartition, boolean hasTimestampColumnDefault,
                                           Map<String, String> specialDefaultValues,
@@ -125,6 +136,8 @@ public class CreatePartitionTableJobFactory extends CreateTableJobFactory {
 
     @Override
     protected void sharedResources(Set<String> resources) {
+        super.sharedResources(resources);
+
         boolean isSigleTable = false;
         boolean isBroadCastTable = false;
         if (partitionInfo != null) {
@@ -198,6 +211,10 @@ public class CreatePartitionTableJobFactory extends CreateTableJobFactory {
                 new TableGroupsSyncTask(preparedData.getSchemaName(), tableGroups);
             taskList.add(tableGroupsSyncTask);
             taskList.add(subJobTask);
+            // For pure columnar table, add CCI and shadow table subjobs at the same level as create table subjob
+            if (needCreateShadowTableForPureColumnar()) {
+                taskList.addAll(createShadowTableForPureColumnar(schemaName));
+            }
             job.addSequentialTasks(taskList);
             for (int i = 0; i < createTableGroupAddMetaTasks.size(); i++) {
                 job.addTaskRelationship(createTableGroupValidateTask, createTableGroupAddMetaTasks.get(i));
@@ -205,10 +222,16 @@ public class CreatePartitionTableJobFactory extends CreateTableJobFactory {
             }
             preparedData.setNeedToGetTableGroupLock(true);
             return job;
-        } else if (!preparedData.isWithImplicitTableGroup() && isNeedToGetCreateTableGroupLock(false)) {
+        } else if (createTableUsingSubJob()) {
             DdlTask ddl = generateCreateTableJob();
             ExecutableDdlJob job = new ExecutableDdlJob();
-            job.addSequentialTasks(Lists.newArrayList(ddl));
+            List<DdlTask> taskList = new ArrayList<>();
+            taskList.add(ddl);
+            // For pure columnar table, add CCI and shadow table subjobs at the same level as create table subjob
+            if (needCreateShadowTableForPureColumnar()) {
+                taskList.addAll(createShadowTableForPureColumnar(schemaName));
+            }
+            job.addSequentialTasks(taskList);
             preparedData.setNeedToGetTableGroupLock(true);
             return job;
         } else {
@@ -273,6 +296,9 @@ public class CreatePartitionTableJobFactory extends CreateTableJobFactory {
 
             CdcDdlMarkTask cdcDdlMarkTask = new CdcDdlMarkTask(schemaName, physicalPlanData, false,
                 CollectionUtils.isNotEmpty(addedForeignKeys), versionId);
+            cdcDdlMarkTask.setExternalColumnDdl(specialDefaultValueFlags != null
+                && specialDefaultValueFlags.values().stream().anyMatch(flags -> flags != null
+                && (flags & ColumnsRecord.FLAG_EXTERNALIZED_COLUMN) != 0L));
 
             CreateArchiveTableEventLogTask createArchiveTableEventLogTask = null;
             // TTL table
@@ -288,6 +314,10 @@ public class CreatePartitionTableJobFactory extends CreateTableJobFactory {
             }
             ExecutableDdlJob4CreatePartitionTable result = new ExecutableDdlJob4CreatePartitionTable();
 
+            // Register ext_column_mapping rows for EXTERNALIZE columns. The parent
+            // CreatePartitionTableWithGsiJobFactory reuses this task and only adds index dependencies.
+            DdlTask registerBlobTask = buildRegisterBlobColumnMappingTask();
+
             List<DdlTask> taskList = new ArrayList<>();
             if (preparedData.isImportTable()) {
                 taskList.addAll(
@@ -295,6 +325,7 @@ public class CreatePartitionTableJobFactory extends CreateTableJobFactory {
                         validateTask,
                         addPartitionInfoTask,
                         createTableAddTablesMetaTask,
+                        registerBlobTask,
                         cdcDdlMarkTask,
                         showTableMetaTask,
                         createArchiveTableEventLogTask,
@@ -309,6 +340,7 @@ public class CreatePartitionTableJobFactory extends CreateTableJobFactory {
                         addPartitionInfoTask,
                         phyDdlTask,
                         createTableAddTablesMetaTask,
+                        registerBlobTask,
                         cdcDdlMarkTask,
                         showTableMetaTask,
                         createArchiveTableEventLogTask,
@@ -347,6 +379,12 @@ public class CreatePartitionTableJobFactory extends CreateTableJobFactory {
             result.setCreateArchiveTableEventLogTask(createArchiveTableEventLogTask);
             result.setTableSyncTask(tableSyncTask);
 
+            if (ttlDefinitionInfo != null
+                && Optional.ofNullable(ttlDefinitionInfo.getTtlInfoRecord().getExtra().getTtlHybrid()).orElse(false)
+                && executionContext.getParamManager().getBoolean(ConnectionParams.TTL_HYBRID_AUTO_CREATE_ARCHIVE_CCI)) {
+                result.appendJob2(TtlJobUtil.buildCreateArchiveCciJob(ttlDefinitionInfo));
+            }
+
             if (selectSql != null) {
                 InsertIntoTask
                     insertIntoTask = new InsertIntoTask(schemaName, logicalTableName, selectSql, null, 0);
@@ -363,6 +401,51 @@ public class CreatePartitionTableJobFactory extends CreateTableJobFactory {
 
             return result;
         }
+    }
+
+    private boolean needCreateShadowTableForPureColumnar() {
+        return !executionContext.isSubJob() && Engine.COLUMNAR == preparedData.getTableMeta().getEngine();
+    }
+
+    private boolean createTableUsingSubJob() {
+        return (!preparedData.isWithImplicitTableGroup() && isNeedToGetCreateTableGroupLock(false))
+            || needCreateShadowTableForPureColumnar();
+    }
+
+    private List<DdlTask> createShadowTableForPureColumnar(String schemaName) {
+        List<DdlTask> tasks = new ArrayList<>();
+        // 如果是列存引擎表（ENGINE=COLUMNAR），需要创建影子表；如果没有显式带 CCI，还需要创建默认 CCI
+        if (Engine.COLUMNAR == preparedData.getTableMeta().getEngine()) {
+            String primaryTableName = preparedData.getTableName();
+            String primaryKeyColumn = preparedData.getTableMeta().getPrimaryKey()
+                .stream().map(ColumnMeta::getName).collect(Collectors.toList()).get(0);
+            SqlNode primaryPartitioning = preparedData.getPartitioning();
+
+            if (!withCci) {
+                String cciName = "pure_table_default_cci";
+                String partitionClause = primaryPartitioning != null ? primaryPartitioning.toString()
+                    : String.format("PARTITION BY KEY(`%s`)", primaryKeyColumn);
+                String createCciSql = String.format(
+                    "CREATE CLUSTERED COLUMNAR INDEX `%s` ON `%s`(`%s`) %s",
+                    cciName, primaryTableName, primaryKeyColumn, partitionClause);
+                String rollbackCciSql = String.format("DROP INDEX IF EXISTS `%s` ON `%s`",
+                    cciName, primaryTableName);
+
+                SubJobTask createCciSubJob = new SubJobTask(schemaName, createCciSql, rollbackCciSql);
+                createCciSubJob.setParentAcquireResource(true);
+                tasks.add(createCciSubJob);
+            }
+
+            String shadowTableName = BlackHoleUtils.getInsertToDeleteBlackHoleTableName(primaryTableName);
+            String createShadowTableSql = ExecUtils.buildColumnarShadowTableSql(
+                schemaName, primaryTableName, preparedData.getTableMeta(), primaryPartitioning);
+            String rollbackSql = String.format("DROP TABLE IF EXISTS `%s`", shadowTableName);
+
+            SubJobTask createShadowTableSubJob = new SubJobTask(schemaName, createShadowTableSql, rollbackSql);
+            createShadowTableSubJob.setParentAcquireResource(true);
+            tasks.add(createShadowTableSubJob);
+        }
+        return tasks;
     }
 
     private SubJobTask generateCreateTableJob() {

@@ -1,0 +1,6 @@
+#test_udf_with_locality
+#test_udf_with_locality2
+#test_sig_with_locality
+#test_bro_with_locality
+test_normal_bro
+test_normal_sig

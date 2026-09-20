@@ -16,10 +16,19 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 
-public interface AggResultIterator {
+public interface AggResultIterator extends MemoryCountable {
 
     Chunk nextChunk();
 
+    default boolean isEmpty() {
+        return true;
+    }
+
+    @Override
+    default long getMemoryUsage() {
+        return 0L;
+    }
 }

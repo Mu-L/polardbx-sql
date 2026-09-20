@@ -47,6 +47,7 @@ import org.apache.calcite.sql.VariableScope;
 import org.apache.calcite.sql.fun.SqlCastFunction;
 import org.apache.calcite.sql.fun.SqlCountAggFunction;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
+import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.ArraySqlType;
 import org.apache.calcite.sql.type.MapSqlType;
 import org.apache.calcite.sql.type.MultisetSqlType;
@@ -341,7 +342,8 @@ public class RexBuilder {
           List<RexNode> exprs,
           List<RexNode> partitionKeys,
           RexWindowBound lowerBound,
-          RexWindowBound upperBound) {
+          RexWindowBound upperBound,
+          boolean isRows) {
     assert operator != null;
     assert exprs != null;
     assert partitionKeys != null;
@@ -351,7 +353,7 @@ public class RexBuilder {
                     ImmutableList.of(),
                     lowerBound,
                     upperBound,
-                    true);
+                isRows);
     final RexOver over = new RexOver(type, operator, exprs, window, false);
     return over;
   }
@@ -808,19 +810,26 @@ public class RexBuilder {
   }
 
   /**
-   * Makes a cast of a value to NOT NULL;
-   * no-op if the type already has NOT NULL.
+   * Makes a cast of an expression to NOT NULL;
+   * returns the expression unchanged if its type already has NOT NULL.
    */
   public RexNode makeNotNull(RexNode exp) {
-    final RelDataType type = exp.getType();
-    if (!type.isNullable()) {
-      return exp;
-    }
-    final RelDataType notNullType =
-        typeFactory.createTypeWithNullability(type, false);
-    return makeAbstractCast(notNullType, exp);
+    return makeNullable(exp, false);
   }
 
+  /**
+   * Makes a cast of an expression to the required nullability; returns
+   * the expression unchanged if its type already has the desired nullability.
+   */
+  public RexNode makeNullable(RexNode exp, boolean nullability) {
+    final RelDataType type = exp.getType();
+    if (type.isNullable() == nullability) {
+      return exp;
+    }
+    final RelDataType type2 =
+        typeFactory.createTypeWithNullability(type, nullability);
+    return makeCastForConvertlet(type2, exp);
+  }
   /**
    * Creates a reference to all the fields in the row. That is, the whole row
    * as a single record object.

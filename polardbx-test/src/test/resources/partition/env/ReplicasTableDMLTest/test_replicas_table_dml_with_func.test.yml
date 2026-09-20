@@ -1,0 +1,85 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+use polardbx;
+drop database if exists test_replicas_db;
+
+set session FORBID_CROSS_GROUP_WRITE_FOR_EXPLICIT_TRX=true;
+set session ENABLE_PUSH_DOWN_AUTO_INCREMENT = true;
+set session sql_mode='STRICT_TRANS_TABLES,NO_AUTO_VALUE_ON_ZERO';
+
+  ## USE_DN_LIST_MSG
+create database if not exists test_replicas_db charset = utf8 collate = utf8_general_ci mode = 'auto' locality='dble_config={"group_config":{"p1":["$dn1","p_01"],"p2":["$dn1","p_02"],"p3":["$dn2","p_03"],"p4":["$dn2","p_04"]}}';
+use test_replicas_db;
+
+CREATE TABLE `replicas_dml_tb` (
+`pk` bigint(20) NOT NULL,
+`integer_test` int(11) DEFAULT NULL,
+`varchar_test` varchar(255) DEFAULT NULL,
+`char_test` char(255) DEFAULT NULL,
+`blob_test` blob,
+`tinyint_test` tinyint(4) DEFAULT NULL,
+`smallint_test` smallint(6) DEFAULT NULL,
+`mediumint_test` mediumint(9) DEFAULT NULL,
+`bit_test` bit(1) DEFAULT NULL,
+`bigint_test` bigint(20) DEFAULT NULL,
+`float_test` float DEFAULT NULL,
+`double_test` double DEFAULT NULL,
+`decimal_test` decimal(10, 0) DEFAULT NULL,
+`date_test` date DEFAULT NULL,
+`time_test` time DEFAULT NULL,
+`datetime_test` datetime DEFAULT NULL,
+`timestamp_test` timestamp NULL DEFAULT NULL,
+`year_test` year(4) DEFAULT NULL,
+PRIMARY KEY (`pk`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 replicas locality='db_set=p1,p2';
+
+-- 模拟 tableDataPrepare 插入 20 条初始数据
+-- 主键 pk 从 0 到 19
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (0, 100, 'text_0', '2023-01-01', '2023-01-01 10:00:00', '2023-01-01 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (1, 101, 'text_1', '2023-01-02', '2023-01-02 10:00:00', '2023-01-02 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (2, 102, 'text_2', '2023-01-03', '2023-01-03 10:00:00', '2023-01-03 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (3, 103, 'text_3', '2023-01-04', '2023-01-04 10:00:00', '2023-01-04 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (4, 104, 'text_4', '2023-01-05', '2023-01-05 10:00:00', '2023-01-05 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (5, 105, 'text_5', '2023-01-06', '2023-01-06 10:00:00', '2023-01-06 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (6, 106, 'text_6', '2023-01-07', '2023-01-07 10:00:00', '2023-01-07 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (7, 107, 'text_7', '2023-01-08', '2023-01-08 10:00:00', '2023-01-08 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (8, 108, 'text_8', '2023-01-09', '2023-01-09 10:00:00', '2023-01-09 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (9, 109, 'text_9', '2023-01-10', '2023-01-10 10:00:00', '2023-01-10 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (10, 110, 'text_10', '2023-01-11', '2023-01-11 10:00:00', '2023-01-11 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (11, 111, 'text_11', '2023-01-12', '2023-01-12 10:00:00', '2023-01-12 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (12, 112, 'text_12', '2023-01-13', '2023-01-13 10:00:00', '2023-01-13 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (13, 113, 'text_13', '2023-01-14', '2023-01-14 10:00:00', '2023-01-14 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (14, 114, 'text_14', '2023-01-15', '2023-01-15 10:00:00', '2023-01-15 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (15, 115, 'text_15', '2023-01-16', '2023-01-16 10:00:00', '2023-01-16 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (16, 116, 'text_16', '2023-01-17', '2023-01-17 10:00:00', '2023-01-17 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (17, 117, 'text_17', '2023-01-18', '2023-01-18 10:00:00', '2023-01-18 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (18, 118, 'text_18', '2023-01-19', '2023-01-19 10:00:00', '2023-01-19 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, date_test, timestamp_test, datetime_test) VALUES (19, 119, 'text_19', '2023-01-20', '2023-01-20 10:00:00', '2023-01-20 10:00:00');
+
+INSERT INTO replicas_dml_tb (pk, date_test) VALUES (123456, DATE(DATE_ADD(NOW(), INTERVAL 1 DAY)));
+INSERT INTO replicas_dml_tb (pk, datetime_test) VALUES (32908082, DATE(DATE_SUB(NOW(), INTERVAL 1 DAY)));
+INSERT INTO replicas_dml_tb (pk, integer_test) VALUES (483084027, HOUR(TIMEDIFF(NOW(), DATE_SUB(NOW(), INTERVAL 5 DAY))));
+
+INSERT INTO replicas_dml_tb (pk, double_test) VALUES (327346, rand());
+INSERT INTO replicas_dml_tb (pk, timestamp_test) VALUES (43563, now());
+INSERT INTO replicas_dml_tb (pk, timestamp_test) VALUES (4872639, CURRENT_TIMESTAMP());
+INSERT INTO replicas_dml_tb (pk, datetime_test) VALUES (3780628, now());
+
+UPDATE replicas_dml_tb set integer_test = 12983 order by rand() limit 1;
+UPDATE replicas_dml_tb set double_test = rand() order by rand() limit 1;
+UPDATE replicas_dml_tb set double_test = rand() where rand() < 0.5;
+UPDATE replicas_dml_tb set timestamp_test = CURRENT_TIMESTAMP() where rand() < 0.5;
+UPDATE replicas_dml_tb set datetime_test = now() where rand() < 0.5;
+UPDATE replicas_dml_tb set varchar_test = uuid() where rand() < 0.5;
+UPDATE replicas_dml_tb set time_test = curTime() where rand() < 0.5;
+UPDATE replicas_dml_tb set date_test = curDate() where rand() < 0.5;
+UPDATE replicas_dml_tb set integer_test = CONNECTION_ID() where rand() < 0.5;
+UPDATE replicas_dml_tb set integer_test = UNIX_TIMESTAMP() where rand() < 0.5;
+
+DELETE from replicas_dml_tb where rand() < 0.5;
+DELETE from replicas_dml_tb order by rand() limit 1;
+
+use polardbx;
+drop database if exists test_replicas_db;

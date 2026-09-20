@@ -31,9 +31,6 @@ import com.alibaba.polardbx.server.ServerConnection;
 import com.alibaba.polardbx.server.util.PacketUtil;
 import com.alibaba.polardbx.server.util.StringUtil;
 
-import java.util.List;
-import java.util.Map;
-
 /**
  * @author shengyu
  */
@@ -84,38 +81,14 @@ public class ShardingAdvice {
             proxy = eof.write(proxy);
         }
 
-        List<String> summary = shardingWhatIf.summarize();
-        // write rows
-        if (result.getSqls().size() == 0) {
-            RowDataPacket row = new RowDataPacket(FIELD_COUNT);
-            row.add(StringUtil.encode(c.getSchema(), c.getResultSetCharset()));
-            row.add(StringUtil.encode("No valid sql cache found in current schema!", c.getResultSetCharset()));
-            for (int i = 0; i < 3; i++) {
-                row.add(StringUtil.encode("", c.getResultSetCharset()));
-            }
-            row.packetId = ++tmpPacketId;
-            proxy = row.write(proxy);
-        } else if (summary == null) {
-            RowDataPacket row = new RowDataPacket(FIELD_COUNT);
-            row.add(StringUtil.encode(c.getSchema(), c.getResultSetCharset()));
-            row.add(StringUtil.encode("No better sharding plan found for current workload!", c.getResultSetCharset()));
-            for (int i = 0; i < 3; i++) {
-                row.add(StringUtil.encode("", c.getResultSetCharset()));
-            }
-            row.packetId = ++tmpPacketId;
-            proxy = row.write(proxy);
-        } else {
-            for (Map.Entry<String, StringBuilder> entry : result.display().entrySet()) {
-                RowDataPacket row = new RowDataPacket(FIELD_COUNT);
-                row.add(StringUtil.encode(entry.getKey(), c.getResultSetCharset()));
-                row.add(StringUtil.encode(entry.getValue().toString(), c.getResultSetCharset()));
-                for (String info : summary) {
-                    row.add(StringUtil.encode(info, c.getResultSetCharset()));
-                }
-                row.packetId = ++tmpPacketId;
-                proxy = row.write(proxy);
-            }
+        RowDataPacket row = new RowDataPacket(FIELD_COUNT);
+        row.add(StringUtil.encode(c.getSchema(), c.getResultSetCharset()));
+        row.add(StringUtil.encode("not support!", c.getResultSetCharset()));
+        for (int i = 0; i < 3; i++) {
+            row.add(StringUtil.encode("", c.getResultSetCharset()));
         }
+        row.packetId = ++tmpPacketId;
+        proxy = row.write(proxy);
 
         // write last eof
         EOFPacket lastEof = new EOFPacket();

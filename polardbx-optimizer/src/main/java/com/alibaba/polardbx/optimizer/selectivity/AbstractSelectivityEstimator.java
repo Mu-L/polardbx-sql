@@ -17,6 +17,8 @@
 package com.alibaba.polardbx.optimizer.selectivity;
 
 import com.alibaba.polardbx.optimizer.PlannerContext;
+import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertUtil;
 import org.apache.calcite.plan.RelOptPredicateList;
@@ -85,5 +87,12 @@ public abstract class AbstractSelectivityEstimator extends RexVisitorImpl<Double
                 return normalize(value);
             }
         }
+    }
+
+    public static ColumnMeta findColumnMeta(TableMeta tableMeta, int index) {
+        if (index < 0 || index >= tableMeta.getAllColumns().size()) {
+            return null;
+        }
+        return tableMeta.getAllColumns().get(index);
     }
 }

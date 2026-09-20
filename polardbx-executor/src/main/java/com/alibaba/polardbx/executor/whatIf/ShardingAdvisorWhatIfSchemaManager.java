@@ -19,6 +19,7 @@ package com.alibaba.polardbx.executor.whatIf;
 import com.alibaba.polardbx.common.TddlConstants;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.gms.partition.TablePartitionRecord;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
@@ -41,6 +42,7 @@ import com.alibaba.polardbx.optimizer.partition.PartitionInfoBuilder;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfoManager;
 import com.alibaba.polardbx.optimizer.partition.common.PartitionTableType;
 import com.alibaba.polardbx.rule.TableRule;
+import com.google.common.collect.Lists;
 import org.apache.calcite.sql.SqlAlterTablePartitionKey;
 import org.apache.calcite.sql.SqlAlterTableRepartition;
 import org.apache.calcite.sql.SqlBasicCall;
@@ -50,6 +52,7 @@ import org.apache.calcite.sql.SqlPartitionBy;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 /**
@@ -126,6 +129,12 @@ public class ShardingAdvisorWhatIfSchemaManager extends WhatIfSchemaManager {
         boolean broadcast = alterTableSql.endsWith("broadcast;");
         SqlNode sqlNode = new FastsqlParser().parse(alterTableSql).get(0);
         TableMeta whatIfTableMeta;
+
+        Map<String, ColumnMeta> columnsMap = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+        for (ColumnMeta columnMeta : tableMeta.getPhysicalColumns()) {
+            ColumnMeta newColumnMeta = new ColumnMeta(columnMeta);
+            columnsMap.put(columnMeta.getName().toLowerCase(), newColumnMeta);
+        }
         // new partition table
         PartitionInfoManager partitionInfoManager = getTddlRuleManager().getPartitionInfoManager();
         PartitionInfo partitionInfo;
@@ -144,15 +153,15 @@ public class ShardingAdvisorWhatIfSchemaManager extends WhatIfSchemaManager {
             String shardColumn =
                 ((SqlPartitionBy) sqlAlterTableRepartition.getSqlPartition()).getColumns().get(0).toString();
 
-            List<IndexMeta> whatIfIndexes = buildWhatIfIndexMetas(tableMeta);
+            List<IndexMeta> whatIfIndexes = buildWhatIfIndexMetas(tableMeta, columnsMap);
             // add local index of shard key
             whatIfIndexes.add(generateWhatIfIndexMeta(
                 tableName,
                 new ArrayList<ColumnMeta>() {{
-                    add(tableMeta.getColumn(shardColumn));
+                    add(columnsMap.get(shardColumn));
                 }},
                 WhatIfIndexType.auto));
-            whatIfTableMeta = createTableMeta(tableMeta, whatIfIndexes);
+            whatIfTableMeta = createTableMeta(tableMeta, whatIfIndexes, columnsMap);
             buildGsi(whatIfTableMeta, tableMeta, shardColumn);
         } else {
             // broadcast table
@@ -163,10 +172,10 @@ public class ShardingAdvisorWhatIfSchemaManager extends WhatIfSchemaManager {
                     tableMeta.getAllColumns(),
                     PartitionTableType.BROADCAST_TABLE,
                     executionContext);
-            List<IndexMeta> whatIfIndexes = buildWhatIfIndexMetas(tableMeta);
-            addGsiToLocalIndex(tableMeta, whatIfIndexes, tableName);
+            List<IndexMeta> whatIfIndexes = buildWhatIfIndexMetas(tableMeta, columnsMap);
+            addGsiToLocalIndex(tableMeta, whatIfIndexes, tableName, columnsMap);
             // build tableMeta
-            whatIfTableMeta = createTableMeta(tableMeta, whatIfIndexes);
+            whatIfTableMeta = createTableMeta(tableMeta, whatIfIndexes, columnsMap);
         }
 
         // use the new table meta in whatIf
@@ -196,6 +205,12 @@ public class ShardingAdvisorWhatIfSchemaManager extends WhatIfSchemaManager {
         boolean broadcast = alterTableSql.endsWith("broadcast;");
         SqlNode sqlNode = new FastsqlParser().parse(alterTableSql).get(0);
 
+        Map<String, ColumnMeta> columnsMap = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+        for (ColumnMeta columnMeta : tableMeta.getPhysicalColumns()) {
+            ColumnMeta newColumnMeta = new ColumnMeta(columnMeta);
+            columnsMap.put(columnMeta.getName().toLowerCase(), newColumnMeta);
+        }
+
         // build tableMeta
         TableMeta whatIfTableMeta;
 
@@ -214,15 +229,15 @@ public class ShardingAdvisorWhatIfSchemaManager extends WhatIfSchemaManager {
                 OptimizerContext.getContext(schemaName),
                 executionContext);
             whatIfTddlRuleManager.addTableRule(tableName, tableRule);
-            List<IndexMeta> whatIfIndexes = buildWhatIfIndexMetas(tableMeta);
+            List<IndexMeta> whatIfIndexes = buildWhatIfIndexMetas(tableMeta, columnsMap);
             // add local index of shard key
             whatIfIndexes.add(generateWhatIfIndexMeta(
                 tableName,
                 new ArrayList<ColumnMeta>() {{
-                    add(tableMeta.getColumn(shardColumn));
+                    add(columnsMap.get(shardColumn));
                 }},
                 WhatIfIndexType.auto));
-            whatIfTableMeta = createTableMeta(tableMeta, whatIfIndexes);
+            whatIfTableMeta = createTableMeta(tableMeta, whatIfIndexes, columnsMap);
             buildGsi(whatIfTableMeta, tableMeta, shardColumn);
         } else {
             TableRule tableRule = TableRuleBuilder.buildBroadcastTableRule(
@@ -231,9 +246,9 @@ public class ShardingAdvisorWhatIfSchemaManager extends WhatIfSchemaManager {
                 OptimizerContext.getContext(schemaName),
                 true);
             whatIfTddlRuleManager.addTableRule(tableName, tableRule);
-            List<IndexMeta> whatIfIndexes = buildWhatIfIndexMetas(tableMeta);
-            addGsiToLocalIndex(tableMeta, whatIfIndexes, tableName);
-            whatIfTableMeta = createTableMeta(tableMeta, whatIfIndexes);
+            List<IndexMeta> whatIfIndexes = buildWhatIfIndexMetas(tableMeta, columnsMap);
+            addGsiToLocalIndex(tableMeta, whatIfIndexes, tableName, columnsMap);
+            whatIfTableMeta = createTableMeta(tableMeta, whatIfIndexes, columnsMap);
         }
 
         whatIfTableMeta.setSchemaName(schemaName);
@@ -293,15 +308,27 @@ public class ShardingAdvisorWhatIfSchemaManager extends WhatIfSchemaManager {
 
                     // gsi table meta also contain the shard column
                     TableMeta gsiTableMeta = actualSchemaManager.getTable(whatIfIndexMetaBean.indexTableName);
+                    Map<String, ColumnMeta> columnsMap = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+                    for (ColumnMeta columnMeta : gsiTableMeta.getPhysicalColumns()) {
+                        ColumnMeta newColumnMeta = new ColumnMeta(columnMeta);
+                        columnsMap.put(columnMeta.getName().toLowerCase(), newColumnMeta);
+                    }
                     List<ColumnMeta> whatIfColumnMetas = new ArrayList<>();
-                    whatIfColumnMetas.addAll(gsiTableMeta.getAllColumns());
-                    whatIfColumnMetas.add(whatIfTableMeta.getColumn(shardColumn));
+                    for (ColumnMeta columnMeta : gsiTableMeta.getPhysicalColumns()) {
+                        whatIfColumnMetas.add(columnsMap.get(columnMeta.getName()));
+                    }
+                    if (!columnsMap.containsKey(shardColumn)) {
+                        whatIfColumnMetas.add(new ColumnMeta(whatIfTableMeta.getColumn(shardColumn)));
+                    }
+
                     TableMeta whatIfGsiTableMeta = new TableMeta(
                         getSchemaName(),
                         gsiTableMeta.getTableName(),
                         whatIfColumnMetas,
-                        gsiTableMeta.getPrimaryIndex(),
-                        gsiTableMeta.getSecondaryIndexes(),
+                        tableMeta.getPrimaryIndex() == null ? null :
+                            new IndexMeta(tableMeta.getPrimaryIndex(), columnsMap),
+                        gsiTableMeta.getSecondaryIndexes().stream().map(im -> new IndexMeta(im, columnsMap)).collect(
+                            Collectors.toList()),
                         gsiTableMeta.isHasPrimaryKey(),
                         gsiTableMeta.getStatus(),
                         gsiTableMeta.getVersion(),
@@ -320,12 +347,17 @@ public class ShardingAdvisorWhatIfSchemaManager extends WhatIfSchemaManager {
         }
     }
 
-    private TableMeta createTableMeta(TableMeta tableMeta, List<IndexMeta> whatIfIndexes) {
+    private TableMeta createTableMeta(TableMeta tableMeta, List<IndexMeta> whatIfIndexes,
+                                      Map<String, ColumnMeta> columnsMap) {
+        List<ColumnMeta> columns = Lists.newArrayList();
+        for (ColumnMeta columnMeta : tableMeta.getPhysicalColumns()) {
+            columns.add(columnsMap.get(columnMeta.getName()));
+        }
         return new TableMeta(
             tableMeta.getSchemaName(),
             tableMeta.getTableName(),
-            tableMeta.getAllColumns(),
-            tableMeta.getPrimaryIndex(),
+            columns,
+            tableMeta.getPrimaryIndex() == null ? null : new IndexMeta(tableMeta.getPrimaryIndex(), columnsMap),
             whatIfIndexes,
             tableMeta.isHasPrimaryKey(),
             tableMeta.getStatus(),
@@ -340,12 +372,12 @@ public class ShardingAdvisorWhatIfSchemaManager extends WhatIfSchemaManager {
      * @param tableMeta old table meta
      * @return whatIf indexMeta if repartitioned
      */
-    private List<IndexMeta> buildWhatIfIndexMetas(TableMeta tableMeta) {
+    private List<IndexMeta> buildWhatIfIndexMetas(TableMeta tableMeta, Map<String, ColumnMeta> columnsMap) {
         List<IndexMeta> whatIfIndexes = new ArrayList<>();
         // remove local index of shard key
         for (Map.Entry<String, IndexMeta> entry : tableMeta.getSecondaryIndexesMap().entrySet()) {
             if (!entry.getKey().startsWith(TddlConstants.AUTO_SHARD_KEY_PREFIX)) {
-                whatIfIndexes.add(entry.getValue());
+                whatIfIndexes.add(new IndexMeta(entry.getValue(), columnsMap));
             }
         }
         return whatIfIndexes;
@@ -358,7 +390,8 @@ public class ShardingAdvisorWhatIfSchemaManager extends WhatIfSchemaManager {
      * @param whatIfIndexes indexes of new table
      * @param tableName table name
      */
-    private void addGsiToLocalIndex(TableMeta tableMeta, List<IndexMeta> whatIfIndexes, String tableName) {
+    private void addGsiToLocalIndex(TableMeta tableMeta, List<IndexMeta> whatIfIndexes, String tableName,
+                                    Map<String, ColumnMeta> columnsMap) {
         // move gsi to local index
         if (tableMeta.withGsi()) {
             Map<String, GsiMetaManager.GsiIndexMetaBean> gsiPublished = tableMeta.getGsiPublished();
@@ -366,7 +399,7 @@ public class ShardingAdvisorWhatIfSchemaManager extends WhatIfSchemaManager {
                 whatIfIndexes.add(generateWhatIfIndexMeta(
                     tableName,
                     indexMetaBean.indexColumns.stream().
-                        map(gsiIndexColumnMetaBean -> tableMeta.getColumn(gsiIndexColumnMetaBean.columnName)).
+                        map(gsiIndexColumnMetaBean -> columnsMap.get(gsiIndexColumnMetaBean.columnName)).
                         collect(Collectors.toList()),
                     WhatIfIndexType.local));
             }

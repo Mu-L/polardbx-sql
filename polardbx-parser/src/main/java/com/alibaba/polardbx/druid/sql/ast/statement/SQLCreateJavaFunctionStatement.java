@@ -34,6 +34,7 @@ public class SQLCreateJavaFunctionStatement extends SQLStatementImpl
     protected String javaCode;
     protected SQLDataType returnType;
     protected List<SQLDataType> inputType;
+    protected boolean ifNotExists = false;
 
     protected boolean noState = false;
 
@@ -93,5 +94,13 @@ public class SQLCreateJavaFunctionStatement extends SQLStatementImpl
     @Override
     public void setDataType(SQLDataType dataType) {
 
+    }
+
+    public boolean isIfNotExists() {
+        return ifNotExists;
+    }
+
+    public void setIfNotExists(boolean ifNotExists) {
+        this.ifNotExists = ifNotExists;
     }
 }

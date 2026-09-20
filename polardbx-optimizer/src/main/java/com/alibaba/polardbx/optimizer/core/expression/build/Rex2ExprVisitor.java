@@ -71,6 +71,7 @@ import java.util.stream.Collectors;
 import static org.apache.calcite.sql.type.SqlTypeName.BINARY;
 import static org.apache.calcite.sql.type.SqlTypeName.CHAR;
 import static org.apache.calcite.sql.type.SqlTypeName.DECIMAL;
+import static org.apache.calcite.sql.type.SqlTypeName.VECTOR;
 
 /**
  * @author Eric Fu
@@ -89,7 +90,8 @@ public class Rex2ExprVisitor extends RexVisitorImpl<IExpression> {
     public Rex2ExprVisitor(ExecutionContext executionContext) {
         super(false);
         this.contextProvider = new ExprContextProvider(executionContext);
-        this.enableDrdsTypeSystem = executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_DRDS_TYPE_SYSTEM);
+        this.enableDrdsTypeSystem =
+            executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_DRDS_TYPE_SYSTEM);
     }
 
     public Rex2ExprVisitor(ExprContextProvider contextHolder) {
@@ -222,8 +224,9 @@ public class Rex2ExprVisitor extends RexVisitorImpl<IExpression> {
         if (functionName.equalsIgnoreCase("CAST")) {
             RelDataType relDataType = call.getType();
             DataType dataType = DataTypeUtil.calciteToDrdsType(relDataType);
-            if ((relDataType.getSqlTypeName() == CHAR || relDataType.getSqlTypeName() == BINARY)
-                && relDataType.getPrecision() >= 0) {
+            if (((relDataType.getSqlTypeName() == CHAR || relDataType.getSqlTypeName() == BINARY)
+                && relDataType.getPrecision() >= 0)
+                || (relDataType.getSqlTypeName() == VECTOR && relDataType.getPrecision() > 0)) {
                 return ImmutableList.of(new LiteralExpression(dataType.getStringSqlType()),
                     new LiteralExpression(relDataType.getPrecision()));
             }

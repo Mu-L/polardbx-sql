@@ -59,7 +59,7 @@ public class OptimizerAlertLoggerStatisticImplTest {
         // test rowcount == 0, sampleSize = 1000
         c.setRowCount(0L);
         OptimizerAlertUtil.checkStatisticsMiss(testSchema, testTbl, c, 1000);
-        Assert.assertTrue(0L == getStatisticAlertNum());
+        Assert.assertTrue(1L == getStatisticAlertNum());
 
         // test rowcount == 5, sampleSize = 1000
         c.setRowCount(5L);
@@ -80,7 +80,7 @@ public class OptimizerAlertLoggerStatisticImplTest {
         // test rowcount == 1000, sampleSize = 0
         c.setRowCount(1000L);
         OptimizerAlertUtil.checkStatisticsMiss(testSchema, testTbl, c, 0);
-        Assert.assertTrue(1L == getStatisticAlertNum());
+        Assert.assertTrue(0L == getStatisticAlertNum());
 
     }
 

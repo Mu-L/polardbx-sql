@@ -32,7 +32,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class ColumnarColumnEvolutionRecord implements SystemTableRecord {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     public long id;
     public long fieldId;

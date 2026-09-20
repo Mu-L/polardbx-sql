@@ -30,6 +30,8 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Arrays;
+import java.util.Objects;
+import java.util.Set;
 
 public class XAUtils {
 
@@ -153,6 +155,17 @@ public class XAUtils {
         return xid;
     }
 
+    public static String toXidStringAsyncCommit(long transId, long primaryGroupUid, String dnId, long seq,
+                                                long formatId) {
+        String xid = String.format("'drds-%s@%s', '%s@%08d', %s",
+            Long.toHexString(transId),
+            Long.toHexString(primaryGroupUid),
+            null == dnId ? "readonly" : Long.toHexString(FnvHash.fnv1a_64(dnId)),
+            seq,
+            formatId);
+        return xid;
+    }
+
     public static String toGtridString(long transId, long primaryGroupUid) {
         return String.format("drds-%s@%s", Long.toHexString(transId), Long.toHexString(primaryGroupUid));
     }
@@ -184,41 +197,36 @@ public class XAUtils {
      * format 1 (polardb-x trx): gtrid = drds-<txid>@<group-uid>, bqual = <group>[@<readview-seq>]
      * format 2 (recover task trx): gtrid = POLARDB-X-RECOVER-TASK@{trx-id}, bqual = [ async-commit | sync-commit ]
      */
-    public static class XATransInfo {
+    public static class XATransInfo implements Comparable<XATransInfo> {
         public final String gtrid;
         public final long transId;
         public final String bqual;
         public final long primaryGroupUid;
         public final String trimedBqual;
         public final int formatId;
+        public String dnId = null;
+        public Integer seq = null;
 
-        public XATransInfo(long transId, String bqual, long uid) {
-            this.gtrid = null;
+        public XATransInfo(String gtrid, String bqual, int formatId, long transId, long primaryGroupUid) {
+            this.gtrid = gtrid;
             this.transId = transId;
-            this.primaryGroupUid = uid;
+            this.primaryGroupUid = primaryGroupUid;
             this.bqual = bqual;
             this.trimedBqual = uniqueBqual(bqual);
-            this.formatId = 1;
+            this.formatId = formatId;
         }
 
-        public XATransInfo(String gtrid, String bqual) {
+        public XATransInfo(String gtrid, String bqual, int formatId) {
             this.gtrid = gtrid;
             this.transId = 0;
             this.primaryGroupUid = 0;
             this.bqual = bqual;
             this.trimedBqual = null;
-            this.formatId = 2;
+            this.formatId = formatId;
         }
 
         public String toXidString() {
-            switch (formatId) {
-            case 1:
-                return "'drds-" + Long.toHexString(transId) + "@" + Long.toHexString(primaryGroupUid) + "', '"
-                    + trimedBqual + "'";
-            case 2:
-                return "'" + gtrid + "', '" + bqual + "'";
-            }
-            return "";
+            return String.format("'%s', '%s', %s", gtrid, bqual, formatId);
         }
 
         /**
@@ -233,29 +241,99 @@ public class XAUtils {
             }
         }
 
+        public String getDnId(Set<String> dnIds) {
+            if (null != dnId) {
+                return dnId;
+            }
+
+            if (!TransactionAttribute.FormatId.ASYNC_COMMIT.equals(TransactionAttribute.FormatId.fromId(formatId))) {
+                return null;
+            }
+
+            int atSymbolIndex = bqual.lastIndexOf('@');
+            if (atSymbolIndex > 0) {
+                String hash = bqual.substring(0, atSymbolIndex);
+                for (String dn : dnIds) {
+                    if (hash.equals(Long.toHexString(FnvHash.fnv1a_64(dn)))) {
+                        dnId = dn;
+                        break;
+                    }
+                }
+            }
+            return dnId;
+        }
+
+        public void setDnId(String dnId) {
+            this.dnId = dnId;
+        }
+
+        public Integer getSeq() {
+            if (null != seq) {
+                return seq;
+            }
+
+            if (!TransactionAttribute.FormatId.ASYNC_COMMIT.equals(TransactionAttribute.FormatId.fromId(formatId))) {
+                return null;
+            }
+
+            int atSymbolIndex = bqual.lastIndexOf('@');
+            if (atSymbolIndex > 0) {
+                String seqStr = bqual.substring(atSymbolIndex + 1);
+                seq = Integer.parseInt(seqStr);
+            }
+            return seq;
+        }
+
         @Override
         public String toString() {
             return toXidString();
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(gtrid, bqual, formatId);
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (!(obj instanceof XATransInfo)) {
+                return false;
+            }
+            return hashCode() == obj.hashCode();
+        }
+
+        @Override
+        public int compareTo(XAUtils.XATransInfo o) {
+            return Long.compare(transId, o.transId);
+        }
+
+        public String printInfo() {
+            return "Trx id " + transId + " dn " + dnId + " xid " + toXidString();
         }
     }
 
     public static XATransInfo parseXid(long formatID, int gtridLength, int bqualLength, byte[] data) {
         TransactionAttribute.FormatId id = TransactionAttribute.FormatId.fromId((int) formatID);
         if (null == id) {
+            // tempt to treat it as a normal trx
             return null;
         }
         byte[] gtridData = Arrays.copyOfRange(data, 0, gtridLength);
         byte[] bqualData = Arrays.copyOfRange(data, gtridLength, gtridLength + bqualLength);
+        String gtrid = new String(gtridData);
+        String bqual = new String(bqualData);
         switch (id) {
         case NORMAL:
         case ARCHIVE:
         case IGNORE_BINLOG:
+        case TSO_OPT:
+        case ASYNC_COMMIT:
             if (ExecUtils.checkGtridPrefix(gtridData)) {
                 int atSymbolIndex = ArrayUtils.indexOf(gtridData, (byte) '@');
-                String txid = new String(gtridData, 5, atSymbolIndex - 5);
+                String txId = new String(gtridData, 5, atSymbolIndex - 5);
                 String primaryGroupUid = new String(gtridData, atSymbolIndex + 1, gtridData.length - atSymbolIndex - 1);
-                String group = new String(bqualData);
-                return new XATransInfo(Long.parseLong(txid, 16), group, tryParseLong(primaryGroupUid, 16));
+                return new XATransInfo(gtrid, bqual, (int) formatID, Long.parseLong(txId, 16),
+                    tryParseLong(primaryGroupUid, 16));
             } else {
                 return null;
             }
@@ -270,9 +348,7 @@ public class XAUtils {
                 return null;
             }
 
-            String gtrid = new String(gtridData);
-            String bqual = new String(bqualData);
-            return new XATransInfo(gtrid, bqual);
+            return new XATransInfo(gtrid, bqual, TransactionAttribute.FormatId.RECOVER.id());
         default:
             return null;
         }

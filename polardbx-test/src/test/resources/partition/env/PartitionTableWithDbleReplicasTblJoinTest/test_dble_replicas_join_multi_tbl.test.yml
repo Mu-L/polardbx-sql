@@ -1,0 +1,474 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+set ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING=true;
+set ENABLE_RANDOM_PHY_TABLE_NAME=false;
+set ENABLE_REPLICAS_RANDOM_READ= false;
+
+use polardbx;
+
+
+drop database if exists mydbledb3;
+  ## USE_DN_LIST_MSG
+create database if not exists mydbledb3 mode = 'auto' 
+locality='dble_config={"group_config":{
+  "mydbledb3_g1":["$dn1","mydbledb3_01"],
+  "mydbledb3_g2":["$dn2","mydbledb3_02"], 
+  "mydbledb3_g3":["$dn1","mydbledb3_03"],
+  "mydbledb3_g4":["$dn2","mydbledb3_04"],
+  "mydbledb3_g5":["$dn1","mydbledb3_05"],
+  "mydbledb3_g6":["$dn2","mydbledb3_06"] }}';
+
+use mydbledb3;
+
+CREATE TABLE `r_g1` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb3_g1'
+;
+
+CREATE TABLE `r_g3` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb3_g3'
+;
+
+CREATE TABLE `r_g2g3` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb3_g2,mydbledb3_g3'
+;
+
+CREATE TABLE `r_g3g4` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb3_g3,mydbledb3_g4'
+;
+
+CREATE TABLE `r_g3g6` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb3_g3,mydbledb3_g6'
+;
+
+CREATE TABLE `r_g3g6_t2` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb3_g3,mydbledb3_g6'
+;
+
+
+CREATE TABLE `r_all_t1` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb3_g1,mydbledb3_g2,mydbledb3_g3,mydbledb3_g4,mydbledb3_g5,mydbledb3_g6'
+;
+
+CREATE TABLE `r_all_t2` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb3_g1,mydbledb3_g2,mydbledb3_g3,mydbledb3_g4,mydbledb3_g5,mydbledb3_g6'
+;
+
+CREATE TABLE `b_t1` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+BROADCAST;
+
+
+CREATE TABLE `b_t2` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+BROADCAST;
+
+CREATE TABLE `sig_g3_t1` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+SINGLE
+LOCALITY='db_pools=mydbledb3_g3'
+;
+
+CREATE TABLE `sig_g6_t1` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+SINGLE
+LOCALITY='db_pools=mydbledb3_g6'
+;
+
+CREATE TABLE `bro_tbl_t1` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+BROADCAST;
+
+CREATE TABLE `bro_tbl_t2` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+BROADCAST;
+
+
+CREATE TABLE `part_tbl_t1` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+PARTITION BY KEY(a)
+PARTITION 6
+LOCALITY='db_pools=mydbledb3_g1,mydbledb3_g2,mydbledb3_g3,mydbledb3_g4,mydbledb3_g5,mydbledb3_g6'
+;
+
+
+CREATE TABLE `part_tbl_t2` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+PARTITION BY KEY(a)
+PARTITION 6
+LOCALITY='db_pools=mydbledb3_g1,mydbledb3_g2,mydbledb3_g3,mydbledb3_g4,mydbledb3_g5,mydbledb3_g6'
+;
+
+CREATE TABLE `part_tbl_g3g6_t1` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+PARTITION BY KEY(a)
+PARTITION 2
+LOCALITY='db_pools=mydbledb3_g3,mydbledb3_g6'
+;
+
+
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+
+  ## no push join for replicas_tbl at g2g3 join replicas_tbl at g3g4
+explain select t1.a from r_g2g3 t1 join r_g3g4 t2 on t1.a=t2.a where t2.a=100;
+
+  ## no push join for replicas_tbl at g2g3 join replicas_tbl at g3g4
+explain select t1.a from r_g2g3 t1 join r_g3g4 t2 on t1.a=t2.a where t2.a=100;
+
+  ## no push join for replicas_tbl at g2g3 join replicas_tbl at all
+explain select t1.a from r_g2g3 t1 join r_all_t1 t2 on t1.a=t2.a where t2.a=100;
+
+  ## push join for replicas_tbl at all join replicas_tbl at g2g3
+explain select t1.a from r_all_t1 t1 join r_g2g3 t2 on t1.a=t2.a where t2.a=100;
+
+ ## route a=100 : p3
+explain select * from part_tbl_t1 where a in (100);
+  
+  ## route a=100 : p6
+explain select * from part_tbl_t1 where a in (200);
+
+  ## push multi-table join without replicas table
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+
+  ## push multi-table join with replicas table at all
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join r_all_t1 t5 on t1.a=t5.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join r_all_t1 t5 on t1.a=t5.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+  
+  ## push multi-table join with two replicas tables at all
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join r_all_t2 t6 on t1.a=t6.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+inner join r_all_t1 t5 on t1.a=t5.a
+where t2.a in (100,200);
+
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join r_all_t2 t6 on t1.a=t6.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+inner join r_all_t1 t5 on t1.a=t5.a
+where t2.a in (100,200);
+  
+  ## no push rep_tbl and part_tbl, rep_tbl not contains all group of part_tbl
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+where t2.a in (100,200);
+
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+where t2.a in (100,200);
+
+  ## push multi-table join with bro_tbl join part_tbl join rep_tbl
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+where t2.a in (100,200);
+
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+where t2.a in (100,200);
+
+  ## push multi-table join, all at g3,g6
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+where t2.a in (100,200);
+
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+where t2.a in (100,200);
+
+  ## push multi-table join, all at g3
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+inner join sig_g3_t1 t6 on t1.a=t6.a
+where t2.a in (100);
+
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+inner join sig_g3_t1 t6 on t1.a=t6.a
+where t2.a in (100);
+
+  ## no push multi-table join, sig_g3_t1 not at g6
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+inner join sig_g3_t1 t6 on t1.a=t6.a
+where t2.a in (200);
+
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+inner join sig_g3_t1 t6 on t1.a=t6.a
+where t2.a in (200);
+
+  ## push multi-table join, all at g6
+explain select t1.a from
+r_g3g6 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join sig_g6_t1 t6 on t1.a=t6.a
+where t2.a = 200;
+
+select t1.a from
+r_g3g6 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join sig_g6_t1 t6 on t1.a=t6.a
+where t2.a = 200;
+
+  ## no push multi-table join, sig_g6_t1 not at g3
+explain select t1.a from
+r_g3g6 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join sig_g6_t1 t6 on t1.a=t6.a
+where t2.a = 100;
+
+select t1.a from
+r_g3g6 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join sig_g6_t1 t6 on t1.a=t6.a
+where t2.a = 100;
+
+  ## push multi-join, all at g6
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join sig_g6_t1 t6 on t1.a=t6.a
+where t2.a = 200;
+
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join sig_g6_t1 t6 on t1.a=t6.a
+where t2.a = 200;
+
+  ## no push join, sig_g6_t1 not at g3
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join sig_g6_t1 t6 on t1.a=t6.a
+where t2.a = 100;
+
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join sig_g6_t1 t6 on t1.a=t6.a
+where t2.a = 100;
+
+ ## push join, all at g6
+explain select t2.a from
+part_tbl_g3g6_t1 t2
+inner join sig_g6_t1 t6 on t2.a=t6.a
+where t2.a = 200;
+
+select t2.a from
+part_tbl_g3g6_t1 t2
+inner join sig_g6_t1 t6 on t2.a=t6.a
+where t2.a = 200;
+  
+  
+  ## no push join, sig_g6_t1 not at g3
+explain select t2.a from
+part_tbl_g3g6_t1 t2
+inner join sig_g6_t1 t6 on t2.a=t6.a
+where t2.a = 100;
+
+select t2.a from
+part_tbl_g3g6_t1 t2
+inner join sig_g6_t1 t6 on t2.a=t6.a
+where t2.a = 100;
+
+  ## push multi-join, all at g3,g6
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join part_tbl_g3g6_t1 t4 on t1.a=t4.a
+inner join r_g3g6 t5 on t1.a=t5.a
+where t2.a in (100,200);
+
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join part_tbl_g3g6_t1 t4 on t1.a=t4.a
+inner join r_g3g6 t5 on t1.a=t5.a
+where t2.a in (100,200);
+
+  ## push join with bro_tbl and rep_tbl 
+explain select t1.a from
+bro_tbl_t1 t1
+inner join r_g3g6 t5 on t1.a=t5.a
+where t5.a in (100,200);
+
+select t1.a from
+bro_tbl_t1 t1
+inner join r_g3g6 t5 on t1.a=t5.a
+where t5.a in (100,200);
+
+  ## push join with bro_tbl and rep_tbl 
+explain select t1.a from
+bro_tbl_t1 t1
+inner join r_g3g4 t5 on t1.a=t5.a
+where t5.a in (100,200);
+
+select t1.a from
+bro_tbl_t1 t1
+inner join r_g3g4 t5 on t1.a=t5.a
+where t5.a in (100,200);
+
+  ## push multi-join, all at g3,g6
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join r_all_t1 t5 on t1.a=t5.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join r_all_t1 t5 on t1.a=t5.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+
+  ## no push multi-join, r_g3g6 is not all group
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join r_all_t1 t5 on t1.a=t5.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+inner join r_g3g6 t6 on t1.a=t6.a
+where t2.a in (100,200);
+
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join r_all_t1 t5 on t1.a=t5.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+inner join r_g3g6 t6 on t1.a=t6.a
+where t2.a in (100,200);
+
+  ## push multi-join, all at g3 g6
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+
+  ## push multi-table join 
+explain select t2.a from
+part_tbl_t1 t2
+inner join part_tbl_t2 t4 on t2.a=t4.a
+where t2.a in (100,200);
+
+select t2.a from
+part_tbl_t1 t2
+inner join part_tbl_t2 t4 on t2.a=t4.a
+where t2.a in (100,200);
+
+use polardbx;
+drop database mydbledb3;
+
+
+
+

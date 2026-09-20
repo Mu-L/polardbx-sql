@@ -56,6 +56,7 @@ public class SqlEngineAlertTest {
             try {
                 for (int j = 0; j < logNum; j++) {
                     Map<String, String> map = SqlEngineAlert.getInstance().collectAndClear();
+                    boolean empty = map.isEmpty();
                     Iterator<Map.Entry<String, String>> iterator = map.entrySet().iterator();
                     StringBuilder sb = new StringBuilder();
                     while (iterator.hasNext()) {
@@ -63,7 +64,7 @@ public class SqlEngineAlertTest {
                         sb.append(entry.getKey()).append(" ").append(entry.getValue()).append(" ");
                     }
                     Assert.assertTrue(map.size() < threadNum);
-                    if (!map.isEmpty()) {
+                    if (!empty) {
                         Assert.assertFalse(sb.toString().isEmpty());
                     }
                     Thread.sleep(sleep);
@@ -130,6 +131,33 @@ public class SqlEngineAlertTest {
             instConfUtilMockedStatic.when(
                 () -> InstConfUtil.getBool(ConnectionParams.ENABLE_SQL_ENGINE_ALERT_CRITICAL)).thenReturn(false);
             SqlEngineAlert.getInstance().putCritical("a");
+            Assert.assertEquals(0, SqlEngineAlert.getInstance().collectAndClear().size());
+
+        }
+    }
+
+    @Test
+    public void testNewSwitch() {
+        try (MockedStatic<InstConfUtil> instConfUtilMockedStatic = Mockito.mockStatic(InstConfUtil.class)) {
+            instConfUtilMockedStatic.when(() -> InstConfUtil.getBool(any())).thenReturn(true);
+            SqlEngineAlert.getInstance().collectAndClear();
+
+            instConfUtilMockedStatic.when(
+                () -> InstConfUtil.getBool(ConnectionParams.ENABLE_SQL_ENGINE_ALERT_COLUMNAR_READ)).thenReturn(true);
+            SqlEngineAlert.getInstance().putColumnarRead("a");
+            Assert.assertEquals(1, SqlEngineAlert.getInstance().collectAndClear().size());
+            instConfUtilMockedStatic.when(
+                () -> InstConfUtil.getBool(ConnectionParams.ENABLE_SQL_ENGINE_ALERT_COLUMNAR_READ)).thenReturn(false);
+            SqlEngineAlert.getInstance().putColumnarRead("a");
+            Assert.assertEquals(0, SqlEngineAlert.getInstance().collectAndClear().size());
+
+            instConfUtilMockedStatic.when(
+                () -> InstConfUtil.getBool(ConnectionParams.ENABLE_SQL_ENGINE_ALERT_COLUMNAR_WARMUP)).thenReturn(true);
+            SqlEngineAlert.getInstance().putColumnarWarmUp("a");
+            Assert.assertEquals(1, SqlEngineAlert.getInstance().collectAndClear().size());
+            instConfUtilMockedStatic.when(
+                () -> InstConfUtil.getBool(ConnectionParams.ENABLE_SQL_ENGINE_ALERT_COLUMNAR_WARMUP)).thenReturn(false);
+            SqlEngineAlert.getInstance().putColumnarWarmUp("a");
             Assert.assertEquals(0, SqlEngineAlert.getInstance().collectAndClear().size());
         }
     }

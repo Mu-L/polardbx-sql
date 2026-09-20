@@ -26,7 +26,7 @@ public class TtlPhyDeleteStmtTest {
             String forceIndexExpr = "force index(`idx_b`)";
             String phyDeleteStmt =
                 TtlTaskSqlBuilder.buildDeleteTemplate(mockTtlInfo, needAddIntervalLowerBound, queryHint,
-                    forceIndexExpr);
+                    forceIndexExpr, null);
             System.out.println(phyDeleteStmt);
             Assert.assertTrue(!phyDeleteStmt.toLowerCase().contains("force index"));
         } catch (Throwable ex) {

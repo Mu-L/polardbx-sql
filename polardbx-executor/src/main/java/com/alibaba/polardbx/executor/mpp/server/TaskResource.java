@@ -32,7 +32,6 @@ import com.alibaba.polardbx.executor.mpp.execution.buffer.SerializedChunk;
 import com.google.common.reflect.TypeToken;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import io.airlift.concurrent.BoundedExecutor;
 import io.airlift.units.DataSize;
 import io.airlift.units.Duration;
 
@@ -77,7 +76,8 @@ public class TaskResource {
     public static final Duration DEFAULT_MAX_WAIT_TIME = new Duration(2, SECONDS);
 
     private final TaskManager taskManager;
-    private final Executor responseExecutor;
+    private final Executor dataResponseExecutor;
+    private final Executor controlResponseExecutor;
     private final ScheduledExecutorService timeoutExecutor;
 
     private static DrdsContextHandler drdsContextHandler = null;
@@ -85,10 +85,12 @@ public class TaskResource {
     @Inject
     public TaskResource(
         TaskManager taskManager,
-        @ForAsyncHttp BoundedExecutor responseExecutor,
+        @ForAsyncHttpData MonitoredBoundedExecutor dataResponseExecutor,
+        @ForAsyncHttpControl MonitoredBoundedExecutor controlResponseExecutor,
         @ForAsyncHttp ScheduledExecutorService timeoutExecutor) {
         this.taskManager = requireNonNull(taskManager, "taskManager is null");
-        this.responseExecutor = requireNonNull(responseExecutor, "responseExecutor is null");
+        this.dataResponseExecutor = requireNonNull(dataResponseExecutor, "dataResponseExecutor is null");
+        this.controlResponseExecutor = requireNonNull(controlResponseExecutor, "controlResponseExecutor is null");
         this.timeoutExecutor = requireNonNull(timeoutExecutor, "timeoutExecutor is null");
     }
 
@@ -146,7 +148,7 @@ public class TaskResource {
 
         // For hard timeout, add an additional time to max wait for thread scheduling contention and GC
         Duration timeout = new Duration(waitTime.toMillis() + ADDITIONAL_WAIT_TIME, MILLISECONDS);
-        bindAsyncResponse(asyncResponse, futureTaskInfo, responseExecutor)
+        bindAsyncResponse(asyncResponse, futureTaskInfo, controlResponseExecutor)
             .withTimeout(timeout);
     }
 
@@ -176,7 +178,7 @@ public class TaskResource {
 
         // For hard timeout, add an additional time to max wait for thread scheduling contention and GC
         Duration timeout = new Duration(maxWait.toMillis() + ADDITIONAL_WAIT_TIME, MILLISECONDS);
-        bindAsyncResponse(asyncResponse, futureTaskStatus, responseExecutor)
+        bindAsyncResponse(asyncResponse, futureTaskStatus, controlResponseExecutor)
             .withTimeout(timeout);
     }
 
@@ -249,7 +251,7 @@ public class TaskResource {
 
         // For hard timeout, add an additional 5 seconds to max wait for thread scheduling contention and GC
         Duration timeout = new Duration(waitTime.toMillis() + 5000, MILLISECONDS);
-        bindAsyncResponse(asyncResponse, responseFuture, responseExecutor)
+        bindAsyncResponse(asyncResponse, responseFuture, dataResponseExecutor)
             .withTimeout(timeout,
                 Response.status(Response.Status.NO_CONTENT)
                     .header(MppMediaTypes.MPP_TASK_INSTANCE_ID, taskId.toString())

@@ -246,7 +246,7 @@ public class TwoPhaseDdlManager {
                     String hashCode = DdlHelper.genHashCodeForPhyTableDDL(schemaName, sourceGroupName,
                         SqlIdentifier.surroundWithBacktick(phyTableName), 0);
                     String fullPhyTableName =
-                        buildPhyDbTableNameFromGroupNameAndPhyTableName(sourceGroupName, phyTableName);
+                        buildPhyDbTableNameFromGroupNameAndPhyTableName(schemaName, sourceGroupName, phyTableName);
                     phyTableHashCodeMap.put(fullPhyTableName, hashCode);
                 }
             }
@@ -396,7 +396,8 @@ public class TwoPhaseDdlManager {
                 if (lastEmitPhyTableNameMap.containsKey(sourceGroupName)) {
                     String lastEmitPhyTableName = lastEmitPhyTableNameMap.get(sourceGroupName);
                     String fullPhyTableName =
-                        buildPhyDbTableNameFromGroupNameAndPhyTableName(sourceGroupName, lastEmitPhyTableName);
+                        buildPhyDbTableNameFromGroupNameAndPhyTableName(schemaName, sourceGroupName,
+                            lastEmitPhyTableName);
                     phyTableDdlState = phyTableDdlStateMap.get(fullPhyTableName);
                 }
                 // 7.3.3 if state is ok & remain some physical ddl task. & concurrent, poll more task...
@@ -637,7 +638,7 @@ public class TwoPhaseDdlManager {
             Map<Pair<String, Long>, String> queryIdToProcessInfoMap =
                 resultsToQueryIdToProcessInfoMap(processInfoResults);
             Map<String, String> physicalTableNameToProcessInfoMap = new HashMap<>();
-            String phyDbName = buildPhysicalDbNameFromGroupName(sourceGroupName);
+            String phyDbName = buildPhysicalDbNameFromGroupName(schemaName, sourceGroupName);
             for (String physicalTableName : queryIdMapOnSourceGroup.keySet()) {
                 Long queryId = queryIdMapOnSourceGroup.get(physicalTableName);
                 physicalTableNameToProcessInfoMap.put(physicalTableName,
@@ -673,7 +674,7 @@ public class TwoPhaseDdlManager {
             List<String> sqls = new ArrayList<>();
             phyTableNames.forEach(phyTableName -> {
                 String fullPhyTableName =
-                    buildPhyDbTableNameFromGroupNameAndPhyTableName(sourceGroupName, phyTableName);
+                    buildPhyDbTableNameFromGroupNameAndPhyTableName(schemaName, sourceGroupName, phyTableName);
                 Long queryId = queryIdMap.get(fullPhyTableName);
                 String processInfo = queryProcessInfoMap.get(sourceGroupName).get(fullPhyTableName);
                 // if there is truely running ddl, kill query.
@@ -1029,7 +1030,7 @@ public class TwoPhaseDdlManager {
             Set<String> emittedPhyTableNames = new HashSet<>();
             for (String phyTableName : phyTableNames) {
                 String fullPhyTableName =
-                    buildPhyDbTableNameFromGroupNameAndPhyTableName(sourceGroupName, phyTableName);
+                    buildPhyDbTableNameFromGroupNameAndPhyTableName(schemaName, sourceGroupName, phyTableName);
                 String processInfo = queryProcessInfoOnGroup.get(fullPhyTableName);
                 if (checkIfProcessInfoRunning(processInfo)) {
                     emittedPhyTableNames.add(phyTableName);
@@ -1058,7 +1059,7 @@ public class TwoPhaseDdlManager {
             Set<String> phyTableNames = sourcePhyTableNames.get(sourceGroupName);
             for (String phyTableName : phyTableNames) {
                 String fullPhyTableName =
-                    buildPhyDbTableNameFromGroupNameAndPhyTableName(sourceGroupName, phyTableName);
+                    buildPhyDbTableNameFromGroupNameAndPhyTableName(schemaName, sourceGroupName, phyTableName);
                 if (queryProcessInfoOnGroup.get(fullPhyTableName) == null || !expectedStates.contains(
                     phyDdlStateOnGroup.get(fullPhyTableName))) {
                     allPhysicalTableInState = false;

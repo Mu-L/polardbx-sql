@@ -19,6 +19,7 @@ package com.alibaba.polardbx.optimizer.core.planner.rule;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.optimizer.PlannerContext;
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.PushUtil;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.MergeSort;
 import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
@@ -91,11 +92,6 @@ public class PushFilterRule extends RelOptRule {
 
     @Override
     public boolean matches(RelOptRuleCall call) {
-        // todo
-//        final LogicalView logicalView = call.rel(1);
-//        if (logicalView instanceof OSSTableScan) {
-//            return false;
-//        }
         return true;
     }
 
@@ -103,7 +99,7 @@ public class PushFilterRule extends RelOptRule {
     public void onMatch(RelOptRuleCall call) {
         Filter filter = call.rel(0);
         LogicalView logicalView = call.rel(1);
-        if (RelUtils.existLastInsertId(filter)) {
+        if (RelUtils.isLastInsertId(filter.getChildExps())) {
             return;
         }
         if (logicalView instanceof OSSTableScan
@@ -137,12 +133,8 @@ public class PushFilterRule extends RelOptRule {
         }
     }
 
-    public static boolean doNotPush(Filter filter, LogicalView logicalView) {
-        return doNotPush(filter.getCondition(), logicalView);
-    }
-
     public static boolean doNotPush(RexNode condition, LogicalView logicalView) {
-        if (RexUtil.containsUnPushableFunction(condition, false)) {
+        if (!PushUtil.isPushable(condition)) {
             return true;
         }
         if (logicalView instanceof OSSTableScan
@@ -202,7 +194,7 @@ public class PushFilterRule extends RelOptRule {
             MergeSort mergeSort = call.rel(1);
             LogicalView logicalView = call.rel(2);
 
-            if (PushFilterRule.doNotPush(filter, logicalView)) {
+            if (PushFilterRule.doNotPush(filter.getCondition(), logicalView)) {
                 return;
             }
 
@@ -234,7 +226,7 @@ public class PushFilterRule extends RelOptRule {
             Filter filter = (Filter) call.rels[0];
             LogicalUnion logicalUnion = (LogicalUnion) call.rels[1];
 
-            if (doNotPush(filter, null)) {
+            if (!PushUtil.isPushable(filter)) {
                 return;
             }
 
@@ -244,7 +236,7 @@ public class PushFilterRule extends RelOptRule {
                 newInputs.add(newFilter);
             }
 
-            LogicalUnion newUnion = LogicalUnion.create(newInputs, logicalUnion.all);
+            LogicalUnion newUnion = logicalUnion.copy(logicalUnion.getTraitSet(), newInputs, logicalUnion.all);
             call.transformTo(newUnion);
         }
     }
@@ -270,7 +262,7 @@ public class PushFilterRule extends RelOptRule {
             Filter filter = call.rel(1);
             LogicalView logicalView = call.rel(2);
 
-            if (PushFilterRule.doNotPush(filter, logicalView)) {
+            if (PushFilterRule.doNotPush(filter.getCondition(), logicalView)) {
                 return;
             }
 

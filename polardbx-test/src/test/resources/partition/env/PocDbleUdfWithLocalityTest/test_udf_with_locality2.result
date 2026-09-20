@@ -1,0 +1,199 @@
+## DISABLE_FAST_SQL_PARSER
+select mypartlongc2l360(0)
+mypartlongc2l360(0)
+0
+select mypartlongc2l360(359)
+mypartlongc2l360(359)
+0
+select mypartlongc2l360(360)
+mypartlongc2l360(360)
+1
+select mypartlongc2l360(361)
+mypartlongc2l360(361)
+1
+select mypartlongc2l360(719)
+mypartlongc2l360(719)
+1
+select mypartlongc2l360(720)
+mypartlongc2l360(720)
+0
+select mypartlongc2l360(721)
+mypartlongc2l360(721)
+0
+select mypartlongc2l360(721)
+mypartlongc2l360(721)
+0
+drop database if exists mypocdb2
+create database if not exists mypocdb2 mode = auto locality = "db_config=mypocdb2_db00:polardbx-storage-0-master,mypocdb2_db01:polardbx-storage-1-master"
+use mypocdb2
+drop tablegroup if exists tg_my_udf2
+create tablegroup if not exists tg_my_udf2
+partition by udf_hash(bigint)
+partition 2
+(
+partition p0 values less than (1),
+partition p1 values less than (2)
+)
+drop table if exists uhp2_myt1
+create table uhp2_myt1(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(mypartlongc2l360(c1))
+tablegroup=tg_my_udf2
+locality="db_pools=mypocdb2_db00,mypocdb2_db01"
+drop table if exists uhp2_myt2
+## error_msg: $# mismatch #$
+create table uhp2_myt2(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(mypartlongc2l360(c1))
+tablegroup=tg_my_udf2
+locality="db_pools=mypocdb2_db00"
+mismatch
+create table uhp2_myt2(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(mypartlongc2l360(c1))
+tablegroup=tg_my_udf2
+locality="db_pools=mypocdb2_db00,mypocdb2_db01"
+show create table uhp2_myt1
+Table,Create Table
+uhp2_myt1,CREATE TABLE `uhp2_myt1` (
+	`c1` bigint(20) NOT NULL,
+	`c2` bigint(20) NOT NULL,
+	KEY `auto_shard_key_c1` USING BTREE (`c1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+/* LOCALITY='db_pools=mypocdb2_db00,mypocdb2_db01' */
+PARTITION BY UDF_HASH(mypartlongc2l360(`c1`))
+PARTITIONS 2
+(PARTITION p0 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p1 VALUES LESS THAN (2) ENGINE = InnoDB)
+tablegroup = `tg_my_udf2`
+show create table uhp2_myt2
+Table,Create Table
+uhp2_myt2,CREATE TABLE `uhp2_myt2` (
+	`c1` bigint(20) NOT NULL,
+	`c2` bigint(20) NOT NULL,
+	KEY `auto_shard_key_c1` USING BTREE (`c1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+/* LOCALITY='db_pools=mypocdb2_db00,mypocdb2_db01' */
+PARTITION BY UDF_HASH(mypartlongc2l360(`c1`))
+PARTITIONS 2
+(PARTITION p0 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p1 VALUES LESS THAN (2) ENGINE = InnoDB)
+tablegroup = `tg_my_udf2`
+insert into uhp2_myt1 values (0,0)
+insert into uhp2_myt1 values (359,359)
+insert into uhp2_myt1 values (360,360)
+insert into uhp2_myt1 values (361,361)
+insert into uhp2_myt1 values (719,719)
+insert into uhp2_myt1 values (720,720)
+insert into uhp2_myt1 values (721,721)
+insert into uhp2_myt2 values (0,0)
+insert into uhp2_myt2 values (359,359)
+insert into uhp2_myt2 values (360,360)
+insert into uhp2_myt2 values (361,361)
+insert into uhp2_myt2 values (719,719)
+insert into uhp2_myt2 values (720,720)
+insert into uhp2_myt2 values (721,721)
+select c1, part_route('', 'uhp2_myt1', c1) as route_rs, part_hash('', 'uhp2_myt1', c1) as hash_rs from uhp2_myt1 where c1=0
+c1,route_rs,hash_rs
+0,p0,(0)
+select c1, part_route('', 'uhp2_myt1', c1) as route_rs, part_hash('', 'uhp2_myt1', c1) as hash_rs from uhp2_myt1 where c1=359
+c1,route_rs,hash_rs
+359,p0,(0)
+select c1, part_route('', 'uhp2_myt1', c1) as route_rs, part_hash('', 'uhp2_myt1', c1) as hash_rs from uhp2_myt1 where c1=360
+c1,route_rs,hash_rs
+360,p1,(1)
+select c1, part_route('', 'uhp2_myt1', c1) as route_rs, part_hash('', 'uhp2_myt1', c1) as hash_rs from uhp2_myt1 where c1=361
+c1,route_rs,hash_rs
+361,p1,(1)
+select c1, part_route('', 'uhp2_myt1', c1) as route_rs, part_hash('', 'uhp2_myt1', c1) as hash_rs from uhp2_myt1 where c1=719
+c1,route_rs,hash_rs
+719,p1,(1)
+select c1, part_route('', 'uhp2_myt1', c1) as route_rs, part_hash('', 'uhp2_myt1', c1) as hash_rs from uhp2_myt1 where c1=720
+c1,route_rs,hash_rs
+720,p0,(0)
+select c1, part_route('', 'uhp2_myt1', c1) as route_rs, part_hash('', 'uhp2_myt1', c1) as hash_rs from uhp2_myt1 where c1=721
+c1,route_rs,hash_rs
+721,p0,(0)
+explain select a.c1 from uhp2_myt1 a join uhp2_myt2 b on a.c1=b.c1 where a.c1 between 359 and 360 order by a.c1
+Logical ExecutionPlan
+MergeSort(sort="c1 ASC")
+  LogicalView(tables="uhp2_myt1[p0,p1],uhp2_myt2[p0,p1]", shardCount=2, sql="SELECT `uhp2_myt1`.`c1` FROM `uhp2_myt1` AS `uhp2_myt1` INNER JOIN `uhp2_myt2` AS `uhp2_myt2` ON ((`uhp2_myt1`.`c1` = `uhp2_myt2`.`c1`) AND (`uhp2_myt1`.`c1` BETWEEN ? AND ?)) ORDER BY `uhp2_myt1`.`c1`")
+select a.c1 from uhp2_myt1 a join uhp2_myt2 b on a.c1=b.c1 where a.c1 between 359 and 360 order by a.c1
+c1
+359
+360
+drop table if exists uhp2_myt3
+create table uhp2_myt3(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(mypartlongc2l360(c1))
+partition 2
+(
+partition p0 values less than (1),
+partition p1 values less than (2)
+)
+locality="db_pools=mypocdb2_db00,mypocdb2_db01"
+drop table if exists uhp2_myt4
+create table uhp2_myt4(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(mypartlongc2l360(c1))
+partition 2
+(
+partition p0 values less than (1),
+partition p1 values less than (2)
+)
+locality="db_pools=mypocdb2_db00,mypocdb2_db01"
+show topology from uhp2_myt1
+ID,GROUP_NAME,TABLE_NAME,PARTITION_NAME,SUBPARTITION_NAME,PHY_DB_NAME,DN_ID,STORAGE_POOL_NAME
+0,MYPOCDB2_P00000_GROUP,uhp2_myt1,p0,,mypocdb2_db00,polardbx-storage-0-master,_default
+1,MYPOCDB2_P00001_GROUP,uhp2_myt1,p1,,mypocdb2_db01,polardbx-storage-1-master,_default
+show topology from uhp2_myt2
+ID,GROUP_NAME,TABLE_NAME,PARTITION_NAME,SUBPARTITION_NAME,PHY_DB_NAME,DN_ID,STORAGE_POOL_NAME
+0,MYPOCDB2_P00000_GROUP,uhp2_myt2,p0,,mypocdb2_db00,polardbx-storage-0-master,_default
+1,MYPOCDB2_P00001_GROUP,uhp2_myt2,p1,,mypocdb2_db01,polardbx-storage-1-master,_default
+show topology from uhp2_myt3
+ID,GROUP_NAME,TABLE_NAME,PARTITION_NAME,SUBPARTITION_NAME,PHY_DB_NAME,DN_ID,STORAGE_POOL_NAME
+0,MYPOCDB2_P00000_GROUP,uhp2_myt3,p0,,mypocdb2_db00,polardbx-storage-0-master,_default
+1,MYPOCDB2_P00001_GROUP,uhp2_myt3,p1,,mypocdb2_db01,polardbx-storage-1-master,_default
+insert into uhp2_myt3 values (0,0)
+insert into uhp2_myt3 values (359,359)
+insert into uhp2_myt3 values (360,360)
+insert into uhp2_myt3 values (361,361)
+insert into uhp2_myt3 values (719,719)
+insert into uhp2_myt3 values (720,720)
+insert into uhp2_myt3 values (721,721)
+insert into uhp2_myt4 values (0,0)
+insert into uhp2_myt4 values (359,359)
+insert into uhp2_myt4 values (360,360)
+insert into uhp2_myt4 values (361,361)
+insert into uhp2_myt4 values (719,719)
+insert into uhp2_myt4 values (720,720)
+insert into uhp2_myt4 values (721,721)
+explain select a.c1 from uhp2_myt3 a join uhp2_myt4 b on a.c1=b.c1 where a.c1 between 359 and 360 order by a.c1
+Logical ExecutionPlan
+MergeSort(sort="c1 ASC")
+  LogicalView(tables="uhp2_myt3[p0,p1],uhp2_myt4[p0,p1]", shardCount=2, sql="SELECT `uhp2_myt3`.`c1` FROM `uhp2_myt3` AS `uhp2_myt3` INNER JOIN `uhp2_myt4` AS `uhp2_myt4` ON ((`uhp2_myt3`.`c1` = `uhp2_myt4`.`c1`) AND (`uhp2_myt3`.`c1` BETWEEN ? AND ?)) ORDER BY `uhp2_myt3`.`c1`")
+select a.c1 from uhp2_myt3 a join uhp2_myt4 b on a.c1=b.c1 where a.c1 between 359 and 360 order by a.c1
+c1
+359
+360
+explain select a.c1 from uhp2_myt3 a join uhp2_myt4 b on a.c1=b.c1 where a.c1 between 718 and 721 order by a.c1
+Logical ExecutionPlan
+MergeSort(sort="c1 ASC")
+  LogicalView(tables="uhp2_myt3[p0,p1],uhp2_myt4[p0,p1]", shardCount=2, sql="SELECT `uhp2_myt3`.`c1` FROM `uhp2_myt3` AS `uhp2_myt3` INNER JOIN `uhp2_myt4` AS `uhp2_myt4` ON ((`uhp2_myt3`.`c1` = `uhp2_myt4`.`c1`) AND (`uhp2_myt3`.`c1` BETWEEN ? AND ?)) ORDER BY `uhp2_myt3`.`c1`")
+select a.c1 from uhp2_myt3 a join uhp2_myt4 b on a.c1=b.c1 where a.c1 between 718 and 721 order by a.c1
+c1
+719
+720
+721
+use polardbx
+drop database if exists mypocdb2;

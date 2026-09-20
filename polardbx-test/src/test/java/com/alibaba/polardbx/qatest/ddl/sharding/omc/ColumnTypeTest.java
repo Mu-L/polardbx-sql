@@ -18,6 +18,7 @@ package com.alibaba.polardbx.qatest.ddl.sharding.omc;
 
 import com.alibaba.polardbx.executor.common.StorageInfoManager;
 import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
+import com.alibaba.polardbx.qatest.ReplicaIgnore;
 import com.alibaba.polardbx.qatest.constant.GsiConstant;
 import com.alibaba.polardbx.qatest.data.ExecuteTableSelect;
 import com.alibaba.polardbx.qatest.util.ConnectionManager;
@@ -54,6 +55,7 @@ import static com.alibaba.polardbx.qatest.data.ExecuteTableSelect.DEFAULT_PARTIT
 import static com.alibaba.polardbx.qatest.validator.DataValidator.selectContentSameAssertWithDiffSql;
 import static org.junit.Assert.assertTrue;
 
+@ReplicaIgnore(ignoreReason = "set session variables")
 public class ColumnTypeTest extends DDLBaseNewDBTestCase {
     private final boolean supportsAlterType =
         StorageInfoManager.checkSupportAlterType(ConnectionManager.getInstance().getMysqlDataSource());
@@ -111,6 +113,7 @@ public class ColumnTypeTest extends DDLBaseNewDBTestCase {
 
     private static final String USE_OMC_ALGORITHM = " ALGORITHM=OMC ";
     private static final String OMC_FORCE_TYPE_CONVERSION = "OMC_FORCE_TYPE_CONVERSION=TRUE";
+    protected static final String OMC_DISABLE_30 = "ENABLE_OMC_30=FALSE";
     private static final String DISABLE_OMC_CHECKER = "COL_CHECK_AFTER_BACK_FILL=FALSE";
     private static final String SELECT_COLUMN_TYPE = "select COLUMN_DEFAULT, IS_NULLABLE, DATA_TYPE, "
         + "CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE, DATETIME_PRECISION, "
@@ -124,14 +127,16 @@ public class ColumnTypeTest extends DDLBaseNewDBTestCase {
         dropTableIfExists(tableName);
         dropTableIfExistsInMySql(tableName);
 
-        String createTableSql = String.format("create table %s (a int primary key, b varchar(20))", tableName);
+        String createTableSql = String.format(
+            "create table %s (a int primary key, b varchar(20)) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci",
+            tableName);
         String partitionDef = " dbpartition by hash(a) tbpartition by hash(a) tbpartitions 4";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTableSql + partitionDef);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, createTableSql);
 
         final String selectColumnType = String.format(SELECT_COLUMN_TYPE, tableName, "b");
         for (int i = 0; i < CHARSET_PARAMS.length; i++) {
-            String alterSql =
+            String alterSql = buildCmdExtra(OMC_DISABLE_30) +
                 String.format("alter table %s modify column b varchar(20) character set %s collate %s", tableName,
                     CHARSET_PARAMS[i][0], CHARSET_PARAMS[i][1]);
             System.out.println(CHARSET_PARAMS[i][0] + " " + CHARSET_PARAMS[i][1]);
@@ -147,7 +152,9 @@ public class ColumnTypeTest extends DDLBaseNewDBTestCase {
         dropTableIfExists(tableName);
         dropTableIfExistsInMySql(tableName);
 
-        String createTableSql = String.format("create table %s (a int primary key, b int) charset=utf8mb4", tableName);
+        String createTableSql =
+            String.format("create table %s (a int primary key, b int) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci",
+                tableName);
         String partitionDef = " dbpartition by hash(a) tbpartition by hash(a) tbpartitions 4";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTableSql + partitionDef);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, createTableSql);
@@ -160,7 +167,9 @@ public class ColumnTypeTest extends DDLBaseNewDBTestCase {
             columnType = columnType.substring(0, columnType.length() - 2);
 
             System.out.println(columnType);
-            String alterSql = String.format("alter table %s modify column b %s", tableName, columnType);
+            String alterSql =
+                buildCmdExtra(OMC_DISABLE_30) + String.format("alter table %s modify column b %s", tableName,
+                    columnType);
             execDdlWithRetry(tddlDatabase1, tableName, hint + alterSql + USE_OMC_ALGORITHM, tddlConnection);
             JdbcUtil.executeUpdateSuccess(mysqlConnection, alterSql);
             assertTrue(assertSameTypeInfo(selectColumnType));
@@ -212,16 +221,18 @@ public class ColumnTypeTest extends DDLBaseNewDBTestCase {
         String tableName = "omc_not_null_tbl_test";
         try (Connection conn = getPolardbxConnection()) {
             String createSql =
-                String.format("create table %s (a int primary key, b int not null) dbpartition by hash(a)", tableName);
+                String.format(
+                    "create table %s (a int primary key, b int not null) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci dbpartition by hash(a)",
+                    tableName);
             JdbcUtil.executeUpdateSuccess(conn, createSql);
             String alterSql = String.format("alter table %s modify column b int not null", tableName);
 
             String sqlMode = JdbcUtil.getSqlMode(conn);
             setSqlMode("STRICT_TRANS_TABLES", conn);
             JdbcUtil.executeUpdateSuccess(conn,
-                buildCmdExtra(OMC_FORCE_TYPE_CONVERSION) + alterSql + USE_OMC_ALGORITHM);
+                buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30) + alterSql + USE_OMC_ALGORITHM);
             setSqlMode("", conn);
-            JdbcUtil.executeUpdateFailed(conn, alterSql + USE_OMC_ALGORITHM,
+            JdbcUtil.executeUpdateFailed(conn, buildCmdExtra(OMC_DISABLE_30) + alterSql + USE_OMC_ALGORITHM,
                 "");
 
             // Reset sql mode
@@ -322,7 +333,7 @@ public class ColumnTypeTest extends DDLBaseNewDBTestCase {
 
                     // Now do some alter
                     String alterSql =
-                        buildCmdExtra(OMC_FORCE_TYPE_CONVERSION) + String.format(alterSqlTmpl,
+                        buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30) + String.format(alterSqlTmpl,
                             tableName, column, targetColumnType) + USE_OMC_ALGORITHM;
                     String refAlterSql = String.format(alterSqlTmpl, refTableName, column, targetColumnType);
                     JdbcUtil.executeUpdateSuccess(conn, alterSql);
@@ -569,7 +580,7 @@ public class ColumnTypeTest extends DDLBaseNewDBTestCase {
                     refAllInserts.forEach(s -> JdbcUtil.executeUpdateSuccess(conn, s.replace(col, column)));
 
                     // Now do some alter
-                    String alterSql =
+                    String alterSql = buildCmdExtra(OMC_DISABLE_30) +
                         String.format(alterSqlTmpl, tableName, column, targetColumnType) + USE_OMC_ALGORITHM;
                     String refAlterSql = String.format(alterSqlTmpl, refTableName, column, targetColumnType);
                     try {

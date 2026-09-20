@@ -16,30 +16,38 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.common.utils.memory.ObjectSizeUtils;
+import com.alibaba.polardbx.common.utils.memory.SizeOf;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.google.common.base.Preconditions;
 import it.unimi.dsi.fastutil.Hash;
 import it.unimi.dsi.fastutil.HashCommon;
+import org.openjdk.jol.info.ClassLayout;
+import org.openjdk.jol.util.VMSupport;
 
 import java.util.Arrays;
 import java.util.List;
 
-class GroupOpenHashMap implements GroupHashMap, Hash {
-
+public final class GroupOpenHashMap implements GroupHashMap, Hash {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(GroupOpenHashMap.class).instanceSize();
     protected static final int NOT_EXISTS = -1;
 
     protected final int expectedSize;
 
     protected final int chunkSize;
 
+    @FieldMemoryCounter(value = false)
     protected final DataType[] groupKeyType;
 
     protected TypedBuffer groupKeyBuffer;
 
     protected int groupCount;
+
+    protected final float loadFactor;
 
     /**
      * The array of keys (buckets)
@@ -66,8 +74,7 @@ class GroupOpenHashMap implements GroupHashMap, Hash {
      */
     private int maxFill;
 
-    protected float loadFactor;
-
+    @FieldMemoryCounter(value = false)
     protected ExecutionContext context;
 
     public GroupOpenHashMap(DataType[] groupKeyType, int expectedSize, int chunkSize, ExecutionContext context) {
@@ -98,10 +105,17 @@ class GroupOpenHashMap implements GroupHashMap, Hash {
         this.context = context;
     }
 
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(groupKeyBuffer)
+            + VMSupport.align((int) SizeOf.sizeOf(keys));
+    }
+
     /**
      * @param groupId if groupId == -1 means need to generate a new groupid
      */
-    int innerPut(Chunk chunk, int position, int groupId) {
+    public int innerPut(Chunk chunk, int position, int groupId) {
         int h = HashCommon.mix(chunk.hashCode(position)) & mask;
         int k = keys[h];
 
@@ -148,7 +162,7 @@ class GroupOpenHashMap implements GroupHashMap, Hash {
         }
     }
 
-    int appendGroup(Chunk chunk, int position) {
+    protected int appendGroup(Chunk chunk, int position) {
         groupKeyBuffer.appendRow(chunk, position);
         return groupCount++;
     }
@@ -163,10 +177,6 @@ class GroupOpenHashMap implements GroupHashMap, Hash {
         return chunks;
     }
 
-    boolean noGroupBy() {
-        return groupKeyType.length == 0;
-    }
-
     @Override
     public long estimateSize() {
         long size = 0L;
@@ -179,7 +189,7 @@ class GroupOpenHashMap implements GroupHashMap, Hash {
         return size;
     }
 
-    int getGroupCount() {
+    public int getGroupCount() {
         return groupCount;
     }
 }

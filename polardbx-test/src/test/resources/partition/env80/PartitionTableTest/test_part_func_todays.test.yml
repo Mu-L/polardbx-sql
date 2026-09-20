@@ -3,7 +3,7 @@
 drop table if exists tbl;
 CREATE TABLE `tbl` (
         `a` datetime NOT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4  
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin  
 PARTITION BY RANGE(to_days(a))
 (PARTITION p0 VALUES LESS THAN (to_days('1990-01-01')) ENGINE = InnoDB,
  PARTITION p1 VALUES LESS THAN (to_days('2000-01-01')) ENGINE = InnoDB,
@@ -29,7 +29,7 @@ explain select * from tbl where (a<'2019-01-02' and a>='2009-12-31') or a betwee
 ## test hash
 CREATE TABLE `tod1` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(TO_DAYS(`d`))
 PARTITIONS 16;
 show create table tod1;
@@ -48,7 +48,7 @@ explain select * from tod1 where d > '2021-12-30' and d < '2022-01-02' order by 
 ## test range
 CREATE TABLE `tod2` (
 `dt` datetime DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY RANGE(TO_DAYS(`dt`))
 (PARTITION p0 VALUES LESS THAN(5),
 PARTITION p1 VALUES LESS THAN(10),
@@ -66,7 +66,7 @@ select * from tod2 where dt < '0000-01-15 00:00:00' order by dt;
 ## test list
 CREATE TABLE `tod3` (
 `dt` datetime DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY LIST(TO_DAYS(`dt`))
 (PARTITION p0 VALUES IN (1,2,3,4,5),
 PARTITION p1 VALUES IN(6,7,8,9,10),

@@ -151,6 +151,12 @@ public class VirtualView extends AbstractRelNode {
             return new InformationSchemaTableConstraints(cluster, traitSet);
         case EVENTS:
             return new InformationSchemaEvents(cluster, traitSet);
+        case EXECUTOR_MEMORY:
+            return new InformationSchemaExecutorMemory(cluster, traitSet);
+        case QUERY_MEMORY:
+            return new InformationSchemaQueryMemory(cluster, traitSet);
+        case TOTAL_MEMORY:
+            return new InformationSchemaTotalMemory(cluster, traitSet);
         case TRIGGERS:
             return new InformationSchemaTriggers(cluster, traitSet);
         case ROUTINES:
@@ -288,6 +294,9 @@ public class VirtualView extends AbstractRelNode {
         case METADATA_LOCK:
             return new InformationSchemaMetadataLock(cluster, traitSet);
 
+        case NODE_STATS:
+            return new InformationSchemaNodeStats(cluster, traitSet);
+
         case STORAGE:
             return new InformationSchemaStorage(cluster, traitSet);
         case STORAGE_STATUS:
@@ -317,12 +326,27 @@ public class VirtualView extends AbstractRelNode {
             return new InformationSchemaStatisticTask(cluster, traitSet);
         case CCL_RULE:
             return new InformationSchemaCclRules(cluster, traitSet);
+        case CCL_BLOCKER:
         case CCL_TRIGGER:
-            return new InformationSchemaCclTriggers(cluster, traitSet);
+            return new InformationSchemaCclBlockers(cluster, traitSet);
+        case DN_CCL:
+            return new InformationSchemaDnCcl(cluster, traitSet);
+        case DN_CCL_DRYRUN:
+            return new InformationSchemaDnCclDryRun(cluster, traitSet);
         case SPM:
             return new InformationSchemaSPM(cluster, traitSet);
+        case SPM_GRAY_STATUS:
+            return new InformationSchemaGrayStatus(cluster, traitSet);
         case PLAN_CACHE_CAPACITY:
             return new InformationSchemaPlanCacheCapacity(cluster, traitSet);
+        case CN_MEMORYPOOL:
+            return new InformationSchemaCnMemoryPool(cluster, traitSet);
+        case CN_THREADPOOL:
+            return new InformationSchemaCnThreadPool(cluster, traitSet);
+        case CN_STATUS:
+            return new InformationSchemaCnStatus(cluster, traitSet);
+        case CN_DBSTATS:
+            return new InformationSchemaCnDbStats(cluster, traitSet);
         case REACTOR_PERF:
             return new InformationSchemaReactorPerf(cluster, traitSet);
         case DN_PERF:
@@ -335,8 +359,22 @@ public class VirtualView extends AbstractRelNode {
             return new InformationSchemaFileStorage(cluster, traitSet);
         case FILE_STORAGE_FILES_META:
             return new InformationSchemaFileStorageFilesMeta(cluster, traitSet);
+        case WARMUP_EXECUTION_LOGS:
+            return new InformationSchemaWarmupExecutionLogs(cluster, traitSet);
+        case COLUMNAR_WARMUP:
+            return new InformationSchemaColumnarWarmup(cluster, traitSet);
+        case COLUMNAR_SCAN_MONITOR:
+            return new InformationSchemaColumnarScanMonitor(cluster, traitSet);
         case DDL_PLAN:
             return new InformationSchemaDdlPlan(cluster, traitSet);
+        case DDL_PHYSICAL_LOCK_STAT:
+            return new InformationSchemaDdlPhysicalLockStat(cluster, traitSet);
+        case DDL_PROGRESS:
+            return new InformationSchemaDdlProgress(cluster, traitSet);
+        case DDL_INFO:
+            return new InformationSchemaDdlInfo(cluster, traitSet);
+        case OMC_PROGRESS:
+            return new InformationSchemaOmcProgress(cluster, traitSet);
         case REBALANCE_BACKFILL:
             return new InformationSchemaRebalanceBackFill(cluster, traitSet);
         case REBALANCE_PROGRESS:
@@ -353,6 +391,8 @@ public class VirtualView extends AbstractRelNode {
             return new InformationSchemaJoinGroup(cluster, traitSet);
         case SCHEDULE_JOBS:
             return new InformationSchemaScheduleJobs(cluster, traitSet);
+        case ROUTING_RULES:
+            return new InformationSchemaRoutingRules(cluster, traitSet);
         case AFFINITY_TABLES:
             return new InformationSchemaAffinity(cluster, traitSet);
         case PROCEDURE_CACHE:
@@ -387,6 +427,22 @@ public class VirtualView extends AbstractRelNode {
             return new InformationSchemaDdlScheduler(cluster, traitSet);
         case DDL_ENGINE_RESOURCE:
             return new InformationSchemaDdlEngineResources(cluster, traitSet);
+        case COLLECT_STATISTIC_PROGRESS:
+            return new InformationSchemaCollectStatisticProgress(cluster, traitSet);
+        case TABLE_PROPERTIES:
+            return new InformationSchemaTableProperties(cluster, traitSet);
+        case LOGIN_LOCKED:
+            return new InformationSchemaLoginLocked(cluster, traitSet);
+        case PHYSICAL_INDEX_USAGE:
+            return new InformationSchemaPhysicalIndexUsage(cluster, traitSet);
+        case LOGICAL_INDEX_USAGE:
+            return new InformationSchemaLogicalIndexUsage(cluster, traitSet);
+        case EXT_COLUMN_STATS:
+            return new InformationSchemaExtColumnStats(cluster, traitSet);
+        case EXT_COLUMN_STATS_PER_NODE:
+            return new InformationSchemaExtColumnStatsPerNode(cluster, traitSet);
+        case EXT_STAGING_STATUS:
+            return new InformationSchemaExtStagingStatus(cluster, traitSet);
         default:
             throw new AssertionError();
         }

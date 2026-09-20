@@ -1,0 +1,59 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+use polardbx;
+drop database if exists onedn_db;
+## USE_DN_LIST_MSG
+create database if not exists onedn_db mode = 'auto' locality='dn=$dn1';
+use onedn_db;
+
+set ENABLE_SHOW_STORAGE_PARTITIONS=true;
+set ENABLE_RANDOM_PHY_TABLE_NAME=false;
+  
+create table part_with_sp_hash(
+a bigint not null,
+b bigint,
+primary key(a)) 
+charset utf8mb4 collate utf8mb4_bin
+/*!storage
+partition by key(a)
+partitions 4
+*/
+partition by key(b)
+partitions 1;
+show create table part_with_sp_hash;
+/*+TDDL:node(0)*/show create table part_with_sp_hash_00000;
+
+create table part_with_sp_rng(
+  a bigint not null, 
+  b bigint,
+  primary key(a))
+charset utf8mb4 collate utf8mb4_bin
+/*!storage
+partition by key(a)
+partitions 4
+*/
+partition by key(b)
+partitions 1;
+
+show create table part_with_sp_rng;
+/*+TDDL:node(0)*/show create table part_with_sp_rng_00000;
+  
+create table part_with_sp_list(
+a bigint not null,
+b bigint,
+primary key(a))
+charset utf8mb4 collate utf8mb4_bin
+/*!storage
+partition by list columns(a)
+(
+partition p1 values in(1),
+partition p2 values in(10)
+)
+*/
+partition by key(b)
+partitions 1;
+
+show create table part_with_sp_list;
+/*+TDDL:node(0)*/show create table part_with_sp_list_00000;

@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableIntArrayList;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
@@ -28,7 +29,7 @@ import com.alibaba.polardbx.executor.operator.ProducerExecutor;
 import com.alibaba.polardbx.executor.operator.SortAggExec;
 import com.alibaba.polardbx.executor.operator.spill.Spiller;
 import com.alibaba.polardbx.executor.operator.spill.SpillerFactory;
-import com.alibaba.polardbx.executor.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.expression.calc.Aggregator;
@@ -38,7 +39,6 @@ import com.alibaba.polardbx.optimizer.memory.OperatorMemoryAllocatorCtx;
 import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
-import it.unimi.dsi.fastutil.ints.IntArrayList;
 import org.apache.calcite.rel.RelFieldCollation;
 
 import java.util.ArrayList;
@@ -95,7 +95,7 @@ public class SpillableAggHashMap implements AggHashMap {
         this.memoryAllocator = memoryAllocator;
 
         aggHashMap = new AggOpenHashMap(groupKeyType, aggregators, aggValueType, inputType,
-            expectedSize, chunkSize, context, memoryAllocator);
+            expectedSize, chunkSize, context, memoryAllocator, null);
         this.spillerFactory = spillerFactory;
         this.spillTypes = new ArrayList<>();
         blockBuilders = new BlockBuilder[groupKeyType.length + aggValueType.length];
@@ -110,19 +110,9 @@ public class SpillableAggHashMap implements AggHashMap {
     }
 
     @Override
-    public void putChunk(Chunk keyChunk, Chunk inputChunk, IntArrayList groupIdResult) {
+    public void putChunk(Chunk keyChunk, Chunk inputChunk, MemoryCountableIntArrayList groupIdResult) {
         checkState(spillInProgress.isDone());
         aggHashMap.putChunk(keyChunk, inputChunk, groupIdResult);
-    }
-
-    @Override
-    public List<Chunk> getGroupChunkList() {
-        return null;
-    }
-
-    @Override
-    public List<Chunk> getValueChunkList() {
-        return null;
     }
 
     private List<WorkProcessor<Chunk>> getSpilledPages() {
@@ -209,7 +199,7 @@ public class SpillableAggHashMap implements AggHashMap {
                 aggHashMap.close();
             }
             aggHashMap = new AggOpenHashMap(groupKeyType, aggregators, aggValueType, inputType,
-                expectedSize, chunkSize, context, memoryAllocator);
+                expectedSize, chunkSize, context, memoryAllocator, null);
         };
         return spillInProgress;
     }

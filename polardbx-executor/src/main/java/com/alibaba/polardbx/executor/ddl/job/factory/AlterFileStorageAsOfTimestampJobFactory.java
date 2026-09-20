@@ -53,14 +53,14 @@ import java.util.stream.Collectors;
 
 import java.util.stream.Collectors;
 
-import static com.alibaba.polardbx.optimizer.utils.ITimestampOracle.BITS_LOGICAL_TIME;
+import static com.alibaba.polardbx.common.trx.ITimestampOracle.BITS_LOGICAL_TIME;
 
 /**
  * @author chenzilin
  */
 public class AlterFileStorageAsOfTimestampJobFactory extends DdlJobFactory {
 
-    private static final Logger logger = LoggerFactory.getLogger("oss");
+    private static final Logger logger = LoggerFactory.getLogger("mpp_log");
 
     private ExecutionContext executionContext;
     private AlterFileStoragePreparedData alterFileStoragePreparedData;

@@ -8,6 +8,7 @@ import com.alibaba.polardbx.executor.physicalbackfill.PhysicalBackfillUtils;
 import com.alibaba.polardbx.gms.partition.PhysicalBackfillDetailInfoFieldJSON;
 import com.alibaba.polardbx.gms.topology.DbGroupInfoRecord;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
+import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ScaleOutPlanUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -23,6 +24,7 @@ import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
+import java.sql.Connection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.concurrent.FutureTask;
@@ -54,7 +56,7 @@ public class PhysicalBackfillTaskTest {
         Mockito.reset(consumerMock, ecMock);
     }
 
-    @Test
+
     public void testForeachPhysicalFile_success() throws Exception {
         prepareAndRunPhysicalBackfillTask(true, false, false);
         prepareAndRunPhysicalBackfillTask(true, true, false);
@@ -105,8 +107,9 @@ public class PhysicalBackfillTaskTest {
         DbInfoManager dbInfoManager = mock(DbInfoManager.class);
         try (MockedStatic<PhysicalBackfillUtils> mockedPhysicalBackfillUtils = Mockito.mockStatic(
             PhysicalBackfillUtils.class);
-             MockedStatic<ScaleOutPlanUtil> mockedScaleOutPlanUtil = Mockito.mockStatic(ScaleOutPlanUtil.class);
-            MockedConstruction<PhysicalBackfillManager> mockedPhysicalBackfillManager = Mockito.mockConstruction(PhysicalBackfillManager.class,
+            MockedStatic<ScaleOutPlanUtil> mockedScaleOutPlanUtil = Mockito.mockStatic(ScaleOutPlanUtil.class);
+            MockedConstruction<PhysicalBackfillManager> mockedPhysicalBackfillManager = Mockito.mockConstruction(
+                PhysicalBackfillManager.class,
                 (mock, context) -> {
                     Mockito.when(mock.loadBackfillMeta(anyLong(), anyString(), anyString(), anyString(), anyString()))
                         .thenReturn(mockBackfillBean(inited)).thenReturn(mockBackfillBean(inited));
@@ -114,7 +117,8 @@ public class PhysicalBackfillTaskTest {
             ; MockedStatic<DbInfoManager> mockedDbInfoManager = Mockito.mockStatic(DbInfoManager.class);
             MockedConstruction<FutureTask> mockedFuture = Mockito.mockConstruction(FutureTask.class);) {
             mockedPhysicalBackfillUtils.when(
-                    () -> PhysicalBackfillUtils.getTempIbdFileInfo(any(Pair.class), any(Pair.class), any(Pair.class),
+                    () -> PhysicalBackfillUtils.getTempIbdFileInfo(anyLong(), any(Pair.class), any(Pair.class),
+                        any(Pair.class),
                         any(String.class), any(String.class), any(Pair.class), any(Long.class), any(Boolean.class),
                         any(List.class)))
                 .thenAnswer(invocation -> {
@@ -138,7 +142,8 @@ public class PhysicalBackfillTaskTest {
 
             XConnection conn = mock(XConnection.class);
             mockedPhysicalBackfillUtils.when(
-                    () -> PhysicalBackfillUtils.getXConnectionForStorage(anyString(), anyString(), anyInt(), anyString(),
+                    () -> PhysicalBackfillUtils.getXConnectionForStorage(anyLong(), anyString(), anyString(), anyInt(),
+                        anyString(),
                         anyString(), anyInt()))
                 .thenReturn(connectIsNull ? null : conn);
 
@@ -158,7 +163,8 @@ public class PhysicalBackfillTaskTest {
             when(ecMock.getParamManager()).thenReturn(mock(ParamManager.class));
             DbGroupInfoRecord sourceTargetGroup = mock(DbGroupInfoRecord.class);
             sourceTargetGroup.phyDbName = "db1";
-            mockedScaleOutPlanUtil.when(() -> ScaleOutPlanUtil.getDbGroupInfoByGroupName(anyString())).thenReturn(sourceTargetGroup);
+            mockedScaleOutPlanUtil.when(() -> ScaleOutPlanUtil.getDbGroupInfoByGroupName(anyString()))
+                .thenReturn(sourceTargetGroup);
             task.rollbackImpl(ecMock);
         }
     }

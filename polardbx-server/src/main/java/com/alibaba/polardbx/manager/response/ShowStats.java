@@ -203,7 +203,7 @@ public final class ShowStats {
         proxy.packetEnd();
     }
 
-    private static RowDataPacket getRow(TDataSource ds, String charset) {
+    public static RowDataPacket getRow(TDataSource ds, String charset) {
         MatrixStatistics stats = ds.getStatistics();
         RowDataPacket row = new RowDataPacket(FIELD_COUNT);
         row.add(StringUtil.encode(ds.getSchemaName(), charset));

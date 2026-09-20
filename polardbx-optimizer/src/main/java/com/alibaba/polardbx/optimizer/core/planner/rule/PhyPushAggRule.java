@@ -78,9 +78,10 @@ public class PhyPushAggRule extends RelOptRule {
         LogicalAggregate aggregate =
             LogicalAggregate.create(logicalView.getPushedRelNode(), hashAgg.getGroupSet(), hashAgg.getGroupSets(),
                 hashAgg.getAggCallList());
-        logicalView.push(aggregate);
-        RelUtils.changeRowType(logicalView, aggregate.getRowType());
-        call.transformTo(logicalView);
+        LogicalView newLogicalView = logicalView.copy(logicalView.getTraitSet());
+        newLogicalView.push(aggregate);
+        RelUtils.changeRowType(newLogicalView, aggregate.getRowType());
+        call.transformTo(newLogicalView);
     }
 
     protected void onMatchNotSingle(RelOptRuleCall call) {
@@ -88,8 +89,11 @@ public class PhyPushAggRule extends RelOptRule {
         LogicalView logicalView = (LogicalView) call.rels[1];
 
         // try full matching first
-        TddlRuleManager tddlRuleManager = PlannerContext.getPlannerContext(hashAgg).getExecutionContext()
-            .getSchemaManager(logicalView.getSchemaName()).getTddlRuleManager();
+        TddlRuleManager tddlRuleManager = PlannerContext
+            .getPlannerContext(hashAgg)
+            .getExecutionContext()
+            .getSchemaManager(logicalView.getSchemaName())
+            .getTddlRuleManager();
         TableRule rt = tddlRuleManager.getTableRule(logicalView.getShardingTable());
         PartitionInfoManager partitionInfoManager = tddlRuleManager.getPartitionInfoManager();
         final List<String> shardColumns;
@@ -105,12 +109,15 @@ public class PhyPushAggRule extends RelOptRule {
         Set<Integer> shardIndex = new HashSet<>();
         if (CBOPushAggRule.fullMatchSharding(hashAgg, logicalView, shardColumns, shardIndex)) {
             LogicalAggregate aggregate =
-                LogicalAggregate.create(logicalView.getPushedRelNode(), hashAgg.getGroupSet(), hashAgg.getGroupSets(),
+                LogicalAggregate.create(logicalView.getPushedRelNode(),
+                    hashAgg.getGroupSet(),
+                    hashAgg.getGroupSets(),
                     hashAgg.getAggCallList());
-            logicalView.push(aggregate);
-            logicalView.setOnePhaseAgg(true);
-            RelUtils.changeRowType(logicalView, aggregate.getRowType());
-            call.transformTo(logicalView);
+            LogicalView newLogicalView = logicalView.copy(logicalView.getTraitSet());
+            newLogicalView.push(aggregate);
+            newLogicalView.setOnePhaseAgg(true);
+            RelUtils.changeRowType(newLogicalView, aggregate.getRowType());
+            call.transformTo(newLogicalView);
             return;
         }
 
@@ -127,17 +134,18 @@ public class PhyPushAggRule extends RelOptRule {
             return;
         }
 
+        LogicalView newLogicalView = logicalView.copy(logicalView.getTraitSet());
         LogicalAggregate partialAgg = LogicalAggregate.create(
-            logicalView.getPushedRelNode(),
+            newLogicalView.getPushedRelNode(),
             twoPhaseAggComponent.getPartialAggGroupSet(),
             ImmutableList.of(twoPhaseAggComponent.getPartialAggGroupSet()),
             twoPhaseAggComponent.getPartialAggCalls());
-        logicalView.push(partialAgg);
-        RelUtils.changeRowType(logicalView, partialAgg.getRowType());
+        newLogicalView.push(partialAgg);
+        RelUtils.changeRowType(newLogicalView, partialAgg.getRowType());
 
         HashAgg globalHashAgg = hashAgg.copy(
             hashAgg.getTraitSet(),
-            logicalView,
+            newLogicalView,
             hashAgg.indicator,
             twoPhaseAggComponent.getGlobalAggGroupSet(),
             ImmutableList.of(twoPhaseAggComponent.getGlobalAggGroupSet()),

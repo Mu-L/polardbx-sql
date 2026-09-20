@@ -69,14 +69,16 @@ public class physicalBackfillLoader {
         builder.setOffset(transferFileData.getOffset());
         builder.setBuffer(transferFileData.getBuffer());
         List<Future> futures = new ArrayList<>(targetHosts.size());
-
+        long rootJobId = ec.getDdlContext().getParentJobId() == 0 ? ec.getDdlContext().getJobId() :
+            ec.getDdlContext().getParentJobId();
         targetHosts.forEach(v -> {
             FutureTask<Void> task = new FutureTask<>(() -> {
                 boolean success = false;
                 int tryTime = 1;
                 do {
                     try (XConnection conn = (XConnection) (PhysicalBackfillUtils.getXConnectionForStorage(
-                        targetDbAndGroup.getKey(), v.getKey(), v.getValue(), userInfo.getKey(), userInfo.getValue(),
+                        rootJobId, targetDbAndGroup.getKey(), v.getKey(), v.getValue(), userInfo.getKey(),
+                        userInfo.getValue(),
                         -1))) {
                         long writeSize = conn.execTransferFile(builder);
                         if (writeSize != transferFileData.getBufferLen()) {

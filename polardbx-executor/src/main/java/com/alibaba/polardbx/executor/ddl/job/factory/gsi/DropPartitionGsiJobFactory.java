@@ -16,32 +16,34 @@
 
 package com.alibaba.polardbx.executor.ddl.job.factory.gsi;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.executor.ddl.job.builder.gsi.DropGlobalIndexBuilder;
+import com.alibaba.polardbx.executor.ddl.job.builder.gsi.DropPartitionGlobalIndexBuilder;
 import com.alibaba.polardbx.executor.ddl.job.converter.PhysicalPlanData;
+import com.alibaba.polardbx.executor.ddl.job.factory.ComplexTaskFactory;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.DropTableRemoveMetaTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameUselessTmpGsiPhyTableDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TablesSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcGsiDdlMarkTask;
 import com.alibaba.polardbx.executor.ddl.job.task.factory.GsiTaskFactory;
-import com.alibaba.polardbx.executor.ddl.job.task.gsi.DropGsiTableHideTableMetaTask;
-import com.alibaba.polardbx.executor.ddl.job.task.gsi.DropPartitionGsiPhyDdlTask;
-import com.alibaba.polardbx.executor.ddl.job.task.gsi.GsiDropCleanUpTask;
-import com.alibaba.polardbx.executor.ddl.job.task.gsi.ValidateGsiExistenceTask;
+import com.alibaba.polardbx.executor.ddl.job.task.gsi.*;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupSyncTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4DropPartitionGsi;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.config.table.ScaleOutPlanUtil;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.gsi.DropGlobalIndexPreparedData;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.google.common.collect.Lists;
+import org.apache.commons.lang.StringUtils;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * 1. drop index xxx on yyy
@@ -74,6 +76,7 @@ public class DropPartitionGsiJobFactory extends DropGsiJobFactory {
     @Override
     protected void excludeResources(Set<String> resources) {
         resources.add(concatWithDot(schemaName, indexTableName));
+        resources.add(concatWithDot(schemaName, primaryTableName));
 
         OptimizerContext oc =
             Objects.requireNonNull(OptimizerContext.getContext(schemaName), schemaName + " corrupted");
@@ -120,10 +123,35 @@ public class DropPartitionGsiJobFactory extends DropGsiJobFactory {
         DropGsiTableHideTableMetaTask dropGsiTableHideTableMetaTask =
             new DropGsiTableHideTableMetaTask(schemaName, primaryTableName, indexTableName);
         taskList.add(dropGsiTableHideTableMetaTask);
+        taskList.add(new TableSyncTask(schemaName, primaryTableName));
 
         //3.2 drop gsi physical table
-        DropPartitionGsiPhyDdlTask dropPartitionGsiPhyDdlTask =
-            new DropPartitionGsiPhyDdlTask(schemaName, primaryTableName, indexTableName, physicalPlanData);
+        boolean recycleBinEnable = ScaleOutPlanUtil.isPhyRecyclebinEnable(executionContext);
+        DdlTask dropPartitionGsiPhyDdlTask;
+        List<DdlTask> dropForeignKeyTasksBeforeRename = new ArrayList<>();
+        if (recycleBinEnable) {
+            if (physicalPlanData != null) {
+                Map<String, Set<String>> newTopology = new HashMap<>();
+                Map<String, List<List<String>>> topology = physicalPlanData.getTableTopology();
+                topology.forEach((k, v) ->
+                    newTopology.computeIfAbsent(k,
+                        i -> v.stream().map(l -> l.get(0)).collect(Collectors.toSet()))
+                );
+                dropPartitionGsiPhyDdlTask =
+                    ComplexTaskFactory.createRenameUselessPhyTableTask(schemaName, indexTableName, newTopology, null,
+                        dropForeignKeyTasksBeforeRename, false, executionContext);
+            } else {
+                dropPartitionGsiPhyDdlTask =
+                    new RenameUselessTmpGsiPhyTableDdlTask(schemaName, primaryTableName, indexTableName, null, null,
+                        null);
+            }
+        } else {
+            dropPartitionGsiPhyDdlTask =
+                new DropPartitionGsiPhyDdlTask(schemaName, primaryTableName, indexTableName, physicalPlanData);
+        }
+        if (dropForeignKeyTasksBeforeRename.size() > 0) {
+            taskList.addAll(dropForeignKeyTasksBeforeRename);
+        }
         taskList.add(dropPartitionGsiPhyDdlTask);
 
         //3.3 remove indexes meta for primary table
@@ -134,7 +162,8 @@ public class DropPartitionGsiJobFactory extends DropGsiJobFactory {
         taskList.add(tableSyncTaskAfterCleanUpGsiIndexesMeta);
 
         //4. remove table meta for gsi table
-        DropTableRemoveMetaTask dropGsiTableRemoveMetaTask = new DropTableRemoveMetaTask(schemaName, indexTableName, true);
+        DropTableRemoveMetaTask dropGsiTableRemoveMetaTask =
+            new DropTableRemoveMetaTask(schemaName, indexTableName, true);
         taskList.add(dropGsiTableRemoveMetaTask);
 
         if (!skipSchemaChange && !repartition) {

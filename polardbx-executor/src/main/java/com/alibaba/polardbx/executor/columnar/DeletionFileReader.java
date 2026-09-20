@@ -63,6 +63,16 @@ public interface DeletionFileReader extends Closeable {
     void open(Engine engine, String delFileName, int offset, int length) throws IOException;
 
     /**
+     * Open the .del file resource honoring a per-statement GeneralCache override.
+     *
+     * @param cacheOverride non-null forces GeneralCache on/off for this read; null uses dynamic config
+     */
+    default void open(Engine engine, String delFileName, int offset, int length, Boolean cacheOverride)
+        throws IOException {
+        open(engine, delFileName, offset, length);
+    }
+
+    /**
      * Fetch and parse the next deletion entry unit.
      */
     DeletionEntry next();

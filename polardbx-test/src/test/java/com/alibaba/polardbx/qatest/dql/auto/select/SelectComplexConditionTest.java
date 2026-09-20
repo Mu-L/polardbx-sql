@@ -192,6 +192,61 @@ public class SelectComplexConditionTest extends AutoReadBaseTestCase {
         selectContentSameAssert(sql, param, mysqlConnection, tddlConnection, true);
     }
 
+    @Test
+    public void bigInTest() {
+        StringBuilder sb = new StringBuilder("select count(1)  from "
+            + baseOneTableName
+            + " as bigin1 where pk in(?");
+        int inValues = 1500;
+        for (int i = 0; i < inValues; i++) {
+            sb.append(", ?");
+        }
+        sb.append(");");
+        List<Object> param = new ArrayList<>();
+        for (int i = 0; i < inValues + 1; i++) {
+            param.add(i);
+        }
+        selectContentSameAssert(sb.toString(), param, mysqlConnection, tddlConnection, true);
+
+        param = new ArrayList<>();
+        for (int i = 0; i < inValues; i++) {
+            param.add(i);
+        }
+        param.add(null);
+        selectContentSameAssert(sb.toString(), param, mysqlConnection, tddlConnection, true);
+
+        sb = new StringBuilder("select count(1)  from "
+            + baseOneTableName
+            + " as bigin1 where (pk,integer_test) in((?,?)");
+
+        for (int i = 0; i < inValues; i++) {
+            sb.append(", (?,?)");
+        }
+        sb.append(");");
+        param = new ArrayList<>();
+        for (int i = 0; i < inValues + 1; i++) {
+            param.add(i);
+            param.add(4);
+        }
+        selectContentSameAssert(sb.toString(), param, mysqlConnection, tddlConnection, true);
+
+        sb = new StringBuilder("select count(1)  from "
+            + baseOneTableName
+            + " as bigin1 where (pk,integer_test) in((?,?+?)");
+
+        for (int i = 0; i < inValues; i++) {
+            sb.append(", (?,?+?)");
+        }
+        sb.append(");");
+        param = new ArrayList<>();
+        for (int i = 0; i < inValues + 1; i++) {
+            param.add(i);
+            param.add(3);
+            param.add(1);
+        }
+        selectContentSameAssert(sb.toString(), param, mysqlConnection, tddlConnection, true);
+    }
+
     /**
      * @since 5.0.1
      */

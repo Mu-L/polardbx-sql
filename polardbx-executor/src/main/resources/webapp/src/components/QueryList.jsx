@@ -24,7 +24,8 @@ import {
     GLYPHICON_HIGHLIGHT,
     parseDataSize,
     parseDuration,
-    truncateString
+    truncateString,
+    getFormattedUrl, getFormattedHtmlHrefUrl
 } from "../utils";
 
 export class QueryListItem extends React.Component {
@@ -141,7 +142,8 @@ export class QueryListItem extends React.Component {
                     <div className="col-xs-4">
                         <div className="row stat-row query-header query-header-queryid">
                             <div className="col-xs-9" data-placement="bottom">
-                                <a href={"query.html?" + query.queryId} target="_blank" data-toggle="tooltip"
+                                <a href={getFormattedHtmlHrefUrl("query.html?" + query.queryId)} target="_blank"
+                                   data-toggle="tooltip"
                                    title="Query ID">{query.queryId}</a>
                                 {this.renderWarning()}
                             </div>
@@ -325,7 +327,7 @@ export class QueryList extends React.Component {
         clearTimeout(this.timeoutId); // to stop multiple series of refreshLoop from going on simultaneously
         clearTimeout(this.searchTimeoutId);
 
-        $.get('/v1/query', function (queryList) {
+        $.get(getFormattedUrl('/v1/query'), function (queryList) {
             const queryMap = queryList.reduce(function (map, query) {
                 map[query.queryId] = query;
                 return map;

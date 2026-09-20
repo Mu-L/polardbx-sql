@@ -45,7 +45,7 @@ public class JoinGroupInfoAccessor extends AbstractAccessor {
     private static final String ALL_COLUMNS =
         "`id`,`gmt_create`,`gmt_modified`,`table_schema`,`join_group_name`,`locality`";
 
-    private static final String ALL_VALUES = "(null,null,now(),?,?,?)";
+    private static final String ALL_VALUES = "(null,now(),now(),?,?,?)";
 
     private static final String INSERT_IGNORE_JOIN_GROUP =
         "insert ignore into " + GmsSystemTables.JOIN_GROUP_INFO + " (" + ALL_COLUMNS + ") VALUES " + ALL_VALUES;

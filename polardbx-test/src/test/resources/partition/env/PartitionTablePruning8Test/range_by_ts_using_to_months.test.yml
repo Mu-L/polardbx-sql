@@ -1,0 +1,63 @@
+## DISABLE_FAST_SQL_PARSER
+
+set ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION=true;
+
+set time_zone='+08:00';
+DROP TABLE IF EXISTS `rng_ts_using_tomonths`;
+CREATE /*+TDDL:cmd_extra(ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION=true)*/ TABLE IF NOT EXISTS `rng_ts_using_tomonths` (
+`a` varchar(8) DEFAULT NULL,
+`b` timestamp default current_timestamp
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+PARTITION BY range(to_months(b))
+(
+PARTITION p20250101 VALUES LESS THAN (to_months('2025-02-01 00:00:00')),
+PARTITION p20250201 VALUES LESS THAN (to_months('2025-03-01 00:00:00')),
+PARTITION p20250301 VALUES LESS THAN (to_months('2025-04-01 00:00:00')),
+PARTITION p20250401 VALUES LESS THAN (to_months('2025-05-01 00:00:00')),
+PARTITION p20250501 VALUES LESS THAN (to_months('2025-06-01 00:00:00')),
+PARTITION pmax VALUES LESS THAN (maxvalue)
+);
+
+DROP TABLE IF EXISTS `rng_dt_using_tomonths`;
+CREATE TABLE IF NOT EXISTS `rng_dt_using_tomonths` (
+`a` varchar(8) DEFAULT NULL,
+`b` datetime default current_timestamp
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+PARTITION BY range(to_months(b))
+(
+PARTITION p20250101 VALUES LESS THAN (to_months('2025-02-01 00:00:00')),
+PARTITION p20250201 VALUES LESS THAN (to_months('2025-03-01 00:00:00')),
+PARTITION p20250301 VALUES LESS THAN (to_months('2025-04-01 00:00:00')),
+PARTITION p20250401 VALUES LESS THAN (to_months('2025-05-01 00:00:00')),
+PARTITION p20250501 VALUES LESS THAN (to_months('2025-06-01 00:00:00')),
+PARTITION pmax VALUES LESS THAN (maxvalue)
+);
+
+set time_zone='+08:00';
+explain select a,b from rng_dt_using_tomonths where b='2025-02-01 02:00:00';
+set time_zone='+00:00';
+explain select a,b from rng_dt_using_tomonths where b='2025-01-31 18:00:00';
+  
+## All timestamp datatype roting by using time_zone of '+08:00'
+## '2025-02-01 02:00:00TZ08:00' == '2025-01-31 18:00:00TZ00:00'
+set time_zone='+08:00';
+explain select a,b from rng_ts_using_tomonths where b='2025-02-01 02:00:00';
+set time_zone='+00:00';
+explain select a,b from rng_ts_using_tomonths where b='2025-01-31 18:00:00';
+
+
+set time_zone='+08:00';
+explain  select a,b from rng_dt_using_tomonths where b between '2025-02-01 02:00:00' and '2025-04-01 02:00:00';
+set time_zone='+00:00';
+explain  select a,b from rng_dt_using_tomonths where b between '2025-01-31 18:00:00' and '2025-03-31 18:00:00';
+  
+## All timestamp datatype roting by using time_zone of '+08:00'
+## '2025-02-01 02:00:00TZ08:00' == '2025-01-31 18:00:00TZ00:00'
+## '2025-04-01 02:00:00TZ08:00' == '2025-03-31 18:00:00TZ00:00'
+set time_zone='+08:00';
+explain  select a,b from rng_ts_using_tomonths where b between '2025-02-01 02:00:00' and '2025-04-01 02:00:00';
+set time_zone='+00:00';
+explain  select a,b from rng_ts_using_tomonths where b between '2025-01-31 18:00:00' and '2025-03-31 18:00:00';
+
+DROP TABLE IF EXISTS `rng_ts_using_tomonths`;
+DROP TABLE IF EXISTS `rng_dt_using_tomonths`;

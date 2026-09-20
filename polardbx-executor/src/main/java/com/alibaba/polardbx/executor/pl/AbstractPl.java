@@ -74,6 +74,8 @@ import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutionException;
 
+import static com.alibaba.polardbx.common.exception.code.ErrorCode.ERR_TRANS_FATAL_CANNOT_CONTINUE;
+
 public abstract class AbstractPl {
     protected static final Logger logger = LoggerFactory.getLogger(AbstractPl.class);
 
@@ -202,8 +204,14 @@ public abstract class AbstractPl {
             .containsKey(errorCode)) {
             if (blockStatement != null && (blockStatement.getParent() instanceof SQLCreateProcedureStatement
                 || blockStatement.getParent() instanceof SQLCreateFunctionStatement)) {
-                throw new TddlRuntimeException(ErrorCode.ERR_NO_MATCHED_EXCEPTION_HANDLER, ex, "execute procedure/function failed: " + ex.getMessage()
-                    + ", and no related exception handler found");
+                // handle ERR_TRANS_FATAL_CANNOT_CONTINUE
+                if (ex instanceof TddlRuntimeException
+                    && ((TddlRuntimeException) ex).getErrorCode() == ERR_TRANS_FATAL_CANNOT_CONTINUE.getCode()) {
+                    throw (TddlRuntimeException) ex;
+                }
+                throw new TddlRuntimeException(ErrorCode.ERR_NO_MATCHED_EXCEPTION_HANDLER, ex,
+                    "execute procedure/function failed: " + ex.getMessage()
+                        + ", and no related exception handler found");
             }
             blockStatement = nextParentBlockStmt(blockStatement);
         }

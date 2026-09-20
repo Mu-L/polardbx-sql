@@ -55,6 +55,8 @@ public class CompressPacketByteBufferOutputProxy extends PacketByteBufferOutputP
         if (nestedPacketCount++ == 0) {
             waitForCompressQueue = new LinkedBlockingQueue<ByteBufferHolder>();
         }
+        // Compressed output cannot use the raw-proxy recovery path; fail closed.
+        c.markPacketOutputDirty();
     }
 
     /**

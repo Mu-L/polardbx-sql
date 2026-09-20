@@ -30,18 +30,46 @@ import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableRepartition;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableSetTableGroup;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableSetTableGroupPreparedData;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import org.apache.calcite.rel.ddl.AlterTableSetTableGroup;
+import org.apache.calcite.sql.SqlAddIndex;
+import org.apache.calcite.sql.SqlAlterTableRepartition;
 import org.apache.commons.lang.StringUtils;
+
+import java.util.Map;
+import java.util.Set;
 
 public class LogicalAlterTableSetTableGroupHandler extends LogicalCommonDdlHandler {
 
     public LogicalAlterTableSetTableGroupHandler(IRepository repo) {
         super(repo);
+    }
+
+    @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        String schemaName = logicalDdlPlan.getSchemaName();
+        String tableName = logicalDdlPlan.getTableName();
+
+        String targetTableGroupName = ((AlterTableSetTableGroup) logicalDdlPlan.relDdl).getTableGroupName();
+        if (StringUtils.isNotEmpty(targetTableGroupName)) {
+            exclusiveResources.add(concatWithDot(schemaName, targetTableGroupName));
+        }
+        TableMeta tableMeta = executionContext.getSchemaManager(schemaName).getTableWithNull(tableName);
+        if (tableMeta != null && tableMeta.isGsi()) {
+            return;
+        } else if (tableMeta != null) {
+            exclusiveResources.add(concatWithDot(logicalDdlPlan.getSchemaName(), logicalDdlPlan.getTableName()));
+            tableVersions.put(tableName, tableMeta.getVersion());
+        }
     }
 
     @Override

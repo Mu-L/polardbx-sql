@@ -45,11 +45,11 @@ import java.util.regex.Pattern;
 import static io.airlift.units.DataSize.succinctBytes;
 
 public class ShowColumnarStatus {
-    private static final int FIELD_COUNT = 11;
+    private static final int FIELD_COUNT = 13;
     private static final ResultSetHeaderPacket header = PacketUtil.getHeader(FIELD_COUNT);
     private static final FieldPacket[] FIELDS = new FieldPacket[FIELD_COUNT];
     private static final byte packetId = FIELD_COUNT + 1;
-    private static final int COLUMNAR_STATUS_FIELDS = 11;
+    private static final int COLUMNAR_STATUS_FIELDS = 13;
 
     /**
      * tso 条件匹配 “ tso = 21213”， tso忽略大小写， =前后忽略空格
@@ -89,6 +89,12 @@ public class ShowColumnarStatus {
         FIELDS[i++].packetId = ++packetId;
 
         FIELDS[i] = PacketUtil.getField("FILES_SIZE", Fields.FIELD_TYPE_VAR_STRING);
+        FIELDS[i++].packetId = ++packetId;
+
+        FIELDS[i] = PacketUtil.getField("DN_TABLE_SIZE", Fields.FIELD_TYPE_VAR_STRING);
+        FIELDS[i++].packetId = ++packetId;
+
+        FIELDS[i] = PacketUtil.getField("COMPRESSION_RATIO", Fields.FIELD_TYPE_VAR_STRING);
         FIELDS[i++].packetId = ++packetId;
 
         FIELDS[i] = PacketUtil.getField("STATUS", Fields.FIELD_TYPE_VAR_STRING);
@@ -188,6 +194,9 @@ public class ShowColumnarStatus {
         List<ColumnarTransactionUtils.ColumnarIndexStatusRow> rows =
             ColumnarTransactionUtils.queryColumnarIndexStatus(tso, columnarRecords);
 
+        //统计主表大小和压缩倍率
+        ColumnarTransactionUtils.queryTableSizeAndCompressionRatio(rows);
+
         rows.forEach(row -> {
             byte[][] results = new byte[COLUMNAR_STATUS_FIELDS][];
             results[0] = String.valueOf(row.tso).getBytes();
@@ -200,7 +209,9 @@ public class ShowColumnarStatus {
             results[7] = String.valueOf(row.orcFileNum).getBytes();
             results[8] = String.valueOf(row.delFileNum).getBytes();
             results[9] = succinctBytes(row.csvFileSize + row.orcFileSize + row.delFileSize).toString().getBytes();
-            results[10] = row.status.getBytes();
+            results[10] = succinctBytes(row.dnTableSize).toString().getBytes();
+            results[11] = String.format("%.2f", row.compressionRate).getBytes();
+            results[12] = row.status.getBytes();
             resultsList.add(results);
         });
 

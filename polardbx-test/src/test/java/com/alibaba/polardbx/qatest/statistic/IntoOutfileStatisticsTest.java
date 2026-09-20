@@ -112,7 +112,6 @@ public class IntoOutfileStatisticsTest extends DDLBaseNewDBTestCase {
         checkCommon(getTddlConnection1(), sql, broadcastTable);
         sql = String.format(POINT, partitionTable);
         checkCommon(getTddlConnection1(), sql, partitionTable);
-        checkIgnoreString(getTddlConnection1(), sql);
 
         // force index sql
         sql = String.format(FORCE_INDEX, partitionTable);

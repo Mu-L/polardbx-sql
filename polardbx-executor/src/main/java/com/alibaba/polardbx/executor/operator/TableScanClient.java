@@ -182,6 +182,8 @@ public class TableScanClient {
 
     private RangeScanMode rangeScanMode;
 
+    boolean isSplitShuffled = false;
+
     public TableScanClient(ExecutionContext context, CursorMeta meta,
                            boolean useTransaction, int prefetchNum) {
         this.context = context;
@@ -253,6 +255,18 @@ public class TableScanClient {
         this.splitList.add(split);
     }
 
+    public synchronized void reorderSplits() {
+        if (isSplitShuffled) {
+            return;
+        }
+        doReorderSplits();
+        isSplitShuffled = true;
+    }
+
+    public void doReorderSplits() {
+        Collections.shuffle(splitList);
+    }
+
     private void registerBloomFilter(List<BloomFilterInfo> bloomFilterInfos) {
         try {
             logger.info("Start registering bloom filters.");
@@ -310,11 +324,15 @@ public class TableScanClient {
     }
 
     protected int needFetch() {
-        return Math.min(splitList.size() - pushdownSplitIndex.get(), prefetchNum - connectionCount());
+        return Math.min(splitList.size() - pushdownSplitIndex.get(), getPrefetchNum() - connectionCount());
     }
 
     public int getSplitNum() {
         return splitList.size();
+    }
+
+    public int getPrefetchNum() {
+        return prefetchNum;
     }
 
     public TableScanClient incrementSourceExec() {
@@ -403,6 +421,7 @@ public class TableScanClient {
         this.pushdownSplitIndex.set(0);
         this.completeExecuteNum.set(0);
         this.isClosed = false;
+        this.isSplitShuffled = false;
     }
 
     public void setTargetPlanStatGroup(RuntimeStatistics.OperatorStatisticsGroup targetPlanStatGroup) {
@@ -411,10 +430,6 @@ public class TableScanClient {
 
     public RangeScanMode getRangeScanMode() {
         return rangeScanMode;
-    }
-
-    public void setPrefetchNum(int prefetchNum) {
-        this.prefetchNum = prefetchNum;
     }
 
     public synchronized void setException(TddlRuntimeException exception) {
@@ -477,12 +492,8 @@ public class TableScanClient {
 
     }
 
-    public SplitResultSet newSplitResultSet(JdbcSplit jdbcSplit, boolean rangeScan, int splitIndex) {
-        if (!rangeScan) {
-            return new SplitResultSet(jdbcSplit);
-        } else {
-            return new SplitResultSet(jdbcSplit, splitIndex);
-        }
+    public SplitResultSet newSplitResultSet(JdbcSplit jdbcSplit, int splitIndex) {
+        return new SplitResultSet(jdbcSplit);
     }
 
     public class SplitResultSet {
@@ -503,7 +514,6 @@ public class TableScanClient {
         protected boolean closeConnection = false;
         protected AtomicBoolean closed = new AtomicBoolean(false);
         protected SettableFuture blockedFuture;
-        protected SettableFuture<String> connectionFuture;
 
         protected int splitIndex;
 
@@ -1022,10 +1032,16 @@ public class TableScanClient {
                     }
                 }
             } else if (clazz == Decimal.class) {
-                DecimalBlockBuilder decBuilder = (DecimalBlockBuilder) dst;
-                boolean useDecimal64 = DynamicConfig.getInstance().enableXResultDecimal64()
-                    && decBuilder.canWriteDecimal64()
-                    && type.getScale() != DecimalTypeBase.DEFAULT_SCALE;
+                boolean useDecimal64 = false;
+                // in range scan mode, dst may be BlackHoleBlockBuilder, so we disable decimal64 mode
+                // the change don't affect performance since BlackHoleBlockBuilder only do dummy append
+                if (dst instanceof DecimalBlockBuilder) {
+                    DecimalBlockBuilder decBuilder = (DecimalBlockBuilder) dst;
+                    useDecimal64 = DynamicConfig.getInstance().enableXResultDecimal64()
+                        && decBuilder.canWriteDecimal64()
+                        && type.getScale() != DecimalTypeBase.DEFAULT_SCALE;
+                }
+
                 for (int i = 0; i < rowCount; ++i) {
                     src.next();
                     if (src.isNull()) {
@@ -1324,7 +1340,7 @@ public class TableScanClient {
 
         public PrefetchThread(Split split, boolean rangeScan, int splitIndex) {
             this.split = (JdbcSplit) split.getConnectorSplit();
-            this.resultSet = newSplitResultSet(this.split, rangeScan, splitIndex);
+            this.resultSet = newSplitResultSet(this.split, splitIndex);
         }
 
         public boolean isPureAsyncMode() {
@@ -1357,7 +1373,14 @@ public class TableScanClient {
                 if (null == future) {
                     return; // Only run once.
                 } else {
-                    future.cancel(false);
+                    try {
+                        future.cancel(false);
+                    } catch (Throwable t) {
+                        setException(
+                            new TddlRuntimeException(ErrorCode.ERR_EXECUTE_ON_MYSQL, t,
+                                resultSet.jdbcSplit.getDbIndex(),
+                                resultSet.getCurrentDbkey(), t.getMessage()));
+                    }
                 }
 
                 // Complete the query routine.
@@ -1442,7 +1465,7 @@ public class TableScanClient {
                     .append("The splitList ")
                     .append(splitList.size())
                     .append(" prefetch ")
-                    .append(prefetchNum)
+                    .append(getPrefetchNum())
                     .append(" pushdownSplitIndex ")
                     .append(pushdownSplitIndex.get())
                     .append(" compeletePrefetchNum ")

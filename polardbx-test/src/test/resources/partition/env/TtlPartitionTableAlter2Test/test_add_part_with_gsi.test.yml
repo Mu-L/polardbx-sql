@@ -1,0 +1,107 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+
+drop database if exists alter_ttl_db2;
+create database if not exists alter_ttl_db2 mode='auto';
+use alter_ttl_db2;
+
+drop table if exists part_with_gsi_t1;
+create table part_with_gsi_t1 (
+  a int, name varchar(20), 
+  created_at datetime, 
+  b int,
+  primary key(a)) 
+partition by range columns (created_at) (
+  partition p20240401 values less than ('2024-04-01'), 
+  partition p20240501 values less than ('2024-05-01'),
+  partition p20240601 values less than ('2024-06-01')
+);
+create global index gsi_b on part_with_gsi_t1(b) partition by key(a) partitions 4;
+show create table part_with_gsi_t1;
+
+ALTER TABLE part_with_gsi_t1 
+MODIFY TTL 
+SET 
+TTL_EXPR = created_at EXPIRE AFTER 1 MONTH TIMEZONE '-03:00',
+TTL_ENABLE = 'OFF',
+TTL_CLEANUP = 'OFF',
+TTL_PART_INTERVAL = INTERVAL(1, MONTH),
+ARCHIVE_TYPE= 'PARTITION',
+ARCHIVE_TABLE_PRE_ALLOCATE=6, 
+ARCHIVE_TABLE_POST_ALLOCATE=6;
+alter table part_with_gsi_t1 cleanup expired data;
+show create table part_with_gsi_t1;
+alter table part_with_gsi_t1 modify ttl set archive_table_pre_allocate=10;
+alter table part_with_gsi_t1 cleanup expired data;
+show create table part_with_gsi_t1;
+  
+## error_msg: $# not supported #$
+alter table part_with_gsi_t1 modify ttl set ttl_cleanup='on';
+DROP TABLE IF EXISTS part_with_gsi_t2;
+## error_msg: $# not supported #$
+CREATE TABLE `part_with_gsi_t2` (
+`a` int(11) NOT NULL,
+`name` varchar(20) DEFAULT NULL,
+`created_at` datetime DEFAULT NULL,
+`b` int(11) DEFAULT NULL,
+PRIMARY KEY (`a`),
+GLOBAL INDEX `gsi_b` (`b`) COVERING (`created_at`)　PARTITION BY KEY(`a`)　PARTITIONS 4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+TTL = TTL_DEFINITION ( 
+TTL_ENABLE = 'OFF', 
+TTL_EXPR = `created_at` EXPIRE AFTER 3 DAY TIMEZONE '-03:00', 
+TTL_JOB = CRON '0 0 2 * * ? *', 
+TTL_CLEANUP = 'ON', 
+TTL_PART_INTERVAL = INTERVAL(1, MONTH), 
+ARCHIVE_TYPE = 'PARTITION', 
+ARCHIVE_TABLE_NAME = '', 
+ARCHIVE_TABLE_PRE_ALLOCATE = 10, 
+ARCHIVE_TABLE_POST_ALLOCATE = 6 )
+PARTITION BY RANGE COLUMNS(`created_at`)
+(
+PARTITION `p20240401` VALUES LESS THAN ('2024-04-01 00:00:00') ENGINE = InnoDB,
+PARTITION `p20240501` VALUES LESS THAN ('2024-05-01 00:00:00') ENGINE = InnoDB,
+PARTITION `p20240601` VALUES LESS THAN ('2024-06-01 00:00:00') ENGINE = InnoDB
+);
+
+CREATE TABLE `part_with_gsi_t2` (
+`a` int(11) NOT NULL,
+`name` varchar(20) DEFAULT NULL,
+`created_at` datetime DEFAULT NULL,
+`b` int(11) DEFAULT NULL,
+PRIMARY KEY (`a`),
+GLOBAL INDEX `gsi_b` (`b`) COVERING (`created_at`)　PARTITION BY KEY(`a`)　PARTITIONS 4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+TTL = TTL_DEFINITION (
+TTL_ENABLE = 'OFF',
+TTL_EXPR = `created_at` EXPIRE AFTER 3 DAY TIMEZONE '-03:00',
+TTL_JOB = CRON '0 0 2 * * ? *',
+TTL_CLEANUP = 'OFF',
+TTL_PART_INTERVAL = INTERVAL(1, MONTH),
+ARCHIVE_TYPE = 'PARTITION',
+ARCHIVE_TABLE_NAME = '',
+ARCHIVE_TABLE_PRE_ALLOCATE = 10,
+ARCHIVE_TABLE_POST_ALLOCATE = 6 )
+PARTITION BY RANGE COLUMNS(`created_at`)
+(
+PARTITION `p20240401` VALUES LESS THAN ('2024-04-01 00:00:00') ENGINE = InnoDB,
+PARTITION `p20240501` VALUES LESS THAN ('2024-05-01 00:00:00') ENGINE = InnoDB,
+PARTITION `p20240601` VALUES LESS THAN ('2024-06-01 00:00:00') ENGINE = InnoDB
+);
+
+show create table part_with_gsi_t2;
+
+drop table if exists part_with_gsi_t1;
+drop table if exists part_with_gsi_t2;
+
+use polardbx;
+drop database if exists alter_ttl_db2;
+
+
+

@@ -49,6 +49,7 @@ public class TCharsetProvider extends CharsetProvider {
 
         charsets.add(WrappedCharset.of(CharsetName.BINARY));
         charsets.add(WrappedCharset.of(CharsetName.UTF8MB4));
+        charsets.add(WrappedCharset.of(CharsetName.GB18030_2022));
         for (Charset charset : charsets) {
             charsetMap.put(charset.name().toLowerCase(), charset);
             for (String aliase : charset.aliases()) {

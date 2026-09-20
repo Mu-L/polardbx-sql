@@ -14,6 +14,7 @@ import java.util.Map;
 public class VecMinMaxTest extends GroupByTestBase {
     @Before
     public void config() {
+        checkExecutorMemory = true;
         Map connectionMap = new HashMap();
         connectionMap.put(ConnectionParams.ENABLE_VEC_ACCUMULATOR.getName(), true);
         context.setParamManager(new ParamManager(connectionMap));

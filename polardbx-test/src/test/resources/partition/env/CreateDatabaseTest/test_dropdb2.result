@@ -1,0 +1,17 @@
+## DISABLE_FAST_SQL_PARSER
+create database mydropdb mode='auto'
+create table mydropdb.mydropdb_k_t1 (a bigint)
+partition by key(a)
+partitions 2
+create table mydropdb.mydropdb_r_t1 (a bigint)
+partition by range(a)
+(
+partition p1 values less than(maxvalue)
+)
+create table mydropdb.mydropdb_l_t1 (a bigint)
+partition by list(a)
+(
+partition p1 values in (default)
+)
+use polardbx
+drop database mydropdb;

@@ -37,7 +37,7 @@ import java.util.List;
 import java.util.Map;
 
 public class ColumnarColumnEvolutionAccessor extends AbstractAccessor {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     private static final String COLUMNAR_COLUMN_EVOLUTION_TABLE = wrap(GmsSystemTables.COLUMNAR_COLUMN_EVOLUTION);
 
@@ -56,9 +56,11 @@ public class ColumnarColumnEvolutionAccessor extends AbstractAccessor {
 
     private static final String ORDER_BY_ID = " order by id asc";
 
-    private static final String WHERE_BY_TABLE_ID = " where `table_id`=?" + ORDER_BY_ID;
+    private static final String WHERE_BY_TABLE_ID = " where `table_id`=?";
 
     private static final String WHERE_BY_FIELD_ID = " where `field_id`=?";
+
+    private static final String WHERE_BY_ID = " where `id`=?";
 
     private static final String WHERE_BY_VERSION_ID = " where `version_id`=?";
 
@@ -114,7 +116,7 @@ public class ColumnarColumnEvolutionAccessor extends AbstractAccessor {
     private static final String DELETE_TABLE_ID = "delete " + FROM_TABLE + WHERE_BY_TABLE_ID;
 
     private static final String UPDATE_COLUMNS_RECORD =
-        UPDATE_COLUMN_EVOLUTION + " `columns_record`=?" + WHERE_BY_FIELD_ID;
+        UPDATE_COLUMN_EVOLUTION + " `columns_record`=?" + WHERE_BY_ID;
 
     private static final String DELETE_BY_ID_STATUS =
         "delete " + FROM_TABLE + WHERE_BY_TABLE_ID_AND_STATUS;
@@ -265,11 +267,11 @@ public class ColumnarColumnEvolutionAccessor extends AbstractAccessor {
         update(UPDATE_FIELD_ID_AS_ID_BY_VERSION_ID, COLUMNAR_COLUMN_EVOLUTION_TABLE, params);
     }
 
-    public void updateColumnRecord(ColumnsRecord columnsRecord, long fieldId) {
+    public void updateColumnRecord(ColumnsRecord columnsRecord, long id) {
         Map<Integer, ParameterContext> params = new HashMap<>(2);
         MetaDbUtil.setParameter(1, params, ParameterMethod.setString,
             ColumnarColumnEvolutionRecord.serializeToJson(columnsRecord));
-        MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, fieldId);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, id);
         update(UPDATE_COLUMNS_RECORD, COLUMNAR_COLUMN_EVOLUTION_TABLE, params);
     }
 

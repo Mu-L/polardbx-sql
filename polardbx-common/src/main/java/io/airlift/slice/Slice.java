@@ -1,5 +1,5 @@
-
 /*
+
  * Copyright [2013-2021], Alibaba Group Holding Limited
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,9 @@
 
 package io.airlift.slice;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import org.openjdk.jol.info.ClassLayout;
+import org.openjdk.jol.util.VMSupport;
 import sun.misc.Unsafe;
 
 import javax.annotation.Nullable;
@@ -41,7 +43,6 @@ import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 
-import static io.airlift.slice.JvmUtils.newByteBuffer;
 import static io.airlift.slice.JvmUtils.unsafe;
 import static io.airlift.slice.Preconditions.checkArgument;
 import static io.airlift.slice.Preconditions.checkPositionIndexes;
@@ -57,23 +58,12 @@ import static java.lang.Math.min;
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Objects.requireNonNull;
-import static sun.misc.Unsafe.ARRAY_BOOLEAN_BASE_OFFSET;
-import static sun.misc.Unsafe.ARRAY_BOOLEAN_INDEX_SCALE;
 import static sun.misc.Unsafe.ARRAY_BYTE_BASE_OFFSET;
-import static sun.misc.Unsafe.ARRAY_DOUBLE_BASE_OFFSET;
-import static sun.misc.Unsafe.ARRAY_DOUBLE_INDEX_SCALE;
-import static sun.misc.Unsafe.ARRAY_FLOAT_BASE_OFFSET;
-import static sun.misc.Unsafe.ARRAY_FLOAT_INDEX_SCALE;
 import static sun.misc.Unsafe.ARRAY_INT_BASE_OFFSET;
-import static sun.misc.Unsafe.ARRAY_INT_INDEX_SCALE;
-import static sun.misc.Unsafe.ARRAY_LONG_BASE_OFFSET;
-import static sun.misc.Unsafe.ARRAY_LONG_INDEX_SCALE;
-import static sun.misc.Unsafe.ARRAY_SHORT_BASE_OFFSET;
-import static sun.misc.Unsafe.ARRAY_SHORT_INDEX_SCALE;
 
-public final class Slice
-    implements Comparable<Slice> {
+public final class Slice implements Comparable<Slice>, MemoryCountable {
     private static final int INSTANCE_SIZE = (int) ClassLayout.parseClass(Slice.class).instanceSize();
+    private static final byte[] EMPTY_BYTE_ARRAY = new byte[0];
 
 
     @Deprecated
@@ -123,72 +113,9 @@ public final class Slice
         this.reference = null;
     }
 
-    Slice(boolean[] base, int offset, int length) {
-        requireNonNull(base, "base is null");
-        checkPositionIndexes(offset, offset + length, base.length);
-
-        this.base = base;
-        this.address = ARRAY_BOOLEAN_BASE_OFFSET + offset * ARRAY_BOOLEAN_INDEX_SCALE;
-        this.size = length * ARRAY_BOOLEAN_INDEX_SCALE;
-        this.retainedSize = INSTANCE_SIZE + base.length * ARRAY_BOOLEAN_INDEX_SCALE;
-        this.reference = null;
-    }
-
-    Slice(short[] base, int offset, int length) {
-        requireNonNull(base, "base is null");
-        checkPositionIndexes(offset, offset + length, base.length);
-
-        this.base = base;
-        this.address = ARRAY_SHORT_BASE_OFFSET + offset * ARRAY_SHORT_INDEX_SCALE;
-        this.size = length * ARRAY_SHORT_INDEX_SCALE;
-        this.retainedSize = INSTANCE_SIZE + base.length * ARRAY_SHORT_INDEX_SCALE;
-        this.reference = null;
-    }
-
-    Slice(int[] base, int offset, int length) {
-        requireNonNull(base, "base is null");
-        checkPositionIndexes(offset, offset + length, base.length);
-
-        this.base = base;
-        this.address = ARRAY_INT_BASE_OFFSET + offset * ARRAY_INT_INDEX_SCALE;
-        this.size = length * ARRAY_INT_INDEX_SCALE;
-        this.retainedSize = INSTANCE_SIZE + base.length * ARRAY_INT_INDEX_SCALE;
-        this.reference = null;
-    }
-
-    Slice(long[] base, int offset, int length) {
-        requireNonNull(base, "base is null");
-        checkPositionIndexes(offset, offset + length, base.length);
-
-        this.base = base;
-        this.address = ARRAY_LONG_BASE_OFFSET + offset * ARRAY_LONG_INDEX_SCALE;
-        this.size = length * ARRAY_LONG_INDEX_SCALE;
-        this.retainedSize = INSTANCE_SIZE + base.length * ARRAY_LONG_INDEX_SCALE;
-        this.reference = null;
-    }
-
-    Slice(float[] base, int offset, int length) {
-        requireNonNull(base, "base is null");
-        checkPositionIndexes(offset, offset + length, base.length);
-
-        this.base = base;
-        this.address = ARRAY_FLOAT_BASE_OFFSET + offset * ARRAY_FLOAT_INDEX_SCALE;
-        this.size = length * ARRAY_FLOAT_INDEX_SCALE;
-        this.retainedSize = INSTANCE_SIZE + base.length * ARRAY_FLOAT_INDEX_SCALE;
-        this.reference = null;
-    }
-
-    Slice(double[] base, int offset, int length) {
-        requireNonNull(base, "base is null");
-        checkPositionIndexes(offset, offset + length, base.length);
-
-        this.base = base;
-        this.address = ARRAY_DOUBLE_BASE_OFFSET + offset * ARRAY_DOUBLE_INDEX_SCALE;
-        this.size = length * ARRAY_DOUBLE_INDEX_SCALE;
-        this.retainedSize = INSTANCE_SIZE + base.length * ARRAY_DOUBLE_INDEX_SCALE;
-        this.reference = null;
-    }
-
+    /**
+     * Creates a slice for directly accessing the base object.
+     */
     Slice(@Nullable Object base, long address, int size, int retainedSize, @Nullable Object reference) {
         if (address <= 0) {
             throw new IllegalArgumentException(format("Invalid address: %s", address));
@@ -206,8 +133,9 @@ public final class Slice
         this.retainedSize = retainedSize;
     }
 
-    public long memoryUsage() {
-        return INSTANCE_SIZE + (base instanceof byte[] ? sizeOf((byte[]) base) : 0);
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + (base instanceof byte[] ? VMSupport.align((int) sizeOf((byte[]) base)) : 0);
     }
 
     void resetSlice(byte[] base, int offset, int length) {
@@ -396,8 +324,7 @@ public final class Slice
         return bytes;
     }
 
-    public void getBytes(int index, OutputStream out, int length)
-        throws IOException {
+    public void getBytes(int index, OutputStream out, int length) throws IOException {
         checkIndexLength(index, length);
 
         if (base instanceof byte[]) {
@@ -499,8 +426,7 @@ public final class Slice
         copyMemory(source, (long) ARRAY_INT_BASE_OFFSET + sourceIndex, base, address + index, length * Integer.BYTES);
     }
 
-    public void setBytes(int index, InputStream in, int length)
-        throws IOException {
+    public void setBytes(int index, InputStream in, int length) throws IOException {
         checkIndexLength(index, length);
         if (base instanceof byte[]) {
             byte[] bytes = (byte[]) base;
@@ -918,20 +844,10 @@ public final class Slice
             return ByteBuffer.wrap((byte[]) base, (int) ((address - ARRAY_BYTE_BASE_OFFSET) + index), length);
         }
 
-        try {
-            return (ByteBuffer) newByteBuffer.invokeExact(address + index, length, (Object) reference);
-        } catch (Throwable throwable) {
-            if (throwable instanceof Error) {
-                throw (Error) throwable;
-            }
-            if (throwable instanceof RuntimeException) {
-                throw (RuntimeException) throwable;
-            }
-            if (throwable instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
-            throw new RuntimeException(throwable);
+        if (length == 0) {
+            return ByteBuffer.wrap(EMPTY_BYTE_ARRAY, 0, 0);
         }
+        throw new RuntimeException("Failed to convert to byteBuffer");
     }
 
     @Override
@@ -965,14 +881,8 @@ public final class Slice
     }
 
     private static long fillLong(byte value) {
-        return (value & 0xFFL) << 56
-            | (value & 0xFFL) << 48
-            | (value & 0xFFL) << 40
-            | (value & 0xFFL) << 32
-            | (value & 0xFFL) << 24
-            | (value & 0xFFL) << 16
-            | (value & 0xFFL) << 8
-            | (value & 0xFFL);
+        return (value & 0xFFL) << 56 | (value & 0xFFL) << 48 | (value & 0xFFL) << 40 | (value & 0xFFL) << 32
+            | (value & 0xFFL) << 24 | (value & 0xFFL) << 16 | (value & 0xFFL) << 8 | (value & 0xFFL);
     }
 
     private static int compareUnsignedBytes(byte thisByte, byte thatByte) {

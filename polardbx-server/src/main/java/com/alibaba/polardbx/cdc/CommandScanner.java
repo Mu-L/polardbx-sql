@@ -19,7 +19,6 @@ package com.alibaba.polardbx.cdc;
 import com.alibaba.fastjson.JSONObject;
 import com.alibaba.polardbx.CobarConfig;
 import com.alibaba.polardbx.CobarServer;
-import com.alibaba.polardbx.cdc.entity.LogicMeta;
 import com.alibaba.polardbx.common.cdc.ICdcManager;
 import com.alibaba.polardbx.common.model.lifecycle.AbstractLifecycle;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
@@ -35,6 +34,7 @@ import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
 import com.alibaba.polardbx.gms.metadb.cdc.BinlogCommandAccessor;
 import com.alibaba.polardbx.gms.metadb.cdc.BinlogCommandRecord;
+import com.alibaba.polardbx.gms.metadb.cdc.entity.LogicMeta;
 import com.alibaba.polardbx.gms.topology.DbInfoAccessor;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
@@ -161,6 +161,8 @@ public class CommandScanner extends AbstractLifecycle {
             // 1. get pre ddl perform version
             final AtomicLong preVersion = new AtomicLong(0L);
             preVersion.set(DdlEngineScheduler.getInstance().getPerformVersion());
+            final AtomicLong preMaxId = new AtomicLong(0L);
+            preMaxId.set(DdlEngineScheduler.getInstance().getMaxId());
 
             // 2. get pre db list
             final Set<String> preDbs = new HashSet<>(getAllDbs());
@@ -181,8 +183,8 @@ public class CommandScanner extends AbstractLifecycle {
                 final AtomicBoolean timeout = new AtomicBoolean(false);
                 final AtomicBoolean success = new AtomicBoolean(false);
                 try {
-                    DdlEngineScheduler.getInstance().compareAndExecute(preVersion.get(), () -> {
-                        if (postDbs.equals(preDbs)) {
+                    DdlEngineScheduler.getInstance().compareAndExecute(preVersion.get(), preMaxId.get(), () -> {
+                        if (postDbs.equals(preDbs)&& ExecUtils.hasLeadership(null)) {
                             cdcManager.sendInstruction(ICdcManager.InstructionType.CdcStart, instructionId,
                                 JSONObject.toJSONString(logicMeta));
                             success.set(true);

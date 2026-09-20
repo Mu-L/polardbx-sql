@@ -21,15 +21,29 @@ import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJob;
 import com.alibaba.polardbx.executor.partitionmanagement.AlterTableGroupUtils;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.optimizer.archive.CheckOSSArchiveUtil;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableGroupReorgPartition;
 import org.apache.calcite.sql.SqlAlterTableGroup;
+import org.apache.calcite.sql.SqlIdentifier;
+
+import java.util.Map;
+import java.util.Set;
 
 public class LogicalAlterTableGroupReorgPartitionHandler extends LogicalCommonDdlHandler {
 
     public LogicalAlterTableGroupReorgPartitionHandler(IRepository repo) {
         super(repo);
+    }
+
+    @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        SqlAlterTableGroup sqlAlterTableGroup = (SqlAlterTableGroup) logicalDdlPlan.getNativeSqlNode();
+        String tableGroupName = ((SqlIdentifier) sqlAlterTableGroup.getTableGroupName()).getLastName();
+        exclusiveResources.add(concatWithDot(logicalDdlPlan.getSchemaName(), tableGroupName));
     }
 
     @Override

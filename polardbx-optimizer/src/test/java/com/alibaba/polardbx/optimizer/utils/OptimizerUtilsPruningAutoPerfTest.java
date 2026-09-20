@@ -141,6 +141,7 @@ public class OptimizerUtilsPruningAutoPerfTest extends BasePlannerTest {
 
     private long testWithTblName(String tblName, boolean isVarchar) {
         ExecutionContext executionContext = new ExecutionContext(SCHEMA_NAME);
+        executionContext.setExplain(new ExplainResult());
         Parameters parameters = new Parameters();
         Map<Integer, ParameterContext> params = Maps.newHashMap();
         if (isVarchar) {

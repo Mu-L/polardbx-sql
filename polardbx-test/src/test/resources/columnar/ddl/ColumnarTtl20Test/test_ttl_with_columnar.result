@@ -1,0 +1,65 @@
+SET TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false
+SET TTL_DEBUG_CCI_SKIP_DDL_TASKS = 'WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask'
+SET SKIP_DDL_TASKS = 'WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask'
+SET TTL_DEBUG_CURRENT_DATETIME = '2024-06-27 00:00:00'
+SET TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false
+SET time_zone = '+08:00'
+SET MAX_CCI_COUNT = 3
+SET enable_htap = true
+SET enable_mpp = true
+SET ENABLE_COLUMNAR_OPTIMIZER = true
+SET EXPLAIN_SHOW_PHYSICAL_PLAN = false
+CREATE TABLE my_modify_ttl_col_t1 (
+	a int NOT NULL AUTO_INCREMENT,
+	b datetime DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (a)
+) TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00', TTL_JOB = CRON '*/1 * * * * ?' TIMEZONE '+08:00', ARCHIVE_TYPE = '', ARCHIVE_TABLE_SCHEMA = '', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 3, ARCHIVE_TABLE_POST_ALLOCATE = 4 )
+PARTITION BY KEY (a) PARTITIONS 2
+SHOW CREATE TABLE my_modify_ttl_col_t1
+Table,Create Table
+my_modify_ttl_col_t1,CREATE TABLE `my_modify_ttl_col_t1` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00', TTL_JOB = CRON '*/1 * * * * ?', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 3, ARCHIVE_TABLE_POST_ALLOCATE = 4 )
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+CREATE TABLE my_modify_arc_t1 LIKE my_modify_ttl_col_t1 ENGINE = 'columnar' ARCHIVE_MODE = ttl
+CREATE CLUSTERED COLUMNAR INDEX cci_my_modify_ttl_col_t1 ON my_modify_ttl_col_t1 (a) PARTITION BY HASH (a) PARTITIONS 4
+SHOW CREATE TABLE my_modify_ttl_col_t1
+Table,Create Table
+my_modify_ttl_col_t1,CREATE TABLE `my_modify_ttl_col_t1` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_my_modify_arc_t1` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20240201 VALUES LESS THAN ('2024-02-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240301 VALUES LESS THAN ('2024-03-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240401 VALUES LESS THAN ('2024-04-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240501 VALUES LESS THAN ('2024-05-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240601 VALUES LESS THAN ('2024-06-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240701 VALUES LESS THAN ('2024-07-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240801 VALUES LESS THAN ('2024-08-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240901 VALUES LESS THAN ('2024-09-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20241001 VALUES LESS THAN ('2024-10-01 00:00:00') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar),
+	CLUSTERED COLUMNAR INDEX `cci_my_modify_ttl_col_t1` (`a`)
+		PARTITION BY HASH(`a`)
+		PARTITIONS 4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00', TTL_JOB = CRON '*/1 * * * * ?', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'my_modify_arc_t1', ARCHIVE_TABLE_PRE_ALLOCATE = 3, ARCHIVE_TABLE_POST_ALLOCATE = 4 )
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+SET workload_type = ap
+EXPLAIN SELECT *
+FROM my_modify_ttl_col_t1
+Logical ExecutionPlan
+OSSTableScan(tables="cci_my_modify_ttl_col_t1_$[p1,p2,p3,p4]", shardCount=4, partition=[remote], sql="SELECT `a`, `b` FROM `cci_my_modify_ttl_col_t1_$` AS `cci_my_modify_ttl_col_t1_$`")
+EXPLAIN SELECT *
+FROM my_modify_ttl_col_t1 IGNORE INDEX (cci_my_modify_ttl_col_t1)
+Logical ExecutionPlan
+LogicalView(tables="my_modify_ttl_col_t1[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `my_modify_ttl_col_t1` AS `my_modify_ttl_col_t1`")
+EXPLAIN SELECT *
+FROM my_modify_arc_t1
+Logical ExecutionPlan
+OSSTableScan(tables="arctmp_my_modify_arc_t1_$[p20240201,p20240301,p20240401,p20240501,p20240601,p20240701,p20240801,p20240901,p20241001,pmax]", shardCount=10, partition=[remote], sql="SELECT `a`, `b` FROM `arctmp_my_modify_arc_t1_$` AS `arctmp_my_modify_arc_t1_$`")

@@ -79,8 +79,10 @@ public class LogicalCheckColumnarSnapshotHandler extends HandlerCommon {
                 StringBuilder diff = new StringBuilder();
                 String partName = entry.getKey();
                 Pair<List<String>, List<Pair<String, Long>>> expectedSnapshot = entry.getValue();
+                TableMeta columnarTableMeta = Objects.requireNonNull(OptimizerContext.getContext(schemaName)).getLatestSchemaManager()
+                    .getTable(columnarName);
                 Pair<List<String>, List<String>> columnarSnapshot =
-                    cm.findFileNames(tso, schemaName, columnarName, partName);
+                    cm.findFileNames(tso, schemaName, columnarName, partName, columnarTableMeta);
 
                 // compare orc:
                 Set<String> expectedOrc = new HashSet<>(expectedSnapshot.getKey());

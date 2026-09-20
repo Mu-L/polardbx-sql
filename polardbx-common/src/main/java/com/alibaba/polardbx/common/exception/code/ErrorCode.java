@@ -710,6 +710,17 @@ public enum ErrorCode {
 
     ERR_IN_PRUNING(ErrorType.Optimizer, 4532),
 
+    ERR_OPTIMIZER_TYPE(ErrorType.Optimizer, 4533),
+
+    /**
+     * 不允许改拆分键
+     * 从优化器中报错会走4506报错码
+     * 从plancache的标志位判断出错会走4534报错码
+     */
+    ERR_MODIFY_PARTITION_COLUMN(ErrorType.Optimizer, 4534),
+
+    ERR_MULTI_COLUMN_QUANTIFIED_COMPARISON(ErrorType.Optimizer, 4535),
+
     // ============= executor 从4600下标开始================
     //
     ERR_FUNCTION(ErrorType.Executor, 4600),
@@ -718,7 +729,7 @@ public enum ErrorCode {
 
     ERR_CONVERTOR(ErrorType.Executor, 4602),
 
-    ERR_ACCROSS_DB_TRANSACTION(ErrorType.Executor, 4603),
+    ERR_CROSS_GROUP_TRANSACTION(ErrorType.Executor, 4603),
 
     ERR_CONCURRENT_TRANSACTION(ErrorType.Executor, 4604),
 
@@ -733,6 +744,8 @@ public enum ErrorCode {
     ERR_DUPLICATE_ENTRY(ErrorType.Executor, 4609),
 
     ERR_CONNECTION_CLOSED(ErrorType.Executor, 4610),
+
+    ERR_WRITE_FOR_READ_ONLY_DN(ErrorType.Executor, 4611),
 
     ERR_UNKNOWN_SAVEPOINT(ErrorType.Executor, 1305),
 
@@ -812,6 +825,15 @@ public enum ErrorCode {
      */
     ERR_SUBQUERY_VALUE_NOT_READY(ErrorType.Executor, 4671),
 
+    ERR_EXTERNAL_TABLE(ErrorType.Executor, 4672),
+
+    /**
+     * check constraints
+     */
+    ERR_ADD_CHECK_CONSTRAINT(ErrorType.Executor, 4675),
+    ERR_DROP_CHECK_CONSTRAINT(ErrorType.Executor, 4676),
+    ERR_ALTER_CHECK_CONSTRAINT(ErrorType.Executor, 4677),
+
     /**
      * foreign key constraints
      */
@@ -890,6 +912,8 @@ public enum ErrorCode {
 
     ERR_CREATE_SELECT_WITH_OSS(ErrorType.Executor, 4668),
 
+    ERR_CHECK_TABLE_META_VERSION(ErrorType.Executor, 4669),
+
     ERR_CREATE_TABLE_WITH_TTL(ErrorType.Executor, 4710),
 
     // ============= server 从4700下标开始================
@@ -959,6 +983,14 @@ public enum ErrorCode {
     ERR_TRANS_IDLE_TIMEOUT(ErrorType.Transaction, 5016),
 
     ERR_FLASHBACK_AREA(ErrorType.Transaction, 5017),
+
+    ERR_AC_RECOVER(ErrorType.Transaction, 5018),
+
+    ERR_SQL_EXCEED_CCL_EXECUTION_TIME(ErrorType.Transaction, 5019),
+
+    ERR_LARGE_TRANS(ErrorType.Transaction, 5019),
+
+    ERR_TRANS_FATAL_CANNOT_CONTINUE(ErrorType.Transaction, 5020),
     // ================权限相关异常从5101开始==================
     /**
      * 暂时不支持的权限点
@@ -1035,6 +1067,11 @@ public enum ErrorCode {
      * 密码不符合自定义规则
      */
     ERR_INVALID_PASSWORD_CUSTOMIZED(ErrorType.Account, 5207),
+
+    /**
+     * 创建 DBA 用户失败
+     */
+    ERR_CREATE_DBA_USER_FAILED(ErrorType.Account, 5208),
 
     // ================全局二级索引相关异常从5300开始==================
 
@@ -1266,6 +1303,7 @@ public enum ErrorCode {
     ERR_INSTANCE_READ_ONLY_OPTION_SET_FAILED(ErrorType.CDC, 9206),
     ERR_CDC_INVALID_PARAMS(ErrorType.CDC, 9207),
     ERR_SQL_LOG_BIN_NOT_SUPPORT_AUTO_COMMIT(ErrorType.CDC, 9208),
+    ERR_ROUTING_RULE(ErrorType.Executor, 9209),
 
     ERR_PARTITION_MANAGEMENT(ErrorType.Executor, 9300),
 
@@ -1360,6 +1398,7 @@ public enum ErrorCode {
     ERR_COLUMNAR_SNAPSHOT(ErrorType.GMS, 12005),
     ERR_COLUMNAR_SCHEMA(ErrorType.GMS, 12006),
 
+    ERR_FORCE_COLUMNAR_INDEX(ErrorType.Parser, 12010),
     ERR_COLUMNAR_DROP_PARTITION(ErrorType.Executor, 12011),
     ERR_COLUMNAR_MODIFY_PARTITION_DROP_VALUE(ErrorType.Executor, 12012),
     ERR_COLUMNAR_TRUNCATE_PARTITION(ErrorType.Executor, 12013);
@@ -1410,6 +1449,9 @@ public enum ErrorCode {
     public static int extract(String message) {
         if (message != null) {
             // get error code from message
+            if (message.startsWith("java.lang.RuntimeException: ")) {
+                message = message.substring("java.lang.RuntimeException: ".length());
+            }
             if (message.startsWith(errorMessagePre)) {
                 int endPos = message.indexOf(']', errorMessagePre.length());
                 try {

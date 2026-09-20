@@ -13,4 +13,4 @@
 
   plan: |
 
-    logicalview(tables="test1[p1],test2[p1]", sql="select `id` from (select `id`, `warehousecode`, `code` from `test1` as `test1` where ((`id` in('1111112')) or (`id` = some (select `id` from `test2` as `test2` where (1 = 0))))) as `t1`")
+    logicalview(tables="test1[p1],test2[p1]", sql="select `id` from (select `id`, `warehousecode`, `code` from `test1` as `test1` where ((`id` in('1111112')) or (`id` in (select `id` from `test2` as `test2` where (1 = 0))))) as `t1`")

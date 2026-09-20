@@ -30,7 +30,6 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelShuttle;
 import org.apache.calcite.rel.RelWriter;
 import org.apache.calcite.rel.externalize.RelDrdsWriter;
-import org.apache.calcite.rel.externalize.RelWriterImpl;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexNode;
@@ -39,6 +38,16 @@ import org.apache.calcite.sql.SqlExplainLevel;
 import java.util.List;
 
 public class DynamicValues extends AbstractRelNode {
+
+    /**
+     * Raw-string execution mode of a single-tuple DynamicValues backed by RawString parameters.
+     * COLUMN_ARRAY: one dynamic param per column, rows are produced by zipping the column arrays.
+     * ROW_LIST: one bare dynamic param whose elements are row lists.
+     */
+    public enum RawStringMode {
+        COLUMN_ARRAY,
+        ROW_LIST
+    }
 
     private static final Function<ImmutableList<RexNode>, Object> F =
         new Function<ImmutableList<RexNode>, Object>() {
@@ -51,17 +60,31 @@ public class DynamicValues extends AbstractRelNode {
 
     public ImmutableList<ImmutableList<RexNode>> tuples;
 
+    // Raw-string execution mode, maintained by the optimizer at every construction / conversion
+    // site that may produce a raw-string shape. Never mutated after construction: SPM-cached
+    // plans are shared static objects.
+    private final RawStringMode rawStringMode;
+
     protected DynamicValues(RelOptCluster cluster, RelTraitSet traits, RelDataType rowType,
-                         ImmutableList<ImmutableList<RexNode>> tuples) {
+                            ImmutableList<ImmutableList<RexNode>> tuples) {
+        this(cluster, traits, rowType, tuples, null);
+    }
+
+    protected DynamicValues(RelOptCluster cluster, RelTraitSet traits, RelDataType rowType,
+                            ImmutableList<ImmutableList<RexNode>> tuples, RawStringMode rawStringMode) {
         super(cluster, traits);
         this.rowType = rowType;
         this.tuples = tuples;
+        this.rawStringMode = rawStringMode;
     }
 
     public DynamicValues(RelInput input) {
         super(input.getCluster(), input.getTraitSet());
         this.rowType = input.getRowType("type");
         this.tuples = input.getDynamicTuples("tuples");
+        // Absent in plans serialized by older versions; consumers re-detect via
+        // LogicalDynamicValues.detectRawStringMode when needed.
+        this.rawStringMode = input.getEnum("rawStringMode", RawStringMode.class, null);
     }
 
     public static DynamicValues create(RelOptCluster cluster, RelDataType rowType,
@@ -74,6 +97,11 @@ public class DynamicValues extends AbstractRelNode {
         return new DynamicValues(cluster, traits, rowType, tuples);
     }
 
+    public static DynamicValues create(RelOptCluster cluster, RelTraitSet traits, RelDataType rowType,
+                                       ImmutableList<ImmutableList<RexNode>> tuples, RawStringMode rawStringMode) {
+        return new DynamicValues(cluster, traits, rowType, tuples, rawStringMode);
+    }
+
     @Override
     protected RelDataType deriveRowType() {
         return rowType;
@@ -81,6 +109,14 @@ public class DynamicValues extends AbstractRelNode {
 
     public ImmutableList<ImmutableList<RexNode>> getTuples() {
         return tuples;
+    }
+
+    /**
+     * The raw-string mode maintained by the optimizer at construction / conversion time. Null
+     * when the shape is not marked (or the plan was deserialized from an older version).
+     */
+    public RawStringMode getRawStringMode() {
+        return rawStringMode;
     }
 
     @Override
@@ -109,21 +145,28 @@ public class DynamicValues extends AbstractRelNode {
     public RelWriter explainTermsForDisplay(RelWriter pw) {
         pw.item(RelDrdsWriter.REL_NAME, "DynamicValues");
         pw.item("tuples", Lists.transform(tuples, F));
+        if (rawStringMode != null) {
+            pw.item("rawStringMode", rawStringMode.name());
+        }
         return pw;
     }
+
     @Override
     public RelWriter explainTerms(RelWriter pw) {
+        RawStringMode mode = getRawStringMode();
         return super.explainTerms(pw)
             .itemIf("type", rowType,
                 pw.getDetailLevel() == SqlExplainLevel.DIGEST_ATTRIBUTES)
             .itemIf("type", rowType.getFieldList(), true)
-            .itemIf("tuples", tuples, true);
+            .itemIf("tuples", tuples, true)
+            // Serialized as a name string: some RelJson writers reject unknown enum types.
+            .itemIf("rawStringMode", mode == null ? null : mode.name(), mode != null);
     }
 
     @Override
     public RelNode copy(RelTraitSet traitSet, List<RelNode> inputs) {
         assert traitSet.containsIfApplicable(Convention.NONE);
         assert inputs.isEmpty();
-        return new DynamicValues(getCluster(), traitSet, rowType, tuples);
+        return new DynamicValues(getCluster(), traitSet, rowType, tuples, rawStringMode);
     }
 }

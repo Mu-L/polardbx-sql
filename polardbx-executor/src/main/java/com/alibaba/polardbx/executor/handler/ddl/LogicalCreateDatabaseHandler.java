@@ -29,6 +29,7 @@ import com.alibaba.polardbx.executor.mpp.planner.PartitionHandle;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.gms.locality.LocalityDesc;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.gms.topology.CreateDbInfo;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.gms.topology.DbInfoRecord;
@@ -74,7 +75,13 @@ public class LogicalCreateDatabaseHandler extends HandlerCommon {
         final LocalityManager lm = LocalityManager.getInstance();
         Long connId = executionContext.getConnId();
 
+        Boolean dryRunDdlOption = false;
+        if (sqlCreateDatabase.getDryrun() != null) {
+            dryRunDdlOption = sqlCreateDatabase.getDryrun();
+        }
+
         String dbName = sqlCreateDatabase.getDbName().getSimple();
+        ExternalNameValidator.rejectPossibleExternalCatalog(dbName);
         if (!DbNameUtil.validateDbName(dbName, KeyWordsUtil.isKeyWord(dbName))) {
             throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
                 String.format("Failed to create database because the dbName[%s] is invalid", dbName));
@@ -107,7 +114,7 @@ public class LogicalCreateDatabaseHandler extends HandlerCommon {
         }
 
         // choose dn by locality
-        LocalityDesc localityDesc = LocalityInfoUtils.parse(locality);
+        LocalityDesc localityDesc = LocalityInfoUtils.parse(locality, dbName);
 //        if (!localityDesc.holdEmptyDnList() && !localityDesc.getDnList()
 //            .contains(DbTopologyManager.singleGroupStorageInstList.get(0))) {
 //            throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC,
@@ -135,11 +142,12 @@ public class LogicalCreateDatabaseHandler extends HandlerCommon {
             }
         } else {
             defaultSingle = false;
-            if (!localityDesc.holdEmptyLocality()) {
+            if (!localityDesc.holdEmptyLocality() && !localityDesc.hasProxyConfig()) {
                 throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
                     "database of drds mode doesn't support locality specification!"
                 );
-
+            } else if (localityDesc.hasProxyConfig()) {
+                predLocality = null;
             }
         }
 
@@ -148,7 +156,8 @@ public class LogicalCreateDatabaseHandler extends HandlerCommon {
             finalLocalityDesc,
             predLocality,
             dbType,
-            isCreateIfNotExists, socketTimeoutVal, shardDbCountEachStorageInst);
+            isCreateIfNotExists, socketTimeoutVal, shardDbCountEachStorageInst, dryRunDdlOption);
+        checkIfGdnDdlLoad(createDbInfo, executionContext);
         initHookFuncForCreateDbInfo(executionContext, dbName, sqlCreateDatabase, createDbInfo, finalLocalityDesc, lm);
         createDbInfo.setConnId(connId);
         createDbInfo.setTraceId(executionContext.getTraceId());
@@ -156,6 +165,11 @@ public class LogicalCreateDatabaseHandler extends HandlerCommon {
         DbEventUtil.logFirstAutoDbCreationEvent(createDbInfo);
 
         return new AffectRowCursor(new int[] {1});
+    }
+
+    private void checkIfGdnDdlLoad(CreateDbInfo createDbInfo, ExecutionContext executionContext) {
+        Long gdnDdlLoadSqlId = executionContext.getParamManager().getLong(ConnectionParams.ASYNC_LOAD_GDN_DDL_SQL_ID);
+        createDbInfo.setGdnDdlLoad(gdnDdlLoadSqlId != null && gdnDdlLoadSqlId > 0);
     }
 
     private void initHookFuncForCreateDbInfo(ExecutionContext executionContext,
@@ -178,7 +192,7 @@ public class LogicalCreateDatabaseHandler extends HandlerCommon {
         CreateDbInfo.CreatedDbHookFunc refreshLocalityFunc = new CreateDbInfo.CreatedDbHookFunc() {
             @Override
             public void handle(Long newAddedDbInfoId) {
-                if (!finalLocalityDesc.holdEmptyDnList()) {
+                if (!finalLocalityDesc.holdEmptyDnList() || finalLocalityDesc.hasProxyConfig()) {
                     lm.setLocalityOfDb(newAddedDbInfoId, finalLocalityDesc.toString());
                 }
             }

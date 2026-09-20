@@ -1,0 +1,122 @@
+SQL:
+  - sql: |
+      SELECT * FROM t0 WHERE EXISTS (
+        WITH cte_sub AS (SELECT v4, v5 FROM t1 WHERE t1.v4 = t0.v1)
+        SELECT 1 FROM cte_sub WHERE v5 > t0.v2
+      );
+    plan: |
+      semihashjoin(condition="v5 > v2 and v4 = v1", type="semi", build="inner")
+        gather(concurrent=true)
+          logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+        cteanchor(cte_id=0)
+          cteproducer(cte_id=0)
+            gather(concurrent=true)
+              logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5` from `t1` as `t1`")
+          cteconsumer(cte_id="0_0", projects=[1, $0, $1])
+  - sql: |
+      WITH cte_base AS (
+        SELECT t0.v1, t0.v2, t1.v5, t1.v6 FROM t0 JOIN t1 ON t0.v1 = t1.v4
+      ),
+      cte_win AS (
+        SELECT v1, v2, v5,
+               RANK() OVER (PARTITION BY v1 ORDER BY v5) AS rnk,
+               SUM(v5) OVER (PARTITION BY v1) AS win_sum
+        FROM cte_base
+      )
+      SELECT * FROM t0
+      WHERE t0.v1 IN (
+        SELECT v1 FROM cte_win
+        WHERE rnk = 1 AND win_sum > t0.v2
+           OR v2 = t0.v3
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3],t1[p1,p2,p3]", shardcount=3, sql="select `t0`.`v1`, `t0`.`v2`, `t1`.`v5` from `t0` as `t0` inner join `t1` as `t1` on (`t0`.`v1` = `t1`.`v4`)")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            project(v1="v1", v2="v2", f4w0$o0="f4w0$o0", f5w1$o0="f5w1$o0")
+              sortwindow(v1="v1", v2="v2", v5="v5", f4w0$o0="f4w0$o0", f5w1$o0="window#0sum($2)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [sum($2)])")
+                sortwindow(v1="v1", v2="v2", v5="v5", f4w0$o0="window#0rank($2)", reference windows="window#0=window(partition {0} order by [2 asc-nulls-first] rows between unbounded preceding and current row aggs [rank($2)])")
+                  memsort(sort="v1 asc,v5 asc")
+                    cteconsumer(cte_id="0_0")
+          project(v1="v1", v2="v2", v3="v3")
+            filter(condition="apply_boolean")
+              correlateapply(cor=$cor0, leftconditions=[$0], opkind=equals, type=semi)
+                gather(concurrent=true)
+                  logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+                project(v1="v1")
+                  filter(condition="(rnk = 1 and win_sum > $cor0.v2) or v2 = $cor0.v3")
+                    cteconsumer(cte_id="1_0")
+      cache node:
+
+      gather(concurrent=true)
+        logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+      cteconsumer(cte_id="1_0")
+  - sql: |
+      WITH agg_t0 AS (SELECT v1, COUNT(*) AS c0 FROM t0 GROUP BY v1),
+                 agg_t1 AS (SELECT v4, COUNT(*) AS c1 FROM t1 GROUP BY v4)
+            SELECT * FROM t0
+            WHERE t0.v1 IN (SELECT v1 FROM agg_t0 WHERE c0 > 1)
+               OR t0.v1 IN (SELECT v4 FROM agg_t1 WHERE agg_t1.v4 = t0.v1 AND c1 > 2);
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, count(*) as `$f1` from `t0` as `t0` group by `v1` having (count(*) > 1)")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            gather(concurrent=true)
+              logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, count(*) as `$f1` from `t1` as `t1` group by `v4`")
+          project(v1="v1", v2="v2", v3="v3")
+            filter(condition="apply_boolean or apply_boolean0")
+              correlateapply(cor=$cor0, leftconditions=[$0], opkind=equals, type=semi)
+                correlateapply(cor=$cor0, leftconditions=[$0], opkind=equals, type=semi)
+                  gather(concurrent=true)
+                    logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+                  cteconsumer(cte_id="0_0", projects=[$0], conditions=[>($1, 1)])
+                project(v4="v4")
+                  filter(condition="c1 > 2 and v4 = $cor0.v1")
+                    cteconsumer(cte_id="1_0")
+      cache node:
+
+      gather(concurrent=true)
+        logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+      cteconsumer(cte_id="0_0", projects=[$0], conditions=[>($1, 1)])
+      correlateapply(cor=$cor0, leftconditions=[$0], opkind=equals, type=semi)
+        gather(concurrent=true)
+          logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+        cteconsumer(cte_id="0_0", projects=[$0], conditions=[>($1, 1)])
+      cteconsumer(cte_id="1_0")
+DDL:
+  t0:
+    CREATE TABLE `t0` (
+    `v1` int(11) NOT NULL,
+    `v2` int(11) NOT NULL,
+    `v3` int(11) NOT NULL,
+    PRIMARY KEY (`v1`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 partition by hash(`v1`) PARTITIONS 3;
+
+  t1:
+    CREATE TABLE `t1` (
+    `v4` int(11) NOT NULL,
+    `v5` int(11) NOT NULL,
+    `v6` int(11) NOT NULL,
+    PRIMARY KEY (`v4`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 partition by hash(`v4`) PARTITIONS 3;
+
+STATISTICS:
+  t0:
+    168648768
+  t1:
+    6860984320
+CONFIG:
+  CTE_MODE:
+    REUSE
+  FORCE_HOLISTIC_SUBQUERY_UNNEST:
+    false
+  EXPLAIN_CTE_CONSUMER:
+    true
+  defaltxxAPPName.isNew:
+    true

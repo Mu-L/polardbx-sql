@@ -19,8 +19,6 @@ package com.alibaba.polardbx.executor.scheduler;
 import com.alibaba.polardbx.common.TddlConstants;
 import com.alibaba.polardbx.common.async.AsyncCallableTask;
 import com.alibaba.polardbx.common.async.AsyncTask;
-import com.alibaba.polardbx.common.exception.TddlRuntimeException;
-import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.scheduler.FiredScheduledJobState;
 import com.alibaba.polardbx.common.scheduler.SchedulePolicy;
@@ -30,7 +28,7 @@ import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.thread.ExecutorUtil;
 import com.alibaba.polardbx.common.utils.thread.NamedThreadFactory;
-import com.alibaba.polardbx.common.utils.timezone.TimeZoneUtils;
+import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.executor.scheduler.executor.ScheduleJobStarter;
 import com.alibaba.polardbx.executor.scheduler.executor.ScheduleJobStarter;
 import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
@@ -42,32 +40,27 @@ import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.module.ModuleInfo;
 import com.alibaba.polardbx.gms.node.LeaderStatusBridge;
 import com.alibaba.polardbx.gms.scheduler.ExecutableScheduledJob;
-import com.alibaba.polardbx.gms.scheduler.FiredScheduledJobsAccessor;
 import com.alibaba.polardbx.gms.scheduler.ScheduledJobExecutorType;
-import com.alibaba.polardbx.gms.scheduler.ScheduledJobsAccessor;
 import com.alibaba.polardbx.gms.scheduler.ScheduledJobsAccessorDelegate;
 import com.alibaba.polardbx.gms.scheduler.ScheduledJobsRecord;
 import com.alibaba.polardbx.gms.sync.SyncScope;
+import com.alibaba.polardbx.gms.util.SyncUtil;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.view.VirtualViewType;
 import com.cronutils.descriptor.CronDescriptor;
 import com.cronutils.model.Cron;
 import com.cronutils.model.definition.CronDefinitionBuilder;
-import com.cronutils.model.time.ExecutionTime;
 import com.cronutils.parser.CronParser;
 import com.google.common.collect.Maps;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.glassfish.jersey.internal.guava.Sets;
 
-import java.sql.Connection;
 import java.text.SimpleDateFormat;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
@@ -88,7 +81,6 @@ import static com.alibaba.polardbx.common.scheduler.SchedulePolicy.FIRE;
 import static com.alibaba.polardbx.common.scheduler.SchedulePolicy.SKIP;
 import static com.alibaba.polardbx.common.scheduler.SchedulePolicy.WAIT;
 import static com.alibaba.polardbx.executor.scheduler.ScheduledJobsTrigger.restoreTrigger;
-import static com.alibaba.polardbx.gms.scheduler.ScheduleDateTimeConverter.secondToZonedDateTime;
 import static com.cronutils.model.CronType.QUARTZ;
 
 /**
@@ -375,7 +367,7 @@ public final class ScheduledJobsManager implements ModuleInfo {
                         List<ExecutableScheduledJob> runningJobs = firedScheduledJobsAccessor.getRunningJobs();
                         // TODO timeout control?
                         List<List<Map<String, Object>>> results =
-                            SyncManagerHelper.sync(new FetchRunningScheduleJobsSyncAction(),
+                            SyncManagerHelper.syncIgnoreExceptions(new FetchRunningScheduleJobsSyncAction(),
                                 TddlConstants.INFORMATION_SCHEMA, SyncScope.ALL);
                         Map<Long, Set<Long>> executingJobs = merge(results);
                         if (!hasLeadership()) {
@@ -522,6 +514,9 @@ public final class ScheduledJobsManager implements ModuleInfo {
     private static class FiredScheduledJobsScanner implements Runnable {
 
         private final ExecutorService executorService;
+        private ExecutionContext ec;
+        private Long scheduleId;
+        private Long fireTimeTs;
 
         FiredScheduledJobsScanner(ExecutorService executorService) {
             this.executorService = executorService;
@@ -529,7 +524,7 @@ public final class ScheduledJobsManager implements ModuleInfo {
 
         @Override
         public void run() {
-            if (!hasLeadership()) {
+            if (!hasLeadership() && !(ConfigDataMode.isColumnarMode() && SyncUtil.isNodeWithSmallestId())) {
                 return;
             }
             try {
@@ -538,8 +533,14 @@ public final class ScheduledJobsManager implements ModuleInfo {
                     return;
                 }
                 for (ExecutableScheduledJob record : executableScheduledJobList) {
-                    if (!hasLeadership()) {
+                    if (!hasLeadership() && !(ConfigDataMode.isColumnarMode() && SyncUtil.isNodeWithSmallestId())) {
                         return;
+                    }
+                    if (scheduleId != null && !scheduleId.equals(record.getScheduleId())) {
+                        continue;
+                    }
+                    if (fireTimeTs != null && !fireTimeTs.equals(record.getFireTime())) {
+                        continue;
                     }
                     if (!StringUtils.equalsIgnoreCase(record.getState(), QUEUED.name())) {
                         continue;
@@ -548,12 +549,31 @@ public final class ScheduledJobsManager implements ModuleInfo {
                     if (StringUtils.equalsIgnoreCase(record.getStatus(), SchedulerJobStatus.DISABLED.name())) {
                         continue;
                     }
-                    executorService.submit(AsyncCallableTask.<Boolean>build(new SchedulerExecutorRunner(record)));
+                    SchedulerExecutorRunner schedulerExecutorRunner = new SchedulerExecutorRunner(record);
+                    if (ec != null) {
+                        schedulerExecutorRunner.setEc(ec);
+                    }
+                    executorService.submit(AsyncCallableTask.<Boolean>build(schedulerExecutorRunner));
+
+//                    executorService.submit(AsyncCallableTask.<Boolean>build(new SchedulerExecutorRunner(record)));
                 }
             } catch (Throwable t) {
                 logger.error("FiredScheduledJobsScanner error", t);
             }
         }
+
+        public void setEc(ExecutionContext ec) {
+            this.ec = ec;
+        }
+
+        public void setScheduleId(Long scheduleId) {
+            this.scheduleId = scheduleId;
+        }
+
+        public void setFireTimeTs(Long fireTimeTs) {
+            this.fireTimeTs = fireTimeTs;
+        }
+
     }
 
     /**
@@ -564,6 +584,7 @@ public final class ScheduledJobsManager implements ModuleInfo {
         private final ExecutableScheduledJob executableScheduledJob;
         private final long scheduleId;
         private final long fireTime;
+        private ExecutionContext ec;
 
         SchedulerExecutorRunner(ExecutableScheduledJob executableScheduledJob) {
             this.executableScheduledJob = executableScheduledJob;
@@ -573,10 +594,22 @@ public final class ScheduledJobsManager implements ModuleInfo {
 
         @Override
         public Boolean call() throws Exception {
-            if (!hasLeadership()) {
+            if (
+                // case 1: for master cluster, only allowed for leadership node.
+                !hasLeadership() &&
+                    !(
+                        // case 2: for columnar RO cluster, only allowed for node with the smallest node id,
+                        // and the job is COLUMNAR_WARMUP type.
+                        ConfigDataMode.isColumnarMode()
+                            && SyncUtil.isNodeWithSmallestId()
+                            && executableScheduledJob != null
+                            && StringUtils.equalsIgnoreCase(executableScheduledJob.getExecutorType(),
+                            ScheduledJobExecutorType.COLUMNAR_WARMUP.name())
+                    )) {
                 return false;
             }
             String schedulePolicy = executableScheduledJob.getSchedulePolicy();
+
             if (StringUtils.equalsIgnoreCase(schedulePolicy, WAIT.name())) {
                 return executeByWaitPolicy();
             } else if (StringUtils.equalsIgnoreCase(schedulePolicy, SKIP.name())) {
@@ -602,9 +635,12 @@ public final class ScheduledJobsManager implements ModuleInfo {
                 if (schedulerExecutor == null) {
                     return false;
                 }
+                schedulerExecutor.setEc(ec);
+
                 if (schedulerExecutor.needInterrupted().getKey()) {
                     return false;
                 }
+
                 ScheduledJobsManager.getInstance().triggerJobNum++;
                 ScheduledJobsManager.getInstance().lastTriggerTimestamp = System.currentTimeMillis();
 
@@ -651,6 +687,14 @@ public final class ScheduledJobsManager implements ModuleInfo {
             } finally {
                 remove(scheduleId);
             }
+        }
+
+        public ExecutionContext getEc() {
+            return ec;
+        }
+
+        public void setEc(ExecutionContext ec) {
+            this.ec = ec;
         }
     }
 
@@ -756,6 +800,19 @@ public final class ScheduledJobsManager implements ModuleInfo {
         }.execute();
     }
 
+    public static ScheduledJobsRecord queryScheduledJobByTableName(String tableSchema, String tableName) {
+        return new ScheduledJobsAccessorDelegate<ScheduledJobsRecord>() {
+            @Override
+            protected ScheduledJobsRecord invoke() {
+                List<ScheduledJobsRecord> recordList = scheduledJobsAccessor.query(tableSchema, tableName);
+                if (recordList.isEmpty()) {
+                    return null;
+                }
+                return recordList.get(0);
+            }
+        }.execute();
+    }
+
     public static List<ScheduledJobsRecord> queryScheduledJobsRecord() {
         return new ScheduledJobsAccessorDelegate<List<ScheduledJobsRecord>>() {
             @Override
@@ -806,9 +863,40 @@ public final class ScheduledJobsManager implements ModuleInfo {
     }
 
     private void fireAtOnce() {
+        fireAtOnce(null);
+    }
+
+    private void fireAtOnce(ExecutionContext ec) {
+        FiredScheduledJobsScanner firedScheduledJobsScanner = new FiredScheduledJobsScanner(workersThreadPool);
+        firedScheduledJobsScanner.setEc(ec);
         scannerThread.submit(
-            AsyncTask.build(new FiredScheduledJobsScanner(workersThreadPool))
+            AsyncTask.build(firedScheduledJobsScanner)
         );
+
+//        scannerThread.submit(
+//            AsyncTask.build(new FiredScheduledJobsScanner(workersThreadPool))
+//        );
+    }
+
+    private void fireAtOnce(ExecutionContext ec, Long scheduleId) {
+        FiredScheduledJobsScanner firedScheduledJobsScanner = new FiredScheduledJobsScanner(workersThreadPool);
+        firedScheduledJobsScanner.setEc(ec);
+        firedScheduledJobsScanner.setScheduleId(scheduleId);
+        scannerThread.submit(
+            AsyncTask.build(firedScheduledJobsScanner)
+        );
+
+//        scannerThread.submit(
+//            AsyncTask.build(new FiredScheduledJobsScanner(workersThreadPool))
+//        );
+    }
+
+    private void forceFireAtOnce(ExecutionContext ec, Long scheduleId, Long fireTimeTs) {
+        FiredScheduledJobsScanner firedScheduledJobsScanner = new FiredScheduledJobsScanner(workersThreadPool);
+        firedScheduledJobsScanner.setEc(ec);
+        firedScheduledJobsScanner.setScheduleId(scheduleId);
+        firedScheduledJobsScanner.setFireTimeTs(fireTimeTs);
+        firedScheduledJobsScanner.run();
     }
 
     public static int dropScheduledJob(long scheduleId) {
@@ -822,7 +910,8 @@ public final class ScheduledJobsManager implements ModuleInfo {
         }.execute();
     }
 
-    public static int fireScheduledJob(long scheduleId) {
+    public static int fireScheduledJob(long scheduleId,
+                                       ExecutionContext ec) {
         return new ScheduledJobsAccessorDelegate<Integer>() {
             @Override
             protected Integer invoke() {
@@ -834,12 +923,38 @@ public final class ScheduledJobsManager implements ModuleInfo {
                     return 0;
                 }
                 if (trigger.fireOnceNow()) {
-                    ScheduledJobsManager.getInstance().fireAtOnce();
+                    ScheduledJobsManager.getInstance().fireAtOnce(ec, scheduleId);
                     return 1;
                 }
                 return 0;
             }
         }.execute();
+    }
+
+    public static int forceFireScheduledJob(long scheduleId,
+                                            long fireTimeTs,
+                                            Map<String, Object> hintCmdParams,
+                                            ExecutionContext ec) {
+        ScheduledJobsAccessorDelegate delegate = new ScheduledJobsAccessorDelegate<Integer>() {
+            @Override
+            protected Integer invoke() {
+                ScheduledJobsTrigger trigger = restoreTrigger(scheduledJobsAccessor.queryById(scheduleId),
+                    scheduledJobsAccessor,
+                    firedScheduledJobsAccessor);
+                if (trigger == null) {
+                    //schedule type not supported yet
+                    return 0;
+                }
+                if (trigger.forceFireOnceNow(fireTimeTs, hintCmdParams)) {
+                    ScheduledJobsManager.getInstance().forceFireAtOnce(ec, scheduleId, fireTimeTs);
+                    return 1;
+                }
+                return 0;
+            }
+        };
+        delegate.execute();
+        ScheduledJobsManager.getInstance().forceFireAtOnce(ec, scheduleId, fireTimeTs);
+        return 0;
     }
 
     public static int pauseScheduledJob(long scheduleId) {

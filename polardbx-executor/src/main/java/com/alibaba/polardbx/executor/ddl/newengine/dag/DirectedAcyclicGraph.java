@@ -33,6 +33,7 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.Stack;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.stream.Collectors;
 
 public class DirectedAcyclicGraph {
@@ -590,6 +591,22 @@ public class DirectedAcyclicGraph {
             return object.toString();
         }
     }
+
+//    public static class VertexComparator implements Comparator<Vertex> {
+//        @Override
+//        public int compare(Vertex v1, Vertex v2) {
+//            if (v1.object == null && v2.object == null) {
+//                return 0;
+//            }
+//            if (v1.object == null) {
+//                return -1;
+//            }
+//            if (v2.object == null) {
+//                return 1;
+//            }
+//            return Long.compare(v1.object.getTaskId(), v2.object.getTaskId());
+//        }
+//    }
 
     public static class Edge {
 

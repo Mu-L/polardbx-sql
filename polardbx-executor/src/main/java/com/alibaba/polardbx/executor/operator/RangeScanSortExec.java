@@ -49,7 +49,7 @@ public class RangeScanSortExec extends TableScanExec {
         }
         try {
             checkStatus();
-            reorderSplits();
+            scanClient.reorderSplits();
 
             if (dataTypes == null) {
                 createDataTypes();
@@ -86,11 +86,9 @@ public class RangeScanSortExec extends TableScanExec {
      */
     protected void reorderSplits() {
         List<Split> splitList = scanClient.splitList;
-        String logicalTableName = logicalView.getTableNames().get(0);
-        String logicalSchema = logicalView.getSchemaName();
         if (!splitList.isEmpty()) {
-            List<Integer> partitions = getPhysicalPartitions(splitList, logicalSchema, logicalTableName);
-            int[] index = sortPartitions(partitions);
+            List<Integer> partitions = RangeScanUtils.getPhysicalPartitions(splitList, logicalView, context);
+            int[] index = RangeScanUtils.sortPartitions(partitions, logicalView);
             List<Split> orderedSplits = IntStream.of(index)
                 .mapToObj(splitList::get).collect(Collectors.toList());
             // Clears the current split list and adds the sorted splits back to the scanClient
@@ -126,66 +124,6 @@ public class RangeScanSortExec extends TableScanExec {
             throw new TddlRuntimeException(ERR_EXECUTOR,
                 "all splits should has one physical table under range scan mode");
         }
-    }
-
-    /**
-     * Retrieves physical partition numbers from a list of splits based on the logical schema and table name.
-     *
-     * @param splitList A list of split objects.
-     * @param logicalSchema The logical schema name.
-     * @param logicalTableName The logical table name.
-     * @return A list of integer representing the physical partition IDs.
-     * @throws TddlRuntimeException If no partition information is found in range scan mode.
-     */
-    private List<Integer> getPhysicalPartitions(List<Split> splitList, String logicalSchema,
-                                                String logicalTableName) {
-        // Convert the splitList to JdbcSplits and extract the physical schema and table names as pairs
-        List<Pair<String, String>> phySchemaAndPhyTables =
-            splitList.stream().map(split -> (JdbcSplit) split.getConnectorSplit())
-                .map(split -> Pair.of(split.getDbIndex(), split.getTableNames().get(0).get(0))).collect(
-                    Collectors.toList());
-
-        // Calculate the physical partition numbers using the logical schema, logical table, and extracted pairs, then collect them
-        List<Integer> partitions = phySchemaAndPhyTables.stream()
-            .map(pair ->
-                PartitionUtils.calcPartition(logicalSchema, logicalTableName, pair.getKey(), pair.getValue(), context))
-            .collect(Collectors.toList());
-
-        // Check if any partition was not found, and if so, throw an exception
-        boolean notFoundPart = partitions.stream().anyMatch(part -> part < 0);
-        if (notFoundPart) {
-            throw new TddlRuntimeException(ERR_EXECUTOR, "not found partition info under range scan mode");
-        }
-        return partitions;
-    }
-
-    /**
-     * Sorts the given list of partitions.
-     *
-     * @param partitions A list of integers representing the partitions to be sorted.
-     * @return index An array of indices representing the sorted order of the partitions.
-     */
-    private int[] sortPartitions(List<Integer> partitions) {
-        int[] index = new int[partitions.size()];
-        for (int i = 0; i < index.length; i++) {
-            index[i] = i;
-        }
-        // Obtain sorting information from the logical view
-        Sort sort = (Sort) logicalView.getOptimizedPushedRelNodeForMetaQuery();
-        RelCollation collation = sort.getCollation();
-        RelFieldCollation.Direction direction = collation.getFieldCollations().get(0).direction;
-        // Determine whether the sort order is descending
-        boolean isDesc = direction.isDescending();
-        IntArrays.quickSort(index, new AbstractIntComparator() {
-            @Override
-            public int compare(int position1, int position2) {
-                int part1 = partitions.get(position1);
-                int part2 = partitions.get(position2);
-                // Compare according to sort direction
-                return !isDesc ? part1 - part2 : part2 - part1;
-            }
-        });
-        return index;
     }
 
     /**
@@ -241,7 +179,10 @@ public class RangeScanSortExec extends TableScanExec {
             try {
                 // Fill the chunk based on the result set's async mode
                 if (consumeResultSet.isPureAsyncMode()) {
-                    // Handle skipping a specified number of rows
+                    // Handle skipping a specified number of rows. Skip and output are mutually
+                    // exclusive within one iteration: in row layout fillChunk reads the current
+                    // row without advancing the cursor, so falling through to the output fillChunk
+                    // would emit the same row that was just skipped.
                     if (skipped > 0) {
                         BlockBuilder[] blackHoleBlockBuilders = new BlockBuilder[blockBuilders.length];
                         for (int i = 0; i < blockBuilders.length; ++i) {
@@ -250,18 +191,17 @@ public class RangeScanSortExec extends TableScanExec {
                         int skip = consumeResultSet.fillChunk(dataTypes, blackHoleBlockBuilders, (int) skipped);
                         assert skip == blackHoleBlockBuilders[0].getPositionCount();
                         skipped -= skip;
-                        // If more rows need to be skipped, continue the loop
-                        if (skipped > 0) {
-                            continue;
-                        }
+                    } else {
+                        // Fill the chunk up to the limit or until no more data is available
+                        int maxFill = (int) Math.min(chunkLimit - count, fetched);
+                        final int filled = consumeResultSet.fillChunk(dataTypes, blockBuilders, maxFill);
+                        count += filled;
+                        fetched -= filled;
                     }
-                    // Fill the chunk up to the limit or until no more data is available
-                    int maxFill = (int) Math.min(chunkLimit - count, fetched);
-                    final int filled = consumeResultSet.fillChunk(dataTypes, blockBuilders, maxFill);
-                    count += filled;
-                    fetched -= filled;
                 } else {
-                    // Row filling logic for non-pure async mode
+                    // Row filling logic for non-pure async mode. Same mutual-exclusion reasoning
+                    // as above: current() does not advance, so skip and output must not share an
+                    // iteration.
                     if (skipped > 0) {
                         BlockBuilder[] blackHoleBlockBuilders = new BlockBuilder[blockBuilders.length];
                         for (int i = 0; i < blockBuilders.length; ++i) {
@@ -270,14 +210,11 @@ public class RangeScanSortExec extends TableScanExec {
                         ResultSetCursorExec.buildOneRow(consumeResultSet.current(), dataTypes, blackHoleBlockBuilders,
                             context);
                         skipped -= 1;
-                        // If more rows need to be skipped, continue the loop
-                        if (skipped > 0) {
-                            continue;
-                        }
+                    } else {
+                        ResultSetCursorExec.buildOneRow(consumeResultSet.current(), dataTypes, blockBuilders, context);
+                        count++;
+                        fetched--;
                     }
-                    ResultSetCursorExec.buildOneRow(consumeResultSet.current(), dataTypes, blockBuilders, context);
-                    count++;
-                    fetched--;
                 }
                 // Exit the loop if the fetched data limit is reached
                 if (fetched <= 0) {

@@ -19,28 +19,36 @@ package com.alibaba.polardbx.parser;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.parser.ParserConfig;
 import com.alibaba.fastjson.serializer.SerializerFeature;
-import com.alibaba.polardbx.executor.sync.BaselineDeleteHotEvolvedSyncAction;
 import com.alibaba.polardbx.executor.cursor.ResultCursor;
+import com.alibaba.polardbx.executor.sync.BaselineDeleteHotEvolvedSyncAction;
 import com.alibaba.polardbx.executor.sync.BaselineDeleteSyncAction;
+import com.alibaba.polardbx.executor.sync.BaselineDeleteUnfixedSyncAction;
 import com.alibaba.polardbx.executor.sync.BaselineInvalidatePlanSyncAction;
 import com.alibaba.polardbx.executor.sync.BaselineInvalidateSchemaSyncAction;
+import com.alibaba.polardbx.executor.sync.BaselineQuerySyncAction;
 import com.alibaba.polardbx.executor.sync.BaselineUpdateSyncAction;
-import com.alibaba.polardbx.executor.sync.DeleteBaselineSyncAction;
 import com.alibaba.polardbx.executor.sync.FetchSPMSyncAction;
 import com.alibaba.polardbx.executor.sync.MetricSyncAction;
 import com.alibaba.polardbx.executor.sync.RemoveColumnStatisticSyncAction;
 import com.alibaba.polardbx.executor.sync.RemoveTableStatisticSyncAction;
 import com.alibaba.polardbx.executor.sync.RenameStatisticSyncAction;
-import com.alibaba.polardbx.executor.sync.RenameTableSyncAction;
 import com.alibaba.polardbx.executor.sync.UpdateStatisticSyncAction;
 import com.alibaba.polardbx.gms.config.impl.MetaDbInstConfigManager;
+import com.alibaba.polardbx.gms.metadb.htap.RoutingRuleRecord;
+import com.alibaba.polardbx.gms.topology.ServerInstIdManager;
 import com.alibaba.polardbx.optimizer.config.table.statistic.Histogram;
 import com.alibaba.polardbx.optimizer.config.table.statistic.StatisticFeedbackSyncAction;
 import com.alibaba.polardbx.optimizer.config.table.statistic.StatisticManager;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
+import com.alibaba.polardbx.optimizer.core.row.Row;
+import com.alibaba.polardbx.optimizer.htaprouting.RoutingRuleClassifier;
+import com.alibaba.polardbx.optimizer.htaprouting.RoutingRuleManager;
+import com.alibaba.polardbx.optimizer.htaprouting.RoutingType;
 import com.alibaba.polardbx.optimizer.planmanager.BaselineInfo;
 import com.alibaba.polardbx.optimizer.planmanager.PlanInfo;
 import com.alibaba.polardbx.server.response.ShowNodeSyncAction;
+import com.alibaba.polardbx.server.response.ShowRoutingRulesSyncAction;
 import com.alibaba.polardbx.server.response.ShowSQLSlowSyncAction;
 import com.alibaba.polardbx.stats.metric.FeatureStats;
 import com.alibaba.polardbx.stats.metric.FeatureStatsItem;
@@ -48,13 +56,19 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import org.junit.Assert;
 import org.junit.Test;
+import org.mockito.MockedStatic;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
+import static com.alibaba.polardbx.common.utils.Assert.assertEqual;
 import static com.alibaba.polardbx.common.utils.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.when;
 
 public class SyncActionTest {
 
@@ -96,8 +110,7 @@ public class SyncActionTest {
     public void testDeleteBaselineSyncAction1() {
         ParserConfig parserConfig = ParserConfig.getGlobalInstance();
         parserConfig.setAutoTypeSupport(true);
-        ParserConfig.getGlobalInstance()
-            .addAccept("com.alibaba.polardbx.executor.sync.BaselineDeleteSyncAction");
+        ParserConfig.getGlobalInstance().addAccept("com.alibaba.polardbx.executor.sync.BaselineDeleteSyncAction");
         int baselineId = 123;
         int planId = 1234;
         BaselineDeleteSyncAction action = new BaselineDeleteSyncAction("test1", baselineId);
@@ -133,29 +146,6 @@ public class SyncActionTest {
     }
 
     @Test
-    public void testDeleteBaselineSyncAction() {
-        ParserConfig parserConfig = ParserConfig.getGlobalInstance();
-        parserConfig.setAutoTypeSupport(true);
-        ParserConfig.getGlobalInstance()
-            .addAccept("com.alibaba.polardbx.executor.sync.DeleteBaselineSyncAction");
-
-        DeleteBaselineSyncAction action = new DeleteBaselineSyncAction("test1", "test2");
-
-        String data = JSON.toJSONString(action, SerializerFeature.WriteClassName);
-        DeleteBaselineSyncAction obj = (DeleteBaselineSyncAction) JSON.parse(data);
-        Assert.assertEquals(action.getSchemaName(), obj.getSchemaName());
-        Assert.assertEquals(action.getParameterSql(), obj.getParameterSql());
-        Assert.assertTrue(0 == obj.getPlanInfoId());
-
-        action = new DeleteBaselineSyncAction("test1", "test2", 123);
-        data = JSON.toJSONString(action, SerializerFeature.WriteClassName);
-        obj = (DeleteBaselineSyncAction) JSON.parse(data);
-        Assert.assertEquals(action.getSchemaName(), obj.getSchemaName());
-        Assert.assertEquals(action.getParameterSql(), obj.getParameterSql());
-        Assert.assertEquals(action.getPlanInfoId(), obj.getPlanInfoId());
-    }
-
-    @Test
     public void testBaselineDeleteHotEvolvedSyncAction() {
         ParserConfig parserConfig = ParserConfig.getGlobalInstance();
         parserConfig.setAutoTypeSupport(true);
@@ -170,11 +160,49 @@ public class SyncActionTest {
     }
 
     @Test
+    public void testShowRoutingRulesSyncAction() {
+        ParserConfig parserConfig = ParserConfig.getGlobalInstance();
+        parserConfig.setAutoTypeSupport(true);
+        ParserConfig.getGlobalInstance().addAccept("com.alibaba.polardbx.executor.sync.ShowRoutingRulesSyncAction");
+
+        RoutingRuleRecord record = new RoutingRuleRecord();
+        record.id = 1;
+        record.userName = RoutingRuleManager.ALL_USER;
+        record.keywords = Lists.newArrayList("1");
+        record.routingType = RoutingType.COLUMNAR.name();
+        RoutingRuleClassifier classifier = RoutingRuleClassifier.build(Arrays.asList(record));
+        try (MockedStatic<RoutingRuleManager> mockedStatic = mockStatic(RoutingRuleManager.class)) {
+            RoutingRuleManager mockedManager = mock(RoutingRuleManager.class);
+            when(mockedManager.getClassifier()).thenReturn(classifier);
+            mockedStatic.when(RoutingRuleManager::getInstance).thenReturn(mockedManager);
+
+            ShowRoutingRulesSyncAction action = new ShowRoutingRulesSyncAction();
+            String data = JSON.toJSONString(action, SerializerFeature.WriteClassName);
+            ShowRoutingRulesSyncAction obj = (ShowRoutingRulesSyncAction) JSON.parse(data);
+            ResultCursor cursor = obj.sync();
+            Row row = cursor.next();
+            while (row != null) {
+                Assert.assertEquals((Long) 0L, row.getLong(1));
+                row = cursor.next();
+            }
+
+            classifier.classify(new ExecutionContext(), null, "select 1");
+            classifier.classify(new ExecutionContext(), null, "select 1");
+            classifier.classify(new ExecutionContext(), null, "select 2");
+            cursor = obj.sync();
+            row = cursor.next();
+            while (row != null) {
+                Assert.assertEquals((Long) 2L, row.getLong(1));
+                row = cursor.next();
+            }
+        }
+    }
+
+    @Test
     public void testUpdateStatisticSyncAction() {
         ParserConfig parserConfig = ParserConfig.getGlobalInstance();
         parserConfig.setAutoTypeSupport(true);
-        ParserConfig.getGlobalInstance()
-            .addAccept("com.alibaba.polardbx.executor.sync.UpdateStatisticSyncAction");
+        ParserConfig.getGlobalInstance().addAccept("com.alibaba.polardbx.executor.sync.UpdateStatisticSyncAction");
 
         Histogram h = new Histogram(7, DataTypes.IntegerType, 1);
         Integer[] list = new Integer[10000];
@@ -196,27 +224,10 @@ public class SyncActionTest {
     }
 
     @Test
-    public void testRenameTableSyncAction() {
-        ParserConfig parserConfig = ParserConfig.getGlobalInstance();
-        parserConfig.setAutoTypeSupport(true);
-        ParserConfig.getGlobalInstance()
-            .addAccept("com.alibaba.polardbx.executor.sync.RenameTableSyncAction");
-
-        RenameTableSyncAction action = new RenameTableSyncAction("test1", "test2", "test3");
-
-        String data = JSON.toJSONString(action, SerializerFeature.WriteClassName);
-        RenameTableSyncAction obj = (RenameTableSyncAction) JSON.parse(data);
-        Assert.assertEquals(action.getSchemaName(), obj.getSchemaName());
-        Assert.assertEquals(action.getSourceTableName(), obj.getSourceTableName());
-        Assert.assertEquals(action.getTargetTableName(), obj.getTargetTableName());
-    }
-
-    @Test
     public void testRenameStatisticSyncAction() {
         ParserConfig parserConfig = ParserConfig.getGlobalInstance();
         parserConfig.setAutoTypeSupport(true);
-        ParserConfig.getGlobalInstance()
-            .addAccept("com.alibaba.polardbx.executor.sync.RenameStatisticSyncAction");
+        ParserConfig.getGlobalInstance().addAccept("com.alibaba.polardbx.executor.sync.RenameStatisticSyncAction");
 
         RenameStatisticSyncAction action = new RenameStatisticSyncAction("test1", "test2", "test3");
 
@@ -231,8 +242,7 @@ public class SyncActionTest {
     public void testRemoveTableStatisticSyncAction() {
         ParserConfig parserConfig = ParserConfig.getGlobalInstance();
         parserConfig.setAutoTypeSupport(true);
-        ParserConfig.getGlobalInstance()
-            .addAccept("com.alibaba.polardbx.executor.sync.RemoveTableStatisticSyncAction");
+        ParserConfig.getGlobalInstance().addAccept("com.alibaba.polardbx.executor.sync.RemoveTableStatisticSyncAction");
 
         RemoveTableStatisticSyncAction action = new RemoveTableStatisticSyncAction("test1", "test2");
 
@@ -246,8 +256,7 @@ public class SyncActionTest {
     public void testFetchSPMSyncAction() {
         ParserConfig parserConfig = ParserConfig.getGlobalInstance();
         parserConfig.setAutoTypeSupport(true);
-        ParserConfig.getGlobalInstance()
-            .addAccept("com.alibaba.polardbx.executor.sync.FetchSPMSyncAction");
+        ParserConfig.getGlobalInstance().addAccept("com.alibaba.polardbx.executor.sync.FetchSPMSyncAction");
 
         FetchSPMSyncAction action = new FetchSPMSyncAction("test1", false);
 
@@ -255,14 +264,19 @@ public class SyncActionTest {
         FetchSPMSyncAction obj = (FetchSPMSyncAction) JSON.parse(data);
         Assert.assertEquals(action.getSchemaName(), obj.getSchemaName());
         Assert.assertEquals(action.isWithPlan(), obj.isWithPlan());
+
+        ServerInstIdManager sim = mock(ServerInstIdManager.class);
+        try (MockedStatic<ServerInstIdManager> mockedStatic = mockStatic(ServerInstIdManager.class)) {
+            mockedStatic.when(ServerInstIdManager::getInstance).thenReturn(sim);
+            obj.sync();
+        }
     }
 
     @Test
     public void testBaselineUpdateSyncAction() {
         ParserConfig parserConfig = ParserConfig.getGlobalInstance();
         parserConfig.setAutoTypeSupport(true);
-        ParserConfig.getGlobalInstance()
-            .addAccept("com.alibaba.polardbx.executor.sync.BaselineUpdateSyncAction");
+        ParserConfig.getGlobalInstance().addAccept("com.alibaba.polardbx.executor.sync.BaselineUpdateSyncAction");
 
         Map<String, List<String>> baselineMap = Maps.newConcurrentMap();
         List<String> baselineStrList1 = Lists.newArrayList();
@@ -301,20 +315,42 @@ public class SyncActionTest {
     }
 
     @Test
-    public void testMetricSyncAction() {
+    public void testBaselineDeleteUnfixedSyncAction() {
         MetaDbInstConfigManager.setConfigFromMetaDb(false);
         ParserConfig parserConfig = ParserConfig.getGlobalInstance();
         parserConfig.setAutoTypeSupport(true);
         ParserConfig.getGlobalInstance()
-            .addAccept("com.alibaba.polardbx.executor.sync.MetricSyncAction");
+            .addAccept("com.alibaba.polardbx.executor.sync.BaselineDeleteUnfixedSyncAction");
+
+        BaselineDeleteUnfixedSyncAction action = new BaselineDeleteUnfixedSyncAction("test");
+
+        action.setSchema("test1");
+        String data = JSON.toJSONString(action, SerializerFeature.WriteClassName);
+        BaselineDeleteUnfixedSyncAction obj = (BaselineDeleteUnfixedSyncAction) JSON.parse(data);
+        Assert.assertEquals(action.getSchema(), obj.getSchema());
+
+        assert null == action.sync();
+    }
+
+    @Test
+    public void testMetricSyncAction() {
+        MetaDbInstConfigManager.setConfigFromMetaDb(false);
+        ParserConfig parserConfig = ParserConfig.getGlobalInstance();
+        parserConfig.setAutoTypeSupport(true);
+        ParserConfig.getGlobalInstance().addAccept("com.alibaba.polardbx.executor.sync.MetricSyncAction");
         MetricSyncAction metricSyncAction = new MetricSyncAction();
         FeatureStats.getInstance().plus(FeatureStatsItem.FIX_PLAN_NUM, 99);
         FeatureStats.getInstance().plus(FeatureStatsItem.NEW_BASELINE_NUM, 100);
+        FeatureStats.getInstance().plus(FeatureStatsItem.DATETIME_COMPENSATION_NUM, 111);
         FeatureStats.getInstance().plus(FeatureStatsItem.HOT_EVOLVE_PLAN_NUM, 105);
         FeatureStats.getInstance().plus(FeatureStatsItem.HLL_TASK_SUCC, 101);
         FeatureStats.getInstance().plus(FeatureStatsItem.HLL_TASK_FAIL, 102);
         FeatureStats.getInstance().plus(FeatureStatsItem.SAMPLE_TASK_SUCC, 103);
         FeatureStats.getInstance().plus(FeatureStatsItem.SAMPLE_TASK_FAIL, 104);
+        FeatureStats.getInstance().plus(FeatureStatsItem.VEC_EXPRESSION_HIT_TIMES, 105);
+        FeatureStats.getInstance().plus(FeatureStatsItem.UNVEC_EXPRESSION_HIT_TIMES, 106);
+        FeatureStats.getInstance().plus(FeatureStatsItem.EXPAND_IN, 107);
+        FeatureStats.getInstance().plus(FeatureStatsItem.GSI_LOOKUP_FALLBACK_MAINTABLE_TIMES, 5);
 
         FeatureStats.getInstance().increment(FeatureStatsItem.FIX_PLAN_NUM);
         FeatureStats.getInstance().increment(FeatureStatsItem.NEW_BASELINE_NUM);
@@ -323,38 +359,44 @@ public class SyncActionTest {
         FeatureStats.getInstance().increment(FeatureStatsItem.HLL_TASK_FAIL);
         FeatureStats.getInstance().increment(FeatureStatsItem.SAMPLE_TASK_SUCC);
         FeatureStats.getInstance().increment(FeatureStatsItem.SAMPLE_TASK_FAIL);
+        FeatureStats.getInstance().increment(FeatureStatsItem.VEC_EXPRESSION_HIT_TIMES);
+        FeatureStats.getInstance().increment(FeatureStatsItem.UNVEC_EXPRESSION_HIT_TIMES);
+        FeatureStats.getInstance().increment(FeatureStatsItem.EXPAND_IN);
+        FeatureStats.getInstance().increment(FeatureStatsItem.GSI_LOOKUP_TIMES);
         ResultCursor rc = metricSyncAction.sync();
         String line = rc.doNext().getString(0);
-        System.out.println(line);
-        assertTrue("{\"longStats\":[101,100,106,104,105,102,103],\"sign\":797014233}".equalsIgnoreCase(line));
+        assertEqual("{\"longstats\":[101,100,111,106,104,105,102,103,106,107,108,1,5],\"sign\":-2068317206}",
+            line.toLowerCase());
+//        assertTrue(
+//            "{\"longStats\":[101,100,111,106,104,105,102,103,106,107,108],\"sign\":-3015135667}".equalsIgnoreCase(line));
 
         FeatureStats fs = FeatureStats.deserialize(line);
-        System.out.println(fs.log());
-        Assert.assertTrue(fs.log().equalsIgnoreCase(
-            "NEW_BASELINE_NUM:101,FIX_PLAN_NUM:100,HOT_EVOLVE_PLAN_NUM:106,SAMPLE_TASK_SUCC:104,SAMPLE_TASK_FAIL:105,HLL_TASK_SUCC:102,HLL_TASK_FAIL:103"));
+        assertEqual(
+            "NEW_BASELINE_NUM:101,FIX_PLAN_NUM:100,DATETIME_COMPENSATION_NUM:111,HOT_EVOLVE_PLAN_NUM:106,SAMPLE_TASK_SUCC:104,SAMPLE_TASK_FAIL:105,HLL_TASK_SUCC:102,HLL_TASK_FAIL:103,VEC_EXPRESSION_HIT_TIMES:106,UNVEC_EXPRESSION_HIT_TIMES:107,EXPAND_IN:108,GSI_LOOKUP_TIMES:1,GSI_LOOKUP_FALLBACK_MAINTABLE_TIMES:5",
+            fs.log().toUpperCase());
     }
 
     @Test
     public void testBaselineQuerySyncAction() {
+        MetaDbInstConfigManager.setConfigFromMetaDb(false);
         ParserConfig parserConfig = ParserConfig.getGlobalInstance();
         parserConfig.setAutoTypeSupport(true);
-        ParserConfig.getGlobalInstance()
-            .addAccept("com.alibaba.polardbx.executor.sync.FetchSPMSyncAction");
+        ParserConfig.getGlobalInstance().addAccept("com.alibaba.polardbx.executor.sync.BaselineQuerySyncAction");
 
-        FetchSPMSyncAction action = new FetchSPMSyncAction("test1", false);
+        BaselineQuerySyncAction action = new BaselineQuerySyncAction();
 
         String data = JSON.toJSONString(action, SerializerFeature.WriteClassName);
-        FetchSPMSyncAction obj = (FetchSPMSyncAction) JSON.parse(data);
-        Assert.assertEquals(action.getSchemaName(), obj.getSchemaName());
-        Assert.assertEquals(action.isWithPlan(), obj.isWithPlan());
+        Assert.assertTrue(JSON.parse(data) instanceof BaselineQuerySyncAction);
+
+        ResultCursor cursor = action.sync();
+        assertTrue(cursor.getCursorMeta().getColumnMeta(0).getName().equalsIgnoreCase("baselines"));
     }
 
     @Test
     public void testRemoveColumnStatisticSyncAction() {
         ParserConfig parserConfig = ParserConfig.getGlobalInstance();
         parserConfig.setAutoTypeSupport(true);
-        ParserConfig.getGlobalInstance()
-            .addAccept("com.alibaba.polardbx.executor.sync.FetchSPMSyncAction");
+        ParserConfig.getGlobalInstance().addAccept("com.alibaba.polardbx.executor.sync.FetchSPMSyncAction");
 
         List<String> colList = Lists.newArrayList();
         colList.add("col1");
@@ -376,9 +418,7 @@ public class SyncActionTest {
         for (int i = 0; i < planNum; i++) {
             PlanInfo p =
                 new PlanInfo(r.nextInt(), "", System.currentTimeMillis() / 1000, System.currentTimeMillis() / 1000, 0,
-                    1D,
-                    1D,
-                    true, false, "", "", "", 1);
+                    1D, 1D, true, false, "", "", "", 1, 1);
             p.setId(r.nextInt());
             b.addAcceptedPlan(p);
         }

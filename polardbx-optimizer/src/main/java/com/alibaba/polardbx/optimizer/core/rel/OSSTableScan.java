@@ -23,6 +23,7 @@ import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.timezone.TimestampUtils;
 import com.alibaba.polardbx.optimizer.PlannerContext;
+import com.alibaba.polardbx.optimizer.config.meta.ColumnarScanIOEstimator;
 import com.alibaba.polardbx.optimizer.config.meta.CostModelWeight;
 import com.alibaba.polardbx.optimizer.config.meta.TableScanIOEstimator;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
@@ -55,6 +56,7 @@ import org.apache.calcite.rel.logical.LogicalProject;
 import org.apache.calcite.rel.logical.LogicalTableScan;
 import org.apache.calcite.rel.metadata.RelColumnOrigin;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
+import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexDynamicParam;
 import org.apache.calcite.rex.RexInputRef;
@@ -85,6 +87,7 @@ public class OSSTableScan extends LogicalView {
     private OSSIndexContext indexContext = null;
 
     private RexNode runtimeFilter;
+    private volatile List<String> outputColumnOriginalNames;
 
     public OSSTableScan(RelInput relInput) {
         super(relInput);
@@ -122,6 +125,36 @@ public class OSSTableScan extends LogicalView {
     public OSSTableScan(RelNode rel, RelOptTable table, SqlNodeList hints,
                         SqlSelect.LockMode lockMode, SqlNode indexNode) {
         super(rel, table, hints, lockMode, indexNode);
+    }
+
+    public List<String> getOutputColumnOriginalNames() {
+        if (outputColumnOriginalNames == null) {
+            synchronized (this) {
+                if (outputColumnOriginalNames == null) {
+
+                    getRowType();
+
+                    // get original columns from row-type.
+                    List<String> originalColumnNames = new ArrayList<>();
+                    List<RelDataTypeField> fieldList = rowType.getFieldList();
+                    for (int i = 0; i < fieldList.size(); i++) {
+                        RelDataTypeField field = fieldList.get(i);
+                        RelColumnOrigin columnOrigin =
+                            getCluster().getMetadataQuery().getColumnOrigin(this, field.getIndex());
+                        if (columnOrigin != null && columnOrigin.getColumnName() != null) {
+                            originalColumnNames.add(columnOrigin.getColumnName());
+                        } else {
+                            originalColumnNames = null;
+                            break;
+                        }
+                    }
+                    outputColumnOriginalNames = originalColumnNames == null ? ImmutableList.of() : originalColumnNames;
+                }
+            }
+        }
+
+        return outputColumnOriginalNames;
+
     }
 
     public boolean isColumnarIndex() {
@@ -367,7 +400,7 @@ public class OSSTableScan extends LogicalView {
             return;
         }
 
-        RelNode plan = CBOUtil.OssTableScanFormat(getPushedRelNode());
+        RelNode plan = orcNode.getNodeForMetaQuery();
         LogicalFilter filter = null;
         LogicalProject bottomProject = null;
         LogicalTableScan tableScan = null;
@@ -513,22 +546,28 @@ public class OSSTableScan extends LogicalView {
 
         if (isColumnarIndex() || PlannerContext.getPlannerContext(this).getParamManager()
             .getBoolean(ConnectionParams.ENABLE_OSS_MOCK_COLUMNAR)) {
-            double estimateRowCount = mq.getRowCount(this);
-            return planner.getCostFactory().makeCost(estimateRowCount, estimateRowCount, 0, 0, 0);
+            if (PlannerContext.getPlannerContext(this).getParamManager()
+                .getBoolean(ConnectionParams.ENABLE_COLUMNAR_SCAN_COST)) {
+                return computeSelfCostForColumnarScan(planner, mq);
+            } else {
+                double estimateRowCount = mq.getRowCount(this);
+                return planner.getCostFactory().makeCost(estimateRowCount, estimateRowCount, 0, 0, 0);
+            }
         }
 
         // MetaQuery will compute the pushed node cumulative cost
         OrcTableScan orcNode = getOrcNode();
         // index selection
-        if (indexContext == null) {
+        if (indexContext == null && !isColumnarIndex()) {
             indexSelection(orcNode);
         }
         int shardUpperBound = calShardUpperBound();
         int totalShardCount = getTotalShardCount();
 
         double estimateRowCount = mq.getRowCount(this);
-        double totalRowCount = TableTopologyUtil.isShard(CBOUtil.getTableMeta(getTable())) ?
-            getTable().getRowCount() * shardUpperBound / totalShardCount : getTable().getRowCount();
+        double totalRowCount =
+            TableTopologyUtil.isShard(CBOUtil.getTableMeta(getTable()), PlannerContext.getPlannerContext(this)) ?
+                getTable().getRowCount() * shardUpperBound / totalShardCount : getTable().getRowCount();
         // get total stripe number
         double rowSize = (double) TableScanIOEstimator.estimateRowSize(getTable().getRowType());
         int avgStripeLen = (int) ((64 << 20) / rowSize);
@@ -544,6 +583,102 @@ public class OSSTableScan extends LogicalView {
                 0, totalStripeRows * base * CostModelWeight.BLOOM_FILTER_READ_COST, 0, 0, 0));
         }
         return readCost;
+    }
+
+    /**
+     * for cci index selection
+     * 1. multi-cci choose
+     * 2. hybrid cbo ： LogicalView  vs  OSSTableScan
+     */
+    private RelOptCost computeSelfCostForColumnarScan(RelOptPlanner planner, RelMetadataQuery mq) {
+        OrcTableScan orcNode = getOrcNode();
+
+        double estimatedRowCount = mq.getRowCount(this);
+
+        //分区裁剪，减少需要check的totalRowCount
+        int shardUpperBound = calShardUpperBound();
+        int totalShardCount = getTotalShardCount();
+        double totalRowCount =
+            TableTopologyUtil.isShard(CBOUtil.getTableMeta(getTable()), PlannerContext.getPlannerContext(this)) ?
+                getTable().getRowCount() * shardUpperBound / totalShardCount : getTable().getRowCount();
+
+        RexNode filterCondition = null;
+        List<RexNode> oriFilters = orcNode.getOriFilters();
+        if (oriFilters != null && !oriFilters.isEmpty()) {
+            filterCondition = RexUtil.composeConjunction(this.getCluster().getRexBuilder(), oriFilters, true);
+        }
+
+        //1.io cost
+
+        /**
+         * （1）分区裁剪， 分区裁剪之后会减少需要考虑的totalRowCount
+         *
+         * （2）filter 谓词是否包含排序键
+         * 是，则认为查询结果的estimateRowCount行数据在orc文件中是顺序排列的，容易计算出estimateRowCount行数据所占的rowgroup数量
+         * 否，则认为查询结果的estimateRowCount行数据在orc文件中是随机排列的，基于getGroupNumber计算出所占的rowgroup数量
+         *
+         * 注意基于filter的延迟物化，会避免rowgroup中不必要的block解析，但是整个rowgroup都会进行IO
+         *
+         * （3）考虑缓存系统，多少rowgroup/block需要进行OSS IO的（优化阶段估算需要缓存系统的元数据，推荐推荐不需要，增加开关暂时关闭）
+         *
+         * （3）project 列的数量与类型，因为orc是列式存储，所以不同数据类型的列，相同数量的rowgroup的字节大小是不同的
+         *
+         * （4）估算所有rowgroup转换为原始字节后的IO page数量(考虑压缩算法，这里可以直接使用通过压缩比，或者统计信息中的压缩比)
+         *
+         * （5）将iO page数作为IO Cost
+         *
+         */
+
+        RelNode logicalTableScan = this.getPushedRelNode();
+        while (!(logicalTableScan instanceof TableScan)) {
+            logicalTableScan = logicalTableScan.getInput(0);
+        }
+
+        ColumnarScanIOEstimator ioEstimator =
+            new ColumnarScanIOEstimator(orcNode, (TableScan) logicalTableScan, mq, totalRowCount, estimatedRowCount);
+        double rowGroupBytes;
+        if (filterCondition == null) {
+            rowGroupBytes = ioEstimator.getMaxIO();
+        } else {
+            rowGroupBytes = ioEstimator.evaluate(filterCondition);
+        }
+        double io = Math.ceil(rowGroupBytes / CostModelWeight.SEQ_IO_PAGE_SIZE);
+
+        //2. net cost
+        /**
+         * （1）需要获取所有RowGroup数据压缩之后的数据量/BufferSize，不能直接使用rowcount，数据检索的最小粒度是RowGroup
+         *
+         * （2）分区裁剪减少会网络访问的次数，参考行存LogicalView
+         */
+        double net = Math.ceil(rowGroupBytes / CostModelWeight.NET_BUFFER_SIZE);
+        net += (shardUpperBound - 1) * CostModelWeight.INSTANCE.getShardWeight();
+
+        //3. cpu
+        /**
+         * (1)  输出的每一行都需要经过解压的cpu消耗
+         *
+         * (2) 下推到columnScan中的算子（filter、project）
+         * project没有代价，但是filter有代价：
+         * - in 查询
+         * - equal 比较
+         * - range 查询
+         * - 乱七八糟的过滤条件
+         *
+         */
+        double cpu = 0;
+        cpu += ioEstimator.getFilterRowGroupCount() * CostModelWeight.OSS_ROW_GROUP_SIZE
+            * CostModelWeight.OSS_COLUMN_DECOMPRESS_WEIGHT * ioEstimator.getFilterColumnFields().size()
+            + estimatedRowCount * CostModelWeight.OSS_COLUMN_DECOMPRESS_WEIGHT * ioEstimator.getProjectColumnFields()
+            .size();
+
+        //4. mem
+        /**
+         * 缓存estimateRowCount行数据的内存消耗，缓存系统hold住了
+         */
+        double mem = 0;
+
+        RelOptCost cost = planner.getCostFactory().makeCost(estimatedRowCount, cpu, mem, io, net);
+        return cost;
     }
 
     @Override

@@ -34,6 +34,7 @@ import org.apache.calcite.rel.core.TableModify.Operation;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.mapping.Mapping;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiPredicate;
@@ -57,13 +58,15 @@ public class RelocateWriter extends AbstractSingleWriter implements CaseWhenWrit
     protected final List<ColumnMeta> identifierKeyMetas;
     protected final boolean modifySkOnly;
     protected final boolean usePartFieldChecker;
+    protected final boolean modifyBlackHole;
 
     public volatile boolean printed = false;
 
     public RelocateWriter(RelOptTable targetTable, DistinctWriter deleteWriter, DistinctWriter insertWriter,
                           DistinctWriter modifyWriter, Mapping identifierKeyTargetMapping,
                           Mapping identifierKeySourceMapping,
-                          List<ColumnMeta> identifierKeyMetas, boolean modifySkOnly, boolean usePartFieldChecker) {
+                          List<ColumnMeta> identifierKeyMetas, boolean modifySkOnly,
+                          boolean usePartFieldChecker, boolean modifyBlackHole) {
         super(targetTable, Operation.UPDATE);
 
         this.deleteWriter = deleteWriter;
@@ -74,6 +77,7 @@ public class RelocateWriter extends AbstractSingleWriter implements CaseWhenWrit
         this.identifierKeyMetas = identifierKeyMetas;
         this.modifySkOnly = modifySkOnly;
         this.usePartFieldChecker = usePartFieldChecker;
+        this.modifyBlackHole = modifyBlackHole;
     }
 
     public DistinctWriter getDeleteWriter() {
@@ -115,33 +119,49 @@ public class RelocateWriter extends AbstractSingleWriter implements CaseWhenWrit
                                List<RelNode> replicateOutDeletePlans, List<RelNode> replicateOutInsertPlans,
                                List<RelNode> replicateOutModifyPlans) {
         final SourceRows sourceRows = rowGenerator.apply(getDeleteWriter());
+        final List<List<Object>> modifyRows;
+        final List<List<Object>> relocateRows;
 
-        final ClassifyResult classifyResult = classifier.apply(this, sourceRows, new ClassifyResult());
-        final List<List<Object>> modifyRows = classifyResult.modifyRows;
-        final List<List<Object>> relocateRows = classifyResult.relocateRows;
+        if (modifyBlackHole) {
+            // black hole must perform delete + insert
+            relocateRows = new ArrayList<>(sourceRows.selectedRows);
+            modifyRows = new ArrayList<>();
+        } else {
+            final ClassifyResult classifyResult = classifier.apply(this, sourceRows, new ClassifyResult());
+            modifyRows = classifyResult.modifyRows;
+            relocateRows = classifyResult.relocateRows;
+        }
 
         List<RelNode> inputs = getModifyWriter().getInput(ec, (w) -> modifyRows);
-        outModifyPlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-            Collectors.toList()));
+        addPhaseExecutionPlans(inputs, outModifyPlans);
         replicateOutModifyPlans
             .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                 Collectors.toList()));
 
         inputs = getDeleteWriter().getInput(ec, (w) -> relocateRows);
-        outDeletePlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-            Collectors.toList()));
+        addPhaseExecutionPlans(inputs, outDeletePlans);
         replicateOutDeletePlans
             .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                 Collectors.toList()));
 
         inputs = getInsertWriter().getInput(insertEc, (w) -> relocateRows);
-        outInsertPlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-            Collectors.toList()));
+        addPhaseExecutionPlans(inputs, outInsertPlans);
         replicateOutInsertPlans
             .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                 Collectors.toList()));
 
         return sourceRows;
+    }
+
+    /**
+     * Add one primary-write phase to its execution bucket. Staging plans are pre-write companions in that phase;
+     * they are not business writes and must never contribute to affected rows.
+     */
+    protected static void addPhaseExecutionPlans(List<RelNode> inputs, List<RelNode> output) {
+        output.addAll(inputs.stream().filter(input -> {
+            BaseQueryOperation operation = (BaseQueryOperation) input;
+            return operation.isPrimaryWriteRelNode() || operation.isStagingRelNode();
+        }).collect(Collectors.toList()));
     }
 
     /**

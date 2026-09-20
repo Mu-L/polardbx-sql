@@ -182,8 +182,8 @@ public class LogicalAlterTableReorgPartition extends BaseDdlOperation {
 
             for (int i = 0; i < newPartitionGroups.size(); i++) {
                 String mockTableName = "";
-                mockOrderedTargetTableLocations.put(newPartitionGroups.get(i).partition_name, new Pair<>(mockTableName,
-                    GroupInfoUtil.buildGroupNameFromPhysicalDb(newPartitionGroups.get(i).partition_name)));
+                mockOrderedTargetTableLocations.put(newPartitionGroups.get(i).partition_name,
+                    new Pair<>(mockTableName, newPartitionGroups.get(i).getGroup_Name()));
             }
 
             boolean isAlterTableGroup = this instanceof LogicalAlterTableGroupReorgPartition;

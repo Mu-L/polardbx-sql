@@ -51,7 +51,8 @@ public class InformationSchemaSPMHandler extends BaseVirtualViewSubClassHandler 
 
         Set<String> schemaNames = OptimizerContext.getActiveSchemaNames();
         for (String schemaName : schemaNames) {
-            List<List<Map<String, Object>>> results = SyncManagerHelper.sync(new FetchSPMSyncAction(schemaName),
+            List<List<Map<String, Object>>> results = SyncManagerHelper.syncIgnoreExceptions(
+                new FetchSPMSyncAction(schemaName),
                 schemaName, SyncScope.CURRENT_ONLY);
             for (List<Map<String, Object>> nodeRows : results) {
                 if (nodeRows == null) {
@@ -78,6 +79,9 @@ public class InformationSchemaSPMHandler extends BaseVirtualViewSubClassHandler 
                     final String hint = DataTypes.StringType.convertFrom(row.get("HINT"));
                     final String usePostPlanner = DataTypes.StringType.convertFrom(row.get("USE_POST_PLANNER"));
                     final String hotEvolved = DataTypes.StringType.convertFrom(row.get("HOT_EVOLVED"));
+                    final String version = DataTypes.StringType.convertFrom(row.get("VERSION"));
+                    final Integer grayPercentage = DataTypes.IntegerType.convertFrom(row.get("GRAY_PERCENTAGE"));
+                    final String isGrayStatus = DataTypes.StringType.convertFrom(row.get("IS_GRAY_STATUS"));
 
                     cursor.addRow(new Object[] {
                         host,
@@ -100,7 +104,10 @@ public class InformationSchemaSPMHandler extends BaseVirtualViewSubClassHandler 
                         isRebuildAtLoad,
                         hint,
                         usePostPlanner,
-                        hotEvolved
+                        hotEvolved,
+                        version,
+                        grayPercentage,
+                        isGrayStatus
                     });
                 }
             }

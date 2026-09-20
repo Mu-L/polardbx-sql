@@ -53,6 +53,11 @@ public class LookupJoinGsiExec extends LookupJoinExec implements LookupTableExec
     }
 
     @Override
+    public void switchNoMgetSql() {
+
+    }
+
+    @Override
     public void updateLookupPredicate(Chunk chunk) {
         ((LookupTableScanExec) outerInput).updateLookupPredicate(chunk);
     }

@@ -22,6 +22,8 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
+import com.alibaba.polardbx.common.utils.logger.Logger;
+import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
 import com.alibaba.polardbx.gms.partition.TablePartitionRecord;
 import com.alibaba.polardbx.gms.tablegroup.PartitionGroupRecord;
@@ -117,6 +119,9 @@ import java.util.stream.Collectors;
  * @author luoyanxin
  */
 public class AlterTableGroupSnapShotUtils {
+
+    private static final Logger logger = LoggerFactory.getLogger("ddl");
+
     //{"table_group_name":"xxx","type":"split", "at_value"="xx", "old_partition":"xx",
     // "ordered_locations":{"groupNum":"xxx","group1":"xx","group2":"xx",..,"groupN":xx},
     //"newPartition":{"num":"xx","p1":{"name":"xx"}, "p2":{"name":"xx"}},
@@ -198,7 +203,7 @@ public class AlterTableGroupSnapShotUtils {
 
         boolean firstPartition = newPartitions.isEmpty();
         PartitionStrategy strategy = splitSpec.getStrategy();
-        assert strategy == PartitionStrategy.HASH || splitSpec.getStrategy() == PartitionStrategy.KEY;
+        //assert strategy == PartitionStrategy.HASH || splitSpec.getStrategy() == PartitionStrategy.KEY;
         PartitionByDefinition subPartitionBy = curPartitionInfo.getPartitionBy().getSubPartitionBy();
         boolean splitTemplateSubPart =
             sqlAlter.isSubPartitionsSplit() && (subPartitionBy != null && subPartitionBy.isUseSubPartTemplate());
@@ -766,7 +771,10 @@ public class AlterTableGroupSnapShotUtils {
             for (PartitionSpec spec : partitionSpecs) {
                 if (spec.isLogical()) {
                     for (PartitionSpec subSpec : spec.getSubPartitions()) {
-                        if (subSpec.getLocation().getPartitionGroupId().longValue() == splitPartRecord.id.longValue()) {
+                        if (subSpec.getLocation() != null
+                            && subSpec.getLocation().getPartitionGroupId() != null
+                            && subSpec.getLocation().getPartitionGroupId().longValue()
+                            == splitPartRecord.id.longValue()) {
                             splitPartitionSpec = subSpec;
                             break;
                         }
@@ -775,12 +783,20 @@ public class AlterTableGroupSnapShotUtils {
                         break;
                     }
                 } else {
-                    if (spec.getLocation().getPartitionGroupId().longValue() == splitPartRecord.id.longValue()) {
+                    if (spec.getLocation() != null
+                        && spec.getLocation().getPartitionGroupId() != null
+                        && spec.getLocation().getPartitionGroupId().longValue()
+                        == splitPartRecord.id.longValue()) {
                         splitPartitionSpec = spec;
                         break;
                     }
                 }
             }
+        }
+
+        if (splitPartitionSpec == null) {
+            throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_NAME_NOT_EXISTS,
+                "the partition:" + splitPartitionName + " is not exists");
         }
 
         /**
@@ -805,7 +821,8 @@ public class AlterTableGroupSnapShotUtils {
             //atVal = ((SqlLiteral) sqlAlterTableGroupSplitPartition.getAtValue()).getValueAs(Long.class);
         }
 
-        assert GeneralUtil.isNotEmpty(physicalTableAndGroupPairs) && physicalTableAndGroupPairs.size() > 1;
+        // TODO(chenyi-yijin)
+//        assert GeneralUtil.isNotEmpty(physicalTableAndGroupPairs) && physicalTableAndGroupPairs.size() > 1;
         assert GeneralUtil.isNotEmpty(invisiblePartitionGroups);
         List<PartitionSpec> oldPartitions = curPartitionInfo.getPartitionBy().getPartitions();
         List<PartitionSpec> newPartitions = new ArrayList<>();
@@ -849,6 +866,81 @@ public class AlterTableGroupSnapShotUtils {
         updatePartitionSpecRelationship(newPartitionInfo);
         newPartitionInfo.getPartitionBy().getPhysicalPartitions().clear();
         return newPartitionInfo;
+    }
+
+    /**
+     * Handle multi-partition split by iteratively applying each single-partition split.
+     * For each source partition, temporarily set only that source's new partitions on the AST,
+     * then call the existing single-partition logic. The result is accumulated across iterations.
+     *
+     * <p><b>Note:</b> This method temporarily mutates the shared {@code sqlAlter} AST object
+     * (clears and replaces {@code newPartitions}) during iteration, and restores it in a
+     * {@code finally} block. It is <b>not thread-safe</b> and must only be called from
+     * a single-threaded DDL execution context.</p>
+     */
+    private static PartitionInfo getNewPartitionInfoForMultiSplitType(
+        ExecutionContext executionContext,
+        PartitionInfo curPartitionInfo,
+        List<PartitionGroupRecord> invisiblePartitionGroups,
+        SqlAlterTableSplitPartition sqlAlter,
+        String tableGroupName,
+        Map<String, Pair<String, String>> physicalTableAndGroupPairs,
+        Map<SqlNode, RexNode> partRexInfoCtx) {
+
+        List<SqlNode> splitPartitionNameNodes = sqlAlter.getSplitPartitionNames();
+        List<String> splitPartitionNames = new ArrayList<>();
+        for (SqlNode nameNode : splitPartitionNameNodes) {
+            splitPartitionNames.add(Util.last(((SqlIdentifier) nameNode).names));
+        }
+
+        // Save the full new partitions list from the AST
+        List<SqlPartition> allNewPartitions = new ArrayList<>(sqlAlter.getNewPartitions());
+        int newPerSource = allNewPartitions.size() / splitPartitionNames.size();
+        if (allNewPartitions.size() % splitPartitionNames.size() != 0) {
+            throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
+                "New partition count (" + allNewPartitions.size()
+                    + ") is not evenly divisible by source partition count ("
+                    + splitPartitionNames.size() + ")");
+        }
+
+        logger.info("Multi-partition split: processing " + splitPartitionNames.size()
+            + " source partitions, " + newPerSource + " new partitions per source");
+
+        PartitionInfo iterPartInfo = curPartitionInfo;
+
+        try {
+            for (int s = 0; s < splitPartitionNames.size(); s++) {
+                String sourceName = splitPartitionNames.get(s);
+
+                // Temporarily set only this source's new partitions on the AST
+                List<SqlPartition> sourceNewPartitions =
+                    new ArrayList<>(allNewPartitions.subList(s * newPerSource, (s + 1) * newPerSource));
+                sqlAlter.getNewPartitions().clear();
+                sqlAlter.getNewPartitions().addAll(sourceNewPartitions);
+
+                // Call existing single-partition split logic, accumulating changes
+                iterPartInfo = getNewPartitionInfoForSplitType(
+                    executionContext,
+                    iterPartInfo,
+                    invisiblePartitionGroups,
+                    sqlAlter,
+                    tableGroupName,
+                    sourceName,
+                    physicalTableAndGroupPairs,
+                    partRexInfoCtx);
+
+                logger.info("Multi-partition split: completed source partition ["
+                    + (s + 1) + "/" + splitPartitionNames.size() + "]: " + sourceName);
+            }
+        } finally {
+            // Always restore the full new partitions list on the AST
+            sqlAlter.getNewPartitions().clear();
+            sqlAlter.getNewPartitions().addAll(allNewPartitions);
+        }
+
+        logger.info("Multi-partition split: all source partitions processed successfully");
+
+        return iterPartInfo;
     }
 
     private static List<PartitionSpec> generateNewPartitionSpecForSplit(ExecutionContext executionContext,
@@ -1652,7 +1744,7 @@ public class AlterTableGroupSnapShotUtils {
                                                        PartitionGroupRecord partitionGroupRecord) {
         PartitionSpec newPartSpec = partitionSpec.copy();
         newPartSpec.getLocation()
-            .setGroupKey(GroupInfoUtil.buildGroupNameFromPhysicalDb(partitionGroupRecord.phy_db));
+            .setGroupKey(partitionGroupRecord.getGroup_Name());
         newPartSpec.getLocation().setPartitionGroupId(partitionGroupRecord.id);
         return newPartSpec;
     }
@@ -1809,7 +1901,7 @@ public class AlterTableGroupSnapShotUtils {
         for (PartitionGroupRecord record : unVisiablePartitionGroupRecords) {
             partitionSpec.setName(record.partition_name);
             partitionSpec.getLocation().setVisiable(false);
-            partitionSpec.getLocation().setGroupKey(GroupInfoUtil.buildGroupNameFromPhysicalDb(record.phy_db));
+            partitionSpec.getLocation().setGroupKey(record.getGroup_Name());
             newPartitionInfo.getPartitionBy().getPartitions().add(partitionSpec);
             partitionSpec = partitionSpec.copy();
         }
@@ -2118,16 +2210,30 @@ public class AlterTableGroupSnapShotUtils {
             SqlAlterTableSplitPartition splitPartition = (SqlAlterTableSplitPartition) sqlNode;
             AlterTableGroupSplitPartitionPreparedData alterTableGroupSplitPartitionPreparedData =
                 (AlterTableGroupSplitPartitionPreparedData) parentPreparedData;
-            newPartInfo = getNewPartitionInfoForSplitType(
-                executionContext,
-                curPartitionInfo,
-                invisiblePartitionGroupRecords,
-                splitPartition,
-                tableGroupName,
-                targetPartitionNameToBeAltered,
-                physicalTableAndGroupPairs,
-                alterTableGroupSplitPartitionPreparedData.getPartBoundExprInfo()
-            );
+            List<SqlNode> splitPartitionNames = splitPartition.getSplitPartitionNames();
+            if (splitPartitionNames != null && splitPartitionNames.size() > 1) {
+                // Multi-partition split: iteratively apply each split
+                newPartInfo = getNewPartitionInfoForMultiSplitType(
+                    executionContext,
+                    curPartitionInfo,
+                    invisiblePartitionGroupRecords,
+                    splitPartition,
+                    tableGroupName,
+                    physicalTableAndGroupPairs,
+                    alterTableGroupSplitPartitionPreparedData.getPartBoundExprInfo()
+                );
+            } else {
+                newPartInfo = getNewPartitionInfoForSplitType(
+                    executionContext,
+                    curPartitionInfo,
+                    invisiblePartitionGroupRecords,
+                    splitPartition,
+                    tableGroupName,
+                    targetPartitionNameToBeAltered,
+                    physicalTableAndGroupPairs,
+                    alterTableGroupSplitPartitionPreparedData.getPartBoundExprInfo()
+                );
+            }
         } else if (sqlNode instanceof SqlAlterTableMergePartition) {
             SqlAlterTableMergePartition sqlAlterTableMergePartition =
                 (SqlAlterTableMergePartition) sqlNode;

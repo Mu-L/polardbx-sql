@@ -154,8 +154,12 @@ public class SqlSubPartitionBy extends SqlCall {
         }
 
         for (SqlNode partCol : this.getColumns()) {
+//            SqlCreateTable.PartitionColumnFinder columnFinder = new SqlCreateTable.PartitionColumnFinder();
+//            partCol.accept(columnFinder);
             SqlCreateTable.PartitionColumnFinder columnFinder = new SqlCreateTable.PartitionColumnFinder();
-            partCol.accept(columnFinder);
+            columnFinder.find(partCol);
+            SqlIdentifier partColId = columnFinder.getPartColumn();
+            boolean isUseUdfParams = columnFinder.isUseUdfParams();
             if (columnFinder.getPartColumn() == null) {
                 throw new TddlRuntimeException(ErrorCode.ERR_VALIDATE, String
                     .format("Not allowed to use unknown column[%s] as partition column",partCol.toString()));
@@ -172,7 +176,9 @@ public class SqlSubPartitionBy extends SqlCall {
                     }
                 }
             }
-
+            if (isUseUdfParams) {
+                partCol = partColId;
+            }
             RelDataType dataType = validator.deriveType(scope, partCol);
             if (dataType == null) {
                 throw new TddlRuntimeException(ErrorCode.ERR_VALIDATE,

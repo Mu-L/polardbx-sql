@@ -1,19 +1,3 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.config;
 
 import com.alibaba.polardbx.CobarServer;
@@ -38,11 +22,7 @@ import com.alibaba.polardbx.matrix.jdbc.TDataSource;
 import com.alibaba.polardbx.matrix.jdbc.utils.TDataSourceInitUtils;
 import com.alibaba.polardbx.optimizer.config.server.IServerConfigManager;
 import com.alibaba.polardbx.optimizer.context.DdlContext;
-
-import java.util.List;
-import java.util.Map;
-
-import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext.ErrorMessage;
 import com.alibaba.polardbx.server.conn.InnerConnection;
 
 import java.sql.Connection;
@@ -142,7 +122,7 @@ public class ServerConfigManager implements IServerConfigManager {
     }
 
     @Override
-    public List<ExecutionContext.ErrorMessage> performAsyncDDLJob(Job job, String schemaName, Object jobRequest) {
+    public List<ErrorMessage> performAsyncDDLJob(Job job, String schemaName, Object jobRequest) {
         MatrixConfigHolder matrixConfigHolder = getMatrixConfigHolder(schemaName);
         return matrixConfigHolder.performAsyncDDLJob(job, schemaName, (JobRequest) jobRequest);
     }
@@ -167,8 +147,7 @@ public class ServerConfigManager implements IServerConfigManager {
 
     @Override
     public long submitSubDDL(String schemaName, DdlContext parentDdlContext, long parentJobId, long parentTaskId,
-                             boolean forRollback,
-                             String sql, ParamManager paramManager) {
+                             boolean forRollback, String sql, ParamManager paramManager) {
         MatrixConfigHolder matrixConfigHolder = getMatrixConfigHolder(schemaName);
         return matrixConfigHolder.submitSubDDL(schemaName, parentDdlContext, parentJobId, parentTaskId, forRollback,
             sql);
@@ -261,7 +240,7 @@ public class ServerConfigManager implements IServerConfigManager {
 
         try (Statement stmt = connection.createStatement()) {
             ResultSet rs = stmt.executeQuery(sql);
-            result = ExecUtils.resultSetToList(rs);
+            result = ExecUtils.resultSetToListByUsingGetColumnLabel(rs);
             return result;
         } catch (SQLException e) {
             ex = e;

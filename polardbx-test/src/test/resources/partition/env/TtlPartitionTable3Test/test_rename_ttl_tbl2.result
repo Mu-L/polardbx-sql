@@ -1,0 +1,255 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI=false;
+drop database if exists test_rename_ttl_db;
+create database if not exists test_rename_ttl_db mode='auto';
+use test_rename_ttl_db;
+create table ttl_with_arc_t1(
+a int not null auto_increment,
+b datetime default current_timestamp,
+primary key(a)
+)
+partition by key(a)
+partitions 2;
+create table ttl_without_arc_t1(
+a int not null auto_increment,
+b datetime default current_timestamp,
+primary key(a)
+)
+partition by key(a)
+partitions 2;
+alter table ttl_with_arc_t1
+modify ttl
+set
+ttl_enable = 'on',
+ttl_expr = `b` expire after 2 month timezone '+08:00',
+ttl_job = cron '0 0 1 */2 * ? *' timezone '+08:00',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+alter table ttl_without_arc_t1
+modify ttl
+set
+ttl_enable = 'on',
+ttl_expr = `b` expire after 2 month timezone '+08:00',
+ttl_job = cron '0 0 1 */2 * ? *' timezone '+08:00',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+create table ttl_with_arc_t1_arc like ttl_with_arc_t1 engine='columnar' archive_mode='ttl';
+alter table ttl_with_arc_t1 cleanup expired data;
+show create table ttl_with_arc_t1;
+Table,Create Table
+ttl_with_arc_t1,CREATE TABLE `ttl_with_arc_t1` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_ttl_with_arc_t1_arc` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20240401 VALUES LESS THAN ('2024-04-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240501 VALUES LESS THAN ('2024-05-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240601 VALUES LESS THAN ('2024-06-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240701 VALUES LESS THAN ('2024-07-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240801 VALUES LESS THAN ('2024-08-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240901 VALUES LESS THAN ('2024-09-01 00:00:00') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 2 month TIMEZONE '+08:00', TTL_JOB = CRON '0 0 1 */2 * ? *', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'ttl_with_arc_t1_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+show create view ttl_with_arc_t1_arc;
+View,Create View,character_set_client,collation_connection
+ttl_with_arc_t1_arc,CREATE VIEW `ttl_with_arc_t1_arc` AS SELECT `ttl_with_arc_t1`.`a`, `ttl_with_arc_t1`.`b`
+FROM `test_rename_ttl_db`.`ttl_with_arc_t1` FORCE INDEX(`ARCTMP_TTL_WITH_ARC_T1_ARC`),utf8,utf8_general_ci
+alter table ttl_with_arc_t1 add column c int;
+show create table ttl_with_arc_t1;
+Table,Create Table
+ttl_with_arc_t1,CREATE TABLE `ttl_with_arc_t1` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT CURRENT_TIMESTAMP,
+	`c` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_ttl_with_arc_t1_arc` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20240401 VALUES LESS THAN ('2024-04-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240501 VALUES LESS THAN ('2024-05-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240601 VALUES LESS THAN ('2024-06-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240701 VALUES LESS THAN ('2024-07-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240801 VALUES LESS THAN ('2024-08-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240901 VALUES LESS THAN ('2024-09-01 00:00:00') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 2 month TIMEZONE '+08:00', TTL_JOB = CRON '0 0 1 */2 * ? *', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'ttl_with_arc_t1_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+show create view ttl_with_arc_t1_arc;
+View,Create View,character_set_client,collation_connection
+ttl_with_arc_t1_arc,CREATE VIEW `ttl_with_arc_t1_arc` AS SELECT `ttl_with_arc_t1`.`a`, `ttl_with_arc_t1`.`b`, `ttl_with_arc_t1`.`c`
+FROM `test_rename_ttl_db`.`ttl_with_arc_t1` FORCE INDEX(`ARCTMP_TTL_WITH_ARC_T1_ARC`),utf8,utf8_general_ci
+rename table ttl_with_arc_t1 to ttl_with_arc_t2;
+show create table ttl_with_arc_t2;
+Table,Create Table
+ttl_with_arc_t2,CREATE TABLE `ttl_with_arc_t2` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT CURRENT_TIMESTAMP,
+	`c` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_ttl_with_arc_t1_arc` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20240401 VALUES LESS THAN ('2024-04-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240501 VALUES LESS THAN ('2024-05-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240601 VALUES LESS THAN ('2024-06-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240701 VALUES LESS THAN ('2024-07-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240801 VALUES LESS THAN ('2024-08-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240901 VALUES LESS THAN ('2024-09-01 00:00:00') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 2 month TIMEZONE '+08:00', TTL_JOB = CRON '0 0 1 */2 * ? *', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'ttl_with_arc_t1_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 ) AUTO_INCREMENT = 100002
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+show create view ttl_with_arc_t1_arc;
+View,Create View,character_set_client,collation_connection
+ttl_with_arc_t1_arc,CREATE VIEW `ttl_with_arc_t1_arc` AS SELECT `ttl_with_arc_t2`.`a`, `ttl_with_arc_t2`.`b`, `ttl_with_arc_t2`.`c`
+FROM `test_rename_ttl_db`.`ttl_with_arc_t2` FORCE INDEX(`ARCTMP_TTL_WITH_ARC_T1_ARC`),utf8,utf8_general_ci
+alter table ttl_with_arc_t2 rename to ttl_with_arc_t3;
+show create table ttl_with_arc_t3;
+Table,Create Table
+ttl_with_arc_t3,CREATE TABLE `ttl_with_arc_t3` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT CURRENT_TIMESTAMP,
+	`c` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_ttl_with_arc_t1_arc` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20240401 VALUES LESS THAN ('2024-04-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240501 VALUES LESS THAN ('2024-05-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240601 VALUES LESS THAN ('2024-06-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240701 VALUES LESS THAN ('2024-07-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240801 VALUES LESS THAN ('2024-08-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240901 VALUES LESS THAN ('2024-09-01 00:00:00') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 2 month TIMEZONE '+08:00', TTL_JOB = CRON '0 0 1 */2 * ? *', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'ttl_with_arc_t1_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 ) AUTO_INCREMENT = 200003
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+show create view ttl_with_arc_t1_arc;
+View,Create View,character_set_client,collation_connection
+ttl_with_arc_t1_arc,CREATE VIEW `ttl_with_arc_t1_arc` AS SELECT `ttl_with_arc_t3`.`a`, `ttl_with_arc_t3`.`b`, `ttl_with_arc_t3`.`c`
+FROM `test_rename_ttl_db`.`ttl_with_arc_t3` FORCE INDEX(`ARCTMP_TTL_WITH_ARC_T1_ARC`),utf8,utf8_general_ci
+rename table ttl_without_arc_t1 to ttl_without_arc_t2, ttl_with_arc_t3 to ttl_with_arc_t4;
+show create table ttl_with_arc_t4;
+Table,Create Table
+ttl_with_arc_t4,CREATE TABLE `ttl_with_arc_t4` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT CURRENT_TIMESTAMP,
+	`c` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_ttl_with_arc_t1_arc` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20240401 VALUES LESS THAN ('2024-04-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240501 VALUES LESS THAN ('2024-05-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240601 VALUES LESS THAN ('2024-06-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240701 VALUES LESS THAN ('2024-07-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240801 VALUES LESS THAN ('2024-08-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240901 VALUES LESS THAN ('2024-09-01 00:00:00') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 2 month TIMEZONE '+08:00', TTL_JOB = CRON '0 0 1 */2 * ? *', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'ttl_with_arc_t1_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 ) AUTO_INCREMENT = 300004
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+show create view ttl_with_arc_t1_arc;
+View,Create View,character_set_client,collation_connection
+ttl_with_arc_t1_arc,CREATE VIEW `ttl_with_arc_t1_arc` AS SELECT `ttl_with_arc_t4`.`a`, `ttl_with_arc_t4`.`b`, `ttl_with_arc_t4`.`c`
+FROM `test_rename_ttl_db`.`ttl_with_arc_t4` FORCE INDEX(`ARCTMP_TTL_WITH_ARC_T1_ARC`),utf8,utf8_general_ci
+create table ttl_without_arc_t2_arc like ttl_without_arc_t2 engine='columnar' archive_mode='ttl';
+alter table ttl_without_arc_t2 cleanup expired data;
+show create table ttl_with_arc_t4;
+Table,Create Table
+ttl_with_arc_t4,CREATE TABLE `ttl_with_arc_t4` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT CURRENT_TIMESTAMP,
+	`c` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_ttl_with_arc_t1_arc` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20240401 VALUES LESS THAN ('2024-04-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240501 VALUES LESS THAN ('2024-05-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240601 VALUES LESS THAN ('2024-06-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240701 VALUES LESS THAN ('2024-07-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240801 VALUES LESS THAN ('2024-08-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240901 VALUES LESS THAN ('2024-09-01 00:00:00') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 2 month TIMEZONE '+08:00', TTL_JOB = CRON '0 0 1 */2 * ? *', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'ttl_with_arc_t1_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 ) AUTO_INCREMENT = 300004
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+show create table ttl_without_arc_t2;
+Table,Create Table
+ttl_without_arc_t2,CREATE TABLE `ttl_without_arc_t2` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_ttl_without_arc_t2_arc` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20240401 VALUES LESS THAN ('2024-04-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240501 VALUES LESS THAN ('2024-05-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240601 VALUES LESS THAN ('2024-06-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240701 VALUES LESS THAN ('2024-07-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240801 VALUES LESS THAN ('2024-08-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240901 VALUES LESS THAN ('2024-09-01 00:00:00') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 2 month TIMEZONE '+08:00', TTL_JOB = CRON '0 0 1 */2 * ? *', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'ttl_without_arc_t2_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 ) AUTO_INCREMENT = 100002
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+show create view ttl_with_arc_t1_arc;
+View,Create View,character_set_client,collation_connection
+ttl_with_arc_t1_arc,CREATE VIEW `ttl_with_arc_t1_arc` AS SELECT `ttl_with_arc_t4`.`a`, `ttl_with_arc_t4`.`b`, `ttl_with_arc_t4`.`c`
+FROM `test_rename_ttl_db`.`ttl_with_arc_t4` FORCE INDEX(`ARCTMP_TTL_WITH_ARC_T1_ARC`),utf8,utf8_general_ci
+show create view ttl_without_arc_t2_arc;
+View,Create View,character_set_client,collation_connection
+ttl_without_arc_t2_arc,CREATE VIEW `ttl_without_arc_t2_arc` AS SELECT `ttl_without_arc_t2`.`a`, `ttl_without_arc_t2`.`b`
+FROM `test_rename_ttl_db`.`ttl_without_arc_t2` FORCE INDEX(`ARCTMP_TTL_WITHOUT_ARC_T2_ARC`),utf8,utf8_general_ci
+rename table ttl_with_arc_t4 to ttl_with_arc_t5, ttl_without_arc_t2 to ttl_without_arc_t3;
+show create table ttl_with_arc_t5;
+Table,Create Table
+ttl_with_arc_t5,CREATE TABLE `ttl_with_arc_t5` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT CURRENT_TIMESTAMP,
+	`c` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_ttl_with_arc_t1_arc` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20240401 VALUES LESS THAN ('2024-04-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240501 VALUES LESS THAN ('2024-05-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240601 VALUES LESS THAN ('2024-06-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240701 VALUES LESS THAN ('2024-07-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240801 VALUES LESS THAN ('2024-08-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240901 VALUES LESS THAN ('2024-09-01 00:00:00') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 2 month TIMEZONE '+08:00', TTL_JOB = CRON '0 0 1 */2 * ? *', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'ttl_with_arc_t1_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 ) AUTO_INCREMENT = 400005
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+show create table ttl_without_arc_t3;
+Table,Create Table
+ttl_without_arc_t3,CREATE TABLE `ttl_without_arc_t3` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_ttl_without_arc_t2_arc` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20240401 VALUES LESS THAN ('2024-04-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240501 VALUES LESS THAN ('2024-05-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240601 VALUES LESS THAN ('2024-06-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240701 VALUES LESS THAN ('2024-07-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240801 VALUES LESS THAN ('2024-08-01 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240901 VALUES LESS THAN ('2024-09-01 00:00:00') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 2 month TIMEZONE '+08:00', TTL_JOB = CRON '0 0 1 */2 * ? *', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'ttl_without_arc_t2_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 ) AUTO_INCREMENT = 200003
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+show create view ttl_with_arc_t1_arc;
+View,Create View,character_set_client,collation_connection
+ttl_with_arc_t1_arc,CREATE VIEW `ttl_with_arc_t1_arc` AS SELECT `ttl_with_arc_t5`.`a`, `ttl_with_arc_t5`.`b`, `ttl_with_arc_t5`.`c`
+FROM `test_rename_ttl_db`.`ttl_with_arc_t5` FORCE INDEX(`ARCTMP_TTL_WITH_ARC_T1_ARC`),utf8,utf8_general_ci
+show create view ttl_without_arc_t2_arc;
+View,Create View,character_set_client,collation_connection
+ttl_without_arc_t2_arc,CREATE VIEW `ttl_without_arc_t2_arc` AS SELECT `ttl_without_arc_t3`.`a`, `ttl_without_arc_t3`.`b`
+FROM `test_rename_ttl_db`.`ttl_without_arc_t3` FORCE INDEX(`ARCTMP_TTL_WITHOUT_ARC_T2_ARC`),utf8,utf8_general_ci
+use polardbx;
+drop database if exists test_rename_ttl_db;

@@ -1,0 +1,79 @@
+SQL:
+  - sql: |
+      select * from t_order, lineitem where id = l_orderkey;
+    plan: |
+      project(id="id", order_id="order_id", buyer_id="buyer_id", seller_id="seller_id", order_snapshot="order_snapshot", order_detail="order_detail", l_orderkey="l_orderkey", l_partkey="l_partkey", l_suppkey="l_suppkey", l_linenumber="l_linenumber", l_quantity="l_quantity", l_extendedprice="l_extendedprice", l_discount="l_discount", l_tax="l_tax", l_returnflag="l_returnflag", l_linestatus="l_linestatus", l_shipdate="l_shipdate", l_commitdate="l_commitdate", l_receiptdate="l_receiptdate", l_shipinstruct="l_shipinstruct", l_shipmode="l_shipmode", l_comment="l_comment")
+        hashjoin(condition="l_orderkey = id", type="inner")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,...p16]", shardcount=16, partition=[remote], sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem_col_index` as `lineitem_col_index`")
+          exchange(distribution=broadcast, collation=[])
+            osstablescan(tables="cc_i_seller[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `order_snapshot`, `order_detail` from `cc_i_seller` as `cc_i_seller`")
+  - sql: |
+      /*+TDDL:cmd_extra(PLANNER_MAX_TIME=-1)*/select * from t_order, lineitem where id = l_orderkey;
+    plan: |
+      hashjoin(condition="l_orderkey = id", type="inner")
+        exchange(distribution=hash[0], collation=[])
+          osstablescan(tables="cc_i_seller[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `order_snapshot`, `order_detail` from `cc_i_seller` as `cc_i_seller`")
+        project(l_orderkey="l_orderkey", l_partkey="l_partkey", l_suppkey="l_suppkey", l_linenumber="l_linenumber", l_quantity="l_quantity", l_extendedprice="l_extendedprice", l_discount="l_discount", l_tax="l_tax", l_returnflag="l_returnflag", l_linestatus="l_linestatus", l_shipdate="l_shipdate", l_commitdate="l_commitdate", l_receiptdate="l_receiptdate", l_shipinstruct="l_shipinstruct", l_shipmode="l_shipmode", l_comment="l_comment")
+          exchange(distribution=hash[16], collation=[])
+            project(l_orderkey="l_orderkey", l_partkey="l_partkey", l_suppkey="l_suppkey", l_linenumber="l_linenumber", l_quantity="l_quantity", l_extendedprice="l_extendedprice", l_discount="l_discount", l_tax="l_tax", l_returnflag="l_returnflag", l_linestatus="l_linestatus", l_shipdate="l_shipdate", l_commitdate="l_commitdate", l_receiptdate="l_receiptdate", l_shipinstruct="l_shipinstruct", l_shipmode="l_shipmode", l_comment="l_comment", l_orderkey_shuffle__="cast(l_orderkey)")
+              osstablescan(tables="lineitem_col_index[p1,p2,p3,...p16]", shardcount=16, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_PLANNER_TIMEOUT=false PLANNER_MAX_TIME=0)*/select * from t_order, lineitem where id = l_orderkey;
+    plan: |
+      project(id="id", order_id="order_id", buyer_id="buyer_id", seller_id="seller_id", order_snapshot="order_snapshot", order_detail="order_detail", l_orderkey="l_orderkey", l_partkey="l_partkey", l_suppkey="l_suppkey", l_linenumber="l_linenumber", l_quantity="l_quantity", l_extendedprice="l_extendedprice", l_discount="l_discount", l_tax="l_tax", l_returnflag="l_returnflag", l_linestatus="l_linestatus", l_shipdate="l_shipdate", l_commitdate="l_commitdate", l_receiptdate="l_receiptdate", l_shipinstruct="l_shipinstruct", l_shipmode="l_shipmode", l_comment="l_comment")
+        hashjoin(condition="l_orderkey = id", type="inner")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,...p16]", shardcount=16, partition=[remote], sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem_col_index` as `lineitem_col_index`")
+          exchange(distribution=broadcast, collation=[])
+            osstablescan(tables="cc_i_seller[p1,p2,p3,...p16]", shardcount=16, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `order_snapshot`, `order_detail` from `cc_i_seller` as `cc_i_seller`")
+DDL:
+  t_order:
+    CREATE TABLE `t_order` (
+    `id` bigint(11) NOT NULL AUTO_INCREMENT,
+    `order_id` varchar(20) DEFAULT NULL,
+    `buyer_id` varchar(20) DEFAULT NULL,
+    `seller_id` varchar(20) DEFAULT NULL,
+    `order_snapshot` longtext,
+    `order_detail` longtext,
+    PRIMARY KEY (`id`),
+    KEY `auto_shard_key_order_id` USING BTREE (`order_id`),
+    GLOBAL INDEX `g_i_buyer`(`buyer_id`) COVERING (`id`, `order_id`, `seller_id`, `order_snapshot`) PARTITION BY HASH(`buyer_id`) PARTITIONS 3,
+    UNIQUE GLOBAL KEY `g_i_seller` (`seller_id`) COVERING (`id`, `order_id`, `buyer_id`, `order_snapshot`) PARTITION BY HASH(`seller_id`) PARTITIONS 3，
+    CLUSTERED COLUMNAR INDEX `cc_i_seller` ON t_order (`seller_id`) partition by hash(`order_id`) partitions 16
+    ) ENGINE = InnoDB AUTO_INCREMENT = 2300006 DEFAULT CHARSET = latin1 partition by hash(`order_id`) PARTITIONS 3,
+
+  lineitem:
+    CREATE TABLE IF NOT EXISTS `lineitem` (
+    `l_orderkey` int(11) NOT NULL,
+    `l_partkey` int(11) NOT NULL,
+    `l_suppkey` int(11) NOT NULL,
+    `l_linenumber` int(11) NOT NULL,
+    `l_quantity` decimal(15, 2) NOT NULL,
+    `l_extendedprice` decimal(15, 2) NOT NULL,
+    `l_discount` decimal(15, 2) NOT NULL,
+    `l_tax` decimal(15, 2) NOT NULL,
+    `l_returnflag` varchar(1) NOT NULL,
+    `l_linestatus` varchar(1) NOT NULL,
+    `l_shipdate` date NOT NULL,
+    `l_commitdate` date NOT NULL,
+    `l_receiptdate` date NOT NULL,
+    `l_shipinstruct` varchar(25) NOT NULL,
+    `l_shipmode` varchar(10) NOT NULL,
+    `l_comment` varchar(44) NOT NULL,
+    PRIMARY KEY (`l_orderkey`, `l_linenumber`),
+    CLUSTERED COLUMNAR INDEX `lineitem_col_index` on lineitem(`l_shipdate`, `l_orderkey`) PARTITION BY HASH(`l_orderkey`) PARTITIONS 16
+    ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`l_orderkey`) PARTITIONS 8;
+
+STATISTICS:
+  t_order:
+    14295431
+  lineitem:
+    730177270
+CONFIG:
+  ENABLE_MPP:
+    true
+  ENABLE_COLUMNAR_OPTIMIZER:
+    true
+  ENABLE_PLANNER_TIMEOUT:
+    true
+  defaltxxAPPName.isNew:
+    true

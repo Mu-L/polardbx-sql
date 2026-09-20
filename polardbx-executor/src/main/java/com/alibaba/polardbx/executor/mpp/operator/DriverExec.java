@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.mpp.operator;
 
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
@@ -57,8 +58,20 @@ public class DriverExec {
     private List<MemoryRevoker> memoryRevokers = new ArrayList<>();
     private HashMap<Integer, List<SourceExec>> sourceExecs = new HashMap<>();
 
+    // all producer executors from root.
+    private List<Executor> producerList;
+    // all consumer executors.
+    private List<ConsumerExecutor> consumerList;
+
     public DriverExec(int pipelineId, DriverContext driverContext, Executor producer, ConsumerExecutor consumer,
                       int parallelism) {
+        this(pipelineId, driverContext, producer, consumer, parallelism, null, null);
+    }
+
+    public DriverExec(int pipelineId, DriverContext driverContext, Executor producer, ConsumerExecutor consumer,
+                      int parallelism, List<Executor> producerList, List<ConsumerExecutor> consumerList) {
+        this.producerList = producerList;
+        this.consumerList = consumerList;
         this.pipelineId = pipelineId;
         this.producer = producer;
         this.consumer = consumer;
@@ -126,6 +139,14 @@ public class DriverExec {
         }
     }
 
+    public List<Executor> getProducerList() {
+        return producerList;
+    }
+
+    public List<ConsumerExecutor> getConsumerList() {
+        return consumerList;
+    }
+
     public synchronized void open() {
         if (opened) {
             return;
@@ -133,11 +154,22 @@ public class DriverExec {
         try {
             if (!closed) {
                 producer.open();
+
+                // Adjust producer memory usage after open.
+                MemoryTrackerManager.adjustMemoryUsage(producer.getProducerMemoryOwnerId());
+
                 consumer.openConsume();
+
+                // Adjust consumer memory usage after open.
+                MemoryTrackerManager.adjustMemoryUsage(consumer.getConsumerMemoryOwnerId());
             }
         } finally {
             opened = true;
         }
+    }
+
+    public synchronized boolean isProducerIsClosed() {
+        return producerIsClosed;
     }
 
     public synchronized void closeProducer() {
@@ -147,27 +179,35 @@ public class DriverExec {
             }
         } finally {
             producerIsClosed = true;
-        }
-    }
 
-    public synchronized boolean isProducerIsClosed() {
-        return producerIsClosed;
+            // memory tracker
+            releaseProducerMemory();
+        }
     }
 
     public synchronized void close() {
         try {
             if (!closed) {
                 if (opened) {
+
+                    // producer closing && release memory
                     try {
                         producer.close();
                     } catch (Throwable e) {
                         //ignore
+                    } finally {
+                        releaseProducerMemory();
                     }
+
+                    // consumer closing && release memory
                     try {
                         consumer.buildConsume();
                     } catch (Throwable e) {
                         log.warn("buildConsume consumer:" + consumer, e);
                         throw GeneralUtil.nestedException(e);
+                    } finally {
+                        // memory tracker
+                        releaseConsumerMemory();
                     }
                 } else if (consumerIsBuffer) {
                     try {
@@ -175,6 +215,9 @@ public class DriverExec {
                     } catch (Throwable e) {
                         log.warn("buildConsume consumer:" + consumer, e);
                         throw GeneralUtil.nestedException(e);
+                    } finally {
+                        // memory tracker
+                        releaseConsumerMemory();
                     }
                 }
 
@@ -192,7 +235,10 @@ public class DriverExec {
             } catch (Throwable e) {
                 log.warn("closeConsume consumer:" + consumer, e);
             } finally {
+
                 consumerIsClosed = true;
+                // memory tracker
+                releaseConsumerMemory();
             }
         }
     }
@@ -231,5 +277,36 @@ public class DriverExec {
 
     public List<ProducerExecutor> getForceCloseExecs() {
         return forceCloseExecs;
+    }
+
+    private synchronized void releaseProducerMemory() {
+        if (producer instanceof ConsumerExecutor) {
+            // When producer is blocked-operator of the last Driver,
+            // release memory by consumer id.
+            MemoryTrackerManager.releaseAll(
+                ((ConsumerExecutor) producer).getConsumerMemoryOwnerId()
+            );
+        } else if (producer != null) {
+            MemoryTrackerManager.releaseAll(
+                producer.getProducerMemoryOwnerId()
+            );
+        }
+        producer = null;
+    }
+
+    private synchronized void releaseConsumerMemory() {
+        if (!(consumer instanceof Executor)) {
+            // When consumer is not a producer of the next Driver,
+            // release all the memory from it.
+            MemoryTrackerManager.releaseAll(
+                consumer.getConsumerMemoryOwnerId()
+            );
+        } else if (consumer != null) {
+            // We cannot release memory of consumer immediately,
+            // but we should adjust memory usage of it.
+            MemoryTrackerManager.adjustMemoryUsage(consumer.getConsumerMemoryOwnerId());
+        }
+        consumer = null;
+        // Don't release memory of consumer that is the producer of the next Driver.
     }
 }

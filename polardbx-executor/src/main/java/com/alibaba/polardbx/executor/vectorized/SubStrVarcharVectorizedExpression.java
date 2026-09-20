@@ -23,6 +23,7 @@ import com.alibaba.polardbx.executor.chunk.SliceBlock;
 import com.alibaba.polardbx.executor.vectorized.metadata.ExpressionSignatures;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
+import com.alibaba.polardbx.optimizer.core.datatype.SliceType;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
 
@@ -41,9 +42,14 @@ public class SubStrVarcharVectorizedExpression extends AbstractVectorizedExpress
     private int startPos;
     private int subStrLen;
 
+    private boolean isLatin1;
+
     public SubStrVarcharVectorizedExpression(DataType<?> outputDataType,
                                              int outputIndex, VectorizedExpression[] children) {
         super(outputDataType, outputIndex, children);
+
+        DataType inputDataType = children[0].getOutputDataType();
+        this.isLatin1 = inputDataType instanceof SliceType && inputDataType.isLatin1Encoding();
 
         Object operand1Value = ((LiteralVectorizedExpression) children[1]).getConvertedValue();
         Object operand2Value = ((LiteralVectorizedExpression) children[2]).getConvertedValue();
@@ -76,6 +82,96 @@ public class SubStrVarcharVectorizedExpression extends AbstractVectorizedExpress
             }
         }
 
+    }
+
+    /**
+     * Get the number of UTF-8 characters in a slice.
+     */
+    private int getUtf8CharCount(Slice slice) {
+        int charCount = 0;
+        int byteLength = slice.length();
+        for (int i = 0; i < byteLength; ) {
+            byte b = slice.getByte(i);
+            int charBytes = getUtf8CharBytes(b);
+            i += charBytes;
+            charCount++;
+        }
+        return charCount;
+    }
+
+    /**
+     * Get the byte length of a UTF-8 character by its first byte.
+     */
+    private int getUtf8CharBytes(byte firstByte) {
+        int b = firstByte & 0xFF;
+        if ((b & 0x80) == 0) {
+            return 1; // 0xxxxxxx
+        } else if ((b & 0xE0) == 0xC0) {
+            return 2; // 110xxxxx
+        } else if ((b & 0xF0) == 0xE0) {
+            return 3; // 1110xxxx
+        } else if ((b & 0xF8) == 0xF0) {
+            return 4; // 11110xxx
+        }
+        return 1; // Invalid UTF-8, treat as 1 byte
+    }
+
+    /**
+     * Find the byte offset of the character at the given character position.
+     * Returns -1 if charPos is out of bounds.
+     */
+    private int findUtf8CharByteOffset(Slice slice, int charPos) {
+        int byteOffset = 0;
+        int charCount = 0;
+        int byteLength = slice.length();
+
+        while (byteOffset < byteLength && charCount < charPos) {
+            byte b = slice.getByte(byteOffset);
+            int charBytes = getUtf8CharBytes(b);
+            byteOffset += charBytes;
+            charCount++;
+        }
+
+        if (charCount == charPos) {
+            return byteOffset;
+        }
+        return -1; // Out of bounds
+    }
+
+    /**
+     * Extract substring from slice based on character positions.
+     */
+    private Slice substringByCharPosition(Slice slice, int charStart, int charLen) {
+        if (isLatin1) {
+            // For Latin1, byte position equals character position
+            int start = useNegativeStart ? slice.length() + startPos : startPos;
+            int len = Math.min(slice.length() - start, subStrLen);
+            if (start < 0 || start >= slice.length()) {
+                return Slices.EMPTY_SLICE;
+            }
+            return slice.slice(start, len);
+        } else {
+            // For UTF-8, need to find byte offsets
+            int totalChars = getUtf8CharCount(slice);
+            int actualCharStart = useNegativeStart ? totalChars + startPos : startPos;
+
+            if (actualCharStart < 0 || actualCharStart >= totalChars) {
+                return Slices.EMPTY_SLICE;
+            }
+
+            int byteStart = findUtf8CharByteOffset(slice, actualCharStart);
+            if (byteStart < 0) {
+                return Slices.EMPTY_SLICE;
+            }
+
+            int actualCharLen = Math.min(totalChars - actualCharStart, subStrLen);
+            int byteEnd = findUtf8CharByteOffset(slice, actualCharStart + actualCharLen);
+            if (byteEnd < 0) {
+                byteEnd = slice.length();
+            }
+
+            return slice.slice(byteStart, byteEnd - byteStart);
+        }
     }
 
     @Override
@@ -128,60 +224,24 @@ public class SubStrVarcharVectorizedExpression extends AbstractVectorizedExpress
             if (isSelectionInUse) {
                 for (int i = 0; i < batchSize; i++) {
                     int j = selection[i];
-
                     Slice slice = sliceBlock.getRegion(j);
-                    Slice result;
-
-                    int start = useNegativeStart ? slice.length() + startPos : startPos;
-                    int len = Math.min(slice.length() - start, subStrLen);
-                    if (start < 0 || start + 1 > slice.length()) {
-                        // check start pos out of bound
-                        result = Slices.EMPTY_SLICE;
-                    } else {
-                        result = slice.slice(start, len);
-                    }
-
-                    objectArray[j] = result;
+                    objectArray[j] = substringByCharPosition(slice, startPos, subStrLen);
                 }
             } else {
                 for (int i = 0; i < batchSize; i++) {
                     Slice slice = sliceBlock.getRegion(i);
-                    Slice result;
-
-                    int start = useNegativeStart ? slice.length() + startPos : startPos;
-                    int len = Math.min(slice.length() - start, subStrLen);
-                    if (start < 0 || start + 1 > slice.length()) {
-                        // check start pos out of bound
-                        result = Slices.EMPTY_SLICE;
-                    } else {
-                        result = slice.slice(start, len);
-                    }
-
-                    objectArray[i] = result;
+                    objectArray[i] = substringByCharPosition(slice, startPos, subStrLen);
                 }
             }
         } else if (leftInputVectorSlot instanceof ReferenceBlock) {
             if (isSelectionInUse) {
                 for (int i = 0; i < batchSize; i++) {
                     int j = selection[i];
-
                     Slice slice = ((Slice) leftInputVectorSlot.elementAt(j));
                     if (slice == null) {
                         objectArray[j] = Slices.EMPTY_SLICE;
                     } else {
-                        Slice result;
-
-                        int start = useNegativeStart ? slice.length() + startPos : startPos;
-                        int len = Math.min(slice.length() - start, subStrLen);
-                        if (start < 0 || start + 1 > slice.length()) {
-                            // check start pos out of bound
-                            result = Slices.EMPTY_SLICE;
-                        } else {
-                            result = slice.slice(start, len);
-                        }
-
-                        objectArray[j] = result;
-
+                        objectArray[j] = substringByCharPosition(slice, startPos, subStrLen);
                     }
                 }
             } else {
@@ -190,18 +250,7 @@ public class SubStrVarcharVectorizedExpression extends AbstractVectorizedExpress
                     if (slice == null) {
                         objectArray[i] = Slices.EMPTY_SLICE;
                     } else {
-                        Slice result;
-
-                        int start = useNegativeStart ? slice.length() + startPos : startPos;
-                        int len = Math.min(slice.length() - start, subStrLen);
-                        if (start < 0 || start + 1 > slice.length()) {
-                            // check start pos out of bound
-                            result = Slices.EMPTY_SLICE;
-                        } else {
-                            result = slice.slice(start, len);
-                        }
-
-                        objectArray[i] = result;
+                        objectArray[i] = substringByCharPosition(slice, startPos, subStrLen);
                     }
                 }
             }

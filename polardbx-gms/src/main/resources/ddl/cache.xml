@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SystemTables>
+
+    <SystemTable name="cache_user">
+        <Create><![CDATA[
+            CREATE TABLE IF NOT EXISTS `cache_user` (
+                `id` bigint(11) NOT NULL AUTO_INCREMENT,
+                `gmt_created` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                `user_name` varchar(128) NOT NULL,
+                `password` varchar(256) NOT NULL COMMENT 'encrypted by PasswdUtil',
+                `read_priv` tinyint(1) NOT NULL DEFAULT 1,
+                `write_priv` tinyint(1) NOT NULL DEFAULT 0,
+                `admin_priv` tinyint(1) NOT NULL DEFAULT 0,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_user_name` (`user_name`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Cache service user authentication'
+        ]]></Create>
+    </SystemTable>
+
+    <SystemTable name="cache_peer">
+        <Create><![CDATA[
+            CREATE TABLE IF NOT EXISTS `cache_peer` (
+                `id` bigint(11) NOT NULL AUTO_INCREMENT,
+                `peer_name` varchar(512) NOT NULL COMMENT 'unique peer node name',
+                `host` varchar(256) NOT NULL COMMENT 'ip:port of cache rpc service',
+                `node_hash` bigint(20) NOT NULL COMMENT 'xxhash64 of peer node name for consistent hashing',
+                `lease` bigint(20) unsigned NOT NULL COMMENT 'the expiration time of this lease in UTC ms',
+                `role` varchar(32) NOT NULL DEFAULT 'OTHERS' COMMENT 'peer role: CACHE_WRITER, CACHE_READER, OTHERS',
+                `leader` tinyint(1) NOT NULL DEFAULT 0 COMMENT 'whether this peer is the leader (1=leader, 0=follower)',
+                `status_json` longtext DEFAULT NULL COMMENT 'peer status in JSON format for future extensibility',
+                `gmt_created` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_peer_name` (`peer_name`),
+                KEY `idx_leader_lease` (`leader`, `lease`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 ROW_FORMAT=DYNAMIC COMMENT='Cache service peer node registry and leader election'
+        ]]></Create>
+    </SystemTable>
+
+    <SystemTable name="cache_file_mapping">
+        <Create><![CDATA[
+            CREATE TABLE IF NOT EXISTS `cache_file_mapping` (
+                `id` bigint(11) NOT NULL AUTO_INCREMENT COMMENT 'file id',
+                `gmt_created` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                `file_name` varchar(255) NOT NULL COMMENT 'file name',
+                `logical_schema` varchar(64) DEFAULT NULL COMMENT 'logical schema for cleanup',
+                `logical_table` varchar(64) DEFAULT NULL COMMENT 'logical table for cleanup',
+                `part_name` varchar(64) DEFAULT NULL COMMENT 'partition name for cleanup',
+                `engine` varchar(64) DEFAULT NULL COMMENT 'engine type for cleanup',
+                `meta` longblob DEFAULT NULL COMMENT 'file metadata',
+                `version` bigint(20) NOT NULL DEFAULT 0 COMMENT 'version for optimistic locking',
+                `locked` tinyint(1) NOT NULL DEFAULT 0 COMMENT 'whether this file is locked (1=locked, 0=unlocked)',
+                PRIMARY KEY (`id`),
+                UNIQUE KEY `uk_file_name` (`file_name`),
+                KEY `idx_schema_table_part` (`logical_schema`, `logical_table`, `part_name`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Cache file name to file id mapping'
+        ]]></Create>
+    </SystemTable>
+
+</SystemTables>

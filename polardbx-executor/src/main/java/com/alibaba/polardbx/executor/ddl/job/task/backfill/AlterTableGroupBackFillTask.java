@@ -18,7 +18,6 @@ package com.alibaba.polardbx.executor.ddl.job.task.backfill;
 
 import com.alibaba.fastjson.annotation.JSONCreator;
 import com.alibaba.polardbx.common.ddl.newengine.DdlTaskState;
-import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.ExecutorHelper;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseBackfillTask;
 import com.alibaba.polardbx.executor.ddl.job.task.RemoteExecutableDdlTask;
@@ -26,13 +25,11 @@ import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.gsi.GsiBackfillManager;
 import com.alibaba.polardbx.executor.physicalbackfill.PhysicalBackfillUtils;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
-import com.alibaba.polardbx.optimizer.config.table.ScaleOutPlanUtil;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.AlterTableGroupBackfill;
-import com.alibaba.polardbx.optimizer.core.rel.PhysicalBackfill;
 import lombok.Getter;
 import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.util.Pair;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -45,7 +42,7 @@ import java.util.Set;
 public class AlterTableGroupBackFillTask extends BaseBackfillTask implements RemoteExecutableDdlTask {
 
     String logicalTableName;
-    Map<String, Pair<String, String>> ptbGroupMap;
+    Map<String, List<String>> ptbGroupMap;
     Map<String, Set<String>> sourcePhyTables;
     Map<String, Set<String>> targetPhyTables;
     boolean broadcast;
@@ -56,7 +53,7 @@ public class AlterTableGroupBackFillTask extends BaseBackfillTask implements Rem
     @JSONCreator
     public AlterTableGroupBackFillTask(String schemaName,
                                        String logicalTableName,
-                                       Map<String, Pair<String, String>> ptbGroupMap,
+                                       Map<String, List<String>> ptbGroupMap,
                                        Map<String, Set<String>> sourcePhyTables,
                                        Map<String, Set<String>> targetPhyTables,
                                        boolean broadcast,
@@ -95,24 +92,19 @@ public class AlterTableGroupBackFillTask extends BaseBackfillTask implements Rem
         executionContext.setSchemaName(schemaName);
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
-        if (usePhysicalBackfill && !broadcast) {
-            final RelNode executablePhyBackfillPlan =
-                PhysicalBackfill.createPhysicalBackfill(schemaName, logicalTableName, executionContext, sourcePhyTables,
-                    targetPhyTables, broadcast, null);
-            ExecutorHelper.execute(executablePhyBackfillPlan, executionContext);
-        } else {
-            final RelNode executableLogicalBackfillPlan = AlterTableGroupBackfill
-                .createAlterTableGroupBackfill(schemaName, logicalTableName, executionContext, ptbGroupMap,
-                    sourcePhyTables, targetPhyTables, broadcast, movePartitions, useChangeSet);
-            ExecutorHelper.execute(executableLogicalBackfillPlan, executionContext);
-        }
+        final RelNode executableLogicalBackfillPlan = AlterTableGroupBackfill
+            .createAlterTableGroupBackfill(schemaName, logicalTableName, executionContext, ptbGroupMap,
+                sourcePhyTables, targetPhyTables, broadcast, movePartitions, useChangeSet);
+        ExecutorHelper.execute(executableLogicalBackfillPlan, executionContext);
+        FailPoint.injectSuspendFromHint(FailPointKey.FP_LOGICAL_BACK_FILL_SUSPEND, executionContext);
     }
 
     @Override
     protected void rollbackImpl(ExecutionContext executionContext) {
         if (usePhysicalBackfill) {
             //cleanup idb file
-            PhysicalBackfillUtils.rollbackCopyIbd(getTaskId(), schemaName, logicalTableName, 0, executionContext);
+            PhysicalBackfillUtils.rollbackCopyIbd(getRootJobId(), getTaskId(), schemaName, logicalTableName, 0,
+                executionContext);
         } else {
             GsiBackfillManager gsiBackfillManager = new GsiBackfillManager(schemaName);
             gsiBackfillManager.deleteByBackfillId(getTaskId());
@@ -124,7 +116,7 @@ public class AlterTableGroupBackFillTask extends BaseBackfillTask implements Rem
     }
 
     @Override
-    public List<String> explainInfo() {
+    public List<String> explainInfo(ExecutionContext ec) {
         String backfillTask = "LOGICAL_BACKFILL(" + logicalTableName + ")";
         List<String> command = new ArrayList<>(1);
         command.add(backfillTask);

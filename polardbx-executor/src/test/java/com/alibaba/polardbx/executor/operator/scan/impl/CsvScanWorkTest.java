@@ -1,6 +1,10 @@
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
 import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.memory.MemoryUsageReport;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.properties.ParamManager;
@@ -14,11 +18,17 @@ import com.alibaba.polardbx.executor.gms.FileVersionStorage;
 import com.alibaba.polardbx.executor.operator.scan.ColumnarSplit;
 import com.alibaba.polardbx.executor.operator.scan.CsvScanTestBase;
 import com.alibaba.polardbx.executor.operator.scan.IOStatus;
+import com.alibaba.polardbx.executor.operator.scan.MockColumnarRpcServiceServer;
 import com.alibaba.polardbx.executor.operator.scan.ScanState;
 import com.alibaba.polardbx.executor.operator.scan.ScanWork;
+import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.engine.FileSystemUtils;
+import com.alibaba.polardbx.gms.ha.ColumnarHaSwitchParams;
+import com.alibaba.polardbx.gms.ha.impl.ColumnarHaContext;
+import com.alibaba.polardbx.gms.ha.impl.ColumnarHaManager;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarAppendedFilesAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarAppendedFilesRecord;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarLeaseRecord;
 import com.alibaba.polardbx.gms.metadb.table.FilesAccessor;
 import com.alibaba.polardbx.gms.metadb.table.FilesRecord;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
@@ -27,6 +37,8 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.ListenableFuture;
+import io.grpc.Server;
+import io.grpc.ServerBuilder;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -37,6 +49,8 @@ import org.mockito.Mockito;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -60,7 +74,9 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
 
 public class CsvScanWorkTest extends CsvScanTestBase {
@@ -68,6 +84,7 @@ public class CsvScanWorkTest extends CsvScanTestBase {
     private static final Logger logger = LoggerFactory.getLogger(CsvScanWorkTest.class);
 
     private static List<ColumnarAppendedFilesRecord> MOCK_FULL_TYPE_CAF_RECORDS;
+    private static List<ColumnarAppendedFilesRecord> MOCK_DEL_CAF_RECORDS;
 
     static {
         ColumnarAppendedFilesRecord caf = new ColumnarAppendedFilesRecord();
@@ -76,6 +93,13 @@ public class CsvScanWorkTest extends CsvScanTestBase {
         caf.checkpointTso = 7257742356747649088L;
         caf.fileName = FULL_TYPE_FILE_NAME;
         MOCK_FULL_TYPE_CAF_RECORDS = Collections.singletonList(caf);
+
+        ColumnarAppendedFilesRecord delCaf = new ColumnarAppendedFilesRecord();
+        delCaf.appendLength = DEL_FILE_LENGTH;
+        delCaf.appendOffset = 0L;
+        delCaf.checkpointTso = 7257742230016753728L;
+        delCaf.fileName = DEL_FILE_NAME;
+        MOCK_DEL_CAF_RECORDS = Collections.singletonList(delCaf);
     }
 
     @BeforeClass
@@ -89,7 +113,12 @@ public class CsvScanWorkTest extends CsvScanTestBase {
 
         while ((scanWork = split.nextWork()) != null) {
             IOStatus<Chunk> ioStatus = scanWork.getIOStatus();
-            scanWork.invoke(SCAN_WORK_EXECUTOR);
+            String workId = scanWork.getWorkId();
+
+            checkDeviationWithDiag(scanWork, "scanWork", "BEFORE_INVOKE", workId);
+            checkDeviationWithDiag(ioStatus, "ioStatus", "BEFORE_INVOKE", workId);
+
+            scanWork.invoke(SCAN_WORK_EXECUTOR, null);
             boolean isCompleted = false;
             while (!isCompleted) {
                 ScanState state = ioStatus.state();
@@ -110,9 +139,16 @@ public class CsvScanWorkTest extends CsvScanTestBase {
                     break;
                 }
                 case FINISHED:
+                    checkDeviationWithDiag(scanWork, "scanWork", "FINISHED_BEFORE_DRAIN", workId);
+                    checkDeviationWithDiag(ioStatus, "ioStatus", "FINISHED_BEFORE_DRAIN", workId);
+
                     while ((result = ioStatus.popResult()) != null) {
                         rowCount += result.getPositionCount();
                     }
+
+                    checkDeviationWithDiag(scanWork, "scanWork", "FINISHED_AFTER_DRAIN", workId);
+                    checkDeviationWithDiag(ioStatus, "ioStatus", "FINISHED_AFTER_DRAIN", workId);
+
                     isCompleted = true;
                     break;
                 case FAILED:
@@ -128,10 +164,44 @@ public class CsvScanWorkTest extends CsvScanTestBase {
         return rowCount;
     }
 
+    /**
+     * Run MemoryCountable.checkDeviation with extra diagnostic logs to help reproduce
+     * and investigate memory estimation deviations in the test environment.
+     * <p>
+     * Before the check: logs the estimated size and a hash of the countable.
+     * On failure: logs estimated vs actual sizes, the deviation, and the full memory tree,
+     * then rethrows so the test still fails.
+     */
+    private static void checkDeviationWithDiag(MemoryCountable countable, String kind, String phase, String workId) {
+        long estimated = countable.getMemoryUsage();
+        logger.info("[DEVIATION_CHECK] phase={}, kind={}, workId={}, class={}, estimated={} bytes",
+            phase, kind, workId, countable.getClass().getName(), estimated);
+        try {
+            MemoryCountable.checkDeviation(countable, 0d, false);
+        } catch (RuntimeException e) {
+            // Re-measure to print the full diagnostic tree, then rethrow original exception.
+            try {
+                MemoryUsageReport report = FastMemoryCounter.parseInstance(
+                    countable, FastMemoryCounter.DEFAULT_MAX_DEPTH, true, true, true);
+                long actual = report.getTotalSize();
+                long diff = estimated - actual;
+                double deviation = actual != 0 ? ((double) diff) / actual : 0d;
+                logger.error(
+                    "[DEVIATION_FAIL] phase={}, kind={}, workId={}, class={}, estimated={}, actual={}, diff={}, deviation={}\nmemoryTree=\n{}",
+                    phase, kind, workId, countable.getClass().getName(),
+                    estimated, actual, diff, deviation, report.getMemoryUsageTree());
+            } catch (Throwable diagError) {
+                logger.error("[DEVIATION_FAIL] phase=" + phase + ", kind=" + kind + ", workId=" + workId
+                    + ", failed to build diagnostic tree", diagError);
+            }
+            throw e;
+        }
+    }
+
     @Test
     public void testSpecifiedCsvColumnarScan() throws ExecutionException, InterruptedException {
         when(columnarManager.fileMetaOf(anyString())).thenReturn(FULL_TYPE_FILE_META);
-        Mockito.doCallRealMethod().when(columnarManager).csvData(anyLong(), anyString());
+        Mockito.doCallRealMethod().when(columnarManager).csvData(anyLong(), anyString(), any());
         Mockito.doCallRealMethod().when(columnarManager).injectForTest(any(), any(), any(), any(), any());
         columnarManager.injectForTest(new FileVersionStorage(columnarManager), null, new AtomicLong(),
             CacheBuilder.newBuilder()
@@ -182,9 +252,220 @@ public class CsvScanWorkTest extends CsvScanTestBase {
     }
 
     @Test
-    public void testColumnarScan() throws ExecutionException, InterruptedException {
+    public void testColumnarScan() throws ExecutionException, InterruptedException, IOException {
+        try (MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            List<ColumnarLeaseRecord> records = new ArrayList<>();
+            ColumnarLeaseRecord record1 = new ColumnarLeaseRecord();
+            record1.id = 1;
+            record1.owner = "127.0.0.1@12345@1741241905182";
+            record1.lease = System.currentTimeMillis() + 120000;
+
+            ColumnarLeaseRecord record2 = new ColumnarLeaseRecord();
+            record2.id = 10;
+            record2.owner = "127.0.0.1:8030:8031";
+            records.add(record1);
+            records.add(record2);
+
+            Connection connection = Mockito.mock(Connection.class);
+            metaDbUtilMockedStatic.when(MetaDbUtil::getConnection).thenReturn(connection);
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(),
+                Mockito.eq(ColumnarLeaseRecord.class), Mockito.any())).thenReturn(records);
+
+            ColumnarHaManager haManager = ColumnarHaManager.getInstance();
+            ColumnarHaContext columnarHaContext = ColumnarHaManager.buildColumnarHaContextFromMetaDb();
+            haManager.setColumnarHaContext(columnarHaContext);
+            ColumnarHaManager.refreshColumnarHaContext(haManager, haManager.getColumnarHaContext());
+            ColumnarHaSwitchParams haSwitchParams = new ColumnarHaSwitchParams();
+            haSwitchParams.curAvailableAddr = columnarHaContext.getCurrAvailableNodeAddr();
+            haSwitchParams.rpcPort = columnarHaContext.getCurrRpcPort();
+            haManager.doHaSwitch(haSwitchParams);
+            Server server = null;
+            try {
+                server = ServerBuilder.forPort(haManager.getColumnarHaContext().getCurrRpcPort())
+                    .addService(new MockColumnarRpcServiceServer())
+                    .build()
+                    .start();
+                when(columnarManager.fileMetaOf(anyString())).thenReturn(FULL_TYPE_FILE_META);
+                Mockito.doCallRealMethod().when(columnarManager).csvData(anyLong(), anyString(), any());
+                Mockito.doCallRealMethod().when(columnarManager).injectForTest(any(), any(), any(), any(), any());
+                columnarManager.injectForTest(new FileVersionStorage(columnarManager), null, new AtomicLong(),
+                    CacheBuilder.newBuilder()
+                        .build(new CacheLoader<Long, Map<String, List<ColumnarAppendedFilesRecord>>>() {
+                            @Override
+                            public Map<String, List<ColumnarAppendedFilesRecord>> load(Long key) {
+                                Map<String, List<ColumnarAppendedFilesRecord>> result = new HashMap<>();
+                                result.put(FULL_TYPE_FILE_NAME, MOCK_FULL_TYPE_CAF_RECORDS);
+                                return result;
+                            }
+                        }), null);
+
+                ExecutionContext executionContext;
+                try (MockedStatic<ConfigDataMode> mockedStatic = Mockito.mockStatic(ConfigDataMode.class)) {
+                    mockedStatic.when(ConfigDataMode::isColumnarMode).thenReturn(true);
+                    executionContext = ColumnarStoreUtils.newEcForCache();
+                }
+
+                defaultScanPreProcessor.addFile(FULL_TYPE_FILE_PATH);
+                ListenableFuture<?> preProcessorFuture =
+                    defaultScanPreProcessor.prepare(SCAN_WORK_EXECUTOR, null, null);
+                preProcessorFuture.get();
+                ColumnarSplit split = CsvColumnarSplit.newBuilder()
+                    .executionContext(executionContext)
+                    .columnarManager(columnarManager)
+                    .file(FULL_TYPE_FILE_PATH, 0)
+                    .position(null)
+                    .inputRefs(new ArrayList<>(), IntStream.rangeClosed(2, 71).boxed().collect(Collectors.toList()))
+                    .tso(7257742356747649088L)
+                    .prepare(defaultScanPreProcessor)
+                    .columnTransformer(new OSSColumnTransformer(
+                        FULL_TYPE_FILE_META.getColumnMetas().subList(2, 72),
+                        FULL_TYPE_FILE_META.getColumnMetas().subList(2, 72),
+                        null, null,
+                        IntStream.rangeClosed(3, 72).boxed().collect(Collectors.toList())))
+                    .partNum(0)
+                    .nodePartCount(1)
+                    .build();
+
+                int rowCount = runWork(split);
+                Assert.assertEquals(240, rowCount);
+
+                split = CsvColumnarSplit.newBuilder()
+                    .executionContext(executionContext)
+                    .columnarManager(columnarManager)
+                    .file(FULL_TYPE_FILE_PATH, 0)
+                    .position(null)
+                    .inputRefs(new ArrayList<>(), IntStream.rangeClosed(2, 71).boxed().collect(Collectors.toList()))
+                    .tso(7257742356747649088L)
+                    .prepare(defaultScanPreProcessor)
+                    .columnTransformer(new OSSColumnTransformer(
+                        FULL_TYPE_FILE_META.getColumnMetas().subList(2, 72),
+                        FULL_TYPE_FILE_META.getColumnMetas().subList(2, 72),
+                        null, null,
+                        IntStream.rangeClosed(3, 72).boxed().collect(Collectors.toList())))
+                    .partNum(0)
+                    .nodePartCount(1)
+                    .build();
+                rowCount = runWork(split);
+                Assert.assertEquals(240, rowCount);
+            } finally {
+                if (server != null) {
+                    server.shutdown();
+                    server.awaitTermination();
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testColumnarScanWithRandomFail() throws ExecutionException, InterruptedException, IOException {
+        try (MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            List<ColumnarLeaseRecord> records = new ArrayList<>();
+            ColumnarLeaseRecord record1 = new ColumnarLeaseRecord();
+            record1.id = 1;
+            record1.owner = "127.0.0.1@12345@1741241905182";
+            record1.lease = System.currentTimeMillis() + 120000;
+
+            ColumnarLeaseRecord record2 = new ColumnarLeaseRecord();
+            record2.id = 10;
+            record2.owner = "127.0.0.1:8030:8031";
+            records.add(record1);
+            records.add(record2);
+
+            Connection connection = Mockito.mock(Connection.class);
+            metaDbUtilMockedStatic.when(MetaDbUtil::getConnection).thenReturn(connection);
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(),
+                Mockito.eq(ColumnarLeaseRecord.class), Mockito.any())).thenReturn(records);
+
+            ColumnarHaManager haManager = ColumnarHaManager.getInstance();
+            ColumnarHaContext columnarHaContext = ColumnarHaManager.buildColumnarHaContextFromMetaDb();
+            haManager.setColumnarHaContext(columnarHaContext);
+            ColumnarHaManager.refreshColumnarHaContext(haManager, haManager.getColumnarHaContext());
+            ColumnarHaSwitchParams haSwitchParams = new ColumnarHaSwitchParams();
+            haSwitchParams.curAvailableAddr = columnarHaContext.getCurrAvailableNodeAddr();
+            haSwitchParams.rpcPort = columnarHaContext.getCurrRpcPort();
+            haManager.doHaSwitch(haSwitchParams);
+            Server server = null;
+            try {
+                server = ServerBuilder.forPort(haManager.getColumnarHaContext().getCurrRpcPort())
+                    .addService(new MockColumnarRpcServiceServer(true))
+                    .build()
+                    .start();
+                when(columnarManager.fileMetaOf(anyString())).thenReturn(FULL_TYPE_FILE_META);
+                Mockito.doCallRealMethod().when(columnarManager).csvData(anyLong(), anyString(), any());
+                Mockito.doCallRealMethod().when(columnarManager).injectForTest(any(), any(), any(), any(), any());
+                columnarManager.injectForTest(new FileVersionStorage(columnarManager), null, new AtomicLong(),
+                    CacheBuilder.newBuilder()
+                        .build(new CacheLoader<Long, Map<String, List<ColumnarAppendedFilesRecord>>>() {
+                            @Override
+                            public Map<String, List<ColumnarAppendedFilesRecord>> load(Long key) {
+                                Map<String, List<ColumnarAppendedFilesRecord>> result = new HashMap<>();
+                                result.put(FULL_TYPE_FILE_NAME, MOCK_FULL_TYPE_CAF_RECORDS);
+                                return result;
+                            }
+                        }), null);
+
+                ExecutionContext executionContext;
+                try (MockedStatic<ConfigDataMode> mockedStatic = Mockito.mockStatic(ConfigDataMode.class)) {
+                    mockedStatic.when(ConfigDataMode::isColumnarMode).thenReturn(true);
+                    executionContext = ColumnarStoreUtils.newEcForCache();
+                }
+
+                defaultScanPreProcessor.addFile(FULL_TYPE_FILE_PATH);
+                ListenableFuture<?> preProcessorFuture =
+                    defaultScanPreProcessor.prepare(SCAN_WORK_EXECUTOR, null, null);
+                preProcessorFuture.get();
+                ColumnarSplit split = CsvColumnarSplit.newBuilder()
+                    .executionContext(executionContext)
+                    .columnarManager(columnarManager)
+                    .file(FULL_TYPE_FILE_PATH, 0)
+                    .position(null)
+                    .inputRefs(new ArrayList<>(), IntStream.rangeClosed(2, 71).boxed().collect(Collectors.toList()))
+                    .tso(7257742356747649088L)
+                    .prepare(defaultScanPreProcessor)
+                    .columnTransformer(new OSSColumnTransformer(
+                        FULL_TYPE_FILE_META.getColumnMetas().subList(2, 72),
+                        FULL_TYPE_FILE_META.getColumnMetas().subList(2, 72),
+                        null, null,
+                        IntStream.rangeClosed(3, 72).boxed().collect(Collectors.toList())))
+                    .partNum(0)
+                    .nodePartCount(1)
+                    .build();
+
+                int rowCount = runWork(split);
+                Assert.assertEquals(240, rowCount);
+
+                split = CsvColumnarSplit.newBuilder()
+                    .executionContext(executionContext)
+                    .columnarManager(columnarManager)
+                    .file(FULL_TYPE_FILE_PATH, 0)
+                    .position(null)
+                    .inputRefs(new ArrayList<>(), IntStream.rangeClosed(2, 71).boxed().collect(Collectors.toList()))
+                    .tso(7257742356747649088L)
+                    .prepare(defaultScanPreProcessor)
+                    .columnTransformer(new OSSColumnTransformer(
+                        FULL_TYPE_FILE_META.getColumnMetas().subList(2, 72),
+                        FULL_TYPE_FILE_META.getColumnMetas().subList(2, 72),
+                        null, null,
+                        IntStream.rangeClosed(3, 72).boxed().collect(Collectors.toList())))
+                    .partNum(0)
+                    .nodePartCount(1)
+                    .build();
+                rowCount = runWork(split);
+                Assert.assertEquals(240, rowCount);
+            } finally {
+                if (server != null) {
+                    server.shutdown();
+                    server.awaitTermination();
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testColumnarScanFromOss() throws ExecutionException, InterruptedException, IOException {
+        ColumnarHaManager.getInstance().doHaSwitch(new ColumnarHaSwitchParams());
         when(columnarManager.fileMetaOf(anyString())).thenReturn(FULL_TYPE_FILE_META);
-        Mockito.doCallRealMethod().when(columnarManager).csvData(anyLong(), anyString());
+        Mockito.doCallRealMethod().when(columnarManager).csvData(anyLong(), anyString(), any());
         Mockito.doCallRealMethod().when(columnarManager).injectForTest(any(), any(), any(), any(), any());
         columnarManager.injectForTest(new FileVersionStorage(columnarManager), null, new AtomicLong(),
             CacheBuilder.newBuilder()
@@ -276,46 +557,7 @@ public class CsvScanWorkTest extends CsvScanTestBase {
             .nodePartCount(1)
             .build();
 
-        ScanWork<ColumnarSplit, Chunk> scanWork;
-        int rowCount = 0;
-        while ((scanWork = split.nextWork()) != null) {
-            IOStatus<Chunk> ioStatus = scanWork.getIOStatus();
-            scanWork.invoke(SCAN_WORK_EXECUTOR);
-            boolean isCompleted = false;
-            while (!isCompleted) {
-                ScanState state = ioStatus.state();
-                Chunk result;
-                switch (state) {
-                case READY:
-                case BLOCKED: {
-                    result = ioStatus.popResult();
-                    if (result == null) {
-                        ListenableFuture<?> listenableFuture = ioStatus.isBlocked();
-                        listenableFuture.get();
-                        result = ioStatus.popResult();
-                    }
-
-                    if (result != null) {
-                        rowCount += result.getPositionCount();
-                    }
-                    break;
-                }
-                case FINISHED:
-                    while ((result = ioStatus.popResult()) != null) {
-                        rowCount += result.getPositionCount();
-                    }
-                    isCompleted = true;
-                    break;
-                case FAILED:
-                    isCompleted = true;
-                    ioStatus.throwIfFailed();
-                    break;
-                case CLOSED:
-                    isCompleted = true;
-                    break;
-                }
-            }
-        }
+        int rowCount = runWork(split);
         Assert.assertEquals(25, rowCount);
     }
 
@@ -348,6 +590,7 @@ public class CsvScanWorkTest extends CsvScanTestBase {
                     public Map<String, List<ColumnarAppendedFilesRecord>> load(Long key) {
                         Map<String, List<ColumnarAppendedFilesRecord>> result = new HashMap<>();
                         result.put(FULL_TYPE_FILE_NAME, MOCK_FULL_TYPE_CAF_RECORDS);
+                        result.put(DEL_FILE_NAME, MOCK_DEL_CAF_RECORDS);
                         return result;
                     }
                 }),
@@ -360,8 +603,8 @@ public class CsvScanWorkTest extends CsvScanTestBase {
                     }
                 }));
 
-        flashbackScanPreProcessor.addFile(DATA_FILE_PATH);
-        ListenableFuture<?> preProcessorFuture = flashbackScanPreProcessor.prepare(SCAN_WORK_EXECUTOR, null, null);
+        autoFlashbackScanPreProcessor.addFile(DATA_FILE_PATH);
+        ListenableFuture<?> preProcessorFuture = autoFlashbackScanPreProcessor.prepare(SCAN_WORK_EXECUTOR, null, null);
         preProcessorFuture.get();
         ColumnarSplit split = CsvColumnarSplit.newBuilder()
             .executionContext(new ExecutionContext())
@@ -370,7 +613,7 @@ public class CsvScanWorkTest extends CsvScanTestBase {
             .inputRefs(new ArrayList<>(), Lists.newArrayList(2, 3, 4, 5))
             .tso(7182618688200114304L + 1L)
             .isFlashback(true)
-            .prepare(flashbackScanPreProcessor)
+            .prepare(autoFlashbackScanPreProcessor)
             .columnTransformer(new OSSColumnTransformer(
                 FILE_META.getColumnMetas().subList(2, 6),
                 FILE_META.getColumnMetas().subList(2, 6),
@@ -382,6 +625,69 @@ public class CsvScanWorkTest extends CsvScanTestBase {
 
         int rowCount = runWork(split);
         Assert.assertEquals(25, rowCount);
+    }
+
+    @Test
+    public void testColumnarAutoFlashbackZeroLengthQueryWithCache() throws Throwable {
+        DynamicConfig.getInstance().loadValue(logger, ConnectionProperties.ENABLE_COLUMNAR_SNAPSHOT_CACHE, "true");
+        Mockito.doCallRealMethod().when(columnarManager).resetSnapshotCacheTtlMs(anyInt());
+        columnarManager.resetSnapshotCacheTtlMs(60000);
+        testAutoFlashbackForZeroLengthFile();
+    }
+
+    @Test
+    public void testColumnarAutoFlashbackZeroLengthQueryWithoutCache() throws Throwable {
+        DynamicConfig.getInstance().loadValue(logger, ConnectionProperties.ENABLE_COLUMNAR_SNAPSHOT_CACHE, "false");
+        testAutoFlashbackForZeroLengthFile();
+    }
+
+    private void testAutoFlashbackForZeroLengthFile() throws Throwable {
+        Mockito.doCallRealMethod().when(columnarManager).flashbackCsvData(anyLong(), anyString());
+        Mockito.doCallRealMethod().when(columnarManager).getMaxLength(anyString(), anyLong());
+        Mockito.doCallRealMethod().when(columnarManager).injectForTest(any(), any(), any(), any(), any());
+        Mockito.doCallRealMethod().when(columnarManager)
+            .getFlashbackColumnarManager(anyLong(), anyString(), anyString(), anyBoolean());
+        Mockito.doCallRealMethod().when(columnarManager).getFlashbackDeleteBitmapManager(anyLong(), anyString(),
+            anyString(), anyString(), any());
+        columnarManager.injectForTest(new FileVersionStorage(columnarManager), null, new AtomicLong(),
+            CacheBuilder.newBuilder()
+                .build(new CacheLoader<Long, Map<String, List<ColumnarAppendedFilesRecord>>>() {
+                    @Override
+                    public Map<String, List<ColumnarAppendedFilesRecord>> load(Long key) {
+                        return new HashMap<>();
+                    }
+                }),
+            CacheBuilder.newBuilder()
+                .expireAfterAccess(1, TimeUnit.HOURS)
+                .build(new CacheLoader<String, Integer>() {
+                    @Override
+                    public Integer load(@NotNull String fileName) {
+                        return DynamicColumnarManager.getMaxLength(fileName);
+                    }
+                }));
+
+        autoFlashbackScanPreProcessor.addFile(ZERO_LENGTH_FILE_PATH);
+        ListenableFuture<?> preProcessorFuture = autoFlashbackScanPreProcessor.prepare(SCAN_WORK_EXECUTOR, null, null);
+        preProcessorFuture.get();
+        ColumnarSplit split = CsvColumnarSplit.newBuilder()
+            .executionContext(new ExecutionContext())
+            .columnarManager(columnarManager)
+            .file(ZERO_LENGTH_FILE_PATH, 0)
+            .inputRefs(new ArrayList<>(), Lists.newArrayList(2, 3, 4, 5))
+            .tso(7182618688200114304L + 1L)
+            .isFlashback(true)
+            .prepare(autoFlashbackScanPreProcessor)
+            .columnTransformer(new OSSColumnTransformer(
+                FILE_META.getColumnMetas().subList(2, 6),
+                FILE_META.getColumnMetas().subList(2, 6),
+                null, null,
+                Lists.newArrayList(3, 4, 5, 6)))
+            .partNum(0)
+            .nodePartCount(1)
+            .build();
+
+        int rowCount = runWork(split);
+        Assert.assertEquals(0, rowCount);
     }
 
     static class MockExecutorService implements ExecutorService {
@@ -431,6 +737,7 @@ public class CsvScanWorkTest extends CsvScanTestBase {
             return executorService.submit(() -> {
                 try (MockedStatic<ColumnarManager> columnarManagerMockedStatic = Mockito.mockStatic(
                     ColumnarManager.class);
+                    MockedStatic<InstConfUtil> mockInstConfUtil = Mockito.mockStatic(InstConfUtil.class);
                     MockedStatic<FileSystemUtils> mockFsUtils = Mockito.mockStatic(FileSystemUtils.class);
                     MockedStatic<MetaDbUtil> mockedStatic = Mockito.mockStatic(MetaDbUtil.class);
                     MockedConstruction<ColumnarAppendedFilesAccessor> mockedConstruction =
@@ -447,9 +754,18 @@ public class CsvScanWorkTest extends CsvScanTestBase {
                                 mock.queryColumnarByFileName(anyString())
                             ).thenAnswer(
                                 invocationOnMock -> {
-                                    if (invocationOnMock.getArgument(0).equals(DATA_FILE_NAME)) {
+                                    String fileName = (String) invocationOnMock.getArgument(0);
+                                    if (fileName.equals(DATA_FILE_NAME)) {
                                         FilesRecord record = new FilesRecord();
                                         record.extentSize = 2460931;
+                                        return Lists.newArrayList(record);
+                                    } else if (fileName.equals(ZERO_LENGTH_FILE_NAME)) {
+                                        FilesRecord record = new FilesRecord();
+                                        record.extentSize = 0;
+                                        return Lists.newArrayList(record);
+                                    } else if (fileName.equals(DEL_FILE_NAME)) {
+                                        FilesRecord record = new FilesRecord();
+                                        record.extentSize = DEL_FILE_LENGTH;
                                         return Lists.newArrayList(record);
                                     } else {
                                         return null;
@@ -457,6 +773,8 @@ public class CsvScanWorkTest extends CsvScanTestBase {
                                 }
                             );
                         })) {
+                    mockInstConfUtil.when(() -> InstConfUtil.getInt(eq(ConnectionParams.COLUMNAR_RPC_MAX_MESSAGE_SIZE)))
+                        .thenReturn(8 * 1024 * 1024);
                     mockedStatic.when(MetaDbUtil::getConnection).thenReturn(null);
                     mockFsUtils.when(() -> FileSystemUtils.fileExists(anyString(), any(Engine.class), anyBoolean()))
                         .thenReturn(true);
@@ -464,6 +782,11 @@ public class CsvScanWorkTest extends CsvScanTestBase {
                         () -> FileSystemUtils.readFile(anyString(), anyInt(), anyInt(), any(byte[].class),
                             any(Engine.class),
                             anyBoolean())
+                    ).thenAnswer(mockFileReadAnswer);
+                    mockFsUtils.when(
+                        () -> FileSystemUtils.readFile(anyString(), anyInt(), anyInt(), any(byte[].class),
+                            any(Engine.class),
+                            anyBoolean(), any())
                     ).thenAnswer(mockFileReadAnswer);
                     mockFsUtils.when(
                         () -> FileSystemUtils.openStreamFileWithBuffer(anyString(), any(Engine.class), anyBoolean())

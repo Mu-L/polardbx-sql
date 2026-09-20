@@ -16,17 +16,26 @@
 
 package com.alibaba.polardbx.common.utils.time.core;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import org.openjdk.jol.info.ClassLayout;
+
 import java.io.Serializable;
 import java.sql.Timestamp;
 import java.util.Date;
 
 public class OriginalTimestamp extends Timestamp implements OriginalTemporalValue, Serializable {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(OriginalTimestamp.class).instanceSize();
     private final MysqlDateTime mysqlDateTime;
 
     public OriginalTimestamp(MysqlDateTime t) {
         super(UNSET_VALUE);
 
         this.mysqlDateTime = t.clone();
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(mysqlDateTime);
     }
 
     @Override

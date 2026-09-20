@@ -24,7 +24,7 @@ public class IllegalAccumulatorOpTest {
     public void testIllegalAccumulateCall() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new Sum0(), DataTypes.LongType, new DataType[] {DataTypes.LongType}, 100,
-                new ExecutionContext());
+                new ExecutionContext(), null);
         Assert.assertTrue(accumulator instanceof LongSum0Accumulator);
         try {
             ((LongSum0Accumulator) accumulator).accumulate(0);
@@ -35,7 +35,7 @@ public class IllegalAccumulatorOpTest {
 
         Accumulator accumulator2 =
             AccumulatorBuilders.create(new CountV2(new int[0], false, null, 0), DataTypes.LongType,
-                new DataType[] {DataTypes.LongType}, 100, new ExecutionContext());
+                new DataType[] {DataTypes.LongType}, 100, new ExecutionContext(), null);
         Assert.assertTrue(accumulator2 instanceof CountRowsAccumulator);
         try {
             ((CountRowsAccumulator) accumulator2).accumulate(0, LongBlock.of(1L, 2L, 3L), 0);

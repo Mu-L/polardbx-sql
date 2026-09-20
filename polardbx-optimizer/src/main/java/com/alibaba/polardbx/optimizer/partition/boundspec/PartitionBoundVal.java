@@ -20,6 +20,7 @@ import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.partition.datatype.PartitionField;
 import com.alibaba.polardbx.optimizer.partition.datatype.PartitionFieldBuilder;
+import com.alibaba.polardbx.optimizer.partition.util.MySqlStringEscaperUtils;
 
 /**
  * The definition the const value of one partition bound
@@ -234,18 +235,23 @@ public class PartitionBoundVal {
             if (!bndVal.isNullValue() && !(DataTypeUtil.isNumberSqlType(partField.dataType()))) {
                 needWrappWithQuotationMarks = true;
             }
-            if (needWrappWithQuotationMarks) {
-                sb.append("'");
-            }
+
+            String vndStr = null;
             if (bndVal.isNullValue()) {
-                sb.append("null");
+                vndStr = "null";
             } else {
-                sb.append(partField.stringValue().toStringUtf8());
+                vndStr = partField.stringValue().toStringUtf8();
             }
 
             if (needWrappWithQuotationMarks) {
-                sb.append("'");
+                // non-number type need wrapped with quotation marks
+                String strForMySql = String.format("'%s'", MySqlStringEscaperUtils.escapeJavaStringForMySQL(vndStr));
+                sb.append(strForMySql);
+            } else {
+                // number type need NOT wrapped with quotation marks
+                sb.append(vndStr);
             }
+
         } else if (bndVal.getValueKind() == PartitionBoundValueKind.DATUM_MAX_VALUE) {
             sb.append("MAXVALUE");
         } else if (bndVal.getValueKind() == PartitionBoundValueKind.DATUM_MIN_VALUE) {

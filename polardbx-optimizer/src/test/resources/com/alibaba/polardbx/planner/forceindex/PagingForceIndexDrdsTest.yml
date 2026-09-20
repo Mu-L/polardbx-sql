@@ -62,7 +62,7 @@ SQL:
         ORDER BY id DESC
         LIMIT 0, 20
     plan: |
-      logicalview(tables="optest_0000.t_special", sql="select `t_special0`.`id` as `id0`, `t_special0`.`order_id`, `t_special0`.`buyer_id` from (select `id` from `t_special` as `t_special` force index(`gg-sp`) where (`buyer_id` = ?) order by `id` desc limit ? offset ?) as `t3` inner join `t_special` as `t_special0` on (`t3`.`id` = `t_special0`.`id`) order by `t_special0`.`id` desc limit ?")
+      phytableoperation(tables="optest_0000.[t_special]", sql="select `t_special`.`id`, `t_special`.`order_id`, `t_special`.`buyer_id` from ? as `t_special` force index(`gg-sp`) where (`t_special`.`buyer_id` = ?) order by `id` desc limit ? offset ?", params="0,43544028,20")
   - sql: |
       /*+TDDL:cmd_extra(enable_direct_plan=false ENABLE_AUTO_PAGINATION_INDEX=false)*/ SELECT *
         FROM t_special FORCE INDEX (`gg-sp`)
@@ -71,14 +71,6 @@ SQL:
         LIMIT 0, 20
     plan: |
       phytableoperation(tables="optest_0000.[t_special]", sql="select `t_special`.`id`, `t_special`.`order_id`, `t_special`.`buyer_id` from ? as `t_special` force index(`gg-sp`) where (`t_special`.`buyer_id` = ?) order by `id` desc limit ? offset ?", params="0,43544028,20")
-  - sql: |
-      /*+TDDL:cmd_extra(enable_direct_plan=false ENABLE_AUTO_PAGINATION_INDEX=true)*/ SELECT *
-        FROM t_special FORCE INDEX (`gg-sp`)
-        WHERE buyer_id = 43544028          
-        ORDER BY id DESC
-        LIMIT 0, 20
-    plan: |
-      logicalview(tables="optest_0000.t_special", sql="select `t_special0`.`id` as `id0`, `t_special0`.`order_id`, `t_special0`.`buyer_id` from (select `id` from `t_special` as `t_special` force index(`gg-sp`) where (`buyer_id` = ?) order by `id` desc limit ? offset ?) as `t3` inner join `t_special` as `t_special0` on (`t3`.`id` = `t_special0`.`id`) order by `t_special0`.`id` desc limit ?")
   - sql: |
       SELECT *
         FROM t_order PAGING_FORCE INDEX (`prdo_long`)
@@ -110,12 +102,12 @@ SQL:
       select * from t_order PAGING_FORCE INDEX (`g_i_buyer`) where buyer_id = 1 limit 1;
     plan: |
       mergesort(sort="", offset=0, fetch=?1)
-        logicalview(tables="[0000-0003].t_order", shardcount=4, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` where (`buyer_id` = ?) limit (? + 0)")
+        logicalview(tables="[0000-0003].t_order", shardcount=4, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` where (`buyer_id` = ?) limit ?")
   - sql: |
       /*+TDDL:cmd_extra() PAGING_INDEX(`g_i_buyer`)*/select * from t_order where buyer_id = 1 limit 1;
     plan: |
       mergesort(sort="", offset=0, fetch=?1)
-        logicalview(tables="[0000-0003].t_order", shardcount=4, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` where (`buyer_id` = ?) limit (? + 0)")
+        logicalview(tables="[0000-0003].t_order", shardcount=4, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` where (`buyer_id` = ?) limit ?")
   - sql: |
       SELECT *
         FROM t_order PAGING_FORCE INDEX (`k1`)
@@ -147,6 +139,7 @@ SQL:
           indexscan(tables="optest_0001.g_i_buyer", sql="select `g_i_buyer0`.`id` as `id0`, `g_i_buyer0`.`order_id`, `g_i_buyer0`.`buyer_id` as `buyer_id0`, `g_i_buyer0`.`seller_id`, `g_i_buyer0`.`order_snapshot` from (select `id`, `buyer_id` from `g_i_buyer` as `g_i_buyer` force index(`auto_shard_key_buyer_id`) where (`buyer_id` = ?) order by `id` limit ?) as `t2` inner join `g_i_buyer` as `g_i_buyer0` on ((`t2`.`id` = `g_i_buyer0`.`id`) and (`t2`.`buyer_id` = `g_i_buyer0`.`buyer_id`)) order by `g_i_buyer0`.`id` limit ?")
           gather(concurrent=true)
             logicalview(tables="[0000-0003].t_order_full", shardcount=4, sql="select `id`, `order_id`, `product_id`, `extra_id`, `order_detail` from `t_order_full` as `t_order_full` force index(`primary`) where ((`buyer_id` = ?) and (`id` in (...)))")
+
   - sql: |
       /*+TDDL:PAGING_INDEX(t_order_full, g_i_buyer,auto_shard_key_buyer_id)*/select order_id from t_order_full where buyer_id = 1 order by id limit 1;
     plan: |
@@ -159,30 +152,31 @@ SQL:
           indexscan(tables="optest_0001.g_i_buyer", sql="select `g_i_buyer0`.`id` as `id0`, `g_i_buyer0`.`order_id`, `g_i_buyer0`.`buyer_id` as `buyer_id0`, `g_i_buyer0`.`seller_id`, `g_i_buyer0`.`order_snapshot` from (select `id`, `buyer_id` from `g_i_buyer` as `g_i_buyer` force index(`auto_shard_key_buyer_id`) where (`buyer_id` = ?) order by `id` limit ?) as `t2` inner join `g_i_buyer` as `g_i_buyer0` on ((`t2`.`id` = `g_i_buyer0`.`id`) and (`t2`.`buyer_id` = `g_i_buyer0`.`buyer_id`)) order by `g_i_buyer0`.`id` limit ?")
           gather(concurrent=true)
             logicalview(tables="[0000-0003].t_order_full", shardcount=4, sql="select `id`, `order_id`, `product_id`, `extra_id`, `order_detail` from `t_order_full` as `t_order_full` force index(`primary`) where ((`buyer_id` = ?) and (`id` in (...)))")
+
   - sql: |
       /*+TDDL:PAGING_INDEX(gg, g_i_buyer,auto_shard_key_buyer_id)*/select order_id from t_order_full gg where buyer_id = 1 order by id limit 1;
     plan: |
       indexscan(tables="optest_0001.g_i_buyer", sql="select `g_i_buyer0`.`order_id` from (select `id`, `buyer_id` from `g_i_buyer` as `g_i_buyer` force index(`auto_shard_key_buyer_id`) where (`buyer_id` = ?) order by `id` limit ?) as `t2` inner join `g_i_buyer` as `g_i_buyer0` on ((`t2`.`id` = `g_i_buyer0`.`id`) and (`t2`.`buyer_id` = `g_i_buyer0`.`buyer_id`)) order by `g_i_buyer0`.`id` limit ?")
   - sql: |
-      /*+TDDL:PAGING_INDEX(tt, g_i_buyer,auto_shard_key_buyer_id) cmd_extra(ENABLE_AUTO_PAGINATION_INDEX=true=false)*/select order_id from t_order_full gg where buyer_id = 1 order by id limit 1;
+      /*+TDDL:PAGING_INDEX(tt, g_i_buyer,auto_shard_key_buyer_id) cmd_extra(ENABLE_AUTO_PAGINATION_INDEX=false)*/select order_id from t_order_full gg where buyer_id = 1 order by id limit 1;
     plan: |
       indexscan(tables="optest_0001.g_i_buyer", sql="select `order_id` from `g_i_buyer` as `g_i_buyer` where (`buyer_id` = ?) order by `id` limit ?")
   - sql: |
       select * from t_order_full PAGING_FORCE INDEX (primary.prdo_long) where buyer_id = 1 order by id limit 1;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?1)
-        logicalview(tables="[0000-0003].t_order_full", shardcount=4, sql="select `t_order_full0`.`id` as `id0`, `t_order_full0`.`order_id` as `order_id0`, `t_order_full0`.`buyer_id`, `t_order_full0`.`seller_id`, `t_order_full0`.`product_id`, `t_order_full0`.`extra_id`, `t_order_full0`.`order_snapshot`, `t_order_full0`.`order_detail` from (select `id`, `order_id` from `t_order_full` as `t_order_full` force index(`prdo_long`) where (`buyer_id` = ?) order by `id` limit (? + 0)) as `t2` inner join `t_order_full` as `t_order_full0` on ((`t2`.`id` = `t_order_full0`.`id`) and (`t2`.`order_id` <=> `t_order_full0`.`order_id`)) order by `t_order_full0`.`id` limit (? + 0)")
+        logicalview(tables="[0000-0003].t_order_full", shardcount=4, sql="select `t_order_full0`.`id` as `id0`, `t_order_full0`.`order_id` as `order_id0`, `t_order_full0`.`buyer_id`, `t_order_full0`.`seller_id`, `t_order_full0`.`product_id`, `t_order_full0`.`extra_id`, `t_order_full0`.`order_snapshot`, `t_order_full0`.`order_detail` from (select `id`, `order_id` from `t_order_full` as `t_order_full` force index(`prdo_long`) where (`buyer_id` = ?) order by `id` limit ?) as `t2` inner join `t_order_full` as `t_order_full0` on ((`t2`.`id` = `t_order_full0`.`id`) and (`t2`.`order_id` <=> `t_order_full0`.`order_id`)) order by `t_order_full0`.`id` limit ?")
   - sql: |
       /*+TDDL:PAGING_INDEX(t_order_full, primary, prdo_long)*/select * from t_order_full where buyer_id = 1 order by id limit 1;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?1)
-        logicalview(tables="[0000-0003].t_order_full", shardcount=4, sql="select `t_order_full0`.`id` as `id0`, `t_order_full0`.`order_id` as `order_id0`, `t_order_full0`.`buyer_id`, `t_order_full0`.`seller_id`, `t_order_full0`.`product_id`, `t_order_full0`.`extra_id`, `t_order_full0`.`order_snapshot`, `t_order_full0`.`order_detail` from (select `id`, `order_id` from `t_order_full` as `t_order_full` force index(`prdo_long`) where (`buyer_id` = ?) order by `id` limit (? + 0)) as `t2` inner join `t_order_full` as `t_order_full0` on ((`t2`.`id` = `t_order_full0`.`id`) and (`t2`.`order_id` <=> `t_order_full0`.`order_id`)) order by `t_order_full0`.`id` limit (? + 0)")
+        logicalview(tables="[0000-0003].t_order_full", shardcount=4, sql="select `t_order_full0`.`id` as `id0`, `t_order_full0`.`order_id` as `order_id0`, `t_order_full0`.`buyer_id`, `t_order_full0`.`seller_id`, `t_order_full0`.`product_id`, `t_order_full0`.`extra_id`, `t_order_full0`.`order_snapshot`, `t_order_full0`.`order_detail` from (select `id`, `order_id` from `t_order_full` as `t_order_full` force index(`prdo_long`) where (`buyer_id` = ?) order by `id` limit ?) as `t2` inner join `t_order_full` as `t_order_full0` on ((`t2`.`id` = `t_order_full0`.`id`) and (`t2`.`order_id` <=> `t_order_full0`.`order_id`)) order by `t_order_full0`.`id` limit ?")
   - sql: |
       select extra_id from t_order_multi_sk paging_force index(prdo) where order_id = 1 and buyer_id in (1,2) order by buyer_id limit 1;
     plan: |
       project(extra_id="extra_id")
         mergesort(sort="buyer_id asc", offset=0, fetch=?2)
-          logicalview(tables="optest_0001.t_order_multi_sk_[0,1]", shardcount=2, sql="select `t_order_multi_sk0`.`extra_id`, `t_order_multi_sk0`.`buyer_id` as `buyer_id` from (select `buyer_id`, `id`, `order_id` from `t_order_multi_sk` as `t_order_multi_sk` force index(`prdo`) where ((`order_id` = ?) and (`buyer_id` in(?))) order by `buyer_id` limit (? + 0)) as `t2` inner join `t_order_multi_sk` as `t_order_multi_sk0` on ((`t2`.`buyer_id` = `t_order_multi_sk0`.`buyer_id`) and (`t2`.`id` = `t_order_multi_sk0`.`id`) and (`t2`.`order_id` = `t_order_multi_sk0`.`order_id`)) order by `t_order_multi_sk0`.`buyer_id` limit (? + 0)", pruninginfo="all size:2*2(part), pruning size:2")
+          logicalview(tables="optest_0001.t_order_multi_sk_[0,1]", shardcount=2, sql="select `t_order_multi_sk0`.`extra_id`, `t_order_multi_sk0`.`buyer_id` as `buyer_id` from (select `buyer_id`, `id`, `order_id` from `t_order_multi_sk` as `t_order_multi_sk` force index(`prdo`) where ((`order_id` = ?) and (`buyer_id` in(?))) order by `buyer_id` limit ?) as `t2` inner join `t_order_multi_sk` as `t_order_multi_sk0` on ((`t2`.`buyer_id` = `t_order_multi_sk0`.`buyer_id`) and (`t2`.`id` = `t_order_multi_sk0`.`id`) and (`t2`.`order_id` = `t_order_multi_sk0`.`order_id`)) order by `t_order_multi_sk0`.`buyer_id` limit ?", pruninginfo="all size:2*2(part), pruning size:2")
 DDL:
   t_special:
     CREATE TABLE `t_special` (

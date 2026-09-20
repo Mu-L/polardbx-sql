@@ -18,6 +18,8 @@ package com.alibaba.polardbx.executor.accumulator;
 
 import com.alibaba.polardbx.common.CrcAccumulator;
 import com.alibaba.polardbx.common.IOrderInvariantHash;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.common.RevisableOrderInvariantHash;
 import com.alibaba.polardbx.executor.accumulator.state.NullableCheckSumGroupState;
 import com.alibaba.polardbx.executor.chunk.Block;
@@ -26,13 +28,16 @@ import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.DoubleBlock;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.expression.calc.Aggregator;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.zip.CRC32;
 
 /**
  * @author yaozhili
  */
-public class CheckSumV2Accumulator implements Accumulator {
+public class CheckSumV2Accumulator extends AbstractAccumulator {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(CheckSumV2Accumulator.class).instanceSize();
+    @FieldMemoryCounter(value = false)
     private final DataType[] inputTypes;
 
     private final NullableCheckSumGroupState groupState;
@@ -44,6 +49,11 @@ public class CheckSumV2Accumulator implements Accumulator {
             inputTypes[i] = rowInputType[inputColumnIndexes[i]];
         }
         this.groupState = new NullableCheckSumGroupState(capacity, RevisableOrderInvariantHash.class);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(groupState);
     }
 
     @Override

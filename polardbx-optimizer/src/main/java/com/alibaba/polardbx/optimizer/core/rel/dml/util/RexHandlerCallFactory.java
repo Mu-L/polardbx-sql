@@ -19,6 +19,7 @@
 package com.alibaba.polardbx.optimizer.core.rel.dml.util;
 
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalInsert;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.LogicalWriteUtil.DynamicImplicitDefaultHandlerCall;
@@ -42,6 +43,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 
@@ -120,10 +122,14 @@ public final class RexHandlerCallFactory {
             if (defaultRex instanceof RexCallParam && rex instanceof RexCall) {
                 final RexNode maxScaleRex = ((RexCallParam) defaultRex).getRexCall();
 
-                if (maxScaleRex instanceof RexCall && ((RexCall) maxScaleRex).getOperator().getName()
-                    .equalsIgnoreCase(((RexCall) rex).getOperator().getName())) {
+                if (maxScaleRex instanceof RexCall
+                    // Check rex contains the same operator as maxScaleRex
+                    && RexUtils.RexCallChecker.analyze(rex,
+                    rexCall -> TStringUtil.equalsIgnoreCase(
+                        ((RexCall) maxScaleRex).getOperator().getName(),
+                        rexCall.getOperator().getName()))) {
 
-                    // For now, handle CURRENT_TIMESTAMP() ONLY
+                    // For now, replace CURRENT_TIMESTAMP() ONLY
                     final Long maxScale = RexUtils.currentTimestampScaleFinder(maxScaleRex);
 
                     if (maxScale >= 0) {
@@ -275,9 +281,16 @@ public final class RexHandlerCallFactory {
             this.replaceExplicitRexCallWithComputedDynamicImplicitDefault = ec.getParamManager()
                 .getBoolean(ConnectionParams.DML_REPLACE_EXPLICIT_REX_CALL_WITH_COMPUTED_DYNAMIC_IMPLICIT_DEFAULT);
 
-            // load dynamic implicit default param map and update insert plan
-            this.dynamicImplicitDefaultParamMap =
-                insert.loadDynamicImplicitDefaultParamMap(maxParamIndex, computeAllDynamicImplicitDefaultRefInOneGo);
+            final boolean replaceDynamicImplicitDefault =
+                ec.getParamManager().getBoolean(ConnectionParams.DML_REPLACE_DYNAMIC_IMPLICIT_DEFAULT);
+
+            if (replaceDynamicImplicitDefault) {
+                // load dynamic implicit default param map and update insert plan
+                this.dynamicImplicitDefaultParamMap = insert.loadDynamicImplicitDefaultParamMap(maxParamIndex,
+                    computeAllDynamicImplicitDefaultRefInOneGo);
+            } else {
+                this.dynamicImplicitDefaultParamMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+            }
         }
 
         @Override

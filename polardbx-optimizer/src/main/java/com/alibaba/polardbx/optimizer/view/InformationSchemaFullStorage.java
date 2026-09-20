@@ -55,6 +55,7 @@ public class InformationSchemaFullStorage extends VirtualView {
         columns.add(new RelDataTypeFieldImpl("IS_HEALTHY", 8, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
         columns.add(new RelDataTypeFieldImpl("IS_VIP", 9, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
         columns.add(new RelDataTypeFieldImpl("INFO_FROM", 10, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
+        columns.add(new RelDataTypeFieldImpl("DN_LABEL", 11, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
 
         return typeFactory.createStructType(columns);
     }

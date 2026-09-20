@@ -16,45 +16,71 @@
 
 package com.alibaba.polardbx.repo.mysql.handler;
 
+import com.alibaba.polardbx.common.TddlConstants;
+import com.alibaba.polardbx.common.dmlStats.GlobalReplaceReturningStatsSingleton;
 import com.alibaba.polardbx.common.eventlogger.EventLogger;
 import com.alibaba.polardbx.common.eventlogger.EventType;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
+import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.executor.common.ExecutorContext;
+import com.alibaba.polardbx.executor.common.TopologyHandler;
+import com.alibaba.polardbx.executor.cursor.Cursor;
+import com.alibaba.polardbx.executor.cursor.impl.GroupConcurrentUnionCursor;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.executor.utils.GroupKey;
 import com.alibaba.polardbx.executor.utils.NewGroupKey;
+import com.alibaba.polardbx.gms.metadb.table.ExternalizedColumnInfo;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
+import com.alibaba.polardbx.optimizer.config.table.ComplexTaskPlanUtils;
+import com.alibaba.polardbx.optimizer.config.table.GlobalIndexMeta;
+import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager;
+import com.alibaba.polardbx.optimizer.config.table.TableColumnUtils;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.context.ReturningFlagForCdc;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
+import com.alibaba.polardbx.optimizer.core.rel.BaseQueryOperation;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalDynamicValues;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalInsert;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalReplace;
+import com.alibaba.polardbx.optimizer.core.rel.PhyTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.dml.DistinctWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.RoutedWriteInput;
+import com.alibaba.polardbx.optimizer.core.rel.dml.WritePlanHook;
 import com.alibaba.polardbx.optimizer.core.rel.dml.Writer;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.ClassifyResult;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.DuplicateCheckResult;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.RowClassifier;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.SourceRows;
+import com.alibaba.polardbx.optimizer.core.rel.dml.writer.InsertWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.RelocateWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.ReplaceRelocateWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.writer.ShardingModifyWriter;
+import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.memory.MemoryEstimator;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
 import com.alibaba.polardbx.optimizer.memory.MemoryPoolUtils;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
 import com.alibaba.polardbx.optimizer.utils.PhyTableOperationUtil;
+import com.alibaba.polardbx.optimizer.utils.QueryConcurrencyPolicy;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.alibaba.polardbx.optimizer.utils.RexUtils;
+import com.alibaba.polardbx.repo.mysql.spi.MyPhyTableModifyCursor;
+import com.alibaba.polardbx.rule.TableRule;
+import com.alibaba.polardbx.rule.TddlRule;
 import com.google.common.collect.ImmutableList;
 import org.apache.calcite.linq4j.Ord;
+import org.apache.calcite.prepare.RelOptTableImpl;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexNode;
@@ -63,14 +89,21 @@ import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.mapping.Mapping;
 import org.apache.calcite.util.mapping.Mappings;
 
+import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiPredicate;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -80,7 +113,7 @@ import static com.alibaba.polardbx.executor.utils.ExecUtils.buildNewGroupKeys;
 import static com.alibaba.polardbx.optimizer.utils.RexUtils.buildRowValue;
 
 /**
- * @author chenmo.cm
+ *
  */
 public class LogicalReplaceHandler extends LogicalInsertIgnoreHandler {
     public LogicalReplaceHandler(IRepository repo) {
@@ -98,7 +131,7 @@ public class LogicalReplaceHandler extends LogicalInsertIgnoreHandler {
         final String tableName = replace.getLogicalTableName();
         final RelNode input = replace.getInput();
         final TddlRuleManager or = OptimizerContext.getContext(schemaName).getRuleManager();
-        final boolean isBroadcast = or.isBroadCast(tableName);
+        final boolean isBroadcast = or.isBroadCastOrReplicas(tableName);
 
         if (replace.isUkContainGeneratedColumn()) {
             throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
@@ -120,8 +153,14 @@ public class LogicalReplaceHandler extends LogicalInsertIgnoreHandler {
         final boolean gsiConcurrentWrite =
             executionContext.getParamManager().getBoolean(ConnectionParams.GSI_CONCURRENT_WRITE_OPTIMIZE);
         executionContext.getExtraCmds().put(ConnectionProperties.GSI_CONCURRENT_WRITE, gsiConcurrentWrite);
-
         PhyTableOperationUtil.enableIntraGroupParallelism(schemaName, executionContext);
+
+        final boolean needsExternalWrite = ExternalizedDmlRewriter.needsHandling(tableMeta)
+            || GeneralUtil.isNotEmpty(replace.getExternalizedUpsertPushdownBindings());
+        if (needsExternalWrite && replace.hasHint()) {
+            throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
+                "Externalized INSERT-family DML with target-table hint is not supported");
+        }
 
         // Replace with NODE/SCAN hint specified
         if (replace.hasHint()) {
@@ -136,7 +175,8 @@ public class LogicalReplaceHandler extends LogicalInsertIgnoreHandler {
         final ExecutionContext replaceEc = executionContext.copy();
 
         // Try to exec by pushDown policy for scale-out
-        Integer execAffectRow = tryPushDownExecute(replace, schemaName, tableName, replaceEc);
+        Integer execAffectRow = tryPushDownExecute(replace, schemaName, tableName, replaceEc, tableMeta,
+            needsExternalWrite);
         if (execAffectRow != null) {
             return execAffectRow;
         }
@@ -145,7 +185,57 @@ public class LogicalReplaceHandler extends LogicalInsertIgnoreHandler {
         final MemoryAllocatorCtx memoryAllocator = selectValuesPool.getMemoryAllocatorCtx();
         final RelDataType selectRowType = getRowTypeForDuplicateCheck(replace);
 
+        final ExecutorContext executorContext = ExecutorContext.getContext(schemaName);
+        final TopologyHandler topologyHandler = executorContext.getTopologyHandler();
+        final boolean allDnUseXDataSource = isAllDnUseXDataSource(topologyHandler);
+        // for replace returning, gsi can use returning only on published state and not in complex task
+        final boolean gsiCanUseReturning = GlobalIndexMeta
+            .isAllGsi(replace.getTargetTables().get(0), executionContext, GlobalIndexMeta::isPublished)
+            && !GlobalIndexMeta.isAnyGsi(replace.getTargetTables().get(0), executionContext,
+            (ec, gsiMeta) -> ComplexTaskPlanUtils.canWrite(gsiMeta));
+        final boolean isColumnMultiWriting =
+            TableColumnUtils.isModifying(schemaName, tableName, executionContext);
+        final boolean checkPrimaryKey =
+            executionContext.getParamManager().getBoolean(ConnectionParams.PRIMARY_KEY_CHECK);
+        final boolean gsiCoverAllSk = checkGsiCoverAllSk(tableMeta, executionContext);
+        final boolean optimizeReplaceByReturningCheckSelfConflict = executionContext.getParamManager()
+            .getBoolean(ConnectionParams.OPTIMIZE_REPLACE_BY_RETURNING_CHECK_SELF_CONFLICT);
+
+        boolean canUseReturning =
+            replace.isCanUseReturning() && executorContext.getStorageInfoManager().supportsReturningAll()
+                && gsiCoverAllSk
+                && !ComplexTaskPlanUtils.canWrite(tableMeta)
+                && gsiCanUseReturning
+                && allDnUseXDataSource
+                && !checkForeignKey
+                && !checkPrimaryKey && !isColumnMultiWriting && !isBroadcast
+                && !ExternalizedDmlRewriter.isReturningForbidden(tableMeta);
+
+        if (canUseReturning && optimizeReplaceByReturningCheckSelfConflict) {
+            canUseReturning = !hasDuplicateInValues(replace, executionContext);
+        }
+
         try {
+            GlobalReplaceReturningStatsSingleton.getInstance().increment();
+            if (canUseReturning) {
+                // 在全局变量中增加统计信息
+                GlobalReplaceReturningStatsSingleton.getInstance().incrementReturning();
+                GlobalReplaceReturningStatsSingleton.getInstance().addDatabaseName(schemaName);
+                GlobalReplaceReturningStatsSingleton.getInstance().addTableName(tableName);
+                // set optimizedWithReturning = true to write into sql.log
+                handlerParams.optimizedWithReturning = true;
+                try {
+                    affectRows = executeReplaceWithReturning(replace, replaceEc, memoryAllocator,
+                        (i) -> executionContext.setPhySqlId(executionContext.getPhySqlId() + 1));
+                    // Insert batch may be split in TConnection, so we need to set executionContext's PhySqlId for next part
+                    executionContext.setPhySqlId(replaceEc.getPhySqlId() + 1);
+                    return affectRows;
+                } catch (Throwable e) {
+                    handleException(executionContext, e,
+                        GeneralUtil.isNotEmpty(replace.getGsiInsertWriters()));
+                }
+            }
+
             Map<String, List<List<String>>> ukGroupByTable = replace.getUkGroupByTable();
             Map<String, List<String>> localIndexPhyName = replace.getLocalIndexPhyName();
             List<List<Object>> convertedValues = new ArrayList<>();
@@ -169,9 +259,11 @@ public class LogicalReplaceHandler extends LogicalInsertIgnoreHandler {
 
             try {
                 if (gsiConcurrentWrite) {
-                    affectRows = concurrentExecute(replace, classifiedRows, replaceEc);
+                    affectRows = concurrentExecute(replace, classifiedRows, replaceEc, tableMeta,
+                        needsExternalWrite);
                 } else {
-                    affectRows = sequentialExecute(replace, classifiedRows, replaceEc);
+                    affectRows = sequentialExecute(replace, classifiedRows, replaceEc, tableMeta,
+                        needsExternalWrite);
                 }
             } catch (Throwable e) {
                 handleException(executionContext, e, GeneralUtil.isNotEmpty(replace.getGsiInsertWriters()));
@@ -184,8 +276,515 @@ public class LogicalReplaceHandler extends LogicalInsertIgnoreHandler {
         return affectRows;
     }
 
+    private int executeReplaceWithReturning(LogicalReplace replace, ExecutionContext executionContext,
+                                            MemoryAllocatorCtx memoryAllocator, Consumer<Integer> phySqlIdConsumer) {
+        final String schemaName = replace.getSchemaName();
+        final String tableName = replace.getLogicalTableName().toLowerCase();
+        TableMeta tableMeta = executionContext.getSchemaManager(schemaName).getTable(tableName);
+
+        final RelNode input = replace.getInput();
+        int affectedRows = 0;
+
+        // save currentReturning for later recovery
+        final String currentReturning = executionContext.getReturning();
+
+        // no need to return all columns , 真实的returning columns在执行计划中
+        // 这里用于标识物理sql通过returning_all下发，同时可以作为兜底
+        executionContext.setReturningAll("*");
+
+        List<String> returningColumns = populatePkSkColumns(tableMeta, executionContext, schemaName, tableName);
+
+        // returning replace返回列的columnMetas，用于后续构造groupKey
+        final List<ColumnMeta> returningColumnMetas = new ArrayList<>();
+        returningColumns.forEach(columnName -> returningColumnMetas.add(tableMeta.getColumnIgnoreCase(columnName)));
+
+        // get plan for primary
+        final InsertWriter primaryWriter = replace.getPrimaryInsertWriter();
+        final List<RelNode> allPhyPlan = new ArrayList<>();
+
+        List<RelNode> inputs = primaryWriter.getInput(executionContext);
+
+        inputs.stream().filter(o -> ((BaseQueryOperation) o).isPrimaryWriteRelNode())
+            .forEach(o -> {
+                ((BaseQueryOperation) o).setReturningColumns(String.join(",", returningColumns));
+                allPhyPlan.add(o);
+            });
+
+        final List<RelNode> replicatePhyPlan =
+            inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
+                Collectors.toList());
+
+        allPhyPlan.addAll(replicatePhyPlan);
+
+        final LogicalDynamicValues totalInput = RelUtils.getRelInput(replace);
+        final Parameters params = executionContext.getParams();
+        final int batchSize = params.isBatch() ? params.getBatchSize() : 1;
+        int totalRows = batchSize * totalInput.getTuples().size();
+        GlobalReplaceReturningStatsSingleton.getInstance().incrementTotalRows(totalRows);
+
+        // get plan for gsi
+        final AtomicInteger writableGsiCount = new AtomicInteger(0);
+        final List<InsertWriter> gsiWriters = replace.getGsiInsertWriters();
+        gsiWriters.stream()
+            .map(gsiWriter -> gsiWriter.getInput(executionContext))
+            .filter(w -> !w.isEmpty())
+            .forEach(w -> {
+                for (RelNode relNode : w) {
+                    String gsiName = ((PhyTableOperation) relNode).getLogicalTableNames().get(0).toLowerCase();
+                    ((BaseQueryOperation) relNode).setReturningColumns(
+                        String.join(",", returningColumns));
+                }
+                writableGsiCount.incrementAndGet();
+                allPhyPlan.addAll(w);
+            });
+
+        List<List<Object>> values;
+
+        if (executionContext
+            .getParamManager().getBoolean(ConnectionParams.GSI_CONCURRENT_WRITE_OPTIMIZE)) {
+            executionContext.getExtraCmds().put(ConnectionProperties.GSI_CONCURRENT_WRITE, true);
+        } else {
+            executionContext.getExtraCmds().put(ConnectionProperties.GSI_CONCURRENT_WRITE, false);
+        }
+
+        executionContext.setPhySqlId(executionContext.getPhySqlId() + 1);
+
+        try {
+            final QueryConcurrencyPolicy queryConcurrencyPolicy = ExecUtils.getQueryConcurrencyPolicy(executionContext);
+
+            // primary deleted values
+            // groupKey: pk + primary sk + all gsi sk
+            Set<GroupKey> primaryDeletedValues = new HashSet<>();
+
+            // gsi name -> deleted values
+            // groupKey: pk + primary sk + all gsi sk
+            Map<String, Set<GroupKey>> gsiDeletedValues = new HashMap<>();
+
+            final List<Cursor> inputCursors = new ArrayList<>(allPhyPlan.size());
+            try {
+                executeWithConcurrentPolicy(executionContext, allPhyPlan, queryConcurrencyPolicy, inputCursors,
+                    schemaName);
+
+                for (Cursor cursor : inputCursors) {
+                    if (cursor instanceof GroupConcurrentUnionCursor) {
+                        final GroupConcurrentUnionCursor groupConcurrentUnionCursor =
+                            (GroupConcurrentUnionCursor) cursor;
+                        try {
+                            int rowCount = 0;
+                            Row rs;
+                            while ((rs = groupConcurrentUnionCursor.next()) != null) {
+                                // Allocator memory
+                                if ((++rowCount) % TddlConstants.DML_SELECT_BATCH_SIZE_DEFAULT == 0) {
+                                    memoryAllocator.allocateReservedMemory(
+                                        MemoryEstimator.calcSelectValuesMemCost(rowCount, input.getRowType()));
+                                    rowCount = 0;
+                                }
+
+                                final List<Object> rawValues = rs.getValues();
+
+                                String logicalTableName =
+                                    ((MyPhyTableModifyCursor) groupConcurrentUnionCursor.getCurrentCursor()).getPlan()
+                                        .getLogicalTableNames().get(0).toLowerCase();
+                                boolean isPrimary = logicalTableName.equals(tableName);
+
+                                if (isPrimary) {
+                                    // primary table
+                                    affectedRows++;
+                                    // handle primary returning value
+                                    handlePrimaryReturning(rawValues, primaryDeletedValues,
+                                        returningColumnMetas);
+
+                                } else {
+                                    // gsi
+                                    // handle gsi returning value
+                                    handleGsiReturning(rawValues, logicalTableName, gsiDeletedValues,
+                                        returningColumnMetas);
+                                }
+                            }
+                        } finally {
+                            cursor.close(new ArrayList<>());
+                        }
+                    } else if (cursor instanceof MyPhyTableModifyCursor) {
+                        try {
+                            values =
+                                getQueryResult(cursor, (rowCount) -> memoryAllocator.allocateReservedMemory(
+                                    MemoryEstimator.calcSelectValuesMemCost(rowCount, input.getRowType())));
+
+                            String logicalTableName =
+                                ((MyPhyTableModifyCursor) cursor).getPlan()
+                                    .getLogicalTableNames().get(0).toLowerCase();
+
+                            boolean isPrimary = logicalTableName.equals(tableName);
+
+                            if (isPrimary) {
+                                affectedRows += values.size();
+                                for (List<Object> value : values) {
+                                    handlePrimaryReturning(value, primaryDeletedValues,
+                                        returningColumnMetas);
+                                }
+                            } else {
+                                for (List<Object> value : values) {
+                                    handleGsiReturning(value, logicalTableName, gsiDeletedValues,
+                                        returningColumnMetas);
+                                }
+
+                            }
+                        } catch (Exception e) {
+                            throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR, e,
+                                "executeReplaceWithReturning error : " + e.getMessage());
+                        } finally {
+                            cursor.close(new ArrayList<>());
+                        }
+
+                    } else {
+                        // Do not support broadcast now
+                        throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+                            "unsupported cursor type " + cursor.getClass().getName());
+                    }
+                }
+            } finally {
+                for (Cursor cursor : inputCursors) {
+                    try {
+                        cursor.close(new ArrayList<>());
+                    } catch (Throwable t) {
+                        // ignore to avoid masking original exception
+                    }
+                }
+            }
+
+            // handle fix delete
+            affectedRows += handleFixDeleteForReturning(replace, executionContext, tableMeta,
+                primaryDeletedValues, gsiDeletedValues, schemaName, currentReturning);
+
+        } catch (Exception e) {
+            throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR, e,
+                "executeReplaceWithReturning error : " + e.getMessage());
+        }
+
+        return affectedRows;
+    }
+
+    /**
+     * convert fullKey to newGroupKey by columnMetas
+     *
+     * @return newGroupKey , null if columnMetas is not subset of fullKey
+     */
+    private GroupKey convertGroupKey(GroupKey fullKey, List<ColumnMeta> columnMetas) {
+        List<Object> groupKeys = Arrays.asList(fullKey.getGroupKeys());
+        List<ColumnMeta> fullColumnMetas = fullKey.getColumns();
+        List<Object> newGroupKeys = new ArrayList<>(columnMetas.size());
+
+        for (ColumnMeta columnMeta : columnMetas) {
+            int index = fullColumnMetas.indexOf(columnMeta);
+            if (index == -1) {
+                throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+                    "Column " + columnMeta.getName() + " not found in GroupKey columns during convertGroupKey");
+            }
+            newGroupKeys.add(groupKeys.get(fullColumnMetas.indexOf(columnMeta)));
+        }
+
+        return new GroupKey(newGroupKeys.toArray(), columnMetas);
+    }
+
+    /**
+     * handle fix delete
+     */
+    private int handleFixDeleteForReturning(LogicalReplace replace, ExecutionContext executionContext,
+                                            TableMeta tableMeta,
+                                            Set<GroupKey> primaryDeletedValues,
+                                            Map<String, Set<GroupKey>> gsiDeletedValues,
+                                            String schemaName,
+                                            String currentReturning) {
+        int affectedRows = 0;
+        if (primaryDeletedValues.isEmpty() && gsiDeletedValues.isEmpty()) {
+            return affectedRows;
+        }
+
+        Map<String, List<String>> gsiShardingKeys = new HashMap<>();
+        List<String> primaryKeys = getPrimaryKeys(tableMeta);
+        tableMeta.getGsiPublished().forEach((indexName, gsiIndexMetaBean) -> {
+            gsiShardingKeys.put(indexName.toLowerCase(),
+                Objects.requireNonNull(OptimizerContext.getContext(gsiIndexMetaBean.tableSchema)).getRuleManager()
+                    .getSharedColumns(gsiIndexMetaBean.indexName));
+        });
+
+        Set<GroupKey> totalInitialDeleteRows = new HashSet<>();
+        totalInitialDeleteRows.addAll(primaryDeletedValues);
+        totalInitialDeleteRows.addAll(
+            gsiDeletedValues.values().stream().flatMap(Set::stream).collect(Collectors.toList()));
+
+        // get primary delete plan
+        final DistinctWriter primaryDeleteWriter = Objects.requireNonNull(replace.getPrimaryDeleteWriter());
+
+        Set<GroupKey> primaryFixDeleteRows = new HashSet<>(totalInitialDeleteRows);
+
+        primaryFixDeleteRows.removeAll(primaryDeletedValues);
+
+        affectedRows += primaryFixDeleteRows.size();
+        GlobalReplaceReturningStatsSingleton.getInstance().incrementFixDeleteRows(primaryFixDeleteRows.size());
+
+        // for primary , also need to rebuild rows by pkMapping and skMapping
+        Mapping primaryPkMapping =
+            Objects.requireNonNull(((ShardingModifyWriter) primaryDeleteWriter).getPkMapping());
+        Mapping primarySkMapping =
+            Objects.requireNonNull(((ShardingModifyWriter) primaryDeleteWriter).getSkMapping());
+
+        List<ColumnMeta> primaryPkColumns = primaryKeys.stream()
+            .map(tableMeta::getColumnIgnoreCase).collect(Collectors.toList());
+        List<ColumnMeta> primaryShardingKeyColumns = ((ShardingModifyWriter) primaryDeleteWriter).getSkMetas();
+
+        List<List<Object>> primaryFixDeleteWriterRows = new ArrayList<>(Collections.emptyList());
+
+        primaryFixDeleteRows.forEach(value -> {
+            List<Object> pkValue =
+                Arrays.asList(Objects.requireNonNull(convertGroupKey(value, primaryPkColumns)).getGroupKeys());
+            List<Object> skValue =
+                Arrays.asList(Objects.requireNonNull(convertGroupKey(value, primaryShardingKeyColumns)).getGroupKeys());
+            // need to build rows by pkMapping and skMapping
+            List<Object> tmpRow = new ArrayList<>(Collections.nCopies(primaryPkMapping.getTargetCount(), null));
+
+            if (primaryPkMapping.getSourceCount() != pkValue.size()
+                || primarySkMapping.getSourceCount() != skValue.size()) {
+                // pk或sk长度不匹配
+                throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+                    "pk or sk length not match in building fix delete plan");
+            }
+
+            for (int i = 0; i < primaryPkMapping.getSourceCount(); i++) {
+                tmpRow.set(primaryPkMapping.getTarget(i), pkValue.get(i));
+            }
+            for (int i = 0; i < primarySkMapping.getSourceCount(); i++) {
+                tmpRow.set(primarySkMapping.getTarget(i), skValue.get(i));
+            }
+            primaryFixDeleteWriterRows.add(tmpRow);
+        });
+
+        List<RelNode> primaryDeleteWriterInputs =
+            primaryDeleteWriter.getInput(executionContext, (w) ->
+                new ArrayList<>(primaryFixDeleteWriterRows)
+            );
+
+        final List<RelNode> allDeletePlan =
+            primaryDeleteWriterInputs.stream().filter(o -> ((BaseQueryOperation) o).isPrimaryWriteRelNode())
+                .collect(Collectors.toList());
+        final List<RelNode> replicateDeletePlan =
+            primaryDeleteWriterInputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
+                Collectors.toList());
+
+        allDeletePlan.addAll(replicateDeletePlan);
+
+        // build gsi delete plan
+        List<RelNode> gsiDeletePlan = new ArrayList<>();
+
+        replace.getGsiDeleteWriters().forEach(gsiWriter -> {
+            final String gsiName =
+                ((TableMeta) (((RelOptTableImpl) (gsiWriter.getTargetTable())).getImplTable())).getTableName()
+                    .toLowerCase();
+
+            final Set<GroupKey> gsiFixDeleteRows = new HashSet<>(totalInitialDeleteRows);
+            if (gsiDeletedValues.containsKey(gsiName) && !gsiDeletedValues.get(gsiName).isEmpty()) {
+                gsiFixDeleteRows.removeAll(gsiDeletedValues.get(gsiName));
+            }
+
+            List<ColumnMeta> gsiSkColumns = gsiShardingKeys.get(gsiName).stream()
+                .map(tableMeta::getColumnIgnoreCase).collect(Collectors.toList());
+
+            Mapping pkMapping = Objects.requireNonNull(((ShardingModifyWriter) gsiWriter).getPkMapping());
+            Mapping skMapping = Objects.requireNonNull(((ShardingModifyWriter) gsiWriter).getSkMapping());
+
+            final List<List<Object>> gsiFixDeleteWriterRowsFinal = new ArrayList<>(gsiFixDeleteRows.size());
+
+            // for gsi , need to get sharding keys
+            for (GroupKey value : gsiFixDeleteRows) {
+                List<Object> pkValue =
+                    Arrays.asList(Objects.requireNonNull(convertGroupKey(value, primaryPkColumns)).getGroupKeys());
+                List<Object> skValue =
+                    Arrays.asList(Objects.requireNonNull(convertGroupKey(value, gsiSkColumns)).getGroupKeys());
+
+                // need to build rows by pkMapping and skMapping
+                List<Object> tmpRow = new ArrayList<>(Collections.nCopies(pkMapping.getTargetCount(), null));
+                if (pkMapping.getSourceCount() != pkValue.size() || skMapping.getSourceCount() != skValue.size()) {
+                    // pk和sk长度不匹配
+                    throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+                        "pk or sk length not match in building fix delete plan");
+                }
+                for (int i = 0; i < pkMapping.getSourceCount(); i++) {
+                    tmpRow.set(pkMapping.getTarget(i), pkValue.get(i));
+                }
+                for (int i = 0; i < skMapping.getSourceCount(); i++) {
+                    tmpRow.set(skMapping.getTarget(i), skValue.get(i));
+                }
+                gsiFixDeleteWriterRowsFinal.add(tmpRow);
+            }
+
+            gsiDeletePlan.addAll(gsiWriter.getInput(executionContext, (w) ->
+                new ArrayList<>(gsiFixDeleteWriterRowsFinal)
+            ));
+        });
+
+        // cancel returning all
+        executionContext.setReturningAll(currentReturning);
+
+        allDeletePlan.addAll(gsiDeletePlan);
+
+        // let cdc reorganize phy sql and ignore order
+        executionContext.setReturningFlagForCdc(ReturningFlagForCdc.REPLACE_IGNORE_ORDER);
+        executionContext.setPhySqlId(executionContext.getPhySqlId() - 1);
+
+        // execute all fix delete
+        executePhysicalPlan(allDeletePlan, executionContext, schemaName, false);
+
+        executionContext.setPhySqlId(executionContext.getPhySqlId() + 1);
+        executionContext.setReturningFlagForCdc(ReturningFlagForCdc.NO_SPECIAL);
+        return affectedRows;
+    }
+
+    private List<String> getPrimaryKeys(TableMeta tableMeta) {
+        return tableMeta.getPrimaryKey().stream().map(ColumnMeta::getName).map(String::toLowerCase)
+            .collect(Collectors.toList());
+    }
+
+    private List<String> getPrimaryShardingKeys(TableMeta tableMeta, ExecutionContext executionContext,
+                                                String schemaName,
+                                                String tableName) {
+        if (tableMeta.getPartitionInfo() != null) {
+            // for auto
+            return tableMeta.getPartitionInfo().getPartitionColumns().stream().map(String::toLowerCase)
+                .collect(Collectors.toList());
+        } else {
+            // for drds
+            TddlRule tddlRule = executionContext.getSchemaManager(schemaName).getTddlRuleManager().getTddlRule();
+            TableRule tableRule = tddlRule.getTable(tableName);
+            return tableRule.getShardColumns().stream().map(String::toLowerCase).collect(Collectors.toList());
+        }
+    }
+
+    private void populateGsiShardingKeys(TableMeta tableMeta, Map<String, List<String>> gsiShardingKeys,
+                                         LinkedHashSet<String> deduplicatedColumns) {
+        tableMeta.getGsiPublished().forEach((indexName, gsiIndexMetaBean) -> {
+            gsiShardingKeys.put(indexName.toLowerCase(),
+                Objects.requireNonNull(OptimizerContext.getContext(gsiIndexMetaBean.tableSchema)).getRuleManager()
+                    .getSharedColumns(gsiIndexMetaBean.indexName));
+            deduplicatedColumns.addAll(gsiShardingKeys.get(indexName.toLowerCase()));
+        });
+    }
+
+    private List<String> populatePkSkColumns(TableMeta tableMeta, ExecutionContext executionContext, String schemaName,
+                                             String tableName) {
+        // 从tableMeta中拿到主键、分区键以及所有GSI的分区键
+        final List<String> primaryKeys = getPrimaryKeys(tableMeta);
+        List<String> primaryShardingKeys = getPrimaryShardingKeys(tableMeta, executionContext, schemaName, tableName);
+
+        // index name -> gsi sharding keys
+        final Map<String, List<String>> gsiShardingKeys = new HashMap<>();
+
+        // 所有期望拿回的列
+        final LinkedHashSet<String> deduplicatedColumns = new LinkedHashSet<>(primaryKeys);
+        deduplicatedColumns.addAll(primaryShardingKeys);
+
+        // put all gsi sharding key to deduplicatedColumns
+        populateGsiShardingKeys(tableMeta, gsiShardingKeys, deduplicatedColumns);
+
+        return new ArrayList<>(deduplicatedColumns);
+    }
+
+    public boolean checkGsiCoverAllSk(TableMeta tableMeta, ExecutionContext ec) {
+
+        String schemaName = tableMeta.getSchemaName();
+        String tableName = tableMeta.getTableName();
+        if (tableMeta.getGsiPublished() == null || tableMeta.getGsiPublished().size() <= 1) {
+            // 如果没有GSI或只有一个GSI，则不需要检查
+            return true;
+        }
+
+        final List<String> returningColumns = populatePkSkColumns(tableMeta, ec, schemaName, tableName);
+        // 检查每个GSI是否都包含所有returningColumns
+        for (GsiMetaManager.GsiIndexMetaBean gsiIndexMetaBean : tableMeta.getGsiPublished().values()) {
+            List<String> gsiColumns =
+                gsiIndexMetaBean.getIndexColumns().stream().map(GsiMetaManager.GsiIndexColumnMetaBean::getColumnName)
+                    .map(colName -> translateToLogicalName(colName, tableMeta))
+                    .map(String::toLowerCase)
+                    .collect(Collectors.toList());
+            gsiColumns.addAll(
+                gsiIndexMetaBean.getCoveringColumns().stream().map(GsiMetaManager.GsiIndexColumnMetaBean::getColumnName)
+                    .map(colName -> translateToLogicalName(colName, tableMeta))
+                    .map(String::toLowerCase)
+                    .collect(Collectors.toList()));
+            if (!new HashSet<>(gsiColumns).containsAll(returningColumns)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Translate physical column name to logical name for externalized columns.
+     * e.g. "content_addr_" -> "content" if it's an externalized column.
+     */
+    private String translateToLogicalName(String columnName, TableMeta tableMeta) {
+        if (ExternalizedColumnInfo.isAddrColumn(columnName)) {
+            String logicalName = ExternalizedColumnInfo.toLogicalColumnName(columnName);
+            ColumnMeta cm = tableMeta.getColumnIgnoreCase(logicalName);
+            if (cm != null && cm.isExternalizedColumn()) {
+                return logicalName;
+            }
+        }
+        return columnName;
+    }
+
+    private void handlePrimaryReturning(List<Object> rawValues,
+                                        Set<GroupKey> primaryDeletedValues,
+                                        List<ColumnMeta> returningColumnMetas) {
+
+        if (rawValues.isEmpty() || !rawValues.get(0).equals(BigInteger.valueOf(0L))) {
+            // after value
+            GroupKey afterGroupKey =
+                getGroupKey(rawValues, returningColumnMetas);
+            // need to remove before value in primaryDeletedValues
+            primaryDeletedValues.remove(afterGroupKey);
+            // ignore after value
+            return;
+        }
+        // before value
+        GroupKey groupKeyForCompare = getGroupKey(rawValues, returningColumnMetas);
+        primaryDeletedValues.add(groupKeyForCompare);
+    }
+
+    private void handleGsiReturning(List<Object> rawValues, String logicalTableName,
+                                    Map<String, Set<GroupKey>> deletedValues,
+                                    List<ColumnMeta> returningColumnMetas) {
+        if (rawValues.isEmpty() || !rawValues.get(0).equals(BigInteger.valueOf(0L))) {
+            // after value
+            GroupKey afterGroupKey =
+                getGroupKey(rawValues, returningColumnMetas);
+            // need to remove before value in gsiDeletedValues
+            if (deletedValues.containsKey(logicalTableName)) {
+                deletedValues.get(logicalTableName).remove(afterGroupKey);
+            }
+            // ignore after value
+            return;
+        }
+        // before value
+        GroupKey groupKeyForCompare = getGroupKey(rawValues, returningColumnMetas);
+        deletedValues.computeIfAbsent(logicalTableName.toLowerCase(), (k) -> new HashSet<>()).add(groupKeyForCompare);
+    }
+
+    private GroupKey getGroupKey(List<Object> rawValues, List<ColumnMeta> returningColumnMetas) {
+        final int groupKeySize = rawValues.size() - 1;
+        final List<Object> outValueForCompare = new ArrayList<>(rawValues.size() - 1);
+        final List<ColumnMeta> outMetaForCompare = new ArrayList<>(groupKeySize);
+        for (int i = 1; i < rawValues.size(); i++) {
+            outValueForCompare.add(rawValues.get(i));
+            // returningColumnMetas not include before/after column
+            outMetaForCompare.add(returningColumnMetas.get(i - 1));
+        }
+
+        return new GroupKey(outValueForCompare.toArray(), outMetaForCompare);
+    }
+
     private int concurrentExecute(LogicalReplace replace, List<DuplicateCheckResult> classifiedRows,
-                                  ExecutionContext executionContext) {
+                                  ExecutionContext executionContext,
+                                  TableMeta tableMeta, boolean needsExternalWrite) {
         final String schemaName = replace.getSchemaName();
         final String tableName = replace.getLogicalTableName();
         final TddlRuleManager or = OptimizerContext.getContext(schemaName).getRuleManager();
@@ -212,6 +811,12 @@ public class LogicalReplaceHandler extends LogicalInsertIgnoreHandler {
 
         final List<DuplicateCheckResult> inputValues = new ArrayList<>();
         final Function<DistinctWriter, SourceRows> rowBuilder = (wr) -> SourceRows.createFromValues(classifiedRows);
+        if (needsExternalWrite) {
+            final ExternalizedDmlWriteContext writeContext = new ExternalizedDmlWriteContext(
+                replace, tableMeta, Collections.emptyMap(), executionContext);
+            executionContext.setDmlWriteContext(writeContext);
+            deduplicatedEc.setDmlWriteContext(writeContext);
+        }
 
         // 1. Build physical plans
         final ReplaceRelocateWriter primaryRelocateWriter = replace.getPrimaryRelocateWriter();
@@ -259,7 +864,8 @@ public class LogicalReplaceHandler extends LogicalInsertIgnoreHandler {
     }
 
     private int sequentialExecute(LogicalReplace replace, List<DuplicateCheckResult> classifiedRows,
-                                  ExecutionContext executionContext) {
+                                  ExecutionContext executionContext,
+                                  TableMeta tableMeta, boolean needsExternalWrite) {
         final String schemaName = replace.getSchemaName();
         final String tableName = replace.getLogicalTableName();
         final TddlRuleManager or = OptimizerContext.getContext(schemaName).getRuleManager();
@@ -279,6 +885,13 @@ public class LogicalReplaceHandler extends LogicalInsertIgnoreHandler {
         final List<RelNode> replicatedDeletePlans = new ArrayList<>();
         final List<RelNode> replicatedInsertPlans = new ArrayList<>();
         final List<RelNode> replicatedReplacePlans = new ArrayList<>();
+
+        if (needsExternalWrite) {
+            final ExternalizedDmlWriteContext writeContext = new ExternalizedDmlWriteContext(
+                replace, tableMeta, Collections.emptyMap(), executionContext);
+            executionContext.setDmlWriteContext(writeContext);
+            deduplicatedEc.setDmlWriteContext(writeContext);
+        }
 
         // Primary physical plans
         replace.getPrimaryRelocateWriter().getInput(executionContext, deduplicatedEc,
@@ -431,6 +1044,57 @@ public class LogicalReplaceHandler extends LogicalInsertIgnoreHandler {
                 return sourceSkGk.equals(targetSkGk);
             }
         };
+    }
+
+    /**
+     * Check if there are PK or UK conflicts among the batch replace values themselves.
+     * If conflicts exist, returning optimization should not be used, because the returning
+     * path cannot correctly handle intra-batch duplicate resolution.
+     * <p>
+     * The detection logic is consistent with bindInsertRows: for each insert row, build
+     * GroupKeys based on afterUkMapping (which includes PK and all UKs), and check whether
+     * any two rows share the same GroupKey on any unique key.
+     */
+    private boolean hasDuplicateInValues(LogicalReplace replace, ExecutionContext executionContext) {
+        final List<List<Integer>> afterUkMapping = replace.getAfterUkMapping();
+        final List<List<ColumnMeta>> ukColumnMetas = replace.getUkColumnMetas();
+        final LogicalDynamicValues input = RelUtils.getRelInput(replace);
+        final ImmutableList<RexNode> rexRow = input.getTuples().get(0);
+
+        final Parameters params = executionContext.getParams();
+        if (!params.isBatch()) {
+            return false;
+        }
+
+        final List<Map<Integer, ParameterContext>> batchParams = params.getBatchParameters();
+        if (batchParams == null || batchParams.size() <= 1) {
+            return false;
+        }
+
+        // For each UK, track seen group keys using TreeMap (consistent with GroupKey comparison in bindInsertRows)
+        final List<Map<GroupKey, Boolean>> ukKeyMaps = new ArrayList<>();
+        for (int i = 0; i < afterUkMapping.size(); i++) {
+            ukKeyMaps.add(new TreeMap<>());
+        }
+
+        for (Map<Integer, ParameterContext> newRow : batchParams) {
+            final List<GroupKey> newGroupKeys = buildGroupKeys(afterUkMapping, ukColumnMetas,
+                (i) -> RexUtils.getValueFromRexNode(rexRow.get(i), executionContext, newRow));
+
+            for (int ukIndex = 0; ukIndex < newGroupKeys.size(); ukIndex++) {
+                final GroupKey key = newGroupKeys.get(ukIndex);
+                // Skip if any UK column is NULL (SQL semantics: NULL != NULL)
+                if (Arrays.stream(key.getGroupKeys()).anyMatch(Objects::isNull)) {
+                    continue;
+                }
+                if (ukKeyMaps.get(ukIndex).containsKey(key)) {
+                    return true;
+                }
+                ukKeyMaps.get(ukIndex).put(key, Boolean.TRUE);
+            }
+        }
+
+        return false;
     }
 
     protected List<DuplicateCheckResult> bindInsertRows(LogicalReplace replace, List<List<Object>> selectedRows,

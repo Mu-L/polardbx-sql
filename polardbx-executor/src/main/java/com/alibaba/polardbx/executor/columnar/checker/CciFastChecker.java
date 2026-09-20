@@ -24,21 +24,18 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.oss.ColumnarFileType;
 import com.alibaba.polardbx.common.oss.IDeltaReadOption;
 import com.alibaba.polardbx.common.utils.Pair;
-import com.alibaba.polardbx.common.utils.logger.Logger;
-import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.logger.MDC;
 import com.alibaba.polardbx.common.utils.thread.ServerThreadPool;
-import com.alibaba.polardbx.executor.common.ExecutorContext;
-import com.alibaba.polardbx.executor.gms.util.ColumnarTransactionUtils;
 import com.alibaba.polardbx.executor.mpp.split.SpecifiedOssSplit;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarAppendedFilesAccessor;
 import com.alibaba.polardbx.gms.metadb.table.FilesRecordSimplifiedWithChecksum;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.utils.ITransaction;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
-import org.jetbrains.annotations.Nullable;
+import com.google.common.util.concurrent.Futures;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -51,30 +48,24 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
-import static com.alibaba.polardbx.gms.topology.SystemDbHelper.DEFAULT_DB_NAME;
+import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_FAIL_CSV_CHECKSUM;
+import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_FAIL_DELETE_CHECKSUM;
+import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_FAIL_DURING_CAL_COLUMNAR_HASH;
+import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_FAIL_DURING_CAL_PRIMARY_HASH;
+import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_FORCE_CAL_IN_NAIVE_METHOD;
 
 /**
  * @author yaozhili
  */
-public class CciFastChecker implements ICciChecker {
-    private static final Logger logger = LoggerFactory.getLogger(CciFastChecker.class);
-
-    private final String schemaName;
-    protected final String tableName;
-    protected final String indexName;
-    private long columnarHashCode = -1L;
-    private long primaryHashCode = -1L;
-    private final List<String> errors = new ArrayList<>();
+public class CciFastChecker extends AbstractCciChecker {
     private final Lock hashLock = new ReentrantLock();
     /**
      * Record connection id in use.
@@ -101,137 +92,108 @@ public class CciFastChecker implements ICciChecker {
         "select check_sum_v2(*) as checksum from %s force index(%s)";
 
     protected static final String PRIMARY_HINT =
-        "/*+TDDL:WORKLOAD_TYPE=AP ENABLE_ORC_RAW_TYPE_BLOCK=true "
-            + "SOCKET_TIMEOUT=259200000 MPP_TASK_MAX_RUN_TIME=259200000 %s */";
+        "/*+TDDL:ENABLE_ORC_RAW_TYPE_BLOCK=true SOCKET_TIMEOUT=259200000 %s */";
     protected static final String COLUMNAR_HINT =
-        "/*+TDDL:WORKLOAD_TYPE=AP ENABLE_COLUMNAR_OPTIMIZER=true "
-            + "OPTIMIZER_TYPE='columnar' ENABLE_HTAP=true ENABLE_BLOCK_CACHE=false ENABLE_ORC_RAW_TYPE_BLOCK=true "
+        "/*+TDDL:WORKLOAD_TYPE=AP ENABLE_COLUMNAR_OPTIMIZER=true OPTIMIZER_TYPE='columnar' "
+            + "ENABLE_HTAP=true ENABLE_BLOCK_CACHE=false ENABLE_ORC_RAW_TYPE_BLOCK=true "
             + "SOCKET_TIMEOUT=259200000 MPP_TASK_MAX_RUN_TIME=259200000 %s */";
 
     public CciFastChecker(String schemaName, String tableName, String indexName) {
-        this.schemaName = schemaName;
-        this.tableName = tableName;
-        this.indexName = indexName;
+        super(schemaName, tableName, indexName);
     }
 
     @Override
-    public void check(ExecutionContext baseEc, Runnable recoverChangedConfigs) throws Throwable {
-        Pair<Long, Long> tso = getCheckTso();
-        logger.warn("Check cci using innodb tso " + tso.getKey() + ", columnar tso " + tso.getValue());
+    public void checkSnapshot(ExecutionContext baseEc) throws Throwable {
+        /*
+        1. crete read view for innodb to prevent purge.
+        2. columnar flush to make consistent point.
+        3. create columnar trx to prevent purge.
+        4. get primary table hash.
+        5. close innodb connection.
+        6. get columnar table hash.
+        7. close columnar connection.
+        8. close columnar trx.
+         */
+        AtomicReference<Pair<Long, Long>> tso = new AtomicReference<>(null);
+        ITransaction columnarTrx;
+        try (IInnerConnection conn = connManager.getConnection(schemaName)) {
+            conn.setTimeZone("+8:00");
+            // 1. crete read view for innodb to prevent purge.
+            AbstractCciChecker.createReadViewForInnodb(conn, tableName);
+            // 2. columnar flush to make consistent point.
+            interruptIfDdlCanceled(
+                threadPool, baseEc,
+                () -> tso.set(getAndWaitColumnarFlush(schemaName, indexName)),
+                null);
+            log("Check cci using innodb tso " + tso.get().getKey() + ", columnar tso " + tso.get().getValue());
+            // 3. create columnar trx to prevent purge.
+            columnarTrx = ExecUtils.createColumnarTransaction(schemaName, baseEc, tso.get().getValue());
+            // 4. get primary table hash.
+            try (Statement stmt = conn.createStatement()) {
+                long start = System.nanoTime();
 
-        ITransaction trx = ExecUtils.createColumnarTransaction(schemaName, baseEc, tso.getValue());
+                interruptIfDdlCanceled(
+                    threadPool, baseEc,
+                    () -> {
+                        try {
+                            calculatePrimaryChecksum(stmt, baseEc, tso.get().getKey());
+                        } catch (SQLException e) {
+                            throw new RuntimeException(e);
+                        }
+                    },
+                    () -> {
+                        // KILL: force close
+                        try {
+                            conn.close();
+                        } catch (SQLException e) {
+                            handleError(e);
+                        }
+                    });
 
-        try {
-            ExecutorContext executorContext = ExecutorContext.getContext(schemaName);
-            ServerThreadPool threadPool = executorContext.getTopologyExecutor().getExecutorService();
-            IInnerConnectionManager connectionManager = executorContext.getInnerConnectionManager();
-
-            // Calculate primary table checksum.
-            long start = System.nanoTime();
-            calculatePrimaryChecksum(baseEc, tso.getKey(), threadPool, connectionManager, recoverChangedConfigs);
-            SQLRecorderLogger.ddlLogger.info("[Fast checker] Primary checksum calculated, costing "
-                + ((System.nanoTime() - start) / 1_000_000) + " ms");
-
-            // Calculate columnar table checksum.
-            start = System.nanoTime();
-            calculateColumnarChecksum(baseEc, tso.getValue(), threadPool, connectionManager);
-            SQLRecorderLogger.ddlLogger.info("[Fast checker] Columnar checksum calculated, costing "
-                + ((System.nanoTime() - start) / 1_000_000) + " ms");
-
-            SQLRecorderLogger.ddlLogger.info("primary checksum: " + primaryHashCode);
-            logger.info("primary checksum: " + primaryHashCode);
-            SQLRecorderLogger.ddlLogger.info("columnar checksum: " + columnarHashCode);
-            logger.info("columnar checksum: " + columnarHashCode);
-        } catch (Throwable t) {
-            handleError(t);
-            throw t;
-        } finally {
-            trx.close();
-        }
-    }
-
-    protected Pair<Long, Long> getCheckTso() {
-        return ColumnarTransactionUtils.getLatestOrcCheckpointTsoFromGms();
-    }
-
-    protected void calculatePrimaryChecksum(ExecutionContext baseEc, long tso,
-                                            ServerThreadPool threadPool,
-                                            IInnerConnectionManager connectionManager,
-                                            Runnable recoverChangedConfigs)
-        throws SQLException, ExecutionException, InterruptedException {
-        try (IInnerConnection daemonConnection = ICciChecker.startDaemonTransaction(
-            connectionManager, schemaName, tableName)) {
-            // Calculate primary checksum in this thread.
-            try (IInnerConnection conn = connectionManager.getConnection(schemaName);
-                Statement stmt = conn.createStatement()) {
-                connections.add(conn);
-                conn.setTimeZone("+8:00");
-
-                String finalSql = getPrimarySql(baseEc, tso);
-                SQLRecorderLogger.ddlLogger.info("primary checksum sql: " + finalSql);
-                logger.info("primary checksum sql: " + finalSql);
-
-                executeSqlAndInterruptIfDdlCanceled(threadPool, stmt, finalSql, baseEc, true);
+                log("Primary checksum calculated, costing " + ((System.nanoTime() - start) / 1_000_000) + " ms");
+                log("primary checksum: " + primaryHashCode);
             } catch (Throwable t) {
                 handleError(t);
+                error("Get primary table hash failed.", t);
+                columnarTrx.close();
                 throw t;
-            } finally {
-                connections.clear();
-                if (null != recoverChangedConfigs) {
-                    recoverChangedConfigs.run();
-                }
             }
-            try {
-                daemonConnection.close();
-            } catch (Throwable t) {
-                // ignore.
-            }
+            // 5. close innodb connection.
+        }
+        try {
+            long start = System.nanoTime();
+
+            // 6. get columnar table hash. 7. close columnar connection.
+            calculateColumnarChecksum(baseEc, tso.get().getValue(), threadPool, connManager);
+
+            log("Columnar checksum calculated, costing " + ((System.nanoTime() - start) / 1_000_000) + " ms");
+            log("columnar checksum: " + columnarHashCode);
+        } catch (Throwable t) {
+            handleError(t);
+            error("Get columnar hash failed.", t);
+            throw t;
+        } finally {
+            // 8. close columnar trx.
+            columnarTrx.close();
         }
     }
 
-    private void executeSqlAndInterruptIfDdlCanceled(ServerThreadPool threadPool, Statement stmt, String finalSql,
-                                                     ExecutionContext baseEc, boolean isPrimary)
-        throws InterruptedException, ExecutionException {
-        Future<String> future = threadPool.submit(null, null, () -> {
-            try {
-                ResultSet rs = stmt.executeQuery(finalSql);
-                if (rs.next()) {
-                    if (isPrimary) {
-                        primaryHashCode = rs.getLong("checksum");
-                    } else {
-                        columnarHashCode = rs.getLong("checksum");
-                    }
-                }
-                return null;
-            } catch (SQLException e) {
-                handleError(e);
-                return e.getMessage();
-            }
-        });
-
-        String error = null;
-        while (true) {
-            try {
-                error = future.get(1, TimeUnit.SECONDS);
-                break;
-            } catch (TimeoutException e) {
-                // ignore.
-            }
-
-            if (baseEc.getDdlContext().isInterrupted()) {
-                future.cancel(true);
-                if (isPrimary) {
-                    primaryHashCode = -1;
-                } else {
-                    columnarHashCode = -1;
-                }
-                error = String.format("Interrupted when checking columnar index %s.%s", tableName, indexName);
-                break;
-            }
+    protected void calculatePrimaryChecksum(Statement stmt, ExecutionContext baseEc, long tso) throws SQLException {
+        if (FailPoint.isKeyEnable(FP_FAIL_DURING_CAL_PRIMARY_HASH)) {
+            throw new RuntimeException(FP_FAIL_DURING_CAL_PRIMARY_HASH);
         }
-        if (null != error) {
-            throw new TddlRuntimeException(ErrorCode.ERR_COLUMNAR_INDEX_CHECKER,
-                "Fast CCI checker error: " + error);
+        // Calculate primary checksum in this thread.
+        try {
+            final String sql = getPrimarySql(baseEc, tso);
+            log("primary checksum sql: " + sql);
+            ResultSet rs = stmt.executeQuery(sql);
+            if (rs.next()) {
+                primaryHashCode = rs.getLong("checksum");
+            }
+        } catch (Throwable t) {
+            handleError(t);
+            error("Calculate primary table hash failed.", t);
+            throw t;
         }
     }
 
@@ -239,20 +201,21 @@ public class CciFastChecker implements ICciChecker {
                                              long tso,
                                              ServerThreadPool threadPool,
                                              IInnerConnectionManager connectionManager) throws SQLException {
+        if (FailPoint.isKeyEnable(FP_FAIL_DURING_CAL_COLUMNAR_HASH)) {
+            throw new RuntimeException(FP_FAIL_DURING_CAL_COLUMNAR_HASH);
+        }
         // 1. Get all orc/csv files of this CCI.
         long startTime = System.nanoTime();
-        final long tableId = ICciChecker.getTableId(schemaName, indexName);
-        SQLRecorderLogger.ddlLogger.info(
-            "[Fast checker] Get table id cost: " + (System.nanoTime() - startTime) / 1_000_000 + " ms");
+        final long tableId = getTableId(schemaName, indexName);
+        log("[Fast checker] Get table id cost: " + (System.nanoTime() - startTime) / 1_000_000 + " ms");
 
         startTime = System.nanoTime();
-        List<FilesRecordSimplifiedWithChecksum> filesRecords = ICciChecker.getFilesRecords(tso, tableId, schemaName);
-        SQLRecorderLogger.ddlLogger.info(
-            "[Fast checker] Get all files cost: " + (System.nanoTime() - startTime) / 1_000_000 + " ms");
+        List<FilesRecordSimplifiedWithChecksum> filesRecords = getFilesRecords(tso, tableId, schemaName);
+        log("[Fast checker] Get all files cost: " + (System.nanoTime() - startTime) / 1_000_000 + " ms");
 
+        // 2. Filter out files needed to be process, and by the way calculate cached checksum.
         Map<String, Set<String>> orcFiles = new HashMap<>();
         Set<String> deltaFiles = new HashSet<>();
-        // 2. Filter out files needed to be process, and by the way calculate cached checksum.
         final RevisableOrderInvariantHash hasher = new RevisableOrderInvariantHash();
         final Map<String, Set<String>> toBeProcessedOrcFiles = new HashMap<>();
         for (FilesRecordSimplifiedWithChecksum filesRecord : filesRecords) {
@@ -273,15 +236,14 @@ public class CciFastChecker implements ICciChecker {
                 deltaFiles.add(fileName);
                 break;
             default:
-                logger.warn("Increment check found unexpected file: " + fileName);
+                log("Increment check found unexpected file: " + fileName);
                 break;
             }
         }
-        SQLRecorderLogger.ddlLogger.info("all orc files checksum: " + hasher.getResult());
-        logger.info("all orc files checksum: " + hasher.getResult());
+        log("all orc files checksum: " + hasher.getResult());
 
-        // csv/del file name -> pair(partition name, end pos)
         startTime = System.nanoTime();
+        // csv/del file name -> pair(partition name, end pos)
         Map<String, Pair<String, Long>> tuples = new HashMap<>();
         try (Connection connection = MetaDbUtil.getConnection()) {
             ColumnarAppendedFilesAccessor accessor = new ColumnarAppendedFilesAccessor();
@@ -294,11 +256,10 @@ public class CciFastChecker implements ICciChecker {
                 tuples.put(fileName, new Pair<>(partName, end));
             });
         } catch (Throwable t) {
-            logger.error("calculate columnar checksum failed.", t);
+            error("Failed to diff csv files", t);
             throw new TddlRuntimeException(ErrorCode.ERR_COLUMNAR_INDEX_CHECKER, t, "Failed to diff csv files");
         }
-        SQLRecorderLogger.ddlLogger.info(
-            "[Fast checker] Get all delta files info cost: " + (System.nanoTime() - startTime) / 1_000_000 + " ms");
+        log("Get all delta files info cost: " + (System.nanoTime() - startTime) / 1_000_000 + " ms");
 
         Map<String, IDeltaReadOption> deltas = new HashMap<>();
         AtomicBoolean hasCsvFiles = new AtomicBoolean(false);
@@ -336,111 +297,81 @@ public class CciFastChecker implements ICciChecker {
                     delta.getDelEndPos().add(endPos);
                     break;
                 default:
-                    logger.warn("Cci fast check found unexpected file: " + fileName);
+                    log("Cci fast check found unexpected file: " + fileName);
                     break;
                 }
                 return v;
             });
         }
 
-        CompletableFuture<String> deletedChecksumFuture = null;
         // 3. RTT 2: Calculate deleted checksum.
-        if (!toBeProcessedOrcFiles.isEmpty()) {
-            deletedChecksumFuture = CompletableFuture.supplyAsync(
-                () -> calDeletedChecksum(baseEc, connectionManager, hasher,
-                    toBeProcessedOrcFiles, deltas), threadPool);
-        }
+        final Future deletedChecksumFuture = toBeProcessedOrcFiles.isEmpty() ? Futures.immediateFuture(null) :
+            threadPool.submit(null, null, () -> {
+                MDC.put(MDC.MDC_KEY_APP, schemaName);
+                calDeletedChecksum(baseEc, connectionManager, hasher, toBeProcessedOrcFiles, deltas);
+            });
 
-        // 4. RTT 2: Calculate csv part in this thread.
-        CompletableFuture<String> csvFuture = null;
-        if (hasCsvFiles.get()) {
-            csvFuture = CompletableFuture.supplyAsync(
-                () -> calCsvChecksum(baseEc, connectionManager, hasher, deltas), threadPool);
-        }
+        // 4. RTT 2: Calculate csv checksum.
+        final Future csvFuture = !hasCsvFiles.get() ? Futures.immediateFuture(null) :
+            threadPool.submit(null, null, () -> {
+                MDC.put(MDC.MDC_KEY_APP, schemaName);
+                calCsvChecksum(baseEc, connectionManager, hasher, deltas);
+            });
 
-        // Combine these two tasks.
-        CompletableFuture<String> completableFuture = null;
-        if (null == deletedChecksumFuture) {
-            if (null != csvFuture) {
-                completableFuture = csvFuture;
-            }
-        } else {
-            if (null == csvFuture) {
-                completableFuture = deletedChecksumFuture;
-            } else {
-                completableFuture = deletedChecksumFuture.thenCombine(csvFuture, (s1, s2) -> {
-                    if (null == s1 && null == s2) {
-                        return null;
-                    }
-                    return s1 + "\n" + s2;
-                });
-            }
-        }
-
-        // If ddl is paused, interrupt tasks.
-        String error = null;
-        if (null != completableFuture) {
-            while (true) {
+        interruptIfDdlCanceled(
+            threadPool, baseEc,
+            () -> {
                 try {
-                    error = completableFuture.get(1, TimeUnit.SECONDS);
-                    break;
-                } catch (TimeoutException e) {
-                    // ignore.
-                } catch (Throwable t) {
-                    error = t.getMessage();
-                    break;
+                    deletedChecksumFuture.get();
+                } catch (InterruptedException | ExecutionException e) {
+                    csvFuture.cancel(true);
+                    forceCloseConnections();
+                    throw new RuntimeException(e);
                 }
-
-                if (baseEc.getDdlContext().isInterrupted()) {
-                    completableFuture.cancel(true);
-                    error = String.format("Interrupted when checking columnar index %s.%s", tableName, indexName);
-                    break;
+                try {
+                    csvFuture.get();
+                } catch (InterruptedException | ExecutionException e) {
+                    forceCloseConnections();
+                    throw new RuntimeException(e);
                 }
-            }
-        }
+            },
+            () -> {
+                deletedChecksumFuture.cancel(true);
+                csvFuture.cancel(true);
+                forceCloseConnections();
+            });
 
-        if (null != error) {
-            for (IInnerConnection connection : connections) {
-                connection.close();
-            }
-            columnarHashCode = -1;
-            throw new TddlRuntimeException(ErrorCode.ERR_COLUMNAR_INDEX_CHECKER,
-                "Fast CCI checker error: " + error);
-        } else {
-            columnarHashCode = hasher.getResult();
-        }
+        columnarHashCode = hasher.getResult();
 
-        if (-1 != columnarHashCode && -1 != primaryHashCode && columnarHashCode != primaryHashCode) {
-            // Use naive method to check again.
-            calColumnarChecksumInNaiveMethod(orcFiles, deltas, baseEc, tso, threadPool, connectionManager);
+        if (FailPoint.isKeyEnable(FP_FORCE_CAL_IN_NAIVE_METHOD)
+            || (-1 != primaryHashCode && columnarHashCode != primaryHashCode)) {
+            log("Columnar checksum not match, innodb checksum: " + primaryHashCode
+                + ", columnar checksum: " + columnarHashCode);
+            if (baseEc.isEnableCciNaiveCheckIfFastCheckerFailed()) {
+                // Use naive method to check again.
+                calColumnarChecksumInNaiveMethod(orcFiles, deltas, baseEc, threadPool, connectionManager);
+            }
         }
     }
 
-    @Nullable
-    private String calCsvChecksum(ExecutionContext baseEc, IInnerConnectionManager connectionManager,
-                                  RevisableOrderInvariantHash hasher, Map<String, IDeltaReadOption> deltas) {
-        final Map savedMdcContext = MDC.getCopyOfContextMap();
-        MDC.put(MDC.MDC_KEY_APP, DEFAULT_DB_NAME);
+    private void calCsvChecksum(ExecutionContext baseEc, IInnerConnectionManager connectionManager,
+                                RevisableOrderInvariantHash hasher, Map<String, IDeltaReadOption> deltas) {
+        if (FailPoint.isKeyEnable(FP_FAIL_CSV_CHECKSUM)) {
+            throw new RuntimeException(FP_FAIL_CSV_CHECKSUM);
+        }
         try (IInnerConnection conn = connectionManager.getConnection(schemaName);
             Statement stmt = conn.createStatement()) {
             connections.add(conn);
             conn.addExecutionContextInjectHook(
-                e -> {
-                    ((ExecutionContext) e).setCheckingCci(true);
-                    ((ExecutionContext) e).setReadDeltaFiles(deltas);
-                }
+                e -> ((ExecutionContext) e).setReadDeltaFiles(deltas)
             );
             String sql = getCsvSql(baseEc);
-
-            SQLRecorderLogger.ddlLogger.info("columnar csv checksum sql: " + sql);
-            logger.info("columnar csv checksum sql: " + sql);
-
+            log("columnar csv checksum sql: " + sql);
             long startTime = System.nanoTime();
             ResultSet rs = stmt.executeQuery(sql);
             if (rs.next()) {
                 long csvChecksum = rs.getLong("checksum");
-                SQLRecorderLogger.ddlLogger.info("columnar csv checksum: " + csvChecksum);
-                logger.info("columnar csv checksum: " + csvChecksum);
+                log("columnar csv checksum: " + csvChecksum);
                 hashLock.lock();
                 try {
                     hasher.add(csvChecksum).remove(0);
@@ -448,50 +379,42 @@ public class CciFastChecker implements ICciChecker {
                     hashLock.unlock();
                 }
             } else {
-                throw new TddlRuntimeException(ErrorCode.ERR_COLUMNAR_INDEX_CHECKER, "not found any csv checksum.");
+                throw new RuntimeException("Not found any csv checksum.");
             }
-            SQLRecorderLogger.ddlLogger.info(
-                "Calculate csv checksum cost: " + (System.nanoTime() - startTime) / 1_000_000 + " ms");
-
+            log("Calculate csv checksum cost: " + (System.nanoTime() - startTime) / 1_000_000 + " ms");
             conn.clearExecutionContextInjectHooks();
             connections.remove(conn);
-            return null;
         } catch (Throwable t) {
             handleError(t);
-            return t.getMessage();
-        } finally {
-            MDC.setContextMap(savedMdcContext);
+            throw new RuntimeException("Failed to calculate csv checksum.", t);
         }
     }
 
-    @Nullable
-    private String calDeletedChecksum(ExecutionContext baseEc,
-                                      IInnerConnectionManager connectionManager,
-                                      RevisableOrderInvariantHash hasher,
-                                      Map<String, Set<String>> toBeProcessedOrcFiles,
-                                      Map<String, IDeltaReadOption> deltas) {
-        final Map savedMdcContext = MDC.getCopyOfContextMap();
-        MDC.put(MDC.MDC_KEY_APP, DEFAULT_DB_NAME);
+    private void calDeletedChecksum(ExecutionContext baseEc,
+                                    IInnerConnectionManager connectionManager,
+                                    RevisableOrderInvariantHash hasher,
+                                    Map<String, Set<String>> toBeProcessedOrcFiles,
+                                    Map<String, IDeltaReadOption> deltas) {
+        if (FailPoint.isKeyEnable(FP_FAIL_DELETE_CHECKSUM)) {
+            throw new RuntimeException(FP_FAIL_DELETE_CHECKSUM);
+        }
         try (IInnerConnection conn = connectionManager.getConnection(schemaName);
             Statement stmt = conn.createStatement()) {
             connections.add(conn);
             conn.addExecutionContextInjectHook(
                 (ec) -> {
-                    ((ExecutionContext) ec).setCheckingCci(true);
                     ((ExecutionContext) ec).setReadOrcFiles(toBeProcessedOrcFiles);
                     ((ExecutionContext) ec).setReadDeltaFiles(deltas);
                 });
             String sql = getDeletedSql(baseEc);
 
-            SQLRecorderLogger.ddlLogger.info("columnar deleted checksum sql: " + sql);
-            logger.info("columnar deleted checksum sql: " + sql);
+            log("columnar deleted checksum sql: " + sql);
 
             long startTime = System.nanoTime();
             ResultSet rs = stmt.executeQuery(sql);
             if (rs.next()) {
                 long deletedChecksum = rs.getLong("checksum");
-                SQLRecorderLogger.ddlLogger.info("columnar deleted checksum: " + deletedChecksum);
-                logger.info("columnar deleted checksum: " + deletedChecksum);
+                log("columnar deleted checksum: " + deletedChecksum);
                 hashLock.lock();
                 try {
                     hasher.remove(deletedChecksum).add(0);
@@ -499,74 +422,100 @@ public class CciFastChecker implements ICciChecker {
                     hashLock.unlock();
                 }
             } else {
-                return "Not found deleted checksum in result set.";
+                throw new RuntimeException("Columnar deleted checksum is empty.");
             }
-            SQLRecorderLogger.ddlLogger.info(
-                "Calculate deleted checksum cost: " + (System.nanoTime() - startTime) / 1_000_000 + " ms");
-
+            log("Calculate deleted checksum cost: " + (System.nanoTime() - startTime) / 1_000_000 + " ms");
             conn.clearExecutionContextInjectHooks();
             connections.remove(conn);
         } catch (Throwable t) {
             handleError(t);
-            return "Error occurs, caused by " + t.getMessage();
-        } finally {
-            MDC.setContextMap(savedMdcContext);
+            throw new RuntimeException(t);
         }
-        return null;
     }
 
     private void calColumnarChecksumInNaiveMethod(Map<String, Set<String>> orcFiles,
                                                   Map<String, IDeltaReadOption> deltas,
-                                                  ExecutionContext baseEc, long tso, ServerThreadPool threadPool,
+                                                  ExecutionContext baseEc, ServerThreadPool threadPool,
                                                   IInnerConnectionManager connectionManager) {
         try (IInnerConnection conn = connectionManager.getConnection(schemaName);
             Statement stmt = conn.createStatement()) {
             conn.addExecutionContextInjectHook(
                 (ec) -> {
-                    ((ExecutionContext) ec).setCheckingCci(true);
                     ((ExecutionContext) ec).setReadOrcFiles(orcFiles);
                     ((ExecutionContext) ec).setReadDeltaFiles(deltas);
                 });
-            connections.add(conn);
-
-            String finalSql = getColumnarNaiveSql(baseEc);
-            SQLRecorderLogger.ddlLogger.info("columnar naive checksum sql: " + finalSql);
-            logger.info("columnar naive checksum sql: " + finalSql);
-
-            executeSqlAndInterruptIfDdlCanceled(threadPool, stmt, finalSql, baseEc, false);
+            String sql = getColumnarNaiveSql(baseEc);
+            log("columnar naive checksum sql: " + sql);
+            interruptIfDdlCanceled(
+                threadPool, baseEc,
+                () -> {
+                    try {
+                        ResultSet rs = stmt.executeQuery(sql);
+                        if (rs.next()) {
+                            columnarHashCode = rs.getLong("checksum");
+                        }
+                    } catch (SQLException e) {
+                        throw new RuntimeException(e);
+                    }
+                },
+                () -> {
+                    // KILL: force close
+                    try {
+                        conn.close();
+                    } catch (SQLException e) {
+                        handleError(e);
+                        error("Close connection failed,", e);
+                    }
+                });
             conn.clearExecutionContextInjectHooks();
-            connections.remove(conn);
         } catch (Throwable t) {
             handleError(t);
-            throw new TddlRuntimeException(ErrorCode.ERR_COLUMNAR_INDEX_CHECKER,
-                "Fast CCI checker error: " + t.getMessage());
+            error("Calculate columnar checksum in naive method failed.", t);
+            throw new RuntimeException("Calculate columnar checksum in naive method failed.");
         }
     }
 
-    protected void handleError(Throwable t) {
-        SQLRecorderLogger.ddlLogger.error(String.format(
-            "[Fast CCI Checker] Error occurs when checking columnar index %s.%s", tableName, indexName), t);
-        errors.add(t.getMessage());
+    private void forceCloseConnections() {
+        for (IInnerConnection connection : connections) {
+            try {
+                // KILL: force close
+                connection.close();
+            } catch (Throwable t) {
+                // ignore
+                handleError(t);
+            }
+        }
+    }
+
+    @Override
+    protected void log(String msg) {
+        SQLRecorderLogger.ddlLogger.warn("[CCI Fast Checker] " + msg);
+    }
+
+    @Override
+    protected void error(String msg, Throwable t) {
+        SQLRecorderLogger.ddlLogger.error("[CCI Fast Checker] " + msg, t);
     }
 
     @Override
     public boolean getCheckReports(Collection<String> reports) {
+        super.getCheckReports(reports);
         boolean success = true;
-        if (!errors.isEmpty()) {
-            reports.addAll(errors);
-        }
         if (-1 == primaryHashCode || primaryHashCode != columnarHashCode) {
             // Check fail.
             reports.add("Inconsistency detected: primary hash: " + primaryHashCode
                 + ", columnar hash: " + columnarHashCode);
             success = false;
         }
+        if (success) {
+            reports.clear();
+        }
         return success;
     }
 
     protected String getPrimarySql(ExecutionContext baseEc, long tso) {
         StringBuilder sb = new StringBuilder();
-        ICciChecker.setBasicHint(baseEc, sb);
+        setBasicHint(baseEc, sb);
         sb.append(" SNAPSHOT_TS=")
             .append(tso);
         sb.append(" TRANSACTION_POLICY=TSO");
@@ -576,7 +525,7 @@ public class CciFastChecker implements ICciChecker {
 
     protected String getCsvSql(ExecutionContext baseEc) {
         StringBuilder sb = new StringBuilder(" READ_CSV_ONLY=true");
-        ICciChecker.setBasicHint(baseEc, sb);
+        setBasicHint(baseEc, sb);
 
         String hint = String.format(COLUMNAR_HINT, sb);
         return hint + String.format(CALCULATE_COLUMNAR_HASH, tableName, indexName);
@@ -584,15 +533,14 @@ public class CciFastChecker implements ICciChecker {
 
     protected String getDeletedSql(ExecutionContext baseEc) {
         StringBuilder sb = new StringBuilder(" READ_ORC_ONLY=true ENABLE_OSS_DELETED_SCAN=true ");
-        ICciChecker.setBasicHint(baseEc, sb);
-
+        setBasicHint(baseEc, sb);
         String hint = String.format(COLUMNAR_HINT, sb);
         return hint + String.format(CALCULATE_COLUMNAR_HASH, tableName, indexName);
     }
 
     protected String getColumnarNaiveSql(ExecutionContext baseEc) {
         StringBuilder sb = new StringBuilder(" READ_SPECIFIED_COLUMNAR_FILES=true ");
-        ICciChecker.setBasicHint(baseEc, sb);
+        setBasicHint(baseEc, sb);
         String hint = String.format(COLUMNAR_HINT, sb);
         return hint + String.format(CALCULATE_COLUMNAR_HASH, tableName, indexName);
     }

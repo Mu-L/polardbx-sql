@@ -57,6 +57,7 @@ public class BaselineInfoRecord implements SystemTableRecord {
     public long createTime;
     public String origin;
     public String planExtend;
+    public int version;
 
     @Override
     public BaselineInfoRecord fill(ResultSet rs) throws SQLException {
@@ -78,6 +79,7 @@ public class BaselineInfoRecord implements SystemTableRecord {
         this.createTime = rs.getLong("UNIX_TIMESTAMP(PLAN_INFO.GMT_CREATED)");
         this.origin = rs.getString("PLAN_INFO.ORIGIN");
         this.planExtend = rs.getString("PLAN_EXTEND");
+        this.version = rs.getInt("VERSION");
         return this;
     }
 
@@ -115,7 +117,23 @@ public class BaselineInfoRecord implements SystemTableRecord {
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.origin);
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, this.tablesHashCode);
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.planExtend);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, this.version);
         // skip automatically updated column: create_time and update_time
+        return params;
+    }
+
+    public Map<Integer, ParameterContext> buildInsertParamsForPlanStats() {
+        Map<Integer, ParameterContext> params = new HashMap<>(7);
+        int index = 0;
+        // skip auto increment primary-index
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setTimestamp1,
+            this.lastExecuteTime == -1 ? null : new Timestamp(this.lastExecuteTime * 1000));
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, this.chooseCount);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, this.tablesHashCode);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.instId);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.schemaName);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, this.id);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, this.planId);
         return params;
     }
 }

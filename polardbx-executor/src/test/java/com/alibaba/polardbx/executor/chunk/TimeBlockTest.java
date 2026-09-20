@@ -79,6 +79,7 @@ public class TimeBlockTest extends BaseBlockTest {
             Assert.assertEquals(timeBlock.getLong(i), newBlock.getLong(i));
             Assert.assertEquals(timeBlock.hashCode(i), newBlock.hashCode(i));
             Assert.assertEquals(timeBlock.hashCodeUseXxhash(i), newBlock.hashCodeUseXxhash(i));
+            Assert.assertTrue(timeBlock.compareAssertedSameType(i, newBlock, i) == 0);
         }
         MemoryCountable.checkDeviation(timeBlock, .05d, true);
     }

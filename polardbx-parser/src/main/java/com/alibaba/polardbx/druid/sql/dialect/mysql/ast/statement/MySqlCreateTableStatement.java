@@ -83,6 +83,7 @@ public class MySqlCreateTableStatement extends SQLCreateTableStatement implement
     protected SQLIdentifierExpr effectedBy;
     protected boolean isBroadCast;
     protected boolean isSingle;
+    protected boolean isReplicas;
     protected SQLExpr locality; // for drds
     protected SQLExpr autoSplit; // for drds
     protected Map<String, SQLName> with = new HashMap<String, SQLName>(3); // for ads
@@ -457,13 +458,23 @@ public class MySqlCreateTableStatement extends SQLCreateTableStatement implement
                 }
                 // clean and follow table charset
                 setColumnCharacter(targetCharset, targetCollate, true);
-                removeCharsetOptions();
-                if (convertCharSet.getCharset() != null) {
-                    tableOptions.add(
-                        new SQLAssignItem(new SQLIdentifierExpr("CHARSET"), convertCharSet.getCharset()));
-                }
-                if (convertCharSet.getCollate() != null) {
-                    tableOptions.add(new SQLAssignItem(new SQLIdentifierExpr("COLLATE"), convertCharSet.getCharset()));
+
+                // Only modify table options if charset is actually changing or explicit collate is specified
+                String currentCharset = getCharsetOptions();
+                boolean charsetUnchanged = currentCharset != null && targetCollate == null
+                    && StringUtils.equalsIgnoreCase(SQLUtils.normalize(currentCharset),
+                    SQLUtils.normalize(targetCharset));
+
+                if (!charsetUnchanged) {
+                    removeCharsetOptions();
+                    if (convertCharSet.getCharset() != null) {
+                        tableOptions.add(
+                            new SQLAssignItem(new SQLIdentifierExpr("CHARSET"), convertCharSet.getCharset()));
+                    }
+                    if (convertCharSet.getCollate() != null) {
+                        tableOptions.add(
+                            new SQLAssignItem(new SQLIdentifierExpr("COLLATE"), convertCharSet.getCollate()));
+                    }
                 }
                 applyCount++;
             }
@@ -542,8 +553,10 @@ public class MySqlCreateTableStatement extends SQLCreateTableStatement implement
                 collate = option.getValue().toString();
             }
         }
+        // Save original table charset before removing options
+        String originalCharset = getCharsetOptions();
         if (charset != null) {
-            setColumnCharacter(charset, collate, false);
+            setColumnCharacter(charset, collate, false, originalCharset);
         }
 
         removeCharsetOptions();
@@ -563,7 +576,42 @@ public class MySqlCreateTableStatement extends SQLCreateTableStatement implement
     }
 
     private void setColumnCharacter(String character, String collate, boolean forceConvert) {
+        setColumnCharacter(character, collate, forceConvert, null);
+    }
+
+    private void setColumnCharacter(String character, String collate, boolean forceConvert, String originalCharset) {
         for (SQLColumnDefinition column : this.getColumnDefinitions()) {
+            // For GENERATED columns, check if they have explicit charset
+            // MySQL behavior: 
+            // 1. CONVERT TO CHARACTER SET modifies column-level charset of generated columns
+            //    that have explicit charset, but does NOT modify CAST expressions inside them.
+            // 2. ALTER TABLE ... charset (without CONVERT) should add original table charset to
+            //    generated columns WITHOUT explicit charset, to preserve their behavior.
+            if (column.getGeneratedAlawsAs() != null) {
+                // For ALTER TABLE ... charset (forceConvert=false), add original charset to generated columns without explicit charset
+                if (column.getCharsetExpr() == null && originalCharset != null && !forceConvert) {
+                    // This is ALTER TABLE ... charset (not CONVERT TO CHARACTER SET)
+                    // Add original table charset to generated column
+                    if (charsetSensitive(column.getDataType())) {
+                        column.setCharsetExpr(new SQLIdentifierExpr(originalCharset));
+                    }
+                    continue;
+                }
+                // For generated columns without explicit charset, skip them
+                // - CONVERT TO CHARACTER SET: they will use new table charset by default
+                // - ALTER TABLE charset: handled above (added original charset)
+                if (column.getCharsetExpr() == null) {
+                    continue;
+                }
+                // Has explicit charset, allow conversion below
+            }
+            // When force converting without explicit target collate,
+            // skip columns whose effective charset already matches the target.
+            if (forceConvert && StringUtils.isBlank(collate) && StringUtils.isNotBlank(character)) {
+                if (isColumnCharsetMatch(column, character)) {
+                    continue;
+                }
+            }
             if (forceConvert && column.getDataType() instanceof SQLCharacterDataType) {
                 // convert to character 语法会掉用到这里，所以这里要判断一下nchar/nvarchar，转换成普通类型)
                 SQLCharacterDataType newDataType = getSqlCharacterDataType(column);
@@ -600,6 +648,55 @@ public class MySqlCreateTableStatement extends SQLCreateTableStatement implement
                 }
             }
         }
+    }
+
+    /**
+     * Check if column's effective charset already matches the target charset.
+     */
+    private boolean isColumnCharsetMatch(SQLColumnDefinition column, String targetCharset) {
+        if (!charsetSensitive(column.getDataType())) {
+            return false;
+        }
+        // Check explicit charsetExpr
+        if (column.getCharsetExpr() != null) {
+            return StringUtils.equalsIgnoreCase(
+                SQLUtils.normalize(column.getCharsetExpr().toString()),
+                SQLUtils.normalize(targetCharset));
+        }
+        // Check characterDataType's charset
+        if (column.getDataType() instanceof SQLCharacterDataType) {
+            SQLCharacterDataType characterDataType = (SQLCharacterDataType) column.getDataType();
+            if (StringUtils.isNotBlank(characterDataType.getCharSetName())) {
+                return StringUtils.equalsIgnoreCase(
+                    SQLUtils.normalize(characterDataType.getCharSetName()),
+                    SQLUtils.normalize(targetCharset));
+            }
+        }
+        // Check collateExpr -> derive charset from collation
+        if (column.getCollateExpr() != null) {
+            String collateName = column.getCollateExpr().toString();
+            CharsetNameForParser charsetFromCollate = CollationNameForParser.getCharsetOf(collateName, false);
+            if (charsetFromCollate != null) {
+                return StringUtils.equalsIgnoreCase(charsetFromCollate.name(), SQLUtils.normalize(targetCharset));
+            }
+        }
+        // Check characterDataType's collate
+        if (column.getDataType() instanceof SQLCharacterDataType) {
+            SQLCharacterDataType characterDataType = (SQLCharacterDataType) column.getDataType();
+            if (StringUtils.isNotBlank(characterDataType.getCollate())) {
+                CharsetNameForParser charsetFromCollate =
+                    CollationNameForParser.getCharsetOf(characterDataType.getCollate(), false);
+                if (charsetFromCollate != null) {
+                    return StringUtils.equalsIgnoreCase(charsetFromCollate.name(), SQLUtils.normalize(targetCharset));
+                }
+            }
+        }
+        // No explicit charset/collate -> inherits from table, check table charset
+        String tableCharset = getCharsetOptions();
+        if (tableCharset != null) {
+            return StringUtils.equalsIgnoreCase(SQLUtils.normalize(tableCharset), SQLUtils.normalize(targetCharset));
+        }
+        return false;
     }
 
     private void doSpecialConvertDataType(SQLCharacterDataType characterDataType, String srcCharsetName,
@@ -951,6 +1048,7 @@ public class MySqlCreateTableStatement extends SQLCreateTableStatement implement
 
         x.setBroadCast(isBroadCast);
         x.setSingle(isSingle);
+        x.setReplicas(isReplicas);
 
         if (dbPartitionBy != null) {
             x.setDbPartitionBy(dbPartitionBy.clone());
@@ -1149,6 +1247,14 @@ public class MySqlCreateTableStatement extends SQLCreateTableStatement implement
         isSingle = single;
     }
 
+    public boolean isReplicas() {
+        return isReplicas;
+    }
+
+    public void setReplicas(boolean replicas) {
+        isReplicas = replicas;
+    }
+
     public SQLName getArchiveBy() {
         return archiveBy;
     }
@@ -1197,7 +1303,6 @@ public class MySqlCreateTableStatement extends SQLCreateTableStatement implement
         }
         addOption("TRANSACTIONAL", x);
     }
-
 
     private final Set<String> VALID_TABLE_OPTIONS = new HashSet<String>(Arrays.asList(
         "AUTO_INCREMENT", "AVG_ROW_LENGTH", "CHARACTER SET", "DEFAULT CHARACTER SET", "CHARSET", "DEFAULT CHARSET",

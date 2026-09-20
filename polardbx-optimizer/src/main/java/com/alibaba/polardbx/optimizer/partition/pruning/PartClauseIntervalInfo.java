@@ -30,7 +30,6 @@ import com.alibaba.polardbx.optimizer.utils.ExprContextProvider;
 import com.alibaba.polardbx.optimizer.utils.RexUtils;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlCall;
-import org.apache.calcite.sql.SqlOperator;
 
 import java.util.List;
 
@@ -88,7 +87,7 @@ public class PartClauseIntervalInfo extends AbstractLifecycle {
 
         SqlCall partFuncCall = PartitionFunctionBuilder.getPartFuncCall(partLevel, partKeyIndex, partInfo);
         if (partFuncCall != null) {
-            partFunc = PartitionFunctionBuilder.createPartFuncByPartFuncCal(partFuncCall, partColMetas);
+            partFunc = PartitionFunctionBuilder.createPartFuncByPartFuncCall(partFuncCall, partColMetas);
         }
 
         IExpression exprExec = RexUtils.getEvalFuncExec(partPredExpr, exprCtxHolder);

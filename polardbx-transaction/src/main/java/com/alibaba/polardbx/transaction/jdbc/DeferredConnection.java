@@ -23,10 +23,11 @@ import com.alibaba.polardbx.common.exception.NotSupportException;
 import com.alibaba.polardbx.common.jdbc.BytesSql;
 import com.alibaba.polardbx.common.jdbc.ConnectionStats;
 import com.alibaba.polardbx.common.jdbc.IConnection;
-import com.alibaba.polardbx.common.jdbc.ReadViewConn;
+import com.alibaba.polardbx.common.jdbc.XaConn;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
+import com.alibaba.polardbx.rpc.client.XSession;
 import com.alibaba.polardbx.rpc.pool.XConnection;
 import com.alibaba.polardbx.transaction.TransactionManager;
 import com.mysql.cj.x.protobuf.PolarxExecPlan;
@@ -51,7 +52,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executor;
 
-public class DeferredConnection extends ReadViewConn {
+public class DeferredConnection extends XaConn {
 
     protected final boolean serverDiscards;
     protected final IConnection conn;
@@ -134,6 +135,12 @@ public class DeferredConnection extends ReadViewConn {
         if (discardResults > 0) {
             GeneralUtil.nestedException("A deferred PreparedStatement hasn't executed.");
         }
+
+        //当事务中出现explain语句时，deferBytesSql先不下发
+        if (XSession.isExplain(hint)) {
+            return;
+        }
+
         if (conn.isWrapperFor(XConnection.class)) {
             final XConnection xconn = conn.unwrap(XConnection.class);
             for (BytesSql deferSql : deferBytesSqls) {
@@ -159,10 +166,17 @@ public class DeferredConnection extends ReadViewConn {
         // Build a multi-query including deferred queries.
         int actualPos = findStart(sql);
 
+        // Prefix hint in sql, adding it to each deferred sql.
+        final String prefix = sql.substring(0, actualPos);
+
+        //当事务中出现explain语句时，deferBytesSql先不下发
+        if (prefix.startsWith("explain") || prefix.startsWith("EXPLAIN")) {
+            return sql;
+        }
+
         // Use pipeline in XConnection.
         if (conn.isWrapperFor(XConnection.class)) {
             final XConnection xconn = conn.unwrap(XConnection.class);
-            final String prefix = sql.substring(0, actualPos);
 
             for (BytesSql deferSql : deferBytesSqls) {
                 // Run with prefix.
@@ -174,13 +188,13 @@ public class DeferredConnection extends ReadViewConn {
         }
 
         StringBuilder builder = new StringBuilder(sql.length() + 64);
-        builder.append(sql.substring(0, actualPos));
         if (serverDiscards) {
             builder.append("SET @@rds_result_skip_counter = ");
             builder.append(deferBytesSqls.size());
             builder.append(';');
         }
         for (BytesSql deferSql : deferBytesSqls) {
+            builder.append(prefix);
             builder.append(deferSql.toString());
             builder.append(';');
             discardResults++;
@@ -749,5 +763,16 @@ public class DeferredConnection extends ReadViewConn {
     @Override
     public void disableFlashbackArea() throws SQLException {
         conn.disableFlashbackArea();
+    }
+
+    @Override
+    public IConnection enableAsOfCrossDdl(boolean enable) throws SQLException {
+        conn.enableAsOfCrossDdl(enable);
+        return this;
+    }
+
+    @Override
+    public void disableAsOfCrossDdl() throws SQLException {
+        conn.disableAsOfCrossDdl();
     }
 }

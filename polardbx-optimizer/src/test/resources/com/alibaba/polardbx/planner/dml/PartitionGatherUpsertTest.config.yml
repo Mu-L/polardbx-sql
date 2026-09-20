@@ -1,0 +1,6 @@
+defaltxxAPPName.isNew:
+  true
+DML_EXECUTION_STRATEGY:
+  LOGICAL
+DML_PUSH_DUPLICATE_CHECK:
+  false

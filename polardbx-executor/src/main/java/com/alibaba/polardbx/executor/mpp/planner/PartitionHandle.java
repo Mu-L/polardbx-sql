@@ -114,4 +114,8 @@ public class PartitionHandle {
             .add("partitionCount", partitionCount)
             .toString();
     }
+
+    public PartitionHandle copy() {
+        return new PartitionHandle(partitionMode, partitionCount);
+    }
 }

@@ -12,6 +12,9 @@ import java.util.TimeZone;
 import java.util.List;
 
 public class TsoToTime extends AbstractScalarFunction {
+    public TsoToTime() {
+    }
+
     public TsoToTime(List<DataType> operandTypes, DataType resultType) {
         super(operandTypes, resultType);
     }
@@ -75,5 +78,17 @@ public class TsoToTime extends AbstractScalarFunction {
     }
     public int getPrecision() {
         return 0;
+    }
+
+    /**
+     * AbstractScalarFunction 仅按 resultType 推导返回类型，而调用方也可能只设置 resultField，
+     * 因此优先取 resultField，避免返回类型为 null 导致 NPE。
+     */
+    @Override
+    public DataType getReturnType() {
+        if (resultField != null) {
+            return resultField.getDataType();
+        }
+        return super.getReturnType();
     }
 }

@@ -59,22 +59,23 @@ public class GmsJdbcUtil {
     public static Map<String, String> getDefaultConnPropertiesForHaChecker() {
         Map<String, String> connPropsMap = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
         connPropsMap.putAll(JDBC_DEFAULT_CONN_PROPS_MAP);
-        connPropsMap.put(JDBC_SOCKET_TIMEOUT, "2000");
-        connPropsMap.put(JDBC_CONNECT_TIMEOUT, "2000");
+        connPropsMap.put(JDBC_SOCKET_TIMEOUT, "1000");
+        connPropsMap.put(JDBC_CONNECT_TIMEOUT, "1000");
         return connPropsMap;
     }
 
     public static Map<String, String> getDefaultConnPropertiesForHaCheckerFast() {
         Map<String, String> connPropsMap = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
         connPropsMap.putAll(JDBC_DEFAULT_CONN_PROPS_MAP);
-        connPropsMap.put(JDBC_SOCKET_TIMEOUT, "2000");
-        connPropsMap.put(JDBC_CONNECT_TIMEOUT, "2000");
+        connPropsMap.put(JDBC_SOCKET_TIMEOUT, "1000");
+        connPropsMap.put(JDBC_CONNECT_TIMEOUT, "1000");
         return connPropsMap;
     }
 
     public static Map<String, String> getDefaultConnPropertiesForMetaDb() {
         Map<String, String> connPropsMap = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
         connPropsMap.putAll(JDBC_DEFAULT_CONN_PROPS_MAP);
+        connPropsMap.put(JDBC_CONNECT_TIMEOUT, "1000");
         return connPropsMap;
     }
 

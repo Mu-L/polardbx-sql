@@ -291,6 +291,26 @@ public class TtlJobContext {
      */
     protected Boolean useArcTrans = Boolean.valueOf(ConnectionParams.TTL_USE_ARCHIVE_TRANS_POLICY.getDefault());
 
+    /**
+     * Label if need use rebuild-policy to perform expired data cleaning up instead of row-level deleting.
+     */
+    protected Boolean useRebuildPolicy = false;
+
+    /**
+     * The percentAvg of all expired data of ttl-table
+     */
+    protected Long expiredDataPercentAvg = 0L;
+
+    /**
+     * The total row count of ttl-prim table
+     */
+    protected Long ttlPrimTblTotalRowCount = 0L;
+
+    /**
+     * The sql for cleaning up expired data by rebuild-policy
+     */
+    protected String cleanupByRebuildTableSql = "";
+
     public TtlJobContext() {
     }
 
@@ -652,5 +672,37 @@ public class TtlJobContext {
 
     public void setNewAddedPartsCount(Integer newAddedPartsCount) {
         this.newAddedPartsCount = newAddedPartsCount;
+    }
+
+    public Boolean getUseRebuildPolicy() {
+        return useRebuildPolicy;
+    }
+
+    public void setUseRebuildPolicy(Boolean useRebuildPolicy) {
+        this.useRebuildPolicy = useRebuildPolicy;
+    }
+
+    public Long getExpiredDataPercentAvg() {
+        return expiredDataPercentAvg;
+    }
+
+    public void setExpiredDataPercentAvg(Long expiredDataPercentAvg) {
+        this.expiredDataPercentAvg = expiredDataPercentAvg;
+    }
+
+    public Long getTtlPrimTblTotalRowCount() {
+        return ttlPrimTblTotalRowCount;
+    }
+
+    public void setTtlPrimTblTotalRowCount(Long ttlPrimTblTotalRowCount) {
+        this.ttlPrimTblTotalRowCount = ttlPrimTblTotalRowCount;
+    }
+
+    public String getCleanupByRebuildTableSql() {
+        return cleanupByRebuildTableSql;
+    }
+
+    public void setCleanupByRebuildTableSql(String cleanupByRebuildTableSql) {
+        this.cleanupByRebuildTableSql = cleanupByRebuildTableSql;
     }
 }

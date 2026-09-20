@@ -1,0 +1,44 @@
+## DISABLE_FAST_SQL_PARSER
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+
+use polardbx;
+drop database if exists newttldb1;
+create database if not exists newttldb1 mode='auto';
+use newttldb1;
+  
+## create table
+drop table if exists test_ttl_job2;
+create table test_ttl_job2(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by key(`a`)
+partitions 16;
+
+insert into test_ttl_job2(a,b) values (null, '1970-02-01');
+insert into test_ttl_job2 select null,b from test_ttl_job2;
+insert into test_ttl_job2 select null,b from test_ttl_job2;
+select count(1) from test_ttl_job2;
+
+alter table test_ttl_job2
+modify ttl
+ttl_enable = 'on',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_job = cron '0 */1 * * * ? *' timezone '+08:00'
+;
+
+show create table test_ttl_job2;
+select sleep(120);
+
+select count(1) > 0 from metadb.scheduled_jobs where table_schema='newttldb1' and table_name='test_ttl_job2';
+select count(1) > 0 from metadb.fired_scheduled_jobs where table_schema='newttldb1' and table_name='test_ttl_job2' and state in ('QUEUED','SUCCESS') and fire_time > 0;
+
+drop database if exists newttldb1;
+use polardbx;

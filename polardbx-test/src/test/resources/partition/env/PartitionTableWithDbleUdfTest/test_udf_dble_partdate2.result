@@ -1,0 +1,117 @@
+## DISABLE_FAST_SQL_PARSER
+select Partdated0sp10d('2013-01-01')
+Partdated0sp10d('2013-01-01')
+0
+select Partdated0sp10d('2014-01-01')
+Partdated0sp10d('2014-01-01')
+0
+select Partdated0sp10d('2014-01-10')
+Partdated0sp10d('2014-01-10')
+0
+select Partdated0sp10d('2014-01-11')
+Partdated0sp10d('2014-01-11')
+1
+select Partdated0sp10d('2014-01-30')
+Partdated0sp10d('2014-01-30')
+2
+select Partdated0sp10d('2014-01-31')
+Partdated0sp10d('2014-01-31')
+0
+select Partdated0sp10d('2014-02-09')
+Partdated0sp10d('2014-02-09')
+0
+select Partdated0sp10d('2014-02-10')
+Partdated0sp10d('2014-02-10')
+1
+select Partdated0sp10d('2014-02-19')
+Partdated0sp10d('2014-02-19')
+1
+select Partdated0sp10d('2014-02-20')
+Partdated0sp10d('2014-02-20')
+2
+select Partdated0sp10d('2014-03-01')
+Partdated0sp10d('2014-03-01')
+2
+drop tablegroup if exists tg_dble_udf11
+create tablegroup if not exists tg_dble_udf11
+partition by udf_hash(bigint)
+partition 4
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3),
+partition pm values less than (9223372036854775807)
+)
+drop table if exists uh_t11
+create table uh_t11(
+c1 datetime not null,
+c2 datetime not null
+)
+partition by udf_hash(Partdated0sp10d(c1))
+tablegroup=tg_dble_udf11
+insert into uh_t11 values ('2013-01-01','2013-01-01')
+insert into uh_t11 values ('2014-01-01','2014-01-01')
+insert into uh_t11 values ('2014-01-10','2014-01-10')
+insert into uh_t11 values ('2014-01-11','2014-01-11')
+insert into uh_t11 values ('2014-01-30','2014-01-30')
+insert into uh_t11 values ('2014-01-31','2014-01-31')
+insert into uh_t11 values ('2014-02-09','2014-02-09')
+insert into uh_t11 values ('2014-02-10','2014-02-10')
+insert into uh_t11 values ('2014-02-19','2014-02-19')
+insert into uh_t11 values ('2014-02-20','2014-02-20')
+insert into uh_t11 values ('2014-03-01','2014-03-01')
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2013-01-01'
+c1,route_rs,hash_rs
+2013-01-01 00:00:00.0,p0,(0)
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-01-01'
+c1,route_rs,hash_rs
+2014-01-01 00:00:00.0,p0,(0)
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-01-10'
+c1,route_rs,hash_rs
+2014-01-10 00:00:00.0,p0,(0)
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-01-11'
+c1,route_rs,hash_rs
+2014-01-11 00:00:00.0,p1,(1)
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-01-30'
+c1,route_rs,hash_rs
+2014-01-30 00:00:00.0,p2,(2)
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-01-31'
+c1,route_rs,hash_rs
+2014-01-31 00:00:00.0,p0,(0)
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-02-09'
+c1,route_rs,hash_rs
+2014-02-09 00:00:00.0,p0,(0)
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-02-10'
+c1,route_rs,hash_rs
+2014-02-10 00:00:00.0,p1,(1)
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-02-19'
+c1,route_rs,hash_rs
+2014-02-19 00:00:00.0,p1,(1)
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-02-20'
+c1,route_rs,hash_rs
+2014-02-20 00:00:00.0,p2,(2)
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-03-01'
+c1,route_rs,hash_rs
+2014-03-01 00:00:00.0,p2,(2)
+explain select c1 from uh_t11 where c1 between '2014-01-09' and '2014-01-13' order by c1
+Logical ExecutionPlan
+MergeSort(sort="c1 ASC")
+  LogicalView(tables="uh_t11[p0,p1,p2,pm]", shardCount=4, sql="SELECT `c1` FROM `uh_t11` AS `uh_t11` WHERE (`c1` BETWEEN ? AND ?) ORDER BY `c1`")
+select c1 from uh_t11 where c1 between '2014-01-09' and '2014-01-13' order by c1
+c1
+2014-01-10 00:00:00.0
+2014-01-11 00:00:00.0
+show create table uh_t11
+Table,Create Table
+uh_t11,CREATE TABLE `uh_t11` (
+	`c1` datetime NOT NULL,
+	`c2` datetime NOT NULL,
+	KEY `auto_shard_key_c1` USING BTREE (`c1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY UDF_HASH(partdated0sp10d(`c1`))
+PARTITIONS 4
+(PARTITION p0 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p1 VALUES LESS THAN (2) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (3) ENGINE = InnoDB,
+ PARTITION pm VALUES LESS THAN (9223372036854775807) ENGINE = InnoDB)
+tablegroup = `tg_dble_udf11`

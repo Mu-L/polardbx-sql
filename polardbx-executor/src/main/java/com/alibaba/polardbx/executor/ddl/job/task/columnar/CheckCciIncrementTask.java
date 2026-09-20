@@ -4,7 +4,7 @@ import com.alibaba.fastjson.annotation.JSONCreator;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.columnar.checker.CciIncrementalChecker;
-import com.alibaba.polardbx.executor.columnar.checker.ICciChecker;
+import com.alibaba.polardbx.executor.columnar.checker.AbstractCciChecker;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.gsi.CheckerManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -59,14 +59,14 @@ public class CheckCciIncrementTask extends CheckCciBaseTask {
     @Override
     protected void beforeTransaction(ExecutionContext executionContext) {
         // Check.
-        ICciChecker checker = new CciIncrementalChecker(schemaName, tableName, indexName);
+        AbstractCciChecker checker = new CciIncrementalChecker(schemaName, tableName, indexName);
         doCheck(executionContext, checker);
     }
 
-    protected void doCheck(ExecutionContext executionContext, ICciChecker checker) {
+    protected void doCheck(ExecutionContext executionContext, AbstractCciChecker checker) {
         long startTime = System.nanoTime();
         try {
-            checker.check(executionContext, tsoV0, tsoV1, innodbTso);
+            checker.checkIncrement(executionContext, tsoV0, tsoV1, innodbTso);
         } catch (Throwable t) {
             reports.add(
                 createReportRecord(

@@ -1,0 +1,40 @@
+## DISABLE_FAST_SQL_PARSER
+
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=false;
+
+select numrngid0r3(0);
+select numrngid0r3(2000000);
+select numrngid0r3(2000001);
+select numrngid0r3(4000000);
+select numrngid0r3(4000001);
+select numrngid0r3(6000000);
+select numrngid0r3(6000001);
+
+
+drop table if exists numrng_t1;
+create table numrng_t1(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(numrngid0r3(c1))
+partition 3
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3)
+)
+;
+select part_route('','numrng_t1',  null);
+  ## error_msg: $# invalid type conversion #$
+select part_route('','numrng_t1',  '');
+  ## error_msg: $# invalid type conversion #$
+select part_route('','numrng_t1',  'a');
+select part_route('','numrng_t1',  1500000);
+select part_route('','numrng_t1',  3500000);
+select part_route('','numrng_t1',  5500000);
+select part_route('','numrng_t1',  10000000);
+
+
+
+
+

@@ -274,7 +274,7 @@ public class ScaleOutPlanWithMultiGroupMoveTest extends ScaleOutBaseTest {
             trace = getTrace(tddlConnection);
 
             basePhyInsert = 2;
-            Assert.assertThat(trace.toString(), trace.size(), is(topology.size() + 1 + basePhyInsert));
+            Assert.assertThat(trace.toString(), trace.size(), is(tbPartitions + 1 + basePhyInsert));
             sql = "/*+TDDL:CMD_EXTRA(ENABLE_COMPLEX_DML_CROSS_DB=true)*/delete from " + tableName + " where 1=1";
             executeDml(sql);
         }
@@ -562,7 +562,7 @@ public class ScaleOutPlanWithMultiGroupMoveTest extends ScaleOutBaseTest {
             trace = getTrace(tddlConnection);
 
             basePhyInsert = 2; //4:(delete + insert) * 2
-            Assert.assertThat(trace.toString(), trace.size(), is(1 + basePhyInsert + topology.size()));
+            Assert.assertThat(trace.toString(), trace.size(), is(1 + basePhyInsert + tbPartitions));
 
             if (i == 0) {
                 sql = "/*+TDDL:CMD_EXTRA(ENABLE_COMPLEX_DML_CROSS_DB=true)*/delete from " + tableName + " where 1=1";
@@ -1415,7 +1415,7 @@ public class ScaleOutPlanWithMultiGroupMoveTest extends ScaleOutBaseTest {
             trace = getTrace(tddlConnection);
 
             basePhyInsert = i == 0 ? 4 : 2;
-            Assert.assertThat(trace.toString(), trace.size(), is(1 + topology.size() + basePhyInsert));
+            Assert.assertThat(trace.toString(), trace.size(), is(1 + tbPartitions + basePhyInsert));
 
             sql = "insert into " + tableName
                     + "(a,b) select a+1-1,b from " + sourceTableName + " where a=0+1-1 on duplicate key update b=b+1+3";
@@ -1423,7 +1423,7 @@ public class ScaleOutPlanWithMultiGroupMoveTest extends ScaleOutBaseTest {
             trace = getTrace(tddlConnection);
 
             basePhyInsert = i == 0 ? 3 : 1;
-            Assert.assertThat(trace.toString(), trace.size(), is(1 + topology.size() + basePhyInsert));
+            Assert.assertThat(trace.toString(), trace.size(), is(1 + tbPartitions + basePhyInsert));
 
             sql = "insert into " + tableName
                     + "(a,b) select a+1-1,b from " + sourceTableName + " where a=2+1-1 on duplicate key update b=b+1+3";
@@ -1431,7 +1431,7 @@ public class ScaleOutPlanWithMultiGroupMoveTest extends ScaleOutBaseTest {
             trace = getTrace(tddlConnection);
 
             basePhyInsert = i == 0 ? 4 : 2;
-            Assert.assertThat(trace.toString(), trace.size(), is(1 + topology.size() + basePhyInsert));
+            Assert.assertThat(trace.toString(), trace.size(), is(1 + tbPartitions + basePhyInsert));
 
             if (i == 0) {
                 sql = "/*+TDDL:CMD_EXTRA(ENABLE_COMPLEX_DML_CROSS_DB=true)*/delete from " + tableName + " where 1=1";

@@ -8,6 +8,7 @@ import com.alibaba.polardbx.gms.metadb.misc.DdlEngineAccessor;
 import com.alibaba.polardbx.gms.topology.DbGroupInfoRecord;
 import com.alibaba.polardbx.optimizer.config.table.ScaleOutPlanUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.rpc.compatible.XDataSource;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -16,8 +17,14 @@ import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
+import java.lang.reflect.Field;
+import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+import com.alibaba.polardbx.gms.util.MetaDbUtil;
 
 /**
  * Created by luoyanxin.
@@ -28,6 +35,83 @@ import java.util.List;
 //@PowerMockIgnore("javax.management.*")
 //@PrepareForTest({PhysicalBackfillUtils.class, PhysicalBackfillManager.class, ScaleOutPlanUtil.class})
 public class physicalbackfillUtilsTest {
+
+    @Before
+    public void setUp() throws Exception {
+        getDataSourcePool().clear();
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        getDataSourcePool().clear();
+    }
+
+    @Test
+    public void testDestroyDataSourcesOnlyTargetJob() throws Exception {
+        long targetJobId = 1L;
+        long otherJobId = 2L;
+        XDataSource targetDataSource = mock(XDataSource.class);
+        XDataSource otherDataSource = mock(XDataSource.class);
+
+        Map<Long, Map<String, XDataSource>> dataSourcePool = getDataSourcePool();
+        dataSourcePool.put(targetJobId, newDataSources("target", targetDataSource));
+        dataSourcePool.put(otherJobId, newDataSources("other", otherDataSource));
+
+        PhysicalBackfillUtils.destroyDataSources(targetJobId);
+
+        verify(targetDataSource, times(1)).close();
+        verify(otherDataSource, never()).close();
+        Assert.assertFalse(dataSourcePool.containsKey(targetJobId));
+        Assert.assertSame(otherDataSource, dataSourcePool.get(otherJobId).get("other"));
+    }
+
+    @Test
+    public void testDestroyDataSourcesRepeatedlyDoesNotCloseTwice() throws Exception {
+        long jobId = 1L;
+        XDataSource dataSource = mock(XDataSource.class);
+        Map<Long, Map<String, XDataSource>> dataSourcePool = getDataSourcePool();
+        dataSourcePool.put(jobId, newDataSources("target", dataSource));
+
+        PhysicalBackfillUtils.destroyDataSources(jobId);
+        PhysicalBackfillUtils.destroyDataSources(jobId);
+
+        verify(dataSource, times(1)).close();
+        Assert.assertFalse(dataSourcePool.containsKey(jobId));
+    }
+
+    @Test
+    public void testDestroyDataSourcesRetriesFailedClose() throws Exception {
+        long jobId = 1L;
+        String dataSourceKey = "target";
+        XDataSource dataSource = mock(XDataSource.class);
+        doThrow(new RuntimeException("close failed")).doNothing().when(dataSource).close();
+        Map<Long, Map<String, XDataSource>> dataSourcePool = getDataSourcePool();
+        dataSourcePool.put(jobId, newDataSources(dataSourceKey, dataSource));
+
+        PhysicalBackfillUtils.destroyDataSources(jobId);
+
+        verify(dataSource, times(1)).close();
+        Assert.assertTrue(dataSourcePool.containsKey(jobId));
+        Assert.assertSame(dataSource, dataSourcePool.get(jobId).get(dataSourceKey));
+
+        PhysicalBackfillUtils.destroyDataSources(jobId);
+
+        verify(dataSource, times(2)).close();
+        Assert.assertFalse(dataSourcePool.containsKey(jobId));
+    }
+
+    private Map<String, XDataSource> newDataSources(String key, XDataSource dataSource) {
+        Map<String, XDataSource> dataSources = new ConcurrentHashMap<>();
+        dataSources.put(key, dataSource);
+        return dataSources;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<Long, Map<String, XDataSource>> getDataSourcePool() throws Exception {
+        Field field = PhysicalBackfillUtils.class.getDeclaredField("dataSourcePool");
+        field.setAccessible(true);
+        return (Map<Long, Map<String, XDataSource>>) field.get(null);
+    }
 
     @Test
     // 测试backfillId非空，tableSchema非空，tableName非空，type=2，查询到一个回填对象记录
@@ -49,6 +133,7 @@ public class physicalbackfillUtilsTest {
         try (MockedStatic<ScaleOutPlanUtil> mockedScaleOutPlanUtil = Mockito.mockStatic(ScaleOutPlanUtil.class);
             MockedStatic<PhysicalBackfillUtils> mockedPhysicalBackfillUtils = Mockito.mockStatic(
                 PhysicalBackfillUtils.class);
+            MockedStatic<MetaDbUtil> mockedMetaDbUtil = Mockito.mockStatic(MetaDbUtil.class);
             MockedConstruction<PhysicalBackfillManager> mocked = Mockito.mockConstruction(PhysicalBackfillManager.class,
                 (mock, context) -> {
                     Mockito.when(mock.queryBackfillObject(backfillId, tableSchema, tableName))
@@ -59,6 +144,7 @@ public class physicalbackfillUtilsTest {
                 .thenReturn(dbGroupInfoRecord);
 
             mockedPhysicalBackfillUtils.when(() -> PhysicalBackfillUtils.deleteInnodbDataFile(
+                    anyLong(),
                     anyString(),
                     anyString(),
                     anyString(),
@@ -68,26 +154,28 @@ public class physicalbackfillUtilsTest {
                     anyBoolean(),
                     any(ExecutionContext.class)))
                 .thenAnswer(invocation -> null);  // 对于 void 方法使用 thenAnswer 回调并返回 null
-
+            Connection mockConnection = mock(Connection.class);
+            mockedMetaDbUtil.when(MetaDbUtil::getConnection).thenReturn(mockConnection);
             // Call the actual method that triggers the static method call
             //PowerMockito.doCallRealMethod().when(PhysicalBackfillUtils.class, "rollbackCopyIbd", backfillId, tableSchema, tableName, type, ec);
 
             mockedPhysicalBackfillUtils.when(
-                    () -> PhysicalBackfillUtils.rollbackCopyIbd(backfillId, tableSchema, tableName, type, ec))
+                    () -> PhysicalBackfillUtils.rollbackCopyIbd(0L, backfillId, tableSchema, tableName, type, ec))
                 .thenCallRealMethod();
 
             mockedPhysicalBackfillUtils.when(
-                    () -> PhysicalBackfillUtils.deleteInnodbDataFiles(anyString(), any(Pair.class), anyString(),
+                    () -> PhysicalBackfillUtils.deleteInnodbDataFiles(anyLong(), anyString(), any(Pair.class), anyString(),
                         anyString(), anyString(), anyBoolean(), any(ExecutionContext.class))).thenCallRealMethod()
                 .thenCallRealMethod();
 
-            PhysicalBackfillUtils.rollbackCopyIbd(backfillId, tableSchema, tableName, type, ec);
+            PhysicalBackfillUtils.rollbackCopyIbd(0L, backfillId, tableSchema, tableName, type, ec);
 
             // 验证 staticMethod 被正确的用参数调用
             mockedScaleOutPlanUtil.verify(() -> ScaleOutPlanUtil.getDbGroupInfoByGroupName(Mockito.anyString()),
                 Mockito.times(1));
             mockedPhysicalBackfillUtils.verify(
-                () -> PhysicalBackfillUtils.deleteInnodbDataFile(Mockito.anyString(), Mockito.anyString(),
+                () -> PhysicalBackfillUtils.deleteInnodbDataFile(Mockito.anyLong(), Mockito.anyString(),
+                    Mockito.anyString(),
                     Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(),
                     Mockito.anyBoolean(), Mockito.any(ExecutionContext.class)), Mockito.times(2));
         }
@@ -113,6 +201,7 @@ public class physicalbackfillUtilsTest {
         try (MockedStatic<ScaleOutPlanUtil> mockedScaleOutPlanUtil = Mockito.mockStatic(ScaleOutPlanUtil.class);
             MockedStatic<PhysicalBackfillUtils> mockedPhysicalBackfillUtils = Mockito.mockStatic(
                 PhysicalBackfillUtils.class);
+            MockedStatic<MetaDbUtil> mockedMetaDbUtil = Mockito.mockStatic(MetaDbUtil.class);
             MockedConstruction<PhysicalBackfillManager> mocked = Mockito.mockConstruction(PhysicalBackfillManager.class,
                 (mock, context) -> {
                     Mockito.when(mock.queryBackfillObject(backfillId, tableSchema, tableName))
@@ -123,6 +212,7 @@ public class physicalbackfillUtilsTest {
                 .thenReturn(dbGroupInfoRecord);
 
             mockedPhysicalBackfillUtils.when(() -> PhysicalBackfillUtils.deleteInnodbDataFile(
+                    anyLong(),
                     anyString(),
                     anyString(),
                     anyString(),
@@ -133,25 +223,30 @@ public class physicalbackfillUtilsTest {
                     any(ExecutionContext.class)))
                 .thenAnswer(invocation -> null);  // 对于 void 方法使用 thenAnswer 回调并返回 null
 
+            // Mock MetaDbUtil.getConnection() to return a mock connection
+            Connection mockConnection = mock(Connection.class);
+            mockedMetaDbUtil.when(MetaDbUtil::getConnection).thenReturn(mockConnection);
+
             // Call the actual method that triggers the static method call
             //PowerMockito.doCallRealMethod().when(PhysicalBackfillUtils.class, "rollbackCopyIbd", backfillId, tableSchema, tableName, type, ec);
 
             mockedPhysicalBackfillUtils.when(
-                    () -> PhysicalBackfillUtils.rollbackCopyIbd(backfillId, tableSchema, tableName, type, ec))
+                    () -> PhysicalBackfillUtils.rollbackCopyIbd(0L, backfillId, tableSchema, tableName, type, ec))
                 .thenCallRealMethod();
 
             mockedPhysicalBackfillUtils.when(
-                    () -> PhysicalBackfillUtils.deleteInnodbDataFiles(anyString(), any(Pair.class), anyString(),
+                    () -> PhysicalBackfillUtils.deleteInnodbDataFiles(anyLong(), anyString(), any(Pair.class), anyString(),
                         anyString(), anyString(), anyBoolean(), any(ExecutionContext.class))).thenCallRealMethod()
                 .thenCallRealMethod();
 
-            PhysicalBackfillUtils.rollbackCopyIbd(backfillId, tableSchema, tableName, type, ec);
+            PhysicalBackfillUtils.rollbackCopyIbd(0L, backfillId, tableSchema, tableName, type, ec);
 
             // 验证 staticMethod 被正确的用参数调用
             mockedScaleOutPlanUtil.verify(() -> ScaleOutPlanUtil.getDbGroupInfoByGroupName(Mockito.anyString()),
                 Mockito.times(0));
             mockedPhysicalBackfillUtils.verify(
-                () -> PhysicalBackfillUtils.deleteInnodbDataFile(Mockito.anyString(), Mockito.anyString(),
+                () -> PhysicalBackfillUtils.deleteInnodbDataFile(Mockito.anyLong(), Mockito.anyString(),
+                    Mockito.anyString(),
                     Mockito.anyString(), Mockito.anyString(), Mockito.anyInt(), Mockito.anyString(),
                     Mockito.anyBoolean(), Mockito.any(ExecutionContext.class)), Mockito.times(1));
         }

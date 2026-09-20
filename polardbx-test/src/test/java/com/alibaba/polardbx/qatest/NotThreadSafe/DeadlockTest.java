@@ -249,11 +249,13 @@ public class DeadlockTest extends CrudBasedLockTestCase {
     private Future<Boolean> executeSqlAndCommit(ExecutorService threadPool, String tableName,
                                                 Connection connection, String sql) {
         return threadPool.submit(() -> {
-            try {
-                JdbcUtil.executeQuery(sql, connection);
+            try (Statement stmt = connection.createStatement()) {
+                stmt.executeQuery(sql);
             } catch (Throwable e) {
                 if (e.getMessage()
                     .contains("Deadlock found when trying to get lock; try restarting transaction")) {
+                    Assert.assertTrue(e instanceof SQLException);
+                    Assert.assertEquals(1213, ((SQLException)e).getErrorCode());
                     // Deadlock occurs in this connection.
                     // It should be rolled back already and can execute any sql immediately.
                     try {

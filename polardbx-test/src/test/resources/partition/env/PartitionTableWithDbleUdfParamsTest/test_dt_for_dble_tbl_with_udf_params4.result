@@ -1,0 +1,117 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+drop table if exists dbleerng_ubi_t1;
+create table dbleerng_ubi_t1
+(a bigint unsigned，b bigint)
+partition by udf_hash(
+`a` with udf_params (
+  'dble/numberrange',
+  '{
+    "defaultNode": "0",　
+    "patternValue" : "128",
+    "mapFile":
+      "
+      1-32=0
+      33-64=1
+      65-96=2
+      97-128=3
+      "
+  }'
+)
+)
+partitions 4;
+drop table if exists dbleerng_de_t1;
+create table dbleerng_de_t1
+(a decimal(64,0)，b bigint)
+partition by udf_hash(
+`a` with udf_params (
+  'dble/numberrange',
+'{
+    "defaultNode": "0",　
+    "patternValue" : "128",
+    "mapFile":
+      "
+      1-32=0
+      33-64=1
+      65-96=2
+      97-128=3
+      "
+  }'
+)
+)
+partitions 4;
+drop table if exists dblestrhash_dt_t1;
+create table dblestrhash_dt_t1
+(a datetime，b bigint)
+partition by udf_hash(
+`a` with udf_params (
+'dble/stringhash',
+'{
+  "partitionCount": "4",
+  "partitionLength": "1",　
+  "hashSlice" : "0:0",
+}'
+)
+)
+partitions 4;
+drop table if exists dblestrhash_ts_t1;
+create table dblestrhash_ts_t1
+(a timestamp，b bigint)
+partition by udf_hash(
+`a` with udf_params (
+'dble/stringhash',
+'{
+"partitionCount": "4",
+"partitionLength": "1",　
+"hashSlice" : "0:0",
+}'
+)
+)
+partitions 4;
+set sql_mode='';
+set ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC=true;
+insert into dbleerng_ubi_t1 (a,b) values (32, 32),(128,128);
+insert into dbleerng_de_t1 (a,b) values ('32', '32'),('128','128');
+insert into dblestrhash_dt_t1 (a,b) values ('2025-01-01 00:00:00', 32),('2025-01-02 00:00:00',128);
+insert into dblestrhash_ts_t1 (a,b) values ('2025-01-01 00:00:00', '32'),('2025-01-02 00:00:00','128');
+select a,b from dbleerng_ubi_t1 where a=32;
+a,b
+32,32
+select a,b from dbleerng_de_t1 where a='32';
+a,b
+32,32
+select a,b from dblestrhash_dt_t1 where a='2025-01-01 00:00:00';
+a,b
+2025-01-01 00:00:00.0,32
+select a,b from dblestrhash_ts_t1 where a='2025-01-01 00:00:00';
+a,b
+2025-01-01 00:00:00.0,32
+select a,b from dbleerng_ubi_t1 where a=128;
+a,b
+128,128
+select a,b from dbleerng_de_t1 where a='128';
+a,b
+128,128
+select a,b from dblestrhash_dt_t1 where a='2025-01-02 00:00:00';
+a,b
+2025-01-02 00:00:00.0,128
+select a,b from dblestrhash_ts_t1 where a='2025-01-02 00:00:00';
+a,b
+2025-01-02 00:00:00.0,128
+select a,b,part_route('', 'dbleerng_ubi_t1', a) as part from dbleerng_ubi_t1 order by b;
+a,b,part
+32,32,p1
+128,128,p4
+select a,b,part_route('', 'dbleerng_de_t1', a) as part from dbleerng_de_t1 order by b;
+a,b,part
+32,32,p1
+128,128,p4
+select a,b,part_route('', 'dblestrhash_dt_t1', a) as part from dblestrhash_dt_t1 order by b;
+a,b,part
+2025-01-01 00:00:00.0,32,p4
+2025-01-02 00:00:00.0,128,p3
+select a,b,part_route('', 'dblestrhash_ts_t1', a) as part from dblestrhash_ts_t1 order by b;
+a,b,part
+2025-01-01 00:00:00.0,32,p4
+2025-01-02 00:00:00.0,128,p3

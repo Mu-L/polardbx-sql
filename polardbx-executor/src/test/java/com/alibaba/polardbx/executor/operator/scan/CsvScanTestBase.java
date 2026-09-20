@@ -17,7 +17,8 @@ import com.alibaba.polardbx.optimizer.core.TddlTypeFactoryImpl;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.datatype.EnumType;
 import com.alibaba.polardbx.optimizer.core.datatype.SetType;
-import com.google.common.collect.ImmutableList;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
+import com.google.common.util.concurrent.SettableFuture;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rex.RexNode;
@@ -40,7 +41,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 import static com.alibaba.polardbx.executor.gms.FileVersionStorageTestBase.FILE_META;
 import static com.alibaba.polardbx.executor.gms.FileVersionStorageTestBase.openMockFile;
@@ -60,9 +60,12 @@ import static org.mockito.Mockito.when;
 public abstract class CsvScanTestBase {
 
     protected final static String DEL_FILE_NAME = "fb2604e133e6.del";
+    protected final static String ZERO_LENGTH_DEL_FILE_NAME = "0.del";
     protected final static String DATA_FILE_NAME = "6659a663977d.csv";
     protected final static String FULL_TYPE_FILE_NAME = "1023a18dcf60.csv";
+    protected final static String ZERO_LENGTH_FILE_NAME = "0.csv";
     protected FlashbackScanPreProcessor flashbackScanPreProcessor;
+    protected FlashbackScanPreProcessor autoFlashbackScanPreProcessor;
     protected DefaultScanPreProcessor defaultScanPreProcessor;
     @Mock
     protected Configuration configuration;
@@ -75,11 +78,12 @@ public abstract class CsvScanTestBase {
     protected static final String LOGICAL_TABLE_NAME = "1";
     private static final String PARTITION_NAME = "p1";
     protected static final Long TSO = 7182618688200114304L;
-    private static final Long FILE_LENGTH = 4088L;
+    protected static final Long DEL_FILE_LENGTH = 4088L;
     protected static final int DELETE_COUNT = 1219;
     protected static final Path TEST_FILE_PATH = new Path("/" + DEL_FILE_NAME);
     protected static final Path DATA_FILE_PATH = new Path("/" + DATA_FILE_NAME);
     protected static final Path FULL_TYPE_FILE_PATH = new Path("/", FULL_TYPE_FILE_NAME);
+    protected static final Path ZERO_LENGTH_FILE_PATH = new Path("/", ZERO_LENGTH_FILE_NAME);
 
     protected MockedStatic<ColumnarManager> columnarManagerMockedStatic;
     protected MockedStatic<FileSystemUtils> mockFsUtils;
@@ -175,15 +179,9 @@ public abstract class CsvScanTestBase {
 
     private static RelDataType buildEnumType(RelDataTypeFactory factory) {
         EnumType enumType = parseEnumType("enum('a','b','c')");
-        final ImmutableList.Builder<String> builder = ImmutableList.builder();
+        List<String> enumList = new ArrayList<>(enumType.getEnumList());
 
-        final Set<String> strings = enumType.getEnumValues().keySet();
-        for (String enumValue : strings) {
-            builder.add(enumValue);
-        }
-
-        final ImmutableList<String> build = builder.build();
-        return factory.createEnumSqlType(SqlTypeName.ENUM, build);
+        return factory.createEnumSqlType(SqlTypeName.ENUM, enumList);
     }
 
     private static RelDataType buildSetType(RelDataTypeFactory factory) {
@@ -221,7 +219,9 @@ public abstract class CsvScanTestBase {
         when(columnarManager.fileNameOf(anyString(), anyLong(), anyString(), anyInt())).thenReturn(
             Optional.of(DATA_FILE_NAME));
         Map<String, List<Pair<String, Long>>> allDelPositions = new HashMap<>();
-        allDelPositions.put(PARTITION_NAME, Collections.singletonList(new Pair<>(DEL_FILE_NAME, FILE_LENGTH)));
+        allDelPositions.put(PARTITION_NAME, Collections.singletonList(new Pair<>(DEL_FILE_NAME, DEL_FILE_LENGTH)));
+        Map<String, List<Pair<String, Long>>> autoDelPositions = new HashMap<>();
+        autoDelPositions.put(PARTITION_NAME, Collections.singletonList(new Pair<>(DEL_FILE_NAME, -1L)));
         List<ColumnMeta> columns =
             Collections.singletonList(new ColumnMeta("t1", "pk", "pk", new Field(DataTypes.LongType)));
         List<RexNode> rexList = Collections.emptyList(); // Mocked or real instance as needed
@@ -231,12 +231,20 @@ public abstract class CsvScanTestBase {
 
         flashbackScanPreProcessor = new FlashbackScanPreProcessor(configuration,
             fileSystem, SCHEMA_NAME, LOGICAL_TABLE_NAME, true, true, columns,
-            rexList, params, groupsRatio, deletionRatio, columnarManager, TSO + 1,
-            Collections.singletonList(1L), allDelPositions);
+            rexList, params, groupsRatio, deletionRatio, columnarManager, TSO + 1, Collections.singletonList(1L),
+            Collections.singletonList(new OrderByOption(0, true, true)), allDelPositions, SettableFuture.create(),
+            null);
+
+        autoFlashbackScanPreProcessor = new FlashbackScanPreProcessor(configuration,
+            fileSystem, SCHEMA_NAME, LOGICAL_TABLE_NAME, true, true, columns,
+            rexList, params, groupsRatio, deletionRatio, columnarManager, TSO + 1, Collections.singletonList(1L),
+            Collections.singletonList(new OrderByOption(0, true, true)), autoDelPositions, SettableFuture.create(),
+            null);
 
         defaultScanPreProcessor = new DefaultScanPreProcessor(configuration,
             fileSystem, SCHEMA_NAME, LOGICAL_TABLE_NAME, true, true, columns,
-            rexList, params, groupsRatio, deletionRatio, columnarManager, TSO, Collections.singletonList(1L));
+            rexList, params, groupsRatio, deletionRatio, columnarManager, TSO, Collections.singletonList(1L),
+            Collections.singletonList(new OrderByOption(0, true, true)), false, null, SettableFuture.create(), null);
 
         columnarManagerMockedStatic = Mockito.mockStatic(ColumnarManager.class);
         columnarManagerMockedStatic.when(ColumnarManager::getInstance).thenReturn(columnarManager);
@@ -247,6 +255,10 @@ public abstract class CsvScanTestBase {
         mockFsUtils.when(
             () -> FileSystemUtils.readFile(anyString(), anyInt(), anyInt(), any(byte[].class), any(Engine.class),
                 anyBoolean())
+        ).thenAnswer(mockFileReadAnswer);
+        mockFsUtils.when(
+            () -> FileSystemUtils.readFile(anyString(), anyInt(), anyInt(), any(byte[].class), any(Engine.class),
+                anyBoolean(), any())
         ).thenAnswer(mockFileReadAnswer);
         mockFsUtils.when(
             () -> FileSystemUtils.openStreamFileWithBuffer(anyString(), any(Engine.class), anyBoolean())

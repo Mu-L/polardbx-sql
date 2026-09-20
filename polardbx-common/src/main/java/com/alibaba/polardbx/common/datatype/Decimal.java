@@ -16,14 +16,18 @@
 
 package com.alibaba.polardbx.common.datatype;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import io.airlift.slice.Slice;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.math.BigDecimal;
 
 /**
  * Wrap a decimal structure.
  */
-public class Decimal extends Number implements Comparable<Decimal> {
+public class Decimal extends Number implements Comparable<Decimal>, MemoryCountable {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(Decimal.class).instanceSize();
 
     private static final long serialVersionUID = 5036570408857619384L;
 
@@ -64,6 +68,11 @@ public class Decimal extends Number implements Comparable<Decimal> {
     public Decimal(long longVal, int scale) {
         this(new DecimalStructure());
         this.decimalStructure.setLongWithScale(longVal, scale);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(decimalStructure);
     }
 
     public static Decimal fromBigDecimal(BigDecimal bd) {
@@ -155,7 +164,8 @@ public class Decimal extends Number implements Comparable<Decimal> {
     public Decimal divide(Decimal d) {
         DecimalStructure to = new DecimalStructure();
         FastDecimalUtils
-            .div(this.decimalStructure, d.decimalStructure, to, DecimalStructure.getDefaultDivPrecisionIncrement(), true);
+            .div(this.decimalStructure, d.decimalStructure, to, DecimalStructure.getDefaultDivPrecisionIncrement(),
+                true);
         return new Decimal(to);
     }
 

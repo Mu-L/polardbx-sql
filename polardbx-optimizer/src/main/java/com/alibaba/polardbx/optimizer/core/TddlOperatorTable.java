@@ -20,6 +20,13 @@ import com.alibaba.polardbx.optimizer.core.function.AddTimeFunction;
 import com.alibaba.polardbx.optimizer.core.function.FunctionWithVariadicArg;
 import com.alibaba.polardbx.optimizer.core.function.FunctionWithoutArg;
 import com.alibaba.polardbx.optimizer.core.function.MySQLMatchAgainst;
+import com.alibaba.polardbx.optimizer.core.function.MySQLVecDistance;
+import com.alibaba.polardbx.optimizer.core.function.MySQLVecDistanceCosine;
+import com.alibaba.polardbx.optimizer.core.function.MySQLVecDistanceEuclidean;
+import com.alibaba.polardbx.optimizer.core.function.MySQLVecDistanceInnerProduct;
+import com.alibaba.polardbx.optimizer.core.function.MySQLVecFromText;
+import com.alibaba.polardbx.optimizer.core.function.MySQLVecToText;
+import com.alibaba.polardbx.optimizer.core.function.MySQLVectorDim;
 import com.alibaba.polardbx.optimizer.core.function.SqlBitAndFunction;
 import com.alibaba.polardbx.optimizer.core.function.SqlBitOrFunction;
 import com.alibaba.polardbx.optimizer.core.function.SqlBitXorFunction;
@@ -29,8 +36,10 @@ import com.alibaba.polardbx.optimizer.core.function.SqlDateDiffFunction;
 import com.alibaba.polardbx.optimizer.core.function.SqlDateFormatFunction;
 import com.alibaba.polardbx.optimizer.core.function.SqlDateManipulationFunction;
 import com.alibaba.polardbx.optimizer.core.function.SqlDayOfYearFunction;
+import com.alibaba.polardbx.optimizer.core.function.SqlDbleRouteFunction;
 import com.alibaba.polardbx.optimizer.core.function.SqlFunctionWithOneStringArg;
 import com.alibaba.polardbx.optimizer.core.function.SqlGroupConcatFunction;
+import com.alibaba.polardbx.optimizer.core.function.SqlHexFunction;
 import com.alibaba.polardbx.optimizer.core.function.SqlIfFunction;
 import com.alibaba.polardbx.optimizer.core.function.SqlIfNullFunction;
 import com.alibaba.polardbx.optimizer.core.function.SqlJsonArrayAggFunction;
@@ -45,6 +54,7 @@ import com.alibaba.polardbx.optimizer.core.function.SqlNumericOneFunction;
 import com.alibaba.polardbx.optimizer.core.function.SqlPadFunction;
 import com.alibaba.polardbx.optimizer.core.function.SqlPartHashFunction;
 import com.alibaba.polardbx.optimizer.core.function.SqlPartRouteFunction;
+import com.alibaba.polardbx.optimizer.core.function.SqlPolardbxHasherFunction;
 import com.alibaba.polardbx.optimizer.core.function.SqlRepeatFunction;
 import com.alibaba.polardbx.optimizer.core.function.SqlReplaceFunction;
 import com.alibaba.polardbx.optimizer.core.function.SqlReverseFunction;
@@ -287,6 +297,8 @@ public class TddlOperatorTable extends SqlStdOperatorTable {
 
     public static SqlFunction PART_ROUTE = new SqlPartRouteFunction("PART_ROUTE");
     public static SqlFunction PART_HASH = new SqlPartHashFunction("PART_HASH");
+    public static SqlFunction POLARDBX_HASHER = new SqlPolardbxHasherFunction("POLARDBX_HASHER");
+    public static SqlFunction DBLE_ROUTE = new SqlDbleRouteFunction("DBLE_ROUTE");
 
     // Todo:CONNECTION_ID
     public static SqlFunction CONV = new SqlNumericConvFunction("CONV");
@@ -470,12 +482,7 @@ public class TddlOperatorTable extends SqlStdOperatorTable {
     /**
      * HEX
      */
-    public static SqlFunction HEX = new SqlFunction("HEX",
-        SqlKind.OTHER_FUNCTION,
-        ReturnTypes.VARCHAR_2000,
-        InferTypes.FIRST_KNOWN,
-        OperandTypes.ANY,
-        SqlFunctionCategory.NUMERIC);
+    public static SqlFunction HEX = new SqlHexFunction();
 
     public static SqlFunction IF = new SqlIfFunction();
     public static SqlFunction IFNULL = new SqlIfNullFunction();
@@ -787,6 +794,29 @@ public class TddlOperatorTable extends SqlStdOperatorTable {
         InferTypes.FIRST_KNOWN,
         OperandTypes.family(SqlTypeFamily.ANY, SqlTypeFamily.ANY),
         SqlFunctionCategory.SYSTEM);
+
+    /**
+     * FETCH_BLOB: fetches externalized column blob content from OSS by blob address.
+     * Injected by ToDrdsRelVisitor.wrapFetchBlobProjectIfNeeded, not meant for direct user use.
+     * Non-pushable — always evaluated at CN side.
+     * Args: (blob_addr, schema, table, column, type_family)
+     */
+    public static SqlFunction FETCH_BLOB = new SqlFunction("FETCH_BLOB",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.ARG0_FORCE_NULLABLE,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM) {
+        @Override
+        public boolean canPushDown() {
+            return false;
+        }
+
+        @Override
+        public boolean canPushDown(boolean withScaleOut) {
+            return false;
+        }
+    };
 
     /**
      * SOUNDEX SOUNDS LIKE
@@ -2443,6 +2473,13 @@ public class TddlOperatorTable extends SqlStdOperatorTable {
 
     public static SqlFunction PRE_FILTER = new SqlPreFilterFunction();
 
+    public static SqlFunction NODE_ID = new SqlFunction("NODE_ID",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.BIGINT_NULLABLE,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.ANY,
+        SqlFunctionCategory.SYSTEM);
+
     public static SqlFunction LBAC_CHECK = new SqlFunction("LBAC_CHECK",
         SqlKind.OTHER_FUNCTION,
         ReturnTypes.BIGINT,
@@ -2478,7 +2515,330 @@ public class TddlOperatorTable extends SqlStdOperatorTable {
         OperandTypes.VARIADIC,
         SqlFunctionCategory.SYSTEM);
 
+    public static SqlFunction ENCDB_IMPORT_RULE = new SqlFunction("ENCDB_IMPORT_RULE",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.explicit(SqlTypeName.CHAR),
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction ENCDB_DELETE_RULE = new SqlFunction("ENCDB_DELETE_RULE",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.explicit(SqlTypeName.CHAR),
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction ENCDB_MODIFY_RULE = new SqlFunction("ENCDB_MODIFY_RULE",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.explicit(SqlTypeName.CHAR),
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction ENCDB_DESCRIBE_RULE = new SqlFunction("ENCDB_DESCRIBE_RULE",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.explicit(SqlTypeName.CHAR),
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction ENCDB_DESCRIBE_USER = new SqlFunction("ENCDB_DESCRIBE_USER",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.explicit(SqlTypeName.CHAR),
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction ENCDB_GRANT_USER = new SqlFunction("ENCDB_GRANT_USER",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.explicit(SqlTypeName.CHAR),
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction ENCDB_REGISTER_MEK = new SqlFunction("ENCDB_REGISTER_MEK",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.explicit(SqlTypeName.CHAR),
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction ENCDB_DESCRIBE_MEK = new SqlFunction("ENCDB_DESCRIBE_MEK",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.explicit(SqlTypeName.CHAR),
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction ENCDB_CLEAN_MEK = new SqlFunction("ENCDB_CLEAN_MEK",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.explicit(SqlTypeName.CHAR),
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction ENCDB_DESCRIBE_CLS = new SqlFunction("ENCDB_DESCRIBE_CLS",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.explicit(SqlTypeName.CHAR),
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction TTL_QUERY_BOUNDARY = new SqlFunction("TTL_QUERY_BOUNDARY",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.explicit(SqlTypeName.CHAR),
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    /**
+     * MODIFY_ON_UPDATE(value) - DN function that returns value only when the row is actually modified,
+     * otherwise returns the column's original value. Used for ON UPDATE CURRENT_TIMESTAMP columns
+     * in returning update path to preserve correct MySQL semantics.
+     */
+    public static SqlFunction MODIFY_ON_UPDATE = new SqlFunction("MODIFY_ON_UPDATE",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.ARG0_NULLABLE,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.ANY,
+        SqlFunctionCategory.SYSTEM);
+
     public static SqlFunction MATCH_AGAINST = new MySQLMatchAgainst();
+
+    /**
+     * VEC_DISTANCE function for vector similarity search.
+     * Syntax: VEC_DISTANCE(column, vector_literal, distance_metric)
+     * Example: VEC_DISTANCE(embedding, '[0.1,0.2,0.3]', COSINE)
+     */
+    public static SqlFunction VEC_DISTANCE = MySQLVecDistance.INSTANCE;
+
+    /**
+     * VEC_FROMTEXT function to convert JSON text to VECTOR binary format.
+     * This function is pushed down to DN for execution.
+     * Syntax: VEC_FROMTEXT(string)
+     * Example: VEC_FROMTEXT('[0.1,0.2,0.3]')
+     */
+    public static SqlFunction VEC_FROMTEXT = MySQLVecFromText.INSTANCE;
+    public static SqlFunction TO_VECTOR = MySQLVecFromText.TO_VECTOR;
+    public static SqlFunction STRING_TO_VECTOR = MySQLVecFromText.STRING_TO_VECTOR;
+
+    /**
+     * VEC_TOTEXT function to convert VECTOR binary format to JSON text.
+     * This function is pushed down to DN for execution.
+     * Syntax: VEC_TOTEXT(vector_column)
+     * Example: VEC_TOTEXT(embedding)
+     */
+    public static SqlFunction VEC_TOTEXT = MySQLVecToText.INSTANCE;
+    public static SqlFunction FROM_VECTOR = MySQLVecToText.FROM_VECTOR;
+    public static SqlFunction VECTOR_TO_STRING = MySQLVecToText.VECTOR_TO_STRING;
+
+    /**
+     * VEC_DISTANCE_EUCLIDEAN function for vector similarity search with explicit EUCLIDEAN distance.
+     * This function is pushed down to DN for execution.
+     * Syntax: VEC_DISTANCE_EUCLIDEAN(column, vector_literal)
+     * Example: VEC_DISTANCE_EUCLIDEAN(embedding, '[0.1,0.2,0.3]')
+     */
+    public static SqlFunction VEC_DISTANCE_EUCLIDEAN = MySQLVecDistanceEuclidean.INSTANCE;
+
+    /**
+     * VEC_DISTANCE_COSINE function for vector similarity search with explicit COSINE distance.
+     * This function is pushed down to DN for execution.
+     * Syntax: VEC_DISTANCE_COSINE(column, vector_literal)
+     * Example: VEC_DISTANCE_COSINE(embedding, '[0.1,0.2,0.3]')
+     */
+    public static SqlFunction VEC_DISTANCE_COSINE = MySQLVecDistanceCosine.INSTANCE;
+
+    /**
+     * VEC_DISTANCE_INNER_PRODUCT function for negative dot-product distance.
+     */
+    public static SqlFunction VEC_DISTANCE_INNER_PRODUCT = MySQLVecDistanceInnerProduct.INSTANCE;
+
+    /**
+     * VECTOR_DIM function to return the number of dimensions of a VECTOR.
+     * This function is pushed down to DN for execution.
+     * Syntax: VECTOR_DIM(vec)
+     * Example: VECTOR_DIM(embedding)
+     */
+    public static SqlFunction VECTOR_DIM = MySQLVectorDim.INSTANCE;
+
+    // AI Model Management Functions
+    public static SqlFunction AI_REGISTER_MODEL = new SqlFunction("AI_REGISTER_MODEL",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_UPDATE_MODEL = new SqlFunction("AI_UPDATE_MODEL",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_DROP_MODEL = new SqlFunction("AI_DROP_MODEL",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_UPDATE_FUNCTION = new SqlFunction("AI_UPDATE_FUNCTION",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_LIST_MODELS = new SqlFunction("AI_LIST_MODELS",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_DESCRIBE_MODEL = new SqlFunction("AI_DESCRIBE_MODEL",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    // AI Skill Management Functions
+    public static SqlFunction AI_REGISTER_SKILL = new SqlFunction("AI_REGISTER_SKILL",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_UPDATE_SKILL = new SqlFunction("AI_UPDATE_SKILL",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_DROP_SKILL = new SqlFunction("AI_DROP_SKILL",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_LIST_SKILLS = new SqlFunction("AI_LIST_SKILLS",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_DESCRIBE_SKILL = new SqlFunction("AI_DESCRIBE_SKILL",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_ADD_SKILL_REFERENCE = new SqlFunction("AI_ADD_SKILL_REFERENCE",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_REMOVE_SKILL_REFERENCE = new SqlFunction("AI_REMOVE_SKILL_REFERENCE",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_GET_REFERENCE = new SqlFunction("AI_GET_REFERENCE",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_GET_SKILL_PROMPT = new SqlFunction("AI_GET_SKILL_PROMPT",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    // AI Inference Functions
+    public static SqlFunction AI_PROMPT = new SqlFunction("AI_PROMPT",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_EMBEDDING = new SqlFunction("AI_EMBEDDING",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_RANK = new SqlFunction("AI_RANK",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.DOUBLE_NULLABLE,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_CLASSIFY = new SqlFunction("AI_CLASSIFY",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_PARSE_DOCUMENT = new SqlFunction("AI_PARSE_DOCUMENT",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_VL_EMBEDDING = new SqlFunction("AI_VL_EMBEDDING",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_SIMILARITY = new SqlFunction("AI_SIMILARITY",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.DOUBLE_NULLABLE,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_EXTRACT = new SqlFunction("AI_EXTRACT",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_SUMMARIZE = new SqlFunction("AI_SUMMARIZE",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
+
+    public static SqlFunction AI_TEXT2SQL = new SqlFunction("AI_TEXT2SQL",
+        SqlKind.OTHER_FUNCTION,
+        ReturnTypes.VARCHAR_2000,
+        InferTypes.FIRST_KNOWN,
+        OperandTypes.VARIADIC,
+        SqlFunctionCategory.SYSTEM);
 
     @Override
     public void lookupOperatorOverloads(SqlIdentifier opName, SqlFunctionCategory category, SqlSyntax syntax,

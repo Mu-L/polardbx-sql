@@ -21,12 +21,12 @@ import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.ComplexTaskPlanUtils;
 import com.alibaba.polardbx.optimizer.config.table.GlobalIndexMeta;
-import com.alibaba.polardbx.optimizer.config.table.TableColumnUtils;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.BaseQueryOperation;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalInsert;
 import com.alibaba.polardbx.optimizer.core.rel.dml.DistinctWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.DmlWriteContext;
 import com.alibaba.polardbx.optimizer.core.rel.dml.Writer;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.ClassifyResult;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.DuplicateCheckResult;
@@ -73,7 +73,7 @@ public class UpsertRelocateWriter extends RelocateWriter {
                                 boolean modifySkOnly,
                                 boolean usePartFieldChecker) {
         super(targetTable, relocateDeleteWriter, relocateInsertWriter, modifyWriter, skTargetMapping, skSourceMapping,
-            skMetas, modifySkOnly, usePartFieldChecker);
+            skMetas, modifySkOnly, usePartFieldChecker, false);
         this.parent = parent;
         this.simpleInsertWriter = simpleInsertWriter;
         this.insertThenUpdateWriter = insertThenUpdateWriter;
@@ -84,29 +84,47 @@ public class UpsertRelocateWriter extends RelocateWriter {
                                    SourceRows sourceRows, ExecutionContext ec, ClassifyResult result) {
         final List<DuplicateCheckResult> classifiedRows = sourceRows.valueRows;
 
-        final RelOptTable targetTable = getTargetTable();
-        assert targetTable.getQualifiedName().size() == 2;
-        final String schemaName = targetTable.getQualifiedName().get(0);
-        final String tableName = targetTable.getQualifiedName().get(1);
-        final TableMeta tableMeta = ec.getSchemaManager(schemaName).getTable(tableName);
-
-        final boolean canWriteForScaleout = ComplexTaskPlanUtils.canWrite(tableMeta);
-        final boolean isReadyToPublishForScaleout = ComplexTaskPlanUtils.isReadyToPublish(tableMeta);
-        final boolean isGsiBackfill = tableMeta.isGsi() && GlobalIndexMeta.isBackFillStatus(ec, tableMeta);
-
         classifiedRows.stream().filter(r -> !r.skipUpdate()).forEach(row -> {
             final boolean insertThenUpdate = row.insertThenUpdate();
             final boolean updateOnly = row.updateOnly();
 
             // If partition key is not modified do UPDATE, or else do DELETE + INSERT
-            final boolean doUpdate = updateOnly && identicalSk.test(this, Pair.of(row.updateSource, null))
-                && (!canWriteForScaleout || isReadyToPublishForScaleout) && !isGsiBackfill;
+            final boolean doUpdate = updateOnly && canUpdateInPlace(row.updateSource, identicalSk, ec);
 
             addResult(row.before, row.after, row.updateSource, row.insertParam, row.duplicated, insertThenUpdate,
                 doUpdate, ec, result);
         });
 
         return result;
+    }
+
+    /**
+     * Authoritative UPSERT UPDATE-versus-relocate decision.
+     *
+     * <p>Physical route equality is not sufficient. For example, changing a partition key from {@code 1} to
+     * {@code 2} may keep the row in the same physical partition, but UPSERT must still follow DELETE+INSERT when the
+     * partition-key comparator reports a change. Scale-out and GSI-backfill phases may also force relocate even when
+     * the key compares equal.</p>
+     *
+     * <p>The executor uses this method before route-dependent external-value materialization, and
+     * {@link #classify(BiPredicate, SourceRows, ExecutionContext, ClassifyResult)} uses the same method when building
+     * the actual leaf plans.</p>
+     */
+    public boolean canUpdateInPlace(
+        List<Object> updateSource,
+        BiPredicate<Writer, Pair<List<Object>, Map<Integer, ParameterContext>>> identicalSk,
+        ExecutionContext ec) {
+        final RelOptTable targetTable = getTargetTable();
+        assert targetTable.getQualifiedName().size() == 2;
+        final String schemaName = targetTable.getQualifiedName().get(0);
+        final String tableName = targetTable.getQualifiedName().get(1);
+        final TableMeta tableMeta = ec.getSchemaManager(schemaName).getTable(tableName);
+        final boolean canWriteForScaleout = ComplexTaskPlanUtils.canWrite(tableMeta);
+        final boolean isReadyToPublishForScaleout = ComplexTaskPlanUtils.isReadyToPublish(tableMeta);
+        final boolean isGsiBackfill = tableMeta.isGsi() && GlobalIndexMeta.isBackFillStatus(ec, tableMeta);
+        return identicalSk.test(this, Pair.of(updateSource, null))
+            && (!canWriteForScaleout || isReadyToPublishForScaleout)
+            && !isGsiBackfill;
     }
 
     /**
@@ -168,8 +186,7 @@ public class UpsertRelocateWriter extends RelocateWriter {
             final DistinctWriter updateWriter = getModifyWriter();
 
             List<RelNode> inputs = updateWriter.getInput(updateEc, (w) -> updateAfterRows);
-            outModifyPlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                Collectors.toList()));
+            addPhaseExecutionPlans(inputs, outModifyPlans);
             replicateOutModifyPlans
                 .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                     Collectors.toList()));
@@ -178,8 +195,7 @@ public class UpsertRelocateWriter extends RelocateWriter {
 
         if (!relocateBeforeRows.isEmpty()) {
             List<RelNode> inputs = getDeleteWriter().getInput(ec, (w) -> relocateBeforeRows);
-            outDeletePlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                Collectors.toList()));
+            addPhaseExecutionPlans(inputs, outDeletePlans);
             replicateOutDeletePlans
                 .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                     Collectors.toList()));
@@ -191,9 +207,13 @@ public class UpsertRelocateWriter extends RelocateWriter {
 
             final InsertWriter insertWriter = getInsertWriter().unwrap(InsertWriter.class);
 
+            final DmlWriteContext writeContext = insertEc.getDmlWriteContext();
+            if (writeContext != null) {
+                writeContext.prepareInsertRows(insertWriter, relocateAfterRows, insertEc);
+            }
+
             List<RelNode> inputs = insertWriter.getInput(insertEc);
-            outInsertPlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                Collectors.toList()));
+            addPhaseExecutionPlans(inputs, outInsertPlans);
             replicateOutInsertPlans
                 .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                     Collectors.toList()));
@@ -205,8 +225,7 @@ public class UpsertRelocateWriter extends RelocateWriter {
             final InsertWriter insertWriter = getSimpleInsertWriter().unwrap(InsertWriter.class);
 
             List<RelNode> inputs = insertWriter.getInput(insertEc);
-            outInsertPlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                Collectors.toList()));
+            addPhaseExecutionPlans(inputs, outInsertPlans);
             replicateOutInsertPlans
                 .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                     Collectors.toList()));
@@ -219,9 +238,13 @@ public class UpsertRelocateWriter extends RelocateWriter {
 
             final InsertWriter insertWriter = getInsertThenUpdateWriter();
 
+            final DmlWriteContext writeContext = insertEc.getDmlWriteContext();
+            if (writeContext != null) {
+                writeContext.prepareInsertRows(insertWriter, insertThenUpdateRows, insertEc);
+            }
+
             List<RelNode> inputs = insertWriter.getInput(insertEc);
-            outInsertPlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                Collectors.toList()));
+            addPhaseExecutionPlans(inputs, outInsertPlans);
             replicateOutInsertPlans
                 .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                     Collectors.toList()));

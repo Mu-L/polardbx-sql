@@ -20,17 +20,21 @@ import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.executor.ddl.job.factory.RenameTablesJobFactory;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.ValidateTableVersionTask;
+import com.alibaba.polardbx.executor.ddl.job.task.ttl.TtlJobUtil;
 import com.alibaba.polardbx.executor.ddl.job.validator.TableValidator;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJob;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.executor.utils.DdlUtils;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalRenameTables;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.DdlPreparedData;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.RenameTablesPreparedData;
 import org.apache.calcite.sql.SqlIdentifier;
+import org.apache.calcite.sql.SqlRenameTable;
 import org.apache.calcite.sql.SqlRenameTables;
 import org.apache.calcite.util.Pair;
 
@@ -45,6 +49,25 @@ public class LogicalRenameTablesHandler extends LogicalCommonDdlHandler {
 
     public LogicalRenameTablesHandler(IRepository repo) {
         super(repo);
+    }
+
+    @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        String schemaName = logicalDdlPlan.getSchemaName();
+        SqlRenameTables sqlRenameTables = (SqlRenameTables) logicalDdlPlan.getNativeSqlNode();
+        for (Pair<SqlIdentifier, SqlIdentifier> item : sqlRenameTables.getTableNameList()) {
+            String tableName = item.getKey().getLastName();
+            String newTableName = item.getValue().getLastName();
+            exclusiveResources.add(concatWithDot(schemaName, tableName));
+            exclusiveResources.add(concatWithDot(schemaName, newTableName));
+
+            TableMeta tableMeta = executionContext.getSchemaManager(schemaName).getTableWithNull(tableName);
+            if (tableMeta != null) {
+                tableVersions.put(tableName, tableMeta.getVersion());
+            }
+        }
     }
 
     @Override
@@ -72,6 +95,7 @@ public class LogicalRenameTablesHandler extends LogicalCommonDdlHandler {
                 executionContext, versionIds).create();
         result.addTask(validateTableVersionTask);
         result.addTaskRelationship(validateTableVersionTask, result.getHead());
+        TtlJobUtil.addRefreshArcViewSubJobIfNeed(result, logicalRenameTables, executionContext);
         return result;
     }
 

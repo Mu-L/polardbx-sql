@@ -16,28 +16,48 @@
 
 package com.alibaba.polardbx.executor.mpp.operator;
 
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
+import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.OutputBufferMemoryManager;
 import com.alibaba.polardbx.executor.operator.ConsumerExecutor;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public abstract class LocalExchanger implements ConsumerExecutor {
 
     protected AtomicBoolean opened = new AtomicBoolean(false);
+
+    @FieldMemoryCounter(value = false)
     protected final OutputBufferMemoryManager bufferMemoryManager;
+
+    @FieldMemoryCounter(value = false)
     protected final List<ConsumerExecutor> executors;
     protected final boolean executorIsLocalBuffer;
+
+    @FieldMemoryCounter(value = false)
     protected LocalExchangersStatus status;
     protected final boolean asyncConsume;
 
     protected final boolean singleConsumer;
+    protected long waitNotFullInMillis;
 
     public LocalExchanger(
         OutputBufferMemoryManager bufferMemoryManager, List<ConsumerExecutor> executors,
         LocalExchangersStatus status,
         boolean asyncConsume) {
+        this(bufferMemoryManager, executors, status, asyncConsume, 0L);
+    }
+
+    public LocalExchanger(
+        OutputBufferMemoryManager bufferMemoryManager, List<ConsumerExecutor> executors,
+        LocalExchangersStatus status,
+        boolean asyncConsume, long waitNotFullInMillis) {
         this.bufferMemoryManager = bufferMemoryManager;
         this.executors = executors;
         this.status = status;
@@ -48,6 +68,20 @@ public abstract class LocalExchanger implements ConsumerExecutor {
             this.executorIsLocalBuffer = false;
         }
         this.singleConsumer = executors.size() == 0;
+        this.waitNotFullInMillis = waitNotFullInMillis;
+    }
+
+    @FieldMemoryCounter(value = false)
+    protected OperatorMemoryOwnerId consumerMemoryOwnerId;
+
+    @Override
+    public void setConsumerOperatorMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        this.consumerMemoryOwnerId = operatorMemoryOwnerId;
+    }
+
+    @Override
+    public OperatorMemoryOwnerId getConsumerMemoryOwnerId() {
+        return consumerMemoryOwnerId;
     }
 
     @Override
@@ -80,6 +114,20 @@ public abstract class LocalExchanger implements ConsumerExecutor {
         if (singleConsumer && !executorIsLocalBuffer) {
             return executors.get(0).needsInput();
         } else {
+
+            ListenableFuture<?> notFullFuture = bufferMemoryManager.getNotFullFuture();
+
+            if (!notFullFuture.isDone() && waitNotFullInMillis > 0) {
+                try {
+                    notFullFuture.get(waitNotFullInMillis, TimeUnit.MILLISECONDS);
+                } catch (TimeoutException e) {
+                    return false;
+                } catch (Throwable t) {
+                    throw GeneralUtil.nestedException(t);
+                }
+                return true;
+            }
+
             return bufferMemoryManager.getNotFullFuture().isDone();
         }
     }
@@ -89,6 +137,18 @@ public abstract class LocalExchanger implements ConsumerExecutor {
         if (singleConsumer && !executorIsLocalBuffer) {
             return executors.get(0).consumeIsBlocked();
         } else {
+            ListenableFuture<?> notFullFuture = bufferMemoryManager.getNotFullFuture();
+
+            if (!notFullFuture.isDone() && waitNotFullInMillis > 0) {
+                try {
+                    notFullFuture.get(waitNotFullInMillis, TimeUnit.MILLISECONDS);
+                } catch (TimeoutException e) {
+                    return notFullFuture;
+                } catch (Throwable t) {
+                    throw GeneralUtil.nestedException(t);
+                }
+                return notFullFuture;
+            }
             return bufferMemoryManager.getNotFullFuture();
         }
     }
@@ -132,5 +192,9 @@ public abstract class LocalExchanger implements ConsumerExecutor {
 
     public boolean executorIsLocalBuffer() {
         return executorIsLocalBuffer;
+    }
+
+    public int getConsumerParallelism() {
+        return status.getConsumerParallelism();
     }
 }

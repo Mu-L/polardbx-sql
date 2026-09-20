@@ -24,18 +24,25 @@ import com.alibaba.polardbx.optimizer.config.table.statistic.StatisticManager;
 import com.alibaba.polardbx.optimizer.config.table.statistic.StatisticResult;
 import com.alibaba.polardbx.optimizer.config.table.statistic.StatisticUtils;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
+import com.alibaba.polardbx.optimizer.core.rel.ExternalTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.GroupTopN;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.MysqlTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.PhysicalCTEConsumer;
 import com.alibaba.polardbx.optimizer.view.ViewPlan;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
+import org.apache.calcite.rel.core.CTEAnchor;
+import org.apache.calcite.rel.core.CTEProducer;
+import org.apache.calcite.rel.core.DynamicValues;
 import org.apache.calcite.rel.core.GroupJoin;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.core.SemiJoin;
 import org.apache.calcite.rel.core.TableLookup;
 import org.apache.calcite.rel.core.Window;
+import org.apache.calcite.rel.logical.LogicalCTEConsumer;
 import org.apache.calcite.rel.logical.LogicalExpand;
 import org.apache.calcite.rel.logical.LogicalTableScan;
 import org.apache.calcite.rel.logical.RuntimeFilterBuilder;
@@ -46,6 +53,7 @@ import org.apache.calcite.rel.metadata.RelMdUtil;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rex.RexBuilder;
+import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
@@ -79,6 +87,12 @@ public class DrdsRelMdDistinctRowCount extends RelMdDistinctRowCount {
     public Double getDistinctRowCount(MysqlTableScan rel, RelMetadataQuery mq,
                                       ImmutableBitSet groupKey, RexNode predicate) {
         return mq.getDistinctRowCount(rel.getNodeForMetaQuery(), groupKey, predicate);
+    }
+
+    public Double getDistinctRowCount(
+        ExternalTableScan rel,
+        RelMetadataQuery mq, ImmutableBitSet groupKey, RexNode predicate) {
+        return rel.getDistinctRowCount(mq, groupKey, predicate);
     }
 
     public Double getDistinctRowCount(LogicalTableScan rel, RelMetadataQuery mq,
@@ -295,6 +309,25 @@ public class DrdsRelMdDistinctRowCount extends RelMdDistinctRowCount {
         return d;
     }
 
+    public Double getDistinctRowCount(DynamicValues rel, RelMetadataQuery mq,
+                                      ImmutableBitSet groupKey, RexNode predicate) {
+        if (predicate == null || predicate.isAlwaysTrue()) {
+            if (groupKey.isEmpty()) {
+                return 1D;
+            }
+        }
+        Double selectivity = RelMdUtil.guessSelectivity(predicate);
+        // assume half the rows are duplicates
+        Double nRows = mq.getRowCount(rel);
+        if (rel.getRowType().getFieldCount() > 1) {
+            nRows = nRows / 2;
+        }
+        if (predicate == null || predicate.isAlwaysTrue()) {
+            return nRows;
+        }
+        return RelMdUtil.numDistinctVals(nRows, nRows * selectivity);
+    }
+
     @Override
     public Double getDistinctRowCount(Aggregate rel, RelMetadataQuery mq,
                                       ImmutableBitSet groupKey, RexNode predicate) {
@@ -346,6 +379,32 @@ public class DrdsRelMdDistinctRowCount extends RelMdDistinctRowCount {
         }
     }
 
+    public Double getDistinctRowCount(GroupTopN rel, RelMetadataQuery mq,
+                                      ImmutableBitSet groupKey, RexNode predicate) {
+        if (groupKey.isEmpty()) {
+            return 1D;
+        }
+
+        // determine which predicates can be applied on the child of the
+        // aggregate
+        final List<RexNode> notPushable = new ArrayList<>();
+        final List<RexNode> pushable = new ArrayList<>();
+        RelOptUtil.splitFilters(
+            rel.getGroupSet(),
+            predicate,
+            pushable,
+            notPushable);
+        final RexBuilder rexBuilder = rel.getCluster().getRexBuilder();
+        RexNode childPreds =
+            RexUtil.composeConjunction(rexBuilder, pushable, true);
+
+        /** difference from calcite we use this aggregate groupSet instead of childKey */
+        Double distinctRowCount =
+            mq.getDistinctRowCount(rel.getInput(), rel.getGroupSet(), childPreds);
+
+        return distinctRowCount;
+    }
+
     public Double getDistinctRowCount(Window rel, RelMetadataQuery mq,
                                       ImmutableBitSet groupKey, RexNode predicate) {
         if (groupKey.isEmpty()) {
@@ -376,5 +435,40 @@ public class DrdsRelMdDistinctRowCount extends RelMdDistinctRowCount {
             mq.getDistinctRowCount(rel.getInput(), rel.groups.get(0).keys, childPreds);
 
         return distinctRowCount;
+    }
+
+    public Double getDistinctRowCount(CTEAnchor rel, RelMetadataQuery mq, ImmutableBitSet groupKey,
+                                      RexNode predicate) {
+        return mq.getDistinctRowCount(rel.getRight(), groupKey, predicate);
+    }
+
+    public Double getDistinctRowCount(CTEProducer rel, RelMetadataQuery mq, ImmutableBitSet groupKey,
+                                      RexNode predicate) {
+        return mq.getDistinctRowCount(rel.getInput(), groupKey, predicate);
+    }
+
+    public Double getDistinctRowCount(LogicalCTEConsumer rel, RelMetadataQuery mq, ImmutableBitSet groupKey,
+                                      RexNode predicate) {
+        return mq.getDistinctRowCount(rel.getInnerRel(), groupKey, predicate);
+    }
+
+    public Double getDistinctRowCount(PhysicalCTEConsumer rel, RelMetadataQuery mq, ImmutableBitSet groupKey,
+                                      RexNode predicate) {
+        java.util.List<RexNode> projects = rel.getProjects();
+        if (projects != null && !projects.isEmpty()) {
+            ImmutableBitSet.Builder mappedKey = ImmutableBitSet.builder();
+            for (int bit : groupKey) {
+                if (bit < projects.size()) {
+                    RexNode project = projects.get(bit);
+                    if (project instanceof RexInputRef) {
+                        mappedKey.set(((RexInputRef) project).getIndex());
+                    } else {
+                        mappedKey.addAll(RelOptUtil.InputFinder.bits(project));
+                    }
+                }
+            }
+            groupKey = mappedKey.build();
+        }
+        return mq.getDistinctRowCount(CBOUtil.getCteProducer(rel), groupKey, predicate);
     }
 }

@@ -18,6 +18,7 @@ package com.alibaba.polardbx.executor.operator;
 
 import com.alibaba.polardbx.common.DefaultSchema;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.ParameterMethod;
@@ -35,6 +36,7 @@ import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.alibaba.polardbx.optimizer.core.expression.bean.EnumValue;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalInsert;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
 import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.memory.MemoryControlByBlocked;
@@ -158,6 +160,11 @@ public class InsertSelectExec extends SourceExec {
     }
 
     public void insertExec() {
+        if (ExternalizedDmlRewriter.needsHandling(
+            LogicalInsertHandler.getInsertTargetTableMeta(insert, context))) {
+            throw new TddlRuntimeException(ErrorCode.ERR_INSERT_SELECT,
+                "MPP INSERT SELECT cannot safely write externalized columns");
+        }
         int chunkSize = context.getParamManager().getInt(ConnectionParams.CHUNK_SIZE);
         ExecutionContext insertContext = context.copy();
 

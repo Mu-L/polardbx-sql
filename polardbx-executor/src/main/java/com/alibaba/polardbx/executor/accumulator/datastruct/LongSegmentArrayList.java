@@ -16,11 +16,12 @@
 
 package com.alibaba.polardbx.executor.accumulator.datastruct;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.common.utils.MathUtils;
+import com.alibaba.polardbx.common.utils.memory.SizeOf;
 import org.openjdk.jol.info.ClassLayout;
-
-import java.util.ArrayList;
-import java.util.List;
+import org.openjdk.jol.util.VMSupport;
 
 /**
  * Long Segmented Array List
@@ -33,13 +34,13 @@ public class LongSegmentArrayList implements SegmentArrayList {
 
     private static final int SEGMENT_SIZE = 1024;
 
-    private List<long[]> arrays;
+    private MemoryCountableArrayList<long[]> arrays;
 
     private int size;
     private int capacity;
 
     public LongSegmentArrayList(int capacity) {
-        this.arrays = new ArrayList<>(MathUtils.ceilDiv(capacity, SEGMENT_SIZE));
+        this.arrays = new MemoryCountableArrayList<>(MathUtils.ceilDiv(capacity, SEGMENT_SIZE));
         this.size = 0;
         this.capacity = arrays.size() * SEGMENT_SIZE;
     }
@@ -49,6 +50,17 @@ public class LongSegmentArrayList implements SegmentArrayList {
             grow();
         }
         arrays.get(arrays.size() - 1)[size++ % SEGMENT_SIZE] = value;
+    }
+
+    @Override
+    public long estimateGrowthMemoryUsage() {
+        // If adding one more element would trigger expansion,
+        // return the memory required for the next expansion; otherwise return 0L
+        if (size == capacity) {
+            // Expansion requires adding a new long array of SEGMENT_SIZE
+            return VMSupport.align((int) SizeOf.sizeOfLongArray(SEGMENT_SIZE));
+        }
+        return 0L;
     }
 
     public void set(int index, long value) {
@@ -72,5 +84,20 @@ public class LongSegmentArrayList implements SegmentArrayList {
     @Override
     public long estimateSize() {
         return INSTANCE_SIZE + (long) arrays.size() * SEGMENT_SIZE * Long.BYTES;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        long size = INSTANCE_SIZE;
+
+        if (arrays != null) {
+            size += FastMemoryCounter.sizeOf(arrays);
+            for (int i = 0; i < arrays.size(); i++) {
+                long[] array = arrays.get(i);
+                size += VMSupport.align((int) SizeOf.sizeOf(array));
+            }
+        }
+
+        return size;
     }
 }

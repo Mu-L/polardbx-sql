@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.qatest.ddl.sharding.gsi.group1;
 
 import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.collect.ImmutableList;
 import org.apache.calcite.util.Litmus;
@@ -148,6 +149,7 @@ public class CreateGsiUnsupportedTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateSuccess(tddlConnection, "DROP TABLE IF EXISTS " + gsiTestTableName);
     }
 
+    @IcbcIgnore(ignoreReason = "NO_ZERO_DATE")
     @Test
     public void createIndex() {
         try {

@@ -44,12 +44,11 @@ SQL:
   - sql: |
       select max(col0) as max, avg(col3) as avg, sum(col5) as sum from t1 where col4 = 100 group by col4, col2 order by col2 limit 10, 1;
     plan: |
-      project(max="max", avg="avg", sum="sum")
+      project(max="max", avg="$f3 / $f4", sum="sum")
         topn(sort="col2 asc", offset=?1, fetch=?2)
-          project(max="max", avg="$f3 / $f4", sum="sum", col2="col2")
-            hashagg(group="col4,col2", max="max(max)", $f3="sum($f3)", $f4="sum($f4)", sum="sum(sum)")
-              gather(concurrent=true)
-                logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `col4`, `col2`, max(`col0`) as `max`, sum(`col3`) as `$f3`, count(`col3`) as `$f4`, sum(`col5`) as `sum` from `t1` as `t1` force index(`col4_2_idx`) where (`col4` = ?) group by `col2`, `col4`")
+          hashagg(group="col4,col2", max="max(max)", $f3="sum($f3)", $f4="sum($f4)", sum="sum(sum)")
+            gather(concurrent=true)
+              logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `col4`, `col2`, max(`col0`) as `max`, sum(`col3`) as `$f3`, count(`col3`) as `$f4`, sum(`col5`) as `sum` from `t1` as `t1` force index(`col4_2_idx`) where (`col4` = ?) group by `col2`, `col4` order by `col2` limit (? + ?)")
   - sql: |
       select max(col0) as max, sum(col5) as sum from t1 where col4 = 100  order by col2 limit 10, 1;
     plan: |

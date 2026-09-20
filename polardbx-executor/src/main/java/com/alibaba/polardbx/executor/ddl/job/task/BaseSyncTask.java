@@ -17,6 +17,8 @@
 package com.alibaba.polardbx.executor.ddl.job.task;
 
 import com.alibaba.polardbx.common.utils.TStringUtil;
+import com.alibaba.polardbx.executor.ddl.newengine.job.DdlExceptionAction;
+import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 
@@ -26,6 +28,7 @@ public abstract class BaseSyncTask extends BaseDdlTask {
 
     public BaseSyncTask(String schemaName) {
         super(schemaName);
+        onExceptionTryWaitAndRecoveryThenPause();
     }
 
     @Override

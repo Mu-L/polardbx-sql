@@ -1,0 +1,46 @@
+## DISABLE_FAST_SQL_PARSER
+
+## normal
+select unitmurhashc12('5');
+  
+## error_msg: $# routeKey is legal #$
+select unitmurhashc12('');
+  
+## error_msg: $# routeKey is legal #$
+select unitmurhashc12(null);
+
+## error_msg: $# routeKey is legal #$  
+select unitmurhashc12('1234567891234567891234567');
+  
+## error_msg: $# routeKey is legal #$   
+select unitmurhashc12('a');
+
+
+
+create table dble_t12
+(a varchar(64), b int)
+partition by udf_hash(unitmurhashc12(a))
+partitions 2
+(
+partition p1 values less than(1),
+partition p2 values less than(2)
+);
+
+insert into dble_t12 values ('2', 2);
+
+  ## error_msg: $# routeKey is legal #$
+insert into dble_t12 values (null, 3);
+
+select * from dble_t12 where a='2';
+select part_route('','dble_t12', '2');
+  ## error_msg: $# routeKey is legal #$
+select part_route('','dble_t12', '');
+  ## error_msg: $# routeKey is legal #$
+select part_route('','dble_t12', null);
+  ## error_msg: $# routeKey is legal #$
+select part_route('','dble_t12', '1234567891234567891234567');
+  ## error_msg: $# routeKey is legal #$
+select part_route('','dble_t12', 'aaa');
+
+drop table dble_t12;
+

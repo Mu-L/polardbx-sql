@@ -32,7 +32,9 @@ public class InformationSchemaTtlInfo extends VirtualView {
         columns.add(
             new RelDataTypeFieldImpl("TTL_ENABLE",
                 index++, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
-
+        columns.add(
+            new RelDataTypeFieldImpl("TTL_CLEANUP",
+                index++, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
         columns.add(new RelDataTypeFieldImpl("TTL_COL", index++,
             typeFactory.createSqlType(SqlTypeName.VARCHAR)));
 
@@ -40,6 +42,18 @@ public class InformationSchemaTtlInfo extends VirtualView {
             typeFactory.createSqlType(SqlTypeName.VARCHAR)));
 
         columns.add(new RelDataTypeFieldImpl("TTL_CRON", index++,
+            typeFactory.createSqlType(SqlTypeName.VARCHAR)));
+
+        columns.add(new RelDataTypeFieldImpl("TTL_COL_ENCODER", index++,
+            typeFactory.createSqlType(SqlTypeName.VARCHAR)));
+
+        columns.add(new RelDataTypeFieldImpl("TTL_COL_DECODER", index++,
+            typeFactory.createSqlType(SqlTypeName.VARCHAR)));
+
+        columns.add(new RelDataTypeFieldImpl("TTL_FILTER", index++,
+            typeFactory.createSqlType(SqlTypeName.VARCHAR)));
+
+        columns.add(new RelDataTypeFieldImpl("TTL_PART_INTERVAL", index++,
             typeFactory.createSqlType(SqlTypeName.VARCHAR)));
 
         columns.add(new RelDataTypeFieldImpl("ARCHIVE_TYPE", index++,

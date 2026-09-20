@@ -1,23 +1,7 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.optimizer.parse.bean;
 
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
-import com.alibaba.polardbx.common.jdbc.RawString;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.druid.sql.ast.SQLStatement;
@@ -29,6 +13,7 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlInsertSta
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlLoadDataInFileStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlLoadXmlStatement;
 import com.alibaba.polardbx.druid.sql.parser.ByteString;
+import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.optimizer.parse.SqlParameterizeUtils;
 import com.alibaba.polardbx.optimizer.parse.visitor.FastSqlTableNameCollector;
 import com.google.common.collect.Lists;
@@ -52,6 +37,7 @@ public class SqlParameterized {
     public static final int VARCHAR_CODE = 1 << 3;
     public static final int VARCHAR_BYTE_CODE = 1 << 4;
     public static final int END_OF_LIST_CODE = 1 << 5;
+    public static final int END_OF_BIG_LIST_CODE = 1 << 6;
     /**
      * prevent collision when switch strict mode
      */
@@ -78,6 +64,7 @@ public class SqlParameterized {
      */
     private final SQLStatement stmt;
     private final Set<Pair<String, String>> tables;
+    private final boolean referencesExternalTable;
 
     /**
      * Type info digest for parameters.
@@ -103,6 +90,7 @@ public class SqlParameterized {
         FastSqlTableNameCollector collector = new FastSqlTableNameCollector();
         stmt.accept(collector);
         this.tables = collector.getTables();
+        this.referencesExternalTable = collector.isReferencesExternalTable();
     }
 
     public SqlParameterized(String sql, List<Object> parameters) {
@@ -112,6 +100,7 @@ public class SqlParameterized {
         this.unparameterized = false;
         this.stmt = null;
         this.tables = null;
+        this.referencesExternalTable = false;
     }
 
     public SqlParameterized(String parameterSql, Map<Integer, ParameterContext> currentParameter) {
@@ -123,6 +112,7 @@ public class SqlParameterized {
         this.unparameterized = false;
         this.stmt = null;
         this.tables = null;
+        this.referencesExternalTable = false;
     }
 
     public SQLStatement getAst() {
@@ -149,22 +139,22 @@ public class SqlParameterized {
         return this.tables;
     }
 
+    public boolean isReferencesExternalTable() {
+        return referencesExternalTable;
+    }
+
     public boolean needCache() {
         return SqlParameterizeUtils.needCache(stmt);
     }
 
     public boolean isUpdateDelete() {
-        return stmt instanceof SQLUpdateStatement
-            || stmt instanceof SQLDeleteStatement;
+        return stmt instanceof SQLUpdateStatement || stmt instanceof SQLDeleteStatement;
     }
 
     public boolean isDML() {
-        return stmt instanceof SQLInsertStatement
-            || stmt instanceof SQLReplaceStatement
-            || stmt instanceof SQLUpdateStatement
-            || stmt instanceof SQLDeleteStatement
-            || stmt instanceof MySqlLoadDataInFileStatement
-            || stmt instanceof MySqlLoadXmlStatement;
+        return stmt instanceof SQLInsertStatement || stmt instanceof SQLReplaceStatement
+            || stmt instanceof SQLUpdateStatement || stmt instanceof SQLDeleteStatement
+            || stmt instanceof MySqlLoadDataInFileStatement || stmt instanceof MySqlLoadXmlStatement;
     }
 
     public long getDigest() {
@@ -221,6 +211,10 @@ public class SqlParameterized {
                 }
             }
         }
+        if (isBigIn()) {
+            digest = 63 * digest + END_OF_BIG_LIST_CODE;
+        }
+
         return digest;
     }
 
@@ -260,6 +254,17 @@ public class SqlParameterized {
                 return VARCHAR_CODE;
             }
         }
+    }
+
+    public boolean isBigIn() {
+        for (Object value : parameters) {
+            if (value instanceof List) {
+                if (((List<?>) value).size() >= InstConfUtil.getLong(ConnectionParams.COL_IN_SEMIJOIN_THRESHOLD)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     public boolean isUnparameterized() {

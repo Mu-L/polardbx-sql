@@ -16,20 +16,30 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
 import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCounterUtils;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
+import com.alibaba.polardbx.common.oss.filesystem.OSSCacheAdapter;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
-import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.thread.NamedThreadFactory;
+import com.alibaba.polardbx.common.utils.thread.ThreadCpuStatUtil;
 import com.alibaba.polardbx.executor.archive.reader.OSSColumnTransformer;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.gms.ColumnarManager;
+import com.alibaba.polardbx.executor.gms.DynamicColumnarManager;
 import com.alibaba.polardbx.executor.mpp.metadata.Split;
+import com.alibaba.polardbx.executor.mpp.planner.EarlyStopManager;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFManager;
 import com.alibaba.polardbx.executor.mpp.split.OssSplit;
 import com.alibaba.polardbx.executor.operator.scan.BlockCacheManager;
+import com.alibaba.polardbx.executor.operator.scan.ColumnarMemoryPermitManager;
 import com.alibaba.polardbx.executor.operator.scan.ColumnarSplit;
 import com.alibaba.polardbx.executor.operator.scan.IOStatus;
 import com.alibaba.polardbx.executor.operator.scan.LazyEvaluator;
@@ -41,13 +51,17 @@ import com.alibaba.polardbx.executor.operator.scan.impl.CsvColumnarSplit;
 import com.alibaba.polardbx.executor.operator.scan.impl.DefaultLazyEvaluator;
 import com.alibaba.polardbx.executor.operator.scan.impl.DefaultScanPreProcessor;
 import com.alibaba.polardbx.executor.operator.scan.impl.FlashbackScanPreProcessor;
+import com.alibaba.polardbx.executor.operator.scan.impl.GroupedExecutor;
 import com.alibaba.polardbx.executor.operator.scan.impl.MorselColumnarSplit;
+import com.alibaba.polardbx.executor.operator.scan.impl.RoundRobinWorkPool;
 import com.alibaba.polardbx.executor.operator.scan.impl.SimpleWorkPool;
-import com.alibaba.polardbx.executor.operator.scan.impl.SpecifiedDeleteBitmapPreProcessor;
-import com.alibaba.polardbx.executor.operator.scan.metrics.RuntimeMetrics;
+import com.alibaba.polardbx.executor.operator.scan.impl.TrackerBackedPermitManager;
 import com.alibaba.polardbx.executor.vectorized.build.InputRefTypeChecker;
+import com.alibaba.polardbx.executor.vectorized.build.VectorizedExpressionBuilder;
+import com.alibaba.polardbx.gms.engine.DynamicCacheFileSystem;
 import com.alibaba.polardbx.gms.engine.FileSystemManager;
 import com.alibaba.polardbx.gms.engine.FileSystemUtils;
+import com.alibaba.polardbx.gms.engine.OssGeneralCacheOverrideFileSystem;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
@@ -55,22 +69,24 @@ import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
 import com.alibaba.polardbx.optimizer.memory.MemoryPoolUtils;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.TimestampUtils;
 import com.google.common.collect.ImmutableList;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import it.unimi.dsi.fastutil.objects.MemoryCountableObjectArraySet;
 import org.apache.calcite.rex.RexNode;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.text.MessageFormat;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
@@ -79,33 +95,51 @@ import java.util.stream.Collectors;
 
 // columnar table scan exec.
 public class ColumnarScanExec extends SourceExec {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
-    private static final int CPU_CORES = Runtime.getRuntime().availableProcessors();
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
+
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(ColumnarScanExec.class).instanceSize();
+
+    public static final int CORE_THREADS = ThreadCpuStatUtil.NUM_CORES * ThreadCpuStatUtil.NUM_CORES;
 
     protected static final ExecutorService IO_EXECUTOR =
-        Executors.newFixedThreadPool(CPU_CORES * CPU_CORES, new NamedThreadFactory(
-            "columnar-io"
-        ));
+        Executors.newFixedThreadPool(
+            CORE_THREADS, new NamedThreadFactory(
+                "columnar-io"
+            ));
 
-    private static final ExecutorService SCAN_EXECUTOR =
-        Executors.newFixedThreadPool(CPU_CORES * CPU_CORES, new NamedThreadFactory(
-            "columnar-scan"
-        ));
+    public static final GroupedExecutor SCAN_EXECUTOR = GroupedExecutor.create(
+        Executors.newFixedThreadPool(CORE_THREADS,
+            new NamedThreadFactory(
+                "columnar-scan"
+            )),
+        CORE_THREADS
+    );
+
     protected static final AtomicLong SNAPSHOT_FILE_ACCESS_COUNT = new AtomicLong(0);
 
     public static final double DEFAULT_RATIO = .3D;
     public static final double DEFAULT_GROUPS_RATIO = 1D;
     public static final double DEFAULT_DELETION_RATIO = 0D;
 
+    private static final long ROW_GROUP_ROWS_GRAIN = 10000L;
+
+    @FieldMemoryCounter(value = false)
     protected OSSTableScan ossTableScan;
+    @FieldMemoryCounter(value = false)
     private List<DataType> outputDataTypes;
 
     // Shared by all scan operators of one partition in one server node.
+    @FieldMemoryCounter(value = false)
     protected WorkPool<ColumnarSplit, Chunk> workPool;
     private ExecutorService scanExecutor;
+    private ColumnarMemoryPermitManager columnarMemoryPermitManager;
 
+    @FieldMemoryCounter(value = false)
     protected ScanPreProcessor preProcessor;
+
+    @FieldMemoryCounter(value = false)
     private ListenableFuture preProcessorFuture;
+    @FieldMemoryCounter(value = false)
     private Supplier<ListenableFuture<?>> blockedSupplier;
 
     /**
@@ -114,7 +148,8 @@ public class ColumnarScanExec extends SourceExec {
     private volatile ScanWork<ColumnarSplit, Chunk> currentWork;
     private volatile boolean lastWorkNotExecutable;
     private volatile boolean noAvailableWork;
-    private Map<String, ScanWork<ColumnarSplit, Chunk>> finishedWorks;
+
+    @FieldMemoryCounter(value = false)
     protected List<Split> splitList;
 
     /**
@@ -138,26 +173,87 @@ public class ColumnarScanExec extends SourceExec {
     private boolean enableDebug;
 
     // memory management.
+    @FieldMemoryCounter(value = false)
     private MemoryPool memoryPool;
+    @FieldMemoryCounter(value = false)
     protected MemoryAllocatorCtx memoryAllocator;
 
     // plan fragment level runtime filter manager.
+    @FieldMemoryCounter(value = false)
     protected volatile FragmentRFManager fragmentRFManager;
 
-    protected Set<String> filterSet;
+    protected MemoryCountableObjectArraySet<String> filterSet;
+
+    @FieldMemoryCounter(value = false)
+    protected EarlyStopManager earlyStopManager;
+
+    @FieldMemoryCounter(value = false)
+    protected List<OrderByOption> scanOrderByOptions;
+    @FieldMemoryCounter(value = false)
+    protected List<Integer> orderByInProjects;
+
+    private int morselUnit;
+    private final int chunkLimit;
+    private boolean useDescendingScanWork;
+    private final Configuration configuration;
+    private RexNode rewrittenPredicate;
+
+    private LazyEvaluator<Chunk, BitSet> evaluator;
 
     // for dynamic param of IN expression.
     protected Map<Integer, Map<String, List>> rewriterParams;
+    protected final BlockingFuture<?> preheatCloseFuture = BlockingFuture.create(BlockingReason.NOT_BLOCKED);
 
-    public ColumnarScanExec(OSSTableScan ossTableScan, ExecutionContext context, List<DataType> outputDataTypes) {
+    @Override
+    public long getMemoryUsage() {
+        long memoryUsage = INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(currentWork);
+
+        if (currentWork == null || currentWork.getIOStatus() != currentIOStatus) {
+            memoryUsage += FastMemoryCounter.sizeOf(currentIOStatus);
+        }
+
+        memoryUsage += FastMemoryCounter.sizeOf(filterSet);
+        memoryUsage += FastMemoryCounter.sizeOf(evaluator);
+        return memoryUsage;
+    }
+
+    public ColumnarScanExec(OSSTableScan ossTableScan, ExecutionContext context, List<DataType> outputDataTypes,
+                            ExecutorService scanExecutor, ColumnarMemoryPermitManager columnarMemoryPermitManager) {
+        this(ossTableScan, context, outputDataTypes, null, scanExecutor, columnarMemoryPermitManager);
+    }
+
+    public ColumnarScanExec(OSSTableScan ossTableScan, ExecutionContext context, List<DataType> outputDataTypes,
+                            EarlyStopManager earlyStopManager, ExecutorService scanExecutor,
+                            ColumnarMemoryPermitManager columnarMemoryPermitManager) {
         super(context);
+
+        this.scanExecutor = scanExecutor;
+        this.columnarMemoryPermitManager = columnarMemoryPermitManager;
+
+        // It's time consuming because the constructor of configuration will initialize a large parameter list.
+        configuration = new Configuration();
         this.ossTableScan = ossTableScan;
         this.outputDataTypes = outputDataTypes;
+        this.earlyStopManager = earlyStopManager;
 
-        this.scanExecutor = SCAN_EXECUTOR;
+        chunkLimit = context.getParamManager().getInt(ConnectionParams.CHUNK_SIZE);
+        morselUnit = context.getParamManager().getInt(ConnectionParams.COLUMNAR_WORK_UNIT);
+        if (earlyStopManager != null) {
+            int earlyStopWorkUnit = (int) (earlyStopManager.getTopNSize() / ROW_GROUP_ROWS_GRAIN + 1);
+            morselUnit = Math.min(morselUnit, earlyStopWorkUnit);
 
-        this.workPool = new SimpleWorkPool();
-        this.finishedWorks = new TreeMap<>(String::compareTo);
+            useDescendingScanWork = earlyStopManager.isDesc();
+
+            scanOrderByOptions = earlyStopManager.getOrderByOptionsForScan(ossTableScan);
+
+            orderByInProjects = scanOrderByOptions.stream()
+                .map(option -> ossTableScan.getOrcNode().getInProjects().get(option.index))
+                .collect(Collectors.toList());
+
+        }
+
+        this.workPool = earlyStopManager != null ? new RoundRobinWorkPool(earlyStopManager) : new SimpleWorkPool();
 
         // status of ScanWork
         this.lastWorkNotExecutable = true;
@@ -183,9 +279,18 @@ public class ColumnarScanExec extends SourceExec {
 
         String fileListStr = context.getParamManager().getString(ConnectionParams.FILE_LIST);
         if (fileListStr != null && !"ALL".equalsIgnoreCase(fileListStr)) {
-            filterSet = Arrays.stream(fileListStr.split(","))
-                .map(String::trim)
-                .collect(Collectors.toSet());
+            filterSet = new MemoryCountableObjectArraySet(MemoryCounterUtils.getMemoryCounter(String.class));
+            Arrays.stream(fileListStr.split(","))
+                .map(String::trim).forEach(filterSet::add);
+        }
+    }
+
+    @Override
+    public void setProducerMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        super.setProducerMemoryOwnerId(operatorMemoryOwnerId);
+        if (operatorMemoryOwnerId != null) {
+            this.columnarMemoryPermitManager =
+                ColumnarMemoryPermitManager.createTrackerBacked(operatorMemoryOwnerId);
         }
     }
 
@@ -231,9 +336,6 @@ public class ColumnarScanExec extends SourceExec {
         // todo it's not the unique id for each table-scan exec in different work thread.
         int sequenceId = getSourceId();
 
-        // todo It's time consuming because the constructor of configuration will initialize a large parameter list.
-        Configuration configuration = new Configuration();
-
         ColumnarManager columnarManager = ColumnarManager.getInstance();
         OSSColumnTransformer columnTransformer = ossSplit.getColumnTransformer(ossTableScan, context);
 
@@ -247,7 +349,8 @@ public class ColumnarScanExec extends SourceExec {
                 tableMeta,
                 fileSystem,
                 configuration,
-                columnarManager);
+                columnarManager,
+                preheatCloseFuture);
         }
 
         // Schema-level cache manager.
@@ -255,15 +358,21 @@ public class ColumnarScanExec extends SourceExec {
 
         // Get the push-down predicate.
         // The refs of input-type will be consistent with refs in RexNode.
-        LazyEvaluator<Chunk, BitSet> evaluator = null;
         List<Integer> inputRefsForFilter = ImmutableList.of();
         if (!ossTableScan.getOrcNode().getFilters().isEmpty()) {
             RexNode rexNode = ossTableScan.getOrcNode().getFilters().get(0);
             List<DataType<?>> inputTypes = ossTableScan.getOrcNode().getInProjectsDataType();
 
+            if (rexNode != null && rewrittenPredicate == null) {
+                rewrittenPredicate = VectorizedExpressionBuilder.rewriteRoot(rexNode, true);
+
+                InputRefTypeChecker inputRefTypeChecker = new InputRefTypeChecker(inputTypes);
+                rewrittenPredicate = rewrittenPredicate.accept(inputRefTypeChecker);
+            }
+
             // Build evaluator suitable for columnar scan, with the ratio to decide the evaluation strategy.
             evaluator = DefaultLazyEvaluator.builder()
-                .setRexNode(rexNode)
+                .setRexNode(rewrittenPredicate)
                 .setRatio(DEFAULT_RATIO)
                 .setInputTypes(inputTypes)
                 .setContext(context)
@@ -289,9 +398,6 @@ public class ColumnarScanExec extends SourceExec {
             .sorted()
             .collect(Collectors.toList());
 
-        final int chunkLimit = context.getParamManager().getInt(ConnectionParams.CHUNK_SIZE);
-        final int morselUnit = context.getParamManager().getInt(ConnectionParams.COLUMNAR_WORK_UNIT);
-
         final OssSplit.DeltaReadOption deltaReadOption = ossSplit.getDeltaReadOption();
 
         // Build csv split for all csv files in deltaReadOption and fill into work pool.
@@ -300,7 +406,6 @@ public class ColumnarScanExec extends SourceExec {
             final Map<String, List<Long>> allPositions = deltaReadOption.getAllPositions();
 
             List<Integer> finalInputRefsForFilterForCsv = inputRefsForFilter;
-            LazyEvaluator<Chunk, BitSet> finalEvaluatorForCsv = evaluator;
 
             for (Map.Entry<String, List<String>> entry : allCsvFiles.entrySet()) {
                 List<String> files = entry.getValue();
@@ -320,12 +425,13 @@ public class ColumnarScanExec extends SourceExec {
                         .inputRefs(finalInputRefsForFilterForCsv, inputRefsForProject)
                         .tso(ossSplit.getCheckpointTso())
                         .prepare(preProcessor)
-                        .pushDown(finalEvaluatorForCsv)
+                        .pushDown(evaluator)
                         .columnTransformer(columnTransformer)
                         .partNum(partNum)
                         .nodePartCount(nodePartCount)
                         .memoryAllocator(memoryAllocator)
                         .isFlashback(ossTableScan.isFlashbackQuery())
+                        .tableMeta(logicalSchema, logicalTableName)
                         .build()
                     );
                 }
@@ -345,13 +451,20 @@ public class ColumnarScanExec extends SourceExec {
                 // todo need columnar file-id mapping.
                 int fileId = 0;
 
+                if (LOGGER.isDebugEnabled() && columnarMemoryPermitManager instanceof TrackerBackedPermitManager) {
+                    LOGGER.debug("Building MorselColumnarSplit with TrackerBackedPermitManager for file: "
+                        + fileName);
+                }
+
                 ColumnarSplit columnarSplit = MorselColumnarSplit.newBuilder()
                     .executionContext(context)
                     .ioExecutor(IO_EXECUTOR)
+                    .columnarMemoryPermitManager(columnarMemoryPermitManager)
                     .fileSystem(fileSystem, engine)
                     .configuration(configuration)
                     .sequenceId(sequenceId)
                     .file(filePath, fileId)
+                    .tableMeta(logicalSchema, logicalTableName)
                     .columnTransformer(columnTransformer)
                     .inputRefs(inputRefsForFilter, inputRefsForProject)
                     .cacheManager(blockCacheManager)
@@ -367,6 +480,9 @@ public class ColumnarScanExec extends SourceExec {
                     .memoryAllocator(memoryAllocator)
                     .fragmentRFManager(fragmentRFManager)
                     .operatorStatistic(statistics)
+                    .earlyStopManager(earlyStopManager, scanOrderByOptions, orderByInProjects)
+                    .useDescending(useDescendingScanWork)
+                    .tableMeta(logicalSchema, logicalTableName)
                     .build();
 
                 workPool.addSplit(sequenceId, columnarSplit);
@@ -383,13 +499,35 @@ public class ColumnarScanExec extends SourceExec {
                                                       TableMeta tableMeta,
                                                       FileSystem fileSystem,
                                                       Configuration configuration,
-                                                      ColumnarManager columnarManager) {
+                                                      ColumnarManager columnarManager,
+                                                      ListenableFuture<?> isClosed) {
         // 只有在绕过 CSV 缓存的情况下，才允许同时绕过 Delete bitmap 缓存
         boolean forceDisableDelCache =
             !context.getParamManager().getBoolean(ConnectionParams.ENABLE_COLUMNAR_CSV_CACHE)
                 && !context.getParamManager().getBoolean(ConnectionParams.ENABLE_COLUMNAR_DEL_CACHE);
+
+        ZoneId zoneId = TimestampUtils.getZoneId(context);
+
+        // Apply per-statement GeneralCache override (HINT/session takes precedence over
+        // DynamicConfig) at the earliest preprocessor creation point so that ORC footer
+        // preheat (PreheatMetaManager -> ORCMetaReaderImpl -> ReaderImpl.extractFileTail)
+        // also honors the override.
+        Boolean ossCacheOverride = OSSCacheAdapter.extractStatementOverride(context.getExtraCmds());
+        if (ossCacheOverride != null && fileSystem instanceof DynamicCacheFileSystem) {
+            fileSystem = new OssGeneralCacheOverrideFileSystem(
+                (DynamicCacheFileSystem) fileSystem, ossCacheOverride);
+        }
+
         if (ossTableScan.isFlashbackQuery() || forceDisableDelCache) {
             OssSplit.DeltaReadOption deltaReadOption = ossSplit.getDeltaReadOption();
+            // TODO: GET TABLE ID MORE GRACEFULLY
+            Long tso =
+                deltaReadOption == null ? ossSplit.getCheckpointTso() : (Long) deltaReadOption.getCheckpointTso();
+            Long tableId = null;
+            if (tso != null) {
+                tableId = ((DynamicColumnarManager) columnarManager).getTableId(tso, logicalSchema, logicalTableName,
+                    tableMeta);
+            }
 
             return new FlashbackScanPreProcessor(
                 configuration, fileSystem,
@@ -409,11 +547,22 @@ public class ColumnarScanExec extends SourceExec {
 
                 // for columnar mode.
                 columnarManager,
-                deltaReadOption == null ? ossSplit.getCheckpointTso() : (Long) deltaReadOption.getCheckpointTso(),
-                tableMeta.getColumnarFieldIdList(),
-                deltaReadOption == null ? null : deltaReadOption.getAllDelPositions()
+                tso,
+                tso == null ? null : tableMeta.getColumnarFieldIdList(tableId),
+                tso == null ? null : tableMeta.getColumnarSortKeys(tableId),
+                deltaReadOption == null ? null : deltaReadOption.getAllDelPositions(),
+                isClosed,
+                zoneId
             );
         } else {
+            // TODO: GET TABLE ID MORE GRACEFULLY
+            Long tso = ossSplit.getCheckpointTso();
+            Long tableId = null;
+            if (tso != null) {
+                tableId = ((DynamicColumnarManager) columnarManager).getTableId(tso, logicalSchema, logicalTableName,
+                    tableMeta);
+            }
+
             return new DefaultScanPreProcessor(
                 configuration, fileSystem,
 
@@ -431,8 +580,15 @@ public class ColumnarScanExec extends SourceExec {
 
                 // for columnar mode.
                 columnarManager,
-                ossSplit.getCheckpointTso(),
-                tableMeta.getColumnarFieldIdList()
+                tso,
+                tso == null ? null : tableMeta.getColumnarFieldIdList(tableId),
+                tso == null ? null : tableMeta.getColumnarSortKeys(tableId),
+
+                // for preheat meta
+                context.getParamManager().getBoolean(ConnectionParams.ENABLE_PARALLEL_PREHEAT_FILE_META),
+                context.getVersionStorageStatistics(),
+                isClosed,
+                zoneId
             );
         }
     }
@@ -451,7 +607,8 @@ public class ColumnarScanExec extends SourceExec {
     void doOpen() {
         // invoke pre-processor.
         if (preProcessor != null) {
-            preProcessorFuture = preProcessor.prepare(scanExecutor, context.getTraceId(), context.getColumnarTracer());
+            preProcessorFuture =
+                preProcessor.prepare(scanExecutor, IO_EXECUTOR, context.getTraceId(), context.getColumnarTracer());
         }
     }
 
@@ -460,7 +617,7 @@ public class ColumnarScanExec extends SourceExec {
         // There is no split added.
         if (splitList.isEmpty()) {
             // If there is no split, don't block the Driver.
-            blockedSupplier = () -> Futures.immediateFuture(null);
+            blockedSupplier = () -> BlockingFuture.immediateFuture(null, BlockingReason.NOT_BLOCKED);
             return null;
         }
         // Firstly, Check if pre-processor is done.
@@ -478,7 +635,7 @@ public class ColumnarScanExec extends SourceExec {
         tryInvokeNext();
         if (currentIOStatus == null) {
             // If there is no selected row-group, don't block the Driver.
-            blockedSupplier = () -> Futures.immediateFuture(null);
+            blockedSupplier = () -> BlockingFuture.immediateFuture(null, BlockingReason.NOT_BLOCKED);
             return null;
         }
 
@@ -513,7 +670,6 @@ public class ColumnarScanExec extends SourceExec {
             }
 
             // The results of this scan work is run out.
-            finishedWorks.put(currentWork.getWorkId(), currentWork);
             lastStatusRunOut = true;
             if (enableDebug) {
                 LOGGER.info(MessageFormat.format(
@@ -539,7 +695,6 @@ public class ColumnarScanExec extends SourceExec {
                 lastWorkNotExecutable = true;
             }
             // The results of this scan work is run out.
-            finishedWorks.put(currentWork.getWorkId(), currentWork);
             lastStatusRunOut = true;
             if (enableDebug) {
                 LOGGER.info(MessageFormat.format(
@@ -585,7 +740,7 @@ public class ColumnarScanExec extends SourceExec {
                 }
 
                 currentWork = newWork;
-                currentWork.invoke(scanExecutor);
+                currentWork.invoke(scanExecutor, producerMemoryOwnerId);
 
                 lastWorkNotExecutable = false;
             }
@@ -593,7 +748,12 @@ public class ColumnarScanExec extends SourceExec {
 
         // if the current io status is run out?
         if (lastStatusRunOut && !noAvailableWork) {
-            // switch io status
+            // NOTE: switch io status, and close finished io status.
+            IOStatus<Chunk> finishedIOStatus = currentIOStatus;
+            if (finishedIOStatus != null) {
+                finishedIOStatus.close();
+            }
+
             currentIOStatus = currentWork.getIOStatus();
             lastStatusRunOut = false;
 
@@ -607,47 +767,56 @@ public class ColumnarScanExec extends SourceExec {
         }
     }
 
+    ScanWork getCurrentWork() {
+        return currentWork;
+    }
+
     @Override
     void doClose() {
-        Throwable t = null;
-        RuntimeMetrics summaryMetrics = null;
-        for (ScanWork<ColumnarSplit, Chunk> scanWork : finishedWorks.values()) {
-            try {
-                if (enableMetrics) {
-                    RuntimeMetrics metrics = scanWork.getMetrics();
-                    if (useVerboseMetricsReport) {
-                        // print verbose metrics.
-                        String report = metrics.reportAll();
-                        LOGGER.info(MessageFormat.format("the scan-work report: {0}", report));
-                    }
+        ScanWork currentWork = getCurrentWork();
+        if (currentWork != null && currentWork.getIOStatus() != null) {
 
-                    // To merge all metrics into the first one.
-                    if (summaryMetrics == null) {
-                        summaryMetrics = metrics;
-                    } else {
-                        summaryMetrics.merge(metrics);
-                    }
-                }
-            } catch (Throwable e) {
-                // don't throw here to prevent from memory leak.
-                t = e;
-            } finally {
-                try {
-                    scanWork.close(false);
-                } catch (Throwable e) {
-                    // don't throw here to prevent from memory leak.
-                    t = e;
-                }
+            // check if this scan work has done.
+            ScanState scanState = currentWork.getIOStatus().state();
+            if (!(scanState == ScanState.FINISHED || scanState == ScanState.FAILED || scanState == ScanState.CLOSED)) {
+                currentWork.cancel();
             }
         }
 
-        // print summary metrics.
-        if (enableMetrics && summaryMetrics != null) {
-            LOGGER.info(MessageFormat.format("the summary of scan-work report: {0}", summaryMetrics.reportAll()));
+        //notify DefaultScanPreProcessor to stop
+        preheatCloseFuture.complete(null);
+
+        if (currentWork != null) {
+            currentWork.close(true);
+            currentWork = null;
         }
 
-        if (t != null) {
-            throw GeneralUtil.nestedException(t);
+        if (currentIOStatus != null) {
+            currentIOStatus.close();
+            currentIOStatus = null;
+        }
+
+        ossTableScan = null;
+        outputDataTypes = null;
+        workPool = null;
+        preProcessor = null;
+        preProcessorFuture = null;
+        blockedSupplier = null;
+
+        splitList = null;
+        memoryPool = null;
+        memoryAllocator = null;
+        filterSet = null;
+        earlyStopManager = null;
+        scanOrderByOptions = null;
+        orderByInProjects = null;
+        evaluator = null;
+
+        // Release any remaining permits and clean up the permit manager
+        // to prevent memory leaks in the MemoryTracker tree.
+        if (columnarMemoryPermitManager != null) {
+            columnarMemoryPermitManager.clear();
+            columnarMemoryPermitManager = null;
         }
     }
 
@@ -677,5 +846,10 @@ public class ColumnarScanExec extends SourceExec {
 
     public static long getSnapshotFileAccessCount() {
         return SNAPSHOT_FILE_ACCESS_COUNT.get();
+    }
+
+    @Override
+    public String getSourceName() {
+        return ossTableScan.getSchemaName() + "." + ossTableScan.getLogicalTableName();
     }
 }

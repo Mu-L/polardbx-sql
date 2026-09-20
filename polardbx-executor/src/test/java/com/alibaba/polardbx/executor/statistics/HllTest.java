@@ -2,7 +2,7 @@ package com.alibaba.polardbx.executor.statistics;
 
 import com.alibaba.polardbx.executor.statistic.ndv.NDVShardSketch;
 import com.alibaba.polardbx.gms.config.impl.MetaDbInstConfigManager;
-import com.sun.tools.javac.util.Assert;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class HllTest {
@@ -13,11 +13,11 @@ public class HllTest {
         long start = 0;
         NDVShardSketch ndvShardSketch =
             new NDVShardSketch(null, null, null, null, null, null, new long[] {start});
-        Assert.check(ndvShardSketch.anyShardExpired());
+        Assert.assertTrue(ndvShardSketch.anyShardExpired());
 
         ndvShardSketch =
             new NDVShardSketch(null, null, null, null, null, null, new long[] {System.currentTimeMillis()});
-        Assert.check(!ndvShardSketch.anyShardExpired());
+        Assert.assertFalse(ndvShardSketch.anyShardExpired());
     }
 
 }

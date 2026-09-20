@@ -11,6 +11,7 @@ import com.alibaba.polardbx.gms.ttl.TtlInfoAccessor;
 import com.alibaba.polardbx.gms.ttl.TtlInfoRecord;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.ttl.TtlArchiveKind;
+import com.alibaba.polardbx.optimizer.ttl.TtlTimeUnit;
 import com.alibaba.polardbx.optimizer.view.InformationSchemaTtlInfo;
 import com.alibaba.polardbx.optimizer.view.VirtualView;
 
@@ -54,9 +55,14 @@ public class InformationSchemaTtlInfoHandler extends BaseVirtualViewSubClassHand
                 ttlInfoRec.getTtlStatus() == TtlInfoRecord.TTL_STATUS_ENABLE_SCHEDULE ?
                     TtlInfoRecord.TTL_STATUS_ENABLE_SCHEDULE_STR_VAL :
                     TtlInfoRecord.TTL_STATUS_DISABLE_SCHEDULE_STR_VAL,
+                buildTtlCleanup(ttlInfoRec),
                 ttlInfoRec.getTtlCol(),
                 ttlInfoRec.getTtlExpr(),
                 ttlInfoRec.getTtlCron(),
+                ttlInfoRec.getTtlColEncoder(),
+                ttlInfoRec.getTtlColDecoder(),
+                ttlInfoRec.getTtlFilter(),
+                buildTtlPartInterval(ttlInfoRec.getArcPartInterval(), ttlInfoRec.getArcPartUnit()),
                 TtlArchiveKind.of(ttlInfoRec.getArcKind()).getArchiveKindStr(),
                 ttlInfoRec.getArcTblSchema(),
                 ttlInfoRec.getArcTblName(),
@@ -66,6 +72,19 @@ public class InformationSchemaTtlInfoHandler extends BaseVirtualViewSubClassHand
         }
 
         return cursor;
+    }
+
+    private static String buildTtlPartInterval(Integer partIntervalNum, Integer partIntervalUnit) {
+        String partIntervalStr = "";
+        TtlTimeUnit timeUnit = TtlTimeUnit.of(partIntervalUnit);
+        partIntervalStr = String.format("INTERVAL(%s, %s)", partIntervalNum, timeUnit.getUnitName());
+        return partIntervalStr;
+    }
+
+    private static String buildTtlCleanup(TtlInfoRecord ttlRec) {
+        boolean ttlCleanupBool = ttlRec.getBitValFromArchiveStatus(TtlInfoRecord.ARCHIVE_STATUS_BIT_OF_CLEANUP_EXPIRED_DATA_OF_TTL_TBL);
+        String ttlEnableStr = ttlCleanupBool ? TtlInfoRecord.TTL_CLEANUP_ON : TtlInfoRecord.TTL_CLEANUP_OFF;
+        return ttlEnableStr;
     }
 }
 

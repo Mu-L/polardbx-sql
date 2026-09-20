@@ -24,34 +24,39 @@ import java.util.Set;
 
 public enum DdlState {
 
+    INITIAL,
     QUEUED,
     RUNNING,
     PAUSED,
     COMPLETED,
+    TRANSITIONING,
     ROLLBACK_RUNNING,
     ROLLBACK_PAUSED,
     ROLLBACK_COMPLETED,
     ROLLBACK_TO_READY;
 
     public static final Set<DdlState> ALL_STATES = EnumSet.of(
+        INITIAL,
         QUEUED,
         RUNNING,
         PAUSED,
         COMPLETED,
+        TRANSITIONING,
         ROLLBACK_RUNNING,
         ROLLBACK_PAUSED,
         ROLLBACK_COMPLETED,
         ROLLBACK_TO_READY
     );
 
-    public static final Set<DdlState> RUNNABLE = EnumSet.of(QUEUED, RUNNING, ROLLBACK_RUNNING, ROLLBACK_TO_READY);
+    public static final Set<DdlState> RUNNABLE =
+        EnumSet.of(QUEUED, RUNNING, ROLLBACK_RUNNING, ROLLBACK_TO_READY, TRANSITIONING);
 
     public static final Set<DdlState> TERMINATED = EnumSet.of(ROLLBACK_PAUSED, PAUSED);
 
     public static final Set<DdlState> FINISHED = EnumSet.of(ROLLBACK_COMPLETED, COMPLETED);
 
     public static final Set<DdlState> PAUSED_POLICY_VALUES =
-        EnumSet.of(PAUSED, RUNNING, ROLLBACK_RUNNING, ROLLBACK_TO_READY);
+        EnumSet.of(PAUSED, RUNNING, ROLLBACK_RUNNING, ROLLBACK_TO_READY, TRANSITIONING);
 
     public static final Set<DdlState> ROLLBACK_PAUSED_POLICY_VALUES = EnumSet.of(ROLLBACK_PAUSED, ROLLBACK_RUNNING);
 
@@ -67,6 +72,7 @@ public enum DdlState {
             .put(DdlState.ROLLBACK_PAUSED, DdlState.ROLLBACK_RUNNING)
             .put(DdlState.ROLLBACK_RUNNING, DdlState.ROLLBACK_RUNNING)
             .put(DdlState.ROLLBACK_COMPLETED, DdlState.ROLLBACK_COMPLETED)
+            .put(DdlState.TRANSITIONING, DdlState.RUNNING)
             .build();
 
     /**
@@ -79,6 +85,7 @@ public enum DdlState {
             .put(DdlState.PAUSED, DdlState.ROLLBACK_RUNNING)
             .put(DdlState.ROLLBACK_RUNNING, DdlState.ROLLBACK_RUNNING)
             .put(DdlState.ROLLBACK_PAUSED, DdlState.ROLLBACK_RUNNING)
+            .put(DdlState.TRANSITIONING, DdlState.ROLLBACK_RUNNING)
             .build();
 
     /**
@@ -89,6 +96,15 @@ public enum DdlState {
             .put(DdlState.RUNNING, DdlState.PAUSED)
             .put(DdlState.QUEUED, DdlState.PAUSED)
             .put(DdlState.ROLLBACK_RUNNING, DdlState.ROLLBACK_PAUSED)
+            .put(DdlState.TRANSITIONING, DdlState.PAUSED)
+            .build();
+
+    /**
+     * State transition that transition a job
+     */
+    public static final Map<DdlState, DdlState> TRANSITION_JOB_STATE_TRANSFER =
+        new ImmutableMap.Builder<DdlState, DdlState>()
+            .put(DdlState.RUNNING, DdlState.TRANSITIONING)
             .build();
 
     public static DdlState tryParse(String str, DdlState defaultState) {

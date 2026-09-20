@@ -29,6 +29,9 @@
  */
 package com.alibaba.polardbx.executor.mpp.execution;
 
+import com.alibaba.polardbx.common.columnar.ColumnarScanMetrics;
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.mpp.operator.DriverContext;
 import com.alibaba.polardbx.executor.mpp.operator.DriverStats;
 import com.alibaba.polardbx.executor.mpp.operator.TaskStats;
@@ -234,7 +237,7 @@ public class StageInfo {
                         // Use -1 as the default value when there is no dump in TaskExecution.
                         driverInfoResult.add(new Object[] {
                             traceId, stageAndPipeline, nodeId, threadId,
-                            -1, -1, -1, -1, -1, -1, -1, -1});
+                            -1, -1, -1, -1, -1, -1, -1, -1, -1, "", -1, -1, ""});
                     } else {
                         driverInfoResult.add(new Object[] {
                             traceId, stageAndPipeline, nodeId, threadId,
@@ -245,7 +248,12 @@ public class StageInfo {
                             driverRuntimeStatistics.getTotalCost(),
                             driverRuntimeStatistics.getRunningCount(),
                             driverRuntimeStatistics.getPendingCount(),
-                            driverRuntimeStatistics.getBlockedCount()
+                            driverRuntimeStatistics.getBlockedCount(),
+                            driverRuntimeStatistics.getSplitStatistics(),
+                            driverRuntimeStatistics.getIoReadBytes(),
+                            driverRuntimeStatistics.getInputRows(),
+                            driverRuntimeStatistics.getOutputRows(),
+                            driverRuntimeStatistics.getBlockingStatistics()
                         });
                     }
 
@@ -257,6 +265,46 @@ public class StageInfo {
         if (rootStage.getSubStages() != null && !rootStage.getSubStages().isEmpty()) {
             for (int i = 0; i < rootStage.getSubStages().size(); i++) {
                 collectStats(rootStage.getSubStages().get(i), driverStatistics);
+            }
+        }
+    }
+
+    public static void collectTaskStatistics(StageInfo rootStage,
+                                             Map<TaskId, VersionStorageStatistics> versionStorageStatisticsMap,
+                                             Map<String, Long> maximumQueryMemoryUsageMap,
+                                             Map<TaskId, ColumnarScanMetrics> columnarScanMetricsMap) {
+
+        List<TaskInfo> taskInfoList = rootStage.getTasks();
+        for (int i = 0; i < taskInfoList.size(); i++) {
+            TaskInfo taskInfo = taskInfoList.get(i);
+            Pair<TaskId, VersionStorageStatistics> versionStorageStatisticsPair =
+                taskInfo.getVersionStorageStatisticsPair();
+            if (versionStorageStatisticsPair != null) {
+                versionStorageStatisticsMap.put(versionStorageStatisticsPair.getKey(),
+                    versionStorageStatisticsPair.getValue());
+            }
+
+            Pair<String, Long> maximumQueryMemoryUsagePair = taskInfo.getMaximumQueryMemoryUsagePair();
+            if (maximumQueryMemoryUsagePair != null) {
+                maximumQueryMemoryUsageMap.compute(
+                    maximumQueryMemoryUsagePair.getKey(),
+                    (key, oldValue) ->
+                        oldValue == null ? maximumQueryMemoryUsagePair.getValue()
+                            : Math.max(oldValue, maximumQueryMemoryUsagePair.getValue())
+                );
+            }
+
+            Pair<TaskId, ColumnarScanMetrics> columnarScanMetricsPair = taskInfo.getColumnarScanMetricsPair();
+            if (columnarScanMetricsPair != null) {
+                columnarScanMetricsMap.put(columnarScanMetricsPair.getKey(), columnarScanMetricsPair.getValue());
+            }
+        }
+
+        // Traverse the children stages.
+        if (rootStage.getSubStages() != null && !rootStage.getSubStages().isEmpty()) {
+            for (int i = 0; i < rootStage.getSubStages().size(); i++) {
+                collectTaskStatistics(rootStage.getSubStages().get(i),
+                    versionStorageStatisticsMap, maximumQueryMemoryUsageMap, columnarScanMetricsMap);
             }
         }
     }

@@ -23,6 +23,7 @@ import com.alibaba.fastjson.JSON;
  */
 public class StorageInfoExtraFieldJSON {
     public String storagePoolName = "";
+    public String storageInstLabel = "";
 
     public StorageInfoExtraFieldJSON() {
     }
@@ -49,5 +50,13 @@ public class StorageInfoExtraFieldJSON {
 
     public void setStoragePoolName(String storagePoolName) {
         this.storagePoolName = storagePoolName;
+    }
+
+    public String getStorageInstLabel() {
+        return storageInstLabel;
+    }
+
+    public void setStorageInstLabel(String storageInstLabel) {
+        this.storageInstLabel = storageInstLabel;
     }
 }

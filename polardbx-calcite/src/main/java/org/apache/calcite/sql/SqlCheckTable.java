@@ -41,6 +41,16 @@ public class SqlCheckTable extends SqlDal {
 
     private String displayMode;
 
+    public boolean isPhysical() {
+        return physical;
+    }
+
+    public void setPhysical(boolean physical) {
+        this.physical = physical;
+    }
+
+    private boolean physical;
+
     public SqlCheckTable(SqlParserPos pos, List<SqlNode> tableNames){
         super(pos);
         this.tableNames = tableNames;

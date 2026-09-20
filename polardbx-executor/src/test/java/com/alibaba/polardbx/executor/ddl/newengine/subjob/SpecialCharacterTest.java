@@ -8,6 +8,7 @@ import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableRepartition;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.RenameLocalIndexPreparedData;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.RepartitionPrepareData;
+import com.alibaba.polardbx.optimizer.utils.ForeignKeyUtils;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.ddl.AlterTableRepartition;
@@ -95,11 +96,11 @@ public class SpecialCharacterTest {
             secretField.setAccessible(true);
             secretField.set(logicalAlterTableRepartition, prepareData);
 
-            logicalAlterTableRepartition.genAddForeignKeySql(foreignKeyDataList);
+            ForeignKeyUtils.genAddForeignKeySql(foreignKeyDataList, prepareData.getAddForeignKeySql());
             Assert.assertEquals(prepareData.getAddForeignKeySql().get(0).getValue(),
                 "ALTER TABLE `wumu`.`t``b` DROP FOREIGN KEY `c``onstraint` /* partition_fk_sub_job */");
 
-            logicalAlterTableRepartition.genDropForeignKeySql(foreignKeyDataList);
+            ForeignKeyUtils.genDropForeignKeySql(foreignKeyDataList, prepareData.getDropForeignKeySql());
             Assert.assertEquals(prepareData.getDropForeignKeySql().get(0).getKey(),
                 "ALTER TABLE `wumu`.`t``b` DROP FOREIGN KEY `c``onstraint` /* partition_fk_sub_job */");
 

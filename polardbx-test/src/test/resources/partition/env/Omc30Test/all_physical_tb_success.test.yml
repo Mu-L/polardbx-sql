@@ -1,0 +1,22 @@
+dbName: "test_omc30_all_success"
+tableName: "t1"
+prepareSqlList:
+  - "use polardbx"
+  - "drop database if exists test_omc30_all_success"
+  - "create database test_omc30_all_success mode = auto"
+  - "use test_omc30_all_success;"
+  - "create table t1(a int AUTO_INCREMENT primary key, b bigint, c varchar(10), d datetime) partition by key(a) partitions 3;"
+  - "insert into t1(b, c, d) values(1, 'a', now())"
+  - "insert into t1(b, c, d) values(2, 'b', now())"
+  - "insert into t1(b, c, d) values(3, 'c', now())"
+successDDLs:
+  - ddl: "alter table t1 modify column c varchar(100), algorithm=omc"
+    expectTableStructure: "`c` varchar(100)"
+  - ddl: "/*+TDDL:cmd_extra(FP_OMC_FAILED_ON_LOCK_TABLE_CUT_OVER_4=true)*/alter table t1 modify column c varchar(150), algorithm=omc"
+    expectTableStructure: "`c` varchar(150)"
+  - ddl: "/*+TDDL:cmd_extra(FP_OMC_FAILED_ON_LOCK_TABLE_CUT_OVER_5=true)*/alter table t1 modify column c varchar(100), algorithm=omc"
+    expectTableStructure: "`c` varchar(100)"
+  - ddl: "/*+TDDL:cmd_extra(FP_OMC_FAILED_AFTER_RENAME=true)*/alter table t1 modify column c varchar(200), algorithm=omc"
+    expectTableStructure: "`c` varchar(200)"
+cleanupDDLs:
+  - "drop database test_omc30_all_success"

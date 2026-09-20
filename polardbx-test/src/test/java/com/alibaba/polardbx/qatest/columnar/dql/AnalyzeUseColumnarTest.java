@@ -2,16 +2,23 @@ package com.alibaba.polardbx.qatest.columnar.dql;
 
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
+import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
+import com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertType;
 import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
+import com.alibaba.polardbx.qatest.NotThreadSafe.OptimizerAlertScheduleJobTest;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.truth.Truth;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Calendar;
 
 public class AnalyzeUseColumnarTest extends DDLBaseNewDBTestCase {
     private static String TABLE_DEFINITION_FORMAT = "CREATE TABLE `%s` (\n" +
@@ -94,6 +101,27 @@ public class AnalyzeUseColumnarTest extends DDLBaseNewDBTestCase {
                 + ConnectionParams.STATISTIC_NDV_SKETCH_EXPIRE_TIME.getDefault());
         }
 
+    }
+
+    @Test
+    public void testRemainTimeInMaintenanceTimeWindow() {
+        String MAINTENANCE_TIME_START = "02:00";
+
+        String MAINTENANCE_TIME_END = "05:00";
+
+        Assert.assertEquals(
+            InstConfUtil.remainTimeInMaintenanceTimeWindow(new Calendar.Builder().setTimeOfDay(3, 30, 0).build(),
+                MAINTENANCE_TIME_START, MAINTENANCE_TIME_END), 90 * 60);
+        Assert.assertEquals(
+            InstConfUtil.remainTimeInMaintenanceTimeWindow(new Calendar.Builder().setTimeOfDay(23, 30, 0).build(),
+                MAINTENANCE_TIME_END, MAINTENANCE_TIME_START), 150 * 60);
+        Assert.assertEquals(
+            InstConfUtil.remainTimeInMaintenanceTimeWindow(new Calendar.Builder().setTimeOfDay(1, 30, 0).build(),
+                MAINTENANCE_TIME_END, MAINTENANCE_TIME_START), 30 * 60);
+
+        Assert.assertEquals(
+            InstConfUtil.remainTimeInMaintenanceTimeWindow(new Calendar.Builder().setTimeOfDay(3, 30, 0).build(),
+                "", ""), 0);
     }
 
     long getUpdateTime() {

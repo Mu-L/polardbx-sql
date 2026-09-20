@@ -39,6 +39,8 @@ public class YearPartitionIntFunction extends PartitionIntFunction {
         if (fieldType.getSqlType() == Types.DATE
             || fieldType.getSqlType() == MySQLTimeTypeUtil.DATETIME_SQL_TYPE) {
             return Monotonicity.MONOTONIC_INCREASING;
+        } else if (fieldType.getSqlType() == Types.TIMESTAMP) {
+            return Monotonicity.MONOTONIC_INCREASING;
         }
         return Monotonicity.NON_MONOTONIC;
     }

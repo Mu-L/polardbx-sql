@@ -20,6 +20,8 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalModify;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableModifyBuilder;
 import com.alibaba.polardbx.optimizer.core.rel.dml.DistinctWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.DmlWriteContext;
+import com.alibaba.polardbx.optimizer.core.rel.dml.RoutedModifyInput;
 import com.alibaba.polardbx.optimizer.core.rel.dml.Writer;
 import com.alibaba.polardbx.optimizer.utils.BuildPlanUtils;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
@@ -81,7 +83,10 @@ public class SingleModifyWriter extends AbstractSingleWriter implements Distinct
         final String logicalTableName = qn.right;
 
         // Deduplicate
-        final List<List<Object>> distinctRows = rowGenerator.apply(this);
+        final List<List<Object>> logicalRows = rowGenerator.apply(this);
+        final DmlWriteContext writeContext = ec.getDmlWriteContext();
+        final List<List<Object>> distinctRows = writeContext == null ? logicalRows
+            : writeContext.prepareModifyRows(this, logicalRows, ec);
         if (distinctRows.isEmpty()) {
             return new ArrayList<>();
         }
@@ -93,15 +98,24 @@ public class SingleModifyWriter extends AbstractSingleWriter implements Distinct
         final Map<String, Map<String, List<Pair<Integer, List<Object>>>>> shardResult = BuildPlanUtils
             .buildResultForSingleTable(schemaName, logicalTableName, distinctRows, pkIndexList, ec);
 
+        if (writeContext != null) {
+            writeContext.beforeModifyPlans(this, new RoutedModifyInput(distinctRows,
+                RoutedModifyInput.buildRoutes(qn.left, shardResult, distinctRows.size())), ec);
+        }
+
         final PhyTableModifyBuilder builder = new PhyTableModifyBuilder();
+        final List<RelNode> primaryPlans;
         switch (getOperation()) {
         case UPDATE:
-            return builder.buildUpdateWithPk(modify, distinctRows, updateSetMapping, qn, shardResult, ec);
+            primaryPlans = builder.buildUpdateWithPk(modify, distinctRows, updateSetMapping, qn, shardResult, ec);
+            break;
         case DELETE:
-            return builder.buildDelete(modify, qn, shardResult, ec, withoutPk);
+            primaryPlans = builder.buildDelete(modify, qn, shardResult, ec, withoutPk);
+            break;
         default:
             throw new AssertionError("Cannot handle operation " + getOperation().name());
         }
+        return writeContext == null ? primaryPlans : writeContext.afterModifyPlans(this, primaryPlans, ec);
     }
 
     public Mapping getUpdateSetMapping() {

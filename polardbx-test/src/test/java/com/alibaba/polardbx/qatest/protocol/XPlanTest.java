@@ -31,6 +31,7 @@ import org.junit.runners.Parameterized;
 import java.text.MessageFormat;
 import java.util.Arrays;
 import java.util.List;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.qatest.BaseSequenceTestCase.quoteSpecialName;
@@ -47,6 +48,8 @@ public class XPlanTest extends ReadBaseTestCase {
     private static final String NO_PK_TABLE_NAME = "XPlan_no_pk";
     private static final String COMPOSITE_PK_TABLE_NAME = "XPlan_composite_pk";
     private static final String MULTI_KEY_TABLE_NAME = "XPlan_multi_key";
+    private static final Pattern UNION_ALL_PATTERN =
+        Pattern.compile("\\bUNION\\s+ALL\\b", Pattern.CASE_INSENSITIVE);
 
     private static final String[] PARTITIONS_TEMPLATE = {
         "",
@@ -279,7 +282,7 @@ public class XPlanTest extends ReadBaseTestCase {
         // some special case:
         // 1. can use xplan if table_scan_plan
         // 2. not go xplan if union
-        if (trace.contains(" UNION ALL ")) {
+        if (UNION_ALL_PATTERN.matcher(trace).find()) {
             useX = false;
         } else if (exp.contains("table_scan_plan") && sql.contains(" = null")) {
             useX = true;

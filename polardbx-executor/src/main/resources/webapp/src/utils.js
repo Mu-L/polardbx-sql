@@ -22,6 +22,8 @@ import * as d3 from "d3";
 export const GLYPHICON_DEFAULT = {color: '#1edcff'};
 export const GLYPHICON_HIGHLIGHT = {color: '#999999'};
 
+export const WEBSHELL_MPPUI = false;
+
 const STATE_COLOR_MAP = {
     QUEUED: '#7bb3fb',
     RUNNING: '#265cdf',
@@ -307,6 +309,11 @@ export function getStagePipelineFromDriverId(driverId: string): string
 export function getFullSplitIdSuffix(driverId: string): string
 {
     return driverId.substring(driverId.indexOf('.') + 1)
+}
+
+export function getDriverIdOnly(driverId: string): string
+{
+    return driverId.substring(driverId.lastIndexOf('.') + 1)
 }
 
 export function getTaskNumber(taskId
@@ -602,4 +609,59 @@ string
     const month = "" + (date.getMonth() + 1);
     const dayOfMonth = "" + date.getDate();
     return year + "-" + (month[1] ? month : "0" + month[0]) + "-" + (dayOfMonth[1] ? dayOfMonth : "0" + dayOfMonth[0]) + " " + formatShortTime(date);
+}
+
+/**
+ * @param url '/v1/query'
+ */
+export function getFormattedUrl(url: string): string {
+    if (!WEBSHELL_MPPUI) {
+        return url;
+    }
+
+    if (url.includes('?')) {
+        return url.replace('/v1/', '/v1/mppui/') + '&host=' + host + '&mppPort=' + mppPort;
+    } else {
+        return url.replace('/v1/', '/v1/mppui/') + '?host=' + host + '&mppPort=' + mppPort;
+    }
+}
+
+export function getFormattedKilledUrl(queryId: string): string {
+    if (!WEBSHELL_MPPUI) {
+        return '/v1/query/' + queryId + '/killed';
+    }
+
+    return '/v1/mppui/query?queryId=' + queryId + '&killed=true' + '&host=' + host + '&mppPort=' + mppPort;
+}
+
+export function getFormattedJsonUrl(queryId: string): string {
+    if (!WEBSHELL_MPPUI) {
+        return '/v1/query/' + queryId + '?pretty';
+    }
+
+    return '/v1/mppui/query?queryId=' + queryId + '&pretty=true' + '&host=' + host + '&mppPort=' + mppPort;
+}
+
+/**
+ * @param url '/v1/query/stats/${QueryId}'
+ */
+export function getFormattedStatsUrl(url: string): string {
+    if (!WEBSHELL_MPPUI) {
+        return url;
+    }
+
+    return url.replace('/v1/', '/v1/mppui/').replace('/stats/', '/stats?queryId=')
+        + '&host=' + host + '&mppPort=' + mppPort;
+}
+
+export function getFormattedHtmlHrefUrl(url: string): string {
+    if (!WEBSHELL_MPPUI) {
+        return url;
+    }
+
+    if (url.includes('?')) {
+        return url + '&host=' + host + '&mppPort=' + mppPort;
+    } else {
+        return url + '?host=' + host + '&mppPort=' + mppPort;
+    }
 }

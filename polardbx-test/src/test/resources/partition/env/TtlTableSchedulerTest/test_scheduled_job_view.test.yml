@@ -1,0 +1,53 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+
+use polardbx;
+drop database if exists test_scheduler_view_db;
+create database if not exists test_scheduler_view_db mode='auto';
+use test_scheduler_view_db;
+
+desc information_schema.schedule_jobs;
+
+## create table
+drop table if exists ttl_t1_sv;
+create table ttl_t1_sv(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by key(a)
+partitions 8;
+
+alter table ttl_t1_sv
+modify ttl
+ttl_enable = 'on',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_job = cron '0 0 0 1 1 ? */1' timezone '+08:00',
+archive_table_pre_allocate=2,
+archive_table_post_allocate=4
+;
+
+delete from ttl_t1_sv where 1=1;
+insert into ttl_t1_sv values (1, '2024-05-01 00:00:00');
+insert into ttl_t1_sv values (2, '2024-06-26 00:00:00');
+insert into ttl_t1_sv values (3, '2024-06-27 00:00:00');
+insert into ttl_t1_sv values (4, '2024-06-28 00:00:00');
+insert into ttl_t1_sv values (5, '2024-06-29 00:00:00');
+
+/*+TDDL:cmd_extra(TTL_JOB_MAINTENANCE_ENABLE=true,TTL_DEBUG_CURRENT_DATETIME='2024-06-28 02:00:00',TTL_JOB_MAINTENANCE_TIME_START='00:00:01',TTL_JOB_MAINTENANCE_TIME_END='23:59:59')*/fire schedule by table ttl_t1_sv;
+select sleep(20);
+select * from ttl_t1_sv order by a;
+
+select table_schema,table_name,schedule_name,job_type, lastjob_state from information_schema.schedule_jobs where table_schema='test_scheduler_view_db' and table_name='ttl_t1_sv' and lastjob_state='SUCCESS';
+
+use polardbx;
+drop database if exists test_scheduler_view_db;
+use polardbx;

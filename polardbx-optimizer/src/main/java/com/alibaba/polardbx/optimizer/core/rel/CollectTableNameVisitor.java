@@ -249,6 +249,13 @@ public abstract class CollectTableNameVisitor extends SqlShuttle {
             visit((SqlJoin) from);
         } else if (fromKind == SqlKind.SELECT) {
             visit((SqlSelect) from);
+        } else if (from instanceof SqlCall) {
+            SqlCall call = (SqlCall) from;
+            if (call.getOperator().getKind() == SqlKind.AS_OF) {
+                if (call.getOperandList().get(0) instanceof SqlIdentifier) {
+                    buildSth(call.getOperandList().get(0));
+                }
+            }
         }
     }
 

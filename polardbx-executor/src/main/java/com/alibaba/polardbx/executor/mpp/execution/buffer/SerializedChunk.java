@@ -16,6 +16,9 @@
 
 package com.alibaba.polardbx.executor.mpp.execution.buffer;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import io.airlift.slice.Slice;
 import org.openjdk.jol.info.ClassLayout;
@@ -24,17 +27,26 @@ import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
-public class SerializedChunk {
+public class SerializedChunk implements MemoryCountable {
 
     private static final int INSTANCE_SIZE = ClassLayout.parseClass(SerializedChunk.class).instanceSize();
     private static final int PAGE_COMPRESSION_SIZE = ClassLayout.parseClass(ChunkCompression.class).instanceSize();
 
     private final Slice slice;
+
+    @FieldMemoryCounter(value = false)
     private final ChunkCompression compression;
     private final int positionCount;
     private final int uncompressedSizeInBytes;
     private final Chunk page;
     private final int length;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(slice)
+            + FastMemoryCounter.sizeOf(page);
+    }
 
     public SerializedChunk(Slice slice, ChunkCompression compression, int positionCount, int uncompressedSizeInBytes) {
         this.slice = requireNonNull(slice, "slice is null");

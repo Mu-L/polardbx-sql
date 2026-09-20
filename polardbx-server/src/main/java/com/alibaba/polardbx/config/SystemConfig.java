@@ -273,7 +273,7 @@ public final class SystemConfig {
      * ccl reschedule timeout period
      */
     private int cclRescheduleTimeoutCheckPeriod = 5;
-    private int processCclTriggerPeriod = 2;
+    private int processCclBlockerPeriod = 2;
 
     /**
      * Only used when initializing cluster
@@ -1012,12 +1012,12 @@ public final class SystemConfig {
         this.cclRescheduleTimeoutCheckPeriod = cclRescheduleTimeoutCheckPeriod;
     }
 
-    public int getProcessCclTriggerPeriod() {
-        return processCclTriggerPeriod;
+    public int getProcessCclBlockerPeriod() {
+        return processCclBlockerPeriod;
     }
 
-    public void setProcessCclTriggerPeriod(int processCclTriggerPeriod) {
-        this.processCclTriggerPeriod = processCclTriggerPeriod;
+    public void setProcessCclBlockerPeriod(int processCclBlockerPeriod) {
+        this.processCclBlockerPeriod = processCclBlockerPeriod;
     }
 
     public boolean getEnableLogicalDbWarmmingUp() {

@@ -1,0 +1,88 @@
+## DISABLE_FAST_SQL_PARSER
+
+drop database if exists checkrouting_db;
+create database if not exists checkrouting_db mode='auto';
+use checkrouting_db;
+
+create table t1_r_p
+(a int, b int)
+partition by range(a)
+partitions 3
+(
+  partition p1 values less than(10),
+  partition p2 values less than(20),
+  partition p3 values less than(30)
+);
+
+create table t1_r_p2
+(a int, b int)
+partition by range(a)
+partitions 3
+(
+partition p1 values less than(10),
+partition p2 values less than(20),
+partition p3 values less than(30)
+);
+
+
+insert into t1_r_p values (9,9),(19,19),(29,29);
+
+check table routing t1_r_p explain=true;
+check table routing t1_r_p;
+
+check table routing t1_r_p partition (p2) explain=true;
+check table routing t1_r_p partition (p2) ;
+
+check table routing t1_r_p explain=true;
+check table routing t1_r_p;
+
+/*+TDDL:CHECK_ROUTING_TABLE_META='t1_r_p2'*/check table routing t1_r_p partition (p2) explain=true;
+/*+TDDL:CHECK_ROUTING_TABLE_META='t1_r_p2'*/check table routing t1_r_p partition (p2) ;
+
+create table t2_k_sp
+(a int, 
+ b int,
+ c int,
+ d int)
+partition by key(a,c)
+partitions 3
+subpartition by key(d,a)
+subpartitions 2;
+
+insert into t2_k_sp values (9,9,9,9),(19,19,19,19),(29,29,29,29);
+
+check table routing t2_k_sp explain=true;
+check table routing t2_k_sp;
+
+check table routing t2_k_sp partition (p1,p1sp2,p3sp1) explain=true;
+check table routing t2_k_sp partition (p1,p1sp2,p3sp1) ;
+
+
+#partMappings.add(new Pair<>("4-6", 0));
+#partMappings.add(new Pair<>("7-8", 1));
+#partMappings.add(new Pair<>("9-10", 2));
+create table t1_numrange_p
+(a bigint, b bigint)
+partition by udf_hash(pattrngip10(a))
+partitions 3
+(
+  partition p0 values less than (1),
+  partition p1 values less than (2),
+  partition p2 values less than (3)
+);
+
+insert into t1_numrange_p values (4,4),(7,7),(9,9);
+
+check table routing t1_numrange_p explain=true;
+check table routing t1_numrange_p;
+
+check table routing t1_numrange_p partition (p1,p2) explain=true;
+check table routing t1_numrange_p partition (p1,p2) ;
+
+drop table t1_r_p;
+drop table t1_r_p2;
+drop table t2_k_sp;
+drop table t1_numrange_p;
+
+use polardbx;
+drop database if exists checkrouting_db;

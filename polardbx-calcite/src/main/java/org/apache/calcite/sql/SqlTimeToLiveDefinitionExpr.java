@@ -15,6 +15,8 @@ public class SqlTimeToLiveDefinitionExpr extends SqlNode {
     protected SqlNode ttlEnableExpr;
     protected SqlNode ttlExpr;
     protected SqlNode ttlJobExpr;
+    protected SqlNode ttlColEncoderExpr;
+    protected SqlNode ttlColDecoderExpr;
     protected SqlNode ttlFilterExpr;
     protected SqlNode ttlCleanupExpr;
     protected SqlNode ttlPartIntervalExpr;
@@ -23,6 +25,9 @@ public class SqlTimeToLiveDefinitionExpr extends SqlNode {
     protected SqlNode archiveTableNameExpr;
     protected SqlNode archiveTablePreAllocateExpr;
     protected SqlNode archiveTablePostAllocateExpr;
+    protected SqlNode ttlRefColList;
+    protected SqlNode ttlHybrid;
+
 
     public SqlTimeToLiveDefinitionExpr() {
         super(SqlParserPos.ZERO);
@@ -40,6 +45,15 @@ public class SqlTimeToLiveDefinitionExpr extends SqlNode {
         }
         if (ttlJobExpr != null) {
             newTtlDefExpr.setTtlJobExpr(ttlJobExpr.clone(pos));
+        }
+        if (ttlColEncoderExpr != null) {
+            newTtlDefExpr.setTtlColEncoderExpr(ttlColEncoderExpr.clone(pos));
+        }
+        if (ttlColDecoderExpr != null) {
+            newTtlDefExpr.setTtlColDecoderExpr(ttlColDecoderExpr.clone(pos));
+        }
+        if (ttlFilterExpr != null) {
+            newTtlDefExpr.setTtlFilterExpr(ttlFilterExpr.clone(pos));
         }
         if (ttlFilterExpr != null) {
             newTtlDefExpr.setTtlFilterExpr(ttlFilterExpr.clone(pos));
@@ -72,6 +86,18 @@ public class SqlTimeToLiveDefinitionExpr extends SqlNode {
             newTtlDefExpr.setArchiveTablePostAllocateExpr(archiveTablePostAllocateExpr.clone(pos));
         }
 
+        if (archiveTablePreAllocateExpr != null) {
+            newTtlDefExpr.setArchiveTablePreAllocateExpr(archiveTablePreAllocateExpr.clone(pos));
+        }
+
+        if (ttlRefColList != null) {
+            newTtlDefExpr.setTtlRefColList(ttlRefColList.clone(pos));
+        }
+
+        if (ttlHybrid != null) {
+            newTtlDefExpr.setTtlHybrid(ttlHybrid.clone(pos));
+        }
+
         return newTtlDefExpr;
     }
 
@@ -94,6 +120,16 @@ public class SqlTimeToLiveDefinitionExpr extends SqlNode {
             writer.print(", ");
             writer.print("TTL_JOB = ");
             ttlJobExpr.unparse(writer, leftPrec, rightPrec);
+        }
+        if (ttlColEncoderExpr != null) {
+            writer.print(", ");
+            writer.print("TTL_COL_ENCODER = ");
+            ttlColEncoderExpr.unparse(writer, leftPrec, rightPrec);
+        }
+        if (ttlColDecoderExpr != null) {
+            writer.print(", ");
+            writer.print("TTL_COL_DECODER = ");
+            ttlColDecoderExpr.unparse(writer, leftPrec, rightPrec);
         }
         if (ttlFilterExpr != null) {
             writer.print(", ");
@@ -142,6 +178,18 @@ public class SqlTimeToLiveDefinitionExpr extends SqlNode {
             writer.print(", ");
             writer.print("ARCHIVE_TABLE_POST_ALLOCATE = ");
             archiveTablePostAllocateExpr.unparse(writer, leftPrec, rightPrec);
+        }
+
+        if (ttlRefColList != null) {
+            writer.print(", ");
+            writer.print("TTL_REF_COL_LIST = ");
+            ttlRefColList.unparse(writer,leftPrec, rightPrec);
+        }
+
+        if (ttlHybrid != null) {
+            writer.print(", ");
+            writer.print("TTL_HYBRID = ");
+            ttlHybrid.unparse(writer,leftPrec, rightPrec);
         }
 
         writer.print(")");
@@ -250,5 +298,36 @@ public class SqlTimeToLiveDefinitionExpr extends SqlNode {
 
     public void setTtlPartIntervalExpr(SqlNode ttlPartIntervalExpr) {
         this.ttlPartIntervalExpr = ttlPartIntervalExpr;
+    }
+
+    public SqlNode getTtlColEncoderExpr() {
+        return ttlColEncoderExpr;
+    }
+
+    public void setTtlColEncoderExpr(SqlNode ttlColEncoderExpr) {
+        this.ttlColEncoderExpr = ttlColEncoderExpr;
+    }
+
+    public SqlNode getTtlColDecoderExpr() {
+        return ttlColDecoderExpr;
+    }
+
+    public void setTtlColDecoderExpr(SqlNode ttlColDecoderExpr) {
+        this.ttlColDecoderExpr = ttlColDecoderExpr;
+    }
+
+    public SqlNode getTtlRefColList() {
+        return ttlRefColList;
+    }
+
+    public void setTtlRefColList(SqlNode ttlRefColList) {
+        this.ttlRefColList = ttlRefColList;
+    }
+
+    public SqlNode getTtlHybrid() {
+        return ttlHybrid;
+    }
+    public void setTtlHybrid(SqlNode ttlHybrid) {
+        this.ttlHybrid = ttlHybrid;
     }
 }

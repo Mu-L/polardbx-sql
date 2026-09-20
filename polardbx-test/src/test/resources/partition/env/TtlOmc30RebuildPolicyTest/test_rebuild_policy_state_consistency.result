@@ -1,0 +1,80 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+use polardbx;
+drop database if exists test_omc30_rb_twice_db;
+create database if not exists test_omc30_rb_twice_db mode='auto' default character set utf8mb4 default collate utf8mb4_bin;
+use test_omc30_rb_twice_db;
+## case1: run rebuild policy twice on same table - verifies state consistency (cleanedPhyPartSet)
+## after first rebuild cleanup, insert new expired data, then run again
+drop table if exists rb_twice_t1;
+create table rb_twice_t1(
+  a int not null,
+  b datetime not null,
+  c varchar(32),
+  primary key(a)
+) default character set utf8mb4 default collate utf8mb4_bin
+partition by hash(a) partitions 4;
+alter table rb_twice_t1 modify ttl set
+  TTL_ENABLE='on',
+  TTL_CLEANUP='on',
+  TTL_EXPR=`b` expire after 1 day timezone '+08:00';
+insert into rb_twice_t1 values(1, '2020-01-01 00:00:00', 'expired1');
+insert into rb_twice_t1 values(2, '2020-01-02 00:00:00', 'expired2');
+insert into rb_twice_t1 values(3, '2030-01-01 00:00:00', 'valid1');
+insert into rb_twice_t1 values(4, '2030-01-02 00:00:00', 'valid2');
+set TTL_DEBUG_CURRENT_DATETIME='2025-01-01 00:00:00';
+## first cleanup with rebuild policy
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=true,TTL_FORCE_USE_REBUILD_POLICY_FOR_CLEANUP_EXPIRED_DATA=true,TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY=0,TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY=0)*/alter table rb_twice_t1 cleanup expired data;
+## verify after first cleanup: only valid rows remain
+select a, c from rb_twice_t1 order by a;
+a,c
+3,valid1
+4,valid2
+## insert new expired data after first cleanup
+insert into rb_twice_t1 values(5, '2020-03-01 00:00:00', 'expired3');
+insert into rb_twice_t1 values(6, '2020-04-01 00:00:00', 'expired4');
+## second cleanup with rebuild policy - verifies task state reset is correct
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=true,TTL_FORCE_USE_REBUILD_POLICY_FOR_CLEANUP_EXPIRED_DATA=true,TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY=0,TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY=0)*/alter table rb_twice_t1 cleanup expired data;
+## verify after second cleanup: only valid rows remain, new expired rows also cleaned
+select a, c from rb_twice_t1 order by a;
+a,c
+3,valid1
+4,valid2
+drop table if exists rb_twice_t1;
+## case2: first cleanup uses rebuild policy, second uses row-delete (policy switch)
+drop table if exists rb_switch_t1;
+create table rb_switch_t1(
+  a int not null,
+  b datetime not null,
+  c varchar(32),
+  primary key(a)
+) default character set utf8mb4 default collate utf8mb4_bin
+partition by hash(a) partitions 4;
+alter table rb_switch_t1 modify ttl set
+  TTL_ENABLE='on',
+  TTL_CLEANUP='on',
+  TTL_EXPR=`b` expire after 1 day timezone '+08:00';
+insert into rb_switch_t1 values(1, '2020-01-01 00:00:00', 'expired1');
+insert into rb_switch_t1 values(2, '2020-01-02 00:00:00', 'expired2');
+insert into rb_switch_t1 values(3, '2030-01-01 00:00:00', 'valid1');
+set TTL_DEBUG_CURRENT_DATETIME='2025-01-01 00:00:00';
+## first cleanup: rebuild policy ON
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=true,TTL_FORCE_USE_REBUILD_POLICY_FOR_CLEANUP_EXPIRED_DATA=true,TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY=0,TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY=0)*/alter table rb_switch_t1 cleanup expired data;
+## verify: expired rows cleaned
+select a, c from rb_switch_t1 order by a;
+a,c
+3,valid1
+## insert more expired data
+insert into rb_switch_t1 values(4, '2020-05-01 00:00:00', 'expired3');
+insert into rb_switch_t1 values(5, '2020-06-01 00:00:00', 'expired4');
+## second cleanup: rebuild policy OFF (row-delete) - verifies cleanedPhyPartSet state does not interfere
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=false)*/alter table rb_switch_t1 cleanup expired data;
+## verify: new expired rows cleaned via row-delete
+select a, c from rb_switch_t1 order by a;
+a,c
+3,valid1
+5,expired4
+drop table if exists rb_switch_t1;
+use polardbx;
+drop database if exists test_omc30_rb_twice_db;
+use polardbx;

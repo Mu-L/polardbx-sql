@@ -91,6 +91,11 @@ public class PartPruneStepPruningContext {
      */
     protected Map<Integer, ExprEvalResult> partClauseEvalResultCache = new HashMap<>();
 
+    /**
+     *
+     */
+    protected PartPruneStepPruningExtraInfo extraInfo;
+
     protected static class ExprEvalResult {
         protected Object rawVal;
         protected PartitionField valFld;
@@ -130,7 +135,7 @@ public class PartPruneStepPruningContext {
     public void putEvalResult(Integer partClauseId, ExprEvalResult result) {
         partClauseEvalResultCache.put(partClauseId, result);
     }
-    
+
     public boolean isEnableConstExprEvalCache() {
         return enableConstExprEvalCache;
     }
@@ -205,6 +210,14 @@ public class PartPruneStepPruningContext {
 
     public void setMaxInSubQueryPruningSize(long maxInSubQueryPruningSize) {
         this.maxInSubQueryPruningSize = maxInSubQueryPruningSize;
+    }
+
+    public PartPruneStepPruningExtraInfo getExtraInfo() {
+        return extraInfo;
+    }
+
+    public void setExtraInfo(PartPruneStepPruningExtraInfo extraInfo) {
+        this.extraInfo = extraInfo;
     }
 
 }

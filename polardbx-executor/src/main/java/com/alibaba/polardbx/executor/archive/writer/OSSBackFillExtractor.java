@@ -55,7 +55,7 @@ import java.util.Set;
 import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_RANDOM_BACKFILL_EXCEPTION;
 
 public class OSSBackFillExtractor extends Extractor {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
     // phy schema - {phy tables}
     private Map<String, Set<String>> sourcePhyTables;
 

@@ -49,8 +49,12 @@ public class WithItemNamespace extends AbstractNamespace {
         childNs = validator.getNamespace(((SqlCall) withItem.query).operand(0));
       }else if(withItem.query instanceof SqlSelect){
         SqlNode from = ((SqlSelect)withItem.query).getFrom();
-        // From node must be union call here
-        childNs = validator.getNamespace( ((SqlBasicCall) from).getOperands()[0]);
+        if(from.getKind()==SqlKind.UNION){
+          // From node must be union call here
+          childNs = validator.getNamespace(((SqlBasicCall) from).getOperands()[0]);
+        }else{
+          childNs = validator.getNamespace(withItem.query);
+        }
       }else{
         throw new AssertionError("not support cte form:" + withItem.query);
       }

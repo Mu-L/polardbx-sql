@@ -16,7 +16,6 @@
 
 package com.alibaba.polardbx.executor.ddl.job.factory.util;
 
-import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.ddl.job.converter.PhysicalPlanData;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
@@ -27,8 +26,8 @@ import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupDetailConfig;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupRecord;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
-import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
+import com.alibaba.polardbx.optimizer.utils.ForeignKeyUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -124,31 +123,23 @@ public class FactoryUtils {
     }
 
     public static List<DdlTask> getFkTableSyncTasks(String schemaName, String logicalTableName) {
-        List<DdlTask> taskList = new ArrayList<DdlTask>();
-        TableMeta tableMeta =
-            OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(logicalTableName);
-        Map<String, ForeignKeyData> foreignKeys = tableMeta.getForeignKeys();
-        for (Map.Entry<String, ForeignKeyData> e : foreignKeys.entrySet()) {
-            taskList.add(new TableSyncTask(e.getValue().refSchema, e.getValue().refTableName));
-        }
-        Map<String, ForeignKeyData> refForeignKeys = tableMeta.getReferencedForeignKeys();
-        for (Map.Entry<String, ForeignKeyData> e : refForeignKeys.entrySet()) {
-            taskList.add(new TableSyncTask(e.getValue().schema, e.getValue().tableName));
+        List<DdlTask> taskList = new ArrayList<>();
+        Map<String, Set<String>> fkTables = ForeignKeyUtils.getAllForeignKeyRelatedTables(schemaName, logicalTableName);
+        for (Map.Entry<String, Set<String>> entry : fkTables.entrySet()) {
+            for (String table : entry.getValue()) {
+                taskList.add(new TableSyncTask(entry.getKey(), table));
+            }
         }
         return taskList;
     }
 
     public static void getFkTableExcludeResources(String schemaName, String logicalTableName,
                                                   Set<String> resources) {
-        TableMeta tableMeta =
-            OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(logicalTableName);
-        Map<String, ForeignKeyData> foreignKeys = tableMeta.getForeignKeys();
-        for (Map.Entry<String, ForeignKeyData> e : foreignKeys.entrySet()) {
-            resources.add(DdlJobFactory.concatWithDot(e.getValue().refSchema, e.getValue().refTableName));
-        }
-        Map<String, ForeignKeyData> refForeignKeys = tableMeta.getReferencedForeignKeys();
-        for (Map.Entry<String, ForeignKeyData> e : refForeignKeys.entrySet()) {
-            resources.add(DdlJobFactory.concatWithDot(e.getValue().schema, e.getValue().tableName));
+        Map<String, Set<String>> fkTables = ForeignKeyUtils.getAllForeignKeyRelatedTables(schemaName, logicalTableName);
+        for (Map.Entry<String, Set<String>> entry : fkTables.entrySet()) {
+            for (String table : entry.getValue()) {
+                resources.add(DdlJobFactory.concatWithDot(entry.getKey(), table));
+            }
         }
     }
 }

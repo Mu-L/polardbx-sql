@@ -25,8 +25,11 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.pl.udf.CreateJavaFunctio
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcCreateJavaFunctionMarkTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.TransientDdlJob;
+import com.alibaba.polardbx.executor.utils.PolarPrivilegeUtils;
 import com.alibaba.polardbx.executor.utils.StringUtils;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
+import com.alibaba.polardbx.gms.privilege.PrivilegeKind;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.TddlRelDataTypeSystemImpl;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
@@ -111,6 +114,7 @@ public class CreateJavaFunctionJobFactory extends AbstractFunctionJobFactory {
         String returnType = sqlCreateFunction.getReturnType();
         List<String> inputTypes = sqlCreateFunction.getInputTypes();
         boolean noState = sqlCreateFunction.isNoState();
+        boolean isIfNotExists = sqlCreateFunction.isIfNotExists();
 
         DdlTask addMetaTask = new CreateJavaFunctionRegisterMetaTask(schema, null,
             functionName, javaCode, returnType, inputTypes == null ? "" : String.join(",", inputTypes), noState);
@@ -123,10 +127,18 @@ public class CreateJavaFunctionJobFactory extends AbstractFunctionJobFactory {
     public static ExecutableDdlJob createFunction(LogicalCreateJavaFunction logicalCreateFunction,
                                                   ExecutionContext ec) {
 
-        if (!ec.isSuperUserOrAllPrivileges()) {
+        if (!ec.isSuperUserOrAllPrivileges() && !PolarPrivilegeUtils.checkPolardbxPrivilege(ec, PrivilegeKind.CREATE)) {
             PrivilegeContext pc = ec.getPrivilegeContext();
             throw new TddlRuntimeException(ErrorCode.ERR_CHECK_PRIVILEGE_FAILED,
-                "create java udf should be super user or has all privileges", pc.getUser(), pc.getHost());
+                "create java udf on polardbx", pc.getUser(), pc.getHost());
+        }
+        SqlCreateJavaFunction sqlCreateJavaFunction = logicalCreateFunction.getSqlCreateFunction();
+        String javaFuncName = sqlCreateJavaFunction.getFuncName();
+        boolean isIfNotExists = sqlCreateJavaFunction.isIfNotExists();
+        boolean udfFuncExits = JavaFunctionManager.getInstance().checkIfContainsFunctionByMetaDb(javaFuncName);
+        if (udfFuncExits && isIfNotExists) {
+            // find javaFunc already exists , so ignore
+            return new TransientDdlJob();
         }
         return new CreateJavaFunctionJobFactory(logicalCreateFunction, ec.getSchemaName()).create();
     }

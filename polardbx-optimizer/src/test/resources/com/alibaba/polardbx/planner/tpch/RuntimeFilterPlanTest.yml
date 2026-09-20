@@ -9,7 +9,6 @@
         runtimefilterbuilder(condition="runtime_filter_builder_[0](s_nationkey)")
           logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_suppkey`, `s_name`, `s_address`, `s_nationkey`, `s_phone`, `s_acctbal`, `s_comment` from `supplier` as `supplier`")
 
-#测试生成bloomfilter，并且下推给mysql
 - sql: |
     /*+TDDL:ENABLE_PUSH_RUNTIME_FILTER_SCAN=true ENABLE_RUNTIME_FILTER=true BLOOM_FILTER_PROBE_MIN_ROW_COUNT=-1 FORCE_ENABLE_RUNTIME_FILTER=("p_partkey,s_nationkey") ENABLE_MPP=true*/
     select * from part, supplier where p_partkey=s_nationkey
@@ -21,7 +20,6 @@
         runtimefilterbuilder(condition="runtime_filter_builder_[0](s_nationkey)")
           logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_suppkey`, `s_name`, `s_address`, `s_nationkey`, `s_phone`, `s_acctbal`, `s_comment` from `supplier` as `supplier`")
 
-#测试生成bloomfilter
 - sql: |
     /*+TDDL:ENABLE_RUNTIME_FILTER=true BLOOM_FILTER_PROBE_MIN_ROW_COUNT=-1 FORCE_ENABLE_RUNTIME_FILTER=("p_partkey,s_nationkey") ENABLE_MPP=true*/
     select * from (select p_partkey, s_address from part, supplier where p_partkey=s_nationkey) as t, part where t.p_partkey=part.p_partkey
@@ -34,7 +32,6 @@
           runtimefilterbuilder(condition="runtime_filter_builder_[0](s_nationkey)")
             logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_address`, `s_nationkey` from `supplier` as `supplier`")
 
-#测试生成bloomfilter，并且下推给mysql
 - sql: |
     /*+TDDL: ENABLE_PUSH_RUNTIME_FILTER_SCAN=true ENABLE_RUNTIME_FILTER=true BLOOM_FILTER_PROBE_MIN_ROW_COUNT=-1 FORCE_ENABLE_RUNTIME_FILTER=("p_partkey,s_nationkey") ENABLE_MPP=true*/
     select * from (select p_partkey, s_address from part, supplier where p_partkey=s_nationkey) as t, part where t.p_partkey=part.p_partkey
@@ -47,7 +44,6 @@
           runtimefilterbuilder(condition="runtime_filter_builder_[0](s_nationkey)")
             logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_address`, `s_nationkey` from `supplier` as `supplier`")
 
-#测试生成bloomfilter，透传给Join Probe，并且下继续推给mysql
 - sql: |
     /*+TDDL:ENABLE_OPTIMIZE_SCAN_WITH_RUNTIME_FILTER=true ENABLE_PUSH_RUNTIME_FILTER_SCAN=true ENABLE_RUNTIME_FILTER=true BLOOM_FILTER_PROBE_MIN_ROW_COUNT=-1 FORCE_ENABLE_RUNTIME_FILTER=("p_partkey,s_nationkey") ENABLE_MPP=true*/
     select * from (select p_partkey, s_address from part, supplier where p_partkey=s_nationkey) as t, part where t.p_partkey=part.p_partkey
@@ -60,7 +56,6 @@
           runtimefilterbuilder(condition="runtime_filter_builder_[0](s_nationkey)")
             logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_address`, `s_nationkey` from `supplier` as `supplier`")
 
-#测试生成bloomfilter，透传给Join Probe和Build，并且下继续推给mysql
 - sql: |
     /*+TDDL:ENABLE_RUNTIME_FILTER_INTO_BUILD_SIDE=true ENABLE_OPTIMIZE_SCAN_WITH_RUNTIME_FILTER=true ENABLE_PUSH_RUNTIME_FILTER_SCAN=true ENABLE_RUNTIME_FILTER=true BLOOM_FILTER_PROBE_MIN_ROW_COUNT=-1 FORCE_ENABLE_RUNTIME_FILTER=("p_partkey,s_nationkey") ENABLE_MPP=true*/
     select * from (select p_partkey, s_address from part, supplier where p_partkey=s_nationkey) as t, part where t.p_partkey=part.p_partkey
@@ -73,7 +68,6 @@
           runtimefilterbuilder(condition="runtime_filter_builder_[0](s_nationkey)")
             logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_address`, `s_nationkey` from `supplier` as `supplier`")
 
-#测试生成bloomfilter，三表join, join key都一样，测试filter-build merge
 - sql: |
     /*+TDDL:ENABLE_RUNTIME_FILTER=true BLOOM_FILTER_PROBE_MIN_ROW_COUNT=-1 FORCE_ENABLE_RUNTIME_FILTER=("p_partkey,s_nationkey") ENABLE_MPP=true*/
     select * from (select p_partkey, s_address from part, supplier where p_partkey=s_nationkey) as t, partsupp where t.p_partkey=partsupp.ps_suppkey
@@ -90,7 +84,6 @@
                 runtimefilterbuilder(condition="runtime_filter_builder_[0](s_nationkey)")
                   logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_address`, `s_nationkey` from `supplier` as `supplier`")
 
-#测试生成bloomfilter，三表join, join key都一样，测试filter-build merge
 - sql: |
     /*+TDDL:ENABLE_RUNTIME_FILTER=true BLOOM_FILTER_PROBE_MIN_ROW_COUNT=-1 FORCE_ENABLE_RUNTIME_FILTER=("p_partkey,s_nationkey") ENABLE_MPP=true*/
     select * from (select p_partkey, s_address, s_nationkey from part, supplier where p_partkey=s_nationkey) as t, partsupp where t.s_nationkey=partsupp.ps_suppkey
@@ -108,7 +101,6 @@
                   runtimefilterbuilder(condition="runtime_filter_builder_[1](s_nationkey)")
                     logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_address`, `s_nationkey` from `supplier` as `supplier`")
 
-#测试生成bloomfilter，三表join, join key不一样，测试filter-build merge
 - sql: |
     /*+TDDL:ENABLE_RUNTIME_FILTER=true BLOOM_FILTER_PROBE_MIN_ROW_COUNT=-1 FORCE_ENABLE_RUNTIME_FILTER=("p_partkey,s_nationkey,p_size,ps_suppkey") ENABLE_MPP=true*/
     select * from (select p_partkey, s_address, p_size from part, supplier where p_partkey=s_nationkey) as t, partsupp where t.p_size=partsupp.ps_suppkey
@@ -126,7 +118,6 @@
                   runtimefilterbuilder(condition="runtime_filter_builder_[1](s_nationkey)")
                     logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_address`, `s_nationkey` from `supplier` as `supplier`")
 
-#测试生成bloomfilter(left join)
 - sql: |
     /*+TDDL:ENABLE_RUNTIME_FILTER=true BLOOM_FILTER_PROBE_MIN_ROW_COUNT=-1 FORCE_ENABLE_RUNTIME_FILTER=("p_partkey,s_nationkey") ENABLE_MPP=true*/
     select * from part left join supplier on p_partkey=s_nationkey
@@ -137,7 +128,6 @@
       exchange(distribution=broadcast, collation=[])
         logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_suppkey`, `s_name`, `s_address`, `s_nationkey`, `s_phone`, `s_acctbal`, `s_comment` from `supplier` as `supplier`")
 
-#测试生成bloomfilter(left join)
 - sql: |
     /*+TDDL:ENABLE_RUNTIME_FILTER=true BLOOM_FILTER_PROBE_MIN_ROW_COUNT=-1 FORCE_ENABLE_RUNTIME_FILTER=("p_partkey,s_nationkey") ENABLE_MPP=true*/
     select * from (select p_partkey, s_address from part, supplier where p_partkey=s_nationkey) as t left join part on t.p_partkey=part.p_partkey
@@ -150,7 +140,6 @@
           runtimefilterbuilder(condition="runtime_filter_builder_[0](s_nationkey)")
             logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_address`, `s_nationkey` from `supplier` as `supplier`")
 
-##测试生成bloomfilter，并且下推给mysql(left join)
 - sql: |
     /*+TDDL: ENABLE_PUSH_RUNTIME_FILTER_SCAN=true ENABLE_RUNTIME_FILTER=true BLOOM_FILTER_PROBE_MIN_ROW_COUNT=-1 FORCE_ENABLE_RUNTIME_FILTER=("p_partkey,s_nationkey") ENABLE_MPP=true*/
     select * from (select p_partkey, s_address from part, supplier where p_partkey=s_nationkey) as t left join part on t.p_partkey=part.p_partkey
@@ -163,7 +152,6 @@
           runtimefilterbuilder(condition="runtime_filter_builder_[0](s_nationkey)")
             logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_address`, `s_nationkey` from `supplier` as `supplier`")
 
-##测试生成bloomfilter，透传给Join Probe，并且下继续推给mysql(left join)
 - sql: |
     /*+TDDL:ENABLE_OPTIMIZE_SCAN_WITH_RUNTIME_FILTER=true ENABLE_PUSH_RUNTIME_FILTER_SCAN=true ENABLE_RUNTIME_FILTER=true BLOOM_FILTER_PROBE_MIN_ROW_COUNT=-1 FORCE_ENABLE_RUNTIME_FILTER=("p_partkey,s_nationkey") ENABLE_MPP=true*/
     select * from (select p_partkey, s_address from part, supplier where p_partkey=s_nationkey) as t left join part on t.p_partkey=part.p_partkey
@@ -176,7 +164,6 @@
           runtimefilterbuilder(condition="runtime_filter_builder_[0](s_nationkey)")
             logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_address`, `s_nationkey` from `supplier` as `supplier`")
 
-##测试生成bloomfilter，透传给Join Probe和Build，并且下继续推给mysql(left join)
 - sql: |
     /*+TDDL:ENABLE_RUNTIME_FILTER_INTO_BUILD_SIDE=true ENABLE_OPTIMIZE_SCAN_WITH_RUNTIME_FILTER=true ENABLE_PUSH_RUNTIME_FILTER_SCAN=true ENABLE_RUNTIME_FILTER=true BLOOM_FILTER_PROBE_MIN_ROW_COUNT=-1 FORCE_ENABLE_RUNTIME_FILTER=("p_partkey,s_nationkey") ENABLE_MPP=true*/
     select * from (select p_partkey, s_address from part, supplier where p_partkey=s_nationkey) as t left join part on t.p_partkey=part.p_partkey
@@ -189,7 +176,6 @@
           runtimefilterbuilder(condition="runtime_filter_builder_[0](s_nationkey)")
             logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_address`, `s_nationkey` from `supplier` as `supplier`")
 
-##测试生成bloomfilter，透传给Join Probe和Build，并且下继续推给mysql(right join)
 - sql: |
     /*+TDDL:ENABLE_RUNTIME_FILTER_INTO_BUILD_SIDE=true ENABLE_OPTIMIZE_SCAN_WITH_RUNTIME_FILTER=true ENABLE_PUSH_RUNTIME_FILTER_SCAN=true ENABLE_RUNTIME_FILTER=true BLOOM_FILTER_PROBE_MIN_ROW_COUNT=-1 FORCE_ENABLE_RUNTIME_FILTER=("p_partkey,s_nationkey") ENABLE_MPP=true*/
     select * from (select p_partkey, s_address from part, supplier where p_partkey=s_nationkey) as t right join part on t.p_partkey=part.p_partkey
@@ -205,7 +191,6 @@
                 logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_address`, `s_nationkey` from `supplier` as `supplier`")
       logicalview(tables="[0000-0003].part_[00-15]", shardcount=16, sql="select `p_partkey`, `p_name`, `p_mfgr`, `p_brand`, `p_type`, `p_size`, `p_container`, `p_retailprice`, `p_comment` from `part` as `part`")
 
-#测试生成bloomfilter，三表join, join key都一样，测试filter-build merge(left join)
 - sql: |
     /*+TDDL:ENABLE_RUNTIME_FILTER=true BLOOM_FILTER_PROBE_MIN_ROW_COUNT=-1 FORCE_ENABLE_RUNTIME_FILTER=("p_partkey,s_nationkey") ENABLE_MPP=true*/
     select * from (select p_partkey, s_address, s_nationkey from part, supplier where p_partkey=s_nationkey) as t left join partsupp on t.s_nationkey=partsupp.ps_suppkey
@@ -215,15 +200,14 @@
       hashjoin(condition="s_nationkey = ps_suppkey", type="right", build="right")
         exchange(distribution=hash[1], collation=[])
           logicalview(tables="[0000-0003].partsupp_[00-15]", shardcount=16, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
-        project(s_address="s_address", s_nationkey="s_nationkey", p_partkey="p_partkey")
-          hashjoin(condition="p_partkey = s_nationkey", type="inner")
-            exchange(distribution=hash[0], collation=[])
+        exchange(distribution=hash[1], collation=[])
+          project(s_address="s_address", s_nationkey="s_nationkey", p_partkey="p_partkey")
+            hashjoin(condition="p_partkey = s_nationkey", type="inner")
               logicalview(tables="[0000-0003].part_[00-15]", shardcount=16, sql="select `p_partkey` from `part` as `part` where (bloomfilter(?, ?, ?, `p_partkey`))")
-            exchange(distribution=hash[1], collation=[])
-              runtimefilterbuilder(condition="runtime_filter_builder_[0](s_nationkey)")
-                logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_address`, `s_nationkey` from `supplier` as `supplier`")
+              exchange(distribution=broadcast, collation=[])
+                runtimefilterbuilder(condition="runtime_filter_builder_[0](s_nationkey)")
+                  logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_address`, `s_nationkey` from `supplier` as `supplier`")
 
-#测试生成bloomfilter，将bloom filter推到join以下
 - sql: |
     /*+TDDL:ENABLE_RUNTIME_FILTER=true ENABLE_PUSH_RUNTIME_FILTER_SCAN=true BLOOM_FILTER_PROBE_MIN_ROW_COUNT=-1 FORCE_ENABLE_RUNTIME_FILTER=("l_suppkey,ps_suppkey") ENABLE_RUNTIME_FILTER_INTO_BUILD_SIDE=true ENABLE_MPP=true*/
     select * from (select p_partkey, s_address, s_nationkey from part, supplier where p_partkey=s_nationkey) as t inner join (select l_suppkey, ps_suppkey, l_linenumber, l_quantity from partsupp inner join lineitem where partsupp.ps_suppkey = lineitem.l_suppkey) as t1 on t.s_nationkey=t1.ps_suppkey
@@ -237,16 +221,15 @@
           hashjoin(condition="ps_suppkey = s_nationkey", type="inner")
             exchange(distribution=hash[0], collation=[])
               logicalview(tables="[0000-0003].partsupp_[00-15]", shardcount=16, sql="select `ps_suppkey` from `partsupp` as `partsupp` where (bloomfilter(?, ?, ?, `ps_suppkey`))")
-            runtimefilterbuilder(condition="runtime_filter_builder_[0](s_nationkey)")
-              project(s_address="s_address", s_nationkey="s_nationkey", p_partkey="p_partkey")
-                hashjoin(condition="p_partkey = s_nationkey", type="inner")
-                  exchange(distribution=hash[0], collation=[])
+            exchange(distribution=hash[1], collation=[])
+              runtimefilterbuilder(condition="runtime_filter_builder_[0](s_nationkey)")
+                project(s_address="s_address", s_nationkey="s_nationkey", p_partkey="p_partkey")
+                  hashjoin(condition="p_partkey = s_nationkey", type="inner")
                     logicalview(tables="[0000-0003].part_[00-15]", shardcount=16, sql="select `p_partkey` from `part` as `part` where (bloomfilter(?, ?, ?, `p_partkey`))")
-                  exchange(distribution=hash[1], collation=[])
-                    runtimefilterbuilder(condition="runtime_filter_builder_[1](s_nationkey)")
-                      logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_address`, `s_nationkey` from `supplier` as `supplier`")
+                    exchange(distribution=broadcast, collation=[])
+                      runtimefilterbuilder(condition="runtime_filter_builder_[1](s_nationkey)")
+                        logicalview(tables="[0000-0003].supplier_[00-15]", shardcount=16, sql="select `s_address`, `s_nationkey` from `supplier` as `supplier`")
 
-#测试生成bloomfilter，一部分下推到mysql, 一部分无法下推，保留在上面
 - sql: |
     /*+TDDL:ENABLE_RUNTIME_FILTER=true BLOOM_FILTER_PROBE_MIN_ROW_COUNT=-1 FORCE_ENABLE_RUNTIME_FILTER=("p_partkey,s_nationkey,p_name,s_name") ENABLE_MPP=true*/
     select p_partkey, s_address, s_nationkey from part, supplier where p_partkey=s_nationkey and p_name=s_name

@@ -37,24 +37,33 @@ import java.util.Map;
 import static com.alibaba.polardbx.gms.metadb.GmsSystemTables.COLUMNAR_PURGE_HISTORY;
 
 public class ColumnarPurgeHistoryAccessor extends AbstractAccessor {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
     private static final String COLUMNAR_PURGE_HISTORY_TABLE = wrap(COLUMNAR_PURGE_HISTORY);
 
     private static final String INSERT = "insert into " + COLUMNAR_PURGE_HISTORY_TABLE
-        + " (`tso`, `status`, `info`, `extra`)"
-        + " values (?, ?, ?, ?)";
+        + " (`tso`, `status`, `info`, `extra`, `flag`)"
+        + " values (?, ?, ?, ?, ?)";
 
     private static final String SELECT_LAST_PURGE = "select * from " + COLUMNAR_PURGE_HISTORY_TABLE
         + " order by `tso` desc limit 1";
 
+    private static final String SELECT_LAST_PURGE_WITH_FLAG = "select * from " + COLUMNAR_PURGE_HISTORY_TABLE
+        + " where (`flag` & ?) != 0 order by `tso` desc limit 1";
+
     private static final String SELECT_TSO_PURGE_RECORD = "select * from " + COLUMNAR_PURGE_HISTORY_TABLE
         + " where `tso` = ? ";
+
+    private static final String SELECT_TSO_PURGE_RECORD_FOR_UPDATE = "select * from " + COLUMNAR_PURGE_HISTORY_TABLE
+        + " where `tso` = ? for update";
 
     private static final String UPDATE_STATUS_BY_TSO = "update " + COLUMNAR_PURGE_HISTORY_TABLE
         + " set `status` = ? where `tso` = ? ";
 
     private static final String UPDATE_EXTRA_BY_TSO = "update " + COLUMNAR_PURGE_HISTORY_TABLE
         + " set `extra` = ? where `tso` = ? ";
+
+    private static final String UPDATE_FLAG_ADD_BY_TSO = "update " + COLUMNAR_PURGE_HISTORY_TABLE
+        + " set `flag` = `flag` | ? where `tso` = ? ";
 
     public int[] insert(Collection<ColumnarPurgeHistoryRecord> records) {
         try {
@@ -85,6 +94,26 @@ public class ColumnarPurgeHistoryAccessor extends AbstractAccessor {
         }
     }
 
+    /**
+     * Query last purge record with specific flag
+     *
+     * @param flag the flag to check (e.g., FLAG_CHECKPOINT_PURGE, FLAG_PURGE_OPTIMIZE_TABLE_SUCCESS, FLAG_PURGE_OPTIMIZE_TABLE_FAIL)
+     * @return list of records matching the flag condition
+     */
+    public List<ColumnarPurgeHistoryRecord> queryLastPurgeTsoWithFlag(long flag) {
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>(1);
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, flag);
+
+            return MetaDbUtil.query(SELECT_LAST_PURGE_WITH_FLAG, params, ColumnarPurgeHistoryRecord.class,
+                connection);
+        } catch (Exception e) {
+            LOGGER.error("Failed to query the system table " + COLUMNAR_PURGE_HISTORY_TABLE + " with flag=" + flag, e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
+                COLUMNAR_PURGE_HISTORY_TABLE, e.getMessage());
+        }
+    }
+
     public List<ColumnarPurgeHistoryRecord> queryPurgeRecordByTso(long tso) {
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(1);
@@ -95,6 +124,21 @@ public class ColumnarPurgeHistoryAccessor extends AbstractAccessor {
         } catch (Exception e) {
             LOGGER.error("Failed to query the system table " + COLUMNAR_PURGE_HISTORY_TABLE, e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
+                COLUMNAR_PURGE_HISTORY_TABLE,
+                e.getMessage());
+        }
+    }
+
+    public List<ColumnarPurgeHistoryRecord> queryPurgeRecordByTsoForUpdate(long tso) {
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>(1);
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, tso);
+
+            return MetaDbUtil.query(SELECT_TSO_PURGE_RECORD_FOR_UPDATE, params, ColumnarPurgeHistoryRecord.class,
+                connection);
+        } catch (Exception e) {
+            LOGGER.error("Failed to query the system table " + COLUMNAR_PURGE_HISTORY_TABLE + " for update", e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query for update",
                 COLUMNAR_PURGE_HISTORY_TABLE,
                 e.getMessage());
         }
@@ -112,5 +156,29 @@ public class ColumnarPurgeHistoryAccessor extends AbstractAccessor {
         MetaDbUtil.setParameter(1, params, ParameterMethod.setString, extra);
         MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, tso);
         return update(UPDATE_EXTRA_BY_TSO, COLUMNAR_PURGE_HISTORY_TABLE, params);
+    }
+
+    /**
+     * Update flag to add specific flag bit by tso
+     *
+     * @param flag the flag to add (e.g., FLAG_CHECKPOINT_PURGE, FLAG_PURGE_OPTIMIZE_TABLE_SUCCESS, FLAG_PURGE_OPTIMIZE_TABLE_FAIL)
+     * @param tso the tso to update
+     * @return number of rows updated
+     */
+    public int updateFlagAddByTso(long flag, long tso) {
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>(2);
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, flag);
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, tso);
+
+            DdlMetaLogUtil.logSql(UPDATE_FLAG_ADD_BY_TSO, params);
+            return update(UPDATE_FLAG_ADD_BY_TSO, COLUMNAR_PURGE_HISTORY_TABLE, params);
+        } catch (Exception e) {
+            LOGGER.error("Failed to update flag=" + flag + " for tso=" + tso + " in " + COLUMNAR_PURGE_HISTORY_TABLE,
+                e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "update flag",
+                COLUMNAR_PURGE_HISTORY_TABLE,
+                e.getMessage());
+        }
     }
 }

@@ -114,7 +114,11 @@ public class SequenceMetaChanger {
                     tableRule = OptimizerContext.getContext(schemaName).getRuleManager().getTableRule(logicalTableName);
                 }
                 if (tableRule != null && (isPartitioned || tableRule.isBroadcast())) {
-                    sequence.setType(AutoIncrementType.GROUP);
+                    if (DbInfoManager.getInstance().isCdcDb(schemaName)) {
+                        sequence.setType(AutoIncrementType.NEW);
+                    } else {
+                        sequence.setType(AutoIncrementType.GROUP);
+                    }
                 } else {
                     return false;
                 }

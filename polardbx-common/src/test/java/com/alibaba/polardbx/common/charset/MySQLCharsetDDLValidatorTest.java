@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.common.charset;
 
+import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -211,6 +212,24 @@ public class MySQLCharsetDDLValidatorTest {
         "sinhala_ci", "slovak_ci", "slovenian_ci", "spanish2_ci",
         "spanish_ci", "swedish_ci", "tolower_ci", "turkish_ci", "unicode_520_ci", "unicode_ci", "vietnamese_ci"
     };
+    private static final String[] LOWER_VALID_CHARSETS = {
+        "big5", "dec8", "cp850", "hp8", "koi8r", "latin1", "latin2", "swe7", "ascii", "ujis", "sjis", "hebrew",
+        "tis620", "euckr", "koi8u", "gb2312", "greek", "cp1250", "gbk", "latin5", "armscii8", "utf8", "ucs2", "cp866",
+        "keybcs2", "macce", "macroman", "cp852", "latin7", "utf8mb4", "cp1251", "utf16", "utf16le", "cp1256", "cp1257",
+        "utf32", "binary", "geostd8", "cp932", "eucjpms", "gb18030"
+    };
+    private static final String[] UPPER_VALID_CHARSETS = {
+        "BIG5", "DEC8", "CP850", "HP8", "KOI8R", "LATIN1", "LATIN2", "SWE7", "ASCII", "UJIS", "SJIS", "HEBREW",
+        "TIS620", "EUCKR", "KOI8U", "GB2312", "GREEK", "CP1250", "GBK", "LATIN5", "ARMSCII8", "UTF8", "UCS2", "CP866",
+        "KEYBCS2", "MACCE", "MACROMAN", "CP852", "LATIN7", "UTF8MB4", "CP1251", "UTF16", "UTF16LE", "CP1256", "CP1257",
+        "UTF32", "BINARY", "GEOSTD8", "CP932", "EUCJPMS", "GB18030"
+    };
+    private static final String[] LOWER_INVALID_CHARSETS = {
+        "g5", "c8", "850", "8", "i8r", "tin1", "tin2", "e7", "cii", "is", "is", "brew",
+        "s620", "ckr", "i8u", "2312", "eek", "1250", "k", "tin5", "mscii8", "f8", "s2", "866",
+        "ybcs2", "cce", "croman", "852", "tin7", "f8mb4", "1251", "f16", "f16le", "1256", "1257", "f32",
+        "nary", "ostd8", "932", "cjpms", "18030"
+    };
 
     @Test
     public void testCheckCollation() {
@@ -226,27 +245,6 @@ public class MySQLCharsetDDLValidatorTest {
             Assert.assertFalse(MySQLCharsetDDLValidator.checkCollation(invalidCollations));
         }
     }
-
-    private static final String[] LOWER_VALID_CHARSETS = {
-        "big5", "dec8", "cp850", "hp8", "koi8r", "latin1", "latin2", "swe7", "ascii", "ujis", "sjis", "hebrew",
-        "tis620", "euckr", "koi8u", "gb2312", "greek", "cp1250", "gbk", "latin5", "armscii8", "utf8", "ucs2", "cp866",
-        "keybcs2", "macce", "macroman", "cp852", "latin7", "utf8mb4", "cp1251", "utf16", "utf16le", "cp1256", "cp1257",
-        "utf32", "binary", "geostd8", "cp932", "eucjpms", "gb18030"
-    };
-
-    private static final String[] UPPER_VALID_CHARSETS = {
-        "BIG5", "DEC8", "CP850", "HP8", "KOI8R", "LATIN1", "LATIN2", "SWE7", "ASCII", "UJIS", "SJIS", "HEBREW",
-        "TIS620", "EUCKR", "KOI8U", "GB2312", "GREEK", "CP1250", "GBK", "LATIN5", "ARMSCII8", "UTF8", "UCS2", "CP866",
-        "KEYBCS2", "MACCE", "MACROMAN", "CP852", "LATIN7", "UTF8MB4", "CP1251", "UTF16", "UTF16LE", "CP1256", "CP1257",
-        "UTF32", "BINARY", "GEOSTD8", "CP932", "EUCJPMS", "GB18030"
-    };
-
-    private static final String[] LOWER_INVALID_CHARSETS = {
-        "g5", "c8", "850", "8", "i8r", "tin1", "tin2", "e7", "cii", "is", "is", "brew",
-        "s620", "ckr", "i8u", "2312", "eek", "1250", "k", "tin5", "mscii8", "f8", "s2", "866",
-        "ybcs2", "cce", "croman", "852", "tin7", "f8mb4", "1251", "f16", "f16le", "1256", "1257", "f32",
-        "nary", "ostd8", "932", "cjpms", "18030"
-    };
 
     @Test
     public void testCheckCharset() {
@@ -289,16 +287,24 @@ public class MySQLCharsetDDLValidatorTest {
     @Test
     public void testImplement() {
         // test all implemented & unimplemented charset names.
-        Set<CharsetName> implementedCharsets = CharsetName.POLAR_DB_X_IMPLEMENTED_CHARSET_NAMES.stream().collect(
-            Collectors.toSet());
+        Set<CharsetName> implementedCharsets;
+        if (InstanceVersion.isMYSQL80()) {
+            implementedCharsets = CharsetName.POLAR_DB_X_IMPLEMENTED_CHARSET_NAMES_80.stream().collect(
+                Collectors.toSet());
+        } else {
+            implementedCharsets = CharsetName.POLAR_DB_X_IMPLEMENTED_CHARSET_NAMES.stream().collect(
+                Collectors.toSet());
+        }
         Set<CharsetName> unimplementedCharsets = Arrays.stream(CharsetName.values()).collect(
             Collectors.toSet());
         unimplementedCharsets.removeAll(implementedCharsets);
         for (CharsetName implemented : implementedCharsets) {
-            Assert.assertTrue(MySQLCharsetDDLValidator.isCharsetImplemented(implemented.name()));
+            Assert.assertTrue(implemented.name(),
+                MySQLCharsetDDLValidator.isCharsetImplemented(implemented.name()));
         }
         for (CharsetName unimplemented : unimplementedCharsets) {
-            Assert.assertFalse(MySQLCharsetDDLValidator.isCharsetImplemented(unimplemented.name()));
+            Assert.assertFalse(unimplemented.name(),
+                MySQLCharsetDDLValidator.isCharsetImplemented(unimplemented.name()));
         }
 
         // test all implemented & unimplemented collation names.

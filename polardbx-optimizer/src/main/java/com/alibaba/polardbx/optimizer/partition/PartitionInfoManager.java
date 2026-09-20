@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.optimizer.partition;
 
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.model.lifecycle.AbstractLifecycle;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
@@ -56,6 +58,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 /**
@@ -197,6 +200,14 @@ public class PartitionInfoManager extends AbstractLifecycle {
             || partInfoCtx.getPartInfo().getTableType() == PartitionTableType.GSI_BROADCAST_TABLE;
     }
 
+    public boolean isReplicasTable(String tbName) {
+        PartInfoCtx partInfoCtx = partInfoCtxCache.get(tbName);
+        if (partInfoCtx == null) {
+            return false;
+        }
+        return partInfoCtx.getPartInfo().getTableType() == PartitionTableType.REPLICAS_TABLE;
+    }
+
     public boolean isSingleTable(String tbName) {
         PartInfoCtx partInfoCtx = partInfoCtxCache.get(tbName);
         if (partInfoCtx == null) {
@@ -213,12 +224,49 @@ public class PartitionInfoManager extends AbstractLifecycle {
         }
 
         PartitionInfo partInfo = partInfoCtx.getPartInfo();
-        PartitionSpec part = partInfo.getPartitionBy().getPhysicalPartitions().get(0);
+        PartitionByDefinition partitionBy = partInfo.getPartitionBy();
+        if (partitionBy == null) {
+            throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER,
+                "PartitionBy is null for table: " + tbName);
+        }
+        List<PartitionSpec> physicalPartitions = partitionBy.getPhysicalPartitions();
+        PartitionSpec part;
+        if (physicalPartitions != null && !physicalPartitions.isEmpty()) {
+            part = physicalPartitions.get(0);
+        } else {
+            List<PartitionSpec> logicalPartitions = partitionBy.getPartitions();
+            if (logicalPartitions == null || logicalPartitions.isEmpty()) {
+                throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER,
+                    "No partitions found for table: " + tbName);
+            }
+            part = logicalPartitions.get(0);
+        }
         PartitionLocation location = part.getLocation();
         PhysicalPartitionInfo prunedPartInfo = new PhysicalPartitionInfo();
         prunedPartInfo.setGroupKey(location.getGroupKey());
         prunedPartInfo.setPhyTable(location.getPhyTableName());
         prunedPartInfo.setPartBitSetIdx(0);
+        prunedPartInfo.setPartId(part.getId());
+        prunedPartInfo.setPartLevel(part.getPartLevel());
+        prunedPartInfo.setPartName(part.getName());
+        return prunedPartInfo;
+    }
+
+    public PhysicalPartitionInfo getRandomPhysicalPartition(String tbName) {
+        PartInfoCtx partInfoCtx = partInfoCtxCache.get(tbName);
+        if (partInfoCtx == null) {
+            return null;
+        }
+
+        PartitionInfo partInfo = partInfoCtx.getPartInfo();
+        List<PartitionSpec> physicalPartitions = partInfo.getPartitionBy().getPhysicalPartitions();
+        int randomIndex = ThreadLocalRandom.current().nextInt(physicalPartitions.size());
+        PartitionSpec part = physicalPartitions.get(randomIndex);
+        PartitionLocation location = part.getLocation();
+        PhysicalPartitionInfo prunedPartInfo = new PhysicalPartitionInfo();
+        prunedPartInfo.setGroupKey(location.getGroupKey());
+        prunedPartInfo.setPhyTable(location.getPhyTableName());
+        prunedPartInfo.setPartBitSetIdx(randomIndex);
         prunedPartInfo.setPartId(part.getId());
         prunedPartInfo.setPartLevel(part.getPartLevel());
         prunedPartInfo.setPartName(part.getName());

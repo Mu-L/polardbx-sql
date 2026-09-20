@@ -50,7 +50,7 @@ public class LocalityParserTest {
     @Test
     public void testShowCreate() {
         LocalityDesc desc = LocalityDesc.parse("dn=dn1");
-        Assert.assertEquals("/* LOCALITY='dn=dn1' */", desc.showCreate());
+        Assert.assertEquals("/* LOCALITY='dn=dn1' */", desc.showCreate(null));
     }
 
     @Test

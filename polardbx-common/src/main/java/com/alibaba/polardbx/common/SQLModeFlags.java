@@ -52,6 +52,12 @@ public class SQLModeFlags {
     public static final long MODE_NO_ENGINE_SUBSTITUTION = (MODE_HIGH_NOT_PRECEDENCE * 2);
     public static final long MODE_PAD_CHAR_TO_FULL_LENGTH = (1L << 31);
 
+    /*
+     *  If this mode is set the fractional seconds which cannot fit in given fsp will
+     *  be truncated.
+     */
+    public static final long MODE_TIME_TRUNCATE_FRACTIONAL = 1L << 32;
+
     public static boolean check(long flags, long toCheck) {
         return (flags & toCheck) != 0;
     }

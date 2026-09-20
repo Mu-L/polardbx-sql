@@ -30,6 +30,7 @@ import com.alibaba.polardbx.executor.ddl.job.validator.TableValidator;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
@@ -126,5 +127,10 @@ public class RemoveLocalPartitionJobFactory extends DdlJobFactory {
     @Override
     protected void sharedResources(Set<String> resources) {
 
+    }
+
+    @Override
+    protected void updateOnlineDdlInfo(OnlineDdlInfo onlineDdlInfo) {
+        onlineDdlInfo.setOnlineDdlType(OnlineDdlInfo.DdlType.LOCK_TABLE);
     }
 }

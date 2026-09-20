@@ -19,6 +19,7 @@ package com.alibaba.polardbx.optimizer.core.rel.ddl;
 import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.topology.GroupDetailInfoExRecord;
 import com.alibaba.polardbx.gms.util.TableGroupNameUtil;
@@ -42,6 +43,7 @@ import org.apache.calcite.sql.SqlPartition;
 
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 public class LogicalAlterTableGroupAddPartition extends LogicalAlterTableAddPartition {
@@ -72,6 +74,10 @@ public class LogicalAlterTableGroupAddPartition extends LogicalAlterTableAddPart
                 .getPartitionInfo();
 
         preparedData = new AlterTableGroupAddPartitionPreparedData();
+        Boolean hasSubPartition = partitionInfo.containSubPartitions();
+        boolean isTemplateSubPart = hasSubPartition ?
+            partitionInfo.getPartitionBy().getSubPartitionBy().isUseSubPartTemplate() : false;
+        preparedData.setUseTemplatePart(isTemplateSubPart);
         preparedData.setTableGroupName(tableGroupName);
         preparedData.setSchemaName(schemaName);
         preparedData.setTableName(tableName);
@@ -79,17 +85,19 @@ public class LogicalAlterTableGroupAddPartition extends LogicalAlterTableAddPart
         preparedData.setTargetGroupDetailInfoExRecords(targetGroupDetailInfoExRecords);
 
         preparedData.setPartBoundExprInfoByLevel(partBoundExprInfoByLevel);
-
+        Map<String, List<String>> logicalPartitionGroups = new TreeMap<>(String::compareToIgnoreCase);
         preparedData.setNewPartitions(
             sqlAlterTableAddPartition.getPartitions().stream().map(o -> (SqlPartition) o).collect(Collectors.toList()),
-            partitionInfo.getPartitionBy(), tableGroupConfig, sqlAlterTableAddPartition.isSubPartition());
+            partitionInfo.getPartitionBy(), tableGroupConfig, sqlAlterTableAddPartition.isSubPartition(),
+            logicalPartitionGroups);
 
         preparedData.setOldPartitionNames(ImmutableList.of());
 
-        Boolean hasSubPartition = partitionInfo.containSubPartitions();
-        preparedData.prepareInvisiblePartitionGroup(hasSubPartition);
-
         preparedData.setTaskType(ComplexTaskMetaManager.ComplexTaskType.ADD_PARTITION);
+        boolean isShuffle =
+            ec.getParamManager().getBoolean(ConnectionParams.ENABLE_RANDOM_PARTITION_PLACEMENT);
+        //please setTaskType before prepareInvisiblePartitionGroup
+        preparedData.prepareInvisiblePartitionGroup(hasSubPartition, isShuffle, logicalPartitionGroups);
 
     }
 

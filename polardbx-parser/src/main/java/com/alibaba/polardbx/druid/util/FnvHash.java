@@ -546,6 +546,8 @@ public final class FnvHash {
         long DETERMINISTIC = fnv1a_64_lower("DETERMINISTIC");
         long CONTAINS = fnv1a_64_lower("CONTAINS");
         long SQL = fnv1a_64_lower("SQL");
+        long EXPR = fnv1a_64_lower("EXPR");
+        long GRAY_RATIO = fnv1a_64_lower("GRAY_RATIO");
         long CALL = fnv1a_64_lower("CALL");
         long CHARACTER = fnv1a_64_lower("CHARACTER");
         long UNNEST = fnv1a_64_lower("UNNEST");
@@ -754,6 +756,7 @@ public final class FnvHash {
         long DECODE = fnv1a_64_lower("DECODE");
         long IF = fnv1a_64_lower("IF");
         long EXTERNAL = fnv1a_64_lower("EXTERNAL");
+        long EXTERNALIZE = fnv1a_64_lower("EXTERNALIZE");
         long SORTED = fnv1a_64_lower("SORTED");
         long CLUSTERED = fnv1a_64_lower("CLUSTERED");
         long COLUMNAR = fnv1a_64_lower("COLUMNAR");
@@ -887,6 +890,9 @@ public final class FnvHash {
         long FACE_FEATURE_EXTRACT_V1 = fnv1a_64_lower("FACE_FEATURE_EXTRACT_V1");
         long TEXT_FEATURE_EXTRACT_V1 = fnv1a_64_lower("TEXT_FEATURE_EXTRACT_V1");
 
+        long JSON_TABLE = fnv1a_64_lower("JSON_TABLE");
+
+        long NESTED = fnv1a_64_lower("NESTED");
         long JSON_EXTRACT = fnv1a_64_lower("JSON_EXTRACT");
         long JSON_EXTRACT_SCALAR = fnv1a_64_lower("json_extract_scalar");
         long JSON_ARRAY_GET = fnv1a_64_lower("JSON_ARRAY_GET");
@@ -955,6 +961,7 @@ public final class FnvHash {
         long EXCLUDING = fnv1a_64_lower("EXCLUDING");
         long ROUTINE = fnv1a_64_lower("ROUTINE");
         long ROUTE = fnv1a_64_lower("ROUTE");
+        long ROUTING = fnv1a_64_lower("ROUTING");
         long IDENTIFIED = fnv1a_64_lower("IDENTIFIED");
         long DELIMITER = fnv1a_64_lower("DELIMITER");
         long UNKNOWN = fnv1a_64_lower("UNKNOWN");
@@ -1016,6 +1023,8 @@ public final class FnvHash {
         long ANNINDEX = fnv1a_64_lower("ANNINDEX");
         long RTTYPE = fnv1a_64_lower("RTTYPE");
         long DISTANCE = fnv1a_64_lower("DISTANCE");
+        long M = fnv1a_64_lower("M"); // HNSW M parameter for vector index
+        long EF_CONSTRUCTION = fnv1a_64_lower("EF_CONSTRUCTION");
         long IDXPROPERTIES = fnv1a_64_lower("IDXPROPERTIES");
         long RECOVER = fnv1a_64_lower("RECOVER");
         long PAUSE = fnv1a_64_lower("PAUSE");
@@ -1036,10 +1045,14 @@ public final class FnvHash {
         long UNARCHIVE = fnv1a_64_lower("UNARCHIVE");
         long SEQUENCES = fnv1a_64_lower("SEQUENCES");
         long OUTLINE = fnv1a_64_lower("OUTLINE");
+        long ROUTING_RULE = fnv1a_64_lower("ROUTING_RULE");
+        long ROUTING_RULES = fnv1a_64_lower("ROUTING_RULES");
         long CCL_RULE = fnv1a_64_lower("CCL_RULE");
         long CCL_RULES = fnv1a_64_lower("CCL_RULES");
+        // only for drop ccl_trigger if exists 'ccl_blocker_name';
         long CCL_TRIGGER = fnv1a_64_lower("CCL_TRIGGER");
-        long CCL_TRIGGERS = fnv1a_64_lower("CCL_TRIGGERS");
+        long CCL_BLOCKER = fnv1a_64_lower("CCL_BLOCKER");
+        long CCL_BLOCKERS = fnv1a_64_lower("CCL_BLOCKERS");
         long SLOW_SQL_CCL = fnv1a_64_lower("SLOW_SQL_CCL");
         long ORD = fnv1a_64_lower("ORD");
         long SPACE = fnv1a_64_lower("SPACE");
@@ -1055,6 +1068,7 @@ public final class FnvHash {
         long DUMP = fnv1a_64_lower("DUMP");
         long SINGLE = fnv1a_64_lower("SINGLE");
         long BROADCAST = fnv1a_64_lower("BROADCAST");
+        long REPLICAS = fnv1a_64_lower("REPLICAS");
         long GROUP = fnv1a_64_lower("GROUP");
         long GROUPING = fnv1a_64_lower("GROUPING");
         long WITH = fnv1a_64_lower("WITH");
@@ -1092,6 +1106,14 @@ public final class FnvHash {
         long TRY_CAST = fnv1a_64_lower("TRY_CAST");
         long COVERING = fnv1a_64_lower("COVERING");
         long REBALANCE = fnv1a_64_lower("REBALANCE");
+        long VECTOR = fnv1a_64_lower("VECTOR");
+        long VEC_DISTANCE = fnv1a_64_lower("VEC_DISTANCE");
+        long VEC_DISTANCE_COSINE = fnv1a_64_lower("VEC_DISTANCE_COSINE");
+        long VEC_DISTANCE_EUCLIDEAN = fnv1a_64_lower("VEC_DISTANCE_EUCLIDEAN");
+        long VEC_DISTANCE_IP = fnv1a_64_lower("VEC_DISTANCE_IP");
+        long VEC_FROMTEXT = fnv1a_64_lower("VEC_FROMTEXT");
+        long VEC_TOTEXT = fnv1a_64_lower("VEC_TOTEXT");
+        long VECTOR_DIM = fnv1a_64_lower("VECTOR_DIM");
 
         long CHARFILTER = fnv1a_64_lower("CHARFILTER");
         long CHARFILTERS = fnv1a_64_lower("CHARFILTERS");
@@ -1183,6 +1205,8 @@ public final class FnvHash {
         long TTL_ENABLE = fnv1a_64_lower("TTL_ENABLE");
         long TTL_EXPR = fnv1a_64_lower("TTL_EXPR");
         long TTL_JOB = fnv1a_64_lower("TTL_JOB");
+        long TTL_COL_ENCODER = fnv1a_64_lower("TTL_COL_ENCODER");
+        long TTL_COL_DECODER = fnv1a_64_lower("TTL_COL_DECODER");
         long TTL_FILTER = fnv1a_64_lower("TTL_FILTER");
         long TTL_CLEANUP = fnv1a_64_lower("TTL_CLEANUP");
         long TTL_CLEANUP_BOUND = fnv1a_64_lower("TTL_CLEANUP_BOUND");
@@ -1193,6 +1217,10 @@ public final class FnvHash {
         long ARCHIVE_TABLE_NAME = fnv1a_64_lower("ARCHIVE_TABLE_NAME");
         long ARCHIVE_TABLE_PRE_ALLOCATE = fnv1a_64_lower("ARCHIVE_TABLE_PRE_ALLOCATE");
         long ARCHIVE_TABLE_POST_ALLOCATE = fnv1a_64_lower("ARCHIVE_TABLE_POST_ALLOCATE");
+        long TTL_REF_COL_LIST = fnv1a_64_lower("TTL_REF_COL_LIST");
+        long TTL_HYBRID = fnv1a_64_lower("TTL_HYBRID");
+
+        long ENFORCED = fnv1a_64_lower("ENFORCED");
 
         Set<Long> MYSQL_CHARACTER_SETS = ImmutableSet.of(
             _BIG5, _DEC8, _CP850, _HP8, _KOI8R, _LATIN1, _LATIN2, _SWE7, _ASCII, _UJIS, _SJIS, _HEBREW, _TIS620,

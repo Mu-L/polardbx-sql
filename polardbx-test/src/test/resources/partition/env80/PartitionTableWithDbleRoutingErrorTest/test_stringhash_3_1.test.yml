@@ -1,0 +1,23 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+set ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC=true;
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=true;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+  
+#边界值测试 
+create table string_hash_table_3(id varchar(10))
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/stringhash',
+  '{
+"partitionCount" : "4",
+"partitionLength" : "256",
+"hashSlice":"0:2"
+}'
+  )
+  )
+  partitions 4;
+
+select part_route('','string_hash_table_3', null);
+select part_route('','string_hash_table_3','');

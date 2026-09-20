@@ -133,7 +133,14 @@ public class GlobalIndexMeta {
         return table.withPublishedGsi();
     }
 
-    public static List<String> getColumnarIndexNames(String primaryTable, String schema, ExecutionContext ec) {
+    /**
+     * get all columnar indexes for target table, including archive cci
+     *
+     * @param primaryTable the table to find columnar indexes
+     * @param schema schema of table
+     * @return list of columnar indexes
+     */
+    public static List<String> getAllColumnarIndexNames(String primaryTable, String schema, ExecutionContext ec) {
         final List<String> result = new ArrayList<>();
         final TableMeta table = ec.getSchemaManager(schema).getTable(primaryTable);
         final Map<String, GsiIndexMetaBean> columnarIndexPublished = table.getColumnarIndexPublished();

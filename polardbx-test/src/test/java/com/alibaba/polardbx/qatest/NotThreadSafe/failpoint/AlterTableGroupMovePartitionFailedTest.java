@@ -154,7 +154,8 @@ public class AlterTableGroupMovePartitionFailedTest extends DDLBaseNewDBTestCase
 
         for (String instId : instIds) {
             // move partition p1
-            commands.add(String.format(ALTER_TABLE_GROUP_SQL, tableGroupName, PARTITION_NAME, instId));
+            commands.add("/*+TDDL:cmd_extra(ENABLE_PHY_RECYCLEBIN=false)*/" + String.format(ALTER_TABLE_GROUP_SQL,
+                tableGroupName, PARTITION_NAME, instId));
         }
         return commands;
     }

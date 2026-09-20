@@ -18,6 +18,7 @@ package com.alibaba.polardbx.executor.mpp.execution;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
 import com.alibaba.polardbx.common.properties.MppConfig;
 import com.alibaba.polardbx.common.utils.bloomfilter.BloomFilterInfo;
 import com.alibaba.polardbx.common.utils.logger.Logger;
@@ -212,6 +213,10 @@ public class SqlTaskManager
         taskNotificationExecutor.shutdownNow();
     }
 
+    public QueryContext getQueryContext(String queryId) {
+        return queryContexts.getUnchecked(queryId);
+    }
+
     @Override
     public List<SqlTask> getAllTasks() {
         return ImmutableList.copyOf(tasks.asMap().values());
@@ -357,6 +362,9 @@ public class SqlTaskManager
 
     private void doRemoveFinishedTask(TaskId taskId, boolean removeTask) {
         synchronized (doRemoveTaskLock) {
+            final int stageId = taskId.getStageId().getId();
+            final String queryId = taskId.getQueryId();
+
             SqlTask sqlTask;
             if (removeTask) {
                 sqlTask = tasks.asMap().remove(taskId);
@@ -367,6 +375,13 @@ public class SqlTaskManager
                     sqlTask.releaseTaskMemoryInAdvance();
                 }
             }
+
+            // release task-level memory tracker
+            if (sqlTask != null) {
+                MemoryTrackerManager.getGlobalMemoryTrackerManager()
+                    .releaseStageMemory(queryId, stageId, false);
+            }
+
             List<TaskId> taskIds = queryTasks.get(taskId.getQueryId());
             if (taskIds != null) {
                 boolean lastTask = false;
@@ -380,6 +395,10 @@ public class SqlTaskManager
                     if (context != null) {
                         context.destroyQueryMemoryPool();
                     }
+
+                    // release query-level memory tracker
+                    MemoryTrackerManager.getGlobalMemoryTrackerManager().releaseQueryMemory(queryId);
+
                 }
             }
         }
@@ -433,5 +452,10 @@ public class SqlTaskManager
         } catch (Exception e) {
             log.error("sqlTask force delete error " + e.getMessage(), e);
         }
+    }
+
+    @Override
+    public SqlTaskExecutionFactory getSqlTaskExecutionFactory() {
+        return sqlTaskExecutionFactory;
     }
 }

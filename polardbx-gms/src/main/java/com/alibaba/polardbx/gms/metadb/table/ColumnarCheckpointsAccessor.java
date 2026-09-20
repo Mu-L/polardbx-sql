@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.gms.metadb.table;
 
 import com.alibaba.fastjson.JSON;
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
@@ -40,7 +41,7 @@ import java.util.Map;
 import static com.alibaba.polardbx.gms.metadb.GmsSystemTables.COLUMNAR_CHECKPOINTS;
 
 public class ColumnarCheckpointsAccessor extends AbstractAccessor {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
     private static final String COLUMNAR_CHECKPOINT_TABLE = wrap(COLUMNAR_CHECKPOINTS);
 
     /**
@@ -56,6 +57,9 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
 
     private static final String QUERY_LAST_CHECKPOINT = "select * from " + COLUMNAR_CHECKPOINT_TABLE
         + " where `checkpoint_type` = ?" + ORDER_BY_TSO_DESC_LIMIT_1;
+
+    private static final String QUERY_BY_BINLOG_TSO =
+        "select * from " + COLUMNAR_CHECKPOINT_TABLE + " where `binlog_tso` = ?";
 
     private static final String QUERY_LAST_CHECKPOINTS = "select * from " + COLUMNAR_CHECKPOINT_TABLE
         + " where `checkpoint_type` in ( %s )" + ORDER_BY_TSO_DESC_LIMIT_1;
@@ -122,6 +126,10 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
         "delete from " + COLUMNAR_CHECKPOINT_TABLE
             + " where `checkpoint_tso` < ? and `checkpoint_type` in ( %s ) and info is null limit ? ";
 
+    private static final String DELETE_BY_RANGE_TSO_AND_TYPES_AND_INFO_IS_NULL_LIMIT =
+        "delete from " + COLUMNAR_CHECKPOINT_TABLE
+            + " where `checkpoint_tso` >= ? and `checkpoint_tso` < ? and `checkpoint_type` in ( %s ) and info is null limit ? ";
+
     private static final String DELETE_SNAPSHOT_BY_TSO_AND_SCHEMA_TABLE_LIMIT =
         "delete from " + COLUMNAR_CHECKPOINT_TABLE
             + " where `logical_schema` = ? and `logical_table` = ? and `checkpoint_tso` < ? and `checkpoint_type` in ( %s ) limit ? ";
@@ -184,6 +192,7 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
     }
 
     public List<ColumnarCheckpointsRecord> queryLastByType(CheckPointType checkPointType) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(1);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, checkPointType.name());
@@ -195,10 +204,31 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
+        }
+    }
+
+    public List<ColumnarCheckpointsRecord> queryByBinlogTso(long tso) {
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>(1);
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, tso);
+
+            return MetaDbUtil.query(QUERY_BY_BINLOG_TSO, params, ColumnarCheckpointsRecord.class,
+                connection);
+        } catch (Exception e) {
+            LOGGER.error("Failed to query the system table " + COLUMNAR_CHECKPOINT_TABLE, e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
+                COLUMNAR_CHECKPOINT_TABLE,
+                e.getMessage());
         }
     }
 
     public List<ColumnarCheckpointsRecord> queryLastByTypes(List<CheckPointType> checkPointTypes) {
+        long startMillis = System.currentTimeMillis();
         int size = checkPointTypes.size();
         if (checkPointTypes.size() == 1) {
             return queryLastByType(checkPointTypes.get(0));
@@ -217,12 +247,17 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<ColumnarCheckpointsRecord> queryLastRecordByTableAndTsoAndTypes(String schema, String table, long tso,
                                                                                 List<CheckPointType> checkPointTypes) {
-
+        long startMillis = System.currentTimeMillis();
         try {
             String sql = String.format(QUERY_LAST_RECORD_BY_TABLE_AND_TSO_AND_TYPE,
                 String.join(",", Collections.nCopies(checkPointTypes.size(), "?")));
@@ -240,6 +275,11 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
@@ -279,6 +319,7 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
     }
 
     public List<ColumnarCheckpointsRecord> queryByTso(long checkpointTso) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(1);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, checkpointTso);
@@ -290,11 +331,17 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<ColumnarCheckpointsRecord> queryLastByTableAndType(String schema, String table,
                                                                    CheckPointType checkPointType) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(3);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, schema);
@@ -308,10 +355,16 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<ColumnarCheckpointsRecord> queryColumnarTsoByBinlogTso(long binlogTso) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(1);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, binlogTso);
@@ -323,10 +376,16 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<ColumnarCheckpointsRecord> queryColumnarTsoByBinlogTsoAndCheckpointTsoAsc(long binlogTso) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(1);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, binlogTso);
@@ -339,10 +398,16 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<ColumnarCheckpointsRecord> queryCompactionByStartTsoAndEndTso(long startTso, long endTso) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(2);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, startTso);
@@ -355,11 +420,17 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<ColumnarCheckpointsRecord> queryLastByPartitionAndType(String schema, String table, String partition,
                                                                        CheckPointType checkPointType) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(4);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, schema);
@@ -374,10 +445,16 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public Long queryLatestTso() {
+        long startMillis = System.currentTimeMillis();
         try {
             try (PreparedStatement ps = connection.prepareStatement(QUERY_LAST_VALID_TSO)) {
                 try (ResultSet rs = ps.executeQuery()) {
@@ -392,10 +469,16 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public Long queryLatestTsoWithDelay(long delayMicroseconds) {
+        long startMillis = System.currentTimeMillis();
         try {
             try (PreparedStatement ps = connection.prepareStatement(QUERY_LAST_VALID_TSO_WITH_DELAY)) {
                 ps.setLong(1, delayMicroseconds);
@@ -411,6 +494,11 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
@@ -418,6 +506,7 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
      * @return (Innodb tso, Columnar tso)
      */
     public Pair<Long, Long> queryLatestTsoPair() {
+        long startMillis = System.currentTimeMillis();
         try (PreparedStatement ps = connection.prepareStatement(QUERY_LAST_VALID_TSO);
             ResultSet rs = ps.executeQuery()) {
             if (rs.next()) {
@@ -435,10 +524,16 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public Long queryLatestTsoByShowColumnarStatus() {
+        long startMillis = System.currentTimeMillis();
         try {
             try (PreparedStatement ps = connection.prepareStatement(QUERY_LAST_TSO_FOR_SHOW_COLUMNAR_STATUS)) {
                 try (ResultSet rs = ps.executeQuery()) {
@@ -453,11 +548,17 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<ColumnarCheckpointsRecord> queryByTsoAndTypes(long checkpointTso,
                                                               List<CheckPointType> checkPointTypes) {
+        long startMillis = System.currentTimeMillis();
         int size = checkPointTypes.size();
 
         try {
@@ -474,10 +575,16 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<ColumnarCheckpointsRecord> queryValidCheckpointByTso(long checkpointTso) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(1);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, checkpointTso);
@@ -487,10 +594,16 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<ColumnarCheckpointsRecord> queryLatestForcedCheckpoints(long tso, long limit) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(2);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, tso);
@@ -502,10 +615,16 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public int updateExtraByTso(String extra, long tso) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(2);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, extra);
@@ -516,6 +635,11 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
@@ -618,7 +742,7 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
             Map<Integer, ParameterContext> params = new HashMap<>(3);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, logicalSchema);
             MetaDbUtil.setParameter(2, params, ParameterMethod.setString, logicalTable);
-            MetaDbUtil.setParameter(2, params, ParameterMethod.setString, partitionName);
+            MetaDbUtil.setParameter(3, params, ParameterMethod.setString, partitionName);
 
             DdlMetaLogUtil.logSql(DELETE_BY_SCHEMA_AND_TABLE_AND_PARTITION, params);
             return MetaDbUtil.delete(DELETE_BY_SCHEMA_AND_TABLE_AND_PARTITION, params, connection);
@@ -672,6 +796,21 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
                 COLUMNAR_CHECKPOINT_TABLE,
                 e.getMessage());
         }
+    }
+
+    public int deleteLimitByRangeTsoAndTypesAndInfoIsNull(long startTso, long endTso,
+                                                          List<CheckPointType> checkPointTypes, long limit) {
+        String sql = String.format(DELETE_BY_RANGE_TSO_AND_TYPES_AND_INFO_IS_NULL_LIMIT,
+            String.join(",", Collections.nCopies(checkPointTypes.size(), "?")));
+        Map<Integer, ParameterContext> params = new HashMap<>(4 + checkPointTypes.size());
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, startTso);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, endTso);
+        for (int i = 0; i < checkPointTypes.size(); i++) {
+            MetaDbUtil.setParameter(3 + i, params, ParameterMethod.setString, checkPointTypes.get(i).name());
+        }
+
+        MetaDbUtil.setParameter(3 + checkPointTypes.size(), params, ParameterMethod.setLong, limit);
+        return delete(sql, COLUMNAR_CHECKPOINT_TABLE, params);
     }
 
     public int deleteLimitByTsoAndSchemaTable(String logicalSchema, String logicalTable, long tso,
@@ -752,7 +891,15 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
          */
         SNAPSHOT_END,
         /**
-         * 增全量合并，记录每个分区已经完成了增全量合并，分区级别
+         * 全量拉取完数据，开始 apply，分区级别
+         */
+        SNAPSHOT_MERGE,
+        /**
+         * 全量数据 apply 完，开始追缺失的增量数据，分区级别
+         */
+        SNAPSHOT_CATCHUP,
+        /**
+         * 增全量合并结束，记录每个分区已经完成了增全量合并，分区级别
          */
         SNAPSHOT_FINISHED;
 
@@ -770,6 +917,10 @@ public class ColumnarCheckpointsAccessor extends AbstractAccessor {
                 return COMPACTION;
             case "snapshot_end":
                 return SNAPSHOT_END;
+            case "snapshot_merge":
+                return SNAPSHOT_MERGE;
+            case "snapshot_catchup":
+                return SNAPSHOT_CATCHUP;
             case "snapshot_finished":
                 return SNAPSHOT_FINISHED;
             default:

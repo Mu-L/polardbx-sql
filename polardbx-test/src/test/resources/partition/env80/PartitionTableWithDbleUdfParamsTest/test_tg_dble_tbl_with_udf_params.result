@@ -1,0 +1,49 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+create tablegroup if not exists mydbletg1;
+drop table if exists dble_hash_tg_t1;
+create table dble_hash_tg_t1
+  (a bigint，b bigint)
+  partition by udf_hash (
+    `a` with udf_params (
+      'dble/hash',
+      '{"partitionCount" : "2,2","partitionLength" : "50,100"}'
+    )
+  ) partitions 4
+  tablegroup=mydbletg1;
+drop table if exists dble_hash_tg_t2;
+create table dble_hash_tg_t2
+  (a bigint，b bigint)
+  partition by udf_hash (
+    `a` with udf_params (
+      'dble/hash',
+      '{"partitionCount" : "2,2","partitionLength" : "50,100"}'
+    )
+  ) partitions 4
+  tablegroup=mydbletg1;
+drop table if exists dble_hash_tg_t3;
+## error_msg: $# mismatch #$
+  create table dble_hash_tg_t3
+  (a bigint，b bigint)
+  partition by udf_hash (
+    `a` with udf_params (
+      'dble/hash',
+      '{"partitionCount" : "3,1","partitionLength" : "50,100"}'
+    )
+  ) partitions 4
+  tablegroup=mydbletg1;
+mismatch
+insert into dble_hash_tg_t1 values (1,1),(150,150);
+insert into dble_hash_tg_t2 values (1,1),(150,150);
+explain select * from dble_hash_tg_t1 t1 join dble_hash_tg_t2 t2 on t1.a=t2.a order by t1.a;
+Logical ExecutionPlan
+MergeSort(sort="a ASC")
+  LogicalView(tables="dble_hash_tg_t1[p1,p2,p3,p4],dble_hash_tg_t2[p1,p2,p3,p4]", shardCount=4, sql="SELECT `dble_hash_tg_t1`.`a`, `dble_hash_tg_t1`.`b`, `dble_hash_tg_t2`.`a` AS `a0`, `dble_hash_tg_t2`.`b` AS `b0` FROM `dble_hash_tg_t1` AS `dble_hash_tg_t1` INNER JOIN `dble_hash_tg_t2` AS `dble_hash_tg_t2` ON (`dble_hash_tg_t1`.`a` = `dble_hash_tg_t2`.`a`) ORDER BY `dble_hash_tg_t1`.`a`")
+select * from dble_hash_tg_t1 t1 join dble_hash_tg_t2 t2 on t1.a=t2.a order by t1.a;
+a,b,a,b
+1,1,1,1
+150,150,150,150
+drop table if exists dble_hash_tg_t1;
+drop table if exists dble_hash_tg_t2;
+drop tablegroup if exists mydbletg1;

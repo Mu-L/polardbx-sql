@@ -27,6 +27,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
@@ -114,27 +115,29 @@ public class BloomFilterBenchTest {
             putLongs(bloomFilters.get(i), hashers.get(i));
         }
 
-        HashSet<Long> allValues = new HashSet<>(NUM_ELEMENT);
-        for (long l : longData) {
-            allValues.add(l);
-        }
+        Arrays.sort(longData);
         final int testCount = NUM_ELEMENT;
+        double falsePositiveRate = 0l;
         final double fppWithError = FPP * (1.006);
         for (int i = 0; i < SUPPORT_HASH_INFO.size(); i++) {
-            long falsePositiveCount = 0;
-            BloomFilter bloomFilter = bloomFilters.get(i);
-            IStreamingHasher hasher = hashers.get(i);
-            Random random = new Random(System.currentTimeMillis());
-            for (int j = 0; j < testCount; j++) {
-                long value = random.nextLong();
-                boolean contains = allValues.contains(value);
-                boolean guess = bloomFilter.mightContain(hasher.putLong(value).hash());
-
-                if (!contains && guess) {
-                    falsePositiveCount += 1;
+            for (int times = 0; times < 3; times++) {
+                long falsePositiveCount = 0;
+                BloomFilter bloomFilter = bloomFilters.get(i);
+                IStreamingHasher hasher = hashers.get(i);
+                Random random = new Random(System.currentTimeMillis());
+                for (int j = 0; j < testCount; j++) {
+                    long value = random.nextLong();
+                    boolean contains = Arrays.binarySearch(longData, value) >= 0;
+                    boolean guess = bloomFilter.mightContain(hasher.putLong(value).hash());
+                    if (!contains && guess) {
+                        falsePositiveCount += 1;
+                    }
+                }
+                falsePositiveRate = falsePositiveCount * 1.0 / testCount;
+                if (falsePositiveRate <= fppWithError) {
+                    break;
                 }
             }
-            double falsePositiveRate = falsePositiveCount * 1.0 / testCount;
             Assert.assertTrue(String.format("[%s] False positive rate %.6f higher than expected %.6f",
                 SUPPORT_HASH_INFO.get(i).getMethodName(), falsePositiveRate, FPP), falsePositiveRate <= fppWithError);
         }

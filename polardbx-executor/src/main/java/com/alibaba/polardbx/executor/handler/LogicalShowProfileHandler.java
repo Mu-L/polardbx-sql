@@ -281,8 +281,9 @@ public class LogicalShowProfileHandler extends HandlerCommon {
         } catch (Exception e) {
             throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, e, e.getMessage());
         }
-        List<List<Map<String, Object>>> results = SyncManagerHelper.sync(showProfileSyncAction, schemaName,
-            SyncScope.CURRENT_ONLY);
+        List<List<Map<String, Object>>> results =
+            SyncManagerHelper.syncIgnoreExceptions(showProfileSyncAction, schemaName,
+                SyncScope.CURRENT_ONLY);
         return results;
     }
 }

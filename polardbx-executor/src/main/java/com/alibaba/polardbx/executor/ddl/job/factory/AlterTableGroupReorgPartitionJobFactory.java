@@ -96,11 +96,12 @@ public class AlterTableGroupReorgPartitionJobFactory extends AlterTableGroupBase
         int targetDbCnt = reorgPreparedData.getTargetGroupDetailInfoExRecords().size();
 
         List<String> localities = new ArrayList<>();
-        List<String> targetDbList = new ArrayList<>();
+        List<Pair<String,String>> targetDbList = new ArrayList<>();
         List<String> newPartitions = new ArrayList<>();
 
         for (int i = 0; i < reorgPreparedData.getNewPartitionNames().size(); i++) {
-            targetDbList.add(reorgPreparedData.getTargetGroupDetailInfoExRecords().get(i % targetDbCnt).phyDbName);
+            targetDbList.add(new Pair<>(reorgPreparedData.getTargetGroupDetailInfoExRecords().get(i % targetDbCnt).getPhyDbName(),
+                reorgPreparedData.getTargetGroupDetailInfoExRecords().get(i % targetDbCnt).getGroupName()));
             newPartitions.add(reorgPreparedData.getNewPartitionNames().get(i));
 
             int indexLocality =
@@ -135,7 +136,8 @@ public class AlterTableGroupReorgPartitionJobFactory extends AlterTableGroupBase
         ));
 
         List<DdlTask> bringUpAlterTableGroupTasks =
-            ComplexTaskFactory.bringUpAlterTableGroup(schemaName, tableGroupName, null, taskType,
+            ComplexTaskFactory.bringUpAlterTableGroup(schemaName, tableGroupName, null,
+                preparedData.getOldPartitionNames(), taskType,
                 preparedData.getDdlVersionId(), executionContext);
 
         final String finalStatus =

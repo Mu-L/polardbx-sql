@@ -335,7 +335,7 @@ public abstract class SqlUtil {
             operand.unparse(writer, 0, 0);
         }
         if (call instanceof GroupConcatCall) {
-            writer.print(" " + call.computeAttributesString());
+            call.computeAttributesString(writer);
         }
         writer.endList(frame);
     }
@@ -1101,6 +1101,40 @@ public abstract class SqlUtil {
     }
 
     /**
+     * Detects whether a {@link SqlNode} tree contains a subquery (scalar
+     * subquery, EXISTS or NOT EXISTS). MySQL does not support subqueries
+     * inside a GROUP BY clause, so callers that resolve a GROUP BY alias or
+     * ordinal to its underlying SELECT list expression must use this check
+     * to decide whether to fall back to an ordinal reference instead of
+     * inlining the full expression when generating pushdown SQL.
+     */
+    public static boolean containsSubQuery(SqlNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.getKind() == SqlKind.SCALAR_QUERY
+            || node.getKind() == SqlKind.EXISTS
+            || node.getKind() == SqlKind.NOT_EXISTS
+            || node.getKind() == SqlKind.SELECT) {
+            return true;
+        }
+        if (node instanceof SqlCall) {
+            for (SqlNode operand : ((SqlCall) node).getOperandList()) {
+                if (containsSubQuery(operand)) {
+                    return true;
+                }
+            }
+        } else if (node instanceof SqlNodeList) {
+            for (SqlNode operand : (SqlNodeList) node) {
+                if (containsSubQuery(operand)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * Returns a list of ancestors of {@code predicate} within a given
      * {@code SqlNode} tree.
      *
@@ -1354,6 +1388,27 @@ public abstract class SqlUtil {
         static {
             set.add("SHOW_PROCESSLIST.USER");
         }
+    }
+
+    public static boolean withCTE(SqlNode sqlNode) {
+        if (null != sqlNode
+            && (sqlNode.getKind() == SqlKind.WITH
+            || sqlNode instanceof SqlInsert && ((SqlInsert) sqlNode).getSource() instanceof SqlWith
+            || sqlNode instanceof SqlReplace && ((SqlReplace) sqlNode).getSource() instanceof SqlWith)) {
+            return true;
+        }
+        return false;
+    }
+    public static SqlWith getCTE(SqlNode sqlNode) {
+        SqlWith sqlWith = null;
+        if (sqlNode instanceof SqlWith) {
+            sqlWith = (SqlWith) sqlNode;
+        } else if (sqlNode instanceof SqlInsert && ((SqlInsert) sqlNode).getSource() instanceof SqlWith) {
+            sqlWith = (SqlWith) ((SqlInsert) sqlNode).getSource();
+        } else if (sqlNode instanceof SqlReplace && ((SqlReplace) sqlNode).getSource() instanceof SqlWith) {
+            sqlWith = (SqlWith) ((SqlReplace) sqlNode).getSource();
+        }
+        return sqlWith;
     }
 
 }

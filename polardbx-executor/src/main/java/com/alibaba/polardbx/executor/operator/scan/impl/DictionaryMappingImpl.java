@@ -16,8 +16,14 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableObjectArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.memory.MemoryCounter;
 import com.alibaba.polardbx.executor.operator.scan.BlockDictionary;
 import io.airlift.slice.Slice;
+import it.unimi.dsi.fastutil.objects.MemoryCountableObject2ObjectArrayMap;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -25,13 +31,22 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
-public class DictionaryMappingImpl implements DictionaryMapping {
-    public List<Slice> getMergedDict() {
-        return mergedDict;
+public class DictionaryMappingImpl implements DictionaryMapping, MemoryCountable {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(DictionaryMappingImpl.class).instanceSize();
+    private MemoryCountableObjectArrayList<Slice> mergedDict = new MemoryCountableObjectArrayList<>();
+    private MemoryCountableObject2ObjectArrayMap<Integer, int[]> reMappings =
+        new MemoryCountableObject2ObjectArrayMap<>(
+            MemoryCounter.INTEGER_MEMORY_COUNTER, MemoryCounter.INTEGER_ARRAY_MEMORY_COUNTER
+        );
+
+    public DictionaryMappingImpl() {
+
     }
 
-    private List<Slice> mergedDict = new ArrayList<>();
-    private Map<Integer, int[]> reMappings = new HashMap<>();
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(mergedDict) + FastMemoryCounter.sizeOf(reMappings);
+    }
 
     @Override
     public int[] merge(BlockDictionary dictionary) {
@@ -60,14 +75,11 @@ public class DictionaryMappingImpl implements DictionaryMapping {
 
     @Override
     public long estimatedSize() {
-        AtomicLong estimatedSize = new AtomicLong();
-        for (Slice dictValue : mergedDict) {
-            estimatedSize.addAndGet(dictValue == null ? 0 : dictValue.length());
-        }
+        return getMemoryUsage();
+    }
 
-        reMappings.forEach((integer, intArray) ->
-            estimatedSize.addAndGet(Integer.BYTES + intArray.length * Integer.BYTES));
-        return estimatedSize.get();
+    public List<Slice> getMergedDict() {
+        return mergedDict;
     }
 
     @Override

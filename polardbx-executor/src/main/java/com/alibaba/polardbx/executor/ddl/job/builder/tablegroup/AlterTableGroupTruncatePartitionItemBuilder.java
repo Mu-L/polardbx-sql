@@ -26,6 +26,7 @@ import com.alibaba.polardbx.optimizer.partition.PartitionByDefinition;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfoUtil;
 import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
+import com.alibaba.polardbx.optimizer.utils.SqlIdentifierUtil;
 import org.apache.calcite.rel.core.DDL;
 import org.apache.calcite.sql.SqlNode;
 
@@ -81,8 +82,10 @@ public class AlterTableGroupTruncatePartitionItemBuilder extends AlterTableGroup
 
     @Override
     protected void buildSqlTemplate() {
+        // 修复：使用SqlIdentifierUtil对表名进行转义
+        String escapedTableName = SqlIdentifierUtil.escapeIdentifierString(preparedData.getTableName());
         final SqlNode truncateTableNode =
-            new FastsqlParser().parse("truncate table " + preparedData.getTableName(), executionContext).get(0);
+            new FastsqlParser().parse("truncate table " + escapedTableName, executionContext).get(0);
         ReplaceTableNameWithQuestionMarkVisitor visitor =
             new ReplaceTableNameWithQuestionMarkVisitor(ddlPreparedData.getSchemaName(), executionContext);
         this.originSqlTemplate = this.sqlTemplate;

@@ -1,11 +1,14 @@
 package com.alibaba.polardbx.qatest.mdl;
 
+import com.alibaba.fastjson.JSON;
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.thread.NamedThreadFactory;
-import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
 import com.alibaba.polardbx.qatest.NotThreadSafe.DeadlockTest;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
+import com.alibaba.polardbx.server.TddlLauncher;
 import net.jcip.annotations.NotThreadSafe;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -27,13 +30,14 @@ import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.stream.Collectors;
 
 @NotThreadSafe
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 public class MdlDetectionTest extends DDLBaseNewDBTestCase {
 
-    static Long maxWaitTimeout = 30L;
+    static Long maxWaitTimeout = 10L;
+
+    static Long defaultMdlTimeout = 15L;
 
     @Override
     public boolean usingNewPartDb() {
@@ -85,7 +89,7 @@ public class MdlDetectionTest extends DDLBaseNewDBTestCase {
     }
 
     @Test(timeout = 600000)
-    public void test10MdlDetectionVariablesSetting() throws SQLException {
+    public void test02MdlDetectionVariablesSetting() throws SQLException {
         int sampleTimeout = 3600000;
         final String tableName = "mdl_detection_global_variables_setting";
         final String createTableStmt =
@@ -145,7 +149,7 @@ public class MdlDetectionTest extends DDLBaseNewDBTestCase {
 
                 defaultTimeout = 30;
                 logger.info("mdl detection timeout reset to 15 seconds, and wait for the forth time");
-                JdbcUtil.executeQuerySuccess(connections.get(2), String.format(setGlobalTimeoutSql, 15));
+                JdbcUtil.executeQuerySuccess(connections.get(2), String.format(setGlobalTimeoutSql, defaultMdlTimeout));
                 if (!future.get(defaultTimeout, TimeUnit.SECONDS)) {
                     Assert.fail("Mdl Detection: switch failed!");
                 }
@@ -160,7 +164,68 @@ public class MdlDetectionTest extends DDLBaseNewDBTestCase {
         }
     }
 
+    @Test(timeout = 300000)
+    public void test04MultiDnMdlDeadlock() throws SQLException {
+        final String tableName = "mdl_deadlock_testing_add_column";
 
+        final String dbName = "mdl_deadlock_testing" + "22";
+        final String createDbStmt = String.format("create database if not exists %s mode = auto", dbName);
+        final String ddlStmt =
+            String.format("create table %s(a int, b int) partition by hash(a) partitions 16", tableName);
+        final String setTimeoutSql =
+            String.format("set global %s = 1000", ConnectionParams.PHYSICAL_DDL_MDL_WAITING_TIMEOUT);
+        final String rollbackTimeoutSql =
+            String.format("set global %s = %s", ConnectionParams.PHYSICAL_DDL_MDL_WAITING_TIMEOUT, 5);
+        final String useDb = String.format("use %s", dbName);
+        final String dropDb = String.format("drop database if exists %s", dbName);
+        List<Connection> connections = new ArrayList<>();
+        try {
+            JdbcUtil.executeUpdateSuccess(tddlConnection, createDbStmt);
+            JdbcUtil.executeUpdateSuccess(tddlConnection, useDb);
+            JdbcUtil.executeUpdateSuccess(tddlConnection, ddlStmt);
+            JdbcUtil.executeUpdateSuccess(tddlConnection, setTimeoutSql);
+            for (int i = 0; i < 3; i++) {
+                connections.add(getPolardbxConnection(dbName));
+                connections.get(i).setAutoCommit(false);
+            }
+            ThreadTask threadTask1 = new ThreadTask(connections.get(0), "thread_task1", logger);
+            ThreadTask threadTask2 = new ThreadTask(connections.get(1), "thread_task2", logger);
+            ThreadTask threadTask3 = new ThreadTask(connections.get(2), "thread_task3", logger);
+            threadTask1.startTransaction();
+            threadTask1.execSql(String.format("insert into %s(a) values(0)", tableName));
+            threadTask2.startTransaction();
+            threadTask2.execSql(String.format("insert into %s(a) values(1)", tableName));
+            threadTask3.execSql("select sleep(5);");
+            threadTask3.submitSql(
+                String.format("/*+TDDL:cmd_extra(%s=true,%s=true,%s=4)*/alter table %s add column d int",
+                    ConnectionParams.MERGE_DDL_CONCURRENT, ConnectionParams.MERGE_CONCURRENT,
+                    ConnectionParams.PHYSICAL_DDL_PARALLELISM, tableName));
+            Thread.sleep(5000);
+            threadTask1.submitSql(String.format("insert into %s(a) values(1);commit", tableName));
+            threadTask2.submitSql(String.format("insert into %s(a) values(0);commit", tableName));
+            if (!threadTask3.waitTimeout(10)) {
+                throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, "Expected timeout 10s, but not success");
+            }
+            List<List<Object>> results = JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(tddlConnection, "show global deadlocks"));
+            String mdlDeadlockLog = results.get(1).get(1).toString();
+            logger.info("get result of show global deadlocks " + mdlDeadlockLog);
+            if(!mdlDeadlockLog.contains(dbName) || !mdlDeadlockLog.contains(tableName)) {
+                throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, "Expected mdl deadlock log contains dbname and tablename, but no");
+            }
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        } finally {
+            JdbcUtil.executeUpdateSuccess(tddlConnection, rollbackTimeoutSql);
+            JdbcUtil.executeUpdateSuccess(tddlConnection, dropDb);
+            for (int i = 0; i < 3; i++) {
+                try{
+                    connections.get(i).close();
+                }catch (Exception e){
+
+                }
+            }
+        }
+    }
 
     @Test(timeout = 60000)
     public void test11ExlusiveMdlWaitingForAddColumn() throws SQLException {
@@ -277,32 +342,30 @@ public class MdlDetectionTest extends DDLBaseNewDBTestCase {
         testFramework(tableName, false, ddlStmt, createTableStmt);
     }
 
-    // this testcase would drop all databases to ensure repeating the drop database invalidate detection.
-    // so don't do this after all.
-//    @Ignore
+    // this testcase drops and recreates its own database to verify MDL detection still works after recreation.
     @Test(timeout = 600000)
     public void test90FinallyDropDatabaseCheckValid() throws Exception {
         Connection connection1 = getPolardbxConnection();
         Connection connection2 = getPolardbxConnection();
         Connection connection3 = getPolardbxConnection();
-        String schema = JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(connection2, "select database()")).get(0).get(0).toString();
-        // drop database.
-        List<List<Object>> dbResult = JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(connection1, "show databases"));
-        List<String> dbs = dbResult.stream().map(o->o.get(0).toString()).filter(o->!SystemDbHelper.isDBBuildInExceptCdc(o)).collect(Collectors.toList());
+        String schema =
+            JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(connection2, "select database()")).get(0).get(0)
+                .toString();
+        // drop only the current test database (not all databases).
         String useDb = String.format("use %s", "polardbx");
-        JdbcUtil.executeUpdateSuccess(connection1, useDb);
-        for(String db : dbs) {
-            String dropDb = String.format("DROP DATABASE %s", db);
-            JdbcUtil.executeUpdateSuccess(connection1, dropDb);
-        }
-
-        // create database now.
-        String createDb = String.format("CREATE DATABASE %s MODE = auto", schema);
-        useDb = String.format("USE %s", schema);
-        JdbcUtil.executeUpdateSuccess(connection1, createDb);
         JdbcUtil.executeUpdateSuccess(connection1, useDb);
         JdbcUtil.executeUpdateSuccess(connection2, useDb);
         JdbcUtil.executeUpdateSuccess(connection3, useDb);
+        String dropDb = String.format("DROP DATABASE IF EXISTS %s", schema);
+        JdbcUtil.executeUpdateSuccess(connection1, dropDb);
+
+        // create database now.
+        String createDb = String.format("CREATE DATABASE %s MODE = auto", schema);
+        String useSchema = String.format("USE %s", schema);
+        JdbcUtil.executeUpdateSuccess(connection1, createDb);
+        JdbcUtil.executeUpdateSuccess(connection1, useSchema);
+        JdbcUtil.executeUpdateSuccess(connection2, useSchema);
+        JdbcUtil.executeUpdateSuccess(connection3, useSchema);
 
         final List<Connection> connections = new ArrayList<>(3);
         connections.add(connection1);
@@ -344,7 +407,7 @@ public class MdlDetectionTest extends DDLBaseNewDBTestCase {
         }
     }
 
-    private static void  innerTest(String tableName, List<Connection> connections, String ddl) {
+    private static void innerTest(String tableName, List<Connection> connections, String ddl) {
 
 //        String sql = "insert into " + tableName + " values (0), (1)";
 //        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
@@ -364,12 +427,12 @@ public class MdlDetectionTest extends DDLBaseNewDBTestCase {
 
         for (Future<Boolean> future : futures) {
             try {
-                if (!future.get(maxWaitTimeout, TimeUnit.SECONDS)) {
+                if (!future.get(defaultMdlTimeout + 8, TimeUnit.SECONDS)) {
                     Assert.fail("Mdl Detection: Logical ddl failed!");
                 }
             } catch (TimeoutException e) {
                 e.printStackTrace();
-                Assert.fail("Mdl Detection: Wait for too long, more than maxWaitTimeout seconds in test case!"  );
+                Assert.fail("Mdl Detection: Wait for too long, more than maxWaitTimeout seconds in test case!");
             } catch (Exception e) {
                 Assert.fail("Mdl Detection: failed for unexpected cause!");
             }
@@ -396,7 +459,7 @@ public class MdlDetectionTest extends DDLBaseNewDBTestCase {
     }
 
     private static Future<Boolean> executeSqlAndCommit(ExecutorService threadPool, String tableName,
-                                                Connection connection, String sql) {
+                                                       Connection connection, String sql) {
         return threadPool.submit(() -> {
             try {
                 JdbcUtil.executeUpdate(connection, sql);
@@ -407,7 +470,8 @@ public class MdlDetectionTest extends DDLBaseNewDBTestCase {
         });
     }
 
-    private static void createTable(Connection tddlConnection, String tableName, boolean single, String createTableStmt) {
+    private static void createTable(Connection tddlConnection, String tableName, boolean single,
+                                    String createTableStmt) {
         String sql = "drop table if exists " + tableName;
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 

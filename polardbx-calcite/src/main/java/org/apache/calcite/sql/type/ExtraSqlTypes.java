@@ -45,6 +45,9 @@ public interface ExtraSqlTypes {
 
   // From OpenGIS
   int GEOMETRY = 2015; // TODO: confirm
+
+  // Vector type for ANN (Approximate Nearest Neighbor) search
+  int VECTOR = 2016;
 }
 
 // End ExtraSqlTypes.java

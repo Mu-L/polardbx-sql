@@ -112,6 +112,7 @@ import org.apache.calcite.sql.SqlInsert;
 import org.apache.calcite.sql.SqlIntervalLiteral;
 import org.apache.calcite.sql.SqlIntervalQualifier;
 import org.apache.calcite.sql.SqlJoin;
+import org.apache.calcite.sql.SqlJsonTable;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlMatchRecognize;
@@ -1080,6 +1081,7 @@ SqlValidatorImpl implements SqlValidatorWithHints {
             || topNode.getKind() == SqlKind.CREATE_STORAGE_POOL
             || topNode.getKind() == SqlKind.ALTER_STORAGE_POOL
             || topNode.getKind() == SqlKind.DROP_STORAGE_POOL
+            || topNode.getKind() == SqlKind.CREATE_INDEX_IN_DATABASE
         ) {
             if (topNode.getKind() == SqlKind.CREATE_TABLE) {
                 outermostNode.validate(this, scope);
@@ -2156,7 +2158,8 @@ SqlValidatorImpl implements SqlValidatorWithHints {
                         SqlLiteral.createNull(SqlParserPos.ZERO),
                         null, true, SqlColumnDeclaration.SpecialIndex.PRIMARY,
                         SqlLiteral.createCharString("implicit pk", SqlParserPos.ZERO), null, null, null, false,
-                        SequenceAttribute.Type.GROUP, 1, 0, 100000, false, false, null);
+                        SequenceAttribute.Type.GROUP, 1, 0, 100000, false, false, null, null,
+                        SqlColumnDeclaration.Constraint.PRIMARY_KEY);
                 List<Pair<SqlIdentifier, SqlColumnDeclaration>> sqlColDefs = ((SqlCreateTable) node).getColDefs();
                 if (sqlColDefs == null) {
                     sqlColDefs = new ArrayList<Pair<SqlIdentifier, SqlColumnDeclaration>>();
@@ -2172,7 +2175,7 @@ SqlValidatorImpl implements SqlValidatorWithHints {
                 SqlIndexDefinition implicitPKey =
                     SqlIndexDefinition.localIndex(SqlParserPos.ZERO, false, null, true, null, null, keyName,
                         (SqlIdentifier) ((SqlCreateTable) node).getTargetTable(),
-                        Lists.newArrayList(new SqlIndexColumnName(SqlParserPos.ZERO, implicitColName, null, false)),
+                        Lists.newArrayList(new SqlIndexColumnName(SqlParserPos.ZERO, implicitColName, null, null)),
                         null);
 
                 ((SqlCreateTable) node).setPrimaryKey(implicitPKey);
@@ -2189,7 +2192,8 @@ SqlValidatorImpl implements SqlValidatorWithHints {
             }
 
             // Clear auto partition flag if explicit broadcast or single.
-            if (((SqlCreateTable) node).isBroadCast() || ((SqlCreateTable) node).isSingle()) {
+            if (((SqlCreateTable) node).isBroadCast() || ((SqlCreateTable) node).isSingle()
+                || ((SqlCreateTable) node).isReplicas()) {
                 enableAutoPartition = false;
             }
 
@@ -3084,9 +3088,9 @@ SqlValidatorImpl implements SqlValidatorWithHints {
             final List<RelDataType> typeList = new ArrayList<>();
             for (Ord<SqlNode> column : Ord.zip(rowConstructor.getOperandList())) {
                 final String alias;
-                if (values instanceof SqlValuesTableSource){
+                if (values instanceof SqlValuesTableSource) {
                     alias = SqlValuesTableSource.COLUMN_NAME_PREFIX + column.i;
-                }else{
+                } else {
                     alias = deriveAlias(column.e, column.i);
                 }
                 aliasList.add(alias);
@@ -3791,6 +3795,10 @@ SqlValidatorImpl implements SqlValidatorWithHints {
                 forceNullable);
         case N_ROW:
             return node;
+        case JSON_TABLE:
+            final SqlJsonTable jsonTable = (SqlJsonTable) node;
+            registerNamespace(usingScope, alias, new JsonTableNamespace(this, jsonTable), forceNullable);
+            return node;
         default:
             throw Util.unexpected(kind);
         }
@@ -4360,6 +4368,12 @@ SqlValidatorImpl implements SqlValidatorWithHints {
         case CREATE_STORAGE_POOL:
         case ALTER_STORAGE_POOL:
         case DROP_STORAGE_POOL:
+        case CREATE_EXTERNAL_CATALOG:
+        case DROP_EXTERNAL_CATALOG:
+        case ALTER_EXTERNAL_CATALOG:
+        case CREATE_SECRET:
+        case DROP_SECRET:
+        case ALTER_SECRET:
             setValidatedNodeType(node, RelOptUtil.createDmlRowType(
                 SqlKind.INSERT, typeFactory));
             break;
@@ -4652,6 +4666,16 @@ SqlValidatorImpl implements SqlValidatorWithHints {
                 new CreateDatabaseNamespace(this, (SqlDdl) node, enclosingNode, parentScope);
             registerNamespace(usingScope, alias, createDbNamespace, forceNullable);
             break;
+        case CREATE_INDEX_IN_DATABASE:
+            final CreateIndexInDatabaseNamespace createIndexInDatabaseNamespace =
+                new CreateIndexInDatabaseNamespace(this, (SqlDdl) node, enclosingNode, parentScope);
+            registerNamespace(usingScope, alias, createIndexInDatabaseNamespace, forceNullable);
+            break;
+        case DROP_INDEX_IN_DATABASE:
+            final DropIndexInDatabaseNamespace dropIndexInDatabaseNamespace =
+                new DropIndexInDatabaseNamespace(this, (SqlDdl) node, enclosingNode, parentScope);
+            registerNamespace(usingScope, alias, dropIndexInDatabaseNamespace, forceNullable);
+            break;
         case ALTER_DATABASE:
             final AlterDatabaseNamespace alterDatabaseNamespace =
                 new AlterDatabaseNamespace(this, (SqlDdl) node, enclosingNode, parentScope);
@@ -4792,8 +4816,10 @@ SqlValidatorImpl implements SqlValidatorWithHints {
 
             registerQuery(withScope, null, withItem.query, with,
                 withItem.name.getSimple(), false);
+            // check recursive flag of the entire with clause, but not the whole with clause flag
+            boolean isRecursive = isWithItemRecursive(withItem, with);
             WithItemNamespace wns =
-                new WithItemNamespace(this, withItem, enclosingNode, with.isRecursive.booleanValue());
+                new WithItemNamespace(this, withItem, enclosingNode, isRecursive);
             registerNamespace(null, alias,
                 wns,
                 false);
@@ -4802,6 +4828,25 @@ SqlValidatorImpl implements SqlValidatorWithHints {
 
         registerQuery(scope, null, with.body, enclosingNode, alias, forceNullable,
             checkUpdate);
+    }
+
+    /**
+     * Need to determine whether each withItem itself is recursive, rather than using the recursive flag of the entire with clause
+     * Determine whether a single WithItem is recursive
+     *
+     * @param withItem CTE item
+     * @param with query node
+     * @return whether it is recursive
+     */
+    private boolean isWithItemRecursive(SqlWithItem withItem, SqlWith with) {
+        // check recursive flag of the entire with clause
+        if (!with.isRecursive.booleanValue()) {
+            return false;
+        }
+
+        // if the entire WITH clause is recursive,
+        // need to further check whether the single item is really recursive
+        return WithNamespace.hasSelfReference(withItem, withItem.query);
     }
 
     /**
@@ -5102,6 +5147,9 @@ SqlValidatorImpl implements SqlValidatorWithHints {
         case OVER:
             validateOver((SqlCall) node, scope);
             break;
+        case JSON_TABLE:
+            validateJsonTable((SqlCall) node, scope);
+            break;
         default:
             validateQuery(node, scope, targetRowType);
             break;
@@ -5114,6 +5162,32 @@ SqlValidatorImpl implements SqlValidatorWithHints {
 
     protected void validateOver(SqlCall call, SqlValidatorScope scope) {
         throw new AssertionError("OVER unexpected in this context");
+    }
+
+    /**
+     * Validates a JSON_TABLE expression.
+     *
+     * @param call JSON_TABLE call
+     * @param scope Scope within which the JSON_TABLE occurs
+     */
+    protected void validateJsonTable(SqlCall call, SqlValidatorScope scope) {
+        if (!(call instanceof SqlJsonTable)) {
+            throw newValidationError(call, RESOURCE.columnNotFound("Invalid JSON_TABLE call"));
+        }
+
+        final SqlJsonTable jsonTable = (SqlJsonTable) call;
+
+        // Validate that json_path is not null
+        SqlNode pathExpr = jsonTable.getPathExpr();
+        if (pathExpr == null) {
+            throw newValidationError(call, RESOURCE.columnNotFound("JSON_TABLE path expression is required"));
+        }
+
+        // Validate that columns are not empty
+        List<SqlJsonTable.JsonTableColumn> columns = jsonTable.getColumns();
+        if (columns == null || columns.isEmpty()) {
+            throw newValidationError(call, RESOURCE.columnNotFound("JSON_TABLE columns are required"));
+        }
     }
 
     private void checkRollUpInUsing(SqlIdentifier identifier, SqlNode leftOrRight) {
@@ -5623,8 +5697,7 @@ SqlValidatorImpl implements SqlValidatorWithHints {
     }
 
     public static void validateUnsupportedTypeWithCciWhenModifyColumn(SqlColumnDeclaration columnDeclaration) {
-        final List<String> deniedTypes = Arrays.asList(
-            "text", "binary", "varbinary", "blob", "timestamp", "time", "year", "json", "enum", "set", "point", "geometry");
+        final List<String> deniedTypes = Arrays.asList("point", "geometry");
         String columnType = columnDeclaration.getDataType().getTypeName().getLastName().toLowerCase();
         if (deniedTypes.contains(columnType)) {
             throw new TddlRuntimeException(ErrorCode.ERR_UNSUPPORTED_COLUMN_TYPE_WITH_CCI,
@@ -5633,9 +5706,9 @@ SqlValidatorImpl implements SqlValidatorWithHints {
     }
 
     public static void validateUnsupportedColumnTypeWithCci(MySqlCreateTableStatement stmt, List<String> primaryKeys,
-                                                           List<String> sortKeys, List<String> shardingKeys) {
+                                                            List<String> sortKeys, List<String> shardingKeys) {
         final String[] deniedTypes = {
-            "float", "double", "decimal", "numeric", "json", "enum", "set", "point", "geometry"};
+            "float", "double", "json", "enum", "set", "point", "geometry"};
 
         final Iterator<SQLTableElement> it = stmt.getTableElementList().iterator();
         while (it.hasNext()) {
@@ -6291,8 +6364,6 @@ SqlValidatorImpl implements SqlValidatorWithHints {
             SqlNode anchor = null;
             if (withItem.query.getKind() == UNION) {
                 anchor = ((SqlCall) withItem.query).operand(0);
-            } else if (withItem.query instanceof SqlSelect) {
-                anchor = tryFindAnchorPart((SqlSelect) withItem.query);
             }
 
             if (anchor != null) {
@@ -8551,6 +8622,56 @@ SqlValidatorImpl implements SqlValidatorWithHints {
 
         CreateDatabaseNamespace(SqlValidatorImpl validator, SqlDdl node,
                                 SqlNode enclosingNode, SqlValidatorScope scope) {
+            super(validator, enclosingNode);
+            this.current = Preconditions.checkNotNull(node);
+            this.scope = scope;
+        }
+
+        @Override
+        public SqlNode getNode() {
+            return current;
+        }
+
+        @Override
+        protected RelDataType validateImpl(RelDataType targetRowType) {
+            return current.getOperator().deriveType(this.validator, this.scope, this.current);
+        }
+    }
+
+    /**
+     * Namespace for a CreateIndexInDatabaseNamespace statement.
+     */
+    private static class CreateIndexInDatabaseNamespace extends AbstractNamespace {
+        private final SqlCall current;
+        private final SqlValidatorScope scope;
+
+        CreateIndexInDatabaseNamespace(SqlValidatorImpl validator, SqlDdl node,
+                                       SqlNode enclosingNode, SqlValidatorScope scope) {
+            super(validator, enclosingNode);
+            this.current = Preconditions.checkNotNull(node);
+            this.scope = scope;
+        }
+
+        @Override
+        public SqlNode getNode() {
+            return current;
+        }
+
+        @Override
+        protected RelDataType validateImpl(RelDataType targetRowType) {
+            return current.getOperator().deriveType(this.validator, this.scope, this.current);
+        }
+    }
+
+    /**
+     * Namespace for a DropIndexInDatabaseNamespace statement.
+     */
+    private static class DropIndexInDatabaseNamespace extends AbstractNamespace {
+        private final SqlCall current;
+        private final SqlValidatorScope scope;
+
+        DropIndexInDatabaseNamespace(SqlValidatorImpl validator, SqlDdl node,
+                                     SqlNode enclosingNode, SqlValidatorScope scope) {
             super(validator, enclosingNode);
             this.current = Preconditions.checkNotNull(node);
             this.scope = scope;

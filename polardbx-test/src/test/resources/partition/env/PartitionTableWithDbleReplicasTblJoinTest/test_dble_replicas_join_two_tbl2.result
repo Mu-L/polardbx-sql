@@ -1,0 +1,36 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+## test dble_db
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+set ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING=true;
+set ENABLE_RANDOM_PHY_TABLE_NAME=false;
+set ENABLE_REPLICAS_RANDOM_READ= false;
+use polardbx;
+drop database if exists mydbledb2;
+## USE_DN_LIST_MSG
+create database if not exists mydbledb2 mode = 'auto' locality='dble_config={"group_config":{"mydbledb2_g1":["$dn1","mydbledb2_00"],"mydbledb2_g2":["$dn2","mydbledb2_01"] }}';
+use mydbledb2;
+CREATE TABLE `my_r_t1_g1g2` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_pools=mydbledb2_g1,mydbledb2_g2';
+CREATE TABLE `my_r_t2_g1g2` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_pools=mydbledb2_g1,mydbledb2_g2';
+CREATE TABLE `my_r_t3_g2g1` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_pools=mydbledb2_g2,mydbledb2_g1';
+explain select t1.a from my_r_t1_g1g2 t1 join my_r_t2_g1g2 t2 on t1.a=t2.a;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb2_g1.my_r_t1_g1g2,my_r_t2_g1g2", sql="SELECT `t1`.`a` AS `a` FROM `my_r_t1_g1g2` AS `t1` INNER JOIN `my_r_t2_g1g2` AS `t2` ON (`t1`.`a` = `t2`.`a`)")
+explain select t1.a from my_r_t1_g1g2 t1 join my_r_t3_g2g1 t3 on t1.a=t3.a;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb2_g1.my_r_t1_g1g2,my_r_t3_g2g1", sql="SELECT `t1`.`a` AS `a` FROM `my_r_t1_g1g2` AS `t1` INNER JOIN `my_r_t3_g2g1` AS `t3` ON (`t1`.`a` = `t3`.`a`)")

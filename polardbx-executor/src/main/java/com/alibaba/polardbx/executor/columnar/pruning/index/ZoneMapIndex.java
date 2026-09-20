@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.columnar.pruning.index;
 
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
@@ -61,7 +62,7 @@ public class ZoneMapIndex extends BaseColumnIndex {
         this.dataMap = dataMap;
         this.nullValMap = nullValMap;
 
-        int maxGroupSize = InstConfUtil.getInt(ZONEMAP_MAX_GROUP_SIZE);
+        int maxGroupSize = DynamicConfig.getInstance().getZoneMapMaxGroupSize();
         for (int index : dataMap.keySet()) {
             ArrayList<Object> dataTemp = dataMap.get(index);
             Map<String, RoaringBitmap> groupData = Maps.newConcurrentMap();
@@ -147,7 +148,7 @@ public class ZoneMapIndex extends BaseColumnIndex {
      * @param includeEnd is upper value included
      */
     public void prune(int colId, Object startObj, boolean includeStart, Object endObj, boolean includeEnd,
-                      RoaringBitmap cur) {
+                      RoaringBitmap cur, IndexPruneContext ipc) {
         //startObj/endObj == null means lowerBound/UpperBound is unlimited
         // paramTransform() == null means type of startObj is unsupported
         Object start;
@@ -155,7 +156,7 @@ public class ZoneMapIndex extends BaseColumnIndex {
             //lower bound is unlimited
             start = null;
         } else {
-            start = paramTransform(startObj, dtMap.get(colId), Long.class);
+            start = paramTransform(startObj, dtMap.get(colId), ipc, Long.class);
             //type is unsupported
             if (start == null) {
                 return;
@@ -167,7 +168,7 @@ public class ZoneMapIndex extends BaseColumnIndex {
             //upper bound is unlimited
             end = null;
         } else {
-            end = paramTransform(endObj, dtMap.get(colId), Long.class);
+            end = paramTransform(endObj, dtMap.get(colId), ipc, Long.class);
             //type is unsupported
             if (end == null) {
                 return;

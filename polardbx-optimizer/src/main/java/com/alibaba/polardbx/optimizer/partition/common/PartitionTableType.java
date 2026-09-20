@@ -29,6 +29,7 @@ public enum PartitionTableType {
     GSI_TABLE(TablePartitionRecord.PARTITION_TABLE_TYPE_GSI_TABLE),
     SINGLE_TABLE(TablePartitionRecord.PARTITION_TABLE_TYPE_SINGLE_TABLE),
     BROADCAST_TABLE(TablePartitionRecord.PARTITION_TABLE_TYPE_BROADCAST_TABLE),
+    REPLICAS_TABLE(TablePartitionRecord.PARTITION_TABLE_TYPE_REPLICAS_TABLE),
     GSI_BROADCAST_TABLE(TablePartitionRecord.PARTITION_TABLE_TYPE_GSI_BROADCAST_TABLE),
     GSI_SINGLE_TABLE(TablePartitionRecord.PARTITION_TABLE_TYPE_GSI_SINGLE_TABLE),
     OSS_TABLE(TablePartitionRecord.PARTITION_TABLE_TYPE_OSS_TABLE),
@@ -51,6 +52,8 @@ public enum PartitionTableType {
             return SINGLE_TABLE;
         } else if (tblTypeVal == TablePartitionRecord.PARTITION_TABLE_TYPE_BROADCAST_TABLE) {
             return BROADCAST_TABLE;
+        } else if (tblTypeVal == TablePartitionRecord.PARTITION_TABLE_TYPE_REPLICAS_TABLE) {
+            return REPLICAS_TABLE;
         } else if (tblTypeVal == TablePartitionRecord.PARTITION_TABLE_TYPE_GSI_SINGLE_TABLE) {
             return GSI_SINGLE_TABLE;
         } else if (tblTypeVal == TablePartitionRecord.PARTITION_TABLE_TYPE_GSI_BROADCAST_TABLE) {
@@ -72,6 +75,8 @@ public enum PartitionTableType {
             tableTypeName = "SINGLE_TABLE";
         } else if (this.tblTypeVal == TablePartitionRecord.PARTITION_TABLE_TYPE_BROADCAST_TABLE) {
             tableTypeName = "BROADCAST_TABLE";
+        } else if (this.tblTypeVal == TablePartitionRecord.PARTITION_TABLE_TYPE_REPLICAS_TABLE) {
+            tableTypeName = "REPLICAS_TABLE";
         } else if (this.tblTypeVal == TablePartitionRecord.PARTITION_TABLE_TYPE_GSI_BROADCAST_TABLE) {
             tableTypeName = "GSI_BROADCAST_TABLE";
         } else if (this.tblTypeVal == TablePartitionRecord.PARTITION_TABLE_TYPE_GSI_SINGLE_TABLE) {
@@ -106,5 +111,24 @@ public enum PartitionTableType {
 
     public boolean isA(@NotNull EnumSet<PartitionTableType> set) {
         return set.contains(this);
+    }
+
+    public static final EnumSet<PartitionTableType> TABLE_TYPES_WITHOUT_PARTITION_KEY = EnumSet.of(
+        SINGLE_TABLE,
+        BROADCAST_TABLE,
+        REPLICAS_TABLE,
+        GSI_SINGLE_TABLE,
+        GSI_BROADCAST_TABLE);
+
+    public static boolean isTableTypeWithoutPartitionKey(PartitionTableType tableType) {
+        return TABLE_TYPES_WITHOUT_PARTITION_KEY.contains(tableType);
+    }
+
+    public static final EnumSet<PartitionTableType> SINGLE_TABLE_TYPES = EnumSet.of(
+        SINGLE_TABLE,
+        GSI_SINGLE_TABLE);
+
+    public static boolean isSingleTableType(PartitionTableType tableType) {
+        return SINGLE_TABLE_TYPES.contains(tableType);
     }
 }

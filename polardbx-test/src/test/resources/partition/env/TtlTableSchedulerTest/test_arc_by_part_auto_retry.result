@@ -1,0 +1,90 @@
+## DISABLE_FAST_SQL_PARSER
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00'
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false
+use polardbx
+drop database if exists test_arcpart_retry_db
+create database if not exists test_arcpart_retry_db mode='auto'
+use test_arcpart_retry_db
+## create table
+drop table if exists ttl_rng_t1
+create table ttl_rng_t1(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by range columns(`b`)
+(
+partition p0 values less than ('1970-01-01'),
+partition p1 values less than ('1970-02-01'),
+partition p2 values less than ('1970-03-01')
+)
+alter table ttl_rng_t1
+modify ttl
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_job = cron '0 */1 * * * ? *' timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='partition',
+archive_table_pre_allocate=2,
+archive_table_post_allocate=4
+show create table ttl_rng_t1
+Table,Create Table
+ttl_rng_t1,CREATE TABLE `ttl_rng_t1` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 */1 * * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 4 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p0 VALUES LESS THAN ('1970-01-01 00:00:00') ENGINE = InnoDB,
+ PARTITION p1 VALUES LESS THAN ('1970-02-01 00:00:00') ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN ('1970-03-01 00:00:00') ENGINE = InnoDB)
+drop table if exists ttl_rng_t2
+create table ttl_rng_t2(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by range columns(`b`)
+(
+partition p0 values less than ('1970-01-01'),
+partition p1 values less than ('1970-02-01'),
+partition p2 values less than ('1970-03-01')
+)
+alter table ttl_rng_t2
+modify ttl
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_job = cron '0 */1 * * * ? *' timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='partition',
+archive_table_pre_allocate=2,
+archive_table_post_allocate=4
+show create table ttl_rng_t2
+Table,Create Table
+ttl_rng_t2,CREATE TABLE `ttl_rng_t2` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 */1 * * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 4 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p0 VALUES LESS THAN ('1970-01-01 00:00:00') ENGINE = InnoDB,
+ PARTITION p1 VALUES LESS THAN ('1970-02-01 00:00:00') ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN ('1970-03-01 00:00:00') ENGINE = InnoDB)
+## error_msg: $# ROLLBACK_COMPLETED #$
+/*+TDDL:CMD_EXTRA(TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00',DDL_TASK_ERROR_RETRY_WAIT_TIME=1,TTL_ALTER_ADD_PART_STMT_EXTRA_PARAMS='SOCKET_TIMEOUT=500,FP_FAIL_ON_SET_TABLE_GROUP_CHANGE_META=true,FP_SUSPEND_ON_SET_TABLE_GROUP_CHANGE_META=3000')*/alter table `ttl_rng_t1` cleanup expired data
+ROLLBACK_COMPLETED
+select sleep(2)
+sleep(2)
+0
+## error_msg: $# FP_FAILED_TABLES_SYNC #$
+/*+TDDL:CMD_EXTRA(TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00',DDL_TASK_ERROR_RETRY_WAIT_TIME=1,TTL_ALTER_ADD_PART_STMT_EXTRA_PARAMS='SOCKET_TIMEOUT=500,FP_FAILED_TABLES_SYNC=true')*/alter table `ttl_rng_t1` cleanup expired data
+FP_FAILED_TABLES_SYNC
+use polardbx
+drop database if exists test_arcpart_retry_db;

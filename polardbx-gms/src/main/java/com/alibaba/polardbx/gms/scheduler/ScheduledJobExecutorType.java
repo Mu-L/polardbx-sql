@@ -19,18 +19,19 @@ package com.alibaba.polardbx.gms.scheduler;
 import com.alibaba.polardbx.gms.module.Module;
 
 import static com.alibaba.polardbx.gms.module.Module.METRIC;
-import static com.alibaba.polardbx.gms.module.Module.MODULE_LOG;
 import static com.alibaba.polardbx.gms.module.Module.OPTIMIZER;
 import static com.alibaba.polardbx.gms.module.Module.OSS;
+import static com.alibaba.polardbx.gms.module.Module.SCHEDULE_JOB;
 import static com.alibaba.polardbx.gms.module.Module.SPM;
 import static com.alibaba.polardbx.gms.module.Module.STATISTICS;
 import static com.alibaba.polardbx.gms.module.Module.TRX;
+import static com.alibaba.polardbx.gms.module.Module.TTL;
 import static com.alibaba.polardbx.gms.module.Module.UNKNOWN;
 
 public enum ScheduledJobExecutorType {
 
     LOCAL_PARTITION(UNKNOWN),
-    TTL_JOB(UNKNOWN),
+    TTL_JOB(TTL),
     REBALANCE(UNKNOWN),
     PARTITION_VISUALIZER(UNKNOWN),
     REFRESH_MATERIALIZED_VIEW(UNKNOWN),
@@ -46,13 +47,16 @@ public enum ScheduledJobExecutorType {
     OPTIMIZER_ALERT(OPTIMIZER),
     AUTO_SPLIT_TABLE_GROUP(UNKNOWN),
     PERSIST_GSI_STATISTICS(UNKNOWN),
+    PURGE_RECYLE_BIN(SCHEDULE_JOB),
     @Deprecated
     CLEAN_LOG_TABLE(TRX),
     CLEAN_LOG_TABLE_V2(TRX),
     CHECK_CCI(TRX),
     GENERATE_COLUMNAR_SNAPSHOT(TRX),
 
-    LOG_SYSTEM_METRICS(METRIC);
+    LOG_SYSTEM_METRICS(METRIC),
+    COLUMNAR_WARMUP(UNKNOWN),
+    CLEAN_CACHE_FILE_MAPPING(SCHEDULE_JOB);
 
     ScheduledJobExecutorType(Module module) {
         m = module;

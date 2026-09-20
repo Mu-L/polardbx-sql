@@ -16,8 +16,23 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
-public interface GroupHashMap {
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.executor.chunk.Chunk;
+
+public interface GroupHashMap extends MemoryCountable {
+
+    default int innerPut(Chunk chunk, int position, int groupId) {
+        return 0;
+    }
+
+    default int getGroupCount() {
+        return 0;
+    }
 
     long estimateSize();
 
+    @Override
+    default long getMemoryUsage() {
+        return 0;
+    }
 }

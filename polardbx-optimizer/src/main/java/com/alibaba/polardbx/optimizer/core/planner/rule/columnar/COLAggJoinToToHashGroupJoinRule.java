@@ -20,10 +20,12 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.core.planner.rule.implement.AggJoinToToHashGroupJoinRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.RuleUtils;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import com.alibaba.polardbx.optimizer.core.rel.HashGroupJoin;
 import com.alibaba.polardbx.optimizer.hint.operator.HintType;
 import com.alibaba.polardbx.optimizer.hint.util.CheckJoinHint;
+import com.alibaba.polardbx.optimizer.utils.CalciteUtils;
 import com.google.common.collect.ImmutableList;
 import org.apache.calcite.plan.RelOptCost;
 import org.apache.calcite.plan.RelOptRuleCall;
@@ -34,11 +36,13 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.logical.LogicalAggregate;
 import org.apache.calcite.rel.logical.LogicalJoin;
+import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.util.ImmutableIntList;
 import org.apache.calcite.util.mapping.IntPair;
 import org.apache.calcite.util.mapping.Mappings;
+import org.apache.commons.collections.CollectionUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -62,34 +66,29 @@ public class COLAggJoinToToHashGroupJoinRule extends AggJoinToToHashGroupJoinRul
         CBOUtil.RexNodeHolder equalConditionHolder,
         CBOUtil.RexNodeHolder otherConditionHolder) {
         List<Pair<RelDistribution, Pair<RelNode, RelNode>>> implementationList = new ArrayList<>();
-        if (PlannerContext.getPlannerContext(call).getParamManager()
-            .getBoolean(ConnectionParams.ENABLE_PARTITION_WISE_JOIN)) {
-            List<Pair<List<Integer>, List<Integer>>> keyPairList = new ArrayList<>();
-            JoinInfo joinInfo = JoinInfo.of(left, right, equalConditionHolder.getRexNode());
-            for (IntPair pair : joinInfo.pairs()) {
-                keyPairList.add(Pair.of(ImmutableIntList.of(pair.source), ImmutableIntList.of(pair.target)));
-            }
-            Mappings.TargetMapping mapping =
-                Mappings.createShiftMapping(right.getRowType().getFieldCount(),
-                    left.getRowType().getFieldCount(),
-                    0,
-                    right.getRowType().getFieldCount());
-
-            CBOUtil.columnarHashDistribution(
-                keyPairList,
-                join,
-                left,
-                right,
-                mapping,
-                implementationList);
-
-            CBOUtil.columnarBroadcastDistribution(
-                join,
-                left,
-                right,
-                implementationList);
+        List<Pair<List<Integer>, List<Integer>>> keyPairList = new ArrayList<>();
+        JoinInfo joinInfo = JoinInfo.of(left, right, equalConditionHolder.getRexNode());
+        for (IntPair pair : joinInfo.pairs()) {
+            keyPairList.add(Pair.of(ImmutableIntList.of(pair.source), ImmutableIntList.of(pair.target)));
         }
+        Mappings.TargetMapping mapping =
+            Mappings.createShiftMapping(right.getRowType().getFieldCount(),
+                left.getRowType().getFieldCount(),
+                0,
+                right.getRowType().getFieldCount());
 
+        if (PlannerContext.getPlannerContext(call).getParamManager()
+            .getBoolean(ConnectionParams.ENABLE_PARTITION_WISE) &&
+            PlannerContext.getPlannerContext(call).getParamManager()
+                .getBoolean(ConnectionParams.ENABLE_PARTITION_WISE_JOIN)) {
+            CBOUtil.columnarHashDistribution(keyPairList, join, left, right, mapping, implementationList);
+        }
+        nonePartitionWiseJoin(join, left, right, joinInfo, implementationList, true);
+        if (PlannerContext.getPlannerContext(call).getParamManager()
+            .getBoolean(ConnectionParams.ENABLE_BROADCAST_JOIN)) {
+            CBOUtil.columnarBroadcastDistribution(join, left, right, implementationList);
+        }
+        nonePartitionWiseJoin(join, left, right, joinInfo, implementationList, false);
         for (Pair<RelDistribution, Pair<RelNode, RelNode>> implementation : implementationList) {
             HashGroupJoin newAgg = HashGroupJoin.create(
                 join.getTraitSet().replace(outConvention).replace(implementation.getKey()),
@@ -116,6 +115,25 @@ public class COLAggJoinToToHashGroupJoinRule extends AggJoinToToHashGroupJoinRul
             } else {
                 call.transformTo(newAgg);
             }
+        }
+    }
+
+    private void nonePartitionWiseJoin(LogicalJoin join,
+                                       RelNode left,
+                                       RelNode right,
+                                       JoinInfo joinInfo,
+                                       List<Pair<RelDistribution, Pair<RelNode, RelNode>>> implementationList,
+                                       boolean pruning) {
+        if (CollectionUtils.isEmpty(implementationList)) {
+            if (pruning && CBOUtil.groupSmall(left, right, joinInfo.leftKeys, joinInfo.rightKeys)) {
+                return;
+            }
+            RelDataType keyDataType = CalciteUtils.getJoinKeyDataType(
+                join.getCluster().getTypeFactory(), join, joinInfo.leftKeys, joinInfo.rightKeys);
+            // Hash Shuffle
+            RelNode hashLeft = RuleUtils.ensureKeyDataTypeDistribution(left, keyDataType, joinInfo.leftKeys);
+            RelNode hashRight = RuleUtils.ensureKeyDataTypeDistribution(right, keyDataType, joinInfo.rightKeys);
+            implementationList.add(Pair.of(RelDistributions.ANY, Pair.of(hashLeft, hashRight)));
         }
     }
 }

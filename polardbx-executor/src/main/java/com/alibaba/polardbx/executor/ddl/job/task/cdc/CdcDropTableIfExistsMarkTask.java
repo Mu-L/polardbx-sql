@@ -19,12 +19,14 @@ package com.alibaba.polardbx.executor.ddl.job.task.cdc;
 import com.alibaba.fastjson.annotation.JSONCreator;
 import com.alibaba.polardbx.common.cdc.CdcDdlMarkVisibility;
 import com.alibaba.polardbx.common.cdc.CdcManagerHelper;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.druid.DbType;
 import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
 import com.alibaba.polardbx.druid.sql.ast.SQLStatement;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLPropertyExpr;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLDropTableStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLExprTableSource;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlHintStatement;
 import com.alibaba.polardbx.druid.sql.parser.SQLParserUtils;
 import com.alibaba.polardbx.druid.sql.parser.SQLStatementParser;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
@@ -77,8 +79,8 @@ public class CdcDropTableIfExistsMarkTask extends BaseDdlTask {
             // 历史上cdc下游依据job_id是否为空来判断是否需要对打标sql进行apply，如果不为空则进行apply，如果为空则不进行apply
             // 所以此处需要继续保持job_id为空，来解决兼容性问题。否则，当只升级CN、没有升级CDC时，老版本的CDC无法识别是真实建表，还是单纯打标，会触发问题
             CdcManagerHelper.getInstance().notifyDdlNew(schemaName, tableName, SqlKind.DROP_TABLE.name(),
-                ddlContext.getDdlStmt(), ddlContext.getDdlType(), null, getTaskId(),
-                CdcDdlMarkVisibility.Public, buildExtendParameter(executionContext));
+                ddlContext.getDdlStmt(), ddlContext.getDdlType(), isMarkJobId(executionContext) ? jobId : null,
+                getTaskId(), CdcDdlMarkVisibility.Public, buildExtendParameter(executionContext));
         } else {
             log.warn("table {} is currently present, cdc ddl mark for drop table with if exits is ignored, sql {}",
                 tableName, ddlContext.getDdlStmt());
@@ -88,7 +90,18 @@ public class CdcDropTableIfExistsMarkTask extends BaseDdlTask {
     public static void checkTableName(String sql) {
         SQLStatementParser parser = SQLParserUtils.createSQLStatementParser(sql, DbType.mysql, SQL_PARSE_FEATURES);
         List<SQLStatement> statementList = parser.parseStatementList();
-        SQLDropTableStatement dropTableStatement = (SQLDropTableStatement) statementList.get(0);
+        SQLStatement statement = statementList.get(0);
+        SQLDropTableStatement dropTableStatement = null;
+
+        if (statement instanceof MySqlHintStatement) {
+            MySqlHintStatement mySqlHintStatement = (MySqlHintStatement) statement;
+            dropTableStatement = (SQLDropTableStatement) mySqlHintStatement.getHintStatements().get(0);
+        } else if (statement instanceof SQLDropTableStatement) {
+            dropTableStatement = (SQLDropTableStatement) statement;
+        } else {
+            throw new RuntimeException("sql is not drop table statement or hint statement");
+        }
+
         for (SQLExprTableSource tableSource : dropTableStatement.getTableSources()) {
             SQLExpr sqlName = tableSource.getExpr();
             if (sqlName instanceof SQLPropertyExpr) {
@@ -98,5 +111,9 @@ public class CdcDropTableIfExistsMarkTask extends BaseDdlTask {
                 }
             }
         }
+    }
+
+    private boolean isMarkJobId(ExecutionContext executionContext) {
+        return executionContext.getParamManager().getBoolean(ConnectionParams.CDC_DDL_MARK_WITH_DETAIL_META_ENABLE);
     }
 }

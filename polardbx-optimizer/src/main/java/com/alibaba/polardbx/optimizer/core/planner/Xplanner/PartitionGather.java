@@ -20,6 +20,8 @@ package com.alibaba.polardbx.optimizer.core.planner.Xplanner;
 
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.Parameters;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
@@ -47,12 +49,27 @@ public class PartitionGather extends RelVisitor {
     protected static final Logger logger = LoggerFactory.getLogger(PartitionGather.class);
 
     final ExecutionContext ec;
+    // For test only. When true, rethrow errors raised during gathering instead of swallowing
+    // them, so the switchover upsert NPE can be reproduced through SQL execution.
+    final boolean rethrowOnError;
     @Getter
     // schema -> group -> isWrite
     final Map<String, Map<String, Boolean>> targetGroups = new HashMap<>();
 
     public PartitionGather(ExecutionContext ec) {
         this.ec = ec;
+        this.rethrowOnError = resolveRethrowOnError(ec);
+    }
+
+    private static boolean resolveRethrowOnError(ExecutionContext ec) {
+        try {
+            if (ec != null && ec.getParamManager() != null) {
+                return ec.getParamManager().getBoolean(ConnectionParams.FORCE_SWITCHOVER_CHECK_FOR_TEST);
+            }
+        } catch (Throwable ignore) {
+            // ignore and keep default behavior
+        }
+        return false;
     }
 
     @Override
@@ -110,10 +127,20 @@ public class PartitionGather extends RelVisitor {
                     }
 
                     if (null == logicalInsert.getTargetTablesHintCache()) {
-                        RexUtils.updateParam(logicalInsert, executionContext, true, null);
+                        // Partition routing only depends on the INSERT VALUES tuples (handled by
+                        // replaceExpressionWithLiteralParam inside updateParam). The ON DUPLICATE KEY
+                        // UPDATE list must NOT be evaluated here: it may contain a RexInputRef which,
+                        // when evaluated against a null row, throws NPE and aborts partition gathering
+                        // (silently disabling switchover reschedule protection for upserts).
+                        RexUtils.updateParam(logicalInsert, executionContext, false, null);
                     }
 
-                    final List<RelNode> inputs = logicalInsert.getPhyPlanForDisplay(executionContext, logicalInsert);
+                    // Collect target groups using the pure-INSERT physical plan. For an upsert the
+                    // ON DUPLICATE KEY UPDATE list is irrelevant to routing, and building the upsert
+                    // physical SQL would reference duplicate-key-update parameters that are not
+                    // materialized here (they were intentionally skipped above), which would NPE.
+                    // The primary INSERT writer routes purely on the INSERT VALUES, so use it.
+                    final List<RelNode> inputs = gatherInsertPhyPlan(logicalInsert, executionContext);
                     for (final RelNode phyOps : inputs) {
                         if (phyOps instanceof PhyTableOperation) {
                             targetGroups.compute(((PhyTableOperation) phyOps).getSchemaName(), (k, v) -> {
@@ -161,8 +188,27 @@ public class PartitionGather extends RelVisitor {
             }
         } catch (Exception e) {
             logger.error("Error in PartitionGather", e);
+            if (rethrowOnError) {
+                throw GeneralUtil.nestedException(e);
+            }
             return;
         }
         node.childrenAccept(this);
+    }
+
+    /**
+     * Collect the physical plan used only to gather target groups for routing.
+     *
+     * <p>For an upsert, {@code LogicalUpsert#getPhyPlanForDisplay} rebuilds the physical SQL with the
+     * ON DUPLICATE KEY UPDATE list, whose duplicate-key-update parameters are intentionally not
+     * materialized during partition gathering (see updateParam called with false). Building it would
+     * therefore NPE. Routing only depends on the INSERT VALUES, so use the primary INSERT writer,
+     * which shards purely on the VALUES tuples.
+     */
+    private List<RelNode> gatherInsertPhyPlan(LogicalInsert logicalInsert, ExecutionContext executionContext) {
+        if (logicalInsert.isUpsert() && null != logicalInsert.getPrimaryInsertWriter()) {
+            return logicalInsert.getPrimaryInsertWriter().getInput(executionContext);
+        }
+        return logicalInsert.getPhyPlanForDisplay(executionContext, logicalInsert);
     }
 }

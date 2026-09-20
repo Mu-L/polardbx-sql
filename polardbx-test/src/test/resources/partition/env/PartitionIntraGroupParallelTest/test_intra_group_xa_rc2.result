@@ -1,4 +1,5 @@
 ## DISABLE_FAST_SQL_PARSER
+SET SESSION GROUP_PARALLELISM=8
 CREATE TABLE `shipment_header` (
 `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '??????',
 `warehouseCode` varchar(50) NOT NULL COMMENT '??',
@@ -13,59 +14,59 @@ SUBPARTITION BY KEY(`id`) SUBPARTITIONS 4
 PARTITION p1 VALUES IN ('021DC1'),
 PARTITION p2 VALUES IN ('573DC'),
 PARTITION pd VALUES IN (DEFAULT)
-);
-set autocommit=true;
-set TRANSACTION_POLICY='TSO';
-set enable_auto_commit_tso = false;
-set TX_ISOLATION='REPEATABLE-READ';
-set TRANSACTION_ISOLATION='REPEATABLE-READ';
-set ALLOW_GROUP_PARALLELISM_WITHOUT_SHARE_READVIEW=true;
-trace SELECT *  FROM shipment_header  WHERE warehouseCode = '573DC'    AND (primaryWaybillCode ='21312'      OR secondWaybillCodes = '21312');
+)
+set autocommit=true
+set TRANSACTION_POLICY='TSO'
+set enable_auto_commit_tso = false
+set TX_ISOLATION='REPEATABLE-READ'
+set TRANSACTION_ISOLATION='REPEATABLE-READ'
+set ALLOW_GROUP_PARALLELISM_WITHOUT_SHARE_READVIEW=true
+trace SELECT *  FROM shipment_header  WHERE warehouseCode = '573DC'    AND (primaryWaybillCode ='21312'      OR secondWaybillCodes = '21312')
 id,warehouseCode,primaryWaybillCode,secondWaybillCodes
-select count(1) from information_schema.trace;
+select count(1) from information_schema.trace
 count(1)
 4
-set autocommit=true;
-set enable_auto_commit_tso = true;
-set TRANSACTION_POLICY='TSO';
-set TX_ISOLATION='REPEATABLE-READ';
-set TRANSACTION_ISOLATION='REPEATABLE-READ';
-set ALLOW_GROUP_PARALLELISM_WITHOUT_SHARE_READVIEW=true;
-trace SELECT *  FROM shipment_header  WHERE warehouseCode = '573DC'    AND (primaryWaybillCode ='21312'      OR secondWaybillCodes = '21312');
+set autocommit=true
+set enable_auto_commit_tso = true
+set TRANSACTION_POLICY='TSO'
+set TX_ISOLATION='REPEATABLE-READ'
+set TRANSACTION_ISOLATION='REPEATABLE-READ'
+set ALLOW_GROUP_PARALLELISM_WITHOUT_SHARE_READVIEW=true
+trace SELECT *  FROM shipment_header  WHERE warehouseCode = '573DC'    AND (primaryWaybillCode ='21312'      OR secondWaybillCodes = '21312')
 id,warehouseCode,primaryWaybillCode,secondWaybillCodes
-select count(1) from information_schema.trace;
+select count(1) from information_schema.trace
 count(1)
 4
-set TRANSACTION_POLICY='XA';
-set TX_ISOLATION='READ-COMMITTED';
-set TRANSACTION_ISOLATION='READ-COMMITTED';
-set ALLOW_GROUP_PARALLELISM_WITHOUT_SHARE_READVIEW=true;
-trace SELECT *  FROM shipment_header  WHERE warehouseCode = '573DC'    AND (primaryWaybillCode ='21312'      OR secondWaybillCodes = '21312');
+set TRANSACTION_POLICY='XA'
+set TX_ISOLATION='READ-COMMITTED'
+set TRANSACTION_ISOLATION='READ-COMMITTED'
+set ALLOW_GROUP_PARALLELISM_WITHOUT_SHARE_READVIEW=true
+trace SELECT *  FROM shipment_header  WHERE warehouseCode = '573DC'    AND (primaryWaybillCode ='21312'      OR secondWaybillCodes = '21312')
 id,warehouseCode,primaryWaybillCode,secondWaybillCodes
-select count(1) from information_schema.trace;
+select count(1) from information_schema.trace
 count(1)
 4
-set TRANSACTION_POLICY='XA';
-set enable_xa_tso = true;
-set TX_ISOLATION='REPEATABLE-READ';
-set TRANSACTION_ISOLATION='REPEATABLE-READ';
-set ALLOW_GROUP_PARALLELISM_WITHOUT_SHARE_READVIEW=true;
-begin;
-trace SELECT *  FROM shipment_header  WHERE warehouseCode = '573DC'    AND (primaryWaybillCode ='21312'      OR secondWaybillCodes = '21312');
+set TRANSACTION_POLICY='XA'
+set enable_xa_tso = true
+set TX_ISOLATION='REPEATABLE-READ'
+set TRANSACTION_ISOLATION='REPEATABLE-READ'
+set ALLOW_GROUP_PARALLELISM_WITHOUT_SHARE_READVIEW=true
+begin
+trace SELECT *  FROM shipment_header  WHERE warehouseCode = '573DC'    AND (primaryWaybillCode ='21312'      OR secondWaybillCodes = '21312')
 id,warehouseCode,primaryWaybillCode,secondWaybillCodes
-select count(1) from information_schema.trace;
+select count(1) from information_schema.trace
 count(1)
 4
-show variables like 'TRX_CLASS';
+show variables like 'TRX_CLASS'
 Variable_name,Value
 TRX_CLASS,XATsoTransaction
-rollback;
-set TX_ISOLATION='READ-COMMITTED';
-set TRANSACTION_ISOLATION='READ-COMMITTED';
-set ALLOW_GROUP_PARALLELISM_WITHOUT_SHARE_READVIEW=false;
-trace SELECT *  FROM shipment_header  WHERE warehouseCode = '573DC'    AND (primaryWaybillCode ='21312'      OR secondWaybillCodes = '21312');
+rollback
+set TX_ISOLATION='READ-COMMITTED'
+set TRANSACTION_ISOLATION='READ-COMMITTED'
+set ALLOW_GROUP_PARALLELISM_WITHOUT_SHARE_READVIEW=false
+trace SELECT *  FROM shipment_header  WHERE warehouseCode = '573DC'    AND (primaryWaybillCode ='21312'      OR secondWaybillCodes = '21312')
 id,warehouseCode,primaryWaybillCode,secondWaybillCodes
-select count(1) from information_schema.trace;
+select count(1) from information_schema.trace
 count(1)
 2
 drop table shipment_header;

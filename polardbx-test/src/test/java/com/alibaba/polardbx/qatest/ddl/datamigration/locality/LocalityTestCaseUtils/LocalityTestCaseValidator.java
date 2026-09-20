@@ -226,8 +226,8 @@ public class LocalityTestCaseValidator {
         Map<String, String> groupStorageIdMap = new HashMap<>();
         try (ResultSet result = JdbcUtil.executeQuerySuccess(tddlConnection, showGroupInfoSql)) {
             while (result.next()) {
-                String group = result.getString(6);
-                String storageId = result.getString(7);
+                String group = result.getString("GROUP_NAME");
+                String storageId = result.getString("STORAGE_INST_ID");
                 if (storageIds.contains(storageId)) {
                     groupStorageIdMap.put(group, storageId);
                 }
@@ -241,8 +241,8 @@ public class LocalityTestCaseValidator {
             List<LocalityTestUtils.TopologyBean> topologyBeans = new ArrayList<>();
             try (ResultSet result = JdbcUtil.executeQuerySuccess(tddlConnection, showTopologySql + tableName)) {
                 while (result.next()) {
-                    String partition = result.getString(4);
-                    String group = result.getString(2);
+                    String partition = result.getString("PARTITION_NAME");
+                    String group = result.getString("GROUP_NAME");
                     LocalityTestUtils.TopologyBean topologyBean =
                         new LocalityTestUtils.TopologyBean(partition, group, groupStorageIdMap.get(group));
                     topologyBeans.add(topologyBean);

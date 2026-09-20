@@ -2,6 +2,8 @@ package com.alibaba.polardbx.executor.vectorized.math;
 
 import com.alibaba.polardbx.common.datatype.Decimal;
 import com.alibaba.polardbx.common.datatype.FastDecimalUtils;
+import com.alibaba.polardbx.common.properties.ConnectionProperties;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.DecimalBlock;
 import com.alibaba.polardbx.executor.chunk.DecimalBlockBuilder;
@@ -88,7 +90,7 @@ public class FastSubDecimalDecimalTest {
 
     @Test
     public void testSubDecimalColDecimalCol() {
-
+        DynamicConfig.getInstance().loadValue(null, ConnectionProperties.ENABLE_DECIMAL_128, "true");
         final VectorizedExpression[] children = new VectorizedExpression[2];
         children[0] = new InputRefVectorizedExpression(decimalType1, 0, 0);
         children[1] = new InputRefVectorizedExpression(decimalType2, 1, 1);
@@ -141,6 +143,86 @@ public class FastSubDecimalDecimalTest {
                         "Expect output block to be decimal128 when overflowed from decimal_64, got: "
                             + outputBlock.getState(),
                         outputBlock.isDecimal128());
+                }
+                break;
+            case FULL:
+                Assert.assertTrue("Expect output block to full when input is full, got: " + outputBlock.getState(),
+                    outputBlock.getState().isFull());
+                break;
+            }
+        }
+
+        // check result
+        Assert.assertEquals("Incorrect output block positionCount", COUNT, outputBlock.getPositionCount());
+        if (withSelection) {
+            for (int i = 0; i < sel.length; i++) {
+                int j = sel[i];
+                Assert.assertEquals("Incorrect value for: " + leftBlock.getDecimal(j).toString() + " at pos: " + i,
+                    targetResult[j], outputBlock.getDecimal(j));
+            }
+        } else {
+            for (int i = 0; i < COUNT; i++) {
+                Assert.assertEquals("Incorrect value for: " + leftBlock.getDecimal(i).toString() + " at pos: " + i,
+                    targetResult[i], outputBlock.getDecimal(i));
+            }
+        }
+    }
+
+    @Test
+    public void testSubDecimalColDecimalCol2() {
+        DynamicConfig.getInstance().loadValue(null, ConnectionProperties.ENABLE_DECIMAL_128, "false");
+        final VectorizedExpression[] children = new VectorizedExpression[2];
+        children[0] = new InputRefVectorizedExpression(decimalType1, 0, 0);
+        children[1] = new InputRefVectorizedExpression(decimalType2, 1, 1);
+        FastSubDecimalColDecimalColVectorizedExpression expr = new FastSubDecimalColDecimalColVectorizedExpression(
+            OUTPUT_INDEX, children);
+
+        MutableChunk chunk = preAllocatedChunk();
+        EvaluationContext evaluationContext = new EvaluationContext(chunk, executionContext);
+        DecimalBlock leftBlock = (DecimalBlock) Objects.requireNonNull(chunk.slotIn(0));
+        Assert.assertEquals("Expect left block to be decimal64: " + isDecimal64(),
+            leftBlock.isDecimal64(), isDecimal64());
+
+        DecimalBlock outputBlock = (DecimalBlock) Objects.requireNonNull(chunk.slotIn(OUTPUT_INDEX));
+
+        Assert.assertTrue("Expect to be unallocated before evaluation", outputBlock.isUnalloc());
+
+        expr.eval(evaluationContext);
+
+        Assert.assertFalse("Expect to be allocated after evaluation", outputBlock.isUnalloc());
+
+        if (!overflow) {
+            switch (inputState) {
+            case DECIMAL_64:
+                if (Math.abs(decimalType1.getScale() - decimalType2.getScale())
+                    >= FastSubDecimalColDecimalColVectorizedExpression.MAX_SCALE_DIFF) {
+                    Assert.assertTrue(
+                        "Expect output block to be full when exceeds MAX_SCALE_DIFF, got: " + outputBlock.getState(),
+                        outputBlock.getState().isFull());
+                } else {
+                    Assert.assertTrue(
+                        "Expect output block to be decimal64 when not overflowed, got: " + outputBlock.getState(),
+                        outputBlock.isDecimal64());
+                }
+                break;
+            case FULL:
+                Assert.assertTrue("Expect output block to full when input is full got: " + outputBlock.getState(),
+                    outputBlock.getState().isFull());
+                break;
+            }
+        } else {
+            switch (inputState) {
+            case DECIMAL_64:
+                if (decimalType1.getScale() != decimalType2.getScale()) {
+                    Assert.assertTrue(
+                        "Expect output block to be full when overflowed from decimal_64 with diff scales, got: "
+                            + outputBlock.getState(),
+                        outputBlock.getState().isFull());
+                } else {
+                    Assert.assertTrue(
+                        "Expect output block to be decimal128 when overflowed from decimal_64, got: "
+                            + outputBlock.getState(),
+                        outputBlock.getState().isFull());
                 }
                 break;
             case FULL:

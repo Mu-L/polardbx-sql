@@ -16,19 +16,25 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Chunk;
-import com.alibaba.polardbx.executor.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import java.util.List;
 
-public abstract class Sorter {
+public abstract class Sorter implements MemoryCountable {
 
     protected final int chunkLimit;
+
+    @FieldMemoryCounter(value = false)
     protected final List<OrderByOption> orderBys;
+    @FieldMemoryCounter(value = false)
     protected final List<DataType> columnMetas;
+    @FieldMemoryCounter(value = false)
     protected final MemoryAllocatorCtx memoryAllocator;
 
     public Sorter(MemoryAllocatorCtx memoryAllocator, List<OrderByOption> orderBys,

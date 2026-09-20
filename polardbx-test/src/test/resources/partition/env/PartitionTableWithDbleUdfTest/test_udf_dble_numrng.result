@@ -1,0 +1,81 @@
+## DISABLE_FAST_SQL_PARSER
+select numrngd0r3i(0)
+numrngd0r3i(0)
+0
+select numrngd0r3i(2000000)
+numrngd0r3i(2000000)
+0
+select numrngd0r3i(2000001)
+numrngd0r3i(2000001)
+1
+select numrngd0r3i(4000000)
+numrngd0r3i(4000000)
+1
+select numrngd0r3i(4000001)
+numrngd0r3i(4000001)
+2
+select numrngd0r3i(6000000)
+numrngd0r3i(6000000)
+2
+select numrngd0r3i(6000001)
+numrngd0r3i(6000001)
+0
+drop tablegroup if exists tg_dble_udf6
+create tablegroup if not exists tg_dble_udf6
+partition by udf_hash(bigint)
+partition 4
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3),
+partition pm values less than (9223372036854775807)
+)
+drop table if exists uh_t6
+create table uh_t6(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(numrngd0r3i(c1))
+tablegroup=tg_dble_udf6
+insert into uh_t6 values (0,0)
+insert into uh_t6 values (2000000,2000000)
+insert into uh_t6 values (2000001,2000001)
+insert into uh_t6 values (4000000,4000000)
+insert into uh_t6 values (4000001,4000001)
+insert into uh_t6 values (6000000,6000000)
+insert into uh_t6 values (6000001,6000001)
+select c1, part_route('', 'uh_t6', c1) as route_rs, part_hash('', 'uh_t6', c1) as hash_rs from uh_t6 where c1=0
+c1,route_rs,hash_rs
+0,p0,(0)
+select c1, part_route('', 'uh_t6', c1) as route_rs, part_hash('', 'uh_t6', c1) as hash_rs from uh_t6 where c1=2000000
+c1,route_rs,hash_rs
+2000000,p0,(0)
+select c1, part_route('', 'uh_t6', c1) as route_rs, part_hash('', 'uh_t6', c1) as hash_rs from uh_t6 where c1=2000001
+c1,route_rs,hash_rs
+2000001,p1,(1)
+select c1, part_route('', 'uh_t6', c1) as route_rs, part_hash('', 'uh_t6', c1) as hash_rs from uh_t6 where c1=4000000
+c1,route_rs,hash_rs
+4000000,p1,(1)
+select c1, part_route('', 'uh_t6', c1) as route_rs, part_hash('', 'uh_t6', c1) as hash_rs from uh_t6 where c1=4000001
+c1,route_rs,hash_rs
+4000001,p2,(2)
+select c1, part_route('', 'uh_t6', c1) as route_rs, part_hash('', 'uh_t6', c1) as hash_rs from uh_t6 where c1=6000000
+c1,route_rs,hash_rs
+6000000,p2,(2)
+select c1, part_route('', 'uh_t6', c1) as route_rs, part_hash('', 'uh_t6', c1) as hash_rs from uh_t6 where c1=6000001
+c1,route_rs,hash_rs
+6000001,p0,(0)
+show create table uh_t6
+Table,Create Table
+uh_t6,CREATE TABLE `uh_t6` (
+	`c1` bigint(20) NOT NULL,
+	`c2` bigint(20) NOT NULL,
+	KEY `auto_shard_key_c1` USING BTREE (`c1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY UDF_HASH(numrngd0r3i(`c1`))
+PARTITIONS 4
+(PARTITION p0 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p1 VALUES LESS THAN (2) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (3) ENGINE = InnoDB,
+ PARTITION pm VALUES LESS THAN (9223372036854775807) ENGINE = InnoDB)
+tablegroup = `tg_dble_udf6`

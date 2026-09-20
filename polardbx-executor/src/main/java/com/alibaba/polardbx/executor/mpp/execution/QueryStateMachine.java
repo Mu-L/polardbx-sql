@@ -31,6 +31,8 @@ package com.alibaba.polardbx.executor.mpp.execution;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.QueryMemoryOwnerId;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
@@ -101,6 +103,26 @@ public class QueryStateMachine implements StateMachineBase<QueryState> {
         this.queryStateTimer = new QueryStateTimer(ticker, session.getStartTime(), needStats);
 
         this.queryState = new StateMachine<>("query " + query, executor, QUEUED, TERMINAL_QUERY_STATES);
+
+        // For memory tracker.
+        addStateChangeListener(state -> {
+            switch (state) {
+            case QUEUED:
+            case PLANNING:
+            case STARTING:
+                break;
+
+            case FAILED:
+            case FINISHED:
+            case FINISHING:
+            case DATA_FINISHED:
+                // remove query memory id and tracker.
+                MemoryTrackerManager.getGlobalMemoryTrackerManager().releaseQueryMemory(queryId);
+                break;
+            default:
+            }
+        });
+
         this.finalQueryInfo = new StateMachine<>("finalQueryInfo-" + queryId, executor, Optional.empty());
     }
 
@@ -481,6 +503,10 @@ public class QueryStateMachine implements StateMachineBase<QueryState> {
 
     public DateTime getQueryEndTime() {
         return queryStateTimer.getEndTime();
+    }
+
+    public Duration getFinishTime() {
+        return queryStateTimer.getFinishingTime();
     }
 
     public long getExecuteCreateMillis() {

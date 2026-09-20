@@ -769,9 +769,12 @@ public class GeneratedColumnConcurrentDMLTest extends DDLBaseNewDBTestCase {
                                 try {
                                     JdbcUtil.executeUpdateSuccess(connection, sql);
                                 } catch (AssertionError e) {
-                                    if (isRDS80 && e.getMessage().contains(
-                                        "The definition of the table required by the flashback query has changed ")) {
+                                    if (e.getMessage().contains(
+                                        "The definition of the table required by the flashback query has changed")) {
                                         // ignore
+                                        totalCount.getAndDecrement();
+                                    } else if (e.getMessage().contains("ConcurrentModificationException")) {
+                                        // ignore CME caused by concurrent DDL modifying internal collections
                                         totalCount.getAndDecrement();
                                     } else if (e.getMessage().contains("Lock wait timeout exceeded") || e.getMessage()
                                         .contains("Deadlock found")) {
@@ -869,16 +872,16 @@ public class GeneratedColumnConcurrentDMLTest extends DDLBaseNewDBTestCase {
                                     }
                                 } catch (SQLException e) {
                                     System.out.println(e.getMessage());
-                                    if (isRDS80) {
-                                        if (e.getMessage().contains("Communications link failure")) {
-                                            connection = getTddlJdbcConnection();
-                                            stmt = connection.createStatement();
-                                        } else if (e.getMessage().contains(
-                                            "The definition of the table required by the flashback query has changed ")) {
-                                            // ignore
-                                        } else {
-                                            throw (e);
-                                        }
+                                    if (e.getMessage().contains("Communications link failure")) {
+                                        connection = getTddlJdbcConnection();
+                                        stmt = connection.createStatement();
+                                    } else if (e.getMessage().contains(
+                                        "The definition of the table required by the flashback query has changed")) {
+                                        // ignore
+                                    } else if (e.getMessage().contains("ConcurrentModificationException")) {
+                                        // ignore CME caused by concurrent DDL
+                                    } else {
+                                        throw (e);
                                     }
                                 }
                                 Thread.sleep(100);

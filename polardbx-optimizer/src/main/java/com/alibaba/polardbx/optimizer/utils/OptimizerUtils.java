@@ -39,6 +39,10 @@ import com.alibaba.polardbx.optimizer.core.planner.Planner;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.ShardProcessor;
 import com.alibaba.polardbx.optimizer.core.rel.SimpleShardProcessor;
+import com.alibaba.polardbx.optimizer.htaprouting.FollowerReadRecord;
+import com.alibaba.polardbx.optimizer.htaprouting.RoutingRuleClassifier;
+import com.alibaba.polardbx.optimizer.htaprouting.RoutingRuleManager;
+import com.alibaba.polardbx.optimizer.htaprouting.RoutingType;
 import com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertManager;
 import com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertType;
 import com.alibaba.polardbx.optimizer.parse.bean.PreparedParamRef;
@@ -341,6 +345,16 @@ public class OptimizerUtils {
         case GRANT_SECURITY_LABEL:
         case REVOKE_SECURITY_LABEL:
         case ALTER_INSTANCE:
+        case COLLECT_STATISTIC:
+        case CREATE_INDEX_IN_DATABASE:
+        case DROP_INDEX_IN_DATABASE:
+        case ALTER_USER:
+        case CREATE_EXTERNAL_CATALOG:
+        case DROP_EXTERNAL_CATALOG:
+        case ALTER_EXTERNAL_CATALOG:
+        case CREATE_SECRET:
+        case DROP_SECRET:
+        case ALTER_SECRET:
             return true;
         default:
             if (ast.isA(SqlKind.DAL)) {
@@ -496,7 +510,9 @@ public class OptimizerUtils {
             if (pruningTime > DynamicConfig.getInstance().getPruningTimeWarningThreshold()) {
                 OptimizerAlertManager.getInstance().log(OptimizerAlertType.PRUNING_SLOW, context);
             }
-            context.addPruningTime(pruningTime);
+            if (context.getExplain() != null) {
+                context.addPruningTime(pruningTime);
+            }
             return pruningResult;
         }
         return null;
@@ -636,7 +652,18 @@ public class OptimizerUtils {
                                                                                   List<Object> pruningObject,
                                                                                   Parameters parameters) {
         Map<Pair<String, List<String>>, Parameters> pruningResult = Maps.newHashMap();
-        TddlRuleManager or = executionContext.getSchemaManager().getTddlRuleManager();
+        /*
+         * Change context:
+         * - Before: resolved TddlRuleManager via executionContext.getSchemaManager() (connection's
+         *   default schema). When a cross-schema qualified SELECT is issued without first executing
+         *   USE <schema>, the default schema differs from lv.getSchemaName(), so getTableRule() on the
+         *   wrong schema's rule manager returned null and the following tr.getDbNames() threw NPE.
+         * - Path impact: aligns with the sibling couldSimpleShard(), which already resolves the rule
+         *   manager via executionContext.getSchemaManager(lv.getSchemaName()); other pruning branches
+         *   (pruningPartTable, pruningShardTable) already key off lv's own schema and are unaffected.
+         * - Capability regression: None; same-schema queries resolve to the identical SchemaManager.
+         */
+        TddlRuleManager or = executionContext.getSchemaManager(lv.getSchemaName()).getTddlRuleManager();
         TableRule tr = or.getTableRule(lv.getShardingTable());
 
         for (Map.Entry<Integer, BitSet> entry : bitSetMap.entrySet()) {
@@ -710,7 +737,7 @@ public class OptimizerUtils {
                 partPrunedResultsTmp.add(partPrunedResult);
             }
             Map<String, List<List<String>>> groupAndTbl =
-                PartitionPrunerUtils.buildTargetTablesByPartPrunedResults(partPrunedResultsTmp);
+                PartitionPrunerUtils.buildTargetTablesByPartPrunedResults(partPrunedResultsTmp, null);
 
             Parameters beMerged = entry.getValue();
             // one bitset represents multi group&shard table
@@ -766,6 +793,7 @@ public class OptimizerUtils {
         ExecutionContext contextForInPruning = new ExecutionContext(context.getSchemaName());
         contextForInPruning.setParamManager(context.getParamManager());
         contextForInPruning.setParams(parameters);
+        contextForInPruning.setSchemaManagers(context.getSchemaManagers());
 
         Pair<Integer, PruneRawString>[] pruningPairArr = iterator.getTargetPair();
 
@@ -1098,8 +1126,23 @@ public class OptimizerUtils {
         if (paramManager.getBoolean(ConnectionParams.ENABLE_COLUMNAR_OPTIMIZER)) {
             return true;
         }
-        return (paramManager.getBoolean(ConnectionParams.ENABLE_COLUMNAR_OPTIMIZER_WITH_COLUMNAR)
-            && DynamicConfig.getInstance().existColumnarNodes());
+        return paramManager.getBoolean(ConnectionParams.ENABLE_COLUMNAR_OPTIMIZER_WITH_COLUMNAR)
+            && DynamicConfig.getInstance().existColumnarNodes();
+    }
+
+    public static boolean enableStaleRead(ExecutionContext context) {
+        return context != null && context.getRoutingType() == RoutingType.STALE;
+    }
+
+    public static boolean enableFollowRead(ExecutionContext context) {
+        return context != null && RoutingType.isFollower(context.getRoutingType());
+    }
+
+    public static boolean enableFollowRead() {
+        RoutingRuleClassifier classifier = RoutingRuleManager.getInstance().getClassifier();
+        boolean ret = (classifier != null && classifier.isHasFollowerRead())
+            && !FollowerReadRecord.getInstance().isExpired();
+        return ret || DynamicConfig.getInstance().enableFollowReadForPolarDBX();
     }
 
     private static boolean isMppMode(ExecutionContext context) {

@@ -40,7 +40,7 @@ public class SysTableUtil {
     private static final String SHOW_DDL = "show ddl";
     private static final String RECOVER_JOB = "recover ddl %s";
     private static final String JOB_STATE_RUNNING = "RUNNING";
-    private static final String JOB_STATE_PENDING = "PENDING";
+    private static final String JOB_STATE_PAUSED = "PAUSED";
 
     private final static Logger logger = LoggerFactory.getLogger(SysTableUtil.class);
 
@@ -105,7 +105,7 @@ public class SysTableUtil {
 
                     if (objectSchema.equals(SystemDbHelper.CDC_DB_NAME)) {
                         // CDC系统表Job任务残留，使用recover ddl语句恢复
-                        if (jobState.equals(JOB_STATE_PENDING)) {
+                        if (jobState.equals(JOB_STATE_PAUSED)) {
                             logger.warn("DDL job is pending, try to recover ddl job");
                             String recoverDDL = String.format(RECOVER_JOB, jobId);
                             stmt.executeQuery(recoverDDL);

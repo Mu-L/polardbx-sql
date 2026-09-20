@@ -1,12 +1,16 @@
 package com.alibaba.polardbx.executor.ddl.job.task.ttl;
 
 import com.alibaba.fastjson.annotation.JSONCreator;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import com.alibaba.polardbx.optimizer.config.server.IServerConfigManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfoUtil;
 import com.alibaba.polardbx.optimizer.ttl.TtlConfigUtil;
+import com.alibaba.polardbx.optimizer.ttl.TtlDatetimeNormalizer;
 import com.alibaba.polardbx.optimizer.ttl.TtlDefinitionInfo;
 import com.alibaba.polardbx.optimizer.ttl.TtlTimeUnit;
 import lombok.Getter;
@@ -33,10 +37,12 @@ public class PreparingFormattedCurrDatetimeTask extends AbstractTtlJobTask {
     public PreparingFormattedCurrDatetimeTask(String schemaName,
                                               String logicalTableName) {
         super(schemaName, logicalTableName);
-        onExceptionTryRecoveryThenPause();
+//        onExceptionTryRecoveryThenPause();
+        onExceptionTryRecoveryThenRollback();
     }
 
     public void executeImpl(ExecutionContext executionContext) {
+        FailPoint.injectExceptionFromHint(FailPointKey.FP_TTL_JOB_FAILED_ON_PREPARE_CURR_DATETIME, executionContext);
         TtlJobUtil.updateJobStage(this.jobContext, "PrepareFormattedCurrDatetimeTask");
         initCurrDatetimeAndExpiredUpperBound(executionContext);
     }
@@ -88,6 +94,123 @@ public class PreparingFormattedCurrDatetimeTask extends AbstractTtlJobTask {
         this.jobContext.setCleanUpUpperBound(this.expiredUpperBound);
     }
 
+//    private void fetchCurrDatetimeAndExpiredUpperBoundBackUp(IServerConfigManager serverConfigManager,
+//                                                             String ttlTblSchemaName,
+//                                                             ExecutionContext ec,
+//                                                             Map<String, Object> sessionVariables) {
+//        TtlJobUtil.wrapWithDistributedTrx(
+//            serverConfigManager,
+//            ttlTblSchemaName,
+//            sessionVariables,
+//            (transConn) -> {
+//
+//                /**
+//                 * Select the current_datetime value
+//                 * <pre>
+//                 * set TIME_ZONE='xxx';
+//                 * SELECT now() as current_datetime;
+//                 * </pre>
+//                 *
+//                 */
+//                final String selectCurrentDtStringSql = TtlTaskSqlBuilder.buildSelectCurrentDatetimeValueStringSql(ec);
+//                List<Map<String, Object>> currentDtResult =
+//                    TtlJobUtil.execLogicalQueryOnInnerConnection(serverConfigManager,
+//                        ttlTblSchemaName,
+//                        transConn,
+//                        ec,
+//                        selectCurrentDtStringSql);
+//                final String currentDatetimeValStr = TtlJobUtil.fetchStringFromQueryValue(currentDtResult,
+//                    TtlTaskSqlBuilder.COL_NAME_FOR_SELECT_TTL_COL_CURRENT_DATETIME);
+//                this.currentDatetime = currentDatetimeValStr;
+//
+//                /**
+//                 * Select the current_datetime value formated by arc_part timeunit
+//                 * <pre>
+//                 * set TIME_ZONE='xxx';
+//                 * SELECT DATE_FORMAT( current_datetime, %s ) as formated_current_datetime;
+//                 * </pre>
+//                 *
+//                 */
+//                final String selectCurrentDtFormatedByArcPartUnitSql =
+//                    buildSelectFormatedDatetimeStringSql(ec, currentDatetimeValStr, true);
+//                List<Map<String, Object>> currentDtFormatedByArcPartUnitResult =
+//                    TtlJobUtil.execLogicalQueryOnInnerConnection(serverConfigManager,
+//                        ttlTblSchemaName,
+//                        transConn,
+//                        ec,
+//                        selectCurrentDtFormatedByArcPartUnitSql);
+//                String currentDtFormatedByArcPartUnit =
+//                    TtlJobUtil.fetchStringFromQueryValue(currentDtFormatedByArcPartUnitResult,
+//                        TtlTaskSqlBuilder.COL_NAME_FOR_SELECT_TTL_COL_FORMATED_CURRENT_DATETIME);
+//                this.currentDatetimeFormatedByArcPartUnit = currentDtFormatedByArcPartUnit;
+//
+//                boolean specifyTtlExprUnit = this.jobContext.getTtlInfo().isExpireIntervalSpecified();
+//                if (specifyTtlExprUnit) {
+//                    /**
+//                     * Select
+//                     *  the current_datetime value formated by ttl_expr timeunit
+//                     *  and
+//                     *  the round-downed upper bound of expired value of ttl_col by current_datetime
+//                     *
+//                     * <pre>
+//                     * set TIME_ZONE='xxx';
+//                     * SELECT
+//                     *  DATE_FORMAT( current_datetime, %s ) as formated_current_datetime
+//                     *  ,
+//                     *  DATE_FORMAT( DATE_SUB(NOW(), INTERVAL %s %s), formatter ) expired_upper_bound;
+//                     * formatter is like %Y-%m-%d 00:00:00.000000
+//                     * </pre>
+//                     *
+//                     */
+//                    final String selectExpiredUpperBoundSql =
+//                        buildSelectExpiredUpperBoundSql(ec, currentDatetimeValStr);
+//                    List<Map<String, Object>> upperBoundResult =
+//                        TtlJobUtil.execLogicalQueryOnInnerConnection(serverConfigManager,
+//                            ttlTblSchemaName,
+//                            transConn,
+//                            ec,
+//                            selectExpiredUpperBoundSql);
+//                    String currentDtFormatedByTtlExprUnit = TtlJobUtil.fetchStringFromQueryValue(upperBoundResult,
+//                        TtlTaskSqlBuilder.COL_NAME_FOR_SELECT_TTL_COL_FORMATED_CURRENT_DATETIME);
+//                    this.currentDatetimeFormatedByTtlExprUnit = currentDtFormatedByTtlExprUnit;
+//                    String expiredUpperBoundStr =
+//                        TtlJobUtil.fetchStringFromQueryValue(upperBoundResult,
+//                            TtlTaskSqlBuilder.COL_NAME_FOR_SELECT_TTL_COL_UPPER_BOUND);
+//                    this.expiredUpperBound = expiredUpperBoundStr;
+//                }
+//                return 0;
+//            }
+//        );
+//    }
+//    public static String fetchCurrDatetimeByInnerConn(String ttlTimezoneStr,
+//                                                      String ttlTblSchemaName,
+//                                                      ExecutionContext ec) {
+//        IServerConfigManager serverConfigManager = TtlJobUtil.getServerConfigManager();
+//        Map<String, Object> sessionVariables = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+//        ec.setSchemaName(ttlTblSchemaName);
+//        sessionVariables.put("time_zone", ttlTimezoneStr);
+//        final String[] queryRs = new String[1];
+//        TtlJobUtil.wrapWithDistributedTrx(
+//            serverConfigManager,
+//            ttlTblSchemaName,
+//            sessionVariables,
+//            (transConn) -> {
+//                final String selectCurrentDtStringSql = TtlTaskSqlBuilder.buildSelectCurrentDatetimeValueStringSql(ec);
+//                List<Map<String, Object>> currentDtResult =
+//                    TtlJobUtil.execLogicalQueryOnInnerConnection(serverConfigManager,
+//                        ttlTblSchemaName,
+//                        transConn,
+//                        ec,
+//                        selectCurrentDtStringSql);
+//                String currentDatetimeValStr = TtlJobUtil.fetchStringFromQueryValue(currentDtResult,
+//                    TtlTaskSqlBuilder.COL_NAME_FOR_SELECT_TTL_COL_CURRENT_DATETIME);
+//                queryRs[0] = currentDatetimeValStr;
+//                return 0;
+//            }
+//        );
+//        return queryRs[0];
+//    }
+
     private void fetchCurrDatetimeAndExpiredUpperBound(IServerConfigManager serverConfigManager,
                                                        String ttlTblSchemaName,
                                                        ExecutionContext ec,
@@ -117,26 +240,42 @@ public class PreparingFormattedCurrDatetimeTask extends AbstractTtlJobTask {
                     TtlTaskSqlBuilder.COL_NAME_FOR_SELECT_TTL_COL_CURRENT_DATETIME);
                 this.currentDatetime = currentDatetimeValStr;
 
-                /**
-                 * Select the current_datetime value formated by arc_part timeunit
-                 * <pre>
-                 * set TIME_ZONE='xxx';
-                 * SELECT DATE_FORMAT( current_datetime, %s ) as formated_current_datetime;
-                 * </pre>
-                 *
-                 */
-                final String selectCurrentDtFormatedByArcPartUnitSql =
-                    buildSelectFormatedDatetimeStringSql(ec, currentDatetimeValStr, true);
-                List<Map<String, Object>> currentDtFormatedByArcPartUnitResult =
-                    TtlJobUtil.execLogicalQueryOnInnerConnection(serverConfigManager,
-                        ttlTblSchemaName,
-                        transConn,
-                        ec,
-                        selectCurrentDtFormatedByArcPartUnitSql);
-                String currentDtFormatedByArcPartUnit =
-                    TtlJobUtil.fetchStringFromQueryValue(currentDtFormatedByArcPartUnitResult,
-                        TtlTaskSqlBuilder.COL_NAME_FOR_SELECT_TTL_COL_FORMATED_CURRENT_DATETIME);
-                this.currentDatetimeFormatedByArcPartUnit = currentDtFormatedByArcPartUnit;
+//                /**
+//                 * Select the current_datetime value formated by arc_part timeunit
+//                 * <pre>
+//                 * set TIME_ZONE='xxx';
+//                 * SELECT DATE_FORMAT( current_datetime, %s ) as formated_current_datetime;
+//                 * </pre>
+//                 *
+//                 */
+//                String selectCurrentDtFormatedByArcPartUnitSql =
+//                    buildSelectFormatedDatetimeStringSql(ec, currentDatetimeValStr, true);
+//                List<Map<String, Object>> currentDtFormatedByArcPartUnitResult =
+//                    TtlJobUtil.execLogicalQueryOnInnerConnection(serverConfigManager,
+//                        ttlTblSchemaName,
+//                        transConn,
+//                        ec,
+//                        selectCurrentDtFormatedByArcPartUnitSql);
+//                String currentDtFormatedByArcPartUnit =
+//                    TtlJobUtil.fetchStringFromQueryValue(currentDtFormatedByArcPartUnitResult,
+//                        TtlTaskSqlBuilder.COL_NAME_FOR_SELECT_TTL_COL_FORMATED_CURRENT_DATETIME);
+
+                TtlDefinitionInfo ttlInfo = this.jobContext.getTtlInfo();
+                TtlTimeUnit arcPartTimeUnit = TtlTimeUnit.of(ttlInfo.getTtlInfoRecord().getArcPartUnit());
+                Integer arcPartInterval = ttlInfo.getTtlInfoRecord().getArcPartInterval();
+
+                String normalizerBaseDatetime =
+                    ec.getParamManager().getString(ConnectionParams.TTL_NORMALIZER_BASE_DATETIME);
+                if (normalizerBaseDatetime == null) {
+                    normalizerBaseDatetime = TtlDatetimeNormalizer.TTL_NORMALIZATION_BASE_DATETIME;
+                }
+                String currentDtValFormatedByArcPartUnit = TtlDatetimeNormalizer.normalizeDatetimeByIntervalAndUnit(
+                    normalizerBaseDatetime,
+                    arcPartTimeUnit.getUnitName(),
+                    arcPartInterval,
+                    currentDatetimeValStr
+                );
+                this.currentDatetimeFormatedByArcPartUnit = currentDtValFormatedByArcPartUnit;
 
                 boolean specifyTtlExprUnit = this.jobContext.getTtlInfo().isExpireIntervalSpecified();
                 if (specifyTtlExprUnit) {
@@ -183,21 +322,21 @@ public class PreparingFormattedCurrDatetimeTask extends AbstractTtlJobTask {
         return selectSql;
     }
 
-    protected String buildSelectFormatedDatetimeStringSql(ExecutionContext ec,
-                                                          String currTimeValStr,
-                                                          boolean isForArcPart) {
-        TtlDefinitionInfo ttlInfo = this.jobContext.getTtlInfo();
-        TtlTimeUnit targetTimeUnit = null;
-        if (isForArcPart) {
-            targetTimeUnit = TtlTimeUnit.of(ttlInfo.getTtlInfoRecord().getArcPartUnit());
-        } else {
-            targetTimeUnit = TtlTimeUnit.of(ttlInfo.getTtlInfoRecord().getTtlUnit());
-        }
-
-        String tarTimeUnitName = targetTimeUnit.getUnitName();
-        String selectSql =
-            TtlTaskSqlBuilder.buildSelectFormatedDatetimeValueSql(ttlInfo, ec, currTimeValStr, tarTimeUnitName);
-        return selectSql;
-    }
+//    protected String buildSelectFormatedDatetimeStringSql(ExecutionContext ec,
+//                                                          String currTimeValStr,
+//                                                          boolean isForArcPart) {
+//        TtlDefinitionInfo ttlInfo = this.jobContext.getTtlInfo();
+//        TtlTimeUnit targetTimeUnit = null;
+//        if (isForArcPart) {
+//            targetTimeUnit = TtlTimeUnit.of(ttlInfo.getTtlInfoRecord().getArcPartUnit());
+//        } else {
+//            targetTimeUnit = TtlTimeUnit.of(ttlInfo.getTtlInfoRecord().getTtlUnit());
+//        }
+//
+//        String tarTimeUnitName = targetTimeUnit.getUnitName();
+//        String selectSql =
+//            TtlTaskSqlBuilder.buildSelectFormatedDatetimeValueSql(ttlInfo, ec, currTimeValStr, tarTimeUnitName);
+//        return selectSql;
+//    }
 
 }

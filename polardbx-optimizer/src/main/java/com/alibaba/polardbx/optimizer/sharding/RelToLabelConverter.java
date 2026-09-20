@@ -20,6 +20,7 @@ import com.alibaba.polardbx.common.exception.NotSupportException;
 import com.alibaba.polardbx.optimizer.core.rel.BroadcastTableModify;
 import com.alibaba.polardbx.optimizer.core.rel.DirectMultiDBTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.DirectTableOperation;
+import com.alibaba.polardbx.optimizer.core.rel.GroupTopN;
 import com.alibaba.polardbx.optimizer.core.rel.HashGroupJoin;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalDynamicValues;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
@@ -37,6 +38,9 @@ import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelShuttleImpl;
 import org.apache.calcite.rel.core.Aggregate;
+import org.apache.calcite.rel.core.CTEAnchor;
+import org.apache.calcite.rel.core.CTEConsumer;
+import org.apache.calcite.rel.core.CTEProducer;
 import org.apache.calcite.rel.core.Correlate;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.DynamicValues;
@@ -165,6 +169,14 @@ public class RelToLabelConverter extends RelShuttleImpl {
                 .create(join, RelOptUtil.conjunctions(joinCondition), context);
 
             root(labelBuilder.join(join, onCondition));
+        }
+
+        public void cteConsumer(CTEConsumer cteConsumer) {
+            root(labelBuilder.cteConsumer(cteConsumer));
+        }
+
+        public void cteAnchor(CTEAnchor cteAnchor) {
+            root(labelBuilder.cteAnchor(cteAnchor));
         }
 
         public void correlate(Correlate correlate) {
@@ -379,6 +391,18 @@ public class RelToLabelConverter extends RelShuttleImpl {
         return dynamicValues;
     }
 
+    public RelNode visit(CTEConsumer cteConsumer) {
+        super.visit(cteConsumer);
+        blackboard.cteConsumer(cteConsumer);
+        return cteConsumer;
+    }
+
+    public RelNode visit(CTEAnchor cteAnchor) {
+        super.visit(cteAnchor);
+        blackboard.cteAnchor(cteAnchor);
+        return cteAnchor;
+    }
+
     @Override
     public RelNode visit(RelNode other) {
         if (other instanceof HepRelVertex) {
@@ -446,6 +470,18 @@ public class RelToLabelConverter extends RelShuttleImpl {
             return visit((LogicalExchange) other);
         }
         if (other instanceof Sort) {
+            return super.visit(other);
+        }
+        if (other instanceof CTEAnchor) {
+            return visit((CTEAnchor) other);
+        }
+        if (other instanceof CTEConsumer) {
+            return visit((CTEConsumer) other);
+        }
+        if (other instanceof CTEProducer) {
+            return super.visit(other);
+        }
+        if (other instanceof GroupTopN) {
             return super.visit(other);
         }
         if (other instanceof Exchange) {

@@ -18,6 +18,7 @@ package com.alibaba.polardbx.optimizer.config.meta;
 
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.optimizer.PlannerContext;
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
 import com.alibaba.polardbx.optimizer.memory.MemoryEstimator;
 import org.apache.calcite.plan.RelOptCost;
@@ -73,7 +74,7 @@ public class DrdsRelMdLowerBoundCost extends RelMdLowerBoundCost {
                                         RelMetadataQuery mq, VolcanoPlanner planner) {
         RelOptCost selfCost;
 
-        if (planner.isEnableColumnar()) {
+        if (CBOUtil.isColumnarOptimizer(node)) {
             return getLowerBoundCostForColumnar(node, mq, planner);
         }
         if (planner.isLogical(node)) {

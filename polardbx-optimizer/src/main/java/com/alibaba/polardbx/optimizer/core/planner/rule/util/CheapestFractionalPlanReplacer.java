@@ -18,11 +18,14 @@ package com.alibaba.polardbx.optimizer.core.planner.rule.util;
 
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.optimizer.PlannerContext;
+import com.alibaba.polardbx.optimizer.config.meta.CostModelWeight;
 import com.alibaba.polardbx.optimizer.core.rel.HashAgg;
 import com.alibaba.polardbx.optimizer.core.rel.HashGroupJoin;
 import com.alibaba.polardbx.optimizer.core.rel.HashJoin;
 import com.alibaba.polardbx.optimizer.core.rel.HashWindow;
 import com.alibaba.polardbx.optimizer.core.rel.Limit;
+import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
+import com.alibaba.polardbx.optimizer.core.rel.LookupJoin;
 import com.alibaba.polardbx.optimizer.core.rel.MaterializedSemiJoin;
 import com.alibaba.polardbx.optimizer.core.rel.MemSort;
 import com.alibaba.polardbx.optimizer.core.rel.NLJoin;
@@ -85,10 +88,19 @@ public class CheapestFractionalPlanReplacer {
             RelOptCost cheapestTotalPlanFractionCost = getFractionalCost(cheapestTotalPlan, fraction, mq);
             RelOptCost cheapestStartUpPlanFractionCost = getFractionalCost(cheapestStartUpPlan, fraction, mq);
 
-            if (cheapestTotalPlanFractionCost.isLt(cheapestStartUpPlanFractionCost.multiplyBy(1.01))) {
+            if (cheapestTotalPlanFractionCost.isLt(cheapestStartUpPlanFractionCost.multiplyBy(
+                CostModelWeight.INSTANCE.getStartUpWeight()))) {
                 p = cheapestTotalPlan;
             } else {
                 p = cheapestStartUpPlan;
+            }
+        }
+
+        if (p instanceof LogicalView) {
+            LogicalView lv = (LogicalView) p;
+            if (lv.isLookupTable()) {
+                lv = lv.copy(p.getTraitSet());
+                return lv;
             }
         }
 
@@ -104,6 +116,9 @@ public class CheapestFractionalPlanReplacer {
         }
         if (!inputs.equals(oldInputs)) {
             p = p.copy(p.getTraitSet(), inputs);
+        }
+        if (p instanceof LookupJoin) {
+            ((LookupJoin) p).deepVisitLookupJoin();
         }
         return p;
     }

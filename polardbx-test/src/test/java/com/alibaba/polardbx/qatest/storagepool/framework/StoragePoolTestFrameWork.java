@@ -1,10 +1,9 @@
 package com.alibaba.polardbx.qatest.storagepool.framework;
 
 import com.alibaba.polardbx.common.utils.thread.NamedThreadFactory;
-import com.alibaba.polardbx.executor.ddl.job.factory.storagepool.StoragePoolUtils;
+import com.alibaba.polardbx.optimizer.locality.StoragePoolUtils;
 import com.alibaba.polardbx.optimizer.config.schema.InformationSchema;
 import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
-import com.alibaba.polardbx.qatest.NotThreadSafe.DeadlockTest;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.aliyun.oss.common.utils.StringUtils;
 import net.jcip.annotations.NotThreadSafe;

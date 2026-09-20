@@ -185,7 +185,7 @@ public class CreateTableWithClusteredIndexTest extends DDLBaseNewDBTestCase {
             + "\tUNIQUE CLUSTERED "
             + gsiTestUkName
             + "(`buyer_id`) DBPARTITION BY HASH (`buyer_id`)\n"
-            + ") ENGINE = InnoDB CHARSET = utf8 dbpartition by hash(`order_id`);\n";
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci dbpartition by hash(`order_id`);\n";
         try {
 
             dropTableWithGsi(gsiTestTableName, ImmutableList.of(gsiTestKeyName, gsiTestUkName));
@@ -229,7 +229,7 @@ public class CreateTableWithClusteredIndexTest extends DDLBaseNewDBTestCase {
             + "(`gmt_id`) DBPARTITION BY HASH(`gmt_id`),\n"
             + "        UNIQUE CLUSTERED " + gsiTestUkName
             + " (`iot_id`) DBPARTITION BY HASH(`iot_id`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 100000000 CHARSET = utf8mb4 COMMENT '设备表' dbpartition by hash"
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 100000000 DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci COMMENT '设备表' dbpartition by hash"
             + "(`id`) tbpartition by hash(`id`) tbpartitions 20";
 
         try {
@@ -281,7 +281,7 @@ public class CreateTableWithClusteredIndexTest extends DDLBaseNewDBTestCase {
             + "\tUNIQUE CLUSTERED "
             + gsiTestUkName
             + "(`buyer_id`,`seller_id`) DBPARTITION BY HASH (`buyer_id`)\n"
-            + ") ENGINE = InnoDB CHARSET = utf8 dbpartition by hash(`order_id`);\n";
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci dbpartition by hash(`order_id`);\n";
         try {
             dropTableWithGsi(gsiTestTableName, ImmutableList.of(gsiTestKeyName, gsiTestUkName));
             checkCreateTableExecute(tddlConnection,

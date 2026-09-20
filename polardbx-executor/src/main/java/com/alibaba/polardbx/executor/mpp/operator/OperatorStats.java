@@ -32,6 +32,7 @@ public class OperatorStats {
     private final Optional<String> operatorType;
     private final int operatorId;
     private final long outputRowCount;
+    private final long ioBytesCount;
     private final long runtimeFilteredCount;
     private final long outputBytes;
     private final double startupDuration;
@@ -52,6 +53,8 @@ public class OperatorStats {
         int operatorId,
         @JsonProperty("outputRowCount")
         long outputRowCount,
+        @JsonProperty("ioBytesCount")
+        long ioBytesCount,
         @JsonProperty("runtimeFilteredCount")
         long runtimeFilteredCount,
         @JsonProperty("outputBytes")
@@ -71,6 +74,7 @@ public class OperatorStats {
         this.pipelineId = pipelineId;
         this.operatorId = operatorId;
         this.outputRowCount = outputRowCount;
+        this.ioBytesCount = ioBytesCount;
         this.runtimeFilteredCount = runtimeFilteredCount;
         this.outputBytes = outputBytes;
         this.startupDuration = startupDuration;
@@ -131,6 +135,11 @@ public class OperatorStats {
     }
 
     @JsonProperty
+    public long getIoBytesCount() {
+        return ioBytesCount;
+    }
+
+    @JsonProperty
     public Optional<StageId> getStageId() {
         return stageId;
     }
@@ -146,6 +155,7 @@ public class OperatorStats {
 
     public OperatorStats add(Iterable<OperatorStats> operators) {
         long outputRowCount = this.outputRowCount;
+        long ioBytesCount = this.ioBytesCount;
         long runtimeFilteredCount = this.runtimeFilteredCount;
         long outputBytes = this.outputBytes;
         double startupDuration = this.startupDuration;
@@ -155,6 +165,7 @@ public class OperatorStats {
         int spillCnt = 0;
         for (OperatorStats operator : operators) {
             outputRowCount += operator.outputRowCount;
+            ioBytesCount += operator.ioBytesCount;
             runtimeFilteredCount += operator.runtimeFilteredCount;
             outputBytes += operator.outputBytes;
             startupDuration += operator.startupDuration;
@@ -163,12 +174,13 @@ public class OperatorStats {
             instances += operator.instances;
             spillCnt += operator.spillCnt;
         }
-        return new OperatorStats(stageId, pipelineId, operatorType, operatorId, outputRowCount, runtimeFilteredCount,
+        return new OperatorStats(stageId, pipelineId, operatorType, operatorId, outputRowCount, ioBytesCount,
+            runtimeFilteredCount,
             outputBytes, startupDuration, duration, memory, instances, spillCnt);
     }
 
     public RuntimeStatisticsSketch toSketch() {
-        return new RuntimeStatisticsSketch(startupDuration, duration, 0, outputRowCount, runtimeFilteredCount,
-            outputBytes, memory, instances, spillCnt);
+        return new RuntimeStatisticsSketch(startupDuration, duration, 0, outputRowCount, ioBytesCount,
+            runtimeFilteredCount, outputBytes, memory, instances, spillCnt);
     }
 }

@@ -75,9 +75,7 @@ public class UpsertGsiWriter extends UpsertWriter implements GsiWriter {
                 final DistinctWriter deleteWriter = getDeleteWriter();
 
                 List<RelNode> inputs = deleteWriter.getInput(updateEc, (w) -> updateBeforeRow);
-                outDeletePlans
-                    .addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                        Collectors.toList()));
+                RelocateWriter.addPhaseExecutionPlans(inputs, outDeletePlans);
                 replicateOutDeletePlans
                     .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                         Collectors.toList()));

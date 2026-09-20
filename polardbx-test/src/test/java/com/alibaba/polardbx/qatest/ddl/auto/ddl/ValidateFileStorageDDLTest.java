@@ -265,9 +265,9 @@ public class ValidateFileStorageDDLTest extends DDLBaseNewDBTestCase {
 
         // add check
         sql = "alter table " + tableName + " add check (b > 0)";
-        JdbcUtil.executeUpdateFailed(getFileStoreConn(), sql, NOT_SUPPORTED);
+        JdbcUtil.executeUpdateFailed(getFileStoreConn(), sql, INVOLVE_FILE_STORAGE);
         sql = "alter table " + innodbTableName + " add check (b > 0)";
-        JdbcUtil.executeUpdateFailed(getInnodbConn(), sql, NOT_SUPPORTED);
+        JdbcUtil.executeUpdateSuccess(getInnodbConn(), sql);
 
         // set default charset
         sql = "alter table " + tableName + " DEFAULT CHARACTER SET = gbk";

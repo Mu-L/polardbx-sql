@@ -13,4 +13,28 @@
             ) charset=utf8
         ]]></Create>
     </SystemTable>
+    <SystemTable name="phy_recycle_bin_info">
+        <Create><![CDATA[
+            create table phy_recycle_bin_info(`id` bigint(20) NOT NULL AUTO_INCREMENT,
+              `job_id` bigint NOT NULL DEFAULT 0 comment 'ddl job id',
+              `gmt_created` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              `gmt_modified` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              `storage_inst_id` varchar(128) NOT NULL,
+              `origin_db_name` varchar(128) NOT NULL,
+              `origin_tb_name` varchar(128) NOT NULL,
+              `cur_db_name` varchar(128) NOT NULL,
+              `cur_tb_name` varchar(128) NOT NULL,
+               `type` tinyint NOT NULL DEFAULT 0 comment 'rebalance 删除的表type为1，其他是0',
+               `status` tinyint NOT NULL DEFAULT 0 comment '0:init, 1:phy table renamed, 2:phy table is deleted',
+               `extras` text,
+               primary key(`id`),
+               key `uk_origin_db_tb_name`(origin_db_name, origin_tb_name),
+               key `k_storage_tb_name`(storage_inst_id, cur_tb_name),
+               key `idx_job_status`(job_id, status)
+            ) charset=utf8
+        ]]></Create>
+        <Change><![CDATA[
+            alter table `phy_recycle_bin_info` add key `k_storage_tb_name`(storage_inst_id, cur_tb_name), drop key `uk_storage_tb_name`
+        ]]> </Change>
+    </SystemTable>
 </SystemTables>

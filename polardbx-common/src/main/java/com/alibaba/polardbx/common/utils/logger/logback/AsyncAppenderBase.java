@@ -36,6 +36,8 @@ public class AsyncAppenderBase<E> extends UnsynchronizedAppenderBase<E> implemen
      */
     public static final int DEFAULT_MAX_FLUSH_TIME = 1000;
 
+    private static final int DEFAULT_PROFILE_TIMES = 5000;
+
     AppenderAttachableImpl<E> aai = new AppenderAttachableImpl<E>();
     BlockingQueue<E> blockingQueue;
 
@@ -56,6 +58,8 @@ public class AsyncAppenderBase<E> extends UnsynchronizedAppenderBase<E> implemen
 
     protected Encoder<E> encoder;
     public long discardCount;
+
+    public long discardItem = 0;
 
     /**
      * Is the eventObject passed as parameter discardable? The base class's implementation of this method always returns
@@ -153,7 +157,12 @@ public class AsyncAppenderBase<E> extends UnsynchronizedAppenderBase<E> implemen
 
     @Override
     protected void append(E eventObject) {
+
         if (isQueueBelowDiscardingThreshold() && isDiscardable(eventObject)) {
+            discardItem++;
+            if (discardItem % DEFAULT_PROFILE_TIMES == 0) {
+                System.out.printf("LOGBACK DISCARD: %s Appender %s%n", discardItem, name);
+            }
             return;
         }
         preprocess(eventObject);
@@ -165,12 +174,17 @@ public class AsyncAppenderBase<E> extends UnsynchronizedAppenderBase<E> implemen
     }
 
     private void put(E eventObject) {
+
         if (neverBlock || (supportRemoteConsume && DynamicConfig.getInstance().enableRemoteConsumeLog())) {
             //allow event miss when it enable remote consume logs, or here maybe block!
             boolean ret = blockingQueue.offer(eventObject);
             if (!ret) {
                 //there is a concurrency issue here, but it doesn't matter because it is mainly for performance.
                 discardCount++;
+                if (discardCount % DEFAULT_PROFILE_TIMES == 0) {
+                    System.out.printf("LOGBACK DISCARD: %s Appender %s%n", discardCount, name);
+                }
+
             }
         } else {
             putUninterruptibly(eventObject);

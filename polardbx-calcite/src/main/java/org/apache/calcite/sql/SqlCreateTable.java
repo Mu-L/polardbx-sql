@@ -18,13 +18,16 @@
 package org.apache.calcite.sql;
 
 import com.alibaba.polardbx.common.ArchiveMode;
+import com.alibaba.polardbx.common.ColumnarOptions;
 import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.common.TddlConstants;
 import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.properties.ColumnarConfig;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.TStringUtil;
+import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.druid.DbType;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
@@ -42,6 +45,9 @@ import com.alibaba.polardbx.druid.sql.ast.expr.SQLIntegerExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLMethodInvokeExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLPropertyExpr;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAssignItem;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLCheck;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnCheck;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnConstraint;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnDefinition;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnPrimaryKey;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnUniqueKey;
@@ -58,6 +64,7 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlStatement
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlTableIndex;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.visitor.MySqlOutputVisitor;
 import com.alibaba.polardbx.druid.util.JdbcConstants;
+import com.alibaba.polardbx.gms.metadb.limit.LimitValidator;
 import com.alibaba.polardbx.gms.util.PartColLocalIndexNameUtil;
 import com.alibaba.polardbx.rule.MappingRule;
 import com.google.common.base.Preconditions;
@@ -136,6 +143,7 @@ public class SqlCreateTable extends SqlCreate {
     private boolean autoPartition = false;
     private boolean broadcast;
     private boolean single = false;
+    private boolean replicas = false;
     //sourceSql maybe change
     private String sourceSql;
     //originalSql is the same as what user input
@@ -164,6 +172,7 @@ public class SqlCreateTable extends SqlCreate {
     private List<Pair<SqlIdentifier, SqlIndexDefinition>> keys;
     private List<Pair<SqlIdentifier, SqlIndexDefinition>> fullTextKeys;
     private List<Pair<SqlIdentifier, SqlIndexDefinition>> spatialKeys;
+    private List<Pair<SqlIdentifier, SqlIndexDefinition>> vectorKeys;
     private List<Pair<SqlIdentifier, SqlIndexDefinition>> foreignKeys;
 
     public List<SQLTableElement> getLocalIndexes() {
@@ -177,12 +186,15 @@ public class SqlCreateTable extends SqlCreate {
 
     private List<SQLTableElement> localIndexes;
     private List<SqlCall> checks;
+    // 给schema唯一的constraint名称加后缀
+    private String phyTableHash;
 
     private List<String> logicalReferencedTables = null;
     private List<String> physicalReferencedTables = null;
     private List<ForeignKeyData> addedForeignKeys;
     private List<Boolean> isAddLogicalForeignKeyOnly;
     public boolean pushDownForeignKeys;
+    public boolean enableAutoShardKeyIndex = true;
 
     /**
      * 应该只有一个CONSTRAINT for primary key
@@ -470,7 +482,8 @@ public class SqlCreateTable extends SqlCreate {
                           boolean replaceInto,
                           String rowFormat,
                           boolean uniqueShardingKey,
-                          SqlNode ttlDefinition) {
+                          SqlNode ttlDefinition,
+                          String phyTableHash) {
         super(OPERATOR, pos, replace, ifNotExists);
         this.name = name;
         this.likeTableName = likeTableName;
@@ -495,6 +508,7 @@ public class SqlCreateTable extends SqlCreate {
         this.keys = keys;
         this.fullTextKeys = fullTextKeys;
         this.spatialKeys = spatialKeys;
+        this.vectorKeys = null; // Will be set by setter if needed
         this.foreignKeys = foreignKeys;
         this.checks = checks;
         this.primaryKeyConstraint = primaryKeyConstraint;
@@ -531,7 +545,7 @@ public class SqlCreateTable extends SqlCreate {
         this.rowFormat = rowFormat;
         this.uniqueShardingKey = uniqueShardingKey;
         this.ttlDefinition = ttlDefinition;
-
+        this.phyTableHash = phyTableHash;
     }
 
     public boolean shouldLoad() {
@@ -784,6 +798,10 @@ public class SqlCreateTable extends SqlCreate {
             writer.keyword("BROADCAST");
         }
 
+        if (replicas == true) {
+            writer.keyword("REPLICAS");
+        }
+
         if (tableGroupName != null) {
             if (withImplicitTableGroup) {
                 writer.keyword("WITH TABLEGROUP=");
@@ -812,6 +830,14 @@ public class SqlCreateTable extends SqlCreate {
 
     public boolean isBroadCast() {
         return broadcast;
+    }
+
+    public boolean isReplicas() {
+        return replicas;
+    }
+
+    public void setReplicas(boolean replicas) {
+        this.replicas = replicas;
     }
 
     public List<MappingRule> getMappingRules() {
@@ -1139,8 +1165,12 @@ public class SqlCreateTable extends SqlCreate {
             replaceInto,
             rowFormat,
             uniqueShardingKey,
-            ttlDefinition);
+            ttlDefinition,
+            phyTableHash);
         ret.setWithImplicitTableGroup(withImplicitTableGroup);
+        ret.setReplicas(replicas);
+        ret.setVectorKeys(vectorKeys);
+        ret.setEnableAutoShardKeyIndex(enableAutoShardKeyIndex);
         return ret;
     }
 
@@ -1205,7 +1235,13 @@ public class SqlCreateTable extends SqlCreate {
         if (localPartitionSuffix != null) {
             addLocalPartitionSuffix(stmt);
         }
+
+        if (Engine.isPureColumnar(engine)) {
+            stmt.setEngine(Engine.BLACKHOLE.name());
+        }
+
         stmt.setBroadCast(false);
+        stmt.setReplicas(false);
         removePolarDBXExclusiveFeature(stmt);
 
         stmt.setDbPartitionBy(null);
@@ -1260,6 +1296,7 @@ public class SqlCreateTable extends SqlCreate {
         addLocalIndexesForShardKeys(stmt, shardKeys, subPartKeys);
 
         stmt.setBroadCast(false);
+        stmt.setReplicas(false);
         // remove locality on mysql
         stmt.setLocality(null);
         removePolarDBXExclusiveFeature(stmt);
@@ -1286,6 +1323,10 @@ public class SqlCreateTable extends SqlCreate {
                 indexDefinition.getColumns().add(new SQLSelectOrderByItem(sqlColumnDefinition.getName()));
                 stmt.getTableElementList().add(implicitKey);
             }
+        }
+
+        if (Engine.isPureColumnar(engine)) {
+            stmt.setEngine(Engine.BLACKHOLE.name());
         }
         return stmt;
     }
@@ -1321,7 +1362,8 @@ public class SqlCreateTable extends SqlCreate {
 //                    addCompositeIndex(shardKeys, stmt);
                     if (usePartBy && !addPartColIndexLater && !isCreateTtlTmpTbl) {
                         SqlCreateTable.addCompositeIndexForAutoTbl(null, stmt,
-                            false, ImmutableList.<SqlIndexOption>of(), false, partStrategy, partKeyList, false, "");
+                            false, ImmutableList.<SqlIndexOption>of(), false, partStrategy, partKeyList, false, "",
+                            enableAutoShardKeyIndex);
                     }
                 }
             }
@@ -1329,10 +1371,12 @@ public class SqlCreateTable extends SqlCreate {
             if (useSubPartBy && !isCreateTtlTmpTbl) {
 //                addCompositeIndex(subPartKeys, stmt);
                 SqlCreateTable.addCompositeIndexForAutoTbl(null, stmt,
-                    false, ImmutableList.<SqlIndexOption>of(), false, subpartStrategy, subPartKeyList, false, "");
+                    false, ImmutableList.<SqlIndexOption>of(), false, subpartStrategy, subPartKeyList, false, "",
+                    enableAutoShardKeyIndex);
                 if (usePartBy && addPartColIndexLater && !isCreateTtlTmpTbl) {
                     SqlCreateTable.addCompositeIndexForAutoTbl(null, stmt,
-                        false, ImmutableList.<SqlIndexOption>of(), false, partStrategy, partKeyList, false, "");
+                        false, ImmutableList.<SqlIndexOption>of(), false, partStrategy, partKeyList, false, "",
+                        enableAutoShardKeyIndex);
                 }
             }
         }
@@ -1499,7 +1543,11 @@ public class SqlCreateTable extends SqlCreate {
 
         // set engine name to create table statement.
         if (engine != null) {
-            stmt.setEngine(engine.name());
+            if (Engine.isPureColumnar(engine)) {
+                stmt.setEngine(Engine.BLACKHOLE.name());
+            } else {
+                stmt.setEngine(engine.name());
+            }
         }
 
         // Handle default binary value
@@ -1521,6 +1569,29 @@ public class SqlCreateTable extends SqlCreate {
                         }
                     }
                 }
+            }
+        }
+
+        // handle check constraint physical table name
+        for (SQLTableElement tableElement : stmt.getTableElementList()) {
+            if (phyTableHash == null || !InstanceVersion.isMYSQL80()) {
+                continue;
+            }
+            if (tableElement instanceof SQLColumnDefinition) {
+                final SQLColumnDefinition columnDefinition = (SQLColumnDefinition) tableElement;
+                for (SQLColumnConstraint constraint : columnDefinition.getConstraints()) {
+                    if (constraint instanceof SQLColumnCheck) {
+                        String name = SQLUtils.normalizeNoTrim(constraint.getName().getSimpleName());
+                        String phyName = SqlIdentifier.surroundWithBacktick(name + "_" + phyTableHash);
+                        LimitValidator.validateConstraintNameLength(phyName);
+                        ((SQLColumnCheck) constraint).setName(phyName);
+                    }
+                }
+            } else if (tableElement instanceof SQLCheck) {
+                String name = SQLUtils.normalizeNoTrim((((SQLCheck) tableElement).getName().getSimpleName()));
+                String phyName = SqlIdentifier.surroundWithBacktick(name + "_" + phyTableHash);
+                LimitValidator.validateConstraintNameLength(phyName);
+                ((SQLCheck) tableElement).setName(phyName);
             }
         }
 
@@ -2074,11 +2145,15 @@ public class SqlCreateTable extends SqlCreate {
         protected boolean containConstExpr = false;
         protected boolean containPartFunc = false;
         protected boolean useNestingPartFunc = false;
+        protected boolean useUdfParams = false;
 
         public PartitionColumnFinder() {
         }
 
         public boolean find(SqlNode partExpr) {
+            if (partExpr instanceof SqlColumnWithUdfParamsExpr) {
+                this.useUdfParams = true;
+            }
             partExpr.accept(this);
             return partColumn != null;
         }
@@ -2126,6 +2201,14 @@ public class SqlCreateTable extends SqlCreate {
 
         public List<SqlNode> getAllPartColAsts() {
             return allPartColAsts;
+        }
+
+        public boolean isUseUdfParams() {
+            return useUdfParams;
+        }
+
+        public void setUseUdfParams(boolean useUdfParams) {
+            this.useUdfParams = useUdfParams;
         }
     }
 
@@ -2270,6 +2353,19 @@ public class SqlCreateTable extends SqlCreate {
         return columnarKeys;
     }
 
+    public List<Pair<SqlIdentifier, SqlIndexDefinition>> getArchiveColumnarKeys() {
+        List<Pair<SqlIdentifier, SqlIndexDefinition>> archiveColumnarKeys = new ArrayList<>();
+        if (columnarKeys != null) {
+            for (Pair<SqlIdentifier, SqlIndexDefinition> pair : columnarKeys) {
+                String columnarType = pair.getValue().getColumnarOptions().get(ColumnarOptions.TYPE);
+                if (columnarType != null && columnarType.equalsIgnoreCase(ColumnarConfig.ARCHIVE)) {
+                    archiveColumnarKeys.add(pair);
+                }
+            }
+        }
+        return archiveColumnarKeys;
+    }
+
     public void setColumnarKeys(List<Pair<SqlIdentifier, SqlIndexDefinition>> columnarKeys) {
         this.columnarKeys = columnarKeys;
     }
@@ -2306,6 +2402,14 @@ public class SqlCreateTable extends SqlCreate {
         this.spatialKeys = spatialKeys;
     }
 
+    public List<Pair<SqlIdentifier, SqlIndexDefinition>> getVectorKeys() {
+        return vectorKeys;
+    }
+
+    public void setVectorKeys(List<Pair<SqlIdentifier, SqlIndexDefinition>> vectorKeys) {
+        this.vectorKeys = vectorKeys;
+    }
+
     public List<Pair<SqlIdentifier, SqlIndexDefinition>> getForeignKeys() {
         return foreignKeys;
     }
@@ -2340,6 +2444,10 @@ public class SqlCreateTable extends SqlCreate {
         this.pushDownForeignKeys = pushDownForeignKeys;
     }
 
+    public void setEnableAutoShardKeyIndex(boolean enableAutoShardKeyIndex) {
+        this.enableAutoShardKeyIndex = enableAutoShardKeyIndex;
+    }
+
     public List<Boolean> getIsAddLogicalForeignKeyOnly() {
         return isAddLogicalForeignKeyOnly;
     }
@@ -2360,6 +2468,14 @@ public class SqlCreateTable extends SqlCreate {
 
     public void setChecks(List<SqlCall> checks) {
         this.checks = checks;
+    }
+
+    public void setPhyTableHash(String phyTableHash) {
+        this.phyTableHash = phyTableHash;
+    }
+
+    public String getPhyTableHash() {
+        return phyTableHash;
     }
 
     public List<String> getLogicalReferencedTables() {
@@ -2462,6 +2578,21 @@ public class SqlCreateTable extends SqlCreate {
                                                    boolean addFkIndex,
                                                    String fkIndexName
     ) {
+        addCompositeIndexForAutoTbl(indexColumnNameMap, stmt, isUniqueIndex, options, isGsi,
+            shardKeysPartStrategy, shardKeys, addFkIndex, fkIndexName, true);
+    }
+
+    public static void addCompositeIndexForAutoTbl(Map<String, SqlIndexColumnName> indexColumnNameMap,
+                                                   MySqlCreateTableStatement stmt,
+                                                   boolean isUniqueIndex,
+                                                   List<SqlIndexOption> options,
+                                                   boolean isGsi,
+                                                   String shardKeysPartStrategy,
+                                                   List<String> shardKeys,
+                                                   boolean addFkIndex,
+                                                   String fkIndexName,
+                                                   boolean enableAutoShardKeyIndex
+    ) {
         /**
          * The linked-hash Map can key the key's order by their insert order
          */
@@ -2497,11 +2628,11 @@ public class SqlCreateTable extends SqlCreate {
 //                addCompositeIndex(newIndexColumnNameMap, stmt, false, ImmutableList.<SqlIndexOption>of(), false,
 //                    tmpShardKey, false, "");
                 addCompositeIndex(newIndexColumnNameMap, stmt, isUniqueIndex, options, isGsi,
-                    tmpShardKey, addFkIndex, fkIndexName);
+                    tmpShardKey, addFkIndex, fkIndexName, enableAutoShardKeyIndex);
             }
         } else {
             addCompositeIndex(newIndexColumnNameMap, stmt, isUniqueIndex, options, isGsi,
-                shardKeys, addFkIndex, fkIndexName);
+                shardKeys, addFkIndex, fkIndexName, enableAutoShardKeyIndex);
         }
     }
 
@@ -2597,6 +2728,16 @@ public class SqlCreateTable extends SqlCreate {
                                          List<SqlIndexOption> options, boolean isGsi,
                                          List<String> shardingKey,
                                          boolean addFkIndex, String foreignKeyIndexName) {
+        addCompositeIndex(indexColumnDefMap, stmt, isUniqueIndex, options, isGsi,
+            shardingKey, addFkIndex, foreignKeyIndexName, true);
+    }
+
+    public static void addCompositeIndex(Map<String, SqlIndexColumnName> indexColumnDefMap,
+                                         MySqlCreateTableStatement stmt, boolean isUniqueIndex,
+                                         List<SqlIndexOption> options, boolean isGsi,
+                                         List<String> shardingKey,
+                                         boolean addFkIndex, String foreignKeyIndexName,
+                                         boolean enableAutoShardKeyIndex) {
 
         final Set<String> indexColumns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
         indexColumns.addAll(indexColumnDefMap.keySet());
@@ -2873,7 +3014,7 @@ public class SqlCreateTable extends SqlCreate {
         columnDefIncludedPkColsMap.putAll(shardingColumnDefMap);
 
 //        if (!indexAlreadExists) {
-        if (!autoShardIndexAlreadyExists || addFkIndex) {
+        if ((!autoShardIndexAlreadyExists && enableAutoShardKeyIndex) || addFkIndex) {
             List<IndexColumnInfo> indexColumnInfos =
                 prepareAutoCompositeIndexes(shardingKey, columnDefMap, 191);
 

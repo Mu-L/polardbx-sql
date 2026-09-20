@@ -36,9 +36,10 @@ import com.alibaba.polardbx.executor.ddl.job.task.columnar.WaitColumnarTableCrea
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.CciUpdateIndexStatusTask;
 import com.alibaba.polardbx.executor.ddl.job.validator.GsiValidator;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlExceptionAction;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4CreateColumnarIndex;
 import com.alibaba.polardbx.gms.engine.FileSystemManager;
 import com.alibaba.polardbx.gms.locality.LocalityDesc;
@@ -78,7 +79,7 @@ import static com.alibaba.polardbx.executor.gsi.GsiUtils.columnAst2nameStr;
 /**
  * create cluster columnar index
  */
-public class CreateColumnarIndexJobFactory extends DdlJobFactory {
+public class CreateColumnarIndexJobFactory extends OnlineDdlJobFactory {
 
     private static final PartitionStrategy DEFAULT_PARTITION_STRATEGY = PartitionStrategy.KEY;
 
@@ -95,6 +96,10 @@ public class CreateColumnarIndexJobFactory extends DdlJobFactory {
     protected List<String> partitionKeys = null;
     protected PartitionStrategy partitionStrategy = null;
     protected List<String> sortKeys;
+    /**
+     * sortKeys排序键对应的collation，事实上值是A｜D｜NULL，NULL代表默认值，A代表升序asc，D代表降序desc
+     */
+    protected List<String> collations;
     protected final SqlCreateIndex sqlCreateIndex;
     protected ExecutionContext executionContext;
     protected PartitionInfo partitionInfo = null;
@@ -109,6 +114,9 @@ public class CreateColumnarIndexJobFactory extends DdlJobFactory {
      */
     protected final boolean createTableWithCci;
     protected final Long versionId;
+    protected Map<String, String> columnarOptions;
+    protected final Long taskMarkSeq;
+    protected final boolean markByHint;
 
     public CreateColumnarIndexJobFactory(CreateGlobalIndexPreparedData globalIndexPreparedData,
                                          ExecutionContext executionContext) {
@@ -127,6 +135,8 @@ public class CreateColumnarIndexJobFactory extends DdlJobFactory {
             globalIndexPreparedData.isCreateTableWithIndex(),
             globalIndexPreparedData.getIndexPartitionInfo(),
             globalIndexPreparedData.getDdlVersionId(),
+            globalIndexPreparedData.getTaskMarkSeq(),
+            globalIndexPreparedData.isMarkByHint(),
             executionContext
         );
     }
@@ -145,13 +155,17 @@ public class CreateColumnarIndexJobFactory extends DdlJobFactory {
                                             boolean createTableWithCci,
                                             PartitionInfo indexPartitionInfo,
                                             Long versionId,
+                                            Long taskMarkSeq,
+                                            boolean markByHint,
                                             ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.OSC);
         this.schemaName = schemaName;
         this.primaryTableName = primaryTableName;
         this.columnarIndexTableName = indexTableName;
         this.clusteredIndex = clusteredIndex;
         this.preparedData = preparedData;
         this.sortKeys = columnAst2nameStr(sortKeys);
+        this.collations = sortKeys.stream().map(SqlIndexColumnName::getCollation).collect(Collectors.toList());
         this.coverings = columnAst2nameStr(covering);
         this.indexComment = indexComment == null ? "" : indexComment;
         this.indexType = indexType;
@@ -174,6 +188,8 @@ public class CreateColumnarIndexJobFactory extends DdlJobFactory {
         Preconditions.checkNotNull(versionId);
         Preconditions.checkArgument(isVersionIdInitialized(versionId), "Ddl versionId is not initialized");
         this.versionId = versionId;
+        this.taskMarkSeq = taskMarkSeq;
+        this.markByHint = markByHint;
         if (null != executionContext.getDdlContext()) {
             executionContext.getDdlContext().setPausedPolicy(DdlState.PAUSED);
         }
@@ -271,6 +287,8 @@ public class CreateColumnarIndexJobFactory extends DdlJobFactory {
     private void buildColumnarSortKey() {
         if (CollectionUtils.isEmpty(sortKeys)) {
             sortKeys = ImmutableList.copyOf(primaryKeys);
+            //默认主键情况下，默认情况
+            collations = Collections.nCopies(primaryKeys.size(), null);
         }
     }
 
@@ -316,6 +334,7 @@ public class CreateColumnarIndexJobFactory extends DdlJobFactory {
             primaryTableName,
             columnarIndexTableName,
             sortKeys,
+            collations,
             coverings,
             false,
             indexComment,
@@ -323,6 +342,9 @@ public class CreateColumnarIndexJobFactory extends DdlJobFactory {
             IndexStatus.CREATING,
             clusteredIndex);
         taskList.add(insertColumnarIndexMetaTask);
+        if (!createTableWithCci) {
+            taskList.add(new TableSyncTask(schemaName, primaryTableName));
+        }
 
         // 2.4 CDC mark create columnar table
         CdcCreateColumnarIndexTask cdcCreateColumnarIndexTask = null;
@@ -350,12 +372,16 @@ public class CreateColumnarIndexJobFactory extends DdlJobFactory {
                 // and use `columnar_table_evolution` to get the immutable options (like dict columns).
                 columnarOptions,
                 sqlCreateIndex.toString(true),
-                versionId);
+                versionId,
+                taskMarkSeq,
+                markByHint
+            );
             taskList.add(cdcCreateColumnarIndexTask);
 
             // 2.5 table sync
             DdlTask tableSyncTask = new TableSyncTask(schemaName, columnarIndexTableName);
             taskList.add(tableSyncTask);
+            taskList.add(new TableSyncTask(schemaName, primaryTableName));
         }
 
         // 3.1.1 wait columnar table creation
@@ -381,7 +407,9 @@ public class CreateColumnarIndexJobFactory extends DdlJobFactory {
         taskList.add(changeCreatingToChecking);
 
         DdlTask checkingTableSyncTask = new TableSyncTask(schemaName, primaryTableName);
-        taskList.add(checkingTableSyncTask);
+        if (!createTableWithCci) {
+            taskList.add(checkingTableSyncTask);
+        }
 
         final CreateCheckCciTask createCheckCciTask = new CreateCheckCciTask(
             schemaName,
@@ -407,7 +435,9 @@ public class CreateColumnarIndexJobFactory extends DdlJobFactory {
 
         // 3.3 final table sync
         DdlTask finalTableSyncTask = new TableSyncTask(schemaName, primaryTableName);
-        taskList.add(finalTableSyncTask);
+        if (!createTableWithCci) {
+            taskList.add(finalTableSyncTask);
+        }
 
         final ExecutableDdlJob4CreateColumnarIndex result = new ExecutableDdlJob4CreateColumnarIndex();
         result.addSequentialTasks(taskList);

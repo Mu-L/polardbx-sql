@@ -36,14 +36,14 @@ public class LargeBatchDml extends ReadBaseTestCase {
         + "        `bill_code` varchar(50) NOT NULL DEFAULT '',\n"
         + "        `bill_code_bak` varchar(255) DEFAULT '',\n"
         + "        PRIMARY KEY (`id`)\n"
-        + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 dbpartition by HASH(`id`)";
+        + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci dbpartition by HASH(`id`)";
     private static final String TABLE0_PART = "CREATE TABLE `" + TABLE0_NAME + "` (\n"
         + "        `id` bigint(20) NOT NULL AUTO_INCREMENT,\n"
         + "        `agency_company_code` varchar(6) DEFAULT '',\n"
         + "        `bill_code` varchar(50) NOT NULL DEFAULT '',\n"
         + "        `bill_code_bak` varchar(255) DEFAULT '',\n"
         + "        PRIMARY KEY (`id`)\n"
-        + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 partition by KEY(`id`) partitions 3";
+        + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci partition by KEY(`id`) partitions 3";
 
     private static final String TABLE1_NAME = "xproto_large1";
     private static final String TABLE1 = "CREATE TABLE `" + TABLE1_NAME + "` (\n"
@@ -52,7 +52,7 @@ public class LargeBatchDml extends ReadBaseTestCase {
         + "        `bill_code` varchar(16) NOT NULL DEFAULT '',\n"
         + "        `bill_code_bak` varchar(255) DEFAULT '',\n"
         + "        PRIMARY KEY (`id`)\n"
-        + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 dbpartition by HASH(`id`)";
+        + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci dbpartition by HASH(`id`)";
 
     private static final String TABLE1_PART = "CREATE TABLE `" + TABLE1_NAME + "` (\n"
         + "        `id` bigint(20) NOT NULL AUTO_INCREMENT,\n"
@@ -60,7 +60,7 @@ public class LargeBatchDml extends ReadBaseTestCase {
         + "        `bill_code` varchar(16) NOT NULL DEFAULT '',\n"
         + "        `bill_code_bak` varchar(255) DEFAULT '',\n"
         + "        PRIMARY KEY (`id`)\n"
-        + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 partition by KEY(`id`) partitions 3";
+        + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci partition by KEY(`id`) partitions 3";
 
     @Before
     public void before() {

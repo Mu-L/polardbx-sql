@@ -16,22 +16,29 @@
 
 package com.alibaba.polardbx.executor.accumulator;
 
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.expression.calc.Aggregator;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class WrapAggregatorAccumulator implements Accumulator {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(WrapAggregatorAccumulator.class).instanceSize();
 
+    @FieldMemoryCounter(value = false)
     private Aggregator aggregator;
 
+    @FieldMemoryCounter(value = false)
     private DataType[] inputTypes;
 
+    @FieldMemoryCounter(value = false)
     private DataType aggValueType;
 
+    @FieldMemoryCounter(value = false)
     private List<Aggregator> aggregatorList;
 
     public WrapAggregatorAccumulator(Aggregator aggregator, DataType[] rowInputType, DataType aggValueType,
@@ -44,6 +51,11 @@ public class WrapAggregatorAccumulator implements Accumulator {
             inputTypes[i] = rowInputType[inputColumnIndexes[i]];
         }
         this.aggregatorList = new ArrayList<>(capacity);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE;
     }
 
     public DataType[] getInputTypes() {

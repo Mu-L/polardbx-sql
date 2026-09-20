@@ -31,6 +31,7 @@ import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlInsert;
 import org.apache.calcite.sql.SqlIntervalQualifier;
 import org.apache.calcite.sql.SqlJoin;
+import org.apache.calcite.sql.SqlJsonTable;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
@@ -343,6 +344,8 @@ public class RemoveSchemaNameVisitor extends SqlShuttle {
             leftNode = visit((SqlSelect) leftNode);
         } else if (leftNode instanceof SqlIdentifier) {
             leftNode = buildNewIdentifier((SqlIdentifier) leftNode);
+        } else if (leftNode instanceof SqlJsonTable) {
+            // do nothing
         } else if (leftNode instanceof SqlCall) {
             leftNode = visit((SqlCall) leftNode);
         } else if (leftNode instanceof SqlDynamicParam) {

@@ -7,7 +7,7 @@ set ENABLE_DROP_TRUNCATE_CCI_PARTITION=true;
 set TTL_DEBUG_CURRENT_DATETIME='2024-06-04 11:00:00';
 ## timezone_on_tz0800
 create table tc10_ttl_key_i_t1(
-a int not null auto_increment,
+a int not null,
 b bigint not null,
 c varchar(32),
 primary key(a)
@@ -75,7 +75,7 @@ ttl_filter = cond_expr(c='0'),
 archive_type='ROW';
 drop table tc10_ttl_key_i_t1;
 create table tc10_ttl_key_d_t2(
-a int not null auto_increment,
+a int not null,
 b datetime not null,
 c varchar(32),
 primary key(a)
@@ -147,7 +147,7 @@ ttl_cleanup='on';
 show create table tc10_ttl_key_d_t2;
 Table,Create Table
 tc10_ttl_key_d_t2,CREATE TABLE `tc10_ttl_key_d_t2` (
-	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`a` int(11) NOT NULL,
 	`b` datetime NOT NULL,
 	`c` varchar(32) DEFAULT NULL,
 	PRIMARY KEY (`a`)
@@ -163,7 +163,7 @@ archive_table_pre_allocate=10,
 archive_table_post_allocate=10;
 drop table tc10_ttl_key_d_t2;
 create table tc10_ttl_rng_i_t3(
-a int not null auto_increment,
+a int not null,
 b bigint not null,
 c varchar(32),
 primary key(a)
@@ -198,7 +198,7 @@ archive_type='PARTITION';
 show create table tc10_ttl_rng_i_t3;
 Table,Create Table
 tc10_ttl_rng_i_t3,CREATE TABLE `tc10_ttl_rng_i_t3` (
-	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`a` int(11) NOT NULL,
 	`b` bigint(20) NOT NULL,
 	`c` varchar(32) DEFAULT NULL,
 	PRIMARY KEY (`a`)
@@ -208,7 +208,7 @@ PARTITION BY RANGE COLUMNS(`a`)
  PARTITION p2 VALUES LESS THAN (1706716800) ENGINE = InnoDB)
 drop table tc10_ttl_rng_i_t3;
 create table tc10_ttl_rng_ntsp_d_t4(
-a int not null auto_increment,
+a int not null,
 b datetime not null,
 c varchar(32),
 primary key(a)
@@ -249,7 +249,7 @@ archive_type='SUBPARTITION';
 is not templated subpartition
 drop table tc10_ttl_rng_ntsp_d_t4;
 create table tc10_ttl_rng_tsp_d_t5(
-a int not null auto_increment,
+a int not null,
 b datetime not null,
 c varchar(32),
 e datetime not null,

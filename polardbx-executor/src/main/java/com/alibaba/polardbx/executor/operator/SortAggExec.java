@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.operator.util.DataTypeUtils;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
@@ -25,6 +27,7 @@ import com.alibaba.polardbx.optimizer.core.expression.calc.Aggregator;
 import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -33,17 +36,24 @@ import java.util.List;
  * Sort Aggregation Executor
  */
 public class SortAggExec extends AbstractExecutor {
+    private static final int INSTANCE_SIZE = (int) ClassLayout.parseClass(SortAggExec.class).instanceSize();
 
+    @FieldMemoryCounter(value = false)
     private final Executor input;
 
+    @FieldMemoryCounter(value = false)
     private final List<Aggregator> aggregators;
 
+    @FieldMemoryCounter(value = false)
     private AggCallsHolder aggCallsHolder;
 
+    @FieldMemoryCounter(value = false)
     private final List<DataType> outputColumnMeta;
 
+    @FieldMemoryCounter(value = false)
     private final int[] groups;
 
+    @FieldMemoryCounter(value = false)
     private Chunk.ChunkRow currentKey;
 
     private Chunk currentInputChunk;
@@ -51,6 +61,8 @@ public class SortAggExec extends AbstractExecutor {
     private int currentInputChunkPosition;
 
     private boolean finished;
+
+    @FieldMemoryCounter(value = false)
     private ListenableFuture<?> blocked;
 
     public SortAggExec(Executor input, int[] groups, List<Aggregator> aggregators, List<DataType> outputColumnMeta,
@@ -61,6 +73,11 @@ public class SortAggExec extends AbstractExecutor {
         this.outputColumnMeta = outputColumnMeta;
         this.input = input;
         this.blocked = NOT_BLOCKED;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(currentInputChunk);
     }
 
     @Override

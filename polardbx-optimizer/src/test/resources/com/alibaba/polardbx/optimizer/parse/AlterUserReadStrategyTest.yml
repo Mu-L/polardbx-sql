@@ -1,0 +1,38 @@
+SQL:
+  - sql: |
+      alter user user1 READ_STRATEGY FOLlower
+    plan: |
+      logicaldal(sql="alter user user1@% read_strategy 'follower'")
+  - sql: |
+      alter user user1@'11.11.23.32' read_Strategy none
+    plan: |
+      logicaldal(sql="alter user user1@11.11.23.32 read_strategy 'none'")
+  - sql: |
+      alter user user1 read_Strategy none
+    plan: |
+      logicaldal(sql="alter user user1@% read_strategy 'none'")
+  - sql: |
+      alter user user1 read_Strategy none, user2@'127.0.0.1' read_Strategy none
+    plan: |
+      ERR-CODE: [PXC-4500][ERR_PARSER] alter multi user
+  - sql: |
+      alter user user1 ACCOUNT LOCK READ_STRATEGY FOLlower
+    plan: |
+      err-code: [tddl-4500][err_parser] alter user user1 read_strategy follower
+  - sql: |
+      alter user IF EXISTS user1 IDENTIFIED BY 'auth_string' PASSWORD EXPIRE INTERVAL 5 DAY
+    plan: |
+      err-code: [tddl-4500][err_parser] alter user if exists user1 identified by 'auth_string' password expire interval 5 day
+  - sql: |
+      alter user user2@'127.0.0.1' read_Strategy Stale
+    plan: |
+      logicaldal(sql="alter user user2@127.0.0.1 read_strategy 'stale'")
+  - sql: |
+      alter user 's;drop\table' read_Strategy Stale
+    plan: |
+      logicaldal(sql="alter user s;drop	able@% read_strategy 'stale'")
+DDL:
+STATISTICS:
+CONFIG:
+  defaltxxAPPName.isNew:
+    true

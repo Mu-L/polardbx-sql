@@ -51,6 +51,7 @@ public class SQLAlterTableStatement extends SQLStatementImpl implements SQLDDLSt
     private boolean invalidateGlobalIndexes = false;
 
     private boolean removePatiting = false;
+    private boolean removeAutoPartition = false;
     private boolean removeLocalPatiting = false;
     private boolean upgradePatiting = false;
     private List<SQLAssignItem> tableOptions = new ArrayList<SQLAssignItem>();
@@ -129,6 +130,14 @@ public class SQLAlterTableStatement extends SQLStatementImpl implements SQLDDLSt
 
     public void setRemoveLocalPatiting(final boolean removeLocalPatiting) {
         this.removeLocalPatiting = removeLocalPatiting;
+    }
+
+    public boolean isRemoveAutoPartition() {
+        return removeAutoPartition;
+    }
+
+    public void setRemoveAutoPartition(boolean removeAutoPartition) {
+        this.removeAutoPartition = removeAutoPartition;
     }
 
     public boolean isUpgradePatiting() {

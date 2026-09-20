@@ -25,6 +25,7 @@ import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.executor.corrector.Checker;
 import com.alibaba.polardbx.executor.gsi.PhysicalPlanBuilder;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
+import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -118,7 +119,15 @@ public class GsiChecker extends Checker {
         final List<DataType> columnTypes = new ArrayList<>(info.getTargetTableColumns().size());
 
         for (String column : info.getTargetTableColumns()) {
-            columnTypes.add(indexTableMeta.getColumnIgnoreCase(column).getDataType());
+            ColumnMeta cm = indexTableMeta.getColumnIgnoreCase(column);
+            if (cm == null && indexTableMeta.hasExternalizedColumn()) {
+                cm = indexTableMeta.getColumnByMappingName(column);
+            }
+            if (cm == null) {
+                throw new TddlRuntimeException(ErrorCode.ERR_GLOBAL_SECONDARY_INDEX_EXECUTE,
+                    "Column not found in index table " + indexName + ": " + column);
+            }
+            columnTypes.add(cm.getDataType());
         }
 
         final Comparator<List<Pair<ParameterContext, byte[]>>> rowComparator = (o1, o2) -> {

@@ -25,4 +25,9 @@ public interface CdcConstants {
     int SUCCESS_CODE = 200;
 
     String CONFIG_KEY_PREFIX = "cdc_";
+
+    String DDL_LOAD_STATUS_STOPPED = "STOPPED";
+    String DDL_LOAD_STATUS_RUNNING = "RUNNING";
+
+    String DDL_LOAD_CHECKPOINT_KEY = "DDL_LOAD_CHECKPOINT_KEY";
 }

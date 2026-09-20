@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.net.util;
 
+import com.alibaba.polardbx.common.charset.CharsetName;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.HashMap;
@@ -264,6 +265,8 @@ public class CharsetUtil {
             return "iso_8859_1";
         }
 
-        return charset;
+        CharsetName charsetName = CharsetName.of(charset);
+
+        return charsetName == null ? charset : charsetName.getJavaCharset();
     }
 }

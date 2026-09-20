@@ -163,4 +163,9 @@ public final class ManagerConnection extends FrontendConnection {
         String clusterName = CobarServer.getInstance().getConfig().getSystem().getClusterName();
         return StringUtils.isEmpty(clusterName);
     }
+
+    @Override
+    public boolean isManagerConnection() {
+        return true;
+    }
 }

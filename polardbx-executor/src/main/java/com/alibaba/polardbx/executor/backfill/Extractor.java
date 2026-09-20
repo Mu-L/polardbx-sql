@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.executor.backfill;
 
 import com.alibaba.fastjson.JSON;
+import com.alibaba.polardbx.common.async.AsyncTask;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
@@ -28,12 +29,14 @@ import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.TStringUtil;
+import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.executor.ExecutorHelper;
 import com.alibaba.polardbx.executor.balancer.stats.StatsUtils;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.ddl.newengine.DdlEngineStats;
 import com.alibaba.polardbx.executor.ddl.newengine.cross.CrossEngineValidator;
+import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
 import com.alibaba.polardbx.executor.ddl.workqueue.BackFillThreadPool;
 import com.alibaba.polardbx.executor.ddl.workqueue.PriorityFIFOTask;
 import com.alibaba.polardbx.executor.gsi.GsiBackfillManager;
@@ -64,6 +67,8 @@ import com.alibaba.polardbx.optimizer.sql.sql2rel.TddlSqlToRelConverter;
 import com.alibaba.polardbx.optimizer.utils.PlannerUtils;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.RateLimiter;
@@ -125,6 +130,9 @@ public class Extractor extends PhyOperationBuilderCommon {
     protected volatile long nowSpeedLimit;
     protected final long parallelism;
     protected final GsiBackfillManager backfillManager;
+    // last 8192 task
+    public static Cache<Long, Integer> backfillTaskActiveSubTaskMap =
+        CacheBuilder.newBuilder().maximumSize(8192).build();
 
     /* Templates, built once, used every time. */
     /**
@@ -232,7 +240,8 @@ public class Extractor extends PhyOperationBuilderCommon {
         this.tm = ExecutorContext.getContext(schemaName).getTransactionManager();
         this.backfillManager = new GsiBackfillManager(schemaName);
         this.reporter = new Reporter(backfillManager);
-        this.throttle = new com.alibaba.polardbx.executor.backfill.Throttle(speedMin, speedLimit, schemaName);
+        this.throttle =
+            new com.alibaba.polardbx.executor.backfill.Throttle(speedMin, speedLimit, schemaName, batchSize);
     }
 
     /**
@@ -326,8 +335,7 @@ public class Extractor extends PhyOperationBuilderCommon {
     }
 
     private long getTableRowsCount(final String dbIndex, final String phyTable) {
-        String dbIndexWithoutGroup = GroupInfoUtil.buildPhysicalDbNameFromGroupName(dbIndex);
-        List<List<Object>> phyDb = StatsUtils.queryGroupByPhyDb(schemaName, dbIndexWithoutGroup, "select database();");
+        List<List<Object>> phyDb = StatsUtils.queryGroupByGroupName(schemaName, dbIndex, "select database();");
         if (GeneralUtil.isEmpty(phyDb) || GeneralUtil.isEmpty(phyDb.get(0))) {
             throw new TddlRuntimeException(ErrorCode.ERR_BACKFILL_GET_TABLE_ROWS,
                 String.format("group %s can not find physical db", dbIndex));
@@ -335,7 +343,7 @@ public class Extractor extends PhyOperationBuilderCommon {
 
         String phyDbName = String.valueOf(phyDb.get(0).get(0));
         String rowsCountSQL = StatsUtils.genTableRowsCountSQL(phyDbName, phyTable);
-        List<List<Object>> result = StatsUtils.queryGroupByPhyDb(schemaName, dbIndexWithoutGroup, rowsCountSQL);
+        List<List<Object>> result = StatsUtils.queryGroupByGroupName(schemaName, dbIndex, rowsCountSQL);
         if (GeneralUtil.isEmpty(result) || GeneralUtil.isEmpty(result.get(0))) {
             throw new TddlRuntimeException(ErrorCode.ERR_BACKFILL_GET_TABLE_ROWS,
                 String.format("db %s can not find table %s", phyDbName, phyTable));
@@ -344,9 +352,9 @@ public class Extractor extends PhyOperationBuilderCommon {
         return Long.parseLong(String.valueOf(result.get(0).get(0)));
     }
 
-    protected long getTableAvgRowLength(final String dbIndex, final String phyTable) {
-        String dbIndexWithoutGroup = GroupInfoUtil.buildPhysicalDbNameFromGroupName(dbIndex);
-        List<List<Object>> phyDb = StatsUtils.queryGroupByPhyDb(schemaName, dbIndexWithoutGroup, "select database();");
+    public static long getPhyiscalTableAvgRowLength(final String schemaName, final String dbIndex,
+                                                    final String phyTable) {
+        List<List<Object>> phyDb = StatsUtils.queryGroupByGroupName(schemaName, dbIndex, "select database();");
         if (GeneralUtil.isEmpty(phyDb) || GeneralUtil.isEmpty(phyDb.get(0))) {
             throw new TddlRuntimeException(ErrorCode.ERR_BACKFILL_GET_TABLE_AVG_ROW_LENGTH,
                 String.format("group %s can not find physical db", dbIndex));
@@ -354,13 +362,95 @@ public class Extractor extends PhyOperationBuilderCommon {
 
         String phyDbName = String.valueOf(phyDb.get(0).get(0));
         String avgRowLengthSQL = StatsUtils.genAvgTableRowLengthSQL(phyDbName, phyTable);
-        List<List<Object>> result = StatsUtils.queryGroupByPhyDb(schemaName, dbIndexWithoutGroup, avgRowLengthSQL);
+        List<List<Object>> result = StatsUtils.queryGroupByGroupName(schemaName, dbIndex, avgRowLengthSQL);
         if (GeneralUtil.isEmpty(result) || GeneralUtil.isEmpty(result.get(0))) {
             throw new TddlRuntimeException(ErrorCode.ERR_BACKFILL_GET_TABLE_AVG_ROW_LENGTH,
                 String.format("db %s can not find table %s", phyDbName, phyTable));
         }
 
         return Long.parseLong(String.valueOf(result.get(0).get(0)));
+    }
+
+    /**
+     * 计算整张表的平均行长，使用全分区扫描的方式
+     *
+     * @param schemaName schema名称
+     * @param primaryTable 逻辑表名
+     * @return 整张表的平均行长
+     */
+    public static long getLogicalTableAvgRowLength(final String schemaName, final String primaryTable) {
+        // 获取表的所有物理分区
+        Map<String, Set<String>> phyTables = GsiUtils.getPhyTables(schemaName, primaryTable);
+
+        if (phyTables == null || phyTables.isEmpty()) {
+            throw new TddlRuntimeException(ErrorCode.ERR_BACKFILL_GET_TABLE_AVG_ROW_LENGTH,
+                String.format("table %s.%s has no physical tables", schemaName, primaryTable));
+        }
+
+        long totalDataLength = 0L;
+        long totalRows = 0L;
+        int partitionCount = 0;
+
+        // 按物理库串行查询，减少网络开销
+        for (Map.Entry<String, Set<String>> entry : phyTables.entrySet()) {
+            String dbIndex = entry.getKey();
+            String physicalDbName = GroupInfoUtil.buildPhysicalDbNameFromGroupName(schemaName, dbIndex);
+            Set<String> tableNames = entry.getValue();
+
+            try {
+                // 构建批量查询SQL，一次查询多个表的统计信息
+                String sql = StatsUtils.genAvgTableRowLengthSQL(physicalDbName, tableNames);
+
+                // 执行批量查询
+                List<List<Object>> batchResult = StatsUtils.queryGroupByGroupName(schemaName, dbIndex, sql);
+
+                if (GeneralUtil.isNotEmpty(batchResult)) {
+                    for (List<Object> row : batchResult) {
+                        if (row.size() >= 3) {
+                            Object dataLengthObj = row.get(0);
+                            Object tableRowsObj = row.get(1);
+                            Object tableName = row.get(2);
+
+                            if (dataLengthObj != null && tableRowsObj != null) {
+                                try {
+                                    long dataLength = Long.parseLong(String.valueOf(dataLengthObj));
+                                    long tableRows = Long.parseLong(String.valueOf(tableRowsObj));
+
+                                    if (tableRows > 0) {
+                                        totalDataLength += dataLength;
+                                        totalRows += tableRows;
+                                        partitionCount++;
+                                    }
+                                } catch (NumberFormatException e) {
+                                    SQLRecorderLogger.ddlLogger.warn(String.format(
+                                        "Invalid number format for table %s.%s: dataLength=%s, tableRows=%s",
+                                        physicalDbName, tableName, dataLengthObj, tableRowsObj));
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                SQLRecorderLogger.ddlLogger.warn(String.format("Failed to get size info for database %s, error: %s",
+                    physicalDbName, e.getMessage()));
+            }
+        }
+
+        if (partitionCount == 0 || totalRows == 0) {
+            SQLRecorderLogger.ddlLogger.warn(
+                String.format("No valid partition data found for table %s.%s, using default avg row length 256",
+                    schemaName, primaryTable));
+            return 256L;
+        }
+
+        long avgRowLength = totalDataLength / totalRows;
+
+        SQLRecorderLogger.ddlLogger.info(String.format(
+            "Calculated avg row length for table %s.%s: %d bytes (total data: %d, total rows: %d, partitions: %d)",
+            schemaName, primaryTable, avgRowLength, totalDataLength, totalRows, partitionCount));
+
+        // 确保返回值至少为 64
+        return Math.max(avgRowLength, 64L);
     }
 
     protected List<GsiBackfillManager.BackfillObjectRecord> splitAndInitUpperBound(final ExecutionContext baseEc,
@@ -390,6 +480,7 @@ public class Extractor extends PhyOperationBuilderCommon {
             return initUpperBound(baseEc, ddlJobId, taskId, dbIndex, phyTable, primaryKeysId);
         }
 
+        long rowCount = getTableRowsCount(dbIndex, phyTable);
         int splitCount =
             baseEc.getParamManager().getInt(ConnectionParams.PHYSICAL_TABLE_BACKFILL_PARALLELISM);
         long maxPhyTableRowCount =
@@ -398,8 +489,19 @@ public class Extractor extends PhyOperationBuilderCommon {
             baseEc.getParamManager().getLong(ConnectionParams.BACKFILL_MAX_SAMPLE_ROWS);
         float samplePercentage =
             baseEc.getParamManager().getFloat(ConnectionParams.BACKFILL_MAX_SAMPLE_PERCENTAGE);
+        // if (DdlHelper.isBoostPerfMode(baseEc) || true) {
+        // 计算理想的split数量，但要限制在合理范围内
+        int idealSplitCount = (int) (rowCount / maxPhyTableRowCount) + 1;
+        // 限制splitCount在1到64之间，避免过度分裂
+        splitCount = Math.max(splitCount, Math.min(idealSplitCount, 64));
+        maxSampleSize = (long) Math.min(Math.max(rowCount * 0.002, maxSampleSize), rowCount * 0.1);
 
-        long rowCount = getTableRowsCount(dbIndex, phyTable);
+        SQLRecorderLogger.ddlLogger.info(String.format(
+            "[%s] Boost mode: dbIndex=%s, phyTable=%s, rowCount=%d, idealSplitCount=%d, actualSplitCount=%d, sampleSize=%d, maxPhyTableRowCount=%d",
+            baseEc.getTraceId(), dbIndex, phyTable, rowCount, idealSplitCount, splitCount, maxSampleSize,
+            maxPhyTableRowCount));
+        // }
+
         // judge need split
         if (rowCount < maxPhyTableRowCount || splitCount <= 1) {
             return initUpperBound(baseEc, ddlJobId, taskId, dbIndex, phyTable, primaryKeysId);
@@ -642,7 +744,8 @@ public class Extractor extends PhyOperationBuilderCommon {
         int i = 0;
         for (Map<Integer, ParameterContext> item : upperBoundList) {
             final AtomicInteger srcIndex = new AtomicInteger(0);
-            final String suffix = "_%" + String.format("%02x", i++);
+            // 65536 physical batch, which is enough for a 10TB large table, where each physical batch is 120MB.
+            final String suffix = "_%" + String.format("%04x", i++);
             final String name = physicalTableName + suffix;
             final String grpTableName = dbIndex + "_" + name;
 
@@ -900,6 +1003,10 @@ public class Extractor extends PhyOperationBuilderCommon {
                                         BatchConsumer loader,
                                         AtomicReference<Boolean> interrupted) {
         String physicalTableName = TddlSqlToRelConverter.unwrapPhysicalTableName(phyTable);
+
+        boolean asyncLog =
+            OptimizerContext.getContext(schemaName).getParamManager().getBoolean(ConnectionParams.BACKFILL_ASYNC_LOG);
+
         // Load upper bound
         List<ParameterContext> upperBoundParam =
             buildUpperBoundParam(backfillObjects.size(), backfillObjects, primaryKeysIdMap);
@@ -914,102 +1021,143 @@ public class Extractor extends PhyOperationBuilderCommon {
         List<Map<Integer, ParameterContext>> lastBatch = null;
         boolean finished = false;
         long actualBatchSize = batchSize;
-        do {
-            try {
-                if (rateLimiter != null) {
-                    rateLimiter.acquire((int) actualBatchSize);
-                }
-                long start = System.currentTimeMillis();
+        if (CrossEngineValidator.isJobInterrupted(ec) || Thread.currentThread().isInterrupted()
+            || interrupted.get()) {
+            long jobId = ec.getDdlJobId();
+            throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR,
+                "The job '" + jobId + "' has been cancelled");
+        }
 
-                // Dynamic adjust lower bound of rate.
-                final long dynamicRate = DynamicConfig.getInstance().getGeneralDynamicSpeedLimitation();
-                if (dynamicRate > 0) {
-                    throttle.resetMaxRate(dynamicRate);
-                }
+        Long taskId = ec.getTaskId();
+        if (taskId > 0) {
+            GsiUtils.incrementTaskIdSubtaskCount(taskId, 1);
+        }
+        try {
+            do {
+                try {
+                    final long dynamicBatchSize = ec.getDdlContext().newBackfillBatchSize();
+                    if (dynamicBatchSize > 0) {
+                        actualBatchSize = dynamicBatchSize;
+                    }
+                    if (rateLimiter != null) {
+                        rateLimiter.acquire((int) actualBatchSize);
+                    }
+                    long start = System.currentTimeMillis();
 
-                // For next batch, build select plan and parameters
-                final PhyTableOperation selectPlan = buildSelectPlanWithParam(dbIndex,
-                    physicalTableName,
-                    actualBatchSize,
-                    Stream.concat(lastPk.stream(), upperBoundParam.stream()).collect(Collectors.toList()),
-                    GeneralUtil.isNotEmpty(lastPk),
-                    withUpperBound);
+                    // Dynamic adjust lower bound of rate.
+                    final long dynamicRate = DynamicConfig.getInstance().getGeneralDynamicSpeedLimitation();
+                    if (dynamicRate > 0) {
+                        throttle.resetMaxRate(dynamicRate);
+                    }
 
-                List<ParameterContext> finalLastPk = lastPk;
-                lastBatch = GsiUtils.retryOnException(
-                    // 1. Lock rows within trx1 (single db transaction)
-                    // 2. Fill into index table within trx2 (XA transaction)
-                    // 3. Trx1 commit, if (success) {trx2 commit} else {trx2 rollback}
-                    () -> GsiUtils.wrapWithSingleDbTrx(tm, ec,
-                        (selectEc) -> extract(dbIndex, physicalTableName, selectPlan, selectEc, loader, finalLastPk,
-                            upperBoundParam)),
-                    e -> (GsiUtils.vendorErrorIs(e, SQLSTATE_DEADLOCK, ER_LOCK_DEADLOCK)
-                        || GsiUtils.vendorErrorIs(e, SQLSTATE_LOCK_TIMEOUT, ER_LOCK_WAIT_TIMEOUT))
-                        || e.getMessage().contains("Loader check error."),
-                    (e, retryCount) -> deadlockErrConsumer(selectPlan, ec, e, retryCount));
+                    // For next batch, build select plan and parameters
+                    final PhyTableOperation selectPlan = buildSelectPlanWithParam(dbIndex,
+                        physicalTableName,
+                        actualBatchSize,
+                        Stream.concat(lastPk.stream(), upperBoundParam.stream()).collect(Collectors.toList()),
+                        GeneralUtil.isNotEmpty(lastPk),
+                        withUpperBound);
 
-                // For status recording
-                List<ParameterContext> beforeLastPk = lastPk;
+                    List<ParameterContext> finalLastPk = lastPk;
+                    lastBatch = GsiUtils.retryOnException(
+                        // 1. Lock rows within trx1 (single db transaction)
+                        // 2. Fill into index table within trx2 (XA transaction)
+                        // 3. Trx1 commit, if (success) {trx2 commit} else {trx2 rollback}
+                        () -> GsiUtils.wrapWithSingleDbTrx(tm, ec,
+                            (selectEc) -> extract(dbIndex, physicalTableName, selectPlan, selectEc, loader, finalLastPk,
+                                upperBoundParam)),
+                        e -> (GsiUtils.vendorErrorIs(e, SQLSTATE_DEADLOCK, ER_LOCK_DEADLOCK)
+                            || GsiUtils.vendorErrorIs(e, SQLSTATE_LOCK_TIMEOUT, ER_LOCK_WAIT_TIMEOUT))
+                            || e.getMessage().contains("Loader check error."),
+                        (e, retryCount) -> deadlockErrConsumer(selectPlan, ec, e, retryCount));
 
-                // Build parameter for next batch
-                lastPk = buildSelectParam(lastBatch, primaryKeysId);
+                    // For status recording
+                    List<ParameterContext> beforeLastPk = lastPk;
 
-                finished = lastBatch.size() != actualBatchSize;
+                    // Build parameter for next batch
+                    lastPk = buildSelectParam(lastBatch, primaryKeysId);
 
-                // Update position mark
-                successRowCount += lastBatch.size();
-                reporter.updatePositionMark(ec, backfillObjects, successRowCount, lastPk, beforeLastPk, finished,
-                    primaryKeysIdMap);
-                ec.getStats().backfillRows.addAndGet(lastBatch.size());
-                DdlEngineStats.METRIC_BACKFILL_ROWS_FINISHED.update(lastBatch.size());
+                    finished = lastBatch.size() != actualBatchSize;
 
-                if (!finished) {
+                    // Update position mark
+                    successRowCount += lastBatch.size();
+
+                    if (asyncLog) {
+                        // 异步写日志
+                        long finalSuccessRowCount = successRowCount;
+                        List<ParameterContext> finalLastPk1 = lastPk;
+                        boolean finalFinished = finished;
+                        FutureTask<Void> futureTask = new FutureTask<>(
+                            () -> {
+                                reporter.updatePositionMark(ec,
+                                    backfillObjects,
+                                    finalSuccessRowCount,
+                                    finalLastPk1,
+                                    beforeLastPk,
+                                    finalFinished,
+                                    primaryKeysIdMap
+                                );
+                            }, null);
+                        ec.getExecutorService()
+                            .submit(ec.getSchemaName(), ec.getTraceId(), AsyncTask.build(futureTask));
+                    } else {
+                        reporter.updatePositionMark(ec, backfillObjects, successRowCount, lastPk, beforeLastPk,
+                            finished, primaryKeysIdMap);
+                    }
+
+                    ec.getStats().backfillRows.addAndGet(lastBatch.size());
+                    DdlEngineStats.METRIC_BACKFILL_ROWS_FINISHED.update(lastBatch.size());
+
                     throttle.feedback(new com.alibaba.polardbx.executor.backfill.Throttle.FeedbackStats(
                         System.currentTimeMillis() - start, start, lastBatch.size()));
-                }
 //                DdlEngineStats.METRIC_BACKFILL_ROWS_SPEED.set((long) throttle.getActualRateLastCycle());
 
-                if (rateLimiter != null) {
-                    // Limit rate.
-                    rateLimiter.setRate(throttle.getNewRate());
+                    if (rateLimiter != null) {
+                        // Limit rate.
+                        rateLimiter.setRate(throttle.getNewRate());
+                    }
+
+                    // Check DDL is ongoing.
+                    if (CrossEngineValidator.isJobInterrupted(ec) || Thread.currentThread().isInterrupted()
+                        || interrupted.get()) {
+                        long jobId = ec.getDdlJobId();
+                        throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR,
+                            "The job '" + jobId + "' has been cancelled");
+                    }
+                    if (actualBatchSize < batchSize) {
+                        actualBatchSize = Math.min(actualBatchSize * 2, batchSize);
+                    }
+                } catch (TddlRuntimeException e) {
+                    boolean retry = (e.getErrorCode() == ErrorCode.ERR_X_PROTOCOL_BAD_PACKET.getCode() ||
+                        (e.getErrorCode() == 1153 && e.getMessage().toLowerCase().contains("max_allowed_packet")) ||
+                        (e.getSQLState() != null && e.getSQLState().equalsIgnoreCase("S1000") && e.getMessage()
+                            .toLowerCase().contains("max_allowed_packet"))) && actualBatchSize > 1;
+                    if (retry) {
+                        actualBatchSize = Math.max(actualBatchSize / 8, 1);
+                    } else {
+                        throw e;
+                    }
                 }
 
-                // Check DDL is ongoing.
-                if (CrossEngineValidator.isJobInterrupted(ec) || Thread.currentThread().isInterrupted()
-                    || interrupted.get()) {
-                    long jobId = ec.getDdlJobId();
-                    throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR,
-                        "The job '" + jobId + "' has been cancelled");
-                }
-                if (actualBatchSize < batchSize) {
-                    actualBatchSize = Math.min(actualBatchSize * 2, batchSize);
-                }
-            } catch (TddlRuntimeException e) {
-                boolean retry = (e.getErrorCode() == ErrorCode.ERR_X_PROTOCOL_BAD_PACKET.getCode() ||
-                    (e.getErrorCode() == 1153 && e.getMessage().toLowerCase().contains("max_allowed_packet")) ||
-                    (e.getSQLState() != null && e.getSQLState().equalsIgnoreCase("S1000") && e.getMessage()
-                        .toLowerCase().contains("max_allowed_packet"))) && actualBatchSize > 1;
-                if (retry) {
-                    actualBatchSize = Math.max(actualBatchSize / 8, 1);
-                } else {
-                    throw e;
-                }
-            }
-
-            // for sliding window of split
-            checkAndSplitBackfillObject(
-                dbIndex, phyTable, successRowCount, ec, rangeBackfillStartTime, lastBatch, backfillObjects);
-        } while (!finished);
+                // for sliding window of split
+                checkAndSplitBackfillObject(
+                    dbIndex, phyTable, successRowCount, ec, rangeBackfillStartTime, lastBatch, backfillObjects);
+            } while (!finished);
 
 //        DdlEngineStats.METRIC_BACKFILL_ROWS_SPEED.set(0);
-        reporter.addBackfillCount(successRowCount);
+            reporter.addBackfillCount(successRowCount);
 
-        SQLRecorderLogger.ddlLogger.warn(MessageFormat.format("[{0}] Last backfill row for {1}[{2}][{3}]: {4}",
-            ec.getTraceId(),
-            dbIndex,
-            phyTable,
-            successRowCount,
-            GsiUtils.rowToString(lastBatch.isEmpty() ? null : lastBatch.get(lastBatch.size() - 1))));
+            SQLRecorderLogger.ddlLogger.warn(MessageFormat.format("[{0}] Last backfill row for {1}[{2}][{3}]: {4}",
+                ec.getTraceId(),
+                dbIndex,
+                phyTable,
+                successRowCount,
+                GsiUtils.rowToString(lastBatch.isEmpty() ? null : lastBatch.get(lastBatch.size() - 1))));
+        } finally {
+            if (taskId > 0L) {
+                GsiUtils.incrementTaskIdSubtaskCount(taskId, -1);
+            }
+        }
     }
 
     /**
@@ -1021,7 +1169,8 @@ public class Extractor extends PhyOperationBuilderCommon {
                                                List<GsiBackfillManager.BackfillObjectBean> backfillObjects) {
         ParamManager pm = OptimizerContext.getContext(schemaName).getParamManager();
         ParamManager ecPm = ec.getParamManager();
-        boolean enableSlideWindowBackfill = pm.getBoolean(ConnectionParams.ENABLE_SLIDE_WINDOW_BACKFILL);
+        boolean enableSlideWindowBackfill = pm.getBoolean(ConnectionParams.ENABLE_SLIDE_WINDOW_BACKFILL)
+            && !DdlHelper.isBoostPerfMode(ec);
         boolean enableSample = pm.getBoolean(ConnectionParams.ENABLE_INNODB_BTREE_SAMPLING);
 
         boolean enablePhyTblParallelBackfill =
@@ -1372,10 +1521,6 @@ public class Extractor extends PhyOperationBuilderCommon {
         public List<Integer> getPrimaryKeysId() {
             return primaryKeysId;
         }
-
-        public void setTargetTableColumns(List<String> targetTableColumns) {
-            this.targetTableColumns = targetTableColumns;
-        }
     }
 
     public static ExtractorInfo buildExtractorInfo(ExecutionContext ec,
@@ -1407,6 +1552,8 @@ public class Extractor extends PhyOperationBuilderCommon {
             targetTableColumns = targetTableMeta.getWriteColumns()
                 .stream()
                 .filter(columnMeta -> !skipGeneratedColumn || !columnMeta.isGeneratedColumn())
+                .filter(columnMeta -> !omcColumnMapping || columnMeta.getMappingName() == null
+                    || !columnMeta.getMappingName().isEmpty())
                 .map(ColumnMeta::getName)
                 .collect(Collectors.toList());
         }
@@ -1415,17 +1562,12 @@ public class Extractor extends PhyOperationBuilderCommon {
         for (int i = 0; i < targetTableColumns.size(); i++) {
             targetColumnMap.put(targetTableColumns.get(i), i);
         }
-
         // order reserved primary keys
         List<String> primaryKeys = getPrimaryKeys(sourceTableMeta, ec);
         List<Integer> appearedKeysId = new ArrayList<>();
         for (String primaryKey : primaryKeys) {
             if (targetColumnMap.containsKey(primaryKey)) {
                 appearedKeysId.add(targetColumnMap.get(primaryKey));
-            } else {
-                // 正常情况 target 一定会包含 主表的主键，drop primary key, add primary key 时，可能会不存在
-                targetTableColumns.add(primaryKey);
-                appearedKeysId.add(targetTableColumns.size() - 1);
             }
         }
 
@@ -1434,7 +1576,8 @@ public class Extractor extends PhyOperationBuilderCommon {
         List<String> targetTableColumnsAfterMapping = new ArrayList<>(targetTableColumns.size());
         for (String columnName : targetTableColumns) {
             ColumnMeta columnMeta = targetTableMeta.getColumn(columnName);
-            if (omcColumnMapping && columnMeta.getMappingName() != null) {
+            if (omcColumnMapping && columnMeta.getMappingName() != null
+                && !columnMeta.isExternalizedColumn()) {
                 if (!columnMeta.getMappingName().isEmpty()) {
                     sourceTableColumnsAfterMapping.add(columnMeta.getMappingName());
                     targetTableColumnsAfterMapping.add(columnName);
@@ -1442,6 +1585,19 @@ public class Extractor extends PhyOperationBuilderCommon {
             } else {
                 sourceTableColumnsAfterMapping.add(columnName);
                 targetTableColumnsAfterMapping.add(columnName);
+            }
+        }
+
+        // Externalized columns: backfill uses physical column names (e.g. content -> content_addr_)
+        // so that SELECT/INSERT hit the actual DN column (BIGINT) instead of the logical name (LONGTEXT).
+        if (sourceTableMeta.hasExternalizedColumn()) {
+            for (int i = 0; i < sourceTableColumnsAfterMapping.size(); i++) {
+                String colName = sourceTableColumnsAfterMapping.get(i);
+                ColumnMeta cm = sourceTableMeta.getColumnIgnoreCase(colName);
+                if (cm != null && cm.isExternalizedColumn() && cm.getMappingName() != null) {
+                    sourceTableColumnsAfterMapping.set(i, cm.getMappingName());
+                    targetTableColumnsAfterMapping.set(i, cm.getMappingName());
+                }
             }
         }
 

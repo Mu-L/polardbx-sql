@@ -178,7 +178,7 @@
                             </execution>
                         </executions>
                         <configuration>
-                            <verbose>true</verbose>
+                            <verbose>false</verbose>
                             <skip>false</skip>
                             <prefix>git</prefix>
                             <dotGitDirectory>../.git</dotGitDirectory>
@@ -191,7 +191,7 @@
                             <abbrevLength>7</abbrevLength>
                             <format>properties</format>
                             <gitDescribe>
-                                <skip>false</skip>
+                                <skip>true</skip>
                                 <always>false</always>
                                 <abbrev>7</abbrev>
                                 <match>*</match>

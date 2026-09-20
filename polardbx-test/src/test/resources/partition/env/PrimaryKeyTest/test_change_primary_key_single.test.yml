@@ -1,0 +1,65 @@
+drop table if exists s1;
+drop table if exists s2;
+drop table if exists s3;
+drop table if exists s4;
+drop table if exists s5;
+
+drop tablegroup if exists single1;
+drop tablegroup if exists single2;
+
+create tablegroup single1;
+create tablegroup single2;
+
+create table s1(a int primary key, b int) single tablegroup = single1;
+create table s2(a bit(10), b int, primary key(a,b)) single tablegroup = single1;
+
+create table s3(a int primary key, b int) single tablegroup = single2;
+create table s4(a bit(10), b int, primary key(a,b)) single tablegroup = single2;
+
+create table s5(a int, b int) single tablegroup = single1;
+
+insert into s1 values(1,1);
+insert into s2 values(2,2);
+insert into s3 values(3,3);
+insert into s4 values(4,4);
+insert into s5 values(5,5);
+
+alter table s1 change column a a1 bit(10);
+alter table s2 change column a a1 int;
+
+show full create table s1;
+show full create table s2;
+
+alter table s1 change column a1 a2 bit(10);
+alter table s2 change column a1 a2 int;
+
+show full create table s1;
+show full create table s2;
+
+alter table s1 change column b b1 bigint;
+alter table s2 change column b b1 bigint;
+
+show full create table s1;
+show full create table s2;
+
+alter table s3 change column a b int, change column b a int;
+alter table s4 change column a c int, change column b d int;
+
+show full create table s3;
+show full create table s4;
+
+alter table s5 change column `_drds_implicit_id_` `c` bigint(20) NOT NULL AUTO_INCREMENT;
+
+show full create table s5;
+
+insert into s1 values(6,6);
+insert into s2 values(7,7);
+insert into s3 values(8,8);
+insert into s4 values(9,9);
+insert into s5(a,b) values(10,10);
+
+select * from s1;
+select * from s2;
+select * from s3;
+select * from s4;
+select * from s5;

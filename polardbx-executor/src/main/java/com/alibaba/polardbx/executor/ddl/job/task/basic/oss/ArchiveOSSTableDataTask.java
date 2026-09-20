@@ -28,8 +28,7 @@ import com.alibaba.polardbx.executor.archive.writer.OSSBackFillExecutor;
 import com.alibaba.polardbx.executor.archive.writer.OSSBackFillTimer;
 import com.alibaba.polardbx.executor.archive.writer.OSSBackFillWriterTask;
 import com.alibaba.polardbx.executor.ddl.job.meta.CommonMetaChanger;
-import com.alibaba.polardbx.executor.ddl.job.meta.FileStorageBackFillAccessor;
-import com.alibaba.polardbx.executor.ddl.job.meta.TableMetaChanger;
+import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseGmsTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.ddl.newengine.meta.FileStorageAccessorDelegate;
@@ -65,7 +64,8 @@ import java.util.stream.Collectors;
 
 @Getter
 @TaskName(name = "ArchiveOSSTableDataTask")
-public class ArchiveOSSTableDataTask extends BaseGmsTask {
+public class ArchiveOSSTableDataTask extends BaseDdlTask {
+    protected final String logicalTableName;
     protected final String loadTableSchema;
     protected final String loadTableName;
     protected final String physicalPartitionName;
@@ -76,7 +76,8 @@ public class ArchiveOSSTableDataTask extends BaseGmsTask {
     public ArchiveOSSTableDataTask(String schemaName, String logicalTableName,
                                    String loadTableSchema, String loadTableName,
                                    String physicalPartitionName, Engine targetTableEngine) {
-        super(schemaName, logicalTableName);
+        super(schemaName);
+        this.logicalTableName = logicalTableName;
         this.loadTableSchema = loadTableSchema;
         this.loadTableName = loadTableName;
         this.physicalPartitionName = physicalPartitionName;
@@ -91,7 +92,7 @@ public class ArchiveOSSTableDataTask extends BaseGmsTask {
     }
 
     @Override
-    protected void executeImpl(Connection metaDbConnection, ExecutionContext executionContext) {
+    protected void duringTransaction(Connection metaDbConnection, ExecutionContext executionContext) {
         executionContext.setBackfillId(getTaskId());
         executionContext.setTaskId(getTaskId());
         new FileStorageAccessorDelegate<Integer>() {
@@ -110,7 +111,7 @@ public class ArchiveOSSTableDataTask extends BaseGmsTask {
     }
 
     @Override
-    protected void rollbackImpl(Connection metaDbConnection, ExecutionContext executionContext) {
+    protected void duringRollbackTransaction(Connection metaDbConnection, ExecutionContext executionContext) {
         rollbackFileStorage(metaDbConnection, executionContext);
     }
 

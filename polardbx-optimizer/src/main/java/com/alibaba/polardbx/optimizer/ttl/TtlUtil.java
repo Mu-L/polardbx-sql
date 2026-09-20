@@ -5,14 +5,14 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
-import com.alibaba.polardbx.druid.sql.ast.SQLPartition;
 import com.alibaba.polardbx.druid.sql.ast.SQLPartitionBy;
-import com.alibaba.polardbx.druid.sql.ast.SQLPartitionByRange;
-import com.alibaba.polardbx.druid.sql.ast.SQLPartitionValue;
-import com.alibaba.polardbx.druid.sql.ast.SQLSubPartitionByHash;
-import com.alibaba.polardbx.druid.sql.ast.expr.SQLCharExpr;
-import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
-import com.alibaba.polardbx.druid.sql.ast.expr.SQLIntegerExpr;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.parser.MySqlCreateTableParser;
+import com.alibaba.polardbx.druid.sql.parser.ByteString;
+import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLVariantRefExpr;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.parser.MySqlExprParser;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.visitor.MySqlOutputVisitor;
+import com.alibaba.polardbx.druid.sql.parser.ByteString;
 import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
 import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
@@ -20,6 +20,8 @@ import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.gms.ttl.TtlInfoRecord;
 import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.config.server.IServerConfigManager;
+import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager;
 import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
@@ -28,11 +30,33 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.TddlOperatorTable;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
+import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
+import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
+import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
+import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTable;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalRenameTable;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalRenameTables;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTablePreparedData;
+import com.alibaba.polardbx.optimizer.parse.visitor.FastSqlToCalciteNodeVisitor;
+import com.alibaba.polardbx.optimizer.exception.TableNotFoundException;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.common.PartitionTableType;
 import com.alibaba.polardbx.optimizer.view.SystemTableView;
 import com.alibaba.polardbx.optimizer.view.ViewManager;
+import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.plan.RelOptCluster;
+import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.RelShuttleImpl;
+import org.apache.calcite.rel.core.TableScan;
+import org.apache.calcite.rel.logical.LogicalFilter;
+import org.apache.calcite.rel.logical.LogicalUnion;
+import org.apache.calcite.rex.RexBuilder;
+import org.apache.calcite.rex.RexCall;
+import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.rex.RexShuttle;
+import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlCharStringLiteral;
 import org.apache.calcite.sql.SqlCreateTable;
@@ -168,6 +192,14 @@ public class TtlUtil {
         }
     }
 
+    /**
+     * Convert the func expr with the input of SqlIdentifier ttl_col into
+     * the func expr with the input of dynamic params .
+     * <pre>
+     *     from_unixtime(ttl_col / 1000) =>
+     *     from_unixtime(? / 1000) =>
+     * </pre>
+     */
     protected static class TtlColumnAsSqlDynamicParamReplacer extends SqlShuttle {
 
         protected TtlColumnAsSqlDynamicParamReplacer() {
@@ -305,6 +337,11 @@ public class TtlUtil {
     public static TtlDefinitionInfo fetchTtlDefinitionInfoByDbAndTb(String tableSchema,
                                                                     String tableName,
                                                                     ExecutionContext ec) {
+        SchemaManager sc = ec.getSchemaManager(tableSchema);
+        if (sc == null) {
+            // no found tableSchema
+            return null;
+        }
         TableMeta tableMeta = ec.getSchemaManager(tableSchema).getTable(tableName);
         TtlDefinitionInfo ttlDefinitionInfo = tableMeta.getTtlDefinitionInfo();
         return ttlDefinitionInfo;
@@ -365,7 +402,13 @@ public class TtlUtil {
             return false;
         }
 
-        if (!cciIndexName.toLowerCase().startsWith(ttlInfo.getTmpTableName().toLowerCase())) {
+        // arcTmpTblName is the arc cci name
+        String arcTmpTblName = ttlInfo.getTmpTableName();
+        if (StringUtils.isEmpty(arcTmpTblName)) {
+            return false;
+        }
+
+        if (!cciIndexName.toLowerCase().startsWith(arcTmpTblName.toLowerCase())) {
             return false;
         }
         return true;
@@ -426,6 +469,15 @@ public class TtlUtil {
              */
             TtlDefinitionInfo ttlInfo = targetTableMeta.getTtlDefinitionInfo();
             if (ttlInfo == null) {
+                /**
+                 * Come here, targetPartInfo of tableMeta should NOT be null,
+                 * if it is null,
+                 * maybe the targetTableMeta is invalid and its ddl-job has be paused,
+                 * so return true
+                 */
+                if (targetPartInfo == null) {
+                    return true;
+                }
                 /**
                  * tarDb.tarTb is NOT ttl-definition table
                  */
@@ -552,9 +604,9 @@ public class TtlUtil {
         return val;
     }
 
-    protected static String getFirstColumnarIndexName(SqlCreateTable sqlCreateTable) {
+    protected static String getFirstArchiveColumnarIndexName(SqlCreateTable sqlCreateTable) {
 
-        List<Pair<SqlIdentifier, SqlIndexDefinition>> cciIdxInfos = sqlCreateTable.getColumnarKeys();
+        List<Pair<SqlIdentifier, SqlIndexDefinition>> cciIdxInfos = sqlCreateTable.getArchiveColumnarKeys();
         if (cciIdxInfos == null || cciIdxInfos.isEmpty()) {
             return null;
         }
@@ -567,7 +619,8 @@ public class TtlUtil {
     public static TtlDefinitionInfo createTtlDefinitionInfoBySqlCreateTable(SqlCreateTable sqlCreateTable,
                                                                             TableMeta tableMeta,
                                                                             PartitionInfo newCreateTblPartInfo,
-                                                                            ExecutionContext executionContext) {
+                                                                            ExecutionContext executionContext,
+                                                                            IServerConfigManager svrMgr) {
         boolean foundTtlDefinition = false;
 
         SqlNode ttlDefinitionExprNode = sqlCreateTable.getTtlDefinition();
@@ -594,6 +647,8 @@ public class TtlUtil {
         SqlNode ttlEnableExpr = ttlDefinitionExprAst.getTtlEnableExpr();
         SqlNode ttlExprNode = ttlDefinitionExprAst.getTtlExpr();
         SqlNode ttlJobNode = ttlDefinitionExprAst.getTtlJobExpr();
+        SqlNode ttlTtlColEncoderNode = ttlDefinitionExprAst.getTtlColEncoderExpr();
+        SqlNode ttlTtlColDecoderNode = ttlDefinitionExprAst.getTtlColDecoderExpr();
         SqlNode ttlFilterExpr = ttlDefinitionExprAst.getTtlFilterExpr();
         SqlNode ttlCleanupExpr = ttlDefinitionExprAst.getTtlCleanupExpr();
         SqlNode ttlPartIntervalExpr = ttlDefinitionExprAst.getTtlPartIntervalExpr();
@@ -602,6 +657,8 @@ public class TtlUtil {
         SqlNode archiveTableNameExpr = ttlDefinitionExprAst.getArchiveTableNameExpr();
         SqlNode archiveTablePreAllocateExpr = ttlDefinitionExprAst.getArchiveTablePreAllocateExpr();
         SqlNode archiveTablePostAllocateExpr = ttlDefinitionExprAst.getArchiveTablePostAllocateExpr();
+        SqlNode ttlRefColList = ttlDefinitionExprAst.getTtlRefColList();
+        SqlNode ttlHybrid = ttlDefinitionExprAst.getTtlHybrid();
 
         String ttlEnable = TtlInfoRecord.TTL_STATUS_DISABLE_SCHEDULE_STR_VAL;
         if (ttlEnableExpr != null) {
@@ -619,6 +676,26 @@ public class TtlUtil {
         for (int i = 0; i < pkColMetas.size(); i++) {
             ColumnMeta pkCm = pkColMetas.get(i);
             pkColNames.add(pkCm.getName());
+        }
+
+        String ttlColEncoderStr = null;
+        if (ttlTtlColEncoderNode != null) {
+            if (ttlTtlColEncoderNode instanceof SqlCharStringLiteral) {
+                ttlColEncoderStr = SQLUtils.normalizeNoTrim(((SqlCharStringLiteral) ttlTtlColEncoderNode).toValue());
+            } else {
+                ttlColEncoderStr = SQLUtils.normalizeNoTrim(ttlTtlColEncoderNode.toString());
+            }
+//            ttlColEncoderStr = SQLUtils.normalizeNoTrim(ttlTtlColEncoderNode.toString());
+        }
+
+        String ttlColDecoderStr = null;
+        if (ttlTtlColDecoderNode != null) {
+            if (ttlTtlColDecoderNode instanceof SqlCharStringLiteral) {
+                ttlColDecoderStr = SQLUtils.normalizeNoTrim(((SqlCharStringLiteral) ttlTtlColDecoderNode).toValue());
+            } else {
+                ttlColDecoderStr = SQLUtils.normalizeNoTrim(ttlTtlColDecoderNode.toString());
+            }
+//            ttlColDecoderStr = SQLUtils.normalizeNoTrim(ttlTtlColDecoderNode.toString());
         }
 
         String ttlFilterStr = null;
@@ -662,6 +739,8 @@ public class TtlUtil {
         buildParams.setTtlEnable(ttlEnable);
         buildParams.setTtlExpr(ttlExpr);
         buildParams.setTtlJob(ttlJob);
+        buildParams.setTtlColEncoder(ttlColEncoderStr);
+        buildParams.setTtlColDecoder(ttlColDecoderStr);
         buildParams.setTtlFilter(ttlFilterStr);
         buildParams.setTtlCleanup(ttlCleanupStr);
         buildParams.setTtlPartInterval(ttlPartIntervalExpr);
@@ -672,6 +751,9 @@ public class TtlUtil {
         buildParams.setArcPostAllocateCount(arcPostAllocateVal);
         buildParams.setTtlTableMeta(tableMeta);
         buildParams.setEc(executionContext);
+        buildParams.setServerConfigManager(svrMgr);
+        buildParams.setTtlRefColList(ttlRefColList);
+        buildParams.setTtlHybrid(ttlHybrid);
         ttlDefinitionInfo = TtlDefinitionInfo.createNewTtlInfo(
             buildParams,
             newCreateTblPartInfo,
@@ -679,4 +761,156 @@ public class TtlUtil {
         return ttlDefinitionInfo;
     }
 
+    protected static class DynamicParamsReplacer extends MySqlOutputVisitor {
+        protected String inputValStr = "?";
+
+        public DynamicParamsReplacer(Appendable appender) {
+            super(appender);
+        }
+
+        @Override
+        public boolean visit(SQLVariantRefExpr x) {
+//            super.visit(x);
+            String name = x.getName();
+            if ("?".equals(name)) {
+                print(inputValStr);
+            }
+            return false;
+        }
+
+        public String getInputValStr() {
+            return inputValStr;
+        }
+
+        public void setInputValStr(String inputValStr) {
+            this.inputValStr = inputValStr;
+        }
+
+    }
+
+    public static String replaceParamsAndBuildExprSql(String inputValStr,
+                                                      SQLExpr targetExpr) {
+        StringBuilder outputExpr = new StringBuilder();
+        DynamicParamsReplacer dynamicParamsReplacer = new DynamicParamsReplacer(outputExpr);
+        dynamicParamsReplacer.setInputValStr(inputValStr);
+        targetExpr.accept(dynamicParamsReplacer);
+        return outputExpr.toString();
+    }
+
+    public static SQLExpr parseExprString(String queryExprStr) {
+        SQLExpr sqlExprVal = null;
+        if (!StringUtils.isEmpty(queryExprStr)) {
+            ByteString queryExprByteStr = ByteString.from(queryExprStr);
+            MySqlExprParser queryExprParser = new MySqlExprParser(queryExprByteStr);
+            sqlExprVal = queryExprParser.expr();
+        }
+        return sqlExprVal;
+    }
+
+    public static boolean needRefreshArcTblView(BaseDdlOperation ddlPlan,
+                                                ExecutionContext ec,
+                                                List<RefreshArcTblViewContext> tarTtlInfoCtxOutput) {
+        boolean needRefreshArcTblView = false;
+        if (ddlPlan instanceof LogicalAlterTable) {
+            LogicalAlterTable alterTable = (LogicalAlterTable) ddlPlan;
+            needRefreshArcTblView = alterTable.needRefreshArcTblView(ec);
+            String tableSchema = ddlPlan.getSchemaName();
+            String tableName = ddlPlan.getTableName();
+            if (needRefreshArcTblView) {
+                if (tarTtlInfoCtxOutput != null) {
+                    TtlDefinitionInfo tarTtlInfo = TtlUtil.fetchTtlDefinitionInfoByDbAndTb(tableSchema, tableName, ec);
+                    RefreshArcTblViewContext refreshArcTblViewContext = new RefreshArcTblViewContext();
+                    refreshArcTblViewContext.setNewTtlTblName(tableName);
+                    refreshArcTblViewContext.setNewTtlTblSchema(tableSchema);
+                    refreshArcTblViewContext.setTarTtlInfo(tarTtlInfo);
+                    tarTtlInfoCtxOutput.add(refreshArcTblViewContext);
+                }
+            }
+        } else if (ddlPlan instanceof LogicalRenameTable) {
+            LogicalRenameTable renameTable = (LogicalRenameTable) ddlPlan;
+            String tableSchema = renameTable.getRenameTablePreparedData().getSchemaName();
+            String oldTableName = renameTable.getRenameTablePreparedData().getTableName();
+            String newTableName = renameTable.getRenameTablePreparedData().getNewTableName();
+            TtlDefinitionInfo oldTblTtlInfo = TtlUtil.fetchTtlDefinitionInfoByDbAndTb(tableSchema, oldTableName, ec);
+            if (oldTblTtlInfo != null) {
+                needRefreshArcTblView = oldTblTtlInfo.needPerformExpiredDataArchiving();
+            }
+            if (needRefreshArcTblView) {
+                if (tarTtlInfoCtxOutput != null) {
+                    TtlDefinitionInfo tarTtlInfo =
+                        TtlUtil.fetchTtlDefinitionInfoByDbAndTb(tableSchema, oldTableName, ec);
+                    RefreshArcTblViewContext refreshArcTblViewContext = new RefreshArcTblViewContext();
+                    refreshArcTblViewContext.setNewTtlTblName(newTableName);
+                    refreshArcTblViewContext.setNewTtlTblSchema(tableSchema);
+                    refreshArcTblViewContext.setTarTtlInfo(tarTtlInfo);
+                    tarTtlInfoCtxOutput.add(refreshArcTblViewContext);
+                }
+            }
+        } else if (ddlPlan instanceof LogicalRenameTables) {
+            LogicalRenameTables renameTables = (LogicalRenameTables) ddlPlan;
+            String tableSchema = renameTables.getRenameTablesPreparedData().getSchemaName();
+            List<String> newTableNames = renameTables.getRenameTablesPreparedData().getToTableNames();
+            List<String> oldTableNames = renameTables.getRenameTablesPreparedData().getFromTableNames();
+
+            List<String[]> renameFromToInfos = new ArrayList<>();
+            for (int i = 0; i < oldTableNames.size(); i++) {
+                String[] fromTo = new String[2];
+                fromTo[0] = oldTableNames.get(i);
+                fromTo[1] = newTableNames.get(i);
+                renameFromToInfos.add(fromTo);
+            }
+            Map<String, String> finalMappingForOriginalToNewName =
+                TtlUtil.resolveFinalNamesByMultiRenameRelationShip(renameFromToInfos);
+            List<String> originalTableNames = new ArrayList<>(finalMappingForOriginalToNewName.keySet());
+
+            for (int i = 0; i < originalTableNames.size(); i++) {
+                String oldTableName = oldTableNames.get(i);
+                String newTableName = finalMappingForOriginalToNewName.get(oldTableName);
+                TtlDefinitionInfo oldTblTtlInfo = null;
+                oldTblTtlInfo = TtlUtil.fetchTtlDefinitionInfoByDbAndTb(tableSchema, oldTableName, ec);
+                if (oldTblTtlInfo != null) {
+                    boolean hasArcTbl = oldTblTtlInfo.needPerformExpiredDataArchiving();
+                    if (hasArcTbl) {
+                        RefreshArcTblViewContext refreshArcTblViewContext = new RefreshArcTblViewContext();
+                        refreshArcTblViewContext.setNewTtlTblName(newTableName);
+                        refreshArcTblViewContext.setNewTtlTblSchema(tableSchema);
+                        refreshArcTblViewContext.setTarTtlInfo(oldTblTtlInfo);
+                        tarTtlInfoCtxOutput.add(refreshArcTblViewContext);
+                    }
+                }
+            }
+            needRefreshArcTblView = !tarTtlInfoCtxOutput.isEmpty();
+        }
+        return needRefreshArcTblView;
+    }
+
+    public static Map<String, String> resolveFinalNamesByMultiRenameRelationShip(List<String[]> renames) {
+        // currentName -> originalName
+        Map<String, String> currentToOriginal = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+
+        for (String[] rename : renames) {
+            String from = rename[0];
+            String to = rename[1];
+
+            // If from not in currentToOriginal, it's original table
+            if (!currentToOriginal.containsKey(from)) {
+                currentToOriginal.put(from, from);
+            }
+
+            String original = currentToOriginal.get(from);
+
+            // remove old name, add new name
+            currentToOriginal.remove(from);
+            currentToOriginal.put(to, original);
+        }
+
+        // reverse mapping: currentToOriginal to originalToFinal
+        Map<String, String> originalToFinal = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+        for (Map.Entry<String, String> entry : currentToOriginal.entrySet()) {
+            String currentName = entry.getKey();
+            String originalName = entry.getValue();
+            originalToFinal.put(originalName, currentName);
+        }
+        return originalToFinal;
+    }
 }

@@ -24,7 +24,7 @@ public class UseDbTest extends ReadBaseTestCase {
         + "  `x` int(11) NOT NULL AUTO_INCREMENT,\n"
         + "  `y` int(11) NOT NULL,\n"
         + "  PRIMARY KEY (`x`)\n"
-        + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4  dbpartition by hash(`x`) tbpartition by hash(`x`) tbpartitions 3";
+        + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_general_ci dbpartition by hash(`x`) tbpartition by hash(`x`) tbpartitions 3";
 
     @Before
     public void initData() {

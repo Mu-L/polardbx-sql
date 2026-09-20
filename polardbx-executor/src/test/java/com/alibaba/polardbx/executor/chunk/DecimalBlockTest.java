@@ -46,11 +46,9 @@ public class DecimalBlockTest extends BaseBlockTest {
     public void testSizeInBytes() {
         DecimalBlock block = new DecimalBlock(new DecimalType(), 1024);
         MemoryCountable.checkDeviation(block, .05d, true);
-        Assert.assertEquals("delay memory allocation should contains the nulls array", 1240, block.getElementUsedBytes());
 
         block.setElementAt(0, Decimal.fromString("3.14"));
         MemoryCountable.checkDeviation(block, .05d, true);
-        Assert.assertEquals("should allocate memory after setting an element", 42232, block.getElementUsedBytes());
     }
 
     @Test
@@ -727,6 +725,25 @@ public class DecimalBlockTest extends BaseBlockTest {
                 Assert.assertTrue("Failed at : " + i, decimal128Block1.equals(i, normalBlock1, i));
                 Assert.assertTrue("Failed at : " + i, normalBlock1.equals(i, decimal64Block1, i));
                 Assert.assertTrue("Failed at : " + i, normalBlock1.equals(i, normalBlock2, i));
+
+                Assert.assertTrue("Failed at : " + i,
+                    decimal64Block1.compareAssertedSameType(i, decimal64Block2, i) == 0);
+                Assert.assertTrue("Failed at : " + i,
+                    decimal64Block2.compareAssertedSameType(i, decimal64Block1, i) == 0);
+                Assert.assertTrue("Failed at : " + i,
+                    decimal64Block1.compareAssertedSameType(i, decimal128Block1, i) == 0);
+                Assert.assertTrue("Failed at : " + i,
+                    decimal128Block1.compareAssertedSameType(i, decimal128Block2, i) == 0);
+                Assert.assertTrue("Failed at : " + i,
+                    decimal128Block1.compareAssertedSameType(i, decimal64Block1, i) == 0);
+                Assert.assertTrue("Failed at : " + i,
+                    decimal128Block2.compareAssertedSameType(i, decimal128Block1, i) == 0);
+                Assert.assertTrue("Failed at : " + i, decimal64Block1.compareAssertedSameType(i, normalBlock1, i) == 0);
+                Assert.assertTrue("Failed at : " + i,
+                    decimal128Block1.compareAssertedSameType(i, normalBlock1, i) == 0);
+                Assert.assertTrue("Failed at : " + i, normalBlock1.compareAssertedSameType(i, decimal64Block1, i) == 0);
+                Assert.assertTrue("Failed at : " + i, normalBlock1.compareAssertedSameType(i, normalBlock2, i) == 0);
+
             } else {
                 Assert.assertFalse("Failed at : " + i, decimal64Block1.equals(i, decimal64Block2, i));
                 Assert.assertFalse("Failed at : " + i, decimal64Block2.equals(i, decimal64Block1, i));

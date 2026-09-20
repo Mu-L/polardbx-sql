@@ -76,8 +76,8 @@ public class RepartitionCutOverTask extends BaseGmsTask {
             single,
             broadcast,
             auto,
-            repartitionGsi
-        );
+            repartitionGsi,
+            false);
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
 

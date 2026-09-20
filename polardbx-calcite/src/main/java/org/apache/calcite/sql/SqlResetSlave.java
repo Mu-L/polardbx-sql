@@ -27,7 +27,8 @@ import java.util.List;
  */
 public class SqlResetSlave extends SqlReplicationBase {
 
-    private boolean isAll;
+    private final boolean isAll;
+    private final boolean isDdlLoad;
 
     {
         operator = new SqlResetSlaveOperator();
@@ -36,9 +37,10 @@ public class SqlResetSlave extends SqlReplicationBase {
     }
 
     public SqlResetSlave(SqlParserPos pos, List<Pair<SqlNode, SqlNode>> options, SqlNode channel,
-                         SqlNode subChannel, boolean isAll) {
+                         SqlNode subChannel, boolean isAll, boolean isDdlLoad) {
         super(pos, options, channel, subChannel);
         this.isAll = isAll;
+        this.isDdlLoad = isDdlLoad;
     }
 
     public static class SqlResetSlaveOperator extends SqlReplicationOperator {
@@ -50,5 +52,9 @@ public class SqlResetSlave extends SqlReplicationBase {
 
     public boolean isAll() {
         return isAll;
+    }
+
+    public boolean isDdlLoad() {
+        return isDdlLoad;
     }
 }

@@ -33,9 +33,16 @@ public class MetaDbDataIdBuilder {
     public static final MessageFormat INST_CONFIG_DATA_ID = new MessageFormat("polardbx.inst.config.{0}");
 
     /**
+     * {0} : subInstId
+     */
+    public static final MessageFormat SUB_INST_CONFIG_DATA_ID = new MessageFormat("polardbx.subinst.config.{0}");
+
+    /**
      * {0} : instId
      */
     public static final MessageFormat SERVER_INFO_DATA_ID = new MessageFormat("polardbx.server.info.{0}");
+    public static final MessageFormat SERVER_SUBCLUSTER_DATA_ID = new MessageFormat("polardbx.server.subcluster.{0}");
+    public static final MessageFormat SERVER_LOADWEIGHT_DATA_ID = new MessageFormat("polardbx.server.loadweight.{0}");
 
     /**
      * {0} : instId
@@ -56,6 +63,11 @@ public class MetaDbDataIdBuilder {
      * {0} : instId
      */
     public static final MessageFormat CCL_RULE_DATA_ID = new MessageFormat("polardbx.ccl.rule.{0}");
+
+    /**
+     * {0} : instId
+     */
+    public static final MessageFormat ROUTING_RULE_DATA_ID = new MessageFormat("polardbx.routing.rule.{0}");
 
     /**
      * {0} : instId, {1}: dbName, {2}: groupName
@@ -167,6 +179,12 @@ public class MetaDbDataIdBuilder {
 
     public static final String CDC_SYSTEM_CONFIG_DATA_ID = "polardbx.cdc.config";
 
+    public static final String AI_MODEL_CONFIG_DATA_ID = "polardbx.ai.model.config";
+
+    public static final String AI_FUNCTION_CONFIG_DATA_ID = "polardbx.ai.function.config";
+
+    public static final String AI_SKILL_CONFIG_DATA_ID = "polardbx.ai.skill.config";
+
     public static String formatDataId(String dataId) {
         return dataId.toLowerCase();
     }
@@ -199,6 +217,14 @@ public class MetaDbDataIdBuilder {
         return formatDataId(SERVER_INFO_DATA_ID.format(new Object[] {instId}));
     }
 
+    public static String getServerSubClusterDataId(String instId) {
+        return formatDataId(SERVER_SUBCLUSTER_DATA_ID.format(new Object[] {instId}));
+    }
+
+    public static String getServerLoadWeightDataId(String instId) {
+        return formatDataId(SERVER_LOADWEIGHT_DATA_ID.format(new Object[] {instId}));
+    }
+
     public static String getStorageInfoDataId(String instId) {
         return formatDataId(STORAGE_INFO_DATA_ID.format(new Object[] {instId}));
     }
@@ -209,6 +235,10 @@ public class MetaDbDataIdBuilder {
 
     public static String getInstConfigDataId(String instId) {
         return formatDataId(INST_CONFIG_DATA_ID.format(new Object[] {instId}));
+    }
+
+    public static String getSubInstConfigDataId(String subInstId) {
+        return formatDataId(SUB_INST_CONFIG_DATA_ID.format(new Object[] {subInstId}));
     }
 
     public static String getQuarantineConfigDataId(String instId) {
@@ -275,6 +305,10 @@ public class MetaDbDataIdBuilder {
         return formatDataId(CCL_RULE_DATA_ID.format(new Object[] {instId}));
     }
 
+    public static String getRoutingRuleDataId(String instId) {
+        return formatDataId(ROUTING_RULE_DATA_ID.format(new Object[] {instId}));
+    }
+
     public static String getDbComplexTaskDataId(String dbName) {
         return formatDataId(DB_COMPLEX_TASK_DATA_ID.format(new Object[] {dbName.toLowerCase()}));
     }
@@ -289,5 +323,17 @@ public class MetaDbDataIdBuilder {
 
     public static String getCdcSystemConfigDataId() {
         return formatDataId(CDC_SYSTEM_CONFIG_DATA_ID);
+    }
+
+    public static String getAiModelConfigDataId() {
+        return formatDataId(AI_MODEL_CONFIG_DATA_ID);
+    }
+
+    public static String getAiSkillConfigDataId() {
+        return formatDataId(AI_SKILL_CONFIG_DATA_ID);
+    }
+
+    public static String getAiFunctionConfigDataId() {
+        return formatDataId(AI_FUNCTION_CONFIG_DATA_ID);
     }
 }

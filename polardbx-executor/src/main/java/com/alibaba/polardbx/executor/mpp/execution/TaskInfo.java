@@ -29,10 +29,21 @@
  */
 package com.alibaba.polardbx.executor.mpp.execution;
 
+import com.alibaba.polardbx.common.columnar.ColumnarScanMetrics;
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.utils.Pair;
+import com.alibaba.polardbx.executor.mpp.deploy.ServiceProvider;
+import com.alibaba.polardbx.common.columnar.ColumnarScanMetrics;
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
+import com.alibaba.polardbx.common.utils.Pair;
+import com.alibaba.polardbx.executor.mpp.deploy.ServiceProvider;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.BufferState;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.OutputBufferInfo;
 import com.alibaba.polardbx.executor.mpp.metadata.TaskLocation;
 import com.alibaba.polardbx.executor.mpp.operator.TaskStats;
+import com.alibaba.polardbx.gms.node.InternalNode;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.statis.ColumnarTracer;
 import com.alibaba.polardbx.util.MoreObjects;
 import com.fasterxml.jackson.annotation.JsonCreator;
@@ -41,6 +52,8 @@ import com.google.common.collect.ImmutableSet;
 import org.joda.time.DateTime;
 
 import javax.annotation.concurrent.Immutable;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 
 import static com.alibaba.polardbx.executor.mpp.execution.TaskStatus.initialTaskStatus;
@@ -94,26 +107,28 @@ public class TaskInfo {
     private final long pullDataTimeMillis;
     private final long deliveryTimeMillis;
 
-    @JsonCreator
-    public TaskInfo(@JsonProperty("taskStatus") TaskStatus taskStatus,
-                    @JsonProperty("lastHeartbeat") DateTime lastHeartbeat,
-                    @JsonProperty("outputBuffers") OutputBufferInfo outputBuffers,
-                    @JsonProperty("noMoreSplits") Set<Integer> noMoreSplits,
-                    @JsonProperty("taskStats") TaskStats taskStats,
-                    @JsonProperty("columnarTracer") ColumnarTracer columnarTracer,
-                    @JsonProperty("needsPlan") boolean needsPlan,
-                    @JsonProperty("complete") boolean complete,
-                    @JsonProperty("completedPipelineExecs") int completedPipelineExecs,
-                    @JsonProperty("totalPipelineExecs") int totalPipelineExecs,
-                    @JsonProperty("cumulativeMemory") double cumulativeMemory,
-                    @JsonProperty("memoryReservation") long memoryReservation,
-                    @JsonProperty("elapsedTimeMillis") long elapsedTimeMillis,
-                    @JsonProperty("totalCpuTime") long totalCpuTime,
-                    @JsonProperty("processTimeMillis") long processTimeMillis,
-                    @JsonProperty("processWall") long processWall,
-                    @JsonProperty("pullDataTimeMillis") long pullDataTimeMillis,
-                    @JsonProperty("deliveryTimeMillis") long deliveryTimeMillis
-    ) {
+    private Pair<String, Long> maximumQueryMemoryUsagePair;
+    private Pair<TaskId, VersionStorageStatistics> versionStorageStatisticsPair;
+    private Pair<TaskId, ColumnarScanMetrics> columnarScanMetricsPair;
+
+    public TaskInfo(TaskStatus taskStatus,
+                    DateTime lastHeartbeat,
+                    OutputBufferInfo outputBuffers,
+                    Set<Integer> noMoreSplits,
+                    TaskStats taskStats,
+                    ColumnarTracer columnarTracer,
+                    boolean needsPlan,
+                    boolean complete,
+                    int completedPipelineExecs,
+                    int totalPipelineExecs,
+                    double cumulativeMemory,
+                    long memoryReservation,
+                    long elapsedTimeMillis,
+                    long totalCpuTime,
+                    long processTimeMillis,
+                    long processWall,
+                    long pullDataTimeMillis,
+                    long deliveryTimeMillis) {
         this.taskStatus = requireNonNull(taskStatus, "taskStatus is null");
         this.lastHeartbeat = requireNonNull(lastHeartbeat, "lastHeartbeat is null");
         this.outputBuffers = requireNonNull(outputBuffers, "outputBuffers is null");
@@ -137,6 +152,78 @@ public class TaskInfo {
         this.processWall = processWall;
         this.pullDataTimeMillis = pullDataTimeMillis;
         this.deliveryTimeMillis = deliveryTimeMillis;
+    }
+
+    @JsonCreator
+    public TaskInfo(@JsonProperty("taskStatus") TaskStatus taskStatus,
+                    @JsonProperty("lastHeartbeat") DateTime lastHeartbeat,
+                    @JsonProperty("outputBuffers") OutputBufferInfo outputBuffers,
+                    @JsonProperty("noMoreSplits") Set<Integer> noMoreSplits,
+                    @JsonProperty("taskStats") TaskStats taskStats,
+                    @JsonProperty("columnarTracer") ColumnarTracer columnarTracer,
+                    @JsonProperty("needsPlan") boolean needsPlan,
+                    @JsonProperty("complete") boolean complete,
+                    @JsonProperty("completedPipelineExecs") int completedPipelineExecs,
+                    @JsonProperty("totalPipelineExecs") int totalPipelineExecs,
+                    @JsonProperty("cumulativeMemory") double cumulativeMemory,
+                    @JsonProperty("memoryReservation") long memoryReservation,
+                    @JsonProperty("elapsedTimeMillis") long elapsedTimeMillis,
+                    @JsonProperty("totalCpuTime") long totalCpuTime,
+                    @JsonProperty("processTimeMillis") long processTimeMillis,
+                    @JsonProperty("processWall") long processWall,
+                    @JsonProperty("pullDataTimeMillis") long pullDataTimeMillis,
+                    @JsonProperty("deliveryTimeMillis") long deliveryTimeMillis,
+                    @JsonProperty("maximumQueryMemoryUsagePair")
+                    Pair<String, Long> maximumQueryMemoryUsagePair,
+                    @JsonProperty("versionStorageStatisticsPair")
+                    Pair<TaskId, VersionStorageStatistics> versionStorageStatisticsPair,
+                    @JsonProperty("columnarScanMetricsPair")
+                    Pair<TaskId, ColumnarScanMetrics> columnarScanMetricsPair
+                    ) {
+        this.taskStatus = requireNonNull(taskStatus, "taskStatus is null");
+        this.lastHeartbeat = requireNonNull(lastHeartbeat, "lastHeartbeat is null");
+        this.outputBuffers = requireNonNull(outputBuffers, "outputBuffers is null");
+        this.noMoreSplits = requireNonNull(noMoreSplits, "noMoreSplits is null");
+        this.taskStats = taskStats;
+        this.columnarTracer = columnarTracer;
+
+        this.needsPlan = needsPlan;
+        this.complete = complete;
+
+        this.completedPipelineExecs = completedPipelineExecs;
+        this.totalPipelineExecs = totalPipelineExecs;
+
+        this.cumulativeMemory = cumulativeMemory;
+        this.memoryReservation = memoryReservation;
+
+        this.elapsedTimeMillis = elapsedTimeMillis;
+        this.totalCpuTime = totalCpuTime;
+
+        this.processTimeMillis = processTimeMillis;
+        this.processWall = processWall;
+        this.pullDataTimeMillis = pullDataTimeMillis;
+        this.deliveryTimeMillis = deliveryTimeMillis;
+        this.maximumQueryMemoryUsagePair = maximumQueryMemoryUsagePair;
+        this.versionStorageStatisticsPair = versionStorageStatisticsPair;
+        this.columnarScanMetricsPair = columnarScanMetricsPair;
+    }
+
+    public void collectNodeStatistics(ExecutionContext context, TaskId taskId) {
+        // collect max memory usage info.
+        InternalNode localNode = ServiceProvider.getInstance().getServer().getLocalNode();
+        String hostPort = localNode.getHostPort();
+        long maximumQueryMemoryUsage = MemoryTrackerManager.getMaximumQueryMemoryUsage(taskStatus.getTaskId().getQueryId());
+        this.maximumQueryMemoryUsagePair = Pair.of(hostPort, maximumQueryMemoryUsage);
+
+        // collect version storage statistics.
+        if (context.getVersionStorageStatistics() != null) {
+            this.versionStorageStatisticsPair = Pair.of(taskId, context.getVersionStorageStatistics());
+        }
+
+        // collect columnar scan metrics here.
+        if (context.getColumnarScanMetrics() != null) {
+            this.columnarScanMetricsPair = Pair.of(taskId, context.getColumnarScanMetrics());
+        }
     }
 
     @JsonProperty
@@ -229,6 +316,21 @@ public class TaskInfo {
         return deliveryTimeMillis;
     }
 
+    @JsonProperty
+    public Pair<String, Long> getMaximumQueryMemoryUsagePair() {
+        return maximumQueryMemoryUsagePair;
+    }
+
+    @JsonProperty
+    public Pair<TaskId, VersionStorageStatistics> getVersionStorageStatisticsPair() {
+        return versionStorageStatisticsPair;
+    }
+
+    @JsonProperty
+    public Pair<TaskId, ColumnarScanMetrics> getColumnarScanMetricsPair() {
+        return columnarScanMetricsPair;
+    }
+
     @Override
     public String toString() {
         return MoreObjects.toStringHelper(this)
@@ -277,7 +379,10 @@ public class TaskInfo {
             processTimeMillis,
             processWall,
             pullDataTimeMillis,
-            deliveryTimeMillis);
+            deliveryTimeMillis,
+            maximumQueryMemoryUsagePair,
+            versionStorageStatisticsPair,
+            columnarScanMetricsPair);
     }
 
     public String toTaskString() {

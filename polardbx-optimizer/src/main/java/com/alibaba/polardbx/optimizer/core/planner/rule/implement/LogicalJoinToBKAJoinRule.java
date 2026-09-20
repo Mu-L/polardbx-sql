@@ -99,8 +99,8 @@ public abstract class LogicalJoinToBKAJoinRule extends RelOptRule {
         if (newCondition == null) {
             return;
         }
-        RelNode left;
-        RelNode right;
+        RelNode left = call.rel(1);
+        RelNode right = call.rel(2);
 
         final LogicalView inner;
 
@@ -116,9 +116,9 @@ public abstract class LogicalJoinToBKAJoinRule extends RelOptRule {
 
         if (join.getJoinType().equals(JoinRelType.RIGHT)) {
             left = inner = logicalView.copy(leftTraitSet);
-            right = convert(join.getRight(), rightTraitSet);
+            right = convert(right, rightTraitSet);
         } else {
-            left = convert(join.getLeft(), leftTraitSet);
+            left = convert(left, leftTraitSet);
             right = inner = logicalView.copy(rightTraitSet);
         }
 

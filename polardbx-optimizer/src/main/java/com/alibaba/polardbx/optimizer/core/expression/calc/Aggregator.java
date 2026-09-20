@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.optimizer.core.expression.calc;
 
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.optimizer.core.expression.bean.FunctionSignature;
 import com.alibaba.polardbx.optimizer.core.expression.calc.aggfunctions.CheckSumMerge;
 import com.alibaba.polardbx.optimizer.core.expression.calc.aggfunctions.CheckSumV2;
@@ -73,6 +74,7 @@ public abstract class Aggregator extends AbstractExpression implements IExtraFun
 
     private final HashSet<Object> effectRows;
 
+    @FieldMemoryCounter(value = false)
     protected final MemoryAllocatorCtx memoryAllocator;
 
     protected final int filterArg;

@@ -1,0 +1,101 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+set ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC=true;
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=true;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+#算法功能验证
+create table enum_table(id int)
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/enum',
+  '{
+　　　 "type" : "0",
+               "mapFile" :
+                 "
+                 0=0
+                 aaa=0
+                 1=1
+                 bbb=1
+                 2=2
+                 3=3
+                 "
+}'
+  )
+)
+partitions 4;
+select part_route('','enum_table',0);
+part_route('', 'enum_table', 0)
+p1
+select part_route('','enum_table',1);
+part_route('', 'enum_table', 1)
+p2
+select part_route('','enum_table',2);
+part_route('', 'enum_table', 2)
+p3
+select part_route('','enum_table',3);
+part_route('', 'enum_table', 3)
+p4
+## error_msg: $# can't find any valid data node #$
+select part_route('','enum_table',-1);
+can't find any valid data node
+## error_msg: $# can't find any valid data node #$
+select part_route('','enum_table',4);
+can't find any valid data node
+## error_msg: $# can't find any valid data node #$
+select part_route('','enum_table',5);
+can't find any valid data node
+## error_msg: $# Please check if the format satisfied #$
+select part_route('','enum_table','aaa');
+Please check if the format satisfied
+create table enum_table_1(id varchar(10))
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/enum',
+  '{
+    　　　 "type" : "1",
+          "defaultNode" : "3",
+          "mapFile" :
+           "
+            aaa=0
+            bbb=1
+            ccc=2
+            ddd=3
+            1=1
+            2=2
+            3=3
+           "
+    }'
+  )
+  )
+  partitions 4;
+select part_route('','enum_table_1',null);
+part_route('', 'enum_table_1', NULL)
+p4
+select part_route('','enum_table_1',0);
+part_route('', 'enum_table_1', 0)
+p4
+select part_route('','enum_table_1',1);
+part_route('', 'enum_table_1', 1)
+p2
+select part_route('','enum_table_1',2);
+part_route('', 'enum_table_1', 2)
+p3
+select part_route('','enum_table_1',3);
+part_route('', 'enum_table_1', 3)
+p4
+select part_route('','enum_table_1','aaa');
+part_route('', 'enum_table_1', 'aaa')
+p1
+select part_route('','enum_table_1','bbb');
+part_route('', 'enum_table_1', 'bbb')
+p2
+select part_route('','enum_table_1','ccc');
+part_route('', 'enum_table_1', 'ccc')
+p3
+select part_route('','enum_table_1','ddd');
+part_route('', 'enum_table_1', 'ddd')
+p4
+select part_route('','enum_table_1','eee');
+part_route('', 'enum_table_1', 'eee')
+p4

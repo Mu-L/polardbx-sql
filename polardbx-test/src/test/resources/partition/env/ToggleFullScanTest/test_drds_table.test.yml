@@ -1,0 +1,103 @@
+## DISABLE_FAST_SQL_PARSER
+drop database if exists test_drds_table_db;
+create database test_drds_table_db mode=drds;
+use test_drds_table_db;
+create table t9(id int, name varchar(20)) dbpartition by hash(id);
+create table t1(id int, name varchar(20)) dbpartition by hash(id);
+insert into t1 values(1, 'aaa'), (2, 'bbb'), (3, 'ccc');
+create table t2(id int, name varchar(20)) dbpartition by hash(id) tbpartition by hash(name) tbpartitions 2;
+insert into t2 values(1, 'aaa'), (2, 'bbb'), (3, 'ccc');
+create table t3(id int, name varchar(20)) broadcast;
+insert into t3 values(1, 'aaa'), (2, 'bbb'), (3, 'ccc');
+create table t4(id int, name varchar(20)) broadcast;
+insert into t4 values(1, 'aaa'), (2, 'bbb'), (3, 'ccc');
+create table t5(id int, name varchar(20)) single;
+insert into t5 values(1, 'aaa'), (2, 'bbb'), (3, 'ccc');
+create table t6(id int, name varchar(20)) single;
+insert into t6 values(1, 'aaa'), (2, 'bbb'), (3, 'ccc');
+select * from t1 order by id;
+select * from information_schema.table_properties where table_schema = 'test_drds_table_db' order by table_name;
+alter table t1 disable full_scan;
+## error_msg: $# ERR_CONTAINS_NO_SHARDING_KEY #$
+select * from t1 order by id;
+select * from t1 where id=1 order by id;
+select * from t1 where id>=1 order by id;
+## error_msg: $# ERR_CONTAINS_NO_SHARDING_KEY #$
+select * from t1 where name = 'aaa' order by id;
+## error_msg: $# ERR_CONTAINS_NO_SHARDING_KEY #$
+select * from t1 where name = 'aaa' or id>10 order by id;
+select * from t1 where id=1 or id>10 order by id;
+  ## error_msg: $# ERR_CONTAINS_NO_SHARDING_KEY #$
+select * from t1 join t9 on t1.id=t9.id where t1.id=1 or t9.id=2;
+select * from t2 order by id;
+select * from information_schema.table_properties where table_schema = 'test_drds_table_db' order by table_name;
+alter table t2 disable full_scan;
+## error_msg: $# ERR_CONTAINS_NO_SHARDING_KEY #$
+select * from t2 order by id;
+  ## error_msg: $# ERR_CONTAINS_NO_SHARDING_KEY #$
+select * from t2 where id=1 order by id;
+  ## error_msg: $# ERR_CONTAINS_NO_SHARDING_KEY #$
+select * from t2 where id>=1 order by id;
+## error_msg: $# ERR_CONTAINS_NO_SHARDING_KEY #$
+select * from t2 where name = 'aaa' order by id;
+## error_msg: $# ERR_CONTAINS_NO_SHARDING_KEY #$
+select * from t2 where name = 'aaa' or id>10 order by id;
+## error_msg: $# ERR_CONTAINS_NO_SHARDING_KEY #$
+select * from t2 where id=1 or id>10 order by id;
+select * from t3 order by id;
+select * from information_schema.table_properties where table_schema = 'test_drds_table_db' order by table_name;
+alter table t3 disable full_scan;
+select * from t3 order by id;
+select * from t3 where id=1 order by id;
+select * from t3 where id>=1 order by id;
+select * from t3 where name = 'aaa' order by id;
+select * from t3 where name = 'aaa' or id>10 order by id;
+select * from t3 where id=1 or id>10 order by id;
+select * from t4 order by id;
+select * from information_schema.table_properties where table_schema = 'test_drds_table_db' order by table_name;
+alter table t4 disable full_scan;
+select * from t4 order by id;
+select * from t4 where id=1 order by id;
+select * from t4 where id>=1 order by id;
+select * from t4 where name = 'aaa' order by id;
+select * from t4 where name = 'aaa' or id>10 order by id;
+select * from t4 where id=1 or id>10 order by id;
+select * from t5 order by id;
+select * from information_schema.table_properties where table_schema = 'test_drds_table_db' order by table_name;
+alter table t5 disable full_scan;
+select * from t5 order by id;
+select * from t5 where id=1 order by id;
+select * from t5 where id>=1 order by id;
+select * from t5 where name = 'aaa' order by id;
+select * from t5 where name = 'aaa' or id>10 order by id;
+select * from t5 where id=1 or id>10 order by id;
+select * from t6 order by id;
+select * from information_schema.table_properties where table_schema = 'test_drds_table_db' order by table_name;
+alter table t6 disable full_scan;
+select * from t6 order by id;
+select * from t6 where id=1 order by id;
+select * from t6 where id>=1 order by id;
+select * from t6 where name = 'aaa' order by id;
+select * from t6 where name = 'aaa' or id>10 order by id;
+select * from t6 where id=1 or id>10 order by id;
+select * from information_schema.table_properties where table_schema = 'test_drds_table_db' order by table_name;
+alter table t1 rename to t1_new;
+alter table t3 rename to t3_new;
+alter table t5 rename to t5_new;
+alter table t2 dbpartition by hash(id) tbpartition by hash(name) tbpartitions 3;
+alter table t4 dbpartition by hash(id) tbpartition by hash(name) tbpartitions 3;
+alter table t6 dbpartition by hash(id) tbpartition by hash(name) tbpartitions 3;
+create table t7 like t2;
+select * from information_schema.table_properties where table_schema = 'test_drds_table_db' order by table_name;
+
+alter table t1_new enable full_scan;
+alter table t2 enable full_scan;
+alter table t3_new enable full_scan;
+select * from information_schema.table_properties where table_schema = 'test_drds_table_db' order by table_name;
+show create table t1_new;
+show create table t2;
+show create table t3_new;
+show create table t4;
+show create table t5_new;
+show create table t6;
+show create table t7;

@@ -1,0 +1,295 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS
+# Set SQL mode to allow invalid data insertion
+set sql_mode='';
+# Create a 3-partition table for comprehensive testing
+create table t2_comprehensive
+(
+  id bigint,
+  name varchar(64),
+  age int,
+  salary decimal(10,2),
+  create_time datetime,
+  is_active boolean
+)
+partition by key(id)
+partitions 3;
+# Insert comprehensive test data covering various data types and edge cases
+# Basic integers
+insert into t2_comprehensive values (0, 'zero', 25, 50000.00, '2023-01-01 00:00:00', true);
+insert into t2_comprehensive values (1, 'one', 30, 60000.50, '2023-01-01 00:00:01', false);
+insert into t2_comprehensive values (-1, 'negative one', 35, 70000.75, '2023-01-01 00:00:02', true);
+# Boundary values for bigint
+insert into t2_comprehensive values (9223372036854775807, 'max bigint', 40, 80000.00, '2023-01-01 00:00:03', false);
+insert into t2_comprehensive values (-9223372036854775808, 'min bigint', 45, 90000.25, '2023-01-01 00:00:04', true);
+# Boundary values for int
+insert into t2_comprehensive values (2147483647, 'max int', 50, 100000.50, '2023-01-01 00:00:05', false);
+insert into t2_comprehensive values (-2147483648, 'min int', 55, 110000.75, '2023-01-01 00:00:06', true);
+# NULL values
+insert into t2_comprehensive values (null, 'null id', 60, 120000.00, '2023-01-01 00:00:07', false);
+# Regular positive and negative numbers
+insert into t2_comprehensive values (123456789, 'positive number', 65, 130000.25, '2023-01-01 00:00:08', true);
+insert into t2_comprehensive values (-123456789, 'negative number', 70, 140000.50, '2023-01-01 00:00:09', false);
+# Duplicate values to test consistency
+insert into t2_comprehensive values (0, 'zero duplicate', 75, 150000.75, '2023-01-01 00:00:10', true);
+insert into t2_comprehensive values (1, 'one duplicate', 80, 160000.00, '2023-01-01 00:00:11', false);
+# Additional edge cases for comprehensive testing
+insert into t2_comprehensive values (999999999999999999, 'large positive', 85, 170000.25, '2023-01-01 00:00:12', true);
+insert into t2_comprehensive values (-999999999999999999, 'large negative', 90, 180000.50, '2023-01-01 00:00:13', false);
+# Insert invalid data that would normally be rejected
+# Truncated string values
+insert into t2_comprehensive values (2, 'This is a very long string that should be truncated to fit in the varchar(64) field', 100, 200000.00, '2023-01-01 00:00:14', true);
+# Test part_hash function on CN to get expected hash values
+select id, part_hash('', 't2_comprehensive', id) as cn_hash_value from t2_comprehensive order by id;
+id,cn_hash_value
+null,(-2447670524089286488)
+-9223372036854775808,(-766309672757065757)
+-999999999999999999,(-8743579002109771268)
+-2147483648,(5469880392096735833)
+-123456789,(-3620301585535634836)
+-1,(-7348136593072465315)
+0,(19144387141682250)
+0,(19144387141682250)
+1,(-8173640338422413147)
+1,(-8173640338422413147)
+2,(-3352251721694388416)
+123456789,(2992062570744776958)
+2147483647,(1170050490489566395)
+999999999999999999,(-8404339029480530427)
+9223372036854775807,(7070105468656064132)
+# Test polardbx_hasher function on CN with logical table name
+/*+TDDL:scan()*/select id, polardbx_hasher(id) from t2_comprehensive order by id;
+id,polardbx_hasher(id)
+null,-2447670524089286488
+-9223372036854775808,-766309672757065757
+-999999999999999999,-8743579002109771268
+-2147483648,5469880392096735833
+-123456789,-3620301585535634836
+-1,-7348136593072465315
+0,19144387141682250
+0,19144387141682250
+1,-8173640338422413147
+1,-8173640338422413147
+2,-3352251721694388416
+123456789,2992062570744776958
+2147483647,1170050490489566395
+999999999999999999,-8404339029480530427
+9223372036854775807,7070105468656064132
+# Test with string partition key
+create table t2_string
+(
+  id varchar(64),
+  name varchar(64),
+  age int,
+  salary decimal(10,2),
+  create_time datetime,
+  is_active boolean
+)
+partition by key(id)
+partitions 3;
+# Insert test data covering various string types and edge cases
+insert into t2_string values ('', 'empty string', 25, 50000.00, '2023-01-01 00:00:00', true);
+insert into t2_string values ('0', 'zero string', 30, 60000.50, '2023-01-01 00:00:01', false);
+insert into t2_string values ('1', 'one string', 35, 70000.75, '2023-01-01 00:00:02', true);
+insert into t2_string values ('-1', 'negative one string', 40, 80000.00, '2023-01-01 00:00:03', false);
+insert into t2_string values ('null', 'null string', 45, 90000.25, '2023-01-01 00:00:04', true);
+insert into t2_string values (null, 'actual null', 50, 100000.50, '2023-01-01 00:00:05', false);
+insert into t2_string values ('abcdefghijklmnopqrstuvwxyz', 'long string', 55, 110000.75, '2023-01-01 00:00:06', true);
+insert into t2_string values ('1234567890123456789012345678901234567890123456789012345678901234', '64 char string', 60, 120000.00, '2023-01-01 00:00:07', false);
+insert into t2_string values ('中文测试', 'chinese string', 65, 130000.25, '2023-01-01 00:00:08', true);
+insert into t2_string values ('🌟emoji🌟', 'emoji string', 70, 140000.50, '2023-01-01 00:00:09', false);
+# Insert invalid string data
+insert into t2_string values ('This is a very long string that should be truncated to fit in the varchar(64) field', 'truncated string', 75, 150000.00, '2023-01-01 00:00:10', false);
+# Test part_hash function on CN for string table
+select id, part_hash('', 't2_string', id) as cn_hash_value from t2_string order by id;
+id,cn_hash_value
+null,(-2447670524089286488)
+,(19144387141682250)
+-1,(-8675257767930456906)
+0,(25495277661461982)
+1,(8290533177681263434)
+1234567890123456789012345678901234567890123456789012345678901234,(-683621026105894815)
+abcdefghijklmnopqrstuvwxyz,(7641057448359016677)
+null,(-1898589711392029520)
+This is a very long string that should be truncated to fit in th,(-7362376018663374477)
+中文测试,(-6780121873020068026)
+🌟emoji🌟,(-2784840694238019434)
+# Test polardbx_hasher function on CN with logical table name
+/*+TDDL:scan()*/select id, polardbx_hasher(id) from t2_string order by id;
+id,polardbx_hasher(id)
+null,-2447670524089286488
+,19144387141682250
+-1,-8675257767930456906
+0,25495277661461982
+1,8290533177681263434
+1234567890123456789012345678901234567890123456789012345678901234,-683621026105894815
+abcdefghijklmnopqrstuvwxyz,7641057448359016677
+null,-1898589711392029520
+This is a very long string that should be truncated to fit in th,-7362376018663374477
+中文测试,-6780121873020068026
+🌟emoji🌟,-2784840694238019434
+# Create tables with different charset/collation settings
+# UTF8MB4 charset with utf8mb4_general_ci collation
+create table t2_string_utf8mb4_general
+(
+  id varchar(64) charset utf8mb4 collate utf8mb4_general_ci,
+  name varchar(64),
+  age int,
+  salary decimal(10,2),
+  create_time datetime,
+  is_active boolean
+)
+partition by key(id)
+partitions 3;
+# Insert test data for UTF8MB4 general collation
+insert into t2_string_utf8mb4_general values ('', 'empty string', 25, 50000.00, '2023-01-01 00:00:00', true);
+insert into t2_string_utf8mb4_general values ('ABC', 'uppercase', 30, 60000.50, '2023-01-01 00:00:01', false);
+insert into t2_string_utf8mb4_general values ('abc', 'lowercase', 35, 70000.75, '2023-01-01 00:00:02', true);
+insert into t2_string_utf8mb4_general values ('中文测试', 'chinese string', 40, 80000.00, '2023-01-01 00:00:03', false);
+insert into t2_string_utf8mb4_general values ('🌟emoji🌟', 'emoji string', 45, 90000.25, '2023-01-01 00:00:04', true);
+# Insert invalid string data
+insert into t2_string_utf8mb4_general values ('This is a very long string that should be truncated to fit in the varchar(64) field', 'truncated string', 50, 100000.00, '2023-01-01 00:00:05', false);
+# Test part_hash function on CN for UTF8MB4 general collation table
+select id, part_hash('', 't2_string_utf8mb4_general', id) as cn_hash_value from t2_string_utf8mb4_general order by id;
+id,cn_hash_value
+,(19144387141682250)
+ABC,(-4326194196521601902)
+abc,(-4326194196521601902)
+This is a very long string that should be truncated to fit in th,(-7362376018663374477)
+中文测试,(-6780121873020068026)
+🌟emoji🌟,(-2784840694238019434)
+# Test polardbx_hasher function on CN with logical table name for UTF8MB4 general collation
+/*+TDDL:scan()*/select id, polardbx_hasher(id) from t2_string_utf8mb4_general order by id;
+id,polardbx_hasher(id)
+,19144387141682250
+ABC,-4326194196521601902
+abc,-4326194196521601902
+This is a very long string that should be truncated to fit in th,-7362376018663374477
+中文测试,-6780121873020068026
+🌟emoji🌟,-2784840694238019434
+# UTF8MB4 charset with utf8mb4_unicode_ci collation
+create table t2_string_utf8mb4_unicode
+(
+  id varchar(64) charset utf8mb4 collate utf8mb4_unicode_ci,
+  name varchar(64),
+  age int,
+  salary decimal(10,2),
+  create_time datetime,
+  is_active boolean
+)
+partition by key(id)
+partitions 3;
+# Insert test data for UTF8MB4 unicode collation
+insert into t2_string_utf8mb4_unicode values ('', 'empty string', 25, 50000.00, '2023-01-01 00:00:00', true);
+insert into t2_string_utf8mb4_unicode values ('ABC', 'uppercase', 30, 60000.50, '2023-01-01 00:00:01', false);
+insert into t2_string_utf8mb4_unicode values ('abc', 'lowercase', 35, 70000.75, '2023-01-01 00:00:02', true);
+insert into t2_string_utf8mb4_unicode values ('中文测试', 'chinese string', 40, 80000.00, '2023-01-01 00:00:03', false);
+insert into t2_string_utf8mb4_unicode values ('🌟emoji🌟', 'emoji string', 45, 90000.25, '2023-01-01 00:00:04', true);
+# Insert invalid string data
+insert into t2_string_utf8mb4_unicode values ('This is a very long string that should be truncated to fit in the varchar(64) field', 'truncated string', 50, 100000.00, '2023-01-01 00:00:05', false);
+# Test part_hash function on CN for UTF8MB4 unicode collation table
+select id, part_hash('', 't2_string_utf8mb4_unicode', id) as cn_hash_value from t2_string_utf8mb4_unicode order by id;
+id,cn_hash_value
+,(19144387141682250)
+ABC,(5562477067663514029)
+abc,(5562477067663514029)
+This is a very long string that should be truncated to fit in th,(325854453624894120)
+中文测试,(1311855300803436977)
+🌟emoji🌟,(51564136637747964)
+# Test polardbx_hasher function on CN with logical table name for UTF8MB4 unicode collation
+/*+TDDL:scan()*/select id, polardbx_hasher(id) from t2_string_utf8mb4_unicode order by id;
+id,polardbx_hasher(id)
+,19144387141682250
+ABC,5562477067663514029
+abc,5562477067663514029
+This is a very long string that should be truncated to fit in th,325854453624894120
+中文测试,1311855300803436977
+🌟emoji🌟,51564136637747964
+# Latin1 charset with latin1_swedish_ci collation
+create table t2_string_latin1
+(
+  id varchar(64) charset latin1 collate latin1_swedish_ci,
+  name varchar(64),
+  age int,
+  salary decimal(10,2),
+  create_time datetime,
+  is_active boolean
+)
+partition by key(id)
+partitions 3;
+# Insert test data for Latin1 charset
+insert into t2_string_latin1 values ('', 'empty string', 25, 50000.00, '2023-01-01 00:00:00', true);
+insert into t2_string_latin1 values ('ABC', 'uppercase', 30, 60000.50, '2023-01-01 00:00:01', false);
+insert into t2_string_latin1 values ('abc', 'lowercase', 35, 70000.75, '2023-01-01 00:00:02', true);
+insert into t2_string_latin1 values ('123', 'numbers', 40, 80000.00, '2023-01-01 00:00:03', false);
+insert into t2_string_latin1 values ('!@#', 'special chars', 45, 90000.25, '2023-01-01 00:00:04', true);
+# Insert invalid string data
+insert into t2_string_latin1 values ('This is a very long string that should be truncated to fit in the varchar(64) field', 'truncated string', 50, 100000.00, '2023-01-01 00:00:05', false);
+# Test part_hash function on CN for Latin1 table
+select id, part_hash('', 't2_string_latin1', id) as cn_hash_value from t2_string_latin1 order by id;
+id,cn_hash_value
+,(19144387141682250)
+!@#,(7276624572562066167)
+123,(-7578486583939256747)
+ABC,(4282853122710784245)
+abc,(4282853122710784245)
+This is a very long string that should be truncated to fit in th,(-3302224924655830243)
+# Test polardbx_hasher function on CN with logical table name for Latin1 table
+/*+TDDL:scan()*/select id, polardbx_hasher(id) from t2_string_latin1 order by id;
+id,polardbx_hasher(id)
+,19144387141682250
+!@#,7276624572562066167
+123,-7578486583939256747
+ABC,4282853122710784245
+abc,4282853122710784245
+This is a very long string that should be truncated to fit in th,-3302224924655830243
+# Test with datetime partition key
+create table t2_datetime
+(
+  id bigint,
+  name varchar(64),
+  age int,
+  salary decimal(10,2),
+  create_time datetime,
+  is_active boolean
+)
+partition by key(create_time)
+partitions 3;
+# Insert test data covering various datetime types and edge cases
+insert into t2_datetime values (1, 'epoch record 1', 25, 50000.00, '1970-01-01 00:00:00', true);
+insert into t2_datetime values (2, 'epoch plus one second', 30, 60000.50, '1970-01-01 00:00:01', false);
+insert into t2_datetime values (3, 'y2k record', 35, 70000.75, '2000-01-01 00:00:00', true);
+insert into t2_datetime values (4, '32-bit signed int max', 40, 80000.00, '2038-01-19 03:14:07', false);
+insert into t2_datetime values (5, 'null datetime', 45, 90000.25, null, true);
+insert into t2_datetime values (6, 'very old date', 50, 100000.50, '1000-01-01 00:00:00', false);
+insert into t2_datetime values (7, 'far future date', 55, 110000.75, '9999-12-31 23:59:59', true);
+# Insert invalid datetime data
+insert into t2_datetime values (8, 'invalid feb 29', 60, 120000.00, '2023-02-29 12:30:45', false);
+insert into t2_datetime values (9, 'invalid date format', 65, 130000.00, 'invalid-date', true);
+insert into t2_datetime values (10, 'invalid date values', 70, 140000.00, '2023-13-01 25:70:80', false);
+# Test part_hash function on CN for datetime table
+select create_time, part_hash('', 't2_datetime', create_time) as cn_hash_value from t2_datetime order by create_time;
+create_time,cn_hash_value
+null,(-2447670524089286488)
+null,(-355151459223910796)
+null,(-355151459223910796)
+null,(-355151459223910796)
+1000-01-01 00:00:00.0,(-2742216880090065996)
+1970-01-01 00:00:00.0,(-8521412585126158867)
+1970-01-01 00:00:01.0,(-3680712160614478387)
+2000-01-01 00:00:00.0,(4796388105427186539)
+2038-01-19 03:14:07.0,(7586824847929777776)
+9999-12-31 23:59:59.0,(4586868268686427463)
+# Test polardbx_hasher function on CN with logical table name
+/*+TDDL:scan()*/select create_time, polardbx_hasher(create_time) from t2_datetime order by create_time;
+create_time,polardbx_hasher(create_time)
+null,-2447670524089286488
+null,-885261968256131534
+null,-885261968256131534
+null,-885261968256131534
+1000-01-01 00:00:00.0,2839146924820141047
+1970-01-01 00:00:00.0,8931040700269154388
+1970-01-01 00:00:01.0,331065493003537199
+2000-01-01 00:00:00.0,2039079424746271343
+2038-01-19 03:14:07.0,3044323121291210492
+9999-12-31 23:59:59.0,-4313085730353808759

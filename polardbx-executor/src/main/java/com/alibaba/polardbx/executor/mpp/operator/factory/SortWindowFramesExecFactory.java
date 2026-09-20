@@ -29,7 +29,7 @@ import com.alibaba.polardbx.executor.operator.frame.RowUnboundedFollowingOverFra
 import com.alibaba.polardbx.executor.operator.frame.RowUnboundedPrecedingOverFrame;
 import com.alibaba.polardbx.executor.operator.frame.UnboundedOverFrame;
 import com.alibaba.polardbx.executor.operator.util.AggregateUtils;
-import com.alibaba.polardbx.executor.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
@@ -37,7 +37,6 @@ import com.alibaba.polardbx.optimizer.core.expression.calc.Aggregator;
 import com.alibaba.polardbx.optimizer.core.rel.SortWindow;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.utils.CalciteUtils;
-import com.alibaba.polardbx.statistics.RuntimeStatHelper;
 import com.google.common.collect.ImmutableList;
 import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.core.Window;

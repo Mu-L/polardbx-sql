@@ -1,0 +1,124 @@
+## DISABLE_FAST_SQL_PARSER
+
+drop database if exists mypocbrodb;
+create database if not exists mypocbrodb mode = auto locality = "db_config=mypocbrodb_db00:polardbx-storage-0-master,mypocbrodb_db01:polardbx-storage-1-master";
+use mypocbrodb;
+
+create table mybro_t1(
+c1 bigint not null,
+c2 bigint not null
+)
+broadcast
+locality="db_pools=mypocbrodb_db00";
+show create table mybro_t1;
+  
+## error_msg: $# not compatible #$
+create table mybro_t2(
+c1 bigint not null,
+c2 bigint not null
+)
+broadcast
+locality="db_pools=mypocbrodb_db01";
+show create table mybro_t2;
+
+create table mybro_t3(
+c1 bigint not null,
+c2 bigint not null
+)
+broadcast
+locality="db_pools=mypocbrodb_db00";
+show create table mybro_t3;
+
+create table mysig_t1(
+c1 bigint not null,
+c2 bigint not null
+)
+single
+
+locality="db_pools=mypocbrodb_db00";
+show create table mysig_t1;
+
+create table mysig_t2(
+c1 bigint not null,
+c2 bigint not null
+)
+single
+
+locality="db_pools=mypocbrodb_db01";
+show create table mysig_t1;
+
+
+create table mypart_t1(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by key(c1)
+partitions 2
+locality="db_pools=mypocbrodb_db00,mypocbrodb_db01";
+
+create table mypart_t1_bk(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by key(c1)
+partitions 2
+locality="db_pools=mypocbrodb_db01,mypocbrodb_db00";
+
+create table mypart_t2(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by key(c1)
+partitions 2
+locality="db_pools=mypocbrodb_db00";
+show topology from mypart_t2;
+
+create table mypart_t3(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by key(c1)
+partitions 2
+locality="db_pools=mypocbrodb_db01";
+show topology from mypart_t3;
+
+create table mypart_t4(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by key(c1)
+partitions 2
+locality="db_pools=mypocbrodb_db00";
+show topology from mypart_t4;
+
+show create table mysig_t1;
+
+show topology from mybro_t1;
+show topology from mybro_t2;
+show topology from mybro_t3;
+
+insert into mybro_t1 values (1,1);
+insert into mybro_t2 values (1,1);
+insert into mybro_t3 values (1,1);
+
+explain select * from mybro_t1 a join mybro_t2 b on a.c1=b.c1;
+explain select * from mybro_t1 a join mybro_t3 b on a.c1=b.c1;
+select * from mybro_t1 a join mybro_t3 b on a.c1=b.c1;
+
+use polardbx;
+drop database if exists mypocbrodb;
+
+explain select * from mybro_t1 a join mybro_t3 b on a.c1=b.c1;
+select * from mybro_t1 a join mybro_t3 b on a.c1=b.c1;
+
+explain select * from mybro_t1 a join mysig_t1 b on a.c1=b.c1;
+explain select * from mybro_t1 a join mysig_t2 b on a.c1=b.c1;
+
+explain select * from mybro_t1 a join mypart_t1 b on a.c1=b.c1;
+explain select * from mybro_t1 a join mypart_t2 b on a.c1=b.c1;
+explain select * from mybro_t1 a join mypart_t3 b on a.c1=b.c1;
+
+explain select * from mybro_t1 a join mypart_t3 b on a.c1=b.c1 join mypart_t4 c on a.c1=c.c1;
+explain select * from mybro_t1 a join mypart_t1 b on a.c1=b.c1 join mypart_t4 c on a.c1=c.c1;
+
+

@@ -109,8 +109,6 @@ import static org.apache.calcite.sql.type.SqlTypeName.INT_TYPES;
  */
 public class RexUtil {
 
-  public final static Logger bigSqlLogger = LoggerFactory.getLogger("big_sql");
-
   /**
    * DNF_REX_NODE_LIMIT may be reset by instanct_properties, default is 2000
    */
@@ -371,6 +369,21 @@ public class RexUtil {
       }
     }
     return false;
+  }
+
+  /**
+   * Returns whether every expression in a list is a literal.
+   *
+   * @param expressionOperands list of expressions to check
+   * @return true if every expression from the specified list is literal.
+   */
+  public static boolean allLiterals(List<RexNode> expressionOperands) {
+    for (RexNode rexNode : expressionOperands) {
+      if (!isLiteral(rexNode, true)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -2574,11 +2587,12 @@ public class RexUtil {
   }
 
   public static List<RexFieldAccess> findFieldAccessesDeep(RexNode rexNode){
-    AccessFieldDeeperFinder accessFieldDeeperFinder = new AccessFieldDeeperFinder();
-    FieldAccessNestFinder fieldAccessNestFinder = new FieldAccessNestFinder(accessFieldDeeperFinder);
+    List<RexFieldAccess> fieldAccessList = Lists.newArrayList();
+    FieldAccessNestFinder fieldAccessNestFinder = new FieldAccessNestFinder(fieldAccessList);
 
     rexNode.accept(fieldAccessNestFinder);
-    return fieldAccessNestFinder.getFieldAccessList();
+
+    return fieldAccessList;
   }
 
   public static class FieldAccessNestFinder extends RexVisitorImpl<Void> {
@@ -2586,10 +2600,10 @@ public class RexUtil {
 
     private final AccessFieldDeeperFinder accessFieldDeeperFinder;
 
-    public FieldAccessNestFinder(AccessFieldDeeperFinder accessFieldDeeperFinder) {
+    public FieldAccessNestFinder(List<RexFieldAccess> fieldAccessList) {
       super(true);
-      fieldAccessList = new ArrayList<>();
-      this.accessFieldDeeperFinder = accessFieldDeeperFinder;
+      this.fieldAccessList = fieldAccessList;
+      this.accessFieldDeeperFinder = new AccessFieldDeeperFinder(this);
     }
 
     public Void visitFieldAccess(RexFieldAccess fieldAccess) {
@@ -2615,14 +2629,9 @@ public class RexUtil {
     public Void visitSubQuery(RexSubQuery subQuery){
       if(subQuery.getRel()!=null){
         accessFieldDeeperFinder.go(subQuery.getRel());
-        this.fieldAccessList.addAll(accessFieldDeeperFinder.accessFiledFinder.getFieldAccessList());
       }
       super.visitSubQuery(subQuery);
       return null;
-    }
-
-    public List<RexFieldAccess> getFieldAccessList() {
-      return fieldAccessList;
     }
   }
 
@@ -2630,9 +2639,9 @@ public class RexUtil {
 
     FieldAccessNestFinder accessFiledFinder;
 
-    public AccessFieldDeeperFinder() {
+    public AccessFieldDeeperFinder(FieldAccessNestFinder accessFiledFinder) {
       super();
-      accessFiledFinder = new FieldAccessNestFinder(this);
+      this.accessFiledFinder = accessFiledFinder;
     }
 
     @Override public void visit(RelNode node, int ordinal, RelNode parent) {
@@ -3596,6 +3605,37 @@ public class RexUtil {
                 throw new Util.FoundOne(call);
               }
               if (call instanceof RexOver) {
+                throw new Util.FoundOne(call);
+              }
+              super.visitCall(call);
+              return null;
+            }
+          };
+      node.accept(visitor);
+      return false;
+    } catch (Util.FoundOne e) {
+      Util.swallow(e, null);
+      return true;
+    }
+  }
+
+  public static boolean containsUnPushableFunctionForDirectPlan(RexNode node, boolean mysql80) {
+    if (node == null) {
+      return false;
+    }
+
+    try {
+      RexVisitor<Void> visitor =
+          new RexVisitorImpl<Void>(true) {
+            public Void visitCall(RexCall call) {
+              if (!call.op.canPushDown()) {
+                throw new Util.FoundOne(call);
+              }
+              if (!mysql80 && call instanceof RexOver) {
+                throw new Util.FoundOne(call);
+              }
+              // MySQL 8.0 supports window functions but not DISTINCT modifier in window functions
+              if (call instanceof RexOver && ((RexOver) call).isDistinct()) {
                 throw new Util.FoundOne(call);
               }
               super.visitCall(call);

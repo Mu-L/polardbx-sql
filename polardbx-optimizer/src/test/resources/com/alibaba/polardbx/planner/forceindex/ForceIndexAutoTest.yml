@@ -123,11 +123,11 @@ SQL:
       (select * from (select * from t_order order by id) where (order_snapshot,product_id) in(('2',1)) )
     plan: |
       unionall(concurrent=true)
-        project(id="id", order_id="order_id", buyer_id="buyer_id", seller_id="seller_id", product_id="product_id", extra_id="extra_id", order_snapshot="order_snapshot", order_detail="order_detail")
+        project(id="id0", order_id="order_id0", buyer_id="buyer_id", seller_id="seller_id", product_id="product_id", extra_id="extra_id", order_snapshot="order_snapshot", order_detail="order_detail")
           bkajoin(condition="id = id and order_id <=> order_id", type="inner")
-            indexscan(tables="g_i_seller[p6]", sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `order_snapshot` from `g_i_seller` as `g_i_seller` where ((`order_snapshot` = ?) and (`seller_id` = ?))")
+            indexscan(tables="g_i_seller[p6]", sql="select `id`, `order_id` from `g_i_seller` as `g_i_seller` where ((`order_snapshot` = ?) and (`seller_id` = ?))")
             gather(concurrent=true)
-              logicalview(tables="t_order[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `id`, `order_id`, `product_id`, `extra_id`, `order_detail` from `t_order` as `t_order` force index(`primary`) where ((`product_id` = ?) and (`order_snapshot` = ?) and (`seller_id` = ?) and (`id` in (...)))")
+              logicalview(tables="t_order[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `id`, `order_id`, `product_id`, `extra_id`, `order_detail`, `buyer_id`, `seller_id`, `order_snapshot` from `t_order` as `t_order` force index(`primary`) where ((`product_id` = ?) and (`order_snapshot` = ?) and (`seller_id` = ?) and (`id` in (...)))")
         gather(concurrent=true)
           logicalview(tables="t_order[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` force index(`uk`) where ((`seller_id` = `product_id`) and (`product_id` = ?) and (`order_snapshot` = ?))")
         gather(concurrent=true)
@@ -138,6 +138,7 @@ SQL:
           logicalview(tables="t_order[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` force index(`uk`) where ((((`order_snapshot`, `product_id`)) in(?)) and (`id` > ?)) order by `id`")
         mergesort(sort="id asc")
           logicalview(tables="t_order[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` force index(`uk`) where (((`order_snapshot`, `product_id`)) in(?)) order by `id`")
+
   - sql: |
       select * from t_order where product_id = 1 union all
       select * from t_order where product_id = 1 and order_detail='1' union all
@@ -208,7 +209,10 @@ SQL:
       /*+TDDL:cmd_extra(enable_index_selection=false)*/
       (select * from t_order where (`product_id`,`order_id`,`seller_id`)=('1','1','1') order by buyer_id desc) union all
       (select * from t_order where (`product_id`,`order_id`,`seller_id`)=('1','1','1') order by seller_id desc) union all
+      (select * from t_order where (`product_id`,`order_id`)=('1','1') order by seller_id,buyer_id) union all
       (select * from t_order where (`product_id`,`order_id`)=('1','1') order by seller_id desc,buyer_id) union all
+      (select * from t_order where (`product_id`,`order_id`)=('1','1') order by seller_id,buyer_id desc) union all
+      (select * from t_order where (`product_id`,`order_id`)=('1','1') order by seller_id desc,buyer_id desc) union all
       (select * from t_order where (`product_id`,`order_id`)=('1','1') order by seller_id,buyer_id desc, id) union all
       (select * from t_order where (`product_id`,`order_id`+1)=('1','1') order by seller_id desc, buyer_id limit 10) union all
       (select * from t_order where (`product_id`,`order_id`)=('1','1') order by buyer_id,seller_id desc) union all
@@ -217,10 +221,13 @@ SQL:
       unionall(concurrent=true)
         logicalview(tables="t_order[p6]", sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` force index(`prdo_long`) where ((`product_id`, `order_id`, `seller_id`) =(?, ?, ?)) order by `buyer_id` desc")
         logicalview(tables="t_order[p6]", sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` where ((`product_id`, `order_id`, `seller_id`) =(?, ?, ?)) order by `seller_id` desc")
-        logicalview(tables="t_order[p6]", sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` force index(`prdo_long`) where ((`product_id`, `order_id`) =(?, ?)) order by `seller_id` desc, `buyer_id`")
+        logicalview(tables="t_order[p6]", sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` force index(`prdo_long`) where ((`product_id`, `order_id`) =(?, ?)) order by `seller_id`, `buyer_id`")
+        logicalview(tables="t_order[p6]", sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` where ((`product_id`, `order_id`) =(?, ?)) order by `seller_id` desc, `buyer_id`")
+        logicalview(tables="t_order[p6]", sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` where ((`product_id`, `order_id`) =(?, ?)) order by `seller_id`, `buyer_id` desc")
+        logicalview(tables="t_order[p6]", sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` force index(`prdo_long`) where ((`product_id`, `order_id`) =(?, ?)) order by `seller_id` desc, `buyer_id` desc")
         logicalview(tables="t_order[p6]", sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` where ((`product_id`, `order_id`) =(?, ?)) order by `seller_id`, `buyer_id` desc, `id`")
-        mergesort(sort="seller_id desc,buyer_id asc", offset=0, fetch=?13)
-          logicalview(tables="t_order[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` where ((`product_id`, (`order_id` + ?)) =(?, ?)) order by `seller_id` desc, `buyer_id` limit (? + 0)")
+        mergesort(sort="seller_id desc,buyer_id asc", offset=0, fetch=?19)
+          logicalview(tables="t_order[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` where ((`product_id`, (`order_id` + ?)) =(?, ?)) order by `seller_id` desc, `buyer_id` limit ?")
         logicalview(tables="t_order[p6]", sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` where ((`product_id`, `order_id`) =(?, ?)) order by `buyer_id`, `seller_id` desc")
         logicalview(tables="t_order[p6]", sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` where ((`product_id`, `order_id`) =(?, ?)) order by (`seller_id` + ?) desc, `buyer_id` limit ?")
   - sql: |
@@ -242,6 +249,7 @@ SQL:
           logicalview(tables="t_order[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` use index(primary) where (`product_id` = ?)")
         gather(concurrent=true)
           logicalview(tables="t_order[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `product_id`, `extra_id`, `order_snapshot`, `order_detail` from `t_order` as `t_order` ignore index(primary) where (`product_id` = ?)")
+
   - sql: |
       /*+TDDL:index(t_order,g_i_buyer)*/ select * from t_order where product_id = 1
     plan: |
@@ -251,6 +259,7 @@ SQL:
             indexscan(tables="g_i_buyer[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `id`, `order_id`, `buyer_id`, `seller_id`, `order_snapshot` from `g_i_buyer` as `g_i_buyer`")
           gather(concurrent=true)
             logicalview(tables="t_order[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `id`, `order_id`, `product_id`, `extra_id`, `order_detail` from `t_order` as `t_order` force index(`primary`) where ((`product_id` = ?) and (`id` in (...)))")
+
   - sql: |
       /*+TDDL:cmd_extra(ENABLE_AUTO_FORCE_INDEX=false)*/ select * from t_order where product_id = 1
     plan: |

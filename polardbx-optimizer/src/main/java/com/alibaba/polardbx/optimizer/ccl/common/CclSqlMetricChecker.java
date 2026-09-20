@@ -43,6 +43,7 @@ public class CclSqlMetricChecker {
         Maps.newHashMapWithExpectedSize(5);
 
     static {
+        METRIC_VALUE_EXTRACTOR_MAP.put(CclSqlMetric.METRIC_NAME_EXECUTION_TIME, (e) -> e.getExecutionTime());
         METRIC_VALUE_EXTRACTOR_MAP.put(CclSqlMetric.METRIC_NAME_RESPONSE_TIME, (e) -> e.getResponseTime());
         METRIC_VALUE_EXTRACTOR_MAP.put(CclSqlMetric.METRIC_NAME_AFFECTED_ROWS, (e) -> e.getAffectedRows());
         METRIC_VALUE_EXTRACTOR_MAP.put(CclSqlMetric.METRIC_NAME_FETCH_ROWS, (e) -> e.getFetchRows());

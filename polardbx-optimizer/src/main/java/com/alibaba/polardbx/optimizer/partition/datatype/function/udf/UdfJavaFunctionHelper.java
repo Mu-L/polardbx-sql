@@ -18,7 +18,9 @@ package com.alibaba.polardbx.optimizer.partition.datatype.function.udf;
 
 import com.alibaba.polardbx.optimizer.core.TddlOperatorTable;
 import com.alibaba.polardbx.optimizer.core.expression.JavaFunctionManager;
+import com.alibaba.polardbx.optimizer.core.function.SqlDbleRouteFunction;
 import com.alibaba.polardbx.optimizer.core.function.calc.IScalarFunction;
+import com.alibaba.polardbx.optimizer.partition.datatype.function.FunctionInitParams;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlOperator;
@@ -34,17 +36,34 @@ import java.util.List;
  */
 public class UdfJavaFunctionHelper {
 
+    public static SqlOperator getUdfOperatorByFunctionName(String functionName) {
+        ReflectiveSqlOperatorTable.Key key = new ReflectiveSqlOperatorTable.Key(functionName, SqlSyntax.FUNCTION);
+        boolean contains = TddlOperatorTable.instance().getOperators().containsKey(key);
+        if (!contains) {
+            return null;
+        }
+        Collection<SqlOperator> operators = TddlOperatorTable.instance().getOperators().get(key);
+        if (operators.isEmpty()) {
+            return null;
+        }
+        SqlOperator operator = operators.iterator().next();
+        return operator;
+    }
+
     public static IScalarFunction getUdfPartitionJavaFunctionByName(String udfFuncName) {
         IScalarFunction udfJavaFunc = JavaFunctionManager.getInstance().getJavaFunction(udfFuncName);
         return udfJavaFunc;
     }
 
-    public static UdfJavaFunctionMeta createUdfJavaFunctionMetaByName(String udfFuncName,
-                                                                      SqlOperator udfFuncAst) {
-        if (!checkIfUdfJavaFunctionExists(udfFuncName)) {
-            return null;
+    public static UdfJavaFunctionMeta createUdfJavaFunctionMetaByNameAndInitParams(String udfFuncName,
+                                                                                   SqlOperator udfFuncAst,
+                                                                                   FunctionInitParams initParams) {
+        if (!(udfFuncAst == TddlOperatorTable.DBLE_ROUTE)) {
+            if (!checkIfUdfJavaFunctionExists(udfFuncName)) {
+                return null;
+            }
         }
-        UdfJavaFunctionMeta meta = new UdfJavaFunctionMetaImpl(udfFuncName, udfFuncAst);
+        UdfJavaFunctionMeta meta = new UdfJavaFunctionMetaImpl(udfFuncName, udfFuncAst, initParams);
         return meta;
     }
 

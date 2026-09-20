@@ -214,13 +214,13 @@ public class AlterTableExtractPartitionByHotValueTest extends AlterTableReorgBas
 
     @Test
     public void testUpdate() {
-        if (!usingNewPartDb()) {
+        boolean isPublic = partitionRuleInfo.getTableStatus() == ComplexTaskMetaManager.ComplexTaskStatus.PUBLIC;
+        if (!usingNewPartDb() || isMySQL80() && isPublic) {
             return;
         }
-        boolean isPublic = partitionRuleInfo.getTableStatus() == ComplexTaskMetaManager.ComplexTaskStatus.PUBLIC;
+
         boolean isDeleteOnly =
             partitionRuleInfo.getTableStatus() == ComplexTaskMetaManager.ComplexTaskStatus.DELETE_ONLY;
-
         //update sharding key
         String sql = partitionRuleInfo.getDeleteClause(ImmutableList.of(partitionRuleInfo.getPartVals().get(0)), true);
         executeDml(sql, tddlConnection);

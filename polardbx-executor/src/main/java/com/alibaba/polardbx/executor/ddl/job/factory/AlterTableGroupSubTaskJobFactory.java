@@ -28,10 +28,13 @@ import com.alibaba.polardbx.executor.ddl.job.builder.DropPartLocalIndexBuilder;
 import com.alibaba.polardbx.executor.ddl.job.builder.tablegroup.AlterTableGroupItemBuilder;
 import com.alibaba.polardbx.executor.ddl.job.converter.DdlJobDataConverter;
 import com.alibaba.polardbx.executor.ddl.job.converter.PhysicalPlanData;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.AddLogicalForeignKeyTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.CreatePhyTableWithRollbackCheckTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.DropIndexPhyDdlTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.SubJobTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.DropLogicalForeignKeyTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.TablesSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcTableGroupDdlMarkTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterTableGroupAddSubTaskMetaTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
@@ -42,23 +45,31 @@ import com.alibaba.polardbx.gms.tablegroup.PartitionGroupRecord;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ComplexTaskMetaManager;
+import com.alibaba.polardbx.optimizer.config.table.ScaleOutPlanUtil;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.PhyDdlTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableGroupBasePreparedData;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableGroupItemPreparedData;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableMovePartitionPreparedData;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfoUtil;
 import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
 import com.alibaba.polardbx.optimizer.tablegroup.AlterTableGroupSnapShotUtils;
+import com.alibaba.polardbx.optimizer.utils.ForeignKeyUtils;
 import org.apache.calcite.rel.core.DDL;
 import org.apache.calcite.sql.SqlAlterTableGroup;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.commons.lang.StringUtils;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeMap;
 
 import static org.apache.calcite.sql.SqlIdentifier.surroundWithBacktick;
 
@@ -145,6 +156,9 @@ public class AlterTableGroupSubTaskJobFactory extends DdlJobFactory {
         String schemaName = preparedData.getSchemaName();
         String tableName = preparedData.getTableName();
         String tableGroupName = preparedData.getTableGroupName();
+        List<ForeignKeyData> modifyForeignKeys = parentPrepareData.getModifyForeignKeys();
+        List<Pair<String, String>> addForeignKeySql = parentPrepareData.getAddForeignKeySql();
+        List<Pair<String, String>> dropForeignKeySql = parentPrepareData.getDropForeignKeySql();
         TableGroupConfig tableGroupConfig = OptimizerContext.getContext(schemaName).getTableGroupInfoManager()
             .getTableGroupConfigByName(tableGroupName);
 
@@ -157,21 +171,32 @@ public class AlterTableGroupSubTaskJobFactory extends DdlJobFactory {
             .prepareRecordForAllSubpartitions(partRecList, newPartitionInfo,
                 newPartitionInfo.getPartitionBy().getPartitions());
 
+        boolean moveTable = (taskType == ComplexTaskMetaManager.ComplexTaskType.MOVE_PARTITION
+            && parentPrepareData instanceof AlterTableMovePartitionPreparedData);
         //DdlTask validateTask = new AlterTableGroupValidateTask(schemaName, preparedData.getTableGroupName());
         DdlTask addMetaTask =
             new AlterTableGroupAddSubTaskMetaTask(schemaName, tableName,
                 tableGroupConfig.getTableGroupRecord().getTg_name(),
                 tableGroupConfig.getTableGroupRecord().getId(), "",
                 ComplexTaskMetaManager.ComplexTaskStatus.CREATING.getValue(), 0, logTableRec, partRecList,
-                subPartRecInfos);
+                subPartRecInfos, parentPrepareData.getOldPartitionNames(), taskType, moveTable);
 
         List<DdlTask> taskList = new ArrayList<>();
         //1. validate
         //taskList.add(validateTask);
+        // 1. drop foreign keys on child table
+        if (dropForeignKeySql != null && !dropForeignKeySql.isEmpty()) {
+            // drop foreign key subJob
+            List<SubJobTask> dropFkSubJobTasks = new ArrayList<>();
+            for (Pair<String, String> sql : dropForeignKeySql) {
+                SubJobTask dropFkSubJobTask =
+                    new SubJobTask(schemaName, sql.getKey(), sql.getValue());
+                dropFkSubJobTask.setParentAcquireResource(true);
+                dropFkSubJobTasks.add(dropFkSubJobTask);
+            }
 
-        //1. add logical foreign key
-        DdlTask addLogicalForeignKeyTask = getPushDownForeignKeysTask(schemaName, tableName, true);
-        taskList.add(addLogicalForeignKeyTask);
+            taskList.addAll(dropFkSubJobTasks);
+        }
 
         //2. create physical table
         //2.1 insert meta to complex_task_outline
@@ -182,7 +207,7 @@ public class AlterTableGroupSubTaskJobFactory extends DdlJobFactory {
             if (!tableTopology.isEmpty()) {
                 PhysicalPlanData physicalPlanData =
                     DdlJobDataConverter.convertToPhysicalPlanData(tableTopology, phyDdlTableOperations,
-                        executionContext);
+                        ComplexTaskMetaManager.ComplexTaskType.MOVE_PARTITION == taskType, false, executionContext);
                 DdlTask phyDdlTask =
                     new CreatePhyTableWithRollbackCheckTask(schemaName, physicalPlanData.getLogicalTableName(),
                         physicalPlanData, sourceTableTopology);
@@ -208,10 +233,10 @@ public class AlterTableGroupSubTaskJobFactory extends DdlJobFactory {
 
         DdlTask mayBeTailTask = taskList.get(taskList.size() - 1);
         boolean skipBackFill = skipBackfill || tableTopology.isEmpty() || preparedData.isColumnarIndex();
-        List<DdlTask> bringUpNewPartitions = ComplexTaskFactory
-            .addPartitionTasks(schemaName, tableName, ptbGroupMap, sourceTableTopology, targetTableTopology,
+        List<DdlTask> bringUpNewPartitions =
+            addPartitionTasks(schemaName, tableName, ptbGroupMap, sourceTableTopology, targetTableTopology,
                 stayAtCreating, stayAtDeleteOnly, stayAtWriteOnly, stayAtWriteReOrg,
-                skipBackFill, executionContext, isBroadcast(), taskType);
+                skipBackFill, executionContext, isBroadcast(), taskType, parentPrepareData.isInplaceBackfill());
         //3.2 status: CREATING -> DELETE_ONLY -> WRITE_ONLY -> WRITE_REORG -> READY_TO_PUBLIC
         taskList.addAll(bringUpNewPartitions);
 
@@ -234,27 +259,43 @@ public class AlterTableGroupSubTaskJobFactory extends DdlJobFactory {
             taskList.add(phyDdlTask);
         }
 
+        // 4. drop/create fk on related table
+        if (addForeignKeySql != null && !addForeignKeySql.isEmpty()) {
+            for (ForeignKeyData fk : modifyForeignKeys) {
+                taskList.add(new TableSyncTask(fk.refSchema, fk.refTableName));
+            }
+            TableSyncTask syncTask = new TableSyncTask(schemaName, tableName);
+            taskList.add(syncTask);
+
+            // add foreign key subJob
+            List<SubJobTask> addFkSubJobTasks = new ArrayList<>();
+            for (Pair<String, String> sql : addForeignKeySql) {
+                SubJobTask addFkSubJobTask =
+                    new SubJobTask(schemaName, sql.getKey(), sql.getValue());
+                addFkSubJobTask.setParentAcquireResource(true);
+                addFkSubJobTasks.add(addFkSubJobTask);
+            }
+
+            taskList.addAll(addFkSubJobTasks);
+        }
+
         //cdc ddl mark task
         SqlKind sqlKind = ddl.kind();
         DdlContext dc = executionContext.getDdlContext();
-
-        // drop logical foreign key
-        DdlTask dropLogicalForeignKeyTask = getPushDownForeignKeysTask(schemaName, tableName, false);
-        taskList.add(dropLogicalForeignKeyTask);
 
         Map<String, Set<String>> newTopology = newPartitionInfo.getTopology();
         DdlTask cdcDdlMarkTask =
             new CdcTableGroupDdlMarkTask(tableGroupName, schemaName, tableName, sqlKind, newTopology,
                 dc.getDdlStmt(),
                 sqlKind == SqlKind.ALTER_TABLEGROUP ? CdcDdlMarkVisibility.Private : CdcDdlMarkVisibility.Protected,
-                preparedData.isColumnarIndex());
+                preparedData.isColumnarIndex(), isFetchLatestTableTopology());
         if (stayAtPublic) {
             cdcTableGroupDdlMarkTask = cdcDdlMarkTask;
         }
 
         final ExecutableDdlJob executableDdlJob = new ExecutableDdlJob();
         executableDdlJob.addSequentialTasks(taskList);
-        executableDdlJob.labelAsHead(addLogicalForeignKeyTask);
+        executableDdlJob.labelAsHead(taskList.get(0));
         if (!stayAtCreating) {
             executableDdlJob.labelAsTail(taskList.get(taskList.size() - 1));
         } else {
@@ -263,18 +304,34 @@ public class AlterTableGroupSubTaskJobFactory extends DdlJobFactory {
         return executableDdlJob;
     }
 
+    protected Map<String, Set<String>> getNewTableTopology(PartitionInfo newPartitionInfo) {
+        return newPartitionInfo.getTopology();
+    }
+
+    protected boolean isFetchLatestTableTopology() {
+        return false;
+    }
+
     @Override
     protected void excludeResources(Set<String> resources) {
         for (String phyTableName : GeneralUtil.emptyIfNull(preparedData.getNewPhyTables())) {
             resources.add(
                 concatWithDot(concatWithDot(preparedData.getSchemaName(), preparedData.getTableName()), phyTableName));
         }
-        //todo luoyanxin when
-        resources.add(concatWithDot(preparedData.getSchemaName(), preparedData.getTableName()));
+        boolean enableMovePartitionConcurrently = ScaleOutPlanUtil.isMovePartitionConcurrently(executionContext);
+
+        if (taskType != ComplexTaskMetaManager.ComplexTaskType.MOVE_PARTITION
+            || !enableMovePartitionConcurrently) {
+            resources.add(concatWithDot(preparedData.getSchemaName(), preparedData.getTableName()));
+        }
     }
 
     @Override
     protected void sharedResources(Set<String> resources) {
+        boolean enableMovePartitionConcurrently = ScaleOutPlanUtil.isMovePartitionConcurrently(executionContext);
+        if (taskType == ComplexTaskMetaManager.ComplexTaskType.MOVE_PARTITION && enableMovePartitionConcurrently) {
+            resources.add(concatWithDot(preparedData.getSchemaName(), preparedData.getTableName()));
+        }
     }
 
     protected PartitionInfo generateNewPartitionInfo() {
@@ -396,22 +453,31 @@ public class AlterTableGroupSubTaskJobFactory extends DdlJobFactory {
         return parentPrepareData;
     }
 
-    DdlTask getPushDownForeignKeysTask(String schemaName, String tableName, boolean add) {
-        TableMeta tableMeta = OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(tableName);
-        List<ForeignKeyData> pushDownForeignKeys = new ArrayList<>(tableMeta.getForeignKeys().values());
-
-        if (add) {
-            return new AddLogicalForeignKeyTask(schemaName, tableName, pushDownForeignKeys);
-        } else {
-            return new DropLogicalForeignKeyTask(schemaName, tableName, pushDownForeignKeys);
-        }
-    }
-
     public List<DdlTask> getBackfillTaskEdgeNodes() {
         return null;
     }
 
     public List<List<DdlTask>> getPhysicalyTaskPipeLine() {
         return null;
+    }
+
+    public List<DdlTask> addPartitionTasks(String schemaName,
+                                           String logicalTableName,
+                                           Map<String, org.apache.calcite.util.Pair<String, String>> ptbGroupMap,
+                                           Map<String, Set<String>> sourcePhyTables,
+                                           Map<String, Set<String>> targetPhyTables,
+                                           boolean stayAtCreating,
+                                           boolean stayAtDeleteOnly,
+                                           boolean stayAtWriteOnly,
+                                           boolean stayAtWriteReorg,
+                                           boolean skipBackFill,
+                                           ExecutionContext executionContext,
+                                           boolean isBroadcast,
+                                           ComplexTaskMetaManager.ComplexTaskType taskType,
+                                           boolean inplaceBackfill) {
+        return ComplexTaskFactory
+            .addPartitionTasks(schemaName, logicalTableName, ptbGroupMap, sourcePhyTables, targetPhyTables,
+                stayAtCreating, stayAtDeleteOnly, stayAtWriteOnly, stayAtWriteReorg,
+                skipBackFill, executionContext, isBroadcast, taskType);
     }
 }

@@ -16,8 +16,6 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * tpch_100g_oss statistic and plan check
- *
  * @author fangwu
  */
 public class StatisticsCostModelDumpIgnoreTraceTest extends StatisticCostModelTest {

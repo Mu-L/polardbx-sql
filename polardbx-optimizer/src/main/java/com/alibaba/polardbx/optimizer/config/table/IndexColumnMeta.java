@@ -16,25 +16,51 @@
 
 package com.alibaba.polardbx.optimizer.config.table;
 
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
+
 /**
  * @version 1.0
  */
 public class IndexColumnMeta {
 
+    // might be null for function index, not null for primary index
     private final ColumnMeta columnMeta;
     private final long subPart;
+    private final OrderByOption orderByOption;
 
-    public IndexColumnMeta(ColumnMeta columnMeta, long subPart) {
+    public IndexColumnMeta(ColumnMeta columnMeta, long subPart, OrderByOption orderByOption) {
         this.columnMeta = columnMeta;
         this.subPart = subPart;
+        this.orderByOption = orderByOption;
     }
 
     public ColumnMeta getColumnMeta() {
         return columnMeta;
     }
 
+    public String getName() {
+        if (columnMeta == null) {
+            return null;
+        }
+        return columnMeta.getName();
+    }
+
+    public boolean hasColumn() {
+        return columnMeta != null;
+    }
+
     public long getSubPart() {
         return subPart;
     }
 
+    public OrderByOption getOrderByOption() {
+        return orderByOption;
+    }
+
+    @Override
+    public String toString() {
+        return (columnMeta == null ? "null" : columnMeta.getName())
+            + (subPart == 0 ? "" : "(" + subPart + ")")
+            + (orderByOption.isAsc() ? " ASC" : " DESC");
+    }
 }

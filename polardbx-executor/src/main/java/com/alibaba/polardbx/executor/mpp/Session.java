@@ -27,17 +27,16 @@ import com.alibaba.polardbx.executor.mpp.execution.StageId;
 import com.alibaba.polardbx.executor.utils.GroupingFetchLSN;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.utils.IColumnarTransaction;
 import com.alibaba.polardbx.optimizer.utils.IMppTsoTransaction;
 import com.alibaba.polardbx.optimizer.utils.ITransaction;
 import org.apache.commons.lang3.StringUtils;
 
-import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static com.alibaba.polardbx.common.jdbc.ITransactionPolicy.TransactionClass.AUTO_COMMIT_SINGLE_SHARD;
-import static com.alibaba.polardbx.common.jdbc.ITransactionPolicy.TransactionClass.COLUMNAR_READ_ONLY_TRANSACTION;
 import static com.alibaba.polardbx.common.jdbc.ITransactionPolicy.TransactionClass.TSO_TRANSACTION;
 import static com.alibaba.polardbx.util.MoreObjects.toStringHelper;
 
@@ -120,14 +119,13 @@ public final class Session {
         return preferLocal;
     }
 
-    public void generateTsoInfo() throws SQLException {
+    public void generateTsoInfo() {
 
         ITransaction iTransaction = clientContext.getTransaction();
-        if (iTransaction.getTransactionClass() == COLUMNAR_READ_ONLY_TRANSACTION) {
+        if (iTransaction instanceof IColumnarTransaction) {
             long externalTso = clientContext.getSnapshotTs();
             this.tsoTime = externalTso > 0 ? externalTso :
-                ((IMppTsoTransaction) clientContext.getTransaction()).nextTimestamp(t -> {
-                });
+                ((IColumnarTransaction) clientContext.getTransaction()).getSnapshotSeq();
         } else {
             if (ExecutorContext.getContext(
                 getSchema()).getStorageInfoManager().supportTso() &&
@@ -240,12 +238,16 @@ public final class Session {
             clientContext.getConnection().getLastInsertId(),
             clientContext.getTimeZone(),
             tsoTime,
-            clientContext.isUseColumnar(),
+            clientContext.getPlanType(),
+            clientContext.getOriginSql(),
+            clientContext.isWarmup(),
             dnLsns,
             omitTso,
             lizard1PC,
             clientContext.getUseColumnarTracer(),
             clientContext.getWorkloadType(),
+            clientContext.isAutoCommit(),
+            clientContext.getLogicalSqlStartTimeInMs(),
             extraServerVariables);
     }
 

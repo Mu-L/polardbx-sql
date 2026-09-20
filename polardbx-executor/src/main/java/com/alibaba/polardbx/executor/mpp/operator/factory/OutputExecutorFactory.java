@@ -31,15 +31,13 @@ import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 
 import java.util.List;
 
-import static com.google.common.base.Preconditions.checkArgument;
-
 public class OutputExecutorFactory implements ConsumeExecutorFactory {
     private PlanFragment fragment;
     private OutputBuffer outputBuffer;
     private PagesSerdeFactory pagesSerdeFactory;
 
-    public OutputExecutorFactory(PlanFragment fragment, OutputBuffer outputBuffer, PagesSerdeFactory pagesSerdeFactory
-    ) {
+    public OutputExecutorFactory(PlanFragment fragment, OutputBuffer outputBuffer,
+                                 PagesSerdeFactory pagesSerdeFactory) {
         this.fragment = fragment;
         this.outputBuffer = outputBuffer;
         this.pagesSerdeFactory = pagesSerdeFactory;
@@ -51,15 +49,14 @@ public class OutputExecutorFactory implements ConsumeExecutorFactory {
         List<DataType> inputType = fragment.getTypes();
         List<DataType> outputType = SerializeDataType.convertToDataType(fragment.getOutputTypes(), context);
 
-        if ((partitioningScheme.getShuffleHandle().isSinglePartition() && !partitioningScheme.isRemotePairWise())
-            || partitioningScheme.getPartitionMode().equals(PartitionShuffleHandle.PartitionShuffleMode.BROADCAST)) {
-            // if this Exchange is under pairwise, we should use TaskOutputCollector even it is single partition
+        if (partitioningScheme.getShuffleHandle().isSinglePartition() || partitioningScheme.getPartitionMode()
+            .equals(PartitionShuffleHandle.PartitionShuffleMode.BROADCAST)
+            || partitioningScheme.getPartitionCount() == 1) {
             return new TaskOutputCollector(inputType, outputType, outputBuffer,
                 this.pagesSerdeFactory.createPagesSerde(outputType, context), context);
         } else {
             int chunkLimit = context.getParamManager().getInt(ConnectionParams.CHUNK_SIZE);
-            int partitionCount = partitioningScheme.getPartitionCount();
-            return new PartitionedOutputCollector(partitionCount,
+            return new PartitionedOutputCollector(partitioningScheme.getPartitionCount(),
                 partitioningScheme.getPrunePartitions(), partitioningScheme.getFullPartCount(),
                 inputType, partitioningScheme.isRemotePairWise(), outputType, partitioningScheme.getPartChannels(),
                 outputBuffer, this.pagesSerdeFactory,

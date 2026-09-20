@@ -34,6 +34,7 @@ public class MemoryStatAttribute {
     public static final String OPERATOR_TMP_TABLE_POOL = "OperatorTmpTable";
     public static final String SCALAR_SUBQUERY_POOL = "ScalarSubQuery";
     public static final String APPLY_SUBQUERY_POOL = "ApplySubQuery";
+    public static final String CTE = "CTE";
 
     // Use to init general pool for StmtMemPool
     public static final List<String> normalPoolTypeNameList = new ArrayList<String>();

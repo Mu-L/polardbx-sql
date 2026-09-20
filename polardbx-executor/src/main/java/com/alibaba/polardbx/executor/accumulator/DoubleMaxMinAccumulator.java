@@ -16,14 +16,19 @@
 
 package com.alibaba.polardbx.executor.accumulator;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.executor.accumulator.state.NullableDoubleGroupState;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
+import org.openjdk.jol.info.ClassLayout;
 
 public class DoubleMaxMinAccumulator extends AbstractAccumulator {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(DoubleMaxMinAccumulator.class).instanceSize();
 
+    @FieldMemoryCounter(value = false)
     private static final DataType[] INPUT_TYPES = new DataType[] {DataTypes.DoubleType};
 
     private final NullableDoubleGroupState state;
@@ -32,6 +37,11 @@ public class DoubleMaxMinAccumulator extends AbstractAccumulator {
     DoubleMaxMinAccumulator(int capacity, boolean isMin) {
         this.state = new NullableDoubleGroupState(capacity);
         this.isMin = isMin;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(state);
     }
 
     @Override

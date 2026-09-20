@@ -31,6 +31,7 @@ import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableGroupBasePreparedData;
+import org.apache.calcite.rel.core.DDL;
 import org.apache.calcite.sql.SqlKind;
 import org.junit.Rule;
 import org.junit.Test;
@@ -141,13 +142,12 @@ public class ColumnarForbidTest {
 
     @Test(expected = TddlRuntimeException.class)
     public void validateTableWithCciThrowTest1() {
-        AlterTableGroupBaseBuilder builder = mock(AlterTableGroupBaseBuilder.class);
+        DDL ddl = mock(DDL.class);
         AlterTableGroupBasePreparedData preparedData = mock(AlterTableGroupBasePreparedData.class);
         ExecutionContext executionContext = mock(ExecutionContext.class);
         SchemaManager schemaManager = mock(SchemaManager.class);
         TableMeta tableMeta = mock(TableMeta.class);
-        when(builder.getExecutionContext()).thenReturn(executionContext);
-        when(builder.getPreparedData()).thenReturn(preparedData);
+
         when(preparedData.getSchemaName()).thenReturn("schema");
         when(executionContext.getSchemaManager(any())).thenReturn(schemaManager);
         when(schemaManager.getTable(any())).thenReturn(tableMeta);
@@ -156,13 +156,16 @@ public class ColumnarForbidTest {
         when(executionContext.getParamManager()).thenReturn(paramManager);
         when(paramManager.getBoolean(any())).thenReturn(true);
 
-        doCallRealMethod().when(builder).createAlterTableGroupItemPreparedData(any(), any());
+        AlterTableGroupBaseBuilder builder = new AlterTableGroupBaseBuilder(ddl, preparedData, executionContext);
+
         when(preparedData.getTaskType()).thenReturn(ComplexTaskMetaManager.ComplexTaskType.ADD_PARTITION);
         builder.createAlterTableGroupItemPreparedData("tableName", null);
         when(preparedData.getTaskType()).thenReturn(ComplexTaskMetaManager.ComplexTaskType.DROP_PARTITION);
-        builder.createAlterTableGroupItemPreparedData("tableName", null);
+        AlterTableGroupBaseBuilder builder2 = new AlterTableGroupBaseBuilder(ddl, preparedData, executionContext);
+        builder2.createAlterTableGroupItemPreparedData("tableName", null);
         when(preparedData.getTaskType()).thenReturn(ComplexTaskMetaManager.ComplexTaskType.SPLIT_PARTITION);
-        builder.createAlterTableGroupItemPreparedData("tableName", null);
+        AlterTableGroupBaseBuilder builder3 = new AlterTableGroupBaseBuilder(ddl, preparedData, executionContext);
+        builder3.createAlterTableGroupItemPreparedData("tableName", null);
     }
 
     @Test(expected = NullPointerException.class)

@@ -55,16 +55,16 @@ public class PushFilterRuleTest extends BaseRuleTest {
         LogicalFilter filter = LogicalFilter.create(logicalView,
             condition);
 
-        Assert.assertTrue(PushFilterRule.doNotPush(filter, logicalView));
+        Assert.assertTrue(PushFilterRule.doNotPush(filter.getCondition(), logicalView));
 
         setParams(filter, FORCE_APPLY_CACHE, true);
 //        correlVariable.setApplyMark(true);
 
-        Assert.assertTrue(PushFilterRule.doNotPush(filter, logicalView));
+        Assert.assertTrue(PushFilterRule.doNotPush(filter.getCondition(), logicalView));
 
         setParams(filter, FORBID_APPLY_CACHE, true);
 
-        Assert.assertTrue(!PushFilterRule.doNotPush(filter, logicalView));
+        Assert.assertTrue(!PushFilterRule.doNotPush(filter.getCondition(), logicalView));
     }
 
     private void setParams(RelNode relNode, String key, Object o) {

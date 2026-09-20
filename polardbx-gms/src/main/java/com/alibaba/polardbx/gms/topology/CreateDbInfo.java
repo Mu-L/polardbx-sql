@@ -83,6 +83,10 @@ public class CreateDbInfo {
 
     protected DatabaseDdlContext ddlContext = null;
 
+    protected Boolean dryRunDdl = false;
+
+    protected Boolean gdnDdlLoad = false;
+
     public Long getConnId() {
         return connId;
     }
@@ -105,6 +109,14 @@ public class CreateDbInfo {
 
     public void setTraceId(String traceId) {
         this.traceId = traceId;
+    }
+
+    public Boolean getDryRunDdl() {
+        return dryRunDdl;
+    }
+
+    public void setDryRunDdl(Boolean dryRunDdl) {
+        this.dryRunDdl = dryRunDdl;
     }
 
     /**
@@ -243,6 +255,14 @@ public class CreateDbInfo {
 
     public List<CreatedDbHookFunc> getCreatedDbHookFuncList() {
         return createdDbHookFuncList;
+    }
+
+    public Boolean getGdnDdlLoad() {
+        return gdnDdlLoad;
+    }
+
+    public void setGdnDdlLoad(Boolean gdnDdlLoad) {
+        this.gdnDdlLoad = gdnDdlLoad;
     }
 
     public void setCreatedDbHookFuncList(

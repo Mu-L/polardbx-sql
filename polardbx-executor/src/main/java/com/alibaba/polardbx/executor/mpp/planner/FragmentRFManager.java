@@ -24,7 +24,7 @@ import java.util.Map;
 public interface FragmentRFManager {
 
     enum RFType {
-        LOCAL, BROADCAST
+        LOCAL, BROADCAST, TOP_N_THRESHOLD
     }
 
     Map<FragmentRFItemKey, FragmentRFItem> getAllItems();

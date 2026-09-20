@@ -1,5 +1,6 @@
 package com.alibaba.polardbx.executor.accumulator;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.LongBlock;
 import com.alibaba.polardbx.executor.chunk.LongBlockBuilder;
@@ -20,10 +21,11 @@ public class LongSum0AccumulatorTest {
     public void before() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new Sum0(), DataTypes.LongType, new DataType[] {DataTypes.LongType}, COUNT,
-                new ExecutionContext());
+                new ExecutionContext(), null);
 
         this.accumulator = (LongSum0Accumulator) accumulator;
         Assert.assertEquals(1, accumulator.getInputTypes().length);
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 
     @Test
@@ -43,12 +45,14 @@ public class LongSum0AccumulatorTest {
         for (int i = 0; i < block.getPositionCount(); i++) {
             accumulator.accumulate(0, block, i);
         }
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
 
         LongBlockBuilder resultBuilder = new LongBlockBuilder(COUNT);
         accumulator.writeResultTo(0, resultBuilder);
         Block resultBlock = resultBuilder.build();
         Assert.assertEquals(1, resultBlock.getPositionCount());
         Assert.assertEquals(result, resultBlock.getLong(0));
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
 
         long size = accumulator.estimateSize();
         Assert.assertTrue(size > 0);
@@ -70,11 +74,13 @@ public class LongSum0AccumulatorTest {
         for (int i = 0; i < block.getPositionCount(); i++) {
             accumulator.accumulate(0, block, i);
         }
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
 
         LongBlockBuilder resultBuilder = new LongBlockBuilder(COUNT);
         accumulator.writeResultTo(0, resultBuilder);
         Block resultBlock = resultBuilder.build();
         Assert.assertEquals(1, resultBlock.getPositionCount());
         Assert.assertEquals(0, resultBlock.getLong(0));
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 }

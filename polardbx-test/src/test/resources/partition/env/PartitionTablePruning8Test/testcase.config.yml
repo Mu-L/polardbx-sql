@@ -1,1 +1,11 @@
 test_fullscan_blacklist
+range_by_ts_using_col
+range_by_ts_using_month
+list_by_ts_using_month
+hash_by_ts_using_month
+range_by_ts_using_year
+range_by_ts_using_to_months
+range_by_ts_using_to_weeks
+range_by_ts_using_to_days
+range_by_ts_using_to_seconds
+part_by_ts_validation_test

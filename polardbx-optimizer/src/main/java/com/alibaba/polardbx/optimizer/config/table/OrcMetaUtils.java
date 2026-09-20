@@ -101,10 +101,11 @@ public class OrcMetaUtils {
 
         // all string columns from single or composite key
         Set<String> columnsWithSortKey = sourceTableMeta.getIndexes().stream()
-            .map(indexMeta -> indexMeta.getKeyColumns())
+            .map(IndexMeta::getKeyColumnsExt)
             .flatMap(List::stream)
-            .filter(columnMeta -> columnMeta.getDataType() instanceof SliceType)
-            .map(ColumnMeta::getName)
+            .filter(IndexColumnMeta::hasColumn)
+            .filter(indexColumnMeta -> indexColumnMeta.getColumnMeta().getDataType() instanceof SliceType)
+            .map(IndexColumnMeta::getName)
             .collect(Collectors.toSet());
 
         if (sourceTableMeta.getGsiPublished() != null) {
@@ -139,8 +140,10 @@ public class OrcMetaUtils {
 
         // No varchar index column, because it's redundant column have bloom filter.
         Set<ColumnMeta> bfColumnMetas = sourceTableMeta.getSecondaryIndexes().stream()
-            .map(indexMeta -> indexMeta.getKeyColumns())
+            .map(IndexMeta::getKeyColumnsExt)
             .flatMap(List::stream)
+            .filter(IndexColumnMeta::hasColumn)
+            .map(IndexColumnMeta::getColumnMeta)
             .filter(columnMeta -> !(columnMeta.getDataType() instanceof SliceType))
             .collect(Collectors.toSet());
 

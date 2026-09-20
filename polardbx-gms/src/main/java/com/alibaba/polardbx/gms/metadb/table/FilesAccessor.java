@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.gms.metadb.table;
 
 import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
@@ -44,13 +45,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.gms.metadb.GmsSystemTables.COLUMNAR_APPENDED_FILES;
 import static com.alibaba.polardbx.gms.metadb.GmsSystemTables.COLUMNAR_FILE_MAPPING;
 
 public class FilesAccessor extends AbstractAccessor {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     private static final String FILES_TABLE = wrap(GmsSystemTables.FILES);
 
@@ -87,7 +89,7 @@ public class FilesAccessor extends AbstractAccessor {
 
     private static final String SELECT_VISIBLE_FILES =
         "select * from " + FILES_TABLE
-            + " where `table_schema` = ? and `table_name` = ? and `logical_table_name` = ?and `life_cycle`= "
+            + " where `table_schema` = ? and `table_name` = ? and `logical_table_name` = ? and `life_cycle`= "
             + OSSMetaLifeCycle.READY.ordinal() +
             " order by `create_time`";
 
@@ -114,7 +116,7 @@ public class FilesAccessor extends AbstractAccessor {
 
     private static final String SELECT_COLUMNAR_FILES =
         "select `file_id`,`file_name`,`file_type`, `file_meta`, `tablespace_name`,`table_catalog`,a.`table_schema`,a.`table_name`,`logfile_group_name`,`logfile_group_number`,`engine`,`fulltext_keys`,`deleted_rows`,`update_count`,`free_extents`,`total_extents`,`extent_size`,`initial_size`,`maximum_size`,`autoextend_size`,`creation_time`,`last_update_time`,`last_access_time`,`recover_time`,`transaction_counter`,`version`,`row_format`,`table_rows`,`avg_row_length`,`data_length`,`max_data_length`,`index_length`,`data_free`,`create_time`,`update_time`,`check_time`,`checksum`,`deleted_checksum`,a.`status`,a.`extra`,`task_id`,`life_cycle`,`local_path`, b.`table_schema` as `logical_schema_name`, a.`logical_table_name` as `logical_table_name`, `local_partition_name`,`commit_ts`,`remove_ts`,`file_hash`,`partition_name`,`local_partition_name`,`schema_ts` from "
-            + FILES_TABLE + "a join " + COLUMNAR_TABLE_MAPPING_TABLE
+            + FILES_TABLE + " a join " + COLUMNAR_TABLE_MAPPING_TABLE
             + " b on a.`logical_table_name` = b.`table_id`";
 
     private static final String SELECT_SIMPLIFIED_FILES =
@@ -172,6 +174,20 @@ public class FilesAccessor extends AbstractAccessor {
     private static final String SELECT_FILES_BY_ENGINE =
         "select * from " + FILES_TABLE + " where `engine` = ? order by `create_time`";
 
+    private static final String SELECT_PENDING_BLOB_ORPHAN_MANIFESTS =
+        "select * from " + FILES_TABLE
+            + " where `logical_schema_name` = ''"
+            + " and `logical_table_name` = ''"
+            + " and `file_type` = 'BLOB_ORPHAN_MANIFEST'"
+            + " and `remove_ts` is null"
+            + " and `commit_ts` < ?"
+            + " order by `commit_ts` limit ?";
+
+    private static final String UPDATE_BLOB_ORPHAN_MANIFEST_REMOVE_TS =
+        "update " + FILES_TABLE
+            + " set `remove_ts` = ?"
+            + " where `file_name` = ? and `file_type` = 'BLOB_ORPHAN_MANIFEST'";
+
     private static final String SELECT_FILES_BY_LOCAL_PARTITION =
         "select * from " + FILES_TABLE
             + " where `logical_schema_name` = ? and `logical_table_name` = ? and `table_schema` = ? and `table_name` = ? and `local_partition_name` = ?"
@@ -203,6 +219,21 @@ public class FilesAccessor extends AbstractAccessor {
     private static final String SELECT_BY_PARTITION_AND_TYPE_ORDER_BY_TSO_WITH_LIMIT =
         "select * from " + FILES_TABLE +
             " where `logical_schema_name` = ? and `logical_table_name` = ? and `partition_name` = ? and `file_type` = ? and `engine` = ?"
+            + " order by `version` desc, `commit_ts` desc limit ?";
+
+    private static final String SELECT_BY_PARTITION_AND_TYPE_ORDER_BY_TSO_WITH_LIMIT_OFFSET =
+        "select * from " + FILES_TABLE +
+            " where `logical_schema_name` = ? and `logical_table_name` = ? and `partition_name` = ? and `file_type` = ? and `engine` = ?"
+            + " order by `version` desc, `commit_ts` desc limit ? offset ?";
+
+    /**
+     * Keyset(seek) pagination for PK IDX. Since `version` is monotonically increasing and unique,
+     * use `version` < ? as the seek boundary instead of offset to avoid deep-pagination scans.
+     */
+    private static final String SELECT_BY_PARTITION_AND_TYPE_ORDER_BY_VERSION_SEEK =
+        "select * from " + FILES_TABLE +
+            " where `logical_schema_name` = ? and `logical_table_name` = ? and `partition_name` = ? and `file_type` = ? and `engine` = ?"
+            + " and `version` < ?"
             + " order by `version` desc, `commit_ts` desc limit ?";
 
     private static final String SELECT_BY_ID =
@@ -286,6 +317,9 @@ public class FilesAccessor extends AbstractAccessor {
             + " as b on a.file_name = b.file_name and a.logical_schema_name = b.logical_schema and a.logical_table_name = b.logical_table "
             + " where a.`logical_schema_name` = ? and a.`logical_table_name` = ? and a.`commit_ts` = ? ";
 
+    private static final String LOOKING_FOR_NEW_FILES =
+        "select file_name, partition_name, engine from files where file_type = ? and commit_ts > ? and commit_ts <= ? limit ?";
+
     /**
      * 统计
      */
@@ -350,6 +384,11 @@ public class FilesAccessor extends AbstractAccessor {
             + " set `extent_size` = ?, `table_rows` = ? "
             + " where `file_name` = ? ";
 
+    private static final String UPDATE_BLOB_FILE_READY =
+        "update " + FILES_TABLE
+            + " set `status` = 'READY', `life_cycle` = 1, `table_rows` = ?, `extent_size` = ?, `commit_ts` = ? "
+            + " where `file_name` = ? and `status` = 'ACTIVE'";
+
     public static FilesAccessor create() {
         return new FilesAccessor();
     }
@@ -365,34 +404,68 @@ public class FilesAccessor extends AbstractAccessor {
         "select `file_id`,`file_name`,`file_type`, `tablespace_name`,`table_catalog`,a.`table_schema`,a.`table_name`,`logfile_group_name`,`logfile_group_number`,`engine`,`fulltext_keys`,`deleted_rows`,`update_count`,`free_extents`,`total_extents`,`extent_size`,`initial_size`,`maximum_size`,`autoextend_size`,`creation_time`,`last_update_time`,`last_access_time`,`recover_time`,`transaction_counter`,`version`,`row_format`,`table_rows`,`avg_row_length`,`data_length`,`max_data_length`,`index_length`,`data_free`,`create_time`,`update_time`,`check_time`,`checksum`,`deleted_checksum`,a.`status`,a.`extra`,`task_id`,`life_cycle`,`local_path`, a.`logical_schema_name`, a.`logical_table_name`, `local_partition_name`,`commit_ts`,`remove_ts`,`file_hash`,`partition_name`,`local_partition_name`,`schema_ts` from "
             + FILES_TABLE + " a join " + COLUMNAR_TABLE_MAPPING_TABLE
             + " b on a.`logical_table_name` = b.`table_id`";
-    ;
 
     private static final String SELECT_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE = SELECT_FILE_INFO
         + " where `logical_schema_name` = ? and `logical_table_name` = ? ";
 
     private static final String SELECT_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_TSO = SELECT_FILE_INFO
-        + " where `logical_schema_name` = ? and `logical_table_name` = ? and `remove_ts` is not null and `remove_ts` < ? ";
+        + " force index(`columnar_rm_ts_idx`) where `logical_schema_name` = ? and `logical_table_name` = ? and `file_type` = 'TABLE_FILE' and `remove_ts` is not null and `remove_ts` < ? ";
 
     /**
      * 用来判断是否存在需要purge文件
      */
     private static final String SELECT_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_TSO_LIMIT_1 = SELECT_FILE_INFO
-        + " where `logical_schema_name` = ? and `logical_table_name` = ? and `remove_ts` is not null and `remove_ts` < ? ";
+        + " where `logical_schema_name` = ? and `logical_table_name` = ? and `file_type` = 'TABLE_FILE' and `remove_ts` is not null and `remove_ts` < ? ";
+
+    /**
+     * 用来判断某个表是否存在需要purge的TABLE_FILE，走 columnar_rm_ts_idx 索引精确查找，limit 1 找到即返回
+     */
+    private static final String SELECT_EXPIRED_TABLE_FILE_BY_SCHEMA_TABLE_TSO_LIMIT_1 = SELECT_FILE_INFO
+        + " force index(`columnar_rm_ts_idx`) where `logical_schema_name` = ? and `logical_table_name` = ? and `file_type` = 'TABLE_FILE' and `remove_ts` is not null and `remove_ts` < ? limit 1";
 
     private static final String SELECT_CSV_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_RANGE_TSO = SELECT_FILE_INFO
-        + " where `logical_schema_name` = ? and `logical_table_name` = ? and RIGHT(`file_name`, 3) = 'csv' and `extent_size` = 0  and `remove_ts` is not null and `remove_ts` >= ? and `remove_ts` < ? ";
+        + " where `logical_schema_name` = ? and `logical_table_name` = ? and `file_type` = 'TABLE_FILE' and RIGHT(`file_name`, 3) = 'csv' and `extent_size` = 0  and `remove_ts` is not null and `remove_ts` >= ? and `remove_ts` < ? ";
 
     /**
      * 用来判断是否存在某个remove tso范围内的文件
      */
     private static final String SELECT_CSV_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_RANGE_TSO_LIMIT_1 = SELECT_FILE_INFO
-        + " where `logical_schema_name` = ? and `logical_table_name` = ? and RIGHT(`file_name`, 3) = 'csv' and `extent_size` = 0  and `remove_ts` is not null and `remove_ts` >= ? and `remove_ts` < ? limit 1";
+        + " where `logical_schema_name` = ? and `logical_table_name` = ? and `file_type` = 'TABLE_FILE' and RIGHT(`file_name`, 3) = 'csv' and `extent_size` = 0  and `remove_ts` is not null and `remove_ts` >= ? and `remove_ts` < ? limit 1";
+
+    private static final String SELECT_DEL_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_RANGE_TSO = SELECT_FILE_INFO
+        + " where `logical_schema_name` = ? and `logical_table_name` = ? and `file_type` = 'TABLE_FILE' and RIGHT(`file_name`, 3) = 'del' and `extent_size` = 0  and `remove_ts` is not null and `remove_ts` >= ? and `remove_ts` < ? ";
+
+    private static final String SELECT_DEL_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_RANGE_TSO_LIMIT_1 = SELECT_FILE_INFO
+        + " where `logical_schema_name` = ? and `logical_table_name` = ? and `file_type` = 'TABLE_FILE' and RIGHT(`file_name`, 3) = 'del' and `extent_size` = 0  and `remove_ts` is not null and `remove_ts` >= ? and `remove_ts` < ? limit 1";
+
+    private static final String SELECT_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_RANGE_TSO = SELECT_FILE_INFO
+        + " where `logical_schema_name` = ? and `logical_table_name` = ? and `file_type` = 'TABLE_FILE' and RIGHT(`file_name`, 3) in ('csv', 'del') and `extent_size` = 0  and `commit_ts` < ? and `remove_ts` is null";
+
+    private static final String SELECT_VALID_DEL_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_RANGE_TSO = SELECT_FILE_INFO
+        + " where `logical_schema_name` = ? and `logical_table_name` = ? and `file_type` = 'TABLE_FILE' and RIGHT(`file_name`, 3) = 'del' and `extent_size` = 0  and `commit_ts` < ? and `remove_ts` is null";
 
     private static final String SELECT_FILE_INFO_BY_START_TSO_AND_END_TSO = SELECT_FILE_INFO_JOIN_TABLE
         + " where `commit_ts` <= ? and ( `remove_ts` is null or `remove_ts` >= ? ) and RIGHT(`file_name`, 3) in ('orc', 'sst');";
 
-    private static final String SELECT_SNAPSHOT_CSV_FILE_INFO_BY_START_TSO_AND_END_TSO = SELECT_FILE_INFO_JOIN_TABLE
-        + " where `commit_ts` <= ? and ( `remove_ts` is null or `remove_ts` >= ? ) and RIGHT(`file_name`, 3) in ('csv') and `extent_size` > 0 ;";
+    private static final String SELECT_SNAPSHOT_CSV_DEL_FILE_INFO_BY_START_TSO_AND_END_TSO = SELECT_FILE_INFO_JOIN_TABLE
+        + " where `commit_ts` <= ? and ( `remove_ts` is null or `remove_ts` >= ? ) and RIGHT(`file_name`, 3) in ('csv','del') and `extent_size` > 0 ;";
+
+    /**
+     * 只查文件名和长度的精简列，供快照文件列表等大结果集查询使用，避免拉取files表的全部列
+     */
+    private static final String SELECT_SIMPLE_FILE_INFO_JOIN_TABLE =
+        "select `file_name`,`extent_size` from " + FILES_TABLE + " a join " + COLUMNAR_TABLE_MAPPING_TABLE
+            + " b on a.`logical_table_name` = b.`table_id`";
+
+    private static final String SELECT_ORC_FILE_INFO_BY_START_TSO_AND_END_TSO = SELECT_SIMPLE_FILE_INFO_JOIN_TABLE
+        + " where `commit_ts` <= ? and ( `remove_ts` is null or `remove_ts` >= ? ) and RIGHT(`file_name`, 3) = 'orc'";
+
+    private static final String SELECT_SST_FILE_INFO_BY_START_TSO_AND_END_TSO = SELECT_SIMPLE_FILE_INFO_JOIN_TABLE
+        + " where `commit_ts` <= ? and ( `remove_ts` is null or `remove_ts` >= ? ) and RIGHT(`file_name`, 3) = 'sst'";
+
+    private static final String SELECT_SIMPLE_SNAPSHOT_CSV_DEL_FILE_INFO_BY_START_TSO_AND_END_TSO =
+        SELECT_SIMPLE_FILE_INFO_JOIN_TABLE
+            + " where `commit_ts` <= ? and ( `remove_ts` is null or `remove_ts` >= ? ) and RIGHT(`file_name`, 3) in ('csv','del') and `extent_size` > 0";
 
     private static final String DELETE_TWO_BY_LOGICAL_SCHEMA_TABLE_TSO =
         "delete a,b from " + FILES_TABLE + " as a  join " + COLUMNAR_FILE_MAPPING_TABLE
@@ -401,18 +474,18 @@ public class FilesAccessor extends AbstractAccessor {
 
     private static final String DELETE_BY_LOGICAL_SCHEMA_TABLE_TSO_LIMIT =
         "delete from " + FILES_TABLE
-            + " where `logical_schema_name` = ? and `logical_table_name` = ? and `remove_ts` is not null and `remove_ts` < ? limit ? ";
+            + " where `logical_schema_name` = ? and `logical_table_name` = ? and `file_type` = 'TABLE_FILE' and `remove_ts` is not null and `remove_ts` < ? limit ? ";
 
     private static final String DELETE_ORC_BY_TSO =
         "delete a,b from " + FILES_TABLE + " as a  join " + COLUMNAR_FILE_MAPPING_TABLE
             + " as b on a.file_name = b.file_name and a.logical_schema_name = b.logical_schema and a.logical_table_name = b.logical_table "
-            + " where a.`commit_ts` > ? and RIGHT(a.`file_name`, 3) = 'orc' ";
+            + " where a.`commit_ts` > ? and a.`file_type` = 'TABLE_FILE' and RIGHT(a.`file_name`, 3) = 'orc' ";
 
     private static final String DELETE_THREE_FILE_META_BY_TSO =
         "delete a,b,c from " + FILES_TABLE + " as a  join " + COLUMNAR_FILE_MAPPING_TABLE
             + " as b on a.file_name = b.file_name join " + COLUMNAR_APPENDED_FILES_TABLE
             + " as c on a.file_name = c.file_name"
-            + " where a.`commit_ts` > ? and RIGHT(a.file_name, 3) in ('csv','del','set') ";
+            + " where a.`commit_ts` > ? and a.`file_type` = 'TABLE_FILE' and RIGHT(a.file_name, 3) in ('csv','del','set') ";
 
     private static final String UPDATE_COLUMNAR_REMOVE_TS_BY_TSO =
         "update " + FILES_TABLE + " as a join " + COLUMNAR_FILE_MAPPING_TABLE
@@ -420,9 +493,9 @@ public class FilesAccessor extends AbstractAccessor {
             + " set a.`remove_ts` = null "
             + " where a.`remove_ts` > ? ";
 
-    private static final String SELECT_WH_BY_TABLE_AND_REMOVE_TSO =
+    private static final String SELECT_CSV_FILE_BY_REMOVE_TSO =
         "select * from " + FILES_TABLE
-            + "where logical_schema_name = ? and`remove_ts` is not null and b.`remove_ts` < ?";
+            + "where RIGHT(`file_name`, 3) = 'csv' and ( `remove_ts` is null or `remove_ts` >= ? )";
 
     public int[] insert(List<FilesRecord> records, String tableSchema, String tableName) {
         List<Map<Integer, ParameterContext>> paramsBatch = new ArrayList<>(records.size());
@@ -534,40 +607,133 @@ public class FilesAccessor extends AbstractAccessor {
     }
 
     public List<FilesRecord> query(String phyTableSchema, String phyTableName, String logicalTableName) {
-        return query(SELECT_VISIBLE_FILES, FILES_TABLE, FilesRecord.class, phyTableSchema, phyTableName,
-            logicalTableName);
+        long startMillis = System.currentTimeMillis();
+        try {
+            return query(SELECT_VISIBLE_FILES, FILES_TABLE, FilesRecord.class, phyTableSchema, phyTableName,
+                logicalTableName);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
+        }
     }
 
     public List<FilesRecord> queryByLogicalSchemaTable(String logicalSchemaName, String logicalTableName) {
-        return query(SELECT_FILES_BY_LOGICAL_SCHEMA_TABLE, FILES_TABLE, FilesRecord.class, logicalSchemaName,
-            logicalTableName);
+        long startMillis = System.currentTimeMillis();
+        try {
+
+            return query(SELECT_FILES_BY_LOGICAL_SCHEMA_TABLE, FILES_TABLE, FilesRecord.class, logicalSchemaName,
+                logicalTableName);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
+        }
     }
 
     public List<FileInfoRecord> queryFileInfoByLogicalSchemaTable(String logicalSchemaName, String logicalTableName) {
-        return query(SELECT_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE, FILES_TABLE, FileInfoRecord.class, logicalSchemaName,
-            logicalTableName);
+        long startMillis = System.currentTimeMillis();
+        try {
+            return query(SELECT_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE, FILES_TABLE, FileInfoRecord.class, logicalSchemaName,
+                logicalTableName);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
+        }
     }
 
     public List<FileInfoRecord> queryFileInfoByLogicalSchemaTableTso(String logicalSchemaName, String logicalTableName,
                                                                      long tso) {
-        Map<Integer, ParameterContext> params = new HashMap<>(4);
-        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, logicalSchemaName);
-        MetaDbUtil.setParameter(2, params, ParameterMethod.setString, logicalTableName);
-        MetaDbUtil.setParameter(3, params, ParameterMethod.setLong, tso);
-        return query(SELECT_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_TSO, FILES_TABLE, FileInfoRecord.class, params);
+        long startMillis = System.currentTimeMillis();
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>(4);
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setString, logicalSchemaName);
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setString, logicalTableName);
+            MetaDbUtil.setParameter(3, params, ParameterMethod.setLong, tso);
+            return query(SELECT_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_TSO, FILES_TABLE, FileInfoRecord.class, params);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
+        }
     }
 
     public List<FileInfoRecord> queryFileInfoByLogicalSchemaTableTsoLimitOne(String logicalSchemaName,
                                                                              String logicalTableName,
                                                                              long tso) {
+        long startMillis = System.currentTimeMillis();
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>(4);
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setString, logicalSchemaName);
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setString, logicalTableName);
+            MetaDbUtil.setParameter(3, params, ParameterMethod.setLong, tso);
+            return query(SELECT_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_TSO_LIMIT_1, FILES_TABLE, FileInfoRecord.class,
+                params);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
+        }
+    }
+
+    public List<FileInfoRecord> queryExpiredTableFileBySchemaTableTsoLimitOne(String logicalSchemaName,
+                                                                              String logicalTableName,
+                                                                              long tso) {
         Map<Integer, ParameterContext> params = new HashMap<>(4);
         MetaDbUtil.setParameter(1, params, ParameterMethod.setString, logicalSchemaName);
         MetaDbUtil.setParameter(2, params, ParameterMethod.setString, logicalTableName);
         MetaDbUtil.setParameter(3, params, ParameterMethod.setLong, tso);
-        return query(SELECT_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_TSO_LIMIT_1, FILES_TABLE, FileInfoRecord.class, params);
+        return query(SELECT_EXPIRED_TABLE_FILE_BY_SCHEMA_TABLE_TSO_LIMIT_1, FILES_TABLE, FileInfoRecord.class, params);
     }
 
     public List<FileInfoRecord> queryCSVFileInfoByLogicalSchemaTableRangeTso(String logicalSchemaName,
+                                                                             String logicalTableName,
+                                                                             long startTso, long endTso) {
+        long startMillis = System.currentTimeMillis();
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>(8);
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setString, logicalSchemaName);
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setString, logicalTableName);
+            MetaDbUtil.setParameter(3, params, ParameterMethod.setLong, startTso);
+            MetaDbUtil.setParameter(4, params, ParameterMethod.setLong, endTso);
+            return query(SELECT_CSV_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_RANGE_TSO, FILES_TABLE, FileInfoRecord.class,
+                params);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
+        }
+    }
+
+    public List<FileInfoRecord> queryCSVFileInfoByLogicalSchemaTableRangeTsoLimitOne(String logicalSchemaName,
+                                                                                     String logicalTableName,
+                                                                                     long startTso, long endTso) {
+        long startMillis = System.currentTimeMillis();
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>(8);
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setString, logicalSchemaName);
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setString, logicalTableName);
+            MetaDbUtil.setParameter(3, params, ParameterMethod.setLong, startTso);
+            MetaDbUtil.setParameter(4, params, ParameterMethod.setLong, endTso);
+            return query(SELECT_CSV_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_RANGE_TSO_LIMIT_1, FILES_TABLE,
+                FileInfoRecord.class,
+                params);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
+        }
+    }
+
+    public List<FileInfoRecord> queryDelFileInfoByLogicalSchemaTableRangeTso(String logicalSchemaName,
                                                                              String logicalTableName,
                                                                              long startTso, long endTso) {
         Map<Integer, ParameterContext> params = new HashMap<>(8);
@@ -575,10 +741,10 @@ public class FilesAccessor extends AbstractAccessor {
         MetaDbUtil.setParameter(2, params, ParameterMethod.setString, logicalTableName);
         MetaDbUtil.setParameter(3, params, ParameterMethod.setLong, startTso);
         MetaDbUtil.setParameter(4, params, ParameterMethod.setLong, endTso);
-        return query(SELECT_CSV_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_RANGE_TSO, FILES_TABLE, FileInfoRecord.class, params);
+        return query(SELECT_DEL_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_RANGE_TSO, FILES_TABLE, FileInfoRecord.class, params);
     }
 
-    public List<FileInfoRecord> queryCSVFileInfoByLogicalSchemaTableRangeTsoLimitOne(String logicalSchemaName,
+    public List<FileInfoRecord> queryDelFileInfoByLogicalSchemaTableRangeTsoLimitOne(String logicalSchemaName,
                                                                                      String logicalTableName,
                                                                                      long startTso, long endTso) {
         Map<Integer, ParameterContext> params = new HashMap<>(8);
@@ -586,35 +752,127 @@ public class FilesAccessor extends AbstractAccessor {
         MetaDbUtil.setParameter(2, params, ParameterMethod.setString, logicalTableName);
         MetaDbUtil.setParameter(3, params, ParameterMethod.setLong, startTso);
         MetaDbUtil.setParameter(4, params, ParameterMethod.setLong, endTso);
-        return query(SELECT_CSV_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_RANGE_TSO_LIMIT_1, FILES_TABLE, FileInfoRecord.class,
+        return query(SELECT_DEL_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_RANGE_TSO_LIMIT_1, FILES_TABLE, FileInfoRecord.class,
+            params);
+    }
+
+    public List<FileInfoRecord> queryFileInfoByLogicalSchemaTableRangeTso(String logicalSchemaName,
+                                                                          String logicalTableName,
+                                                                          long tso) {
+        Map<Integer, ParameterContext> params = new HashMap<>(4);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, logicalSchemaName);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setString, logicalTableName);
+        MetaDbUtil.setParameter(3, params, ParameterMethod.setLong, tso);
+        return query(SELECT_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_RANGE_TSO, FILES_TABLE, FileInfoRecord.class, params);
+    }
+
+    public List<FileInfoRecord> queryValidDelInfoByLogicalSchemaTableRangeTso(String logicalSchemaName,
+                                                                              String logicalTableName,
+                                                                              long tso) {
+        Map<Integer, ParameterContext> params = new HashMap<>(4);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, logicalSchemaName);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setString, logicalTableName);
+        MetaDbUtil.setParameter(3, params, ParameterMethod.setLong, tso);
+        return query(SELECT_VALID_DEL_FILE_INFO_BY_LOGICAL_SCHEMA_TABLE_RANGE_TSO, FILES_TABLE, FileInfoRecord.class,
             params);
     }
 
     public List<FilesRecord> queryTableFormatByLogicalSchemaTable(String logicalSchemaName, String logicalTableName) {
-        return query(SELECT_TABLE_FORMAT_FILE_BY_LOGICAL_SCHEMA_TABLE, FILES_TABLE, FilesRecord.class,
-            logicalSchemaName, logicalTableName);
+        long startMillis = System.currentTimeMillis();
+        try {
+            return query(SELECT_TABLE_FORMAT_FILE_BY_LOGICAL_SCHEMA_TABLE, FILES_TABLE, FilesRecord.class,
+                logicalSchemaName, logicalTableName);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
+        }
     }
 
     public List<FilesRecord> queryLatestFileByLogicalSchemaTable(String logicalSchemaName, String logicalTableName) {
-        return query(SELECT_LATEST_FILE_BY_LOGICAL_SCHEMA_TABLE, FILES_TABLE, FilesRecord.class, logicalSchemaName,
-            logicalTableName);
+        long startMillis = System.currentTimeMillis();
+        try {
+            return query(SELECT_LATEST_FILE_BY_LOGICAL_SCHEMA_TABLE, FILES_TABLE, FilesRecord.class, logicalSchemaName,
+                logicalTableName);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
+        }
     }
 
     public List<FilesRecord> queryByLogicalSchema(String logicalSchemaName) {
-        return query(SELECT_FILES_BY_LOGICAL_SCHEMA, FILES_TABLE, FilesRecord.class, logicalSchemaName);
+        long startMillis = System.currentTimeMillis();
+        try {
+            return query(SELECT_FILES_BY_LOGICAL_SCHEMA, FILES_TABLE, FilesRecord.class, logicalSchemaName);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
+        }
     }
 
     public List<FilesRecord> queryByFileName(String fileName) {
-        return query(SELECT_FILES_BY_FILE_NAME, FILES_TABLE, FilesRecord.class, fileName);
+        long startMillis = System.currentTimeMillis();
+        try {
+            return query(SELECT_FILES_BY_FILE_NAME, FILES_TABLE, FilesRecord.class, fileName);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
+        }
     }
 
     public List<FilesRecord> queryByEngine(Engine engine) {
-        return query(SELECT_FILES_BY_ENGINE, FILES_TABLE, FilesRecord.class, engine.name());
+        long startMillis = System.currentTimeMillis();
+        try {
+            return query(SELECT_FILES_BY_ENGINE, FILES_TABLE, FilesRecord.class, engine.name());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
+        }
+    }
+
+    /**
+     * Pending blob orphan manifest objects whose commit_ts is older than the
+     * cutoff. Used by columnar BlobPurgeJob to discover work.
+     */
+    public List<FilesRecord> queryPendingBlobOrphanManifests(long cutoffTso, int limit) {
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>();
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, cutoffTso);
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setInt, limit);
+            return MetaDbUtil.query(SELECT_PENDING_BLOB_ORPHAN_MANIFESTS, params, FilesRecord.class, connection);
+        } catch (Exception e) {
+            throw GeneralUtil.nestedException(e);
+        }
+    }
+
+    /**
+     * Mark a blob orphan manifest as purged by setting remove_ts.
+     */
+    public int markBlobOrphanManifestPurged(long removeTs, String fileName) {
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>();
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, removeTs);
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setString, fileName);
+            DdlMetaLogUtil.logSql(UPDATE_BLOB_ORPHAN_MANIFEST_REMOVE_TS, params);
+            return MetaDbUtil.update(UPDATE_BLOB_ORPHAN_MANIFEST_REMOVE_TS, params, connection);
+        } catch (Exception e) {
+            throw GeneralUtil.nestedException(e);
+        }
     }
 
     public List<FilesRecord> queryByLocalPartition(String logicalTableSchema, String logicalTableName,
                                                    String phyTableSchema, String phyTableName,
                                                    String localPartition) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params
                 = MetaDbUtil.buildStringParameters(
@@ -626,11 +884,17 @@ public class FilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<FilesRecord> queryByPhyTableName(String logicalTableSchema, String logicalTableName,
                                                  String phyTableSchema, String phyTableName, Long taskId) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params
                 = MetaDbUtil.buildStringParameters(
@@ -643,6 +907,11 @@ public class FilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
@@ -665,11 +934,20 @@ public class FilesAccessor extends AbstractAccessor {
     }
 
     public List<FilesRecord> queryColumnarByFileName(String fileName) {
-        return query(SELECT_COLUMNAR_FILES_BY_FILE_NAME, FILES_TABLE, FilesRecord.class, fileName);
+        long startMillis = System.currentTimeMillis();
+        try {
+            return query(SELECT_COLUMNAR_FILES_BY_FILE_NAME, FILES_TABLE, FilesRecord.class, fileName);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
+        }
     }
 
     public List<FilesRecordSimplified> queryColumnarDeltaFilesByTsoAndTableId(long tso, long lastTso,
                                                                               String logicalSchema, String tableId) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(9);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, lastTso);
@@ -689,11 +967,17 @@ public class FilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<FilesRecordSimplified> queryColumnarSnapshotFilesByTsoAndTableId(long tso, String logicalSchema,
                                                                                  String tableId) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(4);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, tso);
@@ -709,12 +993,18 @@ public class FilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<FilesRecordSimplifiedWithChecksum> querySnapshotWithChecksumByTsoAndTableId(long tso,
                                                                                             String logicalSchema,
                                                                                             String tableId) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(4);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, tso);
@@ -730,6 +1020,11 @@ public class FilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
@@ -778,6 +1073,7 @@ public class FilesAccessor extends AbstractAccessor {
      * 不读取file_meta列，orc文件的file_meta量巨大
      */
     public List<OrcFileStatusRecord> queryOrcFileStatusByTsoAndTableId(long tso, String logicalSchema, String tableId) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(5);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, tso);
@@ -792,13 +1088,20 @@ public class FilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     /**
      * 快照表可能csv没有append记录了，直接files中记录
      */
-    public List<OrcFileStatusRecord> querySnapshotCSVFileStatusByTsoAndTableId(long tso, String logicalSchema, String tableId) {
+    public List<OrcFileStatusRecord> querySnapshotCSVFileStatusByTsoAndTableId(long tso, String logicalSchema,
+                                                                               String tableId) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(5);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, tso);
@@ -813,6 +1116,11 @@ public class FilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
@@ -835,6 +1143,7 @@ public class FilesAccessor extends AbstractAccessor {
     }
 
     public List<FilesRecord> queryUncommitted(Long taskId, String logicalSchemaName, String logicalTableName) {
+        long startMillis = System.currentTimeMillis();
         Map<Integer, ParameterContext> params = new HashMap<>(3);
         MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, taskId);
         MetaDbUtil.setParameter(2, params, ParameterMethod.setString, logicalSchemaName);
@@ -844,11 +1153,17 @@ public class FilesAccessor extends AbstractAccessor {
             return MetaDbUtil.query(SELECT_UNCOMMITTED_FOR_ROLLBACK, params, FilesRecord.class, connection);
         } catch (Exception e) {
             throw GeneralUtil.nestedException(e);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<FilesRecord> queryByIdAndSchemaAndTable(Long taskId, String logicalSchemaName,
                                                         String logicalTableName) {
+        long startMillis = System.currentTimeMillis();
         Map<Integer, ParameterContext> params = new HashMap<>(3);
         MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, taskId);
         MetaDbUtil.setParameter(2, params, ParameterMethod.setString, logicalSchemaName);
@@ -858,11 +1173,17 @@ public class FilesAccessor extends AbstractAccessor {
             return MetaDbUtil.query(SELECT_FOR_ROLLBACK, params, FilesRecord.class, connection);
         } catch (Exception e) {
             throw GeneralUtil.nestedException(e);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<FilesRecord> queryCompactionFileByTsoAndTable(long commitTso, String logicalSchemaName,
                                                               String logicalTableName) {
+        long startMillis = System.currentTimeMillis();
         Map<Integer, ParameterContext> params = new HashMap<>(3);
         MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, commitTso);
         MetaDbUtil.setParameter(2, params, ParameterMethod.setString, logicalSchemaName);
@@ -872,6 +1193,11 @@ public class FilesAccessor extends AbstractAccessor {
             return MetaDbUtil.query(SELECT_COMPACTION_ADD_FILES_BY_TSO, params, FilesRecord.class, connection);
         } catch (Exception e) {
             throw GeneralUtil.nestedException(e);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
@@ -889,6 +1215,54 @@ public class FilesAccessor extends AbstractAccessor {
             //DdlMetaLogUtil.logSql(SELECT_BY_PARTITION_AND_TYPE_ORDER_BY_TSO_WITH_LIMIT, params);
             return MetaDbUtil.query(SELECT_BY_PARTITION_AND_TYPE_ORDER_BY_TSO_WITH_LIMIT, params, FilesRecord.class,
                 connection);
+        } catch (Exception e) {
+            throw GeneralUtil.nestedException(e);
+        }
+    }
+
+    public List<FilesRecord> queryByPartitionAndTypeOrderByCommitTsDesc(
+        String logicalSchemaName, String logicalTableName, String partitionName, String fileType, String engine,
+        long limit, long offset) {
+        Map<Integer, ParameterContext> params = new HashMap<>(7);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, logicalSchemaName);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setString, logicalTableName);
+        MetaDbUtil.setParameter(3, params, ParameterMethod.setString, partitionName);
+        MetaDbUtil.setParameter(4, params, ParameterMethod.setString, fileType);
+        MetaDbUtil.setParameter(5, params, ParameterMethod.setString, engine);
+        MetaDbUtil.setParameter(6, params, ParameterMethod.setLong, limit);
+        MetaDbUtil.setParameter(7, params, ParameterMethod.setLong, offset);
+        try {
+            //DdlMetaLogUtil.logSql(SELECT_BY_PARTITION_AND_TYPE_ORDER_BY_TSO_WITH_LIMIT_OFFSET, params);
+            return MetaDbUtil.query(SELECT_BY_PARTITION_AND_TYPE_ORDER_BY_TSO_WITH_LIMIT_OFFSET, params,
+                FilesRecord.class, connection);
+        } catch (Exception e) {
+            throw GeneralUtil.nestedException(e);
+        }
+    }
+
+    /**
+     * Keyset(seek) pagination by `version`. Since `version` is monotonically increasing and unique,
+     * pass the last (smallest) `version` of the previous batch as {@code lastVersion} to continue
+     * traversing the remaining records, which lets the query do an index range scan and avoids the
+     * deep-pagination cost of limit/offset.
+     *
+     * <p>For the first batch pass {@link Long#MAX_VALUE} as {@code lastVersion}.</p>
+     */
+    public List<FilesRecord> queryByPartitionAndTypeOrderByVersionDescAfter(
+        String logicalSchemaName, String logicalTableName, String partitionName, String fileType, String engine,
+        long lastVersion, long limit) {
+        Map<Integer, ParameterContext> params = new HashMap<>(7);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, logicalSchemaName);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setString, logicalTableName);
+        MetaDbUtil.setParameter(3, params, ParameterMethod.setString, partitionName);
+        MetaDbUtil.setParameter(4, params, ParameterMethod.setString, fileType);
+        MetaDbUtil.setParameter(5, params, ParameterMethod.setString, engine);
+        MetaDbUtil.setParameter(6, params, ParameterMethod.setLong, lastVersion);
+        MetaDbUtil.setParameter(7, params, ParameterMethod.setLong, limit);
+        try {
+            //DdlMetaLogUtil.logSql(SELECT_BY_PARTITION_AND_TYPE_ORDER_BY_VERSION_SEEK, params);
+            return MetaDbUtil.query(SELECT_BY_PARTITION_AND_TYPE_ORDER_BY_VERSION_SEEK, params,
+                FilesRecord.class, connection);
         } catch (Exception e) {
             throw GeneralUtil.nestedException(e);
         }
@@ -929,6 +1303,8 @@ public class FilesAccessor extends AbstractAccessor {
 
     public List<FilesRecord> queryByPartitionAndType(
         String logicalSchemaName, String logicalTableName, String partitionName, String fileType, String engine) {
+
+        long startMillis = System.currentTimeMillis();
         Map<Integer, ParameterContext> params = new HashMap<>(5);
         MetaDbUtil.setParameter(1, params, ParameterMethod.setString, logicalSchemaName);
         MetaDbUtil.setParameter(2, params, ParameterMethod.setString, logicalTableName);
@@ -943,6 +1319,11 @@ public class FilesAccessor extends AbstractAccessor {
                 connection);
         } catch (Exception e) {
             throw GeneralUtil.nestedException(e);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
@@ -1007,6 +1388,7 @@ public class FilesAccessor extends AbstractAccessor {
     }
 
     public List<FileInfoRecord> queryORCAndSSTFileInfoByTso(long startTso, long endTso) {
+        long startMillis = System.currentTimeMillis();
         Map<Integer, ParameterContext> params = new HashMap<>(4);
         MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, endTso);
         MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, startTso);
@@ -1017,16 +1399,22 @@ public class FilesAccessor extends AbstractAccessor {
                 connection);
         } catch (Exception e) {
             throw GeneralUtil.nestedException(e);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
-    public List<FileInfoRecord> querySnapshotCSVFileInfoByTso(long startTso, long endTso) {
+    public List<FileInfoRecord> querySnapshotCsvDelFileInfoByTso(long startTso, long endTso) {
         Map<Integer, ParameterContext> params = new HashMap<>(4);
         MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, endTso);
         MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, startTso);
 
         try {
-            return MetaDbUtil.query(SELECT_SNAPSHOT_CSV_FILE_INFO_BY_START_TSO_AND_END_TSO, params, FileInfoRecord.class,
+            return MetaDbUtil.query(SELECT_SNAPSHOT_CSV_DEL_FILE_INFO_BY_START_TSO_AND_END_TSO, params,
+                FileInfoRecord.class,
                 connection);
         } catch (Exception e) {
             throw GeneralUtil.nestedException(e);
@@ -1034,9 +1422,57 @@ public class FilesAccessor extends AbstractAccessor {
     }
 
     /**
+     * 流式查询有效的orc文件名和长度，逐行回调consumer
+     */
+    public void streamOrcFileInfoByTso(long startTso, long endTso, Consumer<FileInfoSimpleRecord> consumer) {
+        streamSimpleFileInfoByTso(SELECT_ORC_FILE_INFO_BY_START_TSO_AND_END_TSO, startTso, endTso, consumer);
+    }
+
+    /**
+     * 流式查询有效的主键索引sst文件名和长度，逐行回调consumer
+     */
+    public void streamSstFileInfoByTso(long startTso, long endTso, Consumer<FileInfoSimpleRecord> consumer) {
+        streamSimpleFileInfoByTso(SELECT_SST_FILE_INFO_BY_START_TSO_AND_END_TSO, startTso, endTso, consumer);
+    }
+
+    /**
+     * 流式查询快照表有效的csv/del文件名和长度，逐行回调consumer
+     */
+    public void streamSnapshotCsvDelFileInfoByTso(long startTso, long endTso,
+                                                  Consumer<FileInfoSimpleRecord> consumer) {
+        streamSimpleFileInfoByTso(SELECT_SIMPLE_SNAPSHOT_CSV_DEL_FILE_INFO_BY_START_TSO_AND_END_TSO, startTso, endTso,
+            consumer);
+    }
+
+    private void streamSimpleFileInfoByTso(String sql, long startTso, long endTso,
+                                           Consumer<FileInfoSimpleRecord> consumer) {
+        long startMillis = System.currentTimeMillis();
+        Map<Integer, ParameterContext> params = new HashMap<>(4);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, endTso);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, startTso);
+
+        try {
+            DdlMetaLogUtil.logSql(sql, params);
+            MetaDbUtil.queryStream(sql, params, FileInfoSimpleRecord.class, connection, consumer);
+        } catch (Exception e) {
+            throw GeneralUtil.nestedException(e);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
+        }
+    }
+
+    public List<FilesRecord> queryCsvByRemoveTso(long tso) {
+        return query(SELECT_CSV_FILE_BY_REMOVE_TSO, FILES_TABLE, FilesRecord.class, tso);
+    }
+
+    /**
      * @return checksums of orc files which contains no deleted data.
      */
     public List<FilesRecord> queryFilesByNames(List<String> files) {
+        long startMillis = System.currentTimeMillis();
         List<FilesRecord> results = new ArrayList<>();
         try (Statement stmt = connection.createStatement()) {
             final int maxBatchSize = 128;
@@ -1057,6 +1493,11 @@ public class FilesAccessor extends AbstractAccessor {
             return results;
         } catch (Exception e) {
             throw GeneralUtil.nestedException(e);
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
@@ -1414,6 +1855,23 @@ public class FilesAccessor extends AbstractAccessor {
         try {
             DdlMetaLogUtil.logSql(UPDATE_FILE_SIZE_AND_ROWS_BY_FILE_NAME, params);
             return MetaDbUtil.update(UPDATE_FILE_SIZE_AND_ROWS_BY_FILE_NAME, params, connection);
+        } catch (Exception e) {
+            throw GeneralUtil.nestedException(e);
+        }
+    }
+
+    /**
+     * Update a blob file from ACTIVE to READY status after sealing.
+     */
+    public int updateBlobFileReady(String fileName, long rowCount, long fileSize, long commitTs) {
+        Map<Integer, ParameterContext> params = new HashMap<>(5);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, rowCount);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, fileSize);
+        MetaDbUtil.setParameter(3, params, ParameterMethod.setLong, commitTs);
+        MetaDbUtil.setParameter(4, params, ParameterMethod.setString, fileName);
+        try {
+            DdlMetaLogUtil.logSql(UPDATE_BLOB_FILE_READY, params);
+            return MetaDbUtil.update(UPDATE_BLOB_FILE_READY, params, connection);
         } catch (Exception e) {
             throw GeneralUtil.nestedException(e);
         }

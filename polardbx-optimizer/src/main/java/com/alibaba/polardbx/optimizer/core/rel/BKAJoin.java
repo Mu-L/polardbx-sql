@@ -68,6 +68,8 @@ public class BKAJoin extends Join implements LookupJoin, PhysicalNode {
     private RelOptCost fixedCost;
     private RelOptCost lookupCost;
     private Index lookupIndex;
+    private boolean hasSwitched = false;
+    private Boolean isAdaptiveLookupOptimizationReady = null;
 
     //~ Constructors -----------------------------------------------------------
 
@@ -109,17 +111,7 @@ public class BKAJoin extends Join implements LookupJoin, PhysicalNode {
             this.systemFieldList = (ImmutableList<RelDataTypeField>) relInput.get("systemFields");
         }
         this.semiJoinDone = relInput.getBoolean("semiJoinDone", false);
-        if (this.getInner() instanceof Gather) {
-            ((Gather) this.getInner()).setJoin(this);
-        } else if (this.getInner() instanceof LogicalView) {
-            ((LogicalView) this.getInner()).setJoin(this);
-        } else if (this.getInner() instanceof Project) {
-            RelNode node = ((BKAJoin) ((Project) this.getInner()).getInput()).getOuter();
-            if (node instanceof Gather) {
-                node = ((Gather) node).getInput();
-            }
-            ((LogicalIndexScan) node).setJoin(this);
-        }
+        this.deepVisitLookupJoin();
     }
 
     public static BKAJoin create(RelTraitSet traitSet, RelNode left, RelNode right, RexNode condition,
@@ -140,6 +132,7 @@ public class BKAJoin extends Join implements LookupJoin, PhysicalNode {
             traitSet, left, right, conditionExpr,
             variablesSet, joinType, semiJoinDone, systemFieldList, hints);
         bkaJoin.setFixedCost(this.fixedCost);
+        bkaJoin.setHasSwitched(this.hasSwitched);
         return bkaJoin;
     }
 
@@ -153,7 +146,23 @@ public class BKAJoin extends Join implements LookupJoin, PhysicalNode {
         // Don't ever print semiJoinDone=false. This way, we
         // don't clutter things up in optimizers that don't use semi-joins.
         return super.explainTerms(pw)
+            .itemIf("hasSwitched", hasSwitched, hasSwitched)
             .itemIf("semiJoinDone", semiJoinDone, semiJoinDone);
+    }
+
+    @Override
+    public void deepVisitLookupJoin() {
+        if (this.getInner() instanceof Gather) {
+            ((Gather) this.getInner()).setJoin(this);
+        } else if (this.getInner() instanceof LogicalView) {
+            ((LogicalView) this.getInner()).setLookupInfo(this);
+        } else if (this.getInner() instanceof Project) {
+            RelNode node = ((BKAJoin) ((Project) this.getInner()).getInput()).getOuter();
+            if (node instanceof Gather) {
+                node = ((Gather) node).getInput();
+            }
+            ((LogicalIndexScan) node).setLookupInfo(this);
+        }
     }
 
     @Override
@@ -330,5 +339,27 @@ public class BKAJoin extends Join implements LookupJoin, PhysicalNode {
         }
 
         return DeriveMode.LEFT_FIRST;
+    }
+
+    public boolean isHasSwitched() {
+        return hasSwitched;
+    }
+
+    public void setHasSwitched(boolean hasSwitched) {
+        this.hasSwitched = hasSwitched;
+    }
+
+    public Boolean isAdaptiveLookupOptimizationReady() {
+        return isAdaptiveLookupOptimizationReady;
+    }
+
+    public Boolean setAdaptiveLookupOptimizationReady(Boolean adaptiveLookupOptimizationReady) {
+        isAdaptiveLookupOptimizationReady = adaptiveLookupOptimizationReady;
+        return isAdaptiveLookupOptimizationReady;
+    }
+
+    @Override
+    public boolean suitForProjectJoinTransposeAfterCbo() {
+        return true;
     }
 }

@@ -1,35 +1,15 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.optimizer.core.planner.rule;
 
 import com.alibaba.polardbx.common.properties.ConnectionParams;
-import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
-import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
 import com.alibaba.polardbx.common.properties.ParamManager;
-import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
-import com.alibaba.polardbx.optimizer.utils.RelUtils;
-import com.alibaba.polardbx.optimizer.utils.TableTopologyUtil;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.core.planner.Planner;
+import com.alibaba.polardbx.optimizer.core.planner.rule.cte.CTEUtil;
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.PushUtil;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
+import com.alibaba.polardbx.optimizer.utils.TableTopologyUtil;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import org.apache.calcite.plan.Convention;
@@ -41,20 +21,24 @@ import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Correlate;
 import org.apache.calcite.rel.logical.LogicalCorrelate;
+import org.apache.calcite.rel.logical.LogicalProject;
+import org.apache.calcite.rel.logical.LogicalValues;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexDynamicParam;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SemiJoinType;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.tools.RelBuilder;
+import org.apache.calcite.util.trace.OptimizerPhase;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
 import static com.alibaba.polardbx.common.properties.ConnectionParams.PUSH_CORRELATE_MATERIALIZED_LIMIT;
-import static org.apache.calcite.sql.SqlKind.DML;
 import static org.apache.calcite.sql.SqlKind.EQUALS;
+import static org.apache.calcite.sql.SqlKind.INSERT;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.IN;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.ROW;
 
@@ -62,21 +46,30 @@ import static org.apache.calcite.sql.fun.SqlStdOperatorTable.ROW;
  * @author fangwu
  */
 public class PushCorrelateRule extends RelOptRule {
+    private boolean pushToValues = false;
 
-    public PushCorrelateRule(RelOptRuleOperand operand, String description) {
+    public PushCorrelateRule(RelOptRuleOperand operand, String description, boolean pushToValues) {
         super(operand, "PushCorrelateRule:" + description);
+        this.pushToValues = pushToValues;
     }
 
     public static final PushCorrelateRule INSTANCE = new PushCorrelateRule(
         operand(Correlate.class, some(operand(LogicalView.class, none()), operand(RelNode.class, any()))),
-        "INSTANCE");
+        "INSTANCE", false);
+
+    public static final PushCorrelateRule INSTANCE_VALUES = new PushCorrelateRule(
+        operand(Correlate.class, some(operand(LogicalValues.class, none()), operand(RelNode.class, any()))),
+        "INSTANCE", true);
 
     @Override
     public boolean matches(RelOptRuleCall call) {
-        final LogicalView leftView = (LogicalView) call.rels[1];
-        if (leftView instanceof OSSTableScan) {
-            return false;
+        if (!pushToValues) {
+            final LogicalView leftView = (LogicalView) call.rels[1];
+            if (leftView instanceof OSSTableScan) {
+                return false;
+            }
         }
+
         if (!PlannerContext.getPlannerContext(call).getParamManager()
             .getBoolean(ConnectionParams.ENABLE_PUSH_CORRELATE)) {
             return false;
@@ -87,14 +80,52 @@ public class PushCorrelateRule extends RelOptRule {
     @Override
     public void onMatch(RelOptRuleCall call) {
         final LogicalCorrelate logicalCorrelate = (LogicalCorrelate) call.rels[0];
-        final LogicalView leftView = (LogicalView) call.rels[1];
         RelNode rightPlan = call.rels[2];
-        RelBuilder relBuilder = call.builder();
-
-        if (PlannerContext.getPlannerContext(rightPlan).getSqlKind().belongsTo(DML) ||
-            CBOUtil.containsCorrelate(rightPlan)) {
+        if (RelOptUtil.findCorrelates(rightPlan).size() > 0) {
             return;
         }
+        if (RelOptUtil.anyCte(rightPlan)) {
+            return;
+        }
+        if (CTEUtil.findCte(rightPlan)) {
+            return;
+        }
+        if (pushToValues) {
+            if (!PlannerContext.getPlannerContext(logicalCorrelate).getExecutionContext().getParamManager()
+                .getBoolean(ConnectionParams.ENABLE_TRANS_CORRELATE_TO_VALUES)) {
+                return;
+            }
+            if (PlannerContext.getPlannerContext(logicalCorrelate).getSqlKind() == INSERT) {
+                return;
+            }
+            handlePushToLogicalValues(call, logicalCorrelate, rightPlan);
+        } else {
+            handlePushToLogicalView(call, logicalCorrelate, rightPlan);
+        }
+    }
+
+    private void handlePushToLogicalValues(RelOptRuleCall call, LogicalCorrelate logicalCorrelate, RelNode rightPlan) {
+        final LogicalValues leftValues = (LogicalValues) call.rels[1];
+        if (leftValues.getRowType().getFieldList().size() == 1 &&
+            leftValues.getRowType().getFieldList().get(0).getName().equals("ZERO") &&
+            leftValues.getTuples().size() == 1) {
+
+            int rightFieldCount = rightPlan.getRowType().getFieldCount();
+            List<RexNode> projects = new ArrayList<>();
+            List<String> names = new ArrayList<>();
+            projects.add(leftValues.getTuples().get(0).get(0));
+            names.add("ZERO");
+            for (int i = 0; i < rightFieldCount; i++) {
+                projects.add(call.builder().getRexBuilder().makeInputRef(rightPlan, i));
+                names.add(rightPlan.getRowType().getFieldList().get(i).getName());
+            }
+            call.transformTo(LogicalProject.create(rightPlan, projects, names));
+        }
+    }
+
+    private void handlePushToLogicalView(RelOptRuleCall call, LogicalCorrelate logicalCorrelate, RelNode rightPlan) {
+        final LogicalView leftView = (LogicalView) call.rels[1];
+        RelBuilder relBuilder = call.builder();
 
         // single table pushdown
         boolean allSingleTable = false;
@@ -108,11 +139,6 @@ public class PushCorrelateRule extends RelOptRule {
         if (!TableTopologyUtil.isAllSingleTableInSamePhysicalDB(tables)) {
             // meaning has correlate columns
             if (RelOptUtil.getVariablesUsed(rightPlan).size() > 0) {
-                return;
-            }
-
-            // right plan should contains correlate node
-            if (RelOptUtil.findCorrelates(rightPlan).size() > 0) {
                 return;
             }
 
@@ -135,6 +161,12 @@ public class PushCorrelateRule extends RelOptRule {
                 return;
             }
         } else {
+            if (PlannerContext.getPlannerContext(call).getParamManager()
+                .getBoolean(ConnectionParams.ENABLE_CHECK_PUSH_CORRELATE)) {
+                if (!PushUtil.canPushTree(rightPlan)) {
+                    return;
+                }
+            }
             allSingleTable = true;
         }
 
@@ -143,8 +175,14 @@ public class PushCorrelateRule extends RelOptRule {
         relBuilder.push(newLogicalView);
         List<RexNode> projects = (List<RexNode>) relBuilder.getRexBuilder().identityProjects(leftView.getRowType());
         final ImmutableList.Builder<RexNode> builder = ImmutableList.builder();
-        rightPlan =
-            Planner.getInstance().optimizeBySqlWriter(rightPlan, PlannerContext.getPlannerContext(rightPlan));
+        final PlannerContext rightCtx = PlannerContext.getPlannerContext(rightPlan);
+        rightCtx.optimizerTrace(x -> x.beginPhaseSnapshot(OptimizerPhase.PUSH_CORRELATE));
+        try {
+            rightPlan = Planner.getInstance().optimizeBySqlWriter(rightPlan, rightCtx);
+        } finally {
+            final RelNode endPlan = rightPlan;
+            rightCtx.optimizerTrace(x -> x.endPhaseSnapshot(endPlan, rightCtx));
+        }
         RexDynamicParam rexDynamicParam =
             relBuilder.getRexBuilder()
                 .makeDynamicParam(logicalCorrelate.getJoinType() == SemiJoinType.LEFT ?

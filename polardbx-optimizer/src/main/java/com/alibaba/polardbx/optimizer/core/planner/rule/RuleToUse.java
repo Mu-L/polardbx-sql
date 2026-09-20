@@ -16,30 +16,45 @@
 
 package com.alibaba.polardbx.optimizer.core.planner.rule;
 
+import com.alibaba.polardbx.optimizer.core.planner.MppCTEProducerConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.columnar.COLAggJoinToToHashGroupJoinRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.columnar.COLFilterMinMaxWindowToGroupTopNRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.columnar.COLFilterRowWindowToGroupTopNRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.columnar.COLLogicalAggToHashAggRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.columnar.COLLogicalJoinToHashJoinRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.columnar.COLLogicalJoinToNLJoinRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.columnar.COLLogicalSemiJoinToSemiHashJoinRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.columnar.COLLogicalSemiJoinToSemiNLJoinRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.columnar.COLLogicalSortToSortRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.columnar.COLExternalTableScanConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.columnar.COLLogicalViewConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.columnar.COLLogicalWindowToHashWindowRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.columnar.COLLogicalWindowToSortWindowRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.columnar.COLProjectJoinTransposeRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.columnar.COLSortJoinTransposeRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.cte.CTEAnchorInlineRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.cte.CTEConsumerInlineRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.cte.FilterCTEAnchorTransposeRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.cte.OptimizeCTEConsumerRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.cte.ProjectCTEAnchorTransposeRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.cte.PushFilterToCTEConsumerRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.cte.PushProjectToCTEConsumerRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MPPMaterializedViewConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppBKAJoinConvertRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppCTEAnchorConvertRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppCTEConsumerConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppCorrelateConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppDynamicValuesConverRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppExpandConversionRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppExpandConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppFilterConvertRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppGroupTopNConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppHashAggConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppHashGroupJoinConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppHashJoinConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppHashWindowConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppLimitConvertRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppExternalTableScanConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppLogicalViewConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppMaterializedSemiJoinConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppMemSortConvertRule;
@@ -66,8 +81,9 @@ import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.runtimefilter.RFBuil
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.runtimefilter.RFBuilderProjectTransposeRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.runtimefilter.RFilterJoinTransposeRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.runtimefilter.RFilterProjectTransposeRule;
-import com.alibaba.polardbx.optimizer.core.planner.rule.smp.SMPLogicalSortSemiJoinToMaterializedSemiJoinRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.smp.SMPAggJoinToToHashGroupJoinRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.smp.SMPFilterMinMaxMinMaxWindowToGroupTopNRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.smp.SMPFilterRowWindowToGroupTopNRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.smp.SMPJoinTableLookupToBKAJoinTableLookupRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.smp.SMPLogicalAggToHashAggRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.smp.SMPLogicalJoinToBKAJoinRule;
@@ -77,7 +93,9 @@ import com.alibaba.polardbx.optimizer.core.planner.rule.smp.SMPLogicalSemiJoinTo
 import com.alibaba.polardbx.optimizer.core.planner.rule.smp.SMPLogicalSemiJoinToSemiBKAJoinRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.smp.SMPLogicalSemiJoinToSemiHashJoinRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.smp.SMPLogicalSemiJoinToSemiNLJoinRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.smp.SMPLogicalSortSemiJoinToMaterializedSemiJoinRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.smp.SMPLogicalSortToSortRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.smp.SMPExternalTableScanConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.smp.SMPLogicalViewConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.smp.SMPLogicalWindowToHashWindowRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.smp.SMPLogicalWindowToSortWindowRule;
@@ -102,6 +120,7 @@ import org.apache.calcite.rel.rules.ProjectJoinTransposeRule;
 import org.apache.calcite.rel.rules.ProjectMergeRule;
 import org.apache.calcite.rel.rules.ProjectRemoveRule;
 import org.apache.calcite.rel.rules.ProjectToWindowRule;
+import org.apache.calcite.rel.rules.ProjectUnionTransposeRule;
 import org.apache.calcite.rel.rules.ProjectWindowTransposeRule;
 import org.apache.calcite.rel.rules.PruneEmptyRules;
 import org.apache.calcite.rel.rules.SemiJoinProjectTransposeRule;
@@ -122,12 +141,18 @@ public class RuleToUse {
         SetOpToSemiJoinRule.MINUS,
         PushJoinRule.INSTANCE,
         PushProjectRule.INSTANCE,
+        PushProjectToCTEConsumerRule.INSTANCE,
+        PushProjectExternalTableScanRule.INSTANCE,
 //        PushCorrelateRule.INSTANCE,
         CorrelateProjectRule.INSTANCE,
         ProjectTableLookupTransposeRule.INSTANCE,
         AggregatePruningRule.INSTANCE,
         TableLookupRemoveRule.INSTANCE,
         PushFilterRule.LOGICALVIEW,
+        PushFilterExternalTableScanRule.INSTANCE,
+        PushSortExternalTableScanRule.INSTANCE,
+        PushAggExternalTableScanRule.INSTANCE,
+        PushFilterToCTEConsumerRule.INSTANCE,
         FilterCorrelateRule.INSTANCE,
         CorrelateProjectRule.INSTANCE,
         OptimizeLogicalTableLookupRule.INSTANCE,
@@ -174,7 +199,8 @@ public class RuleToUse {
         SortProjectTransposeRule.INSTANCE,
         FilterWindowTransposeRule.INSTANCE,
         LogicalSemiJoinRule.PROJECT,
-        LogicalSemiJoinRule.JOIN
+        LogicalSemiJoinRule.JOIN,
+        FilterCTEAnchorTransposeRule.INSTANCE
     );
 
     public static final ImmutableList<RelOptRule> CALCITE_PUSH_FILTER_PRE = ImmutableList
@@ -188,20 +214,28 @@ public class RuleToUse {
         .addAll(CALCITE_PUSH_FILTER_BASE)
         .add(TddlFilterJoinRule.TDDL_FILTER_ON_JOIN)
         .add(FilterProjectTransposeRule.INSTANCE)
+        .add(FilterMergeRule.INSTANCE)
         .build();
 
     public static final ImmutableList<RelOptRule> PUSH_FILTER_PROJECT_SORT = ImmutableList.of(
         FilterProjectTransposeRule.INSTANCE,
         PushFilterRule.LOGICALVIEW,
+        PushFilterToCTEConsumerRule.INSTANCE,
+        PushFilterExternalTableScanRule.INSTANCE,
         FilterCorrelateRule.INSTANCE,
         CorrelateProjectRule.INSTANCE,
         FilterTableLookupTransposeRule.INSTANCE,
         ProjectTableLookupTransposeRule.INSTANCE,
         TableLookupRemoveRule.INSTANCE,
         PushProjectRule.INSTANCE,
+        PushProjectToCTEConsumerRule.INSTANCE,
+        PushProjectExternalTableScanRule.INSTANCE,
         PushCorrelateRule.INSTANCE,
+        PushCorrelateRule.INSTANCE_VALUES,
         TddlFilterJoinRule.TDDL_FILTER_ON_JOIN,
-        FilterSortTransposeRule.INSTANCE
+        FilterSortTransposeRule.INSTANCE,
+        FilterCTEAnchorTransposeRule.INSTANCE,
+        ProjectCTEAnchorTransposeRule.INSTANCE
     );
 
     public static final ImmutableList<RelOptRule> PUSH_AFTER_JOIN = ImmutableList.of(
@@ -213,6 +247,8 @@ public class RuleToUse {
         ProjectJoinTransposeRule.INSTANCE,
         ProjectCorrelateTransposeRule.INSTANCE,
         PushFilterRule.LOGICALVIEW,
+        PushFilterToCTEConsumerRule.INSTANCE,
+        PushFilterExternalTableScanRule.INSTANCE,
         FilterCorrelateRule.INSTANCE,
         CorrelateProjectRule.INSTANCE,
         FilterTableLookupTransposeRule.INSTANCE,
@@ -220,7 +256,10 @@ public class RuleToUse {
         // Limit Union Transpose
         LimitUnionTransposeRule.INSTANCE,
         PushProjectRule.INSTANCE,
+        PushProjectToCTEConsumerRule.INSTANCE,
+        PushProjectExternalTableScanRule.INSTANCE,
         PushCorrelateRule.INSTANCE,
+        PushCorrelateRule.INSTANCE_VALUES,
         TddlFilterJoinRule.TDDL_FILTER_ON_JOIN,
         PushAggRule.SINGLE_GROUP_VIEW,
         PushAggRule.NOT_SINGLE_GROUP_VIEW,
@@ -228,7 +267,9 @@ public class RuleToUse {
         PushSemiJoinDirectRule.INSTANCE,
         PushJoinRule.INSTANCE,
         PushFilterRule.VIRTUALVIEW,
-        RemoveJoinConditionFilterRule.INSTANCE
+        RemoveJoinConditionFilterRule.INSTANCE,
+        FilterCTEAnchorTransposeRule.INSTANCE,
+        ProjectCTEAnchorTransposeRule.INSTANCE
     );
 
     /**
@@ -241,12 +282,17 @@ public class RuleToUse {
         JoinConditionSimplifyRule.INSTANCE,
         TddlFilterJoinRule.TDDL_FILTER_ON_JOIN,
         PushFilterRule.LOGICALVIEW,
+        PushFilterExternalTableScanRule.INSTANCE,
+        PushFilterToCTEConsumerRule.INSTANCE,
         FilterCorrelateRule.INSTANCE,
         CorrelateProjectRule.INSTANCE,
         FilterTableLookupTransposeRule.INSTANCE,
         OptimizeLogicalTableLookupRule.INSTANCE,
         PushProjectRule.INSTANCE,
+        PushProjectExternalTableScanRule.INSTANCE,
+        PushProjectToCTEConsumerRule.INSTANCE,
         PushCorrelateRule.INSTANCE,
+        PushCorrelateRule.INSTANCE_VALUES,
         PushJoinRule.INSTANCE,
         PushSemiJoinRule.INSTANCE,
         PushSemiJoinDirectRule.INSTANCE,
@@ -268,6 +314,12 @@ public class RuleToUse {
         ProjectToWindowRule.INSTANCE
     );
 
+    public static final ImmutableList<RelOptRule> CLICKBENCH_OPTIMIZE = ImmutableList.of(
+        AggregateGroupByColumnRemoveRule.INSTANCE,
+        AggregateSumAddExpand.INSTANCE,
+        AggregateGroupByDuplicatedRemoveRule.INSTANCE
+    );
+
     public static ImmutableList<RelOptRule> PUSH_INTO_LOGICALVIEW = ImmutableList.of(
         // Push Agg
         PushAggRule.SINGLE_GROUP_VIEW,
@@ -282,12 +334,15 @@ public class RuleToUse {
         FilterSortTransposeRule.INSTANCE,
         FilterProjectTransposeRule.INSTANCE,
         PushFilterRule.LOGICALVIEW,
+        PushFilterExternalTableScanRule.INSTANCE,
         FilterMergeRule.INSTANCE,
         FilterConditionSimplifyRule.INSTANCE,
         // Push Project
         PushProjectRule.INSTANCE,
+        PushProjectExternalTableScanRule.INSTANCE,
 
         PushCorrelateRule.INSTANCE,
+        PushCorrelateRule.INSTANCE_VALUES,
         // Project Merge
         ProjectMergeRule.INSTANCE,
         // TableLookup Related
@@ -354,13 +409,18 @@ public class RuleToUse {
 
     public static final ImmutableList<RelOptRule> PUSH_PROJECT_RULE = ImmutableList.of(
         ProjectJoinTransposeRule.INSTANCE,
+        ProjectUnionTransposeRule.HYBRID_UNION_INSTANCE,
         ProjectCorrelateTransposeRule.INSTANCE,
         ProjectFilterTransposeRule.INSTANCE,
         ProjectWindowTransposeRule.INSTANCE,
         ProjectSortTransitiveRule.INSTANCE,
         PushProjectRule.INSTANCE,
+        PushProjectExternalTableScanRule.INSTANCE,
+        PushProjectToCTEConsumerRule.INSTANCE,
         PushCorrelateRule.INSTANCE,
-        ProjectMergeRule.INSTANCE
+        PushCorrelateRule.INSTANCE_VALUES,
+        ProjectMergeRule.INSTANCE,
+        ProjectCTEAnchorTransposeRule.INSTANCE
     );
 
     public static final ImmutableList<RelOptRule> PULL_PROJECT_RULE = ImmutableList.of(
@@ -369,13 +429,20 @@ public class RuleToUse {
         SemiJoinProjectTransposeRule.INSTANCE,
         ProjectMergeRule.INSTANCE,
         PushCorrelateRule.INSTANCE,
+        PushCorrelateRule.INSTANCE_VALUES,
         ProjectRemoveRule.INSTANCE,
         FilterProjectTransposeRule.INSTANCE,
         AggregateProjectMergeRule.INSTANCE
     );
 
+    public static final ImmutableList<RelOptRule> CTE_INLINE_RULE = ImmutableList.of(
+        CTEAnchorInlineRule.INSTANCE,
+        CTEConsumerInlineRule.INSTANCE
+    );
+
     public static final ImmutableList<RelOptRule> EXPAND_TABLE_LOOKUP = ImmutableList.of(
         PushProjectRule.INSTANCE,
+        PushProjectExternalTableScanRule.INSTANCE,
 //        PushCorrelateRule.INSTANCE,
         ProjectSortTransitiveRule.LOGICALVIEW,
         ProjectRemoveRule.INSTANCE,
@@ -389,8 +456,16 @@ public class RuleToUse {
         OptimizeLogicalInsertRule.INSTANCE
     );
 
+    public static final ImmutableList<RelOptRule> OPTIMIZE_RELOCATE = ImmutableList.of(
+        OptimizeRelocateReturningRule.RELOCATE_VIEW
+    );
+
     public static final ImmutableList<RelOptRule> OPTIMIZE_LOGICAL_VIEW = ImmutableList.of(
         OptimizeLogicalViewRule.INSTANCE
+    );
+
+    public static final ImmutableList<RelOptRule> OPTIMZE_CTE_CONSUMER = ImmutableList.of(
+        OptimizeCTEConsumerRule.INSTANCE
     );
 
     public static final ImmutableList<RelOptRule> OPTIMIZE_AGGREGATE = ImmutableList.of(
@@ -479,18 +554,24 @@ public class RuleToUse {
         // window
         SMPLogicalWindowToSortWindowRule.INSTANCE,
         SMPLogicalWindowToHashWindowRule.INSTANCE,
+        SMPFilterRowWindowToGroupTopNRule.INSTANCE,
+        SMPFilterMinMaxMinMaxWindowToGroupTopNRule.INSTANCE,
         // Push Sort
         PushSortRule.PLAN_ENUERATE,
+        PushSortExternalTableScanRule.INSTANCE,
         // Push Filter
         PushFilterRule.LOGICALVIEW,
+        PushFilterExternalTableScanRule.INSTANCE,
         PushFilterRule.MERGE_SORT,
         PushFilterRule.PROJECT_FILTER_LOGICALVIEW,
+        PushFilterToCTEConsumerRule.INSTANCE,
         // Push Join
         CBOPushSemiJoinRule.INSTANCE,
         CBOPushSemiJoinDirectRule.INSTANCE,
         CBOPushJoinRule.INSTANCE,
         // Push Agg
         CBOPushAggRule.LOGICALVIEW,
+        PushAggExternalTableScanRule.INSTANCE,
         //Push TopN and Agg
         CBOPushTopnAndAggRule.INSTANCE,
         // Join Window Transpose
@@ -510,12 +591,20 @@ public class RuleToUse {
         PushModifyRule.VIEW,
         PushModifyRule.MERGESORT,
         PushModifyRule.SORT_VIEW,
+        // Through-Project variants for FETCH_BLOB externalized column support
+        PushModifyRule.VIEW_FB,
+        PushModifyRule.MERGESORT_FB,
+        PushModifyRule.SORT_VIEW_FB,
+
+        CTEAnchorInlineRule.INSTANCE,
+        CTEConsumerInlineRule.INSTANCE,
 
         // Convert Sort
         SMPLogicalSortToSortRule.INSTANCE,
         SMPLogicalSortToSortRule.TOPN,
         // Convert
         SMPLogicalViewConvertRule.INSTANCE,
+        SMPExternalTableScanConvertRule.INSTANCE,
         DrdsExpandConvertRule.SMP_INSTANCE,
         DrdsProjectConvertRule.SMP_INSTANCE,
         DrdsRecursiveCTEAnchorConvertRule.SMP_INSTANCE,
@@ -531,50 +620,78 @@ public class RuleToUse {
         DrdsDynamicConvertRule.SMP_INSTANCE,
         DrdsMaterializedViewConvertRule.SMP_INSTANCE,
 
+        DrdsCTEAnchorConvertRule.SMP_INSTANCE,
+        DrdsCTEProducerConvertRule.SMP_INSTANCE,
+        DrdsCTEConsumerConvertRule.SMP_INSTANCE,
         DrdsModifyConvertRule.INSTANCE,
-        DrdsInsertConvertRule.INSTANCE,
+        DrdsInsertConvertRule.SMP_INSTANCE,
+        DrdsExternalInsertConvertRule.SMP_INSTANCE,
         DrdsRelocateConvertRule.INSTANCE,
         DrdsRecyclebinConvertRule.INSTANCE,
         DrdsOutFileConvertRule.INSTANCE
+    );
+
+    public static final ImmutableList<RelOptRule> COLUMNAR_EXTRA_CBO_RULE = ImmutableList.of(
+        // Reverse join
+        COLLogicalJoinToHashJoinRule.OUTER_INSTANCE,
+        // Reverse semi join
+        COLLogicalSemiJoinToSemiHashJoinRule.OUTER_INSTANCE,
+
+        // Join Window Transpose
+        CBOJoinWindowTransposeRule.INSTANCE,
+
+        // Row window to GroupTopN
+        COLFilterRowWindowToGroupTopNRule.INSTANCE,
+        // MinMax window to GroupTopN
+        COLFilterMinMaxWindowToGroupTopNRule.INSTANCE,
+
+        // Agg Join Optimize
+        JoinAggToJoinAggSemiJoinRule.INSTANCE,
+        COLAggJoinToToHashGroupJoinRule.INSTANCE,
+        DrdsAggregateJoinTransposeRule.EXTENDED,
+        DrdsAggregateJoinTransposeRule.PROJECT_EXTENDED,
+        new COLProjectJoinTransposeRule(3),
+        // Sort Join Transpose
+        COLSortJoinTransposeRule.INSTANCE,
+        DrdsSortProjectTransposeRule.INSTANCE
     );
 
     public static final ImmutableList<RelOptRule> COLUMNAR_CBO_RULE = ImmutableList.of(
         // Join Algorithm
         COLLogicalJoinToNLJoinRule.INSTANCE,
         COLLogicalJoinToHashJoinRule.INSTANCE,
-        COLLogicalJoinToHashJoinRule.OUTER_INSTANCE,
+
+        // Semi Algorithm
         COLLogicalSemiJoinToSemiNLJoinRule.INSTANCE,
         COLLogicalSemiJoinToSemiHashJoinRule.INSTANCE,
-        COLLogicalSemiJoinToSemiHashJoinRule.OUTER_INSTANCE,
-        JoinAggToJoinAggSemiJoinRule.INSTANCE,
+
         // Agg Algorithm
         COLLogicalAggToHashAggRule.INSTANCE,
-        COLAggJoinToToHashGroupJoinRule.INSTANCE,
-        // window
+
+        // Window Algorithm
         COLLogicalWindowToSortWindowRule.INSTANCE,
         COLLogicalWindowToHashWindowRule.INSTANCE,
-        // Push Sort
-        PushSortRule.PLAN_ENUERATE,
+
         // Push Filter
         PushFilterRule.LOGICALVIEW,
+        PushFilterToCTEConsumerRule.INSTANCE,
+        PushFilterExternalTableScanRule.INSTANCE,
         PushFilterRule.MERGE_SORT,
         PushFilterRule.PROJECT_FILTER_LOGICALVIEW,
-        // Join Window Transpose
-        CBOJoinWindowTransposeRule.INSTANCE,
-        // Agg Join Transpose
-        DrdsAggregateJoinTransposeRule.EXTENDED,
-        DrdsAggregateJoinTransposeRule.PROJECT_EXTENDED,
-        new COLProjectJoinTransposeRule(3),
-        // Sort Join Transpose
-        COLSortJoinTransposeRule.INSTANCE,
-        DrdsSortProjectTransposeRule.INSTANCE,
+
+        CTEAnchorInlineRule.INSTANCE,
+        CTEConsumerInlineRule.INSTANCE,
         // Convert Sort
         COLLogicalSortToSortRule.INSTANCE,
         COLLogicalSortToSortRule.TOPN,
         // Convert Logicalview
         COLLogicalViewConvertRule.INSTANCE,
+        COLExternalTableScanConvertRule.INSTANCE,
 
         // Convert
+        DrdsCTEAnchorConvertRule.COL_INSTANCE,
+        DrdsCTEProducerConvertRule.COL_INSTANCE,
+        DrdsCTEConsumerConvertRule.COL_INSTANCE,
         DrdsExpandConvertRule.COL_INSTANCE,
         DrdsProjectConvertRule.COL_INSTANCE,
         DrdsRecursiveCTEAnchorConvertRule.COL_INSTANCE,
@@ -585,6 +702,8 @@ public class RuleToUse {
         DrdsValuesConvertRule.COL_INSTANCE,
         DrdsUnionConvertRule.COL_INSTANCE,
         DrdsVirtualViewConvertRule.COL_INSTANCE,
+        DrdsInsertConvertRule.COL_INSTANCE,
+        DrdsExternalInsertConvertRule.COL_INSTANCE,
         DrdsDynamicConvertRule.COL_INSTANCE,
         DrdsMaterializedViewConvertRule.COL_INSTANCE
     );
@@ -611,6 +730,8 @@ public class RuleToUse {
         // Window Convert
         MppSortWindowConvertRule.INSTANCE,
         MppHashWindowConvertRule.INSTANCE,
+        // GroupTop Convert
+        MppGroupTopNConvertRule.INSTANCE,
         // Sort Convert
         MppMemSortConvertRule.INSTANCE,
         MppLimitConvertRule.INSTANCE,
@@ -618,6 +739,9 @@ public class RuleToUse {
         // Merge Sort
         MppMergeSortConvertRule.INSTANCE,
         // Others Convert
+        MppCTEAnchorConvertRule.INSTANCE,
+        MppCTEProducerConvertRule.INSTANCE,
+        MppCTEConsumerConvertRule.INSTANCE,
         MppExpandConvertRule.INSTANCE,
         MppUnionConvertRule.INSTANCE,
         MppValuesConverRule.INSTANCE,
@@ -626,6 +750,7 @@ public class RuleToUse {
         MppCorrelateConvertRule.INSTANCE,
         MppFilterConvertRule.INSTANCE,
         MppLogicalViewConvertRule.INSTANCE,
+        MppExternalTableScanConvertRule.INSTANCE,
         MppVirtualViewConvertRule.INSTANCE,
         MPPMaterializedViewConvertRule.INSTANCE
     );

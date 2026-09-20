@@ -16,7 +16,10 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.common.utils.memory.SizeOf;
+import com.alibaba.polardbx.executor.chunk.AbstractBlock;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.operator.scan.BlockCacheManager;
 import com.alibaba.polardbx.executor.operator.scan.SeekableIterator;
@@ -27,13 +30,12 @@ import com.github.benmanes.caffeine.cache.LoadingCache;
 import com.github.benmanes.caffeine.cache.RemovalListener;
 import com.github.benmanes.caffeine.cache.Weigher;
 import com.google.common.base.Preconditions;
-import io.airlift.slice.SizeOf;
 import org.apache.hadoop.fs.Path;
 import org.openjdk.jol.info.ClassLayout;
 import org.openjdk.jol.util.VMSupport;
 
+import java.text.DecimalFormat;
 import java.text.MessageFormat;
-import java.util.Arrays;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
@@ -54,6 +56,9 @@ public class SimpleBlockCacheManager implements BlockCacheManager<Block> {
 
     // mark word (8 Bytes) + class pointer (4 Bytes) + long value (8 Bytes)
     private static final int LONG_OBJECT_IN_BYTES = ClassLayout.parseClass(Long.class).instanceSize();
+
+    float ratio = DynamicConfig.getInstance().getBlockCacheMemoryFactor();
+    long maximumMemorySize = (long) (Runtime.getRuntime().maxMemory() * ratio);
 
     /**
      * Caching the block collections that covering all blocks in row-group which the block in collection belongs to.
@@ -87,7 +92,7 @@ public class SimpleBlockCacheManager implements BlockCacheManager<Block> {
         }
 
         public BlockCacheKey(Path path, int stripeId, int columnId, int rowGroupId) {
-            this.path = path.toString();
+            this.path = path.toUri().getRawPath();
             this.stripeId = stripeId;
             this.columnId = columnId;
             this.rowGroupId = rowGroupId;
@@ -151,13 +156,17 @@ public class SimpleBlockCacheManager implements BlockCacheManager<Block> {
         this.quotaExceedCount = new AtomicLong(0L);
         this.flightCount = new AtomicLong(0L);
         this.validCache = Caffeine.newBuilder()
-            .maximumWeight(MAXIMUM_MEMORY_SIZE)
+            .maximumWeight(maximumMemorySize)
             .weigher((Weigher<BlockCacheKey, SimplifiedBlockCache>) (key, value) ->
 
                 // calculate memory size of block cache for cache weight.
                 key.getMemorySize() + value.memorySize()
             )
             .removalListener((blockCacheKey, simplifiedBlockCache, removalCause) -> {
+
+                    for (int i = 0; i < simplifiedBlockCache.blocks.length; i++) {
+                        ((AbstractBlock) simplifiedBlockCache.blocks[i]).setCached(false);
+                    }
                     // decrement memory size when invalidate block cache.
                     size.getAndAdd(-(blockCacheKey.getMemorySize() + simplifiedBlockCache.memorySize()));
                     quotaExceedCount.getAndIncrement();
@@ -225,6 +234,9 @@ public class SimpleBlockCacheManager implements BlockCacheManager<Block> {
         }
 
         public SimplifiedBlockCache simplify() {
+            for (int i = 0; i < blocks.length; i++) {
+                ((AbstractBlock) blocks[i]).setCached(true);
+            }
             return new SimplifiedBlockCache(chunkLimit, blocks);
         }
 
@@ -396,6 +408,23 @@ public class SimpleBlockCacheManager implements BlockCacheManager<Block> {
     }
 
     @Override
+    public float getMemoryRatio() {
+        return ratio;
+    }
+
+    @Override
+    public long getMaximumMemorySize() {
+        return maximumMemorySize;
+    }
+
+    @Override
+    public void resetBlockCacheMemoryFactor(float memoryRatio) {
+        this.ratio = memoryRatio;
+        this.maximumMemorySize = (long) (Runtime.getRuntime().maxMemory() * ratio);
+        validCache.policy().eviction().ifPresent(eviction -> eviction.setMaximum(maximumMemorySize));
+    }
+
+    @Override
     public long getMemorySize() {
         return size.get();
     }
@@ -409,6 +438,25 @@ public class SimpleBlockCacheManager implements BlockCacheManager<Block> {
         missCount.set(0);
         quotaExceedCount.set(0);
         flightCount.set(0);
+    }
+
+    @Override
+    public Object[] dumpMemoryUsage() {
+        DecimalFormat decimalFormat = new DecimalFormat("0.000000");
+
+        long memorySize = size.get();
+
+        Object[] result = new Object[7];
+        result[0] = "BLOCK CACHE".getBytes();
+        result[1] = memorySize;
+        result[2] = maximumMemorySize;
+        result[3] = decimalFormat.format(memorySize * 1.0d / maximumMemorySize);
+
+        result[4] = validCache.estimatedSize();
+        result[5] = -1;
+        result[6] = -1;
+
+        return result;
     }
 
     @Override
@@ -427,7 +475,7 @@ public class SimpleBlockCacheManager implements BlockCacheManager<Block> {
         results[pos++] = IN_MEMORY.getBytes();
         results[pos++] = String.valueOf(-1).getBytes();
         results[pos++] = String.valueOf(-1).getBytes();
-        results[pos++] = new StringBuilder().append(MAXIMUM_MEMORY_SIZE).append(" BYTES").toString().getBytes();
+        results[pos++] = new StringBuilder().append(maximumMemorySize).append(" BYTES").toString().getBytes();
 
         return results;
     }
@@ -524,7 +572,7 @@ public class SimpleBlockCacheManager implements BlockCacheManager<Block> {
                     // automatically decrement size in flight
                     inFlightCache.invalidate(cacheKey);
 
-                    size.addAndGet(LONG_OBJECT_IN_BYTES + simplifiedCache.memorySize());
+                    size.addAndGet(cacheKey.getMemorySize() + simplifiedCache.memorySize());
                 }
             } finally {
                 inFlight.rwLock.unlockWrite(stamp);

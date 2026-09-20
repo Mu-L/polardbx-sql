@@ -47,6 +47,9 @@ public class ExecutableScheduledJob implements SystemTableRecord {
     private String remark;
     private String result;
 
+    public ExecutableScheduledJob() {
+    }
+
     @Override
     public ExecutableScheduledJob fill(ResultSet rs) throws SQLException {
 

@@ -92,7 +92,7 @@ public class InformationSchemaVariablesHandler extends BaseVirtualViewSubClassHa
             } catch (Exception e) {
                 throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, e, e.getMessage());
             }
-            final List<List<Map<String, Object>>> allTaskValues = SyncManagerHelper.sync(fetchTimerTaskInfoSyncAction,
+            final List<List<Map<String, Object>>> allTaskValues = SyncManagerHelper.syncIgnoreExceptions(fetchTimerTaskInfoSyncAction,
                 SyncScope.MASTER_ONLY);
 
             if (allTaskValues == null) {

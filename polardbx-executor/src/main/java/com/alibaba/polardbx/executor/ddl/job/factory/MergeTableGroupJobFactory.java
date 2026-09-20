@@ -30,9 +30,10 @@ import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.CleanupEmptyTableGr
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.JoinGroupValidateTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.MergeTableGroupChangeTablesMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupSyncTask;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.gms.tablegroup.PartitionGroupRecord;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
@@ -57,7 +58,7 @@ import java.util.stream.Collectors;
  *
  * @author luoyanxin
  */
-public class MergeTableGroupJobFactory extends DdlJobFactory {
+public class MergeTableGroupJobFactory extends OnlineDdlJobFactory {
 
     protected final MergeTableGroupPreparedData preparedData;
     protected final ExecutionContext executionContext;
@@ -66,6 +67,7 @@ public class MergeTableGroupJobFactory extends DdlJobFactory {
 
     public MergeTableGroupJobFactory(MergeTableGroupPreparedData preparedData,
                                      ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.OSC);
         this.preparedData = preparedData;
         this.executionContext = executionContext;
     }
@@ -91,20 +93,19 @@ public class MergeTableGroupJobFactory extends DdlJobFactory {
     }
 
     private SubJobTask generateMovePartitionJob(TableGroupConfig sourceTableGroupConfig,
-                                                Map<String, String> targetLocations) {
+                                                Map<String, Pair<String, String>> targetLocations) {
         String tableGroupName = sourceTableGroupConfig.getTableGroupRecord().getTg_name();
-        sourceTableGroupConfig.getPartitionGroupRecords();
         Map<String, Set<String>> moveActions = new TreeMap<>(String::compareToIgnoreCase);
 
         boolean needMove = false;
         for (PartitionGroupRecord record : sourceTableGroupConfig.getPartitionGroupRecords()) {
-            String targetDb = targetLocations.get(record.partition_name);
-            String targetInst = preparedData.getDbInstMap().get(targetDb);
+            String targetGroup = targetLocations.get(record.partition_name).getValue();
+            String targetInst = preparedData.getGroupInstMap().get(targetGroup);
             if (StringUtils.isEmpty(targetInst)) {
                 throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
-                    "can't find the storage inst for [] " + targetDb);
+                    "can't find the storage inst for [] " + targetGroup);
             }
-            if (!record.getPhy_db().equalsIgnoreCase(targetDb)) {
+            if (!record.getGroup_Name().equalsIgnoreCase(targetGroup)) {
                 needMove = true;
                 moveActions.computeIfAbsent(targetInst, o -> new TreeSet<>(String::compareToIgnoreCase))
                     .add(record.getPartition_name());
@@ -131,7 +132,7 @@ public class MergeTableGroupJobFactory extends DdlJobFactory {
             tableGroupName,
             sb.toString());
         SubJobTask subJobTask = new SubJobTask(preparedData.getSchemaName(), sql, null);
-
+        subJobTask.setParentAcquireResource(true);
         return subJobTask;
     }
 
@@ -155,16 +156,16 @@ public class MergeTableGroupJobFactory extends DdlJobFactory {
     public ExecutableDdlJob toDdlJob() {
         String targetTableGroup = preparedData.getTargetTableGroupName();
         TableGroupConfig targetTableGroupConfig = preparedData.getTableGroupConfigMap().get(targetTableGroup);
-        Map<String, String> targetLocations = new TreeMap<>(String::compareToIgnoreCase);
+        Map<String, Pair<String, String>> targetLocations = new TreeMap<>(String::compareToIgnoreCase);
         PreemptiveTime preemptiveTime = PreemptiveTime.getPreemptiveTimeFromExecutionContext(executionContext,
             ConnectionParams.PREEMPTIVE_MDL_INITWAIT, ConnectionParams.PREEMPTIVE_MDL_INTERVAL);
 
         for (PartitionGroupRecord record : targetTableGroupConfig.getPartitionGroupRecords()) {
-            targetLocations.put(record.partition_name, record.phy_db);
+            targetLocations.put(record.partition_name, new Pair<>(record.getPhy_db(), record.getGroup_Name()));
         }
 
         ExecutableDdlJob job = new ExecutableDdlJob();
-        job.setMaxParallelism(executionContext.getParamManager().getInt(ConnectionParams.REBALANCE_TASK_PARALISM));
+        job.setMaxParallelism(executionContext.getParamManager().getInt(ConnectionParams.REBALANCE_DB_PARALLELISM));
         EmptyTask headTask = new EmptyTask(preparedData.getSchemaName());
         EmptyTask midTask = new EmptyTask(preparedData.getSchemaName());
         EmptyTask tailTask = new EmptyTask(preparedData.getSchemaName());

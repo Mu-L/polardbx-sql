@@ -1,5 +1,10 @@
 SQL:
   - sql: |
+      SELECT * from xt where name like concat("1", "%");
+    plan: |
+      gather(concurrent=true)
+        logicalview(tables="[0000-0003].xt", shardcount=4, sql="select `id`, `name` from `xt` as `xt` where (`name` like concat(?, ?))")
+  - sql: |
       SELECT * from xt where name in (null);
     plan: |
       gather(concurrent=true)
@@ -38,6 +43,14 @@ SQL:
       SELECT foo.id AS foo_id, foo.bar AS foo_bar, foo.`range` AS foo_range FROM alchemy_foo as foo ORDER BY foo.bar LIMIT 10, -18446744073709551615;
     plan: |
       err-code: [pxc-4501][err_optimizer] optimize error by get rex -18446744073709551615
+  - sql: |
+      SELECT foo.id AS foo_id, foo.bar AS foo_bar, foo.`range` AS foo_range FROM alchemy_foo as foo ORDER BY foo.bar LIMIT -18446744073709551615;
+    plan: |
+      err-code: [tddl-4501][err_optimizer] optimize error by get rex -18446744073709551615
+  - sql: |
+      SELECT foo.id AS foo_id, foo.bar AS foo_bar, foo.`range` AS foo_range FROM alchemy_foo as foo ORDER BY foo.bar LIMIT -1;
+    plan: |
+      err-code: [tddl-4501][err_optimizer] optimize error by get rex -1
   - sql: |
       SELECT foo.id AS foo_id, foo.bar AS foo_bar, foo.`range` AS foo_range FROM alchemy_foo as foo ORDER BY foo.bar LIMIT 10, 0;
     plan: |

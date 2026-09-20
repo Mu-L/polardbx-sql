@@ -18,7 +18,11 @@ package com.alibaba.polardbx.optimizer.config.meta;
 
 import com.alibaba.polardbx.common.utils.TreeMaps;
 import com.alibaba.polardbx.optimizer.PlannerContext;
+import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.GlobalIndexMeta;
+import com.alibaba.polardbx.optimizer.core.rel.ExternalTableScan;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.MysqlTableScan;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
@@ -33,6 +37,9 @@ import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.AggregateCall;
+import org.apache.calcite.rel.core.CTEAnchor;
+import org.apache.calcite.rel.core.CTEConsumer;
+import org.apache.calcite.rel.core.CTEProducer;
 import org.apache.calcite.rel.core.Exchange;
 import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.Join;
@@ -63,6 +70,7 @@ import org.apache.calcite.util.BuiltInMethod;
 import org.apache.calcite.util.Pair;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -107,6 +115,12 @@ public class DrdsRelMdCoveringIndex implements MetadataHandler<CoveringIndex> {
     public List<Set<RelColumnOrigin>> isCoveringIndex(MysqlTableScan rel, RelMetadataQuery mq, RelOptTable table,
                                                       String index) {
         return mq.isCoveringIndex(rel.getNodeForMetaQuery(), table, index);
+    }
+
+    public List<Set<RelColumnOrigin>> isCoveringIndex(
+        ExternalTableScan rel,
+        RelMetadataQuery mq, RelOptTable table, String index) {
+        return rel.isCoveringIndex(mq, table, index);
     }
 
     public List<Set<RelColumnOrigin>> isCoveringIndex(Sort rel, RelMetadataQuery mq, RelOptTable table, String index) {
@@ -261,6 +275,21 @@ public class DrdsRelMdCoveringIndex implements MetadataHandler<CoveringIndex> {
         return null;
     }
 
+    public List<Set<RelColumnOrigin>> isCoveringIndex(CTEAnchor rel, RelMetadataQuery mq, RelOptTable table,
+                                                      String index) {
+        return null;
+    }
+
+    public List<Set<RelColumnOrigin>> isCoveringIndex(CTEProducer rel, RelMetadataQuery mq, RelOptTable table,
+                                                      String index) {
+        return null;
+    }
+
+    public List<Set<RelColumnOrigin>> isCoveringIndex(CTEConsumer rel, RelMetadataQuery mq, RelOptTable table,
+                                                      String index) {
+        return null;
+    }
+
     public List<Set<RelColumnOrigin>> isCoveringIndex(TableFunctionScan rel, RelMetadataQuery mq) {
         return null;
     }
@@ -338,12 +367,33 @@ public class DrdsRelMdCoveringIndex implements MetadataHandler<CoveringIndex> {
                 (x, y) -> y,
                 TreeMaps::caseInsensitiveMap));
 
-        return primaryRowType.getFieldList().stream().map(field -> {
-            if (indexColumnRefMap.containsKey(field.getName())) {
-                return ImmutableSet.of(new RelColumnOrigin(indexTable, indexColumnRefMap.get(field.getName()), false));
-            } else {
-                return ImmutableSet.of(new RelColumnOrigin(relTable, field.getIndex(), false));
+        // For externalized columns, the primary table uses logical name (e.g. "content")
+        // while the index table uses physical name (e.g. "content_addr_"). Build a mapping
+        // from logical name to physical name so we can look up the index column correctly.
+        final TableMeta tableMeta = CBOUtil.getTableMeta(relTable);
+        final Map<String, String> logicalToPhysicalMap;
+        if (tableMeta != null && tableMeta.hasExternalizedColumn()) {
+            logicalToPhysicalMap = TreeMaps.caseInsensitiveMap();
+            for (ColumnMeta cm : tableMeta.getAllColumns()) {
+                if (cm.isExternalizedColumn() && cm.getMappingName() != null) {
+                    logicalToPhysicalMap.put(cm.getName(), cm.getMappingName());
+                }
             }
+        } else {
+            logicalToPhysicalMap = Collections.emptyMap();
+        }
+
+        return primaryRowType.getFieldList().stream().map(field -> {
+            String fieldName = field.getName();
+            if (indexColumnRefMap.containsKey(fieldName)) {
+                return ImmutableSet.of(new RelColumnOrigin(indexTable, indexColumnRefMap.get(fieldName), false));
+            }
+            // Try physical name for externalized columns
+            String physicalName = logicalToPhysicalMap.get(fieldName);
+            if (physicalName != null && indexColumnRefMap.containsKey(physicalName)) {
+                return ImmutableSet.of(new RelColumnOrigin(indexTable, indexColumnRefMap.get(physicalName), false));
+            }
+            return ImmutableSet.of(new RelColumnOrigin(relTable, field.getIndex(), false));
         }).collect(Collectors.toList());
     }
 

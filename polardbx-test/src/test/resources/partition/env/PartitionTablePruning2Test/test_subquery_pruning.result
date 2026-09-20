@@ -243,25 +243,25 @@ select a from sb_pruning_test1 where  ( a = ( select t2.a from sb_pruning_test2 
 a
 98
 99
-# scalarSubQuery + inQuery;
-explain select a from sb_pruning_test1 where  a in ( select t2.a from sb_pruning_test2 t2  where  t2.a in (96,97,98,190) order by t2.a limit 5 )  and a between 97 and 200 order by a;
+# scalarSubQuery + inQuery
+explain select a from sb_pruning_test1 where  a in ( select t2.a from sb_pruning_test2 t2  where  t2.a in (96,97,98,190) order by t2.a limit 5 )  and a between 97 and 200 order by a
 Logical ExecutionPlan
-MergeSort(sort="a ASC")
-  LogicalView(tables="sb_pruning_test1[p1,p2,p3]", shardCount=3, sql="SELECT `a` FROM `sb_pruning_test1` AS `sb_pruning_test1` WHERE ((`a` IN(?)) AND (`a` BETWEEN ? AND ?)) ORDER BY `a`")
-HitCache:false
-Source:PLAN_CACHE
->> individual scalar subquery
-MergeSort(sort="a ASC", offset=0, fetch=?1)
-  LogicalView(tables="sb_pruning_test2[p1,p2]", shardCount=2, sql="SELECT `a` FROM `sb_pruning_test2` AS `sb_pruning_test2` WHERE (`a` IN(?)) ORDER BY `a` LIMIT (? + 0)", pruningInfo="all size:4*2(part), pruning size:4")
-select a from sb_pruning_test1 where  a in ( select t2.a from sb_pruning_test2 t2  where  t2.a in (96,97,98,190) order by t2.a limit 5 )  and a between 97 and 200 order by a;
+MemSort(sort="a ASC")
+  MaterializedSemiJoin(condition="a = a", type="semi")
+    Gather(concurrent=true)
+      LogicalView(tables="sb_pruning_test1[p1,p2]", shardCount=2, sql="SELECT `a` FROM `sb_pruning_test1` AS `sb_pruning_test1` WHERE ((`a` BETWEEN ? AND ?) AND (`a` IN(?)) AND (`a` IN (...)))", pruningInfo="all size:4*2(part), pruning size:5")
+    Filter(condition="BETWEEN ASYMMETRIC($0, ?2, ?3)")
+      MergeSort(sort="a ASC", offset=0, fetch=?1)
+        LogicalView(tables="sb_pruning_test2[p1,p2]", shardCount=2, sql="SELECT `a` FROM `sb_pruning_test2` AS `sb_pruning_test2` WHERE (`a` IN(?)) ORDER BY `a` LIMIT ?", pruningInfo="all size:4*2(part), pruning size:4")
+select a from sb_pruning_test1 where  a in ( select t2.a from sb_pruning_test2 t2  where  t2.a in (96,97,98,190) order by t2.a limit 5 )  and a between 97 and 200 order by a
 a
 97
 98
 190
 # (select t2.a from sb_pruning_test2 t2 order by t2.a limit 9,1) = 99
 # (select t2.a from sb_pruning_test2 t2 order by t2.a limit 8,1) = 98
-# inQuery with multi scalar subQuery;
-explain select a from sb_pruning_test1 where  a in ( (select t2.a from sb_pruning_test2 t2 order by t2.a limit 8,1), (select t2.a from sb_pruning_test2 t2 order by t2.a limit 9,1) )  and a between 97 and 200 order by a;
+# inQuery with multi scalar subQuery
+explain select a from sb_pruning_test1 where  a in ( (select t2.a from sb_pruning_test2 t2 order by t2.a limit 8,1), (select t2.a from sb_pruning_test2 t2 order by t2.a limit 9,1) )  and a between 97 and 200 order by a
 Logical ExecutionPlan
 MergeSort(sort="a ASC")
   LogicalView(tables="sb_pruning_test1[p1,p2,p3]", shardCount=3, sql="SELECT `a` FROM `sb_pruning_test1` AS `sb_pruning_test1` WHERE ((`a` IN(?, ?)) AND (`a` BETWEEN ? AND ?)) ORDER BY `a`")
@@ -273,67 +273,55 @@ MergeSort(sort="a ASC", offset=?0, fetch=?1)
 >> individual scalar subquery
 MergeSort(sort="a ASC", offset=?2, fetch=?3)
   LogicalView(tables="sb_pruning_test2[p1,p2,p3,p4,p5,p6,p7,p8,p9,p10]", shardCount=10, sql="SELECT `a` FROM `sb_pruning_test2` AS `sb_pruning_test2` ORDER BY `a` LIMIT (? + ?)")
-select a from sb_pruning_test1 where  a in ( (select t2.a from sb_pruning_test2 t2 order by t2.a limit 8,1), (select t2.a from sb_pruning_test2 t2 order by t2.a limit 9,1) )  and a between 97 and 200 order by a;
+select a from sb_pruning_test1 where  a in ( (select t2.a from sb_pruning_test2 t2 order by t2.a limit 8,1), (select t2.a from sb_pruning_test2 t2 order by t2.a limit 9,1) )  and a between 97 and 200 order by a
 a
 98
 99
-# scalarSubQuery wrapped with scalarSubQuery;
-explain select a from sb_pruning_test1 where  a in ( select t2.a from sb_pruning_test2 t2  where  t2.a in (select t3.a from sb_pruning_test3 t3 where t3.a in (96,97,98,190) ) order by t2.a limit 1,5 )  and a between 97 and 200 order by a;
+# scalarSubQuery wrapped with scalarSubQuery
+explain select a from sb_pruning_test1 where  a in ( select t2.a from sb_pruning_test2 t2  where  t2.a in (select t3.a from sb_pruning_test3 t3 where t3.a in (96,97,98,190) ) order by t2.a limit 1,5 )  and a between 97 and 200 order by a
 Logical ExecutionPlan
-MergeSort(sort="a ASC")
-  LogicalView(tables="sb_pruning_test1[p1,p2,p3]", shardCount=3, sql="SELECT `a` FROM `sb_pruning_test1` AS `sb_pruning_test1` WHERE ((`a` IN(?)) AND (`a` BETWEEN ? AND ?)) ORDER BY `a`")
-HitCache:false
-Source:PLAN_CACHE
->> individual scalar subquery
-TopN(sort="a ASC", offset=?1, fetch=?2)
+MemSort(sort="a ASC")
   MaterializedSemiJoin(condition="a = a", type="semi")
     Gather(concurrent=true)
-      LogicalView(tables="sb_pruning_test2[p1,p2]", shardCount=2, sql="SELECT `a` FROM `sb_pruning_test2` AS `sb_pruning_test2` WHERE ((`a` IN(?)) AND (`a` IN (...)))", pruningInfo="all size:4*2(part), pruning size:4")
-    Gather(concurrent=true)
-      LogicalView(tables="sb_pruning_test3[p1,p2]", shardCount=2, sql="SELECT `a` FROM `sb_pruning_test3` AS `sb_pruning_test3` WHERE (`a` IN(?))", pruningInfo="all size:4*2(part), pruning size:4")
-select a from sb_pruning_test1 where  a in ( select t2.a from sb_pruning_test2 t2  where  t2.a in (select t3.a from sb_pruning_test3 t3 where t3.a in (96,97,98,190) ) order by t2.a limit 1,5 )  and a between 97 and 200 order by a;
+      LogicalView(tables="sb_pruning_test1[p1,p2]", shardCount=2, sql="SELECT `a` FROM `sb_pruning_test1` AS `sb_pruning_test1` WHERE ((`a` BETWEEN ? AND ?) AND (`a` IN(?)) AND (`a` IN (...)))", pruningInfo="all size:4*2(part), pruning size:5")
+    Filter(condition="BETWEEN ASYMMETRIC($0, ?3, ?4)")
+      TopN(sort="a ASC", offset=?1, fetch=?2)
+        MaterializedSemiJoin(condition="a = a", type="semi")
+          Gather(concurrent=true)
+            LogicalView(tables="sb_pruning_test2[p1,p2]", shardCount=2, sql="SELECT `a` FROM `sb_pruning_test2` AS `sb_pruning_test2` WHERE ((`a` IN(?)) AND (`a` IN (...)))", pruningInfo="all size:4*2(part), pruning size:4")
+          Gather(concurrent=true)
+            LogicalView(tables="sb_pruning_test3[p1,p2]", shardCount=2, sql="SELECT `a` FROM `sb_pruning_test3` AS `sb_pruning_test3` WHERE (`a` IN(?))", pruningInfo="all size:4*2(part), pruning size:4")
+select a from sb_pruning_test1 where  a in ( select t2.a from sb_pruning_test2 t2  where  t2.a in (select t3.a from sb_pruning_test3 t3 where t3.a in (96,97,98,190) ) order by t2.a limit 1,5 )  and a between 97 and 200 order by a
 a
 97
 98
 190
-# scalarSubQuery wrapped with applySubQuery;
-explain select a from sb_pruning_test1 where  a in ( select t2.a from sb_pruning_test2 t2  where  t2.a in (select t3.a from sb_pruning_test3 t3 where t3.a in (96,97,98,190) and t3.b<=t2.b ) order by t2.a limit 1,5 )  and a between 97 and 200 order by a;
+# scalarSubQuery wrapped with applySubQuery
+explain select a from sb_pruning_test1 where  a in ( select t2.a from sb_pruning_test2 t2  where  t2.a in (select t3.a from sb_pruning_test3 t3 where t3.a in (96,97,98,190) and t3.b<=t2.b ) order by t2.a limit 1,5 )  and a between 97 and 200 order by a
 Logical ExecutionPlan
-MergeSort(sort="a ASC")
-  LogicalView(tables="sb_pruning_test1[p1,p2,p3]", shardCount=3, sql="SELECT `a` FROM `sb_pruning_test1` AS `sb_pruning_test1` WHERE ((`a` IN(?)) AND (`a` BETWEEN ? AND ?)) ORDER BY `a`")
-HitCache:false
-Source:PLAN_CACHE
->> individual scalar subquery
-TopN(sort="a ASC", offset=?1, fetch=?2)
-  Project(a="a")
-    SemiBKAJoin(condition="a = a AND b <= b", type="semi")
-      Gather(concurrent=true)
-        LogicalView(tables="sb_pruning_test2[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `sb_pruning_test2` AS `sb_pruning_test2` WHERE (`a` IN(?))", pruningInfo="all size:4*2(part), pruning size:4")
-      Gather(concurrent=true)
-        LogicalView(tables="sb_pruning_test3[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `sb_pruning_test3` AS `sb_pruning_test3` WHERE ((`a` IN(?)) AND (`a` IN (...)))", pruningInfo="all size:4*2(part), pruning size:4")
-select a from sb_pruning_test1 where  a in ( select t2.a from sb_pruning_test2 t2  where  t2.a in (select t3.a from sb_pruning_test3 t3 where t3.a in (96,97,98,190) and t3.b<=t2.b ) order by t2.a limit 1,5 )  and a between 97 and 200 order by a;
+MemSort(sort="a ASC")
+  MaterializedSemiJoin(condition="a = a", type="semi")
+    Gather(concurrent=true)
+      LogicalView(tables="sb_pruning_test1[p1,p2]", shardCount=2, sql="SELECT `a` FROM `sb_pruning_test1` AS `sb_pruning_test1` WHERE ((`a` BETWEEN ? AND ?) AND (`a` IN(?)) AND (`a` IN (...)))", pruningInfo="all size:4*2(part), pruning size:5")
+    Filter(condition="BETWEEN ASYMMETRIC($0, ?3, ?4)")
+      TopN(sort="a ASC", offset=?1, fetch=?2)
+        Project(a="a")
+          SemiBKAJoin(condition="a = a AND b <= b", type="semi")
+            Gather(concurrent=true)
+              LogicalView(tables="sb_pruning_test2[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `sb_pruning_test2` AS `sb_pruning_test2` WHERE (`a` IN(?))", pruningInfo="all size:4*2(part), pruning size:4")
+            Gather(concurrent=true)
+              LogicalView(tables="sb_pruning_test3[p1,p2]", shardCount=2, sql="SELECT `a`, `b` FROM `sb_pruning_test3` AS `sb_pruning_test3` WHERE ((`a` IN(?)) AND (`a` IN (...)))", pruningInfo="all size:4*2(part), pruning size:4")
+select a from sb_pruning_test1 where  a in ( select t2.a from sb_pruning_test2 t2  where  t2.a in (select t3.a from sb_pruning_test3 t3 where t3.a in (96,97,98,190) and t3.b<=t2.b ) order by t2.a limit 1,5 )  and a between 97 and 200 order by a
 a
 97
 98
 190
 # (select t2.a from sb_pruning_test2 t2 order by t2.a limit 8,1) = 98
 # (select t3.b from sb_pruning_test3 t2 order by t3.b limit 8,1) = 908
-# multi inSubQuery with diff partition columns on one AND operator;
-explain select a,b from sb_pruning_test1 where  a in (select t2.a from sb_pruning_test2 t2 order by t2.a limit 8,1) and b in (select t3.b from sb_pruning_test3 t3 order by t3.b limit 8,1) and a between 97 and 200 order by a;
-Logical ExecutionPlan
-MergeSort(sort="a ASC")
-  LogicalView(tables="sb_pruning_test1[p1,p2,p3]", shardCount=3, sql="SELECT `a`, `b` FROM `sb_pruning_test1` AS `sb_pruning_test1` WHERE ((`a` IN(?)) AND (`b` IN(?)) AND (`a` BETWEEN ? AND ?)) ORDER BY `a`")
-HitCache:false
-Source:PLAN_CACHE
->> individual scalar subquery
-MergeSort(sort="a ASC", offset=?0, fetch=?1)
-  LogicalView(tables="sb_pruning_test2[p1,p2,p3,p4,p5,p6,p7,p8,p9,p10]", shardCount=10, sql="SELECT `a` FROM `sb_pruning_test2` AS `sb_pruning_test2` ORDER BY `a` LIMIT (? + ?)")
->> individual scalar subquery
-MergeSort(sort="b ASC", offset=?2, fetch=?3)
-  LogicalView(tables="sb_pruning_test3[p1,p2,p3,p4,p5,p6,p7,p8,p9,p10]", shardCount=10, sql="SELECT `b` FROM `sb_pruning_test3` AS `sb_pruning_test3` ORDER BY `b` LIMIT (? + ?)")
-select a,b from sb_pruning_test1 where  a in (select t2.a from sb_pruning_test2 t2 order by t2.a limit 8,1) and b in (select t3.b from sb_pruning_test3 t3 order by t3.b limit 8,1) and a between 97 and 200 order by a;
+# multi inSubQuery with diff partition columns on one AND operator
+select a,b from sb_pruning_test1 where  a in (select t2.a from sb_pruning_test2 t2 order by t2.a limit 8,1) and b in (select t3.b from sb_pruning_test3 t3 order by t3.b limit 8,1) and a between 97 and 200 order by a
 a,b
 98,908
 ## error_msg: $# SCALAR_QUERY must be one #$
-select a from sb_pruning_test1 where  (a,b) <= ( select t2.a,t2.b from sb_pruning_test2 t2 order by t2.a limit 8,1 )  and a between 97 and 200 order by a;
+select a from sb_pruning_test1 where  (a,b) <= ( select t2.a,t2.b from sb_pruning_test2 t2 order by t2.a limit 8,1 )  and a between 97 and 200 order by a
 SCALAR_QUERY must be one

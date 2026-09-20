@@ -16,15 +16,30 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableArrayList;
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.ORCMemoryCounterUtil;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
+import com.alibaba.polardbx.common.orc.FastColumnEncodingIndex;
+import com.alibaba.polardbx.common.orc.FastPositionIndex;
+import com.alibaba.polardbx.common.orc.FastPositionIndexPositionProviderBuilder;
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
+import com.alibaba.polardbx.common.orc.PreheatFileMeta;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.common.utils.memory.SizeOf;
 import com.alibaba.polardbx.executor.operator.scan.StripeLoader;
 import com.alibaba.polardbx.executor.operator.scan.metrics.ORCMetricsWrapper;
 import com.alibaba.polardbx.executor.operator.scan.metrics.ProfileKeys;
 import com.alibaba.polardbx.executor.operator.scan.metrics.ProfileUnit;
 import com.alibaba.polardbx.executor.operator.scan.metrics.RuntimeMetrics;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
+import com.alibaba.polardbx.optimizer.statis.OperatorStatistics;
 import com.codahale.metrics.Counter;
 import com.google.common.base.Preconditions;
 import org.apache.hadoop.conf.Configuration;
@@ -45,11 +60,15 @@ import org.apache.orc.impl.DataReaderProperties;
 import org.apache.orc.impl.InStream;
 import org.apache.orc.impl.OrcCodecPool;
 import org.apache.orc.impl.OrcIndex;
+import org.apache.orc.impl.PositionProviderBuilder;
 import org.apache.orc.impl.RecordReaderUtils;
 import org.apache.orc.impl.StreamName;
 import org.apache.orc.impl.reader.ReaderEncryption;
 import org.apache.orc.impl.reader.StreamInformation;
 import org.jetbrains.annotations.NotNull;
+import org.openjdk.jol.info.ClassLayout;
+import org.openjdk.jol.util.VMSupport;
+import org.roaringbitmap.RoaringBitmap;
 
 import java.io.IOException;
 import java.text.MessageFormat;
@@ -64,6 +83,7 @@ import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
@@ -71,9 +91,12 @@ import java.util.function.Supplier;
 import static com.alibaba.polardbx.executor.operator.scan.metrics.MetricsNameBuilder.columnMetricsKey;
 import static com.alibaba.polardbx.executor.operator.scan.metrics.MetricsNameBuilder.columnsMetricsKey;
 import static com.alibaba.polardbx.executor.operator.scan.metrics.MetricsNameBuilder.streamMetricsKey;
+import static io.airlift.compress.lz4.Lz4RawCompressor.MAX_TABLE_SIZE;
 
 public class AsyncStripeLoader implements StripeLoader {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(AsyncStripeLoader.class).instanceSize();
+
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     // Name of metrics
     public static final String ASYNC_STRIPE_LOADER_MEMORY = "AsyncStripeLoader.Memory";
@@ -90,25 +113,45 @@ public class AsyncStripeLoader implements StripeLoader {
     };
 
     // parameters for IO processing
+    @FieldMemoryCounter(value = false)
     private final ExecutorService ioExecutor;
+
+    @FieldMemoryCounter(value = false)
     private final FileSystem fileSystem;
+
+    @FieldMemoryCounter(value = false)
     private final Configuration configuration;
+
+    @FieldMemoryCounter(value = false)
     private final Path filePath;
+
+    @FieldMemoryCounter(value = false)
     private final boolean[] columnIncluded;
 
     // for compression
     private final int compressionSize;
+
+    @FieldMemoryCounter(value = false)
     private final CompressionKind compressionKind;
 
     // preheated meta of this stripe
+    @FieldMemoryCounter(value = false)
     private final PreheatFileMeta preheatFileMeta;
 
     // context for stripe parser
+    @FieldMemoryCounter(value = false)
     private final StripeInformation stripeInformation;
+
+    @FieldMemoryCounter(value = false)
     private final TypeDescription fileSchema;
+
+    @FieldMemoryCounter(value = false)
     private final OrcFile.WriterVersion version;
 
+    @FieldMemoryCounter(value = false)
     private final ReaderEncryption encryption;
+
+    @FieldMemoryCounter(value = false)
     private final OrcProto.ColumnEncoding[] encodings;
     private final boolean ignoreNonUtf8BloomFilter;
     private final long maxBufferSize;
@@ -116,24 +159,74 @@ public class AsyncStripeLoader implements StripeLoader {
     private final long maxMergeDistance;
 
     // need initialized
+    @FieldMemoryCounter(value = false)
     private StripeContext stripeContext;
+    @FieldMemoryCounter(value = false)
     private StreamManager streamManager;
+    @FieldMemoryCounter(value = false)
     private InStream.StreamOptions streamOptions;
+
+    // for memory usage count.
+    private MemoryCountableArrayList<BufferChunkList> ioPlans;
+    private long allocatedBytesForIOPlan = 0L;
+    @FieldMemoryCounter(value = false)
+    private RoaringBitmap objectBitmap;
 
     // register loading or loaded columns.
     // NODE: The Stripe-Loader is stateful, and a column can only be loaded once in one stripe.
+    @FieldMemoryCounter(value = false)
     private ConcurrentHashMap<Integer, boolean[]> registerMap;
 
     // for metrics
+    @FieldMemoryCounter(value = false)
     private final RuntimeMetrics metrics;
     private final boolean enableMetrics;
     private boolean isOpened;
+
+    @FieldMemoryCounter(value = false)
     private Counter openingTimer;
 
     // for memory management.
+    @FieldMemoryCounter(value = false)
     private final MemoryAllocatorCtx memoryAllocatorCtx;
+    @FieldMemoryCounter(value = false)
+    private final OperatorStatistics operatorStatistics;
     private AtomicLong totalAllocatedBytes;
+
+    @FieldMemoryCounter(value = false)
     private Set<StreamName> releasedStreams;
+
+    @FieldMemoryCounter(value = false)
+    private OperatorMemoryOwnerId operatorMemoryOwnerId;
+
+    @FieldMemoryCounter(value = false)
+    private AtomicBoolean released;
+
+    @FieldMemoryCounter(value = false)
+    private VersionStorageStatistics versionStorageStatistics;
+
+    @Override
+    public long getMemoryUsage() {
+        try {
+            long memoryUsage = INSTANCE_SIZE;
+            memoryUsage += FastMemoryCounter.sizeOf(ioPlans);
+
+            for (int i = 0; i < ioPlans.size(); i++) {
+                BufferChunkList ioPlan = ioPlans.get(i);
+                memoryUsage += ORCMemoryCounterUtil.sizeOfBufferChunkList(ioPlan, objectBitmap);
+            }
+
+            memoryUsage += FastMemoryCounter.sizeOf(totalAllocatedBytes);
+            return memoryUsage;
+        } finally {
+            objectBitmap.clear();
+        }
+    }
+
+    @Override
+    public void setOperatorMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        this.operatorMemoryOwnerId = operatorMemoryOwnerId;
+    }
 
     public AsyncStripeLoader(
         // for file io execution
@@ -156,11 +249,13 @@ public class AsyncStripeLoader implements StripeLoader {
 
         // for metrics
         RuntimeMetrics metrics,
-        boolean enableMetrics, MemoryAllocatorCtx memoryAllocatorCtx) {
+        boolean enableMetrics, MemoryAllocatorCtx memoryAllocatorCtx,
+        OperatorStatistics operatorStatistics) {
         this.maxDiskRangeChunkLimit = maxDiskRangeChunkLimit;
         this.maxMergeDistance = maxMergeDistance;
         this.enableMetrics = enableMetrics;
         this.memoryAllocatorCtx = memoryAllocatorCtx;
+        this.operatorStatistics = operatorStatistics;
         // NOTE: the 0th column in array is tree-struct.
         Preconditions.checkArgument(columnIncluded != null
             && columnIncluded.length == fileSchema.getMaximumId() + 1);
@@ -197,11 +292,19 @@ public class AsyncStripeLoader implements StripeLoader {
 
         this.totalAllocatedBytes = new AtomicLong(0);
         this.releasedStreams = new HashSet<>();
+        this.released = new AtomicBoolean(false);
+        this.objectBitmap = new RoaringBitmap();
+        this.ioPlans = new MemoryCountableArrayList<>();
     }
 
     @Override
     public void open() {
         long start = System.nanoTime();
+
+        // Lz4Compressor.<init> allocates a 4KB table.
+        MemoryTrackerManager.tryAllocate(operatorMemoryOwnerId,
+            VMSupport.align((int) SizeOf.sizeOfIntArray(MAX_TABLE_SIZE)));
+
         streamOptions = InStream.options()
             .withCodec(OrcCodecPool.getCodec(compressionKind))
             .withBufferSize(compressionSize);
@@ -210,19 +313,34 @@ public class AsyncStripeLoader implements StripeLoader {
             stripeInformation, fileSchema, encryption, version, streamOptions, ignoreNonUtf8BloomFilter, maxBufferSize
         );
 
-        OrcProto.StripeFooter footer =
-            preheatFileMeta.getStripeFooter(stripeInformation.getStripeId());
+        if (preheatFileMeta.isUseBinaryMeta()) {
+            int stripeIndex = (int) stripeInformation.getStripeId();
 
-        // Get all stream information in this stripe.
-        streamManager = StaticStripePlanner.parseStripe(
-            stripeContext, columnIncluded, footer
-        );
+            // Get all stream information in this stripe.
+            streamManager = StaticStripePlanner.parseStripe(
+                stripeContext, columnIncluded, preheatFileMeta, stripeIndex
+            );
+        } else {
+            OrcProto.StripeFooter footer =
+                preheatFileMeta.findStripeFooterInNonBinaryMode(stripeInformation.getStripeId());
+
+            // Get all stream information in this stripe.
+            streamManager = StaticStripePlanner.parseStripe(
+                stripeContext, columnIncluded, footer
+            );
+        }
+
         releasedStreams.addAll(streamManager.getStreams().keySet());
 
         isOpened = true;
         if (enableMetrics) {
             openingTimer.inc(System.nanoTime() - start);
         }
+    }
+
+    @Override
+    public void setVersionStorageStatistics(VersionStorageStatistics versionStorageStatistics) {
+        this.versionStorageStatistics = versionStorageStatistics;
     }
 
     @Override
@@ -238,9 +356,8 @@ public class AsyncStripeLoader implements StripeLoader {
             return CompletableFuture.completedFuture(new HashMap<>());
         }
 
-        OrcIndex orcIndex = preheatFileMeta.getOrcIndex(
-            stripeInformation.getStripeId()
-        );
+        final long stripeId = stripeInformation.getStripeId();
+        PositionProviderBuilder orcIndex = preheatFileMeta.getPositionProviderBuilder(stripeId);
 
         // build selected columns bitmap
         boolean[] selectedColumns = new boolean[fileSchema.getMaximumId() + 1];
@@ -251,20 +368,38 @@ public class AsyncStripeLoader implements StripeLoader {
         // and merge them into one buffer-chunk-list.
 
         // Get the IO plan of all streams in this column.
-        BufferChunkList result = StaticStripePlanner.planGroupsInColumn(
-            stripeContext,
-            streamManager,
-            streamOptions,
-            orcIndex,
-            rowGroupBitmaps,
-            selectedColumns
-        );
+        BufferChunkList ioPlan;
+
+        if (orcIndex instanceof OrcIndex) {
+            ioPlan = StaticStripePlanner.planGroupsInColumn(
+                stripeContext,
+                streamManager,
+                streamOptions,
+                (OrcIndex) orcIndex,
+                rowGroupBitmaps,
+                selectedColumns
+            );
+        } else {
+            ioPlan = StaticStripePlanner.planGroupsInColumn(
+                stripeContext,
+                streamManager,
+                streamOptions,
+                (FastPositionIndexPositionProviderBuilder) orcIndex,
+                rowGroupBitmaps,
+                selectedColumns
+            );
+        }
+        ioPlans.add(ioPlan);
 
         // check buffer chunk list
         long bytesInIOPlan = 0L;
         long bytesHitStream = 0L;
-        for (BufferChunk node = result.get(); node != null; node = (BufferChunk) node.next) {
+        for (BufferChunk node = ioPlan.get(); node != null; node = (BufferChunk) node.next) {
             bytesInIOPlan += node.getLength();
+        }
+
+        if (operatorStatistics != null) {
+            operatorStatistics.addIOReadBytes(bytesInIOPlan);
         }
 
         // metrics the logical bytes range.
@@ -311,7 +446,7 @@ public class AsyncStripeLoader implements StripeLoader {
         }
 
         return CompletableFuture.supplyAsync(
-            () -> readData(selectedColumns, result, controller), ioExecutor
+            () -> readData(selectedColumns, ioPlan, controller), ioExecutor
         );
     }
 
@@ -336,19 +471,31 @@ public class AsyncStripeLoader implements StripeLoader {
             );
         }
 
-        OrcIndex orcIndex = preheatFileMeta.getOrcIndex(
-            stripeInformation.getStripeId()
-        );
+        final long stripeId = stripeInformation.getStripeId();
+        PositionProviderBuilder orcIndex = preheatFileMeta.getPositionProviderBuilder(stripeId);
 
         // Get the IO plan of all streams in this column.
-        BufferChunkList ioPlan = StaticStripePlanner.planGroupsInColumn(
-            stripeContext,
-            streamManager,
-            streamOptions,
-            orcIndex,
-            targetRowGroups,
-            targetColumnId
-        );
+        BufferChunkList ioPlan;
+        if (orcIndex instanceof OrcIndex) {
+            ioPlan = StaticStripePlanner.planGroupsInColumn(
+                stripeContext,
+                streamManager,
+                streamOptions,
+                (OrcIndex) orcIndex,
+                targetRowGroups,
+                targetColumnId
+            );
+        } else {
+            ioPlan = StaticStripePlanner.planGroupsInColumn(
+                stripeContext,
+                streamManager,
+                streamOptions,
+                (FastPositionIndexPositionProviderBuilder) orcIndex,
+                targetRowGroups,
+                targetColumnId
+            );
+        }
+        ioPlans.add(ioPlan);
 
         // check buffer chunk list
         long bytesInIOPlan = 0L;
@@ -357,12 +504,17 @@ public class AsyncStripeLoader implements StripeLoader {
             bytesInIOPlan += node.getLength();
         }
 
+        if (operatorStatistics != null) {
+            operatorStatistics.addIOReadBytes(bytesInIOPlan);
+        }
+
         // metrics the logical bytes range.
         Counter bytesRangeCounter = enableMetrics ? metrics.addCounter(
             columnMetricsKey(targetColumnId, ProfileKeys.ORC_LOGICAL_BYTES_RANGE),
             ASYNC_STRIPE_LOADER_BYTES_RANGE,
             ProfileKeys.ORC_LOGICAL_BYTES_RANGE.getProfileUnit()
         ) : null;
+
         for (Map.Entry<StreamName, StreamInformation> entry : streamManager.getStreams().entrySet()) {
             StreamName streamName = entry.getKey();
             if (streamName.getColumn() == targetColumnId) {
@@ -406,6 +558,78 @@ public class AsyncStripeLoader implements StripeLoader {
     }
 
     @Override
+    public long getIOMemoryUsage(List<Integer> columnIds, Map<Integer, boolean[]> rowGroupBitmaps) {
+        Preconditions.checkArgument(isOpened, "The stripe loader has not already been opened");
+        // Column-level parallel data loading is only suitable for columns that size > 2MB in one stripe.
+        // In some cases, we need merge all columns in one IO task.
+
+        if (rowGroupBitmaps != null && rowGroupBitmaps.values().stream().allMatch(AsyncStripeLoader::allFalse)) {
+            // Directly return empty map to avoid opening file.
+            return 0L;
+        }
+
+        final long stripeId = stripeInformation.getStripeId();
+        PositionProviderBuilder orcIndex = preheatFileMeta.getPositionProviderBuilder(stripeId);
+
+        // build selected columns bitmap
+        boolean[] selectedColumns = new boolean[fileSchema.getMaximumId() + 1];
+        Arrays.fill(selectedColumns, false);
+        columnIds.forEach(col -> selectedColumns[col] = true);
+
+        // Build IO plans for each column with different row group bitmaps
+        // and merge them into one buffer-chunk-list.
+        // IMPORTANT: Create a local StreamManager to avoid polluting this.streamManager's stream.firstChunk.
+        // planGroupsInColumn has a side effect of setting stream.firstChunk via addChunk1,
+        // which would corrupt subsequent load() calls if applied to this.streamManager.
+        StreamManager localStreamManager;
+        if (preheatFileMeta.isUseBinaryMeta()) {
+            int stripeIndex = (int) stripeInformation.getStripeId();
+            localStreamManager = StaticStripePlanner.parseStripe(
+                stripeContext, columnIncluded, preheatFileMeta, stripeIndex
+            );
+        } else {
+            OrcProto.StripeFooter footer =
+                preheatFileMeta.findStripeFooterInNonBinaryMode(stripeInformation.getStripeId());
+            localStreamManager = StaticStripePlanner.parseStripe(
+                stripeContext, columnIncluded, footer
+            );
+        }
+
+        // Get the IO plan of all streams in this column.
+        BufferChunkList result;
+        if (orcIndex instanceof OrcIndex) {
+            result = StaticStripePlanner.planGroupsInColumn(
+                stripeContext,
+                localStreamManager,
+                streamOptions,
+                (OrcIndex) orcIndex,
+                rowGroupBitmaps,
+                selectedColumns
+            );
+        } else {
+            result = StaticStripePlanner.planGroupsInColumn(
+                stripeContext,
+                localStreamManager,
+                streamOptions,
+                (FastPositionIndexPositionProviderBuilder) orcIndex,
+                rowGroupBitmaps,
+                selectedColumns
+            );
+        }
+
+        // check buffer chunk list
+        long bytesInIOPlan = 0L;
+        for (BufferChunk node = result.get(); node != null; node = (BufferChunk) node.next) {
+            bytesInIOPlan += node.getLength();
+        }
+
+        // large memory allocation: buffer chunk list in stripe-level IO processing.
+        // We must multiply by a factor of 2 because the OSS network buffer
+        // or file read buffer requires the same memory size as bytesInIOPlan.
+        return 2 * bytesInIOPlan;
+    }
+
+    @Override
     public long clearStream(StreamName streamName) {
         if (streamManager == null) {
             return 0L;
@@ -445,7 +669,8 @@ public class AsyncStripeLoader implements StripeLoader {
 
     private Map<StreamName, InStream> readData(boolean[] selectedColumns, BufferChunkList ioPlan,
                                                Supplier<Boolean> controller) {
-        try (DataReader dataReader = buildDataReader()) {
+        VersionStorageStatistics.setThreadLocalStatistics(versionStorageStatistics);
+        try (ColumnDataReader dataReader = buildDataReader()) {
             dataReader.setController(controller);
             if (enableMetrics) {
                 // build profile for IO processing.
@@ -463,12 +688,16 @@ public class AsyncStripeLoader implements StripeLoader {
 
                 // Execute IO tasks within the buffer chunk list.
                 dataReader.readFileData(ioPlan, false, memoryCounter, null, ioTimer);
+                allocatedBytesForIOPlan += dataReader.getActualAllocatedBytes();
             } else {
                 dataReader.readFileData(ioPlan, false);
+                allocatedBytesForIOPlan += dataReader.getActualAllocatedBytes();
             }
         } catch (Throwable t) {
             // IO ERROR
             throw GeneralUtil.nestedException(t);
+        } finally {
+            VersionStorageStatistics.removeThreadLocalStatistics();
         }
 
         // Build in-streams after IO tasks done
@@ -477,7 +706,8 @@ public class AsyncStripeLoader implements StripeLoader {
 
     private Map<StreamName, InStream> readData(int targetColumnId, BufferChunkList ioPlan,
                                                Supplier<Boolean> controller) {
-        try (DataReader dataReader = buildDataReader()) {
+        VersionStorageStatistics.setThreadLocalStatistics(versionStorageStatistics);
+        try (ColumnDataReader dataReader = buildDataReader()) {
             dataReader.setController(controller);
             if (enableMetrics) {
                 // build profile for IO processing.
@@ -495,12 +725,16 @@ public class AsyncStripeLoader implements StripeLoader {
 
                 // Execute IO tasks within the buffer chunk list.
                 dataReader.readFileData(ioPlan, false, memoryCounter, null, ioTimer);
+                allocatedBytesForIOPlan += dataReader.getActualAllocatedBytes();
             } else {
                 dataReader.readFileData(ioPlan, false);
+                allocatedBytesForIOPlan += dataReader.getActualAllocatedBytes();
             }
         } catch (Throwable t) {
             // IO ERROR
             throw GeneralUtil.nestedException(t);
+        } finally {
+            VersionStorageStatistics.removeThreadLocalStatistics();
         }
 
         // Build in-streams after IO tasks done
@@ -550,32 +784,34 @@ public class AsyncStripeLoader implements StripeLoader {
         return results;
     }
 
-    private DataReader buildDataReader() throws IOException {
-        // The stream options will be modified when data-reader closing.
-        InStream.StreamOptions streamOptions = InStream.options()
-            .withCodec(OrcCodecPool.getCodec(compressionKind))
-            .withBufferSize(compressionSize);
-
+    private ColumnDataReader buildDataReader() throws IOException {
         DataReaderProperties.Builder builder =
             DataReaderProperties.builder()
-                .withCompression(streamOptions)
                 .withFileSystemSupplier(() -> fileSystem)
                 .withPath(filePath)
                 .withMaxMergeDistance(maxMergeDistance)
                 .withMaxDiskRangeChunkLimit(maxDiskRangeChunkLimit)
                 .withZeroCopy(false);
-        FSDataInputStream file = fileSystem.open(filePath);
+
+        FSDataInputStream file = fileSystem.open(filePath); // may have IO rt.
         if (file != null) {
             builder.withFile(file);
         }
 
-        DataReader dataReader = RecordReaderUtils.createDefaultDataReader(builder.build());
+        ColumnDataReader dataReader = new ColumnDataReader(builder.build());
         return dataReader;
     }
 
     @Override
     public void close() throws IOException {
         // nothing should be closed here.
+    }
+
+    @Override
+    public void release() {
+        if (released.compareAndSet(false, true)) {
+            MemoryTrackerManager.adjustMemoryUsage(operatorMemoryOwnerId);
+        }
     }
 
     public static boolean allFalse(boolean[] rowGroupIncluded) {

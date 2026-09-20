@@ -16,19 +16,33 @@
 
 package com.alibaba.polardbx.executor.mpp.operator;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.OutputBufferMemoryManager;
 import com.alibaba.polardbx.executor.operator.ConsumerExecutor;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SingleExchanger extends LocalExchanger {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(SingleExchanger.class).instanceSize();
+
+    @FieldMemoryCounter(value = false)
     private final AtomicBoolean consuming;
 
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+
+            // super class
+            + FastMemoryCounter.sizeOf(opened);
+    }
+
     public SingleExchanger(OutputBufferMemoryManager bufferMemoryManager, List<ConsumerExecutor> executors,
-                           LocalExchangersStatus status, boolean asyncConsume) {
-        super(bufferMemoryManager, executors, status, asyncConsume);
+                           LocalExchangersStatus status, boolean asyncConsume, long waitNotFullInMillis) {
+        super(bufferMemoryManager, executors, status, asyncConsume, waitNotFullInMillis);
         this.consuming = status.getConsumings().get(0);
     }
 

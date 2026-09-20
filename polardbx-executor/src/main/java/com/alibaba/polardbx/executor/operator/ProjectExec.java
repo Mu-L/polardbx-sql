@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.executor.chunk.BlockBuilders;
@@ -28,6 +30,7 @@ import com.alibaba.polardbx.optimizer.core.expression.calc.InputRefExpression;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.List;
 
@@ -36,9 +39,13 @@ import java.util.List;
  *
  */
 public class ProjectExec extends AbstractExecutor {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(ProjectExec.class).instanceSize();
 
+    @FieldMemoryCounter(value = false)
     protected final Executor input;
+    @FieldMemoryCounter(value = false)
     private final List<IExpression> expressions;
+    @FieldMemoryCounter(value = false)
     protected final List<DataType> columns;
 
     protected int[] mappedColumnIndex;
@@ -54,6 +61,18 @@ public class ProjectExec extends AbstractExecutor {
         blockBuilders = new BlockBuilder[columns.size()];
         mappedColumnIndex = new int[expressions.size()];
 
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+
+            // super class
+            + FastMemoryCounter.sizeOf(blockBuilders)
+            + FastMemoryCounter.sizeOf(executorName)
+
+            // this class
+            + FastMemoryCounter.sizeOf(mappedColumnIndex);
     }
 
     @Override

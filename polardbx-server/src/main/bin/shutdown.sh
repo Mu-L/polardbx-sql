@@ -77,7 +77,11 @@ if [ x"$metaDbAddr" != "x" ]; then
      polardbx=true
 fi
 
-TEMP=`getopt -o d:p:m:c:a:f:i:s:hD -- "$@"`
+if [ x"$serverPort" == "x" ]; then
+     serverPort=3306
+fi
+
+TEMP=`getopt -o d:p:m:c:J:a:f:i:s:hD -- "$@"`
 eval set -- "$TEMP"
 while true ; do
   case "$1" in
@@ -88,6 +92,7 @@ while true ; do
         -d) debugPort=$2; shift 2;;
         -i) other=1; shift 2 ;;
         -c) other=1; shift 2 ;;
+        -J) other=1; shift 2 ;;
         -f) other=1; shift 2 ;;
         -s) other=1; shift 2 ;;
         -a) other=1; shift 2;;

@@ -111,7 +111,7 @@ public class WaitColumnarTableCreationTask extends BaseDdlTask {
         Long latestTso = ColumnarTransactionUtils.getLatestTsoFromGms();
         if (latestTso != null) {
             try {
-                SyncManagerHelper.sync(new ColumnarSnapshotUpdateSyncAction(latestTso),
+                SyncManagerHelper.syncThrowExceptions(new ColumnarSnapshotUpdateSyncAction(latestTso),
                     SystemDbHelper.DEFAULT_DB_NAME, SyncScope.ALL);
             } catch (Throwable t) {
                 LOGGER.error(String.format("error occurs while updating tso after columnar index creation, tso: %d.",

@@ -18,6 +18,7 @@ package org.apache.calcite.sql.type;
 
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 
+import java.util.Iterator;
 import java.util.List;
 
 /**
@@ -39,6 +40,43 @@ public class SetSqlType extends BasicSqlType {
 
     public List<String> getSetValues() {
         return setValues;
+    }
+
+    @Override
+    public void generateTypeString(StringBuilder sb, boolean withDetail) {
+        // Called to make the digest, which equals() compares;
+        // so equivalent data types must produce identical type strings.
+
+        sb.append("SET");
+
+        if (setValues != null) {
+            sb.append('(');
+            final Iterator<String> iterator = setValues.iterator();
+            boolean isFirst = true;
+            while (iterator.hasNext()) {
+                if (isFirst) {
+                    isFirst = false;
+                } else {
+                    sb.append(", ");
+                }
+                final String next = iterator.next();
+                sb.append(next);
+            }
+            sb.append(')');
+        }
+        if (!withDetail) {
+            return;
+        }
+        if (getCharset() != null) {
+            sb.append(" CHARACTER SET \"");
+            sb.append(getCharset().name());
+            sb.append("\"");
+        }
+        if (getCollation() != null) {
+            sb.append(" COLLATE \"");
+            sb.append(getCollation().getCollationName());
+            sb.append("\"");
+        }
     }
 
 }

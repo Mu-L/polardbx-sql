@@ -295,13 +295,18 @@ public class SourcePartitionedScheduler implements StageScheduler {
     }
 
     @Override
+    public Map<Node, Multimap<Integer, Split>> getSplitAssignments() {
+        return splitAssignments;
+    }
+
+    @Override
     public int getTaskNum() {
         return splitAssignments.keySet().size();
     }
 
     @Override
     public int requireChildOutputNum() {
-        return getTaskNum();
+        return stage.getFragment().isRemotePairWise() ? requireChildOutput : getTaskNum();
     }
 
     @Override

@@ -16,13 +16,17 @@
 
 package com.alibaba.polardbx.server.encdb;
 
+import com.alibaba.polardbx.common.eventlogger.EventLogger;
+import com.alibaba.polardbx.common.eventlogger.EventType;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.druid.sql.parser.ByteString;
 import com.alibaba.polardbx.executor.gms.GmsTableMetaManager;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.metadb.encdb.EncdbRule;
 import com.alibaba.polardbx.gms.metadb.encdb.EncdbRuleManager;
+import com.alibaba.polardbx.gms.metadb.encdb.mask.EncdbMaskAlgo;
 import com.alibaba.polardbx.gms.privilege.PolarAccount;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.PlannerContext;
@@ -33,8 +37,6 @@ import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
 import com.alibaba.polardbx.optimizer.core.planner.Planner;
 import com.alibaba.polardbx.optimizer.parse.FastsqlParser;
 import com.alibaba.polardbx.optimizer.utils.CalciteUtils;
-import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.rel.ddl.CreateTable;
 import org.apache.calcite.sql.SqlAlterSpecification;
 import org.apache.calcite.sql.SqlAlterTable;
 import org.apache.calcite.sql.SqlChangeColumn;
@@ -45,8 +47,6 @@ import org.apache.calcite.sql.SqlDropTable;
 import org.apache.calcite.sql.SqlDropView;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlInsert;
-import org.apache.calcite.sql.SqlKind;
-import org.apache.calcite.sql.SqlModifyColumn;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlRenameTable;
 import org.apache.calcite.sql.SqlRenameTables;
@@ -84,7 +84,8 @@ public class EncdbRuleSpreader {
         }
 
         try {
-            SqlNode sqlNode = ec.getFinalPlan().getAst();
+            ByteString sql = ec.getSql();
+            SqlNode sqlNode = new FastsqlParser().parse(sql, ec).get(0);
             if (sqlNode instanceof SqlCreateTable) {
                 maySpreadEncRules((SqlCreateTable) sqlNode, ec);
             } else if (sqlNode instanceof SqlCreateView) {
@@ -111,13 +112,14 @@ public class EncdbRuleSpreader {
                 }
             }
         } catch (Throwable e) {
-            logger.error(e.getMessage(), e);
+            logger.error("[ENCDB] error when spread enc rules", e);
+            EventLogger.log(EventType.ENCDB_ERROR, "Failed to spread enc rules");
         }
     }
 
     private static void maySpreadEncRules(SqlDropTable sqlDropTable, ExecutionContext ec) {
         if (!(sqlDropTable.getTargetTable() instanceof SqlIdentifier)) {
-            sqlDropTable = (SqlDropTable) new FastsqlParser().parse(ec.getOriginSql()).get(0);
+            sqlDropTable = (SqlDropTable) new FastsqlParser().parse(ec.getOriginSql(), ec).get(0);
         }
 
         String schema = ec.getSchemaName();
@@ -130,15 +132,15 @@ public class EncdbRuleSpreader {
             table = targetTable.names.get(0);
         }
         Set<String> spreadEncRules = EncdbRuleManager.getInstance()
-            .getRuleMatchTree().getSpecificTableRules(schema, table)
-            .stream().filter(ruleName -> ruleName.startsWith(EncdbRuleManager.ENCDB_SPREADED_RULE_))
+            .getRuleMatchTree().getSpreadRules(schema, table)
+            .stream().filter(ruleName -> ruleName.startsWith(EncdbRuleManager.ENCDB_SPREADED_RULE_PREFIX))
             .collect(Collectors.toSet());
         EncdbRuleManager.getInstance().deleteEncRules(spreadEncRules);
     }
 
     private static void maySpreadEncRules(SqlDropView sqlDropView, ExecutionContext ec) {
         if (!(sqlDropView.getTargetTable() instanceof SqlIdentifier)) {
-            sqlDropView = (SqlDropView) new FastsqlParser().parse(ec.getOriginSql()).get(0);
+            sqlDropView = (SqlDropView) new FastsqlParser().parse(ec.getOriginSql(), ec).get(0);
         }
 
         String schema = ec.getSchemaName();
@@ -151,9 +153,7 @@ public class EncdbRuleSpreader {
             table = targetTable.names.get(0);
         }
         Set<String> spreadEncRules = EncdbRuleManager.getInstance()
-            .getRuleMatchTree().getSpecificTableRules(schema, table)
-            .stream().filter(ruleName -> ruleName.startsWith(EncdbRuleManager.ENCDB_SPREADED_RULE_))
-            .collect(Collectors.toSet());
+            .getRuleMatchTree().getSpreadRules(schema, table);
         EncdbRuleManager.getInstance().deleteEncRules(spreadEncRules);
     }
 
@@ -162,13 +162,17 @@ public class EncdbRuleSpreader {
             return;
         }
         if (!(sqlCreateTable.getTargetTable() instanceof SqlIdentifier)) {
-            sqlCreateTable = (SqlCreateTable) new FastsqlParser().parse(ec.getOriginSql()).get(0);
+            sqlCreateTable = (SqlCreateTable) new FastsqlParser().parse(ec.getOriginSql(), ec).get(0);
         }
 
         PlannerContext plannerContext = PlannerContext.fromExecutionContext(ec);
         ExecutionPlan selectPlan = Planner.getInstance().getPlan(sqlCreateTable.getQuery(), plannerContext);
+        List<List<String[]>> originColumnNames = CalciteUtils.buildOriginColumnNames(selectPlan.getPlan());
+        if (originColumnNames == null) {
+            return;
+        }
         List<Set<String>> columnMatchRulesList = EncdbRuleManager.getInstance().getRuleMatchTree()
-            .getColumnMatchRulesList(CalciteUtils.buildOriginColumnNames(selectPlan.getPlan()));
+            .getColumnMatchRulesList(originColumnNames);
         if (columnMatchRulesList != null) {
             String schema = ec.getSchemaName();
             String table;
@@ -179,10 +183,9 @@ public class EncdbRuleSpreader {
             } else {
                 table = targetTable.names.get(0);
             }
-            List<String> columns = sqlCreateTable.getColDefs()
-                .stream()
-                .map(pair -> pair.getKey().getSimple())
-                .collect(Collectors.toList());
+            List<String> columns =
+                selectPlan.getCursorMeta().getColumns().stream().map(ColumnMeta::getName).map(String::toLowerCase)
+                    .collect(Collectors.toList());
             spreadEncRules(schema, table, columns, columnMatchRulesList);
         }
     }
@@ -192,13 +195,17 @@ public class EncdbRuleSpreader {
             return;
         }
         if (!(sqlCreateView.getTargetTable() instanceof SqlIdentifier)) {
-            sqlCreateView = (SqlCreateView) new FastsqlParser().parse(ec.getOriginSql()).get(0);
+            sqlCreateView = (SqlCreateView) new FastsqlParser().parse(ec.getOriginSql(), ec).get(0);
         }
 
         PlannerContext plannerContext = PlannerContext.fromExecutionContext(ec);
         ExecutionPlan selectPlan = Planner.getInstance().getPlan(sqlCreateView.getQuery(), plannerContext);
+        List<List<String[]>> originColumnNames = CalciteUtils.buildOriginColumnNames(selectPlan.getPlan());
+        if (originColumnNames == null) {
+            return;
+        }
         List<Set<String>> columnMatchRulesList = EncdbRuleManager.getInstance().getRuleMatchTree()
-            .getColumnMatchRulesList(CalciteUtils.buildOriginColumnNames(selectPlan.getPlan()));
+            .getColumnMatchRulesList(originColumnNames);
         if (columnMatchRulesList != null) {
             String schema = ec.getSchemaName();
             String table;
@@ -222,13 +229,17 @@ public class EncdbRuleSpreader {
             return;
         }
         if (!(sqlInsert.getTargetTable() instanceof SqlIdentifier)) {
-            sqlInsert = (SqlInsert) new FastsqlParser().parse(ec.getOriginSql()).get(0);
+            sqlInsert = (SqlInsert) new FastsqlParser().parse(ec.getOriginSql(), ec).get(0);
         }
 
         PlannerContext plannerContext = PlannerContext.fromExecutionContext(ec);
         ExecutionPlan selectPlan = Planner.getInstance().getPlan(sqlInsert.getSource(), plannerContext);
+        List<List<String[]>> originColumnNames = CalciteUtils.buildOriginColumnNames(selectPlan.getPlan());
+        if (originColumnNames == null) {
+            return;
+        }
         List<Set<String>> columnMatchRulesList = EncdbRuleManager.getInstance().getRuleMatchTree()
-            .getColumnMatchRulesList(CalciteUtils.buildOriginColumnNames(selectPlan.getPlan()));
+            .getColumnMatchRulesList(originColumnNames);
         if (columnMatchRulesList != null) {
             String schema = ec.getSchemaName();
             String table;
@@ -255,13 +266,17 @@ public class EncdbRuleSpreader {
             return;
         }
         if (!(sqlReplace.getTargetTable() instanceof SqlIdentifier)) {
-            sqlReplace = (SqlReplace) new FastsqlParser().parse(ec.getOriginSql()).get(0);
+            sqlReplace = (SqlReplace) new FastsqlParser().parse(ec.getOriginSql(), ec).get(0);
         }
 
         PlannerContext plannerContext = PlannerContext.fromExecutionContext(ec);
         ExecutionPlan selectPlan = Planner.getInstance().getPlan(sqlReplace.getSource(), plannerContext);
+        List<List<String[]>> originColumnNames = CalciteUtils.buildOriginColumnNames(selectPlan.getPlan());
+        if (originColumnNames == null) {
+            return;
+        }
         List<Set<String>> columnMatchRulesList = EncdbRuleManager.getInstance().getRuleMatchTree()
-            .getColumnMatchRulesList(CalciteUtils.buildOriginColumnNames(selectPlan.getPlan()));
+            .getColumnMatchRulesList(originColumnNames);
         if (columnMatchRulesList != null) {
             String schema = ec.getSchemaName();
             String table;
@@ -316,7 +331,7 @@ public class EncdbRuleSpreader {
         String column = sqlDropColumn.getColName().getSimple();
 
         String ruleName = EncdbRuleManager.getInstance().getRuleMatchTree().match(schema, table, column);
-        if (ruleName == null || !ruleName.startsWith(EncdbRuleManager.ENCDB_SPREADED_RULE_)) {
+        if (ruleName == null || !ruleName.startsWith(EncdbRuleManager.ENCDB_SPREADED_RULE_PREFIX)) {
             return;
         }
         EncdbRule encdbRule = EncdbRuleManager.getInstance().getEncRule(ruleName);
@@ -388,6 +403,7 @@ public class EncdbRuleSpreader {
         Set<String> dbs = Collections.singleton(schema);
         Set<String> tbs = Collections.singleton(table);
         boolean enabled = true;
+
         for (int i = 0; i < matchRules.size(); i++) {
             Set<String> matchRuleSet = matchRules.get(i);
             if (matchRuleSet.isEmpty()) {
@@ -406,16 +422,23 @@ public class EncdbRuleSpreader {
             Set<String> cols = new HashSet<>();
             cols.add(columns.get(i));
 
-            String ruleName = EncdbRuleManager.ENCDB_SPREADED_RULE_ + "from_";
+            String ruleName = EncdbRuleManager.ENCDB_SPREADED_RULE_PREFIX + "from_";
             String description = "encdb rule spreaded from ";
             Set<PolarAccount> fullAccessUsers = new HashSet<>();
             Set<PolarAccount> restrictedUsers = new HashSet<>();
+            EncdbRule.EncdbRuleType ruleType = null;
+            EncdbMaskAlgo maskAlgo = null;
             for (String matchRuleName : matchRuleSet) {
+                EncdbRule matchRule = EncdbRuleManager.getInstance().getEncRule(matchRuleName);
+                if (matchRule == null || !matchRule.isEnable()) {
+                    continue;
+                }
                 ruleName += matchRuleName + "_";
                 description += matchRuleName + " ";
-                EncdbRule matchRule = EncdbRuleManager.getInstance().getEncRule(matchRuleName);
                 fullAccessUsers.addAll(matchRule.getFullAccessUsers());
                 restrictedUsers.addAll(matchRule.getRestrictedAccessUsers());
+                ruleType = matchRule.getRuleType();
+                maskAlgo = matchRule.getMaskAlgo();
             }
 
             Iterator<PolarAccount> iterator = fullAccessUsers.iterator();
@@ -427,10 +450,12 @@ public class EncdbRuleSpreader {
             }
 
             ruleName += System.currentTimeMillis() + "_" + ThreadLocalRandom.current().nextInt();
-            EncdbRule encdbRule = new EncdbRule(ruleName, enabled, fullAccessUsers, restrictedUsers,
-                dbs, tbs, cols, description);
-            spreadRules.add(encdbRule);
-            cachedRules.put(matchRuleSet, encdbRule);
+            if (ruleType != null) {
+                EncdbRule encdbRule = new EncdbRule(ruleName, enabled, fullAccessUsers, restrictedUsers,
+                    dbs, tbs, cols, description, ruleType, maskAlgo);
+                spreadRules.add(encdbRule);
+                cachedRules.put(matchRuleSet, encdbRule);
+            }
         }
 
         EncdbRuleManager.getInstance().insertEncRules(spreadRules);

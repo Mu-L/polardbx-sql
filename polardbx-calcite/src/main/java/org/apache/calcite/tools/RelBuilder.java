@@ -24,6 +24,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 import org.apache.calcite.linq4j.Ord;
 import org.apache.calcite.plan.Context;
 import org.apache.calcite.plan.Contexts;
@@ -38,6 +39,7 @@ import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.AggregateCall;
+import org.apache.calcite.rel.core.Correlate;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.core.JoinRelType;
@@ -72,11 +74,13 @@ import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
+import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.validate.SqlValidatorUtil;
 import org.apache.calcite.util.Holder;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.ImmutableIntList;
+import org.apache.calcite.util.ImmutableNullableList;
 import org.apache.calcite.util.Litmus;
 import org.apache.calcite.util.NlsString;
 import org.apache.calcite.util.Optionality;
@@ -84,6 +88,7 @@ import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Util;
 import org.apache.calcite.util.mapping.Mapping;
 import org.apache.calcite.util.mapping.Mappings;
+import org.checkerframework.checker.nullness.qual.Nullable;
 
 import javax.annotation.Nonnull;
 import java.math.BigDecimal;
@@ -91,6 +96,7 @@ import java.util.AbstractList;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedList;
@@ -102,6 +108,7 @@ import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
 
+import static java.util.Objects.requireNonNull;
 import static org.apache.calcite.util.Static.RESOURCE;
 
 /**
@@ -603,6 +610,25 @@ public class RelBuilder {
   /** Creates an {@code =}. */
   public RexNode equals(RexNode operand0, RexNode operand1) {
     return call(SqlStdOperatorTable.EQUALS, operand0, operand1);
+  }
+
+  public RexNode greaterThan(RexNode operand0, RexNode operand1) {
+    return call(SqlStdOperatorTable.GREATER_THAN, operand0, operand1);
+  }
+
+  /** Creates a {@code >=}. */
+  public RexNode greaterThanOrEqual(RexNode operand0, RexNode operand1) {
+    return call(SqlStdOperatorTable.GREATER_THAN_OR_EQUAL, operand0, operand1);
+  }
+
+  /** Creates a {@code <}. */
+  public RexNode lessThan(RexNode operand0, RexNode operand1) {
+    return call(SqlStdOperatorTable.LESS_THAN, operand0, operand1);
+  }
+
+  /** Creates a {@code <=}. */
+  public RexNode lessThanOrEqual(RexNode operand0, RexNode operand1) {
+    return call(SqlStdOperatorTable.LESS_THAN_OR_EQUAL, operand0, operand1);
   }
 
   /** Creates a {@code <>}. */
@@ -1210,6 +1236,71 @@ public class RelBuilder {
     return project(ImmutableList.copyOf(nodes));
   }
 
+  /** Creates a {@link Project} of the given
+   * expressions and field names, and optionally optimizing.
+   *
+   * <p>If {@code fieldNames} is null, or if a particular entry in
+   * {@code fieldNames} is null, derives field names from the input
+   * expressions.
+   *
+   * <p>If {@code force} is false,
+   * and the input is a {@code Project},
+   * and the expressions  make the trivial projection ($0, $1, ...),
+   * modifies the input.
+   *
+   * @param nodes       Expressions
+   * @param fieldNames  Suggested field names, or null to generate
+   * @param force       Whether to create a renaming Project if the
+   *                    projections are trivial
+   */
+  public RelBuilder projectNamed(Iterable<? extends RexNode> nodes,
+                                 @Nullable Iterable<? extends @Nullable String> fieldNames, boolean force) {
+    return projectNamed(nodes, fieldNames, force, ImmutableSet.of());
+  }
+
+  /** Creates a {@link Project} of the given
+   * expressions and field names, and optionally optimizing.
+   *
+   * <p>If {@code fieldNames} is null, or if a particular entry in
+   * {@code fieldNames} is null, derives field names from the input
+   * expressions.
+   *
+   * <p>If {@code force} is false,
+   * and the input is a {@code Project},
+   * and the expressions  make the trivial projection ($0, $1, ...),
+   * modifies the input.
+   *
+   * @param nodes       Expressions
+   * @param fieldNames  Suggested field names, or null to generate
+   * @param force       Whether to create a renaming Project if the
+   *                    projections are trivial
+   * @param variablesSet Correlating variables that are set when reading a row
+   *                     from the input, and which may be referenced from the
+   *                     projection expressions
+   */
+  public RelBuilder projectNamed(Iterable<? extends RexNode> nodes,
+                                 @Nullable Iterable<? extends @Nullable String> fieldNames, boolean force,
+                                 Iterable<CorrelationId> variablesSet) {
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    final List<? extends RexNode> nodeList =
+        nodes instanceof List ? (List) nodes : ImmutableList.copyOf(nodes);
+    final List<@Nullable String> fieldNameList =
+        fieldNames == null ? null
+            : fieldNames instanceof List ? (List<@Nullable String>) fieldNames
+            : ImmutableNullableList.copyOf(fieldNames);
+    final RelNode input = peek();
+    final RelDataType rowType =
+        RexUtil.createStructType(cluster.getTypeFactory(), nodeList,
+            fieldNameList, SqlValidatorUtil.F_SUGGESTER);
+    if (!force
+        && RexUtil.isIdentity(nodeList, input.getRowType())) {
+      throw new AssertionError("projectNamed unsupported");
+    } else {
+      project(nodeList, rowType.getFieldNames(), null, force, Sets.newHashSet(variablesSet));
+    }
+    return this;
+  }
+
   /** Ensures that the field names match those given.
    *
    * <p>If all fields have the same name, adds nothing;
@@ -1560,28 +1651,30 @@ public class RelBuilder {
     final RelNode join;
     final boolean correlate = variablesSet.size() == 1;
     RexNode postCondition = literal(true);
+
     if (correlate) {
       final CorrelationId id = Iterables.getOnlyElement(variablesSet);
-      final ImmutableBitSet requiredColumns =
-          RelOptUtil.correlationColumns(id, right.rel);
-      if (!RelOptUtil.notContainsCorrelation(left.rel, id, Litmus.IGNORE)) {
-        throw new IllegalArgumentException("variable " + id
-            + " must not be used by left input to correlation");
-      }
+      // Correlate does not have an ON clause.
       switch (joinType) {
       case LEFT:
-        // Correlate does not have an ON clause.
-        // For a LEFT correlate, predicate must be evaluated first.
-        // For INNER, we can defer.
+      case SEMI:
+      case ANTI:
+        // For a LEFT/SEMI/ANTI, predicate must be evaluated first.
         stack.push(right);
         filter(condition.accept(new Shifter(left.rel, id, right.rel)));
         right = stack.pop();
         break;
-      default:
+      case INNER:
+        // For INNER, we can defer.
         postCondition = condition;
+        break;
+      default:
+        throw new IllegalArgumentException("Correlated " + joinType + " join is not supported");
       }
-      join = correlateFactory.createCorrelate(left.rel, right.rel, id,
-          requiredColumns, null, null, SemiJoinType.of(joinType));
+      final ImmutableBitSet requiredColumns = RelOptUtil.correlationColumns(id, right.rel);
+      join =
+          correlateFactory.createCorrelate(left.rel, right.rel, id,
+              requiredColumns, null, null, SemiJoinType.of(joinType));
     } else {
       join = joinFactory.createJoin(left.rel, right.rel, condition,
           variablesSet, joinType, false);
@@ -1589,6 +1682,89 @@ public class RelBuilder {
     final ImmutableList.Builder<Field> fields = ImmutableList.builder();
     fields.addAll(left.fields);
     fields.addAll(right.fields);
+    stack.push(new Frame(join, fields.build()));
+    filter(postCondition);
+    return this;
+  }
+  public RelBuilder correlateSemiJoin(JoinRelType joinType, RexNode condition,
+                                 Set<CorrelationId> variablesSet) {
+    Frame right = stack.pop();
+    final Frame left = stack.pop();
+    final RelNode join;
+    final boolean correlate = variablesSet.size() > 0;
+    if (correlate) {
+      final CorrelationId id = Iterables.getOnlyElement(variablesSet);
+      // Correlate does not have an ON clause.
+      switch (joinType) {
+      case SEMI:
+      case ANTI:
+        // For a SEMI/ANTI, predicate must be evaluated first.
+        stack.push(right);
+        filter(condition.accept(new Shifter(left.rel, id, right.rel)));
+        right = stack.pop();
+        break;
+      default:
+        throw new IllegalArgumentException("Correlated " + joinType + " join is not supported");
+      }
+      final ImmutableBitSet requiredColumns = RelOptUtil.correlationColumns(id, right.rel);
+      final Map<Integer, Integer> requiredColsMap = new HashMap<>();
+      requiredColumns.forEach(i -> requiredColsMap.put(i, i));
+      CorrelationId newId = right.rel.getCluster().createCorrel();
+      RexCorrelVariable rexCorrel = (RexCorrelVariable) getRexBuilder().makeCorrel(left.rel.getRowType(), newId);
+      RelNode newRight = right.rel.accept(
+          new RelOptUtil.RelNodesExprsHandler(
+              new RelOptUtil.RexFieldAccessReplacer(id, rexCorrel, getRexBuilder(), requiredColsMap)));
+      join = correlateFactory.createColCorrelate(left.rel, newRight, newId,
+          requiredColumns, SemiJoinType.of(joinType));
+    } else {
+      join =
+          semiJoinFactory.createSemiJoin(left.rel, right.rel, condition, joinType,
+              ImmutableList.of(), ImmutableSet.of(), new SqlNodeList(SqlParserPos.ZERO), "");
+    }
+    final ImmutableList.Builder<Field> fields = ImmutableList.<Field>builder().addAll(left.fields);
+    stack.push(new Frame(join, fields.build()));
+    return this;
+  }
+
+
+  public RelBuilder columnarJoin(JoinRelType joinType, RexNode condition,
+                         Set<CorrelationId> variablesSet) {
+    Frame right = stack.pop();
+    final Frame left = stack.pop();
+    final RelNode join;
+    final boolean correlate = variablesSet.size() > 0;
+    RexNode postCondition = literal(true);
+    if (correlate) {
+      final CorrelationId id = Iterables.getOnlyElement(variablesSet);
+      // Correlate does not have an ON clause.
+      switch (joinType) {
+      case LEFT:
+        stack.push(right);
+        filter(condition.accept(new Shifter(left.rel, id, right.rel)));
+        right = stack.pop();
+        break;
+      case INNER:
+        // For INNER, we can defer.
+        postCondition = condition;
+        break;
+      default:
+        throw new IllegalArgumentException("Correlated " + joinType + " join is not supported");
+      }
+      final ImmutableBitSet requiredColumns = RelOptUtil.correlationColumns(id, right.rel);
+      final Map<Integer, Integer> requiredColsMap = new HashMap<>();
+      requiredColumns.forEach(i -> requiredColsMap.put(i, i));
+      CorrelationId newId = right.rel.getCluster().createCorrel();
+      RexCorrelVariable rexCorrel = (RexCorrelVariable) getRexBuilder().makeCorrel(left.rel.getRowType(), newId);
+      RelNode newRight = right.rel.accept(
+          new RelOptUtil.RelNodesExprsHandler(
+              new RelOptUtil.RexFieldAccessReplacer(id, rexCorrel, getRexBuilder(), requiredColsMap)));
+      join = correlateFactory.createColCorrelate(left.rel, newRight, newId,
+          requiredColumns, SemiJoinType.of(joinType));
+    } else {
+      join = joinFactory.createJoin(left.rel, right.rel, condition, variablesSet, joinType, false);
+    }
+    final ImmutableList.Builder<Field> fields = ImmutableList.builder();
+    fields.addAll(left.fields).addAll(right.fields);
     stack.push(new Frame(join, fields.build()));
     filter(postCondition);
     return this;

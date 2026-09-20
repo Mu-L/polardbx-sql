@@ -14,7 +14,7 @@ ALTER TABLE test_single_change_column1
 	CHANGE COLUMN c1 C7 int AFTER C3;
 ALTER TABLE test_single_change_column1
 	MODIFY COLUMN C4 varchar(60);
-ALTER TABLE test_single_change_column1
+/*+TDDL:cmd_extra(SUPPORT_INSTANT_ADD_COLUMN=false)*/ALTER TABLE test_single_change_column1
 	ADD COLUMN C5 varchar(60) AFTER C2;
 ALTER TABLE test_single_change_column1
 	RENAME INDEX i_C1c2 TO i_c1c5;

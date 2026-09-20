@@ -161,7 +161,8 @@ public class TablesAccessor extends AbstractAccessor {
             return TStringUtil.equalsIgnoreCase(newRecord.tableType, existingRecord.tableType) &&
                 TStringUtil.equalsIgnoreCase(newRecord.engine, existingRecord.engine) &&
                 TStringUtil.equalsIgnoreCase(newRecord.rowFormat, existingRecord.rowFormat) &&
-                newRecord.autoIncrement == existingRecord.autoIncrement &&
+                (newRecord.autoIncrement == existingRecord.autoIncrement ||
+                    (newRecord.autoIncrement == 1 && existingRecord.autoIncrement == 0)) &&
                 TStringUtil.equalsIgnoreCase(newRecord.tableCollation, existingRecord.tableCollation);
         }
         return false;

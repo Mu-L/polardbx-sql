@@ -1,0 +1,57 @@
+## DISABLE_FAST_SQL_PARSER
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00'
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false
+drop table if exists test_ttl_filter
+## create table
+create table test_ttl_filter(
+a int not null,
+b datetime,
+c int,
+primary key(a)
+)
+partition by key(`a`)
+partitions 4
+alter table test_ttl_filter
+modify ttl set
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_filter = cond_expr( `c` in (1,2,3) )
+show create table test_ttl_filter
+Table,Create Table
+test_ttl_filter,CREATE TABLE `test_ttl_filter` (
+	`a` int(11) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_FILTER = COND_EXPR ( `c` IN (1, 2, 3) ) , TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 12, ARCHIVE_TABLE_POST_ALLOCATE = 64 )
+PARTITION BY KEY(`a`)
+PARTITIONS 4
+insert into test_ttl_filter values (1,'2025-05-01', 1)
+insert into test_ttl_filter values (2,'2025-05-02', 2)
+insert into test_ttl_filter values (3,'2025-05-04', 3)
+insert into test_ttl_filter values (4,'2025-05-05', 4)
+insert into test_ttl_filter values (5,'2025-05-06', 4)
+select * from test_ttl_filter order by a,b,c
+a,b,c
+1,2025-05-01 00:00:00.0,1
+2,2025-05-02 00:00:00.0,2
+3,2025-05-04 00:00:00.0,3
+4,2025-05-05 00:00:00.0,4
+5,2025-05-06 00:00:00.0,4
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-06 12:00:00'
+alter table test_ttl_filter cleanup expired data
+select * from test_ttl_filter order by a,b,c
+a,b,c
+3,2025-05-04 00:00:00.0,3
+4,2025-05-05 00:00:00.0,4
+5,2025-05-06 00:00:00.0,4
+alter table test_ttl_filter cleanup expired data
+select * from test_ttl_filter order by a,b,c
+a,b,c
+4,2025-05-05 00:00:00.0,4
+5,2025-05-06 00:00:00.0,4
+drop table if exists test_ttl_filter;

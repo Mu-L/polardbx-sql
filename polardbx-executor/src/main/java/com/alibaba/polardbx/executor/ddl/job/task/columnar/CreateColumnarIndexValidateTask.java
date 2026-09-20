@@ -25,6 +25,7 @@ import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.ddl.job.validator.GsiValidator;
 import com.alibaba.polardbx.executor.ddl.job.validator.IndexValidator;
 import com.alibaba.polardbx.executor.ddl.job.validator.TableValidator;
+import com.alibaba.polardbx.executor.gms.util.ColumnarNodeStatusUtils;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import lombok.Getter;
 import org.apache.commons.lang3.StringUtils;
@@ -52,10 +53,14 @@ public class CreateColumnarIndexValidateTask extends BaseValidateTask {
         if (!TableValidator.checkIfTableExists(schemaName, primaryTableName)) {
             throw new TddlRuntimeException(ErrorCode.ERR_UNKNOWN_TABLE, schemaName, primaryTableName);
         }
+        IndexValidator.validateNoColumnarIndexOnExternalizedTable(schemaName, primaryTableName);
         IndexValidator.validateIndexNonExistence(schemaName, primaryTableName, indexName);
         //IndexValidator.validateColumnarIndexNonExistence(schemaName, primaryTableName);
         IndexValidator.validateColumnarIndexNumLimit(schemaName, primaryTableName,
             executionContext.getParamManager().getLong(ConnectionParams.MAX_CCI_COUNT));
+
+        // 检查列存节点是否存在，如果不存在则不允许创建列存索引
+        ColumnarNodeStatusUtils.validateColumnarNodeExists(executionContext);
 
         GsiValidator.validateGsiSupport(schemaName, executionContext);
         GsiValidator.validateCreateOnGsi(schemaName, indexName, executionContext);

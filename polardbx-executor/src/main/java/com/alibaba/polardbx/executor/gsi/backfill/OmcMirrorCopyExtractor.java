@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.gsi.backfill;
 
+import com.alibaba.polardbx.common.async.AsyncTask;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
@@ -29,14 +30,12 @@ import com.alibaba.polardbx.executor.backfill.Extractor;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.ddl.newengine.DdlEngineStats;
 import com.alibaba.polardbx.executor.ddl.newengine.cross.CrossEngineValidator;
-import com.alibaba.polardbx.executor.ddl.workqueue.OmcThreadPoll;
+import com.alibaba.polardbx.executor.ddl.workqueue.OmcThreadPool;
 import com.alibaba.polardbx.executor.gsi.GsiBackfillManager;
 import com.alibaba.polardbx.executor.gsi.GsiUtils;
 import com.alibaba.polardbx.executor.gsi.PhysicalPlanBuilder;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.gms.topology.DbTopologyManager;
-import com.alibaba.polardbx.gms.topology.GroupDetailInfoRecord;
-import com.alibaba.polardbx.gms.topology.ServerInstIdManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
@@ -61,7 +60,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -130,11 +128,10 @@ public class OmcMirrorCopyExtractor extends Extractor {
                                                 Map<String, Set<String>> sourcePhyTables,
                                                 boolean useChangeSet, boolean useBinary, boolean onlineModifyColumn,
                                                 ExecutionContext ec) {
-        final long batchSize = ec.getParamManager().getLong(ConnectionParams.OMC_BACKFILL_BATCH_SIZE_MAX);
-        final long batchFileSize = ec.getParamManager().getLong(ConnectionParams.OMC_BACKFILL_BATCH_FILE_SIZE);
+        final int batchSize = ec.getParamManager().getInt(ConnectionParams.OMC_BACKFILL_BATCH_SIZE_MAX);
+        final int batchFileSize = ec.getParamManager().getInt(ConnectionParams.OMC_BACKFILL_BATCH_FILE_SIZE);
         final long speedLimit = ec.getParamManager().getLong(ConnectionParams.OMC_BACKFILL_SPEED_LIMITATION);
         final long speedMin = ec.getParamManager().getLong(ConnectionParams.OMC_BACKFILL_SPEED_MIN);
-        final long parallelism = ec.getParamManager().getLong(ConnectionParams.OMC_BACKFILL_PARALLELISM);
         final boolean useInsertIgnore = ec.getParamManager().getBoolean(ConnectionParams.ENABLE_INSERT_IGNORE_FOR_OMC);
 
         Extractor.ExtractorInfo info =
@@ -162,7 +159,7 @@ public class OmcMirrorCopyExtractor extends Extractor {
             batchFileSize,
             speedMin,
             speedLimit,
-            parallelism,
+            -1L,
             useBinary,
             builder.buildSelectUpperBoundForInsertSelectBackfill(info.getSourceTableMeta(),
                 info.getTargetTableColumns(), info.getPrimaryKeys(),
@@ -248,7 +245,7 @@ public class OmcMirrorCopyExtractor extends Extractor {
             }
         }
 
-        OmcThreadPoll.getInstance().submitTasks(allTasksByStorageInstId);
+        OmcThreadPool.getInstance().submitTasks(allTasksByStorageInstId);
 
         List<FutureTask<Void>> allFutureTasks = allTasksByStorageInstId
             .stream()
@@ -269,11 +266,11 @@ public class OmcMirrorCopyExtractor extends Extractor {
             }
         }
 
+        throttle.stop();
+
         if (excep.get() != null) {
             throw GeneralUtil.nestedException(excep.get());
         }
-
-        throttle.stop();
 
         // After all physical table finished
         reporter.updateBackfillStatus(ec, GsiBackfillManager.BackfillStatus.SUCCESS);
@@ -294,6 +291,9 @@ public class OmcMirrorCopyExtractor extends Extractor {
                 "Must use READ-COMMITTED isolation in Online Modify Column");
         }
 
+        boolean asyncLog =
+            OptimizerContext.getContext(schemaName).getParamManager().getBoolean(ConnectionParams.BACKFILL_ASYNC_LOG);
+
         // Load upper bound
         List<ParameterContext> upperBoundParam =
             buildUpperBoundParam(backfillObjects.size(), backfillObjects, primaryKeysIdMap);
@@ -309,7 +309,7 @@ public class OmcMirrorCopyExtractor extends Extractor {
         List<Map<Integer, ParameterContext>> lastBatch = null;
         AtomicReference<Boolean> finished = new AtomicReference<>(false);
         long actualBatchSize = batchSize;
-        long tableAvgRowLength = getTableAvgRowLength(dbIndex, physicalTableName);
+        long tableAvgRowLength = getPhyiscalTableAvgRowLength(schemaName, dbIndex, physicalTableName);
         if (tableAvgRowLength != 0) {
             long idealBatchSize = batchFileSize / tableAvgRowLength;
             if (idealBatchSize <= 0) {
@@ -369,8 +369,28 @@ public class OmcMirrorCopyExtractor extends Extractor {
 
             successRowCount += currentSuccessRowCount.get();
 
-            reporter.updatePositionMark(ec, backfillObjects, successRowCount, lastPk, beforeLastPk,
-                finished.get(), primaryKeysIdMap);
+            if (asyncLog) {
+                // 异步写日志
+                long finalSuccessRowCount = successRowCount;
+                List<ParameterContext> finalLastPk1 = lastPk;
+                boolean finalFinished = finished.get();
+                FutureTask<Void> futureTask = new FutureTask<>(
+                    () -> {
+                        reporter.updatePositionMark(ec,
+                            backfillObjects,
+                            finalSuccessRowCount,
+                            finalLastPk1,
+                            beforeLastPk,
+                            finalFinished,
+                            primaryKeysIdMap
+                        );
+                    }, null);
+                ec.getExecutorService().submit(ec.getSchemaName(), ec.getTraceId(), AsyncTask.build(futureTask));
+            } else {
+                reporter.updatePositionMark(ec, backfillObjects, successRowCount, lastPk, beforeLastPk,
+                    finished.get(), primaryKeysIdMap);
+            }
+
             // 估算速度
             ec.getStats().backfillRows.addAndGet(currentSuccessRowCount.get());
             DdlEngineStats.METRIC_BACKFILL_ROWS_FINISHED.update(currentSuccessRowCount.get());

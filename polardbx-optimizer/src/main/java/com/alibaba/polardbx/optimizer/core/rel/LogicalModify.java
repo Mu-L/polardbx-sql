@@ -22,6 +22,7 @@ import com.alibaba.polardbx.optimizer.core.rel.dml.DistinctWriter;
 import com.alibaba.polardbx.optimizer.utils.RelUtils.LogicalModifyViewBuilder;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import lombok.Data;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -47,9 +48,11 @@ import org.apache.calcite.util.mapping.Mapping;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -66,6 +69,9 @@ public class LogicalModify extends TableModify {
 
     private List<DistinctWriter> primaryModifyWriters = new ArrayList<>();
     private List<DistinctWriter> gsiModifyWriters = new ArrayList<>();
+
+    // only for update
+    private Map<Integer, List<DistinctWriter>> gsiModifyWritersMap = new HashMap<>();
     /**
      * True if any target table contains no primary key
      */
@@ -76,6 +82,10 @@ public class LogicalModify extends TableModify {
     private Map<Integer, List<Integer>> inputToEvalFieldMappings;
     private Map<Integer, List<RexNode>> genColRexNodes;
 
+    // {writer，表下标}，
+    // 对不需要比较前后数据是否一致的的primary writer也维护一个映射，使得update执行能通过一个流程执行
+    private Map<DistinctWriter, Integer> primaryWriterToPrimaryIndex;
+
     // 需要比较set的行是否相同的变量
     // ON UPDATE TIMESTAMP 列，如果行相同，则无需执行，保证该列值不变
     // {writer，表下标}
@@ -84,6 +94,13 @@ public class LogicalModify extends TableModify {
     private Map<Integer, Mapping> setColumnTargetMappings;
     private Map<Integer, Mapping> setColumnSourceMappings;
     private Map<Integer, List<ColumnMeta>> setColumnMetas;
+
+    /**
+     * Terminal externalized columns whose in-place UPDATE SET expression has been proven to be a direct identity.
+     * The optimizer has already replaced both the old-row and writer SET slots with the raw BlobRef for these
+     * columns, so the executor must reuse the address rather than materialize the slot as logical content.
+     */
+    private Map<Integer, Set<String>> externalizedUpdateReuseColumns = Collections.emptyMap();
 
     private boolean modifyForeignKey = false;
 
@@ -115,11 +132,16 @@ public class LogicalModify extends TableModify {
                 .of(),
             modify instanceof LogicalModify ? ((LogicalModify) modify).getPrimaryModifyWriters() : ImmutableList.of(),
             modify instanceof LogicalModify ? ((LogicalModify) modify).getGsiModifyWriters() : ImmutableList.of(),
+            modify instanceof LogicalModify ? ((LogicalModify) modify).getGsiModifyWritersMap() : ImmutableMap.of(),
             modify instanceof LogicalModify ? ((LogicalModify) modify).isWithoutPk() : false,
             modify instanceof LogicalModify ? ((LogicalModify) modify).isModifyForeignKey() : false,
             modify instanceof LogicalModify ? ((LogicalModify) modify).getModifyTopNInfo() : ModifyTopNInfo.EMPTY,
             modify instanceof LogicalModify ? ((LogicalModify) modify).getMultiWriteInfo() :
                 LogicalMultiWriteInfo.EMPTY);
+        if (modify instanceof LogicalModify) {
+            this.externalizedUpdateReuseColumns =
+                ((LogicalModify) modify).getExternalizedUpdateReuseColumns();
+        }
     }
 
     public LogicalModify(RelOptCluster cluster, RelTraitSet traitSet, RelOptTable table,
@@ -146,6 +168,7 @@ public class LogicalModify extends TableModify {
         this.dbType = DbType.MYSQL;
         this.extraTargetTables = ImmutableList.of();
         this.extraTargetColumns = ImmutableList.of();
+        this.primaryWriterToPrimaryIndex = new HashMap<>();
         this.needCompareWriters = new HashMap<>();
         this.setColumnTargetMappings = new HashMap<>();
         this.setColumnSourceMappings = new HashMap<>();
@@ -159,6 +182,7 @@ public class LogicalModify extends TableModify {
                          List<String> keywords, SqlNodeList hints, OptimizerHint hintContext, TableInfo tableInfo,
                          List<RelOptTable> extraTargetTables, List<String> extraTargetColumns,
                          List<DistinctWriter> primaryModifyWriters, List<DistinctWriter> gsiModifyWriters,
+                         Map<Integer, List<DistinctWriter>> gsiModifyWritersMap,
                          boolean withoutPk, boolean modifyForeignKey, ModifyTopNInfo modifyTopNInfo,
                          LogicalMultiWriteInfo multiWriteInfo) {
         super(cluster,
@@ -183,8 +207,10 @@ public class LogicalModify extends TableModify {
         this.extraTargetColumns = extraTargetColumns;
         this.primaryModifyWriters = primaryModifyWriters;
         this.gsiModifyWriters = gsiModifyWriters;
+        this.gsiModifyWritersMap = gsiModifyWritersMap;
         this.withoutPk = withoutPk;
         this.modifyForeignKey = modifyForeignKey;
+        this.primaryWriterToPrimaryIndex = new HashMap<>();
         this.needCompareWriters = new HashMap<>();
         this.setColumnTargetMappings = new HashMap<>();
         this.setColumnSourceMappings = new HashMap<>();
@@ -275,6 +301,7 @@ public class LogicalModify extends TableModify {
             getExtraTargetColumns(),
             getPrimaryModifyWriters(),
             getGsiModifyWriters(),
+            getGsiModifyWritersMap(),
             isWithoutPk(),
             isModifyForeignKey(),
             getModifyTopNInfo(),
@@ -283,10 +310,12 @@ public class LogicalModify extends TableModify {
         logicalModify.evalRowColumnMetas = evalRowColumnMetas;
         logicalModify.inputToEvalFieldMappings = inputToEvalFieldMappings;
         logicalModify.genColRexNodes = genColRexNodes;
+        logicalModify.primaryWriterToPrimaryIndex = primaryWriterToPrimaryIndex;
         logicalModify.needCompareWriters = needCompareWriters;
         logicalModify.setColumnTargetMappings = setColumnTargetMappings;
         logicalModify.setColumnSourceMappings = setColumnSourceMappings;
         logicalModify.setColumnMetas = setColumnMetas;
+        logicalModify.externalizedUpdateReuseColumns = externalizedUpdateReuseColumns;
         return logicalModify;
     }
 
@@ -321,6 +350,14 @@ public class LogicalModify extends TableModify {
 
     public void setGsiModifyWriters(List<DistinctWriter> gsiModifyWriters) {
         this.gsiModifyWriters = gsiModifyWriters;
+    }
+
+    public Map<Integer, List<DistinctWriter>> getGsiModifyWritersMap() {
+        return gsiModifyWritersMap;
+    }
+
+    public void setGsiModifyWritersMap(Map<Integer, List<DistinctWriter>> gsiModifyWritersMap) {
+        this.gsiModifyWritersMap = gsiModifyWritersMap;
     }
 
     public boolean isWithoutPk() {
@@ -358,6 +395,11 @@ public class LogicalModify extends TableModify {
         this.genColRexNodes = genColRexNodes;
     }
 
+    public void setPrimaryWriterToPrimaryIndex(
+        Map<DistinctWriter, Integer> primaryWriterToPrimaryIndex) {
+        this.primaryWriterToPrimaryIndex = primaryWriterToPrimaryIndex;
+    }
+
     public void setNeedCompareWriters(
         Map<DistinctWriter, Integer> needCompareWriters) {
         this.needCompareWriters = needCompareWriters;
@@ -376,6 +418,19 @@ public class LogicalModify extends TableModify {
     public void setSetColumnMetas(
         Map<Integer, List<ColumnMeta>> setColumnMetas) {
         this.setColumnMetas = setColumnMetas;
+    }
+
+    public Map<Integer, Set<String>> getExternalizedUpdateReuseColumns() {
+        return externalizedUpdateReuseColumns;
+    }
+
+    public void setExternalizedUpdateReuseColumns(Map<Integer, Set<String>> externalizedUpdateReuseColumns) {
+        this.externalizedUpdateReuseColumns = externalizedUpdateReuseColumns == null
+            ? Collections.emptyMap() : externalizedUpdateReuseColumns;
+    }
+
+    public Map<DistinctWriter, Integer> getPrimaryWriterToPrimaryIndex() {
+        return primaryWriterToPrimaryIndex;
     }
 
     public Map<DistinctWriter, Integer> getNeedCompareWriters() {
@@ -458,6 +513,12 @@ public class LogicalModify extends TableModify {
 
         @Accessors(chain = true)
         private boolean optimizeByReturning = false;
+
+        /**
+         * optimize by returning all for update
+         */
+        @Accessors(chain = true)
+        private boolean optimizeByReturningAll = false;
 
         private LogicalMultiWriteInfo() {
             this.withOffset = false;

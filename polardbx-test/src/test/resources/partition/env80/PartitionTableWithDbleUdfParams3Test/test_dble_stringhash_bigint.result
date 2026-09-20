@@ -1,0 +1,40 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+drop table if exists dblestrhash_tb_bi;
+create table if not exists dblestrhash_tb_bi(a bigint)
+charset utf8mb4 collate utf8mb4_bin
+partition by udf_hash(
+`a` with udf_params(
+'dble/stringhash',
+'{
+  "partitionCount":"4",
+  "partitionLength":"1",
+  "hashSlice":"0:8"
+}'
+)
+)
+partitions 4;
+insert into dblestrhash_tb_bi values(0);
+select a from dblestrhash_tb_bi where a=0;
+a
+0
+insert into dblestrhash_tb_bi values(9223372036854775807);
+select a from dblestrhash_tb_bi where a=9223372036854775807;
+a
+9223372036854775807
+insert into dblestrhash_tb_bi values(-9223372036854775808);
+select a from dblestrhash_tb_bi where a=-9223372036854775808;
+a
+-9223372036854775808
+set sql_mode='';
+insert into dblestrhash_tb_bi values(9223372036854775808);
+select a from dblestrhash_tb_bi where a=9223372036854775807;
+a
+9223372036854775807
+9223372036854775807
+delete from dblestrhash_tb_bi where a=-9223372036854775808;
+insert into dblestrhash_tb_bi values(-9223372036854775809);
+select a from dblestrhash_tb_bi where a=-9223372036854775808;
+a
+-9223372036854775808

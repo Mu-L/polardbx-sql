@@ -16,6 +16,9 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.ORCMemoryCounterUtil;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.chunk.BlobBlock;
 import com.alibaba.polardbx.executor.chunk.RandomAccessBlock;
@@ -34,9 +37,11 @@ import org.apache.orc.impl.BitFieldReader;
 import org.apache.orc.impl.InStream;
 import org.apache.orc.impl.OrcIndex;
 import org.apache.orc.impl.PositionProvider;
+import org.apache.orc.impl.PositionProviderBuilder;
 import org.apache.orc.impl.RecordReaderImpl;
 import org.apache.orc.impl.RunLengthIntegerReaderV2;
 import org.apache.orc.impl.StreamName;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.io.IOException;
 import java.text.MessageFormat;
@@ -46,11 +51,15 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class DirectBlobColumnReader extends AbstractColumnReader {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(DirectBlobColumnReader.class).instanceSize();
     // basic metadata
+    @FieldMemoryCounter(value = false)
     private final StripeLoader stripeLoader;
 
     // in preheat mode, all row-indexes in orc-index should not be null.
-    private final OrcIndex orcIndex;
+    @FieldMemoryCounter(value = false)
+    private final PositionProviderBuilder orcIndex;
+    @FieldMemoryCounter(value = false)
     private final RuntimeMetrics metrics;
 
     private final int indexStride;
@@ -61,6 +70,7 @@ public class DirectBlobColumnReader extends AbstractColumnReader {
     protected InStream dataStream;
     protected RunLengthIntegerReaderV2 lengthReader;
     // open parameters
+    @FieldMemoryCounter(value = false)
     private boolean[] rowGroupIncluded;
     private boolean await;
     // inner states
@@ -68,19 +78,42 @@ public class DirectBlobColumnReader extends AbstractColumnReader {
     private AtomicBoolean initializeOnlyOnce;
     private AtomicBoolean isOpened;
     // IO results
+    @FieldMemoryCounter(value = false)
     private Throwable throwable;
+    @FieldMemoryCounter(value = false)
     private Map<StreamName, InStream> inStreamMap;
+    @FieldMemoryCounter(value = false)
     private CompletableFuture<Map<StreamName, InStream>> openFuture;
     // record read positions
     private int currentRowGroup;
     private int lastPosition;
 
     // execution time metrics.
+    @FieldMemoryCounter(value = false)
     private Counter preparingTimer;
+    @FieldMemoryCounter(value = false)
     private Counter seekTimer;
+    @FieldMemoryCounter(value = false)
     private Counter parseTimer;
 
-    public DirectBlobColumnReader(int columnId, boolean isPrimaryKey, StripeLoader stripeLoader, OrcIndex orcIndex,
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            // from AbstractColumnReader
+            + FastMemoryCounter.sizeOf(refCount)
+            + FastMemoryCounter.sizeOf(isClosed)
+            + FastMemoryCounter.sizeOf(hasNoMoreBlocks)
+            // from AbstractLongColumnReader
+            + FastMemoryCounter.sizeOf(openFailed)
+            + FastMemoryCounter.sizeOf(initializeOnlyOnce)
+            + FastMemoryCounter.sizeOf(isOpened)
+            + ORCMemoryCounterUtil.sizeOfBitFieldReader(present)
+            + ORCMemoryCounterUtil.sizeOfInStream(dataStream)
+            + ORCMemoryCounterUtil.sizeOfIntegerReader(lengthReader);
+    }
+
+    public DirectBlobColumnReader(int columnId, boolean isPrimaryKey, StripeLoader stripeLoader,
+                                  PositionProviderBuilder orcIndex,
                                   RuntimeMetrics metrics, int indexStride, boolean enableMetrics) {
         super(columnId, isPrimaryKey);
         this.stripeLoader = stripeLoader;
@@ -189,7 +222,8 @@ public class DirectBlobColumnReader extends AbstractColumnReader {
         }
     }
 
-    protected void init() throws IOException {
+    @Override
+    public void init() throws IOException {
         if (!initializeOnlyOnce.compareAndSet(false, true)) {
             return;
         }
@@ -372,15 +406,7 @@ public class DirectBlobColumnReader extends AbstractColumnReader {
         init();
 
         // Find the position-provider of given column and row group.
-        PositionProvider positionProvider;
-        OrcProto.RowIndex[] rowIndices = orcIndex.getRowGroupIndex();
-        OrcProto.RowIndexEntry entry = rowIndices[columnId].getEntry(rowGroupId);
-        // This is effectively a test for pre-ORC-569 files.
-        if (rowGroupId == 0 && entry.getPositionsCount() == 0) {
-            positionProvider = new RecordReaderImpl.ZeroPositionProvider();
-        } else {
-            positionProvider = new RecordReaderImpl.PositionProviderImpl(entry);
-        }
+        PositionProvider positionProvider = orcIndex.buildRowGroupIndex(columnId, rowGroupId);
 
         // NOTE: The order of seeking is strict!
         if (present != null) {
@@ -510,5 +536,7 @@ public class DirectBlobColumnReader extends AbstractColumnReader {
                 ));
             }
         }
+
+        closeFuture.set(null);
     }
 }

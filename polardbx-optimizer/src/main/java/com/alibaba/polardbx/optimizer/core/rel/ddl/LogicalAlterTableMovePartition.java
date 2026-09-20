@@ -20,15 +20,13 @@ import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
-import com.alibaba.polardbx.common.utils.TStringUtil;
-import com.alibaba.polardbx.gms.locality.LocalityDesc;
 import com.alibaba.polardbx.gms.tablegroup.PartitionGroupRecord;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupLocation;
 import com.alibaba.polardbx.gms.topology.GroupDetailInfoExRecord;
-import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ComplexTaskMetaManager;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableGroupMovePartitionPreparedData;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableMovePartitionPreparedData;
@@ -39,6 +37,7 @@ import com.alibaba.polardbx.optimizer.partition.PartitionInfoUtil;
 import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
 import com.alibaba.polardbx.optimizer.partition.common.PartitionLocation;
 import com.alibaba.polardbx.optimizer.tablegroup.AlterTableGroupSnapShotUtils;
+import com.alibaba.polardbx.optimizer.utils.ForeignKeyUtils;
 import org.apache.calcite.rel.core.DDL;
 import org.apache.calcite.rel.ddl.AlterTable;
 import org.apache.calcite.sql.SqlAlterTable;
@@ -114,7 +113,7 @@ public class LogicalAlterTableMovePartition extends BaseDdlOperation {
 
             for (int i = 0; i < newPartitionGroups.size(); i++) {
                 String partName = newPartitionGroups.get(i).partition_name;
-                String groupName = GroupInfoUtil.buildGroupNameFromPhysicalDb(newPartitionGroups.get(i).phy_db);
+                String groupName = newPartitionGroups.get(i).getGroup_Name();
                 mockOrderedTargetTableLocations.put(partName, new Pair<>("", groupName));
                 partitionLocations.put(partName, groupName);
             }
@@ -160,6 +159,9 @@ public class LogicalAlterTableMovePartition extends BaseDdlOperation {
             preparedData.findCandidateTableGroupAndUpdatePrepareDate(tableGroupConfig, newPartInfo, null, null, flag,
                 ec);
         }
+        TableMeta tableMeta = optimizerContext.getLatestSchemaManager().getTable(logicalTableName);
+        ForeignKeyUtils.prepareForeignKeyData(tableMeta, preparedData.getModifyForeignKeys(),
+            preparedData.getAddForeignKeySql(), preparedData.getDropForeignKeySql());
     }
 
     protected void doPrepare(SqlAlterTableMovePartition sqlAlterTableMovePartition, String tableGroupName,
@@ -233,5 +235,4 @@ public class LogicalAlterTableMovePartition extends BaseDdlOperation {
     public static LogicalAlterTableMovePartition create(DDL ddl) {
         return new LogicalAlterTableMovePartition(ddl);
     }
-
 }

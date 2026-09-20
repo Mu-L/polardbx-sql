@@ -18,6 +18,7 @@ package com.alibaba.polardbx.optimizer.core.rel.ddl;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.gms.tablegroup.PartitionGroupRecord;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
@@ -45,6 +46,7 @@ import org.apache.calcite.util.Util;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
 
@@ -115,19 +117,26 @@ public class LogicalAlterTableAddPartition extends BaseDdlOperation {
         preparedData.setTargetGroupDetailInfoExRecords(targetGroupDetailInfoExRecords);
 
         preparedData.setPartBoundExprInfoByLevel(sqlAlterTable.getPartRexInfoCtxByLevel());
-
+        Map<String, List<String>> logicalPartitionGroups = new TreeMap<>(String::compareToIgnoreCase);
         preparedData.setNewPartitions(
             sqlAlterTableAddPartition.getPartitions().stream().map(o -> (SqlPartition) o).collect(Collectors.toList()),
-            partitionInfo.getPartitionBy(), tableGroupConfig, sqlAlterTableAddPartition.isSubPartition());
+            partitionInfo.getPartitionBy(), tableGroupConfig, sqlAlterTableAddPartition.isSubPartition(),
+            logicalPartitionGroups);
 
         preparedData.setOldPartitionNames(ImmutableList.of());
 
         Boolean hasSubPartition = (partitionInfo.getPartitionBy().getSubPartitionBy() != null);
-        preparedData.prepareInvisiblePartitionGroup(hasSubPartition);
+        //please setTaskType before prepareInvisiblePartitionGroup
+        preparedData.setTaskType(ComplexTaskMetaManager.ComplexTaskType.ADD_PARTITION);
+        boolean isShuffle =
+            ec.getParamManager().getBoolean(ConnectionParams.ENABLE_RANDOM_PARTITION_PLACEMENT);
+        boolean isTemplateSubPart = hasSubPartition ?
+            partitionInfo.getPartitionBy().getSubPartitionBy().isUseSubPartTemplate() : false;
+        preparedData.setUseTemplatePart(isTemplateSubPart);
+        preparedData.prepareInvisiblePartitionGroup(hasSubPartition, isShuffle, logicalPartitionGroups);
 
         preparedData.setSourceSql(((SqlAlterTable) alterTable.getSqlNode()).getSourceSql());
         preparedData.setTableName(logicalTableName);
-        preparedData.setTaskType(ComplexTaskMetaManager.ComplexTaskType.ADD_PARTITION);
         preparedData.setTargetImplicitTableGroupName(sqlAlterTable.getTargetImplicitTableGroupName());
 
         if (preparedData.needFindCandidateTableGroup()) {
@@ -137,7 +146,7 @@ public class LogicalAlterTableAddPartition extends BaseDdlOperation {
             for (int i = 0; i < newPartitionGroups.size(); i++) {
                 String mockTableName = "";
                 mockOrderedTargetTableLocations.put(newPartitionGroups.get(i).partition_name, new Pair<>(mockTableName,
-                    GroupInfoUtil.buildGroupNameFromPhysicalDb(newPartitionGroups.get(i).partition_name)));
+                    newPartitionGroups.get(i).getGroup_Name()));
             }
 
             PartitionInfo newPartInfo = AlterTableGroupSnapShotUtils

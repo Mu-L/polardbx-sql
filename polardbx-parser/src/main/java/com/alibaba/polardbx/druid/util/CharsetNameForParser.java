@@ -539,7 +539,7 @@ public enum CharsetNameForParser {
         ImmutableList.of(),
         "GBK", "GBK", 2),
     /*
-     * China National Standard GB18030
+     * China National Standard GB18030 2022
      */
     GB18030(GB18030_CHINESE_CI,
         ImmutableList.of(GB18030_CHINESE_CI, GB18030_BIN, GB18030_UNICODE_520_CI),

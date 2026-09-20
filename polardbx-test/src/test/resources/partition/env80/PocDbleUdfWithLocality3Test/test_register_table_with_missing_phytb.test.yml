@@ -1,0 +1,56 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+## test dble_db
+
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+
+use polardbx;
+drop database if exists dbledb2;
+  ## USE_DN_LIST_MSG
+create database if not exists dbledb6 mode = 'auto' locality='db_config={"g1":["set1","dbledb6_00"],"g2":["set2","dbledb6_01"] }';
+show create database dbledb6;
+use dbledb6;
+show tables;
+
+  
+  ## test dble_part_tbl
+drop table if exists dble_t1;
+
+  ## error_msg: $# Not found #$
+register table if not exists dble_t1 (
+a bigint ,
+b bigint not null auto_increment,
+primary key(b)
+)
+partition by key(a)
+partitions 2
+locality='db_pools=g1,g2';
+
+create table if not exists dble_t1 (
+a bigint ,
+b bigint not null auto_increment,
+primary key(b)
+)
+partition by key(a)
+partitions 1
+locality='db_pools=g1';
+
+unregister table dble_t1;
+
+  ## error_msg: $# Not found #$
+register table if not exists dble_t1 (
+a bigint ,
+b bigint not null auto_increment,
+primary key(b)
+)
+partition by key(a)
+partitions 2
+locality='db_pools=g1,g2';
+
+use polardbx;
+drop database dbledb6;
+

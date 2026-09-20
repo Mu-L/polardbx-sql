@@ -1,5 +1,6 @@
 package com.alibaba.polardbx.executor.accumulator;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.ByteArrayBlock;
 import com.alibaba.polardbx.executor.chunk.ByteArrayBlockBuilder;
@@ -25,11 +26,12 @@ public class PartialHLLAccumulatorTest {
     public void before() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new PartialHyperLoglog(new int[] {0}, -1), DataTypes.LongType,
-                new DataType[] {DataTypes.LongType}, COUNT, new ExecutionContext());
+                new DataType[] {DataTypes.LongType}, COUNT, new ExecutionContext(), null);
 
         this.accumulator = (PartialHyperLogLogAccumulator) accumulator;
         this.random = new Random();
         Assert.assertEquals(1, accumulator.getInputTypes().length);
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 
     @Test
@@ -46,12 +48,14 @@ public class PartialHLLAccumulatorTest {
         for (int i = 0; i < block.getPositionCount(); i++) {
             accumulator.accumulate(0, chunk, i);
         }
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
 
         ByteArrayBlockBuilder resultBuilder = new ByteArrayBlockBuilder(COUNT, 8);
         accumulator.writeResultTo(0, resultBuilder);
         Block resultBlock = resultBuilder.build();
         Assert.assertEquals(1, resultBlock.getPositionCount());
         Assert.assertNotNull(resultBlock.getByteArray(0));
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 
     @Test
@@ -67,10 +71,12 @@ public class PartialHLLAccumulatorTest {
         for (int i = 0; i < block.getPositionCount(); i++) {
             accumulator.accumulate(0, chunk, i);
         }
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
 
         ByteArrayBlockBuilder resultBuilder = new ByteArrayBlockBuilder(COUNT, 8);
         accumulator.writeResultTo(0, resultBuilder);
         Block resultBlock = resultBuilder.build();
         Assert.assertEquals(1, resultBlock.getPositionCount());
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 }

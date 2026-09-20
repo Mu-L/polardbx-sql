@@ -19,6 +19,7 @@ package com.alibaba.polardbx.druid.sql.parser;
 import com.alibaba.polardbx.druid.DbType;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
 import com.alibaba.polardbx.druid.sql.ast.SQLStatement;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLCreateDatabaseStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.parser.MySqlStatementParser;
 import com.alibaba.polardbx.druid.sql.visitor.VisitorFeature;
 import org.junit.Assert;
@@ -519,6 +520,19 @@ public class SQLStatementParserTest {
         Assert.assertTrue(myInsertValueHandler.getFunctions().containsKey("CLOTHES_FEATURE_EXTRACT_V1"));
         Assert.assertEquals("url",
             myInsertValueHandler.getFunctions().get("CLOTHES_FEATURE_EXTRACT_V1"));
+    }
+
+    @Test
+    public void testParseLocality(){
+        String originalCreateDatabaseSql = "CREATE DATABASE IF NOT EXISTS dbledb1 LOCALITY = 'dble_config={\"group_config\":{\"dbledb1_g1\":[\"$dn1\",\"dbledb1_00\"],\"dbledb1_g2\":[\"$dn2\",\"dbledb1_01\"] }}' MODE 'auto'";
+        SQLStatementParser sqlStatementParser = new MySqlStatementParser(ByteString.from(originalCreateDatabaseSql));
+        SQLCreateDatabaseStatement sqlCreateDatabaseStatement = (SQLCreateDatabaseStatement) (sqlStatementParser.parseCreateDatabase());
+        String afterParseCreateDatabaseSql = sqlCreateDatabaseStatement.toString();
+        SQLStatementParser sqlStatementParser1 = new MySqlStatementParser(ByteString.from(afterParseCreateDatabaseSql));
+        SQLCreateDatabaseStatement sqlCreateDatabaseStatement1 = (SQLCreateDatabaseStatement) (sqlStatementParser1.parseCreateDatabase());
+        String afterParseCreateDatabaseSql1 = sqlCreateDatabaseStatement1.toString();
+        Assert.assertEquals(afterParseCreateDatabaseSql, afterParseCreateDatabaseSql1);
+        Assert.assertEquals(originalCreateDatabaseSql, afterParseCreateDatabaseSql1);
     }
 
     @Test

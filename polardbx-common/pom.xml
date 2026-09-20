@@ -12,7 +12,10 @@
     <name>${project.artifactId} module for polardbx ${project.version}</name>
 
     <dependencies>
-
+        <dependency>
+            <groupId>com.alibaba.ajdk</groupId>
+            <artifactId>ajdk-api</artifactId>
+        </dependency>
         <dependency>
             <groupId>commons-lang</groupId>
             <artifactId>commons-lang</artifactId>
@@ -24,6 +27,11 @@
         <dependency>
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.airlift</groupId>
+            <artifactId>aircompressor</artifactId>
+            <version>${aircompressor.version}</version>
         </dependency>
         <dependency>
             <groupId>com.alibaba</groupId>
@@ -82,12 +90,6 @@
             <artifactId>bcpkix-jdk15on</artifactId>
             <version>${bouncycastle.version}</version>
         </dependency>
-
-        <dependency>
-            <groupId>org.yaml</groupId>
-            <artifactId>snakeyaml</artifactId>
-            <version>${snakeyaml.version}</version>
-        </dependency>
         <dependency>
             <groupId>${project.groupId}</groupId>
             <artifactId>polardbx-orc</artifactId>
@@ -124,10 +126,15 @@
         </dependency>
 
         <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+            <version>${caffeine.version}</version>
+        </dependency>
+
+        <dependency>
             <groupId>com.aliyun.oss</groupId>
             <artifactId>aliyun-sdk-oss</artifactId>
         </dependency>
-
 
         <dependency>
             <groupId>com.google.protobuf</groupId>
@@ -142,7 +149,17 @@
             <artifactId>mockito-inline</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>it.unimi.dsi</groupId>
+            <artifactId>fastutil</artifactId>
+            <version>8.5.4</version>
+            <scope>compile</scope>
+        </dependency>
 
+        <dependency>
+            <groupId>com.alibaba.polardbx</groupId>
+            <artifactId>polardbx-cache</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.roaringbitmap</groupId>
             <artifactId>RoaringBitmap</artifactId>

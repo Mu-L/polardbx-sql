@@ -45,7 +45,7 @@ public interface ITsoTransaction extends IMppTsoTransaction {
         return tso;
     }
 
-    default void updateSnapshotTimestamp() {
+    default void updateSnapshotTimestamp(long tso) {
         // do nothing
     }
 

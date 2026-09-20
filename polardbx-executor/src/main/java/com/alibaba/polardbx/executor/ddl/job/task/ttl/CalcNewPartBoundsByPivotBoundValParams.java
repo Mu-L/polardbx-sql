@@ -10,6 +10,7 @@ import com.alibaba.polardbx.optimizer.ttl.TtlTimeUnit;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 /**
@@ -17,6 +18,7 @@ import java.util.TreeMap;
  */
 public class CalcNewPartBoundsByPivotBoundValParams {
     protected TtlDefinitionInfo ttlInfo;
+    protected TtlPartitionUtil.TtlColValueCalcContext calcContext;
     protected String pivotBoundValue;
     protected String ttlTimeZone;
     protected Integer preBuildCnt;
@@ -34,6 +36,13 @@ public class CalcNewPartBoundsByPivotBoundValParams {
     protected List<Pair<String, String>> newAddPartSpecInfosOutput;
     protected Map<String, TtlPartitionUtil.TtlColBoundValue> newAddPartSpecMappingsOutput =
         new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+
+    /**
+     * Names of existing range partitions that are classified as user-reserved (bound beyond threshold).
+     * When a new bound routes to one of these reserved partitions, it should still be added
+     * (the reserved partition will act as a split target), instead of being skipped as "already covered".
+     */
+    protected Set<String> reservedPartNames;
 
     public CalcNewPartBoundsByPivotBoundValParams() {
     }
@@ -175,5 +184,22 @@ public class CalcNewPartBoundsByPivotBoundValParams {
     public void setNewAddPartSpecMappingsOutput(
         Map<String, TtlPartitionUtil.TtlColBoundValue> newAddPartSpecMappingsOutput) {
         this.newAddPartSpecMappingsOutput = newAddPartSpecMappingsOutput;
+    }
+
+    public TtlPartitionUtil.TtlColValueCalcContext getCalcContext() {
+        return calcContext;
+    }
+
+    public void setCalcContext(
+        TtlPartitionUtil.TtlColValueCalcContext calcContext) {
+        this.calcContext = calcContext;
+    }
+
+    public Set<String> getReservedPartNames() {
+        return reservedPartNames;
+    }
+
+    public void setReservedPartNames(Set<String> reservedPartNames) {
+        this.reservedPartNames = reservedPartNames;
     }
 }

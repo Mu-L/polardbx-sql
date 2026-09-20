@@ -16,7 +16,6 @@
 
 package com.alibaba.polardbx.executor.balancer.stats;
 
-import com.alibaba.druid.util.JdbcUtils;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
@@ -69,6 +68,7 @@ import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeFieldImpl;
 import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.NotNull;
 
 import javax.annotation.Nullable;
@@ -79,6 +79,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -428,55 +429,6 @@ public class StatsUtils {
         return res;
     }
 
-    private static RelDataTypeFieldImpl convertRelField(int index, ColumnMeta columnMeta) {
-        return new RelDataTypeFieldImpl(columnMeta.getName(), index, columnMeta.getField().getRelType());
-    }
-
-    public static RelDataType partitionKeyRowType(List<ColumnMeta> columnsMeta) {
-        RelDataTypeFactory typeFactory = new JavaTypeFactoryImpl();
-        List<RelDataTypeFieldImpl> fields =
-            IntStream.range(0, columnsMeta.size())
-                .mapToObj(x -> convertRelField(x, columnsMeta.get(x)))
-                .collect(Collectors.toList());
-        return typeFactory.createStructType(fields);
-    }
-
-    /**
-     * Query a physical group, and case type
-     */
-    public static List<SearchDatumInfo> queryGroupTyped(String schema, String physicalDb,
-                                                        List<DataType> resultTypes,
-                                                        String sql) {
-
-        ExecutorContext ec = ExecutorContext.getContext(schema);
-        String groupName = GroupInfoUtil.buildGroupNameFromPhysicalDb(physicalDb);
-        IGroupExecutor ge = ec.getTopologyExecutor().getGroupExecutor(groupName);
-        List<SearchDatumInfo> result = new ArrayList<>();
-
-        try (Connection conn = ge.getDataSource().getConnection();
-            Statement stmt = conn.createStatement();
-            ResultSet rs = stmt.executeQuery(sql)) {
-
-            int columns = rs.getMetaData().getColumnCount();
-            while (rs.next()) {
-                List<PartitionField> row = new ArrayList<>();
-                for (int i = 1; i <= columns; i++) {
-                    DataType objType = resultTypes.get(i - 1);
-                    PartitionField field = PartitionFieldBuilder.createField(objType);
-                    field.store(rs, i);
-
-                    row.add(field);
-                }
-
-                result.add(SearchDatumInfo.createFromFields(row));
-            }
-
-            return result;
-        } catch (SQLException e) {
-            throw GeneralUtil.nestedException(e);
-        }
-    }
-
     /**
      * Query a physical group
      * NOTE: it's not safe to use ResultSet::getObject when type casting
@@ -525,15 +477,6 @@ public class StatsUtils {
     }
 
     /**
-     * Query a physical group
-     * NOTE: it's not safe to use ResultSet::getObject when type casting
-     */
-    public static List<List<Object>> queryGroupByPhyDb(String schema, String physicalDb, String sql) {
-        String groupName = GroupInfoUtil.buildGroupNameFromPhysicalDb(physicalDb);
-        return queryGroupByGroupName(schema, groupName, sql);
-    }
-
-    /**
      * Query statistics of a table-group
      * <p>
      * Hierarchy:
@@ -561,11 +504,12 @@ public class StatsUtils {
 
         // Group all partition-groups by physical database, to avoid iterate all partitions
         allPgList.stream()
-            .collect(Collectors.groupingBy(x -> x.phy_db))
-            .forEach((physicalDb, pgList) -> {
+            .collect(Collectors.groupingBy(x -> x.getGroup_Name()))
+            .forEach((groupName, pgList) -> {
+                String physicalDb = pgList.get(0).getPhy_db();
                 String sql = genQueryPartitionGroupStatsSQL(physicalDb);
 
-                List<List<Object>> rows = queryGroupByPhyDb(schema, physicalDb, sql);
+                List<List<Object>> rows = queryGroupByGroupName(schema, groupName, sql);
 //                SQLRecorderLogger.ddlLogger.info(
 //                    String.format("got group for phydb stats for schema(%s): %s", schema, JSON.toJSONString(rows)));
 
@@ -603,11 +547,12 @@ public class StatsUtils {
 
         // Group all partition-groups by physical database, to avoid iterate all partitions
         allPgList.stream()
-            .collect(Collectors.groupingBy(x -> x.phy_db))
-            .forEach((physicalDb, pgList) -> {
+            .collect(Collectors.groupingBy(x -> x.getGroup_Name()))
+            .forEach((groupName, pgList) -> {
+                String physicalDb = pgList.get(0).getPhy_db();
                 String sql = genQueryPartitionGroupStatsSQLFromTableSpace(physicalDb);
 
-                List<List<Object>> rows = queryGroupByPhyDb(schema, physicalDb, sql);
+                List<List<Object>> rows = queryGroupByGroupName(schema, groupName, sql);
 
                 for (List<Object> row : rows) {
                     MySQLTableSpacesRowVO rowVO = MySQLTableSpacesRowVO.fromRow(row);
@@ -667,10 +612,11 @@ public class StatsUtils {
 
     /**
      * Query phyDbNames of a logical db
+     * dbGroupNames: schema->groupNames, only one group saved for the same storage instId under the same schema
      */
-    public static void queryPhyDbNames(Set<String> schemaNames, Map<String, Set<String>> dbPhyDbNames,
-                                       Map<String, Set<String>> dbAllPhyDbNames,
-                                       Map<String, Pair<String, String>> storageInstIdGroupNames) {
+    public static void querySchemaPhyDbAndGroupNames(Set<String> schemaNames, Map<String, Set<String>> dbGroupNames,
+                                                     Map<String, Set<String>> dbAllPhyDbNames,
+                                                     Map<String, Pair<String, String>> groupStorageInstIdPhyDbPair) {
         Map<String, Set<String>> dbStorageInstIds = new HashMap<>();
         try (Connection metaDbConn = MetaDbDataSource.getInstance().getConnection()) {
 
@@ -687,7 +633,7 @@ public class StatsUtils {
                 String phyDbName = groupDetailInfoExRecord.phyDbName;
 
                 String groupName = groupDetailInfoExRecord.groupName;
-                storageInstIdGroupNames.put(phyDbName, new Pair<>(instId, groupName));
+                groupStorageInstIdPhyDbPair.put(groupName, new Pair<>(instId, phyDbName));
 
                 if (schemaNames.contains(dbName)) {
                     Set<String> storageInstIds =
@@ -695,9 +641,9 @@ public class StatsUtils {
                     // add group Name whose storageInstId is first visited
                     if (!storageInstIds.contains(instId)) {
                         storageInstIds.add(instId);
-                        Set<String> phyDbNames =
-                            dbPhyDbNames.computeIfAbsent(dbName.toLowerCase(), x -> new HashSet<>());
-                        phyDbNames.add(phyDbName);
+                        Set<String> groupNames =
+                            dbGroupNames.computeIfAbsent(dbName.toLowerCase(), x -> new HashSet<>());
+                        groupNames.add(groupName);
                     }
                     Set<String> phyDbNames =
                         dbAllPhyDbNames.computeIfAbsent(dbName.toLowerCase(), x -> new HashSet<>());
@@ -788,10 +734,10 @@ public class StatsUtils {
             return phyDbTablesInfo;
         }
 
-        Map<String, Set<String>> dbPhyDbNames = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        Map<String, Set<String>> dbGroupNames = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         Map<String, Set<String>> dbAllPhyDbNames = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
 
-        queryPhyDbNames(schemaNames, dbPhyDbNames, dbAllPhyDbNames, storageInstIdGroupNames);
+        querySchemaPhyDbAndGroupNames(schemaNames, dbGroupNames, dbAllPhyDbNames, storageInstIdGroupNames);
 
         boolean isMeetMax = false;
         int scanTablesNum = 0;
@@ -802,9 +748,9 @@ public class StatsUtils {
                 break;
             }
             // get phy tables info of each logical db (character may be different)
-            Set<String> phyDbNames = dbPhyDbNames.get(schemaName);
+            Set<String> groupNames = dbGroupNames.get(schemaName);
             Set<String> allPhyDbNames = dbAllPhyDbNames.get(schemaName);
-            if (phyDbNames == null || phyDbNames.isEmpty()) {
+            if (groupNames == null || groupNames.isEmpty()) {
                 continue;
             }
 
@@ -817,15 +763,15 @@ public class StatsUtils {
 
             List<List<Object>> rows = new ArrayList<>();
             List<List<Object>> statisticRows = new ArrayList<>();
-            for (String phyDbName : phyDbNames) {
-                List<List<Object>> phyDbs = queryGroupByPhyDb(schemaName, phyDbName, sql);
+            for (String phyDbName : groupNames) {
+                List<List<Object>> phyDbs = queryGroupByGroupName(schemaName, phyDbName, sql);
                 scanTablesNum += phyDbs.size();
                 if (maxScanTablesNum != null && maxScanTablesNum > 0 && scanTablesNum > maxScanTablesNum) {
                     isMeetMax = true;
                     break;
                 }
                 rows.addAll(phyDbs);
-                statisticRows.addAll(queryGroupByPhyDb(schemaName, phyDbName, statisticSql));
+                statisticRows.addAll(queryGroupByGroupName(schemaName, phyDbName, statisticSql));
             }
 
             // add phyDbTablesInfo
@@ -869,10 +815,10 @@ public class StatsUtils {
             return phyDbTablesInfo;
         }
 
-        Map<String, Set<String>> dbPhyDbNames = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        Map<String, Set<String>> dbGroupNames = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         Map<String, Set<String>> dbAllPhyDbNames = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
 
-        queryPhyDbNames(schemaNames, dbPhyDbNames, dbAllPhyDbNames, storageInstIdGroupNames);
+        querySchemaPhyDbAndGroupNames(schemaNames, dbGroupNames, dbAllPhyDbNames, storageInstIdGroupNames);
 
         boolean isMeetMax = false;
         int scanTablesNum = 0;
@@ -883,9 +829,9 @@ public class StatsUtils {
                 break;
             }
             // get phy tables info of each logical db (character may be different)
-            Set<String> phyDbNames = dbPhyDbNames.get(schemaName);
+            Set<String> groupNames = dbGroupNames.get(schemaName);
             Set<String> allPhyDbNames = dbAllPhyDbNames.get(schemaName);
-            if (phyDbNames == null || phyDbNames.isEmpty()) {
+            if (groupNames == null || groupNames.isEmpty()) {
                 continue;
             }
 
@@ -896,8 +842,8 @@ public class StatsUtils {
             String countSql = generateQueryPhyTablesCountSQLForHeatmap(schemaName, allPhyDbNames, indexTableNames);
 
             List<List<Object>> rows = new ArrayList<>();
-            for (String phyDbName : phyDbNames) {
-                Long count = queryCountByPhyDb(schemaName, phyDbName, countSql);
+            for (String groupName : groupNames) {
+                Long count = queryCountByGroupName(schemaName, groupName, countSql);
                 if (count > maxSingleLogicSchemaCount) {
                     continue;
                 }
@@ -907,7 +853,7 @@ public class StatsUtils {
                     break;
                 }
 
-                List<List<Object>> phyDbs = queryGroupByPhyDb(schemaName, phyDbName, sql);
+                List<List<Object>> phyDbs = queryGroupByGroupName(schemaName, groupName, sql);
                 rows.addAll(phyDbs);
             }
 
@@ -926,8 +872,8 @@ public class StatsUtils {
         return phyDbTablesInfo;
     }
 
-    public static Long queryCountByPhyDb(String schemaName, String phyDbName, String countSql) {
-        List<List<Object>> phyDbs = queryGroupByPhyDb(schemaName, phyDbName, countSql);
+    public static Long queryCountByGroupName(String schemaName, String groupName, String countSql) {
+        List<List<Object>> phyDbs = queryGroupByGroupName(schemaName, groupName, countSql);
         if (phyDbs == null) {
             return 0L;
         }
@@ -954,10 +900,10 @@ public class StatsUtils {
             return phyDbTablesInfo;
         }
 
-        Map<String, Set<String>> dbPhyDbNames = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        Map<String, Set<String>> dbGroupNames = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         Map<String, Set<String>> dbAllPhyDbNames = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
 
-        queryPhyDbNames(schemaNames, dbPhyDbNames, dbAllPhyDbNames, storageInstIdGroupNames);
+        querySchemaPhyDbAndGroupNames(schemaNames, dbGroupNames, dbAllPhyDbNames, storageInstIdGroupNames);
 
         boolean isMeetMax = false;
         int scanTablesNum = 0;
@@ -968,9 +914,9 @@ public class StatsUtils {
                 break;
             }
             // get phy tables info of each logical db (character may be different)
-            Set<String> phyDbNames = dbPhyDbNames.get(schemaName);
+            Set<String> groupNames = dbGroupNames.get(schemaName);
             Set<String> allPhyDbNames = dbAllPhyDbNames.get(schemaName);
-            if (phyDbNames == null || phyDbNames.isEmpty()) {
+            if (groupNames == null || groupNames.isEmpty()) {
                 continue;
             }
 
@@ -982,8 +928,8 @@ public class StatsUtils {
                 generateQueryPhyTableStatisticsCountSQLForHeatmap(schemaName, allPhyDbNames, indexTableNames);
 
             List<List<Object>> rows = new ArrayList<>();
-            for (String phyDbName : phyDbNames) {
-                Long count = queryCountByPhyDb(schemaName, phyDbName, countSql);
+            for (String groupName : groupNames) {
+                Long count = queryCountByGroupName(schemaName, groupName, countSql);
                 if (count > maxSingleLogicSchemaCount) {
                     continue;
                 }
@@ -993,7 +939,7 @@ public class StatsUtils {
                     break;
                 }
 
-                List<List<Object>> phyDbs = queryGroupByPhyDb(schemaName, phyDbName, sql);
+                List<List<Object>> phyDbs = queryGroupByGroupName(schemaName, groupName, sql);
                 rows.addAll(phyDbs);
             }
 
@@ -1051,7 +997,7 @@ public class StatsUtils {
                         logicalTableName, partitionGroupId));
                     continue;
                 }
-                String phyDbName = partitionGroupRecord.phy_db.toLowerCase();
+                String phyDbName = partitionGroupRecord.getPhy_db().toLowerCase();
                 String phyTbName = partitionSpec.getLocation().getPhyTableName().toLowerCase();
                 List<Object> row;
                 try {
@@ -1173,7 +1119,7 @@ public class StatsUtils {
                     }
                 }
 
-                String phyDbName = partitionGroupRecord.phy_db.toLowerCase();
+                String phyDbName = partitionGroupRecord.getPhy_db().toLowerCase();
                 String phyTbName = phySpec.getLocation().getPhyTableName().toLowerCase();
                 List<Object> row;
                 try {
@@ -1519,11 +1465,13 @@ public class StatsUtils {
                 Map<String, String> phyDbToGroup = groups.stream()
                     .map(x -> Pair.of(x.getPhyDbName().toLowerCase(), x.groupName))
                     .collect(Collectors.toMap(Pair::getKey, Pair::getValue));
-                List<String> phyDbList = groups.stream().map(x -> x.getPhyDbName()).collect(Collectors.toList());
-                String anchorPhyDb = phyDbList.get(0);
+                List<Pair<String, String>> phyDbGroupList =
+                    groups.stream().map(x -> Pair.of(x.getPhyDbName(), x.getGroupName())).collect(Collectors.toList());
+                String anchorGroup = phyDbGroupList.get(0).getValue();
+                List<String> phyDbList = phyDbGroupList.stream().map(Pair::getKey).collect(Collectors.toList());
                 String sql = genDbGroupSQL(phyDbList);
                 // PhyDbName, DataSizeKB
-                List<List<Object>> rows = queryGroupByPhyDb(schema, anchorPhyDb, sql);
+                List<List<Object>> rows = queryGroupByGroupName(schema, anchorGroup, sql);
                 for (List<Object> row : rows) {
                     String phyDbName = (String) row.get(0);
                     long dataSizeKB = ((BigDecimal) row.get(1)).longValue();
@@ -1566,6 +1514,16 @@ public class StatsUtils {
         );
     }
 
+    public static String genAvgTableRowLengthSQL(String phyDb, Collection<String> phyTableNames) {
+        List<String> phyTableNamesList =
+            phyTableNames.stream().map(TStringUtil::quoteString).collect(Collectors.toList());
+        String phyTableNameStr = StringUtils.join(phyTableNamesList, ",").toString();
+        return String.format(
+            "SELECT IFNULL(`DATA_LENGTH`, 0) DATA_LENGTH, IFNULL(`TABLE_ROWS`, 0) TABLE_ROWS, TABLE_NAME from INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = \"%s\" AND TABLE_NAME IN (%s)",
+            phyDb, phyTableNameStr
+        );
+    }
+
     /**
      * Build a SQL to collect stats of mysql table
      */
@@ -1603,6 +1561,9 @@ public class StatsUtils {
                     try {
                         PartitionInfo partitionInfo = sm.getTable(tableName).getPartitionInfo();
                         pattern = partitionInfo.getTableNamePattern();
+                        if (pattern == null) {
+                            pattern = tableName;
+                        }
                     } catch (Exception ex) {
                         pattern = tableName;
                     }

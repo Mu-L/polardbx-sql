@@ -47,7 +47,8 @@ public class GlobalReleaseMdlLockInDbSyncTask extends BaseSyncTask {
     @Override
     public void executeImpl(ExecutionContext executionContext) {
         try {
-            SyncManagerHelper.sync(new GlobalReleaseMdlLockInDbSyncAction(schemaNames), SyncScope.ALL);
+            SyncManagerHelper.syncThrowExceptions(new GlobalReleaseMdlLockInDbSyncAction(schemaNames),
+                SyncScope.MASTER_ONLY);
         } catch (Throwable t) {
             LOGGER.error(String.format(
                 "error occurs while sync table meta, schemaName:%s", schemaNames));

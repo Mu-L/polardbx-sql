@@ -37,9 +37,7 @@ not allowed
 ## error_msg: $# not allowed #$
 alter table my_bro_t1 modify ttl set ttl_expr = `b` expire after 2 month timezone '+08:00';
 not allowed
-## error_msg: $# not allowed #$
 alter table my_sin_t1 modify ttl set ttl_expr = `b` expire after 2 month timezone '+08:00';
-not allowed
 ## error_msg: $# not allowed #$
 alter table ttl_test_drds_db2.my_dbpart_t1 modify ttl set ttl_expr = `b` expire after 2 month timezone '+08:00';
 not allowed

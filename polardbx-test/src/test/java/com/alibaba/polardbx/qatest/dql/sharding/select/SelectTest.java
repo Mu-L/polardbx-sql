@@ -18,6 +18,7 @@ package com.alibaba.polardbx.qatest.dql.sharding.select;
 
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.qatest.CrudBasedLockTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.ReadBaseTestCase;
 import com.alibaba.polardbx.qatest.data.ColumnDataGenerator;
 import com.alibaba.polardbx.qatest.data.ExecuteTableName;
@@ -427,6 +428,7 @@ public class SelectTest {
         /**
          * @since 5.3.12
          */
+        @IcbcIgnore(ignoreReason = "SQL_MODE=ONLY_FULL_GROUP_BY")
         @Test
         public void distinctOrderBy3Test() throws Exception {
             if (usingNewPartDb()) {

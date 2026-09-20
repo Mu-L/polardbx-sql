@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.qatest.ddl.sharding.ddl;
 
 import com.alibaba.polardbx.qatest.AsyncDDLBaseNewDBTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.qatest.util.PropertiesUtil;
 import com.alibaba.polardbx.qatest.validator.RuleValidator;
@@ -108,7 +109,7 @@ public class CreateTableTest extends AsyncDDLBaseNewDBTestCase {
         dropTableIfExists(tableNewName);
 
         String sql = "create table if not exists " + tableName
-            + " (id int,name varchar(30),primary key(id)) CHARSET=utf8mb4";
+            + " (id int,name varchar(30),primary key(id)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         runInsertOneForTable(tableName);
 
@@ -211,7 +212,7 @@ public class CreateTableTest extends AsyncDDLBaseNewDBTestCase {
             + "  `id` bigint(11) NOT NULL AUTO_INCREMENT,\n"
             + "  `name-name` varchar(20) DEFAULT NULL,\n"
             + "  PRIMARY KEY (`id`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 dbpartition by hash(`name-name`) tbpartition by hash(`name-name`) tbpartitions 2;";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci dbpartition by hash(`name-name`) tbpartition by hash(`name-name`) tbpartitions 2;";
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 
         String showCreateTableString = showCreateTable(tddlConnection, tableName);
@@ -233,7 +234,7 @@ public class CreateTableTest extends AsyncDDLBaseNewDBTestCase {
 
         String sql = "create table if not exists "
             + tableName
-            + " (id int, name varchar(30), primary key(id)) dbpartition by hash(id) CHARSET=utf8mb4 dbpartitions 2";
+            + " (id int, name varchar(30), primary key(id)) dbpartition by hash(id) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci dbpartitions 2";
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         runInsertOneForTable(tableName);
 
@@ -263,7 +264,7 @@ public class CreateTableTest extends AsyncDDLBaseNewDBTestCase {
 
         String sql = "create table if not exists "
             + tableName
-            + " (id int, name varchar(30), primary key(id)) dbpartition by hash(id) CHARSET=utf8mb4 dbpartitions 2";
+            + " (id int, name varchar(30), primary key(id)) dbpartition by hash(id) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci dbpartitions 2";
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         runInsertOneForTable(tableName);
 
@@ -293,7 +294,7 @@ public class CreateTableTest extends AsyncDDLBaseNewDBTestCase {
 
         String sql = "create table if not exists "
             + tableName
-            + " (id int, name varchar(30), primary key(id)) CHARSET=utf8mb4 dbpartition by hash(id) dbpartitions 2";
+            + " (id int, name varchar(30), primary key(id)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci dbpartition by hash(id) dbpartitions 2";
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         runInsertOneForTable(tableName);
 
@@ -335,7 +336,7 @@ public class CreateTableTest extends AsyncDDLBaseNewDBTestCase {
             + "  KEY `l_i_order` (`order_id`),\n"
             + "  GLOBAL INDEX g_i_seller(`seller_id`) COVERING (`id`, `order_id`) DBPARTITION BY hash(`seller_id`) TBPARTITION BY hash(`seller_id`) TBPARTITIONS 4,\n"
             + "  UNIQUE GLOBAL g_i_buyer (`buyer_id`) COVERING (`id`, `order_id`, `order_snapshot`) DBPARTITION BY hash(`buyer_id`)\n"
-            + ") ENGINE = InnoDB CHARSET = utf8mb4 dbpartition by hash(`order_id`)";
+            + ") ENGINE = InnoDB CHARSET = utf8mb4 COLLATE=utf8mb4_general_ci dbpartition by hash(`order_id`)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         String showCreateTableString = showCreateTable(tddlConnection, tableName);
         Assert.assertTrue(showCreateTableString.contains("dbpartition by hash(`order_id`)"));
@@ -362,7 +363,7 @@ public class CreateTableTest extends AsyncDDLBaseNewDBTestCase {
 
         String sql = "create table if not exists "
             + tableName
-            + " (id int, name varchar(30), primary key(id)) dbpartition by hash(id) CHARSET=utf8mb4 dbpartitions 2";
+            + " (id int, name varchar(30), primary key(id)) dbpartition by hash(id) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci dbpartitions 2";
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         runInsertOneForTable(tableName);
 
@@ -412,7 +413,7 @@ public class CreateTableTest extends AsyncDDLBaseNewDBTestCase {
 
         String sql = "create table if not exists "
             + tableName
-            + " (`key` int, name varchar(30), primary key(`key`)) CHARSET=utf8mb4 dbpartition by hash(`key`) dbpartitions 2";
+            + " (`key` int, name varchar(30), primary key(`key`)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci dbpartition by hash(`key`) dbpartitions 2";
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         runInsertOneForTableWithKeyName(tableName, "`key`");
 
@@ -811,6 +812,7 @@ public class CreateTableTest extends AsyncDDLBaseNewDBTestCase {
     /**
      * @since 5.1.21
      */
+    @IcbcIgnore(ignoreReason = "MyISAM")
     @Test
     public void testCreateTableWithAutoIncrementInMyISAM() throws SQLException {
         String simpleTableName = testTableName + "_7";
@@ -2377,7 +2379,7 @@ public class CreateTableTest extends AsyncDDLBaseNewDBTestCase {
         JdbcUtil.executeUpdate(tddlConnection, "drop table if exists " + tableName);
         String sql = "CREATE TABLE " + tableName + " (" + "  `order_seq` bigint(22) NOT NULL COMMENT '订单编号',"
             + "  `create_time` timestamp(3) NULL DEFAULT NULL COMMENT '创建订单时间',"
-            + "  PRIMARY KEY (`order_seq`)" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+            + "  PRIMARY KEY (`order_seq`)" + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ";
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
     }
 
@@ -2414,7 +2416,7 @@ public class CreateTableTest extends AsyncDDLBaseNewDBTestCase {
             + "  `id` BIGINT UNSIGNED NOT NULL  AUTO_INCREMENT,\n"
             + "  `name` VARCHAR(255) NULL,\n"
             + "  PRIMARY KEY (id)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 dbpartition by HASH(id) tbpartition by HASH(id) tbpartitions 2;";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci dbpartition by HASH(id) tbpartition by HASH(id) tbpartitions 2;";
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         try {
             JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
@@ -2437,7 +2439,7 @@ public class CreateTableTest extends AsyncDDLBaseNewDBTestCase {
             + "  `id1` BIGINT  NOT NULL,\n"
             + "  `name` VARCHAR(255) NULL,\n"
             + "  PRIMARY KEY (id)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 dbpartition by RANGE_HASH(id, id1, 3) tbpartition by RANGE_HASH(id, id1, 3) tbpartitions 10;";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci dbpartition by RANGE_HASH(id, id1, 3) tbpartition by RANGE_HASH(id, id1, 3) tbpartitions 10;";
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 
         sql = "insert into " + tableName + " values(1000, 1000, 'simiao_test')";
@@ -2488,7 +2490,7 @@ public class CreateTableTest extends AsyncDDLBaseNewDBTestCase {
             + "  `id1` BIGINT  NOT NULL,\n"
             + "  `name` VARCHAR(255) NULL,\n"
             + "  PRIMARY KEY (id)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 dbpartition by RANGE_HASH1(id, id1, 3) tbpartition by RANGE_HASH1(id, id1, 3) tbpartitions 10;";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci dbpartition by RANGE_HASH1(id, id1, 3) tbpartition by RANGE_HASH1(id, id1, 3) tbpartitions 10;";
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 
         sql = "insert into " + tableName + " values(1000, 1000, 'simiao_test')";
@@ -2539,7 +2541,7 @@ public class CreateTableTest extends AsyncDDLBaseNewDBTestCase {
             + "  `id1` BIGINT NOT NULL,\n"
             + "  `name` VARCHAR(255) NULL,\n"
             + "  PRIMARY KEY (id)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 dbpartition by RANGE_HASH1(id, id1, 3) tbpartition by RANGE_HASH1(id, id1, 3) tbpartitions 10;";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci dbpartition by RANGE_HASH1(id, id1, 3) tbpartition by RANGE_HASH1(id, id1, 3) tbpartitions 10;";
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 
         sql = "show create table " + tableName + " ";

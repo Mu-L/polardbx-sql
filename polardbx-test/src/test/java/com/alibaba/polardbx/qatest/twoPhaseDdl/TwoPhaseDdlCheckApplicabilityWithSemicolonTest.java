@@ -41,6 +41,7 @@ public class TwoPhaseDdlCheckApplicabilityWithSemicolonTest extends DDLBaseNewDB
 
     @Before
     public void init() {
+        this.schemaPrefix = "check_applicability_semicolon_";
         this.tableName = schemaPrefix + randomTableName("two_phase", 4);
     }
 

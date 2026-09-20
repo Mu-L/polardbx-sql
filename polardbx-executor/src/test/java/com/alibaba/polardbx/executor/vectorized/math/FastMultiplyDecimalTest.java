@@ -2,6 +2,8 @@ package com.alibaba.polardbx.executor.vectorized.math;
 
 import com.alibaba.polardbx.common.datatype.Decimal;
 import com.alibaba.polardbx.common.datatype.FastDecimalUtils;
+import com.alibaba.polardbx.common.properties.ConnectionProperties;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.DecimalBlock;
 import com.alibaba.polardbx.executor.chunk.DecimalBlockBuilder;
@@ -88,6 +90,7 @@ public class FastMultiplyDecimalTest {
 
     @Test
     public void testMultiplyDecimal64() {
+        DynamicConfig.getInstance().loadValue(null, ConnectionProperties.ENABLE_DECIMAL_128, "true");
         final VectorizedExpression[] children = new VectorizedExpression[2];
         children[0] = new InputRefVectorizedExpression(leftDecimalType, 0, 0);
         children[1] = new InputRefVectorizedExpression(rightDecimalType, 1, 1);
@@ -110,6 +113,51 @@ public class FastMultiplyDecimalTest {
             Assert.assertTrue("Output should be decimal64 when not overflowed", outputBlock.isDecimal64());
         } else {
             Assert.assertTrue("Output should be decimal128 when overflowed", outputBlock.isDecimal128());
+        }
+
+        // check result
+        Assert.assertEquals("Incorrect output block positionCount", COUNT, outputBlock.getPositionCount());
+        if (withSelection) {
+            for (int i = 0; i < sel.length; i++) {
+                int j = sel[i];
+                Assert.assertEquals("Incorrect value for: " + leftBlock.getDecimal(j).toString()
+                        + " and " + rightBlock.getDecimal(i).toString() + " at " + i,
+                    targetResult[j], outputBlock.getDecimal(j));
+            }
+        } else {
+            for (int i = 0; i < COUNT; i++) {
+                Assert.assertEquals("Incorrect value for: " + leftBlock.getDecimal(i).toString()
+                        + " and " + rightBlock.getDecimal(i).toString() + " at " + i,
+                    targetResult[i], outputBlock.getDecimal(i));
+            }
+        }
+    }
+
+    @Test
+    public void testMultiplyDecimal64V2() {
+        DynamicConfig.getInstance().loadValue(null, ConnectionProperties.ENABLE_DECIMAL_128, "false");
+        final VectorizedExpression[] children = new VectorizedExpression[2];
+        children[0] = new InputRefVectorizedExpression(leftDecimalType, 0, 0);
+        children[1] = new InputRefVectorizedExpression(rightDecimalType, 1, 1);
+        FastMultiplyDecimalColVectorizedExpression expr = new FastMultiplyDecimalColVectorizedExpression(
+            OUTPUT_INDEX, children);
+
+        MutableChunk chunk = buildDecimal64Chunk();
+        EvaluationContext evaluationContext = new EvaluationContext(chunk, executionContext);
+
+        DecimalBlock outputBlock = (DecimalBlock) Objects.requireNonNull(chunk.slotIn(OUTPUT_INDEX));
+        DecimalBlock leftBlock = (DecimalBlock) Objects.requireNonNull(chunk.slotIn(0));
+        DecimalBlock rightBlock = (DecimalBlock) Objects.requireNonNull(chunk.slotIn(1));
+
+        Assert.assertTrue("Expect to be unallocated before evaluation", outputBlock.isUnalloc());
+
+        expr.eval(evaluationContext);
+
+        Assert.assertFalse("Expect to be allocated after evaluation", outputBlock.isUnalloc());
+        if (!overflow) {
+            Assert.assertTrue("Output should be decimal64 when not overflowed", outputBlock.isDecimal64());
+        } else {
+            Assert.assertTrue("Output should be decimal128 when overflowed", outputBlock.getState().isFull());
         }
 
         // check result
@@ -170,7 +218,7 @@ public class FastMultiplyDecimalTest {
                     // simple mode does not support selection
                     Assert.assertTrue("Expect output block to full when input is simple with selection, got: "
                             + outputBlock.getState(),
-                        outputBlock.isSimple());
+                        outputBlock.getState().isFull());
                 }
             }
         } else {

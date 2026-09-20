@@ -16,12 +16,12 @@
 
 package com.alibaba.polardbx.parser;
 
+import com.alibaba.polardbx.druid.sql.parser.ByteString;
 import com.alibaba.polardbx.server.parser.ServerParse;
 import com.alibaba.polardbx.server.parser.ServerParseSelect;
 import com.alibaba.polardbx.server.parser.ServerParseSet;
 import com.alibaba.polardbx.server.parser.ServerParseShow;
 import com.alibaba.polardbx.server.parser.ServerParseStart;
-import com.alibaba.polardbx.druid.sql.parser.ByteString;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -378,5 +378,31 @@ public class ServerParserTest {
             ServerParseSelect.parse("select polardb_version from a", 6, null));
         Assert.assertEquals(ServerParseSelect.OTHER,
             ServerParseSelect.parse("select polardb_version", 6, null));
+    }
+
+    @Test
+    public void testIsShowConnection() {
+        Assert.assertEquals(ServerParseShow.CONNECTION, ServerParseShow.parse("show connection", 4));
+        Assert.assertEquals(ServerParseShow.CONNECTION, ServerParseShow.parse("SHOW CONNECTION", 4));
+        Assert.assertEquals(ServerParseShow.CONNECTION, ServerParseShow.parse("Show Connection ", 4));
+    }
+
+    @Test
+    public void testIsShowFullConnection() {
+        Assert.assertEquals(ServerParseShow.FULL_CONNECTION, ServerParseShow.parse("show full connection", 4));
+        Assert.assertEquals(ServerParseShow.FULL_CONNECTION, ServerParseShow.parse("SHOW FULL CONNECTION", 4));
+        Assert.assertEquals(ServerParseShow.FULL_CONNECTION, ServerParseShow.parse("Show Full Connection ", 4));
+    }
+
+    @Test
+    public void testIsShowFullConnectionLocal() {
+        Assert.assertEquals(ServerParseShow.FULL_CONNECTION_LOCAL,
+            ServerParseShow.parse("show full connection_local", 4));
+        Assert.assertEquals(ServerParseShow.FULL_CONNECTION_LOCAL,
+            ServerParseShow.parse("SHOW FULL CONNECTION_LOCAL", 4));
+        Assert.assertEquals(ServerParseShow.FULL_CONNECTION_LOCAL,
+            ServerParseShow.parse("Show Full Connection_Local ", 4));
+        Assert.assertEquals(ServerParseShow.FULL_CONNECTION_LOCAL,
+            ServerParseShow.parse("show FULL connection_LOCAL", 4));
     }
 }

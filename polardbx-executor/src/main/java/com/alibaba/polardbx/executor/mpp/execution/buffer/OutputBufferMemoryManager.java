@@ -18,6 +18,8 @@ package com.alibaba.polardbx.executor.mpp.execution.buffer;
 
 import com.alibaba.polardbx.common.exception.MemoryNotEnoughException;
 import com.alibaba.polardbx.executor.mpp.execution.SystemMemoryUsageListener;
+import com.alibaba.polardbx.common.BlockingReason;
+import com.alibaba.polardbx.common.BlockingState;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
 
@@ -36,7 +38,11 @@ public class OutputBufferMemoryManager {
     protected final AtomicLong bufferedBytes = new AtomicLong();
 
     @GuardedBy("this")
-    protected SettableFuture<?> notFull;
+    protected SettableFuture notFull;
+    protected long notFullStartTime;
+    protected static final BlockingState NOT_FULL_BLOCKING_STATE = BlockingState.create(
+        BlockingReason.LOCAL_BUFFER_NOT_FULL, 0L
+    );
 
     protected final AtomicBoolean blockOnFull = new AtomicBoolean(true);
 
@@ -51,7 +57,7 @@ public class OutputBufferMemoryManager {
         this.notificationExecutor = requireNonNull(notificationExecutor, "notificationExecutor is null");
 
         notFull = SettableFuture.create();
-        notFull.set(null);
+        notFull.set(NOT_FULL_BLOCKING_STATE);
     }
 
     public synchronized void updateMemoryUsage(long bytesAdded) {
@@ -65,14 +71,19 @@ public class OutputBufferMemoryManager {
             // Complete future in a new thread to avoid making a callback on the caller thread.
             // This make is easier for callers to use this class since they can update the memory
             // usage while holding locks.
-            SettableFuture<?> future = this.notFull;
-            notificationExecutor.execute(() -> future.set(null));
+            SettableFuture future = this.notFull;
+            notificationExecutor.execute(() -> {
+                future.set(BlockingState.create(
+                    BlockingReason.LOCAL_BUFFER_NOT_FULL, System.nanoTime() - notFullStartTime
+                ));
+            });
         }
     }
 
     public synchronized ListenableFuture<?> getNotFullFuture() {
         if (isFull() && notFull.isDone()) {
             notFull = SettableFuture.create();
+            notFullStartTime = System.nanoTime();
         }
         return notFull;
     }
@@ -80,8 +91,12 @@ public class OutputBufferMemoryManager {
     public synchronized void setNoBlockOnFull() {
         blockOnFull.set(false);
         // Complete future in a new thread to avoid making a callback on the caller thread.
-        SettableFuture<?> future = notFull;
-        notificationExecutor.execute(() -> future.set(null));
+        SettableFuture future = notFull;
+        notificationExecutor.execute(() -> {
+            future.set(BlockingState.create(
+                BlockingReason.LOCAL_BUFFER_NOT_FULL, System.nanoTime() - notFullStartTime
+            ));
+        });
     }
 
     public long getBufferedBytes() {

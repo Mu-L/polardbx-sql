@@ -25,7 +25,6 @@ import com.alibaba.polardbx.qatest.entity.ColumnEntity;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.qatest.util.PropertiesUtil;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import org.apache.commons.lang.RandomStringUtils;
 import org.junit.Assert;
@@ -610,6 +609,7 @@ public class InsertTest extends CrudBasedLockTestCase {
      */
     @Test
     public void insertErrorTypeFiledTest() throws Exception {
+        setSqlMode("STRICT_TRANS_TABLES", tddlConnection);
         String sql = "insert into " + baseOneTableName + " (pk,datetime_test,varchar_test)values(?,?,?)";
         List<Object> param = new ArrayList<Object>();
         param.add(columnDataGenerator.pkValue);
@@ -1287,41 +1287,41 @@ public class InsertTest extends CrudBasedLockTestCase {
 
     @Test
     public void insertWithView() {
-        final String viewName = "insert_with_view_test_view";
+        final String viewName = randomTableName("insert_with_view_test_view", 12);
+        dropViewOnMysqlAndTddl(viewName);
+        try {
+            String sql = String.format("create view %s as\n"
+                + "(\n"
+                + "    select integer_test, varchar_test from %s as a where a.pk < 11 \n"
+                + ")\n", viewName, baseOneTableName);
+            executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
 
-        // Recreate view
-        String sql = "drop view " + viewName;
-        JdbcUtil.executeUpdateSuccessIgnoreErr(tddlConnection, sql, ImmutableSet.of("Unknown view"));
-        JdbcUtil.executeUpdateSuccessIgnoreErr(mysqlConnection, sql, ImmutableSet.of("Unknown table"));
+            // Execute update
+            sql = String.format("insert into %s(pk, bigint_test, varchar_test) "
+                + "select integer_test + 100, integer_test, varchar_test from %s v", baseOneTableName, viewName);
+            executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
 
-        sql = String.format("create view %s as\n"
-            + "(\n"
-            + "    select integer_test, varchar_test from %s as a where a.pk < 11 \n"
-            + ")\n", viewName, baseOneTableName);
-        executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
+            // Check update result
+            sql = "SELECT bigint_test, varchar_test FROM " + baseOneTableName;
+            selectContentSameAssert(sql, null, mysqlConnection, tddlConnection, true);
 
-        // Execute update
-        sql = String.format("insert into %s(pk, bigint_test, varchar_test) "
-            + "select integer_test + 100, integer_test, varchar_test from %s v", baseOneTableName, viewName);
-        executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
-
-        // Check update result
-        sql = "SELECT bigint_test, varchar_test FROM " + baseOneTableName;
-        selectContentSameAssert(sql, null, mysqlConnection, tddlConnection, true);
-
-        // Check error message
-        sql = String.format("insert into %s(integer_test, varchar_test) select integer_test, varchar_test from %s a",
-            viewName, baseOneTableName);
-        executeErrorAssert(tddlConnection, sql, null,
-            MessageFormat.format("{0}'' of the {1} is not updatable", viewName, "INSERT"));
-        sql = String.format("insert into %s(integer_test, varchar_test) values(1, 'a')", viewName);
-        executeErrorAssert(tddlConnection, sql, null,
-            MessageFormat.format("{0}'' of the {1} is not updatable", viewName, "INSERT"));
-        sql = String.format("insert ignore into %s(integer_test, varchar_test) values(1, 'a')", viewName);
-        executeErrorAssert(tddlConnection, sql, null,
-            MessageFormat.format("{0}'' of the {1} is not updatable", viewName, "INSERT"));
-        sql = String.format("replace into %s(integer_test, varchar_test) values(1, 'a')", viewName);
-        executeErrorAssert(tddlConnection, sql, null,
-            MessageFormat.format("{0}'' of the {1} is not updatable", viewName, "REPLACE"));
+            // Check error message
+            sql =
+                String.format("insert into %s(integer_test, varchar_test) select integer_test, varchar_test from %s a",
+                    viewName, baseOneTableName);
+            executeErrorAssert(tddlConnection, sql, null,
+                MessageFormat.format("{0}'' of the {1} is not updatable", viewName, "INSERT"));
+            sql = String.format("insert into %s(integer_test, varchar_test) values(1, 'a')", viewName);
+            executeErrorAssert(tddlConnection, sql, null,
+                MessageFormat.format("{0}'' of the {1} is not updatable", viewName, "INSERT"));
+            sql = String.format("insert ignore into %s(integer_test, varchar_test) values(1, 'a')", viewName);
+            executeErrorAssert(tddlConnection, sql, null,
+                MessageFormat.format("{0}'' of the {1} is not updatable", viewName, "INSERT"));
+            sql = String.format("replace into %s(integer_test, varchar_test) values(1, 'a')", viewName);
+            executeErrorAssert(tddlConnection, sql, null,
+                MessageFormat.format("{0}'' of the {1} is not updatable", viewName, "REPLACE"));
+        } finally {
+            dropViewOnMysqlAndTddl(viewName);
+        }
     }
 }

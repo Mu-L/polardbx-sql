@@ -52,6 +52,9 @@ public class ScheduledJobsRecord implements SystemTableRecord {
     private String schedulePolicy;
     private String tableGroupName;
 
+    public ScheduledJobsRecord() {
+
+    }
     @Override
     public ScheduledJobsRecord fill(ResultSet rs) throws SQLException {
 

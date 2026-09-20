@@ -16,7 +16,6 @@
 
 package com.alibaba.polardbx.optimizer.core.rel.ddl.data;
 
-import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 
 import java.util.Map;
@@ -39,7 +38,7 @@ public class MergeTableGroupPreparedData extends DdlPreparedData {
         this.tableGroupConfigMap = tableGroupConfigMap;
         this.tablesVersion = tablesVersion;
         this.physicalGroups = physicalGroups;
-        this.dbInstMap = dbInstMap;
+        this.groupInstMap = dbInstMap;
         this.force = force;
     }
 
@@ -48,7 +47,7 @@ public class MergeTableGroupPreparedData extends DdlPreparedData {
     private final Map<String, TableGroupConfig> tableGroupConfigMap;
     private final Map<String, Map<String, Long>> tablesVersion;
     private final Set<String> physicalGroups;
-    private final Map<String, String> dbInstMap;
+    private final Map<String, String> groupInstMap;
     private final boolean force;
 
     public Map<String, Map<String, Long>> getTablesVersion() {
@@ -71,8 +70,8 @@ public class MergeTableGroupPreparedData extends DdlPreparedData {
         return tableGroupConfigMap;
     }
 
-    public Map<String, String> getDbInstMap() {
-        return dbInstMap;
+    public Map<String, String> getGroupInstMap() {
+        return groupInstMap;
     }
 
     public boolean isForce() {

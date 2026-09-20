@@ -5,7 +5,9 @@ import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.timezone.InternalTimeZone;
 import com.alibaba.polardbx.common.utils.timezone.TimeZoneUtils;
+import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.exception.TtlJobRuntimeException;
+import com.alibaba.polardbx.executor.ddl.job.task.ttl.log.TtlLoggerUtil;
 import com.alibaba.polardbx.gms.util.PartitionNameUtil;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
@@ -34,9 +36,12 @@ import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruner;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPrunerUtils;
 import com.alibaba.polardbx.optimizer.partition.pruning.SearchDatumComparator;
 import com.alibaba.polardbx.optimizer.partition.pruning.SearchDatumInfo;
+import com.alibaba.polardbx.optimizer.ttl.TtlColFuncExprInfo;
 import com.alibaba.polardbx.optimizer.ttl.TtlDefinitionInfo;
 import com.alibaba.polardbx.optimizer.ttl.TtlTimeUnit;
+import com.alibaba.polardbx.optimizer.ttl.TtlUtil;
 import com.alibaba.polardbx.optimizer.utils.SqlIdentifierUtil;
+import io.airlift.slice.Slice;
 import lombok.Data;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
@@ -52,7 +57,9 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.TreeSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 /**
@@ -128,6 +135,14 @@ public class TtlPartitionUtil {
         protected Integer postBuildNewPartCount;
         protected Boolean expiredByOverPartCount;
         protected ExecutionContext ec;
+        protected TtlColValueCalcContext calcContext;
+        protected Boolean enableSplitFromNearestPart = false;
+
+        /**
+         * The gap count (in units of arc-part-interval) beyond current time that identifies
+         * user-reserved range partitions not managed by TTL. Default -1 means infinity.
+         */
+        protected Integer reservedPartGapCount = -1;
 
         public BuildPrePartCalcParams() {
         }
@@ -147,6 +162,31 @@ public class TtlPartitionUtil {
         public void setPreBuildTargetBoundValStr(String preBuildTargetBoundValStr) {
             this.preBuildTargetBoundValStr = preBuildTargetBoundValStr;
         }
+
+        public TtlColValueCalcContext getCalcContext() {
+            return calcContext;
+        }
+
+        public void setCalcContext(
+            TtlColValueCalcContext calcContext) {
+            this.calcContext = calcContext;
+        }
+
+        public Boolean getEnableSplitFromNearestPart() {
+            return enableSplitFromNearestPart;
+        }
+
+        public void setEnableSplitFromNearestPart(Boolean enableSplitFromNearestPart) {
+            this.enableSplitFromNearestPart = enableSplitFromNearestPart;
+        }
+
+        public Integer getReservedPartGapCount() {
+            return reservedPartGapCount;
+        }
+
+        public void setReservedPartGapCount(Integer reservedPartGapCount) {
+            this.reservedPartGapCount = reservedPartGapCount;
+        }
     }
 
     @Data
@@ -161,6 +201,27 @@ public class TtlPartitionUtil {
          * val of pair: newPartSpecBoundStr
          */
         protected List<Pair<String, String>> newAddPartSpecInfos = new ArrayList<>();
+
+        /**
+         * The selected single split source partition name for nearest split optimization.
+         */
+        protected String splitSourcePartName = null;
+
+        /**
+         * The original upper bound string of splitSourcePartName.
+         * Used when split source is not a MAXVALUE partition.
+         */
+        protected String splitSourceUpperBound = null;
+
+        /**
+         * Whether the splitSourcePartName is a MAXVALUE partition.
+         */
+        protected Boolean splitSourceIsMaxVal = null;
+
+        /**
+         * The final new part spec list that should be split from splitSourcePartName.
+         */
+        protected List<Pair<String, String>> finalNewPartsForSplit = new ArrayList<>();
 
         public BuildPrePartCalcResult() {
         }
@@ -178,12 +239,95 @@ public class TtlPartitionUtil {
         }
 
         public String generateAddPartsSql(String sqlHint) {
+            if (Boolean.TRUE.equals(params.getEnableSplitFromNearestPart())
+                && !StringUtils.isEmpty(splitSourcePartName)
+                && !finalNewPartsForSplit.isEmpty()) {
+                return buildSplitPartitionSql(splitSourcePartName, Boolean.TRUE.equals(splitSourceIsMaxVal),
+                    splitSourceUpperBound, finalNewPartsForSplit, sqlHint);
+            }
+            return generateSingleAddPartsSql(sqlHint);
+        }
 
+        private String buildSplitPartitionSql(String srcPartName,
+                                              boolean srcIsMaxVal,
+                                              String srcUpperBound,
+                                              List<Pair<String, String>> newParts,
+                                              String sqlHint) {
             boolean isAlterPartFofCci = this.params.getBuildForCci();
             TtlDefinitionInfo ttlInfo = params.getTtlInfo();
-            String primTableSchema = ttlInfo.getTtlInfoRecord().getTableSchema();
-            String primTblName = ttlInfo.getTtlInfoRecord().getTableName();
-            String cciName = ttlInfo.getTtlInfoRecord().getArcTmpTblName();
+            PartKeyLevel tarPartLevel = this.params.getTargetPartLevel();
+            ExecutionContext ec = params.getEc();
+            boolean useSubPart = tarPartLevel == PartKeyLevel.SUBPARTITION_KEY;
+
+            List<String> newPartNameList = new ArrayList<>();
+            List<String> newPartBndStrList = new ArrayList<>();
+            for (int i = 0; i < newParts.size(); i++) {
+                Pair<String, String> newPart = newParts.get(i);
+                newPartNameList.add(newPart.getKey());
+                newPartBndStrList.add(newPart.getValue());
+            }
+
+            String partBoundDefs = "";
+            List<String> normalizedNewAddPartBoundList =
+                normalizedRangePartBoundValueList(ttlInfo, newPartBndStrList, isAlterPartFofCci, tarPartLevel, ec);
+            for (int i = 0; i < normalizedNewAddPartBoundList.size(); i++) {
+                String bndStr = normalizedNewAddPartBoundList.get(i);
+                String partNameStr = newPartNameList.get(i);
+                String escapedPartName = SqlIdentifierUtil.escapeIdentifierString(partNameStr);
+                String part = null;
+                if (useSubPart) {
+                    part = String.format("SUBPARTITION %s VALUES LESS THAN (%s)", escapedPartName, bndStr);
+                } else {
+                    part = String.format("PARTITION %s VALUES LESS THAN (%s)", escapedPartName, bndStr);
+                }
+                if (!partBoundDefs.isEmpty()) {
+                    partBoundDefs += ",\n";
+                }
+                partBoundDefs += part;
+            }
+
+            String alterContentPart = "";
+            if (srcIsMaxVal) {
+                if (useSubPart) {
+                    alterContentPart = String.format(
+                        "SPLIT SUBPARTITION `%s` INTO ( \n%s, SUBPARTITION `%s` VALUES LESS THAN (MAXVALUE) )",
+                        srcPartName, partBoundDefs, srcPartName);
+                } else {
+                    alterContentPart =
+                        String.format("SPLIT PARTITION `%s` INTO ( \n%s, PARTITION `%s` VALUES LESS THAN (MAXVALUE) )",
+                            srcPartName, partBoundDefs, srcPartName);
+                }
+            } else {
+                /**
+                 * Normalize the src-part upper bound the same way as the new-part bounds
+                 * (add quotes for datetime, wrap with part-func if needed), otherwise a raw datetime
+                 * would be mis-parsed (e.g. VALUES LESS THAN (2098-01-01 00:00:00)).
+                 */
+                String normalizedSrcUpperBound = srcUpperBound;
+                if (srcUpperBound != null) {
+                    List<String> normalizedSrcList = normalizedRangePartBoundValueList(ttlInfo,
+                        java.util.Collections.singletonList(srcUpperBound), isAlterPartFofCci, tarPartLevel, ec);
+                    if (normalizedSrcList != null && !normalizedSrcList.isEmpty()) {
+                        normalizedSrcUpperBound = normalizedSrcList.get(0);
+                    }
+                }
+                if (useSubPart) {
+                    alterContentPart = String.format(
+                        "SPLIT SUBPARTITION `%s` INTO ( \n%s, SUBPARTITION `%s` VALUES LESS THAN (%s) )",
+                        srcPartName, partBoundDefs, srcPartName, normalizedSrcUpperBound);
+                } else {
+                    alterContentPart = String.format(
+                        "SPLIT PARTITION `%s` INTO ( \n%s, PARTITION `%s` VALUES LESS THAN (%s) )",
+                        srcPartName, partBoundDefs, srcPartName, normalizedSrcUpperBound);
+                }
+            }
+
+            return wrapAlterPartStmt(alterContentPart, sqlHint);
+        }
+
+        private String generateSingleAddPartsSql(String sqlHint) {
+            boolean isAlterPartFofCci = this.params.getBuildForCci();
+            TtlDefinitionInfo ttlInfo = params.getTtlInfo();
             PartKeyLevel tarPartLevel = this.params.getTargetPartLevel();
             ExecutionContext ec = params.getEc();
             boolean useSubPart = tarPartLevel == PartKeyLevel.SUBPARTITION_KEY;
@@ -239,12 +383,24 @@ public class TtlPartitionUtil {
                 }
             }
 
+            return wrapAlterPartStmt(alterContentPart, sqlHint);
+        }
+
+        private String wrapAlterPartStmt(String alterContentPart, String sqlHint) {
+            boolean isAlterPartFofCci = this.params.getBuildForCci();
+            TtlDefinitionInfo ttlInfo = params.getTtlInfo();
+            String primTableSchema = ttlInfo.getTtlInfoRecord().getTableSchema();
+            String primTblName = ttlInfo.getTtlInfoRecord().getTableName();
+            String cciName = ttlInfo.getTtlInfoRecord().getArcTmpTblName();
+            ExecutionContext ec = params.getEc();
+
             String skipDdlTasks =
                 ec.getParamManager().getString(ConnectionParams.TTL_DEBUG_CCI_SKIP_DDL_TASKS);
             String queryHint = sqlHint;
             if (!StringUtils.isEmpty(skipDdlTasks)) {
                 queryHint =
-                    TtlTaskSqlBuilder.addCciHint(queryHint, String.format("SKIP_DDL_TASKS=\"%s\"", skipDdlTasks));
+                    TtlTaskSqlBuilder.addNewParamsIntoExtraCmdHint(queryHint,
+                        String.format("SKIP_DDL_TASKS=\"%s\"", skipDdlTasks));
             }
 
             String alterPartStmt = "";
@@ -264,6 +420,7 @@ public class TtlPartitionUtil {
     @Data
     public static class CleanupPostPartsCalcParams {
         protected TtlDefinitionInfo ttlInfo;
+        protected TtlColValueCalcContext calcContext;
         protected boolean cleanupPostPastForCci;
         protected PartKeyLevel targetPartLevel;
         protected String cleanupUpperBoundDatetimeStr;
@@ -338,6 +495,7 @@ public class TtlPartitionUtil {
         boolean calcPrePartSpecsForCci = params.getBuildForCci();
 
         ExecutionContext ec = params.getEc();
+        TtlColValueCalcContext calcContext = params.getCalcContext();
         String pivotPointValStr = params.getPivotPointValStr();
         String preBuildTargetBoundValStr = params.getPreBuildTargetBoundValStr();
         String ttlTimeZone = ttlInfo.getTtlInfoRecord().getTtlTimezone();
@@ -349,12 +507,33 @@ public class TtlPartitionUtil {
         Integer postBuildPartCnt = params.getPostBuildNewPartCount();
         List<Pair<String, String>> newAddPartSpecInfosOutputResult = new ArrayList<>();
 
+        /**
+         * Calc the pivotPoint which is used to calculate new parts
+         */
         PivotPointResult pivotPointResult =
             calcAndBuildPivotPointResult(pivotPointValStr, preBuildTargetBoundValStr, calcPrePartSpecsForCci, ttlInfo,
-                ec);
+                ec, calcContext);
+
+        /**
+         * Compute the user-reserved partition set for CCI nearest split.
+         * Only effective when nearest-split is enabled and gapCount >= 0.
+         * A partition whose bound is beyond (pivot + gapCount * arcPartInterval) is treated as
+         * user-reserved (transparent to TTL, only usable as split target). gapCount = -1 means
+         * infinity (empty reserved set, fully backward-compatible).
+         */
+        Set<String> reservedPartNames = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        Integer reservedGapCnt = params.getReservedPartGapCount();
+        if (Boolean.TRUE.equals(params.getEnableSplitFromNearestPart())
+            && reservedGapCnt != null && reservedGapCnt >= 0) {
+            PartitionByDefinition partByForReserved = TtlPartitionUtil.getTargetPartBy(tarTblMeta, partLevel);
+            reservedPartNames = computeReservedPartNames(partByForReserved, ttlInfo,
+                pivotPointResult.getPreBuildPivotPointStr(), reservedGapCnt,
+                arcPartInterval, arcPartTimeUnit, calcContext, ec);
+        }
 
         CalcNewPartBoundsByPivotBoundValParams calcParams = new CalcNewPartBoundsByPivotBoundValParams();
         calcParams.setTtlInfo(ttlInfo);
+        calcParams.setCalcContext(calcContext);
         calcParams.setPartKeyLevel(partLevel);
         calcParams.setPivotBoundValue(pivotPointResult.getPreBuildPivotPointStr());
         calcParams.setTtlTimeZone(ttlTimeZone);
@@ -367,47 +546,36 @@ public class TtlPartitionUtil {
         calcParams.setUseExpireOver(useExpireOver);
         calcParams.setEc(ec);
         calcParams.setNewAddPartSpecInfosOutput(newAddPartSpecInfosOutputResult);
+        calcParams.setReservedPartNames(reservedPartNames);
 
         CalcNewPartBoundsByPivotBoundValWithTblMetaParams buildParams =
             new CalcNewPartBoundsByPivotBoundValWithTblMetaParams();
         buildParams.setCalcParams(calcParams);
         buildParams.setTarTblMeta(tarTblMeta);
         buildParams.setTarPartKeyLevel(partLevel);
+        /**
+         * Calc the new pre-parts by pivot bound
+         */
         calcNewPartBoundsByPivotBoundValWithTblMeta(buildParams);
 
         PartitionByDefinition partBy = TtlPartitionUtil.getTargetPartBy(tarTblMeta, partLevel);
 
         /**
-         * Find the last not one partition
+         * Find the maxvalue partition and the last TTL-managed non-max-val partition.
+         * Reserved partitions (bound beyond threshold) are skipped so that the "last non-max-val"
+         * baseline reflects the last managed partition instead of a far-future reserved one.
          */
         String maxValPartName = null;
         List<PartitionSpec> tarPartSpecList = partBy.getPartitions();
-        int partCnt = tarPartSpecList.size();
-        PartitionSpec lastPart = null;
-        PartitionSpec lastButOnePart = null;
         PartitionSpec lastNonMaxValPart = null;
-        if (partCnt > 0) {
-            lastPart = tarPartSpecList.get(partCnt - 1);
-            if (partCnt > 1) {
-                lastButOnePart = tarPartSpecList.get(partCnt - 2);
+        for (PartitionSpec ps : tarPartSpecList) {
+            if (ps.getBoundSpec().containMaxValues()) {
+                maxValPartName = ps.getName();
+            } else if (!isReservedPart(reservedPartNames, ps.getName())) {
+                lastNonMaxValPart = ps;
             }
         }
-
-        /**
-         * Find the last non-max-val partition
-         */
-        boolean foundMaxValPart = false;
-        if (lastPart != null) {
-            foundMaxValPart = lastPart.getBoundSpec().containMaxValues();
-            if (foundMaxValPart) {
-                maxValPartName = lastPart.getName();
-                if (lastButOnePart != null) {
-                    lastNonMaxValPart = lastButOnePart;
-                }
-            } else {
-                lastNonMaxValPart = lastPart;
-            }
-        }
+        boolean foundMaxValPart = !StringUtils.isEmpty(maxValPartName);
 
         /**
          * Mark sure that the bound values of
@@ -460,14 +628,239 @@ public class TtlPartitionUtil {
         result.setFoundMaxValPart(!StringUtils.isEmpty(maxValPartName));
         result.setNewAddPartSpecInfos(finalNewAddPartSpecInfos);
 
+        /**
+         * Try to find a nearest non-maxval partition as the single split source.
+         * This is only enabled when the switch is on and there are new partitions to add.
+         */
+        if (Boolean.TRUE.equals(params.getEnableSplitFromNearestPart()) && !finalNewAddPartSpecInfos.isEmpty()) {
+            fillNearestSplitSource(result, tarPartSpecList, newPartBndValMappings, partBy, ec);
+        }
+
         return result;
+    }
+
+    /**
+     * Find the nearest existing range partition that can contain all new parts as the single split source.
+     * If no suitable non-maxval partition found, fallback to the maxval partition.
+     */
+    private static void fillNearestSplitSource(BuildPrePartCalcResult result,
+                                               List<PartitionSpec> tarPartSpecList,
+                                               Map<String, TtlColBoundValue> newPartBndValMappings,
+                                               PartitionByDefinition partBy,
+                                               ExecutionContext ec) {
+        List<PartitionSpec> nonMaxValParts = new ArrayList<>();
+        PartitionSpec maxValPart = null;
+        for (PartitionSpec spec : tarPartSpecList) {
+            if (spec.getBoundSpec().containMaxValues()) {
+                maxValPart = spec;
+            } else {
+                nonMaxValParts.add(spec);
+            }
+        }
+
+        List<Pair<String, String>> finalNewAddPartSpecInfos = result.getNewAddPartSpecInfos();
+        Pair<String, String> firstNewPart = finalNewAddPartSpecInfos.get(0);
+        TtlColBoundValue firstBndVal = newPartBndValMappings.get(firstNewPart.getKey());
+        if (firstBndVal == null) {
+            return;
+        }
+
+        PartitionIntFunction partIntFunc = partBy.getPartIntFunc();
+        ExecutionContext newEc = ec.copy();
+        InternalTimeZone tz =
+            TimeZoneUtils.convertFromMySqlTZ(result.getParams().getTtlInfo().getTtlInfoRecord().getTtlTimezone());
+        newEc.setTimeZone(tz);
+
+        PartitionField firstPartFuncFld =
+            buildPartFuncField(firstBndVal.getPartColValFld(), partBy, partIntFunc, newEc);
+        if (firstPartFuncFld == null) {
+            return;
+        }
+
+        PartitionSpec srcPart = findFirstSrcWhoseUpperBoundGreaterThan(firstPartFuncFld, nonMaxValParts);
+        boolean useMaxValAsSrc = (srcPart == null);
+        if (useMaxValAsSrc) {
+            srcPart = maxValPart;
+        }
+
+        if (srcPart != null && !useMaxValAsSrc) {
+            PartitionField srcUpper = getPartFuncUpperBound(srcPart, partBy, partIntFunc, newEc);
+            if (srcUpper == null) {
+                srcPart = maxValPart;
+                useMaxValAsSrc = true;
+            } else {
+                for (Pair<String, String> newPart : finalNewAddPartSpecInfos) {
+                    TtlColBoundValue bndVal = newPartBndValMappings.get(newPart.getKey());
+                    if (bndVal == null) {
+                        continue;
+                    }
+                    PartitionField partFuncFld =
+                        buildPartFuncField(bndVal.getPartColValFld(), partBy, partIntFunc, newEc);
+                    if (partFuncFld == null) {
+                        continue;
+                    }
+                    if (partFuncFld.compareTo(srcUpper) >= 0) {
+                        srcPart = maxValPart;
+                        useMaxValAsSrc = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (srcPart != null) {
+            result.setSplitSourcePartName(srcPart.getName());
+            result.setSplitSourceIsMaxVal(useMaxValAsSrc);
+            if (!useMaxValAsSrc) {
+                TtlDefinitionInfo ttlInfo = result.getParams().getTtlInfo();
+                TtlColValueCalcContext calcContext = result.getParams().getCalcContext();
+                if (calcContext == null && ttlInfo != null && ttlInfo.isTtlColUseFuncExpr()) {
+                    calcContext = TtlColValueCalcContext.buildBoundValueCalcContext(ttlInfo, ec);
+                }
+                BuildPartFieldStringParams buildParams =
+                    BuildPartFieldStringParams.constructPartFieldStringParams(ttlInfo, calcContext);
+                result.setSplitSourceUpperBound(convertPartSpecUpperBoundToString(srcPart, buildParams));
+            }
+            result.setFinalNewPartsForSplit(finalNewAddPartSpecInfos);
+        }
+    }
+
+    private static PartitionSpec findFirstSrcWhoseUpperBoundGreaterThan(PartitionField targetBndFld,
+                                                                        List<PartitionSpec> nonMaxValParts) {
+        for (PartitionSpec spec : nonMaxValParts) {
+            SearchDatumInfo bndValInfo = spec.getBoundSpec().getSingleDatum();
+            if (bndValInfo == null || bndValInfo.getSingletonValue() == null) {
+                continue;
+            }
+            PartitionBoundValueKind bndValKind = bndValInfo.getSingletonValue().getValueKind();
+            if (bndValKind != PartitionBoundValueKind.DATUM_NORMAL_VALUE) {
+                continue;
+            }
+            PartitionField upperFld = bndValInfo.getSingletonValue().getValue();
+            if (upperFld == null) {
+                continue;
+            }
+            if (upperFld.compareTo(targetBndFld) > 0) {
+                return spec;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Whether the given partition is classified as a user-reserved partition.
+     * A null/empty reserved set means no reserved partitions (fully backward-compatible).
+     */
+    private static boolean isReservedPart(Set<String> reservedPartNames, String partName) {
+        return reservedPartNames != null && reservedPartNames.contains(partName);
+    }
+
+    /**
+     * Compute the set of existing range partitions that are classified as user-reserved.
+     * A non-maxvalue partition whose (part-func) upper bound is beyond
+     * threshold = pivot + gapCount * arcPartInterval is treated as user-reserved.
+     * Returns an empty set on any failure so that the caller falls back to the original behavior.
+     */
+    private static Set<String> computeReservedPartNames(PartitionByDefinition partBy,
+                                                        TtlDefinitionInfo ttlInfo,
+                                                        String pivotValStr,
+                                                        int gapCount,
+                                                        Integer arcPartInterval,
+                                                        TtlTimeUnit arcPartUnit,
+                                                        TtlColValueCalcContext calcContext,
+                                                        ExecutionContext ec) {
+        Set<String> reserved = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        try {
+            ColumnMeta partColMeta = partBy.getPartitionFieldList().get(0);
+            PartKeyLevel partKeyLevel = partBy.getPartLevel();
+            boolean usePartFunc = partBy.getPartIntFunc() != null;
+            TtlColValueCalcContext ctx = calcContext;
+            if (ctx == null) {
+                ctx = TtlColValueCalcContext.buildBoundValueCalcContext(ttlInfo, ec);
+            }
+            TtlColBoundValue pivotVal =
+                TtlColBoundValue.buildPartBoundValue(pivotValStr, partColMeta, partKeyLevel, usePartFunc, ttlInfo, ctx);
+            TtlColBoundValue thresholdVal =
+                pivotVal.plusInterval((long) gapCount * arcPartInterval, arcPartUnit, ctx);
+
+            PartitionIntFunction partIntFunc = partBy.getPartIntFunc();
+            ExecutionContext newEc = ec.copy();
+            InternalTimeZone tz = TimeZoneUtils.convertFromMySqlTZ(ttlInfo.getTtlInfoRecord().getTtlTimezone());
+            newEc.setTimeZone(tz);
+            PartitionField thresholdFld =
+                buildPartFuncField(thresholdVal.getPartColValFld(), partBy, partIntFunc, newEc);
+            if (thresholdFld == null) {
+                return reserved;
+            }
+            for (PartitionSpec spec : partBy.getPartitions()) {
+                if (spec.getBoundSpec().containMaxValues()) {
+                    continue;
+                }
+                PartitionField upperFld = getPartFuncUpperBound(spec, partBy, partIntFunc, newEc);
+                if (upperFld == null) {
+                    continue;
+                }
+                if (upperFld.compareTo(thresholdFld) > 0) {
+                    reserved.add(spec.getName());
+                }
+            }
+        } catch (Throwable ex) {
+            TtlLoggerUtil.TTL_TASK_LOGGER.warn("failed to compute reserved part names for cci nearest split", ex);
+            reserved.clear();
+        }
+        return reserved;
+    }
+
+    private static PartitionField buildPartFuncField(PartitionField partFld,
+                                                     PartitionByDefinition partBy,
+                                                     PartitionIntFunction partIntFunc,
+                                                     ExecutionContext newEc) {
+        if (partFld == null) {
+            return null;
+        }
+        if (partIntFunc != null) {
+            return PartitionPrunerUtils.buildPartFieldByEvalPartFuncExpr(partFld, partBy, newEc);
+        }
+        return partFld;
+    }
+
+    private static PartitionField getPartFuncUpperBound(PartitionSpec spec,
+                                                        PartitionByDefinition partBy,
+                                                        PartitionIntFunction partIntFunc,
+                                                        ExecutionContext newEc) {
+        SearchDatumInfo bndValInfo = spec.getBoundSpec().getSingleDatum();
+        if (bndValInfo == null || bndValInfo.getSingletonValue() == null) {
+            return null;
+        }
+        PartitionBoundValueKind bndValKind = bndValInfo.getSingletonValue().getValueKind();
+        if (bndValKind != PartitionBoundValueKind.DATUM_NORMAL_VALUE) {
+            return null;
+        }
+        PartitionField upperFld = bndValInfo.getSingletonValue().getValue();
+        if (upperFld == null) {
+            return null;
+        }
+        if (partIntFunc != null) {
+            return PartitionPrunerUtils.buildPartFieldByEvalPartFuncExpr(upperFld, partBy, newEc);
+        }
+        return upperFld;
+    }
+
+    private static String convertPartSpecUpperBoundToString(PartitionSpec spec,
+                                                            BuildPartFieldStringParams params) {
+        SearchDatumInfo bndValInfo = spec.getBoundSpec().getSingleDatum();
+        if (bndValInfo == null || bndValInfo.getSingletonValue() == null) {
+            return null;
+        }
+        return convertPartSpecBoundValToString(bndValInfo.getSingletonValue(), params);
     }
 
     protected static @NotNull PivotPointResult calcAndBuildPivotPointResult(String pivotPointValStr,
                                                                             String specifiedPreBuildTargetBoundValStr,
                                                                             boolean calcPrePartSpecsForCci,
                                                                             TtlDefinitionInfo ttlInfo,
-                                                                            ExecutionContext ec) {
+                                                                            ExecutionContext ec,
+                                                                            TtlColValueCalcContext calcContext) {
         Boolean useExpireOver = ttlInfo.useExpireOverPartitionsPolicy();
         Boolean archiveByPartition = ttlInfo.performArchiveByPartitionOrSubPartition();
 
@@ -505,7 +898,8 @@ public class TtlPartitionUtil {
              * and
              * maxBndVal of primTtlPartInfo (preBuildTargetBoundValStr)
              */
-            BuildPartFieldStringParams params = BuildPartFieldStringParams.constructPartFieldStringParams(ttlInfo);
+            BuildPartFieldStringParams params =
+                BuildPartFieldStringParams.constructPartFieldStringParams(ttlInfo, calcContext);
             preBuildPivotPointStr = convertPartSpecBoundValToString(
                 minBndValDatumInfoIgnoreMaxValBndOfPrimTbl.getValue().getSingletonValue(), params);
             preBuildTargetBoundValStr = convertPartSpecBoundValToString(
@@ -517,7 +911,7 @@ public class TtlPartitionUtil {
         String formatedPreBuildPivotPointStr = null;
         if (useExpireOver) {
             /**
-             * when using expireOver policy,
+             * When using expireOver policy,
              * the preBuildPivotPointStr from the first part bound of ttlTblPart,
              * maybe a non-formated bound value,
              * so here do the formatting.
@@ -532,19 +926,31 @@ public class TtlPartitionUtil {
         return result;
     }
 
+    /**
+     * Convert bound value to string,
+     * if the bound is from int-datatype ttl_col which use func expr encoding,
+     * then convert it into iso-formated datetime string
+     * (decode ttl_col if need)
+     */
     private static String convertPartSpecBoundValToString(PartitionBoundVal boundVal,
                                                           BuildPartFieldStringParams params) {
-        return convertPartFieldToString(boundVal.getValue(), params);
+        return convertPartFieldToIsoFormatedDatetimeString(boundVal.getValue(), params);
     }
 
-    private static String convertPartFieldToString(PartitionField partBndFld,
-                                                   BuildPartFieldStringParams params) {
+    /**
+     * Convert the PartitionField of bound value of its original datatype of ttl_col into
+     * the iso-formated datatype string if need
+     * (decoding ttl_col)
+     */
+    private static String convertPartFieldToIsoFormatedDatetimeString(PartitionField partBndFld,
+                                                                      BuildPartFieldStringParams params) {
         if (partBndFld.isNull()) {
             return null;
         }
 
         String partFldStr = partBndFld.stringValue().toStringUtf8();
         boolean isDateType = DataTypeUtil.isDateType(partBndFld.dataType());
+        TtlColValueCalcContext calcContext = params.getCalcContext();
         if (params != null) {
             if (params.isForceReturnPartFldString()) {
                 if (isDateType) {
@@ -552,26 +958,41 @@ public class TtlPartitionUtil {
                 }
                 return partFldStr;
             }
+
+            /**
+             * Perform ttl_col decoding
+             */
             boolean needConvert = params.isNeedConvertNumberToTimestampOrDate();
             if (needConvert) {
                 DataType dt = partBndFld.dataType();
                 if (!DataTypeUtil.isNumberSqlType(dt)) {
                     return partFldStr;
                 }
-                boolean needConvertToDate = params.isNeedConvertNumberToDate();
-                if (needConvertToDate) {
-                    //...
-                    throw new UnsupportedOperationException();
-                }
+//                boolean needConvertToDate = params.isNeedConvertNumberToDate();
+//                if (needConvertToDate) {
+//                    //...
+//                    throw new UnsupportedOperationException();
+//                }
+//
+//                long uxtsNumLongVal = partBndFld.longValue();
+//                boolean treatNumAsTsMillSec = params.isTreatAsUnixTimestampMillsSec();
+//                if (treatNumAsTsMillSec) {
+//                    uxtsNumLongVal = uxtsNumLongVal / 1000;
+//                }
+//                String targetTz = params.getTargetTimeZone();
+//                String tsStr = convertUnixTimestampToZonedDateTimeString(uxtsNumLongVal, targetTz);
+//                partFldStr = tsStr;
 
-                long uxtsNumLongVal = partBndFld.longValue();
-                boolean treatNumAsTsMillSec = params.isTreatAsUnixTimestampMillsSec();
-                if (treatNumAsTsMillSec) {
-                    uxtsNumLongVal = uxtsNumLongVal / 1000;
+                String isoDateTimeFormatedString = null;
+                try {
+                    PartitionField rs = TtlColBoundValue.decodeTtlCol(partBndFld, calcContext);
+                    isoDateTimeFormatedString = rs.stringValue().toStringUtf8();
+                    partFldStr = isoDateTimeFormatedString;
+                } catch (Throwable ex) {
+                    String errMsg = String.format("Failed to perform decoding ttl col by using decoder expr");
+                    TtlLoggerUtil.TTL_TASK_LOGGER.error(errMsg, ex);
+                    throw new TtlJobRuntimeException(ex, errMsg);
                 }
-                String targetTz = params.getTargetTimeZone();
-                String tsStr = convertUnixTimestampToZonedDateTimeString(uxtsNumLongVal, targetTz);
-                partFldStr = tsStr;
             }
         }
         return partFldStr;
@@ -603,7 +1024,14 @@ public class TtlPartitionUtil {
     }
 
     private static class PivotPointResult {
+        /**
+         * The start boundValue point for calculating new parts
+         */
         public final String preBuildPivotPointStr;
+
+        /**
+         * The end boundValue point for calculating new parts
+         */
         public final String preBuildTargetBoundValStr;
 
         public PivotPointResult(String preBuildPivotPointStr, String preBuildTargetBoundValStr) {
@@ -626,6 +1054,7 @@ public class TtlPartitionUtil {
         PartKeyLevel cciPartLevel = PartKeyLevel.PARTITION_KEY;
 
         ExecutionContext ec = params.getEc();
+        TtlColValueCalcContext calcContext = TtlColValueCalcContext.buildBoundValueCalcContext(ttlInfo, ec);
         TableMeta ttlTblMeta = params.getTtlTblMeta();
         String pivotPointValStr = params.getPivotPointValStr();
         String ttlTimeZone = ttlInfo.getTtlInfoRecord().getTtlTimezone();
@@ -646,7 +1075,7 @@ public class TtlPartitionUtil {
                 arcPartTimeUnit);
 
         PivotPointResult pivotPointResult =
-            calcAndBuildPivotPointResult(pivotPointValStr, null, preBuildForCci, ttlInfo, ec);
+            calcAndBuildPivotPointResult(pivotPointValStr, null, preBuildForCci, ttlInfo, ec, calcContext);
 
         String ttlColName = ttlInfo.getTtlInfoRecord().getTtlCol();
         ColumnMeta ttlColMeta = ttlTblMeta.getColumn(ttlColName);
@@ -659,6 +1088,7 @@ public class TtlPartitionUtil {
         CalcNewPartBoundsByPivotBoundValParams buildParams = new CalcNewPartBoundsByPivotBoundValParams();
 
         buildParams.setTtlInfo(ttlInfo);
+        buildParams.setCalcContext(calcContext);
         buildParams.setPivotBoundValue(pivotPointResult.getPreBuildPivotPointStr());
         buildParams.setTtlTimeZone(ttlTimeZone);
         buildParams.setPreBuildCnt(finalPreBuildPartCnt);
@@ -701,6 +1131,7 @@ public class TtlPartitionUtil {
         String pivotDatetimeStr = params.getCleanupUpperBoundDatetimeStr();
         Integer newAddPartsCount = params.getNewAddPartsCount();
         TtlDefinitionInfo ttlInfo = params.getTtlInfo();
+        TtlColValueCalcContext calcContext = params.getCalcContext();
         PartKeyLevel partKeyLevel = params.getTargetPartLevel();
         ExecutionContext ec = params.getEc();
 
@@ -730,10 +1161,12 @@ public class TtlPartitionUtil {
 
         List<String> partListToBeDropped = null;
         if (expireByOver) {
-            partListToBeDropped = calcExpiredPartsByExpiredOverPolicy(ec, tarTblMeta, partKeyLevel, newAddPartsCount);
+            partListToBeDropped =
+                calcExpiredPartsByExpiredOverPolicy(ec, calcContext, tarTblMeta, partKeyLevel, newAddPartsCount);
         } else {
             partListToBeDropped =
-                calcExpiredPartsByExpiredAfterPolicy(ec, tarTblMeta, partKeyLevel, ttlTimeZone, pivotDatetimeStr);
+                calcExpiredPartsByExpiredAfterPolicy(ec, calcContext, tarTblMeta, ttlInfo, partKeyLevel, ttlTimeZone,
+                    pivotDatetimeStr);
         }
 
         result.setPartNamesToBeDropped(partListToBeDropped);
@@ -741,7 +1174,9 @@ public class TtlPartitionUtil {
     }
 
     private static @NotNull List<String> calcExpiredPartsByExpiredAfterPolicy(ExecutionContext ec,
+                                                                              TtlColValueCalcContext calcContext,
                                                                               TableMeta tarTblMeta,
+                                                                              TtlDefinitionInfo primTtlInfo,
                                                                               PartKeyLevel partKeyLevel,
                                                                               String ttlTimeZone,
                                                                               String cleanupUpperBoundDatetimeStr) {
@@ -749,9 +1184,10 @@ public class TtlPartitionUtil {
          * Route the pivotDatetimeStr to target partitions
          */
         String tarPartName = TtlPartitionUtil.findTargetNonMaxValPartByRoutingTtlColVal(ec, tarTblMeta,
+            primTtlInfo,
             partKeyLevel,
             ttlTimeZone,
-            cleanupUpperBoundDatetimeStr);
+            cleanupUpperBoundDatetimeStr, calcContext);
 
         List<String> partListToBeDropped = new ArrayList<>();
         if (tarPartName != null) {
@@ -785,6 +1221,7 @@ public class TtlPartitionUtil {
     }
 
     private static @NotNull List<String> calcExpiredPartsByExpiredOverPolicy(ExecutionContext ec,
+                                                                             TtlColValueCalcContext calcContext,
                                                                              TableMeta tarTblMeta,
                                                                              PartKeyLevel partKeyLevel,
                                                                              Integer newAddPartsCount) {
@@ -935,39 +1372,199 @@ public class TtlPartitionUtil {
 //        }
 //    }
 
-    public static class TtlColBoundValue {
+    /**
+     * The Context for calc new bound value of ttl_tbl or arc_tbl
+     */
+    @Data
+    public static class TtlColValueCalcContext {
 
-        protected boolean isNumberType = false;
-        protected boolean isMySqlDateType = false;
-        protected ColumnMeta partColMeta = null;
+        protected TtlDefinitionInfo ttlInfo = null;
+        protected boolean useTtlEncoding = false;
+        protected boolean useTtlColFunc = false;
+        protected SQLExpr ttlColEncoderExpr = null;
+        protected SQLExpr ttlColDecoderExpr = null;
+        protected ExecutionContext ec;
 
-        protected PartKeyLevel partKeyLevel;
-        protected boolean usePartFunc = false;
-        protected boolean isForSubPart = false;
-        protected TtlDefinitionInfo ttlInfo;
-        protected boolean useTtlColFuncExpr = false;
-
-        protected DataType partColValDataType = null;
-        protected PartitionField partColValFld;
-
-        protected PartitionField ttlColValFldForCalcNewBounds;
-        protected RelDataType ttlColRelDataTypeForCalcNewBounds;
-        protected DataType ttlColDataTypeForCalcNewBounds;
-
-        protected TtlColBoundValue(String bndValStr,
-                                   ColumnMeta partColMeta,
-                                   PartKeyLevel partKeyLevel,
-                                   boolean usePartFunc,
-                                   TtlDefinitionInfo ttlInfo) {
-            init(bndValStr, partColMeta, partKeyLevel, usePartFunc, ttlInfo);
+        protected TtlColValueCalcContext() {
         }
 
-        protected void init(String bndValStr,
-                            ColumnMeta partColMeta,
-                            PartKeyLevel partKeyLevel,
-                            boolean usePartFunc,
-                            TtlDefinitionInfo ttlInfo) {
+        protected void init() {
+            try {
+
+                boolean needTtlEncoding = false;
+                String ttlColEncoder = null;
+                String ttlColDecoder = null;
+                TtlColFuncExprInfo ttlColFuncExprInfo = ttlInfo.getTtlColFuncExprInfo();
+                boolean useTtlColFunc = false;
+                if (ttlColFuncExprInfo != null) {
+                    ttlColEncoder = ttlInfo.getTtlColFuncExprInfo().getTtlColFullEncoderStr();
+                    ttlColDecoder = ttlInfo.getTtlColFuncExprInfo().getTtlColFullDecoderStr();
+                    needTtlEncoding = true;
+                    useTtlColFunc = true;
+                }
+                this.useTtlEncoding = needTtlEncoding;
+                this.useTtlColFunc = useTtlColFunc;
+                if (!useTtlEncoding) {
+                    return;
+                }
+
+//                if (useTtlColFunc) {
+//                    if (ttlColFuncExprInfo.isTreatTtlColAsUnixTimestampSeconds()) {
+//                        ttlColEncoder = "UNIX_TIMESTAMP(?)";
+//                        ttlColDecoder = "FROM_UNIXTIME(?)";
+//                    } else if (ttlColFuncExprInfo.isTreatTtlColAsUnixTimestampMillSeconds()) {
+//                        ttlColEncoder = "UNIX_TIMESTAMP(?) * 1000";
+//                        ttlColDecoder = "FROM_UNIXTIME(? / 1000)";
+//                    } else if (ttlColFuncExprInfo.isTreatTtlColAsToDaysNumber()) {
+//                        ttlColEncoder = "TO_DAYS(?)";
+//                        ttlColDecoder = "FROM_DAYS(?)";
+//                    }
+//                }
+
+                SQLExpr ttlColEncoderExprVal = TtlUtil.parseExprString(ttlColEncoder);
+                this.ttlColEncoderExpr = ttlColEncoderExprVal;
+
+                SQLExpr ttlColDecoderExprVal = TtlUtil.parseExprString(ttlColDecoder);
+                this.ttlColDecoderExpr = ttlColDecoderExprVal;
+            } catch (Throwable ex) {
+                throw new TtlJobRuntimeException(ex);
+            }
+        }
+
+        public String buildTtlEncoderExprSql(String datetimeStr) {
+            SQLExpr ttlEncoderExpr = this.ttlColEncoderExpr;
+            String sqlContent = null;
+            if (ttlEncoderExpr != null) {
+                String datetimeStrWrappedQuotes = String.format("'%s'", datetimeStr);
+                String ttlColEncoderStrVal =
+                    TtlUtil.replaceParamsAndBuildExprSql(datetimeStrWrappedQuotes, ttlEncoderExpr);
+                sqlContent = ttlColEncoderStrVal;
+            }
+            return sqlContent;
+        }
+
+        public String buildTtlDecoderExprSql(String intStr) {
+            SQLExpr ttlDecoderExpr = this.ttlColDecoderExpr;
+            String sqlContent = null;
+            if (ttlDecoderExpr != null) {
+                String ttlColEncoderStrVal = TtlUtil.replaceParamsAndBuildExprSql(intStr, ttlDecoderExpr);
+                sqlContent = ttlColEncoderStrVal;
+            }
+            return sqlContent;
+        }
+
+        public static TtlColValueCalcContext buildBoundValueCalcContext(TtlDefinitionInfo ttlInfo,
+                                                                        ExecutionContext ec) {
+            TtlColValueCalcContext ctx = new TtlColValueCalcContext();
+            ctx.setTtlInfo(ttlInfo);
+            ctx.setEc(ec);
+            ctx.init();
+            return ctx;
+        }
+
+        public ExecutionContext getEc() {
+            return ec;
+        }
+
+        public void setEc(ExecutionContext ec) {
+            this.ec = ec;
+        }
+    }
+
+    /**
+     * A middle bound value which is used for shielding different datatype (like date/datetime/integer) of ttl_col
+     */
+    public static class TtlColBoundValue {
+        protected TtlDefinitionInfo ttlInfo;
+
+        /**
+         * The flag label if ttl_col is a normal int type (contains datetime information),
+         * such using expire over policy
+         */
+        protected boolean isNumberType = false;
+
+        /**
+         * he flag label if the datatype of ttl_col is a mysql date type, like 'date/datetime'
+         */
+        protected boolean isMySqlDateType = false;
+        /**
+         * The ColumnMeta of ttl_col
+         */
+        protected ColumnMeta partColMeta = null;
+        /**
+         * The partLevel of ttl_col
+         */
+        protected PartKeyLevel partKeyLevel;
+        protected boolean isForSubPart = false;
+
+        /**
+         * The flag that label if ttl_col use partFunc,like TO_DAYS/YEAR/TO_MONTHS/UNIX_TIMESTAMP, and so on
+         */
+        protected boolean usePartFunc = false;
+        /**
+         * The flag that label if the ttl_col in ttl_expr use func expr to decode from timestamp int value to datetime value
+         */
+        protected boolean useTtlColFuncExpr = false;
+
+        /**
+         * The original DataType of ttl_col
+         */
+        protected DataType partColValDataType = null;
+        /**
+         * The original PartitionField of ttl_col
+         */
+        protected PartitionField partColValFld;
+
+        /**
+         * The middle rel DataType(maybe datatype/timestamp) which is using for calculating new bounds
+         */
+        protected DataType ttlColDataTypeForCalcNewBounds;
+        /**
+         * The middle DataType(maybe datatype/timestamp) which is using for calculating new bounds
+         */
+        protected RelDataType ttlColRelDataTypeForCalcNewBounds;
+        /**
+         * The partField of middle DataType(maybe datatype/timestamp) which is using for calculating new bounds
+         */
+        protected PartitionField ttlColValFldForCalcNewBounds;
+
+        /**
+         * The final query expr after replacing dynamic params by inputVal for ttl_col_encoder
+         */
+        protected String ttlColEncoderExprStr = null;
+        /**
+         * The partField(String) of the final query val fo the final query expr of ttl_col_encoder
+         */
+        protected PartitionField ttlColEncoderExprFld = null;
+
+        /**
+         * The final query expr after replacing dynamic params by inputVal for ttl_col_decoder
+         */
+        protected String ttlColDecoderExprStr = null;
+        /**
+         * The partField(String) of the final query val fo the final query expr of ttl_col_decoder
+         */
+        protected PartitionField ttlColDecoderExprFld = null;
+
+        protected TtlColValueCalcContext calcContext = null;
+
+        private TtlColBoundValue(String bndValStr,
+                                 ColumnMeta partColMeta,
+                                 PartKeyLevel partKeyLevel,
+                                 boolean usePartFunc,
+                                 TtlDefinitionInfo ttlInfo,
+                                 TtlColValueCalcContext calcContext) {
+            init(bndValStr, partColMeta, partKeyLevel, usePartFunc, ttlInfo, calcContext);
+        }
+
+        private void init(String bndValStr,
+                          ColumnMeta partColMeta,
+                          PartKeyLevel partKeyLevel,
+                          boolean usePartFunc,
+                          TtlDefinitionInfo ttlInfo,
+                          TtlColValueCalcContext calcContext) {
             this.ttlInfo = ttlInfo;
+            this.calcContext = calcContext;
 
             if (this.ttlInfo != null) {
                 this.useTtlColFuncExpr = this.ttlInfo.isTtlColUseFuncExpr();
@@ -1011,38 +1608,129 @@ public class TtlPartitionUtil {
                 this.ttlColValFldForCalcNewBounds = PartitionFieldBuilder.createField(ttlColDataTypeForCalcNewBounds);
                 this.ttlColValFldForCalcNewBounds.store(bndValStr, DataTypes.StringType);
 
-                String datetimeStr = this.ttlColValFldForCalcNewBounds.stringValue().toStringUtf8();
-                Long unixTimestampLongVal =
-                    convertZonedDateTimeStringToUnixTimestamp(datetimeStr, ttlInfo.getTtlInfoRecord().getTtlTimezone());
-                this.partColValFld = PartitionFieldBuilder.createField(partColValDataType);
-                if (ttlInfo.getTtlColFuncExprInfo().isTreatTtlColAsUnixTimestampMillSeconds()) {
-                    unixTimestampLongVal *= 1000;
-                }
-                this.partColValFld.store(unixTimestampLongVal, DataTypes.LongType);
-            }
+//                // Here Convert the datetime string into timestamp int_col
+//                // (encode ttl_col)
+//                String datetimeStr = this.ttlColValFldForCalcNewBounds.stringValue().toStringUtf8();
+//                Long unixTimestampLongVal =
+//                    convertZonedDateTimeStringToUnixTimestamp(datetimeStr, ttlInfo.getTtlInfoRecord().getTtlTimezone());
+//                this.partColValFld = PartitionFieldBuilder.createField(partColValDataType);
+//                if (ttlInfo.getTtlColFuncExprInfo().isTreatTtlColAsUnixTimestampMillSeconds()) {
+//                    unixTimestampLongVal *= 1000;
+//                }
+//                this.partColValFld.store(unixTimestampLongVal, DataTypes.LongType);
 
+                try {
+                    this.partColValFld =
+                        encodeTtlCol(this.ttlColValFldForCalcNewBounds, this.partColValDataType, calcContext);
+                } catch (Throwable ex) {
+                    String errMsg = String.format("Failed to perform encoding ttl col by using encoder expr");
+                    TtlLoggerUtil.TTL_TASK_LOGGER.error(errMsg, ex);
+                    throw new TtlJobRuntimeException(ex, errMsg);
+                }
+            }
         }
 
+        /**
+         * Encode the boundVal Fields used by calc new bounds
+         * into the bound Fields of Original Datatype
+         */
+        protected static PartitionField encodeTtlCol(
+            PartitionField ttlColValFldForCalcBounds,
+            DataType ttlColValDataType,
+            TtlColValueCalcContext calcContext) {
+
+            String dtStr = ttlColValFldForCalcBounds.stringValue().toStringUtf8();
+            String encoderExprSql = calcContext.buildTtlEncoderExprSql(dtStr);
+            ExecutionContext ec = calcContext.getEc();
+            TtlDefinitionInfo ttlInfo = calcContext.getTtlInfo();
+
+            String queryEncoderExprSql = String.format("select %s as encoder_ttl_col", encoderExprSql);
+            List<Map<String, Object>> rs = TtlJobUtil.execQueryExprSqlAndGetResult(ec, ttlInfo, queryEncoderExprSql);
+            Object rsVal = rs.get(0).get("encoder_ttl_col");
+
+            PartitionField encodedTtlColFld = PartitionFieldBuilder.createField(ttlColValDataType);
+
+            if (rsVal instanceof Slice) {
+                encodedTtlColFld.store(rsVal, DataTypes.VarcharType);
+            } else if (rsVal instanceof String) {
+                encodedTtlColFld.store(rsVal, DataTypes.StringType);
+            } else {
+                String rsValStr = String.valueOf(rsVal);
+                encodedTtlColFld.store(rsValStr, DataTypes.StringType);
+            }
+            return encodedTtlColFld;
+        }
+
+        /**
+         * Decode the bound Fields of Original Datatype
+         * into
+         * the boundVal Fields used by calc new bounds
+         */
+        protected static PartitionField decodeTtlCol(PartitionField ttlColValFldOfOriginalDatatype,
+                                                     TtlColValueCalcContext calcContext) {
+
+            String rawTtlColIntValStr = ttlColValFldOfOriginalDatatype.stringValue().toStringUtf8();
+            String decoderExprSql = calcContext.buildTtlDecoderExprSql(rawTtlColIntValStr);
+            ExecutionContext ec = calcContext.getEc();
+            TtlDefinitionInfo ttlInfo = calcContext.getTtlInfo();
+
+            String queryDecoderExprSql = String.format("select %s as decoder_ttl_col", decoderExprSql);
+            List<Map<String, Object>> rs = TtlJobUtil.execQueryExprSqlAndGetResult(ec, ttlInfo, queryDecoderExprSql);
+            Object rsVal = rs.get(0).get("decoder_ttl_col");
+
+            PartitionField decodedTtlColFld = PartitionFieldBuilder.createField(DataTypes.VarcharType);
+            decodedTtlColFld.store(rsVal, DataTypes.VarcharType);
+//            System.out.println(decodedTtlColFld.stringValue().toStringUtf8());
+            return decodedTtlColFld;
+        }
+
+        /**
+         * Convert a boundString of PartField of ttl col to the middle-type boundValue
+         * if the bound of PartField is an iso-formated datetime string and the ttl_col is the int value,
+         * then convert iso-formated datetime string the int-type bound of PartField
+         * (encode ttl_col)
+         */
         public static TtlColBoundValue buildPartBoundValue(String bndValStr,
                                                            ColumnMeta partColMeta,
                                                            PartKeyLevel partKeyLevel,
                                                            boolean usePartFunc,
-                                                           TtlDefinitionInfo ttlInfo) {
-            TtlColBoundValue
-                boundValue = new TtlColBoundValue(bndValStr, partColMeta, partKeyLevel, usePartFunc, ttlInfo);
+                                                           TtlDefinitionInfo ttlInfo,
+                                                           TtlColValueCalcContext calcContext) {
+            TtlColBoundValue boundValue = new TtlColBoundValue(
+                bndValStr,
+                partColMeta,
+                partKeyLevel,
+                usePartFunc,
+                ttlInfo,
+                calcContext);
             return boundValue;
         }
 
+        /**
+         * According to the datetype and partField of ttl_col,
+         * convert to the value of partField into iso-datetime-formated string value
+         * which is using for calculating new bounds
+         * (decoding ttl_col)
+         */
         public String getPartBoundValueStringForCalcNewBounds() {
-            BuildPartFieldStringParams params = BuildPartFieldStringParams.constructPartFieldStringParams(ttlInfo);
+            BuildPartFieldStringParams params =
+                BuildPartFieldStringParams.constructPartFieldStringParams(ttlInfo, calcContext);
             params.setForceReturnPartFldString(true);
-            return convertPartFieldToString(this.ttlColValFldForCalcNewBounds, params);
+            String rsString = convertPartFieldToIsoFormatedDatetimeString(this.ttlColValFldForCalcNewBounds, params);
+            return rsString;
         }
 
+        /**
+         * Change the middle-type boundValue (int-type value) of its Original int-DataType PartCol
+         * into the string value of iso-formated datetime string
+         * (encode ttl_col)
+         */
         public String getPartBoundValueStringByOriginalPartColDataType() {
-            BuildPartFieldStringParams params = BuildPartFieldStringParams.constructPartFieldStringParams(ttlInfo);
+            BuildPartFieldStringParams params =
+                BuildPartFieldStringParams.constructPartFieldStringParams(ttlInfo, calcContext);
             params.setForceReturnPartFldString(true);
-            return convertPartFieldToString(this.partColValFld, params);
+            String bndValStr = convertPartFieldToIsoFormatedDatetimeString(this.partColValFld, params);
+            return bndValStr;
         }
 
         private String getDateTimePartBoundValueFormatOnPartName(TtlTimeUnit ttlUnit) {
@@ -1060,6 +1748,9 @@ public class TtlPartitionUtil {
             return bndValStr;
         }
 
+        /**
+         * Build the partName by new middle-type boundValue and the timeUnit
+         */
         public String buildPartNameByPartUnit(TtlTimeUnit ttlUnit) {
             String partNamePrefix = "p";
             if (isForSubPart) {
@@ -1075,13 +1766,12 @@ public class TtlPartitionUtil {
 
         }
 
-//        public PartitionByDefinition getTartPartBy() {
-//            return tartPartBy;
-//        }
-
-        public RelDataType getTtlColRelDataTypeForCalcNewBounds(TtlDefinitionInfo ttlInfo,
-                                                                ColumnMeta partColMeta) {
-            boolean useTtlFuncExpr = ttlInfo.isTtlColUseFuncExpr();
+        /**
+         * The specified relDataType for calculating new bound: DATATIME(0)
+         */
+        private RelDataType getTtlColRelDataTypeForCalcNewBounds(TtlDefinitionInfo ttlInfo,
+                                                                 ColumnMeta partColMeta) {
+            boolean useTtlFuncExpr = ttlInfo.isTtlColUseFuncExpr();//use isTtlColUseExprEncoding
             if (!useTtlFuncExpr) {
                 return partColMeta.getField().getRelType();
             }
@@ -1093,10 +1783,10 @@ public class TtlPartitionUtil {
             return calciteDataType;
         }
 
-        public DataType getTtlColDataTypeForCalcNewBounds(TtlDefinitionInfo ttlInfo,
-                                                          ColumnMeta partColMeta,
-                                                          RelDataType ttlColRelDataTypeForCalcNewBounds) {
-            boolean useTtlFuncExpr = ttlInfo.isTtlColUseFuncExpr();
+        private DataType getTtlColDataTypeForCalcNewBounds(TtlDefinitionInfo ttlInfo,
+                                                           ColumnMeta partColMeta,
+                                                           RelDataType ttlColRelDataTypeForCalcNewBounds) {
+            boolean useTtlFuncExpr = ttlInfo.isTtlColUseFuncExpr();//use isTtlColUseExprEncoding
             if (!useTtlFuncExpr) {
                 return partColMeta.getDataType();
             }
@@ -1108,7 +1798,8 @@ public class TtlPartitionUtil {
         }
 
         public TtlColBoundValue plusInterval(Long partInterval,
-                                             TtlTimeUnit partIntervalUnit) {
+                                             TtlTimeUnit partIntervalUnit,
+                                             TtlColValueCalcContext calcContext) {
 
             String newBndValStr = null;
 //            PartitionByDefinition tarPartBy = this.getTartPartBy();
@@ -1133,8 +1824,11 @@ public class TtlPartitionUtil {
                     newBndValStr = String.valueOf(tmpBigDeciVal);
                 }
             }
+//            TtlColBoundValue newBondVal =
+//                new TtlColBoundValue(newBndValStr, this.partColMeta, this.partKeyLevel, this.usePartFunc, this.ttlInfo);
             TtlColBoundValue newBondVal =
-                new TtlColBoundValue(newBndValStr, this.partColMeta, this.partKeyLevel, this.usePartFunc, this.ttlInfo);
+                TtlColBoundValue.buildPartBoundValue(newBndValStr, this.partColMeta, this.partKeyLevel,
+                    this.usePartFunc, this.ttlInfo, calcContext);
             return newBondVal;
         }
 
@@ -1230,6 +1924,9 @@ public class TtlPartitionUtil {
             this.ttlTimeZone = ttlTimeZone;
         }
 
+        /**
+         * Found the target non-maxvalue part by routing one boundValue of ttl_col
+         */
         protected String findTargetNonMaxValPartByRoutingTtlColVal(ExecutionContext ec, TtlColBoundValue ttlColVal) {
             List<String> phyParts = fetchTargetPartNamesByRoutingTtlColValAndPartLevel(ec,
                 tarTblMeta,
@@ -1273,19 +1970,26 @@ public class TtlPartitionUtil {
         }
     }
 
+    /**
+     *
+     */
     protected static void calcNewPartBoundsByPivotBoundValWithTblMeta(
         CalcNewPartBoundsByPivotBoundValWithTblMetaParams params) {
 
         TableMeta targetTblMeta = params.getTarTblMeta();
         PartKeyLevel partKeyLevel = params.getTarPartKeyLevel();
         CalcNewPartBoundsByPivotBoundValParams inputParams = params.getCalcParams();
+        ExecutionContext ec = inputParams.getEc();
 
         String ttlTimeZone = inputParams.getTtlTimeZone();
         PartitionByDefinition tarPartBy = TtlPartitionUtil.getTargetPartBy(targetTblMeta, partKeyLevel);
         TtlPartitionRouter ttlPartitionRouter = new TtlPartitionRouter(targetTblMeta, partKeyLevel, ttlTimeZone);
+        TtlDefinitionInfo ttlInfo = inputParams.getTtlInfo();
+        TtlColValueCalcContext calcContext = TtlColValueCalcContext.buildBoundValueCalcContext(ttlInfo, ec);
 
         CalcNewPartBoundsByPivotBoundValParams buildParams = new CalcNewPartBoundsByPivotBoundValParams();
         buildParams.setTtlInfo(inputParams.getTtlInfo());
+        buildParams.setCalcContext(calcContext);
         buildParams.setPivotBoundValue(inputParams.getPivotBoundValue());
         buildParams.setTtlTimeZone(inputParams.getTtlTimeZone());
         buildParams.setPreBuildCnt(inputParams.getPreBuildCnt());
@@ -1298,6 +2002,7 @@ public class TtlPartitionUtil {
         buildParams.setEc(inputParams.getEc());
         buildParams.setNewAddPartSpecInfosOutput(inputParams.getNewAddPartSpecInfosOutput());
         buildParams.setNewAddPartSpecMappingsOutput(inputParams.getNewAddPartSpecMappingsOutput());
+        buildParams.setReservedPartNames(inputParams.getReservedPartNames());
 
         buildParams.setTtlPartitionRouter(ttlPartitionRouter);
         buildParams.setPartColMeta(tarPartBy.getPartitionFieldList().get(0));
@@ -1307,6 +2012,17 @@ public class TtlPartitionUtil {
         calcNewPartBoundsByPivotBoundVal(buildParams);
     }
 
+    /**
+     * <pre>
+     *     Calc both new postBuild parts and new preBuild parts,
+     *     it process is :
+     *     (1) generate all postParts by postPartCnt if need;
+     *     (2) generate all preParts by prePartCnt or targetBndValue;
+     *     (3) put postParts and preParts into an allPartList;
+     *     (4) skip some invalid parts for the allPartList;
+     *     (5) prepare output result.
+     * </pre>
+     */
     public static void calcNewPartBoundsByPivotBoundVal(CalcNewPartBoundsByPivotBoundValParams params) {
 
         String pivotBoundValue = params.getPivotBoundValue();
@@ -1322,22 +2038,37 @@ public class TtlPartitionUtil {
         boolean usePartFunc = params.isUsePartFunc();
         ExecutionContext ec = params.getEc();
         TtlDefinitionInfo ttlInfo = params.getTtlInfo();
+        TtlColValueCalcContext calcContext = params.getCalcContext();
         List<Pair<String, String>> newAddPartSpecInfosOutput = params.getNewAddPartSpecInfosOutput();
         Map<String, TtlColBoundValue> newAddPartSpecMappingsOutput = params.getNewAddPartSpecMappingsOutput();
+        Set<String> reservedPartNames = params.getReservedPartNames();
         try {
+            /**
+             * Change the pivotBoundValue into the middle-type boundValue which is using for calculating new bounds
+             */
             String pivotValStr = pivotBoundValue;
             TtlColBoundValue pivotValuePoint =
-                TtlColBoundValue.buildPartBoundValue(pivotValStr, partColMeta, partKeyLevel, usePartFunc, ttlInfo);
+                TtlColBoundValue.buildPartBoundValue(pivotValStr, partColMeta, partKeyLevel, usePartFunc, ttlInfo,
+                    calcContext);
 
+            /**
+             * Calc the range parts according to postBuildCnt for postBuild of arc_tbl if need
+             */
             List<TtlColBoundValue> newPostPartBoundValList = new ArrayList<>();
             if (postBuildCnt != null && postBuildCnt > 0) {
 
                 TtlColBoundValue newPostBound = pivotValuePoint;
                 for (int i = 0; i < postBuildCnt; i++) {
-                    newPostBound = newPostBound.plusInterval(-1L * arcPartInterval, arcPartUnit);
+                    /**
+                     * Calculating new bound by plus an interval
+                     */
+                    newPostBound = newPostBound.plusInterval(-1L * arcPartInterval, arcPartUnit, calcContext);
                     String tarPartName = null;
                     if (!ignoreRoutingCheck) {
                         if (ttlPartitionRouter != null) {
+                            /**
+                             * Find the max bound which is not a non-maxvalue partition
+                             */
                             tarPartName =
                                 ttlPartitionRouter.findTargetNonMaxValPartByRoutingTtlColVal(ec, newPostBound);
                             if (tarPartName == null) {
@@ -1353,30 +2084,61 @@ public class TtlPartitionUtil {
                 }
             }
 
+            /**
+             * Calc the range parts according to preBuildCnt and preBuildTargetBndVal for preBuild of ttl_tbl/arc_tbl
+             */
             List<TtlColBoundValue> newPrePartBoundValList = new ArrayList<>();
             newPrePartBoundValList.add(pivotValuePoint);
 
+            /**
+             * Here check if need building new pre-build parts by using interval  [pivotValuePoint, preBuildTargetBndVal)
+             */
             String preBuildTarBoundValueStr = preBuildTargetBoundValue;
             TtlColBoundValue preBuildTargetBndVal = null;
             boolean needPreBuildToTargetBndVal = false;
             if (preBuildTarBoundValueStr != null) {
+                /**
+                 * In the partition generations of creating cci(arc_tbl) for ttl-tbl using archive by partition/subpartition,
+                 * because it has not any partInfo of cci,
+                 * so it need fetch the startBoundValue(pivotValuePoint) and endBoundValue(preBuildTargetBndVal)
+                 * from ttl_tbl partInfo,
+                 * and treat the [pivotValuePoint, preBuildTargetBndVal) as the whole ranges of cci.
+                 */
                 preBuildTargetBndVal =
                     TtlColBoundValue.buildPartBoundValue(preBuildTarBoundValueStr, partColMeta, partKeyLevel,
-                        usePartFunc, ttlInfo);
+                        usePartFunc, ttlInfo, calcContext);
                 needPreBuildToTargetBndVal = true;
             }
 
+            /**
+             * <pre>
+             *     Here generate all new pre-build parts by two policy :
+             *          policy 1: generate parts by the [pivotValuePoint, preBuildTargetBndVal)
+             *          policy 2: generate parts by the prePartCount, [pivotValuePoint, pivotValuePoint + n * pare_interval)
+             * </pre>
+             *
+             */
             TtlColBoundValue newBound = pivotValuePoint;
             if (needPreBuildToTargetBndVal) {
+                /**
+                 * Come here :  generate parts by the [pivotValuePoint, preBuildTargetBndVal)
+                 */
                 while (true) {
-                    newBound = newBound.plusInterval(arcPartInterval, arcPartUnit);
+                    /**
+                     * Calculating new bound for prebuildPart by plus an interval
+                     */
+                    newBound = newBound.plusInterval(arcPartInterval, arcPartUnit, calcContext);
                     if (!ignoreRoutingCheck) {
+
+                        // Here make sure that all new partBounds should route empty non-maxvalue parts
+
                         if (ttlPartitionRouter != null) {
                             String tarPartName =
                                 ttlPartitionRouter.findTargetNonMaxValPartByRoutingTtlColVal(ec, newBound);
-                            if (tarPartName == null) {
+                            if (tarPartName == null
+                                || isReservedPart(reservedPartNames, tarPartName)) {
                                 /**
-                                 * No found any non-max-value parts
+                                 * No found any managed non-max-value parts (routed to maxval or reserved part)
                                  */
                                 newPrePartBoundValList.add(newBound);
                             }
@@ -1389,15 +2151,24 @@ public class TtlPartitionUtil {
                     }
                 }
             } else {
+                /**
+                 * Come here :
+                 * generate parts by the prePartCount, [pivotValuePoint, pivotValuePoint + n * pare_interval)
+                 * and skip each new-generated bound value which can route and find an already-exists non-maxvalue part
+                 */
                 for (int i = 0; i < preBuildCnt; i++) {
-                    newBound = newBound.plusInterval(arcPartInterval, arcPartUnit);
+                    newBound = newBound.plusInterval(arcPartInterval, arcPartUnit, calcContext);
                     if (!ignoreRoutingCheck) {
                         if (ttlPartitionRouter != null) {
+
+                            // Here make sure that all new partBounds should route empty non-maxvalue parts
+
                             String tarPartName =
                                 ttlPartitionRouter.findTargetNonMaxValPartByRoutingTtlColVal(ec, newBound);
-                            if (tarPartName == null) {
+                            if (tarPartName == null
+                                || isReservedPart(reservedPartNames, tarPartName)) {
                                 /**
-                                 * No found any non-max-value parts
+                                 * No found any managed non-max-value parts (routed to maxval or reserved part)
                                  */
                                 newPrePartBoundValList.add(newBound);
                             }
@@ -1408,19 +2179,31 @@ public class TtlPartitionUtil {
                 }
             }
 
+            // finalNewPartInfos includes all new generated parts, included postParts and preBuild parts
             List<TtlColBoundValue> finalNewPartInfos = new ArrayList<>();
 
+            // because new postParts are build by desc order,
+            // so here need to reverse scan to make finalNewPartInfos because asc order parts
             for (int i = newPostPartBoundValList.size() - 1; i > -1; --i) {
                 finalNewPartInfos.add(newPostPartBoundValList.get(i));
             }
             finalNewPartInfos.addAll(newPrePartBoundValList);
 
+            /**
+             * Here prepare the output info of new generated parts
+             */
             List<Pair<String, String>> newAddPartSpecInfosBeforeFixingOutput = new ArrayList<>();
             if (newAddPartSpecInfosOutput != null) {
                 if (!finalNewPartInfos.isEmpty()) {
                     for (int i = 0; i < finalNewPartInfos.size(); i++) {
                         TtlColBoundValue newBndVal = finalNewPartInfos.get(i);
+                        /**
+                         * Change the middle-type boundValue to its Original PartCol DataType
+                         */
                         String newBndValStr = newBndVal.getPartBoundValueStringByOriginalPartColDataType();
+                        /**
+                         * Build the partName by the middle-type bound value
+                         */
                         String bndValForPartNameStr = newBndVal.buildPartNameByPartUnit(arcPartUnit);
                         Pair<String, String> newPartNameAndBndVal = new Pair<>(bndValForPartNameStr, newBndValStr);
                         newAddPartSpecInfosBeforeFixingOutput.add(newPartNameAndBndVal);
@@ -1430,11 +2213,27 @@ public class TtlPartitionUtil {
                 List<Pair<String, String>> newAddPartSpecInfosAfterFixingOutput = new ArrayList<>();
                 List<Pair<Integer, Integer>> fixedPartSpecIndexMappingsOutput = new ArrayList<>();
                 if (ttlPartitionRouter != null) {
+                    // if ttlPartitionRouter exists, will check all routing for all bound values
+                    /**
+                     * Auto fix some wrong or invalid parts like:
+                     * 1.  duplicated bound values
+                     * 2.  duplicated part names
+                     * 3.  too-long part names fix
+                     * 4.  invalid bound values
+                     */
                     ttlPartitionRouter.fixInvalidPartitionsWithPartInfo(newAddPartSpecInfosBeforeFixingOutput,
                         newAddPartSpecInfosAfterFixingOutput, fixedPartSpecIndexMappingsOutput);
                     newAddPartSpecInfosOutput.clear();
                     newAddPartSpecInfosOutput.addAll(newAddPartSpecInfosAfterFixingOutput);
                 } else {
+                    // if ttlPartitionRouter does NOT exist, then no check routing,
+                    // such create cci or new create ttl tbl
+                    /**
+                     * Auto fix some wrong parts like:
+                     * 1.  duplicated bound values
+                     * 2.  duplicated parts names
+                     * 3.  invalid bound values
+                     */
                     TtlPartitionUtil.fixInvalidPartitionsWithoutPartInfo(newAddPartSpecInfosBeforeFixingOutput,
                         newAddPartSpecInfosAfterFixingOutput, fixedPartSpecIndexMappingsOutput);
                     newAddPartSpecInfosOutput.clear();
@@ -1457,17 +2256,18 @@ public class TtlPartitionUtil {
         }
     }
 
-    protected static String findTargetNonMaxValPartByRoutingTtlColVal(ExecutionContext ec,
-                                                                      TableMeta tarTblMeta,
-                                                                      PartKeyLevel partLevel,
-                                                                      String ttlTimeZone,
-                                                                      String ttlColVal) {
+    public static String findTargetNonMaxValPartByRoutingTtlColVal(ExecutionContext ec,
+                                                                   TableMeta tarTblMeta,
+                                                                   TtlDefinitionInfo primTblTtlInfo,
+                                                                   PartKeyLevel partLevel,
+                                                                   String ttlTimeZone,
+                                                                   String ttlColVal,
+                                                                   TtlColValueCalcContext calcContext) {
 
-        TtlDefinitionInfo ttlInfo = tarTblMeta.getTtlDefinitionInfo();
-        ColumnMeta ttlColMeta = ttlInfo.getTtlColMeta(ec);
+        ColumnMeta ttlColMeta = primTblTtlInfo.getTtlColMeta(ec);
         PartitionByDefinition tarPartBy = getTargetPartBy(tarTblMeta, partLevel);
-        TtlColBoundValue ttlColBoundVal = new TtlColBoundValue(ttlColVal,
-            ttlColMeta, partLevel, tarPartBy.getPartIntFunc() != null, ttlInfo);
+        TtlColBoundValue ttlColBoundVal = TtlColBoundValue.buildPartBoundValue(ttlColVal, ttlColMeta, partLevel,
+            tarPartBy.getPartIntFunc() != null, primTblTtlInfo, calcContext);
         List<String> phyParts = fetchTargetPartNamesByRoutingTtlColValAndPartLevel(ec,
             tarTblMeta,
             partLevel,
@@ -1491,6 +2291,9 @@ public class TtlPartitionUtil {
         return partNameRs;
     }
 
+    /**
+     * Find the target partNames by routing new ttl_col value and part_level
+     */
     protected static List<String> fetchTargetPartNamesByRoutingTtlColValAndPartLevel(ExecutionContext ec,
                                                                                      TableMeta tarTblMeta,
                                                                                      PartKeyLevel targetPartLevel,
@@ -1662,6 +2465,9 @@ public class TtlPartitionUtil {
         return unixTsStr;
     }
 
+    /**
+     * Find the min boundValue partition and partition names from all-non-maxvalue partitions
+     */
     public static Pair<String, SearchDatumInfo> findMinPartBoundValAndPartNameFromNonMaxValParts(
         PartitionInfo tarPartInfo,
         PartKeyLevel partLevel) {
@@ -1678,6 +2484,9 @@ public class TtlPartitionUtil {
         return result;
     }
 
+    /**
+     * Find the max boundValue partition and partition names from all-non-maxvalue partitions
+     */
     public static Pair<String, SearchDatumInfo> findMaxPartBoundValAndPartNameFromNonMaxValParts(
         PartitionInfo tarPartInfo,
         PartKeyLevel partLevel) {
@@ -1704,11 +2513,14 @@ public class TtlPartitionUtil {
 
     public static String findMaxPartBoundValStrFromNonMaxValParts(PartitionInfo tarPartInfo,
                                                                   PartKeyLevel partLevel,
-                                                                  TtlDefinitionInfo ttlInfo) {
+                                                                  TtlDefinitionInfo ttlInfo,
+                                                                  TtlColValueCalcContext calcContext) {
         Pair<String, SearchDatumInfo> partNameAndDatum =
             findMaxPartBoundValAndPartNameFromNonMaxValParts(tarPartInfo, partLevel);
         SearchDatumInfo bndValDatum = partNameAndDatum.getValue();
-        BuildPartFieldStringParams params = BuildPartFieldStringParams.constructPartFieldStringParams(ttlInfo);
+        // decode ttl_col if need
+        BuildPartFieldStringParams params =
+            BuildPartFieldStringParams.constructPartFieldStringParams(ttlInfo, calcContext);
         return convertPartSpecBoundValToString(bndValDatum.getDatumInfo()[0], params);
     }
 

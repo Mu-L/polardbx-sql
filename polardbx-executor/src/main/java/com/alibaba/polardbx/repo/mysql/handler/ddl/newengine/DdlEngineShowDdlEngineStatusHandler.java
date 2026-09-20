@@ -10,7 +10,10 @@ import com.alibaba.polardbx.executor.ddl.newengine.dag.TaskScheduler;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.resource.DdlEngineResources;
 import com.alibaba.polardbx.executor.ddl.newengine.resource.ResourceContainer;
+import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
+import com.alibaba.polardbx.executor.gsi.GsiUtils;
 import com.alibaba.polardbx.executor.spi.IRepository;
+import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.gms.node.GmsNodeManager;
 import com.alibaba.polardbx.gms.sync.GmsSyncManagerHelper;
 import com.alibaba.polardbx.gms.sync.IGmsSyncAction;
@@ -73,6 +76,16 @@ public class DdlEngineShowDdlEngineStatusHandler extends DdlEngineJobsHandler {
         result.addColumn("RESOURCES", DataTypes.StringType);
         result.addColumn("EXTRA", DataTypes.StringType);
         result.addColumn("DDL_STMT", DataTypes.StringType);
+        result.addColumn("ACTIVE_SUBTASK_COUNT", DataTypes.IntegerType);
+        result.initMeta();
+        return result;
+    }
+
+    public static ArrayResultCursor buildSubTaskStatusCursor() {
+        // ShowDdlEngineStatus
+        ArrayResultCursor result = new ArrayResultCursor("SUBTASK_STATUE");
+        result.addColumn("TASK_ID", DataTypes.LongType);
+        result.addColumn("ACTIVE_SUBTASK_COUNT", DataTypes.IntegerType);
         result.initMeta();
         return result;
     }
@@ -146,23 +159,51 @@ public class DdlEngineShowDdlEngineStatusHandler extends DdlEngineJobsHandler {
             cursor = buildShowDdlEngineStatusCursor();
 //        List<ShowDdlEngineStatusResult> showResults = handleByExecutorMap(schemaName);
             List<ShowDdlEngineStatusResult> showResults = new ArrayList<>();
-            DdlEngineStatusSyncAction sync = new DdlEngineStatusSyncAction(schemaName);
+            DdlEngineStatusSyncAction statusAyncAction = new DdlEngineStatusSyncAction(schemaName);
 
-            GmsSyncManagerHelper.sync(sync, executionContext.getSchemaName(), SyncScope.MASTER_ONLY, results -> {
-                if (results == null) {
-                    return;
-                }
+            GmsSyncManagerHelper.sync(statusAyncAction, executionContext.getSchemaName(), SyncScope.MASTER_ONLY,
+                results -> {
+                    if (results == null) {
+                        return;
+                    }
 
-                for (Pair<GmsNodeManager.GmsNode, List<Map<String, Object>>> result : results) {
-                    if (CollectionUtils.isEmpty(result.getValue())) {
-                        continue;
+                    for (Pair<GmsNodeManager.GmsNode, List<Map<String, Object>>> result : results) {
+                        if (CollectionUtils.isEmpty(result.getValue())) {
+                            continue;
+                        }
+                        for (Map<String, Object> row : result.getValue()) {
+                            showResults.add(ShowDdlEngineStatusResult.fromRow(row));
+                        }
                     }
-                    for (Map<String, Object> row : result.getValue()) {
-                        showResults.add(ShowDdlEngineStatusResult.fromRow(row));
-                    }
+                });
+            List<Long> queryForActiveSubTasks = new ArrayList<>();
+            Map<Long, Integer> activeSubTaskMap = new HashMap<>();
+            for (ShowDdlEngineStatusResult showResult : showResults) {
+                if (showResult.getTaskState().equalsIgnoreCase("ACTIVE")) {
+                    queryForActiveSubTasks.add(showResult.getTaskId());
                 }
-            });
+            }
+            DdlEngineSubtaskCountCollectAction countSyncAction =
+                new DdlEngineSubtaskCountCollectAction(schemaName, queryForActiveSubTasks);
+            GmsSyncManagerHelper.sync(countSyncAction, executionContext.getSchemaName(), SyncScope.MASTER_ONLY,
+                results -> {
+                    if (results == null) {
+                        return;
+                    }
+                    for (Pair<GmsNodeManager.GmsNode, List<Map<String, Object>>> result : results) {
+                        if (CollectionUtils.isEmpty(result.getValue())) {
+                            continue;
+                        }
+                        for (Map<String, Object> row : result.getValue()) {
+                            activeSubTaskMap.put((Long) row.get("TASK_ID"), (Integer) row.get("ACTIVE_SUBTASK_COUNT"));
+                        }
+                    }
+                });
+
             for (ShowDdlEngineStatusResult result : showResults) {
+                if (activeSubTaskMap.containsKey(result.taskId)) {
+                    result.setActiveSubtaskCount(activeSubTaskMap.get(result.taskId));
+                }
                 cursor.addRow(result.toRow());
             }
         }
@@ -216,7 +257,8 @@ public class DdlEngineShowDdlEngineStatusHandler extends DdlEngineJobsHandler {
                     serverKey,
                     ddlTask.getResourceAcquired().toString(),
                     "",
-                    ddlStmt
+                    ddlStmt,
+                    0
                 ));
             }
         }
@@ -282,7 +324,7 @@ public class DdlEngineShowDdlEngineStatusHandler extends DdlEngineJobsHandler {
         public ShowDdlEngineStatusResult(Long jobId, Long taskId, String taskState, String taskName,
                                          String exeutionInfo,
                                          String executionTime, String nodeIp, String resources, String extra,
-                                         String ddlStmt) {
+                                         String ddlStmt, Integer activeSubtaskCount) {
             this.jobId = jobId;
             this.taskId = taskId;
             this.taskName = taskName;
@@ -293,6 +335,7 @@ public class DdlEngineShowDdlEngineStatusHandler extends DdlEngineJobsHandler {
             this.resources = resources;
             this.extra = extra;
             this.ddlStmt = ddlStmt;
+            this.activeSubtaskCount = activeSubtaskCount;
         }
 
         public Object[] toRow() {
@@ -306,7 +349,8 @@ public class DdlEngineShowDdlEngineStatusHandler extends DdlEngineJobsHandler {
                 nodeIp,
                 resources,
                 extra,
-                ddlStmt
+                ddlStmt,
+                activeSubtaskCount
             };
         }
 
@@ -321,7 +365,8 @@ public class DdlEngineShowDdlEngineStatusHandler extends DdlEngineJobsHandler {
                 (String) row.get("NODE_IP"),
                 (String) row.get("RESOURCES"),
                 (String) row.get("EXTRAS"),
-                (String) row.get("DDL_STMT")
+                (String) row.get("DDL_STMT"),
+                (Integer) row.get("ACTIVE_SUBTASK_COUNT")
             );
         }
 
@@ -335,6 +380,7 @@ public class DdlEngineShowDdlEngineStatusHandler extends DdlEngineJobsHandler {
         public String resources;
         public String extra;
         public String ddlStmt;
+        public Integer activeSubtaskCount = 0;
     }
 
     @Data
@@ -352,6 +398,29 @@ public class DdlEngineShowDdlEngineStatusHandler extends DdlEngineJobsHandler {
                 DdlEngineShowDdlEngineStatusHandler.handleByExecutorMap(schemaName);
             for (ShowDdlEngineStatusResult result : showResults) {
                 cursor.addRow(result.toRow());
+            }
+            return cursor;
+        }
+    }
+
+    @Data
+    public static class DdlEngineSubtaskCountCollectAction implements IGmsSyncAction {
+        String schemaName;
+        List<Long> taskIds;
+
+        public DdlEngineSubtaskCountCollectAction(String schemaName, List<Long> taskIds) {
+            this.schemaName = schemaName;
+            this.taskIds = taskIds;
+        }
+
+        @Override
+        public Object sync() {
+            ArrayResultCursor cursor = buildSubTaskStatusCursor();
+            for (Long taskId : taskIds) {
+                Integer count = GsiUtils.getSubtaskCountByTaskId(taskId);
+                if (count > 0) {
+                    cursor.addRow(new Object[] {taskId, count});
+                }
             }
             return cursor;
         }

@@ -10,17 +10,22 @@ import com.alibaba.polardbx.executor.ddl.job.task.ttl.log.TtlAlterPartsTaskLogIn
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.log.TtlLoggerUtil;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
+import com.alibaba.polardbx.gms.util.TtlEventLogUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.partition.common.PartKeyLevel;
-import com.alibaba.polardbx.optimizer.ttl.TtlArchiveKind;
 import com.alibaba.polardbx.optimizer.ttl.TtlConfigUtil;
 import com.alibaba.polardbx.optimizer.ttl.TtlDefinitionInfo;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.apachecommons.CommonsLog;
+import org.apache.commons.lang.StringUtils;
 
 import java.sql.Connection;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * @author chenghui.lch
@@ -36,7 +41,7 @@ public class CheckAndPrepareDropPartsForTtlTblSqlTask extends AbstractTtlJobTask
     @JSONCreator
     public CheckAndPrepareDropPartsForTtlTblSqlTask(String schemaName, String logicalTableName) {
         super(schemaName, logicalTableName);
-        onExceptionTryRecoveryThenPause();
+        onExceptionTryRecoveryThenRollback();
     }
 
     @Override
@@ -47,8 +52,11 @@ public class CheckAndPrepareDropPartsForTtlTblSqlTask extends AbstractTtlJobTask
     }
 
     protected void executeInner(ExecutionContext executionContext) {
+        FailPoint.injectExceptionFromHint(FailPointKey.FP_TTL_JOB_FAILED_ON_DROP_PART, executionContext);
 
         TtlDefinitionInfo ttlDefinitionInfo = this.jobContext.getTtlInfo();
+        TtlPartitionUtil.TtlColValueCalcContext calcContext =
+            TtlPartitionUtil.TtlColValueCalcContext.buildBoundValueCalcContext(ttlDefinitionInfo, executionContext);
         PartKeyLevel tarPartLevel = PartKeyLevel.PARTITION_KEY;
         if (ttlDefinitionInfo.performArchiveBySubPartition()) {
             tarPartLevel = PartKeyLevel.SUBPARTITION_KEY;
@@ -61,6 +69,7 @@ public class CheckAndPrepareDropPartsForTtlTblSqlTask extends AbstractTtlJobTask
             TtlPartitionUtil.CleanupPostPartsCalcParams params = new TtlPartitionUtil.CleanupPostPartsCalcParams();
 
             params.setTtlInfo(ttlDefinitionInfo);
+            params.setCalcContext(calcContext);
             params.setCleanupPostPastForCci(false);
             params.setTargetPartLevel(tarPartLevel);
             params.setCleanupUpperBoundDatetimeStr(cleanUpUpperBoundStr);
@@ -75,15 +84,32 @@ public class CheckAndPrepareDropPartsForTtlTblSqlTask extends AbstractTtlJobTask
             /**
              * Build add part sql of ttl-tbl
              */
-            String queryHintForAlterTableDropParts = TtlConfigUtil.getQueryHintForAutoDropParts();
+            String queryHintForAlterTableDropParts = TtlTaskSqlBuilder.getTtlDropPartsStmtHint(executionContext);
             this.jobContext.setNeedDropPartsForTtlTbl(true);
             String dropPartsForTtlTbl = calcResult.generateDropPartsStmtSql(queryHintForAlterTableDropParts);
             this.jobContext.setTtlTblDropPartsSql(dropPartsForTtlTbl);
         } else {
-            this.jobContext.setNeedAddPartsForTtlTbl(false);
+            this.jobContext.setNeedDropPartsForTtlTbl(false);
         }
         DropPartsForTtlTblTaskLogInfo logInfo = new DropPartsForTtlTblTaskLogInfo();
         TtlAlterPartsTaskLogInfo.initAlterPartsTaskLogInfo(logInfo, this.jobContext, executionContext);
+
+        boolean isArcCciMetaInvalid = TtlJobUtil.checkIfArcCciMetaInvalid(executionContext, this.jobContext);
+        if (isArcCciMetaInvalid) {
+
+            this.jobContext.setNeedDropPartsForTtlTbl(false);
+            dynamicNotifyDropPartsSubJobTaskToExecIfNeed(executionContext, logInfo);
+
+            List<String> ttlTblListToBeWarn = new ArrayList<>();
+            String fullTblName = String.format("`%s`.`%s`", this.schemaName, this.logicalTableName);
+            ttlTblListToBeWarn.add(fullTblName);
+            TtlEventLogUtil.logInvalidTtlMetaInfoEvent(ttlTblListToBeWarn);
+            // Found invalid arc cci meta, give up cleaning the expired data at this task
+            logInfo.invalidArcCciInfo = fullTblName;
+            logTaskExecResult(this, jobContext, logInfo);
+            return;
+        }
+
         dynamicNotifyDropPartsSubJobTaskToExecIfNeed(executionContext, logInfo);
         logTaskExecResult(this, this.jobContext, logInfo);
     }

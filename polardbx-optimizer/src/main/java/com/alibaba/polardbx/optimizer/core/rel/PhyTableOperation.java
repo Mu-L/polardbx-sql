@@ -28,6 +28,8 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.CursorMeta;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
+import com.alibaba.polardbx.optimizer.utils.ExplainResult;
+import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.googlecode.protobuf.format.JsonFormat;
 import com.mysql.cj.x.protobuf.PolarxExecPlan;
 import lombok.Data;
@@ -288,6 +290,15 @@ public final class PhyTableOperation extends BaseTableOperation {
                 pw.item("XPlan", format.printToString(plan));
             }
         }
+
+        if (executionContext != null && executionContext.getParamManager().getBoolean(ConnectionParams.EXPLAIN_SHOW_PHYSICAL_PLAN)
+                && executionContext.getExplain() != null
+                && (executionContext.getExplain().explainMode == ExplainResult.ExplainMode.DETAIL
+                || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.COST
+                || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.ANALYZE)){
+            RelUtils.displayPhysicalPlan(this, pw, executionContext);
+        }
+
         //pw.done(this);
         return pw;
     }

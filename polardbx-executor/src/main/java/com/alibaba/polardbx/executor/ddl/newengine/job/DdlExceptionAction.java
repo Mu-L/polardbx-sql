@@ -33,6 +33,11 @@ public enum DdlExceptionAction {
      */
     TRY_RECOVERY_THEN_PAUSE,
     /**
+     * try to wait and recover the job when failed(n times)
+     * DdlState will turn to PAUSED if fail to recover
+     */
+    TRY_WAIT_AND_RECOVERY_THEN_PAUSE,
+    /**
      * try to rollback the job
      * DdlState will turn to FAILED_ROLLBACK if fail to recover
      */
@@ -42,6 +47,13 @@ public enum DdlExceptionAction {
      * if failed, then try to rollback
      */
     TRY_RECOVERY_THEN_ROLLBACK,
+
+    /**
+     * try to wait and recover the job when failed(n times)
+     * if all tries are failed, then try to rollback(if rollback is allowed, or else is paused)
+     */
+    TRY_WAIT_AND_RECOVERY_THEN_ROLLBACK,
+
     /**
      * DdlState will turn to PAUSED
      */

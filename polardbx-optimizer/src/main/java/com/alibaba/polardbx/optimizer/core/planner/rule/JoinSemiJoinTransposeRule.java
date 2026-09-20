@@ -93,8 +93,11 @@ public class JoinSemiJoinTransposeRule extends RelOptRule {
                 int nFieldsX = x.getRowType().getFieldList().size();
                 int nFieldsZ = z.getRowType().getFieldList().size();
                 int nFieldsY = y.getRowType().getFieldList().size();
-                int nTotalFields = nFieldsX + nFieldsZ + nFieldsY;
-                int[] adjustments = new int[nTotalFields];
+
+                // semiJoin's own condition/operand field space is [X][Z] (size nFieldsX + nFieldsZ).
+                // X keeps its offset in the new [X][Y][Z] layout (adjustment 0); Z is shifted right
+                // by nFieldsY since Y is now inserted between X and Z.
+                int[] adjustments = new int[nFieldsX + nFieldsZ];
                 for (int i = nFieldsX; i < nFieldsX + nFieldsZ; i++) {
                     adjustments[i] = nFieldsY;
                 }
@@ -145,12 +148,14 @@ public class JoinSemiJoinTransposeRule extends RelOptRule {
                 RelNode y = semiJoin.getLeft();
                 RelNode z = semiJoin.getRight();
                 int nFieldsX = x.getRowType().getFieldList().size();
+                int nFieldsY = y.getRowType().getFieldList().size();
+                int nFieldsZ = z.getRowType().getFieldList().size();
 
-                int nTotalFields = nFieldsX + y.getRowType().getFieldList().size()
-                    + z.getRowType().getFieldList().size();
-                int[] adjustments = new int[nTotalFields];
-                for (int i = nFieldsX; i < nTotalFields; i++) {
-                    adjustments[i] = -nFieldsX;
+                // semiJoin's own condition field space is [Y][Z] only (size nFieldsY + nFieldsZ);
+                // after inserting X before Y, every reference must shift uniformly by +nFieldsX.
+                int[] adjustments = new int[nFieldsY + nFieldsZ];
+                for (int i = 0; i < adjustments.length; i++) {
+                    adjustments[i] = nFieldsX;
                 }
                 transform(call, join, semiJoin, x, y, z, adjustments);
             }
@@ -173,15 +178,26 @@ public class JoinSemiJoinTransposeRule extends RelOptRule {
      */
     private static void transform(RelOptRuleCall call, LogicalJoin join, LogicalSemiJoin semiJoin, RelNode x, RelNode y,
                                   RelNode z, int[] adjustments) {
-        List<RelDataTypeField> fields = new ArrayList<>(x.getRowType().getFieldList());
-        fields.addAll(y.getRowType().getFieldList());
-        fields.addAll(z.getRowType().getFieldList());
+        // The semiJoin's own condition/operands only ever reference indices within its own
+        // [left][right] field space, so srcFields must match that space, not the new [x][y][z]
+        // destination space. Use semiJoin.getLeft()/getRight() directly since they correctly
+        // reflect the old semiJoin regardless of whether this is the LEFT_SEMI or RIGHT_SEMI variant.
+        List<RelDataTypeField> srcFields = new ArrayList<>(semiJoin.getLeft().getRowType().getFieldList());
+        srcFields.addAll(semiJoin.getRight().getRowType().getFieldList());
 
         RelOptUtil.RexInputConverter rexInputConverter = new RelOptUtil.RexInputConverter(
             semiJoin.getCluster().getRexBuilder(),
-            fields,
+            srcFields,
             adjustments);
         RexNode newSemiJoinCondition = semiJoin.getCondition().accept(rexInputConverter);
+
+        List<RexNode> newSemiJoinOperands = null;
+        if (semiJoin.getOperands() != null) {
+            newSemiJoinOperands = new ArrayList<>();
+            for (RexNode operand : semiJoin.getOperands()) {
+                newSemiJoinOperands.add(operand.accept(rexInputConverter));
+            }
+        }
 
         LogicalJoin newJoin = join.copy(
             join.getTraitSet(),
@@ -198,7 +214,8 @@ public class JoinSemiJoinTransposeRule extends RelOptRule {
             newJoin,
             z,
             semiJoin.getJoinType(),
-            semiJoin.isSemiJoinDone()
+            semiJoin.isSemiJoinDone(),
+            newSemiJoinOperands
         );
         RelUtils.changeRowType(newSemiJoin, newJoin.getRowType());
         call.transformTo(newSemiJoin);

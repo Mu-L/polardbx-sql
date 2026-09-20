@@ -18,6 +18,7 @@ public class DdlResourceManagerUtils {
     public static final String DN_CPU = ":DN_CPU";
     public static final String CN_NETWORK = ":CN_NETWORK";
     public static final String CN_CPU = ":CN_CPU";
+    //    public static final String CN_TASK_COUNT = ":CN_TASK_COUNT";
     public static final String MOVE_PARTITION_BEFORE_CHECK = ":MOVE_PARTITION_BEFORE_CHECK";
 
     public static final Set<String> validateResourcesNames = Arrays.stream(new String[] {

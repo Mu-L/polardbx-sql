@@ -67,7 +67,7 @@ public class CharsetTestBase extends AutoReadBaseTestCase {
     protected static final String CREATE_TABLE = "create table if not exists %s (\n"
         + "    pk INT UNSIGNED AUTO_INCREMENT NOT NULL PRIMARY KEY,\n"
         + "    v_default varchar(255) not null default 'abc',\n"
-        + "    v_utf8mb4 varchar(255) character set utf8mb4 not null default 'abc',\n"
+        + "    v_utf8mb4 varchar(255) character set utf8mb4 collate utf8mb4_general_ci not null default 'abc',\n"
         + "    v_utf8mb4_general_ci varchar(255) character set utf8mb4 collate utf8mb4_general_ci not null default 'abc',\n"
         + "    v_utf8mb4_unicode_ci varchar(255) character set utf8mb4 collate utf8mb4_unicode_ci not null default 'abc',\n"
         + "    v_utf8mb4_unicode_520_ci varchar(255) character set utf8mb4 collate utf8mb4_unicode_520_ci not null default 'abc',\n"

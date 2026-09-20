@@ -1,0 +1,508 @@
+SQL:
+  - sql: |
+      SELECT * FROM t0 WHERE EXISTS (
+        WITH cte_sub AS (SELECT v4, v5 FROM t1 WHERE t1.v4 = t0.v1 or t1.v5 = t0.v3)
+        SELECT 1 FROM cte_sub c1, cte_sub c2 WHERE c1.v5 > t0.v2
+      );
+    plan: |
+      project(v1="v1", v2="v2", v3="v3")
+        filter(condition="apply_boolean")
+          correlateapply(cor=$cor1, leftconditions=[], opkind=null, type=semi)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            cteanchor(cte_id=0)
+              cteproducer(cte_id=0)
+                gather(concurrent=true)
+                  logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5` from `t1` as `t1` where ((`v4` = `v1`) or (`v5` = `v3`))")
+              project(1="?0")
+                filter(condition="v5 > $cor1.v2")
+                  project(v5="v5")
+                    nljoin(condition="true", type="inner")
+                      cteconsumer(cte_id="0_1", projects=[$0])
+                      cteconsumer(cte_id="0_0", projects=[$1])
+      cache node:
+      
+      project(v5="v5")
+        nljoin(condition="true", type="inner")
+          cteconsumer(cte_id="0_1", projects=[$0])
+          cteconsumer(cte_id="0_0", projects=[$1])
+  - sql: |
+      WITH sub AS (SELECT EXISTS(SELECT 1 FROM t1 WHERE t0.v2 = t1.v5) AS c1, (NULL AND NULL) AS c2 FROM t0 INNER JOIN t1 ON t0.v2 = t1.v4) SELECT s.c2 FROM sub s WHERE true;
+    plan: |
+      project($f0="null and null")
+        correlateapply(cor=$cor1, leftconditions=[], opkind=null, type=semi)
+          project(v2="v2")
+            hashjoin(condition="v2 = v4", type="inner")
+              gather(concurrent=true)
+                logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4` from `t1` as `t1`")
+              gather(concurrent=true)
+                logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v2` from `t0` as `t0`")
+          gather(concurrent=true)
+            logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1` where (`v2` = `v5`)")
+  - sql: |
+      WITH sub AS (SELECT EXISTS(SELECT 1 FROM t1 WHERE t0.v2 = t1.v4) AS c1, (NULL AND NULL) AS c2 FROM t0 INNER JOIN t1 ON t0.v2 = t1.v4) SELECT s.c2 FROM sub s WHERE s.c2 IS NULL;
+    plan: |
+      project($f0="null and null")
+        correlateapply(cor=$cor1, leftconditions=[], opkind=null, type=semi)
+          project(v2="v2")
+            hashjoin(condition="v2 = v4", type="inner")
+              gather(concurrent=true)
+                logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4` from `t1` as `t1`")
+              gather(concurrent=true)
+                logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v2` from `t0` as `t0` where ((null and null) is null)")
+          gather(concurrent=true)
+            logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1` where (`v2` = `v4`)")
+  - sql: |
+      WITH cte_j AS (SELECT t0.v1, t0.v2, t1.v6 FROM t0 JOIN t1 ON t0.v2 = t1.v5)
+      SELECT * FROM t1
+      WHERE t1.v4 IN (
+        SELECT v1 FROM cte_j
+        WHERE cte_j.v2 = t1.v5 OR cte_j.v6 = t1.v6
+      );
+    plan: |
+      project(v4="v4", v5="v5", v6="v6")
+        filter(condition="apply_boolean")
+          correlateapply(cor=$cor0, leftconditions=[$0], opkind=equals, type=semi)
+            gather(concurrent=true)
+              logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+            project(v1="v1")
+              filter(condition="v2 = $cor0.v5 or v6 = $cor0.v6")
+                project(v1="v1", v2="v2", v6="v6")
+                  hashjoin(condition="v5 = v2", type="inner")
+                    gather(concurrent=true)
+                      logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v5`, `v6` from `t1` as `t1`")
+                    gather(concurrent=true)
+                      logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2` from `t0` as `t0`")
+      cache node:
+      
+      gather(concurrent=true)
+        logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+      project(v1="v1", v2="v2", v6="v6")
+        hashjoin(condition="v5 = v2", type="inner")
+          gather(concurrent=true)
+            logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v5`, `v6` from `t1` as `t1`")
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2` from `t0` as `t0`")
+  - sql: |
+      WITH cte_sorted_join AS (
+        SELECT t0.v1, t0.v3, t1.v5 FROM t0 JOIN t1 ON t0.v2 = t1.v5 ORDER BY t1.v5
+      )
+      SELECT * FROM t1
+      WHERE EXISTS (
+        SELECT 1 FROM cte_sorted_join
+        WHERE v1 = t1.v4 OR v5 = t1.v5
+      ) AND t1.v6 > 0;
+    plan: |
+      project(v4="v4", v5="v5", v6="v6")
+        filter(condition="apply_boolean")
+          correlateapply(cor=$cor0, leftconditions=[], opkind=null, type=semi)
+            gather(concurrent=true)
+              logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1` where (`v6` > ?)")
+            filter(condition="v1 = $cor0.v4 or v5 = $cor0.v5")
+              project(v1="v1", v3="v3", v5="v5")
+                hashjoin(condition="v5 = v2", type="inner")
+                  gather(concurrent=true)
+                    logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v5` from `t1` as `t1`")
+                  gather(concurrent=true)
+                    logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+      cache node:
+      
+      project(v1="v1", v3="v3", v5="v5")
+        hashjoin(condition="v5 = v2", type="inner")
+          gather(concurrent=true)
+            logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v5` from `t1` as `t1`")
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+  - sql: |
+      WITH cte_agg AS (SELECT v4, COUNT(*) AS cnt FROM t1 GROUP BY v4)
+      SELECT * FROM t0
+      WHERE t0.v1 IN (
+        SELECT v4 FROM cte_agg WHERE cnt > t0.v2
+      );
+    plan: |
+      project(v1="v1", v2="v2", v3="v3")
+        filter(condition="apply_boolean")
+          correlateapply(cor=$cor0, leftconditions=[$0], opkind=equals, type=semi)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            gather(concurrent=true)
+              logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4` from (select `v4`, count(*) as `cnt` from `t1` as `t1` group by `v4` having (count(*) > `v2`)) as `t0`")
+      cache node:
+      
+      gather(concurrent=true)
+        logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+  - sql: |
+      WITH cte_gh AS (
+        SELECT v4, SUM(v5) AS sv5 FROM t1 GROUP BY v4 HAVING SUM(v5) > 0
+      )
+      SELECT * FROM t0
+      WHERE EXISTS (
+        SELECT 1 FROM cte_gh WHERE v4 = t0.v1 OR sv5 > t0.v2
+      );
+    plan: |
+      project(v1="v1", v2="v2", v3="v3")
+        filter(condition="apply_boolean")
+          correlateapply(cor=$cor0, leftconditions=[], opkind=null, type=semi)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            gather(concurrent=true)
+              logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, sum(`v5`) as `sv5` from `t1` as `t1` group by `v4` having ((sum(`v5`) > ?) and ((`v4` = `v1`) or (sum(`v5`) > `v2`)))")
+  - sql: |
+      /*+TDDL:cmd_extra(OPTIMIZER_TYPE=MPP)*/
+      WITH cte_gh AS (
+        SELECT v4, SUM(v5) AS sv5 FROM t1 GROUP BY v4 HAVING SUM(v5) > 0
+      )
+      SELECT * FROM t0
+      WHERE EXISTS (
+        SELECT 1 FROM cte_gh WHERE v4 = t0.v1 OR sv5 > t0.v2
+      );
+    plan: |
+      project(v1="v1", v2="v2", v3="v3")
+        filter(condition="apply_boolean")
+          correlateapply(cor=$cor1, leftconditions=[], opkind=null, type=semi)
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, sum(`v5`) as `sv5` from `t1` as `t1` group by `v4` having ((sum(`v5`) > ?) and ((`v4` = `v1`) or (sum(`v5`) > `v2`)))")
+  - sql: |
+      WITH agg_t0 AS (SELECT v1, COUNT(*) AS c0 FROM t0 GROUP BY v1),
+           agg_t1 AS (SELECT v4, COUNT(*) AS c1 FROM t1 GROUP BY v4)
+      SELECT * FROM t0
+      WHERE t0.v1 IN (SELECT v1 FROM agg_t0 WHERE c0 > 1)
+         OR t0.v1 IN (SELECT v4 FROM agg_t1 WHERE agg_t1.v4 = t0.v1 AND c1 > 2);
+    plan: |
+      project(v1="v1", v2="v2", v3="v3")
+        filter(condition="apply_boolean or apply_boolean0")
+          correlateapply(cor=$cor0, leftconditions=[$0], opkind=equals, type=semi)
+            correlateapply(cor=$cor0, leftconditions=[$0], opkind=equals, type=semi)
+              gather(concurrent=true)
+                logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+              gather(concurrent=true)
+                logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1` from (select `v1`, count(*) as `c0` from `t0` as `t0` group by `v1` having (count(*) > ?)) as `t1`")
+            gather(concurrent=true)
+              logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4` from (select `v4`, count(*) as `c1` from `t1` as `t1` group by `v4` having ((count(*) > ?) and (`v4` = `v1`))) as `t0`")
+      cache node:
+      
+      gather(concurrent=true)
+        logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+      gather(concurrent=true)
+        logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1` from (select `v1`, count(*) as `c0` from `t0` as `t0` group by `v1` having (count(*) > ?)) as `t1`")
+      correlateapply(cor=$cor0, leftconditions=[$0], opkind=equals, type=semi)
+        gather(concurrent=true)
+          logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+        gather(concurrent=true)
+          logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1` from (select `v1`, count(*) as `c0` from `t0` as `t0` group by `v1` having (count(*) > ?)) as `t1`")
+  - sql: |
+      WITH cte_raw AS (SELECT v4, v5, v6 FROM t1 WHERE v6 > 0),
+           cte_aggd AS (SELECT v4, COUNT(*) AS cnt FROM cte_raw GROUP BY v4)
+      SELECT * FROM t0
+      WHERE t0.v1 IN (
+        SELECT v4 FROM cte_aggd WHERE cnt > t0.v2
+      );
+    plan: |
+      project(v1="v1", v2="v2", v3="v3")
+        filter(condition="apply_boolean")
+          correlateapply(cor=$cor0, leftconditions=[$0], opkind=equals, type=semi)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            gather(concurrent=true)
+              logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4` from (select `v4`, count(*) as `cnt` from `t1` as `t1` where (`v6` > ?) group by `v4` having (count(*) > `v2`)) as `t2`")
+      cache node:
+      
+      gather(concurrent=true)
+        logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+  - sql: |
+      WITH cte1 AS (SELECT v1, v2 FROM t0 WHERE v3 > 0),
+           cte2 AS (SELECT cte1.v1, t1.v5 FROM cte1 JOIN t1 ON cte1.v1 = t1.v4),
+           cte3 AS (SELECT v1, SUM(v5) AS sv FROM cte2 GROUP BY v1)
+      SELECT * FROM t1
+      WHERE t1.v4 IN (
+        SELECT v1 FROM cte3
+        WHERE sv > t1.v5
+           OR v1 IN (SELECT v1 FROM cte1 WHERE cte1.v2 = t1.v5)
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2` from `t0` as `t0` where (`v3` > ?)")
+        project(v4="v4", v5="v5", v6="v6")
+          filter(condition="apply_boolean")
+            correlateapply(cor=$cor0, leftconditions=[$0], opkind=equals, type=semi)
+              gather(concurrent=true)
+                logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+              project(v1="v1")
+                filter(condition="sv > $cor0.v5 or apply_boolean")
+                  correlateapply(cor=$cor2, leftconditions=[$0], opkind=equals, type=semi)
+                    hashagg(group="v1", sv="sum(v5)")
+                      project(v1="v1", v5="v5")
+                        hashjoin(condition="v1 = v4", type="inner")
+                          gather(concurrent=true)
+                            logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5` from `t1` as `t1`")
+                          cteconsumer(cte_id="0_2", projects=[$0])
+                    project(v1="v1")
+                      filter(condition="v2 = $cor0.v5")
+                        cteconsumer(cte_id="0_3")
+      cache node:
+      
+      gather(concurrent=true)
+        logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+      hashagg(group="v1", sv="sum(v5)")
+        project(v1="v1", v5="v5")
+          hashjoin(condition="v1 = v4", type="inner")
+            gather(concurrent=true)
+              logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5` from `t1` as `t1`")
+            cteconsumer(cte_id="0_2", projects=[$0])
+      cteconsumer(cte_id="0_3")
+  - sql: |
+      SELECT * FROM t0
+      WHERE EXISTS (
+        WITH cte_inline AS (SELECT v4, v5 FROM t1 WHERE t1.v5 > t0.v2)
+        SELECT 1 FROM cte_inline
+        WHERE v4 = t0.v1 OR v5 > t0.v3
+      );
+    plan: |
+      project(v1="v1", v2="v2", v3="v3")
+        filter(condition="apply_boolean")
+          correlateapply(cor=$cor0, leftconditions=[], opkind=null, type=semi)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            gather(concurrent=true)
+              logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select ? as `1` from (select `v4`, `v5` from `t1` as `t1` where (`v5` > `v2`)) as `t0` where ((`v4` = `v1`) or (`v5` > `v3`))")
+  - sql: |
+      SELECT * FROM t0
+      WHERE EXISTS (
+        WITH cte_sub AS (SELECT v4, v5 FROM t1 WHERE t1.v4 = t0.v1 OR t1.v5 = t0.v2)
+        SELECT 1 FROM cte_sub c1, cte_sub c2
+        WHERE c1.v5 > t0.v2
+      );
+    plan: |
+      project(v1="v1", v2="v2", v3="v3")
+        filter(condition="apply_boolean")
+          correlateapply(cor=$cor6, leftconditions=[], opkind=null, type=semi)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            cteanchor(cte_id=0)
+              cteproducer(cte_id=0)
+                gather(concurrent=true)
+                  logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5` from `t1` as `t1` where ((`v4` = `v1`) or (`v5` = `v2`))")
+              project(1="?0")
+                filter(condition="v5 > $cor6.v2")
+                  project(v5="v5")
+                    nljoin(condition="true", type="inner")
+                      cteconsumer(cte_id="0_1", projects=[$0])
+                      cteconsumer(cte_id="0_0", projects=[$1])
+      cache node:
+      
+      project(v5="v5")
+        nljoin(condition="true", type="inner")
+          cteconsumer(cte_id="0_1", projects=[$0])
+          cteconsumer(cte_id="0_0", projects=[$1])
+  - sql: |
+      SELECT * FROM t0
+      WHERE t0.v1 IN (
+        WITH cte_filter AS (SELECT v4 FROM t1 WHERE v5 = t0.v2 OR v6 = t0.v3)
+        SELECT v4 FROM cte_filter WHERE v4 > 0
+      );
+    plan: |
+      project(v1="v1", v2="v2", v3="v3")
+        filter(condition="apply_boolean")
+          correlateapply(cor=$cor1, leftconditions=[$0], opkind=equals, type=semi)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            gather(concurrent=true)
+              logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4` from `t1` as `t1` where ((`v4` > ?) and ((`v5` = `v2`) or (`v6` = `v3`)))")
+      cache node:
+      
+      gather(concurrent=true)
+        logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+  - sql: |
+      WITH cte_x AS (SELECT t0.v1, t0.v2 FROM t0 JOIN t1 ON t0.v3 = t1.v6),
+           cte_y AS (SELECT t0.v1, t1.v5 FROM t0 JOIN t1 ON t0.v1 = t1.v4)
+      SELECT * FROM t1
+      WHERE EXISTS (SELECT 1 FROM cte_x WHERE v1 = t1.v4)
+         OR EXISTS (SELECT 1 FROM cte_y WHERE v1 = t1.v4 AND v5 = t1.v5);
+    plan: |
+      project(v4="v4", v5="v5", v6="v6")
+        filter(condition="apply_boolean or apply_boolean0")
+          correlateapply(cor=$cor1, leftconditions=[], opkind=null, type=semi)
+            correlateapply(cor=$cor1, leftconditions=[], opkind=null, type=semi)
+              gather(concurrent=true)
+                logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+              filter(condition="v1 = $cor1.v4")
+                project(v1="v1", v2="v2")
+                  hashjoin(condition="v6 = v3", type="inner")
+                    gather(concurrent=true)
+                      logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v6` from `t1` as `t1`")
+                    gather(concurrent=true)
+                      logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3],t1[p1,p2,p3]", shardcount=3, sql="select * from (select `t0`.`v1`, `t1`.`v5` from `t0` as `t0` inner join `t1` as `t1` on (`t0`.`v1` = `t1`.`v4`)) as `t` where ((`v1` = `v4`) and (`v5` = `v5`))")
+      cache node:
+      
+      project(v1="v1", v2="v2")
+        hashjoin(condition="v6 = v3", type="inner")
+          gather(concurrent=true)
+            logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v6` from `t1` as `t1`")
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+  - sql: |
+      WITH cte_a AS (SELECT v4, MAX(v5) AS mx FROM t1 GROUP BY v4),
+           cte_b AS (SELECT v1, MIN(v2) AS mn FROM t0 GROUP BY v1)
+      SELECT * FROM t0
+      WHERE t0.v1 IN (
+        SELECT v4 FROM cte_a
+        WHERE mx > (SELECT mn FROM cte_b WHERE cte_b.v1 = t0.v1)
+      );
+    plan: |
+      project(v1="v1", v2="v2", v3="v3")
+        filter(condition="apply_boolean")
+          correlateapply(cor=$cor0, leftconditions=[$0], opkind=equals, type=semi)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            project(v4="v4")
+              filter(condition="mx > mn")
+                seminljoin(condition="true", type="left")
+                  gather(concurrent=true)
+                    logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, max(`v5`) as `mx` from `t1` as `t1` group by `v4`")
+                  gather(concurrent=true)
+                    logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `mn` from (select `v1`, min(`v2`) as `mn` from `t0` as `t0` group by `v1` having (`v1` = `v1`)) as `t1`")
+      cache node:
+      
+      gather(concurrent=true)
+        logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+  - sql: |
+      WITH cte_jn AS (
+        SELECT t0.v1, t0.v2, t1.v4, t1.v5 FROM t0 JOIN t1 ON t0.v1 = t1.v4
+      )
+      SELECT * FROM t0
+      WHERE t0.v1 IN (
+        SELECT v1 FROM cte_jn cj
+        WHERE cj.v2 > (
+          SELECT AVG(v6) FROM t1 WHERE t1.v4 = cj.v4 AND t1.v5 = t0.v2
+        )
+      );
+    plan: |
+      project(v1="v1", v2="v2", v3="v3")
+        filter(condition="apply_boolean")
+          correlateapply(cor=$cor1, leftconditions=[$0], opkind=equals, type=semi)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            gather(concurrent=true)
+              logicalview(tables="t1[p1,p2,p3],t0[p1,p2,p3],t1[p1,p2,p3]", shardcount=3, sql="select `t00`.`v1` from (select `v4`, sum(`v6`) as `$f1`, count(*) as `$f2` from `t1` as `t1` where (`v5` = `v2`) group by `v4`) as `t0` inner join (`t0` as `t00` inner join `t1` as `t10` on (`t00`.`v1` = `t10`.`v4`)) on ((`t0`.`v4` = `t10`.`v4`) and (`t00`.`v2` > (`t0`.`$f1` / `t0`.`$f2`)))")
+      cache node:
+      
+      gather(concurrent=true)
+        logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+  - sql: |
+      WITH cte_full AS (
+        SELECT t0.v1, t0.v2, t1.v5, t1.v6 FROM t0 JOIN t1 ON t0.v1 = t1.v4
+      )
+      SELECT * FROM t0
+      WHERE EXISTS (
+        SELECT 1 FROM cte_full cf
+        WHERE cf.v1 = t0.v1
+          AND NOT EXISTS (
+            SELECT 1 FROM t1 WHERE t1.v4 = cf.v1 AND t1.v5 > t0.v2
+          )
+      );
+    plan: |
+      project(v1="v1", v2="v2", v3="v3")
+        filter(condition="apply_boolean")
+          correlateapply(cor=$cor2, leftconditions=[], opkind=null, type=semi)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3],t1[p1,p2,p3],t1[p1,p2,p3]", shardcount=3, sql="select * from (select `t0`.`v1`, `t0`.`v2`, `t1`.`v5`, `t1`.`v6` from `t0` as `t0` inner join `t1` as `t1` on (`t0`.`v1` = `t1`.`v4`) where (not exists (select `v4` from `t1` as `t10` where ((`v4` = `t0`.`v1`) and (`v5` > `v2`))))) as `t4` where (`v1` = `v1`)")
+  - sql: |
+      WITH base_agg AS (
+        SELECT v4, COUNT(*) AS cnt, MAX(v5) AS mx FROM t1 GROUP BY v4
+      )
+      SELECT * FROM t0
+      WHERE EXISTS (
+        SELECT 1 FROM base_agg
+        WHERE v4 = t0.v1
+          AND cnt > (
+            SELECT MIN(v2) FROM t0 t_inner WHERE t_inner.v1 = t0.v1
+          )
+           OR mx = t0.v2
+      );
+    plan: |
+      project(v1="v1", v2="v2", v3="v3")
+        filter(condition="apply_boolean")
+          correlateapply(cor=$cor0, leftconditions=[], opkind=null, type=semi)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            project(v4="v4", cnt="cnt", mx="mx")
+              filter(condition="(v4 = $cor0.v1 and cnt > min(v2)) or mx = $cor0.v2")
+                correlateapply(cor=$cor3, leftconditions=[], opkind=null, type=left)
+                  gather(concurrent=true)
+                    logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, count(*) as `cnt`, max(`v5`) as `mx` from `t1` as `t1` group by `v4`")
+                  hashagg(min(v2)="min(min(v2))")
+                    gather(concurrent=true)
+                      logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select min(`v2`) as `min(v2)` from `t0` as `t0` where (`v1` = `v1`)")
+  - sql: |
+      WITH cte_base AS (
+        SELECT t0.v1, t0.v2, t1.v5, t1.v6 FROM t0 JOIN t1 ON t0.v1 = t1.v4
+      ),
+      cte_win AS (
+        SELECT v1, v2, v5,
+               RANK() OVER (PARTITION BY v1 ORDER BY v5) AS rnk,
+               SUM(v5) OVER (PARTITION BY v1) AS win_sum
+        FROM cte_base
+      )
+      SELECT * FROM t0
+      WHERE t0.v1 IN (
+        SELECT v1 FROM cte_win
+        WHERE rnk = 1 AND win_sum > t0.v2
+           OR v2 = t0.v3
+      );
+    plan: |
+      project(v1="v1", v2="v2", v3="v3")
+        filter(condition="apply_boolean")
+          correlateapply(cor=$cor1, leftconditions=[$0], opkind=equals, type=semi)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            project(v1="v1")
+              filter(condition="(rnk = ?0 and win_sum > $cor1.v2) or v2 = $cor1.v3")
+                project(v1="v1", v2="v2", rnk="f4w0$o0", win_sum="f5w1$o0")
+                  sortwindow(v1="v1", v2="v2", v5="v5", f4w0$o0="f4w0$o0", f5w1$o0="window#0sum($2)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [sum($2)])")
+                    sortwindow(v1="v1", v2="v2", v5="v5", f4w0$o0="window#0rank($2)", reference windows="window#0=window(partition {0} order by [2 asc-nulls-first] rows between unbounded preceding and current row aggs [rank($2)])")
+                      mergesort(sort="v1 asc,v5 asc")
+                        logicalview(tables="t0[p1,p2,p3],t1[p1,p2,p3]", shardcount=3, sql="select `t0`.`v1`, `t0`.`v2`, `t1`.`v5` from `t0` as `t0` inner join `t1` as `t1` on (`t0`.`v1` = `t1`.`v4`) order by `t0`.`v1`, `t1`.`v5`")
+      cache node:
+      
+      gather(concurrent=true)
+        logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+      project(v1="v1", v2="v2", rnk="f4w0$o0", win_sum="f5w1$o0")
+        sortwindow(v1="v1", v2="v2", v5="v5", f4w0$o0="f4w0$o0", f5w1$o0="window#0sum($2)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [sum($2)])")
+          sortwindow(v1="v1", v2="v2", v5="v5", f4w0$o0="window#0rank($2)", reference windows="window#0=window(partition {0} order by [2 asc-nulls-first] rows between unbounded preceding and current row aggs [rank($2)])")
+            mergesort(sort="v1 asc,v5 asc")
+              logicalview(tables="t0[p1,p2,p3],t1[p1,p2,p3]", shardcount=3, sql="select `t0`.`v1`, `t0`.`v2`, `t1`.`v5` from `t0` as `t0` inner join `t1` as `t1` on (`t0`.`v1` = `t1`.`v4`) order by `t0`.`v1`, `t1`.`v5`")
+DDL:
+  t0:
+    CREATE TABLE `t0` (
+    `v1` int(11) NOT NULL,
+    `v2` int(11) NOT NULL,
+    `v3` int(11) NOT NULL,
+    PRIMARY KEY (`v1`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 partition by hash(`v1`) PARTITIONS 3;
+
+  t1:
+    CREATE TABLE `t1` (
+    `v4` int(11) NOT NULL,
+    `v5` int(11) NOT NULL,
+    `v6` int(11) NOT NULL,
+    PRIMARY KEY (`v4`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 partition by hash(`v4`) PARTITIONS 3;
+
+STATISTICS:
+  t0:
+    168648768
+  t1:
+    6860984320
+CONFIG:
+  CTE_MODE:
+    AUTO
+  FORCE_HOLISTIC_SUBQUERY_UNNEST:
+    false
+  defaltxxAPPName.isNew:
+    true

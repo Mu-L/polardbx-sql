@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.operator.scan;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.executor.operator.scan.metrics.RuntimeMetrics;
 
 import java.io.IOException;
@@ -27,7 +29,13 @@ import java.util.concurrent.ExecutorService;
  *
  * @param <SplitT> class of columnar split
  */
-public interface ScanWork<SplitT extends ColumnarSplit, BATCH> {
+public interface ScanWork<SplitT extends ColumnarSplit, BATCH> extends MemoryCountable {
+
+    @Override
+    default long getMemoryUsage() {
+        return 0;
+    }
+
     String EVALUATION_TIMER = "Evaluation.Timer";
 
     /**
@@ -35,7 +43,7 @@ public interface ScanWork<SplitT extends ColumnarSplit, BATCH> {
      *
      * @param executor IO thread.
      */
-    void invoke(ExecutorService executor);
+    void invoke(ExecutorService executor, OperatorMemoryOwnerId memoryOwnerId);
 
     void cancel();
 

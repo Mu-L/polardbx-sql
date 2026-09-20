@@ -23,9 +23,8 @@ limitations under the License.
         <version>${revision}</version>
     </parent>
     <artifactId>polardbx-calcite</artifactId>
-        <packaging>jar</packaging>
-        <version>${calcite.version}</version>
-        <name>${project.artifactId} module for polardbx ${project.version}</name>
+    <packaging>jar</packaging>
+    <name>${project.artifactId} module for polardbx ${project.version}</name>
     <description>Core Calcite APIs and engine.</description>
     <properties>
         <top.dir>${project.basedir}/..</top.dir>
@@ -167,7 +166,7 @@ limitations under the License.
       <scope>test</scope>
     </dependency>
 
-      <dependency>
+     <dependency>
           <groupId>ch.qos.logback</groupId>
           <artifactId>logback-classic</artifactId>
       </dependency>
@@ -180,7 +179,7 @@ limitations under the License.
           <groupId>org.slf4j</groupId>
           <artifactId>log4j-over-slf4j</artifactId>
       </dependency>
-    
+
     <dependency>
       <groupId>sqlline</groupId>
       <artifactId>sqlline</artifactId>
@@ -195,12 +194,12 @@ limitations under the License.
     <dependency>
       <groupId>com.alibaba.polardbx</groupId>
       <artifactId>polardbx-common</artifactId>
-      <version>${parent.version}</version>
+      <version>${project.version}</version>
     </dependency>
     <dependency>
       <groupId>com.alibaba.polardbx</groupId>
       <artifactId>polardbx-rule</artifactId>
-      <version>${parent.version}</version>
+      <version>${project.version}</version>
     </dependency>
       <dependency>
           <groupId>org.mockito</groupId>
@@ -211,7 +210,7 @@ limitations under the License.
       <dependency>
           <groupId>com.alibaba.polardbx</groupId>
           <artifactId>polardbx-net</artifactId>
-          <version>${parent.version}</version>
+          <version>${project.version}</version>
       </dependency>
   </dependencies>
 

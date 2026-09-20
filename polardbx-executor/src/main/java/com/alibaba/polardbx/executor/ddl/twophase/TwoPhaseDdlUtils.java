@@ -32,6 +32,7 @@ import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.spi.IGroupExecutor;
+import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.group.config.Weight;
 import com.alibaba.polardbx.group.jdbc.TGroupDataSource;
 import com.alibaba.polardbx.group.jdbc.TGroupDirectConnection;
@@ -60,7 +61,6 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
-import static com.alibaba.polardbx.gms.util.GroupInfoUtil.buildGroupNameFromPhysicalDb;
 import static com.alibaba.polardbx.gms.util.GroupInfoUtil.buildPhysicalDbNameFromGroupName;
 
 public class TwoPhaseDdlUtils {
@@ -365,9 +365,10 @@ public class TwoPhaseDdlUtils {
         return origin.replace("\n", "\\n").replace("\t", "\\t");
     }
 
-    public static String buildPhyDbTableNameFromGroupNameAndPhyTableName(String groupName, String phyTableName) {
+    public static String buildPhyDbTableNameFromGroupNameAndPhyTableName(String schemaName, String groupName,
+                                                                         String phyTableName) {
         String formatString = "%s/%s";
-        return String.format(formatString, buildPhysicalDbNameFromGroupName(groupName).toLowerCase(),
+        return String.format(formatString, buildPhysicalDbNameFromGroupName(schemaName, groupName).toLowerCase(),
             phyTableName.toLowerCase());
     }
 
@@ -376,8 +377,7 @@ public class TwoPhaseDdlUtils {
         return String.format(formatString, logicalTableName, groupName);
     }
 
-    public static String buildLogicalTableNameFromTwoPhaseKeyAndPhyDbName(String keyName, String phyDbName) {
-        String groupName = buildGroupNameFromPhysicalDb(phyDbName);
+    public static String buildLogicalTableNameFromTwoPhaseKeyAndPhyDbName(String keyName, String groupName) {
         int index = keyName.lastIndexOf("_" + groupName);
         if (index == -1) {
             return "__unknown_table";

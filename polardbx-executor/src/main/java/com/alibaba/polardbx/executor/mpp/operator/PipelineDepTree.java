@@ -16,7 +16,9 @@
 
 package com.alibaba.polardbx.executor.mpp.operator;
 
-import com.alibaba.polardbx.optimizer.planmanager.PlanManagerUtil;
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
+import com.alibaba.polardbx.common.BlockingState;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
@@ -25,6 +27,7 @@ import com.alibaba.polardbx.executor.mpp.planner.PipelineFragment;
 import com.alibaba.polardbx.executor.mpp.planner.PipelineProperties;
 import com.alibaba.polardbx.executor.mpp.planner.WrapPipelineFragment;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -32,6 +35,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import static com.alibaba.polardbx.common.BlockingReason.NOT_BLOCKED;
+import static com.alibaba.polardbx.common.BlockingReason.WAIT_DRIVER_CONSUMER_FINISHED;
+import static com.alibaba.polardbx.common.BlockingReason.WAIT_PIPELINE_DEPENDENCY;
 
 public class PipelineDepTree {
 
@@ -79,11 +86,15 @@ public class PipelineDepTree {
         for (Map.Entry<Integer, TreeNode> entry : nodeIndex.entrySet()) {
             TreeNode current = entry.getValue();
             if (current.getDependChildren() != null && current.getDependChildren().size() > 0) {
-                ListenableFuture<?> childFuture = Futures.allAsList(
-                    current.getDependChildren().stream().map(t -> t.getFuture()).collect(Collectors.toList()));
+                List<ListenableFuture<?>> childFutures = new ArrayList<>();
+                for (TreeNode child : current.getDependChildren()) {
+                    childFutures.add(child.getFuture());
+                }
+                ListenableFuture<?> childFuture =
+                    BlockingFuture.allAsListFromListenableFutures(childFutures, WAIT_PIPELINE_DEPENDENCY);
                 current.setChildrenFuture(childFuture);
             } else {
-                current.setChildrenFuture(Futures.immediateFuture(null));
+                current.setChildrenFuture(BlockingFuture.immediateFuture(null, BlockingReason.NOT_BLOCKED));
             }
         }
     }
@@ -138,14 +149,16 @@ public class PipelineDepTree {
         private Set<TreeNode> dependChildren = new HashSet<>();
         private Set<TreeNode> children = new HashSet<>();
         private ListenableFuture<?> childrenFuture;
-        private SettableFuture<?> future = SettableFuture.create();
+        private SettableFuture future = SettableFuture.create();
+        private long firstCallTime = 0L;
         private int id;
         private boolean finished;
         private int parallelism;
         private boolean buildDepOnAllConsumers;
 
         private int finishedConsumers = 0;
-        private SettableFuture<?> consumerFuture = SettableFuture.create();
+        private SettableFuture consumerFuture = SettableFuture.create();
+        private long firstCallConsumerFutureTime = 0L;
 
         public TreeNode(int id) {
             this.id = id;
@@ -155,13 +168,19 @@ public class PipelineDepTree {
             synchronized (consumerFuture) {
                 finishedConsumers++;
                 if (finishedConsumers == parallelism) {
-                    consumerFuture.set(null);
+                    consumerFuture.set(BlockingState.create(
+                        WAIT_DRIVER_CONSUMER_FINISHED,
+                        System.nanoTime() - firstCallConsumerFutureTime
+                    ));
                 }
             }
         }
 
         public SettableFuture<?> getConsumerFuture() {
             synchronized (consumerFuture) {
+                if (firstCallConsumerFutureTime == 0L) {
+                    firstCallConsumerFutureTime = System.nanoTime();
+                }
                 return consumerFuture;
             }
         }
@@ -204,7 +223,10 @@ public class PipelineDepTree {
 
         public void setFinished(boolean finished) {
             this.finished = finished;
-            this.future.set(null);
+            this.future.set(BlockingState.create(
+                WAIT_PIPELINE_DEPENDENCY,
+                System.nanoTime() - firstCallTime
+            ));
         }
 
         public void setParallelism(int parallelism) {
@@ -216,6 +238,9 @@ public class PipelineDepTree {
         }
 
         public ListenableFuture<?> getChildrenFuture() {
+            if (firstCallTime == 0L) {
+                firstCallTime = System.nanoTime();
+            }
             return childrenFuture;
         }
 

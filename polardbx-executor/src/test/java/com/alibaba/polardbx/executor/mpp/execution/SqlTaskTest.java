@@ -38,7 +38,7 @@ public class SqlTaskTest {
             TaskLocation location = Mockito.mock(TaskLocation.class);
             TestSqlTask sqlTask = new TestSqlTask("1", TaskId.EMPTY_TASKID, location,
                 new QueryContext(null, "test"),
-                new SqlTaskExecutionFactory(testExecutor, new TaskExecutor(), null, null, null),
+                new SqlTaskExecutionFactory(testExecutor, new TaskExecutor(null, null), null, null, null),
                 testExecutor);
 
             // do nothing if trx id is -1
@@ -98,7 +98,7 @@ public class SqlTaskTest {
             TaskLocation location = Mockito.mock(TaskLocation.class);
             TestSqlTask sqlTask = new TestSqlTask("1", TaskId.EMPTY_TASKID, location,
                 new QueryContext(null, "test"),
-                new SqlTaskExecutionFactory(testExecutor, new TaskExecutor(), null, null, null),
+                new SqlTaskExecutionFactory(testExecutor, new TaskExecutor(null, null), null, null, null),
                 testExecutor);
 
             SessionRepresentation sessionRepresentation = Mockito.mock(SessionRepresentation.class);

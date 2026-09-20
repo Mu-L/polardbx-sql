@@ -31,7 +31,10 @@ import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.gms.metadb.table.TableStatus;
 import com.alibaba.polardbx.gms.metadb.table.TablesAccessor;
 import com.alibaba.polardbx.gms.metadb.table.TablesRecord;
+import com.alibaba.polardbx.gms.topology.StorageInfoMappingAccessor;
+import com.alibaba.polardbx.gms.topology.StorageInfoMappingRecord;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
+import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.server.conn.InnerConnection;
 import com.alibaba.polardbx.server.conn.InnerTransManager;
@@ -46,7 +49,11 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+
+import static com.alibaba.polardbx.gms.topology.SystemDbHelper.CDC_DB_NAME;
 
 /**
  * 关于Cdc系统库中系统表的初始化时机，有几个选择，做如下说明：
@@ -64,7 +71,7 @@ public class CdcTableUtil {
      * 需注意"SCHEMA_NAME列"和"TABLE_NAME列"的长度不能小于meta db中"db_info表"和"tables表"中对应列的长度
      */
     private final static String CREATE_CDC_DDL_RECORD_TABLE = String.format(
-        "CREATE TABLE IF NOT EXISTS `%s` (\n"
+        "/*+TDDL:ENABLE_RANDOM_PHY_TABLE_NAME=false*/CREATE TABLE IF NOT EXISTS `%s` (\n"
             + "  `ID` BIGINT(20) NOT NULL auto_increment,\n"
             + "  `JOB_ID` BIGINT(20)  DEFAULT NULL,\n"
             + "  `SQL_KIND` VARCHAR(50) NOT NULL,\n"
@@ -72,12 +79,12 @@ public class CdcTableUtil {
             + "  `TABLE_NAME`  VARCHAR(200) DEFAULT NULL,\n"
             + "  `GMT_CREATED` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,\n"
             + "  `DDL_SQL`  MEDIUMTEXT NOT NULL,\n"
-            + "  `META_INFO` MEDIUMTEXT DEFAULT NULL,\n"
+            + "  `META_INFO` LONGTEXT DEFAULT NULL,\n"
             + "  `VISIBILITY` BIGINT(10) NOT NULL,\n"
-            + "  `EXT` TEXT DEFAULT NULL,\n"
+            + "  `EXT` MEDIUMTEXT DEFAULT NULL,\n"
             + "  PRIMARY KEY (`ID`),\n"
             + "  KEY idx_job_id(`JOB_ID`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 BROADCAST\n", CDC_DDL_RECORD_TABLE);
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci BROADCAST\n", CDC_DDL_RECORD_TABLE);
 
     private final static String CDC_ADD_INDEX = "alter table %s add index idx_job_id(`JOB_ID`)";
 
@@ -93,7 +100,7 @@ public class CdcTableUtil {
             + "  `INSTRUCTION_ID` VARCHAR(50) NOT NULL,\n"
             + "  PRIMARY KEY (`ID`),\n"
             + "  UNIQUE KEY `uk_instruction_id_type` (`INSTRUCTION_TYPE`,`INSTRUCTION_ID`) \n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 BROADCAST\n", CDC_INSTRUCTION_TABLE);
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci BROADCAST\n", CDC_INSTRUCTION_TABLE);
 
     /**
      * Sql Template for ddl record insert
@@ -121,20 +128,37 @@ public class CdcTableUtil {
     /**
      * Sql Template for cdc instruction insert
      */
-    final static String INSERT_CDC_INSTRUCTION = String
-        .format(
-            "INSERT IGNORE INTO `%s`(INSTRUCTION_TYPE,INSTRUCTION_ID,INSTRUCTION_CONTENT,GMT_CREATED)VALUES(?,?,?,NOW())",
-            CDC_INSTRUCTION_TABLE);
+    final static String INSERT_CDC_INSTRUCTION = String.format(
+        "INSERT IGNORE INTO `%s`(INSTRUCTION_TYPE,INSTRUCTION_ID,INSTRUCTION_CONTENT,GMT_CREATED)VALUES(?,?,?,NOW())",
+        CDC_INSTRUCTION_TABLE);
 
     /**
      * 通过type查询instruction
      */
-    final static String QUERY_CDC_INSTRUCTION_COUNT_BY_TYPE_AND_ID =
-        String
-            .format("SELECT COUNT(ID) FROM %s WHERE INSTRUCTION_TYPE =? and INSTRUCTION_ID =?", CDC_INSTRUCTION_TABLE);
+    final static String QUERY_CDC_INSTRUCTION_COUNT_BY_TYPE_AND_ID = String.format(
+        "SELECT COUNT(ID) FROM %s WHERE INSTRUCTION_TYPE =? and INSTRUCTION_ID =?", CDC_INSTRUCTION_TABLE);
 
     public final static String QUERY_CDC_DDL_RECORD_LIMIT_1 =
         "SELECT JOB_ID,EXT FROM `" + CDC_DDL_RECORD_TABLE + "` LIMIT 1";
+
+    final static String QUERY_CDC_DDL_RECORD_BY_ID_SQL =
+        "SELECT ID, JOB_ID, SQL_KIND, SCHEMA_NAME, TABLE_NAME, GMT_CREATED, DDL_SQL, META_INFO, VISIBILITY, EXT FROM `"
+            + CDC_DDL_RECORD_TABLE + "` WHERE ID = ?";
+
+    final static String QUERY_CDC_DDL_RECORD_LARGE_THAN_ID_SQL =
+        "SELECT ID, JOB_ID, SQL_KIND, SCHEMA_NAME, TABLE_NAME, GMT_CREATED, DDL_SQL, META_INFO, VISIBILITY, EXT FROM `"
+            + CDC_DDL_RECORD_TABLE + "` WHERE ID > ? ORDER BY ID LIMIT ?";
+
+    final static String SELECT_MAX_ID_DDL_RECORD_SQL =
+        "SELECT ID, JOB_ID, SQL_KIND, SCHEMA_NAME, TABLE_NAME, GMT_CREATED, DDL_SQL, META_INFO, VISIBILITY, EXT FROM "
+            + "__cdc__.__cdc_ddl_record__ where id = (select max(id) from __cdc__.__cdc_ddl_record__)";
+
+    final static String SELECT_MIN_ID_DDL_RECORD_SQL =
+        "SELECT ID, JOB_ID, SQL_KIND, SCHEMA_NAME, TABLE_NAME, GMT_CREATED, DDL_SQL, META_INFO, VISIBILITY, EXT FROM "
+            + "__cdc__.__cdc_ddl_record__ where id = (select min(id) from __cdc__.__cdc_ddl_record__)";
+
+    final static String CHECK_IF_EXISTS_DROP_DATABASE_RECORD_AFTER_ID_SQL =
+        "SELECT count(id) from __cdc__.__cdc_ddl_record__ where id > %s and sql_kind = 'DROP_DATABASE' and schema_name = '%s'";
 
     private CdcTableUtil() {
     }
@@ -163,12 +187,13 @@ public class CdcTableUtil {
                 if (!allReady) {
                     logger.warn("cdc system tables are not ready yet ,will sleep and retry.");
                     Thread.sleep(500);
+                } else {
+                    alterTable();
                 }
-                alterTable();
             } catch (Throwable t) {
                 errorTime++;
                 if (errorTime > 2) {
-                    //最大允许重试3次，初始化过程中出现异常的概率很低，但为了更好的容错，我们增加3次异常重试
+                    //最大允许重试 3 次，初始化过程中出现异常的概率很低，但为了更好的容错，我们增加 3 次异常重试
                     throw GeneralUtil.nestedException("init cdc system tables failed.", t);
                 } else {
                     logger.error("init cdc system tables failed, will retry.", t);
@@ -237,6 +262,35 @@ public class CdcTableUtil {
         }
     }
 
+    public CdcDdlRecord queryDdlRecordById(@NotNull Connection connection,
+                                           @NotNull Long id) throws SQLException {
+        try (PreparedStatement stmt = connection.prepareStatement(QUERY_CDC_DDL_RECORD_BY_ID_SQL)) {
+            stmt.setObject(1, id);
+            final ResultSet rs = stmt.executeQuery();
+            final List<CdcDdlRecord> result = new ArrayList<>();
+            while (rs.next()) {
+                result.add(CdcDdlRecord.fill(rs));
+            }
+            return result.isEmpty() ? null : result.get(0);
+        }
+    }
+
+    public List<CdcDdlRecord> queryDdlRecordLargeThanId(@NotNull Connection connection,
+                                                        @NotNull Long id,
+                                                        @NotNull Integer batchSize) throws SQLException {
+        try (PreparedStatement stmt = connection.prepareStatement(QUERY_CDC_DDL_RECORD_LARGE_THAN_ID_SQL)) {
+
+            stmt.setObject(1, id);
+            stmt.setObject(2, batchSize);
+            final ResultSet rs = stmt.executeQuery();
+            final List<CdcDdlRecord> result = new ArrayList<>();
+            while (rs.next()) {
+                result.add(CdcDdlRecord.fill(rs));
+            }
+            return result;
+        }
+    }
+
     /**
      * @return 如果时TSO事务，返回insert的commitTso，该值意味着是该打标sql在binlog事件中的tso值
      */
@@ -288,8 +342,8 @@ public class CdcTableUtil {
 
                     if (taskId != null) {
                         Assert.assertTrue(extInfo != null && extInfo.getTaskId() != null && extInfo.getTaskId() != 0L);
-                        if (taskSubSeq != null) {
-                            Assert.assertTrue(extInfo.getTaskSubSeq() != null && extInfo.getTaskSubSeq() > 0);
+                        if (taskSubSeq != null && extInfo.getTaskSubSeq() != null) {
+                            Assert.assertTrue(extInfo.getTaskSubSeq() > 0);
                             result |= (jobId == jobIdTemp && extInfo.getTaskId().equals(taskId)
                                 && extInfo.getTaskSubSeq().equals(taskSubSeq));
                         } else {
@@ -303,6 +357,20 @@ public class CdcTableUtil {
             }
         }
         return result;
+    }
+
+    @SneakyThrows
+    public Map<String, String> buildStorageMapping() {
+        try (Connection metaDbConn = MetaDbUtil.getConnection()) {
+            StorageInfoMappingAccessor mappingAccessor = new StorageInfoMappingAccessor();
+            mappingAccessor.setConnection(metaDbConn);
+            List<StorageInfoMappingRecord> mappingRecords =
+                mappingAccessor.getStorageInfosByInstId(InstIdUtil.getInstId());
+
+            Map<String, String> storageMapping = new HashMap<>();
+            mappingRecords.forEach(r -> storageMapping.put(r.getUpstreamStorageInstId(), r.getStorageInstId()));
+            return storageMapping;
+        }
     }
 
     @SneakyThrows
@@ -334,6 +402,46 @@ public class CdcTableUtil {
         return false;
     }
 
+    @SneakyThrows
+    public CdcDdlRecord getMaxIdCdcDdlRecord() {
+        try (Connection connection = new InnerConnection(CDC_DB_NAME);
+            Statement statement = connection.createStatement()) {
+            try (ResultSet resultSet = statement.executeQuery(SELECT_MAX_ID_DDL_RECORD_SQL)) {
+                if (resultSet.next()) {
+                    return CdcDdlRecord.fill(resultSet);
+                }
+            }
+        }
+        return null;
+    }
+
+    @SneakyThrows
+    public CdcDdlRecord getMinIdCdcDdlRecord() {
+        try (Connection connection = new InnerConnection(CDC_DB_NAME);
+            Statement statement = connection.createStatement()) {
+            try (ResultSet resultSet = statement.executeQuery(SELECT_MIN_ID_DDL_RECORD_SQL)) {
+                if (resultSet.next()) {
+                    return CdcDdlRecord.fill(resultSet);
+                }
+            }
+        }
+        return null;
+    }
+
+    @SneakyThrows
+    public boolean checkIfExistsDropDatabaseAfterId(long id, String schemaName) {
+        String sql = String.format(CHECK_IF_EXISTS_DROP_DATABASE_RECORD_AFTER_ID_SQL, id, schemaName);
+        try (Connection connection = new InnerConnection(CDC_DB_NAME);
+            Statement statement = connection.createStatement()) {
+            try (ResultSet resultSet = statement.executeQuery(sql)) {
+                if (resultSet.next()) {
+                    return resultSet.getInt(1) > 0;
+                }
+            }
+        }
+        return false;
+    }
+
     private void alterTable() {
         // old version maybe not the index.
         try (Connection connection = new InnerConnection(SystemDbHelper.CDC_DB_NAME)) {
@@ -343,6 +451,7 @@ public class CdcTableUtil {
             }
         } catch (Throwable t) {
             //ignore
+            logger.error("alter table __cdc_ddl_record__ add index failed.", t);
         }
     }
 

@@ -53,30 +53,6 @@ import static com.alibaba.polardbx.executor.utils.ExecUtils.getQueryConcurrencyP
 @Getter
 @TaskName(name = "SperateCheckGsiTask")
 public class SperateCheckGsiTask extends CheckGsiTask {
-    public static SperateCheckGsiTask create(CheckGsiPrepareData prepareData) {
-        return new SperateCheckGsiTask(
-            prepareData.getSchemaName(),
-            prepareData.getTableName(),
-            prepareData.getIndexName(),
-            prepareData.getLockMode().getKey().name(),
-            prepareData.getLockMode().getValue().name(),
-            new GsiChecker.Params(
-                prepareData.getBatchSize(),
-                prepareData.getSpeedLimit(),
-                prepareData.getSpeedMin(),
-                prepareData.getParallelism(),
-                prepareData.getEarlyFailNumber(),
-                prepareData.isUseBinary()
-            ),
-            prepareData.isCorrect(),
-            prepareData.getExtraCmd(),
-            false,
-            false,
-            null,
-            null
-        );
-    }
-
     @JSONCreator
     public SperateCheckGsiTask(String schemaName,
                                String tableName,
@@ -88,13 +64,18 @@ public class SperateCheckGsiTask extends CheckGsiTask {
                                String extraCmd,
                                boolean primaryBroadCast,
                                boolean gsiBroadCast,
-                               Map<String, String> virtualColumnMap,
-                               Map<String, String> backfillColumnMap) {
+                               boolean onlineModifyColumn,
+                               Map<String, String> srcVirtualColumns,
+                               Map<String, String> dstVirtualColumns) {
         super(schemaName, tableName,
             indexName, primaryTableLockMode,
             indexTableLockMode, checkParams,
             correct, extraCmd, primaryBroadCast,
-            gsiBroadCast, false);
+            gsiBroadCast, onlineModifyColumn);
+        if (onlineModifyColumn) {
+            this.setSrcCheckColumnMap(srcVirtualColumns);
+            this.setDstCheckColumnMap(dstVirtualColumns);
+        }
     }
 
     @Override

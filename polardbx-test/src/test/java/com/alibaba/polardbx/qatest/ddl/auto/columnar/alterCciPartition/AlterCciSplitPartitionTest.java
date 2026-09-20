@@ -19,18 +19,19 @@
 package com.alibaba.polardbx.qatest.ddl.auto.columnar.alterCciPartition;
 
 import com.alibaba.polardbx.optimizer.partition.common.PartitionStrategy;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import net.jcip.annotations.NotThreadSafe;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-@RunWith(Parameterized.class)
+@IcbcIgnore(ignoreReason = "icbc not support cci")
 @NotThreadSafe
 public class AlterCciSplitPartitionTest extends AlterCciPartitionBaseTest {
 
@@ -91,8 +92,22 @@ public class AlterCciSplitPartitionTest extends AlterCciPartitionBaseTest {
     }
 
     @Test
-    public void testDDLOnly() {
+    public void testDDLOnly() throws SQLException {
+        // 验证所有 CCI 的分区记录
+        compareTablePartitionRecords(logicalDatabase, tableName, cciNames);
 
+        // 验证分裂后的分区组信息（对所有 CCI）
+        List<String> newPartitionNames = getExpectedSplitPartitionNames();
+        if (!newPartitionNames.isEmpty()) {
+            for (String cciName : cciNames) {
+                validatePartitionGroupInfo(logicalDatabase, tableName, cciName, newPartitionNames);
+            }
+        }
+
+        // 验证所有 columnar 表使用 NonDeletable 组
+        for (String cciName : cciNames) {
+            validateColumnarPartitionUsesNonDeletableGroups(logicalDatabase, cciName);
+        }
     }
 
     @Parameterized.Parameters(name = "{index}:partitionRuleInfo={0}")
@@ -105,6 +120,29 @@ public class AlterCciSplitPartitionTest extends AlterCciPartitionBaseTest {
             status.add(new PartitionRuleInfo[] {pi});
         });
         return status;
+    }
+
+    /**
+     * 根据当前分区策略获取期望的分裂后分区名称
+     */
+    private List<String> getExpectedSplitPartitionNames() {
+        if (partitionRuleInfo == null) {
+            return Arrays.asList();
+        }
+
+        switch (partitionRuleInfo.getStrategy()) {
+        case RANGE:
+        case RANGE_COLUMNS:
+        case LIST:
+        case LIST_COLUMNS:
+            // 这些策略在分裂时明确指定了新分区名 p20, p21
+            return Arrays.asList("p20", "p21");
+        case KEY:
+            // 原来有3个分区，所以新分区为p4, p5
+            return Arrays.asList("p4", "p5");
+        default:
+            return Arrays.asList();
+        }
     }
 
     @Before

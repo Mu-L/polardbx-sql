@@ -31,8 +31,11 @@ import com.alibaba.polardbx.executor.ddl.newengine.resource.DdlEngineResources;
 import com.alibaba.polardbx.executor.physicalbackfill.PhysicalBackfillManager;
 import com.alibaba.polardbx.executor.physicalbackfill.PhysicalBackfillReporter;
 import com.alibaba.polardbx.executor.physicalbackfill.PhysicalBackfillUtils;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import com.alibaba.polardbx.gms.partition.PhysicalBackfillDetailInfoFieldJSON;
 import com.alibaba.polardbx.gms.topology.DbGroupInfoRecord;
+import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ScaleOutPlanUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -52,7 +55,10 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static com.alibaba.polardbx.common.TddlConstants.LONG_ENOUGH_TIMEOUT_FOR_DDL_ON_XPROTO_CONN;
 import static com.alibaba.polardbx.executor.ddl.newengine.utils.DdlResourceManagerUtils.DN_CPU;
@@ -121,6 +127,9 @@ public class CloneTableDataFileTask extends BaseDdlTask {
     }
 
     public void executeImpl(ExecutionContext ec) {
+        FailPoint.injectRandomExceptionFromHint(FailPointKey.FP_CLONE_TABLE_DATA_FILE_TASK_RANDOM_FAIL, ec);
+        FailPoint.injectRandomSuspendFromHint(ec);
+        FailPoint.injectSuspendFromHint(FailPointKey.FP_CLONE_TABLE_DATA_FILE_TASK_SUSPEND, ec);
         PhysicalBackfillManager backfillManager = new PhysicalBackfillManager(schemaName);
         PhysicalBackfillReporter reporter = new PhysicalBackfillReporter(backfillManager);
 
@@ -134,7 +143,8 @@ public class CloneTableDataFileTask extends BaseDdlTask {
             key -> PhysicalBackfillUtils.getUserPasswd(sourceStorageInstId));
 
         Map<String, Pair<String, String>> srcFileAndDirs =
-            PhysicalBackfillUtils.getSourceTableInfo(userInfo, srcDbAndGroup.getKey(), phyTableName, phyPartNames,
+            PhysicalBackfillUtils.getSourceTableInfo(getRootJobId(), userInfo, srcDbAndGroup.getKey(), phyTableName,
+                phyPartNames,
                 hasNoPhyPart, sourceHostIpAndPort);
 
         DbGroupInfoRecord tarDbGroupInfoRecord = ScaleOutPlanUtil.getDbGroupInfoByGroupName(tarDbAndGroup.getValue());
@@ -145,7 +155,7 @@ public class CloneTableDataFileTask extends BaseDdlTask {
     }
 
     public void rollbackImpl(ExecutionContext ec) {
-        PhysicalBackfillUtils.rollbackCopyIbd(getTaskId(), schemaName, logicalTableName, 1, ec);
+        PhysicalBackfillUtils.rollbackCopyIbd(getRootJobId(), getTaskId(), schemaName, logicalTableName, 1, ec);
     }
 
     @Override
@@ -169,7 +179,8 @@ public class CloneTableDataFileTask extends BaseDdlTask {
                 PhysicalBackfillManager.BackfillObjectBean bean = backfillBean.backfillObject;
                 try {
                     PhysicalBackfillDetailInfoFieldJSON detailInfoFieldJSON = bean.detailInfo;
-                    PhysicalBackfillUtils.deleteInnodbDataFiles(schemaName, detailInfoFieldJSON.getSourceHostAndPort(),
+                    PhysicalBackfillUtils.deleteInnodbDataFiles(getRootJobId(), schemaName,
+                        detailInfoFieldJSON.getSourceHostAndPort(),
                         bean.sourceDirName, bean.sourceGroupName, bean.physicalDb, true, ec);
                 } catch (Exception ex) {
                     //ignore
@@ -190,19 +201,17 @@ public class CloneTableDataFileTask extends BaseDdlTask {
             String tmpFile = partSrcFileAndDir.getKey();
             Pair<String, String> partTempFileAndDir = Pair.of(tmpFile, tmpDir);
 
-            String partTargetFile = partSrcFileAndDir.getKey().substring(srcDbAndGroup.getKey().length());
-            partTargetFile = tarDbGroupInfoRecord.phyDbName.toLowerCase() + partTargetFile;
+            String partTargetFile =
+                generateTargetFileDir(partSrcFileAndDir.getKey(), tarDbGroupInfoRecord.phyDbName.toLowerCase(), false);
 
-            String partTargetDir = partSrcFileAndDir.getValue()
-                .substring(PhysicalBackfillUtils.IDB_DIR_PREFIX.length() + srcDbAndGroup.getKey().length());
-            partTargetDir =
-                PhysicalBackfillUtils.IDB_DIR_PREFIX + tarDbGroupInfoRecord.phyDbName.toLowerCase() + partTargetDir;
+            String partTargetDir =
+                generateTargetFileDir(partSrcFileAndDir.getValue(), tarDbGroupInfoRecord.phyDbName.toLowerCase(), true);
 
             Pair<String, String> partTargetFileAndDir = new Pair<>(partTargetFile, partTargetDir);
 
             reporter.getBackfillManager()
                 .insertBackfillMeta(schemaName, logicalTableName, getTaskId(), srcDbAndGroup.getKey(), phyTableName,
-                    entry.getKey(), srcDbAndGroup.getValue(), tarDbAndGroup.getValue(), partTempFileAndDir,
+                    entry.getKey(), srcDbAndGroup.getValue(), tarDbGroupInfoRecord.groupName, partTempFileAndDir,
                     partTargetFileAndDir, 0, batchSize, 0, 0, sourceHostIpAndPort, targetHostsIpAndPort);
 
         }
@@ -218,20 +227,22 @@ public class CloneTableDataFileTask extends BaseDdlTask {
         int tryTime = 1;
         StringBuilder copyFileInfo = null;
         AtomicReference<Boolean> finished = new AtomicReference<>(false);
-        try (XConnection conn = (XConnection) (PhysicalBackfillUtils.getXConnectionForStorage(srcDbAndGroup.getKey(),
+        try (XConnection conn = (XConnection) (PhysicalBackfillUtils.getXConnectionForStorage(getRootJobId(),
+            srcDbAndGroup.getKey(),
             sourceHostIpAndPort.getKey(), sourceHostIpAndPort.getValue(), userInfo.getKey(),
             userInfo.getValue(), -1))) {
             do {
                 try {
                     copyFileInfo = new StringBuilder();
                     try {
-                        Long flushTableTimeout = OptimizerContext.getContext(schemaName).getParamManager().getLong(ConnectionParams.FLUSH_TABLE_TIMEOUT_FOR_DDL_ON_XPROTO_CONN);
+                        Long flushTableTimeout = OptimizerContext.getContext(schemaName).getParamManager()
+                            .getLong(ConnectionParams.FLUSH_TABLE_TIMEOUT_FOR_DDL_ON_XPROTO_CONN);
                         conn.setNetworkTimeoutNanos(flushTableTimeout * 1000000L);
                         conn.execQuery(String.format(PhysicalBackfillUtils.FLUSH_TABLE_SQL_TEMPLATE,
-                                SqlIdentifierUtil.escapeIdentifierString(phyTableName)));
+                            SqlIdentifierUtil.escapeIdentifierString(phyTableName)));
                     } finally {
                         try {
-                            if(conn != null && !conn.isClosed()) {
+                            if (conn != null && !conn.isClosed()) {
                                 conn.setNetworkTimeoutNanos(LONG_ENOUGH_TIMEOUT_FOR_DDL_ON_XPROTO_CONN * 1000000L);
                             }
                         } catch (Exception ex) {
@@ -345,7 +356,7 @@ public class CloneTableDataFileTask extends BaseDdlTask {
                     msg = String.format("fail to clone those files:%s, [ip:%s,port:%s,db:%s]", copyFileInfo.toString(),
                         sourceHostIpAndPort.getKey(), sourceHostIpAndPort.getValue().toString(),
                         srcDbAndGroup.getKey());
-                    if (ex != null && ex.toString() != null) {
+                    if (ex.toString() != null) {
                         msg += " " + ex.toString();
                     }
                     SQLRecorderLogger.ddlLogger.info(msg);
@@ -375,7 +386,7 @@ public class CloneTableDataFileTask extends BaseDdlTask {
             } while (!success);
         } catch (Exception ex) {
             SQLRecorderLogger.ddlLogger.info(ex.toString());
-            throw new TddlRuntimeException(ErrorCode.ERR_SCALEOUT_EXECUTE, ex);
+            throw new TddlRuntimeException(ErrorCode.ERR_SCALEOUT_EXECUTE, ex.toString());
         }
     }
 
@@ -385,7 +396,8 @@ public class CloneTableDataFileTask extends BaseDdlTask {
         for (Map.Entry<String, Pair<String, String>> entry : srcFileAndDirs.entrySet()) {
 
             List<Pair<Long, Long>> offsetAndSize = new ArrayList<>();
-            PhysicalBackfillUtils.getTempIbdFileInfo(userInfo, sourceHostIpAndPort, srcDbAndGroup, phyTableName,
+            PhysicalBackfillUtils.getTempIbdFileInfo(getRootJobId(), userInfo, sourceHostIpAndPort, srcDbAndGroup,
+                phyTableName,
                 entry.getKey(), entry.getValue(), batchSize, false, offsetAndSize);
 
             PhysicalBackfillManager.BackfillBean backfillBean =
@@ -396,6 +408,79 @@ public class CloneTableDataFileTask extends BaseDdlTask {
             reporter.getBackfillManager()
                 .updateStatusAndTotalBatch(backfillBean.backfillObject.id, offsetAndSize.size());
         }
+    }
+
+    // Pre-compiled patterns for better performance
+    private static final Pattern NEW_DB_TARGET_PATTERN = Pattern.compile("_p(\\d{5})");
+    private static final Pattern NEW_DB_SOURCE_PATTERN = Pattern.compile("_p\\d{5}(?=/)");
+    private static final Pattern DRDS_DB_TARGET_PATTERN = Pattern.compile("_(\\d{6})");
+    private static final Pattern DRDS_DB_SOURCE_PATTERN = Pattern.compile("_\\d{6}(?=/)");
+
+    private String generateTargetFileDir(String srcFilePath, String targetDbName, boolean generateFullPath) {
+        String partTargetFile = null;
+        AtomicBoolean find = new AtomicBoolean(false);
+
+        //may contain special char
+        if (srcFilePath.contains("@")) {
+            boolean isNewDb = DbInfoManager.getInstance().isNewPartitionDb(schemaName);
+            if (isNewDb) {
+                // Handle new partition database
+                partTargetFile =
+                    processPartitionFile(srcFilePath, targetDbName, NEW_DB_TARGET_PATTERN, NEW_DB_SOURCE_PATTERN,
+                        "_p", 7, find);
+            } else {
+                // Handle old partition database
+                partTargetFile =
+                    processPartitionFile(srcFilePath, targetDbName, DRDS_DB_TARGET_PATTERN, DRDS_DB_SOURCE_PATTERN,
+                        "_", 7, find);
+            }
+        }
+
+        if (!find.get()) {
+            if (generateFullPath) {
+                partTargetFile = srcFilePath
+                    .substring(PhysicalBackfillUtils.IDB_DIR_PREFIX.length() + srcDbAndGroup.getKey().length());
+                partTargetFile =
+                    PhysicalBackfillUtils.IDB_DIR_PREFIX + targetDbName + partTargetFile;
+            } else {
+                partTargetFile = srcFilePath.substring(srcDbAndGroup.getKey().length());
+                partTargetFile = targetDbName + partTargetFile;
+            }
+        }
+        return partTargetFile;
+    }
+
+    /**
+     * Process partition file path replacement for both new and old database formats
+     *
+     * @param srcFilePath Source file path
+     * @param targetDbName Target database name
+     * @param targetPattern Pattern to extract database index from target database name
+     * @param sourcePattern Pattern to find database index in source file path
+     * @param prefix Prefix for replacement string
+     * @param minLength Minimum length requirement for target database name
+     * @param find Flag indicating if replacement was successful
+     * @return Target file path
+     */
+    private String processPartitionFile(String srcFilePath, String targetDbName,
+                                        Pattern targetPattern, Pattern sourcePattern,
+                                        String prefix, int minLength, AtomicBoolean find) {
+        // Extract physical database index from target database name
+        Matcher targetDbMatcher = targetPattern.matcher(targetDbName);
+        String phyDbIndex = null;
+        String partTargetFile = null;
+        while (targetDbMatcher.find()) {
+            phyDbIndex = targetDbMatcher.group(1);
+        }
+
+        // Find and replace database index in source file path
+        Matcher matcher = sourcePattern.matcher(srcFilePath);
+        if (matcher.find() && targetDbName.length() > minLength) {
+            find.set(true);
+            partTargetFile = matcher.replaceFirst(prefix + phyDbIndex);
+        }
+
+        return partTargetFile;
     }
 
 }

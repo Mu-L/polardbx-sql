@@ -46,11 +46,11 @@ public class CclRuleAccessor extends AbstractAccessor {
 
     private static final String INSERT_SQL_FILTER_RULES = "insert %s into "
         + CONCURRENCY_CONTROL_RULE_TABLE
-        + "( `id`,`sql_type`, `db_name`, `table_name`, `user_name`, `client_ip`, `parallelism`, `keywords`, `template_id`, `query`, `params`, `query_template_id`, `queue_size`, `wait_timeout`, `fast_match`, `light_wait`, `trigger_priority`, `inst_id`)"
-        + " values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        + "( `id`,`sql_type`, `db_name`, `table_name`, `user_name`, `client_ip`, `parallelism`, `keywords`, `template_id`, `query`, `params`, `query_template_id`, `queue_size`, `wait_timeout`, `fast_match`, `dry_run`, `light_wait`, `blocker_priority`, `inst_id`)"
+        + " values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
-    private static final String DELETE_BY_TRIGGER_PRIORITY_IN =
-        "delete from " + CONCURRENCY_CONTROL_RULE_TABLE + " where trigger_priority in (%s)";
+    private static final String DELETE_BY_BLOCKER_PRIORITY_IN =
+        "delete from " + CONCURRENCY_CONTROL_RULE_TABLE + " where blocker_priority in (%s)";
 
     private static final String SELECT_ALL = " select * from " + CONCURRENCY_CONTROL_RULE_TABLE;
 
@@ -58,7 +58,7 @@ public class CclRuleAccessor extends AbstractAccessor {
 
     private static final String WHERE_ID_IN_FORMAT = " where id in (%s)";
 
-    private static final String WHERE_PRIORITY_IN_FORMAT = " where trigger_priority in (%s) ";
+    private static final String WHERE_PRIORITY_IN_FORMAT = " where blocker_priority in (%s) ";
 
     private static final String AND_INST_ID = String.format(" and `inst_id`= '%s' ", InstIdUtil.getInstId());
 
@@ -67,10 +67,10 @@ public class CclRuleAccessor extends AbstractAccessor {
     private static final String DELETE_ALL = "delete from " + CONCURRENCY_CONTROL_RULE_TABLE;
 
     private static final String UPDATE_SQL_FILTER_RULE = "update " + CONCURRENCY_CONTROL_RULE_TABLE
-        + " set `id`=?, `sql_type`=?, `db_name`=?, `table_name`=?, `user_name`=?, `client_ip`=?, `parallelism`=?, `keywords`=?, `template_id`=?, `query`=?, `params`=?, `query_template_id`=?, `queue_size`=?, `wait_timeout`=?, `fast_match`=?, `light_wait`=?, `trigger_priority`=?, `inst_id` = ?, `gmt_updated` = now() where `priority`=?";
+        + " set `id`=?, `sql_type`=?, `db_name`=?, `table_name`=?, `user_name`=?, `client_ip`=?, `parallelism`=?, `keywords`=?, `template_id`=?, `query`=?, `params`=?, `query_template_id`=?, `queue_size`=?, `wait_timeout`=?, `fast_match`=?, `dry_run`=?, `light_wait`=?, `blocker_priority`=?, `inst_id` = ?, `gmt_updated` = now() where `priority`=?";
 
-    private static final String DELETE_BY_TRIGGER_PRIORITY =
-        "delete from " + CONCURRENCY_CONTROL_RULE_TABLE + " where trigger_priority = ?";
+    private static final String DELETE_BY_BLOCKER_PRIORITY =
+        "delete from " + CONCURRENCY_CONTROL_RULE_TABLE + " where blocker_priority = ?";
 
     public int insert(CclRuleRecord record) {
         return insert(String.format(INSERT_SQL_FILTER_RULES, ""), CONCURRENCY_CONTROL_RULE_TABLE, record.buildParams());
@@ -137,15 +137,15 @@ public class CclRuleAccessor extends AbstractAccessor {
         }
     }
 
-    public int deleteByTriggerPriority(int triggerPriority) {
+    public int deleteByBlockerPriority(int blockerPriority) {
         Map<Integer, ParameterContext> params = Maps.newHashMap();
         int index = 0;
-        MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, triggerPriority);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, blockerPriority);
         try {
-            int deletedRows = MetaDbUtil.update(DELETE_BY_TRIGGER_PRIORITY, params, connection);
+            int deletedRows = MetaDbUtil.update(DELETE_BY_BLOCKER_PRIORITY, params, connection);
             return deletedRows;
         } catch (Exception e) {
-            LOGGER.error(String.format("Failed to delete the ccl rules whose trigger priority is %d", triggerPriority),
+            LOGGER.error(String.format("Failed to delete the ccl rules whose blocker priority is %d", blockerPriority),
                 e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "delete",
                 CONCURRENCY_CONTROL_RULE_TABLE,
@@ -153,24 +153,24 @@ public class CclRuleAccessor extends AbstractAccessor {
         }
     }
 
-    public int deleteByTriggers(List<Integer> triggerPriorities) {
-        if (CollectionUtils.isEmpty(triggerPriorities)) {
+    public int deleteByBlockers(List<Integer> blockerPriorities) {
+        if (CollectionUtils.isEmpty(blockerPriorities)) {
             return 0;
         }
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < triggerPriorities.size(); ++i) {
-            sb.append(triggerPriorities.get(i));
-            if (i != triggerPriorities.size() - 1) {
+        for (int i = 0; i < blockerPriorities.size(); ++i) {
+            sb.append(blockerPriorities.get(i));
+            if (i != blockerPriorities.size() - 1) {
                 sb.append(",");
             }
         }
-        String triggerPrioritiesStr = sb.toString();
-        String sql = String.format(DELETE_BY_TRIGGER_PRIORITY_IN, triggerPrioritiesStr);
+        String blockerPrioritiesStr = sb.toString();
+        String sql = String.format(DELETE_BY_BLOCKER_PRIORITY_IN, blockerPrioritiesStr);
         try {
             int deletedRows = MetaDbUtil.execute(sql, Maps.newHashMap(), connection);
             return deletedRows;
         } catch (SQLException e) {
-            LOGGER.error(String.format("Failed to delete the ccl rules whose trigger priorities is %s", sb.toString()),
+            LOGGER.error(String.format("Failed to delete the ccl rules whose blocker priorities is %s", sb.toString()),
                 e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "delete",
                 CONCURRENCY_CONTROL_RULE_TABLE,

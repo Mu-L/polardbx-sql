@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
@@ -54,6 +56,19 @@ public class CacheExec extends AbstractExecutor implements ConsumerExecutor {
     public CacheExec(List<DataType> columnMetas, ExecutionContext context) {
         super(context);
         this.columnMetas = columnMetas;
+    }
+
+    @FieldMemoryCounter(value = false)
+    protected OperatorMemoryOwnerId consumerMemoryOwnerId;
+
+    @Override
+    public void setConsumerOperatorMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        this.consumerMemoryOwnerId = operatorMemoryOwnerId;
+    }
+
+    @Override
+    public OperatorMemoryOwnerId getConsumerMemoryOwnerId() {
+        return consumerMemoryOwnerId;
     }
 
     @Override
@@ -124,5 +139,10 @@ public class CacheExec extends AbstractExecutor implements ConsumerExecutor {
     @Override
     public ListenableFuture<?> produceIsBlocked() {
         return ProducerExecutor.NOT_BLOCKED;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return 0;
     }
 }

@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.qatest.dql.auto.spill;
 
+import com.alibaba.polardbx.qatest.IcbcIgnore;
+import com.alibaba.polardbx.qatest.data.ExecuteTableSelect;
 import com.alibaba.polardbx.qatest.AutoReadBaseTestCase;
 import com.alibaba.polardbx.qatest.data.ExecuteTableSelect;
 import org.junit.Ignore;
@@ -31,7 +33,7 @@ import static com.alibaba.polardbx.qatest.validator.DataValidator.selectContentS
 import static com.alibaba.polardbx.qatest.validator.DataValidator.selectErrorAssert;
 import static com.alibaba.polardbx.qatest.validator.DataValidator.selectOrderAssert;
 
-
+@IcbcIgnore(ignoreReason = "all_test_cases_conflict_only_full_group_by")
 public class SpillSelectGroupByTest extends AutoReadBaseTestCase {
 
     String hint = " /*+TDDL:cmd_extra(ENABLE_SPILL=true)*/";

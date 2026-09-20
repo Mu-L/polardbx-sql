@@ -397,7 +397,7 @@ public class InPruningQaTest extends BaseTestCase {
                 + " name varchar(30),\n"
                 + " birthday datetime not null,\n"
                 + " primary key(id)\n"
-                + ")\n"
+                + ")DEFAULT CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci\n"
                 + "PARTITION BY KEY(name, id)\n"
                 + "PARTITIONS 8;");
             String sql = "select * from key_tbl where name in ('a', 'b', 'c') or id in (1,2,3)";
@@ -499,6 +499,10 @@ public class InPruningQaTest extends BaseTestCase {
             explain = getExplainResult(c, sql);
             System.out.println(explain);
             int endIndex = explain.indexOf("HitCache") - 3;
+            int endIndexPhysicalPlan = explain.indexOf("physicalPlan=");
+            if (endIndexPhysicalPlan != -1) {
+                endIndex = Math.min(endIndexPhysicalPlan, endIndex);
+            }
             int startIndex = explain.indexOf(PRUNING_INFO_PRE);
             Map<String, List<String[]>> check1 = decodePruningInfo(explain.substring(startIndex, endIndex));
 
@@ -507,6 +511,10 @@ public class InPruningQaTest extends BaseTestCase {
             System.out.println(explain);
             assert explain.contains(PRUNING_INFO_PRE);
             endIndex = explain.indexOf("HitCache") - 3;
+            endIndexPhysicalPlan = explain.indexOf("physicalPlan=");
+            if (endIndexPhysicalPlan != -1) {
+                endIndex = Math.min(endIndexPhysicalPlan, endIndex);
+            }
             startIndex = explain.indexOf(PRUNING_INFO_PRE);
             Map<String, List<String[]>> check2 = decodePruningInfo(explain.substring(startIndex, endIndex));
 
@@ -691,6 +699,10 @@ public class InPruningQaTest extends BaseTestCase {
 
         String explain = getExplainResult(c, String.format(sql, inParams));
         int endIndex = explain.indexOf("HitCache") - 3;
+        int endIndexPhysicalPlan = explain.indexOf("physicalPlan=");
+        if (endIndexPhysicalPlan != -1) {
+            endIndex = Math.min(endIndexPhysicalPlan, endIndex);
+        }
         int startIndex = explain.indexOf(PRUNING_INFO_PRE);
         Map<String, List<String[]>> explainMap = decodePruningInfo(explain.substring(startIndex, endIndex));
 

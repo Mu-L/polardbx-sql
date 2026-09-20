@@ -1,0 +1,74 @@
+DROP TABLE IF EXISTS auto_test_1
+CREATE TABLE auto_test_1 (
+	a int PRIMARY KEY AUTO_INCREMENT,
+	b int,
+	c int,
+	d int,
+	INDEX(b),
+	UNIQUE (c)
+)
+INSERT INTO auto_test_1 (b, c, d)
+VALUES (1, 1, 1),
+	(2, 2, 2),
+	(3, 3, 3)
+SHOW CREATE TABLE auto_test_1
+Table,Create Table
+auto_test_1,CREATE TABLE `auto_test_1` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` int(11) DEFAULT NULL,
+	`c` int(11) DEFAULT NULL,
+	`d` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	INDEX `b` (`b`),
+	UNIQUE INDEX `c` (`c`)
+) ENGINE = InnoDB AUTO_INCREMENT = 4 DEFAULT CHARSET = utf8mb4
+ALTER TABLE auto_test_1
+REMOVE AUTO PARTITION
+SHOW CREATE TABLE auto_test_1
+Table,Create Table
+auto_test_1,CREATE TABLE `auto_test_1` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` int(11) DEFAULT NULL,
+	`c` int(11) DEFAULT NULL,
+	`d` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	GLOBAL INDEX `b` (`b`)
+		PARTITION BY KEY(`b`,`a`)
+		PARTITIONS 3,
+	UNIQUE GLOBAL INDEX `c` (`c`)
+		PARTITION BY KEY(`c`)
+		PARTITIONS 3,
+	UNIQUE KEY `_local_c` (`c`),
+	KEY `_local_b` (`b`)
+) ENGINE = InnoDB AUTO_INCREMENT = 4 DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`a`)
+PARTITIONS 3
+ALTER TABLE auto_test_1
+	ADD INDEX idx_d (d)
+SHOW CREATE TABLE auto_test_1
+Table,Create Table
+auto_test_1,CREATE TABLE `auto_test_1` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` int(11) DEFAULT NULL,
+	`c` int(11) DEFAULT NULL,
+	`d` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	GLOBAL INDEX `b` (`b`)
+		PARTITION BY KEY(`b`,`a`)
+		PARTITIONS 3,
+	UNIQUE GLOBAL INDEX `c` (`c`)
+		PARTITION BY KEY(`c`)
+		PARTITIONS 3,
+	UNIQUE KEY `_local_c` (`c`),
+	KEY `_local_b` (`b`),
+	KEY `idx_d` (`d`)
+) ENGINE = InnoDB AUTO_INCREMENT = 4 DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`a`)
+PARTITIONS 3
+SELECT *
+FROM auto_test_1
+ORDER BY a DESC
+a,b,c,d
+3,3,3,3
+2,2,2,2
+1,1,1,1

@@ -38,7 +38,7 @@ import java.util.Map;
 
 public class FileStorageBackFillAccessor extends AbstractAccessor {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     private static final String SYSTABLE_BACKFILL_OBJECTS = GmsSystemTables.BACKFILL_OBJECTS;
     private static final String FILE_STORAGE_BACKFILL_OBJECTS = GmsSystemTables.FILE_STORAGE_BACKFILL_OBJECTS;

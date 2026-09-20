@@ -1,0 +1,62 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+set ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC=true;
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=true;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+
+create table numberrange_table_1 (
+  id int
+  )
+  partition by UDF_HASH(
+  `id` with udf_params(
+  'dble/numberrange',
+  '{
+"defaultNode": "3",
+"mapFile" :
+  "
+           0-255=0
+			256-600=1
+			501-755=2
+			756-1000=3    
+          "
+}'
+  )
+  )
+  partitions 4;
+
+select part_route('','numberrange_table_1',null);
+## error_msg: $# server error by columnValue:'', Please eliminate any quote and non number within it #$
+select part_route('','numberrange_table_1','');
+select part_route('','numberrange_table_1',2000);
+select part_route('','numberrange_table_1',550);
+  
+create table numberrange_table_2 (
+  id int
+  )
+  partition by UDF_HASH(
+  `id` with udf_params(
+  'dble/numberrange',
+  '{
+"mapFile" :
+  "
+  0-255=0
+  256-600=1
+  501-755=2
+  756-1000=3
+  "
+}'
+  )
+  )
+  partitions 4;
+  
+## error_msg: $# server error by can't find any valid data node #$
+select part_route('','numberrange_table_2',null);
+## error_msg: $# server error by columnValue:'', Please eliminate any quote and non number within it #$
+select part_route('','numberrange_table_2','');
+
+## error_msg: $# server error by can't find any valid data node #$
+select part_route('','numberrange_table_2',2000);
+select part_route('','numberrange_table_2',550);
+
+

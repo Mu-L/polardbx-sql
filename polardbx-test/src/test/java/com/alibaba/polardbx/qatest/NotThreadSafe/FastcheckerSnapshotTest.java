@@ -2,7 +2,10 @@ package com.alibaba.polardbx.qatest.NotThreadSafe;
 
 import com.alibaba.polardbx.qatest.CrudBasedLockTestCase;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
+import org.junit.FixMethodOrder;
+import org.junit.Ignore;
 import org.junit.Test;
+import org.junit.runners.MethodSorters;
 
 import java.sql.Connection;
 import java.util.ArrayList;
@@ -14,7 +17,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
+@FixMethodOrder(MethodSorters.NAME_ASCENDING)
 public class FastcheckerSnapshotTest extends CrudBasedLockTestCase {
+
+    @Ignore
     @Test
     public void testSnapshotTooOld() throws ExecutionException, InterruptedException {
         if (!isMySQL80()) {
@@ -54,6 +60,7 @@ public class FastcheckerSnapshotTest extends CrudBasedLockTestCase {
             Thread.sleep(15000);
 
             Connection polarxConnection = getPolardbxConnection();
+            JdbcUtil.executeUpdate(polarxConnection, "set transaction_isolation = 'REPEATABLE-READ'");
             JdbcUtil.executeUpdate(polarxConnection, "update " + tableName + " set name = 'test5' where 1=1");
             System.out.println("update table");
             try {

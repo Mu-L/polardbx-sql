@@ -1,0 +1,9 @@
+- sql: |
+    /*!TDDL:cmd_extra(ENABLE_MPP=true)*/ SELECT * FROM oms_order_tag_relation
+    WHERE order_id = 100 AND tag_code = 'test' AND status = 1
+  plan: |
+    project(id="id", order_number="order_number", order_id="order_id", tag_code="tag_code", status="status", deleted_at="deleted_at", gmt_create="gmt_create")
+      project(id="id0", order_id="order_id", tag_code="tag_code", status="status", id4="id0", order_number="order_number", deleted_at="deleted_at", gmt_create="gmt_create")
+        bkajoin(condition="id = id", type="inner")
+          indexscan(tables="g_i_order_id[p2]", sql="select `id` from `g_i_order_id` as `g_i_order_id` force index(`i_order_id_tag_code_status_id`) where ((`order_id` = 100) and (`tag_code` = 'test') and (`status` = 1))")
+          logicalview(tables="oms_order_tag_relation[p1,p2,p3,p4]", shardcount=4, sql="select `id`, `order_number`, `deleted_at`, `gmt_create`, `order_id`, `tag_code`, `status` from `oms_order_tag_relation` as `oms_order_tag_relation` force index(`primary`) where ((`order_id` = 100) and (`tag_code` = 'test') and (`status` = 1) and (`id` in (...)))")

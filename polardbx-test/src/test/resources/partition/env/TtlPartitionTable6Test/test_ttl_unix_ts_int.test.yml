@@ -1,0 +1,191 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set sql_mode='';
+
+drop table if exists r_unix_ts;
+create table r_unix_ts
+(
+a int ,
+b datetime,
+c varchar(32),
+primary key(a)
+)
+partition by range(a)
+(
+partition p20250501 values less than(1746028800),
+partition p20250502 values less than(1746115200),
+partition p20250503 values less than(1746201600),
+partition p20250504 values less than(1746288000),
+partition p20250505 values less than(1746374400)
+);
+
+alter table r_unix_ts modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = `a` expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+ttl_col_encoder=unix_timestamp(?),
+ttl_col_decoder=from_unixtime(?),
+archive_type='partition',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_unix_ts cleanup expired data;
+show create table r_unix_ts;
+
+alter table r_unix_ts modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = `a` expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+ttl_col_encoder=unix_timestamp(?),
+ttl_col_decoder=from_unixtime(?),
+archive_type='row',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+
+insert into r_unix_ts(a,b,c) values (1746028800, from_unixtime(1746028800), from_unixtime(1746028800));
+insert into r_unix_ts(a,b,c) values (1750953600, from_unixtime(1750953600), from_unixtime(1750953600));
+insert into r_unix_ts(a,b,c) values (1751040000, from_unixtime(1751040000), from_unixtime(1751040000));
+
+set time_zone='+08:00';
+
+select a,b,c from r_unix_ts order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_unix_ts cleanup expired data;
+select a,b,c from r_unix_ts order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-28 00:00:00';
+alter table r_unix_ts cleanup expired data;
+select a,b,c from r_unix_ts order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-29 00:00:00';
+alter table r_unix_ts cleanup expired data;
+select a,b,c from r_unix_ts order by a,b,c;
+
+drop table r_unix_ts;
+
+
+drop table if exists r_unix_ts2;
+create table r_unix_ts2
+(
+a int ,
+b datetime,
+c varchar(32),
+primary key(a)
+)
+partition by range(a)
+(
+partition p20250501 values less than(1746028800),
+partition p20250502 values less than(1746115200),
+partition p20250503 values less than(1746201600),
+partition p20250504 values less than(1746288000),
+partition p20250505 values less than(1746374400)
+);
+
+alter table r_unix_ts2 modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = from_unixtime(`a`) expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='partition',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+
+alter table r_unix_ts2 cleanup expired data;
+show create table r_unix_ts2;
+
+alter table r_unix_ts2 cleanup expired data;
+show create table r_unix_ts2;
+
+insert into r_unix_ts2(a,b,c) values (1746028800, from_unixtime(1746028800), from_unixtime(1746028800));
+insert into r_unix_ts2(a,b,c) values (1750953600, from_unixtime(1750953600), from_unixtime(1750953600));
+insert into r_unix_ts2(a,b,c) values (1751040000, from_unixtime(1751040000), from_unixtime(1751040000));
+
+set time_zone='+08:00';
+
+select a,b,c from r_unix_ts2 order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_unix_ts2 cleanup expired data;
+select a,b,c from r_unix_ts2 order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-28 00:00:00';
+alter table r_unix_ts2 cleanup expired data;
+select a,b,c from r_unix_ts2 order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-29 00:00:00';
+alter table r_unix_ts2 cleanup expired data;
+select a,b,c from r_unix_ts2 order by a,b,c;
+
+drop table if exists r_unix_ts3;
+create table r_unix_ts3
+(
+a int,
+b timestamp,
+c varchar(32),
+primary key(a)
+)
+partition by range(unix_timestamp(b))
+(
+partition p20250501 values less than(unix_timestamp('2025-05-01')),
+partition p20250502 values less than(unix_timestamp('2025-05-02')),
+partition p20250503 values less than(unix_timestamp('2025-05-03')),
+partition p20250504 values less than(unix_timestamp('2025-05-04')),
+partition p20250505 values less than(unix_timestamp('2025-05-05'))
+);
+
+alter table r_unix_ts3 modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='partition',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+
+alter table r_unix_ts3 cleanup expired data;
+show create table r_unix_ts3;
+
+alter table r_unix_ts3 cleanup expired data;
+show create table r_unix_ts3;
+
+insert into r_unix_ts3(a,b,c) values (1746028800, from_unixtime(1746028800), from_unixtime(1746028800));
+insert into r_unix_ts3(a,b,c) values (1750953600, from_unixtime(1750953600), from_unixtime(1750953600));
+insert into r_unix_ts3(a,b,c) values (1751040000, from_unixtime(1751040000), from_unixtime(1751040000));
+
+alter table r_unix_ts3 modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='row',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_unix_ts3 cleanup expired data;
+select a,b,c from r_unix_ts3 order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-28 00:00:00';
+alter table r_unix_ts3 cleanup expired data;
+select a,b,c from r_unix_ts3 order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-29 00:00:00';
+alter table r_unix_ts3 cleanup expired data;
+select a,b,c from r_unix_ts3 order by a,b,c;

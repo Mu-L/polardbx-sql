@@ -30,10 +30,14 @@
 
 package com.alibaba.polardbx.common.oss.filesystem.cache;
 
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import io.airlift.slice.SizeOf;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.Path;
+import org.openjdk.jol.util.VMSupport;
 
 import java.io.IOException;
 
@@ -71,6 +75,41 @@ FileMergeCachingInputStream
     public void readFully(long position, byte[] buffer)
         throws IOException {
         readFully(position, buffer, 0, buffer.length);
+    }
+
+    public void readFully(long position, byte[] buffer, int offset, int length, OperatorMemoryOwnerId memoryOwnerId)
+        throws IOException {
+
+        FileReadRequest key = new FileReadRequest(path, position, length);
+        switch (cacheManager.get(key, buffer, offset, cacheQuota)) {
+        case HIT_HOT_CACHE:
+        case HIT:
+            break;
+        case MISS:
+
+            MemoryTrackerManager.tryAllocate(memoryOwnerId, VMSupport.align((int) SizeOf.sizeOfByteArray(length * 2)));
+
+            // IO cache miss:
+            //      1. OSSInputStream: new ReadBuffer(byteStart, byteEnd)
+            //      2. FileMergeCacheManager.put: byte[] copy = data.getBytes();
+            inputStream.readFully(position, buffer, offset, length);
+            cacheManager.put(key, wrappedBuffer(buffer, offset, length), cacheQuota);
+
+            MemoryTrackerManager.releaseReference(memoryOwnerId, VMSupport.align((int) SizeOf.sizeOfByteArray(length * 2)));
+
+            break;
+        case CACHE_QUOTA_EXCEED:
+        case CACHE_IS_UNAVAILABLE:
+            // IO cache miss:
+            //    FileMergeCacheManager.put: byte[] copy = data.getBytes();
+            MemoryTrackerManager.tryAllocate(memoryOwnerId, VMSupport.align((int) SizeOf.sizeOfByteArray(length)));
+
+            inputStream.readFully(position, buffer, offset, length);
+
+            MemoryTrackerManager.releaseReference(memoryOwnerId, VMSupport.align((int) SizeOf.sizeOfByteArray(length)));
+
+            break;
+        }
     }
 
     @Override

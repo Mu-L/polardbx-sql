@@ -23,9 +23,10 @@ import com.alibaba.polardbx.executor.archive.reader.OSSColumnTransformer;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.gms.ColumnarManager;
-import com.alibaba.polardbx.executor.gms.ColumnarSchemaTransformer;
+import com.alibaba.polardbx.executor.mpp.metadata.SplitType;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFManager;
 import com.alibaba.polardbx.executor.operator.scan.BlockCacheManager;
+import com.alibaba.polardbx.executor.operator.scan.ColumnarMemoryPermitManager;
 import com.alibaba.polardbx.executor.operator.scan.ColumnarSplit;
 import com.alibaba.polardbx.executor.operator.scan.LazyEvaluator;
 import com.alibaba.polardbx.executor.operator.scan.ScanPreProcessor;
@@ -40,6 +41,7 @@ import org.apache.hadoop.fs.Path;
 
 import java.util.BitSet;
 import java.util.List;
+import java.util.Random;
 import java.util.concurrent.ExecutorService;
 
 public class CsvColumnarSplit implements ColumnarSplit {
@@ -65,6 +67,10 @@ public class CsvColumnarSplit implements ColumnarSplit {
 
     protected int nodePartCount;
 
+    private Integer priority = null;
+
+    private static final Random random = new Random();
+
     public CsvColumnarSplit(ExecutionContext executionContext, ColumnarManager columnarManager, long tso,
                             Long position,
                             Path csvFile, int fileId, int sequenceId, List<Integer> inputRefsForFilter,
@@ -87,11 +93,20 @@ public class CsvColumnarSplit implements ColumnarSplit {
         this.nodePartCount = nodePartCount;
         this.isFlashback = isFlashback;
         this.columnTransformer = columnTransformer;
+
+        if (executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_COLUMNAR_SCAN_RANDOM_SPLIT)) {
+            this.priority = random.nextInt();
+        }
     }
 
     @Override
     public String getHostAddress() {
         return csvFile.toString();
+    }
+
+    @Override
+    public SplitType getSplitType() {
+        return SplitType.CSV;
     }
 
     @Override
@@ -129,8 +144,11 @@ public class CsvColumnarSplit implements ColumnarSplit {
     }
 
     @Override
-    public ColumnarSplitPriority getPriority() {
-        return ColumnarSplitPriority.CSV_SPLIT_PRIORITY;
+    public int getPriority() {
+        if (priority != null) {
+            return priority;
+        }
+        return ColumnarSplitPriority.CSV_SPLIT_PRIORITY.getValue();
     }
 
     protected static String generateScanWorkId(String traceId, String file, int workIndex) {
@@ -219,6 +237,12 @@ public class CsvColumnarSplit implements ColumnarSplit {
         @Override
         public ColumnarSplitBuilder ioExecutor(ExecutorService ioExecutor) {
             return this;
+        }
+
+        @Override
+        public ColumnarSplitBuilder columnarMemoryPermitManager(
+            ColumnarMemoryPermitManager columnarMemoryPermitManager) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

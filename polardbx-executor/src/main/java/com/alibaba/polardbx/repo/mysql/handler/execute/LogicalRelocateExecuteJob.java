@@ -36,6 +36,7 @@ import com.alibaba.polardbx.optimizer.core.rel.dml.Writer;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.SourceRows;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.RelocateWriter;
 import com.alibaba.polardbx.optimizer.utils.PhyTableOperationUtil;
+import com.alibaba.polardbx.repo.mysql.handler.ExternalizedExactRowTransformer;
 import com.alibaba.polardbx.repo.mysql.handler.LogicalRelocateHandler;
 import com.google.common.util.concurrent.SettableFuture;
 import org.apache.calcite.rel.RelNode;
@@ -69,6 +70,12 @@ public class LogicalRelocateExecuteJob extends ExecuteJob {
 
     @Override
     public void execute(List<List<Object>> values, long memorySize) throws Exception {
+        if (ExternalizedExactRowTransformer.isRequired(relocate.getExternalizedExactRowTransforms())) {
+            // Exact-row externalization must run primary-first so GSI leaves can consume the primary canonical
+            // BlobRef. LogicalRelocateHandler normally excludes this shape from the parallel job; keep a local
+            // invariant so a future gate change cannot silently execute the ordinary writer order.
+            throw new IllegalStateException("Externalized exact-row relocate cannot use the parallel execute job");
+        }
         int affectRows = 0;
 
         final Map<Integer, DistinctWriter> primaryDistinctWriter = relocate.getPrimaryDistinctWriter();
@@ -91,7 +98,7 @@ public class LogicalRelocateExecuteJob extends ExecuteJob {
             }
 
             final boolean useRowSet;
-            if (skipUnchangedRow && relocate.getModifySkOnlyMap().get(tableIndex)) {
+            if (skipUnchangedRow && relocate.getModifyOnlySafeCompareMap().get(tableIndex)) {
                 rowSet = LogicalRelocateHandler.buildChangedRowSet(distinctValues, returnColumns,
                     relocate.getSetColumnTargetMappings().get(tableIndex),
                     relocate.getSetColumnSourceMappings().get(tableIndex),
@@ -262,7 +269,7 @@ public class LogicalRelocateExecuteJob extends ExecuteJob {
     private int executeDistinctWriter(DistinctWriter writer, RowSet rowSet) throws Exception {
         List<RelNode> inputs = writer.getInput(executionContext, rowSet::distinctRowSetWithoutNull);
         final List<RelNode> primaryPhyPlan =
-            inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
+            inputs.stream().filter(o -> ((BaseQueryOperation) o).isPrimaryWriteRelNode()).collect(
                 Collectors.toList());
         final List<RelNode> allPhyPlan = new ArrayList<>(primaryPhyPlan);
         final List<RelNode> replicatePlans =

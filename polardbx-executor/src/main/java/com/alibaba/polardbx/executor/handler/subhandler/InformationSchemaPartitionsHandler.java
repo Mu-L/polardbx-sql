@@ -28,6 +28,7 @@ import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
+import com.alibaba.polardbx.optimizer.partition.common.PartitionTableType;
 import com.alibaba.polardbx.optimizer.view.InformationSchemaPartitions;
 import com.alibaba.polardbx.optimizer.view.VirtualView;
 
@@ -81,7 +82,7 @@ public class InformationSchemaPartitionsHandler extends BaseVirtualViewSubClassH
     ) {
 
         // get all phy tables(partitions) info from all DNs
-        Map<String/**phyDbName**/, Pair<String/**storageInstId**/, String/**groupName**/>> storageInstIdGroupNames =
+        Map<String/**groupName**/, Pair<String/**storageInstId**/, String/**phyDbName**/>> storageInstIdGroupNames =
             new HashMap<>();
         /**
          *
@@ -109,9 +110,11 @@ public class InformationSchemaPartitionsHandler extends BaseVirtualViewSubClassH
             List<PartitionInfo> allPartInfos = sm.getTddlRuleManager().getPartitionInfoManager().getPartitionInfos();
             for (int i = 0; i < allPartInfos.size(); i++) {
                 PartitionInfo partInfo = allPartInfos.get(i);
-                if (partInfo.getTableType().isGsiTableType()) {
+                PartitionTableType tableType = partInfo.getTableType();
+                if (tableType.isGsiTableType()) {
                     continue;
                 }
+                boolean isSigPartType = PartitionTableType.isSingleTableType(tableType);
                 String tblName = partInfo.getTableName();
                 if (logicalTableNames != null && !logicalTableNames.isEmpty() && !logicalTableNames.contains(
                     tblName.toLowerCase())) {
@@ -154,17 +157,17 @@ public class InformationSchemaPartitionsHandler extends BaseVirtualViewSubClassH
 
                             metaRecord.tableSchema,
                             metaRecord.tableName,
-                            metaRecord.partName,
-                            metaRecord.subPartName,
+                            isSigPartType ? null : metaRecord.partName,
+                            isSigPartType ? null : metaRecord.subPartName,
 
-                            metaRecord.partPosi,
-                            metaRecord.subPartPosi,
-                            metaRecord.partMethod,
-                            metaRecord.subPartMethod,
-                            metaRecord.partExpr,
-                            metaRecord.subPartExpr,
-                            metaRecord.partDesc,
-                            metaRecord.subPartDesc,
+                            isSigPartType ? null : metaRecord.partPosi,
+                            isSigPartType ? null : metaRecord.subPartPosi,
+                            isSigPartType ? null : metaRecord.partMethod,
+                            isSigPartType ? null : metaRecord.subPartMethod,
+                            isSigPartType ? null : metaRecord.partExpr,
+                            isSigPartType ? null : metaRecord.subPartExpr,
+                            isSigPartType ? null : metaRecord.partDesc,
+                            isSigPartType ? null : metaRecord.subPartDesc,
 
                             phyTblRows,
 

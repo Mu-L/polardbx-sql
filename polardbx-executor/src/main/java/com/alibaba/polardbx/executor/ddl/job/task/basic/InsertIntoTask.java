@@ -103,8 +103,8 @@ public class InsertIntoTask extends BaseDdlTask {
         FailPoint.injectRandomSuspendFromHint(executionContext);
 
         executionContext.setPhySqlId(0L);
-        boolean isBroadcast = OptimizerContext.getContext(schemaName).getRuleManager().isBroadCast(logicalTableName);
-        if (isBroadcast) {
+        boolean isBroadCastOrReplicas = OptimizerContext.getContext(schemaName).getRuleManager().isBroadCastOrReplicas(logicalTableName);
+        if (isBroadCastOrReplicas) {
             //广播表策略改为FIRST_THEN_CONCURRENT_POLICY，为了兼容affectRow，理论上可以用GROUP_CONCURRENT_BLOCK
             executionContext.getExtraCmds().put(ConnectionProperties.FIRST_THEN_CONCURRENT_POLICY, true);
         }

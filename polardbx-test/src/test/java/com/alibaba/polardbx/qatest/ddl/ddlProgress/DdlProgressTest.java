@@ -1,14 +1,21 @@
 package com.alibaba.polardbx.qatest.ddl.ddlProgress;
 
 import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.sql.SQLException;
 import java.util.List;
 
 public class DdlProgressTest extends DDLBaseNewDBTestCase {
+    @Before
+    public void beforeMethod() {
+        JdbcUtil.executeSuccess(tddlConnection, "set ENABLE_OMC_30 = false");
+    }
+
     private void prepareData(String tableName, int partitions) {
         dropTableIfExists(tableName);
         String createTable =
@@ -29,6 +36,7 @@ public class DdlProgressTest extends DDLBaseNewDBTestCase {
         for (int i = 0; i < 500; i++) {
             JdbcUtil.executeUpdateSuccess(tddlConnection, insertSql);
         }
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "analyze table " + tableName);
     }
 
     @Test
@@ -37,7 +45,10 @@ public class DdlProgressTest extends DDLBaseNewDBTestCase {
         prepareData(tableName, 3);
         System.out.println("prepareData success");
 
-        String sql = String.format("alter table %s modify column b bigint, algorithm = omc, async=true", tableName);
+        Long jobId = generateDdlJobId();
+        String myHint = String.format("/*+TDDL:cmd_extra(ddl_job_id=%s)*/", jobId);
+        String sql =
+            myHint + String.format("alter table %s modify column b bigint, algorithm = omc, async=true", tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 
         try {
@@ -46,12 +57,12 @@ public class DdlProgressTest extends DDLBaseNewDBTestCase {
             throw new RuntimeException(e);
         }
 
-        JobInfo jobInfo = fetchCurrentJob(tableName);
+        List<DdlProgress> ddlProgressList = getDdlProgress(tddlConnection, jobId);
 
         // 验证 ddl 进度的几个阶段
         // before backfill
         int loopCount = 0;
-        while (jobInfo == null || jobInfo.parentJob.backfillProgress.equalsIgnoreCase("--")) {
+        while (ddlProgressList.isEmpty() || ddlProgressList.get(0).getProgress().equalsIgnoreCase("-")) {
             try {
                 Thread.sleep(1000);
             } catch (InterruptedException e) {
@@ -62,13 +73,42 @@ public class DdlProgressTest extends DDLBaseNewDBTestCase {
                 System.out.println("waiting for backfill start failed");
                 return;
             }
-            jobInfo = fetchCurrentJob(tableName);
+            ddlProgressList = getDdlProgress(tddlConnection, jobId);
         }
 
         // backfill
         System.out.println("start backfill");
-        jobInfo = fetchCurrentJob(tableName);
-        Assert.assertTrue(jobInfo.parentJob.backfillProgress.contains("%"));
+        loopCount = 0;
+        long finishedRows;
+        long approximateTotalRows;
+        long lastFinishedRows = 0;
+        long lastApproximateTotalRows = 0;
+        while (!ddlProgressList.isEmpty() && !ddlProgressList.get(0).getProgress().equalsIgnoreCase("100%")) {
+            finishedRows = Long.parseLong(ddlProgressList.get(0).getFinishedRows());
+            approximateTotalRows = Long.parseLong(ddlProgressList.get(0).getApproximateTotalRows());
+            Assert.assertTrue(finishedRows >= 0);
+            Assert.assertTrue(finishedRows <= 512000);
+            Assert.assertTrue(approximateTotalRows <= 652000);
+            System.out.println("finishedRows: " + finishedRows);
+            if (lastFinishedRows != 0 && finishedRows != 512000) {
+                Assert.assertTrue(
+                    String.format("current finished rows %s, last finished rows %s", finishedRows, lastFinishedRows),
+                    finishedRows >= lastFinishedRows);
+            }
+            if (lastApproximateTotalRows != 0) {
+                Assert.assertEquals(approximateTotalRows, lastApproximateTotalRows);
+            }
+            lastFinishedRows = finishedRows;
+            lastApproximateTotalRows = approximateTotalRows;
+
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            loopCount++;
+            ddlProgressList = getDdlProgress(tddlConnection, jobId);
+        }
 
         // show ddl status
         List<String> metricList =
@@ -76,28 +116,25 @@ public class DdlProgressTest extends DDLBaseNewDBTestCase {
         Assert.assertTrue(metricList.contains("OMC_THREAD_POOL_SIZE"));
         Assert.assertTrue(metricList.contains("OMC_THREAD_POOL_NUM"));
 
-        while (jobInfo != null && jobInfo.parentJob.backfillProgress.contains("%")) {
-            // check progress
-            String progress = jobInfo.parentJob.backfillProgress.replace("%", "");
-            System.out.println("backfill progress " + jobInfo.parentJob.backfillProgress);
-            Assert.assertTrue(Long.parseLong(progress) <= 100);
+        System.out.println("start checker");
+        loopCount = 0;
+        while (!ddlProgressList.isEmpty() && !ddlProgressList.get(0).getCheckProgress().equalsIgnoreCase("100%")) {
             try {
                 Thread.sleep(1000);
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
             loopCount++;
-            if (loopCount > 600) {
-                System.out.println("waiting for ddl finished failed");
+            if (loopCount > 100) {
+                System.out.println("waiting for checker finished failed");
                 return;
             }
-            jobInfo = fetchCurrentJob(tableName);
+            ddlProgressList = getDdlProgress(tddlConnection, jobId);
         }
-        System.out.println("backfill end");
 
         System.out.println("waiting finished");
         loopCount = 0;
-        while (jobInfo != null && jobInfo.parentJob.state.equalsIgnoreCase("RUNNING")) {
+        while (!ddlProgressList.isEmpty() && ddlProgressList.get(0).getState().equalsIgnoreCase("RUNNING")) {
             try {
                 Thread.sleep(1000);
             } catch (InterruptedException e) {
@@ -108,7 +145,84 @@ public class DdlProgressTest extends DDLBaseNewDBTestCase {
                 System.out.println("waiting for ddl finished failed");
                 return;
             }
-            jobInfo = fetchCurrentJob(tableName);
+            ddlProgressList = getDdlProgress(tddlConnection, jobId);
+        }
+        System.out.println("ddl finished");
+    }
+
+    @Test
+    public void testPhysicalDdlProgress() throws SQLException {
+        String tableName = "t_ddl_progress_2";
+        prepareData(tableName, 32);
+        System.out.println("prepareData success");
+
+        Long jobId = generateDdlJobId();
+        String myHint = String.format("/*+TDDL:cmd_extra(ddl_job_id=%s,ENABLE_DRDS_MULTI_PHASE_DDL=false)*/", jobId);
+        String sql =
+            myHint + String.format("alter table %s modify column b bigint, async=true", tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+
+        List<DdlProgress> ddlProgressList = getDdlProgress(tddlConnection, jobId);
+
+        // 验证 ddl 进度的几个阶段
+        // before physical ddl
+        int loopCount = 0;
+        while (ddlProgressList.isEmpty() || ddlProgressList.get(0).getProgress().equalsIgnoreCase("-")) {
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            loopCount++;
+            if (loopCount > 600) {
+                System.out.println("waiting for backfill start failed");
+                return;
+            }
+            ddlProgressList = getDdlProgress(tddlConnection, jobId);
+        }
+
+        System.out.println("start physical ddl");
+        ddlProgressList = getDdlProgress(tddlConnection, jobId);
+        Assert.assertTrue(ddlProgressList.get(0).getFinishedRows().equalsIgnoreCase("-"));
+        Assert.assertTrue(ddlProgressList.get(0).getProgress().contains("%"));
+        Assert.assertTrue(ddlProgressList.get(0).getCheckProgress().equalsIgnoreCase("-"));
+
+        System.out.println("waiting physical ddl finished");
+        loopCount = 0;
+        while (!ddlProgressList.isEmpty() && !ddlProgressList.get(0).getProgress().equalsIgnoreCase("100%")) {
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            loopCount++;
+            if (loopCount > 100) {
+                System.out.println("waiting for physical ddl finished failed");
+                return;
+            }
+            ddlProgressList = getDdlProgress(tddlConnection, jobId);
+        }
+
+        System.out.println("waiting finished");
+        loopCount = 0;
+        while (!ddlProgressList.isEmpty() && ddlProgressList.get(0).getState().equalsIgnoreCase("RUNNING")) {
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            loopCount++;
+            if (loopCount > 20) {
+                System.out.println("waiting for ddl finished failed");
+                return;
+            }
+            ddlProgressList = getDdlProgress(tddlConnection, jobId);
         }
         System.out.println("ddl finished");
     }

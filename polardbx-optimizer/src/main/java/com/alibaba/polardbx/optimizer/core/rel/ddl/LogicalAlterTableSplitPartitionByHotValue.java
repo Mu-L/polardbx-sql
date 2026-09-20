@@ -30,6 +30,7 @@ import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.gms.util.PartitionNameUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ComplexTaskMetaManager;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableGroupSplitPartitionByHotValuePreparedData;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableSplitPartitionByHotValuePreparedData;
@@ -47,6 +48,7 @@ import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPrunerUtils;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartitionTupleRouteInfoBuilder;
 import com.alibaba.polardbx.optimizer.partition.pruning.SearchDatumInfo;
 import com.alibaba.polardbx.optimizer.tablegroup.AlterTableGroupSnapShotUtils;
+import com.alibaba.polardbx.optimizer.utils.InplaceSplitUtils;
 import org.apache.calcite.rel.core.DDL;
 import org.apache.calcite.rel.ddl.AlterTable;
 import org.apache.calcite.rel.type.RelDataType;
@@ -95,7 +97,9 @@ public class LogicalAlterTableSplitPartitionByHotValue extends BaseDdlOperation 
             "unarchive table " + schemaName + "." + tableName);
     }
 
-    public void preparedData(ExecutionContext executionContext) {
+    public void preparedData(ExecutionContext executionContext, boolean supportChangeset) {
+        preparedData =
+            new AlterTableGroupSplitPartitionByHotValuePreparedData();
         AlterTable alterTable = (AlterTable) relDdl;
         SqlAlterTable sqlAlterTable = (SqlAlterTable) alterTable.getSqlNode();
         assert sqlAlterTable.getAlters().size() == 1;
@@ -105,8 +109,8 @@ public class LogicalAlterTableSplitPartitionByHotValue extends BaseDdlOperation 
             (SqlAlterTableSplitPartitionByHotValue) sqlAlterTable.getAlters().get(0);
 
         String logicalTableName = Util.last(((SqlIdentifier) alterTable.getTableName()).names);
-        PartitionInfo partitionInfo =
-            OptimizerContext.getContext(schemaName).getPartitionInfoManager().getPartitionInfo(logicalTableName);
+        TableMeta tableMeta = executionContext.getSchemaManager(schemaName).getTable(logicalTableName);
+        PartitionInfo partitionInfo = tableMeta.getPartitionInfo();
 
         List<Long[]> splitPoints = new ArrayList<>();
         int[] insertPos = {1, 1};
@@ -206,15 +210,30 @@ public class LogicalAlterTableSplitPartitionByHotValue extends BaseDdlOperation 
         splitPointInfos.put(logicalTableName, splitPoints);
 
         Map<String, String> newPartitionLocalities = new HashMap<>();
+        boolean setLocality = false;
         if (sqlAlterTableSplitPartitionByHotValue.getLocality() != null) {
             String locality = sqlAlterTableSplitPartitionByHotValue.getLocality().toString();
             final String finalPrefix = hotKeyPartNamePrefix;
             newPartitionNames.stream().filter(o -> o.startsWith(finalPrefix))
                 .forEach(o -> newPartitionLocalities.put(o, locality));
+            setLocality = true;
+        }
+
+        if (subPartitionSplit && partBy.getSubPartitionBy() != null) {
+            partBy = partBy.getSubPartitionBy();
         }
         preparedData =
             new AlterTableSplitPartitionByHotValuePreparedData();
+        //for case sequence:
+        // 1 alter table t7 split into pcc partitions 2 by hot value('c', 'c');
+        // 2 alter table t7 split into pcc partitions 1 by hot value('c', 'c');
+        // the second ddl can't be supported use inplace backfill, it equals to merge partitions
+        boolean inplaceBackfill =
+            !setLocality && InplaceSplitUtils.supportInplaceBackfill(schemaName, logicalTableName, partBy,
+                supportChangeset,
+                executionContext) && oldPartitions.size() == 1;
 
+        preparedData.setInplaceBackfill(inplaceBackfill);
         preparedData.setSchemaName(schemaName);
         preparedData.setTableName(logicalTableName);
         preparedData.setWithHint(targetTablesHintCache != null);
@@ -251,15 +270,58 @@ public class LogicalAlterTableSplitPartitionByHotValue extends BaseDdlOperation 
         preparedData.setTaskType(ComplexTaskMetaManager.ComplexTaskType.SPLIT_HOT_VALUE);
         preparedData.setHotKeyPartitionName(hotKeyPartNamePrefix);
         preparedData.setSplitPointInfos(splitPointInfos);
-        preparedData.prepareInvisiblePartitionGroup(hasSubPartition);
+        preparedData.setHotKeyNum(sqlAlterTableSplitPartitionByHotValue.getHotKeys().size());
+
         preparedData.setSourceSql(((SqlAlterTable) alterTable.getSqlNode()).getSourceSql());
         preparedData.setTargetImplicitTableGroupName(sqlAlterTable.getTargetImplicitTableGroupName());
+
+        //call this method before preparePartitionRelationship and prepareInvisiblePartitionGroup
+        preparedData.checkAndResetInplaceBackfill(tableMeta, executionContext);
+
+        if (preparedData.isInplaceBackfill()) {
+            preparedData.prepareInvisiblePartitionGroupFromBase(hasSubPartition);
+            List<PartitionGroupRecord> newPartitionGroups = preparedData.getInvisiblePartitionGroups();
+            Map<String, Pair<String, String>> mockOrderedTargetTableLocations =
+                new TreeMap<>(String::compareToIgnoreCase);
+            List<String> newParttitionGroupNames = new ArrayList<>();
+            if (ignoreNameAndLocality || preparedData.isInplaceBackfill()) {
+                for (int j = 0; j < newPartitionGroups.size(); j++) {
+                    Pair<String, String> pair = new Pair<>("", "");
+                    mockOrderedTargetTableLocations.put(newPartitionGroups.get(j).partition_name, pair);
+                    newParttitionGroupNames.add(newPartitionGroups.get(j).partition_name);
+                }
+            } else {
+                for (int j = 0; j < newPartitionGroups.size(); j++) {
+                    String mockTableName = "";
+                    mockOrderedTargetTableLocations.put(newPartitionGroups.get(j).partition_name,
+                        new Pair<>(mockTableName, newPartitionGroups.get(j).getGroup_Name()));
+                    newParttitionGroupNames.add(newPartitionGroups.get(j).partition_name);
+                }
+            }
+            preparedData.setNewPhysicalPartitionNames(newParttitionGroupNames);
+            PartitionInfo newPartInfo = AlterTableGroupSnapShotUtils
+                .getNewPartitionInfo(
+                    preparedData,
+                    partitionInfo,
+                    false,
+                    sqlAlterTableSplitPartitionByHotValue,
+                    preparedData.getOldPartitionNames(),
+                    preparedData.getNewPartitionNames(),
+                    preparedData.getTableGroupName(),
+                    null,
+                    preparedData.getInvisiblePartitionGroups(),
+                    mockOrderedTargetTableLocations,
+                    executionContext);
+            preparedData.preparePartitionRelationship(partitionInfo, newPartInfo);
+        }
+
+        preparedData.prepareInvisiblePartitionGroup(hasSubPartition);
         if (preparedData.needFindCandidateTableGroup()) {
             List<PartitionGroupRecord> newPartitionGroups = preparedData.getInvisiblePartitionGroups();
             Map<String, Pair<String, String>> mockOrderedTargetTableLocations =
                 new TreeMap<>(String::compareToIgnoreCase);
 
-            if (ignoreNameAndLocality) {
+            if (ignoreNameAndLocality || preparedData.isInplaceBackfill()) {
                 for (int j = 0; j < newPartitionGroups.size(); j++) {
                     Pair<String, String> pair = new Pair<>("", "");
                     mockOrderedTargetTableLocations.put(newPartitionGroups.get(j).partition_name, pair);
@@ -268,8 +330,7 @@ public class LogicalAlterTableSplitPartitionByHotValue extends BaseDdlOperation 
                 for (int j = 0; j < newPartitionGroups.size(); j++) {
                     String mockTableName = "";
                     mockOrderedTargetTableLocations.put(newPartitionGroups.get(j).partition_name,
-                        new Pair<>(mockTableName,
-                            GroupInfoUtil.buildGroupNameFromPhysicalDb(newPartitionGroups.get(j).partition_name)));
+                        new Pair<>(mockTableName, newPartitionGroups.get(j).getGroup_Name()));
                 }
             }
 
@@ -286,11 +347,16 @@ public class LogicalAlterTableSplitPartitionByHotValue extends BaseDdlOperation 
                     preparedData.getInvisiblePartitionGroups(),
                     mockOrderedTargetTableLocations,
                     executionContext);
-
+            int compareFlag =
+                PartitionInfoUtil.IGNORE_PARTNAME_LOCALITY | PartitionInfoUtil.COMPARE_EXISTS_PART_LOCATION;
+            if (preparedData.isInplaceBackfill()) {
+                compareFlag |= PartitionInfoUtil.COMPARE_NEW_PART_LOCATION;
+            }
             preparedData.findCandidateTableGroupAndUpdatePrepareDate(tableGroupConfig, newPartInfo, null,
                 hotKeyPartNamePrefix,
-                PartitionInfoUtil.IGNORE_PARTNAME_LOCALITY | PartitionInfoUtil.COMPARE_EXISTS_PART_LOCATION,
+                compareFlag,
                 executionContext);
+            preparedData.rebuildPartitionRelationship(partitionInfo, newPartInfo);
         }
     }
 

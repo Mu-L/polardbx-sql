@@ -52,10 +52,12 @@ public class DdlMetaLogUtil {
         ddlTables.add(GmsSystemTables.COLUMNAR_TABLE_EVOLUTION);
         ddlTables.add(GmsSystemTables.COLUMNAR_COLUMN_EVOLUTION);
         ddlTables.add(GmsSystemTables.COLUMNAR_PARTITION_EVOLUTION);
+        ddlTables.add(GmsSystemTables.COLUMNAR_INDEX_EVOLUTION);
         ddlTables.add(GmsSystemTables.COLUMNAR_CONFIG);
         ddlTables.add(GmsSystemTables.COLUMNAR_LEASE);
         ddlTables.add(GmsSystemTables.COLUMNAR_DUPLICATES);
         ddlTables.add(GmsSystemTables.COLUMNAR_PURGE_HISTORY);
+        ddlTables.add(GmsSystemTables.COLUMNAR_TABLE_ID_VERSION);
         ddlTables.add(GmsSystemTables.COLUMNS);
         ddlTables.add(GmsSystemTables.INDEXES);
         ddlTables.add(GmsSystemTables.KEY_COLUMN_USAGE);
@@ -66,6 +68,9 @@ public class DdlMetaLogUtil {
         ddlTables.add(GmsSystemTables.BACKFILL_SAMPLE_ROWS);
         ddlTables.add(GmsSystemTables.REBALANCE_EXTERNAL_SOLUTION);
         ddlTables.add(GmsSystemTables.CHANGESET_OBJECT);
+        ddlTables.add(GmsSystemTables.OMC_RECORD);
+        ddlTables.add(GmsSystemTables.EXT_COLUMN_MAPPING);
+        ddlTables.add(GmsSystemTables.MCE_COLUMN_STATE);
         ddlTables.add(GmsSystemTables.CHECKER_REPORTS);
         ddlTables.add(GmsSystemTables.DDL_JOBS);
         ddlTables.add(GmsSystemTables.DDL_ENGINE);
@@ -74,6 +79,7 @@ public class DdlMetaLogUtil {
         ddlTables.add(GmsSystemTables.DDL_ENGINE_TASK_ARCHIVE);
         ddlTables.add(GmsSystemTables.TABLE_LOCAL_PARTITIONS);
         ddlTables.add(GmsSystemTables.READ_WRITE_LOCK);
+        ddlTables.add(GmsSystemTables.READ_WRITE_LOCK_WAITING);
         ddlTables.add(GmsSystemTables.RECYCLE_BIN);
         ddlTables.add(GmsSystemTables.SEQUENCE);
         ddlTables.add(GmsSystemTables.SEQUENCE_OPT);
@@ -85,6 +91,11 @@ public class DdlMetaLogUtil {
         ddlTables.add(GmsSystemTables.COLUMN_EVOLUTION);
         ddlTables.add(GmsSystemTables.SCALEOUT_BACKFILL_OBJECTS);
         ddlTables.add(GmsSystemTables.SCALEOUT_CHECKER_REPORTS);
+        ddlTables.add(GmsSystemTables.DB_INFO);
+        ddlTables.add(GmsSystemTables.DB_GROUP_INFO);
+        ddlTables.add(GmsSystemTables.GROUP_DETAIL_INFO);
+        ddlTables.add(GmsSystemTables.SERVER_INFO);
+        ddlTables.add(GmsSystemTables.STORAGE_INFO);
     }
 
     public static boolean isDdlTable(String systemTable) {

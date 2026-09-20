@@ -1,23 +1,8 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.common.properties;
 
 import com.alibaba.polardbx.common.TddlConstants;
 import com.alibaba.polardbx.common.constants.SequenceAttribute;
+import com.alibaba.polardbx.common.encdb.enums.MsgKeyConstants;
 import com.alibaba.polardbx.common.constants.TransactionAttribute;
 import com.alibaba.polardbx.common.ddl.Attribute;
 import com.alibaba.polardbx.common.ddl.newengine.DdlConstants;
@@ -25,6 +10,7 @@ import com.alibaba.polardbx.common.ddl.newengine.DdlConstants;
 import java.util.HashMap;
 import java.util.Map;
 
+import static com.alibaba.polardbx.common.cdc.CdcConstants.DDL_LOAD_STATUS_STOPPED;
 import static com.alibaba.polardbx.common.ddl.newengine.DdlLocalPartitionConstants.DEFAULT_SCHEDULE_CRON_EXPR;
 
 /**
@@ -36,14 +22,41 @@ public class ConnectionParams {
 
     public static final Map<String, ConfigParam> SUPPORTED_PARAMS = new HashMap<>();
 
+    /**
+     * 是否开启show tables结果cache,默认关闭,针对ruby on rails的优化
+     */
     public static final BooleanConfigParam SHOW_TABLES_CACHE = new BooleanConfigParam(
         ConnectionProperties.SHOW_TABLES_CACHE,
         false,
         false);
+    // forReplication
 
+    /**
+     * show tables是否只读规则文件，针对DRDS
+     */
     public static final BooleanConfigParam SHOW_TABLES_FROM_RULE_ONLY = new BooleanConfigParam(
         ConnectionProperties.SHOW_TABLES_FROM_RULE_ONLY,
         false,
+        false);
+
+    public static final BooleanConfigParam USE_SHA2_PASSWORD_FOR_BACKEND = new BooleanConfigParam(
+        ConnectionProperties.USE_SHA2_PASSWORD_FOR_BACKEND,
+        true,
+        false);
+
+    /**
+     * block logical ddl
+     */
+    public static final BooleanConfigParam BLOCK_LOGICAL_DDL = new BooleanConfigParam(
+        ConnectionProperties.BLOCK_LOGICAL_DDL,
+        false,
+        false);
+
+    public static final LongConfigParam DDL_TASK_ERROR_RETRY_WAIT_TIME = new LongConfigParam(
+        ConnectionProperties.DDL_TASK_ERROR_RETRY_WAIT_TIME,
+        0L,
+        3600L,
+        0L,
         false);
 
     /**
@@ -53,7 +66,7 @@ public class ConnectionParams {
      */
     public static final BooleanConfigParam IS_CROSS_RULE = new BooleanConfigParam(
         ConnectionProperties.IS_CROSS_RULE,
-        true,
+        false,
         false);
 
     /**
@@ -64,6 +77,10 @@ public class ConnectionParams {
         true,
         false);
 
+    /**
+     * Check if DRDS executes queries to collect statistics by group or
+     * instance. The default FALSE is for "by instance".
+     */
     public static final BooleanConfigParam INFO_SCHEMA_QUERY_STAT_BY_GROUP = new BooleanConfigParam(
         ConnectionProperties.INFO_SCHEMA_QUERY_STAT_BY_GROUP,
         false,
@@ -81,11 +98,20 @@ public class ConnectionParams {
      */
     public static final BooleanConfigParam ENABLE_DRDS_MULTI_PHASE_DDL =
         new BooleanConfigParam(ConnectionProperties.ENABLE_DRDS_MULTI_PHASE_DDL,
+            false,
+            false);
+
+    /*
+     * 强制关闭多阶段DDL，优先级高于ENABLE_DRDS_MULTI_PHASE_DDL
+     * 默认为true，即默认关闭多阶段DDL
+     */
+    public static final BooleanConfigParam FORCE_DISABLE_MULTI_PHASE_DDL =
+        new BooleanConfigParam(ConnectionProperties.FORCE_DISABLE_MULTI_PHASE_DDL,
             true,
             false);
 
     /*
-     * 是否开启两阶段DDL
+     * 是否在DDL之前执行check table
      */
     public static final BooleanConfigParam CHECK_TABLE_BEFORE_PHY_DDL =
         new BooleanConfigParam(ConnectionProperties.CHECK_TABLE_BEFORE_PHY_DDL,
@@ -113,7 +139,15 @@ public class ConnectionParams {
      */
     public static final BooleanConfigParam ENABLE_RANDOM_PHY_TABLE_NAME =
         new BooleanConfigParam(ConnectionProperties.ENABLE_RANDOM_PHY_TABLE_NAME,
-            true,
+            Attribute.DEFAULT_ENABLE_RANDOM_PHY_TABLE_NAME,
+            false);
+
+    /**
+     * Check if random physical table name is enabled.
+     */
+    public static final BooleanConfigParam CHECK_PHYSICAL_TABLE =
+        new BooleanConfigParam(ConnectionProperties.CHECK_PHYSICAL_TABLE,
+            false,
             false);
 
     /**
@@ -148,6 +182,14 @@ public class ConnectionParams {
      * Enable/Disable grouping for New Sequence
      */
     public static final BooleanConfigParam ENABLE_NEW_SEQ_GROUPING =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_NEW_SEQ_GROUPING,
+            true,
+            false);
+
+    /**
+     * Enable/Disable batch optimization for New Sequence
+     */
+    public static final BooleanConfigParam ENABLE_NEW_SEQ_BATCH =
         new BooleanConfigParam(ConnectionProperties.ENABLE_NEW_SEQ_GROUPING,
             true,
             false);
@@ -262,16 +304,6 @@ public class ConnectionParams {
             false,
             false);
 
-
-    /**
-     * Enable operate subjob
-     */
-    public static final BooleanConfigParam ENABLE_OPERATE_SUBJOB =
-        new BooleanConfigParam(
-            ConnectionProperties.ENABLE_OPERATE_SUBJOB,
-            false,
-            false);
-
     /**
      * Debug the DDL execution flow.
      */
@@ -279,6 +311,33 @@ public class ConnectionParams {
         new StringConfigParam(ConnectionProperties.DDL_ENGINE_DEBUG,
             null,
             false);
+
+    /**
+     * Debug the DDL execution flow.
+     */
+    public static final StringConfigParam DDL_ENGINE_RESOURCE_LIST =
+        new StringConfigParam(ConnectionProperties.DDL_ENGINE_RESOURCE_LIST,
+            "",
+            false);
+
+    public static final BooleanConfigParam SKIP_DDL_FIXED_RESOURCE_CHECK =
+        new BooleanConfigParam(ConnectionProperties.SKIP_DDL_FIXED_RESOURCE_CHECK,
+            false,
+            false);
+
+    /**
+     * Whether to acquire DDL resource locks in two phases, i.e. pre-lock the resources
+     * with an INITIAL job record before building the DDL job.
+     */
+    public static final BooleanConfigParam ENABLE_DDL_TWO_PHASE_LOCK =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_DDL_TWO_PHASE_LOCK,
+            true,
+            true);
+
+    public static final BooleanConfigParam ENABLE_DDL_RW_LOCK_FIFO_WAITING_QUEUE =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_DDL_RW_LOCK_FIFO_WAITING_QUEUE,
+            true,
+            true);
 
     /**
      * Print detail information of physical shards during DDL execution for debug.
@@ -296,6 +355,39 @@ public class ConnectionParams {
             Attribute.DEFAULT_PURE_ASYNC_DDL_MODE,
             false);
 
+    public static final BooleanConfigParam EXPLAIN_SHOW_PERF_PARAMS =
+        new BooleanConfigParam(ConnectionProperties.EXPLAIN_SHOW_PERF_PARAMS,
+            true,
+            false);
+
+    public static final BooleanConfigParam EXPLAIN_SHOW_DB_INDEX_MODE =
+        new BooleanConfigParam(ConnectionProperties.EXPLAIN_SHOW_DB_INDEX_MODE,
+            false,
+            false);
+
+    public static final BooleanConfigParam SHOW_COMMAND_RAND_DISPATCH =
+        new BooleanConfigParam(ConnectionProperties.SHOW_COMMAND_RAND_DISPATCH,
+            false,
+            false);
+
+    public static final StringConfigParam PERF_DDL_MODE =
+        new StringConfigParam(ConnectionProperties.PERF_DDL_MODE,
+            Attribute.DEFAULT_PERF_DDL_MODE,
+            false);
+
+    public static final LongConfigParam BATCH_FILE_SIZE =
+        new LongConfigParam(ConnectionProperties.BATCH_FILE_SIZE,
+            1024 * 128L,
+            1024 * 1024 * 128L,
+            Attribute.DEFAULT_BATCH_FILE_SIZE,
+            false);
+
+    public static final LongConfigParam MAX_BATCH_FILE_SIZE_SPEED =
+        new LongConfigParam(ConnectionProperties.MAX_BATCH_FILE_SIZE_SPEED,
+            1024 * 1024L,
+            1024 * 1024 * 1024 * 32L,
+            Attribute.DEFAULT_BATCH_FILE_SIZE_SPEED,
+            false);
     /**
      * Label if return job_id on async_ddl_mode when submit ddl
      */
@@ -309,6 +401,15 @@ public class ConnectionParams {
      */
     public static final BooleanConfigParam SUPPORT_INSTANT_ADD_COLUMN =
         new BooleanConfigParam(ConnectionProperties.SUPPORT_INSTANT_ADD_COLUMN,
+            false,
+            false);
+
+    /**
+     * Enable operate subjob
+     */
+    public static final BooleanConfigParam ENABLE_OPERATE_SUBJOB =
+        new BooleanConfigParam(
+            ConnectionProperties.ENABLE_OPERATE_SUBJOB,
             false,
             false);
 
@@ -363,12 +464,21 @@ public class ConnectionParams {
     /**
      * Physical DDL MDL WAITING TIMEOUT
      */
-
     public static final IntConfigParam PHYSICAL_DDL_MDL_WAITING_TIMEOUT =
         new IntConfigParam(ConnectionProperties.PHYSICAL_DDL_MDL_WAITING_TIMEOUT,
             -1, //closed
             Attribute.MAX_PHYSICAL_DDL_MDL_WAITING_TIMEOUT, //Integer.MAX_VALUE
             Attribute.PHYSICAL_DDL_MDL_WAITING_TIMEOUT,
+            false);
+
+    /**
+     * The timeout (in minutes) for acquiring DDL engine resource locks, default 60 minutes.
+     */
+    public static final IntConfigParam DDL_ACQUIRE_LOCK_TIMEOUT_MINUTES =
+        new IntConfigParam(ConnectionProperties.DDL_ACQUIRE_LOCK_TIMEOUT_MINUTES,
+            1,
+            null,
+            60,
             false);
 
     /**
@@ -401,11 +511,14 @@ public class ConnectionParams {
      */
     public static final IntConfigParam MAX_TABLE_PARTITIONS_PER_DB =
         new IntConfigParam(ConnectionProperties.MAX_TABLE_PARTITIONS_PER_DB,
-            DdlConstants.MIN_ALLOWED_TABLE_SHARDS_PER_DB,
-            DdlConstants.MAX_ALLOWED_TABLE_SHARDS_PER_DB,
-            Integer.valueOf(DdlConstants.DEFAULT_ALLOWED_TABLE_SHARDS_PER_DB),
+            Attribute.MIN_MAX_TABLE_PARTITIONS_PER_DB,
+            Attribute.MAX_MAX_TABLE_PARTITIONS_PER_DB,
+            Integer.valueOf(Attribute.DEFAULT_MAX_TABLE_PARTITIONS_PER_DB),
             false);
 
+    /**
+     * 是否将or条件转化为index merge，default is true.
+     */
     public final static BooleanConfigParam GROUP_CONCURRENT_BLOCK = new BooleanConfigParam(
         ConnectionProperties.GROUP_CONCURRENT_BLOCK,
         true,
@@ -424,9 +537,17 @@ public class ConnectionParams {
         false,
         false);
 
+    /**
+     * 是否强制首个subNode串行，其他并行，默认false
+     */
     public final static BooleanConfigParam FIRST_THEN_CONCURRENT_POLICY = new BooleanConfigParam(
         ConnectionProperties.FIRST_THEN_CONCURRENT_POLICY,
         false,
+        false);
+
+    public final static BooleanConfigParam ENABLE_ZERO_GROUP_AS_BROADCAST_FIRST_GROUP = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_ZERO_GROUP_AS_BROADCAST_FIRST_GROUP,
+        true,
         false);
 
     /**
@@ -486,16 +607,25 @@ public class ConnectionParams {
         false,
         false);
 
+    /**
+     * 是否忽略不改变实际值的 UPDATE
+     */
     public final static BooleanConfigParam DML_SKIP_TRIVIAL_UPDATE = new BooleanConfigParam(
         ConnectionProperties.DML_SKIP_TRIVIAL_UPDATE,
         true,
         false);
 
+    /**
+     * 是否跳过主键的冲突检查
+     */
     public final static BooleanConfigParam DML_SKIP_DUPLICATE_CHECK_FOR_PK = new BooleanConfigParam(
         ConnectionProperties.DML_SKIP_DUPLICATE_CHECK_FOR_PK,
         true,
         false);
 
+    /**
+     * 是否允许有DML报错的事务继续提交
+     */
     public final static BooleanConfigParam DML_SKIP_CRUCIAL_ERR_CHECK = new BooleanConfigParam(
         ConnectionProperties.DML_SKIP_CRUCIAL_ERR_CHECK,
         false,
@@ -543,11 +673,55 @@ public class ConnectionParams {
         false);
 
     /**
+     * 是否将带 GSI 的单行复杂 DML 的 LOCAL UK 查重裁剪到目标分区
+     * 对新购实例默认为 true，存量实例保持 false
+     */
+    public final static BooleanConfigParam DML_PARTITION_LOCAL_UK_DUP_CHECK = new BooleanConfigParam(
+        ConnectionProperties.DML_PARTITION_LOCAL_UK_DUP_CHECK,
+        false,
+        false);
+
+    /**
+     * 是否将带 GSI 的单行复杂 DML 的 LOCAL PK 查重裁剪到目标分区
+     * 对新购实例默认为 true，存量实例保持 false
+     */
+    public final static BooleanConfigParam DML_PARTITION_LOCAL_PK_DUP_CHECK = new BooleanConfigParam(
+        ConnectionProperties.DML_PARTITION_LOCAL_PK_DUP_CHECK,
+        false,
+        false);
+
+    /**
+     * 是否使用 returning 优化需要逻辑执行的 UPDATE
+     */
+    public final static BooleanConfigParam OPTIMIZE_RELOCATE_BY_RETURNING = new BooleanConfigParam(
+        ConnectionProperties.OPTIMIZE_RELOCATE_BY_RETURNING,
+        false,
+        false);
+
+    /**
      * 是否只允许使用 主表 检查主键冲突，false 代表可以使用 按照主键分区的 gsi 来检查主键冲突
      * 对新购实例默认为 false
      */
     public final static BooleanConfigParam DML_GET_DUP_FOR_PK_FROM_PRIMARY_ONLY = new BooleanConfigParam(
         ConnectionProperties.DML_GET_DUP_FOR_PK_FROM_PRIMARY_ONLY,
+        true,
+        false);
+
+    /**
+     * 是否使用 returning 优化需要逻辑执行的 REPLACE
+     * 对新购实例默认为true
+     */
+    public final static BooleanConfigParam OPTIMIZE_REPLACE_BY_RETURNING = new BooleanConfigParam(
+        ConnectionProperties.OPTIMIZE_REPLACE_BY_RETURNING,
+        false,
+        false);
+
+    /**
+     * 使用 returning 优化逻辑执行的 replace 前是否开启自冲突检测
+     * 默认开启，关闭自冲突检测可能导致下游消费报错，仅供可忽略下游场景使用
+     */
+    public final static BooleanConfigParam OPTIMIZE_REPLACE_BY_RETURNING_CHECK_SELF_CONFLICT = new BooleanConfigParam(
+        ConnectionProperties.OPTIMIZE_REPLACE_BY_RETURNING_CHECK_SELF_CONFLICT,
         true,
         false);
 
@@ -724,6 +898,14 @@ public class ConnectionParams {
             false);
 
     /**
+     * 下推的 INSERT 语句如果没有带 column list 是否默认补上 column list，避免物理表多列导致报错
+     */
+    public final static BooleanConfigParam DML_INSERT_PUSH_DOWN_WITH_COLUMN_LIST = new BooleanConfigParam(
+        ConnectionProperties.DML_INSERT_PUSH_DOWN_WITH_COLUMN_LIST,
+        true,
+        false);
+
+    /**
      * 在检验建表语句时，主动延迟的时间。仅用于测试。
      */
     public final static IntConfigParam GET_PHY_TABLE_INFO_DELAY = new IntConfigParam(
@@ -815,21 +997,13 @@ public class ConnectionParams {
         false);
 
     /**
-     * 是否开启 Foreign Key
-     */
-    public final static BooleanConfigParam ENABLE_FOREIGN_KEY = new BooleanConfigParam(
-        ConnectionProperties.ENABLE_FOREIGN_KEY,
-        false,
-        true);
-
-    /**
      * Rebalance组装任务时生成的单个DDL job迁移对最大数据量，单位为MB
      */
     public final static LongConfigParam REBALANCE_MAX_UNIT_SIZE = new LongConfigParam(
         ConnectionProperties.REBALANCE_MAX_UNIT_SIZE,
         0L,
         Long.MAX_VALUE,
-        0L,
+        128 * 1024L,
         true);
 
     public final static IntConfigParam REBALANCE_MAX_TABLEGROUP_SOLVED_BY_LP = new IntConfigParam(
@@ -844,6 +1018,19 @@ public class ConnectionParams {
         0L,
         Long.MAX_VALUE,
         8192L,
+        true);
+
+    public final static BooleanConfigParam ENABLE_FAST_DRAIN_MODE = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_FAST_DRAIN_MODE,
+        true,
+        true);
+
+    /**
+     * 是否开启 Foreign Key
+     */
+    public final static BooleanConfigParam ENABLE_FOREIGN_KEY = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_FOREIGN_KEY,
+        false,
         true);
 
     /**
@@ -876,10 +1063,47 @@ public class ConnectionParams {
         true);
 
     /**
+     * 是否允许开启check约束
+     */
+    public final static BooleanConfigParam ENABLE_CHECK_CONSTRAINT = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_CHECK_CONSTRAINT,
+        true,
+        true);
+
+    /**
      * 是否允许在包含 CCI 的表上执行 DDL
      */
     public final static BooleanConfigParam FORBID_DDL_WITH_CCI = new BooleanConfigParam(
         ConnectionProperties.FORBID_DDL_WITH_CCI,
+        false,
+        true);
+
+    /**
+     * 是否禁止在纯列存表上执行 DDL
+     */
+    public final static BooleanConfigParam FORBID_DDL_WITH_PURE_COLUMNAR = new BooleanConfigParam(
+        ConnectionProperties.FORBID_DDL_WITH_PURE_COLUMNAR,
+        true,
+        true);
+
+    public final static BooleanConfigParam FORBID_COMPLEX_DML_WITH_PURE_COLUMNAR = new BooleanConfigParam(
+        ConnectionProperties.FORBID_COMPLEX_DML_WITH_PURE_COLUMNAR,
+        true,
+        true);
+
+    /**
+     * 是否允许在包含 归档CCI 的表上执行 Truncate
+     */
+    public final static BooleanConfigParam FORBID_TRUNCATE_WITH_ARCHIVE_CCI = new BooleanConfigParam(
+        ConnectionProperties.FORBID_TRUNCATE_WITH_ARCHIVE_CCI,
+        true,
+        true);
+
+    /**
+     * 是否允许删除表上的最后一个 CCI
+     */
+    public final static BooleanConfigParam ALLOW_DROP_LAST_CCI = new BooleanConfigParam(
+        ConnectionProperties.ALLOW_DROP_LAST_CCI,
         false,
         true);
 
@@ -900,11 +1124,29 @@ public class ConnectionParams {
         true);
 
     /**
+     * 是否将CCI设置到独立的表组
+     */
+    public final static BooleanConfigParam SET_CCI_TO_SEPARATE_TG = new BooleanConfigParam(
+        ConnectionProperties.SET_CCI_TO_SEPARATE_TG,
+        true,
+        true);
+
+    /**
      * 是否允许主表DROP PARTITION时，向影子表中插入数据，生成BINLOG（用于CCI删除）
      */
     public final static BooleanConfigParam ENABLE_SHADOW_INSERT_ON_DROP_PARTITION = new BooleanConfigParam(
         ConnectionProperties.ENABLE_SHADOW_INSERT_ON_DROP_PARTITION,
         false,
+        true);
+
+    /**
+     * INSERT SELECT 到影子表的批次文件总量（B），默认 2MB
+     */
+    public static final LongConfigParam SHADOW_INSERT_BATCH_FILE_SIZE = new LongConfigParam(
+        ConnectionProperties.SHADOW_INSERT_BATCH_FILE_SIZE,
+        1L,
+        Long.MAX_VALUE,
+        2 * 1024 * 1024L,
         true);
 
     /**
@@ -914,7 +1156,7 @@ public class ConnectionParams {
         ConnectionProperties.SHADOW_INSERT_BATCH_SIZE,
         1L,
         Long.MAX_VALUE,
-        1000L,
+        500L,
         true);
 
     /**
@@ -924,7 +1166,7 @@ public class ConnectionParams {
         ConnectionProperties.SHADOW_INSERT_BATCH_INTERVAL,
         0L,
         Long.MAX_VALUE,
-        50L,
+        0L,
         true);
     /**
      * 生成影子表时忽略CCI
@@ -942,6 +1184,15 @@ public class ConnectionParams {
         true);
 
     /**
+     * 是否支持 DMS 无锁变更，版本 V1
+     */
+    public final static BooleanConfigParam ENABLE_DMS_OMC_V1 = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_DMS_OMC_V1,
+        true,
+        false
+    );
+
+    /**
      * 是否强制使用 Online Modify Column，即使列类型没有改变，或者不是支持的类型
      */
     public final static BooleanConfigParam OMC_FORCE_TYPE_CONVERSION = new BooleanConfigParam(
@@ -952,6 +1203,7 @@ public class ConnectionParams {
     /**
      * Online Modify Column 1.0 回填时是否使用 returning 优化
      */
+    @Deprecated
     public final static BooleanConfigParam OMC_BACK_FILL_USE_RETURNING = new BooleanConfigParam(
         ConnectionProperties.OMC_BACK_FILL_USE_RETURNING,
         true,
@@ -966,7 +1218,7 @@ public class ConnectionParams {
         false);
 
     /**
-     * 是否强制采用 Online Modify Column
+     * 是否强制采用 Online Modify Column 2.0
      */
     public final static BooleanConfigParam FORCE_USING_OMC = new BooleanConfigParam(
         ConnectionProperties.FORCE_USING_OMC,
@@ -974,13 +1226,16 @@ public class ConnectionParams {
         false);
 
     /**
-     * OMC 是否开启 changeset 优化
+     * OMC 2.0 是否开启 changeset 优化
      */
     public final static BooleanConfigParam ENABLE_CHANGESET_FOR_OMC = new BooleanConfigParam(
         ConnectionProperties.ENABLE_CHANGESET_FOR_OMC,
         true,
         false);
 
+    /**
+     * OMC 2.0 是否开启 backfill insert select 优化
+     */
     public final static BooleanConfigParam ENABLE_BACKFILL_OPT_FOR_OMC = new BooleanConfigParam(
         ConnectionProperties.ENABLE_BACKFILL_OPT_FOR_OMC,
         true,
@@ -1003,25 +1258,173 @@ public class ConnectionParams {
         false);
 
     /**
+     * enable omc 3.0
+     */
+    public final static BooleanConfigParam ENABLE_OMC_30 = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_OMC_30,
+        true,
+        false);
+
+    /**
+     * force using omc 3.0
+     */
+    public final static BooleanConfigParam FORCE_USING_OMC_30 = new BooleanConfigParam(
+        ConnectionProperties.FORCE_USING_OMC_30,
+        false,
+        false);
+
+    /**
+     * 允许 OMC 3.0 直接修改分区键列类型，开启后不再强制 fallback 到 OMC 2.0 重建表
+     */
+    public final static BooleanConfigParam ENABLE_OMC_30_MODIFY_PARTITION_KEY = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_OMC_30_MODIFY_PARTITION_KEY,
+        false,
+        false);
+
+    /**
+     * enable ghost ddl for physical table
+     */
+    public final static BooleanConfigParam ENABLE_GHOST_DDL = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_GHOST_DDL,
+        true,
+        false);
+
+    /**
+     * max retry count while waiting for omc3.0 rename
+     */
+    public static final IntConfigParam OMC_CATCHUP_LOOP_COUNT_BEFORE_BP = new IntConfigParam(
+        ConnectionProperties.OMC_CATCHUP_LOOP_COUNT_BEFORE_BP,
+        1,
+        15,
+        5,
+        false);
+
+    /**
+     * min bucket fill rate for omc backpressure
+     */
+    public static final IntConfigParam OMC_BACKPRESSURE_MIN_RATE_LIMIT = new IntConfigParam(
+        ConnectionProperties.OMC_BACKPRESSURE_MIN_RATE_LIMIT,
+        1,
+        Integer.MAX_VALUE,
+        1000,
+        false);
+
+    /**
+     * default bucket capacity for omc backpressure
+     */
+    public static final IntConfigParam OMC_BACKPRESSURE_DEFAULT_BUCKET_CAPACITY = new IntConfigParam(
+        ConnectionProperties.OMC_BACKPRESSURE_DEFAULT_BUCKET_CAPACITY,
+        1,
+        Integer.MAX_VALUE,
+        10_000,
+        false);
+
+    /**
+     * force threshold for omc backpressure
+     */
+    public static final IntConfigParam OMC_BACKPRESSURE_CUTOVER_THRESHOLD = new IntConfigParam(
+        ConnectionProperties.OMC_BACKPRESSURE_CUTOVER_THRESHOLD,
+        -1,
+        Integer.MAX_VALUE,
+        -1,
+        false);
+
+    /**
+     * max threshold for omc backpressure
+     */
+    public static final IntConfigParam OMC_BACKPRESSURE_MAX_THRESHOLD = new IntConfigParam(
+        ConnectionProperties.OMC_BACKPRESSURE_MAX_THRESHOLD,
+        1,
+        500_000,
+        50_000,
+        false);
+
+    /**
+     * valid speed for omc backpressure
+     */
+    public static final IntConfigParam OMC_BACKPRESSURE_VALID_SPEED = new IntConfigParam(
+        ConnectionProperties.OMC_BACKPRESSURE_VALID_SPEED,
+        1,
+        Integer.MAX_VALUE,
+        1000,
+        false);
+
+    /**
+     * threshold of file size for omc backpressure
+     * 默认 2MB
+     */
+    public static final IntConfigParam OMC_BACKPRESSURE_THRESHOLD_FILE_SIZE = new IntConfigParam(
+        ConnectionProperties.OMC_BACKPRESSURE_THRESHOLD_FILE_SIZE,
+        100 * 1024,
+        50 * 1024 * 1024,
+        4 * 1024 * 1024,
+        false);
+
+    /**
+     * adaptive level for omc backpressure
+     * 自适应增加反压力度的等级，数字越大，力度越大
+     */
+    public static final IntConfigParam OMC_BACKPRESSURE_ADAPTIVE_LEVEL = new IntConfigParam(
+        ConnectionProperties.OMC_BACKPRESSURE_ADAPTIVE_LEVEL,
+        1,
+        10,
+        5,
+        false);
+
+    /**
+     * adaptive sensitivity for omc backpressure
+     * 自适应增加反压力度的调整幅度
+     */
+    public static final IntConfigParam OMC_BACKPRESSURE_ADJUSTMENT_FACTOR = new IntConfigParam(
+        ConnectionProperties.OMC_BACKPRESSURE_ADJUSTMENT_FACTOR,
+        1,
+        5,
+        2,
+        false);
+
+    /**
+     * threshold factor for omc backpressure
+     * 阈值因子，可切换阈值 * 阈值因子 = 反压阈值
+     */
+    public static final IntConfigParam OMC_BACKPRESSURE_THRESHOLD_FACTOR = new IntConfigParam(
+        ConnectionProperties.OMC_BACKPRESSURE_THRESHOLD_FACTOR,
+        1,
+        10,
+        5,
+        false
+    );
+
+    /**
+     * max file size for omc changeset
+     * 最大文件大小，默认 512MB
+     */
+    public static final LongConfigParam OMC_CHANGESET_FILESIZE_LIMIT = new LongConfigParam(
+        ConnectionProperties.OMC_CHANGESET_FILESIZE_LIMIT,
+        128 * 1024 * 1024L,
+        Long.MAX_VALUE,
+        512 * 1024 * 1024L, // Default 512MB
+        false);
+
+    /**
      * batch size for omc backfill procedure
      * 仅对称复制生效，默认最大 1024 rows/batch
      */
-    public static final LongConfigParam OMC_BACKFILL_BATCH_SIZE_MAX = new LongConfigParam(
+    public static final IntConfigParam OMC_BACKFILL_BATCH_SIZE_MAX = new IntConfigParam(
         ConnectionProperties.OMC_BACKFILL_BATCH_SIZE_MAX,
-        1L,
-        1024L * 1024,
-        1024L,
+        1,
+        1024 * 1024,
+        1024,
         false);
 
     /**
      * physical size of one batch for omc backfill procedure
-     * 仅对称复制生效，默认 2 MB
+     * 仅对称复制生效，默认 1 MB
      */
-    public static final LongConfigParam OMC_BACKFILL_BATCH_FILE_SIZE = new LongConfigParam(
+    public static final IntConfigParam OMC_BACKFILL_BATCH_FILE_SIZE = new IntConfigParam(
         ConnectionProperties.OMC_BACKFILL_BATCH_FILE_SIZE,
-        100 * 1024L,
-        50 * 1024L * 1024,
-        2 * 1024 * 1024L,
+        100 * 1024,
+        50 * 1024 * 1024,
+        1024 * 1024,
         false);
 
     /**
@@ -1047,42 +1450,118 @@ public class ConnectionParams {
         false);
 
     /**
-     * parallelism for omc backfill procedure
-     * 仅对称复制生效
+     * parallelism for omc3.0 backfill procedure
      */
-    public static final LongConfigParam OMC_BACKFILL_PARALLELISM = new LongConfigParam(
+    public static final IntConfigParam OMC_BACKFILL_PARALLELISM = new IntConfigParam(
         ConnectionProperties.OMC_BACKFILL_PARALLELISM,
-        -1L,
-        Long.MAX_VALUE,
-        -1L,
+        1,
+        Integer.MAX_VALUE,
+        1,
         false);
 
-    public static IntConfigParam OMC_THREAD_POOL_SIZE =
-        new IntConfigParam(ConnectionProperties.OMC_THREAD_POOL_SIZE,
-            1, 10, 1, false);
+    /**
+     * parallelism for omc3.0 checker procedure
+     */
+    public static final IntConfigParam OMC_CHECKER_PARALLELISM = new IntConfigParam(
+        ConnectionProperties.OMC_CHECKER_PARALLELISM,
+        1,
+        Integer.MAX_VALUE,
+        1,
+        false);
 
     /**
-     * Online Modify Column / Add Generated Column 回填后是否进行检查
+     * sequential policy for omc3.0 backfill procedure
      */
-    public final static BooleanConfigParam COL_CHECK_AFTER_BACK_FILL = new BooleanConfigParam(
-        ConnectionProperties.COL_CHECK_AFTER_BACK_FILL,
+    public static final BooleanConfigParam OMC_SEQUENTIAL_POLICY = new BooleanConfigParam(
+        ConnectionProperties.OMC_SEQUENTIAL_POLICY,
+        false,
+        false);
+
+    /**
+     * full concurrent policy for omc3.0 backfill procedure
+     */
+    public static final BooleanConfigParam OMC_FULL_CONCURRENT_POLICY = new BooleanConfigParam(
+        ConnectionProperties.OMC_FULL_CONCURRENT_POLICY,
+        false,
+        false);
+
+    /**
+     * prefetch shards for omc3.0
+     */
+    public static final IntConfigParam OMC_PREFETCH_SHARDS = new IntConfigParam(
+        ConnectionProperties.OMC_PREFETCH_SHARDS,
+        -1,
+        Integer.MAX_VALUE,
+        -1,
+        false);
+
+    /**
+     * max retry count while waiting for omc3.0 rename
+     */
+    public static final IntConfigParam OMC_MAX_RETRY_COUNT = new IntConfigParam(
+        ConnectionProperties.OMC_MAX_RETRY_COUNT,
+        1,
+        60,
+        3,
+        false);
+
+    /**
+     * max check count for omc3.0
+     */
+    public static final IntConfigParam OMC_MAX_CHECK_RETRY_COUNT = new IntConfigParam(
+        ConnectionProperties.OMC_MAX_CHECK_RETRY_COUNT,
+        1,
+        15,
+        3,
+        false);
+
+    /**
+     * slow checker batch size for omc
+     */
+    public static final IntConfigParam OMC_CHECKER_BATCH_SIZE = new IntConfigParam(
+        ConnectionProperties.OMC_CHECKER_BATCH_SIZE,
+        1,
+        Integer.MAX_VALUE,
+        1024,
+        false
+    );
+
+    /**
+     * acquire mdl for changeset start
+     */
+    public final static BooleanConfigParam OMC_CHANGESET_ACQUIRE_LOCK = new BooleanConfigParam(
+        ConnectionProperties.OMC_CHANGESET_ACQUIRE_LOCK,
         true,
         false);
 
     /**
-     * Online Modify Column / Add Generated Column 检查是否使用 Simple Checker（只进行 NULL 值判断）
+     * lock wait timeout for omc lock table
      */
-    public final static BooleanConfigParam COL_USE_SIMPLE_CHECKER = new BooleanConfigParam(
-        ConnectionProperties.COL_USE_SIMPLE_CHECKER,
-        false,
-        false);
+    public static final IntConfigParam OMC_LOCK_WAIT_TIMEOUT = new IntConfigParam(
+        ConnectionProperties.OMC_LOCK_WAIT_TIMEOUT,
+        1,
+        60,
+        20,
+        false
+    );
 
     /**
-     * Online Modify Column / Add Generated Column 是否跳过回填阶段（只用来 debug）
+     * cutover sla (lock table time should less then 1s), default is 1000 ms
      */
-    public final static BooleanConfigParam COL_SKIP_BACK_FILL = new BooleanConfigParam(
-        ConnectionProperties.COL_SKIP_BACK_FILL,
-        false,
+    public static final LongConfigParam OMC_CUTOVER_TIMEOUT = new LongConfigParam(
+        ConnectionProperties.OMC_CUTOVER_TIMEOUT,
+        1L,
+        60000L,
+        1000L,
+        false
+    );
+
+    /**
+     * enable trace id for omc physical sql
+     */
+    public final static BooleanConfigParam OMC_ENABLE_TRACE = new BooleanConfigParam(
+        ConnectionProperties.OMC_ENABLE_TRACE,
+        true,
         false);
 
     /**
@@ -1090,14 +1569,6 @@ public class ConnectionParams {
      */
     public final static BooleanConfigParam GEN_COL_FORCE_CN_EVAL = new BooleanConfigParam(
         ConnectionProperties.GEN_COL_FORCE_CN_EVAL,
-        false,
-        false);
-
-    /**
-     * 是否允许在含有 Generated Column 的表上使用 OMC
-     */
-    public final static BooleanConfigParam ENABLE_OMC_WITH_GEN_COL = new BooleanConfigParam(
-        ConnectionProperties.ENABLE_OMC_WITH_GEN_COL,
         false,
         false);
 
@@ -1149,10 +1620,16 @@ public class ConnectionParams {
         false,
         false);
 
+    /**
+     * 是否设置union优化执行，默认为true
+     */
     public final static BooleanConfigParam MERGE_UNION = new BooleanConfigParam(ConnectionProperties.MERGE_UNION,
         true,
         false);
 
+    /**
+     * merge ddl是否采用全并行模式,设置为false,默认为库间并行
+     */
     public final static BooleanConfigParam MERGE_DDL_CONCURRENT = new BooleanConfigParam(
         ConnectionProperties.MERGE_DDL_CONCURRENT,
         false,
@@ -1166,47 +1643,88 @@ public class ConnectionParams {
         false,
         false);
 
+    /**
+     * 在 SHOW CREATE TABLE 结果中输出不带注释的 locality
+     */
+    public static final BooleanConfigParam OUTPUT_LOCALITY_WITHOUT_COMMENT = new BooleanConfigParam(
+        ConnectionProperties.OUTPUT_LOCALITY_WITHOUT_COMMENT,
+        false,
+        false);
+
+    /**
+     * 如果这个值为true,则强制开启允许全表扫描查询。而如果为空。或者为false,则基于规则判断是否开启全表扫描
+     */
     public static final BooleanConfigParam ALLOW_FULL_TABLE_SCAN = new BooleanConfigParam(
         ConnectionProperties.ALLOW_FULL_TABLE_SCAN,
         false,
         false);
 
+    /**
+     * 是否开启广播表多写
+     */
     public static final BooleanConfigParam CHOOSE_BROADCAST_WRITE = new BooleanConfigParam(
         ConnectionProperties.CHOOSE_BROADCAST_WRITE,
         true,
         true);
 
+    /**
+     * 禁止全表删除或者全表更新
+     */
     public static final BooleanConfigParam FORBID_EXECUTE_DML_ALL = new BooleanConfigParam(
         ConnectionProperties.FORBID_EXECUTE_DML_ALL,
         true,
         true);
 
+    /**
+     * 执行jdbc fetch size
+     */
     public static final LongConfigParam FETCH_SIZE = new LongConfigParam(ConnectionProperties.FETCH_SIZE,
         null,
         null,
         0L,
         true);
 
+    /**
+     * Transaction policy, default is null
+     */
     public static final StringConfigParam TRANSACTION_POLICY = new StringConfigParam(
         ConnectionProperties.TRANSACTION_POLICY,
         null,
         true);
 
+    public static final StringConfigParam GDN_TRX_POLICY_STATUS = new StringConfigParam(
+        ConnectionProperties.GDN_TRX_POLICY_STATUS,
+        null,
+        true
+    );
+
+    /**
+     * Share read view, default is true
+     */
     public static final BooleanConfigParam SHARE_READ_VIEW = new BooleanConfigParam(
         ConnectionProperties.SHARE_READ_VIEW,
         true,
         true);
 
+    /**
+     * Single share transaction optimization, default is true
+     */
     public static final BooleanConfigParam ENABLE_TRX_SINGLE_SHARD_OPTIMIZATION = new BooleanConfigParam(
         ConnectionProperties.ENABLE_TRX_SINGLE_SHARD_OPTIMIZATION,
         true,
         true);
 
+    /**
+     * Enable aggressive read connection reuse under RC-level XA/2PC transactions (default false)
+     */
     public static final BooleanConfigParam ENABLE_TRX_READ_CONN_REUSE = new BooleanConfigParam(
         ConnectionProperties.ENABLE_TRX_READ_CONN_REUSE,
         false,
         true);
 
+    /**
+     * Get TSO timeout time, default 10s
+     */
     public static final LongConfigParam GET_TSO_TIMEOUT = new LongConfigParam(
         ConnectionProperties.GET_TSO_TIMEOUT,
         null,
@@ -1214,6 +1732,9 @@ public class ConnectionParams {
         10000L,
         false);
 
+    /**
+     * Max single TSO/XA/2PC transaction time in seconds
+     */
     public static final LongConfigParam MAX_TRX_DURATION = new LongConfigParam(
         ConnectionProperties.MAX_TRX_DURATION,
         null,
@@ -1221,10 +1742,21 @@ public class ConnectionParams {
         28800L,
         false);
 
+    /**
+     * 是否在explain时候显示XPlan,默认为false
+     */
     public static final BooleanConfigParam EXPLAIN_X_PLAN = new BooleanConfigParam(
         ConnectionProperties.EXPLAIN_X_PLAN,
         false,
         false);
+
+    /**
+     * 是否在explain时候显示物理执行计划,默认为false
+     */
+    public static final BooleanConfigParam EXPLAIN_SHOW_PHYSICAL_PLAN = new BooleanConfigParam(
+        ConnectionProperties.EXPLAIN_SHOW_PHYSICAL_PLAN,
+        true,
+        true);
 
     public static final BooleanConfigParam ENABLE_XPLAN_FEEDBACK = new BooleanConfigParam(
         ConnectionProperties.ENABLE_XPLAN_FEEDBACK,
@@ -1249,22 +1781,46 @@ public class ConnectionParams {
         3600 * 24 * 7 * 1000L,
         false);
 
+    /**
+     * Index usage query timeout in seconds
+     * Used for physical_index_usage and logical_index_usage views
+     * Default: 120 seconds
+     */
+    public static final LongConfigParam INDEX_USAGE_QUERY_TIMEOUT = new LongConfigParam(
+        ConnectionProperties.INDEX_USAGE_QUERY_TIMEOUT,
+        1L,
+        3600L,
+        120L,
+        true);
+
+    /**
+     * 是否开启兼容datetime类型的round down,避免四舍五入,默认为false
+     */
     public static final BooleanConfigParam ENABLE_COMPATIBLE_DATETIME_ROUNDDOWN = new BooleanConfigParam(
         ConnectionProperties.ENABLE_COMPATIBLE_DATETIME_ROUNDDOWN,
         false,
         false);
 
+    /**
+     * 是否开启兼容timestamp类型的round down,避免四舍五入,默认为false
+     */
     public static final BooleanConfigParam ENABLE_COMPATIBLE_TIMESTAMP_ROUNDDOWN = new BooleanConfigParam(
         ConnectionProperties.ENABLE_COMPATIBLE_TIMESTAMP_ROUNDDOWN,
         false,
         false);
 
+    /**
+     * 慢SQL阈值
+     */
     public static final LongConfigParam SLOW_SQL_TIME = new LongConfigParam(ConnectionProperties.SLOW_SQL_TIME,
         0L,
         null,
         1000L,
         false);
 
+    /**
+     * load data 每次 batch insert的记录条数，默认为每次1024条
+     */
     public static final LongConfigParam LOAD_DATA_BATCH_INSERT_SIZE =
         new LongConfigParam(ConnectionProperties.LOAD_DATA_BATCH_INSERT_SIZE,
             0L,
@@ -1272,6 +1828,9 @@ public class ConnectionParams {
             1 * 1024L,
             true);
 
+    /**
+     * load data 缓存的buffer阈值，默认为60M
+     */
     public static final LongConfigParam LOAD_DATA_CACHE_BUFFER_SIZE =
         new LongConfigParam(ConnectionProperties.LOAD_DATA_CACHE_BUFFER_SIZE,
             0L,
@@ -1279,6 +1838,9 @@ public class ConnectionParams {
             60 * 1024 * 1024L,
             true);
 
+    /**
+     * select into outfile 的buffer大小，默认为1M，最大为200M
+     */
     public static final LongConfigParam SELECT_INTO_OUTFILE_BUFFER_SIZE =
         new LongConfigParam(ConnectionProperties.SELECT_INTO_OUTFILE_BUFFER_SIZE,
             0L,
@@ -1300,6 +1862,9 @@ public class ConnectionParams {
             PropUtil.LOAD_NULL_MODE.DEFAULT_VALUE_MODE.toString(),
             true);
 
+    /**
+     * Write primary and gsi concurrently on load mode.
+     */
     public static final BooleanConfigParam LOAD_DATA_IGNORE_IS_SIMPLE_INSERT =
         new BooleanConfigParam(ConnectionProperties.LOAD_DATA_IGNORE_IS_SIMPLE_INSERT,
             true,
@@ -1337,6 +1902,9 @@ public class ConnectionParams {
         -1L,
         false);
 
+    /**
+     * server模式下最大允许客户端传递的packet大小,默认为1MB
+     */
     public static final LongConfigParam MAX_ALLOWED_PACKET = new LongConfigParam(
         ConnectionProperties.MAX_ALLOWED_PACKET,
         0L,
@@ -1344,16 +1912,24 @@ public class ConnectionParams {
         (long) (16 * 1024 * 1024),
         false);
 
+    /**
+     * 用kill指令来关闭流式结果集
+     */
     public static final BooleanConfigParam KILL_CLOSE_STREAM = new BooleanConfigParam(
         ConnectionProperties.KILL_CLOSE_STREAM,
-        false,
+        true,
         false);
 
+    /**
+     * 是否开启参数化SQL的日志及其参数化后的SQL_ID的向物理SQL的透传
+     */
     public static final BooleanConfigParam ENABLE_PARAMETERIZED_SQL_LOG = new BooleanConfigParam(
         ConnectionProperties.ENABLE_PARAMETERIZED_SQL_LOG,
         true,
         true);
-
+    /**
+     * 参与参数化SQL日志打印的最大长度
+     */
     public static final LongConfigParam MAX_PARAMETERIZED_SQL_LOG_LENGTH = new LongConfigParam(
         ConnectionProperties.MAX_PARAMETERIZED_SQL_LOG_LENGTH,
         0L,
@@ -1361,11 +1937,17 @@ public class ConnectionParams {
         5000L,
         false);
 
+    /**
+     * 收集SQL在DRDS的新或旧引擎上的执行错误，包括完整堆栈、行号、方法名、文件名和IpPort
+     */
     public static final BooleanConfigParam COLLECT_SQL_ERROR_INFO = new BooleanConfigParam(
         ConnectionProperties.COLLECT_SQL_ERROR_INFO,
         false,
         false);
 
+    /**
+     * XA RECOVER 扫描时间间隔
+     */
     public static final IntConfigParam XA_RECOVER_INTERVAL = new IntConfigParam(
         ConnectionProperties.XA_RECOVER_INTERVAL,
         1,
@@ -1373,6 +1955,9 @@ public class ConnectionParams {
         TransactionAttribute.XA_RECOVER_INTERVAL,
         false);
 
+    /**
+     * 事务日志清理间隔
+     */
     public static final IntConfigParam PURGE_TRANS_INTERVAL = new IntConfigParam(
         ConnectionProperties.PURGE_TRANS_INTERVAL,
         300,
@@ -1380,17 +1965,26 @@ public class ConnectionParams {
         TransactionAttribute.TRANSACTION_PURGE_INTERVAL,
         false);
 
+    /**
+     * 清理多久之前的事务日志
+     */
     public static final IntConfigParam PURGE_TRANS_BEFORE = new IntConfigParam(ConnectionProperties.PURGE_TRANS_BEFORE,
         1800,
         null,
         TransactionAttribute.TRANSACTION_PURGE_BEFORE,
         false);
 
+    /**
+     * Enable deadlock detection for distributed transactions
+     */
     public static final BooleanConfigParam ENABLE_DEADLOCK_DETECTION = new BooleanConfigParam(
         ConnectionProperties.ENABLE_DEADLOCK_DETECTION,
         true,
         false);
 
+    /**
+     * TSO heartbeat 时间间隔
+     */
     public static final IntConfigParam TSO_HEARTBEAT_INTERVAL = new IntConfigParam(
         ConnectionProperties.TSO_HEARTBEAT_INTERVAL,
         100,
@@ -1448,6 +2042,42 @@ public class ConnectionParams {
         true
     );
 
+    public static final StringConfigParam COLUMNAR_VERSION_CHAIN_PRUNER = new StringConfigParam(
+        ConnectionProperties.COLUMNAR_VERSION_CHAIN_PRUNER,
+        "",
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_READ_DELTA_FROM_COLUMNAR = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_READ_DELTA_FROM_COLUMNAR,
+        true,
+        true
+    );
+
+    public static final IntConfigParam COLUMNAR_RPC_MAX_MESSAGE_SIZE = new IntConfigParam(
+        ConnectionProperties.COLUMNAR_RPC_MAX_MESSAGE_SIZE,
+        1024 * 1024,
+        Integer.MAX_VALUE,
+        8 * 1024 * 1024,
+        true
+    );
+
+    public static final IntConfigParam COLUMNAR_RPC_READ_TIMEOUT = new IntConfigParam(
+        ConnectionProperties.COLUMNAR_RPC_READ_TIMEOUT,
+        1,
+        Integer.MAX_VALUE,
+        100,
+        true
+    );
+
+    public static final IntConfigParam COLUMNAR_RPC_BACK_PRESSURE_TIMEOUT = new IntConfigParam(
+        ConnectionProperties.COLUMNAR_RPC_BACK_PRESSURE_TIMEOUT,
+        1,
+        Integer.MAX_VALUE,
+        1000,
+        true
+    );
+
     public static final LongConfigParam FORCE_COLUMNAR_PURGE_DURATION_MS = new LongConfigParam(
         ConnectionProperties.FORCE_COLUMNAR_PURGE_DURATION_MS,
         -1L,
@@ -1470,6 +2100,9 @@ public class ConnectionParams {
         TransactionAttribute.PURGE_TRANS_START_TIME,
         false);
 
+    /**
+     * control recyclebin
+     */
     public static final BooleanConfigParam ENABLE_RECYCLEBIN = new BooleanConfigParam(
         ConnectionProperties.ENABLE_RECYCLEBIN,
         false,
@@ -1482,48 +2115,82 @@ public class ConnectionParams {
         ConnectionProperties.COPY_MODIFY_NODE0_TO_SINGLE,
         false,
         true);
+    public static final FloatConfigParam GSI_LOOKUP_OPTIMIZE_THRESHOLD = new FloatConfigParam(
+        ConnectionProperties.GSI_LOOKUP_OPTIMIZE_THRESHOLD,
+        0.0f,
+        1000.0f,
+        10f,
+        true
+    );
 
     public static void addSupportedParam(ConfigParam param) {
         SUPPORTED_PARAMS.put(param.getName(), param);
     }
 
+    /**
+     * allow DDL on Global Secondary Index
+     */
     public static final BooleanConfigParam DDL_ON_GSI = new BooleanConfigParam(ConnectionProperties.DDL_ON_GSI,
         false,
         false);
 
+    /**
+     * allow DML on Global Secondary Index
+     */
     public static final BooleanConfigParam DML_ON_GSI = new BooleanConfigParam(ConnectionProperties.DML_ON_GSI,
         false,
         false);
 
+    /**
+     * allow create Global Secondary Index on MySQL 5.6
+     */
     public static final BooleanConfigParam STORAGE_CHECK_ON_GSI = new BooleanConfigParam(
         ConnectionProperties.STORAGE_CHECK_ON_GSI,
         true,
         false);
 
+    /**
+     * Check distributed transaction, for debug use
+     */
     public static final BooleanConfigParam DISTRIBUTED_TRX_REQUIRED = new BooleanConfigParam(
         ConnectionProperties.DISTRIBUTED_TRX_REQUIRED,
         false,
         false);
 
+    /**
+     * Check transaction class, for debug use
+     */
     public static final StringConfigParam TRX_CLASS_REQUIRED = new StringConfigParam(
         ConnectionProperties.TRX_CLASS_REQUIRED,
         null,
         false);
 
+    /**
+     * Omit global transaction log in TSO transaction, for benchmark only.
+     * Note: This will cause inconsistency after crash.
+     */
     public static final BooleanConfigParam TSO_OMIT_GLOBAL_TX_LOG = new BooleanConfigParam(
         ConnectionProperties.TSO_OMIT_GLOBAL_TX_LOG,
         false,
         false);
 
+    /**
+     * allow TRUNCATE table with Global Secondary Index
+     */
     public static final BooleanConfigParam TRUNCATE_TABLE_WITH_GSI = new BooleanConfigParam(
         ConnectionProperties.TRUNCATE_TABLE_WITH_GSI,
         false,
         false);
-
+    /**
+     * allow ADD Global Secondary Index after primary table created
+     */
     public static final BooleanConfigParam ALLOW_ADD_GSI = new BooleanConfigParam(ConnectionProperties.ALLOW_ADD_GSI,
         true,
         false);
 
+    /**
+     * debug mode on Global Secondary Index, which makes GSI status change slower etc.
+     */
     public static final StringConfigParam GSI_DEBUG = new StringConfigParam(ConnectionProperties.GSI_DEBUG,
         "",
         false);
@@ -1568,10 +2235,16 @@ public class ConnectionParams {
             "",
             false);
 
+    /**
+     * debug mode on scaleout, which makes scaleout status change slower and print out useful info.
+     */
     public static final StringConfigParam SCALE_OUT_DEBUG = new StringConfigParam(ConnectionProperties.SCALE_OUT_DEBUG,
         "",
         false);
 
+    /**
+     * debug mode on scaleout, which makes scaleout status change slower and print out useful info.
+     */
     public static final LongConfigParam SCALE_OUT_DEBUG_WAIT_TIME_IN_WO =
         new LongConfigParam(ConnectionProperties.SCALE_OUT_DEBUG_WAIT_TIME_IN_WO,
             0L,
@@ -1579,21 +2252,35 @@ public class ConnectionParams {
             0L,
             false);
 
+    /**
+     * debug mode on scaleout write for dml. When SCALE_OUT_WRITE_DEBUG=true,
+     * all the dml will doing by scale out write
+     */
     public static final StringConfigParam SCALE_OUT_WRITE_DEBUG =
         new StringConfigParam(ConnectionProperties.SCALE_OUT_WRITE_DEBUG,
             "",
             false);
 
+    /**
+     * set the table's final status for scaleout debug purpose.
+     */
     public static final StringConfigParam SCALE_OUT_FINAL_TABLE_STATUS_DEBUG =
         new StringConfigParam(ConnectionProperties.SCALE_OUT_FINAL_TABLE_STATUS_DEBUG,
             "",
             false);
 
+    /**
+     * set the db's final status for scaleout debug purpose.
+     */
     public static final StringConfigParam SCALE_OUT_FINAL_DB_STATUS_DEBUG =
         new StringConfigParam(ConnectionProperties.SCALE_OUT_FINAL_DB_STATUS_DEBUG,
             "",
             false);
 
+    /**
+     * test mode on scale out write performance testing. When SCALE_OUT_WRITE_PERFORMANCE_TEST=true,
+     * the scaleout status will not change anymore when reach FINISH_DB_MIG status
+     */
     public static final StringConfigParam SCALE_OUT_WRITE_PERFORMANCE_TEST =
         new StringConfigParam(ConnectionProperties.SCALE_OUT_WRITE_PERFORMANCE_TEST,
             "",
@@ -1627,7 +2314,7 @@ public class ConnectionParams {
      */
     public static final BooleanConfigParam ENABLE_SLIDE_WINDOW_BACKFILL =
         new BooleanConfigParam(ConnectionProperties.ENABLE_SLIDE_WINDOW_BACKFILL,
-            true,
+            false,
             false);
 
     /**
@@ -1657,14 +2344,14 @@ public class ConnectionParams {
      */
     public static final LongConfigParam BACKFILL_MAX_SAMPLE_ROWS =
         new LongConfigParam(ConnectionProperties.BACKFILL_MAX_SAMPLE_ROWS,
-            10000L, Long.MAX_VALUE, 100000L, false);
+            10000L, Long.MAX_VALUE, 1000000L, false);
 
     /**
      * max physcial table sample rows for backfill pk range task
      */
     public static final LongConfigParam BACKFILL_MAX_SAMPLE_ROWS_FOR_PK_RANGE =
         new LongConfigParam(ConnectionProperties.BACKFILL_MAX_SAMPLE_ROWS_FOR_PK_RANGE,
-            10000L, Long.MAX_VALUE, 100000L, false);
+            10000L, Long.MAX_VALUE, 1000000L, false);
 
     public static final StringConfigParam BACKFILL_MAX_PK_RANGE_SIZE =
         new StringConfigParam(ConnectionProperties.BACKFILL_MAX_PK_RANGE_SIZE,
@@ -1682,11 +2369,17 @@ public class ConnectionParams {
             true,
             false);
 
+    /**
+     * move database use fastchecker
+     */
     public static final BooleanConfigParam SCALEOUT_BACKFILL_USE_FASTCHECKER =
         new BooleanConfigParam(ConnectionProperties.SCALEOUT_BACKFILL_USE_FASTCHECKER,
             true,
             false);
 
+    /**
+     * GSI backfill use fastchecker
+     */
     public static final BooleanConfigParam GSI_BACKFILL_USE_FASTCHECKER =
         new BooleanConfigParam(ConnectionProperties.GSI_BACKFILL_USE_FASTCHECKER,
             true,
@@ -1733,11 +2426,11 @@ public class ConnectionParams {
         new IntConfigParam(ConnectionProperties.GSI_JOB_MAX_PARALLELISM,
             1,
             4096,
-            4,
+            256,
             false);
 
     /**
-     * GSI backfill max paramllesim
+     * GSI backfill max paramllesim control by 100/GSI_PK_RANGE_CPU_ACQUIRE
      */
     public static final IntConfigParam GSI_PK_RANGE_CPU_ACQUIRE =
         new IntConfigParam(ConnectionProperties.GSI_PK_RANGE_CPU_ACQUIRE,
@@ -1756,12 +2449,11 @@ public class ConnectionParams {
 
     public static IntConfigParam FASTCHECKER_THREAD_POOL_SIZE =
         new IntConfigParam(ConnectionProperties.FASTCHECKER_THREAD_POOL_SIZE,
-            1, 10, 1, false);
+            1, 10, 2, false);
 
     public static final IntConfigParam FASTCHECKER_BATCH_TIMEOUT_RETRY_TIMES =
         new IntConfigParam(ConnectionProperties.FASTCHECKER_BATCH_TIMEOUT_RETRY_TIMES,
             1, 10, 4, false);
-
 
     /**
      * check whether enable the scaleout feature, could disable/enable it from diamond/metadb
@@ -1771,16 +2463,25 @@ public class ConnectionParams {
             true,
             false);
 
+    /**
+     * check whether enable all phy dml log during doing scale out
+     */
     public static final BooleanConfigParam ENABLE_SCALE_OUT_ALL_PHY_DML_LOG =
         new BooleanConfigParam(ConnectionProperties.ENABLE_SCALE_OUT_ALL_PHY_DML_LOG,
             false,
             false);
 
+    /**
+     * check whether enable scaleout dml log of one group during doing scale out
+     */
     public static final BooleanConfigParam ENABLE_SCALE_OUT_GROUP_PHY_DML_LOG =
         new BooleanConfigParam(ConnectionProperties.ENABLE_SCALE_OUT_GROUP_PHY_DML_LOG,
             true,
             false);
 
+    /**
+     * batch size for scaleout backfill procedure
+     */
     public static final LongConfigParam SCALEOUT_BACKFILL_BATCH_SIZE = new LongConfigParam(
         ConnectionProperties.SCALEOUT_BACKFILL_BATCH_SIZE,
         16L,
@@ -1788,28 +2489,45 @@ public class ConnectionParams {
         1024L,
         false);
 
+    /**
+     * allow to push down dml for the non-gsi and non-broadcast table
+     * when shard groups has no scale-out group
+     */
     public static final BooleanConfigParam SCALEOUT_DML_PUSHDOWN_OPTIMIZATION =
         new BooleanConfigParam(ConnectionProperties.SCALEOUT_DML_PUSHDOWN_OPTIMIZATION,
             true,
             false);
 
+    /**
+     * allow to push down dml for the non-gsi and non-broadcast table
+     * when the batch size is less than SCALEOUT_DML_PUSHDOWN_BATCH_LIMIT
+     */
     public static final IntConfigParam SCALEOUT_DML_PUSHDOWN_BATCH_LIMIT = new IntConfigParam(
         ConnectionProperties.SCALEOUT_DML_PUSHDOWN_BATCH_LIMIT, 0, Integer.MAX_VALUE, 32, true);
 
+    /**
+     * speed limit for scaleout backfill procedure
+     */
     public static final LongConfigParam SCALEOUT_BACKFILL_SPEED_LIMITATION = new LongConfigParam(
         ConnectionProperties.SCALEOUT_BACKFILL_SPEED_LIMITATION,
         -1L,
         Long.MAX_VALUE,
-        300000L,
+        300000L, // min speed 300k rows/s.
         false);
 
+    /**
+     * speed limit for scaleout backfill procedure
+     */
     public static final LongConfigParam SCALEOUT_BACKFILL_SPEED_MIN = new LongConfigParam(
         ConnectionProperties.SCALEOUT_BACKFILL_SPEED_MIN,
         -1L,
         Long.MAX_VALUE,
-        100000L,
+        100000L, // min speed 100k rows/s.
         false);
 
+    /**
+     * parallelism for scaleout backfill procedure
+     */
     public static final LongConfigParam SCALEOUT_BACKFILL_PARALLELISM = new LongConfigParam(
         ConnectionProperties.SCALEOUT_BACKFILL_PARALLELISM,
         -1L,
@@ -1834,6 +2552,9 @@ public class ConnectionParams {
         ConnectionProperties.TABLEGROUP_TASK_PARALLELISM,
         -1L, 1024L, 16L, false);
 
+    public static final LongConfigParam TABLEGROUP_TASK_MAX_PARALLELISM = new LongConfigParam(
+        ConnectionProperties.TABLEGROUP_TASK_MAX_PARALLELISM,
+        -1L, 1024L, 128L, false);
     /**
      * batch size for scaleout check procedure
      */
@@ -1844,20 +2565,29 @@ public class ConnectionParams {
         1024L,
         false);
 
+    /**
+     * speed limit for scaleout check procedure
+     */
     public static final LongConfigParam SCALEOUT_CHECK_SPEED_LIMITATION = new LongConfigParam(
         ConnectionProperties.SCALEOUT_CHECK_SPEED_LIMITATION,
         -1L,
         Long.MAX_VALUE,
-        150000L,
+        150000L, // Default 150k rows/s.
         false);
 
+    /**
+     * speed limit for scaleout check procedure
+     */
     public static final LongConfigParam SCALEOUT_CHECK_SPEED_MIN = new LongConfigParam(
         ConnectionProperties.SCALEOUT_CHECK_SPEED_MIN,
         -1L,
         Long.MAX_VALUE,
-        100000L,
+        100000L, // Default 100k rows/s.
         false);
 
+    /**
+     * parallelism for scaleout check procedure
+     */
     public static final LongConfigParam SCALEOUT_CHECK_PARALLELISM = new LongConfigParam(
         ConnectionProperties.SCALEOUT_CHECK_PARALLELISM,
         -1L,
@@ -1865,13 +2595,9 @@ public class ConnectionParams {
         -1L,
         false);
 
-    public static final IntConfigParam SCALEOUT_FASTCHECKER_PARALLELISM = new IntConfigParam(
-        ConnectionProperties.SCALEOUT_FASTCHECKER_PARALLELISM,
-        -1,
-        128,
-        4,
-        false);
-
+    /**
+     * number of error for scaleout check early fail.
+     */
     public static final LongConfigParam SCALEOUT_EARLY_FAIL_NUMBER = new LongConfigParam(
         ConnectionProperties.SCALEOUT_EARLY_FAIL_NUMBER,
         100L,
@@ -1879,11 +2605,17 @@ public class ConnectionParams {
         1024L,
         false);
 
+    /**
+     * for scaleout backfill test
+     */
     public static final StringConfigParam SCALEOUT_BACKFILL_POSITION_MARK = new StringConfigParam(
         ConnectionProperties.SCALEOUT_BACKFILL_POSITION_MARK,
         "",
         false);
 
+    /**
+     * allow execute the drop database when scaleout is in progress
+     */
     public static final BooleanConfigParam ALLOW_DROP_DATABASE_IN_SCALEOUT_PHASE =
         new BooleanConfigParam(ConnectionProperties.ALLOW_DROP_DATABASE_IN_SCALEOUT_PHASE,
             false,
@@ -1904,6 +2636,9 @@ public class ConnectionParams {
             false,
             false);
 
+    /**
+     * retry time when scaleout task fail
+     */
     public static final LongConfigParam SCALEOUT_TASK_RETRY_TIME = new LongConfigParam(
         ConnectionProperties.SCALEOUT_TASK_RETRY_TIME,
         0L,
@@ -1911,6 +2646,9 @@ public class ConnectionParams {
         3L,
         false);
 
+    /**
+     * allow Alter Global Secondary Index indirectly(rename GSI in primary table, alter drop covering column)
+     */
     public static final BooleanConfigParam ALLOW_ALTER_GSI_INDIRECTLY = new BooleanConfigParam(
         ConnectionProperties.ALLOW_ALTER_GSI_INDIRECTLY,
         false,
@@ -1945,11 +2683,17 @@ public class ConnectionParams {
         false,
         false);
 
+    /**
+     * allow auto partition.
+     */
     public static final BooleanConfigParam AUTO_PARTITION = new BooleanConfigParam(
         ConnectionProperties.AUTO_PARTITION,
         false,
         false);
 
+    /**
+     * Auto partition partitions.
+     */
     public static final LongConfigParam AUTO_PARTITION_PARTITIONS = new LongConfigParam(
         ConnectionProperties.AUTO_PARTITION_PARTITIONS,
         2L,
@@ -1993,31 +2737,46 @@ public class ConnectionParams {
         false,
         false);
 
+    /**
+     * allow create table gsi on table with column default current_timestamp
+     */
     public static final BooleanConfigParam GSI_DEFAULT_CURRENT_TIMESTAMP = new BooleanConfigParam(
         ConnectionProperties.GSI_DEFAULT_CURRENT_TIMESTAMP,
         true,
         false);
 
+    /**
+     * allow create table gsi on table with column on update current_timestamp
+     */
     public static final BooleanConfigParam GSI_ON_UPDATE_CURRENT_TIMESTAMP = new BooleanConfigParam(
         ConnectionProperties.GSI_ON_UPDATE_CURRENT_TIMESTAMP,
         true,
         false);
 
+    /**
+     * allow to ignore Global Secondary Index restriction(PK auto increment check)
+     */
     public static final BooleanConfigParam GSI_IGNORE_RESTRICTION = new BooleanConfigParam(
         ConnectionProperties.GSI_IGNORE_RESTRICTION,
         false,
         false);
 
+    /**
+     * check Global Secondary Index after creation
+     */
     public static final BooleanConfigParam GSI_CHECK_AFTER_CREATION =
         new BooleanConfigParam(ConnectionProperties.GSI_CHECK_AFTER_CREATION,
             true,
             false);
 
+    /**
+     * speed limit for all read/write procedure(backfill, check, insert select, modify)
+     */
     public static final LongConfigParam GENERAL_DYNAMIC_SPEED_LIMITATION = new LongConfigParam(
         ConnectionProperties.GENERAL_DYNAMIC_SPEED_LIMITATION,
         -1L,
         Long.MAX_VALUE,
-        -1L,
+        -1L, // Default -1. not set
         false);
 
     /**
@@ -2030,6 +2789,9 @@ public class ConnectionParams {
         4096L,
         false);
 
+    /**
+     * batch size for backfill procedure
+     */
     public static final LongConfigParam GSI_BACKFILL_BATCH_SIZE = new LongConfigParam(
         ConnectionProperties.GSI_BACKFILL_BATCH_SIZE,
         16L,
@@ -2037,20 +2799,37 @@ public class ConnectionParams {
         1024L,
         false);
 
+    /**
+     * batch size for backfill procedure
+     */
+    public static final BooleanConfigParam SKIP_RELOAD_VALUE_CHECK = new BooleanConfigParam(
+        ConnectionProperties.SKIP_RELOAD_VALUE_CHECK,
+        false,
+        true);
+
+    /**
+     * speed limit for backfill procedure
+     */
     public static final LongConfigParam GSI_BACKFILL_SPEED_LIMITATION = new LongConfigParam(
         ConnectionProperties.GSI_BACKFILL_SPEED_LIMITATION,
         -1L,
         Long.MAX_VALUE,
-        150000L,
+        150000L, // Default 150k rows/s.
         false);
 
+    /**
+     * speed limit for backfill procedure
+     */
     public static final LongConfigParam GSI_BACKFILL_SPEED_MIN = new LongConfigParam(
         ConnectionProperties.GSI_BACKFILL_SPEED_MIN,
         -1L,
         Long.MAX_VALUE,
-        10000L,
+        10000L, // Default 10k rows/s.
         false);
 
+    /**
+     * parallelism for backfill procedure
+     */
     public static final LongConfigParam GSI_BACKFILL_PARALLELISM = new LongConfigParam(
         ConnectionProperties.GSI_BACKFILL_PARALLELISM,
         -1L,
@@ -2058,6 +2837,9 @@ public class ConnectionParams {
         -1L,
         false);
 
+    /**
+     * batch size for check procedure
+     */
     public static final LongConfigParam GSI_CHECK_BATCH_SIZE = new LongConfigParam(
         ConnectionProperties.GSI_CHECK_BATCH_SIZE,
         16L,
@@ -2065,20 +2847,29 @@ public class ConnectionParams {
         1024L,
         false);
 
+    /**
+     * speed limit for check procedure
+     */
     public static final LongConfigParam GSI_CHECK_SPEED_LIMITATION = new LongConfigParam(
         ConnectionProperties.GSI_CHECK_SPEED_LIMITATION,
         -1L,
         Long.MAX_VALUE,
-        150000L,
+        150000L, // Default 150k rows/s.
         false);
 
+    /**
+     * speed limit for check procedure
+     */
     public static final LongConfigParam GSI_CHECK_SPEED_MIN = new LongConfigParam(
         ConnectionProperties.GSI_CHECK_SPEED_MIN,
         -1L,
         Long.MAX_VALUE,
-        10000L,
+        10000L, // Default 10k rows/s.
         false);
 
+    /**
+     * parallelism for check procedure
+     */
     public static final LongConfigParam GSI_CHECK_PARALLELISM = new LongConfigParam(
         ConnectionProperties.GSI_CHECK_PARALLELISM,
         -1L,
@@ -2086,6 +2877,9 @@ public class ConnectionParams {
         -1L,
         false);
 
+    /**
+     * number of error for check early fail.
+     */
     public static final LongConfigParam GSI_EARLY_FAIL_NUMBER = new LongConfigParam(
         ConnectionProperties.GSI_EARLY_FAIL_NUMBER,
         100L,
@@ -2257,16 +3051,25 @@ public class ConnectionParams {
         true
     );
 
+    /**
+     * for gsi backfill test
+     */
     public static final StringConfigParam GSI_BACKFILL_POSITION_MARK = new StringConfigParam(
         ConnectionProperties.GSI_BACKFILL_POSITION_MARK,
         "",
         false);
 
+    /**
+     * Write primary and gsi concurrently
+     */
     public static final BooleanConfigParam GSI_CONCURRENT_WRITE_OPTIMIZE =
         new BooleanConfigParam(ConnectionProperties.GSI_CONCURRENT_WRITE_OPTIMIZE,
             true,
             false);
 
+    /**
+     * Write primary and gsi concurrently
+     */
     public static final BooleanConfigParam GSI_CONCURRENT_WRITE =
         new BooleanConfigParam(ConnectionProperties.GSI_CONCURRENT_WRITE,
             false,
@@ -2327,6 +3130,9 @@ public class ConnectionParams {
         true,
         false);
 
+    /**
+     * Always rebuild plain
+     */
     public static final BooleanConfigParam ALWAYS_REBUILD_PLAN =
         new BooleanConfigParam(ConnectionProperties.ALWAYS_REBUILD_PLAN,
             false,
@@ -2337,6 +3143,9 @@ public class ConnectionParams {
         true,
         false);
 
+    /**
+     * for table lookup replicate all filter from index table to primary table
+     */
     public static final BooleanConfigParam REPLICATE_FILTER_TO_PRIMARY = new BooleanConfigParam(
         ConnectionProperties.REPLICATE_FILTER_TO_PRIMARY,
         true,
@@ -2363,6 +3172,9 @@ public class ConnectionParams {
 
     public static final BooleanConfigParam ENABLE_SQL_ENGINE_ALERT_COLUMNAR_READ = new BooleanConfigParam(
         ConnectionProperties.ENABLE_SQL_ENGINE_ALERT_COLUMNAR_READ, true, true);
+
+    public static final BooleanConfigParam ENABLE_SQL_ENGINE_ALERT_COLUMNAR_WARMUP = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_SQL_ENGINE_ALERT_COLUMNAR_WARMUP, true, true);
 
     public static final IntConfigParam JOIN_CLUSTERING_CONDITION_PROPAGATION_LIMIT = new IntConfigParam(
         ConnectionProperties.JOIN_CLUSTERING_CONDITION_PROPAGATION_LIMIT, 3, Integer.MAX_VALUE, 7, true);
@@ -2400,6 +3212,9 @@ public class ConnectionParams {
 
     public static final LongConfigParam CACHELINE_INDICATE_UPDATE_TIME = new LongConfigParam(
         ConnectionProperties.CACHELINE_INDICATE_UPDATE_TIME, 1L, null, 0L, true);
+
+    public static final LongConfigParam COMPENSATION_REDUNDANCY_TIME = new LongConfigParam(
+        ConnectionProperties.COMPENSATION_REDUNDANCY_TIME, 1L, null, 3 * 24 * 60 * 60 * 1000L, true);
 
     public static final BooleanConfigParam ENABLE_CACHELINE_COMPENSATION = new BooleanConfigParam(
         ConnectionProperties.ENABLE_CACHELINE_COMPENSATION, true, true);
@@ -2441,6 +3256,22 @@ public class ConnectionParams {
     public static final IntConfigParam IN_TO_UNION_ALL_THRESHOLD = new IntConfigParam(
         ConnectionProperties.IN_TO_UNION_ALL_THRESHOLD, 1, Integer.MAX_VALUE, 500, true);
 
+    public static final BooleanConfigParam ENABLE_DYNAMIC_PRUNE_MERGE_SORT = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_DYNAMIC_PRUNE_MERGE_SORT, false, true);
+
+    public static final BooleanConfigParam ENABLE_DYNAMIC_MERGE_SORT_LOOKUP = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_DYNAMIC_MERGE_SORT_LOOKUP, true, true);
+
+    //database:table:columnar, database:table:columnar:columnar
+    public static final StringConfigParam DYNAMIC_MERGE_SORT_WHITE_LIST = new StringConfigParam(
+        ConnectionProperties.DYNAMIC_MERGE_SORT_WHITE_LIST, "", true);
+
+    public static final IntConfigParam DYNAMIC_MERGE_SORT_THRESHOLD = new IntConfigParam(
+        ConnectionProperties.DYNAMIC_MERGE_SORT_THRESHOLD, 1, Integer.MAX_VALUE, 1000, true);
+
+    public static final IntConfigParam DYNAMIC_MERGE_SORT_DETECT_PREFETCH = new IntConfigParam(
+        ConnectionProperties.DYNAMIC_MERGE_SORT_DETECT_PREFETCH, 1, Integer.MAX_VALUE, 1, true);
+
     public static final BooleanConfigParam ENABLE_SPLIT_MERGE_SORT = new BooleanConfigParam(
         ConnectionProperties.ENABLE_SPLIT_MERGE_SORT, true, true);
 
@@ -2450,11 +3281,17 @@ public class ConnectionParams {
     public static final BooleanConfigParam ENABLE_REMOVE_JOIN_CONDITION = new BooleanConfigParam(
         ConnectionProperties.ENABLE_REMOVE_JOIN_CONDITION, false, true);
 
+    public static final BooleanConfigParam ENABLE_SIMPLIFY_LOOKUP_JOIN = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_SIMPLIFY_LOOKUP_JOIN, true, true);
+
     public static final BooleanConfigParam ENABLE_BKA_PRUNING = new BooleanConfigParam(
         ConnectionProperties.ENABLE_BKA_PRUNING, true, true);
 
     public static final BooleanConfigParam ENABLE_BKA_IN_VALUES_PRUNING = new BooleanConfigParam(
         ConnectionProperties.ENABLE_BKA_IN_VALUES_PRUNING, true, true);
+
+    public static final BooleanConfigParam ENABLE_SINGLE_JOIN_EST = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_SINGLE_JOIN_EST, true, true);
 
     public static final BooleanConfigParam ENABLE_HASH_JOIN = new BooleanConfigParam(
         ConnectionProperties.ENABLE_HASH_JOIN, true, true);
@@ -2475,6 +3312,9 @@ public class ConnectionParams {
 
     public static final BooleanConfigParam ENABLE_REVERSE_HASH_JOIN = new BooleanConfigParam(
         ConnectionProperties.ENABLE_REVERSE_HASH_JOIN, true, true);
+
+    public static final BooleanConfigParam ENABLE_REVERSE_BROADCAST_SEMI_HASH_JOIN = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_REVERSE_BROADCAST_SEMI_HASH_JOIN, true, true);
 
     public static final BooleanConfigParam ENABLE_REVERSE_SEMI_HASH_JOIN = new BooleanConfigParam(
         ConnectionProperties.ENABLE_REVERSE_SEMI_HASH_JOIN, true, true);
@@ -2536,8 +3376,20 @@ public class ConnectionParams {
     public static final BooleanConfigParam ENABLE_LV_SUBQUERY_UNWRAP = new BooleanConfigParam(
         ConnectionProperties.ENABLE_LV_SUBQUERY_UNWRAP, true, true);
 
+    public static final BooleanConfigParam ENABLE_SUBQUERY_IGNORE_LIMIT = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_SUBQUERY_IGNORE_LIMIT, true, true);
+
     public static final BooleanConfigParam ENABLE_PAGING_FORCE_TO_JOIN = new BooleanConfigParam(
         ConnectionProperties.ENABLE_PAGING_FORCE_TO_JOIN, true, true);
+
+    public static final BooleanConfigParam ENABLE_PRE_FILTER_LOOKUP = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_PRE_FILTER_LOOKUP, true, true);
+
+    public static final BooleanConfigParam ENABLE_PAGING_FORCE_LOOKUP = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_PAGING_FORCE_LOOKUP, true, true);
+
+    public static final BooleanConfigParam FORBID_DUPLICATE_PUSH = new BooleanConfigParam(
+        ConnectionProperties.FORBID_DUPLICATE_PUSH, false, true);
 
     public static final BooleanConfigParam ENABLE_AUTO_FORCE_INDEX = new BooleanConfigParam(
         ConnectionProperties.ENABLE_AUTO_FORCE_INDEX, false, true);
@@ -2545,11 +3397,20 @@ public class ConnectionParams {
     public static final BooleanConfigParam ENABLE_AUTO_PAGINATION_INDEX = new BooleanConfigParam(
         ConnectionProperties.ENABLE_AUTO_PAGINATION_INDEX, false, true);
 
+    public static final BooleanConfigParam ENABLE_AUTO_PAGINATION_UNION = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_AUTO_PAGINATION_UNION, false, true);
+
+    public static final IntConfigParam AUTO_PAGINATION_OR_THRESHOLD = new IntConfigParam(
+        ConnectionProperties.AUTO_PAGINATION_OR_THRESHOLD, 0, null, 3, true);
+
     public static final BooleanConfigParam ENABLE_AUTO_PAGINATION_IGNORE_INDEX = new BooleanConfigParam(
         ConnectionProperties.ENABLE_AUTO_PAGINATION_IGNORE_INDEX, true, true);
 
     public static final BooleanConfigParam ENABLE_AUTO_PAGINATION_PAGING_FORCE = new BooleanConfigParam(
         ConnectionProperties.ENABLE_AUTO_PAGINATION_PAGING_FORCE, true, true);
+
+    public static final BooleanConfigParam ENABLE_AUTO_PAGINATION_IN_SCALAR = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_AUTO_PAGINATION_IN_SCALAR, false, true);
 
     public static final IntConfigParam SKIP_SORT_EQ_PRE_COL = new IntConfigParam(
         ConnectionProperties.SKIP_SORT_EQ_PRE_COL, 0, null, 1, true);
@@ -2557,8 +3418,11 @@ public class ConnectionParams {
     public static final IntConfigParam SORT_EQ_PRE_COL = new IntConfigParam(
         ConnectionProperties.SORT_EQ_PRE_COL, 0, null, 2, true);
 
-    public static final BooleanConfigParam ENABLE_DELETE_FORCE_CC_INDEX = new BooleanConfigParam(
-        ConnectionProperties.ENABLE_DELETE_FORCE_CC_INDEX, false, true);
+    public static final IntConfigParam PAGINATION_UNCOVER_COL = new IntConfigParam(
+        ConnectionProperties.PAGINATION_UNCOVER_COL, -1, null, -1, true);
+
+    public final static BooleanConfigParam PUSHDOWN_RANGE_LIMIT = new BooleanConfigParam(
+        ConnectionProperties.PUSHDOWN_RANGE_LIMIT, false, true);
 
     public static final BooleanConfigParam EXPLAIN_PRUNING_DETAIL = new BooleanConfigParam(
         ConnectionProperties.EXPLAIN_PRUNING_DETAIL, false, true);
@@ -2605,8 +3469,26 @@ public class ConnectionParams {
     public static final IntConfigParam PARTIAL_AGG_SHARD = new IntConfigParam(
         ConnectionProperties.PARTIAL_AGG_SHARD, 0, Integer.MAX_VALUE, 6, true);
 
+    public static final IntConfigParam PRE_AGG_STREAM_BATCH_THRESHOLD = new IntConfigParam(
+        ConnectionProperties.PRE_AGG_STREAM_BATCH_THRESHOLD, 1, Integer.MAX_VALUE, 100000, true);
+
+    public static final FloatConfigParam TRANSPARENT_PRE_AGG_JUDGE_RATE = new FloatConfigParam(
+        ConnectionProperties.TRANSPARENT_PRE_AGG_JUDGE_RATE, 0f, 1f, 0.9f, true);
+
+    public static final BooleanConfigParam ENABLE_TRANSPARENT_PARTIAL_AGG = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_TRANSPARENT_PARTIAL_AGG, false, true);
+
+    public static final BooleanConfigParam ENABLE_STREAM_PARTIAL_AGG = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_STREAM_PARTIAL_AGG, false, true);
+
     public static final BooleanConfigParam ENABLE_PARTIAL_AGG = new BooleanConfigParam(
         ConnectionProperties.ENABLE_PARTIAL_AGG, true, true);
+
+    public static final BooleanConfigParam ENABLE_PARTIAL_GROUP_TOPN = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_PARTIAL_GROUP_TOPN, true, true);
+
+    public static final BooleanConfigParam PREFER_PARTIAL_GROUP_TOPN = new BooleanConfigParam(
+        ConnectionProperties.PREFER_PARTIAL_GROUP_TOPN, true, true);
 
     public static final BooleanConfigParam ENABLE_TOPN = new BooleanConfigParam(
         ConnectionProperties.ENABLE_TOPN, true, true);
@@ -2635,23 +3517,21 @@ public class ConnectionParams {
     public static final BooleanConfigParam ENABLE_SORT_WINDOW = new BooleanConfigParam(
         ConnectionProperties.ENABLE_SORT_WINDOW, true, true);
 
+    public static final BooleanConfigParam ENABLE_GROUP_TOPN = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_GROUP_TOPN, true, true);
+
     public static final IntConfigParam PARALLELISM = new IntConfigParam(
         ConnectionProperties.PARALLELISM, -1, Integer.MAX_VALUE, -1, true);
 
-    public static final IntConfigParam OSS_LOAD_DATA_PRODUCERS =
-        new IntConfigParam(ConnectionProperties.OSS_LOAD_DATA_PRODUCERS, -1, Integer.MAX_VALUE, 2, true);
-
-    public static final IntConfigParam OSS_LOAD_DATA_MAX_CONSUMERS =
-        new IntConfigParam(ConnectionProperties.OSS_LOAD_DATA_MAX_CONSUMERS, -1, Integer.MAX_VALUE, 32, true);
-
-    public static final IntConfigParam OSS_LOAD_DATA_FLUSHERS =
-        new IntConfigParam(ConnectionProperties.OSS_LOAD_DATA_FLUSHERS, -1, Integer.MAX_VALUE, 16, true);
-
-    public static final IntConfigParam OSS_LOAD_DATA_UPLOADERS =
-        new IntConfigParam(ConnectionProperties.OSS_LOAD_DATA_UPLOADERS, -1, Integer.MAX_VALUE, 2, true);
-
     public static final LongConfigParam OSS_EXPORT_MAX_ROWS_PER_FILE = new LongConfigParam(
         ConnectionProperties.OSS_EXPORT_MAX_ROWS_PER_FILE, 1_000L, 1000_000_000L, 1000_000L, true);
+
+    public static final StringConfigParam ENCDB_ENCRYPTION_ALGORITHM =
+        new StringConfigParam(ConnectionProperties.ENCDB_ENCRYPTION_ALGORITHM, "", true);
+
+    public static final StringConfigParam ENCDB_DEFAULT_ROLE_PRIVILEGE =
+        new StringConfigParam(ConnectionProperties.ENCDB_DEFAULT_ROLE_PRIVILEGE, MsgKeyConstants.RESTRICTED_ACCESS,
+            true);
 
     public static final IntConfigParam PREFETCH_SHARDS = new IntConfigParam(
         ConnectionProperties.PREFETCH_SHARDS, -1, Integer.MAX_VALUE, -1, true);
@@ -2662,11 +3542,29 @@ public class ConnectionParams {
     public static final BooleanConfigParam ENABLE_PUSH_PROJECT = new BooleanConfigParam(
         ConnectionProperties.ENABLE_PUSH_PROJECT, true, true);
 
+    public static final BooleanConfigParam ENABLE_EXTERNAL_PUSH_PROJECT = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_EXTERNAL_PUSH_PROJECT, true, true);
+    public static final BooleanConfigParam ENABLE_EXTERNAL_PUSH_FILTER = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_EXTERNAL_PUSH_FILTER, true, true);
+    public static final BooleanConfigParam ENABLE_EXTERNAL_PUSH_SORT = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_EXTERNAL_PUSH_SORT, true, true);
+    public static final BooleanConfigParam ENABLE_EXTERNAL_PUSH_AGG = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_EXTERNAL_PUSH_AGG, true, true);
+
+    public static final IntConfigParam EXTERNAL_CATALOG_METADATA_IDLE_TTL_MINUTES = new IntConfigParam(
+        ConnectionProperties.EXTERNAL_CATALOG_METADATA_IDLE_TTL_MINUTES, 0, 1440, 10, true);
+
     public static final BooleanConfigParam ENABLE_PUSH_JOIN = new BooleanConfigParam(
         ConnectionProperties.ENABLE_PUSH_JOIN, true, true);
 
+    public static final BooleanConfigParam ENABLE_PUSH_SINGLE_GROUP_JOIN = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_PUSH_SINGLE_GROUP_JOIN, true, true);
+
     public static final BooleanConfigParam ENABLE_PUSH_CORRELATE = new BooleanConfigParam(
         ConnectionProperties.ENABLE_PUSH_CORRELATE, true, true);
+
+    public static final BooleanConfigParam ENABLE_CHECK_PUSH_CORRELATE = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_CHECK_PUSH_CORRELATE, true, true);
 
     public static final BooleanConfigParam IGNORE_UN_PUSHABLE_FUNC_IN_JOIN = new BooleanConfigParam(
         ConnectionProperties.IGNORE_UN_PUSHABLE_FUNC_IN_JOIN, true, true);
@@ -2707,6 +3605,9 @@ public class ConnectionParams {
     public static final BooleanConfigParam ENABLE_EXPAND_DISTINCTAGG = new BooleanConfigParam(
         ConnectionProperties.ENABLE_EXPAND_DISTINCTAGG, true, true);
 
+    public static final BooleanConfigParam ENABLE_SIMPLIFY_GROUP_BY_RULE = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_SIMPLIFY_GROUP_BY_RULE, true, true);
+
     public static final BooleanConfigParam ENABLE_START_UP_COST = new BooleanConfigParam(
         ConnectionProperties.ENABLE_START_UP_COST, true, true);
 
@@ -2722,6 +3623,9 @@ public class ConnectionParams {
     public static final IntConfigParam LOOKUP_JOIN_MAX_BATCH_SIZE = new IntConfigParam(
         ConnectionProperties.LOOKUP_JOIN_MAX_BATCH_SIZE, 10, Integer.MAX_VALUE, 6400, true);
 
+    /**
+     * Lookup in一次最少发送数量
+     */
     public static final IntConfigParam LOOKUP_JOIN_MIN_BATCH_SIZE = new IntConfigParam(
         ConnectionProperties.LOOKUP_JOIN_MIN_BATCH_SIZE, 10, 300, 100, false);
 
@@ -2761,8 +3665,6 @@ public class ConnectionParams {
         ConnectionProperties.INDEX_ADVISOR_BROADCAST_THRESHOLD,
         0, Integer.MAX_VALUE, 100000, true);
 
-    // SPM Params
-
     public static final BooleanConfigParam PLAN_EXTERNALIZE_TEST = new BooleanConfigParam(
         ConnectionProperties.PLAN_EXTERNALIZE_TEST,
         false,
@@ -2777,6 +3679,14 @@ public class ConnectionParams {
             true,
             true);
 
+    public static final BooleanConfigParam ENABLE_EXPRESSION_STATS =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_EXPRESSION_STATS,
+            true, true);
+
+    public static final IntConfigParam EXPRESSION_STATS_THRESHOLD =
+        new IntConfigParam(ConnectionProperties.EXPRESSION_STATS_THRESHOLD,
+            1, Integer.MAX_VALUE, 30, true);
+
     public static final BooleanConfigParam ENABLE_OPTIMIZE_RANDOM_EXCHANGE =
         new BooleanConfigParam(ConnectionProperties.ENABLE_OPTIMIZE_RANDOM_EXCHANGE,
             true,
@@ -2784,8 +3694,7 @@ public class ConnectionParams {
 
     public static final BooleanConfigParam ENABLE_SPM_EVOLUTION_BY_TIME =
         new BooleanConfigParam(ConnectionProperties.ENABLE_SPM_EVOLUTION_BY_TIME,
-            false,
-            true);
+            false, true);
 
     public static final LongConfigParam HOT_GSI_EVOLUTION_THRESHOLD =
         new LongConfigParam(ConnectionProperties.HOT_GSI_EVOLUTION_THRESHOLD,
@@ -2832,6 +3741,9 @@ public class ConnectionParams {
     public static final IntConfigParam SPM_MAX_PLAN_INFO_ERROR_COUNT = new IntConfigParam(
         ConnectionProperties.SPM_MAX_PLAN_INFO_ERROR_COUNT, 1, 1000, 16, true);
 
+    /**
+     * SPM: A time period, using to judge if a plan being executed recently.
+     */
     public static final LongConfigParam SPM_RECENTLY_EXECUTED_PERIOD =
         new LongConfigParam(ConnectionProperties.SPM_RECENTLY_EXECUTED_PERIOD,
             0L,
@@ -2868,9 +3780,15 @@ public class ConnectionParams {
     public static final BooleanConfigParam FORCE_APPLY_CACHE = new BooleanConfigParam(
         ConnectionProperties.FORCE_APPLY_CACHE, false, true);
 
+    /**
+     * Batch insert policy, including NONE, SPLIT(default).
+     */
     public static final StringConfigParam BATCH_INSERT_POLICY = new StringConfigParam(
         ConnectionProperties.BATCH_INSERT_POLICY, "SPLIT", true);
 
+    /**
+     * Param which decide how many sql unions will be grouped.
+     */
     public final static IntConfigParam MERGE_UNION_SIZE = new IntConfigParam(
         ConnectionProperties.MERGE_UNION_SIZE, -1, Integer.MAX_VALUE, -1, true);
 
@@ -2886,7 +3804,7 @@ public class ConnectionParams {
         ConnectionProperties.MIN_MERGE_UNION_SIZE, 1, Integer.MAX_VALUE, 4, true);
 
     public final static IntConfigParam MAX_MERGE_UNION_SIZE = new IntConfigParam(
-        ConnectionProperties.MIN_MERGE_UNION_SIZE, 2, Integer.MAX_VALUE, 8, true);
+        ConnectionProperties.MAX_MERGE_UNION_SIZE, 2, Integer.MAX_VALUE, 8, true);
 
     /**
      * Param which decide stream mode enabled, default is false.
@@ -2906,19 +3824,49 @@ public class ConnectionParams {
     public static final LongConfigParam COLD_HOT_LIMIT_COUNT = new LongConfigParam(
         ConnectionProperties.COLD_HOT_LIMIT_COUNT, 0L, Long.MAX_VALUE, 0L, true);
 
+    /**
+     * Max update num in global secondary index.
+     */
     public static final LongConfigParam MAX_UPDATE_NUM_IN_GSI = new LongConfigParam(
         ConnectionProperties.MAX_UPDATE_NUM_IN_GSI, 0L, Long.MAX_VALUE, 10000L, true);
 
+    /**
+     * The threshold of sql length for checking batch insert policy.
+     */
     public static final LongConfigParam MAX_BATCH_INSERT_SQL_LENGTH = new LongConfigParam(
         ConnectionProperties.MAX_BATCH_INSERT_SQL_LENGTH, 0L, Long.MAX_VALUE, 256L, true);
 
+    /**
+     * Each split sql size in SPLIT batch insert policy. For instance, when the
+     * value is 200, original sql of 50000 values may split into 250 sqls.
+     */
     public static final LongConfigParam BATCH_INSERT_CHUNK_SIZE = new LongConfigParam(
         ConnectionProperties.BATCH_INSERT_CHUNK_SIZE, 0L, Long.MAX_VALUE, 200L, true);
 
+    /**
+     * For test only. Simulate a switchover reschedule when the physical sql id reaches this value.
+     */
+    public static final LongConfigParam SIMULATE_SWITCHOVER_RESCHEDULE_PHY_SQL_ID_FOR_TEST =
+        new LongConfigParam(ConnectionProperties.SIMULATE_SWITCHOVER_RESCHEDULE_PHY_SQL_ID_FOR_TEST, -1L,
+            Long.MAX_VALUE, -1L, true);
+
+    /**
+     * For test only. Disable this guard to reproduce InsertSplitter switchover reschedule duplication.
+     */
+    public static final BooleanConfigParam ENABLE_SWITCHOVER_RESCHEDULE_INTERNAL_SUB_EXECUTION_GUARD_FOR_TEST =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_SWITCHOVER_RESCHEDULE_INTERNAL_SUB_EXECUTION_GUARD_FOR_TEST,
+            true, true);
+
+    /**
+     * Limit of select size for insert select in distributed transaction.
+     */
     public static final LongConfigParam INSERT_SELECT_LIMIT =
         new LongConfigParam(ConnectionProperties.INSERT_SELECT_LIMIT, 0L, Long.MAX_VALUE,
             TddlConstants.DML_SELECT_LIMIT_DEFAULT, true);
 
+    /**
+     * Batch size for insert select.
+     */
     public static final LongConfigParam INSERT_SELECT_BATCH_SIZE =
         new LongConfigParam(ConnectionProperties.INSERT_SELECT_BATCH_SIZE, 0L, Long.MAX_VALUE,
             TddlConstants.DML_SELECT_BATCH_SIZE_DEFAULT, true);
@@ -2994,12 +3942,21 @@ public class ConnectionParams {
     public static final LongConfigParam MAX_CACHE_PARAMS = new LongConfigParam(ConnectionProperties.MAX_CACHE_PARAMS,
         0L, Long.MAX_VALUE, 10000L, true);
 
+    /**
+     * Maximum memory per query
+     */
     public static final LongConfigParam PER_QUERY_MEMORY_LIMIT = new LongConfigParam(
         ConnectionProperties.PER_QUERY_MEMORY_LIMIT, 0L, Long.MAX_VALUE, -1L, true);
 
+    /**
+     * Return data only if all nodes returned when it is in concurrent mode. Default is false.
+     */
     public static final BooleanConfigParam BLOCK_CONCURRENT = new BooleanConfigParam(
         ConnectionProperties.BLOCK_CONCURRENT, false, true);
 
+    /**
+     * CoronaDB PlanCache
+     */
     public static final BooleanConfigParam PLAN_CACHE = new BooleanConfigParam(ConnectionProperties.PLAN_CACHE, true,
         true);
 
@@ -3032,9 +3989,38 @@ public class ConnectionParams {
     public static final BooleanConfigParam SKIP_READONLY_CHECK = new BooleanConfigParam(
         ConnectionProperties.SKIP_READONLY_CHECK, false, true);
 
+    /**
+     * Is transaction enabled for broadcast table dml, default is false.
+     */
     public static final BooleanConfigParam BROADCAST_DML = new BooleanConfigParam(ConnectionProperties.BROADCAST_DML,
         false, true);
 
+    /**
+     * Is XA/TSO use read conn for broadcast table dml, default is false.
+     * Set it to true may cause problems under XA/TSO trx.
+     */
+    public static final BooleanConfigParam USE_READ_CONN_FOR_XA_BROADCAST_DML =
+        new BooleanConfigParam(ConnectionProperties.USE_READ_CONN_FOR_XA_BROADCAST_DML, false, true);
+
+    /**
+     * If true, cross group write in trx is forbidden.
+     */
+    public static final BooleanConfigParam FORBID_CROSS_GROUP_WRITE_FOR_EXPLICIT_TRX =
+        new BooleanConfigParam(ConnectionProperties.FORBID_CROSS_GROUP_WRITE_FOR_EXPLICIT_TRX, false, true);
+
+    public static final BooleanConfigParam OPTIMIZE_FORBID_CROSS_GROUP_CHECK_FOR_PUSH_DOWN_PLAN =
+        new BooleanConfigParam(ConnectionProperties.OPTIMIZE_FORBID_CROSS_GROUP_CHECK_FOR_PUSH_DOWN_PLAN, true, true);
+
+    public static final BooleanConfigParam OPTIMIZE_FORBID_CROSS_GROUP_CHECK_FOR_NON_PUSH_DOWN_PLAN =
+        new BooleanConfigParam(ConnectionProperties.OPTIMIZE_FORBID_CROSS_GROUP_CHECK_FOR_NON_PUSH_DOWN_PLAN,
+            true, true);
+
+    public static final BooleanConfigParam FORBID_TRX_CONTINUE_AFTER_CROSS_GROUP =
+        new BooleanConfigParam(ConnectionProperties.FORBID_TRX_CONTINUE_AFTER_CROSS_GROUP, false, true);
+
+    /**
+     * Using SET @@rds_result_skip_counter = x. Default is false.
+     */
     public static final BooleanConfigParam USING_RDS_RESULT_SKIP =
         new BooleanConfigParam(ConnectionProperties.USING_RDS_RESULT_SKIP, false, true);
 
@@ -3043,8 +4029,33 @@ public class ConnectionParams {
             true,
             true);
 
+    public static final BooleanConfigParam COL_HOLISTIC_SUBQUERY_UNNEST =
+        new BooleanConfigParam(ConnectionProperties.COL_HOLISTIC_SUBQUERY_UNNEST,
+            true,
+            true);
+
+    public static final BooleanConfigParam FORCE_HOLISTIC_SUBQUERY_UNNEST =
+        new BooleanConfigParam(ConnectionProperties.FORCE_HOLISTIC_SUBQUERY_UNNEST,
+            false,
+            true);
+
+    public static final BooleanConfigParam ENABLE_JOIN_SUBQUERY_UNNEST =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_JOIN_SUBQUERY_UNNEST,
+            false,
+            true);
+
+    public static final BooleanConfigParam HOLISTIC_SUBQUERY_UNNEST_DML =
+        new BooleanConfigParam(ConnectionProperties.HOLISTIC_SUBQUERY_UNNEST_DML,
+            true,
+            true);
+
     public static final BooleanConfigParam WINDOW_FUNC_SUBQUERY_CONDITION =
         new BooleanConfigParam(ConnectionProperties.WINDOW_FUNC_SUBQUERY_CONDITION,
+            false,
+            true);
+
+    public static final BooleanConfigParam ENABLE_GSI_LOOKUP_OPTIMIZE =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_GSI_LOOKUP_OPTIMIZE,
             false,
             true);
 
@@ -3053,6 +4064,23 @@ public class ConnectionParams {
 
     public static final BooleanConfigParam ENABLE_MPP = new BooleanConfigParam(
         ConnectionProperties.ENABLE_MPP, false, true);
+
+    /**
+     * See {@link ConnectionProperties#ENABLE_PASS_NOTHING_CONSUME_PROBE} for the inverted name
+     * semantic. Default {@code true} keeps the existing passNothing fast-exit behaviour; setting
+     * it to {@code false} forces ParallelHashJoin to drain the probe side on empty-build INNER JOIN.
+     */
+    public static final BooleanConfigParam ENABLE_PASS_NOTHING_CONSUME_PROBE = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_PASS_NOTHING_CONSUME_PROBE, true, true);
+
+    public static final BooleanConfigParam ENABLE_PUSH_CORRELATE_DOWN = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_PUSH_CORRELATE_DOWN, false, true);
+
+    public static final BooleanConfigParam DISABLE_SUBQUERY_TO_SEMI_JOIN = new BooleanConfigParam(
+        ConnectionProperties.DISABLE_SUBQUERY_TO_SEMI_JOIN, false, true);
+
+    public static final BooleanConfigParam ENABLE_TRANS_CORRELATE_TO_VALUES = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_TRANS_CORRELATE_TO_VALUES, false, true);
 
     public static final BooleanConfigParam MPP_RPC_LOCAL_ENABLED = new BooleanConfigParam(
         ConnectionProperties.MPP_RPC_LOCAL_ENABLED, true, true);
@@ -3154,15 +4182,24 @@ public class ConnectionParams {
 
     public static final LongConfigParam MPP_TASK_LOCAL_MAX_BUFFER_SIZE = new LongConfigParam(
         ConnectionProperties.MPP_TASK_LOCAL_MAX_BUFFER_SIZE, 1000000L, Long.MAX_VALUE,
-        8000000L, true);
+        8000000L, true); //default = 8M
 
     public static final LongConfigParam MPP_OUTPUT_MAX_BUFFER_SIZE = new LongConfigParam(
         ConnectionProperties.MPP_OUTPUT_MAX_BUFFER_SIZE, 1000000L, Long.MAX_VALUE,
-        32000000L, true);
+        32000000L, true); //default = 32M
 
+    /**
+     * 0 - READ_WEIGHT
+     * 1 - MASTER_ONLY
+     * 2 - SLAVE_ONLY
+     * 3 - SLAVE_ONLY_AP
+     */
     public static final IntConfigParam MPP_TABLESCAN_CONNECTION_STRATEGY = new IntConfigParam(
         ConnectionProperties.MPP_TABLESCAN_CONNECTION_STRATEGY, 0, 4, 0, true);
 
+    /**
+     * Allow update sharding column
+     */
     public static final BooleanConfigParam ENABLE_MODIFY_SHARDING_COLUMN = new BooleanConfigParam(
         ConnectionProperties.ENABLE_MODIFY_SHARDING_COLUMN,
         true,
@@ -3184,11 +4221,17 @@ public class ConnectionParams {
         true,
         true);
 
+    /**
+     * Multi update/delete cross db with transaction
+     */
     public static final BooleanConfigParam COMPLEX_DML_WITH_TRX = new BooleanConfigParam(
         ConnectionProperties.COMPLEX_DML_WITH_TRX,
         false,
         true);
 
+    /**
+     * Enable index selection
+     */
     public static final BooleanConfigParam ENABLE_INDEX_SELECTION = new BooleanConfigParam(
         ConnectionProperties.ENABLE_INDEX_SELECTION,
         true,
@@ -3201,6 +4244,14 @@ public class ConnectionParams {
         ConnectionProperties.ENABLE_INDEX_SELECTION_PRUNE,
         true,
         true);
+
+    public static final IntConfigParam GSI_SHARD_DIFFERENCE_THRESHOLD = new IntConfigParam(
+        ConnectionProperties.GSI_SHARD_DIFFERENCE_THRESHOLD,
+        -1,
+        null,
+        -1,
+        true
+    );
 
     public static final BooleanConfigParam ENABLE_PUSHDOWN_DISTINCT = new BooleanConfigParam(
         ConnectionProperties.ENABLE_PUSHDOWN_DISTINCT,
@@ -3236,6 +4287,9 @@ public class ConnectionParams {
         TddlConstants.DML_SELECT_BATCH_SIZE_DEFAULT,
         true);
 
+    /**
+     * Limit of select size for update or delete in distributed transaction.
+     */
     public static final LongConfigParam UPDATE_DELETE_SELECT_LIMIT = new LongConfigParam(
         ConnectionProperties.UPDATE_DELETE_SELECT_LIMIT,
         0L,
@@ -3320,13 +4374,26 @@ public class ConnectionParams {
         false,
         false);
 
+    /*
+     * Enable post planner, default true
+     */
     public static final BooleanConfigParam ENABLE_POST_PLANNER = new BooleanConfigParam(
         ConnectionProperties.ENABLE_POST_PLANNER,
         true,
         true);
 
+    /**
+     * Enable broadcast random read, which could spread read access to all groups.
+     * Default true
+     */
     public static final BooleanConfigParam ENABLE_BROADCAST_RANDOM_READ = new BooleanConfigParam(
         ConnectionProperties.ENABLE_BROADCAST_RANDOM_READ,
+        true,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_REPLICAS_RANDOM_READ = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_REPLICAS_RANDOM_READ,
         true,
         true
     );
@@ -3381,15 +4448,24 @@ public class ConnectionParams {
     public static final BooleanConfigParam ENABLE_CROSS_VIEW_OPTIMIZE = new BooleanConfigParam(
         ConnectionProperties.ENABLE_CROSS_VIEW_OPTIMIZE, true, true);
 
+    /**
+     * conn properties
+     */
     public final static StringConfigParam CONN_POOL_PROPERTIES = new StringConfigParam(
         ConnectionProperties.CONN_POOL_PROPERTIES,
         "connectTimeout=5000;characterEncoding=utf8;autoReconnect=true;failOverReadOnly=false;socketTimeout=900000;rewriteBatchedStatements=true;useServerPrepStmts=false;useSSL=false;strictKeepAlive=true;",
         true);
 
+    /**
+     * min pool size
+     */
     public static final IntConfigParam CONN_POOL_MIN_POOL_SIZE = new IntConfigParam(
         ConnectionProperties.CONN_POOL_MIN_POOL_SIZE, 0, Integer.MAX_VALUE,
         5, true);
 
+    /**
+     * max pool size
+     */
     public static final IntConfigParam CONN_POOL_MAX_POOL_SIZE = new IntConfigParam(
         ConnectionProperties.CONN_POOL_MAX_POOL_SIZE, 1, Integer.MAX_VALUE,
         60, true);
@@ -3397,62 +4473,115 @@ public class ConnectionParams {
     public static final IntConfigParam CONN_POOL_MAX_WAIT_THREAD_COUNT = new IntConfigParam(
         ConnectionProperties.CONN_POOL_MAX_WAIT_THREAD_COUNT, -1, Integer.MAX_VALUE,
         0, true);
-
+    /**
+     * idle time out
+     * Unit: min
+     */
     public static final IntConfigParam CONN_POOL_IDLE_TIMEOUT = new IntConfigParam(
         ConnectionProperties.CONN_POOL_IDLE_TIMEOUT, 1, Integer.MAX_VALUE,
         60, true);
 
+    /**
+     * block timeout
+     * Unit: ms
+     */
     public static final IntConfigParam CONN_POOL_BLOCK_TIMEOUT = new IntConfigParam(
         ConnectionProperties.CONN_POOL_BLOCK_TIMEOUT, 1, Integer.MAX_VALUE,
         5000, true);
 
+    /**
+     * x-protocol config
+     */
     public static final StringConfigParam CONN_POOL_XPROTO_CONFIG = new StringConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_CONFIG,
         "",
         true);
 
+    /**
+     * x-protocol flag
+     */
     public static final LongConfigParam CONN_POOL_XPROTO_FLAG = new LongConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_FLAG, 0L, Long.MAX_VALUE,
         0L, true);
 
+    /**
+     * x-protocol meta DB port. Only read when init. (Set to 0 by drds-manager.)
+     * <0 means off, =0 auto, >0 force set
+     */
     public static final IntConfigParam CONN_POOL_XPROTO_META_DB_PORT = new IntConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_META_DB_PORT, -1, Integer.MAX_VALUE,
-        0, true);
+        -1, true);
 
+    /**
+     * x-protocol storage DB port. (Default value set to 0 since 5.4.10)
+     * <0 means off, =0 auto, >0 force set
+     */
     public static final IntConfigParam CONN_POOL_XPROTO_STORAGE_DB_PORT = new IntConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_STORAGE_DB_PORT, -1, Integer.MAX_VALUE,
         0, true);
 
+    /**
+     * x-protocol max client count(tcp connection) per instance
+     */
     public static final IntConfigParam CONN_POOL_XPROTO_MAX_CLIENT_PER_INST = new IntConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_MAX_CLIENT_PER_INST, 1, Integer.MAX_VALUE,
         32, true);
 
+    /**
+     * x-protocol max session count on single client(tcp connection)
+     */
     public static final IntConfigParam CONN_POOL_XPROTO_MAX_SESSION_PER_CLIENT = new IntConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_MAX_SESSION_PER_CLIENT, 1, Integer.MAX_VALUE,
         1024, true);
 
+    /**
+     * x-protocol max pooled session on single instance
+     */
     public static final IntConfigParam CONN_POOL_XPROTO_MAX_POOLED_SESSION_PER_INST = new IntConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_MAX_POOLED_SESSION_PER_INST, 1, Integer.MAX_VALUE,
         512, true);
 
+    /**
+     * x-protocol min pooled session on single instance
+     */
     public static final IntConfigParam CONN_POOL_XPROTO_MIN_POOLED_SESSION_PER_INST = new IntConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_MIN_POOLED_SESSION_PER_INST, 0, Integer.MAX_VALUE,
         32, true);
 
+    /**
+     * x-protocol session aging time(max alive time)
+     * Unit: ms
+     */
     public static final LongConfigParam CONN_POOL_XPROTO_SESSION_AGING_TIME = new LongConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_SESSION_AGING_TIME, 1L, Long.MAX_VALUE,
         600 * 1000L, true);
 
+    /**
+     * x-protocol slow request threshold
+     * Unit: ms
+     */
     public static final LongConfigParam CONN_POOL_XPROTO_SLOW_THRESH = new LongConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_SLOW_THRESH, 0L, Long.MAX_VALUE,
         1000L, true);
 
+    /**
+     * x-protocol enable auth
+     * Unit: bool
+     */
     public static final BooleanConfigParam CONN_POOL_XPROTO_AUTH = new BooleanConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_AUTH, true, true);
 
+    /**
+     * x-protocol enable auto commit optimize
+     * Unit: bool
+     */
     public static final BooleanConfigParam CONN_POOL_XPROTO_AUTO_COMMIT_OPTIMIZE = new BooleanConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_AUTO_COMMIT_OPTIMIZE, true, true);
 
+    /**
+     * x-protocol enable x plan
+     * Unit: bool
+     */
     public static final BooleanConfigParam CONN_POOL_XPROTO_XPLAN = new BooleanConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_XPLAN, true, true);
 
@@ -3467,41 +4596,84 @@ public class ConnectionParams {
     public static final BooleanConfigParam CONN_POOL_XPROTO_XPLAN_EXPEND_STAR = new BooleanConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_XPLAN_EXPEND_STAR, true, true);
 
+    /**
+     * x-protocol enable xplan table scan
+     * Unit: bool
+     */
     public static final BooleanConfigParam CONN_POOL_XPROTO_XPLAN_TABLE_SCAN = new BooleanConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_XPLAN_TABLE_SCAN, false, true);
 
+    /**
+     * x-protocol trx leak check
+     * Unit: bool
+     */
     public static final BooleanConfigParam CONN_POOL_XPROTO_TRX_LEAK_CHECK = new BooleanConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_TRX_LEAK_CHECK, false, true);
 
+    /**
+     * x-protocol enable message timestamp(use protobuf to send TSO)
+     * Unit: bool
+     */
     public static final BooleanConfigParam CONN_POOL_XPROTO_MESSAGE_TIMESTAMP = new BooleanConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_MESSAGE_TIMESTAMP, true, true);
 
+    /**
+     * x-protocol enable plan cache(sql/plan cache not result cache)
+     * Unit: bool
+     */
     public static final BooleanConfigParam CONN_POOL_XPROTO_PLAN_CACHE = new BooleanConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_PLAN_CACHE, true, true);
 
+    /**
+     * x-protocol enable chunk result
+     * Unit: bool
+     */
     public static final BooleanConfigParam CONN_POOL_XPROTO_CHUNK_RESULT = new BooleanConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_CHUNK_RESULT, true, true);
 
+    /**
+     * x-protocol enable pure async mode in local/mpp
+     * Unit: bool
+     */
     public static final BooleanConfigParam CONN_POOL_XPROTO_PURE_ASYNC_MPP = new BooleanConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_PURE_ASYNC_MPP, true, true);
 
+    /**
+     * x-protocol enable live checker.
+     */
     public static final BooleanConfigParam CONN_POOL_XPROTO_CHECKER = new BooleanConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_CHECKER, true, true);
 
+    /**
+     * x-protocol enable direct socket write.
+     */
     public static final BooleanConfigParam CONN_POOL_XPROTO_DIRECT_WRITE = new BooleanConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_DIRECT_WRITE, false, true);
 
+    /**
+     * x-protocol enable feedback.
+     */
     public static final BooleanConfigParam CONN_POOL_XPROTO_FEEDBACK = new BooleanConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_FEEDBACK, true, true);
 
+    /**
+     * x-protocol max packet size.
+     */
     public static final LongConfigParam CONN_POOL_XPROTO_MAX_PACKET_SIZE = new LongConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_MAX_PACKET_SIZE, 0L, Long.MAX_VALUE,
-        67108864L, true);
+        67108864L, true); // default 64MB
 
+    /**
+     * x-protocol default query token. (default 1w rows)
+     */
     public static final IntConfigParam CONN_POOL_XPROTO_QUERY_TOKEN = new IntConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_QUERY_TOKEN, 1, Integer.MAX_VALUE,
         10000, true);
 
+    /**
+     * x-protocol default pipe buffer size. (default 256MB)
+     * Unit: ms
+     */
     public static final LongConfigParam CONN_POOL_XPROTO_PIPE_BUFFER_SIZE = new LongConfigParam(
         ConnectionProperties.CONN_POOL_XPROTO_PIPE_BUFFER_SIZE, 1L, Long.MAX_VALUE,
         256 * 1024 * 1024L, true);
@@ -3540,11 +4712,11 @@ public class ConnectionParams {
         ConnectionProperties.XPROTO_GALAXY_PREPARE, false, true);
 
     /**
-     * X-Protocol / XRPC flow control pipe max size(in KB, 10240 means 10MB).
+     * X-Protocol / XRPC flow control pipe max size(in KB, 10240 means 10MB, set to 512kb @ 20250908).
      */
     public static final IntConfigParam XPROTO_FLOW_CONTROL_SIZE_KB = new IntConfigParam(
         ConnectionProperties.XPROTO_FLOW_CONTROL_SIZE_KB, 0, Integer.MAX_VALUE,
-        10240, true);
+        512, true);
 
     /**
      * X-Protocol / XRPC TCP aging time in seconds.
@@ -3558,6 +4730,21 @@ public class ConnectionParams {
      */
     public static final BooleanConfigParam ENABLE_SMOOTH_SWITCHOVER = new BooleanConfigParam(
         ConnectionProperties.ENABLE_SMOOTH_SWITCHOVER, true, true);
+
+    /**
+     * Enable statistic trace
+     */
+    public static final BooleanConfigParam ENABLE_STATISTIC_TRACE = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_STATISTIC_TRACE, true, true);
+
+    public static final BooleanConfigParam ENABLE_LOG_PLAN_BUILD = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_LOG_PLAN_BUILD, true, true);
+
+    /**
+     * For test only. Force the switchover-check path to run and rethrow gather errors.
+     */
+    public static final BooleanConfigParam FORCE_SWITCHOVER_CHECK_FOR_TEST = new BooleanConfigParam(
+        ConnectionProperties.FORCE_SWITCHOVER_CHECK_FOR_TEST, false, true);
 
     /**
      * Timeout of switchover wait in millis.
@@ -3602,9 +4789,15 @@ public class ConnectionParams {
         public final static String PUSH_POLICY_NO = "NOTHING";
     }
 
+    /**
+     * variable expire time in mills
+     */
     public static final LongConfigParam VARIABLE_EXPIRE_TIME = new LongConfigParam(
         ConnectionProperties.VARIABLE_EXPIRE_TIME, 1L, null, 300L * 1000, true);
 
+    /**
+     * Deadlock detection interval.
+     */
     public static final IntConfigParam DEADLOCK_DETECTION_INTERVAL = new IntConfigParam(
         ConnectionProperties.DEADLOCK_DETECTION_INTERVAL,
         1,
@@ -3612,12 +4805,37 @@ public class ConnectionParams {
         TransactionAttribute.DEADLOCK_DETECTION_INTERVAL,
         false);
 
+    public static final BooleanConfigParam ENABLE_CCL_EXECUTION_TIME_TASK = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_CCL_EXECUTION_TIME_TASK,
+        true,
+        true
+    );
+
+    public static final IntConfigParam CCL_EXECUTION_TIME_DETECT_INTERVAL = new IntConfigParam(
+        ConnectionProperties.CCL_EXECUTION_TIME_DETECT_INTERVAL,
+        0,
+        Integer.MAX_VALUE,
+        1,
+        true
+    );
+
+    public static final IntConfigParam MAX_TRX_AFFECT_ROWS = new IntConfigParam(
+        ConnectionProperties.MAX_TRX_AFFECT_ROWS,
+        0,
+        Integer.MAX_VALUE,
+        -1,
+        true
+    );
+
     public static final LongConfigParam MERGE_SORT_BUFFER_SIZE = new LongConfigParam(
         ConnectionProperties.MERGE_SORT_BUFFER_SIZE,
         0L,
         Long.MAX_VALUE,
         (long) (2 * 1024 * 1024),
         true);
+
+    public static final BooleanConfigParam CONVERTER_IN_ONE_RELSET = new BooleanConfigParam(
+        ConnectionProperties.CONVERTER_IN_ONE_RELSET, false, true);
 
     public static final LongConfigParam WORKLOAD_IO_THRESHOLD = new LongConfigParam(
         ConnectionProperties.WORKLOAD_IO_THRESHOLD, 0L, null, 15000L, true);
@@ -3634,9 +4852,6 @@ public class ConnectionParams {
     public static final BooleanConfigParam ENABLE_OSS_MOCK_COLUMNAR = new BooleanConfigParam(
         ConnectionProperties.ENABLE_OSS_MOCK_COLUMNAR, false, true);
 
-    public static final BooleanConfigParam ENABLE_COLUMNAR_CORRELATE = new BooleanConfigParam(
-        ConnectionProperties.ENABLE_COLUMNAR_CORRELATE, false, true);
-
     public static final BooleanConfigParam ENABLE_COLUMNAR_OPTIMIZER = new BooleanConfigParam(
         ConnectionProperties.ENABLE_COLUMNAR_OPTIMIZER, false, true);
 
@@ -3647,14 +4862,27 @@ public class ConnectionParams {
     public static final BooleanConfigParam ENABLE_COLUMNAR_OPTIMIZER_WITH_COLUMNAR = new BooleanConfigParam(
         ConnectionProperties.ENABLE_COLUMNAR_OPTIMIZER_WITH_COLUMNAR, false, true);
 
+    /**
+     * CURSOR, TP_LOCAL, AP_LOCAL, MPP
+     */
     public static final StringConfigParam EXECUTOR_MODE = new StringConfigParam(
         ConnectionProperties.EXECUTOR_MODE, "NONE", true);
 
+    /**
+     * 允许PolarDB-X主实例走MPP,目前默认是false
+     */
     public static final BooleanConfigParam ENABLE_MASTER_MPP = new BooleanConfigParam(
         ConnectionProperties.ENABLE_MASTER_MPP, false, true);
 
     public static final BooleanConfigParam ENABLE_TEMP_TABLE_JOIN = new BooleanConfigParam(
         ConnectionProperties.ENABLE_TEMP_TABLE_JOIN, false, true);
+
+    public static final StringConfigParam CTE_MODE = new StringConfigParam(
+        ConnectionProperties.CTE_MODE, "INLINE", true);
+
+    public static final IntConfigParam CTE_REUSE_THRESHOLD = new IntConfigParam(
+        ConnectionProperties.CTE_REUSE_THRESHOLD, 0, Integer.MAX_VALUE,
+        1, true);
 
     public static final IntConfigParam LOOKUP_IN_VALUE_LIMIT = new IntConfigParam(
         ConnectionProperties.LOOKUP_IN_VALUE_LIMIT, 300, Integer.MAX_VALUE,
@@ -3667,14 +4895,35 @@ public class ConnectionParams {
     public static final BooleanConfigParam EXPLAIN_LOGICALVIEW = new BooleanConfigParam(
         ConnectionProperties.EXPLAIN_LOGICALVIEW, false, true);
 
+    public static final BooleanConfigParam EXPLAIN_CTE_CONSUMER = new BooleanConfigParam(
+        ConnectionProperties.EXPLAIN_CTE_CONSUMER, false, true);
+
     public static final BooleanConfigParam ENABLE_CREATE_VIEW = new BooleanConfigParam(
         ConnectionProperties.ENABLE_CREATE_VIEW, true, true);
+
+    public static final BooleanConfigParam ENABLE_USE_VIEW = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_USE_VIEW, true, true);
+
+    public static final BooleanConfigParam RETURN_REAL_ACTIVE_CONNNUM = new BooleanConfigParam(
+        ConnectionProperties.RETURN_REAL_ACTIVE_CONNNUM, false, true);
 
     public static final BooleanConfigParam ENABLE_HTAP = new BooleanConfigParam(
         ConnectionProperties.ENABLE_HTAP, true, true);
 
+    /**
+     * Enable consistent replica read.
+     */
     public static final BooleanConfigParam ENABLE_CONSISTENT_REPLICA_READ = new BooleanConfigParam(
         ConnectionProperties.ENABLE_CONSISTENT_REPLICA_READ,
+        true,
+        false);
+
+    /**
+     * Whether to send TSO (innodb_snapshot_seq) for follower reads when consistent replica read is disabled.
+     * Default true (old instances keep sending TSO); new instances default false via CobarServer.tryInitServerVariables().
+     */
+    public static final BooleanConfigParam SEND_TSO_FOR_NON_CONSISTENT_REPLICA_READ = new BooleanConfigParam(
+        ConnectionProperties.SEND_TSO_FOR_NON_CONSISTENT_REPLICA_READ,
         true,
         false);
 
@@ -3685,6 +4934,9 @@ public class ConnectionParams {
     public static final BooleanConfigParam ENABLE_IN_SUB_QUERY_FOR_DML = new BooleanConfigParam(
         ConnectionProperties.ENABLE_IN_SUB_QUERY_FOR_DML, false, Boolean.TRUE);
 
+    /**
+     * runtime filter
+     */
     public static final BooleanConfigParam ENABLE_RUNTIME_FILTER = new BooleanConfigParam(
         ConnectionProperties.ENABLE_RUNTIME_FILTER, true, true);
 
@@ -3748,14 +5000,26 @@ public class ConnectionParams {
 
     public static final LongConfigParam SPILL_OUTPUT_MAX_BUFFER_SIZE = new LongConfigParam(
         ConnectionProperties.SPILL_OUTPUT_MAX_BUFFER_SIZE, 1000000L, Long.MAX_VALUE,
-        32000000L, true);
+        32000000L, true); //default = 32M
 
     public static final StringConfigParam SUPPORT_READ_FOLLOWER_STRATEGY = new StringConfigParam(
         ConnectionProperties.SUPPORT_READ_FOLLOWER_STRATEGY, "DEFAULT", true);
 
+    public static final LongConfigParam FOLLOWER_READ_ACCOUNT_TIMEOUT = new LongConfigParam(
+        ConnectionProperties.FOLLOWER_READ_ACCOUNT_TIMEOUT,
+        1L,
+        Long.MAX_VALUE, 5000L, true
+    );
+
     public static final BooleanConfigParam ENABLE_LOGIN_AUDIT_CONFIG = new BooleanConfigParam(
         ConnectionProperties.ENABLE_LOGIN_AUDIT_CONFIG, false, false);
 
+    public static final BooleanConfigParam ENABLE_SQL_AUDIT = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_SQL_AUDIT, false, true);
+
+    /**
+     * debug mode on alter tablegroup, which makes tablegroup status change slower and print out useful info.
+     */
     public static final StringConfigParam TABLEGROUP_DEBUG =
         new StringConfigParam(ConnectionProperties.TABLEGROUP_DEBUG,
             "",
@@ -3800,6 +5064,9 @@ public class ConnectionParams {
     public static final IntConfigParam MASTER_READ_WEIGHT = new IntConfigParam(
         ConnectionProperties.MASTER_READ_WEIGHT, -1, 100, -1, true);
 
+    public static final IntConfigParam FOLLOWER_READ_WEIGHT = new IntConfigParam(
+        ConnectionProperties.FOLLOWER_READ_WEIGHT, -1, 100, -1, true);
+
     /**
      * set the operation strategy when the slave delay
      * <0 means nothing, =1 change master, =2 throw exception
@@ -3836,14 +5103,23 @@ public class ConnectionParams {
         false,
         true);
 
+    /**
+     * Show the table group name
+     */
     public static final BooleanConfigParam SHOW_TABLE_GROUP_NAME = new BooleanConfigParam(
         ConnectionProperties.SHOW_TABLE_GROUP_NAME,
         false,
         true);
 
+    /**
+     * The max physical partitions (including both partitions and subpartitions) of one logical table
+     */
     public static final IntConfigParam MAX_PHYSICAL_PARTITION_COUNT = new IntConfigParam(
         ConnectionProperties.MAX_PHYSICAL_PARTITION_COUNT, 1, Integer.MAX_VALUE, 8192, true);
 
+    /**
+     * The max count for the partition columns or subpartition columns
+     */
     public static final IntConfigParam MAX_PARTITION_COLUMN_COUNT = new IntConfigParam(
         ConnectionProperties.MAX_PARTITION_COLUMN_COUNT, 1, Integer.MAX_VALUE, 5, true);
 
@@ -3870,6 +5146,14 @@ public class ConnectionParams {
         true);
 
     /**
+     * Label if auto create local index (auto_shard_key_xxx) for partition keys on CREATE TABLE, default true
+     */
+    public static final BooleanConfigParam ENABLE_AUTO_SHARD_KEY_INDEX = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_AUTO_SHARD_KEY_INDEX,
+        true,
+        true);
+
+    /**
      * Label if auto use range/list columns partitions for "part by range/list", default is true
      */
     public static final BooleanConfigParam ENABLE_AUTO_USE_COLUMNS_PARTITION = new BooleanConfigParam(
@@ -3877,17 +5161,31 @@ public class ConnectionParams {
         true,
         true);
 
+    /**
+     * Label if show storage partitions in show create table, default is false
+     */
+    public static final BooleanConfigParam ENABLE_SHOW_STORAGE_PARTITIONS = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_SHOW_STORAGE_PARTITIONS,
+        false,
+        true);
+
     public static final BooleanConfigParam CALCULATE_ACTUAL_SHARD_COUNT_FOR_COST = new BooleanConfigParam(
         ConnectionProperties.CALCULATE_ACTUAL_SHARD_COUNT_FOR_COST,
         true,
         true);
 
+    /**
+     * Balancer parameters
+     */
     public static final BooleanConfigParam ENABLE_BALANCER = new BooleanConfigParam(
         ConnectionProperties.ENABLE_BALANCER,
         false,
         true
     );
 
+    /**
+     * Max partition size trigger partition-split
+     */
     public static final LongConfigParam BALANCER_MAX_PARTITION_SIZE = new LongConfigParam(
         ConnectionProperties.BALANCER_MAX_PARTITION_SIZE,
         1L, 32L << 30,
@@ -3895,6 +5193,9 @@ public class ConnectionParams {
         true
     );
 
+    /**
+     * Running time window of balancer
+     */
     public static final StringConfigParam BALANCER_WINDOW = new StringConfigParam(
         ConnectionProperties.BALANCER_WINDOW,
         "",
@@ -3909,7 +5210,6 @@ public class ConnectionParams {
         false,
         true
     );
-
 
     /**
      * Allow move the single table with locality='balance_single_table=on' during scale-out/scale-in
@@ -3938,21 +5238,33 @@ public class ConnectionParams {
         true
     );
 
+    /**
+     * Allow use auto merge intervals during dynamic pruning
+     */
     public static final BooleanConfigParam ENABLE_AUTO_MERGE_INTERVALS_IN_PRUNING = new BooleanConfigParam(
         ConnectionProperties.ENABLE_AUTO_MERGE_INTERVALS_IN_PRUNING,
         true,
         true
     );
 
+    /**
+     * Allow enumerate the intervals and convert to range Query to In Query( 1<pk<5 => pk in (2,3,4) ), default: true
+     */
     public static final BooleanConfigParam ENABLE_INTERVAL_ENUMERATION_IN_PRUNING = new BooleanConfigParam(
         ConnectionProperties.ENABLE_INTERVAL_ENUMERATION_IN_PRUNING,
         true,
         true
     );
 
+    /**
+     * the prune step count limit that support doing dynamic pruning
+     */
     public static final IntConfigParam PARTITION_PRUNING_STEP_COUNT_LIMIT = new IntConfigParam(
         ConnectionProperties.PARTITION_PRUNING_STEP_COUNT_LIMIT, 0, Integer.MAX_VALUE, 1024, true);
 
+    /**
+     * Allow to cache the result of const expressions during pruning, default: true
+     */
     public static final BooleanConfigParam ENABLE_CONST_EXPR_EVAL_CACHE = new BooleanConfigParam(
         ConnectionProperties.ENABLE_CONST_EXPR_EVAL_CACHE,
         true,
@@ -3988,6 +5300,9 @@ public class ConnectionParams {
         true
     );
 
+    /**
+     * The max length of the enumerable interval in pruning
+     */
     public static final LongConfigParam MAX_ENUMERABLE_INTERVAL_LENGTH = new LongConfigParam(
         ConnectionProperties.MAX_ENUMERABLE_INTERVAL_LENGTH,
         1L,
@@ -4063,12 +5378,24 @@ public class ConnectionParams {
         false,
         false);
 
+    public static final StringConfigParam MOCK_ROUTING_USER = new StringConfigParam(
+        ConnectionProperties.MOCK_ROUTING_USER,
+        "",
+        true);
+
+    public static final BooleanConfigParam ENABLE_MANUAL_ROUTING = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_MANUAL_ROUTING, true, true);
+
     public static final BooleanConfigParam ENABLE_BRANCH_AND_BOUND_OPTIMIZATION = new BooleanConfigParam(
         ConnectionProperties.ENABLE_BRANCH_AND_BOUND_OPTIMIZATION, true, true);
 
     public static final BooleanConfigParam ENABLE_BROADCAST_JOIN = new BooleanConfigParam(
         ConnectionProperties.ENABLE_BROADCAST_JOIN, true, true);
 
+    public static final BooleanConfigParam ENABLE_PARTITION_WISE_GROUP_OPT = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_PARTITION_WISE_GROUP_OPT, true, true);
+    public static final LongConfigParam PARTITION_WISE_GROUP_THRESHOLD = new LongConfigParam(
+        ConnectionProperties.PARTITION_WISE_GROUP_THRESHOLD, 0L, Long.MAX_VALUE, 4L, true);
     public static final BooleanConfigParam ENABLE_PARTITION_WISE_JOIN = new BooleanConfigParam(
         ConnectionProperties.ENABLE_PARTITION_WISE_JOIN, true, true);
     public static final BooleanConfigParam ENABLE_BROADCAST_LEFT = new BooleanConfigParam(
@@ -4079,6 +5406,23 @@ public class ConnectionParams {
 
     public static final BooleanConfigParam ENABLE_PARTITION_WISE_WINDOW = new BooleanConfigParam(
         ConnectionProperties.ENABLE_PARTITION_WISE_WINDOW, true, true);
+
+    public static final IntConfigParam PARTITION_WISE_THRESHOLD = new IntConfigParam(
+        ConnectionProperties.PARTITION_WISE_THRESHOLD, 2, Integer.MAX_VALUE,
+        8, true);
+
+    public static final BooleanConfigParam ENABLE_PARTITION_WISE = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_PARTITION_WISE, true, true);
+
+    public static final LongConfigParam COL_IN_SEMIJOIN_THRESHOLD = new LongConfigParam(
+        ConnectionProperties.COL_IN_SEMIJOIN_THRESHOLD, 2L, Long.MAX_VALUE,
+        1000L, true);
+
+    public static final BooleanConfigParam ENABLE_COL_IN_SEMIJOIN_STRING = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_COL_IN_SEMIJOIN_STRING, false, true);
+
+    public static final BooleanConfigParam ENABLE_COL_MULTI_IN_SEMIJOIN = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_COL_MULTI_IN_SEMIJOIN, true, true);
 
     public static final IntConfigParam BROADCAST_SHUFFLE_PARALLELISM = new IntConfigParam(
         ConnectionProperties.BROADCAST_SHUFFLE_PARALLELISM, 1, Integer.MAX_VALUE, 64, true);
@@ -4097,6 +5441,10 @@ public class ConnectionParams {
 
     public static final BooleanConfigParam ENABLE_HLL = new BooleanConfigParam(
         ConnectionProperties.ENABLE_HLL, true, true);
+
+    //used in collect statistic
+    public static final BooleanConfigParam ENABLE_COLLECT_HLL = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_COLLECT_HLL, false, true);
 
     public static final IntConfigParam HLL_PARALLELISM = new IntConfigParam(
         ConnectionProperties.HLL_PARALLELISM,
@@ -4135,6 +5483,9 @@ public class ConnectionParams {
         Integer.MAX_VALUE, 100, true
     );
 
+    public static final BooleanConfigParam ENABLE_BASELINE_CLEAN_JOB = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_BASELINE_CLEAN_JOB, true, true);
+
     public static final IntConfigParam STATISTIC_NDV_SKETCH_MAX_DIFFERENT_VALUE = new IntConfigParam(
         ConnectionProperties.STATISTIC_NDV_SKETCH_MAX_DIFFERENT_VALUE, 1, Integer.MAX_VALUE, 50000, true);
 
@@ -4160,18 +5511,36 @@ public class ConnectionParams {
     public static final IntConfigParam STATISTIC_NDV_SKETCH_EXPIRE_TIME = new IntConfigParam(
         ConnectionProperties.STATISTIC_NDV_SKETCH_EXPIRE_TIME, 60, Integer.MAX_VALUE, 1000 * 60 * 60 * 24 * 7, true);
 
+    /**
+     * QUERY timeout (MS) for ndv sketch query
+     */
     public static final IntConfigParam STATISTIC_NDV_SKETCH_QUERY_TIMEOUT = new IntConfigParam(
         ConnectionProperties.STATISTIC_NDV_SKETCH_QUERY_TIMEOUT, 60, Integer.MAX_VALUE, 60 * 1000, true);
 
+    public static final IntConfigParam STATISTIC_NDV_SKETCH_QUERY_TIMEOUT_ON_CCI = new IntConfigParam(
+        ConnectionProperties.STATISTIC_NDV_SKETCH_QUERY_TIMEOUT_ON_CCI, 60, Integer.MAX_VALUE, 30 * 60 * 1000, true);
+
+    /**
+     * sample rate for ndv sketch
+     */
     public static final StringConfigParam STATISTIC_NDV_SKETCH_SAMPLE_RATE = new StringConfigParam(
         ConnectionProperties.STATISTIC_NDV_SKETCH_SAMPLE_RATE, null, true);
 
+    /**
+     * whether to check statistics expired
+     */
     public static final BooleanConfigParam ENABLE_CHECK_STATISTICS_EXPIRE = new BooleanConfigParam(
         ConnectionProperties.ENABLE_CHECK_STATISTICS_EXPIRE, true, true);
 
+    /**
+     * base for CARDINALITY, CARDINALITY >= PARTITIONS * INDEX_ADVISOR_CARDINALITY_BASE
+     */
     public static final IntConfigParam INDEX_ADVISOR_CARDINALITY_BASE = new IntConfigParam(
         ConnectionProperties.INDEX_ADVISOR_CARDINALITY_BASE, 1, Integer.MAX_VALUE, 10, true);
 
+    /**
+     * CDC模块的启动方式: 0不启动, 1同步启动, 2异步启动, 默认同步启动
+     */
     public static final IntConfigParam CDC_STARTUP_MODE = new IntConfigParam(
         ConnectionProperties.CDC_STARTUP_MODE, 0, 2, 1, true);
 
@@ -4187,9 +5556,17 @@ public class ConnectionParams {
         true
     );
 
+    /**
+     * show global variables 时是否展示所有 ConnectionParams 中的变量
+     */
     public static final BooleanConfigParam SHOW_ALL_PARAMS = new BooleanConfigParam(
         ConnectionProperties.SHOW_ALL_PARAMS, false, true);
 
+    /**
+     * set global 是否打开
+     * 若关闭，set global 等价于 session
+     * 若打开，set global 还会持久化
+     */
     public static final BooleanConfigParam ENABLE_SET_GLOBAL = new BooleanConfigParam(
         ConnectionProperties.ENABLE_SET_GLOBAL, false, true);
 
@@ -4241,15 +5618,6 @@ public class ConnectionParams {
     public static final StringConfigParam DEFAULT_LOCAL_PARTITION_SCHEDULE_CRON_EXPR = new StringConfigParam(
         ConnectionProperties.DEFAULT_LOCAL_PARTITION_SCHEDULE_CRON_EXPR, DEFAULT_SCHEDULE_CRON_EXPR, true);
 
-    public static final BooleanConfigParam INTERRUPT_DDL_WHILE_LOSING_LEADER = new BooleanConfigParam(
-        ConnectionProperties.INTERRUPT_DDL_WHILE_LOSING_LEADER, true, true);
-
-    public static final BooleanConfigParam RECORD_SQL_COST = new BooleanConfigParam(
-        ConnectionProperties.RECORD_SQL_COST, false, true);
-
-    public static final BooleanConfigParam ENABLE_LOGICALVIEW_COST = new BooleanConfigParam(
-        ConnectionProperties.ENABLE_LOGICALVIEW_COST, true, true);
-
     public static final StringConfigParam DEFAULT_TTL_SCHEDULE_CRON_EXPR = new StringConfigParam(
         ConnectionProperties.DEFAULT_TTL_SCHEDULE_CRON_EXPR, "0 0 2 * * ? *", true);
 
@@ -4298,6 +5666,15 @@ public class ConnectionParams {
             "",
             false);
 
+    public static final BooleanConfigParam INTERRUPT_DDL_WHILE_LOSING_LEADER = new BooleanConfigParam(
+        ConnectionProperties.INTERRUPT_DDL_WHILE_LOSING_LEADER, true, true);
+
+    public static final BooleanConfigParam RECORD_SQL_COST = new BooleanConfigParam(
+        ConnectionProperties.RECORD_SQL_COST, false, true);
+
+    public static final BooleanConfigParam ENABLE_LOGICALVIEW_COST = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_LOGICALVIEW_COST, true, true);
+
     public static final BooleanConfigParam ENABLE_LOGICAL_DB_WARMMING_UP = new BooleanConfigParam(
         ConnectionProperties.ENABLE_LOGICAL_DB_WARMMING_UP, true, true);
 
@@ -4318,6 +5695,17 @@ public class ConnectionParams {
 
     public static final LongConfigParam CHANGE_SET_MEMORY_LIMIT = new LongConfigParam(
         ConnectionProperties.CHANGE_SET_MEMORY_LIMIT, 1024L, 16 * 1024 * 1024L, 4 * 1024 * 1024L, false);
+
+    /**
+     * physical size of one batch for changeset apply
+     * 默认 1 MB
+     */
+    public static final IntConfigParam CHANGE_SET_APPLY_BATCH_FILE_SIZE = new IntConfigParam(
+        ConnectionProperties.CHANGE_SET_APPLY_BATCH_FILE_SIZE,
+        100 * 1024,
+        50 * 1024 * 1024,
+        2 * 1024 * 1024,
+        false);
 
     public static final BooleanConfigParam CN_ENABLE_CHANGESET =
         new BooleanConfigParam(ConnectionProperties.CN_ENABLE_CHANGESET, true, true);
@@ -4372,9 +5760,6 @@ public class ConnectionParams {
 
     public static final BooleanConfigParam CHANGE_SET_DEBUG_MODE =
         new BooleanConfigParam(ConnectionProperties.CHANGE_SET_DEBUG_MODE, false, true);
-
-    public static final BooleanConfigParam SKIP_CHANGE_SET =
-        new BooleanConfigParam(ConnectionProperties.SKIP_CHANGE_SET, false, true);
 
     public static final BooleanConfigParam SKIP_CHANGE_SET_APPLY =
         new BooleanConfigParam(ConnectionProperties.SKIP_CHANGE_SET_APPLY, false, true);
@@ -4462,6 +5847,95 @@ public class ConnectionParams {
 
     public static final BooleanConfigParam ENABLE_OSS_ZERO_COPY = new BooleanConfigParam(
         ConnectionProperties.ENABLE_OSS_ZERO_COPY, false, true);
+
+    public static final BooleanConfigParam ENABLE_OSS_GENERAL_CACHE = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_OSS_GENERAL_CACHE, true, true);
+
+    public static final BooleanConfigParam ENABLE_BLOB_CACHE = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_BLOB_CACHE, true, true);
+
+    public static final BooleanConfigParam EXT_BLOB_HIGH_WATERMARK_RACE_ENABLED = new BooleanConfigParam(
+        ConnectionProperties.EXT_BLOB_HIGH_WATERMARK_RACE_ENABLED, false, true);
+
+    public static final BooleanConfigParam EXT_FETCH_BLOB_MISS_RETURN_NULL = new BooleanConfigParam(
+        ConnectionProperties.EXT_FETCH_BLOB_MISS_RETURN_NULL, false, true);
+
+    public static final BooleanConfigParam EXT_BLOB_UNKNOWN_TYPE_TO_STRING = new BooleanConfigParam(
+        ConnectionProperties.EXT_BLOB_UNKNOWN_TYPE_TO_STRING, false, true);
+
+    public static final BooleanConfigParam ALLOW_TRUNCATE_EXTERNALIZED_TABLE = new BooleanConfigParam(
+        ConnectionProperties.ALLOW_TRUNCATE_EXTERNALIZED_TABLE, false, true);
+
+    public static final IntConfigParam EXT_BLOB_HIGH_WATERMARK_RACE_CONCURRENCY = new IntConfigParam(
+        ConnectionProperties.EXT_BLOB_HIGH_WATERMARK_RACE_CONCURRENCY, 1, Integer.MAX_VALUE, 64, true);
+
+    public static final BooleanConfigParam ENABLE_EXT_COLUMN_STATISTICS_LOG = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_EXT_COLUMN_STATISTICS_LOG, true, true);
+
+    public static final BooleanConfigParam MCE_ADD_COLUMN_ALLOW_LOCK = new BooleanConfigParam(
+        ConnectionProperties.MCE_ADD_COLUMN_ALLOW_LOCK, false, true);
+
+    public static final BooleanConfigParam MCE_PAUSE_BEFORE_READ_CUTOVER = new BooleanConfigParam(
+        ConnectionProperties.MCE_PAUSE_BEFORE_READ_CUTOVER, false, true);
+
+    /**
+     * Initial safety defaults; tune with dedicated MCE benchmark results.
+     */
+    public static final IntConfigParam MCE_BACKFILL_BATCH_ROWS = new IntConfigParam(
+        ConnectionProperties.MCE_BACKFILL_BATCH_ROWS, 1, 100_000, 32768, true);
+
+    public static final IntConfigParam MCE_BACKFILL_UPDATE_BATCH_ROWS = new IntConfigParam(
+        ConnectionProperties.MCE_BACKFILL_UPDATE_BATCH_ROWS, 1, 100_000, 8, true);
+
+    public static final IntConfigParam MCE_CHECKER_BATCH_ROWS = new IntConfigParam(
+        ConnectionProperties.MCE_CHECKER_BATCH_ROWS, 1, 100_000, 1000, true);
+
+    public static final IntConfigParam MCE_CHECKER_PARALLELISM = new IntConfigParam(
+        ConnectionProperties.MCE_CHECKER_PARALLELISM, 1, 64, 8, true);
+
+    public static final LongConfigParam MCE_BACKFILL_BATCH_BYTES = new LongConfigParam(
+        ConnectionProperties.MCE_BACKFILL_BATCH_BYTES,
+        1L,
+        Long.MAX_VALUE,
+        128L * 1024 * 1024,
+        true);
+
+    public static final IntConfigParam MCE_INTERNALIZE_BACKFILL_BATCH_ROWS = new IntConfigParam(
+        ConnectionProperties.MCE_INTERNALIZE_BACKFILL_BATCH_ROWS, 1, 100_000, 1024, true);
+
+    public static final LongConfigParam MCE_INTERNALIZE_BACKFILL_BATCH_BYTES = new LongConfigParam(
+        ConnectionProperties.MCE_INTERNALIZE_BACKFILL_BATCH_BYTES,
+        1L,
+        Long.MAX_VALUE,
+        16L * 1024 * 1024,
+        true);
+
+    public static final IntConfigParam MCE_PHYSICAL_DDL_PARALLELISM = new IntConfigParam(
+        ConnectionProperties.MCE_PHYSICAL_DDL_PARALLELISM, 1, 64, 8, true);
+
+    public static final IntConfigParam MCE_BACKFILL_PARALLELISM = new IntConfigParam(
+        ConnectionProperties.MCE_BACKFILL_PARALLELISM, 1, 64, 8, true);
+
+    public static final LongConfigParam MCE_BACKFILL_MAX_INFLIGHT_BYTES = new LongConfigParam(
+        ConnectionProperties.MCE_BACKFILL_MAX_INFLIGHT_BYTES,
+        1L,
+        Long.MAX_VALUE,
+        128L * 1024 * 1024,
+        true);
+
+    public static final LongConfigParam MCE_BACKFILL_SPEED_LIMITATION = new LongConfigParam(
+        ConnectionProperties.MCE_BACKFILL_SPEED_LIMITATION,
+        -1L,
+        Long.MAX_VALUE,
+        150000L, // Default 150k rows/s, mirroring OMC_BACKFILL_SPEED_LIMITATION.
+        false);
+
+    public static final LongConfigParam MCE_BACKFILL_SPEED_MIN = new LongConfigParam(
+        ConnectionProperties.MCE_BACKFILL_SPEED_MIN,
+        -1L,
+        Long.MAX_VALUE,
+        10000L, // Default 10k rows/s, mirroring OMC_BACKFILL_SPEED_MIN.
+        false);
 
     /**
      * should get compatible from execution context rather than param manager
@@ -4584,9 +6058,18 @@ public class ConnectionParams {
     public static final IntConfigParam MAX_IN_PRUNE_CACHE_SIZE = new IntConfigParam(
         ConnectionProperties.MAX_IN_PRUNE_CACHE_SIZE, 0, Integer.MAX_VALUE, 200, true);
 
-    public static final IntConfigParam REBALANCE_TASK_PARALISM = new IntConfigParam(
-        ConnectionProperties.REBALANCE_TASK_PARALISM, 1, 64, 2, true);
+    public static final IntConfigParam REBALANCE_DB_PARALLELISM = new IntConfigParam(
+        ConnectionProperties.REBALANCE_DB_PARALLELISM, 1, 64, 3, true);
 
+    public static final BooleanConfigParam ALLOW_SCHEDULE_CONCURRENT_MOVE_PARTITION_INSIDE_TABLEGROUP =
+        new BooleanConfigParam(
+            ConnectionProperties.ALLOW_SCHEDULE_CONCURRENT_MOVE_PARTITION_INSIDE_TABLEGROUP, false, true);
+
+    public static final IntConfigParam REBALANCE_CLUSTER_PARALLELISM = new IntConfigParam(
+        ConnectionProperties.REBALANCE_CLUSTER_PARALLELISM, 1, 64, 2, true);
+
+    public static final StringConfigParam REBALANCE_DB_LIST_WHEN_REBALANCE_CLUSTER_ONLY_DEBUG = new StringConfigParam(
+        ConnectionProperties.REBALANCE_DB_LIST_WHEN_REBALANCE_CLUSTER_ONLY_DEBUG, "", true);
     /**
      * statement summary
      */
@@ -4605,8 +6088,18 @@ public class ConnectionParams {
     public static final BooleanConfigParam SKIP_MOVE_DATABASE_VALIDATOR = new BooleanConfigParam(
         ConnectionProperties.SKIP_MOVE_DATABASE_VALIDATOR, false, true);
 
+    public static final BooleanConfigParam USE_MOVE_TABLEGROUP_VALIDATOR = new BooleanConfigParam(
+        ConnectionProperties.USE_MOVE_TABLEGROUP_VALIDATOR, true, true);
+
+    public static final BooleanConfigParam ADD_BARRIER_TASK_FOR_MOVE_TABLEGROUP = new BooleanConfigParam(
+        ConnectionProperties.ADD_BARRIER_TASK_FOR_MOVE_TABLEGROUP, false, true);
+
     public static final BooleanConfigParam ENABLE_MPP_FILE_STORE_BACKFILL = new BooleanConfigParam(
         ConnectionProperties.ENABLE_MPP_FILE_STORE_BACKFILL, true, true);
+    public static final BooleanConfigParam FORBID_REMOTE_DDL_TASK = new BooleanConfigParam(
+        ConnectionProperties.FORBID_REMOTE_DDL_TASK, true, true);
+    public static final BooleanConfigParam DISABLE_REBALANCE_MPP = new BooleanConfigParam(
+        ConnectionProperties.DISABLE_REBALANCE_MPP, false, true);
 
     public static final BooleanConfigParam FORCE_STANDBY_BACKFILL = new BooleanConfigParam(
         ConnectionProperties.FORCE_STANDBY_BACKFILL, false, true);
@@ -4640,17 +6133,14 @@ public class ConnectionParams {
     public static final IntConfigParam PURGE_OSS_FILE_BEFORE_DAY = new IntConfigParam(
         ConnectionProperties.PURGE_OSS_FILE_BEFORE_DAY, 1, Integer.MAX_VALUE, 60, true);
 
+    public static final IntConfigParam BACKUP_OSS_PERIOD = new IntConfigParam(
+        ConnectionProperties.BACKUP_OSS_PERIOD, 1, Integer.MAX_VALUE, 30, true);
+
     public static final IntConfigParam FILE_STORAGE_FILES_META_QUERY_PARALLELISM = new IntConfigParam(
         ConnectionProperties.FILE_STORAGE_FILES_META_QUERY_PARALLELISM, 1, Integer.MAX_VALUE, 8, true);
 
     public static final BooleanConfigParam SKIP_TABLEGROUP_VALIDATOR =
         new BooleanConfigParam(ConnectionProperties.SKIP_TABLEGROUP_VALIDATOR, false, true);
-
-    public static final IntConfigParam BACKUP_OSS_PERIOD = new IntConfigParam(
-        ConnectionProperties.BACKUP_OSS_PERIOD, 1, Integer.MAX_VALUE, 30, true);
-
-    public static final BooleanConfigParam FORBID_REMOTE_DDL_TASK = new BooleanConfigParam(
-        ConnectionProperties.FORBID_REMOTE_DDL_TASK, true, true);
 
     /**
      * Whether enable auto savepoint.
@@ -4687,6 +6177,14 @@ public class ConnectionParams {
 
     public static final BooleanConfigParam ENABLE_LOWER_CASE_TABLE_NAMES = new BooleanConfigParam(
         ConnectionProperties.ENABLE_LOWER_CASE_TABLE_NAMES, false, true);
+
+    /**
+     * Whether to lower-case table names exposed by metadata commands.
+     * Defaults to false so existing instances keep their original output after upgrade.
+     * Decoupled from ENABLE_LOWER_CASE_TABLE_NAMES to avoid silent behavior change.
+     */
+    public static final BooleanConfigParam ENABLE_LOWER_CASE_TABLE_NAME_OUTPUT = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_LOWER_CASE_TABLE_NAME_OUTPUT, false, true);
 
     public static final LongConfigParam DDL_PLAN_SCHEDULER_DELAY = new LongConfigParam(
         ConnectionProperties.DDL_PLAN_SCHEDULER_DELAY, 10L, 1800L, 60L, true);
@@ -4738,6 +6236,8 @@ public class ConnectionParams {
 
     public static final BooleanConfigParam ACQUIRE_CREATE_TABLE_GROUP_LOCK = new BooleanConfigParam(
         ConnectionProperties.ACQUIRE_CREATE_TABLE_GROUP_LOCK, true, true);
+    public static final IntConfigParam DDL_RW_LOCK_DEADLOCK_DETECTION_INTERVAL = new IntConfigParam(
+        ConnectionProperties.DDL_RW_LOCK_DEADLOCK_DETECTION_INTERVAL, 1, Integer.MAX_VALUE, 10, true);
     public static final BooleanConfigParam ENABLE_AUTO_SPLIT_PARTITION = new BooleanConfigParam(
         ConnectionProperties.ENABLE_AUTO_SPLIT_PARTITION, true, true);
 
@@ -4776,8 +6276,8 @@ public class ConnectionParams {
         true);
 
     // cte loop control
-    public static final IntConfigParam MAX_RECURSIVE_TIME = new IntConfigParam(
-        ConnectionProperties.MAX_RECURSIVE_TIME, 1, 1000, 500, true);
+    public static final IntConfigParam MAX_RECURSIVE_COUNT = new IntConfigParam(
+        ConnectionProperties.MAX_RECURSIVE_COUNT, 1, 1000, 500, true);
 
     public static final LongConfigParam MAX_RECURSIVE_CTE_MEM_BYTES = new LongConfigParam(
         ConnectionProperties.MAX_RECURSIVE_CTE_MEM_BYTES, 100L, Long.MAX_VALUE, 100 * 1024 * 1024L, true);
@@ -4839,13 +6339,18 @@ public class ConnectionParams {
         ConnectionProperties.RANGE_SCAN_SERIALIZE_LIMIT, 0, Integer.MAX_VALUE, 100, true);
 
     public static final BooleanConfigParam ENABLE_REPLICA = new BooleanConfigParam(
-        ConnectionProperties.ENABLE_REPLICA, true, true);
+        ConnectionProperties.ENABLE_REPLICA, false, true);
 
     /**
      * Whether enable async commit.
      */
-    public static final BooleanConfigParam ENABLE_ASYNC_COMMIT = new BooleanConfigParam(
-        ConnectionProperties.ENABLE_ASYNC_COMMIT,
+    public static final BooleanConfigParam ENABLE_ASYNC_COMMIT_80 = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_ASYNC_COMMIT_80,
+        false,
+        true
+    );
+    public static final BooleanConfigParam ENABLE_ASYNC_COMMIT_57 = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_ASYNC_COMMIT_57,
         false,
         true
     );
@@ -4865,18 +6370,6 @@ public class ConnectionParams {
     public static final BooleanConfigParam ENABLE_TRANSACTION_RECOVER_TASK = new BooleanConfigParam(
         ConnectionProperties.ENABLE_TRANSACTION_RECOVER_TASK,
         true,
-        true
-    );
-
-    /**
-     * Limited size of async commit queue,
-     * not a precise value, the actual size may be larger than this one.
-     */
-    public static final IntConfigParam ASYNC_COMMIT_TASK_LIMIT = new IntConfigParam(
-        ConnectionProperties.ASYNC_COMMIT_TASK_LIMIT,
-        0,
-        Integer.MAX_VALUE,
-        64,
         true
     );
 
@@ -4910,6 +6403,52 @@ public class ConnectionParams {
             Long.MAX_VALUE,
             1L,
             false);
+
+    /**
+     * 修改CCI的分区键、排序键和主键时，是否重建CCI，以及重建CCI的策略
+     * -1: 不允许修改
+     * 0: 允许修改，根据列类型自动判断是否重建
+     * 1: 允许修改，强制不重建CCI，是普通列变更DDL
+     * 2: 允许修改，强制重建CCI，会丢失schema历史
+     */
+    public static final IntConfigParam REBUILD_CCI_STRATEGY = new IntConfigParam(
+        ConnectionProperties.REBUILD_CCI_STRATEGY,
+        -1,
+        2,
+        -1,
+        true
+    );
+
+    /**
+     * 双保险，若用户将REBUILD_CCI_STRATEGY开启（高危操作）
+     * 需要通过设置ENABLE_MODIFY_CCI_CRITICAL_COLUMN = true来二次确认
+     */
+    public static final BooleanConfigParam ENABLE_MODIFY_CCI_CRITICAL_COLUMN = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_MODIFY_CCI_CRITICAL_COLUMN,
+        false,
+        true
+    );
+
+    /**
+     * 是否允许重建快照CCI
+     */
+    public static final BooleanConfigParam ENABLE_REBUILD_SNAPSHOT_CCI = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_REBUILD_SNAPSHOT_CCI,
+        false,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_COLUMNAR_IGNORE = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_COLUMNAR_IGNORE,
+        false,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_CREATE_CCI_WITHOUT_COLUMNAR_NODE = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_CREATE_CCI_WITHOUT_COLUMNAR_NODE,
+        false,
+        true
+    );
 
     public static final BooleanConfigParam ENABLE_CCI_ON_TABLE_WITH_IMPLICIT_PK = new BooleanConfigParam(
         ConnectionProperties.ENABLE_CCI_ON_TABLE_WITH_IMPLICIT_PK,
@@ -4964,10 +6503,23 @@ public class ConnectionParams {
     public static final IntConfigParam SCAN_POLICY = new IntConfigParam(
         ConnectionProperties.SCAN_POLICY,
         1,
-        3,
+        4,
         2,
         true
     );
+
+    public static final BooleanConfigParam ENABLE_COLUMNAR_SCAN_RANDOM_SPLIT = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_COLUMNAR_SCAN_RANDOM_SPLIT,
+        true,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_OSS_CLIENT_CRC_CHECK = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_OSS_CLIENT_CRC_CHECK,
+        false,
+        true
+    );
+
     /**
      * To enable the block cache.
      */
@@ -5131,15 +6683,15 @@ public class ConnectionParams {
         ConnectionProperties.BLOCK_CACHE_MEMORY_SIZE_FACTOR,
         .1f,
         .8f,
-        .6f,
+        .4f,
         true
     );
 
-    public static final LongConfigParam PREHEATED_CACHE_MAX_ENTRIES = new LongConfigParam(
-        ConnectionProperties.PREHEATED_CACHE_MAX_ENTRIES,
-        16L,
+    public static final LongConfigParam PREHEATED_CACHE_MAX_MEMORY_SIZE = new LongConfigParam(
+        ConnectionProperties.PREHEATED_CACHE_MAX_MEMORY_SIZE,
+        1024L,
         Long.MAX_VALUE,
-        4096L,
+        1L << 32, // 4GB
         true
     );
 
@@ -5179,6 +6731,32 @@ public class ConnectionParams {
 
     public static final BooleanConfigParam ENABLE_SIMPLIFY_SHARDING_SQL = new BooleanConfigParam(
         ConnectionProperties.ENABLE_SIMPLIFY_SHARDING_SQL, false, true);
+
+    public static final BooleanConfigParam ENABLE_CLOSE_CONNECTION_WHEN_TRX_FATAL = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_CLOSE_CONNECTION_WHEN_TRX_FATAL, false, true
+    );
+
+    /**
+     * Allows compatible Connector/J clients to receive an ERR packet after a partial streaming result
+     * without closing the connection. Disabled by default.
+     */
+    public static final BooleanConfigParam ENABLE_ERR_PACKET_AFTER_PARTIAL_RESULT = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_ERR_PACKET_AFTER_PARTIAL_RESULT, false, true
+    );
+
+    /**
+     * If enabled, trx can not continue if any errors occurred, and only can be rolled back.
+     * Except for the following cases:
+     * SET statements, but excluding SET autocommit
+     * some SHOW statements, like SHOW DATABASES, SHOW WARNINGS, SHOW HELP
+     * some special SELECT statements, like select @@SESSION.TX_READ_ONLY, select @@SESSION.TRANSACTION_READ_ONLY,
+     * select 1, select 100, select version(), select database(), select user()
+     * KILL statements
+     * BEGIN, START TRANSACTION (these statements have no effects)
+     */
+    public static final BooleanConfigParam ENABLE_TRX_FATAL_ON_ANY_ERROR = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_TRX_FATAL_ON_ANY_ERROR, false, true
+    );
 
     /**
      * Time unit: second.
@@ -5265,6 +6843,12 @@ public class ConnectionParams {
     public static final BooleanConfigParam ASYNC_PAUSE = new BooleanConfigParam(
         ConnectionProperties.ASYNC_PAUSE,
         true,
+        true
+    );
+
+    public static final BooleanConfigParam DRY_RUN_PHYSICAL_DDL = new BooleanConfigParam(
+        ConnectionProperties.DRY_RUN_PHYSICAL_DDL,
+        false,
         true
     );
 
@@ -5570,7 +7154,7 @@ public class ConnectionParams {
 
     public static final BooleanConfigParam ENABLE_IMPLICIT_TABLE_GROUP = new BooleanConfigParam(
         ConnectionProperties.ENABLE_IMPLICIT_TABLE_GROUP,
-        true,
+        false,
         true
     );
 
@@ -5595,6 +7179,16 @@ public class ConnectionParams {
         false,
         true
     );
+
+    public static final StringConfigParam FP_RANDOM_SUSPEND =
+        new StringConfigParam(ConnectionProperties.FP_RANDOM_SUSPEND,
+            "0,0",
+            true);
+
+    public static final StringConfigParam FP_DDL_INTERNAL_MAX_PARALLELISM =
+        new StringConfigParam(ConnectionProperties.FP_DDL_INTERNAL_MAX_PARALLELISM,
+            "",
+            true);
 
     public static final LongConfigParam SNAPSHOT_TS = new LongConfigParam(
         ConnectionProperties.SNAPSHOT_TS,
@@ -5660,7 +7254,13 @@ public class ConnectionParams {
 
     public static final BooleanConfigParam ENABLE_CCI_FAST_CHECKER = new BooleanConfigParam(
         ConnectionProperties.ENABLE_CCI_FAST_CHECKER,
-        true,
+        false,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_CCI_NAIVE_CHECK_IF_FAST_CHECKER_FAILED = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_CCI_NAIVE_CHECK_IF_FAST_CHECKER_FAILED,
+        false,
         true
     );
 
@@ -5688,6 +7288,30 @@ public class ConnectionParams {
         true
     );
 
+    public static final StringConfigParam READONLY_DN_LIST = new StringConfigParam(
+        ConnectionProperties.READONLY_DN_LIST,
+        null,
+        true
+    );
+
+    public static final BooleanConfigParam ALLOW_BROADCAST_WRITE_FOR_READONLY_DN = new BooleanConfigParam(
+        ConnectionProperties.ALLOW_BROADCAST_WRITE_FOR_READONLY_DN,
+        true,
+        true
+    );
+
+    public static final BooleanConfigParam FORBID_TRX_CONTINUE_AFTER_WRITE_READONLY = new BooleanConfigParam(
+        ConnectionProperties.FORBID_TRX_CONTINUE_AFTER_WRITE_READONLY,
+        true,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_AS_OF_CROSS_DDL = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_AS_OF_CROSS_DDL,
+        false,
+        true
+    );
+
     public static final BooleanConfigParam ENABLE_XA_TSO = new BooleanConfigParam(
         ConnectionProperties.ENABLE_XA_TSO,
         true,
@@ -5696,7 +7320,7 @@ public class ConnectionParams {
 
     public static final BooleanConfigParam ENABLE_AUTO_COMMIT_TSO = new BooleanConfigParam(
         ConnectionProperties.ENABLE_AUTO_COMMIT_TSO,
-        false,
+        true,
         true
     );
 
@@ -5715,6 +7339,12 @@ public class ConnectionParams {
     public static final BooleanConfigParam ENABLE_EXTERNAL_CONSISTENCY_FOR_WRITE_TRX = new BooleanConfigParam(
         ConnectionProperties.ENABLE_EXTERNAL_CONSISTENCY_FOR_WRITE_TRX,
         false,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_PARALLEL_TOP_N = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_PARALLEL_TOP_N,
+        true,
         true
     );
 
@@ -5805,6 +7435,11 @@ public class ConnectionParams {
         true
     );
 
+    public static final BooleanConfigParam TTL_SCHEDULE_JOB_ARCHIVED_BY_PARTITION_ONE_BY_ONE = new BooleanConfigParam(
+        ConnectionProperties.TTL_SCHEDULE_JOB_ARCHIVED_BY_PARTITION_ONE_BY_ONE,
+        true,
+        true);
+
     public static final BooleanConfigParam TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = new BooleanConfigParam(
         ConnectionProperties.TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL,
         false,
@@ -5814,6 +7449,18 @@ public class ConnectionParams {
         new StringConfigParam(ConnectionProperties.TTL_DEBUG_CCI_SKIP_DDL_TASKS,
             "",
             false);
+
+    public static final BooleanConfigParam TTL_ENABLE_CCI_SPLIT_FROM_NEAREST_PART =
+        new BooleanConfigParam(ConnectionProperties.TTL_ENABLE_CCI_SPLIT_FROM_NEAREST_PART,
+            false,
+            true);
+
+    public static final IntConfigParam TTL_CCI_RESERVED_PART_GAP_COUNT =
+        new IntConfigParam(ConnectionProperties.TTL_CCI_RESERVED_PART_GAP_COUNT,
+            -1,
+            Integer.MAX_VALUE,
+            -1,
+            true);
 
     public static final IntConfigParam TTL_JOB_DEFAULT_BATCH_SIZE = new IntConfigParam(
         ConnectionProperties.TTL_JOB_DEFAULT_BATCH_SIZE,
@@ -5876,7 +7523,7 @@ public class ConnectionParams {
 
     public static final StringConfigParam TTL_DELETE_STMT_HINT =
         new StringConfigParam(ConnectionProperties.TTL_DELETE_STMT_HINT,
-            "/*+TDDL:cmd_extra(SOCKET_TIMEOUT=1800000)*/",
+            "/*+TDDL:cmd_extra(SOCKET_TIMEOUT=1800000,ALLOW_USING_SPECIFY_PARTITIONS_ON_SINGLE_TABLE=true)*/",
             false);
 
     public static final StringConfigParam TTL_INSERT_STMT_HINT =
@@ -5894,9 +7541,19 @@ public class ConnectionParams {
             "/*+TDDL:cmd_extra(SOCKET_TIMEOUT=1800000)*/",
             false);
 
+    public static final StringConfigParam TTL_ALTER_ADD_PART_STMT_EXTRA_PARAMS =
+        new StringConfigParam(ConnectionProperties.TTL_ALTER_ADD_PART_STMT_EXTRA_PARAMS,
+            "",
+            false);
+
     public static final StringConfigParam TTL_ALTER_DROP_PART_STMT_HINT =
         new StringConfigParam(ConnectionProperties.TTL_ALTER_DROP_PART_STMT_HINT,
-            "/*+TDDL:cmd_extra(SOCKET_TIMEOUT=1800000, ENABLE_DROP_TRUNCATE_CCI_PARTITION=true)*/",
+            "/*+TDDL:cmd_extra(SOCKET_TIMEOUT=1800000, ENABLE_DROP_TRUNCATE_CCI_PARTITION=true, TTL_MARK_DROP_PARTITION_AS_ARCHIVE_CLEANUP_FOR_CDC=true, ENABLE_PHY_RECYCLEBIN=true)*/",
+            false);
+
+    public static final StringConfigParam TTL_ALTER_DROP_PART_STMT_EXTRA_PARAMS =
+        new StringConfigParam(ConnectionProperties.TTL_ALTER_DROP_PART_STMT_EXTRA_PARAMS,
+            "",
             false);
 
     public static final LongConfigParam TTL_GROUP_PARALLELISM_ON_DQL_CONN =
@@ -5932,6 +7589,66 @@ public class ConnectionParams {
         new BooleanConfigParam(ConnectionProperties.HIDE_TTL_DEFINITION_IN_SHOW_CREATE_TABLE,
             false,
             true);
+
+    /**
+     * Label if only allow cleaning up not-null values rows of ttl_col, default is true
+     */
+    public static final BooleanConfigParam TTL_ONLY_CLEANUP_NOT_NULL_ROWS =
+        new BooleanConfigParam(ConnectionProperties.TTL_ONLY_CLEANUP_NOT_NULL_ROWS,
+            true,
+            true);
+
+    /**
+     * The base datetime used by normalizer, default is '1970-01-01 00:00:00'
+     */
+    public static final StringConfigParam TTL_NORMALIZER_BASE_DATETIME =
+        new StringConfigParam(ConnectionProperties.TTL_NORMALIZER_BASE_DATETIME,
+            "1970-01-01 00:00:00",
+            true);
+
+    public static final BooleanConfigParam TTL_SKIP_SPLIT_PARTITION_FOR_REBUILD_TABLE =
+        new BooleanConfigParam(ConnectionProperties.TTL_SKIP_SPLIT_PARTITION_FOR_REBUILD_TABLE,
+            false,
+            true);
+    public static final BooleanConfigParam TTL_FORCE_USE_REBUILD_POLICY_FOR_CLEANUP_EXPIRED_DATA =
+        new BooleanConfigParam(ConnectionProperties.TTL_FORCE_USE_REBUILD_POLICY_FOR_CLEANUP_EXPIRED_DATA,
+            false,
+            true);
+
+//    public static final StringConfigParam TTL_EXPIRED_DATA_FILTER_EXPR_FOR_REBUILD_TABLE =
+//        new StringConfigParam(ConnectionProperties.TTL_EXPIRED_DATA_FILTER_EXPR_FOR_REBUILD_TABLE,
+//            "",
+//            false);
+
+    /**
+     * Label if need cleanup expired data by OMC rebuild policy, default is false
+     */
+    public static final BooleanConfigParam TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY =
+        new BooleanConfigParam(ConnectionProperties.TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY,
+            false,
+            true);
+
+    /**
+     * The expired data percent of the whole ttl table for auto using rebuild policy, unit: %
+     */
+    public static final IntConfigParam TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY = new IntConfigParam(
+        ConnectionProperties.TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY,
+        0,
+        100,
+        45,
+        true
+    );
+
+    /**
+     * The min row count of the whole ttl table for auto using rebuild policy, default is 500000
+     */
+    public static final IntConfigParam TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY = new IntConfigParam(
+        ConnectionProperties.TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY,
+        0,
+        Integer.MAX_VALUE,
+        500000,
+        true
+    );
 
     public static final LongConfigParam TTL_MAX_WAIT_ACQUIRE_RATE_PERMITS_PERIODS =
         new LongConfigParam(ConnectionProperties.TTL_MAX_WAIT_ACQUIRE_RATE_PERMITS_PERIODS,
@@ -5972,6 +7689,43 @@ public class ConnectionParams {
             "05:00",
             true);
 
+    public static final BooleanConfigParam TTL_JOB_INTERRUPT_IGNORE_MAINTAIN_WINDOWS =
+        new BooleanConfigParam(ConnectionProperties.TTL_JOB_INTERRUPT_IGNORE_MAINTAIN_WINDOWS,
+            false,
+            true);
+
+    /**
+     * When set to true via HINT in a manually-triggered ALTER TABLE xxx CLEANUP EXPIRED DATA,
+     * the DDL job will obey the TTL maintenance-window constraint and pause when the current
+     * time is outside the configured window. Default is false.
+     */
+    public static final BooleanConfigParam TTL_JOB_FOLLOW_MAINTAIN_WINDOW =
+        new BooleanConfigParam(ConnectionProperties.TTL_JOB_FOLLOW_MAINTAIN_WINDOW,
+            false,
+            true);
+
+    /**
+     * The retry time for fired-scheudled-Ttl-Job to restart paused the ddl job of cleanup expired data
+     */
+    public static final IntConfigParam TTL_MAX_RETRY_TIME_FOR_PAUSED_CLEANUP_DDL_JOB =
+        new IntConfigParam(ConnectionProperties.TTL_MAX_RETRY_TIME_FOR_PAUSED_CLEANUP_DDL_JOB,
+            1,
+            Integer.MAX_VALUE,
+            2,
+            true
+        );
+
+    /**
+     * The wait time before exec each retry ddl-stmt of cleanup expired data. Unit: ms
+     */
+    public static final IntConfigParam TTL_WAIT_TIME_BEFORE_EACH_DDL_STMT_RETRY =
+        new IntConfigParam(ConnectionProperties.TTL_WAIT_TIME_BEFORE_EACH_DDL_STMT_RETRY,
+            1,
+            Integer.MAX_VALUE,
+            5000,
+            true
+        );
+
     /**
      * The ratio of global-delete-worker / rw-dn-count, default is 2
      */
@@ -5982,6 +7736,41 @@ public class ConnectionParams {
         2,
         true
     );
+
+    /**
+     * Label if enable batch-resubmit schedule for TTL cleanup intra tasks, default is false.
+     */
+    /**
+     * Label if enable batch-resubmit schedule for TTL cleanup intra tasks.
+     * When true, each DataCleaningUpIntraTask runs only one batch per scheduling slot
+     * and resubmits itself if more data remains, eliminating long-tail worker idleness.
+     * Default is false (original partition-hold-thread behaviour is preserved for rollback).
+     */
+    public static final BooleanConfigParam TTL_ENABLE_BATCH_RESUBMIT_SCHEDULE =
+        new BooleanConfigParam(ConnectionProperties.TTL_ENABLE_BATCH_RESUBMIT_SCHEDULE,
+            true,
+            true);
+
+    /**
+     * The max concurrent worker count per DN when batch-resubmit schedule is enabled.
+     * 0 means auto-decide as ceil(totalWorkers / dnCount), default is 0.
+     */
+    public static final IntConfigParam TTL_MAX_WORKER_COUNT_EACH_DN = new IntConfigParam(
+        ConnectionProperties.TTL_MAX_WORKER_COUNT_EACH_DN,
+        0,
+        512,
+        0,
+        true
+    );
+
+    /**
+     * When true, each batch completion log line and the per-partition batch-round summary
+     * (batchRoundStats) are written to the TTL task log. Default is false.
+     */
+    public static final BooleanConfigParam TTL_ENABLE_INTRA_TASK_INFO_LOG =
+        new BooleanConfigParam(ConnectionProperties.TTL_ENABLE_INTRA_TASK_INFO_LOG,
+            false,
+            true);
 
     public static final IntConfigParam TTL_DEFAULT_ARC_PRE_ALLOCATE_COUNT = new IntConfigParam(
         ConnectionProperties.TTL_DEFAULT_ARC_PRE_ALLOCATE_COUNT,
@@ -6004,6 +7793,28 @@ public class ConnectionParams {
             true,
             true);
 
+    public static final BooleanConfigParam TTL_ENABLE_SCAN_ADD_PARTS_WARNING =
+        new BooleanConfigParam(ConnectionProperties.TTL_ENABLE_SCAN_ADD_PARTS_WARNING,
+            true,
+            true);
+
+    public static final LongConfigParam TTL_ADD_PARTS_WARNING_SCAN_INTERVAL_SECONDS =
+        new LongConfigParam(ConnectionProperties.TTL_ADD_PARTS_WARNING_SCAN_INTERVAL_SECONDS,
+            0L,
+            Long.MAX_VALUE,
+            86400L,
+            true);
+
+    public static final BooleanConfigParam TTL_ONLY_WARNING_FOR_THE_LAST_PART =
+        new BooleanConfigParam(ConnectionProperties.TTL_ONLY_WARNING_FOR_THE_LAST_PART,
+            false,
+            true);
+
+    public static final BooleanConfigParam TTL_ARC_CCI_FORCE_USING_ARCHIVE_TYPE =
+        new BooleanConfigParam(ConnectionProperties.TTL_ARC_CCI_FORCE_USING_ARCHIVE_TYPE,
+            false,
+            true);
+
     public static final StringConfigParam TTL_DEBUG_CURRENT_DATETIME =
         new StringConfigParam(ConnectionProperties.TTL_DEBUG_CURRENT_DATETIME,
             "",
@@ -6018,6 +7829,58 @@ public class ConnectionParams {
         new BooleanConfigParam(ConnectionProperties.TTL_MARK_DROP_PARTITION_AS_ARCHIVE_CLEANUP_FOR_CDC,
             false,
             true);
+
+    /**
+     * Label if need validate the encoder/decoder of ttl_col, default is true
+     */
+    public static final BooleanConfigParam ENABLE_TTL_COL_ENCODER_DECODER_VALIDATION =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_TTL_COL_ENCODER_DECODER_VALIDATION,
+            true,
+            true);
+
+    /**
+     * The value used by the validation the encoder/decoder of ttl_col, default is '2036-01-01 00:00:00'
+     */
+    public static final StringConfigParam TTL_COL_ENCODER_DECODER_VALIDATION_VALUE =
+        new StringConfigParam(ConnectionProperties.TTL_COL_ENCODER_DECODER_VALIDATION_VALUE,
+            "2036-01-01 00:00:00",
+            true);
+
+    public static final StringConfigParam REBUILD_TABLE_KEEP_FILTER =
+        new StringConfigParam(ConnectionProperties.REBUILD_TABLE_KEEP_FILTER,
+            "",
+            false);
+
+    public static final BooleanConfigParam FORCE_REBUILD_CLEANUP_WITH_GSI =
+        new BooleanConfigParam(ConnectionProperties.FORCE_REBUILD_CLEANUP_WITH_GSI,
+            false,
+            false);
+
+    public static final BooleanConfigParam REBUILD_CLEANUP_SKIP_CDC_TASK =
+        new BooleanConfigParam(ConnectionProperties.REBUILD_CLEANUP_SKIP_CDC_TASK,
+            false,
+            false);
+
+//    public static final StringConfigParam TTL_EXPIRED_DATA_FILTER_EXPR_FOR_REBUILD_TABLE =
+//        new StringConfigParam(ConnectionProperties.TTL_EXPIRED_DATA_FILTER_EXPR_FOR_REBUILD_TABLE,
+//            "",
+//            false);
+
+    /**
+     * The value labeled if ttl-job allowed cleanup data
+     */
+    public static final BooleanConfigParam TTL_STOP_CLEANUP_DATA = new BooleanConfigParam(
+        ConnectionProperties.TTL_STOP_CLEANUP_DATA,
+        false,
+        true);
+
+    /**
+     * The value labeled if ttl-job skip preparing cleanup interval, like fetch min val of ttl_col
+     */
+    public static final BooleanConfigParam TTL_SKIP_PREPARING_CLEANUP_INTERVAL = new BooleanConfigParam(
+        ConnectionProperties.TTL_SKIP_PREPARING_CLEANUP_INTERVAL,
+        false,
+        true);
 
     /**
      * Columnar storage read-only instance's maximum sustainable QPS
@@ -6055,6 +7918,11 @@ public class ConnectionParams {
             Long.MAX_VALUE,
             10L,
             true);
+
+    public static final BooleanConfigParam ENABLE_MPP_SERIALIZED_CHUNK_COMPRESSION =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_MPP_SERIALIZED_CHUNK_COMPRESSION,
+            false,
+            true);
     /**
      * 等待列存同步的超时时间
      */
@@ -6063,6 +7931,26 @@ public class ConnectionParams {
         0L,
         Long.MAX_VALUE,
         60000L,
+        true
+    );
+
+    /**
+     * columnar_snapshot_files返回结果是否包含主键索引相关文件（sst、pk_idx_log_meta、pk_idx_log）
+     */
+    public static final BooleanConfigParam COLUMNAR_SNAPSHOT_INCLUDE_PK_INDEX_FILES = new BooleanConfigParam(
+        ConnectionProperties.COLUMNAR_SNAPSHOT_INCLUDE_PK_INDEX_FILES,
+        true,
+        true
+    );
+
+    /**
+     * columnar_snapshot_files结果缓存内存超过该值时spill到本地文件，单位字节，默认256MB
+     */
+    public static final LongConfigParam COLUMNAR_SNAPSHOT_SPILL_MEMORY_LIMIT = new LongConfigParam(
+        ConnectionProperties.COLUMNAR_SNAPSHOT_SPILL_MEMORY_LIMIT,
+        0L,
+        Long.MAX_VALUE,
+        256 * 1024 * 1024L,
         true
     );
 
@@ -6084,6 +7972,99 @@ public class ConnectionParams {
         false,
         true);
 
+    public static final IntConfigParam
+        STATISTIC_PARALLELISM = new IntConfigParam(
+        ConnectionProperties.STATISTIC_PARALLELISM,
+        1,
+        1024,
+        2,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_TSO_OPT = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_TSO_OPT,
+        false,
+        true
+    );
+    public static final IntConfigParam DN_HLL_STATISTIC_PARALLELISM = new IntConfigParam(
+        ConnectionProperties.DN_HLL_STATISTIC_PARALLELISM,
+        -1,
+        32,
+        1,
+        true
+    );
+
+    /**
+     * 外部指定的 ddl job_id
+     */
+    public static final LongConfigParam DDL_JOB_ID = new LongConfigParam(
+        ConnectionProperties.DDL_JOB_ID,
+        -1L,
+        Long.MAX_VALUE,
+        -1L,
+        false
+    );
+
+    /**
+     * 外部指定的 ddl plan_id
+     */
+    public static final LongConfigParam DDL_PLAN_ID = new LongConfigParam(
+        ConnectionProperties.DDL_PLAN_ID,
+        -1L,
+        Long.MAX_VALUE,
+        -1L,
+        false
+    );
+
+    /**
+     * backfill 异步记录 last value
+     */
+    public static final BooleanConfigParam BACKFILL_ASYNC_LOG =
+        new BooleanConfigParam(ConnectionProperties.BACKFILL_ASYNC_LOG,
+            false,
+            true);
+
+    public static IntConfigParam OMC_THREAD_POOL_SIZE =
+        new IntConfigParam(ConnectionProperties.OMC_THREAD_POOL_SIZE,
+            1, 10, 1, false);
+
+    //turn on as default after this Chinese New Year
+    public static final BooleanConfigParam ENABLE_PHY_RECYCLEBIN = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_PHY_RECYCLEBIN,
+        true,
+        true);
+    public static final LongConfigParam MAX_PHY_RECYCLEBIN_RETENTION_MINUTES = new LongConfigParam(
+        ConnectionProperties.MAX_PHY_RECYCLEBIN_RETENTION_MINUTES,
+        0L,
+        Long.MAX_VALUE,
+        60L,
+        true
+    );
+    public static final StringConfigParam PURGE_RECYCLEBIN_CRON_EXPR = new StringConfigParam(
+        ConnectionProperties.PURGE_PHY_RECYCLEBIN_CRON_EXPR, "0 0/10 * * * ?", true);
+
+    public static final BooleanConfigParam PURGE_PHY_RECYCLEBIN_MAINTENANCE_ENABLE = new BooleanConfigParam(
+        ConnectionProperties.PURGE_PHY_RECYCLEBIN_MAINTENANCE_ENABLE,
+        false,
+        true);
+    /**
+     * purge phy recyclebin start point
+     */
+    public static final StringConfigParam PURGE_PHY_RECYCLEBIN_MAINTENANCE_TIME_START =
+        new StringConfigParam(ConnectionProperties.PURGE_PHY_RECYCLEBIN_MAINTENANCE_TIME_START, "01:00", true);
+
+    /**
+     * purge phy recyclebin start point
+     */
+    public static final StringConfigParam PURGE_PHY_RECYCLEBIN_MAINTENANCE_TIME_END =
+        new StringConfigParam(ConnectionProperties.PURGE_PHY_RECYCLEBIN_MAINTENANCE_TIME_END, "05:00", true);
+
+    public static final BooleanConfigParam ENABLE_SHUFFLE_JOIN = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_SHUFFLE_JOIN,
+        true,
+        true
+    );
+
     public static final StringConfigParam CONSTANT_FOLD_BLACKLIST =
         new StringConfigParam(ConnectionProperties.CONSTANT_FOLD_BLACKLIST,
             "",
@@ -6102,13 +8083,49 @@ public class ConnectionParams {
         true,
         true
     );
-    public static final IntConfigParam STATISTICS_MISS_MIN_ROWCOUNT = new IntConfigParam(
-        ConnectionProperties.STATISTICS_MISS_MIN_ROWCOUNT,
-        0,
-        100000,
-        10,
+
+    public static final LongConfigParam WAIT_FOR_NOT_FULL_MS = new LongConfigParam(
+        ConnectionProperties.WAIT_FOR_NOT_FULL_MS,
+        0L,
+        Long.MAX_VALUE,
+        0L,
         true
     );
+
+    public static final LongConfigParam WAIT_FOR_NOT_EMPTY_MS = new LongConfigParam(
+        ConnectionProperties.WAIT_FOR_NOT_EMPTY_MS,
+        0L,
+        Long.MAX_VALUE,
+        0L,
+        true
+    );
+
+    public static final LongConfigParam WAIT_FOR_EXCHANGE_CLIENT_MS = new LongConfigParam(
+        ConnectionProperties.WAIT_FOR_EXCHANGE_CLIENT_MS,
+        0L,
+        Long.MAX_VALUE,
+        0L,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_EARLY_STOP_TOP_K = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_EARLY_STOP_TOP_K,
+        true,
+        true
+    );
+
+    public static final LongConfigParam MPP_WAIT_QUERY_INFO_TIME_IN_MILLIS = new LongConfigParam(
+        ConnectionProperties.MPP_WAIT_QUERY_INFO_TIME_IN_MILLIS,
+        0L,
+        Long.MAX_VALUE,
+        20L, // 20ms
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_PARALLEL_PREHEAT_FILE_META =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_PARALLEL_PREHEAT_FILE_META,
+            false,
+            true);
 
     public static final BooleanConfigParam ENABLE_IN_VALUE_LIST_REWRITE =
         new BooleanConfigParam(ConnectionProperties.ENABLE_IN_VALUE_LIST_REWRITE,
@@ -6119,6 +8136,243 @@ public class ConnectionParams {
         new StringConfigParam(ConnectionProperties.FULL_SCAN_TABLE_BLACK_LIST,
             "",
             false);
+
+    public static final BooleanConfigParam ENABLE_WARMUP_SCHEDULE =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_WARMUP_SCHEDULE,
+            true,
+            true);
+
+    public static final BooleanConfigParam ENABLE_DEEP_PAGE_OPTIMIZER = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_DEEP_PAGE_OPTIMIZER,
+        false,
+        true
+    );
+
+    public static final StringConfigParam DEFAULT_COLLATION_FOR_UTF8MB4 = new StringConfigParam(
+        ConnectionProperties.DEFAULT_COLLATION_FOR_UTF8MB4,
+        "",
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_NEW_EXPLAIN_EXECUTE = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_NEW_EXPLAIN_EXECUTE,
+        true,
+        true
+    );
+
+    /**
+     * explain execute展示物理表执行计划的级别
+     * -1 ：表示只展示一个物理表的DN执行计划
+     * 0 ：表示只展示一个物理表的DN执行计划，Extra 中会展示DifferentPlan()和ScanRow(min, max)信息
+     * 1 ：表示展示DifferentPlan()包含的所有物理表的DN执行计划
+     * 2 ：表示展示所有物理表的DN执行计划
+     */
+    public static final IntConfigParam EXPLAIN_EXECUTE_PHYTB_LEVEL = new IntConfigParam(
+        ConnectionProperties.EXPLAIN_EXECUTE_PHYTB_LEVEL,
+        -1,
+        2,
+        0,
+        true
+    );
+
+    /**
+     * if enable push down auto increment ,auto increment columns will be local auto incremented by each dn
+     */
+    public static final BooleanConfigParam ENABLE_PUSH_DOWN_AUTO_INCREMENT = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_PUSH_DOWN_AUTO_INCREMENT,
+        false,
+        true
+    );
+
+    /**
+     * Label if force ignore all type cast status during routing one tuple, default is true
+     */
+    public static final BooleanConfigParam ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST =
+        new BooleanConfigParam(ConnectionProperties.ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST,
+            true,
+            true);
+
+    /**
+     * Label if need perform pre-check for the query value by using udf_func(such dble func), default is false
+     */
+    public static final BooleanConfigParam ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC =
+        new BooleanConfigParam(ConnectionProperties.ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC,
+            false,
+            true);
+
+    /**
+     * Label if need auto check the partitionCount
+     * of (sub)partitionBy match the routing algorithm of dble_hash like dble/date or dble/nummberrange,
+     * default is true, only supported global level
+     */
+    public static final BooleanConfigParam AUTO_CHECK_PARTITION_COUNT_IF_MATCH_DBLE_HASH =
+        new BooleanConfigParam(ConnectionProperties.AUTO_CHECK_PARTITION_COUNT_IF_MATCH_DBLE_HASH,
+            true,
+            true);
+
+    /**
+     * Label if the last partition of udf_hash use the catch-all bound value during bound value generation,
+     * <pre>
+     *     The last partition use the catch-all bound value may allowed add new partition by perform split partition
+     * </pre>
+     */
+    public static final BooleanConfigParam LAST_UDF_HASH_PARTITION_USE_CATCH_ALL_BOUND_VALUE =
+        new BooleanConfigParam(ConnectionProperties.LAST_UDF_HASH_PARTITION_USE_CATCH_ALL_BOUND_VALUE,
+            true,
+            true);
+
+    /**
+     * Label if need do datanode checking for dble routing, only supported global level , default is true
+     * <pre>
+     *     in dble routing, its routing result is the index of datanode,
+     *     so the valid datanode index should be 0<= datanode < partitionCount
+     *     ,which partitionCount is the partitions number of (sub)partitionBy
+     * </pre>
+     */
+    public static final BooleanConfigParam ENABLE_DBLE_CHECK_DATANODE_INDEX_ROUTING =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_DBLE_CHECK_DATANODE_INDEX_ROUTING,
+            true,
+            true);
+
+    /**
+     * Label if part_route func ignore any exception, default is false
+     */
+    public static final BooleanConfigParam PART_ROUTE_IGNORE_EXCEPTION =
+        new BooleanConfigParam(ConnectionProperties.PART_ROUTE_IGNORE_EXCEPTION,
+            false,
+            true);
+
+    /**
+     * Label if part_route func ignore any exception, default is false
+     */
+    public static final BooleanConfigParam ENABLE_DBLE_ROUTE_RESULT_CHECK =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_DBLE_ROUTE_RESULT_CHECK,
+            true,
+            true);
+
+    public static final IntConfigParam IO_STATUS_BOUND_SIZE = new IntConfigParam(
+        ConnectionProperties.IO_STATUS_BOUND_SIZE,
+        1,
+        16384,
+        1024,
+        true
+    );
+
+    public static final LongConfigParam IO_STATUS_IS_FULL_MAX_WAIT_MS = new LongConfigParam(
+        ConnectionProperties.IO_STATUS_IS_FULL_MAX_WAIT_MS,
+        1L,
+        Long.MAX_VALUE,
+        120000L, // 2min
+        true
+    );
+
+    public static final IntConfigParam DRIVER_MEMORY_ADJUST_FREQUENCY = new IntConfigParam(
+        ConnectionProperties.DRIVER_MEMORY_ADJUST_FREQUENCY,
+        1,
+        65535,
+        4,
+        true
+    );
+
+    public static final StringConfigParam EXPLAIN_EXECUTE_PHYTB_PATTERN = new StringConfigParam(
+        ConnectionProperties.EXPLAIN_EXECUTE_PHYTB_PATTERN,
+        null,
+        true
+    );
+
+    /**
+     * The table routing meta used by check table routing cmd
+     */
+    public static final StringConfigParam CHECK_ROUTING_TABLE_META =
+        new StringConfigParam(ConnectionProperties.CHECK_ROUTING_TABLE_META,
+            "",
+            true);
+
+    public static final LongConfigParam WAIT_TIMEOUT = new LongConfigParam(
+        ConnectionProperties.WAIT_TIMEOUT,
+        0L,
+        Long.MAX_VALUE,
+        8 * 3600L,
+        true
+    );
+
+    /**
+     * -1 标识无限制
+     */
+    public static final IntConfigParam MAX_USER_CONNECTIONS = new IntConfigParam(
+        ConnectionProperties.MAX_USER_CONNECTIONS,
+        -1,
+        Integer.MAX_VALUE,
+        -1,
+        true
+    );
+
+    /**
+     * Force treat remove partitioning as single, default is true
+     */
+    public static final BooleanConfigParam FORCE_REMOVE_PARTITIONING_AS_SINGLE =
+        new BooleanConfigParam(ConnectionProperties.FORCE_REMOVE_PARTITIONING_AS_SINGLE,
+            false,
+            true);
+
+    public static final BooleanConfigParam ENABLE_ZONE_MAP_PRUNE =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_ZONE_MAP_PRUNE,
+            true,
+            true);
+
+    public static final BooleanConfigParam FORCE_CHANGE_ROLE = new BooleanConfigParam(
+        ConnectionProperties.FORCE_CHANGE_ROLE,
+        false,
+        true);
+
+    public static final StringConfigParam META_DB_PROPS = new StringConfigParam(
+        ConnectionProperties.META_DB_PROPS,
+        "",
+        false);
+
+    /**
+     * Label if enable java udf functions
+     */
+    public static final BooleanConfigParam ENABLE_JAVA_UDF = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_JAVA_UDF, false, true);
+
+    /**
+     * Repartitioning is supported for DBLE table if this option is enabled.
+     */
+    public static final BooleanConfigParam ENABLE_DBLE_TABLE_REPARTITION =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_DBLE_TABLE_REPARTITION,
+            false,
+            true);
+
+    /**
+     * if enable create table without partition definition in dble db
+     */
+    public static final BooleanConfigParam ENABLE_DBLE_WITHOUT_PARTITION_DEF =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_DBLE_WITHOUT_PARTITION_DEF,
+            false,
+            true);
+
+    /**
+     * Label if enable the partition hint pruning in PostPlanner
+     */
+    public static final BooleanConfigParam ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING,
+            false,
+            true);
+
+    /**
+     * Label if ignore the invalid exception during getting topology in planner, only used for unit-test of optimizer test
+     */
+    public static final BooleanConfigParam IGNORE_INVALID_TOPOLOGY_IN_POST_PLANNER =
+        new BooleanConfigParam(ConnectionProperties.IGNORE_INVALID_TOPOLOGY_IN_POST_PLANNER,
+            false,
+            true);
+
+    public static final BooleanConfigParam ENABLE_DML_FOR_NO_PARTITION_KEY_TABLE =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_DML_FOR_NO_PARTITION_KEY_TABLE,
+            false,
+            true);
+
     public static final IntConfigParam DRDS_TO_AUTO_DB_PARTITIONS_DEFAULT = new IntConfigParam(
         ConnectionProperties.DRDS_TO_AUTO_DB_PARTITIONS_DEFAULT,
         1,
@@ -6126,11 +8380,169 @@ public class ConnectionParams {
         8,
         true
     );
+
     public static final BooleanConfigParam EXECUTE_AFTER_DRDS_AUTO_MODE_CONVERSION = new BooleanConfigParam(
         ConnectionProperties.EXECUTE_AFTER_DRDS_AUTO_MODE_CONVERSION,
         false,
         true
     );
+
+    public static final BooleanConfigParam GROUP_SEQ_AS_DEFAULT = new BooleanConfigParam(
+        ConnectionProperties.GROUP_SEQ_AS_DEFAULT,
+        false,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_COLUMNAR_SCAN_COST = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_COLUMNAR_SCAN_COST,
+        false,
+        true
+    );
+
+    public static final IntConfigParam CCI_ADVISOR_DEFAULT_PARTITIONS = new IntConfigParam(
+        ConnectionProperties.CCI_ADVISOR_DEFAULT_PARTITIONS,
+        1,
+        Integer.MAX_VALUE,
+        16,
+        true
+    );
+
+    public static final BooleanConfigParam CCI_ADVISOR_FAST_ENUMERATION = new BooleanConfigParam(
+        ConnectionProperties.CCI_ADVISOR_FAST_ENUMERATION,
+        true,
+        true
+    );
+
+    public static final BooleanConfigParam CCI_ADVISOR_PREFER_PARTITION_WISE = new BooleanConfigParam(
+        ConnectionProperties.CCI_ADVISOR_PREFER_PARTITION_WISE,
+        true,
+        true
+    );
+
+    public static final BooleanConfigParam ASYNC_LOAD_GDN_DDL_SQL_ENABLE = new BooleanConfigParam(
+        ConnectionProperties.ASYNC_LOAD_GDN_DDL_SQL_ENABLE,
+        false,
+        true
+    );
+
+    public static final StringConfigParam ASYNC_LOAD_GDN_DDL_SQL_STATUS = new StringConfigParam(
+        ConnectionProperties.ASYNC_LOAD_GDN_DDL_SQL_STATUS,
+        DDL_LOAD_STATUS_STOPPED,
+        true
+    );
+
+    public static final IntConfigParam ASYNC_LOAD_GDN_DDL_SQL_INTERVAL_MS = new IntConfigParam(
+        ConnectionProperties.ASYNC_LOAD_GDN_DDL_SQL_INTERVAL_MS,
+        1,
+        Integer.MAX_VALUE,
+        1000,
+        true
+    );
+    public static final BooleanConfigParam ASYNC_LOAD_GDN_DDL_SQL_AUTO_INIT_CHECKPOINT_ENABLE = new BooleanConfigParam(
+        ConnectionProperties.ASYNC_LOAD_GDN_DDL_SQL_AUTO_INIT_CHECKPOINT_ENABLE,
+        false,
+        true
+    );
+
+    public static final IntConfigParam ASYNC_LOAD_GDN_DDL_SQL_BATCH_SIZE = new IntConfigParam(
+        ConnectionProperties.ASYNC_LOAD_GDN_DDL_SQL_BATCH_SIZE,
+        1,
+        Integer.MAX_VALUE,
+        100,
+        true
+    );
+
+    public static final LongConfigParam ASYNC_LOAD_GDN_DDL_SQL_ID = new LongConfigParam(
+        ConnectionProperties.ASYNC_LOAD_GDN_DDL_SQL_ID,
+        1L,
+        Long.MAX_VALUE,
+        -1L,
+        true
+    );
+
+    public static final BooleanConfigParam ASYNC_LOAD_GDN_DDL_DEBUG_DUMP_TABLE_META = new BooleanConfigParam(
+        ConnectionProperties.ASYNC_LOAD_GDN_DDL_DEBUG_DUMP_TABLE_META,
+        false,
+        true
+    );
+
+    public static final StringConfigParam ASYNC_LOAD_GDN_DDL_SQL_WITHOUT_HINTS_SQL_KINDS = new StringConfigParam(
+        ConnectionProperties.ASYNC_LOAD_GDN_DDL_SQL_WITHOUT_HINTS_SQL_KINDS,
+        "",
+        true
+    );
+
+    public static final IntConfigParam ASYNC_LOAD_GDN_DDL_SQL_WAIT_ALIGN_TIMEOUT_SECONDS = new IntConfigParam(
+        ConnectionProperties.ASYNC_LOAD_GDN_DDL_SQL_WAIT_ALIGN_TIMEOUT_SECONDS,
+        1,
+        Integer.MAX_VALUE,
+        600,
+        true
+    );
+
+    public static final BooleanConfigParam ASYNC_LOAD_GDN_DDL_SQL_IN_SHADOW_MODE_ENABLE = new BooleanConfigParam(
+        ConnectionProperties.ASYNC_LOAD_GDN_DDL_SQL_IN_SHADOW_MODE_ENABLE,
+        false,
+        true
+    );
+
+    public static final BooleanConfigParam ASYNC_LOAD_GDN_DDL_INJECT_DUPLICATE_TROUBLE_ENABLE = new BooleanConfigParam(
+        ConnectionProperties.ASYNC_LOAD_GDN_DDL_INJECT_DUPLICATE_TROUBLE_ENABLE,
+        false,
+        true
+    );
+
+    public static final StringConfigParam ASYNC_LOAD_GDN_DDL_SQL_CONNECTION_INIT_SQLS = new StringConfigParam(
+        ConnectionProperties.ASYNC_LOAD_GDN_DDL_SQL_CONNECTION_INIT_SQLS,
+        "",
+        true
+    );
+
+    public static final BooleanConfigParam CDC_DDL_MARK_WITH_DETAIL_META_ENABLE = new BooleanConfigParam(
+        ConnectionProperties.CDC_DDL_MARK_WITH_DETAIL_META_ENABLE,
+        false,
+        true
+    );
+    public static final BooleanConfigParam ENABLE_CHECK_TABLE_META_VERSION = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_CHECK_TABLE_META_VERSION,
+        true,
+        true
+    );
+    public static final BooleanConfigParam ENABLE_CCL_DETECT =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_CCL_DETECT, true, true);
+
+    public static final IntConfigParam CCL_DETECT_INTERVAL =
+        new IntConfigParam(ConnectionProperties.CCL_DETECT_INTERVAL, 0, Integer.MAX_VALUE, 5, true);
+
+    public static final StringConfigParam CCL_DETECT_LEVEL =
+        new StringConfigParam(ConnectionProperties.CCL_DETECT_LEVEL, "dql,dml,ddl", true);
+
+    public static final IntConfigParam CCL_DETECT_CONNECTION_LIMIT =
+        new IntConfigParam(ConnectionProperties.CCL_DETECT_CONNECTION_LIMIT, 0, Integer.MAX_VALUE, 50, true);
+
+    public static final IntConfigParam CCL_DETECT_DN_DELAY_INTERVAL =
+        new IntConfigParam(ConnectionProperties.CCL_DETECT_DN_DELAY_INTERVAL, 0, Integer.MAX_VALUE, 20, true);
+
+    public static final IntConfigParam CCL_DETECT_KILL_BATCH =
+        new IntConfigParam(ConnectionProperties.CCL_DETECT_KILL_BATCH, 0, Integer.MAX_VALUE, 60, true);
+
+    public static final IntConfigParam CCL_DETECT_SLOW_THRESHOLD =
+        new IntConfigParam(ConnectionProperties.CCL_DETECT_SLOW_THRESHOLD, 0, Integer.MAX_VALUE, 3, true);
+
+    public static final IntConfigParam CCL_DETECT_MAX_THRESHOLD =
+        new IntConfigParam(ConnectionProperties.CCL_DETECT_MAX_THRESHOLD, 0, Integer.MAX_VALUE, 300, true);
+
+    public static final IntConfigParam CCL_DETECT_KILL_MIN_CONCURRENCY =
+        new IntConfigParam(ConnectionProperties.CCL_DETECT_KILL_MIN_CONCURRENCY, 0, Integer.MAX_VALUE, 1, true);
+
+    public static final StringConfigParam CCL_DETECT_ROOT_COLUMN =
+        new StringConfigParam(ConnectionProperties.CCL_DETECT_ROOT_COLUMN, "UNDETERMINED_COLUMN", true);
+
+    public static final IntConfigParam CCL_DETECT_DN_RULE_EXPIRE_TIME =
+        new IntConfigParam(ConnectionProperties.CCL_DETECT_DN_RULE_EXPIRE_TIME, 0, Integer.MAX_VALUE, 21600, true);
+
+    public static final BooleanConfigParam CCL_DETECT_DRY_RUN =
+        new BooleanConfigParam(ConnectionProperties.CCL_DETECT_DRY_RUN, true, true);
 
     /**
      * jdbc prepare是否进行权限检查
@@ -6144,4 +8556,456 @@ public class ConnectionParams {
             2,
             2,
             true);
+
+    public static final BooleanConfigParam ENABLE_DRDS_REX_ROUTE = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_DRDS_REX_ROUTE,
+        false,
+        true);
+
+    public static final BooleanConfigParam ENABLE_DRDS_OPTIMIZE_REX_ROUTE = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_DRDS_OPTIMIZE_REX_ROUTE,
+        false,
+        true);
+
+    public static final BooleanConfigParam ENABLE_QUERY_MEMORY_TRACKER =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_QUERY_MEMORY_TRACKER,
+            true,
+            true);
+
+    public static final BooleanConfigParam ENABLE_SHOW_CREATE_TABLE_FOR_EXPORT = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_SHOW_CREATE_TABLE_FOR_EXPORT,
+        true,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_USERNAME_PUSHDOWN =
+        new BooleanConfigParam(ConnectionProperties.ENABLE_USERNAME_PUSHDOWN,
+            false, true);
+
+    public static final BooleanConfigParam ENABLE_OUTPUT_STORAGE_LABEL = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_OUTPUT_STORAGE_LABEL,
+        true,
+        true
+    );
+
+    public static final IntConfigParam LOGIN_ERROR_DEFAULT_MAX_COUNT = new IntConfigParam(
+        ConnectionProperties.LOGIN_ERROR_DEFAULT_MAX_COUNT,
+        0,
+        Integer.MAX_VALUE,
+        0,
+        true
+    );
+
+    public static final IntConfigParam LOGIN_ERROR_DEFAULT_EXPIRE_SECONDS = new IntConfigParam(
+        ConnectionProperties.LOGIN_ERROR_DEFAULT_EXPIRE_SECONDS,
+        0,
+        Integer.MAX_VALUE,
+        0,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_MERGE_LIMIT_SORT = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_MERGE_LIMIT_SORT,
+        true,
+        true
+    );
+
+    public static final BooleanConfigParam BINLOG_DUMP_ARCHIVE_IGNORE_ENABLED = new BooleanConfigParam(
+        ConnectionProperties.BINLOG_DUMP_ARCHIVE_IGNORE_ENABLED,
+        false,
+        true);
+
+    public static final BooleanConfigParam BINLOG_DUMP_ROWS_QUERY_IGNORE_ENABLED = new BooleanConfigParam(
+        ConnectionProperties.BINLOG_DUMP_ROWS_QUERY_IGNORE_ENABLED,
+        false,
+        true);
+
+    public static final BooleanConfigParam BINLOG_DUMP_IGNORE_BY_SET_FLAG = new BooleanConfigParam(
+        ConnectionProperties.BINLOG_DUMP_IGNORE_BY_SET_FLAG,
+        false,
+        true);
+
+    public static final StringConfigParam BINLOG_DUMP_IGNORE_TABLE = new StringConfigParam(
+        ConnectionProperties.BINLOG_DUMP_IGNORE_TABLE,
+        "",
+        true);
+
+    public static final StringConfigParam BINLOG_DUMP_DO_TABLE = new StringConfigParam(
+        ConnectionProperties.BINLOG_DUMP_DO_TABLE,
+        "",
+        true);
+
+    public static final StringConfigParam BINLOG_DUMP_FILTER_USER_CONFIG = new StringConfigParam(
+        ConnectionProperties.BINLOG_DUMP_FILTER_USER_CONFIG,
+        "",
+        true
+    );
+
+    public static final IntConfigParam BINLOG_GET_DUMPER_SOCKET_TIME_MILLISECOND = new IntConfigParam(
+        ConnectionProperties.BINLOG_GET_DUMPER_SOCKET_TIME_MILLISECOND,
+        0,
+        Integer.MAX_VALUE,
+        4000,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_MULTI_TABLE_UPDATE_MODIFY_GSI_SHARDING_KEY = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_MULTI_TABLE_UPDATE_MODIFY_GSI_SHARDING_KEY,
+        true,
+        true
+    );
+
+    public static final BooleanConfigParam LIMIT_TDDL_LOG_SQL_PARAMS_LENGTH = new BooleanConfigParam(
+        ConnectionProperties.LIMIT_TDDL_LOG_SQL_PARAMS_LENGTH,
+        true,
+        true
+    );
+
+    //just for testcase, please don't set this param in production
+    public static final IntConfigParam PHYSICAL_BACKFILL_TASK_INJECT_FAIL_TIME = new IntConfigParam(
+        ConnectionProperties.PHYSICAL_BACKFILL_TASK_INJECT_FAIL_TIME,
+        0,
+        Integer.MAX_VALUE,
+        0,
+        true
+    );
+
+    public static final BooleanConfigParam FORCE_DOWNGRADE_RW_LOCK_FOR_TABLEGROUP = new BooleanConfigParam(
+        ConnectionProperties.FORCE_DOWNGRADE_RW_LOCK_FOR_TABLEGROUP,
+        false,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_MOVE_PARTITIONGROUP_CONCURRENTLY = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_MOVE_PARTITIONGROUP_CONCURRENTLY,
+        false,
+        true
+    );
+
+    /**
+     * Allow using timestamp column in range/list partition
+     */
+    public static final BooleanConfigParam ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION =
+        new BooleanConfigParam(ConnectionProperties.ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION,
+            false,
+            false);
+
+    public static final BooleanConfigParam ALLOW_USING_SPECIFY_PARTITIONS_ON_SINGLE_TABLE = new BooleanConfigParam(
+        ConnectionProperties.ALLOW_USING_SPECIFY_PARTITIONS_ON_SINGLE_TABLE,
+        false,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_COLLECT_CARDINALITY_FROM_DN = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_COLLECT_CARDINALITY_FROM_DN,
+        true,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_COLLECT_CARDINALITY_FROM_DN_FOR_GSI = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_COLLECT_CARDINALITY_FROM_DN_FOR_GSI,
+        true,
+        true
+    );
+
+    public static final IntConfigParam TTL_SCHEDULED_JOB_USE_DEBUG_FIRE_TIME = new IntConfigParam(
+        ConnectionProperties.TTL_SCHEDULED_JOB_USE_DEBUG_FIRE_TIME,
+        0,
+        Integer.MAX_VALUE,
+        0,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_RANDOM_PARTITION_PLACEMENT = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_RANDOM_PARTITION_PLACEMENT,
+        true,
+        true
+    );
+    /**
+     * Label if show partitions in logicalview of all autodb-tables for show create table
+     * <pre>
+     *     only used for test cases
+     * </pre>
+     */
+    public static final BooleanConfigParam SHOW_PARTITIONS_IN_LOGICALVIEW_FOR_SHOW_CREATE_TABLE =
+        new BooleanConfigParam(
+            ConnectionProperties.SHOW_PARTITIONS_IN_LOGICALVIEW_FOR_SHOW_CREATE_TABLE,
+            false,
+            true
+        );
+
+    public static final BooleanConfigParam TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK = new BooleanConfigParam(
+        ConnectionProperties.TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK,
+        false,
+        true
+    );
+
+    /**
+     * The delay time in seconds after the ttl definition is modified
+     */
+    public static final LongConfigParam TTL_WARNING_DELAY_SECONDS_AFTER_TTL_MODIFIED = new LongConfigParam(
+        ConnectionProperties.TTL_WARNING_DELAY_SECONDS_AFTER_TTL_MODIFIED,
+        0L,
+        Long.MAX_VALUE,
+        86400L,
+        true
+    );
+
+    /**
+     * The delay time in seconds after the ttl definition is modified
+     */
+    public static final StringConfigParam TTL_DEBUG_WARNING_SCAN_TTLINFO_MODIFIED_TIME = new StringConfigParam(
+        ConnectionProperties.TTL_DEBUG_WARNING_SCAN_TTLINFO_MODIFIED_TIME,
+        "",
+        true);
+
+    /**
+     * The delay time in seconds after the ttl definition is modified
+     */
+    public static final StringConfigParam TTL_DEBUG_WARNING_SCAN_TARGET_SCHEMA = new StringConfigParam(
+        ConnectionProperties.TTL_DEBUG_WARNING_SCAN_TARGET_SCHEMA,
+        "",
+        true);
+
+    /**
+     * The delay time in seconds after the ttl definition is modified
+     */
+    public static final StringConfigParam TTL_DEBUG_WARNING_SCAN_TARGET_TABLE = new StringConfigParam(
+        ConnectionProperties.TTL_DEBUG_WARNING_SCAN_TARGET_TABLE,
+        "",
+        true);
+
+    public static final BooleanConfigParam ENABLE_TRANSPARENT_TTL = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_TRANSPARENT_TTL,
+        true,
+        true
+    );
+
+    /**
+     * HOT_AND_COLD
+     * COLD_ONLY
+     * HOT_ONLY
+     */
+    public static final StringConfigParam TTL_QUERY_TYPE = new StringConfigParam(
+        ConnectionProperties.TTL_QUERY_TYPE,
+        "",
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_TTL_HYBRID_SCHEDULE = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_TTL_HYBRID_SCHEDULE,
+        false,
+        true
+    );
+
+    public static final BooleanConfigParam FORCE_TTL_COL_NOT_NULL = new BooleanConfigParam(
+        ConnectionProperties.FORCE_TTL_COL_NOT_NULL,
+        false,
+        true
+    );
+
+    public static final BooleanConfigParam FORCE_TTL_TRANSPARENT_QUERY_WORKLOAD = new BooleanConfigParam(
+        ConnectionProperties.FORCE_TTL_TRANSPARENT_QUERY_WORKLOAD,
+        true,
+        true
+    );
+
+    public static final BooleanConfigParam IGNORE_TTL_COL_NULLABLE = new BooleanConfigParam(
+        ConnectionProperties.IGNORE_TTL_COL_NULLABLE,
+        false,
+        true
+    );
+
+    public static final BooleanConfigParam ALLOW_TTL_HYBRID_SCHEDULE_WITHOUT_COLUMNAR_NODE = new BooleanConfigParam(
+        ConnectionProperties.ALLOW_TTL_HYBRID_SCHEDULE_WITHOUT_COLUMNAR_NODE,
+        false,
+        true
+    );
+
+    public static final BooleanConfigParam TTL_HYBRID_AUTO_CREATE_ARCHIVE_CCI = new BooleanConfigParam(
+        ConnectionProperties.TTL_HYBRID_AUTO_CREATE_ARCHIVE_CCI,
+        true,
+        true
+    );
+
+    public static final BooleanConfigParam TTL_ENABLE_PLAN_PRUNER = new BooleanConfigParam(
+        ConnectionProperties.TTL_ENABLE_PLAN_PRUNER,
+        true,
+        true
+    );
+    public static final BooleanConfigParam ENCDB_ENABLE_KMS_MODE = new BooleanConfigParam(
+        ConnectionProperties.ENCDB_ENABLE_KMS_MODE,
+        true,
+        true
+    );
+
+    public static final StringConfigParam ENCJDBC_KMS_MIN_VERSION = new StringConfigParam(
+        ConnectionProperties.ENCJDBC_KMS_MIN_VERSION,
+        "",
+        true
+    );
+
+    public static final BooleanConfigParam ENCDB_ENABLE_RANDOM_MEK = new BooleanConfigParam(
+        ConnectionProperties.ENCDB_ENABLE_RANDOM_MEK,
+        true,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_INPLACE_BACKFILL = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_INPLACE_BACKFILL,
+        true,
+        true
+    );
+
+    public static final BooleanConfigParam ENABLE_HASH_RANGE_CHECK = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_HASH_RANGE_CHECK,
+        true,
+        true
+    );
+
+    // support datatype for inplace backfill
+    // 1；number 10:string 100:date 1000:binary
+    //11: number+string 101: number+date 110: string+date 1001: number+binary  1111: string+date+binary+number
+    public static final IntConfigParam SUPPORT_DATATYPE_FOR_INPLACE_BACKFILL = new IntConfigParam(
+        ConnectionProperties.SUPPORT_DATATYPE_FOR_INPLACE_BACKFILL,
+        0,
+        Integer.MAX_VALUE,
+        1,
+        true
+    );
+
+    /**
+     * batch size for inplace backfill procedure
+     * 默认最大 10240 rows/batch
+     */
+    public static final IntConfigParam INPLACE_BACKFILL_BATCH_SIZE_MAX = new IntConfigParam(
+        ConnectionProperties.INPLACE_BACKFILL_BATCH_SIZE_MAX,
+        1,
+        100 * 1024 * 1024,
+        10 * 1024,
+        false);
+
+    public static final IntConfigParam INPLACE_BACKFILL_BEFORE_FIRST_CATCHUP_SUSPEND_DEBUG = new IntConfigParam(
+        ConnectionProperties.INPLACE_BACKFILL_BEFORE_FIRST_CATCHUP_SUSPEND_DEBUG,
+        0,
+        48 * 3600,
+        0,
+        false);
+
+    public static final FloatConfigParam COLUMNAR_SCAN_MAXIMUM_MEMORY_PERMITS_RATIO = new FloatConfigParam(
+        ConnectionProperties.COLUMNAR_SCAN_MAXIMUM_MEMORY_PERMITS_RATIO,
+        0.0f,
+        1.0f,
+        0.04f,
+        true
+    );
+
+    public static final IntConfigParam COLUMNAR_SCAN_GRANULARITY_REDUCTION_SCALE = new IntConfigParam(
+        ConnectionProperties.COLUMNAR_SCAN_GRANULARITY_REDUCTION_SCALE,
+        1,
+        Integer.MAX_VALUE,
+        4,
+        true
+    );
+
+    public static final FloatConfigParam COLUMNAR_SCAN_THREAD_LIMIT_REDUCTION_FACTOR = new FloatConfigParam(
+        ConnectionProperties.COLUMNAR_SCAN_THREAD_LIMIT_REDUCTION_FACTOR,
+        0.0f,
+        1.0f,
+        0.8f,
+        true
+    );
+
+    public static final IntConfigParam ADAPTIVE_COLUMNAR_SCAN_MONITOR_MAXIMUM_SIZE = new IntConfigParam(
+        ConnectionProperties.ADAPTIVE_COLUMNAR_SCAN_MONITOR_MAXIMUM_SIZE,
+        0,
+        Integer.MAX_VALUE,
+        4096,
+        true
+    );
+
+    public static final IntConfigParam COLUMNAR_SCAN_MAX_BUFFER_SIZE = new IntConfigParam(
+        ConnectionProperties.COLUMNAR_SCAN_MAX_BUFFER_SIZE,
+        4 * 1024,
+        Integer.MAX_VALUE - 1024,
+        Integer.MAX_VALUE - 1024,
+        true
+    );
+
+    public static final IntConfigParam COLUMNAR_SCAN_MAX_DISK_RANGE_SIZE = new IntConfigParam(
+        ConnectionProperties.COLUMNAR_SCAN_MAX_DISK_RANGE_SIZE,
+        4 * 1024,
+        Integer.MAX_VALUE - 1024,
+        Integer.MAX_VALUE - 1024,
+        true
+    );
+    public static final BooleanConfigParam ENABLE_NL2SQL = new BooleanConfigParam(
+        ConnectionProperties.ENABLE_NL2SQL,
+        false,
+        true
+    );
+
+    public static final StringConfigParam NL2SQL_MODEL_NAME = new StringConfigParam(
+        ConnectionProperties.NL2SQL_MODEL_NAME,
+        "",
+        true
+    );
+
+    public static final IntConfigParam NL2SQL_MAX_HISTORY = new IntConfigParam(
+        ConnectionProperties.NL2SQL_MAX_HISTORY,
+        1,
+        1000,
+        200,
+        true
+    );
+
+    public static final IntConfigParam NL2SQL_MAX_ITERATIONS = new IntConfigParam(
+        ConnectionProperties.NL2SQL_MAX_ITERATIONS,
+        1,
+        500,
+        100,
+        true
+    );
+
+    public static final StringConfigParam NL2SQL_ALLOWED_SQL_TYPES = new StringConfigParam(
+        ConnectionProperties.NL2SQL_ALLOWED_SQL_TYPES,
+        "READ_ONLY",
+        true
+    );
+
+    public static final IntConfigParam NL2SQL_QUERY_TIMEOUT_MS = new IntConfigParam(
+        ConnectionProperties.NL2SQL_QUERY_TIMEOUT_MS,
+        1000,
+        300000,
+        30000,
+        true
+    );
+
+    public static final IntConfigParam NL2SQL_MAX_SCAN_ROWS = new IntConfigParam(
+        ConnectionProperties.NL2SQL_MAX_SCAN_ROWS,
+        1000,
+        100000000,
+        1000000,
+        true
+    );
+
+    public static final BooleanConfigParam NL2SQL_READ_USE_MASTER = new BooleanConfigParam(
+        ConnectionProperties.NL2SQL_READ_USE_MASTER,
+        true,
+        true
+    );
+
+    public static final BooleanConfigParam NL2SQL_SHOW_STEPS = new BooleanConfigParam(
+        ConnectionProperties.NL2SQL_SHOW_STEPS,
+        true,
+        true
+    );
+
+    public static final IntConfigParam NL2SQL_MAX_CONTEXT_TOKENS = new IntConfigParam(
+        ConnectionProperties.NL2SQL_MAX_CONTEXT_TOKENS,
+        8000,
+        1000000,
+        200000,
+        true
+    );
 }

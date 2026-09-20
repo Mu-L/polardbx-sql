@@ -22,7 +22,7 @@ import com.alibaba.polardbx.optimizer.ccl.common.CclRuleInfo;
 import com.alibaba.polardbx.optimizer.ccl.service.impl.CclConfigService;
 import com.alibaba.polardbx.optimizer.ccl.service.ICclConfigService;
 import com.alibaba.polardbx.optimizer.ccl.service.ICclService;
-import com.alibaba.polardbx.optimizer.ccl.service.ICclTriggerService;
+import com.alibaba.polardbx.optimizer.ccl.service.ICclBlockerService;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -44,7 +44,7 @@ public class CclConfigTest {
     public void before() {
         cclConfigService = new CclConfigService() {
             @Override
-            public void init(ICclService cclService, ICclTriggerService cclTriggerService) {
+            public void init(ICclService cclService, ICclBlockerService cclBlockerService) {
                 this.cclService = cclService;
             }
         };

@@ -1,0 +1,41 @@
+SQL:
+  - sql: |
+      show routing_rules order by id
+    plan: |
+      memsort(sort="id asc")
+        logicalshow(sql="show routing_rules")
+  - sql: |
+      show routing_rules order by id desc limit 10
+    plan: |
+      topn(sort="id desc", offset=0, fetch=10)
+        logicalshow(sql="show routing_rules")
+  - sql: |
+      show routing_rules where hit_count > 100 limit 10
+    plan: |
+      limit(offset=0, fetch=10)
+        filter(condition="hit_count > 100")
+          logicalshow(sql="show routing_rules")
+  - sql: |
+      select * from information_schema.routing_rules order by id
+    plan: |
+      memsort(sort="id asc")
+        virtualview(virtualviewtype="routing_rules")
+  - sql: |
+      select CREATE_TIME, USER_NAME from information_schema.routing_rules order by id desc limit 10
+    plan: |
+      project(create_time="create_time", user_name="user_name")
+        topn(sort="id desc", offset=0, fetch=?0)
+          project(create_time="create_time", user_name="user_name", id="id")
+            virtualview(virtualviewtype="routing_rules")
+  - sql: |
+        select CREATE_TIME, USER_NAME from information_schema.routing_rules where RULE_NAME like '%x' limit 10
+    plan: |
+      limit(offset=0, fetch=?1)
+        project(create_time="create_time", user_name="user_name")
+          filter(condition="rule_name like ?0")
+            virtualview(virtualviewtype="routing_rules")
+DDL:
+STATISTICS:
+CONFIG:
+  defaltxxAPPName.isNew:
+    true

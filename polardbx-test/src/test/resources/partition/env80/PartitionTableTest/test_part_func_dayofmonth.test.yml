@@ -2,7 +2,7 @@
 ## test create table(date)
 CREATE TABLE `d1` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(DAYOFMONTH(`d`))
 PARTITIONS 16;
 show create table d1;
@@ -36,7 +36,7 @@ explain select * from d1 where d >= '2022-07-18' and d <= '2022-07-22' order by 
 ## test create table (datetime)
 CREATE TABLE `d2` (
 `dt` datetime DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(DAYOFMONTH(`dt`))
 PARTITIONS 16;
 show create table d2;
@@ -56,7 +56,7 @@ explain select * from d2 where dt >= '2022-07-18' and dt <= '2022-07-22' order b
 ## test range partition(date)
 CREATE TABLE `d3` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY RANGE(DAYOFMONTH(`d`))
 (PARTITION `p0` VALUES LESS THAN (7) ENGINE = InnoDB,
 PARTITION `p1` VALUES LESS THAN (14) ENGINE = InnoDB,
@@ -90,7 +90,7 @@ explain select * from d3 where d < '2022-07-07' and d >= '2022-07-01' order by d
 ## test range partition(datetime)
 CREATE TABLE `d4` (
 `dt` datetime DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY RANGE(DAYOFMONTH(`dt`))
 (PARTITION `p0` VALUES LESS THAN (7) ENGINE = InnoDB,
 PARTITION `p1` VALUES LESS THAN (14) ENGINE = InnoDB,
@@ -124,7 +124,7 @@ explain select * from d4 where dt < '2022-07-07' and dt >= '2022-07-01' order by
 ## test list
 CREATE TABLE `d5` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY LIST(DAYOFMONTH(`d`))
 (PARTITION `p0` VALUES IN (1,2,3,4,5,6,7) ENGINE = InnoDB,
 PARTITION `p1` VALUES IN (8,9,10,11,12,13,14) ENGINE = InnoDB,
@@ -159,7 +159,7 @@ explain select * from d5 where d < '2022-07-08' and d >= '2022-07-01' order by d
 ## test range select on leap year
 CREATE TABLE `d6` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(DAYOFMONTH(`d`))
 PARTITIONS 16;
 ## prepare data

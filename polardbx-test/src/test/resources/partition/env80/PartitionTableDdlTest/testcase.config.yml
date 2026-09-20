@@ -28,3 +28,4 @@ test_drop_idx_with_cgsi
 test_alter_repartition_with_ugsi
 test_create_tb_with_gsi2
 test_add_global_index_failed
+test_enable_auto_shard_key_index

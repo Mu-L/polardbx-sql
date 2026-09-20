@@ -61,6 +61,7 @@ public class TruncateTableWithCciTest extends DDLBaseNewDBTestCase {
     @Test
     public void testTruncate_table_with_cci_check_cdc_mark() {
         JdbcUtil.executeUpdateSuccess(tddlConnection, "SET FORBID_DDL_WITH_CCI = false");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "SET MAX_CCI_COUNT = 2");
 
         final Random random = new Random();
         final Formatter formatter = new Formatter();
@@ -86,12 +87,112 @@ public class TruncateTableWithCciTest extends DDLBaseNewDBTestCase {
             createCciSuccess(sqlCreateTable1);
 
             // Drop table
-            final String sqlDdl1 = String.format("truncate table %s ", cciTestTableName1);
+            final String sqlDdl1 = String.format("truncate table `%s`", cciTestTableName1);
             JdbcUtil.executeUpdateSuccess(tddlConnection, sqlDdl1);
             checkLatestColumnarSchemaEvolutionRecordByDdlSql(sqlDdl1,
                 getDdlSchema(),
                 cciTestTableName1,
                 cciTestIndexName1,
+                DdlType.TRUNCATE_TABLE,
+                ColumnarTableStatus.PUBLIC);
+
+        } catch (Exception e) {
+            throw new RuntimeException("sql statement execution failed!", e);
+        }
+    }
+
+    @Test
+    public void testTruncate_table_with_multi_cci_check_cdc_mark() {
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "SET FORBID_DDL_WITH_CCI = false");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "SET MAX_CCI_COUNT = 2");
+
+        final Random random = new Random();
+        final Formatter formatter = new Formatter();
+        final String suffix = "__" + formatter.format("%04x", random.nextInt(0x10000));
+        final String cciTestTableName1 = PRIMARY_TABLE_NAME1 + suffix;
+        final String cciTestIndexName1 = INDEX_NAME1 + suffix;
+        final String cciTestIndexName2 = INDEX_NAME2 + suffix;
+
+        try {
+            final String creatTableTmpl = "CREATE TABLE `%s` ( \n"
+                + "    `id` bigint(11) NOT NULL AUTO_INCREMENT BY GROUP, \n"
+                + "    `order_id` varchar(20) DEFAULT NULL, \n"
+                + "    `buyer_id` varchar(20) DEFAULT NULL, \n"
+                + "    `order_snapshot` longtext, \n"
+                + "    PRIMARY KEY (`id`), \n"
+                + "    CLUSTERED COLUMNAR INDEX `%s`(`buyer_id`) PARTITION BY KEY(`id`),\n"
+                + "    CLUSTERED COLUMNAR INDEX `%s`(`order_id`) PARTITION BY KEY(`id`)\n"
+                + ") ENGINE = InnoDB CHARSET = utf8 PARTITION BY KEY(`order_id`);\n";
+            final String sqlCreateTable1 = String.format(
+                creatTableTmpl,
+                cciTestTableName1,
+                cciTestIndexName1,
+                cciTestIndexName2);
+
+            // Create table with cci
+            dropTableIfExists(cciTestTableName1);
+            createCciSuccess(sqlCreateTable1);
+
+            // Drop table
+            final String sqlDdl1 = String.format("truncate table `%s`", cciTestTableName1);
+            JdbcUtil.executeUpdateSuccess(tddlConnection, sqlDdl1);
+            checkLatestColumnarSchemaEvolutionRecordByDdlSql(sqlDdl1,
+                getDdlSchema(),
+                cciTestTableName1,
+                cciTestIndexName1,
+                DdlType.TRUNCATE_TABLE,
+                ColumnarTableStatus.PUBLIC);
+            checkLatestColumnarSchemaEvolutionRecordByDdlSql(sqlDdl1,
+                getDdlSchema(),
+                cciTestTableName1,
+                cciTestIndexName2,
+                DdlType.TRUNCATE_TABLE,
+                ColumnarTableStatus.PUBLIC);
+
+        } catch (Exception e) {
+            throw new RuntimeException("sql statement execution failed!", e);
+        }
+    }
+
+    @Test
+    public void testTruncate_table_with_gsi_cci_check_cdc_mark() {
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "SET FORBID_DDL_WITH_CCI = false");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "SET MAX_CCI_COUNT = 2");
+
+        final Random random = new Random();
+        final Formatter formatter = new Formatter();
+        final String suffix = "__" + formatter.format("%04x", random.nextInt(0x10000));
+        final String cciTestTableName1 = PRIMARY_TABLE_NAME1 + suffix;
+        final String cciTestIndexName1 = INDEX_NAME1 + suffix;
+        final String cciTestIndexName2 = INDEX_NAME2 + suffix;
+
+        try {
+            final String creatTableTmpl = "CREATE TABLE `%s` ( \n"
+                + "    `id` bigint(11) NOT NULL AUTO_INCREMENT BY GROUP, \n"
+                + "    `order_id` varchar(20) DEFAULT NULL, \n"
+                + "    `buyer_id` varchar(20) DEFAULT NULL, \n"
+                + "    `order_snapshot` longtext, \n"
+                + "    PRIMARY KEY (`id`), \n"
+                + "    GLOBAL INDEX `%s`(`id`) PARTITION BY KEY(`id`),\n"
+                + "    CLUSTERED COLUMNAR INDEX `%s`(`order_id`) PARTITION BY KEY(`id`)\n"
+                + ") ENGINE = InnoDB CHARSET = utf8 PARTITION BY KEY(`order_id`);\n";
+            final String sqlCreateTable1 = String.format(
+                creatTableTmpl,
+                cciTestTableName1,
+                cciTestIndexName1,
+                cciTestIndexName2);
+
+            // Create table with cci
+            dropTableIfExists(cciTestTableName1);
+            createCciSuccess(sqlCreateTable1);
+
+            // Drop table
+            final String sqlDdl1 = String.format("truncate table `%s`", cciTestTableName1);
+            JdbcUtil.executeUpdateSuccess(tddlConnection, sqlDdl1);
+            checkLatestColumnarSchemaEvolutionRecordByDdlSql(sqlDdl1,
+                getDdlSchema(),
+                cciTestTableName1,
+                cciTestIndexName2,
                 DdlType.TRUNCATE_TABLE,
                 ColumnarTableStatus.PUBLIC);
 

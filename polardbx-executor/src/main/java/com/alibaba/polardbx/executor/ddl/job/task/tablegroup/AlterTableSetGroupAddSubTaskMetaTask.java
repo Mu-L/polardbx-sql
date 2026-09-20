@@ -51,7 +51,7 @@ public class AlterTableSetGroupAddSubTaskMetaTask extends AlterTableGroupAddSubT
                                                 String targetTableGroupName,
                                                 String curJoinGroup) {
         super(schemaName, tableName, tableGroupName, tableGroupId, sourceSql, status, type, logTableRec, partRecList,
-            subPartRecInfos);
+            subPartRecInfos, null, null, false);
         this.targetTableGroupName = targetTableGroupName;
         this.curJoinGroup = curJoinGroup;
     }

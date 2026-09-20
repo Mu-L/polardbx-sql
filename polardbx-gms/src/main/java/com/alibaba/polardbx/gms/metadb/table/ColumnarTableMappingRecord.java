@@ -27,12 +27,15 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class ColumnarTableMappingRecord implements SystemTableRecord {
+    public static final String TYPE_EXTERNAL_COLUMN = "external_column";
+
     public long tableId;
     public String tableSchema;
     public String tableName;
     public String indexName;
     public long latestVersionId;
     public String status;
+    public String info;
     public String extra;
     public String type;
 
@@ -56,6 +59,7 @@ public class ColumnarTableMappingRecord implements SystemTableRecord {
         this.indexName = rs.getString("index_name");
         this.latestVersionId = rs.getLong("latest_version_id");
         this.status = rs.getString("status");
+        this.info = rs.getString("info");
         this.extra = rs.getString("extra");
         this.type = rs.getString("type");
         return this;
@@ -69,6 +73,7 @@ public class ColumnarTableMappingRecord implements SystemTableRecord {
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.indexName);
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setLong, this.latestVersionId);
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.status);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.info);
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.extra);
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.type);
         return params;

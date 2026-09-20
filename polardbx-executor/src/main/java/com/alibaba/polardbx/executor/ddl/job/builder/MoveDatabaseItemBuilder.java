@@ -21,8 +21,11 @@ import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.ExecutorHelper;
 import com.alibaba.polardbx.executor.cursor.Cursor;
+import com.alibaba.polardbx.executor.ddl.util.ChangeSetUtils;
 import com.alibaba.polardbx.executor.partitionmanagement.AlterTableGroupUtils;
+import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.config.table.ComplexTaskMetaManager;
 import com.alibaba.polardbx.optimizer.config.table.ScaleOutPlanUtil;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -33,10 +36,18 @@ import com.alibaba.polardbx.optimizer.sharding.DataNodeChooser;
 import com.alibaba.polardbx.rule.model.TargetDB;
 import org.apache.calcite.rel.core.DDL;
 import org.apache.calcite.sql.SqlIdentifier;
+import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlShowCreateTable;
 import org.apache.calcite.sql.parser.SqlParserPos;
+import org.apache.commons.lang.StringUtils;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * Created by luoyanxin.
@@ -52,11 +63,16 @@ public class MoveDatabaseItemBuilder extends DdlPhyPlanBuilder {
     private Map<String, Set<String>> sourcePhyTables = new LinkedHashMap<>();
     private Pair<String, String> defaultGroupAndPhyTable;
 
+    private Map<String, Map<String, SqlNode>> phyTbsDefinition = new TreeMap<>(String::compareToIgnoreCase);
+    private final boolean usePhysicalBackfill;
+
     public MoveDatabaseItemBuilder(DDL ddl,
                                    MoveDatabaseItemPreparedData preparedData,
+                                   boolean usePhysicalBackfill,
                                    ExecutionContext executionContext) {
         super(ddl, preparedData, executionContext);
         this.preparedData = preparedData;
+        this.usePhysicalBackfill = usePhysicalBackfill;
         this.executionContext = executionContext;
     }
 
@@ -72,7 +88,7 @@ public class MoveDatabaseItemBuilder extends DdlPhyPlanBuilder {
     protected void buildTableRuleAndTopology() {
         buildExistingTableRule(preparedData.getTableName());
         buildNewTableTopology(preparedData.getSchemaName(), preparedData.getTableName());
-        buildAlterReferenceTableTopology(preparedData.getSchemaName(), preparedData.getTableName());
+//        buildAlterReferenceTableTopology(preparedData.getSchemaName(), preparedData.getTableName());
     }
 
     @Override
@@ -101,17 +117,17 @@ public class MoveDatabaseItemBuilder extends DdlPhyPlanBuilder {
             for (String newPhyTableName : phyTableNames) {
                 List<String> phyTables = new ArrayList<>();
                 phyTables.add(newPhyTableName);
-                if(!tableTopology.containsKey(sourceTargetGroup.getValue())) {
+                if (!tableTopology.containsKey(sourceTargetGroup.getValue())) {
                     tableTopology.put(sourceTargetGroup.getValue(), new ArrayList<>());
                 }
                 tableTopology.get(sourceTargetGroup.getValue())
                     .add(phyTables);
-                if(!targetPhyTables.containsKey(sourceTargetGroup.getValue())) {
+                if (!targetPhyTables.containsKey(sourceTargetGroup.getValue())) {
                     targetPhyTables.put(sourceTargetGroup.getValue(), new HashSet<>());
                 }
                 targetPhyTables.get(sourceTargetGroup.getValue())
                     .add(newPhyTableName);
-                if(!sourcePhyTables.containsKey(sourceTargetGroup.getKey())) {
+                if (!sourcePhyTables.containsKey(sourceTargetGroup.getKey())) {
                     sourcePhyTables.put(sourceTargetGroup.getKey(), new HashSet<>());
                 }
                 sourcePhyTables.get(sourceTargetGroup.getKey())
@@ -203,5 +219,35 @@ public class MoveDatabaseItemBuilder extends DdlPhyPlanBuilder {
                 }
             }
         }
+    }
+
+    public Map<String, Map<String, SqlNode>> getGroupPhyTbDefinition() {
+        TableMeta tableMeta =
+            executionContext.getSchemaManager(preparedData.getSchemaName()).getTable(preparedData.getTableName());
+        if (GeneralUtil.isEmpty(phyTbsDefinition) && usePhysicalBackfill && ChangeSetUtils.supportUseChangeSet(
+            ComplexTaskMetaManager.ComplexTaskType.MOVE_PARTITION, tableMeta)) {
+            phyTbsDefinition =
+                AlterTableGroupUtils.buildSqlTemplateForEachPhyTable(relDdl, preparedData.getSchemaName(),
+                    preparedData.getTableName(), getSourcePhyTables(), executionContext);
+        }
+        return phyTbsDefinition;
+    }
+
+    @Override
+    public SqlNode getSqlTemplate(String groupKey, List<String> phyTableNames) {
+        Map<String, Map<String, SqlNode>> allPhyTbDef = getGroupPhyTbDefinition();
+        Map<String, Set<String>> srcGroupTables = getSourcePhyTables();
+        Map<String, String> tarSrcGroupMap = new TreeMap<>(String::compareToIgnoreCase);
+        for (String srcGroup : GeneralUtil.emptyIfNull(srcGroupTables.keySet())) {
+            tarSrcGroupMap.put(GroupInfoUtil.buildScaleOutGroupName(srcGroup), srcGroup);
+        }
+        String srcGroup = tarSrcGroupMap.get(groupKey);
+        Map<String, SqlNode> phyDefMap = allPhyTbDef.get(srcGroup);
+        if (StringUtils.isNotEmpty(srcGroup) && GeneralUtil.isNotEmpty(phyTableNames) && phyTableNames.size() == 1
+            && GeneralUtil.isNotEmpty(phyDefMap)) {
+            return phyDefMap.containsKey(phyTableNames.get(0)) ? phyDefMap.get(phyTableNames.get(0)) :
+                getSqlTemplate();
+        }
+        return getSqlTemplate();
     }
 }

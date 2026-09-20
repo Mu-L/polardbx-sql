@@ -19,6 +19,7 @@ package com.alibaba.polardbx.executor.columnar.pruning.predicate;
 import com.alibaba.polardbx.executor.columnar.pruning.index.BitMapRowGroupIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.BloomFilterIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.IndexPruneContext;
+import com.alibaba.polardbx.executor.columnar.pruning.index.MultiSortKeyIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.SortKeyIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.ZoneMapIndex;
 import org.jetbrains.annotations.NotNull;
@@ -59,6 +60,11 @@ public class NotColumnPredicate implements ColumnPredicatePruningInf {
     @Override
     public void zoneMap(@NotNull ZoneMapIndex zoneMapIndex, IndexPruneContext ipc, @NotNull RoaringBitmap cur) {
         return;
+    }
+
+    @Override
+    public void multiSortKey(@NotNull MultiSortKeyIndex multiSortKeyIndex, IndexPruneContext ipc,
+                             @NotNull RoaringBitmap cur) {
     }
 
     @Override

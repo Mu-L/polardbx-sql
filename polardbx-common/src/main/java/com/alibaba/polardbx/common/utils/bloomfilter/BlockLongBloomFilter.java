@@ -16,6 +16,10 @@
 
 package com.alibaba.polardbx.common.utils.bloomfilter;
 
+import io.airlift.slice.SizeOf;
+import org.openjdk.jol.info.ClassLayout;
+import org.openjdk.jol.util.VMSupport;
+
 /**
  * A special kind of blocked Bloom filter. It sets 2 to 4 (usually 4) bits in
  * two 64-bit words; 1 or 2 (usually 2) per word. It is faster than a regular
@@ -23,6 +27,7 @@ package com.alibaba.polardbx.common.utils.bloomfilter;
  * positive rate.
  */
 public class BlockLongBloomFilter implements RFBloomFilter {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(BlockLongBloomFilter.class).instanceSize();
     public static final int BITS_PER_KEY = 8;
     public static final long RANDOM_SEED = 2528582834704613611L;
 
@@ -40,6 +45,11 @@ public class BlockLongBloomFilter implements RFBloomFilter {
         long bits = (long) entryCount * bitsPerKey;
         this.buckets = (int) bits / 64;
         data = new long[buckets + 16 + 1];
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + VMSupport.align((int) SizeOf.sizeOf(data));
     }
 
     public long getBitCount() {

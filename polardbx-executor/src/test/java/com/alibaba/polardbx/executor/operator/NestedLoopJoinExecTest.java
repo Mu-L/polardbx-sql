@@ -55,7 +55,7 @@ public class NestedLoopJoinExecTest extends BaseExecTest {
 
         return new NestedLoopJoinExec(
             outerInput, innerInput, joinType, maxOneRow,
-            otherCondition, antiJoinOperands, null, context, new NestedLoopJoinExec.Synchronizer());
+            otherCondition, antiJoinOperands, null, context, new NestedLoopJoinExec.Synchronizer(1));
     }
 
     @Test

@@ -16,6 +16,12 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableIntArrayList;
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
@@ -35,7 +41,9 @@ import com.alibaba.polardbx.executor.operator.scan.metrics.RuntimeMetrics;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.utils.TimestampUtils;
+import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.hadoop.fs.Path;
+import org.openjdk.jol.info.ClassLayout;
 import org.roaringbitmap.RoaringBitmap;
 
 import java.io.IOException;
@@ -44,32 +52,54 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 public class CsvScanWork extends AbstractScanWork {
-    private static final Logger logger = LoggerFactory.getLogger("COLUMNAR_TRANS");
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(CsvScanWork.class).instanceSize();
+    private static final Logger logger = LoggerFactory.getLogger("mpp_log");
 
+    @FieldMemoryCounter(value = false)
     protected final ColumnarManager columnarManager;
-
+    @FieldMemoryCounter(value = false)
     protected final ExecutionContext executionContext;
 
     protected final long tso;
 
+    @FieldMemoryCounter(value = false) // banned because constant pool.
     private final Long position;
 
     private final boolean isFlashBack;
 
+    @FieldMemoryCounter(value = false)
     protected final Path csvFile;
 
     private final boolean useSelection;
 
     private final boolean enableCompatible;
 
-    private final List<Integer> refList;
+    protected final MemoryCountableIntArrayList refList;
 
+    @FieldMemoryCounter(value = false)
     private final TimeZone targetTimeZone;
 
     private final boolean enableDebug;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            // from Abstract Scan work
+            + FastMemoryCounter.sizeOf(workId)
+            + FastMemoryCounter.sizeOf(rgIterator)
+            + FastMemoryCounter.sizeOf(inputRefsForFilter)
+            + FastMemoryCounter.sizeOf(inputRefsForProject)
+            + FastMemoryCounter.sizeOf(chunkRefMap)
+            + FastMemoryCounter.sizeOf(isIOCanceled)
+            + FastMemoryCounter.sizeOf(ioStatus)
+
+            // from this class
+            + FastMemoryCounter.sizeOf(refList);
+    }
 
     public CsvScanWork(ColumnarManager columnarManager, long tso,
                        Long position, Path csvFile,
@@ -91,7 +121,7 @@ public class CsvScanWork extends AbstractScanWork {
         this.enableCompatible = enableCompatible;
         this.executionContext = executionContext;
         this.targetTimeZone = TimestampUtils.getTimeZone(executionContext);
-        refList = refSet.stream().sorted().collect(Collectors.toList());
+        refList = new MemoryCountableIntArrayList(refSet.stream().sorted().collect(Collectors.toList()));
 
         this.enableDebug =
             LOGGER.isDebugEnabled() || executionContext.getParamManager()
@@ -110,7 +140,7 @@ public class CsvScanWork extends AbstractScanWork {
                 chunkIterator = columnarManager.flashbackCsvData(tso, csvFile.getName());
             }
         } else {
-            chunkIterator = columnarManager.csvData(tso, csvFile.getName());
+            chunkIterator = columnarManager.csvData(tso, csvFile.getName(), executionContext);
         }
         int filterColumns = inputRefsForFilter.size();
 
@@ -147,7 +177,15 @@ public class CsvScanWork extends AbstractScanWork {
             } else if (selection.length > 0) {
                 // rebuild chunk according to project refs.
                 Chunk projectChunk = rebuildProject(chunk, selection, selection.length);
-                ioStatus.addResult(projectChunk);
+
+                while (!ioStatus.addResult(projectChunk)) {
+                    ListenableFuture<?> waitForEmpty = ioStatus.waitForEmpty();
+
+                    // case 1. signal by IOStatus.popResult.
+                    // case 2. could throw CancellationException due to cancel of IOStatus.close().
+                    waitForEmpty.get();
+                }
+
                 actualPositionCnt += projectChunk.getPositionCount();
             }
             totalPositionCnt += positionCnt;
@@ -250,13 +288,17 @@ public class CsvScanWork extends AbstractScanWork {
     }
 
     @Override
-    public void invoke(ExecutorService executor) {
+    public void invoke(ExecutorService executor, OperatorMemoryOwnerId memoryOwnerId) {
         executor.submit(() -> {
             try {
+                VersionStorageStatistics.setThreadLocalStatistics(executionContext.getVersionStorageStatistics());
+
                 handleNextWork();
             } catch (Throwable e) {
                 ioStatus.addException(e);
                 LOGGER.error("fail to execute csv scan work: ", e);
+            } finally {
+                VersionStorageStatistics.removeThreadLocalStatistics();
             }
         });
     }

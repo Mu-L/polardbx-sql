@@ -1,0 +1,114 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+## ======== hash =========
+  create table dblehash_bi_t1
+  (a bigint，b bigint)
+  partition by udf_hash (
+  `a` with udf_params (
+  'dble/hash',
+    '{
+    "partitionCount" : "4,4",
+    "partitionLength" : "128,256"
+    }'
+    )
+  )
+  partitions 8;
+## ======== stringhash =========
+  create table dblestrhash_bi_t1
+  (a bigint，b bigint)
+  partition by udf_hash (
+    `b` with udf_params (
+    'dble/stringhash',
+    '{
+          "partitionCount" : "4,4",
+          "partitionLength" : "128,256",
+          "hashSlice" : "0:8"
+     }'
+  )
+  )
+  partitions 8;
+create table dblestrhash_i_t1
+  (a bigint，b int)
+  partition by udf_hash (
+  `b` with udf_params (
+  'dble/stringhash',
+  '{
+          "partitionCount" : "4,4",
+          "partitionLength" : "128,256",
+          "hashSlice" : "0:8"
+   }'
+  )
+  )
+  partitions 8;
+insert into dblestrhash_i_t1(a,b) values (1,1);
+create table dblestrhash_vc_t1
+  (a bigint，b varchar(32))
+  partition by udf_hash (
+  `b` with udf_params (
+  'dble/stringhash',
+  '{
+          "partitionCount" : "4,4",
+          "partitionLength" : "128,256",
+          "hashSlice" : "0:8"
+   }'
+  )
+  )
+  partitions 8;
+create table dblestrhash_c_t1
+  (a bigint，b char(32))
+  partition by udf_hash (
+  `b` with udf_params (
+  'dble/stringhash',
+  '{
+          "partitionCount" : "4,4",
+          "partitionLength" : "128,256",
+          "hashSlice" : "0:8"
+   }'
+  )
+  )
+  partitions 8;
+create table dblestrhash_dt_t1
+  (a bigint，b datetime )
+  partition by udf_hash (
+  `b` with udf_params (
+  'dble/stringhash',
+  '{
+          "partitionCount" : "4,4",
+          "partitionLength" : "128,256",
+          "hashSlice" : "0:8"
+   }'
+  )
+  )
+  partitions 8;
+create table dblestrhash_d_t1
+  (a bigint，b date )
+  partition by udf_hash (
+  `b` with udf_params (
+  'dble/stringhash',
+  '{
+          "partitionCount" : "4,4",
+          "partitionLength" : "128,256",
+          "hashSlice" : "0:8"
+   }'
+  )
+  )
+  partitions 8;
+select part_route('','dblestrhash_i_t1', '10000');
+part_route('', 'dblestrhash_i_t1', '10000')
+p4
+select part_route('','dblestrhash_bi_t1', '10000');
+part_route('', 'dblestrhash_bi_t1', '10000')
+p4
+select part_route('','dblestrhash_vc_t1', '10000');
+part_route('', 'dblestrhash_vc_t1', '10000')
+p4
+select part_route('','dblestrhash_c_t1', '10000');
+part_route('', 'dblestrhash_c_t1', '10000')
+p4
+select part_route('','dblestrhash_d_t1', '2025-01-01');
+part_route('', 'dblestrhash_d_t1', '2025-01-01')
+p8
+select part_route('','dblestrhash_dt_t1', '2025-01-01');
+part_route('', 'dblestrhash_dt_t1', '2025-01-01')
+p8

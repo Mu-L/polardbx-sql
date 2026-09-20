@@ -28,6 +28,8 @@ public class DrdsAlterTableModifyTtlOptions extends MySqlObjectImpl implements S
     protected SQLExpr ttlEnable;
     protected SQLExpr ttlExpr;
     protected SQLExpr ttlJob;
+    protected SQLExpr ttlColEncoder;
+    protected SQLExpr ttlColDecoder;
     protected SQLExpr ttlFilter;
     protected SQLExpr ttlCleanup;
     protected SQLExpr ttlPartInterval;
@@ -38,6 +40,9 @@ public class DrdsAlterTableModifyTtlOptions extends MySqlObjectImpl implements S
 
     protected SQLExpr arcPreAllocate;
     protected SQLExpr arcPostAllocate;
+
+    protected SQLExpr ttlRefColList;
+    protected SQLExpr ttlHybrid;
 
 //    protected SQLExpr ttlArchiveCci;
 //    protected SQLExpr archiveView;
@@ -82,6 +87,18 @@ public class DrdsAlterTableModifyTtlOptions extends MySqlObjectImpl implements S
 
             if (this.archiveTableName != null) {
                 this.archiveTableName.accept(visitor);
+            }
+
+            if (this.arcPreAllocate != null) {
+                this.arcPreAllocate.accept(visitor);
+            }
+
+            if (this.ttlRefColList != null) {
+                this.ttlRefColList.accept(visitor);
+            }
+
+            if (this.ttlHybrid != null) {
+                this.ttlHybrid.accept(visitor);
             }
         }
         visitor.endVisit(this);
@@ -174,4 +191,37 @@ public class DrdsAlterTableModifyTtlOptions extends MySqlObjectImpl implements S
     public void setTtlPartInterval(SQLExpr ttlPartInterval) {
         this.ttlPartInterval = ttlPartInterval;
     }
+
+    public SQLExpr getTtlColEncoder() {
+        return ttlColEncoder;
+    }
+
+    public void setTtlColEncoder(SQLExpr ttlColEncoder) {
+        this.ttlColEncoder = ttlColEncoder;
+    }
+
+    public SQLExpr getTtlColDecoder() {
+        return ttlColDecoder;
+    }
+
+    public void setTtlColDecoder(SQLExpr ttlColDecoder) {
+        this.ttlColDecoder = ttlColDecoder;
+    }
+
+    public SQLExpr getTtlRefColList() {
+        return ttlRefColList;
+    }
+
+    public void setTtlRefColList(SQLExpr ttlRefColList) {
+        this.ttlRefColList = ttlRefColList;
+    }
+
+    public SQLExpr getTtlHybrid() {
+        return ttlHybrid;
+    }
+
+    public void setTtlHybrid(SQLExpr ttlHybrid) {
+        this.ttlHybrid = ttlHybrid;
+    }
+
 }

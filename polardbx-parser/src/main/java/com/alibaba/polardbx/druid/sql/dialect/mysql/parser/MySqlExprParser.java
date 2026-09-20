@@ -47,11 +47,13 @@ import com.alibaba.polardbx.druid.sql.ast.expr.SQLIntervalUnit;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLListExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLMethodInvokeExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLQueryExpr;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLUdfParamsExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLUnaryExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLUnaryOperator;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLVariantRefExpr;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableModifyPartitionValues;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAssignItem;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLCharacterDataType;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnDefinition;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLDDLStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLForeignKeyImpl.Option;
@@ -61,6 +63,7 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.MySqlPrimaryKey;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.MySqlUnique;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.MysqlForeignKey;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.expr.MySqlCharExpr;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.expr.MySqlJSONTableExpr;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.expr.MySqlOrderingExpr;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.expr.MySqlOutFileExpr;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.expr.MySqlUserName;
@@ -80,6 +83,9 @@ import java.sql.Types;
 import java.util.Arrays;
 import java.util.List;
 import java.util.regex.Pattern;
+
+import static com.alibaba.polardbx.druid.sql.parser.Token.LPAREN;
+import static com.alibaba.polardbx.druid.sql.parser.Token.RPAREN;
 
 public class MySqlExprParser extends SQLExprParser {
     public final static String[] AGGREGATE_FUNCTIONS;
@@ -225,6 +231,22 @@ public class MySqlExprParser extends SQLExprParser {
         this.lexer.nextToken();
     }
 
+    public static SQLUdfParamsExpr parseUdfParamsExpr(SQLExprParser exprParser, Lexer lexer) {
+        if (lexer.identifierEquals("UDF_PARAMS")) {
+            lexer.nextToken();
+        }
+        exprParser.accept(LPAREN);
+        SQLExpr functionName = exprParser.expr();
+        exprParser.accept(Token.COMMA);
+        SQLExpr paramsContent = exprParser.expr();
+        exprParser.accept(RPAREN);
+        SQLUdfParamsExpr udfParamsExpr = new SQLUdfParamsExpr();
+        udfParamsExpr.setFunctionName(functionName);
+        udfParamsExpr.setParamsContent(paramsContent);
+        return udfParamsExpr;
+
+    }
+
     public SQLExpr primary() {
         final Token tok = lexer.token();
         switch (tok) {
@@ -266,6 +288,34 @@ public class MySqlExprParser extends SQLExprParser {
                 currentTimeExpr = new SQLCurrentTimeExpr(SQLCurrentTimeExpr.Type.LOCALTIME);
             } else if (hash_lower == FnvHash.Constants.LOCALTIMESTAMP && !quoteStart) {
                 currentTimeExpr = new SQLCurrentTimeExpr(SQLCurrentTimeExpr.Type.LOCALTIMESTAMP);
+            } else if (hash_lower == FnvHash.Constants.JSON_TABLE) {
+                if (lexer.identifierEquals("JSON_TABLE")) {
+                    lexer.nextToken();
+                    accept(Token.LPAREN);
+
+                    MySqlJSONTableExpr jsonTable = new MySqlJSONTableExpr();
+                    jsonTable.setExpr(
+                        this.expr());
+                    accept(Token.COMMA);
+                    jsonTable.setPath(
+                        this.expr());
+                    acceptIdentifier("COLUMNS");
+                    accept(Token.LPAREN);
+                    for (; lexer.token() != Token.RPAREN; ) {
+                        jsonTable.addColumn(
+                            parseJsonTableColumn());
+
+                        if (lexer.token() == Token.COMMA) {
+                            lexer.nextToken();
+                            continue;
+                        }
+                        break;
+                    }
+                    accept(Token.RPAREN);
+
+                    accept(Token.RPAREN);
+                    return jsonTable;
+                }
             } else if (hash_lower == FnvHash.Constants.UTC_DATE && !quoteStart) {
                 currentTimeExpr = new SQLCurrentTimeExpr(SQLCurrentTimeExpr.Type.UTC_DATE);
             } else if (hash_lower == FnvHash.Constants.UTC_TIME && !quoteStart) {
@@ -703,6 +753,77 @@ public class MySqlExprParser extends SQLExprParser {
 
     }
 
+    protected MySqlJSONTableExpr.Column parseJsonTableColumn() {
+        MySqlJSONTableExpr.Column column = new MySqlJSONTableExpr.Column();
+
+        SQLName name = this.name();
+        column.setName(
+            name);
+
+        if (lexer.token() == Token.FOR) {
+            lexer.nextToken();
+            acceptIdentifier("ORDINALITY");
+        } else {
+            boolean nested = name instanceof SQLIdentifierExpr
+                && name.nameHashCode64() == FnvHash.Constants.NESTED;
+
+            if (!nested) {
+                column.setDataType(
+                    this.parseDataType());
+            }
+
+            if (lexer.token() == Token.EXISTS) {
+                lexer.nextToken();
+                column.setExists(true);
+            }
+
+            if (lexer.identifierEquals(FnvHash.Constants.PATH)) {
+                lexer.nextToken();
+                column.setPath(
+                    this.primary());
+            }
+
+            if (name instanceof SQLIdentifierExpr
+                && name.nameHashCode64() == FnvHash.Constants.NESTED) {
+                acceptIdentifier("COLUMNS");
+                accept(Token.LPAREN);
+                for (; lexer.token() != Token.RPAREN; ) {
+                    MySqlJSONTableExpr.Column nestedColumn = parseJsonTableColumn();
+                    column.addNestedColumn(nestedColumn);
+
+                    if (lexer.token() == Token.COMMA) {
+                        lexer.nextToken();
+                        continue;
+                    }
+                    break;
+                }
+                accept(Token.RPAREN);
+            }
+
+            for (int i = 0; i < 2; ++i) {
+                if (lexer.identifierEquals("ERROR")
+                    || lexer.token() == Token.DEFAULT
+                    || lexer.token() == Token.NULL) {
+                    if (lexer.token() == Token.DEFAULT) {
+                        lexer.nextToken();
+                    }
+
+                    SQLExpr expr = this.expr();
+                    accept(Token.ON);
+                    if (lexer.identifierEquals("ERROR")) {
+                        lexer.nextToken();
+                        column.setOnError(expr);
+                    } else {
+                        acceptIdentifier("EMPTY");
+                        column.setOnEmpty(expr);
+                    }
+                }
+            }
+        }
+
+        return column;
+    }
+
     public final SQLExpr primaryRest(SQLExpr expr) {
         if (expr == null) {
             throw new IllegalArgumentException("expr");
@@ -988,7 +1109,7 @@ public class MySqlExprParser extends SQLExprParser {
 
             accept(Token.RPAREN);
 
-            // 
+            //
 
             if (methodInvokeExpr.getArguments().size() == 1 //
                 && lexer.token() == Token.IDENTIFIER) {
@@ -1119,7 +1240,25 @@ public class MySqlExprParser extends SQLExprParser {
         }
 
         // May multiple collate caused by type with collate.
+        // Only set collate for character data types, MySQL ignores COLLATE for non-character types (e.g., int)
         while (lexer.identifierEquals(FnvHash.Constants.COLLATE)) {
+            // Exclude numeric and other non-character types that don't support COLLATE
+            boolean isNonCharType = column.getDataType() != null && (
+                column.getDataType().jdbcType() == Types.INTEGER
+                    || column.getDataType().jdbcType() == Types.BIGINT
+                    || column.getDataType().jdbcType() == Types.SMALLINT
+                    || column.getDataType().jdbcType() == Types.TINYINT
+                    || column.getDataType().jdbcType() == Types.FLOAT
+                    || column.getDataType().jdbcType() == Types.REAL
+                    || column.getDataType().jdbcType() == Types.DOUBLE
+                    || column.getDataType().jdbcType() == Types.DECIMAL
+                    || column.getDataType().jdbcType() == Types.NUMERIC
+                    || column.getDataType().jdbcType() == Types.BOOLEAN
+                    || column.getDataType().jdbcType() == Types.DATE
+                    || column.getDataType().jdbcType() == Types.TIME
+                    || column.getDataType().jdbcType() == Types.TIMESTAMP
+            );
+
             lexer.nextToken();
             SQLExpr collateExpr;
             if (lexer.token() == Token.IDENTIFIER) {
@@ -1128,20 +1267,41 @@ public class MySqlExprParser extends SQLExprParser {
                 collateExpr = new SQLCharExpr(lexer.stringVal());
             }
             lexer.nextToken();
-            column.setCollateExpr(collateExpr);
+
+            // Only set collateExpr for non-numeric types (allow character types)
+            if (!isNonCharType) {
+                column.setCollateExpr(collateExpr);
+            }
+            // For numeric types, ignore the COLLATE (MySQL behavior)
         }
 
-        if (lexer.identifierEquals(FnvHash.Constants.GENERATED)) {
-            lexer.nextToken();
-            acceptIdentifier("ALWAYS");
-            accept(Token.AS);
-            accept(Token.LPAREN);
-            SQLExpr expr = this.expr();
-            accept(Token.RPAREN);
-            column.setGeneratedAlawsAs(expr);
-        }
+        parseGeneratedAlwaysAs(column);
 
         return parseColumnRest(column);
+    }
+
+    private void parseGeneratedAlwaysAs(SQLColumnDefinition column) {
+        if (!lexer.identifierEquals(FnvHash.Constants.GENERATED)) {
+            return;
+        }
+
+        lexer.nextToken();
+        acceptIdentifier("ALWAYS");
+        accept(Token.AS);
+        accept(Token.LPAREN);
+        SQLExpr expr = this.expr();
+        accept(Token.RPAREN);
+        column.setGeneratedAlawsAs(expr);
+
+        // For generated columns, if the data type has explicit charset, set it as column's charsetExpr
+        // This is needed because the CHARACTER SET is consumed during data type parsing,
+        // so the later parseColumnRest logic won't be triggered for generated columns.
+        if (column.getDataType() instanceof SQLCharacterDataType) {
+            SQLCharacterDataType charType = (SQLCharacterDataType) column.getDataType();
+            if (charType.getCharSetName() != null && column.getCharsetExpr() == null) {
+                column.setCharsetExpr(new SQLIdentifierExpr(charType.getCharSetName()));
+            }
+        }
     }
 
     public SQLColumnDefinition parseColumnRest(SQLColumnDefinition column) {
@@ -1210,6 +1370,23 @@ public class MySqlExprParser extends SQLExprParser {
             return parseColumnRest(column);
         }
         if (lexer.identifierEquals(FnvHash.Constants.COLLATE)) {
+            // Exclude numeric and other non-character types that don't support COLLATE
+            boolean isNonCharType = column.getDataType() != null && (
+                column.getDataType().jdbcType() == Types.INTEGER
+                    || column.getDataType().jdbcType() == Types.BIGINT
+                    || column.getDataType().jdbcType() == Types.SMALLINT
+                    || column.getDataType().jdbcType() == Types.TINYINT
+                    || column.getDataType().jdbcType() == Types.FLOAT
+                    || column.getDataType().jdbcType() == Types.REAL
+                    || column.getDataType().jdbcType() == Types.DOUBLE
+                    || column.getDataType().jdbcType() == Types.DECIMAL
+                    || column.getDataType().jdbcType() == Types.NUMERIC
+                    || column.getDataType().jdbcType() == Types.BOOLEAN
+                    || column.getDataType().jdbcType() == Types.DATE
+                    || column.getDataType().jdbcType() == Types.TIME
+                    || column.getDataType().jdbcType() == Types.TIMESTAMP
+            );
+
             lexer.nextToken();
             SQLExpr collateExpr;
             if (lexer.token() == Token.IDENTIFIER) {
@@ -1218,7 +1395,12 @@ public class MySqlExprParser extends SQLExprParser {
                 collateExpr = new SQLCharExpr(lexer.stringVal());
             }
             lexer.nextToken();
-            column.setCollateExpr(collateExpr);
+
+            // Only set collateExpr for non-numeric types (allow character types)
+            if (!isNonCharType) {
+                column.setCollateExpr(collateExpr);
+            }
+            // For numeric types, ignore the COLLATE (MySQL behavior)
             return parseColumnRest(column);
         }
 
@@ -1245,6 +1427,8 @@ public class MySqlExprParser extends SQLExprParser {
             column.setStorage(expr);
         }
 
+        parseGeneratedAlwaysAs(column);
+
         if (lexer.token() == Token.AS) {
             lexer.nextToken();
             accept(Token.LPAREN);
@@ -1267,6 +1451,12 @@ public class MySqlExprParser extends SQLExprParser {
         if (lexer.identifierEquals(FnvHash.Constants.LOGICAL)) {
             lexer.nextToken();
             column.setLogical(true);
+        }
+
+        if (lexer.identifierEquals(FnvHash.Constants.EXTERNALIZE)) {
+            lexer.nextToken();
+            column.setExternalize(true);
+            return parseColumnRest(column);
         }
 
         if (lexer.identifierEquals(FnvHash.Constants.DELIMITER)) {
@@ -1508,6 +1698,11 @@ public class MySqlExprParser extends SQLExprParser {
     public MySqlPrimaryKey parsePrimaryKey() {
         MySqlPrimaryKey primaryKey = new MySqlPrimaryKey();
         parseIndex(primaryKey.getIndexDefinition());
+        if (lexer.token() == Token.HINT) {
+            String execComment = lexer.stringVal();
+            primaryKey.getIndexDefinition().getOptions().setExecComment(execComment);
+            lexer.nextToken();
+        }
         return primaryKey;
         /*
         accept(Token.PRIMARY);

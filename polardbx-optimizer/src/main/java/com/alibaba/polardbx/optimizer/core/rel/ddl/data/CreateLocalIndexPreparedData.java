@@ -34,6 +34,8 @@ public class CreateLocalIndexPreparedData extends DdlPreparedData {
      */
     private boolean onGsi;
 
+    private boolean lock;
+
     /**
      * Can equals to an alter table drop index
      */

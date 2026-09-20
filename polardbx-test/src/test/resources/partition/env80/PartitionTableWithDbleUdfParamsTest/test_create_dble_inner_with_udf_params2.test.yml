@@ -1,0 +1,199 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+
+## =================
+
+create table dble_numrng_0_p5_t2
+(a bigint，b bigint)
+partition by udf_hash(
+    `a` with 
+    udf_params (
+      'dble/numberrange',
+      '{
+          "type" : "0",　
+          "defaultNode" : "0",
+          "mappings" :
+            [
+              "0-200M=0",
+              "200M1-400M=1",
+              "400M1-600M=2",
+              "600M1-800M=3",
+              "800M1-1000M=4"
+            ]
+      }'
+  )
+  )
+  partitions 5 (
+  partition p1 values less than(1),
+  partition p2 values less than(2),
+  partition p3 values less than(3),
+  partition p4 values less than(4),
+  partition p5 values less than(5)
+  );
+  
+  
+
+
+## =================
+
+
+create table dble_enum_0_p5_t2
+(a bigint，b bigint)
+partition by udf_hash(
+    `a` with 
+    udf_params (
+      'dble/enum',
+      '{
+          "type" : "0",　
+          "defaultNode" : "0",
+          "mappings" :
+          [
+            "10000=0",
+            "10010=1",
+            "10020=2",
+            "10030=3",
+            "10040=4"
+          ]
+      }'
+  )
+  )
+  partitions 5 (
+  partition p1 values less than(1),
+  partition p2 values less than(2),
+  partition p3 values less than(3),
+  partition p4 values less than(4),
+  partition p5 values less than(5)
+  );
+  
+  
+  ## =================
+          
+create table dble_pttr_0_p5_t2
+(a bigint，b bigint)
+partition by udf_hash(
+    `a` with 
+    udf_params (
+      'dble/patternrange',
+      '{
+        "defaultNode" : "0",
+        "patternValue" : "1024",
+        "mappings" :
+          [
+            "0-32=0",
+            "33-64=1",
+            "65-96=2",
+            "97-128=3",
+            "129-160=4",
+            "161-192=5",
+            "193-224=6",
+            "225-256=7"
+          ]
+      }'
+    )
+  )
+  partitions 8 (
+  partition p1 values less than(1),
+  partition p2 values less than(2),
+  partition p3 values less than(3),
+  partition p4 values less than(4),
+  partition p5 values less than(5),
+  partition p6 values less than(6),
+  partition p7 values less than(7),
+  partition p8 values less than(8)
+  );
+  
+  
+  create table dble_pttr_0_p8_t3
+  (a bigint，b bigint)
+  partition by udf_hash(
+  `a` with
+  udf_params (
+  'dble/patternrange',
+    '{
+        "defaultNode" : "0",
+        "patternValue" : "1024",
+        "mappings" :
+          [
+            "0-32=0",
+            "33-64=1",
+            "65-96=2",
+            "97-128=3",
+            "129-160=4",
+            "161-192=5",
+            "193-224=6",
+            "225-256=7"
+          ]
+    }'
+  )
+  )
+  partitions 8;
+
+
+  create table dble_pttr_0_p8_t4
+  (a bigint，b bigint)
+  partition by udf_hash(
+  `a` with
+  udf_params (
+  'dble/patternrange',
+  '{
+        "defaultNode" : "0",
+        "patternValue" : "1024",
+        "mappings" :
+          [
+            "0-32=0",
+            "33-64=1",
+            "65-96=2",
+            "97-128=3",
+            "129-160=4",
+            "161-192=5",
+            "193-224=6",
+            "225-256=7"
+          ]
+    }'
+  )
+  )
+  partitions 8;
+
+
+  create table dble_pttr_0_p8_t5
+  (a bigint，b bigint)
+  partition by udf_hash(
+  `a` with
+  udf_params (
+  'dble/patternrange',
+  '{
+        "defaultNode" : "0",
+        "patternValue" : "512",
+        "mappings" :
+          [
+            "0-32=0",
+            "33-64=1",
+            "65-96=2",
+            "97-128=3",
+            "129-160=4",
+            "161-192=5",
+            "193-224=6",
+            "225-256=7"
+          ]
+    }'
+  )
+  )
+  partitions 8;
+          
+          
+insert into dble_pttr_0_p8_t3 (a,b) values (63,63),(95,95),(127,127),(0,0);
+insert into dble_pttr_0_p8_t4 (a,b) values (63,63),(95,95),(127,127),(0,0);
+insert into dble_pttr_0_p8_t5 (a,b) values (63,63),(95,95),(127,127),(0,0);
+          
+explain select t1.a,t2.b from dble_pttr_0_p8_t3 t1 join dble_pttr_0_p8_t4 t2 on t1.a=t2.a order by t1.a;
+select t1.a,t2.b from dble_pttr_0_p8_t3 t1 join dble_pttr_0_p8_t4 t2 on t1.a=t2.a order by t1.a;
+explain select t1.a,t2.b from dble_pttr_0_p8_t3 t1 join dble_pttr_0_p8_t5 t2 on t1.a=t2.a order by t1.a;;
+select t1.a,t2.b from dble_pttr_0_p8_t3 t1 join dble_pttr_0_p8_t5 t2 on t1.a=t2.a order by t1.a;
+  
+drop table if exists dble_numrng_0_p5_t2;
+drop table if exists dble_enum_0_p5_t2;
+drop table if exists dble_pttr_0_p8_t3;
+drop table if exists dble_pttr_0_p8_t4;
+drop table if exists dble_pttr_0_p8_t5;

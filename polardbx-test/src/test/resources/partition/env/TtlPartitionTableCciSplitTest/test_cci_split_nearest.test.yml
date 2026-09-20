@@ -1,0 +1,31 @@
+## DISABLE_FAST_SQL_PARSER
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+
+create table test_cci_split_nearest(
+a int not null auto_increment,
+b datetime default current_timestamp,
+primary key(a)
+)
+ttl = ttl_definition( TTL_ENABLE = 'OFF' TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00' TTL_JOB = CRON '0 0 1 */2 * ? *' TIMEZONE '+08:00' ARCHIVE_TABLE_PRE_ALLOCATE = 2 ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+partition by key(a) partitions 2;
+show create table test_cci_split_nearest;
+create table test_cci_split_nearest_bk like test_cci_split_nearest engine='columnar' archive_mode='ttl';
+show create table test_cci_split_nearest;
+
+alter index arctmp_test_cci_split_nearest_bk on table test_cci_split_nearest
+  split partition pmax into (
+    partition p202410 values less than ('2025-01-01 00:00:00'),
+    partition pmax values less than (maxvalue)
+  );
+show create table test_cci_split_nearest;
+
+alter table test_cci_split_nearest modify ttl set ARCHIVE_TABLE_PRE_ALLOCATE=6;
+/*+TDDL:cmd_extra(TTL_ENABLE_CCI_SPLIT_FROM_NEAREST_PART=true)*/ alter table test_cci_split_nearest cleanup expired data;
+show create table test_cci_split_nearest;
+
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI=false;
+drop table test_cci_split_nearest;

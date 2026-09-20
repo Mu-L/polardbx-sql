@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.optimizer.config.meta;
 
+import com.alibaba.polardbx.optimizer.core.rel.ExternalTableScan;
 import com.alibaba.polardbx.optimizer.core.rel.Limit;
 import com.alibaba.polardbx.optimizer.core.rel.TopN;
 import org.apache.calcite.rel.BiRel;
@@ -91,6 +92,11 @@ public class DrdsRelMdDistribution extends RelMdDistribution {
         } else {
             return getDistribution(scan);
         }
+    }
+
+    public RelDistribution distribution(
+        ExternalTableScan rel, RelMetadataQuery mq) {
+        return rel.distribution(mq);
     }
 
     @Override

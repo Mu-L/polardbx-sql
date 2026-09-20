@@ -19,11 +19,31 @@ package com.alibaba.polardbx.executor.ddl.job.validator;
 import com.alibaba.polardbx.common.ddl.newengine.DdlConstants;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.logger.Logger;
+import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
+import com.alibaba.polardbx.executor.ddl.job.task.BasePhyDdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlJobManager;
 import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTable;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableAddPartition;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalCreateDatabase;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalCreateIndex;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalCreateTable;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalDropDatabase;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalDropTable;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalOptimizeTable;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalRenameTable;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalTruncateTable;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+import static com.alibaba.polardbx.gms.topology.SystemDbHelper.CDC_DB_NAME;
 
 public class CommonValidator {
 
@@ -41,6 +61,35 @@ public class CommonValidator {
 
         // Check the capacity of the DDL Engine system table.
         validateDdlJobCapacity(schemaName);
+    }
+
+    public static int MAX_PHYSICAL_TASK_NUM = 10;
+    public static int EXPECTED_PHYSICAL_DDL_TASK_NUM = 1;
+
+    public static void blockLogicalDdlJob(String schemaName, BaseDdlOperation logicalDdlPlan, DdlJob ddlJob,
+                                          ExecutionContext executionContext) {
+        Boolean blockLogicalDdl = executionContext.getParamManager().getBoolean(ConnectionParams.BLOCK_LOGICAL_DDL);
+        if (blockLogicalDdl && !schemaName.equalsIgnoreCase(CDC_DB_NAME)) {
+            if (logicalDdlPlan instanceof LogicalCreateDatabase || logicalDdlPlan instanceof LogicalDropDatabase
+                || logicalDdlPlan instanceof LogicalCreateTable || logicalDdlPlan instanceof LogicalDropTable) {
+                return;
+            }
+            if (logicalDdlPlan instanceof LogicalAlterTable || logicalDdlPlan instanceof LogicalRenameTable
+                || logicalDdlPlan instanceof LogicalOptimizeTable || logicalDdlPlan instanceof LogicalTruncateTable
+                || logicalDdlPlan instanceof LogicalCreateIndex) {
+                List<DdlTask> ddlTaskList = ddlJob.getAllTasks();
+                if (ddlTaskList.size() <= MAX_PHYSICAL_TASK_NUM) {
+                    List<DdlTask> phyDdlTaskList =
+                        ddlTaskList.stream().filter(ddlTask -> ddlTask instanceof BasePhyDdlTask).collect(
+                            Collectors.toList());
+                    if (phyDdlTaskList.size() == EXPECTED_PHYSICAL_DDL_TASK_NUM) {
+                        return;
+                    }
+                }
+            }
+            throw DdlHelper.logAndThrowError(null,
+                "We don't support block the logical DDL, which is controlled by the parameter BLOCK_LOGICAL_DDL");
+        }
     }
 
     private static void validateDdlJobCapacity(String schemaName) {

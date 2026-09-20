@@ -93,6 +93,7 @@ public class AlterTableGroupOptimizePartitionJobFactory extends DdlJobFactory {
             executableDdlJob.addTaskRelationship(tailTask, subTasks.getHead());
 
             executableDdlJob.getExcludeResources().addAll(subTasks.getExcludeResources());
+            executableDdlJob.getSharedResources().addAll(subTasks.getSharedResources());
         }
     }
 

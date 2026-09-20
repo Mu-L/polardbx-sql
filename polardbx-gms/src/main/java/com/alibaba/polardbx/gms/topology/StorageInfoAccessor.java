@@ -26,6 +26,7 @@ import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.metadb.GmsSystemTables;
 import com.alibaba.polardbx.gms.metadb.accessor.AbstractAccessor;
+import com.alibaba.polardbx.gms.util.DdlMetaLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.google.common.collect.Lists;
@@ -130,6 +131,9 @@ public class StorageInfoAccessor extends AbstractAccessor {
             MetaDbUtil.setParameter(1, insertParams, ParameterMethod.setString, storageInstId);
             MetaDbUtil.setParameter(2, insertParams, ParameterMethod.setString, ip);
             MetaDbUtil.setParameter(3, insertParams, ParameterMethod.setInt, port);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.STORAGE_INFO)) {
+                DdlMetaLogUtil.logSql(DELETE_STORAGE_INFO_BY_INST_ID_IP_PORT, insertParams);
+            }
             MetaDbUtil.delete(DELETE_STORAGE_INFO_BY_INST_ID_IP_PORT, insertParams, connection);
             return;
         } catch (Exception e) {
@@ -144,6 +148,9 @@ public class StorageInfoAccessor extends AbstractAccessor {
         try {
             Map<Integer, ParameterContext> insertParams = Maps.newHashMap();
             MetaDbUtil.setParameter(1, insertParams, ParameterMethod.setString, instId);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.STORAGE_INFO)) {
+                DdlMetaLogUtil.logSql(DELETE_REMOVED_RO_STORAGE_INFO_BY_SERVER_INST_ID, insertParams);
+            }
             MetaDbUtil.delete(DELETE_REMOVED_RO_STORAGE_INFO_BY_SERVER_INST_ID, insertParams, connection);
             return;
         } catch (Exception e) {
@@ -161,6 +168,9 @@ public class StorageInfoAccessor extends AbstractAccessor {
             Map<Integer, ParameterContext> updateParams = Maps.newHashMap();
             MetaDbUtil.setParameter(1, updateParams, ParameterMethod.setInt, status);
             MetaDbUtil.setParameter(2, updateParams, ParameterMethod.setString, instId);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.STORAGE_INFO)) {
+                DdlMetaLogUtil.logSql(UPDATE_STORAGE_STATUS, updateParams);
+            }
             int affected = MetaDbUtil.update(UPDATE_STORAGE_STATUS, updateParams, connection);
             if (affected == 0) {
                 throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE,
@@ -179,6 +189,9 @@ public class StorageInfoAccessor extends AbstractAccessor {
             MetaDbUtil.setParameter(1, updateParams, ParameterMethod.setString,
                 StorageInfoExtraFieldJSON.toJson(extras));
             MetaDbUtil.setParameter(2, updateParams, ParameterMethod.setString, storageInst);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.STORAGE_INFO)) {
+                DdlMetaLogUtil.logSql(UPDATE_STORAGE_POOL_NAME, updateParams);
+            }
             int affected = MetaDbUtil.update(UPDATE_STORAGE_POOL_NAME, updateParams, connection);
             if (affected == 0) {
                 throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE,
@@ -252,6 +265,9 @@ public class StorageInfoAccessor extends AbstractAccessor {
             // extras
             MetaDbUtil.setParameter(19, insertParams, ParameterMethod.setString,
                 StorageInfoExtraFieldJSON.toJson(storageInfoRecord.extras));
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.STORAGE_INFO)) {
+                DdlMetaLogUtil.logSql(INSERT_IGNORE_NEW_STORAGE_INFO, insertParams);
+            }
             MetaDbUtil.insert(INSERT_IGNORE_NEW_STORAGE_INFO, insertParams, connection);
             return;
         } catch (Exception e) {

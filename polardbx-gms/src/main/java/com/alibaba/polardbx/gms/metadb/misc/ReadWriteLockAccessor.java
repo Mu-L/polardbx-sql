@@ -55,6 +55,8 @@ public class ReadWriteLockAccessor extends AbstractAccessor {
 
     private static final String WHERE_OWNER = " where `owner` = ?";
 
+    private static final String WHERE_OWNER_RESOURCE = " where `owner` = ? and `resource` = ?";
+
     private static final String WHERE_SCHEMA_NAME = " where `schema_name` = ?";
 
     private static final String WHERE_RESOURCE = " where `resource` = ?";
@@ -71,7 +73,11 @@ public class ReadWriteLockAccessor extends AbstractAccessor {
 
     private static final String SELECT_BY_OWNER = SELECT_FULL + FROM_TABLE + WHERE_OWNER;
 
+    private static final String SELECT_BY_OWNER_RESOURCE = SELECT_FULL + FROM_TABLE + WHERE_OWNER_RESOURCE;
+
     private static final String SELECT_BY_RESOURCE_TYPE = SELECT_FULL + FROM_TABLE + WHERE_RESOURCE + WITH_TYPE;
+
+    private static final String SELECT_BY_RESOURCE_FOR_UPDATE = SELECT_FULL + FROM_TABLE + WHERE_RESOURCE + FOR_UPDATE;
 
     private static final String SELECT_BY_RESOURCE_TYPE_FOR_UPDATE =
         SELECT_FULL + FROM_TABLE + WHERE_RESOURCE + WITH_TYPE + FOR_UPDATE;
@@ -80,6 +86,8 @@ public class ReadWriteLockAccessor extends AbstractAccessor {
         SELECT_FULL + FROM_TABLE + WHERE_RESOURCE + WITH_TYPE + IN_SHARE_MODE;
 
     private static final String SELECT_BY_RESOURCE = SELECT_FULL + FROM_TABLE + WHERE_RESOURCE;
+
+    private static final String SELECT_ALL = SELECT_FULL + FROM_TABLE;
 
     private static final String SELECT_BY_RESOURCE_LIST_TEMPLATE =
         SELECT_FULL + FROM_TABLE + WHERE_RESOURCE_IN_TEMPLATE;
@@ -118,6 +126,24 @@ public class ReadWriteLockAccessor extends AbstractAccessor {
                 return records;
             }
             return null;
+        } catch (Exception e) {
+            throw logAndThrow("Failed to query from " + READ_WRITE_LOCK_TABLE, "query from", e);
+        }
+    }
+
+    public Optional<ReadWriteLockRecord> queryByOwnerAndResource(String owner, String resource) {
+        try {
+            final Map<Integer, ParameterContext> params = new HashMap<>(16);
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setString, owner);
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setString, resource);
+
+            List<ReadWriteLockRecord> records =
+                MetaDbUtil.query(SELECT_BY_OWNER_RESOURCE, params, ReadWriteLockRecord.class, connection);
+
+            if (CollectionUtils.isNotEmpty(records)) {
+                return Optional.of(records.get(0));
+            }
+            return Optional.empty();
         } catch (Exception e) {
             throw logAndThrow("Failed to query from " + READ_WRITE_LOCK_TABLE, "query from", e);
         }
@@ -166,6 +192,35 @@ public class ReadWriteLockAccessor extends AbstractAccessor {
             List<ReadWriteLockRecord> records =
                 MetaDbUtil.query(SELECT_BY_RESOURCE, params, ReadWriteLockRecord.class, connection);
 
+            if (records != null) {
+                return records;
+            }
+            return new ArrayList<>();
+        } catch (Exception e) {
+            throw logAndThrow("Failed to query from " + READ_WRITE_LOCK_TABLE, "query from", e);
+        }
+    }
+
+    public List<ReadWriteLockRecord> queryByResourceForUpdate(String resource) {
+        try {
+            final Map<Integer, ParameterContext> params =
+                MetaDbUtil.buildParameters(ParameterMethod.setString, new String[] {resource});
+
+            List<ReadWriteLockRecord> records =
+                MetaDbUtil.query(SELECT_BY_RESOURCE_FOR_UPDATE, params, ReadWriteLockRecord.class, connection);
+
+            if (records != null) {
+                return records;
+            }
+            return new ArrayList<>();
+        } catch (Exception e) {
+            throw logAndThrow("Failed to query from " + READ_WRITE_LOCK_TABLE, "query from", e);
+        }
+    }
+
+    public List<ReadWriteLockRecord> queryAll() {
+        try {
+            List<ReadWriteLockRecord> records = MetaDbUtil.query(SELECT_ALL, ReadWriteLockRecord.class, connection);
             if (records != null) {
                 return records;
             }

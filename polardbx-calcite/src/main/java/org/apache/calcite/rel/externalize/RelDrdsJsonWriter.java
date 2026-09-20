@@ -38,6 +38,7 @@ public class RelDrdsJsonWriter implements RelWriter {
 
     public final static String                   REL_NAME      = RelDrdsWriter.REL_NAME;
     public final static String                   LV_INPUTS     = RelDrdsWriter.LV_INPUTS;
+    public final static String                   CONSUMER_INNER = RelDrdsWriter.CONSUMER_INNER;
 
     private final JsonBuilder                    jsonBuilder   = new JsonBuilder();
     private final SqlExplainLevel                detailLevel;
@@ -70,7 +71,8 @@ public class RelDrdsJsonWriter implements RelWriter {
         if (inputs.isEmpty()) {
             for (Pair<String, Object> val : values) {
                 String inputsOfLogicalView = val.getKey();
-                if (inputsOfLogicalView.equals(LV_INPUTS)) {
+                if (inputsOfLogicalView.equals(LV_INPUTS)
+                || inputsOfLogicalView.equals(CONSUMER_INNER)) {
                     inputs = (List<RelNode>) val.getValue();
                 }
             }
@@ -90,6 +92,9 @@ public class RelDrdsJsonWriter implements RelWriter {
                 continue;
             }
             if (LV_INPUTS.equals(value.left)) {
+                continue;
+            }
+            if (CONSUMER_INNER.equals(value.left)) {
                 continue;
             }
             if (detailLevel != SqlExplainLevel.NO_ATTRIBUTES) {
@@ -116,6 +121,10 @@ public class RelDrdsJsonWriter implements RelWriter {
                 node.put("actual_rowcount", sketch.getRowCount());
                 if (sketch.getRuntimeFilteredRowCount() > 0) {
                     node.put("runtime_filtered_count", sketch.getRuntimeFilteredRowCount());
+                }
+
+                if (sketch.getIoBytesCount() > 0) {
+                    node.put("io_bytes_count", sketch.getIoBytesCount());
                 }
 
                 node.put("actual_memory", sketch.getMemory());

@@ -16,12 +16,13 @@
 
 package com.alibaba.polardbx.executor.operator.util.bloomfilter;
 
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
 import com.alibaba.polardbx.common.utils.bloomfilter.BloomFilter;
 import com.alibaba.polardbx.common.utils.bloomfilter.BloomFilterInfo;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.operator.util.minmaxfilter.MinMaxFilter;
-import com.google.common.util.concurrent.SettableFuture;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -36,7 +37,7 @@ public class BloomFilterConsume {
     private volatile BloomFilter bloomFilter;
     private volatile List<MinMaxFilter> minMaxFilterList;
 
-    private SettableFuture<BloomFilterInfo> future = SettableFuture.create();
+    private BlockingFuture<BloomFilterInfo> future = BlockingFuture.create(BlockingReason.WAIT_FOR_BLOOM_FILTER);
 
     public BloomFilterConsume(List<Integer> hashKeys, int id) {
         this.hashKeys = hashKeys;
@@ -47,7 +48,7 @@ public class BloomFilterConsume {
         return id;
     }
 
-    public SettableFuture<BloomFilterInfo> getFuture() {
+    public BlockingFuture<BloomFilterInfo> getFuture() {
         return future;
     }
 
@@ -66,9 +67,9 @@ public class BloomFilterConsume {
                 this.bloomFilter = bloomFilter;
                 this.minMaxFilterList = filterInfo.getMinMaxFilterInfoList().stream().map(x -> MinMaxFilter.from(x))
                     .collect(Collectors.toList());
-                this.future.set(filterInfo);
+                this.future.complete(filterInfo);
             } else {
-                this.future.set(null);
+                this.future.complete(null);
             }
         }
     }

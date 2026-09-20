@@ -16,12 +16,15 @@
 
 package com.alibaba.polardbx.executor.mpp.operator;
 
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
+import com.alibaba.polardbx.common.collection.MemoryCountableObjectArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.MathUtils;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
-import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.ListenableFuture;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.ChunkBuilder;
 import com.alibaba.polardbx.executor.chunk.ChunkConverter;
@@ -32,8 +35,14 @@ import com.alibaba.polardbx.executor.mpp.execution.buffer.PagesSerde;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.PagesSerdeFactory;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.SerializedChunk;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
+import com.alibaba.polardbx.executor.utils.fastutil.MemoryCountableIntOpenHashSet;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -46,10 +55,18 @@ import static com.google.common.base.Preconditions.checkState;
 import static java.util.Objects.requireNonNull;
 
 public class PartitionedOutputCollector extends OutputCollector {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(PartitionedOutputCollector.class).instanceSize();
 
     private final PagePartitioner partitionPartitioner;
     private boolean finished;
+
+    @FieldMemoryCounter(value = false)
     private ListenableFuture<?> blocked = NOT_BLOCKED;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(partitionPartitioner);
+    }
 
     public PartitionedOutputCollector(
         int partitionCount,
@@ -84,7 +101,13 @@ public class PartitionedOutputCollector extends OutputCollector {
     @Override
     public void finish() {
         finished = true;
-        blocked = partitionPartitioner.flush(true);
+
+        try {
+            MemoryTrackerManager.setCurrentMemoryOwner(consumerMemoryOwnerId);
+            blocked = partitionPartitioner.flush(true);
+        } finally {
+            MemoryTrackerManager.removeCurrentMemoryOwner();
+        }
     }
 
     @Override
@@ -109,7 +132,12 @@ public class PartitionedOutputCollector extends OutputCollector {
             return;
         }
 
-        blocked = partitionPartitioner.partitionPage(page);
+        try {
+            MemoryTrackerManager.setCurrentMemoryOwner(consumerMemoryOwnerId);
+            blocked = partitionPartitioner.partitionPage(page);
+        } finally {
+            MemoryTrackerManager.removeCurrentMemoryOwner();
+        }
     }
 
     @Override
@@ -117,29 +145,45 @@ public class PartitionedOutputCollector extends OutputCollector {
         return !finished && consumeIsBlocked().isDone();
     }
 
-    private static class PagePartitioner {
+    private static class PagePartitioner implements MemoryCountable {
+        private static final int INSTANCE_SIZE = ClassLayout.parseClass(PagePartitioner.class).instanceSize();
         protected final OutputBuffer outputBuffer;
+
+        @FieldMemoryCounter(value = false)
         protected final List<DataType> outputType;
         protected final RemotePartitionFunction partitionFunction;
-        protected final List<Integer> partitionChannels;  //shuffle字段下标
+
+        @FieldMemoryCounter(value = false)
         protected final PagesSerde serde;
 
+        @FieldMemoryCounter(value = false)
         private ChunkConverter converter;
 
         private final int chunkLimit;
+
+        @FieldMemoryCounter(value = false)
         private final ExecutionContext context;
         private final int partitionCount;
 
-        //防止内存膨胀的一种优化策略
-        private List<Chunk>[] chunkArraylist;
-        protected List<ChunkBuilder> pageBuilders;
+        private MemoryCountableObjectArrayList<Chunk>[] chunkArraylist;
+        protected ChunkBuilder[] pageBuilders;
 
         /**
          * There are int arrays with size = chunk_limit for each parallelism.
          */
         private final int[][] partitionSelections;
         private final int[] selSizes;
-        private final int[] partitionPositions;
+
+        @Override
+        public long getMemoryUsage() {
+            return INSTANCE_SIZE
+                + FastMemoryCounter.sizeOf(outputBuffer)
+                + FastMemoryCounter.sizeOf(partitionFunction)
+                + FastMemoryCounter.sizeOf(chunkArraylist)
+                + FastMemoryCounter.sizeOf(pageBuilders)
+                + FastMemoryCounter.sizeOf(partitionSelections)
+                + FastMemoryCounter.sizeOf(selSizes);
+        }
 
         public PagePartitioner(
             int partitionCount,
@@ -178,7 +222,6 @@ public class PartitionedOutputCollector extends OutputCollector {
             } else {
                 this.partitionFunction = new RandomPartitionFunction(partitionCount);
             }
-            this.partitionChannels = requireNonNull(partitionChannels, "partitionChannels is null");
 
             this.outputBuffer = requireNonNull(outputBuffer, "outputBuffer is null");
             this.outputType = requireNonNull(outputType, "sourceTypes is null");
@@ -190,7 +233,6 @@ public class PartitionedOutputCollector extends OutputCollector {
 
             this.partitionSelections = new int[partitionCount][chunkLimit];
             this.selSizes = new int[partitionCount];
-            this.partitionPositions = new int[chunkLimit];
         }
 
         public void init() {
@@ -200,11 +242,11 @@ public class PartitionedOutputCollector extends OutputCollector {
                     for (int i = 0; i < partitionFunction.getPartitionCount(); i++) {
                         pageBuilders.add(new ChunkBuilder(outputType, chunkLimit, context));
                     }
-                    this.pageBuilders = pageBuilders.build();
+                    this.pageBuilders = pageBuilders.build().toArray(new ChunkBuilder[0]);
 
-                    this.chunkArraylist = new List[partitionCount];
+                    this.chunkArraylist = new MemoryCountableObjectArrayList[partitionCount];
                     for (int i = 0; i < partitionCount; i++) {
-                        this.chunkArraylist[i] = new ArrayList<>();
+                        this.chunkArraylist[i] = new MemoryCountableObjectArrayList<>();
                     }
                 }
             }
@@ -234,7 +276,7 @@ public class PartitionedOutputCollector extends OutputCollector {
             for (int partition = 0; partition < selSizes.length; partition++) {
                 final int partitionSize = selSizes[partition];
                 int[] partitionSelection = partitionSelections[partition];
-                ChunkBuilder pageBuilder = pageBuilders.get(partition);
+                ChunkBuilder pageBuilder = pageBuilders[partition];
 
                 final int writablePositions = chunkLimit - pageBuilder.getDeclarePosition();
                 if (partitionSize > writablePositions) {
@@ -306,7 +348,11 @@ public class PartitionedOutputCollector extends OutputCollector {
                 blockedFutures.add(outputBuffer.enqueue(partition, pages.build()));
                 bufferedPage.clear();
             }
-            ListenableFuture<?> future = Futures.allAsList(blockedFutures);
+            if (blockedFutures.isEmpty()) {
+                return NOT_BLOCKED;
+            }
+            ListenableFuture<?> future =
+                BlockingFuture.allAsListFromListenableFutures(blockedFutures, BlockingReason.LOCAL_BUFFER_NOT_FULL);
             if (future.isDone()) {
                 return NOT_BLOCKED;
             }
@@ -320,13 +366,14 @@ public class PartitionedOutputCollector extends OutputCollector {
             // add all full pages to output buffer
             List<ListenableFuture<?>> blockedFutures = new ArrayList<>();
 
-            for (int partition = 0; partition < pageBuilders.size(); partition++) {
-                ChunkBuilder partitionPageBuilder = pageBuilders.get(partition);
+            for (int partition = 0; partition < pageBuilders.length; partition++) {
+                ChunkBuilder partitionPageBuilder = pageBuilders[partition];
                 if (!partitionPageBuilder.isEmpty() && (force || partitionPageBuilder.isFull())) {
                     Chunk pagePartition = partitionPageBuilder.build();
                     partitionPageBuilder.reset();
                     //TODO 如果发送的chunk的函数虽然很小，但是数据本身很大，则这里最好考虑将做切分发送，既split into chunks.
                     ClientBuffer buffer = outputBuffer.getClientBuffer(partition);
+
                     SerializedChunk
                         serializedPages = serde.serialize(
                         buffer != null && buffer.isPreferLocal(), pagePartition);
@@ -334,7 +381,11 @@ public class PartitionedOutputCollector extends OutputCollector {
                     blockedFutures.add(outputBuffer.enqueue(partition, Lists.newArrayList(serializedPages)));
                 }
             }
-            ListenableFuture<?> future = Futures.allAsList(blockedFutures);
+            if (blockedFutures.isEmpty()) {
+                return NOT_BLOCKED;
+            }
+            ListenableFuture<?> future =
+                BlockingFuture.allAsListFromListenableFutures(blockedFutures, BlockingReason.LOCAL_BUFFER_NOT_FULL);
             if (future.isDone()) {
                 return NOT_BLOCKED;
             }
@@ -343,10 +394,16 @@ public class PartitionedOutputCollector extends OutputCollector {
     }
 
     public static class HashPartitionFunction implements RemotePartitionFunction {
+        private static final int INSTANCE_SIZE = ClassLayout.parseClass(HashPartitionFunction.class).instanceSize();
 
         protected final int partitionCount;
         protected final int[] partitionChannelArray;
         protected final boolean isPowerOfTwo;
+
+        @Override
+        public long getMemoryUsage() {
+            return INSTANCE_SIZE + FastMemoryCounter.sizeOf(partitionChannelArray);
+        }
 
         public HashPartitionFunction(int partitionCount, List<Integer> partitionChannels) {
             this.partitionCount = partitionCount;
@@ -377,12 +434,18 @@ public class PartitionedOutputCollector extends OutputCollector {
     }
 
     public static class PairWisePartitionFunction extends HashPartitionFunction {
+        private static final int INSTANCE_SIZE = ClassLayout.parseClass(PairWisePartitionFunction.class).instanceSize();
 
         protected final int fullPartCount;
 
         protected final boolean isFullPartPowerOfTwo;
 
         protected final boolean enableCompatible;
+
+        @Override
+        public long getMemoryUsage() {
+            return INSTANCE_SIZE + FastMemoryCounter.sizeOf(partitionChannelArray);
+        }
 
         public PairWisePartitionFunction(int partitionCount, int fullPartCount, List<Integer> partitionChannels,
                                          boolean enableCompatible) {
@@ -408,12 +471,23 @@ public class PartitionedOutputCollector extends OutputCollector {
     }
 
     public static class PrunedPairWisePartitionFunction extends PairWisePartitionFunction {
-        private final Set<Integer> prunePartitions;
+        private static final int INSTANCE_SIZE =
+            ClassLayout.parseClass(PrunedPairWisePartitionFunction.class).instanceSize();
+        private final MemoryCountableIntOpenHashSet prunePartitions;
 
         public PrunedPairWisePartitionFunction(int partitionCount, int fullPartCount, List<Integer> partitionChannels,
                                                Set<Integer> prunePartitions, boolean enableCompatible) {
             super(partitionCount, fullPartCount, partitionChannels, enableCompatible);
-            this.prunePartitions = prunePartitions;
+
+            this.prunePartitions = new MemoryCountableIntOpenHashSet(prunePartitions.size());
+            for (Integer prunePartition : prunePartitions) {
+                prunePartitions.add(prunePartition);
+            }
+        }
+
+        @Override
+        public long getMemoryUsage() {
+            return INSTANCE_SIZE + FastMemoryCounter.sizeOf(prunePartitions);
         }
 
         @Override
@@ -434,6 +508,7 @@ public class PartitionedOutputCollector extends OutputCollector {
     }
 
     private static class SinglePartitionFunction implements RemotePartitionFunction {
+        private static final int INSTANCE_SIZE = ClassLayout.parseClass(SinglePartitionFunction.class).instanceSize();
 
         @Override
         public int getPartitionCount() {
@@ -444,10 +519,18 @@ public class PartitionedOutputCollector extends OutputCollector {
         public int getPartition(Chunk page, int position) {
             return 0;
         }
+
+        @Override
+        public long getMemoryUsage() {
+            return INSTANCE_SIZE;
+        }
     }
 
     private static class RandomPartitionFunction implements RemotePartitionFunction {
+        private static final int INSTANCE_SIZE = ClassLayout.parseClass(RandomPartitionFunction.class).instanceSize();
         private final int partitionCount;
+
+        @FieldMemoryCounter(value = false)
         private final Random random;
 
         public RandomPartitionFunction(int partitionCount) {
@@ -463,6 +546,11 @@ public class PartitionedOutputCollector extends OutputCollector {
         @Override
         public int getPartition(Chunk page, int position) {
             return random.nextInt(this.partitionCount);
+        }
+
+        @Override
+        public long getMemoryUsage() {
+            return INSTANCE_SIZE;
         }
     }
 }

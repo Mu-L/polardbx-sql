@@ -12,13 +12,17 @@
 
                     `ttl_status` int NOT NULL COMMENT '0-enable ttl schedule,1-disable ttl schedule',
                     `ttl_expr` text NOT NULL COMMENT 'the raw definition of ttl of tbl',
+
+                    `ttl_col_encoder` text DEFAULT NULL COMMENT 'the encoder for ttl_col',
+                    `ttl_col_decoder` text DEFAULT NULL COMMENT 'the decoder for ttl_col',
+
                     `ttl_filter` text NOT NULL COMMENT 'the filter condition expr of ttl of tbl',
                     `ttl_interval` int NOT NULl COMMENT 'the interval count of ttl expire after of data',
                     `ttl_unit` int NOT NULL COMMENT 'the timeunit code of ttl_expr, like day/week/month/year',
                     `ttl_col` varchar(128) NOT NULL COMMENT 'the ttl col of ttl_expr',
                     `ttl_tz` varchar(64) NOT NULl COMMENT 'the ttl tz of all ttl job',
                     `ttl_cron` text NOT NULL COMMENT 'the raw definition of cron of ttl job',
-                    `ttl_binlog` int NOT NULL COMMENT '0-disable gen binlog, 1-enable gen binlog',
+                    `ttl_binlog` int NOT NULL COMMENT '0-disable gen arc binlog, 1-enable gen arc binlog',
 
                     `arc_kind` int DEFAULT 0 COMMENT '0-undef,1-oss,2-columnar',
                     `arc_status` int NOT NULL COMMENT '0-enable oss schedule,1-disable oss schedule',
@@ -41,6 +45,12 @@
                     KEY `idx_atdb_attb`(`arc_tmp_tbl_schema`,`arc_tmp_tbl_name`)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
         ]]></Create>
+        <Change><![CDATA[
+            alter table `ttl_info` add column `ttl_col_encoder` text DEFAULT NULL COMMENT 'the encoder for ttl_col'
+        ]]></Change>
+        <Change><![CDATA[
+            alter table `ttl_info` add column `ttl_col_decoder` text DEFAULT NULL COMMENT 'the decoder for ttl_col'
+        ]]></Change>
     </SystemTable>
 
 </SystemTables>

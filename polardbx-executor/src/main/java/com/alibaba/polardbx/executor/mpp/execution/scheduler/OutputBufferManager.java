@@ -34,6 +34,6 @@ import com.alibaba.polardbx.executor.mpp.execution.StageId;
 
 import java.util.List;
 
-interface OutputBufferManager {
+public interface OutputBufferManager {
     void addOutputBuffers(StageId stageId, List<OutputBuffers.OutputBufferId> newBuffers, boolean noMoreBuffers);
 }

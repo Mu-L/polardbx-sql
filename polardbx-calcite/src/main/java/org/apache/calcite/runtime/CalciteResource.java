@@ -758,8 +758,8 @@ public interface CalciteResource {
     @BaseMessage("Do not support create more than one Clustered Columnar Index on table ''{0}''")
     ExInst<SqlValidatorException> cciMoreThanOne(String name);
 
-    @BaseMessage("Do not support create Clustered Columnar Index on table without primary key")
-    ExInst<SqlValidatorException> createCciOnTableWithoutPk();
+    @BaseMessage("Do not support create Clustered Columnar Index on table without primary key on table ''{0}''")
+    ExInst<SqlValidatorException> createCciOnTableWithoutPk(String name);
 
     @BaseMessage("Duplicate column name ''{0}''")
     ExInst<SqlValidatorException> duplicateColumnNameInTable(String a0);

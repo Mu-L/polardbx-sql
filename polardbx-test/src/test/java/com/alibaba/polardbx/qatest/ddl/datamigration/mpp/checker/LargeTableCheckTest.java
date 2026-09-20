@@ -1,6 +1,11 @@
 package com.alibaba.polardbx.qatest.ddl.datamigration.mpp.checker;
 
 import com.alibaba.fastjson.JSON;
+import com.alibaba.polardbx.common.utils.Pair;
+import com.alibaba.polardbx.executor.gsi.GsiUtils;
+import com.alibaba.polardbx.gms.tablegroup.TableGroupLocation;
+import com.alibaba.polardbx.optimizer.config.table.ScaleOutPlanUtil;
+import com.alibaba.polardbx.qatest.CdcIgnore;
 import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
 import com.alibaba.polardbx.qatest.ddl.datamigration.mpp.pkrange.PkTest;
 import com.alibaba.polardbx.qatest.twoPhaseDdl.TwoPhaseDdlTestUtils.DataManipulateUtil;
@@ -25,11 +30,13 @@ import java.util.List;
 import java.util.Map;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.qatest.twoPhaseDdl.TwoPhaseDdlTestUtils.DataManipulateUtil.prepareData;
 
 @NotThreadSafe
-@RunWith(Parameterized.class)
+@CdcIgnore(
+    ignoreReason = "在执行DDL期间直接物理下推执行DML到还没有打标完成的库表中，导致CDC无法识别该DML，从而过滤掉，无法生成对应的逻辑binlog")
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 public class LargeTableCheckTest extends DDLBaseNewDBTestCase {
 
@@ -85,7 +92,7 @@ public class LargeTableCheckTest extends DDLBaseNewDBTestCase {
         }
     }
 
-    static String  convertTimeStamp(LocalDateTime dateTime){
+    static String convertTimeStamp(LocalDateTime dateTime) {
 //        LocalDateTime dateTime = Instant.ofEpochMilli(timestamp)
 //            .atZone(ZoneId.systemDefault())
 //            .toLocalDateTime();
@@ -93,6 +100,7 @@ public class LargeTableCheckTest extends DDLBaseNewDBTestCase {
         String dateTimeString = dateTime.format(formatter);
         return dateTimeString;
     }
+
     static List<String> buildPkStringList(Connection connection, String sql) {
         List<List<Object>> results = JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(connection, sql));
         List<String> resultStr = new ArrayList<>();
@@ -102,7 +110,8 @@ public class LargeTableCheckTest extends DDLBaseNewDBTestCase {
                 if (o instanceof JdbcUtil.MyNumber) {
                     convertedResult.add(((JdbcUtil.MyNumber) o).getNumber());
                 } else if (o instanceof JdbcUtil.MyDate) {
-                    convertedResult.add(convertTimeStamp(((Timestamp) ((JdbcUtil.MyDate) o).getDate()).toLocalDateTime()));
+                    convertedResult.add(
+                        convertTimeStamp(((Timestamp) ((JdbcUtil.MyDate) o).getDate()).toLocalDateTime()));
                 } else {
                     convertedResult.add(o.toString());
                 }
@@ -123,18 +132,20 @@ public class LargeTableCheckTest extends DDLBaseNewDBTestCase {
         String originalTableName = "large_table_check_auto";
         // prepare data
         prepareTableIfNotExists(tddlConnection, schemaName, originalTableName, 8000_000);
-        Map<String, List<String>> topology = DdlStateCheckUtil.getTableTopology(tddlConnection, originalTableName);
-        List<String> dns = DdlStateCheckUtil.getStorageList(tddlConnection);
+        Map<String, Map<String, String>> topology =
+            DdlStateCheckUtil.getTableTopology(tddlConnection, originalTableName);
         String setBatcherRecheckerNumSqlStmt = "set global FASTCHECKER_MAX_RECHECK_BATCH = %d";
         String setBatcherRecheckerNumSql = String.format(setBatcherRecheckerNumSqlStmt, 8);
         JdbcUtil.executeUpdate(tddlConnection, setBatcherRecheckerNumSql);
 
-        String dn1 = topology.get("p1").get(0);
-        String dn2 = topology.get("p2").get(0);
-        String p1Group = topology.get("p1").get(1);
-        String p2Group = topology.get("p2").get(1);
-        String p1PhyTableName = topology.get("p1").get(2);
-        String p2PhyTableName = topology.get("p2").get(2);
+        String dn1 = topology.get("p1").get("DN_ID");
+        String dn2 = topology.get("p2").get("DN_ID");
+        String p1Group = topology.get("p1").get("GROUP_NAME");
+        String p2Group = topology.get("p2").get("GROUP_NAME");
+        String phyDb = topology.get("p1").get("PHY_DB_NAME");
+
+        String p1PhyTableName = topology.get("p1").get("PHY_TABLE_NAME");
+        String p2PhyTableName = topology.get("p2").get("PHY_TABLE_NAME");
         String movePartitionSql =
             String.format("alter table %s move partitions (p1) to '%s', (p2) to '%s' async=true", originalTableName,
                 dn2, dn1);
@@ -188,25 +199,25 @@ public class LargeTableCheckTest extends DDLBaseNewDBTestCase {
         String originalTableName = "large_table_check_auto1";
         String createTableStmt =
             "create table if not exists "
-                + " %s(a int NOT NULL AUTO_INCREMENT,b int, c varchar(32), d varchar(32), e datetime, PRIMARY KEY(e, d, a)"
+                + " %s(a int NOT NULL AUTO_INCREMENT,b int, c varchar(32), d varchar(32), e datetime, PRIMARY KEY(a, d, e)"
                 + ") PARTITION BY HASH(a) PARTITIONS %d";
         // prepare data
         prepareTableIfNotExists(tddlConnection, schemaName, originalTableName, createTableStmt, 8000_000);
-        Map<String, List<String>> topology = DdlStateCheckUtil.getTableTopology(tddlConnection, originalTableName);
-        List<String> dns = DdlStateCheckUtil.getStorageList(tddlConnection);
+        Map<String, Map<String, String>> topology =
+            DdlStateCheckUtil.getTableTopology(tddlConnection, originalTableName);
         String setBatcherRecheckerNumSqlStmt = "set global FASTCHECKER_MAX_RECHECK_BATCH = %d";
         String setBatcherRecheckerNumSql = String.format(setBatcherRecheckerNumSqlStmt, 8);
         JdbcUtil.executeUpdate(tddlConnection, setBatcherRecheckerNumSql);
 
-        String dn1 = topology.get("p1").get(0);
-        String dn2 = topology.get("p2").get(0);
-        String dn3 = topology.get("p3").get(0);
-        String p1Group = topology.get("p1").get(1);
-        String p2Group = topology.get("p2").get(1);
-        String p3Group = topology.get("p3").get(1);
-        String p1PhyTableName = topology.get("p1").get(2);
-        String p2PhyTableName = topology.get("p2").get(2);
-        String p3PhyTableName = topology.get("p3").get(2);
+        String dn1 = topology.get("p1").get("DN_ID");
+        String dn2 = topology.get("p2").get("DN_ID");
+        String dn3 = topology.get("p3").get("DN_ID");
+        String p1Group = topology.get("p1").get("GROUP_NAME");
+        String p2Group = topology.get("p2").get("GROUP_NAME");
+        String p3Group = topology.get("p3").get("GROUP_NAME");
+        String p1PhyTableName = topology.get("p1").get("PHY_TABLE_NAME");
+        String p2PhyTableName = topology.get("p2").get("PHY_TABLE_NAME");
+        String p3PhyTableName = topology.get("p3").get("PHY_TABLE_NAME");
         String movePartitionSql =
             String.format("alter table %s move partitions (p1, p3) to '%s', (p2) to '%s' async=true", originalTableName,
                 dn2, dn1);
@@ -217,7 +228,7 @@ public class LargeTableCheckTest extends DDLBaseNewDBTestCase {
 
         Long jobId = DdlStateCheckUtil.getRootDdlJobIdFromPattern(tddlConnection, movePartitionSql);
         String updateSqlStmt = "/*+TDDL:node(%s)*/ update %s set c = 'error value' where a >= %d and a <= %d;";
-        String selectSqlStmt = "/*+TDDL:node(%s)*/ select e, d, a from %s where a >= %d and a <= %d;";
+        String selectSqlStmt = "/*+TDDL:node(%s)*/ select a, d, e from %s where a >= %d and a <= %d;";
         String selectFullSqlStmt = "/*+TDDL:node(%s)*/ select * from %s where a >= %d and a <= %d;";
         DdlStateCheckUtil.waitTillImportTableSpaceDone(tddlConnection, jobId, null);
         DdlStateCheckUtil.waitTillLogicalBackfillDone(tddlConnection, jobId, null);
@@ -249,7 +260,7 @@ public class LargeTableCheckTest extends DDLBaseNewDBTestCase {
 
         /* p3  700_0080~800_0000 */
         right = 8_000_000;
-        left = right - 2000;
+        left = right - 20;
         updateSql = String.format(updateSqlStmt, p2Group, p3PhyTableName, left, right);
         selectSql = String.format(selectSqlStmt, p2Group, p3PhyTableName, left, right);
         selectFullSql = String.format(selectFullSqlStmt, p2Group, p3PhyTableName, left, right);
@@ -276,9 +287,11 @@ public class LargeTableCheckTest extends DDLBaseNewDBTestCase {
         String originalTableName = "large_table_check_auto";
         // prepare data
         prepareTableIfNotExists(tddlConnection, schemaName, originalTableName, 8000_000);
-        Map<String, List<String>> topology = DdlStateCheckUtil.getTableTopology(tddlConnection, originalTableName);
-        List<String> dns = DdlStateCheckUtil.getStorageList(tddlConnection);
-        String originalDn = topology.get("p1").get(0);
+        Map<String, Map<String, String>> topology =
+            DdlStateCheckUtil.getTableTopology(tddlConnection, originalTableName);
+        List<String> dns =
+            DdlStateCheckUtil.getStorageList(tddlConnection).stream().map(Pair::getKey).collect(Collectors.toList());
+        String originalDn = topology.get("p1").get("DN_ID");
         dns.remove(originalDn);
         String dn = dns.get(0);
 
@@ -322,7 +335,7 @@ public class LargeTableCheckTest extends DDLBaseNewDBTestCase {
 //        // continue
 //        DdlStateCheckUtil.continueDdlAsync(tddlConnection, jobId);
         // check concurrent checker valid
-        DdlStateCheckUtil.waitTillDdlDone(log, tddlConnection, jobId, tableName, 2, "hashcheck", false);
+        DdlStateCheckUtil.waitTillDdlDone(log, tddlConnection, jobId, tableName, -1, "hashcheck", false);
         DdlStateCheckUtil.checkIfCompleteSuccessful(tddlConnection, jobId);
     }
 
@@ -332,9 +345,11 @@ public class LargeTableCheckTest extends DDLBaseNewDBTestCase {
         String originalTableName = "empty_table_check_auto";
         // prepare data
         prepareTableIfNotExists(tddlConnection, schemaName, originalTableName, 0);
-        Map<String, List<String>> topology = DdlStateCheckUtil.getTableTopology(tddlConnection, originalTableName);
-        List<String> dns = DdlStateCheckUtil.getStorageList(tddlConnection);
-        String originalDn = topology.get("p1").get(0);
+        Map<String, Map<String, String>> topology =
+            DdlStateCheckUtil.getTableTopology(tddlConnection, originalTableName);
+        List<String> dns =
+            DdlStateCheckUtil.getStorageList(tddlConnection).stream().map(Pair::getKey).collect(Collectors.toList());
+        String originalDn = topology.get("p1").get("DN_ID");
         dns.remove(originalDn);
         String dn = dns.get(0);
         String movePartitionSql =

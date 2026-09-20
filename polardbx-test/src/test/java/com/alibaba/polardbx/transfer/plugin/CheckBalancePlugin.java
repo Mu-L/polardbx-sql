@@ -22,6 +22,7 @@ public class CheckBalancePlugin extends BasePlugin {
     private final String hint = "/*" + UUID.randomUUID() + "*/";
     private final SecureRandom random = new SecureRandom();
     private final String beforeCheckStmt;
+    private boolean forceOrderBy = false;
 
     public CheckBalancePlugin() {
         super();
@@ -34,6 +35,7 @@ public class CheckBalancePlugin extends BasePlugin {
         enabled = config.getBoolean("enabled", false);
         threads = Math.toIntExact(config.getLong("threads", 1L));
         beforeCheckStmt = config.getString("before_check_stmt", null);
+        forceOrderBy = config.getBoolean("force_order_by", false);
     }
 
     @Override
@@ -41,7 +43,7 @@ public class CheckBalancePlugin extends BasePlugin {
         final AtomicReference<List<Account>> accounts = new AtomicReference<>();
         getConnectionAndExecute(dsn, (conn, error) -> {
             try {
-                accounts.set(getAccounts(conn));
+                accounts.set(getAccounts(conn, forceOrderBy));
             } catch (SQLException e) {
                 logger.error("Check balance error.", e);
                 error.set(e);
@@ -50,7 +52,7 @@ public class CheckBalancePlugin extends BasePlugin {
         checkConsistency(accounts.get(), hint);
     }
 
-    private List<Account> getAccounts(MyConnection conn) throws SQLException {
+    private List<Account> getAccounts(MyConnection conn, boolean forceOrderBy) throws SQLException {
         try (Statement stmt = conn.createStatement()) {
             if (null != beforeCheckStmt) {
                 stmt.execute(beforeCheckStmt);
@@ -66,7 +68,7 @@ public class CheckBalancePlugin extends BasePlugin {
 
             List<Account> accounts;
             try {
-                accounts = Utils.getAccounts(hint, stmt);
+                accounts = Utils.getAccounts(hint, stmt, forceOrderBy);
             } finally {
                 // rollback if necessary
                 if (choice < 0.66) {

@@ -53,7 +53,7 @@ public class ColumnarPlancacheTest extends DDLBaseNewDBTestCase {
 
     @After
     public void afterDDLBaseNewDBTestCase() {
-        //cleanDataBase();
+        cleanDataBase();
     }
 
     @Test
@@ -99,7 +99,7 @@ public class ColumnarPlancacheTest extends DDLBaseNewDBTestCase {
             Assert.assertTrue(explain.contains("(`id` > (? + ?)") && explain.contains("HitCache:true"));
 
         } finally {
-            JdbcUtil.executeQuery(DISABLE_COL_CACHE, getTddlConnection1());
+            JdbcUtil.executeQuery(ENABLE_COL_CACHE, getTddlConnection1());
         }
 
     }

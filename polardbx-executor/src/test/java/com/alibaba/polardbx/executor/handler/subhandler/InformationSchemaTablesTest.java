@@ -312,22 +312,27 @@ public class InformationSchemaTablesTest {
                 String schema = (String) row.getObject(1);
                 long dataLength = (long) row.getObject(9);
                 long indexLength = (long) row.getObject(11);
+                long dataFree = (long) row.getObject(12);
                 if (table.equals(tb1)) {
                     Assert.assertEquals(db1, schema);
                     Assert.assertEquals(200, dataLength);
                     Assert.assertEquals(400, indexLength);
+                    Assert.assertEquals(400, dataFree);
                 } else if (table.equals(gsi1)) {
                     Assert.assertEquals(db1, schema);
                     Assert.assertEquals(200, dataLength);
                     Assert.assertEquals(0, indexLength);
+                    Assert.assertEquals(0, dataFree);
                 } else if (table.equals(tb2)) {
                     Assert.assertEquals(db2, schema);
                     Assert.assertEquals(200, dataLength);
                     Assert.assertEquals(400, indexLength);
+                    Assert.assertEquals(400, dataFree);
                 } else if (table.equals(gsi2)) {
                     Assert.assertEquals(db2, schema);
                     Assert.assertEquals(200, dataLength);
                     Assert.assertEquals(0, indexLength);
+                    Assert.assertEquals(0, dataFree);
                 }
             }
         }

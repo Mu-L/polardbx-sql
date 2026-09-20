@@ -20,6 +20,8 @@ import com.alibaba.polardbx.common.jdbc.BytesSql;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.core.planner.PostPlanner;
+import com.alibaba.polardbx.optimizer.core.rel.util.DirectPlanCommonGroupInfo;
 import com.alibaba.polardbx.optimizer.exception.OptimizerException;
 import com.alibaba.polardbx.optimizer.utils.PlannerUtils;
 import com.google.common.collect.ImmutableList;
@@ -42,6 +44,7 @@ public class DirectTableOperation extends BaseTableOperation {
     private List<Map<Integer, ParameterContext>> batchParameters;
     private List<String> logicalTableNames; // log tables
     private List<String> tableNames; // phy tables
+    private DirectPlanCommonGroupInfo commonGroupKeyInfo = new DirectPlanCommonGroupInfo();
 
     public DirectTableOperation(RelNode logicalPlan, RelDataType rowType, List<String> logicalTableNames,
                                 List<String> tableNames, String dbIndex,
@@ -58,6 +61,7 @@ public class DirectTableOperation extends BaseTableOperation {
         super(src);
         tableNames = src.tableNames;
         logicalTableNames = src.logicalTableNames;
+        commonGroupKeyInfo = src.commonGroupKeyInfo.copy();
     }
 
     /**
@@ -136,4 +140,23 @@ public class DirectTableOperation extends BaseTableOperation {
         DirectTableOperation directTableOperation = new DirectTableOperation(this);
         return directTableOperation;
     }
+
+    public String calcDircectPlanGroupKey(ExecutionContext ec) {
+        String targetIndex = null;
+        if (getCommonGroupKeyInfo().isContainAnyReplicasTables()) {
+            targetIndex = getCommonGroupKeyInfo().getRandomReadTargetGroupKeyIfAllowed(ec, withLock());
+        } else {
+            targetIndex = PostPlanner.getBroadcastTableGroup(ec, getSchemaName(), getLogicalTableNames());
+        }
+        return targetIndex;
+    }
+
+    public DirectPlanCommonGroupInfo getCommonGroupKeyInfo() {
+        return commonGroupKeyInfo;
+    }
+
+    public void setCommonGroupKeyInfo(DirectPlanCommonGroupInfo commonGroupKeyInfo) {
+        this.commonGroupKeyInfo = commonGroupKeyInfo;
+    }
+
 }

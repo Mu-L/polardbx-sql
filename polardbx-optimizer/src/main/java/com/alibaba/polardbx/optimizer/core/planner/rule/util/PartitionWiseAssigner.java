@@ -41,12 +41,12 @@ import java.util.List;
 import java.util.Map;
 
 public class PartitionWiseAssigner {
-    public static RelNode assign(RelNode root, boolean joinKeepPartition) {
+    public static RelNode assign(RelNode root, boolean joinKeepPartition, boolean enablePartitionWise) {
         // deduce RelPartitionWise for non-leaf node
         BottomUpAssign bottomUpAssign = new BottomUpAssign(joinKeepPartition);
         RelNode newRoot = root.accept(bottomUpAssign);
         // deduce RelPartitionWise for leaf node
-        TopDownAssign topDownAssign = new TopDownAssign();
+        TopDownAssign topDownAssign = new TopDownAssign(enablePartitionWise);
         return newRoot.accept(topDownAssign);
     }
 
@@ -197,12 +197,15 @@ public class PartitionWiseAssigner {
      * A tableScan is RelPartitionWises.ALL only if it is required to provide partition-wise.
      */
     static public class TopDownAssign extends RelShuttleImpl {
-        private final RelPartitionWise defaultValue = RelPartitionWises.REMOTE;
+        private final RelPartitionWise defaultValue;
         // map relNode.id to a RelPartitionWise the relNode is required to provide
         private final Map<Integer, RelPartitionWise> requiredPartitionWise;
+        private final boolean enablePartitionWise;
 
-        public TopDownAssign() {
+        public TopDownAssign(boolean enablePartitionWise) {
             this.requiredPartitionWise = Maps.newHashMap();
+            this.enablePartitionWise = enablePartitionWise;
+            this.defaultValue = enablePartitionWise ? RelPartitionWises.REMOTE : RelPartitionWises.ANY;
         }
 
         protected RelNode visitChild(RelNode parent, int i, RelNode child) {
@@ -247,6 +250,15 @@ public class PartitionWiseAssigner {
         }
 
         public RelNode visit(RelNode other) {
+
+            if (!enablePartitionWise) {
+                requiredPartitionWise.put(other.getId(), RelPartitionWises.ANY);
+                for (RelNode input : other.getInputs()) {
+                    requiredPartitionWise.put(input.getId(), RelPartitionWises.ANY);
+                }
+                return visitChildren(other);
+            }
+
             if (other instanceof ColumnarExchange) {
                 // set required PartitionWise of child to be ANY
                 requiredPartitionWise.put(getFirstChildId(other), RelPartitionWises.ANY);

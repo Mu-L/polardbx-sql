@@ -56,6 +56,7 @@ import com.alibaba.polardbx.executor.mpp.planner.StageExecutionPlan;
 import com.alibaba.polardbx.executor.mpp.util.Failures;
 import com.alibaba.polardbx.executor.mpp.util.ImmutableCollectors;
 import com.alibaba.polardbx.gms.node.Node;
+import com.alibaba.polardbx.optimizer.ttl.query.TtlQueryType;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
@@ -79,6 +80,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static com.alibaba.polardbx.executor.mpp.execution.StageState.ABORTED;
 import static com.alibaba.polardbx.executor.mpp.execution.StageState.CANCELED;
@@ -139,7 +141,7 @@ public class SqlQueryScheduler {
         ImmutableMultimap.Builder<StageId, StageLinkage> stageLinkages = ImmutableMultimap.builder();
         // Only fetch a distribution once per query to assure all stages see the same machine assignments
         Map<Integer, StageId> stageIdMapping = new HashMap<>();
-        initStageIds(Optional.empty(), plan, queryStateMachine.getQueryId(), stageIdMapping);
+        initStageIds(Optional.empty(), plan, queryStateMachine.getQueryId(), stageIdMapping, this.c2pLinkages);
 
         this.nodeSelector = nodeSelector;
         Map<StageId, SqlStageExecution> initedStages = new HashMap<>();
@@ -147,7 +149,9 @@ public class SqlQueryScheduler {
             createStages(Optional.empty(), stageIdMapping, initedStages, locationFactory, plan,
                 partitioningHandler -> nodePartitioningManager
                     .getNodePartitioningMap(this.nodeSelector, partitioningHandler),
-                remoteTaskFactory, session, executor, nodeTaskMap, stageSchedulers, stageLinkages
+                remoteTaskFactory, session, executor, nodeTaskMap, stageSchedulers, stageLinkages,
+                this.stage2childStages, this.c2pLinkages, this.outputBufferManagers, this.bloomFilterManager,
+                this.nodeSelector, this.summarizeTaskInfo, this.stages
             );
 
         SqlStageExecution rootStage = stages.get(0);
@@ -199,8 +203,8 @@ public class SqlQueryScheduler {
         return bloomFilterManager;
     }
 
-    private void initStageIds(Optional<StageExecutionPlan> parent, StageExecutionPlan plan,
-                              String queryId, Map<Integer, StageId> stageIdMapping) {
+    static public void initStageIds(Optional<StageExecutionPlan> parent, StageExecutionPlan plan, String queryId,
+                                    Map<Integer, StageId> stageIdMapping, Multimap<StageId, StageId> c2pLinkages) {
 
         boolean visitBefore = stageIdMapping.containsKey(plan.getFragment().getId());
         if (!visitBefore) {
@@ -216,38 +220,49 @@ public class SqlQueryScheduler {
 
         if (!visitBefore) {
             for (StageExecutionPlan subStage : plan.getSubStages()) {
-                initStageIds(Optional.of(plan), subStage, queryId, stageIdMapping
-                );
+                initStageIds(Optional.of(plan), subStage, queryId, stageIdMapping, c2pLinkages);
             }
         }
     }
 
-    private List<SqlStageExecution> createStages(Optional<SqlStageExecution> parent,
-                                                 Map<Integer, StageId> stageIdMapping,
-                                                 Map<StageId, SqlStageExecution> initedStages,
-                                                 LocationFactory locationFactory, StageExecutionPlan plan,
-                                                 Function<PartitionHandle, Map<Integer, Node>> partitioningCache,
-                                                 RemoteTaskFactory remoteTaskFactory,
-                                                 Session session, ExecutorService executor,
-                                                 NodeTaskMap nodeTaskMap,
-                                                 ImmutableMap.Builder<StageId, StageScheduler> stageSchedulers,
-                                                 ImmutableMultimap.Builder<StageId, StageLinkage> stageLinkages) {
+    public static List<SqlStageExecution> createStages(
+        Optional<SqlStageExecution> parent,
+        Map<Integer, StageId> stageIdMapping,
+        Map<StageId, SqlStageExecution> initedStages,
+        LocationFactory locationFactory,
+        StageExecutionPlan plan,
+        Function<PartitionHandle, Map<Integer, Node>> partitioningCache,
+        RemoteTaskFactory remoteTaskFactory,
+        Session session,
+        ExecutorService executor,
+        NodeTaskMap nodeTaskMap,
+        ImmutableMap.Builder<StageId, StageScheduler> stageSchedulers,
+        ImmutableMultimap.Builder<StageId, StageLinkage> stageLinkages,
+        Map<StageId, Set<SqlStageExecution>> stage2childStages,
+        Multimap<StageId, StageId> c2pLinkages,
+        Map<StageId, OutputBufferManager> outputBufferManagers,
+        QueryBloomFilter bloomFilterManager,
+        NodeSelector nodeSelector,
+        boolean summarizeTaskInfo,
+        Map<StageId, SqlStageExecution> stages) {
 
         StageId stageId = stageIdMapping.get(plan.getFragment().getId());
         checkArgument(stageId != null, "stageId of fragment %s is null", plan.getFragment().getId());
-        ImmutableList.Builder<SqlStageExecution> stages = ImmutableList.builder();
+        ImmutableList.Builder<SqlStageExecution> resultStages = ImmutableList.builder();
 
         if (initedStages.containsKey(stageId)) {
             StageLinkage linkage =
-                new StageLinkage(plan.getFragment(), parent, stage2childStages.get(stageId), c2pLinkages
-                );
+                new StageLinkage(plan.getFragment(), parent, stage2childStages.get(stageId), c2pLinkages,
+                    outputBufferManagers);
             stageLinkages.put(stageId, linkage);
-            stages.add(initedStages.get(stageId));
-            return stages.build();
+            resultStages.add(initedStages.get(stageId));
+            return resultStages.build();
         }
+
         if (log.isDebugEnabled()) {
             log.debug("create stage: " + stageId + " for fragment: " + plan.getFragment().getId());
         }
+
         SqlStageExecution stage =
             new SqlStageExecution(stageId, locationFactory.createStageLocation(stageId), plan.getFragment(),
                 remoteTaskFactory, session, summarizeTaskInfo, nodeTaskMap, executor, sId -> {
@@ -267,7 +282,7 @@ public class SqlQueryScheduler {
                         Collectors.toList()) : null
             );
 
-        stages.add(stage);
+        resultStages.add(stage);
 
         StageScheduler scheduler;
 
@@ -279,10 +294,24 @@ public class SqlQueryScheduler {
             scheduler = new FixedCountScheduler(stage, partitionToNode);
         } else if (plan.getFragment().getExpandSources().isEmpty()) {
             // only contain logicalView
-            SplitPlacementPolicy placementPolicy = new DynamicSplitPlacementPolicy(nodeSelector, stage::getAllTasks);
-            scheduler = new SourcePartitionedScheduler(
-                stage, placementPolicy, plan.getSplitInfos(), null, session.getClientContext(),
-                nodeSelector.getOrderedNode());
+            if (plan.getFragment().isAllOss()
+                && TtlQueryType.needHybridSchedule(session.getClientContext().getTtlQueryType())
+                && nodeSelector instanceof HybridNodeSelector) {
+                ColumnarNodeSelector columnarNodeSelector =
+                    ((HybridNodeSelector) nodeSelector).getColumnarNodeSelector();
+                SplitPlacementPolicy placementPolicy =
+                    new DynamicSplitPlacementPolicy(columnarNodeSelector, stage::getAllTasks);
+                scheduler = new SourcePartitionedScheduler(
+                    stage, placementPolicy, plan.getSplitInfos(), null, session.getClientContext(),
+                    columnarNodeSelector.getOrderedNode());
+            } else {
+                SplitPlacementPolicy placementPolicy =
+                    new DynamicSplitPlacementPolicy(nodeSelector, stage::getAllTasks);
+                scheduler = new SourcePartitionedScheduler(
+                    stage, placementPolicy, plan.getSplitInfos(), null, session.getClientContext(),
+                    nodeSelector.getOrderedNode());
+            }
+
         } else {
             if (plan.getFragment().getPartitionedSources().size() == plan.getFragment().getExpandSources().size()) {
                 Map<Integer, Node> partitionToNode = partitioningCache.apply(plan.getFragment().getPartitioning());
@@ -325,13 +354,15 @@ public class SqlQueryScheduler {
             List<SqlStageExecution> subTree =
                 createStages(Optional.of(stage), stageIdMapping, initedStages, locationFactory, subStagePlan,
                     partitioningCache, remoteTaskFactory, session,
-                    executor, nodeTaskMap, stageSchedulers, stageLinkages
+                    executor, nodeTaskMap, stageSchedulers, stageLinkages,
+                    stage2childStages, c2pLinkages, outputBufferManagers, bloomFilterManager, nodeSelector,
+                    summarizeTaskInfo, stages
                 );
 
             for (SqlStageExecution child : subTree) {
                 if (!childStageIds.contains(child.getStageId())) {
                     // avoid duplicate stage for cte
-                    stages.add(child);
+                    resultStages.add(child);
                     childStageIds.add(child.getStageId());
                 }
             }
@@ -345,7 +376,7 @@ public class SqlQueryScheduler {
                 for (SqlStageExecution childStage : childStages) {
                     // only cancel stage that all of it's parent is done
                     Optional<StageId> notFinishedParent = c2pLinkages.get(childStage.getStageId()).stream()
-                        .filter(parentId -> !this.stages.get(parentId).getState().isDone()).findAny();
+                        .filter(parentId -> !stages.get(parentId).getState().isDone()).findAny();
                     if (!notFinishedParent.isPresent()) {
                         childStage.cancel();
                     }
@@ -354,12 +385,12 @@ public class SqlQueryScheduler {
         });
 
         StageLinkage linkage =
-            new StageLinkage(plan.getFragment(), parent, childStages, c2pLinkages);
+            new StageLinkage(plan.getFragment(), parent, childStages, c2pLinkages, outputBufferManagers);
         stageLinkages.put(stageId, linkage);
         stage2childStages.put(stageId, childStages);
         initedStages.put(stageId, stage);
 
-        return stages.build();
+        return resultStages.build();
     }
 
     public StageExecutionPlan getPlan() {
@@ -517,7 +548,7 @@ public class SqlQueryScheduler {
         //}
     }
 
-    private class StageLinkage {
+    public static class StageLinkage {
         private final Integer currentStageFragmentId;
         private final Optional<SqlStageExecution> parent;
         private final Set<OutputBufferManager> childOutputBufferManagers;
@@ -525,7 +556,8 @@ public class SqlQueryScheduler {
         private final boolean childStageHasMultiParent;
 
         public StageLinkage(PlanFragment fragment, Optional<SqlStageExecution> parent, Set<SqlStageExecution> children,
-                            Multimap<StageId, StageId> linkages) {
+                            Multimap<StageId, StageId> linkages,
+                            Map<StageId, OutputBufferManager> outputBufferManagers) {
             this.currentStageFragmentId = fragment.getId();
             this.parent = parent;
             this.childStageHasMultiParent =
@@ -544,18 +576,13 @@ public class SqlQueryScheduler {
                     ImmutableMap<Integer, Boolean> parentStageIds = childParents.stream()
                         .map(stageId -> stageId.getId()).collect(
                             ImmutableCollectors.toImmutableMap(stageId -> stageId, stageId -> false));
+                    // schedule under remote pairwise should rely on partition count not task's num
+                    int bufferCount = fragment.isRemotePairWise() ? partitioningHandle.getPartitionCount() : -1;
                     outputBufferManager =
-                        new BroadcastOutputBufferManager(new HashMap<>(parentStageIds), childStage::setOutputBuffers);
+                        new BroadcastOutputBufferManager(new HashMap<>(parentStageIds), bufferCount,
+                            childStage::setOutputBuffers);
                 } else {
-                    int partitionCount;
-                    if (partitioningHandle.isRemotePairWise()) {
-                        // task ID under partition-wise mode is determined by (physicalPartitionID % nodeCount)
-                        // so we just assign a max count here
-                        partitionCount = nodeSelector.getOrderedNode().size();
-                        partitioningHandle.setPartitionCount(partitionCount);
-                    } else {
-                        partitionCount = partitioningHandle.getPartitionCount();
-                    }
+                    int partitionCount = partitioningHandle.getPartitionCount();
                     outputBufferManager =
                         new PartitionedOutputBufferManager(childParents, childStageHasMultiParent, partitionCount,
                             childStage::setOutputBuffers
@@ -622,9 +649,27 @@ public class SqlQueryScheduler {
                 }
 
                 for (OutputBufferManager child : childOutputBufferManagers) {
-                    child.addOutputBuffers(stageId, newOutputBuffers, noMoreTasks);
+                    List<OutputBuffers.OutputBufferId> tempBuffers = newOutputBuffers;
+                    // NOTE: here, buffer ids should have same stage id
+                    if (child instanceof BroadcastOutputBufferManager
+                        && ((BroadcastOutputBufferManager) child).getBufferCount() > 0
+                        && !newOutputBuffers.isEmpty()) {
+                        tempBuffers = getFullBuffer(newOutputBuffers.get(0).getStageId(),
+                            ((BroadcastOutputBufferManager) child).getBufferCount());
+                    }
+                    child.addOutputBuffers(stageId, tempBuffers, noMoreTasks);
                 }
             }
+        }
+
+        /**
+         * @param stageId stage id used to create output buffer
+         * @param bufferCount all buffers to create
+         */
+        private List<OutputBuffers.OutputBufferId> getFullBuffer(int stageId,
+                                                                 int bufferCount) {
+            return IntStream.range(0, bufferCount).boxed().map(idx -> new OutputBuffers.OutputBufferId(stageId, idx))
+                .collect(Collectors.toList());
         }
     }
 }

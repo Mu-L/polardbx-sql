@@ -1,0 +1,12 @@
+SQL:
+  - sql: |
+      select * from (values row(cast(1 as bigint)), row(cast(2 as bigint)), row(cast(3 as bigint))) as v(a)
+    plan: |
+      dynamicvalues(tuples=[{ cast(?0):bigint }, { cast(?1):bigint }, { cast(?2):bigint }])
+  - sql: |
+      select * from (values row(cast(1 as bigint), cast('2026-08-18 08:00:00.000' as timestamp(3))), row(cast('2' as bigint), cast(null as timestamp(3)))) as v(id, cutoff_time)
+    plan: |
+      dynamicvalues(tuples=[{ cast(?0):bigint, cast(?1):timestamp(3) }, { cast(?2):bigint, cast(null):timestamp(3) }])
+DDL: { }
+STATISTICS: { }
+CONFIG: { }

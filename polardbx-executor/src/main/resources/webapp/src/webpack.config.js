@@ -23,5 +23,9 @@ module.exports = {
     output: {
         path: __dirname + '/../dist',
         filename: '[name].js'
+    },
+    externals: {
+        './cptable': 'var cptable',
+        '../xlsx.js': 'var _XLSX'
     }
 };

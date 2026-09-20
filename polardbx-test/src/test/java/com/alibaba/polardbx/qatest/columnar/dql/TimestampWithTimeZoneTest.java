@@ -172,4 +172,42 @@ public class TimestampWithTimeZoneTest extends ColumnarReadBaseTestCase {
         DataValidator.selectContentSameAssertWithDiffSql(columnarSql, primarySql, null, tddlConnection, tddlConnection,
             false, false, false);
     }
+
+    @Test
+    public void testTimestampWithTimeZoneName() throws InterruptedException {
+        // 创建表结构
+        JdbcUtil.executeUpdateSuccess(tddlConnection,
+            String.format("CREATE TABLE %s (\n"
+                + "\t`id` int NOT NULL AUTO_INCREMENT,\n"
+                + "\t`ts` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n"
+                + "\tPRIMARY KEY (`id`),\n"
+                + "\tCLUSTERED COLUMNAR INDEX `cc_i_example` (`ts`) PARTITION BY HASH(`ts`) PARTITIONS 4\n"
+                + ") ENGINE = InnoDB AUTO_INCREMENT = 2 DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_general_ci SINGLE", PRIMARY_TABLE_NAME));
+
+        // 设置时区为 Asia/Shanghai
+        JdbcUtil.executeSuccess(tddlConnection, "SET time_zone = 'Asia/Shanghai'");
+
+        // 插入数据
+        JdbcUtil.executeUpdateSuccess(tddlConnection,
+            String.format("INSERT INTO %s(id, ts) VALUES(1, '2025-08-26 12:00:00')", PRIMARY_TABLE_NAME));
+
+        waitForSync(tddlConnection);
+
+        // 在不同时区下验证查询结果
+        // 首先在 America/Los_Angeles 时区查询
+        JdbcUtil.executeSuccess(tddlConnection, "set time_zone='America/Los_Angeles'");
+        String columnarSql1 =
+            "/*+TDDL: WORKLOAD_TYPE=AP*/select * from " + PRIMARY_TABLE_NAME + " force index (`cc_i_example`) where ts = '2025-08-25 21:00:00'";
+        String primarySql1 = "select * from " + PRIMARY_TABLE_NAME + " force index (primary) where ts = '2025-08-25 21:00:00'";
+        DataValidator.selectContentSameAssertWithDiffSql(columnarSql1, primarySql1, null, tddlConnection, tddlConnection,
+            false, false, false);
+
+        // 然后在 Asia/Shanghai 时区查询
+        JdbcUtil.executeSuccess(tddlConnection, "SET time_zone = 'Asia/Shanghai'");
+        String columnarSql2 =
+            "/*+TDDL: WORKLOAD_TYPE=AP*/select * from " + PRIMARY_TABLE_NAME + " force index (`cc_i_example`) where ts = '2025-08-26 12:00:00'";
+        String primarySql2 = "select * from " + PRIMARY_TABLE_NAME + " force index (primary) where ts = '2025-08-26 12:00:00'";
+        DataValidator.selectContentSameAssertWithDiffSql(columnarSql2, primarySql2, null, tddlConnection, tddlConnection,
+            false, false, false);
+    }
 }

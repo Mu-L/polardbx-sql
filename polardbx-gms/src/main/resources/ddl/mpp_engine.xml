@@ -6,6 +6,7 @@
               `id` bigint unsigned not null auto_increment,
               `cluster` varchar(64) not null default '',
               `inst_id` varchar(128) NOT NULL,
+              `sub_inst_id` varchar(128) default null,
               `nodeid` varchar(64) not null default '',
               `version` varchar(64) not null default '',
               `ip` varchar(20) not null default '',
@@ -19,5 +20,8 @@
               unique key (`cluster`, `nodeid`)
             ) charset=utf8
         ]]></Create>
+        <Change><![CDATA[
+            alter table `node_info` add column `sub_inst_id` varchar(128) default null
+        ]]> </Change>
     </SystemTable>
 </SystemTables>

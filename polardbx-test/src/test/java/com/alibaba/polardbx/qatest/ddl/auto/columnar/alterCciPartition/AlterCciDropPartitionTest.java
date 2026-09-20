@@ -19,18 +19,19 @@
 package com.alibaba.polardbx.qatest.ddl.auto.columnar.alterCciPartition;
 
 import com.alibaba.polardbx.optimizer.partition.common.PartitionStrategy;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import net.jcip.annotations.NotThreadSafe;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-@RunWith(Parameterized.class)
+@IcbcIgnore(ignoreReason = "icbc not support cci")
 @NotThreadSafe
 public class AlterCciDropPartitionTest extends AlterCciPartitionBaseTest {
     static List<PartitionRuleInfo> partitionRuleInfos = new ArrayList<>(Arrays
@@ -50,7 +51,7 @@ public class AlterCciDropPartitionTest extends AlterCciPartitionBaseTest {
 
     private static PartitionRuleInfo partitionRuleInfo;
     static boolean firstIn = true;
-    final static String logicalDatabase = "AlterCciAddPartition";
+    final static String logicalDatabase = "AlterCciDropPartition";
 
     public AlterCciDropPartitionTest(PartitionRuleInfo partitionRuleInfo) {
         super(logicalDatabase);
@@ -59,8 +60,9 @@ public class AlterCciDropPartitionTest extends AlterCciPartitionBaseTest {
     }
 
     @Test
-    public void testDDLOnly() {
-
+    public void testDDLOnly() throws SQLException {
+        // 验证所有 CCI 的分区记录
+        compareTablePartitionRecords(logicalDatabase, tableName, cciNames);
     }
 
     @Parameterized.Parameters(name = "{index}:partitionRuleInfo={0}")

@@ -29,11 +29,17 @@ import com.alibaba.polardbx.optimizer.core.rel.PhyTableInsertBuilder;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableInsertSharder;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableInsertSharder.PhyTableShardResult;
 import com.alibaba.polardbx.optimizer.core.rel.SingleTableInsert;
+import com.alibaba.polardbx.optimizer.core.rel.dml.DmlWriteContext;
+import com.alibaba.polardbx.optimizer.core.rel.dml.PhysicalRoute;
+import com.alibaba.polardbx.optimizer.core.rel.dml.RoutedInsertInput;
+import com.alibaba.polardbx.optimizer.core.rel.dml.RoutedModifyInput;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
+import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.alibaba.polardbx.rule.TableRule;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.rel.RelNode;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -58,24 +64,36 @@ public class SingleInsertWriter extends InsertWriter {
 
     @Override
     public List<RelNode> getInput(ExecutionContext executionContext) {
-         String schemaName = this.tableMeta.getSchemaName();
-         if (!DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
-             return getInputForShardingTables(executionContext);
-         } else {
-             return getInputForPartitioningTables(executionContext);
-         }
+        String schemaName = this.tableMeta.getSchemaName();
+        if (!DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
+            return getInputForShardingTables(executionContext);
+        } else {
+            return getInputForPartitioningTables(executionContext);
+        }
     }
-    
+
     public List<RelNode> getInputForPartitioningTables(ExecutionContext executionContext) {
 
         SingleTableInsert singleTableInsert = this.singleTableOperation;
         Map<Integer, ParameterContext> params = executionContext.getParams() == null ?
-            null : executionContext.getParams().getCurrentParameter();;
+            null : executionContext.getParams().getCurrentParameter();
+        ;
         Pair<String, String> phyDbAndTb = singleTableInsert.getPhyGroupAndPhyTablePair(params, executionContext);
 
         // Build plan
         final List<PhyTableShardResult> shardResults =
             Lists.newArrayList(new PhyTableShardResult(phyDbAndTb.getKey(), phyDbAndTb.getValue(), null));
+
+        final DmlWriteContext writeContext = executionContext.getDmlWriteContext();
+        if (writeContext != null) {
+            final int rowCount = executionContext.getParams().isBatch()
+                ? executionContext.getParams().getBatchParameters().size()
+                : ((com.alibaba.polardbx.optimizer.core.rel.LogicalDynamicValues) RelUtils.getRelInput(insert))
+                .getTuples().size();
+            writeContext.beforeInsertPlans(this, new RoutedInsertInput(
+                    RoutedModifyInput.buildInsertRoutes(insert.getSchemaName(), shardResults, rowCount)),
+                executionContext);
+        }
 
         final PhyTableInsertSharder partitioner = new PhyTableInsertSharder(insert,
             executionContext.getParams(),
@@ -87,10 +105,11 @@ public class SingleInsertWriter extends InsertWriter {
             insert.getDbType(),
             insert.getSchemaName());
 
-        return phyPlanbuilder.build(shardResults);
-        
+        final List<RelNode> result = phyPlanbuilder.build(shardResults);
+        return writeContext == null ? result : writeContext.afterInsertPlans(this, result, executionContext);
+
     }
-    
+
     public List<RelNode> getInputForShardingTables(ExecutionContext executionContext) {
 
         // Get group key
@@ -101,6 +120,17 @@ public class SingleInsertWriter extends InsertWriter {
         final List<PhyTableShardResult> shardResults =
             Lists.newArrayList(new PhyTableShardResult(groupIndex, physicalTableName, null));
 
+        final DmlWriteContext writeContext = executionContext.getDmlWriteContext();
+        if (writeContext != null) {
+            final int rowCount = executionContext.getParams().isBatch()
+                ? executionContext.getParams().getBatchParameters().size()
+                : ((com.alibaba.polardbx.optimizer.core.rel.LogicalDynamicValues) RelUtils.getRelInput(insert))
+                .getTuples().size();
+            writeContext.beforeInsertPlans(this, new RoutedInsertInput(
+                    RoutedModifyInput.buildInsertRoutes(insert.getSchemaName(), shardResults, rowCount)),
+                executionContext);
+        }
+
         final PhyTableInsertSharder partitioner = new PhyTableInsertSharder(insert,
             executionContext.getParams(),
             SequenceAttribute.getAutoValueOnZero(executionContext.getSqlMode()));
@@ -111,7 +141,8 @@ public class SingleInsertWriter extends InsertWriter {
             insert.getDbType(),
             insert.getSchemaName());
 
-        return phyPlanbuilder.build(shardResults);
+        final List<RelNode> result = phyPlanbuilder.build(shardResults);
+        return writeContext == null ? result : writeContext.afterInsertPlans(this, result, executionContext);
     }
 
     private String getPhysicalTableName() {

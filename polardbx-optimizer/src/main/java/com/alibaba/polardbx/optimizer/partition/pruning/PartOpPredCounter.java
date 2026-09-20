@@ -16,10 +16,15 @@
 
 package com.alibaba.polardbx.optimizer.partition.pruning;
 
+import com.alibaba.polardbx.common.jdbc.ParameterContext;
+import com.alibaba.polardbx.common.jdbc.RawString;
 import org.apache.calcite.rex.RexCall;
+import org.apache.calcite.rex.RexDynamicParam;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexShuttle;
 import org.apache.calcite.sql.SqlKind;
+
+import java.util.Map;
 
 /**
  * @author chenghui.lch
@@ -28,16 +33,29 @@ public class PartOpPredCounter extends RexShuttle {
 
     protected int opPredCnt = 0;
 
-    public PartOpPredCounter() {
+    protected Map<Integer, ParameterContext> params;
+
+    public PartOpPredCounter(Map<Integer, ParameterContext> params) {
+        this.params = params;
     }
-    
+
     @Override
     public RexNode visitCall(RexCall call) {
         //return super.visitLiteral(literal);  
         SqlKind kind = call.getKind();
-        if (kind == SqlKind.OR || kind == SqlKind.AND) {
+        if (kind == SqlKind.OR || kind == SqlKind.AND || kind == SqlKind.IN) {
             for (int i = 0; i < call.getOperands().size(); i++) {
                 call.getOperands().get(i).accept(this);
+            }
+        } else if (kind == SqlKind.ROW && params != null) {
+            if (call.getOperands().size() == 1 && call.getOperands().get(0) instanceof RexDynamicParam) {
+                RexDynamicParam dynamicParam = (RexDynamicParam) call.getOperands().get(0);
+                int index = dynamicParam.getIndex();
+                ParameterContext pc = params.get(index + 1);
+                if (pc != null && pc.getValue() != null && pc.getValue() instanceof RawString) {
+                    RawString rawString = (RawString) pc.getValue();
+                    opPredCnt += rawString.size();
+                }
             }
         } else {
             opPredCnt++;

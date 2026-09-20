@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.executor.operator;
 
 import com.alibaba.polardbx.common.datatype.Decimal;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.chunk.MutableChunk;
 import com.alibaba.polardbx.executor.operator.util.RowChunksBuilder;
@@ -69,7 +70,11 @@ public class VectorizedProjectExecTest extends BaseExecTest {
         VectorizedProjectExec projectExec =
             new VectorizedProjectExec(inputExecutor, expressions, chunks, columns, context);
 
+        MemoryCountable.checkDeviation(projectExec, 0d, true);
+
         assertExecResults(projectExec, true, expectedOutputs.toArray(new Chunk[0]));
+
+        MemoryCountable.checkDeviation(projectExec, 0d, true);
     }
 
     @Test

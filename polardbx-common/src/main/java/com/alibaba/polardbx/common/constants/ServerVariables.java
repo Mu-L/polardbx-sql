@@ -1,19 +1,3 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.common.constants;
 
 import com.alibaba.polardbx.common.cdc.CdcConstants;
@@ -35,18 +19,25 @@ public class ServerVariables {
     public static Set<String> extraVariables = new HashSet<String>();
     public static Set<String> XbannedVariables = new HashSet<>();
 
+    // 既可以通过set key=NULL;也可以通过set key='';执行
     public static Set<String> canExecByBoth = new HashSet<String>();
-
+    // 只能通过set key=NULL;
     public static Set<String> canOnlyExecByNullVariables = new HashSet<String>();
-
+    // 只能通过set key='';
     public static Set<String> canOnlyExecByEmptyStrVariables = new HashSet<String>();
 
+    // Mysql 8.0 System Variable var scope: https://dev.mysql.com/doc/refman/8.0/en/server-system-variable-reference.html
     public static Set<String> mysqlBothVariables = new HashSet<>();
     public static Set<String> mysqlGlobalVariables = new HashSet<>();
     public static Set<String> mysqlSessionVariables = new HashSet<>();
     public static Set<String> mysqlDynamicVariables = new HashSet<>();
 
+    // 不允许通过 set global 设置的变量
     public static Set<String> globalBannedVariables = new HashSet<>();
+
+    // DBA 账号允许通过 set global 设置的安全 DN 变量白名单（仅这些经过严格审核、对实例稳定性无影响的变量才允许 DBA 设置；
+    // 高危变量必须通过 polardbx_root 账号设置）
+    public static Set<String> dbaAllowedGlobalVariables = new HashSet<>();
 
     public static final Set<String> CN_VARIABLES_REPLACE_DN_VARIABLES = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
 
@@ -57,16 +48,26 @@ public class ServerVariables {
         ConnectionProperties.PURGE_TRANS_INTERVAL,
         ConnectionProperties.PURGE_TRANS_BEFORE,
         ConnectionProperties.PURGE_TRANS_START_TIME);
+
     public static final Set<String> MODIFIABLE_DEADLOCK_DETECTION_PARAM = ImmutableSet.of(
         ConnectionProperties.ENABLE_DEADLOCK_DETECTION,
         ConnectionProperties.DEADLOCK_DETECTION_INTERVAL);
+
     public static final Set<String> MODIFIABLE_TRANSACTION_STATISTICS_PARAM = ImmutableSet.of(
         ConnectionProperties.TRANSACTION_STATISTICS_TASK_INTERVAL,
         ConnectionProperties.ENABLE_TRANSACTION_STATISTICS);
 
+    public static final Set<String> MODIFIABLE_AC_RECOVER_PARAM = ImmutableSet.of(
+        ConnectionProperties.XA_RECOVER_INTERVAL,
+        ConnectionProperties.ENABLE_TRANSACTION_RECOVER_TASK);
+
     public static final Set<String> MODIFIABLE_TRX_IDLE_TIMEOUT_PARAM = ImmutableSet.of(
         ConnectionProperties.ENABLE_TRX_IDLE_TIMEOUT_TASK,
         ConnectionProperties.TRX_IDLE_TIMEOUT_TASK_INTERVAL);
+
+    public static final Set<String> MODIFIABLE_CCL_EXECUTION_TIME_PARAM = ImmutableSet.of(
+        ConnectionProperties.ENABLE_CCL_EXECUTION_TIME_TASK,
+        ConnectionProperties.CCL_EXECUTION_TIME_DETECT_INTERVAL);
 
     public static final Set<String> MODIFIABLE_SYNC_POINT_PARAM = ImmutableSet.of(
         ConnectionProperties.ENABLE_SYNC_POINT,
@@ -268,6 +269,7 @@ public class ServerVariables {
         variables.add("flush_time");
         variables.add("force_revise");
         variables.add("foreign_key_checks");
+        variables.add("pushdown_range_limit");
         variables.add("ft_boolean_syntax");
         variables.add("ft_max_word_len");
         variables.add("ft_min_word_len");
@@ -704,6 +706,8 @@ public class ServerVariables {
         variables.add("open_files_limit");
         variables.add("opt_enable_rds_priv_strategy");
         variables.add("opt_force_index_pct_cached");
+        variables.add("opt_index_format_gpp_enabled");
+        variables.add("opt_index_format_panda_enabled");
         variables.add("opt_indexstat");
         variables.add("opt_outline_enabled");
         variables.add("opt_tablestat");
@@ -1069,6 +1073,18 @@ public class ServerVariables {
         variables.add("polarx_sync_point_timeout");
         variables.add("xa_detach_on_prepare");
         variables.add("innodb_rds_faster_ddl");
+        variables.add("max_trx_affected_rows");
+        variables.add("slow_query_user_pattern");
+        variables.add("opt_index_format_gpp_enabled");
+        variables.add("opt_index_format_panda_enabled");
+        variables.add("polarx_slow_query_block_check_interval");
+        variables.add("polarx_slow_query_block_cpu_percent_threshold");
+        variables.add("polarx_slow_query_block_enable");
+        variables.add("polarx_slow_query_block_exec_timeout");
+        variables.add("polarx_slow_query_block_exec_timeout_for_cpu_exceed");
+        variables.add("polarx_slow_query_block_user_pattern");
+        variables.add("vidx_disabled");
+        variables.add("vidx_hnsw_ef_search");
 
         readonlyVariables.add("audit_log_current_session");
         readonlyVariables.add("audit_log_filter_id");
@@ -1288,6 +1304,7 @@ public class ServerVariables {
         writableVariables.add("engine_condition_pushdown");
         writableVariables.add("eq_range_index_dive_limit");
         writableVariables.add("foreign_key_checks");
+        writableVariables.add("pushdown_range_limit");
         writableVariables.add("generated_random_password_length");
         writableVariables.add("group_concat_max_len");
         writableVariables.add("group_replication_consistency");
@@ -1444,11 +1461,18 @@ public class ServerVariables {
         writableVariables.add("wait_timeout");
         writableVariables.add("windowing_use_high_precision");
 
+        // 这个比较特殊，这个需要在query_cache打开的情况下才可写
         writableVariables.add("query_cache_type");
 
+        writableVariables.add("opt_index_format_gpp_enabled");
+        writableVariables.add("opt_index_format_panda_enabled");
+        writableVariables.add("vidx_hnsw_ef_search");
+
+        // ban
         bannedVariables.add("pseudo_thread_id");
 
         canExecByBoth.add("session_track_system_variables");
+        canExecByBoth.add("polarx_slow_query_pushdown_username");
 
         canOnlyExecByNullVariables.add("character_set_results");
         canOnlyExecByNullVariables.add("innodb_ft_user_stopword_table");
@@ -1464,10 +1488,12 @@ public class ServerVariables {
 
         extraVariables.add(TransactionAttribute.DRDS_TRANSACTION_POLICY);
 
+        // Limits for TSO/XA/2PC trx.
         variables.add(ConnectionProperties.MAX_TRX_DURATION.toLowerCase());
         writableVariables.add(ConnectionProperties.MAX_TRX_DURATION.toLowerCase());
         extraVariables.add(ConnectionProperties.MAX_TRX_DURATION.toLowerCase());
 
+        //wumu add
         extraVariables.add("sockettimeout");
         extraVariables.add("pure_async_ddl_mode");
         extraVariables.add("transaction policy");
@@ -1479,6 +1505,7 @@ public class ServerVariables {
         extraVariables.add(ConnectionProperties.ENABLE_BALANCER.toLowerCase());
         extraVariables.add(ConnectionProperties.BALANCER_MAX_PARTITION_SIZE.toLowerCase());
 
+        // X-protocol banned.
         XbannedVariables.add("net_read_timeout");
         XbannedVariables.add("net_write_timeout");
         XbannedVariables.add("net_retry_count");
@@ -1525,6 +1552,7 @@ public class ServerVariables {
         mysqlBothVariables.add("explicit_defaults_for_timestamp");
         mysqlBothVariables.add("force_revise");
         mysqlBothVariables.add("foreign_key_checks");
+        mysqlBothVariables.add("pushdown_range_limit");
         mysqlBothVariables.add("generated_random_password_length");
         mysqlBothVariables.add("global_connection_memory_tracking");
         mysqlBothVariables.add("global_query_wait_timeout");
@@ -1664,6 +1692,7 @@ public class ServerVariables {
         mysqlBothVariables.add("wait_timeout");
         mysqlBothVariables.add("windowing_use_high_precision");
         mysqlBothVariables.add("xa_detach_on_prepare");
+        mysqlBothVariables.add("vidx_hnsw_ef_search");
 
         mysqlGlobalVariables.add("opt_flashback_area");
         mysqlGlobalVariables.add("innodb_txn_retention");
@@ -2374,6 +2403,8 @@ public class ServerVariables {
         mysqlGlobalVariables.add("open_files_limit");
         mysqlGlobalVariables.add("opt_enable_rds_priv_strategy");
         mysqlGlobalVariables.add("opt_force_index_pct_cached");
+        mysqlGlobalVariables.add("opt_index_format_gpp_enabled");
+        mysqlGlobalVariables.add("opt_index_format_panda_enabled");
         mysqlGlobalVariables.add("opt_indexstat");
         mysqlGlobalVariables.add("opt_outline_enabled");
         mysqlGlobalVariables.add("opt_tablestat");
@@ -2680,6 +2711,15 @@ public class ServerVariables {
         mysqlGlobalVariables.add("weak_consensus_mode");
         mysqlGlobalVariables.add(ENABLE_POLARX_SYNC_POINT);
         mysqlGlobalVariables.add("polarx_sync_point_timeout");
+        mysqlGlobalVariables.add("max_trx_affected_rows");
+        mysqlGlobalVariables.add("slow_query_user_pattern");
+        mysqlGlobalVariables.add("polarx_slow_query_block_check_interval");
+        mysqlGlobalVariables.add("polarx_slow_query_block_cpu_percent_threshold");
+        mysqlGlobalVariables.add("polarx_slow_query_block_enable");
+        mysqlGlobalVariables.add("polarx_slow_query_block_exec_timeout");
+        mysqlGlobalVariables.add("polarx_slow_query_block_exec_timeout_for_cpu_exceed");
+        mysqlGlobalVariables.add("polarx_slow_query_block_user_pattern");
+        mysqlGlobalVariables.add("vidx_disabled");
 
         mysqlSessionVariables.add("debug_sync");
         mysqlSessionVariables.add("error_count");
@@ -2923,6 +2963,7 @@ public class ServerVariables {
         mysqlDynamicVariables.add("flush_time");
         mysqlDynamicVariables.add("force_revise");
         mysqlDynamicVariables.add("foreign_key_checks");
+        mysqlDynamicVariables.add("pushdown_range_limit");
         mysqlDynamicVariables.add("ft_boolean_syntax");
         mysqlDynamicVariables.add("galaxyx_enable_galaxy_kill_log");
         mysqlDynamicVariables.add("galaxyx_enable_galaxy_session_pool_log");
@@ -3341,6 +3382,8 @@ public class ServerVariables {
         mysqlDynamicVariables.add("only_report_warning_when_skip_sequence");
         mysqlDynamicVariables.add("opt_enable_rds_priv_strategy");
         mysqlDynamicVariables.add("opt_force_index_pct_cached");
+        mysqlDynamicVariables.add("opt_index_format_gpp_enabled");
+        mysqlDynamicVariables.add("opt_index_format_panda_enabled");
         mysqlDynamicVariables.add("opt_indexstat");
         mysqlDynamicVariables.add("opt_outline_enabled");
         mysqlDynamicVariables.add("opt_tablestat");
@@ -3623,6 +3666,16 @@ public class ServerVariables {
         mysqlDynamicVariables.add("weak_consensus_mode");
         mysqlDynamicVariables.add("windowing_use_high_precision");
         mysqlDynamicVariables.add("xa_detach_on_prepare");
+        mysqlDynamicVariables.add("max_trx_affected_rows");
+        mysqlDynamicVariables.add("slow_query_user_pattern");
+        mysqlDynamicVariables.add("polarx_slow_query_block_check_interval");
+        mysqlDynamicVariables.add("polarx_slow_query_block_cpu_percent_threshold");
+        mysqlDynamicVariables.add("polarx_slow_query_block_enable");
+        mysqlDynamicVariables.add("polarx_slow_query_block_exec_timeout");
+        mysqlDynamicVariables.add("polarx_slow_query_block_exec_timeout_for_cpu_exceed");
+        mysqlDynamicVariables.add("polarx_slow_query_block_user_pattern");
+        mysqlDynamicVariables.add("vidx_disabled");
+        mysqlDynamicVariables.add("vidx_hnsw_ef_search");
 
         // OFF/ON 切换需要经过中间状态，持久化有风险
         globalBannedVariables.add("gtid_mode");
@@ -3635,6 +3688,110 @@ public class ServerVariables {
 
         // 禁止全局设置：
         globalBannedVariables.add("file_list");
+        globalBannedVariables.add("sample_percentage");
+        globalBannedVariables.add("rebuild_table_keep_filter");
+        globalBannedVariables.add("enable_java_udf");
+
+        // ============================================================
+        // DBA 允许通过 set global 设置的安全 DN 变量白名单
+        // 加入原则：
+        //   1. 在线可调，调整错误可立即恢复
+        //   2. 不影响数据持久性、复制链路、共识协议
+        //   3. 调整范围有限，最坏情况只影响性能不影响可用性
+        // ============================================================
+
+        // 1. 连接 / 会话超时
+        dbaAllowedGlobalVariables.add("wait_timeout");
+        dbaAllowedGlobalVariables.add("interactive_timeout");
+        dbaAllowedGlobalVariables.add("connect_timeout");
+        dbaAllowedGlobalVariables.add("lock_wait_timeout");
+        dbaAllowedGlobalVariables.add("innodb_lock_wait_timeout");
+        dbaAllowedGlobalVariables.add("max_execution_time");
+
+        // 2. 慢查询日志（仅日志开关与阈值，不涉及日志路径）
+        dbaAllowedGlobalVariables.add("slow_query_log");
+        dbaAllowedGlobalVariables.add("long_query_time");
+        dbaAllowedGlobalVariables.add("log_queries_not_using_indexes");
+        dbaAllowedGlobalVariables.add("log_slow_admin_statements");
+        dbaAllowedGlobalVariables.add("log_throttle_queries_not_using_indexes");
+        dbaAllowedGlobalVariables.add("min_examined_row_limit");
+        dbaAllowedGlobalVariables.add("general_log");
+
+        // 3. 优化器调节
+        dbaAllowedGlobalVariables.add("optimizer_switch");
+        dbaAllowedGlobalVariables.add("optimizer_search_depth");
+        dbaAllowedGlobalVariables.add("optimizer_prune_level");
+        dbaAllowedGlobalVariables.add("range_optimizer_max_mem_size");
+        dbaAllowedGlobalVariables.add("eq_range_index_dive_limit");
+        dbaAllowedGlobalVariables.add("range_alloc_block_size");
+
+        // 4. InnoDB 性能调优（不影响数据持久性、不影响 buffer pool 大小）
+        dbaAllowedGlobalVariables.add("innodb_spin_wait_delay");
+        dbaAllowedGlobalVariables.add("innodb_sync_spin_loops");
+        dbaAllowedGlobalVariables.add("innodb_thread_concurrency");
+        dbaAllowedGlobalVariables.add("innodb_thread_sleep_delay");
+        dbaAllowedGlobalVariables.add("innodb_concurrency_tickets");
+        dbaAllowedGlobalVariables.add("innodb_io_capacity");
+        dbaAllowedGlobalVariables.add("innodb_io_capacity_max");
+        dbaAllowedGlobalVariables.add("innodb_lru_scan_depth");
+        dbaAllowedGlobalVariables.add("innodb_old_blocks_pct");
+        dbaAllowedGlobalVariables.add("innodb_old_blocks_time");
+        dbaAllowedGlobalVariables.add("innodb_adaptive_hash_index");
+        dbaAllowedGlobalVariables.add("innodb_adaptive_flushing");
+        dbaAllowedGlobalVariables.add("innodb_adaptive_flushing_lwm");
+        dbaAllowedGlobalVariables.add("innodb_max_dirty_pages_pct");
+        dbaAllowedGlobalVariables.add("innodb_max_dirty_pages_pct_lwm");
+        dbaAllowedGlobalVariables.add("innodb_change_buffering");
+        dbaAllowedGlobalVariables.add("innodb_change_buffer_max_size");
+        dbaAllowedGlobalVariables.add("innodb_max_purge_lag");
+        dbaAllowedGlobalVariables.add("innodb_max_purge_lag_delay");
+        dbaAllowedGlobalVariables.add("innodb_purge_batch_size");
+        dbaAllowedGlobalVariables.add("innodb_purge_rseg_truncate_frequency");
+        dbaAllowedGlobalVariables.add("innodb_random_read_ahead");
+        dbaAllowedGlobalVariables.add("innodb_read_ahead_threshold");
+        dbaAllowedGlobalVariables.add("innodb_idle_flush_pct");
+        dbaAllowedGlobalVariables.add("innodb_strict_mode");
+        dbaAllowedGlobalVariables.add("innodb_table_locks");
+        dbaAllowedGlobalVariables.add("innodb_max_undo_log_size");
+
+        // 5. 统计信息
+        dbaAllowedGlobalVariables.add("innodb_stats_auto_recalc");
+        dbaAllowedGlobalVariables.add("innodb_stats_method");
+        dbaAllowedGlobalVariables.add("innodb_stats_on_metadata");
+        dbaAllowedGlobalVariables.add("innodb_stats_persistent");
+        dbaAllowedGlobalVariables.add("innodb_stats_persistent_sample_pages");
+        dbaAllowedGlobalVariables.add("innodb_stats_sample_pages");
+        dbaAllowedGlobalVariables.add("innodb_stats_transient_sample_pages");
+
+        // 6. 临时表与排序缓冲
+        dbaAllowedGlobalVariables.add("tmp_table_size");
+        dbaAllowedGlobalVariables.add("max_heap_table_size");
+        dbaAllowedGlobalVariables.add("sort_buffer_size");
+        dbaAllowedGlobalVariables.add("join_buffer_size");
+        dbaAllowedGlobalVariables.add("read_buffer_size");
+        dbaAllowedGlobalVariables.add("read_rnd_buffer_size");
+        dbaAllowedGlobalVariables.add("bulk_insert_buffer_size");
+
+        // 7. 查询/事务内存分配
+        dbaAllowedGlobalVariables.add("query_alloc_block_size");
+        dbaAllowedGlobalVariables.add("query_prealloc_size");
+        dbaAllowedGlobalVariables.add("transaction_alloc_block_size");
+        dbaAllowedGlobalVariables.add("transaction_prealloc_size");
+
+        // 8. 字符串/排序长度
+        dbaAllowedGlobalVariables.add("max_sort_length");
+        dbaAllowedGlobalVariables.add("group_concat_max_len");
+
+        // 9. 死锁监控
+        dbaAllowedGlobalVariables.add("innodb_print_all_deadlocks");
+
+        // 10. 压缩调节
+        dbaAllowedGlobalVariables.add("innodb_compression_level");
+        dbaAllowedGlobalVariables.add("innodb_compression_failure_threshold_pct");
+        dbaAllowedGlobalVariables.add("innodb_compression_pad_pct_max");
+
+        // 11. 向量化索引
+        dbaAllowedGlobalVariables.add("vidx_disabled");
 
         MODIFIABLE_TIMER_TASK_PARAM = new ImmutableSet.Builder<String>()
             .addAll(MODIFIABLE_PURGE_TRANS_PARAM)
@@ -3642,6 +3799,7 @@ public class ServerVariables {
             .addAll(MODIFIABLE_TRANSACTION_STATISTICS_PARAM)
             .addAll(MODIFIABLE_TRX_IDLE_TIMEOUT_PARAM)
             .addAll(MODIFIABLE_SYNC_POINT_PARAM)
+            .addAll(MODIFIABLE_AC_RECOVER_PARAM)
             .addAll(MODIFIABLE_XA_RECOVER_PARAM)
             .build();
     }
@@ -3700,6 +3858,10 @@ public class ServerVariables {
 
     public static boolean isGlobalBanned(String variable) {
         return globalBannedVariables.contains(variable.toLowerCase());
+    }
+
+    public static boolean isDbaGlobalAllowed(String variable) {
+        return dbaAllowedGlobalVariables.contains(variable.toLowerCase());
     }
 
     public static boolean isVariablesBlackList(String variable) {

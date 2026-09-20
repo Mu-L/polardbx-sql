@@ -17,21 +17,19 @@
 package com.alibaba.polardbx.server.response;
 
 import com.alibaba.polardbx.Fields;
+import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.net.buffer.ByteBufferHolder;
 import com.alibaba.polardbx.net.compress.IPacketOutputProxy;
 import com.alibaba.polardbx.net.compress.PacketOutputProxyFactory;
 import com.alibaba.polardbx.net.packet.*;
+import com.alibaba.polardbx.optimizer.utils.IColumnarTransaction;
+import com.alibaba.polardbx.optimizer.utils.ITransaction;
 import com.alibaba.polardbx.server.ServerConnection;
 import com.alibaba.polardbx.server.util.PacketUtil;
-import com.alibaba.polardbx.server.util.StringUtil;
-import com.alibaba.polardbx.common.exception.TddlRuntimeException;
-import com.alibaba.polardbx.common.exception.code.ErrorCode;
-import com.alibaba.polardbx.common.utils.extension.ExtensionLoader;
 import com.alibaba.polardbx.matrix.jdbc.TConnection;
-import com.alibaba.polardbx.optimizer.utils.ITimestampOracle;
+import com.alibaba.polardbx.common.trx.ITimestampOracle;
 
-import java.sql.Connection;
-import java.sql.SQLException;
+import java.util.Objects;
 
 public class SelectTsoTimestamp {
 
@@ -82,7 +80,20 @@ public class SelectTsoTimestamp {
 
     }
 
+    private static String getTsoTimestampForColumnar(ServerConnection c) {
+        ITransaction tx = Objects.requireNonNull(c.getExecutionContext()).getTransaction();
+        if (tx instanceof IColumnarTransaction) {
+            return Long.toString(((IColumnarTransaction) tx).getSnapshotSeq());
+        } else {
+            return "NULL";
+        }
+    }
+
     private static String getTsoTimestamp(ServerConnection c) {
+        if (ConfigDataMode.isColumnarMode()) {
+            return getTsoTimestampForColumnar(c);
+        }
+
         TConnection tConn = c.getTddlConnection();
         if (c.getTddlConnection() == null) {
             boolean ret = c.initTddlConnection();

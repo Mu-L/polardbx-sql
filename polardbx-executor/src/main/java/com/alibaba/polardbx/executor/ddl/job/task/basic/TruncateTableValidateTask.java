@@ -45,6 +45,7 @@ public class TruncateTableValidateTask extends BaseValidateTask {
         TableValidator.validateTableExistence(schemaName, logicalTableName, executionContext);
         TableValidator.validateTableNotReferenceFk(schemaName, logicalTableName, executionContext);
         TableValidator.validateTableWithCCI(schemaName, logicalTableName, executionContext, SqlKind.TRUNCATE_TABLE);
+        TableValidator.validateTruncateOnExternalizedTable(schemaName, logicalTableName, executionContext);
         GsiValidator.validateAllowTruncateOnTable(schemaName, logicalTableName, executionContext);
         if (tableGroupConfig != null) {
             TableValidator.validateTableGroupChange(schemaName, tableGroupConfig);

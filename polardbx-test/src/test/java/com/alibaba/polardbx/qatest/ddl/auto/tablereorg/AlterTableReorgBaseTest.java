@@ -205,7 +205,7 @@ public class AlterTableReorgBaseTest extends DDLBaseNewDBTestCase {
             dmlWhilePartitionReorg(partitionRuleInfo, partitionRuleInfo.alterCommand, tableName);
         } else {
             executePartReorg(partitionRuleInfo.tableStatus, partitionRuleInfo.alterCommand,
-                partitionRuleInfo.usePhysicalTableBackfill);
+                partitionRuleInfo.usePhysicalTableBackfill, partitionRuleInfo.useInplaceBackfill);
         }
     }
 
@@ -273,14 +273,17 @@ public class AlterTableReorgBaseTest extends DDLBaseNewDBTestCase {
     }
 
     private void executePartReorg(ComplexTaskMetaManager.ComplexTaskStatus status, String command,
-                                  boolean usePhysicalBackfill) {
+                                  boolean usePhysicalBackfill, boolean useInplaceBackfill) {
         String sqlHint = "";
-        if (!status.isPublic()) {
+        if (useInplaceBackfill) {
+            sqlHint = "/*+TDDL:CMD_EXTRA(ENABLE_INPLACE_BACKFILL=true)*/";
+        } else if (!status.isPublic()) {
             sqlHint = String.format(
-                "/*+TDDL:CMD_EXTRA(PHYSICAL_BACKFILL_ENABLE=false, TABLEGROUP_REORG_FINAL_TABLE_STATUS_DEBUG='%s')*/",
+                "/*+TDDL:CMD_EXTRA(ENABLE_INPLACE_BACKFILL=false,PHYSICAL_BACKFILL_ENABLE=false, TABLEGROUP_REORG_FINAL_TABLE_STATUS_DEBUG='%s')*/",
                 status.name());
         } else if (usePhysicalBackfill) {
-            sqlHint = "/*+TDDL:CMD_EXTRA(PHYSICAL_BACKFILL_ENABLE=true, PHYSICAL_BACKFILL_SPEED_TEST=false)*/";
+            sqlHint =
+                "/*+TDDL:CMD_EXTRA(ENABLE_INPLACE_BACKFILL=false,PHYSICAL_BACKFILL_ENABLE=true, PHYSICAL_BACKFILL_SPEED_TEST=false)*/";
         }
         String ignoreErr = "The DDL job has been cancelled or interrupted";
         Set<String> ignoreErrs = new HashSet<>();
@@ -767,7 +770,8 @@ public class AlterTableReorgBaseTest extends DDLBaseNewDBTestCase {
                     max2, tableName, (sql) -> {
                     executeDml(hintStr + sql, partitionRuleInfo.connection, ignoreError);
                 }))));
-            executePartReorg(partitionRuleInfo.tableStatus, command, partitionRuleInfo.usePhysicalTableBackfill);
+            executePartReorg(partitionRuleInfo.tableStatus, command, partitionRuleInfo.usePhysicalTableBackfill,
+                partitionRuleInfo.useInplaceBackfill);
             try {
                 TimeUnit.SECONDS.sleep(2);
             } catch (InterruptedException e) {
@@ -812,6 +816,7 @@ public class AlterTableReorgBaseTest extends DDLBaseNewDBTestCase {
         }};
 
         boolean usePhysicalTableBackfill = false;
+        boolean useInplaceBackfill = false;
 
         public PartitionRuleInfo(PartitionStrategy partitionStrategy,
                                  int initDataType, String partitionRule,
@@ -873,6 +878,10 @@ public class AlterTableReorgBaseTest extends DDLBaseNewDBTestCase {
 
         public void setUsePhysicalTableBackfill(boolean usePhysicalTableBackfill) {
             this.usePhysicalTableBackfill = usePhysicalTableBackfill;
+        }
+
+        public void setUseInplaceBackfill(boolean useInplaceBackfill) {
+            this.useInplaceBackfill = useInplaceBackfill;
         }
 
         public void prepareData(String tableName, Integer insertRow) {

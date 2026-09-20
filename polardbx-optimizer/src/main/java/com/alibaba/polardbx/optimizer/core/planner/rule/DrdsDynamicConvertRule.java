@@ -46,6 +46,6 @@ public class DrdsDynamicConvertRule extends ConverterRule {
         final DynamicValues values = (DynamicValues) rel;
         return LogicalDynamicValues
             .createDrdsValues(values.getCluster(), values.getTraitSet().simplify(), values.getRowType(),
-                values.getTuples());
+                values.getTuples(), values.getRawStringMode());
     }
 }

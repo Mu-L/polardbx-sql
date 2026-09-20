@@ -55,6 +55,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
 
@@ -173,6 +174,17 @@ public class Balancer extends AbstractLifecycle {
         List<DbInfoRecord> dbInfoList = DbInfoManager.getInstance().getDbInfoList();
         List<String> schemaList = dbInfoList.stream()
             .filter(DbInfoRecord::isUserDb).map(x -> x.dbName).collect(Collectors.toList());
+
+        if (options.drainNode == null) {
+            String dbs =
+                ec.getParamManager().getString(ConnectionParams.REBALANCE_DB_LIST_WHEN_REBALANCE_CLUSTER_ONLY_DEBUG);
+            if (StringUtils.isNotBlank(dbs)) {
+                Set<String> dbSet = Arrays.stream(dbs.split(",")).map(String::trim).collect(Collectors.toSet());
+                if (!dbSet.isEmpty()) {
+                    schemaList = schemaList.stream().filter(dbSet::contains).collect(Collectors.toList());
+                }
+            }
+        }
 
         Map<String, BalanceStats> stats = schemaList.stream().map(schema ->
             collectBalanceStatsOfDatabase(schema, ec)

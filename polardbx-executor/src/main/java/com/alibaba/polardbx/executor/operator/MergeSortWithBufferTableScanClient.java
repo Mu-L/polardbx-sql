@@ -32,6 +32,7 @@ import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
 import com.alibaba.polardbx.optimizer.memory.MemoryType;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.google.common.collect.Lists;
 
 import java.sql.ResultSet;
@@ -40,7 +41,7 @@ import java.util.List;
 
 import static com.alibaba.polardbx.common.exception.code.ErrorCode.ERR_X_PROTOCOL_RESULT;
 
-public class MergeSortWithBufferTableScanClient extends TableScanClient {
+public class MergeSortWithBufferTableScanClient extends MergeSortTableScanClient {
 
     public static final Logger log = LoggerFactory.getLogger(MergeSortWithBufferTableScanClient.class);
 
@@ -66,19 +67,7 @@ public class MergeSortWithBufferTableScanClient extends TableScanClient {
     @Override
     public void addSplitResultSet(SplitResultSet splitResultSet) {
         ((BufferSplitResultSet) splitResultSet).advanceCacheData();
-        synchronized (this) {
-            readyResultSet.add(splitResultSet);
-            executePrefetchThread(false);
-            if (readyResultSet.size() == getSplitNum()) {
-                notifyBlockedCallers();
-            }
-        }
-    }
-
-    @Override
-    public int connectionCount() {
-        //对于merge-sort，使用滑动窗口
-        return pushdownSplitIndex.get() - readyResultSet.size();
+        super.addSplitResultSet(splitResultSet);
     }
 
     @Override
@@ -91,13 +80,8 @@ public class MergeSortWithBufferTableScanClient extends TableScanClient {
     }
 
     @Override
-    public SplitResultSet newSplitResultSet(JdbcSplit jdbcSplit, boolean rangeScan, int splitIndex) {
+    public SplitResultSet newSplitResultSet(JdbcSplit jdbcSplit, int splitIndex) {
         return new BufferSplitResultSet(jdbcSplit, Lists.newArrayList(dataTypeList));
-    }
-
-    @Override
-    protected boolean isReady() {
-        return completePrefetchNum.get() == splitList.size();
     }
 
     public class BufferSplitResultSet extends SplitResultSet {

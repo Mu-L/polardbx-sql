@@ -19,19 +19,26 @@ package com.alibaba.polardbx.optimizer.config.meta;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
-import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
+import com.alibaba.polardbx.optimizer.core.rel.ExternalTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.GroupTopN;
 import com.alibaba.polardbx.optimizer.core.rel.MysqlTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.PhysicalCTEConsumer;
 import com.alibaba.polardbx.optimizer.view.ViewPlan;
 import org.apache.calcite.plan.volcano.RelSubset;
+import org.apache.calcite.rel.core.CTEAnchor;
+import org.apache.calcite.rel.core.CTEProducer;
 import org.apache.calcite.rel.core.Sort;
 import org.apache.calcite.rel.core.TableLookup;
-import org.apache.calcite.rel.logical.RuntimeFilterBuilder;
+import org.apache.calcite.rel.logical.LogicalCTEConsumer;
 import org.apache.calcite.rel.logical.LogicalExpand;
+import org.apache.calcite.rel.logical.RuntimeFilterBuilder;
 import org.apache.calcite.rel.metadata.ReflectiveRelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMdMaxRowCount;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
+import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.util.BuiltInMethod;
 
 import java.util.Map;
@@ -88,6 +95,37 @@ public class DrdsRelMdMaxRowCount extends RelMdMaxRowCount {
         return rowCount;
     }
 
+    public Double getMaxRowCount(GroupTopN rel, RelMetadataQuery mq) {
+        return mq.getMaxRowCount(rel.getInput());
+    }
+
+    public Double getMaxRowCount(CTEAnchor rel, RelMetadataQuery mq) {
+        return mq.getMaxRowCount(rel.getRight());
+    }
+
+    public Double getMaxRowCount(CTEProducer rel, RelMetadataQuery mq) {
+        return mq.getMaxRowCount(rel.getInput());
+    }
+
+    public Double getMaxRowCount(LogicalCTEConsumer rel, RelMetadataQuery mq) {
+        return mq.getMaxRowCount(rel.getInnerRel());
+    }
+
+    public Double getMaxRowCount(PhysicalCTEConsumer rel, RelMetadataQuery mq) {
+        Double maxRowCount = mq.getMaxRowCount(CBOUtil.getCteProducer(rel));
+        if (maxRowCount != null && !rel.getConditions().isEmpty()) {
+            RexNode condition = RexUtil.composeConjunction(
+                rel.getCluster().getRexBuilder(), rel.getConditions(), true);
+            if (condition != null) {
+                Double selectivity = mq.getSelectivity(CBOUtil.getCteProducer(rel), condition);
+                if (selectivity != null) {
+                    maxRowCount *= selectivity;
+                }
+            }
+        }
+        return maxRowCount;
+    }
+
     public Double getMaxRowCount(TableLookup rel, RelMetadataQuery mq) {
         if (rel.isRelPushedToPrimary()) {
             return mq.getMaxRowCount(rel.getProject());
@@ -110,5 +148,9 @@ public class DrdsRelMdMaxRowCount extends RelMdMaxRowCount {
 
     public Double getMaxRowCount(MysqlTableScan rel, RelMetadataQuery mq) {
         return mq.getMaxRowCount(rel.getNodeForMetaQuery());
+    }
+
+    public Double getMaxRowCount(ExternalTableScan rel, RelMetadataQuery mq) {
+        return rel.getMaxRowCount(mq);
     }
 }

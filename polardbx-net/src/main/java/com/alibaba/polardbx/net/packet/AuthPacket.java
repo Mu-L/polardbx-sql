@@ -23,6 +23,10 @@ import com.alibaba.polardbx.net.util.BufferUtil;
 import com.alibaba.polardbx.net.util.MySQLMessage;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * From client to server during initial handshake.
@@ -57,6 +61,11 @@ public class AuthPacket extends MySQLPacket {
     public String authMethod;
     public boolean isSsl;
 
+    public static final String ATTR_CLIENT_NAME = "_client_name";
+    public static final String ATTR_CLIENT_VERSION = "_client_version";
+    private static final long INVALID_LENGTH = -2L;
+    private Map<String, String> connectionAttributes = Collections.emptyMap();
+
     public static boolean checkSsl(byte[] data) {
         if (data.length == QuitPacket.QUIT.length && data[4] == Commands.COM_QUIT) {
             return false;
@@ -74,6 +83,8 @@ public class AuthPacket extends MySQLPacket {
     }
 
     public void read(byte[] data) {
+        connectionAttributes = Collections.emptyMap();
+
         MySQLMessage mm = new MySQLMessage(data);
         packetLength = mm.readUB3();
         packetId = mm.read();
@@ -96,10 +107,103 @@ public class AuthPacket extends MySQLPacket {
         }
         if (((clientFlags & Capabilities.CLIENT_PLUGIN_AUTH) != 0) && mm.hasRemaining()) {
             authMethod = mm.readStringWithNull();
+            if (authMethod == null
+                && (clientFlags & Capabilities.CLIENT_CONNECT_WITH_DB) == 0
+                && mm.hasRemaining()) {
+                // Connector/J 5.1 writes an empty database placeholder even when the flag is absent.
+                final int candidatePosition = mm.position();
+                final String candidate = mm.readStringWithNull();
+                if (isAuthPluginName(candidate)) {
+                    authMethod = candidate;
+                } else {
+                    mm.position(candidatePosition);
+                }
+            }
+        }
+        if (((clientFlags & Capabilities.CLIENT_CONNECT_ATTRS) != 0) && mm.hasRemaining()) {
+            readConnectionAttributes(mm);
         }
         if ((clientFlags & Capabilities.CLIENT_SSL) != 0) {
             // client use ssl
             isSsl = true;
+        }
+    }
+
+    public String getConnectionAttribute(String name) {
+        return connectionAttributes.get(name);
+    }
+
+    private static boolean isAuthPluginName(String value) {
+        if (value == null || !value.endsWith("_password")) {
+            return false;
+        }
+        for (int i = 0; i < value.length(); i++) {
+            final char ch = value.charAt(i);
+            if (ch != '_' && ch != '-' && !Character.isLetterOrDigit(ch)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void readConnectionAttributes(MySQLMessage mm) {
+        final long attributesLength = readLengthEncodedInteger(mm, mm.length());
+        if (attributesLength < 0 || attributesLength > mm.length() - mm.position()) {
+            return;
+        }
+
+        final int attributesEnd = mm.position() + (int) attributesLength;
+        final Map<String, String> attributes = new LinkedHashMap<>();
+
+        while (mm.position() < attributesEnd) {
+            final String name = readLengthEncodedString(mm, attributesEnd);
+            final String value = readLengthEncodedString(mm, attributesEnd);
+
+            if (name == null || value == null) {
+                return;
+            }
+            attributes.put(name, value);
+        }
+
+        if (mm.position() == attributesEnd) {
+            connectionAttributes = attributes;
+        }
+    }
+
+    private static String readLengthEncodedString(MySQLMessage mm, int end) {
+        final long length = readLengthEncodedInteger(mm, end);
+        if (length < 0 || length > Integer.MAX_VALUE || length > end - mm.position()) {
+            return null;
+        }
+        return new String(mm.readBytes((int) length), StandardCharsets.UTF_8);
+    }
+
+    private static long readLengthEncodedInteger(MySQLMessage mm, int end) {
+        if (mm.position() >= end) {
+            return INVALID_LENGTH;
+        }
+
+        final int first = mm.read() & 0xff;
+        switch (first) {
+        case 251:
+            return MySQLMessage.NULL_LENGTH;
+        case 252:
+            if (end - mm.position() < 2) {
+                return INVALID_LENGTH;
+            }
+            return mm.readUB2();
+        case 253:
+            if (end - mm.position() < 3) {
+                return INVALID_LENGTH;
+            }
+            return mm.readUB3();
+        case 254:
+            if (end - mm.position() < 8) {
+                return INVALID_LENGTH;
+            }
+            return mm.readLong();
+        default:
+            return first < 251 ? first : INVALID_LENGTH;
         }
     }
 

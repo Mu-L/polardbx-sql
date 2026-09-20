@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.executor.ddl.job.factory.gsi;
 
 import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.ddl.job.builder.gsi.CreatePartitionTableWithGsiBuilder;
 import com.alibaba.polardbx.executor.ddl.job.builder.gsi.CreateTableWithGsiBuilder;
 import com.alibaba.polardbx.executor.ddl.job.converter.DdlJobDataConverter;
@@ -28,11 +29,14 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.DropPartitionTableRemove
 import com.alibaba.polardbx.executor.ddl.job.task.basic.DropTableRemoveMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.DropTableValidateTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.DropTruncateTmpPrimaryTablePhyDdlTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameUselessTmpGsiPhyTableDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.ResetSequence4TruncateTableTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TruncateTableValidateTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcTruncateTableWithGsiMarkTask;
+import com.alibaba.polardbx.executor.ddl.job.task.columnar.PrimaryTblCleanColumnarDataUtils;
 import com.alibaba.polardbx.executor.ddl.job.task.columnar.TruncateColumnarTableTask;
+import com.alibaba.polardbx.executor.ddl.job.task.columnar.TruncatePrimaryTblCleanColumnarDataTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.TruncateCutOverTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.TruncateSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.TruncateTableWithGsiValidateTask;
@@ -41,9 +45,10 @@ import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.validator.GsiValidator;
 import com.alibaba.polardbx.executor.ddl.job.validator.TableValidator;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlExceptionAction;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4CreateGsi;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4CreatePartitionGsi;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4CreatePartitionTable;
@@ -53,6 +58,8 @@ import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.config.table.ScaleOutPlanUtil;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.config.table.TruncateUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.PhyDdlTableOperation;
@@ -64,9 +71,15 @@ import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.TreeMap;
 
-public class TruncateTableWithGsiJobFactory extends DdlJobFactory {
+public class TruncateTableWithGsiJobFactory extends OnlineDdlJobFactory {
 
     protected final String schemaName;
     protected final String logicalTableName;
@@ -81,6 +94,7 @@ public class TruncateTableWithGsiJobFactory extends DdlJobFactory {
 
     public TruncateTableWithGsiJobFactory(TruncateTableWithGsiPreparedData preparedData,
                                           ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.DEFAULT);
         this.schemaName = preparedData.getSchemaName();
         this.logicalTableName = preparedData.getPrimaryTableName();
         this.tmpIndexTableMap = preparedData.getTmpIndexTableMap();
@@ -124,6 +138,13 @@ public class TruncateTableWithGsiJobFactory extends DdlJobFactory {
             isNewPartDb ? generateDropTmpPartitionTableJob() : generateDropTmpTableJob();
 
         result.appendJob2(validateJob);
+
+        // Add columnar data clean tasks if needed
+        List<DdlTask> cleanColumnarDataTasks = cleanColumnarDataTask(schemaName, logicalTableName);
+        for (DdlTask task : cleanColumnarDataTasks) {
+            result.appendTask(task);
+        }
+
         result.appendJob2(createTmpTableJob);
         DdlTask resetSequenceTask = new ResetSequence4TruncateTableTask(schemaName, logicalTableName);
         result.appendTask(resetSequenceTask);
@@ -182,7 +203,8 @@ public class TruncateTableWithGsiJobFactory extends DdlJobFactory {
     private ExecutableDdlJob generateCutOverJob() {
         ExecutableDdlJob cutOverJob = new ExecutableDdlJob();
         CdcTruncateTableWithGsiMarkTask cdcTask =
-            new CdcTruncateTableWithGsiMarkTask(schemaName, logicalTableName, tmpPrimaryTableName, preparedData.getVersionId());
+            new CdcTruncateTableWithGsiMarkTask(schemaName, logicalTableName, tmpPrimaryTableName,
+                preparedData.getVersionId());
         TruncateCutOverTask cutOverTask =
             new TruncateCutOverTask(schemaName, logicalTableName, tmpIndexTableMap, tmpPrimaryTableName);
         TruncateSyncTask syncTask =
@@ -253,6 +275,7 @@ public class TruncateTableWithGsiJobFactory extends DdlJobFactory {
         ));
 
         result.addExcludeResources(createTableJob.getExcludeResources());
+        result.addSharedResources(createTableJob.getSharedResources());
 
         // Create Index Table
         Map<String, CreateGlobalIndexPreparedData> gsiPreparedDataMap =
@@ -285,6 +308,7 @@ public class TruncateTableWithGsiJobFactory extends DdlJobFactory {
             result.addTaskRelationship(
                 gsiJob.getLastUpdateGsiStatusTask(), lastTableSyncTask);
             result.addExcludeResources(gsiJob.getExcludeResources());
+            result.addSharedResources(gsiJob.getSharedResources());
         }
 
         recoverThenRollbackTask = createTableJob.getCreateTableAddTablesMetaTask();
@@ -377,7 +401,15 @@ public class TruncateTableWithGsiJobFactory extends DdlJobFactory {
         ExecutableDdlJob dropTmpTableJob = new ExecutableDdlJob();
         // Drop primary Table
         DropTableValidateTask validateTask = new DropTableValidateTask(schemaName, tmpPrimaryTableName);
-        DdlTask phyDdlTask = new DropTruncateTmpPrimaryTablePhyDdlTask(schemaName, tmpPrimaryTableName);
+        boolean recycleBinEnable = ScaleOutPlanUtil.isPhyRecyclebinEnable(executionContext);
+        DdlTask phyDdlTask;
+        if (recycleBinEnable) {
+            phyDdlTask =
+                new RenameUselessTmpGsiPhyTableDdlTask(schemaName, logicalTableName, tmpPrimaryTableName, null, null,
+                    null);
+        } else {
+            phyDdlTask = new DropTruncateTmpPrimaryTablePhyDdlTask(schemaName, tmpPrimaryTableName);
+        }
         DdlTask removeMetaTask = new DropTableRemoveMetaTask(schemaName, tmpPrimaryTableName, true);
         DdlTask tableSyncTask = new TableSyncTask(schemaName, tmpPrimaryTableName);
         dropTmpTableJob.addSequentialTasks(Lists.newArrayList(
@@ -386,6 +418,11 @@ public class TruncateTableWithGsiJobFactory extends DdlJobFactory {
             removeMetaTask,
             tableSyncTask
         ));
+
+        List<DdlTask> fkTableSyncTasks = FactoryUtils.getFkTableSyncTasks(schemaName, logicalTableName);
+        if (!fkTableSyncTasks.isEmpty()) {
+            dropTmpTableJob.addSequentialTasksAfter(tableSyncTask, fkTableSyncTasks);
+        }
 
         // Drop GSI Tables
         Map<String, String> tmpIndexTableMap = preparedData.getTmpIndexTableMap();
@@ -403,12 +440,14 @@ public class TruncateTableWithGsiJobFactory extends DdlJobFactory {
             dropTmpTableJob.addTaskRelationship(dropGsiJob.getValidateTask(), phyDdlTask);
             dropTmpTableJob.addTaskRelationship(validateTask, dropGsiJob.getValidateTask());
 
-            dropTmpTableJob.addSequentialTasksAfter(tableSyncTask, Lists.newArrayList(
-                dropGsiJob.getDropGsiPhyDdlTask(),
-                dropGsiJob.getGsiDropCleanUpTask(),
-                dropGsiJob.getDropGsiTableRemoveMetaTask(),
-                dropGsiJob.getFinalSyncTask()
-            ));
+            dropTmpTableJob.addSequentialTasksAfter(
+                fkTableSyncTasks.isEmpty() ? tableSyncTask : fkTableSyncTasks.get(fkTableSyncTasks.size() - 1),
+                Lists.newArrayList(
+                    dropGsiJob.getDropGsiPhyDdlTask(),
+                    dropGsiJob.getGsiDropCleanUpTask(),
+                    dropGsiJob.getDropGsiTableRemoveMetaTask(),
+                    dropGsiJob.getFinalSyncTask()
+                ));
         }
         return dropTmpTableJob;
     }
@@ -425,7 +464,15 @@ public class TruncateTableWithGsiJobFactory extends DdlJobFactory {
 
         List<DdlTask> tasks = new ArrayList<>();
         DropTableValidateTask validateTask = new DropTableValidateTask(schemaName, tmpPrimaryTableName);
-        DdlTask phyDdlTask = new DropTruncateTmpPrimaryTablePhyDdlTask(schemaName, tmpPrimaryTableName);
+        boolean recycleBinEnable = ScaleOutPlanUtil.isPhyRecyclebinEnable(executionContext);
+        DdlTask phyDdlTask;
+        if (recycleBinEnable) {
+            phyDdlTask =
+                new RenameUselessTmpGsiPhyTableDdlTask(schemaName, logicalTableName, tmpPrimaryTableName, null, null,
+                    null);
+        } else {
+            phyDdlTask = new DropTruncateTmpPrimaryTablePhyDdlTask(schemaName, tmpPrimaryTableName);
+        }
         DdlTask removeMetaTask = new DropPartitionTableRemoveMetaTask(schemaName, tmpPrimaryTableName);
         DdlTask syncTableGroup = null;
         if (tableGroupId != -1) {
@@ -444,6 +491,11 @@ public class TruncateTableWithGsiJobFactory extends DdlJobFactory {
             tasks.add(syncTableGroup);
         }
         tasks.add(tableSyncTask);
+
+        List<DdlTask> fkTableSyncTasks = FactoryUtils.getFkTableSyncTasks(schemaName, logicalTableName);
+        if (!fkTableSyncTasks.isEmpty()) {
+            dropTmpTableJob.addSequentialTasksAfter(tableSyncTask, fkTableSyncTasks);
+        }
 
         dropTmpTableJob.addSequentialTasks(tasks);
 
@@ -464,14 +516,53 @@ public class TruncateTableWithGsiJobFactory extends DdlJobFactory {
             dropTmpTableJob.addTaskRelationship(dropGsiJob.getValidateTask(), phyDdlTask);
             dropTmpTableJob.addTaskRelationship(validateTask, dropGsiJob.getValidateTask());
 
-            dropTmpTableJob.addSequentialTasksAfter(tableSyncTask, Lists.newArrayList(
-                dropGsiJob.getDropGsiPhyDdlTask(),
-                dropGsiJob.getGsiDropCleanUpTask(),
-                dropGsiJob.getDropGsiTableRemoveMetaTask(),
-                dropGsiJob.getFinalSyncTask()
-            ));
+            dropTmpTableJob.addSequentialTasksAfter(
+                fkTableSyncTasks.isEmpty() ? tableSyncTask : fkTableSyncTasks.get(fkTableSyncTasks.size() - 1),
+                Lists.newArrayList(
+                    dropGsiJob.getDropGsiPhyDdlTask(),
+                    dropGsiJob.getGsiDropCleanUpTask(),
+                    dropGsiJob.getDropGsiTableRemoveMetaTask(),
+                    dropGsiJob.getFinalSyncTask()
+                ));
 
         }
         return dropTmpTableJob;
+    }
+
+    /**
+     * Create columnar data clean tasks for truncate table with CCI
+     */
+    public List<DdlTask> cleanColumnarDataTask(String schemaName, String tableName) {
+        List<DdlTask> ddlTasks = new ArrayList<>();
+        TableMeta tableMeta = OptimizerContext.getContext(schemaName).getLatestSchemaManager()
+            .getTable(tableName);
+        if (tableMeta.withCci() && executionContext.getParamManager()
+            .getBoolean(ConnectionParams.ENABLE_SHADOW_INSERT_ON_DROP_PARTITION)) {
+            String shadowTableName =
+                PrimaryTblCleanColumnarDataUtils.getBlackHoleTableName(preparedData.getTableName());
+            // 创建影子表
+            List<DdlTask> createShadowTableTasks =
+                PrimaryTblCleanColumnarDataUtils.generateCreateShadowTableTasks(schemaName, shadowTableName,
+                    preparedData.getTableName(), executionContext);
+            ddlTasks.addAll(createShadowTableTasks);
+
+            // 清理列存数据
+            DdlTask cleanColumnarDataTask = new TruncatePrimaryTblCleanColumnarDataTask(
+                schemaName,
+                tableName,
+                executionContext.getParamManager().getLong(ConnectionParams.SHADOW_INSERT_BATCH_SIZE),
+                executionContext.getParamManager().getLong(ConnectionParams.SHADOW_INSERT_BATCH_INTERVAL)
+            );
+            ddlTasks.add(cleanColumnarDataTask);
+
+            // 删除影子表
+            List<DdlTask> dropShadowTableTasks =
+                PrimaryTblCleanColumnarDataUtils.generateDropShadowTableTasks(schemaName, shadowTableName,
+                    preparedData.getTableName(), executionContext);
+            ddlTasks.addAll(dropShadowTableTasks);
+
+            return ddlTasks;
+        }
+        return ddlTasks;
     }
 }

@@ -2,6 +2,7 @@ package com.alibaba.polardbx.executor.columnar.pruning.index;
 
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
+import com.alibaba.polardbx.optimizer.core.function.calc.scalar.filter.In;
 import com.google.common.base.Preconditions;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.hadoop.io.WritableComparator;
@@ -16,14 +17,14 @@ public class StringSortKeyIndex extends SortKeyIndex {
     private byte[][] data;
     private long sizeInBytes;
 
-    private StringSortKeyIndex(long rgNum, int colId, DataType dt) {
-        super(rgNum, colId, dt);
+    private StringSortKeyIndex(long rgNum, int colId, DataType dt, boolean isAsc) {
+        super(rgNum, colId, dt, isAsc);
     }
 
     //build StringSortKeyIndex base on data
-    public static StringSortKeyIndex build(int colId, String[] data, DataType dt) {
+    public static StringSortKeyIndex build(int colId, String[] data, DataType dt, boolean isAsc) {
         Preconditions.checkArgument(data != null && data.length > 0 && data.length % 2 == 0, "bad sort key index");
-        StringSortKeyIndex stringSortKeyIndex = new StringSortKeyIndex(data.length / 2, colId, dt);
+        StringSortKeyIndex stringSortKeyIndex = new StringSortKeyIndex(data.length / 2, colId, dt, isAsc);
         long size = 0;
         stringSortKeyIndex.data = new byte[data.length][];
         for (int i = 0; i < data.length; i++) {
@@ -31,19 +32,23 @@ public class StringSortKeyIndex extends SortKeyIndex {
             size += stringSortKeyIndex.data[i].length;
         }
         stringSortKeyIndex.sizeInBytes = size;
+
+        if (!isAsc) {
+            reverseString(stringSortKeyIndex.data);
+        }
         return stringSortKeyIndex;
     }
 
     @Override
-    public void pruneEqual(Object param, RoaringBitmap cur) {
+    public void pruneEqual(Object param, RoaringBitmap cur, IndexPruneContext ipc) {
         if (param == null) {
             return;
         }
-        pruneRange(param, param, cur);
+        pruneRange(param, param, cur, ipc);
     }
 
     @Override
-    public void pruneRange(Object startObj, Object endObj, RoaringBitmap cur) {
+    public void pruneRange(Object startObj, Object endObj, RoaringBitmap cur, IndexPruneContext ipc) {
         Preconditions.checkArgument(!(startObj == null && endObj == null), "null val");
         byte[] start;
         byte[] end;
@@ -53,7 +58,7 @@ public class StringSortKeyIndex extends SortKeyIndex {
         if (startObj == null) {
             start = data[0];
         } else {
-            String stringStart = paramTransform(startObj, dt, String.class);
+            String stringStart = paramTransform(startObj, dt, ipc, String.class);
             if (stringStart == null) {
                 return;
             }
@@ -63,7 +68,7 @@ public class StringSortKeyIndex extends SortKeyIndex {
         if (endObj == null) {
             end = data[data.length - 1];
         } else {
-            String stringEnd = paramTransform(endObj, dt, String.class);
+            String stringEnd = paramTransform(endObj, dt, ipc, String.class);
             if (stringEnd == null) {
                 return;
             }
@@ -83,22 +88,10 @@ public class StringSortKeyIndex extends SortKeyIndex {
         Pair<Integer, Boolean> sIndex = binarySearchLowerBound(start);
         // get upper bound rg index
         Pair<Integer, Boolean> eIndex = binarySearchUpperBound(end);
-        int startRgIndex;
-        int endRgIndex;
 
-        // if lower rg index was not included, plus it was different from upper index, then add 1 to lower rg index
-        if (!sIndex.getValue() && !Objects.equals(sIndex.getKey(), eIndex.getKey())) {
-            startRgIndex = sIndex.getKey() + 1;
-        } else {
-            startRgIndex = sIndex.getKey();
-        }
-        if (eIndex.getValue()) {
-            endRgIndex = eIndex.getKey() + 1;
-        } else {
-            endRgIndex = eIndex.getKey();
-        }
+        Pair<Integer, Integer> interval = handleInterval(sIndex, eIndex);
 
-        cur.and(RoaringBitmap.bitmapOfRange(startRgIndex, endRgIndex));
+        cur.and(RoaringBitmap.bitmapOfRange(interval.getKey(), interval.getValue()));
     }
 
     /**
@@ -217,6 +210,25 @@ public class StringSortKeyIndex extends SortKeyIndex {
 
     private static int bytesCompare(byte[] a, byte[] b) {
         return WritableComparator.compareBytes(a, 0, a.length, b, 0, b.length);
+    }
+
+    //[3, 4, 1, 2] => [1, 2, 3, 4]
+    private static void reverseString(byte[][] array) {
+        for (int i = 0; i < array.length; i += 2) {
+            byte[] temp = array[i];
+            array[i] = array[i + 1];
+            array[i + 1] = temp;
+        }
+        int left = 0;
+        int right = array.length - 1;
+
+        while (left < right) {
+            byte[] temp = array[left];
+            array[left] = array[right];
+            array[right] = temp;
+            left++;
+            right--;
+        }
     }
 
     @Override

@@ -58,19 +58,7 @@ public class StoragePoolValidateTask extends BaseValidateTask {
         if (GeneralUtil.isEmpty(validStorageInsts)) {
             throw new TddlRuntimeException(ErrorCode.ERR_INVALID_DDL_PARAMS, "the valid storage insts can't be empty");
         }
-        StorageInfoAccessor storageInfoAccessor = new StorageInfoAccessor();
-        storageInfoAccessor.setConnection(metaDbConnection);
-        StoragePoolManager storagePoolManager = StoragePoolManager.getInstance();
-        if (!storagePoolManager.storagePoolCacheByName.containsKey(storagePoolName)) {
-            throw new TddlRuntimeException(ErrorCode.ERR_INVALID_DDL_PARAMS,
-                String.format("storage pool doesn't exist: '%s'", storagePoolName));
-        }
-        StoragePoolInfo storagePoolInfo = storagePoolManager.getStoragePoolInfo(storagePoolName);
-        if (!new HashSet<>(storagePoolInfo.getDnLists()).containsAll(validStorageInsts)) {
-            throw new TddlRuntimeException(ErrorCode.ERR_INVALID_DDL_PARAMS,
-                String.format("storage pool '%s' doesn't contains all of storage inst: '%s'", storagePoolName,
-                    StringUtils.join(validStorageInsts, ",")));
-        }
+        StoragePoolTaskUtils.validateStoragePoolNameExistsAndDnIdsInStoragePool(storagePoolName, validStorageInsts);
     }
 
     @Override

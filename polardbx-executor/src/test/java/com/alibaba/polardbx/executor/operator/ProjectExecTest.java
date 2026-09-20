@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.google.common.collect.ImmutableList;
 import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.executor.chunk.Chunk;
@@ -48,7 +49,12 @@ public class ProjectExecTest extends BaseExecTest {
         ProjectExec project = new ProjectExec(input, expressions, columns, context);
         List<Chunk> expects = RowChunksBuilder.rowChunksBuilder(DataTypes.IntegerType, DataTypes.IntegerType)
             .row(1, 3).row(2, 4).row(3, 5).row(4, 6).build();
+
+        MemoryCountable.checkDeviation(project, 0d, true);
+
         execForSmpMode(project, expects, false);
+
+        MemoryCountable.checkDeviation(project, 0d, true);
     }
 
     @Test
@@ -65,6 +71,9 @@ public class ProjectExecTest extends BaseExecTest {
         ProjectExec project = new ProjectExec(input, expressions, columns, context);
         List<Chunk> expects = RowChunksBuilder.rowChunksBuilder(DataTypes.IntegerType, DataTypes.IntegerType)
             .row(1, 3).row(2, 4).row(3, 5).row(4, 6).build();
+
+        MemoryCountable.checkDeviation(project, 0d, true);
         execForSmpMode(project, expects, 2, 4);
+        MemoryCountable.checkDeviation(project, 0d, true);
     }
 }

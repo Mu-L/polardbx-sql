@@ -22,7 +22,11 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class AsyncUtils {
 
@@ -48,5 +52,60 @@ public class AsyncUtils {
                 throw new RuntimeException(ex);
             }
         }
+    }
+
+    /**
+     * return when caller thread is interrupted, but notice that the task is still running
+     */
+    public static void waitAllInterruptibly(Collection<Future> futures) {
+        List<Throwable> exceptions = new ArrayList<>();
+
+        // Wait for all the tasks finish their work
+        for (Future future : futures) {
+            try {
+                future.get();
+            } catch (Throwable ex) {
+                if (ex instanceof InterruptedException) {
+                    // Preserve interrupt status
+                    Thread.currentThread().interrupt();
+                }
+                exceptions.add(ex.getCause());
+            }
+        }
+
+        if (!exceptions.isEmpty()) {
+            // Re-throw the first exception
+            final Throwable ex = exceptions.get(0);
+            if (ex instanceof RuntimeException) {
+                throw (RuntimeException) ex;
+            } else {
+                throw new RuntimeException(ex);
+            }
+        }
+    }
+
+    public static boolean shutdownNowAndAwaitTermination(
+        ExecutorService service, long timeout, TimeUnit unit) {
+        long timeoutNanos = unit.toNanos(timeout);
+        // Cancel currently executing tasks
+        List<Runnable> remainingTasks = service.shutdownNow();
+
+        // Cancel remaining tasks
+        for (Runnable remainingTask : remainingTasks) {
+            if (remainingTask instanceof Future) {
+                ((Future) remainingTask).cancel(true);
+            }
+        }
+
+        try {
+            // Wait for the duration of the timeout for existing tasks to terminate
+            service.awaitTermination(timeoutNanos, TimeUnit.NANOSECONDS);
+        } catch (InterruptedException ie) {
+            // Preserve interrupt status
+            Thread.currentThread().interrupt();
+            // (Re-)Cancel if current thread also interrupted
+            service.shutdownNow();
+        }
+        return service.isTerminated();
     }
 }

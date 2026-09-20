@@ -23,9 +23,10 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.TablesSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.oss.UnArchiveValidateTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.oss.UnBindingArchiveTableMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.ValidateTableVersionTask;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4UnArchive;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -38,12 +39,13 @@ import java.util.Set;
 /**
  * @author Shi Yuxuan
  */
-public class UnArchiveJobFactory extends DdlJobFactory {
+public class UnArchiveJobFactory extends OnlineDdlJobFactory {
 
     UnArchivePreparedData preparedData;
     ExecutionContext executionContext;
 
     public UnArchiveJobFactory(UnArchivePreparedData preparedData, ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.META_ONLY);
         this.preparedData = preparedData;
         this.executionContext = executionContext;
     }

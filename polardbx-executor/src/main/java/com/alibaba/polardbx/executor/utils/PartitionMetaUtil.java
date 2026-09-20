@@ -94,6 +94,7 @@ public class PartitionMetaUtil {
         String dbName = partInfo.getTableSchema().toLowerCase(Locale.ROOT);
         String tblName = partInfo.getTableName().toLowerCase(Locale.ROOT);
         PartitionTableType partTblType = partInfo.getTableType();
+        boolean withoutAnyPartKey = PartitionTableType.isTableTypeWithoutPartitionKey(partTblType);
         Long tgId = partInfo.getTableGroupId();
         TableGroupInfoManager tgMgr = OptimizerContext.getContext(dbName).getTableGroupInfoManager();
         TopologyHandler topology = ExecutorContext.getContext(dbName).getTopologyHandler();
@@ -102,19 +103,27 @@ public class PartitionMetaUtil {
         String tgName = tgInfo.getTableGroupRecord().getTg_name();
 
         PartitionByDefinition partBy = partInfo.getPartitionBy();
-        String partMethod = partBy.getStrategy().getStrategyExplainName();
-        String partCol = org.apache.commons.lang.StringUtils.join(partBy.getPartitionColumnNameList(), ",");
-        List<String> partColTypeStrList = new ArrayList<>();
-        for (int i = 0; i < partBy.getPartitionFieldList().size(); i++) {
-            partColTypeStrList.add(partBy.getPartitionFieldList().get(i).getField().getRelType().getFullTypeString());
-        }
-        String partColType = org.apache.commons.lang.StringUtils.join(partColTypeStrList, ",");
+        String partMethod = null;
+        String partCol = null;
+        String partColType = null;
+        String partExpr = null;
+        if (!withoutAnyPartKey) {
+            partMethod = partBy.getStrategy().getStrategyExplainName();
+            partCol = org.apache.commons.lang.StringUtils.join(partBy.getPartitionColumnNameList(), ",");
 
-        List<String> partColExprStrList = new ArrayList<>();
-        for (int i = 0; i < partBy.getPartitionExprList().size(); i++) {
-            partColExprStrList.add(partBy.getPartitionExprList().get(i).toString());
+            List<String> partColTypeStrList = new ArrayList<>();
+            for (int i = 0; i < partBy.getPartitionFieldList().size(); i++) {
+                partColTypeStrList.add(partBy.getPartitionFieldList().get(i).getField().getRelType().getFullTypeString());
+            }
+            partColType = org.apache.commons.lang.StringUtils.join(partColTypeStrList, ",");
+
+            List<String> partColExprStrList = new ArrayList<>();
+            for (int i = 0; i < partBy.getPartitionExprList().size(); i++) {
+                partColExprStrList.add(partBy.getPartitionExprList().get(i).toString());
+            }
+            partExpr = org.apache.commons.lang.StringUtils.join(partColExprStrList, ",");
         }
-        String partExpr = org.apache.commons.lang.StringUtils.join(partColExprStrList, ",");
+
 
         PartitionByDefinition subPartBy = partBy.getSubPartitionBy();
         boolean useSubPart = subPartBy != null;
@@ -149,8 +158,11 @@ public class PartitionMetaUtil {
             PartitionSpec partSpec = partSpecs.get(i);
 
             String partName = partSpec.getName();
+            String partDesc = null;
+            if (!withoutAnyPartKey) {
+                partDesc = partSpec.getBoundSpec().toString();
+            }
             Long partPosi = partSpec.getPosition();
-            String partDesc = partSpec.getBoundSpec().toString();
             String partArcStateName =
                 TtlPartArcState.getTtlPartArcStateByArcStateValue(partSpec.getArcState()).getArcStateName();
             if (useSubPart) {

@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.server.parser;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.server.util.ParseUtil;
 import com.alibaba.polardbx.druid.sql.parser.ByteString;
 
@@ -24,13 +26,11 @@ import java.util.Set;
 
 public class ServerParseCollect {
     public static final int OTHER = -1;
-    public static final int STATISTIC = 1;
 
     public static final Set<Integer> PREPARE_UNSUPPORTED_COLLECT_TYPE;
 
     static {
         PREPARE_UNSUPPORTED_COLLECT_TYPE = new HashSet<>();
-        PREPARE_UNSUPPORTED_COLLECT_TYPE.add(ServerParseCollect.STATISTIC);
     }
 
     public static int parse(ByteString stmt, int offset) {
@@ -43,36 +43,8 @@ public class ServerParseCollect {
             case '#':
                 i = ParseUtil.comment(stmt, i);
                 continue;
-            case 'S':
-            case 's':
-                return statisticCheck(stmt, i);
             default:
                 return OTHER;
-            }
-        }
-        return OTHER;
-    }
-
-    private static int statisticCheck(ByteString stmt, int offset) {
-        if (stmt.length() > offset + "tatistic".length()) {
-            char c1 = stmt.charAt(++offset);
-            char c2 = stmt.charAt(++offset);
-            char c3 = stmt.charAt(++offset);
-            char c4 = stmt.charAt(++offset);
-            char c5 = stmt.charAt(++offset);
-            char c6 = stmt.charAt(++offset);
-            char c7 = stmt.charAt(++offset);
-            char c8 = stmt.charAt(++offset);
-            if ((c1 == 't' || c1 == 'T') &&
-                (c2 == 'a' || c2 == 'A') &&
-                (c3 == 't' || c3 == 'T') &&
-                (c4 == 'i' || c4 == 'I') &&
-                (c5 == 's' || c5 == 'S') &&
-                (c6 == 't' || c6 == 'T') &&
-                (c7 == 'i' || c7 == 'I') &&
-                (c8 == 'c' || c8 == 'C') &&
-                (stmt.length() == ++offset || ParseUtil.isEOF(stmt.charAt(offset)))) {
-                return STATISTIC;
             }
         }
         return OTHER;

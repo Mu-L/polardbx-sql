@@ -9,6 +9,8 @@ import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarConfigAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarConfigRecord;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingAccessor;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingRecord;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import org.jetbrains.annotations.NotNull;
 import org.junit.After;
@@ -21,6 +23,7 @@ import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
 import java.sql.Connection;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
@@ -47,42 +50,48 @@ public class ColumnarTsoManagerTest {
         new MockScheduledExecutorService("ColumnarTsoPurgeTaskExecutor");
     private final ScheduledExecutorService executorService2 =
         new MockScheduledExecutorService("ColumnarTsoUpdateTaskExecutor");
+    private MockedStatic<InstConfUtil> instConfUtilMockedStatic;
 
     @Before
     public void setUp() {
+        instConfUtilMockedStatic = Mockito.mockStatic(InstConfUtil.class);
+        instConfUtilMockedStatic.when(() -> InstConfUtil.getInt(ConnectionParams.COLUMNAR_TSO_UPDATE_INTERVAL))
+            .thenReturn(500);
+        instConfUtilMockedStatic.when(() -> InstConfUtil.getInt(ConnectionParams.COLUMNAR_TSO_PURGE_INTERVAL))
+            .thenReturn(800);
+        instConfUtilMockedStatic.when(
+                () -> InstConfUtil.getOriginVal(ConnectionParams.COLUMNAR_VERSION_CHAIN_PRUNER))
+            .thenReturn("");
         ColumnarTsoManager.INSTANCE.destroy();
         ColumnarManager.getInstance().reload();
     }
 
     @Test
     public void test() throws InterruptedException {
-        try (MockedStatic<InstConfUtil> instConfUtilMockedStatic = Mockito.mockStatic(InstConfUtil.class)) {
-            instConfUtilMockedStatic.when(() -> InstConfUtil.getInt(ConnectionParams.COLUMNAR_TSO_UPDATE_INTERVAL))
-                .thenReturn(500);
-            instConfUtilMockedStatic.when(() -> InstConfUtil.getInt(ConnectionParams.COLUMNAR_TSO_PURGE_INTERVAL))
-                .thenReturn(800);
-            ConfigDataMode.setMode(ConfigDataMode.Mode.GMS);
-            ColumnarTsoManager columnarTsoManager;
-            try (MockedStatic<Executors> executorsMockedStatic = Mockito.mockStatic(Executors.class,
-                Mockito.CALLS_REAL_METHODS)) {
-                executorsMockedStatic.when(() -> Executors.newSingleThreadScheduledExecutor(any()))
-                    .thenReturn(executorService1)
-                    .thenReturn(executorService2);
-                columnarTsoManager = ColumnarTsoManager.getInstance();
-            }
-            Thread.sleep(10000);
-            Assert.assertTrue(purgeWatermark.get() > 0);
-            columnarTsoManager.resetColumnarTsoPurgeInterval(10);
-            columnarTsoManager.resetColumnarTsoUpdateInterval(10);
-            Thread.sleep(3333);
-            Assert.assertTrue(purgeWatermark.get() > 300);
+        ConfigDataMode.setMode(ConfigDataMode.Mode.GMS);
+        ColumnarTsoManager columnarTsoManager;
+        try (MockedStatic<Executors> executorsMockedStatic = Mockito.mockStatic(Executors.class,
+            Mockito.CALLS_REAL_METHODS)) {
+            executorsMockedStatic.when(() -> Executors.newSingleThreadScheduledExecutor(any()))
+                .thenReturn(executorService1)
+                .thenReturn(executorService2);
+            columnarTsoManager = ColumnarTsoManager.getInstance();
         }
+        Thread.sleep(10000);
+        Assert.assertTrue(purgeWatermark.get() > 0);
+        columnarTsoManager.resetColumnarTsoPurgeInterval(10);
+        columnarTsoManager.resetColumnarTsoUpdateInterval(10);
+        Thread.sleep(3333);
+        Assert.assertTrue(purgeWatermark.get() > 300);
     }
 
     @After
     public void tearDown() {
         ColumnarTsoManager.INSTANCE.destroy();
         ColumnarManager.getInstance().reload();
+        if (instConfUtilMockedStatic != null) {
+            instConfUtilMockedStatic.close();
+        }
     }
 
     class MockScheduledExecutorService implements ScheduledExecutorService {
@@ -132,7 +141,17 @@ public class ColumnarTsoManagerTest {
                                     purgeWatermark.set(newValue);
                                     return 1;
                                 });
-                        })) {
+                        }
+                    );
+                    MockedConstruction<ColumnarTableMappingAccessor> ctmaCtor = Mockito.mockConstruction(
+                        ColumnarTableMappingAccessor.class,
+                        (mock, context) -> {
+                            List<ColumnarTableMappingRecord> records = new ArrayList<>();
+                            records.add(Mockito.mock(ColumnarTableMappingRecord.class));
+                            Mockito.when(mock.queryLimitOne()).thenReturn(records);
+                        }
+                    )
+                ) {
                     metaDbUtilMockedStatic.when(MetaDbUtil::getConnection).thenReturn(Mockito.mock(Connection.class));
                     instConfUtilMockedStatic.when(() -> InstConfUtil.getInt(ConnectionParams.COLUMNAR_TSO_UPDATE_DELAY))
                         .thenReturn(1000);

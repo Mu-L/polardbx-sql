@@ -22,6 +22,7 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.TStringUtil;
+import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseGmsTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.gms.util.SequenceUtil;
@@ -44,18 +45,18 @@ import static com.alibaba.polardbx.common.constants.SequenceAttribute.AUTO_SEQ_P
  */
 @Getter
 @TaskName(name = "LogicalHandleSequenceTask")
-public class LogicalHandleSequenceTask extends BaseGmsTask {
+public class LogicalHandleSequenceTask extends BaseDdlTask {
     private SequenceBean sequenceBean;
 
     @JSONCreator
-    public LogicalHandleSequenceTask(String schemaName, String logicalTableName, SequenceBean sequenceBean) {
-        super(schemaName, logicalTableName);
+    public LogicalHandleSequenceTask(String schemaName, SequenceBean sequenceBean) {
+        super(schemaName);
         this.sequenceBean = sequenceBean;
         onExceptionTryRecoveryThenRollback();
     }
 
     @Override
-    public void executeImpl(Connection metaDbConn, ExecutionContext executionContext) {
+    public void duringTransaction(Connection metaDbConn, ExecutionContext executionContext) {
         SequencesAccessor sequencesAccessor = new SequencesAccessor();
         sequencesAccessor.setConnection(metaDbConn);
 

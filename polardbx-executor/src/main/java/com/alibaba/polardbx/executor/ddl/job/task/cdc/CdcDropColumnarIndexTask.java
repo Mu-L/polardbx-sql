@@ -39,12 +39,15 @@ public class CdcDropColumnarIndexTask extends BaseDdlTask {
     private final String logicalTableName;
     private final String indexName;
     private final Long versionId;
+    private final boolean markByHint;
 
-    public CdcDropColumnarIndexTask(String schemaName, String logicalTableName, String indexName, Long versionId) {
+    public CdcDropColumnarIndexTask(String schemaName, String logicalTableName, String indexName, Long versionId,
+                                    boolean markByHint) {
         super(schemaName);
         this.logicalTableName = logicalTableName;
         this.indexName = indexName;
         this.versionId = versionId;
+        this.markByHint = markByHint;
     }
 
     @Override
@@ -53,7 +56,11 @@ public class CdcDropColumnarIndexTask extends BaseDdlTask {
         stmt.setTableName(new SQLIdentifierExpr(SqlIdentifier.surroundWithBacktick(logicalTableName)));
         stmt.setIndexName(new SQLIdentifierExpr(SqlIdentifier.surroundWithBacktick(indexName)));
 
-        String markSql = CdcMarkUtil.buildVersionIdHint(versionId) + stmt;
+        String dropIndexSql = stmt.toString();
+        if (markByHint) {
+            dropIndexSql = CdcMarkUtil.getExtraDdlHint(dropIndexSql);
+        }
+        String markSql = CdcMarkUtil.buildVersionIdHint(versionId) + dropIndexSql;
         CdcMarkUtil.useDdlVersionId(executionContext, versionId);
         CdcMarkUtil.useOriginalDDL(executionContext);
 
@@ -61,6 +68,6 @@ public class CdcDropColumnarIndexTask extends BaseDdlTask {
         CdcManagerHelper.getInstance()
             .notifyDdlNew(schemaName, logicalTableName, SqlKind.DROP_INDEX.name(),
                 markSql, DdlType.DROP_INDEX, ddlContext.getJobId(), getTaskId(),
-                CdcDdlMarkVisibility.Protected, buildExtendParameter(executionContext));
+                CdcDdlMarkVisibility.Protected, buildExtendParameter(executionContext, dropIndexSql));
     }
 }

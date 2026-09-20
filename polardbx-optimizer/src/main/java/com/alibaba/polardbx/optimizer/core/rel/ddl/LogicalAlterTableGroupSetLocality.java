@@ -131,7 +131,7 @@ public class LogicalAlterTableGroupSetLocality extends BaseDdlOperation {
                 if (targetDnList.containsAll(dnList)) {
                     skipRebalance = true;
                 }
-            // targetDnList is empty
+                // targetDnList is empty
             } else if (targetDnList.isEmpty()) {
                 skipRebalance = true;
                 // originalDnList is not empty and targetDnList is not empty.

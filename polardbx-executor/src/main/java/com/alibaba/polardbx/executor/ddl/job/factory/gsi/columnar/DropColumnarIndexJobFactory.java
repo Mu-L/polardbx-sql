@@ -28,11 +28,11 @@ import com.alibaba.polardbx.executor.ddl.job.task.gsi.DropColumnarTableHideTable
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.GsiDropCleanUpTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.ValidateGsiExistenceTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupSyncTask;
-import com.alibaba.polardbx.executor.ddl.job.validator.GsiValidator;
 import com.alibaba.polardbx.executor.ddl.job.validator.TtlValidator;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4DropColumnarIndex;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupRecord;
@@ -57,7 +57,7 @@ import java.util.Set;
  *
  * @author guxu
  */
-public class DropColumnarIndexJobFactory extends DdlJobFactory {
+public class DropColumnarIndexJobFactory extends OnlineDdlJobFactory {
 
     protected final String schemaName;
     protected final String primaryTableName;
@@ -69,6 +69,7 @@ public class DropColumnarIndexJobFactory extends DdlJobFactory {
     public static final String HIDE_TABLE_TASK = "HIDE_TABLE_TASK";
 
     private boolean skipSchemaChange = false;
+    private boolean markByHint = false;
 
     public DropColumnarIndexJobFactory(String schemaName,
                                        String primaryTableName,
@@ -76,13 +77,16 @@ public class DropColumnarIndexJobFactory extends DdlJobFactory {
                                        String originalIndexName,
                                        Long versionId,
                                        boolean skipSchemaChange,
+                                       boolean markByHint,
                                        ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.OSC);
         this.schemaName = schemaName;
         this.primaryTableName = primaryTableName;
         this.indexTableName = indexTableName;
         this.originalIndexName = originalIndexName;
         this.skipSchemaChange = skipSchemaChange;
         this.versionId = versionId;
+        this.markByHint = markByHint;
         this.executionContext = executionContext;
     }
 
@@ -131,13 +135,15 @@ public class DropColumnarIndexJobFactory extends DdlJobFactory {
 
         // 3.1 table status: public -> absent
         DropColumnarTableHideTableMetaTask dropColumnarTableHideTableMetaTask =
-            new DropColumnarTableHideTableMetaTask(schemaName, primaryTableName, indexTableName);
+            new DropColumnarTableHideTableMetaTask(schemaName, indexTableName);
         taskList.add(dropColumnarTableHideTableMetaTask);
+        taskList.add(new TableSyncTask(schemaName, indexTableName));
 
         // 3.2 remove table meta for columnar index
         CciSchemaEvolutionTask cciSchemaEvolutionTask =
             CciSchemaEvolutionTask.dropCci(schemaName, primaryTableName, indexTableName, versionId);
         taskList.add(cciSchemaEvolutionTask);
+        taskList.add(new TableSyncTask(schemaName, primaryTableName));
 
         // 3.3 drop columnar table
         CdcDropColumnarIndexTask cdcDropColumnarTableTask = null;
@@ -147,7 +153,7 @@ public class DropColumnarIndexJobFactory extends DdlJobFactory {
             taskList.add(dropMockColumnarIndexTask);
         } else {
             cdcDropColumnarTableTask =
-                new CdcDropColumnarIndexTask(schemaName, primaryTableName, originalIndexName, versionId);
+                new CdcDropColumnarIndexTask(schemaName, primaryTableName, originalIndexName, versionId, markByHint);
             taskList.add(cdcDropColumnarTableTask);
         }
 
@@ -159,7 +165,7 @@ public class DropColumnarIndexJobFactory extends DdlJobFactory {
 
         // 4.1 remove table meta for columnar index
         DropColumnarTableRemoveMetaTask dropColumnarTableRemoveMetaTask =
-            new DropColumnarTableRemoveMetaTask(schemaName, primaryTableName, indexTableName);
+            new DropColumnarTableRemoveMetaTask(schemaName, indexTableName);
         taskList.add(dropColumnarTableRemoveMetaTask);
 
         // 4.2 clear table group cache if necessary
@@ -230,6 +236,7 @@ public class DropColumnarIndexJobFactory extends DdlJobFactory {
             preparedData.getOriginalIndexName(),
             preparedData.getDdlVersionId(),
             skipSchemaChange,
+            preparedData.isMarkByHint(),
             executionContext
         ).create(validate);
     }

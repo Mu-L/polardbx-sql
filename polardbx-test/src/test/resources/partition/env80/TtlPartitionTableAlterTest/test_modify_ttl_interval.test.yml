@@ -1,0 +1,53 @@
+## DISABLE_FAST_SQL_PARSER
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+
+drop table if exists test_ttl_interval;
+## create table
+create table test_ttl_interval(
+a int not null,
+b datetime,
+c int,
+primary key(a)
+)
+partition by key(`a`)
+partitions 4;
+  
+## error_msg: $# not supported #$
+alter table test_ttl_interval
+modify ttl set
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 2 week timezone '+08:00',
+ttl_filter = cond_expr( `c` in (1,2,3) )
+;
+
+alter table test_ttl_interval
+modify ttl set
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 14 day timezone '+08:00',
+ttl_filter = cond_expr( `c` in (1,2,3) ),
+ttl_part_interval=interval(1, week),
+archive_table_pre_allocate=2,
+archive_table_post_allocate=4
+;
+show create table test_ttl_interval;
+
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+create table test_ttl_interval_arc like test_ttl_interval engine='columnar' archive_mode='ttl';
+show create table test_ttl_interval;
+
+set TTL_DEBUG_CURRENT_DATETIME='2024-07-07 00:00:00';
+alter table test_ttl_interval cleanup expired data;
+show create table test_ttl_interval;
+set TTL_DEBUG_CURRENT_DATETIME='2024-07-08 00:00:00';
+alter table test_ttl_interval cleanup expired data;
+show create table test_ttl_interval;
+
+drop table if exists test_ttl_interval;
+

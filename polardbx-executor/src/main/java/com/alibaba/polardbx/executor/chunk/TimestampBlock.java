@@ -273,6 +273,21 @@ public class TimestampBlock extends AbstractCommonBlock {
     }
 
     @Override
+    public int compareAssertedSameType(int position, Block otherBlock, int otherPosition) {
+        boolean isNullLeft = isNull(position);
+        boolean isNullRight = otherBlock.isNull(otherPosition);
+        if (isNullLeft && isNullRight) {
+            return 0;
+        } else if (isNullLeft) {
+            return -1;
+        } else if (isNullRight) {
+            return 1;
+        } else {
+            return Long.compare(getPackedLong(position), otherBlock.getPackedLong(otherPosition));
+        }
+    }
+
+    @Override
     public boolean equals(int position, Block other, int otherPosition) {
         position = realPositionOf(position);
         if (other instanceof TimestampBlock) {

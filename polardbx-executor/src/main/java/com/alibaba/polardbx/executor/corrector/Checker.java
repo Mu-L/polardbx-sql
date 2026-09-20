@@ -220,7 +220,7 @@ public class Checker {
         this.batchSize = batchSize;
         this.rateLimiter = speedLimit <= 0 ? null : RateLimiter.create(speedLimit);
         SQLRecorderLogger.ddlLogger.warn("checker args: speedMin: " + speedMin + ", speedLimit: " + speedLimit);
-        this.t = new Throttle(speedMin, speedLimit, schemaName);
+        this.t = new Throttle(speedMin, speedLimit, schemaName, batchSize);
         this.nowSpeedLimit = speedLimit;
         this.parallelism = parallelism;
         this.useBinary = useBinary;
@@ -1238,7 +1238,8 @@ public class Checker {
         return result;
     }
 
-    public static List<Pair<ParameterContext, byte[]>> row2objects(Row rowSet, boolean useBinary, Set<String> notConvertedColumns) {
+    public static List<Pair<ParameterContext, byte[]>> row2objects(Row rowSet, boolean useBinary,
+                                                                   Set<String> notConvertedColumns) {
         final List<ColumnMeta> columns = rowSet.getParentCursorMeta().getColumns();
         final List<Pair<ParameterContext, byte[]>> result = new ArrayList<>(columns.size());
         for (int i = 0; i < columns.size(); i++) {

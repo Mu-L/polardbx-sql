@@ -21,7 +21,6 @@ import com.alibaba.polardbx.executor.cursor.impl.ArrayResultCursor;
 import com.alibaba.polardbx.executor.gms.ColumnarManager;
 import com.alibaba.polardbx.executor.spi.ITransactionManager;
 import com.alibaba.polardbx.gms.sync.IGmsSyncAction;
-import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 
 import java.util.Iterator;
@@ -33,9 +32,6 @@ public class RequestColumnarSnapshotSeqSyncAction implements IGmsSyncAction {
         long minSnapshotTime = ColumnarManager.getInstance().latestTso();
         Map<String, ExecutorContext> executorContextMap = ExecutorContext.getExecutorContextMap();
         for (Map.Entry<String, ExecutorContext> entry : executorContextMap.entrySet()) {
-            if (SystemDbHelper.isDBBuildInExceptCdc(entry.getKey())) {
-                continue;
-            }
             ITransactionManager manager = entry.getValue().getTransactionManager();
             long minTsoOfCurrentDb = manager.getColumnarMinSnapshotSeq();
             minSnapshotTime = Math.min(minSnapshotTime, minTsoOfCurrentDb);

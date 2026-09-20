@@ -49,6 +49,11 @@ import com.alibaba.polardbx.executor.common.StorageInfoManager;
 import com.alibaba.polardbx.executor.common.TopologyHandler;
 import com.alibaba.polardbx.executor.ddl.job.meta.CommonMetaChanger;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.oss.PurgeOssFileScheduleTask;
+import com.alibaba.polardbx.executor.ddl.job.task.recyclebin.PurgeRecycleBinTask;
+import com.alibaba.polardbx.executor.ddl.job.task.ttl.scheduler.TtlScanWarningManager;
+import com.alibaba.polardbx.executor.columnar.StagingFlushTaskScheduler;
+import com.alibaba.polardbx.executor.columnar.StagingLifecycleEligibility;
+import com.alibaba.polardbx.executor.ddl.job.task.ttl.scheduler.TtlScheduledJobManager;
 import com.alibaba.polardbx.executor.ddl.newengine.DdlEngineDagExecutor;
 import com.alibaba.polardbx.executor.ddl.newengine.DdlEngineRemoteTaskExecutor;
 import com.alibaba.polardbx.executor.ddl.newengine.DdlEngineScheduler;
@@ -89,6 +94,7 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext.ErrorMessage;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfoManager;
 import com.alibaba.polardbx.optimizer.partition.util.TableMetaFetcher;
+import com.alibaba.polardbx.optimizer.planmanager.PlanManager;
 import com.alibaba.polardbx.optimizer.rule.MockSchemaManager;
 import com.alibaba.polardbx.optimizer.rule.Partitioner;
 import com.alibaba.polardbx.optimizer.rule.RuleSchemaManager;
@@ -269,6 +275,7 @@ public class MatrixConfigHolder extends AbstractLifecycle {
         }
         if (ConfigDataMode.isPolarDbX()) {
             PurgeOssFileScheduleTask.getInstance().init(new ParamManager(dataSource.getConnectionProperties()));
+            PurgeRecycleBinTask.getInstance().init(new ParamManager(dataSource.getConnectionProperties()));
         }
 
         executorContext.setInnerConnectionManager(InnerConnectionManager.getInstance());
@@ -277,6 +284,10 @@ public class MatrixConfigHolder extends AbstractLifecycle {
         DbGroupInfoManager.getInstance().reloadGroupsOfDb(schemaName);
         AutoSnapshotManager.init();
         oc.setFinishInit(true);//Label oc of the db finish init
+    }
+
+    void setExecutorContext(ExecutorContext executorContext) {
+        this.executorContext = executorContext;
     }
 
     private void loadContext() {
@@ -302,7 +313,7 @@ public class MatrixConfigHolder extends AbstractLifecycle {
     }
 
     private void gsiInit() {
-        GsiManager manager = new GsiManager(this.topologyHandler, this.storageInfoManager);
+        GsiManager manager = new GsiManager(this.topologyHandler, this.tddlRuleManager, this.storageInfoManager);
         manager.init();
 
         this.gsiManager = manager;
@@ -311,14 +322,6 @@ public class MatrixConfigHolder extends AbstractLifecycle {
 
     @Override
     protected void doDestroy() {
-        try {
-            if (optimizerContext != null && optimizerContext.getLatestSchemaManager() != null) {
-                optimizerContext.getLatestSchemaManager().destroy();
-            }
-        } catch (Exception ex) {
-            logger.warn("schemaManager destroy error", ex);
-        }
-
         try {
             if (tddlRuleManager != null) {
                 tddlRuleManager.destroy();
@@ -401,7 +404,11 @@ public class MatrixConfigHolder extends AbstractLifecycle {
         }
 
         try {
-            CommonMetaChanger.invalidateBufferPool(schemaName);
+            /**
+             * Because all cn node will call doDestroy for TDataSource when drop db,
+             * So here just clear pool for current node only, to avoiding locking between cn nodes
+             */
+            CommonMetaChanger.invalidateBufferPoolCurrentNodeOnly(schemaName);
         } catch (Exception ex) {
             logger.warn("Invalidate BufferPool error", ex);
         }
@@ -409,6 +416,24 @@ public class MatrixConfigHolder extends AbstractLifecycle {
         ddlEngineDestroy();
 
         tableMetaDestroy();
+
+        logger.info("schemaManager destroy start");
+        try {
+            if (optimizerContext != null && optimizerContext.getLatestSchemaManager() != null) {
+                optimizerContext.getLatestSchemaManager().destroy();
+            }
+        } catch (Exception ex) {
+            logger.warn("schemaManager destroy error", ex);
+        }
+        logger.info("schemaManager destroy finished");
+
+        logger.info("PlanManager invalidateCache start");
+        try {
+            PlanManager.getInstance().invalidateCache();
+        } catch (Exception ex) {
+            logger.warn("PlanManager invalidateCache error", ex);
+        }
+        logger.info("PlanManager invalidateCache finished");
 
         unLoadContext();
         serverConfigManager = null;
@@ -458,10 +483,6 @@ public class MatrixConfigHolder extends AbstractLifecycle {
             }
         }
 
-        String enableShardConstExprStr = GeneralUtil.getPropertyString(dataSource.getConnectionProperties(),
-            ConnectionProperties.ENABLE_SHARD_CONST_EXPR, Boolean.FALSE.toString());
-        boolean enableShardConstExpr = Boolean.parseBoolean(enableShardConstExprStr);
-
         if (ConfigDataMode.isFastMock()) {
             rule.init();
 
@@ -473,7 +494,6 @@ public class MatrixConfigHolder extends AbstractLifecycle {
 
             partitioner = new Partitioner(rule, optimizerContext);
             partitioner.setShardRouterTimeZone(this.shardRouterDefaultTimeZone);
-            partitioner.setEnableConstExpr(enableShardConstExpr);
 
             return;
         }
@@ -488,7 +508,7 @@ public class MatrixConfigHolder extends AbstractLifecycle {
             partitionInfoManager.setTableMetaFetcher(new TableMetaFetcher() {
                 @Override
                 public TableMeta getTableMeta(String schemaName, String appName, String tableName) {
-                    return GmsTableMetaManager.fetchTableMeta(null, schemaName, tableName, null, null, true,
+                    return GmsTableMetaManager.fetchTableMeta(null, schemaName, appName, tableName, null, null, true,
                         true);
                 }
             });
@@ -497,7 +517,6 @@ public class MatrixConfigHolder extends AbstractLifecycle {
             tddlRuleManager = new TddlRuleManager(rule, partitionInfoManager, tableGroupInfoManager, schemaName);
             partitioner = new Partitioner(rule, optimizerContext);
             partitioner.setShardRouterTimeZone(this.shardRouterDefaultTimeZone);
-            partitioner.setEnableConstExpr(enableShardConstExpr);
         } catch (Throwable e) {
             logger.error("initialize PartitionInfoManager failed: e");
             throw e;
@@ -630,6 +649,8 @@ public class MatrixConfigHolder extends AbstractLifecycle {
             if (AsyncDDLContext.isSeparateJob(job) || AsyncDDLContext.isParentJob(job)) {
                 try (ITPrepareStatement ps = conn.prepareStatement(job.getDdlStmt())) {
                     ExecutionContext ec = conn.getExecutionContext();
+                    ec.setLogicalSqlStartTimeInMs(System.currentTimeMillis());
+                    ec.setLogicalSqlStartTime(System.nanoTime());
                     AsyncDDLContext asyncDDLContext = conn.getExecutionContext().getAsyncDDLContext();
                     // Perform a job newly created or recovered.
                     asyncDDLContext.setJob(job);
@@ -663,10 +684,16 @@ public class MatrixConfigHolder extends AbstractLifecycle {
         try (TConnection conn = (TConnection) dataSource.getConnection()) {
             ExecutionContext executionContext = conn.getExecutionContext();
             executionContext.setExecutorService(conn.getExecutorService());
+            executionContext.setLogicalSqlStartTimeInMs(System.currentTimeMillis());
+            executionContext.setLogicalSqlStartTime(System.nanoTime());
 
             TransactionManager transactionManager = (TransactionManager) this.executorContext.getTransactionManager();
             autoCommitTrans = new AutoCommitTransaction(executionContext, transactionManager);
+            autoCommitTrans.setStartTimeInMs(System.currentTimeMillis());
+            autoCommitTrans.setStartTime(System.nanoTime());
             executionContext.setTransaction(autoCommitTrans);
+            // 该路径直接构造事务对象，必须等完整初始化后再注册。
+            transactionManager.register(autoCommitTrans);
 
             executionContext.setStats(dataSource.getStatistics());
             executionContext.setPhysicalRecorder(dataSource.getPhysicalRecorder());
@@ -695,10 +722,16 @@ public class MatrixConfigHolder extends AbstractLifecycle {
         try (TConnection conn = (TConnection) dataSource.getConnection()) {
             ExecutionContext executionContext = conn.getExecutionContext();
             executionContext.setExecutorService(conn.getExecutorService());
+            executionContext.setLogicalSqlStartTimeInMs(System.currentTimeMillis());
+            executionContext.setLogicalSqlStartTime(System.nanoTime());
 
             TransactionManager transactionManager = (TransactionManager) this.executorContext.getTransactionManager();
             autoCommitTrans = new AutoCommitTransaction(executionContext, transactionManager);
+            autoCommitTrans.setStartTimeInMs(System.currentTimeMillis());
+            autoCommitTrans.setStartTime(System.nanoTime());
             executionContext.setTransaction(autoCommitTrans);
+            // 该路径直接构造事务对象，必须等完整初始化后再注册。
+            transactionManager.register(autoCommitTrans);
 
             executionContext.setStats(dataSource.getStatistics());
             executionContext.setPhysicalRecorder(dataSource.getPhysicalRecorder());
@@ -728,6 +761,8 @@ public class MatrixConfigHolder extends AbstractLifecycle {
             ExecutionContext executionContext = conn.getExecutionContext();
             executionContext.setSchemaName(schema);
             executionContext.setPrivilegeMode(false);
+            executionContext.setLogicalSqlStartTimeInMs(System.currentTimeMillis());
+            executionContext.setLogicalSqlStartTime(System.nanoTime());
             /**
              * Generate txid before executing query.
              * This ensures the connection will only generate exact ONE trx object.
@@ -750,6 +785,8 @@ public class MatrixConfigHolder extends AbstractLifecycle {
             ExecutionContext executionContext = conn.getExecutionContext();
             executionContext.setSchemaName(schema);
             executionContext.setPrivilegeMode(false);
+            executionContext.setLogicalSqlStartTimeInMs(System.currentTimeMillis());
+            executionContext.setLogicalSqlStartTime(System.nanoTime());
 
             SQLRecorderLogger.ddlEngineLogger.info(
                 String.format("submit job, schemaName:[%s], ddlSql:[%s]", schema, ddlSql));
@@ -779,6 +816,8 @@ public class MatrixConfigHolder extends AbstractLifecycle {
             ExecutionContext executionContext = conn.getExecutionContext();
             executionContext.setSchemaName(schema);
             executionContext.setPrivilegeMode(false);
+            executionContext.setLogicalSqlStartTimeInMs(System.currentTimeMillis());
+            executionContext.setLogicalSqlStartTime(System.nanoTime());
             /**
              * Generate txid before executing query.
              * This ensures the connection will only generate exact ONE trx object.
@@ -806,6 +845,8 @@ public class MatrixConfigHolder extends AbstractLifecycle {
             ExecutionContext executionContext = conn.getExecutionContext();
             executionContext.setSchemaName(schema);
             executionContext.setPrivilegeMode(false);
+            executionContext.setLogicalSqlStartTimeInMs(System.currentTimeMillis());
+            executionContext.setLogicalSqlStartTime(System.nanoTime());
             DdlContext ddlContext = new DdlContext();
             ddlContext.setIsSubJob(true);
             ddlContext.setParentJobId(parentJobId);
@@ -873,8 +914,36 @@ public class MatrixConfigHolder extends AbstractLifecycle {
     }
 
     public void schedulerInit() {
-        if (ConfigDataMode.isPolarDbX() && !ConfigDataMode.isFastMock()) {
-            ScheduledJobsManager.getInstance();
+//        if (ConfigDataMode.isPolarDbX() && !ConfigDataMode.isFastMock()) {
+//            ScheduledJobsManager.getInstance();
+//            TtlScheduledJobManager.getInstance();
+//        }
+        try {
+            if (ConfigDataMode.isPolarDbX() && !ConfigDataMode.isFastMock()) {
+                /**
+                 * Init some background automatic scheduled jobs which depend on TDataSource finish init
+                 */
+                // init all scheduled jobs scheduler
+                ScheduledJobsManager.getInstance();
+                // init ttl scheduled job
+                TtlScheduledJobManager.getInstance();
+                // init ttl scan warning task
+                TtlScanWarningManager.getInstance();
+            }
+        } catch (Throwable ex) {
+            logger.warn(ex.getMessage(), ex);
+        }
+
+        // Staging flush task: schedule a delayed start (5 min) so that orphan
+        // reclaim and row-count sync run even if no ext-col write happens.
+        // If the first ext-col write fires StagingTableManager.initialize()
+        // before the 5-min timer, resetTask() cancels this and starts immediately.
+        if (StagingLifecycleEligibility.isEligible()) {
+            try {
+                StagingFlushTaskScheduler.getInstance().scheduleDelayedStart(5 * 60 * 1000L);
+            } catch (Throwable ex) {
+                logger.warn("StagingFlushTaskScheduler delayed start failed: " + ex.getMessage(), ex);
+            }
         }
     }
 

@@ -1,0 +1,604 @@
+{
+    "operators": [
+        {
+            operandCount: 1
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 2
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 3
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 4
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 5
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 6
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 7
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 8
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 9
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 10
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 11
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 12
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 13
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 14
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 15
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 16
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 17
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 18
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 19
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 20
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 21
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 22
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 23
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 24
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 25
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 26
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 27
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 28
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 29
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 30
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 31
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 32
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 33
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 34
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 35
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 36
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 37
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 38
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 39
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 40
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 41
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 42
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 43
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 44
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 45
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 46
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 47
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 48
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 49
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 50
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 51
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 52
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 53
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 54
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 55
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 56
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 57
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 58
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 59
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 60
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 61
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 62
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 63
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 64
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 65
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 66
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 67
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 68
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 69
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 70
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 71
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 72
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 73
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 74
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 75
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 76
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 77
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 78
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 79
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 80
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 81
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 82
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 83
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 84
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 85
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 86
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 87
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 88
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 89
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 90
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 91
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 92
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 93
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 94
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 95
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 96
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 97
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 98
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 99
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        },
+        {
+            operandCount: 100
+            types: [
+                {leftType: "Varchar", rightType: "Char", abstractClass: "AbstractNotInVarcharColCharConstVectorizedExpression"}
+            ]
+        }
+    ]
+}

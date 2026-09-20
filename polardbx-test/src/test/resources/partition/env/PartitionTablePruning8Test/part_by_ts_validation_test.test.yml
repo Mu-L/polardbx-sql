@@ -1,0 +1,22 @@
+## DISABLE_FAST_SQL_PARSER
+
+set time_zone='+08:00';
+DROP TABLE IF EXISTS `rng_ts_using_substr`;
+
+set ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION=false;
+## error_msg: $# not allowed #$
+CREATE　/*+TDDL:cmd_extra(ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION=false)*/ TABLE IF NOT EXISTS `rng_ts_using_todays2` (
+`a` varchar(8) DEFAULT NULL,
+`b` timestamp default current_timestamp
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+PARTITION BY hash(to_days(b))
+PARTITIONS 4;
+
+set ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION=true;
+CREATE /*+TDDL:cmd_extra(ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION=true)*/ TABLE IF NOT EXISTS `rng_ts_using_todays2` (
+`a` varchar(8) DEFAULT NULL,
+`b` timestamp default current_timestamp
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+PARTITION BY hash(to_days(b))
+PARTITIONS 4;
+DROP TABLE IF EXISTS `rng_ts_using_todays2`;

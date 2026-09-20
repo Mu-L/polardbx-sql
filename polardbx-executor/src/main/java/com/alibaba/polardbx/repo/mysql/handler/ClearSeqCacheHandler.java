@@ -47,7 +47,7 @@ public class ClearSeqCacheHandler extends AbstractDalHandler {
         String seqName = names.get(names.size() - 1);
         boolean isAll = "ALL".equalsIgnoreCase(seqName);
 
-        SyncManagerHelper.sync(new ClearSeqCacheSyncAction(schemaName, seqName, isAll, true), SyncScope.ALL);
+        SyncManagerHelper.syncThrowExceptions(new ClearSeqCacheSyncAction(schemaName, seqName, isAll, true), SyncScope.ALL);
 
         return new AffectRowCursor(isAll ? 0 : 1);
     }

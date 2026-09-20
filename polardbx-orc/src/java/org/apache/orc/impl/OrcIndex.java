@@ -20,7 +20,7 @@ package org.apache.orc.impl;
 
 import org.apache.orc.OrcProto;
 
-public final class OrcIndex {
+public final class OrcIndex implements PositionProviderBuilder {
   OrcProto.RowIndex[] rowGroupIndex;
   OrcProto.Stream.Kind[] bloomFilterKinds;
   OrcProto.BloomFilterIndex[] bloomFilterIndex;
@@ -36,8 +36,27 @@ public final class OrcIndex {
     this.bitmapIndex = bitmapIndex;
   }
 
+  public void clearBitmapIndex() {
+    bitmapIndex = null;
+  }
+
   public OrcProto.RowIndex[] getRowGroupIndex() {
     return rowGroupIndex;
+  }
+
+  @Override
+  public PositionProvider buildRowGroupIndex(int columnId, int rowGroupId) {
+    // Find the position-provider of given column and row group.
+    PositionProvider positionProvider;
+    OrcProto.RowIndex[] rowIndices = rowGroupIndex;
+    OrcProto.RowIndexEntry entry = rowIndices[columnId].getEntry(rowGroupId);
+    // This is effectively a test for pre-ORC-569 files.
+    if (rowGroupId == 0 && entry.getPositionsCount() == 0) {
+      positionProvider = new RecordReaderImpl.ZeroPositionProvider();
+    } else {
+      positionProvider = new RecordReaderImpl.PositionProviderImpl(entry);
+    }
+    return positionProvider;
   }
 
   public OrcProto.BloomFilterIndex[] getBloomFilterIndex() {

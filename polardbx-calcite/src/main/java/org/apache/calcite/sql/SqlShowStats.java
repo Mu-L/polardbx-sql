@@ -34,12 +34,14 @@ import org.apache.calcite.sql.validate.SqlValidatorScope;
 public class SqlShowStats extends SqlShow {
 
     private boolean              full;
+    private boolean              list;
     private SqlShowStatsOperator operator;
 
     public SqlShowStats(SqlParserPos pos, List<SqlSpecialIdentifier> specialIdentifiers, List<SqlNode> operands,
-                        SqlNode like, SqlNode where, SqlNode orderBy, SqlNode limit, boolean full){
+                        SqlNode like, SqlNode where, SqlNode orderBy, SqlNode limit, boolean full, boolean list){
         super(pos, specialIdentifiers, operands, like, where, orderBy, limit);
         this.full = full;
+        this.list = list;
     }
 
     public boolean isFull() {
@@ -48,6 +50,14 @@ public class SqlShowStats extends SqlShow {
 
     public void setFull(boolean full) {
         this.full = full;
+    }
+
+    public boolean isList() {
+        return list;
+    }
+
+    public void setListed(boolean list) {
+        this.list = list;
     }
 
     @Override

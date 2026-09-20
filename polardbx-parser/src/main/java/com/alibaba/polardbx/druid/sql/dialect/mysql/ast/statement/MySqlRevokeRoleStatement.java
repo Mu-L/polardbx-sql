@@ -32,6 +32,7 @@ import java.util.List;
 public class MySqlRevokeRoleStatement extends MySqlStatementImpl {
     private final List<MySqlUserName> revokedAccounts = new ArrayList<MySqlUserName>(2);
     private final List<MySqlUserName> fromAccounts = new ArrayList<MySqlUserName>(2);
+    private boolean ifExists;
 
     public List<MySqlUserName> getRevokedAccounts() {
         return Collections.unmodifiableList(revokedAccounts);
@@ -39,6 +40,14 @@ public class MySqlRevokeRoleStatement extends MySqlStatementImpl {
 
     public List<MySqlUserName> getFromAccounts() {
         return Collections.unmodifiableList(fromAccounts);
+    }
+
+    public boolean isIfExists() {
+        return ifExists;
+    }
+
+    public void setIfExists(boolean ifExists) {
+        this.ifExists = ifExists;
     }
 
     public void addRevokedAccount(MySqlUserName revokedAccount) {

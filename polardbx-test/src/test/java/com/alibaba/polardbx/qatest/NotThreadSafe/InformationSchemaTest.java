@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.qatest.NotThreadSafe;
 
 import com.alibaba.polardbx.common.utils.TStringUtil;
+import com.alibaba.polardbx.optimizer.view.VirtualViewType;
 import com.alibaba.polardbx.qatest.AutoReadBaseTestCase;
 import com.alibaba.polardbx.qatest.CdcIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
@@ -784,6 +785,23 @@ public class InformationSchemaTest extends AutoReadBaseTestCase {
             conn.createStatement().executeQuery(sqlWithoutSchema);
             explain = getExplainResult(conn, sqlWithoutSchema);
             Assert.assertTrue(explain.contains("HitCache:false"));
+        }
+    }
+
+    @Test
+    public void informationTest() {
+        String sql = "select * from information_schema.%s limit 1";
+        for (VirtualViewType view : VirtualViewType.values()) {
+            System.out.println(view);
+            try {
+                JdbcUtil.executeSuccess(tddlConnection, String.format(sql, view.toString()));
+            } catch (Throwable e) {
+                if (e.getMessage().contains("specified")) {
+                    // ignore
+                } else {
+                    throw e;
+                }
+            }
         }
     }
 

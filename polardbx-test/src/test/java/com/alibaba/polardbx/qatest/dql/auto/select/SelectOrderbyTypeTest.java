@@ -20,7 +20,6 @@ import com.alibaba.polardbx.qatest.AutoReadBaseTestCase;
 import com.alibaba.polardbx.qatest.data.ColumnDataRandomGenerateRule;
 import com.alibaba.polardbx.qatest.data.ExecuteTableSelect;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
-import groovy.sql.Sql;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.junit.Ignore;
 import org.junit.Test;

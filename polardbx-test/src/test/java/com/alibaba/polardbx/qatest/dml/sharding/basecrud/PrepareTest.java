@@ -19,6 +19,7 @@ package com.alibaba.polardbx.qatest.dml.sharding.basecrud;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.qatest.CrudBasedLockTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.data.ColumnDataGenerator;
 import com.alibaba.polardbx.qatest.data.ExecuteTableSelect;
 import com.alibaba.polardbx.qatest.util.ConnectionManager;
@@ -100,6 +101,7 @@ public class PrepareTest extends CrudBasedLockTestCase {
         assertPrepareTest(mysqlConnection, tddlConnection, prepareSql, setSql, executeSql);
     }
 
+    @IcbcIgnore(ignoreReason = "SQL_MODE=ONLY_FULL_GROUP_BY")
     @Test
     public void prepareSelectCountTest() {
         String sql =

@@ -51,7 +51,7 @@ public class RelMdUniqueKeys
 
   //~ Constructors -----------------------------------------------------------
 
-  private RelMdUniqueKeys() {}
+  protected RelMdUniqueKeys() {}
 
   //~ Methods ----------------------------------------------------------------
   @Override
@@ -210,13 +210,13 @@ public class RelMdUniqueKeys
   public Set<ImmutableBitSet> getUniqueKeys(Aggregate rel, RelMetadataQuery mq,
       boolean ignoreNulls) {
     // group by keys form a unique key
-    return ImmutableSet.of(rel.getGroupSet());
+    return ImmutableSet.of(ImmutableBitSet.range(rel.getGroupCount()));
   }
 
   public Set<ImmutableBitSet> getUniqueKeys(GroupJoin rel, RelMetadataQuery mq,
                                             boolean ignoreNulls) {
     // group by keys form a unique key
-    return ImmutableSet.of(rel.getGroupSet());
+    return ImmutableSet.of(ImmutableBitSet.range(rel.getGroupSet().cardinality()));
   }
 
   public Set<ImmutableBitSet> getUniqueKeys(SetOp rel, RelMetadataQuery mq,

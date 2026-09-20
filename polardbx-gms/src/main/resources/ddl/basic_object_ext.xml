@@ -65,10 +65,18 @@
               `table_schema` varchar(64) not null,
               `table_name` varchar(64) not null,
               `constraint_type` varchar(64) not null,
+              `enforced` varchar(64) default null,
               primary key (`id`),
-              key (`constraint_schema`, `constraint_name`)
+              key (`constraint_schema`, `constraint_name`),
+              key (`table_schema`, `table_name`, `constraint_name`)
             ) charset=utf8
         ]]></Create>
+        <Change><![CDATA[
+            alter table `table_constraints` add key (`table_schema`, `table_name`, `constraint_name`)
+        ]]></Change>
+        <Change><![CDATA[
+            alter table `table_constraints` add column `enforced` varchar(64) default null after `constraint_type`
+        ]]></Change>
     </SystemTable>
     <SystemTable name="referential_constraints">
         <Create><![CDATA[
@@ -135,5 +143,8 @@
               PRIMARY KEY (`id`)
             ) DEFAULT CHARSET=utf8;
         ]]></Create>
+        <Change><![CDATA[
+            alter table `cdc_sync_point_meta` add key (`gmt_created`)
+        ]]></Change>
     </SystemTable>
 </SystemTables>

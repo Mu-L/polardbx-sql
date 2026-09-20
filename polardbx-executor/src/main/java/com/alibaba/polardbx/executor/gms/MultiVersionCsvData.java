@@ -19,6 +19,8 @@ package com.alibaba.polardbx.executor.gms;
 import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
@@ -32,6 +34,7 @@ import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.FileMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.rpc.ColumnarDeltaRpcClient;
 import org.jetbrains.annotations.Nullable;
 
 import java.sql.Connection;
@@ -42,13 +45,14 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.SortedMap;
 import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class MultiVersionCsvData implements Purgeable {
-    private static final Logger LOGGER = LoggerFactory.getLogger("COLUMNAR_TRANS");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     protected final String csvFileName;
     // tso - <end position, cache>
@@ -107,7 +111,7 @@ public class MultiVersionCsvData implements Purgeable {
         return appendedFilesRecords;
     }
 
-    public void loadUntilTso(long minTso, long tso) {
+    public void loadUntilTso(long minTso, long tso, ExecutionContext ec) {
         if (!allChunks.isEmpty() && allChunks.lastKey() >= tso) {
             return;
         }
@@ -130,12 +134,15 @@ public class MultiVersionCsvData implements Purgeable {
 
             long maxReadPosition = lastRecord.appendOffset + lastRecord.appendLength;
             openedFileCount.incrementAndGet();
+            long ioStartNanos = System.nanoTime();
+            int lastRowCount = totalRowCount.get();
             try (SimpleCSVFileReader csvFileReader = new SimpleCSVFileReader()) {
-                csvFileReader.open(ColumnarStoreUtils.newEcForCache(),
+                csvFileReader.open(ColumnarStoreUtils.newEcForCache(ec),
                     columnMetas, FileVersionStorage.CSV_CHUNK_LIMIT, engine, csvFileName,
                     (int) lastEndPosition,
-                    (int) (maxReadPosition - lastEndPosition));
-                int lastRowCount = totalRowCount.get();
+                    (int) (maxReadPosition - lastEndPosition),
+                    DynamicConfig.getInstance().enableReadDeltaFromColumnar() &&
+                        ColumnarDeltaRpcClient.getInstance().getColumnarAvailable().get());
                 for (ColumnarAppendedFilesRecord record : appendedFilesRecords) {
                     long newEndPosition = record.appendOffset + record.appendLength;
                     int expectedRowCount = (int) record.totalRows - lastRowCount;
@@ -161,6 +168,17 @@ public class MultiVersionCsvData implements Purgeable {
                         csvFileName, latestTso, tso));
             } finally {
                 openedFileCount.decrementAndGet();
+            }
+            if (ec.getParamManager().getBoolean(ConnectionParams.ENABLE_COLUMNAR_DEBUG) || LOGGER.isDebugEnabled()) {
+                LOGGER.info(
+                    String.format(
+                        "%s load csv file until tso: %d, cost: %d ms, chunk count: %d, row count: %d, row/chunk: %f",
+                        csvFileName, tso,
+                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - ioStartNanos),
+                        allChunks.size(), totalRowCount.get(),
+                        allChunks.isEmpty() ? -1 : (double) totalRowCount.get() / allChunks.size()
+                    )
+                );
             }
         } else {
             // add a new version to bump the tso when the file is not appended
@@ -241,6 +259,7 @@ public class MultiVersionCsvData implements Purgeable {
             Engine engine = fileMeta.getEngine();
             List<ColumnMeta> columnMetas = fileMeta.getColumnMetas();
 
+            // for purge, low-latency is not required, fetch from OSS
             csvFileReader.open(ColumnarStoreUtils.newEcForCache(),
                 columnMetas, FileVersionStorage.CSV_CHUNK_LIMIT, engine, csvFileName,
                 (int) firstPos, (int) (purgePos - firstPos));

@@ -66,7 +66,8 @@ public class LocalityInfoUtils {
         }
     }
 
-    public static String allocatePhyDb(String schemaName, LocalityDesc localityDesc) {
+    public static void allocatePhyDb(String schemaName, LocalityDesc localityDesc,
+                                     PartitionGroupRecord partitionGroupRecord) {
         List<String> groupNames =
             getGroupDetails(schemaName, localityDesc.getDnList()).values().stream().map(o -> o.getGroupName()).collect(
                 Collectors.toList());
@@ -76,9 +77,11 @@ public class LocalityInfoUtils {
             throw new TddlRuntimeException(ErrorCode.ERR_INVALID_DDL_PARAMS, errMessage);
         }
         Random random = new Random();
-        int index = random.nextInt(groupNames.size()); // 生成一个0到list.size()-1之间的随机整数
-        String groupName = groupNames.get(index); // 获取对应索引的元素
-        return GroupInfoUtil.buildPhysicalDbNameFromGroupName(groupName);
+        // 生成一个0到list.size()-1之间的随机整数
+        int index = random.nextInt(groupNames.size());
+        String groupName = groupNames.get(index);
+        partitionGroupRecord.setGroup_Name(groupName);
+        partitionGroupRecord.setPhy_db(GroupInfoUtil.buildPhysicalDbNameFromGroupName(schemaName, groupName));
     }
 
     public static Map<String, GroupDetailInfoRecord> getGroupDetails(String schema, List<String> storageInsts) {
@@ -363,13 +366,17 @@ public class LocalityInfoUtils {
     }
 
     public static LocalityDesc parse(String str) {
-        LocalityDesc result = LocalityDesc.parse(str);
+        return parse(str, null);
+    }
+
+    public static LocalityDesc parse(String str, String schemaName) {
+        LocalityDesc result = LocalityDesc.parse(str, schemaName);
         if (!result.getStoragePoolNames().isEmpty()) {
             List<String> storagePoolNames = result.getStoragePoolNames();
             String primaryStoragePoolName = result.getPrimaryStoragePoolName();
             Set<String> fullDnSet = new HashSet<>();
             for (String storagePoolName : storagePoolNames) {
-                if (StoragePoolManager.getInstance().inValidStoragePoolName(storagePoolName)) {
+                if (StoragePoolManager.getInstance().notExistStoragePoolName(storagePoolName)) {
                     throw new TddlRuntimeException(ErrorCode.ERR_INVALID_DDL_PARAMS, String.format(
                         "invalid locality: '%s', storage pool name not defined '%s'",
                         str, storagePoolName));

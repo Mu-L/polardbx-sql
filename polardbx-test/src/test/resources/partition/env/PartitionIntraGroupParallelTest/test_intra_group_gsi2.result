@@ -242,7 +242,7 @@ a,b,a,b
 2,2,2,2
 6,6,6,6
 10,10,10,10
-update hash_tbl_bigint,hash_tbl_bigint2 set hash_tbl_bigint.b=hash_tbl_bigint.b+1, hash_tbl_bigint2.b=hash_tbl_bigint2.b+1 where hash_tbl_bigint.a=hash_tbl_bigint2.a;
+/*+TDDL:CMD_EXTRA(ENABLE_MULTI_TABLE_UPDATE_MODIFY_GSI_SHARDING_KEY=TRUE)*/ update hash_tbl_bigint,hash_tbl_bigint2 set hash_tbl_bigint.b=hash_tbl_bigint.b+1, hash_tbl_bigint2.b=hash_tbl_bigint2.b+1 where hash_tbl_bigint.a=hash_tbl_bigint2.a;
 select * from hash_tbl_bigint t1 join bro_tbl_bigint t2 on t1.a=t2.a order by t1.a;
 a,b,a,b
 2,3,2,2
@@ -263,7 +263,7 @@ a,b,a,b
 2,3,2,2
 6,7,6,6
 10,11,10,10
-update bro_tbl_bigint,bro_tbl_bigint2 set bro_tbl_bigint.b=bro_tbl_bigint.b+1, bro_tbl_bigint2.b=bro_tbl_bigint2.b+1 where bro_tbl_bigint.a=bro_tbl_bigint2.a;
+/*+TDDL:CMD_EXTRA(ENABLE_MULTI_TABLE_UPDATE_MODIFY_GSI_SHARDING_KEY=TRUE)*/ update bro_tbl_bigint,bro_tbl_bigint2 set bro_tbl_bigint.b=bro_tbl_bigint.b+1, bro_tbl_bigint2.b=bro_tbl_bigint2.b+1 where bro_tbl_bigint.a=bro_tbl_bigint2.a;
 select * from hash_tbl_bigint t1 join bro_tbl_bigint t2 on t1.a=t2.a order by t1.a;
 a,b,a,b
 2,3,2,3
@@ -284,7 +284,7 @@ a,b,a,b
 2,3,2,2
 6,7,6,6
 10,11,10,10
-update sig_tbl_bigint,sig_tbl_bigint2 set sig_tbl_bigint.b=sig_tbl_bigint.b+1, sig_tbl_bigint2.b=sig_tbl_bigint2.b+1 where sig_tbl_bigint.a=sig_tbl_bigint2.a;
+/*+TDDL:CMD_EXTRA(ENABLE_MULTI_TABLE_UPDATE_MODIFY_GSI_SHARDING_KEY=TRUE)*/ update sig_tbl_bigint,sig_tbl_bigint2 set sig_tbl_bigint.b=sig_tbl_bigint.b+1, sig_tbl_bigint2.b=sig_tbl_bigint2.b+1 where sig_tbl_bigint.a=sig_tbl_bigint2.a;
 select * from hash_tbl_bigint t1 join sig_tbl_bigint t2 on t1.a=t2.a order by t1.a;
 a,b,a,b
 2,3,2,3
@@ -342,7 +342,7 @@ a,b,a,b
 2,2,2,2
 6,6,6,6
 10,10,10,10
-update hash_tbl_bigint,bro_tbl_bigint set hash_tbl_bigint.b=hash_tbl_bigint.b+1, bro_tbl_bigint.b=bro_tbl_bigint.b+1 where bro_tbl_bigint.a=bro_tbl_bigint.a;
+/*+TDDL:CMD_EXTRA(ENABLE_MULTI_TABLE_UPDATE_MODIFY_GSI_SHARDING_KEY=TRUE)*/ update hash_tbl_bigint,bro_tbl_bigint set hash_tbl_bigint.b=hash_tbl_bigint.b+1, bro_tbl_bigint.b=bro_tbl_bigint.b+1 where bro_tbl_bigint.a=bro_tbl_bigint.a;
 select * from hash_tbl_bigint t1 join bro_tbl_bigint t2 on t1.a=t2.a order by t1.a;
 a,b,a,b
 2,3,2,3
@@ -353,7 +353,7 @@ a,b,a,b
 2,3,2,2
 6,7,6,6
 10,11,10,10
-update hash_tbl_bigint,sig_tbl_bigint set hash_tbl_bigint.b=hash_tbl_bigint.b+1, sig_tbl_bigint.b=sig_tbl_bigint.b+1 where hash_tbl_bigint.a=sig_tbl_bigint.a;
+/*+TDDL:CMD_EXTRA(ENABLE_MULTI_TABLE_UPDATE_MODIFY_GSI_SHARDING_KEY=TRUE)*/ update hash_tbl_bigint,sig_tbl_bigint set hash_tbl_bigint.b=hash_tbl_bigint.b+1, sig_tbl_bigint.b=sig_tbl_bigint.b+1 where hash_tbl_bigint.a=sig_tbl_bigint.a;
 select * from hash_tbl_bigint t1 join sig_tbl_bigint t2 on t1.a=t2.a order by t1.a;
 a,b,a,b
 2,4,2,3
@@ -364,7 +364,7 @@ a,b,a,b
 2,3,2,3
 6,7,6,7
 10,11,10,11
-update bro_tbl_bigint,sig_tbl_bigint set bro_tbl_bigint.b=bro_tbl_bigint.b+1, sig_tbl_bigint.b=sig_tbl_bigint.b+1 where bro_tbl_bigint.a=sig_tbl_bigint.a;
+/*+TDDL:CMD_EXTRA(ENABLE_MULTI_TABLE_UPDATE_MODIFY_GSI_SHARDING_KEY=TRUE)*/ update bro_tbl_bigint,sig_tbl_bigint set bro_tbl_bigint.b=bro_tbl_bigint.b+1, sig_tbl_bigint.b=sig_tbl_bigint.b+1 where bro_tbl_bigint.a=sig_tbl_bigint.a;
 select * from bro_tbl_bigint t1 join sig_tbl_bigint t2 on t1.a=t2.a order by t1.a;
 a,b,a,b
 2,4,2,4

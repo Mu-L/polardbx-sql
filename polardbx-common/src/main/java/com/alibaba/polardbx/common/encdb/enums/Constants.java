@@ -121,7 +121,12 @@ public class Constants {
         SM4_128_CTR(6),
         SM4_128_GCM(7),
 
-        CLWW_ORE(8);
+        CLWW_ORE(8),
+
+        AES_256_GCM(9),
+        AES_256_CBC(10),
+        AES_256_ECB(11),
+        AES_256_CTR(12);
 
         private final int val;
 

@@ -1,0 +1,68 @@
+## DISABLE_FAST_SQL_PARSER
+
+select partenumt0d0i(10000);
+select partenumt0d0i(10010);
+select partenumt0d0i(10020);
+
+drop tablegroup if exists tg_dble_udf4;
+create tablegroup if not exists tg_dble_udf4
+partition by udf_hash(bigint)
+partition 3
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition pm values less than (9223372036854775807)
+)
+;
+
+drop table if exists uh_t4;
+create table uh_t4(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(Partenumt0d0i(c1))
+tablegroup=tg_dble_udf4;
+
+insert into uh_t4 values (10000,10000);
+insert into uh_t4 values (10010,10010);
+insert into uh_t4 values (10020,10020);
+select c1, part_route('', 'uh_t4', c1) as route_rs, part_hash('', 'uh_t4', c1) as hash_rs from uh_t4 where c1=10000;
+select c1, part_route('', 'uh_t4', c1) as route_rs, part_hash('', 'uh_t4', c1) as hash_rs from uh_t4 where c1=10010;
+select c1, part_route('', 'uh_t4', c1) as route_rs, part_hash('', 'uh_t4', c1) as hash_rs from uh_t4 where c1=10020;
+show create table uh_t4;
+
+
+
+
+select partenumtm1d0c('A');
+select partenumtm1d0c('B');
+select partenumtm1d0c('C');
+
+drop tablegroup if exists tg_dble_udf5;
+create tablegroup if not exists tg_dble_udf5
+partition by udf_hash(bigint)
+partition 3
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition pm values less than (9223372036854775807)
+)
+;
+
+drop table if exists uh_t5;
+create table uh_t5(
+c1 varchar(32) not null,
+c2 varchar(32) not null
+)
+partition by udf_hash(partenumtm1d0c(c1))
+tablegroup=tg_dble_udf5;
+
+insert into uh_t5 values ('A','A');
+insert into uh_t5 values ('B','B');
+insert into uh_t5 values ('C','C');
+select c1, part_route('', 'uh_t5', c1) as route_rs, part_hash('', 'uh_t5', c1) as hash_rs from uh_t5 where c1='A';
+select c1, part_route('', 'uh_t5', c1) as route_rs, part_hash('', 'uh_t5', c1) as hash_rs from uh_t5 where c1='B';
+select c1, part_route('', 'uh_t5', c1) as route_rs, part_hash('', 'uh_t5', c1) as hash_rs from uh_t5 where c1='C';
+show create table uh_t5;
+
+

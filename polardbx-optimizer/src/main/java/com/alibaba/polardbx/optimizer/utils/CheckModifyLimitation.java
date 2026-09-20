@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.optimizer.utils;
 
+import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
@@ -164,14 +165,27 @@ public class CheckModifyLimitation {
         final Set<RelOptTable> targetTableSet = modify.getTableInfo().getTargetTableSet();
 
         if (modify.isUpdate()) {
-            final boolean enableModifyShardingColumn = getProperty(pc, ConnectionParams.ENABLE_MODIFY_SHARDING_COLUMN);
-            if (targetTableSet.size() > 1 || !enableModifyShardingColumn) {
+            if (targetTableSet.size() > 1) {
                 /*
                   DO NOT allow multi-table update to modify shardColumns.
                  */
-                checkModifyShardingColumn(updateColumnList, tables, (c, t) -> {
-                    throw new TddlRuntimeException(ERR_MODIFY_SHARD_COLUMN, c, Util.last(t.getQualifiedName()));
-                });
+
+                boolean enableModifyGSIShardingColumn =
+                    getProperty(pc, ConnectionParams.ENABLE_MULTI_TABLE_UPDATE_MODIFY_GSI_SHARDING_KEY);
+
+                if (enableModifyGSIShardingColumn) {
+                    checkModifyShardingColumn(updateColumnList, tables, (c, t) -> {
+                    });
+                } else {
+                    for (int i = 0; i < updateColumnList.size(); i++) {
+                        final RelOptTable table = tables.get(i);
+                        final Pair<String, String> qualifiedTableName = RelUtils.getQualifiedTableName(table);
+                        final String schemaName = qualifiedTableName.left;
+                        Set<String> updateColumnSet = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+                        updateColumnSet.add(updateColumnList.get(i));
+                        checkModifyShardingColumnOnPrimaryAndGSI(updateColumnSet, table, pc, false);
+                    }
+                }
             } else {
                 /*
                   DO NOT allow single-table update to modify shardColumns on table without primary key
@@ -204,30 +218,84 @@ public class CheckModifyLimitation {
         }
     }
 
-    public static boolean checkUpsertModifyShardingColumn(LogicalInsert logicalInsert) {
+    public static boolean checkModifyShardingColumnOnPrimaryAndGSI(Set<String> updateColumnList,
+                                                                   RelOptTable table,
+                                                                   PlannerContext pc,
+                                                                   boolean enableModifyShardingColumn) {
+        final Pair<String, String> qualifiedTableName = RelUtils.getQualifiedTableName(table);
+        final String schemaName = qualifiedTableName.left;
+        String tableName = qualifiedTableName.right;
+
+        TddlRuleManager or = Objects.requireNonNull(OptimizerContext.getContext(schemaName)).getRuleManager();
+        final List<TableMeta> indexMeta = GlobalIndexMeta.getIndex(table, pc.getExecutionContext());
+
+        List<String> sharedColumns = or.getSharedColumns(tableName);
+        for (String sharedColumn : sharedColumns) {
+            if (updateColumnList.contains(sharedColumn)) {
+                if (enableModifyShardingColumn) {
+                    return true;
+                } else {
+                    throw new TddlRuntimeException(ERR_MODIFY_SHARD_COLUMN, sharedColumn,
+                        tableName);
+                }
+            }
+        }
+
+        for (TableMeta meta : indexMeta) {
+            List<String> partitionColumns;
+            if (DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
+                partitionColumns = meta.getPartitionInfo().getPartitionColumns();
+            } else {
+                partitionColumns = or.getSharedColumns(meta.getTableName());
+            }
+            for (String partitionColumn : partitionColumns) {
+                if (updateColumnList.contains(partitionColumn)) {
+                    if (enableModifyShardingColumn) {
+                        return true;
+                    } else {
+                        throw new TddlRuntimeException(ERR_MODIFY_SHARD_COLUMN, partitionColumn,
+                            meta.getTableName());
+                    }
+                }
+            }
+        }
+
+        return false;
+
+    }
+
+    public static boolean checkUpsertModifyShardingColumn(LogicalInsert logicalInsert,
+                                                          PlannerContext pc) {
         if (!logicalInsert.isInsert()) {
             return false;
         }
 
-        String tableName = logicalInsert.getLogicalTableName();
-        String schemaName = logicalInsert.getSchemaName();
-        TddlRuleManager or = OptimizerContext.getContext(schemaName).getRuleManager();
-
         final Set<String> updateColumnList = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
         updateColumnList.addAll(BuildPlanUtils.buildUpdateColumnList(logicalInsert));
-        return or.getSharedColumns(tableName).stream().anyMatch(updateColumnList::contains);
+
+        return checkModifyShardingColumnOnPrimaryAndGSI(updateColumnList, logicalInsert.getTable(), pc,
+            getProperty(pc, ConnectionParams.ENABLE_MODIFY_SHARDING_COLUMN));
     }
 
-    public static boolean checkModifyShardingColumn(LogicalModify modify) {
+    public static boolean checkModifyShardingColumn(LogicalModify modify, PlannerContext pc) {
         if (!modify.isUpdate()) {
             return false;
         }
 
         final List<String> updateColumnList = modify.getUpdateColumnList();
         final List<RelOptTable> tables = modify.getTargetTables();
+        boolean enableModifyShardingColumn = getProperty(pc, ConnectionParams.ENABLE_MODIFY_SHARDING_COLUMN);
 
-        return checkModifyShardingColumn(updateColumnList, tables, (c, t) -> {
-        });
+        for (int i = 0; i < updateColumnList.size(); i++) {
+            final RelOptTable table = tables.get(i);
+            Set<String> updateColumnSet = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+            updateColumnSet.add(updateColumnList.get(i));
+            if (checkModifyShardingColumnOnPrimaryAndGSI(updateColumnSet, table, pc,
+                enableModifyShardingColumn)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static boolean checkModifyShardingColumn(List<String> updateColumnList, List<RelOptTable> tables,
@@ -358,7 +426,7 @@ public class CheckModifyLimitation {
         return targetTables.stream().anyMatch(t -> {
             final Pair<String, String> schemaTable = RelUtils.getQualifiedTableName(t);
             final TddlRuleManager or = OptimizerContext.getContext(schemaTable.left).getRuleManager();
-            if (or.isBroadCast(schemaTable.right)) {
+            if (or.isBroadCastOrReplicas(schemaTable.right)) {
                 handler.run();
                 return true;
             }
@@ -598,6 +666,20 @@ public class CheckModifyLimitation {
         });
     }
 
+    public static boolean checkModifyBlackHole(TableModify tableModify, ExecutionContext ec) {
+        if (!tableModify.isUpdate() && !tableModify.isDelete()) {
+            return false;
+        }
+
+        final List<RelOptTable> targetTables = tableModify.getTargetTables();
+
+        return Ord.zip(targetTables).stream().anyMatch(o -> {
+            final Pair<String, String> qn = RelUtils.getQualifiedTableName(o.getValue());
+            final TableMeta tm = ec.getSchemaManager(qn.left).getTable(qn.right);
+            return tm.getEngine() == Engine.BLACKHOLE;
+        });
+    }
+
     /**
      * If it's an UPDATE, and we modify primary key, then we should make sure that primary key contains all the sharding
      * key, otherwise we may violate the constraint
@@ -614,7 +696,7 @@ public class CheckModifyLimitation {
 
             if (pkSet.contains(targetColumns.get(o.getKey()))) {
                 final TddlRuleManager rm = OptimizerContext.getContext(qn.left).getRuleManager();
-                final boolean isBroadcast = rm.isBroadCast(qn.right);
+                final boolean isBroadcast = rm.isBroadCastOrReplicas(qn.right);
                 final boolean isSingleTable = rm.isTableInSingleDb(qn.right);
                 if (isBroadcast || isSingleTable) {
                     return true;

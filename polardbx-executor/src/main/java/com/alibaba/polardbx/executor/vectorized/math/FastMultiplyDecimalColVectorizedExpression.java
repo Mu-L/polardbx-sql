@@ -20,6 +20,7 @@ import com.alibaba.polardbx.common.datatype.DecimalConverter;
 import com.alibaba.polardbx.common.datatype.DecimalStructure;
 import com.alibaba.polardbx.common.datatype.FastDecimalUtils;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.MathUtils;
 import com.alibaba.polardbx.executor.chunk.DecimalBlock;
 import com.alibaba.polardbx.executor.chunk.MutableChunk;
@@ -52,9 +53,11 @@ public class FastMultiplyDecimalColVectorizedExpression extends AbstractVectoriz
     long[] carry9s;
     long[] carry18s;
     int[] nonNullSelection;
+    boolean enableDecimal128;
 
     public FastMultiplyDecimalColVectorizedExpression(int outputIndex, VectorizedExpression[] children) {
         super(DataTypes.DecimalType, outputIndex, children);
+        this.enableDecimal128 = DynamicConfig.getInstance().enableDecimal128();
     }
 
     @Override
@@ -86,26 +89,12 @@ public class FastMultiplyDecimalColVectorizedExpression extends AbstractVectoriz
 
         boolean[] isNulls = outputVectorSlot.nulls();
 
-        // prepare for fast method
-        boolean enableFastVec =
-            ctx.getExecutionContext().getParamManager().getBoolean(ConnectionParams.ENABLE_DECIMAL_FAST_VEC);
         leftInputVectorSlot.collectDecimalInfo();
         rightInputVectorSlot.collectDecimalInfo();
-        boolean useFastMethod = !isSelectionInUse
-            && (leftInputVectorSlot.isSimple() && leftInputVectorSlot.getInt2Pos() == -1)
-            && (rightInputVectorSlot.isSimple() && rightInputVectorSlot.getInt2Pos() == -1);
 
         // normal multiply
-        if (!useFastMethod) {
-            normalMul(chunk, batchSize, isSelectionInUse, sel, outputVectorSlot,
-                leftInputVectorSlot, rightInputVectorSlot, output);
-        } else if (enableFastVec) {
-            // fast multiply 1
-            fastMul1(batchSize, outputVectorSlot, leftInputVectorSlot, rightInputVectorSlot, isNulls);
-        } else {
-            // fast multiply 2
-            fastMul2(batchSize, outputVectorSlot, leftInputVectorSlot, rightInputVectorSlot, isNulls);
-        }
+        normalMul(chunk, batchSize, isSelectionInUse, sel, outputVectorSlot,
+            leftInputVectorSlot, rightInputVectorSlot, output);
     }
 
     private boolean checkResultScaleDecimal64(int leftScale, int rightScale, int actualResultScale) {
@@ -131,8 +120,14 @@ public class FastMultiplyDecimalColVectorizedExpression extends AbstractVectoriz
                 long y = rightInputVectorSlot.getLong(j);
                 long result = x * y;
                 if (MathUtils.longMultiplyOverflow(x, y, result)) {
-                    return doDecimal64MulTo128(batchSize, isSelectionInUse, sel,
-                        leftInputVectorSlot, rightInputVectorSlot, outputVectorSlot);
+                    if (enableDecimal128) {
+                        return doDecimal64MulTo128(batchSize, isSelectionInUse, sel,
+                            leftInputVectorSlot, rightInputVectorSlot, outputVectorSlot);
+                    } else {
+                        outputVectorSlot.deallocateDecimal64();
+                        return false;
+                    }
+
                 }
 
                 decimal64Output[j] = result;
@@ -143,8 +138,14 @@ public class FastMultiplyDecimalColVectorizedExpression extends AbstractVectoriz
                 long y = rightInputVectorSlot.getLong(i);
                 long result = x * y;
                 if (MathUtils.longMultiplyOverflow(x, y, result)) {
-                    return doDecimal64MulTo128(batchSize, isSelectionInUse, sel,
-                        leftInputVectorSlot, rightInputVectorSlot, outputVectorSlot);
+                    if (enableDecimal128) {
+                        return doDecimal64MulTo128(batchSize, isSelectionInUse, sel,
+                            leftInputVectorSlot, rightInputVectorSlot, outputVectorSlot);
+                    } else {
+                        outputVectorSlot.deallocateDecimal64();
+                        return false;
+                    }
+
                 }
 
                 decimal64Output[i] = result;
@@ -323,143 +324,6 @@ public class FastMultiplyDecimalColVectorizedExpression extends AbstractVectoriz
                 }
             }
         }
-    }
-
-    private void fastMul1(int batchSize, DecimalBlock outputVectorSlot, DecimalBlock leftInputVectorSlot,
-                          DecimalBlock rightInputVectorSlot, boolean[] isNulls) {
-        long a1, b1;
-        long a2, b2;
-        long sum0, sum9, sum18;
-        long carry0 = 0, carry9 = 0, carry18 = 0;
-        for (int i = 0; i < batchSize; i++) {
-            if (isNulls[i]) {
-                continue;
-            }
-
-            a1 = leftInputVectorSlot.fastInt1(i);
-            b1 = leftInputVectorSlot.fastFrac(i);
-
-            a2 = rightInputVectorSlot.fastInt1(i);
-            b2 = rightInputVectorSlot.fastFrac(i);
-
-            // (a1 * [0] + b1 * [-9]) * (a2 * [0] + b2 * [-9])
-            // = (a1 * a2) * [0]
-            // + (a1 * b2 + b1 * a2) * [-9]
-            // + (b1 * b2) * [-18]
-
-            // handle carry:
-            // (a + carry * 1000_000_000) * [9n] = (a) * [9n] + carry * [9(n+1)]
-
-            sum18 = b1 * b2;
-            if (sum18 > 1000_000_000L) {
-                carry18 = sum18 / 1000_000_000L;
-                sum18 -= carry18 * 1000_000_000L;
-            }
-
-            sum9 = a1 * b2 + b1 * a2 + carry18;
-            if (sum9 > 1000_000_000L) {
-                carry9 = sum9 / 1000_000_000L;
-                sum9 -= carry9 * 1000_000_000L;
-            }
-
-            sum0 = a1 * a2 + carry9;
-            if (sum0 > 1000_000_000L) {
-                carry0 = sum0 / 1000_000_000L;
-                sum0 -= carry0 * 1000_000_000L;
-            }
-
-            if (carry0 == 0 && sum18 == 0) {
-                outputVectorSlot.setMultiResult1(i, (int) sum0, (int) sum9);
-            } else if (carry0 > 0 && sum18 == 0) {
-                outputVectorSlot.setMultiResult2(i, (int) carry0, (int) sum0, (int) sum9);
-            } else if (carry0 == 0 && sum18 > 0) {
-                outputVectorSlot.setMultiResult3(i, (int) sum0, (int) sum9, (int) sum18);
-            } else {
-                outputVectorSlot.setMultiResult4(i, (int) carry0, (int) sum0, (int) sum9, (int) sum18);
-            }
-
-            carry0 = carry9 = carry18 = 0;
-        }
-    }
-
-    private void fastMul2(int batchSize, DecimalBlock outputVectorSlot, DecimalBlock leftInputVectorSlot,
-                          DecimalBlock rightInputVectorSlot, boolean[] isNulls) {
-        initForFastMethod(batchSize);
-        long a1, b1;
-        long a2, b2;
-
-        int nonNullBatchSize = 0;
-        for (int i = 0; i < batchSize; i++) {
-            if (!isNulls[i]) {
-                nonNullSelection[nonNullBatchSize++] = i;
-            }
-        }
-
-        // record sum
-        for (int position = 0; position < nonNullBatchSize; position++) {
-            int i = nonNullSelection[position];
-            a1 = leftInputVectorSlot.fastInt1(i);
-            b1 = leftInputVectorSlot.fastFrac(i);
-
-            a2 = rightInputVectorSlot.fastInt1(i);
-            b2 = rightInputVectorSlot.fastFrac(i);
-
-            sum18s[i] = b1 * b2;
-            sum9s[i] = a1 * b2 + b1 * a2;
-            sum0s[i] = a1 * a2;
-        }
-
-        // record carry
-        boolean allSum18Zero = true;
-        boolean allCarry0Zero = true;
-        for (int position = 0; position < nonNullBatchSize; position++) {
-            int i = nonNullSelection[position];
-            carry18s[i] = sum18s[i] / 1000_000_000L;
-            sum18s[i] -= carry18s[i] * 1000_000_000L;
-
-            allSum18Zero = allSum18Zero && sum18s[i] == 0;
-
-            sum9s[i] += carry18s[i];
-
-            carry9s[i] = sum9s[i] / 1000_000_000L;
-            sum9s[i] -= carry9s[i] * 1000_000_000L;
-
-            sum0s[i] += carry9s[i];
-
-            carry0s[i] = sum0s[i] / 1000_000_000L;
-            sum0s[i] -= carry0s[i] * 1000_000_000L;
-
-            allCarry0Zero = allCarry0Zero && carry0s[i] == 0;
-        }
-
-        if (allCarry0Zero && allSum18Zero) {
-            for (int position = 0; position < nonNullBatchSize; position++) {
-                int i = nonNullSelection[position];
-
-                outputVectorSlot.setMultiResult1(i, (int) sum0s[i], (int) sum9s[i]);
-            }
-        } else {
-            for (int position = 0; position < nonNullBatchSize; position++) {
-                int i = nonNullSelection[position];
-
-                if (carry0s[i] == 0 && sum18s[i] == 0) {
-                    outputVectorSlot.setMultiResult1(i, (int) sum0s[i], (int) sum9s[i]);
-                } else if (carry0s[i] > 0 && sum18s[i] == 0) {
-                    outputVectorSlot.setMultiResult2(i, (int) carry0s[i], (int) sum0s[i], (int) sum9s[i]);
-                } else if (carry0s[i] == 0 && sum18s[i] > 0) {
-                    outputVectorSlot.setMultiResult3(i, (int) sum0s[i], (int) sum9s[i], (int) sum18s[i]);
-                } else {
-                    outputVectorSlot
-                        .setMultiResult4(i, (int) carry0s[i], (int) sum0s[i], (int) sum9s[i], (int) sum18s[i]);
-                }
-            }
-        }
-
-        Arrays.fill(carry0s, 0);
-        Arrays.fill(carry9s, 0);
-        Arrays.fill(carry18s, 0);
-
-        Arrays.fill(nonNullSelection, 0);
     }
 
     private void normalMul(MutableChunk chunk, int batchSize, boolean isSelectionInUse, int[] sel,

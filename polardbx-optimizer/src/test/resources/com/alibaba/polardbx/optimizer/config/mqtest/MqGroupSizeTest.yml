@@ -1,0 +1,129 @@
+SQL:
+  - sql: |
+      select l_orderkey from lineitem where l_orderkey = 1;
+    plan: |
+      1
+  - sql: |
+      select l_orderkey from lineitem where l_orderkey in( 1,2,4,5,6,1+1);
+    plan: |
+      6
+  - sql: |
+      select l_orderkey from lineitem where l_orderkey in( 1,2,4,5,6,1+1) and l_orderkey <=> 1 and l_orderkey < 1;
+    plan: |
+      1
+  - sql: |
+      select l_orderkey from lineitem where l_orderkey in( 1,2,4,5,6,l_partkey);
+    plan: |
+      147
+  - sql: |
+      select l_orderkey from lineitem where l_orderkey = 1 or l_orderkey = 3;
+    plan: |
+      2
+  - sql: |
+      select l_orderkey from lineitem where (l_orderkey = 1 and l_partkey=1 )or l_orderkey = 3;
+    plan: |
+      147
+  - sql: |
+      select l_orderkey from lineitem where l_orderkey in ( 1,2,4,5,6) and (l_partkey, l_orderkey) = (1,2) 
+      and l_orderkey in( 1,2,4,5,6,1+1);
+    plan: |
+      1
+  - sql: |
+      select l_orderkey from lineitem where l_orderkey in ( 1,2,4,5,6) and (l_partkey, l_orderkey) in( (1,2),(4,5)) 
+      and l_orderkey in( 1,2,4,5,6,1+1);
+    plan: |
+      2
+  - sql: |
+      select l_partkey from lineitem where l_orderkey = 1 or l_orderkey = 3;
+    plan: |
+      201
+  - sql: |
+      select l_partkey, l_orderkey from lineitem where l_suppkey in(1,2) and l_partkey in (3,4);
+    plan: |
+      294
+  - sql: |
+      select l_partkey, l_orderkey from lineitem where l_partkey in(1,2) and l_orderkey in (3,4);
+    plan: |
+      4
+  - sql: |
+      select l_partkey, l_orderkey from lineitem where (l_suppkey, l_partkey, l_orderkey) in( (1,2,5),(1,2,4),(4,5,6))
+      and l_orderkey in(1,2) and l_partkey in (3,4);
+    plan: |
+      3
+  - sql: |
+      select l_partkey, l_orderkey from lineitem where (l_suppkey, l_partkey, l_orderkey) in( (1,2,5),(1,2,4),(4,5,6))
+      and l_suppkey = 3 and l_partkey =4;
+    plan: |
+      3
+  - sql: |
+      select l_partkey, l_orderkey from lineitem where (l_suppkey, l_partkey, l_orderkey) in( (1,2,5),(1,2,4),(4,5,6))
+      and l_orderkey = 3 and l_partkey =4;
+    plan: |
+      1
+  - sql: |
+      select l_partkey, l_orderkey from lineitem where (l_suppkey, l_partkey, l_orderkey) in
+      ( (1,2,5),(1,2,4),(4,5,6),(1,2,5),(1,2,4),(4,5,6))
+      and (l_suppkey, l_partkey) in( (1,2),(1,4)) and (l_suppkey, l_orderkey) in( (1,2),(4,6))
+    plan: |
+      4
+  - sql: |
+      /*+TDDL:cmd_extra(PARTITION_WISE_GROUP_THRESHOLD=2)*/
+      select l_partkey, l_orderkey from lineitem where (l_suppkey, l_partkey, l_orderkey) in
+      ( (1,2,5),(1,2,4),(4,5,6),(1,2,5),(1,2,4),(4,5,6))
+    plan: |
+      6
+  - sql: |
+      select l_partkey, l_orderkey from lineitem;
+    plan: |
+      29547
+  - sql: |
+      /*+TDDL:cmd_extra(PARTITION_WISE_GROUP_THRESHOLD=2000000)*/select l_partkey, l_suppkey from lineitem;
+    plan: |
+      null
+  - sql: |
+      /*+TDDL:cmd_extra(PARTITION_WISE_GROUP_THRESHOLD=2000000)*/select l_partkey, l_orderkey,l_suppkey from lineitem;
+    plan: |
+      null
+  - sql: |
+      select x.l_partkey, y.l_partkey from lineitem x, lineitem y where x.l_partkey=y.l_partkey;
+    plan: |
+      40401
+  - sql: |
+      select x.l_partkey, y.l_orderkey from lineitem x, lineitem y where x.l_partkey=y.l_partkey;
+    plan: |
+      29547
+  - sql: |
+      select x.l_partkey, y.l_orderkey from lineitem x left join lineitem y on x.l_partkey=y.l_partkey;
+    plan: |
+      29748
+  - sql: |
+      select x.l_partkey, y.l_partkey from lineitem x right join lineitem y on x.l_partkey=y.l_partkey where y.l_partkey=1;
+    plan: |
+      2
+  - sql: |
+      select x.l_partkey, y.l_orderkey from lineitem x right join lineitem y on x.l_partkey=y.l_partkey where y.l_partkey=1;
+    plan: |
+      294
+DDL:
+  lineitem:
+    CREATE TABLE IF NOT EXISTS `lineitem` (  `l_orderkey` bigint(20) NOT NULL,  `l_partkey` int(11) NOT NULL,  `l_suppkey` int(11) NOT NULL,  `l_linenumber` bigint(20) NOT NULL,  `l_quantity` decimal(15, 2) NOT NULL,  `l_extendedprice` decimal(15, 2) NOT NULL,  `l_discount` decimal(15, 2) NOT NULL,  `l_tax` decimal(15, 2) NOT NULL,  `l_returnflag` varchar(1) NOT NULL,  `l_linestatus` varchar(1) NOT NULL,  `l_shipdate` date NOT NULL,  `l_commitdate` date NOT NULL,  `l_receiptdate` date NOT NULL,  `l_shipinstruct` varchar(25) NOT NULL,  `l_shipmode` varchar(10) NOT NULL,  `l_comment` varchar(44) NOT NULL,  PRIMARY KEY (`l_orderkey`, `l_linenumber`),  CLUSTERED COLUMNAR INDEX `lineitem_col_index`(`l_shipdate`, `l_orderkey`) PARTITION BY HASH (`l_orderkey`) PARTITIONS 96 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`l_orderkey`) PARTITIONS 128;
+STATISTICS:
+  lineitem:
+    730177270
+  lineitem.l_orderkey.composite_cardinality:
+    147
+  lineitem.l_partkey.composite_cardinality:
+    201
+CONFIG:
+  WORK_LOAD_TYPE:
+    AP
+  ENABLE_MPP:
+    true
+  PARTITION_WISE_GROUP_THRESHOLD:
+    1000
+  ENABLE_COLUMNAR_OPTIMIZER:
+    true
+  ENABLE_PARTITION_WISE_GROUP_OPT:
+    true
+  defaltxxAPPName.isNew:
+    true

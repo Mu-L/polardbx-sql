@@ -60,11 +60,14 @@ public class PolarPrivUtil {
 
     public static final String DB_PRIV_TABLE = "db_priv";
     public static final String DB_NAME = "db_name";
+    public static final String CATALOG_NAME = "catalog_name";
 
     public static final String TABLE_PRIV_TABLE = "table_priv";
     public static final String TABLE_NAME = "table_name";
 
     public static final String POLAR_ROOT = "polardbx_root";
+
+    public static final String ACCOUNT_LOCKED = "account_locked";
 
     public static final String SELECT_LOGIN_ERROR_INFO =
         "select * from `" + GmsSystemTables.USER_LOGIN_ERROR_LIMIT + "` where limit_key = ?";
@@ -76,6 +79,10 @@ public class PolarPrivUtil {
     public static final String UPDATE_LOGIN_ERROR_INFO =
         "update `" + GmsSystemTables.USER_LOGIN_ERROR_LIMIT
             + "` set error_count = ? ,expire_date = ?, max_error_limit = ? where limit_key = ? and error_count = ?";
+
+    public static final String DELETE_LOGIN_ERROR_INFO =
+        "delete from `" + GmsSystemTables.USER_LOGIN_ERROR_LIMIT
+            + "` where limit_key = ?";
 
     public static String getSelectAllUserPrivSql() {
         return String.format("select * from %s", USER_PRIV_TABLE);
@@ -156,6 +163,17 @@ public class PolarPrivUtil {
             userInfo.getHost());
     }
 
+    public static String getUpdateUserPrivSql(PolarAccountInfo userInfo, List<String> colNames,
+                                              List<String> colValues) {
+        return String.format("update %s set %s where %s='%s' and %s='%s'",
+            USER_PRIV_TABLE,
+            PolarPrivUtil.getSetSql(colNames, colValues),
+            USER_NAME,
+            userInfo.getUsername(),
+            HOST,
+            userInfo.getHost());
+    }
+
     public static String getDeleteUserPrivSql(PolarAccountInfo userInfo) {
         return String.format("delete from %s where %s='%s' and %s='%s'",
             USER_PRIV_TABLE,
@@ -166,12 +184,14 @@ public class PolarPrivUtil {
     }
 
     public static String getCheckDbPrivSql(PolarDbPriv dbPriv) {
-        return String.format("select * from %s where %s='%s' and %s='%s' and %s='%s'",
+        return String.format("select * from %s where %s='%s' and %s='%s' and %s='%s' and %s='%s'",
             DB_PRIV_TABLE,
             USER_NAME,
             dbPriv.getUserName(),
             HOST,
             dbPriv.getHost(),
+            CATALOG_NAME,
+            dbPriv.getCatalogName(),
             DB_NAME,
             dbPriv.getDbName());
     }
@@ -181,9 +201,11 @@ public class PolarPrivUtil {
 
         colAndValues.getKey().add(USER_NAME);
         colAndValues.getKey().add(HOST);
+        colAndValues.getKey().add(CATALOG_NAME);
         colAndValues.getKey().add(DB_NAME);
         colAndValues.getValue().add(PolarPrivUtil.quote(dbPriv.getUserName()));
         colAndValues.getValue().add(PolarPrivUtil.quote(dbPriv.getHost()));
+        colAndValues.getValue().add(PolarPrivUtil.quote(dbPriv.getCatalogName()));
         colAndValues.getValue().add(PolarPrivUtil.quote(dbPriv.getDbName()));
 
         return String.format("insert into %s(id, gmt_created, gmt_modified, %s) values(null, now(), now(), %s)",
@@ -193,12 +215,14 @@ public class PolarPrivUtil {
     }
 
     public static String getDeleteDbPrivSql(PolarDbPriv dbPriv) {
-        return String.format("delete from %s where %s='%s' and %s='%s' and %s='%s'",
+        return String.format("delete from %s where %s='%s' and %s='%s' and %s='%s' and %s='%s'",
             DB_PRIV_TABLE,
             USER_NAME,
             dbPriv.getUserName(),
             HOST,
             dbPriv.getHost(),
+            CATALOG_NAME,
+            dbPriv.getCatalogName(),
             DB_NAME,
             dbPriv.getDbName());
     }
@@ -215,22 +239,26 @@ public class PolarPrivUtil {
     public static String getUpdateDbPrivSql(PolarDbPriv dbPriv) {
         Pair<List<String>, List<String>> colAndValues = getPrivColAndValues(dbPriv);
 
-        return String.format("update %s set %s where %s='%s' and %s='%s' and %s='%s'",
+        return String.format("update %s set %s where %s='%s' and %s='%s' and %s='%s' and %s='%s'",
             DB_PRIV_TABLE,
             PolarPrivUtil.getSetSql(colAndValues.getKey(), colAndValues.getValue()),
             USER_NAME,
             dbPriv.getUserName(),
             HOST,
             dbPriv.getHost(),
+            CATALOG_NAME,
+            dbPriv.getCatalogName(),
             DB_NAME,
             dbPriv.getDbName());
     }
 
     public static String getCheckTablePrivSql(PolarTbPriv tbPriv) {
-        return String.format("select * from %s where user_name='%s' and host='%s' and db_name='%s' and table_name='%s'",
+        return String.format(
+            "select * from %s where user_name='%s' and host='%s' and catalog_name='%s' and db_name='%s' and table_name='%s'",
             TABLE_PRIV_TABLE,
             tbPriv.getUserName(),
             tbPriv.getHost(),
+            tbPriv.getCatalogName(),
             tbPriv.getDbName(),
             tbPriv.getTbName());
     }
@@ -240,10 +268,12 @@ public class PolarPrivUtil {
 
         colAndValues.getKey().add(USER_NAME);
         colAndValues.getKey().add(HOST);
+        colAndValues.getKey().add(CATALOG_NAME);
         colAndValues.getKey().add(DB_NAME);
         colAndValues.getKey().add(TABLE_NAME);
         colAndValues.getValue().add(PolarPrivUtil.quote(tbPriv.getUserName()));
         colAndValues.getValue().add(PolarPrivUtil.quote(tbPriv.getHost()));
+        colAndValues.getValue().add(PolarPrivUtil.quote(tbPriv.getCatalogName()));
         colAndValues.getValue().add(PolarPrivUtil.quote(tbPriv.getDbName()));
         colAndValues.getValue().add(PolarPrivUtil.quote(tbPriv.getTbName()));
 
@@ -254,12 +284,14 @@ public class PolarPrivUtil {
     }
 
     public static String getDeleteTablePrivSql(PolarTbPriv tbPriv) {
-        return String.format("delete from %s where %s='%s' and %s='%s' and %s='%s' and %s='%s'",
+        return String.format("delete from %s where %s='%s' and %s='%s' and %s='%s' and %s='%s' and %s='%s'",
             TABLE_PRIV_TABLE,
             USER_NAME,
             tbPriv.getUserName(),
             HOST,
             tbPriv.getHost(),
+            CATALOG_NAME,
+            tbPriv.getCatalogName(),
             DB_NAME,
             tbPriv.getDbName(),
             TABLE_NAME,
@@ -277,13 +309,15 @@ public class PolarPrivUtil {
 
     public static String getUpdateTablePrivSql(PolarTbPriv tbPriv) {
         Pair<List<String>, List<String>> colAndValues = getPrivColAndValues(tbPriv);
-        return String.format("update %s set %s where %s='%s' and %s='%s' and %s='%s' and %s='%s'",
+        return String.format("update %s set %s where %s='%s' and %s='%s' and %s='%s' and %s='%s' and %s='%s'",
             TABLE_PRIV_TABLE,
             PolarPrivUtil.getSetSql(colAndValues.getKey(), colAndValues.getValue()),
             USER_NAME,
             tbPriv.getUserName(),
             HOST,
             tbPriv.getHost(),
+            CATALOG_NAME,
+            tbPriv.getCatalogName(),
             DB_NAME,
             tbPriv.getDbName(),
             TABLE_NAME,
@@ -299,26 +333,6 @@ public class PolarPrivUtil {
         }
         return new Pair<>(names, values);
     }
-
-    public static PrivManageLevel getPrivManageLevel(PolarAccountInfo userInfo) {
-        if (userInfo.getInstPriv().hasAnyPrivilege()) {
-            return PrivManageLevel.INST;
-        } else if (!userInfo.getDbPrivMap().isEmpty()) {
-            return PrivManageLevel.DB;
-        } else {
-            return PrivManageLevel.TABLE;
-        }
-    }
-
-//    private static Permission toPermission(PolarAccountInfo userInfo) {
-//        if (userInfo.getInstPriv().hasAnyPrivilege()) {
-//            return PrivManageLevel.INST;
-//        } else if (!userInfo.getDbPrivMap().isEmpty()) {
-//            return PrivManageLevel.DB;
-//        } else {
-//            return PrivManageLevel.TABLE;
-//        }
-//    }
 
     public static String quote(String value) {
         return "'" + value + "'";

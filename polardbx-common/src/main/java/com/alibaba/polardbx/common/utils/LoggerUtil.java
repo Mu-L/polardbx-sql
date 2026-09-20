@@ -22,9 +22,9 @@ import com.alibaba.polardbx.common.utils.logger.MDC;
 
 public class LoggerUtil {
 
-    private static final Logger loggerSpm = LoggerFactory.getLogger("spm");
+    private static final Logger loggerSpm = LoggerFactory.getLogger(LoggerUtil.class);
     // Statistics logger
-    public final static Logger statisticsLogger = LoggerFactory.getLogger("STATISTICS");
+    public final static Logger statisticsLogger = LoggerFactory.getLogger(LoggerUtil.class);
 
     public static void buildMDC(String schemaName) {
         if (TStringUtil.isNotEmpty(schemaName)) {
@@ -48,7 +48,7 @@ public class LoggerUtil {
 
     public static void logSpm(String schemaName, String msg) {
         MDC.put(MDC.MDC_KEY_APP, schemaName.toLowerCase());
-        loggerSpm.info(msg);
+        loggerSpm.warn(msg);
     }
 
     public static void logSpmError(String schemaName, String msg, Throwable throwable) {

@@ -75,6 +75,7 @@ public enum CollationName {
     CP932_JAPANESE_CI(95, false, true),
     EUCJPMS_JAPANESE_CI(97, false, true),
     GB18030_CHINESE_CI(248, false, true),
+    GB18030_2022_CHINESE_CI(217, false, true),
 
     /*
      * All non-default collations
@@ -260,6 +261,8 @@ public enum CollationName {
     EUCJPMS_BIN(98, true, false),
     GB18030_BIN(249, true, false),
     GB18030_UNICODE_520_CI(250, false, false),
+    GB18030_2022_BIN(216, true, false),
+    GB18030_2022_UNICODE_520_CI(218, true, false),
 
     /*
      * All mysql 8.0 new supported collations.
@@ -343,6 +346,9 @@ public enum CollationName {
 
         // for gb18030
         GB18030_CHINESE_CI, GB18030_BIN, GB18030_UNICODE_520_CI,
+
+        // for gb18030-2022
+        GB18030_2022_CHINESE_CI, GB18030_2022_BIN, GB18030_2022_UNICODE_520_CI,
 
         // for latin1
         LATIN1_SWEDISH_CI, LATIN1_GERMAN1_CI, LATIN1_DANISH_CI, LATIN1_GERMAN2_CI, LATIN1_BIN, LATIN1_GENERAL_CI,
@@ -607,6 +613,9 @@ public enum CollationName {
             .put(new MixCollationKey(UTF8_GENERAL_CI, GB18030_CHINESE_CI), UTF8_GENERAL_CI)
             .put(new MixCollationKey(UTF8_GENERAL_CI, GB18030_BIN), UTF8_GENERAL_CI)
             .put(new MixCollationKey(UTF8_GENERAL_CI, GB18030_UNICODE_520_CI), UTF8_GENERAL_CI)
+            .put(new MixCollationKey(UTF8_GENERAL_CI, GB18030_2022_CHINESE_CI), UTF8_GENERAL_CI)
+            .put(new MixCollationKey(UTF8_GENERAL_CI, GB18030_2022_BIN), UTF8_GENERAL_CI)
+            .put(new MixCollationKey(UTF8_GENERAL_CI, GB18030_2022_UNICODE_520_CI), UTF8_GENERAL_CI)
             .put(new MixCollationKey(UTF8_GENERAL_CI, LATIN1_SWEDISH_CI), UTF8_GENERAL_CI)
             .put(new MixCollationKey(UTF8_GENERAL_CI, LATIN1_GERMAN1_CI), UTF8_GENERAL_CI)
             .put(new MixCollationKey(UTF8_GENERAL_CI, LATIN1_DANISH_CI), UTF8_GENERAL_CI)
@@ -630,6 +639,9 @@ public enum CollationName {
             .put(new MixCollationKey(UTF8_BIN, GB18030_CHINESE_CI), UTF8_BIN)
             .put(new MixCollationKey(UTF8_BIN, GB18030_BIN), UTF8_BIN)
             .put(new MixCollationKey(UTF8_BIN, GB18030_UNICODE_520_CI), UTF8_BIN)
+            .put(new MixCollationKey(UTF8_BIN, GB18030_2022_CHINESE_CI), UTF8_BIN)
+            .put(new MixCollationKey(UTF8_BIN, GB18030_2022_BIN), UTF8_BIN)
+            .put(new MixCollationKey(UTF8_BIN, GB18030_2022_UNICODE_520_CI), UTF8_BIN)
             .put(new MixCollationKey(UTF8_BIN, LATIN1_SWEDISH_CI), UTF8_BIN)
             .put(new MixCollationKey(UTF8_BIN, LATIN1_GERMAN1_CI), UTF8_BIN)
             .put(new MixCollationKey(UTF8_BIN, LATIN1_DANISH_CI), UTF8_BIN)
@@ -656,6 +668,9 @@ public enum CollationName {
             .put(new MixCollationKey(UTF8_UNICODE_CI, GB18030_CHINESE_CI), UTF8_UNICODE_CI)
             .put(new MixCollationKey(UTF8_UNICODE_CI, GB18030_BIN), UTF8_UNICODE_CI)
             .put(new MixCollationKey(UTF8_UNICODE_CI, GB18030_UNICODE_520_CI), UTF8_UNICODE_CI)
+            .put(new MixCollationKey(UTF8_UNICODE_CI, GB18030_2022_CHINESE_CI), UTF8_UNICODE_CI)
+            .put(new MixCollationKey(UTF8_UNICODE_CI, GB18030_2022_BIN), UTF8_UNICODE_CI)
+            .put(new MixCollationKey(UTF8_UNICODE_CI, GB18030_2022_UNICODE_520_CI), UTF8_UNICODE_CI)
             .put(new MixCollationKey(UTF8_UNICODE_CI, LATIN1_SWEDISH_CI), UTF8_UNICODE_CI)
             .put(new MixCollationKey(UTF8_UNICODE_CI, LATIN1_GERMAN1_CI), UTF8_UNICODE_CI)
             .put(new MixCollationKey(UTF8_UNICODE_CI, LATIN1_DANISH_CI), UTF8_UNICODE_CI)
@@ -676,6 +691,9 @@ public enum CollationName {
             .put(new MixCollationKey(UTF8MB4_GENERAL_CI, GB18030_CHINESE_CI), UTF8MB4_GENERAL_CI)
             .put(new MixCollationKey(UTF8MB4_GENERAL_CI, GB18030_BIN), UTF8MB4_GENERAL_CI)
             .put(new MixCollationKey(UTF8MB4_GENERAL_CI, GB18030_UNICODE_520_CI), UTF8MB4_GENERAL_CI)
+            .put(new MixCollationKey(UTF8MB4_GENERAL_CI, GB18030_2022_CHINESE_CI), UTF8MB4_GENERAL_CI)
+            .put(new MixCollationKey(UTF8MB4_GENERAL_CI, GB18030_2022_BIN), UTF8MB4_GENERAL_CI)
+            .put(new MixCollationKey(UTF8MB4_GENERAL_CI, GB18030_2022_UNICODE_520_CI), UTF8MB4_GENERAL_CI)
             .put(new MixCollationKey(UTF8MB4_GENERAL_CI, LATIN1_SWEDISH_CI), UTF8MB4_GENERAL_CI)
             .put(new MixCollationKey(UTF8MB4_GENERAL_CI, LATIN1_GERMAN1_CI), UTF8MB4_GENERAL_CI)
             .put(new MixCollationKey(UTF8MB4_GENERAL_CI, LATIN1_DANISH_CI), UTF8MB4_GENERAL_CI)
@@ -696,6 +714,9 @@ public enum CollationName {
             .put(new MixCollationKey(UTF8MB4_BIN, GB18030_CHINESE_CI), UTF8MB4_BIN)
             .put(new MixCollationKey(UTF8MB4_BIN, GB18030_BIN), UTF8MB4_BIN)
             .put(new MixCollationKey(UTF8MB4_BIN, GB18030_UNICODE_520_CI), UTF8MB4_BIN)
+            .put(new MixCollationKey(UTF8MB4_BIN, GB18030_2022_CHINESE_CI), UTF8MB4_BIN)
+            .put(new MixCollationKey(UTF8MB4_BIN, GB18030_2022_BIN), UTF8MB4_BIN)
+            .put(new MixCollationKey(UTF8MB4_BIN, GB18030_2022_UNICODE_520_CI), UTF8MB4_BIN)
             .put(new MixCollationKey(UTF8MB4_BIN, LATIN1_SWEDISH_CI), UTF8MB4_BIN)
             .put(new MixCollationKey(UTF8MB4_BIN, LATIN1_GERMAN1_CI), UTF8MB4_BIN)
             .put(new MixCollationKey(UTF8MB4_BIN, LATIN1_DANISH_CI), UTF8MB4_BIN)
@@ -721,6 +742,9 @@ public enum CollationName {
             .put(new MixCollationKey(UTF8MB4_UNICODE_CI, GB18030_CHINESE_CI), UTF8MB4_UNICODE_CI)
             .put(new MixCollationKey(UTF8MB4_UNICODE_CI, GB18030_BIN), UTF8MB4_UNICODE_CI)
             .put(new MixCollationKey(UTF8MB4_UNICODE_CI, GB18030_UNICODE_520_CI), UTF8MB4_UNICODE_CI)
+            .put(new MixCollationKey(UTF8MB4_UNICODE_CI, GB18030_2022_CHINESE_CI), UTF8MB4_UNICODE_CI)
+            .put(new MixCollationKey(UTF8MB4_UNICODE_CI, GB18030_2022_BIN), UTF8MB4_UNICODE_CI)
+            .put(new MixCollationKey(UTF8MB4_UNICODE_CI, GB18030_2022_UNICODE_520_CI), UTF8MB4_UNICODE_CI)
             .put(new MixCollationKey(UTF8MB4_UNICODE_CI, LATIN1_SWEDISH_CI), UTF8MB4_UNICODE_CI)
             .put(new MixCollationKey(UTF8MB4_UNICODE_CI, LATIN1_GERMAN1_CI), UTF8MB4_UNICODE_CI)
             .put(new MixCollationKey(UTF8MB4_UNICODE_CI, LATIN1_DANISH_CI), UTF8MB4_UNICODE_CI)
@@ -741,6 +765,9 @@ public enum CollationName {
             .put(new MixCollationKey(UTF16_GENERAL_CI, GB18030_CHINESE_CI), UTF16_GENERAL_CI)
             .put(new MixCollationKey(UTF16_GENERAL_CI, GB18030_BIN), UTF16_GENERAL_CI)
             .put(new MixCollationKey(UTF16_GENERAL_CI, GB18030_UNICODE_520_CI), UTF16_GENERAL_CI)
+            .put(new MixCollationKey(UTF16_GENERAL_CI, GB18030_2022_CHINESE_CI), UTF16_GENERAL_CI)
+            .put(new MixCollationKey(UTF16_GENERAL_CI, GB18030_2022_BIN), UTF16_GENERAL_CI)
+            .put(new MixCollationKey(UTF16_GENERAL_CI, GB18030_2022_UNICODE_520_CI), UTF16_GENERAL_CI)
             .put(new MixCollationKey(UTF16_GENERAL_CI, LATIN1_SWEDISH_CI), UTF16_GENERAL_CI)
             .put(new MixCollationKey(UTF16_GENERAL_CI, LATIN1_GERMAN1_CI), UTF16_GENERAL_CI)
             .put(new MixCollationKey(UTF16_GENERAL_CI, LATIN1_DANISH_CI), UTF16_GENERAL_CI)
@@ -761,6 +788,9 @@ public enum CollationName {
             .put(new MixCollationKey(UTF16_BIN, GB18030_CHINESE_CI), UTF16_BIN)
             .put(new MixCollationKey(UTF16_BIN, GB18030_BIN), UTF16_BIN)
             .put(new MixCollationKey(UTF16_BIN, GB18030_UNICODE_520_CI), UTF16_BIN)
+            .put(new MixCollationKey(UTF16_BIN, GB18030_2022_CHINESE_CI), UTF16_BIN)
+            .put(new MixCollationKey(UTF16_BIN, GB18030_2022_BIN), UTF16_BIN)
+            .put(new MixCollationKey(UTF16_BIN, GB18030_2022_UNICODE_520_CI), UTF16_BIN)
             .put(new MixCollationKey(UTF16_BIN, LATIN1_SWEDISH_CI), UTF16_BIN)
             .put(new MixCollationKey(UTF16_BIN, LATIN1_GERMAN1_CI), UTF16_BIN)
             .put(new MixCollationKey(UTF16_BIN, LATIN1_DANISH_CI), UTF16_BIN)
@@ -783,6 +813,9 @@ public enum CollationName {
             .put(new MixCollationKey(UTF16_UNICODE_CI, GB18030_CHINESE_CI), UTF16_UNICODE_CI)
             .put(new MixCollationKey(UTF16_UNICODE_CI, GB18030_BIN), UTF16_UNICODE_CI)
             .put(new MixCollationKey(UTF16_UNICODE_CI, GB18030_UNICODE_520_CI), UTF16_UNICODE_CI)
+            .put(new MixCollationKey(UTF16_UNICODE_CI, GB18030_2022_CHINESE_CI), UTF16_UNICODE_CI)
+            .put(new MixCollationKey(UTF16_UNICODE_CI, GB18030_2022_BIN), UTF16_UNICODE_CI)
+            .put(new MixCollationKey(UTF16_UNICODE_CI, GB18030_2022_UNICODE_520_CI), UTF16_UNICODE_CI)
             .put(new MixCollationKey(UTF16_UNICODE_CI, LATIN1_SWEDISH_CI), UTF16_UNICODE_CI)
             .put(new MixCollationKey(UTF16_UNICODE_CI, LATIN1_GERMAN1_CI), UTF16_UNICODE_CI)
             .put(new MixCollationKey(UTF16_UNICODE_CI, LATIN1_DANISH_CI), UTF16_UNICODE_CI)
@@ -804,6 +837,9 @@ public enum CollationName {
             .put(new MixCollationKey(UTF16LE_GENERAL_CI, GB18030_CHINESE_CI), UTF16LE_GENERAL_CI)
             .put(new MixCollationKey(UTF16LE_GENERAL_CI, GB18030_BIN), UTF16LE_GENERAL_CI)
             .put(new MixCollationKey(UTF16LE_GENERAL_CI, GB18030_UNICODE_520_CI), UTF16LE_GENERAL_CI)
+            .put(new MixCollationKey(UTF16LE_GENERAL_CI, GB18030_2022_CHINESE_CI), UTF16LE_GENERAL_CI)
+            .put(new MixCollationKey(UTF16LE_GENERAL_CI, GB18030_2022_BIN), UTF16LE_GENERAL_CI)
+            .put(new MixCollationKey(UTF16LE_GENERAL_CI, GB18030_2022_UNICODE_520_CI), UTF16LE_GENERAL_CI)
             .put(new MixCollationKey(UTF16LE_GENERAL_CI, LATIN1_SWEDISH_CI), UTF16LE_GENERAL_CI)
             .put(new MixCollationKey(UTF16LE_GENERAL_CI, LATIN1_GERMAN1_CI), UTF16LE_GENERAL_CI)
             .put(new MixCollationKey(UTF16LE_GENERAL_CI, LATIN1_DANISH_CI), UTF16LE_GENERAL_CI)
@@ -825,6 +861,9 @@ public enum CollationName {
             .put(new MixCollationKey(UTF16LE_BIN, GB18030_CHINESE_CI), UTF16LE_BIN)
             .put(new MixCollationKey(UTF16LE_BIN, GB18030_BIN), UTF16LE_BIN)
             .put(new MixCollationKey(UTF16LE_BIN, GB18030_UNICODE_520_CI), UTF16LE_BIN)
+            .put(new MixCollationKey(UTF16LE_BIN, GB18030_2022_CHINESE_CI), UTF16LE_BIN)
+            .put(new MixCollationKey(UTF16LE_BIN, GB18030_2022_BIN), UTF16LE_BIN)
+            .put(new MixCollationKey(UTF16LE_BIN, GB18030_2022_UNICODE_520_CI), UTF16LE_BIN)
             .put(new MixCollationKey(UTF16LE_BIN, LATIN1_SWEDISH_CI), UTF16LE_BIN)
             .put(new MixCollationKey(UTF16LE_BIN, LATIN1_GERMAN1_CI), UTF16LE_BIN)
             .put(new MixCollationKey(UTF16LE_BIN, LATIN1_DANISH_CI), UTF16LE_BIN)
@@ -844,6 +883,9 @@ public enum CollationName {
             .put(new MixCollationKey(UTF32_GENERAL_CI, GB18030_CHINESE_CI), UTF32_GENERAL_CI)
             .put(new MixCollationKey(UTF32_GENERAL_CI, GB18030_BIN), UTF32_GENERAL_CI)
             .put(new MixCollationKey(UTF32_GENERAL_CI, GB18030_UNICODE_520_CI), UTF32_GENERAL_CI)
+            .put(new MixCollationKey(UTF32_GENERAL_CI, GB18030_2022_CHINESE_CI), UTF32_GENERAL_CI)
+            .put(new MixCollationKey(UTF32_GENERAL_CI, GB18030_2022_BIN), UTF32_GENERAL_CI)
+            .put(new MixCollationKey(UTF32_GENERAL_CI, GB18030_2022_UNICODE_520_CI), UTF32_GENERAL_CI)
             .put(new MixCollationKey(UTF32_GENERAL_CI, LATIN1_SWEDISH_CI), UTF32_GENERAL_CI)
             .put(new MixCollationKey(UTF32_GENERAL_CI, LATIN1_GERMAN1_CI), UTF32_GENERAL_CI)
             .put(new MixCollationKey(UTF32_GENERAL_CI, LATIN1_DANISH_CI), UTF32_GENERAL_CI)
@@ -862,6 +904,9 @@ public enum CollationName {
             .put(new MixCollationKey(UTF32_BIN, GB18030_CHINESE_CI), UTF32_BIN)
             .put(new MixCollationKey(UTF32_BIN, GB18030_BIN), UTF32_BIN)
             .put(new MixCollationKey(UTF32_BIN, GB18030_UNICODE_520_CI), UTF32_BIN)
+            .put(new MixCollationKey(UTF32_BIN, GB18030_2022_CHINESE_CI), UTF32_BIN)
+            .put(new MixCollationKey(UTF32_BIN, GB18030_2022_BIN), UTF32_BIN)
+            .put(new MixCollationKey(UTF32_BIN, GB18030_2022_UNICODE_520_CI), UTF32_BIN)
             .put(new MixCollationKey(UTF32_BIN, LATIN1_SWEDISH_CI), UTF32_BIN)
             .put(new MixCollationKey(UTF32_BIN, LATIN1_GERMAN1_CI), UTF32_BIN)
             .put(new MixCollationKey(UTF32_BIN, LATIN1_DANISH_CI), UTF32_BIN)
@@ -882,6 +927,9 @@ public enum CollationName {
             .put(new MixCollationKey(UTF32_UNICODE_CI, GB18030_CHINESE_CI), UTF32_UNICODE_CI)
             .put(new MixCollationKey(UTF32_UNICODE_CI, GB18030_BIN), UTF32_UNICODE_CI)
             .put(new MixCollationKey(UTF32_UNICODE_CI, GB18030_UNICODE_520_CI), UTF32_UNICODE_CI)
+            .put(new MixCollationKey(UTF32_UNICODE_CI, GB18030_2022_CHINESE_CI), UTF32_UNICODE_CI)
+            .put(new MixCollationKey(UTF32_UNICODE_CI, GB18030_2022_BIN), UTF32_UNICODE_CI)
+            .put(new MixCollationKey(UTF32_UNICODE_CI, GB18030_2022_UNICODE_520_CI), UTF32_UNICODE_CI)
             .put(new MixCollationKey(UTF32_UNICODE_CI, LATIN1_SWEDISH_CI), UTF32_UNICODE_CI)
             .put(new MixCollationKey(UTF32_UNICODE_CI, LATIN1_GERMAN1_CI), UTF32_UNICODE_CI)
             .put(new MixCollationKey(UTF32_UNICODE_CI, LATIN1_DANISH_CI), UTF32_UNICODE_CI)
@@ -899,6 +947,9 @@ public enum CollationName {
             .put(new MixCollationKey(BINARY, GB18030_CHINESE_CI), BINARY)
             .put(new MixCollationKey(BINARY, GB18030_BIN), BINARY)
             .put(new MixCollationKey(BINARY, GB18030_UNICODE_520_CI), BINARY)
+            .put(new MixCollationKey(BINARY, GB18030_2022_CHINESE_CI), BINARY)
+            .put(new MixCollationKey(BINARY, GB18030_2022_BIN), BINARY)
+            .put(new MixCollationKey(BINARY, GB18030_2022_UNICODE_520_CI), BINARY)
             .put(new MixCollationKey(BINARY, LATIN1_SWEDISH_CI), BINARY)
             .put(new MixCollationKey(BINARY, LATIN1_GERMAN1_CI), BINARY)
             .put(new MixCollationKey(BINARY, LATIN1_DANISH_CI), BINARY)
@@ -933,6 +984,9 @@ public enum CollationName {
             .put(new MixCollationKey(UTF8MB4_0900_AI_CI, GB18030_CHINESE_CI), UTF8MB4_0900_AI_CI)
             .put(new MixCollationKey(UTF8MB4_0900_AI_CI, GB18030_BIN), UTF8MB4_0900_AI_CI)
             .put(new MixCollationKey(UTF8MB4_0900_AI_CI, GB18030_UNICODE_520_CI), UTF8MB4_0900_AI_CI)
+            .put(new MixCollationKey(UTF8MB4_0900_AI_CI, GB18030_2022_CHINESE_CI), UTF8MB4_0900_AI_CI)
+            .put(new MixCollationKey(UTF8MB4_0900_AI_CI, GB18030_2022_BIN), UTF8MB4_0900_AI_CI)
+            .put(new MixCollationKey(UTF8MB4_0900_AI_CI, GB18030_2022_UNICODE_520_CI), UTF8MB4_0900_AI_CI)
             .put(new MixCollationKey(UTF8MB4_0900_AI_CI, LATIN1_SWEDISH_CI), UTF8MB4_0900_AI_CI)
             .put(new MixCollationKey(UTF8MB4_0900_AI_CI, LATIN1_GERMAN1_CI), UTF8MB4_0900_AI_CI)
             .put(new MixCollationKey(UTF8MB4_0900_AI_CI, LATIN1_DANISH_CI), UTF8MB4_0900_AI_CI)
@@ -961,6 +1015,9 @@ public enum CollationName {
             .put(new MixCollationKey(UTF8MB4_UNICODE_520_CI, GB18030_CHINESE_CI), UTF8MB4_UNICODE_520_CI)
             .put(new MixCollationKey(UTF8MB4_UNICODE_520_CI, GB18030_BIN), UTF8MB4_UNICODE_520_CI)
             .put(new MixCollationKey(UTF8MB4_UNICODE_520_CI, GB18030_UNICODE_520_CI), UTF8MB4_UNICODE_520_CI)
+            .put(new MixCollationKey(UTF8MB4_UNICODE_520_CI, GB18030_2022_CHINESE_CI), UTF8MB4_UNICODE_520_CI)
+            .put(new MixCollationKey(UTF8MB4_UNICODE_520_CI, GB18030_2022_BIN), UTF8MB4_UNICODE_520_CI)
+            .put(new MixCollationKey(UTF8MB4_UNICODE_520_CI, GB18030_2022_UNICODE_520_CI), UTF8MB4_UNICODE_520_CI)
             .put(new MixCollationKey(UTF8MB4_UNICODE_520_CI, LATIN1_SWEDISH_CI), UTF8MB4_UNICODE_520_CI)
             .put(new MixCollationKey(UTF8MB4_UNICODE_520_CI, LATIN1_GERMAN1_CI), UTF8MB4_UNICODE_520_CI)
             .put(new MixCollationKey(UTF8MB4_UNICODE_520_CI, LATIN1_DANISH_CI), UTF8MB4_UNICODE_520_CI)
@@ -980,6 +1037,8 @@ public enum CollationName {
             .put(new MixCollationKey(LATIN1_BIN, LATIN1_SPANISH_CI), LATIN1_BIN)
             .put(new MixCollationKey(GB18030_BIN, GB18030_UNICODE_520_CI), GB18030_BIN)
             .put(new MixCollationKey(GB18030_BIN, GB18030_CHINESE_CI), GB18030_BIN)
+            .put(new MixCollationKey(GB18030_2022_BIN, GB18030_2022_UNICODE_520_CI), GB18030_2022_BIN)
+            .put(new MixCollationKey(GB18030_2022_BIN, GB18030_2022_CHINESE_CI), GB18030_2022_BIN)
             .put(new MixCollationKey(ASCII_BIN, ASCII_GENERAL_CI), ASCII_BIN)
             .put(new MixCollationKey(GBK_BIN, GBK_CHINESE_CI), GBK_BIN)
             .put(new MixCollationKey(BIG5_BIN, BIG5_CHINESE_CI), BIG5_BIN)

@@ -49,6 +49,8 @@ public abstract class HotGsiTestCommon extends ParameterizedTestCommon {
         final HintPlanner hintPlanner = HintPlanner.getInstance(appName, executionContext);
         executionContext.setParams(new Parameters(param, false));
         executionContext.getExtraCmds().put(ConnectionProperties.ENABLE_AUTO_FORCE_INDEX, enableAutoForceIndex);
+        executionContext.getExtraCmds().put(ConnectionProperties.ENABLE_GSI_LOOKUP_OPTIMIZE, true);
+        executionContext.getExtraCmds().put(ConnectionProperties.IGNORE_INVALID_TOPOLOGY_IN_POST_PLANNER, true);
         executionContext.getExtraCmds().putAll(configMaps);
         final HintCmdOperator.CmdBean cmdBean = new HintCmdOperator.CmdBean(appName,
             executionContext.getExtraCmds(),

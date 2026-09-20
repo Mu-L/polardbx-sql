@@ -12,6 +12,7 @@ import com.alibaba.polardbx.common.utils.logger.MDC;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.scheduler.ScheduledJobsManager;
 import com.alibaba.polardbx.executor.scheduler.executor.SchedulerExecutor;
+import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingExtra;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingRecord;
@@ -21,8 +22,6 @@ import com.alibaba.polardbx.gms.module.ModuleLogInfo;
 import com.alibaba.polardbx.gms.scheduler.ExecutableScheduledJob;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager;
-import org.apache.calcite.sql.SqlKind;
-import org.apache.calcite.sql.SqlKind;
 
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -36,7 +35,6 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static com.alibaba.polardbx.common.columnar.ColumnarUtils.AddCDCMarkEventForColumnar;
 import static com.alibaba.polardbx.common.scheduler.FiredScheduledJobState.FAILED;
 import static com.alibaba.polardbx.common.scheduler.FiredScheduledJobState.QUEUED;
 import static com.alibaba.polardbx.common.scheduler.FiredScheduledJobState.RUNNING;
@@ -154,8 +152,7 @@ public class GenerateColumnarSnapshotScheduledJob extends SchedulerExecutor {
                                         Thread.sleep(100);
                                         continue;
                                     }
-                                    String sql = String.format("call polardbx.columnar_flush(%s)", r.tableId);
-                                    Long tso = AddCDCMarkEventForColumnar(sql, SqlKind.PROCEDURE_CALL.name());
+                                    Long tso = ExecUtils.columnarFlush(r.tableId);
                                     ColumnarTableMappingExtra extra = getColumnarTableMappingExtra(r);
                                     assert extra != null;
                                     extra.setTso(tso);

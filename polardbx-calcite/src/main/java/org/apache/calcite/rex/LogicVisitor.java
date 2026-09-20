@@ -104,6 +104,9 @@ public class LogicVisitor implements RexBiVisitor<Logic, Logic> {
       switch (call.getKind()) {
       case AND:
         break;
+      case OR:
+        logic = Logic.UNKNOWN_AS_FALSE;
+        break;
       default:
         logic = Logic.TRUE_FALSE_UNKNOWN;
       }

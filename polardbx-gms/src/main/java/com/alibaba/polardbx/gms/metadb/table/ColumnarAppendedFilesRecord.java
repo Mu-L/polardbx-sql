@@ -18,9 +18,12 @@ package com.alibaba.polardbx.gms.metadb.table;
 
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.ParameterMethod;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.gms.metadb.record.SystemTableRecord;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import lombok.Data;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -31,7 +34,8 @@ import java.util.Map;
  * Record wrapper for table: columnar_appended_files
  */
 @Data
-public class ColumnarAppendedFilesRecord implements SystemTableRecord {
+public class ColumnarAppendedFilesRecord implements SystemTableRecord, MemoryCountable {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(ColumnarAppendedFilesRecord.class).instanceSize();
     public long id;
     public long checkpointTso;
     public String logicalSchema;
@@ -51,6 +55,21 @@ public class ColumnarAppendedFilesRecord implements SystemTableRecord {
     public long totalRows;
     public String createTime;
     public String updateTime;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(logicalSchema)
+            + FastMemoryCounter.sizeOf(logicalTable)
+            + FastMemoryCounter.sizeOf(physicalSchema)
+            + FastMemoryCounter.sizeOf(physicalTable)
+            + FastMemoryCounter.sizeOf(partName)
+            + FastMemoryCounter.sizeOf(fileName)
+            + FastMemoryCounter.sizeOf(fileType)
+            + FastMemoryCounter.sizeOf(engine)
+            + FastMemoryCounter.sizeOf(createTime)
+            + FastMemoryCounter.sizeOf(updateTime);
+    }
 
     @Override
     public ColumnarAppendedFilesRecord fill(ResultSet rs) throws SQLException {

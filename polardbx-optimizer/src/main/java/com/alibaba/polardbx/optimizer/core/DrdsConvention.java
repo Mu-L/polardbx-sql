@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.optimizer.core;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.RuleUtils;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
@@ -54,6 +55,10 @@ public class DrdsConvention extends Convention.Impl {
             // left Convert Rule to deal with
             return null;
         } else if (input.getConvention() == DrdsConvention.INSTANCE) {
+            if (PlannerContext.getPlannerContext(input).getParamManager()
+                .getBoolean(ConnectionParams.CONVERTER_IN_ONE_RELSET)) {
+                return optimizedEnforce(input, required);
+            }
             RelCollation toCollation = required.getTrait(RelCollationTraitDef.INSTANCE);
             RelDistribution toDistribution = required.getTrait(RelDistributionTraitDef.INSTANCE);
             if (CBOUtil.isColumnarOptimizer(input)) {
@@ -107,6 +112,47 @@ public class DrdsConvention extends Convention.Impl {
             return memSort;
         } else {
             return node;
+        }
+    }
+
+    private RelNode optimizedEnforce(final RelNode input, final RelTraitSet required) {
+        RelCollation toCollation = required.getTrait(RelCollationTraitDef.INSTANCE);
+        RelDistribution toDistribution = required.getTrait(RelDistributionTraitDef.INSTANCE);
+        boolean satisfyDistribution = RuleUtils.satisfyDistribution(toDistribution, input);
+        boolean satisfyCollation = RuleUtils.satisfyCollation(toCollation, input);
+        if (CBOUtil.isColumnarOptimizer(input)) {
+            if (toDistribution.getType() == RelDistribution.Type.SINGLETON) {
+                if (!satisfyCollation) {
+                    return ensureCollation(input, toCollation);
+                }
+                if (!satisfyDistribution) {
+                    return ColumnarExchange.create(input, toCollation, toDistribution);
+                }
+                return null;
+            }
+            if (!satisfyDistribution) {
+                if (!satisfyCollation) {
+                    // discard collation
+                    return ColumnarExchange.create(input, toDistribution);
+                } else {
+                    // preserve collation
+                    return ColumnarExchange.create(input, toCollation, toDistribution);
+                }
+            }
+            if (!satisfyCollation) {
+                return ensureCollation(input, toCollation);
+            }
+            return null;
+        }
+        // only deal with collation
+        if (!satisfyCollation) {
+            RelTraitSet emptyTraitSet = input.getCluster().getPlanner().emptyTraitSet();
+            return MemSort.create(
+                emptyTraitSet.replace(DrdsConvention.INSTANCE).replace(toCollation).replace(toDistribution),
+                input,
+                toCollation);
+        } else {
+            return null;
         }
     }
 }

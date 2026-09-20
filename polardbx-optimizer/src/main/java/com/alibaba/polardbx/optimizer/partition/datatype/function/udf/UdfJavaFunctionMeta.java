@@ -18,6 +18,7 @@ package com.alibaba.polardbx.optimizer.partition.datatype.function.udf;
 
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.function.calc.UserDefinedJavaFunction;
+import com.alibaba.polardbx.optimizer.partition.datatype.function.FunctionInitParams;
 import org.apache.calcite.sql.SqlOperator;
 
 import java.util.List;
@@ -48,5 +49,11 @@ public interface UdfJavaFunctionMeta {
      * return the datatyps of output data
      */
     DataType getOutputDataType();
+
+    /**
+     * Return the init params of udf
+     * @return
+     */
+    FunctionInitParams getUdfInitParams();
 
 }

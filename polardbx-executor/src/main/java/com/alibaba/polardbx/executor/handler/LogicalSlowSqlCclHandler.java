@@ -35,8 +35,8 @@ import com.alibaba.polardbx.gms.listener.impl.MetaDbConfigManager;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
 import com.alibaba.polardbx.gms.metadb.ccl.CclRuleAccessor;
 import com.alibaba.polardbx.gms.metadb.ccl.CclRuleRecord;
-import com.alibaba.polardbx.gms.metadb.ccl.CclTriggerAccessor;
-import com.alibaba.polardbx.gms.metadb.ccl.CclTriggerRecord;
+import com.alibaba.polardbx.gms.metadb.ccl.CclBlockerAccessor;
+import com.alibaba.polardbx.gms.metadb.ccl.CclBlockerRecord;
 import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.gms.util.InstIdUtil;
@@ -75,7 +75,9 @@ import java.util.stream.Collectors;
  */
 public class LogicalSlowSqlCclHandler extends HandlerCommon {
 
-    private static final String SLOW_SQL_CCL_TRIGGER_NAME_FORMAT = "_SYSTEM_SLOW_SQL_CCL_TRIGGER_%s_";
+    // Compatible with old DAS SQL
+    // select * from information_schema.ccl_trigger where TRIGGER_NAME like '_SYSTEM_SLOW_SQL_CCL_TRIGGER_%' order by `NO.`
+    private static final String SLOW_SQL_CCL_BLOCKER_NAME_FORMAT = "_SYSTEM_SLOW_SQL_CCL_TRIGGER_%s_";
 
     private static final String SLOW_SQL_CCL_OPERATION_GO = "GO";
 
@@ -87,9 +89,9 @@ public class LogicalSlowSqlCclHandler extends HandlerCommon {
 
     private static final String SLOW_SQL_CCL_OPERATION_SHOW = "SHOW";
 
-    private static final int DEFAULT_MAX_CCL_RULE = LogicalCreateCclTriggerHandler.MAX_CCL_RULE;
+    private static final int DEFAULT_MAX_CCL_RULE = LogicalCreateCclBlockerHandler.MAX_CCL_RULE;
 
-    private static final int DEFAULT_MAX_SQL_SIZE = LogicalCreateCclTriggerHandler.MAX_SQL_SIZE;
+    private static final int DEFAULT_MAX_SQL_SIZE = LogicalCreateCclBlockerHandler.MAX_SQL_SIZE;
 
     private static final Class SHOW_PROCESSLIST_SYNC_ACTION_CLASS;
 
@@ -99,8 +101,8 @@ public class LogicalSlowSqlCclHandler extends HandlerCommon {
         Sets.newHashSet("SELECT", "UPDATE", "DELETE", "INSERT", "SELECT_FOR_UPDATE", "REPLACE", "INSERT_INTO_SELECT",
             "REPLACE_INTO_SELECT", "SELECT_UNION", "SELECT_WITHOUT_TABLE", "ALL");
 
-    private List<String> cclTriggerIds =
-        SUPPORTED_SQL_TYPES.stream().map((e) -> String.format(SLOW_SQL_CCL_TRIGGER_NAME_FORMAT, e))
+    private List<String> cclBlockerIds =
+        SUPPORTED_SQL_TYPES.stream().map((e) -> String.format(SLOW_SQL_CCL_BLOCKER_NAME_FORMAT, e))
             .collect(Collectors.toList());
 
     static {
@@ -186,7 +188,7 @@ public class LogicalSlowSqlCclHandler extends HandlerCommon {
             }
         }
 
-        boolean tryCreateResult = tryCreateCclTrigger(maxConcurrency, maxCclRule, (int) slowSqlTime, sqlType);
+        boolean tryCreateResult = tryCreateCclBlocker(maxConcurrency, maxCclRule, (int) slowSqlTime, sqlType, "%", "%");
         if (!tryCreateResult) {
             if (!executionContext.getExtraDatas().containsKey(ExecutionContext.FAILED_MESSAGE)) {
                 executionContext.getExtraDatas()
@@ -212,8 +214,9 @@ public class LogicalSlowSqlCclHandler extends HandlerCommon {
             throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, e, e.getMessage());
         }
 
-        List<List<Map<String, Object>>> processListResults = SyncManagerHelper.sync(showProcesslistSyncAction,
-            SyncScope.CURRENT_ONLY);
+        List<List<Map<String, Object>>> processListResults =
+            SyncManagerHelper.syncIgnoreExceptions(showProcesslistSyncAction,
+                SyncScope.CURRENT_ONLY);
         for (List<Map<String, Object>> nodeRows : processListResults) {
             if (nodeRows == null) {
                 continue;
@@ -280,7 +283,7 @@ public class LogicalSlowSqlCclHandler extends HandlerCommon {
             } catch (Exception e) {
                 throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, e, e.getMessage());
             }
-            List<List<Map<String, Object>>> results = SyncManagerHelper.sync(
+            List<List<Map<String, Object>>> results = SyncManagerHelper.syncIgnoreExceptions(
                 killSyncAction, schema, SyncScope.CURRENT_ONLY);
             for (List<Map<String, Object>> result : results) {
                 if (CollectionUtils.isNotEmpty(result)) {
@@ -291,23 +294,24 @@ public class LogicalSlowSqlCclHandler extends HandlerCommon {
         return new AffectRowCursor(new int[] {count});
     }
 
-    private boolean tryCreateCclTrigger(int maxConcurrency, int maxCclRule, int slowSqlTime, String sqlType) {
+    private boolean tryCreateCclBlocker(int maxConcurrency, int maxCclRule, int slowSqlTime, String sqlType,
+                                        String userName, String host) {
         try (Connection metaDbConn = MetaDbUtil.getConnection()) {
             metaDbConn.setAutoCommit(false);
-            CclTriggerAccessor cclTriggerAccessor = new CclTriggerAccessor();
-            cclTriggerAccessor.setConnection(metaDbConn);
+            CclBlockerAccessor cclBlockerAccessor = new CclBlockerAccessor();
+            cclBlockerAccessor.setConnection(metaDbConn);
             CclRuleAccessor cclRuleAccessor = new CclRuleAccessor();
             cclRuleAccessor.setConnection(metaDbConn);
-            String slowSqlCclTriggerName = String.format(SLOW_SQL_CCL_TRIGGER_NAME_FORMAT, sqlType);
-            List<String> toDeleteCclTriggers = Lists.newArrayList(slowSqlCclTriggerName);
-            List<CclTriggerRecord> cclTriggerRecords =
-                cclTriggerAccessor.queryByIds(toDeleteCclTriggers);
+            String slowSqlCclBlockerName = String.format(SLOW_SQL_CCL_BLOCKER_NAME_FORMAT, sqlType);
+            List<String> toDeleteCclBlockers = Lists.newArrayList(slowSqlCclBlockerName);
+            List<CclBlockerRecord> cclBlockerRecords =
+                cclBlockerAccessor.queryByIds(toDeleteCclBlockers);
             List<String> schemas = Lists.newArrayList();
             List<String> templates = Lists.newArrayList();
-            if (CollectionUtils.isNotEmpty(cclTriggerRecords)) {
-                List<Integer> cclTriggerPriorities =
-                    cclTriggerRecords.stream().map(e -> e.priority).collect(Collectors.toList());
-                List<CclRuleRecord> triggerCclRuleRecords = cclRuleAccessor.queryByPriorities(cclTriggerPriorities);
+            if (CollectionUtils.isNotEmpty(cclBlockerRecords)) {
+                List<Integer> cclBlockerPriorities =
+                    cclBlockerRecords.stream().map(e -> e.priority).collect(Collectors.toList());
+                List<CclRuleRecord> triggerCclRuleRecords = cclRuleAccessor.queryByPriorities(cclBlockerPriorities);
                 System.out.println(triggerCclRuleRecords);
                 for (CclRuleRecord cclRuleRecord : triggerCclRuleRecords) {
                     String ruleTemplates = cclRuleRecord.templateId;
@@ -319,13 +323,13 @@ public class LogicalSlowSqlCclHandler extends HandlerCommon {
                         }
                     }
                 }
-                cclRuleAccessor.deleteByTriggers(cclTriggerPriorities);
-                cclTriggerAccessor.deleteByIds(toDeleteCclTriggers);
+                cclRuleAccessor.deleteByBlockers(cclBlockerPriorities);
+                cclBlockerAccessor.deleteByIds(toDeleteCclBlockers);
             }
 
-            CclTriggerRecord cclTriggerRecord = new CclTriggerRecord();
-            cclTriggerRecord.id = slowSqlCclTriggerName;
-            cclTriggerRecord.schema = "*";
+            CclBlockerRecord cclBlockerRecord = new CclBlockerRecord();
+            cclBlockerRecord.id = slowSqlCclBlockerName;
+            cclBlockerRecord.schema = "*";
             List<CclCondition> cclConditions = Lists.newArrayList();
             cclConditions.add(
                 CclCondition.builder().sqlMetricName(CclSqlMetric.METRIC_NAME_RESPONSE_TIME).comparison(">=")
@@ -336,15 +340,18 @@ public class LogicalSlowSqlCclHandler extends HandlerCommon {
                     .add(CclCondition.builder().sqlMetricName(CclSqlMetric.METRIC_SQL_TYPE).comparison("=").value(
                         SqlType.valueOf(sqlType).getI()).build());
             }
-            cclTriggerRecord.conditions = JSON.toJSONString(cclConditions);
-            cclTriggerRecord.ruleConfig = String
+            cclBlockerRecord.conditions = JSON.toJSONString(cclConditions);
+            cclBlockerRecord.user = userName;
+            cclBlockerRecord.host = host;
+
+            cclBlockerRecord.ruleConfig = String
                 .format("[{\"comparison\":\"=\",\"sqlMetricName\":\"MAX_CONCURRENCY\",\"value\":%d}]",
                     maxConcurrency);
-            cclTriggerRecord.maxCclRule = maxCclRule;
-            cclTriggerRecord.ruleUpgrade = 1;
-            cclTriggerRecord.cclRuleCount = 0;
-            cclTriggerRecord.maxSQLSize = DEFAULT_MAX_SQL_SIZE;
-            cclTriggerAccessor.insert(cclTriggerRecord);
+            cclBlockerRecord.maxCclRule = maxCclRule;
+            cclBlockerRecord.ruleUpgrade = 1;
+            cclBlockerRecord.cclRuleCount = 0;
+            cclBlockerRecord.maxSQLSize = DEFAULT_MAX_SQL_SIZE;
+            cclBlockerAccessor.insert(cclBlockerRecord);
             String dataId = MetaDbDataIdBuilder.getCclRuleDataId(InstIdUtil.getInstId());
             MetaDbConfigManager metaDbConfigManager = MetaDbConfigManager.getInstance();
             metaDbConfigManager.notify(dataId, metaDbConn);
@@ -371,19 +378,19 @@ public class LogicalSlowSqlCclHandler extends HandlerCommon {
         int affectedRows = 0;
         try (Connection metaDbConn = MetaDbUtil.getConnection()) {
             metaDbConn.setAutoCommit(false);
-            CclTriggerAccessor cclTriggerAccessor = new CclTriggerAccessor();
-            cclTriggerAccessor.setConnection(metaDbConn);
+            CclBlockerAccessor cclBlockerAccessor = new CclBlockerAccessor();
+            cclBlockerAccessor.setConnection(metaDbConn);
             CclRuleAccessor cclRuleAccessor = new CclRuleAccessor();
             cclRuleAccessor.setConnection(metaDbConn);
 
-            List<CclTriggerRecord> cclTriggerRecords =
-                cclTriggerAccessor.queryByIds(cclTriggerIds);
-            if (CollectionUtils.isNotEmpty(cclTriggerRecords)) {
-                List<Integer> cclTriggerPriorities =
-                    cclTriggerRecords.stream().map(e -> e.priority).collect(Collectors.toList());
-                affectedRows = cclRuleAccessor.deleteByTriggers(cclTriggerPriorities);
+            List<CclBlockerRecord> cclBlockerRecords =
+                cclBlockerAccessor.queryByIds(cclBlockerIds);
+            if (CollectionUtils.isNotEmpty(cclBlockerRecords)) {
+                List<Integer> cclBlockerPriorities =
+                    cclBlockerRecords.stream().map(e -> e.priority).collect(Collectors.toList());
+                affectedRows = cclRuleAccessor.deleteByBlockers(cclBlockerPriorities);
             }
-            cclTriggerAccessor.deleteByIds(cclTriggerIds);
+            cclBlockerAccessor.deleteByIds(cclBlockerIds);
             String dataId = MetaDbDataIdBuilder.getCclRuleDataId(InstIdUtil.getInstId());
             MetaDbConfigManager metaDbConfigManager = MetaDbConfigManager.getInstance();
             metaDbConfigManager.notify(dataId, metaDbConn);
@@ -414,17 +421,17 @@ public class LogicalSlowSqlCclHandler extends HandlerCommon {
 
         try (Connection metaDbConn = MetaDbUtil.getConnection()) {
             metaDbConn.setAutoCommit(false);
-            CclTriggerAccessor cclTriggerAccessor = new CclTriggerAccessor();
-            cclTriggerAccessor.setConnection(metaDbConn);
-            List<Integer> cclTriggerPriorities =
-                cclTriggerAccessor.queryByIds(cclTriggerIds).stream().map((e) -> e.priority)
+            CclBlockerAccessor cclBlockerAccessor = new CclBlockerAccessor();
+            cclBlockerAccessor.setConnection(metaDbConn);
+            List<Integer> cclBlockerPriorities =
+                cclBlockerAccessor.queryByIds(cclBlockerIds).stream().map((e) -> e.priority)
                     .collect(Collectors.toList());
             CclRuleAccessor cclRuleAccessor = new CclRuleAccessor();
             cclRuleAccessor.setConnection(metaDbConn);
 
-            if (CollectionUtils.isNotEmpty(cclTriggerPriorities)) {
+            if (CollectionUtils.isNotEmpty(cclBlockerPriorities)) {
                 Set<String> cclRuleRecords =
-                    cclRuleAccessor.queryByPriorities(cclTriggerPriorities).stream().map((e) -> e.id).collect(
+                    cclRuleAccessor.queryByPriorities(cclBlockerPriorities).stream().map((e) -> e.id).collect(
                         Collectors.toSet());
                 if (!cclRuleRecords.isEmpty()) {
                     LogicalShowCclRuleHandler logicalShowCclRuleHandler = new LogicalShowCclRuleHandler(null);
@@ -515,9 +522,10 @@ public class LogicalSlowSqlCclHandler extends HandlerCommon {
                 continue;
             }
 
-            List<List<Map<String, Object>>> results = SyncManagerHelper.sync(new FetchPlanCacheSyncAction(schemaName,
-                    false),
-                schemaName, SyncScope.CURRENT_ONLY);
+            List<List<Map<String, Object>>> results =
+                SyncManagerHelper.syncIgnoreExceptions(new FetchPlanCacheSyncAction(schemaName,
+                        false),
+                    schemaName, SyncScope.CURRENT_ONLY);
 
             for (List<Map<String, Object>> nodeRows : results) {
                 if (nodeRows == null) {

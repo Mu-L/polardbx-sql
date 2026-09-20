@@ -18,10 +18,13 @@ package com.alibaba.polardbx.optimizer.planmanager;
 
 import com.alibaba.polardbx.optimizer.BaseRuleTest;
 import com.alibaba.polardbx.optimizer.PlannerContext;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.DrdsConvention;
+import com.alibaba.polardbx.optimizer.core.rel.GroupTopN;
 import com.alibaba.polardbx.optimizer.core.rel.HashAgg;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.google.common.collect.ImmutableList;
+import org.apache.calcite.rel.RelCollations;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.logical.LogicalFilter;
@@ -105,18 +108,27 @@ public class LogicalViewExternalizeTest extends BaseRuleTest {
         node.explain(writer);
         String s = writer.asString();
 
+        ExecutionContext ec = new ExecutionContext(SCHEMA_NAME);
+        PlanInfo planInfo = new PlanInfo(s, 1, 1.0, "traceId", "origin", 1);
+        node = planInfo.getPlan(SCHEMA_NAME, ec);
+        planInfo.getCumulativeCost(ec);
+
         PlannerContext plannerContext = PlannerContext.getPlannerContext(node);
-        assertTrue(plannerContext.isUseColumnar() && plannerContext.getColumnarMaxShardCnt() == 40);
+        assertTrue(plannerContext.getColumnarMaxShardCnt() == 40);
         assertThat(
             Util.toLinux(s).replaceAll("\n", "").replaceAll("\\\\n", "").replaceAll("[\t ]", ""),
-            is(EXPECTED));
+            is(EXPECTED_AFTER));
+
     }
 
     private final String EXPECTED =
         "{\"rels\":[{\"id\":\"0\",\"relOp\":\"LogicalView\",\"table\":[\"optest\",\"emp\"],\"tableNames\":[\"emp\"],\"pushDownOpt\":{\"pushrels\":[{\"id\":\"0\",\"relOp\":\"LogicalTableScan\",\"table\":[\"optest\",\"emp\"],\"flashback\":null,\"inputs\":[]}]},\"schemaName\":\"optest\",\"partitions\":[],\"flashback\":null},{\"id\":\"1\",\"relOp\":\"LogicalFilter\",\"condition\":{\"op\":\"SqlBinaryOperator=\",\"operands\":[{\"input\":2,\"name\":\"$2\",\"type\":{\"type\":\"TINYINT\",\"nullable\":true,\"precision\":1}},10],\"type\":{\"type\":\"BIGINT\",\"nullable\":true}}},{\"id\":\"2\",\"relOp\":\"HashAgg\",\"group\":[0],\"aggs\":[{\"agg\":\"SqlCountAggFunctionCOUNT\",\"type\":{\"type\":\"BIGINT\",\"nullable\":true},\"distinct\":true,\"operands\":[1],\"filter\":-1},{\"agg\":\"SqlCountAggFunctionCOUNT\",\"type\":{\"type\":\"BIGINT\",\"nullable\":true},\"distinct\":false,\"operands\":[],\"filter\":-1}]}],\"args\":\"{\\\"columnarMaxShardCnt\\\":40,\\\"useColumnar\\\":true}\"}";
 
+    private final String EXPECTED_AFTER =
+        "{\"rels\":[{\"id\":\"0\",\"relOp\":\"LogicalView\",\"table\":[\"optest\",\"emp\"],\"tableNames\":[\"emp\"],\"pushDownOpt\":{\"pushrels\":[{\"id\":\"0\",\"relOp\":\"LogicalTableScan\",\"table\":[\"optest\",\"emp\"],\"flashback\":null,\"inputs\":[]}]},\"schemaName\":\"optest\",\"partitions\":[],\"flashback\":null,\"isSingleGroup\":false},{\"id\":\"1\",\"relOp\":\"LogicalFilter\",\"condition\":{\"op\":\"SqlBinaryOperator=\",\"operands\":[{\"input\":2,\"name\":\"$2\",\"type\":{\"type\":\"TINYINT\",\"nullable\":true,\"precision\":1}},10],\"type\":{\"type\":\"BIGINT\",\"nullable\":true}}},{\"id\":\"2\",\"relOp\":\"HashAgg\",\"group\":[0],\"aggs\":[{\"agg\":\"SqlCountAggFunctionCOUNT\",\"type\":{\"type\":\"BIGINT\",\"nullable\":true},\"distinct\":true,\"operands\":[1],\"filter\":-1},{\"agg\":\"SqlCountAggFunctionCOUNT\",\"type\":{\"type\":\"BIGINT\",\"nullable\":true},\"distinct\":false,\"operands\":[],\"filter\":-1}]}],\"args\":\"{\\\"columnarMaxShardCnt\\\":40,\\\"isSkipPostOpt\\\":false}\"}";
+
     private final String AS_OF_TSO_WRITER =
-        "{  \"rels\": [    {      \"id\": \"0\",      \"relOp\": \"LogicalView\",      \"table\": [        \"optest\",        \"emp\"      ],      \"tableNames\": [        \"emp\"      ],      \"pushDownOpt\": {        \"pushrels\": [          {            \"id\": \"0\",            \"relOp\": \"LogicalTableScan\",            \"table\": [              \"optest\",              \"emp\"            ],            \"flashback\": {              \"index\": 0,              \"skindex\": -1,              \"subindex\": -1,              \"reltype\": {                \"type\": \"BIGINT\",                \"nullable\": true              },              \"type\": \"DYNAMIC\"            },            \"flashbackOperator\": \"SqlAsOf57OperatorAS OF TSO\",            \"inputs\": []          }        ]      },      \"schemaName\": \"optest\",      \"partitions\": [],      \"flashback\": {        \"index\": 0,        \"skindex\": -1,        \"subindex\": -1,        \"reltype\": {          \"type\": \"BIGINT\",          \"nullable\": true        },        \"type\": \"DYNAMIC\"      },      \"flashbackOperator\": \"SqlAsOf57OperatorAS OF TSO\"    }  ]}";
+        "{  \"rels\": [    {      \"id\": \"0\",      \"relOp\": \"LogicalView\",      \"table\": [        \"optest\",        \"emp\"      ],      \"tableNames\": [        \"emp\"      ],      \"pushDownOpt\": {        \"pushrels\": [          {            \"id\": \"0\",            \"relOp\": \"LogicalTableScan\",            \"table\": [              \"optest\",              \"emp\"            ],            \"flashback\": {              \"index\": 0,              \"skindex\": -1,              \"subindex\": -1,              \"reltype\": {                \"type\": \"BIGINT\",                \"nullable\": true              },              \"type\": \"DYNAMIC\"            },            \"flashbackOperator\": \"SqlAsOf57OperatorAS OF TSO\",            \"inputs\": []          }        ]      },      \"schemaName\": \"optest\",      \"partitions\": [],      \"flashback\": {        \"index\": 0,        \"skindex\": -1,        \"subindex\": -1,        \"reltype\": {          \"type\": \"BIGINT\",          \"nullable\": true        },        \"type\": \"DYNAMIC\"      },      \"isSingleGroup\": false,      \"flashbackOperator\": \"SqlAsOf57OperatorAS OF TSO\"    }  ]}";
 
     @Test
     public void testAsOfTsoWriter() {
@@ -136,6 +148,53 @@ public class LogicalViewExternalizeTest extends BaseRuleTest {
         String s = writer.asString();
 
         assertThat(s.replaceAll("\n", "").replaceAll("\t", ""), is(AS_OF_TSO_WRITER));
+    }
+
+    @Test
+    public void testGroupTopN() {
+        LogicalTableScan scan = LogicalTableScan.create(relOptCluster,
+            schema.getTableForMember(Arrays.asList("optest", "emp")));
+        LogicalView logicalView = LogicalView.create(scan, scan.getTable());
+        final RexBuilder rexBuilder = relOptCluster.getRexBuilder();
+
+        GroupTopN groupTopN = GroupTopN.create(relOptCluster.traitSet().replace(DrdsConvention.INSTANCE), logicalView,
+            RelCollations.EMPTY,
+            rexBuilder.makeIntLiteral(2), rexBuilder.makeIntLiteral(1),
+            ImmutableBitSet.of(0, 1), true);
+        DRDSRelJsonWriter writer = new DRDSRelJsonWriter(false);
+        groupTopN.explain(writer);
+        String s = writer.asString();
+        DRDSRelJsonReader reader = new DRDSRelJsonReader(relOptCluster, schema, null, false);
+        RelNode node;
+        try {
+            node = reader.read(s);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        Assert.assertTrue(node instanceof GroupTopN);
+        GroupTopN des = (GroupTopN) node;
+        Assert.assertTrue(des.isPartial());
+        Assert.assertEquals("1", des.getFetch().toString());
+        Assert.assertEquals("2", des.getOffset().toString());
+        Assert.assertEquals(2, des.getGroupCount());
+
+        groupTopN = GroupTopN.create(relOptCluster.traitSet().replace(DrdsConvention.INSTANCE), logicalView,
+            RelCollations.EMPTY,
+            rexBuilder.makeIntLiteral(2), rexBuilder.makeIntLiteral(1),
+            ImmutableBitSet.of(0), false);
+        writer = new DRDSRelJsonWriter(false);
+        groupTopN.explain(writer);
+        groupTopN.explain(writer);
+        reader = new DRDSRelJsonReader(relOptCluster, schema, null, false);
+        try {
+            node = reader.read(writer.asString());
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        Assert.assertTrue(node instanceof GroupTopN);
+        des = (GroupTopN) node;
+        Assert.assertFalse(des.isPartial());
+        Assert.assertEquals(1, des.getGroupCount());
     }
 
     @Test

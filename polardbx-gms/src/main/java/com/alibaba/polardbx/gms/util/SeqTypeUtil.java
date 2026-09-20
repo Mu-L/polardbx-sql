@@ -23,7 +23,8 @@ import com.alibaba.polardbx.gms.topology.DbInfoManager;
 public class SeqTypeUtil {
 
     public static boolean isNewSeqSupported(String schemaName) {
-        return DbInfoManager.getInstance().isNewPartitionDb(schemaName);
+        return DbInfoManager.getInstance().isNewPartitionDb(schemaName) ||
+            DbInfoManager.getInstance().isCdcDb(schemaName);
     }
 
     public static AutoIncrementType getDefaultAutoIncrementType(String schemaName) {

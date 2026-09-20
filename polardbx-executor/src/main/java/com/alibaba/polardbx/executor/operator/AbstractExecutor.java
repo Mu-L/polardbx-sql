@@ -16,9 +16,8 @@
 
 package com.alibaba.polardbx.executor.operator;
 
-import com.alibaba.polardbx.executor.mpp.operator.DriverContext;
-import com.google.common.base.Preconditions;
-import com.google.common.collect.ImmutableList;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
@@ -29,6 +28,7 @@ import com.alibaba.polardbx.executor.chunk.BlockBuilders;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.mpp.operator.EmptyExecutor;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
+import com.alibaba.polardbx.net.FrontendConnection;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
@@ -51,15 +51,22 @@ public abstract class AbstractExecutor implements Executor {
 
     private static final Logger logger = LoggerFactory.getLogger(AbstractExecutor.class);
 
+    @FieldMemoryCounter(value = false)
+    protected OperatorMemoryOwnerId producerMemoryOwnerId;
+
+    @FieldMemoryCounter(value = false)
     final ExecutionContext context;
     protected int chunkLimit;
-    BlockBuilder[] blockBuilders;
-    protected boolean opened = false;
-    private int relId;
 
+    protected BlockBuilder[] blockBuilders;
+    protected boolean opened = false;
+    protected int relId;
+
+    @FieldMemoryCounter(value = false)
     protected OperatorStatistics statistics = new OperatorStatistics();
     protected long startTime = -1;
     protected final boolean enableCpuProfile;
+
     protected final String executorName;
     // Use For stat the time cost for fetch jdbc resultSet
     protected long startTimeCostNano = 0;
@@ -78,6 +85,7 @@ public abstract class AbstractExecutor implements Executor {
      *
      * <pre/>
      */
+    @FieldMemoryCounter(value = false)
     protected OperatorStatisticsGroup targetPlanStatGroup = null;
 
     public AbstractExecutor(ExecutionContext context) {
@@ -92,6 +100,16 @@ public abstract class AbstractExecutor implements Executor {
     abstract void doClose();
 
     abstract Chunk doNextChunk();
+
+    @Override
+    public void setProducerMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        this.producerMemoryOwnerId = operatorMemoryOwnerId;
+    }
+
+    @Override
+    public OperatorMemoryOwnerId getProducerMemoryOwnerId() {
+        return producerMemoryOwnerId;
+    }
 
     @Override
     public final synchronized void open() {
@@ -116,7 +134,11 @@ public abstract class AbstractExecutor implements Executor {
                 doClose();
                 afterClose();
             } catch (Throwable ex) {
-                logger.error("Failed to close operator", ex);
+                if (!FrontendConnection.isCClError(ex)) {
+                    logger.error("Failed to close operator", ex);
+                } else {
+                    logger.info("Failed to close operator", ex);
+                }
             }
             opened = false;
         }

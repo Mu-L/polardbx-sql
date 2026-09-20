@@ -1,5 +1,6 @@
 package com.alibaba.polardbx.executor.accumulator;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.LongBlock;
 import com.alibaba.polardbx.executor.chunk.LongBlockBuilder;
@@ -20,10 +21,11 @@ public class FirstValueAccumulatorTest {
     public void before() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new InternalFirstValue(0, -1), DataTypes.LongType,
-                new DataType[] {DataTypes.LongType}, COUNT, new ExecutionContext());
+                new DataType[] {DataTypes.LongType}, COUNT, new ExecutionContext(), null);
         this.accumulator = (FirstValueAccumulator) accumulator;
 
         Assert.assertEquals(1, accumulator.getInputTypes().length);
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 
     @Test
@@ -38,12 +40,14 @@ public class FirstValueAccumulatorTest {
         for (int i = 0; i < block.getPositionCount(); i++) {
             accumulator.accumulate(0, block, i);
         }
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
 
         LongBlockBuilder resultBuilder = new LongBlockBuilder(COUNT);
         accumulator.writeResultTo(0, resultBuilder);
         Block resultBlock = resultBuilder.build();
         Assert.assertEquals(1, resultBlock.getPositionCount());
         Assert.assertEquals(0, resultBlock.getLong(0));
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 
     @Test
@@ -60,6 +64,7 @@ public class FirstValueAccumulatorTest {
             accumulator.accumulate(0, block, i);
             accumulator.accumulate(1, block, (i + offset) % COUNT);
         }
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
 
         LongBlockBuilder resultBuilder = new LongBlockBuilder(COUNT);
         accumulator.writeResultTo(0, resultBuilder);
@@ -68,6 +73,7 @@ public class FirstValueAccumulatorTest {
         Assert.assertEquals(2, resultBlock.getPositionCount());
         Assert.assertEquals(0, resultBlock.getLong(0));
         Assert.assertEquals(10, resultBlock.getLong(1));
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 
     @Test
@@ -86,11 +92,13 @@ public class FirstValueAccumulatorTest {
                 accumulator.accumulate(j, block, (i + j) % COUNT);
             }
         }
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
 
         LongBlockBuilder resultBuilder = new LongBlockBuilder(COUNT);
         for (int i = 0; i < groups; i++) {
             accumulator.writeResultTo(i, resultBuilder);
         }
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
         Block resultBlock = resultBuilder.build();
         Assert.assertEquals(groups, resultBlock.getPositionCount());
         for (int i = 0; i < groups; i++) {
@@ -100,6 +108,7 @@ public class FirstValueAccumulatorTest {
 
         long size = accumulator.estimateSize();
         Assert.assertTrue("Estimate size should be larger than 0", size > 0);
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 
     @Test
@@ -111,6 +120,7 @@ public class FirstValueAccumulatorTest {
         Block resultBlock = resultBuilder.build();
         Assert.assertEquals(1, resultBlock.getPositionCount());
         Assert.assertTrue(resultBlock.isNull(0));
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 
 }

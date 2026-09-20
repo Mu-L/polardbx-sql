@@ -35,6 +35,8 @@ public class ColumnarCheckSnapshotTest extends ColumnarReadBaseTestCase {
             for (int i = 100; i < 200; ++i) {
                 JdbcUtil.executeSuccess(tddlConnection, String.format(INSERT_DATA, TABLE_1, i, i));
             }
+            // 等列存位点追上，避免 check columnar snapshot 报 ERR_COLUMNAR_SNAPSHOT
+            ColumnarUtils.waitColumnarOffset(tddlConnection);
         }
     }
 

@@ -73,7 +73,8 @@ public class LogicalShowTableAccessHandler extends HandlerCommon {
         }
 
         List<List<Map<String, Object>>> tableAccessStatOfAllCn =
-            SyncManagerHelper.sync(showTableAccessAction, executionContext.getSchemaName(), SyncScope.ALL);
+            SyncManagerHelper.syncIgnoreExceptions(showTableAccessAction, executionContext.getSchemaName(),
+                SyncScope.ALL);
 
         ArrayResultCursor cursor = new ArrayResultCursor("SHOW_TABLE_ACCESS");
         cursor.addColumn("TABLE_SCHEMA", DataTypes.StringType);

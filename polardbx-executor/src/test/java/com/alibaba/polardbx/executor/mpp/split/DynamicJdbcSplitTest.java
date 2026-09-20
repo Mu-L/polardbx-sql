@@ -2,6 +2,7 @@ package com.alibaba.polardbx.executor.mpp.split;
 
 import com.alibaba.polardbx.common.jdbc.BytesSql;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
+import com.alibaba.polardbx.executor.mpp.metadata.SplitType;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.utils.ITransaction;
@@ -16,6 +17,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static com.alibaba.polardbx.executor.test.JSONParseTest.buildParams;
@@ -37,7 +39,8 @@ public class DynamicJdbcSplitTest {
         List<List<ParameterContext>> params = buildParams();
         List<List<String>> tableNames = buildTableNames();
         jdbcSplit =
-            new JdbcSplit("ca", "sc", "db0", hint, bytesSql, null, params, "127.1", tableNames, ITransaction.RW.WRITE,
+            new JdbcSplit("ca", "sc", "db0", hint, bytesSql, null, null, params, "127.1", tableNames,
+                ITransaction.RW.WRITE,
                 true, null, new byte[] {0x01, 0x02, 0x03}, true, null, null);
 
     }
@@ -85,4 +88,125 @@ public class DynamicJdbcSplitTest {
         Assert.assertTrue(bytesSql.size() == 70);
     }
 
+    // New test cases
+
+    @Test
+    public void testConstructorWithSingleCondition() throws Exception {
+        SqlNode sqlNode = buildCondition();
+        DynamicJdbcSplit dynamicJdbcSplit = new DynamicJdbcSplit(jdbcSplit, sqlNode);
+
+        // Verify that the constructor works correctly
+        Assert.assertNotNull(dynamicJdbcSplit);
+        Assert.assertEquals(jdbcSplit.getCatalogName(), dynamicJdbcSplit.getCatalogName());
+        Assert.assertEquals(jdbcSplit.getSchemaName(), dynamicJdbcSplit.getSchemaName());
+        Assert.assertEquals(jdbcSplit.getDbIndex(), dynamicJdbcSplit.getDbIndex());
+    }
+
+    @Test
+    public void testConstructorWithMultipleConditions() throws Exception {
+        List<SqlNode> conditions = new ArrayList<>();
+        for (int i = 0; i < jdbcSplit.getTableNames().size(); i++) {
+            conditions.add(buildCondition());
+        }
+
+        DynamicJdbcSplit dynamicJdbcSplit = new DynamicJdbcSplit(jdbcSplit, conditions);
+
+        // Verify that the constructor works correctly
+        Assert.assertNotNull(dynamicJdbcSplit);
+        Assert.assertEquals(jdbcSplit.getCatalogName(), dynamicJdbcSplit.getCatalogName());
+        Assert.assertEquals(jdbcSplit.getSchemaName(), dynamicJdbcSplit.getSchemaName());
+        Assert.assertEquals(jdbcSplit.getDbIndex(), dynamicJdbcSplit.getDbIndex());
+    }
+
+    @Test
+    public void testGetFlattedParamsWithNullConditions() throws Exception {
+        List<SqlNode> conditions = new ArrayList<>();
+        for (int i = 0; i < jdbcSplit.getTableNames().size(); i++) {
+            conditions.add(null); // Add null conditions
+        }
+
+        DynamicJdbcSplit dynamicJdbcSplit = new DynamicJdbcSplit(jdbcSplit, conditions);
+        List<ParameterContext> parameterContexts = dynamicJdbcSplit.getFlattedParams();
+
+        // With all null conditions, we should have no parameters
+        Assert.assertTrue(parameterContexts.isEmpty());
+    }
+
+    @Test
+    public void testGetFlattedParamsWithMixedConditions() throws Exception {
+        List<SqlNode> conditions = new ArrayList<>();
+        for (int i = 0; i < jdbcSplit.getTableNames().size(); i++) {
+            if (i % 2 == 0) {
+                conditions.add(buildCondition()); // Add condition for even indices
+            } else {
+                conditions.add(null); // Add null for odd indices
+            }
+        }
+
+        DynamicJdbcSplit dynamicJdbcSplit = new DynamicJdbcSplit(jdbcSplit, conditions);
+        List<ParameterContext> parameterContexts = dynamicJdbcSplit.getFlattedParams();
+
+        // We should have parameters only for the non-null conditions
+        Assert.assertTrue(parameterContexts.size() > 0);
+        Assert.assertTrue(parameterContexts.size() < 20); // Less than the full set
+    }
+
+    @Test
+    public void testGetUnionBytesSqlWithIgnoreTrue() throws Exception {
+        SqlNode sqlNode = buildCondition();
+        DynamicJdbcSplit dynamicJdbcSplit = new DynamicJdbcSplit(jdbcSplit, sqlNode);
+        BytesSql bytesSql = dynamicJdbcSplit.getUnionBytesSql(true);
+
+        // Verify that we get a result
+        Assert.assertNotNull(bytesSql);
+        Assert.assertTrue(bytesSql.size() > 0);
+    }
+
+    @Test
+    public void testGetUnionBytesSqlWithIgnoreFalse() throws Exception {
+        SqlNode sqlNode = buildCondition();
+        DynamicJdbcSplit dynamicJdbcSplit = new DynamicJdbcSplit(jdbcSplit, sqlNode);
+        BytesSql bytesSql = dynamicJdbcSplit.getUnionBytesSql(false);
+
+        // Verify that we get a result
+        Assert.assertNotNull(bytesSql);
+        Assert.assertTrue(bytesSql.size() > 0);
+    }
+
+    @Test
+    public void testGetUnionBytesSqlWithLocalIndexExists() throws Exception {
+        SqlNode sqlNode = buildCondition();
+        List<SqlNode> conditions = new ArrayList<>();
+        for (int i = 0; i < jdbcSplit.getTableNames().size(); i++) {
+            conditions.add(sqlNode);
+        }
+        DynamicJdbcSplit dynamicJdbcSplit = new DynamicJdbcSplit(jdbcSplit, conditions);
+        BytesSql bytesSql = dynamicJdbcSplit.getUnionBytesSql(false);
+
+        // Verify that we get a result
+        Assert.assertNotNull(bytesSql);
+        Assert.assertTrue(bytesSql.size() > 0);
+    }
+
+    @Test
+    public void testReset() throws Exception {
+        SqlNode sqlNode = buildCondition();
+        DynamicJdbcSplit dynamicJdbcSplit = new DynamicJdbcSplit(jdbcSplit, sqlNode);
+
+        // Reset the split without calling any other methods first
+        dynamicJdbcSplit.reset();
+
+        // After reset, both lookupConditions and hintSql are null
+        // getSplitType should still work
+        Assert.assertEquals(SplitType.DYNAMIC_JDBC, dynamicJdbcSplit.getSplitType());
+    }
+
+    @Test
+    public void testGetSplitType() throws Exception {
+        SqlNode sqlNode = buildCondition();
+        DynamicJdbcSplit dynamicJdbcSplit = new DynamicJdbcSplit(jdbcSplit, sqlNode);
+
+        // Verify that the split type is correct
+        Assert.assertEquals(SplitType.DYNAMIC_JDBC, dynamicJdbcSplit.getSplitType());
+    }
 }

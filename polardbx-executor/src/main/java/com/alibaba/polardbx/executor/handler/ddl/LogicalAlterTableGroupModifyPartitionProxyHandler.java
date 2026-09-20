@@ -40,6 +40,9 @@ import org.apache.calcite.sql.SqlPartition;
 import org.apache.calcite.sql.SqlSubPartition;
 import org.apache.calcite.util.Util;
 
+import java.util.Map;
+import java.util.Set;
+
 /**
  * Created by zhuqiwei.
  *
@@ -51,6 +54,12 @@ public class LogicalAlterTableGroupModifyPartitionProxyHandler extends LogicalAl
 
     public LogicalAlterTableGroupModifyPartitionProxyHandler(IRepository repo) {
         super(repo);
+    }
+
+    @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
     }
 
     @Override

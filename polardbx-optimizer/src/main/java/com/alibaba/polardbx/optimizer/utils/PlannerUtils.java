@@ -27,24 +27,36 @@ import com.alibaba.polardbx.common.model.sqljep.Comparative;
 import com.alibaba.polardbx.common.model.sqljep.ComparativeAND;
 import com.alibaba.polardbx.common.model.sqljep.ComparativeBaseList;
 import com.alibaba.polardbx.common.model.sqljep.ComparativeOR;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.config.ConfigDataMode;
+import com.alibaba.polardbx.druid.sql.ast.SqlType;
+import com.alibaba.polardbx.druid.sql.parser.ByteString;
+import com.alibaba.polardbx.gms.locality.LocalityDesc;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.meta.DrdsRelMetadataProvider;
+import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
+import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
+import com.alibaba.polardbx.optimizer.core.rel.ToDrdsRelVisitor;
 import com.alibaba.polardbx.optimizer.core.rel.util.DynamicParamInfo;
 import com.alibaba.polardbx.optimizer.core.rel.util.IndexedDynamicParamInfo;
 import com.alibaba.polardbx.optimizer.core.rel.util.RuntimeFilterDynamicParamInfo;
 import com.alibaba.polardbx.optimizer.exception.OptimizerException;
+import com.alibaba.polardbx.optimizer.locality.LocalityInfoUtils;
+import com.alibaba.polardbx.optimizer.locality.LocalityManager;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
+import com.alibaba.polardbx.optimizer.partition.common.PartitionTableType;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruneStepUtil;
-import com.alibaba.polardbx.optimizer.rule.ExtPartitionOptimizerRule;
 import com.alibaba.polardbx.optimizer.rule.Partitioner;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
 import com.alibaba.polardbx.optimizer.sharding.result.RelShardInfo;
@@ -75,6 +87,7 @@ import org.apache.calcite.sql.SqlDelete;
 import org.apache.calcite.sql.SqlDynamicParam;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlIntervalQualifier;
+import org.apache.calcite.sql.SqlJsonTable;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
@@ -105,6 +118,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.stream.Collectors;
 
 /**
@@ -117,7 +131,11 @@ public class PlannerUtils {
     public final static int APPLY_SUBQUERY_PARAM_INDEX = -3;
     public final static int EXPLAIN_SUBQUERY_PARAM_INDEX = -4;
     public final static int APPLY_IN_VALUES_PARAM_INDEX = -5;
+    public final static int DYNAMIC_SORT_PARAM_BOOL_INDEX = -6;
+    public final static int DYNAMIC_SORT_PARAM_INDEX = -7;
     private final static Logger logger = LoggerFactory.getLogger(PlannerUtils.class);
+
+    public final static int OPTIMIZER_VERSION = 1;
 
     public static RelMetadataQuery newMetadataQuery() {
         return RelMetadataQuery.instance(DrdsRelMetadataProvider.DEFAULT);
@@ -565,7 +583,13 @@ public class PlannerUtils {
         if (node instanceof SqlCall) {
             SqlCall call = (SqlCall) node;
             List<SqlNode> sqlNodeList = Lists.newArrayList();
-            if (call instanceof SqlCase) {
+            if (node instanceof SqlJsonTable) {
+                SqlJsonTable jsonTable = (SqlJsonTable) node;
+                sqlNodeList.addAll(jsonTable.getOperandList());
+            } else if (node instanceof SqlJsonTable.JsonTableColumn) {
+                SqlJsonTable.JsonTableColumn jsonTableColumn = (SqlJsonTable.JsonTableColumn) node;
+                sqlNodeList.addAll(jsonTableColumn.getOperandList());
+            } else if (call instanceof SqlCase) {
                 for (int m = 0; m < ((SqlCase) call).getWhenOperands().size(); m++) {
                     sqlNodeList.add(((SqlCase) call).getWhenOperands().get(m));
                     sqlNodeList.add(((SqlCase) call).getThenOperands().get(m));
@@ -983,10 +1007,23 @@ public class PlannerUtils {
      */
     public static List<List<TargetDB>> fillGroup(List<List<TargetDB>> logicalTableGroupPhyTable, List<Group> groups,
                                                  TableRule tableRule) {
+        return fillGroup(logicalTableGroupPhyTable, groups, tableRule, false);
+    }
+
+    public static List<List<TargetDB>> fillGroup(List<List<TargetDB>> logicalTableGroupPhyTable, List<Group> groups,
+                                                 TableRule tableRule, boolean force) {
+        if (!force) {
+            if (tableRule == null) {
+                return logicalTableGroupPhyTable;
+            }
+            if (!isSingleTable(tableRule) || (!tableRule.isBroadcast() && ConfigDataMode.isPolarDbX())) {
+                return logicalTableGroupPhyTable;
+            }
+        }
         if (tableRule == null) {
             return logicalTableGroupPhyTable;
         }
-        if (!isSingleTable(tableRule) || (!tableRule.isBroadcast())) {
+        if (!isSingleTable(tableRule) || (!tableRule.isBroadcast() && ConfigDataMode.isPolarDbX())) {
             return logicalTableGroupPhyTable;
         }
         if (logicalTableGroupPhyTable == null || groups == null) {
@@ -1046,19 +1083,30 @@ public class PlannerUtils {
      */
     public static Map<String, Comparative> buildComparative(Map<String, Comparative> comparatives, RexNode rexNode,
                                                             RelDataType rowType, String tableName, String schemaName,
-                                                            ExecutionContext executionContext) {
+                                                            ExecutionContext executionContext,
+                                                            boolean enableConstExpr) {
         TddlRuleManager or = executionContext.getSchemaManager(schemaName).getTddlRuleManager();
         OptimizerContext oc = OptimizerContext.getContext(schemaName);
         List<String> shardColumns = or.getSharedColumns(tableName);
-        return buildColumnsComparative(comparatives, rexNode, rowType, shardColumns, oc.getPartitioner());
+        enableConstExpr = executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_DRDS_REX_ROUTE);
+        return buildColumnsComparative(
+            comparatives, rexNode, rowType, shardColumns, oc.getPartitioner(), executionContext, enableConstExpr);
     }
 
+    /**
+     * PolarDB-X due to the design of parameterized, the optimizer does not support expression calculation.
+     * Only in the execution phase can {@param enableConstExpr} be set to true
+     */
     public static Map<String, Comparative> buildColumnsComparative(Map<String, Comparative> comparatives,
                                                                    RexNode rexNode,
                                                                    RelDataType rowType, List<String> columns,
-                                                                   Partitioner partitioner) {
+                                                                   Partitioner partitioner,
+                                                                   ExecutionContext executionContext,
+                                                                   boolean enableConstExpr) {
         for (String column : columns) {
-            Comparative curComp = partitioner.getComparative(rexNode, rowType, column, null);
+            //use the executionContext and calculate the const expr if enableConstExpr is true
+            Comparative curComp = partitioner.getComparative(
+                rexNode, rowType, column, enableConstExpr ? executionContext : null, enableConstExpr);
             if (curComp == null) {
                 continue;
             }
@@ -1072,57 +1120,6 @@ public class PlannerUtils {
                 comparatives.put(column, curComp);
             }
         }
-        return comparatives;
-    }
-
-    /**
-     * Build shard columns comparative for table by the filter condition build
-     * once time only,before execute
-     */
-    public static Map<String, Comparative> buildComparativeWithAllColumn(RexNode rexNode, RelDataType rowType,
-                                                                         String tableName, String schemaName) {
-        Map<String, Comparative> comparatives = new HashMap<>();
-        TddlRuleManager or = OptimizerContext.getContext(schemaName).getRuleManager();
-        ExtPartitionOptimizerRule orExt = new ExtPartitionOptimizerRule(or.getTddlRule());
-        List<String> shardColumns = or.getSharedColumns(tableName);
-        final HashSet<String> stringColumns = Sets.newHashSet(shardColumns);
-        final Comparative comparative = orExt.getComparative(rexNode, rowType, stringColumns, null);
-        if (comparative != null) {
-            for (String column : shardColumns) {
-                comparatives.put(column, comparative);
-            }
-        }
-        return comparatives;
-    }
-
-    /**
-     * Build shard columns comparative for table by the filter condition build
-     * once time only,before execute
-     */
-    public static Map<String, Comparative> buildComparativeWithAllColumn(Map<String, Comparative> comparativeParams,
-                                                                         RexNode rexNode, RelDataType rowType,
-                                                                         String tableName, String schemaName,
-                                                                         ExecutionContext executionContext) {
-        Map<String, Comparative> comparatives = new HashMap<>();
-        TddlRuleManager or = executionContext.getSchemaManager(schemaName).getTddlRuleManager();
-        ExtPartitionOptimizerRule orExt = new ExtPartitionOptimizerRule(or.getTddlRule());
-        List<String> shardColumns = or.getSharedColumns(tableName);
-        final HashSet<String> stringColumns = Sets.newHashSet(shardColumns);
-        final Comparative comparative = orExt.getComparative(rexNode, rowType, stringColumns, null);
-
-        if (comparative != null) {
-            for (String column : shardColumns) {
-                Comparative originComp = comparativeParams.get(column);
-                if (originComp != null) {
-                    ComparativeBaseList newComp = new ComparativeAND(originComp);
-                    newComp.addComparative(comparative);
-                    comparatives.put(column, newComp);
-                } else {
-                    comparatives.put(column, comparative);
-                }
-            }
-        }
-
         return comparatives;
     }
 
@@ -1500,4 +1497,219 @@ public class PlannerUtils {
         }
     }
 
+    public static boolean checkIfAllowPushJoinAsDirectPlanForSingleTblAndBroadcastTbl(ToDrdsRelVisitor toDrdsRelVisitor,
+                                                                                      PlannerContext plannerContext,
+                                                                                      List<String> schemaNames,
+                                                                                      List<String> tableNames) {
+        if (schemaNames.size() > 1) {
+            return false;
+        }
+
+        String schemaName = schemaNames.get(0);
+        if (!DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
+            return true;
+        }
+
+        ExecutionContext ec = plannerContext.getExecutionContext();
+        SchemaManager sm = ec.getSchemaManager(schemaName);
+        List<PartitionInfo> broTblPartInfoList = new ArrayList<>();
+        List<PartitionInfo> otherSigTblPartInfoList = new ArrayList<>();
+        for (int i = 0; i < tableNames.size(); i++) {
+            String tblName = tableNames.get(i);
+            TableMeta tm = sm.getTable(tblName);
+            PartitionInfo partInfo = tm.getPartitionInfo();
+            PartitionTableType tblType = partInfo.getTableType();
+            if (tblType == PartitionTableType.BROADCAST_TABLE) {
+                broTblPartInfoList.add(partInfo);
+            } else {
+                otherSigTblPartInfoList.add(partInfo);
+            }
+        }
+        if (!broTblPartInfoList.isEmpty()) {
+            // contain bro_tbl only or bro_tbl/sig_tbl
+            PartitionInfo bro0PartInfo = broTblPartInfoList.get(0);
+            if (StringUtils.isEmpty(bro0PartInfo.getLocality())) {
+                return true;
+            }
+            if (!checkIfAllowPushJoinForBroadcastTblAndOtherTbl(bro0PartInfo, otherSigTblPartInfoList)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static boolean checkAllowPushJoinForBroadcastTblAndOtherOtherTbl(PartitionInfo bro0PartInfo,
+                                                                            PartitionInfo otherTblPartInfo) {
+        List<PartitionInfo> partInfoList = new ArrayList<>();
+        partInfoList.add(otherTblPartInfo);
+        return checkIfAllowPushJoinForBroadcastTblAndOtherTbl(bro0PartInfo, partInfoList);
+
+    }
+
+    private static boolean checkIfAllowPushJoinForBroadcastTblAndOtherTbl(PartitionInfo bro0PartInfo,
+                                                                          List<PartitionInfo> otherTblPartInfoList) {
+        String schemaName = bro0PartInfo.getTableSchema();
+        if (!checkIfUseSchemaUsePhyDbConfigs(schemaName)) {
+            return true;
+        }
+        Set<String> grpKeySetOfBroTopology = bro0PartInfo.getTopology(true).keySet();
+        for (int i = 0; i < otherTblPartInfoList.size(); i++) {
+            PartitionInfo otherPartInfo = otherTblPartInfoList.get(i);
+            Set<String> grpKeySetOfOtherTblTopology = otherPartInfo.getTopology(true).keySet();
+            for (String phyDbIdx : grpKeySetOfOtherTblTopology) {
+                if (!grpKeySetOfBroTopology.contains(phyDbIdx)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    public static boolean checkIfBroadcastTableWithLocality(String schemaName, String tblName, ExecutionContext ec) {
+        if (!DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
+            return false;
+        }
+
+        TableMeta tm = ec.getSchemaManager(schemaName).getTable(tblName);
+        PartitionInfo partInfo = tm.getPartitionInfo();
+
+        boolean useDbleSchema = checkIfUseSchemaUsePhyDbConfigs(schemaName);
+        if (!useDbleSchema) {
+            return false;
+        }
+
+        if (!partInfo.isBroadcastTable()) {
+            return false;
+        }
+        if (StringUtils.isEmpty(partInfo.getLocality())) {
+            return false;
+        }
+        return true;
+    }
+
+    public static boolean checkIfReplicasTable(String schemaName, String tblName, ExecutionContext ec) {
+        if (!DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
+            return false;
+        }
+
+        TableMeta tm = ec.getSchemaManager(schemaName).getTable(tblName);
+        PartitionInfo partInfo = tm.getPartitionInfo();
+
+        boolean useDbleSchema = checkIfUseSchemaUsePhyDbConfigs(schemaName);
+        if (!useDbleSchema) {
+            return false;
+        }
+
+        if (!partInfo.isReplicasTable()) {
+            return false;
+        }
+        return true;
+    }
+
+    public static boolean checkAllowPushJoinForReplicasTblAndOtherOtherTbl(PartitionInfo replicasTbl0PartInfo,
+                                                                           PartitionInfo otherTblPartInfo) {
+        List<PartitionInfo> partInfoList = new ArrayList<>();
+        partInfoList.add(otherTblPartInfo);
+        return checkIfAllowPushJoinForReplicasTblAndOtherTbl(replicasTbl0PartInfo, partInfoList);
+
+    }
+
+    private static boolean checkIfAllowPushJoinForReplicasTblAndOtherTbl(PartitionInfo replicasTbl0PartInfo,
+                                                                         List<PartitionInfo> otherTblPartInfoList) {
+        String schemaName = replicasTbl0PartInfo.getTableSchema();
+        if (!checkIfUseSchemaUsePhyDbConfigs(schemaName)) {
+            return true;
+        }
+        Set<String> grpKeySetOfBroTopology = replicasTbl0PartInfo.getTopology(true).keySet();
+        for (int i = 0; i < otherTblPartInfoList.size(); i++) {
+            PartitionInfo otherPartInfo = otherTblPartInfoList.get(i);
+            Set<String> grpKeySetOfOtherTblTopology = otherPartInfo.getTopology(true).keySet();
+            for (String phyDbIdx : grpKeySetOfOtherTblTopology) {
+                if (!grpKeySetOfBroTopology.contains(phyDbIdx)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    public static Set<String> getReplicasTableGroupKeySet(String schemaName, String tblName, ExecutionContext ec) {
+        if (!DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
+            return null;
+        }
+
+        TableMeta tm = ec.getSchemaManager(schemaName).getTable(tblName);
+        PartitionInfo partInfo = tm.getPartitionInfo();
+
+        boolean useDbleSchema = checkIfUseSchemaUsePhyDbConfigs(schemaName);
+        if (!useDbleSchema) {
+            return null;
+        }
+
+        if (!partInfo.isReplicasTable()) {
+            return null;
+        }
+
+        Set<String> groupKeySet = new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+        if (StringUtils.isEmpty(partInfo.getLocality())) {
+            return groupKeySet;
+        }
+
+        groupKeySet.addAll(partInfo.getLocalityDesc().getGroupKeyList());
+        return groupKeySet;
+    }
+
+    public static boolean checkIfUseSchemaUsePhyDbConfigs(String schemaName) {
+        boolean useDbleSchema = false;
+        try {
+            LocalityDesc dbLocalityDesc =
+                LocalityInfoUtils.parse(LocalityManager.getInstance().getLocalityOfDb(schemaName).getLocality());
+            useDbleSchema = dbLocalityDesc.hasProxyConfig();
+        } catch (Throwable e) {
+            // ignore
+            logger.warn(e);
+        }
+        return useDbleSchema;
+    }
+
+    public static void checkIfDmlOnNoPartitionKeyTable(final ByteString sql, final ExecutionPlan plan,
+                                                       final ExecutionContext ec) {
+        boolean enableDML = ec.getParamManager().getBoolean(ConnectionParams.ENABLE_DML_FOR_NO_PARTITION_KEY_TABLE);
+        if (!SqlType.isDML(ec.getSqlType()) || enableDML) {
+            return;
+        }
+        Set<Pair<String, String>> tables = plan.getTableSet();
+        if (tables != null) {
+            for (Pair<String, String> table : tables) {
+                String schemaName = table.getKey();
+                if (schemaName == null) {
+                    schemaName = ec.getSchemaName();
+                }
+                boolean isNewPartDb = DbInfoManager.getInstance().isNewPartitionDb(schemaName);
+                if (!isNewPartDb) {
+                    return;
+                }
+                TableMeta meta = ec.getSchemaManager(schemaName).getTableWithNull(table.getValue());
+                if (meta == null) {
+                    // is not a table but view
+                    return;
+                }
+                PartitionInfo partitionInfo = meta.getPartitionInfo();
+                if (partitionInfo.isNoPartitionKeyTable()) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
+                        String.format(
+                            "DML '%s' operations are not allowed on table '%s.%s' because it does not have a partition key.",
+                            sql, schemaName, table.getValue()));
+                }
+            }
+        }
+    }
+
+    public static void checkIfEnableModifyShardingColumn(final ExecutionContext ec) {
+        boolean enableModifyShardingKey =
+            ec.getParamManager().getBoolean(ConnectionParams.ENABLE_MODIFY_SHARDING_COLUMN);
+        if (!enableModifyShardingKey && ec.isModifyShardingColumn()) {
+            throw new TddlRuntimeException(ErrorCode.ERR_MODIFY_PARTITION_COLUMN);
+        }
+    }
 }

@@ -25,12 +25,15 @@ import com.alibaba.polardbx.common.encdb.enums.MsgKeyConstants;
 import com.alibaba.polardbx.common.encdb.enums.MsgType;
 import com.alibaba.polardbx.common.encdb.utils.Utils;
 import com.alibaba.polardbx.gms.metadb.encdb.EncdbRuleManager;
+import com.alibaba.polardbx.gms.metadb.encdb.mask.EncdbMaskAlgo;
+import com.alibaba.polardbx.gms.metadb.encdb.mask.EncdbMaskType;
 import com.alibaba.polardbx.gms.privilege.AccountType;
 import com.alibaba.polardbx.gms.privilege.PolarAccount;
 import com.alibaba.polardbx.gms.metadb.encdb.EncdbRule;
 import com.alibaba.polardbx.gms.privilege.PolarAccountInfo;
 import com.alibaba.polardbx.server.ServerConnection;
 import com.alibaba.polardbx.server.encdb.EncdbMsgProcessor;
+import com.alibaba.polardbx.server.encdb.EncdbRuleFormat;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -47,88 +50,20 @@ import static com.alibaba.polardbx.gms.metadb.encdb.EncdbRule.*;
  */
 public class EncdbImportRuleHandler implements EncdbHandler {
 
-    private static final int RULE_VERSION = 1;
-
     @Override
     public JSONObject handle(JSONObject request, ServerConnection serverConnection) {
         EncdbMsgProcessor.checkUserPrivileges(serverConnection, true);
 
-        List<EncdbRule> encdbRules = json2Rule(request);
+        List<EncdbRule> encdbRules = parseRequest(request);
         EncdbRuleManager.getInstance().insertEncRules(encdbRules);
 
         return EMPTY;
     }
 
-    public static List<EncdbRule> json2Rule(JSONObject request) {
+    public static List<EncdbRule> parseRequest(JSONObject request) {
         JSONObject encRule =
             JSON.parseObject(new String(Utils.base64ToBytes(request.getString(ENC_RULE)), StandardCharsets.UTF_8));
-
-        int version = encRule.getIntValue(VERSION);
-        if (version != RULE_VERSION) {
-            throw new EncdbException("the rule format is invalid");
-        }
-        JSONArray rules = encRule.getJSONArray(RULES);
-        List<EncdbRule> encdbRules = new ArrayList<>(rules.size());
-        for (int i = 0; i < rules.size(); i++) {
-            JSONObject ruleJson = rules.getJSONObject(i);
-            String ruleName = ruleJson.getString(NAME);
-            boolean enable = ruleJson.getBoolean(ENABLED);
-            String description = ruleJson.getString(DESCRIPTION);
-
-            JSONObject meta = ruleJson.getJSONObject(META);
-            Set<String> dbs = jsonArr2Set(meta.getJSONArray(DATABASES));
-            Set<String> tbs = jsonArr2Set(meta.getJSONArray(TABLES));
-            Set<String> cols = jsonArr2Set(meta.getJSONArray(COLUMNS));
-
-            JSONObject users = ruleJson.getJSONObject(USERS);
-            Set<PolarAccount> fullAccessUsers = users.getJSONArray(FULL_ACCESS)
-                .stream().map(s -> PolarAccount.fromIdentifier((String) s))
-                .collect(Collectors.toSet());
-            Set<PolarAccount> restrictedAccessUsers = users.getJSONArray(RESTRICTED_ACCESS)
-                .stream().map(s -> PolarAccount.fromIdentifier((String) s))
-                .collect(Collectors.toSet());
-
-            encdbRules.add(
-                new EncdbRule(ruleName, enable, fullAccessUsers, restrictedAccessUsers, dbs, tbs, cols, description)
-            );
-        }
-
-        return encdbRules;
-    }
-
-    public static JSONObject rule2Json(List<EncdbRule> encdbRules) {
-        JSONObject json = new JSONObject();
-        json.put(REQUEST_TYPE, MsgType.ENC_RULE_IMPORT);
-
-        JSONObject encRule = new JSONObject();
-        encRule.put(VERSION, RULE_VERSION);
-        JSONArray rules = new JSONArray();
-        encRule.put(RULES, rules);
-        for (EncdbRule encdbRule : encdbRules) {
-            JSONObject ruleJson = new JSONObject();
-            ruleJson.put(NAME, encdbRule.getRuleName());
-            ruleJson.put(ENABLED, encdbRule.isEnable());
-            ruleJson.put(DESCRIPTION, encdbRule.getDescription());
-
-            JSONObject ruleMeta = new JSONObject();
-            ruleJson.put(META, ruleMeta);
-            ruleMeta.put(DATABASES, set2JsonArr(encdbRule.getDbs()));
-            ruleMeta.put(TABLES, set2JsonArr(encdbRule.getTbs()));
-            ruleMeta.put(COLUMNS, set2JsonArr(encdbRule.getCols()));
-
-            JSONObject users = new JSONObject();
-            ruleJson.put(USERS, users);
-            users.put(FULL_ACCESS,
-                new JSONArray(encdbRule.getFullAccessUsers().stream().map(PolarAccount::getIdentifier)
-                    .collect(Collectors.toList())));
-            users.put(RESTRICTED_ACCESS,
-                new JSONArray(encdbRule.getRestrictedAccessUsers().stream().map(PolarAccount::getIdentifier)
-                    .collect(Collectors.toList())));
-            rules.add(ruleJson);
-        }
-
-        json.put(ENC_RULE, Utils.bytesTobase64(encRule.toString().getBytes(StandardCharsets.UTF_8)));
-        return json;
+        return EncdbRuleFormat.parseNewEncRule(encRule);
     }
 
 }

@@ -175,7 +175,7 @@ public class LocalityManager extends AbstractLifecycle {
     public void deleteLocalityOfTable(long tableId) {
         LocalityId id = LocalityId.ofTable(tableId);
         deleteLocalityInDatabase(id);
-        if(localityCache.containsKey(id)) {
+        if (localityCache.containsKey(id)) {
             localityCache.remove(id);
         }
     }

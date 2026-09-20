@@ -16,17 +16,20 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.operator.scan.BlockDictionary;
 import io.airlift.slice.Slice;
 import io.airlift.slice.SliceOutput;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.Arrays;
 
 /**
  * A local dictionary scoped in a block.
  */
-public class LocalBlockDictionary implements BlockDictionary {
-
+public class LocalBlockDictionary implements BlockDictionary, MemoryCountable {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(LocalBlockDictionary.class).instanceSize();
     public static final BlockDictionary EMPTY_DICTIONARY = new LocalBlockDictionary(new Slice[0]);
 
     // NOTE: the format (slice + offsets) is not efficient enough
@@ -43,6 +46,11 @@ public class LocalBlockDictionary implements BlockDictionary {
             sizeInBytes += dictValue.length();
         }
         this.sizeInBytes = sizeInBytes;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(dict);
     }
 
     public Slice[] getDict() {

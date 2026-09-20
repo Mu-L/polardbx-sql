@@ -1,0 +1,77 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+set ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC=true;
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=true;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+  
+  create table numberrange_table_1 (
+  id int
+  )
+  partition by UDF_HASH(
+  `id` with udf_params(
+  'dble/numberrange',
+  '{
+"defaultNode": "3",
+"mapFile" :
+  "
+           0-255=0
+			256-500=1
+			501-755=2
+			756-1000=3    
+          "
+}'
+  )
+) 
+partitions 4;
+select part_route('','numberrange_table_1',null);
+## error_msg: $# server error by columnValue:'', Please eliminate any quote and non number within it #$
+select part_route('','numberrange_table_1','');
+select part_route('','numberrange_table_1',0);
+select part_route('','numberrange_table_1',255);
+select part_route('','numberrange_table_1',256);
+select part_route('','numberrange_table_1',500);
+select part_route('','numberrange_table_1',501);
+select part_route('','numberrange_table_1',755);
+select part_route('','numberrange_table_1',756);
+select part_route('','numberrange_table_1',1000);
+select part_route('','numberrange_table_1',1001);
+
+ 
+create table numberrange_table (
+  id int
+  )
+  partition by UDF_HASH(
+  `id` with udf_params(
+  'dble/numberrange',
+  '{
+"mapFile":
+  "
+  0-255=0
+  256-500=1
+  501-755=2
+  756-1000=3
+  "
+}'
+   )
+ ) 
+ partitions 4;
+
+select part_route('','numberrange_table',0);
+select part_route('','numberrange_table',255);
+select part_route('','numberrange_table',256);
+select part_route('','numberrange_table',500);
+select part_route('','numberrange_table',501);
+select part_route('','numberrange_table',755);
+select part_route('','numberrange_table',756);
+select part_route('','numberrange_table',1000);
+## error_msg: $# server error by can't find any valid data node: nodeIndex is null #$
+select part_route('','numberrange_table',1001);
+## error_msg: $# server error by can't find any valid data node: nodeIndex is null #$
+select part_route('','numberrange_table',null);
+## error_msg: $# server error by can't find any valid data node: nodeIndex is null #$
+select part_route('','numberrange_table',-1);
+## error_msg: $# server error by can't find any valid data node: nodeIndex is null #$
+select part_route('','numberrange_table',-2);
+
+

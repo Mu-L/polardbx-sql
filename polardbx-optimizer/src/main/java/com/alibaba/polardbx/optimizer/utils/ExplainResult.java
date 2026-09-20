@@ -67,13 +67,26 @@ public class ExplainResult {
          */
         OPTIMIZER,
         /**
+         * 优化器详细模式 + rule-level 细粒度快照（EXPLAIN OPTIMIZER DETAIL）
+         */
+        OPTIMIZER_DETAIL,
+        /**
          * 显示每张逻辑表需要扫描哪些分片
          */
         SHARDING,
+
+        // Show routing info
+        ROUTING,
+        KEYWORD,
         // Show costs estimated by cost-based optimizer
         COST,
         // Show actual execution cost
         ANALYZE,
+        ANALYZE_EXECUTE,
+        TREE_EXECUTE,
+        JSON_EXECUTE,
+        DIFF_EXECUTE,
+        ALL_EXECUTE,
         // Show baselineInfo id and planInfoId of this plan
         BASELINE,
         // Show plan info with json format
@@ -89,7 +102,13 @@ public class ExplainResult {
         // show pipeline level stats
         PIPELINE,
         // show columnar snapshot
-        SNAPSHOT;
+        SNAPSHOT,
+        // show online ddl info
+        ONLINE_DDL,
+        // show mpp schedule info
+        SCHEDULE,
+        // show ddl dag visualization with job_id and task_id
+        DDL_DAG;
 
         public boolean isLogic() {
             return this == LOGIC || isSimple();
@@ -107,16 +126,40 @@ public class ExplainResult {
             return this == EXECUTE;
         }
 
+        public boolean isAnalyzeExecute() {
+            return this == ANALYZE_EXECUTE;
+        }
+
+        public boolean isJsonExecute() {
+            return this == JSON_EXECUTE;
+        }
+
+        public boolean isTreeExecute() {
+            return this == TREE_EXECUTE;
+        }
+
         public boolean isPhysical() {
             return this == PHYSICAL;
         }
 
         public boolean isOptimizer() {
-            return this == OPTIMIZER;
+            return this == OPTIMIZER || this == OPTIMIZER_DETAIL;
+        }
+
+        public boolean isOptimizerDetail() {
+            return this == OPTIMIZER_DETAIL;
         }
 
         public boolean isSharding() {
             return this.isA(EXPLAIN_SHARDING);
+        }
+
+        public boolean isRouting() {
+            return this == ROUTING;
+        }
+
+        public boolean isKeyword() {
+            return this == KEYWORD;
         }
 
         public boolean isCost() {
@@ -163,6 +206,18 @@ public class ExplainResult {
             return this == SNAPSHOT;
         }
 
+        public boolean isOnlineDDL() {
+            return this == ONLINE_DDL;
+        }
+
+        public boolean isSchedule() {
+            return this == SCHEDULE;
+        }
+
+        public boolean isDdlDag() {
+            return this == DDL_DAG;
+        }
+
         public boolean isA(EnumSet enumSet) {
             return null != enumSet && enumSet.contains(this);
         }
@@ -170,6 +225,10 @@ public class ExplainResult {
 
     public static boolean isExplainOptimizer(ExplainResult er) {
         return er == null ? false : er.explainMode.isOptimizer();
+    }
+
+    public static boolean isExplainOptimizerDetail(ExplainResult er) {
+        return er != null && er.explainMode.isOptimizerDetail();
     }
 
     public static boolean isExplainSharding(ExplainResult er) {
@@ -184,8 +243,28 @@ public class ExplainResult {
         return er == null ? false : er.explainMode.isExecute();
     }
 
+    public static boolean isExplainAnalyzeExecute(ExplainResult er) {
+        return er == null ? false : er.explainMode.isAnalyzeExecute();
+    }
+
+    public static boolean isExplainJsonExecute(ExplainResult er) {
+        return er == null ? false : er.explainMode.isJsonExecute();
+    }
+
+    public static boolean isExplainTreeExecute(ExplainResult er) {
+        return er == null ? false : er.explainMode.isTreeExecute();
+    }
+
     public static boolean isPhysicalFragment(ExplainResult er) {
         return er == null ? false : er.explainMode.isPhysical();
+    }
+
+    public static boolean isExplainRouting(ExplainResult er) {
+        return er == null ? false : er.explainMode.isRouting();
+    }
+
+    public static boolean isExplainKeyword(ExplainResult er) {
+        return er == null ? false : er.explainMode.isKeyword();
     }
 
     public static boolean isExplainCost(ExplainResult er) {
@@ -224,6 +303,18 @@ public class ExplainResult {
         return er != null && er.explainMode.isSnapshot();
     }
 
+    public static boolean isExplainOnlineDdl(ExplainResult er) {
+        return er != null && er.explainMode.isOnlineDDL();
+    }
+
+    public static boolean isExplainSchedule(ExplainResult er) {
+        return er != null && er.explainMode.isSchedule();
+    }
+
+    public static boolean isExplainDdlDag(ExplainResult er) {
+        return er != null && er.explainMode.isDdlDag();
+    }
+
     public static boolean isExplainVec(ExplainResult er) {
         return er == null ? false : er.explainMode.isVec();
     }
@@ -232,6 +323,7 @@ public class ExplainResult {
         if (isExplainOptimizer(er) ||
             isExplainAdvisor(er) ||
             isExplainStatistics(er) ||
+            isExplainKeyword(er) ||
             isExplainJsonPlan(er) ||
             isExplainExecute(er) ||
             isExplainSharding(er)) {

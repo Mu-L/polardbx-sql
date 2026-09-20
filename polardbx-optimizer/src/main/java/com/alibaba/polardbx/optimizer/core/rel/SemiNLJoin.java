@@ -16,13 +16,13 @@
 
 package com.alibaba.polardbx.optimizer.core.rel;
 
+import com.alibaba.polardbx.optimizer.config.meta.CostModelWeight;
+import com.alibaba.polardbx.optimizer.core.DrdsConvention;
+import com.alibaba.polardbx.optimizer.core.MppConvention;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import com.alibaba.polardbx.optimizer.memory.MemoryEstimator;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import com.alibaba.polardbx.optimizer.config.meta.CostModelWeight;
-import com.alibaba.polardbx.optimizer.core.DrdsConvention;
-import com.alibaba.polardbx.optimizer.core.MppConvention;
 import org.apache.calcite.plan.DeriveMode;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptCost;
@@ -195,6 +195,11 @@ public class SemiNLJoin extends SemiJoin implements PhysicalNode {
         double rowCount = streamRowCount + buildRowCount;
         double cpu = CostModelWeight.INSTANCE.getNlWeight() * streamRowCount * buildRowCount + buildRowCount;
         double memory = buildRowCount * MemoryEstimator.estimateRowSizeInArrayList(right.getRowType());
+
+        RelOptCost cost = CBOUtil.compensationWeightForJoin(this, mq);
+        if (cost != null) {
+            return planner.getCostFactory().makeCost(rowCount, cpu, memory, 0, 0).plus(cost);
+        }
 
         return planner.getCostFactory().makeCost(rowCount, cpu, memory, 0, 0);
     }

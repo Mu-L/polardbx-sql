@@ -28,6 +28,7 @@ public class SQLShowStatisticStmt extends SQLStatementImpl implements SQLShowSta
 
     private SQLExprTableSource tableSource;
     private boolean full;
+    private boolean list;
     private final List<SQLAssignItem> partitions = new ArrayList<SQLAssignItem>(4);
 
     public SQLShowStatisticStmt() {
@@ -61,6 +62,14 @@ public class SQLShowStatisticStmt extends SQLStatementImpl implements SQLShowSta
 
     public void setFull(boolean full) {
         this.full = full;
+    }
+
+    public boolean isList() {
+        return list;
+    }
+
+    public void setList(boolean list) {
+        this.list = list;
     }
 
     public List<SQLAssignItem> getPartitions() {

@@ -15,4 +15,8 @@ public class TtlJobRuntimeException extends TddlRuntimeException {
     public TtlJobRuntimeException(Throwable ex, String... params) {
         super(ErrorCode.ERR_TTL, ex, params);
     }
+
+    public TtlJobRuntimeException(Throwable ex) {
+        super(ErrorCode.ERR_TTL, ex, ex.getMessage());
+    }
 }

@@ -18,6 +18,7 @@ package com.alibaba.polardbx.optimizer.core.function.calc.scalar.partition;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
@@ -110,10 +111,22 @@ public class PartRoute extends AbstractScalarFunction {
             }
             tupleValList.add(subPartTupleVal);
         }
-        PhysicalPartitionInfo phyPartInfo = router.routeTuple(tupleValList);
-        if (phyPartInfo == null) {
-            return "";
+        boolean ignoreException = ec.getParamManager().getBoolean(ConnectionParams.PART_ROUTE_IGNORE_EXCEPTION);
+        PhysicalPartitionInfo phyPartInfo = null;
+        String routedPartName = null;
+        try {
+            phyPartInfo = router.routeTuple(tupleValList);
+            if (phyPartInfo == null) {
+                return "";
+            }
+            routedPartName = phyPartInfo.getPartName();
+        } catch (Throwable ex) {
+            if (!ignoreException) {
+                throw ex;
+            } else {
+                routedPartName = String.format("route error: %s", ex.getMessage());
+            }
         }
-        return phyPartInfo.getPartName();
+        return routedPartName;
     }
 }

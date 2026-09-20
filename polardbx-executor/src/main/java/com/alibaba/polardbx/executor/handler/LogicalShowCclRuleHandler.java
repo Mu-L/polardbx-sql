@@ -104,6 +104,7 @@ public class LogicalShowCclRuleHandler extends HandlerCommon {
         result.addColumn("WAIT_QUEUE_SIZE_PER_NODE", DataTypes.IntegerType);
         result.addColumn("WAIT_TIMEOUT", DataTypes.IntegerType);
         result.addColumn("FAST_MATCH", DataTypes.IntegerType);
+        result.addColumn("DRY_RUN", DataTypes.IntegerType);
         result.addColumn("LIGHT_WAIT", DataTypes.IntegerType);
         result.addColumn("SQL_TYPE", DataTypes.StringType);
         result.addColumn("USER", DataTypes.StringType);
@@ -114,9 +115,10 @@ public class LogicalShowCclRuleHandler extends HandlerCommon {
         result.addColumn("CREATED_TIME", DataTypes.DatetimeType);
         result.initMeta();
 
-        List<List<Map<String, Object>>> syncResult = SyncManagerHelper.sync(new ShowCclStatsSyncAction(),
-            SystemDbHelper.DEFAULT_DB_NAME,
-            SyncScope.CURRENT_ONLY);
+        List<List<Map<String, Object>>> syncResult =
+            SyncManagerHelper.syncIgnoreExceptions(new ShowCclStatsSyncAction(),
+                SystemDbHelper.DEFAULT_DB_NAME,
+                SyncScope.CURRENT_ONLY);
         Map<String, Map<String, Long>> aggSynResult = Maps.newHashMapWithExpectedSize(syncResult.size());
         syncResult.forEach((e) -> {
             if (e == null) {
@@ -182,6 +184,7 @@ public class LogicalShowCclRuleHandler extends HandlerCommon {
                 record.queueSize,
                 record.waitTimeout,
                 record.fastMatch,
+                record.dryRun,
                 record.lightWait,
                 record.sqlType,
                 record.userName == null ? "ALL" : record.userName + "@" + record.clientIp,

@@ -20,11 +20,14 @@ import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.druid.util.StringUtils;
 import com.sun.jna.Platform;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.PriorityQueue;
 import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
@@ -55,7 +58,8 @@ public class MixedModel {
         NON_HOT_SPLIT,
         MIN_COST,
         HOT_SPLIT,
-        EXTERNAL
+        EXTERNAL,
+        DRAIN_ONLY
     }
 
     public static Boolean checkNativeOptimizationSupport() {
@@ -207,6 +211,61 @@ public class MixedModel {
         } else {
             return model.greedySolve();
         }
+    }
+
+    /**
+     * Drain-only solver: only move partitions off drain nodes, keep all other partitions in place.
+     * Uses LPT (Largest Processing Time first) greedy scheduling to assign drain-node partitions
+     * to the least-loaded remaining node.
+     */
+    public static Solution solveMovePartitionDrainOnly(int m, int n, int[] originalPlace,
+                                                       double[] partitionSize, int[] drainNodeIndexes) {
+        Set<Integer> drainSet = Arrays.stream(drainNodeIndexes).boxed().collect(Collectors.toSet());
+        int[] targetPlace = Arrays.copyOf(originalPlace, n);
+
+        // Compute current load on each node
+        double[] nodeLoad = new double[m];
+        for (int i = 0; i < n; i++) {
+            nodeLoad[originalPlace[i]] += partitionSize[i];
+        }
+
+        // Collect partitions on drain nodes, sorted by size descending (LPT)
+        List<Integer> drainPartitions = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            if (drainSet.contains(originalPlace[i])) {
+                drainPartitions.add(i);
+            }
+        }
+        if (drainPartitions.isEmpty()) {
+            double mu = caculateBalanceFactor(m, n, targetPlace, partitionSize, drainNodeIndexes).getValue();
+            return new Solution(true, targetPlace, mu, "DrainOnly");
+        }
+        drainPartitions.sort((a, b) -> Double.compare(partitionSize[b], partitionSize[a]));
+
+        // Clear drain node loads (these partitions will be reassigned)
+        for (int idx : drainNodeIndexes) {
+            nodeLoad[idx] = 0;
+        }
+
+        // Min-heap of non-drain nodes ordered by current load
+        PriorityQueue<Integer> minHeap =
+            new PriorityQueue<>(Comparator.comparingDouble(i -> nodeLoad[i]));
+        for (int i = 0; i < m; i++) {
+            if (!drainSet.contains(i)) {
+                minHeap.add(i);
+            }
+        }
+
+        // Assign each drain partition to the least-loaded non-drain node
+        for (int pIdx : drainPartitions) {
+            int bestNode = minHeap.poll();
+            targetPlace[pIdx] = bestNode;
+            nodeLoad[bestNode] += partitionSize[pIdx];
+            minHeap.add(bestNode);
+        }
+
+        double mu = caculateBalanceFactor(m, n, targetPlace, partitionSize, drainNodeIndexes).getValue();
+        return new Solution(true, targetPlace, mu, "DrainOnly");
     }
 
     public static Pair<Boolean, Double> caculateBalanceFactor(int M, int N, int place[], double partitionSize[]) {

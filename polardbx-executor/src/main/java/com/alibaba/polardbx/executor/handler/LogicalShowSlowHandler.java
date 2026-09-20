@@ -97,7 +97,8 @@ public class LogicalShowSlowHandler extends HandlerCommon {
             }
 
             List<List<Map<String, Object>>> results =
-                SyncManagerHelper.sync(showSlowAction, executionContext.getSchemaName(), SyncScope.CURRENT_ONLY);
+                SyncManagerHelper.syncIgnoreExceptions(showSlowAction, executionContext.getSchemaName(),
+                    SyncScope.CURRENT_ONLY);
             int size = 0;
             for (List<Map<String, Object>> rs : results) {
                 if (rs == null) {
@@ -159,7 +160,7 @@ public class LogicalShowSlowHandler extends HandlerCommon {
                 throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, e, e.getMessage());
 
             }
-            List<List<Map<String, Object>>> results = SyncManagerHelper.sync(showPhysicalSlowAction,
+            List<List<Map<String, Object>>> results = SyncManagerHelper.syncIgnoreExceptions(showPhysicalSlowAction,
                 executionContext.getSchemaName(), SyncScope.NOT_COLUMNAR_SLAVE);
             int size = 0;
             for (List<Map<String, Object>> rs : results) {

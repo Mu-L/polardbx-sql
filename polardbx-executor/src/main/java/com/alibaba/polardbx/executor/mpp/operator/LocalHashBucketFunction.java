@@ -16,19 +16,27 @@
 
 package com.alibaba.polardbx.executor.mpp.operator;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.common.utils.MathUtils;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
+import org.openjdk.jol.info.ClassLayout;
 
 import static com.google.common.base.Preconditions.checkState;
 
-public class LocalHashBucketFunction implements PartitionFunction {
+public class LocalHashBucketFunction implements PartitionFunction, MemoryCountable {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(LocalHashBucketFunction.class).instanceSize();
     protected final int partitionCount;
     protected final boolean isPowerOfTwo;
 
     public LocalHashBucketFunction(int partitionCount) {
         this.partitionCount = partitionCount;
         this.isPowerOfTwo = MathUtils.isPowerOfTwo(partitionCount);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE;
     }
 
     @Override

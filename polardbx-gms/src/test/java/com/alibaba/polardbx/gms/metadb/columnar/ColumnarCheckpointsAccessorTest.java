@@ -144,7 +144,7 @@ public class ColumnarCheckpointsAccessorTest {
             Assert.assertEquals(1, result.size());
 
             TableInfoManager tableInfoManager = new TableInfoManager();
-            tableInfoManager.queryColumnarTableEvolutionByVersionId(123L);
+            tableInfoManager.queryColumnarTableEvolutionByVersionIdAndTableId(123L, 1L);
 
             result = tableInfoManager.queryColumnarCheckpointsByCommitTs(123L);
             Assert.assertEquals(1, result.size());
@@ -165,6 +165,100 @@ public class ColumnarCheckpointsAccessorTest {
             } catch (Exception ignored) {
 
             }
+        }
+    }
+
+    @Test
+    public void testCheckpointType() {
+        Assert.assertEquals(ColumnarCheckpointsAccessor.CheckPointType.SNAPSHOT_MERGE,
+            ColumnarCheckpointsAccessor.CheckPointType.from("snapshot_merge"));
+
+        Assert.assertEquals(ColumnarCheckpointsAccessor.CheckPointType.SNAPSHOT_CATCHUP,
+            ColumnarCheckpointsAccessor.CheckPointType.from("snapshot_catchup"));
+
+    }
+
+    @Test
+    public void testDeleteLimitByRangeTsoAndTypesAndInfoIsNull() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            AtomicInteger deleteCount = new AtomicInteger(0);
+
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.delete(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.any())).thenAnswer(invocationOnMock -> deleteCount.get());
+
+            ColumnarCheckpointsAccessor accessor = new ColumnarCheckpointsAccessor();
+
+            // Single type
+            deleteCount.set(7);
+            int count = accessor.deleteLimitByRangeTsoAndTypesAndInfoIsNull(100L, 200L,
+                ImmutableList.of(ColumnarCheckpointsAccessor.CheckPointType.STREAM), 50);
+            Assert.assertEquals(7, count);
+
+            // Multiple types
+            deleteCount.set(15);
+            count = accessor.deleteLimitByRangeTsoAndTypesAndInfoIsNull(300L, 400L,
+                ImmutableList.of(
+                    ColumnarCheckpointsAccessor.CheckPointType.STREAM,
+                    ColumnarCheckpointsAccessor.CheckPointType.HEARTBEAT),
+                100);
+            Assert.assertEquals(15, count);
+
+            // Zero deleted
+            deleteCount.set(0);
+            count = accessor.deleteLimitByRangeTsoAndTypesAndInfoIsNull(500L, 600L,
+                ImmutableList.of(ColumnarCheckpointsAccessor.CheckPointType.SNAPSHOT), 10);
+            Assert.assertEquals(0, count);
+        }
+    }
+
+    @Test
+    public void testDeleteLimitByRangeTsoAndTypesAndInfoIsNullError() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.delete(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.any())).thenThrow(new RuntimeException("range delete error"));
+
+            ColumnarCheckpointsAccessor accessor = new ColumnarCheckpointsAccessor();
+            try {
+                accessor.deleteLimitByRangeTsoAndTypesAndInfoIsNull(100L, 200L,
+                    ImmutableList.of(ColumnarCheckpointsAccessor.CheckPointType.STREAM), 50);
+                Assert.fail("Expected exception was not thrown");
+            } catch (Exception e) {
+                Assert.assertTrue(e.getMessage().contains("range delete error"));
+            }
+        }
+    }
+
+    @Test
+    public void testDeleteLimitByRangeTsoAndTypesAllCheckpointTypes() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            AtomicInteger deleteCount = new AtomicInteger(99);
+
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.delete(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.any())).thenAnswer(invocationOnMock -> deleteCount.get());
+
+            ColumnarCheckpointsAccessor accessor = new ColumnarCheckpointsAccessor();
+
+            // Test with DDL type
+            deleteCount.set(3);
+            int count = accessor.deleteLimitByRangeTsoAndTypesAndInfoIsNull(1000L, 2000L,
+                ImmutableList.of(ColumnarCheckpointsAccessor.CheckPointType.DDL), 5);
+            Assert.assertEquals(3, count);
+
+            // Test with SNAPSHOT type
+            deleteCount.set(8);
+            count = accessor.deleteLimitByRangeTsoAndTypesAndInfoIsNull(2000L, 3000L,
+                ImmutableList.of(ColumnarCheckpointsAccessor.CheckPointType.SNAPSHOT), 20);
+            Assert.assertEquals(8, count);
+
+            // Test with multiple types including COMPACTION
+            deleteCount.set(12);
+            count = accessor.deleteLimitByRangeTsoAndTypesAndInfoIsNull(0L, 9999L,
+                ImmutableList.of(
+                    ColumnarCheckpointsAccessor.CheckPointType.COMPACTION,
+                    ColumnarCheckpointsAccessor.CheckPointType.SNAPSHOT,
+                    ColumnarCheckpointsAccessor.CheckPointType.SNAPSHOT_END),
+                200);
+            Assert.assertEquals(12, count);
         }
     }
 

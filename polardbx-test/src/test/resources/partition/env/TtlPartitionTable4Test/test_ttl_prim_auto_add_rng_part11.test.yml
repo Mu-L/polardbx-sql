@@ -6,9 +6,8 @@ set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreatio
 set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI=false;
 set ENABLE_DROP_TRUNCATE_CCI_PARTITION=true;
 
-
 create table rng_dt_tc11_t1(
-a int not null auto_increment,
+a int not null,
 b datetime not null,
 c varchar(32),
 primary key(a)
@@ -18,8 +17,6 @@ partition by range columns(b)
   partition p1 values less than ('2024-01-01'),
   partition p2 values less than ('2024-02-01')
 );
-
-
 
 set TTL_DEBUG_CURRENT_DATETIME='2024-02-03 00:00:00';
 

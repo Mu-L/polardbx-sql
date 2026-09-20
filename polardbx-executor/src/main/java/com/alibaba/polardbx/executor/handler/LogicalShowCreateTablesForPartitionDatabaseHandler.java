@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.handler;
 
+import com.alibaba.polardbx.common.ColumnarOptions;
 import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.common.TddlConstants;
 import com.alibaba.polardbx.common.constants.SequenceAttribute;
@@ -29,6 +30,7 @@ import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
+import com.alibaba.polardbx.druid.sql.ast.SQLCommentHint;
 import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
 import com.alibaba.polardbx.druid.sql.ast.SQLName;
 import com.alibaba.polardbx.druid.sql.ast.SQLOrderingSpecification;
@@ -39,6 +41,7 @@ import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIntegerExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLMethodInvokeExpr;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAssignItem;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLCheck;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnDefinition;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLExprTableSource;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLSelectOrderByItem;
@@ -53,6 +56,7 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.parser.MySqlCreateTableParse
 import com.alibaba.polardbx.druid.sql.dialect.mysql.parser.MySqlExprParser;
 import com.alibaba.polardbx.druid.sql.parser.ByteString;
 import com.alibaba.polardbx.druid.util.JdbcConstants;
+import com.alibaba.polardbx.druid.util.StoragePartitionHintUtils;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.cursor.impl.ArrayResultCursor;
@@ -189,6 +193,14 @@ public class LogicalShowCreateTablesForPartitionDatabaseHandler extends HandlerC
             showHashPartitionByRange =
                 executionContext.getParamManager().getBoolean(ConnectionParams.SHOW_HASH_PARTITIONS_BY_RANGE);
         }
+
+        Boolean enableShowStoragePartitions =
+            Boolean.valueOf(ConnectionParams.ENABLE_SHOW_STORAGE_PARTITIONS.getDefault());
+        if (executionContext != null) {
+            enableShowStoragePartitions =
+                executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_SHOW_STORAGE_PARTITIONS);
+        }
+
         boolean needShowHashByRange = showHashPartitionByRange || show.isShowForTruncateTable();
         String partitionByStr = partInfo.showCreateTablePartitionDefInfo(needShowHashByRange);
         partitionStr.append("\n").append(partitionByStr);
@@ -204,15 +216,20 @@ public class LogicalShowCreateTablesForPartitionDatabaseHandler extends HandlerC
             (MySqlCreateTableStatement) SQLUtils.parseStatementsWithDefaultFeatures(sql, JdbcConstants.MYSQL).get(0)
                 .clone();
 
-        createTable.setTableName(SqlIdentifier.surroundWithBacktick(tableName));
+        // Lowercase the output table name (in both the DDL and the result row) only
+        // when the dedicated switch ENABLE_LOWER_CASE_TABLE_NAME_OUTPUT is on.
+        // The switch defaults to false so existing instances keep the original case
+        // after upgrade; ENABLE_LOWER_CASE_TABLE_NAMES no longer controls this behavior.
+        final String outputTableName = getTableNameForOutput(tableName, executionContext);
+        createTable.setTableName(SqlIdentifier.surroundWithBacktick(outputTableName));
 
         List<SQLTableElement> toRemove = Lists.newArrayList();
         List<SQLTableElement> toAdd = Lists.newArrayList();
         for (SQLTableElement sqlTableElement : createTable.getTableElementList()) {
             if (sqlTableElement instanceof SQLColumnDefinition) {
                 SQLColumnDefinition sqlColumnDefinition = (SQLColumnDefinition) sqlTableElement;
-                String columnName = SQLUtils.normalizeNoTrim(sqlColumnDefinition.getColumnName());
-                ColumnMeta columnMeta = tableMeta.getColumnIgnoreCase(columnName);
+                ColumnMeta columnMeta =
+                    ExternalizedColumnShowCreateHelper.restoreExternalizedColumn(sqlColumnDefinition, tableMeta);
                 if (sqlColumnDefinition.isAutoIncrement()) {
                     containAutoIncrement = true;
                 }
@@ -316,6 +333,14 @@ public class LogicalShowCreateTablesForPartitionDatabaseHandler extends HandlerC
                         MysqlForeignKey.PushDown.fromBoolean(foreignKeyData.isPushDown()));
                 }
             }
+
+            if (sqlTableElement instanceof SQLCheck) {
+                SQLCheck check = (SQLCheck) sqlTableElement;
+                String constraintName = SQLUtils.normalizeNoTrim(check.getName().getSimpleName());
+                int len = constraintName.length();
+                String unwrapName = constraintName.substring(0, len - 9);
+                check.setName(SqlIdentifier.surroundWithBacktick(unwrapName));
+            }
         }
         createTable.getTableElementList().removeAll(toRemove);
         createTable.getTableElementList().addAll(toAdd);
@@ -329,9 +354,16 @@ public class LogicalShowCreateTablesForPartitionDatabaseHandler extends HandlerC
         }
         createTable.getTableElementList().removeAll(localIndexes);
         if (createTable.getOptionHints() != null) {
-            createTable.getOptionHints().removeIf(
-                e -> StringUtils.contains(e.getText(), "PARTITION BY")
-            );
+            if (!enableShowStoragePartitions) {
+                createTable.getOptionHints().removeIf(
+                    e -> StringUtils.contains(e.getText(), "PARTITION BY")
+                );
+            } else {
+                List<SQLCommentHint> newOptionHints =
+                    StoragePartitionHintUtils.convertMySqlPartHitPrefixIntoStoragePartPrefixIfNeed(
+                        createTable.getOptionHints());
+                createTable.setOptionHints(newOptionHints);
+            }
         }
 
         List<SQLTableElement> indexDefs =
@@ -365,7 +397,7 @@ public class LogicalShowCreateTablesForPartitionDatabaseHandler extends HandlerC
          * 单独处理autoIncrement
          * 1. 值取自sequence manager, 而非物理表
          * 2. 如果存在`_drds_implicit_id_`列, 则不显示autoIncrement值
-         * 3. 对于group sequence, simple sequence、new sequence: 如果该表的sequence还未使用过，则show create table时不显示autoIncrement值(与mysql保持一致)
+         * 3. 对于groupre sequence, simple sequence、new sequence: 如果该表的sequence还未使用过，则show create table时不显示autoIncrement值(与mysql保持一致)
          * */
         if (!containImplicitColumn && containAutoIncrement) {
             String sequenceName = SequenceAttribute.AUTO_SEQ_PREFIX + tableName;
@@ -468,7 +500,11 @@ public class LogicalShowCreateTablesForPartitionDatabaseHandler extends HandlerC
         String tableLocality = partitionInfoManager.getPartitionInfo(tableName).getLocality();
         LocalityDesc localityDesc = LocalityInfoUtils.parse(tableLocality);
         if (!localityDesc.isEmpty()) {
-            sql += "\n" + localityDesc.showCreate();
+            if (executionContext.getParamManager().getBoolean(ConnectionParams.OUTPUT_LOCALITY_WITHOUT_COMMENT)) {
+                sql += "\n" + localityDesc.showCreateWithoutComment(schemaName);
+            } else {
+                sql += "\n" + localityDesc.showCreate(schemaName);
+            }
         }
 
         if (!tableMeta.isAutoPartition() || showCreateTable.isFull()) {
@@ -482,7 +518,7 @@ public class LogicalShowCreateTablesForPartitionDatabaseHandler extends HandlerC
         sql = sql + buildTableGroupInfo(schemaName, showCreateTable, partInfo);
         sql = tryAttachImplicitTableGroupInfo(executionContext, schemaName, tableName, sql);
 
-        result.addRow(new Object[] {tableName, sql});
+        result.addRow(new Object[] {outputTableName, sql});
         return result;
     }
 
@@ -580,7 +616,7 @@ public class LogicalShowCreateTablesForPartitionDatabaseHandler extends HandlerC
                         show.getTraitSet(),
                         SqlShowCreateTable.create(SqlParserPos.ZERO,
                             TStringUtil.isEmpty(show.getPhyTable()) ? phyTbSqlId :
-                                show.getPhyTableNode()),
+                                show.getPhyTableNode(), false, showCreateTable.isForExport()),
                         show.getRowType(),
                         show.getDbIndex(),
                         show.getPhyTable(),
@@ -657,8 +693,11 @@ public class LogicalShowCreateTablesForPartitionDatabaseHandler extends HandlerC
                     if (meta.getPrimaryIndex().getKeyColumn(coveringColumn.columnName) != null) {
                         continue;
                     }
+                    // Translate physical name to logical name for externalized columns
+                    String displayName =
+                        ExternalizedColumnShowCreateHelper.toLogicalColumnName(coveringColumn.columnName, meta);
                     coveringColumns
-                        .add(new SQLIdentifierExpr(SqlIdentifier.surroundWithBacktick(coveringColumn.columnName)));
+                        .add(new SQLIdentifierExpr(SqlIdentifier.surroundWithBacktick(displayName)));
                 }
 
                 // Get show name.
@@ -698,6 +737,14 @@ public class LogicalShowCreateTablesForPartitionDatabaseHandler extends HandlerC
                     indeDef.getCovering().addAll(coveringColumns);
                 }
                 indeDef.setColumnar(indexMeta.columnarIndex);
+                if (!full && indexMeta.columnarIndex) {
+                    if (indexMeta.columnarOptions.get().containsKey(ColumnarOptions.COLUMNAR_IGNORE)) {
+                        if (Boolean.parseBoolean(
+                            indexMeta.columnarOptions.get().get(ColumnarOptions.COLUMNAR_IGNORE))) {
+                            continue;
+                        }
+                    }
+                }
                 if (full && indexMeta.columnarIndex) {
                     // set options
                     TablesAccessor tablesAccessor = new TablesAccessor();

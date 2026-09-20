@@ -1,5 +1,27 @@
 -
   sql: |
+    /*+TDDL:MATERIALIZED_SEMI_JOIN(fact,fact)*/
+    select * from fact a
+    where exists (select id from fact b where a.id1 = b.id1 and a.id1 = b.id2)
+  plan: |
+    materializedsemijoin(condition="id1 = id1 and id1 = id2", type="semi")
+      gather(concurrent=true)
+        logicalview(tables="[0000-0003].fact_[00-39]", shardcount=40, sql="select `id`, `id1`, `id2`, `id3`, `id4`, `id5`, `id6`, `id7`, `id8`, `id9`, `id10` from `fact` as `fact` where (((`id1`, `id1`)) in (...))")
+      gather(concurrent=true)
+        logicalview(tables="[0000-0003].fact_[00-39]", shardcount=40, sql="select `id1`, `id2` from `fact` as `fact`")
+-
+  sql: |
+    /*+TDDL:MATERIALIZED_SEMI_JOIN(t_shard_id1,t_shard_id1)*/
+    select * from t_shard_id1 a
+    where exists (select id from t_shard_id1 b where a.name = b.name)
+  plan: |
+    materializedsemijoin(condition="name = name", type="semi")
+      gather(concurrent=true)
+        logicalview(tables="[0000-0003].t_shard_id1", shardcount=4, sql="select `id`, `name`, `create_time` from `t_shard_id1` as `t_shard_id1` where (`name` in (...))")
+      gather(concurrent=true)
+        logicalview(tables="[0000-0003].t_shard_id1", shardcount=4, sql="select `name` from `t_shard_id1` as `t_shard_id1`")
+-
+  sql: |
     /*+TDDL:MATERIALIZED_SEMI_JOIN(t_shard_id1,t_shard_id2)*/
     select a.id
     from

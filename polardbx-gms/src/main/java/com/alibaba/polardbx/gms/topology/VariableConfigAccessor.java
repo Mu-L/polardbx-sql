@@ -30,7 +30,6 @@ import com.alibaba.polardbx.gms.util.MetaDbUtil;
 
 import java.sql.PreparedStatement;
 import java.util.HashMap;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -41,14 +40,12 @@ import java.util.Properties;
 public class VariableConfigAccessor extends AbstractAccessor {
     private static final Logger logger = LoggerFactory.getLogger(VariableConfigAccessor.class);
     private static final String VARIABLE_CONFIG_TABLE = wrap(GmsSystemTables.VARIABLE_CONFIG);
-    public static final String READONLY = "READONLY";
     private static final String SELECT_ALL = "select * from " + VARIABLE_CONFIG_TABLE;
-    private static final String SELECT_BY_PARAM_KEY_AND_INST_ID = SELECT_ALL + " where param_key=? and inst_id=?";
-    private static final String UPDATE_PARAM_VALUE =
-        "replace into " + VARIABLE_CONFIG_TABLE + "set param_val=?, param_key=?, inst_id=?";
+    private static final String SELECT_ALL_BY_INST_ID = SELECT_ALL + " where inst_id=?";
     private static final String INSERT_IGNORE_VARIABLE_CONFIGS =
-        "insert ignore into " + VARIABLE_CONFIG_TABLE
-            + " (inst_id, param_key, param_val, extra) values (?, ?, ?, ?)";
+        "insert ignore into " + VARIABLE_CONFIG_TABLE + " (inst_id, param_key, param_val, extra) values (?, ?, ?, ?)";
+    private static final String REPLACE_PARAM_VALUE =
+        "replace into " + VARIABLE_CONFIG_TABLE + "set param_val=?, param_key=?, inst_id=?";
 
     public void addVariableConfigs(List<VariableConfigRecord> variableConfigRecords) {
         try (PreparedStatement preparedStatement = this.connection.prepareStatement(INSERT_IGNORE_VARIABLE_CONFIGS)) {
@@ -100,38 +97,14 @@ public class VariableConfigAccessor extends AbstractAccessor {
         }
     }
 
-    public List<VariableConfigRecord> queryAll() {
-        return queryBySql(SELECT_ALL, null);
-    }
-
-    public List<VariableConfigRecord> queryByParamKey(String paramKey, String instId) {
+    public List<VariableConfigRecord> getAllVariableConfigsByInstId(String instId) {
         Map<Integer, ParameterContext> params = new HashMap<>();
-        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, paramKey);
-        MetaDbUtil.setParameter(2, params, ParameterMethod.setString, instId);
-        return queryBySql(SELECT_BY_PARAM_KEY_AND_INST_ID, params);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, instId);
+        return queryBySql(SELECT_ALL_BY_INST_ID, params);
     }
 
-    public int[] updateBySql(String sql, List<Map<Integer, ParameterContext>> paramsList) {
-        try {
-            return MetaDbUtil.update(sql, paramsList, connection);
-        } catch (Throwable t) {
-            logger.error("Failed to update system table " + VARIABLE_CONFIG_TABLE + " sql: " + sql, t);
-            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, t, "update", VARIABLE_CONFIG_TABLE,
-                t.getMessage());
-        }
-    }
-
-    public int[] updateParamsValue(Properties props, String instId) {
-        List<Map<Integer, ParameterContext>> paramsList = new LinkedList<>();
-        for (String paramKey : props.stringPropertyNames()) {
-            Map<Integer, ParameterContext> params = new HashMap<>();
-            MetaDbUtil.setParameter(1, params, ParameterMethod.setString, props.getProperty(paramKey));
-            MetaDbUtil.setParameter(2, params, ParameterMethod.setString, paramKey);
-            MetaDbUtil.setParameter(3, params, ParameterMethod.setString, instId);
-            paramsList.add(params);
-        }
-        int[] updateResult = updateBySql(UPDATE_PARAM_VALUE, paramsList);
-        MetaDbConfigManager.getInstance().notify(MetaDbDataIdBuilder.getVariableConfigDataId(instId), connection);
-        return updateResult;
+    public void updateParamsValue(Properties props, String instId) {
+        upsertConfigValue(instId, props, VARIABLE_CONFIG_TABLE, REPLACE_PARAM_VALUE,
+            MetaDbDataIdBuilder.getVariableConfigDataId(instId));
     }
 }

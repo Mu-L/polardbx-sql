@@ -32,7 +32,7 @@ import java.util.Set;
 
 public class AlterFileStorageBackupJobFactory extends DdlJobFactory {
 
-    private static final Logger logger = LoggerFactory.getLogger("oss");
+    private static final Logger logger = LoggerFactory.getLogger("mpp_log");
 
     private ExecutionContext executionContext;
     private AlterFileStoragePreparedData alterFileStoragePreparedData;

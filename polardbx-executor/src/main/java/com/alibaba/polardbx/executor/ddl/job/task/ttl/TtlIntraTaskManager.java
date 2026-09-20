@@ -1,8 +1,10 @@
 package com.alibaba.polardbx.executor.ddl.job.task.ttl;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.exception.TtlJobRuntimeException;
+import com.alibaba.polardbx.executor.ddl.job.task.ttl.log.CleanupExpiredDataLogInfo;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.log.TtlLoggerUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.ttl.TtlConfigUtil;
@@ -26,6 +28,11 @@ public class TtlIntraTaskManager {
     protected TtlWorkerTaskMonitor taskMonitor;
     protected List<Pair<Future, TtlIntraTaskRunner>> taskFutureInfoList = new ArrayList();
     protected TtlJobContext jobContext;
+    /**
+     * Set when batch-resubmit schedule mode is active.
+     * Completion is tracked by this counter instead of the initial future list.
+     */
+    protected volatile CleanupExpiredDataLogInfo cleanupLogInfo;
 
     public TtlIntraTaskManager(BaseDdlTask ddlTask,
                                ExecutionContext ec,
@@ -49,6 +56,10 @@ public class TtlIntraTaskManager {
         this.taskMonitor = taskMonitor;
     }
 
+    public void setCleanupLogInfo(CleanupExpiredDataLogInfo logInfo) {
+        this.cleanupLogInfo = logInfo;
+    }
+
     public void submitAndRunIntraTasks() {
 
         /**
@@ -59,6 +70,11 @@ public class TtlIntraTaskManager {
         boolean needAutoExit = false;
         boolean allTaskFinished = false;
         boolean withinMaintainableTimeFrame = true;
+        // True when the loop exits because the current time is outside the configured maintenance
+        // window AND the caller explicitly opted in to window enforcement via the
+        // TTL_JOB_FOLLOW_MAINTAIN_WINDOW hint.  In that case we want the DDL task to be paused
+        // (not silently completed), so we re-use the interrupted path in handleIntraTaskResults.
+        boolean outOfWindowAndFollowWindow = false;
         List<Throwable> allUnexpectedExList = new ArrayList<>();
         while (true) {
 
@@ -74,10 +90,16 @@ public class TtlIntraTaskManager {
             /**
              * Check if it is in the maintainable time frame
              */
-            withinMaintainableTimeFrame = checkIfWithinMaintainableTime();
+            withinMaintainableTimeFrame = checkIfWithinMaintainableTime(this.ec);
             if (!withinMaintainableTimeFrame) {
                 doTaskInterrupt(allUnexpectedExList);
                 statTaskTimeCost(beginTsNano);
+                // If the caller opted-in to maintenance-window enforcement via hint,
+                // treat the out-of-window exit as an interruption so the DDL task is
+                // paused rather than silently completed.
+                if (ec.getParamManager().getBoolean(ConnectionParams.TTL_JOB_FOLLOW_MAINTAIN_WINDOW)) {
+                    outOfWindowAndFollowWindow = true;
+                }
                 break;
             }
 
@@ -117,7 +139,13 @@ public class TtlIntraTaskManager {
         if (taskMonitor != null) {
             this.taskMonitor.handleResults(allTaskFinished, isInterrupted, withinMaintainableTimeFrame);
         }
-        handleIntraTaskResults(isInterrupted, needAutoExit, allUnexpectedExList);
+        // When TTL_JOB_FOLLOW_MAINTAIN_WINDOW=true and the time window has elapsed,
+        // treat it the same as an interruption so handleIntraTaskResults throws
+        // TtlJobRuntimeException which causes the DDL engine to pause the job.
+        // Note: outOfWindowAndFollowWindow=true implies isForInterrupted=true, so it
+        // is passed as the isForInterrupted argument directly via the OR expression.
+        handleIntraTaskResults(isInterrupted || outOfWindowAndFollowWindow, outOfWindowAndFollowWindow, needAutoExit,
+            allUnexpectedExList);
 
     }
 
@@ -129,8 +157,8 @@ public class TtlIntraTaskManager {
         return taskSubmitter.submitWorkerTasks();
     }
 
-    protected boolean checkIfWithinMaintainableTime() {
-        return TtlJobUtil.checkIfInTtlMaintainWindow();
+    protected boolean checkIfWithinMaintainableTime(ExecutionContext ec) {
+        return TtlJobUtil.checkIfInTtlMaintainWindow(ec);
     }
 
     /**
@@ -153,6 +181,16 @@ public class TtlIntraTaskManager {
 
     protected boolean checkIfAllTaskFinished(boolean isForInterrupt,
                                              List<Throwable> allUnexpectedExListOutput) {
+        // Batch-resubmit mode: completion is signalled via pendingPartCount reaching 0
+        Boolean enableBatchResubmitSchedule =
+            ec.getParamManager().getBoolean(ConnectionParams.TTL_ENABLE_BATCH_RESUBMIT_SCHEDULE);
+        if (enableBatchResubmitSchedule
+            && cleanupLogInfo != null
+            && cleanupLogInfo.batchResubmitPendingPartCount != null) {
+            return cleanupLogInfo.batchResubmitPendingPartCount.get() <= 0;
+        }
+
+        // Original mode: check all initial futures
         int finishCnt = 0;
         int maxWaitTime = TtlConfigUtil.getIntraTaskInterruptionMaxWaitTime();
         List<Throwable> unexpectedExceptionList = new ArrayList<>();
@@ -193,6 +231,7 @@ public class TtlIntraTaskManager {
     }
 
     protected void handleIntraTaskResults(boolean isForInterrupted,
+                                          boolean isOutOfMaintainWindow,
                                           boolean needAutoExit,
                                           List<Throwable> foundUnexpectedExList) {
         List<Throwable> taskUnexpectedExList = new ArrayList<>();
@@ -233,6 +272,11 @@ public class TtlIntraTaskManager {
                     /**
                      * actively throw an ex to make curr job from running to paused
                      */
+                    if (isOutOfMaintainWindow) {
+                        throw new TtlJobRuntimeException(
+                            "Ttl job has been paused: current time is outside the TTL maintenance window "
+                                + "(TTL_JOB_FOLLOW_MAINTAIN_WINDOW=true)");
+                    }
                     throw new TtlJobRuntimeException(String.format("Ttl job has been interrupted"));
                 }
             }

@@ -48,7 +48,7 @@ public class OSSTableScanClientTest extends CsvScanTestBase {
         ossTableScan = mock(OSSTableScan.class);
         ServiceProvider.getInstance().setServerExecutor(
             ExecutorUtil.create("ServerExecutor", 1, 500, 1));
-        doCallRealMethod().when(columnarManager).csvData(anyLong(), anyString());
+        doCallRealMethod().when(columnarManager).csvData(anyLong(), anyString(), any());
         doCallRealMethod().when(columnarManager).injectForTest(any(), any(), any(), any(), any());
         columnarManager.injectForTest(new FileVersionStorage(columnarManager), null, new AtomicLong(0),
             CacheBuilder.newBuilder()

@@ -42,22 +42,15 @@ public class SyncManagerHelper {
         instance = ExtensionLoader.load(ISyncManager.class);
     }
 
-    public static List<List<Map<String, Object>>> sync(IGmsSyncAction action, SyncScope scope) {
-        return sync(action, scope, false);
-    }
-
-    public static List<List<Map<String, Object>>> syncWithDefaultDB(IGmsSyncAction action, SyncScope scope) {
-        return sync(action, SystemDbHelper.DEFAULT_DB_NAME, scope, false);
-    }
-
-    public static List<List<Map<String, Object>>> sync(IGmsSyncAction action, SyncScope scope,
-                                                       boolean throwExceptions) {
+    // DDL TASK 内部的 sync 使用该方法
+    public static List<List<Map<String, Object>>> syncThrowExceptions(IGmsSyncAction action, SyncScope scope) {
         DdlMetaLogUtil.DDL_META_LOG.info("sync. action:" + JSONObject.toJSONString(action));
-        return sync(action, DefaultSchema.getSchemaName(), scope, throwExceptions);
+        return sync(action, DefaultSchema.getSchemaName(), scope, true);
     }
 
-    public static List<List<Map<String, Object>>> sync(IGmsSyncAction action, String schema, SyncScope scope) {
-        return sync(action, schema, scope, false);
+    public static List<List<Map<String, Object>>> syncThrowExceptions(IGmsSyncAction action, String schema,
+                                                                      SyncScope scope) {
+        return sync(action, schema, scope, true);
     }
 
     public static List<List<Map<String, Object>>> sync(IGmsSyncAction action, String schema, SyncScope scope,
@@ -65,13 +58,23 @@ public class SyncManagerHelper {
         return instance.sync(action, schema, scope, throwExceptions);
     }
 
-    public static void sync(IGmsSyncAction action, String schema, SyncScope scope, ISyncResultHandler handler) {
-        sync(action, schema, scope, handler, false);
+    // 生命周期跟库生命周期不一致的 sync action 使用此方法，例如 baseline、统计信息等
+    public static List<List<Map<String, Object>>> syncWithDefaultDb(IGmsSyncAction action, SyncScope scope) {
+        return sync(action, SystemDbHelper.DEFAULT_DB_NAME, scope, true);
     }
 
-    public static void sync(IGmsSyncAction action, String schema, SyncScope scope, ISyncResultHandler handler,
-                            boolean throwExceptions) {
-        instance.sync(action, schema, scope, handler, throwExceptions);
+    public static List<List<Map<String, Object>>> syncIgnoreExceptions(IGmsSyncAction action, SyncScope scope) {
+        return syncIgnoreExceptions(action, DefaultSchema.getSchemaName(), scope);
+    }
+
+    public static List<List<Map<String, Object>>> syncIgnoreExceptions(IGmsSyncAction action, String schema,
+                                                                       SyncScope scope) {
+        return sync(action, schema, scope, false);
+    }
+
+    public static void syncIgnoreExceptions(IGmsSyncAction action, String schema, SyncScope scope,
+                                            ISyncResultHandler handler) {
+        instance.sync(action, schema, scope, handler, false);
     }
 
     public static List<Map<String, Object>> sync(IGmsSyncAction action, String schema, String serverKey) {

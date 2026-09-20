@@ -77,7 +77,7 @@ public class ArchiveOSSTableDataMppTask extends ArchiveOSSTableDataTask implemen
     }
 
     @Override
-    protected void executeImpl(Connection metaDbConnection, ExecutionContext executionContext) {
+    protected void duringTransaction(Connection metaDbConnection, ExecutionContext executionContext) {
         new FileStorageAccessorDelegate<Integer>() {
             @Override
             protected Integer invoke() {
@@ -96,7 +96,8 @@ public class ArchiveOSSTableDataMppTask extends ArchiveOSSTableDataTask implemen
         loadTable(executionContext, true);
     }
 
-    protected void rollbackImpl(Connection metaDbConnection, ExecutionContext executionContext) {
+    @Override
+    protected void duringRollbackTransaction(Connection metaDbConnection, ExecutionContext executionContext) {
         rollbackFileStorage(metaDbConnection, executionContext);
 
         // delete file_storage_backfill_object

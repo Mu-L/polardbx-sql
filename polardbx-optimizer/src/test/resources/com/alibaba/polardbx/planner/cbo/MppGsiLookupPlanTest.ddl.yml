@@ -1,0 +1,16 @@
+oms_order_tag_relation:
+  CREATE TABLE `oms_order_tag_relation` (
+    `id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+    `order_number` varchar(30) NOT NULL DEFAULT '',
+    `order_id` int(11) NOT NULL DEFAULT '0',
+    `tag_code` varchar(64) NOT NULL DEFAULT '',
+    `status` int(11) NOT NULL DEFAULT '0',
+    `deleted_at` datetime DEFAULT NULL,
+    `gmt_create` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    GLOBAL INDEX `g_i_order_id` (`order_id`, `tag_code`, `status`, `id`)
+            PARTITION BY KEY(`order_id`,`tag_code`,`status`,`id`) PARTITIONS 4,
+    GLOBAL INDEX `g_i_order_number` (`order_number`, `tag_code`, `status`, `id`)
+            PARTITION BY KEY(`order_number`,`tag_code`,`status`,`id`) PARTITIONS 4
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  PARTITION BY KEY(`id`) PARTITIONS 4

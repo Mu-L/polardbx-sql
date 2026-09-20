@@ -81,6 +81,7 @@ public class GsiPkRangeExtractor extends Extractor {
                                    ExecutionContext ec) {
         Extractor.ExtractorInfo
             info = Extractor.buildExtractorInfo(ec, schemaName, sourceTableName, targetTableName, true);
+
         final PhysicalPlanBuilder builder = new PhysicalPlanBuilder(schemaName, useBinary, modifyStringColumns, ec);
 
         TableMeta targetTableMeta =

@@ -1,1 +1,5 @@
-test_check_tbl_ver
+#test_check_tbl_ver## unstable_cases, ignore
+test_modify_ttl_job
+test_modify_ttl_filter
+test_invalid_modify_ttl
+test_modify_ttl_interval

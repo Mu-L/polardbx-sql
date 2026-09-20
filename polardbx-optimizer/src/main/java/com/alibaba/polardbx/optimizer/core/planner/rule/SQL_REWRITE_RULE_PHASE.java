@@ -26,6 +26,10 @@ import java.util.List;
 public enum SQL_REWRITE_RULE_PHASE {
     EMPTY(),
     /**
+     * optimize clickbench style aggregate query
+     */
+    CLICKBENCH_OPTIMIZE(RuleToUse.CLICKBENCH_OPTIMIZE),
+    /**
      * Subquery unnesting
      */
     SUBQUERY(RuleToUse.SUBQUERY),
@@ -105,13 +109,19 @@ public enum SQL_REWRITE_RULE_PHASE {
     OPTIMIZE_MODIFY(RuleToUse.OPTIMIZE_MODIFY),
 
     /**
+     * Optimize LogicalRelocate by returning
+     */
+    OPTIMIZE_RELOCATE(RuleToUse.OPTIMIZE_RELOCATE),
+
+    /**
      * Optimize pushed operator tree, including operator merge rule and join condition simplification.
      * This makes things easier for volcano planer
      */
     OPTIMIZE_LOGICAL_VIEW(RuleToUse.OPTIMIZE_LOGICAL_VIEW),
 
-    OPTIMIZE_AGGREGATE(RuleToUse.OPTIMIZE_AGGREGATE);
+    OPTIMZE_CTE_CONSUMER(RuleToUse.OPTIMZE_CTE_CONSUMER),
 
+    OPTIMIZE_AGGREGATE(RuleToUse.OPTIMIZE_AGGREGATE);
     List<ImmutableList<RelOptRule>> collectionList = new LinkedList<>();
     List<RelOptRule> singleList = new LinkedList<>();
     HepMatchOrder order = HepMatchOrder.ARBITRARY;

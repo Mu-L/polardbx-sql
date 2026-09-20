@@ -1,0 +1,325 @@
+SQL:
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_TOPN=false ENABLE_PARTIAL_GROUP_TOPN=false ENABLE_PARTITION_WISE_WINDOW=false workload_type=ap enable_columnar_optimizer=true enable_sort_window=true)*/ 
+      SELECT   FROM_UNIXTIME(bucket_ts) AS bucket_start,   side FROM (   SELECT     bucket_ts,     side,     ROW_NUMBER() OVER (       PARTITION BY bucket_ts, side       ORDER BY create_time ASC     ) AS rn   FROM (     SELECT       FLOOR(UNIX_TIMESTAMP(create_time) / 86400) * 86400 AS bucket_ts,       CASE         WHEN type IN (1, 3, 6) THEN 'B'         WHEN type IN (2, 4, 5) THEN 'S'       END AS side,       create_time     FROM pm_user_bill     WHERE       user_id = 951556   ) base ) ranked WHERE rn = 1 ORDER BY bucket_ts DESC, side LIMIT 90;
+    plan: |
+      project(bucket_start="bucket_start", side="side")
+        limit(offset=0, fetch=?8)
+          exchange(distribution=single, collation=[2 desc-nulls-last, 1 asc-nulls-first])
+            memsort(sort="bucket_ts desc,side asc")
+              project(bucket_start="from_unixtime(bucket_ts)", side="side", bucket_ts="bucket_ts")
+                filter(condition="f3w0$o0 = ?7")
+                  sortwindow(bucket_ts="bucket_ts", side="side", create_time="create_time", f3w0$o0="window#0row_number()", reference windows="window#0=window(partition {0, 1} order by [2 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+                    grouptopn(sort="create_time asc", fetch=?7, group={0, 1})
+                      exchange(distribution=hash[0, 1], collation=[])
+                        project(bucket_ts="floor(unix_timestamp(create_time) / ?0) * ?1", side="case(in($0, row(?2)), ?3, in($0, row(?4)), ?5, null)", create_time="create_time")
+                          osstablescan(tables="cci_pm_user_bill[p1,p2,p3,p4]", shardcount=4, sql="select `type`, `create_time` from `cci_pm_user_bill` as `cci_pm_user_bill` where (`user_id` = ?)")
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_LIMIT=false workload_type=ap enable_columnar_optimizer=true enable_sort_window=false)*/  
+      SELECT   FROM_UNIXTIME(bucket_ts) AS bucket_start,   side FROM (   SELECT     bucket_ts,     side,     ROW_NUMBER() OVER (       PARTITION BY bucket_ts, side       ORDER BY create_time ASC     ) AS rn   FROM (     SELECT       FLOOR(UNIX_TIMESTAMP(create_time) / 86400) * 86400 AS bucket_ts,       CASE         WHEN type IN (1, 3, 6) THEN 'B'         WHEN type IN (2, 4, 5) THEN 'S'       END AS side,       create_time     FROM pm_user_bill     WHERE       user_id = 951556   ) base ) ranked WHERE rn = 1 ORDER BY bucket_ts DESC, side LIMIT 90;
+    plan: |
+      project(bucket_start="bucket_start", side="side")
+        topn(sort="bucket_ts desc,side asc", offset=0, fetch=?8)
+          exchange(distribution=single, collation=[2 desc-nulls-last, 1 asc-nulls-first])
+            topn(sort="bucket_ts desc,side asc", fetch=?8)
+              project(bucket_start="from_unixtime(bucket_ts)", side="side", bucket_ts="bucket_ts")
+                filter(condition="f3w0$o0 = ?7")
+                  sortwindow(bucket_ts="bucket_ts", side="side", create_time="create_time", f3w0$o0="window#0row_number()", reference windows="window#0=window(partition {0, 1} order by [2 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+                    grouptopn(sort="create_time asc", fetch=?7, group={0, 1})
+                      exchange(distribution=hash[0]20, collation=[])
+                        grouptopn(sort="create_time asc", fetch=?7, group={0, 1}, partial=true)
+                          project(bucket_ts="floor(unix_timestamp(create_time) / ?0) * ?1", side="case(in($0, row(?2)), ?3, in($0, row(?4)), ?5, null)", create_time="create_time")
+                            osstablescan(tables="cci_pm_user_bill[p1,p2,p3,p4]", shardcount=4, sql="select `type`, `create_time` from `cci_pm_user_bill` as `cci_pm_user_bill` where (`user_id` = ?)")
+DDL:
+  pm_user_bill:
+    CREATE TABLE `pm_user_bill` ( 	`id` bigint(20) NOT NULL, 	`user_id` bigint(20) NOT NULL DEFAULT '0', 	`broker_id` int(11) NOT NULL DEFAULT '0', 	`s_id` bigint(20) DEFAULT '0', 	`biz_id` tinyint(4) NOT NULL, 	`index_id` int(11) NOT NULL DEFAULT '0', 	`instrument_id` bigint(20) NOT NULL DEFAULT '0', 	`instrument_name` varchar(64) NOT NULL DEFAULT '', 	`margin_mode` tinyint(4) NOT NULL DEFAULT '0', 	`coin_id` int(11) NOT NULL DEFAULT '0', 	`type` int(11) NOT NULL DEFAULT '0', 	`size` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000', 	`profit` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000', 	`price` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000', 	`amount` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000', 	`before_balance` decimal(64, 16) NOT NULL DEFAULT '0.0000000000000000', 	`after_balance` decimal(64, 16) NOT NULL DEFAULT '0.0000000000000000', 	`before_isolated_balance` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000', 	`after_isolated_balance` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000', 	`fee` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000', 	`fee_rate` decimal(16, 8) NOT NULL DEFAULT '0.00000000', 	`interest` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000', 	`trade_side` tinyint(4) NOT NULL DEFAULT '0', 	`refer_id` bigint(20) NOT NULL DEFAULT '0', 	`deal_time` timestamp(3) NULL DEFAULT NULL, 	`trade_id` bigint(20) DEFAULT NULL, 	`opposite_user_id` bigint(20) DEFAULT NULL, 	`opposite_broker_id` int(11) DEFAULT NULL, 	`opposite_order_id` bigint(20) DEFAULT NULL, 	`opposite_s_id` bigint(20) DEFAULT '0', 	`tag` varchar(32) DEFAULT NULL, 	`target` int(11) NOT NULL DEFAULT '0', 	`multiplier` decimal(16, 4) NOT NULL DEFAULT '0.0000', 	`contract_val` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000', 	`client_oid` varchar(64) DEFAULT '', 	`fill_idx_px` decimal(32, 16) DEFAULT NULL, 	`fill_px_vol` decimal(32, 16) DEFAULT NULL, 	`fill_px_usd` decimal(32, 16) DEFAULT NULL, 	`fill_mark_vol` decimal(32, 16) DEFAULT NULL, 	`fill_fwd_px` decimal(32, 16) DEFAULT NULL, 	`fill_mark_px` decimal(32, 16) DEFAULT NULL, 	`has_bonus` tinyint(1) NOT NULL DEFAULT '0', 	`partition_time` datetime(3) NOT NULL, 	`create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), 	`modify_time` timestamp(3) NULL DEFAULT CURRENT_TIMESTAMP(3), 	`created_at` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), 	`modified_at` timestamp(3) NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3), 	PRIMARY KEY (`id`), 	CLUSTERED COLUMNAR INDEX `cci_pm_user_bill`(`create_time`, `instrument_id`) PARTITION BY HASH (`id`) PARTITIONS 4, 	KEY `auto_shard_key_user_id` USING BTREE (`user_id`), 	KEY `auto_shard_key_partition_time` USING BTREE (`partition_time`), 	KEY `indx2` (`user_id`, `broker_id`, `type`, `id`, `instrument_id`, `biz_id`, `refer_id`, `s_id`, `create_time`), 	KEY `idx_refer_id` (`user_id`, `refer_id`, `id`, `type`, `instrument_id`, `biz_id`, `s_id`, `create_time`), 	KEY `idx_modified_at` (`modified_at`), 	KEY `idx_brokerid_bizid_type` (`user_id`, `broker_id`, `biz_id`, `type`, `id`, `instrument_id`, `refer_id`, `s_id`, `create_time`), 	KEY `idx_brokerid_instrumentid_bizid_type` (`user_id`, `broker_id`, `instrument_id`, `biz_id`, `type`, `id`, `refer_id`, `s_id`, `create_time`), 	KEY `idx_brokerid_coinid_type` (`user_id`, `broker_id`, `coin_id`, `type`, `id`, `instrument_id`, `s_id`, `create_time`), 	KEY `idx_brokerid_bizid_coinid_type` (`user_id`, `broker_id`, `biz_id`, `coin_id`, `type`, `id`, `instrument_id`, `s_id`, `create_time`), 	KEY `idx_user_biz` (`user_id`, `broker_id`, `biz_id`, `id`, `type`, `coin_id`, `instrument_id`, `s_id`, `create_time`, `partition_time`), 	KEY `indx2_new` (`user_id`, `broker_id`, `type`, `id`, `instrument_id`, `biz_id`, `refer_id`, `s_id`, `create_time`, `margin_mode`, `partition_time`), 	KEY `idx_refer_id_new` (`user_id`, `refer_id`, `id`, `type`, `instrument_id`, `biz_id`, `s_id`, `create_time`, `broker_id`, `partition_time`), 	KEY `idx_brokerid_bizid_type_new` (`user_id`, `broker_id`, `biz_id`, `type`, `id`, `instrument_id`, `refer_id`, `s_id`, `create_time`, `margin_mode`, `partition_time`, `index_id`), 	KEY `idx_brokerid_instrumentid_bizid_type_new` (`user_id`, `broker_id`, `instrument_id`, `biz_id`, `type`, `id`, `refer_id`, `s_id`, `create_time`, `partition_time`), 	KEY `idx_brokerid_coinid_type_new` (`user_id`, `broker_id`, `coin_id`, `type`, `id`, `instrument_id`, `s_id`, `create_time`, `partition_time`), 	KEY `idx_brokerid_bizid_coinid_type_new` (`user_id`, `broker_id`, `biz_id`, `coin_id`, `type`, `id`, `instrument_id`, `s_id`, `create_time`, `margin_mode`, `partition_time`) ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 PARTITION BY KEY (`user_id`) PARTITIONS 4 SUBPARTITION BY RANGE (TO_DAYS(`partition_time`)) ( 	SUBPARTITION `p202402` VALUES LESS THAN (739311), 	SUBPARTITION `p202403` VALUES LESS THAN (739342), 	SUBPARTITION `p202404` VALUES LESS THAN (739372), 	SUBPARTITION `p202405` VALUES LESS THAN (739403), 	SUBPARTITION `p202406` VALUES LESS THAN (739433), 	SUBPARTITION `p202407` VALUES LESS THAN (739464), 	SUBPARTITION `p202408` VALUES LESS THAN (739495), 	SUBPARTITION `p202409` VALUES LESS THAN (739525), 	SUBPARTITION `p202410` VALUES LESS THAN (739556), 	SUBPARTITION `p202411` VALUES LESS THAN (739586), 	SUBPARTITION `p202412` VALUES LESS THAN (739617), 	SUBPARTITION `p202501` VALUES LESS THAN (739648), 	SUBPARTITION `p202502` VALUES LESS THAN (739676), 	SUBPARTITION `p202503` VALUES LESS THAN (739707), 	SUBPARTITION `p202504` VALUES LESS THAN (739737), 	SUBPARTITION `p202505` VALUES LESS THAN (739768) );
+STATISTICS:
+  pm_user_bill:
+    25861937774
+  pm_user_bill.after_balance.cardinality:
+    240989924
+  pm_user_bill.after_balance.null_count:
+    0
+  pm_user_bill.after_balance.sample_rate:
+    3.8666863E-6
+  pm_user_bill.after_isolated_balance.cardinality:
+    5434339
+  pm_user_bill.after_isolated_balance.null_count:
+    0
+  pm_user_bill.after_isolated_balance.sample_rate:
+    3.8666863E-6
+  pm_user_bill.amount.cardinality:
+    20454974
+  pm_user_bill.amount.null_count:
+    0
+  pm_user_bill.amount.sample_rate:
+    3.8666863E-6
+  pm_user_bill.before_balance.cardinality:
+    236345438
+  pm_user_bill.before_balance.null_count:
+    0
+  pm_user_bill.before_balance.sample_rate:
+    3.8666863E-6
+  pm_user_bill.before_isolated_balance.cardinality:
+    5451794
+  pm_user_bill.before_isolated_balance.null_count:
+    0
+  pm_user_bill.before_isolated_balance.sample_rate:
+    3.8666863E-6
+  pm_user_bill.biz_id.cardinality:
+    6
+  pm_user_bill.biz_id.null_count:
+    0
+  pm_user_bill.biz_id.sample_rate:
+    3.8666863E-6
+  pm_user_bill.broker_id.cardinality:
+    1
+  pm_user_bill.broker_id.null_count:
+    0
+  pm_user_bill.broker_id.sample_rate:
+    3.8666863E-6
+  pm_user_bill.client_oid.cardinality:
+    24716431
+  pm_user_bill.client_oid.null_count:
+    6595
+  pm_user_bill.client_oid.sample_rate:
+    3.8666863E-6
+  pm_user_bill.coin_id.cardinality:
+    10474
+  pm_user_bill.coin_id.null_count:
+    0
+  pm_user_bill.coin_id.sample_rate:
+    3.8666863E-6
+  pm_user_bill.contract_val.cardinality:
+    15
+  pm_user_bill.contract_val.null_count:
+    0
+  pm_user_bill.contract_val.sample_rate:
+    3.8666863E-6
+  pm_user_bill.created_at.cardinality:
+    16285560
+  pm_user_bill.created_at.null_count:
+    0
+  pm_user_bill.created_at.sample_rate:
+    3.8666863E-6
+  pm_user_bill.create_time.cardinality:
+    22777608
+  pm_user_bill.create_time.null_count:
+    0
+  pm_user_bill.create_time.sample_rate:
+    3.8666863E-6
+  pm_user_bill.deal_time.cardinality:
+    21392828
+  pm_user_bill.deal_time.null_count:
+    0
+  pm_user_bill.deal_time.sample_rate:
+    3.8666863E-6
+  pm_user_bill.fee.cardinality:
+    56637512
+  pm_user_bill.fee.null_count:
+    0
+  pm_user_bill.fee.sample_rate:
+    3.8666863E-6
+  pm_user_bill.fee_rate.cardinality:
+    56215
+  pm_user_bill.fee_rate.null_count:
+    0
+  pm_user_bill.fee_rate.sample_rate:
+    3.8666863E-6
+  pm_user_bill.fill_fwd_px.cardinality:
+    12787
+  pm_user_bill.fill_fwd_px.null_count:
+    0
+  pm_user_bill.fill_fwd_px.sample_rate:
+    3.8666863E-6
+  pm_user_bill.fill_idx_px.cardinality:
+    10585427
+  pm_user_bill.fill_idx_px.null_count:
+    0
+  pm_user_bill.fill_idx_px.sample_rate:
+    3.8666863E-6
+  pm_user_bill.fill_mark_px.cardinality:
+    11183182
+  pm_user_bill.fill_mark_px.null_count:
+    0
+  pm_user_bill.fill_mark_px.sample_rate:
+    3.8666863E-6
+  pm_user_bill.fill_mark_vol.cardinality:
+    12787
+  pm_user_bill.fill_mark_vol.null_count:
+    0
+  pm_user_bill.fill_mark_vol.sample_rate:
+    3.8666863E-6
+  pm_user_bill.fill_px_usd.cardinality:
+    12787
+  pm_user_bill.fill_px_usd.null_count:
+    0
+  pm_user_bill.fill_px_usd.sample_rate:
+    3.8666863E-6
+  pm_user_bill.fill_px_vol.cardinality:
+    12787
+  pm_user_bill.fill_px_vol.null_count:
+    0
+  pm_user_bill.fill_px_vol.sample_rate:
+    3.8666863E-6
+  pm_user_bill.has_bonus.cardinality:
+    2
+  pm_user_bill.has_bonus.null_count:
+    0
+  pm_user_bill.has_bonus.sample_rate:
+    3.8666863E-6
+  pm_user_bill.id.cardinality:
+    327866135
+  pm_user_bill.id.null_count:
+    0
+  pm_user_bill.id.sample_rate:
+    3.8666863E-6
+  pm_user_bill.index_id.cardinality:
+    2358
+  pm_user_bill.index_id.null_count:
+    0
+  pm_user_bill.index_id.sample_rate:
+    3.8666863E-6
+  pm_user_bill.instrument_id.cardinality:
+    28210
+  pm_user_bill.instrument_id.null_count:
+    0
+  pm_user_bill.instrument_id.sample_rate:
+    3.8666863E-6
+  pm_user_bill.instrument_name.cardinality:
+    29208
+  pm_user_bill.instrument_name.null_count:
+    0
+  pm_user_bill.instrument_name.sample_rate:
+    3.8666863E-6
+  pm_user_bill.interest.cardinality:
+    2336132
+  pm_user_bill.interest.null_count:
+    0
+  pm_user_bill.interest.sample_rate:
+    3.8666863E-6
+  pm_user_bill.margin_mode.cardinality:
+    5
+  pm_user_bill.margin_mode.null_count:
+    0
+  pm_user_bill.margin_mode.sample_rate:
+    3.8666863E-6
+  pm_user_bill.modified_at.cardinality:
+    16285560
+  pm_user_bill.modified_at.null_count:
+    0
+  pm_user_bill.modified_at.sample_rate:
+    3.8666863E-6
+  pm_user_bill.modify_time.cardinality:
+    22791178
+  pm_user_bill.modify_time.null_count:
+    0
+  pm_user_bill.modify_time.sample_rate:
+    3.8666863E-6
+  pm_user_bill.multiplier.cardinality:
+    4
+  pm_user_bill.multiplier.null_count:
+    0
+  pm_user_bill.multiplier.sample_rate:
+    3.8666863E-6
+  pm_user_bill.opposite_broker_id.cardinality:
+    2
+  pm_user_bill.opposite_broker_id.null_count:
+    0
+  pm_user_bill.opposite_broker_id.sample_rate:
+    3.8666863E-6
+  pm_user_bill.opposite_order_id.cardinality:
+    46483668
+  pm_user_bill.opposite_order_id.null_count:
+    0
+  pm_user_bill.opposite_order_id.sample_rate:
+    3.8666863E-6
+  pm_user_bill.opposite_s_id.cardinality:
+    26099
+  pm_user_bill.opposite_s_id.null_count:
+    0
+  pm_user_bill.opposite_s_id.sample_rate:
+    3.8666863E-6
+  pm_user_bill.opposite_user_id.cardinality:
+    5606148
+  pm_user_bill.opposite_user_id.null_count:
+    0
+  pm_user_bill.opposite_user_id.sample_rate:
+    3.8666863E-6
+  pm_user_bill.partition_time.cardinality:
+    22777608
+  pm_user_bill.partition_time.null_count:
+    0
+  pm_user_bill.partition_time.sample_rate:
+    3.8666863E-6
+  pm_user_bill.price.cardinality:
+    15523993
+  pm_user_bill.price.null_count:
+    0
+  pm_user_bill.price.sample_rate:
+    3.8666863E-6
+  pm_user_bill.profit.cardinality:
+    23833614
+  pm_user_bill.profit.null_count:
+    0
+  pm_user_bill.profit.sample_rate:
+    3.8666863E-6
+  pm_user_bill.refer_id.cardinality:
+    28772085
+  pm_user_bill.refer_id.null_count:
+    0
+  pm_user_bill.refer_id.sample_rate:
+    3.8666863E-6
+  pm_user_bill.size.cardinality:
+    101918705
+  pm_user_bill.size.null_count:
+    0
+  pm_user_bill.size.sample_rate:
+    3.8666863E-6
+  pm_user_bill.s_id.cardinality:
+    478882
+  pm_user_bill.s_id.null_count:
+    0
+  pm_user_bill.s_id.sample_rate:
+    3.8666863E-6
+  pm_user_bill.tag.cardinality:
+    160521
+  pm_user_bill.tag.null_count:
+    30583
+  pm_user_bill.tag.sample_rate:
+    3.8666863E-6
+  pm_user_bill.target.cardinality:
+    510
+  pm_user_bill.target.null_count:
+    0
+  pm_user_bill.target.sample_rate:
+    3.8666863E-6
+  pm_user_bill.trade_id.cardinality:
+    58058744
+  pm_user_bill.trade_id.null_count:
+    0
+  pm_user_bill.trade_id.sample_rate:
+    3.8666863E-6
+  pm_user_bill.trade_side.cardinality:
+    3
+  pm_user_bill.trade_side.null_count:
+    0
+  pm_user_bill.trade_side.sample_rate:
+    3.8666863E-6
+  pm_user_bill.type.cardinality:
+    4632
+  pm_user_bill.type.null_count:
+    0
+  pm_user_bill.type.sample_rate:
+    3.8666863E-6
+  pm_user_bill.user_id.cardinality:
+    3831079
+  pm_user_bill.user_id.null_count:
+    0
+  pm_user_bill.user_id.sample_rate:
+    3.8666863E-6
+CONFIG:
+  ENABLE_MPP:
+    true
+  defaltxxAPPName.isNew:
+    true

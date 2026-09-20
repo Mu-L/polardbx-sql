@@ -30,7 +30,14 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.druid.sql.ast.SQLObjectImpl;
 import com.alibaba.polardbx.druid.sql.ast.TDDLHint;
+import com.alibaba.polardbx.druid.util.StringUtils;
+import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
+import com.alibaba.polardbx.gms.module.LogPattern;
+import com.alibaba.polardbx.gms.module.Module;
+import com.alibaba.polardbx.gms.module.ModuleLogInfo;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
+import com.alibaba.polardbx.gms.util.ModuleUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.schema.InformationSchema;
@@ -42,10 +49,17 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
 import com.alibaba.polardbx.optimizer.core.planner.PlaceHolderExecutionPlan;
 import com.alibaba.polardbx.optimizer.core.planner.PlanCache;
+import com.alibaba.polardbx.optimizer.core.planner.SqlConverter;
 import com.alibaba.polardbx.optimizer.core.rel.BaseQueryOperation;
 import com.alibaba.polardbx.optimizer.core.rel.BaseTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.CollectTableNameVisitor;
+import com.alibaba.polardbx.optimizer.core.rel.ExternalTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.LogicalExternalInsert;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
+import com.alibaba.polardbx.optimizer.core.rel.SqlNodeTransformBaselineExprVisitor;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadType;
+import com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertType;
+import com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertUtil;
 import com.alibaba.polardbx.optimizer.parse.bean.SqlParameterized;
 import com.alibaba.polardbx.optimizer.planmanager.feedback.PhyFeedBack;
 import com.alibaba.polardbx.optimizer.planmanager.parametric.Point;
@@ -55,7 +69,6 @@ import com.alibaba.polardbx.optimizer.sharding.label.PredicateNode;
 import com.alibaba.polardbx.optimizer.sharding.result.ExtractionResult;
 import com.alibaba.polardbx.optimizer.utils.ExplainResult;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
-import com.alibaba.polardbx.optimizer.workload.WorkloadType;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
@@ -70,14 +83,20 @@ import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexUtil;
+import org.apache.calcite.sql.SqlCall;
+import org.apache.calcite.sql.SqlExplainFormat;
+import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
+import org.apache.calcite.sql.SqlSelect;
+import org.apache.calcite.sql.SqlUtil;
 import org.apache.calcite.sql.SqlWith;
 import org.apache.calcite.sql.SqlWithItem;
 import org.apache.calcite.sql.TDDLSqlSelect;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
+import org.apache.calcite.sql.util.SqlShuttle;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.JsonBuilder;
 import org.jetbrains.annotations.NotNull;
@@ -106,9 +125,17 @@ import static com.alibaba.polardbx.optimizer.utils.ExplainResult.isExplainStatis
 import static org.apache.calcite.sql.SqlKind.STATISTICS_AFFINITY;
 
 public class PlanManagerUtil {
-    private static final Logger logger = LoggerFactory.getLogger(PlanManagerUtil.class);
 
     public static final Logger loggerSpm = LoggerFactory.getLogger("spm");
+
+    public static enum PlanBuildPath {
+        PLAN_CACHE,
+        BASELINE_FIX_UPDATE,
+        BASELINE_NEW_ACC,
+        BASELINE_NEW_UNACC,
+        FEEDBACK,
+        PREPARE
+    }
 
     public static void applyCache(RelNode post) {
         /**
@@ -148,6 +175,54 @@ public class PlanManagerUtil {
             return drdsRelJsonReader.read(json);
         } catch (IOException e) {
             throw new IllegalArgumentException("internalize plan error: " + json, e);
+        }
+    }
+
+    public static Map<String, RexNode> getRexNodeTableNameMap(RelNode rel) {
+        Map<LogicalTableScan, RexNode> scanMap = getRexNodeTableMap(rel);
+
+        Map<String, RexNode> tableNameMap = Maps.newHashMap();
+        if (scanMap == null || scanMap.isEmpty()) {
+            return tableNameMap;
+        }
+        for (Map.Entry<LogicalTableScan, RexNode> entry : scanMap.entrySet()) {
+            tableNameMap.put(entry.getKey().getTable().getQualifiedName().get(1), entry.getValue());
+        }
+        return tableNameMap;
+    }
+
+    /**
+     * Builds a RexNode object.
+     *
+     * @param expr The expression node
+     * @param schemaName The database schema name
+     * @param rexNodeTableMap A map mapping tables to RexNodes
+     * @param plan The plan node
+     * @param executionContext The execution context
+     * @return The converted RexNode object
+     */
+    public static RexNode buildRexNode(SqlNode expr,
+                                       String schemaName,
+                                       Map<String, RexNode> rexNodeTableMap,
+                                       RelNode plan,
+                                       ExecutionContext executionContext) {
+        // Get an instance of SqlConverter
+        SqlConverter sqlConverter = SqlConverter.getInstance(schemaName, executionContext);
+
+        // Create a SqlNode transformation visitor
+        SqlNodeTransformBaselineExprVisitor visitor =
+            new SqlNodeTransformBaselineExprVisitor(rexNodeTableMap, executionContext.getSchemaManager(),
+                executionContext.getParams());
+
+        // Use the visitor pattern to update the expr
+        expr = expr.accept(visitor);
+
+        try {
+            // Convert the SqlNode to a RexNode
+            return sqlConverter.convertBaselineExpr(expr, PlannerContext.getPlannerContext(plan));
+        } catch (Exception e) {
+            // Handle any exceptions that may occur
+            throw new RuntimeException("Failed to convert baseline expression", e);
         }
     }
 
@@ -212,12 +287,12 @@ public class PlanManagerUtil {
             }
             infl.end();
         } catch (Exception e) {
-            //
+            OptimizerAlertUtil.spmAlert(OptimizerAlertType.SPM_SERIALIZATION_ERR, null, e);
+            loggerSpm.error(e);
         } finally {
             try {
                 bos.close();
             } catch (IOException e) {
-                logger.warn("close error");
             }
         }
         return bos.toByteArray();
@@ -236,14 +311,57 @@ public class PlanManagerUtil {
                 bos.write(outputByte, 0, len);
             }
             defl.end();
+        } catch (Exception e) {
+            OptimizerAlertUtil.spmAlert(OptimizerAlertType.SPM_SERIALIZATION_ERR, null, e);
+            loggerSpm.error(e);
         } finally {
             bos.close();
         }
         return bos.toByteArray();
     }
 
-    public static boolean useSPM(String schemaName, ExecutionPlan executionPlan, String parameterizedSql,
-                                 ExecutionContext executionContext) {
+    public static void logPlanBuild(PlanBuildPath source,
+                                    String parameterizedSql,
+                                    ExecutionContext ec,
+                                    RelNode plan) {
+        if (source == null || StringUtils.isEmpty(parameterizedSql) || ec == null || plan == null) {
+            return;
+        }
+        String schema = ec.getSchemaName();
+        if (DynamicConfig.getInstance().isEnableLogPlanBuild() && !SystemDbHelper.isDBBuildIn(schema)) {
+            Integer bid = PlanManager.getInstance().getBaselineIdBySql(schema, parameterizedSql);
+            logPlanBuild(source, bid, ec, plan);
+        }
+    }
+
+    public static void logPlanBuild(PlanBuildPath source,
+                                    Integer bid,
+                                    ExecutionContext ec,
+                                    RelNode plan) {
+        // log plan build
+        String schema = ec.getSchemaName();
+        if (DynamicConfig.getInstance().isEnableLogPlanBuild() && !SystemDbHelper.isDBBuildIn(schema)) {
+            // source:%s, schema:%s, bid:%s, tid:%s, params:%s, statistic:%, digest:%s
+            String logicalPlanString = RelOptUtil.dumpPlan("",
+                plan,
+                SqlExplainFormat.TEXT,
+                SqlExplainLevel.NO_ATTRIBUTES);
+            String[] logParams = new String[] {
+                source.name(),
+                schema,
+                bid == null ? "-1" : bid + "",
+                ec.getSqlTemplateId(),
+                ModuleUtil.buildParametersLog(ec.getParams() == null ? null : ec.getParams().getCurrentParameter()),
+                PlannerContext.getPlannerContext(plan).formatAndClearStatisticTrace(),
+                logicalPlanString,
+                ec.getTraceId()
+            };
+            ModuleLogInfo.getInstance().logInfo(Module.SPM, LogPattern.PLAN_BUILD, logParams);
+        }
+    }
+
+    public static boolean useBaseline(String schemaName, ExecutionPlan executionPlan, SqlParameterized sqlParameterized,
+                                      ExecutionContext executionContext) {
         if (DynamicConfig.getInstance().enableExtremePerformance()) {
             return false;
         }
@@ -261,16 +379,24 @@ public class PlanManagerUtil {
             return false;
         }
 
-        if (parameterizedSql != null && PlanManager.getInstance().getBaselineMap(schemaName)
-            .containsKey(parameterizedSql)) {
-            return true;
+        PlannerContext plannerContext = PlannerContext.getPlannerContext(executionPlan.getPlan());
+        if (sqlParameterized != null) {
+            // don't use spm for big in
+            if (plannerContext != null) {
+                if (plannerContext.isColumnarOptimizer() && sqlParameterized.isBigIn()) {
+                    return false;
+                }
+            }
+            String parameterizedSql = sqlParameterized.getSql();
+            if (parameterizedSql != null && PlanManager.getInstance().getBaselineMap(schemaName)
+                .containsKey(parameterizedSql)) {
+                return true;
+            }
         }
 
-        if (parameterizedSql != null && parameterizedSql.length() > 100000) {
+        if (!baselineSupported(executionPlan.getPlan())) {
             return false;
         }
-
-        PlannerContext plannerContext = PlannerContext.getPlannerContext(executionPlan.getPlan());
 
         if (!plannerContext.isNeedSPM()) {
             return false;
@@ -332,12 +458,37 @@ public class PlanManagerUtil {
             return false;
         }
 
-        // if plan contain apply return false
-//        if (OptimizerUtils.hasSubquery(executionPlan.getPlan())) {
-//            return false;
-//        }
-
         return true;
+    }
+
+    public static boolean containsDuplicateCol(SqlNode ast) {
+        if (!InstConfUtil.getBool(ConnectionParams.FORBID_DUPLICATE_PUSH)) {
+            return false;
+        }
+        final boolean[] containsDuplicateCol = {false};
+        ast.accept(new SqlShuttle() {
+            public SqlNode visit(final SqlCall call) {
+                if (call.getKind() == SqlKind.SELECT) {
+                    SqlSelect select = (SqlSelect) call;
+                    Set<String> colNames = new HashSet<>();
+                    for (SqlNode sqlNode : select.getSelectList().getList()) {
+                        String colName = sqlNode.toString().toLowerCase();
+                        if (sqlNode instanceof SqlCall) {
+                            SqlCall sqlCall = (SqlCall) sqlNode;
+                            if (sqlCall.getOperandList().size() == 2 && sqlCall.getKind() == SqlKind.AS) {
+                                colName = sqlCall.getOperandList().get(1).toString().toLowerCase();
+                            }
+                        }
+                        if (colNames.contains(colName)) {
+                            containsDuplicateCol[0] = true;
+                        }
+                        colNames.add(colName);
+                    }
+                }
+                return super.visit(call);
+            }
+        });
+        return containsDuplicateCol[0];
     }
 
     public static Set<Pair<String, String>> getTableSetFromAst(SqlNode ast) {
@@ -357,9 +508,11 @@ public class PlanManagerUtil {
             }
         });
 
+        final SqlWith sqlWith = SqlUtil.getCTE(ast);
+
         // deal with [top] SqlWith
-        if (ast instanceof SqlWith) {
-            SqlNodeList sqlNodeList = (SqlNodeList) (((SqlWith) ast).getOperandList().get(0));
+        if (null != sqlWith) {
+            SqlNodeList sqlNodeList = (SqlNodeList) (sqlWith.getOperandList().get(0));
             for (SqlNode sqlNode : sqlNodeList) {
                 if (sqlNode instanceof SqlWithItem) {
                     for (Pair<String, String> p : schemaTables) {
@@ -372,6 +525,17 @@ public class PlanManagerUtil {
             }
         }
         return schemaTables;
+    }
+
+    public static void checkBlockChain(Map<String, TableMeta> tableMetas, ExecutionPlan plan) {
+        for (TableMeta tableMeta : tableMetas.values()) {
+            if (tableMeta.isPolardbxBlockChain()) {
+                plan.setContainsBlockChainTable(true);
+                plan.setBlockChainTable(tableMeta.getTableName());
+                plan.setBlockChainSchema(tableMeta.getSchemaName());
+                break;
+            }
+        }
     }
 
     public static Map<String, TableMeta> getTableMetaSetByTableSet(Set<Pair<String, String>> tableSet,
@@ -439,19 +603,36 @@ public class PlanManagerUtil {
 
                 TableMeta tableMeta;
                 if (ec == null) {
-                    tableMeta = OptimizerContext.getContext(schema).getLatestSchemaManager().getTable(table);
+                    tableMeta = OptimizerContext.getContext(schema).getLatestSchemaManager().getTableWithNull(table);
                 } else {
-                    tableMeta = ec.getSchemaManager(schema).getTable(table);
+                    tableMeta = ec.getSchemaManager(schema).getTableWithNull(table);
+                }
+
+                if (tableMeta == null) {
+                    // TODO handle view
+                    continue;
                 }
 
                 // table version
                 hash.append(tableMeta.getVersion());
             } catch (Throwable e) {
-                loggerSpm.debug("plan manager compute tables hash code error", e);
+                loggerSpm.error("plan manager compute tables hash code error:" + e.getMessage(), e);
+                OptimizerAlertUtil.spmAlert(OptimizerAlertType.SPM_TABLE_VERSION_ERR, ec, e);
                 return PlanManager.ERROR_TABLES_HASH_CODE;
             }
         }
         return hash.result();
+    }
+
+    public static boolean isVersionCompatible(int curVersion, int planVersion) {
+        return curVersion >= planVersion;
+    }
+
+    public static boolean isBaselineCustomized(BaselineInfo baselineInfo) {
+        if (baselineInfo == null || baselineInfo.isDirty()) {
+            return false;
+        }
+        return !baselineInfo.getFixPlans().isEmpty() || baselineInfo.isRebuildAtLoad() || baselineInfo.isHotEvolution();
     }
 
     /**
@@ -492,6 +673,19 @@ public class PlanManagerUtil {
         return null;
     }
 
+    public static boolean containsExternalTable(RelNode node) {
+        if (node instanceof ExternalTableScan
+            || node instanceof LogicalExternalInsert) {
+            return true;
+        }
+        for (RelNode input : node.getInputs()) {
+            if (containsExternalTable(input)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static boolean cacheSqlKind(SqlKind kind) {
         switch (kind) {
         case SELECT:
@@ -508,6 +702,13 @@ public class PlanManagerUtil {
         default:
             return false;
         }
+    }
+
+    public static boolean referencesExternalTable(SqlParameterized sqlParameterized, ExecutionContext ec) {
+        if (ec.getSchemaName() != null && ExternalNameValidator.isExternalSchema(ec.getSchemaName())) {
+            return true;
+        }
+        return sqlParameterized.isReferencesExternalTable();
     }
 
     public static boolean useSpm(SqlParameterized sqlParameterized, ExecutionContext ec) {
@@ -591,6 +792,10 @@ public class PlanManagerUtil {
                     return false;
                 }
             }
+        }
+
+        if (referencesExternalTable(sqlParameterized, ec)) {
+            return false;
         }
 
         return ec.getParamManager().getBoolean(ConnectionParams.PLAN_CACHE);
@@ -787,9 +992,11 @@ public class PlanManagerUtil {
             return false;
         }
         PlannerContext context = PlannerContext.getPlannerContext(plan);
-        if (context.isHasConstantFold()) {
+        if (context.isHasConstantFold() ||
+            context.isHasRecursiveCte()) {
             return false;
         }
+
         return true;
     }
 
@@ -820,8 +1027,9 @@ public class PlanManagerUtil {
                 entry.getValue().accept(finder);
                 processParameterTypeConversion(finder.getMap(), executionContext);
             }
-        } catch (Throwable throwable) {
-            logger.warn("Failed to change parameter type by metadata:", throwable);
+        } catch (Throwable t) {
+            OptimizerAlertUtil.spmAlert(OptimizerAlertType.SPM_CHANGE_PARAM_TYPE_ERR, null, t);
+            loggerSpm.error("Failed to change parameter type by metadata:" + t.getMessage(), t);
         }
     }
 

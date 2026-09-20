@@ -1,28 +1,9 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.executor.partitionmanagement;
 
 import com.alibaba.polardbx.common.DefaultSchema;
 import com.alibaba.polardbx.common.TddlConstants;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
-import com.alibaba.polardbx.common.jdbc.BytesSql;
-import com.alibaba.polardbx.common.jdbc.ParameterContext;
-import com.alibaba.polardbx.common.model.privilege.DbInfo;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
@@ -34,19 +15,18 @@ import com.alibaba.polardbx.executor.backfill.Extractor;
 import com.alibaba.polardbx.gms.tablegroup.PartitionGroupRecord;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
-import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.core.rel.RemoveFkVisitor;
 import com.alibaba.polardbx.optimizer.core.rel.ReplaceTableNameWithQuestionMarkVisitor;
 import com.alibaba.polardbx.optimizer.parse.FastsqlParser;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartitionTupleRouteInfoBuilder;
 import com.alibaba.polardbx.optimizer.tablegroup.TableGroupInfoManager;
-import com.google.common.collect.ImmutableList;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlAlterTableAddPartition;
 import org.apache.calcite.sql.SqlAlterTableDropPartition;
@@ -122,9 +102,12 @@ public class PartitionUtils {
 
         updateBinaryColumnDefault(primaryTableNode, tableMeta);
 
+        RemoveFkVisitor removeFkVisitor = new RemoveFkVisitor();
+        SqlNode primaryTableNodeWithoutFk = primaryTableNode.accept(removeFkVisitor);
+
         ReplaceTableNameWithQuestionMarkVisitor visitor =
             new ReplaceTableNameWithQuestionMarkVisitor(DefaultSchema.getSchemaName(), ec);
-        return primaryTableNode.accept(visitor);
+        return primaryTableNodeWithoutFk.accept(visitor);
     }
 
     public static void updateBinaryColumnDefault(SqlCreateTable sqlCreateTable, TableMeta tableMeta) {
@@ -132,8 +115,10 @@ public class PartitionUtils {
         List<Pair<SqlIdentifier, SqlColumnDeclaration>> newColDefs = new ArrayList<>();
         for (Pair<SqlIdentifier, SqlColumnDeclaration> colDef : GeneralUtil.emptyIfNull(sqlCreateTable.getColDefs())) {
             String columnName = colDef.getKey().getLastName();
+            // columnMeta may be null for externalized columns: physical DDL uses
+            // addr column name (content_addr_) but tableMeta stores logical name (content).
             ColumnMeta columnMeta = tableMeta.getColumnIgnoreCase(columnName);
-            if (columnMeta.isBinaryDefault()) {
+            if (columnMeta != null && columnMeta.isBinaryDefault()) {
                 // Replace default value with SqlBinaryStringLiteral
                 SqlColumnDeclaration oldColDef = colDef.getValue();
                 SqlBinaryStringLiteral newDefaultVal = SqlLiteral.createBinaryString(columnMeta.getField().getDefault(),
@@ -157,7 +142,9 @@ public class PartitionUtils {
                     oldColDef.getInnerStep(),
                     oldColDef.isGeneratedAlways(),
                     oldColDef.isGeneratedAlwaysLogical(),
-                    oldColDef.getGeneratedAlwaysExpr());
+                    oldColDef.getGeneratedAlwaysExpr(),
+                    oldColDef.getCheck(),
+                    oldColDef.getConstraint());
                 newColDefs.add(new Pair<>(colDef.getKey(), newColDef));
             } else {
                 newColDefs.add(colDef);
@@ -291,7 +278,7 @@ public class PartitionUtils {
                 PartitionGroupRecord partitionGroupRecord = partitionGroupRecords.stream()
                     .filter(o -> o.partition_name.equalsIgnoreCase(partitionSpec.getName())).findFirst().orElse(null);
                 if (!partitionSpec.getLocation().getGroupKey()
-                    .equalsIgnoreCase(GroupInfoUtil.buildGroupNameFromPhysicalDb(partitionGroupRecord.phy_db))) {
+                    .equalsIgnoreCase(partitionGroupRecord.getGroup_Name())) {
                     sourcePhyTables
                         .computeIfAbsent(partitionSpec.getLocation().getGroupKey(), k -> new HashSet<String>())
                         .add(partitionSpec.getLocation().getPhyTableName());

@@ -201,6 +201,7 @@ public class MyBaseDalHandler extends BaseDalHandler {
         }
         return resultCursor;
     }
+
     private Cursor handleShowEnginesInColumnarMode(RelNode logicalPlan, ExecutionContext ec) {
         final BaseDalOperation dal = (BaseDalOperation) logicalPlan;
         String schemaName = dal.getSchemaName();
@@ -227,7 +228,6 @@ public class MyBaseDalHandler extends BaseDalHandler {
         }
         return resultCursor;
     }
-
 
     private Cursor handleShowColumnInColumnarMode(RelNode logicalPlan, ExecutionContext ec) {
         final BaseDalOperation dal = (BaseDalOperation) logicalPlan;
@@ -459,7 +459,8 @@ public class MyBaseDalHandler extends BaseDalHandler {
             viewManager = InformationSchemaViewManager.getInstance();
         } else if (RelUtils.informationSchema(desc.getTableName())) {
             viewManager = InformationSchemaViewManager.getInstance();
-        } else if (RelUtils.mysqlSchema(desc.getTableName())) {
+        } else if (RelUtils.mysqlSchema(desc.getTableName()) || RelUtils.isMySqlSchemaWithTable(desc)) {
+//        } else if (RelUtils.mysqlSchema(desc.getTableName())) {
             viewManager = MysqlSchemaViewManager.getInstance();
         } else {
             viewManager = OptimizerContext.getContext(schemaName).getViewManager();

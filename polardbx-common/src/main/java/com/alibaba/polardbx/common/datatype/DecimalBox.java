@@ -16,13 +16,17 @@
 
 package com.alibaba.polardbx.common.datatype;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import io.airlift.slice.Slice;
+import org.openjdk.jol.info.ClassLayout;
 
 /**
  * Decimal Box represent the value in format of:
  * sum + { intVal2 * 10 ^ (9 * 1) + intVal1 * 10 ^ (9 * 0) + fracVal * 10 ^ (9 * -1)}
  */
-public class DecimalBox {
+public class DecimalBox implements MemoryCountable {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(DecimalBox.class).instanceSize();
     private DecimalStructure sum;
     private long intVal1;
     private long intVal2;
@@ -41,6 +45,11 @@ public class DecimalBox {
         isSumZero = true;
 
         this.scale = scale;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(sum);
     }
 
     public void add(int a1, int a2, int b) {
@@ -197,4 +206,5 @@ public class DecimalBox {
     public void setScale(int scale) {
         this.scale = scale;
     }
+
 }

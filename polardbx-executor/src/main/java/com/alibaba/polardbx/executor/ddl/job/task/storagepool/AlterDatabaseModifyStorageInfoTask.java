@@ -17,6 +17,8 @@
 package com.alibaba.polardbx.executor.ddl.job.task.storagepool;
 
 import com.alibaba.fastjson.annotation.JSONCreator;
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
@@ -60,6 +62,7 @@ public class AlterDatabaseModifyStorageInfoTask extends BaseDdlTask {
     }
 
     public void executeImpl(Connection metaDbConnection, ExecutionContext executionContext) {
+        updateSupportedCommands(true, false, metaDbConnection);
         long dbId = DbInfoManager.getInstance().getDbInfo(schemaName).id;
         LocalityManager.getInstance().setLocalityOfDb(dbId, targetLocality);
     }
@@ -75,6 +78,7 @@ public class AlterDatabaseModifyStorageInfoTask extends BaseDdlTask {
 
     @Override
     protected void duringRollbackTransaction(Connection metaDbConnection, ExecutionContext executionContext) {
+        throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, "we don't support rollback in this phase ");
 //        rollbackImpl(metaDbConnection, executionContext);
     }
 

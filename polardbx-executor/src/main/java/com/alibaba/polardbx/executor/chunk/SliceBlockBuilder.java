@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.executor.chunk;
 
 import com.alibaba.polardbx.common.charset.CharsetName;
+import com.alibaba.polardbx.common.collection.MemoryCountableIntArrayList;
 import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.executor.operator.scan.BlockDictionary;

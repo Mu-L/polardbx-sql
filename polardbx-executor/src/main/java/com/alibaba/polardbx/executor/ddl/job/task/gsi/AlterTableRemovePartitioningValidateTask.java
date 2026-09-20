@@ -68,6 +68,7 @@ public class AlterTableRemovePartitioningValidateTask extends BaseValidateTask {
         GsiValidator.validateGsiSupport(schemaName, executionContext);
         GsiValidator.validateCreateOnGsi(schemaName, indexTableName, executionContext);
         TableValidator.validateTableWithCCI(schemaName, primaryTable, executionContext, SqlKind.ALTER_TABLE);
+        TableValidator.validateTableWithPureColumnar(schemaName, primaryTable, executionContext, SqlKind.ALTER_TABLE);
 
         if (addGsiNames != null) {
             addGsiNames.forEach(e -> GsiValidator.validateCreateOnGsi(schemaName, e, executionContext));

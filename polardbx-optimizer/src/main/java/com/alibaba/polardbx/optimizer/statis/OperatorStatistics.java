@@ -38,6 +38,8 @@ public class OperatorStatistics {
 
     protected long runtimeFilteredCount = 0;
 
+    protected long ioReadBytes = 0;
+
     /**
      * Memory consumed by this operator (in bytes)
      */
@@ -72,12 +74,14 @@ public class OperatorStatistics {
     @JsonCreator
     public OperatorStatistics(@JsonProperty("rowCount") long rowCount,
                               @JsonProperty("runtimeFilteredCount") long runtimeFilteredCount,
+                              @JsonProperty("ioReadBytes") long ioReadBytes,
                               @JsonProperty("memory") long memory,
                               @JsonProperty("startupDuration") long startupDuration,
                               @JsonProperty("processDuration") long processDuration,
                               @JsonProperty("closeDuration") long closeDuration,
                               @JsonProperty("spillCnt") int spillCnt) {
         this.rowCount = rowCount;
+        this.ioReadBytes = ioReadBytes;
         this.runtimeFilteredCount = runtimeFilteredCount;
         this.memory = memory;
         this.startupDuration = startupDuration;
@@ -93,6 +97,15 @@ public class OperatorStatistics {
 
     public void addRowCount(long rowCount) {
         this.rowCount += rowCount;
+    }
+
+    @JsonProperty
+    public long getIOReadBytes() {
+        return ioReadBytes;
+    }
+
+    public void addIOReadBytes(long ioReadBytes) {
+        this.ioReadBytes += ioReadBytes;
     }
 
     @JsonProperty

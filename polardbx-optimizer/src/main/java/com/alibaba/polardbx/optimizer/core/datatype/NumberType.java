@@ -177,7 +177,7 @@ public abstract class NumberType<DATA> extends AbstractDataType<DATA> {
                 // 转为BigDecimal对象后再转一次
                 BigDecimal truncatedVal = truncateIncorrectDoubleValue((String) value);
                 // 判断val是否在当前类型的值范围内
-                if (inValueRange(truncatedVal) || truncatedVal.equals(BigDecimal.ZERO)) {
+                if (inValueRange(truncatedVal) || truncatedVal.compareTo(BigDecimal.ZERO) == 0) {
                     return convertFrom(truncatedVal);
                 } else {
                     throw new TruncatedDoubleValueOverflowException("not in column's value range for " + value);

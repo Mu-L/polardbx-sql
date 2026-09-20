@@ -1,0 +1,70 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+drop table if exists dbleerng_bi_t1;
+create table dbleerng_bi_t1
+  (a bigint，b bigint)
+  partition by udf_hash(
+  `a` with udf_params (
+    'dble/numberrange',
+    '{
+      "defaultNode": "0",　
+      "patternValue" : "128",
+      "mapFile":
+        "
+        1-32=0
+        33-64=1
+        65-96=2
+        97-128=3
+        "
+    }'
+  )
+  )
+  partitions 4;
+drop table if exists dbleerng_vc_t1;
+create table dbleerng_vc_t1
+  (a varchar(3)，b bigint)
+  partition by udf_hash(
+  `a` with udf_params (
+    'dble/numberrange',
+  '{
+      "defaultNode": "0",　
+      "patternValue" : "128",
+      "mapFile":
+        "
+        1-32=0
+        33-64=1
+        65-96=2
+        97-128=3
+        "
+    }'
+  )
+  )
+  partitions 4;
+set sql_mode='';
+insert into dbleerng_bi_t1 (a,b) values (32, 32),(128,128);
+insert into dbleerng_vc_t1 (a,b) values ('32', '32'),('128','128');
+select a,b from dbleerng_bi_t1 where a=32;
+a,b
+32,32
+select a,b from dbleerng_vc_t1 where a='32';
+a,b
+32,32
+select a,b from dbleerng_bi_t1 where a=128;
+a,b
+128,128
+select a,b from dbleerng_vc_t1 where a='128';
+a,b
+128,128
+select a,b,part_route('', 'dbleerng_bi_t1', a) as part from dbleerng_bi_t1 order by b;
+a,b,part
+32,32,p1
+128,128,p4
+select a,b,part_route('', 'dbleerng_vc_t1', a) as part from dbleerng_vc_t1 order by b;
+a,b,part
+32,32,p1
+128,128,p4
+insert into dbleerng_vc_t1 (a,b) values ('1270', 1270);
+select a,b,part_route('', 'dbleerng_vc_t1', a) as part from dbleerng_vc_t1 where a='127' order by b;
+a,b,part
+127,1270,p4

@@ -86,7 +86,7 @@ public class BroadcastWriteWithXATest extends CrudBasedLockTestCase {
             executeErrorAssert(tddlConnection,
                 sql,
                 null,
-                "[TDDL-4603][ERR_ACCROSS_DB_TRANSACTION] Transaction accross db is not supported in current transaction policy");
+                "[TDDL-4603][ERR_CROSS_GROUP_TRANSACTION] Transaction accross db is not supported in current transaction policy");
 
             sql = "ROLLBACK";
             executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
@@ -117,7 +117,7 @@ public class BroadcastWriteWithXATest extends CrudBasedLockTestCase {
             executeErrorAssert(tddlConnection,
                 sql,
                 null,
-                "[TDDL-4603][ERR_ACCROSS_DB_TRANSACTION] Transaction accross db is not supported in current transaction policy");
+                "[TDDL-4603][ERR_CROSS_GROUP_TRANSACTION] Transaction accross db is not supported in current transaction policy");
         }
 
         sql = "ROLLBACK";

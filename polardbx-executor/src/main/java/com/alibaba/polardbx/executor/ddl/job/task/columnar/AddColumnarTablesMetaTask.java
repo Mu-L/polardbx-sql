@@ -18,14 +18,22 @@ package com.alibaba.polardbx.executor.ddl.job.task.columnar;
 
 import com.alibaba.fastjson.annotation.JSONCreator;
 import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.ddl.job.meta.TableMetaChanger;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseGmsTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
+import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
+import com.alibaba.polardbx.executor.sync.TableMetaChangePreemptiveSyncAction;
 import com.alibaba.polardbx.executor.utils.DdlUtils;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
 import com.alibaba.polardbx.gms.metadb.table.ColumnsRecord;
+import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
+import com.alibaba.polardbx.gms.sync.SyncScope;
+import com.alibaba.polardbx.optimizer.config.table.PreemptiveTime;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import lombok.Getter;
+import org.apache.commons.lang3.StringUtils;
 
 import java.sql.Connection;
 import java.util.List;
@@ -70,7 +78,26 @@ public class AddColumnarTablesMetaTask extends BaseGmsTask {
     }
 
     @Override
+    protected void updateTableVersion(Connection metaDbConnection) {
+        try {
+            TableInfoManager.updateTableVersionWithoutDataId(schemaName, columnarTableName, metaDbConnection);
+        } catch (Exception e) {
+            throw GeneralUtil.nestedException(e);
+        }
+    }
+
+    @Override
     protected void onRollbackSuccess(ExecutionContext executionContext) {
-        TableMetaChanger.afterRemovingTableMeta(schemaName, logicalTableName);
+        PreemptiveTime preemptiveTime = PreemptiveTime.getPreemptiveTimeFromExecutionContext(executionContext,
+            ConnectionParams.PREEMPTIVE_MDL_INITWAIT, ConnectionParams.PREEMPTIVE_MDL_INTERVAL);
+        if (!StringUtils.isEmpty(columnarTableName)) {
+            SyncManagerHelper.syncThrowExceptions(
+                new TableMetaChangePreemptiveSyncAction(schemaName, columnarTableName, preemptiveTime), SyncScope.ALL);
+        }
+    }
+
+    @Override
+    protected String remark() {
+        return "|tableName: " + columnarTableName;
     }
 }

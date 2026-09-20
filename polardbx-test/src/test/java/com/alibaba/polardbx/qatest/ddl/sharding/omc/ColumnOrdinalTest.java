@@ -26,6 +26,7 @@ import com.alibaba.polardbx.druid.sql.repository.SchemaRepository;
 import com.alibaba.polardbx.druid.util.JdbcConstants;
 import com.alibaba.polardbx.executor.common.StorageInfoManager;
 import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
+import com.alibaba.polardbx.qatest.ReplicaIgnore;
 import com.alibaba.polardbx.qatest.util.ConnectionManager;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.qatest.util.RandomUtils;
@@ -52,6 +53,7 @@ import static com.alibaba.polardbx.qatest.validator.DataOperator.executeOnMysqlA
 import static com.alibaba.polardbx.qatest.validator.DataValidator.selectContentSameAssert;
 
 @NotThreadSafe
+@ReplicaIgnore(ignoreReason = "set session variables")
 public class ColumnOrdinalTest extends DDLBaseNewDBTestCase {
     private final boolean supportsAlterType =
         StorageInfoManager.checkSupportAlterType(ConnectionManager.getInstance().getMysqlDataSource());
@@ -85,6 +87,8 @@ public class ColumnOrdinalTest extends DDLBaseNewDBTestCase {
     private static final String[] CHANGE_GSI_COLUMNS = {"\"f\"", "UNIQUE", "cc", "a", "bb"};
 
     private static final String USE_OMC_ALGORITHM = " ALGORITHM=OMC ";
+
+    protected static final String OMC_DISABLE_30 = "ENABLE_OMC_30=FALSE";
 
     private static String buildCmdExtra(String... params) {
         if (0 == params.length) {
@@ -158,7 +162,7 @@ public class ColumnOrdinalTest extends DDLBaseNewDBTestCase {
         executeOnMysqlAndTddl(mysqlConnection, tddlConnection, insert, insert, null, false);
 
         for (String param : params) {
-            String alterSql = String.format(param, tableName);
+            String alterSql = buildCmdExtra(OMC_DISABLE_30) + String.format(param, tableName);
             execDdlWithRetry(tddlDatabase1, tableName, alterSql + USE_OMC_ALGORITHM, tddlConnection);
             JdbcUtil.executeUpdateSuccess(mysqlConnection, alterSql);
             selectContentSameAssert("select * from " + tableName, null, mysqlConnection, tddlConnection);
@@ -258,28 +262,38 @@ public class ColumnOrdinalTest extends DDLBaseNewDBTestCase {
         String partDef = " dbpartition by hash(a)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partDef);
 
-        String alter = String.format("alter table %s modify column b bigint first, algorithm=omc", tableName);
+        String alter =
+            buildCmdExtra(OMC_DISABLE_30) + String.format("alter table %s modify column b bigint first, algorithm=omc",
+                tableName);
         JdbcUtil.executeUpdateFailed(tddlConnection, alter, "");
 
-        alter = String.format("alter table %s modify column b bigint after e, algorithm=omc", tableName);
+        alter = buildCmdExtra(OMC_DISABLE_30) + String.format(
+            "alter table %s modify column b bigint after e, algorithm=omc", tableName);
         JdbcUtil.executeUpdateFailed(tddlConnection, alter, "");
 
-        alter = String.format("alter table %s modify column d bigint first, algorithm=omc", tableName);
+        alter =
+            buildCmdExtra(OMC_DISABLE_30) + String.format("alter table %s modify column d bigint first, algorithm=omc",
+                tableName);
         JdbcUtil.executeUpdateFailed(tddlConnection, alter, "");
 
-        alter = String.format("alter table %s modify column d bigint after e, algorithm=omc", tableName);
+        alter = buildCmdExtra(OMC_DISABLE_30) + String.format(
+            "alter table %s modify column d bigint after e, algorithm=omc", tableName);
         JdbcUtil.executeUpdateFailed(tddlConnection, alter, "");
 
-        alter = String.format("alter table %s change column b f bigint first, algorithm=omc", tableName);
+        alter = buildCmdExtra(OMC_DISABLE_30) + String.format(
+            "alter table %s change column b f bigint first, algorithm=omc", tableName);
         JdbcUtil.executeUpdateFailed(tddlConnection, alter, "");
 
-        alter = String.format("alter table %s change column b f bigint after e, algorithm=omc", tableName);
+        alter = buildCmdExtra(OMC_DISABLE_30) + String.format(
+            "alter table %s change column b f bigint after e, algorithm=omc", tableName);
         JdbcUtil.executeUpdateFailed(tddlConnection, alter, "");
 
-        alter = String.format("alter table %s change column d f bigint first, algorithm=omc", tableName);
+        alter = buildCmdExtra(OMC_DISABLE_30) + String.format(
+            "alter table %s change column d f bigint first, algorithm=omc", tableName);
         JdbcUtil.executeUpdateFailed(tddlConnection, alter, "");
 
-        alter = String.format("alter table %s change column d f bigint after e, algorithm=omc", tableName);
+        alter = buildCmdExtra(OMC_DISABLE_30) + String.format(
+            "alter table %s change column d f bigint after e, algorithm=omc", tableName);
         JdbcUtil.executeUpdateFailed(tddlConnection, alter, "");
     }
 }

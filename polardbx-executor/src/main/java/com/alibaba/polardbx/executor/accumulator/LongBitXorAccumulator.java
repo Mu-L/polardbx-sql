@@ -16,20 +16,30 @@
 
 package com.alibaba.polardbx.executor.accumulator;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.executor.accumulator.state.LongGroupState;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
+import org.openjdk.jol.info.ClassLayout;
 
 public class LongBitXorAccumulator extends AbstractAccumulator {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(LongBitXorAccumulator.class).instanceSize();
 
+    @FieldMemoryCounter(value = false)
     private static final DataType[] INPUT_TYPES = new DataType[] {DataTypes.LongType};
 
     private final LongGroupState state;
 
     LongBitXorAccumulator(int capacity) {
         this.state = new LongGroupState(capacity);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(state);
     }
 
     @Override

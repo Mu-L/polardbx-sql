@@ -115,6 +115,10 @@ public class PropertiesUtil {
         return Boolean.valueOf(configProp.getProperty("columnar_mode", "false"));
     }
 
+    public static boolean icbcTest() {
+        return Boolean.valueOf(configProp.getProperty("icbc_test", "false"));
+    }
+
     public static boolean skipCreateColumnarIndex() {
         return Boolean.valueOf(configProp.getProperty("skip_create_columnar_index", "false"));
     }

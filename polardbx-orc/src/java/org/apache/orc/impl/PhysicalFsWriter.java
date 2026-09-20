@@ -35,6 +35,7 @@ import org.apache.orc.impl.writer.WriterEncryptionVariant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
@@ -76,6 +77,19 @@ public class PhysicalFsWriter implements PhysicalWriter {
   private int stripeStatisticsLength = 0;
   private int footerLength;
   private int stripeNumber = 0;
+
+  private final boolean useRedundantMetadata;
+  private final boolean useBinaryMetadata;
+
+  private OrcProto.RedundantMetadata.Builder redundantMetadataBuilder;
+  private OrcProto.RedundantMetadata redundantMetadata = null;
+
+  private OrcProto.BinaryMetadata.Builder binaryMetadataBuilder;
+
+  private Map<Integer, List<OrcProto.RowIndexWithColumn>> rowIndexWithColumnMap = new TreeMap<>();
+
+  private Map<Integer, OrcProto.RedundantStripeMetadata.Builder> redundantStripeMetadataBuilderMap = new TreeMap<>();
+  private Map<Integer, OrcProto.RedundantStripeMetadata> redundantStripeMetadataMap = new TreeMap<>();
 
   private final Map<WriterEncryptionVariant, VariantTracker> variants = new TreeMap<>();
 
@@ -129,6 +143,14 @@ public class PhysicalFsWriter implements PhysicalWriter {
           new StreamOptions(unencrypted.options)
               .withEncryption(key.getAlgorithm(), variant.getFileFooterKey());
       variants.put(variant, new VariantTracker(variant.getRoot(), encryptOptions));
+    }
+    useRedundantMetadata = opts.getUseRedundantMetadata();
+    useBinaryMetadata = useRedundantMetadata && opts.getUseBinaryMetadata();
+    if (useRedundantMetadata) {
+      redundantMetadataBuilder = OrcProto.RedundantMetadata.newBuilder();
+    }
+    if (useBinaryMetadata) {
+      binaryMetadataBuilder = OrcProto.BinaryMetadata.newBuilder();
     }
   }
 
@@ -447,6 +469,21 @@ public class PhysicalFsWriter implements PhysicalWriter {
     builder.setContentLength(bodyLength);
     builder.setHeaderLength(headerLength);
     long startPosn = rawWriter.getPos();
+
+    // build file-level redundant metadata.
+    if (useRedundantMetadata) {
+      redundantMetadataBuilder.addAllStripes(redundantStripeMetadataMap.values());
+      redundantMetadata = redundantMetadataBuilder.build();
+
+      if (useBinaryMetadata && binaryMetadataBuilder != null) {
+        OrcProto.BinaryMetadata binaryMetadata = MetadataSerializeUtils.transformToRedundantMetadata(redundantMetadata);
+        builder.setBinaryMetadata(binaryMetadata);
+      } else {
+        builder.setRedundantMetadata(redundantMetadata);
+      }
+
+    }
+
     OrcProto.Footer footer = builder.build();
     footer.writeTo(codedCompressStream);
     codedCompressStream.flush();
@@ -461,6 +498,7 @@ public class PhysicalFsWriter implements PhysicalWriter {
     if (variants.size() > 0) {
       builder.setStripeStatisticsLength(stripeStatisticsLength);
     }
+
     OrcProto.PostScript ps = builder.build();
     // need to write this uncompressed
     long startPosn = rawWriter.getPos();
@@ -685,6 +723,31 @@ public class PhysicalFsWriter implements PhysicalWriter {
       variant.writeStreams(StreamName.Area.DATA, rawWriter);
     }
 
+    if (useRedundantMetadata) {
+      // create redundant stripe metadata builder for each stripe.
+      OrcProto.RedundantStripeMetadata.Builder redundantStripeMetadataBuilder =
+          redundantStripeMetadataBuilderMap.computeIfAbsent(stripeNumber, any -> OrcProto.RedundantStripeMetadata.newBuilder());
+
+      // add all row index with column in this stripe.
+      List<OrcProto.RowIndexWithColumn> rowIndexWithColumnList = rowIndexWithColumnMap.get(stripeNumber);
+      if (rowIndexWithColumnList != null && !rowIndexWithColumnList.isEmpty()) {
+        redundantStripeMetadataBuilder.addAllRowIndex(rowIndexWithColumnList);
+      }
+      // add footer to redundant stripe metadata
+      OrcProto.StripeFooter footerCopy = footer.toBuilder().build();
+
+      OrcProto.StripeFooterWithId stripeFooterWithId = OrcProto.StripeFooterWithId.newBuilder()
+          .setStripe(stripeNumber)
+          .setStripeFooter(footerCopy)
+          .build();
+
+      redundantStripeMetadataBuilder.setStripeFooter(stripeFooterWithId);
+
+      // build redundantStripeMetadata and store to current stripe.
+      OrcProto.RedundantStripeMetadata redundantStripeMetadata = redundantStripeMetadataBuilder.build();
+      redundantStripeMetadataMap.put(stripeNumber, redundantStripeMetadata);
+    }
+
     // Write out the footer.
     writeStripeFooter(footer, sizes, dirEntry);
 
@@ -737,7 +800,22 @@ public class PhysicalFsWriter implements PhysicalWriter {
                          OrcProto.RowIndex.Builder index
                          ) throws IOException {
     OutputStream stream = createIndexStream(name);
-    index.build().writeTo(stream);
+    OrcProto.RowIndex rowIndex =index.build();
+
+    if (useRedundantMetadata) {
+      // Build RowIndexWithColumn and add to list of this stripe.
+      List<OrcProto.RowIndexWithColumn> rowIndexWithColumnList =
+          rowIndexWithColumnMap.computeIfAbsent(stripeNumber, any -> new ArrayList<>());
+
+      OrcProto.RowIndex rowIndexCopy = rowIndex.toBuilder().build();
+      OrcProto.RowIndexWithColumn rowIndexWithColumn =  OrcProto.RowIndexWithColumn.newBuilder()
+          .setColumn(name.getColumn())
+          .setRowIndex(rowIndexCopy)
+          .build();
+      rowIndexWithColumnList.add(rowIndexWithColumn);
+    }
+
+    rowIndex.writeTo(stream);
     stream.flush();
   }
 

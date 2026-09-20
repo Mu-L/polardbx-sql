@@ -16,7 +16,12 @@
 
 package com.alibaba.polardbx.optimizer.parse;
 
+import com.alibaba.polardbx.common.constants.CpuStatAttribute.CpuStatAttr;
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
+import com.alibaba.polardbx.common.properties.MetricLevel;
+import com.alibaba.polardbx.common.utils.thread.ThreadCpuStatUtil;
 import com.alibaba.polardbx.druid.sql.ast.SQLStatement;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLVariantRefExpr;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlHintStatement;
@@ -26,19 +31,15 @@ import com.alibaba.polardbx.druid.sql.repository.SchemaRepository;
 import com.alibaba.polardbx.druid.sql.repository.SchemaResolveVisitor;
 import com.alibaba.polardbx.druid.util.JdbcConstants;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
-import com.alibaba.polardbx.optimizer.core.profiler.cpu.CpuStat;
-import com.alibaba.polardbx.optimizer.parse.visitor.PolarXBindParamTypeVisitor;
-import com.google.common.annotations.VisibleForTesting;
-import com.alibaba.polardbx.common.constants.CpuStatAttribute.CpuStatAttr;
-import com.alibaba.polardbx.common.properties.ConnectionParams;
-import com.alibaba.polardbx.common.properties.MetricLevel;
-import com.alibaba.polardbx.common.utils.thread.ThreadCpuStatUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.core.profiler.cpu.CpuStat;
 import com.alibaba.polardbx.optimizer.exception.SqlParserException;
 import com.alibaba.polardbx.optimizer.parse.custruct.FastSqlConstructUtils;
 import com.alibaba.polardbx.optimizer.parse.visitor.ContextParameterKey;
 import com.alibaba.polardbx.optimizer.parse.visitor.ContextParameters;
 import com.alibaba.polardbx.optimizer.parse.visitor.FastSqlToCalciteNodeVisitor;
+import com.alibaba.polardbx.optimizer.parse.visitor.PolarXBindParamTypeVisitor;
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.calcite.sql.SqlHint;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
@@ -169,6 +170,9 @@ public class FastsqlParser {
         try {
             return realParse(sql, params, contextParameters, ec);
         } catch (Exception e) {
+            if (e instanceof TddlRuntimeException) {
+                throw e;
+            }
             throw new SqlParserException(e, e.getMessage());
         }
     }
@@ -188,10 +192,22 @@ public class FastsqlParser {
                     if (statement.getAsync() != null) {
                         ((SqlNodeList) converted).getList().forEach(o -> o.setAsync(statement.getAsync()));
                     }
+                    if (statement.getDryrun() != null) {
+                        ((SqlNodeList) converted).getList().forEach(o -> o.setDryrun(statement.getDryrun()));
+                    }
+                    if (statement.getPerfMode() != null) {
+                        ((SqlNodeList) converted).getList().forEach(o -> o.setPerfMode(statement.getPerfMode()));
+                    }
                     sqlNodes.addAll(((SqlNodeList) converted).getList());
                 } else {
                     if (statement.getAsync() != null) {
                         converted.setAsync(statement.getAsync());
+                    }
+                    if (statement.getPerfMode() != null) {
+                        converted.setPerfMode(statement.getPerfMode());
+                    }
+                    if (statement.getDryrun() != null) {
+                        converted.setDryrun(statement.getDryrun());
                     }
                     sqlNodes.add(converted);
                 }

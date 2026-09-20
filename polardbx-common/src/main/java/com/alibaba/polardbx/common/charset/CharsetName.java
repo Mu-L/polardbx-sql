@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.common.charset;
 
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.google.common.collect.ImmutableList;
 
@@ -105,7 +106,7 @@ public enum CharsetName {
     /**
      * UTF-8 Unicode (MySQL style)
      */
-    UTF8MB4(UTF8MB4_0900_AI_CI,
+    UTF8MB4(UTF8MB4_GENERAL_CI,
         ImmutableList
             .of(UTF8MB4_GENERAL_CI, UTF8MB4_BIN, UTF8MB4_UNICODE_CI, UTF8MB4_0900_AI_CI, UTF8MB4_UNICODE_520_CI),
         ImmutableList.of(
@@ -310,6 +311,14 @@ public enum CharsetName {
         ImmutableList.of(),
         "GB18030", "GB18030", 4),
 
+    /*
+     * China National Standard GB18030 2022
+     */
+    GB18030_2022(GB18030_2022_CHINESE_CI,
+        ImmutableList.of(GB18030_2022_CHINESE_CI, GB18030_2022_BIN, GB18030_2022_UNICODE_520_CI),
+        ImmutableList.of(),
+        "GB18030_2022", "GB18030", 4),
+
     /**
      * BIG5 Traditional Chinese
      */
@@ -408,7 +417,12 @@ public enum CharsetName {
         UTF8, UTF8MB3, UTF8MB4, UTF16, UTF16LE, UTF32, LATIN1, GBK, GB18030, BIG5, BINARY, ASCII
     );
 
+    public static ImmutableList<CharsetName> POLAR_DB_X_IMPLEMENTED_CHARSET_NAMES_80 = ImmutableList.of(
+        UTF8, UTF8MB3, UTF8MB4, UTF16, UTF16LE, UTF32, LATIN1, GBK, GB18030, GB18030_2022, BIG5, BINARY, ASCII
+    );
+
     static Set<String> POLAR_DB_X_IMPLEMENTED_CHARSET_NAME_STRINGS = new HashSet<>();
+    static Set<String> POLAR_DB_X_IMPLEMENTED_CHARSET_NAME_STRINGS_80 = new HashSet<>();
 
     public static final Map<String, CharsetName> CHARSET_NAME_MATCHES = ImmutableMap.<String, CharsetName>builder()
 
@@ -458,7 +472,12 @@ public enum CharsetName {
 
         .put("GB18030", GB18030)
         .put("gb18030", GB18030)
-
+        // for gb18030-2022
+        .put("gb18030-2022", GB18030_2022)
+        .put("gb18030_2022", GB18030_2022)
+        .put("GB18030-2022", GB18030_2022)
+        .put("GB18030_2022", GB18030_2022)
+        // for big5
         .put("BIG5", BIG5)
         .put("big5", BIG5)
         .build();
@@ -473,6 +492,11 @@ public enum CharsetName {
         for (CharsetName charsetName : POLAR_DB_X_IMPLEMENTED_CHARSET_NAMES) {
             POLAR_DB_X_IMPLEMENTED_CHARSET_NAME_STRINGS.add(charsetName.name().toUpperCase());
             POLAR_DB_X_IMPLEMENTED_CHARSET_NAME_STRINGS.add(charsetName.name().toLowerCase());
+        }
+
+        for (CharsetName charsetName : POLAR_DB_X_IMPLEMENTED_CHARSET_NAMES_80) {
+            POLAR_DB_X_IMPLEMENTED_CHARSET_NAME_STRINGS_80.add(charsetName.name().toUpperCase());
+            POLAR_DB_X_IMPLEMENTED_CHARSET_NAME_STRINGS_80.add(charsetName.name().toLowerCase());
         }
 
         CHARSET_NAMES_OF_COLLATION[1] = BIG5;
@@ -670,6 +694,9 @@ public enum CharsetName {
         CHARSET_NAMES_OF_COLLATION[213] = UTF8;
         CHARSET_NAMES_OF_COLLATION[214] = UTF8;
         CHARSET_NAMES_OF_COLLATION[215] = UTF8;
+        CHARSET_NAMES_OF_COLLATION[216] = GB18030_2022;
+        CHARSET_NAMES_OF_COLLATION[217] = GB18030_2022;
+        CHARSET_NAMES_OF_COLLATION[218] = GB18030_2022;
         CHARSET_NAMES_OF_COLLATION[223] = UTF8;
         CHARSET_NAMES_OF_COLLATION[224] = UTF8MB4;
         CHARSET_NAMES_OF_COLLATION[225] = UTF8MB4;
@@ -826,7 +853,14 @@ public enum CharsetName {
             // collation name happens before the setting of MySQL version in InstanceVersion.
             switch (defaultCollationName) {
             case UTF8MB4_GENERAL_CI:
-                return UTF8MB4_0900_AI_CI;
+                CollationName defaultCollationForUtf8mb4;
+                if ((defaultCollationForUtf8mb4 = DynamicConfig.getInstance().getDefaultCollationForUtf8m4()) != null) {
+                    // Force specify collation.
+                    return defaultCollationForUtf8mb4;
+                } else {
+                    // For MySQL 8.0
+                    return UTF8MB4_0900_AI_CI;
+                }
             default:
                 return defaultCollationName;
             }
@@ -905,7 +939,8 @@ public enum CharsetName {
 
         Set<String> aliases = charset.aliases();
 
-        return POLAR_DB_X_IMPLEMENTED_CHARSET_NAMES.stream()
+        return (InstanceVersion.isMYSQL80() ? POLAR_DB_X_IMPLEMENTED_CHARSET_NAMES_80 :
+            POLAR_DB_X_IMPLEMENTED_CHARSET_NAMES).stream()
             .filter(c -> c.name().equals(name) || aliases.stream().anyMatch(c.name()::equalsIgnoreCase))
             .findFirst()
             .orElseGet(

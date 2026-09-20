@@ -21,6 +21,7 @@ import com.alibaba.polardbx.common.jdbc.ParameterMethod;
 import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.common.jdbc.RawString;
 import com.alibaba.polardbx.common.model.sqljep.Comparative;
+import com.alibaba.polardbx.common.properties.BooleanConfigParam;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
@@ -31,6 +32,8 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.dialect.DbType;
 import com.alibaba.polardbx.optimizer.core.planner.rule.AutoForceIndexRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.AutoPaginationRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.AutoPaginationUnionRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.DynamicFilterToMergeSortRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.FilterConditionSimplifyRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.FilterMergeRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.FilterReorderRule;
@@ -103,6 +106,7 @@ import org.apache.calcite.sql.validate.SqlValidatorUtil;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Util;
+import org.apache.calcite.util.trace.OptimizerPhase;
 import org.apache.commons.lang.StringUtils;
 
 import java.util.ArrayList;
@@ -148,7 +152,6 @@ public class PushDownOpt {
      * val: the comp info of the column
      */
     private List<Map<String, Comparative>> comparatives = new ArrayList<>();
-    private List<Map<String, Comparative>> fullComparatives = new ArrayList<>();
 
     /**
      * index of list: the table index of logical table in the LV
@@ -158,7 +161,7 @@ public class PushDownOpt {
 
     /**
      * For columnar multi-version partition:
-     * meta_version -> IN expression key -> PartitionPruneStep
+     * tso -> IN expression key -> PartitionPruneStep
      */
     private Map<Long, Map<String, PartitionPruneStep>> allColumnarPartPruneSteps = Maps.newConcurrentMap();
 
@@ -193,7 +196,6 @@ public class PushDownOpt {
         this.tableModify = pushDownOpt.tableModify;
         this.plainRows = pushDownOpt.plainRows.copy();
         this.comparatives = pushDownOpt.comparatives;
-        this.fullComparatives = pushDownOpt.fullComparatives;
         this.allPartPruneSteps = pushDownOpt.allPartPruneSteps;
         this.allColumnarPartPruneSteps = pushDownOpt.allColumnarPartPruneSteps;
     }
@@ -212,16 +214,6 @@ public class PushDownOpt {
                     newMap.put(entry.getKey(), entry.getValue() == null ? null : entry.getValue().clone());
                 }
                 newPushDownOpt.comparatives.add(newMap);
-            }
-        }
-        if (this.fullComparatives != null) {
-            newPushDownOpt.fullComparatives = new ArrayList<>();
-            for (Map<String, Comparative> m : this.fullComparatives) {
-                Map<String, Comparative> newMap = new HashMap<>();
-                for (Map.Entry<String, Comparative> entry : m.entrySet()) {
-                    newMap.put(entry.getKey(), entry.getValue() == null ? null : entry.getValue().clone());
-                }
-                newPushDownOpt.fullComparatives.add(newMap);
             }
         }
         newPushDownOpt.shardRelatedInTypeParamIndexes = shardRelatedInTypeParamIndexes;
@@ -243,6 +235,8 @@ public class PushDownOpt {
 
     private void builderScan(List<String> qualifiedName, RelBuilder builder) {
         builder.scan(qualifiedName);
+        // The physical sql does NOT need partition hint
+        pushedPartitionHint(builder);
         pushedIndexHint(builder);
         if (this.tableScan.getFlashback() != null) {
             builder.flashback(this.tableScan.getFlashback(), this.tableScan.getFlashbackOperator());
@@ -371,7 +365,19 @@ public class PushDownOpt {
         builder.addRuleInstance(FilterReorderRule.INSTANCE);
         builder.addGroupEnd();
 
+        if (shouldDynamicPrunerMergeSort()) {
+            builder.addGroupBegin();
+            builder.addRuleInstance(DynamicFilterToMergeSortRule.FILTER_INSTANCE);
+            builder.addRuleInstance(DynamicFilterToMergeSortRule.PROJECT_INSTANCE);
+            builder.addGroupEnd();
+        }
+
         if (shouldOptPagination()) {
+            // auto pagination
+            builder.addGroupBegin();
+            builder.addRuleInstance(AutoPaginationUnionRule.INSTANCE);
+            builder.addRuleInstance(AutoPaginationUnionRule.PROJECT);
+            builder.addGroupEnd();
             // auto pagination
             builder.addGroupBegin();
             builder.addRuleInstance(AutoPaginationRule.INSTANCE);
@@ -398,22 +404,39 @@ public class PushDownOpt {
         }
 
         PlannerContext pc = PlannerContext.getPlannerContext(tableScan);
-        pc.getCalcitePlanOptimizerTrace()
-            .ifPresent(x -> x.addSnapshot("before optimize physical sql", getPushedRelNode(), pc));
+        pc.optimizerTrace(x -> {
+            if (x.isDetailMode()) {
+                x.beginPhaseSnapshot(OptimizerPhase.FINAL_RBO_PHYSICAL_SQL_BEFORE);
+                x.endPhaseSnapshot(getPushedRelNode(), pc);
+            }
+        });
 
         HepPlanner planner = new HepPlanner(builder.build(), pc);
+        pc.optimizerTrace(x -> {
+            if (x.isDetailMode()) {
+                x.beginPhaseSnapshot(OptimizerPhase.FINAL_RBO_PHYSICAL_SQL_AFTER);
+            }
+        });
         planner.setRoot(getPushedRelNode());
         planner.startOptimizerTrace();
         RelNode optimizedNode = planner.findBestExp().accept(new RelCastRemover());
         this.builder.clear();
         this.builder.push(optimizedNode);
 
-        pc.getCalcitePlanOptimizerTrace()
-            .ifPresent(x -> x.addSnapshot("after optimize physical sql", optimizedNode, pc));
+        pc.optimizerTrace(x -> {
+            if (x.isDetailMode()) {
+                x.endPhaseSnapshot(optimizedNode, pc);
+            }
+        });
     }
 
     private boolean shouldOptPreFilter() {
-        if (tableScan.getJoin() != null) {
+        // correlated
+        if (!tableScan.getScalarList().isEmpty()) {
+            return false;
+        }
+
+        if (!checkLookupJoin(ConnectionParams.ENABLE_PRE_FILTER_LOOKUP)) {
             return false;
         }
         if (tableScan instanceof LogicalModifyView || tableScan instanceof OSSTableScan) {
@@ -426,13 +449,39 @@ public class PushDownOpt {
         return true;
     }
 
+    public boolean shouldDynamicPrunerMergeSort() {
+        // correlated
+        if (!tableScan.getScalarList().isEmpty()) {
+            return false;
+        }
+
+        // lookup join
+        if (!checkLookupJoin(ConnectionParams.ENABLE_DYNAMIC_MERGE_SORT_LOOKUP)) {
+            return false;
+        }
+        // oss table scan
+        if (tableScan instanceof OSSTableScan) {
+            return false;
+        }
+        // dml
+        SqlSelect.LockMode lockMode = tableScan.getLockMode();
+        if (!(lockMode == null || lockMode == SqlSelect.LockMode.UNDEF)) {
+            return false;
+        }
+
+        if (!tableScan.pushedRelNodeIsSort()) {
+            return false;
+        }
+        return true;
+    }
+
     public boolean shouldOptPagination() {
         // correlated
         if (!tableScan.getScalarList().isEmpty()) {
             return false;
         }
         // lookup join
-        if (tableScan.getJoin() != null) {
+        if (!checkLookupJoin(ConnectionParams.ENABLE_PAGING_FORCE_LOOKUP)) {
             return false;
         }
         // oss table scan
@@ -445,6 +494,22 @@ public class PushDownOpt {
             return false;
         }
         return true;
+    }
+
+    private boolean checkLookupJoin(BooleanConfigParam param) {
+        // return true only when
+        // Not Lookup Join or
+        // MaterializedSemi + expand in + switch enabled
+        if (!tableScan.isLookupTable()) {
+            return true;
+        }
+        if (!tableScan.getLookupInfo().isMaterializedSemiJoin()) {
+            return false;
+        }
+        if (!PlannerContext.getPlannerContext(tableScan).isHasExpandIn()) {
+            return false;
+        }
+        return PlannerContext.getPlannerContext(tableScan).getParamManager().getBoolean(param);
     }
 
     /**
@@ -618,15 +683,12 @@ public class PushDownOpt {
             rightView.getPushDownOpt().getPlainRows());
     }
 
-    private void updateComparative(Map<String, Map<String, Comparative>> inferred,
-                                   Map<String, Map<String, Comparative>> inferredFull, AtomicInteger comparativeIndex) {
+    private void updateComparative(Map<String, Map<String, Comparative>> inferred, AtomicInteger comparativeIndex) {
         tableScan.getTableNames().forEach(tableName -> {
             if (comparatives.size() == comparativeIndex.get()) {
                 comparatives.add(inferred.getOrDefault(tableName, new HashMap<>()));
-                fullComparatives.add(inferredFull.getOrDefault(tableName, new HashMap<>()));
             } else {
                 comparatives.set(comparativeIndex.get(), inferred.getOrDefault(tableName, new HashMap<>()));
-                fullComparatives.set(comparativeIndex.get(), inferredFull.getOrDefault(tableName, new HashMap<>()));
             }
             comparativeIndex.getAndIncrement();
         });
@@ -719,6 +781,12 @@ public class PushDownOpt {
         for (int i = 0; i < logTbNameList.size(); i++) {
             String tbName = logTbNameList.get(i);
             PartitionPruneStep partStep = partRoutingPlanInfo.allPartPruningSteps.get(tbName);
+            if (partStep == null) {
+                // just add full table scan. for sql like column subquery
+                partStep =
+                    PartitionPruneStepBuilder.genFullScanAllPhyPartsStepInfoByDbNameAndTbName(tableScan.getSchemaName(),
+                        tbName, ec);
+            }
             allPartPruneSteps.add(partStep);
         }
         String key = OptimizerUtils.buildInExprKey(ec);
@@ -749,6 +817,13 @@ public class PushDownOpt {
         }
     }
 
+    public void pushedPartitionHint(RelBuilder builder) {
+        RelNode peek = builder.peek();
+        if (peek instanceof LogicalTableScan) {
+            ((LogicalTableScan) peek).setPartitions(this.tableScan.getPartitions());
+        }
+    }
+
     public List<Map<String, Comparative>> getComparative() {
         return comparatives;
     }
@@ -759,6 +834,7 @@ public class PushDownOpt {
         String dbName = this.tableScan.getSchemaName();
         relShardInfo.setTableName(logTbName);
         relShardInfo.setSchemaName(this.tableScan.getSchemaName());
+        relShardInfo.setPartitions(this.tableScan.getPartitions());
         boolean isNewPartDb = DbInfoManager.getInstance().isNewPartitionDb(dbName);
         if (isNewPartDb) {
             relShardInfo.setPartPruneStepInfo(
@@ -769,7 +845,6 @@ public class PushDownOpt {
             relShardInfo.setUsePartTable(false);
             if (comparatives.size() > tableIndex) {
                 relShardInfo.setAllComps(comparatives.get(tableIndex));
-                relShardInfo.setAllFullComps(fullComparatives.get(tableIndex));
             }
         } else {
             relShardInfo.setUsePartTable(true);
@@ -794,9 +869,8 @@ public class PushDownOpt {
     }
 
     public RelShardInfo getCciRelShardInfo(ExecutionContext ec, PartitionInfo cciPartInfo) {
-        Long metaVersion = cciPartInfo.getMetaVersion();
         Map<String, PartitionPruneStep> partPruneStepCache =
-            allColumnarPartPruneSteps.computeIfAbsent(metaVersion, v -> Maps.newConcurrentMap());
+            allColumnarPartPruneSteps.computeIfAbsent(cciPartInfo.getColumnarSchemaTso(), v -> Maps.newConcurrentMap());
         RelShardInfo relShardInfo = new RelShardInfo();
         String logTbName = this.tableScan.getTableNames().get(0);
         relShardInfo.setTableName(logTbName);
@@ -818,15 +892,6 @@ public class PushDownOpt {
 
     public Map<String, Comparative> getComparative(int tableIndex) {
         return Optional.of(comparatives).filter(c -> c.size() > tableIndex).map(c -> c.get(tableIndex))
-            .orElse(new HashMap<>());
-    }
-
-    public List<Map<String, Comparative>> getFullComparatives() {
-        return fullComparatives;
-    }
-
-    public Map<String, Comparative> getFullComparative(int tableIndex) {
-        return Optional.of(fullComparatives).filter(c -> c.size() > tableIndex).map(c -> c.get(tableIndex))
             .orElse(new HashMap<>());
     }
 
@@ -1027,7 +1092,6 @@ public class PushDownOpt {
          * val: the comparative tree of shard column
          */
         protected Map<String, Map<String, Comparative>> allComps = new HashMap<>();
-        protected Map<String, Map<String, Comparative>> allFullComps = new HashMap<>();
         /**
          * key: table name
          * val: the pruning plan info of table
@@ -1044,11 +1108,11 @@ public class PushDownOpt {
         PartRoutingPlanInfo pruningPlanInfo = new PartRoutingPlanInfo();
         if (!usePartitionTable) {
             final Map<String, Map<String, Comparative>> allComps = new HashMap<>();
-            final Map<String, Map<String, Comparative>> allFullComps = new HashMap<>();
             final ExtractionResult er = ConditionExtractor.partitioningConditionFrom(relPlan).extract();
-            er.allCondition(allComps, allFullComps, PlannerContext.getPlannerContext(relPlan).getExecutionContext());
+            er.allCondition(
+                allComps, PlannerContext.getPlannerContext(relPlan).getExecutionContext(),
+                ec.getParamManager().getBoolean(ConnectionParams.ENABLE_DRDS_OPTIMIZE_REX_ROUTE));
             pruningPlanInfo.allComps = allComps;
-            pruningPlanInfo.allFullComps = allFullComps;
             pruningPlanInfo.usePartitionTable = false;
         } else {
             ExtractionResult er = ConditionExtractor.predicateFrom(relPlan).extract();
@@ -1072,7 +1136,7 @@ public class PushDownOpt {
 
     protected void updatePartRoutingPlanInfo(PartRoutingPlanInfo newPruningPlanInfo) {
         if (!newPruningPlanInfo.usePartitionTable) {
-            updateComparative(newPruningPlanInfo.allComps, newPruningPlanInfo.allFullComps, new AtomicInteger());
+            updateComparative(newPruningPlanInfo.allComps, new AtomicInteger());
         } else {
             updatePartPruneSteps(newPruningPlanInfo.allPartPruningSteps);
         }

@@ -21,13 +21,13 @@ public class CdcLocalPartitionTableDdlRecordTest extends CdcBaseTest {
         + "\t`id` bigint(20) DEFAULT NULL,\n"
         + "\t`gmt_modified` datetime NOT NULL,\n"
         + "\tPRIMARY KEY (`gmt_modified`)\n"
-        + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4\n"
+        + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = `utf8mb4_general_ci` \n"
         + "PARTITION BY KEY(`gmt_modified`)\n"
         + "PARTITIONS 8\n"
         + "LOCAL PARTITION BY RANGE (gmt_modified)\n"
         + "STARTWITH '%s-01-01'\n"
         + "INTERVAL 1 MONTH\n"
-        + "EXPIRE AFTER 12\n"
+        + "EXPIRE AFTER 11\n"
         + "PRE ALLOCATE 6\n"
         + "PIVOTDATE NOW()\n", startYear);
 

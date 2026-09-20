@@ -51,6 +51,18 @@ public class VarcharType extends SliceType {
         super(charsetName, collationName, precision);
     }
 
+    public static VarcharType buildVarcharType(String charsetName, String collationName) {
+        CharsetName charset = CharsetName.of(charsetName, false);
+        if (charset == null) {
+            throw new IllegalArgumentException("charsetName is not valid: " + charsetName);
+        }
+        CollationName collation = CollationName.of(collationName, false);
+        if (collation == null) {
+            throw new IllegalArgumentException("collationName is not valid: " + collationName);
+        }
+        return new VarcharType(charset, collation);
+    }
+
     @Override
     public int getSqlType() {
         return Types.VARCHAR;

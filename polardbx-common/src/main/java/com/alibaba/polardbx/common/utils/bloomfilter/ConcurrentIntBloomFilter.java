@@ -14,9 +14,13 @@
 
 package com.alibaba.polardbx.common.utils.bloomfilter;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.common.utils.memory.SizeOf;
 import com.google.common.math.LongMath;
 import com.google.common.primitives.Ints;
+import org.openjdk.jol.info.ClassLayout;
+import org.openjdk.jol.util.VMSupport;
 
 import java.math.RoundingMode;
 import java.util.concurrent.atomic.AtomicLongArray;
@@ -25,6 +29,7 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 public final class ConcurrentIntBloomFilter implements RFBloomFilter {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(ConcurrentIntBloomFilter.class).instanceSize();
 
     public static final double DEFAULT_FPP = 0.03;
     private final LockFreeBitArray bits;
@@ -35,6 +40,20 @@ public final class ConcurrentIntBloomFilter implements RFBloomFilter {
         checkArgument(numHashFunctions < 32, "numHashFunctions (%s) must be < 32", numHashFunctions);
         this.bits = checkNotNull(bits);
         this.numHashFunctions = numHashFunctions;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(bits);
+    }
+
+    public static long estimatedSizeInBytes(long expectedInsertions, double fpp) {
+        if (expectedInsertions == 0) {
+            expectedInsertions = 1;
+        }
+        int numBits = BloomFilterUtil.optimalNumOfBits(expectedInsertions, fpp);
+        int arraySize = Ints.checkedCast(LongMath.divide(numBits, 64, RoundingMode.CEILING));
+        return INSTANCE_SIZE + LockFreeBitArray.INSTANCE_SIZE + FastMemoryCounter.sizeOfAtomicLongArray(arraySize);
     }
 
     @Override
@@ -80,15 +99,6 @@ public final class ConcurrentIntBloomFilter implements RFBloomFilter {
         throw new UnsupportedOperationException();
     }
 
-    public static long estimatedSizeInBytes(long expectedInsertions, double fpp) {
-        if (expectedInsertions == 0) {
-            expectedInsertions = 1;
-        }
-        int numBits = BloomFilterUtil.optimalNumOfBits(expectedInsertions, fpp);
-        int arraySize = Ints.checkedCast(LongMath.divide(numBits, 64, RoundingMode.CEILING));
-        return SizeOf.sizeOfLongArray(arraySize);
-    }
-
     public static ConcurrentIntBloomFilter create(long expectedInsertions) {
         return create(expectedInsertions, DEFAULT_FPP); // FYI, for 3%, we always get 5 hash functions
     }
@@ -121,8 +131,8 @@ public final class ConcurrentIntBloomFilter implements RFBloomFilter {
      * We use this instead of java.util.BitSet because we need access to the
      * array of longs and we need compare-and-swap.
      */
-    static final class LockFreeBitArray {
-
+    static final class LockFreeBitArray implements MemoryCountable {
+        static final int INSTANCE_SIZE = ClassLayout.parseClass(LockFreeBitArray.class).instanceSize();
         private static final int LONG_ADDRESSABLE_BITS = 6;
 
         private final AtomicLongArray data;
@@ -133,6 +143,11 @@ public final class ConcurrentIntBloomFilter implements RFBloomFilter {
 
         LockFreeBitArray(long[] data) {
             this.data = new AtomicLongArray(data);
+        }
+
+        @Override
+        public long getMemoryUsage() {
+            return INSTANCE_SIZE + FastMemoryCounter.sizeOf(data);
         }
 
         /**

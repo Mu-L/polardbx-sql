@@ -4,6 +4,7 @@ import com.alibaba.polardbx.gms.metadb.table.IndexStatus;
 import com.alibaba.polardbx.gms.metadb.table.IndexVisibility;
 import com.alibaba.polardbx.gms.metadb.table.LackLocalIndexStatus;
 import com.alibaba.polardbx.gms.metadb.table.TableStatus;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.clearspring.analytics.util.Lists;
 import com.google.common.collect.ImmutableList;
 import org.junit.Test;
@@ -78,6 +79,15 @@ public class TableMetaTest {
         assertNotEquals(expectedGsiMeta, tableMeta.findGlobalSecondaryIndexByName("MATCHING INDEX"));
     }
 
+    @Test
+    public void testSortKeys() throws NoSuchFieldException, IllegalAccessException {
+        TableMeta tableMeta = createMockTableMeta();
+        List<OrderByOption> sortKeys = new ArrayList<>();
+        sortKeys.add(new OrderByOption(0, true, true));
+        tableMeta.setColumnarSortKeys(1L, sortKeys);
+        assertEquals(sortKeys, tableMeta.getColumnarSortKeys(1L));
+    }
+
     /**
      * Tests that findGlobalSecondaryIndexByName with index name of cci
      */
@@ -134,7 +144,7 @@ public class TableMetaTest {
 
         when(nonPrimaryKeyIndex.isPrimaryKeyIndex()).thenReturn(false);
         when(nonPrimaryKeyIndex.getPhysicalIndexName()).thenReturn("matching_index");
-        when(tableMeta.getAllIndexes()).thenReturn(allIndexes);
+        when(tableMeta.getIndexes()).thenReturn(allIndexes);
         when(tableMeta.findLocalIndexByName("matching_index")).thenCallRealMethod();
 
         assertEquals(nonPrimaryKeyIndex, tableMeta.findLocalIndexByName("matching_index"));
@@ -181,7 +191,7 @@ public class TableMetaTest {
                 0,
                 false,
                 false,
-                 IndexVisibility.VISIBLE, LackLocalIndexStatus.NO_LACKIING);
+                IndexVisibility.VISIBLE, LackLocalIndexStatus.NO_LACKIING);
         gsiPublished.put("MATCHING_INDEX", gsiMeta1);
 
         GsiMetaManager.GsiIndexMetaBean cciMeta =
@@ -203,7 +213,7 @@ public class TableMetaTest {
                 0,
                 true,
                 true,
-                 IndexVisibility.VISIBLE, LackLocalIndexStatus.NO_LACKIING);
+                IndexVisibility.VISIBLE, LackLocalIndexStatus.NO_LACKIING);
         columnarIndexPublished.put("CCI", cciMeta);
 
         GsiMetaManager.GsiIndexMetaBean gsiMeta2 = new GsiMetaManager.GsiIndexMetaBean(
@@ -224,7 +234,7 @@ public class TableMetaTest {
             0,
             false,
             false,
-             IndexVisibility.VISIBLE, LackLocalIndexStatus.NO_LACKIING);
+            IndexVisibility.VISIBLE, LackLocalIndexStatus.NO_LACKIING);
         gsiPublished.put("NON_MATCHING_INDEX", gsiMeta2);
 
         GsiMetaManager.GsiIndexMetaBean gsiMeta3 =
@@ -246,7 +256,7 @@ public class TableMetaTest {
                 0,
                 false,
                 false,
-                 IndexVisibility.VISIBLE, LackLocalIndexStatus.NO_LACKIING);
+                IndexVisibility.VISIBLE, LackLocalIndexStatus.NO_LACKIING);
         gsiPublished.put("MATCHING INDEX ", gsiMeta3);
 
         TableMeta tableMeta = new TableMeta(

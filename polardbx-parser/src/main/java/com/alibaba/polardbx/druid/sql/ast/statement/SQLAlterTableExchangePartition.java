@@ -24,8 +24,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class SQLAlterTableExchangePartition extends SQLObjectImpl implements SQLAlterTableItem {
-    private List<SQLExpr> partitions = new ArrayList<SQLExpr>();
+    private List<SQLExpr> srcPartitions = new ArrayList<SQLExpr>();
+    private List<SQLExpr> targetPartitions = new ArrayList<SQLExpr>();
     private SQLExprTableSource table;
+    private Boolean subPartition;
     private Boolean validation;
 
     public SQLAlterTableExchangePartition() {
@@ -35,21 +37,21 @@ public class SQLAlterTableExchangePartition extends SQLObjectImpl implements SQL
     @Override
     protected void accept0(SQLASTVisitor visitor) {
         if (visitor.visit(this)) {
-            acceptChild(visitor, partitions);
+            acceptChild(visitor, srcPartitions);
             acceptChild(visitor, table);
         }
         visitor.endVisit(this);
     }
 
-    public List<SQLExpr> getPartitions() {
-        return partitions;
+    public List<SQLExpr> getSrcPartitions() {
+        return srcPartitions;
     }
 
-    public void addPartition(SQLExpr x) {
+    public void addSrcPartition(SQLExpr x) {
         if (x != null) {
             x.setParent(this);
         }
-        this.partitions.add(x);
+        this.srcPartitions.add(x);
     }
 
     public SQLExprTableSource getTable() {
@@ -65,6 +67,25 @@ public class SQLAlterTableExchangePartition extends SQLObjectImpl implements SQL
             x.setParent(this);
         }
         this.table = x;
+    }
+
+    public List<SQLExpr> getTargetPartitions() {
+        return targetPartitions;
+    }
+
+    public Boolean isSubPartition() {
+        return subPartition;
+    }
+
+    public void setSubPartition(Boolean subPartition) {
+        this.subPartition = subPartition;
+    }
+
+    public void addTargetPartition(SQLExpr x) {
+        if (x != null) {
+            x.setParent(this);
+        }
+        this.targetPartitions.add(x);
     }
 
     public void setValidation(boolean validation) {

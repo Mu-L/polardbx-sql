@@ -20,7 +20,7 @@ public class OptimizerAlertLoggerStackBaseImpl extends OptimizerAlertLoggerBaseI
                 if (currentTime >= lastTime + DynamicConfig.getInstance().getOptimizerAlertLogInterval()) {
                     lastAccessTime.set(currentTime);
                     if (ec == null) {
-                        logger.info(optimizerAlertType.name());
+                        logger.warn(optimizerAlertType.name());
                     } else {
                         String stack = "";
                         if (object instanceof Throwable) {
@@ -29,7 +29,7 @@ public class OptimizerAlertLoggerStackBaseImpl extends OptimizerAlertLoggerBaseI
                             ((Throwable) object).printStackTrace(pw);
                             stack = sw.toString();
                         }
-                        logger.info(String.format("alert_type{ %s }: schema{ %s } trace_id { %s } stack %s",
+                        logger.warn(String.format("alert_type{ %s }: schema{ %s } trace_id { %s } stack %s",
                             optimizerAlertType.name(),
                             ec.getSchemaName(),
                             ec.getTraceId(),

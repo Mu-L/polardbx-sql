@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.common.utils.Pair;
@@ -64,8 +65,10 @@ public class VectorizedFilterExecTest extends BaseExecTest {
 
         VectorizedFilterExec filterExec =
             new VectorizedFilterExec(inputExecutor, condition, chunk, context);
+        MemoryCountable.checkDeviation(filterExec, 0d, true);
 
         assertExecResults(filterExec, expectedOutputs.toArray(new Chunk[0]));
+        MemoryCountable.checkDeviation(filterExec, 0d, true);
     }
 
     @Before

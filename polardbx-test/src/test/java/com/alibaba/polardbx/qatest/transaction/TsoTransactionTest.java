@@ -79,7 +79,7 @@ public class TsoTransactionTest extends CrudBasedLockTestCase {
 
     @Before
     public void before() throws Exception {
-        JdbcUtil.executeUpdateSuccess(tddlConnection, "set ENABLE_ASYNC_COMMIT = " + asyncCommit);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "set ENABLE_ASYNC_COMMIT_80 = " + asyncCommit);
         executeOnMysqlAndTddl(mysqlConnection, tddlConnection, "delete from " + baseOneTableName, null);
         final String sql = "insert into " + baseOneTableName + "(pk, integer_test, varchar_test) values(?, ?, ?)";
         final List<List<Object>> params = new ArrayList<>();

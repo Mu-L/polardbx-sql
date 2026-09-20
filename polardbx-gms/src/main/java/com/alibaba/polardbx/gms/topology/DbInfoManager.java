@@ -144,6 +144,14 @@ public class DbInfoManager extends AbstractLifecycle {
         return dbInfoRecord.dbType == DbInfoRecord.DB_TYPE_NEW_PART_DB;
     }
 
+    public boolean isCdcDb(String dbName) {
+        DbInfoRecord dbInfoRecord = allDbInfoMap.get(dbName);
+        if (dbInfoRecord == null) {
+            return false;
+        }
+        return dbInfoRecord.dbType == DbInfoRecord.DB_TYPE_CDC_DB;
+    }
+
     public boolean ifDatabaseIsReadOnly(String schemaName) {
         schemaName = SQLUtils.normalize(schemaName);
         DbInfoRecord dbInfo = getDbInfo(schemaName);

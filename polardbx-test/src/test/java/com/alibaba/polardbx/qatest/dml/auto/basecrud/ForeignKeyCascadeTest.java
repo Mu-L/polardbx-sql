@@ -27,6 +27,8 @@ public class ForeignKeyCascadeTest extends DDLBaseNewDBTestCase {
 
     private static final String FOREIGN_KEY_CHECKS = "FOREIGN_KEY_CHECKS=TRUE";
     private static final String FOREIGN_KEY_CHECKS_FOR_UPDATE_DELETE = "FOREIGN_KEY_CHECKS_FOR_UPDATE_DELETE=TRUE";
+    private static final String ENABLE_MULTI_TABLE_UPDATE_MODIFY_GSI_SHARDING_KEY =
+        "ENABLE_MULTI_TABLE_UPDATE_MODIFY_GSI_SHARDING_KEY=TRUE";
 
     private static final String SOURCE_TABLE_NAME = "fk_test_src_tbl";
 
@@ -1078,6 +1080,11 @@ public class ForeignKeyCascadeTest extends DDLBaseNewDBTestCase {
 
             sql = String.format("insert into %s values (1,1,3)", tableName);
             JdbcUtil.executeUpdateSuccess(tddlConnection, hint + sql);
+
+            // 测试不同类型是否可以插入成功，10是Integer, 20-10是Long
+            sql = String.format("insert into %s values (10,20 - 10,30)", tableName);
+            JdbcUtil.executeUpdateSuccess(tddlConnection, hint + sql);
+
             sql = String.format("insert into %s values (2,1,4)", tableName);
             JdbcUtil.executeUpdateSuccess(tddlConnection, hint + sql);
 
@@ -1330,7 +1337,8 @@ public class ForeignKeyCascadeTest extends DDLBaseNewDBTestCase {
         String child1 = SOURCE_TABLE_NAME + "_c1";
         String child2 = SOURCE_TABLE_NAME + "_c2";
 
-        String hint = buildCmdExtra(FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS_FOR_UPDATE_DELETE);
+        String hint = buildCmdExtra(FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS_FOR_UPDATE_DELETE,
+            ENABLE_MULTI_TABLE_UPDATE_MODIFY_GSI_SHARDING_KEY);
 
         dropTableIfExists(child1);
         dropTableIfExists(child2);
@@ -1533,8 +1541,9 @@ public class ForeignKeyCascadeTest extends DDLBaseNewDBTestCase {
                         JdbcUtil.executeUpdateSuccess(tddlConnection, createSql2);
 
                         // test bug: upsert only insert value
-                        String sql = String.format("insert into %s values (100,200,300) on duplicate key update b = values (b)",
-                            tableName1);
+                        String sql =
+                            String.format("insert into %s values (100,200,300) on duplicate key update b = values (b)",
+                                tableName1);
                         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 
                         sql = String.format("insert into %s values (1,2,3), (4,5,6)", tableName1);

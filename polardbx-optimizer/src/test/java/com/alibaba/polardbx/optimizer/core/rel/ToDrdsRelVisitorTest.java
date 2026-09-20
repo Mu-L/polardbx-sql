@@ -1,6 +1,8 @@
 package com.alibaba.polardbx.optimizer.core.rel;
 
 import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.gms.metadb.table.IndexStatus;
 import com.alibaba.polardbx.gms.metadb.table.IndexVisibility;
 import com.alibaba.polardbx.gms.metadb.table.LackLocalIndexStatus;
@@ -18,6 +20,7 @@ import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.logical.LogicalTableLookup;
 import org.apache.calcite.rel.logical.LogicalTableScan;
 import org.apache.calcite.sql.SqlCall;
+import org.apache.calcite.sql.SqlDal;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlIndexHint;
 import org.apache.calcite.sql.SqlKind;
@@ -32,11 +35,13 @@ import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
+import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collections;
 
 import static org.apache.calcite.sql.parser.SqlParserPos.ZERO;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -457,5 +462,225 @@ public class ToDrdsRelVisitorTest {
 
     private SqlNode buildForceIndexForTest() {
         return new SqlIndexHint(SqlLiteral.createCharString("FORCE INDEX", ZERO), null, new SqlNodeList(ZERO), ZERO);
+    }
+
+    // -----------------------------------------------------------------------
+    // isRandomShowKind – new private method added in commit 345cbc5e06b
+    // -----------------------------------------------------------------------
+
+    /**
+     * Helper: create a real ToDrdsRelVisitor with its private plannerContext
+     * field injected, then invoke the private isRandomShowKind method via
+     * reflection so the real method body runs.
+     */
+    private boolean invokeIsRandomShowKind(ParamManager paramManager, SqlDal sqlDal) throws Exception {
+        ToDrdsRelVisitor visitor = new ToDrdsRelVisitor();
+
+        // Inject plannerContext into the private field.
+        PlannerContext plannerContext = mock(PlannerContext.class);
+        when(plannerContext.getParamManager()).thenReturn(paramManager);
+        java.lang.reflect.Field plannerContextField =
+            ToDrdsRelVisitor.class.getDeclaredField("plannerContext");
+        plannerContextField.setAccessible(true);
+        plannerContextField.set(visitor, plannerContext);
+
+        // Invoke the private method via reflection.
+        Method method = ToDrdsRelVisitor.class.getDeclaredMethod("isRandomShowKind", SqlDal.class);
+        method.setAccessible(true);
+        return (boolean) method.invoke(visitor, sqlDal);
+    }
+
+    /**
+     * When SHOW_COMMAND_RAND_DISPATCH is false (default), isRandomShowKind must
+     * return false regardless of the SqlDal kind.
+     */
+    @Test
+    public void testIsRandomShowKindReturnsFalseWhenParamDisabled() throws Exception {
+        ParamManager paramManager = mock(ParamManager.class);
+        when(paramManager.getBoolean(ConnectionParams.SHOW_COMMAND_RAND_DISPATCH)).thenReturn(false);
+
+        SqlDal sqlDal = mock(SqlDal.class);
+        when(sqlDal.getKind()).thenReturn(SqlKind.SHOW);
+
+        assertFalse("Should return false when SHOW_COMMAND_RAND_DISPATCH is disabled",
+            invokeIsRandomShowKind(paramManager, sqlDal));
+    }
+
+    /**
+     * When SHOW_COMMAND_RAND_DISPATCH is true but the SqlDal kind is not SHOW,
+     * isRandomShowKind must return false.
+     */
+    @Test
+    public void testIsRandomShowKindReturnsFalseWhenKindIsNotShow() throws Exception {
+        ParamManager paramManager = mock(ParamManager.class);
+        when(paramManager.getBoolean(ConnectionParams.SHOW_COMMAND_RAND_DISPATCH)).thenReturn(true);
+
+        SqlDal sqlDal = mock(SqlDal.class);
+        when(sqlDal.getKind()).thenReturn(SqlKind.SHOW_TABLES);
+
+        assertFalse("Should return false when SqlDal kind is not SHOW",
+            invokeIsRandomShowKind(paramManager, sqlDal));
+    }
+
+    /**
+     * When SHOW_COMMAND_RAND_DISPATCH is true AND the SqlDal kind is SHOW,
+     * isRandomShowKind must return true.
+     */
+    @Test
+    public void testIsRandomShowKindReturnsTrueWhenParamEnabledAndKindIsShow() throws Exception {
+        ParamManager paramManager = mock(ParamManager.class);
+        when(paramManager.getBoolean(ConnectionParams.SHOW_COMMAND_RAND_DISPATCH)).thenReturn(true);
+
+        SqlDal sqlDal = mock(SqlDal.class);
+        when(sqlDal.getKind()).thenReturn(SqlKind.SHOW);
+
+        assertTrue("Should return true when SHOW_COMMAND_RAND_DISPATCH is enabled and kind is SHOW",
+            invokeIsRandomShowKind(paramManager, sqlDal));
+    }
+
+    // -----------------------------------------------------------------------
+    // resolvePartitionedTableDbIndex – extracted from visit(RelNode) L1537-1544
+    // -----------------------------------------------------------------------
+
+    /**
+     * Helper: build a visitor with plannerContext injected, then call
+     * resolvePartitionedTableDbIndex directly (it is package-private).
+     */
+    private ToDrdsRelVisitor buildVisitorWithParamManager(ParamManager paramManager) throws Exception {
+        ToDrdsRelVisitor visitor = new ToDrdsRelVisitor();
+        PlannerContext plannerContext = mock(PlannerContext.class);
+        when(plannerContext.getParamManager()).thenReturn(paramManager);
+        java.lang.reflect.Field plannerContextField =
+            ToDrdsRelVisitor.class.getDeclaredField("plannerContext");
+        plannerContextField.setAccessible(true);
+        plannerContextField.set(visitor, plannerContext);
+        return visitor;
+    }
+
+    /**
+     * When SHOW_COMMAND_RAND_DISPATCH is enabled and kind is SHOW,
+     * resolvePartitionedTableDbIndex must call getRandomPhysicalPartition
+     * and set modeHolder[0] to DB_INDEX_MODE_RANDOM.
+     */
+    @Test
+    public void testResolvePartitionedTableDbIndexUsesRandomPartitionWhenParamEnabled() throws Exception {
+        ParamManager paramManager = mock(ParamManager.class);
+        when(paramManager.getBoolean(ConnectionParams.SHOW_COMMAND_RAND_DISPATCH)).thenReturn(true);
+
+        SqlDal sqlDal = mock(SqlDal.class);
+        when(sqlDal.getKind()).thenReturn(SqlKind.SHOW);
+
+        com.alibaba.polardbx.optimizer.partition.PartitionInfoManager partInfoMgr =
+            mock(com.alibaba.polardbx.optimizer.partition.PartitionInfoManager.class);
+        com.alibaba.polardbx.optimizer.partition.pruning.PhysicalPartitionInfo randomPartition =
+            mock(com.alibaba.polardbx.optimizer.partition.pruning.PhysicalPartitionInfo.class);
+        when(partInfoMgr.getRandomPhysicalPartition("t1")).thenReturn(randomPartition);
+
+        ToDrdsRelVisitor visitor = buildVisitorWithParamManager(paramManager);
+        int[] modeHolder = new int[1];
+        com.alibaba.polardbx.optimizer.partition.pruning.PhysicalPartitionInfo result =
+            visitor.resolvePartitionedTableDbIndex(sqlDal, partInfoMgr, "t1", modeHolder);
+
+        assertEquals(randomPartition, result);
+        assertEquals(com.alibaba.polardbx.optimizer.core.rel.dal.LogicalShow.DB_INDEX_MODE_RANDOM, modeHolder[0]);
+        verify(partInfoMgr).getRandomPhysicalPartition("t1");
+        verify(partInfoMgr, never()).getFirstPhysicalPartition("t1");
+    }
+
+    /**
+     * When SHOW_COMMAND_RAND_DISPATCH is disabled,
+     * resolvePartitionedTableDbIndex must call getFirstPhysicalPartition
+     * and set modeHolder[0] to DB_INDEX_MODE_NORMAL.
+     */
+    @Test
+    public void testResolvePartitionedTableDbIndexUsesFirstPartitionWhenParamDisabled() throws Exception {
+        ParamManager paramManager = mock(ParamManager.class);
+        when(paramManager.getBoolean(ConnectionParams.SHOW_COMMAND_RAND_DISPATCH)).thenReturn(false);
+
+        SqlDal sqlDal = mock(SqlDal.class);
+        when(sqlDal.getKind()).thenReturn(SqlKind.SHOW);
+
+        com.alibaba.polardbx.optimizer.partition.PartitionInfoManager partInfoMgr =
+            mock(com.alibaba.polardbx.optimizer.partition.PartitionInfoManager.class);
+        com.alibaba.polardbx.optimizer.partition.pruning.PhysicalPartitionInfo firstPartition =
+            mock(com.alibaba.polardbx.optimizer.partition.pruning.PhysicalPartitionInfo.class);
+        when(partInfoMgr.getFirstPhysicalPartition("t1")).thenReturn(firstPartition);
+
+        ToDrdsRelVisitor visitor = buildVisitorWithParamManager(paramManager);
+        int[] modeHolder = new int[1];
+        com.alibaba.polardbx.optimizer.partition.pruning.PhysicalPartitionInfo result =
+            visitor.resolvePartitionedTableDbIndex(sqlDal, partInfoMgr, "t1", modeHolder);
+
+        assertEquals(firstPartition, result);
+        assertEquals(com.alibaba.polardbx.optimizer.core.rel.dal.LogicalShow.DB_INDEX_MODE_NORMAL, modeHolder[0]);
+        verify(partInfoMgr).getFirstPhysicalPartition("t1");
+        verify(partInfoMgr, never()).getRandomPhysicalPartition("t1");
+    }
+
+    // -----------------------------------------------------------------------
+    // resolveNoTableNameDbIndex – extracted from visit(RelNode) L1550-1556
+    // -----------------------------------------------------------------------
+
+    /**
+     * When SHOW_COMMAND_RAND_DISPATCH is disabled, resolveNoTableNameDbIndex
+     * must return the defaultDbIndex unchanged and leave modeHolder[0] as-is.
+     */
+    @Test
+    public void testResolveNoTableNameDbIndexReturnsDefaultWhenParamDisabled() throws Exception {
+        ParamManager paramManager = mock(ParamManager.class);
+        when(paramManager.getBoolean(ConnectionParams.SHOW_COMMAND_RAND_DISPATCH)).thenReturn(false);
+
+        SqlDal sqlDal = mock(SqlDal.class);
+        when(sqlDal.getKind()).thenReturn(SqlKind.SHOW);
+
+        ToDrdsRelVisitor visitor = buildVisitorWithParamManager(paramManager);
+        int[] modeHolder = new int[] {com.alibaba.polardbx.optimizer.core.rel.dal.LogicalShow.DB_INDEX_MODE_NORMAL};
+        String result = visitor.resolveNoTableNameDbIndex(sqlDal, "testSchema", "defaultGroup", modeHolder);
+
+        assertEquals("defaultGroup", result);
+        assertEquals(com.alibaba.polardbx.optimizer.core.rel.dal.LogicalShow.DB_INDEX_MODE_NORMAL, modeHolder[0]);
+    }
+
+    /**
+     * When SHOW_COMMAND_RAND_DISPATCH is enabled and kind is SHOW,
+     * resolveNoTableNameDbIndex must pick a group from the schema's group list,
+     * set modeHolder[0] to DB_INDEX_MODE_RANDOM, and return a valid group name.
+     */
+    @Test
+    public void testResolveNoTableNameDbIndexPicksRandomGroupWhenParamEnabled() throws Exception {
+        ParamManager paramManager = mock(ParamManager.class);
+        when(paramManager.getBoolean(ConnectionParams.SHOW_COMMAND_RAND_DISPATCH)).thenReturn(true);
+
+        SqlDal sqlDal = mock(SqlDal.class);
+        when(sqlDal.getKind()).thenReturn(SqlKind.SHOW);
+
+        com.alibaba.polardbx.common.model.Group groupA = mock(com.alibaba.polardbx.common.model.Group.class);
+        com.alibaba.polardbx.common.model.Group groupB = mock(com.alibaba.polardbx.common.model.Group.class);
+        when(groupA.getName()).thenReturn("GROUP_A");
+        when(groupB.getName()).thenReturn("GROUP_B");
+        java.util.List<com.alibaba.polardbx.common.model.Group> groups = java.util.Arrays.asList(groupA, groupB);
+
+        com.alibaba.polardbx.common.model.Matrix matrix = mock(com.alibaba.polardbx.common.model.Matrix.class);
+        when(matrix.getGroups()).thenReturn(groups);
+
+        com.alibaba.polardbx.optimizer.OptimizerContext optimizerContext =
+            mock(com.alibaba.polardbx.optimizer.OptimizerContext.class);
+        when(optimizerContext.getMatrix()).thenReturn(matrix);
+
+        try (MockedStatic<com.alibaba.polardbx.optimizer.OptimizerContext> mockedOptimizerContext =
+            mockStatic(com.alibaba.polardbx.optimizer.OptimizerContext.class)) {
+            mockedOptimizerContext.when(
+                    () -> com.alibaba.polardbx.optimizer.OptimizerContext.getContext("testSchema"))
+                .thenReturn(optimizerContext);
+
+            ToDrdsRelVisitor visitor = buildVisitorWithParamManager(paramManager);
+            int[] modeHolder = new int[] {
+                com.alibaba.polardbx.optimizer.core.rel.dal.LogicalShow.DB_INDEX_MODE_NORMAL};
+            String result = visitor.resolveNoTableNameDbIndex(sqlDal, "testSchema", "defaultGroup", modeHolder);
+
+            assertTrue("Result must be one of the schema groups",
+                result.equals("GROUP_A") || result.equals("GROUP_B"));
+            assertEquals(com.alibaba.polardbx.optimizer.core.rel.dal.LogicalShow.DB_INDEX_MODE_RANDOM, modeHolder[0]);
+        }
     }
 }

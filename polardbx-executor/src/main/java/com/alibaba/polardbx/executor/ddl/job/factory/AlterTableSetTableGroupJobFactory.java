@@ -22,9 +22,13 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.ddl.job.converter.PhysicalPlanData;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.*;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.CreatePhyTableWithRollbackCheckTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.SubJobTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.TablesSyncTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.UpdateTablesVersionTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcAlterTableSetTableGroupMarkTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcTableGroupDdlMarkTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.ValidateTableVersionTask;
@@ -39,16 +43,15 @@ import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupSyncTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
 import com.alibaba.polardbx.executor.ddl.newengine.job.TransientDdlJob;
 import com.alibaba.polardbx.executor.partitionmanagement.AlterTableGroupUtils;
 import com.alibaba.polardbx.executor.scaleout.ScaleOutUtils;
 import com.alibaba.polardbx.gms.partition.TablePartitionRecord;
 import com.alibaba.polardbx.gms.tablegroup.PartitionGroupRecord;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
-import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ComplexTaskMetaManager;
-import com.alibaba.polardbx.optimizer.config.table.PreemptiveTime;
 import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -73,6 +76,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
+
+import static com.alibaba.polardbx.executor.ddl.job.factory.AlterTableGroupBaseJobFactory.CDC_DDL_MARK_HINTS;
 
 /**
  * @author luoyanxin
@@ -183,7 +188,8 @@ public class AlterTableSetTableGroupJobFactory extends DdlJobFactory {
             DdlTask syncTable =
                 new TablesSyncTask(schemaName, Lists.newArrayList(preparedData.getPrimaryTableName()));
 
-            if (!executionContext.getDdlContext().isSubJob()) {
+            if (!executionContext.getDdlContext().isSubJob() || StringUtils.contains(executionContext.getOriginSql(),
+                CDC_DDL_MARK_HINTS)) {
                 boolean isGsi = isGsi(schemaName, preparedData.getPrimaryTableName(), preparedData.getTableName());
                 CdcAlterTableSetTableGroupMarkTask cdcAlterTableSetTableGroupMarkTask =
                     new CdcAlterTableSetTableGroupMarkTask(schemaName, preparedData.getPrimaryTableName(),
@@ -226,10 +232,10 @@ public class AlterTableSetTableGroupJobFactory extends DdlJobFactory {
                 }
             }
         }
-        List<String> targetDbList = new ArrayList<>();
+        List<Pair<String, String>> targetDbList = new ArrayList<>();
         List<String> newPartitions = new ArrayList<>();
         for (PartitionGroupRecord newRecord : newPartitionRecords) {
-            targetDbList.add(newRecord.getPhy_db());
+            targetDbList.add(new Pair<>(newRecord.getPhy_db(), newRecord.getGroup_Name()));
             newPartitions.add(newRecord.getPartition_name());
         }
         DdlTask addMetaTask = new AlterTableGroupAddMetaTask(schemaName, targetTableGroupName,
@@ -247,7 +253,7 @@ public class AlterTableSetTableGroupJobFactory extends DdlJobFactory {
         }
         List<DdlTask> bringUpAlterTableGroupTasks =
             ComplexTaskFactory.bringUpAlterTableGroup(schemaName, targetTableGroupName, tableName,
-                ComplexTaskMetaManager.ComplexTaskType.SET_TABLEGROUP, preparedData.getDdlVersionId(),
+                null, ComplexTaskMetaManager.ComplexTaskType.SET_TABLEGROUP, preparedData.getDdlVersionId(),
                 executionContext);
 
         executableDdlJob.addSequentialTasks(bringUpAlterTableGroupTasks);
@@ -446,20 +452,31 @@ public class AlterTableSetTableGroupJobFactory extends DdlJobFactory {
                 CdcDdlMarkVisibility.Protected;
         CdcTableGroupDdlMarkTask cdcTableGroupDdlMarkTask =
             new CdcTableGroupDdlMarkTask(preparedData.getTableGroupName(), schemaName, tableName, sqlKind, newTopology,
-                dc.getDdlStmt(), cdcDdlMarkVisibility, false);
+                dc.getDdlStmt(), cdcDdlMarkVisibility, false, false);
 
         executableDdlJob.addTask(cdcTableGroupDdlMarkTask);
         executableDdlJob.addTaskRelationship(taskList.get(taskList.size() - 1), cdcTableGroupDdlMarkTask);
         executableDdlJob.addTaskRelationship(cdcTableGroupDdlMarkTask, bringUpAlterTableGroupTasks.get(0));
 
+        List<DdlTask> dropForeignKeyTasksBeforeRename = new ArrayList<>();
         DdlTask dropUselessTableTask =
-            ComplexTaskFactory.CreateDropUselessPhyTableTask(schemaName, tableName, sourceTableTopology,
+            ComplexTaskFactory.cleanUpUselessPhyTableTask(schemaName, tableName, sourceTableTopology,
                 targetTableTopology,
-                executionContext);
+                dropForeignKeyTasksBeforeRename, executionContext);
         executableDdlJob.addTask(dropUselessTableTask);
-        executableDdlJob.addTaskRelationship(bringUpAlterTableGroupTasks.get(bringUpAlterTableGroupTasks.size() - 1),
-            dropUselessTableTask);
+        if (GeneralUtil.isNotEmpty(dropForeignKeyTasksBeforeRename)) {
+            for (DdlTask task : dropForeignKeyTasksBeforeRename) {
+                executableDdlJob.addTaskRelationship(
+                    bringUpAlterTableGroupTasks.get(bringUpAlterTableGroupTasks.size() - 1), task);
+                executableDdlJob.addTaskRelationship(task, dropUselessTableTask);
+            }
+        } else {
+            executableDdlJob
+                .addTaskRelationship(bringUpAlterTableGroupTasks.get(bringUpAlterTableGroupTasks.size() - 1),
+                    dropUselessTableTask);
+        }
         executableDdlJob.getExcludeResources().addAll(subTask.getExcludeResources());
+        executableDdlJob.getSharedResources().addAll(subTask.getSharedResources());
     }
 
     private PartitionInfo generateNewPartitionInfo() {
@@ -537,7 +554,7 @@ public class AlterTableSetTableGroupJobFactory extends DdlJobFactory {
                 assert partitionSpec != null;
 
                 if (!partitionSpec.getLocation().getGroupKey()
-                    .equalsIgnoreCase(GroupInfoUtil.buildGroupNameFromPhysicalDb(partitionGroupRecord.getPhy_db()))) {
+                    .equalsIgnoreCase(partitionGroupRecord.getGroup_Name())) {
                     flag[0] = false;
                     flag[1] = false;
                     return;
@@ -550,4 +567,14 @@ public class AlterTableSetTableGroupJobFactory extends DdlJobFactory {
 
     }
 
+    @Override
+    protected void updateOnlineDdlInfo(OnlineDdlInfo onlineDdlInfo) {
+        onlineDdlInfo.setOnlineDdlType(OnlineDdlInfo.DdlType.ONLINE_DDL);
+        if (preparedData.isAlignPartitionNameFirst() || preparedData.isRepartition()) {
+            onlineDdlInfo.setOnlineDdlAlgorithm(OnlineDdlInfo.DdlAlgorithm.OSC);
+        } else {
+            onlineDdlInfo.setOnlineDdlAlgorithm(OnlineDdlInfo.DdlAlgorithm.META_ONLY);
+        }
+        onlineDdlInfo.setAdviceOnlineDdlSql(String.format("%s", executionContext.getOriginSql()));
+    }
 }

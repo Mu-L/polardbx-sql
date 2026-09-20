@@ -61,7 +61,8 @@ public class LogicalAlterSystemReloadStorageHandler extends HandlerCommon {
 
     private void syncReloadStorage(List<String> dnList) {
         try {
-            SyncManagerHelper.sync(new AlterSystemReloadStorageSyncAction(dnList), SyncScope.ALL);
+            SyncManagerHelper.syncThrowExceptions(
+                new AlterSystemReloadStorageSyncAction(dnList), SyncScope.NOT_COLUMNAR_SLAVE);
         } catch (Throwable e) {
             logger.error(e);
             throw new TddlNestableRuntimeException(e);

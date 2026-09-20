@@ -16,25 +16,23 @@
 
 package com.alibaba.polardbx.server.handler.privileges.polar;
 
-import com.alibaba.polardbx.server.ServerConnection;
-import com.alibaba.polardbx.druid.sql.ast.statement.SQLExprTableSource;
-import com.alibaba.polardbx.druid.sql.ast.statement.SQLRevokeStatement;
-import com.alibaba.polardbx.druid.sql.parser.ByteString;
 import com.alibaba.polardbx.common.audit.AuditAction;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLExprTableSource;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLRevokeStatement;
+import com.alibaba.polardbx.druid.sql.parser.ByteString;
 import com.alibaba.polardbx.gms.privilege.PolarAccountInfo;
 import com.alibaba.polardbx.gms.privilege.PolarPrivManager;
 import com.alibaba.polardbx.gms.privilege.PrivilegeKind;
-import com.alibaba.polardbx.optimizer.parse.FastsqlUtils;
+import com.alibaba.polardbx.server.ServerConnection;
 import org.apache.calcite.sql.SqlKind;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import static com.alibaba.polardbx.server.handler.privileges.polar.PolarHandlerCommon.checkDrdsRoot;
-import static com.alibaba.polardbx.gms.privilege.audit.AuditPrivilege.polarAudit;
+import static com.alibaba.polardbx.server.util.AuditPrivilege.polarAudit;
 
 /**
  * @author bairui.lrj
@@ -43,6 +41,8 @@ public class PolarRevokePrivilegeHandler extends AbstractPrivilegeCommandHandler
     private static final Logger logger = LoggerFactory.getLogger(PolarRevokePrivilegeHandler.class);
 
     private final SQLRevokeStatement stmt;
+
+    private boolean catalog = false;
 
     public PolarRevokePrivilegeHandler(ByteString sql,
                                        ServerConnection serverConn,
@@ -58,13 +58,17 @@ public class PolarRevokePrivilegeHandler extends AbstractPrivilegeCommandHandler
         try {
             SQLExprTableSource sqlExprTableSource = (SQLExprTableSource) stmt.getResource();
             grantees = PolarHandlerCommon.getGrantees(sqlExprTableSource, stmt.getUsers(),
-                stmt.getPrivileges(), c);
+                stmt.getPrivileges(), c, false);
             if (stmt.isGrantOption()) {
                 for (PolarAccountInfo grantee : grantees) {
                     if (grantee.getFirstDbPriv() != null) {
                         grantee.getFirstDbPriv().grantPrivilege(PrivilegeKind.GRANT_OPTION);
+                    } else if (grantee.getFirstCatalogDbPriv() != null) {
+                        grantee.getFirstCatalogDbPriv().grantPrivilege(PrivilegeKind.GRANT_OPTION);
                     } else if (grantee.getFirstTbPriv() != null) {
                         grantee.getFirstTbPriv().grantPrivilege(PrivilegeKind.GRANT_OPTION);
+                    } else if (grantee.getFirstCatalogTbPriv() != null) {
+                        grantee.getFirstCatalogTbPriv().grantPrivilege(PrivilegeKind.GRANT_OPTION);
                     } else {
                         grantee.getInstPriv().grantPrivilege(PrivilegeKind.GRANT_OPTION);
                     }
@@ -88,13 +92,20 @@ public class PolarRevokePrivilegeHandler extends AbstractPrivilegeCommandHandler
         List<PolarAccountInfo> grantees = getGrantees(c);
 
         checkGrantees(grantees);
+        this.catalog = grantees.stream().anyMatch(g ->
+            g.getFirstCatalogDbPriv() != null || g.getFirstCatalogTbPriv() != null);
 
         PolarAccountInfo granter = getGranter();
 
         // Revoke
-        PolarPrivManager.getInstance().revokePrivileges(granter, c.getActiveRoles(), grantees);
-        polarAudit(getServerConn().getConnectionInfo(), getSql().toString(), AuditAction.REVOKE);
+        PolarPrivManager.getInstance().revokePrivileges(granter, c.getActiveRoles(), grantees, stmt.isIfExists());
+        polarAudit(getServerConn(), getSql().toString(), AuditAction.REVOKE);
         logger.info(String.format("REVOKE succeed, sql: %s, granter: %s", sql, granter.getIdentifier()));
+    }
+
+    @Override
+    protected boolean isCatalog() {
+        return catalog;
     }
 
     @Override

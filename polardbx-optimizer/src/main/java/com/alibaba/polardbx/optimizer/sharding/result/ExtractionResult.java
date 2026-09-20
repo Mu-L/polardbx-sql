@@ -18,6 +18,7 @@ package com.alibaba.polardbx.optimizer.sharding.result;
 
 import com.alibaba.polardbx.common.DefaultSchema;
 import com.alibaba.polardbx.common.model.sqljep.Comparative;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
@@ -32,6 +33,8 @@ import com.alibaba.polardbx.optimizer.sharding.utils.ExtractorContext;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.core.TableScan;
+import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Util;
 
@@ -122,34 +125,30 @@ public class ExtractionResult {
     }
 
     public void allCondition(Map<String, Map<String, Comparative>> allComps,
-                             Map<String, Map<String, Comparative>> allFullComps,
-                             ExecutionContext ec) {
+                             ExecutionContext ec, boolean enableConstExpr) {
         allCondition(
             allComps,
-            allFullComps,
             ec,
             (t) -> conditionOf(t)
-                .intersect());
+                .intersect(), enableConstExpr);
     }
 
     public void allConditionWithScalarFunctionReplaced(Map<String, Map<String, Comparative>> allComps,
-                                                       Map<String, Map<String, Comparative>> allFullComps,
                                                        AtomicInteger maxParamIndex,
                                                        ExecutionContext ec) {
         allCondition(
             allComps,
-            allFullComps,
             ec,
             (t) -> conditionOf(t)
                 .intersect()
-                .convertScalarFunction2RexCallParam(maxParamIndex, ec));
+                .convertScalarFunction2RexCallParam(maxParamIndex, ec), false);
     }
 
     private void allCondition(Map<String, Map<String, Comparative>> allComps,
-                              Map<String, Map<String, Comparative>> allFullComps,
                               ExecutionContext ec,
-                              Function<RelOptTable, ConditionResult> conditionBuilder) {
-        if (null == allComps && null == allFullComps) {
+                              Function<RelOptTable, ConditionResult> conditionBuilder,
+                              boolean enableConstExpr) {
+        if (null == allComps) {
             return;
         }
 
@@ -157,18 +156,17 @@ public class ExtractionResult {
             final ConditionResult conditions = conditionBuilder.apply(t);
 
             if (null != allComps) {
-                final Map<String, Comparative> comps = conditions.toPartitionCondition(ec);
+                final Map<String, Comparative> comps = conditions.toPartitionCondition(ec, enableConstExpr);
                 allComps.put(Util.last(t.getQualifiedName()), comps);
-            }
-            if (null != allFullComps) {
-                final Map<String, Comparative> fullComps = conditions.toFullPartitionCondition(ec);
-                allFullComps.put(Util.last(t.getQualifiedName()), fullComps);
             }
         }
     }
 
-    public PlanShardInfo allShardInfo(ExecutionContext ec) {
-
+    /**
+     * 在优化器阶段调用这个方法，需要确保enableConstExpr=false; 在执行器阶段调用这个方案，enableConstExpr参数
+     * 根据实际情况可以传递false或则true，传递true意味着我们会把涉及到的裁剪表达式计算出来常量。
+     */
+    public PlanShardInfo allShardInfo(ExecutionContext ec, boolean enableConstExpr) {
         PlanShardInfo planShardInfo = new PlanShardInfo();
         for (RelOptTable relTablle : getLogicalTables()) {
             List<String> qualifiedName = relTablle.getQualifiedName();
@@ -194,20 +192,17 @@ public class ExtractionResult {
             relShardInfo.setSchemaName(schema);
             if (!usePartTable) {
 
-                final Map<String, Comparative> comps = conditionOf(relTablle).intersect().toPartitionCondition(ec);
-                final Map<String, Comparative> fullComps =
-                    conditionOf(relTablle).intersect().toFullPartitionCondition(ec);
+                final Map<String, Comparative> comps = conditionOf(relTablle).intersect().toPartitionCondition(
+                    ec, enableConstExpr);
 
                 if (null != comps) {
                     relShardInfo.setAllComps(comps);
-                }
-                if (null != fullComps) {
-                    relShardInfo.setAllFullComps(fullComps);
                 }
                 planShardInfo.putRelShardInfo(schema, tableName, relShardInfo);
 
             } else {
                 ConditionResult condRs = conditionOf(relTablle).intersect();
+                extractPartitionsForRelTableIfNeed(ec, relTablle, relShardInfo);
                 if (condRs instanceof NormalConditionResult) {
                     NormalConditionResult normalCondRs = (NormalConditionResult) condRs;
                     PartitionPruneStep stepInfo = normalCondRs.toPartPruneStep(ec);
@@ -227,13 +222,35 @@ public class ExtractionResult {
         return planShardInfo;
     }
 
-    public void allColumnCondition(Map<String, Map<String, Comparative>> allComps, List<String> columns) {
+    private void extractPartitionsForRelTableIfNeed(ExecutionContext ec,
+                                                    RelOptTable relTablle,
+                                                    RelShardInfo relShardInfo) {
+        boolean enablePostPlannerPartitionHintPruning =
+            ec.getParamManager().getBoolean(ConnectionParams.ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING);
+        if (!enablePostPlannerPartitionHintPruning) {
+            return;
+        }
+        SqlNode partitionsOfRel = null;
+        Map<RelNode, Label> relLabelMap = getTableLabelMap().get(relTablle);
+        if (relLabelMap != null && relLabelMap.size() == 1) {
+            RelNode rel = relLabelMap.keySet().iterator().next();
+            if (rel instanceof TableScan) {
+                partitionsOfRel = ((TableScan) rel).getPartitions();
+            }
+        }
+        if (partitionsOfRel != null) {
+            relShardInfo.setPartitions(partitionsOfRel);
+        }
+    }
+
+    public void allColumnCondition(Map<String, Map<String, Comparative>> allComps, List<String> columns,
+                                   ExecutionContext context) {
         if (null == allComps || columns == null) {
             return;
         }
 
         for (RelOptTable t : getLogicalTables()) {
-            final Map<String, Comparative> comps = conditionOf(t).intersect().toColumnCondition(columns);
+            final Map<String, Comparative> comps = conditionOf(t).intersect().toColumnCondition(columns, context);
 
             if (null != allComps) {
                 allComps.put(Util.last(t.getQualifiedName()), comps);

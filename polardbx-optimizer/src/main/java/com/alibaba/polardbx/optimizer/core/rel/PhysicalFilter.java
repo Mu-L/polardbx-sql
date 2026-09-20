@@ -204,6 +204,7 @@ public class PhysicalFilter extends Filter implements PhysicalNode {
             if (collation != null && collation != RelCollations.EMPTY) {
                 return null;
             }
+
             if (distribution == null || distribution == RelDistributions.ANY) {
                 return null;
             }

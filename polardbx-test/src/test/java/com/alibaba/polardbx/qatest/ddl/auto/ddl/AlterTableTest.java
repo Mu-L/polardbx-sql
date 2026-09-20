@@ -22,6 +22,7 @@ import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import net.jcip.annotations.NotThreadSafe;
 import org.apache.commons.collections.MapUtils;
@@ -47,13 +48,13 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static com.alibaba.polardbx.common.properties.ConnectionProperties.ENABLE_DRDS_MULTI_PHASE_DDL;
 import static com.alibaba.polardbx.qatest.validator.DataOperator.executeOnMysqlAndTddl;
 import static com.alibaba.polardbx.qatest.validator.DataValidator.selectContentSameAssert;
 import static com.google.common.truth.Truth.assertThat;
 
+@IcbcIgnore(ignoreReason = "collation")
 @NotThreadSafe
-@RunWith(Parameterized.class)
+// @RunWith(Parameterized.class)
 public class AlterTableTest extends DDLBaseNewDBTestCase {
 
     final static Log log = LogFactory.getLog(AlterTableTest.class);
@@ -1854,6 +1855,7 @@ public class AlterTableTest extends DDLBaseNewDBTestCase {
         }
     }
 
+    @IcbcIgnore(ignoreReason = "NO_ZERO_DATE")
     @Test
     public void testTimeZoneZeroValue() throws SQLException {
         String schemaName = TStringUtil.isBlank(tddlDatabase2) ? tddlDatabase1 : tddlDatabase2;

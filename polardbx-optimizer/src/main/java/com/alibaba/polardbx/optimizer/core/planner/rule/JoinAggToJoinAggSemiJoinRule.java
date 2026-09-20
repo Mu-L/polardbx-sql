@@ -18,6 +18,7 @@ package com.alibaba.polardbx.optimizer.core.planner.rule;
 
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.optimizer.PlannerContext;
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
@@ -106,10 +107,8 @@ public class JoinAggToJoinAggSemiJoinRule extends RelOptRule {
             return null;
         }
 
-        RelNode copiedRight;
-        try {
-            copiedRight = join.getRight().accept(new RelCopied());
-        } catch (Util.FoundOne e) {
+        RelNode copiedRight = CBOUtil.RelCopied.copy(join.getRight());
+        if (copiedRight == null) {
             return null;
         }
 
@@ -155,24 +154,5 @@ public class JoinAggToJoinAggSemiJoinRule extends RelOptRule {
         newJoin.getJoinReorderContext().setHasSemiFilter(true);
 
         return newJoin;
-    }
-
-    static class RelCopied extends RelShuttleImpl {
-        public RelNode visit(RelNode relNode) {
-            if (relNode instanceof RelSubset) {
-                if (((RelSubset) relNode).getOriginal() == null) {
-                    throw Util.FoundOne.NULL;
-                }
-                return ((RelSubset) relNode).getOriginal().accept(this);
-            }
-            return visitChildren(relNode);
-        }
-
-        public RelNode visit(TableScan scan) {
-            if (scan instanceof LogicalView) {
-                return ((LogicalView) scan).copy(scan.getTraitSet());
-            }
-            throw Util.FoundOne.NULL;
-        }
     }
 }

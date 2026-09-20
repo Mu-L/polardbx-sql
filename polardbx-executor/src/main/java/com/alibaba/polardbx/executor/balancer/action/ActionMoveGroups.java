@@ -21,7 +21,6 @@ import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.MoveDatabaseValidateTask;
 import com.alibaba.polardbx.executor.ddl.job.task.shared.EmptyTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
-import com.alibaba.polardbx.executor.scaleout.ScaleOutUtils;
 import com.alibaba.polardbx.optimizer.config.table.ScaleOutPlanUtil;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -80,7 +79,7 @@ public class ActionMoveGroups implements BalanceAction, Comparable<ActionMoveGro
     @Override
     public ExecutableDdlJob toDdlJob(ExecutionContext ec) {
         ExecutableDdlJob job = new ExecutableDdlJob();
-        job.setMaxParallelism(ec.getParamManager().getInt(ConnectionParams.REBALANCE_TASK_PARALISM));
+        job.setMaxParallelism(ec.getParamManager().getInt(ConnectionParams.REBALANCE_DB_PARALLELISM));
         EmptyTask head = new EmptyTask(schema);
         Map<String, Long> tablesVersion = getTableVersions(ec);
         MoveDatabaseValidateTask moveDatabaseValidateTask = new MoveDatabaseValidateTask(schema, schema, tablesVersion);

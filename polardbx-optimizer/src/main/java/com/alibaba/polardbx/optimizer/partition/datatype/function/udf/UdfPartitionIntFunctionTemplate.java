@@ -43,6 +43,9 @@ public class UdfPartitionIntFunctionTemplate extends PartitionIntFunction {
     protected List<DataType> inputDataTypes;
     protected DataType outputDatatype;
 
+    /**
+     * This constructor is used by ExtraFunctionManager.addFuncion
+     */
     public UdfPartitionIntFunctionTemplate() {
         super(null, DataTypes.LongType);
     }
@@ -97,6 +100,9 @@ public class UdfPartitionIntFunctionTemplate extends PartitionIntFunction {
                                SessionProperties sessionProperties,
                                boolean[] endpoints) {
         Object result = compute(fullParamFlds, sessionProperties, endpoints);
+        if (result == null) {
+            return null;
+        }
         Long longResult = (Long) DataTypes.LongType.convertJavaFrom(result);
         return longResult.longValue();
     }
@@ -162,6 +168,28 @@ public class UdfPartitionIntFunctionTemplate extends PartitionIntFunction {
         SqlOperator otherJdfJavaAst = otherUdfJavaFunc.getSqlOperator();
         if (!otherJdfJavaAst.equals(this.udfJavaFuncAst)) {
             return false;
+        }
+
+        UdfJavaFunctionMeta localFuncMeta = this.udfJavaFuncMeta;
+        UdfJavaFunctionMeta otherFuncMeta = otherUdfJavaFunc.udfJavaFuncMeta;
+        if (localFuncMeta != null && otherFuncMeta == null) {
+            return false;
+        } else if (localFuncMeta == null && otherFuncMeta != null) {
+            return false;
+        } else if (localFuncMeta != null && otherFuncMeta != null) {
+            boolean localUseUdfParams = localFuncMeta.getUdfInitParams() != null;
+            boolean otherUseUdfParams = otherFuncMeta.getUdfInitParams() != null;
+            if (localUseUdfParams != otherUseUdfParams) {
+                return false;
+            }
+
+            if (localUseUdfParams) {
+                UserDefinedJavaFunction localJavaUdf = localFuncMeta.getUdfJavaFunction();
+                UserDefinedJavaFunction otherJavaUdf = otherFuncMeta.getUdfJavaFunction();
+                if (!localJavaUdf.equals(otherJavaUdf)) {
+                    return false;
+                }
+            }
         }
         return true;
     }

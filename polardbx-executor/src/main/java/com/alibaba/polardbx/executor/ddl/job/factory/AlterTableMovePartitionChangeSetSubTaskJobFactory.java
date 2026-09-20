@@ -54,11 +54,13 @@ public class AlterTableMovePartitionChangeSetSubTaskJobFactory extends AlterTabl
                                                              String targetPartition,
                                                              boolean skipBackfill,
                                                              ComplexTaskMetaManager.ComplexTaskType taskType,
+                                                             boolean usePhysicalBackfill,
                                                              ExecutionContext executionContext) {
         super(ddl, parentPrepareData, preparedData, phyDdlTableOperations, discardTableSpaceOperations,
             ptbGroupMap, sourceAndTarDnMap, storageInstAndUserInfos,
             tableTopology, targetTableTopology, sourceTableTopology,
-            orderedTargetTableLocations, targetPartition, skipBackfill, null, null, taskType, executionContext);
+            orderedTargetTableLocations, targetPartition, skipBackfill, null, null,
+            taskType, usePhysicalBackfill, executionContext);
         this.parentPrepareData = parentPrepareData;
     }
 

@@ -27,6 +27,7 @@ import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalInsert;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.RexHandlerCallFactory.DynamicImplicitDefaultHandlerCallBuilder;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
@@ -110,6 +111,24 @@ public class LogicalWriteUtil {
         literalColumnNames.addAll(primaryTableMeta.getLogicalGeneratedColumnNames());
         GeneratedColumnUtil.getAllLogicalReferencedColumnsByGen(primaryTableMeta).values()
             .forEach(literalColumnNames::addAll);
+
+        // MCE follows the same parameter lifecycle as logical generated columns. The content
+        // expression must be evaluated at CN before Blob upload, and the typed NULL addr
+        // placeholder must become a RexCallParam through the normal logical-write pipeline.
+        for (ColumnMeta addrColumn : ExternalizedDmlRewriter.getAppendAddrColumns(primaryTableMeta)) {
+            literalColumnNames.add(addrColumn.getName());
+            if (addrColumn.getMappingName() != null) {
+                literalColumnNames.add(addrColumn.getMappingName());
+            }
+        }
+
+        // Externalized columns must be evaluated at CN (DN only has BIGINT addr column)
+        for (ColumnMeta cm : primaryTableMeta.getAllColumns()) {
+            if (cm.isExternalizedColumn()) {
+                literalColumnNames.add(cm.getName().toUpperCase());
+            }
+        }
+
         return literalColumnNames;
     }
 
@@ -131,7 +150,7 @@ public class LogicalWriteUtil {
         final TddlRuleManager rule = oc.getRuleManager();
 
         // Columns in broadcast table
-        if (rule.isBroadCast(tableName)) {
+        if (rule.isBroadCastOrReplicas(tableName)) {
             tableMeta.getAllColumns().forEach(cm -> resultColumnNames.add(cm.getName()));
         }
 

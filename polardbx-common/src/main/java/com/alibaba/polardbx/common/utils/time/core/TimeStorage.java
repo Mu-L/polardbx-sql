@@ -356,7 +356,7 @@ public class TimeStorage {
         return bb.toByteArray();
     }
 
-    private static boolean isZero(Timestamp v) {
+    public static boolean isZero(Timestamp v) {
         if (v instanceof OriginalTimestamp) {
             MysqlDateTime t = ((OriginalTimestamp) v).getMysqlDateTime();
             return t.getYear() == 0 && t.getMonth() == 0 && t.getDay() == 0

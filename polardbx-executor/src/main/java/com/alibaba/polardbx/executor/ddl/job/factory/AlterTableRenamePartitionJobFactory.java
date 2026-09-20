@@ -32,6 +32,7 @@ import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.validator.TableValidator;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
 import com.alibaba.polardbx.executor.ddl.newengine.job.TransientDdlJob;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
@@ -154,7 +155,7 @@ public class AlterTableRenamePartitionJobFactory extends AlterTableGroupBaseJobF
     }
 
     protected ExecutableDdlJob renameInNewTableGroup() {
-        executionContext.getDdlContext().setDdlType(DdlType.ALTER_TABLE_RENAME_PARTITION);
+        executionContext.getDdlContext().setDdlType(com.alibaba.polardbx.common.ddl.newengine.DdlType.ALTER_TABLE_RENAME_PARTITION);
         ExecutableDdlJob executableDdlJob = new ExecutableDdlJob();
         Map<String, Long> tablesVersion = getTablesVersion();
         String schemaName = preparedData.getSchemaName();
@@ -263,6 +264,14 @@ public class AlterTableRenamePartitionJobFactory extends AlterTableGroupBaseJobF
     protected void sharedResources(Set<String> resources) {
     }
 
+    @Override
+    protected void updateOnlineDdlInfo(OnlineDdlInfo onlineDdlInfo) {
+        onlineDdlInfo.setOnlineDdlType(OnlineDdlInfo.DdlType.ONLINE_DDL);
+        onlineDdlInfo.setOnlineDdlAlgorithm(OnlineDdlInfo.DdlAlgorithm.META_ONLY);
+        onlineDdlInfo.setAdviceOnlineDdlSql(String.format("%s", executionContext.getOriginSql()));
+    }
+
+    @Override
     protected Map<String, Long> getTablesVersion() {
         Map<String, Long> tablesVersion = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         String logicalTable = preparedData.getTableName();
@@ -302,17 +311,17 @@ public class AlterTableRenamePartitionJobFactory extends AlterTableGroupBaseJobF
 
     private boolean isFromSetTableGroup(ExecutionContext executionContext) {
         DdlType parentDdlType = getRootParentDdlContext(executionContext.getDdlContext()).getDdlType();
-        return parentDdlType == DdlType.ALTER_TABLE_SET_TABLEGROUP;
+        return parentDdlType == com.alibaba.polardbx.common.ddl.newengine.DdlType.ALTER_TABLE_SET_TABLEGROUP;
     }
 
     private boolean isFromAlterTableGroup(ExecutionContext executionContext) {
         DdlType parentDdlType = getRootParentDdlContext(executionContext.getDdlContext()).getDdlType();
-        return parentDdlType == DdlType.ALTER_TABLEGROUP;
+        return parentDdlType == com.alibaba.polardbx.common.ddl.newengine.DdlType.ALTER_TABLEGROUP;
     }
 
     private boolean isFromRenamePartition(ExecutionContext executionContext) {
         DdlType parentDdlType = getRootParentDdlContext(executionContext.getDdlContext()).getDdlType();
-        return parentDdlType == DdlType.ALTER_TABLE_RENAME_PARTITION;
+        return parentDdlType == com.alibaba.polardbx.common.ddl.newengine.DdlType.ALTER_TABLE_RENAME_PARTITION;
     }
 
     private DdlContext getRootParentDdlContext(DdlContext ddlContext) {

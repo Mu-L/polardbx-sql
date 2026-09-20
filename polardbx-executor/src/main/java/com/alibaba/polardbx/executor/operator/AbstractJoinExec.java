@@ -16,7 +16,12 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableIntArrayList;
 import com.alibaba.polardbx.common.datatype.UInt64;
+import com.alibaba.polardbx.common.memory.ConditionalMemoryCounter;
+import com.alibaba.polardbx.common.memory.ConditionalMemoryType;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
@@ -24,6 +29,7 @@ import com.alibaba.polardbx.executor.chunk.ChunkConverter;
 import com.alibaba.polardbx.executor.chunk.Converters;
 import com.alibaba.polardbx.executor.mpp.operator.DriverContext;
 import com.alibaba.polardbx.executor.operator.util.ChunksIndex;
+import com.alibaba.polardbx.executor.operator.util.ConcurrentRawHashTable;
 import com.alibaba.polardbx.executor.operator.util.ObjectPools;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
@@ -45,31 +51,40 @@ import java.util.Map;
  * Abstract Join Executor
  *
  */
-abstract class AbstractJoinExec extends AbstractExecutor {
+public abstract class AbstractJoinExec extends AbstractExecutor {
+    public static final int LIST_END = ConcurrentRawHashTable.NOT_EXISTS;
 
     // Limit the size of bloom filter to ~9MB
     protected static final int BLOOM_FILTER_ROWS_LIMIT_FOR_PARALLEL = 10_500_000;
     // Limit the size of bloom filter to ~2MB
     protected static final int BLOOM_FILTER_ROWS_LIMIT = 2_500_000;
 
+    @FieldMemoryCounter(value = false)
     final Executor outerInput;
+    @FieldMemoryCounter(value = false)
     final Executor innerInput;
+    @FieldMemoryCounter(value = false)
     final List<DataType> dataTypes;
-
+    @FieldMemoryCounter(value = false)
     final JoinRelType joinType;
     final boolean outerJoin;
     final boolean semiJoin; // is semi or anti-semi join?
     final boolean singleJoin; // for inner semi-join and left semi-join
-    final List<EquiJoinKey> joinKeys;
-    final IExpression condition;
-    final List<IExpression> antiJoinOperands;
-    final IExpression antiCondition; // for null-aware anti-join
 
+    @FieldMemoryCounter(value = false)
+    final List<EquiJoinKey> joinKeys;
+    @FieldMemoryCounter(value = false)
+    final IExpression condition;
+    @FieldMemoryCounter(value = false)
+    final List<IExpression> antiJoinOperands;
+    @FieldMemoryCounter(value = false)
+    final IExpression antiCondition; // for null-aware anti-join
+    @FieldMemoryCounter(value = false)
     final ChunkConverter outerKeyChunkGetter;
+    @FieldMemoryCounter(value = false)
     final ChunkConverter innerKeyChunkGetter;
 
-    final List<Integer> ignoreNullBlocks = new ArrayList<>();
-
+    protected final MemoryCountableIntArrayList ignoreNullBlocks = new MemoryCountableIntArrayList();
     protected int[] innerKeyMapping;
 
     protected boolean useVecJoin;
@@ -282,7 +297,7 @@ abstract class AbstractJoinExec extends AbstractExecutor {
         return false;
     }
 
-    interface ProbeOperator {
+    interface ProbeOperator extends MemoryCountable {
         void nextRows();
 
         void close();

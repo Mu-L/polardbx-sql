@@ -3,7 +3,7 @@
 DROP TABLE IF EXISTS `hash_to_months`;
 CREATE TABLE IF NOT EXISTS `hash_to_months` (
 `dt` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(TO_MONTHS(`dt`))
 PARTITIONS 8;
 show create table hash_to_months;
@@ -11,7 +11,7 @@ Table,Create Table
 hash_to_months,CREATE TABLE `hash_to_months` (
 	`dt` date DEFAULT NULL,
 	KEY `auto_shard_key_dt` USING BTREE (`dt`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(TO_MONTHS(`dt`))
 PARTITIONS 8
 explain select dt from hash_to_months where dt = '2021-12-01';

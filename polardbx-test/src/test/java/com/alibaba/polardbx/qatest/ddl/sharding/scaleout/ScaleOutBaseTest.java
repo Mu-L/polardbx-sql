@@ -358,7 +358,7 @@ public abstract class ScaleOutBaseTest extends AsyncDDLBaseNewDBTestCase {
             + "      `pk` bigint(11) NOT NULL AUTO_INCREMENT BY GROUP,\n"
             + "      `integer_test` int(11) DEFAULT 0,\n"
             + "      `varchar_test` varchar(255) DEFAULT '$',\n"
-            + "      `datetime_test` datetime DEFAULT '0000-00-00 00:00:00',\n"
+            + "      `datetime_test` datetime DEFAULT '2019-09-23 08:00:00',\n"
             + "      `timestamp_test` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n"
             + "      PRIMARY KEY (`pk`, `integer_test`)\n"
             + "  ) ENGINE = InnoDB DEFAULT CHARSET = utf8 DBPARTITION BY HASH(pk) TBPARTITION BY HASH(pk) TBPARTITIONS 4;";

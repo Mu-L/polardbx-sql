@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.optimizer.core.planner.rule.columnar;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.core.planner.rule.implement.LogicalWindowToSortWindowRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
@@ -64,6 +65,11 @@ public class COLLogicalWindowToSortWindowRule extends LogicalWindowToSortWindowR
             relDistribution = RelDistributions.SINGLETON;
             break;
         case 1:
+            if (!PlannerContext.getPlannerContext(window).getParamManager()
+                .getBoolean(ConnectionParams.ENABLE_PARTITION_WISE_WINDOW)) {
+                relDistribution = RelDistributions.hash(keyInnerIndexes);
+                break;
+            }
             relDistribution = RelDistributions.hashOss(keyInnerIndexes,
                 PlannerContext.getPlannerContext(window).getColumnarMaxShardCnt());
             // convert by hand

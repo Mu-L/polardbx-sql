@@ -16,17 +16,20 @@
 
 package com.alibaba.polardbx.executor.mpp.operator;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.OutputBufferMemoryManager;
 import com.alibaba.polardbx.executor.operator.ConsumerExecutor;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.List;
 
 public class BroadcastExchanger extends LocalExchanger {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(BroadcastExchanger.class).instanceSize();
 
     public BroadcastExchanger(OutputBufferMemoryManager bufferMemoryManager, List<ConsumerExecutor> executors,
-                              LocalExchangersStatus status, boolean asyncConsume) {
-        super(bufferMemoryManager, executors, status, asyncConsume);
+                              LocalExchangersStatus status, boolean asyncConsume, long waitNotFullInMillis) {
+        super(bufferMemoryManager, executors, status, asyncConsume, waitNotFullInMillis);
     }
 
     @Override
@@ -40,5 +43,13 @@ public class BroadcastExchanger extends LocalExchanger {
                 }
             });
         }
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+
+            // super class
+            + FastMemoryCounter.sizeOf(opened);
     }
 }

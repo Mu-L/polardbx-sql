@@ -16,6 +16,9 @@
 
 package com.alibaba.polardbx.executor.mpp.execution.buffer;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableObjectArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.executor.mpp.OutputBuffers;
 import com.alibaba.polardbx.executor.mpp.execution.StateMachine;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -23,13 +26,14 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.ListenableFuture;
 import io.airlift.units.DataSize;
+import it.unimi.dsi.fastutil.objects.MemoryCountableObject2ObjectArrayMap;
+import org.openjdk.jol.info.ClassLayout;
 
 import javax.annotation.concurrent.GuardedBy;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static com.alibaba.polardbx.executor.mpp.Threads.ENABLE_WISP;
@@ -40,25 +44,50 @@ import static java.util.Objects.requireNonNull;
 
 public class BroadcastOutputBuffer
     implements OutputBuffer {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(BroadcastOutputBuffer.class).instanceSize();
+
+    @FieldMemoryCounter(value = false)
     private final String taskInstanceId;
+
+    @FieldMemoryCounter(value = false)
     private final StateMachine<BufferState> state;
+
+    @FieldMemoryCounter(value = false)
     private final OutputBufferMemoryManager memoryManager;
 
     @GuardedBy("this")
+    @FieldMemoryCounter(value = false)
     private OutputBuffers outputBuffers =
         OutputBuffers.createInitialEmptyOutputBuffers(OutputBuffers.BufferType.BROADCAST);
 
+    // all operations guarded by synchronized(this)
     @GuardedBy("this")
-    private final Map<OutputBuffers.OutputBufferId, ClientBuffer> buffers = new ConcurrentHashMap<>();
+    private final MemoryCountableObject2ObjectArrayMap<OutputBuffers.OutputBufferId, ClientBuffer> buffers =
+        new MemoryCountableObject2ObjectArrayMap<>(
+            bufferId -> FastMemoryCounter.sizeOf(bufferId),
+            clientBuffer -> FastMemoryCounter.sizeOf(clientBuffer)
+        );
 
+    // all operations guarded by synchronized(this)
     @GuardedBy("this")
-    private final List<ClientBuffer.SerializedChunkReference> initialPagesForNewBuffers = new ArrayList<>();
+    private final MemoryCountableObjectArrayList<ClientBuffer.SerializedChunkReference>
+        initialPagesForNewBuffers = new MemoryCountableObjectArrayList<>();
 
     private final int metricLevel;
 
     private final AtomicLong totalPagesAdded = new AtomicLong();
     private final AtomicLong totalRowsAdded = new AtomicLong();
     private final AtomicLong totalBufferedPages = new AtomicLong();
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(buffers)
+            + FastMemoryCounter.sizeOf(initialPagesForNewBuffers)
+            + FastMemoryCounter.sizeOf(totalPagesAdded)
+            + FastMemoryCounter.sizeOf(totalRowsAdded)
+            + FastMemoryCounter.sizeOf(totalBufferedPages);
+    }
 
     public BroadcastOutputBuffer(
         String taskInstanceId,

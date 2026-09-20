@@ -22,7 +22,6 @@ import com.alibaba.polardbx.qatest.data.TableColumnGenerator;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.qatest.validator.DataOperator;
 import com.alibaba.polardbx.qatest.validator.DataValidator;
-import com.google.common.collect.ImmutableSet;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Ignore;
@@ -64,6 +63,17 @@ public class UpdateTest extends CrudBasedLockTestCase {
             + "  `business_type` tinyint(4) NOT NULL COMMENT '业务类型(1:消息,2:采集,3:核实)',\n"
             + "  PRIMARY KEY (`cycle_id`,`swjg_dm`,`business_type`)\n"
             + ") ENGINE=InnoDB DEFAULT CHARSET=utf8 ROW_FORMAT=DYNAMIC COMMENT='大数据_业务数据分析数据日表'";
+
+    private static String TABLE_NAME_DML_ON_BROADCAST_WITH_SUBQUERY = "dml_on_broadcast_test";
+    private static String TABLE_DML_ON_BROADCAST_WITH_SUBQUERY =
+        "CREATE TABLE IF NOT EXISTS `" + TABLE_NAME_DML_ON_BROADCAST_WITH_SUBQUERY + "` (\n"
+            + "  `pk` bigint(11) NOT NULL,\n"
+            + "  `integer_test` int(11) DEFAULT NULL,\n"
+            + "  `varchar_test` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL,\n"
+            + "  `bigint_test` bigint(20) DEFAULT NULL,\n"
+            + "  PRIMARY KEY (`pk`)\n"
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8";
+    private static String BROADCAST_MARK = " broadcast";
 
     static {
         TABLE_FIRST_COLUMN_NOT_NUMERIC +=
@@ -1029,35 +1039,58 @@ public class UpdateTest extends CrudBasedLockTestCase {
 
     @Test
     public void updateWithView() {
-        final String viewName = "update_with_view_test_view";
+        final String viewName = randomTableName("update_with_view_test_view", 12);
+        dropViewOnMysqlAndTddl(viewName);
+        try {
+            String sql = String.format("create view %s as\n"
+                + "(\n"
+                + "    select integer_test, varchar_test from %s as a where a.pk < 11 \n"
+                + ")\n", viewName, baseOneTableName);
+            executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
 
-        // Recreate view
-        String sql = "drop view " + viewName;
-        JdbcUtil.executeUpdateSuccessIgnoreErr(tddlConnection, sql, ImmutableSet.of("Unknown view"));
-        JdbcUtil.executeUpdateSuccessIgnoreErr(mysqlConnection, sql, ImmutableSet.of("Unknown table"));
-
-        sql = String.format("create view %s as\n"
-            + "(\n"
-            + "    select integer_test, varchar_test from %s as a where a.pk < 11 \n"
-            + ")\n", viewName, baseOneTableName);
-        executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
-
-        // Execute update
-        sql =
-            String.format("update %s a, %s v set a.bigint_test = v.integer_test where a.varchar_test = v.varchar_test",
+            // Execute update
+            sql = String.format(
+                "update %s a, %s v set a.bigint_test = v.integer_test where a.varchar_test = v.varchar_test",
                 baseOneTableName, viewName);
-        executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
+            executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
 
-        // Check update result
-        sql = "SELECT bigint_test FROM " + baseOneTableName;
-        selectContentSameAssert(sql, null, mysqlConnection, tddlConnection, true);
+            // Check update result
+            sql = "SELECT bigint_test FROM " + baseOneTableName;
+            selectContentSameAssert(sql, null, mysqlConnection, tddlConnection, true);
 
-        // Check error message
-        sql =
-            String.format("update %s a, %s v set v.integer_test = a.bigint_test where a.varchar_test = v.varchar_test",
+            // Check error message
+            sql = String.format(
+                "update %s a, %s v set v.integer_test = a.bigint_test where a.varchar_test = v.varchar_test",
                 baseOneTableName, viewName);
-        executeErrorAssert(tddlConnection, sql, null,
-            MessageFormat.format("{0}'' of the {1} is not updatable", viewName, "UPDATE"));
+            executeErrorAssert(tddlConnection, sql, null,
+                MessageFormat.format("{0}'' of the {1} is not updatable", viewName, "UPDATE"));
+        } finally {
+            dropViewOnMysqlAndTddl(viewName);
+        }
+    }
+
+    @Test
+    public void testUpdateWithSubquery() throws Exception {
+        final String broadcastTableName = TABLE_NAME_DML_ON_BROADCAST_WITH_SUBQUERY;
+        executeOnMysqlAndTddl(mysqlConnection, tddlConnection, TABLE_DML_ON_BROADCAST_WITH_SUBQUERY,
+            TABLE_DML_ON_BROADCAST_WITH_SUBQUERY + BROADCAST_MARK, null, false);
+
+        final String deleteSql = String.format("delete from %s where 1=1", broadcastTableName);
+        executeOnMysqlAndTddl(mysqlConnection, tddlConnection, deleteSql, null, false);
+
+        final String insertSelect =
+            String.format("insert into `%s`(pk, integer_test) select pk, integer_test from `%s`", broadcastTableName,
+                baseOneTableName);
+        executeOnMysqlAndTddl(mysqlConnection, tddlConnection, insertSelect, null, false);
+
+        String sql = String.format("UPDATE %s SET integer_test=1 "
+                + "WHERE pk in (select c.pk from (select b.pk from %s b where b.integer_test > 5) c)", broadcastTableName,
+            baseOneTableName);
+
+        final List<Object> param = new ArrayList<>();
+        executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, param, true);
+
+        sql = "select * from " + broadcastTableName;
+        selectContentSameAssert(sql, null, mysqlConnection, tddlConnection);
     }
 }
-

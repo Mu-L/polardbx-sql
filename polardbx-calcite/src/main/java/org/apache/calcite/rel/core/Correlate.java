@@ -142,6 +142,7 @@ public abstract class Correlate extends BiRel {
     protected RelDataType deriveRowType() {
         switch (joinType) {
         case LEFT:
+        case INNER:
             return SqlValidatorUtil.deriveJoinRowType(left.getRowType(),
                 right.getRowType(), joinType.toJoinType(),
                 getCluster().getTypeFactory(), null,

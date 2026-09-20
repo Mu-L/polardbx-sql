@@ -57,7 +57,8 @@ public class WhatIfPartitionInfoManager extends PartitionInfoManager {
             return false;
         }
         return partitionInfo.getTableType() == PartitionTableType.PARTITION_TABLE
-            || partitionInfo.getTableType() == PartitionTableType.GSI_TABLE;
+            || partitionInfo.getTableType() == PartitionTableType.GSI_TABLE
+            || partitionInfo.getTableType() == PartitionTableType.COLUMNAR_TABLE;
     }
 
     @Override

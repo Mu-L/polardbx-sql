@@ -353,27 +353,6 @@ public class ChangeSetMetaManager {
             });
     }
 
-    public boolean canCatchupStop(Long jobId) {
-        Map<Integer, ParameterContext> params = new HashMap<>();
-        params.put(1, new ParameterContext(ParameterMethod.setLong, new Object[] {1, jobId}));
-        params.put(2,
-            new ParameterContext(ParameterMethod.setLong, new Object[] {2, ChangeSetStatus.RUNNING_AFTER_CHECK.value}));
-
-        try (Connection connection = dataSource.getConnection()) {
-            try (PreparedStatement ps = connection.prepareStatement(SQL_SELECT_NOT_RUNNING_NUMS_BY_JOB_ID)) {
-                ParameterMethod.setParameters(ps, params);
-
-                final ResultSet rs = ps.executeQuery();
-                rs.next();
-                return (Long) rs.getObject(1) == 0L;
-            }
-        } catch (SQLException e) {
-            throw new TddlRuntimeException(ErrorCode.ERR_CHANGESET,
-                e,
-                "query changeset meta failed!");
-        }
-    }
-
     private <T> List<T> query(String sql, Map<Integer, ParameterContext> params, Connection connection, Orm<T> orm)
         throws SQLException {
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
@@ -462,7 +441,7 @@ public class ChangeSetMetaManager {
 
     private static final String SQL_CLEAN_OUTDATED_LOG = "DELETE FROM "
         + SYSTABLE_CHANGESET_OBJECTS
-        + " WHERE DATE(END_TIME) < DATE_SUB( CURDATE(), INTERVAL 60 DAY ) AND DATE(START_TIME) < DATE_SUB( CURDATE(), INTERVAL 60 DAY )";
+        + " WHERE DATE(END_TIME) < DATE_SUB( CURDATE(), INTERVAL 60 DAY ) AND DATE(START_TIME) < DATE_SUB( CURDATE(), INTERVAL 60 DAY ) limit 1000";
 
     private static final String SQL_CLEAN_ALL = "DELETE FROM " + SYSTABLE_CHANGESET_OBJECTS + " WHERE TABLE_SCHEMA = ?";
 
@@ -692,7 +671,7 @@ public class ChangeSetMetaManager {
         public static ChangeSetObjectRecord create(long jobId, long changeSetId, long rootJobId,
                                                    String tableSchema, String tableName,
                                                    String indexSchema, String indexName,
-                                                   String groupName, String phyTable) {
+                                                   String phyDb, String phyTable) {
             return new ChangeSetObjectRecord(
                 -1,
                 changeSetId,
@@ -702,7 +681,7 @@ public class ChangeSetMetaManager {
                 tableName,
                 indexSchema,
                 indexName,
-                groupName,
+                phyDb,
                 phyTable,
                 0,
                 0,

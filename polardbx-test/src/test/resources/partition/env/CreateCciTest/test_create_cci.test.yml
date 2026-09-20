@@ -286,6 +286,42 @@ show create table `nation`;
 show full create table `nation`;
 check columnar index `nation_col_index` on `nation` meta;
 DROP INDEX `nation_col_index` ON `nation`;
+  
+  # create default cci on partition table
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/
+CREATE CLUSTERED COLUMNAR INDEX `cci_seller_id` ON `t_order_0`;
+/*+TDDL:CMD_EXTRA(ALTER_CCI_STATUS=true, ALTER_CCI_STATUS_BEFORE=CREATING, ALTER_CCI_STATUS_AFTER=PUBLIC)*/
+ALTER TABLE `t_order_0` alter index `cci_seller_id` VISIBLE;
+show full create table `t_order_0`;
+check columnar index `cci_seller_id` on `t_order_0` meta;
+DROP INDEX `cci_seller_id` ON `t_order_0`;
+  
+  # create default cci on auto partition table (using implicit pk)
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask",ENABLE_CCI_ON_TABLE_WITH_IMPLICIT_PK=true)*/
+CREATE CLUSTERED COLUMNAR INDEX `cci_seller_id` ON `t_order_1`;
+/*+TDDL:CMD_EXTRA(ALTER_CCI_STATUS=true, ALTER_CCI_STATUS_BEFORE=CREATING, ALTER_CCI_STATUS_AFTER=PUBLIC)*/
+ALTER TABLE `t_order_1` alter index `cci_seller_id` VISIBLE;
+show full create table `t_order_1`;
+check columnar index `cci_seller_id` on `t_order_1` meta;
+DROP INDEX `cci_seller_id` ON `t_order_1`;
+
+  # create default cci on single table 
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/
+CREATE CLUSTERED COLUMNAR INDEX `cci_seller_id` ON `t_order_single`;
+/*+TDDL:CMD_EXTRA(ALTER_CCI_STATUS=true, ALTER_CCI_STATUS_BEFORE=CREATING, ALTER_CCI_STATUS_AFTER=PUBLIC)*/
+ALTER TABLE `t_order_single` alter index `cci_seller_id` VISIBLE;
+show full create table `t_order_single`;
+check columnar index `cci_seller_id` on `t_order_single` meta;
+DROP INDEX `cci_seller_id` ON `t_order_single`;
+
+  # create default cci on broadcast table
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/
+CREATE CLUSTERED COLUMNAR INDEX `cci_seller_id` ON `t_order_broadcast`;
+/*+TDDL:CMD_EXTRA(ALTER_CCI_STATUS=true, ALTER_CCI_STATUS_BEFORE=CREATING, ALTER_CCI_STATUS_AFTER=PUBLIC)*/
+ALTER TABLE `t_order_broadcast` alter index `cci_seller_id` VISIBLE;
+show full create table `t_order_broadcast`;
+check columnar index `cci_seller_id` on `t_order_broadcast` meta;
+DROP INDEX `cci_seller_id` ON `t_order_broadcast`;
 
 # cleanup
 drop table if exists `t_order_0`;

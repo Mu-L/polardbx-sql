@@ -72,7 +72,7 @@ public class BkaJoinCrossSchemaTest extends PartitionTestBase {
             + "  KEY `auto_shard_key_p_id` USING BTREE (`p_id`),\n"
             + "  UNIQUE GLOBAL KEY `gg_i-test_buyer` (`x_id`) COVERING (`id`, `p_id`, `is_deleted`, `type`) DBPARTITION BY HASH(`x_id`),\n"
             + "  GLOBAL INDEX `gg_i-test_seller`(`t_id`) COVERING (`id`, `p_id`) DBPARTITION BY HASH(`t_id`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 100000000 DEFAULT CHARSET = utf8mb4 dbpartition by hash(`p_id`) tbpartition by hash(`p_id`) tbpartitions 20;";
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 100000000 CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci dbpartition by hash(`p_id`) tbpartition by hash(`p_id`) tbpartitions 20;";
         JdbcUtil.executeSuccess(tddlConnection, String.format(createTable, TABLE_NAME));
     }
 

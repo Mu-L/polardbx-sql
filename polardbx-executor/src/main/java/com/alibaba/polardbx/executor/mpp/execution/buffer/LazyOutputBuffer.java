@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.mpp.execution.buffer;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.mpp.OutputBuffers;
 import com.alibaba.polardbx.executor.mpp.execution.RecordMemSystemListener;
@@ -30,6 +32,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.ListenableFuture;
 import io.airlift.concurrent.ExtendedSettableFuture;
 import io.airlift.units.DataSize;
+import org.openjdk.jol.info.ClassLayout;
 
 import javax.annotation.concurrent.GuardedBy;
 import java.util.ArrayList;
@@ -48,18 +51,30 @@ import static com.google.common.util.concurrent.Futures.immediateFuture;
 import static java.util.Objects.requireNonNull;
 
 public class LazyOutputBuffer implements OutputBuffer {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(LazyOutputBuffer.class).instanceSize();
+
+    @FieldMemoryCounter(value = false)
     private final StateMachine<BufferState> state;
+    @FieldMemoryCounter(value = false)
     private final String taskInstanceId;
+    @FieldMemoryCounter(value = false)
     private final Executor executor;
 
     @GuardedBy("this")
     private OutputBuffer delegate;
 
     @GuardedBy("this")
+    @FieldMemoryCounter(value = false)
     private final Set<OutputBuffers.OutputBufferId> abortedBuffers = new HashSet<>();
 
     @GuardedBy("this")
+    @FieldMemoryCounter(value = false)
     private final List<PendingRead> pendingReads = new ArrayList<>();
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(delegate);
+    }
 
     public LazyOutputBuffer(
         TaskId taskId,

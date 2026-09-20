@@ -100,10 +100,6 @@ public class PartitionStat {
         return this.tableGroupConfig.getTableGroupRecord().schema;
     }
 
-    public String getPhysicalDatabase() {
-        return partitionGroupRecord.phy_db;
-    }
-
     public String getPhysicalTableName() {
         return getCurrentPartition().getLocation().getPhyTableName();
     }

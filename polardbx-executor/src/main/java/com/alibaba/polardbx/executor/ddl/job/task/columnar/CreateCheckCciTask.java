@@ -21,9 +21,9 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
-import com.alibaba.polardbx.executor.columnar.checker.CciChecker;
+import com.alibaba.polardbx.executor.columnar.checker.CciNaiveChecker;
 import com.alibaba.polardbx.executor.columnar.checker.CciFastChecker;
-import com.alibaba.polardbx.executor.columnar.checker.ICciChecker;
+import com.alibaba.polardbx.executor.columnar.checker.AbstractCciChecker;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
@@ -67,21 +67,16 @@ public class CreateCheckCciTask extends BaseDdlTask {
             return;
         }
 
-        Runnable recover = null;
-        if (executionContext.isForce2pcDuringCciCheck()) {
-            recover = ExecUtils.forceAllTrx2PC();
-        }
-
-        ICciChecker checker;
+        AbstractCciChecker checker;
         if (executionContext.isEnableCciFastChecker() && ExecUtils.canUseCciFastChecker(schemaName, indexName)) {
             checker = new CciFastChecker(schemaName, logicalTableName, indexName);
         } else {
-            checker = new CciChecker(schemaName, logicalTableName, indexName);
+            checker = new CciNaiveChecker(schemaName, logicalTableName, indexName);
         }
 
         try {
             long start = System.nanoTime();
-            checker.check(executionContext, recover);
+            checker.checkSnapshot(executionContext);
             SQLRecorderLogger.ddlLogger.info((executionContext.isEnableCciFastChecker() ? "Fast " : "")
                 + "Check cci " + schemaName + "." + logicalTableName + "." + indexName
                 + " cost " + (System.nanoTime() - start) / 1_000_000 + " ms.");
@@ -89,10 +84,6 @@ public class CreateCheckCciTask extends BaseDdlTask {
             throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR,
                 (executionContext.isEnableCciFastChecker() ? "Fast " : "")
                     + "Check cci failed, caused by " + t.getMessage());
-        } finally {
-            if (null != recover) {
-                recover.run();
-            }
         }
 
         List<String> reports = new ArrayList<>();
@@ -112,24 +103,16 @@ public class CreateCheckCciTask extends BaseDdlTask {
 
         if (executionContext.isEnableCciFastChecker()) {
             // Fast checker failed, try naive checker.
-            checker = new CciChecker(schemaName, logicalTableName, indexName);
-            recover = null;
-            if (executionContext.isForce2pcDuringCciCheck()) {
-                recover = ExecUtils.forceAllTrx2PC();
-            }
+            checker = new CciNaiveChecker(schemaName, logicalTableName, indexName);
             try {
                 long start = System.nanoTime();
-                checker.check(executionContext, recover);
+                checker.checkSnapshot(executionContext);
                 SQLRecorderLogger.ddlLogger.info("Check cci " + schemaName + "." + logicalTableName
                     + "." + indexName + " cost " + (System.nanoTime() - start) / 1_000_000 + " ms.");
             } catch (Throwable t) {
                 throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR,
                     (executionContext.isEnableCciFastChecker() ? "Fast " : "")
                         + "Check cci failed, caused by " + t.getMessage());
-            } finally {
-                if (null != recover) {
-                    recover.run();
-                }
             }
             success = true;
             if (!checker.getCheckReports(reports)) {

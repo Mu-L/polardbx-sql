@@ -45,13 +45,18 @@ public class LookupTableSortRangeScanExec extends RangeScanSortExec implements M
     }
 
     @Override
+    public void switchNoMgetSql() {
+
+    }
+
+    @Override
     public void updateLookupPredicate(Chunk chunk) {
         if (!scanClient.noMoreSplit()) {
             throw new TddlRuntimeException(ERR_EXECUTE_ON_MYSQL, "input split not ready");
         }
 
         checkStatus();
-        reorderSplits();
+        scanClient.reorderSplits();
 
         if (reservedSplits == null) {
             reservedSplits = new ArrayList<>();

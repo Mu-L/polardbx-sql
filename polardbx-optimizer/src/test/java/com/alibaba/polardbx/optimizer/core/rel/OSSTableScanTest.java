@@ -17,12 +17,13 @@ import com.alibaba.polardbx.optimizer.parse.FastsqlParser;
 import com.alibaba.polardbx.optimizer.parse.SqlParameterizeUtils;
 import com.alibaba.polardbx.optimizer.parse.bean.SqlParameterized;
 import com.alibaba.polardbx.optimizer.utils.IConnectionHolder;
-import com.alibaba.polardbx.optimizer.utils.ITimestampOracle;
+import com.alibaba.polardbx.common.trx.ITimestampOracle;
 import com.alibaba.polardbx.optimizer.utils.ITransaction;
 import com.alibaba.polardbx.optimizer.utils.ITransactionManagerUtil;
 import com.alibaba.polardbx.optimizer.utils.InventoryMode;
 import com.alibaba.polardbx.optimizer.utils.OptimizerUtils;
 import com.alibaba.polardbx.planner.common.BasePlannerTest;
+import com.alibaba.polardbx.stats.CurrentTransactionStatistics;
 import com.alibaba.polardbx.stats.TransactionStatistics;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlNode;
@@ -35,7 +36,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 public class OSSTableScanTest extends BasePlannerTest {
 
@@ -133,11 +136,6 @@ public class OSSTableScanTest extends BasePlannerTest {
         }
 
         @Override
-        public void setExecutionContext(ExecutionContext executionContext) {
-
-        }
-
-        @Override
         public IConnectionHolder getConnectionHolder() {
             return null;
         }
@@ -176,6 +174,11 @@ public class OSSTableScanTest extends BasePlannerTest {
 
         @Override
         public void close() {
+
+        }
+
+        @Override
+        public void setTraceId(String traceId) {
 
         }
 
@@ -255,7 +258,7 @@ public class OSSTableScanTest extends BasePlannerTest {
         }
 
         @Override
-        public boolean isStrongConsistent() {
+        public boolean isDistributedWriteTrx() {
             return false;
         }
 
@@ -280,6 +283,11 @@ public class OSSTableScanTest extends BasePlannerTest {
         }
 
         @Override
+        public InventoryMode getInventoryMode() {
+            return ITransaction.super.getInventoryMode();
+        }
+
+        @Override
         public void setInventoryMode(InventoryMode inventoryMode) {
 
         }
@@ -290,12 +298,12 @@ public class OSSTableScanTest extends BasePlannerTest {
         }
 
         @Override
-        public boolean handleStatementError(Throwable t) {
+        public boolean handleStatementError(Throwable t, String traceId) {
             return false;
         }
 
         @Override
-        public void releaseAutoSavepoint() {
+        public void releaseAutoSavepoint(String traceId) {
 
         }
 
@@ -310,6 +318,11 @@ public class OSSTableScanTest extends BasePlannerTest {
         }
 
         @Override
+        public void updateCurrentStatistics(CurrentTransactionStatistics stat, long durationTimeMs) {
+            ITransaction.super.updateCurrentStatistics(stat, durationTimeMs);
+        }
+
+        @Override
         public TransactionStatistics getStat() {
             return null;
         }
@@ -317,6 +330,11 @@ public class OSSTableScanTest extends BasePlannerTest {
         @Override
         public TransactionType getType() {
             return null;
+        }
+
+        @Override
+        public boolean isRwTransaction() {
+            return ITransaction.super.isRwTransaction();
         }
 
         @Override
@@ -350,7 +368,17 @@ public class OSSTableScanTest extends BasePlannerTest {
         }
 
         @Override
+        public void clearFlashbackArea() {
+            ITransaction.super.clearFlashbackArea();
+        }
+
+        @Override
         public void releaseDirtyReadConnections() {
+        }
+
+        @Override
+        public String getUser() {
+            return "polardbx_root";
         }
     }
 

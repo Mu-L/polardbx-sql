@@ -18,10 +18,10 @@ package com.alibaba.polardbx.optimizer.ccl;
 
 import com.alibaba.polardbx.optimizer.ccl.service.impl.CclConfigService;
 import com.alibaba.polardbx.optimizer.ccl.service.impl.CclService;
-import com.alibaba.polardbx.optimizer.ccl.service.impl.CclTriggerService;
+import com.alibaba.polardbx.optimizer.ccl.service.impl.CclBlockerService;
 import com.alibaba.polardbx.optimizer.ccl.service.ICclConfigService;
 import com.alibaba.polardbx.optimizer.ccl.service.ICclService;
-import com.alibaba.polardbx.optimizer.ccl.service.ICclTriggerService;
+import com.alibaba.polardbx.optimizer.ccl.service.ICclBlockerService;
 
 /**
  * @author busu
@@ -33,10 +33,10 @@ public class CclManager {
 
     private final static ICclService service = new CclService(cclConfigService);
 
-    private final static ICclTriggerService cclTriggerService = new CclTriggerService(cclConfigService);
+    private final static ICclBlockerService cclBlockerService = new CclBlockerService(cclConfigService);
 
     static {
-        cclConfigService.init(service, cclTriggerService);
+        cclConfigService.init(service, cclBlockerService);
     }
 
     public static ICclService getService() {
@@ -47,8 +47,8 @@ public class CclManager {
         return cclConfigService;
     }
 
-    public static ICclTriggerService getTriggerService() {
-        return cclTriggerService;
+    public static ICclBlockerService getTriggerService() {
+        return cclBlockerService;
     }
 
 }

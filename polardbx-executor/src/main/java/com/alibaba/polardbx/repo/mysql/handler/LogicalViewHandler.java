@@ -29,6 +29,7 @@ import com.alibaba.polardbx.executor.handler.HandlerCommon;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.executor.utils.SubqueryUtils;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.ReplaceCallWithLiteralVisitor;
@@ -87,8 +88,25 @@ public class LogicalViewHandler extends HandlerCommon {
                 params, RexUtils.getEvalFunc(executionContext), true);
         }
 
-        // Dynamic functions will be calculated in buildSqlTemplate()
+        // Dynamic functions are calculated in buildSqlTemplate(). For externalized reads, the FETCH_BLOB Project is
+        // already present above this LogicalView; template generation makes the lower DN scan address the physical
+        // addr column, while CN execution of that Project restores the logical value.
         final SqlSelect sqlTemplate = (SqlSelect) logicalView.getSqlTemplate(visitor, executionContext);
+
+        String schemaName = StringUtils.isEmpty(
+            logicalView.getSchemaName()) ? executionContext.getSchemaName() : logicalView.getSchemaName();
+
+        final TableMeta tableMeta = executionContext.getSchemaManager(schemaName)
+            .getTableWithNull(logicalView.getLogicalTableName());
+
+        // Disable XPlan for tables with externalized columns.
+        // XPlan is generated from the RelNode which uses logical column names (e.g. "content"),
+        // but the physical table only has "content_addr_". Pushing original names to DN via
+        // XPlan causes "error code: 122" from the storage engine handler.
+        if (tableMeta != null && tableMeta.hasExternalizedColumn()) {
+            logicalView.disableXPlanForExternalizedColumns();
+        }
+
         if (executionContext.isModifyCrossDb()) {
             inputs = logicalView.getInnerInput(
                 sqlTemplate, ExecUtils.getUnionOptHelper(logicalView, executionContext), executionContext);
@@ -96,12 +114,10 @@ public class LogicalViewHandler extends HandlerCommon {
             inputs = ExecUtils.getInputs(logicalView, executionContext, false, sqlTemplate);
         }
 
-        String schemaName = StringUtils.isEmpty(
-            logicalView.getSchemaName()) ? executionContext.getSchemaName() : logicalView.getSchemaName();
-
         if (inputs.size() == 1) {
-            return ExecutorContext.getContext(schemaName).getTopologyExecutor().execByExecPlanNode
+            Cursor cursor = ExecutorContext.getContext(schemaName).getTopologyExecutor().execByExecPlanNode
                 (inputs.get(0), executionContext);
+            return cursor;
         } else {
             executeWithConcurrentPolicy(executionContext, inputs, queryConcurrencyPolicy, inputCursors, schemaName);
 

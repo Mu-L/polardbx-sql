@@ -47,6 +47,7 @@ public class RelDrdsWriter implements RelWriter {
 
     public final static String                   REL_NAME      = "REL_NAME";
     public final static String                   LV_INPUTS     = "LV_INPUTS";
+    public final static String                   CONSUMER_INNER     = "CONSUMER_INNER";
     // ~ Instance fields
     // --------------------------------------------------------
     private StringWriter                         sw            = new StringWriter();
@@ -103,6 +104,11 @@ public class RelDrdsWriter implements RelWriter {
     public RelDrdsWriter(SqlExplainLevel detailLevel, Map<Integer, ParameterContext> params){
         this(null, detailLevel, false, params, null, null);
     }
+
+    public RelDrdsWriter(PrintWriter pw, SqlExplainLevel detailLevel, Map<Integer, ParameterContext> params){
+        this(pw, detailLevel, false, params, null, null);
+    }
+
     public RelDrdsWriter(){
         this(null, SqlExplainLevel.EXPPLAN_ATTRIBUTES, false, null, null, null);
     }
@@ -121,7 +127,8 @@ public class RelDrdsWriter implements RelWriter {
         if (inputs.isEmpty()) {
             for (Pair<String, Object> val : values) {
                 String inputsOfLogicalView = val.getKey();
-                if (inputsOfLogicalView.equals(LV_INPUTS)) {
+                if (inputsOfLogicalView.equals(LV_INPUTS)
+                    || inputsOfLogicalView.equals(CONSUMER_INNER)) {
                     inputs = (List<RelNode>) val.getValue();
                 }
             }
@@ -153,6 +160,10 @@ public class RelDrdsWriter implements RelWriter {
                 }
 
                 if (LV_INPUTS == value.left) {
+                    continue;
+                }
+
+                if (CONSUMER_INNER == value.left) {
                     continue;
                 }
 
@@ -193,6 +204,10 @@ public class RelDrdsWriter implements RelWriter {
 
                 if (sketch.getRuntimeFilteredRowCount() > 0) {
                     s.append(", runtime filtered count = ").append(sketch.getRuntimeFilteredRowCount());
+                }
+
+                if (sketch.getIoBytesCount() > 0) {
+                    s.append(", io bytes = ").append(sketch.getIoBytesCount());
                 }
 
                 s.append(", actual memory = ").append(sketch.getMemory());
@@ -339,6 +354,10 @@ public class RelDrdsWriter implements RelWriter {
 
     public void setExecutionContext(Object executionContext) {
         this.executionContext = executionContext;
+    }
+
+    public void setSpaces(int spaces) {
+        this.spacer.set(spaces);
     }
 }
 

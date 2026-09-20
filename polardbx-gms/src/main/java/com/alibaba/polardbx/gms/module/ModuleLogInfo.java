@@ -121,9 +121,6 @@ public class ModuleLogInfo implements ModuleInfo {
         if (level == CRITICAL) {
             logToEvent(m, lp, params, traceInfo, t);
         }
-        if (needAuditLog) {
-            logToStatistic(m, lp, params, level, traceInfo, t);
-        }
 
         // record log in mem
         if (params.length > InstConfUtil.getInt(MAX_MODULE_LOG_PARAMS_SIZE)) {
@@ -153,43 +150,7 @@ public class ModuleLogInfo implements ModuleInfo {
         try {
             switch (level) {
             case NORMAL:
-                logger.info(logLine, t);
-                break;
-            case WARNING:
                 logger.warn(logLine, t);
-                break;
-            case CRITICAL:
-                logger.error(logLine, t);
-                break;
-            }
-        } catch (IllegalFormatException e) {
-            // avoid dead loop
-            if (m == MODULE_LOG) {
-                throw e;
-            }
-
-            // Try record log error by module_log module.
-            logRecord(
-                MODULE_LOG,
-                UNEXPECTED,
-                new String[] {
-                    m.name() + "," + lp.getPattern() + "," + (params == null ? null : params.length + ""),
-                    e.getMessage()
-                },
-                CRITICAL,
-                traceInfo
-            );
-        }
-    }
-
-    private void logToStatistic(Module m, LogPattern lp, String[] params, LogLevel level, String traceInfo,
-                                Throwable t) {
-        Logger logger = LoggerFactory.getLogger("audit");
-        String logLine = String.format(lp.getPattern(), (Object[]) params) + "#" + traceInfo;
-        try {
-            switch (level) {
-            case NORMAL:
-                logger.info(logLine, t);
                 break;
             case WARNING:
                 logger.warn(logLine, t);

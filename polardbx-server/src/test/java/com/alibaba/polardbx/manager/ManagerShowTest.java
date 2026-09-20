@@ -7,6 +7,7 @@ import com.alibaba.polardbx.gms.engine.FileSystemGroup;
 import com.alibaba.polardbx.gms.engine.FileSystemManager;
 import com.alibaba.polardbx.manager.response.ShowColumnarRead;
 import com.alibaba.polardbx.manager.response.ShowDirectMemory;
+import com.alibaba.polardbx.manager.response.ShowThreadPool;
 import com.alibaba.polardbx.net.buffer.ByteBufferHolder;
 import com.alibaba.polardbx.net.compress.IPacketOutputProxy;
 import com.alibaba.polardbx.net.compress.PacketOutputProxyFactory;
@@ -112,6 +113,74 @@ public class ManagerShowTest {
             ).thenReturn(fileSystemGroup);
             ShowColumnarRead.execute(conn);
             Assert.assertTrue(buffer.position() > 0);
+        }
+    }
+
+    @Test
+    public void testShowColumnarReadFieldCount() {
+        // Test that FIELD_COUNT is correctly set to 37 to avoid ArrayIndexOutOfBoundsException
+        ManagerConnection conn = mock(ManagerConnection.class);
+        final ByteBufferHolder buffer = new ByteBufferHolder(ByteBuffer.allocate(16 * 1024));
+
+        when(conn.allocate()).thenReturn(buffer);
+        when(conn.checkWriteBuffer(any(ByteBufferHolder.class), any(int.class))).thenReturn(buffer);
+        when(conn.writeToBuffer(any(byte[].class), any(ByteBufferHolder.class))).then(
+            invocation -> {
+                byte[] src = invocation.getArgument(0);
+                buffer.put(src, 0, src.length);
+                return buffer;
+            }
+        );
+        when(conn.getResultSetCharset()).thenReturn("utf8");
+
+        try (MockedStatic<ColumnarTransactionUtils> mockColumnarTransactionUtils = Mockito.mockStatic(
+            ColumnarTransactionUtils.class);
+            MockedStatic<FileSystemManager> mockFsManager = Mockito.mockStatic(FileSystemManager.class);
+            MockedStatic<InstConfUtil> mockInstConfUtil = Mockito.mockStatic(InstConfUtil.class)) {
+
+            mockColumnarTransactionUtils.when(ColumnarTransactionUtils::getLatestTsoFromGms)
+                .thenReturn(1L);
+            mockInstConfUtil.when(() -> InstConfUtil.getInt(ConnectionParams.COLUMNAR_TSO_UPDATE_DELAY))
+                .thenReturn(1000);
+
+            FileSystemGroup fileSystemGroup = Mockito.mock(FileSystemGroup.class);
+            mockFsManager.when(
+                () -> FileSystemManager.getFileSystemGroup(any())
+            ).thenReturn(fileSystemGroup);
+
+            // This should not throw ArrayIndexOutOfBoundsException with FIELD_COUNT = 37
+            ShowColumnarRead.execute(conn);
+            Assert.assertTrue("ShowColumnarRead should execute without ArrayIndexOutOfBoundsException",
+                buffer.position() > 0);
+        }
+    }
+
+    @Test
+    public void testShowThreadPool() {
+        ManagerConnection conn = mock(ManagerConnection.class);
+        final ByteBufferHolder buffer = new ByteBufferHolder(ByteBuffer.allocate(16 * 1024));
+
+        when(conn.allocate()).thenReturn(buffer);
+        when(conn.checkWriteBuffer(any(ByteBufferHolder.class), any(int.class))).thenReturn(buffer);
+        when(conn.writeToBuffer(any(byte[].class), any(ByteBufferHolder.class))).then(
+            invocation -> {
+                byte[] src = invocation.getArgument(0);
+                buffer.put(src, 0, src.length);
+                return buffer;
+            }
+        );
+        when(conn.getResultSetCharset()).thenReturn("utf8");
+
+        try (MockedStatic<FileSystemManager> mockFsManager = Mockito.mockStatic(FileSystemManager.class)) {
+            FileSystemGroup fileSystemGroup = Mockito.mock(FileSystemGroup.class);
+            mockFsManager.when(
+                () -> FileSystemManager.getFileSystemGroup(any())
+            ).thenReturn(fileSystemGroup);
+
+            // Test that ShowThreadPool can handle new thread pool types
+            ShowThreadPool.execute(conn);
+            Assert.assertTrue("ShowThreadPool should execute successfully with new thread pools",
+                buffer.position() > 0);
         }
     }
 }

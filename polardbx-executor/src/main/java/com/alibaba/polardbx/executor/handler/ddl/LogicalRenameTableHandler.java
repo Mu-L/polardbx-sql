@@ -16,34 +16,33 @@
 
 package com.alibaba.polardbx.executor.handler.ddl;
 
-import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.ddl.job.builder.DdlPhyPlanBuilder;
 import com.alibaba.polardbx.executor.ddl.job.builder.RenameTableBuilder;
 import com.alibaba.polardbx.executor.ddl.job.converter.PhysicalPlanData;
 import com.alibaba.polardbx.executor.ddl.job.factory.RenameTableJobFactory;
-import com.alibaba.polardbx.executor.ddl.job.meta.TableMetaChanger;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.ShowTableMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.ValidateTableVersionTask;
+import com.alibaba.polardbx.executor.ddl.job.task.ttl.TtlJobUtil;
 import com.alibaba.polardbx.executor.ddl.job.validator.TableValidator;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJob;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.executor.utils.DdlUtils;
-import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
 import com.alibaba.polardbx.gms.lbac.LBACSecurityManager;
-import com.alibaba.polardbx.gms.util.MetaDbUtil;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalRenameTable;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.RenameTablePreparedData;
 import org.apache.calcite.sql.SqlRenameTable;
 
-import java.sql.Connection;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 public class LogicalRenameTableHandler extends LogicalCommonDdlHandler {
 
@@ -52,13 +51,33 @@ public class LogicalRenameTableHandler extends LogicalCommonDdlHandler {
     }
 
     @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        String schemaName = logicalDdlPlan.getSchemaName();
+        SqlRenameTable sqlRenameTable = (SqlRenameTable) logicalDdlPlan.getNativeSqlNode();
+
+        String sourceTableName = sqlRenameTable.getOriginTableName().getLastName();
+        exclusiveResources.add(concatWithDot(schemaName, sourceTableName));
+        TableMeta tableMeta = executionContext.getSchemaManager(schemaName).getTableWithNull(sourceTableName);
+        if (tableMeta != null) {
+            tableVersions.put(sourceTableName, tableMeta.getVersion());
+        }
+
+        String newTableName = sqlRenameTable.getOriginNewTableName().getLastName();
+        exclusiveResources.add(concatWithDot(schemaName, newTableName));
+    }
+
+    @Override
     protected DdlJob buildDdlJob(BaseDdlOperation logicalDdlPlan, ExecutionContext executionContext) {
         LogicalRenameTable logicalRenameTable = (LogicalRenameTable) logicalDdlPlan;
-        if (executionContext.getParamManager().getBoolean(ConnectionParams.FLASHBACK_RENAME)) {
-            makeTableVisible(logicalRenameTable.getSchemaName(), logicalRenameTable.getTableName(), executionContext);
-        }
+//        if (executionContext.getParamManager().getBoolean(ConnectionParams.FLASHBACK_RENAME)) {
+//            makeTableVisible(logicalRenameTable.getSchemaName(), logicalRenameTable.getTableName(), executionContext);
+//        }
         logicalRenameTable.prepareData();
-        return buildRenameTableJob(logicalRenameTable, executionContext);
+        DdlJob ddlJob = buildRenameTableJob(logicalRenameTable, executionContext);
+        TtlJobUtil.addRefreshArcViewSubJobIfNeed(ddlJob, logicalRenameTable, executionContext);
+        return ddlJob;
     }
 
     @Override
@@ -113,23 +132,23 @@ public class LogicalRenameTableHandler extends LogicalCommonDdlHandler {
         return result;
     }
 
-    public static void makeTableVisible(String schemaName, String tableName, ExecutionContext executionContext) {
-        ShowTableMetaTask showTableMetaTask = new ShowTableMetaTask(schemaName, tableName);
-        try (Connection metaDbConn = MetaDbDataSource.getInstance().getConnection()) {
-            try {
-                MetaDbUtil.beginTransaction(metaDbConn);
-                showTableMetaTask.executeImpl(metaDbConn, executionContext);
-                MetaDbUtil.commit(metaDbConn);
-            } catch (Throwable t) {
-                MetaDbUtil.rollback(metaDbConn, new RuntimeException(t), null, null);
-                throw new TddlNestableRuntimeException(t);
-            } finally {
-                MetaDbUtil.endTransaction(metaDbConn, null);
-            }
-            TableMetaChanger.afterNewTableMeta(showTableMetaTask.getSchemaName(),
-                showTableMetaTask.getLogicalTableName());
-        } catch (Throwable t) {
-            throw new TddlNestableRuntimeException(t);
-        }
-    }
+//    public static void makeTableVisible(String schemaName, String tableName, ExecutionContext executionContext) {
+//        ShowTableMetaTask showTableMetaTask = new ShowTableMetaTask(schemaName, tableName);
+//        try (Connection metaDbConn = MetaDbDataSource.getInstance().getConnection()) {
+//            try {
+//                MetaDbUtil.beginTransaction(metaDbConn);
+//                showTableMetaTask.executeImpl(metaDbConn, executionContext);
+//                MetaDbUtil.commit(metaDbConn);
+//            } catch (Throwable t) {
+//                MetaDbUtil.rollback(metaDbConn, new RuntimeException(t), null, null);
+//                throw new TddlNestableRuntimeException(t);
+//            } finally {
+//                MetaDbUtil.endTransaction(metaDbConn, null);
+//            }
+//            TableMetaChanger.afterNewTableMeta(showTableMetaTask.getSchemaName(),
+//                showTableMetaTask.getLogicalTableName());
+//        } catch (Throwable t) {
+//            throw new TddlNestableRuntimeException(t);
+//        }
+//    }
 }

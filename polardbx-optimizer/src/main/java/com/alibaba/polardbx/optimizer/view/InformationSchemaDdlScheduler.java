@@ -49,6 +49,9 @@ public class InformationSchemaDdlScheduler extends VirtualView {
         columns.add(new RelDataTypeFieldImpl("EXTRAS", columnIndex++, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
         columns.add(
             new RelDataTypeFieldImpl("DDL_STMT", columnIndex++, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
+        columns.add(
+            new RelDataTypeFieldImpl("ACTIVE_SUBTASK_COUNT", columnIndex++,
+                typeFactory.createSqlType(SqlTypeName.INTEGER)));
 
         return typeFactory.createStructType(columns);
     }

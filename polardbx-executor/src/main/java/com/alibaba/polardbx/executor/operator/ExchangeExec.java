@@ -133,6 +133,11 @@ public class ExchangeExec extends SourceExec implements Closeable {
         try {
             SerializedChunk page = exchangeClient.pollPage();
             if (page != null) {
+
+                // only calculate the bytes size without deserialized chunk.
+                if (page.getPage() == null) {
+                    statistics.addIOReadBytes(page.getRetainedSizeInBytes());
+                }
                 return serde.deserialize(page);
             }
             return null;
@@ -191,5 +196,12 @@ public class ExchangeExec extends SourceExec implements Closeable {
     @Override
     public List<Executor> getInputs() {
         return ImmutableList.of();
+    }
+
+    /**
+     * 获取 ExchangeClient 用于指标采集
+     */
+    public IExchangeClient getExchangeClient() {
+        return exchangeClient;
     }
 }

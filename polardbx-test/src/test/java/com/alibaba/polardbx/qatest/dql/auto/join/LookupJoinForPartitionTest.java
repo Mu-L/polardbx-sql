@@ -107,7 +107,6 @@ public class LookupJoinForPartitionTest extends AutoReadBaseTestCase {
         LEFT_SINGLE_JOIN(
             "select *, (select val from ${dim_table} D where ${join_cond} and ${max_one_row_cond}) val from ${fact_table} F where ${where_cond}",
             "SEMI_BKA_JOIN(${fact_table}, ${dim_table})");
-
         final String query;
         final String joinHint;
 
@@ -223,6 +222,7 @@ public class LookupJoinForPartitionTest extends AutoReadBaseTestCase {
 
         try (Connection mysqlConnection = ConnectionManager.getInstance().getDruidMysqlConnection()) {
             JdbcUtil.useDb(mysqlConnection, mysqlDBName1());
+            setNoNeedPkIn80(mysqlConnection);
             // Drop tables on MySQL
             try (Statement stmt = mysqlConnection.createStatement()) {
                 stmt.addBatch(String.format(DROP_TABLE, FACT_TABLE_NAME));

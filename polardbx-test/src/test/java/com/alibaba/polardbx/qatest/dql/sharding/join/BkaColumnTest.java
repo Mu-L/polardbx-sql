@@ -85,6 +85,7 @@ public class BkaColumnTest extends ReadBaseTestCase {
 
         try (Connection mysqlConnection = ConnectionManager.getInstance().getDruidMysqlConnection()) {
             JdbcUtil.useDb(mysqlConnection, mysqlDBName1());
+            setNoNeedPkIn80(mysqlConnection);
             createTable(mysqlConnection, false);
         }
 

@@ -28,14 +28,13 @@ import com.alibaba.polardbx.gms.metadb.table.IndexStatus;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.config.table.GlobalIndexMeta;
 import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager;
-import com.alibaba.polardbx.optimizer.config.table.GsiUtils;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
-import com.alibaba.polardbx.optimizer.ttl.TtlDefinitionInfo;
 import com.alibaba.polardbx.optimizer.ttl.TtlUtil;
 import com.alibaba.polardbx.rule.TableRule;
+import org.apache.calcite.sql.SqlKind;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.List;
@@ -206,5 +205,7 @@ public class GsiValidator {
             throw new TddlRuntimeException(ErrorCode.ERR_GLOBAL_SECONDARY_INDEX_UNSUPPORTED,
                 "Truncating table with GSI on other schema is forbidden, so please login with corresponding schema.");
         }
+
+        TableValidator.validateTableWitchArchiveCci(schemaName, tableName, executionContext, SqlKind.TRUNCATE_TABLE);
     }
 }

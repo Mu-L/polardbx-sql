@@ -68,4 +68,138 @@ public class HintsTest extends TestCase {
         Assert.assertEquals("SELECT *\n" +
             "FROM t1", output);
     }
+
+    /**
+     * buildPushdown() must backtick-quote table names that contain special characters
+     * (e.g. hyphens). Without quoting, the parser treats "test-table" as the arithmetic
+     * expression "test MINUS table", causing a parse failure or semantic error at runtime.
+     */
+    public void test_buildPushdown_table_name_with_hyphen() throws Exception {
+        String sql = HintUtil.buildPushdown("test-table", null, null);
+        MySqlStatementParser parser = new MySqlStatementParser(sql);
+        SQLStatement stmt;
+        try {
+            stmt = parser.parseStatementList().get(0);
+        } catch (Exception e) {
+            Assert.fail("buildPushdown generated SQL that cannot be parsed: '" + sql + "'. Error: " + e.getMessage());
+            return;
+        }
+        String output = SQLUtils.toMySqlString(stmt);
+        Assert.assertTrue(
+            "Table name with hyphen must be backtick-quoted in generated SQL, got: " + output,
+            output.contains("`test-table`"));
+    }
+
+    /**
+     * Same as above but with a WHERE condition — the condition must still be appended
+     * after the backtick-quoted table name.
+     */
+    public void test_buildPushdown_table_name_with_hyphen_and_condition() throws Exception {
+        String sql = HintUtil.buildPushdown("test-table", "pk = 1", null);
+        MySqlStatementParser parser = new MySqlStatementParser(sql);
+        SQLStatement stmt;
+        try {
+            stmt = parser.parseStatementList().get(0);
+        } catch (Exception e) {
+            Assert.fail("buildPushdown generated SQL that cannot be parsed: '" + sql + "'. Error: " + e.getMessage());
+            return;
+        }
+        String output = SQLUtils.toMySqlString(stmt);
+        Assert.assertTrue(
+            "Table name with hyphen must be backtick-quoted in generated SQL, got: " + output,
+            output.contains("`test-table`"));
+        Assert.assertTrue("WHERE condition must be preserved, got: " + output, output.contains("pk = 1"));
+    }
+
+    /**
+     * A table name that already starts with a backtick must not be double-wrapped.
+     */
+    public void test_buildPushdown_already_backticked_table() throws Exception {
+        String sql = HintUtil.buildPushdown("`test-table`", null, null);
+        MySqlStatementParser parser = new MySqlStatementParser(sql);
+        SQLStatement stmt;
+        try {
+            stmt = parser.parseStatementList().get(0);
+        } catch (Exception e) {
+            Assert.fail("buildPushdown generated SQL that cannot be parsed: '" + sql + "'. Error: " + e.getMessage());
+            return;
+        }
+        String output = SQLUtils.toMySqlString(stmt);
+        Assert.assertTrue(
+            "Already-backticked table name must not be double-wrapped, got: " + output,
+            output.contains("`test-table`") && !output.contains("``"));
+    }
+
+    /**
+     * schema.table form: when table contains a dot, both parts should be individually quoted.
+     */
+    public void test_buildPushdown_schema_dot_table_with_hyphen() throws Exception {
+        String sql = HintUtil.buildPushdown("test-schema.test-table", null, null);
+        MySqlStatementParser parser = new MySqlStatementParser(sql);
+        SQLStatement stmt;
+        try {
+            stmt = parser.parseStatementList().get(0);
+        } catch (Exception e) {
+            Assert.fail("buildPushdown generated SQL that cannot be parsed: '" + sql + "'. Error: " + e.getMessage());
+            return;
+        }
+        String output = SQLUtils.toMySqlString(stmt);
+        Assert.assertTrue(
+            "schema.table with hyphens must be backtick-quoted, got: " + output,
+            output.contains("`test-schema`") && output.contains("`test-table`"));
+    }
+
+    /**
+     * A table parameter containing spaces (e.g. table with alias) must be passed through
+     * as-is without quoting, since it represents a complex FROM clause fragment.
+     */
+    public void test_buildPushdown_table_with_alias_not_quoted() throws Exception {
+        String sql = HintUtil.buildPushdown("test_table_a a", null, null);
+        Assert.assertEquals("SELECT * FROM test_table_a a", sql);
+        MySqlStatementParser parser = new MySqlStatementParser(sql);
+        parser.parseStatementList().get(0);
+    }
+
+    /**
+     * A table name with a space that is already backtick-quoted must remain valid.
+     */
+    public void test_buildPushdown_backticked_table_with_space() throws Exception {
+        String sql = HintUtil.buildPushdown("`test table`", null, null);
+        MySqlStatementParser parser = new MySqlStatementParser(sql);
+        SQLStatement stmt;
+        try {
+            stmt = parser.parseStatementList().get(0);
+        } catch (Exception e) {
+            Assert.fail("buildPushdown generated SQL that cannot be parsed: '" + sql + "'. Error: " + e.getMessage());
+            return;
+        }
+        String output = SQLUtils.toMySqlString(stmt);
+        Assert.assertTrue(
+            "Backtick-quoted table name with space must remain valid, got: " + output,
+            output.contains("`test table`"));
+    }
+
+    /**
+     * A comma-separated multi-table expression must be passed through as-is.
+     */
+    public void test_buildPushdown_multi_table_not_quoted() throws Exception {
+        String sql = HintUtil.buildPushdown("test_table_a a, test_table_b b", null, null);
+        Assert.assertEquals("SELECT * FROM test_table_a a, test_table_b b", sql);
+    }
+
+    /**
+     * A safe table name (only alphanumeric and underscore) must NOT be backtick-quoted.
+     */
+    public void test_buildPushdown_safe_table_name_no_quoting() throws Exception {
+        String sql = HintUtil.buildPushdown("my_table_123", null, null);
+        Assert.assertEquals("SELECT * FROM my_table_123", sql);
+    }
+
+    /**
+     * When table is null, buildPushdown should generate SELECT * FROM DUAL.
+     */
+    public void test_buildPushdown_null_table_produces_dual() throws Exception {
+        String sql = HintUtil.buildPushdown(null, null, null);
+        Assert.assertEquals("SELECT * FROM DUAL", sql);
+    }
 }

@@ -34,7 +34,7 @@ public class PartitionGroupStat {
     public List<PartitionStat> partitions = new ArrayList<>();
     public String tgName;
 
-    PartitionGroupStat() {
+    public PartitionGroupStat() {
 
     }
 
@@ -45,6 +45,10 @@ public class PartitionGroupStat {
 
     public long getTotalDiskSize() {
         return this.partitions.stream().mapToLong(PartitionStat::getPartitionDiskSize).sum();
+    }
+
+    public long getTotalRows() {
+        return this.partitions.stream().mapToLong(PartitionStat::getDataRows).sum();
     }
 
     public String getTgName() {
@@ -74,5 +78,9 @@ public class PartitionGroupStat {
 
     public long getPgId() {
         return this.pg.getId();
+    }
+
+    public PartitionGroupRecord getPartitionGroupRecord() {
+        return this.pg;
     }
 }

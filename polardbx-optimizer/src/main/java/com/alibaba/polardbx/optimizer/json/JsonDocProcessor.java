@@ -69,14 +69,58 @@ public class JsonDocProcessor {
      */
     private static Object extract(Object jsonOrVal, List<AbstractPathLeg> pathLegList,
                                   boolean notFoundException) {
-        Object resultObj = jsonOrVal;
-        if (pathLegList != null && !pathLegList.isEmpty()) {
-            for (AbstractPathLeg pathLeg : pathLegList) {
-                resultObj = extract(resultObj, pathLeg, notFoundException);
-            }
+        if (pathLegList == null || pathLegList.isEmpty()) {
+            return jsonOrVal;
+        }
+        return extract(jsonOrVal, pathLegList, 0, notFoundException);
+    }
+
+    /**
+     * 取出json对象或者数组中由指定路径表达式(pathLegList从index开始)代表的子JSON或者对应值
+     * <p>
+     * 当遇到通配符（[*] 或 .*）时，将剩余路径应用于每个展开元素，并收集结果为新数组。
+     * 这符合MySQL JSON_EXTRACT对通配符的语义：$[*].key 对数组每个元素取.key后返回数组。
+     */
+    private static Object extract(Object jsonOrVal, List<AbstractPathLeg> pathLegList, int index,
+                                  boolean notFoundException) {
+        if (index >= pathLegList.size()) {
+            return jsonOrVal;
         }
 
-        return resultObj;
+        AbstractPathLeg pathLeg = pathLegList.get(index);
+
+        if (pathLeg instanceof ArrayLocation && ((ArrayLocation) pathLeg).isAsterisk()) {
+            if (!(jsonOrVal instanceof JSONArray)) {
+                return null;
+            }
+            JSONArray jsonArr = (JSONArray) jsonOrVal;
+            JSONArray result = new JSONArray();
+            for (Object element : jsonArr) {
+                Object extracted = extract(element, pathLegList, index + 1, notFoundException);
+                if (extracted != null) {
+                    result.add(extracted);
+                }
+            }
+            return result;
+        }
+
+        if (pathLeg instanceof Member && ((Member) pathLeg).isAsterisk()) {
+            if (!(jsonOrVal instanceof JSONObject)) {
+                return null;
+            }
+            JSONObject jsonObject = (JSONObject) jsonOrVal;
+            JSONArray result = new JSONArray();
+            for (Object value : jsonObject.values()) {
+                Object extracted = extract(value, pathLegList, index + 1, notFoundException);
+                if (extracted != null) {
+                    result.add(extracted);
+                }
+            }
+            return result;
+        }
+
+        Object next = extract(jsonOrVal, pathLeg, notFoundException);
+        return extract(next, pathLegList, index + 1, notFoundException);
     }
 
     private static Object extract(Object jsonOrVal, AbstractPathLeg pathLeg) {

@@ -105,10 +105,13 @@ public abstract class InterruptDDLTest extends DDLBaseNewDBTestCase {
 
     protected void waitUntilJobCompletedOrPaused() throws SQLException {
         JobInfo job;
+        int maxRetries = 600;
+        int count = 0;
         do {
             waitForSeconds(1);
             job = fetchCurrentJob();
-        } while (job != null &&
+            count++;
+        } while (count < maxRetries && job != null &&
             !TStringUtil.equalsIgnoreCase(job.parentJob.state, "PAUSED") &&
             !TStringUtil.equalsIgnoreCase(job.parentJob.state, "ROLLBACK_PAUSED"));
     }

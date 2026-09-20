@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.transaction.trx;
 
+import com.alibaba.polardbx.common.constants.TransactionAttribute;
 import com.alibaba.polardbx.common.jdbc.IConnection;
 import com.alibaba.polardbx.common.jdbc.ITransactionPolicy;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -28,7 +29,6 @@ import com.alibaba.polardbx.transaction.utils.XAUtils;
  * @author yaozhili
  */
 public class ArchiveTransaction extends TsoTransaction {
-    private final static long ARCHIVE_FORMAT_ID = 3;
     private final static String TRX_LOG_PREFIX = "[" + ITransactionPolicy.TransactionClass.ARCHIVE + "]";
 
     public ArchiveTransaction(ExecutionContext executionContext,
@@ -41,12 +41,13 @@ public class ArchiveTransaction extends TsoTransaction {
         if (conn.getTrxXid() != null) {
             return conn.getTrxXid();
         }
-        conn.setInShareReadView(shareReadView);
         String xid;
         if (shareReadView) {
-            xid = XAUtils.toXidStringWithFormatId(id, group, primaryGroupUid, getReadViewSeq(group), ARCHIVE_FORMAT_ID);
+            xid = XAUtils.toXidStringWithFormatId(id, group, primaryGroupUid, getReadViewSeq(group),
+                TransactionAttribute.FormatId.ARCHIVE.id());
         } else {
-            xid = XAUtils.toXidStringWithFormatId(id, group, primaryGroupUid, ARCHIVE_FORMAT_ID);
+            xid = XAUtils.toXidStringWithFormatId(id, group, primaryGroupUid,
+                TransactionAttribute.FormatId.ARCHIVE.id());
         }
         conn.setTrxXid(xid);
         return xid;

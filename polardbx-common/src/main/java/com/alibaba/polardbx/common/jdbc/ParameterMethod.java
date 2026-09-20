@@ -45,7 +45,8 @@ public enum ParameterMethod {
     setCharacterStream, setClob, setDate1, setDate2, setDouble, setFloat, setInt, setLong, setBit, //
     setNull1, setNull2, setObject1, setObject2, setObject3, setRef, setShort, setString, //
     setTime1, setTime2, setTimestamp1, setTimestamp2, setURL, setUnicodeStream, setTableName, //
-    setBloomFilterData, setBloomFilterDataLength, setBloomFilterFuncNum, setDelegate, setDelegateInValue; //
+    setBloomFilterData, setBloomFilterDataLength, setBloomFilterFuncNum, setDelegate, setDelegateInValue,
+    setDelegateDynamicSort; //
 
     public boolean isBloomFilterParameterMethod() {
         return (this == setBloomFilterData)
@@ -217,6 +218,10 @@ public enum ParameterMethod {
         case setDelegateInValue:
             //DelegateInValue is used to pass the delegate for explain mode.
             stmt.setInt(index, Types.NULL);
+            break;
+        case setDelegateDynamicSort:
+            //DelegateDynamicSort is used to pass the delegate for dynamic sort in explain mode.
+            stmt.setObject(index, args[1]);
             break;
         default:
             throw new IllegalArgumentException("Unhandled ParameterMethod:" + this.name());

@@ -67,7 +67,8 @@ public class InformationSchemaPolardbxTrxHandler extends BaseVirtualViewSubClass
         }
 
         final String schema = executionContext.getSchemaName();
-        List<List<Map<String, Object>>> results = SyncManagerHelper.sync(syncAction, schema, SyncScope.ALL);
+        List<List<Map<String, Object>>> results =
+            SyncManagerHelper.syncIgnoreExceptions(syncAction, schema, SyncScope.ALL);
 
         for (List<Map<String, Object>> rs : results) {
             if (rs == null) {

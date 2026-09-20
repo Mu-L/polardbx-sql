@@ -29,11 +29,13 @@
  */
 package com.alibaba.polardbx.executor.mpp;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.util.MoreObjects;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonValue;
 import com.google.common.collect.ImmutableMap;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -219,9 +221,15 @@ public final class OutputBuffers {
             partition);
     }
 
-    public static class OutputBufferId {
+    public static class OutputBufferId implements MemoryCountable {
+        private static final int INSTANCE_SIZE = ClassLayout.parseClass(OutputBufferId.class).instanceSize();
         private final int stageId;
         private final int id;
+
+        @Override
+        public long getMemoryUsage() {
+            return INSTANCE_SIZE;
+        }
 
         // this is needed by JAX-RS, Cannot be deleted!!!
         public static OutputBufferId fromString(String id) {

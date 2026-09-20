@@ -4,6 +4,7 @@ import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.executor.gsi.GsiUtils;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
 import com.google.common.collect.Sets;
+import lombok.Data;
 import org.apache.calcite.util.Pair;
 
 import java.util.ArrayList;
@@ -18,6 +19,7 @@ import java.util.Set;
  *
  * @author taokun
  */
+@Data
 public class CheckerBatch {
     public String getPhyDb() {
         return phyDb;
@@ -31,7 +33,7 @@ public class CheckerBatch {
         return batchBound;
     }
 
-    public Map<String, Set<String>> getPhyTables(){
+    public Map<String, Set<String>> getPhyTables() {
         Map<String, Set<String>> phyTables = new HashMap<>();
         Set<String> tables = Sets.newHashSet(phyTb);
         phyTables.put(phyDb, tables);
@@ -68,7 +70,7 @@ public class CheckerBatch {
     public Pair<Map<Integer, ParameterContext>, Map<Integer, ParameterContext>> getBound() {
         Map<Integer, ParameterContext> firstBoundValue = null;
         Map<Integer, ParameterContext> secondBoundValue = null;
-        if(batchBound != null) {
+        if (batchBound != null) {
             if (withUpperBound && withLowerBound) {
                 firstBoundValue = batchBound.get(0);
                 secondBoundValue = batchBound.get(1);
@@ -121,9 +123,10 @@ public class CheckerBatch {
         return Objects.hash(phyDb, phyTb, withLowerBound, withUpperBound, batchIndex, isSourceTable, batchBound);
     }
 
-    public static Pair<Pair<String, String>, String> buildBatchReport(CheckerBatch sourceBatch, CheckerBatch targetBatch,
-                                                                     Pair<Long, Boolean> sourceBatchResult,
-                                                                     Pair<Long, Boolean> targetBatchResult) {
+    public static Pair<Pair<String, String>, String> buildBatchReport(CheckerBatch sourceBatch,
+                                                                      CheckerBatch targetBatch,
+                                                                      Pair<Long, Boolean> sourceBatchResult,
+                                                                      Pair<Long, Boolean> targetBatchResult) {
         String sourceValue = "";
         if (sourceBatchResult == null) {
             sourceValue = "UNKNOWN";
@@ -136,7 +139,8 @@ public class CheckerBatch {
                 targetBatchResult.getKey()
             );
         SQLRecorderLogger.ddlLogger.error(errorMsg);
-        Pair<Pair<String, String>, String> reportPair = Pair.of(Pair.of(sourceBatch.phyDb, sourceBatch.phyTb), errorMsg);
+        Pair<Pair<String, String>, String> reportPair =
+            Pair.of(Pair.of(sourceBatch.phyDb, sourceBatch.phyTb), errorMsg);
         return reportPair;
     }
 }

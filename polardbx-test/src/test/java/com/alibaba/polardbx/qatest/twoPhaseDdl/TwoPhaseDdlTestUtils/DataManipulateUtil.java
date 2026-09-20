@@ -56,7 +56,7 @@ public class DataManipulateUtil {
         Long start = new Date().getTime();
         List<Thread> threads = new ArrayList<>();
         List<Connection> connections = new ArrayList<>();
-        Boolean fastMode = true;
+        Boolean fastMode = false;
         ConcurrentLinkedDeque<Exception> exceptions = new ConcurrentLinkedDeque<>();
         for (int i = 0; i < threadNum; i++) {
             Connection tddlConnection = getPolardbxConnection(dbName);

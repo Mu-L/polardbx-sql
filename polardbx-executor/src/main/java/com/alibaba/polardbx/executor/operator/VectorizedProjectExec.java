@@ -16,8 +16,11 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
-import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.DecimalBlock;
@@ -35,20 +38,27 @@ import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.clearspring.analytics.util.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
+import org.openjdk.jol.info.ClassLayout;
+import org.roaringbitmap.RoaringBitmap;
 
 import java.util.List;
 import java.util.Objects;
 
 public class VectorizedProjectExec extends AbstractExecutor {
+    private static final int INSTANCE_SIZE = (int) ClassLayout.parseClass(VectorizedProjectExec.class).instanceSize();
+
+    @FieldMemoryCounter(value = false)
     private final Executor input;
+    @FieldMemoryCounter(value = false)
     private final List<VectorizedExpression> expressions;
+    @FieldMemoryCounter(value = false)
     private final List<DataType> dataTypes;
 
     /**
      * Pre-allocated chunks for each expression tree.
      * Allocate physical memory at the runtime.
      */
-    private List<MutableChunk> preAllocatedChunks;
+    private MutableChunk[] preAllocatedChunks;
 
     /**
      * Replace block builders, because all the block during evaluation use random write/read.
@@ -64,10 +74,14 @@ public class VectorizedProjectExec extends AbstractExecutor {
     /**
      * pair of {k-th expression - v-th block}
      */
-    private Pair<Integer, Integer>[] commonSubExpressions;
+    private IntPair[] commonSubExpressions;
 
+    @FieldMemoryCounter(value = false)
     private ObjectPools objectPools;
     private boolean shouldRecycle;
+
+    @FieldMemoryCounter(value = false)
+    private RoaringBitmap objectBitmap;
 
     public VectorizedProjectExec(Executor input, List<VectorizedExpression> expressions,
                                  List<MutableChunk> preAllocatedChunks,
@@ -77,12 +91,37 @@ public class VectorizedProjectExec extends AbstractExecutor {
         this.input = input;
         this.expressions = expressions;
         this.mappedColumnIndex = new int[expressions.size()];
-        this.preAllocatedChunks = preAllocatedChunks;
-        this.commonSubExpressions = new Pair[expressions.size()];
+        this.preAllocatedChunks = preAllocatedChunks.toArray(new MutableChunk[0]);
+        this.commonSubExpressions = new IntPair[expressions.size()];
         this.dataTypes = dataTypes;
         this.objectPools = ObjectPools.create();
         this.shouldRecycle = context.getParamManager().getBoolean(ConnectionParams.ENABLE_DRIVER_OBJECT_POOL);
         Preconditions.checkArgument(expressions.size() == dataTypes.size());
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        if (objectBitmap == null) {
+            objectBitmap = new RoaringBitmap();
+        }
+        try {
+            MemoryTrackerManager.setCurrentRoaringBitmap(objectBitmap);
+
+            return INSTANCE_SIZE
+
+                // super class
+                + FastMemoryCounter.sizeOf(blockBuilders)
+                + FastMemoryCounter.sizeOf(executorName)
+
+                // this class
+                + FastMemoryCounter.sizeOf(preAllocatedChunks)
+                + FastMemoryCounter.sizeOf(outputBlocks)
+                + FastMemoryCounter.sizeOf(mappedColumnIndex)
+                + FastMemoryCounter.sizeOf(commonSubExpressions);
+        } finally {
+            MemoryTrackerManager.removeCurrentRoaringBitmap();
+            objectBitmap.clear();
+        }
     }
 
     @Override
@@ -128,7 +167,7 @@ public class VectorizedProjectExec extends AbstractExecutor {
                                 child.getOutputIndex());
 
                             // set result block
-                            this.commonSubExpressions[i] = Pair.of(j, outputIndex);
+                            this.commonSubExpressions[i] = IntPair.of(j, outputIndex);
                             break;
                         }
                     }
@@ -175,7 +214,7 @@ public class VectorizedProjectExec extends AbstractExecutor {
         Preconditions.checkArgument(!(expression instanceof InputRefVectorizedExpression));
 
         // Construct the input vector from chunk & blocks
-        MutableChunk preAllocatedChunk = this.preAllocatedChunks.get(index);
+        MutableChunk preAllocatedChunk = this.preAllocatedChunks[index];
         int chunkSize = inputChunk.getPositionCount();
         int blockCount = inputChunk.getBlockCount();
         for (int j = 0; j < blockCount; j++) {
@@ -191,21 +230,35 @@ public class VectorizedProjectExec extends AbstractExecutor {
         // Allocate the memory of output vector at runtime.
         if (this.commonSubExpressions[index] == null) {
             if (shouldRecycle) {
+                // Deprecated
                 preAllocatedChunk.allocateWithObjectPool(chunkSize, blockCount, objectPools);
             } else {
-                preAllocatedChunk.reallocate(chunkSize, blockCount);
+
+                try {
+                    MemoryTrackerManager.setCurrentMemoryOwner(producerMemoryOwnerId);
+                    preAllocatedChunk.reallocate(chunkSize, blockCount);
+                } finally {
+                    MemoryTrackerManager.removeCurrentMemoryOwner();
+                }
             }
 
         } else {
             // for common sub expression
-            Pair<Integer, Integer> subExpressionInfo = this.commonSubExpressions[index];
+            IntPair subExpressionInfo = this.commonSubExpressions[index];
             int expressionIndex = subExpressionInfo.getKey();
             int commonBlockIndex = subExpressionInfo.getValue();
 
             if (shouldRecycle) {
+                // Deprecated
                 preAllocatedChunk.allocateWithObjectPool(chunkSize, commonBlockIndex + 1, objectPools);
             } else {
-                preAllocatedChunk.reallocate(chunkSize, commonBlockIndex + 1);
+
+                try {
+                    MemoryTrackerManager.setCurrentMemoryOwner(producerMemoryOwnerId);
+                    preAllocatedChunk.reallocate(chunkSize, commonBlockIndex + 1);
+                } finally {
+                    MemoryTrackerManager.removeCurrentMemoryOwner();
+                }
             }
 
             preAllocatedChunk.setSlotAt((RandomAccessBlock) this.outputBlocks[expressionIndex], commonBlockIndex);
@@ -285,6 +338,33 @@ public class VectorizedProjectExec extends AbstractExecutor {
     public ListenableFuture<?> produceIsBlocked() {
         return input.produceIsBlocked();
     }
+
+    private static class IntPair implements MemoryCountable {
+        private static final int INSTANCE_SIZE = (int) ClassLayout.parseClass(IntPair.class).instanceSize();
+        final int key;
+        final int value;
+
+        private IntPair(int key, int value) {
+            this.key = key;
+            this.value = value;
+        }
+
+        public static IntPair of(int key, int value) {
+            return new IntPair(key, value);
+        }
+
+        public int getKey() {
+            return key;
+        }
+
+        public int getValue() {
+            return value;
+        }
+
+        @Override
+        public long getMemoryUsage() {
+            return INSTANCE_SIZE;
+        }
+    }
+
 }
-
-

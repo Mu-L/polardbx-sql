@@ -1,19 +1,3 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.optimizer.core.planner;
 
 import com.alibaba.polardbx.common.constants.CpuStatAttribute;
@@ -27,17 +11,11 @@ import com.alibaba.polardbx.common.properties.MetricLevel;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.thread.ThreadCpuStatUtil;
+import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.gms.config.impl.ConnPoolConfigManager;
+import com.alibaba.polardbx.gms.locality.LocalityDesc;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.gms.util.GroupInfoUtil;
-import com.alibaba.polardbx.optimizer.config.table.TableColumnUtils;
-import com.alibaba.polardbx.optimizer.core.planner.rule.PushProjectRule;
-import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
-import com.alibaba.polardbx.optimizer.core.profiler.cpu.CpuStat;
-import com.alibaba.polardbx.optimizer.hint.util.HintUtil;
-import com.alibaba.polardbx.optimizer.partition.pruning.PartPrunedResult;
-import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruneStep;
-import com.alibaba.polardbx.optimizer.utils.PlannerUtils;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.table.ComplexTaskPlanUtils;
@@ -48,6 +26,7 @@ import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.dialect.DbType;
 import com.alibaba.polardbx.optimizer.core.planner.rule.OptimizeModifyReturningRule;
+import com.alibaba.polardbx.optimizer.core.planner.rule.OptimizeRelocateReturningRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.PushModifyRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.PushProjectRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
@@ -62,13 +41,21 @@ import com.alibaba.polardbx.optimizer.core.rel.LogicalModify;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalModifyView;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalRelocate;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
+import com.alibaba.polardbx.optimizer.core.rel.ExternalTableScan;
 import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableModifyViewBuilder;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableScanBuilder;
 import com.alibaba.polardbx.optimizer.core.rel.ReplaceTableNameWithQuestionMarkVisitor;
 import com.alibaba.polardbx.optimizer.core.rel.SortWindow;
 import com.alibaba.polardbx.optimizer.core.rel.TableFinder;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
+import com.alibaba.polardbx.optimizer.core.rel.util.DirectPlanCommonGroupInfo;
 import com.alibaba.polardbx.optimizer.exception.OptimizerException;
+import com.alibaba.polardbx.optimizer.hint.util.HintUtil;
+import com.alibaba.polardbx.optimizer.htaprouting.PlanType;
+import com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertUtil;
+import com.alibaba.polardbx.optimizer.partition.pruning.PartPrunedResult;
+import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruneStep;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruner;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPrunerUtils;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
@@ -86,6 +73,7 @@ import com.alibaba.polardbx.optimizer.utils.PartitionUtils;
 import com.alibaba.polardbx.optimizer.utils.PlannerUtils;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.alibaba.polardbx.optimizer.utils.RelUtils.LogicalModifyViewBuilder;
+import com.alibaba.polardbx.optimizer.utils.RelUtils.LogicalModifyViewBuilderFromRelocate;
 import com.alibaba.polardbx.rule.TableRule;
 import com.alibaba.polardbx.rule.model.TargetDB;
 import com.alibaba.polardbx.rule.utils.CalcParamsAttribute;
@@ -97,6 +85,7 @@ import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.RecursiveCTE;
 import org.apache.calcite.rel.core.TableModify;
+import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.logical.LogicalExpand;
 import org.apache.calcite.rel.logical.LogicalOutFile;
 import org.apache.calcite.rel.logical.LogicalRecyclebin;
@@ -121,6 +110,8 @@ import java.util.TreeMap;
 import java.util.function.BiConsumer;
 
 import static com.alibaba.polardbx.optimizer.core.planner.rule.OptimizeModifyReturningRule.OPTIMIZE_MODIFY_RETURNING_RULES;
+import static com.alibaba.polardbx.optimizer.core.planner.rule.OptimizeRelocateReturningRule.OPTIMIZE_RELOCATE_RETURNING_RULES;
+import static com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertType.SPM_POST_PLANNER_ERR;
 import static com.alibaba.polardbx.optimizer.utils.ExplainResult.isExplainOptimizer;
 import static com.alibaba.polardbx.optimizer.utils.ExplainResult.isExplainSharding;
 import static com.alibaba.polardbx.optimizer.utils.OptimizerUtils.hasDNHint;
@@ -172,9 +163,18 @@ public class PostPlanner {
             public boolean isSkipPostPlan() {
                 return skipPostPlan;
             }
+
+            @Override
+            public RelNode visit(TableScan scan) {
+                if (scan instanceof ExternalTableScan) {
+                    this.skipPostPlan = true;
+                }
+                return scan;
+            }
         }
         if (direct || shouldSkipPostPlanner || plannerContext.hasLocalIndexHint() || hasDNHint(plannerContext)
-        || plannerContext.isHasAutoPagination()) {
+            || plannerContext.isHasAutoPagination() || plannerContext.isHasExpandIn()
+            || plannerContext.isDuplicateColumnName() || plannerContext.hasExternalTableOperation()) {
             plannerContext.setSkipPostOpt(true);
             return;
         }
@@ -201,6 +201,16 @@ public class PostPlanner {
         SqlNode ast = executionPlan.getAst();
         if (!executionPlan.isUsePostPlanner() || skipPostPlanner(executionPlan, executionContext)) {
             if (plan instanceof LogicalRelocate) {
+                if (supportOptimizeRelocateByReturning(executionPlan, executionContext)) {
+                    final List<RelNode> bindings = new ArrayList<>();
+                    final LogicalModifyViewBuilderFromRelocate lmvBuilder =
+                        isPushableLogicalRelocate(executionPlan, bindings);
+                    if (lmvBuilder != null) {
+                        final LogicalRelocate relocate = (LogicalRelocate) bindings.get(0);
+                        relocate.getRelocateInfo().setLmvBuilder(lmvBuilder);
+                        relocate.getRelocateInfo().setOptimizeByReturning(true);
+                    }
+                }
                 executionPlan.getPlanProperties().add(ExecutionPlanProperties.MODIFY_CROSS_DB);
             }
             return executionPlan;
@@ -219,11 +229,12 @@ public class PostPlanner {
               Choose a random group within current transaction, to avoid limited on the
               first group.
              */
-            if (isOnlyBroadcast(executionPlan, executionContext)) {
+            if (isOnlyBroadcast(executionPlan, executionContext)
+                || containAnyReplicasTables(executionPlan, executionContext)
+            ) {
                 DirectTableOperation dto = (DirectTableOperation) plan;
-                String dbIndex = getBroadcastTableGroup(executionContext, dto.getSchemaName());
-                DirectTableOperation newDto =
-                    (DirectTableOperation) dto.copy(dto.getTraitSet(), dto.getInputs());
+                String dbIndex = dto.calcDircectPlanGroupKey(executionContext);
+                DirectTableOperation newDto = (DirectTableOperation) dto.copy(dto.getTraitSet(), dto.getInputs());
                 newDto.setDbIndex(dbIndex);
                 return executionPlan.copy(newDto);
             }
@@ -276,6 +287,7 @@ public class PostPlanner {
                     .computeIfAbsent(tableName, (k) -> new ArrayList<>())
                     .add(partResult)
                 : null;
+            final List<PartPrunedResult> prunedResultsOutput = new ArrayList<>();
 
             // Build target tables
             Map<String, List<List<String>>> targetTables = getTargetTablesAndSchemas(logTableNames,
@@ -284,7 +296,8 @@ public class PostPlanner {
                 schemaNamesOfPlan,
                 forceAllowFullTableScan,
                 false,
-                partitionResultConsumer);
+                partitionResultConsumer,
+                prunedResultsOutput);
 
             boolean canPushdown = (schemaNamesOfPlan.size() == 1);
             if (ScaleOutPlanUtil.isEnabledScaleOut(executionContext.getParamManager())
@@ -362,6 +375,21 @@ public class PostPlanner {
 
             canPushdown &= !RelUtils.existUnPushableLastInsertId(executionPlan);
             canPushdown &= isAllAtOnePhyTb && !existUnPushableRelNode(plan);
+
+            // Disable pushdown for tables with externalized columns (column rewrite) OR in MCE
+            // dual-write state (addr column BlobRef fill), so that the DML/LogicalView goes
+            // through the logical handler instead of being pushed down directly.
+            if (canPushdown) {
+                String schemaName = schemaNamesOfPlan.get(0);
+                for (String tableName : logTableNames) {
+                    TableMeta tm = executionContext.getSchemaManager(schemaName).getTableWithNull(tableName);
+                    if (ExternalizedDmlRewriter.needsHandling(tm)) {
+                        canPushdown = false;
+                        break;
+                    }
+                }
+            }
+
             if (canPushdown) {
                 String schemaNamesOfAst = schemaNamesOfPlan.get(0);
                 switch (ast.getKind()) {
@@ -525,6 +553,9 @@ public class PostPlanner {
                     }
                 }
             }
+        } catch (Throwable t) {
+            OptimizerAlertUtil.spmAlert(SPM_POST_PLANNER_ERR, executionContext, t);
+            throw t;
         } finally {
             if (enableTaskCpuProfileStat) {
                 cpuStat.addCpuStatItem(CpuStatAttribute.CpuStatAttr.BUILD_DISTRIBUTED_PLAN,
@@ -533,6 +564,53 @@ public class PostPlanner {
             }
         }
         return executionPlan;
+    }
+
+    /**
+     * Check xrpc is enabled and returning is supported for relocate
+     */
+    private static boolean supportOptimizeRelocateByReturning(@NotNull ExecutionPlan plan,
+                                                              @NotNull ExecutionContext ec) {
+        if (plan.getSchemaNames().size() != 1) {
+            // do not support cross schema
+            return false;
+        }
+        final String schemaName = plan.getSchemaNames().iterator().next();
+
+        // check DML_USE_RETURNING enabled
+        // check OPTIMIZE_RELOCATE_BY_RETURNING enabled
+        // check returning supported in dn
+        // check xrpc enabled
+        if (!ec.getParamManager().getBoolean(ConnectionParams.DML_USE_RETURNING)
+            || !ec.getParamManager().getBoolean(ConnectionParams.OPTIMIZE_RELOCATE_BY_RETURNING)
+            || !ec.getStorageInfo(schemaName).isSupportsReturning()
+            || !ConnPoolConfigManager.getInstance().getConnPoolConfig().isStorageDbXprotoEnabled()) {
+            return false;
+        }
+        return !containsMceReturningForbiddenTable(plan, ec);
+    }
+
+    /**
+     * Validate plan is logical relocate and can be pushdown
+     *
+     * @param executionPlan plan
+     * @param bindings for return binding operands, List{RELOCATE_VIEW}
+     */
+    private static RelUtils.LogicalModifyViewBuilderFromRelocate isPushableLogicalRelocate(
+        @NotNull ExecutionPlan executionPlan,
+        @NotNull List<RelNode> bindings) {
+        if (!(executionPlan.getPlan() instanceof LogicalRelocate
+            && ((LogicalRelocate) executionPlan.getPlan()).isRelocateCanBeOptimizedByReturning())) {
+            return null;
+        }
+
+        for (OptimizeRelocateReturningRule rule : OPTIMIZE_RELOCATE_RETURNING_RULES) {
+            if (RelUtils.matchPlan(executionPlan.getPlan(), rule.getOperand(), bindings, null)) {
+                return rule;
+            }
+        }
+
+        return null;
     }
 
     private static LogicalModifyViewBuilder isLogicalMultiWriteCanBeOptimizedByReturning(
@@ -555,7 +633,6 @@ public class PostPlanner {
             // do not support cross schema
             return false;
         }
-
         final String schemaName = plan.getSchemaNames().iterator().next();
 
         // check DML_USE_RETURNING enabled
@@ -568,7 +645,7 @@ public class PostPlanner {
             || !ConnPoolConfigManager.getInstance().getConnPoolConfig().isStorageDbXprotoEnabled()) {
             return false;
         }
-        return true;
+        return !containsMceReturningForbiddenTable(plan, ec);
     }
 
     /**
@@ -634,7 +711,6 @@ public class PostPlanner {
             // do not support cross schema
             return false;
         }
-
         final String schemaName = plan.getSchemaNames().iterator().next();
 
         // check DML_USE_RETURNING enabled
@@ -647,7 +723,23 @@ public class PostPlanner {
             || !ConnPoolConfigManager.getInstance().getConnPoolConfig().isStorageDbXprotoEnabled()) {
             return false;
         }
-        return true;
+        return !containsMceReturningForbiddenTable(plan, ec);
+    }
+
+    private static boolean containsMceReturningForbiddenTable(@NotNull ExecutionPlan plan,
+                                                              @NotNull ExecutionContext ec) {
+        final Set<Pair<String, String>> tableSet = plan.getTableSet();
+        if (GeneralUtil.isEmpty(tableSet)) {
+            return false;
+        }
+        for (Pair<String, String> tableInfo : tableSet) {
+            final String schemaName = tableInfo.getKey() == null ? ec.getSchemaName() : tableInfo.getKey();
+            final TableMeta tableMeta = ec.getSchemaManager(schemaName).getTableWithNull(tableInfo.getValue());
+            if (ExternalizedDmlRewriter.isReturningForbidden(tableMeta)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -670,7 +762,8 @@ public class PostPlanner {
         // check plan is modify on topN
         return executionPlan.getPlan() instanceof LogicalModify
             && ((LogicalModify) executionPlan.getPlan()).isModifyTopN()
-            && RelUtils.matchPlan(executionPlan.getPlan(), PushModifyRule.MERGESORT.getOperand(), bindings, null);
+            && (RelUtils.matchPlan(executionPlan.getPlan(), PushModifyRule.MERGESORT.getOperand(), bindings, null)
+            || RelUtils.matchPlan(executionPlan.getPlan(), PushModifyRule.MERGESORT_FB.getOperand(), bindings, null));
     }
 
     /**
@@ -708,6 +801,85 @@ public class PostPlanner {
         return executionPlan.getPlanProperties().contains(ExecutionPlanProperties.ONLY_BROADCAST_TABLE);
     }
 
+//    private static boolean isOnlyOneReplicas(final ExecutionPlan executionPlan,
+//                                             final ExecutionContext executionContext) {
+//        RelNode plan = executionPlan.getPlan();
+//        if (!PlannerContext.getPlannerContext(plan).getParamManager()
+//            .getBoolean(ConnectionParams.ENABLE_REPLICAS_RANDOM_READ)) {
+//            return false;
+//        }
+//
+//        if (!(plan instanceof DirectTableOperation)) {
+//            return false;
+//        }
+//        if (((DirectTableOperation) plan).getLockMode() == SqlSelect.LockMode.EXCLUSIVE_LOCK) {
+//            return false;
+//        }
+//
+//        Set<Pair<String, String>> tables = executionPlan.getTableSet();
+//        if (tables == null || tables.size() != 1) {
+//            return false;
+//        }
+//
+//        Pair<String, String> firstTableSet = tables.iterator().next();
+//        String schemaName = firstTableSet.getKey();
+//        String tableName = firstTableSet.getValue();
+//        if (schemaName == null) {
+//            schemaName = executionContext.getSchemaName();
+//        }
+//        // when scale-out in progress don't enable broadcast random read
+//        TableMeta tableMeta = executionContext.getSchemaManager(schemaName).getTable(tableName);
+//        if (tableMeta == null) {
+//            return false;
+//        }
+//        if (tableMeta.getComplexTaskTableMetaBean() != null && !tableMeta.getComplexTaskTableMetaBean()
+//            .allPartIsPublic()) {
+//            return false;
+//        }
+//
+//        if (tableMeta.getPartitionInfo() == null
+//            || tableMeta.getPartitionInfo().getTableType() != PartitionTableType.REPLICAS_TABLE) {
+//            return false;
+//        }
+//
+//        return true;
+//    }
+
+    private static boolean containAnyReplicasTables(final ExecutionPlan executionPlan,
+                                                    final ExecutionContext executionContext) {
+        RelNode plan = executionPlan.getPlan();
+        if (!executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_REPLICAS_RANDOM_READ)) {
+            return false;
+        }
+        if (!(plan instanceof DirectTableOperation)) {
+            return false;
+        }
+        DirectTableOperation dto = (DirectTableOperation) plan;
+        DirectPlanCommonGroupInfo commonGroupKeyInfo = dto.getCommonGroupKeyInfo();
+        return commonGroupKeyInfo.isContainAnyReplicasTables();
+    }
+
+    private static boolean checkIfPushdownQueryWithReplicasTables(final ExecutionPlan executionPlan,
+                                                                  final ExecutionContext executionContext) {
+        RelNode plan = executionPlan.getPlan();
+        if (!(plan instanceof DirectTableOperation)) {
+            return false;
+        }
+        boolean enableReplicasRandomRead =
+            executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_REPLICAS_RANDOM_READ);
+        if (!enableReplicasRandomRead) {
+            return false;
+        }
+        DirectTableOperation dto = (DirectTableOperation) plan;
+        DirectPlanCommonGroupInfo commonGroupKeyInfo = dto.getCommonGroupKeyInfo();
+        if (commonGroupKeyInfo.isContainAnyReplicasTables() && !commonGroupKeyInfo.isContainAnyPartitionedTables()) {
+            if (!commonGroupKeyInfo.getCommonGroupKeySet().isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Only broadcast table:
      * 1. Choose an existed group from held connections if already in a transaction
@@ -735,6 +907,52 @@ public class PostPlanner {
         }
     }
 
+    /**
+     * Only broadcast table:
+     * <p>
+     * 1. Choose an existed group from held connections if already in a transaction
+     * <p>
+     * 2. Choose a random group if it's the first statement in transaction
+     * <p>
+     * 3. Skip single-group if any other groups exist
+     */
+    public static String getBroadcastTableGroup(
+        ExecutionContext executionContext,
+        String schemaName,
+        List<String> tableNames) {
+
+        ITransaction transaction = executionContext.getTransaction();
+        List<String> candidateGroups = null;
+        if (transaction != null) {
+            candidateGroups = transaction.getConnectionHolder().getHeldGroupsOfSchema(schemaName);
+        }
+        boolean isAutoDb = DbInfoManager.getInstance().isNewPartitionDb(schemaName);
+        if (candidateGroups == null || candidateGroups.isEmpty()) {
+            if (tableNames == null || !isAutoDb) {
+                candidateGroups = HintUtil.allGroupsWithBroadcastTable(schemaName);
+            } else {
+                String tblName = tableNames.get(0);
+                TableMeta tblMeta = executionContext.getSchemaManager(schemaName).getTable(tblName);
+                if (!StringUtils.isEmpty(tblMeta.getPartitionInfo().getLocality())) {
+                    candidateGroups =
+                        HintUtil.allGroup(schemaName, LocalityDesc.parse(tblMeta.getPartitionInfo().getLocality()));
+                } else {
+                    candidateGroups = HintUtil.allGroupsWithBroadcastTable(schemaName);
+                }
+            }
+        }
+
+        int allSingleCount =
+            (int) candidateGroups.stream().filter(GroupInfoUtil::isSingleGroup).count();
+        if (allSingleCount == candidateGroups.size()) {
+            return candidateGroups.get(new Random().nextInt(allSingleCount));
+        } else {
+            int count = candidateGroups.size() - allSingleCount;
+            return candidateGroups.stream().filter(x -> !GroupInfoUtil.isSingleGroup(x))
+                .skip(new Random().nextInt(count)).findFirst().orElse(null);
+        }
+    }
+
     public static boolean skipPostPlanner(final ExecutionPlan executionPlan,
                                           final ExecutionContext executionContext) {
         SqlNode ast = executionPlan.getAst();
@@ -743,11 +961,22 @@ public class PostPlanner {
             .getBoolean(ConnectionParams.ENABLE_POST_PLANNER)) {
             return true;
         }
+        if (!executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_POST_PLANNER)) {
+            return true;
+        }
+
         if (isOnlyBroadcast(executionPlan, executionContext)) {
             return false;
         }
 
+        if (checkIfPushdownQueryWithReplicasTables(executionPlan, executionContext)) {
+            return false;
+        }
+
         if (PlannerContext.getPlannerContext(plan).isSkipPostOpt()) {
+            return true;
+        }
+        if (PlanType.containColumnar(PlannerContext.getPlannerContext(plan).getPlanType())) {
             return true;
         }
 
@@ -783,20 +1012,6 @@ public class PostPlanner {
         return plan instanceof LogicalModifyView && !RelUtils.dmlWithDerivedSubquery(plan, ast);
     }
 
-//    public static boolean dmlWithDerivedSubquery(final RelNode plan, final SqlNode ast) {
-//        if (plan instanceof LogicalModifyView) {
-//            switch (ast.getKind()) {
-//            case UPDATE:
-//                return ((SqlUpdate) ast).withSubquery();
-//            case DELETE:
-//                return ((SqlDelete) ast).withSubquery();
-//            default:
-//                return false;
-//            }
-//        }
-//        return false;
-//    }
-
     /**
      * Map[分库 List[按下标分组 List[一个物理 SQL 中的所有表]]]
      */
@@ -806,7 +1021,8 @@ public class PostPlanner {
                                                                       List<String> schemasToBeReturn,
                                                                       boolean forceAllowFullTableScan,
                                                                       boolean allowMultiSchema,
-                                                                      BiConsumer<String, PartPrunedResult> partPrunedResultBiConsumer) {
+                                                                      BiConsumer<String, PartPrunedResult> partPrunedResultBiConsumer,
+                                                                      List<PartPrunedResult> prunedResultsOutput) {
 
         Map<Integer, ParameterContext> params =
             executionContext.getParams() == null ? null :
@@ -847,7 +1063,9 @@ public class PostPlanner {
         RelShardInfo relShardInfo;
         if (!(plan instanceof DirectTableOperation) && planShardInfo == null) {
             //er.allCondition(allComps, allFullComps);
-            planShardInfo = er.allShardInfo(executionContext);
+            planShardInfo = er.allShardInfo(
+                executionContext,
+                executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_DRDS_REX_ROUTE));
         }
 
         // AST tableNames must match ExtractionResult tables one by one
@@ -857,26 +1075,26 @@ public class PostPlanner {
         }
 
         final List<List<TargetDB>> targetDBs = new ArrayList<>();
+
         if (!allowMultiSchema) {
             TddlRuleManager tddlRuleManager =
                 executionContext.getSchemaManager(schemaNameOfPlan).getTddlRuleManager();
             Map<String, List<List<String>>> result = new HashMap<>();
 
+            boolean newPartDb = DbInfoManager.getInstance().isNewPartitionDb(schemaNameOfPlan);
+
             // used by shardedTb
             Map<String, Map<String, Comparative>> allComps =
                 planShardInfo.getAllTableComparative(schemaNameOfPlan);
-            Map<String, Map<String, Comparative>> allFullComps =
-                planShardInfo.getAllTableFullComparative(schemaNameOfPlan);
 
+            List<PartPrunedResult> prunedResults = new ArrayList<>();
             for (String name : tableNames) {
-
                 // used by partitionedTb
                 RelShardInfo shardInfo = planShardInfo.getRelShardInfo(schemaNameOfPlan, name);
                 if (!shardInfo.isUsePartTable()) {
                     Map<String, Comparative> comps = allComps.get(name);
                     Map<String, Object> calcParams = new HashMap<>();
                     calcParams.put(CalcParamsAttribute.SHARD_FOR_EXTRA_DB, false);
-                    calcParams.put(CalcParamsAttribute.COM_DB_TB, allFullComps);
                     calcParams.put(CalcParamsAttribute.CONN_TIME_ZONE,
                         executionContext.getTimeZone());
                     calcParams.put(CalcParamsAttribute.EXECUTION_CONTEXT, executionContext);
@@ -885,22 +1103,36 @@ public class PostPlanner {
                             .shard(name, true, forceAllowFullTableScan, comps, params, calcParams,
                                 executionContext);
                     targetDBs.add(tdbs);
+
                 } else {
                     // do routing for each partTable
                     PartitionPruneStep stepInfo = shardInfo.getPartPruneStepInfo();
                     PartPrunedResult prunedResult =
                         PartitionPruner.doPruningByStepInfo(stepInfo, executionContext);
+                    if (shardInfo.getPartitions() != null) {
+                        PartitionPrunerUtils.filterPartitionsBySelectedPartition(prunedResult,
+                            shardInfo.getPartitions());
+                    }
 
                     if (null != partPrunedResultBiConsumer) {
                         partPrunedResultBiConsumer.accept(name, prunedResult);
                     }
-
-                    // covert to targetDbList
-                    targetDBs.add(
-                        PartitionPrunerUtils.buildTargetDbsByPartPrunedResults(prunedResult));
+                    prunedResults.add(prunedResult);
+                    if (prunedResultsOutput != null) {
+                        prunedResultsOutput.add(prunedResult);
+                    }
                 }
             }
-            result.putAll(PlannerUtils.convertTargetDB(targetDBs, schemaNameOfPlan));
+
+            if (!newPartDb) {
+                result.putAll(PlannerUtils.convertTargetDB(targetDBs, schemaNameOfPlan));
+            } else {
+                Map<String, List<List<String>>> targetTables =
+                    PartitionPrunerUtils.buildTargetTablesByPartPrunedResults(prunedResults, executionContext);
+                result.putAll(targetTables);
+
+            }
+
             return result;
         } else {
             Set<Pair<String, String>> tableSet = executionPlan.getTableSet();
@@ -926,8 +1158,6 @@ public class PostPlanner {
                     // routed by shardDbTb
                     Map<String, Map<String, Comparative>> allComps =
                         planShardInfo.getAllTableComparative(schemaName);
-                    Map<String, Map<String, Comparative>> allFullComps =
-                        planShardInfo.getAllTableFullComparative(schemaName);
 
                     for (String name : tbNameList) {
                         RelShardInfo shardInfo = planShardInfo.getRelShardInfo(schemaName, name);
@@ -935,7 +1165,6 @@ public class PostPlanner {
                             Map<String, Comparative> comps = allComps.get(name);
                             Map<String, Object> calcParams = new HashMap<>();
                             calcParams.put(CalcParamsAttribute.SHARD_FOR_EXTRA_DB, false);
-                            calcParams.put(CalcParamsAttribute.COM_DB_TB, allFullComps);
                             calcParams.put(CalcParamsAttribute.CONN_TIME_ZONE,
                                 executionContext.getTimeZone());
                             calcParams.put(CalcParamsAttribute.EXECUTION_CONTEXT, executionContext);
@@ -1004,7 +1233,8 @@ public class PostPlanner {
     /**
      *
      */
-    private boolean allAtOnePhyTable(Map<String, List<List<String>>> targetTables, int tableSize) {
+    private boolean allAtOnePhyTable(Map<String, List<List<String>>> targetTables,
+                                     int tableSize) {
         if (targetTables.size() != 1) {
             return false;
         }
@@ -1062,4 +1292,23 @@ public class PostPlanner {
         return checkUnPushableRelVisitor.exists();
     }
 
+    private boolean skipPostPlannerForJoinBetweenBroTblAndOtherTbl(ExecutionPlan executionPlan,
+                                                                   ExecutionContext executionContext) {
+
+        Set<Pair<String, String>> tables = executionPlan.getTableSet();
+        if (tables.size() < 2) {
+            return false;
+        }
+        if (tables != null) {
+            for (Pair<String, String> table : tables) {
+                String schemaName = table.getKey();
+                String tableName = table.getValue();
+                if (schemaName == null) {
+                    schemaName = executionContext.getSchemaName();
+                }
+
+            }
+        }
+        return false;
+    }
 }

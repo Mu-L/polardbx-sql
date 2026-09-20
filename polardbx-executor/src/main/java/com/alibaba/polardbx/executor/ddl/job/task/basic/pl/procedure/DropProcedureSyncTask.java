@@ -42,7 +42,7 @@ public class DropProcedureSyncTask extends BaseSyncTask {
 
     @Override
     protected void executeImpl(ExecutionContext executionContext) {
-        SyncManagerHelper.sync(new DropProcedureSyncAction(procedureSchema, procedureName),
+        SyncManagerHelper.syncThrowExceptions(new DropProcedureSyncAction(procedureSchema, procedureName),
             TddlConstants.INFORMATION_SCHEMA, SyncScope.NOT_COLUMNAR_SLAVE);
     }
 

@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.executor.gsi.backfill;
 
 import com.alibaba.polardbx.executor.backfill.Extractor;
+import com.alibaba.polardbx.gms.metadb.table.ExternalizedColumnInfo;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.backfill.Loader;
@@ -86,7 +87,9 @@ public class GsiLoader extends Loader {
                 .stream()
                 .filter(columnMeta -> (!columnMeta.isGeneratedColumn() && !(onlineModifyColumn
                     && columnMeta.getMappingName() != null && columnMeta.getMappingName().isEmpty())))
-                .map(columnMeta -> new SqlIdentifier(columnMeta.getName(), SqlParserPos.ZERO))
+                .map(columnMeta -> new SqlIdentifier(ExternalizedColumnInfo.getBackfillColumnName(
+                    columnMeta.getName(), columnMeta.getMappingName(), columnMeta.isExternalizedColumn()),
+                    SqlParserPos.ZERO))
                 .collect(Collectors.toList()),
             SqlParserPos.ZERO);
 

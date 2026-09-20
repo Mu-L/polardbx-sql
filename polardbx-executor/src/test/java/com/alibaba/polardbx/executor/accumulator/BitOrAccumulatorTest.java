@@ -1,17 +1,13 @@
 package com.alibaba.polardbx.executor.accumulator;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Block;
-import com.alibaba.polardbx.executor.chunk.ByteArrayBlock;
-import com.alibaba.polardbx.executor.chunk.ByteArrayBlockBuilder;
-import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.LongBlock;
 import com.alibaba.polardbx.executor.chunk.LongBlockBuilder;
-import com.alibaba.polardbx.executor.utils.ByteUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.expression.calc.aggfunctions.BitOr;
-import com.alibaba.polardbx.optimizer.core.expression.calc.aggfunctions.FinalHyperLoglog;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -28,10 +24,11 @@ public class BitOrAccumulatorTest {
     public void before() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new BitOr(), DataTypes.LongType, new DataType[] {DataTypes.LongType}, COUNT,
-                new ExecutionContext());
+                new ExecutionContext(), null);
 
         this.accumulator = (LongBitOrAccumulator) accumulator;
         this.random = new Random();
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 
     @Test
@@ -50,6 +47,7 @@ public class BitOrAccumulatorTest {
         for (int i = 0; i < block.getPositionCount(); i++) {
             accumulator.accumulate(0, block, i);
         }
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
 
         LongBlockBuilder resultBuilder = new LongBlockBuilder(COUNT);
         accumulator.writeResultTo(0, resultBuilder);
@@ -59,5 +57,6 @@ public class BitOrAccumulatorTest {
 
         long size = accumulator.estimateSize();
         Assert.assertTrue(size > 0);
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 }

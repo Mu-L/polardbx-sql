@@ -119,6 +119,20 @@ public class ForeignKeyValidator {
                     throw new TddlRuntimeException(ErrorCode.ERR_ADD_FK_CONSTRAINT,
                         String.format("Column `%s` not exist in table `%s`.", column, data.tableName));
                 }
+                if (colDefMap.get(column).isExternalize()) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_ADD_FK_CONSTRAINT,
+                        String.format("Externalized column `%s` cannot be a foreign key column.", column));
+                }
+            }
+            if (data.refTableName.equalsIgnoreCase(tableName)) {
+                for (String refColumn : data.refColumns) {
+                    SqlColumnDeclaration refColumnDef = colDefMap.get(refColumn);
+                    if (refColumnDef != null && refColumnDef.isExternalize()) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_ADD_FK_CONSTRAINT,
+                            String.format("Externalized column `%s` cannot be a referenced foreign key column.",
+                                refColumn));
+                    }
+                }
             }
 
             if (checkForeignKey) {
@@ -822,4 +836,3 @@ public class ForeignKeyValidator {
         return sqlCreateTable;
     }
 }
-

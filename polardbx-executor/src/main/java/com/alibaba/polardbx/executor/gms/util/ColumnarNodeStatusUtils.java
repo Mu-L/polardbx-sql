@@ -1,18 +1,31 @@
 package com.alibaba.polardbx.executor.gms.util;
 
+import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.executor.ddl.job.task.columnar.WaitColumnarTableCreationTask;
+import com.alibaba.polardbx.gms.metadb.columnar.ColumnarNodeInfoAccessor;
+import com.alibaba.polardbx.gms.metadb.columnar.ColumnarNodeInfoRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarCheckpointsAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarCheckpointsRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingRecord;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.google.common.collect.ImmutableList;
 import lombok.Data;
 
 import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -158,6 +171,57 @@ public class ColumnarNodeStatusUtils {
      */
     public static AtomicLong getLastCheckTimeMs() {
         return lastCheckTimeMs;
+    }
+
+    /**
+     * 验证列存节点是否存在
+     * 通过检查列存daemon进程是否存在来判断列存节点是否可用
+     */
+    public static void validateColumnarNodeExists(ExecutionContext ec) {
+        boolean enableCreateCciWithoutColumnarNode =
+            ec.getParamManager().getBoolean(ConnectionParams.ENABLE_CREATE_CCI_WITHOUT_COLUMNAR_NODE);
+        if (enableCreateCciWithoutColumnarNode) {
+            return;
+        } else {
+            // FOR TESTS!
+            Set<String> skipDdlTasks = ec.skipDdlTasks();
+            if (skipDdlTasks.contains(WaitColumnarTableCreationTask.class.getSimpleName())) {
+                return;
+            }
+        }
+        try (Connection metaDbConn = MetaDbUtil.getConnection()) {
+            ColumnarNodeInfoAccessor accessor = new ColumnarNodeInfoAccessor();
+            accessor.setConnection(metaDbConn);
+
+            if (!isCdcNodeExists(metaDbConn)) {
+                throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+                    "Cannot create columnar index because no columnar node is available");
+            }
+
+            Optional<ColumnarNodeInfoRecord> daemonMaster = accessor.getDaemonMaster();
+
+            if (!daemonMaster.isPresent()) {
+                throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+                    "Cannot create columnar index because no columnar node is available");
+            }
+        } catch (Exception e) {
+            throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+                "Cannot create columnar index because failed to check columnar node status: " + e.getMessage());
+        }
+    }
+
+    private static boolean isCdcNodeExists(Connection connection) {
+        try (Statement stmt = connection.createStatement()) {
+            try (ResultSet rs = stmt.executeQuery("SHOW COLUMNS FROM BINLOG_NODE_INFO")) {
+                return true;
+            }
+        } catch (SQLException ex) {
+            if (ex.getErrorCode() == ErrorCode.ER_NO_SUCH_TABLE.getCode()) {
+                return false;
+            } else {
+                throw new TddlNestableRuntimeException("", ex);
+            }
+        }
     }
 
 }

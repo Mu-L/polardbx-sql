@@ -41,7 +41,7 @@ public class DropJavaFunctionSyncTask extends BaseSyncTask {
 
     @Override
     protected void executeImpl(ExecutionContext executionContext) {
-        SyncManagerHelper.sync(new DropJavaFunctionSyncAction(functionName),
+        SyncManagerHelper.syncThrowExceptions(new DropJavaFunctionSyncAction(functionName),
             TddlConstants.INFORMATION_SCHEMA, SyncScope.ALL);
     }
 

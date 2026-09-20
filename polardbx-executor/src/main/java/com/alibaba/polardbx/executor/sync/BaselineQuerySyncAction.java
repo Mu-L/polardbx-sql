@@ -28,7 +28,7 @@ public class BaselineQuerySyncAction implements ISyncAction {
 
     @Override
     public ResultCursor sync() {
-        String jsonString = PlanManager.getBaselineAsJson(PlanManager.getInstance().getBaselineMap());
+        String jsonString = PlanManager.getInstance().getFullBaselineJson();
 
         ArrayResultCursor result = new ArrayResultCursor("baselines");
         result.addColumn("baselines", DataTypes.StringType);

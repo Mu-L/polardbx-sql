@@ -400,7 +400,11 @@ public class RelJson {
     }
   }
 
- protected RexNode toRex(RelInput relInput, Object o) {
+  protected RexNode toRex(RelInput relInput, Object o) {
+    return toRex(relInput, o, null);
+  }
+
+ protected RexNode toRex(RelInput relInput, Object o, List<RelNode> inputs) {
     final RelOptCluster cluster = relInput.getCluster();
     final RexBuilder rexBuilder = cluster.getRexBuilder();
     if (o == null) {
@@ -413,7 +417,7 @@ public class RelJson {
         final List operands = (List) map.get("operands");
         final Object jsonType = map.get("type");
         final SqlOperator operator = toOp(op, map);
-        final List<RexNode> rexOperands = toRexList(relInput, operands);
+        final List<RexNode> rexOperands = toRexList(relInput, operands, inputs);
         RelDataType type;
         if (jsonType != null) {
           type = toType(typeFactory, jsonType);
@@ -425,6 +429,9 @@ public class RelJson {
       final Integer input = (Integer) map.get("input");
       if (input != null) {
         List<RelNode> inputNodes = relInput.getInputs();
+        if (inputs != null) {
+          inputNodes = inputs;
+        }
         int i = input;
         for (RelNode inputNode : inputNodes) {
           final RelDataType rowType = inputNode.getRowType();
@@ -439,7 +446,7 @@ public class RelJson {
       final String field = (String) map.get("field");
       if (field != null) {
         final Object jsonExpr = map.get("expr");
-        final RexNode expr = toRex(relInput, jsonExpr);
+        final RexNode expr = toRex(relInput, jsonExpr, inputs);
         return rexBuilder.makeFieldAccess(expr, field, true);
       }
       final String correl = (String) map.get("correl");
@@ -456,7 +463,7 @@ public class RelJson {
           return rexBuilder.makeNullLiteral(
               typeFactory.createSqlType(sqlTypeName));
         }
-        return toRex(relInput, literal);
+        return toRex(relInput, literal, inputs);
       }
       throw new UnsupportedOperationException("cannot convert to rex " + o);
     } else if (o instanceof Boolean) {
@@ -477,10 +484,10 @@ public class RelJson {
     }
   }
 
-  protected List<RexNode> toRexList(RelInput relInput, List operands) {
+  protected List<RexNode> toRexList(RelInput relInput, List operands, List<RelNode> inputs) {
     final List<RexNode> list = new ArrayList<RexNode>();
     for (Object operand : operands) {
-      list.add(toRex(relInput, operand));
+      list.add(toRex(relInput, operand, inputs));
     }
     return list;
   }

@@ -1,8 +1,11 @@
 package com.alibaba.polardbx.executor.ddl.job.task.ttl;
 
+import com.alibaba.polardbx.common.ColumnarOptions;
 import com.alibaba.polardbx.common.exception.NotSupportException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.ColumnarConfig;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.common.utils.time.core.OriginalTimestamp;
 import com.alibaba.polardbx.common.utils.timezone.InternalTimeZone;
@@ -18,11 +21,12 @@ import com.alibaba.polardbx.executor.ddl.newengine.DdlEngineDagExecutor;
 import com.alibaba.polardbx.executor.ddl.newengine.DdlEngineDagExecutorMap;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJob;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
+import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
 import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlJobManager;
 import com.alibaba.polardbx.executor.ddl.newengine.serializable.SerializableClassMapper;
 import com.alibaba.polardbx.executor.ddl.newengine.utils.TaskHelper;
+import com.alibaba.polardbx.executor.scheduler.executor.TtlArchivedDataScheduledJob;
 import com.alibaba.polardbx.executor.utils.PartitionMetaUtil;
-import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineTaskAccessor;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineTaskRecord;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
@@ -32,11 +36,13 @@ import com.alibaba.polardbx.optimizer.config.server.IServerConfigManager;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager;
 import com.alibaba.polardbx.optimizer.config.table.IndexMeta;
+import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
 import com.alibaba.polardbx.optimizer.partition.common.PartKeyLevel;
@@ -48,13 +54,14 @@ import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruneStepBuilde
 import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruner;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPrunerUtils;
 import com.alibaba.polardbx.optimizer.partition.pruning.PhysicalPartitionInfo;
+import com.alibaba.polardbx.optimizer.ttl.RefreshArcTblViewContext;
 import com.alibaba.polardbx.optimizer.ttl.TtlConfigUtil;
 import com.alibaba.polardbx.optimizer.ttl.TtlDefinitionInfo;
 import com.alibaba.polardbx.optimizer.ttl.TtlTimeUnit;
+import com.alibaba.polardbx.optimizer.ttl.TtlUtil;
 import com.alibaba.polardbx.optimizer.utils.OptimizerHelper;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
-import org.apache.calcite.sql.SqlAlterTableRepartition;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.UnsupportedEncodingException;
@@ -73,6 +80,7 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * @author chenghui.lch
@@ -348,6 +356,9 @@ public class TtlJobUtil {
         case MONTH:
             result = normalizedDatetime.plusMonths(intervalCount);
             break;
+        case WEEK:
+            result = normalizedDatetime.plusWeeks(intervalCount);
+            break;
         case DAY:
             result = normalizedDatetime.plusDays(intervalCount);
             break;
@@ -364,33 +375,64 @@ public class TtlJobUtil {
         return result;
     }
 
+    /**
+     * Find the actual table name from arc cci of tableMeta of ttlTable
+     */
     public static String getActualTableNameForArcCci(TableMeta ttlTblMeta,
                                                      ExecutionContext ec) {
 
         TtlDefinitionInfo ttlInfo = ttlTblMeta.getTtlDefinitionInfo();
         String arcTmpTblSchema = ttlInfo.getTmpTableSchema();
         String arcTmpTblName = ttlInfo.getTmpTableName();
-
+        String arcTmpTblNameLowercase = "";
+        if (!StringUtils.isEmpty(arcTmpTblName)) {
+            arcTmpTblNameLowercase = arcTmpTblName.toLowerCase();
+        }
         String actualTblNameOfCci = null;
+//        if (StringUtils.isEmpty(arcTmpTblName)) {
+//            return actualTblNameOfCci;
+//        }
+        Map<String, GsiMetaManager.GsiIndexMetaBean> allArcCciPublished = ttlTblMeta.getArchiveColumnarIndexPublished();
 
-        Map<String, GsiMetaManager.GsiIndexMetaBean> allPublishedIndexes = ttlTblMeta.getColumnarIndexPublished();
+        /**
+         * A switch used by testcases only for using gsi index instead of cci index, default is false
+         */
         boolean useGsiInsteadOfCci = TtlConfigUtil.isUseGsiInsteadOfCciForCreateColumnarArcTbl(ec);
         if (useGsiInsteadOfCci) {
-            allPublishedIndexes = ttlTblMeta.getGsiPublished();
+            allArcCciPublished = ttlTblMeta.getGsiPublished();
         }
 
-        if (allPublishedIndexes != null) {
-            for (Map.Entry<String, GsiMetaManager.GsiIndexMetaBean> gsiIdxItem : allPublishedIndexes.entrySet()) {
-                String gsiTblName = gsiIdxItem.getKey().toLowerCase();
-                GsiMetaManager.GsiIndexMetaBean gsiBean = gsiIdxItem.getValue();
-                if (!gsiTblName.startsWith(arcTmpTblName)) {
+        if (allArcCciPublished != null) {
+            /**
+             * For each cci, just find the arc cci which is started with arcTmpTblName
+             */
+            for (String cciTblName : allArcCciPublished.keySet()) {
+                String cciTblNameLowerCase = cciTblName.toLowerCase();
+                if (!cciTblNameLowerCase.startsWith(arcTmpTblNameLowercase)) {
                     continue;
                 }
-                actualTblNameOfCci = gsiBean.indexName;
+                actualTblNameOfCci = cciTblNameLowerCase;
                 break;
             }
         }
         return actualTblNameOfCci;
+    }
+
+    public static String getActualTableNameAndCheckCciTypeForArcCci(TableMeta ttlTblMeta,
+                                                                    ExecutionContext ec) {
+        String tblNameOfCci = getActualTableNameForArcCci(ttlTblMeta, ec);
+        if (StringUtils.isEmpty(tblNameOfCci)) {
+            return tblNameOfCci;
+        }
+
+        String finalTblNameOfCci = tblNameOfCci;
+        Map<String, GsiMetaManager.GsiIndexMetaBean> allArcCciPublished = ttlTblMeta.getArchiveColumnarIndexPublished();
+        GsiMetaManager.GsiIndexMetaBean cciMeta = allArcCciPublished.get(tblNameOfCci);
+        String columnarType = cciMeta.columnarOptions.get().get(ColumnarOptions.TYPE);
+        if (columnarType == null || !columnarType.equalsIgnoreCase(ColumnarConfig.ARCHIVE)) {
+            finalTblNameOfCci = null;
+        }
+        return finalTblNameOfCci;
     }
 
     public static TableMeta getLatestTableMetaBySchemaNameAndTableName(String schemaName, String tableName) {
@@ -841,11 +883,17 @@ public class TtlJobUtil {
         jobStatInfo.calcCleanupRowsSpeed();// unit: rows/s
     }
 
-    public static boolean checkIfInTtlMaintainWindow() {
+    public static boolean checkIfInTtlMaintainWindow(ExecutionContext ec) {
+        // If the hint TTL_JOB_FOLLOW_MAINTAIN_WINDOW=true is present in ec, the caller is a
+        // manually-triggered DDL that explicitly opts-in to maintenance-window enforcement.
+        // In that case we skip the global "ignore" flag and always perform the real check.
+        if (ec != null && ec.getParamManager().getBoolean(ConnectionParams.TTL_JOB_FOLLOW_MAINTAIN_WINDOW)) {
+            return TtlArchivedDataScheduledJob.checkIfScheduledTtlJobInMaintenanceWindow(ec);
+        }
         if (TtlConfigUtil.isIgnoreMaintainWindowInTtlJob()) {
             return true;
         }
-        return InstConfUtil.isInTtlJobMaintenanceTimeWindow();
+        return TtlArchivedDataScheduledJob.checkIfScheduledTtlJobInMaintenanceWindow(ec);
     }
 
     public static int decidePreBuiltPartCnt(int preBuiltPartCntForFuture,
@@ -994,5 +1042,183 @@ public class TtlJobUtil {
         );
 
         return datetimeStringFormatedResult;
+    }
+
+    public static List<Map<String, Object>> execQueryExprSqlAndGetResult(ExecutionContext ec,
+                                                                         TtlDefinitionInfo ttlInfo,
+                                                                         String queryExprSql) {
+        final IServerConfigManager serverConfigManager = TtlJobUtil.getServerConfigManager();
+        String ttlTblSchemaName = ttlInfo.getTtlInfoRecord().getTableSchema();
+        String ttlTimezoneStr = ttlInfo.getTtlInfoRecord().getTtlTimezone();
+        String groupParallelismForConnStr = String.valueOf(TtlConfigUtil.getDefaultGroupParallelismOnDqlConn());
+        String charsetEncoding = TtlConfigUtil.defaultCharsetEncodingOnTransConn;
+        String sqlModeSetting = TtlConfigUtil.defaultSqlModeOnTransConn;
+        Map<String, Object> sessionVariables = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+        sessionVariables.put("time_zone", ttlTimezoneStr);
+        sessionVariables.put("names", charsetEncoding);
+        sessionVariables.put("sql_mode", sqlModeSetting);
+        sessionVariables.put("group_parallelism", groupParallelismForConnStr);
+        List<Map<String, Object>> resultSet = null;
+        resultSet = TtlJobUtil.wrapWithDistributedTrx(
+            serverConfigManager,
+            ttlTblSchemaName,
+            sessionVariables,
+            (transConn) -> {
+                List<Map<String, Object>> queryResultSet =
+                    TtlJobUtil.execLogicalQueryOnInnerConnection(serverConfigManager,
+                        ttlTblSchemaName,
+                        transConn,
+                        ec,
+                        queryExprSql);
+                return queryResultSet;
+            }
+        );
+        return resultSet;
+    }
+
+    /**
+     * Check if need add a subjob task of auto refresh the cci view of arc tbl
+     */
+    public static void addRefreshArcViewSubJobIfNeed(DdlJob ddlJob,
+                                                     BaseDdlOperation ddlPlan,
+                                                     ExecutionContext ec) {
+        List<RefreshArcTblViewContext> targetTtlTblListOutput = new ArrayList<>();
+        if (!TtlUtil.needRefreshArcTblView(ddlPlan, ec, targetTtlTblListOutput)) {
+            return;
+        }
+        for (int i = 0; i < targetTtlTblListOutput.size(); i++) {
+            RefreshArcTblViewContext ctx = targetTtlTblListOutput.get(i);
+            addRefreshArcViewSubJobInner(ec, (ExecutableDdlJob) ddlJob, ctx);
+        }
+    }
+
+    protected static void addRefreshArcViewSubJobInner(
+        ExecutionContext ec,
+        ExecutableDdlJob ddlJob,
+        RefreshArcTblViewContext ctx) {
+        String tableSchema = ctx.getNewTtlTblSchema();
+        String newTableName = ctx.getNewTtlTblName();
+        String newTableSchema = ctx.getNewTtlTblSchema();
+        TtlDefinitionInfo ttlInfo = ctx.getTarTtlInfo();
+        if (ttlInfo == null) {
+            return;
+        }
+        String arcTblSchema = ttlInfo.getArchiveTableSchema();
+        String arcTblName = ttlInfo.getArchiveTableName();
+
+        String createViewSqlForArcTbl =
+            TtlTaskSqlBuilder.buildCreateViewSqlForArcTblByTtlTblName(
+                arcTblSchema,
+                arcTblName,
+                newTableSchema,
+                newTableName);
+        String dropViewSqlForArcTbl = ""; // ignore rollback
+        SubJobTask freshViewSubJobTask =
+            new SubJobTask(tableSchema, createViewSqlForArcTbl, dropViewSqlForArcTbl);
+        freshViewSubJobTask.setParentAcquireResource(true);
+
+        ExecutableDdlJob executableDdlJob = ddlJob;
+//        DdlTask tailTask = executableDdlJob.getTail();
+        List<DdlTask> tailNodes =
+            executableDdlJob.getAllZeroOutDegreeVertexes().stream().map(o -> o.getObject()).collect(
+                Collectors.toList());
+        executableDdlJob.addTask(freshViewSubJobTask);
+        for (int i = 0; i < tailNodes.size(); i++) {
+            DdlTask tailTask = tailNodes.get(i);
+            executableDdlJob.addTaskRelationship(tailTask, freshViewSubJobTask);
+        }
+        executableDdlJob.labelAsTail(freshViewSubJobTask);
+    }
+
+    public static String getTtlColStringValueIfUseFuncExpr(TtlDefinitionInfo ttlInfo, ExecutionContext ec,
+                                                           TtlPartitionUtil.TtlColValueCalcContext calcContext,
+                                                           String cleanupTimeBound) {
+        ColumnMeta ttlColMeta = ttlInfo.getTtlColMeta(ec);
+        PartKeyLevel partKeyLevel = PartKeyLevel.PARTITION_KEY;
+        boolean usePartFunc = false;
+
+        /**
+         * For expire after by time interval policy,
+         * minBoundToCleanup must be an iso-formated datetime string which is
+         * decoded by calculating decoder expr,
+         * so if ttl_col use funcExpr encoding,
+         * the minBoundToCleanup need convert into its original value which datatype
+         * is the datatype in ColumnMeta.
+         */
+
+        if (!org.apache.commons.lang.StringUtils.isEmpty(cleanupTimeBound)) {
+//                    TtlPartitionUtil.TtlColBoundValue minBoundToCleanupOnTtlColBndVal =
+//                        new TtlPartitionUtil.TtlColBoundValue(minBoundToCleanup, ttlColMeta, partKeyLevel, usePartFunc,
+//                            ttlInfo);
+            /**
+             * Build the middle-ware bound type of TtlColBoundValue for minBoundToCleanup
+             */
+            TtlPartitionUtil.TtlColBoundValue minBoundToCleanupOnTtlColBndVal =
+                TtlPartitionUtil.TtlColBoundValue.buildPartBoundValue(cleanupTimeBound,
+                    ttlColMeta, partKeyLevel, usePartFunc, ttlInfo, calcContext);
+            /**
+             * Convert the minBoundToCleanup into its original value of its original datatype.
+             * (encoding ttl_col)
+             */
+            cleanupTimeBound =
+                minBoundToCleanupOnTtlColBndVal.getPartBoundValueStringByOriginalPartColDataType();
+        }
+        return cleanupTimeBound;
+    }
+
+    public static final ExecutableDdlJob buildCreateArchiveCciJob(TtlDefinitionInfo ttlDefinitionInfo) {
+        ExecutableDdlJob executableDdlJob = new ExecutableDdlJob();
+        List<DdlTask> taskList = new ArrayList<>();
+        String schemaName = ttlDefinitionInfo.getTtlInfoRecord().getTableSchema();
+        String logicalTableName = ttlDefinitionInfo.getTtlInfoRecord().getTableName();
+        String targetTableName = "hybrid_auto_arc_" + logicalTableName;
+        TtlJobContext jobContext = TtlJobContext.buildFromTtlInfo(ttlDefinitionInfo);
+        PreparingFormattedCurrDatetimeTask preparingFormattedCurrDatetimeTask =
+            new PreparingFormattedCurrDatetimeTask(schemaName, logicalTableName);
+        preparingFormattedCurrDatetimeTask.setJobContext(jobContext);
+        CheckAndPrepareColumnarIndexPartDefTask prepareCreateCiSqlTask =
+            new CheckAndPrepareColumnarIndexPartDefTask(schemaName, logicalTableName, schemaName,
+                targetTableName);
+        String createCiSqlForArcTblSubJobName =
+            TtlTaskSqlBuilder.buildSubJobTaskNameForCreateColumnarIndexBySpecifySubJobStmt();
+        String dropCiSqlForArcTbl =
+            TtlTaskSqlBuilder.buildDropColumnarIndexSqlForArcTbl(ttlDefinitionInfo, schemaName, targetTableName);
+        SubJobTask createCiSubJobTask =
+            new SubJobTask(schemaName, createCiSqlForArcTblSubJobName, dropCiSqlForArcTbl);
+        createCiSubJobTask.setParentAcquireResource(true);
+
+        taskList.add(preparingFormattedCurrDatetimeTask);
+        taskList.add(prepareCreateCiSqlTask);
+        taskList.add(createCiSubJobTask);
+        executableDdlJob.addSequentialTasks(taskList);
+        return executableDdlJob;
+
+    }
+
+    /**
+     * Check if the arc cci meta is invalid
+     */
+    public static boolean checkIfArcCciMetaInvalid(ExecutionContext executionContext, TtlJobContext jobContext) {
+        TtlDefinitionInfo ttlInfo = jobContext.getTtlInfo();
+        if (!ttlInfo.needPerformExpiredDataArchiving()) {
+            return false;
+        }
+        String ttlTblSchema = ttlInfo.getTtlInfoRecord().getTableSchema();
+        String ttlTblName = ttlInfo.getTtlInfoRecord().getTableName();
+        SchemaManager schemaManager = executionContext.getSchemaManager(ttlTblSchema);
+        if (schemaManager != null) {
+            TableMeta ttlTblMeta = schemaManager.getTableWithNull(ttlTblName);
+            String actualTblNameOfCci =
+                TtlJobUtil.getActualTableNameAndCheckCciTypeForArcCci(ttlTblMeta, executionContext);
+            if (org.apache.commons.lang.StringUtils.isEmpty(actualTblNameOfCci)) {
+                /**
+                 * !!! actualTblNameOfCci is empty, which means the arc cci meta is invalid,
+                 * !!! the target arcCci is not archive columnar index.
+                 * so give up cleaning the expired data at this task
+                 */
+                return true;
+            }
+        }
+        return false;
     }
 }

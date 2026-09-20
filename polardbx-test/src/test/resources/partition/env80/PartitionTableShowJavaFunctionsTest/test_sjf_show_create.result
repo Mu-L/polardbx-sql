@@ -1,0 +1,76 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+SHOW CREATE JAVA FUNCTION sjf_cr_func1;
+Java Function,Create Java Function
+sjf_cr_func1,DELIMITER $$
+CREATE JAVA FUNCTION IF NOT EXISTS `sjf_cr_func1`
+  NO STATE
+  RETURN_TYPE bigint
+  INPUT_TYPES bigint
+  CODE
+public class Sjf_cr_func1 extends UserDefinedJavaFunction {
+  public Object compute(Object[] args) {
+    Long a = (Long) args[0];
+    return a * 2;
+  }
+};
+END_CODE $$
+DELIMITER ;
+SHOW CREATE JAVA FUNCTION SJF_CR_FUNC2;
+Java Function,Create Java Function
+sjf_cr_func2,DELIMITER $$
+CREATE JAVA FUNCTION IF NOT EXISTS `sjf_cr_func2`
+  NO STATE
+  RETURN_TYPE bigint
+  INPUT_TYPES bigint,bigint
+  CODE
+public class Sjf_cr_func2 extends UserDefinedJavaFunction {
+  public Object compute(Object[] args) {
+    Long a = (Long) args[0];
+    Long b = (Long) args[1];
+    return a + b;
+  }
+};
+END_CODE $$
+DELIMITER ;
+SHOW CREATE JAVA FUNCTION `sjf_cr_func1`;
+Java Function,Create Java Function
+sjf_cr_func1,DELIMITER $$
+CREATE JAVA FUNCTION IF NOT EXISTS `sjf_cr_func1`
+  NO STATE
+  RETURN_TYPE bigint
+  INPUT_TYPES bigint
+  CODE
+public class Sjf_cr_func1 extends UserDefinedJavaFunction {
+  public Object compute(Object[] args) {
+    Long a = (Long) args[0];
+    return a * 2;
+  }
+};
+END_CODE $$
+DELIMITER ;
+SHOW CREATE JAVA FUNCTION `SJF_CR_FUNC2`;
+Java Function,Create Java Function
+sjf_cr_func2,DELIMITER $$
+CREATE JAVA FUNCTION IF NOT EXISTS `sjf_cr_func2`
+  NO STATE
+  RETURN_TYPE bigint
+  INPUT_TYPES bigint,bigint
+  CODE
+public class Sjf_cr_func2 extends UserDefinedJavaFunction {
+  public Object compute(Object[] args) {
+    Long a = (Long) args[0];
+    Long b = (Long) args[1];
+    return a + b;
+  }
+};
+END_CODE $$
+DELIMITER ;
+## error_msg: $# ERR_UDF_NOT_FOUND #$
+SHOW CREATE JAVA FUNCTION sjf_nonexist_func;
+ERR_UDF_NOT_FOUND
+## error_msg: $# ERR_UDF_NOT_FOUND #$
+SHOW CREATE JAVA FUNCTION `sjf_nonexist_func`;
+ERR_UDF_NOT_FOUND
+drop java function if exists sjf_cr_func1;
+drop java function if exists sjf_cr_func2;

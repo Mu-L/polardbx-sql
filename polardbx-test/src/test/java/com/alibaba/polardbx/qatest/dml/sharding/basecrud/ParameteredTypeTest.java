@@ -44,7 +44,7 @@ public class ParameteredTypeTest extends ReadBaseTestCase {
             + "        `catalog_name1` varchar(255) DEFAULT NULL character set gbk,\n"
             + "        `user_id` varchar(255) DEFAULT NULL COMMENT '用户id',\n"
             + "        PRIMARY KEY (`id`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 11105348 DEFAULT CHARSET = utf8mb4 ROW_FORMAT = DYNAMIC  dbpartition by hash(`user_id`) tbpartition by hash(`user_id`) tbpartitions 4;";
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 11105348 DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = DYNAMIC  dbpartition by hash(`user_id`) tbpartition by hash(`user_id`) tbpartitions 4;";
 
         String sql2 = "CREATE TABLE " + baseOneTableName2 + " (\n"
             + "        `id` int(11) NOT NULL AUTO_INCREMENT BY GROUP,\n"
@@ -53,7 +53,7 @@ public class ParameteredTypeTest extends ReadBaseTestCase {
             + "        `catalog_name1` varchar(255) DEFAULT NULL character set gbk,\n"
             + "        PRIMARY KEY (`id`),\n"
             + "        GLOBAL INDEX `c_s_a_r_id`(`id`) COVERING (`user_id`) DBPARTITION BY HASH(`id`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 11105348 DEFAULT CHARSET = utf8mb4 ROW_FORMAT = DYNAMIC  dbpartition by hash(`user_id`) tbpartition by hash(`user_id`) tbpartitions 4;";
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 11105348 DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci ROW_FORMAT = DYNAMIC  dbpartition by hash(`user_id`) tbpartition by hash(`user_id`) tbpartitions 4;";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql1);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql2);

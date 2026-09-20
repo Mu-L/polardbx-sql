@@ -72,8 +72,7 @@ public class GsiFastChecker extends FastChecker {
             throw new TddlRuntimeException(ErrorCode.ERR_GLOBAL_SECONDARY_INDEX_CHECKER, "Incorrect GSI relationship.");
         }
 
-        final List<String> indexColumns =
-            indexTableMeta.getAllColumns().stream().map(ColumnMeta::getName).collect(Collectors.toList());
+        final List<String> indexColumns = FastChecker.toPhysicalColumnNames(indexTableMeta);
         final List<String> baseTableColumns = new ArrayList<>(indexColumns);
 
         // 重要：构造planSelectSampleSrc 和 planSelectSampleDst时，传入的主键必须按原本的主键顺序!

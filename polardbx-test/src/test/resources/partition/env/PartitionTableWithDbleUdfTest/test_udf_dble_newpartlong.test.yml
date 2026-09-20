@@ -1,0 +1,42 @@
+## DISABLE_FAST_SQL_PARSER
+
+select Partnewlongc8l360('0');
+select Partnewlongc8l360('359');
+select Partnewlongc8l360('360');
+select Partnewlongc8l360('719');
+select Partnewlongc8l360('720');
+select Partnewlongc8l360('2879');
+select Partnewlongc8l360('2880');
+
+drop tablegroup if exists tg_dble_new_udf1;
+create tablegroup if not exists tg_dble_new_udf1
+partition by udf_hash(bigint)
+partition 8
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3),
+partition p3 values less than (4),
+partition p4 values less than (5),
+partition p5 values less than (6),
+partition p6 values less than (7),
+partition p7 values less than (8)
+)
+;
+
+drop table if exists uh_new_t1;
+create table uh_new_t1(
+c1 varchar(32) not null,
+c2 varchar(32) not null
+)
+partition by udf_hash(Partnewlongc8l360(c1))
+tablegroup=tg_dble_new_udf1;
+
+
+insert into uh_new_t1 values ('0','0');
+insert into uh_new_t1 values ('64','2000000');
+insert into uh_new_t1 values ('98','2000001');
+
+select c1, part_route('', 'uh_new_t1', c1) as route_rs, part_hash('', 'uh_new_t1', c1) as hash_rs from uh_new_t1 where c1='0';
+select c1, part_route('', 'uh_new_t1', c1) as route_rs, part_hash('', 'uh_new_t1', c1) as hash_rs from uh_new_t1 where c1='64';
+select c1, part_route('', 'uh_new_t1', c1) as route_rs, part_hash('', 'uh_new_t1', c1) as hash_rs from uh_new_t1 where c1='98';

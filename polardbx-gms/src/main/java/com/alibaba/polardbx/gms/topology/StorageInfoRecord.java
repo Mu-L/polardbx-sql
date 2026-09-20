@@ -228,4 +228,10 @@ public class StorageInfoRecord implements SystemTableRecord {
     public String getStorageInstId() {
         return storageInstId;
     }
+
+    public static boolean isXcluster(int storageType) {
+        return storageType == StorageInfoRecord.STORAGE_TYPE_XCLUSTER ||
+            storageType == StorageInfoRecord.STORAGE_TYPE_RDS80_XCLUSTER ||
+            storageType == StorageInfoRecord.STORAGE_TYPE_GALAXY_CLUSTER;
+    }
 }

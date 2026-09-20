@@ -1,0 +1,17 @@
+drop table if exists auto_test_1;
+
+create table auto_test_1(a int primary key auto_increment, b int, c int, d int, index(b),unique(c));
+
+insert into auto_test_1(b,c,d) values (1,1,1),(2,2,2),(3,3,3);
+
+show create table auto_test_1;
+
+alter table auto_test_1 remove auto partition;
+
+show create table auto_test_1;
+
+alter table auto_test_1 add index idx_d(d);
+
+show create table auto_test_1;
+
+select * from auto_test_1 order by a desc;

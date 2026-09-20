@@ -25,6 +25,7 @@ import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.metadb.GmsSystemTables;
 import com.alibaba.polardbx.gms.metadb.accessor.AbstractAccessor;
+import com.alibaba.polardbx.gms.util.DdlMetaLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 
 import java.sql.PreparedStatement;
@@ -167,6 +168,9 @@ public class GroupDetailInfoAccessor extends AbstractAccessor {
         MetaDbUtil.setParameter(2, params, ParameterMethod.setString, dbName);
         MetaDbUtil.setParameter(3, params, ParameterMethod.setString, groupName);
         MetaDbUtil.setParameter(4, params, ParameterMethod.setString, storageInstId);
+        if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.GROUP_DETAIL_INFO)) {
+            DdlMetaLogUtil.logSql(INSERT_IGNORE_NEW_GROUP_DETAIL_INFO, params);
+        }
         MetaDbUtil.insert(INSERT_IGNORE_NEW_GROUP_DETAIL_INFO, params, this.connection);
     }
 
@@ -183,13 +187,18 @@ public class GroupDetailInfoAccessor extends AbstractAccessor {
         }
 
         Map<Integer, ParameterContext> params = new HashMap<>();
-
+        if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.GROUP_DETAIL_INFO)) {
+            DdlMetaLogUtil.logSql(sql, params);
+        }
         MetaDbUtil.execute(sql, params, this.connection);
     }
 
     public void deleteGroupDetailInfoByDbName(String dbName) throws SQLException {
         Map<Integer, ParameterContext> params = new HashMap<>();
         MetaDbUtil.setParameter(1, params, ParameterMethod.setString, dbName);
+        if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.GROUP_DETAIL_INFO)) {
+            DdlMetaLogUtil.logSql(DELETE_GROUP_DETAIL_INFO_BY_DB_NAME, params);
+        }
         MetaDbUtil.delete(DELETE_GROUP_DETAIL_INFO_BY_DB_NAME, params, this.connection);
     }
 
@@ -198,6 +207,9 @@ public class GroupDetailInfoAccessor extends AbstractAccessor {
             Map<Integer, ParameterContext> params = new HashMap<>();
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, dbName);
             MetaDbUtil.setParameter(2, params, ParameterMethod.setString, groupName);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.GROUP_DETAIL_INFO)) {
+                DdlMetaLogUtil.logSql(DELETE_GROUP_DETAIL_INFO_BY_DB_AND_GROUP, params);
+            }
             MetaDbUtil.delete(DELETE_GROUP_DETAIL_INFO_BY_DB_AND_GROUP, params, this.connection);
         } catch (Exception e) {
             logger.error("Failed to query the system table '" + GROUP_DETAIL_INFO_TABLE + "'", e);
@@ -211,6 +223,9 @@ public class GroupDetailInfoAccessor extends AbstractAccessor {
     public void deleteGroupDetailInfoByInstId(String instId) throws SQLException {
         Map<Integer, ParameterContext> params = new HashMap<>();
         MetaDbUtil.setParameter(1, params, ParameterMethod.setString, instId);
+        if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.GROUP_DETAIL_INFO)) {
+            DdlMetaLogUtil.logSql(DELETE_GROUP_DETAIL_INFO_BY_INST_ID, params);
+        }
         MetaDbUtil.delete(DELETE_GROUP_DETAIL_INFO_BY_INST_ID, params, this.connection);
     }
 
@@ -220,6 +235,9 @@ public class GroupDetailInfoAccessor extends AbstractAccessor {
             Map<Integer, ParameterContext> params = new HashMap<>();
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, instId);
             MetaDbUtil.setParameter(2, params, ParameterMethod.setString, dbName);
+//            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.GROUP_DETAIL_INFO)) {
+//                DdlMetaLogUtil.logSql(SELECT_GROUP_DETAILS_BY_INST_ID_AND_DB_NAME, params);
+//            }
             records = MetaDbUtil
                 .query(SELECT_GROUP_DETAILS_BY_INST_ID_AND_DB_NAME, params, GroupDetailInfoRecord.class,
                     connection);
@@ -237,6 +255,9 @@ public class GroupDetailInfoAccessor extends AbstractAccessor {
             List<GroupDetailInfoRecord> records;
             Map<Integer, ParameterContext> params = new HashMap<>();
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, instId);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.GROUP_DETAIL_INFO)) {
+                DdlMetaLogUtil.logSql(SELECT_GROUP_DETAILS_BY_INST_ID, params);
+            }
             records = MetaDbUtil
                 .query(SELECT_GROUP_DETAILS_BY_INST_ID, params, GroupDetailInfoRecord.class,
                     connection);
@@ -254,6 +275,9 @@ public class GroupDetailInfoAccessor extends AbstractAccessor {
             List<GroupDetailInfoRecord> records;
             Map<Integer, ParameterContext> params = new HashMap<>();
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, storageInstId);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.GROUP_DETAIL_INFO)) {
+                DdlMetaLogUtil.logSql(SELECT_GROUP_DETAILS_BY_STORAGE_INST_ID, params);
+            }
             records = MetaDbUtil
                 .query(SELECT_GROUP_DETAILS_BY_STORAGE_INST_ID, params, GroupDetailInfoRecord.class,
                     connection);
@@ -272,6 +296,9 @@ public class GroupDetailInfoAccessor extends AbstractAccessor {
             Map<Integer, ParameterContext> params = new HashMap<>();
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, dbName);
             MetaDbUtil.setParameter(2, params, ParameterMethod.setString, storageInstId);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.GROUP_DETAIL_INFO)) {
+                DdlMetaLogUtil.logSql(SELECT_GROUP_DETAILS_BY_DB_NAME_AND_STORAGE_INST_ID, params);
+            }
             records = MetaDbUtil
                 .query(SELECT_GROUP_DETAILS_BY_DB_NAME_AND_STORAGE_INST_ID, params, GroupDetailInfoRecord.class,
                     connection);
@@ -289,6 +316,9 @@ public class GroupDetailInfoAccessor extends AbstractAccessor {
             Map<Integer, ParameterContext> params = new HashMap<>();
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, storageInstId);
             MetaDbUtil.setParameter(2, params, ParameterMethod.setString, dbName);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.GROUP_DETAIL_INFO)) {
+                DdlMetaLogUtil.logSql(SELECT_ALL_PHY_DB_NAME_BY_DB_NAME_AND_STORAGE_INST_ID, params);
+            }
             return MetaDbUtil.query(SELECT_ALL_PHY_DB_NAME_BY_DB_NAME_AND_STORAGE_INST_ID, params,
                 DbGroupInfoRecord.class,
                 connection);
@@ -305,6 +335,9 @@ public class GroupDetailInfoAccessor extends AbstractAccessor {
             Map<Integer, ParameterContext> params = new HashMap<>();
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, storageInstId);
             MetaDbUtil.setParameter(2, params, ParameterMethod.setString, phyDbName);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.GROUP_DETAIL_INFO)) {
+                DdlMetaLogUtil.logSql(SELECT_ALL_PHY_DB_NAME_BY_PHY_DB_NAME_AND_STORAGE_INST_ID, params);
+            }
             return MetaDbUtil.query(SELECT_ALL_PHY_DB_NAME_BY_PHY_DB_NAME_AND_STORAGE_INST_ID, params,
                 DbGroupInfoRecord.class,
                 connection);
@@ -322,6 +355,9 @@ public class GroupDetailInfoAccessor extends AbstractAccessor {
             Map<Integer, ParameterContext> params = new HashMap<>();
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, dbName);
             MetaDbUtil.setParameter(2, params, ParameterMethod.setString, groupName);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.GROUP_DETAIL_INFO)) {
+                DdlMetaLogUtil.logSql(SELECT_GROUP_DETAILS_BY_DB_NAME_AND_GROUP, params);
+            }
             records = MetaDbUtil
                 .query(SELECT_GROUP_DETAILS_BY_DB_NAME_AND_GROUP, params, GroupDetailInfoRecord.class,
                     connection);
@@ -515,6 +551,9 @@ public class GroupDetailInfoAccessor extends AbstractAccessor {
             MetaDbUtil.setParameter(2, params, ParameterMethod.setString, instId);
             MetaDbUtil.setParameter(3, params, ParameterMethod.setString, dbName);
             MetaDbUtil.setParameter(4, params, ParameterMethod.setString, groupName);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.GROUP_DETAIL_INFO)) {
+                DdlMetaLogUtil.logSql(UPDATE_STORAGE_INST_ID_BY_INST_DB_GROUP, params);
+            }
             int affectiveRow = MetaDbUtil.update(UPDATE_STORAGE_INST_ID_BY_INST_DB_GROUP, params, connection);
             return affectiveRow;
         } catch (Exception e) {
@@ -532,6 +571,9 @@ public class GroupDetailInfoAccessor extends AbstractAccessor {
 
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, dbName);
             String selectSql = String.format(SELECT_GROUP_DETAIL_LIST_BY_DB_NAME, dbName);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.GROUP_DETAIL_INFO)) {
+                DdlMetaLogUtil.logSql(selectSql, params);
+            }
             records = MetaDbUtil
                 .query(selectSql, params, GroupDetailInfoRecord.class,
                     connection);

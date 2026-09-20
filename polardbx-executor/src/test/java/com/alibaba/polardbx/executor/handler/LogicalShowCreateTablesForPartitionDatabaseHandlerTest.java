@@ -44,9 +44,12 @@ import org.mockito.junit.MockitoJUnitRunner;
 
 import java.sql.Connection;
 
+import static com.alibaba.polardbx.common.properties.ConnectionParams.ENABLE_LOWER_CASE_TABLE_NAME_OUTPUT;
+import static com.alibaba.polardbx.common.properties.ConnectionParams.ENABLE_LOWER_CASE_TABLE_NAMES;
 import static com.alibaba.polardbx.common.properties.ConnectionParams.OUTPUT_MYSQL_INDENT;
 import static com.alibaba.polardbx.common.properties.ConnectionParams.SHOW_HASH_PARTITIONS_BY_RANGE;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doCallRealMethod;
 import static org.mockito.Mockito.mock;
@@ -126,5 +129,143 @@ public class LogicalShowCreateTablesForPartitionDatabaseHandlerTest extends Logi
         }
     }
 
+    @Test
+    public void testTableNameShouldBeLowerCaseWhenEnableLowerCaseShowCreateTable() {
+        String mixedCaseTableName = "MyUpperTable";
+        String showCreateTableSql = "show create table " + mixedCaseTableName;
+        final SqlNodeList showCreateTableNode = new FastsqlParser().parse(showCreateTableSql);
+
+        String physicalDdlWithSpace = "CREATE TABLE `" + mixedCaseTableName + "` (\n"
+            + "  `id` varchar(128) NOT NULL,\n"
+            + "  `c1` varchar(50) NOT NULL,\n"
+            + "  PRIMARY KEY (`id`)\n"
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4\n";
+
+        final ArrayRow mockRow = mock(ArrayRow.class);
+        when(mockRow.getString(eq(1))).thenReturn(physicalDdlWithSpace);
+        final ArrayResultCursor physicalResultCursor = mock(ArrayResultCursor.class);
+        when(physicalResultCursor.next()).thenReturn(mockRow).thenReturn(null);
+
+        final CursorFactoryMyImpl cursorFactoryMyImpl = mock(CursorFactoryMyImpl.class);
+        when(cursorFactoryMyImpl.repoCursor(any(), any())).thenReturn(physicalResultCursor);
+        final MyRepository mockRepo = mock(MyRepository.class);
+        when(mockRepo.getCursorFactory()).thenReturn(cursorFactoryMyImpl);
+
+        try (final MockedStatic<OptimizerContext> mockOptimizerContextStatic = mockStatic(OptimizerContext.class);
+            final MockedConstruction<PhyShow> phyShowMockedConstruction = mockConstruction(PhyShow.class);
+            final MockedStatic<ExecutorContext> mockExecutorContextStatic = mockStatic(ExecutorContext.class);
+        ) {
+            mockMetaSystem(SCHEMA_NAME, mixedCaseTableName, mockOptimizerContextStatic, mockExecutorContextStatic);
+
+            final LogicalShowCreateTablesForPartitionDatabaseHandler showHandler =
+                new LogicalShowCreateTablesForPartitionDatabaseHandler(mockRepo);
+
+            final LogicalShow show = mock(LogicalShow.class);
+            when(show.getNativeSqlNode()).thenReturn(showCreateTableNode.get(0));
+
+            final ExecutionContext ec = new ExecutionContext();
+            ec.setSchemaName(SCHEMA_NAME);
+            ParamManager.setBooleanVal(ec.getParamManager().getProps(),
+                ENABLE_LOWER_CASE_TABLE_NAME_OUTPUT, true, true);
+
+            Cursor result = showHandler.handle(show, ec);
+            Row row = result.next();
+
+            Assert.assertEquals("Table name should be lowercase when ENABLE_LOWER_CASE_TABLE_NAME_OUTPUT=true",
+                mixedCaseTableName.toLowerCase(), row.getString(0));
+
+            String ddl = row.getString(1);
+            Assert.assertTrue("DDL should contain lowercase table name",
+                ddl.contains("`" + mixedCaseTableName.toLowerCase() + "`"));
+            Assert.assertFalse("DDL should NOT contain mixed-case table name",
+                ddl.contains("`" + mixedCaseTableName + "`"));
+        }
+    }
+
+    @Test
+    public void testTableNameShouldPreserveCaseWhenSwitchOffEvenIfEnableLowerCaseTableNamesOn() {
+        String mixedCaseTableName = "MyUpperTable";
+        String showCreateTableSql = "show create table " + mixedCaseTableName;
+        final SqlNodeList showCreateTableNode = new FastsqlParser().parse(showCreateTableSql);
+
+        String physicalDdlWithSpace = "CREATE TABLE `" + mixedCaseTableName + "` (\n"
+            + "  `id` varchar(128) NOT NULL,\n"
+            + "  `c1` varchar(50) NOT NULL,\n"
+            + "  PRIMARY KEY (`id`)\n"
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4\n";
+
+        final ArrayRow mockRow = mock(ArrayRow.class);
+        when(mockRow.getString(eq(1))).thenReturn(physicalDdlWithSpace);
+        final ArrayResultCursor physicalResultCursor = mock(ArrayResultCursor.class);
+        when(physicalResultCursor.next()).thenReturn(mockRow).thenReturn(null);
+
+        final CursorFactoryMyImpl cursorFactoryMyImpl = mock(CursorFactoryMyImpl.class);
+        when(cursorFactoryMyImpl.repoCursor(any(), any())).thenReturn(physicalResultCursor);
+        final MyRepository mockRepo = mock(MyRepository.class);
+        when(mockRepo.getCursorFactory()).thenReturn(cursorFactoryMyImpl);
+
+        try (final MockedStatic<OptimizerContext> mockOptimizerContextStatic = mockStatic(OptimizerContext.class);
+            final MockedConstruction<PhyShow> phyShowMockedConstruction = mockConstruction(PhyShow.class);
+            final MockedStatic<ExecutorContext> mockExecutorContextStatic = mockStatic(ExecutorContext.class);
+        ) {
+            mockMetaSystem(SCHEMA_NAME, mixedCaseTableName, mockOptimizerContextStatic, mockExecutorContextStatic);
+
+            final LogicalShowCreateTablesForPartitionDatabaseHandler showHandler =
+                new LogicalShowCreateTablesForPartitionDatabaseHandler(mockRepo);
+
+            final LogicalShow show = mock(LogicalShow.class);
+            when(show.getNativeSqlNode()).thenReturn(showCreateTableNode.get(0));
+
+            final ExecutionContext ec = new ExecutionContext();
+            ec.setSchemaName(SCHEMA_NAME);
+            // ENABLE_LOWER_CASE_TABLE_NAMES defaults to true on CN, but the dedicated
+            // SHOW CREATE TABLE switch defaults to false. Existing instances must keep
+            // the original-case DDL after upgrade.
+            ParamManager.setBooleanVal(ec.getParamManager().getProps(),
+                ENABLE_LOWER_CASE_TABLE_NAMES, true, true);
+            ParamManager.setBooleanVal(ec.getParamManager().getProps(),
+                ENABLE_LOWER_CASE_TABLE_NAME_OUTPUT, false, true);
+
+            Cursor result = showHandler.handle(show, ec);
+            Row row = result.next();
+
+            Assert.assertEquals(
+                "Table name must preserve original case when ENABLE_LOWER_CASE_TABLE_NAME_OUTPUT=false",
+                mixedCaseTableName, row.getString(0));
+
+            String ddl = row.getString(1);
+            Assert.assertTrue("DDL must preserve original-case table name",
+                ddl.contains("`" + mixedCaseTableName + "`"));
+            Assert.assertFalse("DDL must not lowercase the table name when switch is off",
+                ddl.contains("`" + mixedCaseTableName.toLowerCase() + "`"));
+        }
+    }
+
+    @Test
+    public void testGetColumnarIndexEngineReturnsExternalDisk() {
+        try (MockedStatic<MetaDbDataSource> mockedDataSource = mockStatic(MetaDbDataSource.class)) {
+            MetaDbDataSource mockDataSource = mock(MetaDbDataSource.class);
+            Connection mockConnection = mock(Connection.class);
+            TablesAccessor mockAccessor = mock(TablesAccessor.class);
+
+            mockedDataSource.when(MetaDbDataSource::getInstance).thenReturn(mockDataSource);
+            when(mockDataSource.getConnection()).thenReturn(mockConnection);
+
+            TablesRecord expectedRecord = new TablesRecord();
+            expectedRecord.engine = "EXTERNAL_DISK";
+            when(mockAccessor.query(anyString(), anyString(), eq(false))).thenReturn(expectedRecord);
+
+            LogicalShowCreateTablesForPartitionDatabaseHandler service = mock(
+                LogicalShowCreateTablesForPartitionDatabaseHandler.class);
+            doCallRealMethod().when(service).getColumnarIndexEngine(anyString(), anyString(), any());
+            String engine = service.getColumnarIndexEngine("schemaName", "indexName", mockAccessor);
+
+            Assert.assertEquals("EXTERNAL_DISK", engine);
+
+            when(mockAccessor.query(anyString(), anyString(), eq(false))).thenReturn(null);
+            engine = service.getColumnarIndexEngine("schemaName", "indexName", mockAccessor);
+            Assert.assertNull(engine);
+        }
+    }
 
 }

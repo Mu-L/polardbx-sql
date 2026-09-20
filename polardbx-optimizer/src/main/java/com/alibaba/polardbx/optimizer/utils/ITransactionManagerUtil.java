@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.optimizer.utils;
 
+import com.alibaba.polardbx.common.trx.ITimestampOracle;
+
 public interface ITransactionManagerUtil {
     ITimestampOracle getTimestampOracle();
 }

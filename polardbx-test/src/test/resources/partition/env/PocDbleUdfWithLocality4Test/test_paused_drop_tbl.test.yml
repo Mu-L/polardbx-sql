@@ -1,0 +1,41 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+set OUTPUT_LOCALITY_WITHOUT_COMMENT=true;
+
+## ===== test create database with locality =======
+use polardbx;
+drop database if exists dbledb4droptbl;
+## USE_DN_LIST_MSG
+create database if not exists dbledb4droptbl mode = 'auto' locality='dble_config={"group_config":{"dbledb4droptbl_g1":["$dn1","dbledb4droptbl_00"],"dbledb4droptbl_g2":["$dn2","dbledb4droptbl_01"] }}';
+use dbledb4droptbl;
+
+drop table if exists my_t1;
+create table if not exists my_t1(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by hash(c1)
+partitions 4;
+
+drop table if exists my_t2;
+create table if not exists my_t2(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by hash(c1)
+partitions 4;
+drop table if exists my_t2;
+
+## error_msg: $# FP_FAILED_TABLE_GROUP_SYNC #$  
+/*+TDDL:cmd_extra(FP_FAILED_TABLE_GROUP_SYNC=true)*/drop table if exists my_t1;
+## error_msg: $# ERR_PAUSED_DDL_JOB_EXISTS #$  
+drop table if exists my_t1;
+
+use polardbx;
+drop database if exists dbledb4droptbl;
+  

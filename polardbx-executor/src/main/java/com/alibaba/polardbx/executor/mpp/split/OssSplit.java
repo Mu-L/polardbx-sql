@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.executor.mpp.split;
 
 import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.common.oss.IDeltaReadOption;
@@ -40,6 +41,7 @@ import com.alibaba.polardbx.executor.archive.schemaevolution.ColumnMetaWithTs;
 import com.alibaba.polardbx.executor.archive.schemaevolution.OrcColumnManager;
 import com.alibaba.polardbx.executor.gms.ColumnarManager;
 import com.alibaba.polardbx.executor.gms.ColumnarStoreUtils;
+import com.alibaba.polardbx.executor.mpp.metadata.SplitType;
 import com.alibaba.polardbx.gms.metadb.columnar.FlashbackColumnarManager;
 import com.alibaba.polardbx.executor.mpp.spi.ConnectorSplit;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
@@ -75,6 +77,8 @@ import org.apache.orc.TypeDescription;
 import org.apache.orc.sarg.SearchArgument;
 import org.apache.orc.sarg.SearchArgumentFactory;
 import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.Serializable;
 import java.sql.Timestamp;
@@ -91,11 +95,12 @@ import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.optimizer.utils.PartitionUtils.calcPartition;
 
-import static com.alibaba.polardbx.optimizer.utils.ITimestampOracle.BITS_LOGICAL_TIME;
+import static com.alibaba.polardbx.common.trx.ITimestampOracle.BITS_LOGICAL_TIME;
 import static com.google.common.base.MoreObjects.toStringHelper;
 
 public class OssSplit implements ConnectorSplit {
     public static final Integer NO_PARTITION_INFO = -1;
+    private static final Logger log = LoggerFactory.getLogger(OssSplit.class);
 
     private List<OSSReadOption> readOptions;
 
@@ -179,6 +184,16 @@ public class OssSplit implements ConnectorSplit {
         this.deltaReadOption = deltaReadOption;
         this.checkpointTso = checkpointTso;
         this.localPairWise = localPairWise;
+    }
+
+    @Override
+    @JsonIgnore
+    public SplitType getSplitType() {
+        if (deltaReadOption != null) {
+            return SplitType.CSV;
+        } else {
+            return SplitType.ORC;
+        }
     }
 
     @JsonProperty
@@ -292,7 +307,7 @@ public class OssSplit implements ConnectorSplit {
                     // Find csv files from tso + part name
                     // TODO(siyun): divide files with different schema_ts into different splits
                     Pair<List<String>, List<String>> files =
-                        columnarManager.findFileNames(tso, logicalSchema, logicalTable, partName);
+                        columnarManager.findFileNames(tso, logicalSchema, logicalTable, partName, tableMeta);
                     List<String> orcFiles = files.getKey();
                     List<String> csvFiles = files.getValue();
 
@@ -380,7 +395,7 @@ public class OssSplit implements ConnectorSplit {
 
             // Find csv files from tso + part name
             Pair<List<String>, List<String>> files =
-                columnarManager.findFileNames(tso, logicalSchema, logicalTableName, partName);
+                columnarManager.findFileNames(tso, logicalSchema, logicalTableName, partName, tableMeta);
             List<String> orcFiles = files.getKey();
             List<String> csvFiles = files.getValue();
 
@@ -725,7 +740,6 @@ public class OssSplit implements ConnectorSplit {
             List<Integer> inProjects = ossTableScan.getOrcNode().getInProjects();
             List<String> inProjectNames = ossTableScan.getOrcNode().getInputProjectName();
             long tableId = Long.parseLong(fileMeta.getLogicalTableName());
-
             Map<Long, Integer> columnIndexMap =
                 ColumnarManager.getInstance().getColumnIndex(fileMeta.getSchemaTs(), tableId);
 
@@ -735,7 +749,7 @@ public class OssSplit implements ConnectorSplit {
 
                 columnMetas.add(tableMeta.getColumn(columnName));
 
-                long fieldId = tableMeta.getColumnarFieldId(columnIndex);
+                long fieldId = tableMeta.getColumnarFieldId(tableId, columnIndex);
                 Integer actualColumnIndex = columnIndexMap.get(fieldId);
                 if (actualColumnIndex != null) {
                     fileColumnMetas.add(fileMeta.getColumnMetas().get(actualColumnIndex));
@@ -842,10 +856,17 @@ public class OssSplit implements ConnectorSplit {
                 // Find part name from physical schema + physical table
                 final String partName = partitionInfo.getPartitionNameByPhyLocation(physicalSchema, phyTable);
 
-                // Find csv files from tso + part name
-                Pair<List<FileMeta>, List<FileMeta>> files =
-                    columnarManager.findFiles(checkpointTso, logicalSchema, logicalTableName, partName);
-                fileMetas = files.getKey();
+                try {
+                    VersionStorageStatistics.setThreadLocalStatistics(executionContext.getVersionStorageStatistics());
+
+                    // Find csv files from tso + part name
+                    Pair<List<FileMeta>, List<FileMeta>> files =
+                        columnarManager.findFiles(checkpointTso, logicalSchema, logicalTableName, partName, tableMeta);
+                    fileMetas = files.getKey();
+
+                } finally {
+                    VersionStorageStatistics.removeThreadLocalStatistics();
+                }
             } else {
                 // physical table name -> file metas
                 Map<String, List<FileMeta>> flatFileMetas = tableMeta.getFlatFileMetas();

@@ -62,7 +62,8 @@ public class InformationSchemaStatisticsDataHandler extends BaseVirtualViewSubCl
     @Override
     public Cursor handle(VirtualView virtualView, ExecutionContext executionContext, ArrayResultCursor cursor) {
         List<List<Map<String, Object>>> results =
-            SyncManagerHelper.sync(new StatisticQuerySyncAction(), SystemDbHelper.DEFAULT_DB_NAME, SyncScope.ALL);
+            SyncManagerHelper.syncIgnoreExceptions(new StatisticQuerySyncAction(), SystemDbHelper.DEFAULT_DB_NAME,
+                SyncScope.ALL);
         for (List<Map<String, Object>> nodeRows : results) {
             if (nodeRows == null) {
                 continue;
@@ -109,6 +110,14 @@ public class InformationSchemaStatisticsDataHandler extends BaseVirtualViewSubCl
             if (ndv == null) {
                 ndv = colRow.getCardinality();
                 ndvSource = StatisticResultSource.CACHE_LINE.name();
+                if (colRow.getExtendField() != null && colRow.getExtendField().length() > 0) {
+                    StatisticManager.CacheLine tmp = new StatisticManager.CacheLine();
+                    tmp.setExtend(colRow.getExtendField());
+                    tmp.decodeExtend();
+                    if (tmp.getCardinalitySourceMap() != null && tmp.getCardinalitySourceMap().containsKey(column)) {
+                        ndvSource = tmp.getCardinalitySourceMap().get(column);
+                    }
+                }
             }
             String topN = colRow.getTopN() == null ? "" : colRow.getTopN().manualReading();
 

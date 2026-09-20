@@ -174,7 +174,7 @@ public class PropUtil {
     }
 
     public enum ExplainOutputFormat {
-        TEXT, JSON
+        TEXT, JSON, LEGACY
     }
 
     /**
@@ -185,6 +185,8 @@ public class PropUtil {
     public enum LOAD_NULL_MODE {
         DEFAULT_VALUE_MODE, NULL_MODE, N_MODE, DEFAULT_VALUE_AND_N_MODE
     }
+
+    public static final String COST_MODEL_LATEST = "V2";
 
     public static String getCluster(String defaultClusterName) {
         return System.getProperty(MPP_LOCALCLUSTER) != null ?

@@ -1,0 +1,36 @@
+#clean
+# enable multi cci in same table
+SET MAX_CCI_COUNT = 5;
+
+DROP TABLE IF EXISTS t_order_0;
+DROP TABLE IF EXISTS t_order_1;
+
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/ CREATE TABLE `t_order_0` (
+`id` bigint(11) NOT NULL AUTO_INCREMENT BY GROUP,
+`order_id` varchar(20) DEFAULT NULL,
+`buyer_id` varchar(20) DEFAULT NULL,
+`order_snapshot` longtext,
+PRIMARY KEY (`id`),
+CLUSTERED COLUMNAR INDEX `cci_0`(`buyer_id`) PARTITION BY KEY(`id`),
+CLUSTERED COLUMNAR INDEX `cci_1`(`id`) PARTITION BY KEY(`id`)
+) ENGINE = InnoDB CHARSET = utf8 PARTITION BY KEY(`order_id`);
+SHOW FULL CREATE TABLE t_order_0;
+CHECK COLUMNAR INDEX `cci_0` ON `t_order_0` META;
+DROP INDEX `cci_0` ON `t_order_0`;
+
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/ CREATE TABLE `t_order_1` (
+`id` bigint(11) NOT NULL AUTO_INCREMENT BY GROUP,
+`order_id` varchar(20) DEFAULT NULL,
+`buyer_id` varchar(20) DEFAULT NULL,
+`order_snapshot` longtext,
+PRIMARY KEY (`id`),
+CLUSTERED COLUMNAR INDEX `cci_0`(`buyer_id`) PARTITION BY KEY(`id`),
+CLUSTERED COLUMNAR INDEX `cci_1`(`id`) PARTITION BY KEY(`id`)
+) ENGINE = InnoDB CHARSET = utf8 PARTITION BY KEY(`order_id`);
+SHOW FULL CREATE TABLE t_order_1;
+CHECK COLUMNAR INDEX `cci_0` ON `t_order_1` META;
+CHECK COLUMNAR INDEX `cci_1` ON `t_order_1` META;
+  
+  #cleanup
+DROP TABLE IF EXISTS t_order_0;
+DROP TABLE IF EXISTS t_order_1;

@@ -248,6 +248,9 @@ public class CollationNameTest {
         doTestOf("gb18030_chinese_ci", GB18030_CHINESE_CI);
         doTestOf("gb18030_bin", GB18030_BIN);
         doTestOf("gb18030_unicode_520_ci", GB18030_UNICODE_520_CI);
+        doTestOf("gb18030_2022_chinese_ci", GB18030_2022_CHINESE_CI);
+        doTestOf("gb18030_2022_bin", GB18030_2022_BIN);
+        doTestOf("gb18030_2022_unicode_520_ci", GB18030_2022_UNICODE_520_CI);
         doTestOf("utf8mb4_0900_ai_ci", UTF8MB4_0900_AI_CI);
         doTestOf("utf8mb4_de_pb_0900_ai_ci", UTF8MB4_DE_PB_0900_AI_CI);
         doTestOf("utf8mb4_is_0900_ai_ci", UTF8MB4_IS_0900_AI_CI);

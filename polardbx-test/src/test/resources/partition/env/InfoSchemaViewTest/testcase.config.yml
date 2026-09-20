@@ -1,1 +1,3 @@
 test_query_columns
+test_query_partitions
+test_query_partitions_meta

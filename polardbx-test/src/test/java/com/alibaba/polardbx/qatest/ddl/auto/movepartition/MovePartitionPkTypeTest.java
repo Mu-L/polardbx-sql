@@ -5,8 +5,6 @@ import com.alibaba.polardbx.common.jdbc.ParameterMethod;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
 import com.alibaba.polardbx.qatest.CdcIgnore;
-import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
-import com.alibaba.polardbx.qatest.util.ConnectionManager;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.esri.core.geometry.Point;
 import com.google.common.collect.ImmutableList;
@@ -19,7 +17,7 @@ import org.junit.Test;
 import org.junit.runners.Parameterized;
 
 import java.math.BigDecimal;
-import java.sql.Connection;
+import java.math.BigInteger;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -43,8 +41,6 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.function.Consumer;
-import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -75,8 +71,16 @@ public class MovePartitionPkTypeTest extends MovePartitionDmlBaseTest {
         + "c4 bigint,"
         + "v_a bigint GENERATED ALWAYS AS (c3 + c4) virtual,"
         + "v_b bigint GENERATED ALWAYS AS (c4 - c3) stored,"
-        + "v_c varchar(100) GENERATED ALWAYS AS (CONCAT(c2,' ',c2)) logical,"
+        + "v_c varchar(100) GENERATED ALWAYS AS (CONCAT(c3,' ',c3)) logical,"
         + "primary key(c1)"
+        + ") partition by key (c3) partitions 2";
+
+    private static final String COMPOSITE_PK_TMPL = "create table %s("
+        + "c1 %s, "
+        + "c2 varchar(50) default 'abc', "
+        + "c3 int,"
+        + "c4 bigint unsigned,"
+        + "primary key(c1, c4)"
         + ") partition by key (c3) partitions 2";
 
     protected static final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
@@ -88,6 +92,7 @@ public class MovePartitionPkTypeTest extends MovePartitionDmlBaseTest {
         SHORT,
         INT,
         LONG,
+        ULONG,
         DECIMAL,
         FLOAT,
         DOUBLE,
@@ -107,10 +112,12 @@ public class MovePartitionPkTypeTest extends MovePartitionDmlBaseTest {
     }
 
     private final PkType currentPkType;
+    private final boolean compositePk;
 
-    public MovePartitionPkTypeTest(PkType currentPkType) {
+    public MovePartitionPkTypeTest(PkType currentPkType, boolean compositePk) {
         super(DATABASE_NAME);
         this.currentPkType = currentPkType;
+        this.compositePk = compositePk;
     }
 
     @Before
@@ -127,29 +134,50 @@ public class MovePartitionPkTypeTest extends MovePartitionDmlBaseTest {
         FailPoint.disable("FP_CATCHUP_TASK_SUSPEND");
     }
 
-    @Parameterized.Parameters(name = "{index}:currentPkType={0}")
-    public static List<PkType[]> prepareDate() {
+    @Parameterized.Parameters(name = "{index}:currentPkType={0},compositePk={1}")
+    public static List<Object[]> prepareDate() {
         return ImmutableList.of(
-            new PkType[] {PkType.TINY},
-            new PkType[] {PkType.SHORT},
-            new PkType[] {PkType.INT},
-            new PkType[] {PkType.LONG},
-            new PkType[] {PkType.DOUBLE},
-            new PkType[] {PkType.FLOAT},
-            new PkType[] {PkType.DECIMAL},
-            new PkType[] {PkType.CHAR},
-            new PkType[] {PkType.VARCHAR},
-            new PkType[] {PkType.DATE},
-            new PkType[] {PkType.TIME},
-            new PkType[] {PkType.DATETIME},
-            new PkType[] {PkType.TIMESTAMP},
-            new PkType[] {PkType.TIME_H},
-            new PkType[] {PkType.DATETIME_H},
-            new PkType[] {PkType.TIMESTAMP_H},
-            new PkType[] {PkType.YEAR},
-            new PkType[] {PkType.BINARY},
-            new PkType[] {PkType.VARBINARY}
-            //new PkType[] {PkType.GEOMETRY} 该类型作为主键，backfill 等地方都不支持，没有做过兼容，不支持
+            new Object[] {PkType.TINY, Boolean.TRUE},
+            new Object[] {PkType.TINY, Boolean.FALSE},
+            new Object[] {PkType.SHORT, Boolean.TRUE},
+            new Object[] {PkType.SHORT, Boolean.FALSE},
+            new Object[] {PkType.INT, Boolean.TRUE},
+            new Object[] {PkType.INT, Boolean.FALSE},
+            new Object[] {PkType.LONG, Boolean.TRUE},
+            new Object[] {PkType.LONG, Boolean.FALSE},
+            new Object[] {PkType.ULONG, Boolean.TRUE},
+            new Object[] {PkType.ULONG, Boolean.FALSE},
+            new Object[] {PkType.DOUBLE, Boolean.TRUE},
+            new Object[] {PkType.DOUBLE, Boolean.FALSE},
+            new Object[] {PkType.FLOAT, Boolean.TRUE},
+            new Object[] {PkType.FLOAT, Boolean.FALSE},
+            new Object[] {PkType.DECIMAL, Boolean.TRUE},
+            new Object[] {PkType.DECIMAL, Boolean.FALSE},
+            new Object[] {PkType.CHAR, Boolean.TRUE},
+            new Object[] {PkType.CHAR, Boolean.FALSE},
+            new Object[] {PkType.VARCHAR, Boolean.TRUE},
+            new Object[] {PkType.VARCHAR, Boolean.FALSE},
+            new Object[] {PkType.DATE, Boolean.TRUE},
+            new Object[] {PkType.DATE, Boolean.FALSE},
+            new Object[] {PkType.TIME, Boolean.TRUE},
+            new Object[] {PkType.TIME, Boolean.FALSE},
+            new Object[] {PkType.DATETIME, Boolean.TRUE},
+            new Object[] {PkType.DATETIME, Boolean.FALSE},
+            new Object[] {PkType.TIMESTAMP, Boolean.TRUE},
+            new Object[] {PkType.TIMESTAMP, Boolean.FALSE},
+            new Object[] {PkType.TIME_H, Boolean.TRUE},
+            new Object[] {PkType.TIME_H, Boolean.FALSE},
+            new Object[] {PkType.DATETIME_H, Boolean.TRUE},
+            new Object[] {PkType.DATETIME_H, Boolean.FALSE},
+            new Object[] {PkType.TIMESTAMP_H, Boolean.TRUE},
+            new Object[] {PkType.TIMESTAMP_H, Boolean.FALSE},
+            new Object[] {PkType.YEAR, Boolean.TRUE},
+            new Object[] {PkType.YEAR, Boolean.FALSE},
+            new Object[] {PkType.BINARY, Boolean.TRUE},
+            new Object[] {PkType.BINARY, Boolean.FALSE},
+            new Object[] {PkType.VARBINARY, Boolean.TRUE},
+            new Object[] {PkType.VARBINARY, Boolean.FALSE}
+            //new Object[] {PkType.GEOMETRY, Boolean.TRUE} 该类型作为主键，backfill 等地方都不支持，没有做过兼容，不支持
         );
     }
 
@@ -220,6 +248,9 @@ public class MovePartitionPkTypeTest extends MovePartitionDmlBaseTest {
         case LONG:
             columnDef = "bigint";
             break;
+        case ULONG:
+            columnDef = "bigint unsigned";
+            break;
         case DECIMAL:
             columnDef = "decimal(15,2)";
             break;
@@ -271,6 +302,9 @@ public class MovePartitionPkTypeTest extends MovePartitionDmlBaseTest {
         default:
             throw new UnsupportedOperationException("Invalid type");
         }
+        if (compositePk) {
+            return String.format(COMPOSITE_PK_TMPL, PRIMARY_TABLE_NAME, columnDef);
+        }
         return String.format(SINGLE_PK_TMPL, PRIMARY_TABLE_NAME, columnDef);
     }
 
@@ -291,6 +325,11 @@ public class MovePartitionPkTypeTest extends MovePartitionDmlBaseTest {
             break;
         case LONG:
             parameterContext = new ParameterContext(ParameterMethod.setLong, new Object[] {1, RandomUtils.nextLong()});
+            break;
+        case ULONG:
+            BigInteger bigRand = nextUnsignedLongAbove(9223372036854775807L);
+            parameterContext =
+                new ParameterContext(ParameterMethod.setBigDecimal, new Object[] {1, new BigDecimal(bigRand)});
             break;
         case DECIMAL:
             parameterContext = new ParameterContext(ParameterMethod.setBigDecimal,
@@ -359,7 +398,8 @@ public class MovePartitionPkTypeTest extends MovePartitionDmlBaseTest {
                     .put(2, new ParameterContext(ParameterMethod.setString,
                         new Object[] {2, RandomStringUtils.randomAlphabetic(30)}))
                     .put(3, new ParameterContext(ParameterMethod.setInt, new Object[] {3, RandomUtils.nextInt()}))
-                    .put(4, new ParameterContext(ParameterMethod.setInt, new Object[] {4, RandomUtils.nextInt()}))
+                    .put(4, new ParameterContext(ParameterMethod.setLong,
+                        new Object[] {4, RandomUtils.nextLong(2013755923091058681L, Long.MAX_VALUE)}))
                     .build())
                 .collect(Collectors.toList());
 
@@ -458,11 +498,15 @@ public class MovePartitionPkTypeTest extends MovePartitionDmlBaseTest {
         }
         rs.close();
 
+        String hint = "/*+TDDL:cmd_extra(FP_LOGICAL_BACK_FILL_SUSPEND=5000)*/";
         if (!instIds.isEmpty()) {
             // move partition p3
             commands.add(
-                String.format(MOVE_PARTITION_COMMAND, TABLE_NAME, PARTITION_GROUP, instIds.iterator().next()));
-            commands.add(String.format(MOVE_PARTITION_COMMAND, TABLE_NAME, PARTITION_GROUP, curInstId));
+                hint + String.format(MOVE_PARTITION_COMMAND, TABLE_NAME, PARTITION_GROUP, instIds.iterator().next()));
+            commands.add(hint + String.format(MOVE_PARTITION_COMMAND, TABLE_NAME, PARTITION_GROUP, curInstId));
+            commands.add(
+                hint + String.format("alter table %s modify column c2 varchar(51) default 'abc', algorithm=omc",
+                    TABLE_NAME));
         }
         return commands;
     }

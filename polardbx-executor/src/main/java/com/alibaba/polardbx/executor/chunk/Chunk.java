@@ -18,11 +18,13 @@ package com.alibaba.polardbx.executor.chunk;
 
 import com.alibaba.polardbx.common.datatype.Decimal;
 import com.alibaba.polardbx.common.datatype.UInt64;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.common.utils.hash.HashResult128;
 import com.alibaba.polardbx.common.utils.hash.IStreamingHasher;
 import com.alibaba.polardbx.common.utils.memory.SizeOf;
 import com.alibaba.polardbx.executor.chunk.columnar.CommonLazyBlock;
+import com.alibaba.polardbx.executor.chunk.columnar.LazyBlock;
 import com.alibaba.polardbx.executor.operator.util.VectorUtils;
 import com.alibaba.polardbx.optimizer.core.row.AbstractRow;
 import com.alibaba.polardbx.optimizer.core.row.Row;
@@ -52,6 +54,8 @@ public class Chunk implements Iterable<Row>, MemoryCountable {
     protected final static AtomicLongFieldUpdater<Chunk>
         sizeInBytesUpdater = AtomicLongFieldUpdater.newUpdater(Chunk.class, "sizeInBytesLong");
 
+    public static final ChunkRow NONE_CHUNK_ROW = new Chunk(0).rowAt(0);
+
     protected volatile long sizeInBytesLong = -1;
     protected int positionCount;
 
@@ -74,13 +78,16 @@ public class Chunk implements Iterable<Row>, MemoryCountable {
      * partition index in storage layer, used by local partition wise join
      * default -1, means no partition info
      */
-    private int partIndex = -1;
+    protected int partIndex = -1;
 
     /**
      * partitions scheduled to this computer node, used by local partition wise join
      * default -1, means no partition info
      */
-    private int partCount = -1;
+    protected int partCount = -1;
+
+    @FieldMemoryCounter(value = false)
+    protected int[] blockRefIndexes;
 
     public Chunk(int positionCount, Block... blocks) {
         this.positionCount = positionCount;
@@ -106,6 +113,39 @@ public class Chunk implements Iterable<Row>, MemoryCountable {
         } else {
             this.selectionInUse = false;
         }
+    }
+
+    public int[] getBlockRefIndexes() {
+        return blockRefIndexes;
+    }
+
+    public Chunk setBlockRefIndexes(int[] blockRefIndexes) {
+        this.blockRefIndexes = blockRefIndexes;
+        return this;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        long size = INSTANCE_SIZE;
+        if (selection != null) {
+            size += VMSupport.align((int) SizeOf.sizeOf(selection));
+        }
+        if (blocks != null) {
+            size += VMSupport.align((int) SizeOf.sizeOf(blocks));
+
+            for (Block block : blocks) {
+                if (block != null) {
+                    size += block.getMemoryUsage();
+                }
+            }
+
+            if (blockRefIndexes != null) {
+                for (int i = 0; i < blockRefIndexes.length; i++) {
+                    size -= blocks[blockRefIndexes[i]].getMemoryUsage();
+                }
+            }
+        }
+        return size;
     }
 
     public Block[] getBlocks() {
@@ -199,14 +239,44 @@ public class Chunk implements Iterable<Row>, MemoryCountable {
         return true;
     }
 
-    @Override
-    public long getMemoryUsage() {
+    public int compare(int position, Chunk otherChunk, int otherPosition, int blockIndex) {
+        return getBlock(blockIndex).compareAssertedSameType(position, otherChunk.getBlock(blockIndex), otherPosition);
+    }
+
+    public long getLoadedBlockMemoryUsage() {
         long size = INSTANCE_SIZE;
         if (selection != null) {
             size += VMSupport.align((int) SizeOf.sizeOf(selection));
         }
         for (Block block : blocks) {
-            size += block.getMemoryUsage();
+            if (block instanceof LazyBlock && ((LazyBlock) block).getLoaded() != null) {
+                size += ((LazyBlock) block).getLoaded().getMemoryUsage();
+            } else if (!(block instanceof LazyBlock)) {
+                size += block.getMemoryUsage();
+            }
+        }
+        return size;
+    }
+
+    public long getLoadedBlockMemoryUsage(boolean[] blockIndexBitmap) {
+        long size = INSTANCE_SIZE;
+        if (selection != null) {
+            size += VMSupport.align((int) SizeOf.sizeOf(selection));
+        }
+        for (int blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
+            if (blockIndexBitmap == null || blockIndex >= blockIndexBitmap.length) {
+                continue;
+            }
+            if (!blockIndexBitmap[blockIndex]) {
+                continue;
+            }
+
+            Block block = blocks[blockIndex];
+            if (block instanceof LazyBlock && ((LazyBlock) block).getLoaded() != null) {
+                size += ((LazyBlock) block).getLoaded().getMemoryUsage();
+            } else if (!(block instanceof LazyBlock)) {
+                size += block.getMemoryUsage();
+            }
         }
         return size;
     }
@@ -223,6 +293,35 @@ public class Chunk implements Iterable<Row>, MemoryCountable {
             super(null);
             this.position = position;
             this.colNum = blocks.length;
+        }
+
+        @Override
+        public String toString() {
+            StringBuilder sb = new StringBuilder();
+
+            ArrayList<Object> values = new ArrayList<>(blocks.length);
+            for (int i = 0; i < blocks.length; i++) {
+                Block block = blocks[i];
+
+                if (block instanceof LazyBlock && ((LazyBlock) block).getLoaded() == null) {
+                    // unloaded lazy block.
+                    values.add("unloaded");
+                } else {
+                    Object object = block.getObject(position);
+                    values.add(object);
+                }
+
+            }
+
+            for (int i = 0; i < colNum; i++) {
+                sb.append(i + ":" + values.get(i) + " ");
+            }
+            return sb.toString();
+        }
+
+        public int compareAssertedSameType(int index, ChunkRow other, int otherIndex) {
+            return getBlock(index).compareAssertedSameType(position, other.getChunk().getBlock(otherIndex),
+                other.position);
         }
 
         @Override

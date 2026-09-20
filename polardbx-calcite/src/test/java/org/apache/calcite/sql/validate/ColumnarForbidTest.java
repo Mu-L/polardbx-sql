@@ -23,35 +23,49 @@ import org.apache.calcite.sql.SqlColumnDeclaration;
 import org.apache.calcite.sql.SqlDataTypeSpec;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.junit.Test;
+import org.mockito.MockedStatic;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
 
 public class ColumnarForbidTest {
 
     @Test(expected = TddlRuntimeException.class)
     public void ForbidCitableModifyUnsupportedType() {
-        SqlIdentifier sqlIdentifier = mock(SqlIdentifier.class);
-        SqlColumnDeclaration sqlColumnDeclaration = mock(SqlColumnDeclaration.class);
-        SqlDataTypeSpec sqlDataTypeSpec = mock(SqlDataTypeSpec.class);
+        try (MockedStatic<SqlValidatorImpl> mockedStatic = mockStatic(SqlValidatorImpl.class)) {
+            SqlIdentifier sqlIdentifier = mock(SqlIdentifier.class);
+            SqlColumnDeclaration sqlColumnDeclaration = mock(SqlColumnDeclaration.class);
+            SqlDataTypeSpec sqlDataTypeSpec = mock(SqlDataTypeSpec.class);
 
-        when(sqlColumnDeclaration.getDataType()).thenReturn(sqlDataTypeSpec);
-        when(sqlDataTypeSpec.getTypeName()).thenReturn(sqlIdentifier);
-        when(sqlIdentifier.getLastName()).thenReturn("binary");
+            when(sqlColumnDeclaration.getDataType()).thenReturn(sqlDataTypeSpec);
+            when(sqlDataTypeSpec.getTypeName()).thenReturn(sqlIdentifier);
+            when(sqlIdentifier.getLastName()).thenReturn("point");
 
-        SqlValidatorImpl.validateUnsupportedTypeWithCciWhenModifyColumn(sqlColumnDeclaration);
+            mockedStatic.when(
+                    () -> SqlValidatorImpl.validateUnsupportedTypeWithCciWhenModifyColumn(any()))
+                .thenCallRealMethod();
+            SqlValidatorImpl.validateUnsupportedTypeWithCciWhenModifyColumn(sqlColumnDeclaration);
+        }
+
     }
 
     @Test
     public void ForbidCitableModifySupportedType() {
-        SqlIdentifier sqlIdentifier = mock(SqlIdentifier.class);
-        SqlColumnDeclaration sqlColumnDeclaration = mock(SqlColumnDeclaration.class);
-        SqlDataTypeSpec sqlDataTypeSpec = mock(SqlDataTypeSpec.class);
+        try (MockedStatic<SqlValidatorImpl> mockedStatic = mockStatic(SqlValidatorImpl.class)) {
+            SqlIdentifier sqlIdentifier = mock(SqlIdentifier.class);
+            SqlColumnDeclaration sqlColumnDeclaration = mock(SqlColumnDeclaration.class);
+            SqlDataTypeSpec sqlDataTypeSpec = mock(SqlDataTypeSpec.class);
 
-        when(sqlColumnDeclaration.getDataType()).thenReturn(sqlDataTypeSpec);
-        when(sqlDataTypeSpec.getTypeName()).thenReturn(sqlIdentifier);
-        when(sqlIdentifier.getLastName()).thenReturn("char");
+            when(sqlColumnDeclaration.getDataType()).thenReturn(sqlDataTypeSpec);
+            when(sqlDataTypeSpec.getTypeName()).thenReturn(sqlIdentifier);
+            when(sqlIdentifier.getLastName()).thenReturn("text");
 
-        SqlValidatorImpl.validateUnsupportedTypeWithCciWhenModifyColumn(sqlColumnDeclaration);
+            mockedStatic.when(
+                    () -> SqlValidatorImpl.validateUnsupportedTypeWithCciWhenModifyColumn(any()))
+                .thenCallRealMethod();
+            SqlValidatorImpl.validateUnsupportedTypeWithCciWhenModifyColumn(sqlColumnDeclaration);
+        }
     }
 }

@@ -72,5 +72,14 @@ public class SecurityUtilTest {
             byte[] mysqlUserPassword = SecurityUtil.calcMysqlUserPassword("go2hell".getBytes());
             assertTrue("2E6558E64F7FD60426931B09CD962F2789D5F1FC".equalsIgnoreCase(SecurityUtil.byte2HexStr(mysqlUserPassword)));
         }
+
+        @Test
+        public void mysqlUserSha2PasswordTest() throws NoSuchAlgorithmException {
+            byte[] plainPassword = "password".getBytes();
+            byte[] salt = "\017m\007v1e\031\061BB#Rb]8&\034!\tz".getBytes();
+            byte[] expected = "JstZFmbxq28rQRc5hHagkWG6InZ9ZeJxdlRea4Ttz48".getBytes();
+            assertTrue(
+                Arrays.equals(expected, SecurityUtil.scrambleSHA2(plainPassword, salt,0)));
+        }
     }
 }

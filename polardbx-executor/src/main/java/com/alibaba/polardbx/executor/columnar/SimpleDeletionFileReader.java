@@ -32,12 +32,18 @@ import java.text.MessageFormat;
  * It will load all .del file bytes into memory, and parse bytes to DeletionEntry unit byte-by-byte.
  */
 public class SimpleDeletionFileReader implements DeletionFileReader {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
     private ByteBuffer byteBuffer;
     private int offset;
 
     @Override
     public void open(Engine engine, String delFileName, int offset, int length) throws IOException {
+        open(engine, delFileName, offset, length, null);
+    }
+
+    @Override
+    public void open(Engine engine, String delFileName, int offset, int length, Boolean cacheOverride)
+        throws IOException {
         // synchronous reading (it may cause OOM)
         byte[] buffer;
 
@@ -49,7 +55,7 @@ public class SimpleDeletionFileReader implements DeletionFileReader {
         } else {
             // read from offset
             buffer = new byte[length];
-            FileSystemUtils.readFile(delFileName, offset, length, buffer, engine, true);
+            FileSystemUtils.readFile(delFileName, offset, length, buffer, engine, true, cacheOverride);
         }
         this.byteBuffer = ByteBuffer.wrap(buffer);
         this.offset = offset;

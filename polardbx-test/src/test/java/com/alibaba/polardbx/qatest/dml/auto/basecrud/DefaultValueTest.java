@@ -20,9 +20,11 @@ import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.qatest.AutoCrudBasedLockTestCase;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
+import com.alibaba.polardbx.qatest.validator.DataValidator;
 import com.google.common.collect.ImmutableList;
 import com.google.common.truth.Truth;
 import org.apache.calcite.util.Pair;
+import org.apache.commons.lang3.RandomStringUtils;
 import org.hamcrest.Matchers;
 import org.junit.After;
 import org.junit.Assert;
@@ -33,12 +35,17 @@ import org.junit.Test;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
+import java.sql.Timestamp;
 import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase.DISABLE_DML_COMPUTE_ALL_DYNAMIC_IMPLICIT_DEFAULT_REF_IN_ONE_GO;
+import static com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase.DISABLE_DML_REPLACE_DYNAMIC_IMPLICIT_DEFAULT;
 import static com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase.DML_EXECUTION_STRATEGY_LOGICAL;
 import static com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase.ENABLE_DML_COMPUTE_ALL_DYNAMIC_IMPLICIT_DEFAULT_REF_IN_ONE_GO;
 import static com.alibaba.polardbx.qatest.validator.DataOperator.executeBatchOnMysqlAndTddl;
@@ -63,6 +70,10 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
         + ") {0} ";
     private static final String PARTITIONS_METHOD = "";
     private static final String SELECT_COLUMN = "c1,c2,c3,c4,c5,c6,c7,c8";
+    private static final String FORBID_RELOCATE_RETURNING_HINT =
+        "/*+TDDL:cmd_extra(OPTIMIZE_RELOCATE_BY_RETURNING=false)*/";
+    private static final String ENABLE_RELOCATE_RETURNING_HINT =
+        "/*+TDDL:cmd_extra(OPTIMIZE_RELOCATE_BY_RETURNING=true)*/";
     private static final List<String> SUPPORT_INSERT = new ArrayList<>();
     private static final List<String> UN_SUPPORT_INSERT = new ArrayList<>();
     private static final List<String> SUPPORT_UPDATE = new ArrayList<>();
@@ -177,11 +188,15 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
         JdbcUtil.executeUpdateSuccess(mysqlConnection, MessageFormat.format(CREAT_TABLE, ""));
         JdbcUtil.executeUpdateSuccess(tddlConnection, MessageFormat.format(CREAT_TABLE, PARTITIONS_METHOD));
 
-        this.polardbxConnection = getPolardbxConnection();
+        setSqlMode("STRICT_TRANS_TABLES", tddlConnection);
+        setSqlMode("STRICT_TRANS_TABLES", mysqlConnection);
+
+        this.polardbxConnection = getPolardbxDirectConnection();
         JdbcUtil.executeUpdateSuccess(polardbxConnection, "set sql_mode=''");
         JdbcUtil.executeUpdateSuccess(polardbxConnection, "set DML_REPLACE_IMPLICIT_DEFAULT=true");
         JdbcUtil.executeUpdateSuccess(polardbxConnection, "set DML_REPLACE_DYNAMIC_IMPLICIT_DEFAULT=true");
-        JdbcUtil.executeUpdateSuccess(polardbxConnection, "set DML_FORCE_REPLACE_DYNAMIC_IMPLICIT_DEFAULT_WITH_PARAM=true");
+        JdbcUtil.executeUpdateSuccess(polardbxConnection,
+            "set DML_FORCE_REPLACE_DYNAMIC_IMPLICIT_DEFAULT_WITH_PARAM=true");
     }
 
     @After
@@ -270,6 +285,7 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
     public void updateDefaultOkTest() {
         for (String sql : SUPPORT_UPDATE) {
             truncateData(TABLE_NAME);
+            sql = FORBID_RELOCATE_RETURNING_HINT + sql;
             String prepareData = "insert into " + TABLE_NAME
                 + "(pk, c1, c2, c3, c4, c5, c6, c7, c8) values(200, 200, 200, 200, 200, 200, '200', '200', '200')";
             executeOnMysqlAndTddl(mysqlConnection, tddlConnection, prepareData, null);
@@ -284,6 +300,40 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
     @Test
     public void updateDefaultErrTest() {
         for (String sql : UN_SUPPORT_UPDATE) {
+            sql = FORBID_RELOCATE_RETURNING_HINT + sql;
+            truncateData(TABLE_NAME);
+            String prepareData = "insert into " + TABLE_NAME
+                + "(pk, c1, c2, c3, c4, c5, c6, c7, c8) values(200, 200, 200, 200, 200, 200, '200', '200', '200')";
+            executeOnMysqlAndTddl(mysqlConnection, tddlConnection, prepareData, null);
+            //String mysqlError = JdbcUtil.executeUpdateFailedReturn(mysqlConnection, sql);
+            JdbcUtil.executeUpdateFailedReturn(tddlConnection, sql);
+        }
+    }
+
+    @Test
+    public void updateDefaultOkTestWithReturning() {
+        if (!isMySQL80()) {
+            return;
+        }
+
+        for (String sql : SUPPORT_UPDATE) {
+            truncateData(TABLE_NAME);
+            sql = ENABLE_RELOCATE_RETURNING_HINT + sql;
+            String prepareData = "insert into " + TABLE_NAME
+                + "(pk, c1, c2, c3, c4, c5, c6, c7, c8) values(200, 200, 200, 200, 200, 200, '200', '200', '200')";
+            executeOnMysqlAndTddl(mysqlConnection, tddlConnection, prepareData, null);
+
+            executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
+
+            String select = "select * from " + TABLE_NAME;
+            selectContentSameAssert(select, null, mysqlConnection, tddlConnection);
+        }
+    }
+
+    @Test
+    public void updateDefaultErrTestWithReturning() {
+        for (String sql : UN_SUPPORT_UPDATE) {
+            sql = ENABLE_RELOCATE_RETURNING_HINT + sql;
             truncateData(TABLE_NAME);
             String prepareData = "insert into " + TABLE_NAME
                 + "(pk, c1, c2, c3, c4, c5, c6, c7, c8) values(200, 200, 200, 200, 200, 200, '200', '200', '200')";
@@ -550,7 +600,7 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
 
     @Test
     public void dynamicImplicitDefaultWithGsiTest() throws SQLException, InterruptedException {
-        final String tableName = "t4_dynamic_implicit_default_with_gsi";
+        final String tableName = randomTableName("t4_dynamic_implicit_default_with_gsi", 4);
         final String gsiName = "g_c4";
         JdbcUtil.dropTable(polardbxConnection, tableName);
 
@@ -564,7 +614,7 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
             + "    global index `" + gsiName + "`(c4) covering(c2) partition by key(c4) partitions 8\n"
             + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4\n"
             + "PARTITION BY KEY(`c3`)\n" + "PARTITIONS 8 \n";
-        JdbcUtil.executeUpdateSuccess(polardbxConnection, sqlCreateTable);
+        executeCreateTableWithTableGroupRetry(polardbxConnection, tableName, sqlCreateTable);
 
         String sql = "INSERT INTO " + tableName + " VALUES(1, null, null, 1, 1, 1);";
         JdbcUtil.executeUpdateSuccess(polardbxConnection,
@@ -686,6 +736,29 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
         gsiIntegrityCheck(polardbxConnection, tableName, gsiName);
         checkColumnDataSame(tableName, polardbxConnection, "(round(DATE_FORMAT(c1, '%s.%f')) % 60)",
             "(round(DATE_FORMAT(c2, '%s.%f')) % 60)", ImmutableList.of("c1", "c2"));
+    }
+
+    private void executeCreateTableWithTableGroupRetry(Connection connection, String tableName, String sql)
+        throws SQLException, InterruptedException {
+        final int maxAttempts = 3;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute(sql);
+                return;
+            } catch (SQLException e) {
+                String message = e.getMessage();
+                boolean tableGroupMissing = message != null && (message.contains("ERR_TABLE_GROUP_NOT_EXISTS")
+                    || message.contains("table group:") && message.contains("not exist"));
+                if (!tableGroupMissing || attempt == maxAttempts) {
+                    throw e;
+                }
+                try {
+                    JdbcUtil.dropTable(connection, tableName);
+                } catch (Throwable ignored) {
+                }
+                Thread.sleep(1000L * attempt);
+            }
+        }
     }
 
     @Test
@@ -815,7 +888,9 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
 
         // Modify partition column with type 'timestamp not null' and set column value to null
         // Replace all updated timestamp column value with current_timestamp
-        sql = "UPDATE " + tableName + " SET c1 = null, c2 = null WHERE c3 = 1 AND c2 = '" + timestampValue + "' ;";
+        sql =
+            FORBID_RELOCATE_RETURNING_HINT + "UPDATE " + tableName + " SET c1 = null, c2 = null WHERE c3 = 1 AND c2 = '"
+                + timestampValue + "' ;";
         int affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
         Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
         checkTrace(polardbxConnection, Matchers.is(3), (t, builder) -> {
@@ -826,7 +901,8 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
         // Modify ordinary column with type 'timestamp not null' and set column value to null
         // Partition column with property 'ON UPDATE CURRENT_TIMESTAMP'
         // Replace all updated timestamp column value with current_timestamp
-        sql = "UPDATE " + tableName + " SET c1 = null WHERE c3 = 2 AND c2 = '" + timestampValue + "' ;";
+        sql = FORBID_RELOCATE_RETURNING_HINT + "UPDATE " + tableName + " SET c1 = null WHERE c3 = 2 AND c2 = '"
+            + timestampValue + "' ;";
         affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
         Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
         checkTrace(polardbxConnection, Matchers.is(3), (t, builder) -> {
@@ -838,7 +914,8 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
         // Partition column with property 'ON UPDATE CURRENT_TIMESTAMP'
         // Partition column's new value is identical to old value
         // Replace all updated timestamp column value with current_timestamp
-        sql = "UPDATE " + tableName + " SET c1 = null, c2 = '" + timestampValue + "' WHERE c3 = 3 AND c2 = '"
+        sql = FORBID_RELOCATE_RETURNING_HINT + "UPDATE " + tableName + " SET c1 = null, c2 = '" + timestampValue
+            + "' WHERE c3 = 3 AND c2 = '"
             + timestampValue + "' ;";
         affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
         Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
@@ -884,7 +961,8 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
         // Modify ordinary column with type 'timestamp not null' and set column value to null
         // Partition column without property 'ON UPDATE CURRENT_TIMESTAMP'
         // Do not replace timestamp column value with current_timestamp(), let dn do it
-        sql = "UPDATE " + tableName + " SET c1 = null WHERE c3 = 2 AND c2 = '" + timestampValue + "' ;";
+        sql = FORBID_RELOCATE_RETURNING_HINT + "UPDATE " + tableName + " SET c1 = null WHERE c3 = 2 AND c2 = '"
+            + timestampValue + "' ;";
         int affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
         Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
         checkTrace(polardbxConnection, Matchers.is(1), (t, builder) -> {
@@ -926,7 +1004,7 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
 
         // Modify ordinary column with type 'timestamp not null' and set column value to null
         // Do not replace null value, let DN do the work
-        sql = "UPDATE " + tableName + " SET c1 = null WHERE c2 = 1;";
+        sql = FORBID_RELOCATE_RETURNING_HINT + "UPDATE " + tableName + " SET c1 = null WHERE c2 = 1;";
         int affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
         Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
         checkTrace(polardbxConnection, Matchers.is(1), (t, builder) -> {
@@ -936,7 +1014,8 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
         // Modify ordinary column with type 'timestamp not null' and set column value to null
         // Modify partition column without dynamic implicit value and set column value to non-null
         // Do not replace null value, let DN do the work
-        sql = "UPDATE " + tableName + " SET c1 = null, c2 = 3 WHERE c2 = 1;";
+        sql = FORBID_RELOCATE_RETURNING_HINT + "UPDATE " + tableName
+            + " SET c1 = null, c2 = 3 WHERE c2 = 1;";
         affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
         Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
         checkTrace(polardbxConnection, Matchers.is(3), (t, builder) -> {
@@ -947,7 +1026,8 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
         // Modify ordinary column with type 'timestamp not null' and set column value to null
         // Modify partition column without dynamic implicit value and set column value to null
         // Do not replace null value, let DN throw exception
-        sql = "UPDATE " + tableName + " SET c1 = null, c2 = null WHERE c2 = 2;";
+        sql = FORBID_RELOCATE_RETURNING_HINT + "UPDATE " + tableName
+            + " SET c1 = null, c2 = null WHERE c2 = 2;";
         JdbcUtil.executeUpdateFailed(polardbxConnection, "trace " + sql, "Column 'c2' cannot be null");
         checkTrace(polardbxConnection, Matchers.is(2), (t, builder) -> {
             builder.that(t.get(0).get(11)).contains(", NULL, NULL");
@@ -993,7 +1073,8 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
 
         // Update gsi partition key (with type timestamp not null) to null
         // Specify condition of primary table partition key so that SELECT part can be pushdown
-        sql = "UPDATE " + tableName + " SET c1 = null WHERE c3 = 1 AND c2 = '" + timestampValue + "' ;";
+        sql = FORBID_RELOCATE_RETURNING_HINT + "UPDATE " + tableName + " SET c1 = null WHERE c3 = 1 AND c2 = '"
+            + timestampValue + "' ;";
         int affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
         Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
         checkTrace(polardbxConnection, Matchers.is(5), (t, builder) -> {
@@ -1005,7 +1086,8 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
 
         // Update primary table partition key (with type timestamp not null) to null
         // Specify condition of gsi partition key so that SELECT part first pushdown to gsi then lookup primary
-        sql = "UPDATE " + tableName + " SET c2 = null WHERE c3 = 2 AND c1 = '" + timestampValue + "' ;";
+        sql = FORBID_RELOCATE_RETURNING_HINT + "UPDATE " + tableName + " SET c2 = null WHERE c3 = 2 AND c1 = '"
+            + timestampValue + "' ;";
         affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
         Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
         checkTrace(polardbxConnection, Matchers.is(6), (t, builder) -> {
@@ -1018,7 +1100,7 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
         // Update gsi partition key (with type timestamp not null) to null
         // Update primary partition key to original value
         // Specify condition of primary table partition key so that SELECT part can be pushdown
-        sql = "UPDATE " + tableName
+        sql = FORBID_RELOCATE_RETURNING_HINT + "UPDATE " + tableName
             + " SET c1 = '" + timestampValue + "' + null, c2 = '" + timestampValue + "'"
             + " WHERE c3 = 3 AND c2 = '" + timestampValue + "' ;";
         affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
@@ -1032,7 +1114,7 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
 
         // Update ordinary column (without type timestamp not null)
         // Specify condition of primary table partition key so that SELECT part can be pushdown
-        sql = "UPDATE " + tableName
+        sql = FORBID_RELOCATE_RETURNING_HINT + "UPDATE " + tableName
             + " SET c4 = 10086"
             + " WHERE c3 = 4 AND c2 = '" + timestampValue + "' ;";
         affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
@@ -1266,6 +1348,327 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
         });
 
         checkBroadcastTableDataIntegrity(tableName, polardbxConnection);
+    }
+
+    @Test
+    public void dynamicImplicitDefaultWithUpdateTest1WithReturning() throws SQLException, InterruptedException {
+        if (!isMySQL80()) {
+            return;
+        }
+
+        final String tableName = "t6_dynamic_implicit_default_update_returning";
+
+        JdbcUtil.dropTable(polardbxConnection, tableName);
+
+        String sqlCreateTable = "CREATE TABLE `" + tableName + "` (\n"
+            + "    `c1` timestamp(6) NOT NULL,\n"
+            + "    `c2` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),\n"
+            + "    `c3` bigint NOT NULL ,\n"
+            + "    `c4` varchar(32) NOT NULL ,\n"
+            + "    `c5` bigint NULL DEFAULT NULL \n"
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4\n"
+            + "PARTITION BY RANGE (UNIX_TIMESTAMP(`c2`)) (\n"
+            + "    PARTITION p0 VALUES LESS THAN (UNIX_TIMESTAMP('2025-01-01 00:00:00')),\n"
+            + "    PARTITION p1 VALUES LESS THAN (MAXVALUE)\n"
+            + ")\n";
+        JdbcUtil.executeUpdateSuccess(polardbxConnection, sqlCreateTable);
+
+        final String timestampValue = "2024-11-25 17:49:57.84679";
+        String sql = "INSERT INTO " + tableName
+            + " VALUES('" + timestampValue + "', '" + timestampValue + "', 1, 1, 1),"
+            + "('" + timestampValue + "', '" + timestampValue + "', 2, 2, 2),"
+            + "('" + timestampValue + "', '" + timestampValue + "', 3, 3, 3);";
+        JdbcUtil.executeUpdateSuccess(polardbxConnection, sql);
+
+        // Modify partition column with type 'timestamp not null' and set column value to null
+        // Replace all updated timestamp column value with current_timestamp
+        sql =
+            ENABLE_RELOCATE_RETURNING_HINT + "UPDATE " + tableName + " SET c1 = null, c2 = null WHERE c3 = 1 AND c2 = '"
+                + timestampValue + "' ;";
+        int affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
+        Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
+        checkTrace(polardbxConnection, Matchers.is(3), (t, builder) -> {
+            builder.that(t.get(1).get(12)).doesNotContain(", null");
+            builder.that(t.get(2).get(12)).doesNotContain(", null");
+        });
+
+        // Modify ordinary column with type 'timestamp not null' and set column value to null
+        // Partition column with property 'ON UPDATE CURRENT_TIMESTAMP'
+        // Replace all updated timestamp column value with current_timestamp
+        sql = ENABLE_RELOCATE_RETURNING_HINT + "UPDATE " + tableName + " SET c1 = null WHERE c3 = 2 AND c2 = '"
+            + timestampValue + "' ;";
+        affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
+        Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
+        checkTrace(polardbxConnection, Matchers.is(3), (t, builder) -> {
+            builder.that(t.get(1).get(12)).doesNotContain(", null");
+            builder.that(t.get(2).get(12)).doesNotContain(", null");
+        });
+
+        // Modify ordinary column with type 'timestamp not null' and set column value to null
+        // Partition column with property 'ON UPDATE CURRENT_TIMESTAMP'
+        // Partition column's new value is identical to old value
+        // Replace all updated timestamp column value with current_timestamp
+        sql = ENABLE_RELOCATE_RETURNING_HINT + "UPDATE " + tableName + " SET c1 = null, c2 = '" + timestampValue
+            + "' WHERE c3 = 3 AND c2 = '"
+            + timestampValue + "' ;";
+        affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
+        Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
+        checkTrace(polardbxConnection, Matchers.is(1), (t, builder) -> {
+            builder.that(t.get(0).get(12)).doesNotContain(", null");
+        });
+
+        // Check null value is replaced with CURRENT_TIMESTAMP before partitioning
+        final List<List<Object>> allResult1 = JdbcUtil.getAllResult(
+            JdbcUtil.executeQuery("select c1, c2, c3, c4, c5 from `" + tableName + "`", polardbxConnection));
+
+        JdbcUtil.assertRouteCorrectness("",
+            tableName,
+            allResult1,
+            ImmutableList.of("c1", "c2", "c3", "c4", "c5"),
+            ImmutableList.of("c2", "c1"),
+            polardbxConnection);
+    }
+
+    @Test
+    public void dynamicImplicitDefaultWithUpdateTest2WithReturning() throws SQLException, InterruptedException {
+        if (!isMySQL80()) {
+            return;
+        }
+
+        final String tableName = "t7_dynamic_implicit_default_update_returning";
+
+        JdbcUtil.dropTable(polardbxConnection, tableName);
+
+        String sqlCreateTable = "CREATE TABLE `" + tableName + "` (\n"
+            + "    `c1` timestamp(6) NOT NULL,\n"
+            + "    `c2` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),\n"
+            + "    `c3` bigint NOT NULL ,\n"
+            + "    `c4` varchar(32) NOT NULL ,\n"
+            + "    `c5` bigint NULL DEFAULT NULL \n"
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4\n"
+            + "PARTITION BY KEY(`c2`)\n" + "PARTITIONS 8 \n";
+        JdbcUtil.executeUpdateSuccess(polardbxConnection, sqlCreateTable);
+
+        final String timestampValue = "2024-11-25 17:49:57.84679";
+        String sql = "INSERT INTO " + tableName
+            + " VALUES('" + timestampValue + "', '" + timestampValue + "', 1, 1, 1),"
+            + "('" + timestampValue + "', '" + timestampValue + "', 2, 2, 2),"
+            + "('" + timestampValue + "', '" + timestampValue + "', 3, 3, 3);";
+        JdbcUtil.executeUpdateSuccess(polardbxConnection, sql);
+
+        // Modify ordinary column with type 'timestamp not null' and set column value to null
+        // Partition column without property 'ON UPDATE CURRENT_TIMESTAMP'
+        // Do not replace timestamp column value with current_timestamp(), let dn do it
+        sql = ENABLE_RELOCATE_RETURNING_HINT + "UPDATE " + tableName + " SET c1 = null WHERE c3 = 2 AND c2 = '"
+            + timestampValue + "' ;";
+        int affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
+        Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
+        checkTrace(polardbxConnection, Matchers.is(1), (t, builder) -> {
+            builder.that(t.get(0).get(11)).contains(" = NULL");
+        });
+
+        // Check null value is replaced with CURRENT_TIMESTAMP before partitioning
+        final List<List<Object>> allResult1 = JdbcUtil.getAllResult(
+            JdbcUtil.executeQuery("select c1, c2, c3, c4, c5 from `" + tableName + "`", polardbxConnection));
+
+        JdbcUtil.assertRouteCorrectness("",
+            tableName,
+            allResult1,
+            ImmutableList.of("c1", "c2", "c3", "c4", "c5"),
+            ImmutableList.of("c2", "c1"),
+            polardbxConnection);
+    }
+
+    @Test
+    public void dynamicImplicitDefaultWithUpdateTest3WithReturning() throws SQLException, InterruptedException {
+        if (!isMySQL80()) {
+            return;
+        }
+
+        final String tableName = "t8_dynamic_implicit_default_update_returning";
+
+        // Use a dedicated database with a unique name instead of the shared qatest database.
+        // The previous implementation reused polardbxConnection (the shared qatest DB) and only
+        // dropped a fixed table name, so during full parallel execution this case collided with
+        // other cases' database/table-group lifecycle and failed with ERR_TABLE_GROUP_NOT_EXISTS.
+        // Here we cover the create/use/drop lifecycle of an independent database so the case is
+        // fully isolated, and drop the database in finally to keep the instance clean.
+        final String dbName = "t8_dyn_impl_def_upd_ret_" + RandomStringUtils.randomAlphanumeric(8).toLowerCase();
+
+        JdbcUtil.executeUpdateSuccess(polardbxConnection, "create database " + dbName + " mode=auto");
+        try {
+            Connection dedicatedConnection = getPolardbxDirectConnection(dbName);
+            JdbcUtil.executeUpdateSuccess(dedicatedConnection, "set sql_mode=''");
+            JdbcUtil.executeUpdateSuccess(dedicatedConnection, "set DML_REPLACE_IMPLICIT_DEFAULT=true");
+            JdbcUtil.executeUpdateSuccess(dedicatedConnection, "set DML_REPLACE_DYNAMIC_IMPLICIT_DEFAULT=true");
+            JdbcUtil.executeUpdateSuccess(dedicatedConnection,
+                "set DML_FORCE_REPLACE_DYNAMIC_IMPLICIT_DEFAULT_WITH_PARAM=true");
+
+            String sqlCreateTable = "CREATE TABLE `" + tableName + "` (\n"
+                + "    `c1` timestamp(6) NOT NULL,\n"
+                + "    `c2` bigint NOT NULL ,\n"
+                + "    `c3` varchar(32) NOT NULL ,\n"
+                + "    `c4` bigint NULL DEFAULT NULL \n"
+                + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4\n"
+                + "PARTITION BY KEY(`c2`)\n" + "PARTITIONS 8 \n";
+            JdbcUtil.executeUpdateSuccess(dedicatedConnection, sqlCreateTable);
+
+            final String timestampValue = "2024-11-25 17:49:57.84679";
+            String sql = "INSERT INTO " + tableName
+                + " VALUES('" + timestampValue + "', 1, 1, 1),"
+                + "('" + timestampValue + "', 2, 2, 2);";
+            JdbcUtil.executeUpdateSuccess(dedicatedConnection, sql);
+
+            // Modify ordinary column with type 'timestamp not null' and set column value to null
+            // Do not replace null value, let DN do the work
+            sql = ENABLE_RELOCATE_RETURNING_HINT + "UPDATE " + tableName + " SET c1 = null WHERE c2 = 1;";
+            int affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(dedicatedConnection, "trace " + sql);
+            Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
+            checkTrace(dedicatedConnection, Matchers.is(1), (t, builder) -> {
+                builder.that(t.get(0).get(11)).contains(" = NULL WHERE");
+            });
+
+            // Modify ordinary column with type 'timestamp not null' and set column value to null
+            // Modify partition column without dynamic implicit value and set column value to non-null
+            // returning will replace null value in insert
+            sql = ENABLE_RELOCATE_RETURNING_HINT + "UPDATE " + tableName
+                + " SET c1 = null, c2 = 3 WHERE c2 = 1;";
+            affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(dedicatedConnection, "trace " + sql);
+            Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
+            checkTrace(dedicatedConnection, Matchers.is(3), (t, builder) -> {
+                builder.that(t.get(0).get(11)).contains("NULL");
+                builder.that(t.get(2).get(12)).doesNotContain(", null,");
+            });
+
+            // Modify ordinary column with type 'timestamp not null' and set column value to null
+            // Modify partition column without dynamic implicit value and set column value to null
+            // Do not replace null value, let DN throw exception
+            sql = ENABLE_RELOCATE_RETURNING_HINT + "UPDATE " + tableName
+                + " SET c1 = null, c2 = null WHERE c2 = 2;";
+            JdbcUtil.executeUpdateSuccess(dedicatedConnection, "trace " + sql);
+            checkTrace(dedicatedConnection, Matchers.is(3), (t, builder) -> {
+                builder.that(t.get(0).get(11)).contains("= NULL");
+                builder.that(t.get(2).get(12)).doesNotContain(", null,");
+            });
+
+            // Check null value is replaced with CURRENT_TIMESTAMP before partitioning
+            final List<List<Object>> allResult2 = JdbcUtil.getAllResult(
+                JdbcUtil.executeQuery("select c1, c2, c3, c4 from `" + tableName + "`", dedicatedConnection));
+
+            JdbcUtil.assertRouteCorrectness("",
+                tableName,
+                allResult2,
+                ImmutableList.of("c1", "c2", "c3", "c4"),
+                ImmutableList.of("c2", "c1"),
+                dedicatedConnection);
+        } finally {
+            // Drop the dedicated database to clean up the whole lifecycle, even on failure.
+            JdbcUtil.executeUpdateSuccess(polardbxConnection, "drop database if exists " + dbName);
+        }
+    }
+
+    @Test
+    public void dynamicImplicitDefaultWithGsiUpdateTestWithReturning() throws SQLException, InterruptedException {
+        if (!isMySQL80()) {
+            return;
+        }
+
+        final String tableName = "t9_dynamic_implicit_default_with_gsi_returning";
+        final String gsiName = "g_c1";
+
+        JdbcUtil.dropTable(polardbxConnection, tableName);
+
+        final String sqlCreateTable = "CREATE TABLE `" + tableName + "` (\n"
+            + "    `c1` timestamp(6) NOT NULL,\n"
+            + "    `c2` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),\n"
+            + "    `c3` bigint NOT NULL ,\n"
+            + "    `c4` varchar(32) NOT NULL ,\n"
+            + "    `c5` bigint NULL DEFAULT NULL, \n"
+            + "    clustered index `" + gsiName + "`(c1) partition by RANGE (UNIX_TIMESTAMP(`c1`)) ("
+            + "         PARTITION p0 VALUES LESS THAN (UNIX_TIMESTAMP('2025-01-01 00:00:00')),\n"
+            + "         PARTITION p1 VALUES LESS THAN (MAXVALUE))\n"
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4\n"
+            + "PARTITION BY RANGE (UNIX_TIMESTAMP(`c2`)) (\n"
+            + "    PARTITION p0 VALUES LESS THAN (UNIX_TIMESTAMP('2025-01-01 00:00:00')),\n"
+            + "    PARTITION p1 VALUES LESS THAN (MAXVALUE)\n"
+            + ")\n";
+        JdbcUtil.executeUpdateSuccess(polardbxConnection, sqlCreateTable);
+
+        final String timestampValue = "2024-11-25 17:49:57.84679";
+        String sql = "INSERT INTO " + tableName
+            + " VALUES('" + timestampValue + "', '" + timestampValue + "', 1, 1, 1),"
+            + "('" + timestampValue + "', '" + timestampValue + "', 2, 2, 2),"
+            + "('" + timestampValue + "', '" + timestampValue + "', 3, 3, 3),"
+            + "('" + timestampValue + "', '" + timestampValue + "', 4, 4, 4);";
+        JdbcUtil.executeUpdateSuccess(polardbxConnection, sql);
+
+        // Update gsi partition key (with type timestamp not null) to null
+        // Specify condition of primary table partition key so that SELECT part can be pushdown
+        sql = ENABLE_RELOCATE_RETURNING_HINT + "UPDATE " + tableName + " SET c1 = null WHERE c3 = 1 AND c2 = '"
+            + timestampValue + "' ;";
+        int affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
+        Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
+        checkTrace(polardbxConnection, Matchers.is(5), (t, builder) -> {
+            builder.that(t.get(1).get(12)).doesNotContain(", null");
+            builder.that(t.get(2).get(12)).doesNotContain(", null");
+            builder.that(t.get(3).get(12)).doesNotContain(", null");
+            builder.that(t.get(4).get(12)).doesNotContain(", null");
+        });
+
+        // Update primary table partition key (with type timestamp not null) to null
+        // Specify condition of gsi partition key so that SELECT part first pushdown to gsi then lookup primary
+        sql = ENABLE_RELOCATE_RETURNING_HINT + "UPDATE " + tableName + " SET c2 = null WHERE c3 = 2 AND c1 = '"
+            + timestampValue + "' ;";
+        affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
+        Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
+        checkTrace(polardbxConnection, Matchers.is(6), (t, builder) -> {
+            builder.that(t.get(2).get(12)).doesNotContain(", null");
+            builder.that(t.get(3).get(12)).doesNotContain(", null");
+            builder.that(t.get(4).get(12)).doesNotContain(", null");
+            builder.that(t.get(5).get(12)).doesNotContain(", null");
+        });
+
+        // Update gsi partition key (with type timestamp not null) to null
+        // Update primary partition key to original value
+        // Specify condition of primary table partition key so that SELECT part can be pushdown
+        sql = ENABLE_RELOCATE_RETURNING_HINT + "UPDATE " + tableName
+            + " SET c1 = '" + timestampValue + "' + null, c2 = '" + timestampValue + "'"
+            + " WHERE c3 = 3 AND c2 = '" + timestampValue + "' ;";
+        affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
+        Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
+        checkTrace(polardbxConnection, Matchers.is(3), (t, builder) -> {
+            builder.that(t.get(0).get(11)).contains("IFNULL(?,");
+            builder.that(t.get(1).get(12)).doesNotContain(", null");
+            builder.that(t.get(2).get(12)).doesNotContain(", null");
+        });
+
+        // Update ordinary column (without type timestamp not null)
+        // Specify condition of primary table partition key so that SELECT part can be pushdown
+        sql = ENABLE_RELOCATE_RETURNING_HINT + "UPDATE " + tableName
+            + " SET c4 = 10086"
+            + " WHERE c3 = 4 AND c2 = '" + timestampValue + "' ;";
+        affectedRows = JdbcUtil.executeUpdateAndGetEffectCount(polardbxConnection, "trace " + sql);
+        Truth.assertWithMessage(sql).that(affectedRows).isEqualTo(1);
+        checkTrace(polardbxConnection, Matchers.is(5), (t, builder) -> {
+            builder.that(t.get(0).get(11)).doesNotContain(", null");
+            builder.that(t.get(1).get(12)).doesNotContain(", null");
+            builder.that(t.get(2).get(12)).doesNotContain(", null");
+            builder.that(t.get(3).get(12)).doesNotContain(", null");
+            builder.that(t.get(4).get(12)).doesNotContain(", null");
+        });
+
+        // Check null value is replaced with CURRENT_TIMESTAMP before partitioning
+        final List<List<Object>> allResult = JdbcUtil.getAllResult(
+            JdbcUtil.executeQuery("select c1, c2, c3, c4, c5 from `" + tableName + "`", polardbxConnection));
+
+        JdbcUtil.assertRouteCorrectness("",
+            tableName,
+            allResult,
+            ImmutableList.of("c1", "c2", "c3", "c4", "c5"),
+            ImmutableList.of("c2", "c1"),
+            polardbxConnection);
+
+        gsiIntegrityCheck(polardbxConnection, tableName, gsiName);
     }
 
     @Ignore
@@ -1506,10 +1909,11 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
         final String timestamp = "2025-01-24 16:03:49.000000";
         final String initDataSql =
             buildCmdExtra("DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=true", "DML_EXECUTION_STRATEGY=LOGICAL",
-                "PRIMARY_KEY_CHECK=TRUE") + String.format("INSERT IGNORE INTO %s VALUES(1, NULL, '%s');", tableName,
-                timestamp);
-        final String baseSql = buildCmdExtra("DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=true") +
-            String.format("INSERT INTO %s VALUES(1, NULL, '%s')", tableName, timestamp);
+                "PRIMARY_KEY_CHECK=TRUE", "DML_PARTITION_LOCAL_PK_DUP_CHECK=false")
+                + String.format("INSERT IGNORE INTO %s VALUES(1, NULL, '%s');", tableName, timestamp);
+        final String baseSql = buildCmdExtra("DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=true",
+            "DML_PARTITION_LOCAL_PK_DUP_CHECK=false")
+            + String.format("INSERT INTO %s VALUES(1, NULL, '%s')", tableName, timestamp);
 
         // make sure the timestamp is different from upper statements
         JdbcUtil.executeUpdateSuccess(polardbxConnection, initDataSql);
@@ -1581,10 +1985,12 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
         final List<String> topology = showTopology(polardbxConnection, tableName);
 
         final String timestamp = "2025-01-24 16:03:49.000000";
+        final String localPkLegacyHint = buildCmdExtra("DML_PARTITION_LOCAL_PK_DUP_CHECK=false");
         final String initDataSql =
-            buildCmdExtra("PRIMARY_KEY_CHECK=TRUE")
+            buildCmdExtra("PRIMARY_KEY_CHECK=TRUE", "DML_PARTITION_LOCAL_PK_DUP_CHECK=false")
                 + String.format("INSERT IGNORE INTO %s VALUES(1, NULL, '%s', 1, 1, 1);", tableName, timestamp);
-        final String baseSql = String.format("INSERT INTO %s VALUES(1, NULL, '%s', 2, 2, 2)", tableName, timestamp);
+        final String baseSql = localPkLegacyHint
+            + String.format("INSERT INTO %s VALUES(1, NULL, '%s', 2, 2, 2)", tableName, timestamp);
 
         JdbcUtil.executeUpdateSuccess(polardbxConnection, initDataSql);
         TimeUnit.MILLISECONDS.sleep(100);
@@ -1596,7 +2002,7 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
         });
 
         TimeUnit.MILLISECONDS.sleep(100);
-        sql = "INSERT INTO " + tableName
+        sql = localPkLegacyHint + "INSERT INTO " + tableName
             + " VALUES(1, null, null, 3, 3, 3), (1, '2024-11-19 17:09:25', '2024-11-19 17:09:25', 4, 4, 4)"
             + " ON DUPLICATE KEY UPDATE c1 = NULL, c2 = VALUES(c2), c3 = values(c3), c4 = values(c4);";
         JdbcUtil.executeUpdateSuccess(polardbxConnection, "trace " + sql);
@@ -2144,5 +2550,401 @@ public class DefaultValueTest extends AutoCrudBasedLockTestCase {
             ImmutableList.of("c1", "c2"),
             ImmutableList.of("c2"),
             polardbxConnection);
+    }
+
+    @Test
+    public void dynamicImplicitDefaultUpsertSelectTest1() throws SQLException, InterruptedException {
+        final String targetTableName = "t27_dynamic_implicit_default_upsert_select_tar";
+        final String sourceTableName = "t27_dynamic_implicit_default_upsert_select_src";
+
+        JdbcUtil.dropTable(mysqlConnection, targetTableName);
+        JdbcUtil.dropTable(mysqlConnection, sourceTableName);
+        JdbcUtil.dropTable(polardbxConnection, targetTableName);
+        JdbcUtil.dropTable(polardbxConnection, sourceTableName);
+
+        final String sqlCreateTarTable = "CREATE TABLE `" + targetTableName + "` (\n"
+            + "        `id` bigint NOT NULL,\n"
+            + "        `user_id` bigint NOT NULL,\n"
+            + "        `modified_at` timestamp(3) NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),\n"
+            + "        `create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),\n"
+            + "        `c1` tinyint NOT NULL DEFAULT '0',\n"
+            + "        PRIMARY KEY (`id`)\n"
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4";
+        JdbcUtil.executeUpdateSuccess(mysqlConnection, sqlCreateTarTable);
+        JdbcUtil.executeUpdateSuccess(polardbxConnection, sqlCreateTarTable + " PARTITION BY KEY(`id`) PARTITIONS 3");
+
+        final String sqlCreateSrcTable = "CREATE TABLE `" + sourceTableName + "` (\n"
+            + "        `id` bigint NOT NULL,\n"
+            + "        `user_id` bigint NOT NULL,\n"
+            + "        `modified_at` timestamp(3) NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),\n"
+            + "        `create_time` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),\n"
+            + "        `c1` tinyint NOT NULL DEFAULT '0',\n"
+            + "        PRIMARY KEY (`id`)\n"
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4\n";
+        JdbcUtil.executeUpdateSuccess(mysqlConnection, sqlCreateSrcTable);
+        JdbcUtil.executeUpdateSuccess(polardbxConnection,
+            sqlCreateSrcTable + " PARTITION BY KEY(`user_id`) PARTITIONS 3");
+
+        final String sqlInitData = "INSERT INTO `" + sourceTableName + "` ( id, user_id, modified_at, create_time, c1) "
+            + "VALUES (27149, 9527, '2025-08-20 12:26:35.668', '2025-08-19 15:55:50.635', 0);";
+        executeBatchOnMysqlAndTddl(mysqlConnection, polardbxConnection, sqlInitData, null);
+
+        String sql = null;
+
+        try (Connection tmpPolardbxConn = getPolardbxDirectConnection()) {
+            JdbcUtil.executeUpdateSuccess(tmpPolardbxConn, "set sql_mode = 'STRICT_TRANS_TABLES'");
+
+            final String upsertSelect =
+                buildCmdExtra(DML_EXECUTION_STRATEGY_LOGICAL, DISABLE_DML_REPLACE_DYNAMIC_IMPLICIT_DEFAULT,
+                    ENABLE_DML_COMPUTE_ALL_DYNAMIC_IMPLICIT_DEFAULT_REF_IN_ONE_GO)
+                    + String.format("INSERT INTO %s ( id, user_id, create_time, c1)\n"
+                        + "SELECT id, user_id, create_time, c1\n"
+                        + "FROM %s FORCE INDEX (`PRIMARY`)\n"
+                        + "WHERE id = 27149\n"
+                        + "ON DUPLICATE KEY UPDATE user_id=VALUES(`user_id`), c1=VALUES(`c1`) + 1",
+                    targetTableName, sourceTableName);
+
+            // Do insert
+            executeBatchOnMysqlAndTddl(mysqlConnection, tmpPolardbxConn, upsertSelect, null);
+
+            // check insert result
+            sql = String.format("select id, user_id, create_time, c1 from %s where id= 27149", targetTableName);
+            selectContentSameAssert(sql, null, mysqlConnection, polardbxConnection, false, true);
+
+            // Do upsert
+            executeOnMysqlAndTddl(mysqlConnection,
+                tmpPolardbxConn,
+                upsertSelect,
+                "trace " + upsertSelect,
+                null,
+                true);
+
+            checkTrace(tmpPolardbxConn,
+                Matchers.greaterThanOrEqualTo(2),
+                (t, builder) -> {
+                    for (int i = 0; i < t.size(); i++) {
+                        if (TStringUtil.containsIgnoreCase(t.get(i).get(11), "UPDATE ?")) {
+                            builder.that(t.get(i).get(12)).contains("3=1,");
+                        }
+                    }
+                });
+
+            // check upsert result
+            sql = String.format("select id, user_id, create_time, c1 from %s where id= 27149", targetTableName);
+            selectContentSameAssert(sql, null, mysqlConnection, polardbxConnection, false, true);
+        }
+    }
+
+    @Test
+    public void timestampWithLeadingZeroTest() throws SQLException, InterruptedException {
+        final String tableName = "t28_timestamp_with_leading_zero_select";
+
+        JdbcUtil.dropTable(mysqlConnection, tableName);
+        JdbcUtil.dropTable(polardbxConnection, tableName);
+
+        final String sqlCreateTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
+            + "    `c1` timestamp(6) NOT NULL,\n"
+            + "    `c2` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n"
+            + "    `c3` timestamp(1) NOT NULL DEFAULT CURRENT_TIMESTAMP(1),\n"
+            + "    `c4` timestamp(2) NOT NULL DEFAULT CURRENT_TIMESTAMP(2),\n"
+            + "    `c5` timestamp(4) NOT NULL DEFAULT CURRENT_TIMESTAMP(4) \n"
+            + "  )";
+        JdbcUtil.executeUpdateSuccess(mysqlConnection, sqlCreateTable);
+        JdbcUtil.executeUpdateSuccess(polardbxConnection, sqlCreateTable + " PARTITION BY KEY(`c1`) PARTITIONS 3");
+
+        final List<String> timestampValues = new ArrayList<>();
+        timestampValues.add("2025-09-01 11:43:11.123456");
+        timestampValues.add("2025-09-01 11:43:11");
+        timestampValues.add("2025-09-01 11:43:11.1");
+        timestampValues.add("2025-09-01 11:43:11.12");
+        timestampValues.add("2025-09-01 11:43:11.1235");
+
+        timestampValues.add("2025-09-01 11:43:11.012345");
+        timestampValues.add("2025-09-01 11:43:11");
+        timestampValues.add("2025-09-01 11:43:11.0");
+        timestampValues.add("2025-09-01 11:43:11.01");
+        timestampValues.add("2025-09-01 11:43:11.0123");
+
+        timestampValues.add("2025-09-01 11:43:11.001234");
+        timestampValues.add("2025-09-01 11:43:11");
+        timestampValues.add("2025-09-01 11:43:11.0");
+        timestampValues.add("2025-09-01 11:43:11.00");
+        timestampValues.add("2025-09-01 11:43:11.0012");
+
+        timestampValues.add("2025-09-01 11:43:11.000123");
+        timestampValues.add("2025-09-01 11:43:11");
+        timestampValues.add("2025-09-01 11:43:11.0");
+        timestampValues.add("2025-09-01 11:43:11.00");
+        timestampValues.add("2025-09-01 11:43:11.0001");
+
+        timestampValues.add("2025-09-01 11:43:11.000012");
+        timestampValues.add("2025-09-01 11:43:11");
+        timestampValues.add("2025-09-01 11:43:11.0");
+        timestampValues.add("2025-09-01 11:43:11.00");
+        timestampValues.add("2025-09-01 11:43:11.0000");
+
+        timestampValues.add("2025-09-01 11:43:11.000001");
+        timestampValues.add("2025-09-01 11:43:11");
+        timestampValues.add("2025-09-01 11:43:11.0");
+        timestampValues.add("2025-09-01 11:43:11.00");
+        timestampValues.add("2025-09-01 11:43:11.0000");
+
+        timestampValues.add("2025-09-01 11:43:11.7");
+        timestampValues.add("2025-09-01 11:43:12");
+        timestampValues.add("2025-09-01 11:43:11.7");
+        timestampValues.add("2025-09-01 11:43:11.7");
+        timestampValues.add("2025-09-01 11:43:11.7");
+
+        timestampValues.add("2025-09-01 11:43:11.07");
+        timestampValues.add("2025-09-01 11:43:11");
+        timestampValues.add("2025-09-01 11:43:11.1");
+        timestampValues.add("2025-09-01 11:43:11.07");
+        timestampValues.add("2025-09-01 11:43:11.07");
+
+        timestampValues.add("2025-09-01 11:43:11.007");
+        timestampValues.add("2025-09-01 11:43:11");
+        timestampValues.add("2025-09-01 11:43:11.0");
+        timestampValues.add("2025-09-01 11:43:11.01");
+        timestampValues.add("2025-09-01 11:43:11.007");
+
+        timestampValues.add("2025-09-01 11:43:11.0007");
+        timestampValues.add("2025-09-01 11:43:11");
+        timestampValues.add("2025-09-01 11:43:11.0");
+        timestampValues.add("2025-09-01 11:43:11.00");
+        timestampValues.add("2025-09-01 11:43:11.0007");
+
+        timestampValues.add("2025-09-01 11:43:11.00007");
+        timestampValues.add("2025-09-01 11:43:11");
+        timestampValues.add("2025-09-01 11:43:11.0");
+        timestampValues.add("2025-09-01 11:43:11.00");
+        timestampValues.add("2025-09-01 11:43:11.0000");
+
+        timestampValues.add("2025-09-01 11:43:11.800000");
+        timestampValues.add("2025-09-01 11:43:12");
+        timestampValues.add("2025-09-01 11:43:11.8");
+        timestampValues.add("2025-09-01 11:43:11.80");
+        timestampValues.add("2025-09-01 11:43:11.8000");
+
+        timestampValues.add("2025-09-01 11:43:11.080000");
+        timestampValues.add("2025-09-01 11:43:11");
+        timestampValues.add("2025-09-01 11:43:11.1");
+        timestampValues.add("2025-09-01 11:43:11.08");
+        timestampValues.add("2025-09-01 11:43:11.0800");
+
+        timestampValues.add("2025-09-01 11:43:11.008000");
+        timestampValues.add("2025-09-01 11:43:11");
+        timestampValues.add("2025-09-01 11:43:11.0");
+        timestampValues.add("2025-09-01 11:43:11.01");
+        timestampValues.add("2025-09-01 11:43:11.0080");
+
+        timestampValues.add("2025-09-01 11:43:11.000800");
+        timestampValues.add("2025-09-01 11:43:11");
+        timestampValues.add("2025-09-01 11:43:11.0");
+        timestampValues.add("2025-09-01 11:43:11.00");
+        timestampValues.add("2025-09-01 11:43:11.0008");
+
+        timestampValues.add("2025-09-01 11:43:11.000080");
+        timestampValues.add("2025-09-01 11:43:11");
+        timestampValues.add("2025-09-01 11:43:11.0");
+        timestampValues.add("2025-09-01 11:43:11.00");
+        timestampValues.add("2025-09-01 11:43:11.0000");
+
+        final List<String> conditions = new ArrayList<>();
+        conditions.add("c1 = ?");
+        conditions.add("c2 = ?");
+        conditions.add("c3 = ?");
+        conditions.add("c4 = ?");
+        conditions.add("c5 = ?");
+
+        for (int i = 0; i < timestampValues.size(); i += conditions.size()) {
+            final String timestampValue = timestampValues.get(i);
+            final String sql = "INSERT IGNORE INTO " + tableName + "(c1, c2, c3, c4, c5) "
+                + "VALUES(" +
+                IntStream.range(0, 5)
+                    .mapToObj(j -> "'" + timestampValue + "'")
+                    .collect(Collectors.joining(","))
+                + ");";
+            JdbcUtil.executeUpdateSuccess(mysqlConnection, sql);
+            JdbcUtil.executeUpdateSuccess(polardbxConnection, sql);
+        }
+
+        for (int i = 0; i < timestampValues.size(); i += conditions.size()) {
+
+            for (int j = 0; j < conditions.size(); j++) {
+                final String condition = conditions.get(j);
+                final Timestamp timestampValue = Timestamp.valueOf((timestampValues.get(i + j)));
+                final List<Object> params = new ArrayList<>();
+                params.add(timestampValue);
+                final String sql = "select * from " + tableName + " where " + condition;
+
+                // for debug
+//                try (PreparedStatement ps = JdbcUtil.preparedStatementSet(sql, params, tddlConnection)) {
+//                    try (final ResultSet resultSet = JdbcUtil.executeQuery(sql, ps)) {
+//                        final List<List<Object>> allResult = JdbcUtil.getAllResult(resultSet);
+//                        System.out.println(allResult.stream().map(Objects::toString).collect(Collectors.joining("\n")));
+//                    }
+//                }
+
+                // Prepared 模式下，CN 可能会将 timestamp 类型参数中的 小数部分数字开头的 0 丢掉，导致查不到数据
+                // 比如 2025-09-01 11:43:11.012345 可能会变成 2025-09-01 11:43:11.12345
+                DataValidator.selectStringContentSameAssert(sql,
+                    sql,
+                    params,
+                    mysqlConnection,
+                    polardbxConnection,
+                    false,
+                    true);
+            }
+        }
+    }
+
+    @Test
+    public void dynamicImplicitDefaultBinaryStringTest1() {
+        final String tableName = "t29_dynamic_implicit_default_binary_string";
+        JdbcUtil.dropTable(mysqlConnection, tableName);
+        JdbcUtil.dropTable(polardbxConnection, tableName);
+
+        final String sqlCreateTable = "CREATE TABLE `" + tableName + "` (\n"
+            + "\t`a` bigint(20) UNSIGNED NOT NULL,\n"
+            + "\t`b` datetime NOT NULL,\n"
+            + "\t`c` varchar(128) CHARACTER SET utf8 NOT NULL\n"
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4\n";
+        JdbcUtil.executeUpdateSuccess(mysqlConnection, sqlCreateTable);
+        JdbcUtil.executeUpdateSuccess(polardbxConnection, sqlCreateTable + " PARTITION BY RANGE COLUMNS(`c`)\n"
+            + "(PARTITION `p0` VALUES LESS THAN ('世界') ENGINE = InnoDB,\n"
+            + " PARTITION `p1` VALUES LESS THAN ('世界人民') ENGINE = InnoDB,\n"
+            + " PARTITION `p2` VALUES LESS THAN (MAXVALUE) ENGINE = InnoDB);\n");
+
+        final String sqlInsertPlainString =
+            "insert into " + tableName
+                + "(a,b,c) values (1,current_date(), '世界'),(2,'2012-12-12 01:00:00','世界人民')";
+        final String sqlInsertBinaryString =
+            "insert into " + tableName
+                + "(a,b,c) values (3,current_date(), x'E4B896E7958C'),(4,'2012-12-12 01:00:00', x'E4B896E7958CE4BABAE6B091')";
+
+        final String checkSql1 = String.format("select * from %s where c='世界'", tableName);
+        final String checkSql2 = String.format("select * from %s where c='世界人民'", tableName);
+
+        // insert with binary string then insert with plain string
+        executeBatchOnMysqlAndTddl(mysqlConnection, polardbxConnection, sqlInsertBinaryString, null);
+        executeBatchOnMysqlAndTddl(mysqlConnection, polardbxConnection, sqlInsertPlainString, null);
+
+        selectStringContentSameAssert(checkSql1, checkSql1, null, mysqlConnection, polardbxConnection, false, true);
+        selectStringContentSameAssert(checkSql2, checkSql2, null, mysqlConnection, polardbxConnection, false, true);
+
+        // clear data and plan cache
+        executeBatchOnMysqlAndTddl(mysqlConnection, polardbxConnection,
+            String.format("delete from %s where 1=1", tableName), null);
+        JdbcUtil.executeSuccess(polardbxConnection, "clear plancache");
+
+        // insert with plain string then insert with binary string
+        executeBatchOnMysqlAndTddl(mysqlConnection, polardbxConnection, sqlInsertPlainString, null);
+        executeBatchOnMysqlAndTddl(mysqlConnection, polardbxConnection, sqlInsertBinaryString, null);
+
+        selectStringContentSameAssert(checkSql1, checkSql1, null, mysqlConnection, polardbxConnection, false, true);
+        selectStringContentSameAssert(checkSql2, checkSql2, null, mysqlConnection, polardbxConnection, false, true);
+
+        final String sqlInsertWithoutColumnPlainString =
+            "insert into " + tableName
+                + " values (1,current_date(), '世界'),(2,'2012-12-12 01:00:00','世界人民')";
+        final String sqlInsertWithoutColumnBinaryString =
+            "insert into " + tableName
+                + " values (3,current_date(), x'E4B896E7958C'),(4,'2012-12-12 01:00:00', x'E4B896E7958CE4BABAE6B091')";
+
+        // insert with binary string then insert with plain string
+        executeBatchOnMysqlAndTddl(mysqlConnection, polardbxConnection, sqlInsertWithoutColumnBinaryString, null);
+        executeBatchOnMysqlAndTddl(mysqlConnection, polardbxConnection, sqlInsertWithoutColumnPlainString, null);
+
+        selectStringContentSameAssert(checkSql1, checkSql1, null, mysqlConnection, polardbxConnection, false, true);
+        selectStringContentSameAssert(checkSql2, checkSql2, null, mysqlConnection, polardbxConnection, false, true);
+
+        // clear data and plan cache
+        executeBatchOnMysqlAndTddl(mysqlConnection, polardbxConnection,
+            String.format("delete from %s where 1=1", tableName), null);
+        JdbcUtil.executeSuccess(polardbxConnection, "clear plancache");
+
+        // insert with plain string then insert with binary string
+        executeBatchOnMysqlAndTddl(mysqlConnection, polardbxConnection, sqlInsertWithoutColumnPlainString, null);
+        executeBatchOnMysqlAndTddl(mysqlConnection, polardbxConnection, sqlInsertWithoutColumnBinaryString, null);
+
+        selectStringContentSameAssert(checkSql1, checkSql1, null, mysqlConnection, polardbxConnection, false, true);
+        selectStringContentSameAssert(checkSql2, checkSql2, null, mysqlConnection, polardbxConnection, false, true);
+
+        final String sqlReplacePlainString =
+            "replace into " + tableName
+                + "(a,b,c) values (1,current_date(), '世界'),(2,'2012-12-12 01:00:00','世界人民')";
+        final String sqlReplaceBinaryString =
+            "replace into " + tableName
+                + "(a,b,c) values (3,current_date(), x'E4B896E7958C'),(4,'2012-12-12 01:00:00', x'E4B896E7958CE4BABAE6B091')";
+
+        // replace with binary string then replace with plain string
+        executeBatchOnMysqlAndTddl(mysqlConnection, polardbxConnection, sqlReplaceBinaryString, null);
+        executeBatchOnMysqlAndTddl(mysqlConnection, polardbxConnection, sqlReplacePlainString, null);
+
+        selectStringContentSameAssert(checkSql1, checkSql1, null, mysqlConnection, polardbxConnection, false, true);
+        selectStringContentSameAssert(checkSql2, checkSql2, null, mysqlConnection, polardbxConnection, false, true);
+
+        // clear data and plan cache
+        executeBatchOnMysqlAndTddl(mysqlConnection, polardbxConnection,
+            String.format("delete from %s where 1=1", tableName), null);
+        JdbcUtil.executeSuccess(polardbxConnection, "clear plancache");
+
+        // replace with plain string then replace with binary string
+        executeBatchOnMysqlAndTddl(mysqlConnection, polardbxConnection, sqlReplacePlainString, null);
+        executeBatchOnMysqlAndTddl(mysqlConnection, polardbxConnection, sqlReplaceBinaryString, null);
+
+        selectStringContentSameAssert(checkSql1, checkSql1, null, mysqlConnection, polardbxConnection, false, true);
+        selectStringContentSameAssert(checkSql2, checkSql2, null, mysqlConnection, polardbxConnection, false, true);
+    }
+
+    @Test
+    public void dynamicImplicitDefaultWithColumnReferenceInsertIgnoreTest() throws SQLException, InterruptedException {
+        final String tableName = "t30_dynamic_implicit_default_with_column_ref";
+        final String gsiName = "g_c1";
+
+        JdbcUtil.dropTable(polardbxConnection, tableName);
+
+        final String sqlCreateTable = "CREATE TABLE `" + tableName + "` (\n"
+            + "    `c1` timestamp(6) NOT NULL,\n"
+            + "    `c2` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),\n"
+            + "    `c3` bigint NOT NULL ,\n"
+            + "    `c4` varchar(32) NOT NULL ,\n"
+            + "    `c5` bigint NULL DEFAULT NULL, \n"
+            + "    clustered index `" + gsiName + "`(c1) partition by key(c1) partitions 8\n"
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4\n"
+            + "PARTITION BY KEY(`c2`)\n" + "PARTITIONS 8 \n";
+        JdbcUtil.executeUpdateSuccess(polardbxConnection, sqlCreateTable);
+
+        // make sure the timestamp is different from upper statements
+        TimeUnit.MILLISECONDS.sleep(100);
+        String sql = "INSERT IGNORE INTO " + tableName + " VALUES(null, c1, c1, c1, c1);";
+        JdbcUtil.executeUpdateSuccess(polardbxConnection, "trace " + sql);
+        checkTrace(polardbxConnection, Matchers.is(2), (t, builder) -> {
+            builder.that(t.get(0).get(12)).doesNotContain("null");
+            builder.that(t.get(1).get(12)).doesNotContain("null");
+        });
+
+        // make sure the timestamp is different from upper statements
+        TimeUnit.MILLISECONDS.sleep(100);
+        sql = "INSERT IGNORE INTO " + tableName + " VALUES(c2, null, c2, c2, c2);";
+        JdbcUtil.executeUpdateSuccess(polardbxConnection, "trace " + sql);
+        checkTrace(polardbxConnection, Matchers.is(2), (t, builder) -> {
+            builder.that(t.get(0).get(12)).doesNotContain("null");
+            builder.that(t.get(1).get(12)).doesNotContain("null");
+        });
+
+        // Check null value is replaced with CURRENT_TIMESTAMP before partitioning
+        final List<List<Object>> allResult = JdbcUtil.getAllResult(
+            JdbcUtil.executeQuery("select c1, c2, c3, c4, c5 from `" + tableName + "`", polardbxConnection));
+
+        JdbcUtil.assertRouteCorrectness("",
+            tableName,
+            allResult,
+            ImmutableList.of("c1", "c2", "c3", "c4", "c5"),
+            ImmutableList.of("c3", "c4"),
+            polardbxConnection);
+
+        gsiIntegrityCheck(polardbxConnection, tableName, gsiName);
+        checkColumnDataSame(tableName, polardbxConnection, "c1", "c2", ImmutableList.of("c1", "c2"));
     }
 }

@@ -1,0 +1,44 @@
+SQL:
+  - sql: |
+      select  orders.o_orderkey from orders e;
+    plan: |
+      gather(concurrent=true)
+        logicalview(tables="orders[p1,p2,p3,p4]", shardcount=4, sql="select `o_orderkey` from `orders` as `orders`")
+  - sql: |
+      select  orders.o_orderkey from orders e where orders.o_custkey = 1;
+    plan: |
+      gather(concurrent=true)
+        logicalview(tables="orders[p1,p2,p3,p4]", shardcount=4, sql="select `o_orderkey` from `orders` as `orders` where (`o_custkey` = ?)")
+  - sql: |
+      select  e.o_totalprice from orders e, orders where orders.o_custkey = 1;
+    plan: |
+      project(o_totalprice="o_totalprice")
+        nljoin(condition="true", type="inner")
+          gather(concurrent=true)
+            logicalview(tables="orders[p1,p2,p3,p4]", shardcount=4, sql="select `o_totalprice` from `orders` as `orders`")
+          gather(concurrent=true)
+            logicalview(tables="orders[p1,p2,p3,p4]", shardcount=4, sql="select `o_orderkey` from `orders` as `orders` where (`o_custkey` = ?)")
+  - sql: |
+      select  orders.l_returnflag from (select o_orderstatus as l_returnflag from orders) e;
+    plan: |
+      err-code: [tddl-4518][err_validate] table 'orders' not found
+  - sql: |
+      select     1 from     orders where     EXISTS (         select             1         from             orders x         where             orders.o_orderkey = x.o_orderkey     );
+    plan: |
+      gather(concurrent=true)
+        logicalview(tables="orders[p1,p2,p3,p4],orders[p1,p2,p3,p4]", shardcount=4, sql="select ? as `1` from `orders` as `orders` where (exists (select `o_orderkey` from `orders` as `orders0` where (`orders`.`o_orderkey` = `o_orderkey`)))")
+  - sql: |
+      select     1 from     orders,     orders x where     orders.o_orderkey = x.o_orderkey;
+    plan: |
+      gather(concurrent=true)
+        logicalview(tables="orders[p1,p2,p3,p4],orders[p1,p2,p3,p4]", shardcount=4, sql="select ? as `1` from `orders` as `orders` inner join `orders` as `orders0` on (`orders`.`o_orderkey` = `orders0`.`o_orderkey`)")
+DDL:
+  orders:
+    CREATE TABLE IF NOT EXISTS `orders` (  `o_orderkey` bigint(20) NOT NULL,  `o_custkey` int(11) NOT NULL,  `o_orderstatus` varchar(1) NOT NULL,  `o_totalprice` decimal(15, 2) NOT NULL,  `o_orderdate` date NOT NULL,  `o_orderpriority` varchar(15) NOT NULL,  `o_clerk` varchar(15) NOT NULL,  `o_shippriority` bigint(20) NOT NULL,  `o_comment` varchar(79) NOT NULL,  PRIMARY KEY (`o_orderkey`)) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`o_orderkey`) PARTITIONS 4;
+
+STATISTICS:
+  orders:
+    1660557312
+CONFIG:
+  defaltxxAPPName.isNew:
+    true

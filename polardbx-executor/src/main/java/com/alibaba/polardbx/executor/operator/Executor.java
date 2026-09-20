@@ -16,8 +16,9 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.executor.chunk.Chunk;
-import com.alibaba.polardbx.executor.mpp.operator.DriverContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 
 import java.util.List;
@@ -25,8 +26,7 @@ import java.util.List;
 /**
  * Basic interface for operators
  */
-public interface Executor extends ProducerExecutor {
-
+public interface Executor extends ProducerExecutor, MemoryCountable {
     /**
      * This method is called immediately before any chunk are processed, it should contain the
      * operator's initialization logic.
@@ -61,5 +61,16 @@ public interface Executor extends ProducerExecutor {
 
     default int getId() {
         throw new UnsupportedOperationException(getClass().getName());
+    }
+
+    default void setProducerMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId) {}
+
+    default OperatorMemoryOwnerId getProducerMemoryOwnerId() {
+        return null;
+    }
+
+    @Override
+    default long getMemoryUsage() {
+        return 0L;
     }
 }

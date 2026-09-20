@@ -29,7 +29,6 @@ import org.apache.calcite.sql.validate.SqlValidatorScope;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  * Created by luoyanxin.
@@ -40,6 +39,7 @@ public class SqlAlterTableSplitPartition extends SqlAlterSpecification {
 
     private static final SqlOperator OPERATOR = new SqlSpecialOperator("SPLIT PARTITION", SqlKind.SPLIT_PARTITION);
     private final SqlNode splitPartitionName;
+    private final List<SqlNode> splitPartitionNames;
     private final SqlNode atValue;
     private final List<SqlPartition> newPartitions;
     private final SqlNode newPartitionPrefix;
@@ -49,8 +49,24 @@ public class SqlAlterTableSplitPartition extends SqlAlterSpecification {
     public SqlAlterTableSplitPartition(SqlParserPos pos, SqlNode splitPartitionName, SqlNode atValue,
                                        List<SqlPartition> newPartitions, SqlNode newPartitionPrefix,
                                        SqlNode newPartitionNum, boolean subPartitionsSplit) {
+        this(pos, splitPartitionName, null, atValue, newPartitions, newPartitionPrefix, newPartitionNum,
+            subPartitionsSplit);
+    }
+
+    public SqlAlterTableSplitPartition(SqlParserPos pos, SqlNode splitPartitionName,
+                                       List<SqlNode> splitPartitionNames, SqlNode atValue,
+                                       List<SqlPartition> newPartitions, SqlNode newPartitionPrefix,
+                                       SqlNode newPartitionNum, boolean subPartitionsSplit) {
         super(pos);
         this.splitPartitionName = splitPartitionName;
+        if (splitPartitionNames != null && !splitPartitionNames.isEmpty()) {
+            this.splitPartitionNames = splitPartitionNames;
+        } else {
+            this.splitPartitionNames = new ArrayList<>();
+            if (splitPartitionName != null) {
+                this.splitPartitionNames.add(splitPartitionName);
+            }
+        }
         this.atValue = atValue;
         this.newPartitions = newPartitions == null ? new ArrayList<>() : newPartitions;
         this.newPartitionPrefix = newPartitionPrefix;
@@ -78,6 +94,10 @@ public class SqlAlterTableSplitPartition extends SqlAlterSpecification {
 
     public SqlNode getSplitPartitionName() {
         return splitPartitionName;
+    }
+
+    public List<SqlNode> getSplitPartitionNames() {
+        return splitPartitionNames;
     }
 
     public SqlNode getNewPartitionPrefix() {

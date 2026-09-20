@@ -21,9 +21,10 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.CreateTableGroupValidate
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcCreateTableGroupMarkTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.validator.TableGroupValidator;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.TransientDdlJob;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
@@ -41,7 +42,7 @@ import java.util.Set;
 /**
  * @author luoyanxin
  */
-public class CreateTableGroupJobFactory extends DdlJobFactory {
+public class CreateTableGroupJobFactory extends OnlineDdlJobFactory {
 
     @Deprecated
     protected final DDL ddl;
@@ -50,6 +51,7 @@ public class CreateTableGroupJobFactory extends DdlJobFactory {
 
     public CreateTableGroupJobFactory(DDL ddl, CreateTableGroupPreparedData preparedData,
                                       ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.META_ONLY);
         this.preparedData = preparedData;
         this.ddl = ddl;
         this.executionContext = executionContext;

@@ -2,6 +2,7 @@ package com.alibaba.polardbx.qatest.ddl.auto.omc;
 
 import com.alibaba.polardbx.executor.common.StorageInfoManager;
 import com.alibaba.polardbx.qatest.util.ConnectionManager;
+import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -18,11 +19,10 @@ import java.util.function.Function;
 public class ConcurrentInsertSelectTest extends ConcurrentDMLBaseTest {
     private final boolean supportsAlterType =
         StorageInfoManager.checkSupportAlterType(ConnectionManager.getInstance().getMysqlDataSource());
-    private final boolean isRDS80 = StorageInfoManager.checkRDS80(ConnectionManager.getInstance().getMysqlDataSource());
 
     @Before
     public void beforeMethod() {
-        org.junit.Assume.assumeTrue(supportsAlterType && !isRDS80);
+        org.junit.Assume.assumeTrue(supportsAlterType);
     }
 
     @Override
@@ -41,7 +41,7 @@ public class ConcurrentInsertSelectTest extends ConcurrentDMLBaseTest {
         tasks.add(() -> {
             String tableName = "omc_with_insert_select_1";
             String colDef = "int";
-            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
                 + " alter table %s modify column b bigint";
             String selectSql = "select * from %s";
             Function<Integer, String> generator =
@@ -57,7 +57,7 @@ public class ConcurrentInsertSelectTest extends ConcurrentDMLBaseTest {
         tasks.add(() -> {
             String tableName = "omc_with_insert_select_2";
             String colDef = "int";
-            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
                 + " alter table %s modify column b bigint, modify column d text";
             String selectSql = "select * from %s";
             Function<Integer, String> generator =
@@ -75,7 +75,7 @@ public class ConcurrentInsertSelectTest extends ConcurrentDMLBaseTest {
         tasks.add(() -> {
             String tableName = "omc_with_insert_select_3";
             String colDef = "int";
-            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
                 + " alter table %s modify column b bigint, modify column d char(55)";
             String selectSql = "select * from %s";
             Function<Integer, String> generator =
@@ -111,7 +111,7 @@ public class ConcurrentInsertSelectTest extends ConcurrentDMLBaseTest {
         tasks.add(() -> {
             String tableName = "omc_with_insert_select_1";
             String colDef = "int";
-            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
                 + " alter table %s modify column b bigint";
             String selectSql = "select * from %s";
             Function<Integer, String> generator =
@@ -129,7 +129,7 @@ public class ConcurrentInsertSelectTest extends ConcurrentDMLBaseTest {
         tasks.add(() -> {
             String tableName = "omc_with_insert_select_2";
             String colDef = "int";
-            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
                 + " alter table %s modify column b bigint";
             String selectSql = "select * from %s";
             Function<Integer, String> generator =
@@ -147,7 +147,7 @@ public class ConcurrentInsertSelectTest extends ConcurrentDMLBaseTest {
         tasks.add(() -> {
             String tableName = "omc_with_insert_select_3";
             String colDef = "int";
-            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
                 + " alter table %s modify column b bigint";
             String selectSql = "select * from %s";
             Function<Integer, String> generator =
@@ -166,7 +166,7 @@ public class ConcurrentInsertSelectTest extends ConcurrentDMLBaseTest {
         tasks.add(() -> {
             String tableName = "omc_with_insert_select_4";
             String colDef = "int";
-            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
                 + " alter table %s modify column b bigint";
             String selectSql = "select * from %s";
             Function<Integer, String> generator =
@@ -202,7 +202,7 @@ public class ConcurrentInsertSelectTest extends ConcurrentDMLBaseTest {
         tasks.add(() -> {
             String tableName = "omc_with_insert_select_1";
             String colDef = "int";
-            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
                 + " alter table %s change column b e bigint";
             String selectSql = "select * from %s";
             Function<Integer, String> generator1 =
@@ -222,7 +222,7 @@ public class ConcurrentInsertSelectTest extends ConcurrentDMLBaseTest {
         tasks.add(() -> {
             String tableName = "omc_with_insert_select_2";
             String colDef = "int";
-            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
                 + " alter table %s change column b e bigint";
             String selectSql = "select * from %s";
             Function<Integer, String> generator1 =
@@ -244,7 +244,7 @@ public class ConcurrentInsertSelectTest extends ConcurrentDMLBaseTest {
         tasks.add(() -> {
             String tableName = "omc_with_insert_select_3";
             String colDef = "int";
-            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
                 + " alter table %s modify column b bigint";
             String selectSql = "select * from %s";
             Function<Integer, String> generator1 =
@@ -282,7 +282,7 @@ public class ConcurrentInsertSelectTest extends ConcurrentDMLBaseTest {
         tasks.add(() -> {
             String tableName = "omc_multi_with_insert_select_1";
             String colDef = "int";
-            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
                 + " alter table %s change column b e bigint, change column c f text, change d g char(10)";
             String selectSql = "select * from %s";
             Function<Integer, String> generator1 =
@@ -303,7 +303,7 @@ public class ConcurrentInsertSelectTest extends ConcurrentDMLBaseTest {
         tasks.add(() -> {
             String tableName = "omc_multi_with_insert_select_2";
             String colDef = "int";
-            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
                 + " alter table %s change column b e bigint, change column c d char(10), change column d c char(10)";
             String selectSql = "select * from %s";
             Function<Integer, String> generator1 =
@@ -326,7 +326,7 @@ public class ConcurrentInsertSelectTest extends ConcurrentDMLBaseTest {
         tasks.add(() -> {
             String tableName = "omc_multi_with_insert_select_3";
             String colDef = "int";
-            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
                 + " alter table %s modify column b bigint, change column c f text, change d g char(10)";
             String selectSql = "select * from %s";
             Function<Integer, String> generator1 =
@@ -371,7 +371,7 @@ public class ConcurrentInsertSelectTest extends ConcurrentDMLBaseTest {
                     + "c varchar(10) default 'abc',"
                     + "d varchar(10) default 'abc'"
                     + ") single", colDef);
-            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
                 + " alter table %s change column b e bigint, change column c f text, change d g char(10)";
             String selectSql = "select * from %s";
             Function<Integer, String> generator1 =
@@ -397,7 +397,7 @@ public class ConcurrentInsertSelectTest extends ConcurrentDMLBaseTest {
                     + "c varchar(10) default 'abc',"
                     + "d varchar(10) default 'abc'"
                     + ") broadcast", colDef);
-            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+            String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
                 + " alter table %s change column b e bigint, change column c d char(10), change column d c char(10)";
             String selectSql = "select * from %s";
             Function<Integer, String> generator1 =

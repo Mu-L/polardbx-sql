@@ -90,13 +90,12 @@ PolarDB-X 提供通过 K8S Operator 方式管理以上4个组件，同时计算�
 
 | 组件名称 | 仓库地址                                                              | 版本号             |
 | --- |-------------------------------------------------------------------|-----------------|
-| 计算节点（CN, Compute Node） | [polardbx-sql](https://github.com/polardb/polardbx-sql)           | v5.4.19 |
-| 元数据服务（GMS, Global Meta Service） | [polardbx-engine](https://github.com/polardb/polardbx-engine)     | v8.4.20 |
-| 存储节点（DN, Data Node） | [polardbx-engine](https://github.com/polardb/polardbx-engine)     | v8.4.20 |
-| 日志节点（CDC, Change Data Capture） | [polardbx-cdc](https://github.com/polardb/polardbx-cdc)           | v5.4.19 |
-| 私有协议 | [polardbx-glue](https://github.com/polardb/polardbx-glue)         |  v5.4.19 |
-| K8S Operator | [polardbx-operator](https://github.com/polardb/polardbx-operator) | v1.7.0 |
-| Proxy代理 | [polardbx-proxy](https://github.com/polardb/polardbx-proxy) | v5.4.19 |
+| 计算节点（CN, Compute Node） | [polardbx-sql](https://github.com/polardb/polardbx-sql)           | v5.4.13-16615127 |
+| 元数据服务（GMS, Global Meta Service） | [polardbx-engine](https://github.com/polardb/polardbx-engine)     | v1.0.2 |
+| 存储节点（DN, Data Node） | [polardbx-engine](https://github.com/polardb/polardbx-engine)     | v1.0.2 |
+| 日志节点（CDC, Change Data Capture） | [polardbx-cdc](https://github.com/polardb/polardbx-cdc)           | v5.4.13 |
+| 私有协议 | [polardbx-glue](https://github.com/polardb/polardbx-glue)         |  v5.4.13-16615127 |
+| K8S Operator | [polardbx-operator](https://github.com/polardb/polardbx-operator) | v1.2.2 |
 
 
 

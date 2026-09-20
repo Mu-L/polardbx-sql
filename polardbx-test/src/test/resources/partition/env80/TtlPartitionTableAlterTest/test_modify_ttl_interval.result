@@ -1,0 +1,117 @@
+## DISABLE_FAST_SQL_PARSER
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00'
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false
+drop table if exists test_ttl_interval
+## create table
+create table test_ttl_interval(
+a int not null,
+b datetime,
+c int,
+primary key(a)
+)
+partition by key(`a`)
+partitions 4
+## error_msg: $# not supported #$
+alter table test_ttl_interval
+modify ttl set
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 2 week timezone '+08:00',
+ttl_filter = cond_expr( `c` in (1,2,3) )
+not supported
+alter table test_ttl_interval
+modify ttl set
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 14 day timezone '+08:00',
+ttl_filter = cond_expr( `c` in (1,2,3) ),
+ttl_part_interval=interval(1, week),
+archive_table_pre_allocate=2,
+archive_table_post_allocate=4
+show create table test_ttl_interval
+Table,Create Table
+test_ttl_interval,CREATE TABLE `test_ttl_interval` (
+	`a` int(11) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 14 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_FILTER = COND_EXPR ( `c` IN (1, 2, 3) ) , TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, WEEK), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 4 )
+PARTITION BY KEY(`a`)
+PARTITIONS 4
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00'
+create table test_ttl_interval_arc like test_ttl_interval engine='columnar' archive_mode='ttl'
+show create table test_ttl_interval
+Table,Create Table
+test_ttl_interval,CREATE TABLE `test_ttl_interval` (
+	`a` int(11) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_test_ttl_interval_arc` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20240526 VALUES LESS THAN ('2024-05-26 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240602 VALUES LESS THAN ('2024-06-02 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240609 VALUES LESS THAN ('2024-06-09 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240616 VALUES LESS THAN ('2024-06-16 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240623 VALUES LESS THAN ('2024-06-23 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240630 VALUES LESS THAN ('2024-06-30 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240707 VALUES LESS THAN ('2024-07-07 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240714 VALUES LESS THAN ('2024-07-14 00:00:00') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 14 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_FILTER = COND_EXPR ( `c` IN (1, 2, 3) ) , TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, WEEK), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'test_ttl_interval_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 4 )
+PARTITION BY KEY(`a`)
+PARTITIONS 4
+set TTL_DEBUG_CURRENT_DATETIME='2024-07-07 00:00:00'
+alter table test_ttl_interval cleanup expired data
+show create table test_ttl_interval
+Table,Create Table
+test_ttl_interval,CREATE TABLE `test_ttl_interval` (
+	`a` int(11) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_test_ttl_interval_arc` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20240526 VALUES LESS THAN ('2024-05-26 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240602 VALUES LESS THAN ('2024-06-02 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240609 VALUES LESS THAN ('2024-06-09 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240616 VALUES LESS THAN ('2024-06-16 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240623 VALUES LESS THAN ('2024-06-23 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240630 VALUES LESS THAN ('2024-06-30 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240707 VALUES LESS THAN ('2024-07-07 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240714 VALUES LESS THAN ('2024-07-14 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240721 VALUES LESS THAN ('2024-07-21 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240728 VALUES LESS THAN ('2024-07-28 00:00:00') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 14 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_FILTER = COND_EXPR ( `c` IN (1, 2, 3) ) , TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, WEEK), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'test_ttl_interval_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 4 )
+PARTITION BY KEY(`a`)
+PARTITIONS 4
+set TTL_DEBUG_CURRENT_DATETIME='2024-07-08 00:00:00'
+alter table test_ttl_interval cleanup expired data
+show create table test_ttl_interval
+Table,Create Table
+test_ttl_interval,CREATE TABLE `test_ttl_interval` (
+	`a` int(11) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_test_ttl_interval_arc` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20240526 VALUES LESS THAN ('2024-05-26 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240602 VALUES LESS THAN ('2024-06-02 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240609 VALUES LESS THAN ('2024-06-09 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240616 VALUES LESS THAN ('2024-06-16 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240623 VALUES LESS THAN ('2024-06-23 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240630 VALUES LESS THAN ('2024-06-30 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240707 VALUES LESS THAN ('2024-07-07 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240714 VALUES LESS THAN ('2024-07-14 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240721 VALUES LESS THAN ('2024-07-21 00:00:00') ENGINE = Columnar,
+		 PARTITION p20240728 VALUES LESS THAN ('2024-07-28 00:00:00') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 14 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_FILTER = COND_EXPR ( `c` IN (1, 2, 3) ) , TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, WEEK), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'test_ttl_interval_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 4 )
+PARTITION BY KEY(`a`)
+PARTITIONS 4
+drop table if exists test_ttl_interval;

@@ -19,6 +19,7 @@ package com.alibaba.polardbx.executor.gms;
 import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.columnar.DeletionFileReader;
 import com.alibaba.polardbx.executor.columnar.SimpleDeletionFileReader;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarAppendedFilesAccessor;
@@ -61,16 +62,24 @@ public class MultiVersionDelPartitionInfo implements Purgeable {
         }
     }
 
-    public void loadUntilTso(String logicalSchema, String logicalTable, String partitionName, long minTso, long tso,
+    public void loadUntilTso(String logicalSchema, String logicalTable, String partitionName, long tso,
                              BiConsumer<DeletionFileReader, ColumnarAppendedFilesRecord> delFileConsumer) {
+        loadUntilTso(logicalSchema, logicalTable, partitionName, tso, delFileConsumer, null);
+    }
+
+    public void loadUntilTso(String logicalSchema, String logicalTable, String partitionName, long tso,
+                             BiConsumer<DeletionFileReader, ColumnarAppendedFilesRecord> delFileConsumer,
+                             Boolean cacheOverride) {
         if (!readDelTso.isEmpty() && readDelTso.last() >= tso) {
             return;
         }
 
         long lastTso = readDelTso.isEmpty() ? Long.MIN_VALUE : readDelTso.last();
 
-        List<String> minSnapshotDelFiles = ((DynamicColumnarManager) ColumnarManager.getInstance())
-            .delFileNames(minTso, logicalSchema, logicalTable, partitionName);
+        Pair<Long, List<String>> minTsoAndSnapshotDelFiles = ((DynamicColumnarManager) ColumnarManager.getInstance())
+            .delFileNames(logicalSchema, logicalTable, partitionName);
+        long minTso = minTsoAndSnapshotDelFiles.getKey();
+        List<String> minSnapshotDelFiles = minTsoAndSnapshotDelFiles.getValue();
 
         Map<String, List<ColumnarAppendedFilesRecord>> recordsForEachDelFile = new HashMap<>();
         try (Connection connection = MetaDbUtil.getConnection()) {
@@ -142,7 +151,8 @@ public class MultiVersionDelPartitionInfo implements Purgeable {
                         engine,
                         fileName,
                         (int) lastEndPosition,
-                        (int) (maxReadPosition - lastEndPosition)
+                        (int) (maxReadPosition - lastEndPosition),
+                        cacheOverride
                     );
                 } catch (IOException e) {
                     throw new TddlRuntimeException(ErrorCode.ERR_LOAD_DEL_FILE, e,

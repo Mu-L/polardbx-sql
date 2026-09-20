@@ -130,8 +130,8 @@ public class ShadowTableUtils {
         Map<String, Object> result =
             TwoPhaseDdlUtils.queryGroupBypassConnPool(originEc, -1L, "", schemaName, logicalTableName, groupName, sql)
                 .get(0);
-        Boolean prepareMoment = !result.get("REACHED_PREPARED_MOMENT").toString().startsWith("1970");
-        Boolean commitMoment = !result.get("REACHED_COMMIT_MOMENT").toString().startsWith("1970");
+        Boolean prepareMoment = !result.get("REACHED_PREPARED_MOMENT").toString().startsWith("19");
+        Boolean commitMoment = !result.get("REACHED_COMMIT_MOMENT").toString().startsWith("19");
         return Pair.of(prepareMoment, commitMoment);
 //            shadowTableAltered = true;
     }

@@ -16,15 +16,20 @@
 
 package com.alibaba.polardbx.executor.mpp.planner;
 
+import com.alibaba.polardbx.executor.utils.ExecUtils;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.core.rel.HashJoin;
 import com.alibaba.polardbx.optimizer.core.rel.SemiHashJoin;
+import com.alibaba.polardbx.optimizer.core.rel.TopN;
 import com.google.common.base.Preconditions;
+import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.type.SqlTypeUtil;
 import org.apache.calcite.util.ImmutableIntList;
 
@@ -40,12 +45,47 @@ public class FragmentRFItemKey {
     private final String probeColumnName;
     private final int buildIndex;
     private final int probeIndex;
+    private final SqlKind sqlKind;
+
+    private boolean isValid = false;
 
     public FragmentRFItemKey(String buildColumnName, String probeColumnName, int buildIndex, int probeIndex) {
+        this(buildColumnName, probeColumnName, buildIndex, probeIndex, SqlKind.EQUALS);
+    }
+
+    public FragmentRFItemKey(String buildColumnName, String probeColumnName, int buildIndex, int probeIndex,
+                             SqlKind sqlKind) {
         this.buildColumnName = buildColumnName;
         this.probeColumnName = probeColumnName;
         this.buildIndex = buildIndex;
         this.probeIndex = probeIndex;
+        this.sqlKind = sqlKind;
+    }
+
+    public static List<FragmentRFItemKey> buildItemKeys(TopN topN) {
+        List<FragmentRFItemKey> itemKeys = new ArrayList<>();
+
+        // Get order by list and row type.
+        RelDataType topNRowType = topN.getInput().getRowType();
+        List<RelFieldCollation> sortList = topN.getCollation().getFieldCollations();
+        List<OrderByOption> orderBys = ExecUtils.convertFrom(sortList);
+
+        // Build item key in order of orderBy list.
+        for (int i = 0; i < orderBys.size(); i++) {
+            OrderByOption option = orderBys.get(i);
+            String orderByColumnName = topNRowType.getFieldNames().get(option.index);
+
+            SqlKind sqlKind = option.asc ? SqlKind.LESS_THAN : SqlKind.GREATER_THAN;
+
+            itemKeys.add(new FragmentRFItemKey(
+                orderByColumnName,
+                orderByColumnName,
+                option.index,
+                option.index,
+                sqlKind
+            ));
+        }
+        return itemKeys;
     }
 
     /**
@@ -152,6 +192,10 @@ public class FragmentRFItemKey {
         return probeIndex;
     }
 
+    public SqlKind getSqlKind() {
+        return sqlKind;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {
@@ -162,12 +206,13 @@ public class FragmentRFItemKey {
         }
         FragmentRFItemKey itemKey = (FragmentRFItemKey) o;
         return buildIndex == itemKey.buildIndex && probeIndex == itemKey.probeIndex && Objects.equals(
-            buildColumnName, itemKey.buildColumnName) && Objects.equals(probeColumnName, itemKey.probeColumnName);
+            buildColumnName, itemKey.buildColumnName) && Objects.equals(probeColumnName, itemKey.probeColumnName)
+            && sqlKind == itemKey.sqlKind;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(buildColumnName, probeColumnName, buildIndex, probeIndex);
+        return Objects.hash(buildColumnName, probeColumnName, buildIndex, probeIndex, sqlKind);
     }
 
     @Override
@@ -178,5 +223,13 @@ public class FragmentRFItemKey {
             ", buildIndex=" + buildIndex +
             ", probeIndex=" + probeIndex +
             '}';
+    }
+
+    public boolean isValid() {
+        return isValid;
+    }
+
+    public void setValid(boolean valid) {
+        isValid = valid;
     }
 }

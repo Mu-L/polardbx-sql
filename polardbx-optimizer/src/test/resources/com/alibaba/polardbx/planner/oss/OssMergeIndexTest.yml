@@ -1,5 +1,10 @@
 SQL:
   - sql: |
+      select pk,integer_test from (select * from select_base_one_multi_db_multi_tb) a group by integer_test,pk
+    plan: |
+      gather(concurrent=true)
+        osstablescan(tables="select_base_one_multi_db_multi_tb[p1,p2,p3]", shardcount=3, sql="select `pk`, `integer_test` from `select_base_one_multi_db_multi_tb` as `select_base_one_multi_db_multi_tb`")
+  - sql: |
       /*+TDDL:cmd_extra(ENABLE_OSS_INDEX_SELECTION=true)*/select l_tax from lineitem where (l_partkey = 1 and l_suppkey = 2) or l_orderkey = 1;
     plan: |
       project(l_tax="l_tax")
@@ -44,6 +49,8 @@ SQL:
 DDL:
   lineitem:
     CREATE TABLE `lineitem` ( 	`l_orderkey` int(11) NOT NULL, 	`l_partkey` int(11) NOT NULL, 	`l_suppkey` int(11) NOT NULL, 	`l_linenumber` int(11) NOT NULL, 	`l_quantity` decimal(15, 2) NOT NULL, 	`l_extendedprice` decimal(15, 2) NOT NULL, 	`l_discount` decimal(15, 2) NOT NULL, 	`l_tax` decimal(15, 2) NOT NULL, 	`l_returnflag` varchar(1) NOT NULL, 	`l_linestatus` varchar(1) NOT NULL, 	`l_shipdate` date NOT NULL, 	`l_commitdate` date NOT NULL, 	`l_receiptdate` date NOT NULL, 	`l_shipinstruct` varchar(25) NOT NULL, 	`l_shipmode` varchar(10) NOT NULL, 	`l_comment` varchar(44) NOT NULL, 	PRIMARY KEY (`l_orderkey`, `l_linenumber`),  	KEY `auto_shard_key_l_partkey` USING BTREE (`l_partkey`) ) ENGINE = 'OSS' DEFAULT CHARSET = latin1 PARTITION BY KEY (`l_partkey`) PARTITIONS 128;
+  select_base_one_multi_db_multi_tb:
+    CREATE TABLE `select_base_one_multi_db_multi_tb` (  `pk` bigint(11) NOT NULL,  `integer_test` int(11) DEFAULT NULL,  `varchar_test` varchar(255) DEFAULT NULL,  `char_test` char(255) DEFAULT NULL,  `blob_test` blob,  `tinyint_test` tinyint(4) DEFAULT NULL,  `tinyint_1bit_test` tinyint(1) DEFAULT NULL,  `smallint_test` smallint(6) DEFAULT NULL,  `mediumint_test` mediumint(9) DEFAULT NULL,  `bit_test` bit(1) DEFAULT NULL,  `bigint_test` bigint(20) DEFAULT NULL,  `float_test` float DEFAULT NULL,  `double_test` double DEFAULT NULL,  `decimal_test` decimal(10, 0) DEFAULT NULL,  `date_test` date DEFAULT NULL,  `time_test` time DEFAULT NULL,  `datetime_test` datetime DEFAULT NULL,  `timestamp_test` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,  `year_test` year(4) DEFAULT NULL,  `mediumtext_test` mediumtext,  PRIMARY KEY (`pk`) ) ENGINE = 'OSS' DEFAULT CHARSET = utf8 DEFAULT CHARSET = utf8 PARTITION BY KEY(`pk`) PARTITIONS 3;
 STATISTICS:
   lineitem:
     595915652

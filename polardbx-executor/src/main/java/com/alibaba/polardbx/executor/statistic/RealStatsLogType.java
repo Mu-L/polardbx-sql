@@ -6,6 +6,7 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.pl.ProcedureManager;
 import com.alibaba.polardbx.executor.pl.StoredFunctionManager;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
@@ -165,7 +166,7 @@ public enum RealStatsLogType {
                     if (current - lastUpdate <= expiredTime) {
                         columnCount++;
                     } else {
-                        Logger logger = LoggerFactory.getLogger("STATISTICS");
+                        Logger logger = LoggerFactory.getLogger(RealStatsLogType.class);
                         logger.warn("ndv sketch has expired:" + dbName + "," + tableName + "," + cols);
                     }
                 }
@@ -378,6 +379,11 @@ public enum RealStatsLogType {
     }
 
     protected static int tableInStatsCount() {
-        return StatisticManager.getInstance().getStatisticCache().values().stream().mapToInt(Map::size).sum();
+        // Paired with tableCount(), which only counts local user tables. External row
+        // counts also live in this cache, so they are excluded to keep the two comparable.
+        return StatisticManager.getInstance().getStatisticCache().entrySet().stream()
+            .filter(e -> !ExternalNameValidator.isExternalSchema(e.getKey()))
+            .mapToInt(e -> e.getValue().size())
+            .sum();
     }
 }

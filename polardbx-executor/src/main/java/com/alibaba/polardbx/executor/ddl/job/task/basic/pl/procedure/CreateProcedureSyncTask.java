@@ -53,7 +53,7 @@ public class CreateProcedureSyncTask extends BaseDdlTask {
 
         FailPoint.injectExceptionFromHint("FP_CREATE_PROCEDURE_ERROR", executionContext);
 
-        SyncManagerHelper.sync(new CreateProcedureSyncAction(procedureSchema, procedureName),
+        SyncManagerHelper.syncThrowExceptions(new CreateProcedureSyncAction(procedureSchema, procedureName),
             TddlConstants.INFORMATION_SCHEMA, SyncScope.NOT_COLUMNAR_SLAVE);
     }
 
@@ -61,7 +61,7 @@ public class CreateProcedureSyncTask extends BaseDdlTask {
     protected void beforeRollbackTransaction(ExecutionContext executionContext) {
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
-        SyncManagerHelper.sync(new DropProcedureSyncAction(procedureSchema, procedureName),
+        SyncManagerHelper.syncThrowExceptions(new DropProcedureSyncAction(procedureSchema, procedureName),
             TddlConstants.INFORMATION_SCHEMA, SyncScope.NOT_COLUMNAR_SLAVE);
     }
 }

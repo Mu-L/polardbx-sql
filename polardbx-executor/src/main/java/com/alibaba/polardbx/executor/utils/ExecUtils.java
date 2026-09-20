@@ -18,6 +18,8 @@ package com.alibaba.polardbx.executor.utils;
 
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.TypeReference;
+import com.alibaba.polardbx.common.ColumnarOptions;
+import com.alibaba.polardbx.common.TddlConstants;
 import com.alibaba.polardbx.common.TddlNode;
 import com.alibaba.polardbx.common.async.AsyncTask;
 import com.alibaba.polardbx.common.constants.SequenceAttribute;
@@ -39,6 +41,7 @@ import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.properties.MetricLevel;
 import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.common.utils.AsyncUtils;
+import com.alibaba.polardbx.common.utils.BlackHoleUtils;
 import com.alibaba.polardbx.common.utils.ExecutorMode;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.TStringUtil;
@@ -48,8 +51,10 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.druid.sql.ast.SqlType;
+import com.alibaba.polardbx.druid.util.lang.Consumer;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
+import com.alibaba.polardbx.executor.common.StorageInfoManager;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.cursor.ResultCursor;
 import com.alibaba.polardbx.executor.gms.DynamicColumnarManager;
@@ -76,17 +81,15 @@ import com.alibaba.polardbx.gms.metadb.table.ColumnarConfigRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableEvolutionAccessor;
 import com.alibaba.polardbx.gms.metadb.table.FilesAccessor;
 import com.alibaba.polardbx.gms.metadb.table.FilesRecord;
+import com.alibaba.polardbx.gms.node.CCLDetectManager;
 import com.alibaba.polardbx.gms.node.GmsNodeManager;
 import com.alibaba.polardbx.gms.node.InternalNode;
 import com.alibaba.polardbx.gms.node.InternalNodeManager;
 import com.alibaba.polardbx.gms.node.MppScope;
-import com.alibaba.polardbx.gms.node.Node;
 import com.alibaba.polardbx.gms.sync.IGmsSyncAction;
 import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.gms.topology.DbTopologyManager;
-import com.alibaba.polardbx.gms.topology.InstConfigAccessor;
-import com.alibaba.polardbx.gms.topology.InstConfigRecord;
 import com.alibaba.polardbx.gms.topology.NodeInfoAccessor;
 import com.alibaba.polardbx.gms.topology.NodeInfoRecord;
 import com.alibaba.polardbx.gms.topology.ServerInstIdManager;
@@ -98,9 +101,11 @@ import com.alibaba.polardbx.gms.util.MetaDbLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.group.jdbc.TGroupDataSource;
 import com.alibaba.polardbx.group.jdbc.TGroupDirectConnection;
+import com.alibaba.polardbx.group.utils.CheckDataSourcesTask;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
@@ -124,28 +129,31 @@ import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.SemiHashJoin;
 import com.alibaba.polardbx.optimizer.core.rel.SingleTableOperation;
+import com.alibaba.polardbx.optimizer.core.rel.TableId;
 import com.alibaba.polardbx.optimizer.core.rel.UnionOptHelper;
 import com.alibaba.polardbx.optimizer.core.rel.dal.LogicalShow;
 import com.alibaba.polardbx.optimizer.core.rel.dal.PhyShow;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
+import com.alibaba.polardbx.optimizer.planmanager.LogicalViewFinder;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
 import com.alibaba.polardbx.optimizer.utils.GroupConnId;
 import com.alibaba.polardbx.optimizer.utils.IColumnarTransaction;
 import com.alibaba.polardbx.optimizer.utils.IDistributedTransaction;
 import com.alibaba.polardbx.optimizer.utils.ITransaction;
 import com.alibaba.polardbx.optimizer.utils.OptimizerUtils;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.utils.PhyTableOperationUtil;
 import com.alibaba.polardbx.optimizer.utils.QueryConcurrencyPolicy;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.alibaba.polardbx.rpc.pool.XConnection;
+import com.alibaba.polardbx.rule.TableRule;
 import com.alibaba.polardbx.sequence.Sequence;
 import com.alibaba.polardbx.sequence.exception.SequenceException;
 import com.alibaba.polardbx.sequence.impl.BaseSequence;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.ListenableFuture;
 import it.unimi.dsi.fastutil.HashCommon;
@@ -158,8 +166,12 @@ import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.Sort;
 import org.apache.calcite.rel.logical.LogicalValues;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
+import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.sql.SqlKind;
+import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlSelect;
+import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.Pair;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.collections.CollectionUtils;
@@ -175,10 +187,12 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -191,20 +205,25 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static com.alibaba.polardbx.common.TddlConstants.COLUMNAR_AUTO_SNAPSHOT_CONFIG;
+import static com.alibaba.polardbx.common.columnar.ColumnarUtils.AddCDCMarkEventForColumnar;
+import static com.alibaba.polardbx.common.properties.ConnectionParams.FOLLOWER_READ_WEIGHT;
 import static com.alibaba.polardbx.common.properties.ConnectionParams.MASTER_READ_WEIGHT;
 import static com.alibaba.polardbx.common.trx.TrxLogTableConstants.TRX_LOG_SOCKET_TIMEOUT;
 import static com.alibaba.polardbx.common.utils.thread.ThreadCpuStatUtil.NUM_CORES;
 import static com.alibaba.polardbx.executor.gsi.utils.Transformer.buildBatchParam;
 import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_INJECT_IGNORE_INTERRUPTED_TO_STATISTIC_SCHEDULE_JOB;
+import static com.alibaba.polardbx.gms.topology.SystemDbHelper.DEFAULT_DB_NAME;
 import static io.airlift.concurrent.MoreFutures.getFutureValue;
 import static io.airlift.concurrent.MoreFutures.tryGetFutureValue;
 
@@ -358,6 +377,10 @@ public class ExecUtils {
         } else {
             boolean columnarMode = context.getParamManager()
                 .getBoolean(ConnectionParams.ENABLE_COLUMNAR_SCHEDULE);
+            // we don't support master mpp follow read because follower datasource may not be established
+            if (OptimizerUtils.enableFollowRead(context)) {
+                return false;
+            }
             if (context.getParamManager().getBoolean(ConnectionParams.ENABLE_MASTER_MPP)) {
                 return true;
             } else if (columnarMode) {
@@ -629,6 +652,65 @@ public class ExecUtils {
         return results;
     }
 
+    public static List<Map<String, Object>> resultSetToListByUsingGetColumnLabel(ResultSet rs) {
+
+        if (rs == null) {
+            return null;
+        }
+
+        List<Map<String, Object>> results = new ArrayList<>();
+
+        try {
+            ResultSetMetaData meta = rs.getMetaData();
+            while (rs.next()) {
+                Map<String, Object> row = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+
+                for (int i = 1; i <= meta.getColumnCount(); i++) {
+                    row.put(meta.getColumnLabel(i), rs.getObject(i));
+                }
+
+                results.add(row);
+            }
+        } catch (Exception ex) {
+            throw GeneralUtil.nestedException(ex);
+        }
+
+        return results;
+    }
+
+    public static ColumnMeta getColumnMeta(Object o) {
+        ISelectable c = (ISelectable) o;
+
+        return new ColumnMeta(c.getTableName(), c.getColumnName(), c.getAlias(), c.getField());
+    }
+
+    public static Comparator<Chunk.ChunkRow> getAssertedSameTypeComparator(
+        final List<OrderByOption> orderBys, List<DataType> columnMetas) {
+        Preconditions.checkArgument(columnMetas != null);
+
+        return (r1, r2) -> {
+            final int orderByOptionSize = orderBys.size();
+            for (int i = 0; i < orderByOptionSize; i++) {
+                OrderByOption option = orderBys.get(i);
+
+                // NOTE: null == null
+                int n = r1.compareAssertedSameType(option.index, r2, option.index);
+
+                if (n == 0) {
+                    continue;
+                }
+
+                if (!option.asc) {
+                    n = n < 0 ? 1 : -1;
+                }
+
+                return n;
+            }
+            return 0;
+        };
+
+    }
+
     /**
      * 根据order by 条件，从left和right KVPair里面拿到一个列所对应的值(从key或者从value里面） 然后进行比较。
      * 相等则继续比较其他。 不相等则根据asc desc决定大小。
@@ -712,11 +794,16 @@ public class ExecUtils {
     }
 
     public static MasterSlave getMasterSlave(boolean inTrans, boolean isWrite, ExecutionContext ec) {
+        return getMasterSlave(inTrans, isWrite, false, ec);
+    }
 
+    public static MasterSlave getMasterSlave(boolean inTrans, boolean isWrite, boolean readInTransStart,
+                                             ExecutionContext ec) {
         MasterSlave masterSlaveVal = MasterSlave.READ_WEIGHT;
+        boolean masterInTrans = inTrans && !(DynamicConfig.getInstance().enableFollowReadInTrans() && readInTransStart);
         if (isWrite) {
             masterSlaveVal = MasterSlave.MASTER_ONLY;
-        } else if (inTrans) {
+        } else if (masterInTrans) {
             masterSlaveVal = MasterSlave.MASTER_ONLY;
         } else if (ConfigDataMode.isMasterMode() && (ec.getSqlType() != SqlType.SELECT && !ExecUtils.isMppMode(ec))) {
             //FIXME MPP SqlType is null now!
@@ -727,9 +814,20 @@ public class ExecUtils {
             if (ec.getExtraCmds().containsKey(ConnectionProperties.MASTER)) {
                 masterSlaveVal = MasterSlave.MASTER_ONLY;
             } else if (ec.getExtraCmds().containsKey(ConnectionProperties.SLAVE)) {
-                masterSlaveVal = MasterSlave.SLAVE_ONLY;
-            } else if (ec.getExtraCmds().containsKey(ConnectionProperties.FOLLOWER)) {
+                if (OptimizerUtils.enableFollowRead(ec)) {
+                    masterSlaveVal = MasterSlave.FOLLOWER_ONLY;
+                    CheckDataSourcesTask.checkFollowerConnection(
+                        Math.min(ec.getParamManager().getLong(ConnectionParams.FOLLOWER_READ_ACCOUNT_TIMEOUT), 60000));
+                } else {
+                    masterSlaveVal = MasterSlave.SLAVE_ONLY;
+                }
+            } else if (ec.getExtraCmds().containsKey(ConnectionProperties.FOLLOWER) &&
+                DynamicConfig.getInstance().enableFollowReadForPolarDBX()) {
                 masterSlaveVal = MasterSlave.FOLLOWER_ONLY;
+            } else if (OptimizerUtils.enableFollowRead(ec)) {
+                masterSlaveVal = MasterSlave.FOLLOWER_ONLY;
+                CheckDataSourcesTask.checkFollowerConnection(
+                    Math.min(ec.getParamManager().getLong(ConnectionParams.FOLLOWER_READ_ACCOUNT_TIMEOUT), 60000));
             } else if (ec.getExtraCmds().containsKey(ConnectionProperties.FOLLOWER)) {
                 masterSlaveVal = MasterSlave.FOLLOWER_ONLY;
             } else {
@@ -747,11 +845,18 @@ public class ExecUtils {
             ret = MasterSlave.SLAVE_ONLY;
         } else if (!ServerInstIdManager.getInstance().getAllHTAPReadOnlyInstIdSet().isEmpty() ||
             DynamicConfig.getInstance().enableFollowReadForPolarDBX()) {
+            int readFollowerWeight = ec.getParamManager().getInt(FOLLOWER_READ_WEIGHT);
             int readMasterWeight = ec.getParamManager().getInt(MASTER_READ_WEIGHT);
-            if (readMasterWeight >= 100 || readMasterWeight < 0) {
+            if (readFollowerWeight > 0 && readFollowerWeight <= 100) {
+                if (ThreadLocalRandom.current().nextDouble() * 100 <= readFollowerWeight) {
+                    ret = MasterSlave.FOLLOWER_ONLY;
+                } else {
+                    ret = MasterSlave.MASTER_ONLY;
+                }
+            } else if (readMasterWeight >= 100 || readMasterWeight < 0) {
                 return MasterSlave.MASTER_ONLY;
             } else {
-                if (Math.random() * 100 < readMasterWeight) {
+                if (ThreadLocalRandom.current().nextDouble() * 100 < readMasterWeight) {
                     ret = MasterSlave.MASTER_ONLY;
                 } else {
                     ret = MasterSlave.SLAVE_ONLY;
@@ -778,59 +883,73 @@ public class ExecUtils {
     }
 
     public static QueryConcurrencyPolicy getQueryConcurrencyPolicy(ExecutionContext executionContext) {
-        return getQueryConcurrencyPolicy(executionContext, null);
+        return getQueryConcurrencyPolicy(executionContext, null, null);
     }
 
     public static QueryConcurrencyPolicy getQueryConcurrencyPolicy(ExecutionContext executionContext,
                                                                    LogicalView logicalView) {
+        return getQueryConcurrencyPolicy(executionContext, logicalView, null);
+    }
+
+    /**
+     * Select the physical execution policy in one place. Ordinary callers pass no physical plans and retain the
+     * original policy. A staging/business plan list is constrained to a dispatcher that serializes operations sharing
+     * one group connection: the staging plan precedes its owner in that connection's input order, while different
+     * groups or group connections may still run concurrently.
+     */
+    public static QueryConcurrencyPolicy getQueryConcurrencyPolicy(ExecutionContext executionContext,
+                                                                   LogicalView logicalView,
+                                                                   List<RelNode> physicalPlans) {
+        final QueryConcurrencyPolicy policy;
         if (logicalView instanceof OSSTableScan) {
             if (executionContext.getParamManager().getBoolean(ConnectionParams.OSS_FILE_CONCURRENT)) {
-                return QueryConcurrencyPolicy.FILE_CONCURRENT;
+                policy = QueryConcurrencyPolicy.FILE_CONCURRENT;
             } else {
-                return QueryConcurrencyPolicy.CONCURRENT;
+                policy = QueryConcurrencyPolicy.CONCURRENT;
             }
-        }
-
-        // if MERGE_UNION = false, force use SEQUENTIAL
-        if (!executionContext.getParamManager().getBoolean(ConnectionParams.MERGE_UNION)) {
-            return QueryConcurrencyPolicy.SEQUENTIAL;
-        }
-
-        if (executionContext.getParamManager().getBoolean(ConnectionParams.SEQUENTIAL_CONCURRENT_POLICY)) {
-            return QueryConcurrencyPolicy.SEQUENTIAL;
-        }
-
-        // for broadcast table write
-        if (executionContext.getParamManager().getBoolean(ConnectionParams.FIRST_THEN_CONCURRENT_POLICY)) {
-            return QueryConcurrencyPolicy.FIRST_THEN_CONCURRENT;
-        }
-
-        // Force SEQUENTIAL to reduce deadlocks in transactions, unless for SELECT statements
-        // 5.4.19-0731版本后，新实例，update/delete默认忽略该规则
-        if (!executionContext.getParamManager()
+        } else if (!executionContext.getParamManager().getBoolean(ConnectionParams.MERGE_UNION)) {
+            // if MERGE_UNION = false, force use SEQUENTIAL
+            policy = QueryConcurrencyPolicy.SEQUENTIAL;
+        } else if (executionContext.getParamManager().getBoolean(ConnectionParams.SEQUENTIAL_CONCURRENT_POLICY)) {
+            policy = QueryConcurrencyPolicy.SEQUENTIAL;
+        } else if (executionContext.getParamManager().getBoolean(ConnectionParams.FIRST_THEN_CONCURRENT_POLICY)) {
+            // for broadcast table write
+            policy = QueryConcurrencyPolicy.FIRST_THEN_CONCURRENT;
+        } else if (!executionContext.getParamManager()
             .getBoolean(ConnectionParams.ENABLE_DML_GROUP_CONCURRENT_IN_TRANSACTION)
             && executionContext.getTransaction() instanceof IDistributedTransaction
             && executionContext.getSqlType() != SqlType.SELECT && !executionContext.getParamManager().getBoolean(
             ConnectionParams.GSI_CONCURRENT_WRITE) && logicalView == null) {
-            return QueryConcurrencyPolicy.SEQUENTIAL;
-        }
-
-        if (executionContext.getParamManager().getBoolean(ConnectionParams.GROUP_CONCURRENT_BLOCK)) {
+            // Force SEQUENTIAL to reduce deadlocks in transactions, unless for SELECT statements.
+            // 5.4.19-0731版本后，新实例，update/delete默认忽略该规则
+            policy = QueryConcurrencyPolicy.SEQUENTIAL;
+        } else if (executionContext.getParamManager().getBoolean(ConnectionParams.GROUP_CONCURRENT_BLOCK)) {
             if (logicalView != null && (logicalView.pushedRelNodeIsSort() || executionContext.getParamManager()
                 .getBoolean(ConnectionParams.MERGE_CONCURRENT))) {
-                return QueryConcurrencyPolicy.CONCURRENT;
+                policy = QueryConcurrencyPolicy.CONCURRENT;
+            } else if (executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_GROUP_PARALLELISM)) {
+                policy = QueryConcurrencyPolicy.RELAXED_GROUP_CONCURRENT;
+            } else {
+                policy = QueryConcurrencyPolicy.GROUP_CONCURRENT_BLOCK;
             }
-            if (executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_GROUP_PARALLELISM)) {
-                return QueryConcurrencyPolicy.RELAXED_GROUP_CONCURRENT;
-            }
-            return QueryConcurrencyPolicy.GROUP_CONCURRENT_BLOCK;
+        } else if (executionContext.getParamManager().getBoolean(ConnectionParams.BLOCK_CONCURRENT)) {
+            policy = QueryConcurrencyPolicy.CONCURRENT;
+        } else {
+            policy = QueryConcurrencyPolicy.SEQUENTIAL;
         }
 
-        if (executionContext.getParamManager().getBoolean(ConnectionParams.BLOCK_CONCURRENT)) {
-            return QueryConcurrencyPolicy.CONCURRENT;
+        boolean hasStaging = physicalPlans != null && physicalPlans.stream()
+            .anyMatch(plan -> plan instanceof BaseQueryOperation
+                && ((BaseQueryOperation) plan).isStagingRelNode());
+        if (!hasStaging
+            || policy == QueryConcurrencyPolicy.SEQUENTIAL
+            || policy == QueryConcurrencyPolicy.GROUP_CONCURRENT_BLOCK
+            || policy == QueryConcurrencyPolicy.RELAXED_GROUP_CONCURRENT) {
+            return policy;
         }
-
-        return QueryConcurrencyPolicy.SEQUENTIAL;
+        return executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_GROUP_PARALLELISM)
+            ? QueryConcurrencyPolicy.RELAXED_GROUP_CONCURRENT
+            : QueryConcurrencyPolicy.GROUP_CONCURRENT_BLOCK;
     }
 
     public static List<Map<Integer, ParameterContext>> getReturningResultByCursors(List<Cursor> cursors,
@@ -1083,7 +1202,7 @@ public class ExecUtils {
     }
 
     public static String buildDRDSTraceComment(ExecutionContext context) {
-        StringBuilder append = new StringBuilder();
+        // not support ccl temporary
         Object clientIp = context.getClientIp();
         Object traceId = context.getTraceId();
         Object server_id = "";
@@ -1092,9 +1211,35 @@ public class ExecUtils {
         if (null != extraVariables && extraVariables.containsKey("polardbx_server_id")) {
             server_id = extraVariables.get("polardbx_server_id");
         }
-        append.append("/*DRDS /").append(clientIp).append("/").append(traceId).append("/");
-        append.append(phySqlId).append("/").append(server_id).append("/ */");
-        return append.toString();
+        if (context.isContainsBlockChainTable()) {
+            return buildDRDSTraceComment(clientIp, traceId, server_id, phySqlId,
+                context.getPort(), context.getUser(), context.getBlockChainSchema(), context.getBlockChainTable(),
+                context.getReturningFlagForCdc());
+        } else {
+            return buildDRDSTraceComment(clientIp, traceId, server_id, phySqlId,
+                context.getReturningFlagForCdc());
+        }
+    }
+
+    /**
+     * format : /*DRDS /clientIp/traceId/phySqlId/server_id/port/user/schema/table/returning_flag_for_cdc/
+     * returning_flag_for_cdc:
+     * 0 stand for no special
+     * 1 stand for use returning_all for replace, cdc need to ignore order for fix delete
+     * todo: 2 stand for use returning for insert ignore , cdc need to merge fix delete and prev insert
+     */
+    public static String buildDRDSTraceComment(Object clientIp, Object traceId, Object server_id, Object phySqlId,
+                                               Object returningFlagForCdc) {
+        // fill null for block chain table to keep compatible
+        return "/*DRDS /" + clientIp + "/" + traceId + "/" + phySqlId + "/" + server_id + "/null/null/null/null/"
+            + returningFlagForCdc + "/" + " / */";
+    }
+
+    public static String buildDRDSTraceComment(Object clientIp, Object traceId, Object server_id, Object phySqlId,
+                                               Object port, Object user, Object schema, Object table,
+                                               Object returningFlagForCdc) {
+        return "/*DRDS /" + clientIp + "/" + traceId + "/" + phySqlId + "/" + server_id + "/"
+            + port + "/" + user + "/" + schema + "/" + table + "/" + returningFlagForCdc + "/" + "/ */";
     }
 
     public static byte[] buildDRDSTraceCommentBytes(ExecutionContext context) {
@@ -1106,14 +1251,94 @@ public class ExecUtils {
         if (null != extraVariables && extraVariables.containsKey("polardbx_server_id")) {
             server_id = extraVariables.get("polardbx_server_id");
         }
-        if (clientIp == null) {
-            clientIp = "null";
+        if (context.isContainsBlockChainTable()) {
+            return buildDRDSTraceCommentBytes(clientIp, traceId, server_id, phySqlId,
+                context.getPort(), context.getUser(), context.getBlockChainSchema(), context.getBlockChainTable(),
+                context.getReturningFlagForCdc(), context);
+        } else {
+            return buildDRDSTraceCommentBytes(clientIp, traceId, server_id, phySqlId,
+                context.getReturningFlagForCdc(), context);
         }
-        return Bytes.concat(hintPrefix, clientIp.getBytes(StandardCharsets.UTF_8), hintDivision,
-            traceId.getBytes(StandardCharsets.UTF_8), hintDivision,
-            phySqlId == null ? hintNULL : phySqlId.toString().getBytes(StandardCharsets.UTF_8),
-            hintDivision, server_id.toString().getBytes(StandardCharsets.UTF_8), hintEnd);
+    }
 
+    public static byte[] buildDRDSTraceCommentBytes(String clientIp, String traceId, Object server_id, Long phySqlId,
+                                                    Object returningFlagForCdc) {
+        return Bytes.concat(buildRawDRDSTraceCommentBytes(clientIp, traceId, server_id, phySqlId, returningFlagForCdc),
+            hintEnd);
+    }
+
+    public static byte[] buildDRDSTraceCommentBytes(String clientIp, String traceId, Object server_id, Long phySqlId,
+                                                    Object returningFlagForCdc,
+                                                    ExecutionContext context) {
+        byte[] hint =
+            Bytes.concat(buildRawDRDSTraceCommentBytes(clientIp, traceId, server_id, phySqlId, returningFlagForCdc),
+                hintDivision);
+        return concatCCLDetect(hint, context);
+    }
+
+    public static byte[] buildRawDRDSTraceCommentBytes(String clientIp, String traceId, Object server_id, Long phySqlId,
+                                                       Object returningFlagForCdc) {
+        // fill null for block chain table to keep compatible
+        return Bytes.concat(hintPrefix,
+            clientIp == null ? hintNULL : clientIp.getBytes(StandardCharsets.UTF_8), hintDivision,
+            traceId.getBytes(StandardCharsets.UTF_8), hintDivision,
+            phySqlId == null ? hintNULL : phySqlId.toString().getBytes(StandardCharsets.UTF_8), hintDivision,
+            server_id.toString().getBytes(StandardCharsets.UTF_8), hintDivision, hintNULL, hintDivision, hintNULL,
+            hintDivision, hintNULL, hintDivision, hintNULL, hintDivision,
+            returningFlagForCdc.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    public static byte[] buildDRDSTraceCommentBytes(String clientIp, String traceId, Object server_id, Long phySqlId,
+                                                    Integer port, String user, String schema, String table,
+                                                    Object returningFlagForCdc) {
+        return Bytes.concat(
+            buildRawDRDSTraceCommentBytes(clientIp, traceId, server_id, phySqlId, port, user, schema, table,
+                returningFlagForCdc), hintEnd);
+    }
+
+    public static byte[] buildDRDSTraceCommentBytes(String clientIp, String traceId, Object server_id, Long phySqlId,
+                                                    Integer port, String user, String schema, String table,
+                                                    Object returningFlagForCdc,
+                                                    ExecutionContext context) {
+        byte[] hint = Bytes.concat(
+            buildRawDRDSTraceCommentBytes(clientIp, traceId, server_id, phySqlId, port, user, schema, table,
+                returningFlagForCdc),
+            hintDivision);
+        return concatCCLDetect(hint, context);
+    }
+
+    public static byte[] buildRawDRDSTraceCommentBytes(String clientIp, String traceId, Object server_id, Long phySqlId,
+                                                       Integer port, String user, String schema, String table,
+                                                       Object returningFlagForCdc) {
+        return Bytes.concat(hintPrefix,
+            clientIp == null ? hintNULL : clientIp.getBytes(StandardCharsets.UTF_8), hintDivision,
+            traceId.getBytes(StandardCharsets.UTF_8), hintDivision,
+            phySqlId == null ? hintNULL : phySqlId.toString().getBytes(StandardCharsets.UTF_8), hintDivision,
+            server_id.toString().getBytes(StandardCharsets.UTF_8), hintDivision,
+            port.toString().getBytes(StandardCharsets.UTF_8), hintDivision,
+            user == null ? hintNULL : user.getBytes(StandardCharsets.UTF_8), hintDivision,
+            schema == null ? hintNULL : schema.getBytes(StandardCharsets.UTF_8), hintDivision,
+            table == null ? hintNULL : table.getBytes(StandardCharsets.UTF_8), hintDivision,
+            returningFlagForCdc.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    public static byte[] concatCCLDetect(byte[] hint, ExecutionContext context) {
+        if (context.getParamManager().getBoolean(ConnectionParams.ENABLE_CCL_DETECT)
+            && (context.getSqlType() == SqlType.SELECT || context.getSqlType() == SqlType.SELECT_FOR_UPDATE
+            || context.getSqlType() == SqlType.UPDATE)
+            && (!context.getTraceId().equalsIgnoreCase("statistic"))) {
+            try {
+                // templateID;columnId
+                byte[] cclDetectHInt = Bytes.concat("CCL;".getBytes(StandardCharsets.UTF_8),
+                    context.getSqlTemplateId().getBytes(StandardCharsets.UTF_8),
+                    ";".getBytes(StandardCharsets.UTF_8),
+                    CCLDetectManager.UNDETERMINED_COLUMN.getBytes(StandardCharsets.UTF_8));
+                hint = Bytes.concat(hint, cclDetectHInt);
+            } catch (Exception e) {
+                logger.warn("add CCL DETECT prefix error" + e.getMessage());
+            }
+        }
+        return Bytes.concat(hint, hintEnd);
     }
 
     public static Sequence mockSeq(String name) {
@@ -1270,6 +1495,29 @@ public class ExecUtils {
         return true;
     }
 
+    public static void makeZeroGroupAsBroadcastFirstGroup(ExecutionContext ec, List<RelNode> inputs) {
+        if (ec.isEnableZeroGroupAsBroadcastFirstGroup()) {
+            if (!(inputs.get(0) instanceof PhyTableOperation)) {
+                return;
+            }
+            // Find the min group name and put it in the list head.
+            int minGroupNameIndex = 0;
+            String minGroupName = ((PhyTableOperation) inputs.get(0)).getDbIndex();
+            for (int i = 1; i < inputs.size(); i++) {
+                if (!(inputs.get(i) instanceof PhyTableOperation)) {
+                    return;
+                }
+                if (((PhyTableOperation) inputs.get(i)).getDbIndex().compareTo(minGroupName) < 0) {
+                    minGroupNameIndex = i;
+                    minGroupName = ((PhyTableOperation) inputs.get(i)).getDbIndex();
+                }
+            }
+            if (minGroupNameIndex != 0) {
+                Collections.swap(inputs, 0, minGroupNameIndex);
+            }
+        }
+    }
+
     /**
      * reorder the  inputList by both groupName and groupConnId.
      * (the count of groupConnId of a group depend on the params of GROUP_PARALLELISM)
@@ -1313,6 +1561,8 @@ public class ExecUtils {
         Long grpParallelism = ec.getGroupParallelism();
         Boolean enableGrpParallelism = ec.getParamManager().getBoolean(ConnectionParams.ENABLE_GROUP_PARALLELISM);
 
+        makeZeroGroupAsBroadcastFirstGroup(ec, inputs);
+
         /**
          * key: groupConnid
          * val: list of phyOp
@@ -1333,7 +1583,7 @@ public class ExecUtils {
          * key: dnInstId( dnId@dnAddr )
          * val: set of GroupName
          */
-        Map<String, List<String>> dnInstIdToGroupListMap = new HashMap<>();
+        Map<String, List<String>> dnInstIdToGroupListMap = new LinkedHashMap<>();
         Map<String, Set<String>> dnInstIdToGroupSetMap = new HashMap<>();//used to remove duplicate groupName
         int maxGrpCntOfOneDnInst = 0;
 
@@ -1382,9 +1632,9 @@ public class ExecUtils {
          */
         List<String> newGroupListAfterZigzagDnInst = new ArrayList<>();
         for (int i = 0; i < maxGrpCntOfOneDnInst; i++) {
-            for (List<String> grpSetItem : dnInstIdToGroupListMap.values()) {
-                if (i < grpSetItem.size()) {
-                    newGroupListAfterZigzagDnInst.add(grpSetItem.get(i));
+            for (List<String> grpListItem : dnInstIdToGroupListMap.values()) {
+                if (i < grpListItem.size()) {
+                    newGroupListAfterZigzagDnInst.add(grpListItem.get(i));
                 }
             }
         }
@@ -1500,7 +1750,7 @@ public class ExecUtils {
     /**
      * 将inputList按RDS实例重排一下
      */
-    public static List<RelNode> zigzagInputsByMysqlInst(List<RelNode> inputs, String schemaName, ExecutionContext ec) {
+    public static List<RelNode> zigzagInputsByDnInst(List<RelNode> inputs, String schemaName, ExecutionContext ec) {
 
         List<RelNode> newInputs = new ArrayList<RelNode>(inputs.size());
 
@@ -1917,6 +2167,7 @@ public class ExecUtils {
         }
         logicalView.setTableName(tableNameList);
         logicalView.setFromTableOperation(tableOperation);
+        RelUtils.changeRowType(logicalView, tableOperation.getRowType());
         return logicalView;
     }
 
@@ -2024,9 +2275,9 @@ public class ExecUtils {
     public static String getLeaderKey(String schema) {
         InternalNodeManager manager = ServiceProvider.getInstance().getServer().getNodeManager();
         if (manager != null) {
-            List<Node> coordinators = manager.getAllNodes().getAllCoordinators();
+            List<InternalNode> coordinators = manager.getAllNodes().getAllCoordinators();
             if (coordinators != null && !coordinators.isEmpty()) {
-                for (Node node : coordinators) {
+                for (InternalNode node : coordinators) {
                     if (node.isLeader()) {
                         return node.getHost() + TddlNode.SEPARATOR_INNER + node.getPort();
                     }
@@ -2036,10 +2287,10 @@ public class ExecUtils {
         return null;
     }
 
-    public static void syncNodeStatus(String schema) {
+    public static void syncNodeStatus(String schema, boolean throwExceptions) {
         try {
             IGmsSyncAction action = new RefreshNodeSyncAction(schema);
-            SyncManagerHelper.sync(action, schema, SyncScope.ALL);
+            SyncManagerHelper.sync(action, schema, SyncScope.ALL, throwExceptions);
         } catch (Exception e) {
             logger.warn("node sync error", e);
         }
@@ -2082,12 +2333,12 @@ public class ExecUtils {
     public static long getLsn(IDataSource dataSource, long tso, String hint) throws SQLException {
         final String tsoSql;
         if (InstanceVersion.isMYSQL80()) {
-            tsoSql = hint + "call dbms_xa.advance_gcn_no_flush(" + tso + ")";
+            tsoSql = hint + TransactionAttribute.getPushMaxSeqMemory(tso);
         } else {
             tsoSql = hint + "SET GLOBAL innodb_heartbeat_seq = " + tso;
         }
 
-        final String lsnSql = hint + "SELECT LAST_APPLY_INDEX FROM information_schema.ALISQL_CLUSTER_LOCAL";
+        final String lsnSql = hint + getFetchLsnSql();
 
         ResultSet result;
         try (IConnection masterConn = dataSource.getConnection(MasterSlave.MASTER_ONLY)) {
@@ -2114,7 +2365,15 @@ public class ExecUtils {
                 result = stmt.executeQuery(lsnSql);
 
                 if (result.next()) {
-                    return Long.parseLong(result.getString(1));
+                    long lsn = Long.parseLong(result.getString(1));
+                    if (StorageInfoManager.isSupportGetCidx()) {
+                        // get_cidx() returns the commit index which points to the next log position to be written,
+                        // while LAST_APPLY_INDEX returns the last applied log position.
+                        // Subtract 1 to align semantics: ensure followers can satisfy "APPLIED_INDEX >= read_lsn"
+                        // immediately when no new writes are happening, avoiding infinite wait on replica consistent read.
+                        lsn = lsn - 1;
+                    }
+                    return lsn;
                 } else {
                     throw new SQLException("Empty result while getting Applied_index");
                 }
@@ -2134,6 +2393,14 @@ public class ExecUtils {
             } else {
                 throw new SQLException("Empty result while getting Applied_index");
             }
+        }
+    }
+
+    public static String getFetchLsnSql() {
+        if (StorageInfoManager.isSupportGetCidx()) {
+            return "call dbms_consensus.get_cidx()";
+        } else {
+            return "SELECT LAST_APPLY_INDEX FROM information_schema.ALISQL_CLUSTER_LOCAL";
         }
     }
 
@@ -2362,6 +2629,34 @@ public class ExecUtils {
         AsyncUtils.waitAll(futures);
     }
 
+    public static boolean existsHangingTrx(Set<String> dnIds, ITopologyExecutor executor,
+                                           ConcurrentLinkedQueue<Exception> exceptions) {
+        AtomicBoolean exists = new AtomicBoolean(false);
+        List<Future> futures = new ArrayList<>();
+        // Parallelism is the number of DN.
+        for (String dnId : dnIds) {
+            futures.add(executor.getExecutorService().submit(null, null, AsyncTask.build(() -> {
+                try (Connection conn = DbTopologyManager.getConnectionForStorage(dnId);
+                    Statement stmt = conn.createStatement()) {
+                    conn.setNetworkTimeout(TGroupDirectConnection.socketTimeoutExecutor, TRX_LOG_SOCKET_TIMEOUT);
+                    if (conn.isWrapperFor(XConnection.class)) {
+                        // Note: XA RECOVER will hold the LOCK_transaction_cache lock, so never block it.
+                        conn.unwrap(XConnection.class).setDefaultTokenKb(Integer.MAX_VALUE);
+                    }
+                    try (ResultSet rs = stmt.executeQuery("XA RECOVER")) {
+                        if (rs.next()) {
+                            exists.set(true);
+                        }
+                    }
+                } catch (Exception e) {
+                    exceptions.offer(e);
+                }
+            })));
+        }
+        AsyncUtils.waitAll(futures);
+        return exists.get();
+    }
+
     /**
      * Check whether begins with prefix 'drds-'
      */
@@ -2403,7 +2698,8 @@ public class ExecUtils {
             retry++;
             try {
                 CollectVariableSyncAction action = new CollectVariableSyncAction(k);
-                List<List<Map<String, Object>>> values = SyncManagerHelper.sync(action, SyncScope.ALL);
+                List<List<Map<String, Object>>> values =
+                    SyncManagerHelper.syncIgnoreExceptions(action, SyncScope.CURRENT_ONLY);
                 for (List<Map<String, Object>> value : values) {
                     String result = value.get(0).get("Value").toString();
                     if (!v.equalsIgnoreCase(result)) {
@@ -2438,80 +2734,9 @@ public class ExecUtils {
         if (trx instanceof IColumnarTransaction) {
             ((IColumnarTransaction) trx).setTsoTimestamp(tso);
         }
+        trx.setStartTimeInMs(System.currentTimeMillis());
+        trx.setStartTime(System.nanoTime());
         return trx;
-    }
-
-    public static Runnable forceAllTrx2PC() throws SQLException, InterruptedException {
-        // Force all trx being strict 2PC trx,
-        // the following configs are expected to be true.
-        String instId = InstIdUtil.getInstId();
-        Set<String> paramKeys = ImmutableSet.of(
-            ConnectionProperties.ENABLE_XA_TSO,
-            ConnectionProperties.ENABLE_AUTO_COMMIT_TSO,
-            ConnectionProperties.FORBID_AUTO_COMMIT_TRX
-        );
-        InstConfigAccessor accessor = new InstConfigAccessor();
-        accessor.setConnection(MetaDbUtil.getConnection());
-        // Original config.
-        List<InstConfigRecord> records = accessor.queryByParamKeys(instId, paramKeys);
-        // Need to be changed config.
-        Set<String> needChangedConfigs = new HashSet<>(paramKeys);
-        for (InstConfigRecord record : records) {
-            if (needChangedConfigs.contains(record.paramKey.toUpperCase())
-                && "true".equalsIgnoreCase(record.paramVal)) {
-                needChangedConfigs.remove(record.paramKey.toUpperCase());
-            }
-        }
-        // Changed config.
-        List<InstConfigRecord> changedRecords = null;
-        if (!needChangedConfigs.isEmpty()) {
-            // Change these configs.
-            Properties properties = new Properties();
-            for (String changedRecord : needChangedConfigs) {
-                properties.put(changedRecord, "true");
-            }
-            MetaDbUtil.setGlobal(properties);
-            // Changed config.
-            changedRecords = accessor.queryByParamKeys(instId, needChangedConfigs);
-            waitVarChange("forbidAutoCommitTrx", "true", 5);
-            // A better way to drain trx ?
-            Thread.sleep(1000);
-        }
-
-        final AtomicBoolean recover = new AtomicBoolean(false);
-
-        // Recover these changed configs.
-        final List<InstConfigRecord> changedRecords0 = new ArrayList<>();
-        if (null == changedRecords || changedRecords.isEmpty()) {
-            // No need to recover.
-            recover.set(true);
-        } else {
-            changedRecords0.addAll(changedRecords);
-        }
-        return () -> {
-            if (!recover.compareAndSet(false, true)) {
-                return;
-            }
-            // Restore var.
-            List<InstConfigRecord> current = accessor.queryByParamKeys(instId, needChangedConfigs);
-            Properties properties = new Properties();
-            for (InstConfigRecord changedRecord : changedRecords0) {
-                for (InstConfigRecord currentRecord : current) {
-                    if (currentRecord.paramKey.equalsIgnoreCase(changedRecord.paramKey)) {
-                        if (currentRecord.gmtModified.compareTo(changedRecord.gmtModified) <= 0) {
-                            // Not changed since we modify it, recover it back.
-                            properties.put(changedRecord.paramKey, "false");
-                        }
-                        break;
-                    }
-                }
-            }
-            try {
-                MetaDbUtil.setGlobal(properties);
-            } catch (SQLException e) {
-                throw new RuntimeException(e);
-            }
-        };
     }
 
     public static Map<String, Set<String>> diffOrcFiles(Map<String, Set<String>> v0, Map<String, Set<String>> v1) {
@@ -2617,21 +2842,36 @@ public class ExecUtils {
         return diff;
     }
 
-    private static boolean haveCciDoneDdl(String schemaName, String indexName) throws SQLException {
-        long tableId = DynamicColumnarManager.getInstance().getTableId(0, schemaName, indexName);
+    private static boolean existsDdl(String schemaName, String indexName) throws SQLException {
+        TableMeta tableMeta = OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(indexName);
+        long tableId = DynamicColumnarManager.getInstance().getTableId(0, schemaName, indexName, tableMeta);
         try (Connection connection = MetaDbUtil.getConnection()) {
             ColumnarTableEvolutionAccessor accessor = new ColumnarTableEvolutionAccessor();
             accessor.setConnection(connection);
-            return accessor.haveDoneDdl(tableId);
+            return accessor.existsDdl(tableId);
         }
     }
 
     public static boolean canUseCciFastChecker(String schemaName, String indexName) {
-        try {
-            return !haveCciDoneDdl(schemaName, indexName);
-        } catch (SQLException e) {
-            return false;
+        // maintain checksum may cause large transaction in metadb,
+        // so we currently do not record checksum and cci fast checker can not work anymore.
+        return false;
+//        try {
+//            // Fast checker cant work for cci which has performed ddl before.
+//            return !existsDdl(schemaName, indexName);
+//        } catch (SQLException e) {
+//            return false;
+//        }
+    }
+
+    public static Collection<Future> forEachDn(Set<String> dnIds, Consumer<String> task) {
+        List<Future> futures = new ArrayList<>();
+        ITopologyExecutor executor = ExecutorContext.getContext(DEFAULT_DB_NAME).getTopologyExecutor();
+        for (String dnId : dnIds) {
+            futures.add(executor.getExecutorService().submit(null, null,
+                AsyncTask.build(() -> task.accept(dnId))));
         }
+        return futures;
     }
 
     public static Map<String, String> getColumnarAutoSnapshotConfig() {
@@ -2647,4 +2887,338 @@ public class ExecUtils {
             throw new RuntimeException(e);
         }
     }
+
+    public static Pair<String, List<List<String>>> getGroupAndPhyTableNames(BaseTableOperation relNode,
+                                                                            ExecutionContext executionContext) {
+        List<List<String>> tableNames = null;
+        String groupName = null;
+        if (relNode instanceof PhyTableOperation) {
+            tableNames = ((PhyTableOperation) relNode).getTableNames();
+            groupName = ((PhyTableOperation) relNode).getDbIndex();
+        } else if (relNode instanceof DirectTableOperation) {
+            tableNames = Collections.singletonList(((DirectTableOperation) relNode).getTableNames());
+            groupName = ExecUtils.getTargetDbGruop(relNode, executionContext);
+        } else if (relNode instanceof DirectMultiDBTableOperation) {
+            tableNames = Collections.singletonList(
+                ((DirectMultiDBTableOperation) relNode).getPhysicalTableNames().stream().map(TableId::getTableName)
+                    .collect(Collectors.toList())
+            );
+            groupName = ExecUtils.getTargetDbGruop(relNode, executionContext);
+        } else if (relNode instanceof SingleTableOperation) {
+            tableNames = Collections.singletonList(
+                getSingleTablePhyTbName(executionContext.getSchemaName(), relNode.getLogicalTableNames()));
+            groupName = ExecUtils.getTargetDbGruop(relNode, executionContext);
+        } else if (relNode instanceof DirectShardingKeyTableOperation) {
+            tableNames = Collections.singletonList(
+                Collections.singletonList(executionContext.getDbIndexAndTableName().getValue()));
+            groupName = ExecUtils.getTargetDbGruop(relNode, executionContext);
+        } else {
+            throw new NotSupportException(relNode.getClass().getName());
+        }
+        return Pair.of(groupName, tableNames);
+    }
+
+    public static List<String> getSingleTablePhyTbName(String schema, List<String> logTableNames) {
+        boolean isNewPartDb = DbInfoManager.getInstance().isNewPartitionDb(schema);
+        List<String> physicalTableNames = null;
+        if (isNewPartDb) {
+            physicalTableNames = logTableNames.stream()
+                .map(e -> {
+                    PartitionInfo partitionInfo = OptimizerContext.getContext(schema)
+                        .getPartitionInfoManager().getPartitionInfo(e);
+                    if (partitionInfo != null) {
+                        return partitionInfo.getPrefixTableName();
+                    }
+                    return e;
+                }).collect(Collectors.toList());
+        } else {
+            physicalTableNames = logTableNames.stream()
+                .map(e -> {
+                    TableRule tableRule = OptimizerContext.getContext(schema)
+                        .getRuleManager()
+                        .getTableRule(e);
+                    if (tableRule != null) {
+                        return tableRule.getTbNamePattern();
+                    }
+                    return e;
+                })
+                .collect(Collectors.toList());
+        }
+        return physicalTableNames;
+    }
+
+    public static List<RelNode> filterByExplainExecutePhyTbPattern(ExecutionContext executionContext,
+                                                                   List<RelNode> inputs) {
+        if (inputs.isEmpty()) {
+            return inputs;
+        }
+        try {
+            String explainExecutePhyTbPattern =
+                executionContext.getParamManager().getString(ConnectionParams.EXPLAIN_EXECUTE_PHYTB_PATTERN);
+            if (explainExecutePhyTbPattern == null || explainExecutePhyTbPattern.isEmpty()) {
+                return inputs;
+            }
+            List<Pattern> pattenArr =
+                Arrays.stream(explainExecutePhyTbPattern.split(",")).map(Pattern::compile).collect(Collectors.toList());
+            List<RelNode> filteredInputs = new ArrayList<>();
+            for (int i = 0; i < inputs.size(); i++) {
+                Pair<String, List<List<String>>> pair =
+                    ExecUtils.getGroupAndPhyTableNames((BaseTableOperation) inputs.get(i), executionContext);
+                loop:
+                for (List<String> tableNames : pair.getValue()) {
+                    for (String tableName : tableNames) {
+                        for (Pattern pattern : pattenArr) {
+                            if (pattern.matcher(tableName).matches()) {
+                                filteredInputs.add(inputs.get(i));
+                                break loop;
+                            }
+                        }
+                    }
+                }
+            }
+            inputs = filteredInputs;
+        } catch (Throwable e) {
+            logger.error(e);
+        }
+
+        if (inputs.isEmpty()) {
+            throw new IllegalArgumentException("explain execute phytb pattern not match any table");
+        }
+        return inputs;
+    }
+
+    public static Long columnarFlush(long indexId) {
+        Long tso;
+        if (DynamicConfig.getInstance().isColumnarFlushUsingSyncPoint() && !ConfigDataMode.isColumnarMode()) {
+            // trigger a sync point trx.
+            try {
+                tso = ExecutorContext.getContext(DEFAULT_DB_NAME).getSyncPointExecutor().execute(indexId);
+            } catch (Throwable t) {
+                throw new RuntimeException(t);
+            }
+        } else {
+            // use cdc mark event.
+            String sql = "call polardbx.columnar_flush()";
+
+            //支持三种参数：
+            // 1、columnar_flush()，实例级别
+            // 2、columnar_flush(schemaName, tableName, indexName)，通过库名、表名、索引名匹配
+            // 3、columnar_flush(indexId)，通过列存索引id匹配
+            if (0 != indexId) {
+                //直接将参数替换成列存索引id
+                sql = "call polardbx.columnar_flush(" + indexId + ")";
+            }
+
+            tso = AddCDCMarkEventForColumnar(sql, SqlKind.PROCEDURE_CALL.name());
+        }
+        if (tso == null || tso <= 0) {
+            throw new RuntimeException("Columnar flush failed, because of tso: " + tso);
+        }
+        return tso;
+    }
+
+    public static void columnarIgnore(List<Long> tableIds) {
+        String joinedIds = tableIds.stream()
+            .map(String::valueOf)
+            .collect(Collectors.joining(","));
+
+        String sql = "call polardbx.columnar_ignore(" + joinedIds + ")";
+
+        for (long tableId : tableIds) {
+            try {
+                updateColumnarIgnoreMark(tableId, true);
+            } catch (Throwable t) {
+                logger.error("Set cci ignore failed, table id: " + tableId, t);
+            }
+        }
+
+        AddCDCMarkEventForColumnar(sql, SqlKind.PROCEDURE_CALL.name());
+    }
+
+    public static void columnarUnIgnore(List<Long> tableIds) {
+        String joinedIds = tableIds.stream()
+            .map(String::valueOf)
+            .collect(Collectors.joining(","));
+
+        String sql = "call polardbx.columnar_unignore(" + joinedIds + ")";
+
+        for (long tableId : tableIds) {
+            try {
+                updateColumnarIgnoreMark(tableId, false);
+            } catch (Throwable t) {
+                logger.error("Set cci ignore failed, table id: " + tableId, t);
+            }
+        }
+
+        AddCDCMarkEventForColumnar(sql, SqlKind.PROCEDURE_CALL.name());
+    }
+
+    public static void updateColumnarIgnoreMark(long tableId, boolean ignore) {
+        try (Connection connection = MetaDbUtil.getConnection()) {
+            ColumnarConfigAccessor configAccessor = new ColumnarConfigAccessor();
+            configAccessor.setConnection(connection);
+            List<ColumnarConfigRecord> records = configAccessor.query(tableId, ColumnarOptions.COLUMNAR_IGNORE);
+
+            if (GeneralUtil.isEmpty(records)) {
+                List<ColumnarConfigRecord> configRecords = new ArrayList<>();
+                ColumnarConfigRecord record = new ColumnarConfigRecord();
+                record.tableId = tableId;
+                record.configKey = ColumnarOptions.COLUMNAR_IGNORE;
+                record.configValue = String.valueOf(ignore);
+                configRecords.add(record);
+
+                configAccessor.insert(configRecords);
+            } else {
+                ColumnarConfigRecord record = records.get(0);
+                record.configValue = String.valueOf(ignore);
+                configAccessor.updateParamValueByTableId(tableId, record.configKey, record.configValue);
+            }
+        } catch (SQLException e) {
+            throw new TddlRuntimeException(ErrorCode.ERR_COLUMNAR_SNAPSHOT, e,
+                "Failed to update columnar ignore watermark");
+        }
+    }
+
+    public static void checkCrossGroupPushDown(ExecutionContext ec, List<RelNode> inputs) {
+        if (null == ec || !ec.isForbiddenCrossGroupWriteForExplicitTrx()
+            || !ec.isOptimizeForbidCrossGroupCheckForPushDownPlan()) {
+            return;
+        }
+        String group = null;
+        for (RelNode input : inputs) {
+            if (input instanceof PhyTableOperation) {
+                if (null == group) {
+                    group = ((PhyTableOperation) input).getDbIndex();
+                } else if (!group.equals(((PhyTableOperation) input).getDbIndex())) {
+                    ec.getTransaction().setCrucialError(ErrorCode.ERR_CROSS_GROUP_TRANSACTION,
+                        "Transaction cross group is forbidden.");
+                    throw new TddlRuntimeException(ErrorCode.ERR_CROSS_GROUP_TRANSACTION,
+                        group, ((PhyTableOperation) input).getDbIndex());
+                }
+            }
+        }
+    }
+
+    public static void checkCrossGroupNonPushDown(ExecutionContext ec, RelNode input) {
+        if (null == ec || !ec.isForbiddenCrossGroupWriteForExplicitTrx()
+            || !ec.isOptimizeForbidCrossGroupCheckForNonPushDownPlan()) {
+            return;
+        }
+        String group = null;
+        LogicalViewFinder logicalViewFinder = new LogicalViewFinder();
+        input.accept(logicalViewFinder);
+        for (LogicalView logicalView : logicalViewFinder.getResult()) {
+            // lock for select
+            if (logicalView.getLockMode() == SqlSelect.LockMode.SHARED_LOCK ||
+                logicalView.getLockMode() == SqlSelect.LockMode.EXCLUSIVE_LOCK) {
+                Map<String, List<List<String>>> lvs = logicalView.getTargetTables(ec);
+                for (String g : lvs.keySet()) {
+                    if (null == group) {
+                        group = g;
+                    } else if (!group.equals(g)) {
+                        ec.getTransaction().setCrucialError(ErrorCode.ERR_CROSS_GROUP_TRANSACTION,
+                            "Transaction cross group is forbidden.");
+                        throw new TddlRuntimeException(ErrorCode.ERR_CROSS_GROUP_TRANSACTION, group, g);
+                    }
+                }
+            }
+
+        }
+    }
+
+    /**
+     * 构建列存表影子表的CREATE TABLE SQL（基于TableMeta，用于无CCI场景）
+     * 影子表包含：主表主键、主表拆分键、IMPLICIT_PID_NAME、IMPLICIT_SEQ_NAME
+     * 影子表分区方式与主表一致
+     *
+     * @param schemaName 原表的库名
+     * @param tableName 原表的表名
+     * @param tableMeta 原表的TableMeta（用于获取主键和列定义）
+     * @param primaryPartitioning 主表的分区定义AST（SqlPartitionBy）
+     * @return 影子表的CREATE TABLE SQL
+     */
+    public static String buildColumnarShadowTableSql(
+        String schemaName,
+        String tableName,
+        TableMeta tableMeta,
+        SqlNode primaryPartitioning) {
+
+        // 1. 生成影子表名
+        String shadowTableName = BlackHoleUtils.getInsertToDeleteBlackHoleTableName(tableName);
+
+        // 2. 从TableMeta中获取所有列，保持与主表一致的顺序
+        StringBuilder columnDefSb = new StringBuilder();
+        boolean firstCol = true;
+        for (ColumnMeta col : tableMeta.getAllColumns()) {
+            String colName = col.getName();
+            if (!firstCol) {
+                columnDefSb.append(",\n");
+            }
+            columnDefSb.append("  `").append(colName).append("` ");
+            columnDefSb.append(buildColumnTypeSql(col));
+            firstCol = false;
+        }
+
+        // 2.1 添加主键定义（与主表一致）
+        List<String> pkColumns = tableMeta.getPrimaryKey().stream()
+            .map(ColumnMeta::getName)
+            .collect(Collectors.toList());
+        if (!pkColumns.isEmpty()) {
+            columnDefSb.append(",\n  PRIMARY KEY (");
+            columnDefSb.append(pkColumns.stream().map(c -> "`" + c + "`").collect(Collectors.joining(", ")));
+            columnDefSb.append(")");
+        }
+
+        // 3. 获取分区定义（与主表一致）
+        String partitionDef = "";
+        if (primaryPartitioning != null) {
+            partitionDef = primaryPartitioning.toString();
+        }
+
+        // 4. 构建 CREATE TABLE SQL
+        String createTableSql = String.format(
+            "CREATE TABLE `%s`.`%s` (\n%s\n) ENGINE = blackhole %s",
+            schemaName,
+            shadowTableName,
+            columnDefSb,
+            partitionDef
+        );
+
+        logger.warn("creating columnar shadow table: " + createTableSql);
+        return createTableSql;
+    }
+
+    /**
+     * 从ColumnMeta构建完整的SQL列类型字符串（含精度/长度）
+     * 例如：varchar(30), decimal(10, 2), datetime(3), int(11) 等
+     * 逻辑与 BasicSqlType.generateTypeString(sb, false) 一致
+     */
+    private static String buildColumnTypeSql(ColumnMeta col) {
+        String baseType = col.getField().getDataType().getStringSqlType();
+        RelDataType relType = col.getField().getRelType();
+        SqlTypeName typeName = relType.getSqlTypeName();
+        int precision = relType.getPrecision();
+        int scale = relType.getScale();
+
+        StringBuilder sb = new StringBuilder(baseType);
+        if (SqlTypeName.DATETIME_TYPES.contains(typeName) || SqlTypeName.APPROX_TYPES.contains(typeName)) {
+            // 时间类型和浮点类型：输出 fsp (scale)
+            if (scale >= 0) {
+                sb.append('(').append(scale).append(')');
+            }
+        } else {
+            boolean printPrecision = precision != RelDataType.PRECISION_NOT_SPECIFIED;
+            boolean printScale = scale != RelDataType.SCALE_NOT_SPECIFIED
+                && typeName.allowsPrecScale(true, true);
+            if (printPrecision) {
+                sb.append('(').append(precision);
+                if (printScale) {
+                    sb.append(", ").append(scale);
+                }
+                sb.append(')');
+            }
+        }
+        return sb.toString();
+    }
+
 }

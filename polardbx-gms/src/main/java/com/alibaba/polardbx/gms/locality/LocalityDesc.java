@@ -38,6 +38,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+import static com.alibaba.polardbx.gms.locality.DbConfigParser.unparseDbConfig;
+import static com.alibaba.polardbx.gms.locality.DbConfigParser.unwrapGroupName;
+
 /**
  * Descriptor of locality
  * Format:
@@ -61,6 +64,18 @@ public class LocalityDesc {
     private static final String SEQUENTIAL_PLACEMENT_PREFIX = "hash_range_sequential_placement=";
 
     public static final String STORAGE_POOL_PREFIX = "storage_pools=";
+
+    public static final String DB_CONFIG_PREFIX = "dble_config=";
+
+    public static final String DB_CONFIG_NEW_PREFIX = "db_config=";
+
+    public static final String DB_POOLS_CONFIG = "db_pools=";
+
+    public static final String DB_POOL_SET = "db_set=";
+
+    public static final String DB_CONFIG_RULE = "db_config_rule=";
+
+    public static final String DB_POOLS_RULE = "db_pools_rule=";
 
     private static final String PRIMARY_STORAGE_POOL_PREFIX = "primary_storage_pool=";
 
@@ -91,6 +106,52 @@ public class LocalityDesc {
 
     private String primaryDnId;
 
+    private Map<String, List<String>> proxyConfig;
+
+    public Boolean getDbConfigByRule() {
+        return dbConfigByRule;
+    }
+
+    public void setDbConfigByRule(Boolean dbConfigByRule) {
+        this.dbConfigByRule = dbConfigByRule;
+    }
+
+    private Boolean dbConfigByRule;
+
+    public Boolean getDbPoolsByRule() {
+        return dbPoolsByRule;
+    }
+
+    public void setDbPoolsByRule(Boolean dbPoolsByRule) {
+        this.dbPoolsByRule = dbPoolsByRule;
+    }
+
+    private Boolean dbPoolsByRule;
+
+    public List<String> getGroupKeyList() {
+        return groupKeyList;
+    }
+
+    public List<String> fetchPhyDbList() {
+        return proxyConfig.values().stream().map(o -> o.get(1)).collect(Collectors.toList());
+    }
+
+    public void setGroupKeyList(List<String> groupKeyList) {
+        this.groupKeyList = groupKeyList;
+    }
+
+    public void setUnorderGroupKey(Boolean unorderGroupKey) {
+        this.unorderGroupKey = unorderGroupKey;
+    }
+
+    private List<String> groupKeyList;
+
+    public Boolean getUnorderGroupKey() {
+        return unorderGroupKey;
+    }
+
+    private Boolean unorderGroupKey = false;
+
     public LocalityDesc() {
         this.dnSet = new HashSet<>();
         this.dnList = new ArrayList<>();
@@ -98,6 +159,10 @@ public class LocalityDesc {
         this.fullDnList = new ArrayList<>();
         this.balanceSingleTable = false;
         this.hashRangeSequentialPlacement = false;
+        this.groupKeyList = null;
+        this.unorderGroupKey = false;
+        this.proxyConfig = null;
+        this.dbConfigByRule = false;
     }
 
     public LocalityDesc(List<String> dnList) {
@@ -107,6 +172,10 @@ public class LocalityDesc {
         this.fullDnList = fullDnSet.stream().collect(Collectors.toList());
         this.balanceSingleTable = false;
         this.hashRangeSequentialPlacement = false;
+        this.groupKeyList = null;
+        this.unorderGroupKey = false;
+        this.proxyConfig = null;
+        this.dbConfigByRule = false;
     }
 
     public LocalityDesc(Set<String> dnSet) {
@@ -116,6 +185,10 @@ public class LocalityDesc {
         this.fullDnList = fullDnList.stream().collect(Collectors.toList());
         this.balanceSingleTable = false;
         this.hashRangeSequentialPlacement = false;
+        this.proxyConfig = null;
+        this.unorderGroupKey = false;
+        this.groupKeyList = null;
+        this.dbConfigByRule = false;
     }
 
     public Boolean hasStoragePoolDefinition() {
@@ -123,6 +196,10 @@ public class LocalityDesc {
     }
 
     public static LocalityDesc parse(String str) {
+        return parse(str, null);
+    }
+
+    public static LocalityDesc parse(String str, String schemaName) {
         LocalityDesc result = new LocalityDesc();
         if (str == null) {
             return result;
@@ -194,20 +271,57 @@ public class LocalityDesc {
                 String[] storagePoolNames = storagePoolSpecParser.getStoragePoolNames();
                 String primaryStoragePool = storagePoolSpecParser.getPrimaryStoragePool();
                 if (storagePoolNames != null && storagePoolNames.length > 0) {
-                    result.setStoragePoolNames(Arrays.stream(storagePoolNames).map(o->o.toLowerCase()).collect(Collectors.toList()));
+                    result.setStoragePoolNames(
+                        Arrays.stream(storagePoolNames).map(o -> o.toLowerCase()).collect(Collectors.toList()));
                     if (StringUtils.isEmpty(primaryStoragePool)) {
                         primaryStoragePool = storagePoolNames[0];
                     }
                     result.setPrimaryStoragePoolName(primaryStoragePool.toLowerCase());
                 }
-            } else if(option.startsWith(PRIMARY_STORAGE_POOL_PREFIX)){
-                String primaryStoragePoolStr = StringUtils.trim(StringUtils.removeStart(option, PRIMARY_STORAGE_POOL_PREFIX));
+            } else if (option.startsWith(PRIMARY_STORAGE_POOL_PREFIX)) {
+                String primaryStoragePoolStr =
+                    StringUtils.trim(StringUtils.removeStart(option, PRIMARY_STORAGE_POOL_PREFIX));
                 String primaryStoragePool = StringUtils.strip(primaryStoragePoolStr.toLowerCase(), "'\"");
                 result.setPrimaryStoragePoolName(primaryStoragePool.toLowerCase());
+            } else if (option.startsWith(DB_CONFIG_PREFIX)) { // option.startsWith(DB_CONFIG_RULE)) {
+                DbConfigParser dbConfigParser = new DbConfigParser(option, schemaName);
+                Map<String, List<String>> proxyConfig = dbConfigParser.getProxyConfig();
+                result.setProxyConfig(proxyConfig);
+            } else if (option.startsWith(DB_CONFIG_NEW_PREFIX)) {
+                DbConfigParser dbConfigParser = new DbConfigParser(option, schemaName);
+                Map<String, List<String>> proxyConfig = dbConfigParser.getProxyConfig();
+                result.setProxyConfig(proxyConfig);
+            } else if (option.startsWith(DB_POOLS_CONFIG) || option.startsWith(DB_POOL_SET)) {
+                List<String> groupKeyList = new ArrayList<>();
+                Boolean dbPoolsByRule = false;
+                Boolean unorderGroupKey = false;
+                if (option.startsWith(DB_POOLS_CONFIG)) {
+                    groupKeyList = DbConfigParser.parseGroupNames(
+                        StringUtils.trim(StringUtils.removeStart(option, DB_POOLS_CONFIG)), schemaName);
+                } else if (option.startsWith(DB_POOL_SET)) {
+                    groupKeyList = DbConfigParser.parseGroupNames(
+                        StringUtils.trim(StringUtils.removeStart(option, DB_POOL_SET)), schemaName);
+                    groupKeyList.sort(Comparator.naturalOrder());
+                    unorderGroupKey = true;
+                }
+                Set<String> groupKeySet = new HashSet<>(groupKeyList);
+                if (groupKeyList.size() != groupKeySet.size()) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_INVALID_DDL_PARAMS,
+                        String.format("invalid locality: '%s', each group key must be different", str));
+                }
+                result.setGroupKeyList(groupKeyList);
+                result.setDbPoolsByRule(dbPoolsByRule);
+                result.setUnorderGroupKey(unorderGroupKey);
             } else {
                 throw new TddlRuntimeException(ErrorCode.ERR_INVALID_DDL_PARAMS,
-                    String.format("invalid locality: '%s', must start with '%s' or '%s' or '%s' or be empty string.",
-                        str, DN_PREFIX, BALANCE_PREFIX, STORAGE_POOL_PREFIX));
+                    String.format(
+                        "invalid locality: '%s', must start with %s or be empty string.",
+                        str,
+                        Arrays.asList(DN_PREFIX, BALANCE_PREFIX, STORAGE_POOL_PREFIX, DB_CONFIG_PREFIX,
+                                DB_CONFIG_NEW_PREFIX, DB_POOLS_CONFIG)
+                            .stream()
+                            .map(o -> String.format("'%s'", o)).collect(Collectors.joining(" or "))));
+//                        DB_CONFIG_RULE, DB_POOLS_RULE));
             }
         }
         return result;
@@ -270,6 +384,10 @@ public class LocalityDesc {
         this.primaryStoragePoolName = primaryStoragePoolName;
     }
 
+    public void setProxyConfig(Map<String, List<String>> proxyConfig) {
+        this.proxyConfig = proxyConfig;
+    }
+
     public void setDnSet(Set<String> dnSet) {
         this.dnSet = dnSet;
         this.dnList = dnSet.stream().collect(Collectors.toList());
@@ -309,6 +427,10 @@ public class LocalityDesc {
         return this.dnSet == null || this.dnSet.isEmpty() || this.dnSet.contains(storage);
     }
 
+    public boolean matchGroupKey(String groupKey) {
+        return this.groupKeyList == null || this.groupKeyList.contains(groupKey);
+    }
+
     public boolean fullMatchStorageInstance(String storage) {
         return this.fullDnSet == null || this.fullDnSet.isEmpty() || this.fullDnSet.contains(storage);
     }
@@ -335,6 +457,22 @@ public class LocalityDesc {
         return (this.dnSet == null || this.dnSet.isEmpty()) && this.storagePoolNames.isEmpty();
     }
 
+    public boolean hasProxyConfig() {
+        return proxyConfig != null;
+    }
+
+    public boolean hasGroupKeyConfig() {
+        return groupKeyList != null;
+    }
+
+    public Map<String, List<String>> getProxyConfig() {
+        return proxyConfig;
+    }
+
+    public int fetchPhyDbCount() {
+        return proxyConfig.size();
+    }
+
     public String getDnString() {
         String result = "";
         if (!this.holdEmptyDnList()) {
@@ -349,6 +487,10 @@ public class LocalityDesc {
 
     @Override
     public String toString() {
+        return unparse(null);
+    }
+
+    public String unparse(String schemaName) {
         String result = "";
         List<String> options = new ArrayList<>();
         if (this.balanceSingleTable) {
@@ -366,14 +508,33 @@ public class LocalityDesc {
         } else if (!this.holdEmptyDnList()) {
             options.add("dn=" + StringUtils.join(this.dnSet, ","));
         }
+        if (this.hasProxyConfig()) {
+            String option = new DbConfigParser(proxyConfig).getSpec();
+            options.add(option);
+        }
+        if (this.hasGroupKeyConfig()) {
+            String option = "";
+            List<String> groups =
+                groupKeyList.stream().map(e -> unwrapGroupName(e, schemaName)).collect(Collectors.toList());
+            if (this.unorderGroupKey) {
+                option = DB_POOL_SET + StringUtils.join(groups, ",");
+            } else {
+                option = DB_POOLS_CONFIG + StringUtils.join(groups, ",");
+            }
+            options.add(option);
+        }
         if (!options.isEmpty()) {
             result = StringUtils.join(options, ";");
         }
         return result;
     }
 
-    public String showCreate() {
-        return "/* LOCALITY='" + this.toString() + "' */";
+    public String showCreate(String schemaName) {
+        return "/* LOCALITY='" + unparse(schemaName) + "' */";
+    }
+
+    public String showCreateWithoutComment(String schemaName) {
+        return "LOCALITY='" + unparse(schemaName) + "'";
     }
 
     public static class StoragePoolSpecParser {

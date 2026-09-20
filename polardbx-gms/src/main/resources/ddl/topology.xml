@@ -8,6 +8,7 @@
               `gmt_created` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
               `gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
               `inst_id` varchar(128) NOT NULL,
+              `sub_inst_id` varchar(128) default null,
               `inst_type` int(11) NOT NULL COMMENT '0:master, 1:slave',
               `ip`  varchar(128) NOT NULL,
               `port` int(11) NOT NULL,
@@ -26,6 +27,9 @@
               INDEX `idx_inst_id_status` (`inst_id`,`status`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
         ]]></Create>
+        <Change><![CDATA[
+            alter table `server_info` add column `sub_inst_id` varchar(128) default null
+        ]]> </Change>
     </SystemTable>
 
     <SystemTable name="storage_info">
@@ -155,6 +159,24 @@
         ]]></Create>
     </SystemTable>
 
+    <SystemTable name="sub_inst_config">
+        <Create><![CDATA[
+            CREATE TABLE IF NOT EXISTS `sub_inst_config` (
+              `id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT 'Primary key',
+              `gmt_created` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Creation time',
+              `gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last modification time',
+              `inst_id` varchar(128) NOT NULL COMMENT 'Instance ID',
+              `sub_inst_id` varchar(128) NOT NULL COMMENT 'Sub-instance ID',
+              `param_key` varchar(200) NOT NULL COMMENT 'Configuration parameter key',
+              `param_val` longtext COMMENT 'Configuration parameter value',
+              PRIMARY KEY (`id`),
+              UNIQUE KEY `uk_inst_sub_param` (`inst_id`, `sub_inst_id`, `param_key`),
+              KEY `idx_inst_id` (`inst_id`),
+              KEY `idx_sub_inst_id` (`sub_inst_id`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Sub-instance configuration table';
+        ]]></Create>
+    </SystemTable>
+
     <SystemTable name="inst_lock">
         <Create><![CDATA[
             create table if not exists inst_lock (
@@ -180,7 +202,26 @@
                `param_val` varchar(1024) NOT NULL,
                `extra` varchar(128),
                PRIMARY KEY (`id`),
-               UNIQUE KEY `uk_param_key` (`param_key`)
+               UNIQUE KEY `uk_inst_id_param_key` (`inst_id`, `param_key`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+        ]]></Create>
+        <Change><![CDATA[
+            alter table `variable_config` add unique key `uk_inst_id_param_key`(`inst_id`, `param_key`), drop key `uk_param_key`
+        ]]> </Change>
+    </SystemTable>
+
+    <SystemTable name="storage_info_mapping">
+        <Create><![CDATA[
+            create table if not exists storage_info_mapping (
+              `id` bigint(11) NOT NULL AUTO_INCREMENT,
+              `gmt_created` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              `gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              `upstream_inst_id` varchar(128) NOT NULL,
+              `upstream_storage_inst_id` varchar(128) NOT NULL,
+              `inst_id` varchar(128) NOT NULL,
+              `storage_inst_id` varchar(128) NOT NULL,
+              PRIMARY KEY (`id`),
+              UNIQUE KEY `uk_inst_id_mapping` (`upstream_inst_id`, `upstream_storage_inst_id`, `inst_id`,`storage_inst_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
         ]]></Create>
     </SystemTable>

@@ -117,12 +117,13 @@ public class InformationSchemaTableDetailHandler extends BaseVirtualViewSubClass
                             ExecutionContext executionContext,
                             Set<String> gsiNames,
                             ArrayResultCursor cursor) {
-        Map<String/**phyDbName**/, Pair<String/**storageInstId**/, String/**groupName**/>> storageInstIdGroupNames =
+        Map<String/**groupName**/, Pair<String/**storageInstId**/, String/**phyDb**/>> groupstorageInstIdPhyDbNames =
             new HashMap<>();
 
         // get all phy tables(partitions) info from all DNs
         Map<String/** dbName **/, Map<String, List<Object>> /** phy tables **/> phyDbTablesInfo =
-            StatsUtils.queryTableSchemaStats(schemaNames, logicalTableNames, tableLike, storageInstIdGroupNames, null);
+            StatsUtils.queryTableSchemaStats(schemaNames, logicalTableNames, tableLike, groupstorageInstIdPhyDbNames,
+                null);
 
         for (TableGroupConfig tableGroupConfig : tableGroupConfigs) {
             if (tableGroupConfig.getTableCount() == 0) {
@@ -139,13 +140,13 @@ public class InformationSchemaTableDetailHandler extends BaseVirtualViewSubClass
             List<PartitionGroupRecord> partitionGroupRecords = tableGroupConfig.getPartitionGroupRecords();
             /**
              * key: partName
-             * val: phyDb
-             * Prepare the partName->phyDb map for table group
+             * val: groupName
+             * Prepare the partName->groupName map for table group
              */
-            Map<String, String> partitionPyhDbMap = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+            Map<String, String> partitionGroupMap = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
             if (CollectionUtils.isNotEmpty(partitionGroupRecords)) {
-                partitionPyhDbMap.putAll(partitionGroupRecords.stream().collect(Collectors.toMap(
-                    PartitionGroupRecord::getPartition_name, PartitionGroupRecord::getPhy_db)));
+                partitionGroupMap.putAll(partitionGroupRecords.stream().collect(Collectors.toMap(
+                    PartitionGroupRecord::getPartition_name, PartitionGroupRecord::getGroup_Name)));
             }
             for (String tableName : tableGroupConfig.getAllTables()) {
                 String logicalTableName = tableName.toLowerCase();
@@ -236,11 +237,11 @@ public class InformationSchemaTableDetailHandler extends BaseVirtualViewSubClass
                     /**
                      * fetch phyDb by the phyPartName of phySpec
                      */
-                    String phyDb = partitionPyhDbMap.get(record.getName());
+                    String groupName = partitionGroupMap.get(record.getName());
 
-                    Pair<String/**storageInstId**/, String/**groupName**/> pair = storageInstIdGroupNames.get(phyDb);
+                    Pair<String/**storageInstId**/, String/**groupName**/> pair =
+                        groupstorageInstIdPhyDbNames.get(groupName);
                     String storageInstId = pair.getKey();
-                    String groupName = pair.getValue();
                     String phyTblName = record.getLocation().getPhyTableName();
 
                     Object[] row = new Object[22];

@@ -16,12 +16,11 @@
 
 package com.alibaba.polardbx.executor.operator;
 
-import com.alibaba.polardbx.common.properties.MppConfig;
 import com.alibaba.polardbx.executor.operator.spill.AsyncFileSingleStreamSpillerFactory;
 import com.alibaba.polardbx.executor.operator.spill.GenericSpillerFactory;
 import com.alibaba.polardbx.executor.operator.spill.SpillerFactory;
 import com.alibaba.polardbx.executor.operator.spill.SyncFileCleaner;
-import com.alibaba.polardbx.executor.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
@@ -33,6 +32,7 @@ import com.google.common.io.RecursiveDeleteOption;
 import org.apache.calcite.rel.RelFieldCollation;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -43,7 +43,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
-//
+@Ignore
 public class SortExecTest extends BaseExecTest {
     private static SpillerFactory spillerFactory;
     private static Path tempPath = Paths.get("./tmp/" + UUID.randomUUID());

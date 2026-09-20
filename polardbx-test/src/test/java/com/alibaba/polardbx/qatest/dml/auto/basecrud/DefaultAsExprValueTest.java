@@ -1,6 +1,7 @@
 package com.alibaba.polardbx.qatest.dml.auto.basecrud;
 
 import com.alibaba.polardbx.qatest.AutoCrudBasedLockTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import org.junit.After;
 import org.junit.Before;
@@ -11,6 +12,7 @@ import java.text.MessageFormat;
 import static com.alibaba.polardbx.qatest.validator.DataOperator.executeOnMysqlAndTddl;
 import static com.alibaba.polardbx.qatest.validator.DataValidator.selectContentSameAssert;
 
+@IcbcIgnore(ignoreReason = "TIMESTAMP RESTRICTION")
 public class DefaultAsExprValueTest extends AutoCrudBasedLockTestCase {
     private static final String TABLE_NAME = "default_as_expr_value_test_auto";
     private static final String GSI_NAME = "g_" + TABLE_NAME;

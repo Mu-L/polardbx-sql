@@ -21,6 +21,7 @@ import com.alibaba.polardbx.Commands;
 import com.alibaba.polardbx.Versions;
 import com.alibaba.polardbx.common.audit.AuditAction;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.logger.Logger;
@@ -28,9 +29,11 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.logger.MDC;
 import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.config.ConfigDataMode;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.gms.privilege.PolarAccountInfo;
 import com.alibaba.polardbx.gms.privilege.PolarPrivUtil;
 import com.alibaba.polardbx.net.compress.PacketOutputProxyFactory;
+import com.alibaba.polardbx.net.compress.RawPacketByteBufferOutputProxy;
 import com.alibaba.polardbx.net.handler.FrontendAuthenticator;
 import com.alibaba.polardbx.net.handler.FrontendAuthorityAuthenticator;
 import com.alibaba.polardbx.net.handler.LoadDataHandler;
@@ -42,7 +45,6 @@ import com.alibaba.polardbx.net.packet.EOFPacket;
 import com.alibaba.polardbx.net.packet.ErrorPacket;
 import com.alibaba.polardbx.net.packet.HandshakePacket;
 import com.alibaba.polardbx.net.packet.OkPacket;
-import com.alibaba.polardbx.net.util.AuditUtil;
 import com.alibaba.polardbx.net.util.CharsetUtil;
 import com.alibaba.polardbx.net.util.MySQLMessage;
 import com.alibaba.polardbx.net.util.RandomUtil;
@@ -57,6 +59,8 @@ import java.nio.charset.Charset;
 import java.util.Set;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * @author xianmao.hexm
@@ -64,6 +68,26 @@ import java.util.concurrent.atomic.AtomicReference;
 public abstract class FrontendConnection extends AbstractConnection {
 
     private static final Logger logger = LoggerFactory.getLogger(FrontendConnection.class);
+
+    private static final String MYSQL_CONNECTOR_J_5_NAME = "MySQL Connector Java";
+    private static final String MYSQL_CONNECTOR_J_NAME = "MySQL Connector/J";
+
+    private static final long CONNECTOR_J_PARTIAL_RESULT_FIXED_MAJOR = 5;
+    private static final long CONNECTOR_J_PARTIAL_RESULT_FIXED_MINOR = 1;
+    private static final long CONNECTOR_J_PARTIAL_RESULT_FIXED_PATCH = 35;
+
+    private static final Pattern MYSQL_CONNECTOR_J_VERSION_PATTERN =
+        Pattern.compile("^(\\d+)\\.(\\d+)\\.(\\d+)(?:\\.\\d+)*(?:-[0-9A-Za-z][0-9A-Za-z._-]*)?$");
+
+    /**
+     * Packet-boundary state for the command currently being processed.
+     * NONE means no output, CLEAN means packet-aligned, and DIRTY means a packet may be incomplete.
+     */
+    public enum PacketOutputState {
+        NONE,
+        CLEAN,
+        DIRTY
+    }
 
     protected String instanceId;
 
@@ -95,6 +119,11 @@ public abstract class FrontendConnection extends AbstractConnection {
     // added by chenghui.lch
     protected long clientFlags = 0;
     protected boolean clientMultiStatements = false;
+    private String clientName;
+    private String clientVersion;
+    private volatile PacketOutputState packetOutputState = PacketOutputState.NONE;
+    private final AtomicReference<RawPacketByteBufferOutputProxy> activePacketOutputProxy =
+        new AtomicReference<>();
     protected String authSchema;
     protected long packetCompressThreshold = 16000000L;
 
@@ -137,6 +166,10 @@ public abstract class FrontendConnection extends AbstractConnection {
 
     public void setPacketId(byte packetId) {
         this.packetId = packetId;
+    }
+
+    public void resetPacketOutputState() {
+        packetOutputState = PacketOutputState.NONE;
     }
 
     public static String getServerVersion() {
@@ -299,8 +332,104 @@ public abstract class FrontendConnection extends AbstractConnection {
         compressProto = (this.clientFlags & Capabilities.CLIENT_COMPRESS) != 0;
     }
 
+    public void setClientName(String clientName) {
+        this.clientName = clientName;
+    }
+
+    public String getClientName() {
+        return clientName;
+    }
+
+    public void setClientVersion(String clientVersion) {
+        this.clientVersion = clientVersion;
+    }
+
+    public String getClientVersion() {
+        return clientVersion;
+    }
+
+    /**
+     * Returns false only for Connector/J versions known to mishandle an ERR packet
+     * after a partial result. Unknown clients and versions are allowed by the
+     * blacklist policy.
+     */
+    public boolean isClientSafeForErrAfterPartialResult() {
+        final boolean connectorJ = MYSQL_CONNECTOR_J_5_NAME.equalsIgnoreCase(clientName)
+            || MYSQL_CONNECTOR_J_NAME.equalsIgnoreCase(clientName);
+        if (!connectorJ || clientVersion == null) {
+            return true;
+        }
+
+        final String version = clientVersion.trim();
+        final Matcher matcher = MYSQL_CONNECTOR_J_VERSION_PATTERN.matcher(version);
+        if (!matcher.matches()) {
+            return true;
+        }
+
+        try {
+            final long major = Long.parseLong(matcher.group(1));
+            final long minor = Long.parseLong(matcher.group(2));
+            final long patch = Long.parseLong(matcher.group(3));
+
+            return major > CONNECTOR_J_PARTIAL_RESULT_FIXED_MAJOR
+                || (major == CONNECTOR_J_PARTIAL_RESULT_FIXED_MAJOR
+                && minor > CONNECTOR_J_PARTIAL_RESULT_FIXED_MINOR)
+                || (major == CONNECTOR_J_PARTIAL_RESULT_FIXED_MAJOR
+                && minor == CONNECTOR_J_PARTIAL_RESULT_FIXED_MINOR
+                && patch >= CONNECTOR_J_PARTIAL_RESULT_FIXED_PATCH);
+        } catch (NumberFormatException e) {
+            // Only positively identified affected versions are rejected.
+            return true;
+        }
+    }
+
+    public PacketOutputState getPacketOutputState() {
+        return packetOutputState;
+    }
+
+    public void markPacketOutputDirty() {
+        packetOutputState = PacketOutputState.DIRTY;
+    }
+
+    public void markPacketOutputClean() {
+        packetOutputState = PacketOutputState.CLEAN;
+    }
+
+    public void registerActivePacketOutputProxy(RawPacketByteBufferOutputProxy proxy) {
+        RawPacketByteBufferOutputProxy current = activePacketOutputProxy.get();
+        if (current == proxy) {
+            return;
+        }
+
+        if (!activePacketOutputProxy.compareAndSet(null, proxy)) {
+            throw new TddlRuntimeException(
+                ErrorCode.ERR_PACKET_COMPOSE,
+                "Another packet output proxy is already active");
+        }
+    }
+
+    public void clearActivePacketOutputProxy(RawPacketByteBufferOutputProxy expected) {
+        activePacketOutputProxy.compareAndSet(expected, null);
+    }
+
+    public void flushActivePacketOutputProxy() {
+        RawPacketByteBufferOutputProxy proxy = activePacketOutputProxy.getAndSet(null);
+        if (proxy != null) {
+            proxy.flushPendingBuffer();
+        }
+    }
+
     public boolean isEofDeprecated() {
         return (clientFlags & Capabilities.CLIENT_DEPRECATE_EOF) > 0;
+    }
+
+    /**
+     * Whether the connected client advertised {@code CLIENT_SESSION_TRACK} during
+     * handshake. Only such clients can correctly parse the trailing
+     * {@code session_state_changes} payload that we may attach to OK packets.
+     */
+    public boolean isClientSessionTrack() {
+        return (clientFlags & Capabilities.CLIENT_SESSION_TRACK) > 0;
     }
 
     public boolean isManaged() {
@@ -443,6 +572,14 @@ public abstract class FrontendConnection extends AbstractConnection {
         // 检查schema的有效性
         if (db == null || !privileges.schemaExists(db)) {
             writeErrMessage(ErrorCode.ER_BAD_DB_ERROR, "Unknown database '" + db + "'");
+            return;
+        }
+
+        // Reject USE for external catalog schema — not supported, guide user to three-segment syntax
+        if (ExternalNameValidator.isExternalSchema(db)) {
+            writeErrMessage(ErrorCode.ERR_EXTERNAL_TABLE,
+                "USE is not supported for external catalog schema '" + db
+                    + "'. Use three-segment syntax instead: SELECT * FROM catalog.db.table");
             return;
         }
 
@@ -632,6 +769,9 @@ public abstract class FrontendConnection extends AbstractConnection {
         }
     }
 
+    protected void waitReschedule() {
+    }
+
     protected void showCloseInfo(Throwable t) {
         logger.warn("Connection force closed.", t);
     }
@@ -725,7 +865,7 @@ public abstract class FrontendConnection extends AbstractConnection {
                             }
                         }
                     }
-
+                    waitReschedule();
                     if (rescheduled) {
                         closeConnection = true;
                         if (data.length >= 5 && data[4] == Commands.COM_QUIT) {
@@ -777,6 +917,15 @@ public abstract class FrontendConnection extends AbstractConnection {
         flag |= Capabilities.CLIENT_MULTI_RESULTS;
         // flag |= Capabilities.CLIENT_PS_MULTI_RESULTS;
         flag |= Capabilities.CLIENT_PLUGIN_AUTH;
+        // Request client identity only while partial-result ERR handling is enabled.
+        if (DynamicConfig.getInstance().enableErrPacketAfterPartialResult()) {
+            flag |= Capabilities.CLIENT_CONNECT_ATTRS;
+        }
+
+        // Advertise session-track support so MySQL 5.7+ clients (mycli, mysql cli
+        // with --enable-session-track, JDBC ≥5.1.36 with sessionVariables) parse
+        // the session_state_changes payload we may attach to OK packets.
+        flag |= Capabilities.CLIENT_SESSION_TRACK;
         if (DynamicConfig.getInstance().enableDeprecateEof()) {
             flag |= Capabilities.CLIENT_DEPRECATE_EOF;
         }
@@ -871,6 +1020,12 @@ public abstract class FrontendConnection extends AbstractConnection {
         return false;
     }
 
+    public static boolean isCClError(Throwable t) {
+        String msg = t.getMessage();
+        return msg != null && (msg.contains("Concurrency control refuse to execute query") || msg.contains(
+            "Concurrency control waiting count exceed max waiting count"));
+    }
+
     protected boolean isTableNotFount(Throwable t) {
         String msg = t.getMessage();
         if (msg != null && msg.contains("doesn't exist") && msg.contains("Table")) {
@@ -885,6 +1040,31 @@ public abstract class FrontendConnection extends AbstractConnection {
 
     public abstract boolean checkConnectionCount();
 
+    public void sqlAuditLoginSuccess(String user) {
+    }
+
+    ;
+
+    public void sqlAuditLoginFail(String user) {
+    }
+
+    ;
+
+    public void sqlAuditLogout() {
+    }
+
+    ;
+
+    @Override
+    protected void cleanup() {
+        RawPacketByteBufferOutputProxy proxy = activePacketOutputProxy.getAndSet(null);
+        if (proxy != null) {
+            proxy.close();
+        }
+
+        super.cleanup();
+    }
+
     @Override
     public boolean close() {
         if (super.close()) {
@@ -898,8 +1078,12 @@ public abstract class FrontendConnection extends AbstractConnection {
 
     @Override
     protected void logout() {
-        AuditUtil.logAuditInfo(getInstanceId(), getSchema(),
-            getUser(), getHost(), getPort(), AuditAction.LOGOUT);
+
+    }
+
+    public void logAuditInfo(String instId, String database, String user, String host, int port,
+                             AuditAction action) {
+
     }
 
     public abstract void addConnectionCount();
@@ -924,6 +1108,14 @@ public abstract class FrontendConnection extends AbstractConnection {
 
     public void setInstanceId(String instanceId) {
         this.instanceId = instanceId;
+    }
+
+    public boolean isManagerConnection() {
+        return false;
+    }
+
+    public boolean checkUserConnectionCount(String user, String host, boolean ignoreHost) {
+        throw new UnsupportedOperationException();
     }
 
 }

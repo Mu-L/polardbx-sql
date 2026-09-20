@@ -60,6 +60,7 @@ public class InformationSchemaStorage extends VirtualView {
         columns.add(new RelDataTypeFieldImpl("DELETABLE", 7, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
         columns.add(new RelDataTypeFieldImpl("DELAY", 8, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
         columns.add(new RelDataTypeFieldImpl("ACTIVE", 9, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
+        columns.add(new RelDataTypeFieldImpl("STORAGE_INST_LABEL", 10, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
         return typeFactory.createStructType(columns);
     }
 }

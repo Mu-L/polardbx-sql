@@ -32,7 +32,7 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 public class FrontendCommandHandler implements NIOHandler {
 
     private static final Logger logger = LoggerFactory.getLogger(FrontendCommandHandler.class);
-    private static final Logger cdcLogger = LoggerFactory.getLogger("cdc_log");
+    private static final Logger cdcLogger = LoggerFactory.getLogger(FrontendCommandHandler.class);
 
     protected final FrontendConnection source;
     protected final CommandCount commandCount;
@@ -49,6 +49,7 @@ public class FrontendCommandHandler implements NIOHandler {
     synchronized public void handle(byte[] data) {
         source.buildMDC();
         source.setPacketId((byte) (0 & 0xff));
+        source.resetPacketOutputState();
         source.setLastActiveTime(System.nanoTime());
         source.setSqlBeginTimestamp(System.currentTimeMillis());
 

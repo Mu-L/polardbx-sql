@@ -23,10 +23,6 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
-import com.alibaba.polardbx.common.model.sqljep.Comparative;
-import com.alibaba.polardbx.common.model.sqljep.ComparativeAND;
-import com.alibaba.polardbx.common.model.sqljep.ComparativeOR;
-import com.alibaba.polardbx.common.model.sqljep.ExtComparative;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptSchema;
@@ -39,11 +35,11 @@ import org.apache.calcite.rel.RelInput;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelPartitionWise;
 import org.apache.calcite.rel.core.AggregateCall;
+import org.apache.calcite.rel.core.CTEProducer;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.GroupConcatAggregateCall;
 import org.apache.calcite.rel.core.Window;
 import org.apache.calcite.rel.type.RelDataType;
-import org.apache.calcite.rex.RexDynamicParam;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
@@ -53,7 +49,6 @@ import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlPostfixOperator;
 import org.apache.calcite.sql.SqlWindow;
-import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Util;
@@ -65,7 +60,6 @@ import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -107,6 +101,7 @@ public class DRDSRelJsonReader {
         lastRel = null;
         Map<String, Object> o;
         o = JSON.parseObject(s, TYPE_REF.getType());
+        PlannerContext.getPlannerContext(cluster).getCteContext().init();
         @SuppressWarnings("unchecked") final List<Map<String, Object>> rels = (List) o.get("rels");
         readRels(rels);
         String args = (String) o.get(ARGS_KEY);
@@ -120,53 +115,6 @@ public class DRDSRelJsonReader {
         lastRel = null;
         readRels(jsonRels);
         return lastRel;
-    }
-
-    public List<Map<String, Comparative>> readComparatives(List<Map<String, Object>> comparatives) throws IOException {
-        List<Map<String, Comparative>> list = new ArrayList<>();
-        for (Map<String, Object> inferred : comparatives) {
-            Map<String, Comparative> m = new HashMap<>();
-            for (String key : inferred.keySet()) {
-                Map<String, Object> value = (Map<String, Object>) inferred.get(key);
-                if (value != null) {
-                    m.put(key, readComparative(value));
-                } else {
-                    m.put(key, null);
-                }
-            }
-            list.add(m);
-        }
-        return list;
-    }
-
-    private Comparative readComparative(Map<String, Object> m) {
-        Comparative comparative;
-        String type = (String) m.get("type");
-        if (type.equals(ComparativeAND.class.getSimpleName())) {
-            List<Map<String, Object>> list = (List<Map<String, Object>>) m.get("list");
-            comparative = new ComparativeAND();
-            for (Map<String, Object> mm : list) {
-                ((ComparativeAND) comparative).addComparative(readComparative(mm));
-            }
-        } else if (type.equals(ComparativeOR.class.getSimpleName())) {
-            List<Map<String, Object>> list = (List<Map<String, Object>>) m.get("list");
-            comparative = new ComparativeOR();
-            for (Map<String, Object> mm : list) {
-                ((ComparativeOR) comparative).addComparative(readComparative(mm));
-            }
-        } else if (type.equals(ExtComparative.class.getSimpleName())) {
-            String columnName = (String) m.get("columnName");
-            Integer comparison = (Integer) m.get("comparison");
-            Object value = m.get("value");
-            RexNode rexNode = relJson.toRex(makeEmptyRelInput(), value);
-            comparative = new ExtComparative(columnName, comparison, rexNode);
-        } else {
-            Integer comparison = (Integer) m.get("comparison");
-            Object value = m.get("value");
-            RexNode rexNode = relJson.toRex(makeEmptyRelInput(), value);
-            comparative = new Comparative(comparison, rexNode);
-        }
-        return comparative;
     }
 
     private void readRels(List<Map<String, Object>> jsonRels) {
@@ -381,12 +329,24 @@ public class DRDSRelJsonReader {
                 return ((Number) jsonRel.get(tag)).intValue();
             }
 
+            public RelNode getCTERef(Integer integer) {
+                return PlannerContext.getPlannerContext(cluster).getCteContext().getCteProducer(integer);
+            }
+
             public boolean getBoolean(String tag, boolean default_) {
                 final Boolean b = (Boolean) jsonRel.get(tag);
                 return b != null ? b : default_;
             }
 
             public <E extends Enum<E>> E getEnum(String tag, Class<E> enumClass) {
+                return Util.enumVal(enumClass,
+                    getString(tag).toUpperCase(Locale.ROOT));
+            }
+
+            public <E extends Enum<E>> E getEnum(String tag, Class<E> enumClass, E default_) {
+                if (get(tag) == null) {
+                    return default_;
+                }
                 return Util.enumVal(enumClass,
                     getString(tag).toUpperCase(Locale.ROOT));
             }
@@ -399,6 +359,18 @@ public class DRDSRelJsonReader {
                 final List<RexNode> nodes = new ArrayList<>();
                 for (Object jsonNode : jsonNodes) {
                     nodes.add(relJson.toRex(this, jsonNode));
+                }
+                return nodes;
+            }
+
+            public List<RexNode> getExpressionList(String tag, List<RelNode> inputs) {
+                @SuppressWarnings("unchecked") final List<Object> jsonNodes = (List) jsonRel.get(tag);
+                if (jsonNodes == null) {
+                    return null;
+                }
+                final List<RexNode> nodes = new ArrayList<>();
+                for (Object jsonNode : jsonNodes) {
+                    nodes.add(relJson.toRex(this, jsonNode, inputs));
                 }
                 return nodes;
             }
@@ -438,6 +410,11 @@ public class DRDSRelJsonReader {
                             return names.size();
                         }
                     });
+            }
+
+            public RelCollation getInnerCollation() {
+                //noinspection unchecked
+                return relJson.toCollation((List) get("innercollation"));
             }
 
             public RelCollation getCollation() {
@@ -519,6 +496,9 @@ public class DRDSRelJsonReader {
                 rel.setRelatedId(relatedId);
             }
             relMap.put(id, rel);
+            if (rel instanceof CTEProducer) {
+                PlannerContext.getPlannerContext(rel).getCteContext().registerCteProducer((CTEProducer) rel);
+            }
             lastRel = rel;
         } catch (InstantiationException | IllegalAccessException e) {
             throw new RuntimeException(e);
@@ -559,288 +539,6 @@ public class DRDSRelJsonReader {
                 + " for relational expression");
         }
         return node;
-    }
-
-    private RelInput makeEmptyRelInput() {
-        Map<String, Object> jsonRel = new HashMap<>();
-        DRDSRelJsonReader that = this;
-        return new RelInput() {
-            public RelOptCluster getCluster() {
-                return cluster;
-            }
-
-            public RelTraitSet getTraitSet() {
-                return cluster.traitSetOf(Convention.NONE);
-            }
-
-            @Override
-            public boolean supportMpp() {
-                return supportMpp;
-            }
-
-            @Override
-            public List<Window.Group> getWindowGroups() {
-                ImmutableBitSet keys = this.getBitSet("keys");
-                List<AggregateCall> calls = this.getAggregateCalls("calls");
-                List<Window.RexWinAggCall> rexWinAggCalls = Lists.newLinkedList();
-                RelNode input = this.getInput();
-                for (AggregateCall aggregateCall : calls) {
-                    List<RexNode> args = Lists.newArrayList();
-                    for (Integer index : aggregateCall.getArgList()) {
-                        args.add(new RexInputRef(index, input.getRowType().getFieldList().get(index).getType()));
-                    }
-                    Window.RexWinAggCall rexWinAggCall = new Window.RexWinAggCall(aggregateCall.getAggregation(),
-                        aggregateCall.getType(),
-                        args,
-                        0,
-                        false);
-                    rexWinAggCalls.add(rexWinAggCall);
-                }
-                Window.Group newGroup = new Window.Group(keys,
-                    false,
-                    RexWindowBound.create(SqlWindow.createUnboundedPreceding(SqlParserPos.ZERO), null),
-                    RexWindowBound.create(SqlWindow.createUnboundedPreceding(SqlParserPos.ZERO), null),
-                    RelCollations.EMPTY,
-                    rexWinAggCalls);
-
-                // only support 1 group
-                return Lists.newArrayList(newGroup);
-            }
-
-            public RelOptTable getTable(String table) {
-                final List<String> list = getStringList(table);
-                return relOptSchema.getTableForMember(list);
-            }
-
-            public RelNode getInput() {
-                final List<RelNode> inputs = getInputs();
-                assert inputs.size() == 1;
-                return inputs.get(0);
-            }
-
-            public List<RelNode> getInputs() {
-                final List<String> jsonInputs = getStringList("inputs");
-                if (jsonInputs == null) {
-                    return ImmutableList.of(lastRel);
-                }
-                final List<RelNode> inputs = new ArrayList<>();
-                for (String jsonInput : jsonInputs) {
-                    inputs.add(lookupInput(jsonInput));
-                }
-                return inputs;
-            }
-
-            public RexNode getExpression(String tag) {
-                return relJson.toRex(this, jsonRel.get(tag));
-            }
-
-            public SqlOperator getSqlOperator(String tag) {
-                return relJson.toOp(tag, new HashMap<>());
-            }
-
-            public ImmutableBitSet getBitSet(String tag) {
-                return ImmutableBitSet.of(getIntegerList(tag));
-            }
-
-            public List<ImmutableBitSet> getBitSetList(String tag) {
-                List<List<Integer>> list = getIntegerListList(tag);
-                if (list == null) {
-                    return null;
-                }
-                final ImmutableList.Builder<ImmutableBitSet> builder =
-                    ImmutableList.builder();
-                for (List<Integer> integers : list) {
-                    builder.add(ImmutableBitSet.of(integers));
-                }
-                return builder.build();
-            }
-
-            public List<String> getStringList(String tag) {
-                //noinspection unchecked
-                return (List<String>) jsonRel.get(tag);
-            }
-
-            public List<Integer> getIntegerList(String tag) {
-                //noinspection unchecked
-                return (List<Integer>) jsonRel.get(tag);
-            }
-
-            public List<List<Integer>> getIntegerListList(String tag) {
-                //noinspection unchecked
-                return (List<List<Integer>>) jsonRel.get(tag);
-            }
-
-            public List<AggregateCall> getAggregateCalls(String tag) {
-                @SuppressWarnings("unchecked") final List<Map<String, Object>> jsonAggs = (List) jsonRel.get(tag);
-                final List<AggregateCall> inputs = new ArrayList<>();
-                for (Map<String, Object> jsonAggCall : jsonAggs) {
-                    inputs.add(toAggCall(jsonAggCall));
-                }
-                return inputs;
-            }
-
-            public Object get(String tag) {
-                return jsonRel.get(tag);
-            }
-
-            public String getString(String tag) {
-                return (String) jsonRel.get(tag);
-            }
-
-            public float getFloat(String tag) {
-                return ((Number) jsonRel.get(tag)).floatValue();
-            }
-
-            public int getInteger(String tag) {
-                return ((Number) jsonRel.get(tag)).intValue();
-            }
-
-            public boolean getBoolean(String tag, boolean default_) {
-                final Boolean b = (Boolean) jsonRel.get(tag);
-                return b != null ? b : default_;
-            }
-
-            public <E extends Enum<E>> E getEnum(String tag, Class<E> enumClass) {
-                return Util.enumVal(enumClass,
-                    getString(tag).toUpperCase(Locale.ROOT));
-            }
-
-            public List<RexNode> getExpressionList(String tag) {
-                @SuppressWarnings("unchecked") final List<Object> jsonNodes = (List) jsonRel.get(tag);
-                final List<RexNode> nodes = new ArrayList<>();
-                for (Object jsonNode : jsonNodes) {
-                    nodes.add(relJson.toRex(this, jsonNode));
-                }
-                return nodes;
-            }
-
-            public List<List<RexNode>> getExpressionListList(String tag) {
-                @SuppressWarnings("unchecked") final List<List<Object>> jsonNodeListList = (List) jsonRel.get(tag);
-                final List<List<RexNode>> nodeListList = new ArrayList<>();
-                for (List<Object> jsonNodeList : jsonNodeListList) {
-                    List<RexNode> nodeList = new ArrayList<>();
-                    for (Object jsonNode : jsonNodeList) {
-                        nodeList.add(relJson.toRex(this, jsonNode));
-                    }
-                    nodeListList.add(nodeList);
-                }
-                return nodeListList;
-            }
-
-            public RelDataType getRowType(String tag) {
-                final Object o = jsonRel.get(tag);
-                return relJson.toType(cluster.getTypeFactory(), o);
-            }
-
-            public RelDataType getRowType(String expressionsTag, String fieldsTag) {
-                final List<RexNode> expressionList = getExpressionList(expressionsTag);
-                @SuppressWarnings("unchecked") final List<String> names =
-                    (List<String>) get(fieldsTag);
-                return cluster.getTypeFactory().createStructType(
-                    new AbstractList<Map.Entry<String, RelDataType>>() {
-                        @Override
-                        public Map.Entry<String, RelDataType> get(int index) {
-                            return Pair.of(names.get(index),
-                                expressionList.get(index).getType());
-                        }
-
-                        @Override
-                        public int size() {
-                            return names.size();
-                        }
-                    });
-            }
-
-            public RelCollation getCollation() {
-                //noinspection unchecked
-                return relJson.toCollation((List) get("collation"));
-            }
-
-            public RelDistribution getDistribution() {
-                return relJson.toDistribution((Map<String, Object>) get("distribution"));
-            }
-
-            public RelPartitionWise getPartitionWise() {
-                return relJson.toPartitionWise((Map<String, Object>) get("partitionWise"));
-            }
-
-            public ImmutableList<ImmutableList<RexLiteral>> getTuples(String tag) {
-                //noinspection unchecked
-                final List<List> jsonTuples = (List) get(tag);
-                final ImmutableList.Builder<ImmutableList<RexLiteral>> builder =
-                    ImmutableList.builder();
-                for (List jsonTuple : jsonTuples) {
-                    builder.add(getTuple(jsonTuple));
-                }
-                return builder.build();
-            }
-
-            public ImmutableList<RexLiteral> getTuple(List jsonTuple) {
-                final ImmutableList.Builder<RexLiteral> builder =
-                    ImmutableList.builder();
-                for (Object jsonValue : jsonTuple) {
-                    builder.add((RexLiteral) relJson.toRex(this, jsonValue));
-                }
-                return builder.build();
-            }
-
-            public ImmutableList<ImmutableList<RexNode>> getDynamicTuples(String tag) {
-                //noinspection unchecked
-                final List<List> jsonTuples = (List) get(tag);
-                final ImmutableList.Builder<ImmutableList<RexNode>> builder =
-                    ImmutableList.builder();
-                for (List jsonTuple : jsonTuples) {
-                    builder.add(getDynamicTuple(jsonTuple));
-                }
-                return builder.build();
-            }
-
-            private ImmutableList<RexNode> getDynamicTuple(List jsonTuple) {
-                final ImmutableList.Builder<RexNode> builder =
-                    ImmutableList.builder();
-                for (Object jsonValue : jsonTuple) {
-                    builder.add((RexDynamicParam) relJson.toRex(this, jsonValue));
-                }
-                return builder.build();
-            }
-
-            public ImmutableSet<CorrelationId> getVariablesSet() {
-                if (jsonRel.get("variablesSet") != null) {
-                    Set<CorrelationId> correlationIdSet = new HashSet<>();
-                    for (Object id : (List) jsonRel.get("variablesSet")) {
-                        correlationIdSet.add(new CorrelationId(((Number) id).intValue()));
-                    }
-                    return ImmutableSet.copyOf(correlationIdSet);
-                } else {
-                    return ImmutableSet.of();
-                }
-            }
-
-            public void setLastRel(RelNode relNode) {
-                that.setLastRel(relNode);
-            }
-
-            public RelNode getLastRel() {
-                return that.getLastRel();
-            }
-        };
-    }
-
-    private Map<String, Object> fromJson2Map(String jsonString) {
-        HashMap jsonMap = JSON.parseObject(jsonString, HashMap.class);
-
-        HashMap<String, Object> resultMap = new HashMap<String, Object>();
-        for (Iterator iter = jsonMap.keySet().iterator(); iter.hasNext(); ) {
-            String key = (String) iter.next();
-            if (jsonMap.get(key) instanceof JSONArray) {
-                JSONArray jsonArray = (JSONArray) jsonMap.get(key);
-                List list = handleJSONArray(jsonArray);
-                resultMap.put(key, list);
-            } else {
-                resultMap.put(key, jsonMap.get(key));
-            }
-        }
-        return resultMap;
     }
 
     private List<Map<String, Object>> handleJSONArray(JSONArray jsonArray) {

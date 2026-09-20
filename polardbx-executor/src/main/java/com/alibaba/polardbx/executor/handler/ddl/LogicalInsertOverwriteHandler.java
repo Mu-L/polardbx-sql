@@ -31,7 +31,9 @@ import com.alibaba.polardbx.gms.metadb.misc.DdlEngineTaskAccessor;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineTaskRecord;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.config.table.TruncateUtil;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalCreateTable;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalInsertOverwrite;
@@ -42,6 +44,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static com.alibaba.polardbx.executor.ddl.newengine.utils.TaskHelper.deSerializeTask;
 
@@ -53,6 +56,19 @@ public class LogicalInsertOverwriteHandler extends LogicalCommonDdlHandler {
 
     public LogicalInsertOverwriteHandler(IRepository repo) {
         super(repo);
+    }
+
+    @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        String tableName = logicalDdlPlan.getTableName();
+        exclusiveResources.add(concatWithDot(logicalDdlPlan.getSchemaName(), logicalDdlPlan.getTableName()));
+        TableMeta tableMeta =
+            executionContext.getSchemaManager(logicalDdlPlan.getSchemaName()).getTableWithNull(tableName);
+        if (tableMeta != null) {
+            tableVersions.put(tableName, tableMeta.getVersion());
+        }
     }
 
     @Override

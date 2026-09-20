@@ -70,10 +70,20 @@ public abstract class ParameterizedTestCommon extends PlanTestCommon {
      */
     protected boolean explainCost = false;
 
+    public void beforeOptimize(ExecutionContext ec) {
+        //do nothing
+    }
+
+    public ExecutionPlan afterOptimize(String testSql, ExecutionContext ec, ExecutionPlan executionPlan) {
+        //do nothing
+        return executionPlan;
+    }
+
     @Override
     protected String getPlan(String testSql) {
         Map<Integer, ParameterContext> currentParameter = new HashMap<>();
         ExecutionContext executionContext = new ExecutionContext();
+        beforeOptimize(executionContext);
         executionContext.setStorageInfoSupplier((schema) -> new MergedStorageInfo(true,
             true,
             true,
@@ -89,24 +99,33 @@ public abstract class ParameterizedTestCommon extends PlanTestCommon {
             true,
             true,
             true,
-            false,
-            true,
-            true,
-            false,
             true,
             false,
             true,
             true,
+            false,
+            true,
+            false,
             true,
             true,
             true,
             true,
             true,
-            true));
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            false));
         executionContext.setServerVariables(new HashMap<>());
         executionContext.setAppName(appName);
         SqlParameterized sqlParameterized = SqlParameterizeUtils.parameterize(
             ByteString.from(testSql), currentParameter, executionContext, false);
+        executionContext.setSqlParameterized(sqlParameterized);
         setSysDefVariable(sqlParameterized.getParameters());
         Map<Integer, ParameterContext> param = OptimizerUtils.buildParam(sqlParameterized.getParameters());
         executionContext.setParams(new Parameters(param, false));
@@ -115,6 +134,13 @@ public abstract class ParameterizedTestCommon extends PlanTestCommon {
         SqlNode ast = astList.get(0);
         final HintPlanner hintPlanner = HintPlanner.getInstance(appName, executionContext);
         executionContext.getExtraCmds().put(ConnectionProperties.ENABLE_AUTO_FORCE_INDEX, enableAutoForceIndex);
+        executionContext.getExtraCmds().put(ConnectionProperties.ENABLE_PLANNER_TIMEOUT, false);
+        executionContext.getExtraCmds().put(ConnectionProperties.ENABLE_DRDS_REX_ROUTE, true);
+        executionContext.getExtraCmds().put(ConnectionProperties.ENABLE_GSI_LOOKUP_OPTIMIZE, true);
+        executionContext.getExtraCmds().put(ConnectionProperties.ENABLE_DRDS_OPTIMIZE_REX_ROUTE, true);
+        executionContext.getExtraCmds().put(ConnectionProperties.CONVERTER_IN_ONE_RELSET, true);
+        executionContext.getExtraCmds().put(ConnectionProperties.IGNORE_INVALID_TOPOLOGY_IN_POST_PLANNER, true);
+        executionContext.getServerVariables().put(ConnectionProperties.PUSHDOWN_RANGE_LIMIT.toLowerCase(), true);
         executionContext.getExtraCmds().putAll(configMaps);
         if (configMaps.containsKey("SQL_MODE")) {
             executionContext.setSqlMode((String) configMaps.get("SQL_MODE"));
@@ -135,8 +161,9 @@ public abstract class ParameterizedTestCommon extends PlanTestCommon {
         plannerContext.setSchemaName(appName);
         plannerContext.setAddForcePrimary(addForcePrimary);
 
-        ExecutionPlan executionPlan = Planner.getInstance().getPlan(ast, plannerContext);
+        ExecutionPlan executionPlan = getPlanner().getPlan(ast, plannerContext);
         executionPlan = PostPlanner.getInstance().optimize(executionPlan, executionContext);
+        executionPlan = afterOptimize(testSql, executionContext, executionPlan);
         String planStr = RelUtils
             .toString(executionPlan.getPlan(), param, RexUtils.getEvalFunc(executionContext), executionContext);
 
@@ -144,6 +171,10 @@ public abstract class ParameterizedTestCommon extends PlanTestCommon {
             executionContext.getParams() == null ? null : executionContext.getParams().getCurrentParameter(),
             executionContext.getSqlExplainLevel());
         return code;
+    }
+
+    protected Planner getPlanner() {
+        return Planner.getInstance();
     }
 
     protected void processParameter(SqlParameterized sqlParameterized, ExecutionContext executionContext) {

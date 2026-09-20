@@ -8,6 +8,7 @@ import com.alibaba.polardbx.common.utils.thread.ExecutorUtil;
 import com.alibaba.polardbx.common.utils.thread.NamedThreadFactory;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
+import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.gms.util.SyncUtil;
 import org.apache.calcite.sql.SqlKind;
 import org.quartz.CronScheduleBuilder;
@@ -68,7 +69,8 @@ public class AutoSnapshotManager {
             if (DynamicConfig.getInstance().isEnableColumnarReadInstanceAutoGenerateSnapshot()) {
                 // Only run on columnar slave instance.
                 // Remember to set this option on both master and columnar slave instances.
-                if (ConfigDataMode.isColumnarMode() && SyncUtil.isNodeWithSmallestId()) {
+                if (ConfigDataMode.isColumnarMode() && InstIdUtil.isClusterInstId()
+                    && SyncUtil.isNodeWithSmallestId()) {
                     AddCDCMarkEventForColumnar("call polardbx.columnar_flush()", SqlKind.PROCEDURE_CALL.name());
                 }
             } else {

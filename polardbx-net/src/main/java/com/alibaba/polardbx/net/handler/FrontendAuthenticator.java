@@ -20,11 +20,13 @@ import com.alibaba.polardbx.Capabilities;
 import com.alibaba.polardbx.Commands;
 import com.alibaba.polardbx.common.audit.AuditAction;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.encrypt.SecurityUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.gms.privilege.PolarPrivManager;
+import com.alibaba.polardbx.gms.sqlaudit.SqlAuditInterceptor;
 import com.alibaba.polardbx.net.FrontendConnection;
 import com.alibaba.polardbx.net.buffer.ByteBufferHolder;
 import com.alibaba.polardbx.net.compress.IPacketOutputProxy;
@@ -33,7 +35,7 @@ import com.alibaba.polardbx.net.packet.AuthPacket;
 import com.alibaba.polardbx.net.packet.AuthSwitchRequestPacket;
 import com.alibaba.polardbx.net.packet.AuthSwitchResponsePacket;
 import com.alibaba.polardbx.net.packet.QuitPacket;
-import com.alibaba.polardbx.net.util.AuditUtil;
+import com.alibaba.polardbx.net.util.PrivilegeUtil;
 import com.taobao.tddl.common.privilege.EncrptPassword;
 import org.apache.commons.lang3.StringUtils;
 
@@ -133,7 +135,7 @@ public class FrontendAuthenticator implements NIOHandler {
             }
 
             // check password is not null
-            if (StringUtils.isEmpty(new String(auth.password))) {
+            if (PrivilegeUtil.isPasswordEmpty(auth.password)) {
                 failure(ErrorCode.ER_ACCESS_DENIED_ERROR,
                     "Access denied for user '" + auth.user + "'@'" + source.getHost() + "' because password is empty",
                     "checkPassword");
@@ -141,10 +143,16 @@ public class FrontendAuthenticator implements NIOHandler {
             }
             // check password
             if (!checkPassword(auth.password, auth.user)) {
-                failure(ErrorCode.ER_ACCESS_DENIED_ERROR,
-                    "Access denied for user '" + auth.user + "'@'" + source.getHost()
-                        + "' because password is not correct",
-                    "checkPassword");
+                if (DynamicConfig.getInstance().isEnableConsistentErrorCode()) {
+                    failure(ErrorCode.ER_ACCESS_DENIED_ERROR,
+                        "Access denied for user '" + auth.user + "'@'" + source.getHost(), "checkPassword");
+                } else {
+                    failure(ErrorCode.ER_ACCESS_DENIED_ERROR,
+                        "Access denied for user '" + auth.user + "'@'" + source.getHost()
+                            + "' because password is not correct",
+                        "checkPassword");
+                }
+
                 return;
             }
         }
@@ -272,6 +280,9 @@ public class FrontendAuthenticator implements NIOHandler {
     }
 
     protected void success(AuthPacket auth, boolean trustLogin) {
+        if (auth.user != null && SqlAuditInterceptor.hasLoginSuccessPerm(auth.user) && !source.isManagerConnection()) {
+            source.sqlAuditLoginSuccess(auth.user);
+        }
         source.setAuthenticated(true);
         source.setTrustLogin(trustLogin);
         source.setUser(auth.user);
@@ -279,10 +290,11 @@ public class FrontendAuthenticator implements NIOHandler {
         source.setAuthSchema(auth.database);
         source.setCharsetIndex(auth.charsetIndex);
         source.setClientFlags(auth.clientFlags);
+        source.setClientName(auth.getConnectionAttribute(AuthPacket.ATTR_CLIENT_NAME));
+        source.setClientVersion(auth.getConnectionAttribute(AuthPacket.ATTR_CLIENT_VERSION));
         source.setHandler(new FrontendCommandHandler(source));
-        source.addConnectionCount();
         source.updateMDC();
-        if (logger.isInfoEnabled()) {
+        if (logger.isInfoEnabled() && !source.isManagerConnection()) {
             StringBuilder s = new StringBuilder();
             s.append(source).append('\'').append(auth.user).append("' login success");
             byte[] extra = auth.extra;
@@ -292,7 +304,7 @@ public class FrontendAuthenticator implements NIOHandler {
             logger.info(s.toString());
         }
 
-        AuditUtil.logAuditInfo(source.getInstanceId(), auth.database, auth.user, source.getHost(), source.getPort(),
+        source.logAuditInfo(source.getInstanceId(), auth.database, auth.user, source.getHost(), source.getPort(),
             AuditAction.LOGIN);
 
         /**
@@ -332,14 +344,19 @@ public class FrontendAuthenticator implements NIOHandler {
     }
 
     protected void failure(ErrorCode errno, String info, String cause) {
+        if (auth.user != null && SqlAuditInterceptor.hasLoginFailedPerm(auth.user) && !source.isManagerConnection()) {
+            source.sqlAuditLoginFail(auth.user);
+        }
         source.clearMDC();
         if (errno == ER_DBACCESS_DENIED_ERROR || errno == ErrorCode.ER_ACCESS_DENIED_ERROR) {
-            incrementLoginErrorCount(auth.user, source.getHost());
-            AuditUtil.logAuditInfo(source.getInstanceId(), auth.database, auth.user, source.getHost(), source.getPort(),
+            if ("checkPassword".equalsIgnoreCase(cause)) {
+                incrementLoginErrorCount(auth.user, source.getHost());
+            }
+            source.logAuditInfo(source.getInstanceId(), auth.database, auth.user, source.getHost(), source.getPort(),
                 AuditAction.LOGIN_ERR);
         }
         if (errno == ErrorCode.ER_PASSWORD_NOT_ALLOWED) {
-            AuditUtil.logAuditInfo(source.getInstanceId(), auth.database, auth.user, source.getHost(), source.getPort(),
+            source.logAuditInfo(source.getInstanceId(), auth.database, auth.user, source.getHost(), source.getPort(),
                 AuditAction.LOGIN_ERR);
         }
         if (cause != null) {
@@ -373,4 +390,12 @@ public class FrontendAuthenticator implements NIOHandler {
     public void incrementLoginErrorCount(String userName, String host) {
         PolarPrivManager.getInstance().incrementLoginErrorCount(userName, host);
     }
+
+    public void clearLoginErrorCount(String userName, String host) {
+        if (!ConfigDataMode.isPolarDbX()) {
+            return;
+        }
+        PolarPrivManager.getInstance().clearLoginErrorCount(userName, host);
+    }
+
 }

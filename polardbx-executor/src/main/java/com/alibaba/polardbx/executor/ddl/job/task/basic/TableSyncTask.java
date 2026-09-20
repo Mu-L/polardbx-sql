@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.ddl.job.task.basic;
 
+import com.alibaba.polardbx.common.DefaultSchema;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
@@ -48,7 +49,7 @@ public class TableSyncTask extends BaseSyncTask {
                          String tableName,
                          boolean preemptive,
                          PreemptiveTime preemptiveTime
-                         ) {
+    ) {
         super(schemaName);
         this.tableName = tableName;
         this.preemptive = preemptive;
@@ -69,17 +70,24 @@ public class TableSyncTask extends BaseSyncTask {
             && executionContext.getParamManager().getBoolean(ConnectionParams.FP_FAILED_TABLE_SYNC)) {
             throw new TddlRuntimeException(ErrorCode.ERR_ASSERT_FAIL, "Fail point FP_FAILED_TABLE_SYNC");
         }
+        // CDC 库下表初始化时，其他 cn 还未完全起来，SYNC 一定会失败，所以这里忽略异常
         boolean throwExceptions = !isFromCDC();
         try {
             boolean enablePreemptiveMdl =
                 executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_PREEMPTIVE_MDL);
-            PreemptiveTime preemptiveTime = Optional.ofNullable(this.preemptiveTime).orElse(PreemptiveTime.getPreemptiveTimeFromExecutionContext(executionContext,
-                ConnectionParams.PREEMPTIVE_MDL_INITWAIT, ConnectionParams.PREEMPTIVE_MDL_INTERVAL));
+            PreemptiveTime preemptiveTime = Optional.ofNullable(this.preemptiveTime)
+                .orElse(PreemptiveTime.getPreemptiveTimeFromExecutionContext(executionContext,
+                    ConnectionParams.PREEMPTIVE_MDL_INITWAIT, ConnectionParams.PREEMPTIVE_MDL_INTERVAL));
             if (!preemptive || !enablePreemptiveMdl) {
-                SyncManagerHelper.sync(new TableMetaChangeSyncAction(schemaName, tableName), SyncScope.ALL, throwExceptions);
+                SyncManagerHelper.sync(
+                    new TableMetaChangeSyncAction(schemaName, tableName),
+                    DefaultSchema.getSchemaName(),
+                    SyncScope.ALL,
+                    throwExceptions);
             } else {
                 SyncManagerHelper.sync(
                     new TableMetaChangePreemptiveSyncAction(schemaName, tableName, preemptiveTime, false),
+                    DefaultSchema.getSchemaName(),
                     SyncScope.ALL,
                     throwExceptions);
             }

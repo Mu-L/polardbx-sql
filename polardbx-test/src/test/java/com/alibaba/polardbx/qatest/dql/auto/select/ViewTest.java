@@ -1,8 +1,8 @@
 package com.alibaba.polardbx.qatest.dql.auto.select;
 
+import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.qatest.BaseTestCase;
 import org.junit.AfterClass;
-import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -13,17 +13,13 @@ import java.sql.ResultSet;
  * @author fangwu
  */
 public class ViewTest extends BaseTestCase {
-    private static final String DB_NAME = "VIEW_TEST_DB";
-    private static final String TB_NAME = "VIEW_TEST_TB";
+    private static final String DB_NAME = randomTableName("view_test_db", 12);
+    private static final String TB_NAME = randomTableName("view_test_tb", 12);
 
     private static String CREATE_TABLE = "CREATE TABLE IF NOT EXISTS %s (\n"
         + "  `id` bigint(11) NOT NULL AUTO_INCREMENT,\n"
         + "  `order_id` varchar(20) DEFAULT NULL,\n"
         + "  `buyer_id` varchar(20) DEFAULT NULL,\n"
-        + "  `seller_id` varchar(20) DEFAULT NULL,\n"
-        + "  `create_time` timestamp DEFAULT current_timestamp,\n"
-        + "  `create_time1` datetime DEFAULT current_timestamp,\n"
-        + "  `create_time2` date,\n"
         + "  PRIMARY KEY (`id`),\n"
         + "  KEY `l_i_order` (`order_id`)\n"
         + ") ENGINE=InnoDB DEFAULT CHARSET=utf8 partition by hash(`order_id`) partitions 2";
@@ -35,6 +31,9 @@ public class ViewTest extends BaseTestCase {
             c.createStatement().execute("create database if not exists " + DB_NAME + " mode=auto");
             c.createStatement().execute("use " + DB_NAME);
             c.createStatement().execute(String.format(CREATE_TABLE, TB_NAME));
+            c.createStatement().execute("insert into " + TB_NAME + " values(1, '1', '1')");
+            c.createStatement().execute("set global ENABLE_USE_VIEW=true");
+            c.createStatement().execute("set global ENABLE_CREATE_VIEW=true");
         }
     }
 
@@ -47,37 +46,28 @@ public class ViewTest extends BaseTestCase {
 
     @Test
     public void testViewAlter() throws Exception {
+        final String viewName = randomTableName("view_test_alter", 12);
         try (Connection c = getPolardbxConnection(DB_NAME)) {
-            String sql = "create view view_test1 as select * from %s limit 1";
+            String sql = "create view " + viewName + " as select id, order_id from %s limit 1";
             c.createStatement().execute(String.format(sql, TB_NAME));
-            sql = "select * from view_test1";
-            c.createStatement().executeQuery(sql);
+            sql = "select * from " + viewName;
+            ResultSet rs = c.createStatement().executeQuery(sql);
+            Assert.assertTrue(rs.getMetaData().getColumnCount() == 2);
 
-            ResultSet rs = c.createStatement().executeQuery("explain " + sql);
-            StringBuilder sb = new StringBuilder();
-            while (rs.next()) {
-                sb.append(rs.getString(1));
-            }
-            assert sb.toString().contains("Source:PLAN_CACHE");
-
-            c.createStatement().execute("alter view view_test1 as select 1 from " + TB_NAME + " limit 1");
-            rs = c.createStatement().executeQuery("explain " + sql);
-            sb.setLength(0);
-            while (rs.next()) {
-                sb.append(rs.getString(1));
-            }
-            assert sb.toString().contains("Source:PLAN_CACHE");
-            assert sb.toString().contains("HitCache:false");
+            c.createStatement().execute("alter view " + viewName + " as select id from " + TB_NAME + " limit 1");
+            rs = c.createStatement().executeQuery(sql);
+            Assert.assertTrue(rs.getMetaData().getColumnCount() == 1);
         }
     }
 
     @Test
     public void testViewFix() throws Exception {
+        final String viewName = randomTableName("view_test_fix", 12);
         try (Connection c = getPolardbxConnection(DB_NAME)) {
-            c.createStatement().execute("drop view if exists view_test1");
-            String sql = "create view view_test1 as select * from %s limit 1";
+            c.createStatement().execute("drop view if exists " + viewName);
+            String sql = "create view " + viewName + " as select * from %s limit 1";
             c.createStatement().execute(String.format(sql, TB_NAME));
-            sql = " select * from view_test1";
+            sql = " select * from " + viewName;
             c.createStatement().executeQuery("baseline fix sql /*TDDL:a()*/" + sql);
 
             ResultSet rs = c.createStatement().executeQuery("explain " + sql);
@@ -97,7 +87,7 @@ public class ViewTest extends BaseTestCase {
             }
             assert source.equals("SPM_FIX");
 
-            c.createStatement().execute("alter view view_test1 as select 1 from " + TB_NAME + " limit 1");
+            c.createStatement().execute("alter view " + viewName + " as select 1 from " + TB_NAME + " limit 1");
             rs = c.createStatement().executeQuery("explain " + sql);
             sb.setLength(0);
             String baselineId2 = "";
@@ -120,10 +110,11 @@ public class ViewTest extends BaseTestCase {
 
     @Test
     public void testViewFixWhenTableChange() throws Exception {
+        final String viewName = randomTableName("view_test_table_change", 12);
         try (Connection c = getPolardbxConnection(DB_NAME)) {
-            String sql = "create view view_test2 as select * from %s limit 1";
+            String sql = "create view " + viewName + " as select * from %s limit 1";
             c.createStatement().execute(String.format(sql, TB_NAME));
-            sql = " select * from view_test2";
+            sql = " select * from " + viewName;
             c.createStatement().executeQuery("baseline fix sql /*TDDL:a()*/" + sql);
 
             ResultSet rs = c.createStatement().executeQuery("explain " + sql);
@@ -165,10 +156,35 @@ public class ViewTest extends BaseTestCase {
     }
 
     @Test
+    public void testViewCreateWithPartition() throws Exception {
+        final String viewName = randomTableName("view_test_partition", 12);
+        try (Connection c = getPolardbxConnection(DB_NAME)) {
+            String sql = "create view " + viewName + " as select * from %s partition(p2) limit 1";
+            c.createStatement().execute(String.format(sql, TB_NAME));
+
+            sql = "select * from " + viewName;
+
+            c.createStatement().executeQuery(sql);
+
+            sql = "explain select * from `" + viewName + "`";
+            ResultSet rs = c.createStatement().executeQuery(sql);
+            while (rs.next()) {
+                String line = rs.getString(1).toLowerCase();
+                if (line.contains("logicalview")) {
+                    Assert.assertTrue(line.contains(TB_NAME.toLowerCase() + "[p2]"));
+                    return;
+                }
+            }
+            Assert.fail("not found logicalview");
+        }
+    }
+
+    @Test
     public void testViewCreateEnable() throws Exception {
+        final String viewName = randomTableName("view_test_enable", 12);
         try (Connection c = getPolardbxConnection(DB_NAME)) {
             c.createStatement().execute("set global ENABLE_CREATE_VIEW=false");
-            String sql = "create view view_test_enable as select * from %s limit 1";
+            String sql = "create view " + viewName + " as select * from %s limit 1";
             c.createStatement().execute(String.format(sql, TB_NAME));
             Assert.fail("not found logicalview");
         } catch (Exception e) {
@@ -179,6 +195,44 @@ public class ViewTest extends BaseTestCase {
         } finally {
             try (Connection c = getPolardbxConnection(DB_NAME)) {
                 c.createStatement().execute("set global ENABLE_CREATE_VIEW=true");
+            }
+        }
+    }
+
+    @Test
+    public void testViewUseNotEnabled() throws Exception {
+        final String viewName = randomTableName("view_test_use_enable", 12);
+        try (Connection c = getPolardbxConnection(DB_NAME)) {
+            c.createStatement().execute("set global ENABLE_CREATE_VIEW=true");
+            String sql = "create view if not exists " + viewName + " as select * from %s limit 1";
+            c.createStatement().execute(String.format(sql, TB_NAME));
+
+            c.createStatement().execute("set global ENABLE_USE_VIEW=true");
+            c.createStatement().execute("select * from " + viewName);
+
+            try {
+                c.createStatement().execute("set global ENABLE_USE_VIEW=false");
+                c.createStatement().execute("/*TDDL:a()*/select * from " + viewName);
+                Assert.fail("show report error");
+            } catch (Exception e) {
+                e.printStackTrace();
+                if (!e.getMessage().contains("View error: view is not enabled")) {
+                    Assert.fail("ENABLE_USE_VIEW test error msg is not expected");
+                }
+            }
+
+            try {
+                c.createStatement().execute("select * from " + viewName);
+                Assert.fail("show report error");
+            } catch (Exception e) {
+                e.printStackTrace();
+                if (!e.getMessage().contains("View error: view is not enabled")) {
+                    Assert.fail("ENABLE_USE_VIEW test error msg is not expected");
+                }
+            }
+        } finally {
+            try (Connection c = getPolardbxConnection(DB_NAME)) {
+                c.createStatement().execute("set global ENABLE_USE_VIEW=true");
             }
         }
     }

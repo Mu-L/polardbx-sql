@@ -31,6 +31,8 @@ import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.convert.ConverterRule;
 import org.apache.calcite.rel.logical.LogicalAggregate;
+import org.apache.calcite.rel.type.RelDataTypeField;
+import org.apache.calcite.sql.type.SqlTypeName;
 
 import java.util.LinkedList;
 import java.util.List;
@@ -68,6 +70,12 @@ public class LogicalAggToSortAggRule extends ConverterRule {
         if (agg.getAggOptimizationContext().isFromDistinctAgg() || PlannerUtils.haveAggWithDistinct(
             agg.getAggCallList())) {
             return null;
+        }
+        // forbid sort agg for json
+        for (RelDataTypeField field : agg.getRowType().getFieldList()) {
+            if (field.getType().getSqlTypeName() == SqlTypeName.JSON) {
+                return null;
+            }
         }
         List<Integer> groupSet = Lists.newArrayList(agg.getGroupSet().asList());
 

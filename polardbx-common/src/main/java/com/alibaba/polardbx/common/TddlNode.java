@@ -35,8 +35,6 @@ public class TddlNode {
 
     public static final String SEPARATOR_INNER = ":";
 
-    private static volatile String instId = NOT_APPLICABLE;
-
     private static volatile String host = LOCALHOST;
 
     private static volatile int port = DEFAULT_PORT;
@@ -55,14 +53,6 @@ public class TddlNode {
     private static volatile String nodeIdList = String.valueOf(DEFAULT_SERVER_NODE_ID);
 
     private static volatile Map<Integer, String> nodeIdKeyMapping = new ConcurrentHashMap<>();
-
-    public static String getInstId() {
-        return instId;
-    }
-
-    public static void setInstId(String instId) {
-        TddlNode.instId = instId;
-    }
 
     public static String getNodeInfo() {
         String nodeInfo = getNodeId() + SEPARATOR_INNER + getHost();

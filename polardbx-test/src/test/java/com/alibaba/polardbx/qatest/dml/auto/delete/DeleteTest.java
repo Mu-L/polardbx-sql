@@ -23,7 +23,6 @@ import com.alibaba.polardbx.qatest.util.ConfigUtil;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.qatest.validator.DataOperator;
 import com.alibaba.polardbx.qatest.validator.DataValidator;
-import com.google.common.collect.ImmutableSet;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Ignore;
@@ -1098,33 +1097,32 @@ public class DeleteTest extends AutoCrudBasedLockTestCase {
 
     @Test
     public void deleteWithView() {
-        final String viewName = "delete_with_view_test_view";
+        final String viewName = randomTableName("delete_with_view_test_view", 12);
+        dropViewOnMysqlAndTddl(viewName);
+        try {
+            String sql = String.format("create view %s as\n"
+                + "(\n"
+                + "    select integer_test, varchar_test from %s as a where a.pk < 11 \n"
+                + ")\n", viewName, baseOneTableName);
+            executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
 
-        // Recreate view
-        String sql = "drop view " + viewName;
-        JdbcUtil.executeUpdateSuccessIgnoreErr(tddlConnection, sql, ImmutableSet.of("Unknown view"));
-        JdbcUtil.executeUpdateSuccessIgnoreErr(mysqlConnection, sql, ImmutableSet.of("Unknown table"));
+            // Execute update
+            sql = String.format("delete a from %s a, %s v where a.varchar_test = v.varchar_test",
+                baseOneTableName, viewName);
+            executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
 
-        sql = String.format("create view %s as\n"
-            + "(\n"
-            + "    select integer_test, varchar_test from %s as a where a.pk < 11 \n"
-            + ")\n", viewName, baseOneTableName);
-        executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
+            // Check update result
+            sql = "SELECT bigint_test FROM " + baseOneTableName;
+            selectContentSameAssert(sql, null, mysqlConnection, tddlConnection, true);
 
-        // Execute update
-        sql =
-            String.format("delete a from %s a, %s v where a.varchar_test = v.varchar_test", baseOneTableName, viewName);
-        executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
-
-        // Check update result
-        sql = "SELECT bigint_test FROM " + baseOneTableName;
-        selectContentSameAssert(sql, null, mysqlConnection, tddlConnection, true);
-
-        // Check error message
-        sql =
-            String.format("delete v from %s a, %s v where a.varchar_test = v.varchar_test", baseOneTableName, viewName);
-        executeErrorAssert(tddlConnection, sql, null,
-            MessageFormat.format("{0}'' of the {1} is not updatable", viewName, "DELETE"));
+            // Check error message
+            sql = String.format("delete v from %s a, %s v where a.varchar_test = v.varchar_test",
+                baseOneTableName, viewName);
+            executeErrorAssert(tddlConnection, sql, null,
+                MessageFormat.format("{0}'' of the {1} is not updatable", viewName, "DELETE"));
+        } finally {
+            dropViewOnMysqlAndTddl(viewName);
+        }
     }
 
     // delete with force index
@@ -1176,4 +1174,3 @@ public class DeleteTest extends AutoCrudBasedLockTestCase {
             tddlConnection, true);
     }
 }
-

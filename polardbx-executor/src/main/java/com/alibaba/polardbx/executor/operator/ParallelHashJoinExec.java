@@ -16,16 +16,28 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableIntArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.utils.bloomfilter.ConcurrentIntBloomFilter;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.common.utils.memory.SizeOf;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.ChunkConverter;
 import com.alibaba.polardbx.executor.chunk.IntegerBlock;
-import com.alibaba.polardbx.executor.operator.util.ChunksIndex;
 import com.alibaba.polardbx.executor.mpp.execution.TaskExecutor;
 import com.alibaba.polardbx.executor.operator.util.AntiJoinResultIterator;
+import com.alibaba.polardbx.executor.operator.util.ChunksIndex;
+import com.alibaba.polardbx.executor.operator.util.ConcurrentBitSet;
+import com.alibaba.polardbx.executor.operator.util.ConcurrentBitSetImpl;
+import com.alibaba.polardbx.executor.operator.util.ConcurrentRawDirectHashTable;
+import com.alibaba.polardbx.executor.operator.util.ConcurrentRawHashTable;
 import com.alibaba.polardbx.executor.operator.util.TypedList;
 import com.alibaba.polardbx.executor.operator.util.TypedListHandle;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -36,35 +48,95 @@ import com.alibaba.polardbx.optimizer.core.expression.calc.IExpression;
 import com.alibaba.polardbx.optimizer.core.expression.calc.InputRefExpression;
 import com.alibaba.polardbx.optimizer.core.expression.calc.ScalarFunctionExpression;
 import com.alibaba.polardbx.optimizer.core.function.calc.scalar.filter.NotEqual;
-import com.google.common.base.Preconditions;
-import com.google.common.util.concurrent.ListenableFuture;
 import com.alibaba.polardbx.optimizer.core.join.EquiJoinKey;
 import com.alibaba.polardbx.optimizer.core.row.JoinRow;
 import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.alibaba.polardbx.optimizer.memory.MemoryPoolUtils;
+import com.google.common.base.Preconditions;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
 import org.apache.calcite.rel.core.JoinRelType;
+import org.openjdk.jol.info.ClassLayout;
+import org.openjdk.jol.util.VMSupport;
 
 import java.text.MessageFormat;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.locks.StampedLock;
-
-import static com.alibaba.polardbx.executor.utils.ExecUtils.buildOneChunk;
+import java.util.stream.Collectors;
 
 /**
  * Parallel Hash-Join Executor
  *
  */
-public class ParallelHashJoinExec extends AbstractHashJoinExec {
+public class ParallelHashJoinExec extends AbstractParallelHashJoinExec {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(ParallelHashJoinExec.class).instanceSize();
     private static final Logger LOGGER = LoggerFactory.getLogger(TaskExecutor.class);
 
-    private final int probeParallelism;
-    private final JoinKeyType joinKeyType;
-    private Synchronizer shared;
-    private boolean finished;
-    private ListenableFuture<?> blocked;
-    private int buildChunkSize = 0;
-    private final int operatorIndex;
-    private boolean probeInputIsFinish = false;
+    // OwnedId1 = trace_id - stage_id - pipe_id - driver_id1
+    // OwnedId2 = trace_id - stage_id - pipe_id - driver_id2
+
+    // ------ 1. shared references ------
+    @FieldMemoryCounter(value = false)
+    protected final JoinKeyType joinKeyType;
+
+    // ------ 2. Owned references ------
+    @FieldMemoryCounter(value = false)
+    protected ListenableFuture<?> blocked;
+    // Synchronizer.basic ownedRef = null/non-null // owner
+    // Synchronizer.buildTable ownedRef = null ()
+    // OwnedId1 - driver_id1 - allocate
+    protected PartitionChunksIndex partitionChunksIndex;
+
+    ChunksIndex ownedBuildChunks;
+    ChunksIndex ownedBuildKeyChunks;
+    ConcurrentRawHashTable ownedHashTable;
+    int[] ownedPositionLinks;
+    ConcurrentIntBloomFilter ownedBloomFilter;
+    ConcurrentRawDirectHashTable ownedBuildOuterMatchedPosition;
+    MemoryCountableIntArrayList ownedAntJoinOutputRowId;
+    ConcurrentBitSet ownedJoinNullRowBitSet;
+
+    protected boolean finished;
+    protected int buildChunkSize = 0;
+    protected boolean probeInputIsFinish = false;
+    protected final int probeParallelism;
+
+    @FieldMemoryCounter(value = false)
+    protected BlockingFuture<?> closeFuture;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(partitionChunksIndex)
+            + FastMemoryCounter.sizeOf(ownedBuildChunks)
+            + FastMemoryCounter.sizeOf(ownedBuildKeyChunks)
+            + FastMemoryCounter.sizeOf(ownedHashTable)
+            + FastMemoryCounter.sizeOf(ownedPositionLinks)
+            + FastMemoryCounter.sizeOf(ownedBloomFilter)
+            + FastMemoryCounter.sizeOf(ownedBuildOuterMatchedPosition)
+            + FastMemoryCounter.sizeOf(ownedAntJoinOutputRowId)
+            + FastMemoryCounter.sizeOf(ownedJoinNullRowBitSet)
+
+            // from AbstractSharedHashJoinExec
+            + FastMemoryCounter.sizeOf(ownedSynchronizer)
+            + FastMemoryCounter.sizeOf(probeChunk)
+            + FastMemoryCounter.sizeOf(probeJoinKeyChunk)
+            + FastMemoryCounter.sizeOf(probeOperator)
+            + FastMemoryCounter.sizeOf(antiJoinResultIterator)
+
+            // from AbstractJoinExec
+            + FastMemoryCounter.sizeOf(ignoreNullBlocks)
+            + FastMemoryCounter.sizeOf(innerKeyMapping)
+
+            // from AbstractExecutor
+            + FastMemoryCounter.sizeOf(blockBuilders)
+            + FastMemoryCounter.sizeOf(executorName);
+    }
 
     public ParallelHashJoinExec(Synchronizer synchronizer,
                                 Executor outerInput,
@@ -79,14 +151,15 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
                                 int operatorIndex,
                                 int probeParallelism,
                                 boolean keepPartition) {
-        super(outerInput, innerInput, joinType, maxOneRow, joinKeyTuples, otherCondition, antiJoinOperands, context);
+        super(outerInput, innerInput, joinType, maxOneRow, joinKeyTuples, otherCondition, antiJoinOperands, context,
+            synchronizer, operatorIndex);
+        this.closeFuture = BlockingFuture.create(BlockingReason.WAIT_FOR_PARALLEL_BUILD);
+        this.shared.registerOperator(operatorIndex, this);
         super.keepPartition = keepPartition;
-        this.shared = Preconditions.checkNotNull(synchronizer);
         this.finished = false;
         this.blocked = ProducerExecutor.NOT_BLOCKED;
 
         this.buildOuterInput = buildOuterInput;
-        this.operatorIndex = operatorIndex;
         this.probeParallelism = probeParallelism;
         if (buildOuterInput) {
             if (super.semiJoin) {
@@ -97,28 +170,14 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
         }
         this.joinKeyType = getJoinKeyType(joinKeys);
 
-        boolean enableVecBuildJoinRow =
-            context.getParamManager().getBoolean(ConnectionParams.ENABLE_VEC_BUILD_JOIN_ROW);
-
-        boolean isNotNullSafeJoin = joinKeys.stream().noneMatch(EquiJoinKey::isNullSafeEqual);
-        boolean isSimpleInnerJoin =
-            joinType == JoinRelType.INNER && condition == null && !semiJoin && isNotNullSafeJoin;
-
-        if (isSimpleInnerJoin) {
-            buildSimpleInnerProbe(enableVecBuildJoinRow);
-        } else if (joinType == JoinRelType.SEMI && buildOuterInput) {
-            buildReverseSemiProbe(synchronizer, isNotNullSafeJoin, enableVecBuildJoinRow);
-        } else if (joinType == JoinRelType.ANTI && buildOuterInput) {
-            buildReverseAntiProbe(synchronizer, isNotNullSafeJoin, enableVecBuildJoinRow);
-        } else if (joinType == JoinRelType.SEMI || joinType == JoinRelType.ANTI) {
-            buildVecSemiAntiProbe(isNotNullSafeJoin, enableVecBuildJoinRow);
-        } else {
-            buildDefaultProbe();
-        }
+        // try reverse ref after constructing.
+        long currentMemoryUsage = getMemoryUsage();
+        MemoryTrackerManager.tryReverseReference(consumerMemoryOwnerId, currentMemoryUsage);
     }
 
     private void buildDefaultProbe() {
         this.probeOperator = new DefaultProbeOperator(true);
+        MemoryTrackerManager.tryReverseReference(consumerMemoryOwnerId, probeOperator.getMemoryUsage());
     }
 
     private JoinKeyType getJoinKeyType(List<EquiJoinKey> joinKeys) {
@@ -180,7 +239,7 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
 
     private void buildSingleLongProbe(boolean enableVecBuildJoinRow) {
         this.probeOperator = new LongProbeOperator(enableVecBuildJoinRow);
-        shared.builderKeyChunks.setTypedHashTable(new TypedListHandle() {
+        shared.setKeyChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -206,7 +265,7 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
 
     private void buildSingleIntProbe(boolean enableVecBuildJoinRow) {
         this.probeOperator = new IntProbeOperator(enableVecBuildJoinRow);
-        shared.builderKeyChunks.setTypedHashTable(new TypedListHandle() {
+        shared.setKeyChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -232,7 +291,7 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
 
     private void buildMultiIntProbe(boolean enableVecBuildJoinRow) {
         this.probeOperator = new MultiIntProbeOperator(joinKeys.size(), enableVecBuildJoinRow);
-        shared.builderKeyChunks.setTypedHashTable(new TypedListHandle() {
+        shared.setKeyChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -287,16 +346,16 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
         });
     }
 
-    private void buildReverseSemiProbe(Synchronizer synchronizer, boolean isNotNullSafeJoin,
+    private void buildReverseSemiProbe(boolean isNotNullSafeJoin,
                                        boolean enableVecBuildJoinRow) {
         // try type-specific implementation first
         if (useVecJoin && isNotNullSafeJoin && condition == null) {
             switch (joinKeyType) {
             case LONG:
-                buildReverseSemiLongProbe(synchronizer, enableVecBuildJoinRow);
+                buildReverseSemiLongProbe(enableVecBuildJoinRow);
                 return;
             case INTEGER:
-                buildReverseSemiIntProbe(synchronizer, enableVecBuildJoinRow);
+                buildReverseSemiIntProbe(enableVecBuildJoinRow);
                 return;
             default:
                 // fall through
@@ -323,25 +382,25 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
             JoinKeyType conditionType = getConditionKeyType((ScalarFunctionExpression) condition);
 
             if (useVecJoin && isNotNullSafeJoin && isSemiLongNotEq && conditionType == JoinKeyType.INTEGER) {
-                buildReverseSemiLongNotEqIntProbe(synchronizer, enableVecBuildJoinRow, buildChunkConditionIndex);
+                buildReverseSemiLongNotEqIntProbe(enableVecBuildJoinRow, buildChunkConditionIndex);
                 return;
             } else if (useVecJoin && isNotNullSafeJoin && isSemiIntegerNotEq && conditionType == JoinKeyType.INTEGER) {
-                buildReverseSemiIntNotEqIntProbe(synchronizer, enableVecBuildJoinRow, buildChunkConditionIndex);
+                buildReverseSemiIntNotEqIntProbe(enableVecBuildJoinRow, buildChunkConditionIndex);
                 return;
             }
         }
 
         // normal cases
         if (super.condition == null) {
-            this.probeOperator = new SimpleReverseSemiProbeOperator(synchronizer);
+            this.probeOperator = new SimpleReverseSemiProbeOperator();
         } else {
-            this.probeOperator = new ReverseSemiProbeOperator(synchronizer);
+            this.probeOperator = new ReverseSemiProbeOperator();
         }
     }
 
-    private void buildReverseSemiLongProbe(Synchronizer synchronizer, boolean enableVecBuildJoinRow) {
-        this.probeOperator = new ReverseSemiLongProbeOperator(synchronizer);
-        shared.builderKeyChunks.setTypedHashTable(new TypedListHandle() {
+    private void buildReverseSemiLongProbe(boolean enableVecBuildJoinRow) {
+        this.probeOperator = new ReverseSemiLongProbeOperator();
+        shared.setKeyChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -365,9 +424,9 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
 
     }
 
-    private void buildReverseSemiIntProbe(Synchronizer synchronizer, boolean enableVecBuildJoinRow) {
-        this.probeOperator = new ReverseSemiIntProbeOperator(synchronizer);
-        shared.builderKeyChunks.setTypedHashTable(new TypedListHandle() {
+    private void buildReverseSemiIntProbe(boolean enableVecBuildJoinRow) {
+        this.probeOperator = new ReverseSemiIntProbeOperator();
+        shared.setKeyChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -390,10 +449,10 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
         });
     }
 
-    private void buildReverseSemiLongNotEqIntProbe(Synchronizer synchronizer, boolean enableVecBuildJoinRow,
+    private void buildReverseSemiLongNotEqIntProbe(boolean enableVecBuildJoinRow,
                                                    int buildChunkConditionIndex) {
-        this.probeOperator = new ReverseSemiLongNotEqIntegerProbeOperator(synchronizer);
-        shared.builderChunks.setTypedHashTable(new TypedListHandle() {
+        this.probeOperator = new ReverseSemiLongNotEqIntegerProbeOperator();
+        shared.setChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -415,7 +474,7 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
                     .appendTypedHashTable(typedLists[0], sourceIndex, 0, chunk.getPositionCount());
             }
         });
-        shared.builderKeyChunks.setTypedHashTable(new TypedListHandle() {
+        shared.setKeyChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -438,10 +497,10 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
         });
     }
 
-    private void buildReverseSemiIntNotEqIntProbe(Synchronizer synchronizer, boolean enableVecBuildJoinRow,
+    private void buildReverseSemiIntNotEqIntProbe(boolean enableVecBuildJoinRow,
                                                   int buildChunkConditionIndex) {
-        this.probeOperator = new ReverseSemiIntNotEqIntegerProbeOperator(synchronizer);
-        shared.builderChunks.setTypedHashTable(new TypedListHandle() {
+        this.probeOperator = new ReverseSemiIntNotEqIntegerProbeOperator();
+        shared.setChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -463,7 +522,7 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
                     .appendTypedHashTable(typedLists[0], sourceIndex, 0, chunk.getPositionCount());
             }
         });
-        shared.builderKeyChunks.setTypedHashTable(new TypedListHandle() {
+        shared.setKeyChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -486,7 +545,7 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
         });
     }
 
-    private void buildReverseAntiProbe(Synchronizer synchronizer, boolean isNotNullSafeJoin,
+    private void buildReverseAntiProbe(boolean isNotNullSafeJoin,
                                        boolean enableVecBuildJoinRow) {
         // try type-specific implementation first
         boolean isAntiLongNotEqInteger = joinKeyType == JoinKeyType.LONG;
@@ -503,26 +562,26 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
         }
 
         if (useVecJoin && isNotNullSafeJoin && isAntiLongNotEqInteger) {
-            buildReverseAntiLongNotEqIntProbe(synchronizer, enableVecBuildJoinRow, buildChunkConditionIndex);
+            buildReverseAntiLongNotEqIntProbe(enableVecBuildJoinRow, buildChunkConditionIndex);
             return;
         } else if (useVecJoin && isNotNullSafeJoin && isAntiIntegerNotEqInteger) {
-            buildReverseAntiIntNotEqIntProbe(synchronizer, enableVecBuildJoinRow, buildChunkConditionIndex);
+            buildReverseAntiIntNotEqIntProbe(enableVecBuildJoinRow, buildChunkConditionIndex);
             return;
         }
 
         if (useVecJoin && isNotNullSafeJoin && joinKeyType == JoinKeyType.INTEGER
             && condition == null && !useAntiCondition) {
 
-            buildReversAntiIntProbe(synchronizer, enableVecBuildJoinRow);
+            buildReversAntiIntProbe(enableVecBuildJoinRow);
             return;
         }
 
         // normal cases
         if (this.antiJoinOperands == null && this.antiCondition == null && super.condition == null) {
-            this.probeOperator = new SimpleReverseAntiProbeOperator(synchronizer);
+            this.probeOperator = new SimpleReverseAntiProbeOperator();
         } else if (this.antiJoinOperands == null && this.antiCondition == null) {
             // with join condition
-            this.probeOperator = new ReverseAntiProbeOperator(synchronizer);
+            this.probeOperator = new ReverseAntiProbeOperator();
         } else {
             // should not access here
             throw new RuntimeException(String.format("reverse anti hash join not support this, "
@@ -530,10 +589,10 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
         }
     }
 
-    private void buildReverseAntiLongNotEqIntProbe(Synchronizer synchronizer, boolean enableVecBuildJoinRow,
+    private void buildReverseAntiLongNotEqIntProbe(boolean enableVecBuildJoinRow,
                                                    int buildChunkConditionIndex) {
-        this.probeOperator = new ReverseAntiLongNotEqIntegerProbeOperator(synchronizer);
-        shared.builderChunks.setTypedHashTable(new TypedListHandle() {
+        this.probeOperator = new ReverseAntiLongNotEqIntegerProbeOperator();
+        shared.setChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -555,7 +614,7 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
                     .appendTypedHashTable(typedLists[0], sourceIndex, 0, chunk.getPositionCount());
             }
         });
-        shared.builderKeyChunks.setTypedHashTable(new TypedListHandle() {
+        shared.setKeyChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -578,10 +637,10 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
         });
     }
 
-    private void buildReverseAntiIntNotEqIntProbe(Synchronizer synchronizer, boolean enableVecBuildJoinRow,
+    private void buildReverseAntiIntNotEqIntProbe(boolean enableVecBuildJoinRow,
                                                   int buildChunkConditionIndex) {
-        this.probeOperator = new ReverseAntiIntNotEqIntegerProbeOperator(synchronizer);
-        shared.builderChunks.setTypedHashTable(new TypedListHandle() {
+        this.probeOperator = new ReverseAntiIntNotEqIntegerProbeOperator();
+        shared.setChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -603,7 +662,7 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
                     .appendTypedHashTable(typedLists[0], sourceIndex, 0, chunk.getPositionCount());
             }
         });
-        shared.builderKeyChunks.setTypedHashTable(new TypedListHandle() {
+        shared.setKeyChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -626,9 +685,9 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
         });
     }
 
-    private void buildReversAntiIntProbe(Synchronizer synchronizer, boolean enableVecBuildJoinRow) {
-        this.probeOperator = new ReverseAntiIntegerProbeOperator(synchronizer);
-        shared.builderKeyChunks.setTypedHashTable(new TypedListHandle() {
+    private void buildReversAntiIntProbe(boolean enableVecBuildJoinRow) {
+        this.probeOperator = new ReverseAntiIntegerProbeOperator();
+        shared.setKeyChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -718,7 +777,7 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
 
     private void buildSemiLongProbe(boolean enableVecBuildJoinRow) {
         this.probeOperator = new SemiLongProbeOperator(enableVecBuildJoinRow);
-        shared.builderKeyChunks.setTypedHashTable(new TypedListHandle() {
+        shared.setKeyChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -743,7 +802,7 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
 
     private void buildSemiLongNotEqIntProbe(boolean enableVecBuildJoinRow, int buildChunkConditionIndex) {
         this.probeOperator = new SemiLongNotEqIntegerProbeOperator(enableVecBuildJoinRow);
-        shared.builderChunks.setTypedHashTable(new TypedListHandle() {
+        shared.setChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -765,7 +824,7 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
                     .appendTypedHashTable(typedLists[0], sourceIndex, 0, chunk.getPositionCount());
             }
         });
-        shared.builderKeyChunks.setTypedHashTable(new TypedListHandle() {
+        shared.setKeyChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -790,7 +849,7 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
 
     private void buildSemiLongNotEqLongProbe(boolean enableVecBuildJoinRow, int buildChunkConditionIndex) {
         this.probeOperator = new SemiLongNotEqLongProbeOperator(enableVecBuildJoinRow);
-        shared.builderChunks.setTypedHashTable(new TypedListHandle() {
+        shared.setChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -812,7 +871,7 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
                     .appendTypedHashTable(typedLists[0], sourceIndex, 0, chunk.getPositionCount());
             }
         });
-        shared.builderKeyChunks.setTypedHashTable(new TypedListHandle() {
+        shared.setKeyChunkIndexTypedHashTable(new TypedListHandle() {
             private TypedList[] typedLists;
 
             @Override
@@ -843,43 +902,239 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
             .createOperatorTmpTablePool("ParallelHashJoinExec@" + System.identityHashCode(this),
                 context.getMemoryPool());
         this.memoryAllocator = memoryPool.getMemoryAllocatorCtx();
+
+        partitionChunksIndex = new PartitionChunksIndex();
     }
 
     @Override
     public void doOpen() {
 //        if (!passThrough && passNothing) {
-            // TODO 避免初始化probe side
+        // TODO 避免初始化probe side
 //            return;
 //        }
         super.doOpen();
     }
 
     @Override
+    public void consumeChunk(Chunk inputChunk) {
+        Chunk keyChunk = getBuildKeyChunkGetter().apply(inputChunk);
+
+        long beforeSize = partitionChunksIndex.getMemoryUsage();
+        partitionChunksIndex.appendChunk(inputChunk, keyChunk);
+
+        long afterSize = partitionChunksIndex.getMemoryUsage();
+        MemoryTrackerManager.tryReverseReference(consumerMemoryOwnerId, (afterSize - beforeSize));
+    }
+
+    @Override
     public void buildConsume() {
         if (memoryPool != null) {
             long start = System.nanoTime();
+
+            // Decide type of Probe Operator.
+            boolean enableVecBuildJoinRow =
+                context.getParamManager().getBoolean(ConnectionParams.ENABLE_VEC_BUILD_JOIN_ROW);
+            boolean isNotNullSafeJoin = joinKeys.stream().noneMatch(EquiJoinKey::isNullSafeEqual);
+            boolean isSimpleInnerJoin =
+                joinType == JoinRelType.INNER && condition == null && !semiJoin && isNotNullSafeJoin;
+            if (isSimpleInnerJoin) {
+                buildSimpleInnerProbe(enableVecBuildJoinRow);
+            } else if (joinType == JoinRelType.SEMI && buildOuterInput) {
+                buildReverseSemiProbe(isNotNullSafeJoin, enableVecBuildJoinRow);
+            } else if (joinType == JoinRelType.ANTI && buildOuterInput) {
+                buildReverseAntiProbe(isNotNullSafeJoin, enableVecBuildJoinRow);
+            } else if (joinType == JoinRelType.SEMI || joinType == JoinRelType.ANTI) {
+                buildVecSemiAntiProbe(isNotNullSafeJoin, enableVecBuildJoinRow);
+            } else {
+                buildDefaultProbe();
+            }
+            Preconditions.checkNotNull(probeOperator);
+            probeOperatorClass = probeOperator.getClass();
+
             int partition = shared.buildCount.getAndIncrement();
             if (partition < shared.numberOfExec) {
                 int[] ignoreNullBlocks = getIgnoreNullsInJoinKey().stream().mapToInt(i -> i).toArray();
+
+                // only one executor could get into this code block and become the owner of
+                // objects it allocate.
+                if (!shared.hashTableInitialized) {
+                    synchronized (shared) {
+
+                        // The first operator to enter the race condition will become the owner of these objects.
+                        if (!shared.hashTableInitialized) {
+                            try {
+
+                                long startOfInitHashTable = System.nanoTime();
+
+                                // Collect all close future and invoke doRelease all at once.
+                                shared.listenableFuture = Futures.allAsList(
+                                    Arrays.stream(shared.hashJoinExecs)
+                                        .map(exec -> exec.closeFuture)
+                                        .collect(Collectors.toList())
+                                );
+                                shared.listenableFuture.addListener(() -> {
+                                    for (ParallelHashJoinExec exec : shared.hashJoinExecs) {
+                                        if (exec != null) {
+                                            exec.doRelease();
+                                        }
+                                    }
+                                }, MoreExecutors.directExecutor());
+
+                                this.ownedBuildChunks = new ChunksIndex();
+                                this.ownedBuildKeyChunks = new ChunksIndex();
+
+                                shared.builderChunks = ownedBuildChunks;
+                                shared.builderKeyChunks = ownedBuildKeyChunks;
+                                shared.builderChunks.setTypedHashTable(
+                                    shared.chunkIndexTypedListHandle.get());
+                                shared.builderKeyChunks.setTypedHashTable(
+                                    shared.keyChunkIndexTypedListHandle.get());
+
+                                // Merge chunks index
+                                List<ChunksIndex> partitionBuilderChunks = Arrays.stream(shared.hashJoinExecs)
+                                    .filter(Objects::nonNull)
+                                    .map(exec -> exec.partitionChunksIndex)
+                                    .filter(Objects::nonNull)
+                                    .map(partitionChunksIndex -> partitionChunksIndex.getBuilderChunks())
+                                    .collect(Collectors.toList());
+
+                                List<ChunksIndex> partitionBuilderKeyChunks = Arrays.stream(shared.hashJoinExecs)
+                                    .filter(Objects::nonNull)
+                                    .map(exec -> exec.partitionChunksIndex)
+                                    .filter(Objects::nonNull)
+                                    .map(partitionChunksIndex -> partitionChunksIndex.getBuilderKeyChunks())
+                                    .collect(Collectors.toList());
+
+                                shared.builderChunks.merge(partitionBuilderChunks);
+                                shared.builderKeyChunks.merge(partitionBuilderKeyChunks);
+                                MemoryTrackerManager.tryReverseReference(consumerMemoryOwnerId,
+                                    ownedBuildChunks.getMemoryUsage());
+                                MemoryTrackerManager.tryReverseReference(consumerMemoryOwnerId,
+                                    ownedBuildKeyChunks.getMemoryUsage());
+
+                                // release partition ChunksIndexes
+                                for (int i = 0; i < shared.hashJoinExecs.length; i++) {
+                                    if (shared.hashJoinExecs[i] != null) {
+                                        ParallelHashJoinExec exec = shared.hashJoinExecs[i];
+                                        long releaseMemorySize = exec.partitionChunksIndex.getMemoryUsage();
+                                        OperatorMemoryOwnerId ownerId = exec.consumerMemoryOwnerId;
+
+                                        shared.hashJoinExecs[i].partitionChunksIndex = null;
+                                        MemoryTrackerManager.adjustMemoryUsage(ownerId);
+                                    }
+                                }
+
+                                final int size = shared.builderKeyChunks.getPositionCount();
+
+                                // large memory allocation: hash table for build-side
+                                MemoryTrackerManager.tryAllocate(consumerMemoryOwnerId,
+                                    ConcurrentRawHashTable.estimateSizeInBytes(size));
+                                memoryAllocator.allocateReservedMemory(
+                                    ConcurrentRawHashTable.estimateSizeInBytes(size));
+
+                                ownedHashTable = new ConcurrentRawHashTable(size);
+                                shared.hashTable = ownedHashTable;
+
+                                if (shared.outerDriver && (joinType == JoinRelType.ANTI
+                                    || joinType == JoinRelType.SEMI)) {
+                                    // large memory allocation: hash table for reversed anti/semi join
+                                    MemoryTrackerManager.tryAllocate(consumerMemoryOwnerId,
+                                        ConcurrentRawDirectHashTable.estimateSizeInBytes(size));
+                                    memoryAllocator.allocateReservedMemory(
+                                        ConcurrentRawDirectHashTable.estimatedSizeInBytes(size));
+
+                                    ownedBuildOuterMatchedPosition = new ConcurrentRawDirectHashTable(size);
+                                    shared.buildOuterMatchedPosition = ownedBuildOuterMatchedPosition;
+                                }
+
+                                // large memory allocation: linked list for build-side.
+                                MemoryTrackerManager.tryAllocate(consumerMemoryOwnerId,
+                                    VMSupport.align((int) SizeOf.sizeOfIntArray(size)));
+                                memoryAllocator.allocateReservedMemory(SizeOf.sizeOfIntArray(size));
+
+                                ownedPositionLinks = new int[size];
+                                shared.positionLinks = ownedPositionLinks;
+                                Arrays.fill(shared.positionLinks, AbstractHashJoinExec.LIST_END);
+
+                                // large memory allocation: type-specific lists in key columns chunks index.
+                                MemoryTrackerManager.tryAllocate(consumerMemoryOwnerId,
+                                    ownedBuildKeyChunks.estimateTypedListSizeInBytes());
+                                memoryAllocator.allocateReservedMemory(
+                                    shared.builderKeyChunks.estimateTypedListSizeInBytes());
+                                shared.builderKeyChunks.openTypedHashTable();
+
+                                // large memory allocation: type-specific lists in full columns chunks index.
+                                MemoryTrackerManager.tryAllocate(consumerMemoryOwnerId,
+                                    ownedBuildChunks.estimateTypedListSizeInBytes());
+                                memoryAllocator.allocateReservedMemory(
+                                    shared.builderChunks.estimateTypedListSizeInBytes());
+                                shared.builderChunks.openTypedHashTable();
+
+                                if (shared.useBloomFilter && !shared.alreadyUseRuntimeFilter
+                                    && size <= AbstractJoinExec.BLOOM_FILTER_ROWS_LIMIT_FOR_PARALLEL
+                                    && size > 0) {
+                                    // large memory allocation: bloom-filter
+                                    MemoryTrackerManager.tryReverseReference(consumerMemoryOwnerId,
+                                        ConcurrentIntBloomFilter.estimatedSizeInBytes(size,
+                                            ConcurrentIntBloomFilter.DEFAULT_FPP));
+
+                                    memoryAllocator.allocateReservedMemory(
+                                        ConcurrentIntBloomFilter.estimatedSizeInBytes(size,
+                                            ConcurrentIntBloomFilter.DEFAULT_FPP));
+
+                                    ownedBloomFilter = ConcurrentIntBloomFilter.create(size);
+                                    shared.bloomFilter = ownedBloomFilter;
+                                }
+
+                                if (LOGGER.isDebugEnabled()) {
+                                    LOGGER.debug(
+                                        MessageFormat.format(
+                                            "initialize hash table time cost = {0} ns, positionCount = {1}, "
+                                                + "hash table size = {2}",
+                                            (System.nanoTime() - startOfInitHashTable), size,
+                                            shared.hashTable.size()));
+                                }
+
+                                shared.hashTableInitialized = true;
+
+                            } catch (Throwable t) {
+                                // Avoid allocating hash table after encountering out-of-memory exception.
+                                shared.initException = t;
+                                shared.hashTableInitialized = true;
+                                throw t;
+                            }
+                        }
+                    }
+                }
+
                 shared.buildHashTable(partition, memoryAllocator, ignoreNullBlocks, ignoreNullBlocks.length);
             }
             long end = System.nanoTime();
             LOGGER.debug(MessageFormat.format("HashJoinExec: {0} build consume time cost = {1} ns, partition is {2}, "
                 + "start = {3}, end = {4}", this.toString(), (end - start), partition, start, end));
             // Copy the built hash-table from shared states into this executor
-            this.buildChunks = shared.builderChunks;
-            this.buildKeyChunks = shared.builderKeyChunks;
-            this.hashTable = shared.hashTable;
-            this.positionLinks = shared.positionLinks;
-            this.bloomFilter = shared.bloomFilter;
-            if (buildChunks.isEmpty() && joinType == JoinRelType.INNER) {
-                passNothing = true;
+            if (shared.builderChunks.isEmpty() && joinType == JoinRelType.INNER) {
+                // NOTE: name semantic of ENABLE_PASS_NOTHING_CONSUME_PROBE is inverted:
+                //   true  (default) -> keep passNothing fast-exit, do NOT consume probe.
+                //   false           -> disable the optimization so the normal join path
+                //                      naturally pulls all probe chunks (empty hash table
+                //                      means no matches, but probe data is consumed and
+                //                      upstream Stages are not blocked). See Aone #79665023.
+                boolean enablePassNothingOptimization = context.getParamManager()
+                    .getBoolean(ConnectionParams.ENABLE_PASS_NOTHING_CONSUME_PROBE);
+                if (enablePassNothingOptimization) {
+                    passNothing = true;
+                }
+                // When the optimization is disabled (param=false), we intentionally do NOT
+                // set passNothing. The normal join path handles an empty build table correctly:
+                // probe rows are pulled, hash-lookup finds no match, no output is produced,
+                // and the probe side is consumed to EOF — preventing upstream hang.
             }
             if (semiJoin) {
                 doSpecialCheckForSemiJoin();
             }
 
-            this.buildChunkSize = this.buildChunks.getPositionCount();
+            this.buildChunkSize = this.shared.builderChunks.getPositionCount();
         }
     }
 
@@ -894,7 +1149,18 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
 
         if (buildOuterInput && joinType != JoinRelType.SEMI && joinType != JoinRelType.ANTI
             && shared.joinNullRowBitSet == null) {
-            shared.buildNullBitSets(buildChunkSize);
+
+            if (shared.joinNullRowBitSet == null) {
+                synchronized (shared.isBitSetInitialized) {
+                    if (shared.joinNullRowBitSet == null) {
+                        shared.joinNullRowBitSet = new ConcurrentBitSetImpl(buildChunkSize);
+                        shared.maxIndex = buildChunkSize;
+
+                        // The first operator to enter the race condition will become the owner of the ownedJoinNullRowBitSet.
+                        ownedJoinNullRowBitSet = shared.joinNullRowBitSet;
+                    }
+                }
+            }
         }
 
         return super.doNextChunk();
@@ -908,12 +1174,6 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
             blocked = getProbeInput().produceIsBlocked();
         }
         return ret;
-    }
-
-    @Override
-    public void consumeChunk(Chunk inputChunk) {
-        Chunk keyChunk = getBuildKeyChunkGetter().apply(inputChunk);
-        shared.nextPartition().appendChunk(inputChunk, keyChunk);
     }
 
     @Override
@@ -931,7 +1191,7 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
 
         if (joinType != JoinRelType.RIGHT) {
             for (int j = 0; j < outerInput.getDataTypes().size(); j++) {
-                buildChunks.writePositionTo(j, matchedPosition, blockBuilders[col++]);
+                shared.builderChunks.writePositionTo(j, matchedPosition, blockBuilders[col++]);
             }
             // single join only output the first row of right side
             final int rightColumns = singleJoin ? 1 : innerInput.getDataTypes().size();
@@ -943,7 +1203,7 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
                 blockBuilders[col++].appendNull();
             }
             for (int j = 0; j < outerInput.getDataTypes().size(); j++) {
-                buildChunks.writePositionTo(j, matchedPosition, blockBuilders[col++]);
+                shared.builderChunks.writePositionTo(j, matchedPosition, blockBuilders[col++]);
             }
         }
         assert col == blockBuilders.length;
@@ -977,7 +1237,20 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
                                 // update anti probe count and build anti join row ids if all probe finished
                                 int finishedProbeCount = shared.antiProbeCount.addAndGet(1);
                                 if (finishedProbeCount == probeNumOfSynchronizer) {
-                                    shared.buildAntiJoinOutputRowIds();
+
+                                    if (shared.antJoinOutputRowId == null) {
+                                        synchronized (shared) {
+                                            if (shared.antJoinOutputRowId == null) {
+                                                shared.antJoinOutputRowId =
+                                                    shared.buildOuterMatchedPosition.getNotMarkedPosition();
+                                            }
+                                            // The first operator to enter the race condition will
+                                            // become the owner of the antJoinOutputRowId object and its memory.
+                                            ownedAntJoinOutputRowId = shared.antJoinOutputRowId;
+                                            MemoryTrackerManager.tryReverseReference(consumerMemoryOwnerId,
+                                                ownedAntJoinOutputRowId.getMemoryUsage());
+                                        }
+                                    }
                                 }
                             }
                             int finishedProbeCount = shared.antiProbeCount.get();
@@ -994,6 +1267,10 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
                                         super.chunkLimit,
                                         startOffset,
                                         endOffset);
+                                MemoryTrackerManager.tryReverseReference(
+                                    consumerMemoryOwnerId, antiJoinResultIterator.getMemoryUsage()
+                                );
+
                             }
                             finished = false;
                             blocked = ProducerExecutor.NOT_BLOCKED;
@@ -1089,9 +1366,72 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
             if (!(buildOuterInput && semiJoin)) {
                 this.shared.consumeInputIsFinish(operatorIndex);
             }
-            this.shared = null;
         }
-        super.doClose();
+
+        getProbeInput().close();
+        closeConsume(true);
+
+        if (probeOperator != null) {
+            probeOperator = null;
+        }
+
+        // invoke all executors for calling doRelease()
+        closeFuture.complete(null);
+    }
+
+    @Override
+    public void closeConsume(boolean force) {
+        if (memoryPool != null) {
+            collectMemoryUsage(memoryPool);
+            memoryPool.destroy();
+        }
+    }
+
+    private void doRelease() {
+        if (ownedBuildChunks != null) {
+            ownedBuildChunks = null;
+            shared.builderChunks = null;
+        }
+
+        if (ownedBuildKeyChunks != null) {
+            ownedBuildKeyChunks = null;
+            shared.builderKeyChunks = null;
+        }
+
+        if (ownedHashTable != null) {
+            ownedHashTable = null;
+            shared.hashTable = null;
+        }
+
+        if (ownedPositionLinks != null) {
+            ownedPositionLinks = null;
+            shared.positionLinks = null;
+        }
+
+        if (ownedBloomFilter != null) {
+            ownedBloomFilter = null;
+            shared.bloomFilter = null;
+        }
+
+        if (ownedBuildOuterMatchedPosition != null) {
+            ownedBuildOuterMatchedPosition = null;
+            shared.buildOuterMatchedPosition = null;
+        }
+
+        if (ownedAntJoinOutputRowId != null) {
+            ownedAntJoinOutputRowId = null;
+            shared.antJoinOutputRowId = null;
+        }
+
+        if (ownedJoinNullRowBitSet != null) {
+            ownedJoinNullRowBitSet = null;
+            shared.joinNullRowBitSet = null;
+        }
+
+        if (ownedSynchronizer != null) {
+            ownedSynchronizer = null;
+            shared = null;
+        }
     }
 
     @Override
@@ -1148,7 +1488,7 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
         }
 
         final Row outerRow = outerChunk.rowAt(outerPosition);
-        final Row innerRow = buildChunks.rowAt(innerPosition);
+        final Row innerRow = shared.builderChunks.rowAt(innerPosition);
 
         Row leftRow = joinType.leftSide(outerRow, innerRow);
         Row rightRow = joinType.rightSide(outerRow, innerRow);
@@ -1179,15 +1519,25 @@ public class ParallelHashJoinExec extends AbstractHashJoinExec {
         OTHER
     }
 
-    public static class PartitionChunksIndex {
+    public static class PartitionChunksIndex implements MemoryCountable {
+        private static final int INSTANCE_SIZE = ClassLayout.parseClass(PartitionChunksIndex.class).instanceSize();
         private final ChunksIndex builderChunks;
         private final ChunksIndex builderKeyChunks;
+
+        @FieldMemoryCounter(value = false)
         private final StampedLock lock;
 
         public PartitionChunksIndex() {
             this.builderChunks = new ChunksIndex();
             this.builderKeyChunks = new ChunksIndex();
             this.lock = new StampedLock();
+        }
+
+        @Override
+        public long getMemoryUsage() {
+            return INSTANCE_SIZE
+                + FastMemoryCounter.sizeOf(builderChunks)
+                + FastMemoryCounter.sizeOf(builderKeyChunks);
         }
 
         public void appendChunk(Chunk chunk, Chunk keyChunk) {

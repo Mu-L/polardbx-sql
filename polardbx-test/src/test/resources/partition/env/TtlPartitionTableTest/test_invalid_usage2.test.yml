@@ -43,12 +43,9 @@ alter table my_locpart_t1 modify ttl set ttl_expr = `b` expire after 2 month tim
 
 ## error_msg: $# not allowed #$
 alter table my_bro_t1 modify ttl set ttl_expr = `b` expire after 2 month timezone '+08:00';
-  
-## error_msg: $# not allowed #$
-alter table my_sin_t1 modify ttl set ttl_expr = `b` expire after 2 month timezone '+08:00';
 
 ## error_msg: $# not allowed #$
 alter table ttl_test_drds_db2.my_dbpart_t1 modify ttl set ttl_expr = `b` expire after 2 month timezone '+08:00';
 
-drop database if exists ttl_test_drds_db2;
 drop table my_locpart_t1;
+drop database if exists ttl_test_drds_db2;

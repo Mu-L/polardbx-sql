@@ -16,11 +16,11 @@
 
 package com.alibaba.polardbx.qatest.sequence;
 
-import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.qatest.BaseSequenceTestCase;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.qatest.util.PropertiesUtil;
+import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runners.Parameterized;
 
@@ -359,16 +359,14 @@ public class NewSequenceCnTest extends BaseSequenceTestCase {
     }
 
     private void checkValue(String sql, long expectedValue) throws Exception {
-        boolean matched = false;
         sql = String.format(sql, seqName);
         try (Statement stmt = tddlConnection.createStatement();
             ResultSet rs = stmt.executeQuery(sql)) {
             if (rs.next()) {
                 long value = rs.getLong(1);
-                matched = value == expectedValue;
+                Assert.assertEquals(value, expectedValue);
             }
         }
-        Assert.assertTrue(matched);
     }
 
     private void checkNextvalRunOut() {
@@ -378,8 +376,6 @@ public class NewSequenceCnTest extends BaseSequenceTestCase {
     }
 
     private void checkNextval(int count, long[] expectedValues) throws Exception {
-        boolean matched = false;
-
         String sql = String.format(SELECT_NEXTVAL_BATCH, seqName, count);
         List<Long> values = new ArrayList<>();
         try (Statement stmt = tddlConnection.createStatement();
@@ -389,18 +385,13 @@ public class NewSequenceCnTest extends BaseSequenceTestCase {
             }
         }
 
-        if (values.size() == expectedValues.length) {
-            matched = true;
-            for (int i = 0; i < values.size(); i++) {
-                matched &= values.get(i) == expectedValues[i];
-            }
+        Assert.assertEquals(expectedValues.length, values.size());
+        for (int i = 0; i < values.size(); i++) {
+            Assert.assertEquals(values.get(i), Long.valueOf(expectedValues[i]));
         }
-
-        Assert.assertTrue(matched);
     }
 
     private void checkShowNextval(long expectedValue) throws SQLException {
-        boolean matched = false;
         Connection conn = TStringUtil.isBlank(schema) ? tddlConnection : tddlConnection2;
         String sql = String.format(SHOW_NEXTVAL, simpleSeqName);
         try (Statement stmt = conn.createStatement();
@@ -408,10 +399,10 @@ public class NewSequenceCnTest extends BaseSequenceTestCase {
             if (rs.next()) {
                 long value = rs.getLong("VALUE");
                 String type = rs.getString("TYPE");
-                matched = value == expectedValue && TStringUtil.equals(type, seqType);
+                Assert.assertEquals(value, expectedValue);
+                Assert.assertEquals(type, seqType);
             }
         }
-        Assert.assertTrue(matched);
     }
 
     private long[] genExpectedValues(long base, int count) {

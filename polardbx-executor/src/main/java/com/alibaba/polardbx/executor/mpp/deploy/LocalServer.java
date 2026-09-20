@@ -67,12 +67,15 @@ public class LocalServer extends Server {
             String.valueOf(MppConfig.getInstance().getHttpServerMinThreads()));
 
         boolean htap = true;
-        GmsNodeManager.GmsNode gmsNode = GmsNodeManager.getInstance().getLocalNode();
-        htap = ConfigDataMode.isMasterMode() || gmsNode == null
-            || gmsNode.instType == ServerInfoRecord.INST_TYPE_HTAP_SLAVE;
+        if (ConfigDataMode.isPolarDbX()) {
+            GmsNodeManager.GmsNode gmsNode = GmsNodeManager.getInstance().getLocalNode();
+            htap = ConfigDataMode.isMasterMode() || gmsNode == null
+                || gmsNode.instType == ServerInfoRecord.INST_TYPE_HTAP_SLAVE;
+        }
         String instId = InstIdUtil.getInstId();
+        String subInstId = InstIdUtil.getSubInstId();
         this.localNode = new InternalNode(
-            nodeId, getCluster(LOCAL_CLUSTER_DEFAULT), instId, serverHost, TddlNode.getPort(), mppPort,
+            nodeId, getCluster(LOCAL_CLUSTER_DEFAULT), instId, subInstId, serverHost, TddlNode.getPort(), mppPort,
             new NodeVersion(Version.getVersion()), true, false, false, htap);
         if (ConfigDataMode.isMasterMode()) {
             localNode.setMaster(true);

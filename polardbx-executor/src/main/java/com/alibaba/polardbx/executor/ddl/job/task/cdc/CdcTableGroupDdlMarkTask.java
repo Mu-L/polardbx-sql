@@ -30,10 +30,14 @@ import com.alibaba.polardbx.druid.sql.parser.SQLParserUtils;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseCdcTask;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
+import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlTaskBarrierManager;
+import com.alibaba.polardbx.gms.metadb.misc.DdlTaskBarrierRecord;
 import com.alibaba.polardbx.gms.util.TableGroupNameUtil;
+import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
+import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
@@ -64,11 +68,13 @@ public class CdcTableGroupDdlMarkTask extends BaseCdcTask {
     private String ddlStmt;
     private CdcDdlMarkVisibility cdcDdlMarkVisibility;
     private boolean isColumnarIndex;
+    private boolean fetchLatestTopology;
 
     @JSONCreator
     public CdcTableGroupDdlMarkTask(String tableGroup, String schemaName, String tableName, SqlKind sqlKind,
                                     Map<String, Set<String>> targetTableTopology, String ddlStmt,
-                                    CdcDdlMarkVisibility cdcDdlMarkVisibility, boolean isColumnarIndex) {
+                                    CdcDdlMarkVisibility cdcDdlMarkVisibility, boolean isColumnarIndex,
+                                    boolean fetchLatestTopology) {
         super(schemaName);
         this.tableGroup = tableGroup;
         this.tableName = tableName;
@@ -78,6 +84,7 @@ public class CdcTableGroupDdlMarkTask extends BaseCdcTask {
         this.ddlStmt = ddlStmt;
         this.cdcDdlMarkVisibility = cdcDdlMarkVisibility;
         this.isColumnarIndex = isColumnarIndex;
+        this.fetchLatestTopology = fetchLatestTopology;
     }
 
     @Override
@@ -112,6 +119,12 @@ public class CdcTableGroupDdlMarkTask extends BaseCdcTask {
         log.info("new topology for table {} is {}, isAlterIndex {}", markTableName, targetTableTopology, isAlterIndex);
         DdlContext ddlContext = executionContext.getDdlContext();
 
+        if (fetchLatestTopology) {
+            PartitionInfo partitionInfo =
+                OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(markTableName)
+                    .getNewPartitionInfo();
+            targetTableTopology = partitionInfo.getTopology();
+        }
         CdcManagerHelper.getInstance().notifyDdlNew(schemaName, markTableName, sqlKind.name(), ddlStmt,
             DdlType.ALTER_TABLEGROUP, ddlContext.getJobId(), getTaskId(), cdcDdlMarkVisibility, param, true,
             targetTableTopology);

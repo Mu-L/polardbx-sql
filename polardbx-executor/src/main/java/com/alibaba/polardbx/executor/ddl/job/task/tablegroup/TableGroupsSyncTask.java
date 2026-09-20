@@ -53,7 +53,7 @@ public class TableGroupsSyncTask extends BaseSyncTask {
 
     protected void syncTableGroup() {
         try {
-            SyncManagerHelper.sync(new TableGroupsSyncAction(schemaName, tableGroupNameList), SyncScope.ALL);
+            SyncManagerHelper.syncThrowExceptions(new TableGroupsSyncAction(schemaName, tableGroupNameList), SyncScope.ALL);
         } catch (Throwable t) {
             LOGGER.error(String.format(
                 "error occurs while sync table group, schemaName:%s, tableGroupName:%s", schemaName,

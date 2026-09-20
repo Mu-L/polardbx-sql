@@ -143,17 +143,7 @@ public class SemiBKAJoin extends SemiJoin implements LookupJoin, PhysicalNode {
             this.systemFieldList = (ImmutableList<RelDataTypeField>) relInput.get("systemFields");
         }
         this.semiJoinDone = relInput.getBoolean("semiJoinDone", false);
-        if (this.getRight() instanceof Gather) {
-            ((Gather) this.getRight()).setJoin(this);
-        } else if (this.getRight() instanceof LogicalView) {
-            ((LogicalView) this.getRight()).setJoin(this);
-        } else if (this.getRight() instanceof Project) {
-            RelNode node = ((BKAJoin) ((Project) this.getRight()).getInput()).getOuter();
-            if (node instanceof Gather) {
-                node = ((Gather) node).getInput();
-            }
-            ((LogicalIndexScan) node).setJoin(this);
-        }
+        this.deepVisitLookupJoin();
     }
 
     public static SemiBKAJoin create(RelTraitSet traitSet, RelNode left, RelNode right, RexNode condition,
@@ -186,6 +176,21 @@ public class SemiBKAJoin extends SemiJoin implements LookupJoin, PhysicalNode {
             subqueryPosition);
         bkaJoin.setFixedCost(this.fixedCost);
         return bkaJoin;
+    }
+
+    @Override
+    public void deepVisitLookupJoin() {
+        if (this.getRight() instanceof Gather) {
+            ((Gather) this.getRight()).setJoin(this);
+        } else if (this.getRight() instanceof LogicalView) {
+            ((LogicalView) this.getRight()).setLookupInfo(this);
+        } else if (this.getRight() instanceof Project) {
+            RelNode node = ((BKAJoin) ((Project) this.getRight()).getInput()).getOuter();
+            if (node instanceof Gather) {
+                node = ((Gather) node).getInput();
+            }
+            ((LogicalIndexScan) node).setLookupInfo(this);
+        }
     }
 
     @Override

@@ -1,6 +1,7 @@
 package com.alibaba.polardbx.qatest.ddl.auto.ddl;
 
 import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.ddl.auto.partition.PartitionTestBase;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import groovy.sql.Sql;
@@ -142,6 +143,7 @@ public class CreateSelectTest extends PartitionTestBase {
 //    }
 
     @Test
+    @IcbcIgnore(ignoreReason = "已经确认可以在工行参数下ingore")
     public void testException() throws Exception {
 
         String dbName = "testDb";
@@ -154,6 +156,7 @@ public class CreateSelectTest extends PartitionTestBase {
         dropTableIfExists(tableName);
 
         String sql = "create table " + tableName + "(id int, name varchar(20))";
+        sql += " collate utf8mb4_general_ci";
         String targetTable = dbName + "." + "tbl_t";
 
         dropTableIfExists(tableName);
@@ -221,6 +224,7 @@ public class CreateSelectTest extends PartitionTestBase {
         String tableName = dbName + "." + testTableName + "_1";
         dropTableIfExists(tableName);
         String sql = "create table " + tableName + "(id int, name varchar(20))";
+        sql += " collate utf8mb4_general_ci";
         String targetTable = dbName + "." + "tbl_t";
         JdbcUtil.executeUpdateSuccess(polarConn, sql);
         dropTableIfExists(targetTable);
@@ -266,5 +270,40 @@ public class CreateSelectTest extends PartitionTestBase {
                 e.printStackTrace();
             }
         }
+    }
+
+    /**
+     * AONE-84985809: CTAS new-column charset must be normalized to a MySQL charset name
+     * (e.g. "utf8") instead of the raw java.nio.charset.Charset canonical name (e.g. "UTF-8"),
+     * otherwise FastSQL treats the '-' in "UTF-8" as a minus operator and rejects the
+     * generated DDL with a syntax error.
+     */
+    @Test
+    public void testCreateSelectCharsetNotJavaCanonicalName() throws Exception {
+        String dbName = "testDb";
+        String createDbPolarx = String.format("create database if not exists %s mode='auto'", dbName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, createDbPolarx);
+        Connection polarConn = getPolardbxConnection(dbName);
+
+        String srcTable = dbName + "." + testTableName + "_charset_src";
+        String dstTable = dbName + "." + testTableName + "_charset_dst";
+        dropTableIfExists(srcTable);
+        dropTableIfExists(dstTable);
+
+        String createSrc =
+            "create table " + srcTable + "(test_varchar varchar(255) character set utf8)";
+        JdbcUtil.executeUpdateSuccess(polarConn, createSrc);
+
+        String ctas = "create table " + dstTable + " select * from " + srcTable;
+        JdbcUtil.executeUpdateSuccess(polarConn, ctas);
+
+        ResultSet rs = JdbcUtil.executeQuery("show create table " + dstTable, polarConn);
+        Assert.assertTrue(rs.next());
+        String createTableDdl = rs.getString(2);
+        Assert.assertFalse("CTAS new column must not emit raw java charset name 'UTF-8': "
+            + createTableDdl, createTableDdl.contains("UTF-8"));
+
+        dropTableIfExists(srcTable);
+        dropTableIfExists(dstTable);
     }
 }

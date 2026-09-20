@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.qatest.ddl.auto.gsi.group3;
 
+import com.alibaba.polardbx.common.dmlStats.GlobalInsertIgnoreReturningStatsSingleton;
 import com.alibaba.polardbx.qatest.CdcIgnore;
 import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
 import com.alibaba.polardbx.qatest.util.ConnectionManager;
@@ -3099,12 +3100,15 @@ public class InsertIgnoreTest extends DDLBaseNewDBTestCase {
         Assert.assertThat(trace.size(), is(1 + 2));
 
         final String insert2 =
-            "/*+TDDL:CMD_EXTRA(DML_SKIP_DUPLICATE_CHECK_FOR_PK=FALSE,DML_USE_RETURNING=FALSE)*/ insert ignore into "
+            "/*+TDDL:CMD_EXTRA(DML_SKIP_DUPLICATE_CHECK_FOR_PK=FALSE,DML_USE_RETURNING=FALSE,"
+                + "DML_PARTITION_LOCAL_PK_DUP_CHECK=TRUE)*/ insert ignore into "
                 + tableName + "(`c1`,`c2`) values (2,3)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, "trace " + insert2);
         trace = getTrace(tddlConnection);
-        // 查找 PK, UK
-        Assert.assertThat(trace.size(), is(primaryTopology.size() + 1 + 2));
+        // 查找 PK, UK: UGSI 一个分区 + 主表/GSI 物理 PK 各一个分区 + 两次写入
+        Assert.assertThat(trace.size(), is(5));
+        Assert.assertThat(trace.stream().filter(row -> row.get(11).contains("SELECT ")).count(), is(3L));
+        Assert.assertThat(trace.stream().filter(row -> row.get(11).contains("INSERT INTO")).count(), is(2L));
 
         final String insert3 = "/*+TDDL:CMD_EXTRA(DML_USE_RETURNING=FALSE)*/ insert ignore into " + tableName
             + "(`pk`,`c1`,`c2`) values (null,3,4)";
@@ -3161,12 +3165,15 @@ public class InsertIgnoreTest extends DDLBaseNewDBTestCase {
         Assert.assertThat(trace.size(), is(1 + 2));
 
         final String insert2 =
-            "/*+TDDL:CMD_EXTRA(DML_SKIP_DUPLICATE_CHECK_FOR_PK=FALSE,DML_USE_RETURNING=FALSE)*/ insert ignore into "
+            "/*+TDDL:CMD_EXTRA(DML_SKIP_DUPLICATE_CHECK_FOR_PK=FALSE,DML_USE_RETURNING=FALSE,"
+                + "DML_PARTITION_LOCAL_UK_DUP_CHECK=TRUE,DML_PARTITION_LOCAL_PK_DUP_CHECK=TRUE)*/ insert ignore into "
                 + tableName + "(`pk`,`c1`) values (2,3)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, "trace " + insert2);
         trace = getTrace(tddlConnection);
-        // 查找 PK, UK
-        Assert.assertThat(trace.size(), is(primaryTopology.size() + 2));
+        // 查找 PK, UK: 主表/GSI 物理 PK 各一个分区 + 两次写入
+        Assert.assertThat(trace.size(), is(4));
+        Assert.assertThat(trace.stream().filter(row -> row.get(11).contains("SELECT ")).count(), is(2L));
+        Assert.assertThat(trace.stream().filter(row -> row.get(11).contains("INSERT INTO")).count(), is(2L));
 
         final String insert3 = "/*+TDDL:CMD_EXTRA(DML_USE_RETURNING=FALSE)*/ insert ignore into " + tableName
             + "(`pk`,`c1`,`c2`) values (3,4,null)";
@@ -3553,7 +3560,8 @@ public class InsertIgnoreTest extends DDLBaseNewDBTestCase {
 
     @Test
     public void testLogicalInsertIgnore() throws SQLException {
-        String hint = "/*+TDDL:CMD_EXTRA(DML_EXECUTION_STRATEGY=LOGICAL,DML_USE_RETURNING=FALSE,DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=TRUE)*/";
+        String hint =
+            "/*+TDDL:CMD_EXTRA(DML_EXECUTION_STRATEGY=LOGICAL,DML_USE_RETURNING=FALSE,DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=TRUE)*/";
 
         testComplexDmlInternal(hint + "insert ignore into", "insert_ignore_test_tbl",
             " partition by hash(id) PARTITIONS 3", false,
@@ -3674,7 +3682,8 @@ public class InsertIgnoreTest extends DDLBaseNewDBTestCase {
 
     @Test
     public void testLogicalInsertIgnoreWithoutFullTableScan() throws SQLException {
-        String hint = "/*+TDDL:CMD_EXTRA(DML_EXECUTION_STRATEGY=LOGICAL,DML_USE_RETURNING=FALSE,DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=FALSE)*/";
+        String hint =
+            "/*+TDDL:CMD_EXTRA(DML_EXECUTION_STRATEGY=LOGICAL,DML_USE_RETURNING=FALSE,DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=FALSE)*/";
 
         testComplexDmlInternal(hint + "insert ignore into", "insert_ignore_test_tbl",
             " partition by hash(id) PARTITIONS 3", false,
@@ -4211,7 +4220,8 @@ public class InsertIgnoreTest extends DDLBaseNewDBTestCase {
             setSqlMode("", conn);
 
             String sql = String.format("insert into %s values (1,'fdsa'),(2,'rew')", tableName);
-            String hint = buildCmdExtra(DML_USE_NEW_DUP_CHECKER, DISABLE_RETURNING);
+            String hint = buildCmdExtra(DML_USE_NEW_DUP_CHECKER, DISABLE_RETURNING,
+                "DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=TRUE");
             JdbcUtil.executeUpdateSuccess(conn, sql);
 
             // data should be truncated
@@ -4613,6 +4623,7 @@ public class InsertIgnoreTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeQuery(sql, tddlConnection);
         List<List<String>> trace = getTrace(tddlConnection);
         Assert.assertFalse(trace.toString().toLowerCase().contains("ignore"));
+        rollbackDdl(getDdlSchema(), realGsiName, tddlConnection);
     }
 
     @Test
@@ -4651,6 +4662,69 @@ public class InsertIgnoreTest extends DDLBaseNewDBTestCase {
             JdbcUtil.executeUpdateSuccess(connection, insertSql);
             JdbcUtil.executeUpdateSuccess(connection, insertSql);
             JdbcUtil.executeUpdateSuccess(connection, insertSql);
+        }
+    }
+
+    @Test
+    public void testInsertIgnoreReturningStats() {
+        // for code coverage
+        String log = GlobalInsertIgnoreReturningStatsSingleton.getInstance().log();
+        Assert.assertNotNull(log);
+    }
+
+    @Test
+    public void testBackQuoteTableName() throws Exception {
+        //useAffectedRows to control this case only run once, ignore Parameterized.Parameters
+        if (!supportReturning || useAffectedRows) {
+            return;
+        }
+
+        final String[] tableNames = {
+            "back_quote_table_name`_insert_ignore",
+//            "``_insert_ignore", // not support consecutive back quotes
+//            "``_insert_ignore``", // not support consecutive back quotes
+            "`_insert_ignore",
+            "`_insert_ignore_`"
+        };
+        final String[] partitionDefs = {
+            "PARTITION BY KEY(`partition_key`)\n" + "PARTITIONS 2",
+            "PARTITION BY KEY(`partition_key`)\n" + "PARTITIONS 32",
+            "SINGLE",
+            "BROADCAST"};
+        final String createTableTmpl = "CREATE TABLE {0} (\n"
+            + "\t`id` int NOT NULL,\n"
+            + "\t`partition_key` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,\n"
+            + "\t`partition_key2` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,\n"
+            + "\t`name` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,\n"
+            + "\tPRIMARY KEY (`id`),\n"
+            + "\tKEY `auto_shard_key_partition_key` USING BTREE (`partition_key`)\n"
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_general_ci\n {1}";
+        final String sqlTmpl = "INSERT IGNORE INTO {0} (id, partition_key, partition_key2, name) "
+            + "VALUES (251, 254, 252, \"name_253\");";
+
+        for (String tableName : tableNames) {
+            for (String partitionDef : partitionDefs) {
+                dropTableWithGsi(tableName, ImmutableList.of());
+
+                final String quotedTableName = quoteSpecialName(tableName);
+
+                final String createTable = MessageFormat.format(createTableTmpl, quotedTableName, partitionDef);
+                JdbcUtil.executeUpdateSuccess(tddlConnection, createTable);
+
+                final String sql = MessageFormat.format(sqlTmpl, quotedTableName);
+                JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+
+                final String hint = buildCmdExtra(DML_EXECUTION_STRATEGY_LOGICAL, DISABLE_RETURNING);
+                JdbcUtil.executeUpdateSuccess(tddlConnection, "trace " + hint + sql);
+
+                checkTrace(tddlConnection,
+                    Matchers.greaterThanOrEqualTo(1),
+                    (t, builder) -> {
+                        builder.that(t.get(0).get(11)).contains("SELECT ");
+                        builder.that(t.get(0).get(12))
+                            .contains(quotedTableName.substring(1, quotedTableName.length() - 2));
+                    });
+            }
         }
     }
 }

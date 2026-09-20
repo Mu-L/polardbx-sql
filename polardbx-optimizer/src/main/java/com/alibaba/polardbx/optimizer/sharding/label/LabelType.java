@@ -47,6 +47,8 @@ public enum LabelType {
      * Label with bottom relNode of {@link org.apache.calcite.rel.core.Aggregate}
      */
     AGGREGATE,
+
+    CTE_CONSUMER,
     /**
      * Label with bottom relNode of {@link org.apache.calcite.rel.core.Filter}
      * and the filter contains at least one {@link org.apache.calcite.rex.RexSubQuery} condition
@@ -73,7 +75,7 @@ public enum LabelType {
     //NON_CORRELATE_SUBQUERY;
 
     public static EnumSet<LabelType> COLUMN_JOINT_LABEL = EnumSet.of(JOIN, CORRELATE);
-    public static EnumSet<LabelType> LEAF_LABEL = EnumSet.of(TABLE_SCAN, VALUES);
+    public static EnumSet<LabelType> LEAF_LABEL = EnumSet.of(TABLE_SCAN, VALUES, CTE_CONSUMER);
     public static EnumSet<LabelType> SNAPSHOT_LABEL = EnumSet.of(AGGREGATE, PROJECT, FILTER_SUBQUERY, REX_SUBQUERY);
     public static EnumSet<LabelType> SUBQUERY_WRAPPER_LABEL = EnumSet.of(FILTER_SUBQUERY, PROJECT_SUBQUERY, CORRELATE);
 

@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.executor.ddl.newengine.job;
 
 import com.alibaba.polardbx.executor.ddl.newengine.dag.TaskScheduler;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 
 import java.util.List;
 import java.util.Set;
@@ -173,7 +174,9 @@ public interface DdlJob {
 
     int getTaskCount();
 
-    List<String> getExplainInfo();
+    List<String> getExplainInfo(ExecutionContext ec);
+
+    OnlineDdlInfo getExplainOnlineDdlInfo();
 
     void setDdlJobFactoryName(String ddlJobFactoryName);
 

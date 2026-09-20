@@ -92,6 +92,12 @@ public enum PrivilegeKind {
     REPLICATION_SLAVE("REPLICATION SLAVE", "replication_slave_priv", PrivilegeScope.INSTANCE_ONLY),
 
     /**
+     * NL2SQL privilege - allows natural language to SQL conversion via Agent.
+     * Instance-only: GRANT NL2SQL ON *.* TO user;
+     */
+    NL2SQL("NL2SQL", "nl2sql_priv", PrivilegeScope.INSTANCE_ONLY),
+
+    /**
      * metaDbPriv is special, user can NOT grant metaDbPriv to others, metDbPriv can be only set to 1 by updating meta
      * db directly.
      */

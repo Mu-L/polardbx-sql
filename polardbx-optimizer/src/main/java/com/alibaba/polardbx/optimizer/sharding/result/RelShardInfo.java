@@ -19,6 +19,7 @@ package com.alibaba.polardbx.optimizer.sharding.result;
 import com.alibaba.polardbx.common.model.sqljep.Comparative;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruneStep;
+import org.apache.calcite.sql.SqlNode;
 
 import java.util.Map;
 import java.util.TreeMap;
@@ -39,8 +40,11 @@ public class RelShardInfo {
      * </pre>
      */
     protected Map<String, Comparative> allComps = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
-    protected Map<String, Comparative> allFullComps = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
 
+    /**
+     * The definition of partition selection of current tableName
+     */
+    protected SqlNode partitions = null;
     /**
      * <pre>
      *     the prune step tree of table
@@ -63,10 +67,6 @@ public class RelShardInfo {
         return allComps;
     }
 
-    public Map<String, Comparative> getAllFullComps() {
-        return allFullComps;
-    }
-
     public PartitionPruneStep getPartPruneStepInfo() {
         return partPruneStepInfo;
     }
@@ -83,10 +83,6 @@ public class RelShardInfo {
         this.allComps = allComps;
     }
 
-    public void setAllFullComps(Map<String, Comparative> allFullComps) {
-        this.allFullComps = allFullComps;
-    }
-
     public void setPartPruneStepInfo(PartitionPruneStep partPruneStepInfo) {
         this.partPruneStepInfo = partPruneStepInfo;
     }
@@ -99,4 +95,11 @@ public class RelShardInfo {
         this.schemaName = schemaName;
     }
 
+    public SqlNode getPartitions() {
+        return partitions;
+    }
+
+    public void setPartitions(SqlNode partitions) {
+        this.partitions = partitions;
+    }
 }

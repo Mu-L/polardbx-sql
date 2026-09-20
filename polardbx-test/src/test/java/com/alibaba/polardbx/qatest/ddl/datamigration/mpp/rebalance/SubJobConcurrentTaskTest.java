@@ -11,6 +11,7 @@ import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import net.jcip.annotations.NotThreadSafe;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -32,6 +33,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static java.util.Arrays.stream;
+import static org.junit.Assert.assertEquals;
 
 @NotThreadSafe
 @RunWith(Parameterized.class)
@@ -62,6 +64,61 @@ public class SubJobConcurrentTaskTest extends DDLBaseNewDBTestCase {
     }
 
     @Test
+    public void testSubJobConcurrentTaskForConcurrentPg() throws SQLException, InterruptedException {
+        String schemaName = "sub_job_concurrent_test";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "drop database if exists " + schemaName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "create database  " + schemaName + " mode = auto");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "use " + schemaName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection,
+            "create table t1(a int, b int) partition by hash(a) partitions 16 ");
+        JdbcUtil.executeUpdateSuccess(tddlConnection,
+            "create table t2(a int, b int) partition by hash(a) partitions 16 ");
+        JdbcUtil.executeUpdateSuccess(tddlConnection,
+            "create table t3(a int , b int) partition by hash(a) partitions 16 ");
+
+        JdbcUtil.executeUpdateSuccess(tddlConnection,
+            "create table q1(a bigint, b int) partition by hash(a) partitions 32 ");
+        JdbcUtil.executeUpdateSuccess(tddlConnection,
+            "create table q2(a bigint, b int) partition by hash(a) partitions 32 ");
+        JdbcUtil.executeUpdateSuccess(tddlConnection,
+            "create table q3(a bigint , b int) partition by hash(a) partitions 32 ");
+        Map<String, String> tableToTableGroupMap =
+            DdlStateCheckUtil.getTableToTableGroupMap(tddlConnection, schemaName);
+        logger.info("tableToTableGroupMap: " + JSON.toJSONString(tableToTableGroupMap));
+        Assert.assertTrue(tableToTableGroupMap.get("t1").equals(tableToTableGroupMap.get("t2")));
+        Assert.assertTrue(tableToTableGroupMap.get("t1").equals(tableToTableGroupMap.get("t3")));
+
+        Assert.assertTrue(tableToTableGroupMap.get("q1").equals(tableToTableGroupMap.get("q2")));
+        Assert.assertTrue(tableToTableGroupMap.get("q1").equals(tableToTableGroupMap.get("q3")));
+        String rebalanceDdl =
+            "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_DB_PARALLELISM=8)*//*+random_string_for_concurrent_pg1*/rebalance database shuffle_data_dist=1;";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, rebalanceDdl);
+
+        Long jobId = DdlStateCheckUtil.getDdlJobIdFromPattern(tddlConnection, rebalanceDdl);
+        DdlStateCheckUtil.waitTillDdlDone(tddlConnection, jobId, null);
+
+        List<List<String>> taskInfosList = DdlStateCheckUtil.fetchDagAfterTopologySort(tddlConnection, jobId);
+        Set<String> tableGroupNames = new HashSet<>(tableToTableGroupMap.values());
+        Boolean checkOk = true;
+        for (List<String> taskInfos : taskInfosList) {
+            for (String tableGroupName : tableGroupNames) {
+                if (onlyOneOrZeroPatternMatched(taskInfos, tableGroupName)) {
+                    continue;
+                } else {
+                    checkOk = false;
+                    logger.info(" bad taskInfos: " + JSON.toJSONString(taskInfos));
+                }
+            }
+        }
+        Assert.assertTrue(checkOk);
+    }
+
+    public static Boolean onlyOneOrZeroPatternMatched(List<String> strings, String pattern) {
+        long count = strings.stream().filter(s -> s.contains(pattern)).count();
+        return count <= 1;
+    }
+
+    @Test
     public void testSubJobConcurrentTaskSimple() throws SQLException, InterruptedException {
         String schemaName = "sub_job_concurrent_test";
         JdbcUtil.executeUpdateSuccess(tddlConnection, "drop database if exists " + schemaName);
@@ -87,7 +144,7 @@ public class SubJobConcurrentTaskTest extends DDLBaseNewDBTestCase {
         int minConcurrent = 2;
         int maxConcurrent = 3;
         String rebalanceDdl =
-            "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_TASK_PARALISM=3)*/rebalance database shuffle_data_dist=1;";
+            "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_DB_PARALLELISM=3)*/rebalance database shuffle_data_dist=1;";
         concurrentTaskSubJobTest(tddlConnection, schemaName, minConcurrent, maxConcurrent, rebalanceDdl, waitTime);
     }
 
@@ -129,7 +186,7 @@ public class SubJobConcurrentTaskTest extends DDLBaseNewDBTestCase {
         int maxConcurrent = 3;
         String rebalanceDdl =
             String.format(
-                "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_TASK_PARALISM=%d)*/rebalance database shuffle_data_dist=1;",
+                "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_DB_PARALLELISM=%d)*/rebalance database shuffle_data_dist=1;",
                 maxConcurrent);
         concurrentTaskSubJobTest(tddlConnection, schemaName, minConcurrent, maxConcurrent, rebalanceDdl, waitTime);
     }
@@ -180,7 +237,7 @@ public class SubJobConcurrentTaskTest extends DDLBaseNewDBTestCase {
         int maxConcurrent = 3;
         String rebalanceDdl =
             String.format(
-                "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_TASK_PARALISM=%d)*/rebalance database shuffle_data_dist=1;",
+                "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_DB_PARALLELISM=%d,PHYSICAL_BACKFILL_ENABLE=true,TABLE_SIZE_THRESHOLD_TO_ENABLE_PHYSICAL_BACKFILL=-1)*/rebalance database shuffle_data_dist=1;",
                 maxConcurrent);
         concurrentTaskSubJobTest(tddlConnection, schemaName, minConcurrent, maxConcurrent, rebalanceDdl, waitTime);
     }
@@ -225,7 +282,7 @@ public class SubJobConcurrentTaskTest extends DDLBaseNewDBTestCase {
         int maxConcurrent = 1;
         String rebalanceDdl =
             String.format(
-                "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_TASK_PARALISM=%d)*/rebalance database shuffle_data_dist=1;",
+                "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_DB_PARALLELISM=%d)*/rebalance database shuffle_data_dist=1;",
                 maxConcurrent);
         concurrentTaskSubJobTest(tddlConnection, schemaName, minConcurrent, maxConcurrent, rebalanceDdl, waitTime);
     }
@@ -279,7 +336,7 @@ public class SubJobConcurrentTaskTest extends DDLBaseNewDBTestCase {
         dns.remove(undeletableDn);
         String dn = dns.get(0);
         String rebalanceDdl = String.format(
-            "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_TASK_PARALISM=%d)*/rebalance database drain_node = '%s'",
+            "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_DB_PARALLELISM=%d)*/rebalance database drain_node = '%s'",
             maxConcurrent, dn);
         concurrentTaskSubJobTest(tddlConnection, schemaName, minConcurrent, maxConcurrent, rebalanceDdl, waitTime);
     }
@@ -356,7 +413,7 @@ public class SubJobConcurrentTaskTest extends DDLBaseNewDBTestCase {
             }
             maxRunningSubJobCount = Math.max(maxRunningSubJobCount, tgNames.size());
             Thread.sleep(50);
-            jobFinished = DdlStateCheckUtil.checkIfCompleteFully(tddlConnection, jobId, "randomasyoulike");
+            jobFinished = DdlStateCheckUtil.checkIfCompleteSuccessful(tddlConnection, jobId);
             if (jobFinished) {
                 break;
             }

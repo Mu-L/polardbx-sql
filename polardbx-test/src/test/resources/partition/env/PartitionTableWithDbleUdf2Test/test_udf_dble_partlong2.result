@@ -1,0 +1,40 @@
+## DISABLE_FAST_SQL_PARSER
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=false
+## error_msg: $# server error by columnValue #$
+select partlongi2l360('')
+partlongi2l360('')
+0
+select partlongi2l360(null)
+partlongi2l360(NULL)
+0
+drop table if exists partlong_t1
+create table partlong_t1(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(partlongi2l360(c1))
+(
+ partition p1 values less than(1),
+ partition p2 values less than(2)
+)
+select part_route('','partlong_t1',  null)
+part_route('', 'partlong_t1', NULL)
+p1
+## error_msg: $# invalid type conversion #$
+select part_route('','partlong_t1',  '')
+invalid type conversion
+## error_msg: $# invalid type conversion #$
+select part_route('','partlong_t1',  'a')
+invalid type conversion
+select part_route('','partlong_t1',  1500000)
+part_route('', 'partlong_t1', 1500000)
+p1
+select part_route('','partlong_t1',  3500000)
+part_route('', 'partlong_t1', 3500000)
+p1
+select part_route('','partlong_t1',  5500000)
+part_route('', 'partlong_t1', 5500000)
+p2
+select part_route('','partlong_t1',  10000000)
+part_route('', 'partlong_t1', 10000000)
+p2

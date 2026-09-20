@@ -19,9 +19,9 @@ package com.alibaba.polardbx.executor.ddl.job.task.columnar;
 import com.alibaba.fastjson.annotation.JSONCreator;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
-import com.alibaba.polardbx.executor.columnar.checker.CciChecker;
+import com.alibaba.polardbx.executor.columnar.checker.CciNaiveChecker;
 import com.alibaba.polardbx.executor.columnar.checker.CciFastChecker;
-import com.alibaba.polardbx.executor.columnar.checker.ICciChecker;
+import com.alibaba.polardbx.executor.columnar.checker.AbstractCciChecker;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.gsi.CheckerManager;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
@@ -69,24 +69,15 @@ public class CheckCciTask extends CheckCciBaseTask {
     protected void beforeTransaction(ExecutionContext executionContext) {
         // Check.
         long startTime = System.nanoTime();
-        ICciChecker checker;
+        AbstractCciChecker checker;
         if (executionContext.isEnableCciFastChecker() && ExecUtils.canUseCciFastChecker(schemaName, indexName)) {
             checker = new CciFastChecker(schemaName, tableName, indexName);
         } else {
-            checker = new CciChecker(schemaName, tableName, indexName);
-        }
-
-        Runnable recover = null;
-        if (executionContext.isForce2pcDuringCciCheck()) {
-            try {
-                recover = ExecUtils.forceAllTrx2PC();
-            } catch (Throwable t) {
-                recover = null;
-            }
+            checker = new CciNaiveChecker(schemaName, tableName, indexName);
         }
 
         try {
-            checker.check(executionContext, recover);
+            checker.checkSnapshot(executionContext);
         } catch (Throwable t) {
             reports.add(
                 createReportRecord(

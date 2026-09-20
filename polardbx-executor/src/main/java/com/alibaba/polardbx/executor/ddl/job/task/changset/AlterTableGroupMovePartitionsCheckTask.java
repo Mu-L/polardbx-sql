@@ -28,13 +28,10 @@ import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.corrector.Checker;
 import com.alibaba.polardbx.executor.corrector.Reporter;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseBackfillTask;
-import com.alibaba.polardbx.executor.ddl.job.task.RemoteExecutableDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlEngineAccessorDelegate;
 import com.alibaba.polardbx.executor.ddl.newengine.resource.DdlEngineResources;
-import com.alibaba.polardbx.executor.ddl.newengine.resource.ResourceContainer;
 import com.alibaba.polardbx.executor.ddl.util.ChangeSetUtils;
-import com.alibaba.polardbx.executor.fastchecker.CheckerBatch;
 import com.alibaba.polardbx.executor.fastchecker.FastChecker;
 import com.alibaba.polardbx.executor.gsi.CheckerManager;
 import com.alibaba.polardbx.optimizer.config.table.PreemptiveTime;
@@ -64,7 +61,6 @@ import java.util.Set;
 
 import static com.alibaba.polardbx.executor.ddl.newengine.utils.DdlResourceManagerUtils.DN_CPU;
 import static com.alibaba.polardbx.executor.ddl.newengine.utils.DdlResourceManagerUtils.DN_IO;
-import static com.alibaba.polardbx.executor.ddl.newengine.utils.DdlResourceManagerUtils.MOVE_PARTITION_BEFORE_CHECK;
 
 @TaskName(name = "AlterTableGroupMovePartitionsCheckTask")
 @Getter
@@ -205,7 +201,7 @@ public class AlterTableGroupMovePartitionsCheckTask extends BaseBackfillTask {
             // sync to restore the status of table meta
             PreemptiveTime preemptiveTime = PreemptiveTime.getPreemptiveTimeFromExecutionContext(executionContext,
                 ConnectionParams.PREEMPTIVE_MDL_INITWAIT, ConnectionParams.PREEMPTIVE_MDL_INTERVAL);
-            SyncManagerHelper.sync(
+            SyncManagerHelper.syncThrowExceptions(
                 new TablesMetaChangePreemptiveSyncAction(schemaName, relatedTables, preemptiveTime), SyncScope.ALL);
         }
     }
@@ -439,7 +435,7 @@ public class AlterTableGroupMovePartitionsCheckTask extends BaseBackfillTask {
     }
 
     @Override
-    public List<String> explainInfo() {
+    public List<String> explainInfo(ExecutionContext ec) {
         String backfillTask = "ALTERTABLEGROUP_MOVEPARTITIONS_CHECK_TASK(" + logicalTableName + ")";
         List<String> command = new ArrayList<>(1);
         command.add(backfillTask);

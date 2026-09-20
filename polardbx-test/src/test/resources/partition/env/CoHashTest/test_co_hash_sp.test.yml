@@ -45,7 +45,7 @@ CREATE TABLE `ch_t1_sp_ch_h2` (
   ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
   PARTITION BY CO_HASH(SUBSTR(`order_id`,-8),SUBSTR(`user_id`,-4))
   PARTITIONS 2
-  SUBPARTITION BY HASH(YEAR(`sid`))
+  SUBPARTITION BY HASH(YEAR(`order_time`))
   SUBPARTITIONS 2;
 show create table ch_t1_sp_ch_h2;
 

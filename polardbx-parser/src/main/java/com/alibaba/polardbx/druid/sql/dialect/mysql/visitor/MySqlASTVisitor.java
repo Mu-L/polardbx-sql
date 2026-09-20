@@ -17,6 +17,7 @@ package com.alibaba.polardbx.druid.sql.dialect.mysql.visitor;
 
 import com.alibaba.polardbx.druid.sql.ast.statement.DrdsAlterTableAllocateLocalPartition;
 import com.alibaba.polardbx.druid.sql.ast.statement.DrdsAlterTableCleanupExpiredData;
+import com.alibaba.polardbx.druid.sql.ast.statement.DrdsAlterTableRebuildCleanup;
 import com.alibaba.polardbx.druid.sql.ast.statement.DrdsAlterTableExpireLocalPartition;
 import com.alibaba.polardbx.druid.sql.ast.statement.DrdsArchivePartition;
 import com.alibaba.polardbx.druid.sql.ast.statement.DrdsExtractHotKey;
@@ -26,6 +27,7 @@ import com.alibaba.polardbx.druid.sql.ast.statement.DrdsMovePartition;
 import com.alibaba.polardbx.druid.sql.ast.statement.DrdsRenamePartition;
 import com.alibaba.polardbx.druid.sql.ast.statement.DrdsSplitPartition;
 import com.alibaba.polardbx.druid.sql.ast.statement.DrdsSplitHotKey;
+import com.alibaba.polardbx.druid.sql.ast.statement.DrdsExpandPartitions;
 import com.alibaba.polardbx.druid.sql.ast.statement.MySQLInstanceReadonlyItem;
 import com.alibaba.polardbx.druid.sql.ast.statement.MySQLShowHotkeyStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterDatabaseStatement;
@@ -52,11 +54,14 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.clause.MySqlLeaveStateme
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.clause.MySqlRepeatStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.clause.MySqlSelectIntoStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.expr.MySqlCharExpr;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.expr.MySqlJSONTableExpr;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.expr.MySqlOrderingExpr;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.expr.MySqlOutFileExpr;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.expr.MySqlUserName;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.CobarShowStatus;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.ColumnarWarmupStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.CreateFileStorageStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.ColumnarWarmupControlStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsAlignToTableGroup;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsAlterFileStorageStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsAlterTableAsOfTimeStamp;
@@ -73,8 +78,9 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsCheckColum
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsCheckColumnarPartition;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsCheckColumnarSnapshot;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsCheckGlobalIndex;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsCheckTableRouting;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsClearCclRulesStatement;
-import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsClearCclTriggersStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsClearCclBlockersStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsClearDDLJobCache;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsClearFileStorageStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsClearSeqCacheStatement;
@@ -82,22 +88,15 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsContinueDD
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsContinueScheduleStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsConvertAllSequencesStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsCreateCclRuleStatement;
-import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsCreateCclTriggerStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsCreateCclBlockerStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsCreateRoutingRuleStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsCreateScheduleStatement;
-import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsCreateStoragePoolStatement;
-import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsCreateSecurityLabelComponentStatement;
-import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsCreateSecurityLabelStatement;
-import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsCreateSecurityPolicyStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsDropCclRuleStatement;
-import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsDropCclTriggerStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsDropCclBlockerStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsDropFileStorageStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsDropRoutingRuleStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsDropScheduleStatement;
-import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsDropStoragePoolStatement;
-import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsDropSecurityLabelComponentStatement;
-import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsDropSecurityLabelStatement;
-import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsDropSecurityPolicyStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsFireScheduleStatement;
-import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsGrantSecurityLabelStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsInspectDDLJobCache;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsInspectRuleVersionStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsInspectSeqRangeStatement;
@@ -110,14 +109,14 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsPushDownUd
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsRecoverDDLJob;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsRefreshLocalRulesStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsRefreshTopology;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsReloadTableStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsRemoveDDLJob;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsResumeRebalanceJob;
-import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsRevokeSecurityLabelStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsRollbackDDLJob;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowDdlEngineStatus;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsTerminateRebalanceJob;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowCclRuleStatement;
-import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowCclTriggerStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowCclBlockerStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowChangeSet;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowColumnarIndex;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowCreateTableGroup;
@@ -126,6 +125,7 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowDDLRes
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowGlobalDeadlocks;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowGlobalIndex;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowLocalDeadlocks;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowExpandStatus;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowLocality;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowMetadataLock;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowMoveDatabaseStatement;
@@ -135,11 +135,12 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowSchedu
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowStorage;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowTableGroup;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowTableReplicate;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowAiFunctionStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowAiModelStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowTransStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsShowTransStatsStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsSkipRebalanceSubjob;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsSlowSqlCclStatement;
-import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsTerminateRebalanceJob;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.DrdsUnArchiveStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySql8ShowGrantsStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlAlterDatabaseKillJob;
@@ -171,7 +172,18 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlClearPart
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlClearPlanCacheStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateAddLogFileGroupStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateEventStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlAlterExternalCatalogStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlAlterSecretStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateExternalCatalogStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateSecretStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlDropSecretStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlRefreshExternalCatalogStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowConnectorsStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlDescribeExternalCatalogStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowCreateExternalCatalogStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowCreateSecretStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowExternalCatalogsStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowSecretsStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateRoleStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateServerStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateTableSpaceStatement;
@@ -225,9 +237,11 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowContr
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowCreateDatabaseStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowCreateEventStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowCreateFunctionStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowCreateJavaFunctionStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowCreateProcedureStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowCreateTriggerStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowDatabaseStatusStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowJavaFunctionsStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowDatasourcesStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowDdlStatusStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowDsStatement;
@@ -468,6 +482,14 @@ public interface MySqlASTVisitor extends SQLASTVisitor {
 
     boolean visit(DrdsBaselineStatement x);
 
+    void endVisit(ColumnarWarmupStatement x);
+
+    boolean visit(ColumnarWarmupStatement x);
+
+    void endVisit(ColumnarWarmupControlStatement x);
+
+    boolean visit(ColumnarWarmupControlStatement x);
+
     void endVisit(DrdsShowGlobalIndex x);
 
     void endVisit(DrdsShowColumnarIndex x);
@@ -484,6 +506,10 @@ public interface MySqlASTVisitor extends SQLASTVisitor {
 
     boolean visit(DrdsShowLocalDeadlocks x);
 
+    void endVisit(DrdsShowExpandStatus x);
+
+    boolean visit(DrdsShowExpandStatus x);
+
     void endVisit(DrdsShowMetadataLock x);
 
     boolean visit(DrdsShowMetadataLock x);
@@ -491,6 +517,10 @@ public interface MySqlASTVisitor extends SQLASTVisitor {
     void endVisit(DrdsCheckGlobalIndex x);
 
     boolean visit(DrdsCheckGlobalIndex x);
+
+    void endVisit(DrdsCheckTableRouting x);
+
+    boolean visit(DrdsCheckTableRouting x);
 
     void endVisit(DrdsCheckColumnarPartition x);
 
@@ -503,6 +533,10 @@ public interface MySqlASTVisitor extends SQLASTVisitor {
     void endVisit(DrdsCheckColumnarSnapshot x);
 
     boolean visit(DrdsCheckColumnarIndex x);
+
+    void endVisit(DrdsCreateRoutingRuleStatement x);
+
+    boolean visit(DrdsCreateRoutingRuleStatement x);
 
     void endVisit(DrdsCreateCclRuleStatement x);
 
@@ -528,6 +562,10 @@ public interface MySqlASTVisitor extends SQLASTVisitor {
 
     boolean visit(DrdsContinueScheduleStatement x);
 
+    void endVisit(DrdsDropRoutingRuleStatement x);
+
+    boolean visit(DrdsDropRoutingRuleStatement x);
+
     void endVisit(DrdsDropCclRuleStatement x);
 
     boolean visit(DrdsDropCclRuleStatement x);
@@ -540,21 +578,21 @@ public interface MySqlASTVisitor extends SQLASTVisitor {
 
     boolean visit(DrdsClearCclRulesStatement x);
 
-    void endVisit(DrdsCreateCclTriggerStatement x);
+    void endVisit(DrdsCreateCclBlockerStatement x);
 
-    boolean visit(DrdsCreateCclTriggerStatement x);
+    boolean visit(DrdsCreateCclBlockerStatement x);
 
-    void endVisit(DrdsDropCclTriggerStatement x);
+    void endVisit(DrdsDropCclBlockerStatement x);
 
-    boolean visit(DrdsDropCclTriggerStatement x);
+    boolean visit(DrdsDropCclBlockerStatement x);
 
-    void endVisit(DrdsClearCclTriggersStatement x);
+    void endVisit(DrdsClearCclBlockersStatement x);
 
-    boolean visit(DrdsClearCclTriggersStatement x);
+    boolean visit(DrdsClearCclBlockersStatement x);
 
-    void endVisit(DrdsShowCclTriggerStatement x);
+    void endVisit(DrdsShowCclBlockerStatement x);
 
-    boolean visit(DrdsShowCclTriggerStatement x);
+    boolean visit(DrdsShowCclBlockerStatement x);
 
     void endVisit(DrdsSlowSqlCclStatement x);
 
@@ -687,6 +725,14 @@ public interface MySqlASTVisitor extends SQLASTVisitor {
     boolean visit(MySqlShowCreateFunctionStatement x);
 
     void endVisit(MySqlShowCreateFunctionStatement x);
+
+    boolean visit(MySqlShowJavaFunctionsStatement x);
+
+    void endVisit(MySqlShowJavaFunctionsStatement x);
+
+    boolean visit(MySqlShowCreateJavaFunctionStatement x);
+
+    void endVisit(MySqlShowCreateJavaFunctionStatement x);
 
     boolean visit(MySqlShowCreateProcedureStatement x);
 
@@ -952,6 +998,50 @@ public interface MySqlASTVisitor extends SQLASTVisitor {
 
     void endVisit(MySqlCreateExternalCatalogStatement x);
 
+    boolean visit(MySqlAlterExternalCatalogStatement x);
+
+    void endVisit(MySqlAlterExternalCatalogStatement x);
+
+    boolean visit(MySqlRefreshExternalCatalogStatement x);
+
+    void endVisit(MySqlRefreshExternalCatalogStatement x);
+
+    boolean visit(MySqlCreateSecretStatement x);
+
+    void endVisit(MySqlCreateSecretStatement x);
+
+    boolean visit(MySqlDropSecretStatement x);
+
+    void endVisit(MySqlDropSecretStatement x);
+
+    boolean visit(MySqlAlterSecretStatement x);
+
+    void endVisit(MySqlAlterSecretStatement x);
+
+    boolean visit(MySqlShowExternalCatalogsStatement x);
+
+    void endVisit(MySqlShowExternalCatalogsStatement x);
+
+    boolean visit(MySqlShowSecretsStatement x);
+
+    void endVisit(MySqlShowSecretsStatement x);
+
+    boolean visit(MySqlShowCreateExternalCatalogStatement x);
+
+    void endVisit(MySqlShowCreateExternalCatalogStatement x);
+
+    boolean visit(MySqlDescribeExternalCatalogStatement x);
+
+    void endVisit(MySqlDescribeExternalCatalogStatement x);
+
+    boolean visit(MySqlShowCreateSecretStatement x);
+
+    void endVisit(MySqlShowCreateSecretStatement x);
+
+    boolean visit(MySqlShowConnectorsStatement x);
+
+    void endVisit(MySqlShowConnectorsStatement x);
+
     boolean visit(MySqlAlterUserStatement x);
 
     void endVisit(MySqlAlterUserStatement x);
@@ -1047,6 +1137,10 @@ public interface MySqlASTVisitor extends SQLASTVisitor {
     boolean visit(MySqlFlushStatement x);
 
     void endVisit(MySqlFlushStatement x);
+
+    boolean visit(DrdsReloadTableStatement x);
+
+    void endVisit(DrdsReloadTableStatement x);
 
     boolean visit(MySqlEventSchedule x);
 
@@ -1332,6 +1426,10 @@ public interface MySqlASTVisitor extends SQLASTVisitor {
 
     void endVisit(DrdsSplitPartition x);
 
+    boolean visit(DrdsExpandPartitions x);
+
+    void endVisit(DrdsExpandPartitions x);
+
     boolean visit(DrdsMergePartition x);
 
     void endVisit(DrdsMergePartition x);
@@ -1372,6 +1470,10 @@ public interface MySqlASTVisitor extends SQLASTVisitor {
 
     void endVisit(DrdsAlterTableCleanupExpiredData x);
 
+    boolean visit(DrdsAlterTableRebuildCleanup x);
+
+    void endVisit(DrdsAlterTableRebuildCleanup x);
+
     boolean visit(DrdsDropFileStorageStatement x);
 
     void endVisit(DrdsDropFileStorageStatement x);
@@ -1407,4 +1509,28 @@ public interface MySqlASTVisitor extends SQLASTVisitor {
     boolean visit(MySQLInstanceReadonlyItem x);
 
     void endVisit(MySQLInstanceReadonlyItem x);
+
+    boolean visit(DrdsShowAiFunctionStatement x);
+
+    void endVisit(DrdsShowAiFunctionStatement x);
+
+    boolean visit(DrdsShowAiModelStatement x);
+
+    void endVisit(DrdsShowAiModelStatement x);
+
+    default boolean visit(MySqlJSONTableExpr x) {
+        return true;
+    }
+
+    default void endVisit(MySqlJSONTableExpr x) {
+
+    }
+
+    default boolean visit(MySqlJSONTableExpr.Column x) {
+        return true;
+    }
+
+    default void endVisit(MySqlJSONTableExpr.Column x) {
+
+    }
 } //

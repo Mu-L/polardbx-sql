@@ -40,6 +40,7 @@ import com.alibaba.polardbx.executor.operator.spill.AsyncFileSingleBufferSpiller
 import com.alibaba.polardbx.executor.operator.spill.SpillerFactory;
 import com.alibaba.polardbx.gms.metadb.GmsSystemTables;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.PlannerContext;
@@ -434,6 +435,12 @@ public class OutFileStatisticsCursor extends OutFileCursor {
             }
             TableMeta meta = CBOUtil.getTableMeta(tableScan.getTable());
             final String schemaName = StringUtil.isEmpty(meta.getSchemaName()) ? baseSchema : meta.getSchemaName();
+            // The dump reproduces a local environment: an external schema has no local
+            // database, no replayable DDL and no persisted statistics, and every lookup on
+            // it would instead issue remote metadata requests.
+            if (ExternalNameValidator.isExternalSchema(schemaName)) {
+                continue;
+            }
             String tableName = StatisticManager.getSourceTableName(schemaName, meta.getTableName());
             tablesUsed.computeIfAbsent(schemaName, x -> new HashSet<>());
             tablesUsed.get(schemaName).add(tableName);
@@ -446,6 +453,9 @@ public class OutFileStatisticsCursor extends OutFileCursor {
 
         Map<String, Set<String>> views = PlannerContext.getPlannerContext(unOptimizedPlan).getViewMap();
         for (Map.Entry<String, Set<String>> entry : views.entrySet()) {
+            if (ExternalNameValidator.isExternalSchema(entry.getKey())) {
+                continue;
+            }
             sources.computeIfAbsent(entry.getKey(), x -> new SourceInUsed());
             sources.get(entry.getKey()).setViews(entry.getValue());
         }
@@ -527,7 +537,7 @@ public class OutFileStatisticsCursor extends OutFileCursor {
                 List<String> tableDef = Lists.newArrayList();
                 for (String tableName : tables) {
                     List<String> columnarIndexes =
-                        GlobalIndexMeta.getColumnarIndexNames(tableName, schemaName, context);
+                        GlobalIndexMeta.getAllColumnarIndexNames(tableName, schemaName, context);
                     // with columnar
                     boolean withColumnar = !CollectionUtils.isEmpty(columnarIndexes);
 
@@ -661,7 +671,6 @@ public class OutFileStatisticsCursor extends OutFileCursor {
                     boolean ignoreColumn = ignoreStringColumn(currentSchema, currentTable, currentColumn);
                     param.add(
                         ignoreColumn ? "''" : "'" + StringEscapeUtils.escapeJava(rs.getString("HISTOGRAM")) + "'");
-
                     if (ignoreColumn || StringUtils.isEmpty(rs.getString("TOPN"))) {
                         param.add(null);
                     } else {
@@ -669,7 +678,12 @@ public class OutFileStatisticsCursor extends OutFileCursor {
                     }
                     param.add(String.valueOf(rs.getLong("NULL_COUNT")));
                     param.add(String.valueOf(rs.getFloat("SAMPLE_RATE")));
-                    consumer.append(String.join(",", param));
+                    if (isStringColumn(currentSchema, currentTable, currentColumn)) {
+                        consumer.appendForce(String.join(",", param));
+                    } else {
+                        consumer.append(String.join(",", param));
+                    }
+
                 }
                 rs.close();
                 consumer.flush();
@@ -713,6 +727,18 @@ public class OutFileStatisticsCursor extends OutFileCursor {
         if (!context.getParamManager().getBoolean(ConnectionParams.STATISTICS_DUMP_IGNORE_STRING)) {
             return false;
         }
+        return isStringColumn(currentSchema, currentTable, currentColumn);
+    }
+
+    /**
+     * check whether to ignore the column
+     *
+     * @param currentSchema schema of the column
+     * @param currentTable table of the column
+     * @param currentColumn column name
+     * @return true if enable ignore string and the column is a string
+     */
+    private boolean isStringColumn(String currentSchema, String currentTable, String currentColumn) {
         if (currentSchema != null && currentTable != null && currentColumn != null) {
             TableMeta tableMeta = OptimizerContext.getContext(currentSchema)
                 .getLatestSchemaManager().getTableWithNull(currentTable);
@@ -752,21 +778,6 @@ public class OutFileStatisticsCursor extends OutFileCursor {
             }
             outputCatalog(String.format(SET_SESSION, key, value));
         }
-    }
-
-    private static String mysqlRealEscapeString(String sql) {
-        byte[] bytes = sql.getBytes();
-        ArrayList<Byte> bytesAfterProcess = new ArrayList<>(bytes.length);
-        for (Byte b : bytes) {
-            if (b == '\"') {
-                bytesAfterProcess.add((byte) '\\');
-            } else if (b == '\\') {
-                bytesAfterProcess.add((byte) '\\');
-            }
-            bytesAfterProcess.add(b);
-        }
-        //return new String(Bytes.toArray(bytesAfterProcess));
-        return sql;
     }
 
     static class SourceInUsed {
@@ -819,6 +830,16 @@ public class OutFileStatisticsCursor extends OutFileCursor {
             this.sb = new StringBuilder();
         }
 
+        void appendForce(String value) {
+            // flush previous record
+            flush();
+            // add new value
+            sb.append("(").append(value).append(")");
+            currentSize++;
+            // flush
+            flush();
+        }
+
         void append(String value) {
             if (currentSize > 0) {
                 sb.append(",");
@@ -827,8 +848,6 @@ public class OutFileStatisticsCursor extends OutFileCursor {
             currentSize++;
             if (currentSize >= batchSize) {
                 flush();
-                sb = new StringBuilder();
-
             }
         }
 
@@ -836,6 +855,7 @@ public class OutFileStatisticsCursor extends OutFileCursor {
             if (currentSize > 0) {
                 outputCatalog(String.format(sql, sb));
                 currentSize = 0;
+                sb = new StringBuilder();
             }
         }
     }

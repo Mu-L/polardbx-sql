@@ -114,7 +114,7 @@ public class AutoPartitionShowCreateTest extends AutoPartitionTestBase {
             + "        LOCAL KEY `_local_cg_i_ap_col` USING BTREE (`seller_id`),\n"
             + "        CLUSTERED INDEX `cg_i_ap_col` USING BTREE(`seller_id`) DBPARTITION BY HASH(`seller_id`),\n"
             + "        UNIQUE CLUSTERED KEY `cug_i_ap_col` USING BTREE (`order_id`) DBPARTITION BY HASH(`order_id`)\n"
-            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4  dbpartition by hash(`pk`);";
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE=utf8mb4_general_ci dbpartition by hash(`pk`);";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable);
 

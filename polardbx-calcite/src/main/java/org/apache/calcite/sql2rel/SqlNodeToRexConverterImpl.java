@@ -16,7 +16,6 @@
  */
 package org.apache.calcite.sql2rel;
 
-import com.google.common.primitives.UnsignedLong;
 import org.apache.calcite.avatica.util.ByteString;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
@@ -39,8 +38,6 @@ import org.apache.calcite.util.NlsString;
 import org.apache.calcite.util.TimeString;
 import org.apache.calcite.util.TimestampString;
 import org.apache.calcite.util.Util;
-
-import com.google.common.base.Preconditions;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -102,6 +99,11 @@ public class SqlNodeToRexConverterImpl implements SqlNodeToRexConverter {
       if (literal.getTypeName() == SqlTypeName.BOOLEAN) {
         type = typeFactory.createSqlType(SqlTypeName.BOOLEAN);
         type = typeFactory.createTypeWithNullability(type, true);
+      } else if (literal.getTypeName() == SqlTypeName.NULL) {
+        type = validator.getValidatedNodeTypeIfKnown(literal);
+        if (type == null) {
+          type = rexBuilder.getTypeFactory().createSqlType(SqlTypeName.NULL);
+        }
       } else {
         type = validator.getValidatedNodeType(literal);
       }

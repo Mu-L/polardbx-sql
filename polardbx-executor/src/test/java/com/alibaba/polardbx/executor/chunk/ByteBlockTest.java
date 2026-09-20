@@ -68,6 +68,7 @@ public class ByteBlockTest extends BaseBlockTest {
                 assertFalse(block.isNull(i));
                 assertEquals((long) values[i], block.getByte(i));
                 assertTrue(block.equals(i, block, i));
+                assertTrue(block.compareAssertedSameType(i, block, i) == 0);
             } else {
                 assertTrue(block.isNull(i));
             }

@@ -1,0 +1,103 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+  ## test dble_db
+
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+
+use polardbx;
+drop database if exists dbledb1;
+  ## USE_DN_LIST_MSG
+create database if not exists dbledb1 mode = 'auto' locality='db_config={"g1":["set1","dbledb1_00"],"g2":["set2","dbledb1_01"] }';
+show create database dbledb1;
+use dbledb1;
+show tables;
+use polardbx;
+unregister database if exists dbledb1;
+  ## USE_DN_LIST_MSG
+register database if not exists dbledb1 mode = 'auto' locality='db_config={"g1":["set1","dbledb1_00"],"g2":["set2","dbledb1_01"] }';
+show create database dbledb1;
+use dbledb1;
+show tables;
+  
+  ## test dble_part_tbl
+drop table if exists dble_t1;
+create table if not exists dble_t1 (
+    a bigint , 
+    b bigint not null auto_increment,
+    primary key(b)
+) 
+partition by udf_hash(unitmurhashi2(a))
+partitions 2
+(
+partition p1 values less than (1),
+partition p2 values less than (2)
+)
+locality='db_pools=g1,g2';
+show create table dble_t1;
+insert into dble_t1 (a,b) values (100, null),(120,null);
+select a,b from dble_t1 order by a,b;
+
+unregister table if exists dble_t1;
+show tables;
+register table if not exists dble_t1 (a int , b bigint not null auto_increment, primary key(b)) partition by key(a) partitions 2 locality='db_pools=g1,g2';
+show tables;
+select a,b from dble_t1 order by a,b;
+check table routing dble_t1;
+
+unregister table if exists dble_t1;
+show tables;
+register table if not exists dble_t1 (a bigint , b bigint not null auto_increment, primary key(b)) 
+partition by udf_hash(unitmurhashi2(a)) 
+partitions 2
+(
+partition p1 values less than (1),
+partition p2 values less than (2)
+)
+locality='db_pools=g1,g2';
+show tables;
+select a,b from dble_t1 order by a,b;
+check table routing dble_t1;
+
+  ## test bro_tbl
+create table if not exists dble_t2_bro (a bigint , b bigint not null auto_increment, primary key(b)) 
+broadcast
+locality='db_pools=g1,g2';
+show create table dble_t2_bro;
+insert into dble_t2_bro values (200,200);
+select * from dble_t2_bro;
+
+unregister table if exists dble_t2_bro;
+show tables;
+register table if not exists dble_t2_bro (a bigint , b bigint not null auto_increment, primary key(b))
+broadcast
+locality='db_pools=g1,g2';
+show tables;
+select * from dble_t2_bro;
+  
+  
+  ## test sig_tbl
+create table if not exists dble_t3_sig (a bigint , b bigint not null auto_increment, primary key(b))
+single
+locality='db_pools=g2';
+show create table dble_t3_sig;
+insert into dble_t3_sig values (300,300);
+select * from dble_t3_sig ;
+
+unregister table if exists dble_t3_sig;
+show tables;
+register table if not exists dble_t3_sig (a bigint , b bigint not null auto_increment, primary key(b))
+single
+locality='db_pools=g2';
+show tables;
+select * from dble_t3_sig;
+
+drop table dble_t1;
+drop table dble_t2_bro;
+drop table dble_t3_sig;
+use polardbx;
+drop database dbledb1;
+

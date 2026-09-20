@@ -1,0 +1,494 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+set ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING=true;
+set ENABLE_RANDOM_PHY_TABLE_NAME=false;
+set ENABLE_REPLICAS_RANDOM_READ= false;
+use polardbx;
+drop database if exists mydbledb3;
+## USE_DN_LIST_MSG
+create database if not exists mydbledb3 mode = 'auto'
+locality='dble_config={"group_config":{
+  "mydbledb3_g1":["$dn1","mydbledb3_01"],
+  "mydbledb3_g2":["$dn2","mydbledb3_02"],
+  "mydbledb3_g3":["$dn1","mydbledb3_03"],
+  "mydbledb3_g4":["$dn2","mydbledb3_04"],
+  "mydbledb3_g5":["$dn1","mydbledb3_05"],
+  "mydbledb3_g6":["$dn2","mydbledb3_06"] }}';
+use mydbledb3;
+CREATE TABLE `r_g1` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb3_g1';
+CREATE TABLE `r_g3` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb3_g3';
+CREATE TABLE `r_g2g3` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb3_g2,mydbledb3_g3';
+CREATE TABLE `r_g3g4` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb3_g3,mydbledb3_g4';
+CREATE TABLE `r_g3g6` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb3_g3,mydbledb3_g6';
+CREATE TABLE `r_g3g6_t2` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb3_g3,mydbledb3_g6';
+CREATE TABLE `r_all_t1` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb3_g1,mydbledb3_g2,mydbledb3_g3,mydbledb3_g4,mydbledb3_g5,mydbledb3_g6';
+CREATE TABLE `r_all_t2` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb3_g1,mydbledb3_g2,mydbledb3_g3,mydbledb3_g4,mydbledb3_g5,mydbledb3_g6';
+CREATE TABLE `b_t1` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+BROADCAST;
+CREATE TABLE `b_t2` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+BROADCAST;
+CREATE TABLE `sig_g3_t1` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+SINGLE
+LOCALITY='db_pools=mydbledb3_g3';
+CREATE TABLE `sig_g6_t1` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+SINGLE
+LOCALITY='db_pools=mydbledb3_g6';
+CREATE TABLE `bro_tbl_t1` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+BROADCAST;
+CREATE TABLE `bro_tbl_t2` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+BROADCAST;
+CREATE TABLE `part_tbl_t1` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+PARTITION BY KEY(a)
+PARTITION 6
+LOCALITY='db_pools=mydbledb3_g1,mydbledb3_g2,mydbledb3_g3,mydbledb3_g4,mydbledb3_g5,mydbledb3_g6';
+CREATE TABLE `part_tbl_t2` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+PARTITION BY KEY(a)
+PARTITION 6
+LOCALITY='db_pools=mydbledb3_g1,mydbledb3_g2,mydbledb3_g3,mydbledb3_g4,mydbledb3_g5,mydbledb3_g6';
+CREATE TABLE `part_tbl_g3g6_t1` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+PARTITION BY KEY(a)
+PARTITION 2
+LOCALITY='db_pools=mydbledb3_g3,mydbledb3_g6';
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+a
+## no push join for replicas_tbl at g2g3 join replicas_tbl at g3g4
+explain select t1.a from r_g2g3 t1 join r_g3g4 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb3_g3.r_g2g3,r_g3g4", sql="SELECT `t1`.`a` AS `a` FROM `r_g2g3` AS `t1` INNER JOIN `r_g3g4` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## no push join for replicas_tbl at g2g3 join replicas_tbl at g3g4
+explain select t1.a from r_g2g3 t1 join r_g3g4 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb3_g3.r_g2g3,r_g3g4", sql="SELECT `t1`.`a` AS `a` FROM `r_g2g3` AS `t1` INNER JOIN `r_g3g4` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## no push join for replicas_tbl at g2g3 join replicas_tbl at all
+explain select t1.a from r_g2g3 t1 join r_all_t1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb3_g2.r_g2g3,r_all_t1", sql="SELECT `t1`.`a` AS `a` FROM `r_g2g3` AS `t1` INNER JOIN `r_all_t1` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## push join for replicas_tbl at all join replicas_tbl at g2g3
+explain select t1.a from r_all_t1 t1 join r_g2g3 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb3_g2.r_all_t1,r_g2g3", sql="SELECT `t1`.`a` AS `a` FROM `r_all_t1` AS `t1` INNER JOIN `r_g2g3` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## route a=100 : p3
+explain select * from part_tbl_t1 where a in (100);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="part_tbl_t1[p3]", sql="SELECT `a` FROM `part_tbl_t1` AS `part_tbl_t1` WHERE (`a` IN(?))")
+## route a=100 : p6
+explain select * from part_tbl_t1 where a in (200);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="part_tbl_t1[p6]", sql="SELECT `a` FROM `part_tbl_t1` AS `part_tbl_t1` WHERE (`a` IN(?))")
+## push multi-table join without replicas table
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="part_tbl_t1[p3,p6],part_tbl_t2[p3,p6],bro_tbl_t1,bro_tbl_t2", shardCount=2, sql="SELECT `bro_tbl_t1`.`a` FROM `part_tbl_t1` AS `part_tbl_t1` INNER JOIN `part_tbl_t2` AS `part_tbl_t2` ON ((`part_tbl_t1`.`a` = `part_tbl_t2`.`a`) AND (`part_tbl_t1`.`a` IN(?))) INNER JOIN `bro_tbl_t1` AS `bro_tbl_t1` ON ((`part_tbl_t2`.`a` = `bro_tbl_t1`.`a`) AND (`part_tbl_t1`.`a` = `bro_tbl_t1`.`a`)) INNER JOIN `bro_tbl_t2` AS `bro_tbl_t2` ON ((`part_tbl_t2`.`a` = `bro_tbl_t2`.`a`) AND (`bro_tbl_t1`.`a` = `bro_tbl_t2`.`a`) AND (`part_tbl_t1`.`a` = `bro_tbl_t2`.`a`))", pruningInfo="all size:2*2(part), pruning size:2")
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+a
+## push multi-table join with replicas table at all
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join r_all_t1 t5 on t1.a=t5.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="r_all_t1,bro_tbl_t1,bro_tbl_t2,part_tbl_t1[p3,p6],part_tbl_t2[p3,p6]", shardCount=2, sql="SELECT `bro_tbl_t1`.`a` FROM `r_all_t1` AS `r_all_t1` INNER JOIN `bro_tbl_t1` AS `bro_tbl_t1` ON (`r_all_t1`.`a` = `bro_tbl_t1`.`a`) INNER JOIN `bro_tbl_t2` AS `bro_tbl_t2` ON ((`r_all_t1`.`a` = `bro_tbl_t2`.`a`) AND (`bro_tbl_t1`.`a` = `bro_tbl_t2`.`a`)) INNER JOIN (`part_tbl_t1` AS `part_tbl_t1` INNER JOIN `part_tbl_t2` AS `part_tbl_t2` ON ((`part_tbl_t1`.`a` = `part_tbl_t2`.`a`) AND (`part_tbl_t1`.`a` IN(?)))) ON ((`bro_tbl_t2`.`a` = `part_tbl_t2`.`a`) AND (`bro_tbl_t2`.`a` = `part_tbl_t1`.`a`) AND (`r_all_t1`.`a` = `part_tbl_t2`.`a`) AND (`r_all_t1`.`a` = `part_tbl_t1`.`a`) AND (`bro_tbl_t1`.`a` = `part_tbl_t2`.`a`) AND (`bro_tbl_t1`.`a` = `part_tbl_t1`.`a`))", pruningInfo="all size:2*2(part), pruning size:2")
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join r_all_t1 t5 on t1.a=t5.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+a
+## push multi-table join with two replicas tables at all
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join r_all_t2 t6 on t1.a=t6.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+inner join r_all_t1 t5 on t1.a=t5.a
+where t2.a in (100,200);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="r_all_t2,bro_tbl_t1,bro_tbl_t2,part_tbl_t1[p3,p6],part_tbl_t2[p3,p6],r_all_t1", shardCount=2, sql="SELECT `bro_tbl_t1`.`a` FROM `r_all_t2` AS `r_all_t2` INNER JOIN `bro_tbl_t1` AS `bro_tbl_t1` ON (`r_all_t2`.`a` = `bro_tbl_t1`.`a`) INNER JOIN `bro_tbl_t2` AS `bro_tbl_t2` ON ((`r_all_t2`.`a` = `bro_tbl_t2`.`a`) AND (`bro_tbl_t1`.`a` = `bro_tbl_t2`.`a`)) INNER JOIN (`part_tbl_t1` AS `part_tbl_t1` INNER JOIN `part_tbl_t2` AS `part_tbl_t2` ON ((`part_tbl_t1`.`a` = `part_tbl_t2`.`a`) AND (`part_tbl_t1`.`a` IN(?)))) ON ((`bro_tbl_t2`.`a` = `part_tbl_t2`.`a`) AND (`bro_tbl_t2`.`a` = `part_tbl_t1`.`a`) AND (`r_all_t2`.`a` = `part_tbl_t2`.`a`) AND (`r_all_t2`.`a` = `part_tbl_t1`.`a`) AND (`bro_tbl_t1`.`a` = `part_tbl_t2`.`a`) AND (`bro_tbl_t1`.`a` = `part_tbl_t1`.`a`)) INNER JOIN `r_all_t1` AS `r_all_t1` ON ((`bro_tbl_t2`.`a` = `r_all_t1`.`a`) AND (`r_all_t2`.`a` = `r_all_t1`.`a`) AND (`part_tbl_t2`.`a` = `r_all_t1`.`a`) AND (`bro_tbl_t1`.`a` = `r_all_t1`.`a`) AND (`part_tbl_t1`.`a` = `r_all_t1`.`a`))", pruningInfo="all size:2*2(part), pruning size:2")
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join r_all_t2 t6 on t1.a=t6.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+inner join r_all_t1 t5 on t1.a=t5.a
+where t2.a in (100,200);
+a
+## no push rep_tbl and part_tbl, rep_tbl not contains all group of part_tbl
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+where t2.a in (100,200);
+Logical ExecutionPlan
+Project(a="a0")
+  BKAJoin(condition="a = a AND a = a0", type="inner")
+    LogicalView(tables="r_g3g6,bro_tbl_t1", shardCount=0, sql="SELECT `r_g3g6`.`a`, `bro_tbl_t1`.`a` AS `a0` FROM `r_g3g6` AS `r_g3g6` INNER JOIN `bro_tbl_t1` AS `bro_tbl_t1` ON (`r_g3g6`.`a` = `bro_tbl_t1`.`a`) WHERE ((`r_g3g6`.`a` IN(?)) AND (`bro_tbl_t1`.`a` IN(?)) AND (`r_g3g6`.`a` = `bro_tbl_t1`.`a`))")
+    Gather(concurrent=true)
+      LogicalView(tables="part_tbl_t1[p3,p6]", shardCount=2, sql="SELECT `a` FROM `part_tbl_t1` AS `part_tbl_t1` WHERE ((`a` IN(?)) AND (`a` IN (...)))", pruningInfo="all size:2*2(part), pruning size:2")
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+where t2.a in (100,200);
+a
+## push multi-table join with bro_tbl join part_tbl join rep_tbl
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+where t2.a in (100,200);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="r_g3g6,bro_tbl_t1,part_tbl_g3g6_t1[p1,p2]", shardCount=2, sql="SELECT `bro_tbl_t1`.`a` FROM `r_g3g6` AS `r_g3g6` INNER JOIN `bro_tbl_t1` AS `bro_tbl_t1` ON (`r_g3g6`.`a` = `bro_tbl_t1`.`a`) INNER JOIN `part_tbl_g3g6_t1` AS `part_tbl_g3g6_t1` ON ((`r_g3g6`.`a` = `part_tbl_g3g6_t1`.`a`) AND (`bro_tbl_t1`.`a` = `part_tbl_g3g6_t1`.`a`) AND (`part_tbl_g3g6_t1`.`a` IN(?)))", pruningInfo="all size:2*2(part), pruning size:2")
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+where t2.a in (100,200);
+a
+## push multi-table join, all at g3,g6
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+where t2.a in (100,200);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="r_g3g6,bro_tbl_t1,part_tbl_g3g6_t1[p1,p2]", shardCount=2, sql="SELECT `bro_tbl_t1`.`a` FROM `r_g3g6` AS `r_g3g6` INNER JOIN `bro_tbl_t1` AS `bro_tbl_t1` ON (`r_g3g6`.`a` = `bro_tbl_t1`.`a`) INNER JOIN `part_tbl_g3g6_t1` AS `part_tbl_g3g6_t1` ON ((`r_g3g6`.`a` = `part_tbl_g3g6_t1`.`a`) AND (`bro_tbl_t1`.`a` = `part_tbl_g3g6_t1`.`a`) AND (`part_tbl_g3g6_t1`.`a` IN(?)))", pruningInfo="all size:2*2(part), pruning size:2")
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+where t2.a in (100,200);
+a
+## push multi-table join, all at g3
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+inner join sig_g3_t1 t6 on t1.a=t6.a
+where t2.a in (100);
+Logical ExecutionPlan
+PhyTableOperation(tables="bro_tbl_t1[p3],part_tbl_g3g6_t1[p1],r_g3g6[p1],sig_g3_t1[p1]", sql="SELECT `t1`.`a` AS `a` FROM ? AS `t1` INNER JOIN ? AS `t2` ON (`t1`.`a` = `t2`.`a`) INNER JOIN ? AS `t5` ON (`t1`.`a` = `t5`.`a`) INNER JOIN ? AS `t6` ON (`t1`.`a` = `t6`.`a`) WHERE (`t2`.`a` IN (?))", params="Raw(100)")
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+inner join sig_g3_t1 t6 on t1.a=t6.a
+where t2.a in (100);
+a
+## no push multi-table join, sig_g3_t1 not at g6
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+inner join sig_g3_t1 t6 on t1.a=t6.a
+where t2.a in (200);
+Logical ExecutionPlan
+Project(a="a0")
+  HashJoin(condition="a1 = a AND a = a AND a = a0", type="inner")
+    Gather(concurrent=true)
+      LogicalView(tables="r_g3g6,bro_tbl_t1,part_tbl_g3g6_t1[p2]", sql="SELECT `r_g3g6`.`a`, `bro_tbl_t1`.`a` AS `a0`, `part_tbl_g3g6_t1`.`a` AS `a1` FROM `r_g3g6` AS `r_g3g6` INNER JOIN `bro_tbl_t1` AS `bro_tbl_t1` ON (`r_g3g6`.`a` = `bro_tbl_t1`.`a`) INNER JOIN `part_tbl_g3g6_t1` AS `part_tbl_g3g6_t1` ON ((`r_g3g6`.`a` = `part_tbl_g3g6_t1`.`a`) AND (`bro_tbl_t1`.`a` = `part_tbl_g3g6_t1`.`a`) AND (`part_tbl_g3g6_t1`.`a` IN(?))) WHERE ((`r_g3g6`.`a` = `bro_tbl_t1`.`a`) AND (`part_tbl_g3g6_t1`.`a` = `r_g3g6`.`a`) AND (`part_tbl_g3g6_t1`.`a` = `bro_tbl_t1`.`a`))")
+    LogicalView(tables="sig_g3_t1[p1]", sql="SELECT `a` FROM `sig_g3_t1` AS `sig_g3_t1` WHERE (`a` IN(?))")
+HitCache:false
+Source:
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join r_g3g6 t5 on t1.a=t5.a
+inner join sig_g3_t1 t6 on t1.a=t6.a
+where t2.a in (200);
+a
+## push multi-table join, all at g6
+explain select t1.a from
+r_g3g6 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join sig_g6_t1 t6 on t1.a=t6.a
+where t2.a = 200;
+Logical ExecutionPlan
+PhyTableOperation(tables="r_g3g6[p2],part_tbl_g3g6_t1[p2],sig_g6_t1[p1]", sql="SELECT `t1`.`a` AS `a` FROM ? AS `t1` INNER JOIN ? AS `t2` ON (`t1`.`a` = `t2`.`a`) INNER JOIN ? AS `t6` ON (`t1`.`a` = `t6`.`a`) WHERE (`t2`.`a` = ?)", params="200")
+select t1.a from
+r_g3g6 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join sig_g6_t1 t6 on t1.a=t6.a
+where t2.a = 200;
+a
+## no push multi-table join, sig_g6_t1 not at g3
+explain select t1.a from
+r_g3g6 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join sig_g6_t1 t6 on t1.a=t6.a
+where t2.a = 100;
+Logical ExecutionPlan
+Project(a="a")
+  HashJoin(condition="a = a AND a = a0", type="inner")
+    LogicalView(tables="r_g3g6,part_tbl_g3g6_t1[p1]", sql="SELECT `r_g3g6`.`a`, `part_tbl_g3g6_t1`.`a` AS `a0` FROM `r_g3g6` AS `r_g3g6` INNER JOIN `part_tbl_g3g6_t1` AS `part_tbl_g3g6_t1` ON ((`r_g3g6`.`a` = ?) AND (`part_tbl_g3g6_t1`.`a` = ?) AND (`r_g3g6`.`a` = `part_tbl_g3g6_t1`.`a`)) WHERE ((`r_g3g6`.`a` = ?) AND (`part_tbl_g3g6_t1`.`a` = ?) AND (`r_g3g6`.`a` = `part_tbl_g3g6_t1`.`a`))")
+    LogicalView(tables="sig_g6_t1[p1]", sql="SELECT `a` FROM `sig_g6_t1` AS `sig_g6_t1` WHERE (`a` = ?)")
+HitCache:false
+Source:
+select t1.a from
+r_g3g6 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join sig_g6_t1 t6 on t1.a=t6.a
+where t2.a = 100;
+a
+## push multi-join, all at g6
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join sig_g6_t1 t6 on t1.a=t6.a
+where t2.a = 200;
+Logical ExecutionPlan
+PhyTableOperation(tables="bro_tbl_t1[p6],part_tbl_g3g6_t1[p2],sig_g6_t1[p1]", sql="SELECT `t1`.`a` AS `a` FROM ? AS `t1` INNER JOIN ? AS `t2` ON (`t1`.`a` = `t2`.`a`) INNER JOIN ? AS `t6` ON (`t1`.`a` = `t6`.`a`) WHERE (`t2`.`a` = ?)", params="200")
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join sig_g6_t1 t6 on t1.a=t6.a
+where t2.a = 200;
+a
+## no push join, sig_g6_t1 not at g3
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join sig_g6_t1 t6 on t1.a=t6.a
+where t2.a = 100;
+Logical ExecutionPlan
+Project(a="a0")
+  HashJoin(condition="a = a AND a = a0", type="inner")
+    LogicalView(tables="part_tbl_g3g6_t1[p1],bro_tbl_t1", sql="SELECT `part_tbl_g3g6_t1`.`a`, `bro_tbl_t1`.`a` AS `a0` FROM `part_tbl_g3g6_t1` AS `part_tbl_g3g6_t1` INNER JOIN `bro_tbl_t1` AS `bro_tbl_t1` ON ((`bro_tbl_t1`.`a` = ?) AND (`part_tbl_g3g6_t1`.`a` = ?) AND (`part_tbl_g3g6_t1`.`a` = `bro_tbl_t1`.`a`)) WHERE ((`part_tbl_g3g6_t1`.`a` = ?) AND (`bro_tbl_t1`.`a` = ?) AND (`part_tbl_g3g6_t1`.`a` = `bro_tbl_t1`.`a`))")
+    LogicalView(tables="sig_g6_t1[p1]", sql="SELECT `a` FROM `sig_g6_t1` AS `sig_g6_t1` WHERE (`a` = ?)")
+HitCache:false
+Source:
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join sig_g6_t1 t6 on t1.a=t6.a
+where t2.a = 100;
+a
+## push join, all at g6
+explain select t2.a from
+part_tbl_g3g6_t1 t2
+inner join sig_g6_t1 t6 on t2.a=t6.a
+where t2.a = 200;
+Logical ExecutionPlan
+PhyTableOperation(tables="part_tbl_g3g6_t1[p2],sig_g6_t1[p1]", sql="SELECT `t2`.`a` AS `a` FROM ? AS `t2` INNER JOIN ? AS `t6` ON (`t2`.`a` = `t6`.`a`) WHERE (`t2`.`a` = ?)", params="200")
+select t2.a from
+part_tbl_g3g6_t1 t2
+inner join sig_g6_t1 t6 on t2.a=t6.a
+where t2.a = 200;
+a
+## no push join, sig_g6_t1 not at g3
+explain select t2.a from
+part_tbl_g3g6_t1 t2
+inner join sig_g6_t1 t6 on t2.a=t6.a
+where t2.a = 100;
+Logical ExecutionPlan
+Project(a="a0")
+  HashJoin(condition="a = a", type="inner")
+    LogicalView(tables="sig_g6_t1[p1]", sql="SELECT `a` FROM `sig_g6_t1` AS `sig_g6_t1` WHERE (`a` = ?)")
+    LogicalView(tables="part_tbl_g3g6_t1[p1]", sql="SELECT `a` FROM `part_tbl_g3g6_t1` AS `part_tbl_g3g6_t1` WHERE (`a` = ?)")
+HitCache:false
+Source:
+select t2.a from
+part_tbl_g3g6_t1 t2
+inner join sig_g6_t1 t6 on t2.a=t6.a
+where t2.a = 100;
+a
+## push multi-join, all at g3,g6
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join part_tbl_g3g6_t1 t4 on t1.a=t4.a
+inner join r_g3g6 t5 on t1.a=t5.a
+where t2.a in (100,200);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="r_g3g6,bro_tbl_t1,bro_tbl_t2,part_tbl_g3g6_t1[p1,p2],part_tbl_g3g6_t1[p1,p2]", shardCount=2, sql="SELECT `bro_tbl_t1`.`a` FROM `r_g3g6` AS `r_g3g6` INNER JOIN `bro_tbl_t1` AS `bro_tbl_t1` ON (`r_g3g6`.`a` = `bro_tbl_t1`.`a`) INNER JOIN `bro_tbl_t2` AS `bro_tbl_t2` ON ((`r_g3g6`.`a` = `bro_tbl_t2`.`a`) AND (`bro_tbl_t1`.`a` = `bro_tbl_t2`.`a`)) INNER JOIN (`part_tbl_g3g6_t1` AS `part_tbl_g3g6_t1` INNER JOIN `part_tbl_g3g6_t1` AS `part_tbl_g3g6_t10` ON ((`part_tbl_g3g6_t1`.`a` = `part_tbl_g3g6_t10`.`a`) AND (`part_tbl_g3g6_t1`.`a` IN(?)))) ON ((`bro_tbl_t2`.`a` = `part_tbl_g3g6_t10`.`a`) AND (`bro_tbl_t2`.`a` = `part_tbl_g3g6_t1`.`a`) AND (`r_g3g6`.`a` = `part_tbl_g3g6_t10`.`a`) AND (`bro_tbl_t1`.`a` = `part_tbl_g3g6_t10`.`a`) AND (`r_g3g6`.`a` = `part_tbl_g3g6_t1`.`a`) AND (`bro_tbl_t1`.`a` = `part_tbl_g3g6_t1`.`a`))", pruningInfo="all size:2*2(part), pruning size:2")
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_g3g6_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join part_tbl_g3g6_t1 t4 on t1.a=t4.a
+inner join r_g3g6 t5 on t1.a=t5.a
+where t2.a in (100,200);
+a
+## push join with bro_tbl and rep_tbl
+explain select t1.a from
+bro_tbl_t1 t1
+inner join r_g3g6 t5 on t1.a=t5.a
+where t5.a in (100,200);
+Logical ExecutionPlan
+LogicalView(tables="mydbledb3_g3.bro_tbl_t1,r_g3g6", sql="SELECT `t1`.`a` AS `a` FROM `bro_tbl_t1` AS `t1` INNER JOIN `r_g3g6` AS `t5` ON (`t1`.`a` = `t5`.`a`) WHERE (`t5`.`a` IN (?))", params="Raw(100,200)")
+select t1.a from
+bro_tbl_t1 t1
+inner join r_g3g6 t5 on t1.a=t5.a
+where t5.a in (100,200);
+a
+## push join with bro_tbl and rep_tbl
+explain select t1.a from
+bro_tbl_t1 t1
+inner join r_g3g4 t5 on t1.a=t5.a
+where t5.a in (100,200);
+Logical ExecutionPlan
+LogicalView(tables="mydbledb3_g3.bro_tbl_t1,r_g3g4", sql="SELECT `t1`.`a` AS `a` FROM `bro_tbl_t1` AS `t1` INNER JOIN `r_g3g4` AS `t5` ON (`t1`.`a` = `t5`.`a`) WHERE (`t5`.`a` IN (?))", params="Raw(100,200)")
+select t1.a from
+bro_tbl_t1 t1
+inner join r_g3g4 t5 on t1.a=t5.a
+where t5.a in (100,200);
+a
+## push multi-join, all at g3,g6
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join r_all_t1 t5 on t1.a=t5.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="r_all_t1,bro_tbl_t1,bro_tbl_t2,part_tbl_t1[p3,p6],part_tbl_t2[p3,p6]", shardCount=2, sql="SELECT `bro_tbl_t1`.`a` FROM `r_all_t1` AS `r_all_t1` INNER JOIN `bro_tbl_t1` AS `bro_tbl_t1` ON (`r_all_t1`.`a` = `bro_tbl_t1`.`a`) INNER JOIN `bro_tbl_t2` AS `bro_tbl_t2` ON ((`r_all_t1`.`a` = `bro_tbl_t2`.`a`) AND (`bro_tbl_t1`.`a` = `bro_tbl_t2`.`a`)) INNER JOIN (`part_tbl_t1` AS `part_tbl_t1` INNER JOIN `part_tbl_t2` AS `part_tbl_t2` ON ((`part_tbl_t1`.`a` = `part_tbl_t2`.`a`) AND (`part_tbl_t1`.`a` IN(?)))) ON ((`bro_tbl_t2`.`a` = `part_tbl_t2`.`a`) AND (`bro_tbl_t2`.`a` = `part_tbl_t1`.`a`) AND (`r_all_t1`.`a` = `part_tbl_t2`.`a`) AND (`r_all_t1`.`a` = `part_tbl_t1`.`a`) AND (`bro_tbl_t1`.`a` = `part_tbl_t2`.`a`) AND (`bro_tbl_t1`.`a` = `part_tbl_t1`.`a`))", pruningInfo="all size:2*2(part), pruning size:2")
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join r_all_t1 t5 on t1.a=t5.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+a
+## no push multi-join, r_g3g6 is not all group
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join r_all_t1 t5 on t1.a=t5.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+inner join r_g3g6 t6 on t1.a=t6.a
+where t2.a in (100,200);
+Logical ExecutionPlan
+Project(a="a0")
+  HashJoin(condition="a1 = a AND a2 = a AND a = a00 AND a = a AND a = a0", type="inner")
+    Gather(concurrent=true)
+      LogicalView(tables="r_all_t1,bro_tbl_t1,bro_tbl_t2,part_tbl_t1[p3,p6],part_tbl_t2[p3,p6]", shardCount=2, sql="SELECT `r_all_t1`.`a`, `bro_tbl_t1`.`a` AS `a0`, `bro_tbl_t2`.`a` AS `a1`, `part_tbl_t1`.`a` AS `a2`, `part_tbl_t2`.`a` AS `a00` FROM `r_all_t1` AS `r_all_t1` INNER JOIN `bro_tbl_t1` AS `bro_tbl_t1` ON (`r_all_t1`.`a` = `bro_tbl_t1`.`a`) INNER JOIN `bro_tbl_t2` AS `bro_tbl_t2` ON ((`r_all_t1`.`a` = `bro_tbl_t2`.`a`) AND (`bro_tbl_t1`.`a` = `bro_tbl_t2`.`a`)) INNER JOIN (`part_tbl_t1` AS `part_tbl_t1` INNER JOIN `part_tbl_t2` AS `part_tbl_t2` ON ((`part_tbl_t1`.`a` = `part_tbl_t2`.`a`) AND (`part_tbl_t1`.`a` IN(?)))) ON ((`bro_tbl_t2`.`a` = `part_tbl_t2`.`a`) AND (`bro_tbl_t2`.`a` = `part_tbl_t1`.`a`) AND (`r_all_t1`.`a` = `part_tbl_t2`.`a`) AND (`r_all_t1`.`a` = `part_tbl_t1`.`a`) AND (`bro_tbl_t1`.`a` = `part_tbl_t2`.`a`) AND (`bro_tbl_t1`.`a` = `part_tbl_t1`.`a`)) WHERE ((`bro_tbl_t2`.`a` = `r_all_t1`.`a`) AND (`bro_tbl_t2`.`a` = `bro_tbl_t1`.`a`) AND (`part_tbl_t1`.`a` = `part_tbl_t2`.`a`) AND (`r_all_t1`.`a` = `bro_tbl_t1`.`a`) AND (`bro_tbl_t2`.`a` = `part_tbl_t1`.`a`) AND (`bro_tbl_t2`.`a` = `part_tbl_t2`.`a`) AND (`part_tbl_t1`.`a` = `r_all_t1`.`a`) AND (`part_tbl_t1`.`a` = `bro_tbl_t1`.`a`) AND (`part_tbl_t2`.`a` = `r_all_t1`.`a`) AND (`part_tbl_t2`.`a` = `bro_tbl_t1`.`a`))", pruningInfo="all size:2*2(part), pruning size:2")
+    LogicalView(tables="r_g3g6[p1]", sql="SELECT `a` FROM `r_g3g6` AS `r_g3g6` WHERE (`a` IN(?))")
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join r_all_t1 t5 on t1.a=t5.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+inner join r_g3g6 t6 on t1.a=t6.a
+where t2.a in (100,200);
+a
+## push multi-join, all at g3 g6
+explain select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="part_tbl_t1[p3,p6],part_tbl_t2[p3,p6],bro_tbl_t1,bro_tbl_t2", shardCount=2, sql="SELECT `bro_tbl_t1`.`a` FROM `part_tbl_t1` AS `part_tbl_t1` INNER JOIN `part_tbl_t2` AS `part_tbl_t2` ON ((`part_tbl_t1`.`a` = `part_tbl_t2`.`a`) AND (`part_tbl_t1`.`a` IN(?))) INNER JOIN `bro_tbl_t1` AS `bro_tbl_t1` ON ((`part_tbl_t2`.`a` = `bro_tbl_t1`.`a`) AND (`part_tbl_t1`.`a` = `bro_tbl_t1`.`a`)) INNER JOIN `bro_tbl_t2` AS `bro_tbl_t2` ON ((`part_tbl_t2`.`a` = `bro_tbl_t2`.`a`) AND (`bro_tbl_t1`.`a` = `bro_tbl_t2`.`a`) AND (`part_tbl_t1`.`a` = `bro_tbl_t2`.`a`))", pruningInfo="all size:2*2(part), pruning size:2")
+select t1.a from
+bro_tbl_t1 t1
+inner join part_tbl_t1 t2 on t1.a=t2.a
+inner join bro_tbl_t2 t3 on t1.a=t3.a
+inner join part_tbl_t2 t4 on t1.a=t4.a
+where t2.a in (100,200);
+a
+## push multi-table join
+explain select t2.a from
+part_tbl_t1 t2
+inner join part_tbl_t2 t4 on t2.a=t4.a
+where t2.a in (100,200);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="part_tbl_t1[p3,p6],part_tbl_t2[p3,p6]", shardCount=2, sql="SELECT `part_tbl_t1`.`a` FROM `part_tbl_t1` AS `part_tbl_t1` INNER JOIN `part_tbl_t2` AS `part_tbl_t2` ON ((`part_tbl_t1`.`a` = `part_tbl_t2`.`a`) AND (`part_tbl_t1`.`a` IN(?)))", pruningInfo="all size:2*2(part), pruning size:2")
+select t2.a from
+part_tbl_t1 t2
+inner join part_tbl_t2 t4 on t2.a=t4.a
+where t2.a in (100,200);
+a
+use polardbx;
+drop database mydbledb3;

@@ -22,7 +22,6 @@ import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseGmsTask;
-import com.alibaba.polardbx.executor.ddl.job.task.ttl.TtlTaskSqlBuilder;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
 import com.alibaba.polardbx.executor.sync.TablesMetaChangePreemptiveSyncAction;
@@ -141,7 +140,7 @@ public class UnBindingArchiveTableMetaTask extends BaseGmsTask {
         // sync to restore the status of table meta
         PreemptiveTime preemptiveTime = PreemptiveTime.getPreemptiveTimeFromExecutionContext(executionContext,
             ConnectionParams.PREEMPTIVE_MDL_INITWAIT, ConnectionParams.PREEMPTIVE_MDL_INTERVAL);
-        SyncManagerHelper.sync(
+        SyncManagerHelper.syncThrowExceptions(
             new TablesMetaChangePreemptiveSyncAction(schemaName, tables, preemptiveTime), SyncScope.ALL);
     }
 

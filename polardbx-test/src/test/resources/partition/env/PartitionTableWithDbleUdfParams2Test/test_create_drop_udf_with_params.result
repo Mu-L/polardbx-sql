@@ -1,0 +1,16 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+drop table if exists mymodt1;
+create table if not exists mymodt1(a varchar(36))
+partition by udf_hash(
+`a` with udf_params(
+'dble_ext/mymod',
+'{"partitionCount":"4"}'
+)
+)
+partitions 4;
+select part_route('', 'mymodt1', '3');
+part_route('', 'mymodt1', '3')
+p4
+drop table mymodt1;

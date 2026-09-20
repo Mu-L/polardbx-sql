@@ -22,6 +22,7 @@ import com.alibaba.polardbx.gms.metadb.accessor.AbstractAccessor;
 import com.alibaba.polardbx.gms.util.MetaDbLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 
+import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,15 +30,16 @@ import java.util.Map;
 public class BinlogStreamAccessor extends AbstractAccessor {
     private static final String BINLOG_STREAM_TABLE = "binlog_x_stream";
     private static final String LIST_BINLOG_STREAM_TARGET =
-        "select group_name, stream_name, latest_cursor, endpoint from `" + BINLOG_STREAM_TABLE + "`";
+        "select * from `" + BINLOG_STREAM_TABLE + "` order by group_name, stream_name";
 
     private static final String SELECT_BINLOG_STREAM_TARGET =
-        "select group_name, stream_name, latest_cursor, endpoint from `" + BINLOG_STREAM_TABLE
-            + "` where `stream_name` = ?";
+        "select * from `" + BINLOG_STREAM_TABLE + "` where `stream_name` = ?";
 
     private static final String SELECT_BINLOG_STREAM_IN_GROUP =
-        "select group_name, stream_name, latest_cursor, endpoint from `" + BINLOG_STREAM_TABLE
-            + "` where `group_name` = ?";
+        "select * from `" + BINLOG_STREAM_TABLE + "` where `group_name` = ? order by stream_name";
+
+    private static final String PURGE_BINLOG_STREAM =
+        "delete from `" + BINLOG_STREAM_TABLE + "` where `stream_name` = ? and status = 1";
 
     public List<BinlogStreamRecord> listAllStream() {
         try {
@@ -72,4 +74,16 @@ public class BinlogStreamAccessor extends AbstractAccessor {
             return null;
         }
     }
+
+    public int purgeStream(String streamName) throws SQLException {
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>();
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setString, streamName);
+            return MetaDbUtil.delete(PURGE_BINLOG_STREAM, params, connection);
+        } catch (Exception e) {
+            MetaDbLogUtil.META_DB_LOG.error("Failed to delete binlog stream '" + PURGE_BINLOG_STREAM + "'", e);
+            throw e;
+        }
+    }
+
 }

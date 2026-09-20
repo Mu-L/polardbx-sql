@@ -3,13 +3,12 @@ package com.alibaba.polardbx.optimizer.partition;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.model.lifecycle.AbstractLifecycle;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.ConcurrentHashSet;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
-import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruneStep;
-import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruneStepOp;
-import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruneSubPartStepAnd;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import org.apache.commons.lang.StringUtils;
 
 import java.util.Set;
@@ -98,41 +97,32 @@ public class FullScanTableBlackListManager extends AbstractLifecycle {
         super.doInit();
     }
 
-    public void checkIfAllowFullScan(PartitionPruneStep targetStep) {
+    /**
+     * Throw if the given table is not allowed to perform a full table scan.
+     *
+     * <p>The caller is responsible for determining whether the actual pruning
+     * result really constitutes a full physical scan (e.g. by checking that
+     * the pruned physical-partition BitSet covers all physical partitions).
+     * This method only consults the per-session ALLOW_FULL_TABLE_SCAN switch
+     * and the table-level black list, then throws if disallowed.
+     */
+    public void throwIfNotAllowFullScan(PartitionInfo partInfo, ExecutionContext ec) {
+        /**
+         * Allow current session to bypass the full-scan blacklist check
+         * via session/global variable ALLOW_FULL_TABLE_SCAN.
+         */
+        if (ec != null && ec.getParamManager() != null
+            && ec.getParamManager().getBoolean(ConnectionParams.ALLOW_FULL_TABLE_SCAN)) {
+            return;
+        }
 
-        PartitionInfo partInfo = targetStep.getPartitionInfo();
         String tblSchema = partInfo.getTableSchema();
         String tblName = partInfo.getTableName();
-
-        if (targetStep instanceof PartitionPruneStepOp) {
-            PartitionPruneStepOp stepOp = (PartitionPruneStepOp) targetStep;
-            if (!stepOp.isForceFullScan()) {
-                /**
-                 * Only check first-level partitiong
-                 */
-                return;
-            }
-        } else if (targetStep instanceof PartitionPruneSubPartStepAnd) {
-            PartitionPruneSubPartStepAnd subPartAnd = (PartitionPruneSubPartStepAnd) targetStep;
-            PartitionPruneStep firstLevelPartStep = subPartAnd.getPartStep();
-            if (firstLevelPartStep instanceof PartitionPruneStepOp) {
-                /**
-                 * Only check first-level partitiong
-                 */
-                PartitionPruneStepOp firstPartOp = (PartitionPruneStepOp) firstLevelPartStep;
-                if (!firstPartOp.isForceFullScan()) {
-                    return;
-                }
-            }
-        }
-
         boolean allowFullScan = checkIfAllowFullScan(tblSchema, tblName);
-        if (!allowFullScan) {
+        if (!allowFullScan || partInfo.isBlockFullTableScan()) {
             throw new TddlRuntimeException(
                 ErrorCode.ERR_EXECUTOR,
-                String.format("%s.%s is now allowed to perform full table scan", tblSchema, tblName));
+                String.format("%s.%s is not allowed to perform full table scan", tblSchema, tblName));
         }
-
-        return;
     }
 }

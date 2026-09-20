@@ -34,17 +34,21 @@ import com.alibaba.polardbx.gms.topology.StorageInfoRecord;
 import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.gms.util.MetaDbLogUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalCreateTableGroup;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.CreateTableGroupPreparedData;
 import com.alibaba.polardbx.optimizer.locality.LocalityInfoUtils;
 import com.alibaba.polardbx.optimizer.tablegroup.TableGroupInfoManager;
+import org.apache.calcite.sql.SqlCreateTableGroup;
 import org.apache.commons.collections.CollectionUtils;
 
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -56,6 +60,15 @@ public class LogicalCreateTableGroupHandler extends LogicalCommonDdlHandler {
 
     public LogicalCreateTableGroupHandler(IRepository repo) {
         super(repo);
+    }
+
+    @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        SqlCreateTableGroup sqlCreateTableGroup = (SqlCreateTableGroup) logicalDdlPlan.getNativeSqlNode();
+        String tableGroupName = sqlCreateTableGroup.getTableGroupName();
+        exclusiveResources.add(concatWithDot(logicalDdlPlan.getSchemaName(), tableGroupName));
     }
 
     @Override

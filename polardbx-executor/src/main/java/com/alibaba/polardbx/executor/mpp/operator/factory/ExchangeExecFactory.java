@@ -27,13 +27,12 @@ import com.alibaba.polardbx.executor.operator.ExchangeExec;
 import com.alibaba.polardbx.executor.operator.Executor;
 import com.alibaba.polardbx.executor.operator.SortMergeExchangeExec;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
-import com.alibaba.polardbx.executor.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
 import com.alibaba.polardbx.optimizer.memory.MemoryPoolUtils;
 import com.alibaba.polardbx.optimizer.utils.CalciteUtils;
-import com.alibaba.polardbx.statistics.RuntimeStatHelper;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelFieldCollation;
 
@@ -50,6 +49,7 @@ public class ExchangeExecFactory extends ExecutorFactory {
     private boolean mergeSort;
     private PagesSerdeFactory pagesSerdeFactory;
     private List<DataType> types;
+    private Long topSize;
 
     public ExchangeExecFactory(
         PagesSerdeFactory pagesSerdeFactory,
@@ -59,6 +59,11 @@ public class ExchangeExecFactory extends ExecutorFactory {
         this.supplier = supplier;
         this.mergeSort = mergeSort;
         this.types = CalciteUtils.getTypes(sourceNode.getRowType());
+        this.topSize = null;
+    }
+
+    public void setTopSize(Long topSize) {
+        this.topSize = topSize;
     }
 
     @Override
@@ -71,7 +76,7 @@ public class ExchangeExecFactory extends ExecutorFactory {
 
             List<OrderByOption> orderBys = ExecUtils.convertFrom(sortList);
             ret = new SortMergeExchangeExec(context, sourceNode.getRelatedId(), supplier,
-                pagesSerdeFactory.createPagesSerde(types, context), orderBys, types
+                pagesSerdeFactory.createPagesSerde(types, context), orderBys, types, topSize
             );
         } else {
             if (exchangeClient == null) {
@@ -89,4 +94,7 @@ public class ExchangeExecFactory extends ExecutorFactory {
         return ret;
     }
 
+    public String getExplainOutput() {
+        return sourceNode.getExplainOutput();
+    }
 }

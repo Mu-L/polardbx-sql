@@ -1,0 +1,47 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+use polardbx;
+drop database if exists test_omc30_rb_int_db;
+create database if not exists test_omc30_rb_int_db mode='auto' default character set utf8mb4 default collate utf8mb4_bin;
+use test_omc30_rb_int_db;
+## case: int-encoded TTL col (unix_timestamp) + rebuild policy
+## verifies defect1 fix: filter expr uses integer value not datetime string
+drop table if exists rb_int_ts_t1;
+create table rb_int_ts_t1(
+  a bigint not null,
+  b varchar(32),
+  primary key(a)
+) default character set utf8mb4 default collate utf8mb4_bin
+partition by hash(a) partitions 4;
+alter table rb_int_ts_t1 modify ttl set
+  TTL_ENABLE='on',
+  TTL_CLEANUP='on',
+  TTL_EXPR=`a` expire after 1 day timezone '+08:00',
+  TTL_COL_ENCODER=unix_timestamp(?),
+  TTL_COL_DECODER=from_unixtime(?);
+## insert expired row: unix_timestamp('2020-06-01 00:00:00') = 1590940800
+insert into rb_int_ts_t1 values(1590940800, 'expired1');
+## insert expired row: unix_timestamp('2020-06-02 00:00:00') = 1591027200
+insert into rb_int_ts_t1 values(1591027200, 'expired2');
+## insert valid row: unix_timestamp('2030-06-01 00:00:00') = 1906214400
+insert into rb_int_ts_t1 values(1906214400, 'valid1');
+## insert valid row: unix_timestamp('2030-06-02 00:00:00') = 1906300800
+insert into rb_int_ts_t1 values(1906300800, 'valid2');
+set TTL_DEBUG_CURRENT_DATETIME='2025-01-01 00:00:00';
+select a, b from rb_int_ts_t1 order by a;
+a,b
+1590940800,expired1
+1591027200,expired2
+1906214400,valid1
+1906300800,valid2
+## trigger cleanup with rebuild policy forced on
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=true,TTL_FORCE_USE_REBUILD_POLICY_FOR_CLEANUP_EXPIRED_DATA=true,TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY=0,TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY=0)*/alter table rb_int_ts_t1 cleanup expired data;
+## verify: only valid rows remain (expired rows with small unix_timestamp cleaned up)
+select a, b from rb_int_ts_t1 order by a;
+a,b
+1906214400,valid1
+1906300800,valid2
+drop table if exists rb_int_ts_t1;
+use polardbx;
+drop database if exists test_omc30_rb_int_db;
+use polardbx;

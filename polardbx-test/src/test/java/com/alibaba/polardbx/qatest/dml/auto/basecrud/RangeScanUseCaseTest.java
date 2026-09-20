@@ -21,7 +21,7 @@ public class RangeScanUseCaseTest extends AutoCrudBasedLockTestCase {
             + "    `e` varchar(16) NOT NULL,\n"
             + "    KEY `auto_shard_key_c` USING BTREE (`c`),\n"
             + "    KEY `auto_shard_key_a` USING BTREE (`a`)\n"
-            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4\n"
+            + ") ENGINE = InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci\n"
             + "PARTITION BY RANGE(TO_DAYS(`c`))\n"
             + "SUBPARTITION BY LIST(`a`)\n"
             + "(SUBPARTITION `sp2` VALUES IN (DEFAULT))\n"
@@ -37,13 +37,14 @@ public class RangeScanUseCaseTest extends AutoCrudBasedLockTestCase {
             + "    `e` varchar(16) NOT NULL,\n"
             + "    KEY `auto_shard_key_c` USING BTREE (`c`),\n"
             + "    KEY `auto_shard_key_a` USING BTREE (`a`)\n"
-            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4\n"
+            + ") ENGINE = InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci\n"
             + "PARTITION BY RANGE(TO_DAYS(`c`))\n"
             + "SUBPARTITION BY HASH(`a`)\n"
             + "SUBPARTITIONS 2\n"
             + "(PARTITION `p1` VALUES LESS THAN (737790),\n"
             + " PARTITION `p2` VALUES LESS THAN (745461),\n"
             + " PARTITION `p3` VALUES LESS THAN (748748));";
+
 
         DataOperator.executeOnMysqlAndTddl(mysqlConnection,
             tddlConnection,

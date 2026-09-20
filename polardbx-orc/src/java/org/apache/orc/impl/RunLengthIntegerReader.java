@@ -42,6 +42,14 @@ public class RunLengthIntegerReader implements IntegerReader {
     this.utils = new SerializationUtils();
   }
 
+  public InStream getInput() {
+    return input;
+  }
+
+  public SerializationUtils getSerializationUtils() {
+    return utils;
+  }
+
   private void readValues(boolean ignoreEof) throws IOException {
     int control = input.read();
     if (control == -1) {

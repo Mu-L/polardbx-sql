@@ -75,7 +75,8 @@ public class InformationSchemaModuleHandler extends BaseVirtualViewSubClassHandl
         }
 
         List<List<Map<String, Object>>> results =
-            SyncManagerHelper.sync(showSyncAction, SystemDbHelper.INFO_SCHEMA_DB_NAME, SyncScope.CURRENT_ONLY);
+            SyncManagerHelper.syncIgnoreExceptions(showSyncAction, SystemDbHelper.INFO_SCHEMA_DB_NAME,
+                SyncScope.CURRENT_ONLY);
 
         for (List<Map<String, Object>> nodeRows : results) {
             if (nodeRows == null) {

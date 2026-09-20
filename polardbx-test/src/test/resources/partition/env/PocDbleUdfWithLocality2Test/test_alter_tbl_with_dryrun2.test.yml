@@ -1,0 +1,113 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+  ## test dble_db
+
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+
+use polardbx;
+drop database if exists dbledb4;
+  ## USE_DN_LIST_MSG
+create database if not exists dbledb4 mode = 'auto' locality='dble_config={"group_config":{"dbledb4_g1":["$dn1","dbledb4_00"],"dbledb4_g2":["$dn2","dbledb4_01"] }}';
+use dbledb4;
+
+  ## test dble_part_tbl
+drop table if exists dbledb4_t1;
+create table if not exists dbledb4_t1 (
+a bigint ,
+b bigint not null auto_increment,
+c bigint,
+primary key(b)
+)
+partition by key(a)
+partitions 2
+locality='db_pools=dbledb4_g1,dbledb4_g2';
+show create table dbledb4_t1;
+insert into dbledb4_t1 (a,b) values (100, null),(120,null);
+select a,b from dbledb4_t1 order by a,b;
+
+drop table if exists dbledb4_t2;
+create table if not exists dbledb4_t2 (
+a bigint ,
+b bigint not null auto_increment,
+c bigint,
+primary key(b)
+)
+partition by key(a)
+partitions 2
+locality='db_pools=dbledb4_g1,dbledb4_g2';
+show create table dbledb4_t2;
+insert into dbledb4_t2 (a,b) values (100, null),(120,null);
+select a,b from dbledb4_t2 order by a,b;
+
+drop table if exists dbledb4_t3;
+create table if not exists dbledb4_t3 (
+a bigint ,
+b bigint not null auto_increment,
+c bigint,
+primary key(b)
+)
+partition by key(a)
+partitions 2
+locality='db_pools=dbledb4_g1,dbledb4_g2';
+show create table dbledb4_t3;
+insert into dbledb4_t3 (a,b) values (100, null),(120,null);
+select a,b from dbledb4_t3 order by a,b;
+  
+  ## test alter table modify column / index for p1
+/*+TDDL:node=p1*/alter table dbledb4_t1 add column d bigint;
+/*+TDDL:node=p1*/alter table dbledb4_t1 modify column c bigint unsigned;
+/*+TDDL:node=p1*/alter table dbledb4_t1 add index idx_c(`c`);
+/*+TDDL:node=p1*/alter table dbledb4_t1 add index idx_b_c(`b`,`c`);
+/*+TDDL:node=p1*/alter table dbledb4_t1 rename index auto_shard_key_a to idx_a;
+
+/*+TDDL:node=p1*/alter table dbledb4_t2 modify column b bigint;
+/*+TDDL:node=p1*/alter table dbledb4_t2 add column e bigint;
+/*+TDDL:node=p1*/alter table dbledb4_t2 drop column c;
+/*+TDDL:node=p1*/alter table dbledb4_t2 add index idx_e(`e`),add index idx_b_e(`b`,`e`),rename index auto_shard_key_a to idx_a;
+
+/*+TDDL:node=p1*/alter table dbledb4_t3 modify column b bigint unsigned,add column e bigint,drop column c;
+/*+TDDL:node=p1*/alter table dbledb4_t3 add column f int after e, modify column e bigint after a;
+  
+  
+  ## test alter table modify column / index for p2
+/*+TDDL:node=p2*/alter table dbledb4_t1 add column d bigint;
+/*+TDDL:node=p2*/alter table dbledb4_t1 modify column c bigint unsigned;
+/*+TDDL:node=p2*/alter table dbledb4_t1 add index idx_c(`c`);
+/*+TDDL:node=p2*/alter table dbledb4_t1 add index idx_b_c(`b`,`c`);
+/*+TDDL:node=p2*/alter table dbledb4_t1 rename index auto_shard_key_a to idx_a;
+
+/*+TDDL:node=p2*/alter table dbledb4_t2 modify column b bigint;
+/*+TDDL:node=p2*/alter table dbledb4_t2 add column e bigint;
+/*+TDDL:node=p2*/alter table dbledb4_t2 drop column c;
+/*+TDDL:node=p2*/alter table dbledb4_t2 add index idx_e(`e`),add index idx_b_e(`b`,`e`),rename index auto_shard_key_a to idx_a;
+
+/*+TDDL:node=p2*/alter table dbledb4_t3 modify column b bigint unsigned,add column e bigint,drop column c;
+/*+TDDL:node=p2*/alter table dbledb4_t3 add column f int after e, modify column e bigint after a;
+
+  ## test alter table drop column with dryrun=true (modify table ...)
+modify table dbledb4_t1 add column d bigint;
+modify table dbledb4_t1 modify column c bigint unsigned;
+modify table dbledb4_t1 add index idx_c(`c`);
+modify table dbledb4_t1 add index idx_b_c(`b`,`c`);
+modify table dbledb4_t1 rename index auto_shard_key_a to idx_a;
+
+modify table dbledb4_t2 modify column b bigint;
+modify table dbledb4_t2 add column e bigint;
+modify table dbledb4_t2 drop column c;
+modify table dbledb4_t2 add index idx_e(`e`),add index idx_b_e(`b`,`e`),rename index auto_shard_key_a to idx_a;
+
+modify table dbledb4_t3 modify column b bigint unsigned,add column e bigint,drop column c;
+modify table dbledb4_t3 add column f int after e, modify column e bigint after a;
+  
+  ## check table for modify table  
+check table dbledb4_t1;
+check table dbledb4_t2;
+check table dbledb4_t3;
+
+use polardbx;
+drop database dbledb4;
+

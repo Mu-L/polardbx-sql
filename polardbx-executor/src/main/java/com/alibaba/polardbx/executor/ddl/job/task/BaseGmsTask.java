@@ -18,10 +18,9 @@ package com.alibaba.polardbx.executor.ddl.job.task;
 
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
-import com.alibaba.polardbx.executor.ddl.job.meta.CommonMetaChanger;
-import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
 import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
 import com.alibaba.polardbx.executor.sync.TableMetaChangePreemptiveSyncAction;
+import com.alibaba.polardbx.executor.utils.DdlUtils;
 import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
 import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.optimizer.config.table.PreemptiveTime;
@@ -37,6 +36,11 @@ public abstract class BaseGmsTask extends BaseDdlTask {
     public BaseGmsTask(String schemaName, String logicalTableName) {
         super(schemaName);
         this.logicalTableName = logicalTableName;
+    }
+
+    @Override
+    protected void beforeTransaction(ExecutionContext executionContext) {
+        DdlUtils.checkTableMetaVersion(executionContext, schemaName, logicalTableName);
     }
 
     @Override
@@ -64,7 +68,7 @@ public abstract class BaseGmsTask extends BaseDdlTask {
         PreemptiveTime preemptiveTime = PreemptiveTime.getPreemptiveTimeFromExecutionContext(executionContext,
             ConnectionParams.PREEMPTIVE_MDL_INITWAIT, ConnectionParams.PREEMPTIVE_MDL_INTERVAL);
         if (!StringUtils.isEmpty(logicalTableName)) {
-            SyncManagerHelper.sync(
+            SyncManagerHelper.syncThrowExceptions(
                 new TableMetaChangePreemptiveSyncAction(schemaName, logicalTableName, preemptiveTime), SyncScope.ALL);
         }
     }

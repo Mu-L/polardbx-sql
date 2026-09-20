@@ -170,15 +170,18 @@ public class FailPoint {
      */
     public static void injectRandomSuspendFromHint(ExecutionContext executionContext) {
         injectFromHint(FP_RANDOM_SUSPEND, executionContext, (k, v) -> {
-            String[] pair = v.replace(" ", "").split(",");
-            int percentage = Integer.valueOf(pair[0]);
-            int duration = Integer.valueOf(pair[1]);
-            if (RandomUtils.nextInt(100) <= percentage) {
-                try {
-                    Thread.sleep(duration);
-                } catch (Exception ignored) {
-                    Thread.currentThread().interrupt();
+            try {
+                String[] pair = v.replace(" ", "").split(",");
+                int percentage = Integer.valueOf(pair[0]);
+                int duration = Integer.valueOf(pair[1]);
+                if (RandomUtils.nextInt(100) <= percentage) {
+                    try {
+                        Thread.sleep(duration);
+                    } catch (Exception ignored) {
+                        Thread.currentThread().interrupt();
+                    }
                 }
+            } catch (Exception ignored) {
             }
         });
     }
@@ -423,6 +426,10 @@ public class FailPoint {
 
     private static String getFromKeyMap(String key) {
         return keyMap.get(StringUtils.lowerCase(key));
+    }
+
+    public static String getValueOfKey(String key) {
+        return getFromKeyMap(key);
     }
 
 }

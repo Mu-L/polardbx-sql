@@ -415,6 +415,17 @@ public class CheckCciMetaTask extends CheckCciBaseTask {
 
         final List<CdcDdlRecord> cdcDdlRecords = CdcManagerHelper.getInstance().queryDdlByJobId(ddlJobId);
 
+        // 跳过rebuild cci，同一个JOB_ID包含ALTER_TABLE,CREATE_INDEX
+        boolean isRebuildCci;
+        isRebuildCci =
+            cdcDdlRecords.stream()
+                .anyMatch(cdr -> TStringUtil.equalsIgnoreCase(cdr.getSqlKind(), SqlKind.ALTER_TABLE.name())) &&
+                cdcDdlRecords.stream()
+                    .anyMatch(cdr -> TStringUtil.equalsIgnoreCase(cdr.getSqlKind(), SqlKind.CREATE_INDEX.name()));
+        if (isRebuildCci) {
+            return reports;
+        }
+
         // For create table with cci, there will be ONLY ONE ddl mark record for CREATE TABLE.
         final List<CdcDdlRecord> filteredRecords = new ArrayList<>();
         cdcDdlRecords

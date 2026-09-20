@@ -16,9 +16,10 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableObjectArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.executor.chunk.Block;
-import com.alibaba.polardbx.executor.chunk.BlockBuilder;
-import com.alibaba.polardbx.executor.chunk.BlockBuilders;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.ChunkBuilder;
 import com.alibaba.polardbx.executor.chunk.IntegerBlock;
@@ -26,10 +27,7 @@ import com.alibaba.polardbx.executor.chunk.LongBlock;
 import com.alibaba.polardbx.executor.chunk.RandomAccessBlock;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
-
-import java.util.ArrayList;
-import java.util.BitSet;
-import java.util.List;
+import org.openjdk.jol.info.ClassLayout;
 
 public class TypedBuffers {
     public static TypedBuffer createLong(int chunkSize, ExecutionContext context) {
@@ -41,16 +39,37 @@ public class TypedBuffers {
     }
 
     private static abstract class AbstractTypeSpecificBuffer<T> implements TypedBuffer<T> {
+        private static final int INSTANCE_SIZE =
+            ClassLayout.parseClass(AbstractTypeSpecificBuffer.class).instanceSize();
         protected final int chunkSize;
+
+        @FieldMemoryCounter(value = false)
         protected final ExecutionContext context;
+
         protected int currentSize;
-        protected final List<Chunk> chunks = new ArrayList<>();
+        protected final MemoryCountableObjectArrayList<Chunk> chunks = new MemoryCountableObjectArrayList<>();
         protected long estimateSize = 0;
         protected Block randomAccessBlock;
 
         AbstractTypeSpecificBuffer(int chunkSize, ExecutionContext context) {
             this.chunkSize = chunkSize;
             this.context = context;
+        }
+
+        @Override
+        public long getMemoryUsage() {
+            long size = INSTANCE_SIZE;
+
+            if (chunks != null) {
+                for (int i = 0; i < chunks.size(); i++) {
+                    size += FastMemoryCounter.sizeOf(chunks);
+                    size += chunks.get(i).getMemoryUsage();
+                }
+            }
+
+            size += FastMemoryCounter.sizeOf(randomAccessBlock);
+
+            return size;
         }
 
         protected abstract void doAppendRow(T array, int nullPosition, int sourceIndex, int positionCount);
@@ -88,8 +107,8 @@ public class TypedBuffers {
         }
 
         @Override
-        public List<Chunk> buildChunks() {
-            ArrayList<Chunk> allChunks = new ArrayList<>(this.chunks);
+        public MemoryCountableObjectArrayList<Chunk> buildChunks() {
+            MemoryCountableObjectArrayList<Chunk> allChunks = new MemoryCountableObjectArrayList<>(this.chunks);
             if (currentSize > 0) {
                 allChunks.add(getBuildingChunk());
             }
@@ -153,6 +172,9 @@ public class TypedBuffers {
     }
 
     private static class LongTypedBuffer extends AbstractTypeSpecificBuffer<long[]> {
+
+        private static final int INSTANCE_SIZE = ClassLayout.parseClass(LongTypedBuffer.class).instanceSize();
+
         LongTypedBuffer(int chunkSize, ExecutionContext context) {
             super(chunkSize, context);
             this.randomAccessBlock = new LongBlock(DataTypes.LongType, chunkSize);
@@ -185,12 +207,31 @@ public class TypedBuffers {
             currentSize += positionCount;
         }
 
+        @Override
+        public long getMemoryUsage() {
+            long size = INSTANCE_SIZE
+                + FastMemoryCounter.sizeOf(chunks)
+                + FastMemoryCounter.sizeOf(randomAccessBlock);
+
+            return size;
+        }
     }
 
     private static class IntegerTypedBuffer extends AbstractTypeSpecificBuffer<int[]> {
+        private static final int INSTANCE_SIZE = ClassLayout.parseClass(IntegerTypedBuffer.class).instanceSize();
+
         IntegerTypedBuffer(int chunkSize, ExecutionContext context) {
             super(chunkSize, context);
             this.randomAccessBlock = new IntegerBlock(DataTypes.IntegerType, chunkSize);
+        }
+
+        @Override
+        public long getMemoryUsage() {
+            long size = INSTANCE_SIZE
+                + FastMemoryCounter.sizeOf(chunks)
+                + FastMemoryCounter.sizeOf(randomAccessBlock);
+
+            return size;
         }
 
         @Override

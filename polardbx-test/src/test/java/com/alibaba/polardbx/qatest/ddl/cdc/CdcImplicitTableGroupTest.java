@@ -148,6 +148,10 @@ public class CdcImplicitTableGroupTest extends CdcBaseTest {
 
     @SneakyThrows
     private void executeWithCallBack(Consumer<Parameter> consumer, String dbName, String createDbSql) {
+        if (!supportImplicitTableGroup()) {
+            return;
+        }
+
         try (Statement stmt = tddlConnection.createStatement()) {
             stmt.executeUpdate("drop database if exists " + dbName);
             stmt.executeUpdate(createDbSql);

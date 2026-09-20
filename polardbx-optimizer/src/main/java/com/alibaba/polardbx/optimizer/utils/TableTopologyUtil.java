@@ -16,9 +16,14 @@
 
 package com.alibaba.polardbx.optimizer.utils;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
 import org.apache.calcite.plan.RelOptTable;
@@ -43,6 +48,27 @@ public class TableTopologyUtil {
     public static boolean isShard(TableMeta tableMeta) {
         return OptimizerContext.getContext(tableMeta.getSchemaName()).getRuleManager()
             .isShard(tableMeta.getTableName());
+    }
+
+    /**
+     * 根据当前执行上下文，判断当前表是否是分片表
+     */
+    public static boolean isShard(TableMeta tableMeta, PlannerContext plannerContext) {
+        if (plannerContext == null || PlannerContext.EMPTY_CONTEXT == plannerContext){
+            return isShard(tableMeta);
+        }
+        return isShard(tableMeta, plannerContext.getExecutionContext());
+    }
+
+    /**
+     * 根据当前执行上下文，判断当前表是否是分片表
+     */
+    public static boolean isShard(TableMeta tableMeta, ExecutionContext ec) {
+        if (ec == null || ec.getSchemaManager() == null){
+            return isShard(tableMeta);
+        }
+        return ec.getSchemaManager(tableMeta.getSchemaName()).getTddlRuleManager()
+                .isShard(tableMeta.getTableName());
     }
 
     public static boolean isAllSingleTableInSamePhysicalDB(Set<RelOptTable> scans) {
@@ -120,7 +146,8 @@ public class TableTopologyUtil {
      * push-down the single or broadcast table on drds mode.
      */
     public static boolean supportPushSingleOrBroadcastDrdsTable(
-        String leftTable, String rightTable, TddlRuleManager or, JoinRelType joinType) {
+        String leftTable, String rightTable, TddlRuleManager or, JoinRelType joinType,
+        LogicalView leftView, LogicalView rightView, ParamManager paramManager) {
 
         // 两个单表，可以下推
         if (or.isTableInSingleDb(leftTable) && or.isTableInSingleDb(rightTable)) {
@@ -141,34 +168,38 @@ public class TableTopologyUtil {
             return true;
         }
 
-        if (joinType != null) {
-            /**
-             * inner join, 任意一个是广播表就可以下推
-             */
-            if (joinType == JoinRelType.INNER) {
-                return or.isBroadCast(leftTable) || (or.isBroadCast(rightTable));
+        switch (joinType) {
+        case INNER:
+            if (or.isBroadCast(leftTable) || or.isBroadCast(rightTable)) {
+                return true;
             }
-
-            /**
-             * left join，右表是广播表
-             */
-            if (joinType == JoinRelType.LEFT) {
-                return or.isBroadCast(rightTable);
+            break;
+        case LEFT:
+        case ANTI:
+        case SEMI:
+        case LEFT_SEMI:
+            if (or.isBroadCast(rightTable)) {
+                return true;
             }
-
-            /**
-             * right join, 左表是广播表
-             */
-            if (joinType == JoinRelType.RIGHT) {
-                return or.isBroadCast(leftTable);
+            if (paramManager.getBoolean(ConnectionParams.ENABLE_PUSH_SINGLE_GROUP_JOIN)) {
+                if (or.isBroadCast(leftTable) && rightView.isSingleGroup()) {
+                    return true;
+                }
             }
-
-            /**
-             * 其他
-             */
-            if ((joinType == JoinRelType.SEMI || joinType == JoinRelType.ANTI || joinType == JoinRelType.LEFT_SEMI)) {
-                return or.isBroadCast(rightTable);
+            break;
+        case RIGHT:
+            if (or.isBroadCast(leftTable)) {
+                return true;
             }
+            if (paramManager.getBoolean(ConnectionParams.ENABLE_PUSH_SINGLE_GROUP_JOIN)) {
+                if (or.isBroadCast(rightTable) && leftView.isSingleGroup()) {
+                    return true;
+                }
+            }
+            break;
+        case FULL:
+        default:
+            return false;
         }
 
         return false;

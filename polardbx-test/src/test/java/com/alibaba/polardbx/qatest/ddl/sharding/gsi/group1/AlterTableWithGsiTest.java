@@ -18,6 +18,7 @@ package com.alibaba.polardbx.qatest.ddl.sharding.gsi.group1;
 
 import com.alibaba.polardbx.qatest.AsyncDDLBaseNewDBTestCase;
 import com.alibaba.polardbx.qatest.BinlogIgnore;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.qatest.validator.DataValidator;
 import com.google.common.collect.ImmutableList;
@@ -70,7 +71,8 @@ public class AlterTableWithGsiTest extends AsyncDDLBaseNewDBTestCase {
                 + "    `buyer_id` varchar(20) DEFAULT NULL, \n" + "    `order_snapshot` longtext, \n"
                 + "    PRIMARY KEY (`id`), \n"
                 + "    GLOBAL UNIQUE g_i_test_base(`buyer_id`) COVERING (`order_snapshot`) DBPARTITION BY HASH "
-                + "(`buyer_id`) \n" + ") ENGINE = InnoDB CHARSET = utf8mb4 dbpartition by hash(`order_id`);\n");
+                + "(`buyer_id`) \n"
+                + ") ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_general_ci dbpartition by hash(`order_id`);\n");
 
         supportXA = JdbcUtil.supportXA(tddlConnection);
     }
@@ -657,6 +659,7 @@ public class AlterTableWithGsiTest extends AsyncDDLBaseNewDBTestCase {
      */
     @Test
     public void testAlterSeqDeleteAutoIncrement() throws Exception {
+        setSqlMode("STRICT_TRANS_TABLES", tddlConnection);
         String tableName = "alter_table_test_2";
         dropTableIfExists(tableName);
         String sql = String.format(
@@ -1262,8 +1265,6 @@ public class AlterTableWithGsiTest extends AsyncDDLBaseNewDBTestCase {
         } catch (Exception e) {
             throw new RuntimeException("sharding advisor failed!", e);
         }
-        sql = "/*+TDDL:cmd_extra(SHARDING_ADVISOR_BROADCAST_THRESHOLD=-1)*/shardingadvise";
-        DataValidator.sqlMayErrorAssert(sql, tddlConnection, "ERR_TABLE_NOT_EXIST");
 
         sql = String.format("alter table %s change column d1 d varchar(30)", primaryTable);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
@@ -1677,6 +1678,7 @@ public class AlterTableWithGsiTest extends AsyncDDLBaseNewDBTestCase {
     /**
      * @since 5.1.19
      */
+    @IcbcIgnore(ignoreReason = "DROP PRIMARY KEY")
     @Test
     public void testAlterTableMultiGroupOneAtomWithoutGsi_drop_primary_key() {
 

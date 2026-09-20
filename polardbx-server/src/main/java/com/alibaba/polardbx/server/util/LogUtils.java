@@ -18,8 +18,10 @@ package com.alibaba.polardbx.server.util;
 
 import com.alibaba.fastjson.JSONArray;
 import com.alibaba.polardbx.common.audit.AuditAction;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
+import com.alibaba.polardbx.common.properties.MppConfig;
 import com.alibaba.polardbx.common.utils.ExecutorMode;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.logger.Logger;
@@ -34,12 +36,16 @@ import com.alibaba.polardbx.druid.sql.parser.Token;
 import com.alibaba.polardbx.config.SchemaConfig;
 import com.alibaba.polardbx.druid.sql.ast.SqlType;
 import com.alibaba.polardbx.druid.sql.parser.ByteString;
-import com.alibaba.polardbx.gms.privilege.audit.AuditPrivilege;
+import com.alibaba.polardbx.gms.sqlaudit.SqlAuditInterceptor;
 import com.alibaba.polardbx.optimizer.ccl.CclManager;
 import com.alibaba.polardbx.optimizer.ccl.common.CclMetric;
 import com.alibaba.polardbx.optimizer.ccl.common.CclSqlMetric;
-import com.alibaba.polardbx.optimizer.workload.WorkloadType;
+import com.alibaba.polardbx.optimizer.htaprouting.PlanType;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadType;
+import com.alibaba.polardbx.optimizer.secret.SecretMaskUtils;
+import com.alibaba.polardbx.optimizer.spill.SpillSpaceManager;
 import com.alibaba.polardbx.server.ServerConnection;
+import com.alibaba.polardbx.server.parser.ServerParse;
 import com.alibaba.polardbx.statistics.RuntimeStatistics;
 import com.alibaba.polardbx.statistics.RuntimeStatistics.Metrics;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
@@ -47,7 +53,10 @@ import org.apache.calcite.plan.RelOptCost;
 import org.apache.commons.lang.StringUtils;
 
 import javax.annotation.Nullable;
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Objects;
 
 import static com.alibaba.polardbx.common.utils.logger.support.LogFormat.formatLog;
 
@@ -62,19 +71,56 @@ public class LogUtils {
     private static int MAX_SQL_LENGTH = 4096;
     private static boolean enableSqlProfileLog = true;
 
+    public static String maskSecretPassword(String sql) {
+        return SecretMaskUtils.mask(sql);
+    }
+
+    static String truncateAndMaskSql(ByteString sqlBytes) {
+        String sql;
+        if (sqlBytes.length() > MAX_SQL_LENGTH) {
+            String suffix = String.format("... +%d more", sqlBytes.length() - MAX_SQL_LENGTH);
+            sql = sqlBytes.substring(0, MAX_SQL_LENGTH) + suffix;
+        } else {
+            sql = sqlBytes.toString();
+        }
+        return maskSecretPassword(sql);
+    }
+
     public static void recordSql(ServerConnection c, ByteString sql, Throwable ex) {
         long endTimeNano = System.nanoTime();
-        recordSql(c, "", sql, endTimeNano, ex != null ? -1 : 0);
+        recordSql(c, "", sql, endTimeNano, ex != null ? -1 : 0, 0);
     }
 
     public static void recordSql(ServerConnection c, ByteString sql, boolean success) {
         long endTimeNano = System.nanoTime();
-        recordSql(c, "", sql, endTimeNano, success ? 0 : -1);
+        recordSql(c, "", sql, endTimeNano, success ? 0 : -1, 0);
     }
 
-    public static void recordSql(ServerConnection c, String tag, ByteString sql, long endTimeNano, long affectedRows) {
+    public static void recordSql(ServerConnection c, ByteString sql, boolean success, long trxStartTimeNano) {
+        long endTimeNano = System.nanoTime();
+        recordSql(c, "", sql, endTimeNano, success ? 0 : -1, trxStartTimeNano);
+    }
+
+    /**
+     * Same as {@link #recordSql(ServerConnection, ByteString, boolean, long)}, but takes an explicit
+     * startTimeNano so the rt is not computed from the shared, concurrently-mutable
+     * ServerConnection#getLastActiveTime().
+     */
+    public static void recordSql(ServerConnection c, ByteString sql, boolean success, long trxStartTimeNano,
+                                 long startTimeNano) {
+        long endTimeNano = System.nanoTime();
+        recordSql(c, "", sql, endTimeNano, success ? 0 : -1, trxStartTimeNano, startTimeNano);
+    }
+
+    public static void recordSql(ServerConnection c, String tag, ByteString sql, long endTimeNano, long affectedRows,
+                                 long trxStartTimeNano) {
+        recordSql(c, tag, sql, endTimeNano, affectedRows, trxStartTimeNano, -1);
+    }
+
+    public static void recordSql(ServerConnection c, String tag, ByteString sql, long endTimeNano, long affectedRows,
+                                 long trxStartTimeNano, long startTimeNano) {
         recordSql(c, tag, sql, null, null, affectedRows, endTimeNano, null, null, null, WorkloadType.TP, null, null,
-            false, null);
+            false, null, trxStartTimeNano, startTimeNano);
     }
 
     public static void recordPreparedSql(ServerConnection c, String stmtId,
@@ -86,14 +132,31 @@ public class LogUtils {
         tagInfo.append("[prepare] ");
         tagInfo.append("[stmt_id:").append(stmtId).append("]");
         recordSql(c, tagInfo.toString(), sql, null, null, affectedRows, endTimeNano, null, null, null, WorkloadType.TP,
-            null, null, false, null);
+            null, null, false, null, 0);
     }
 
     public static void recordSql(ServerConnection c, String tag, ByteString sqlBytes,
                                  List<Pair<Integer, ParameterContext>> params, String transactionPolicy,
                                  long affectRow, long endTimeNano, QueryMetrics metrics, Integer baselineInfoId,
                                  Integer planInfoId, WorkloadType workloadType, RelOptCost cost, ExecutorMode mode,
-                                 boolean recordSlowDetail, @Nullable SqlType sqlType) {
+                                 boolean recordSlowDetail, @Nullable SqlType sqlType, long trxStartTimeNano) {
+        recordSql(c, tag, sqlBytes, params, transactionPolicy, affectRow, endTimeNano, metrics, baselineInfoId,
+            planInfoId, workloadType, cost, mode, recordSlowDetail, sqlType, trxStartTimeNano, -1);
+    }
+
+    /**
+     * @param startTimeNano the rt-computation start time; if negative, falls back to
+     * c.getLastActiveTime() (the previous behavior). Callers auditing a Logout
+     * event pass a locally captured nanoTime to avoid racing with
+     * ServerConnection#afterExecution(), which mutates lastActiveTime
+     * concurrently on a different thread.
+     */
+    public static void recordSql(ServerConnection c, String tag, ByteString sqlBytes,
+                                 List<Pair<Integer, ParameterContext>> params, String transactionPolicy,
+                                 long affectRow, long endTimeNano, QueryMetrics metrics, Integer baselineInfoId,
+                                 Integer planInfoId, WorkloadType workloadType, RelOptCost cost, ExecutorMode mode,
+                                 boolean recordSlowDetail, @Nullable SqlType sqlType, long trxStartTimeNano,
+                                 long startTimeNano) {
 
         try {
             if (!recordSql.isInfoEnabled()) {
@@ -103,6 +166,8 @@ public class LogUtils {
             if (c.getSchema() == null) {
                 return;
             }
+            String user = c.getUser();
+            String host = c.getHost();
 
             SchemaConfig droppedSchema = c.getDroppedSchemaConfigIfExists();
             SchemaConfig schema = c.getSchemaConfig();
@@ -139,15 +204,21 @@ public class LogUtils {
             if (metrics != null) {
                 RuntimeStatistics runTimeStat = metrics.runTimeStat;
                 if (runTimeStat != null && runTimeStat.isRunningWithCpuProfile()) {
+                    // Transfer per-SQL ext col stats from ExecutionContext to RuntimeStatistics
+                    if (c.getExecutionContext() != null && c.getExecutionContext().getExtColStats() != null) {
+                        runTimeStat.setExtColStats(c.getExecutionContext().getExtColStats());
+                    }
                     statMetrics = runTimeStat.toMetrics();
                     runTimeStat.setStoredMetrics(statMetrics);
                 }
             }
 
             long sqlBeginTs = c.getSqlBeginTimestamp();
-            long startTime = c.getLastActiveTime();
+            long startTime = startTimeNano >= 0 ? startTimeNano : c.getLastActiveTime();
             // microseconds
             long duration = (endTimeNano - startTime) / 1000;
+            long trxDuration =
+                trxStartTimeNano > 0 && trxStartTimeNano < endTimeNano ? (endTimeNano - trxStartTimeNano) / 1000 : 0;
 
             StringBuilder sqlInfo = new StringBuilder(300 + sqlBytes.length());
             sqlInfo.append(" [TDDL] ");
@@ -161,13 +232,9 @@ public class LogUtils {
                 sqlInfo.append("] ");
             }
 
-            String sql;
+            String sql = truncateAndMaskSql(sqlBytes);
             if (sqlBytes.length() > MAX_SQL_LENGTH) {
-                String suffix = String.format("... +%d more", sqlBytes.length() - MAX_SQL_LENGTH);
-                sql = sqlBytes.substring(0, MAX_SQL_LENGTH) + suffix;
                 sqlInfo.append("[TOO LONG] ");
-            } else {
-                sql = sqlBytes.toString();
             }
 
             if (SqlType.isDDL(sqlType)) {
@@ -209,8 +276,10 @@ public class LogUtils {
             CclSqlMetric cclSqlMetric = null;
             if (cclTrigger && schema != null) {
                 cclSqlMetric = new CclSqlMetric();
+                cclSqlMetric.setHost(host);
+                cclSqlMetric.setUserName(user);
                 cclSqlMetric.setSchemaName(schema.getName());
-                cclSqlMetric.setOriginalSql(sqlBytes.toString());
+                cclSqlMetric.setOriginalSql(maskSecretPassword(sqlBytes.toString()));
                 cclSqlMetric.setResponseTime(duration /1000);
                 cclSqlMetric.setAffectedRows(affectRow);
                 if (metrics != null && metrics.runTimeStat != null && metrics.runTimeStat.getSqlType() != null) {
@@ -218,6 +287,8 @@ public class LogUtils {
                 }
             }
 
+            long connectionId = c.getId();
+            printMetric(sqlInfo, QueryMetricsAttribute.CONNECTION_ID, connectionId);
             if (metrics != null) {
                 String type = encodeType(metrics.hasTempTable, metrics.hasUnpushedJoin, metrics.hasMultiShards);
                 sqlInfo.append(QueryMetricsAttribute.STAT_TYPE).append(type);
@@ -225,6 +296,7 @@ public class LogUtils {
                 if (statMetrics != null) {
 
                     if (enableSqlProfileLog) {
+
                         printMetric(sqlInfo, QueryMetricsAttribute.FETCHED_ROWS, statMetrics.fetchedRows);
                         printMetric(sqlInfo, QueryMetricsAttribute.AFFECTED_PHY_ROWS, statMetrics.affectedPhyRows);
                         printMetric(sqlInfo, QueryMetricsAttribute.SQL_COUNT, statMetrics.phySqlCount);
@@ -238,11 +310,56 @@ public class LogUtils {
                         printMetric(sqlInfo, QueryMetricsAttribute.PHYSICAL_TIMECOST, statMetrics.phyCpuTc);
                         printMetric(sqlInfo, QueryMetricsAttribute.EXEC_SQL_TIMECOST, statMetrics.execSqlTc);
                         printMetric(sqlInfo, QueryMetricsAttribute.FETCH_RS_TIMECOST, statMetrics.fetchRsTc);
+
+                        if (mode == ExecutorMode.MPP) {
+                            // make a statistics for memory usage info from all nodes.
+                            String mppMaxMemoryUsageInfo = metrics.runTimeStat.getMppMaxMemoryUsageInfo();
+                            sqlInfo.append(QueryMetricsAttribute.COLUMNAR_MEMORY_STATISTICS)
+                                .append(mppMaxMemoryUsageInfo);
+                        } else {
+                            // for non-MPP mode.
+                            printMetric(sqlInfo, QueryMetricsAttribute.COLUMNAR_MEMORY_STATISTICS,
+                                statMetrics.queryMem);
+                        }
+
+                        if (mode == ExecutorMode.MPP) {
+                            // make a statistics for rt info from all nodes.
+                            String versionStorageStatisticsInfo = metrics.runTimeStat.getVersionStorageStatisticsInfo();
+                            sqlInfo.append(QueryMetricsAttribute.COLUMNAR_NET_STATISTICS)
+                                .append(versionStorageStatisticsInfo);
+                        } else {
+                            // for non-MPP mode.
+                            sqlInfo.append(QueryMetricsAttribute.COLUMNAR_NET_STATISTICS).append("0");
+                        }
+
+                        if (mode == ExecutorMode.MPP) {
+                            // make a statistics for scan info from all nodes.
+                            String columnarScanMetricsInfo = metrics.runTimeStat.getColumnarScanMetricsInfo();
+                            sqlInfo.append(QueryMetricsAttribute.COLUMNAR_SCAN_METRICS).append(columnarScanMetricsInfo);
+                        } else {
+                            // for non-MPP mode.
+                            sqlInfo.append(QueryMetricsAttribute.COLUMNAR_SCAN_METRICS).append("0");
+                        }
+
                         printMetric(sqlInfo, QueryMetricsAttribute.PHYSICAL_CONN_TIMECOST, statMetrics.phyConnTc);
+                        printMetric(sqlInfo, QueryMetricsAttribute.FETCH_TSO_TIMECOST, statMetrics.fetchTSOTc);
+                        printMetric(sqlInfo, QueryMetricsAttribute.FETCH_SEQUENCE_TIMECOST, statMetrics.fetchSeqTc);
+                        sqlInfo.append(QueryMetricsAttribute.TRX_TYPE).append(statMetrics.trxType);
+                        printMetric(sqlInfo, QueryMetricsAttribute.COMMIT_PREPARE_TIMECOST,
+                            statMetrics.commitPrepareTc);
+                        printMetric(sqlInfo, QueryMetricsAttribute.COMMIT_TSO_TIMECOST, statMetrics.commitTsoTc);
+                        printMetric(sqlInfo, QueryMetricsAttribute.COMMIT_LOGGER_TIMECOST, statMetrics.commitLoggerTc);
+                        printMetric(sqlInfo, QueryMetricsAttribute.COMMIT_COMMIT_TIMECOST, statMetrics.commitCommitTc);
                         printMetric(sqlInfo, QueryMetricsAttribute.COLUMNAR_SNAPSHOT_TIMECOST,
                             statMetrics.columnarSnapshotTc);
                         printMetric(sqlInfo, QueryMetricsAttribute.SPILL_COUNT, statMetrics.spillCnt);
                         printMetric(sqlInfo, QueryMetricsAttribute.MEM_BLOCKED, statMetrics.memBlockedFlag);
+
+                        if (statMetrics.extColStatsStr != null
+                            && DynamicConfig.getInstance().isEnableExtColumnStatisticsLog()) {
+                            sqlInfo.append(QueryMetricsAttribute.EXT_COL_STATISTICS)
+                                .append(statMetrics.extColStatsStr);
+                        }
 
                         if (cclTrigger) {
                             cclSqlMetric.setFetchRows(statMetrics.fetchedRows);
@@ -260,6 +377,12 @@ public class LogUtils {
                 }
                 if (metrics.errorCode != -1) {
                     sqlInfo.append(QueryMetricsAttribute.ERROR_CODE).append(metrics.errorCode);
+                    if (metrics.errorCode == ErrorCode.ERR_SQL_EXCEED_CCL_EXECUTION_TIME.getCode()) {
+                        sqlInfo.append(QueryMetricsAttribute.IS_CCL_AUTO_KILL).append("1");
+                    }
+                }
+                if (metrics.isDryRun) {
+                    sqlInfo.append(QueryMetricsAttribute.IS_DRY_RUN).append("1");
                 }
                 if (!StringUtils.isEmpty(metrics.xplanIndex)) {
                     sqlInfo.append(QueryMetricsAttribute.USING_XPLAN).append(metrics.xplanIndex);
@@ -267,6 +390,22 @@ public class LogUtils {
                 }
                 sqlInfo.append(QueryMetricsAttribute.SQL_TIMESTAMP).append(sqlBeginTs);
                 sqlInfo.append(QueryMetricsAttribute.MEMORY_REJECT).append(metrics.rejectByMemoryLimit ? "1" : "0");
+            } else {
+                int rs = ServerParse.parse(sql);
+                int commandCode = rs & 0xff;
+                if (commandCode == ServerParse.COMMIT
+                    && Objects.requireNonNull(c.getExecutionContext()).getRuntimeStatistics() != null) {
+                    // for commit, print commit time stats
+                    RuntimeStatistics runTimeStat = (RuntimeStatistics) c.getExecutionContext().getRuntimeStatistics();
+                    sqlInfo.append(QueryMetricsAttribute.TRX_TYPE).append(runTimeStat.getTrxType());
+                    printMetric(sqlInfo, QueryMetricsAttribute.COMMIT_PREPARE_TIMECOST,
+                        runTimeStat.getCommitPrepareTimecost());
+                    printMetric(sqlInfo, QueryMetricsAttribute.COMMIT_TSO_TIMECOST, runTimeStat.getCommitTsoTimecost());
+                    printMetric(sqlInfo, QueryMetricsAttribute.COMMIT_LOGGER_TIMECOST,
+                        runTimeStat.getCommitLoggerTimecost());
+                    printMetric(sqlInfo, QueryMetricsAttribute.COMMIT_COMMIT_TIMECOST,
+                        runTimeStat.getCommitCommitTimecost());
+                }
             }
 
             if (cclTrigger && StringUtils.isNotEmpty(cclSqlMetric.getTemplateId())) {
@@ -320,16 +459,32 @@ public class LogUtils {
             }
 
             if (metrics != null) {
-                if (metrics.useColumnar) {
-                    sqlInfo.append(QueryMetricsAttribute.USING_COLUMNAR).append(1);
+                if (metrics.planType != PlanType.ROW) {
+                    sqlInfo.append(QueryMetricsAttribute.PLAN_TYPE).append(metrics.planType.ordinal());
                 }
                 sqlInfo.append(QueryMetricsAttribute.USING_RETURNING).append(metrics.optimizedWithReturning ? 1 : 0);
             }
+
+            printMetric(sqlInfo, QueryMetricsAttribute.TXN_AGE, trxDuration);
 
             sqlInfo.append("] # ").append(c.getTraceId());
             sqlInfo.append(", tddl version: ").append(Version.getVersion());
 
             String sqlLogContent = sqlInfo.toString();
+            //detail sql audit
+            String schemaName = c.getSchema();
+
+            // note: kill query will not pass permission check and always print to sql.log since ExecutionContext === null
+            if (c.getExecutionContext() != null && !c.isLoginAction() && DynamicConfig.getInstance()
+                .getEnableSqlAudit()) {
+                SqlType auditType = c.getExecutionContext().getSqlType();
+                if (auditType == null) {
+                    return;
+                }
+                if (!SqlAuditInterceptor.hasPermission(user, schemaName, auditType)) {
+                    return;
+                }
+            }
             SQLRecorderLogger.sqlLogger.info(sqlLogContent);
 
             //log slow detail
@@ -377,7 +532,7 @@ public class LogUtils {
 
         public RuntimeStatistics runTimeStat;
 
-        public boolean useColumnar;
+        public PlanType planType;
         // The sql template Id
         public String sqlTemplateId;
 
@@ -390,6 +545,7 @@ public class LogUtils {
 
         //metric for ccl
         public CclMetric cclMetric;
+        public boolean isDryRun;
 
         // Whether dml optimized with returning
         public boolean optimizedWithReturning = false;
@@ -404,6 +560,7 @@ public class LogUtils {
         public static final String SQL_TIMESTAMP = ",ts=";
         public static final String BASELINE_ID = ",bid=";
         public static final String PLAN_ID = ",pid=";
+        public static final String CONNECTION_ID = ",cid=";
         public static final String FETCHED_ROWS = ",frows=";
         public static final String AFFECTED_PHY_ROWS = ",arows=";
         public static final String SQL_COUNT = ",scnt=";
@@ -418,6 +575,16 @@ public class LogUtils {
         public static final String EXEC_SQL_TIMECOST = ",pstc=";
         public static final String FETCH_RS_TIMECOST = ",prstc=";
         public static final String PHYSICAL_CONN_TIMECOST = ",pctc=";
+        public static final String FETCH_TSO_TIMECOST = ",tsotc=";
+        public static final String FETCH_SEQUENCE_TIMECOST = ",seqtc=";
+        public static final String TRX_TYPE = ",trxtype=";
+        public static final String COMMIT_PREPARE_TIMECOST = ",cmptc=";
+        public static final String COMMIT_LOGGER_TIMECOST = ",cmltc=";
+        public static final String COMMIT_TSO_TIMECOST = ",cmttc=";
+        public static final String COMMIT_COMMIT_TIMECOST = ",cmctc=";
+        public static final String COLUMNAR_MEMORY_STATISTICS = ",cmem=";
+        public static final String COLUMNAR_NET_STATISTICS = ",cnet=";
+        public static final String COLUMNAR_SCAN_METRICS = ",cscan=";
         public static final String COLUMNAR_SNAPSHOT_TIMECOST = ",cstc=";
         public static final String SQL_TEMPLATE_ID = ",tid=";
         public static final String MEMORY_REJECT = ",mr=";
@@ -428,15 +595,19 @@ public class LogUtils {
         public static final String CPU_COST = ",lcpu=";
         public static final String MEMORY_COST = ",lmem=";
         public static final String IO_COST = ",lio=";
+        public static final String TXN_AGE = ",t_age=";
         public static final String NET_COST = ",lnet=";
         public static final String CCL_RULE_NAME = ",ccl=";
         public static final String CCL_WAIT_TIME = ",cclwt=";
         public static final String CCL_STATUS = ",cclst=";
         public static final String CCL_HC = ",cclhc=";
-        public static final String USING_COLUMNAR = ",colr=";
+        public static final String PLAN_TYPE = ",colr=";
         public static final String USING_RETURNING = ",ur=";
         public static final String USING_XPLAN = ",xplan=";
         public static final String XPLAN_ROWS = ",xrows=";
+        public static final String IS_DRY_RUN = ",dryrun=";
+        public static final String IS_CCL_AUTO_KILL = ",autokill=";
+        public static final String EXT_COL_STATISTICS = ",extc=";
     }
 
     public static void resetMaxSqlLen(int newLen) {
@@ -459,5 +630,17 @@ public class LogUtils {
             return;
         }
         AuditPrivilege.polarAuditDb(c.getConnectionInfo(), auditInfo, auditAction);
+    }
+
+    public static long getTotalLogSpace() {
+        try {
+            List<Path> path = MppConfig.getInstance().getLogPaths();
+            if (path == null || path.isEmpty()) {
+                return 0;
+            }
+            return SpillSpaceManager.getDirectorySize(path.get(0).toAbsolutePath().toString());
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 }

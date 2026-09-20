@@ -1,0 +1,96 @@
+## DISABLE_FAST_SQL_PARSER
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set TTL_DEBUG_CURRENT_DATETIME='2025-09-01 00:00:00'
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+create table test_cci_split_gap_ts(
+a int not null auto_increment,
+b timestamp null default current_timestamp,
+primary key(a)
+)
+ttl = ttl_definition( TTL_ENABLE = 'OFF' TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00' TTL_JOB = CRON '0 0 1 */2 * ? *' TIMEZONE '+08:00' ARCHIVE_TABLE_PRE_ALLOCATE = 2 ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+partition by key(a) partitions 2
+show create table test_cci_split_gap_ts
+Table,Create Table
+test_cci_split_gap_ts,CREATE TABLE `test_cci_split_gap_ts` (
+	`a` int NOT NULL AUTO_INCREMENT,
+	`b` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00', TTL_JOB = CRON '0 0 1 */2 * ? *', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+create table test_cci_split_gap_ts_bk like test_cci_split_gap_ts engine='columnar' archive_mode='ttl'
+show create table test_cci_split_gap_ts
+Table,Create Table
+test_cci_split_gap_ts,CREATE TABLE `test_cci_split_gap_ts` (
+	`a` int NOT NULL AUTO_INCREMENT,
+	`b` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_test_cci_split_gap_ts_bk` (`b`)
+		PARTITION BY RANGE(UNIX_TIMESTAMP(`b`))
+		(PARTITION p20250701 VALUES LESS THAN (1751299200) ENGINE = Columnar,
+		 PARTITION p20250801 VALUES LESS THAN (1753977600) ENGINE = Columnar,
+		 PARTITION p20250901 VALUES LESS THAN (1756656000) ENGINE = Columnar,
+		 PARTITION p20251001 VALUES LESS THAN (1759248000) ENGINE = Columnar,
+		 PARTITION p20251101 VALUES LESS THAN (1761926400) ENGINE = Columnar,
+		 PARTITION p20251201 VALUES LESS THAN (1764518400) ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00', TTL_JOB = CRON '0 0 1 */2 * ? *', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'test_cci_split_gap_ts_bk', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+## split pmax to build a large gap with far-future reserved partitions
+## note: TIMESTAMP is capped at 2038-01-19, so reserved parts must stay below that bound
+alter index arctmp_test_cci_split_gap_ts_bk on table test_cci_split_gap_ts
+  split partition pmax into (
+    partition p20360101 values less than (2082729600),
+    partition p20370101 values less than (2114352000),
+    partition p20380101 values less than (2145888000),
+    partition pmax values less than (maxvalue)
+  )
+show create table test_cci_split_gap_ts
+Table,Create Table
+test_cci_split_gap_ts,CREATE TABLE `test_cci_split_gap_ts` (
+	`a` int NOT NULL AUTO_INCREMENT,
+	`b` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_test_cci_split_gap_ts_bk` (`b`)
+		PARTITION BY RANGE(UNIX_TIMESTAMP(`b`))
+		(PARTITION p20250701 VALUES LESS THAN (1751299200) ENGINE = Columnar,
+		 PARTITION p20250801 VALUES LESS THAN (1753977600) ENGINE = Columnar,
+		 PARTITION p20250901 VALUES LESS THAN (1756656000) ENGINE = Columnar,
+		 PARTITION p20251001 VALUES LESS THAN (1759248000) ENGINE = Columnar,
+		 PARTITION p20251101 VALUES LESS THAN (1761926400) ENGINE = Columnar,
+		 PARTITION p20251201 VALUES LESS THAN (1764518400) ENGINE = Columnar,
+		 PARTITION p20360101 VALUES LESS THAN (2082729600) ENGINE = Columnar,
+		 PARTITION p20370101 VALUES LESS THAN (2114352000) ENGINE = Columnar,
+		 PARTITION p20380101 VALUES LESS THAN (2145888000) ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00', TTL_JOB = CRON '0 0 1 */2 * ? *', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'test_cci_split_gap_ts_bk', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+## enable nearest split + reserved gap threshold, should split from the nearest reserved part
+alter table test_cci_split_gap_ts modify ttl set ARCHIVE_TABLE_PRE_ALLOCATE=7
+/*+TDDL:cmd_extra(TTL_ENABLE_CCI_SPLIT_FROM_NEAREST_PART=true,TTL_CCI_RESERVED_PART_GAP_COUNT=24)*/ alter table test_cci_split_gap_ts cleanup expired data
+show create table test_cci_split_gap_ts
+Table,Create Table
+test_cci_split_gap_ts,CREATE TABLE `test_cci_split_gap_ts` (
+	`a` int NOT NULL AUTO_INCREMENT,
+	`b` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_test_cci_split_gap_ts_bk` (`b`)
+		PARTITION BY RANGE(UNIX_TIMESTAMP(`b`))
+		(PARTITION p20250701 VALUES LESS THAN (1751299200) ENGINE = Columnar,
+		 PARTITION p20250801 VALUES LESS THAN (1753977600) ENGINE = Columnar,
+		 PARTITION p20250901 VALUES LESS THAN (1756656000) ENGINE = Columnar,
+		 PARTITION p20251001 VALUES LESS THAN (1759248000) ENGINE = Columnar,
+		 PARTITION p20251101 VALUES LESS THAN (1761926400) ENGINE = Columnar,
+		 PARTITION p20251201 VALUES LESS THAN (1764518400) ENGINE = Columnar,
+		 PARTITION p20360101 VALUES LESS THAN (2082729600) ENGINE = Columnar,
+		 PARTITION p20370101 VALUES LESS THAN (2114352000) ENGINE = Columnar,
+		 PARTITION p20380101 VALUES LESS THAN (2145888000) ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00', TTL_JOB = CRON '0 0 1 */2 * ? *', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'test_cci_split_gap_ts_bk', ARCHIVE_TABLE_PRE_ALLOCATE = 7, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI=false
+drop table test_cci_split_gap_ts;

@@ -32,6 +32,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static com.alibaba.polardbx.optimizer.selectivity.AbstractSelectivityEstimator.findColumnMeta;
+
 /**
  * estimate the upper bound of Selectivity for any possible parameter
  */
@@ -535,12 +537,5 @@ public class TableScanSelectivityUpperLimitEstimator extends RexVisitorImpl<Uppe
             }
         }
         return true;
-    }
-
-    private ColumnMeta findColumnMeta(TableMeta tableMeta, int index) {
-        if (index < 0 || index > tableMeta.getAllColumns().size()) {
-            return null;
-        }
-        return tableMeta.getAllColumns().get(index);
     }
 }

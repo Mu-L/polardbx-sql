@@ -331,6 +331,10 @@ public abstract class Join extends BiRel {
   public RelNode getInner() {
     return joinType != JoinRelType.RIGHT ? right : left;
   }
+
+  public boolean suitForProjectJoinTransposeAfterCbo() {
+    return false;
+  }
 }
 
 // End Join.java

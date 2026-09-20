@@ -73,8 +73,9 @@ public class ShowTransHandler extends HandlerCommon {
             throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, e, e.getMessage());
         }
 
-        List<List<Map<String, Object>>> results = SyncManagerHelper.sync(syncAction, executionContext.getSchemaName(),
-            SyncScope.ALL);
+        List<List<Map<String, Object>>> results =
+            SyncManagerHelper.syncIgnoreExceptions(syncAction, executionContext.getSchemaName(),
+                SyncScope.ALL);
 
         for (List<Map<String, Object>> rs : results) {
             if (rs == null) {

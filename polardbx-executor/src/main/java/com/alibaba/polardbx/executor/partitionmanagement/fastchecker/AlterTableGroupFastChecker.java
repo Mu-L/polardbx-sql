@@ -85,10 +85,7 @@ public class AlterTableGroupFastChecker extends FastChecker {
 
         final TableMeta baseTableMeta = sm.getTable(tableName);
 
-        final List<String> baseTableColumns = baseTableMeta.getAllColumns()
-            .stream()
-            .map(ColumnMeta::getName)
-            .collect(Collectors.toList());
+        final List<String> baseTableColumns = FastChecker.toPhysicalColumnNames(baseTableMeta);
 
         // 重要：构造planSelectSampleSrc 和 planSelectSampleDst时，传入的主键必须按原本的主键顺序!!!
         final List<String> baseTablePks = FastChecker.getOrderedPrimaryKeys(baseTableMeta);

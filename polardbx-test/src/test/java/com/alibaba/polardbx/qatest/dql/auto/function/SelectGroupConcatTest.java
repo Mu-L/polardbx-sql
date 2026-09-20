@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.qatest.dql.auto.function;
 
 import com.alibaba.polardbx.qatest.AutoCrudBasedLockTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.data.ExecuteTableSelect;
 import com.alibaba.polardbx.qatest.util.ConfigUtil;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
@@ -454,6 +455,7 @@ public class SelectGroupConcatTest extends AutoCrudBasedLockTestCase {
     /**
      * @since 5.1.25-SNAPSHOT
      */
+    @IcbcIgnore(ignoreReason = "SQL_MODE=ONLY_FULL_GROUP_BY")
     @Test
     public void testGroupConcatWithOrderByInSelect() throws Exception {
         String sql = String
@@ -466,6 +468,7 @@ public class SelectGroupConcatTest extends AutoCrudBasedLockTestCase {
     /**
      * @since 5.1.25-SNAPSHOT
      */
+    @IcbcIgnore(ignoreReason = "SQL_MODE=ONLY_FULL_GROUP_BY")
     @Test
     public void testGroupConcatWithOrderByInSelectOrderBy() throws Exception {
         String sql = String
@@ -830,6 +833,21 @@ public class SelectGroupConcatTest extends AutoCrudBasedLockTestCase {
             + "inner join (select id,MD5(GROUP_CONCAT(identifier ORDER BY identifier)) AS identifier "
             + " FROM (SELECT tinyint_test id , MD5(CONCAT(integer_test, GREATEST(date_test, '2020-12-16'), timestamp_test)) AS identifier "
             + "         FROM select_base_four_multi_db_multi_tb where pk = 2) b group by id) b on a.identifier = b.identifier and a.id != b.id;";
+        selectContentSameAssert(sql, null, mysqlConnection, tddlConnection, true);
+    }
+
+    @Test
+    public void testGroupConcatNotPushDown() throws Exception {
+        if (!baseFourTableName4.equalsIgnoreCase("select_base_four_multi_db_multi_tb")) {
+            return;
+        }
+        String sql =
+            "/*TDDL:enable_post_planner=false*/ select b.* from (select id,MD5(GROUP_CONCAT(identifier ORDER BY identifier)) AS identifier"
+                + " FROM (SELECT tinyint_test id , MD5(CONCAT(integer_test, GREATEST(date_test, '2020-12-16'), timestamp_test)) AS identifier "
+                + "         FROM select_base_four_multi_db_multi_tb where pk = 1) a group by id) a "
+                + "inner join (select id,MD5(GROUP_CONCAT(identifier ORDER BY identifier)) AS identifier "
+                + " FROM (SELECT tinyint_test id , MD5(CONCAT(integer_test, GREATEST(date_test, '2020-12-16'), timestamp_test)) AS identifier "
+                + "         FROM select_base_four_multi_db_multi_tb where pk = 2) b group by id) b on a.identifier = b.identifier and a.id != b.id;";
         selectContentSameAssert(sql, null, mysqlConnection, tddlConnection, true);
     }
 

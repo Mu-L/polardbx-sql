@@ -44,6 +44,7 @@ public class TwoPhaseDdlPauseOnlineDdlTest extends DDLBaseNewDBTestCase {
 
     @Before
     public void init() {
+        this.schemaPrefix = "pause_online_ddl_";
         this.tableName = schemaPrefix + randomTableName("two_phase", 4);
     }
 

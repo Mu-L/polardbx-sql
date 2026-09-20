@@ -2,12 +2,19 @@ package com.alibaba.polardbx.qatest.ddl.auto.omc;
 
 import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
+import org.junit.Before;
 import org.junit.Test;
 
 public class ErrorMsgTest extends DDLBaseNewDBTestCase {
 
+    @Before
+    public void beforeMethod() {
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "set ENABLE_OMC_30 = false");
+    }
+
     @Test
     public void testOnlineModifyColumnErrorMsg() {
+        setSqlMode("STRICT_TRANS_TABLES", tddlConnection);
         String tableName = "omc_err_msg_t1";
         String sql = String.format("create table %s (a int primary key, b int, c int) partition by key(a)", tableName);
         JdbcUtil.executeSuccess(tddlConnection, sql);
@@ -109,13 +116,15 @@ public class ErrorMsgTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateFailed(tddlConnection, sql, "can not be changed to a generated column");
 
         sql = String.format("alter table %s change column a d bigint, algorithm=omc;", tableName);
-        JdbcUtil.executeUpdateFailed(tddlConnection, sql, "Online modify primary key name is not supported");
+        JdbcUtil.executeUpdateFailed(tddlConnection, sql, "Do not support change the column name of sharding key");
     }
 
     @Test
     public void testOnlineModifyColumnErrorMsg3() {
         String tableName = "omc_err_msg_t3";
-        String sql = String.format("create table %s (a int primary key, b int, c int, d int GENERATED ALWAYS AS (a + b)) partition by key(a)", tableName);
+        String sql = String.format(
+            "create table %s (a int primary key, b int, c int, d int GENERATED ALWAYS AS (a + b)) partition by key(a)",
+            tableName);
         JdbcUtil.executeSuccess(tddlConnection, sql);
 
         sql = String.format("alter table %s change column d d bigint, algorithm=omc;", tableName);

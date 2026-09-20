@@ -55,6 +55,8 @@ public class ContextParameters {
 
     private boolean internalQuery = false;
 
+    private int aliasIndex = 0;
+
     public ContextParameters() {
     }
 
@@ -73,6 +75,10 @@ public class ContextParameters {
 
     public <T> T removeParameter(ContextParameterKey contextParametersKey) {
         return (T) contextParameters.remove(contextParametersKey);
+    }
+
+    public String buildAlias() {
+        return "alias_" + aliasIndex++;
     }
 
     public void setHeadHints(List<SQLCommentHint> headHints) {

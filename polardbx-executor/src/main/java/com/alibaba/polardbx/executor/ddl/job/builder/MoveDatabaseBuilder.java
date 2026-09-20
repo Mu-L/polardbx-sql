@@ -16,11 +16,14 @@
 
 package com.alibaba.polardbx.executor.ddl.job.builder;
 
+import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ScaleOutPlanUtil;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.PhyDdlTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.MoveDatabaseItemPreparedData;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.MoveDatabasePreparedData;
+import com.alibaba.polardbx.optimizer.utils.ForeignKeyUtils;
 import org.apache.calcite.rel.core.DDL;
 
 import java.util.ArrayList;
@@ -74,9 +77,11 @@ public class MoveDatabaseBuilder {
             MoveDatabaseItemPreparedData moveDatabaseItemPreparedData =
                 new MoveDatabaseItemPreparedData(preparedData.getSchemaName(), preparedData.getSourceTargetGroupMap(),
                     tableName);
+            buildFkPrepareData(moveDatabaseItemPreparedData, tableName);
 
             MoveDatabaseItemBuilder itemBuilder =
-                new MoveDatabaseItemBuilder(relDdl, moveDatabaseItemPreparedData, executionContext);
+                new MoveDatabaseItemBuilder(relDdl, moveDatabaseItemPreparedData, preparedData.isUsePhysicalBackfill(),
+                    executionContext);
             List<PhyDdlTableOperation> phyDdlTableOperations = itemBuilder.build().getPhysicalPlans();
             tablesTopologyMap.put(tableName, itemBuilder.getTableTopology());
             sourceTablesTopology.put(tableName, itemBuilder.getSourcePhyTables());
@@ -122,5 +127,13 @@ public class MoveDatabaseBuilder {
 
     public ExecutionContext getExecutionContext() {
         return executionContext;
+    }
+
+    public void buildFkPrepareData(MoveDatabaseItemPreparedData moveDatabaseItemPreparedData, String tableName) {
+        TableMeta tableMeta = OptimizerContext.getContext(preparedData.getSchemaName())
+            .getLatestSchemaManager().getTable(tableName);
+        ForeignKeyUtils.prepareForeignKeyData(tableMeta, moveDatabaseItemPreparedData.getModifyForeignKeys(),
+            moveDatabaseItemPreparedData.getAddForeignKeySql(),
+            moveDatabaseItemPreparedData.getDropForeignKeySql());
     }
 }

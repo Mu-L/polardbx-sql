@@ -13,6 +13,8 @@ public class SQLTimeToLiveDefinitionExpr extends SQLExprImpl {
     protected SQLExpr ttlEnableExpr;
     protected SQLExpr ttlExpr;
     protected SQLExpr ttlJobExpr;
+    protected SQLExpr ttlColEncoderExpr;
+    protected SQLExpr ttlColDecoderExpr;
     protected SQLExpr ttlFilterExpr;
     protected SQLExpr ttlPartIntervalExpr;
     protected SQLExpr ttlCleanupExpr;
@@ -21,6 +23,8 @@ public class SQLTimeToLiveDefinitionExpr extends SQLExprImpl {
     protected SQLExpr archiveTableNameExpr;
     protected SQLExpr archiveTablePreAllocateExpr;
     protected SQLExpr archiveTablePostAllocateExpr;
+    protected SQLExpr ttlRefColList;
+    protected SQLExpr ttlHybrid;
 
     public SQLTimeToLiveDefinitionExpr() {
     }
@@ -41,6 +45,8 @@ public class SQLTimeToLiveDefinitionExpr extends SQLExprImpl {
         SQLExpr otherTtlEnableExpr = otherTtlDefineExpr.getTtlEnableExpr();
         SQLExpr otherTtlExpr = otherTtlDefineExpr.getTtlExpr();
         SQLExpr otherTtlJobExpr = otherTtlDefineExpr.getTtlJobExpr();
+        SQLExpr otherTtlEncoderExpr = otherTtlDefineExpr.getTtlColEncoderExpr();
+        SQLExpr otherTtlDecoderExpr = otherTtlDefineExpr.getTtlColDecoderExpr();
         SQLExpr otherTtlFilterExpr = otherTtlDefineExpr.getTtlFilterExpr();
         SQLExpr otherTtlSkipCleanupExpr = otherTtlDefineExpr.getTtlCleanupExpr();
         SQLExpr otherArchiveTypeExpr = otherTtlDefineExpr.getArchiveTypeExpr();
@@ -48,6 +54,8 @@ public class SQLTimeToLiveDefinitionExpr extends SQLExprImpl {
         SQLExpr otherArchiveNameExpr = otherTtlDefineExpr.getArchiveTableNameExpr();
         SQLExpr otherArchivePreAllocateExpr = otherTtlDefineExpr.getArchiveTablePreAllocateExpr();
         SQLExpr otherArchivePostAllocateExpr = otherTtlDefineExpr.getArchiveTablePostAllocateExpr();
+        SQLExpr otherTtlRefColList = otherTtlDefineExpr.getTtlRefColList();
+        SQLExpr otherTtlHybrid = otherTtlDefineExpr.getTtlHybrid();
 
         if (ttlEnableExpr != null) {
             if (otherTtlEnableExpr == null) {
@@ -84,6 +92,32 @@ public class SQLTimeToLiveDefinitionExpr extends SQLExprImpl {
             }
         } else {
             if (otherTtlJobExpr != null) {
+                return false;
+            }
+        }
+
+        if (ttlColEncoderExpr != null) {
+            if (otherTtlEncoderExpr == null) {
+                return false;
+            }
+            if (!ttlColEncoderExpr.equals(otherTtlEncoderExpr)) {
+                return false;
+            }
+        } else {
+            if (otherTtlEncoderExpr != null) {
+                return false;
+            }
+        }
+
+        if (ttlColDecoderExpr != null) {
+            if (otherTtlDecoderExpr == null) {
+                return false;
+            }
+            if (!ttlColDecoderExpr.equals(otherTtlDecoderExpr)) {
+                return false;
+            }
+        } else {
+            if (otherTtlDecoderExpr != null) {
                 return false;
             }
         }
@@ -178,6 +212,33 @@ public class SQLTimeToLiveDefinitionExpr extends SQLExprImpl {
                 return false;
             }
         }
+
+        if (ttlRefColList != null) {
+            if (otherTtlRefColList == null) {
+                return false;
+            }
+            if (!ttlRefColList.equals(otherTtlRefColList)) {
+                return false;
+            }
+        } else {
+            if (otherTtlRefColList != null) {
+                return false;
+            }
+        }
+
+        if (ttlHybrid != null) {
+            if (otherTtlHybrid == null) {
+                return false;
+            }
+            if (!ttlHybrid.equals(otherTtlHybrid)) {
+                return false;
+            }
+        } else {
+            if (otherTtlHybrid != null) {
+                return false;
+            }
+        }
+
         return true;
     }
 
@@ -195,6 +256,8 @@ public class SQLTimeToLiveDefinitionExpr extends SQLExprImpl {
         int result = ttlEnableExpr != null ? ttlEnableExpr.hashCode() : 0;
         result = 31 * result + (ttlExpr != null ? ttlExpr.hashCode() : 0);
         result = 31 * result + (ttlJobExpr != null ? ttlJobExpr.hashCode() : 0);
+        result = 31 * result + (ttlColEncoderExpr != null ? ttlColEncoderExpr.hashCode() : 0);
+        result = 31 * result + (ttlColDecoderExpr != null ? ttlColDecoderExpr.hashCode() : 0);
         result = 31 * result + (ttlFilterExpr != null ? ttlFilterExpr.hashCode() : 0);
         result = 31 * result + (ttlCleanupExpr != null ? ttlCleanupExpr.hashCode() : 0);
         result = 31 * result + (ttlPartIntervalExpr != null ? ttlPartIntervalExpr.hashCode() : 0);
@@ -203,6 +266,8 @@ public class SQLTimeToLiveDefinitionExpr extends SQLExprImpl {
         result = 31 * result + (archiveTableNameExpr != null ? archiveTableNameExpr.hashCode() : 0);
         result = 31 * result + (archiveTablePreAllocateExpr != null ? archiveTablePreAllocateExpr.hashCode() : 0);
         result = 31 * result + (archiveTablePostAllocateExpr != null ? archiveTablePostAllocateExpr.hashCode() : 0);
+        result = 31 * result + (ttlRefColList != null ? ttlRefColList.hashCode() : 0);
+        result = 31 * result + (ttlHybrid != null ? ttlHybrid.hashCode() : 0);
 
         return result;
     }
@@ -222,6 +287,14 @@ public class SQLTimeToLiveDefinitionExpr extends SQLExprImpl {
 
         if (ttlJobExpr != null) {
             sqlTimeToLiveDefinitionExpr.setTtlJobExpr(ttlJobExpr.clone());
+        }
+
+        if (ttlColEncoderExpr != null) {
+            sqlTimeToLiveDefinitionExpr.setTtlColEncoderExpr(ttlColEncoderExpr.clone());
+        }
+
+        if (ttlColDecoderExpr != null) {
+            sqlTimeToLiveDefinitionExpr.setTtlColDecoderExpr(ttlColDecoderExpr.clone());
         }
 
         if (ttlFilterExpr != null) {
@@ -254,6 +327,14 @@ public class SQLTimeToLiveDefinitionExpr extends SQLExprImpl {
 
         if (archiveTablePostAllocateExpr != null) {
             sqlTimeToLiveDefinitionExpr.setArchiveTablePostAllocateExpr(archiveTablePostAllocateExpr.clone());
+        }
+
+        if (ttlRefColList != null) {
+            sqlTimeToLiveDefinitionExpr.setTtlRefColList(ttlRefColList.clone());
+        }
+
+        if (ttlHybrid != null) {
+            sqlTimeToLiveDefinitionExpr.setTtlHybrid(ttlHybrid.clone());
         }
 
         return sqlTimeToLiveDefinitionExpr;
@@ -296,6 +377,14 @@ public class SQLTimeToLiveDefinitionExpr extends SQLExprImpl {
 
             if (archiveTablePostAllocateExpr != null) {
                 acceptChild(visitor, archiveTablePostAllocateExpr);
+            }
+
+            if (ttlRefColList != null) {
+                acceptChild(visitor, ttlRefColList);
+            }
+
+            if (ttlHybrid != null) {
+                acceptChild(visitor, ttlHybrid);
             }
         }
         visitor.endVisit(this);
@@ -387,5 +476,37 @@ public class SQLTimeToLiveDefinitionExpr extends SQLExprImpl {
 
     public void setTtlPartIntervalExpr(SQLExpr ttlPartIntervalExpr) {
         this.ttlPartIntervalExpr = ttlPartIntervalExpr;
+    }
+
+    public SQLExpr getTtlColEncoderExpr() {
+        return ttlColEncoderExpr;
+    }
+
+    public void setTtlColEncoderExpr(SQLExpr ttlColEncoderExpr) {
+        this.ttlColEncoderExpr = ttlColEncoderExpr;
+    }
+
+    public SQLExpr getTtlColDecoderExpr() {
+        return ttlColDecoderExpr;
+    }
+
+    public void setTtlColDecoderExpr(SQLExpr ttlColDecoderExpr) {
+        this.ttlColDecoderExpr = ttlColDecoderExpr;
+    }
+
+    public SQLExpr getTtlRefColList() {
+        return ttlRefColList;
+    }
+
+    public void setTtlRefColList(SQLExpr ttlRefColList) {
+        this.ttlRefColList = ttlRefColList;
+    }
+
+    public SQLExpr getTtlHybrid() {
+        return ttlHybrid;
+    }
+
+    public void setTtlHybrid(SQLExpr ttlHybrid) {
+        this.ttlHybrid = ttlHybrid;
     }
 }

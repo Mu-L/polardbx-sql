@@ -1,0 +1,175 @@
+## DISABLE_FAST_SQL_PARSER
+
+
+create table myudf_t1 
+(a varchar(16))
+partition by udf_hash(myparamsfunc(a))
+partitions 4 (
+  partition p1 values less than(100),
+  partition p2 values less than(200),
+  partition p3 values less than(300),
+  partition p4 values less than(400)
+);
+
+
+create table myudf_t1
+(a varchar(16))
+partition by udf_hash(
+  `a` with udf_params("dble", "1000"),
+)
+partitions 4 (
+partition p1 values less than(100),
+partition p2 values less than(200),
+partition p3 values less than(300),
+partition p4 values less than(400)
+);
+
+
+
+create table myudf_t1
+(a varchar(16))
+partition by udf_hash(
+`a` with udf_params("dble", "1000")
+)
+partitions 4 (
+partition p1 values less than(100),
+partition p2 values less than(200),
+partition p3 values less than(300),
+partition p4 values less than(400)
+);
+  
+  ## dble-with-mapping-files
+create table myudf_t2
+  (a varchar(16)，b bigint)
+  partition by udf_hash(
+  `a` with udf_params(　'dble', '｛　"algorithm"　: "partitionByLong", "algorithmParams" : {　"partitionCount":"4",　"defaultNode":"0", "mappings": "1000-100=1,2000-2500=2,3000-3500=3"　}　｝')   )
+  partitions 4 (
+  partition p1 values less than(100),
+  partition p2 values less than(200),
+  partition p3 values less than(300),
+  partition p4 values less than(400)
+  );
+  
+  ## dble-no-mapping-files
+  create table myudf_t3
+  (a varchar(16)，b bigint)
+  partition by udf_hash( 
+    `a` with udf_params( 'dble', '｛ "algorithm" : "partitionByLong", "algorithmParams" : {　"partitionCount":"4",　"defaultNode":"0"　}　｝' )
+  )
+  partitions 4 (
+  partition p1 values less than(100),
+  partition p2 values less than(200),
+  partition p3 values less than(300),
+  partition p4 values less than(400)
+  );
+
+  ## udf-dble-no-mapping-files
+  create table myudf_t3
+  (a varchar(16)，b bigint)
+  partition by udf_hash(
+  `a` with udf_params( 'dble',  '｛ "algorithm" : "partitionByLong", "params" : {　"partitionCount":"4",　"defaultNode":"0"　}　｝' )
+  )
+  partitions 4 (
+  partition p1 values less than(100),
+  partition p2 values less than(200),
+  partition p3 values less than(300),
+  partition p4 values less than(400)
+  ); 
+                                                                   
+  ## udf-dble-with-mapping-files
+  create table myudf_t4
+  (a varchar(16)，b bigint)
+  partition by udf_hash(
+  `a` with udf_params( 'dbleudf',  '｛ "algorithm" : "mymurhash", "params" : {　"partitionCount":"4",　"defaultNode":"0",  "mappings": "1000-100=1,2000-2500=2,3000-3500=3"　}　｝' )
+  )
+  partitions 4 (
+  partition p1 values less than(100),
+  partition p2 values less than(200),
+  partition p3 values less than(300),
+  partition p4 values less than(400)
+  );
+
+
+#create table myudf_t2
+#(a varchar(16)，b bigint)
+#partition by udf_hash(
+#  `a` with udf_params(　'dble', '｛　"algorithm"　: "partitionByLong", "algorithmParams" : {　"partitionCount":"4","defaultNode":"0", "mappings": "1000-100=1,2000-2500=2,3000-3500=3"　}　｝') ,
+#  `b` with udf_params(　'dble', '｛　"algorithm"　: "partitionByString", "algorithmParams" : {"partitionCount":"4","defaultNode":"0", "mappings": "1000-100=1,2000-2500=2,3000-3500=3"}　｝')
+#)
+#partitions 4 (
+#partition p1 values less than(100,100),
+#partition p2 values less than(200,200),
+#partition p3 values less than(300,300),
+#partition p4 values less than(400,400)
+#);
+
+
+
+
+
+
+  ## udf-dble-with-mapping-files
+  create table dble_numrng_0_p5
+  (a bigint，b bigint)
+  partition by udf_hash(
+  `a` with udf_params (
+  'dble',
+  '{
+          "algorithm" : "numberrange",
+          "params" : {
+              "type" : "0",　
+              "defaultNode" : "0",
+              "mappings" : [
+                "0-200M=0",
+                "200M1-400M=1",
+                "400M1-600M=2",
+                "600M1-800M=3",
+                "800M1-1000M=4"
+              ]
+          }
+  }'
+  )
+  )
+  partitions 5 (
+  partition p1 values less than(1),
+  partition p2 values less than(2),
+  partition p3 values less than(3),
+  partition p4 values less than(4),
+  partition p5 values less than(5)
+  );
+                                                                   
+
+
+  ## udf-dble-with-mapping-files
+create table dbleudf_m_t4
+  (a varchar(16)，b bigint)
+  partition by udf_hash(
+    `a` with udf_params (
+        dbleudf,  
+        '｛
+          "algorithm" : "mymurhash",
+          "params" : {　
+              "partitionCount": "4",　
+              "defaultNode": "0",
+              "mappings": [
+                  "[range_definition]",
+                  "3-3=0",
+                  "4552-4552=3"
+                  "[segments_default]",
+                  "0-1249=0",
+                  "1250-2499=1",
+                  "7500-8749=6"
+              ]
+          }
+        ｝'
+    )
+  )
+  partitions 4 (
+  partition p1 values less than(100),
+  partition p2 values less than(200),
+  partition p3 values less than(300),
+  partition p4 values less than(400)
+  );
+
+
+

@@ -32,8 +32,10 @@ import com.alibaba.polardbx.optimizer.planmanager.DRDSRelJsonWriter;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.alibaba.polardbx.optimizer.utils.RexUtils;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.sql.SqlExplainLevel;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
+import org.apache.calcite.util.trace.CalcitePlanOptimizerTrace;
 import org.junit.runner.RunWith;
 
 import java.io.IOException;
@@ -74,11 +76,23 @@ public abstract class PlanTestCommon extends BasePlannerTest {
         return ast;
     }
 
+    /**
+     * show the cost of plan
+     */
+    protected boolean explainCost = false;
+
+    public void setExplainCost(boolean explainCost) {
+        this.explainCost = explainCost;
+    }
+
     @Override
     protected String getPlan(String testSql) {
         final String[] planStr = new String[1];
 
         ExecutionContext executionContext = new ExecutionContext(appName);
+        executionContext.getExtraCmds().put(ConnectionProperties.ENABLE_DRDS_REX_ROUTE, true);
+        executionContext.getExtraCmds().put(ConnectionProperties.ENABLE_GSI_LOOKUP_OPTIMIZE, true);
+        executionContext.getExtraCmds().put(ConnectionProperties.ENABLE_DRDS_OPTIMIZE_REX_ROUTE, true);
         ExecutionPlan executionPlan = getExecutionPlan(testSql, executionContext);
         assertPlanProperty(executionPlan.getPlan());
 
@@ -117,6 +131,7 @@ public abstract class PlanTestCommon extends BasePlannerTest {
             executionContext.getExtraCmds().put(ConnectionProperties.IN_SUB_QUERY_THRESHOLD, inValuesThread);
             executionContext.setSqlType(sqlType);
         }
+        executionContext.getExtraCmds().put(ConnectionProperties.IGNORE_INVALID_TOPOLOGY_IN_POST_PLANNER, true);
         executionContext.setServerVariables(new HashMap<>());
         hintPlanner.collectAndPreExecute(ast, cmdBean, false, executionContext);
 
@@ -125,8 +140,11 @@ public abstract class PlanTestCommon extends BasePlannerTest {
                 partialAggBucketThreshold);
         }
 
-        executionContext.getExtraCmds().put(ConnectionProperties.ENABLE_SCALE_OUT_FEATURE,
-            false);
+        if (explainCost) {
+            executionContext.setCalcitePlanOptimizerTrace(new CalcitePlanOptimizerTrace());
+            executionContext.getCalcitePlanOptimizerTrace()
+                .ifPresent(x -> x.setSqlExplainLevel(SqlExplainLevel.ALL_ATTRIBUTES));
+        }
 
         PlannerContext plannerContext = PlannerContext.fromExecutionContext(executionContext);
         plannerContext.setSchemaName(appName);

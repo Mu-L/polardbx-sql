@@ -22,6 +22,7 @@ import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.ddl.job.converter.DdlJobDataConverter;
 import com.alibaba.polardbx.executor.ddl.job.converter.PhysicalPlanData;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.CreatePhyTableWithRollbackCheckTask;
+import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcColumnarTableGroupDdlMark;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcTableGroupDdlMarkTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterTableGroupAddPartitionMetaTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
@@ -46,7 +47,12 @@ import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.commons.lang.StringUtils;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 
 public class AlterTableAddPartitionSubTaskJobFactory extends AlterTableGroupSubTaskJobFactory {
 
@@ -65,8 +71,8 @@ public class AlterTableAddPartitionSubTaskJobFactory extends AlterTableGroupSubT
                                                    ComplexTaskMetaManager.ComplexTaskType taskType,
                                                    ExecutionContext executionContext) {
         super(ddl, parentPrepareData, preparedData, phyDdlTableOperations, tableTopology, targetTableTopology,
-                sourceTableTopology, orderedTargetTableLocations, targetPartition, skipBackfill, taskType,
-                executionContext);
+            sourceTableTopology, orderedTargetTableLocations, targetPartition, skipBackfill, taskType,
+            executionContext);
         this.parentPrepareData = parentPrepareData;
     }
 
@@ -78,11 +84,11 @@ public class AlterTableAddPartitionSubTaskJobFactory extends AlterTableGroupSubT
     @Override
     protected ExecutableDdlJob doCreate() {
         PartitionInfo curPartitionInfo =
-                OptimizerContext.getContext(preparedData.getSchemaName()).getPartitionInfoManager()
-                        .getPartitionInfo(preparedData.getTableName());
+            OptimizerContext.getContext(preparedData.getSchemaName()).getPartitionInfoManager()
+                .getPartitionInfo(preparedData.getTableName());
 
         final TableGroupInfoManager tableGroupInfoManager =
-                OptimizerContext.getContext(curPartitionInfo.getTableSchema()).getTableGroupInfoManager();
+            OptimizerContext.getContext(curPartitionInfo.getTableSchema()).getTableGroupInfoManager();
 
         PartitionInfo newPartitionInfo = generateNewPartitionInfo();
         String targetTableGroupName = null;
@@ -94,7 +100,7 @@ public class AlterTableAddPartitionSubTaskJobFactory extends AlterTableGroupSubT
         }
         if (StringUtils.isNotEmpty(targetTableGroupName)) {
             TableGroupConfig tableGroupConfig =
-                    tableGroupInfoManager.getTableGroupConfigByName(targetTableGroupName);
+                tableGroupInfoManager.getTableGroupConfigByName(targetTableGroupName);
             if (tableGroupConfig != null) {
                 newPartitionInfo.setTableGroupId(tableGroupConfig.getTableGroupRecord().id);
             }
@@ -105,11 +111,12 @@ public class AlterTableAddPartitionSubTaskJobFactory extends AlterTableGroupSubT
             phyDdlTableOperations.forEach(o -> o.setPartitionInfo(newPartitionInfo));
             if (!tableTopology.isEmpty()) {
                 PhysicalPlanData physicalPlanData =
-                        DdlJobDataConverter.convertToPhysicalPlanData(tableTopology, phyDdlTableOperations,
-                                executionContext);
+                    DdlJobDataConverter.convertToPhysicalPlanData(tableTopology, phyDdlTableOperations,
+                        executionContext);
                 DdlTask phyDdlTask =
-                        new CreatePhyTableWithRollbackCheckTask(preparedData.getSchemaName(), physicalPlanData.getLogicalTableName(),
-                                physicalPlanData, sourceTableTopology);
+                    new CreatePhyTableWithRollbackCheckTask(preparedData.getSchemaName(),
+                        physicalPlanData.getLogicalTableName(),
+                        physicalPlanData, sourceTableTopology);
                 taskList.add(phyDdlTask);
             }
         }
@@ -117,20 +124,35 @@ public class AlterTableAddPartitionSubTaskJobFactory extends AlterTableGroupSubT
         TablePartitionRecord logTableRec = PartitionInfoUtil.prepareRecordForLogicalTable(newPartitionInfo);
         logTableRec.partStatus = TablePartitionRecord.PARTITION_STATUS_LOGICAL_TABLE_PUBLIC;
         List<TablePartitionRecord> partRecList =
-                PartitionInfoUtil.prepareRecordForAllPartitions(newPartitionInfo);
+            PartitionInfoUtil.prepareRecordForAllPartitions(newPartitionInfo);
         Map<String, List<TablePartitionRecord>> subPartRecInfos = PartitionInfoUtil
-                .prepareRecordForAllSubpartitions(partRecList, newPartitionInfo,
-                        newPartitionInfo.getPartitionBy().getPartitions());
+            .prepareRecordForAllSubpartitions(partRecList, newPartitionInfo,
+                newPartitionInfo.getPartitionBy().getPartitions());
 
         AlterTableGroupAddPartitionMetaTask addSubTaskMetaTask =
-                new AlterTableGroupAddPartitionMetaTask(preparedData.getSchemaName(), StringUtils.isNotEmpty(targetTableGroupName) ? targetTableGroupName : preparedData.getTableGroupName(),
-                        preparedData.getTableName(),
-                        logTableRec, partRecList, subPartRecInfos, getParentPrepareData().getSourceSql());
+            new AlterTableGroupAddPartitionMetaTask(preparedData.getSchemaName(),
+                StringUtils.isNotEmpty(targetTableGroupName) ? targetTableGroupName : preparedData.getTableGroupName(),
+                preparedData.getTableName(),
+                logTableRec, partRecList, subPartRecInfos, getParentPrepareData().getSourceSql(),
+                preparedData.getDdlVersionId());
         taskList.add(addSubTaskMetaTask);
+        CdcColumnarTableGroupDdlMark cdcColumnarTableGroupDdlMark = null;
+        if (preparedData.isColumnarIndex()) {
+            // mark after refresh meta
+            cdcColumnarTableGroupDdlMark =
+                new CdcColumnarTableGroupDdlMark(preparedData.getSchemaName(),
+                    Collections.singletonList(preparedData.getTableName()), preparedData.getDdlVersionId());
+            taskList.add(cdcColumnarTableGroupDdlMark);
+        }
+
         final ExecutableDdlJob executableDdlJob = new ExecutableDdlJob();
         executableDdlJob.addSequentialTasks(taskList);
         executableDdlJob.labelAsHead(taskList.get(0));
-        executableDdlJob.labelAsTail(addSubTaskMetaTask);
+        if (!preparedData.isColumnarIndex()) {
+            executableDdlJob.labelAsTail(addSubTaskMetaTask);
+        } else {
+            executableDdlJob.labelAsTail(cdcColumnarTableGroupDdlMark);
+        }
 
         SqlKind sqlKind = ddl.kind();
         Map<String, Set<String>> newTopology = newPartitionInfo.getTopology();
@@ -138,17 +160,17 @@ public class AlterTableAddPartitionSubTaskJobFactory extends AlterTableGroupSubT
         DdlContext dc = executionContext.getDdlContext();
 
         DdlTask cdcDdlMarkTask =
-                new CdcTableGroupDdlMarkTask(preparedData.getTableGroupName(), preparedData.getSchemaName(),
-                        preparedData.getTableName(), sqlKind, newTopology,
-                        dc.getDdlStmt(),
-                        sqlKind == SqlKind.ALTER_TABLEGROUP ? CdcDdlMarkVisibility.Private : CdcDdlMarkVisibility.Protected,
-                        preparedData.isColumnarIndex());
+            new CdcTableGroupDdlMarkTask(preparedData.getTableGroupName(), preparedData.getSchemaName(),
+                preparedData.getTableName(), sqlKind, newTopology,
+                dc.getDdlStmt(),
+                sqlKind == SqlKind.ALTER_TABLEGROUP ? CdcDdlMarkVisibility.Private : CdcDdlMarkVisibility.Protected,
+                preparedData.isColumnarIndex(), false);
         boolean stayAtPublic = true;
         final String finalStatus =
-                executionContext.getParamManager().getString(ConnectionParams.TABLEGROUP_REORG_FINAL_TABLE_STATUS_DEBUG);
+            executionContext.getParamManager().getString(ConnectionParams.TABLEGROUP_REORG_FINAL_TABLE_STATUS_DEBUG);
         if (StringUtils.isNotEmpty(finalStatus)) {
             stayAtPublic =
-                    StringUtils.equalsIgnoreCase(ComplexTaskMetaManager.ComplexTaskStatus.PUBLIC.name(), finalStatus);
+                StringUtils.equalsIgnoreCase(ComplexTaskMetaManager.ComplexTaskStatus.PUBLIC.name(), finalStatus);
         }
         if (stayAtPublic) {
             cdcTableGroupDdlMarkTask = cdcDdlMarkTask;
@@ -159,24 +181,24 @@ public class AlterTableAddPartitionSubTaskJobFactory extends AlterTableGroupSubT
     @Override
     protected PartitionInfo generateNewPartitionInfo() {
         PartitionInfo curPartitionInfo =
-                OptimizerContext.getContext(preparedData.getSchemaName()).getPartitionInfoManager()
-                        .getPartitionInfo(preparedData.getTableName());
+            OptimizerContext.getContext(preparedData.getSchemaName()).getPartitionInfoManager()
+                .getPartitionInfo(preparedData.getTableName());
 
         SqlNode sqlNode = ((SqlAlterTable) ddl.getSqlNode()).getAlters().get(0);
 
         PartitionInfo newPartInfo = AlterTableGroupSnapShotUtils
-                .getNewPartitionInfo(
-                        parentPrepareData,
-                        curPartitionInfo,
-                        false,
-                        sqlNode,
-                        preparedData.getOldPartitionNames(),
-                        preparedData.getNewPartitionNames(),
-                        parentPrepareData.getTableGroupName(),
-                        null,
-                        preparedData.getInvisiblePartitionGroups(),
-                        orderedTargetTableLocations,
-                        executionContext);
+            .getNewPartitionInfo(
+                parentPrepareData,
+                curPartitionInfo,
+                false,
+                sqlNode,
+                preparedData.getOldPartitionNames(),
+                preparedData.getNewPartitionNames(),
+                parentPrepareData.getTableGroupName(),
+                null,
+                preparedData.getInvisiblePartitionGroups(),
+                orderedTargetTableLocations,
+                executionContext);
 
         if (parentPrepareData.isMoveToExistTableGroup()) {
             updateNewPartitionInfoByTargetGroup(parentPrepareData, newPartInfo);

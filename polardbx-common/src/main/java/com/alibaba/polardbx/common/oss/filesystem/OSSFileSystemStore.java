@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.common.oss.filesystem;
 
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.aliyun.oss.ClientConfiguration;
 import com.aliyun.oss.ClientException;
 import com.aliyun.oss.OSSClient;
@@ -89,6 +90,8 @@ import static com.alibaba.polardbx.common.oss.filesystem.Constants.MAX_PAGING_KE
 import static com.alibaba.polardbx.common.oss.filesystem.Constants.MAX_PAGING_KEYS_KEY;
 import static com.alibaba.polardbx.common.oss.filesystem.Constants.MULTIPART_UPLOAD_PART_SIZE_DEFAULT;
 import static com.alibaba.polardbx.common.oss.filesystem.Constants.MULTIPART_UPLOAD_PART_SIZE_KEY;
+import static com.alibaba.polardbx.common.oss.filesystem.Constants.PRIVATE_CLOUD_DEFAULT;
+import static com.alibaba.polardbx.common.oss.filesystem.Constants.PRIVATE_CLOUD_KEY;
 import static com.alibaba.polardbx.common.oss.filesystem.Constants.PROXY_DOMAIN_KEY;
 import static com.alibaba.polardbx.common.oss.filesystem.Constants.PROXY_HOST_KEY;
 import static com.alibaba.polardbx.common.oss.filesystem.Constants.PROXY_PASSWORD_KEY;
@@ -120,6 +123,7 @@ public class OSSFileSystemStore {
     private String bucketName;
     private long uploadPartSize;
     private int maxKeys;
+    @Getter
     private String serverSideEncryptionAlgorithm;
 
     public FileSystem.Statistics getStatistics() {
@@ -136,6 +140,10 @@ public class OSSFileSystemStore {
         boolean secureConnections = conf.getBoolean(SECURE_CONNECTIONS_KEY,
             SECURE_CONNECTIONS_DEFAULT);
         clientConf.setProtocol(secureConnections ? Protocol.HTTPS : Protocol.HTTP);
+        boolean isPrivateCloud = conf.getBoolean(PRIVATE_CLOUD_KEY, PRIVATE_CLOUD_DEFAULT);
+        if (isPrivateCloud) {
+            clientConf.setSupportCname(false);
+        }
         clientConf.setMaxErrorRetry(conf.getInt(MAX_ERROR_RETRIES_KEY,
             MAX_ERROR_RETRIES_DEFAULT));
         clientConf.setConnectionTimeout(conf.getInt(ESTABLISH_TIMEOUT_KEY,
@@ -148,6 +156,7 @@ public class OSSFileSystemStore {
             clientConf.setRequestTimeout(conf.getInt(REQUEST_TIMEOUT_KEY, REQUEST_TIMEOUT_DEFAULT));
             clientConf.setRequestTimeoutEnabled(true);
         }
+        clientConf.setCrcCheckEnabled(DynamicConfig.getInstance().enableOssCrcCheck());
         clientConf.setUserAgent(
             conf.get(USER_AGENT_PREFIX, USER_AGENT_PREFIX_DEFAULT) + ", Hadoop/"
                 + VersionInfo.getVersion());
@@ -185,6 +194,9 @@ public class OSSFileSystemStore {
             LOG.error(msg);
             throw new IllegalArgumentException(msg);
         }
+
+        // Disable response compression to ensure correct Content-Length and CRC checks for range reads
+        clientConf.addDefaultHeader("Accept-Encoding", "identity");
 
         String endPoint = conf.getTrimmed(ENDPOINT_KEY, "");
         if (StringUtils.isEmpty(endPoint)) {
@@ -511,6 +523,25 @@ public class OSSFileSystemStore {
      * @return This method returns null if the key is not found.
      */
     public InputStream retrieve(String key, long byteStart, long byteEnd) {
+        return retrieve(key, byteStart, byteEnd, false);
+    }
+
+    /**
+     * Variant of {@link #retrieve(String, long, long)} that lets the caller opt
+     * into skipping the cache-bypass guard, used when a per-statement HINT has
+     * explicitly turned GeneralCache off (direct OSS read is the intended path).
+     */
+    public InputStream retrieve(String key, long byteStart, long byteEnd, boolean allowBypass) {
+        // Guard: when cache is enabled, no code path should reach here unless
+        // the caller has explicitly requested to bypass the cache.
+        final OSSCacheAdapter adapter = OSSCacheAdapter.getInstanceOrNull();
+        if (!allowBypass && adapter != null && adapter.isEnabled() && OSSCacheAdapter.isBypassDetectionEnabled()) {
+            throw new IllegalStateException(
+                "[CACHE_BYPASS_DETECTED] Direct OSS read detected while cache is enabled. "
+                    + "key=" + key + ", range=[" + byteStart + "," + byteEnd + "]. "
+                    + "All reads should go through CachedInputStream when cache is active.");
+        }
+        // Cache not enabled, allow normal OSS read
         try {
             GetObjectRequest request = new GetObjectRequest(bucketName, key);
             request.setRange(byteStart, byteEnd);

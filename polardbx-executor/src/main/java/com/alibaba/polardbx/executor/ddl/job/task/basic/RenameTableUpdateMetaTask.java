@@ -66,11 +66,6 @@ public class RenameTableUpdateMetaTask extends BaseGmsTask {
     }
 
     @Override
-    protected void onExecutionSuccess(ExecutionContext executionContext) {
-        TableMetaChanger.afterRenamingTableMeta(schemaName, newLogicalTableName);
-    }
-
-    @Override
     protected void updateTableVersion(Connection metaDbConnection) {
         try {
             TableInfoManager.updateTableVersion(schemaName, newLogicalTableName, metaDbConnection);

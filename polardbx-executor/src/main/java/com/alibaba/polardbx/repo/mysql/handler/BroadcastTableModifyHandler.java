@@ -23,6 +23,7 @@ import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.cursor.impl.AffectRowCursor;
 import com.alibaba.polardbx.executor.handler.HandlerCommon;
 import com.alibaba.polardbx.executor.spi.IRepository;
+import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.BroadcastTableModify;
 import com.alibaba.polardbx.optimizer.utils.PhyTableOperationUtil;
@@ -46,6 +47,7 @@ public class BroadcastTableModifyHandler extends HandlerCommon {
         ExecutionContext ec = executionContext.copy();
         PhyTableOperationUtil.enableIntraGroupParallelism(broadcastTableModify.getSchemaName(), ec);
         List<RelNode> inputs = broadcastTableModify.getInputs(ec);
+        ExecUtils.makeZeroGroupAsBroadcastFirstGroup(ec, inputs);
         List<Cursor> inputCursors = new ArrayList<>(inputs.size());
         boolean partialFinished = false;
         try {

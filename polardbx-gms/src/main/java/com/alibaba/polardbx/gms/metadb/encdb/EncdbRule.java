@@ -21,12 +21,15 @@ import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.ParameterMethod;
+import com.alibaba.polardbx.gms.metadb.encdb.mask.EncdbMaskAlgo;
+import com.alibaba.polardbx.gms.metadb.encdb.mask.EncdbMaskType;
 import com.alibaba.polardbx.gms.metadb.record.SystemTableRecord;
 import com.alibaba.polardbx.gms.privilege.PolarAccount;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -49,6 +52,10 @@ public class EncdbRule implements SystemTableRecord {
 
     private static final String RESTRICTED_ACCESS = "restrictedAccess";
 
+    private static final String TYPE = "type";
+
+    private static final String PARAMS = "params";
+
     private String name;
 
     private boolean enable;
@@ -65,12 +72,16 @@ public class EncdbRule implements SystemTableRecord {
 
     private String description;
 
+    private EncdbRuleType ruleType = EncdbRuleType.ENCRYPTION;
+
+    private EncdbMaskAlgo maskAlgo = null;
+
     public EncdbRule() {
     }
 
     public EncdbRule(String name, boolean enable, Set<PolarAccount> fullAccessUsers,
                      Set<PolarAccount> restrictedAccessUsers, Set<String> dbs, Set<String> tbs, Set<String> cols,
-                     String description) {
+                     String description, EncdbRuleType type, EncdbMaskAlgo maskAlgo) {
         this.name = name;
         this.enable = enable;
         this.fullAccessUsers = fullAccessUsers;
@@ -79,16 +90,31 @@ public class EncdbRule implements SystemTableRecord {
         this.tbs = tbs.stream().map(String::toLowerCase).collect(Collectors.toSet());
         this.cols = cols.stream().map(String::toLowerCase).collect(Collectors.toSet());
         this.description = description;
+        this.ruleType = type;
+        if (ruleType == EncdbRuleType.MASKING && maskAlgo == null) {
+            throw new IllegalArgumentException("the mask algo cannot be null");
+        }
+        this.maskAlgo = maskAlgo;
     }
 
-    public boolean userMatch(PolarAccount account) {
+    /**
+     *
+     * @param account
+     * @return null means either match fullAccess or restrictedAccess
+     */
+    public Boolean isRestrictedAccess(PolarAccount account) {
         for (PolarAccount fullAccessUser : fullAccessUsers) {
             if (fullAccessUser.matches(account.getUsername(), account.getHost())) {
                 return false;
             }
         }
-        //除了full access users，均认为要加密。
-        return true;
+
+        for (PolarAccount restrictedAccessUser : restrictedAccessUsers) {
+            if (restrictedAccessUser.matches(account.getUsername(), account.getHost())) {
+                return true;
+            }
+        }
+        return null;
     }
 
     @Override
@@ -109,6 +135,22 @@ public class EncdbRule implements SystemTableRecord {
         this.restrictedAccessUsers = users.getJSONArray(RESTRICTED_ACCESS)
             .stream().map(s -> PolarAccount.fromIdentifier((String) s))
             .collect(Collectors.toSet());
+
+        if (rs.getString("type") == null) {
+            this.ruleType = EncdbRuleType.ENCRYPTION;
+        } else {
+            this.ruleType = EncdbRuleType.valueOf(rs.getString("type").toUpperCase());
+        }
+
+        if (rs.getString("algo") != null) {
+            if (ruleType == EncdbRuleType.MASKING) {
+                JSONObject algoJson = JSON.parseObject(rs.getString("algo"));
+                this.maskAlgo = EncdbMaskAlgo.buildEncdbMaskAlgo(
+                    EncdbMaskType.valueOf(algoJson.getString("type")),
+                    algoJson.getJSONArray("params").toArray());
+            }
+        }
+
         return this;
     }
 
@@ -124,18 +166,25 @@ public class EncdbRule implements SystemTableRecord {
         JSONObject users = new JSONObject();
         users.put(RESTRICTED_ACCESS,
             new JSONArray(
-                restrictedAccessUsers.stream().map(PolarAccount::getIdentifier).collect(Collectors.toList())));
+                restrictedAccessUsers.stream().map(PolarAccount::getIdentifierWithoutQuote).collect(Collectors.toList())));
         users.put(FULL_ACCESS,
-            new JSONArray(fullAccessUsers.stream().map(PolarAccount::getIdentifier).collect(Collectors.toList())));
+            new JSONArray(fullAccessUsers.stream().map(PolarAccount::getIdentifierWithoutQuote).collect(Collectors.toList())));
 
-        Map<Integer, ParameterContext> params = new HashMap<>(5);
+        JSONObject algo = new JSONObject();
+        if (ruleType == EncdbRuleType.MASKING) {
+            algo.put(TYPE, maskAlgo.getMaskType().toString());
+            algo.put(PARAMS, new JSONArray(Arrays.asList(maskAlgo.getParams())));
+        }
+
+        Map<Integer, ParameterContext> params = new HashMap<>(7);
         int index = 0;
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.name);
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setBoolean, this.enable);
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, meta.toString());
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, users.toString());
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.description);
-
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.ruleType.toString());
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, algo.toString());
         return params;
     }
 
@@ -189,11 +238,60 @@ public class EncdbRule implements SystemTableRecord {
         return restrictedAccessUsers;
     }
 
+    public EncdbRuleType getRuleType() {
+        return ruleType;
+    }
+
+    public EncdbMaskAlgo getMaskAlgo() {
+        return maskAlgo;
+    }
+
+    public void setEnable(boolean enable) {
+        this.enable = enable;
+    }
+
+    public void setFullAccessUsers(Set<PolarAccount> fullAccessUsers) {
+        this.fullAccessUsers = fullAccessUsers;
+    }
+
+    public void setRestrictedAccessUsers(Set<PolarAccount> restrictedAccessUsers) {
+        this.restrictedAccessUsers = restrictedAccessUsers;
+    }
+
+    public void setDbs(Set<String> dbs) {
+        this.dbs = dbs;
+    }
+
+    public void setTbs(Set<String> tbs) {
+        this.tbs = tbs;
+    }
+
+    public void setCols(Set<String> cols) {
+        this.cols = cols;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
+    }
+
+    public void setRuleType(EncdbRuleType ruleType) {
+        this.ruleType = ruleType;
+    }
+
+    public void setMaskAlgo(EncdbMaskAlgo maskAlgo) {
+        this.maskAlgo = maskAlgo;
+    }
+
     @Override
     public EncdbRule clone() {
         return new EncdbRule(name, enable,
             fullAccessUsers.stream().map(PolarAccount::deepCopy).collect(Collectors.toSet()),
             restrictedAccessUsers.stream().map(PolarAccount::deepCopy).collect(Collectors.toSet()),
-            new HashSet<>(dbs), new HashSet<>(tbs), new HashSet<>(cols), description);
+            new HashSet<>(dbs), new HashSet<>(tbs), new HashSet<>(cols), description, ruleType, maskAlgo);
     }
+
+    public static enum EncdbRuleType {
+        ENCRYPTION, MASKING
+    }
+
 }

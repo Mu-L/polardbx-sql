@@ -16,9 +16,7 @@
 
 package com.alibaba.polardbx.executor.ddl.job.factory;
 
-import com.alibaba.polardbx.common.ddl.newengine.DdlType;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
-import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
@@ -32,9 +30,10 @@ import com.alibaba.polardbx.executor.ddl.job.task.changset.ChangeSetApplyExecuto
 import com.alibaba.polardbx.executor.ddl.job.task.changset.ChangeSetApplyFinishTask;
 import com.alibaba.polardbx.executor.ddl.job.task.shared.EmptyTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupsSyncTask;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.util.ChangeSetUtils;
 import com.alibaba.polardbx.executor.scaleout.ScaleOutUtils;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
@@ -74,10 +73,12 @@ import java.util.TreeSet;
 /**
  * @author luoyanxin
  */
-public abstract class AlterTableGroupBaseJobFactory extends DdlJobFactory {
+public abstract class AlterTableGroupBaseJobFactory extends OnlineDdlJobFactory {
 
     protected static final String SET_NEW_TABLE_GROUP = "alter table `%s` set tablegroup=''";
     protected static final String SET_TARGET_TABLE_GROUP = "alter table `%s` set tablegroup='%s'";
+    protected static final String CDC_DDL_MARK_HINTS = "/* set_new_table_group_with_cdc_ddl_mark_in_sub_job */";
+    protected static final String SET_NEW_TABLE_GROUP_WITH_CDC_MARK = CDC_DDL_MARK_HINTS + SET_NEW_TABLE_GROUP;
 
     @Deprecated
     protected final DDL ddl;
@@ -101,6 +102,7 @@ public abstract class AlterTableGroupBaseJobFactory extends DdlJobFactory {
                                          Map<String, Map<String, Pair<String, String>>> orderedTargetTablesLocations,
                                          ComplexTaskMetaManager.ComplexTaskType taskType,
                                          ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.OSC);
         this.preparedData = preparedData;
         this.tablesPrepareData = tablesPrepareData;
         this.ddl = ddl;
@@ -129,6 +131,7 @@ public abstract class AlterTableGroupBaseJobFactory extends DdlJobFactory {
                 preparedData.getTableGroupName()));
         boolean emptyTaskAdded = false;
         final boolean useChangeSet = ChangeSetUtils.isChangeSetProcedure(executionContext);
+        List<ExecutableDdlJob> subJobs = new ArrayList<>();
         for (Map.Entry<String, TreeMap<String, List<List<String>>>> entry : tablesTopologyMap.entrySet()) {
             AlterTableGroupSubTaskJobFactory subTaskJobFactory;
             String logicalTableName = tablesPrepareData.get(entry.getKey()).getTableName();
@@ -168,6 +171,9 @@ public abstract class AlterTableGroupBaseJobFactory extends DdlJobFactory {
             executableDdlJob.combineTasks(subTask);
             executableDdlJob.addTaskRelationship(tailTask, subTask.getHead());
 
+            if (subTaskJobFactory instanceof AlterTableGroupChangeSetJobFactory) {
+                subJobs.add(subTask);
+            }
             if (subTaskJobFactory.getCdcTableGroupDdlMarkTask() != null) {
                 if (!emptyTaskAdded) {
                     executableDdlJob.addTask(emptyTask);
@@ -181,16 +187,25 @@ public abstract class AlterTableGroupBaseJobFactory extends DdlJobFactory {
                 executableDdlJob.addTaskRelationship(subTask.getTail(), bringUpAlterTableGroupTasks.get(0));
             }
 
+            List<DdlTask> dropForeignKeyTasksBeforeRename = new ArrayList<>();
             DdlTask dropUselessTableTask = ComplexTaskFactory
-                .CreateDropUselessPhyTableTask(schemaName, entry.getKey(), sourceTablesTopology.get(entry.getKey()),
+                .cleanUpUselessPhyTableTask(schemaName, entry.getKey(), sourceTablesTopology.get(entry.getKey()),
                     targetTablesTopology.get(entry.getKey()),
-                    executionContext);
+                    dropForeignKeyTasksBeforeRename, executionContext);
             executableDdlJob.addTask(dropUselessTableTask);
             executableDdlJob.labelAsTail(dropUselessTableTask);
-            executableDdlJob
-                .addTaskRelationship(bringUpAlterTableGroupTasks.get(bringUpAlterTableGroupTasks.size() - 1),
-                    dropUselessTableTask);
+            if (GeneralUtil.isNotEmpty(dropForeignKeyTasksBeforeRename)) {
+                for (DdlTask task : dropForeignKeyTasksBeforeRename) {
+                    executableDdlJob.addTaskRelationship(
+                        bringUpAlterTableGroupTasks.get(bringUpAlterTableGroupTasks.size() - 1), task);
+                    executableDdlJob.addTaskRelationship(task, dropUselessTableTask);
+                }
+            } else {
+                executableDdlJob.addTaskRelationship(
+                    bringUpAlterTableGroupTasks.get(bringUpAlterTableGroupTasks.size() - 1), dropUselessTableTask);
+            }
             executableDdlJob.getExcludeResources().addAll(subTask.getExcludeResources());
+            executableDdlJob.getSharedResources().addAll(subTask.getSharedResources());
         }
     }
 
@@ -384,7 +399,8 @@ public abstract class AlterTableGroupBaseJobFactory extends DdlJobFactory {
     }
 
     public ExecutableDdlJob withImplicitTableGroup(ExecutionContext ec) {
-        executionContext.getDdlContext().setDdlType(DdlType.ALTER_TABLE_RENAME_PARTITION);
+        executionContext.getDdlContext()
+            .setDdlType(com.alibaba.polardbx.common.ddl.newengine.DdlType.ALTER_TABLE_RENAME_PARTITION);
         String implicitTableGroup = preparedData.getTargetImplicitTableGroupName();
         assert implicitTableGroup != null;
         TableGroupConfig tgConfig = OptimizerContext.getContext(preparedData.getSchemaName()).getTableGroupInfoManager()
@@ -450,5 +466,12 @@ public abstract class AlterTableGroupBaseJobFactory extends DdlJobFactory {
         ec.getParamManager().getProps()
             .put(ConnectionProperties.ONLY_MANUAL_TABLEGROUP_ALLOW, Boolean.FALSE.toString());
         return job;
+    }
+
+    @Override
+    protected void updateOnlineDdlInfo(OnlineDdlInfo onlineDdlInfo) {
+        onlineDdlInfo.setOnlineDdlType(OnlineDdlInfo.DdlType.ONLINE_DDL);
+        onlineDdlInfo.setOnlineDdlAlgorithm(OnlineDdlInfo.DdlAlgorithm.OSC);
+        onlineDdlInfo.setAdviceOnlineDdlSql(String.format("%s", executionContext.getOriginSql()));
     }
 }

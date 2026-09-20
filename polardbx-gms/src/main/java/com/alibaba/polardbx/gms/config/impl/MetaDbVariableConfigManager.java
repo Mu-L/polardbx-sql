@@ -27,6 +27,7 @@ import com.alibaba.polardbx.gms.metadb.cdc.CdcConfigAccessor;
 import com.alibaba.polardbx.gms.metadb.cdc.CdcConfigRecord;
 import com.alibaba.polardbx.gms.topology.VariableConfigAccessor;
 import com.alibaba.polardbx.gms.topology.VariableConfigRecord;
+import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import lombok.extern.slf4j.Slf4j;
 
@@ -84,7 +85,8 @@ public class MetaDbVariableConfigManager extends AbstractLifecycle implements Va
             Map<String, Object> tempVariableConfig = new HashMap<>();
             VariableConfigAccessor variableConfigAccessor = new VariableConfigAccessor();
             variableConfigAccessor.setConnection(metaDbConnection);
-            List<VariableConfigRecord> variableConfigRecordList = variableConfigAccessor.queryAll();
+            List<VariableConfigRecord> variableConfigRecordList =
+                variableConfigAccessor.getAllVariableConfigsByInstId(InstIdUtil.getInstId());
             MetaDbInstConfigManager instConfigManager = MetaDbInstConfigManager.getInstance();
             instConfigManager.reloadInstConfig();
             for (VariableConfigRecord record : variableConfigRecordList) {

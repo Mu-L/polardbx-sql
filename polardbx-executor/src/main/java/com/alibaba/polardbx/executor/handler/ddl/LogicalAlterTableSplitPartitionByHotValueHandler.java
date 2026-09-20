@@ -23,9 +23,12 @@ import com.alibaba.polardbx.executor.ddl.job.factory.AlterTableSplitPartitionByH
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJob;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
 import com.alibaba.polardbx.executor.ddl.newengine.job.TransientDdlJob;
+import com.alibaba.polardbx.executor.ddl.util.ChangeSetUtils;
 import com.alibaba.polardbx.executor.partitionmanagement.AlterTableGroupUtils;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
+import com.alibaba.polardbx.optimizer.config.table.ComplexTaskMetaManager;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableSplitPartitionByHotValue;
@@ -47,7 +50,14 @@ public class LogicalAlterTableSplitPartitionByHotValueHandler extends LogicalCom
     protected DdlJob buildDdlJob(BaseDdlOperation logicalDdlPlan, ExecutionContext executionContext) {
         LogicalAlterTableSplitPartitionByHotValue logicalAlterTableSplitPartitionByHotValue =
             (LogicalAlterTableSplitPartitionByHotValue) logicalDdlPlan;
-        logicalAlterTableSplitPartitionByHotValue.preparedData(executionContext);
+        String schemaName = logicalAlterTableSplitPartitionByHotValue.getSchemaName();
+        String logicalTableName =
+            Util.last(((SqlIdentifier) logicalAlterTableSplitPartitionByHotValue.relDdl.getTableName()).names);
+        TableMeta tm = executionContext.getSchemaManager(schemaName).getTable(logicalTableName);
+        final boolean useChangeSet =
+            ChangeSetUtils.isChangeSetProcedure(executionContext) && ChangeSetUtils.supportUseChangeSet(
+                ComplexTaskMetaManager.ComplexTaskType.SPLIT_HOT_VALUE, tm);
+        logicalAlterTableSplitPartitionByHotValue.preparedData(executionContext, useChangeSet);
         AlterTableSplitPartitionByHotValuePreparedData preparedData =
             (AlterTableSplitPartitionByHotValuePreparedData) logicalAlterTableSplitPartitionByHotValue.getPreparedData();
         ExecutableDdlJob executableDdlJob = AlterTableSplitPartitionByHotValueJobFactory

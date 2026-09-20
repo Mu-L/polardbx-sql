@@ -72,6 +72,22 @@ public class TtlInfoRecord implements SystemTableRecord {
     private String ttlCol;
 
     /**
+     * The encoder expr of ttl_col for datatime string to user-defined-format number
+     * <pre>
+     *     e.g
+     *     The TTL_COL_DECODER = DATE_FORMAT(STR_TO_DATE(?, '%Y%m%d'), '%Y-%m-%d')
+     *     will change from number 20250205 to datatime-formated string
+     * </pre>
+     */
+    private String ttlColEncoder = "";
+
+    /**
+     * The decoder expr of ttl_col for ser-defined-format number to datatime string
+     */
+    private String ttlColDecoder = "";
+
+
+    /**
      * The interval of expire after
      * <pre>
      *     <= 0 : undefined expired data interval
@@ -427,6 +443,22 @@ public class TtlInfoRecord implements SystemTableRecord {
         this.arcPartUnit = arcPartUnit;
     }
 
+    public String getTtlColEncoder() {
+        return ttlColEncoder;
+    }
+
+    public void setTtlColEncoder(String ttlColEncoder) {
+        this.ttlColEncoder = ttlColEncoder;
+    }
+
+    public String getTtlColDecoder() {
+        return ttlColDecoder;
+    }
+
+    public void setTtlColDecoder(String ttlColDecoder) {
+        this.ttlColDecoder = ttlColDecoder;
+    }
+
     public void setBitValIntoArchiveStatus(int bitFlag, boolean targetVal) {
         if (targetVal) {
             this.arcStatus |= bitFlag;
@@ -458,6 +490,8 @@ public class TtlInfoRecord implements SystemTableRecord {
 
         this.ttlStatus = rs.getInt("ttl_status");
         this.ttlExpr = rs.getString("ttl_expr");
+        this.ttlColEncoder = rs.getString("ttl_col_encoder");
+        this.ttlColDecoder = rs.getString("ttl_col_decoder");
         this.ttlFilter = rs.getString("ttl_filter");
         this.ttlInterval = rs.getInt("ttl_interval");
         this.ttlUnit = rs.getInt("ttl_unit");

@@ -22,6 +22,7 @@ import com.alibaba.polardbx.common.DefaultSchema;
 import com.alibaba.polardbx.common.exception.NotSupportException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.TStringUtil;
@@ -35,6 +36,7 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import org.apache.calcite.CTEConverterContext;
 import org.apache.calcite.linq4j.Ord;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelOptCluster;
@@ -78,6 +80,7 @@ import org.apache.calcite.rel.dal.CheckTableGroup;
 import org.apache.calcite.rel.dal.Dal;
 import org.apache.calcite.rel.dal.Show;
 import org.apache.calcite.rel.ddl.AlterDatabase;
+import org.apache.calcite.rel.ddl.AlterExternalCatalog;
 import org.apache.calcite.rel.ddl.AlterFileStorageAsOfTimestamp;
 import org.apache.calcite.rel.ddl.AlterFileStorageBackup;
 import org.apache.calcite.rel.ddl.AlterFileStoragePurgeBeforeTimestamp;
@@ -86,10 +89,12 @@ import org.apache.calcite.rel.ddl.AlterInstance;
 import org.apache.calcite.rel.ddl.AlterJoinGroup;
 import org.apache.calcite.rel.ddl.AlterProcedure;
 import org.apache.calcite.rel.ddl.AlterRule;
+import org.apache.calcite.rel.ddl.AlterSecret;
 import org.apache.calcite.rel.ddl.AlterStoragePool;
 import org.apache.calcite.rel.ddl.AlterSystemSetConfig;
 import org.apache.calcite.rel.ddl.AlterTable;
 import org.apache.calcite.rel.ddl.AlterTableArchivePartition;
+import org.apache.calcite.rel.ddl.AlterTableGhost;
 import org.apache.calcite.rel.ddl.AlterTableGroupAddPartition;
 import org.apache.calcite.rel.ddl.AlterTableGroupAddTable;
 import org.apache.calcite.rel.ddl.AlterTableGroupDropPartition;
@@ -106,33 +111,41 @@ import org.apache.calcite.rel.ddl.AlterTableGroupSplitPartition;
 import org.apache.calcite.rel.ddl.AlterTableGroupSplitPartitionByHotValue;
 import org.apache.calcite.rel.ddl.AlterTableGroupTruncatePartition;
 import org.apache.calcite.rel.ddl.AlterTablePartitionCount;
+import org.apache.calcite.rel.ddl.AlterTableRemoveAutoPartition;
 import org.apache.calcite.rel.ddl.AlterTableRemovePartitioning;
 import org.apache.calcite.rel.ddl.AlterTableRepartition;
 import org.apache.calcite.rel.ddl.AlterTableSetTableGroup;
+import org.apache.calcite.rel.ddl.AlterTableToggleFullScan;
 import org.apache.calcite.rel.ddl.AnalyzeTable;
 import org.apache.calcite.rel.ddl.ChangeConsensusRole;
 import org.apache.calcite.rel.ddl.ClearFileStorage;
 import org.apache.calcite.rel.ddl.ConvertAllSequences;
 import org.apache.calcite.rel.ddl.CreateDatabase;
+import org.apache.calcite.rel.ddl.CreateExternalCatalog;
 import org.apache.calcite.rel.ddl.CreateFileStorage;
 import org.apache.calcite.rel.ddl.CreateFunction;
 import org.apache.calcite.rel.ddl.CreateIndex;
+import org.apache.calcite.rel.ddl.CreateIndexInDatabase;
 import org.apache.calcite.rel.ddl.CreateJavaFunction;
 import org.apache.calcite.rel.ddl.CreateJoinGroup;
 import org.apache.calcite.rel.ddl.CreateMaterializedView;
 import org.apache.calcite.rel.ddl.CreateProcedure;
+import org.apache.calcite.rel.ddl.CreateSecret;
 import org.apache.calcite.rel.ddl.CreateStoragePool;
 import org.apache.calcite.rel.ddl.CreateTable;
 import org.apache.calcite.rel.ddl.CreateTableGroup;
 import org.apache.calcite.rel.ddl.CreateView;
 import org.apache.calcite.rel.ddl.DropDatabase;
+import org.apache.calcite.rel.ddl.DropExternalCatalog;
 import org.apache.calcite.rel.ddl.DropFileStorage;
 import org.apache.calcite.rel.ddl.DropFunction;
 import org.apache.calcite.rel.ddl.DropIndex;
+import org.apache.calcite.rel.ddl.DropIndexInDatabase;
 import org.apache.calcite.rel.ddl.DropJavaFunction;
 import org.apache.calcite.rel.ddl.DropJoinGroup;
 import org.apache.calcite.rel.ddl.DropMaterializedView;
 import org.apache.calcite.rel.ddl.DropProcedure;
+import org.apache.calcite.rel.ddl.DropSecret;
 import org.apache.calcite.rel.ddl.DropStoragePool;
 import org.apache.calcite.rel.ddl.DropTable;
 import org.apache.calcite.rel.ddl.DropTableGroup;
@@ -151,18 +164,10 @@ import org.apache.calcite.rel.ddl.RenameTables;
 import org.apache.calcite.rel.ddl.SequenceDdl;
 import org.apache.calcite.rel.ddl.TruncateTable;
 import org.apache.calcite.rel.ddl.UnArchive;
-import org.apache.calcite.rel.ddl.OptimizeTable;
-import org.apache.calcite.rel.ddl.PushDownUdf;
-import org.apache.calcite.rel.ddl.RefreshTopology;
-import org.apache.calcite.rel.ddl.RenameTable;
-import org.apache.calcite.rel.ddl.SequenceDdl;
-import org.apache.calcite.rel.ddl.TruncateTable;
-import org.apache.calcite.rel.ddl.*;
-import org.apache.calcite.rel.ddl.DropProcedure;
-import org.apache.calcite.rel.ddl.DropStoragePool;
-import org.apache.calcite.rel.ddl.AlterStoragePool;
-import org.apache.calcite.rel.ddl.CreateStoragePool;
 import org.apache.calcite.rel.logical.LogicalAggregate;
+import org.apache.calcite.rel.logical.LogicalCTEAnchor;
+import org.apache.calcite.rel.logical.LogicalCTEConsumer;
+import org.apache.calcite.rel.logical.LogicalCTEProducer;
 import org.apache.calcite.rel.logical.LogicalCorrelate;
 import org.apache.calcite.rel.logical.LogicalCreateTrigger;
 import org.apache.calcite.rel.logical.LogicalDropTrigger;
@@ -218,12 +223,14 @@ import org.apache.calcite.sql.SemiJoinType;
 import org.apache.calcite.sql.SqlAddIndex;
 import org.apache.calcite.sql.SqlAggFunction;
 import org.apache.calcite.sql.SqlAlterDatabase;
+import org.apache.calcite.sql.SqlAlterExternalCatalog;
 import org.apache.calcite.sql.SqlAlterFileStorage;
 import org.apache.calcite.sql.SqlAlterFunction;
 import org.apache.calcite.sql.SqlAlterInstance;
 import org.apache.calcite.sql.SqlAlterJoinGroup;
 import org.apache.calcite.sql.SqlAlterProcedure;
 import org.apache.calcite.sql.SqlAlterRule;
+import org.apache.calcite.sql.SqlAlterSecret;
 import org.apache.calcite.sql.SqlAlterSpecification;
 import org.apache.calcite.sql.SqlAlterStoragePool;
 import org.apache.calcite.sql.SqlAlterSystemLeader;
@@ -252,12 +259,14 @@ import org.apache.calcite.sql.SqlAlterTableMovePartition;
 import org.apache.calcite.sql.SqlAlterTableOptimizePartition;
 import org.apache.calcite.sql.SqlAlterTablePartitionCount;
 import org.apache.calcite.sql.SqlAlterTablePartitionKey;
+import org.apache.calcite.sql.SqlAlterTableRemoveAutoPartition;
 import org.apache.calcite.sql.SqlAlterTableRemovePartitioning;
 import org.apache.calcite.sql.SqlAlterTableReorgPartition;
 import org.apache.calcite.sql.SqlAlterTableRepartition;
 import org.apache.calcite.sql.SqlAlterTableSetTableGroup;
 import org.apache.calcite.sql.SqlAlterTableSplitPartition;
 import org.apache.calcite.sql.SqlAlterTableSplitPartitionByHotValue;
+import org.apache.calcite.sql.SqlAlterTableToggleFullScan;
 import org.apache.calcite.sql.SqlAlterTableTruncatePartition;
 import org.apache.calcite.sql.SqlAnalyzeTableDdl;
 import org.apache.calcite.sql.SqlBasicCall;
@@ -271,14 +280,16 @@ import org.apache.calcite.sql.SqlClearFileStorage;
 import org.apache.calcite.sql.SqlConvertAllSequences;
 import org.apache.calcite.sql.SqlCreate;
 import org.apache.calcite.sql.SqlCreateDatabase;
+import org.apache.calcite.sql.SqlCreateExternalCatalog;
 import org.apache.calcite.sql.SqlCreateFileStorage;
 import org.apache.calcite.sql.SqlCreateFunction;
 import org.apache.calcite.sql.SqlCreateIndex;
-import org.apache.calcite.sql.SqlCreateProcedure;
+import org.apache.calcite.sql.SqlCreateIndexInDatabase;
 import org.apache.calcite.sql.SqlCreateJavaFunction;
 import org.apache.calcite.sql.SqlCreateJoinGroup;
 import org.apache.calcite.sql.SqlCreateMaterializedView;
 import org.apache.calcite.sql.SqlCreateProcedure;
+import org.apache.calcite.sql.SqlCreateSecret;
 import org.apache.calcite.sql.SqlCreateStoragePool;
 import org.apache.calcite.sql.SqlCreateTable;
 import org.apache.calcite.sql.SqlCreateTableGroup;
@@ -290,14 +301,16 @@ import org.apache.calcite.sql.SqlDdl;
 import org.apache.calcite.sql.SqlDelete;
 import org.apache.calcite.sql.SqlDmlKeyword;
 import org.apache.calcite.sql.SqlDropDatabase;
+import org.apache.calcite.sql.SqlDropExternalCatalog;
 import org.apache.calcite.sql.SqlDropFileStorage;
 import org.apache.calcite.sql.SqlDropFunction;
 import org.apache.calcite.sql.SqlDropIndex;
-import org.apache.calcite.sql.SqlDropProcedure;
+import org.apache.calcite.sql.SqlDropIndexInDatabase;
 import org.apache.calcite.sql.SqlDropJavaFunction;
 import org.apache.calcite.sql.SqlDropJoinGroup;
 import org.apache.calcite.sql.SqlDropMaterializedView;
 import org.apache.calcite.sql.SqlDropProcedure;
+import org.apache.calcite.sql.SqlDropSecret;
 import org.apache.calcite.sql.SqlDropStoragePool;
 import org.apache.calcite.sql.SqlDropTable;
 import org.apache.calcite.sql.SqlDropTableGroup;
@@ -316,6 +329,7 @@ import org.apache.calcite.sql.SqlInsert;
 import org.apache.calcite.sql.SqlInspectIndex;
 import org.apache.calcite.sql.SqlIntervalQualifier;
 import org.apache.calcite.sql.SqlJoin;
+import org.apache.calcite.sql.SqlJsonTable;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlMatchRecognize;
@@ -480,6 +494,7 @@ public class SqlToRelConverter {
     public final SqlToRelConverter.Config config;
     protected final RelBuilder relBuilder;
     final Set<String> cteNames = Sets.newTreeSet();
+    CTEConverterContext cteContext = new CTEConverterContext();
 
     /**
      * Fields used in name resolution for correlated sub-queries.
@@ -824,6 +839,9 @@ public class SqlToRelConverter {
         }
         if (r instanceof LogicalOutFile) {
             return requiredCollation(((LogicalOutFile) r).getInput());
+        }
+        if (r instanceof LogicalCTEAnchor) {
+            return requiredCollation(((LogicalCTEAnchor) r).getInput(1));
         }
         throw new AssertionError();
     }
@@ -1182,7 +1200,7 @@ public class SqlToRelConverter {
 
         findSubQueries(bb, newWhere, RelOptUtil.Logic.UNKNOWN_AS_FALSE, false, false);
         boolean alreadyConvertSemiJoin = false;
-        //保险起见这里对不含order做semiJoin优化，包含order转bkaJoin效率不好
+        //保险起见这里对不含order做semiJoin优化，因为包含order 转bkaJoin不一定是好事
         if (!containOrder && bb.isSupportInvalueSemiJoin()) {
             for (SubQuery node : bb.subQueryList) {
                 boolean ret = substituteJoinSubQuery(bb, node);
@@ -1855,7 +1873,7 @@ public class SqlToRelConverter {
                 unionInputs.add(convertRowConstructor(bb, call));
             }
         }
-        DynamicValues values = DynamicValues.create(cluster, rowType, tupleList.build());
+        DynamicValues values = createDynamicValues(cluster.traitSet(), rowType, tupleList.build());
         RelNode resultRel;
         if (unionInputs.isEmpty()) {
             resultRel = values;
@@ -2231,8 +2249,10 @@ public class SqlToRelConverter {
                 } else if (((SqlWithItem) from).query instanceof SqlSelect) {
                     // from part must be a union call
                     SqlNode f = ((SqlSelect) ((SqlWithItem) from).query).getFrom();
-                    if (!(f instanceof SqlCall)) {
-                        throw GeneralUtil.nestedException("not support cte:" + f);
+                    if (!(f instanceof SqlCall) || f.getKind() != SqlKind.UNION) {
+                        // try non_recursive cte
+                        convertFrom(bb, ((SqlWithItem) from).query);
+                        return;
                     }
                     sqlUnion = (SqlCall) f;
 
@@ -2292,7 +2312,12 @@ public class SqlToRelConverter {
             return;
 
         case WITH:
-            convertFrom(bb, ((SqlWith) from).body);
+            if (shouldCTEReuse((SqlWith) from, cteContext)) {
+                RelRoot rootWith = convertWith((SqlWith) from, false);
+                bb.setRoot(rootWith.rel, false);
+            } else {
+                convertFrom(bb, ((SqlWith) from).body);
+            }
             return;
 
         case TABLESAMPLE:
@@ -2422,6 +2447,22 @@ public class SqlToRelConverter {
             final SqlShow show = (SqlShow) from;
             final RelDataType rowType = validator.getValidatedNodeTypeIfKnown(show);
             bb.setRoot(Show.create(show, rowType, this.cluster), true);
+            return;
+        case JSON_TABLE:
+            final SqlJsonTable jsonTable = (SqlJsonTable) from;
+            final SqlValidatorNamespace jsonTableNamespace = validator.getNamespace(jsonTable);
+            final RelDataType jsonTableNamespaceRowType = jsonTableNamespace.getRowType();
+
+            // Create a simple LogicalTableFunctionScan for JSON_TABLE
+            // Use the JsonTable itself as the function call expression
+            final List<RelNode> inputs = bb.retrieveCursors();
+            final Set<RelColumnMapping> columnMappings = Collections.emptySet();
+
+            final LogicalTableFunctionScan jsonTableScan =
+                LogicalTableFunctionScan.create(cluster, inputs, null,
+                    null, jsonTableNamespaceRowType, columnMappings);
+
+            bb.setRoot(jsonTableScan, true);
             return;
         default:
             throw new AssertionError("not a join operator " + from);
@@ -2595,7 +2636,20 @@ public class SqlToRelConverter {
                 bb.setRoot(cteAnchor, true);
                 return;
             }
-            convertFrom(bb, fromNamespace.getNode());
+
+            if (DynamicConfig.getInstance().isEnableCTEReuse() && cteContext.getCte(fromNamespace) != null &&
+                cteContext.getNestingDepth() < DynamicConfig.getInstance().getCteMaxNestingDepth()) {
+                Integer cteId = cteContext.getCte(fromNamespace).getCteId();
+                Integer sn = cteContext.registerCteConsumer(cteId);
+                cteContext.incrementNestingDepth();
+                convertFrom(bb, ((SqlWithItem) fromNamespace.getNode()).query);
+                LogicalCTEConsumer consumer = new LogicalCTEConsumer(cluster, cluster.traitSet(), bb.root,
+                    cteId, sn, bb.root.getRowType());
+                bb.setRoot(consumer, true);
+                cteContext.decrementNestingDepth();
+            } else {
+                convertFrom(bb, fromNamespace.getNode());
+            }
             return;
         }
         final String datasetName = datasetStack.isEmpty() ? null : datasetStack.peek();
@@ -2697,12 +2751,7 @@ public class SqlToRelConverter {
                                  JoinRelType joinType, SqlNodeList hints) {
         assert joinCond != null;
 
-        CorrelationUse p = null;
-        try {
-            p = getCorrelationUse(bb, rightRel, null, null, null);
-        } catch (ValidationFirstValueException e) {
-            throw new AssertionError(e.getMessage());
-        }
+        CorrelationUse p = getCorrelationUseForJoin(bb, rightRel);
         if (p != null) {
             LogicalCorrelate corr =
                 LogicalCorrelate.create(leftRel, p.r, p.id, p.requiredColumns, null, null, SemiJoinType.of(joinType));
@@ -2715,6 +2764,18 @@ public class SqlToRelConverter {
 
         final Join originalJoin = (Join) RelFactories.DEFAULT_JOIN_FACTORY.createJoin(leftRel, rightRel, joinCond,
             ImmutableSet.<CorrelationId>of(), joinType, false, hints);
+
+        final CorrelationUse correlationUseInJoin = getCorrelationUseForJoin(bb, originalJoin);
+        if (correlationUseInJoin != null) {
+            assert correlationUseInJoin.r instanceof Join;
+            Join joinRelTemp = (Join) correlationUseInJoin.r;
+            return
+                LogicalJoin.create(joinRelTemp.getLeft(),
+                    joinRelTemp.getRight(),
+                    joinRelTemp.getCondition(),
+                    ImmutableSet.of(correlationUseInJoin.id),
+                    joinRelTemp.getJoinType());
+        }
 
         // return RelOptUtil.pushDownJoinConditions(originalJoin);
         return originalJoin;
@@ -2849,6 +2910,94 @@ public class SqlToRelConverter {
 
         if (correlNames.isEmpty()) {
             // None of the correlating variables originated in this scope.
+            return null;
+        }
+
+        RelNode r = r0;
+        if (correlNames.size() > 1) {
+            // The same table was referenced more than once.
+            // So we deduplicate.
+            r = DeduplicateCorrelateVariables.go(rexBuilder, correlNames.get(0), Util.skip(correlNames), r0);
+            // Add new node to leaves.
+            leaves.add(r);
+        }
+        return new CorrelationUse(correlNames.get(0), requiredColumns.build(), r);
+    }
+
+    /**
+     * Variant of {@link #getCorrelationUse} that uses hierarchical scope checking
+     * via {@link SqlValidatorScope#isWithin} to identify correlated references in
+     * JOIN ON conditions. This correctly handles nested JOIN scopes where the simple
+     * equality check ({@code ancestorScope == bb.scope}) would fail.
+     */
+    private CorrelationUse getCorrelationUseForJoin(Blackboard bb, final RelNode r0) {
+        final Set<CorrelationId> correlatedVariables = RelOptUtil.getVariablesUsed(r0);
+        if (correlatedVariables.isEmpty()) {
+            return null;
+        }
+        final ImmutableBitSet.Builder requiredColumns = ImmutableBitSet.builder();
+        final List<CorrelationId> correlNames = Lists.newArrayList();
+
+        for (CorrelationId correlName : correlatedVariables) {
+            DeferredLookup lookup = mapCorrelToDeferred.get(correlName);
+            RexFieldAccess fieldAccess = lookup.getFieldAccess(correlName);
+            String originalRelName = lookup.getOriginalRelName();
+
+            final SqlNameMatcher nameMatcher = lookup.bb.scope.getValidator().getCatalogReader().nameMatcher();
+            final SqlValidatorScope.ResolvedImpl resolved = new SqlValidatorScope.ResolvedImpl();
+            lookup.bb.scope.resolve(ImmutableList.of(originalRelName), nameMatcher, false, resolved);
+            assert resolved.count() == 1;
+            final SqlValidatorScope.Resolve resolve = resolved.only();
+            final RelDataType rowType = resolve.rowType();
+            final int childNamespaceIndex = resolve.path.steps().get(0).i;
+            final SqlValidatorScope ancestorScope = resolve.scope;
+
+            // Use hierarchical scope check: bb.scope must be within ancestorScope
+            if (!bb.scope.isWithin(ancestorScope)) {
+                // This correlation does not originate from an ancestor of the current scope
+                continue;
+            }
+
+            int namespaceOffset = 0;
+            if (childNamespaceIndex > 0) {
+                assert ancestorScope instanceof ListScope;
+                List<SqlValidatorNamespace> children = ((ListScope) ancestorScope).getChildren();
+                for (int i = 0; i < childNamespaceIndex; i++) {
+                    SqlValidatorNamespace child = children.get(i);
+                    namespaceOffset += child.getRowType().getFieldCount();
+                }
+            }
+
+            RexFieldAccess topLevelFieldAccess = fieldAccess;
+            while (topLevelFieldAccess.getReferenceExpr() instanceof RexFieldAccess) {
+                topLevelFieldAccess = (RexFieldAccess) topLevelFieldAccess.getReferenceExpr();
+            }
+            final List<RelDataTypeField> fieldList = rowType.getFieldList();
+            final int index = topLevelFieldAccess.getField().getIndex() - namespaceOffset;
+            if (fieldList.size() <= index || index < 0) {
+                continue;
+            }
+            final RelDataTypeField field = fieldList.get(index);
+            if (field == null) {
+                continue;
+            }
+            int pos = namespaceOffset + field.getIndex();
+
+            if (bb.mapRootRelToFieldProjection.containsKey(bb.root)) {
+                Map<Integer, Integer> exprProjection = bb.mapRootRelToFieldProjection.get(bb.root);
+                if (exprProjection.containsKey(pos)) {
+                    pos = exprProjection.get(pos);
+                } else {
+                    // correl not grouped - skip in join context
+                    continue;
+                }
+            }
+
+            requiredColumns.set(pos);
+            correlNames.add(correlName);
+        }
+
+        if (correlNames.isEmpty()) {
             return null;
         }
 
@@ -3556,10 +3705,14 @@ public class SqlToRelConverter {
         case CREATE_TABLE:
             return RelRoot.of(convertCreateTable((SqlCreateTable) query), kind);
         case ALTER_TABLE:
-            if (query instanceof SqlAlterTablePartitionKey) {
+            if (query instanceof SqlAlterTable && ((SqlAlterTable) query).getGhostDdlDataNode() != null) {
+                return RelRoot.of(convertAlterTableToGhostDdl((SqlAlterTable) query), kind);
+            } else if (query instanceof SqlAlterTablePartitionKey) {
                 return RelRoot.of(convertAlterTable((SqlAlterTable) query), kind);
             } else if (query instanceof SqlAlterTableRepartition) {
                 return RelRoot.of(convertAlterTable((SqlAlterTable) query), kind);
+            } else if (query instanceof SqlAlterTableToggleFullScan) {
+                return RelRoot.of(convertAlterTableToggleFullScan((SqlAlterTableToggleFullScan) query), kind);
             }
             return RelRoot.of(convertAlterTable((SqlAlterTable) query), kind);
         case RENAME_TABLE:
@@ -3577,6 +3730,10 @@ public class SqlToRelConverter {
             return RelRoot.of(convertCreateIndex((SqlCreateIndex) query), kind);
         case DROP_INDEX:
             return RelRoot.of(convertDropIndex((SqlDropIndex) query), kind);
+        case CREATE_INDEX_IN_DATABASE:
+            return RelRoot.of(convertCreateIndexInDatabase((SqlCreateIndexInDatabase) query), kind);
+        case DROP_INDEX_IN_DATABASE:
+            return RelRoot.of(convertDropIndexInDatabase((SqlDropIndexInDatabase) query), kind);
         case CREATE_SEQUENCE:
         case DROP_SEQUENCE:
         case ALTER_SEQUENCE:
@@ -3663,6 +3820,18 @@ public class SqlToRelConverter {
             return RelRoot.of(convertClearFileStorage((SqlClearFileStorage) query), kind);
         case CREATE_FILESTORAGE:
             return RelRoot.of(convertCreateFileStorage((SqlCreateFileStorage) query), kind);
+        case CREATE_EXTERNAL_CATALOG:
+            return RelRoot.of(convertCreateExternalCatalog((SqlCreateExternalCatalog) query), kind);
+        case DROP_EXTERNAL_CATALOG:
+            return RelRoot.of(convertDropExternalCatalog((SqlDropExternalCatalog) query), kind);
+        case ALTER_EXTERNAL_CATALOG:
+            return RelRoot.of(convertAlterExternalCatalog((SqlAlterExternalCatalog) query), kind);
+        case CREATE_SECRET:
+            return RelRoot.of(convertCreateSecret((SqlCreateSecret) query), kind);
+        case DROP_SECRET:
+            return RelRoot.of(convertDropSecret((SqlDropSecret) query), kind);
+        case ALTER_SECRET:
+            return RelRoot.of(convertAlterSecret((SqlAlterSecret) query), kind);
         case CREATE_JOINGROUP:
             return RelRoot.of(convertCreateJoinGroup((SqlCreateJoinGroup) query), kind);
         case DROP_JOINGROUP:
@@ -3732,6 +3901,21 @@ public class SqlToRelConverter {
         Map<SqlNode, RexNode> rexNodesForPartition = convertPartition(query.getPartitioning());
 
         return CreateIndex.create(getCluster(), query, query.getOperandList().get(0), rexNodesForPartition);
+    }
+
+    private RelNode convertCreateIndexInDatabase(SqlCreateIndexInDatabase query) {
+        checkCreateIndexInDatabase(query);
+        final RelDataType targetRowType = validator.getValidatedNodeType(query);
+        assert targetRowType != null;
+        return CreateIndexInDatabase.create(query, targetRowType, getCluster());
+    }
+
+    private RelNode convertDropIndexInDatabase(SqlDropIndexInDatabase query) {
+        checkDropIndexInDatabase(query);
+
+        final RelDataType targetRowType = validator.getValidatedNodeType(query);
+        assert targetRowType != null;
+        return DropIndexInDatabase.create(query, targetRowType, getCluster());
     }
 
     private RelNode convertCreateStoragePool(SqlCreate query) {
@@ -3828,6 +4012,8 @@ public class SqlToRelConverter {
             return AlterTableRemovePartitioning.create(getCluster(), query, query.getOperandList().get(0));
         } else if (query instanceof SqlAlterTableArchivePartition) {
             return AlterTableArchivePartition.create(getCluster(), query, query.getOperandList().get(0));
+        } else if (query instanceof SqlAlterTableRemoveAutoPartition) {
+            return AlterTableRemoveAutoPartition.create(getCluster(), query, query.getOperandList().get(0));
         }
 
         return AlterTable.create(getCluster(), query, query.getOperandList().get(0), new HashMap<>());
@@ -3927,6 +4113,36 @@ public class SqlToRelConverter {
             query.getEngineName().toString(), query.getWithValue(), query.isIfNotExists());
     }
 
+    private RelNode convertCreateExternalCatalog(SqlCreateExternalCatalog query) {
+        final RelDataType targetRowType = validator.getValidatedNodeType(query);
+        return CreateExternalCatalog.create(getCluster(), query, targetRowType);
+    }
+
+    private RelNode convertDropExternalCatalog(SqlDropExternalCatalog query) {
+        final RelDataType targetRowType = validator.getValidatedNodeType(query);
+        return DropExternalCatalog.create(getCluster(), query, targetRowType);
+    }
+
+    private RelNode convertAlterExternalCatalog(SqlAlterExternalCatalog query) {
+        final RelDataType targetRowType = validator.getValidatedNodeType(query);
+        return AlterExternalCatalog.create(getCluster(), query, targetRowType);
+    }
+
+    private RelNode convertCreateSecret(SqlCreateSecret query) {
+        final RelDataType targetRowType = validator.getValidatedNodeType(query);
+        return CreateSecret.create(getCluster(), query, targetRowType);
+    }
+
+    private RelNode convertDropSecret(SqlDropSecret query) {
+        final RelDataType targetRowType = validator.getValidatedNodeType(query);
+        return DropSecret.create(getCluster(), query, targetRowType);
+    }
+
+    private RelNode convertAlterSecret(SqlAlterSecret query) {
+        final RelDataType targetRowType = validator.getValidatedNodeType(query);
+        return AlterSecret.create(getCluster(), query, targetRowType);
+    }
+
     private RelNode convertAlterTableGroup(SqlAlterTableGroup query) {
         Map<Integer, Map<SqlNode, RexNode>> partRexInfoCtxByLevel =
             getRexInfoFromSqlAlterSpecByLevel(query.getAlters());
@@ -4015,6 +4231,19 @@ public class SqlToRelConverter {
         assert targetRowType != null;
         return AlterTableSetTableGroup.create(getCluster(), getCluster().traitSetOf(Convention.NONE),
             sqlAlterTableSetTableGroup, targetRowType, objectNames, tableName, tableGroupName, implicit, force);
+    }
+
+    private RelNode convertAlterTableToggleFullScan(SqlAlterTableToggleFullScan sqlAlterTableToggleFullScan) {
+        final RelDataType targetRowType = validator.getValidatedNodeType(sqlAlterTableToggleFullScan);
+        SqlNode tableName = sqlAlterTableToggleFullScan.getTargetTable();
+        List<SqlIdentifier> objectNames = sqlAlterTableToggleFullScan.getObjectNames();
+        boolean enable = sqlAlterTableToggleFullScan.isEnable();
+        return AlterTableToggleFullScan.create(getCluster(), getCluster().traitSetOf(Convention.NONE),
+            sqlAlterTableToggleFullScan, targetRowType, objectNames, tableName, enable);
+    }
+
+    private RelNode convertAlterTableToGhostDdl(SqlAlterTable sqlAlterTable) {
+        return AlterTableGhost.create(getCluster(), sqlAlterTable, sqlAlterTable.getOperandList().get(0));
     }
 
     private RelNode convertRefreshTopology(SqlRefreshTopology sqlRefreshTopology) {
@@ -4398,6 +4627,14 @@ public class SqlToRelConverter {
         // implemented in TddlSqlToRelConverter
     }
 
+    protected void checkCreateIndexInDatabase(SqlCreateIndexInDatabase query) {
+        // implemented in TddlSqlToRelConverter
+    }
+
+    protected void checkDropIndexInDatabase(SqlDropIndexInDatabase query) {
+        // implemented in TddlSqlToRelConverter
+    }
+
     private RelNode convertCreateTable(SqlCreateTable query) {
         final RelDataType targetRowType = validator.getValidatedNodeType(query);
         assert targetRowType != null;
@@ -4437,6 +4674,12 @@ public class SqlToRelConverter {
         }
         return CreateTable.create(getCluster(), query, query.getOperandList().get(0), query.getLikeTableName(),
             rexNodesForPartition);
+    }
+
+    public RexNode transformBaselineExpr(RexBuilder rexBuilder, SqlNode exprNode) {
+        // replace expr node by dynamic node
+        RexNode rexNode = convertExpression(exprNode);
+        return rexNode;
     }
 
     public Map<SqlNode, RexNode> getRexInfoFromPartition(SqlNode partitioning) {
@@ -5525,10 +5768,12 @@ public class SqlToRelConverter {
 
         final List<Integer> extraTargetTables = new ArrayList<>();
         final List<String> extraTargetColumns = new ArrayList<>();
-
-        final SqlSelect sourceSelect =
-            rewriteUpdateSourceSelect(call, targetTableIndexes, targetColumns, srcTableInfoNodes, extraTargetTables,
-                extraTargetColumns);
+        final SqlSelect sourceSelect = rewriteUpdateSourceSelect(call,
+            targetTableIndexes,
+            targetColumns,
+            srcTableInfoNodes,
+            extraTargetTables,
+            extraTargetColumns);
         targetTableIndexes.addAll(extraTargetTables);
         targetColumns.addAll(extraTargetColumns);
 
@@ -5547,12 +5792,16 @@ public class SqlToRelConverter {
 
         final List<String> newTargetColumns = new ArrayList<>();
         final List<Integer> newTargetTables = new ArrayList<>();
-        sourceRel =
-            transformUpdateSourceRel(sourceRel, tableInfo, targetColumns, sourceColumnIndexMap, newTargetColumns,
-                newTargetTables);
+        sourceRel = transformUpdateSourceRel(sourceRel,
+            tableInfo,
+            targetColumns,
+            sourceColumnIndexMap,
+            newTargetColumns,
+            newTargetTables);
 
-        final TableInfo newTableInfo = TableInfo.create(tableInfo.getSrcNode(), tableInfo.getSrcInfos(), newTargetTables,
-            tableInfo.getSourceColumnIndexMap(), tableInfo.getRefTableInfos());
+        final TableInfo newTableInfo =
+            TableInfo.create(tableInfo.getSrcNode(), tableInfo.getSrcInfos(), newTargetTables,
+                tableInfo.getSourceColumnIndexMap(), tableInfo.getRefTableInfos());
 
         sourceRel = handleDynamicImplicitDefault(sourceRel, call, newTargetColumns, newTableInfo);
 
@@ -6093,11 +6342,115 @@ public class SqlToRelConverter {
         return alias;
     }
 
+    public static boolean shouldCTEReuse(SqlWith with, CTEConverterContext cteContext) {
+        return DynamicConfig.getInstance().isEnableCTEReuse() && !with.isRecursive.booleanValue()
+            && cteContext.getNestingDepth() < DynamicConfig.getInstance().getCteMaxNestingDepth();
+    }
+
+    /**
+     * Pre-scan a SqlWith node to count how many times each CTE is referenced
+     * across all item queries and the body. Used to skip Producer/Consumer
+     * overhead for CTEs referenced only once (inline them instead).
+     */
+    private static Map<String, Integer> countCteReferences(SqlWith with) {
+        Map<String, Integer> result = new HashMap<>();
+        Set<String> cteNames = new HashSet<>();
+        for (SqlNode item : with.withList.getList()) {
+            String name = ((SqlWithItem) item).name.getSimple().toUpperCase();
+            cteNames.add(name);
+            result.put(name, 0);
+        }
+        // Count references in the body
+        countRefsInNode(with.body, cteNames, result);
+        // Count references in other CTE item queries (item i can reference items 0..i-1)
+        for (SqlNode item : with.withList.getList()) {
+            countRefsInNode(((SqlWithItem) item).query, cteNames, result);
+        }
+        return result;
+    }
+
+    /**
+     * Recursively count SqlIdentifier references matching CTE names.
+     * Handles shadowing by nested WITH clauses.
+     */
+    private static void countRefsInNode(SqlNode node, Set<String> cteNames, Map<String, Integer> counts) {
+        if (node == null || cteNames.isEmpty()) {
+            return;
+        }
+        if (node instanceof SqlWith) {
+            // Inner WITH may shadow outer CTE names
+            SqlWith innerWith = (SqlWith) node;
+            Set<String> shadowedNames = new HashSet<>();
+            for (SqlNode item : innerWith.withList.getList()) {
+                String name = ((SqlWithItem) item).name.getSimple().toUpperCase();
+                if (cteNames.contains(name)) {
+                    shadowedNames.add(name);
+                }
+            }
+            Set<String> remainingNames = new HashSet<>(cteNames);
+            remainingNames.removeAll(shadowedNames);
+            // Scan inner WITH item queries and body with remaining (non-shadowed) names
+            for (SqlNode item : innerWith.withList.getList()) {
+                countRefsInNode(((SqlWithItem) item).query, remainingNames, counts);
+            }
+            countRefsInNode(innerWith.body, remainingNames, counts);
+        } else if (node instanceof SqlIdentifier) {
+            SqlIdentifier id = (SqlIdentifier) node;
+            if (id.names.size() == 1) {
+                String name = id.names.get(0).toUpperCase();
+                if (cteNames.contains(name)) {
+                    counts.merge(name, 1, Integer::sum);
+                }
+            }
+        } else if (node instanceof SqlNodeList) {
+            for (SqlNode child : (SqlNodeList) node) {
+                countRefsInNode(child, cteNames, counts);
+            }
+        } else if (node instanceof SqlCall) {
+            for (SqlNode operand : ((SqlCall) node).getOperandList()) {
+                countRefsInNode(operand, cteNames, counts);
+            }
+        }
+    }
+
     /**
      * Converts a WITH sub-query into a relational expression.
      */
     public RelRoot convertWith(SqlWith with, boolean top) {
-        return convertQuery(with.body, false, top);
+        if (shouldCTEReuse(with, cteContext)) {
+            // Pre-scan: count CTE references to determine which CTEs need Producer/Consumer reuse
+            Map<String, Integer> refCounts = countCteReferences(with);
+
+            List<LogicalCTEProducer> cteProducerList = new ArrayList<>();
+            CTEConverterContext prevCteContext = cteContext;
+            cteContext = cteContext.copy();
+
+            for (SqlNode item : with.withList.getList()) {
+                String cteName = ((SqlWithItem) item).name.getSimple().toUpperCase();
+                int refCount = refCounts.getOrDefault(cteName, 0);
+                if (refCount > DynamicConfig.getInstance().getCteParserThreshold()) {
+                    // Multi-reference CTE: create Producer for reuse
+                    RelNode selectSubItem = convertQuery(((SqlWithItem) item).query, false, false).rel;
+                    LogicalCTEProducer producer = new LogicalCTEProducer(cluster, cluster.traitSet(), selectSubItem,
+                        cteContext.nextCteId(), selectSubItem.getRowType());
+                    cteContext.registerCteProducer(validator.getNamespace(item).resolve(), producer);
+                    cteProducerList.add(producer);
+                }
+                // Single-reference or unused CTEs: no producer created,
+                // they will be inlined when encountered in convertIdentifier
+            }
+
+            RelNode relRoot = convertQuery(with.body, false, top).rel;
+            for (int i = cteProducerList.size() - 1; i >= 0; i--) {
+                relRoot = new LogicalCTEAnchor(cluster, cluster.traitSet(),
+                    cteProducerList.get(i), relRoot, cteProducerList.get(i).getCteId(), relRoot.getRowType());
+            }
+            cteContext = prevCteContext;
+            return RelRoot.of(relRoot, with.getKind());
+        } else {
+            return convertQuery(with.body, false, top);
+        }
+
     }
 
     /**
@@ -6119,7 +6472,7 @@ public class SqlToRelConverter {
      * @param values Call to SQL VALUES operator
      * @param targetRowType Target row type
      */
-    private void convertValuesImpl(Blackboard bb, SqlCall values, RelDataType targetRowType) {
+    protected void convertValuesImpl(Blackboard bb, SqlCall values, RelDataType targetRowType) {
         // Attempt direct conversion to LogicalValues; if that fails, deal with
         // fancy stuff like sub-queries below.
         boolean allIsDynamic = values.getOperandList().stream().anyMatch(t -> t instanceof SqlDynamicParam);
@@ -6174,6 +6527,16 @@ public class SqlToRelConverter {
         // ?
     }
 
+    /**
+     * Creates a {@link DynamicValues} for a converted VALUES clause. Subclasses
+     * may override to customize the node (e.g. stamp metadata from the bound
+     * parameters) at its single construction point.
+     */
+    protected DynamicValues createDynamicValues(RelTraitSet traits, RelDataType rowType,
+                                                ImmutableList<ImmutableList<RexNode>> tuples) {
+        return DynamicValues.create(cluster, traits, rowType, tuples);
+    }
+
     private DynamicValues convertValues(Blackboard bb, SqlValuesTableSource values, RelDataType targetRowType) {
         if (targetRowType == null) {
             targetRowType = SqlTypeUtil.promoteToRowType(typeFactory, validator.getValidatedNodeType(values), null);
@@ -6187,8 +6550,7 @@ public class SqlToRelConverter {
             }
             tupleList.add(tuple.build());
         }
-        DynamicValues dynamicValues = DynamicValues.create(
-            cluster,
+        DynamicValues dynamicValues = createDynamicValues(
             cluster.traitSet().replace(RelDistributions.SINGLETON), //for mpp
             targetRowType, tupleList.build());
         return dynamicValues;
@@ -6562,6 +6924,11 @@ public class SqlToRelConverter {
                 } else {
                     if (rel instanceof LogicalJoin || rel instanceof LogicalAggregate) {
                         start[0] += systemFieldCount;
+                    }
+                    if (rel instanceof LogicalCTEAnchor) {
+                        flatten(Collections.singletonList(((LogicalCTEAnchor) rel).getRight()),
+                            systemFieldCount, start, relOffsetList);
+                        return;
                     }
                     flatten(rel.getInputs(), systemFieldCount, start, relOffsetList);
                 }
@@ -8373,9 +8740,11 @@ public class SqlToRelConverter {
         return LogicalDropTrigger.create(getCluster(), null, query,
             new SqlIdentifier(query.getTableName(), SqlParserPos.ZERO), targetRowType);
     }
+
     private RelNode convertUnArchive(SqlUnArchive query) {
         final RelDataType targetRowType = validator.getValidatedNodeType(query);
         assert targetRowType != null;
+
         return UnArchive.create(query, targetRowType, getCluster());
     }
 

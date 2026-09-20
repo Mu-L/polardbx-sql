@@ -1,5 +1,6 @@
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.archive.reader.OSSColumnTransformer;
@@ -11,6 +12,7 @@ import com.alibaba.polardbx.executor.operator.scan.LazyEvaluator;
 import com.alibaba.polardbx.executor.operator.scan.metrics.RuntimeMetrics;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import org.apache.hadoop.fs.Path;
+import org.openjdk.jol.info.ClassLayout;
 import org.roaringbitmap.RoaringBitmap;
 
 import java.util.ArrayList;
@@ -25,7 +27,8 @@ import java.util.List;
  * @author wuzhe
  */
 public class SpecifiedCsvScanWork extends CsvScanWork {
-    private static final Logger logger = LoggerFactory.getLogger("COLUMNAR_TRANS");
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(SpecifiedCsvScanWork.class).instanceSize();
+    private static final Logger logger = LoggerFactory.getLogger("mpp_log");
 
     final private int start;
     final private int end;
@@ -53,6 +56,22 @@ public class SpecifiedCsvScanWork extends CsvScanWork {
         this.end = end;
         this.tsoV0 = tsoV0;
         this.tsoV1 = tsoV1;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            // from Abstract Scan work
+            + FastMemoryCounter.sizeOf(workId)
+            + FastMemoryCounter.sizeOf(rgIterator)
+            + FastMemoryCounter.sizeOf(inputRefsForFilter)
+            + FastMemoryCounter.sizeOf(inputRefsForProject)
+            + FastMemoryCounter.sizeOf(chunkRefMap)
+            + FastMemoryCounter.sizeOf(isIOCanceled)
+            + FastMemoryCounter.sizeOf(ioStatus)
+
+            // from this class
+            + FastMemoryCounter.sizeOf(refList);
     }
 
     @Override

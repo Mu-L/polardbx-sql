@@ -768,7 +768,9 @@ public class JoinTableLookupTransposeRule extends PushJoinRule {
         final RelMetadataQuery mq = originTableLookup.getCluster().getMetadataQuery();
         final List<Set<RelColumnOrigin>> lFieldNames = mq.getColumnOriginNames(leftChild);
         final List<Set<RelColumnOrigin>> rFieldNames = mq.getColumnOriginNames(primary);
-
+        if (lFieldNames == null || rFieldNames == null) {
+            return true;
+        }
         final ImmutableBitSet bitSetPrimary = ImmutableBitSet.range(lFieldCount,
             lFieldCount + rFieldCount);
         for (RexNode condition : RelOptUtil.conjunctions(tableLookupCondition)) {

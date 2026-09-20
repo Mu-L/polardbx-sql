@@ -19,14 +19,21 @@ package com.alibaba.polardbx.optimizer.core.rel.ddl.data;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.gms.util.PartitionNameUtil;
+import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
+import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
 import com.alibaba.polardbx.optimizer.utils.KeyWordsUtil;
+import org.apache.calcite.sql.SqlIdentifier;
+import org.apache.calcite.sql.SqlPartition;
+import org.apache.calcite.sql.SqlSubPartition;
 import org.apache.commons.lang.StringUtils;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 
-public class AlterTableGroupSplitPartitionByHotValuePreparedData extends AlterTableGroupBasePreparedData {
+public class AlterTableGroupSplitPartitionByHotValuePreparedData extends AlterTableGroupSplitPartitionPreparedData {
 
     int[] insertPos;
 
@@ -35,8 +42,9 @@ public class AlterTableGroupSplitPartitionByHotValuePreparedData extends AlterTa
     boolean skipSplit;
     String hotKeyPartitionName;
     boolean hasSubPartition;
-    boolean splitSubPartition;
     String parentPartitionName;
+    int hotKeyNum;
+    List<String> newPhysicalPartitionNames;
 
     public AlterTableGroupSplitPartitionByHotValuePreparedData() {
     }
@@ -59,6 +67,14 @@ public class AlterTableGroupSplitPartitionByHotValuePreparedData extends AlterTa
 
     public String getHotKeyPartitionName() {
         return hotKeyPartitionName;
+    }
+
+    public void setNewPhysicalPartitionNames(List<String> newPhysicalPartitionNames) {
+        this.newPhysicalPartitionNames = newPhysicalPartitionNames;
+    }
+
+    public List<String> getPhysicalPartitionNames() {
+        return newPhysicalPartitionNames;
     }
 
     public void setHotKeyPartitionName(String hotKeyPartitionName) {
@@ -97,6 +113,35 @@ public class AlterTableGroupSplitPartitionByHotValuePreparedData extends AlterTa
         return changePartitionsPair;
     }
 
+    @Override
+    public void processSplitLogicalPartition(PartitionInfo partitionInfo, PartitionInfo newPartitionInfo) {
+        assert getOldPartitionNames().size() == 1;
+        String oldParentPartitionName = getOldPartitionNames().get(0);
+        PartitionSpec partitionSpec =
+            partitionInfo.getPartitionBy().getPartitionByPartName(oldParentPartitionName);
+        List<PartitionSpec> parentPartSpecs = partitionInfo.getPartitionBy().getPartitions();
+        List<PartitionSpec> newParentPartSpecs = newPartitionInfo.getPartitionBy().getPartitions();
+        Set<String> parentPartNames = new TreeSet<>(String::compareToIgnoreCase);
+        List<PartitionSpec> newGeneratedPartSpecs = new ArrayList<>();
+        for (PartitionSpec parentPartSpec : parentPartSpecs) {
+            parentPartNames.add(parentPartSpec.getName());
+        }
+        for (PartitionSpec parentPartSpec : newParentPartSpecs) {
+            if (!parentPartNames.contains(parentPartSpec.getName())) {
+                newGeneratedPartSpecs.add(parentPartSpec);
+            }
+        }
+        int subPartitionCnt = partitionSpec.getSubPartitions().size();
+        for (int i = 0; i < subPartitionCnt; i++) {
+            String oldSubPartitionName = partitionSpec.getSubPartitions().get(i).getName();
+            for (PartitionSpec sqlPartition : newGeneratedPartSpecs) {
+                assert sqlPartition.getSubPartitions().size() == subPartitionCnt;
+                String newSubPartitionName = sqlPartition.getSubPartitions().get(i).getName();
+                newAndOldPhysicalPartitionMap.put(newSubPartitionName, oldSubPartitionName);
+            }
+        }
+    }
+
     public Map<String, List<Long[]>> getSplitPointInfos() {
         return splitPointInfos;
     }
@@ -113,19 +158,24 @@ public class AlterTableGroupSplitPartitionByHotValuePreparedData extends AlterTa
         this.hasSubPartition = hasSubPartition;
     }
 
-    public boolean isSplitSubPartition() {
-        return splitSubPartition;
-    }
-
-    public void setSplitSubPartition(boolean splitSubPartition) {
-        this.splitSubPartition = splitSubPartition;
-    }
-
     public String getParentPartitionName() {
         return parentPartitionName;
     }
 
     public void setParentPartitionName(String parentPartitionName) {
         this.parentPartitionName = parentPartitionName;
+    }
+
+    @Override
+    public boolean isInplaceBackfill() {
+        return inplaceBackfill;
+    }
+
+    public int getHotKeyNum() {
+        return hotKeyNum;
+    }
+
+    public void setHotKeyNum(int hotKeyNum) {
+        this.hotKeyNum = hotKeyNum;
     }
 }

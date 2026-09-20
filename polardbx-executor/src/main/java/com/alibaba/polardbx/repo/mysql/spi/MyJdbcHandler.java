@@ -27,6 +27,7 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.BytesSql;
 import com.alibaba.polardbx.common.jdbc.ConnectionStats;
 import com.alibaba.polardbx.common.jdbc.IConnection;
+import com.alibaba.polardbx.common.jdbc.ITransactionPolicy;
 import com.alibaba.polardbx.common.jdbc.MasterSlave;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.ParameterMethod;
@@ -143,6 +144,8 @@ public class MyJdbcHandler implements GeneralQueryHandler {
     private static final String UNKNOWN_COLUMN = "42S22";
     private static final Logger logger = LoggerFactory.getLogger(MyJdbcHandler.class);
     private static final int MAX_LOG_PARAM_COUNT = 500;
+    private static final int MAX_TDDL_LOG_PARAM_COUNT = 100;
+    private static final int MAX_TDDL_LOG_PARAM_LENGTH = 500;
 
     private IConnection connection = null;
     private ResultSet resultSet = null;
@@ -622,7 +625,10 @@ public class MyJdbcHandler implements GeneralQueryHandler {
             (rel instanceof PhyTableOperation && ((PhyTableOperation) rel).getTableNames().size() != 1) ||
                 (executionContext.getGroupHint() != null && !executionContext.getGroupHint().isEmpty()) ||
                 (executionContext.getExplain() != null
-                    && executionContext.getExplain().explainMode == ExplainResult.ExplainMode.EXECUTE);
+                    && (executionContext.getExplain().explainMode == ExplainResult.ExplainMode.EXECUTE
+                    || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.ANALYZE_EXECUTE
+                    || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.TREE_EXECUTE
+                    || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.JSON_EXECUTE));
         // denied if DDL or function not support or contain raw string or using returning
         if ((noDigest || isDDL || !rel.isSupportGalaxyPrepare() || (null == parameterContexts ?
             bytesSql.containRawString(param) : bytesSql.containRawString(parameterContexts))
@@ -817,7 +823,10 @@ public class MyJdbcHandler implements GeneralQueryHandler {
             return false;
         }
         if (executionContext.getExplain() != null
-            && executionContext.getExplain().explainMode == ExplainResult.ExplainMode.EXECUTE) {
+            && (executionContext.getExplain().explainMode == ExplainResult.ExplainMode.EXECUTE
+            || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.ANALYZE_EXECUTE
+            || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.TREE_EXECUTE
+            || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.JSON_EXECUTE)) {
             // Generate final plan.
             final PolarxExecPlan.ExecPlan.Builder execPlan =
                 XTemplate.getXPlan(dbName, phyTableNames, params, executionContext);
@@ -1178,7 +1187,12 @@ public class MyJdbcHandler implements GeneralQueryHandler {
                     final boolean noDigest =
                         (executionContext.getGroupHint() != null && !executionContext.getGroupHint().isEmpty()) ||
                             (executionContext.getExplain() != null
-                                && executionContext.getExplain().explainMode == ExplainResult.ExplainMode.EXECUTE);
+                                && (executionContext.getExplain().explainMode == ExplainResult.ExplainMode.EXECUTE
+                                || executionContext.getExplain().explainMode
+                                == ExplainResult.ExplainMode.ANALYZE_EXECUTE
+                                || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.TREE_EXECUTE
+                                || executionContext.getExplain().explainMode
+                                == ExplainResult.ExplainMode.JSON_EXECUTE));
                     phySqlExecuted = true;
                     xResult = xStatement.executeQueryX(bytesSql, sqlBytesPrefix,
                         noDigest ? null : queryOperation.getSqlDigest());
@@ -1209,7 +1223,12 @@ public class MyJdbcHandler implements GeneralQueryHandler {
                     final boolean noDigest =
                         (executionContext.getGroupHint() != null && !executionContext.getGroupHint().isEmpty()) ||
                             (executionContext.getExplain() != null
-                                && executionContext.getExplain().explainMode == ExplainResult.ExplainMode.EXECUTE);
+                                && (executionContext.getExplain().explainMode == ExplainResult.ExplainMode.EXECUTE
+                                || executionContext.getExplain().explainMode
+                                == ExplainResult.ExplainMode.ANALYZE_EXECUTE
+                                || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.TREE_EXECUTE
+                                || executionContext.getExplain().explainMode
+                                == ExplainResult.ExplainMode.JSON_EXECUTE));
                     phySqlExecuted = true;
                     xResult = xPreparedStatement.executeQueryX(noDigest ? null :
                         xPreparedStatement.isUseGalaxyPrepare() ? queryOperation.getGalaxyPrepareDigest() :
@@ -1353,7 +1372,10 @@ public class MyJdbcHandler implements GeneralQueryHandler {
             return;
         }
 
-        ITransaction.RW rw = phyTableOperation.isForUpdate() ? ITransaction.RW.WRITE : ITransaction.RW.READ;
+        // explain should get read connection
+        ITransaction.RW rw =
+            phyTableOperation.isForUpdate() && executionContext.getExplain() == null ? ITransaction.RW.WRITE :
+                ITransaction.RW.READ;
         PhyTableScanBuilder phyTableScanBuilder = (PhyTableScanBuilder) phyTableOperation.getPhyOperationBuilder();
         byte[] sqlBytesPrefix = buildSqlPreFix(executionContext);
         BytesSql bytesSql = phyTableScanBuilder.buildBytesSql(phyTableOperation);
@@ -1422,7 +1444,10 @@ public class MyJdbcHandler implements GeneralQueryHandler {
                     phyTableOperation.getTableNames().size() != 1 ||
                         (executionContext.getGroupHint() != null && !executionContext.getGroupHint().isEmpty()) ||
                         (executionContext.getExplain() != null
-                            && executionContext.getExplain().explainMode == ExplainResult.ExplainMode.EXECUTE);
+                            && (executionContext.getExplain().explainMode == ExplainResult.ExplainMode.EXECUTE
+                            || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.ANALYZE_EXECUTE
+                            || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.TREE_EXECUTE
+                            || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.JSON_EXECUTE));
                 phySqlExecuted = true;
                 xResult = xPreparedStatement.executeQueryX(noDigest ? null :
                     xPreparedStatement.isUseGalaxyPrepare() ? phyTableOperation.getGalaxyPrepareDigest() :
@@ -1499,6 +1524,18 @@ public class MyJdbcHandler implements GeneralQueryHandler {
             && executionContext.getExplain().explainMode == ExplainResult.ExplainMode.EXECUTE) {
             trace = Bytes.concat("explain ".getBytes(StandardCharsets.UTF_8), trace);
         }
+        if (executionContext.getExplain() != null
+            && executionContext.getExplain().explainMode == ExplainResult.ExplainMode.ANALYZE_EXECUTE) {
+            trace = Bytes.concat("explain analyze ".getBytes(StandardCharsets.UTF_8), trace);
+        }
+        if (executionContext.getExplain() != null
+            && executionContext.getExplain().explainMode == ExplainResult.ExplainMode.TREE_EXECUTE) {
+            trace = Bytes.concat("explain format=tree ".getBytes(StandardCharsets.UTF_8), trace);
+        }
+        if (executionContext.getExplain() != null
+            && executionContext.getExplain().explainMode == ExplainResult.ExplainMode.JSON_EXECUTE) {
+            trace = Bytes.concat("explain format=json ".getBytes(StandardCharsets.UTF_8), trace);
+        }
         return trace;
     }
 
@@ -1547,12 +1584,13 @@ public class MyJdbcHandler implements GeneralQueryHandler {
         long nanoStartTime = System.nanoTime();
         long sqlCostTime = -1, createCostTime = -1, waitCostTime = -1;
         boolean createConnectionSuccess = false;
+        boolean executeSuccess = false;
         Long grpConnId = null;
         ITransaction.RW rw = ITransaction.RW.WRITE;
         try {
             byte[] sqlBytesPrefix = buildSqlPreFix(executionContext);
             ITransaction transaction = executionContext.getTransaction();
-            if (executionContext.getParamManager().getBoolean(ConnectionParams.BROADCAST_DML)) {
+            if (useReadConnForBroadcastDml(transaction)) {
                 rw = ITransaction.RW.READ;
             }
 
@@ -1571,7 +1609,10 @@ public class MyJdbcHandler implements GeneralQueryHandler {
             final boolean noDigest =
                 (executionContext.getGroupHint() != null && !executionContext.getGroupHint().isEmpty()) ||
                     (executionContext.getExplain() != null
-                        && executionContext.getExplain().explainMode == ExplainResult.ExplainMode.EXECUTE);
+                        && (executionContext.getExplain().explainMode == ExplainResult.ExplainMode.EXECUTE
+                        || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.ANALYZE_EXECUTE
+                        || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.TREE_EXECUTE
+                        || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.JSON_EXECUTE));
             int[] affectRows;
             int affRows = 0;
             long startTimeNano;
@@ -1692,10 +1733,14 @@ public class MyJdbcHandler implements GeneralQueryHandler {
                         connection.flushUnsent(); // Caution: This is important when use deferred sql.
                         xConnection.getSession().setChunkResult(false);
                         boolean isBackfill = executionContext.getBackfillReturning() != null;
-                        String returning =
+                        boolean isReturningAll = executionContext.getReturningAll() != null;
+                        // 对于returning all优先选择从执行计划中拿取returning columns
+                        String returning = isReturningAll ?
+                            (phyTableModify.getReturningColumns() != null) ? phyTableModify.getReturningColumns() :
+                                executionContext.getReturningAll() :
                             isBackfill ? executionContext.getBackfillReturning() : executionContext.getReturning();
                         xResult =
-                            xPreparedStatement.executeUpdateReturningX(returning, isBackfill);
+                            xPreparedStatement.executeUpdateReturningX(returning, isBackfill, isReturningAll);
                         xResult.getMetaData(); // Compatible with original time record.
                         affectRow = -2;
                     } else {
@@ -1722,9 +1767,18 @@ public class MyJdbcHandler implements GeneralQueryHandler {
 
             String currentDbKey = getCurrentDbkey(rw);
             if (executionContext.isEnableTrace()) {
+                boolean isReturningAll = executionContext.getReturningAll() != null;
+                // 对于returning all优先选择从执行计划中拿取returning columns
+                String returning = isReturningAll ?
+                    (phyTableModify.getReturningColumns() != null) ? phyTableModify.getReturningColumns() :
+                        executionContext.getReturningAll() : executionContext.getReturning();
+                final String returningFunc = isReturningAll ? "returning_all" : "returning";
+                final String returningHint =
+                    null != returning ? "/* +" + returningFunc + " fields(" + returning + ") */ " : "";
+
                 ExecuteSQLOperation op =
                     new ExecuteSQLOperation(this.groupName, currentDbKey,
-                        new String(sqlBytesPrefix) + bytesSql.display(), startTime);
+                        new String(sqlBytesPrefix) + returningHint + bytesSql.display(), startTime);
                 if (batchParams != null) {
                     op.setParams(new Parameters(batchParams));
                 } else {
@@ -1764,6 +1818,7 @@ public class MyJdbcHandler implements GeneralQueryHandler {
                 }
             }
             phyTableModify.setAffectedRows(affRows);
+            executeSuccess = true;
             return affectRows;
         } catch (Throwable e) {
             if (!createConnectionSuccess) {
@@ -1792,13 +1847,31 @@ public class MyJdbcHandler implements GeneralQueryHandler {
                     this.groupName,
                     rw);
             } finally {
-                if (!executionContext.useReturning()) {
+                if (!executionContext.useReturning() || !executeSuccess) {
+                    // Non-RETURNING: always close to release connection.
+                    // RETURNING failure: also close since no cursor will be available to release the connection,
+                    // preventing it from being stuck in WRITING state.
                     close();
                 }
                 executionContext.getTransaction().clearTrxContext();
                 collectStatementStats();
             }
         }
+    }
+
+    private boolean useReadConnForBroadcastDml(ITransaction transaction) {
+        if (!executionContext.getParamManager().getBoolean(ConnectionParams.BROADCAST_DML)) {
+            return false;
+        }
+        if (null == transaction) {
+            return false;
+        }
+        // Allow-read trx.
+        if (transaction.getTransactionClass() == ITransactionPolicy.TransactionClass.ALLOW_READ_CROSS_DB) {
+            return true;
+        }
+        // Other trx.
+        return executionContext.getParamManager().getBoolean(ConnectionParams.USE_READ_CONN_FOR_XA_BROADCAST_DML);
     }
 
     /**
@@ -2151,7 +2224,38 @@ public class MyJdbcHandler implements GeneralQueryHandler {
                         sb.append(sqlAndParam.param.get(1));
                         sb.append(",...,}");
                     } else {
-                        sb.append(String.valueOf(sqlAndParam.param.values()));
+                        boolean limitParamsLength = executionContext.getParamManager()
+                            .getBoolean(ConnectionParams.LIMIT_TDDL_LOG_SQL_PARAMS_LENGTH);
+                        if (limitParamsLength) {
+                            // 限制记录的参数数量避免OOM
+                            int paramCount = sqlAndParam.param.size();
+                            // 如果参数数量超过限制，只记录前MAX_LOG_PARAM_COUNT个参数和总数
+                            sb.append("Total ").append(paramCount).append(" parameters, showing first ")
+                                .append(MAX_TDDL_LOG_PARAM_COUNT).append(": ");
+
+                            // 只记录前MAX_LOG_PARAM_COUNT个参数
+                            int count = 0;
+                            sb.append("{");
+                            for (Map.Entry<Integer, ParameterContext> entry : sqlAndParam.param.entrySet()) {
+                                if (count >= MAX_TDDL_LOG_PARAM_COUNT) {
+                                    break;
+                                }
+                                if (count > 0) {
+                                    sb.append(", ");
+                                }
+                                sb.append(entry.getKey()).append("=");
+                                sb.append(entry.getValue().toString().length() >= MAX_TDDL_LOG_PARAM_LENGTH ?
+                                    entry.getValue().toString().substring(0, MAX_TDDL_LOG_PARAM_LENGTH) + "..." :
+                                    entry.getValue());
+                                count++;
+                            }
+                            if (paramCount > MAX_TDDL_LOG_PARAM_COUNT) {
+                                sb.append(",...");
+                            }
+                            sb.append("}");
+                        } else {
+                            sb.append(String.valueOf(sqlAndParam.param.values()));
+                        }
                     }
                 }
                 sb.append(", ERROR: ").append(e.getMessage());

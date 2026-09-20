@@ -180,8 +180,8 @@ public class AddressUtils {
             }
             localAddress = InetAddress.getLocalHost();
             if (isValidHostAddress(localAddress)) {
-                return localAddress;
-            }
+                logger.warn("get local host ip address " + localAddress);
+                return localAddress;}
         } catch (Throwable e) {
             logger.warn("Failed to retriving local host ip address, try scan network card ip address. cause: "
                 + e.getMessage());
@@ -199,6 +199,7 @@ public class AddressUtils {
                                     InetAddress address = addresses.nextElement();
                                     if (isValidHostAddress(address)) {
                                         localAddress = address;
+                                        logger.warn("get local host ip address " + localAddress);
                                         return address;
                                     }
                                 } catch (Throwable e) {

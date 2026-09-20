@@ -102,6 +102,7 @@ public class DecimalBlockSum2Test extends DecimalSumV2Test {
     @Override
     @Test
     public void testDecimal64Sum() {
+        accumulator.setEnableDecimal128(true);
         if (overflowDec128) {
             return;
         }
@@ -122,6 +123,41 @@ public class DecimalBlockSum2Test extends DecimalSumV2Test {
                 accumulator.isOverflowDecimal64(groupId));
             Assert.assertFalse("Expect not overflowDec128 even when overflowDec64",
                 accumulator.isOverflowDecimal128(groupId));
+            accumulator.writeResultTo(groupId, resultBlockBuilder);
+        }
+
+        validateResult(resultBlockBuilder);
+    }
+
+    @Test
+    public void testDecimal64Sum2() {
+        accumulator.setEnableDecimal128(false);
+        if (overflowDec128) {
+            return;
+        }
+        buildDecimal64Blocks();
+
+        for (Block inputBlock : inputBlocks) {
+            Assert.assertTrue(((DecimalBlock) inputBlock).isDecimal64());
+            Chunk inputChunk = new Chunk(inputBlock);
+            for (int i = 0; i < groupCount; i++) {
+                accumulator.accumulate(i, inputChunk, groupIdSelections[i], groupSize);
+            }
+        }
+
+        DecimalBlockBuilder resultBlockBuilder = new DecimalBlockBuilder(groupCount, dataTypes[0]);
+        for (int groupId = 0; groupId < groupCount; groupId++) {
+            // 溢出检查
+            Assert.assertEquals("Expect overflowDec64=" + overflowDec64, overflowDec64,
+                accumulator.isOverflowDecimal64(groupId));
+
+            if (overflowDec64 && !overflowDec128 && !accumulator.enableDecimal128()) {
+                Assert.assertTrue(accumulator.isOverflowDecimal128(groupId));
+            } else {
+                Assert.assertFalse("Expect not overflowDec128 even when overflowDec64",
+                    accumulator.isOverflowDecimal128(groupId));
+            }
+
             accumulator.writeResultTo(groupId, resultBlockBuilder);
         }
 

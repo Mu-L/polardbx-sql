@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.executor.ddl.job.factory;
 
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.ddl.job.builder.tablegroup.AlterTableGroupSplitPartitionByHotValueBuilder;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.PauseCurrentJobTask;
@@ -96,14 +97,15 @@ public class AlterTableGroupSplitPartitionByHotValueJobFactory extends AlterTabl
             getOldDatePartitionGroups(preparedData, preparedData.getOldPartitionNames(),
                 ((AlterTableGroupSplitPartitionByHotValuePreparedData) preparedData).isSplitSubPartition());
 
-        List<String> targetDbList = new ArrayList<>();
+        List<Pair<String, String>> targetDbList = new ArrayList<>();
 
         List<String> newPartitions = getNewPartitions();
         List<String> localities = new ArrayList<>();
 
-        Map<String, String> partAndDbMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        Map<String, Pair<String, String>> partAndDbMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         for (PartitionGroupRecord partitionGroupRecord : preparedData.getInvisiblePartitionGroups()) {
-            partAndDbMap.put(partitionGroupRecord.partition_name, partitionGroupRecord.phy_db);
+            partAndDbMap.put(partitionGroupRecord.partition_name,
+                new Pair<>(partitionGroupRecord.getPhy_db(), partitionGroupRecord.getGroup_Name()));
             localities.add(partitionGroupRecord.getLocality());
         }
         for (int i = 0; i < newPartitions.size(); i++) {
@@ -127,7 +129,7 @@ public class AlterTableGroupSplitPartitionByHotValueJobFactory extends AlterTabl
         ));
         List<DdlTask> bringUpAlterTableGroupTasks =
             ComplexTaskFactory.bringUpAlterTableGroup(schemaName, tableGroupName, null,
-                taskType, preparedData.getDdlVersionId(), executionContext);
+                preparedData.getOldPartitionNames(), taskType, preparedData.getDdlVersionId(), executionContext);
 
         final String finalStatus =
             executionContext.getParamManager().getString(ConnectionParams.TABLEGROUP_REORG_FINAL_TABLE_STATUS_DEBUG);
@@ -228,15 +230,25 @@ public class AlterTableGroupSplitPartitionByHotValueJobFactory extends AlterTabl
             } else {
                 executableDdlJob.addTaskRelationship(subTask.getTail(), bringUpAlterTableGroupTasks.get(0));
             }
+            List<DdlTask> dropForeignKeyTasksBeforeRename = new ArrayList<>();
             DdlTask dropUselessTableTask = ComplexTaskFactory
-                .CreateDropUselessPhyTableTask(schemaName, entry.getKey(), sourceTablesTopology.get(entry.getKey()),
+                .cleanUpUselessPhyTableTask(schemaName, entry.getKey(), sourceTablesTopology.get(entry.getKey()),
                     targetTablesTopology.get(entry.getKey()),
-                    executionContext);
+                    dropForeignKeyTasksBeforeRename, executionContext);
             executableDdlJob.addTask(dropUselessTableTask);
-            executableDdlJob
-                .addTaskRelationship(bringUpAlterTableGroupTasks.get(bringUpAlterTableGroupTasks.size() - 1),
+            if (GeneralUtil.isNotEmpty(dropForeignKeyTasksBeforeRename)) {
+                for (DdlTask task : dropForeignKeyTasksBeforeRename) {
+                    executableDdlJob.addTaskRelationship(
+                        bringUpAlterTableGroupTasks.get(bringUpAlterTableGroupTasks.size() - 1), task);
+                    executableDdlJob.addTaskRelationship(task, dropUselessTableTask);
+                }
+            } else {
+                executableDdlJob.addTaskRelationship(
+                    bringUpAlterTableGroupTasks.get(bringUpAlterTableGroupTasks.size() - 1),
                     dropUselessTableTask);
+            }
             executableDdlJob.getExcludeResources().addAll(subTask.getExcludeResources());
+            executableDdlJob.getSharedResources().addAll(subTask.getSharedResources());
         }
     }
 

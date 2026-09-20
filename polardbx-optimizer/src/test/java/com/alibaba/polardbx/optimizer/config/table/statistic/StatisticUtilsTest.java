@@ -10,7 +10,6 @@ import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.planner.SqlConverter;
 import com.alibaba.polardbx.planner.common.BasePlannerTest;
-import com.sun.tools.javac.util.List;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptSchema;
 import org.jetbrains.annotations.NotNull;
@@ -19,6 +18,8 @@ import org.junit.Test;
 import org.mockito.MockedStatic;
 
 import java.sql.SQLSyntaxErrorException;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -185,7 +186,7 @@ public class StatisticUtilsTest extends BasePlannerTest {
             new GsiMetaManager.GsiIndexColumnMetaBean(0, columnName, null, 0, null, null, null, false);
         GsiMetaManager.GsiIndexMetaBean index1 =
             new GsiMetaManager.GsiIndexMetaBean(null, "schema", "logicalTableName", false, "schemaName", "index1",
-                List.of(columnMetaBean), null, null, null, null, null, null,
+                Collections.singletonList(columnMetaBean), null, null, null, null, null, null,
                 IndexStatus.PUBLIC, 1, true, true, IndexVisibility.VISIBLE, null);
         gsiPublished.put("index1", index1);
         return gsiPublished;
@@ -201,7 +202,7 @@ public class StatisticUtilsTest extends BasePlannerTest {
 
         GsiMetaManager.GsiIndexMetaBean index1 =
             new GsiMetaManager.GsiIndexMetaBean(null, "schema", "logicalTableName", false, "schemaName", "index1",
-                List.of(columnMetaBean1, columnMetaBean2), null, null, null, null, null, null,
+                Arrays.asList(columnMetaBean1, columnMetaBean2), null, null, null, null, null, null,
                 IndexStatus.PUBLIC, 1, true, true, IndexVisibility.VISIBLE, null);
         gsiPublished.put("index1", index1);
         return gsiPublished;

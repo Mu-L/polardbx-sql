@@ -107,21 +107,21 @@ public class SubqueryUserCaseTest extends BaseTestCase {
                     + "    `YLJGDM` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL,\n"
                     + "    `LASTUPDATETIME` datetime DEFAULT NULL COMMENT '最后一次更新时间',\n"
                     + "    PRIMARY KEY (`ID`)\n"
-                    + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4  dbpartition by YYYYMM(`LASTUPDATETIME`)");
+                    + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE utf8mb4_general_ci dbpartition by YYYYMM(`LASTUPDATETIME`)");
             c.createStatement().execute(
                 "CREATE TABLE `tbl_single` (\n"
                     + "    `ID` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,\n"
                     + "    `QHDM` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL,\n"
                     + "    `PDM` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL,\n"
                     + "    PRIMARY KEY (`ID`)\n"
-                    + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;\n");
+                    + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE utf8mb4_general_ci;\n");
             c.createStatement().execute(
                 "CREATE TABLE `tbl_broadcast` (\n"
                     + "    `YLJGDM` varchar(30) NOT NULL ,\n"
                     + "    `SJBM` varchar(64) DEFAULT NULL ,\n"
                     + "    `QXBM` varchar(64) DEFAULT NULL ,\n"
                     + "    PRIMARY KEY (`YLJGDM`)\n"
-                    + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4  broadcast;"
+                    + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE utf8mb4_general_ci broadcast;"
             );
 
             c.createStatement().execute("drop database if exists " + testSchemaAuto);

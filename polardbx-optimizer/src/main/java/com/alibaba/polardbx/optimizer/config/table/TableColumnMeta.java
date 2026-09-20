@@ -36,7 +36,13 @@ public class TableColumnMeta extends AbstractLifecycle {
         modifying = tableMeta.rebuildingTable();
         Map<String, String> columnMapping = new HashMap<>();
         for (ColumnMeta columnMeta : columnMetas) {
-            if (columnMeta.getMappingName() != null) {
+            // Externalized (MCE) columns also carry a mappingName (the physical addr column),
+            // but that belongs to the MCE rewrite path (buildExternalizedColumnMapping), not the
+            // OMC dual-write map. Including them here injects a reverse {addr -> content} entry
+            // that collides with the MCE rewrite and duplicates the addr column.
+            if (columnMeta.getMappingName() != null
+                && !columnMeta.isExternalizedColumn()
+                && !tableMeta.isMceAddrColumnName(columnMeta.getName())) {
                 // old --> new
                 columnMapping.put(columnMeta.getMappingName().toLowerCase(), columnMeta.getName().toLowerCase());
             }

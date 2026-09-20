@@ -63,6 +63,12 @@ public class AlterTablePreparedData extends DdlPreparedData {
     private List<String> droppedForeignKeys;
 
     /**
+     * Constraint
+     */
+    private List<String> addConstraints;
+    private List<String> dropConstraints;
+
+    /**
      * Primary key modifications
      */
     private boolean primaryKeyDropped = false;

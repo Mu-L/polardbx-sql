@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.chunk;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableReferenceArrayList;
+
 import java.util.Objects;
 
 public abstract class ReferenceBlockBuilder<T> extends AbstractBlockBuilder {

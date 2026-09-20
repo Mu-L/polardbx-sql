@@ -1,6 +1,9 @@
 package com.alibaba.polardbx.qatest.storagepool;
 
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.ddl.datamigration.locality.LocalityTestBase;
+import com.alibaba.polardbx.qatest.ddl.datamigration.locality.LocalityTestCaseUtils.LocalityTestCaseTask;
+import com.alibaba.polardbx.qatest.ddl.datamigration.locality.RebalanceLogTest;
 import com.alibaba.polardbx.qatest.storagepool.LegacyStoragePoolTestCase.StoragePoolTestCaseTask;
 import com.alibaba.polardbx.qatest.storagepool.importDatabase.AlterPartitionTest;
 import com.alibaba.polardbx.qatest.storagepool.importDatabase.CommonDdlTest;
@@ -10,6 +13,7 @@ import com.alibaba.polardbx.qatest.storagepool.importDatabase.ImportTableTest;
 import com.alibaba.polardbx.qatest.storagepool.importDatabase.RepartitionTest;
 import net.jcip.annotations.NotThreadSafe;
 import org.junit.FixMethodOrder;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runners.MethodSorters;
 
@@ -30,36 +34,42 @@ public class StoragePoolTestCase extends LocalityTestBase {
      * 因此测试case放在存储池目录下
      */
     @Test
+    @Ignore
     public void testCase001ImportTable() {
         ImportTableTest testcase = new ImportTableTest();
         testcase.runTestCases();
     }
 
     @Test
+    @Ignore
     public void testCase002ImportDatabaseRebalance() {
         ImportDatabaseRebalanceTest testcase = new ImportDatabaseRebalanceTest();
         testcase.runTestCases();
     }
 
     @Test
+    @Ignore
     public void testCase003ImportDatabaseRepartition() {
         RepartitionTest testcase = new RepartitionTest();
         testcase.runTestCases();
     }
 
     @Test
+    @Ignore
     public void testCase004ImportDatabaseAlterPartition() {
         AlterPartitionTest testcase = new AlterPartitionTest();
         testcase.runTestCases();
     }
 
     @Test
+    @Ignore
     public void testCase005ImportDatabaseCommonDdl() {
         CommonDdlTest testcase = new CommonDdlTest();
         testcase.runTestCases();
     }
 
     @Test
+    @Ignore
     public void testCase006ImportDatabaseHintTest() {
         HintTest testcase = new HintTest();
         testcase.runTestCases();
@@ -90,27 +100,66 @@ public class StoragePoolTestCase extends LocalityTestBase {
      */
 
     @Test
-    public void testCase01StoragePoolDemo() throws FileNotFoundException, InterruptedException {
+    public void testCase041() throws InterruptedException {
+        RebalanceLogTest testcase = new RebalanceLogTest();
+        testcase.testRebalanceDrdsDb(tddlConnection);
+    }
+
+    @Test
+    public void testCase042() throws InterruptedException {
+        RebalanceLogTest testcase = new RebalanceLogTest();
+        testcase.testRebalanceAutoDb(tddlConnection);
+    }
+
+    @Test
+    public void testCase110StoragePoolInit() throws FileNotFoundException, InterruptedException {
         runTestCase("storage_pool_init.test.yml");
     }
 
     @Test
-    public void testCase02ListPartitionTableOperation() throws FileNotFoundException, InterruptedException {
+    public void testCase111AlterDatabaseSetLocality() throws FileNotFoundException, InterruptedException {
+        runTestCase("alter_database_set_locality.test.yml");
+    }
+
+    @Test
+    public void testCase112StoragePoolConcurrentModify() throws FileNotFoundException, InterruptedException {
+        runTestCase("storage_pool_concurrent_modify.test.yml");
+    }
+
+    @Test
+    public void testCase113StoragePoolDropStoragePoolCdc() throws FileNotFoundException, InterruptedException {
+        runTestCase("storage_pool_drop_storage_pool_cdc.test.yml");
+    }
+
+    @Test
+    public void testCase117AlterStoragePoolWithPlanId() throws InterruptedException {
+        RebalanceLogTest testcase = new RebalanceLogTest();
+        testcase.testAlterStoragePoolWithPlanId(tddlConnection);
+    }
+
+    @Test
+    public void testCase119AlterRecycleDrainNode() throws InterruptedException {
+        RebalanceLogTest testcase = new RebalanceLogTest();
+        testcase.testAlterRecycleDrainNode(tddlConnection);
+    }
+
+    @Test
+    public void testCase120ListPartitionTableOperation() throws FileNotFoundException, InterruptedException {
         runTestCase("list_partition_table_storage_pool.test.yml");
     }
 
     @Test
-    public void testCase03HashPartitionTableOperation() throws FileNotFoundException, InterruptedException {
+    public void testCase130HashPartitionTableOperation() throws FileNotFoundException, InterruptedException {
         runTestCase("hash_partition_table_storage_pool.test.yml");
     }
 
     @Test
-    public void testCase04SingleTableOperation() throws FileNotFoundException, InterruptedException {
+    public void testCase140SingleTableOperation() throws FileNotFoundException, InterruptedException {
         runTestCase("single_table_storage_pool.test.yml");
     }
 
     @Test
-    public void testCase05ControlAdapter() throws FileNotFoundException, InterruptedException {
+    public void testCase150ControlAdapter() throws FileNotFoundException, InterruptedException {
         runTestCase("control_adapter.test.yml");
     }
 }

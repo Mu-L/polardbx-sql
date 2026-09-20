@@ -152,7 +152,7 @@ public class FullTypeTest extends ReadBaseTestCase {
             + "  `c_decimal` decimal(10,2) DEFAULT NULL,\n"
             + "  `c_decimal_pr` decimal(65,10) DEFAULT NULL,\n"
             + "  PRIMARY KEY (`id`)\n"
-            + ") ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COMMENT=\"10000000\" ";
+            + ") ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT=\"10000000\" ";
         // Create customized full type table.
         JdbcUtil.executeUpdateSuccess(mysqlConnection, "DROP TABLE IF EXISTS `" + tbName + "`");
         JdbcUtil.executeUpdateSuccess(mysqlConnection, tb);

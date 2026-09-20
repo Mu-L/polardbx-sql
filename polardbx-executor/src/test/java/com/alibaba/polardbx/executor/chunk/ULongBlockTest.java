@@ -127,6 +127,7 @@ public class ULongBlockTest extends BaseBlockTest {
 
         for (int i = 0; i < size; i++) {
             Assert.assertEquals(block.getObject(i), block1.getObject(i));
+            Assert.assertTrue(block.compareAssertedSameType(i, block1, i) == 0);
         }
         MemoryCountable.checkDeviation(block1, .05d, true);
     }

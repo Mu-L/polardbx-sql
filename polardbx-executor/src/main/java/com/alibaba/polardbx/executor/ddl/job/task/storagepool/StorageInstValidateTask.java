@@ -40,16 +40,6 @@ public class StorageInstValidateTask extends BaseValidateTask {
     private Boolean checkAlived;
     private Boolean checkIdle;
 
-    public StorageInstValidateTask(String schemaName, String instId, List<String> validStorageInsts) {
-        super(schemaName);
-        this.schemaName = schemaName;
-        this.instId = instId;
-        this.validStorageInsts = validStorageInsts;
-        this.checkAlived = true;
-        this.checkAttached = true;
-        this.checkIdle = true;
-    }
-
     public StorageInstValidateTask(String schemaName, String instId, List<String> validStorageInsts,
                                    Boolean checkAttached, Boolean checkIdle) {
         super(schemaName);

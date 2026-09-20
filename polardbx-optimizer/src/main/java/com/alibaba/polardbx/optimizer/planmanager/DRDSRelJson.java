@@ -26,6 +26,7 @@ import com.alibaba.polardbx.optimizer.core.Xplan.XPlanTemplate;
 import com.alibaba.polardbx.optimizer.core.planner.SqlConverter;
 import com.alibaba.polardbx.optimizer.core.planner.Xplanner.XPlanUtil;
 import com.alibaba.polardbx.optimizer.core.rel.PushDownOpt;
+import com.alibaba.polardbx.optimizer.core.rel.TableSource;
 import com.clearspring.analytics.util.Lists;
 import com.google.common.collect.ImmutableList;
 import com.google.protobuf.InvalidProtocolBufferException;
@@ -37,6 +38,7 @@ import org.apache.calcite.avatica.util.TimeUnitRange;
 import org.apache.calcite.config.CalciteConnectionConfigImpl;
 import org.apache.calcite.config.CalciteConnectionProperty;
 import org.apache.calcite.plan.RelOptCluster;
+import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.prepare.CalciteCatalogReader;
 import org.apache.calcite.prepare.RelOptTableImpl;
 import org.apache.calcite.rel.RelCollationImpl;
@@ -69,6 +71,7 @@ import org.apache.calcite.sql.SemiJoinType;
 import org.apache.calcite.sql.SqlFunction;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperator;
+import org.apache.calcite.sql.SqlSelect;
 import org.apache.calcite.sql.fun.SqlRuntimeFilterBuildFunction;
 import org.apache.calcite.sql.fun.SqlRuntimeFilterFunction;
 import org.apache.calcite.sql.fun.SqlTrimFunction;
@@ -189,6 +192,8 @@ public class DRDSRelJson extends RelJson {
             return toJson((CalciteConnectionConfigImpl) value);
         } else if (value instanceof PushDownOpt) {
             return toJson((PushDownOpt) value);
+        } else if (value instanceof TableSource) {
+            return toJson((TableSource) value);
         } else if (value instanceof RelNode) {
             return toJson((RelNode) value);
         } else if (value instanceof Pair) {
@@ -213,6 +218,8 @@ public class DRDSRelJson extends RelJson {
             return toJson((XPlanTemplate) value);
         } else if (value instanceof XPlanUtil.ScalarParamInfo) {
             return toJson((XPlanUtil.ScalarParamInfo) value);
+        } else if (value instanceof SqlSelect.LockMode) {
+            return ((SqlSelect.LockMode) value).name();
         } else {
             throw new UnsupportedOperationException("type not serializable: "
                 + value + " (type " + value.getClass().getCanonicalName() + ")");
@@ -384,6 +391,13 @@ public class DRDSRelJson extends RelJson {
         return map;
     }
 
+    private Object toJson(TableSource node) {
+        final Map<String, Object> map = jsonBuilder.map();
+        map.put("class", node.getClass().getName());
+        map.putAll(node.toJson());
+        return map;
+    }
+
     private Object toJson(CalciteConnectionConfigImpl node) {
         Properties properties = new Properties();
         properties.setProperty(CalciteConnectionProperty.CASE_SENSITIVE.camelName(),
@@ -421,6 +435,7 @@ public class DRDSRelJson extends RelJson {
                 .getCatalog(),
             null, this.supportMpp);
         try {
+            PlannerContext.getPlannerContext(relInput.getCluster()).getCteContext().init();
             RelNode rel = drdsRelJsonReader.read(json);
             return rel;
         } catch (IOException e) {
@@ -587,6 +602,11 @@ public class DRDSRelJson extends RelJson {
 
     @Override
     public RexNode toRex(RelInput relInput, Object o) {
+        return toRex(relInput, o, null);
+    }
+
+    @Override
+    public RexNode toRex(RelInput relInput, Object o, List<RelNode> inputs) {
         final RelOptCluster cluster = relInput.getCluster();
         final RexBuilder rexBuilder = cluster.getRexBuilder();
         if (o == null) {
@@ -600,7 +620,7 @@ public class DRDSRelJson extends RelJson {
                 final Object jsonType = map.get("type");
 
                 final SqlOperator operator = toOp(op, map);
-                final List<RexNode> rexOperands = toRexList(relInput, operands);
+                final List<RexNode> rexOperands = toRexList(relInput, operands, inputs);
                 RelDataType type;
                 if (jsonType != null) {
                     type = toType(typeFactory, jsonType);
@@ -620,6 +640,9 @@ public class DRDSRelJson extends RelJson {
             final Integer input = (Integer) map.get("input");
             if (input != null) {
                 List<RelNode> inputNodes = relInput.getInputs();
+                if (inputs != null) {
+                    inputNodes = inputs;
+                }
                 int i = input;
                 for (RelNode inputNode : inputNodes) {
                     final RelDataType rowType = inputNode.getRowType();
@@ -642,7 +665,7 @@ public class DRDSRelJson extends RelJson {
             final String field = (String) map.get("field");
             if (field != null) {
                 final Object jsonExpr = map.get("expr");
-                final RexNode expr = toRex(relInput, jsonExpr);
+                final RexNode expr = toRex(relInput, jsonExpr, inputs);
                 return rexBuilder.makeFieldAccess(expr, field, true);
             }
             final String correl = (String) map.get("correl");
@@ -680,7 +703,7 @@ public class DRDSRelJson extends RelJson {
                     String value = (String) map.get("value");
                     return rexBuilder.makeBinaryLiteral(ByteString.ofBase64(value));
                 }
-                return toRex(relInput, literal);
+                return toRex(relInput, literal, inputs);
             }
             final String type = (String) map.get("type");
             if (type != null && type.equals("DYNAMIC")) {

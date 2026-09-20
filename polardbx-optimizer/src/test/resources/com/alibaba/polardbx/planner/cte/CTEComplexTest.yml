@@ -1,0 +1,2443 @@
+SQL:
+  - sql: |
+      WITH cte_orders AS (
+        SELECT o_orderkey, o_custkey, o_totalprice FROM orders WHERE o_orderdate > '1995-01-01'
+      )
+      SELECT * FROM customer c WHERE c_custkey IN (
+        SELECT o_custkey FROM cte_orders WHERE o_totalprice > (
+          SELECT AVG(o_totalprice) FROM cte_orders
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `o_custkey`, `o_totalprice` from `orders_col_index` as `orders_col_index` where (`o_orderdate` > ?)")
+        semihashjoin(condition="c_custkey = o_custkey", type="semi", build="inner")
+          osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer_col_index` as `customer_col_index`")
+          exchange(distribution=broadcast, collation=[])
+            project(o_custkey="o_custkey")
+              nljoin(condition="o_totalprice > /", type="inner")
+                cteconsumer(cte_id="0_0")
+                exchange(distribution=broadcast, collation=[])
+                  project(/="$f0 / $f1")
+                    hashagg($f0="sum($f0)", $f1="sum($f1)")
+                      exchange(distribution=single, collation=[])
+                        partialhashagg($f0="sum(o_totalprice)", $f1="count()")
+                          cteconsumer(cte_id="0_1", projects=[$1])
+  - sql: |
+      WITH cte_parts AS (
+        SELECT p_partkey, p_name, p_retailprice FROM part WHERE p_size > 10
+      )
+      SELECT l_orderkey, l_partkey FROM lineitem WHERE EXISTS (
+        SELECT 1 FROM cte_parts WHERE cte_parts.p_partkey = lineitem.l_partkey
+        AND p_retailprice > (SELECT MAX(p_retailprice) * 0.8 FROM cte_parts)
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `p_partkey`, `p_retailprice` from `part_col_index` as `part_col_index` where (`p_size` > ?)")
+        semihashjoin(condition="l_partkey = p_partkey", type="semi", build="inner")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+          exchange(distribution=broadcast, collation=[])
+            project(p_partkey="p_partkey")
+              nljoin(condition="p_retailprice > $f0", type="inner")
+                cteconsumer(cte_id="0_0", conditions=[=($0, $0)])
+                exchange(distribution=broadcast, collation=[])
+                  hashagg($f0="single_value(max(p_retailprice) * 0.8)")
+                    project(max(p_retailprice) * 0.8="$f0 * ?2")
+                      hashagg($f0="max($f0)")
+                        exchange(distribution=single, collation=[])
+                          partialhashagg($f0="max(p_retailprice)")
+                            cteconsumer(cte_id="0_1", projects=[$1])
+  - sql: |
+      WITH cte_suppliers AS (
+        SELECT s_suppkey, s_name, s_nationkey FROM supplier WHERE s_acctbal > 0
+      )
+      SELECT * FROM nation WHERE n_nationkey IN (
+        SELECT DISTINCT s_nationkey FROM cte_suppliers WHERE s_suppkey IN (
+          SELECT ps_suppkey FROM partsupp WHERE ps_partkey IN (
+            SELECT p_partkey FROM part WHERE p_type LIKE '%BRASS%'
+          )
+        )
+      )
+    plan: |
+      semihashjoin(condition="n_nationkey = s_nationkey", type="semi", build="inner")
+        exchange(distribution=hash[0]20, collation=[])
+          osstablescan(tables="nation_col_index[p1]", sql="select `n_nationkey`, `n_name`, `n_regionkey`, `n_comment` from `nation_col_index` as `nation_col_index`")
+        hashagg(group="s_nationkey")
+          exchange(distribution=hash[0]20, collation=[])
+            partialhashagg(group="s_nationkey")
+              semihashjoin(condition="s_suppkey = ps_suppkey", type="semi", build="outer")
+                exchange(distribution=hash[0]20, collation=[])
+                  osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `s_suppkey`, `s_nationkey` from `supplier_col_index` as `supplier_col_index` where (`s_acctbal` > ?)")
+                exchange(distribution=hash[0]20, collation=[])
+                  project(ps_suppkey="ps_suppkey")
+                    semihashjoin(condition="ps_partkey = p_partkey", type="semi", build="inner")
+                      osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_partkey`, `ps_suppkey` from `partsupp_col_index` as `partsupp_col_index`")
+                      exchange(distribution=broadcast, collation=[])
+                        osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey` from `part_col_index` as `part_col_index` where (`p_type` like ?)")
+  - sql: |
+      /*+TDDL:cmd_extra(CTE_MODE=REUSE)*/WITH cte_suppliers AS (
+        SELECT s_suppkey, s_name, s_nationkey FROM supplier WHERE s_acctbal > 0
+      )
+      SELECT * FROM nation WHERE n_nationkey IN (
+        SELECT DISTINCT s_nationkey FROM cte_suppliers WHERE s_suppkey IN (
+          SELECT ps_suppkey FROM partsupp WHERE ps_partkey IN (
+            SELECT p_partkey FROM part WHERE p_type LIKE '%BRASS%'
+          )
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_suppkey`, `s_nationkey` from `supplier_col_index` as `supplier_col_index` where (`s_acctbal` > ?)")
+        semihashjoin(condition="n_nationkey = s_nationkey", type="semi", build="inner")
+          exchange(distribution=hash[0]20, collation=[])
+            osstablescan(tables="nation_col_index[p1]", sql="select `n_nationkey`, `n_name`, `n_regionkey`, `n_comment` from `nation_col_index` as `nation_col_index`")
+          hashagg(group="s_nationkey")
+            exchange(distribution=hash[0]20, collation=[])
+              partialhashagg(group="s_nationkey")
+                semihashjoin(condition="s_suppkey = ps_suppkey", type="semi", build="outer")
+                  exchange(distribution=hash[0]20, collation=[])
+                    cteconsumer(cte_id="0_0")
+                  exchange(distribution=hash[0]20, collation=[])
+                    project(ps_suppkey="ps_suppkey")
+                      semihashjoin(condition="ps_partkey = p_partkey", type="semi", build="inner")
+                        osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_partkey`, `ps_suppkey` from `partsupp_col_index` as `partsupp_col_index`")
+                        exchange(distribution=broadcast, collation=[])
+                          osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey` from `part_col_index` as `part_col_index` where (`p_type` like ?)")
+  - sql: |
+      WITH cte_lineitem AS (
+        SELECT l_orderkey, l_suppkey, l_quantity, l_extendedprice FROM lineitem WHERE l_shipdate >= '1994-01-01'
+      )
+      SELECT o_orderkey, o_orderdate FROM orders o WHERE o_orderkey IN (
+        SELECT l_orderkey FROM cte_lineitem WHERE l_quantity > (
+          SELECT AVG(l_quantity) FROM cte_lineitem WHERE l_suppkey = cte_lineitem.l_suppkey
+        ) GROUP BY l_orderkey HAVING SUM(l_extendedprice) > 50000
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_suppkey`, `l_quantity`, `l_extendedprice` from `lineitem_col_index` as `lineitem_col_index` where (`l_shipdate` >= ?)")
+        semihashjoin(condition="o_orderkey = l_orderkey", type="semi", build="inner")
+          osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `o_orderkey`, `o_orderdate` from `orders_col_index` as `orders_col_index`")
+          exchange(distribution=broadcast, collation=[])
+            project(l_orderkey="l_orderkey")
+              filter(condition="$f1 > ?1")
+                hashagg(group="l_orderkey", $f1="sum($f1)")
+                  exchange(distribution=hash[0]20, collation=[])
+                    partialhashagg(group="l_orderkey", $f1="sum(l_extendedprice)")
+                      nljoin(condition="l_quantity > $f0 / $f1", type="inner")
+                        cteconsumer(cte_id="0_0", projects=[$0, $2, $3])
+                        exchange(distribution=broadcast, collation=[])
+                          hashagg($f0="sum($f0)", $f1="sum($f1)")
+                            exchange(distribution=single, collation=[])
+                              partialhashagg($f0="sum(l_quantity)", $f1="count()")
+                                cteconsumer(cte_id="0_1", projects=[$2], conditions=[=($1, $1)])
+  - sql: |
+      WITH cte_customer AS (
+        SELECT c_custkey, c_nationkey, c_acctbal FROM customer WHERE c_mktsegment = 'BUILDING'
+      )
+      SELECT * FROM orders WHERE o_custkey IN (
+        SELECT c_custkey FROM cte_customer WHERE c_acctbal > (
+          SELECT AVG(c_acctbal) FROM cte_customer cte2 WHERE cte2.c_nationkey = cte_customer.c_nationkey
+        ) AND c_custkey NOT IN (
+          SELECT o_custkey FROM orders WHERE o_orderstatus = 'F'
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_nationkey`, `c_acctbal` from `customer_col_index` as `customer_col_index` where (`c_mktsegment` = ?)")
+        semihashjoin(condition="o_custkey = c_custkey", type="semi", build="inner")
+          osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders_col_index` as `orders_col_index`")
+          exchange(distribution=broadcast, collation=[])
+            semihashjoin(condition="c_custkey = o_custkey", type="anti", build="outer")
+              exchange(distribution=hash[0]20, collation=[])
+                cteanchor(cte_id=1)
+                  cteproducer(cte_id=1)
+                    cteconsumer(cte_id="0_0")
+                  project(c_custkey="c_custkey")
+                    hashjoin(condition="c_nationkey = c_nationkey and c_acctbal > avg(c_acctbal)", type="inner")
+                      cteconsumer(cte_id="1_1", projects=[$0, $1, $2])
+                      exchange(distribution=broadcast, collation=[])
+                        project(c_nationkey="c_nationkey", avg(c_acctbal)="avg(c_acctbal)")
+                          hashjoin(condition="c_nationkey <=> c_nationkey0", type="right", build="right")
+                            project(c_nationkey0="c_nationkey0", avg(c_acctbal)="$f1 / $f2")
+                              hashagg(group="c_nationkey0", $f1="sum($f1)", $f2="sum($f2)")
+                                exchange(distribution=hash[0]20, collation=[])
+                                  partialhashagg(group="c_nationkey0", $f1="sum(c_acctbal)", $f2="count()")
+                                    cteconsumer(cte_id="0_1", projects=[$2, $1], conditions=[=($1, $1)])
+                            hashagg(group="c_nationkey")
+                              exchange(distribution=hash[0]20, collation=[])
+                                partialhashagg(group="c_nationkey")
+                                  cteconsumer(cte_id="1_0")
+              exchange(distribution=hash[0]20, collation=[])
+                osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_custkey` from `orders_col_index` as `orders_col_index` where (`o_orderstatus` = ?)")
+  - sql: |
+      WITH cte_region AS (
+        SELECT r_regionkey, r_name FROM region WHERE r_name IN ('ASIA', 'EUROPE')
+      )
+      SELECT n_name FROM nation WHERE n_regionkey IN (
+        SELECT r_regionkey FROM cte_region
+      ) AND n_nationkey IN (
+        SELECT s_nationkey FROM supplier WHERE s_suppkey IN (
+          SELECT ps_suppkey FROM partsupp WHERE ps_availqty > (
+            SELECT AVG(ps_availqty) FROM partsupp
+          )
+        )
+      )
+    plan: |
+      project(n_name="n_name")
+        semihashjoin(condition="n_nationkey = s_nationkey", type="semi", build="outer")
+          exchange(distribution=hash[0]20, collation=[])
+            project(n_nationkey="n_nationkey", n_name="n_name")
+              semihashjoin(condition="n_regionkey = r_regionkey", type="semi", build="inner")
+                osstablescan(tables="nation_col_index[p1]", partition=[remote], sql="select `n_nationkey`, `n_name`, `n_regionkey` from `nation_col_index` as `nation_col_index`")
+                exchange(distribution=broadcast, collation=[])
+                  osstablescan(tables="region_col_index[p1]", sql="select `r_regionkey` from `region_col_index` as `region_col_index` where (`r_name` in(?))")
+          exchange(distribution=hash[0]20, collation=[])
+            project(s_nationkey="s_nationkey")
+              semihashjoin(condition="s_suppkey = ps_suppkey", type="semi", build="outer")
+                exchange(distribution=hash[0]20, collation=[])
+                  osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `s_suppkey`, `s_nationkey` from `supplier_col_index` as `supplier_col_index`")
+                exchange(distribution=hash[0]20, collation=[])
+                  project(ps_suppkey="ps_suppkey")
+                    nljoin(condition="ps_availqty > $f0 / $f1", type="inner")
+                      osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `ps_suppkey`, `ps_availqty` from `partsupp_col_index` as `partsupp_col_index`")
+                      exchange(distribution=broadcast, collation=[])
+                        hashagg($f0="sum($f0)", $f1="sum($f1)")
+                          exchange(distribution=single, collation=[])
+                            partialhashagg($f0="sum(ps_availqty)", $f1="count()")
+                              osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_availqty` from `partsupp_col_index` as `partsupp_col_index`")
+  - sql: |
+      /*+TDDL:cmd_extra(CTE_MODE=REUSE)*/WITH cte_region AS (
+        SELECT r_regionkey, r_name FROM region WHERE r_name IN ('ASIA', 'EUROPE')
+      )
+      SELECT n_name FROM nation WHERE n_regionkey IN (
+        SELECT r_regionkey FROM cte_region
+      ) AND n_nationkey IN (
+        SELECT s_nationkey FROM supplier WHERE s_suppkey IN (
+          SELECT ps_suppkey FROM partsupp WHERE ps_availqty > (
+            SELECT AVG(ps_availqty) FROM partsupp
+          )
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          osstablescan(tables="region_col_index[p1]", partition=[remote], sql="select `r_regionkey` from `region_col_index` as `region_col_index` where (`r_name` in(?))")
+        project(n_name="n_name")
+          semihashjoin(condition="n_nationkey = s_nationkey", type="semi", build="outer")
+            exchange(distribution=hash[0]20, collation=[])
+              project(n_nationkey="n_nationkey", n_name="n_name")
+                semihashjoin(condition="n_regionkey = r_regionkey", type="semi", build="inner")
+                  osstablescan(tables="nation_col_index[p1]", partition=[remote], sql="select `n_nationkey`, `n_name`, `n_regionkey` from `nation_col_index` as `nation_col_index`")
+                  exchange(distribution=broadcast, collation=[])
+                    cteconsumer(cte_id="0_0")
+            exchange(distribution=hash[0]20, collation=[])
+              project(s_nationkey="s_nationkey")
+                semihashjoin(condition="s_suppkey = ps_suppkey", type="semi", build="outer")
+                  exchange(distribution=hash[0]20, collation=[])
+                    osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `s_suppkey`, `s_nationkey` from `supplier_col_index` as `supplier_col_index`")
+                  exchange(distribution=hash[0]20, collation=[])
+                    project(ps_suppkey="ps_suppkey")
+                      nljoin(condition="ps_availqty > /", type="inner")
+                        osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `ps_suppkey`, `ps_availqty` from `partsupp_col_index` as `partsupp_col_index`")
+                        exchange(distribution=broadcast, collation=[])
+                          project(/="$f0 / $f1")
+                            hashagg($f0="sum($f0)", $f1="sum($f1)")
+                              exchange(distribution=single, collation=[])
+                                partialhashagg($f0="sum(ps_availqty)", $f1="count()")
+                                  osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_availqty` from `partsupp_col_index` as `partsupp_col_index`")
+  - sql: |
+      WITH cte_high_value_parts AS (
+        SELECT p_partkey, p_retailprice FROM part WHERE p_retailprice > 1000
+      )
+      SELECT l_orderkey, COUNT(*) as part_count FROM lineitem WHERE l_partkey IN (
+        SELECT p_partkey FROM cte_high_value_parts WHERE p_partkey IN (
+          SELECT ps_partkey FROM partsupp WHERE ps_supplycost < (
+            SELECT AVG(p_retailprice) * 0.1 FROM cte_high_value_parts
+          )
+        )
+      ) GROUP BY l_orderkey HAVING COUNT(*) > 2
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `p_partkey`, `p_retailprice` from `part_col_index` as `part_col_index` where (`p_retailprice` > ?)")
+        filter(condition="part_count > ?2")
+          hashagg(group="l_orderkey", part_count="sum(part_count)")
+            exchange(distribution=hash[0]20, collation=[])
+              partialhashagg(group="l_orderkey", part_count="count()")
+                semihashjoin(condition="l_partkey = p_partkey", type="semi", build="inner")
+                  osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+                  exchange(distribution=broadcast, collation=[])
+                    semihashjoin(condition="p_partkey = ps_partkey", type="semi", build="inner")
+                      exchange(distribution=hash[0]20, collation=[])
+                        cteconsumer(cte_id="0_0", projects=[$0])
+                      exchange(distribution=hash[0]20, collation=[])
+                        project(ps_partkey="ps_partkey")
+                          nljoin(condition="ps_supplycost < $f0", type="inner")
+                            osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `ps_partkey`, `ps_supplycost` from `partsupp_col_index` as `partsupp_col_index`")
+                            exchange(distribution=broadcast, collation=[])
+                              hashagg($f0="single_value(avg(p_retailprice) * 0.1)")
+                                project(avg(p_retailprice) * 0.1="$f0 / $f1 * ?1")
+                                  hashagg($f0="sum($f0)", $f1="sum($f1)")
+                                    exchange(distribution=single, collation=[])
+                                      partialhashagg($f0="sum(p_retailprice)", $f1="count()")
+                                        cteconsumer(cte_id="0_1", projects=[$1])
+  - sql: |
+      WITH cte_nation_supplier AS (
+        SELECT s_suppkey, s_nationkey, s_acctbal FROM supplier WHERE s_nationkey IN (1, 2, 3)
+      )
+      SELECT o_orderkey FROM orders WHERE o_custkey IN (
+        SELECT c_custkey FROM customer WHERE c_nationkey IN (
+          SELECT DISTINCT s_nationkey FROM cte_nation_supplier WHERE s_acctbal > (
+            SELECT AVG(s_acctbal) FROM cte_nation_supplier cte2 WHERE cte2.s_nationkey = cte_nation_supplier.s_nationkey
+          )
+        )
+      ) AND o_totalprice > 10000
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_nationkey`, `s_acctbal` from `supplier_col_index` as `supplier_col_index` where (`s_nationkey` in(?))")
+        project(o_orderkey="o_orderkey")
+          semihashjoin(condition="o_custkey = c_custkey", type="semi", build="inner")
+            exchange(distribution=hash[1]20, collation=[])
+              osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index` where (`o_totalprice` > ?)")
+            exchange(distribution=hash[0]20, collation=[])
+              project(c_custkey="c_custkey")
+                semihashjoin(condition="c_nationkey = s_nationkey", type="semi", build="inner")
+                  osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_nationkey` from `customer_col_index` as `customer_col_index` where (`c_nationkey` in(?))")
+                  exchange(distribution=broadcast, collation=[])
+                    hashagg(group="s_nationkey")
+                      exchange(distribution=hash[0], collation=[])
+                        partialhashagg(group="s_nationkey")
+                          cteanchor(cte_id=1)
+                            cteproducer(cte_id=1)
+                              cteconsumer(cte_id="0_0")
+                            project(s_nationkey="s_nationkey")
+                              hashjoin(condition="s_nationkey = s_nationkey and s_acctbal > avg(s_acctbal)", type="inner")
+                                cteconsumer(cte_id="1_1", projects=[$0, $1])
+                                project(s_nationkey="s_nationkey", avg(s_acctbal)="avg(s_acctbal)")
+                                  exchange(distribution=broadcast, collation=[])
+                                    hashjoin(condition="s_nationkey <=> s_nationkey0", type="right", build="right")
+                                      project(s_nationkey0="s_nationkey0", avg(s_acctbal)="$f1 / $f2")
+                                        hashagg(group="s_nationkey0", $f1="sum($f1)", $f2="sum($f2)")
+                                          exchange(distribution=hash[0], collation=[])
+                                            partialhashagg(group="s_nationkey0", $f1="sum(s_acctbal)", $f2="count()")
+                                              cteconsumer(cte_id="0_1", projects=[$1, $0], conditions=[=($0, $0)])
+                                      hashagg(group="s_nationkey")
+                                        exchange(distribution=hash[0], collation=[])
+                                          partialhashagg(group="s_nationkey")
+                                            cteconsumer(cte_id="1_0")
+  - sql: |
+      WITH cte_partsupp AS (
+        SELECT ps_partkey, ps_suppkey, ps_availqty FROM partsupp WHERE ps_availqty > 100
+      )
+      SELECT p_partkey, p_name FROM part WHERE p_partkey IN (
+        SELECT ps_partkey FROM cte_partsupp WHERE (ps_partkey, ps_suppkey) IN (
+          SELECT l_partkey, l_suppkey FROM lineitem WHERE l_quantity > (
+            SELECT AVG(ps_availqty) * 0.01 FROM cte_partsupp
+          ) GROUP BY l_partkey, l_suppkey
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty` from `partsupp_col_index` as `partsupp_col_index` where (`ps_availqty` > ?)")
+        semihashjoin(condition="p_partkey = ps_partkey", type="semi", build="inner")
+          osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index`")
+          exchange(distribution=broadcast, collation=[])
+            project(ps_partkey="ps_partkey")
+              semihashjoin(condition="ps_partkey = l_partkey and ps_suppkey = l_suppkey", type="semi", build="inner")
+                cteconsumer(cte_id="0_0", projects=[$0, $1])
+                exchange(distribution=broadcast, collation=[])
+                  hashagg(group="l_partkey,l_suppkey")
+                    exchange(distribution=hash[0]20, collation=[])
+                      partialhashagg(group="l_partkey,l_suppkey")
+                        nljoin(condition="l_quantity > $f0", type="inner")
+                          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                          exchange(distribution=broadcast, collation=[])
+                            hashagg($f0="single_value(avg(ps_availqty) * 0.01)")
+                              project(avg(ps_availqty) * 0.01="$f0 / $f1 * ?1")
+                                hashagg($f0="sum($f0)", $f1="sum($f1)")
+                                  exchange(distribution=single, collation=[])
+                                    partialhashagg($f0="sum(ps_availqty)", $f1="count()")
+                                      cteconsumer(cte_id="0_1", projects=[$2])
+  - sql: |
+      WITH cte_orders_summary AS (
+        SELECT o_custkey, SUM(o_totalprice) as total_spent FROM orders GROUP BY o_custkey
+      )
+      SELECT c_name, c_phone FROM customer WHERE c_custkey IN (
+        SELECT o_custkey FROM cte_orders_summary WHERE total_spent > (
+          SELECT AVG(total_spent) * 2 FROM cte_orders_summary
+        ) AND o_custkey IN (
+          SELECT DISTINCT o_custkey FROM orders WHERE o_orderdate >= '1995-01-01'
+          AND o_orderkey IN (
+            SELECT l_orderkey FROM lineitem GROUP BY l_orderkey HAVING COUNT(*) > 5
+          )
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          hashagg(group="o_custkey", total_spent="sum(total_spent)")
+            exchange(distribution=hash[0]20, collation=[])
+              partialhashagg(group="o_custkey", total_spent="sum(o_totalprice)")
+                osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_custkey`, `o_totalprice` from `orders_col_index` as `orders_col_index`")
+        project(c_name="c_name", c_phone="c_phone")
+          semihashjoin(condition="c_custkey = o_custkey", type="semi", build="inner")
+            osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_name`, `c_phone` from `customer_col_index` as `customer_col_index`")
+            exchange(distribution=broadcast, collation=[])
+              semihashjoin(condition="o_custkey = o_custkey", type="semi", build="inner")
+                exchange(distribution=hash[0]20, collation=[])
+                  project(o_custkey="o_custkey")
+                    nljoin(condition="total_spent > $f0", type="inner")
+                      exchange(distribution=single, collation=[])
+                        cteconsumer(cte_id="0_0")
+                      hashagg($f0="single_value(avg(total_spent) * 2)")
+                        project(avg(total_spent) * 2="$f0 / $f1 * ?0")
+                          hashagg($f0="sum($f0)", $f1="sum($f1)")
+                            exchange(distribution=single, collation=[])
+                              partialhashagg($f0="sum(total_spent)", $f1="count()")
+                                cteconsumer(cte_id="0_1", projects=[$1])
+                hashagg(group="o_custkey")
+                  exchange(distribution=hash[0]20, collation=[])
+                    partialhashagg(group="o_custkey")
+                      semihashjoin(condition="o_orderkey = l_orderkey", type="semi", build="outer")
+                        exchange(distribution=hash[0]20, collation=[])
+                          osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index` where (`o_orderdate` >= ?)")
+                        project(l_orderkey="l_orderkey")
+                          filter(condition="$f1 > ?2")
+                            hashagg(group="l_orderkey", $f1="sum($f1)")
+                              exchange(distribution=hash[0]20, collation=[])
+                                partialhashagg(group="l_orderkey", $f1="count()")
+                                  osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      WITH cte_supplier_parts AS (
+        SELECT ps_suppkey, ps_partkey, ps_supplycost FROM partsupp WHERE ps_supplycost > 10
+      )
+      SELECT s_name, s_address FROM supplier WHERE s_suppkey IN (
+        SELECT ps_suppkey FROM cte_supplier_parts WHERE ps_partkey IN (
+          SELECT p_partkey FROM part WHERE p_type LIKE '%COPPER%'
+        ) AND ps_supplycost < (
+          SELECT MIN(ps_supplycost) * 1.2 FROM cte_supplier_parts cte2 
+          WHERE cte2.ps_partkey = cte_supplier_parts.ps_partkey
+        )
+      ) AND s_nationkey IN (SELECT n_nationkey FROM nation WHERE n_name = 'CHINA')
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          project(ps_suppkey="ps_suppkey", ps_partkey="ps_partkey", ps_supplycost="ps_supplycost")
+            osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_partkey`, `ps_suppkey`, `ps_supplycost` from `partsupp_col_index` as `partsupp_col_index` where (`ps_supplycost` > ?)")
+        project(s_name="s_name", s_address="s_address")
+          semihashjoin(condition="s_nationkey = n_nationkey", type="semi", build="inner")
+            project(s_name="s_name", s_address="s_address", s_nationkey="s_nationkey")
+              semihashjoin(condition="s_suppkey = ps_suppkey", type="semi", build="outer")
+                exchange(distribution=hash[0]20, collation=[])
+                  osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `s_suppkey`, `s_name`, `s_address`, `s_nationkey` from `supplier_col_index` as `supplier_col_index`")
+                exchange(distribution=hash[0]20, collation=[])
+                  cteanchor(cte_id=1)
+                    cteproducer(cte_id=1)
+                      semihashjoin(condition="ps_partkey = p_partkey", type="semi", build="inner")
+                        cteconsumer(cte_id="0_0")
+                        exchange(distribution=broadcast, collation=[])
+                          osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey` from `part_col_index` as `part_col_index` where (`p_type` like ?)")
+                    project(ps_suppkey="ps_suppkey")
+                      hashjoin(condition="ps_partkey = ps_partkey and ps_supplycost < $f1", type="inner")
+                        cteconsumer(cte_id="1_2", projects=[$0, $1, $2])
+                        exchange(distribution=broadcast, collation=[])
+                          project(ps_partkey="ps_partkey0", $f1="$f1")
+                            hashjoin(condition="ps_partkey <=> ps_partkey", type="right", build="right")
+                              hashagg(group="ps_partkey", $f1="single_value(__*__)")
+                                hashjoin(condition="ps_partkey <=> ps_partkey0", type="left", build="left")
+                                  hashagg(group="ps_partkey")
+                                    exchange(distribution=hash[0]20, collation=[])
+                                      partialhashagg(group="ps_partkey")
+                                        cteconsumer(cte_id="1_0")
+                                  project(ps_partkey0="ps_partkey0", __*__="$f1 * ?2")
+                                    hashagg(group="ps_partkey0", $f1="min($f1)")
+                                      exchange(distribution=hash[0]20, collation=[])
+                                        partialhashagg(group="ps_partkey0", $f1="min(ps_supplycost)")
+                                          cteconsumer(cte_id="0_1", projects=[$2, $1], conditions=[=($1, $1)])
+                              hashagg(group="ps_partkey")
+                                exchange(distribution=hash[0]20, collation=[])
+                                  partialhashagg(group="ps_partkey")
+                                    cteconsumer(cte_id="1_1")
+            exchange(distribution=broadcast, collation=[])
+              osstablescan(tables="nation_col_index[p1]", sql="select `n_nationkey` from `nation_col_index` as `nation_col_index` where (`n_name` = ?)")
+  - sql: |
+      WITH cte1 AS (
+        SELECT o_custkey, SUM(o_totalprice) as total FROM orders GROUP BY o_custkey
+      ), cte2 AS (
+        SELECT c_custkey, c_nationkey FROM customer WHERE c_acctbal > 1000
+      )
+      SELECT * FROM cte1 WHERE o_custkey IN (
+        SELECT c_custkey FROM cte2 WHERE c_nationkey IN (
+          SELECT n_nationkey FROM nation WHERE n_regionkey = (
+            SELECT r_regionkey FROM region WHERE r_name = 'ASIA'
+          )
+        )
+      ) AND total > (SELECT AVG(total) FROM cte1)
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          hashagg(group="o_custkey", total="sum(total)")
+            exchange(distribution=hash[0]20, collation=[])
+              partialhashagg(group="o_custkey", total="sum(o_totalprice)")
+                osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_custkey`, `o_totalprice` from `orders_col_index` as `orders_col_index`")
+        project(o_custkey="o_custkey", total="total")
+          nljoin(condition="total > /", type="inner")
+            exchange(distribution=single, collation=[])
+              semihashjoin(condition="o_custkey = c_custkey", type="semi", build="outer")
+                exchange(distribution=hash[0]20, collation=[])
+                  cteconsumer(cte_id="0_0")
+                exchange(distribution=hash[0]20, collation=[])
+                  project(c_custkey="c_custkey")
+                    semihashjoin(condition="c_nationkey = n_nationkey", type="semi", build="inner")
+                      osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_nationkey` from `customer_col_index` as `customer_col_index` where (`c_acctbal` > ?)")
+                      exchange(distribution=broadcast, collation=[])
+                        project(n_nationkey="n_nationkey")
+                          hashjoin(condition="$f0 = n_regionkey", type="inner")
+                            osstablescan(tables="nation_col_index[p1]", partition=[remote], sql="select `n_nationkey`, `n_regionkey` from `nation_col_index` as `nation_col_index`")
+                            exchange(distribution=broadcast, collation=[])
+                              hashagg($f0="single_value(r_regionkey)")
+                                exchange(distribution=single, collation=[])
+                                  osstablescan(tables="region_col_index[p1]", sql="select `r_regionkey` from `region_col_index` as `region_col_index` where (`r_name` = ?)")
+            project(/="$f0 / $f1")
+              hashagg($f0="sum($f0)", $f1="sum($f1)")
+                exchange(distribution=single, collation=[])
+                  partialhashagg($f0="sum(total)", $f1="count()")
+                    cteconsumer(cte_id="0_1", projects=[$1])
+  - sql: |
+      WITH cte_orders AS (
+        SELECT o_orderkey, o_custkey FROM orders WHERE o_orderdate > '1995-01-01'
+        AND o_custkey IN (
+          SELECT c_custkey FROM customer WHERE c_nationkey IN (
+            SELECT n_nationkey FROM nation WHERE n_name LIKE '%CHINA%'
+          )
+        )
+      )
+      SELECT * FROM lineitem WHERE l_orderkey IN (
+        SELECT o_orderkey FROM cte_orders WHERE o_custkey > (
+          SELECT MIN(o_custkey) FROM cte_orders
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          semihashjoin(condition="o_custkey = c_custkey", type="semi", build="outer")
+            exchange(distribution=hash[1]20, collation=[])
+              osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index` where (`o_orderdate` > ?)")
+            exchange(distribution=hash[0]20, collation=[])
+              project(c_custkey="c_custkey")
+                semihashjoin(condition="c_nationkey = n_nationkey", type="semi", build="inner")
+                  osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_nationkey` from `customer_col_index` as `customer_col_index`")
+                  exchange(distribution=broadcast, collation=[])
+                    osstablescan(tables="nation_col_index[p1]", sql="select `n_nationkey` from `nation_col_index` as `nation_col_index` where (`n_name` like ?)")
+        semihashjoin(condition="l_orderkey = o_orderkey", type="semi", build="inner")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem_col_index` as `lineitem_col_index`")
+          exchange(distribution=broadcast, collation=[])
+            project(o_orderkey="o_orderkey")
+              nljoin(condition="o_custkey > min(o_custkey)", type="inner")
+                cteconsumer(cte_id="0_0")
+                exchange(distribution=broadcast, collation=[])
+                  hashagg(min(o_custkey)="min(min(o_custkey))")
+                    exchange(distribution=single, collation=[])
+                      partialhashagg(min(o_custkey)="min(o_custkey)")
+                        cteconsumer(cte_id="0_1", projects=[$1])
+  - sql: |
+      WITH RECURSIVE cte_supplier AS (
+        SELECT s_suppkey, s_nationkey, s_acctbal FROM supplier WHERE s_suppkey < 100
+        UNION ALL
+        SELECT s.s_suppkey, s.s_nationkey, s.s_acctbal FROM supplier s
+        JOIN cte_supplier c ON s.s_nationkey = c.s_nationkey WHERE s.s_suppkey < 200
+      )
+      SELECT * FROM partsupp WHERE ps_suppkey IN (
+        SELECT s_suppkey FROM cte_supplier WHERE s_acctbal > (
+          SELECT AVG(s_acctbal) FROM cte_supplier
+        )
+      )
+    plan: |
+      semihashjoin(condition="ps_suppkey = s_suppkey", type="semi", build="inner")
+        gather(concurrent=true)
+          logicalview(tables="partsupp[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty`, `ps_supplycost`, `ps_comment` from `partsupp` as `partsupp`")
+        project(s_suppkey="s_suppkey")
+          nljoin(condition="s_acctbal > $f0 / $f1", type="inner")
+            hashagg($f0="sum(s_acctbal)", $f1="count()")
+              recursivecteanchor(cte_target="cte_supplier")
+            recursivecte(cte_name="cte_supplier", offset=null, fetch=null)
+              gather(concurrent=true)
+                logicalview(tables="supplier[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `s_suppkey`, `s_nationkey`, `s_acctbal` from `supplier` as `supplier` where (`s_suppkey` < ?)")
+              project(s_suppkey="s_suppkey0", s_nationkey="s_nationkey0", s_acctbal="s_acctbal0")
+                bkajoin(condition="s_nationkey = s_nationkey", type="inner")
+                  recursivecteanchor(cte_target="cte_supplier")
+                  gather(concurrent=true)
+                    logicalview(tables="supplier[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `s_suppkey`, `s_nationkey`, `s_acctbal` from `supplier` as `supplier` where ((`s_suppkey` < ?) and (`s_nationkey` in (...)))")
+  - sql: |
+      WITH cte1 AS (
+        SELECT p_partkey, p_retailprice FROM part WHERE p_size > 10
+      ), cte2 AS (
+        WITH inner_cte AS (
+          SELECT ps_partkey, ps_suppkey FROM partsupp WHERE ps_availqty > 50
+        )
+        SELECT ps_partkey FROM inner_cte WHERE ps_suppkey IN (
+          SELECT s_suppkey FROM supplier WHERE s_acctbal > 0
+        )
+      )
+      SELECT * FROM cte1 WHERE p_partkey IN (
+        SELECT ps_partkey FROM cte2
+      ) AND p_retailprice > (SELECT AVG(p_retailprice) FROM cte1)
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `p_partkey`, `p_retailprice` from `part_col_index` as `part_col_index` where (`p_size` > ?)")
+        project(p_partkey="p_partkey", p_retailprice="p_retailprice")
+          nljoin(condition="p_retailprice > /", type="inner")
+            semihashjoin(condition="p_partkey = ps_partkey", type="semi", build="outer")
+              exchange(distribution=hash[0]20, collation=[])
+                cteconsumer(cte_id="0_0")
+              exchange(distribution=hash[0]20, collation=[])
+                project(ps_partkey="ps_partkey")
+                  semihashjoin(condition="ps_suppkey = s_suppkey", type="semi", build="inner")
+                    osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_partkey`, `ps_suppkey` from `partsupp_col_index` as `partsupp_col_index` where (`ps_availqty` > ?)")
+                    exchange(distribution=broadcast, collation=[])
+                      osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `s_suppkey` from `supplier_col_index` as `supplier_col_index` where (`s_acctbal` > ?)")
+            exchange(distribution=broadcast, collation=[])
+              project(/="$f0 / $f1")
+                hashagg($f0="sum($f0)", $f1="sum($f1)")
+                  exchange(distribution=single, collation=[])
+                    partialhashagg($f0="sum(p_retailprice)", $f1="count()")
+                      cteconsumer(cte_id="0_1", projects=[$1])
+  - sql: |
+      WITH cte_customer AS (
+        SELECT c_custkey, c_nationkey FROM customer WHERE c_custkey IN (
+          SELECT o_custkey FROM orders WHERE o_totalprice > (
+            SELECT AVG(o_totalprice) FROM orders
+          )
+        )
+      )
+      SELECT n_name FROM nation WHERE n_nationkey IN (
+        SELECT c_nationkey FROM cte_customer WHERE EXISTS (
+          SELECT 1 FROM supplier WHERE s_nationkey = cte_customer.c_nationkey
+          AND s_acctbal > (SELECT MAX(s_acctbal) * 0.5 FROM supplier)
+        )
+      )
+    plan: |
+      project(n_name="n_name")
+        semihashjoin(condition="n_nationkey = c_nationkey", type="semi", build="inner")
+          exchange(distribution=hash[0]20, collation=[])
+            osstablescan(tables="nation_col_index[p1]", sql="select `n_nationkey`, `n_name` from `nation_col_index` as `nation_col_index`")
+          semihashjoin(condition="c_nationkey = s_nationkey", type="semi", build="outer")
+            project(c_nationkey="c_nationkey")
+              exchange(distribution=hash[1]20, collation=[])
+                semihashjoin(condition="c_custkey = o_custkey", type="semi", build="outer")
+                  exchange(distribution=hash[0]20, collation=[])
+                    project(c_custkey="c_custkey", c_nationkey="c_nationkey")
+                      osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer_col_index` as `customer_col_index`")
+                  exchange(distribution=hash[0]20, collation=[])
+                    project(o_custkey="o_custkey")
+                      nljoin(condition="o_totalprice > $f0 / $f1", type="inner")
+                        project(o_custkey="o_custkey", o_totalprice="o_totalprice")
+                          osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders_col_index` as `orders_col_index`")
+                        exchange(distribution=broadcast, collation=[])
+                          hashagg($f0="sum($f0)", $f1="sum($f1)")
+                            exchange(distribution=single, collation=[])
+                              partialhashagg($f0="sum(o_totalprice)", $f1="count()")
+                                osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `o_orderkey`, `o_custkey`, `o_orderstatus`, `o_totalprice`, `o_orderdate`, `o_orderpriority`, `o_clerk`, `o_shippriority`, `o_comment` from `orders_col_index` as `orders_col_index`")
+            exchange(distribution=hash[0]20, collation=[])
+              project(s_nationkey="s_nationkey")
+                nljoin(condition="s_acctbal > $f0", type="inner")
+                  osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `s_nationkey`, `s_acctbal` from `supplier_col_index` as `supplier_col_index` where (`s_nationkey` = `s_nationkey`)")
+                  exchange(distribution=broadcast, collation=[])
+                    hashagg($f0="single_value(max(s_acctbal) * 0.5)")
+                      project(max(s_acctbal) * 0.5="$f0 * ?1")
+                        hashagg($f0="max($f0)")
+                          exchange(distribution=single, collation=[])
+                            partialhashagg($f0="max(s_acctbal)")
+                              osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_acctbal` from `supplier_col_index` as `supplier_col_index`")
+  - sql: |
+      /*+TDDL:cmd_extra(CTE_MODE=REUSE)*/WITH cte_customer AS (
+        SELECT c_custkey, c_nationkey FROM customer WHERE c_custkey IN (
+          SELECT o_custkey FROM orders WHERE o_totalprice > (
+            SELECT AVG(o_totalprice) FROM orders
+          )
+        )
+      )
+      SELECT n_name FROM nation WHERE n_nationkey IN (
+        SELECT c_nationkey FROM cte_customer WHERE EXISTS (
+          SELECT 1 FROM supplier WHERE s_nationkey = cte_customer.c_nationkey
+          AND s_acctbal > (SELECT MAX(s_acctbal) * 0.5 FROM supplier)
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          project(c_nationkey="c_nationkey")
+            semihashjoin(condition="c_custkey = o_custkey", type="semi", build="outer")
+              exchange(distribution=hash[0]20, collation=[])
+                osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey`, `c_nationkey` from `customer_col_index` as `customer_col_index`")
+              exchange(distribution=hash[0]20, collation=[])
+                project(o_custkey="o_custkey")
+                  nljoin(condition="o_totalprice > /", type="inner")
+                    osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_custkey`, `o_totalprice` from `orders_col_index` as `orders_col_index`")
+                    exchange(distribution=broadcast, collation=[])
+                      project(/="$f0 / $f1")
+                        hashagg($f0="sum($f0)", $f1="sum($f1)")
+                          exchange(distribution=single, collation=[])
+                            partialhashagg($f0="sum(o_totalprice)", $f1="count()")
+                              osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `o_totalprice` from `orders_col_index` as `orders_col_index`")
+        project(n_name="n_name")
+          semihashjoin(condition="n_nationkey = c_nationkey", type="semi", build="inner")
+            osstablescan(tables="nation_col_index[p1]", partition=[remote], sql="select `n_nationkey`, `n_name` from `nation_col_index` as `nation_col_index`")
+            exchange(distribution=broadcast, collation=[])
+              cteanchor(cte_id=1)
+                cteproducer(cte_id=1)
+                  cteconsumer(cte_id="0_0")
+                semihashjoin(condition="c_nationkey = s_nationkey", type="semi", build="outer")
+                  exchange(distribution=hash[0]20, collation=[])
+                    cteconsumer(cte_id="1_0")
+                  exchange(distribution=hash[0]20, collation=[])
+                    project(s_nationkey="s_nationkey")
+                      nljoin(condition="s_acctbal > $f0", type="inner")
+                        osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `s_nationkey`, `s_acctbal` from `supplier_col_index` as `supplier_col_index` where (`s_nationkey` = `s_nationkey`)")
+                        exchange(distribution=broadcast, collation=[])
+                          hashagg($f0="single_value(max(s_acctbal) * 0.5)")
+                            project(max(s_acctbal) * 0.5="$f0 * ?1")
+                              hashagg($f0="max($f0)")
+                                exchange(distribution=single, collation=[])
+                                  partialhashagg($f0="max(s_acctbal)")
+                                    osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_acctbal` from `supplier_col_index` as `supplier_col_index`")
+  - sql: |
+      WITH cte1 AS (
+        SELECT l_orderkey, l_partkey, l_quantity FROM lineitem WHERE l_shipdate >= '1994-01-01'
+      ), cte2 AS (
+        SELECT o_orderkey, o_custkey FROM orders WHERE o_orderkey IN (
+          SELECT l_orderkey FROM cte1 WHERE l_quantity > (
+            SELECT AVG(l_quantity) FROM cte1
+          )
+        )
+      ), cte3 AS (
+        SELECT c_custkey, c_name FROM customer WHERE c_custkey IN (
+          SELECT o_custkey FROM cte2
+        )
+      )
+      SELECT * FROM cte3 WHERE c_custkey IN (
+        SELECT o_custkey FROM orders WHERE o_totalprice > 10000
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index` where (`l_shipdate` >= ?)")
+        semihashjoin(condition="c_custkey = o_custkey", type="semi", build="outer")
+          exchange(distribution=hash[0]20, collation=[])
+            semihashjoin(condition="c_custkey = o_custkey", type="semi", build="inner")
+              osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_name` from `customer_col_index` as `customer_col_index`")
+              exchange(distribution=broadcast, collation=[])
+                project(o_custkey="o_custkey")
+                  semihashjoin(condition="o_orderkey = l_orderkey", type="semi", build="inner")
+                    osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index`")
+                    exchange(distribution=broadcast, collation=[])
+                      project(l_orderkey="l_orderkey")
+                        nljoin(condition="l_quantity > /", type="inner")
+                          cteconsumer(cte_id="0_4")
+                          exchange(distribution=broadcast, collation=[])
+                            project(/="$f0 / $f1")
+                              hashagg($f0="sum($f0)", $f1="sum($f1)")
+                                exchange(distribution=single, collation=[])
+                                  partialhashagg($f0="sum(l_quantity)", $f1="count()")
+                                    cteconsumer(cte_id="0_5", projects=[$1])
+          exchange(distribution=hash[0]20, collation=[])
+            osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_custkey` from `orders_col_index` as `orders_col_index` where (`o_totalprice` > ?)")
+  - sql: |
+      /*+TDDL:cmd_extra(CTE_MODE=REUSE)*/WITH cte1 AS (
+        SELECT l_orderkey, l_partkey, l_quantity FROM lineitem WHERE l_shipdate >= '1994-01-01'
+      ), cte2 AS (
+        SELECT o_orderkey, o_custkey FROM orders WHERE o_orderkey IN (
+          SELECT l_orderkey FROM cte1 WHERE l_quantity > (
+            SELECT AVG(l_quantity) FROM cte1
+          )
+        )
+      ), cte3 AS (
+        SELECT c_custkey, c_name FROM customer WHERE c_custkey IN (
+          SELECT o_custkey FROM cte2
+        )
+      )
+      SELECT * FROM cte3 WHERE c_custkey IN (
+        SELECT o_custkey FROM orders WHERE o_totalprice > 10000
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index` where (`l_shipdate` >= ?)")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            project(o_custkey="o_custkey")
+              semihashjoin(condition="o_orderkey = l_orderkey", type="semi", build="inner")
+                osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index`")
+                exchange(distribution=broadcast, collation=[])
+                  project(l_orderkey="l_orderkey")
+                    nljoin(condition="l_quantity > /", type="inner")
+                      cteconsumer(cte_id="0_0")
+                      exchange(distribution=broadcast, collation=[])
+                        project(/="$f0 / $f1")
+                          hashagg($f0="sum($f0)", $f1="sum($f1)")
+                            exchange(distribution=single, collation=[])
+                              partialhashagg($f0="sum(l_quantity)", $f1="count()")
+                                cteconsumer(cte_id="0_1", projects=[$1])
+          cteanchor(cte_id=2)
+            cteproducer(cte_id=2)
+              semihashjoin(condition="c_custkey = o_custkey", type="semi", build="inner")
+                osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_name` from `customer_col_index` as `customer_col_index`")
+                exchange(distribution=broadcast, collation=[])
+                  cteconsumer(cte_id="1_0")
+            semihashjoin(condition="c_custkey = o_custkey", type="semi", build="outer")
+              exchange(distribution=hash[0]20, collation=[])
+                cteconsumer(cte_id="2_0")
+              exchange(distribution=hash[0]20, collation=[])
+                osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_custkey` from `orders_col_index` as `orders_col_index` where (`o_totalprice` > ?)")
+  - sql: |
+      WITH cte_parts AS (
+        SELECT p_partkey FROM part WHERE p_partkey IN (
+          SELECT ps_partkey FROM partsupp WHERE ps_supplycost < (
+            SELECT AVG(ps_supplycost) FROM partsupp
+          ) AND ps_suppkey IN (
+            SELECT s_suppkey FROM supplier WHERE s_nationkey = 1
+          )
+        )
+      )
+      SELECT l_orderkey, SUM(l_extendedprice) as total_price FROM lineitem 
+      WHERE l_partkey IN (SELECT p_partkey FROM cte_parts)
+      GROUP BY l_orderkey
+      HAVING SUM(l_extendedprice) > (
+        SELECT AVG(total_price) FROM (
+          SELECT SUM(l_extendedprice) as total_price FROM lineitem GROUP BY l_orderkey
+        ) t
+      )
+    plan: |
+      project(l_orderkey="l_orderkey", total_price="total_price")
+        nljoin(condition="total_price > $f0 / $f1", type="inner")
+          hashagg(group="l_orderkey", total_price="sum(total_price)")
+            exchange(distribution=hash[0]20, collation=[])
+              partialhashagg(group="l_orderkey", total_price="sum(l_extendedprice)")
+                semihashjoin(condition="l_partkey = p_partkey", type="semi", build="inner")
+                  osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey`, `l_extendedprice` from `lineitem_col_index` as `lineitem_col_index`")
+                  exchange(distribution=broadcast, collation=[])
+                    semihashjoin(condition="p_partkey = ps_partkey", type="semi", build="inner")
+                      exchange(distribution=hash[0]20, collation=[])
+                        osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey` from `part_col_index` as `part_col_index`")
+                      exchange(distribution=hash[0]20, collation=[])
+                        project(ps_partkey="ps_partkey")
+                          semihashjoin(condition="ps_suppkey = s_suppkey", type="semi", build="inner")
+                            project(ps_partkey="ps_partkey", ps_suppkey="ps_suppkey")
+                              nljoin(condition="ps_supplycost < $f0 / $f1", type="inner")
+                                osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_partkey`, `ps_suppkey`, `ps_supplycost` from `partsupp_col_index` as `partsupp_col_index`")
+                                exchange(distribution=broadcast, collation=[])
+                                  hashagg($f0="sum($f0)", $f1="sum($f1)")
+                                    exchange(distribution=single, collation=[])
+                                      partialhashagg($f0="sum(ps_supplycost)", $f1="count()")
+                                        osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_supplycost` from `partsupp_col_index` as `partsupp_col_index`")
+                            exchange(distribution=broadcast, collation=[])
+                              osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `s_suppkey` from `supplier_col_index` as `supplier_col_index` where (`s_nationkey` = ?)")
+          exchange(distribution=broadcast, collation=[])
+            hashagg($f0="sum($f0)", $f1="sum($f1)")
+              exchange(distribution=single, collation=[])
+                partialhashagg($f0="sum(total_price)", $f1="count()")
+                  hashagg(group="l_orderkey", total_price="sum(total_price)")
+                    exchange(distribution=hash[0]20, collation=[])
+                      partialhashagg(group="l_orderkey", total_price="sum(l_extendedprice)")
+                        osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_extendedprice` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      /*+TDDL:cmd_extra(CTE_MODE=REUSE)*/WITH cte_parts AS (
+        SELECT p_partkey FROM part WHERE p_partkey IN (
+          SELECT ps_partkey FROM partsupp WHERE ps_supplycost < (
+            SELECT AVG(ps_supplycost) FROM partsupp
+          ) AND ps_suppkey IN (
+            SELECT s_suppkey FROM supplier WHERE s_nationkey = 1
+          )
+        )
+      )
+      SELECT l_orderkey, SUM(l_extendedprice) as total_price FROM lineitem 
+      WHERE l_partkey IN (SELECT p_partkey FROM cte_parts)
+      GROUP BY l_orderkey
+      HAVING SUM(l_extendedprice) > (
+        SELECT AVG(total_price) FROM (
+          SELECT SUM(l_extendedprice) as total_price FROM lineitem GROUP BY l_orderkey
+        ) t
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          semihashjoin(condition="p_partkey = ps_partkey", type="semi", build="inner")
+            exchange(distribution=hash[0]20, collation=[])
+              osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey` from `part_col_index` as `part_col_index`")
+            exchange(distribution=hash[0]20, collation=[])
+              project(ps_partkey="ps_partkey")
+                semihashjoin(condition="ps_suppkey = s_suppkey", type="semi", build="inner")
+                  project(ps_partkey="ps_partkey", ps_suppkey="ps_suppkey")
+                    nljoin(condition="ps_supplycost < /", type="inner")
+                      osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_partkey`, `ps_suppkey`, `ps_supplycost` from `partsupp_col_index` as `partsupp_col_index`")
+                      exchange(distribution=broadcast, collation=[])
+                        project(/="$f0 / $f1")
+                          hashagg($f0="sum($f0)", $f1="sum($f1)")
+                            exchange(distribution=single, collation=[])
+                              partialhashagg($f0="sum(ps_supplycost)", $f1="count()")
+                                osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_supplycost` from `partsupp_col_index` as `partsupp_col_index`")
+                  exchange(distribution=broadcast, collation=[])
+                    osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `s_suppkey` from `supplier_col_index` as `supplier_col_index` where (`s_nationkey` = ?)")
+        project(l_orderkey="l_orderkey", total_price="total_price")
+          nljoin(condition="total_price > /", type="inner")
+            hashagg(group="l_orderkey", total_price="sum(total_price)")
+              exchange(distribution=hash[0]20, collation=[])
+                partialhashagg(group="l_orderkey", total_price="sum(l_extendedprice)")
+                  semihashjoin(condition="l_partkey = p_partkey", type="semi", build="inner")
+                    osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey`, `l_extendedprice` from `lineitem_col_index` as `lineitem_col_index`")
+                    exchange(distribution=broadcast, collation=[])
+                      cteconsumer(cte_id="0_0", projects=[$0])
+            exchange(distribution=broadcast, collation=[])
+              project(/="$f0 / $f1")
+                hashagg($f0="sum($f0)", $f1="sum($f1)")
+                  exchange(distribution=single, collation=[])
+                    partialhashagg($f0="sum(total_price)", $f1="count()")
+                      hashagg(group="l_orderkey", total_price="sum(total_price)")
+                        exchange(distribution=hash[0]20, collation=[])
+                          partialhashagg(group="l_orderkey", total_price="sum(l_extendedprice)")
+                            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_extendedprice` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      WITH cte_base AS (
+        WITH cte_inner AS (
+          SELECT s_suppkey, s_nationkey FROM supplier WHERE s_acctbal > 100
+        )
+        SELECT n_nationkey, n_name FROM nation WHERE n_nationkey IN (
+          SELECT s_nationkey FROM cte_inner WHERE s_suppkey IN (
+            SELECT ps_suppkey FROM partsupp WHERE ps_availqty > 100
+          )
+        )
+      )
+      SELECT c_name FROM customer WHERE c_nationkey IN (
+        SELECT n_nationkey FROM cte_base WHERE n_name LIKE '%A%'
+      ) AND c_custkey IN (
+        SELECT o_custkey FROM orders WHERE o_orderdate >= '1995-01-01'
+      )
+    plan: |
+      project(c_name="c_name")
+        semihashjoin(condition="c_custkey = o_custkey", type="semi", build="inner")
+          project(c_custkey="c_custkey", c_name="c_name")
+            semihashjoin(condition="c_nationkey = n_nationkey", type="semi", build="inner")
+              osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_name`, `c_nationkey` from `customer_col_index` as `customer_col_index`")
+              exchange(distribution=broadcast, collation=[])
+                semihashjoin(condition="n_nationkey = s_nationkey", type="semi", build="outer")
+                  exchange(distribution=hash[0]20, collation=[])
+                    osstablescan(tables="nation_col_index[p1]", sql="select `n_nationkey` from `nation_col_index` as `nation_col_index` where (`n_name` like ?)")
+                  exchange(distribution=hash[0]20, collation=[])
+                    project(s_nationkey="s_nationkey")
+                      semihashjoin(condition="s_suppkey = ps_suppkey", type="semi", build="outer")
+                        exchange(distribution=hash[0]20, collation=[])
+                          osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `s_suppkey`, `s_nationkey` from `supplier_col_index` as `supplier_col_index` where (`s_acctbal` > ?)")
+                        exchange(distribution=hash[0]20, collation=[])
+                          osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `ps_suppkey` from `partsupp_col_index` as `partsupp_col_index` where (`ps_availqty` > ?)")
+          exchange(distribution=broadcast, collation=[])
+            osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_custkey` from `orders_col_index` as `orders_col_index` where (`o_orderdate` >= ?)")
+  - sql: |
+      /*+TDDL:cmd_extra(CTE_MODE=REUSE)*/WITH cte_base AS (
+        WITH cte_inner AS (
+          SELECT s_suppkey, s_nationkey FROM supplier WHERE s_acctbal > 100
+        )
+        SELECT n_nationkey, n_name FROM nation WHERE n_nationkey IN (
+          SELECT s_nationkey FROM cte_inner WHERE s_suppkey IN (
+            SELECT ps_suppkey FROM partsupp WHERE ps_availqty > 100
+          )
+        )
+      )
+      SELECT c_name FROM customer WHERE c_nationkey IN (
+        SELECT n_nationkey FROM cte_base WHERE n_name LIKE '%A%'
+      ) AND c_custkey IN (
+        SELECT o_custkey FROM orders WHERE o_orderdate >= '1995-01-01'
+      )
+    plan: |
+      cteanchor(cte_id=1)
+        cteproducer(cte_id=1)
+          cteanchor(cte_id=0)
+            cteproducer(cte_id=0)
+              osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_suppkey`, `s_nationkey` from `supplier_col_index` as `supplier_col_index` where (`s_acctbal` > ?)")
+            semihashjoin(condition="n_nationkey = s_nationkey", type="semi", build="outer")
+              exchange(distribution=hash[0]20, collation=[])
+                osstablescan(tables="nation_col_index[p1]", sql="select `n_nationkey`, `n_name` from `nation_col_index` as `nation_col_index` where (`n_name` like ?)")
+              exchange(distribution=hash[0]20, collation=[])
+                project(s_nationkey="s_nationkey")
+                  semihashjoin(condition="s_suppkey = ps_suppkey", type="semi", build="outer")
+                    exchange(distribution=hash[0]20, collation=[])
+                      cteconsumer(cte_id="0_0")
+                    exchange(distribution=hash[0]20, collation=[])
+                      osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `ps_suppkey` from `partsupp_col_index` as `partsupp_col_index` where (`ps_availqty` > ?)")
+        project(c_name="c_name")
+          semihashjoin(condition="c_custkey = o_custkey", type="semi", build="inner")
+            project(c_custkey="c_custkey", c_name="c_name")
+              semihashjoin(condition="c_nationkey = n_nationkey", type="semi", build="inner")
+                osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_name`, `c_nationkey` from `customer_col_index` as `customer_col_index`")
+                exchange(distribution=broadcast, collation=[])
+                  cteconsumer(cte_id="1_0", projects=[$0], conditions=[like($1, ?2)])
+            exchange(distribution=broadcast, collation=[])
+              osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_custkey` from `orders_col_index` as `orders_col_index` where (`o_orderdate` >= ?)")
+  - sql: |
+      WITH cte1 AS (
+        SELECT o_custkey, COUNT(*) as order_count FROM orders GROUP BY o_custkey
+      ), cte2 AS (
+        SELECT c_custkey, c_nationkey FROM customer WHERE c_custkey IN (
+          SELECT o_custkey FROM cte1 WHERE order_count > (
+            SELECT AVG(order_count) FROM cte1
+          )
+        )
+      )
+      SELECT s_name, s_address FROM supplier WHERE s_nationkey IN (
+        SELECT c_nationkey FROM cte2
+      ) AND s_suppkey IN (
+        SELECT ps_suppkey FROM partsupp WHERE (ps_partkey, ps_suppkey) IN (
+          SELECT l_partkey, l_suppkey FROM lineitem WHERE l_quantity > 10
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          hashagg(group="o_custkey", order_count="sum(order_count)")
+            exchange(distribution=hash[0]20, collation=[])
+              partialhashagg(group="o_custkey", order_count="count()")
+                osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_custkey` from `orders_col_index` as `orders_col_index`")
+        project(s_name="s_name", s_address="s_address")
+          semihashjoin(condition="s_suppkey = ps_suppkey", type="semi", build="inner")
+            project(s_suppkey="s_suppkey", s_name="s_name", s_address="s_address")
+              semihashjoin(condition="s_nationkey = c_nationkey", type="semi", build="inner")
+                osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_suppkey`, `s_name`, `s_address`, `s_nationkey` from `supplier_col_index` as `supplier_col_index`")
+                exchange(distribution=broadcast, collation=[])
+                  project(c_nationkey="c_nationkey")
+                    semihashjoin(condition="c_custkey = o_custkey", type="semi", build="inner")
+                      osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_nationkey` from `customer_col_index` as `customer_col_index`")
+                      project(o_custkey="o_custkey")
+                        exchange(distribution=broadcast, collation=[])
+                          nljoin(condition="order_count > /", type="inner")
+                            exchange(distribution=single, collation=[])
+                              cteconsumer(cte_id="0_2", projects=[$0, $1])
+                            project(/="$f0 / $f1")
+                              hashagg($f0="sum($f0)", $f1="sum($f1)")
+                                exchange(distribution=single, collation=[])
+                                  partialhashagg($f0="sum(order_count)", $f1="count(order_count)")
+                                    cteconsumer(cte_id="0_3", projects=[$1])
+            exchange(distribution=broadcast, collation=[])
+              project(ps_suppkey="ps_suppkey")
+                semihashjoin(condition="ps_partkey = l_partkey and ps_suppkey = l_suppkey", type="semi", build="outer")
+                  exchange(distribution=hash[0]20, collation=[])
+                    osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `ps_partkey`, `ps_suppkey` from `partsupp_col_index` as `partsupp_col_index`")
+                  exchange(distribution=hash[0]20, collation=[])
+                    osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_suppkey` from `lineitem_col_index` as `lineitem_col_index` where (`l_quantity` > ?)")
+  - sql: |
+      /*+TDDL:cmd_extra(CTE_MODE=REUSE)*/WITH cte1 AS (
+        SELECT o_custkey, COUNT(*) as order_count FROM orders GROUP BY o_custkey
+      ), cte2 AS (
+        SELECT c_custkey, c_nationkey FROM customer WHERE c_custkey IN (
+          SELECT o_custkey FROM cte1 WHERE order_count > (
+            SELECT AVG(order_count) FROM cte1
+          )
+        )
+      )
+      SELECT s_name, s_address FROM supplier WHERE s_nationkey IN (
+        SELECT c_nationkey FROM cte2
+      ) AND s_suppkey IN (
+        SELECT ps_suppkey FROM partsupp WHERE (ps_partkey, ps_suppkey) IN (
+          SELECT l_partkey, l_suppkey FROM lineitem WHERE l_quantity > 10
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          hashagg(group="o_custkey", order_count="sum(order_count)")
+            exchange(distribution=hash[0]20, collation=[])
+              partialhashagg(group="o_custkey", order_count="count()")
+                osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_custkey` from `orders_col_index` as `orders_col_index`")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            project(c_nationkey="c_nationkey")
+              semihashjoin(condition="c_custkey = o_custkey", type="semi", build="inner")
+                osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_nationkey` from `customer_col_index` as `customer_col_index`")
+                project(o_custkey="o_custkey")
+                  exchange(distribution=broadcast, collation=[])
+                    nljoin(condition="order_count > /", type="inner")
+                      exchange(distribution=single, collation=[])
+                        cteconsumer(cte_id="0_0", projects=[$0, $1])
+                      project(/="$f0 / $f1")
+                        hashagg($f0="sum($f0)", $f1="sum($f1)")
+                          exchange(distribution=single, collation=[])
+                            partialhashagg($f0="sum(order_count)", $f1="count(order_count)")
+                              cteconsumer(cte_id="0_1", projects=[$1])
+          project(s_name="s_name", s_address="s_address")
+            semihashjoin(condition="s_suppkey = ps_suppkey", type="semi", build="inner")
+              project(s_suppkey="s_suppkey", s_name="s_name", s_address="s_address")
+                semihashjoin(condition="s_nationkey = c_nationkey", type="semi", build="inner")
+                  osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_suppkey`, `s_name`, `s_address`, `s_nationkey` from `supplier_col_index` as `supplier_col_index`")
+                  exchange(distribution=broadcast, collation=[])
+                    cteconsumer(cte_id="1_0")
+              exchange(distribution=broadcast, collation=[])
+                project(ps_suppkey="ps_suppkey")
+                  semihashjoin(condition="ps_partkey = l_partkey and ps_suppkey = l_suppkey", type="semi", build="outer")
+                    exchange(distribution=hash[0]20, collation=[])
+                      osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `ps_partkey`, `ps_suppkey` from `partsupp_col_index` as `partsupp_col_index`")
+                    exchange(distribution=hash[0]20, collation=[])
+                      osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_suppkey` from `lineitem_col_index` as `lineitem_col_index` where (`l_quantity` > ?)")
+  - sql: |
+      WITH cte_lineitem AS (
+        SELECT l_orderkey, l_partkey FROM lineitem WHERE l_orderkey IN (
+          SELECT o_orderkey FROM orders WHERE o_custkey IN (
+            SELECT c_custkey FROM customer WHERE c_nationkey IN (
+              SELECT n_nationkey FROM nation WHERE n_regionkey = 1
+            )
+          )
+        )
+      )
+      SELECT p_name, p_type FROM part WHERE p_partkey IN (
+        SELECT l_partkey FROM cte_lineitem WHERE l_orderkey IN (
+          SELECT o_orderkey FROM orders WHERE o_totalprice > (
+            SELECT AVG(o_totalprice) * 1.5 FROM orders
+          )
+        )
+      )
+    plan: |
+      project(p_name="p_name", p_type="p_type")
+        semihashjoin(condition="p_partkey = l_partkey", type="semi", build="outer")
+          exchange(distribution=hash[0]20, collation=[])
+            osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name`, `p_type` from `part_col_index` as `part_col_index`")
+          exchange(distribution=hash[0]20, collation=[])
+            project(l_partkey="l_partkey")
+              semihashjoin(condition="l_orderkey = o_orderkey", type="semi", build="inner")
+                semihashjoin(condition="l_orderkey = o_orderkey", type="semi", build="inner")
+                  exchange(distribution=hash[0]20, collation=[])
+                    osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+                  exchange(distribution=hash[0]20, collation=[])
+                    project(o_orderkey="o_orderkey")
+                      nljoin(condition="o_totalprice > $f0", type="inner")
+                        osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_totalprice` from `orders_col_index` as `orders_col_index`")
+                        exchange(distribution=broadcast, collation=[])
+                          hashagg($f0="single_value(avg(o_totalprice) * 1.5)")
+                            project(avg(o_totalprice) * 1.5="$f0 / $f1 * ?1")
+                              hashagg($f0="sum($f0)", $f1="sum($f1)")
+                                exchange(distribution=single, collation=[])
+                                  partialhashagg($f0="sum(o_totalprice)", $f1="count()")
+                                    osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `o_totalprice` from `orders_col_index` as `orders_col_index`")
+                exchange(distribution=hash[0]20, collation=[])
+                  project(o_orderkey="o_orderkey")
+                    semihashjoin(condition="o_custkey = c_custkey", type="semi", build="inner")
+                      exchange(distribution=hash[1]20, collation=[])
+                        osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index`")
+                      exchange(distribution=hash[0]20, collation=[])
+                        project(c_custkey="c_custkey")
+                          semihashjoin(condition="c_nationkey = n_nationkey", type="semi", build="inner")
+                            osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_nationkey` from `customer_col_index` as `customer_col_index`")
+                            exchange(distribution=broadcast, collation=[])
+                              osstablescan(tables="nation_col_index[p1]", sql="select `n_nationkey` from `nation_col_index` as `nation_col_index` where (`n_regionkey` = ?)")
+  - sql: |
+      /*+TDDL:cmd_extra(CTE_MODE=REUSE)*/WITH cte_lineitem AS (
+        SELECT l_orderkey, l_partkey FROM lineitem WHERE l_orderkey IN (
+          SELECT o_orderkey FROM orders WHERE o_custkey IN (
+            SELECT c_custkey FROM customer WHERE c_nationkey IN (
+              SELECT n_nationkey FROM nation WHERE n_regionkey = 1
+            )
+          )
+        )
+      )
+      SELECT p_name, p_type FROM part WHERE p_partkey IN (
+        SELECT l_partkey FROM cte_lineitem WHERE l_orderkey IN (
+          SELECT o_orderkey FROM orders WHERE o_totalprice > (
+            SELECT AVG(o_totalprice) * 1.5 FROM orders
+          )
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          semihashjoin(condition="l_orderkey = o_orderkey", type="semi", build="inner")
+            exchange(distribution=hash[0]20, collation=[])
+              osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+            exchange(distribution=hash[0]20, collation=[])
+              project(o_orderkey="o_orderkey")
+                semihashjoin(condition="o_custkey = c_custkey", type="semi", build="inner")
+                  exchange(distribution=hash[1]20, collation=[])
+                    osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index`")
+                  exchange(distribution=hash[0]20, collation=[])
+                    project(c_custkey="c_custkey")
+                      semihashjoin(condition="c_nationkey = n_nationkey", type="semi", build="inner")
+                        osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_nationkey` from `customer_col_index` as `customer_col_index`")
+                        exchange(distribution=broadcast, collation=[])
+                          osstablescan(tables="nation_col_index[p1]", sql="select `n_nationkey` from `nation_col_index` as `nation_col_index` where (`n_regionkey` = ?)")
+        project(p_name="p_name", p_type="p_type")
+          semihashjoin(condition="p_partkey = l_partkey", type="semi", build="outer")
+            exchange(distribution=hash[0]20, collation=[])
+              osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name`, `p_type` from `part_col_index` as `part_col_index`")
+            exchange(distribution=hash[0]20, collation=[])
+              project(l_partkey="l_partkey")
+                semihashjoin(condition="l_orderkey = o_orderkey", type="semi", build="inner")
+                  exchange(distribution=hash[0]20, collation=[])
+                    cteconsumer(cte_id="0_0")
+                  exchange(distribution=hash[0]20, collation=[])
+                    project(o_orderkey="o_orderkey")
+                      nljoin(condition="o_totalprice > $f0", type="inner")
+                        osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_totalprice` from `orders_col_index` as `orders_col_index`")
+                        exchange(distribution=broadcast, collation=[])
+                          hashagg($f0="single_value(avg(o_totalprice) * 1.5)")
+                            project(avg(o_totalprice) * 1.5="$f0 / $f1 * ?1")
+                              hashagg($f0="sum($f0)", $f1="sum($f1)")
+                                exchange(distribution=single, collation=[])
+                                  partialhashagg($f0="sum(o_totalprice)", $f1="count()")
+                                    osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `o_totalprice` from `orders_col_index` as `orders_col_index`")
+  - sql: |
+      WITH cte1 AS (
+        SELECT ps_partkey, AVG(ps_supplycost) as avg_cost FROM partsupp GROUP BY ps_partkey
+      ), cte2 AS (
+        SELECT p_partkey, p_name FROM part WHERE p_partkey IN (
+          SELECT ps_partkey FROM cte1 WHERE avg_cost > (
+            SELECT AVG(avg_cost) FROM cte1
+          )
+        )
+      ), cte3 AS (
+        WITH nested_cte AS (
+          SELECT l_partkey, SUM(l_quantity) as total_qty FROM lineitem GROUP BY l_partkey
+        )
+        SELECT l_partkey FROM nested_cte WHERE total_qty > 100
+      )
+      SELECT * FROM cte2 WHERE p_partkey IN (SELECT l_partkey FROM cte3)
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          project(ps_partkey="ps_partkey", avg_cost="$f1 / $f2")
+            hashagg(group="ps_partkey", $f1="sum($f1)", $f2="sum($f2)")
+              exchange(distribution=hash[0]20, collation=[])
+                partialhashagg(group="ps_partkey", $f1="sum(ps_supplycost)", $f2="count()")
+                  osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `ps_partkey`, `ps_supplycost` from `partsupp_col_index` as `partsupp_col_index`")
+        semihashjoin(condition="p_partkey = ps_partkey", type="semi", build="outer")
+          exchange(distribution=hash[0]20, collation=[])
+            semihashjoin(condition="p_partkey = l_partkey", type="semi", build="inner")
+              osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index`")
+              exchange(distribution=broadcast, collation=[])
+                project(l_partkey="l_partkey")
+                  filter(condition="total_qty > ?0")
+                    hashagg(group="l_partkey", total_qty="sum(total_qty)")
+                      exchange(distribution=hash[0]20, collation=[])
+                        partialhashagg(group="l_partkey", total_qty="sum(l_quantity)")
+                          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+          exchange(distribution=hash[0]20, collation=[])
+            project(ps_partkey="ps_partkey")
+              nljoin(condition="avg_cost > /", type="inner")
+                cteconsumer(cte_id="0_2", projects=[$0, $1])
+                exchange(distribution=broadcast, collation=[])
+                  project(/="$f0 / $f1")
+                    hashagg($f0="sum($f0)", $f1="sum($f1)")
+                      exchange(distribution=single, collation=[])
+                        partialhashagg($f0="sum(avg_cost)", $f1="count(avg_cost)")
+                          cteconsumer(cte_id="0_3", projects=[$1])
+  - sql: |
+      /*+TDDL:cmd_extra(CTE_MODE=REUSE)*/WITH cte1 AS (
+        SELECT ps_partkey, AVG(ps_supplycost) as avg_cost FROM partsupp GROUP BY ps_partkey
+      ), cte2 AS (
+        SELECT p_partkey, p_name FROM part WHERE p_partkey IN (
+          SELECT ps_partkey FROM cte1 WHERE avg_cost > (
+            SELECT AVG(avg_cost) FROM cte1
+          )
+        )
+      ), cte3 AS (
+        WITH nested_cte AS (
+          SELECT l_partkey, SUM(l_quantity) as total_qty FROM lineitem GROUP BY l_partkey
+        )
+        SELECT l_partkey FROM nested_cte WHERE total_qty > 100
+      )
+      SELECT * FROM cte2 WHERE p_partkey IN (SELECT l_partkey FROM cte3)
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          project(ps_partkey="ps_partkey", avg_cost="$f1 / $f2")
+            hashagg(group="ps_partkey", $f1="sum($f1)", $f2="sum($f2)")
+              exchange(distribution=hash[0]20, collation=[])
+                partialhashagg(group="ps_partkey", $f1="sum(ps_supplycost)", $f2="count()")
+                  osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `ps_partkey`, `ps_supplycost` from `partsupp_col_index` as `partsupp_col_index`")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            semihashjoin(condition="p_partkey = ps_partkey", type="semi", build="inner")
+              osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index`")
+              exchange(distribution=broadcast, collation=[])
+                project(ps_partkey="ps_partkey")
+                  nljoin(condition="avg_cost > /", type="inner")
+                    cteconsumer(cte_id="0_0", projects=[$0, $1])
+                    exchange(distribution=broadcast, collation=[])
+                      project(/="$f0 / $f1")
+                        hashagg($f0="sum($f0)", $f1="sum($f1)")
+                          exchange(distribution=single, collation=[])
+                            partialhashagg($f0="sum(avg_cost)", $f1="count(avg_cost)")
+                              cteconsumer(cte_id="0_1", projects=[$1])
+          cteanchor(cte_id=3)
+            cteproducer(cte_id=3)
+              cteanchor(cte_id=2)
+                cteproducer(cte_id=2)
+                  filter(condition="total_qty > ?0")
+                    hashagg(group="l_partkey", total_qty="sum(total_qty)")
+                      exchange(distribution=hash[0]20, collation=[])
+                        partialhashagg(group="l_partkey", total_qty="sum(l_quantity)")
+                          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                cteconsumer(cte_id="2_0", projects=[$0], conditions=[>($1, ?0)])
+            semihashjoin(condition="p_partkey = l_partkey", type="semi", build="inner")
+              cteconsumer(cte_id="1_0")
+              exchange(distribution=broadcast, collation=[])
+                cteconsumer(cte_id="3_0")
+  - sql: |
+      WITH cte_orders AS (
+        SELECT o_orderkey, o_custkey, o_totalprice FROM orders WHERE EXISTS (
+          SELECT 1 FROM lineitem WHERE l_orderkey = orders.o_orderkey
+          AND l_quantity > (SELECT AVG(l_quantity) FROM lineitem)
+        )
+      )
+      SELECT c_name, c_address FROM customer WHERE c_custkey IN (
+        SELECT o_custkey FROM cte_orders WHERE o_totalprice > (
+          SELECT MAX(o_totalprice) * 0.8 FROM cte_orders
+        ) AND o_orderkey NOT IN (
+          SELECT l_orderkey FROM lineitem WHERE l_returnflag = 'R'
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          semihashjoin(condition="o_orderkey = l_orderkey", type="semi", build="inner")
+            exchange(distribution=hash[0]20, collation=[])
+              osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_custkey`, `o_totalprice` from `orders_col_index` as `orders_col_index`")
+            exchange(distribution=hash[0]20, collation=[])
+              project(l_orderkey="l_orderkey")
+                nljoin(condition="l_quantity > /", type="inner")
+                  osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index` where (`l_orderkey` = `l_orderkey`)")
+                  exchange(distribution=broadcast, collation=[])
+                    project(/="$f0 / $f1")
+                      hashagg($f0="sum($f0)", $f1="sum($f1)")
+                        exchange(distribution=single, collation=[])
+                          partialhashagg($f0="sum(l_quantity)", $f1="count()")
+                            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+        project(c_name="c_name", c_address="c_address")
+          semihashjoin(condition="c_custkey = o_custkey", type="semi", build="inner")
+            osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_name`, `c_address` from `customer_col_index` as `customer_col_index`")
+            exchange(distribution=broadcast, collation=[])
+              project(o_custkey="o_custkey")
+                semihashjoin(condition="o_orderkey = l_orderkey", type="anti", build="outer")
+                  exchange(distribution=hash[0]20, collation=[])
+                    project(o_orderkey="o_orderkey", o_custkey="o_custkey")
+                      nljoin(condition="o_totalprice > $f0", type="inner")
+                        cteconsumer(cte_id="0_0")
+                        exchange(distribution=broadcast, collation=[])
+                          hashagg($f0="single_value(max(o_totalprice) * 0.8)")
+                            project(max(o_totalprice) * 0.8="$f0 * ?1")
+                              hashagg($f0="max($f0)")
+                                exchange(distribution=single, collation=[])
+                                  partialhashagg($f0="max(o_totalprice)")
+                                    cteconsumer(cte_id="0_1", projects=[$2])
+                  exchange(distribution=hash[0]20, collation=[])
+                    osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey` from `lineitem_col_index` as `lineitem_col_index` where (`l_returnflag` = ?)")
+  - sql: |
+      WITH cte1 AS (
+        SELECT s_suppkey, s_nationkey FROM supplier WHERE s_suppkey > 10
+      ), cte2 AS (
+        SELECT n_nationkey, n_regionkey FROM nation WHERE n_nationkey IN (
+          SELECT s_nationkey FROM cte1
+        )
+      ), cte3 AS (
+        SELECT r_regionkey, r_name FROM region WHERE r_regionkey IN (
+          SELECT n_regionkey FROM cte2 WHERE n_nationkey IN (
+            SELECT s_nationkey FROM cte1 WHERE s_suppkey < 100
+          )
+        )
+      )
+      SELECT * FROM cte3 WHERE r_regionkey IN (
+        SELECT n_regionkey FROM nation WHERE n_nationkey IN (
+          SELECT c_nationkey FROM customer WHERE c_acctbal > 5000
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_suppkey`, `s_nationkey` from `supplier_col_index` as `supplier_col_index` where (`s_suppkey` > ?)")
+        semihashjoin(condition="r_regionkey = n_regionkey", type="semi", build="outer")
+          semihashjoin(condition="r_regionkey = n_regionkey", type="semi", build="inner")
+            osstablescan(tables="region_col_index[p1]", partition=[remote], sql="select `r_regionkey`, `r_name` from `region_col_index` as `region_col_index`")
+            exchange(distribution=broadcast, collation=[])
+              project(n_regionkey="n_regionkey")
+                semihashjoin(condition="n_nationkey = s_nationkey", type="semi", build="outer")
+                  semihashjoin(condition="n_nationkey = s_nationkey", type="semi", build="inner")
+                    osstablescan(tables="nation_col_index[p1]", partition=[remote], sql="select `n_nationkey`, `n_regionkey` from `nation_col_index` as `nation_col_index`")
+                    exchange(distribution=broadcast, collation=[])
+                      cteconsumer(cte_id="0_4", projects=[$1], conditions=[<($0, ?1)])
+                  exchange(distribution=broadcast, collation=[])
+                    cteconsumer(cte_id="0_3", projects=[$1])
+          exchange(distribution=broadcast, collation=[])
+            project(n_regionkey="n_regionkey")
+              semihashjoin(condition="n_nationkey = c_nationkey", type="semi", build="outer")
+                exchange(distribution=hash[0]20, collation=[])
+                  osstablescan(tables="nation_col_index[p1]", sql="select `n_nationkey`, `n_regionkey` from `nation_col_index` as `nation_col_index`")
+                exchange(distribution=hash[0]20, collation=[])
+                  osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_nationkey` from `customer_col_index` as `customer_col_index` where (`c_acctbal` > ?)")
+  - sql: |
+      /*+TDDL:cmd_extra(CTE_MODE=REUSE)*/WITH cte1 AS (
+        SELECT s_suppkey, s_nationkey FROM supplier WHERE s_suppkey > 10
+      ), cte2 AS (
+        SELECT n_nationkey, n_regionkey FROM nation WHERE n_nationkey IN (
+          SELECT s_nationkey FROM cte1
+        )
+      ), cte3 AS (
+        SELECT r_regionkey, r_name FROM region WHERE r_regionkey IN (
+          SELECT n_regionkey FROM cte2 WHERE n_nationkey IN (
+            SELECT s_nationkey FROM cte1 WHERE s_suppkey < 100
+          )
+        )
+      )
+      SELECT * FROM cte3 WHERE r_regionkey IN (
+        SELECT n_regionkey FROM nation WHERE n_nationkey IN (
+          SELECT c_nationkey FROM customer WHERE c_acctbal > 5000
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_suppkey`, `s_nationkey` from `supplier_col_index` as `supplier_col_index` where (`s_suppkey` > ?)")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            semihashjoin(condition="n_nationkey = s_nationkey", type="semi", build="outer")
+              osstablescan(tables="nation_col_index[p1]", partition=[remote], sql="select `n_nationkey`, `n_regionkey` from `nation_col_index` as `nation_col_index`")
+              exchange(distribution=broadcast, collation=[])
+                cteconsumer(cte_id="0_0", projects=[$1])
+          cteanchor(cte_id=2)
+            cteproducer(cte_id=2)
+              semihashjoin(condition="r_regionkey = n_regionkey", type="semi", build="inner")
+                osstablescan(tables="region_col_index[p1]", partition=[remote], sql="select `r_regionkey`, `r_name` from `region_col_index` as `region_col_index`")
+                exchange(distribution=broadcast, collation=[])
+                  project(n_regionkey="n_regionkey")
+                    semihashjoin(condition="n_nationkey = s_nationkey", type="semi", build="inner")
+                      cteconsumer(cte_id="1_0")
+                      exchange(distribution=broadcast, collation=[])
+                        cteconsumer(cte_id="0_2", projects=[$1], conditions=[<($0, ?1)])
+            semihashjoin(condition="r_regionkey = n_regionkey", type="semi", build="outer")
+              cteconsumer(cte_id="2_0")
+              exchange(distribution=broadcast, collation=[])
+                project(n_regionkey="n_regionkey")
+                  semihashjoin(condition="n_nationkey = c_nationkey", type="semi", build="outer")
+                    exchange(distribution=hash[0]20, collation=[])
+                      osstablescan(tables="nation_col_index[p1]", sql="select `n_nationkey`, `n_regionkey` from `nation_col_index` as `nation_col_index`")
+                    exchange(distribution=hash[0]20, collation=[])
+                      osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_nationkey` from `customer_col_index` as `customer_col_index` where (`c_acctbal` > ?)")
+  - sql: |
+      WITH cte_supplier AS (
+        WITH cte_nation AS (
+          SELECT n_nationkey FROM nation WHERE n_regionkey IN (
+            SELECT r_regionkey FROM region WHERE r_name IN ('ASIA', 'EUROPE')
+          )
+        )
+        SELECT s_suppkey, s_name FROM supplier WHERE s_nationkey IN (
+          SELECT n_nationkey FROM cte_nation
+        ) AND s_acctbal > (
+          SELECT AVG(s_acctbal) FROM supplier
+        )
+      )
+      SELECT ps_partkey, ps_availqty FROM partsupp WHERE ps_suppkey IN (
+        SELECT s_suppkey FROM cte_supplier
+      ) AND ps_partkey IN (
+        SELECT p_partkey FROM part WHERE p_type LIKE '%STEEL%'
+      )
+    plan: |
+      semihashjoin(condition="ps_partkey = p_partkey", type="semi", build="inner")
+        exchange(distribution=hash[0]20, collation=[])
+          project(ps_partkey="ps_partkey", ps_availqty="ps_availqty")
+            semihashjoin(condition="ps_suppkey = s_suppkey", type="semi", build="inner")
+              osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty` from `partsupp_col_index` as `partsupp_col_index`")
+              exchange(distribution=broadcast, collation=[])
+                project(s_suppkey="s_suppkey")
+                  nljoin(condition="s_acctbal > $f0 / $f1", type="inner")
+                    semihashjoin(condition="s_nationkey = n_nationkey", type="semi", build="inner")
+                      osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_suppkey`, `s_nationkey`, `s_acctbal` from `supplier_col_index` as `supplier_col_index`")
+                      exchange(distribution=broadcast, collation=[])
+                        project(n_nationkey="n_nationkey")
+                          semihashjoin(condition="n_regionkey = r_regionkey", type="semi", build="inner")
+                            osstablescan(tables="nation_col_index[p1]", partition=[remote], sql="select `n_nationkey`, `n_regionkey` from `nation_col_index` as `nation_col_index`")
+                            exchange(distribution=broadcast, collation=[])
+                              osstablescan(tables="region_col_index[p1]", sql="select `r_regionkey` from `region_col_index` as `region_col_index` where (`r_name` in(?))")
+                    exchange(distribution=broadcast, collation=[])
+                      hashagg($f0="sum($f0)", $f1="sum($f1)")
+                        exchange(distribution=single, collation=[])
+                          partialhashagg($f0="sum(s_acctbal)", $f1="count()")
+                            osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_acctbal` from `supplier_col_index` as `supplier_col_index`")
+        exchange(distribution=hash[0]20, collation=[])
+          osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey` from `part_col_index` as `part_col_index` where (`p_type` like ?)")
+  - sql: |
+      /*+TDDL:cmd_extra(CTE_MODE=REUSE)*/WITH cte_supplier AS (
+        WITH cte_nation AS (
+          SELECT n_nationkey FROM nation WHERE n_regionkey IN (
+            SELECT r_regionkey FROM region WHERE r_name IN ('ASIA', 'EUROPE')
+          )
+        )
+        SELECT s_suppkey, s_name FROM supplier WHERE s_nationkey IN (
+          SELECT n_nationkey FROM cte_nation
+        ) AND s_acctbal > (
+          SELECT AVG(s_acctbal) FROM supplier
+        )
+      )
+      SELECT ps_partkey, ps_availqty FROM partsupp WHERE ps_suppkey IN (
+        SELECT s_suppkey FROM cte_supplier
+      ) AND ps_partkey IN (
+        SELECT p_partkey FROM part WHERE p_type LIKE '%STEEL%'
+      )
+    plan: |
+      cteanchor(cte_id=1)
+        cteproducer(cte_id=1)
+          cteanchor(cte_id=0)
+            cteproducer(cte_id=0)
+              project(n_nationkey="n_nationkey")
+                semihashjoin(condition="n_regionkey = r_regionkey", type="semi", build="inner")
+                  osstablescan(tables="nation_col_index[p1]", partition=[remote], sql="select `n_nationkey`, `n_regionkey` from `nation_col_index` as `nation_col_index`")
+                  exchange(distribution=broadcast, collation=[])
+                    osstablescan(tables="region_col_index[p1]", sql="select `r_regionkey` from `region_col_index` as `region_col_index` where (`r_name` in(?))")
+            project(s_suppkey="s_suppkey")
+              nljoin(condition="s_acctbal > /", type="inner")
+                project(s_suppkey="s_suppkey", s_acctbal="s_acctbal")
+                  semihashjoin(condition="s_nationkey = n_nationkey", type="semi", build="inner")
+                    osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_suppkey`, `s_nationkey`, `s_acctbal` from `supplier_col_index` as `supplier_col_index`")
+                    exchange(distribution=broadcast, collation=[])
+                      cteconsumer(cte_id="0_0", projects=[$0])
+                exchange(distribution=broadcast, collation=[])
+                  project(/="$f0 / $f1")
+                    hashagg($f0="sum($f0)", $f1="sum($f1)")
+                      exchange(distribution=single, collation=[])
+                        partialhashagg($f0="sum(s_acctbal)", $f1="count()")
+                          osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_acctbal` from `supplier_col_index` as `supplier_col_index`")
+        semihashjoin(condition="ps_partkey = p_partkey", type="semi", build="inner")
+          exchange(distribution=hash[0]20, collation=[])
+            project(ps_partkey="ps_partkey", ps_availqty="ps_availqty")
+              semihashjoin(condition="ps_suppkey = s_suppkey", type="semi", build="inner")
+                osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty` from `partsupp_col_index` as `partsupp_col_index`")
+                exchange(distribution=broadcast, collation=[])
+                  cteconsumer(cte_id="1_0")
+          exchange(distribution=hash[0]20, collation=[])
+            osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey` from `part_col_index` as `part_col_index` where (`p_type` like ?)")
+  - sql: |
+      WITH cte1 AS (
+        SELECT l_orderkey, COUNT(DISTINCT l_partkey) as part_count FROM lineitem GROUP BY l_orderkey
+      ), cte2 AS (
+        SELECT o_orderkey, o_custkey FROM orders WHERE o_orderkey IN (
+          SELECT l_orderkey FROM cte1 WHERE part_count > (
+            SELECT AVG(part_count) FROM cte1
+          )
+        )
+      )
+      SELECT c_custkey, c_name FROM customer WHERE c_custkey IN (
+        SELECT o_custkey FROM cte2 WHERE o_custkey IN (
+          SELECT c_custkey FROM customer WHERE c_nationkey IN (
+            SELECT n_nationkey FROM nation WHERE n_name = 'FRANCE'
+          )
+        )
+      ) AND c_acctbal > (SELECT AVG(c_acctbal) FROM customer)
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          hashagg(group="l_orderkey", part_count="count(l_partkey)")
+            hashagg(group="l_orderkey,l_partkey")
+              exchange(distribution=hash[0]20, collation=[])
+                partialhashagg(group="l_orderkey,l_partkey")
+                  osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+        project(c_custkey="c_custkey", c_name="c_name")
+          nljoin(condition="c_acctbal > /", type="inner")
+            exchange(distribution=single, collation=[])
+              semihashjoin(condition="c_custkey = o_custkey", type="semi", build="inner")
+                exchange(distribution=hash[0]20, collation=[])
+                  osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey`, `c_name`, `c_acctbal` from `customer_col_index` as `customer_col_index`")
+                semihashjoin(condition="o_custkey = c_custkey", type="semi", build="outer")
+                  exchange(distribution=hash[0]20, collation=[])
+                    project(o_custkey="o_custkey")
+                      semihashjoin(condition="o_orderkey = l_orderkey", type="semi", build="inner")
+                        exchange(distribution=hash[0]20, collation=[])
+                          osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index`")
+                        exchange(distribution=hash[0]20, collation=[])
+                          project(l_orderkey="l_orderkey")
+                            nljoin(condition="part_count > /", type="inner")
+                              cteconsumer(cte_id="0_2", projects=[$0, $1])
+                              exchange(distribution=broadcast, collation=[])
+                                project(/="$f0 / $f1")
+                                  hashagg($f0="sum($f0)", $f1="sum($f1)")
+                                    exchange(distribution=single, collation=[])
+                                      partialhashagg($f0="sum(part_count)", $f1="count(part_count)")
+                                        cteconsumer(cte_id="0_3", projects=[$1])
+                  exchange(distribution=hash[0]20, collation=[])
+                    project(c_custkey="c_custkey")
+                      semihashjoin(condition="c_nationkey = n_nationkey", type="semi", build="inner")
+                        osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_nationkey` from `customer_col_index` as `customer_col_index`")
+                        exchange(distribution=broadcast, collation=[])
+                          osstablescan(tables="nation_col_index[p1]", sql="select `n_nationkey` from `nation_col_index` as `nation_col_index` where (`n_name` = ?)")
+            project(/="$f0 / $f1")
+              hashagg($f0="sum($f0)", $f1="sum($f1)")
+                exchange(distribution=single, collation=[])
+                  partialhashagg($f0="sum(c_acctbal)", $f1="count()")
+                    osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_acctbal` from `customer_col_index` as `customer_col_index`")
+  - sql: |
+      /*+TDDL:cmd_extra(CTE_MODE=REUSE)*/WITH cte1 AS (
+        SELECT l_orderkey, COUNT(DISTINCT l_partkey) as part_count FROM lineitem GROUP BY l_orderkey
+      ), cte2 AS (
+        SELECT o_orderkey, o_custkey FROM orders WHERE o_orderkey IN (
+          SELECT l_orderkey FROM cte1 WHERE part_count > (
+            SELECT AVG(part_count) FROM cte1
+          )
+        )
+      )
+      SELECT c_custkey, c_name FROM customer WHERE c_custkey IN (
+        SELECT o_custkey FROM cte2 WHERE o_custkey IN (
+          SELECT c_custkey FROM customer WHERE c_nationkey IN (
+            SELECT n_nationkey FROM nation WHERE n_name = 'FRANCE'
+          )
+        )
+      ) AND c_acctbal > (SELECT AVG(c_acctbal) FROM customer)
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          hashagg(group="l_orderkey", part_count="count(l_partkey)")
+            hashagg(group="l_orderkey,l_partkey")
+              exchange(distribution=hash[0]20, collation=[])
+                partialhashagg(group="l_orderkey,l_partkey")
+                  osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            project(o_custkey="o_custkey")
+              semihashjoin(condition="o_orderkey = l_orderkey", type="semi", build="inner")
+                exchange(distribution=hash[0]20, collation=[])
+                  osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index`")
+                exchange(distribution=hash[0]20, collation=[])
+                  project(l_orderkey="l_orderkey")
+                    nljoin(condition="part_count > /", type="inner")
+                      cteconsumer(cte_id="0_0", projects=[$0, $1])
+                      exchange(distribution=broadcast, collation=[])
+                        project(/="$f0 / $f1")
+                          hashagg($f0="sum($f0)", $f1="sum($f1)")
+                            exchange(distribution=single, collation=[])
+                              partialhashagg($f0="sum(part_count)", $f1="count(part_count)")
+                                cteconsumer(cte_id="0_1", projects=[$1])
+          project(c_custkey="c_custkey", c_name="c_name")
+            nljoin(condition="c_acctbal > /", type="inner")
+              exchange(distribution=single, collation=[])
+                semihashjoin(condition="c_custkey = o_custkey", type="semi", build="inner")
+                  exchange(distribution=hash[0]20, collation=[])
+                    osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey`, `c_name`, `c_acctbal` from `customer_col_index` as `customer_col_index`")
+                  semihashjoin(condition="o_custkey = c_custkey", type="semi", build="outer")
+                    exchange(distribution=hash[0]20, collation=[])
+                      cteconsumer(cte_id="1_0")
+                    exchange(distribution=hash[0]20, collation=[])
+                      project(c_custkey="c_custkey")
+                        semihashjoin(condition="c_nationkey = n_nationkey", type="semi", build="inner")
+                          osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_nationkey` from `customer_col_index` as `customer_col_index`")
+                          exchange(distribution=broadcast, collation=[])
+                            osstablescan(tables="nation_col_index[p1]", sql="select `n_nationkey` from `nation_col_index` as `nation_col_index` where (`n_name` = ?)")
+              project(/="$f0 / $f1")
+                hashagg($f0="sum($f0)", $f1="sum($f1)")
+                  exchange(distribution=single, collation=[])
+                    partialhashagg($f0="sum(c_acctbal)", $f1="count()")
+                      osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_acctbal` from `customer_col_index` as `customer_col_index`")
+  - sql: |
+      WITH cte_partsupp AS (
+        SELECT ps_partkey, ps_suppkey, ps_supplycost FROM partsupp WHERE (ps_partkey, ps_suppkey) IN (
+          SELECT l_partkey, l_suppkey FROM lineitem WHERE l_shipdate >= '1994-01-01'
+          AND l_orderkey IN (
+            SELECT o_orderkey FROM orders WHERE o_custkey IN (
+              SELECT c_custkey FROM customer WHERE c_nationkey = 5
+            )
+          )
+        )
+      )
+      SELECT p_name, p_mfgr FROM part WHERE p_partkey IN (
+        SELECT ps_partkey FROM cte_partsupp WHERE ps_supplycost < (
+          SELECT AVG(ps_supplycost) FROM cte_partsupp
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          project(ps_partkey="ps_partkey", ps_supplycost="ps_supplycost")
+            semihashjoin(condition="ps_partkey = l_partkey and ps_suppkey = l_suppkey", type="semi", build="inner")
+              osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_partkey`, `ps_suppkey`, `ps_supplycost` from `partsupp_col_index` as `partsupp_col_index`")
+              exchange(distribution=broadcast, collation=[])
+                project(l_partkey="l_partkey", l_suppkey="l_suppkey")
+                  semihashjoin(condition="l_orderkey = o_orderkey", type="semi", build="outer")
+                    exchange(distribution=hash[0]20, collation=[])
+                      osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_suppkey` from `lineitem_col_index` as `lineitem_col_index` where (`l_shipdate` >= ?)")
+                    exchange(distribution=hash[0]20, collation=[])
+                      project(o_orderkey="o_orderkey")
+                        semihashjoin(condition="o_custkey = c_custkey", type="semi", build="inner")
+                          osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index`")
+                          exchange(distribution=broadcast, collation=[])
+                            osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey` from `customer_col_index` as `customer_col_index` where (`c_nationkey` = ?)")
+        project(p_name="p_name", p_mfgr="p_mfgr")
+          semihashjoin(condition="p_partkey = ps_partkey", type="semi", build="inner")
+            osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `p_partkey`, `p_name`, `p_mfgr` from `part_col_index` as `part_col_index`")
+            exchange(distribution=broadcast, collation=[])
+              project(ps_partkey="ps_partkey")
+                nljoin(condition="ps_supplycost < /", type="inner")
+                  cteconsumer(cte_id="0_0")
+                  exchange(distribution=broadcast, collation=[])
+                    project(/="$f0 / $f1")
+                      hashagg($f0="sum($f0)", $f1="sum($f1)")
+                        exchange(distribution=single, collation=[])
+                          partialhashagg($f0="sum(ps_supplycost)", $f1="count()")
+                            cteconsumer(cte_id="0_1", projects=[$1])
+  - sql: |
+      WITH cte1 AS (
+        SELECT c_custkey, c_nationkey FROM customer WHERE c_mktsegment = 'AUTOMOBILE'
+      ), cte2 AS (
+        WITH inner_cte AS (
+          SELECT o_orderkey, o_custkey FROM orders WHERE o_custkey IN (
+            SELECT c_custkey FROM cte1
+          )
+        )
+        SELECT l_orderkey, l_partkey FROM lineitem WHERE l_orderkey IN (
+          SELECT o_orderkey FROM inner_cte WHERE o_custkey > 1000
+        )
+      )
+      SELECT p_partkey, p_name FROM part WHERE p_partkey IN (
+        SELECT l_partkey FROM cte2
+      ) AND p_retailprice > (
+        SELECT AVG(p_retailprice) FROM part WHERE p_partkey IN (SELECT l_partkey FROM cte2)
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey` from `customer_col_index` as `customer_col_index` where (`c_mktsegment` = ?)")
+        cteanchor(cte_id=2)
+          cteproducer(cte_id=2)
+            project(l_partkey="l_partkey")
+              semihashjoin(condition="l_orderkey = o_orderkey", type="semi", build="inner")
+                exchange(distribution=hash[0]20, collation=[])
+                  osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+                exchange(distribution=hash[0]20, collation=[])
+                  project(o_orderkey="o_orderkey")
+                    semihashjoin(condition="o_custkey = c_custkey and c_custkey > ?1", type="semi", build="inner")
+                      osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index` where (`o_custkey` > ?)")
+                      exchange(distribution=broadcast, collation=[])
+                        cteconsumer(cte_id="0_1", conditions=[>($0, ?1)])
+          project(p_partkey="p_partkey", p_name="p_name")
+            nljoin(condition="p_retailprice > /", type="inner")
+              exchange(distribution=single, collation=[])
+                semihashjoin(condition="p_partkey = l_partkey", type="semi", build="outer")
+                  exchange(distribution=hash[0]20, collation=[])
+                    osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name`, `p_retailprice` from `part_col_index` as `part_col_index`")
+                  exchange(distribution=hash[0]20, collation=[])
+                    cteconsumer(cte_id="2_0")
+              project(/="$f0 / $f1")
+                hashagg($f0="sum($f0)", $f1="sum($f1)")
+                  exchange(distribution=single, collation=[])
+                    partialhashagg($f0="sum(p_retailprice)", $f1="count()")
+                      semihashjoin(condition="p_partkey = l_partkey", type="semi", build="outer")
+                        exchange(distribution=hash[0]20, collation=[])
+                          osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_retailprice` from `part_col_index` as `part_col_index`")
+                        exchange(distribution=hash[0]20, collation=[])
+                          cteconsumer(cte_id="2_1")
+  - sql: |
+      WITH cte_base AS (
+        SELECT s_suppkey, s_nationkey, s_acctbal FROM supplier WHERE s_acctbal > 0
+      ), cte_filtered AS (
+        SELECT s_suppkey FROM cte_base WHERE s_nationkey IN (
+          SELECT n_nationkey FROM nation WHERE n_regionkey = (
+            SELECT r_regionkey FROM region WHERE r_name = 'AMERICA'
+          )
+        ) AND s_acctbal > (SELECT AVG(s_acctbal) FROM cte_base)
+      )
+      SELECT ps_partkey, SUM(ps_availqty) as total_qty FROM partsupp WHERE ps_suppkey IN (
+        SELECT s_suppkey FROM cte_filtered
+      ) GROUP BY ps_partkey HAVING SUM(ps_availqty) > (
+        SELECT AVG(sum_qty) FROM (
+          SELECT SUM(ps_availqty) as sum_qty FROM partsupp GROUP BY ps_partkey
+        ) t
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_suppkey`, `s_nationkey`, `s_acctbal` from `supplier_col_index` as `supplier_col_index` where (`s_acctbal` > ?)")
+        project(ps_partkey="ps_partkey", total_qty="total_qty")
+          nljoin(condition="total_qty > /", type="inner")
+            hashagg(group="ps_partkey", total_qty="sum(total_qty)")
+              exchange(distribution=hash[0]20, collation=[])
+                partialhashagg(group="ps_partkey", total_qty="sum(ps_availqty)")
+                  semihashjoin(condition="ps_suppkey = s_suppkey", type="semi", build="inner")
+                    osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty` from `partsupp_col_index` as `partsupp_col_index`")
+                    exchange(distribution=broadcast, collation=[])
+                      project(s_suppkey="s_suppkey")
+                        nljoin(condition="s_acctbal > /", type="inner")
+                          project(s_suppkey="s_suppkey", s_acctbal="s_acctbal")
+                            semihashjoin(condition="s_nationkey = n_nationkey", type="semi", build="inner")
+                              cteconsumer(cte_id="0_2")
+                              exchange(distribution=broadcast, collation=[])
+                                project(n_nationkey="n_nationkey")
+                                  hashjoin(condition="$f0 = n_regionkey", type="inner")
+                                    osstablescan(tables="nation_col_index[p1]", partition=[remote], sql="select `n_nationkey`, `n_regionkey` from `nation_col_index` as `nation_col_index`")
+                                    exchange(distribution=broadcast, collation=[])
+                                      hashagg($f0="single_value(r_regionkey)")
+                                        exchange(distribution=single, collation=[])
+                                          osstablescan(tables="region_col_index[p1]", sql="select `r_regionkey` from `region_col_index` as `region_col_index` where (`r_name` = ?)")
+                          exchange(distribution=broadcast, collation=[])
+                            project(/="$f0 / $f1")
+                              hashagg($f0="sum($f0)", $f1="sum($f1)")
+                                exchange(distribution=single, collation=[])
+                                  partialhashagg($f0="sum(s_acctbal)", $f1="count()")
+                                    cteconsumer(cte_id="0_3", projects=[$2])
+            exchange(distribution=broadcast, collation=[])
+              project(/="$f0 / $f1")
+                hashagg($f0="sum($f0)", $f1="sum($f1)")
+                  exchange(distribution=single, collation=[])
+                    partialhashagg($f0="sum(sum_qty)", $f1="count(sum_qty)")
+                      hashagg(group="ps_partkey", sum_qty="sum(sum_qty)")
+                        exchange(distribution=hash[0]20, collation=[])
+                          partialhashagg(group="ps_partkey", sum_qty="sum(ps_availqty)")
+                            osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `ps_partkey`, `ps_availqty` from `partsupp_col_index` as `partsupp_col_index`")
+  - sql: |
+      /*+TDDL:cmd_extra(CTE_MODE=REUSE)*/WITH cte_base AS (
+        SELECT s_suppkey, s_nationkey, s_acctbal FROM supplier WHERE s_acctbal > 0
+      ), cte_filtered AS (
+        SELECT s_suppkey FROM cte_base WHERE s_nationkey IN (
+          SELECT n_nationkey FROM nation WHERE n_regionkey = (
+            SELECT r_regionkey FROM region WHERE r_name = 'AMERICA'
+          )
+        ) AND s_acctbal > (SELECT AVG(s_acctbal) FROM cte_base)
+      )
+      SELECT ps_partkey, SUM(ps_availqty) as total_qty FROM partsupp WHERE ps_suppkey IN (
+        SELECT s_suppkey FROM cte_filtered
+      ) GROUP BY ps_partkey HAVING SUM(ps_availqty) > (
+        SELECT AVG(sum_qty) FROM (
+          SELECT SUM(ps_availqty) as sum_qty FROM partsupp GROUP BY ps_partkey
+        ) t
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_suppkey`, `s_nationkey`, `s_acctbal` from `supplier_col_index` as `supplier_col_index` where (`s_acctbal` > ?)")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            project(s_suppkey="s_suppkey")
+              nljoin(condition="s_acctbal > /", type="inner")
+                project(s_suppkey="s_suppkey", s_acctbal="s_acctbal")
+                  semihashjoin(condition="s_nationkey = n_nationkey", type="semi", build="inner")
+                    cteconsumer(cte_id="0_0")
+                    exchange(distribution=broadcast, collation=[])
+                      project(n_nationkey="n_nationkey")
+                        hashjoin(condition="$f0 = n_regionkey", type="inner")
+                          osstablescan(tables="nation_col_index[p1]", partition=[remote], sql="select `n_nationkey`, `n_regionkey` from `nation_col_index` as `nation_col_index`")
+                          exchange(distribution=broadcast, collation=[])
+                            hashagg($f0="single_value(r_regionkey)")
+                              exchange(distribution=single, collation=[])
+                                osstablescan(tables="region_col_index[p1]", sql="select `r_regionkey` from `region_col_index` as `region_col_index` where (`r_name` = ?)")
+                exchange(distribution=broadcast, collation=[])
+                  project(/="$f0 / $f1")
+                    hashagg($f0="sum($f0)", $f1="sum($f1)")
+                      exchange(distribution=single, collation=[])
+                        partialhashagg($f0="sum(s_acctbal)", $f1="count()")
+                          cteconsumer(cte_id="0_1", projects=[$2])
+          project(ps_partkey="ps_partkey", total_qty="total_qty")
+            nljoin(condition="total_qty > /", type="inner")
+              hashagg(group="ps_partkey", total_qty="sum(total_qty)")
+                exchange(distribution=hash[0]20, collation=[])
+                  partialhashagg(group="ps_partkey", total_qty="sum(ps_availqty)")
+                    semihashjoin(condition="ps_suppkey = s_suppkey", type="semi", build="inner")
+                      osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_partkey`, `ps_suppkey`, `ps_availqty` from `partsupp_col_index` as `partsupp_col_index`")
+                      exchange(distribution=broadcast, collation=[])
+                        cteconsumer(cte_id="1_0", projects=[$0])
+              exchange(distribution=broadcast, collation=[])
+                project(/="$f0 / $f1")
+                  hashagg($f0="sum($f0)", $f1="sum($f1)")
+                    exchange(distribution=single, collation=[])
+                      partialhashagg($f0="sum(sum_qty)", $f1="count(sum_qty)")
+                        hashagg(group="ps_partkey", sum_qty="sum(sum_qty)")
+                          exchange(distribution=hash[0]20, collation=[])
+                            partialhashagg(group="ps_partkey", sum_qty="sum(ps_availqty)")
+                              osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `ps_partkey`, `ps_availqty` from `partsupp_col_index` as `partsupp_col_index`")
+  - sql: |
+      WITH cte1 AS (
+        SELECT o_custkey, MAX(o_totalprice) as max_price FROM orders GROUP BY o_custkey
+      ), cte2 AS (
+        SELECT c_custkey, c_name FROM customer WHERE c_custkey IN (
+          SELECT o_custkey FROM cte1 WHERE max_price > (
+            SELECT AVG(max_price) * 2 FROM cte1
+          )
+        )
+      ), cte3 AS (
+        SELECT o_orderkey FROM orders WHERE o_custkey IN (
+          SELECT c_custkey FROM cte2
+        ) AND o_orderdate >= '1995-01-01'
+      )
+      SELECT l_partkey, COUNT(*) as order_count FROM lineitem WHERE l_orderkey IN (
+        SELECT o_orderkey FROM cte3
+      ) AND l_partkey IN (
+        SELECT p_partkey FROM part WHERE p_type LIKE '%BRASS%'
+      ) GROUP BY l_partkey HAVING COUNT(*) > 5
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          hashagg(group="o_custkey", max_price="max(max_price)")
+            exchange(distribution=hash[0]20, collation=[])
+              partialhashagg(group="o_custkey", max_price="max(o_totalprice)")
+                osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_custkey`, `o_totalprice` from `orders_col_index` as `orders_col_index`")
+        filter(condition="order_count > ?3")
+          hashagg(group="l_partkey", order_count="count()")
+            semihashjoin(condition="l_partkey = p_partkey", type="semi", build="outer")
+              exchange(distribution=hash[1]20, collation=[])
+                semihashjoin(condition="l_orderkey = o_orderkey", type="semi", build="inner")
+                  osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+                  exchange(distribution=broadcast, collation=[])
+                    project(o_orderkey="o_orderkey")
+                      semihashjoin(condition="o_custkey = c_custkey", type="semi", build="inner")
+                        osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index` where (`o_orderdate` >= ?)")
+                        exchange(distribution=broadcast, collation=[])
+                          semihashjoin(condition="c_custkey = o_custkey", type="semi", build="inner")
+                            osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey` from `customer_col_index` as `customer_col_index`")
+                            project(o_custkey="o_custkey")
+                              exchange(distribution=broadcast, collation=[])
+                                nljoin(condition="max_price > $f0", type="inner")
+                                  exchange(distribution=single, collation=[])
+                                    cteconsumer(cte_id="0_4")
+                                  hashagg($f0="single_value(avg(max_price) * 2)")
+                                    project(avg(max_price) * 2="$f0 / $f1 * ?0")
+                                      hashagg($f0="sum($f0)", $f1="sum($f1)")
+                                        exchange(distribution=single, collation=[])
+                                          partialhashagg($f0="sum(max_price)", $f1="count(max_price)")
+                                            cteconsumer(cte_id="0_5", projects=[$1])
+              exchange(distribution=hash[0]20, collation=[])
+                osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey` from `part_col_index` as `part_col_index` where (`p_type` like ?)")
+  - sql: |
+      /*+TDDL:cmd_extra(CTE_MODE=REUSE)*/WITH cte1 AS (
+        SELECT o_custkey, MAX(o_totalprice) as max_price FROM orders GROUP BY o_custkey
+      ), cte2 AS (
+        SELECT c_custkey, c_name FROM customer WHERE c_custkey IN (
+          SELECT o_custkey FROM cte1 WHERE max_price > (
+            SELECT AVG(max_price) * 2 FROM cte1
+          )
+        )
+      ), cte3 AS (
+        SELECT o_orderkey FROM orders WHERE o_custkey IN (
+          SELECT c_custkey FROM cte2
+        ) AND o_orderdate >= '1995-01-01'
+      )
+      SELECT l_partkey, COUNT(*) as order_count FROM lineitem WHERE l_orderkey IN (
+        SELECT o_orderkey FROM cte3
+      ) AND l_partkey IN (
+        SELECT p_partkey FROM part WHERE p_type LIKE '%BRASS%'
+      ) GROUP BY l_partkey HAVING COUNT(*) > 5
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          hashagg(group="o_custkey", max_price="max(max_price)")
+            exchange(distribution=hash[0]20, collation=[])
+              partialhashagg(group="o_custkey", max_price="max(o_totalprice)")
+                osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_custkey`, `o_totalprice` from `orders_col_index` as `orders_col_index`")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            semihashjoin(condition="c_custkey = o_custkey", type="semi", build="inner")
+              osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey` from `customer_col_index` as `customer_col_index`")
+              exchange(distribution=broadcast, collation=[])
+                project(o_custkey="o_custkey")
+                  nljoin(condition="max_price > $f0", type="inner")
+                    exchange(distribution=single, collation=[])
+                      cteconsumer(cte_id="0_0")
+                    hashagg($f0="single_value(avg(max_price) * 2)")
+                      project(avg(max_price) * 2="$f0 / $f1 * ?0")
+                        hashagg($f0="sum($f0)", $f1="sum($f1)")
+                          exchange(distribution=single, collation=[])
+                            partialhashagg($f0="sum(max_price)", $f1="count(max_price)")
+                              cteconsumer(cte_id="0_1", projects=[$1])
+          cteanchor(cte_id=2)
+            cteproducer(cte_id=2)
+              project(o_orderkey="o_orderkey")
+                semihashjoin(condition="o_custkey = c_custkey", type="semi", build="inner")
+                  osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index` where (`o_orderdate` >= ?)")
+                  exchange(distribution=broadcast, collation=[])
+                    cteconsumer(cte_id="1_0")
+            filter(condition="order_count > ?3")
+              hashagg(group="l_partkey", order_count="count()")
+                semihashjoin(condition="l_partkey = p_partkey", type="semi", build="outer")
+                  exchange(distribution=hash[1]20, collation=[])
+                    semihashjoin(condition="l_orderkey = o_orderkey", type="semi", build="inner")
+                      osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+                      exchange(distribution=broadcast, collation=[])
+                        cteconsumer(cte_id="2_0", projects=[$0])
+                  exchange(distribution=hash[0]20, collation=[])
+                    osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey` from `part_col_index` as `part_col_index` where (`p_type` like ?)")
+  - sql: |
+      WITH cte_nation_supplier AS (
+        WITH cte_region AS (
+          SELECT r_regionkey FROM region WHERE r_name IN ('ASIA', 'AFRICA')
+        )
+        SELECT s_suppkey, s_nationkey FROM supplier WHERE s_nationkey IN (
+          SELECT n_nationkey FROM nation WHERE n_regionkey IN (
+            SELECT r_regionkey FROM cte_region
+          )
+        )
+      )
+      SELECT p_partkey, p_name FROM part WHERE p_partkey IN (
+        SELECT ps_partkey FROM partsupp WHERE ps_suppkey IN (
+          SELECT s_suppkey FROM cte_nation_supplier WHERE s_nationkey IN (
+            SELECT n_nationkey FROM nation WHERE n_name LIKE '%CHINA%'
+          )
+        ) AND ps_supplycost < (
+          SELECT MIN(ps_supplycost) * 1.5 FROM partsupp WHERE ps_suppkey IN (
+            SELECT s_suppkey FROM cte_nation_supplier
+          )
+        )
+      )
+    plan: |
+      cteanchor(cte_id=1)
+        cteproducer(cte_id=1)
+          semihashjoin(condition="s_nationkey = n_nationkey", type="semi", build="inner")
+            osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_suppkey`, `s_nationkey` from `supplier_col_index` as `supplier_col_index`")
+            exchange(distribution=broadcast, collation=[])
+              project(n_nationkey="n_nationkey")
+                semihashjoin(condition="n_regionkey = r_regionkey", type="semi", build="inner")
+                  osstablescan(tables="nation_col_index[p1]", partition=[remote], sql="select `n_nationkey`, `n_regionkey` from `nation_col_index` as `nation_col_index`")
+                  exchange(distribution=broadcast, collation=[])
+                    osstablescan(tables="region_col_index[p1]", sql="select `r_regionkey` from `region_col_index` as `region_col_index` where (`r_name` in(?))")
+        semihashjoin(condition="p_partkey = ps_partkey", type="semi", build="inner")
+          exchange(distribution=hash[0]20, collation=[])
+            osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index`")
+          exchange(distribution=hash[0]20, collation=[])
+            project(ps_partkey="ps_partkey")
+              nljoin(condition="ps_supplycost < $f0", type="inner")
+                project(ps_partkey="ps_partkey", ps_supplycost="ps_supplycost")
+                  semihashjoin(condition="ps_suppkey = s_suppkey", type="semi", build="inner")
+                    osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_partkey`, `ps_suppkey`, `ps_supplycost` from `partsupp_col_index` as `partsupp_col_index`")
+                    exchange(distribution=broadcast, collation=[])
+                      project(s_suppkey="s_suppkey")
+                        semihashjoin(condition="s_nationkey = n_nationkey", type="semi", build="inner")
+                          cteconsumer(cte_id="1_0")
+                          exchange(distribution=broadcast, collation=[])
+                            osstablescan(tables="nation_col_index[p1]", sql="select `n_nationkey` from `nation_col_index` as `nation_col_index` where (`n_name` like ?)")
+                exchange(distribution=broadcast, collation=[])
+                  hashagg($f0="single_value(min(ps_supplycost) * 1.5)")
+                    project(min(ps_supplycost) * 1.5="$f0 * ?2")
+                      hashagg($f0="min($f0)")
+                        exchange(distribution=single, collation=[])
+                          partialhashagg($f0="min(ps_supplycost)")
+                            semihashjoin(condition="ps_suppkey = s_suppkey", type="semi", build="inner")
+                              osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_suppkey`, `ps_supplycost` from `partsupp_col_index` as `partsupp_col_index`")
+                              exchange(distribution=broadcast, collation=[])
+                                cteconsumer(cte_id="1_1", projects=[$0])
+  - sql: |
+      WITH cte_sorted_orders AS (
+        SELECT o_orderkey, o_custkey, o_totalprice FROM orders ORDER BY o_totalprice DESC
+      )
+      SELECT c_name, c_phone FROM customer WHERE c_custkey IN (
+        SELECT o_custkey FROM cte_sorted_orders WHERE o_totalprice > (
+          SELECT AVG(o_totalprice) FROM cte_sorted_orders
+        ) AND o_orderkey IN (
+          SELECT l_orderkey FROM lineitem WHERE l_quantity > (
+            SELECT AVG(l_quantity) FROM lineitem
+          )
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          exchange(distribution=single, collation=[2 desc-nulls-last])
+            memsort(sort="o_totalprice desc")
+              osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_custkey`, `o_totalprice` from `orders_col_index` as `orders_col_index`")
+        project(c_name="c_name", c_phone="c_phone")
+          semihashjoin(condition="c_custkey = o_custkey", type="semi", build="inner")
+            exchange(distribution=hash[0]20, collation=[])
+              osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey`, `c_name`, `c_phone` from `customer_col_index` as `customer_col_index`")
+            exchange(distribution=hash[0]20, collation=[])
+              project(o_custkey="o_custkey")
+                semihashjoin(condition="o_orderkey = l_orderkey", type="semi", build="outer")
+                  exchange(distribution=hash[0]20, collation=[])
+                    project(o_orderkey="o_orderkey", o_custkey="o_custkey")
+                      nljoin(condition="o_totalprice > /", type="inner")
+                        cteconsumer(cte_id="0_0", projects=[$0, $1, $2])
+                        exchange(distribution=broadcast, collation=[])
+                          project(/="$f0 / $f1")
+                            hashagg($f0="sum($f0)", $f1="sum($f1)")
+                              exchange(distribution=single, collation=[])
+                                partialhashagg($f0="sum(o_totalprice)", $f1="count()")
+                                  cteconsumer(cte_id="0_1", projects=[$2])
+                  exchange(distribution=hash[0]20, collation=[])
+                    project(l_orderkey="l_orderkey")
+                      nljoin(condition="l_quantity > /", type="inner")
+                        osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                        exchange(distribution=broadcast, collation=[])
+                          project(/="$f0 / $f1")
+                            hashagg($f0="sum($f0)", $f1="sum($f1)")
+                              exchange(distribution=single, collation=[])
+                                partialhashagg($f0="sum(l_quantity)", $f1="count()")
+                                  osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      /*+TDDL:cmd_extra(CTE_MODE=REUSE)*/WITH cte_sorted_orders AS (
+        SELECT o_orderkey, o_custkey, o_totalprice FROM orders ORDER BY o_totalprice DESC
+      )
+      SELECT c_name, c_phone FROM customer WHERE c_custkey IN (
+        SELECT o_custkey FROM cte_sorted_orders WHERE o_totalprice > (
+          SELECT AVG(o_totalprice) FROM cte_sorted_orders
+        ) AND o_orderkey IN (
+          SELECT l_orderkey FROM lineitem WHERE l_quantity > (
+            SELECT AVG(l_quantity) FROM lineitem
+          )
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          exchange(distribution=single, collation=[2 desc-nulls-last])
+            memsort(sort="o_totalprice desc")
+              osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_custkey`, `o_totalprice` from `orders_col_index` as `orders_col_index`")
+        project(c_name="c_name", c_phone="c_phone")
+          semihashjoin(condition="c_custkey = o_custkey", type="semi", build="inner")
+            exchange(distribution=hash[0]20, collation=[])
+              osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey`, `c_name`, `c_phone` from `customer_col_index` as `customer_col_index`")
+            exchange(distribution=hash[0]20, collation=[])
+              project(o_custkey="o_custkey")
+                semihashjoin(condition="o_orderkey = l_orderkey", type="semi", build="outer")
+                  exchange(distribution=hash[0]20, collation=[])
+                    project(o_orderkey="o_orderkey", o_custkey="o_custkey")
+                      nljoin(condition="o_totalprice > /", type="inner")
+                        cteconsumer(cte_id="0_0", projects=[$0, $1, $2])
+                        exchange(distribution=broadcast, collation=[])
+                          project(/="$f0 / $f1")
+                            hashagg($f0="sum($f0)", $f1="sum($f1)")
+                              exchange(distribution=single, collation=[])
+                                partialhashagg($f0="sum(o_totalprice)", $f1="count()")
+                                  cteconsumer(cte_id="0_1", projects=[$2])
+                  exchange(distribution=hash[0]20, collation=[])
+                    project(l_orderkey="l_orderkey")
+                      nljoin(condition="l_quantity > /", type="inner")
+                        osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                        exchange(distribution=broadcast, collation=[])
+                          project(/="$f0 / $f1")
+                            hashagg($f0="sum($f0)", $f1="sum($f1)")
+                              exchange(distribution=single, collation=[])
+                                partialhashagg($f0="sum(l_quantity)", $f1="count()")
+                                  osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      WITH cte_expensive_parts AS (
+        SELECT p_partkey, p_name, p_retailprice FROM part ORDER BY p_retailprice DESC
+      ), cte_high_cost_parts AS (
+        SELECT ps_partkey, ps_supplycost FROM partsupp WHERE ps_supplycost > (
+          SELECT AVG(p_retailprice) * 0.5 FROM cte_expensive_parts
+        ) AND ps_partkey IN (
+          SELECT p_partkey FROM cte_expensive_parts WHERE p_retailprice > (
+            SELECT MAX(p_retailprice) * 0.8 FROM cte_expensive_parts
+          )
+        )
+      ), cte_inner AS (
+        SELECT l_orderkey, l_partkey FROM lineitem WHERE l_quantity > 10
+      )
+      SELECT s_name, s_phone FROM supplier WHERE s_suppkey IN (
+        SELECT ps_suppkey FROM partsupp WHERE ps_partkey IN (
+          SELECT ps_partkey FROM cte_high_cost_parts
+        ) AND ps_partkey IN (
+          SELECT l_partkey FROM cte_inner WHERE l_orderkey IN (
+            SELECT o_orderkey FROM orders WHERE o_custkey IN (
+              SELECT c_custkey FROM customer WHERE c_nationkey = 1
+            )
+          )
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          project(p_partkey="p_partkey", p_retailprice="p_retailprice")
+            exchange(distribution=single, collation=[2 desc-nulls-last])
+              memsort(sort="p_retailprice desc")
+                osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name`, `p_retailprice` from `part_col_index` as `part_col_index`")
+        project(s_name="s_name", s_phone="s_phone")
+          semihashjoin(condition="s_suppkey = ps_suppkey", type="semi", build="inner")
+            osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_suppkey`, `s_name`, `s_phone` from `supplier_col_index` as `supplier_col_index`")
+            project(ps_suppkey="ps_suppkey")
+              exchange(distribution=broadcast, collation=[])
+                semihashjoin(condition="ps_partkey = ps_partkey", type="semi", build="outer")
+                  semihashjoin(condition="ps_partkey = l_partkey", type="semi", build="outer")
+                    exchange(distribution=hash[0]20, collation=[])
+                      osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `ps_partkey`, `ps_suppkey` from `partsupp_col_index` as `partsupp_col_index`")
+                    exchange(distribution=hash[0]20, collation=[])
+                      project(l_partkey="l_partkey")
+                        semihashjoin(condition="l_orderkey = o_orderkey", type="semi", build="inner")
+                          exchange(distribution=hash[0]20, collation=[])
+                            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey` from `lineitem_col_index` as `lineitem_col_index` where (`l_quantity` > ?)")
+                          exchange(distribution=hash[0]20, collation=[])
+                            project(o_orderkey="o_orderkey")
+                              semihashjoin(condition="o_custkey = c_custkey", type="semi", build="inner")
+                                osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index`")
+                                exchange(distribution=broadcast, collation=[])
+                                  osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey` from `customer_col_index` as `customer_col_index` where (`c_nationkey` = ?)")
+                  semihashjoin(condition="ps_partkey = p_partkey", type="semi", build="inner")
+                    exchange(distribution=hash[0]20, collation=[])
+                      project(ps_partkey="ps_partkey")
+                        nljoin(condition="ps_supplycost > $f0", type="inner")
+                          osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `ps_partkey`, `ps_supplycost` from `partsupp_col_index` as `partsupp_col_index`")
+                          exchange(distribution=broadcast, collation=[])
+                            hashagg($f0="single_value(avg(p_retailprice) * 0.5)")
+                              project(avg(p_retailprice) * 0.5="$f0 / $f1 * ?0")
+                                hashagg($f0="sum($f0)", $f1="sum($f1)")
+                                  exchange(distribution=single, collation=[])
+                                    partialhashagg($f0="sum(p_retailprice)", $f1="count()")
+                                      cteconsumer(cte_id="0_3", projects=[$1])
+                    exchange(distribution=hash[0]20, collation=[])
+                      project(p_partkey="p_partkey")
+                        nljoin(condition="p_retailprice > $f0", type="inner")
+                          cteconsumer(cte_id="0_4")
+                          exchange(distribution=broadcast, collation=[])
+                            hashagg($f0="single_value(max(p_retailprice) * 0.8)")
+                              project(max(p_retailprice) * 0.8="$f0 * ?1")
+                                hashagg($f0="max($f0)")
+                                  exchange(distribution=single, collation=[])
+                                    partialhashagg($f0="max(p_retailprice)")
+                                      cteconsumer(cte_id="0_5", projects=[$1])
+  - sql: |
+      /*+TDDL:cmd_extra(CTE_MODE=REUSE)*/WITH cte_expensive_parts AS (
+        SELECT p_partkey, p_name, p_retailprice FROM part ORDER BY p_retailprice DESC
+      ), cte_high_cost_parts AS (
+        SELECT ps_partkey, ps_supplycost FROM partsupp WHERE ps_supplycost > (
+          SELECT AVG(p_retailprice) * 0.5 FROM cte_expensive_parts
+        ) AND ps_partkey IN (
+          SELECT p_partkey FROM cte_expensive_parts WHERE p_retailprice > (
+            SELECT MAX(p_retailprice) * 0.8 FROM cte_expensive_parts
+          )
+        )
+      ), cte_inner AS (
+        SELECT l_orderkey, l_partkey FROM lineitem WHERE l_quantity > 10
+      )
+      SELECT s_name, s_phone FROM supplier WHERE s_suppkey IN (
+        SELECT ps_suppkey FROM partsupp WHERE ps_partkey IN (
+          SELECT ps_partkey FROM cte_high_cost_parts
+        ) AND ps_partkey IN (
+          SELECT l_partkey FROM cte_inner WHERE l_orderkey IN (
+            SELECT o_orderkey FROM orders WHERE o_custkey IN (
+              SELECT c_custkey FROM customer WHERE c_nationkey = 1
+            )
+          )
+        )
+      )
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          project(p_partkey="p_partkey", p_retailprice="p_retailprice")
+            exchange(distribution=single, collation=[2 desc-nulls-last])
+              memsort(sort="p_retailprice desc")
+                osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name`, `p_retailprice` from `part_col_index` as `part_col_index`")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            semihashjoin(condition="ps_partkey = p_partkey", type="semi", build="inner")
+              exchange(distribution=hash[0]20, collation=[])
+                project(ps_partkey="ps_partkey")
+                  nljoin(condition="ps_supplycost > $f0", type="inner")
+                    osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `ps_partkey`, `ps_supplycost` from `partsupp_col_index` as `partsupp_col_index`")
+                    exchange(distribution=broadcast, collation=[])
+                      hashagg($f0="single_value(avg(p_retailprice) * 0.5)")
+                        project(avg(p_retailprice) * 0.5="$f0 / $f1 * ?0")
+                          hashagg($f0="sum($f0)", $f1="sum($f1)")
+                            exchange(distribution=single, collation=[])
+                              partialhashagg($f0="sum(p_retailprice)", $f1="count()")
+                                cteconsumer(cte_id="0_0", projects=[$1])
+              exchange(distribution=hash[0]20, collation=[])
+                project(p_partkey="p_partkey")
+                  nljoin(condition="p_retailprice > $f0", type="inner")
+                    cteconsumer(cte_id="0_1")
+                    exchange(distribution=broadcast, collation=[])
+                      hashagg($f0="single_value(max(p_retailprice) * 0.8)")
+                        project(max(p_retailprice) * 0.8="$f0 * ?1")
+                          hashagg($f0="max($f0)")
+                            exchange(distribution=single, collation=[])
+                              partialhashagg($f0="max(p_retailprice)")
+                                cteconsumer(cte_id="0_2", projects=[$1])
+          cteanchor(cte_id=2)
+            cteproducer(cte_id=2)
+              osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey` from `lineitem_col_index` as `lineitem_col_index` where (`l_quantity` > ?)")
+            project(s_name="s_name", s_phone="s_phone")
+              semihashjoin(condition="s_suppkey = ps_suppkey", type="semi", build="inner")
+                osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_suppkey`, `s_name`, `s_phone` from `supplier_col_index` as `supplier_col_index`")
+                project(ps_suppkey="ps_suppkey")
+                  exchange(distribution=broadcast, collation=[])
+                    semihashjoin(condition="ps_partkey = ps_partkey", type="semi", build="outer")
+                      semihashjoin(condition="ps_partkey = l_partkey", type="semi", build="outer")
+                        exchange(distribution=hash[0]20, collation=[])
+                          osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `ps_partkey`, `ps_suppkey` from `partsupp_col_index` as `partsupp_col_index`")
+                        exchange(distribution=hash[0]20, collation=[])
+                          project(l_partkey="l_partkey")
+                            semihashjoin(condition="l_orderkey = o_orderkey", type="semi", build="inner")
+                              exchange(distribution=hash[0]20, collation=[])
+                                cteconsumer(cte_id="2_0")
+                              exchange(distribution=hash[0]20, collation=[])
+                                project(o_orderkey="o_orderkey")
+                                  semihashjoin(condition="o_custkey = c_custkey", type="semi", build="inner")
+                                    osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index`")
+                                    exchange(distribution=broadcast, collation=[])
+                                      osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey` from `customer_col_index` as `customer_col_index` where (`c_nationkey` = ?)")
+                      exchange(distribution=hash[0]20, collation=[])
+                        cteconsumer(cte_id="1_0")
+  - sql: |
+      WITH cte_ranked_suppliers AS (
+        WITH cte_nation_filter AS (
+          SELECT n_nationkey FROM nation WHERE n_regionkey IN (
+            SELECT r_regionkey FROM region WHERE r_name IN ('ASIA', 'EUROPE')
+          )
+        )
+        SELECT s_suppkey, s_name, s_acctbal FROM supplier WHERE s_nationkey IN (
+          SELECT n_nationkey FROM cte_nation_filter
+        ) ORDER BY s_acctbal DESC
+      )
+      SELECT o_orderkey, o_totalprice FROM orders WHERE o_custkey IN (
+        SELECT c_custkey FROM customer WHERE c_nationkey IN (
+          SELECT s_nationkey FROM supplier WHERE s_suppkey IN (
+            SELECT ps_suppkey FROM partsupp WHERE ps_partkey IN (
+              SELECT p_partkey FROM part WHERE p_size > 15
+            )
+          )
+        )
+      ) AND o_totalprice > (
+        SELECT AVG(s_acctbal) FROM cte_ranked_suppliers
+      )
+    plan: |
+      project(o_orderkey="o_orderkey", o_totalprice="o_totalprice")
+        nljoin(condition="o_totalprice > $f0 / $f1", type="inner")
+          semihashjoin(condition="o_custkey = c_custkey", type="semi", build="inner")
+            exchange(distribution=hash[1]20, collation=[])
+              osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_custkey`, `o_totalprice` from `orders_col_index` as `orders_col_index`")
+            exchange(distribution=hash[0]20, collation=[])
+              project(c_custkey="c_custkey")
+                semihashjoin(condition="c_nationkey = s_nationkey", type="semi", build="inner")
+                  exchange(distribution=hash[1]20, collation=[])
+                    osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey`, `c_nationkey` from `customer_col_index` as `customer_col_index`")
+                  exchange(distribution=hash[0]20, collation=[])
+                    project(s_nationkey="s_nationkey")
+                      semihashjoin(condition="s_suppkey = ps_suppkey", type="semi", build="outer")
+                        exchange(distribution=hash[0]20, collation=[])
+                          osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `s_suppkey`, `s_nationkey` from `supplier_col_index` as `supplier_col_index`")
+                        exchange(distribution=hash[0]20, collation=[])
+                          project(ps_suppkey="ps_suppkey")
+                            semihashjoin(condition="ps_partkey = p_partkey", type="semi", build="inner")
+                              exchange(distribution=hash[0]20, collation=[])
+                                osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `ps_partkey`, `ps_suppkey` from `partsupp_col_index` as `partsupp_col_index`")
+                              exchange(distribution=hash[0]20, collation=[])
+                                osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey` from `part_col_index` as `part_col_index` where (`p_size` > ?)")
+          exchange(distribution=broadcast, collation=[])
+            hashagg($f0="sum($f0)", $f1="sum($f1)")
+              exchange(distribution=single, collation=[])
+                partialhashagg($f0="sum(s_acctbal)", $f1="count()")
+                  semihashjoin(condition="s_nationkey = n_nationkey", type="semi", build="inner")
+                    osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_nationkey`, `s_acctbal` from `supplier_col_index` as `supplier_col_index`")
+                    exchange(distribution=broadcast, collation=[])
+                      project(n_nationkey="n_nationkey")
+                        semihashjoin(condition="n_regionkey = r_regionkey", type="semi", build="inner")
+                          osstablescan(tables="nation_col_index[p1]", partition=[remote], sql="select `n_nationkey`, `n_regionkey` from `nation_col_index` as `nation_col_index`")
+                          exchange(distribution=broadcast, collation=[])
+                            osstablescan(tables="region_col_index[p1]", sql="select `r_regionkey` from `region_col_index` as `region_col_index` where (`r_name` in(?))")
+  - sql: |
+      /*+TDDL:cmd_extra(CTE_MODE=REUSE)*/WITH cte_ranked_suppliers AS (
+        WITH cte_nation_filter AS (
+          SELECT n_nationkey FROM nation WHERE n_regionkey IN (
+            SELECT r_regionkey FROM region WHERE r_name IN ('ASIA', 'EUROPE')
+          )
+        )
+        SELECT s_suppkey, s_name, s_acctbal FROM supplier WHERE s_nationkey IN (
+          SELECT n_nationkey FROM cte_nation_filter
+        ) ORDER BY s_acctbal DESC
+      )
+      SELECT o_orderkey, o_totalprice FROM orders WHERE o_custkey IN (
+        SELECT c_custkey FROM customer WHERE c_nationkey IN (
+          SELECT s_nationkey FROM supplier WHERE s_suppkey IN (
+            SELECT ps_suppkey FROM partsupp WHERE ps_partkey IN (
+              SELECT p_partkey FROM part WHERE p_size > 15
+            )
+          )
+        )
+      ) AND o_totalprice > (
+        SELECT AVG(s_acctbal) FROM cte_ranked_suppliers
+      )
+    plan: |
+      cteanchor(cte_id=1)
+        cteproducer(cte_id=1)
+          cteanchor(cte_id=0)
+            cteproducer(cte_id=0)
+              project(n_nationkey="n_nationkey")
+                semihashjoin(condition="n_regionkey = r_regionkey", type="semi", build="inner")
+                  osstablescan(tables="nation_col_index[p1]", partition=[remote], sql="select `n_nationkey`, `n_regionkey` from `nation_col_index` as `nation_col_index`")
+                  exchange(distribution=broadcast, collation=[])
+                    osstablescan(tables="region_col_index[p1]", sql="select `r_regionkey` from `region_col_index` as `region_col_index` where (`r_name` in(?))")
+            project(s_acctbal="s_acctbal")
+              exchange(distribution=single, collation=[2 desc-nulls-last])
+                memsort(sort="s_acctbal desc")
+                  project(s_suppkey="s_suppkey", s_name="s_name", s_acctbal="s_acctbal")
+                    semihashjoin(condition="s_nationkey = n_nationkey", type="semi", build="inner")
+                      osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `s_suppkey`, `s_name`, `s_nationkey`, `s_acctbal` from `supplier_col_index` as `supplier_col_index`")
+                      exchange(distribution=broadcast, collation=[])
+                        cteconsumer(cte_id="0_0", projects=[$0])
+        project(o_orderkey="o_orderkey", o_totalprice="o_totalprice")
+          nljoin(condition="o_totalprice > /", type="inner")
+            project(o_orderkey="o_orderkey", o_totalprice="o_totalprice")
+              semihashjoin(condition="o_custkey = c_custkey", type="semi", build="inner")
+                exchange(distribution=hash[1]20, collation=[])
+                  osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_custkey`, `o_totalprice` from `orders_col_index` as `orders_col_index`")
+                exchange(distribution=hash[0]20, collation=[])
+                  project(c_custkey="c_custkey")
+                    semihashjoin(condition="c_nationkey = s_nationkey", type="semi", build="inner")
+                      exchange(distribution=hash[1]20, collation=[])
+                        osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey`, `c_nationkey` from `customer_col_index` as `customer_col_index`")
+                      exchange(distribution=hash[0]20, collation=[])
+                        project(s_nationkey="s_nationkey")
+                          semihashjoin(condition="s_suppkey = ps_suppkey", type="semi", build="outer")
+                            exchange(distribution=hash[0]20, collation=[])
+                              osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `s_suppkey`, `s_nationkey` from `supplier_col_index` as `supplier_col_index`")
+                            exchange(distribution=hash[0]20, collation=[])
+                              project(ps_suppkey="ps_suppkey")
+                                semihashjoin(condition="ps_partkey = p_partkey", type="semi", build="inner")
+                                  exchange(distribution=hash[0]20, collation=[])
+                                    osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `ps_partkey`, `ps_suppkey` from `partsupp_col_index` as `partsupp_col_index`")
+                                  exchange(distribution=hash[0]20, collation=[])
+                                    osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey` from `part_col_index` as `part_col_index` where (`p_size` > ?)")
+            exchange(distribution=broadcast, collation=[])
+              project(/="$f0 / $f1")
+                hashagg($f0="sum($f0)", $f1="sum($f1)")
+                  exchange(distribution=single, collation=[])
+                    partialhashagg($f0="sum(s_acctbal)", $f1="count()")
+                      cteconsumer(cte_id="1_0")
+DDL:
+  customer:
+    CREATE TABLE IF NOT EXISTS `customer` (  `c_custkey` int(11) NOT NULL,  `c_name` varchar(25) NOT NULL,  `c_address` varchar(40) NOT NULL,  `c_nationkey` int(11) NOT NULL,  `c_phone` varchar(15) NOT NULL,  `c_acctbal` decimal(15, 2) NOT NULL,  `c_mktsegment` varchar(10) NOT NULL,  `c_comment` varchar(117) NOT NULL,  PRIMARY KEY (`c_custkey`),  CLUSTERED COLUMNAR INDEX `customer_col_index`(`c_custkey`) PARTITION BY HASH (`c_custkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`c_custkey`) PARTITIONS 8;
+  lineitem:
+    CREATE TABLE IF NOT EXISTS `lineitem` (  `l_orderkey` bigint(20) NOT NULL,  `l_partkey` int(11) NOT NULL,  `l_suppkey` int(11) NOT NULL,  `l_linenumber` bigint(20) NOT NULL,  `l_quantity` decimal(15, 2) NOT NULL,  `l_extendedprice` decimal(15, 2) NOT NULL,  `l_discount` decimal(15, 2) NOT NULL,  `l_tax` decimal(15, 2) NOT NULL,  `l_returnflag` varchar(1) NOT NULL,  `l_linestatus` varchar(1) NOT NULL,  `l_shipdate` date NOT NULL,  `l_commitdate` date NOT NULL,  `l_receiptdate` date NOT NULL,  `l_shipinstruct` varchar(25) NOT NULL,  `l_shipmode` varchar(10) NOT NULL,  `l_comment` varchar(44) NOT NULL,  PRIMARY KEY (`l_orderkey`, `l_linenumber`),  CLUSTERED COLUMNAR INDEX `lineitem_col_index`(`l_shipdate`, `l_orderkey`) PARTITION BY HASH (`l_orderkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`l_orderkey`) PARTITIONS 8;
+  orders:
+    CREATE TABLE IF NOT EXISTS `orders` (  `o_orderkey` bigint(20) NOT NULL,  `o_custkey` int(11) NOT NULL,  `o_orderstatus` varchar(1) NOT NULL,  `o_totalprice` decimal(15, 2) NOT NULL,  `o_orderdate` date NOT NULL,  `o_orderpriority` varchar(15) NOT NULL,  `o_clerk` varchar(15) NOT NULL,  `o_shippriority` bigint(20) NOT NULL,  `o_comment` varchar(79) NOT NULL,  PRIMARY KEY (`o_orderkey`),  CLUSTERED COLUMNAR INDEX `orders_col_index`(`o_orderdate`, `o_orderkey`) PARTITION BY HASH (`o_orderkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`o_orderkey`) PARTITIONS 8;
+  part:
+    CREATE TABLE IF NOT EXISTS `part` (  `p_partkey` int(11) NOT NULL,  `p_name` varchar(55) NOT NULL,  `p_mfgr` varchar(25) NOT NULL,  `p_brand` varchar(10) NOT NULL,  `p_type` varchar(25) NOT NULL,  `p_size` int(11) NOT NULL,  `p_container` varchar(10) NOT NULL,  `p_retailprice` decimal(15, 2) NOT NULL,  `p_comment` varchar(23) NOT NULL,  PRIMARY KEY (`p_partkey`),  CLUSTERED COLUMNAR INDEX `part_col_index`(`p_size`) PARTITION BY HASH (`p_partkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`p_partkey`) PARTITIONS 8;
+  partsupp:
+    CREATE TABLE IF NOT EXISTS `partsupp` (  `ps_partkey` int(11) NOT NULL,  `ps_suppkey` int(11) NOT NULL,  `ps_availqty` int(11) NOT NULL,  `ps_supplycost` decimal(15, 2) NOT NULL,  `ps_comment` varchar(199) NOT NULL,  PRIMARY KEY (`ps_partkey`, `ps_suppkey`),  CLUSTERED COLUMNAR INDEX `partsupp_col_index`(`ps_partkey`) PARTITION BY HASH (`ps_partkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`ps_partkey`) PARTITIONS 8;
+  supplier:
+    CREATE TABLE IF NOT EXISTS `supplier` (  `s_suppkey` int(11) NOT NULL,  `s_name` varchar(25) NOT NULL,  `s_address` varchar(40) NOT NULL,  `s_nationkey` int(11) NOT NULL,  `s_phone` varchar(15) NOT NULL,  `s_acctbal` decimal(15, 2) NOT NULL,  `s_comment` varchar(101) NOT NULL,  PRIMARY KEY (`s_suppkey`),  CLUSTERED COLUMNAR INDEX `supplier_col_index`(`s_suppkey`) PARTITION BY HASH (`s_suppkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`s_suppkey`) PARTITIONS 8;
+  nation:
+    CREATE TABLE IF NOT EXISTS `nation` (  `n_nationkey` int(11) NOT NULL,  `n_name` varchar(25) NOT NULL,  `n_regionkey` int(11) NOT NULL,  `n_comment` varchar(152) DEFAULT NULL,  PRIMARY KEY (`n_nationkey`),  CLUSTERED COLUMNAR INDEX `nation_col_index`(`n_nationkey`) PARTITION BY HASH (`n_nationkey`) PARTITIONS 1 ) BROADCAST ENGINE = InnoDB DEFAULT CHARSET = latin1;
+  region:
+    CREATE TABLE IF NOT EXISTS `region` (  `r_regionkey` int(11) NOT NULL,  `r_name` varchar(25) NOT NULL,  `r_comment` varchar(152) DEFAULT NULL,  PRIMARY KEY (`r_regionkey`),  CLUSTERED COLUMNAR INDEX `region_col_index`(`r_regionkey`) PARTITION BY HASH (`r_regionkey`) PARTITIONS 1 ) BROADCAST ENGINE = InnoDB DEFAULT CHARSET = latin1;
+
+STATISTICS:
+  customer:
+    168648768
+  lineitem:
+    6860984320
+  nation:
+    25
+  orders:
+    1660557312
+  part:
+    220466800
+  partsupp:
+    883230464
+  region:
+    5
+  supplier:
+    10826645
+CONFIG:
+  ENABLE_MPP:
+    true
+  ENABLE_COLUMNAR_OPTIMIZER:
+    true
+  ENABLE_REVERSE_BROADCAST_SEMI_HASH_JOIN:
+    false
+  WORKLOAD_TYPE:
+    AP
+  FORCE_HOLISTIC_SUBQUERY_UNNEST:
+    true
+  CTE_MODE:
+    AUTO
+  defaltxxAPPName.isNew:
+    true

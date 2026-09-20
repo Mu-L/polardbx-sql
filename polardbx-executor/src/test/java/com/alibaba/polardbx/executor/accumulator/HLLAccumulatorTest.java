@@ -1,5 +1,6 @@
 package com.alibaba.polardbx.executor.accumulator;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.ByteArrayBlock;
 import com.alibaba.polardbx.executor.chunk.ByteArrayBlockBuilder;
@@ -26,11 +27,12 @@ public class HLLAccumulatorTest {
     public void before() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new HyperLoglog(new int[] {0}, -1), DataTypes.LongType,
-                new DataType[] {DataTypes.LongType}, COUNT, new ExecutionContext());
+                new DataType[] {DataTypes.LongType}, COUNT, new ExecutionContext(), null);
 
         this.accumulator = (HyperLogLogAccumulator) accumulator;
         this.random = new Random();
         Assert.assertEquals(1, accumulator.getInputTypes().length);
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 
     @Test
@@ -47,6 +49,7 @@ public class HLLAccumulatorTest {
         for (int i = 0; i < block.getPositionCount(); i++) {
             accumulator.accumulate(0, chunk, i);
         }
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
 
         LongBlockBuilder resultBuilder = new LongBlockBuilder(COUNT);
 
@@ -54,6 +57,7 @@ public class HLLAccumulatorTest {
         Block resultBlock = resultBuilder.build();
         Assert.assertEquals(1, resultBlock.getPositionCount());
         Assert.assertFalse(resultBlock.isNull(0));
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 
     @Test
@@ -70,6 +74,7 @@ public class HLLAccumulatorTest {
         for (int i = 0; i < block.getPositionCount(); i++) {
             accumulator.accumulate(0, chunk, i);
         }
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
 
         LongBlockBuilder resultBuilder = new LongBlockBuilder(COUNT);
         accumulator.writeResultTo(0, resultBuilder);
@@ -78,6 +83,7 @@ public class HLLAccumulatorTest {
         Assert.assertEquals(2, resultBlock.getPositionCount());
         // group 1 has no values
         Assert.assertEquals(0, resultBuilder.getLong(1));
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 
     @Test
@@ -97,6 +103,7 @@ public class HLLAccumulatorTest {
         for (int i = 0; i < chunk.getPositionCount(); i++) {
             accumulator.accumulate(0, chunk, i);
         }
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
 
         LongBlockBuilder resultBuilder = new LongBlockBuilder(COUNT);
 
@@ -106,5 +113,6 @@ public class HLLAccumulatorTest {
         Assert.assertFalse(resultBlock.isNull(0));
 
         Assert.assertTrue(accumulator.estimateSize() > 0);
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 }

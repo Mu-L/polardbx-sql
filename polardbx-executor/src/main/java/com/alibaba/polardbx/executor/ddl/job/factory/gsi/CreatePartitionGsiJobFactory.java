@@ -40,6 +40,7 @@ import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupsSyncTask
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4CreatePartitionGsi;
+import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
 import com.alibaba.polardbx.executor.gsi.corrector.GsiChecker;
 import com.alibaba.polardbx.gms.metadb.table.IndexStatus;
 import com.alibaba.polardbx.gms.metadb.table.IndexVisibility;
@@ -48,6 +49,7 @@ import com.alibaba.polardbx.gms.partition.TablePartRecordInfoContext;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupDetailConfig;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.config.table.TableColumnUtils;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.gsi.CreateGlobalIndexPreparedData;
@@ -66,6 +68,7 @@ import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.executor.gsi.GsiUtils.columnAst2SubPart;
 import static com.alibaba.polardbx.executor.gsi.GsiUtils.columnAst2nameStr;
+import static com.alibaba.polardbx.executor.gsi.GsiUtils.getAvaliableNodeList;
 import static com.alibaba.polardbx.executor.gsi.GsiUtils.getAvaliableNodeNum;
 import static com.alibaba.polardbx.gms.metadb.table.IndexStatus.DELETE_ONLY;
 import static com.alibaba.polardbx.gms.metadb.table.IndexStatus.WRITE_ONLY;
@@ -110,7 +113,9 @@ public class CreatePartitionGsiJobFactory extends CreateGsiJobFactory {
             globalIndexPreparedData.getIndexTablePreparedData() != null ?
                 globalIndexPreparedData.getIndexTablePreparedData().getSpecialDefaultValueFlags() :
                 new TreeMap<>(String.CASE_INSENSITIVE_ORDER),
-            executionContext.getParamManager().getBoolean(ConnectionParams.GSI_BACKFILL_BY_PK_RANGE),
+            executionContext.getParamManager().getBoolean(ConnectionParams.GSI_BACKFILL_BY_PK_RANGE)
+                && !TableColumnUtils.hasExternalizedColumn(executionContext, globalIndexPreparedData.getSchemaName(),
+                globalIndexPreparedData.getPrimaryTableName()),
             executionContext.getParamManager().getBoolean(ConnectionParams.GSI_BACKFILL_BY_PARTITION),
             physicalPlanData,
             physicalPlanDataForLocalIndex,
@@ -130,6 +135,7 @@ public class CreatePartitionGsiJobFactory extends CreateGsiJobFactory {
             executionContext.getExtraCmds().put(ConnectionParams.ACQUIRE_CREATE_TABLE_GROUP_LOCK.getName(), false);
         }
         if (isNeedToGetCreateTableGroupLock(true)) {
+            resources.add(concatWithDot(schemaName, primaryTableName));
             resources.add(concatWithDot(schemaName, ConnectionProperties.ACQUIRE_CREATE_TABLE_GROUP_LOCK));
             executionContext.getExtraCmds().put(ConnectionParams.ACQUIRE_CREATE_TABLE_GROUP_LOCK.getName(), false);
         } else {
@@ -187,7 +193,7 @@ public class CreatePartitionGsiJobFactory extends CreateGsiJobFactory {
             }
             globalIndexPreparedData.setNeedToGetTableGroupLock(true);
             return job;
-        } else if (isNeedToGetCreateTableGroupLock(false)) {
+        } else if (isNeedToGetCreateTableGroupLock(false) && !DdlHelper.isExplain(executionContext)) {
             DdlTask ddl = generateCreateTableJob();
             ExecutableDdlJob job = new ExecutableDdlJob();
             job.addSequentialTasks(Lists.newArrayList(ddl));
@@ -210,13 +216,13 @@ public class CreatePartitionGsiJobFactory extends CreateGsiJobFactory {
 
             final String finalStatus =
                 executionContext.getParamManager().getString(ConnectionParams.GSI_FINAL_STATUS_DEBUG);
-            Boolean buildLocalIndexLater =
-                executionContext.getParamManager().getBoolean(ConnectionParams.GSI_BUILD_LOCAL_INDEX_LATER);
+            Boolean boostMode = DdlHelper.isBoostPerfMode(executionContext);
             int gsiMaxParallelism = executionContext.getParamManager().getInt(ConnectionParams.GSI_JOB_MAX_PARALLELISM);
             final boolean stayAtDeleteOnly = StringUtils.equalsIgnoreCase(DELETE_ONLY.name(), finalStatus);
             final boolean stayAtWriteOnly = StringUtils.equalsIgnoreCase(WRITE_ONLY.name(), finalStatus);
 
             List<DdlTask> bringUpGsi = null;
+            List<String> mppNodeList = new ArrayList<>();
             ExecutableDdlJob bringUpGsiDdlJob = new ExecutableDdlJob();
             if (useChangeSet) {
                 // online modify column
@@ -237,7 +243,7 @@ public class CreatePartitionGsiJobFactory extends CreateGsiJobFactory {
                     physicalPlanData,
                     globalIndexPreparedData.getIndexPartitionInfo()
                 );
-            } else if (needOnlineSchemaChange && (splitByPkRange || splitByPartition)) {
+            } else if (needOnlineSchemaChange && (splitByPkRange || splitByPartition || boostMode) && !mirrorCopy) {
                 TableMeta tableMeta = executionContext.getSchemaManager(schemaName).getTable(primaryTableName);
                 ParamManager pm = executionContext.getParamManager();
                 boolean enableSample = pm.getBoolean(ConnectionParams.ENABLE_INNODB_BTREE_SAMPLING);
@@ -248,38 +254,41 @@ public class CreatePartitionGsiJobFactory extends CreateGsiJobFactory {
                 long maxSampleRows = pm.getLong(ConnectionParams.BACKFILL_MAX_SAMPLE_ROWS);
                 long maxPkRangeSampleRows = pm.getLong(ConnectionParams.BACKFILL_MAX_SAMPLE_ROWS_FOR_PK_RANGE);
                 int cpuAcquired = pm.getInt(ConnectionParams.GSI_PK_RANGE_CPU_ACQUIRE);
-                int maxNodeNum = getAvaliableNodeNum(schemaName, primaryTableName, executionContext);
+                int maxNodeNum = getAvaliableNodeNum(schemaName, primaryTableName, executionContext,
+                    ConnectionParams.FORBID_REMOTE_DDL_TASK);
+                mppNodeList = getAvaliableNodeList(executionContext, ConnectionParams.FORBID_REMOTE_DDL_TASK);
                 // if you use pk range, then control the concurrency by cpuAcquired.
-                gsiMaxParallelism = Math.floorDiv(100, cpuAcquired) * maxNodeNum;
+                long maxThreadCount = (long) Math.floorDiv(100, cpuAcquired) * maxNodeNum;
                 GsiChecker.Params params = GsiChecker.Params.buildFromExecutionContext(executionContext);
                 bringUpGsiDdlJob = GsiTaskFactory.addGlobalIndexTasks(
                     schemaName,
                     primaryTableName,
-                    backfillSourceTableName,
                     indexTableName,
                     stayAtDeleteOnly,
                     stayAtWriteOnly,
                     stayAtBackFill,
                     srcVirtualColumnMap,
-                    null,
+                    dstVirtualColumnMap,
+                    dstColumnNewDefinitions,
                     modifyStringColumns,
                     physicalPlanData,
                     physicalPlanDataForLocalIndex,
                     tableMeta,
                     gsiCdcMark,
                     onlineModifyColumn,
-                    mirrorCopy,
                     executionContext.getOriginSql(),
                     params,
                     splitByPkRange,
                     splitByPartition,
+                    boostMode,
                     enableSample,
                     maxTaskPkRangeSize,
                     maxPkRangeSize,
                     maxSampleRows,
                     maxPkRangeSampleRows,
-                    gsiMaxParallelism,
-                    cpuAcquired
+                    (int) maxThreadCount,
+                    cpuAcquired,
+                    executionContext
                 );
                 // has been set.
                 physicalPlanDataForLocalIndex = null;
@@ -303,7 +312,8 @@ public class CreatePartitionGsiJobFactory extends CreateGsiJobFactory {
                     gsiCdcMark,
                     onlineModifyColumn,
                     mirrorCopy,
-                    executionContext.getOriginSql()
+                    executionContext.getOriginSql(),
+                    executionContext
                 );
             } else {
                 bringUpGsi = GsiTaskFactory.createGlobalIndexTasks(
@@ -380,10 +390,13 @@ public class CreatePartitionGsiJobFactory extends CreateGsiJobFactory {
             taskList.add(showTableMetaTask);
             //3.1 insert indexes meta for primary table
             taskList.add(addIndexMetaTask);
+            if (needOnlineSchemaChange) {
+                taskList.add(new TableSyncTask(schemaName, primaryTableName));
+            }
 //        taskList.add(new GsiSyncTask(schemaName, primaryTableName, indexTableName));
             //3.2 gsi status: CREATING -> DELETE_ONLY -> WRITE_ONLY -> WRITE_REORG -> PUBLIC
             result.addSequentialTasks(taskList);
-            if (needOnlineSchemaChange && (splitByPkRange || splitByPartition)) {
+            if (needOnlineSchemaChange && (splitByPkRange || splitByPartition || boostMode) && !mirrorCopy) {
                 result.combineTasks(bringUpGsiDdlJob);
                 result.addTaskRelationship(taskList.get(taskList.size() - 1), bringUpGsiDdlJob.getHead());
                 taskList = new ArrayList<>();
@@ -391,7 +404,6 @@ public class CreatePartitionGsiJobFactory extends CreateGsiJobFactory {
                 taskList = new ArrayList<>();
                 taskList.addAll(bringUpGsi);
             }
-
 
             DdlTask tableSyncTask = new TableSyncTask(schemaName, indexTableName);
             taskList.add(tableSyncTask);
@@ -427,6 +439,7 @@ public class CreatePartitionGsiJobFactory extends CreateGsiJobFactory {
 
             result.setLastTask(tableSyncTask);
             result.setMaxParallelism(gsiMaxParallelism);
+            result.setMppNodeList(mppNodeList);
 
             return result;
         }
@@ -535,7 +548,8 @@ public class CreatePartitionGsiJobFactory extends CreateGsiJobFactory {
 
         boolean autoPartition = globalIndexPreparedData.getIndexTablePreparedData().isAutoPartition();
         PhysicalPlanData physicalPlanData = builder.genPhysicalPlanData(autoPartition);
-        PhysicalPlanData physicalPlanDataForLocalIndex = DdlPhyPlanBuilder.getPhysicalPlanDataForLocalIndex(builder, autoPartition);
+        PhysicalPlanData physicalPlanDataForLocalIndex =
+            DdlPhyPlanBuilder.getPhysicalPlanDataForLocalIndex(builder, autoPartition);
         ec.getDdlContext().setIgnoreCdcGsiMark(true);
         CreateGsiJobFactory gsiJobFactory = new CreatePartitionGsiJobFactory(
             globalIndexPreparedData,
@@ -558,6 +572,5 @@ public class CreatePartitionGsiJobFactory extends CreateGsiJobFactory {
         }
         return ret;
     }
-
 
 }

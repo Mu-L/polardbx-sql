@@ -36,7 +36,7 @@ public class AutoPartitionAddDropIndexWithClustered extends BaseAutoPartitionNew
     private static final String LOCAL_INDEX_NAME = "l_i_idx_with_clustered";
 
     private static final String CREATE_TABLE = "CREATE TABLE {0} (\n"
-        + "  `t` timestamp default CURRENT_TIMESTAMP,\n"
+        + "  `t` timestamp not null default CURRENT_TIMESTAMP,\n"
         + "  `x` int default 3,\n"
         + "  `y` int default null,\n"
         + "  `z` int null,\n"

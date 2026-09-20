@@ -32,7 +32,11 @@ import com.alibaba.polardbx.executor.mpp.execution.TaskInfo;
 import com.alibaba.polardbx.executor.mpp.execution.TaskStatus;
 import com.alibaba.polardbx.executor.mpp.metadata.ForNodeManager;
 import com.alibaba.polardbx.executor.mpp.metadata.HandleJsonModule;
+import com.alibaba.polardbx.executor.mpp.server.ForAsyncHttpControl;
+import com.alibaba.polardbx.executor.mpp.server.ForAsyncHttpData;
+import com.alibaba.polardbx.executor.mpp.server.MonitoredBoundedExecutor;
 import com.alibaba.polardbx.executor.mpp.server.PagesResponseWriter;
+import com.alibaba.polardbx.executor.mpp.server.UnhandledExceptionMapper;
 import com.alibaba.polardbx.executor.mpp.server.remotetask.HttpLocationFactory;
 import com.alibaba.polardbx.executor.mpp.util.FinalizerService;
 import com.alibaba.polardbx.executor.mpp.web.ClusterStatsResource;
@@ -63,6 +67,7 @@ import com.alibaba.polardbx.gms.node.NodeVersion;
 import com.google.inject.Binder;
 import com.google.inject.Provides;
 import com.google.inject.Scopes;
+import io.airlift.concurrent.BoundedExecutor;
 import io.airlift.units.Duration;
 
 import javax.inject.Singleton;
@@ -117,6 +122,7 @@ public class LocalModule extends BaseModule {
         jsonCodecBinder(binder).bindJsonCodec(InternalNode.class);
         jsonCodecBinder(binder).bindJsonCodec(AllNodes.class);
         jaxrsBinder(binder).bind(PagesResponseWriter.class);
+        jaxrsBinder(binder).bind(UnhandledExceptionMapper.class);
 
         httpClientBinder(binder).bindHttpClient("node-manager", ForNodeManager.class)
             .withConfigDefaults(config -> {
@@ -169,5 +175,27 @@ public class LocalModule extends BaseModule {
     @Singleton
     public static SingleStreamSpillerFactory createSingleStreamSpillerFactory(FileCleaner fileCleaner) {
         return new AsyncFileSingleStreamSpillerFactory(fileCleaner).cleanupOldSpillFiles();
+    }
+
+    @Provides
+    @Singleton
+    @ForAsyncHttpData
+    public static MonitoredBoundedExecutor createDataResponseExecutor() {
+        int poolSize = MppConfig.getInstance().getHttpDataResponseThreads();
+        ExecutorService coreExecutor = newFixedThreadPool(poolSize,
+            Threads.daemonThreadsNamed("async-http-data-response"));
+        BoundedExecutor bounded = new BoundedExecutor(coreExecutor, poolSize);
+        return new MonitoredBoundedExecutor(bounded, "dataplane", poolSize);
+    }
+
+    @Provides
+    @Singleton
+    @ForAsyncHttpControl
+    public static MonitoredBoundedExecutor createControlResponseExecutor() {
+        int poolSize = MppConfig.getInstance().getHttpControlResponseThreads();
+        ExecutorService coreExecutor = newFixedThreadPool(poolSize,
+            Threads.daemonThreadsNamed("async-http-control-response"));
+        BoundedExecutor bounded = new BoundedExecutor(coreExecutor, poolSize);
+        return new MonitoredBoundedExecutor(bounded, "controlplane", poolSize);
     }
 }

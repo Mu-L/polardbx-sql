@@ -17,19 +17,8 @@ package com.alibaba.polardbx.druid.sql.ast.statement;
 
 import com.alibaba.polardbx.druid.DbType;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
-import com.alibaba.polardbx.druid.sql.ast.ClusteringType;
-import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
-import com.alibaba.polardbx.druid.sql.ast.SQLName;
-import com.alibaba.polardbx.druid.sql.ast.SQLObject;
-import com.alibaba.polardbx.druid.sql.ast.SQLPartitionBy;
-import com.alibaba.polardbx.druid.sql.ast.SQLStatement;
-import com.alibaba.polardbx.druid.sql.ast.SQLStatementImpl;
-import com.alibaba.polardbx.druid.sql.ast.SqlType;
-import com.alibaba.polardbx.druid.sql.ast.expr.SQLCharExpr;
-import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
-import com.alibaba.polardbx.druid.sql.ast.expr.SQLMethodInvokeExpr;
-import com.alibaba.polardbx.druid.sql.ast.expr.SQLPropertyExpr;
-import com.alibaba.polardbx.druid.sql.ast.expr.SQLValuableExpr;
+import com.alibaba.polardbx.druid.sql.ast.*;
+import com.alibaba.polardbx.druid.sql.ast.expr.*;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.MySqlKey;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.MySqlPrimaryKey;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.MySqlUnique;
@@ -42,13 +31,7 @@ import com.alibaba.polardbx.druid.util.FnvHash;
 import com.alibaba.polardbx.druid.util.ListDG;
 import com.alibaba.polardbx.druid.util.lang.Consumer;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import static com.alibaba.polardbx.druid.sql.ast.SqlType.SHOW_CONVERT_TABLE_MODE;
 
@@ -303,11 +286,34 @@ public class SQLCreateTableStatement extends SQLStatementImpl implements SQLDDLS
         return keys;
     }
 
+    public List<String> getPrimaryKeyColumnNames() {
+        List<String> keys = new ArrayList<String>();
+        for (SQLTableElement element : this.tableElementList) {
+            if (element instanceof MySqlPrimaryKey) {
+                List<SQLSelectOrderByItem> columns = ((MySqlPrimaryKey) element).getColumns();
+                for (SQLSelectOrderByItem column : columns) {
+                    final SQLExpr expr = column.getExpr();
+                    if (expr instanceof SQLMethodInvokeExpr) {
+                        keys.add(SQLUtils.normalize(((SQLMethodInvokeExpr) expr).getMethodName()));
+                    } else {
+                        keys.add(SQLUtils.normalize(expr.toString()));
+                    }
+                }
+            } else if (element instanceof SQLColumnDefinition && ((SQLColumnDefinition) element).isPrimaryKey()) {
+                SQLColumnDefinition column = (SQLColumnDefinition) element;
+                keys.add(SQLUtils.normalize(column.getName().getSimpleName()));
+                //列定义中Primary key,只能有一个
+                return keys;
+            }
+        }
+        return keys;
+    }
+
     public void addColumn(String columnName, String dataType) {
         SQLColumnDefinition column = new SQLColumnDefinition();
         column.setName(columnName);
         column.setDataType(
-            SQLParserUtils.createExprParser(dataType, dbType).parseDataType()
+                SQLParserUtils.createExprParser(dataType, dbType).parseDataType()
         );
         addColumn(column);
     }

@@ -17,8 +17,15 @@
 package com.alibaba.polardbx.optimizer.core.rel;
 
 import com.alibaba.polardbx.common.jdbc.TableName;
+import com.alibaba.polardbx.gms.topology.DbInfoManager;
+import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
+import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
 import com.alibaba.polardbx.optimizer.utils.CalciteUtils;
+import com.alibaba.polardbx.optimizer.utils.ExplainResult;
+import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.googlecode.protobuf.format.JsonFormat;
 import com.mysql.cj.x.protobuf.PolarxExecPlan;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
@@ -42,6 +49,7 @@ import org.apache.calcite.sql.SqlSelect.LockMode;
 import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang.StringUtils;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -114,11 +122,13 @@ public abstract class BaseTableOperation extends BaseQueryOperation {
 
     @Override
     public RelWriter explainTermsForDisplay(RelWriter pw) {
-        ExplainInfo explainInfo = buildExplainInfo(((RelDrdsWriter) pw).getParams(),
-            (ExecutionContext) ((RelDrdsWriter) pw).getExecutionContext());
+        ExecutionContext ec = (ExecutionContext) ((RelDrdsWriter) pw).getExecutionContext();
+        ExplainInfo explainInfo = buildExplainInfo(((RelDrdsWriter) pw).getParams(), ec);
         pw.item(RelDrdsWriter.REL_NAME, getExplainName());
         String groupAndTableName = explainInfo.groupName + (TStringUtil.isNotBlank(explainInfo.groupName) ? "." : "")
             + StringUtils.join(explainInfo.tableNames, ",");
+        groupAndTableName = rebuildGroupAndTableNamesByUsingPartitionsIfNeed(ec, explainInfo, groupAndTableName);
+
         pw.itemIf("tables", groupAndTableName, groupAndTableName != null);
         String sql = TStringUtil.replace(getNativeSql(), "\n", " ");
         pw.item("sql", sql);
@@ -157,7 +167,52 @@ public abstract class BaseTableOperation extends BaseQueryOperation {
                 pw.item("XPlan", format.printToString(plan));
             }
         }
+
+        if (executionContext != null && executionContext.getParamManager()
+            .getBoolean(ConnectionParams.EXPLAIN_SHOW_PHYSICAL_PLAN)
+            && executionContext.getExplain() != null
+            && (executionContext.getExplain().explainMode == ExplainResult.ExplainMode.DETAIL
+            || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.COST
+            || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.ANALYZE)) {
+            RelUtils.displayPhysicalPlan(this, pw, executionContext);
+        }
+
         return pw;
+    }
+
+    private String rebuildGroupAndTableNamesByUsingPartitionsIfNeed(ExecutionContext ec, ExplainInfo explainInfo,
+                                                                    String groupAndTableName) {
+        boolean usePartitionsOfTablesInLvForShowCreateTable = false;
+        if (ec != null) {
+            usePartitionsOfTablesInLvForShowCreateTable =
+                ec.getParamManager().getBoolean(ConnectionParams.SHOW_PARTITIONS_IN_LOGICALVIEW_FOR_SHOW_CREATE_TABLE);
+        }
+        if (usePartitionsOfTablesInLvForShowCreateTable) {
+            boolean isPhyOp0rPhyDdlOp = this instanceof PhyDdlTableOperation || this instanceof PhyTableOperation;
+            ;
+            if (DbInfoManager.getInstance().isNewPartitionDb(this.schemaName) && !isPhyOp0rPhyDdlOp) {
+                String dbName = this.schemaName;
+                List<String> logTblList = this.getLogicalTableNames();
+                List<String> phyTblList = (List<String>) explainInfo.tableNames;
+                SchemaManager sc = ec.getSchemaManager(dbName);
+                String phyGrp = explainInfo.groupName;
+                List<String> targetListOfLogTblNameWithParts = new ArrayList<>();
+                for (int i = 0; i < logTblList.size(); i++) {
+                    String logTb = logTblList.get(i);
+                    String phyTb = phyTblList.get(i);
+                    TableMeta tm = sc.getTable(logTb);
+                    PartitionInfo partInfo = tm.getPartitionInfo();
+                    PartitionSpec ps = partInfo.getPartSpecSearcher().getPartSpec(phyGrp, phyTb);
+                    if (ps != null) {
+                        String logTblNameWithPart = String.format("%s[%s]", logTb, ps.getName());
+                        targetListOfLogTblNameWithParts.add(logTblNameWithPart);
+                    }
+                }
+                groupAndTableName = phyGrp + (TStringUtil.isNotBlank(phyGrp) ? "." : "")
+                    + StringUtils.join(targetListOfLogTblNameWithParts, ",");
+            }
+        }
+        return groupAndTableName;
     }
 
     protected Map<Integer, ParameterContext> buildParam(String tableName, Map<Integer, ParameterContext> param) {

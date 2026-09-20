@@ -1,5 +1,7 @@
 package com.alibaba.polardbx.executor.operator.scan;
 
+import com.alibaba.polardbx.common.orc.ORCMetaReader;
+import com.alibaba.polardbx.common.orc.PreheatFileMeta;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.archive.schemaevolution.ColumnMetaWithTs;
 import com.alibaba.polardbx.executor.chunk.Block;
@@ -9,20 +11,22 @@ import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.LongBlock;
 import com.alibaba.polardbx.executor.gms.ColumnarManager;
 import com.alibaba.polardbx.executor.operator.scan.impl.AsyncStripeLoader;
-import com.alibaba.polardbx.executor.operator.scan.impl.PreheatFileMeta;
 import com.alibaba.polardbx.executor.operator.scan.impl.StaticStripePlanner;
 import com.alibaba.polardbx.executor.operator.scan.metrics.RuntimeMetrics;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.Field;
 import com.alibaba.polardbx.optimizer.config.table.FileMeta;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.datatype.VarcharType;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadUtil;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.memory.MemoryManager;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
 import com.alibaba.polardbx.optimizer.memory.MemoryPoolUtils;
-import com.alibaba.polardbx.optimizer.workload.WorkloadUtil;
+import com.alibaba.polardbx.optimizer.statis.OperatorStatistics;
+import com.google.common.collect.ImmutableMap;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -47,6 +51,7 @@ import java.io.IOException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -258,9 +263,7 @@ public class ScanTestBase {
     protected StripeLoader createStripeLoader(int stripeId, boolean[] columnIncluded, RuntimeMetrics runtimeMetrics) {
         StripeLoader stripeLoader;
 
-        OrcProto.ColumnEncoding[] encodings = StaticStripePlanner.buildEncodings(
-            encryption, columnIncluded, preheatFileMeta.getStripeFooter(stripeId)
-        );
+        OrcProto.ColumnEncoding[] encodings = preheatFileMeta.getColumnEncodings(stripeId);
 
         stripeLoader = new AsyncStripeLoader(
             IO_EXECUTOR,
@@ -278,7 +281,7 @@ public class ScanTestBase {
             encodings, ignoreNonUtf8BloomFilter,
             maxBufferSize,
             maxDiskRangeChunkLimit, maxMergeDistance, runtimeMetrics,
-            true, memoryAllocatorCtx);
+            true, memoryAllocatorCtx, new OperatorStatistics());
         return stripeLoader;
     }
 
@@ -426,6 +429,11 @@ public class ScanTestBase {
 
     protected ColumnarManager mockColumnarManager = new ColumnarManager() {
         @Override
+        public List<Object[]> dumpMemoryUsage() {
+            return null;
+        }
+
+        @Override
         public void reload() {
 
         }
@@ -452,18 +460,18 @@ public class ScanTestBase {
 
         @Override
         public Pair<List<FileMeta>, List<FileMeta>> findFiles(long tso, String logicalSchema, String logicalTable,
-                                                              String partName) {
+                                                              String partName, TableMeta tableMeta) {
             return null;
         }
 
         @Override
         public Pair<List<String>, List<String>> findFileNames(long tso, String logicalSchema, String logicalTable,
-                                                              String partName) {
+                                                              String partName, TableMeta tableMeta) {
             return null;
         }
 
         @Override
-        public Iterator<Chunk> csvData(long tso, String csvFileName) {
+        public Iterator<Chunk> csvData(long tso, String csvFileName, ExecutionContext ec) {
             return null;
         }
 
@@ -499,33 +507,39 @@ public class ScanTestBase {
         }
 
         @Override
-        public @NotNull List<Long> getColumnFieldIdList(long versionId, long tableId) {
+        public @NotNull
+        List<Long> getColumnFieldIdList(long versionId, long tableId) {
             return null;
         }
 
         @Override
-        public @NotNull List<ColumnMeta> getColumnMetas(long schemaTso, String logicalSchema, String logicalTable) {
+        public @NotNull
+        List<ColumnMeta> getColumnMetas(long schemaTso, String logicalSchema, String logicalTable,
+                                        TableMeta tableMeta) {
             return null;
         }
 
         @Override
-        public @NotNull List<ColumnMeta> getColumnMetas(long schemaTso, long tableId) {
+        public @NotNull
+        List<ColumnMeta> getColumnMetas(long schemaTso, long tableId) {
             return null;
         }
 
         @Override
-        public @NotNull Map<Long, Integer> getColumnIndex(long schemaTso, long tableId) {
+        public @NotNull
+        Map<Long, Integer> getColumnIndex(long schemaTso, long tableId) {
             return null;
         }
 
         @Override
-        public @NotNull ColumnMetaWithTs getInitColumnMeta(long tableId, long fieldId) {
+        public @NotNull
+        ColumnMetaWithTs getInitColumnMeta(long tableId, long fieldId) {
             return null;
         }
 
         @Override
         public RoaringBitmap getDeleteBitMapOf(long tso, String fileName) {
-            return null;
+            return new RoaringBitmap();
         }
 
         @Override
@@ -535,14 +549,15 @@ public class ScanTestBase {
 
         @Override
         public Map<Long, Integer> getPhysicalColumnIndexes(String fileName) {
-            return null;
-        }
-
-        @Override
-        public List<Integer> getSortKeyColumns(long tso, String logicalSchema, String logicalTable) {
-            List<Integer> mockList = new ArrayList<>();
-            mockList.add(0);
-            return mockList;
+            return ImmutableMap.<Long, Integer>builder()
+                .put(0L, 0)
+                .put(1L, 1)
+                .put(2L, 2)
+                .put(3L, 3)
+                .put(4L, 4)
+                .put(5L, 5)
+                .put(6L, 6)
+                .build();
         }
 
         @Override

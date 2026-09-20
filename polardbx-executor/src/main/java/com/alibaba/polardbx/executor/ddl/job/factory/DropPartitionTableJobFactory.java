@@ -17,6 +17,8 @@
 package com.alibaba.polardbx.executor.ddl.job.factory;
 
 import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.ddl.job.converter.PhysicalPlanData;
 import com.alibaba.polardbx.executor.ddl.job.factory.util.FactoryUtils;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.DropEntitySecurityAttrTask;
@@ -27,21 +29,24 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.DropTablePhyDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.oss.UpdateTableRemoveTsTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcDdlMarkTask;
+import com.alibaba.polardbx.executor.ddl.job.task.columnar.CleanBlobCacheForTableSyncTask;
+import com.alibaba.polardbx.executor.ddl.job.task.columnar.DropBlobColumnMappingTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupSyncTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4DropPartitionTable;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.config.table.ScaleOutPlanUtil;
+import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.DropTablePreparedData;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
-import com.alibaba.polardbx.optimizer.utils.ITimestampOracle;
+import com.alibaba.polardbx.common.trx.ITimestampOracle;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.common.cdc.ICdcManager.DEFAULT_DDL_VERSION_ID;
 
@@ -49,14 +54,11 @@ public class DropPartitionTableJobFactory extends DropTableJobFactory {
 
     private List<Long> tableGroupIds = new ArrayList<>();
 
-    private ExecutionContext executionContext;
-
     private DropTablePreparedData dropTablePreparedData = null;
 
     public DropPartitionTableJobFactory(PhysicalPlanData physicalPlanData, ExecutionContext executionContext,
                                         DropTablePreparedData dropTablePreparedData) {
-        super(physicalPlanData);
-        this.executionContext = executionContext;
+        super(physicalPlanData, executionContext);
         this.dropTablePreparedData = dropTablePreparedData;
     }
 
@@ -67,8 +69,11 @@ public class DropPartitionTableJobFactory extends DropTableJobFactory {
 
     @Override
     protected ExecutableDdlJob doCreate() {
-        PartitionInfo partitionInfo =
-            OptimizerContext.getContext(schemaName).getPartitionInfoManager().getPartitionInfo(logicalTableName);
+        SchemaManager schemaManager = executionContext.getSchemaManager(schemaName);
+        TableMeta tableMeta = schemaManager.getTable(logicalTableName);
+        boolean hasExternalColumnLifecycle =
+            tableMeta.hasExternalizedColumn() || tableMeta.hasColumnInMceLifecycle();
+        PartitionInfo partitionInfo = tableMeta.getPartitionInfo();
         Long tableGroupId = -1L;
         TableGroupConfig tableGroupConfig = null;
         if (partitionInfo != null) {
@@ -80,7 +85,25 @@ public class DropPartitionTableJobFactory extends DropTableJobFactory {
             new DropPartitionTableValidateTask(schemaName, logicalTableName, tableGroupIds, tableGroupConfig);
         DropTableHideTableMetaTask dropTableHideTableMetaTask =
             new DropTableHideTableMetaTask(schemaName, logicalTableName);
-        DropTablePhyDdlTask phyDdlTask = new DropTablePhyDdlTask(schemaName, physicalPlanData);
+
+        boolean recycleBinEnable = ScaleOutPlanUtil.isPhyRecyclebinEnable(executionContext);
+        DdlTask phyDdlTask;
+        List<DdlTask> dropForeignKeyTasksBeforeRename = new ArrayList<>();
+        boolean hasForeignKey = tableMeta.hasForeignKey();
+
+        if (recycleBinEnable && !hasForeignKey) {
+            Map<String, Set<String>> newTopology = new HashMap<>();
+            Map<String, List<List<String>>> topology = physicalPlanData.getTableTopology();
+            topology.forEach((k, v) ->
+                newTopology.computeIfAbsent(k,
+                    i -> v.stream().map(l -> l.get(0)).collect(Collectors.toSet()))
+            );
+            phyDdlTask = ComplexTaskFactory.createRenameUselessPhyTableTask(schemaName, logicalTableName, newTopology,
+                null, dropForeignKeyTasksBeforeRename, false, executionContext);
+        } else {
+            phyDdlTask = new DropTablePhyDdlTask(schemaName, physicalPlanData);
+        }
+
         CdcDdlMarkTask cdcDdlMarkTask =
             new CdcDdlMarkTask(schemaName, physicalPlanData, false, false, DEFAULT_DDL_VERSION_ID);
         DropPartitionTableRemoveMetaTask removeMetaTask =
@@ -105,6 +128,12 @@ public class DropPartitionTableJobFactory extends DropTableJobFactory {
          */
         tasks.add(validateTask);
         tasks.add(dropTableHideTableMetaTask);
+        if (hasExternalColumnLifecycle) {
+            // Keep this task after hide-meta so rollback restores the exact mappings before
+            // DropTableHideTableMetaTask exposes the table again.
+            tasks.add(new DropBlobColumnMappingTask(schemaName, logicalTableName));
+        }
+        tasks.add(new TableSyncTask(schemaName, logicalTableName));
         Engine engine =
             OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(logicalTableName).getEngine();
         if (Engine.isFileStore(engine)) {
@@ -119,9 +148,13 @@ public class DropPartitionTableJobFactory extends DropTableJobFactory {
             UpdateTableRemoveTsTask updateTableRemoveTsTask =
                 new UpdateTableRemoveTsTask(engine.name(), schemaName, logicalTableName, ts);
             tasks.add(updateTableRemoveTsTask);
+            tasks.add(new TableSyncTask(schemaName, logicalTableName));
         }
 
         if (!dropTablePreparedData.isImportTable()) {
+            if (GeneralUtil.isNotEmpty(dropForeignKeyTasksBeforeRename)) {
+                tasks.addAll(dropForeignKeyTasksBeforeRename);
+            }
             tasks.add(phyDdlTask);
         }
 
@@ -134,6 +167,9 @@ public class DropPartitionTableJobFactory extends DropTableJobFactory {
             tasks.add(cdcDdlMarkTask);
         }
         tasks.add(removeMetaTask);
+        if (hasExternalColumnLifecycle) {
+            tasks.add(new CleanBlobCacheForTableSyncTask(schemaName, logicalTableName));
+        }
         if (syncTableGroup != null) {
             tasks.add(syncTableGroup);
         }

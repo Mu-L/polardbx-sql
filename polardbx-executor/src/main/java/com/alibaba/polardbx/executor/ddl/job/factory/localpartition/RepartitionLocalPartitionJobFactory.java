@@ -36,6 +36,7 @@ import com.alibaba.polardbx.executor.ddl.job.task.localpartition.LocalPartitionV
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
 import com.alibaba.polardbx.executor.partitionmanagement.LocalPartitionManager;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
@@ -245,5 +246,10 @@ public class RepartitionLocalPartitionJobFactory extends DdlJobFactory {
     @Override
     protected void sharedResources(Set<String> resources) {
 
+    }
+
+    @Override
+    protected void updateOnlineDdlInfo(OnlineDdlInfo onlineDdlInfo) {
+        onlineDdlInfo.setOnlineDdlType(OnlineDdlInfo.DdlType.LOCK_TABLE);
     }
 }

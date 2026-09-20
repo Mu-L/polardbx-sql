@@ -1,0 +1,55 @@
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT = true;
+
+use __cdc__;
+
+drop table if exists `__cdc_ddl_record_test__`;
+drop table if exists `t1`;
+drop table if exists `t2`;
+
+CREATE TABLE `__cdc_ddl_record_test__` (
+`ID` bigint(20) NOT NULL AUTO_INCREMENT,
+`JOB_ID` bigint(20) DEFAULT NULL,
+`SQL_KIND` varchar(50) NOT NULL,
+`SCHEMA_NAME` varchar(200) NOT NULL,
+`TABLE_NAME` varchar(200) DEFAULT NULL,
+`GMT_CREATED` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+`DDL_SQL` mediumtext NOT NULL,
+`META_INFO` mediumtext,
+`VISIBILITY` bigint(10) NOT NULL,
+`EXT` text,
+PRIMARY KEY (`ID`),
+KEY `idx_job_id` (`JOB_ID`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4  broadcast;
+
+create table t1(a int primary key auto_increment, b int) dbpartition by hash(b);
+
+create table t2(a int primary key auto_increment, b int) single;
+
+show create table `__cdc_ddl_record_test__`;
+
+insert into `__cdc_ddl_record_test__`(`JOB_ID`,`SQL_KIND`,`SCHEMA_NAME`,`TABLE_NAME`,`GMT_CREATED`,`DDL_SQL`,`META_INFO`,`VISIBILITY`,`EXT`) values 
+(1, "CREATE_SEQUENCE", "wumu", "test3", "2025-05-15 16:58:32", "create sequence test3", null, 2, "{}");
+
+insert into `__cdc_ddl_record_test__`(`JOB_ID`,`SQL_KIND`,`SCHEMA_NAME`,`TABLE_NAME`,`GMT_CREATED`,`DDL_SQL`,`META_INFO`,`VISIBILITY`,`EXT`) values
+(2, "CREATE_SEQUENCE", "wumu", "test3", "2025-05-15 16:58:32", "create sequence test3", null, 2, "{}");
+
+insert into `__cdc_ddl_record_test__`(`JOB_ID`,`SQL_KIND`,`SCHEMA_NAME`,`TABLE_NAME`,`GMT_CREATED`,`DDL_SQL`,`META_INFO`,`VISIBILITY`,`EXT`) values
+(3, "CREATE_SEQUENCE", "wumu", "test3", "2025-05-15 16:58:32", "create sequence test3", null, 2, "{}");
+
+select * from `__cdc_ddl_record_test__` order by id;
+
+drop table `__cdc_ddl_record_test__`;
+
+show create table t1;
+
+insert into t1(b) values(1),(2),(3),(4);
+
+select * from t1 order by a;
+
+show create table t2;
+
+insert into t2(b) values(1),(2),(3),(4);
+
+select * from t2 order by a;
+
+drop table t1;

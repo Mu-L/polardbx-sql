@@ -1,0 +1,183 @@
+DROP TABLE IF EXISTS s1
+DROP TABLE IF EXISTS s2
+DROP TABLE IF EXISTS s3
+DROP TABLE IF EXISTS s4
+DROP TABLE IF EXISTS s5
+DROP TABLEGROUP IF EXISTS single1
+DROP TABLEGROUP IF EXISTS single2
+CREATE TABLEGROUP single1
+CREATE TABLEGROUP single2
+CREATE TABLE s1 (
+	a int PRIMARY KEY,
+	b int
+) SINGLE
+TABLEGROUP = single1
+CREATE TABLE s2 (
+	a bit(10),
+	b int,
+	PRIMARY KEY (a, b)
+) SINGLE
+TABLEGROUP = single1
+CREATE TABLE s3 (
+	a int PRIMARY KEY,
+	b int
+) SINGLE
+TABLEGROUP = single2
+CREATE TABLE s4 (
+	a bit(10),
+	b int,
+	PRIMARY KEY (a, b)
+) SINGLE
+TABLEGROUP = single2
+CREATE TABLE s5 (
+	a int,
+	b int
+) SINGLE
+TABLEGROUP = single1
+INSERT INTO s1
+VALUES (1, 1)
+INSERT INTO s2
+VALUES (2, 2)
+INSERT INTO s3
+VALUES (3, 3)
+INSERT INTO s4
+VALUES (4, 4)
+INSERT INTO s5
+VALUES (5, 5)
+ALTER TABLE s1
+	CHANGE COLUMN a a1 bit(10)
+ALTER TABLE s2
+	CHANGE COLUMN a a1 int
+SHOW FULL CREATE TABLE s1
+Table,Create Table
+s1,CREATE TABLE `s1` (
+	`a1` bit(10) NOT NULL,
+	`b` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+SINGLE
+tablegroup = `single1`
+SHOW FULL CREATE TABLE s2
+Table,Create Table
+s2,CREATE TABLE `s2` (
+	`a1` int(11) NOT NULL,
+	`b` int(11) NOT NULL,
+	PRIMARY KEY (`a1`, `b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+SINGLE
+tablegroup = `single1`
+ALTER TABLE s1
+	CHANGE COLUMN a1 a2 bit(10)
+ALTER TABLE s2
+	CHANGE COLUMN a1 a2 int
+SHOW FULL CREATE TABLE s1
+Table,Create Table
+s1,CREATE TABLE `s1` (
+	`a2` bit(10) NOT NULL,
+	`b` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a2`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+SINGLE
+tablegroup = `single1`
+SHOW FULL CREATE TABLE s2
+Table,Create Table
+s2,CREATE TABLE `s2` (
+	`a2` int(11) NOT NULL,
+	`b` int(11) NOT NULL,
+	PRIMARY KEY (`a2`, `b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+SINGLE
+tablegroup = `single1`
+ALTER TABLE s1
+	CHANGE COLUMN b b1 bigint
+ALTER TABLE s2
+	CHANGE COLUMN b b1 bigint
+SHOW FULL CREATE TABLE s1
+Table,Create Table
+s1,CREATE TABLE `s1` (
+	`a2` bit(10) NOT NULL,
+	`b1` bigint(20) DEFAULT NULL,
+	PRIMARY KEY (`a2`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+SINGLE
+tablegroup = `single1`
+SHOW FULL CREATE TABLE s2
+Table,Create Table
+s2,CREATE TABLE `s2` (
+	`a2` int(11) NOT NULL,
+	`b1` bigint(20) NOT NULL,
+	PRIMARY KEY (`a2`, `b1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+SINGLE
+tablegroup = `single1`
+ALTER TABLE s3
+	CHANGE COLUMN a b int,
+	CHANGE COLUMN b a int
+ALTER TABLE s4
+	CHANGE COLUMN a c int,
+	CHANGE COLUMN b d int
+SHOW FULL CREATE TABLE s3
+Table,Create Table
+s3,CREATE TABLE `s3` (
+	`b` int(11) NOT NULL,
+	`a` int(11) DEFAULT NULL,
+	PRIMARY KEY (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+SINGLE
+tablegroup = `single2`
+SHOW FULL CREATE TABLE s4
+Table,Create Table
+s4,CREATE TABLE `s4` (
+	`c` int(11) NOT NULL,
+	`d` int(11) NOT NULL,
+	PRIMARY KEY (`c`, `d`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+SINGLE
+tablegroup = `single2`
+ALTER TABLE s5
+	CHANGE COLUMN `_drds_implicit_id_` `c` bigint(20) NOT NULL AUTO_INCREMENT
+SHOW FULL CREATE TABLE s5
+Table,Create Table
+s5,CREATE TABLE `s5` (
+	`a` int(11) DEFAULT NULL,
+	`b` int(11) DEFAULT NULL,
+	`c` bigint(20) NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`c`)
+) ENGINE = InnoDB AUTO_INCREMENT = 100000 DEFAULT CHARSET = utf8mb4
+SINGLE
+tablegroup = `single1`
+INSERT INTO s1
+VALUES (6, 6)
+INSERT INTO s2
+VALUES (7, 7)
+INSERT INTO s3
+VALUES (8, 8)
+INSERT INTO s4
+VALUES (9, 9)
+INSERT INTO s5 (a, b)
+VALUES (10, 10)
+SELECT *
+FROM s1
+a2,b1
+1,1
+6,6
+SELECT *
+FROM s2
+a2,b1
+2,2
+7,7
+SELECT *
+FROM s3
+b,a
+3,3
+8,8
+SELECT *
+FROM s4
+c,d
+4,4
+9,9
+SELECT *
+FROM s5
+a,b,c
+5,5,100001
+10,10,200001

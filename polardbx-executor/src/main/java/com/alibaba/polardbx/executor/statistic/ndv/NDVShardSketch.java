@@ -16,13 +16,13 @@
 
 package com.alibaba.polardbx.executor.statistic.ndv;
 
+import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.IDataSource;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.utils.AsyncUtils;
-import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.LoggerUtil;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.logger.Logger;
@@ -45,17 +45,21 @@ import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.group.jdbc.TGroupDirectConnection;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
+import com.alibaba.polardbx.optimizer.config.table.GlobalIndexMeta;
 import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager;
 import com.alibaba.polardbx.optimizer.config.table.IndexMeta;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.config.table.statistic.inf.SystemTableNDVSketchStatistic;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
+import com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertType;
 import com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertUtil;
 import com.alibaba.polardbx.optimizer.exception.TableNotFoundException;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import org.apache.calcite.sql.SqlIdentifier;
+import org.apache.commons.collections.CollectionUtils;
 import org.eclipse.jetty.util.StringUtil;
 
 import java.sql.Connection;
@@ -64,14 +68,19 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
@@ -477,6 +486,27 @@ public class NDVShardSketch {
                 new String[] {"ndv sketch rebuild:", tableName + "," + columnName},
                 LogLevel.NORMAL
             );
+
+        // Skip externalized columns — physical storage is blob_addr (VARCHAR hex),
+        // HLL on addresses yields meaningless NDV ≈ row_count.
+        // columnName may be comma-separated for composite NDV (e.g. "col1,col2"),
+        // only check single-column case.
+        if (!columnName.contains(",")) {
+            try {
+                OptimizerContext oc = OptimizerContext.getContext(schemaName);
+                if (oc != null) {
+                    TableMeta tm = oc.getLatestSchemaManager().getTableWithNull(tableName);
+                    if (tm != null) {
+                        ColumnMeta cm = tm.getColumnIgnoreCase(columnName);
+                        if (cm != null && cm.isExternalizedColumn()) {
+                            return null;
+                        }
+                    }
+                }
+            } catch (Throwable ignore) {
+                // best-effort check, proceed if meta lookup fails
+            }
+        }
         String shardKey = buildSketchKey(schemaName, tableName, columnName);
 
         // build shard parts and physical index
@@ -506,13 +536,46 @@ public class NDVShardSketch {
         if (cardinality < 0) {
             List<Future> futures = null;
             AtomicBoolean stopped = new AtomicBoolean(false);
-            if (sketchHllExecutor != null) {
+            if (sketchHllExecutor != null || (ec != null && ec.getHllExecutor() != null)) {
                 futures = new ArrayList<>(shardPart.length);
             }
 
             // fill cardinality and sketch bytes
             for (int i = 0; i < shardPart.length; i++) {
-                if (sketchHllExecutor == null) {
+                if (ec != null && ec.getHllExecutor() != null) {
+                    try {
+                        final int partIdx = i;
+                        //注意这里的解析格式，如果上面的buildShardParts返回的格式修改了，这里也要修改
+                        String groupName = shardPart[partIdx].split(":")[0];
+                        String physicalTableName = shardPart[partIdx].split(":")[1];
+
+                        String dnId =
+                            ExecutorContext.getContext(schemaName).getTopologyHandler().get(groupName).getDataSource()
+                                .getMasterDNId();
+                        String taskName =
+                            schemaName + "-" + tableName + "-" + columnName + "-" + groupName + "-" + physicalTableName
+                                + "-" + "HLL";
+                        Future future = ec.getHllExecutor().submit(dnId, taskName,
+                            () -> {
+                                try {
+                                    sketchOnePart(shardKey, shardPart, indexName, dnCardinalityArray, sketchArray,
+                                        gmtCreated,
+                                        gmtUpdate,
+                                        cardinalityTime, sketchTime, isForce, ec, partIdx, stopped);
+                                } catch (Exception e) {
+                                    throw new RuntimeException(e);
+                                }
+                                return null;
+                            });
+                        futures.add(future);
+                    } catch (Throwable e) {
+                        //兜底措施
+                        logger.warn("hll executor failed : " + e);
+                        sketchOnePart(shardKey, shardPart, indexName, dnCardinalityArray, sketchArray, gmtCreated,
+                            gmtUpdate,
+                            cardinalityTime, sketchTime, isForce, ec, i, stopped);
+                    }
+                } else if (sketchHllExecutor == null) {
                     sketchOnePart(shardKey, shardPart, indexName, dnCardinalityArray, sketchArray, gmtCreated,
                         gmtUpdate,
                         cardinalityTime, sketchTime, isForce, ec, i, stopped);
@@ -533,7 +596,7 @@ public class NDVShardSketch {
                 }
             }
             if (futures != null) {
-                AsyncUtils.waitAll(futures);
+                AsyncUtils.waitAllInterruptibly(futures);
             }
             /**
              * sketch data has null meaning it was interrupted for some reason.
@@ -591,22 +654,54 @@ public class NDVShardSketch {
         long cardinality = -1;
         // must visit columnar indexes
         long start = System.currentTimeMillis();
-        try (Connection connection = ExecutorContext.getContext(schemaName).getInnerConnectionManager()
-            .getConnection(schemaName);
-            Statement stmt = connection.createStatement()) {
-            String sql = hint + String.format(HYPER_LOG_LOG_SQL, columnsName, tableName);
-            logger.info(sql);
-            ResultSet rs = stmt.executeQuery(sql);
-            if (rs.next()) {
-                cardinality = rs.getLong(1);
+        int queryTimeout = InstConfUtil.getInt(ConnectionParams.STATISTIC_NDV_SKETCH_QUERY_TIMEOUT_ON_CCI);
+
+        if (ec == null) {
+            //来自定时任务
+            int remainTimeInMaintenanceTimeWindow =
+                InstConfUtil.remainTimeInMaintenanceTimeWindow(Calendar.getInstance(),
+                    InstConfUtil.getOriginVal(ConnectionParams.MAINTENANCE_TIME_START),
+                    InstConfUtil.getOriginVal(ConnectionParams.MAINTENANCE_TIME_END)) * 1000;
+            if (remainTimeInMaintenanceTimeWindow <= 0) {
+                return -1;
             }
-            while (rs.next()) {
+            queryTimeout = Math.min(queryTimeout, remainTimeInMaintenanceTimeWindow);
+        }
+
+        if (FailPoint.isKeyEnable(FailPointKey.FP_INJECT_STATISTIC_HLL_ON_COLUMNAR_EXCEPTION)) {
+            // inject hll exception, set timeout to 1ms
+            queryTimeout = 1;
+        }
+        String sql = hint + String.format(HYPER_LOG_LOG_SQL, columnsName, tableName);
+        logger.warn(sql);
+
+        CompletableFuture<Long> future = CompletableFuture.supplyAsync(() -> {
+            try (Connection connection = ExecutorContext.getContext(schemaName).getInnerConnectionManager()
+                .getConnection(schemaName)) {
+                Statement stmt = connection.createStatement();
+                ResultSet rs = stmt.executeQuery(sql);
+                if (rs.next()) {
+                    return rs.getLong(1);
+                }
+                throw new TddlNestableRuntimeException("Failed to get hll on columnar");
+            } catch (SQLException e) {
+                throw new TddlNestableRuntimeException(e);
             }
-        } catch (Exception e) {
+        }, ExecutorContext.getThreadPool());
+
+        try {
+            cardinality = future.get(queryTimeout, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException | ExecutionException | TimeoutException e) {
+            future.cancel(true);
+            OptimizerAlertUtil.statisticsAlert(schemaName, tableName, OptimizerAlertType.STATISTIC_HLL_FAIL, ec, e);
             logger.error("Failed to get hll on columnar", e);
+            if (e instanceof InterruptedException) {
+                throw new TddlNestableRuntimeException(e);
+            }
             return -1;
         }
-        logger.info(String.format("get hll for %s.%s.%s using columnar", schemaName, tableName, columnsName));
+
+        logger.warn(String.format("get hll for %s.%s.%s using columnar", schemaName, tableName, columnsName));
         sketchTime.getAndAdd(System.currentTimeMillis() - start);
         for (int i = 0; i < shardPart.length; i++) {
             dnCardinalityArray[i] = cardinality;
@@ -618,12 +713,8 @@ public class NDVShardSketch {
     }
 
     public static String genColumnarHllHint(ExecutionContext ec, String schemaName, String tableName) {
-        TableMeta tm = OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTableWithNull(tableName);
-        if (tm == null) {
-            return null;
-        }
         // must be a table with columnar indexes
-        if (GeneralUtil.isEmpty(tm.getColumnarIndexPublished())) {
+        if (CollectionUtils.isEmpty(CBOUtil.getColumnarIndexNamesWithoutArchive(tableName, schemaName, ec))) {
             return null;
         }
         return genColumnarHllHint(ec);
@@ -733,9 +824,6 @@ public class NDVShardSketch {
             }
         }
 
-        if (tableMeta.getGsiPublished() == null) {
-            return null;
-        }
         // try gsi
         if (tableMeta.getGsiPublished() == null) {
             return null;

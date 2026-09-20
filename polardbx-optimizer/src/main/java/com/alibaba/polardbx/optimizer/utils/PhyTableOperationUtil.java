@@ -26,7 +26,6 @@ import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
-import com.alibaba.polardbx.gms.topology.DbTopologyManager;
 import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
@@ -49,7 +48,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.IntStream;
 
 import static com.alibaba.polardbx.common.jdbc.ITransactionPolicy.TransactionClass.ALLOW_GROUP_PARALLELISM_WITHOUT_SHARE_READVIEW_TRANSACTION;
@@ -81,6 +79,10 @@ public class PhyTableOperationUtil {
         }
         ITransaction trans = ec.getTransaction();
         if (trans == null) {
+            return;
+        }
+
+        if (ec.isForbiddenCrossGroupWriteForExplicitTrx()) {
             return;
         }
 

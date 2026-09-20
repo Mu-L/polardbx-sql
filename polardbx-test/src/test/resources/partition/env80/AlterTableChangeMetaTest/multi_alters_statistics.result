@@ -1,0 +1,61 @@
+DROP DATABASE IF EXISTS test_statistics
+CREATE DATABASE test_statistics MODE auto
+USE test_statistics
+DROP TABLE IF EXISTS t_statistics5
+CREATE TABLE t_statistics5 (
+	id int NOT NULL AUTO_INCREMENT,
+	resources_id1 varchar(30) NOT NULL DEFAULT '0',
+	resources_id varchar(30) NOT NULL DEFAULT '',
+	PRIMARY KEY (id),
+	KEY idx_rid1 (resources_id1(20)),
+	KEY idx_rid (resources_id(20))
+) BROADCAST
+SHOW CREATE TABLE t_statistics5
+TABLE,CREATE TABLE
+t_statistics5,CREATE TABLE `t_statistics5` (
+	`id` int(11) NOT NULL AUTO_INCREMENT,
+	`resources_id1` varchar(30) NOT NULL DEFAULT '0',
+	`resources_id` varchar(30) NOT NULL DEFAULT '',
+	PRIMARY KEY (`id`),
+	KEY `idx_rid1` (`resources_id1`(20)),
+	KEY `idx_rid` (`resources_id`(20))
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+BROADCAST
+SELECT *
+FROM INFORMATION_SCHEMA.STATISTICS
+WHERE TABLE_SCHEMA = 'test_statistics'
+	AND table_name = 't_statistics5'
+ORDER BY index_name, seq_in_index
+TABLE_CATALOG,TABLE_SCHEMA,TABLE_NAME,NON_UNIQUE,INDEX_SCHEMA,INDEX_NAME,SEQ_IN_INDEX,COLUMN_NAME,COLLATION,CARDINALITY,SUB_PART,PACKED,NULLABLE,INDEX_TYPE,COMMENT,INDEX_COMMENT
+def,test_statistics,t_statistics5,1,test_statistics,idx_rid,1,resources_id,A,0,20,null,,BTREE,,
+def,test_statistics,t_statistics5,1,test_statistics,idx_rid1,1,resources_id1,A,0,20,null,,BTREE,,
+def,test_statistics,t_statistics5,0,test_statistics,PRIMARY,1,id,A,0,null,null,,BTREE,,
+ALTER TABLE t_statistics5
+	CHANGE COLUMN resources_id extends1 varchar(30) NOT NULL DEFAULT '',
+	CHANGE COLUMN resources_id1 resources_id varchar(10) NOT NULL DEFAULT 0,
+	RENAME INDEX idx_rid TO idx_ext,
+	RENAME INDEX idx_rid1 TO idx_rid,
+	ADD INDEX idx_extend (extends1(5), resources_id(5))
+SHOW CREATE TABLE t_statistics5
+TABLE,CREATE TABLE
+t_statistics5,CREATE TABLE `t_statistics5` (
+	`id` int(11) NOT NULL AUTO_INCREMENT,
+	`resources_id` varchar(10) NOT NULL DEFAULT '0',
+	`extends1` varchar(30) NOT NULL DEFAULT '',
+	PRIMARY KEY (`id`),
+	KEY `idx_rid` (`resources_id`),
+	KEY `idx_ext` (`extends1`(20)),
+	KEY `idx_extend` (`extends1`(5), `resources_id`(5))
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+BROADCAST
+SELECT *
+FROM INFORMATION_SCHEMA.STATISTICS
+WHERE TABLE_SCHEMA = 'test_statistics'
+	AND table_name = 't_statistics5'
+ORDER BY index_name, seq_in_index
+TABLE_CATALOG,TABLE_SCHEMA,TABLE_NAME,NON_UNIQUE,INDEX_SCHEMA,INDEX_NAME,SEQ_IN_INDEX,COLUMN_NAME,COLLATION,CARDINALITY,SUB_PART,PACKED,NULLABLE,INDEX_TYPE,COMMENT,INDEX_COMMENT
+def,test_statistics,t_statistics5,1,test_statistics,idx_ext,1,extends1,A,0,20,null,,BTREE,,
+def,test_statistics,t_statistics5,1,test_statistics,idx_extend,1,extends1,A,0,5,null,,BTREE,,
+def,test_statistics,t_statistics5,1,test_statistics,idx_extend,2,resources_id,A,0,5,null,,BTREE,,
+def,test_statistics,t_statistics5,1,test_statistics,idx_rid,1,resources_id,A,0,null,null,,BTREE,,
+def,test_statistics,t_statistics5,0,test_statistics,PRIMARY,1,id,A,0,null,null,,BTREE,,

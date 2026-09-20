@@ -1,8 +1,11 @@
 package com.alibaba.polardbx.executor.columnar.pruning.index;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.ConnectionProperties;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.executor.columnar.pruning.index.builder.ZoneMapIndexBuilder;
-import com.alibaba.polardbx.gms.config.impl.MetaDbInstConfigManager;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 import org.roaringbitmap.RoaringBitmap;
@@ -14,9 +17,14 @@ import java.util.Random;
  */
 public class ZoneMapIndexTest {
 
+    @After
+    public void tearDown() {
+        DynamicConfig.getInstance().loadValue(null, ConnectionProperties.ZONEMAP_MAX_GROUP_SIZE,
+            ConnectionParams.ZONEMAP_MAX_GROUP_SIZE.getDefault());
+    }
+
     @Test
     public void testZoneMapGroup() {
-        MetaDbInstConfigManager.setConfigFromMetaDb(false);
         ZoneMapIndexBuilder zoneMapIndexBuilder = new ZoneMapIndexBuilder();
         zoneMapIndexBuilder.appendColumn(1, DataTypes.IntegerType);
         Random r = new Random();
@@ -26,7 +34,9 @@ public class ZoneMapIndexTest {
         }
 
         ZoneMapIndex zoneMapIndexWithGroup = zoneMapIndexBuilder.build();
-        MetaDbInstConfigManager.getInstance().getCnVariableConfigMap().put("ZONEMAP_MAX_GROUP_SIZE", "1");
+
+        DynamicConfig.getInstance().loadValue(null, ConnectionProperties.ZONEMAP_MAX_GROUP_SIZE, "1");
+
         ZoneMapIndex zoneMapIndexWithoutGroup = zoneMapIndexBuilder.build();
         Assert.assertEquals(zoneMapIndexWithGroup.getSizeInBytes(), zoneMapIndexWithoutGroup.getSizeInBytes());
 
@@ -40,9 +50,9 @@ public class ZoneMapIndexTest {
             int range = r.nextInt(500);
 
             RoaringBitmap rsWithGroup = RoaringBitmap.bitmapOfRange(0, rgNum);
-            zoneMapIndexWithGroup.prune(1, testStart, true, testStart + range, true, rsWithGroup);
+            zoneMapIndexWithGroup.prune(1, testStart, true, testStart + range, true, rsWithGroup, null);
             RoaringBitmap rsWithoutGroup = RoaringBitmap.bitmapOfRange(0, rgNum);
-            zoneMapIndexWithoutGroup.prune(1, testStart, true, testStart + range, true, rsWithoutGroup);
+            zoneMapIndexWithoutGroup.prune(1, testStart, true, testStart + range, true, rsWithoutGroup, null);
 
             int cardinality = rsWithGroup.getCardinality();
             assert cardinality == rsWithoutGroup.getCardinality();
@@ -50,13 +60,10 @@ public class ZoneMapIndexTest {
             assert cardinality == rsWithGroup.getCardinality();
         }
 
-        MetaDbInstConfigManager.getInstance().getCnVariableConfigMap().remove("ZONEMAP_MAX_GROUP_SIZE");
-
     }
 
     @Test
     public void testInvalidZoneMapGroup() {
-        MetaDbInstConfigManager.setConfigFromMetaDb(false);
         ZoneMapIndexBuilder zoneMapIndexBuilder = new ZoneMapIndexBuilder();
         zoneMapIndexBuilder.appendColumn(1, DataTypes.IntegerType);
         Random r = new Random();
@@ -66,7 +73,7 @@ public class ZoneMapIndexTest {
         }
 
         ZoneMapIndex zoneMapIndexWithGroup = zoneMapIndexBuilder.build();
-        MetaDbInstConfigManager.getInstance().getCnVariableConfigMap().put("ZONEMAP_MAX_GROUP_SIZE", "1");
+        DynamicConfig.getInstance().loadValue(null, ConnectionProperties.ZONEMAP_MAX_GROUP_SIZE, "1");
 
         long rgNum = zoneMapIndexWithGroup.rgNum();
 
@@ -74,12 +81,9 @@ public class ZoneMapIndexTest {
             int testStart = r.nextInt(5000);
             int range = r.nextInt(500);
             RoaringBitmap rsWithGroup = RoaringBitmap.bitmapOfRange(0, rgNum);
-            zoneMapIndexWithGroup.prune(1, testStart, true, testStart - range, true, rsWithGroup);
+            zoneMapIndexWithGroup.prune(1, testStart, true, testStart - range, true, rsWithGroup, null);
             Assert.assertTrue(rsWithGroup.getCardinality() >= 0);
         }
-
-        MetaDbInstConfigManager.getInstance().getCnVariableConfigMap().remove("ZONEMAP_MAX_GROUP_SIZE");
-
     }
 
 }

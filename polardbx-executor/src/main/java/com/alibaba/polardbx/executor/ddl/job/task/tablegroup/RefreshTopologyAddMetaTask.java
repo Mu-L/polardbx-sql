@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.executor.ddl.job.task.tablegroup;
 
 import com.alibaba.fastjson.annotation.JSONCreator;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
 import com.alibaba.polardbx.gms.tablegroup.ComplexTaskOutlineRecord;
@@ -36,14 +37,14 @@ import java.util.List;
 public class RefreshTopologyAddMetaTask extends AlterTableGroupAddMetaTask {
 
     public RefreshTopologyAddMetaTask(String schemaName, String tableGroupName, Long tableGroupId, String sourceSql,
-                                      int status, int type, List<String> targetDbList, List<String> newPartitions) {
+                                      int status, int type, List<Pair<String,String>> targetDbList, List<String> newPartitions) {
         super(schemaName, tableGroupName, tableGroupId, sourceSql, status, type, new HashSet<>(), targetDbList,
             newPartitions);
     }
 
     @JSONCreator
     public RefreshTopologyAddMetaTask(String schemaName, String tableGroupName, Long tableGroupId, String sourceSql,
-                                      int status, int type, List<String> targetDbList, List<String> newPartitions,
+                                      int status, int type, List<Pair<String,String>> targetDbList, List<String> newPartitions,
                                       List<String> localities) {
         super(schemaName, tableGroupName, tableGroupId, sourceSql, status, type, new HashSet<>(), targetDbList,
             newPartitions, localities);

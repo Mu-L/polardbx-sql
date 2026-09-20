@@ -19,6 +19,7 @@ package com.alibaba.polardbx.qatest.dml.auto.basecrud;
 
 import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.qatest.AutoCrudBasedLockTestCase;
+import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.qatest.validator.DataOperator;
 import com.alibaba.polardbx.qatest.validator.DataValidator;
 import org.junit.Before;
@@ -44,7 +45,8 @@ public class RangeScanTest extends AutoCrudBasedLockTestCase {
     }
 
     private static final String RANGE_SCAN_HINT =
-        "/*+TDDL:CMD_EXTRA(ENABLE_RANGE_SCAN_FOR_DML=%s OPTIMIZE_MODIFY_TOP_N_BY_RETURNING=FALSE)*/";
+        "/*+TDDL:CMD_EXTRA(ENABLE_RANGE_SCAN_FOR_DML=%s OPTIMIZE_MODIFY_TOP_N_BY_RETURNING=FALSE"
+            + " COMPLEX_DML_WITH_TRX=FALSE)*/";
 
     private static final String TABLE_DEF = "CREATE TABLE `%s` (\n"
         + "  `id` varchar(32) NOT NULL,\n"
@@ -52,7 +54,7 @@ public class RangeScanTest extends AutoCrudBasedLockTestCase {
         + "  `c2` varchar(32) NOT NULL ,\n"
         + "  `create_time` datetime NULL DEFAULT CURRENT_TIMESTAMP,\n"
         + "  PRIMARY KEY USING BTREE (`id`)\n"
-        + "  ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4\n";
+        + "  ) ENGINE = InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci\n";
     private static final String INSERT_DEF = "insert into `%s`(id, c1, c2, create_time) values(?, ?, ?, ?)";
     private static final String UPDATE_DEF =
         "update `%s` set c2 = 'u1' where c1 = 3 and create_time <= '2024-04-10' order by create_time desc limit 1";

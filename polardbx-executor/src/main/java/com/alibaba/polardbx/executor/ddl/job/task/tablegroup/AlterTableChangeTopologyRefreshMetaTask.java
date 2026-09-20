@@ -21,8 +21,12 @@ import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
+import com.alibaba.polardbx.executor.ddl.job.task.columnar.ColumnarTaskUtil;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarPartitionEvolutionAccessor;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarTableEvolutionAccessor;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingAccessor;
 import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
 import com.alibaba.polardbx.gms.partition.TablePartRecordInfoContext;
 import com.alibaba.polardbx.gms.partition.TablePartitionAccessor;
@@ -56,14 +60,16 @@ public class AlterTableChangeTopologyRefreshMetaTask extends BaseDdlTask {
     protected String sourceTableGroup;
     protected String targetTableGroup;
     protected String tableName;
+    protected Long versionId;
 
     @JSONCreator
     public AlterTableChangeTopologyRefreshMetaTask(String schemaName, String sourceTableGroup, String targetTableGroup,
-                                                   String tableName) {
+                                                   String tableName, Long versionId) {
         super(schemaName);
         this.sourceTableGroup = sourceTableGroup;
         this.targetTableGroup = targetTableGroup;
         this.tableName = tableName;
+        this.versionId = versionId;
     }
 
     public void executeImpl(Connection metaDbConnection, ExecutionContext executionContext) {
@@ -103,9 +109,16 @@ public class AlterTableChangeTopologyRefreshMetaTask extends BaseDdlTask {
             .getTableGroupConfigByName(sourceTableGroup);
         TablePartitionAccessor tablePartitionAccessor = new TablePartitionAccessor();
         PartitionGroupAccessor partitionGroupAccessor = new PartitionGroupAccessor();
+        ColumnarTableMappingAccessor columnarTableMappingAccessor = new ColumnarTableMappingAccessor();
+        ColumnarTableEvolutionAccessor columnarTableEvolutionAccessor = new ColumnarTableEvolutionAccessor();
+        ColumnarPartitionEvolutionAccessor columnarPartitionEvolutionAccessor =
+            new ColumnarPartitionEvolutionAccessor();
 
         tablePartitionAccessor.setConnection(metaDbConnection);
         partitionGroupAccessor.setConnection(metaDbConnection);
+        columnarTableMappingAccessor.setConnection(metaDbConnection);
+        columnarTableEvolutionAccessor.setConnection(metaDbConnection);
+        columnarPartitionEvolutionAccessor.setConnection(metaDbConnection);
 
         updateTaskStatus(metaDbConnection);
 
@@ -177,6 +190,11 @@ public class AlterTableChangeTopologyRefreshMetaTask extends BaseDdlTask {
             tablePartRecordInfoContext.getPartitionRecList(),
             tablePartRecordInfoContext.getSubPartitionRecMap(),
             isUpsert, false);
+
+        // 4.5 insert new columnar table partition to columnar evolution
+        ColumnarTaskUtil.updateColumnarEvolutionSysTables(schemaName, tableName, tablePartitionAccessor,
+            columnarTableMappingAccessor, columnarPartitionEvolutionAccessor, columnarTableEvolutionAccessor,
+            versionId, jobId);
 
         // 5、cleanup table_partition_delta
         //only delete the related records

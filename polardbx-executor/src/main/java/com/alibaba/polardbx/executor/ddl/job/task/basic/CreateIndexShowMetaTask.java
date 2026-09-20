@@ -47,7 +47,7 @@ public class CreateIndexShowMetaTask extends BaseGmsTask {
     protected void executeImpl(Connection metaDbConnection, ExecutionContext executionContext) {
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
-        TableMetaChanger.addIndexMeta(metaDbConnection, schemaName, logicalTableName, indexName, dbIndex, phyTableName);
+        TableMetaChanger.addIndexMeta(executionContext, metaDbConnection, schemaName, logicalTableName, indexName, dbIndex, phyTableName);
     }
 
 }

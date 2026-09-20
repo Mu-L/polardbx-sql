@@ -21,6 +21,7 @@ import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.common.RecycleBin;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.oss.CloseFileStorageTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.oss.DeleteFileStorageDirectoryTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.oss.OSSTaskUtils;
@@ -44,7 +45,7 @@ import java.util.Set;
 
 public class DropFileStorageJobFactory extends DdlJobFactory {
 
-    private static final Logger logger = LoggerFactory.getLogger("oss");
+    private static final Logger logger = LoggerFactory.getLogger("mpp_log");
 
     private ExecutionContext executionContext;
     private DropFileStoragePreparedData dropFileStoragePreparedData;

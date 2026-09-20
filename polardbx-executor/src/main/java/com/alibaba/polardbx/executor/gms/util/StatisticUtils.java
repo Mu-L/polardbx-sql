@@ -28,7 +28,9 @@ import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.ParameterMethod;
 import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.common.oss.OSSMetaLifeCycle;
+import com.alibaba.polardbx.common.properties.BooleanConfigParam;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.LoggerUtil;
 import com.alibaba.polardbx.common.utils.Pair;
@@ -107,7 +109,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collection;
 import java.util.HashMap;
@@ -122,6 +123,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
+import static com.alibaba.polardbx.common.TddlConstants.INVALID;
 import static com.alibaba.polardbx.common.properties.ConnectionParams.STATISTIC_VISIT_DN_TIMEOUT;
 import static com.alibaba.polardbx.common.utils.GeneralUtil.sampleString;
 import static com.alibaba.polardbx.gms.module.LogLevel.CRITICAL;
@@ -468,6 +470,9 @@ public class StatisticUtils {
         List<ColumnMeta> analyzeColumnList,
         List<Row> rows,
         float sampleRate) {
+        if (!DynamicConfig.getInstance().isEnableStatisticBuildSkew()) {
+            return;
+        }
         if (rows.size() == 0) {
             return;
         }
@@ -637,12 +642,25 @@ public class StatisticUtils {
                     h.buildFromData(objs.stream().filter(d -> isReady ? topN.get(d) == 0 : true).toArray());
                 if (isBuilt) {
                     cacheLine.setHistogram(colName, h);
+                } else {
+                    removeHistogramIfPresent(cacheLine, colName);
                 }
             } else {
-                if (cacheLine.getHistogramMap() != null) {
-                    cacheLine.getHistogramMap().remove(colName);
-                }
+                removeHistogramIfPresent(cacheLine, colName);
             }
+        }
+    }
+
+    /**
+     * Removes the histogram for the given column name if the histogram map exists in the cache line.
+     *
+     * @param cacheLine Cache line containing the histogram map.
+     * @param columnName Column name for which the histogram needs to be removed.
+     */
+    protected static void removeHistogramIfPresent(StatisticManager.CacheLine cacheLine, String columnName) {
+        Map<String, Histogram> map = cacheLine.getHistogramMap();
+        if (map != null) {
+            map.remove(columnName);
         }
     }
 
@@ -687,7 +705,11 @@ public class StatisticUtils {
             try {
                 Object columnValue = r.getObject(i);
                 if (columnValue instanceof Slice) {
-                    columnValue = ((Slice) columnValue).toStringUtf8();
+                    if (((Slice) columnValue).length() > DATA_MAX_LEN) {
+                        columnValue = INVALID;
+                    } else {
+                        columnValue = ((Slice) columnValue).toStringUtf8();
+                    }
                 } else if (columnValue instanceof Decimal) {
                     columnValue = ((Decimal) columnValue).toBigDecimal();
                 }
@@ -695,12 +717,12 @@ public class StatisticUtils {
                 if (columnValue instanceof String) {
                     String s = (String) columnValue;
                     if (s.length() > DATA_MAX_LEN) {
-                        columnValue = s.substring(0, DATA_MAX_LEN);
+                        columnValue = INVALID;
                     }
                 } else if (columnValue instanceof byte[]) {
                     byte[] byteArray = (byte[]) columnValue;
                     if (byteArray.length > DATA_MAX_LEN) {
-                        columnValue = Arrays.copyOfRange(byteArray, 0, DATA_MAX_LEN);
+                        columnValue = INVALID;
                     }
                 }
                 DataType dt = r.getParentCursorMeta().getColumnMeta(i).getDataType();
@@ -1289,5 +1311,9 @@ public class StatisticUtils {
             .filter(s -> !s.isMetaDb())
             .map(StorageInstHaContext::getStorageInstId)
             .collect(Collectors.toSet());
+    }
+
+    public static Boolean getBoolFromEcIfNotNull(ExecutionContext ec, BooleanConfigParam c) {
+        return ec != null ? ec.getParamManager().getBoolean(c) : InstConfUtil.getBool(c);
     }
 }

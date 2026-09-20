@@ -10,6 +10,7 @@ import com.alibaba.polardbx.executor.operator.scan.impl.MockScanPreProcessor;
 import com.alibaba.polardbx.executor.operator.scan.impl.MorselColumnarSplit;
 import com.alibaba.polardbx.executor.operator.scan.impl.SimpleWorkPool;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.statis.OperatorStatistics;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.hadoop.conf.Configuration;
@@ -151,6 +152,7 @@ public class ColumnarExecTest extends ScanTestBase {
                 .prepare(preProcessor)
                 .columnarManager(mockColumnarManager)
                 .memoryAllocator(memoryAllocatorCtx)
+                .operatorStatistic(new OperatorStatistics())
                 .build();
 
             workPool.addSplit(SEQUENCE_ID, columnarSplit);
@@ -252,7 +254,7 @@ public class ColumnarExecTest extends ScanTestBase {
                     noAvailableWork = true;
                 } else {
                     currentWork = newWork;
-                    currentWork.invoke(SCAN_EXECUTOR);
+                    currentWork.invoke(SCAN_EXECUTOR, null);
 
                     lastWorkNotExecutable = false;
                 }

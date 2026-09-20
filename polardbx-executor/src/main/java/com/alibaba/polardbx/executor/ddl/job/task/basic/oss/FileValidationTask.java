@@ -24,7 +24,7 @@ import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.archive.writer.OSSBackFillValidator;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
-import com.alibaba.polardbx.executor.ddl.job.task.BaseGmsTask;
+import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.gsi.GsiUtils;
 import com.alibaba.polardbx.executor.partitionmanagement.LocalPartitionManager;
@@ -57,7 +57,8 @@ import java.util.stream.Collectors;
 
 @Getter
 @TaskName(name = "FileValidationTask")
-public class FileValidationTask extends BaseGmsTask {
+public class FileValidationTask extends BaseDdlTask {
+    protected final String logicalTableName;
     protected final String loadTableSchema;
     protected final String loadTableName;
     protected final String localPartitionName;
@@ -66,7 +67,8 @@ public class FileValidationTask extends BaseGmsTask {
     public FileValidationTask(String schemaName, String logicalTableName,
                               String loadTableSchema, String loadTableName,
                               String localPartitionName) {
-        super(schemaName, logicalTableName);
+        super(schemaName);
+        this.logicalTableName = logicalTableName;
         this.loadTableSchema = loadTableSchema;
         this.loadTableName = loadTableName;
         this.localPartitionName = localPartitionName;
@@ -76,7 +78,7 @@ public class FileValidationTask extends BaseGmsTask {
     }
 
     @Override
-    protected void executeImpl(Connection metaDbConnection, ExecutionContext executionContext) {
+    protected void duringTransaction(Connection metaDbConnection, ExecutionContext executionContext) {
         // 0. check task state and skip this task if allowed.
         if (allowSkip(metaDbConnection)) {
             return;

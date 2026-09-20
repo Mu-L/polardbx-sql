@@ -16,6 +16,7 @@
 
 package org.apache.calcite.sql;
 
+import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.google.common.collect.ImmutableList;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.SqlTypeName;
@@ -28,14 +29,19 @@ public class SqlAlterTableExchangePartition extends SqlAlterSpecification {
 
     private final boolean validation;
     private final SqlNode tableName;
-    private final List<SqlNode> partitions;
+    private final List<SqlNode> srcPartitions;
+    private final List<SqlNode> targetPartitions;
+    private final boolean subPartition;
 
     public SqlAlterTableExchangePartition(SqlParserPos pos, boolean validation,
-                                          SqlNode tableName, List<SqlNode> partitions) {
+                                          SqlNode tableName, List<SqlNode> srcPartitions,
+                                          List<SqlNode> targetPartitions, boolean subPartition) {
         super(pos);
         this.validation = validation;
         this.tableName = tableName;
-        this.partitions = partitions;
+        this.srcPartitions = srcPartitions;
+        this.targetPartitions = targetPartitions;
+        this.subPartition = subPartition;
     }
 
     public boolean isValidation() {
@@ -46,8 +52,16 @@ public class SqlAlterTableExchangePartition extends SqlAlterSpecification {
         return tableName;
     }
 
-    public List<SqlNode> getPartitions() {
-        return partitions;
+    public List<SqlNode> getSrcPartitions() {
+        return srcPartitions;
+    }
+
+    public List<SqlNode> getTargetPartitions() {
+        return targetPartitions;
+    }
+
+    public boolean isSubPartition() {
+        return subPartition;
     }
 
     @Override
@@ -58,7 +72,7 @@ public class SqlAlterTableExchangePartition extends SqlAlterSpecification {
     @Override
     public List<SqlNode> getOperandList() {
         return ImmutableList.<SqlNode>builder()
-            .addAll(partitions)
+            .addAll(srcPartitions)
             .add(tableName)
             .add(new SqlLiteral(validation, SqlTypeName.BOOLEAN, SqlParserPos.ZERO))
             .build();
@@ -68,19 +82,37 @@ public class SqlAlterTableExchangePartition extends SqlAlterSpecification {
     public void unparse(SqlWriter writer, int leftPrec, int rightPrec) {
         final SqlWriter.Frame frame = writer.startList(SqlWriter.FrameTypeEnum.SELECT, "EXCHANGE", "");
 
-        writer.keyword("PARTITION");
+        if (subPartition) {
+            writer.keyword("SUBPARTITION");
+        } else {
+            writer.keyword("PARTITION");
+        }
         int i = 0;
-        for (SqlNode sqlNode : partitions) {
+        for (SqlNode sqlNode : srcPartitions) {
             sqlNode.unparse(writer, leftPrec, rightPrec);
             i++;
-            if (i < partitions.size()) {
+            if (i < srcPartitions.size()) {
                 writer.sep(",");
             }
         }
 
         writer.keyword("WITH TABLE");
         this.tableName.unparse(writer, leftPrec, rightPrec);
-
+        if (GeneralUtil.isNotEmpty(targetPartitions)) {
+            i = 0;
+            if (subPartition) {
+                writer.keyword("SUBPARTITION");
+            } else {
+                writer.keyword("PARTITION");
+            }
+            for (SqlNode sqlNode : targetPartitions) {
+                sqlNode.unparse(writer, leftPrec, rightPrec);
+                i++;
+                if (i < targetPartitions.size()) {
+                    writer.sep(",");
+                }
+            }
+        }
         if (validation) {
             writer.keyword("WITH VALIDATION");
         } else {
@@ -91,5 +123,7 @@ public class SqlAlterTableExchangePartition extends SqlAlterSpecification {
     }
 
     @Override
-    public boolean supportFileStorage() { return true;}
+    public boolean supportFileStorage() {
+        return true;
+    }
 }

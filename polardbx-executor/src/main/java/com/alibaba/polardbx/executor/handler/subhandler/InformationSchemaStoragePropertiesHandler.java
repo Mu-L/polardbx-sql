@@ -52,8 +52,9 @@ public class InformationSchemaStoragePropertiesHandler extends BaseVirtualViewSu
     public Cursor handle(VirtualView virtualView, ExecutionContext executionContext, ArrayResultCursor cursor) {
 
         final String schema = executionContext.getSchemaName();
-        List<List<Map<String, Object>>> results = SyncManagerHelper.sync(new StoragePropertiesSyncAction(), schema,
-            SyncScope.CURRENT_ONLY);
+        List<List<Map<String, Object>>> results =
+            SyncManagerHelper.syncIgnoreExceptions(new StoragePropertiesSyncAction(), schema,
+                SyncScope.CURRENT_ONLY);
 
         Map<String, Integer> functionStatus = new HashMap<>();
         for (List<Map<String, Object>> rs : results) {

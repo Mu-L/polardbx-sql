@@ -4,3 +4,4 @@ test_repartition_single_table_locality
 test_repartition_single_table_implicit
 test_repartition_to_partitions1
 test_repartition_auto_partition_table
+test_remove_auto_partition

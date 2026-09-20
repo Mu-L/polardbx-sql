@@ -1,0 +1,7 @@
+## DISABLE_FAST_SQL_PARSER
+select newpartstrc2l512sm40('aaaabbb0000')
+newpartstrc2l512sm40('aaaabbb0000')
+0
+select newpartstrc2l512sm40('aaaabbb2359')
+newpartstrc2l512sm40('aaaabbb2359')
+0

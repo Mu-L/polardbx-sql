@@ -3,7 +3,7 @@
 baseDir=`pwd`/
 target_branch="$1"
 commit=`git merge-base origin/$target_branch HEAD`
-files=`git diff --name-only ${commit} | grep '.java' | grep -v 'polardbx-calcite' | grep -v 'polardbx-orc' | grep -v 'polardbx-rpc/src/main/java/com/mysql/cj'| grep -v 'com/alibaba/polardbx/rpc/cdc'| xargs -I {} echo ${baseDir}{}`
+files=`git diff --name-only ${commit} | grep '.java' | grep -v 'polardbx-calcite' | grep -v 'polardbx-orc' | grep -v 'polardbx-rpc/src/main/java/com/mysql/cj'| grep -v 'com/alibaba/polardbx/rpc/cdc'| grep -v 'com/alibaba/polardbx/rpc/columnar'| xargs -I {} echo ${baseDir}{}`
 count=0
 batchFile=''
 for file in $files; do

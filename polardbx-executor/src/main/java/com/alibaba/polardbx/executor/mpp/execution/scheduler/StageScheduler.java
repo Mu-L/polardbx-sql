@@ -29,8 +29,14 @@
  */
 package com.alibaba.polardbx.executor.mpp.execution.scheduler;
 
+import com.alibaba.polardbx.executor.mpp.metadata.Split;
+import com.alibaba.polardbx.gms.node.Node;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Multimap;
+
 import java.io.Closeable;
 import java.util.List;
+import java.util.Map;
 
 public interface StageScheduler extends Closeable {
     /**
@@ -50,6 +56,10 @@ public interface StageScheduler extends Closeable {
 
     @Override
     default void close() {
+    }
+
+    default Map<Node, Multimap<Integer, Split>> getSplitAssignments() {
+        return ImmutableMap.of();
     }
 
     default List<Integer> getPrunePartitions() {

@@ -1,0 +1,18 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+create table cobar_myhash_tbl (a bigint，b bigint)
+partition by udf_hash(
+    `a` with 
+    udf_params (
+      'cobar_ext/mycobarhash',
+      '{
+        "partitionCount" : "8",　
+        "partitionLength" : "360"
+      }' 
+  )
+)
+partitions 8;
+show create table cobar_myhash_tbl;
+drop table cobar_myhash_tbl;

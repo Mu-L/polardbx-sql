@@ -63,10 +63,6 @@ public interface Block extends CastableBlock, MemoryCountable {
         throw new UnsupportedOperationException(getClass().getName());
     }
 
-    default long getPackedLong(int position) {
-        throw new UnsupportedOperationException(getClass().getName());
-    }
-
     default double getDouble(int position) {
         throw new UnsupportedOperationException(getClass().getName());
     }
@@ -113,6 +109,10 @@ public interface Block extends CastableBlock, MemoryCountable {
 
     default Clob getClob(int position) {
         throw new UnsupportedOperationException(getClass().getName());
+    }
+
+    default long getPackedLong(int position) {
+        return getLong(position);
     }
 
     /**
@@ -277,7 +277,7 @@ public interface Block extends CastableBlock, MemoryCountable {
      * results[0] = sum result number
      * results[1] = sum state (E_DEC_OK, E_DEC_OVERFLOW, E_DEC_TRUNCATED)
      */
-    default void sum(int[] groupSelected, int selSize, long[] results) {
+    default void sum(int[] groupSelected, int selSize, long[] results, boolean enableDecimal128) {
         throw new UnsupportedOperationException();
     }
 
@@ -291,12 +291,12 @@ public interface Block extends CastableBlock, MemoryCountable {
      * results[1] = sum result number for decimal128-high
      * results[2] = sum state (E_DEC_DEC64, E_DEC_DEC128, E_DEC_TRUNCATED)
      */
-    default void sum(int startIndexIncluded, int endIndexExcluded, long[] results) {
+    default void sum(int startIndexIncluded, int endIndexExcluded, long[] results, boolean enableDecimal128) {
         throw new UnsupportedOperationException();
     }
 
     default void sum(int startIndexIncluded, int endIndexExcluded, long[] sumResultArray, int[] sumStatusArray,
-                     int[] normalizedGroupIds) {
+                     int[] normalizedGroupIds, boolean enableDecimal128) {
         throw new UnsupportedOperationException();
     }
 
@@ -517,7 +517,7 @@ public interface Block extends CastableBlock, MemoryCountable {
             int partition = (int) ((hashVal & Long.MAX_VALUE) % totalPartitionCount);
 
             // put hash code.
-            RFBloomFilters[partition].putLong(getLong(pos));
+            RFBloomFilters[partition].putLong(getPackedLong(pos));
         }
     }
 
@@ -525,7 +525,7 @@ public interface Block extends CastableBlock, MemoryCountable {
         final int positionCount = getPositionCount();
         for (int pos = 0; pos < positionCount; pos++) {
             // put hash code.
-            RFBloomFilter.putLong(getLong(pos));
+            RFBloomFilter.putLong(getPackedLong(pos));
         }
     }
 
@@ -542,7 +542,7 @@ public interface Block extends CastableBlock, MemoryCountable {
 
                 // Base on the original status in bitmap.
                 if (bitmap[pos]) {
-                    bitmap[pos] &= RFBloomFilter.mightContainLong(getLong(pos));
+                    bitmap[pos] &= RFBloomFilter.mightContainLong(getPackedLong(pos));
                     if (bitmap[pos]) {
                         hitCount++;
                     }
@@ -552,7 +552,7 @@ public interface Block extends CastableBlock, MemoryCountable {
         } else {
 
             for (int pos = 0; pos < positionCount; pos++) {
-                bitmap[pos] = RFBloomFilter.mightContainLong(getLong(pos));
+                bitmap[pos] = RFBloomFilter.mightContainLong(getPackedLong(pos));
                 if (bitmap[pos]) {
                     hitCount++;
                 }
@@ -576,7 +576,7 @@ public interface Block extends CastableBlock, MemoryCountable {
             RFBloomFilter rfBloomFilter = RFBloomFilters[partition];
 
             for (int pos = 0; pos < positionCount; pos++) {
-                bitmap[pos] = rfBloomFilter.mightContainLong(getLong(pos));
+                bitmap[pos] = rfBloomFilter.mightContainLong(getPackedLong(pos));
                 if (bitmap[pos]) {
                     hitCount++;
                 }
@@ -588,7 +588,7 @@ public interface Block extends CastableBlock, MemoryCountable {
                 int partition = (int) ((hashVal & Long.MAX_VALUE) % totalPartitionCount);
                 RFBloomFilter rfBloomFilter = RFBloomFilters[partition];
 
-                bitmap[pos] = rfBloomFilter.mightContainLong(getLong(pos));
+                bitmap[pos] = rfBloomFilter.mightContainLong(getPackedLong(pos));
                 if (bitmap[pos]) {
                     hitCount++;
                 }
@@ -614,7 +614,7 @@ public interface Block extends CastableBlock, MemoryCountable {
                 for (int pos = 0; pos < positionCount; pos++) {
 
                     if (bitmap[pos]) {
-                        bitmap[pos] &= rfBloomFilter.mightContainLong(getLong(pos));
+                        bitmap[pos] &= rfBloomFilter.mightContainLong(getPackedLong(pos));
                         if (bitmap[pos]) {
                             hitCount++;
                         }
@@ -630,7 +630,7 @@ public interface Block extends CastableBlock, MemoryCountable {
                         int partition = (int) ((hashVal & Long.MAX_VALUE) % totalPartitionCount);
                         RFBloomFilter rfBloomFilter = RFBloomFilters[partition];
 
-                        bitmap[pos] &= rfBloomFilter.mightContainLong(getLong(pos));
+                        bitmap[pos] &= rfBloomFilter.mightContainLong(getPackedLong(pos));
                         if (bitmap[pos]) {
                             hitCount++;
                         }
@@ -649,7 +649,7 @@ public interface Block extends CastableBlock, MemoryCountable {
                 RFBloomFilter rfBloomFilter = RFBloomFilters[partition];
 
                 for (int pos = 0; pos < positionCount; pos++) {
-                    bitmap[pos] = rfBloomFilter.mightContainLong(getLong(pos));
+                    bitmap[pos] = rfBloomFilter.mightContainLong(getPackedLong(pos));
                     if (bitmap[pos]) {
                         hitCount++;
                     }
@@ -661,7 +661,7 @@ public interface Block extends CastableBlock, MemoryCountable {
                     int partition = (int) ((hashVal & Long.MAX_VALUE) % totalPartitionCount);
                     RFBloomFilter rfBloomFilter = RFBloomFilters[partition];
 
-                    bitmap[pos] = rfBloomFilter.mightContainLong(getLong(pos));
+                    bitmap[pos] = rfBloomFilter.mightContainLong(getPackedLong(pos));
                     if (bitmap[pos]) {
                         hitCount++;
                     }
@@ -672,4 +672,6 @@ public interface Block extends CastableBlock, MemoryCountable {
 
         return hitCount;
     }
+
+    int compareAssertedSameType(int position, Block otherBlock, int otherPosition);
 }

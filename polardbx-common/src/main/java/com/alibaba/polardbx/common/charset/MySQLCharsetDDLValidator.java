@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.common.charset;
 
 import com.alibaba.polardbx.common.utils.TStringUtil;
+import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 
 import java.util.Optional;
 
@@ -85,9 +86,15 @@ public class MySQLCharsetDDLValidator {
      * Check if charset has been implemented in PolarDB-X
      */
     public static boolean isCharsetImplemented(String charsetNameStr) {
-        return Optional.ofNullable(charsetNameStr)
-            .map(CharsetName.POLAR_DB_X_IMPLEMENTED_CHARSET_NAME_STRINGS::contains)
-            .orElse(false);
+        if (InstanceVersion.isMYSQL80()) {
+            return Optional.ofNullable(charsetNameStr)
+                .map(CharsetName.POLAR_DB_X_IMPLEMENTED_CHARSET_NAME_STRINGS_80::contains)
+                .orElse(false);
+        } else {
+            return Optional.ofNullable(charsetNameStr)
+                .map(CharsetName.POLAR_DB_X_IMPLEMENTED_CHARSET_NAME_STRINGS::contains)
+                .orElse(false);
+        }
     }
 
     public static boolean checkIfMySql80NewCollation(String collationNameStr) {

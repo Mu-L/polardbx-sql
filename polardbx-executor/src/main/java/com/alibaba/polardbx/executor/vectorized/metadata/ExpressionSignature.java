@@ -121,4 +121,11 @@ public class ExpressionSignature {
             ", mode=" + mode +
             '}';
     }
+
+    public String display() {
+        final int limit = 5;
+        return name + " " + Arrays.stream(args).limit(limit)
+            .map(e -> e.getType().getStringSqlType() + "," + e.getKind().name())
+            .collect(Collectors.joining("; ", "[", args.length > limit ? "...]" : "]"));
+    }
 }

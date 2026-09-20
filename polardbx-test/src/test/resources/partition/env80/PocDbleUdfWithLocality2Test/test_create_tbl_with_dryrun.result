@@ -1,0 +1,156 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+## test dble_db
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+use polardbx;
+drop database if exists dbledb1;
+## USE_DN_LIST_MSG
+create database if not exists dbledb1 mode = 'auto' locality='dble_config={"group_config":{"dbledb1_g1":["$dn1","dbledb1_00"],"dbledb1_g2":["$dn2","dbledb1_01"] }}';
+use dbledb1;
+show tables;
+Tables_in_dbledb1
+use polardbx;
+unregister database if exists dbledb1;
+## USE_DN_LIST_MSG
+register database if not exists dbledb1 mode = 'auto' locality='dble_config={"group_config":{"dbledb1_g1":["$dn1","dbledb1_00"],"dbledb1_g2":["$dn2","dbledb1_01"] }}';
+use dbledb1;
+show tables;
+Tables_in_dbledb1
+## test dble_part_tbl
+drop table if exists dble_t1;
+create table if not exists dble_t1 (
+    a bigint ,
+    b bigint not null auto_increment,
+    primary key(b)
+)
+partition by udf_hash(unitmurhashi2(a))
+partitions 2
+(
+partition p1 values less than (1),
+partition p2 values less than (2)
+)
+locality='db_pools=dbledb1_g1,dbledb1_g2';
+show create table dble_t1;
+Table,Create Table
+dble_t1,CREATE TABLE `dble_t1` (
+	`a` bigint(20) DEFAULT NULL,
+	`b` bigint(20) NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`b`),
+	KEY `auto_shard_key_a` USING BTREE (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
+/* LOCALITY='db_pools=dbledb1_g1,dbledb1_g2' */
+PARTITION BY UDF_HASH(unitmurhashi2(`a`))
+PARTITIONS 2
+(PARTITION p1 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (2) ENGINE = InnoDB)
+insert into dble_t1 (a,b) values (100, null),(120,null);
+select a,b from dble_t1 order by a,b;
+a,b
+100,1
+120,1
+unregister table if exists dble_t1;
+show tables;
+Tables_in_dbledb1
+register table if not exists dble_t1 (a int , b bigint not null auto_increment, primary key(b)) partition by key(a) partitions 2 locality='db_pools=dbledb1_g1,dbledb1_g2';
+show tables;
+Tables_in_dbledb1
+dble_t1
+select a,b from dble_t1 order by a,b;
+a,b
+100,1
+120,1
+check table routing dble_t1;
+route_part,real_part,a
+p2,p1,120
+unregister table if exists dble_t1;
+show tables;
+Tables_in_dbledb1
+register table if not exists dble_t1 (a bigint , b bigint not null auto_increment, primary key(b))
+partition by udf_hash(unitmurhashi2(a))
+partitions 2
+(
+partition p1 values less than (1),
+partition p2 values less than (2)
+)
+locality='db_pools=dbledb1_g1,dbledb1_g2';
+show tables;
+Tables_in_dbledb1
+dble_t1
+select a,b from dble_t1 order by a,b;
+a,b
+100,1
+120,1
+check table routing dble_t1;
+route_part,real_part,a
+## test bro_tbl
+create table if not exists dble_t2_bro (a bigint , b bigint not null auto_increment, primary key(b))
+broadcast
+locality='db_pools=dbledb1_g1,dbledb1_g2';
+show create table dble_t2_bro;
+Table,Create Table
+dble_t2_bro,CREATE TABLE `dble_t2_bro` (
+	`a` bigint(20) DEFAULT NULL,
+	`b` bigint(20) NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
+/* LOCALITY='db_pools=dbledb1_g1,dbledb1_g2' */
+BROADCAST
+insert into dble_t2_bro values (200,200);
+select * from dble_t2_bro;
+a,b
+200,200
+unregister table if exists dble_t2_bro;
+show tables;
+Tables_in_dbledb1
+dble_t1
+register table if not exists dble_t2_bro (a bigint , b bigint not null auto_increment, primary key(b))
+broadcast
+locality='db_pools=dbledb1_g1,dbledb1_g2';
+show tables;
+Tables_in_dbledb1
+dble_t1
+dble_t2_bro
+select * from dble_t2_bro;
+a,b
+200,200
+## test sig_tbl
+create table if not exists dble_t3_sig (a bigint , b bigint not null auto_increment, primary key(b))
+single
+locality='db_pools=dbledb1_g2';
+show create table dble_t3_sig;
+Table,Create Table
+dble_t3_sig,CREATE TABLE `dble_t3_sig` (
+	`a` bigint(20) DEFAULT NULL,
+	`b` bigint(20) NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
+/* LOCALITY='db_pools=dbledb1_g2' */
+SINGLE
+insert into dble_t3_sig values (300,300);
+select * from dble_t3_sig;
+a,b
+300,300
+unregister table if exists dble_t3_sig;
+show tables;
+Tables_in_dbledb1
+dble_t1
+dble_t2_bro
+register table if not exists dble_t3_sig (a bigint , b bigint not null auto_increment, primary key(b))
+single
+locality='db_pools=dbledb1_g2';
+show tables;
+Tables_in_dbledb1
+dble_t1
+dble_t2_bro
+dble_t3_sig
+select * from dble_t3_sig;
+a,b
+300,300
+drop table dble_t1;
+drop table dble_t2_bro;
+drop table dble_t3_sig;
+use polardbx;
+drop database dbledb1;

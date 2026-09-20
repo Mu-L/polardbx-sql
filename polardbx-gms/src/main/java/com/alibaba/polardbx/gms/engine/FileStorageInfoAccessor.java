@@ -36,7 +36,7 @@ import java.util.List;
 import java.util.Map;
 
 public class FileStorageInfoAccessor extends AbstractAccessor {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     private static final String TABLE_NAME = wrap(GmsSystemTables.FILE_STORAGE_INFO);
 
@@ -44,14 +44,14 @@ public class FileStorageInfoAccessor extends AbstractAccessor {
         + TABLE_NAME + " where engine = ? and status != 0 order by priority desc limit 1";
 
     private static final String QUERY_PRIORITY_DESC = "select * from "
-            + TABLE_NAME + " where engine = ? and status != 0 order by priority desc";
+        + TABLE_NAME + " where engine = ? and status != 0 order by priority desc";
 
     private static final String INSERT_SQL = "insert ignore into " + TABLE_NAME
         + " (`inst_id`,`engine`,`external_endpoint`,`internal_classic_endpoint`,`internal_vpc_endpoint`,`file_uri`,`file_system_conf`,`access_key_id`,`access_key_secret`,`priority`,`region_id`,`azone_id`, `cache_policy`, `delete_policy`, `status`) values "
         + " (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
 
     private static final String DELETE_ENGINE = "delete from "
-            + TABLE_NAME + " where engine = ?";
+        + TABLE_NAME + " where engine = ?";
 
     public FileStorageInfoRecord queryLatest(Engine engine) {
         Map<Integer, ParameterContext> params = new HashMap<>();
@@ -74,7 +74,7 @@ public class FileStorageInfoAccessor extends AbstractAccessor {
         try {
             DdlMetaLogUtil.logSql(QUERY_PRIORITY_DESC, params);
             List<FileStorageInfoRecord> recordList =
-                    MetaDbUtil.query(QUERY_PRIORITY_DESC, params, FileStorageInfoRecord.class, connection);
+                MetaDbUtil.query(QUERY_PRIORITY_DESC, params, FileStorageInfoRecord.class, connection);
             return recordList;
         } catch (Exception e) {
             throw GeneralUtil.nestedException(e);

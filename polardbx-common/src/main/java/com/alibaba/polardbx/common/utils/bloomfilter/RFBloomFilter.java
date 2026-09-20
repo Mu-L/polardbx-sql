@@ -16,7 +16,9 @@
 
 package com.alibaba.polardbx.common.utils.bloomfilter;
 
-public interface RFBloomFilter {
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+
+public interface RFBloomFilter extends MemoryCountable {
     static BlockLongBloomFilter createBlockLongBloomFilter(int expectedEntries) {
         return new BlockLongBloomFilter(expectedEntries);
     }
@@ -36,4 +38,24 @@ public interface RFBloomFilter {
     long sizeInBytes();
 
     void merge(RFBloomFilter other);
+
+    // for Top-N
+    default boolean isNull() {
+        throw new UnsupportedOperationException();
+    }
+
+    // for Top-N
+    default int getIntThreshold() {
+        throw new UnsupportedOperationException();
+    }
+
+    // for Top-N
+    default long getLongThreshold() {
+        throw new UnsupportedOperationException();
+    }
+
+    // for Top-N
+    default boolean isInitialized() {
+        throw new UnsupportedOperationException();
+    }
 }

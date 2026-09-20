@@ -28,10 +28,13 @@ import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.datatype.DateTimeType;
+import com.alibaba.polardbx.optimizer.core.datatype.JsonType;
 import com.alibaba.polardbx.optimizer.core.datatype.SliceType;
 import com.alibaba.polardbx.optimizer.core.datatype.StringType;
 import com.alibaba.polardbx.optimizer.core.datatype.TimeType;
 import com.alibaba.polardbx.optimizer.core.datatype.TimestampType;
+import com.alibaba.polardbx.optimizer.core.datatype.VectorCodec;
+import com.alibaba.polardbx.optimizer.core.datatype.VectorType;
 import com.alibaba.polardbx.optimizer.core.function.calc.AbstractScalarFunction;
 import com.alibaba.polardbx.optimizer.utils.FunctionUtils;
 
@@ -126,6 +129,11 @@ public class Cast extends AbstractScalarFunction {
             castType.signed = true;
         } else if (type.equalsIgnoreCase("JSON")) {
             castType.type = DataTypes.JsonType;
+        } else if (type.equalsIgnoreCase("VECTOR")) {
+            if (args.size() > startIndex + 1) {
+                castType.type1 = DataTypes.IntegerType.convertFrom(args.get(startIndex + 1));
+            }
+            castType.type = castType.type1 == null ? new VectorType() : new VectorType(castType.type1);
         } else if (type.equalsIgnoreCase("FLOAT")) {
             castType.type = DataTypes.FloatType;
             castType.signed = true;
@@ -158,7 +166,15 @@ public class Cast extends AbstractScalarFunction {
         }
         Object obj = null;
         CastType castType = getType(Arrays.stream(args).collect(Collectors.toList()), 1);
-        if (castType.type instanceof SliceType) {
+        if (castType.type instanceof VectorType) {
+            if (getOperandType(0) instanceof JsonType) {
+                float[] vector = VectorCodec.parseJson(args[0]);
+                obj = vector == null ? null : VectorCodec.encodeBinary(vector);
+            } else {
+                obj = args[0];
+            }
+            return castType.type.convertFrom(obj);
+        } else if (castType.type instanceof SliceType) {
             obj = DataTypes.StringType.convertFrom(args[0]);
         } else if (DataTypeUtil.isFractionalTimeType(castType.type)) {
             obj = castType.type.convertFrom(args[0]);

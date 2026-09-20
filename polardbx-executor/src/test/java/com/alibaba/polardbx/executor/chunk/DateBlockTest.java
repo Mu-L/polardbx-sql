@@ -128,6 +128,7 @@ public class DateBlockTest extends BaseBlockTest {
             Assert.assertEquals(dateBlock.getObjectForCmp(i), builder1.getPackedLong(i));
             Assert.assertEquals(dateBlock.getObject(i), newBlock.getObject(i));
             Assert.assertEquals(dateBlock.getLong(i), newBlock.getLong(i));
+            Assert.assertTrue(dateBlock.compareAssertedSameType(i, newBlock, i) == 0);
         }
 
         BlockBuilder builder = builder1.newBlockBuilder();

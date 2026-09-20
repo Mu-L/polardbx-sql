@@ -126,6 +126,43 @@
         ]]></Create>
     </SystemTable>
 
+    <SystemTable name="table_partitions_archive">
+        <Create><![CDATA[
+        create table if not exists `table_partitions_archive` (
+              `task_id` bigint not null,
+              `id` bigint not null,
+              `parent_id` bigint not null comment '>0:has parent;  <=0:has no parent',
+              `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              `update_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              `table_schema` varchar(64) not null,
+              `table_name` varchar(64) not null,
+              `sp_temp_flag` int not null comment '1:sub part is defined by template,0:defined by non-template',
+              `group_id` bigint not null default -1 comment 'part_level = 0 ref to tableGroupId, next_level = -1 ref to partition group',
+              `meta_version` bigint unsigned not null default '1',
+              `auto_flag` int default 0 comment '0:auto rebalancing is not open, 1: auto rebalancing is open',
+              `tbl_type` int default 0 comment '0:primary table, 1:gsi table',
+              `part_name` varchar(64) not null default '' comment 'the name of part',
+              `part_temp_name` varchar(64) null comment 'part name in template',
+              `part_level` int not null comment '-1:no_next_level,0:logical,1:1st_level_part,2:2nd_level_part,3:3rd_level_part',
+              `next_level` int not null comment '-1:no_next_level,0:logical,1:1st_level_part,2:2nd_level_part,3:3rd_level_part',
+              `part_status` int not null,
+              `part_position` bigint default null,
+              `part_method` varchar(64) default null,
+              `part_expr` longtext default null,
+              `part_desc` longtext default null,
+              `part_comment` longtext default null,
+              `part_engine` varchar(64) default null,
+              `part_extras` longtext default null,
+              `part_flags` bigint unsigned default '0',
+              `phy_table` varchar(64) default null,
+              `insert_time` bigint unsigned not null,
+               primary key (`task_id`,`id`),
+               key `sch_index`(`table_schema`),
+               key `idx_insert_time`(`insert_time`)
+        ) charset=utf8
+        ]]></Create>
+    </SystemTable>
+
     <SystemTable name="table_partitions_delta">
         <Create><![CDATA[
         create table if not exists `table_partitions_delta` (
@@ -154,9 +191,17 @@
               `part_extras` longtext default null,
               `part_flags` bigint unsigned default '0',
               `phy_table` varchar(64) default null,
+              `ref_count` int default 1,
+               key idx_sch_tgid (`table_schema`,`group_id`),
                PRIMARY KEY (`table_schema`,`table_name`,`part_name`)
         ) charset=utf8
         ]]></Create>
+        <Change><![CDATA[
+            alter table `table_partitions_delta` add column `ref_count` int default 1
+        ]]></Change>
+        <Change><![CDATA[
+            alter table `table_partitions_delta` add key idx_sch_tgid (`table_schema`,`group_id`)
+        ]]></Change>
     </SystemTable>
 
     <SystemTable name="views">
@@ -407,7 +452,7 @@
             KEY `logical_name`(`logical_schema_name`,`logical_table_name`),
             KEY `columnar_ts_idx`(`logical_schema_name`, `logical_table_name`, `file_type`, `commit_ts`, `remove_ts`),
             KEY `columnar_rm_ts_idx`(`logical_schema_name`, `logical_table_name`, `file_type`, `remove_ts`),
-            KEY `columnar_type_engine_idx`(`logical_schema_name`, `logical_table_name`, `partition_name`, `file_type`, `engine`),
+            KEY `columnar_type_engine_version_idx`(`logical_schema_name`, `logical_table_name`, `partition_name`, `file_type`, `engine`, `version`, `commit_ts`),
             primary key (`file_id`)
          ) charset=utf8
         ]]></Create>
@@ -437,6 +482,12 @@
         ]]> </Change>
         <Change><![CDATA[
             alter table `files` add key `columnar_rm_ts_idx`(`logical_schema_name`, `logical_table_name`, `file_type`, `remove_ts`)
+        ]]> </Change>
+        <Change><![CDATA[
+            alter table `files` add key `columnar_type_engine_version_idx`(`logical_schema_name`, `logical_table_name`, `partition_name`, `file_type`, `engine`, `version`, `commit_ts`)
+        ]]> </Change>
+        <Change><![CDATA[
+            alter table `files` drop key `columnar_type_engine_idx`
         ]]> </Change>
     </SystemTable>
 
@@ -657,6 +708,84 @@
                   `axis` TEXT,
                   KEY (`layer_num`, `timestamp`)
             ) charset=utf8
+        ]]></Create>
+    </SystemTable>
+
+    <SystemTable name="columnar_warmup">
+        <Create><![CDATA[
+            create table if not exists `columnar_warmup` (
+                `task_id` bigint not null primary key auto_increment,
+                `create_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `update_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                `instance_id` varchar(64),
+                `schema_name` varchar(64),
+                `cron_expression` longtext,
+                `sql_def` longtext,
+                `status` int COMMENT '0: ready, 1: suspend, 2: cancel',
+                KEY(`instance_id`, `status`)
+            ) charset=utf8
+        ]]></Create>
+    </SystemTable>
+    <SystemTable name="omc_record">
+        <Create><![CDATA[
+            create table if not exists `omc_record` (
+              `id` bigint unsigned not null auto_increment,
+              `job_id` bigint unsigned not null,
+              `task_id` bigint unsigned not null,
+              `changeset_id` bigint unsigned not null,
+              `table_schema` varchar(64) default null,
+              `table_name` varchar(64) default null,
+              `storage_inst_id` varchar(128) not null comment 'Storage instance id',
+              `physical_db` varchar(128) not null comment 'Physical db name',
+              `physical_table` varchar(64) not null comment 'Physical table name',
+              `physical_ddl_sql` longtext not null comment 'Physical DDL statement',
+              `total_row_count` bigint unsigned not null comment 'Total row count',
+              `rollback` tinyint not null default '0' comment '0:false,1:true',
+              `space_id` bigint default null,
+              `status` int not null default '0' comment '0:INIT,1:RUNNING,2:SUCCESS,3:FAILED',
+              `omc_status` int not null default '0' comment '0:INIT,1:CREATE_TABLE,2:PHYSICAL_DDL,3:ADD_GENERATED_COLUMN,4:START_CHANGESET,5:BACKFILL,6:CATCHUP,7:CHECKER,8:CUTOVER,9:CLEANUP,10:FINISH',
+              `start_time` timestamp(3) not null default current_timestamp(3),
+              `end_time` timestamp(3) not null default current_timestamp(3) on update current_timestamp(3),
+              `cut_over_time` bigint unsigned default null comment 'Cut over time ms',
+              `generated_column_map` longtext comment 'Generated column map',
+              `extra` longtext,
+              primary key (`id`),
+              unique key `i_job_task_storage_db_tb` (`job_id`,`task_id`, `storage_inst_id`, `physical_db`, `physical_table`, `rollback`),
+              key `i_job_id_status` (`job_id`, `status`),
+              key `i_task_id` (`task_id`)
+            ) charset=utf8mb4
+        ]]></Create>
+    </SystemTable>
+    <SystemTable name="mce_column_state">
+        <Create><![CDATA[
+            create table if not exists `mce_column_state` (
+              `id` bigint unsigned not null auto_increment,
+              `job_id` bigint unsigned not null,
+              `task_id` bigint unsigned not null,
+              `table_schema` varchar(64) not null,
+              `table_name` varchar(64) not null,
+              `column_name` varchar(64) not null comment 'content column being externalized',
+              `addr_column_name` varchar(64) not null comment 'e.g. content_addr_',
+              `state` int not null default '0' comment '0:NONE,1:DUAL_WRITE,2:READ_ADDR,3:EXTERNALIZED',
+              `status` int not null default '0' comment '0:INIT,1:RUNNING,2:SUCCESS,3:FAILED',
+              `physical_db` varchar(128) not null default '' comment 'backfill checkpoint: physical db',
+              `physical_table` varchar(64) not null default '' comment 'backfill checkpoint: physical table',
+              `partition_name` varchar(64) not null default '' comment 'backfill checkpoint: partition',
+              `last_pk` longtext comment 'checkpoint: largest pk whose addr was written in last batch',
+              `max_pk` longtext comment 'snapshot MAX(pk) captured at backfill start (stopPk)',
+              `pk_type` varchar(64) default null comment 'JDBC param method of pk column, for resume',
+              `processed_rows` bigint unsigned not null default '0',
+              `total_rows` bigint unsigned not null default '0',
+              `start_time` timestamp(3) not null default current_timestamp(3),
+              `end_time` timestamp(3) not null default current_timestamp(3) on update current_timestamp(3),
+              `error_message` longtext,
+              `extra` longtext,
+              primary key (`id`),
+              unique key `i_job_task_col_partition` (`job_id`,`task_id`,`column_name`,`partition_name`),
+              key `i_control_lookup` (`table_schema`,`table_name`,`column_name`,`physical_db`,`physical_table`,`partition_name`,`id`),
+              key `i_schema_table_state` (`table_schema`,`table_name`,`state`),
+              key `i_job_id` (`job_id`)
+            ) charset=utf8mb4
         ]]></Create>
     </SystemTable>
 </SystemTables>

@@ -29,6 +29,7 @@ import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 
 import com.google.common.base.Preconditions;
 import io.airlift.slice.SliceOutput;
+import io.airlift.slice.XxHash64;
 import org.openjdk.jol.info.ClassLayout;
 import org.openjdk.jol.util.VMSupport;
 
@@ -211,6 +212,21 @@ public class DateBlock extends AbstractCommonBlock {
             return equalsInner(position, (DateBlockBuilder) other, otherPosition);
         } else {
             throw new AssertionError();
+        }
+    }
+
+    @Override
+    public int compareAssertedSameType(int position, Block otherBlock, int otherPosition) {
+        boolean isNullLeft = isNull(position);
+        boolean isNullRight = otherBlock.isNull(otherPosition);
+        if (isNullLeft && isNullRight) {
+            return 0;
+        } else if (isNullLeft) {
+            return -1;
+        } else if (isNullRight) {
+            return 1;
+        } else {
+            return Long.compare(getPackedLong(position), otherBlock.getPackedLong(otherPosition));
         }
     }
 

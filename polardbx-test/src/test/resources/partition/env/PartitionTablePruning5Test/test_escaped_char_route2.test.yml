@@ -1,0 +1,110 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+## error_msg: $# should be larger than #$
+CREATE TABLE `rng_esc_route_t0` (
+`a` varchar(8) DEFAULT NULL,
+`b` varchar(8) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+PARTITION BY RANGE COLUMNS(`a`)
+(
+PARTITION p4 VALUES LESS THAN('\\'),
+PARTITION p5 VALUES LESS THAN('\\\\'),
+PARTITION p6 VALUES LESS THAN('\\n')
+)
+;
+
+CREATE TABLE `rng_esc_route_t1` (
+`a` varchar(8) DEFAULT NULL,
+`b` varchar(8) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+PARTITION BY RANGE COLUMNS(`a`)
+(
+PARTITION p1 VALUES LESS THAN(''),
+PARTITION p2 VALUES LESS THAN('"'),
+PARTITION p3 VALUES LESS THAN('\''),
+PARTITION p4 VALUES LESS THAN('\\'),
+PARTITION p5 VALUES LESS THAN('\\n'),
+PARTITION p6 VALUES LESS THAN('\\r'),
+PARTITION p7 VALUES LESS THAN('\\t'),
+PARTITION p8 VALUES LESS THAN('\\\\'),
+PARTITION p9 VALUES LESS THAN(MAXVALUE)
+)
+;
+show create table rng_esc_route_t1;
+
+insert into rng_esc_route_t1 
+(a,b) 
+values
+(null,null),
+('',''),
+('\'',''''),
+('\\t','\\t'),
+('\\r','\\r'),
+('\\n','\\n'),
+('\\','\\'),
+('\\\\','\\\\'),
+('"','"');
+
+select a, part_route('','rng_esc_route_t1', a) part from rng_esc_route_t1 order by a;
+
+CREATE TABLE `rng_esc_route_t2` (
+`a` varchar(8) DEFAULT NULL,
+`b` varchar(8) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+PARTITION BY RANGE COLUMNS(`a`)
+(
+PARTITION p1 VALUES LESS THAN(''),
+PARTITION p2 VALUES LESS THAN('\'\"'),
+PARTITION p3 VALUES LESS THAN('\\t\\r\\n'),
+PARTITION p4 VALUES LESS THAN(MAXVALUE)
+)
+;
+show create table rng_esc_route_t2;
+
+insert into rng_esc_route_t2
+(a,b)
+values
+(null,null),
+('',''),
+('\'"','''\"'),
+('\\t\\r\\n','\\t\\r\\n');
+
+select a, part_route('','rng_esc_route_t2', a) part from rng_esc_route_t2 order by a;
+
+
+CREATE TABLE `rng_esc_route_t3` (
+`a` varchar(8) DEFAULT NULL,
+`b` varchar(8) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+PARTITION BY RANGE COLUMNS(`a`,`b`)
+(
+PARTITION p1 VALUES LESS THAN('',''),
+PARTITION p2 VALUES LESS THAN('"','\"'),
+PARTITION p3 VALUES LESS THAN('\'',''''),
+PARTITION p4 VALUES LESS THAN('\\','\\'),
+PARTITION p5 VALUES LESS THAN('\\n','\\n'),
+PARTITION p6 VALUES LESS THAN('\\r','\\r'),
+PARTITION p7 VALUES LESS THAN('\\t','\\t'),
+PARTITION p8 VALUES LESS THAN('\\\\','\\\\'),
+PARTITION p9 VALUES LESS THAN(MAXVALUE,MAXVALUE)
+)
+;
+show create table rng_esc_route_t3;
+
+insert into rng_esc_route_t3
+(a,b)
+values
+('',''),
+('\'',''''),
+('\\t','\\t'),
+('\\r','\\r'),
+('\\n','\\n'),
+('\\','\\'),
+('\\\\','\\\\'),
+('"','"');
+
+select a,b, part_route('','rng_esc_route_t3', a,b) part from rng_esc_route_t3 order by a;
+
+
+

@@ -26,10 +26,20 @@ public class UdfHashPartBoundValBuilder implements PartBoundValBuilder {
 
     protected int partitionCount;
     protected Long[] upBoundValArr;
+    protected boolean genBoundValsForDbleRouting = false;
+    protected boolean lastPartUseCatchAllBndVal = true;
 
-    public UdfHashPartBoundValBuilder(int partitionCount) {
+//    public UdfHashPartBoundValBuilder(int partitionCount) {
+//        this(partitionCount, false, true);
+//    }
+
+    public UdfHashPartBoundValBuilder(int partitionCount,
+                                      boolean genBoundValsForDbleRouting,
+                                      boolean lastPartUseCatchAllBndVal) {
         this.partitionCount = partitionCount;
         this.upBoundValArr = new Long[partitionCount];
+        this.genBoundValsForDbleRouting = genBoundValsForDbleRouting;
+        this.lastPartUseCatchAllBndVal = lastPartUseCatchAllBndVal;
         partitionLongValueSpace(this.partitionCount);
     }
 
@@ -38,7 +48,24 @@ public class UdfHashPartBoundValBuilder implements PartBoundValBuilder {
         return this.upBoundValArr[partPosition - 1];
     }
 
+    protected Object partitionLongValueSpaceForDbleRoute(int partitionCount) {
+        assert partitionCount > 0;
+        for (int i = 0; i < upBoundValArr.length - 1; i++) {
+            upBoundValArr[i] = Long.valueOf(i + 1);
+        }
+        if (lastPartUseCatchAllBndVal) {
+            upBoundValArr[upBoundValArr.length - 1] = Long.MAX_VALUE;
+        } else {
+            upBoundValArr[upBoundValArr.length - 1] = Long.valueOf(partitionCount);
+        }
+
+        return upBoundValArr;
+    }
+
     protected Object partitionLongValueSpace(int partitionCount) {
+        if (isGenBoundValsForDbleRouting()) {
+            return partitionLongValueSpaceForDbleRoute(partitionCount);
+        }
 
         assert partitionCount > 0;
         if (partitionCount == 1) {
@@ -56,5 +83,13 @@ public class UdfHashPartBoundValBuilder implements PartBoundValBuilder {
             upBoundValArr[j] = lastBoundVal;
         }
         return upBoundValArr;
+    }
+
+    public boolean isGenBoundValsForDbleRouting() {
+        return genBoundValsForDbleRouting;
+    }
+
+    public void setGenBoundValsForDbleRouting(boolean genBoundValsForDbleRouting) {
+        this.genBoundValsForDbleRouting = genBoundValsForDbleRouting;
     }
 }

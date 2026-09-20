@@ -17,6 +17,10 @@
 package com.alibaba.polardbx.executor.chunk.columnar;
 
 import com.alibaba.polardbx.common.datatype.Decimal;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.bloomfilter.RFBloomFilter;
 import com.alibaba.polardbx.common.utils.hash.IStreamingHasher;
@@ -37,6 +41,7 @@ import com.alibaba.polardbx.executor.operator.util.TypedList;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
+import org.openjdk.jol.info.ClassLayout;
 import com.alibaba.polardbx.executor.accumulator.state.NullableLongGroupState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,10 +58,14 @@ import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class CommonLazyBlock implements LazyBlock {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(CommonLazyBlock.class).instanceSize();
     public static final int REF_QUOTA_NUM = 1;
+
+    @FieldMemoryCounter(value = false)
     private final DataType targetType;
 
+    @FieldMemoryCounter(value = false)
     private final OSSColumnTransformer columnTransformer;
     private final int colId;
 
@@ -65,12 +74,15 @@ public class CommonLazyBlock implements LazyBlock {
      */
     private final BlockLoader blockLoader;
 
+    @FieldMemoryCounter(value = false)
     private final ColumnReader columnReader;
 
     private final boolean useSelection;
     private final boolean enableCompatible;
 
     private final AtomicInteger refQuota;
+
+    @FieldMemoryCounter(value = false)
     private TimeZone timeZone;
 
     /**
@@ -86,12 +98,30 @@ public class CommonLazyBlock implements LazyBlock {
     /**
      * Store the exception during loading.
      */
+    @FieldMemoryCounter(value = false)
     private Exception loadingException;
 
+    @FieldMemoryCounter(value = false)
     private int[] selection;
     private int selSize;
 
+    @FieldMemoryCounter(value = false)
     private ExecutionContext context;
+
+    @FieldMemoryCounter(value = false)
+    private OperatorMemoryOwnerId operatorMemoryOwnerId;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(blockLoader)
+            + FastMemoryCounter.sizeOf(refQuota)
+            + FastMemoryCounter.sizeOf(block);
+    }
+
+    public void setOperatorMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        this.operatorMemoryOwnerId = operatorMemoryOwnerId;
+    }
 
     public CommonLazyBlock(DataType targetType, BlockLoader blockLoader, ColumnReader columnReader,
                            boolean useSelection, boolean enableCompatible, TimeZone timeZone,
@@ -148,6 +178,16 @@ public class CommonLazyBlock implements LazyBlock {
                     if (result != null && selection != null && selSize >= 0) {
                         // For zero copy
                         this.block = fillSelection(result);
+
+                        long beforeMemoryUsage =
+                            result.isMemoryCountable() ? result.getMemoryUsage() : 0; // maybe come from block cache.
+                        long afterMemoryUsage = FastMemoryCounter.sizeOf(block);
+
+                        if (afterMemoryUsage > beforeMemoryUsage) {
+                            MemoryTrackerManager.tryReverseReference(operatorMemoryOwnerId,
+                                afterMemoryUsage - beforeMemoryUsage);
+                        }
+
                     } else {
                         this.block = BlockUtils.wrapNullSelection(result, true, enableCompatible, timeZone);
                     }
@@ -163,14 +203,47 @@ public class CommonLazyBlock implements LazyBlock {
         }
     }
 
+    @Override
+    public void warmup() {
+        try {
+            if (loadingException != null) {
+                throw GeneralUtil.nestedException(loadingException);
+            }
+
+            if (!isLoaded) {
+                try {
+                    ColumnMeta sourceColumnMeta = columnTransformer.getSourceColumnMeta(colId);
+                    TypeComparison comparison = columnTransformer.getCompareResult(colId);
+                    switch (comparison) {
+                    case MISSING_EQUAL:
+                    case MISSING_NO_EQUAL:
+                        return;
+                    default:
+                        DataType sourceType = sourceColumnMeta.getDataType();
+                        blockLoader.warmup(sourceType, selection, selSize);
+                    }
+
+                } catch (IOException e) {
+                    loadingException = e;
+                    throw GeneralUtil.nestedException(e);
+                }
+
+                isLoaded = true;
+            }
+
+        } finally {
+            releaseRef();
+        }
+    }
+
     private AbstractBlock loadAndTransformDataType() throws IOException {
         ColumnMeta sourceColumnMeta = columnTransformer.getSourceColumnMeta(colId);
         ColumnMeta targetColumnMeta = columnTransformer.getTargetColumnMeta(colId);
         TypeComparison comparison = columnTransformer.getCompareResult(colId);
 
         switch (comparison) {
-        case MISSING_EQUAL:
-            return (AbstractBlock) OSSColumnTransformer.fillDefaultValue(
+        case MISSING_EQUAL: {
+            AbstractBlock result = (AbstractBlock) OSSColumnTransformer.fillDefaultValue(
                 targetType,
                 columnTransformer.getInitColumnMeta(colId),
                 columnTransformer.getTimeStamp(colId),
@@ -178,18 +251,42 @@ public class CommonLazyBlock implements LazyBlock {
                 blockLoader.positionCount(),
                 context
             );
-        case MISSING_NO_EQUAL:
-            return (AbstractBlock) OSSColumnTransformer.fillDefaultValueAndTransform(
+
+            long targetBlockMemoryUsage = FastMemoryCounter.sizeOf(result);
+            MemoryTrackerManager.tryReverseReference(operatorMemoryOwnerId, targetBlockMemoryUsage);
+
+            return result;
+        }
+        case MISSING_NO_EQUAL: {
+            AbstractBlock result = (AbstractBlock) OSSColumnTransformer.fillDefaultValueAndTransform(
                 targetColumnMeta,
                 columnTransformer.getInitColumnMeta(colId),
                 blockLoader.positionCount(),
                 context
             );
+
+            long targetBlockMemoryUsage = FastMemoryCounter.sizeOf(result);
+            MemoryTrackerManager.tryReverseReference(operatorMemoryOwnerId, targetBlockMemoryUsage);
+
+            return result;
+        }
         default:
             DataType sourceType = sourceColumnMeta.getDataType();
             AbstractBlock sourceBlock = (AbstractBlock) blockLoader.load(sourceType, selection, selSize);
             BlockConverter converter = Converters.createBlockConverter(sourceType, targetType, context);
-            return (AbstractBlock) converter.apply(sourceBlock);
+
+            AbstractBlock result = (AbstractBlock) converter.apply(sourceBlock);
+
+            if (converter != BlockConverter.IDENTITY) {
+                long sourceBlockMemoryUsage = sourceBlock.isMemoryCountable()
+                    ? FastMemoryCounter.sizeOf(sourceBlock) : 0; // maybe come from block cache.
+
+                long targetBlockMemoryUsage = FastMemoryCounter.sizeOf(result);
+                MemoryTrackerManager.tryReverseReference(operatorMemoryOwnerId,
+                    targetBlockMemoryUsage - sourceBlockMemoryUsage);
+            }
+
+            return result;
         }
     }
 
@@ -293,6 +390,12 @@ public class CommonLazyBlock implements LazyBlock {
     }
 
     @Override
+    public long getPackedLong(int position) {
+        load();
+        return block.getPackedLong(position);
+    }
+
+    @Override
     public double getDouble(int position) {
         load();
         return block.getDouble(position);
@@ -380,6 +483,12 @@ public class CommonLazyBlock implements LazyBlock {
     public int checksum(int position) {
         load();
         return block.checksum(position);
+    }
+
+    @Override
+    public int checksumV2(int position) {
+        load();
+        return block.checksumV2(position);
     }
 
     @Override
@@ -520,22 +629,23 @@ public class CommonLazyBlock implements LazyBlock {
     }
 
     @Override
-    public void sum(int[] groupSelected, int selSize, long[] results) {
+    public void sum(int[] groupSelected, int selSize, long[] results, boolean enableDecimal128) {
         load();
-        block.sum(groupSelected, selSize, results);
+        block.sum(groupSelected, selSize, results, enableDecimal128);
     }
 
     @Override
-    public void sum(int startIndexIncluded, int endIndexExcluded, long[] results) {
+    public void sum(int startIndexIncluded, int endIndexExcluded, long[] results, boolean enableDecimal128) {
         load();
-        block.sum(startIndexIncluded, endIndexExcluded, results);
+        block.sum(startIndexIncluded, endIndexExcluded, results, enableDecimal128);
     }
 
     @Override
     public void sum(int startIndexIncluded, int endIndexExcluded, long[] sumResultArray, int[] sumStatusArray,
-                    int[] normalizedGroupIds) {
+                    int[] normalizedGroupIds, boolean enableDecimal128) {
         load();
-        block.sum(startIndexIncluded, endIndexExcluded, sumResultArray, sumStatusArray, normalizedGroupIds);
+        block.sum(startIndexIncluded, endIndexExcluded, sumResultArray, sumStatusArray, normalizedGroupIds,
+            enableDecimal128);
     }
 
     @Override
@@ -554,19 +664,23 @@ public class CommonLazyBlock implements LazyBlock {
     @Override
     public void recycle() {
         load();
-        block.recycle();
+        if (block != null) {
+            block.recycle();
+        }
     }
 
     @Override
     public boolean isRecyclable() {
         load();
-        return block.isRecyclable();
+        return block != null && block.isRecyclable();
     }
 
     @Override
     public <T> void setRecycler(DriverObjectPool.Recycler<T> recycler) {
         load();
-        block.setRecycler(recycler);
+        if (block != null) {
+            block.setRecycler(recycler);
+        }
     }
 
     @Override
@@ -648,8 +762,8 @@ public class CommonLazyBlock implements LazyBlock {
     }
 
     @Override
-    public long getMemoryUsage() {
+    public int compareAssertedSameType(int position, Block otherBlock, int otherPosition) {
         load();
-        return block.getMemoryUsage();
+        return block.compareAssertedSameType(position, otherBlock, otherPosition);
     }
 }

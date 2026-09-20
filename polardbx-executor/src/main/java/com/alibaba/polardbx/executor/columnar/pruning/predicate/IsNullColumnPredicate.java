@@ -19,9 +19,11 @@ package com.alibaba.polardbx.executor.columnar.pruning.predicate;
 import com.alibaba.polardbx.executor.columnar.pruning.index.BitMapRowGroupIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.BloomFilterIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.IndexPruneContext;
+import com.alibaba.polardbx.executor.columnar.pruning.index.MultiSortKeyIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.SortKeyIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.ZoneMapIndex;
 import com.google.common.base.Preconditions;
+import org.apache.calcite.sql.type.SqlTypeName;
 import org.jetbrains.annotations.NotNull;
 import org.roaringbitmap.RoaringBitmap;
 
@@ -32,8 +34,8 @@ import javax.annotation.Nonnull;
  */
 public class IsNullColumnPredicate extends ColumnPredicate {
 
-    public IsNullColumnPredicate(int colId) {
-        super(null, colId);
+    public IsNullColumnPredicate(SqlTypeName type, int colId) {
+        super(type, colId);
     }
 
     @Override
@@ -64,6 +66,16 @@ public class IsNullColumnPredicate extends ColumnPredicate {
         }
 
         zoneMapIndex.pruneNull(colId, cur);
+    }
+
+    @Override
+    public void multiSortKey(@NotNull MultiSortKeyIndex multiSortKeyIndex, IndexPruneContext ipc,
+                             @NotNull RoaringBitmap cur) {
+        if (!multiSortKeyIndex.checkSupport(colId, type)) {
+            return;
+        }
+
+        multiSortKeyIndex.pruneNull(colId, cur);
     }
 
     @Override

@@ -1,24 +1,11 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.common.utils.time.core;
 
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.common.utils.time.MySQLTimeConverter;
 import com.alibaba.polardbx.common.utils.time.MySQLTimeTypeUtil;
 import com.alibaba.polardbx.common.utils.timezone.InternalTimeZone;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -29,8 +16,14 @@ import java.util.TimeZone;
 
 import static com.alibaba.polardbx.common.utils.LongUtil.fastGetSmallLongBytesForDate;
 
-public class MysqlDateTime implements Serializable {
-
+/**
+ * Mysql datetime is the explicit representation of temporal value. SEE:include/mysql_time.h st_mysql_time
+ */
+public class MysqlDateTime implements Serializable, MemoryCountable {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(MysqlDateTime.class).instanceSize();
+    /**
+     * From year to second
+     */
     private long year;
     private long month;
     private long day;
@@ -38,13 +31,31 @@ public class MysqlDateTime implements Serializable {
     private long minute;
     private long second;
 
+    /**
+     * It's different from st_mysql_time， where secondPart is nano seconds rather than micro seconds
+     */
     private long secondPart;
 
+    /**
+     * The jdbc standard representation of type. Types.TIME / Types.TIMESTAMP / Types.DATE/ MySQLTimeTypeUtil.DATETIME_SQL_TYPE
+     */
     private int sqlType;
 
+    /**
+     * The sign of temporal values.
+     */
     private boolean isNeg;
 
+    /**
+     * The timezone information. For UTC time calculation.
+     */
+    @FieldMemoryCounter(value = false)
     private TimeZone timezone;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE;
+    }
 
     public MysqlDateTime() {
         this(0, 0, 0, 0, 0, 0, 0);
@@ -82,6 +93,9 @@ public class MysqlDateTime implements Serializable {
         return t;
     }
 
+    /**
+     * Get epoch millis from temporal value and ignore the nano seconds
+     */
     public long toEpochMillisBySqlType() {
         switch (sqlType) {
         case Types.DATE:
@@ -95,6 +109,9 @@ public class MysqlDateTime implements Serializable {
         }
     }
 
+    /**
+     * Get epoch millis from temporal value and ignore the nano seconds
+     */
     public long toEpochMillsForDatetime() {
         Calendar calendar = MySQLTimeTypeUtil.getCalendar();
         calendar.setTimeZone(InternalTimeZone.DEFAULT_TIME_ZONE);
@@ -104,6 +121,9 @@ public class MysqlDateTime implements Serializable {
         return millis;
     }
 
+    /**
+     * Get epoch millis from temporal value and ignore the nano seconds
+     */
     public long toEpochMillsForDate() {
         Calendar calendar = MySQLTimeTypeUtil.getCalendar();
         calendar.setTimeZone(InternalTimeZone.DEFAULT_TIME_ZONE);
@@ -112,6 +132,9 @@ public class MysqlDateTime implements Serializable {
         return millis;
     }
 
+    /**
+     * Get epoch millis from temporal value, don't ignore the nano seconds
+     */
     public long toEpochMillsForTime() {
         Calendar calendar = MySQLTimeTypeUtil.getCalendar();
         calendar.setTimeZone(InternalTimeZone.DEFAULT_TIME_ZONE);
@@ -126,11 +149,17 @@ public class MysqlDateTime implements Serializable {
         return millis;
     }
 
+    /**
+     * The default representation of datetime using unlimited scale.
+     */
     @Override
     public String toString() {
         return toDatetimeString(-1);
     }
 
+    /**
+     * Get String representation of the mysql datetime, according to the sql type value.
+     */
     public String toStringBySqlType() {
         switch (this.sqlType) {
         case Types.TIMESTAMP:
@@ -145,6 +174,9 @@ public class MysqlDateTime implements Serializable {
         }
     }
 
+    /**
+     * to HH:MM:SS.[ffffff] according to scale
+     */
     public String toTimeString(int scale) {
         String hourString;
         String minuteString;
@@ -174,11 +206,12 @@ public class MysqlDateTime implements Serializable {
         } else {
             nanosecondString = Long.toString(secondPart);
             if (nanosecondString.length() <= 9) {
-
+                // Add leading zeros
                 nanosecondString = zeros.substring(0, (9 - nanosecondString.length())) +
                     nanosecondString;
             }
 
+            // Truncate trailing zeros
             char[] nanosChar = new char[nanosecondString.length()];
             nanosecondString.getChars(0, nanosecondString.length(), nanosChar, 0);
             int truncIndex = 8;
@@ -189,6 +222,7 @@ public class MysqlDateTime implements Serializable {
             nanosecondString = new String(nanosChar, 0, truncIndex + 1);
         }
 
+        // do a string buffer here instead.
         timestampBuf = new StringBuffer(MySQLTimeTypeUtil.MAX_TIME_WIDTH + nanosecondString.length());
         if (isNeg) {
             timestampBuf.append('-');
@@ -201,11 +235,12 @@ public class MysqlDateTime implements Serializable {
         timestampBuf.append(secondString);
 
         if (!nanosecondString.isEmpty()) {
-
+            //  for nanosecond != 0
             int nanoLen = nanosecondString.length();
             timestampBuf.append(".");
             timestampBuf.append(nanosecondString);
 
+            // append '0'
             if (scale > nanoLen) {
                 for (int i = nanoLen; i < scale; i++) {
                     timestampBuf.append('0');
@@ -213,7 +248,7 @@ public class MysqlDateTime implements Serializable {
             }
         } else if (scale > 0) {
             timestampBuf.append(".");
-
+            // for nanosecond = 0 but scale > 0
             for (int i = 0; i < scale; i++) {
                 timestampBuf.append('0');
             }
@@ -222,6 +257,9 @@ public class MysqlDateTime implements Serializable {
         return timestampBuf.toString();
     }
 
+    /**
+     * to YYYY-MM-DD format
+     */
     public String toDateString() {
         String yearString;
         String monthString;
@@ -230,7 +268,7 @@ public class MysqlDateTime implements Serializable {
         StringBuffer timestampBuf;
 
         if (year < 1000) {
-
+            // Add leading zeros
             yearString = "" + year;
             yearString = yearZeros.substring(0, (4 - yearString.length())) +
                 yearString;
@@ -248,6 +286,7 @@ public class MysqlDateTime implements Serializable {
             dayString = Long.toString(day);
         }
 
+        // do a string buffer here instead.
         timestampBuf = new StringBuffer(MySQLTimeTypeUtil.MAX_DATE_WIDTH);
         if (isNeg) {
             timestampBuf.append('-');
@@ -261,6 +300,12 @@ public class MysqlDateTime implements Serializable {
         return timestampBuf.toString();
     }
 
+    /**
+     * print datetime by scale in format of YYYY-MM-DD hh:mm:ss[.ffffff]
+     *
+     * @param scale scale = -1 means any scale.
+     * @return printed string
+     */
     public String toDatetimeString(int scale) {
         String yearString;
         String monthString;
@@ -274,7 +319,7 @@ public class MysqlDateTime implements Serializable {
         StringBuilder timestampBuf;
 
         if (year < 1000) {
-
+            // Add leading zeros
             yearString = "" + year;
             yearString = yearZeros.substring(0, (4 - yearString.length())) +
                 yearString;
@@ -311,11 +356,12 @@ public class MysqlDateTime implements Serializable {
         } else {
             nanosecondString = Long.toString(secondPart);
             if (nanosecondString.length() <= 9) {
-
+                // Add leading zeros
                 nanosecondString = zeros.substring(0, (9 - nanosecondString.length())) +
                     nanosecondString;
             }
 
+            // Truncate trailing zeros
             char[] nanosChar = new char[nanosecondString.length()];
             nanosecondString.getChars(0, nanosecondString.length(), nanosChar, 0);
             int truncIndex = 8;
@@ -326,6 +372,7 @@ public class MysqlDateTime implements Serializable {
             nanosecondString = new String(nanosChar, 0, truncIndex + 1);
         }
 
+        // do a string buffer here instead.
         timestampBuf = new StringBuilder(20 + nanosecondString.length());
         if (isNeg) {
             timestampBuf.append('-');
@@ -343,11 +390,12 @@ public class MysqlDateTime implements Serializable {
         timestampBuf.append(secondString);
 
         if (!nanosecondString.isEmpty()) {
-
+            //  for nanosecond != 0
             int nanoLen = nanosecondString.length();
             timestampBuf.append(".");
             timestampBuf.append(nanosecondString);
 
+            // append '0'
             if (scale > nanoLen) {
                 for (int i = nanoLen; i < scale; i++) {
                     timestampBuf.append('0');
@@ -355,7 +403,7 @@ public class MysqlDateTime implements Serializable {
             }
         } else if (scale > 0) {
             timestampBuf.append(".");
-
+            // for nanosecond = 0 but scale > 0
             for (int i = 0; i < scale; i++) {
                 timestampBuf.append('0');
             }

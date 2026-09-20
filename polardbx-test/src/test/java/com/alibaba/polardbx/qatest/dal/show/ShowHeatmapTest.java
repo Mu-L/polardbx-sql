@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.qatest.dal.show;
 
 import com.alibaba.polardbx.qatest.CdcIgnore;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.ReadBaseTestCase;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import org.junit.Assert;
@@ -29,6 +30,7 @@ import java.sql.Statement;
 /**
  * @author ximing.yd
  */
+@IcbcIgnore(ignoreReason = "unsupported")
 @CdcIgnore(ignoreReason = "用例在replica实验室运行不稳定，对CDC回归测试无影响，可忽略")
 public class ShowHeatmapTest extends ReadBaseTestCase {
 

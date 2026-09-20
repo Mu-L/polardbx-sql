@@ -224,7 +224,7 @@ public class DeadlockAutoTest extends DDLBaseNewDBTestCase {
         int retry = 0;
         while (queryInfoSchemaDeadlocks() - before < 1 && retry++ < 10) {
             try {
-                Thread.sleep(1000);
+                Thread.sleep(5000);
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }

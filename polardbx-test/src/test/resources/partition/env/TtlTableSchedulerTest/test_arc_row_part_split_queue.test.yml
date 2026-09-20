@@ -1,0 +1,192 @@
+## DISABLE_FAST_SQL_PARSER
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+
+use polardbx;
+drop database if exists test_arc_row_part_split_db;
+create database if not exists test_arc_row_part_split_db mode='auto';
+use test_arc_row_part_split_db;
+  
+  
+## create table ttl_row_t1
+drop table if exists ttl_row_t1;
+create table ttl_row_t1(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by key(a)
+partitions 8;
+
+alter table ttl_row_t1
+modify ttl
+ttl_enable = 'on',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_job = cron '0 0 0 1 1 ? */1' timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='row',
+archive_table_pre_allocate=2,
+archive_table_post_allocate=4
+;
+show create table ttl_row_t1;
+insert into ttl_row_t1(b) values('2024-02-27 00:00:00');
+insert into ttl_row_t1(b) values('2024-03-27 00:00:00');
+insert into ttl_row_t1(b) values('2024-04-27 00:00:00');
+insert into ttl_row_t1(b) values('2024-06-27 00:00:00');
+insert into ttl_row_t1(b) values('2024-06-28 00:00:00');
+  
+
+## create table ttl_row_t2
+drop table if exists ttl_row_t2;
+create table ttl_row_t2(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by key(a)
+partitions 8;
+
+alter table ttl_row_t2
+modify ttl
+ttl_enable = 'on',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_job = cron '0 0 0 1 1 ? */1' timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='row',
+archive_table_pre_allocate=2,
+archive_table_post_allocate=4
+;
+show create table ttl_row_t2;
+insert into ttl_row_t2(b) values('2024-02-27 00:00:00');
+insert into ttl_row_t2(b) values('2024-03-27 00:00:00');
+insert into ttl_row_t2(b) values('2024-04-27 00:00:00');
+insert into ttl_row_t2(b) values('2024-06-27 00:00:00');
+insert into ttl_row_t2(b) values('2024-06-28 00:00:00');
+  
+  
+  
+## create table ttl_rng_t1
+drop table if exists ttl_rng_t1;
+create table ttl_rng_t1(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by range columns(b)
+(
+  partition p1 values less than('2024-06-24'),
+  partition p2 values less than('2024-06-25'),
+  partition p3 values less than('2024-06-26'),
+  partition p4 values less than('2024-06-27'),
+  partition p5 values less than('2024-06-28'),
+  partition p6 values less than('2024-06-29'),
+  partition p7 values less than('2024-06-30')
+);
+alter table ttl_rng_t1
+modify ttl
+ttl_enable = 'on',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_job = cron '0 0 0 1 1 ? */1' timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='partition',
+archive_table_pre_allocate=2,
+archive_table_post_allocate=4
+;
+show create table ttl_rng_t1;
+insert into ttl_rng_t1(b) values('2024-02-27 00:00:00');
+insert into ttl_rng_t1(b) values('2024-03-27 00:00:00');
+insert into ttl_rng_t1(b) values('2024-04-27 00:00:00');
+insert into ttl_rng_t1(b) values('2024-06-27 00:00:00');
+  
+## create table ttl_rng_t2
+drop table if exists ttl_rng_t2;
+create table ttl_rng_t2(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by range columns(b)
+(
+partition p1 values less than('2024-06-24'),
+partition p2 values less than('2024-06-25'),
+partition p3 values less than('2024-06-26'),
+partition p4 values less than('2024-06-27'),
+partition p5 values less than('2024-06-28'),
+partition p6 values less than('2024-06-29'),
+partition p7 values less than('2024-06-30')
+);
+alter table ttl_rng_t2
+modify ttl
+ttl_enable = 'on',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_job = cron '0 0 0 1 1 ? */1' timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='partition',
+archive_table_pre_allocate=2,
+archive_table_post_allocate=4
+;
+show create table ttl_rng_t2;
+insert into ttl_rng_t2(b) values('2024-02-27 00:00:00');
+insert into ttl_rng_t2(b) values('2024-03-27 00:00:00');
+insert into ttl_rng_t2(b) values('2024-04-27 00:00:00');
+insert into ttl_rng_t2(b) values('2024-06-27 00:00:00');
+
+## create table ttl_rng_t3
+drop table if exists ttl_rng_t3;
+create table ttl_rng_t3(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by range columns(b)
+(
+partition p1 values less than('2024-06-24'),
+partition p2 values less than('2024-06-25'),
+partition p3 values less than('2024-06-26'),
+partition p4 values less than('2024-06-27'),
+partition p5 values less than('2024-06-28'),
+partition p6 values less than('2024-06-29'),
+partition p7 values less than('2024-06-30')
+);
+alter table ttl_rng_t3
+modify ttl
+ttl_enable = 'on',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_job = cron '0 0 0 1 1 ? */1' timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='partition',
+archive_table_pre_allocate=2,
+archive_table_post_allocate=4
+;
+show create table ttl_rng_t3;
+insert into ttl_rng_t3(b) values('2024-02-27 00:00:00');
+insert into ttl_rng_t3(b) values('2024-03-27 00:00:00');
+insert into ttl_rng_t3(b) values('2024-04-27 00:00:00');
+insert into ttl_rng_t3(b) values('2024-06-27 00:00:00');
+
+
+explain select t1.a from ttl_rng_t1 t1 join ttl_rng_t2 t2 on t1.b=t2.b join ttl_rng_t3 t3 on t1.b=t3.b where t1.b='2024-06-27 00:00:00';
+
+/*+TDDL:cmd_extra(TTL_JOB_MAINTENANCE_ENABLE=true,TTL_DEBUG_CURRENT_DATETIME='2024-06-27 02:00:00',TTL_JOB_MAINTENANCE_TIME_START='00:00:01',TTL_JOB_MAINTENANCE_TIME_END='23:59:59',FP_TTL_JOB_SUSPEND_TIME_ON_DELETE_ROW=15000)*/fire schedule by table ttl_row_t1;
+/*+TDDL:cmd_extra(TTL_JOB_MAINTENANCE_ENABLE=true,TTL_DEBUG_CURRENT_DATETIME='2024-06-27 02:00:00',TTL_JOB_MAINTENANCE_TIME_START='00:00:01',TTL_JOB_MAINTENANCE_TIME_END='23:59:59',FP_TTL_JOB_SUSPEND_TIME_ON_DELETE_ROW=15000)*/fire schedule by table ttl_row_t2;
+select sleep(1);
+/*+TDDL:cmd_extra(TTL_JOB_MAINTENANCE_ENABLE=true,TTL_DEBUG_CURRENT_DATETIME='2024-06-27 02:00:00',TTL_JOB_MAINTENANCE_TIME_START='00:00:01',TTL_JOB_MAINTENANCE_TIME_END='23:59:59',FP_TTL_JOB_SUSPEND_TIME_ON_ADD_PRIM_PART=5000)*/fire schedule by table ttl_rng_t1;
+select sleep(1);
+/*+TDDL:cmd_extra(TTL_JOB_MAINTENANCE_ENABLE=true,TTL_DEBUG_CURRENT_DATETIME='2024-06-27 02:00:00',TTL_JOB_MAINTENANCE_TIME_START='00:00:01',TTL_JOB_MAINTENANCE_TIME_END='23:59:59',FP_TTL_JOB_SUSPEND_TIME_ON_ADD_PRIM_PART=10000)*/fire schedule by table ttl_rng_t2;
+select sleep(3);
+/*+TDDL:cmd_extra(TTL_JOB_MAINTENANCE_ENABLE=true,TTL_DEBUG_CURRENT_DATETIME='2024-06-27 02:00:00',TTL_JOB_MAINTENANCE_TIME_START='00:00:01',TTL_JOB_MAINTENANCE_TIME_END='23:59:59',FP_TTL_JOB_SUSPEND_TIME_ON_ADD_PRIM_PART=10000)*/fire schedule by table ttl_rng_t3;
+select sleep(240);
+explain select t1.a from ttl_rng_t1 t1 join ttl_rng_t2 t2 on t1.b=t2.b join ttl_rng_t3 t3 on t1.b=t3.b where t1.b='2024-06-27 00:00:00';
+
+use polardbx;
+drop database if exists test_arc_row_part_split_db;
+

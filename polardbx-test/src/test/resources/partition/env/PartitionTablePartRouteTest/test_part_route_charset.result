@@ -169,7 +169,7 @@ ORDER BY a;
 Logical ExecutionPlan
 Project(hex(c)="hex(c)")
   MergeSort(sort="a ASC")
-    LogicalView(tables="rc_tbl_utf8[p1,p2]", shardCount=2, sql="SELECT HEX(`c`) AS `hex(c)`, `a` FROM `rc_tbl_utf8` AS `rc_tbl_utf8` WHERE ((`c` = CONVERT(? USING 'UTF8')) OR (`c` = CONVERT(? USING 'UTF8'))) ORDER BY `a`")
+    LogicalView(tables="rc_tbl_utf8[p1,p2]", shardCount=2, sql="SELECT HEX(`c`) AS `hex(c)`, `a` FROM `rc_tbl_utf8` AS `rc_tbl_utf8` WHERE ((`c` = CONVERT(? USING 'UTF8')  collate 'UTF8_GENERAL_CI') OR (`c` = CONVERT(? USING 'UTF8')  collate 'UTF8_GENERAL_CI')) ORDER BY `a`")
 SELECT part_route('', 'rc_tbl_utf8', 0xE4B896E7958C);
 part_route('', 'rc_tbl_utf8', 0xE4B896E7958C)
 p1
@@ -197,7 +197,7 @@ ORDER BY a;
 Logical ExecutionPlan
 Project(hex(c)="hex(c)")
   MergeSort(sort="a ASC")
-    LogicalView(tables="rc_tbl_gbk[p1,p2]", shardCount=2, sql="SELECT HEX(`c`) AS `hex(c)`, `a` FROM `rc_tbl_gbk` AS `rc_tbl_gbk` WHERE ((`c` = CONVERT(? USING 'GBK')) OR (`c` = CONVERT(? USING 'GBK'))) ORDER BY `a`")
+    LogicalView(tables="rc_tbl_gbk[p1,p2]", shardCount=2, sql="SELECT HEX(`c`) AS `hex(c)`, `a` FROM `rc_tbl_gbk` AS `rc_tbl_gbk` WHERE ((`c` = CONVERT(? USING 'GBK')  collate 'GBK_CHINESE_CI') OR (`c` = CONVERT(? USING 'GBK')  collate 'GBK_CHINESE_CI')) ORDER BY `a`")
 SELECT part_route('', 'rc_tbl_gbk', 0xCAC0BDE7);
 part_route('', 'rc_tbl_gbk', 0xCAC0BDE7)
 p1

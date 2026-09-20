@@ -1,0 +1,4 @@
+partition-design-best-practice.md
+create-table.md
+gsi.md
+primary-key-unique-key.md

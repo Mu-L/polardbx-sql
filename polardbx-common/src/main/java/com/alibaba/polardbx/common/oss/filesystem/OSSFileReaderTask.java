@@ -41,14 +41,21 @@ public class OSSFileReaderTask implements Runnable {
     private String key;
     private OSSFileSystemStore store;
     private ReadBuffer readBuffer;
+    private final boolean allowBypass;
     private static final int MAX_RETRIES = 3;
     private RetryPolicy retryPolicy;
 
     public OSSFileReaderTask(String key, OSSFileSystemStore store,
                              ReadBuffer readBuffer) {
+        this(key, store, readBuffer, false);
+    }
+
+    public OSSFileReaderTask(String key, OSSFileSystemStore store,
+                             ReadBuffer readBuffer, boolean allowBypass) {
         this.key = key;
         this.store = store;
         this.readBuffer = readBuffer;
+        this.allowBypass = allowBypass;
         RetryPolicy defaultPolicy =
             RetryPolicies.retryUpToMaximumCountWithFixedSleep(
                 MAX_RETRIES, 3, TimeUnit.SECONDS);
@@ -69,7 +76,7 @@ public class OSSFileReaderTask implements Runnable {
         try {
             while (true) {
                 try (InputStream in = store.retrieve(
-                    key, readBuffer.getByteStart(), readBuffer.getByteEnd())) {
+                    key, readBuffer.getByteStart(), readBuffer.getByteEnd(), allowBypass)) {
                     IOUtils.readFully(in, readBuffer.getBuffer(),
                         0, readBuffer.getBuffer().length);
                     readBuffer.setStatus(ReadBuffer.STATUS.SUCCESS);

@@ -6,11 +6,18 @@ package com.alibaba.polardbx.stats.metric;
 public enum FeatureStatsItem {
     NEW_BASELINE_NUM("long"),
     FIX_PLAN_NUM("long"),
+    DATETIME_COMPENSATION_NUM("long"),
     HOT_EVOLVE_PLAN_NUM("long"),
     SAMPLE_TASK_SUCC("long"),
     SAMPLE_TASK_FAIL("long"),
     HLL_TASK_SUCC("long"),
-    HLL_TASK_FAIL("long");
+    HLL_TASK_FAIL("long"),
+
+    VEC_EXPRESSION_HIT_TIMES("long"),
+    UNVEC_EXPRESSION_HIT_TIMES("long"),
+    EXPAND_IN("long"),
+    GSI_LOOKUP_TIMES("long"),
+    GSI_LOOKUP_FALLBACK_MAINTABLE_TIMES("long");
 
     String type;
     static long hash = 0L;

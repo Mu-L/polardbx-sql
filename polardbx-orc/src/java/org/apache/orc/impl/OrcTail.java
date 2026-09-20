@@ -38,13 +38,13 @@ public final class OrcTail {
   private static final Logger LOG = LoggerFactory.getLogger(OrcTail.class);
 
   // postscript + footer - Serialized in OrcSplit
-  private final OrcProto.FileTail fileTail;
+  private OrcProto.FileTail fileTail;
   // serialized representation of metadata, footer and postscript
   private final BufferChunk serializedTail;
   private final TypeDescription schema;
   // used to invalidate cache entries
   private final long fileModificationTime;
-  private final Reader reader;
+  private Reader reader;
 
   public OrcTail(OrcProto.FileTail fileTail,
                  ByteBuffer serializedTail) throws IOException {
@@ -72,6 +72,15 @@ public final class OrcTail {
     OrcUtils.isValidTypeTree(types, 0);
     this.schema = OrcUtils.convertTypeFromProtobuf(types, 0);
     this.reader = reader;
+  }
+
+  public void clearForPreheat() {
+    for(BufferChunk chunk=serializedTail;
+        chunk != null;
+        chunk = (BufferChunk) chunk.next) {
+      chunk.setChunk(null);
+    }
+    this.reader = null;
   }
 
   public ByteBuffer getSerializedTail() {
@@ -117,6 +126,10 @@ public final class OrcTail {
 
   public OrcProto.PostScript getPostScript() {
     return fileTail.getPostscript();
+  }
+
+  public void resetTail(OrcProto.FileTail fileTail) {
+    this.fileTail = fileTail;
   }
 
   public OrcFile.WriterVersion getWriterVersion() {

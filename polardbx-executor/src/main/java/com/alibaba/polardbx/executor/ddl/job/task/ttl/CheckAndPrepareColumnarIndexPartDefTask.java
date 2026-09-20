@@ -4,6 +4,8 @@ import com.alibaba.fastjson.annotation.JSONCreator;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.partition.common.PartKeyLevel;
@@ -30,7 +32,7 @@ public class CheckAndPrepareColumnarIndexPartDefTask extends AbstractTtlJobTask 
         super(schemaName, logicalTableName);
         this.arcTblSchema = arcTblSchema;
         this.arcTblName = arcTblName;
-        onExceptionTryRecoveryThenPause();
+        onExceptionTryRecoveryThenRollback();
     }
 
     @Override
@@ -41,7 +43,8 @@ public class CheckAndPrepareColumnarIndexPartDefTask extends AbstractTtlJobTask 
     }
 
     protected void executeInner(ExecutionContext executionContext) {
-
+        FailPoint.injectSuspendFromHint(FailPointKey.FP_TTL_JOB_SUSPEND_TIME_ON_CREATE_ARC_CCI, executionContext);
+        FailPoint.injectExceptionFromHint(FailPointKey.FP_TTL_JOB_FAILED_ON_CREATE_ARC_CCI, executionContext);
         TtlDefinitionInfo ttlDefinitionInfo = this.jobContext.getTtlInfo();
         TtlPartitionUtil.CreateArcCciPartByDefResult calcResult = null;
         TableMeta ttlTblMeta = executionContext.getSchemaManager(ttlDefinitionInfo.getTtlInfoRecord().getTableSchema())

@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.optimizer.sharding;
 
 import com.alibaba.polardbx.optimizer.sharding.label.AggregateLabel;
+import com.alibaba.polardbx.optimizer.sharding.label.CTEConsumerLabel;
 import com.alibaba.polardbx.optimizer.sharding.label.CorrelateLabel;
 import com.alibaba.polardbx.optimizer.sharding.label.JoinLabel;
 import com.alibaba.polardbx.optimizer.sharding.label.Label;
@@ -42,6 +43,8 @@ public interface LabelShuttle {
     Label visit(UnionLabel unionLabel);
 
     Label visit(ValuesLabel valuesLabel);
+
+    Label visit(CTEConsumerLabel cteConsumerLabel);
 
     Label visit(SubqueryLabel subqueryLabel);
 

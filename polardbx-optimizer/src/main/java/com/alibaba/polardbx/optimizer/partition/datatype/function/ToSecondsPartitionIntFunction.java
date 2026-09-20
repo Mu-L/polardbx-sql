@@ -41,6 +41,8 @@ public class ToSecondsPartitionIntFunction extends PartitionIntFunction {
         if (fieldType.getSqlType() == Types.DATE
             || fieldType.getSqlType() == MySQLTimeTypeUtil.DATETIME_SQL_TYPE) {
             return Monotonicity.MONOTONIC_STRICT_INCREASING_NOT_NULL;
+        } else if (fieldType.getSqlType() == Types.TIMESTAMP) {
+            return Monotonicity.MONOTONIC_STRICT_INCREASING_NOT_NULL;
         }
         return Monotonicity.NON_MONOTONIC;
     }

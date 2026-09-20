@@ -123,6 +123,8 @@ public class GsiDmlTest extends DDLBaseNewDBTestCase {
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable);
 
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "set names utf8mb4");
+
         // Check emoji.
         String sql = MessageFormat.format(
             "INSERT INTO `{0}` ( id,unit_id,uid,source_id,source_type,source_name,nick_name,mobile,is_agent,is_agent_checked,level_id,is_black,create_time,avatar,member_growth,agent_growth ) VALUES( 1387777936966467584,1250056650086289408,0,1299627390452031488,3,\"xxx\",\"董依依ゆい\uD83C\uDF61   \",\"1392684638010531840\",2,2,1250056650124038144,2,1620876867,\"url\",0,0 )",
@@ -182,7 +184,7 @@ public class GsiDmlTest extends DDLBaseNewDBTestCase {
                 + "        PRIMARY KEY USING BTREE (`id`),\n"
                 + "        KEY `auto_shard_key_account_id` USING BTREE (`account_id`),\n"
                 + "        GLOBAL INDEX `{1}`(`identifier`) COVERING (`id`, `account_id`, `credential`) DBPARTITION BY HASH(`identifier`) TBPARTITION BY HASH(`identifier`) TBPARTITIONS 2\n"
-                + ") ENGINE = InnoDB AUTO_INCREMENT = 10235175 DEFAULT CHARSET = utf8mb4 dbpartition by hash(`account_id`) tbpartition by hash(`account_id`) tbpartitions 2;\n",
+                + ") ENGINE = InnoDB AUTO_INCREMENT = 10235175 DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_general_ci dbpartition by hash(`account_id`) tbpartition by hash(`account_id`) tbpartitions 2;\n",
             TABLE_NAME, GSI_NAME);
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable);

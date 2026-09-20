@@ -1,0 +1,46 @@
+## DISABLE_FAST_SQL_PARSER
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set sql_mode='';
+set TTL_ADD_MAXVAL_PART_ON_CCI_CREATING=true;
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+set MAX_CCI_COUNT=2;
+
+DROP DATABASE IF EXISTS db_ttl_rename;
+CREATE DATABASE IF NOT EXISTS db_ttl_rename MODE='auto';
+use db_ttl_rename;
+
+
+CREATE TABLE `myttl_with_rename_t1` (
+`a` int(11) NOT NULL AUTO_INCREMENT,
+`c` int(11) NOT NULL,
+`b` timestamp(3),
+PRIMARY KEY(a)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 
+PARTITION BY KEY(`a`)
+PARTITIONS 2;
+
+ALTER TABLE myttl_with_rename_t1 MODIFY TTL SET TTL_EXPR =`b` EXPIRE AFTER 30 DAY TIMEZONE '+08:00',ARCHIVE_TABLE_PRE_ALLOCATE = 12, ARCHIVE_TABLE_POST_ALLOCATE = 12;
+ALTER TABLE myttl_with_rename_t1 MODIFY TTL SET TTL_ENABLE ='ON';
+
+SHOW CREATE TABLE myttl_with_rename_t1;
+
+SELECT table_schema,table_name,schedule_name FROM metadb.scheduled_jobs where table_name='myttl_with_rename_t1' and table_schema='db_ttl_rename';
+
+RENAME TABLE myttl_with_rename_t1 TO myttl_with_rename_t2;
+
+SELECT table_schema,table_name,schedule_name FROM metadb.scheduled_jobs where table_name='myttl_with_rename_t1' and table_schema='db_ttl_rename';
+SELECT table_schema,table_name,schedule_name FROM metadb.scheduled_jobs where table_name='myttl_with_rename_t2' and table_schema='db_ttl_rename';
+
+RENAME TABLE myttl_with_rename_t2 TO myttl_with_rename_t3;
+
+SELECT table_schema,table_name,schedule_name FROM metadb.scheduled_jobs where table_name='myttl_with_rename_t2' and table_schema='db_ttl_rename';
+SELECT table_schema,table_name,schedule_name FROM metadb.scheduled_jobs where table_name='myttl_with_rename_t3' and table_schema='db_ttl_rename';
+
+
+USE polardbx;
+
+DROP DATABASE `db_ttl_rename`;

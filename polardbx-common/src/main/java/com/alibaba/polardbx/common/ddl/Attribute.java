@@ -24,6 +24,7 @@ public class Attribute {
 
     public static final boolean DEFAULT_ENABLE_ASYNC_DDL = true;
     public static final boolean DEFAULT_PURE_ASYNC_DDL_MODE = false;
+    public static final String DEFAULT_PERF_DDL_MODE = "default";
 
     public static final boolean DEFAULT_ENABLE_RANDOM_PHY_TABLE_NAME = true;
     public static final int MAX_TABLE_NAME_LENGTH_MYSQL_ALLOWS = 64;
@@ -51,7 +52,7 @@ public class Attribute {
     public static final int MAX_JOB_IDLE_WAITING_TIME = 60000;
     public static final int MAX_PHYSICAL_DDL_MDL_WAITING_TIMEOUT = Integer.MAX_VALUE;
     public static final int DEFAULT_JOB_IDLE_WAITING_TIME = MORE_JOB_IDLE_WAITING_TIME;
-    public static final int PHYSICAL_DDL_MDL_WAITING_TIMEOUT = 15;
+    public static final int PHYSICAL_DDL_MDL_WAITING_TIMEOUT = 5;
 
     // Async DDL job timeout
     public static final int JOB_REQUEST_TIMEOUT = 900000;
@@ -105,4 +106,7 @@ public class Attribute {
     public static final String TYPE_ON_PRIMARY = "PRIMARY";
     public static final String TYPE_ON_GSI = "GSI";
 
+    // 1M
+    public static final Long DEFAULT_BATCH_FILE_SIZE = 1024 * 1024L;
+    public static final Long DEFAULT_BATCH_FILE_SIZE_SPEED = 1024 * 1024 * 64L;
 }

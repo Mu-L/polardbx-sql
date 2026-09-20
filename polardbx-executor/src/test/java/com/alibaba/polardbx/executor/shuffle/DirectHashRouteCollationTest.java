@@ -34,7 +34,6 @@ public class DirectHashRouteCollationTest {
     @Test
     public void testCharLatin1() {
         ExecutionContext executionContext = new ExecutionContext();
-        executionContext.setEnableOssCompatible(Boolean.TRUE);
         DataType type = new CharType(CharsetName.LATIN1, CollationName.LATIN1_GENERAL_CI);
         SliceBlockBuilder blockBuilder =
             new SliceBlockBuilder(type, 1024, executionContext, executionContext.getParamManager().getBoolean(
@@ -54,7 +53,6 @@ public class DirectHashRouteCollationTest {
     @Test
     public void testCharGbk() {
         ExecutionContext executionContext = new ExecutionContext();
-        executionContext.setEnableOssCompatible(Boolean.TRUE);
         DataType type = new CharType(CharsetName.GBK, CollationName.GBK_CHINESE_CI);
         SliceBlockBuilder blockBuilder =
             new SliceBlockBuilder(type, 1024, executionContext, executionContext.getParamManager().getBoolean(
@@ -74,7 +72,6 @@ public class DirectHashRouteCollationTest {
     @Test
     public void testCharGbk2() {
         ExecutionContext executionContext = new ExecutionContext();
-        executionContext.setEnableOssCompatible(Boolean.TRUE);
         DataType type = new CharType(CharsetName.GBK, CollationName.GBK_CHINESE_CI);
         SliceBlockBuilder blockBuilder =
             new SliceBlockBuilder(type, 1024, executionContext, executionContext.getParamManager().getBoolean(
@@ -92,7 +89,6 @@ public class DirectHashRouteCollationTest {
     @Test
     public void testCharUtf8() {
         ExecutionContext executionContext = new ExecutionContext();
-        executionContext.setEnableOssCompatible(Boolean.TRUE);
         DataType type = new CharType(CharsetName.UTF8, CollationName.UTF8_GENERAL_CI);
         SliceBlockBuilder blockBuilder =
             new SliceBlockBuilder(type, 1024, executionContext, executionContext.getParamManager().getBoolean(
@@ -112,7 +108,6 @@ public class DirectHashRouteCollationTest {
     @Test
     public void testCharUtf82() {
         ExecutionContext executionContext = new ExecutionContext();
-        executionContext.setEnableOssCompatible(Boolean.TRUE);
         DataType type = new CharType(CharsetName.UTF8, CollationName.UTF8_GENERAL_CI);
         SliceBlockBuilder blockBuilder =
             new SliceBlockBuilder(type, 1024, executionContext, executionContext.getParamManager().getBoolean(
@@ -130,7 +125,6 @@ public class DirectHashRouteCollationTest {
     @Test
     public void testVarCharLatin1() {
         ExecutionContext executionContext = new ExecutionContext();
-        executionContext.setEnableOssCompatible(Boolean.TRUE);
         DataType type = new VarcharType(CharsetName.LATIN1, CollationName.LATIN1_GENERAL_CI);
         SliceBlockBuilder blockBuilder =
             new SliceBlockBuilder(type, 1024, executionContext, executionContext.getParamManager().getBoolean(
@@ -150,7 +144,6 @@ public class DirectHashRouteCollationTest {
     @Test
     public void testVarCharUtf8Mb4() {
         ExecutionContext executionContext = new ExecutionContext();
-        executionContext.setEnableOssCompatible(Boolean.TRUE);
         DataType type = new VarcharType(CharsetName.UTF8MB4, CollationName.UTF8MB4_GENERAL_CI);
         SliceBlockBuilder blockBuilder =
             new SliceBlockBuilder(type, 1024, executionContext, executionContext.getParamManager().getBoolean(

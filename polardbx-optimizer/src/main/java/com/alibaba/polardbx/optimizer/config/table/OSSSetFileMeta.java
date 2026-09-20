@@ -17,11 +17,15 @@
 package com.alibaba.polardbx.optimizer.config.table;
 
 import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import org.openjdk.jol.info.ClassLayout;
 
 /**
  * File meta for table-file with suffix .del
  */
 public class OSSSetFileMeta extends FileMeta {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(OSSSetFileMeta.class).instanceSize();
+
     public OSSSetFileMeta(String logicalSchemaName, String logicalTableName, String physicalTableSchema,
                           String physicalTableName, String partitionName, String fileName,
                           long fileSize, long tableRows, Long commitTs, Long removeTs, Long schemaTs,
@@ -29,4 +33,22 @@ public class OSSSetFileMeta extends FileMeta {
         super(logicalSchemaName, logicalTableName, physicalTableSchema, physicalTableName, partitionName, fileName,
             fileSize, tableRows, commitTs, removeTs, schemaTs, createTime, updateTime, engine, fileHash);
     }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(logicalTableSchema)
+            + FastMemoryCounter.sizeOf(logicalTableName)
+            + FastMemoryCounter.sizeOf(physicalTableSchema)
+            + FastMemoryCounter.sizeOf(physicalTableName)
+            + FastMemoryCounter.sizeOf(fileName)
+            + FastMemoryCounter.sizeOf(commitTs)
+            + FastMemoryCounter.sizeOf(removeTs)
+            + FastMemoryCounter.sizeOf(schemaTs)
+            + FastMemoryCounter.sizeOf(createTime)
+            + FastMemoryCounter.sizeOf(updateTime)
+            + FastMemoryCounter.sizeOf(fileHash)
+            + FastMemoryCounter.sizeOf(partitionName);
+    }
+
 }

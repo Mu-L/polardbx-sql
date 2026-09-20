@@ -234,8 +234,8 @@ public class UpsertTest extends DDLBaseNewDBTestCase {
 
         final String hint = "/*+TDDL:CMD_EXTRA(DML_PUSH_DUPLICATE_CHECK=FALSE,DML_SKIP_TRIVIAL_UPDATE=FALSE)*/ ";
         final String insert = "insert into " + tableName
-                + "(c1, c5, c8) values(3, 'a', '2020-06-16 06:49:32'), (3, 'b', '2020-06-16 06:49:32'), (3, 'c', '2020-06-16 06:49:32')"
-                + "on duplicate key update c3 = c3 + 1";
+            + "(c1, c5, c8) values(3, 'a', '2020-06-16 06:49:32'), (3, 'b', '2020-06-16 06:49:32'), (3, 'c', '2020-06-16 06:49:32')"
+            + "on duplicate key update c3 = c3 + 1";
         // equal when first insert
         // VALUES 中有重复，affected rows 可能会比 MySQL 返回的小 1
 
@@ -288,8 +288,8 @@ public class UpsertTest extends DDLBaseNewDBTestCase {
 
         final String hint = "/*+TDDL:CMD_EXTRA(DML_PUSH_DUPLICATE_CHECK=FALSE)*/ ";
         final String insert = "insert into " + tableName
-                + "(c1, c5, c8) values(3, 'a', '2020-06-16 06:49:32'), (3, 'b', '2020-06-16 06:49:32'), (3, 'c', '2020-06-16 06:49:32')"
-                + "on duplicate key update c3 = c3 + 1";
+            + "(c1, c5, c8) values(3, 'a', '2020-06-16 06:49:32'), (3, 'b', '2020-06-16 06:49:32'), (3, 'c', '2020-06-16 06:49:32')"
+            + "on duplicate key update c3 = c3 + 1";
         // DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN = true
         executeTwiceThenCheckDataAndTraceResult(
             hint + "/*+TDDL:CMD_EXTRA(DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=true)*/ ",
@@ -517,7 +517,7 @@ public class UpsertTest extends DDLBaseNewDBTestCase {
         final String hint =
             "/*+TDDL:CMD_EXTRA(DML_PUSH_DUPLICATE_CHECK=FALSE,DML_SKIP_TRIVIAL_UPDATE=FALSE,DML_SKIP_DUPLICATE_CHECK_FOR_PK=FALSE)*/ ";
         final String insert = "insert into " + tableName
-                + "(c1, c5, c8) values(1, 'a', '2020-06-16 06:49:32'), (null, 'b', '2020-06-16 06:49:32'), (3, 'c', '2020-06-16 06:49:32')on duplicate key update c3 = c3 + 1";
+            + "(c1, c5, c8) values(1, 'a', '2020-06-16 06:49:32'), (null, 'b', '2020-06-16 06:49:32'), (3, 'c', '2020-06-16 06:49:32')on duplicate key update c3 = c3 + 1";
         // DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN = true
         executeTwiceThenCheckDataAndTraceResult(
             hint + "/*+TDDL:CMD_EXTRA(DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=true)*/ ",
@@ -566,7 +566,7 @@ public class UpsertTest extends DDLBaseNewDBTestCase {
 
         final String insert =
             "/*+TDDL:CMD_EXTRA(DML_PUSH_DUPLICATE_CHECK=FALSE,DML_SKIP_TRIVIAL_UPDATE=FALSE)*/ insert into " + tableName
-                + "(c1, c5, c8) values(1, 'a', '2020-06-16 06:49:32'), (null, 'b', '2020-06-16 06:49:32'), (3, 'c', '2020-06-16 06:49:32')on duplicate key update c3 = c3 + 1";
+                + "(pk, c1, c5, c8) values(1, 1, 'a', '2020-06-16 06:49:32'), (2, null, 'b', '2020-06-16 06:49:32'), (3, 3, 'c', '2020-06-16 06:49:32')on duplicate key update c3 = c3 + 1";
         executeOnMysqlAndTddl(mysqlConnection, tddlConnection, insert, null, true);
 
         selectContentSameAssert("select c1,c2,c3,c4,c5,c6,c7,c8 from " + tableName, null, mysqlConnection,
@@ -3161,7 +3161,8 @@ public class UpsertTest extends DDLBaseNewDBTestCase {
 
         selectContentSameAssert("select * from " + tableName, null, mysqlConnection, tddlConnection);
 
-        final String upsert = "/*+TDDL:CMD_EXTRA(DML_SKIP_TRIVIAL_UPDATE=FALSE)*/ insert into " + tableName
+        final String upsert = "/*+TDDL:CMD_EXTRA(DML_SKIP_TRIVIAL_UPDATE=FALSE,"
+            + "DML_PARTITION_LOCAL_PK_DUP_CHECK=FALSE)*/ insert into " + tableName
             + "(id, c1, c2, c5, c8) values(2, 1, 1, 'd', '2020-06-16 06:49:32') on duplicate key update c5 = values(c5)";
 
         executeOnMysqlAndTddl(mysqlConnection, tddlConnection, upsert, "trace " + upsert, null, true);
@@ -3441,8 +3442,8 @@ public class UpsertTest extends DDLBaseNewDBTestCase {
 
         final String hint = "/*+TDDL:CMD_EXTRA(DML_PUSH_DUPLICATE_CHECK=FALSE,DML_SKIP_TRIVIAL_UPDATE=FALSE)*/ ";
         final String insert = "insert into " + tableName
-                + "(id, c1, c5, c8) values(4, 1, 'a', '2020-06-16 06:49:32'), (5, 2, 'b', '2020-06-16 06:49:32'), (6, 3, 'c', '2020-06-16 06:49:32')"
-                + "on duplicate key update c1 = c1 + 3";
+            + "(id, c1, c5, c8) values(4, 1, 'a', '2020-06-16 06:49:32'), (5, 2, 'b', '2020-06-16 06:49:32'), (6, 3, 'c', '2020-06-16 06:49:32')"
+            + "on duplicate key update c1 = c1 + 3";
         // DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN = true
         executeTwiceThenCheckDataAndTraceResult(
             hint + "/*+TDDL:CMD_EXTRA(DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=true)*/ ",
@@ -3627,7 +3628,7 @@ public class UpsertTest extends DDLBaseNewDBTestCase {
                 + "\tKEY `auto_shard_key_integer_test` USING BTREE (`integer_test`),\n"
                 + "\tINDEX `" + gsiName + "`(`integer_test`),\n"
                 + "\tINDEX `" + gsiName2 + "`(`pk`)"
-                + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 ";
+                + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci ";
 
         final String createTable =
             "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -3653,7 +3654,7 @@ public class UpsertTest extends DDLBaseNewDBTestCase {
                 + "`(`integer_test`) COVERING (`pk`, `double_test`) DBPARTITION BY HASH(`integer_test`) TBPARTITION BY HASH(`integer_test`) TBPARTITIONS 7,\n"
                 + "\tGLOBAL INDEX `" + gsiName2
                 + "`(`pk`) COVERING (`varchar_test`, `integer_test`) DBPARTITION BY HASH(`pk`) TBPARTITION BY HASH(`pk`) TBPARTITIONS 5\n"
-                + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 ";
+                + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci ";
         final String partitionDef =
             " dbpartition by hash(`integer_test`) tbpartition by hash(`integer_test`) tbpartitions 3";
 
@@ -3730,12 +3731,12 @@ public class UpsertTest extends DDLBaseNewDBTestCase {
     }
 
     /**
-     * 无 PK 有 UK
-     * UPSERT IGNORE 不支持逻辑执行
+     * 无 PK 有 UK, 不指定主键
+     * UPSERT IGNORE 支持下推执行
      */
     @Test
-    public void tableWithPkWithUk_upsertIgnoreError() {
-        final String tableName = "upsert_ignore_test_tb_with_pk_with_uk_err";
+    public void tableWithPkWithUk_pushDownUpsertIgnoreSuccess() {
+        final String tableName = "upsert_ignore_test_tb_with_pk_with_uk_success";
         dropTableIfExists(tableName);
         dropTableIfExistsInMySql(tableName);
 
@@ -3759,6 +3760,39 @@ public class UpsertTest extends DDLBaseNewDBTestCase {
 
         final String insert = "/*+TDDL:CMD_EXTRA(DML_PUSH_DUPLICATE_CHECK=FALSE)*/ insert ignore into " + tableName
             + "(c1, c5, c8) values(1, 'a', '2020-06-16 06:49:32'), (null, 'b', '2020-06-16 06:49:32'), (3, 'c', '2020-06-16 06:49:32')on duplicate key update c3 = c3 + 1";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, insert);
+    }
+
+    /**
+     * 无 PK 有 UK 指定主键
+     * UPSERT IGNORE 不支持逻辑执行
+     */
+    @Test
+    public void tableWithPkWithUk_logicalUpsertIgnoreError() {
+        final String tableName = "upsert_ignore_test_tb_with_pk_with_uk_err";
+        dropTableIfExists(tableName);
+        dropTableIfExistsInMySql(tableName);
+
+        final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
+            + "  `pk` bigint(11) NOT NULL AUTO_INCREMENT,\n"
+            + "  `c1` bigint(20) DEFAULT NULL,\n"
+            + "  `c2` bigint(20) DEFAULT NULL,\n"
+            + "  `c3` bigint(20) DEFAULT NULL,\n"
+            + "  `c4` bigint(20) DEFAULT NULL,\n"
+            + "  `c5` varchar(255) DEFAULT NULL,\n"
+            + "  `c6` datetime DEFAULT NULL,\n"
+            + "  `c7` text,\n"
+            + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
+            + "  PRIMARY KEY (`pk`),"
+            + "  UNIQUE KEY u_id(`c1`)"
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+        final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
+
+        JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
+        JdbcUtil.executeUpdateSuccess(mysqlConnection, createTable);
+
+        final String insert = "/*+TDDL:CMD_EXTRA(DML_PUSH_DUPLICATE_CHECK=FALSE)*/ insert ignore into " + tableName
+            + "(pk, c1, c5, c8) values(1, 1, 'a', '2020-06-16 06:49:32'), (2, null, 'b', '2020-06-16 06:49:32'), (3, 3, 'c', '2020-06-16 06:49:32')on duplicate key update c3 = c3 + 1";
         updateErrorAssert(insert, null, tddlConnection, "Do not support insert ignore...on duplicate key update");
     }
 
@@ -4175,7 +4209,7 @@ public class UpsertTest extends DDLBaseNewDBTestCase {
             + "\t`year_test` year(4) DEFAULT NULL,\n"
             + "\tPRIMARY KEY (`pk`),\n"
             + "\tUNIQUE KEY `u_upsert_test_u64_param` (`bigint_test`, `integer_test`)\n"
-            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4";
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci";
         final String partitionDef = " dbpartition by hash(`bigint_test`)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, createTable);
@@ -4417,6 +4451,8 @@ public class UpsertTest extends DDLBaseNewDBTestCase {
 
     @Test
     public void testUpsertModifyShardingKey() {
+        setSqlMode("STRICT_TRANS_TABLES", tddlConnection);
+        setSqlMode("STRICT_TRANS_TABLES", mysqlConnection);
         String tableName = "upsert_test_modify_sk_tbl";
         String createSql =
             String.format("create table %s (a int unsigned primary key) dbpartition by hash(a)", tableName);
@@ -4598,7 +4634,8 @@ public class UpsertTest extends DDLBaseNewDBTestCase {
         List<Pair<String, String>> topology = JdbcUtil.getTopology(tddlConnection, tableName);
 
         // DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN = true
-        final String hint = "/*+TDDL:CMD_EXTRA(DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=true)*/ ";
+        final String hint = "/*+TDDL:CMD_EXTRA(DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=true,"
+            + "DML_PARTITION_LOCAL_PK_DUP_CHECK=false)*/ ";
 
         // all after value, pushdown
         String upsertSql =
@@ -5248,7 +5285,7 @@ public class UpsertTest extends DDLBaseNewDBTestCase {
 
         String sql = String.format("insert into %s values (1,1,1,1,null)", tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
-        sql = String.format(
+        sql = "/*+TDDL:CMD_EXTRA(DML_PARTITION_LOCAL_PK_DUP_CHECK=FALSE)*/ " + String.format(
             "insert into %s values (1,2,3,4,'{\"a\":\"b\"}') on duplicate key update pk=values(pk),c1=values(c1),c2=values(c2),c3=values(c3),c4=values(c4)",
             tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);

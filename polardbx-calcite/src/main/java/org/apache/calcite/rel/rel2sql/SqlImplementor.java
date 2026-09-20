@@ -379,6 +379,20 @@ public abstract class SqlImplementor {
   /** Creates a result based on a single relational expression. */
   public Result result(SqlNode node, Collection<Clause> clauses,
       RelNode rel, Map<String, RelDataType> aliases) {
+    return result(node, clauses, rel, rel.getRowType(), aliases);
+  }
+
+  /**
+   * Creates a result based on a single relational expression, using the given
+   * {@code overrideRowType} instead of {@code rel.getRowType()} for column name
+   * resolution during SQL generation.
+   *
+   * <p>This is useful when the physical column names differ from the logical
+   * names exposed in the RelNode tree (e.g., externalized columns that map
+   * logical name "payload" to physical name "payload_addr_").
+   */
+  public Result result(SqlNode node, Collection<Clause> clauses,
+      RelNode rel, RelDataType overrideRowType, Map<String, RelDataType> aliases) {
     assert aliases == null
         || aliases.size() < 2
         || aliases instanceof LinkedHashMap
@@ -393,7 +407,7 @@ public abstract class SqlImplementor {
         && !aliases.isEmpty()
         && (!dialect.hasImplicitTableAlias()
         || aliases.size() > 1)) {
-      return new Result(node, clauses, alias4, rel.getRowType(), aliases);
+      return new Result(node, clauses, alias4, overrideRowType, aliases);
     }
     final String alias5;
     /**
@@ -409,8 +423,8 @@ public abstract class SqlImplementor {
     } else {
       alias5 = null;
     }
-    return new Result(node, clauses, alias5, rel.getRowType(),
-        ImmutableMap.of(alias4, rel.getRowType()));
+    return new Result(node, clauses, alias5, overrideRowType,
+        ImmutableMap.of(alias4, overrideRowType));
   }
 
   /** Creates a result based on a join. (Each join could contain one or more

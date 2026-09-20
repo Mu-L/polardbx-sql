@@ -30,14 +30,14 @@ public class FailPointTest {
 
     @After
     public void after() {
-        FailPoint.disable("key1");
-        FailPoint.disable("key2");
+        FailPoint.disable("FailPointTestKey1");
+        FailPoint.disable("FailPointTestKey2");
     }
 
     @Test
     public void testInject1() {
 
-        String key = "key1";
+        String key = "FailPointTestKey1";
 
         /**
          * haven't register any key, so no error will be thrown
@@ -49,20 +49,20 @@ public class FailPointTest {
         thrown.expect(RuntimeException.class);
         FailPoint.enable(key, "value");
         /**
-         * since key1 registered, RuntimeException will be thrown
+         * since FailPointTestKey1 registered, RuntimeException will be thrown
          */
         FailPoint.inject(key, () -> {
             throw new RuntimeException("injected error message");
         });
         /**
-         * since key2 is not registered, IllegalArgumentException won't be thrown
+         * since FailPointTestKey2 is not registered, IllegalArgumentException won't be thrown
          */
-        FailPoint.inject("key2", () -> {
+        FailPoint.inject("FailPointTestKey2", () -> {
             throw new IllegalArgumentException("injected error message");
         });
 
         /**
-         * since key1 deRegistered, RuntimeException won't be thrown
+         * since FailPointTestKey1 deRegistered, RuntimeException won't be thrown
          */
         FailPoint.disable(key);
         FailPoint.inject(key, () -> {
@@ -74,7 +74,7 @@ public class FailPointTest {
     @Test
     public void testInject2() {
 
-        String key = "key1";
+        String key = "FailPointTestKey1";
 
         FailPoint.inject(key, () -> {
             throw new RuntimeException("injected error message");
@@ -94,11 +94,11 @@ public class FailPointTest {
     @Test
     public void testInject3() {
 
-        String key = "key1";
+        String key = "FailPointTestKey1";
 
         long start = System.currentTimeMillis();
 
-        FailPoint.enable("key1", "value");
+        FailPoint.enable("FailPointTestKey1", "value");
         FailPoint.inject(key, () -> {
             try {
                 Thread.sleep(3 * 1000);
@@ -115,11 +115,11 @@ public class FailPointTest {
     @Test
     public void testReadValue() {
 
-        String key = "key1";
+        String key = "FailPointTestKey1";
 
-        FailPoint.enable("key1", "value1");
+        FailPoint.enable("FailPointTestKey1", "value1");
         FailPoint.inject(key, (k, v) -> {
-            Assert.assertEquals(k, "key1");
+            Assert.assertEquals(k, "FailPointTestKey1");
             Assert.assertEquals(v, "value1");
         });
     }

@@ -175,7 +175,7 @@ public class LogicalShowRuleHandler extends HandlerCommon {
 
             Integer id = index++;
             String dbName = partInfo.getTableSchema();
-            String tblName = partInfo.getTableName();
+            String tblName = getTableNameForOutput(partInfo.getTableName(), executionContext);
             Boolean isBroadcast = partInfo.isGsiBroadcastOrBroadcast();
             Boolean isPartitionTbl = partInfo.isGsiOrPartitionedTable();
 
@@ -193,7 +193,7 @@ public class LogicalShowRuleHandler extends HandlerCommon {
                 }
                 allLevelPartColsStr += String.join(",", allLevelPartColsInfo.get(j));
             }
-            String tbPartKey = isPartitionTbl ? allLevelPartColsStr : "";
+            String tbPartKey = (isPartitionTbl && !partInfo.isNoPartitionKeyTable()) ? allLevelPartColsStr : "";
 
             List<PartitionStrategy> allLevelPartStrategies = partInfo.getAllLevelPartitionStrategies();
             String allLevelPartStrategiesStr = "";
@@ -293,7 +293,7 @@ public class LogicalShowRuleHandler extends HandlerCommon {
 
             result.addRow(new Object[] {
                 index++,// Id
-                table.getVirtualTbName(), // TABLE_NAME
+                getTableNameForOutput(table.getVirtualTbName(), executionContext), // TABLE_NAME
                 table.isBroadcast(), // BROADCAST
 
                 table.getDbPartitionKeys() == null ? null : TStringUtil.join(table.getDbPartitionKeys(), ","),
@@ -344,7 +344,7 @@ public class LogicalShowRuleHandler extends HandlerCommon {
             }
 
             result.addRow(new Object[] {
-                index++, table.getVirtualTbName(), table.isBroadcast(),
+                index++, getTableNameForOutput(table.getVirtualTbName(), executionContext), table.isBroadcast(),
                 table.getJoinGroup(), table.isAllowFullTableScan(), table.getDbNamePattern(),
                 buildStr(table.getDbShardRules()), table.getTbNamePattern(), buildStr(table.getTbShardRules()),
                 buildStr(table.getShardColumns()), rule.getDefaultDbIndex(table.getVirtualTbName())});

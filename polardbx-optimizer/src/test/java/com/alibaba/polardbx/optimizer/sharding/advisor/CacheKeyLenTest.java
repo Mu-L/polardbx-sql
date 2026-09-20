@@ -17,12 +17,22 @@
 package com.alibaba.polardbx.optimizer.sharding.advisor;
 
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
+import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.druid.sql.parser.ByteString;
+import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
 import com.alibaba.polardbx.optimizer.core.planner.PlanCache;
+import com.alibaba.polardbx.optimizer.core.planner.Planner;
+import com.alibaba.polardbx.optimizer.hint.HintPlanner;
+import com.alibaba.polardbx.optimizer.hint.operator.HintCmdOperator;
+import com.alibaba.polardbx.optimizer.parse.FastsqlParser;
 import com.alibaba.polardbx.optimizer.parse.SqlParameterizeUtils;
 import com.alibaba.polardbx.optimizer.parse.bean.SqlParameterized;
-import com.alibaba.polardbx.planner.common.PlanTestCommon;
+import com.alibaba.polardbx.optimizer.utils.OptimizerUtils;
+import com.alibaba.polardbx.planner.common.ParameterizedTestCommon;
+import org.apache.calcite.sql.SqlNode;
+import org.apache.calcite.sql.SqlNodeList;
 import org.junit.runners.Parameterized;
 
 import java.util.HashMap;
@@ -32,7 +42,7 @@ import java.util.Map;
 /**
  * make sure don't record parameters of big sql
  */
-public class CacheKeyLenTest extends PlanTestCommon {
+public class CacheKeyLenTest extends ParameterizedTestCommon {
 
     public CacheKeyLenTest(String caseName, int sqlIndex, String sql, String expectedPlan, String lineNum) {
         super(caseName, sqlIndex, sql, expectedPlan, lineNum);
@@ -45,19 +55,37 @@ public class CacheKeyLenTest extends PlanTestCommon {
 
     @Override
     protected String getPlan(String testSql) {
+
         Map<Integer, ParameterContext> currentParameter = new HashMap<>();
         ExecutionContext executionContext = new ExecutionContext();
         executionContext.setServerVariables(new HashMap<>());
         executionContext.setAppName(appName);
         SqlParameterized sqlParameterized = SqlParameterizeUtils.parameterize(
             ByteString.from(testSql), currentParameter, executionContext, false);
+        setSysDefVariable(sqlParameterized.getParameters());
+        Map<Integer, ParameterContext> param = OptimizerUtils.buildParam(sqlParameterized.getParameters());
+        executionContext.setParams(new Parameters(param, false));
+        SqlNodeList astList = new FastsqlParser().parse(
+            sqlParameterized.getSql(), sqlParameterized.getParameters(), executionContext);
+        SqlNode ast = astList.get(0);
+        final HintPlanner hintPlanner = HintPlanner.getInstance(appName, executionContext);
+        executionContext.getExtraCmds().putAll(configMaps);
+        final HintCmdOperator.CmdBean cmdBean = new HintCmdOperator.CmdBean(appName,
+            executionContext.getExtraCmds(),
+            executionContext.getGroupHint());
+        executionContext.setInternalSystemSql(false);
+
+        hintPlanner.collectAndPreExecute(ast, cmdBean, false, executionContext);
+        processParameter(sqlParameterized, executionContext);
+        PlannerContext plannerContext = PlannerContext.fromExecutionContext(executionContext);
+        plannerContext.setSchemaName(appName);
+        plannerContext.setAddForcePrimary(addForcePrimary);
+
+        ExecutionPlan executionPlan = Planner.getInstance().getPlan(ast, plannerContext);
 
         PlanCache.CacheKey cacheKey = new PlanCache.CacheKey(appName, sqlParameterized, null, null, true, true,
-            true, ec);
-        if (cacheKey.getParameters() == null) {
-            return "not record";
-        } else {
-            return "record";
-        }
+            true, null, 0L, false, false, null);
+        return "record para:" + (cacheKey.getParameters() != null)
+            + "\ntypeDigest:" + cacheKey.getTypeDigest();
     }
 }

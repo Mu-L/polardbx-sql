@@ -52,12 +52,14 @@ public class CharsetNameTest {
         doTestMatch(UCS2_ROMAN_CI, UCS2, true);
         doTestMatch(UCS2_UNICODE_CI, UCS2, true);
         doTestMatch(GB18030_UNICODE_520_CI, GB18030, true);
+        doTestMatch(GB18030_2022_UNICODE_520_CI, GB18030_2022, true);
         doTestMatch(UTF32_TURKISH_CI, UTF32, true);
         doTestMatch(UTF8MB4_PERSIAN_CI, UTF8MB4, true);
         doTestMatch(KEYBCS2_BIN, KEYBCS2, true);
         doTestMatch(UTF32_VIETNAMESE_CI, UTF32, true);
         doTestMatch(UTF8MB4_RO_0900_AI_CI, UTF8MB4, true);
         doTestMatch("binary", GB18030, false);
+        doTestMatch("binary", GB18030_2022, false);
         doTestMatch("utf8mb4_0900_as_cs", LATIN2, false);
         doTestMatch("utf8_slovak_ci", UTF8MB4, false);
         doTestMatch("latin5_bin", UTF8MB4, false);
@@ -109,6 +111,7 @@ public class CharsetNameTest {
         doTestOf("ucs2", UCS2);
         doTestOf("utf16", UTF16);
         doTestOf("gb18030", GB18030);
+        doTestOf("gb18030_2022", GB18030_2022);
         doTestOf("armscii8", ARMSCII8);
         doTestOf("utf8mb4", UTF8MB4);
         doTestOf("utf8mb4", UTF8MB4);
@@ -128,7 +131,7 @@ public class CharsetNameTest {
         doTestOf("utf8mb4", UTF8MB4);
         doTestOf("ucs2", UCS2);
         doTestOf("utf16", UTF16);
-        doTestOf("gb18030", GB18030);
+        doTestOf("gb18030_2022", GB18030_2022);
     }
 
     private void doTestOf(String charsetNameStr, CharsetName expected) {
@@ -154,6 +157,7 @@ public class CharsetNameTest {
         Assert.assertTrue(EUCJPMS.getDefaultCollationName() == EUCJPMS_JAPANESE_CI);
         Assert.assertTrue(EUCKR.getDefaultCollationName() == EUCKR_KOREAN_CI);
         Assert.assertTrue(GB18030.getDefaultCollationName() == GB18030_CHINESE_CI);
+        Assert.assertTrue(GB18030_2022.getDefaultCollationName() == GB18030_2022_CHINESE_CI);
         Assert.assertTrue(GB2312.getDefaultCollationName() == GB2312_CHINESE_CI);
         Assert.assertTrue(GBK.getDefaultCollationName() == GBK_CHINESE_CI);
         Assert.assertTrue(GEOSTD8.getDefaultCollationName() == GEOSTD8_GENERAL_CI);
@@ -199,7 +203,7 @@ public class CharsetNameTest {
         Assert.assertTrue(DEC8.getDefaultCollationName() == DEC8_SWEDISH_CI);
         Assert.assertTrue(EUCJPMS.getDefaultCollationName() == EUCJPMS_JAPANESE_CI);
         Assert.assertTrue(EUCKR.getDefaultCollationName() == EUCKR_KOREAN_CI);
-        Assert.assertTrue(GB18030.getDefaultCollationName() == GB18030_CHINESE_CI);
+        Assert.assertTrue(GB18030_2022.getDefaultCollationName() == GB18030_2022_CHINESE_CI);
         Assert.assertTrue(GB2312.getDefaultCollationName() == GB2312_CHINESE_CI);
         Assert.assertTrue(GBK.getDefaultCollationName() == GBK_CHINESE_CI);
         Assert.assertTrue(GEOSTD8.getDefaultCollationName() == GEOSTD8_GENERAL_CI);

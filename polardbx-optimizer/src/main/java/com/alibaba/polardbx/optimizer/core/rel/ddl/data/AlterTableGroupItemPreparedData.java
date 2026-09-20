@@ -45,6 +45,7 @@ public class AlterTableGroupItemPreparedData extends DdlPreparedData {
     private List<PartitionGroupRecord> invisiblePartitionGroups;
     private boolean operateOnSubPartition;
     private boolean columnarIndex;
+    private boolean containPhysicalPartition = false;
 
     public String getTableGroupName() {
         return tableGroupName;
@@ -141,5 +142,13 @@ public class AlterTableGroupItemPreparedData extends DdlPreparedData {
 
     public void setColumnarIndex(final boolean columnarIndex) {
         this.columnarIndex = columnarIndex;
+    }
+
+    public boolean isContainPhysicalPartition() {
+        return containPhysicalPartition;
+    }
+
+    public void setContainPhysicalPartition(boolean containPhysicalPartition) {
+        this.containPhysicalPartition = containPhysicalPartition;
     }
 }

@@ -22,6 +22,8 @@ import com.alibaba.polardbx.druid.sql.visitor.SQLASTVisitor;
  */
 public class SQLSubPartitionByUdfHash extends SQLSubPartitionBy {
 
+    protected SQLExpr sqlUdfParams;
+
     public SQLSubPartitionByUdfHash() {
         super();
     }
@@ -43,11 +45,22 @@ public class SQLSubPartitionByUdfHash extends SQLSubPartitionBy {
             c2.setParent(x);
             x.columns.add(c2);
         }
+        if (this.sqlUdfParams != null) {
+            x.setSqlUdfParams(this.sqlUdfParams.clone());
+        }
     }
 
     public SQLSubPartitionByUdfHash clone() {
         SQLSubPartitionByUdfHash x = new SQLSubPartitionByUdfHash();
         cloneTo(x);
         return x;
+    }
+
+    public SQLExpr getSqlUdfParams() {
+        return sqlUdfParams;
+    }
+
+    public void setSqlUdfParams(SQLExpr sqlUdfParams) {
+        this.sqlUdfParams = sqlUdfParams;
     }
 }

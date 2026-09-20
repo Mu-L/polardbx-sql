@@ -21,6 +21,7 @@ import com.google.common.base.Preconditions;
 import org.apache.calcite.sql.dialect.AnsiSqlDialect;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.pretty.SqlPrettyWriter;
+import org.apache.calcite.sql.pretty.SqlViewPrettyWriter;
 import org.apache.calcite.sql.util.SqlString;
 import org.apache.calcite.sql.util.SqlVisitor;
 import org.apache.calcite.sql.validate.SqlMoniker;
@@ -57,6 +58,10 @@ public abstract class SqlNode implements Cloneable {
   protected final SqlParserPos pos;
 
   protected Boolean async = null;
+
+  protected Boolean dryrun = null;
+
+  protected String perfMode = null; // "boost" or "default"
 
   //~ Constructors -----------------------------------------------------------
 
@@ -158,6 +163,19 @@ public abstract class SqlNode implements Cloneable {
       dialect = AnsiSqlDialect.DEFAULT;
     }
     SqlPrettyWriter writer = new SqlPrettyWriter(dialect);
+    writer.setAlwaysUseParentheses(forceParens);
+    writer.setSelectListItemsOnSeparateLines(false);
+    writer.setIndentation(0);
+    unparse(writer, 0, 0);
+    final String sql = writer.toString();
+    return new SqlString(dialect, sql);
+  }
+
+  public SqlString toSqlStringForView(SqlDialect dialect, boolean forceParens) {
+    if (dialect == null) {
+      dialect = AnsiSqlDialect.DEFAULT;
+    }
+    SqlViewPrettyWriter writer = new SqlViewPrettyWriter(dialect);
     writer.setAlwaysUseParentheses(forceParens);
     writer.setSelectListItemsOnSeparateLines(false);
     writer.setIndentation(0);
@@ -347,6 +365,21 @@ public abstract class SqlNode implements Cloneable {
 
   public void setAsync(Boolean async) {
     this.async = async;
+  }
+
+  public String getPerfMode() {
+    return perfMode;
+  }
+
+  public void setPerfMode(String perfMode) {
+    this.perfMode = perfMode;
+  }
+
+  public Boolean getDryrun() {
+    return dryrun;
+  }
+  public void setDryrun(Boolean dryrun) {
+    this.dryrun = dryrun;
   }
 }
 

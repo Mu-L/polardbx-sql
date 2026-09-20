@@ -102,7 +102,6 @@ public class LogicalAlterTableMergePartition extends BaseDdlOperation {
         SqlAlterTable sqlAlterTable = (SqlAlterTable) alterTable.getSqlNode();
         assert sqlAlterTable.getAlters().size() == 1;
 
-        assert sqlAlterTable.getAlters().get(0) instanceof SqlAlterTableSplitPartitionByHotValue;
         SqlAlterTableMergePartition sqlAlterTableMergePartition =
             (SqlAlterTableMergePartition) sqlAlterTable.getAlters().get(0);
 
@@ -234,8 +233,8 @@ public class LogicalAlterTableMergePartition extends BaseDdlOperation {
             int i = 0;
             for (int j = 0; j < newPartitionGroups.size(); j++) {
                 String mockTableName = "";
-                mockOrderedTargetTableLocations.put(newPartitionGroups.get(j).partition_name, new Pair<>(mockTableName,
-                    GroupInfoUtil.buildGroupNameFromPhysicalDb(newPartitionGroups.get(j).partition_name)));
+                mockOrderedTargetTableLocations.put(newPartitionGroups.get(j).partition_name,
+                    new Pair<>(mockTableName, newPartitionGroups.get(j).getGroup_Name()));
 
             }
             if (preparedData.isHasSubPartition() && !preparedData.isUseTemplatePart()

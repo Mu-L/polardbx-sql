@@ -3,7 +3,7 @@
 drop table if exists tbl;
 CREATE TABLE `tbl` (
         `a` datetime NOT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY RANGE(to_days(a))
 (PARTITION p0 VALUES LESS THAN (to_days('1990-01-01')) ENGINE = InnoDB,
  PARTITION p1 VALUES LESS THAN (to_days('2000-01-01')) ENGINE = InnoDB,
@@ -14,7 +14,7 @@ Table,Create Table
 tbl,CREATE TABLE `tbl` (
 	`a` datetime NOT NULL,
 	KEY `auto_shard_key_a` USING BTREE (`a`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY RANGE(TO_DAYS(`a`))
 (PARTITION p0 VALUES LESS THAN (726833) ENGINE = InnoDB,
  PARTITION p1 VALUES LESS THAN (730485) ENGINE = InnoDB,
@@ -54,7 +54,7 @@ MergeSort(sort="a ASC")
 ## test hash
 CREATE TABLE `tod1` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(TO_DAYS(`d`))
 PARTITIONS 16;
 show create table tod1;
@@ -62,7 +62,7 @@ Table,Create Table
 tod1,CREATE TABLE `tod1` (
 	`d` date DEFAULT NULL,
 	KEY `auto_shard_key_d` USING BTREE (`d`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(TO_DAYS(`d`))
 PARTITIONS 16
 ## prepare data
@@ -96,7 +96,7 @@ MergeSort(sort="d ASC")
 ## test range
 CREATE TABLE `tod2` (
 `dt` datetime DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY RANGE(TO_DAYS(`dt`))
 (PARTITION p0 VALUES LESS THAN(5),
 PARTITION p1 VALUES LESS THAN(10),
@@ -107,7 +107,7 @@ Table,Create Table
 tod2,CREATE TABLE `tod2` (
 	`dt` datetime DEFAULT NULL,
 	KEY `auto_shard_key_dt` USING BTREE (`dt`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY RANGE(TO_DAYS(`dt`))
 (PARTITION p0 VALUES LESS THAN (5) ENGINE = InnoDB,
  PARTITION p1 VALUES LESS THAN (10) ENGINE = InnoDB,
@@ -139,7 +139,7 @@ dt
 ## test list
 CREATE TABLE `tod3` (
 `dt` datetime DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY LIST(TO_DAYS(`dt`))
 (PARTITION p0 VALUES IN (1,2,3,4,5),
 PARTITION p1 VALUES IN(6,7,8,9,10),
@@ -150,7 +150,7 @@ Table,Create Table
 tod2,CREATE TABLE `tod2` (
 	`dt` datetime DEFAULT NULL,
 	KEY `auto_shard_key_dt` USING BTREE (`dt`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY RANGE(TO_DAYS(`dt`))
 (PARTITION p0 VALUES LESS THAN (5) ENGINE = InnoDB,
  PARTITION p1 VALUES LESS THAN (10) ENGINE = InnoDB,

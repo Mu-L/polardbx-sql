@@ -1,0 +1,29 @@
+## DISABLE_FAST_SQL_PARSER
+
+## test TIME_TRUNCATE_FRACTIONAL effect on datetime routing and insertion
+drop table if exists t_datetime_test;
+
+CREATE TABLE t_datetime_test (
+id bigint primary key auto_increment,
+datetime_test DATETIME(3),
+time_test TIME(3),
+timestamp_test TIMESTAMP(3)
+)
+PARTITION BY RANGE (TO_DAYS(datetime_test)) (
+PARTITION p1 VALUES LESS THAN (TO_DAYS('2025-07-15')),
+PARTITION p2 VALUES LESS THAN (TO_DAYS('2025-07-16'))
+);
+
+## Test with sql_mode='' (default rounding behavior)
+set sql_mode='';
+
+INSERT INTO t_datetime_test (datetime_test, time_test, timestamp_test) VALUES ('2025-07-14 23:59:59.9998', '23:59:59.9998', '2025-07-14 23:59:59.9998');
+
+select datetime_test,time_test,timestamp_test from t_datetime_test where datetime_test = '2025-07-15 00:00:00.000';
+
+## Test with sql_mode='TIME_TRUNCATE_FRACTIONAL' (truncate behavior)
+set sql_mode = 'TIME_TRUNCATE_FRACTIONAL';
+
+INSERT INTO t_datetime_test (datetime_test, time_test, timestamp_test) VALUES ('2025-07-14 23:59:59.9998', '23:59:59.9998', '2025-07-14 23:59:59.9998');
+
+select datetime_test,time_test,timestamp_test from t_datetime_test where datetime_test = '2025-07-14 23:59:59.999';

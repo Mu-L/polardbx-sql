@@ -11,6 +11,7 @@ import com.alibaba.polardbx.common.utils.logger.MDC;
 import com.alibaba.polardbx.executor.ExecutorHelper;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.ddl.newengine.cross.CrossEngineValidator;
+import com.alibaba.polardbx.executor.ddl.omc.HashCheckResult;
 import com.alibaba.polardbx.executor.ddl.workqueue.FastCheckerThreadPool;
 import com.alibaba.polardbx.executor.fastchecker.FastChecker;
 import com.alibaba.polardbx.executor.gsi.GsiUtils;
@@ -22,7 +23,6 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableOperation;
 import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
-import lombok.Data;
 import org.apache.calcite.util.Pair;
 import org.apache.commons.collections.MapUtils;
 
@@ -98,7 +98,9 @@ public class OmcFastChecker extends FastChecker {
 
         for (ColumnMeta columnMeta : indexTableMeta.getAllColumns()) {
             String baseTableColumnName = null;
-            if (columnMeta.getMappingName() != null) {
+            if (columnMeta.isExternalizedColumn()) {
+                baseTableColumnName = FastChecker.physicalColumnName(columnMeta).toLowerCase();
+            } else if (columnMeta.getMappingName() != null) {
                 if (!columnMeta.getMappingName().isEmpty()) {
                     baseTableColumnName = columnMeta.getMappingName().toLowerCase();
                 }
@@ -107,7 +109,8 @@ public class OmcFastChecker extends FastChecker {
             }
 
             if (baseTableColumnName != null) {
-                String indexColumnName = columnMeta.getName().toLowerCase();
+                String indexColumnName = columnMeta.isExternalizedColumn()
+                    ? baseTableColumnName : columnMeta.getName().toLowerCase();
                 baseTableColumns.add(baseTableColumnName);
                 indexColumns.add(indexColumnName);
 
@@ -158,13 +161,6 @@ public class OmcFastChecker extends FastChecker {
 
             builder.buildSqlSelectForSample(baseTableMeta, baseTablePks),
             builder.buildSqlSelectForSample(indexTableMeta, indexTablePks));
-    }
-
-    @Data
-    static class HashCheckResult {
-        public Long commonHash;
-        public Long originColumnHash;
-        public Long checkColumnHash;
     }
 
     @Override

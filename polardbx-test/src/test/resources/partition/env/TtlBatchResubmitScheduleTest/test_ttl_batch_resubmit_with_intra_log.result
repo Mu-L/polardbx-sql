@@ -1,0 +1,47 @@
+## DISABLE_FAST_SQL_PARSER
+## Test: batch-resubmit mode with TTL_ENABLE_INTRA_TASK_INFO_LOG=true to exercise
+##       all logging code paths.
+##
+## Covered code paths:
+##   - DataCleaningUpIntraTask.logOneIntraTaskExecResult
+##     - L885: TTL_ENABLE_INTRA_TASK_INFO_LOG=true check
+##     - L895-897: pendingPartsStr / modeTag construction
+##     - L899-904: formatted log output
+##   - DataArchivingWorkerTaskMonitor.doMonitoring
+##     - L961-964: batchResubmitTaskRunners != null + log enabled => logBatchResubmitPartProgress
+##   - logBatchResubmitPartProgress (L1132-1183): full method
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00'
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false
+use polardbx
+drop database if exists test_ttl_br_log_db
+create database if not exists test_ttl_br_log_db mode='auto'
+use test_ttl_br_log_db
+drop table if exists ttl_br_log_t1
+create table ttl_br_log_t1(
+  a int not null auto_increment,
+  b datetime,
+  primary key(a)
+)
+partition by key(a)
+partitions 4
+insert into ttl_br_log_t1(b) values ('2024-05-01'),('2024-05-02'),('2024-05-03'),('2024-05-04')
+insert into ttl_br_log_t1(b) values ('2024-06-28'),('2024-06-29')
+alter table ttl_br_log_t1
+modify ttl
+  ttl_enable = 'on',
+  ttl_cleanup = 'on',
+  ttl_expr = `b` expire after 1 day timezone '+08:00',
+  ttl_job = cron '0 0 0 1 1 ? */1' timezone '+08:00',
+  archive_table_pre_allocate=2,
+  archive_table_post_allocate=4
+select count(*) as total_before from ttl_br_log_t1
+total_before
+6
+## Enable intra-task info logging to cover log code paths
+/*+TDDL:cmd_extra(TTL_ENABLE_BATCH_RESUBMIT_SCHEDULE=true,TTL_ENABLE_INTRA_TASK_INFO_LOG=true)*/alter table ttl_br_log_t1 cleanup expired data
+use polardbx
+drop database if exists test_ttl_br_log_db
+use polardbx;

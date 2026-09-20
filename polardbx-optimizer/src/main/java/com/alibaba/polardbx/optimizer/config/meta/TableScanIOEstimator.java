@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.optimizer.config.meta;
 
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
@@ -31,6 +32,7 @@ import com.alibaba.polardbx.optimizer.index.Index;
 import com.alibaba.polardbx.optimizer.index.IndexUtil;
 import com.alibaba.polardbx.optimizer.utils.DrdsRexFolder;
 import com.google.common.collect.Lists;
+import io.airlift.slice.Slice;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
@@ -52,6 +54,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.optimizer.config.meta.CostModelWeight.TUPLE_HEADER_SIZE;
+import static com.alibaba.polardbx.optimizer.selectivity.AbstractSelectivityEstimator.findColumnMeta;
 import static com.alibaba.polardbx.optimizer.selectivity.TableScanSelectivityEstimator.LACK_OF_STATISTICS_INDEX_EQUAL_ROW_COUNT;
 import static com.alibaba.polardbx.optimizer.selectivity.TableScanSelectivityEstimator.LACK_OF_STATISTICS_INDEX_RANGE_ROW_COUNT;
 
@@ -59,18 +62,22 @@ import static com.alibaba.polardbx.optimizer.selectivity.TableScanSelectivityEst
  * @author dylan
  */
 public class TableScanIOEstimator extends AbstractIOEstimator {
-    private final TableScan tableScan;
-    private final Double tableRowCount;
-    private final TableMeta tableMeta;
+    protected final TableScan tableScan;
+    protected final Double tableRowCount;
+    protected final TableMeta tableMeta;
 
     private final long rowSize;
     private List<Index> accessIndexList;
     private Set<String> canUseIndexSet;
 
     public TableScanIOEstimator(TableScan tableScan, RelMetadataQuery metadataQuery) {
-        super(metadataQuery, tableScan.getCluster().getRexBuilder(),
+        this(tableScan, metadataQuery,
             (Math.ceil((TUPLE_HEADER_SIZE + TableScanIOEstimator.estimateRowSize(tableScan.getRowType()))
-                * tableScan.getTable().getRowCount() / CostModelWeight.SEQ_IO_PAGE_SIZE)),
+                * tableScan.getTable().getRowCount() / CostModelWeight.SEQ_IO_PAGE_SIZE)));
+    }
+
+    public TableScanIOEstimator(TableScan tableScan, RelMetadataQuery metadataQuery, double maxIO) {
+        super(metadataQuery, tableScan.getCluster().getRexBuilder(), maxIO,
             PlannerContext.getPlannerContext(tableScan));
         this.tableScan = tableScan;
         this.tableMeta = CBOUtil.getTableMeta(tableScan.getTable());
@@ -415,6 +422,9 @@ public class TableScanIOEstimator extends AbstractIOEstimator {
                         likeString = String.valueOf(likeValue);
                     } else if (likeValue instanceof String) {
                         likeString = (String) likeValue;
+                    } else if (likeValue instanceof Slice) {
+                        Slice likeSlice = ((Slice) likeValue);
+                        likeString = likeSlice.toStringUtf8();
                     } else {
                         continue;
                     }
@@ -507,28 +517,42 @@ public class TableScanIOEstimator extends AbstractIOEstimator {
                     long frequency = 0;
                     if (columnMeta != null && columnMeta.equals(indexColumnMeta)) {
                         int fanOut = ((RexCall) rightRexNode).operands.size();
-                        StatisticResult statisticResult;
-                        for (RexNode rexNode : ((RexCall) rightRexNode).operands) {
-                            Object value = DrdsRexFolder.fold(rexNode, plannerContext);
-                            if (value instanceof List) {
-                                statisticResult = StatisticManager.getInstance()
-                                    .getFrequency(tableMeta.getSchemaName(), tableMeta.getTableName(),
-                                        columnMeta.getName(),
-                                        (List) value, plannerContext.isNeedStatisticTrace());
-                            } else {
-                                statisticResult = StatisticManager.getInstance()
-                                    .getFrequency(tableMeta.getSchemaName(), tableMeta.getTableName(),
-                                        columnMeta.getName(),
-                                        value == null ? null : value.toString(),
-                                        plannerContext.isNeedStatisticTrace());
-                            }
+
+                        if (((RexCall) rightRexNode).operands.size() > DynamicConfig.getInstance()
+                            .getInDegradationNum()) {
+                            StatisticResult statisticResult =
+                                StatisticManager.getInstance().tryFrequencyDegradation(tableMeta.getSchemaName(),
+                                    tableMeta.getTableName(),
+                                    columnMeta.getName(),
+                                    fanOut,
+                                    plannerContext.isNeedStatisticTrace());
                             if (plannerContext.isNeedStatisticTrace()) {
                                 plannerContext.recordStatisticTrace(statisticResult.getTrace());
                             }
-                            frequency += statisticResult.getLongValue();
+                            frequency = statisticResult.getLongValue();
+                        } else {
+                            StatisticResult statisticResult;
+                            for (RexNode rexNode : ((RexCall) rightRexNode).operands) {
+                                Object value = DrdsRexFolder.fold(rexNode, plannerContext);
+                                if (value instanceof List) {
+                                    statisticResult = StatisticManager.getInstance()
+                                        .getFrequency(tableMeta.getSchemaName(), tableMeta.getTableName(),
+                                            columnMeta.getName(),
+                                            (List) value, plannerContext.isNeedStatisticTrace());
+                                } else {
+                                    statisticResult = StatisticManager.getInstance()
+                                        .getFrequency(tableMeta.getSchemaName(), tableMeta.getTableName(),
+                                            columnMeta.getName(),
+                                            value == null ? null : value.toString(),
+                                            plannerContext.isNeedStatisticTrace());
+                                }
+                                if (plannerContext.isNeedStatisticTrace()) {
+                                    plannerContext.recordStatisticTrace(statisticResult.getTrace());
+                                }
+                                frequency += statisticResult.getLongValue();
 
+                            }
                         }
-
                         // if statistic result is empty, assign one default value
                         if (frequency < 0) {
                             // Meaning lack of statistics
@@ -626,8 +650,8 @@ public class TableScanIOEstimator extends AbstractIOEstimator {
         return null;
     }
 
-    private IndexContext oneIndexColumnContext(ColumnMeta indexColumnMeta, List<RexNode> conjunctions,
-                                               PlannerContext plannerContext) {
+    protected IndexContext oneIndexColumnContext(ColumnMeta indexColumnMeta, List<RexNode> conjunctions,
+                                                 PlannerContext plannerContext) {
         // check equal and in
         for (RexNode pred : conjunctions) {
             IndexContext indexContext = null;
@@ -735,9 +759,9 @@ public class TableScanIOEstimator extends AbstractIOEstimator {
      * @param keyColumns key columns in the index
      * @param indexContextList index context list
      */
-    private void mergeIndexContextList(String schemaName, String logicalTableName,
-                                       List<ColumnMeta> keyColumns,
-                                       List<IndexContext> indexContextList) {
+    protected void mergeIndexContextList(String schemaName, String logicalTableName,
+                                         List<ColumnMeta> keyColumns,
+                                         List<IndexContext> indexContextList) {
         List<IndexContext> mergeList = Lists.newLinkedList();
         for (ColumnMeta columnMeta : keyColumns) {
             for (IndexContext indexContext : indexContextList) {
@@ -815,13 +839,6 @@ public class TableScanIOEstimator extends AbstractIOEstimator {
             }
         }
         return result;
-    }
-
-    private ColumnMeta findColumnMeta(TableMeta tableMeta, int index) {
-        if (index < 0 || index > tableMeta.getAllColumns().size()) {
-            return null;
-        }
-        return tableMeta.getAllColumns().get(index);
     }
 
     /**
@@ -1001,7 +1018,7 @@ public class TableScanIOEstimator extends AbstractIOEstimator {
         return estimateRowSize(rowType.getFieldList());
     }
 
-    private static long estimateRowSize(List<RelDataTypeField> fields) {
+    public static long estimateRowSize(List<RelDataTypeField> fields) {
         long result = 0;
         for (RelDataTypeField field : fields) {
             if (field.getType() instanceof BasicSqlType) {

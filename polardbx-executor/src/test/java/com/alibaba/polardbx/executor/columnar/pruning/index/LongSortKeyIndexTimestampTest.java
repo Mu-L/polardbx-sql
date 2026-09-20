@@ -17,22 +17,24 @@ public class LongSortKeyIndexTimestampTest {
      */
     private final long[] data =
         new long[] {28610161799726696L, 29140697634965096L, 29142147186427496L, 29143596737889896L};
-    private final LongSortKeyIndex sortKeyIndex = LongSortKeyIndex.build(1, data, DataTypes.TimestampType);
+    private final LongSortKeyIndex sortKeyIndex = LongSortKeyIndex.build(1, data, DataTypes.TimestampType, true);
 
     @Test
     public void testEqual() {
         RoaringBitmap rs = RoaringBitmap.bitmapOfRange(0, sortKeyIndex.rgNum());
-        sortKeyIndex.pruneEqual("2024-01-15 14:02:11.657", rs);
+        IndexPruneContext ipc = new IndexPruneContext();
+        
+        sortKeyIndex.pruneEqual("2024-01-15 14:02:11.657", rs, ipc);;
         rs.stream().forEachOrdered(System.out::print);
         Assert.assertTrue(rs.getCardinality() == 1 && rs.contains(0));
 
         rs = RoaringBitmap.bitmapOfRange(0, sortKeyIndex.rgNum());
-        sortKeyIndex.pruneEqual("2025-01-16 14:02:11.657", rs);
+        sortKeyIndex.pruneEqual("2025-01-16 14:02:11.657", rs, ipc);;
         rs.stream().forEachOrdered(System.out::print);
         Assert.assertTrue(rs.getCardinality() == 1 && rs.contains(1));
 
         rs = RoaringBitmap.bitmapOfRange(0, sortKeyIndex.rgNum());
-        sortKeyIndex.pruneEqual("2023-01-15 14:02:11.657", rs);
+        sortKeyIndex.pruneEqual("2023-01-15 14:02:11.657", rs, ipc);;
         rs.stream().forEachOrdered(System.out::print);
         Assert.assertEquals(0, rs.getCardinality());
 
@@ -42,22 +44,23 @@ public class LongSortKeyIndexTimestampTest {
     public void testRange() {
         // test start obj less than the lowest value
         RoaringBitmap rs = RoaringBitmap.bitmapOfRange(0, sortKeyIndex.rgNum());
-        sortKeyIndex.pruneRange("2024-01-15 14:02:11.657", "2024-01-13 14:02:11.657", rs);
+        IndexPruneContext ipc = new IndexPruneContext();
+        sortKeyIndex.pruneRange("2024-01-15 14:02:11.657", "2024-01-13 14:02:11.657", rs, ipc);;
         rs.stream().forEachOrdered(System.out::println);
         Assert.assertTrue(rs.getCardinality() == 0);
 
         rs = RoaringBitmap.bitmapOfRange(0, sortKeyIndex.rgNum());
-        sortKeyIndex.pruneRange("2024-01-15 14:02:11.657", "2025-01-17 14:02:11.657", rs);
+        sortKeyIndex.pruneRange("2024-01-15 14:02:11.657", "2025-01-17 14:02:11.657", rs, ipc);;
         rs.stream().forEachOrdered(System.out::println);
         Assert.assertTrue(rs.getCardinality() == 2 && rs.contains(0) && rs.contains(1));
 
         rs = RoaringBitmap.bitmapOfRange(0, sortKeyIndex.rgNum());
-        sortKeyIndex.pruneRange("2024-01-15 14:02:11.657", null, rs);
+        sortKeyIndex.pruneRange("2024-01-15 14:02:11.657", null, rs, ipc);;
         rs.stream().forEachOrdered(System.out::println);
         Assert.assertTrue(rs.getCardinality() == 2 && rs.contains(0) && rs.contains(1));
 
         rs = RoaringBitmap.bitmapOfRange(0, sortKeyIndex.rgNum());
-        sortKeyIndex.pruneRange("2024-01-15 14:02:11.657", "2025-01-15 15:02:11.657", rs);
+        sortKeyIndex.pruneRange("2024-01-15 14:02:11.657", "2025-01-15 15:02:11.657", rs, ipc);;
         rs.stream().forEachOrdered(System.out::println);
         Assert.assertTrue(rs.getCardinality() == 1 && rs.contains(0));
     }

@@ -67,7 +67,7 @@ public class PushBloomFilterRule extends RelOptRule {
         Filter filter = call.rel(0);
         LogicalView logicalView = call.rel(1);
 
-        if (doNotPush(filter, logicalView)) {
+        if (doNotPush(filter.getCondition(), logicalView)) {
             return;
         }
 

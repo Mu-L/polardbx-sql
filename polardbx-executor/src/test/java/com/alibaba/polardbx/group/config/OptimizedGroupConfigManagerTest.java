@@ -1,12 +1,19 @@
 package com.alibaba.polardbx.group.config;
 
 import com.alibaba.polardbx.atom.TAtomDataSource;
+import com.alibaba.polardbx.common.constants.TransactionAttribute;
+import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.config.ConfigDataMode;
+import com.alibaba.polardbx.executor.common.ExecutorContext;
+import com.alibaba.polardbx.executor.spi.ITransactionManager;
+import com.alibaba.polardbx.gms.config.impl.ConnPoolConfig;
 import com.alibaba.polardbx.gms.ha.HaSwitchParams;
 import com.alibaba.polardbx.gms.ha.HaSwitcher;
+import com.alibaba.polardbx.gms.topology.ServerInstIdManager;
 import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.group.jdbc.DataSourceWrapper;
 import com.alibaba.polardbx.group.jdbc.TGroupDataSource;
+import com.alibaba.polardbx.common.trx.ITimestampOracle;
 import com.alibaba.polardbx.server.SwitchoverManager;
 import com.alibaba.polardbx.server.response.OnDnChangeLeaderAction;
 import org.junit.Assert;
@@ -14,9 +21,17 @@ import org.junit.Test;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
 

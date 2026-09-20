@@ -69,11 +69,17 @@ public class ClearFileSystemCacheSyncAction implements ISyncAction {
         if (fileSystemGroup != null) {
             FileMergeCacheConfig fileMergeCacheConfig = FileConfig.getInstance().getMergeCacheConfig();
             // rebuild cache by new configs.
-            ((FileMergeCachingFileSystem) fileSystemGroup.getMaster()).getCacheManager()
-                .rebuildCache(fileMergeCacheConfig);
+            rebuildCacheIfApplicable(fileSystemGroup.getMaster(), fileMergeCacheConfig);
             for (FileSystem slave : fileSystemGroup.getSlaves()) {
-                ((FileMergeCachingFileSystem) slave).getCacheManager().rebuildCache(fileMergeCacheConfig);
+                rebuildCacheIfApplicable(slave, fileMergeCacheConfig);
             }
+        }
+    }
+
+    private void rebuildCacheIfApplicable(FileSystem fileSystem, FileMergeCacheConfig fileMergeCacheConfig) {
+        if (fileSystem instanceof FileMergeCachingFileSystem) {
+            ((FileMergeCachingFileSystem) fileSystem).getCacheManager()
+                .rebuildCache(fileMergeCacheConfig);
         }
     }
 

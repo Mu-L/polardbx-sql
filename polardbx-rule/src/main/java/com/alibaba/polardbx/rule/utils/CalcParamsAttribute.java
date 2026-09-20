@@ -25,10 +25,7 @@ import com.alibaba.polardbx.common.properties.ConnectionProperties;
 public class CalcParamsAttribute {
 
     public final static String SHARD_FOR_EXTRA_DB = "shardForExtraDb";
-    public final static String COM_DB_TB = "COM_DB_TB";
-    public final static String SHARD_PARAMS = "SHARD_PARAMS";
     public final static String SHARD_DATATYPE_MAP = "SHARD_DATATYPE_MAP";
-    public final static String SHARD_CHOISER = "SHARD_CHOISER";
     public final static String CONN_TIME_ZONE = ConnectionProperties.CONN_TIME_ZONE;
     public final static String DB_SHARD_KEY_SET = "DB_SHARD_KEY_SET";
     public final static String TB_SHARD_KEY_SET = "TB_SHARD_KEY_SET";

@@ -24,6 +24,7 @@ import com.alibaba.polardbx.executor.ddl.job.task.gsi.DropGsiTableHideTableMetaT
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.DropPartitionGsiPhyDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.GsiDropCleanUpTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.ValidateGsiExistenceTask;
+import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
 import lombok.Data;
 
@@ -40,7 +41,7 @@ public class ExecutableDdlJob4DropPartitionGsi extends ExecutableDdlJob {
 
     private DropGsiTableHideTableMetaTask dropGsiTableHideTableMetaTask;
 
-    private DropPartitionGsiPhyDdlTask dropGsiPhyDdlTask;
+    private DdlTask dropGsiPhyDdlTask;
 
     private GsiDropCleanUpTask gsiDropCleanUpTask;
 

@@ -36,10 +36,9 @@ public class TableMetaListener implements ConfigListener {
     public void onHandleConfig(String dataId, long newOpVersion) {
         MDC.put(MDC.MDC_KEY_APP, schemaName.toLowerCase());
 
-        SchemaManager sm = OptimizerContext.getContext(schemaName).getLatestSchemaManager();
-        // TODO(pt.luoyanxin) optimize single-version schema change
+        // SchemaManager sm = OptimizerContext.getContext(schemaName).getLatestSchemaManager();
         SQLRecorderLogger.ddlMetaLogger.info(
-            String.format("tableName: %s; dataId: %s; start to new version by table meta listener", tableName, dataId));
-        sm.toNewVersionForTableGroup(tableName, true);
+            String.format("tableName: %s; dataId: %s; triggered by table meta listener", tableName, dataId));
+        // sm.toNewVersionForTableGroup(tableName, true);
     }
 }

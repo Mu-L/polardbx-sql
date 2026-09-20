@@ -16,6 +16,9 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.ORCMemoryCounterUtil;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.operator.scan.AbstractColumnReader;
 import com.alibaba.polardbx.executor.operator.scan.ColumnReader;
@@ -33,6 +36,7 @@ import org.apache.orc.impl.InStream;
 import org.apache.orc.impl.IntegerReader;
 import org.apache.orc.impl.OrcIndex;
 import org.apache.orc.impl.PositionProvider;
+import org.apache.orc.impl.PositionProviderBuilder;
 import org.apache.orc.impl.RecordReaderImpl;
 import org.apache.orc.impl.RunLengthIntegerReaderV2;
 import org.apache.orc.impl.StreamName;
@@ -46,18 +50,23 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public abstract class AbstractLongColumnReader extends AbstractColumnReader {
     // basic metadata
+    @FieldMemoryCounter(value = false)
     protected final StripeLoader stripeLoader;
 
     // in preheat mode, all row-indexes in orc-index should not be null.
-    protected final OrcIndex orcIndex;
+    @FieldMemoryCounter(value = false)
+    protected final PositionProviderBuilder orcIndex;
+    @FieldMemoryCounter(value = false)
     protected final RuntimeMetrics metrics;
 
+    @FieldMemoryCounter(value = false)
     protected final OrcProto.ColumnEncoding.Kind kind;
     protected final int indexStride;
 
     protected final boolean enableMetrics;
 
     // open parameters
+    @FieldMemoryCounter(value = false)
     protected boolean[] rowGroupIncluded;
     protected boolean await;
 
@@ -67,8 +76,12 @@ public abstract class AbstractLongColumnReader extends AbstractColumnReader {
     protected AtomicBoolean isOpened;
 
     // IO results
+    @FieldMemoryCounter(value = false)
     protected Throwable throwable;
+    @FieldMemoryCounter(value = false)
     protected Map<StreamName, InStream> inStreamMap;
+
+    @FieldMemoryCounter(value = false)
     protected CompletableFuture<Map<StreamName, InStream>> openFuture;
 
     // for semantic parser
@@ -80,11 +93,15 @@ public abstract class AbstractLongColumnReader extends AbstractColumnReader {
     protected int lastPosition;
 
     // execution time metrics.
+    @FieldMemoryCounter(value = false)
     protected Counter preparingTimer;
+    @FieldMemoryCounter(value = false)
     protected Counter seekTimer;
+    @FieldMemoryCounter(value = false)
     protected Counter parseTimer;
 
-    public AbstractLongColumnReader(int columnId, boolean isPrimaryKey, StripeLoader stripeLoader, OrcIndex orcIndex,
+    public AbstractLongColumnReader(int columnId, boolean isPrimaryKey, StripeLoader stripeLoader,
+                                    PositionProviderBuilder orcIndex,
                                     RuntimeMetrics metrics, OrcProto.ColumnEncoding.Kind kind, int indexStride,
                                     boolean enableMetrics) {
         super(columnId, isPrimaryKey);
@@ -194,7 +211,8 @@ public abstract class AbstractLongColumnReader extends AbstractColumnReader {
         }
     }
 
-    protected void init() throws IOException {
+    @Override
+    public void init() throws IOException {
         if (!initializeOnlyOnce.compareAndSet(false, true)) {
             return;
         }
@@ -363,15 +381,7 @@ public abstract class AbstractLongColumnReader extends AbstractColumnReader {
         init();
 
         // Find the position-provider of given column and row group.
-        PositionProvider positionProvider;
-        OrcProto.RowIndex[] rowIndices = orcIndex.getRowGroupIndex();
-        OrcProto.RowIndexEntry entry = rowIndices[columnId].getEntry(rowGroupId);
-        // This is effectively a test for pre-ORC-569 files.
-        if (rowGroupId == 0 && entry.getPositionsCount() == 0) {
-            positionProvider = new RecordReaderImpl.ZeroPositionProvider();
-        } else {
-            positionProvider = new RecordReaderImpl.PositionProviderImpl(entry);
-        }
+        PositionProvider positionProvider = orcIndex.buildRowGroupIndex(columnId, rowGroupId);
 
         // Seek on present stream and data stream.
         if (present != null) {
@@ -421,5 +431,7 @@ public abstract class AbstractLongColumnReader extends AbstractColumnReader {
                 ));
             }
         }
+
+        closeFuture.set(null);
     }
 }

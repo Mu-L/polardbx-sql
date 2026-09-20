@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.mpp.operator.factory;
 
+import com.alibaba.polardbx.executor.mpp.operator.DriverContext;
 import com.alibaba.polardbx.executor.operator.ConsumerExecutor;
 import com.alibaba.polardbx.executor.operator.Executor;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -24,7 +25,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class LocalBufferConsumerFactory implements ConsumeExecutorFactory {
-
     private ExecutorFactory parentExecutorFactory;
     private List<ConsumerExecutor> consumerExecutors = new ArrayList<>();
 

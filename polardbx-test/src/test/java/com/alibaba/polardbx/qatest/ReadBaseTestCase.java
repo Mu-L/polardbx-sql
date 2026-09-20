@@ -25,6 +25,8 @@ public class ReadBaseTestCase extends BaseTestCase {
 
     protected Connection mysqlConnection;
     protected Connection tddlConnection;
+    // for executionTime test
+    protected Connection testConnection;
     protected String baseOneTableName;
     protected String baseTwoTableName;
     protected String baseThreeTableName;

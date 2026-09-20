@@ -30,15 +30,16 @@ sql: |
 
 
 plan: |
-  Project(id="id", name="name")
-    Filter(condition="create_time > '2017-12-12 12:12:12' OR APPLY_BOOLEAN")
-      CorrelateApply(cor=$cor0, leftConditions=[$0], opKind=EQUALS, type=SEMI)
-        LogicalView(tables="optest_0001.test_hash_tb", sql="SELECT `id`, `name`, `create_time` FROM `test_hash_tb` AS `test_hash_tb` WHERE (`id` = 5)")
-        Filter(condition="id <= $cor0.id")
-          Gather(concurrent=true)
-            LogicalView(tables="[0000-0003].test_hash_tb2", shardCount=4, sql="SELECT `id` FROM `test_hash_tb2` AS `test_hash_tb2` WHERE (`create_time` < '2018-12-12 12:12:12')")
-  cache node:
 
-  LogicalView(tables="optest_0001.test_hash_tb", sql="SELECT `id`, `name`, `create_time` FROM `test_hash_tb` AS `test_hash_tb` WHERE (`id` = 5)")
-  Gather(concurrent=true)
-    LogicalView(tables="[0000-0003].test_hash_tb2", shardCount=4, sql="SELECT `id` FROM `test_hash_tb2` AS `test_hash_tb2` WHERE (`create_time` < '2018-12-12 12:12:12')")
+    project(id="id", name="name")
+      filter(condition="create_time > '2017-12-12 12:12:12' or apply_boolean")
+        correlateapply(cor=$cor0, leftconditions=[$0], opkind=equals, type=semi)
+          logicalview(tables="optest_0001.test_hash_tb", sql="select `id`, `name`, `create_time` from `test_hash_tb` as `test_hash_tb` where (`id` = 5)")
+          filter(condition="id <= $cor0.id")
+            gather(concurrent=true)
+              logicalview(tables="[0000-0003].test_hash_tb2", shardcount=4, sql="select `id` from `test_hash_tb2` as `test_hash_tb2` where (`create_time` < '2018-12-12 12:12:12')")
+    cache node:
+    
+    logicalview(tables="optest_0001.test_hash_tb", sql="select `id`, `name`, `create_time` from `test_hash_tb` as `test_hash_tb` where (`id` = 5)")
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].test_hash_tb2", shardcount=4, sql="select `id` from `test_hash_tb2` as `test_hash_tb2` where (`create_time` < '2018-12-12 12:12:12')")

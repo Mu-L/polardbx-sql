@@ -118,7 +118,8 @@ public class LogicalDescHandler extends HandlerCommon {
                         rowType = converter.toRel(validatedNode).getRowType();
                     }
 
-                    ArrayResultCursor resultCursor = new ArrayResultCursor(tableName);
+                    ArrayResultCursor resultCursor =
+                        new ArrayResultCursor(getTableNameForOutput(tableName, executionContext));
 //                    | Field | Type    | Null | Key | Default | Extra |
                     resultCursor.addColumn("Field", DataTypes.StringType, false);
                     resultCursor.addColumn("Type", DataTypes.StringType, false);
@@ -163,7 +164,7 @@ public class LogicalDescHandler extends HandlerCommon {
     }
 
     private Cursor reorgLogicalColumnOrder(String schemaName, String tableName, Cursor cursor, ExecutionContext ec) {
-        ArrayResultCursor resultCursor = new ArrayResultCursor(tableName);
+        ArrayResultCursor resultCursor = new ArrayResultCursor(getTableNameForOutput(tableName, ec));
 
         resultCursor.addColumn("Field", DataTypes.StringType);
         resultCursor.addColumn("Type", DataTypes.StringType);

@@ -111,6 +111,30 @@ public class DdlEngineRecord implements SystemTableRecord {
         return params;
     }
 
+    public Map<Integer, ParameterContext> buildUpdateFullParams() {
+        Map<Integer, ParameterContext> params = new HashMap<>(16);
+        int index = 0;
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.ddlType);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.schemaName);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.objectName);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.responseNode);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.executionNode);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.state);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.resources);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, this.progress);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.traceId);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.context);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.taskGraph);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.result);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.ddlStmt);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setLong, this.gmtModified);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, this.maxParallelism);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, this.supportedCommands);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.pausedPolicy);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.rollbackPausedPolicy);
+        return params;
+    }
+
     /**
      * SubJob means the job submitted by a task.
      */

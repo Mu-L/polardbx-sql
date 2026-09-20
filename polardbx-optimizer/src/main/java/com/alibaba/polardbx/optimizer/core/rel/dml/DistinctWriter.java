@@ -48,4 +48,5 @@ public interface DistinctWriter extends SingleWriter, Wrapper {
      * @return list of PhyTableOperation
      */
     List<RelNode> getInput(ExecutionContext ec, Function<DistinctWriter, List<List<Object>>> rowGenerator);
+
 }

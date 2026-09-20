@@ -26,6 +26,8 @@ import com.alibaba.polardbx.common.constants.ServerVariables;
 import com.alibaba.polardbx.common.constants.TransactionAttribute;
 import com.alibaba.polardbx.common.ddl.Attribute;
 import com.alibaba.polardbx.common.encdb.EncdbException;
+import com.alibaba.polardbx.common.encdb.enums.Constants;
+import com.alibaba.polardbx.common.encdb.enums.MsgKeyConstants;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.BatchInsertPolicy;
@@ -33,6 +35,7 @@ import com.alibaba.polardbx.common.jdbc.ITransactionPolicy;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
+import com.alibaba.polardbx.common.properties.MceDynamicConfig;
 import com.alibaba.polardbx.common.properties.SystemPropertiesHelper;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.TStringUtil;
@@ -45,6 +48,8 @@ import com.alibaba.polardbx.druid.sql.parser.ByteString;
 import com.alibaba.polardbx.executor.balancer.BalanceOptions;
 import com.alibaba.polardbx.executor.balancer.Balancer;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
+import com.alibaba.polardbx.executor.ddl.newengine.DdlEngineRequester;
+import com.alibaba.polardbx.executor.gms.ColumnarVersionChainPruner;
 import com.alibaba.polardbx.executor.sync.FailPointClearSyncAction;
 import com.alibaba.polardbx.executor.sync.FailPointDisableSyncAction;
 import com.alibaba.polardbx.executor.sync.FailPointEnableSyncAction;
@@ -70,6 +75,7 @@ import com.alibaba.polardbx.gms.topology.InstConfigAccessor;
 import com.alibaba.polardbx.gms.topology.ServerInstIdManager;
 import com.alibaba.polardbx.gms.topology.VariableConfigAccessor;
 import com.alibaba.polardbx.gms.util.InstIdUtil;
+import com.alibaba.polardbx.group.utils.CheckDataSourcesTask;
 import com.alibaba.polardbx.matrix.jdbc.TConnection;
 import com.alibaba.polardbx.net.compress.PacketOutputProxyFactory;
 import com.alibaba.polardbx.net.packet.MySQLPacket;
@@ -77,10 +83,12 @@ import com.alibaba.polardbx.net.packet.OkPacket;
 import com.alibaba.polardbx.optimizer.config.table.statistic.StatisticManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.parse.FastsqlParser;
+import com.alibaba.polardbx.optimizer.ttl.query.TtlQueryType;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.alibaba.polardbx.server.QueryResultHandler;
 import com.alibaba.polardbx.server.ServerConnection;
 import com.alibaba.polardbx.server.exception.UnknownCharsetException;
+import com.alibaba.polardbx.server.handler.privileges.polar.PolarHandlerCommon;
 import com.alibaba.polardbx.server.util.IsolationUtil;
 import com.alibaba.polardbx.transaction.utils.ParamValidationUtils;
 import org.apache.calcite.sql.SqlBasicCall;
@@ -124,6 +132,7 @@ import static com.alibaba.polardbx.common.exception.code.ErrorCode.ERR_CHECK_PRI
 import static com.alibaba.polardbx.executor.utils.failpoint.FailPoint.FP_CLEAR;
 import static com.alibaba.polardbx.executor.utils.failpoint.FailPoint.FP_SHOW;
 import static com.alibaba.polardbx.executor.utils.failpoint.FailPoint.SET_PREFIX;
+import static com.alibaba.polardbx.gms.sqlaudit.SqlAuditInterceptor.validateJsonValue;
 
 /**
  * SET 语句处理
@@ -177,7 +186,7 @@ public final class SetHandler {
                         //FailPoint command, only works in java -ea mode
                         if (FailPoint.isAssertEnable() && StringUtils.startsWith(lowerCaseKey, SET_PREFIX)
                             && StringUtils.length(lowerCaseKey) >= 3) {
-                            SyncManagerHelper.syncWithDefaultDB(new FailPointEnableSyncAction(lowerCaseKey, value),
+                            SyncManagerHelper.syncWithDefaultDb(new FailPointEnableSyncAction(lowerCaseKey, value),
                                 SyncScope.ALL);
                             c.getUserDefVariables().put(FP_SHOW, FailPoint.show());
                         }
@@ -188,7 +197,7 @@ public final class SetHandler {
                         c.getUserDefVariables().put(lowerCaseKey, RelUtils.booleanValue(oriValue));
                         //FailPoint command, only works in java -ea mode
                         if (FailPoint.isAssertEnable() && StringUtils.equalsIgnoreCase(lowerCaseKey, FP_CLEAR)) {
-                            SyncManagerHelper.syncWithDefaultDB(new FailPointClearSyncAction(), SyncScope.ALL);
+                            SyncManagerHelper.syncWithDefaultDb(new FailPointClearSyncAction(), SyncScope.ALL);
                             c.getUserDefVariables().put(FP_SHOW, FailPoint.show());
                         }
                     } else if (oriValue instanceof SqlLiteral
@@ -197,7 +206,7 @@ public final class SetHandler {
                         c.getUserDefVariables().remove(lowerCaseKey);
                         //FailPoint command, only works in java -ea mode
                         if (FailPoint.isAssertEnable() && StringUtils.startsWith(lowerCaseKey, SET_PREFIX)) {
-                            SyncManagerHelper.syncWithDefaultDB(new FailPointDisableSyncAction(lowerCaseKey),
+                            SyncManagerHelper.syncWithDefaultDb(new FailPointDisableSyncAction(lowerCaseKey),
                                 SyncScope.ALL);
                             c.getUserDefVariables().put(FP_SHOW, FailPoint.show());
                         }
@@ -539,6 +548,8 @@ public final class SetHandler {
                                 return false;
                             }
                             isolationCode = isolation.getCode();
+                            // reformat value
+                            value = isolation.nameWithHyphen();
                         }
                         c.setTxIsolation(isolationCode);
                         c.getExtraServerVariables().put(key.getName().toLowerCase(), value);
@@ -554,7 +565,7 @@ public final class SetHandler {
                             globalDNVariables.add(new Pair<>(
                                 SqlSystemVar.create(((SqlSystemVar) variable.getKey()).getScope(),
                                     ConnectionProperties.TRANSACTION_ISOLATION, variable.getKey().getParserPosition()),
-                                variable.getValue()));
+                                SqlLiteral.createCharString(value, variable.getValue().getParserPosition())));
                         }
                     } else if ("READ".equalsIgnoreCase(key.getName())) {
                         if (!(oriValue instanceof SqlCharStringLiteral) && !(oriValue instanceof SqlUserDefVar)
@@ -625,6 +636,18 @@ public final class SetHandler {
 
                         /* 忽略client属性设置 */
                         // 忽略这个？
+                    } else if (ConnectionProperties.SQL_AUDIT_RULE.equalsIgnoreCase(key.getName())) {
+                        Object parserValue = parserValue(oriValue, key, c);
+                        String relVal = parserValue.toString();
+                        try {
+                            validateJsonValue(relVal);
+                        } catch (Exception e) {
+                            throw new RuntimeException("set audit rule error " + e.getMessage());
+                        }
+                        c.getConnectionVariables().put(key.getName().toUpperCase(Locale.ROOT), relVal);
+                        if (enableSetGlobal && (key.getScope() == VariableScope.GLOBAL)) {
+                            globalCnVariables.add(Pair.of(key.getName(), parserValue.toString()));
+                        }
                     } else if (BatchInsertPolicy.getVariableName().equalsIgnoreCase(key.getName())) {
                         if (!(oriValue instanceof SqlCharStringLiteral) && !(oriValue instanceof SqlUserDefVar)
                             && !(oriValue instanceof SqlSystemVar)) {
@@ -676,6 +699,20 @@ public final class SetHandler {
                             if (enableSetGlobal && key.getScope() == VariableScope.GLOBAL) {
                                 globalCnVariables.add(
                                     new Pair(ConnectionProperties.GROUP_CONCAT_MAX_LEN, String.valueOf(v)));
+                                globalDNVariables.add(variable);
+                            }
+                        } catch (Exception e) {
+                            occurError(inProcedureCall, key.getName(), oriValue, c);
+                            return false;
+                        }
+                    } else if (ConnectionProperties.PUSHDOWN_RANGE_LIMIT.equalsIgnoreCase(key.getName())) {
+                        try {
+                            boolean enable = RelUtils.booleanValue(oriValue);
+                            c.getServerVariables().put(ConnectionProperties.PUSHDOWN_RANGE_LIMIT.toLowerCase(), enable);
+                            c.getConnectionVariables().put(ConnectionProperties.PUSHDOWN_RANGE_LIMIT, enable);
+                            if (enableSetGlobal && key.getScope() == VariableScope.GLOBAL) {
+                                globalCnVariables.add(
+                                    new Pair(ConnectionProperties.PUSHDOWN_RANGE_LIMIT, String.valueOf(enable)));
                                 globalDNVariables.add(variable);
                             }
                         } catch (Exception e) {
@@ -823,7 +860,8 @@ public final class SetHandler {
                     } else if (ConnectionProperties.PHYSICAL_TABLE_BACKFILL_PARALLELISM.equalsIgnoreCase(key.getName())
                         || ConnectionProperties.SLIDE_WINDOW_SPLIT_SIZE.equalsIgnoreCase(key.getName())
                         || ConnectionProperties.BACKFILL_PARALLELISM.equalsIgnoreCase(key.getName())
-                        || ConnectionProperties.CHANGE_SET_APPLY_PARALLELISM.equalsIgnoreCase(key.getName())
+                        || ConnectionProperties.CHANGE_SET_THREAD_POOL_SIZE.equalsIgnoreCase(key.getName())
+                        || ConnectionProperties.OMC_CHECKER_THREAD_POOL_SIZE.equalsIgnoreCase(key.getName())
                         || ConnectionProperties.PHYSICAL_TABLE_START_SPLIT_SIZE.equalsIgnoreCase(key.getName())
                         || ConnectionProperties.SLIDE_WINDOW_TIME_INTERVAL.equalsIgnoreCase(key.getName())) {
                         final String value = c.getVarStringValue(oriValue);
@@ -860,6 +898,9 @@ public final class SetHandler {
                         if (enableSetGlobal && key.getScope() == VariableScope.GLOBAL) {
                             globalCnVariables.add(new Pair<>(key.getName(), newSeqGroupingEnabled.toString()));
                         }
+                    } else if (ConnectionProperties.RELOAD_DDL_PARAMETER.equalsIgnoreCase(key.getName())) {
+                        final String value = c.getVarStringValue(oriValue);
+                        DdlEngineRequester.reloadJobParameter(value);
                     } else if (ConnectionProperties.NEW_SEQ_CACHE_SIZE.equalsIgnoreCase(key.getName())
                         || ConnectionProperties.NEW_SEQ_CACHE_SIZE_ON_CN.equalsIgnoreCase(key.getName())
                         || ConnectionProperties.NEW_SEQ_GROUPING_TIMEOUT.equalsIgnoreCase(key.getName())
@@ -963,6 +1004,16 @@ public final class SetHandler {
                         c.getExtraServerVariables()
                             .put(ConnectionProperties.BLOCK_ENCRYPTION_MODE, encryptionMode.nameWithHyphen());
                         c.getServerVariables().put(key.getName().toLowerCase(), c.getVarStringValue(oriValue));
+                    } else if ("enable_in_memory_follower_read".equalsIgnoreCase(key.getName())) {
+                        try {
+                            boolean bValue = parseBool(oriValue, c);
+                            CheckDataSourcesTask.setInMemoryFollowReadAndWait(
+                                DynamicConfig.getInstance().enableFollowReadTimeout(), bValue);
+                        } catch (Throwable t) {
+                            c.writeErrMessage(ErrorCode.ER_WRONG_VALUE_FOR_VAR,
+                                t.getMessage());
+                            return false;
+                        }
                     } else if ("SQL_MODE".equalsIgnoreCase(key.getName())) {
                         String val = c.getVarStringValue(oriValue);
                         boolean enableANSIQuotes = false;
@@ -989,6 +1040,7 @@ public final class SetHandler {
                         } else if (parserValue != IGNORE_VALUE) {
                             c.getServerVariables().put(key.getName().toLowerCase(), parserValue);
                             if (enableSetGlobal && (key.getScope() == VariableScope.GLOBAL)) {
+                                globalCnVariables.add(new Pair<>(key.getName(), val));
                                 globalDNVariables.add(variable);
                             }
                         }
@@ -1113,6 +1165,82 @@ public final class SetHandler {
                         if (enableSetGlobal && (key.getScope() == VariableScope.GLOBAL)) {
                             globalCnVariables.add(new Pair<String, String>(key.getName(), Boolean.toString(enable)));
                         }
+                    } else if (ConnectionProperties.ENCDB_ENCRYPTION_ALGORITHM.equalsIgnoreCase(key.getName())) {
+                        PolarPrivileges polarPrivileges = (PolarPrivileges) c.getPrivileges();
+                        PolarAccountInfo polarUserInfo = polarPrivileges.checkAndGetMatchUser(c.getUser(), c.getHost());
+                        if (!polarUserInfo.getAccountType().isSuperUser()
+                            && polarUserInfo.getAccountType() != AccountType.SSO) {
+                            throw new EncdbException("check privilege failed");
+                        }
+                        String algo = parserValue(oriValue, key, c).toString();
+                        Constants.EncAlgo encAlgo = Constants.EncAlgo.valueOf(algo.toUpperCase());
+                        c.getConnectionVariables().put(ConnectionProperties.ENCDB_ENCRYPTION_ALGORITHM, encAlgo.name());
+                        if (enableSetGlobal && (key.getScope() == VariableScope.GLOBAL)) {
+                            globalCnVariables.add(new Pair<String, String>(key.getName(), encAlgo.name()));
+                        }
+                    } else if (ConnectionProperties.ENCDB_DEFAULT_ROLE_PRIVILEGE.equalsIgnoreCase(key.getName())) {
+                        PolarPrivileges polarPrivileges = (PolarPrivileges) c.getPrivileges();
+                        PolarAccountInfo polarUserInfo = polarPrivileges.checkAndGetMatchUser(c.getUser(), c.getHost());
+                        if (!polarUserInfo.getAccountType().isSuperUser()
+                            && polarUserInfo.getAccountType() != AccountType.SSO) {
+                            throw new EncdbException("check privilege failed");
+                        }
+                        String priv = parserValue(oriValue, key, c).toString();
+                        if (!MsgKeyConstants.FULL_ACCESS.equals(priv) && !MsgKeyConstants.RESTRICTED_ACCESS.equals(
+                            priv)) {
+                            throw new EncdbException("invalid default role privilege");
+                        }
+                        c.getConnectionVariables().put(ConnectionProperties.ENCDB_DEFAULT_ROLE_PRIVILEGE, priv);
+                        if (enableSetGlobal && (key.getScope() == VariableScope.GLOBAL)) {
+                            globalCnVariables.add(new Pair<String, String>(key.getName(), priv));
+                        }
+                    } else if (ConnectionProperties.COLUMNAR_VERSION_CHAIN_PRUNER.equalsIgnoreCase(key.getName())) {
+                        String value = parserValue(oriValue, key, c).toString();
+                        ColumnarVersionChainPruner.checkPruneStringValid(value);
+                        if (enableSetGlobal && (key.getScope() == VariableScope.GLOBAL)) {
+                            globalCnVariables.add(new Pair<>(key.getName(), value));
+                        }
+                    } else if (ConnectionProperties.LOGIN_ERROR_DEFAULT_MAX_COUNT.equalsIgnoreCase(key.getName())
+                        || ConnectionProperties.LOGIN_ERROR_DEFAULT_EXPIRE_SECONDS.equalsIgnoreCase(key.getName())
+                        || ConnectionProperties.MAX_USER_CONNECTIONS.equalsIgnoreCase(key.getName())) {
+
+                        PolarPrivileges polarPrivileges = (PolarPrivileges) c.getPrivileges();
+                        PolarAccountInfo polarUserInfo = polarPrivileges.checkAndGetMatchUser(c.getUser(), c.getHost());
+                        if (!polarUserInfo.getAccountType().isSuperUser()
+                            && polarUserInfo.getAccountType() != AccountType.SSO) {
+                            throw new TddlRuntimeException(ERR_CHECK_PRIVILEGE_FAILED, "set global security variable",
+                                c.getUser(), c.getHost());
+                        }
+                        if (key.getScope() != VariableScope.GLOBAL) {
+                            throw new UnsupportedOperationException("the variables can only be set global");
+                        }
+                        String value = parserValue(oriValue, key, c).toString();
+                        c.getConnectionVariables().put(key.getName(), value);
+                        if (enableSetGlobal && (key.getScope() == VariableScope.GLOBAL)) {
+                            globalCnVariables.add(new Pair<String, String>(key.getName(), value));
+                        }
+                    } else if (ConnectionProperties.WAIT_TIMEOUT.equalsIgnoreCase(key.getName())) {
+                        String value = parserValue(oriValue, key, c).toString();
+                        c.getConnectionVariables().put(key.getName(), value);
+                        if (enableSetGlobal && key.getScope() == VariableScope.GLOBAL) {
+                            PolarPrivileges polarPrivileges = (PolarPrivileges) c.getPrivileges();
+                            PolarAccountInfo polarUserInfo =
+                                polarPrivileges.checkAndGetMatchUser(c.getUser(), c.getHost());
+                            if (!polarUserInfo.getAccountType().isSuperUser()
+                                && polarUserInfo.getAccountType() != AccountType.SSO) {
+                                throw new TddlRuntimeException(ERR_CHECK_PRIVILEGE_FAILED, "check privilege failed");
+                            }
+                            globalCnVariables.add(new Pair<String, String>(key.getName(), value));
+                        }
+                    } else if (ConnectionProperties.ENABLE_DEEP_PAGE_OPTIMIZER.equalsIgnoreCase(key.getName())) {
+                        if (key.getScope() == VariableScope.GLOBAL) {
+                            throw new UnsupportedOperationException("ENABLE_DEEP_PAGE_OPTIMIZER can not be set global");
+                        }
+                        boolean enable = Boolean.parseBoolean(parserValue(oriValue, key, c).toString());
+                        if (!enable && c.getDeepPageCacheMap() != null) {
+                            c.getDeepPageCacheMap().clear();
+                        }
+                        c.getConnectionVariables().put(ConnectionProperties.ENABLE_DEEP_PAGE_OPTIMIZER, enable);
                     } else if (ConnectionProperties.ENABLE_EXTERNAL_CONSISTENCY_FOR_WRITE_TRX
                         .equalsIgnoreCase(key.getName())) {
                         boolean enable = Boolean.parseBoolean(parserValue(oriValue, key, c).toString());
@@ -1147,6 +1275,39 @@ public final class SetHandler {
                                 globalCnVariables.add(
                                     new Pair<>(ConnectionProperties.COMPLEX_DML_WITH_TRX, Boolean.toString(false)));
                             }
+                        }
+                    } else if (ConnectionProperties.WAIT_TIMEOUT.equalsIgnoreCase(key.getName())
+                        || ConnectionProperties.MAX_USER_CONNECTIONS.equalsIgnoreCase(key.getName())) {
+                        //设置安全属性需要高权限账户或者DBA,DSA
+                        PolarAccountInfo currentUserInfo = PolarHandlerCommon.getMatchGranter(c);//获取当前user
+                        if (!currentUserInfo.getAccountType().isGod()
+                            && !currentUserInfo.getAccountType().isDBA()
+                            && currentUserInfo.getAccountType() != AccountType.SSO) {
+                            throw new TddlRuntimeException(ERR_CHECK_PRIVILEGE_FAILED, "set global security variable",
+                                currentUserInfo.getUsername(), currentUserInfo.getHost());
+                        }
+
+                        Object parserValue = parserValue(oriValue, key, c);
+                        String relVal = parserValue.toString();
+
+                        c.getConnectionVariables().put(key.getName().toUpperCase(Locale.ROOT), relVal);
+                        if (enableSetGlobal && (key.getScope() == VariableScope.GLOBAL)) {
+                            globalCnVariables.add(Pair.of(key.getName(), parserValue.toString()));
+                        }
+
+                    } else if (ConnectionProperties.TTL_QUERY_TYPE.equalsIgnoreCase(key.getName())) {
+                        Object parserValue = parserValue(oriValue, key, c);
+                        String relVal = parserValue.toString().toUpperCase();
+                        TtlQueryType defaultQueryType = null;
+                        try {
+                            defaultQueryType = TtlQueryType.valueOf(relVal);
+                        } catch (Throwable e) {
+                            throw new IllegalArgumentException("invalid ttl_default_query_type");
+                        }
+
+                        c.getConnectionVariables().put(key.getName().toUpperCase(Locale.ROOT), defaultQueryType.name());
+                        if (enableSetGlobal && (key.getScope() == VariableScope.GLOBAL)) {
+                            globalCnVariables.add(Pair.of(key.getName(), defaultQueryType.name()));
                         }
                     } else if (!isCnVariable(key.getName())) {
                         // Processing DN variables.
@@ -1224,6 +1385,12 @@ public final class SetHandler {
                                 c.getServerVariables().put(key.getName().toLowerCase(), parserValue);
                             }
                         }
+                    } else if (key.getName().equalsIgnoreCase(ConnectionProperties.ENABLE_JAVA_UDF)) {
+                        // Security: ENABLE_JAVA_UDF can only be modified via inst_config backend
+                        c.writeErrMessage(ErrorCode.ER_NOT_SUPPORTED_YET,
+                            "Variable 'ENABLE_JAVA_UDF' is a security-sensitive parameter and cannot be set via SET command. "
+                                + "It can only be modified through inst_config backend.");
+                        return true;
                     } else {
                         // Processing CN session/global variables.
                         Object parserValue = parserValue(oriValue, key, c);
@@ -1570,6 +1737,15 @@ public final class SetHandler {
 
             logger.warn("[" + c.getTraceId() + "]" + msg);
             return false;
+        } else if (!c.isGod()) {
+            for (Pair<SqlNode, SqlNode> variable : dnVariableAssignmentList) {
+                String varName = ((SqlSystemVar) variable.getKey()).getName().toLowerCase(Locale.ROOT);
+                if (!ServerVariables.isDbaGlobalAllowed(varName)) {
+                    c.writeErrMessage(ErrorCode.ER_GLOBAL_VARIABLE,
+                        "Variable '" + varName + "' is not allowed to be set globally");
+                    return true;
+                }
+            }
         }
 
         boolean needSyncCnProps = false;
@@ -1677,13 +1853,15 @@ public final class SetHandler {
                         c.writeErrMessage(ErrorCode.ER_UNKNOWN_CHARACTER_SET, "Unknown charset :" + charset);
                         return false;
                     }
+                    // Resolve the actual charset name from the index (e.g. "13" -> "sjis")
+                    charset = c.getResultSetCharset();
                 } catch (RuntimeException e) {
                     c.writeErrMessage(ErrorCode.ER_UNKNOWN_CHARACTER_SET, "Unknown charset :" + charset);
                     return false;
                 }
             }
 
-            c.getExtraServerVariables().put("CHARACTER_SET_RESULTS".toLowerCase(), charset);
+            c.getExtraServerVariables().put("CHARACTER_SET_RESULTS".toLowerCase(), isDefaultOrNull ? "" : charset);
             return true;
         }
 
@@ -1702,13 +1880,15 @@ public final class SetHandler {
                         c.writeErrMessage(ErrorCode.ER_UNKNOWN_CHARACTER_SET, "Unknown charset :" + charset);
                         return false;
                     }
+                    // Resolve the actual charset name from the index (e.g. "13" -> "sjis")
+                    charset = c.getConnectionCharset();
                 } catch (RuntimeException e) {
                     c.writeErrMessage(ErrorCode.ER_UNKNOWN_CHARACTER_SET, "Unknown charset :" + charset);
                     return false;
                 }
             }
 
-            c.getExtraServerVariables().put("CHARACTER_SET_CONNECTION".toLowerCase(), charset);
+            c.getExtraServerVariables().put("CHARACTER_SET_CONNECTION".toLowerCase(), isDefaultOrNull ? "" : charset);
             return true;
         }
 
@@ -1730,14 +1910,17 @@ public final class SetHandler {
                         c.writeErrMessage(ErrorCode.ER_UNKNOWN_CHARACTER_SET, "Unknown charset :" + charset);
                         return false;
                     }
+                    // Resolve the actual charset name from the index (e.g. "13" -> "sjis")
+                    charset = c.getConnectionCharset();
                 } catch (RuntimeException e) {
                     c.writeErrMessage(ErrorCode.ER_UNKNOWN_CHARACTER_SET, "Unknown charset :" + charset);
                     return false;
                 }
             }
         }
-        c.getExtraServerVariables().put("CHARACTER_SET_RESULTS".toLowerCase(), charset);
-        c.getExtraServerVariables().put("CHARACTER_SET_CONNECTION".toLowerCase(), charset);
+        String effectiveCharset = isDefaultOrNull ? "" : charset;
+        c.getExtraServerVariables().put("CHARACTER_SET_RESULTS".toLowerCase(), effectiveCharset);
+        c.getExtraServerVariables().put("CHARACTER_SET_CONNECTION".toLowerCase(), effectiveCharset);
         return true;
     }
 
@@ -1846,6 +2029,10 @@ public final class SetHandler {
      * If it is not valid, an exception will be thrown.
      */
     private static void extraCheck(String systemVarName, String systemVarValue) {
+        if (MceDynamicConfig.isSupportedKey(systemVarName)) {
+            MceDynamicConfig.validateValue(systemVarName, systemVarValue);
+            return;
+        }
         if (systemVarName.equalsIgnoreCase(TransactionAttribute.DRDS_TRANSACTION_POLICY)) {
             if ("2PC".equalsIgnoreCase(systemVarValue) || "FLEXIBLE".equalsIgnoreCase(systemVarValue)) {
                 return;

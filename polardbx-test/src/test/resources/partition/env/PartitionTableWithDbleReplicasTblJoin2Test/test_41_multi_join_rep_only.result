@@ -1,0 +1,600 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+set ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING=true;
+set ENABLE_REPLICAS_RANDOM_READ= false;
+use polardbx;
+drop database if exists repjoin41_db;
+## USE_DN_LIST_MSG
+create database if not exists `repjoin41_db` CHARSET = `utf8mb4` COLLATE = `utf8mb4_general_ci` MODE = 'auto'
+LOCALITY = 'dble_config={"group_config":{
+  "repjoin41_db_g0":["$dn1","repjoin41_db_g0"],
+  "repjoin41_db_g1":["$dn2","repjoin41_db_g1"],
+  "repjoin41_db_g2":["$dn1","repjoin41_db_g2"],
+  "repjoin41_db_g3":["$dn2","repjoin41_db_g3"],
+  "repjoin41_db_g4":["$dn1","repjoin41_db_g4"],
+  "repjoin41_db_g5":["$dn2","repjoin41_db_g5"]
+}}';
+use repjoin41_db;
+DROP TABLE IF EXISTS `rep_t1_g0g1g2`;
+CREATE TABLE IF NOT EXISTS `rep_t1_g0g1g2` (
+  `id` bigint(20) NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin41_db_g0,repjoin41_db_g1,repjoin41_db_g2';
+DROP TABLE IF EXISTS `rep_t2_g0g1g2`;
+CREATE TABLE IF NOT EXISTS  `rep_t2_g0g1g2` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin41_db_g0,repjoin41_db_g1,repjoin41_db_g2';
+DROP TABLE IF EXISTS `rep_t3_g1g2`;
+CREATE TABLE IF NOT EXISTS `rep_t3_g1g2` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin41_db_g1,repjoin41_db_g2';
+DROP TABLE IF EXISTS `rep_t4_g2g3`;
+CREATE TABLE IF NOT EXISTS `rep_t4_g2g3` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin41_db_g2,repjoin41_db_g3';
+DROP TABLE IF EXISTS `rep_t5_g3g4`;
+CREATE TABLE IF NOT EXISTS `rep_t5_g3g4` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin41_db_g3,repjoin41_db_g4';
+DROP TABLE IF EXISTS `rep_t6_g5`;
+CREATE TABLE IF NOT EXISTS `rep_t6_g5` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin41_db_g5';
+insert into rep_t1_g0g1g2 values (1),(2),(3),(4),(5);
+insert into rep_t2_g0g1g2 values (1),(2),(3),(4),(5);
+insert into rep_t3_g1g2 values (1),(2),(3),(4),(5);
+insert into rep_t4_g2g3 values (1),(2),(3),(4),(5);
+insert into rep_t5_g3g4 values (1),(2),(3),(4),(5);
+insert into rep_t6_g5 values (1),(2),(3),(4),(5);
+##===== normaLJoin: all rep tbl with common group keys =====
+explain select t1.id from
+rep_t1_g0g1g2 t1
+join rep_t2_g0g1g2 t2 on t1.id = t2.id
+join rep_t3_g1g2 t3 on t1.id = t3.id
+order by t1.id;
+Logical ExecutionPlan
+LogicalView(tables="repjoin41_db_g1.rep_t1_g0g1g2,rep_t2_g0g1g2,rep_t3_g1g2", sql="SELECT `t1`.`id` AS `id` FROM `rep_t1_g0g1g2` AS `t1` INNER JOIN `rep_t2_g0g1g2` AS `t2` ON (`t1`.`id` = `t2`.`id`) INNER JOIN `rep_t3_g1g2` AS `t3` ON (`t1`.`id` = `t3`.`id`) ORDER BY `t1`.`id`")
+select t1.id from
+rep_t1_g0g1g2 t1
+join rep_t2_g0g1g2 t2 on t1.id = t2.id
+join rep_t3_g1g2 t3 on t1.id = t3.id
+order by t1.id;
+id
+1
+2
+3
+4
+5
+##===== normaLJoin: not all rep tbl with common group keys =====
+explain select t1.id from
+rep_t1_g0g1g2 t1
+join rep_t3_g1g2 t3 on t1.id = t3.id
+join rep_t5_g3g4 t5 on t5.id = t3.id
+join rep_t4_g2g3 t4 on t4.id = t5.id
+order by t1.id;
+Logical ExecutionPlan
+Project(id="id")
+  HashJoin(condition="id = id0 AND id0 = id0 AND id = id AND id0 = id", type="inner")
+    LogicalView(tables="rep_t1_g0g1g2[p2],rep_t3_g1g2[p1]", sql="SELECT `rep_t1_g0g1g2`.`id`, `rep_t3_g1g2`.`id` AS `id0` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` INNER JOIN `rep_t3_g1g2` AS `rep_t3_g1g2` ON (`rep_t1_g0g1g2`.`id` = `rep_t3_g1g2`.`id`) WHERE (`rep_t3_g1g2`.`id` = `rep_t1_g0g1g2`.`id`) ORDER BY `rep_t1_g0g1g2`.`id`")
+    LogicalView(tables="rep_t5_g3g4[p1],rep_t4_g2g3[p2]", sql="SELECT `rep_t5_g3g4`.`id`, `rep_t4_g2g3`.`id` AS `id0` FROM `rep_t5_g3g4` AS `rep_t5_g3g4` INNER JOIN `rep_t4_g2g3` AS `rep_t4_g2g3` ON (`rep_t5_g3g4`.`id` = `rep_t4_g2g3`.`id`)")
+select t1.id from
+rep_t1_g0g1g2 t1
+join rep_t3_g1g2 t3 on t1.id = t3.id
+join rep_t5_g3g4 t5 on t5.id = t3.id
+join rep_t4_g2g3 t4 on t4.id = t5.id
+order by t1.id;
+id
+1
+2
+3
+4
+5
+##===== normaLJoin: no rep tbl with common group keys =====
+explain select t1.id from
+rep_t6_g5 t1
+join rep_t3_g1g2 t3 on t1.id = t3.id
+join rep_t5_g3g4 t5 on t5.id = t3.id
+order by t1.id;
+Logical ExecutionPlan
+Project(id="id")
+  HashJoin(condition="id = id AND id0 = id", type="inner")
+    HashJoin(condition="id = id", type="inner")
+      LogicalView(tables="rep_t6_g5[p1]", sql="SELECT `id` FROM `rep_t6_g5` AS `rep_t6_g5` ORDER BY `id`")
+      LogicalView(tables="rep_t3_g1g2[p1]", sql="SELECT `id` FROM `rep_t3_g1g2` AS `rep_t3_g1g2`")
+    LogicalView(tables="rep_t5_g3g4[p1]", sql="SELECT `id` FROM `rep_t5_g3g4` AS `rep_t5_g3g4`")
+select t1.id from
+rep_t6_g5 t1
+join rep_t3_g1g2 t3 on t1.id = t3.id
+join rep_t5_g3g4 t5 on t5.id = t3.id
+order by t1.id;
+id
+1
+2
+3
+4
+5
+##===== filterSubQuery : all rep tbl with common group keys =====
+explain select t1.id from
+rep_t1_g0g1g2 t1
+where
+t1.id in (select t3.id from rep_t3_g1g2 t3)
+or
+t1.id in (select t4.id from rep_t4_g2g3 t4)
+order by t1.id;
+Logical ExecutionPlan
+LogicalView(tables="repjoin41_db_g2.rep_t1_g0g1g2,rep_t3_g1g2,rep_t4_g2g3", sql="SELECT `t1`.`id` AS `id` FROM `rep_t1_g0g1g2` AS `t1` WHERE ((`t1`.`id` IN (SELECT `t3`.`id` AS `id` FROM `rep_t3_g1g2` AS `t3`)) OR (`t1`.`id` IN (SELECT `t4`.`id` AS `id` FROM `rep_t4_g2g3` AS `t4`))) ORDER BY `t1`.`id`")
+select t1.id from
+rep_t1_g0g1g2 t1
+where
+t1.id in (select t3.id from rep_t3_g1g2 t3)
+or
+t1.id in (select t4.id from rep_t4_g2g3 t4)
+order by t1.id;
+id
+1
+2
+3
+4
+5
+##===== filterSubQuery : not all rep tbl with common group keys =====
+explain select t1.id from
+rep_t1_g0g1g2 t1
+where
+t1.id in (select t3.id from rep_t3_g1g2 t3)
+and
+t1.id in (select t6.id from rep_t6_g5 t6)
+order by t1.id;
+Logical ExecutionPlan
+SemiHashJoin(condition="id = id", type="semi", build="inner")
+  LogicalView(tables="rep_t1_g0g1g2[p2],rep_t3_g1g2[p1]", sql="SELECT `id` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` WHERE (`id` IN (SELECT `id` FROM `rep_t3_g1g2` AS `rep_t3_g1g2`)) ORDER BY `id`")
+  LogicalView(tables="rep_t6_g5[p1]", sql="SELECT `id` FROM `rep_t6_g5` AS `rep_t6_g5`")
+select t1.id from
+rep_t1_g0g1g2 t1
+where
+t1.id in (select t3.id from rep_t3_g1g2 t3)
+and
+t1.id in (select t6.id from rep_t6_g5 t6)
+order by t1.id;
+id
+1
+2
+3
+4
+5
+##===== filterSubQuery : no rep tbl with common group keys =====
+explain select t6.id from
+rep_t6_g5 t6
+where
+t6.id in (select t3.id from rep_t3_g1g2 t3)
+and
+t6.id in (select t4.id from rep_t4_g2g3 t4)
+order by t6.id;
+Logical ExecutionPlan
+SemiHashJoin(condition="id = id", type="semi", build="inner")
+  SemiHashJoin(condition="id = id", type="semi", build="inner")
+    LogicalView(tables="rep_t6_g5[p1]", sql="SELECT `id` FROM `rep_t6_g5` AS `rep_t6_g5` ORDER BY `id`")
+    LogicalView(tables="rep_t3_g1g2[p1]", sql="SELECT `id` FROM `rep_t3_g1g2` AS `rep_t3_g1g2`")
+  LogicalView(tables="rep_t4_g2g3[p1]", sql="SELECT `id` FROM `rep_t4_g2g3` AS `rep_t4_g2g3`")
+select t6.id from
+rep_t6_g5 t6
+where
+t6.id in (select t3.id from rep_t3_g1g2 t3)
+and
+t6.id in (select t4.id from rep_t4_g2g3 t4)
+order by t6.id;
+id
+1
+2
+3
+4
+5
+##===== columnSubQuery : all rep tbl with common group keys =====
+explain select t1.id,
+(select t2.id from rep_t2_g0g1g2 t2 where t2.id=t1.id) as t2_id,
+(select t3.id from rep_t3_g1g2 t3 where t3.id=t1.id) as t3_id,
+(select t4.id from rep_t4_g2g3 t4 where t4.id=t1.id) as t4_id
+from rep_t1_g0g1g2 t1
+order by t1.id;
+Logical ExecutionPlan
+LogicalView(tables="repjoin41_db_g2.rep_t2_g0g1g2,rep_t3_g1g2,rep_t4_g2g3,rep_t1_g0g1g2", sql="SELECT `t1`.`id` AS `id`, (((SELECT `t2`.`id` AS `id` FROM `rep_t2_g0g1g2` AS `t2` WHERE (`t2`.`id` = `t1`.`id`)))) AS `t2_id`, (((SELECT `t3`.`id` AS `id` FROM `rep_t3_g1g2` AS `t3` WHERE (`t3`.`id` = `t1`.`id`)))) AS `t3_id`, (((SELECT `t4`.`id` AS `id` FROM `rep_t4_g2g3` AS `t4` WHERE (`t4`.`id` = `t1`.`id`)))) AS `t4_id` FROM `rep_t1_g0g1g2` AS `t1` ORDER BY `t1`.`id`")
+select t1.id,
+(select t2.id from rep_t2_g0g1g2 t2 where t2.id=t1.id) as t2_id,
+(select t3.id from rep_t3_g1g2 t3 where t3.id=t1.id) as t3_id,
+(select t4.id from rep_t4_g2g3 t4 where t4.id=t1.id) as t4_id
+from rep_t1_g0g1g2 t1
+order by t1.id;
+id,t2_id,t3_id,t4_id
+1,1,1,1
+2,2,2,2
+3,3,3,3
+4,4,4,4
+5,5,5,5
+##===== columnSubQuery : not all rep tbl with common group keys =====
+explain select t1.id,
+(select t2.id from rep_t2_g0g1g2 t2 where t2.id=t1.id) as t2_id,
+(select t5.id from rep_t5_g3g4 t5 where t5.id=t1.id) as t5_id,
+(select t4.id from rep_t4_g2g3 t4 where t4.id=t1.id) as t4_id
+from rep_t1_g0g1g2 t1
+order by t1.id;
+Logical ExecutionPlan
+SemiHashJoin(condition="id = id", type="left", build="inner")
+  SemiHashJoin(condition="id = id", type="left", build="inner")
+    LogicalView(tables="rep_t2_g0g1g2[p1],rep_t1_g0g1g2[p1]", sql="SELECT `id`, (((SELECT `id` FROM `rep_t2_g0g1g2` AS `rep_t2_g0g1g2` WHERE (`id` = `rep_t1_g0g1g2`.`id`)))) AS `id0` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` ORDER BY `id`")
+    LogicalView(tables="rep_t5_g3g4[p1]", sql="SELECT `id` FROM `rep_t5_g3g4` AS `rep_t5_g3g4`")
+  LogicalView(tables="rep_t4_g2g3[p1]", sql="SELECT `id` FROM `rep_t4_g2g3` AS `rep_t4_g2g3`")
+select t1.id,
+(select t2.id from rep_t2_g0g1g2 t2 where t2.id=t1.id) as t2_id,
+(select t5.id from rep_t5_g3g4 t5 where t5.id=t1.id) as t5_id,
+(select t4.id from rep_t4_g2g3 t4 where t4.id=t1.id) as t4_id
+from rep_t1_g0g1g2 t1
+order by t1.id;
+id,t2_id,t5_id,t4_id
+1,1,1,1
+2,2,2,2
+3,3,3,3
+4,4,4,4
+5,5,5,5
+explain select t1.id,
+(select t2.id from rep_t2_g0g1g2 t2 where t2.id=t1.id) as t2_id,
+(select t4.id from rep_t4_g2g3 t4 where t4.id=t1.id) as t4_id,
+(select t5.id from rep_t5_g3g4 t5 where t5.id=t1.id) as t5_id
+from rep_t1_g0g1g2 t1
+order by t1.id;
+Logical ExecutionPlan
+SemiHashJoin(condition="id = id", type="left", build="inner")
+  LogicalView(tables="rep_t4_g2g3[p1],rep_t2_g0g1g2[p3],rep_t1_g0g1g2[p3]", sql="SELECT `id`, `id0`, (((SELECT `id` FROM `rep_t4_g2g3` AS `rep_t4_g2g3` WHERE (`id` = `t0`.`id`)))) AS `id1` FROM (SELECT `id`, (((SELECT `id` FROM `rep_t2_g0g1g2` AS `rep_t2_g0g1g2` WHERE (`id` = `rep_t1_g0g1g2`.`id`)))) AS `id0` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2`) AS `t0` ORDER BY `id`")
+  LogicalView(tables="rep_t5_g3g4[p1]", sql="SELECT `id` FROM `rep_t5_g3g4` AS `rep_t5_g3g4`")
+select t1.id,
+(select t2.id from rep_t2_g0g1g2 t2 where t2.id=t1.id) as t2_id,
+(select t4.id from rep_t4_g2g3 t4 where t4.id=t1.id) as t4_id,
+(select t5.id from rep_t5_g3g4 t5 where t5.id=t1.id) as t5_id
+from rep_t1_g0g1g2 t1
+order by t1.id;
+id,t2_id,t4_id,t5_id
+1,1,1,1
+2,2,2,2
+3,3,3,3
+4,4,4,4
+5,5,5,5
+##===== columnSubQuery : no rep tbl with common group keys =====
+explain select t6.id,
+(select t3.id from rep_t3_g1g2 t3 where t3.id=t6.id) as t3_id,
+(select t4.id from rep_t4_g2g3 t4 where t4.id=t6.id) as t4_id
+from rep_t6_g5 t6
+order by t6.id;
+Logical ExecutionPlan
+SemiHashJoin(condition="id = id", type="left", build="inner")
+  SemiHashJoin(condition="id = id", type="left", build="inner")
+    LogicalView(tables="rep_t6_g5[p1]", sql="SELECT `id` FROM `rep_t6_g5` AS `rep_t6_g5` ORDER BY `id`")
+    LogicalView(tables="rep_t3_g1g2[p1]", sql="SELECT `id` FROM `rep_t3_g1g2` AS `rep_t3_g1g2`")
+  LogicalView(tables="rep_t4_g2g3[p1]", sql="SELECT `id` FROM `rep_t4_g2g3` AS `rep_t4_g2g3`")
+select t6.id,
+(select t3.id from rep_t3_g1g2 t3 where t3.id=t6.id) as t3_id,
+(select t4.id from rep_t4_g2g3 t4 where t4.id=t6.id) as t4_id
+from rep_t6_g5 t6
+order by t6.id;
+id,t3_id,t4_id
+1,1,1
+2,2,2
+3,3,3
+4,4,4
+5,5,5
+##===== union : all rep tbl with common group keys =====
+explain select id from rep_t1_g0g1g2
+union all
+(select t2.id from rep_t2_g0g1g2 t2)
+union all
+(select t3.id from rep_t3_g1g2 t3)
+order by id;
+Logical ExecutionPlan
+LogicalView(tables="repjoin41_db_g1.rep_t1_g0g1g2,rep_t2_g0g1g2,rep_t3_g1g2", sql="SELECT `__ALIAS__`.`id` FROM (SELECT `rep_t1_g0g1g2`.`id` AS `id` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` UNION ALL SELECT `t2`.`id` AS `id` FROM `rep_t2_g0g1g2` AS `t2` UNION ALL SELECT `t3`.`id` AS `id` FROM `rep_t3_g1g2` AS `t3`) AS `__ALIAS__` ORDER BY `id`")
+select id from rep_t1_g0g1g2
+union all
+(select t2.id from rep_t2_g0g1g2 t2)
+union all
+(select t3.id from rep_t3_g1g2 t3)
+order by id;
+id
+1
+1
+1
+2
+2
+2
+3
+3
+3
+4
+4
+4
+5
+5
+5
+##===== union : not all rep tbl with common group keys =====
+explain select id from rep_t1_g0g1g2
+union all
+(select t3.id from rep_t3_g1g2 t3)
+union all
+(select t5.id from rep_t5_g3g4 t5)
+order by id;
+Logical ExecutionPlan
+MemSort(sort="id ASC")
+  UnionAll(concurrent=true)
+    LogicalView(tables="rep_t1_g0g1g2[p1]", sql="SELECT `id` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2`")
+    LogicalView(tables="rep_t3_g1g2[p1]", sql="SELECT `id` FROM `rep_t3_g1g2` AS `rep_t3_g1g2`")
+    LogicalView(tables="rep_t5_g3g4[p1]", sql="SELECT `id` FROM `rep_t5_g3g4` AS `rep_t5_g3g4`")
+select id from rep_t1_g0g1g2
+union all
+(select t3.id from rep_t3_g1g2 t3)
+union all
+(select t5.id from rep_t5_g3g4 t5)
+order by id;
+id
+1
+1
+1
+2
+2
+2
+3
+3
+3
+4
+4
+4
+5
+5
+5
+##===== union : no rep tbl with common group keys =====
+explain select id from rep_t6_g5
+union all
+(select t3.id from rep_t3_g1g2 t3)
+union all
+(select t5.id from rep_t5_g3g4 t5)
+order by id;
+Logical ExecutionPlan
+MemSort(sort="id ASC")
+  UnionAll(concurrent=true)
+    LogicalView(tables="rep_t6_g5[p1]", sql="SELECT `id` FROM `rep_t6_g5` AS `rep_t6_g5`")
+    LogicalView(tables="rep_t3_g1g2[p1]", sql="SELECT `id` FROM `rep_t3_g1g2` AS `rep_t3_g1g2`")
+    LogicalView(tables="rep_t5_g3g4[p1]", sql="SELECT `id` FROM `rep_t5_g3g4` AS `rep_t5_g3g4`")
+select id from rep_t6_g5
+union all
+(select t3.id from rep_t3_g1g2 t3)
+union all
+(select t5.id from rep_t5_g3g4 t5)
+order by id;
+id
+1
+1
+1
+2
+2
+2
+3
+3
+3
+4
+4
+4
+5
+5
+5
+##===== mixJoinAndSubQuery1-0: all rep tbl with common group keys =====
+explain select
+t1.id,
+(select t2.id from rep_t2_g0g1g2 t2 where t2.id=t1.id) as t2_id,
+(select t3.id from rep_t3_g1g2 t3 where t3.id=t1.id) as t3_id,
+(select t4.id from rep_t4_g2g3 t4 where t4.id=t1.id) as t4_id
+from
+rep_t1_g0g1g2 t1
+join rep_t2_g0g1g2 t2 on t1.id = t2.id
+join rep_t3_g1g2 t3 on t1.id = t3.id
+where
+t1.id in (select t3_2.id from rep_t3_g1g2 t3_2)
+and
+t1.id in (select t4_2.id from rep_t4_g2g3 t4_2)
+order by t1.id;
+Logical ExecutionPlan
+LogicalView(tables="repjoin41_db_g2.rep_t2_g0g1g2,rep_t3_g1g2,rep_t4_g2g3,rep_t1_g0g1g2,rep_t2_g0g1g2,rep_t3_g1g2,rep_t3_g1g2,rep_t4_g2g3", sql="SELECT `t1`.`id` AS `id`, (((SELECT `t2`.`id` AS `id` FROM `rep_t2_g0g1g2` AS `t2` WHERE (`t2`.`id` = `t1`.`id`)))) AS `t2_id`, (((SELECT `t3`.`id` AS `id` FROM `rep_t3_g1g2` AS `t3` WHERE (`t3`.`id` = `t1`.`id`)))) AS `t3_id`, (((SELECT `t4`.`id` AS `id` FROM `rep_t4_g2g3` AS `t4` WHERE (`t4`.`id` = `t1`.`id`)))) AS `t4_id` FROM `rep_t1_g0g1g2` AS `t1` INNER JOIN `rep_t2_g0g1g2` AS `t2` ON (`t1`.`id` = `t2`.`id`) INNER JOIN `rep_t3_g1g2` AS `t3` ON (`t1`.`id` = `t3`.`id`) WHERE ((`t1`.`id` IN (SELECT `t3_2`.`id` AS `id` FROM `rep_t3_g1g2` AS `t3_2`)) AND (`t1`.`id` IN (SELECT `t4_2`.`id` AS `id` FROM `rep_t4_g2g3` AS `t4_2`))) ORDER BY `t1`.`id`")
+select
+t1.id,
+(select t2.id from rep_t2_g0g1g2 t2 where t2.id=t1.id) as t2_id,
+(select t3.id from rep_t3_g1g2 t3 where t3.id=t1.id) as t3_id,
+(select t4.id from rep_t4_g2g3 t4 where t4.id=t1.id) as t4_id
+from
+rep_t1_g0g1g2 t1
+join rep_t2_g0g1g2 t2 on t1.id = t2.id
+join rep_t3_g1g2 t3 on t1.id = t3.id
+where
+t1.id in (select t3_2.id from rep_t3_g1g2 t3_2)
+and
+t1.id in (select t4_2.id from rep_t4_g2g3 t4_2)
+order by t1.id;
+id,t2_id,t3_id,t4_id
+1,1,1,1
+2,2,2,2
+3,3,3,3
+4,4,4,4
+5,5,5,5
+##===== mixJoinAndSubQuery1-1: all rep tbl with common group keys =====
+explain select
+t1.id
+from
+rep_t1_g0g1g2 t1
+join rep_t2_g0g1g2 t2 on t1.id = t2.id
+join (
+select t1_2.id as sb_id
+from
+rep_t1_g0g1g2 t1_2
+where
+t1_2.id in (select t3_3.id from rep_t3_g1g2 t3_3)
+order by t1_2.id
+) sb1 on t1.id = sb1.sb_id and t1.id in (select t4_2.id from rep_t4_g2g3 t4_2)
+order by t1.id;
+Logical ExecutionPlan
+LogicalView(tables="repjoin41_db_g2.rep_t1_g0g1g2,rep_t2_g0g1g2,rep_t1_g0g1g2,rep_t3_g1g2,rep_t4_g2g3", sql="SELECT `t1`.`id` AS `id` FROM `rep_t1_g0g1g2` AS `t1` INNER JOIN `rep_t2_g0g1g2` AS `t2` ON (`t1`.`id` = `t2`.`id`) INNER JOIN (SELECT `t1_2`.`id` AS `sb_id` FROM `rep_t1_g0g1g2` AS `t1_2` WHERE (`t1_2`.`id` IN (SELECT `t3_3`.`id` AS `id` FROM `rep_t3_g1g2` AS `t3_3`)) ORDER BY `t1_2`.`id`) AS `sb1` ON ((`t1`.`id` = `sb1`.`sb_id`) AND (`t1`.`id` IN (SELECT `t4_2`.`id` AS `id` FROM `rep_t4_g2g3` AS `t4_2`))) ORDER BY `t1`.`id`")
+select
+t1.id
+from
+rep_t1_g0g1g2 t1
+join rep_t2_g0g1g2 t2 on t1.id = t2.id
+join (
+select t1_2.id as sb_id
+from
+rep_t1_g0g1g2 t1_2
+where
+t1_2.id in (select t3_3.id from rep_t3_g1g2 t3_3)
+order by t1_2.id
+) sb1 on t1.id = sb1.sb_id and t1.id in (select t4_2.id from rep_t4_g2g3 t4_2)
+order by t1.id;
+id
+1
+2
+3
+4
+5
+##===== mixJoinAndSubQuery2-0 : not all rep tbl with common group keys =====
+explain select
+t1.id
+from
+rep_t1_g0g1g2 t1
+join rep_t2_g0g1g2 t2 on t1.id = t2.id
+join (
+select t1_2.id as sb_id
+from
+rep_t1_g0g1g2 t1_2
+where
+t1_2.id in (select t3_3.id from rep_t3_g1g2 t3_3)
+order by t1_2.id
+) sb1 on t1.id = sb1.sb_id
+and t1.id in (select t5.id from rep_t5_g3g4 t5)
+order by t1.id;
+Logical ExecutionPlan
+Project(id="id")
+  HashJoin(condition="id = id", type="inner")
+    SemiHashJoin(condition="id = id", type="semi", build="inner")
+      LogicalView(tables="rep_t1_g0g1g2[p1],rep_t2_g0g1g2[p1]", sql="SELECT `rep_t1_g0g1g2`.`id` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` INNER JOIN `rep_t2_g0g1g2` AS `rep_t2_g0g1g2` ON (`rep_t1_g0g1g2`.`id` = `rep_t2_g0g1g2`.`id`) ORDER BY `rep_t1_g0g1g2`.`id`")
+      LogicalView(tables="rep_t5_g3g4[p1]", sql="SELECT `id` FROM `rep_t5_g3g4` AS `rep_t5_g3g4`")
+    SemiHashJoin(condition="id = id", type="semi", build="inner")
+      LogicalView(tables="rep_t1_g0g1g2[p1]", sql="SELECT `id` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2`")
+      LogicalView(tables="rep_t3_g1g2[p1]", sql="SELECT `id` FROM `rep_t3_g1g2` AS `rep_t3_g1g2`")
+##===== mixJoinAndSubQuery2-0 : not all rep tbl with common group keys =====
+explain select
+t1.id
+from
+rep_t1_g0g1g2 t1
+join rep_t2_g0g1g2 t2 on t1.id = t2.id
+join (
+select t1_2.id as sb_id
+from
+rep_t1_g0g1g2 t1_2
+where
+t1_2.id in (select t3_3.id from rep_t3_g1g2 t3_3)
+order by t1_2.id
+) sb1 on t1.id = sb1.sb_id
+where t1.id in (select t5.id from rep_t5_g3g4 t5)
+order by t1.id;
+Logical ExecutionPlan
+Project(id="id")
+  HashJoin(condition="id = id AND id0 = id", type="inner")
+    SemiHashJoin(condition="id = id", type="semi", build="inner")
+      LogicalView(tables="rep_t1_g0g1g2[p1],rep_t2_g0g1g2[p1]", sql="SELECT `rep_t1_g0g1g2`.`id`, `rep_t2_g0g1g2`.`id` AS `id0` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` INNER JOIN `rep_t2_g0g1g2` AS `rep_t2_g0g1g2` ON (`rep_t1_g0g1g2`.`id` = `rep_t2_g0g1g2`.`id`) WHERE (`rep_t1_g0g1g2`.`id` = `rep_t2_g0g1g2`.`id`) ORDER BY `rep_t1_g0g1g2`.`id`")
+      LogicalView(tables="rep_t5_g3g4[p1]", sql="SELECT `id` FROM `rep_t5_g3g4` AS `rep_t5_g3g4`")
+    LogicalView(tables="rep_t1_g0g1g2[p2],rep_t3_g1g2[p1]", sql="SELECT `id` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` WHERE (`id` IN (SELECT `id` FROM `rep_t3_g1g2` AS `rep_t3_g1g2`))")
+select
+t1.id
+from
+rep_t1_g0g1g2 t1
+join rep_t2_g0g1g2 t2 on t1.id = t2.id
+join (
+select t1_2.id as sb_id
+from
+rep_t1_g0g1g2 t1_2
+where
+t1_2.id in (select t3_3.id from rep_t3_g1g2 t3_3)
+order by t1_2.id
+) sb1 on t1.id = sb1.sb_id
+where t1.id in (select t5.id from rep_t5_g3g4 t5)
+order by t1.id;
+id
+1
+2
+3
+4
+5
+##===== mixJoinAndSubQuery2-2: not all rep tbl with common group keys =====
+explain select
+t1.id
+from
+rep_t1_g0g1g2 t1
+join rep_t2_g0g1g2 t2 on t1.id = t2.id
+join (
+select t1_2.id as sb_id,
+(select t2.id from rep_t2_g0g1g2 t2 where t2.id=t1_2.id) as t2_id,
+(select t3.id from rep_t3_g1g2 t3 where t3.id=t1_2.id) as t3_id,
+(select t4.id from rep_t4_g2g3 t4 where t4.id=t1_2.id) as t4_id
+from
+rep_t1_g0g1g2 t1_2
+where
+t1_2.id in (select t3_3.id from rep_t3_g1g2 t3_3)
+order by t1_2.id
+) sb1 on t1.id = sb1.sb_id
+where
+t1.id in (select t5.id from rep_t5_g3g4 t5)
+order by t1.id;
+Logical ExecutionPlan
+Project(id="id")
+  HashJoin(condition="id = sb_id AND id0 = sb_id", type="inner")
+    SemiHashJoin(condition="id = id", type="semi", build="inner")
+      LogicalView(tables="rep_t1_g0g1g2[p1],rep_t2_g0g1g2[p1]", sql="SELECT `rep_t1_g0g1g2`.`id`, `rep_t2_g0g1g2`.`id` AS `id0` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` INNER JOIN `rep_t2_g0g1g2` AS `rep_t2_g0g1g2` ON (`rep_t1_g0g1g2`.`id` = `rep_t2_g0g1g2`.`id`) WHERE (`rep_t1_g0g1g2`.`id` = `rep_t2_g0g1g2`.`id`) ORDER BY `rep_t1_g0g1g2`.`id`")
+      LogicalView(tables="rep_t5_g3g4[p1]", sql="SELECT `id` FROM `rep_t5_g3g4` AS `rep_t5_g3g4`")
+    LogicalView(tables="rep_t1_g0g1g2[p2],rep_t3_g1g2[p1]", sql="SELECT `id` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` WHERE (`id` IN (SELECT `id` FROM `rep_t3_g1g2` AS `rep_t3_g1g2`))")
+select
+t1.id
+from
+rep_t1_g0g1g2 t1
+join rep_t2_g0g1g2 t2 on t1.id = t2.id
+join (
+select t1_2.id as sb_id,
+(select t2.id from rep_t2_g0g1g2 t2 where t2.id=t1_2.id) as t2_id,
+(select t3.id from rep_t3_g1g2 t3 where t3.id=t1_2.id) as t3_id,
+(select t4.id from rep_t4_g2g3 t4 where t4.id=t1_2.id) as t4_id
+from
+rep_t1_g0g1g2 t1_2
+where
+t1_2.id in (select t3_3.id from rep_t3_g1g2 t3_3)
+order by t1_2.id
+) sb1 on t1.id = sb1.sb_id
+where
+t1.id in (select t5.id from rep_t5_g3g4 t5)
+order by t1.id;
+id
+1
+2
+3
+4
+5
+use polardbx;
+drop database if exists repjoin41_db;

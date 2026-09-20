@@ -27,33 +27,31 @@ import com.alibaba.polardbx.executor.balancer.stats.GroupStats;
 import com.alibaba.polardbx.executor.ddl.job.builder.MoveDatabaseBuilder;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseValidateTask;
 import com.alibaba.polardbx.executor.ddl.job.task.CostEstimableDdlTask;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.AnalyzePhyTableTask;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.DdlBackfillCostRecordTask;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.ImportTableSpaceDdlNormalTask;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.InitNewStorageInstTask;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.MoveDatabaseAddMetaTask;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.MoveDatabaseValidateTask;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.PauseCurrentJobTask;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.PhysicalBackfillTask;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.SyncLsnTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.*;
 import com.alibaba.polardbx.executor.ddl.job.task.changset.ChangeSetApplyExecutorInitTask;
 import com.alibaba.polardbx.executor.ddl.job.task.changset.ChangeSetApplyFinishTask;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
+import com.alibaba.polardbx.executor.ddl.job.task.shared.EmptyLogTask;
+import com.alibaba.polardbx.executor.ddl.job.task.shared.EmptyTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.util.ChangeSetUtils;
+import com.alibaba.polardbx.executor.physicalbackfill.PhysicalBackfillUtils;
 import com.alibaba.polardbx.executor.scaleout.ScaleOutUtils;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.gms.topology.DbTopologyManager;
 import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ComplexTaskMetaManager;
+import com.alibaba.polardbx.optimizer.config.table.ScaleOutPlanUtil;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.PhyDdlTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.MoveDatabaseItemPreparedData;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.MoveDatabasePreparedData;
+import com.alibaba.polardbx.statistics.SQLRecorderLogger;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import org.apache.calcite.rel.core.DDL;
@@ -74,7 +72,7 @@ import java.util.TreeMap;
  *
  * @author luoyanxin
  */
-public class MoveDatabaseJobFactory extends DdlJobFactory {
+public class MoveDatabaseJobFactory extends OnlineDdlJobFactory {
 
     @Deprecated
     protected final DDL ddl;
@@ -99,6 +97,7 @@ public class MoveDatabaseJobFactory extends DdlJobFactory {
                                   Map<String, Map<String, Set<String>>> sourceTablesTopology,
                                   ComplexTaskMetaManager.ComplexTaskType taskType,
                                   ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.OSC);
         this.preparedData = preparedData;
         this.ddl = ddl;
         this.tablesPrepareData = tablesPrepareData;
@@ -144,96 +143,112 @@ public class MoveDatabaseJobFactory extends DdlJobFactory {
         int pipelineSize = ScaleOutUtils.getTaskPipelineSize(executionContext);
         Queue<DdlTask> leavePipeLineQueue = new LinkedList<>();
 
-        for (Map.Entry<String, TreeMap<String, List<List<String>>>> entry : tablesTopologyMap.entrySet()) {
-            String schemaName = tablesPrepareData.get(entry.getKey()).getSchemaName();
-            String logicalTableName = tablesPrepareData.get(entry.getKey()).getTableName();
-            TableMeta tm = OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(logicalTableName);
+        try {
+            for (Map.Entry<String, TreeMap<String, List<List<String>>>> entry : tablesTopologyMap.entrySet()) {
+                String schemaName = tablesPrepareData.get(entry.getKey()).getSchemaName();
+                String logicalTableName = tablesPrepareData.get(entry.getKey()).getTableName();
+                TableMeta tm =
+                    OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(logicalTableName);
 
-            MoveDatabaseSubTaskJobFactory subTaskJobFactory;
-            if (useChangeSet && ChangeSetUtils.supportUseChangeSet(taskType, tm) && !tm.containFullTextIndex()) {
-                subTaskJobFactory = new MoveDatabaseChangeSetJobFactory(ddl, tablesPrepareData.get(entry.getKey()),
-                    logicalTablesPhysicalPlansMap.get(entry.getKey()),
-                    discardTableSpacePhysicalPlansMap.get(entry.getKey()),
-                    sourceAndTarDnMap,
-                    storageInstAndUserInfos,
-                    tablesTopologyMap.get(entry.getKey()),
-                    targetTablesTopology.get(entry.getKey()),
-                    sourceTablesTopology.get(entry.getKey()),
-                    changeSetApplyExecutorInitTask,
-                    changeSetApplyFinishTask,
-                    tarGroupAndStorageIds,
-                    preparedData.isUsePhysicalBackfill(),
-                    executionContext);
-            } else {
-                subTaskJobFactory = new MoveDatabaseSubTaskJobFactory(ddl, tablesPrepareData.get(entry.getKey()),
-                    logicalTablesPhysicalPlansMap.get(entry.getKey()), tablesTopologyMap.get(entry.getKey()),
-                    targetTablesTopology.get(entry.getKey()), sourceTablesTopology.get(entry.getKey()),
-                    executionContext);
-            }
-            ExecutableDdlJob subTask = subTaskJobFactory.create();
-            executableDdlJob.combineTasks(subTask);
-            executableDdlJob.addTaskRelationship(tailTask, subTask.getHead());
-            executableDdlJob.getExcludeResources().addAll(subTask.getExcludeResources());
-            executableDdlJob.addTaskRelationship(subTask.getTail(), bringUpMoveDatabase.get(0));
+                MoveDatabaseSubTaskJobFactory subTaskJobFactory;
+                if (useChangeSet && ChangeSetUtils.supportUseChangeSet(taskType, tm) && !tm.containFullTextIndex()) {
+                    subTaskJobFactory =
+                        new MoveDatabaseChangeSetJobFactory(ddl, preparedData, tablesPrepareData.get(entry.getKey()),
+                            logicalTablesPhysicalPlansMap.get(entry.getKey()),
+                            discardTableSpacePhysicalPlansMap.get(entry.getKey()),
+                            sourceAndTarDnMap,
+                            storageInstAndUserInfos,
+                            tablesTopologyMap.get(entry.getKey()),
+                            targetTablesTopology.get(entry.getKey()),
+                            sourceTablesTopology.get(entry.getKey()),
+                            changeSetApplyExecutorInitTask,
+                            changeSetApplyFinishTask,
+                            tarGroupAndStorageIds,
+                            preparedData.isUsePhysicalBackfill(),
+                            executionContext);
+                } else {
+                    subTaskJobFactory = new MoveDatabaseSubTaskJobFactory(ddl, tablesPrepareData.get(entry.getKey()),
+                        logicalTablesPhysicalPlansMap.get(entry.getKey()), tablesTopologyMap.get(entry.getKey()),
+                        targetTablesTopology.get(entry.getKey()), sourceTablesTopology.get(entry.getKey()),
+                        executionContext);
+                }
+                ExecutableDdlJob subTask = subTaskJobFactory.create();
+                executableDdlJob.combineTasks(subTask);
+                executableDdlJob.addTaskRelationship(tailTask, subTask.getHead());
+                executableDdlJob.getExcludeResources().addAll(subTask.getExcludeResources());
+                executableDdlJob.addSharedResources(subTask.getSharedResources());
+                executableDdlJob.addTaskRelationship(subTask.getTail(), bringUpMoveDatabase.get(0));
 
-            if (preparedData.isUsePhysicalBackfill()) {
-                if (!syncLsnTaskAdded) {
-                    Map<String, Set<String>> sourceTableTopology = sourceTablesTopology.get(entry.getKey());
-                    Map<String, String> targetGroupAndStorageIdMap = new HashMap<>();
-                    Map<String, String> sourceGroupAndStorageIdMap = new HashMap<>();
-                    for (String groupName : sourceTableTopology.keySet()) {
-                        sourceGroupAndStorageIdMap.put(groupName,
-                            DbTopologyManager.getStorageInstIdByGroupName(schemaName, groupName));
-                        targetGroupAndStorageIdMap.put(preparedData.getSourceTargetGroupMap().get(groupName),
-                            preparedData.getGroupAndStorageInstId().get(groupName).getValue());
+                if (preparedData.isUsePhysicalBackfill()) {
+                    if (!syncLsnTaskAdded) {
+                        Map<String, Set<String>> sourceTableTopology = sourceTablesTopology.get(entry.getKey());
+                        Map<String, String> targetGroupAndStorageIdMap = new HashMap<>();
+                        Map<String, String> sourceGroupAndStorageIdMap = new HashMap<>();
+                        for (String groupName : sourceTableTopology.keySet()) {
+                            sourceGroupAndStorageIdMap.put(groupName,
+                                DbTopologyManager.getStorageInstIdByGroupName(schemaName, groupName));
+                            targetGroupAndStorageIdMap.put(preparedData.getSourceTargetGroupMap().get(groupName),
+                                preparedData.getGroupAndStorageInstId().get(groupName).getValue());
+                        }
+                        if (GeneralUtil.isNotEmpty(subTaskJobFactory.getPhysicalyTaskPipeLine())) {
+                            syncLsnTask =
+                                new SyncLsnTask(schemaName, sourceGroupAndStorageIdMap, targetGroupAndStorageIdMap);
+                            executableDdlJob.addTask(syncLsnTask);
+                            syncLsnTaskAdded = true;
+                        }
                     }
-                    if (GeneralUtil.isNotEmpty(subTaskJobFactory.getPhysicalyTaskPipeLine())) {
-                        syncLsnTask =
-                            new SyncLsnTask(schemaName, sourceGroupAndStorageIdMap, targetGroupAndStorageIdMap);
-                        executableDdlJob.addTask(syncLsnTask);
-                        syncLsnTaskAdded = true;
+                    for (List<DdlTask> pipeLine : GeneralUtil.emptyIfNull(
+                        subTaskJobFactory.getPhysicalyTaskPipeLine())) {
+                        DdlTask parentLeaveNode;
+                        if (leavePipeLineQueue.size() < pipelineSize) {
+                            parentLeaveNode = syncLsnTask;
+                        } else {
+                            parentLeaveNode = leavePipeLineQueue.poll();
+                        }
+                        executableDdlJob.removeTaskRelationship(subTaskJobFactory.getBackfillTaskEdgeNodes().get(0),
+                            subTaskJobFactory.getBackfillTaskEdgeNodes().get(1));
+                        executableDdlJob.addTaskRelationship(subTaskJobFactory.getBackfillTaskEdgeNodes().get(0),
+                            syncLsnTask);
+                        executableDdlJob.addTaskRelationship(parentLeaveNode,
+                            pipeLine.get(0));
+                        executableDdlJob.addTaskRelationship(pipeLine.get(0),
+                            pipeLine.get(1));
+                        PhysicalBackfillTask physicalBackfillTask = (PhysicalBackfillTask) pipeLine.get(1);
+                        TreeMap<String, List<List<String>>> targetTables = new TreeMap<>();
+                        String tarGroupKey = physicalBackfillTask.getSourceTargetGroup().getValue();
+                        String phyTableName = physicalBackfillTask.getPhysicalTableName();
+
+                        targetTables.computeIfAbsent(tarGroupKey, k -> new ArrayList<>())
+                            .add(Collections.singletonList(phyTableName));
+
+                        ImportTableSpaceDdlNormalTask importTableSpaceDdlNormalTask = new ImportTableSpaceDdlNormalTask(
+                            preparedData.getSchemaName(), entry.getKey(),
+                            targetTables);
+
+                        for (int i = 2; i < pipeLine.size(); i++) {
+                            executableDdlJob.addTaskRelationship(pipeLine.get(1),
+                                pipeLine.get(i));
+                            executableDdlJob.addTaskRelationship(pipeLine.get(i),
+                                importTableSpaceDdlNormalTask);
+                        }
+
+                        AnalyzePhyTableTask analyzePhyTableTask = new AnalyzePhyTableTask(schemaName, tarGroupKey,
+                            phyTableName);
+                        executableDdlJob.addTaskRelationship(importTableSpaceDdlNormalTask, analyzePhyTableTask);
+                        executableDdlJob.addTaskRelationship(analyzePhyTableTask,
+                            subTaskJobFactory.getBackfillTaskEdgeNodes().get(1));
+                        leavePipeLineQueue.add(analyzePhyTableTask);
                     }
                 }
-                for (List<DdlTask> pipeLine : GeneralUtil.emptyIfNull(subTaskJobFactory.getPhysicalyTaskPipeLine())) {
-                    DdlTask parentLeaveNode;
-                    if (leavePipeLineQueue.size() < pipelineSize) {
-                        parentLeaveNode = syncLsnTask;
-                    } else {
-                        parentLeaveNode = leavePipeLineQueue.poll();
-                    }
-                    executableDdlJob.removeTaskRelationship(subTaskJobFactory.getBackfillTaskEdgeNodes().get(0),
-                        subTaskJobFactory.getBackfillTaskEdgeNodes().get(1));
-                    executableDdlJob.addTaskRelationship(subTaskJobFactory.getBackfillTaskEdgeNodes().get(0),
-                        syncLsnTask);
-                    executableDdlJob.addTaskRelationship(parentLeaveNode,
-                        pipeLine.get(0));
-                    executableDdlJob.addTaskRelationship(pipeLine.get(0),
-                        pipeLine.get(1));
-                    PhysicalBackfillTask physicalBackfillTask = (PhysicalBackfillTask) pipeLine.get(1);
-                    TreeMap<String, List<List<String>>> targetTables = new TreeMap<>();
-                    String tarGroupKey = physicalBackfillTask.getSourceTargetGroup().getValue();
-                    String phyTableName = physicalBackfillTask.getPhysicalTableName();
-
-                    targetTables.computeIfAbsent(tarGroupKey, k -> new ArrayList<>())
-                        .add(Collections.singletonList(phyTableName));
-
-                    ImportTableSpaceDdlNormalTask importTableSpaceDdlNormalTask = new ImportTableSpaceDdlNormalTask(
-                        preparedData.getSchemaName(), entry.getKey(),
-                        targetTables);
-
-                    for (int i = 2; i < pipeLine.size(); i++) {
-                        executableDdlJob.addTaskRelationship(pipeLine.get(1),
-                            pipeLine.get(i));
-                        executableDdlJob.addTaskRelationship(pipeLine.get(i),
-                            importTableSpaceDdlNormalTask);
-                    }
-
-                    AnalyzePhyTableTask analyzePhyTableTask = new AnalyzePhyTableTask(schemaName, tarGroupKey,
-                        phyTableName);
-                    executableDdlJob.addTaskRelationship(importTableSpaceDdlNormalTask, analyzePhyTableTask);
-                    executableDdlJob.addTaskRelationship(analyzePhyTableTask,
-                        subTaskJobFactory.getBackfillTaskEdgeNodes().get(1));
-                    leavePipeLineQueue.add(analyzePhyTableTask);
+            }
+        } finally {
+            if (preparedData.isUsePhysicalBackfill()) {
+                try {
+                    PhysicalBackfillUtils.destroyDataSources(preparedData.getTempJobId());
+                } catch (RuntimeException e) {
+                    SQLRecorderLogger.ddlLogger.error("fail to destroy data sources", e);
+                } catch (Exception e) {
+                    SQLRecorderLogger.ddlLogger.error("fail to destroy data sources: " + e.getMessage(), e);
                 }
             }
         }
@@ -257,7 +272,7 @@ public class MoveDatabaseJobFactory extends DdlJobFactory {
                 if (!shareStorageMode) {
                     instGroupDbInfos.computeIfAbsent(entry.getKey(), o -> new ArrayList<>())
                         .add(Pair.of(GroupInfoUtil.buildScaleOutGroupName(sourceGroup),
-                            GroupInfoUtil.buildPhysicalDbNameFromGroupName(sourceGroup)));
+                            GroupInfoUtil.buildPhysicalDbNameFromGroupName(schemaName, sourceGroup)));
                 } else {
                     String targetPhyDb = GroupInfoUtil.buildScaleOutPhyDbName(schemaName, sourceGroup);
                     instGroupDbInfos.computeIfAbsent(entry.getKey(), o -> new ArrayList<>())
@@ -349,7 +364,33 @@ public class MoveDatabaseJobFactory extends DdlJobFactory {
             executableDdlJob.addSequentialTasks(bringUpMoveDatabase);
             executableDdlJob.removeTaskRelationship(addMetaTask, bringUpMoveDatabase.get(0));
             constructSubTasks(executableDdlJob, addMetaTask, bringUpMoveDatabase);
-            executableDdlJob.labelAsTail(bringUpMoveDatabase.get(bringUpMoveDatabase.size() - 1));
+            EmptyLogTask emptyLogTask = (EmptyLogTask) bringUpMoveDatabase.get(bringUpMoveDatabase.size() - 2);
+            MoveDatabaseCleanupTask moveDatabaseCleanupTask =
+                (MoveDatabaseCleanupTask) bringUpMoveDatabase.get(bringUpMoveDatabase.size() - 1);
+            if (ScaleOutPlanUtil.isPhyRecyclebinEnable(executionContext)) {
+                List<DdlTask> dropForeignKeyTasksBeforeRename = new ArrayList<>();
+                List<DdlTask> ddlTasks = renameUselessTable(dropForeignKeyTasksBeforeRename);
+                if (ddlTasks.size() > 0) {
+                    executableDdlJob.removeTaskRelationship(emptyLogTask, moveDatabaseCleanupTask);
+                    if (GeneralUtil.isEmpty(dropForeignKeyTasksBeforeRename)) {
+                        for (DdlTask ddlTask : ddlTasks) {
+                            executableDdlJob.addTaskRelationship(emptyLogTask, ddlTask);
+                            executableDdlJob.addTaskRelationship(ddlTask, moveDatabaseCleanupTask);
+                        }
+                    } else {
+                        EmptyTask emptyTask = new EmptyTask(schemaName);
+                        for (DdlTask ddlTask : dropForeignKeyTasksBeforeRename) {
+                            executableDdlJob.addTaskRelationship(emptyLogTask, ddlTask);
+                            executableDdlJob.addTaskRelationship(ddlTask, emptyTask);
+                        }
+                        for (DdlTask ddlTask : ddlTasks) {
+                            executableDdlJob.addTaskRelationship(emptyTask, ddlTask);
+                            executableDdlJob.addTaskRelationship(ddlTask, moveDatabaseCleanupTask);
+                        }
+                    }
+                }
+            }
+            executableDdlJob.labelAsTail(moveDatabaseCleanupTask);
         } else {
             PauseCurrentJobTask pauseCurrentJobTask = new PauseCurrentJobTask(schemaName);
             constructSubTasks(executableDdlJob, addMetaTask, ImmutableList.of(pauseCurrentJobTask));
@@ -420,5 +461,22 @@ public class MoveDatabaseJobFactory extends DdlJobFactory {
             tablesVersion.putIfAbsent(primaryTblName, primaryTblVersion);
         }
         return tablesVersion;
+    }
+
+    private List<DdlTask> renameUselessTable(List<DdlTask> dropForeignKeyTasksBeforeRename) {
+        List<DdlTask> ddlTasks = new ArrayList<>(sourceTablesTopology.size());
+        for (Map.Entry<String, Map<String, Set<String>>> entry : sourceTablesTopology.entrySet()) {
+            TableMeta tableMeta =
+                executionContext.getSchemaManager(preparedData.getSchemaName()).getTable(entry.getKey());
+            if (tableMeta.hasForeignKey()) {
+                continue;
+            }
+            DdlTask ddlTask =
+                ComplexTaskFactory.createRenameUselessPhyTableTask(preparedData.getSchemaName(), entry.getKey(),
+                    entry.getValue(),
+                    null, dropForeignKeyTasksBeforeRename, true, executionContext);
+            ddlTasks.add(ddlTask);
+        }
+        return ddlTasks;
     }
 }

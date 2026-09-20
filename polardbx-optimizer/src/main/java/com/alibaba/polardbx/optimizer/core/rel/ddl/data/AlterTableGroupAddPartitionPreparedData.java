@@ -33,6 +33,7 @@ import org.apache.calcite.sql.SqlSubPartition;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -57,7 +58,8 @@ public class AlterTableGroupAddPartitionPreparedData extends AlterTableGroupBase
     public void setNewPartitions(List<SqlPartition> newPartitions,
                                  PartitionByDefinition partByDef,
                                  TableGroupConfig tableGroupConfig,
-                                 boolean isSubPartition) {
+                                 boolean isSubPartition,
+                                 Map<String, List<String>> logicalPartitionGroups) {
         this.newPartitions = newPartitions;
 
         PartitionByDefinition subPartByDef = partByDef.getSubPartitionBy();
@@ -83,8 +85,11 @@ public class AlterTableGroupAddPartitionPreparedData extends AlterTableGroupBase
                     // ADD SUBPARTITION
                     for (PartitionSpec partitionSpec : partByDef.getPartitions()) {
                         for (SqlNode subPartition : sqlPartition.getSubPartitions()) {
-                            newPartitionNames.add(PartitionNameUtil.autoBuildSubPartitionName(partitionSpec.getName(),
-                                ((SqlSubPartition) subPartition).getName().toString()));
+                            String subPartName = PartitionNameUtil.autoBuildSubPartitionName(partitionSpec.getName(),
+                                ((SqlSubPartition) subPartition).getName().toString());
+                            newPartitionNames.add(subPartName);
+                            logicalPartitionGroups.computeIfAbsent(partitionSpec.getName(), k -> new ArrayList<>())
+                                .add(subPartName);
                         }
                     }
                 } else {
@@ -106,9 +111,12 @@ public class AlterTableGroupAddPartitionPreparedData extends AlterTableGroupBase
                         }
 
                         for (PartitionSpec subPartitionSpec : subPartitionSpecs) {
-                            newPartitionNames.add(
+                            String subPartName =
                                 PartitionNameUtil.autoBuildSubPartitionName(newPartition.getName().toString(),
-                                    subPartitionSpec.getName()));
+                                    subPartitionSpec.getName());
+                            newPartitionNames.add(subPartName);
+                            logicalPartitionGroups.computeIfAbsent(newPartition.getName().toString(),
+                                k -> new ArrayList<>()).add(subPartName);
                         }
                     }
                 }

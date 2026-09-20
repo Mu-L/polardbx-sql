@@ -19,7 +19,7 @@ package com.alibaba.polardbx.executor.gms;
 import com.alibaba.polardbx.executor.archive.schemaevolution.ColumnMetaWithTs;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.FileMeta;
-import com.google.common.collect.ImmutableList;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.List;
@@ -39,13 +39,6 @@ public interface ColumnarSchemaTransformer {
     Map<Long, Integer> getPhysicalColumnIndexes(String fileName);
 
     /**
-     * @param tso TSO
-     * @param logicalTable logical name of columnar table
-     * @return The sort key column index of logical table, start from 0
-     */
-    List<Integer> getSortKeyColumns(long tso, String logicalSchema, String logicalTable);
-
-    /**
      * Get the physical column indexes of primary key for certain file, start from 1.
      */
     int[] getPrimaryKeyColumns(String fileName);
@@ -58,7 +51,7 @@ public interface ColumnarSchemaTransformer {
     List<Long> getColumnFieldIdList(long versionId, long tableId);
 
     @NotNull
-    List<ColumnMeta> getColumnMetas(long schemaTso, String logicalSchema, String logicalTable);
+    List<ColumnMeta> getColumnMetas(long schemaTso, String logicalSchema, String logicalTable, TableMeta tableMeta);
 
     @NotNull
     List<ColumnMeta> getColumnMetas(long schemaTso, long tableId);

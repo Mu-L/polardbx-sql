@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.mpp.operator;
 
-public interface RemotePartitionFunction extends PartitionFunction {
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+
+public interface RemotePartitionFunction extends PartitionFunction, MemoryCountable {
     int getPartitionCount();
 }

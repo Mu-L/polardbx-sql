@@ -17,11 +17,13 @@
 package com.alibaba.polardbx.executor.ddl.job.task.basic;
 
 import com.alibaba.fastjson.annotation.JSONCreator;
+import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.common.TddlConstants;
 import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.type.ConstraintType;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableItem;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableRenameColumn;
@@ -31,6 +33,7 @@ import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.ddl.job.validator.GsiValidator;
 import com.alibaba.polardbx.executor.ddl.job.validator.TableValidator;
 import com.alibaba.polardbx.gms.lbac.LBACSecurityManager;
+import com.alibaba.polardbx.gms.metadb.table.ExternalizedColumnInfo;
 import com.alibaba.polardbx.gms.metadb.table.IndexStatus;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
@@ -47,6 +50,7 @@ import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.sql.sql2rel.TddlSqlToRelConverter;
 import com.alibaba.polardbx.rule.TableRule;
 import lombok.Getter;
+import org.apache.calcite.sql.SqlAddCheck;
 import org.apache.calcite.sql.SqlAddColumn;
 import org.apache.calcite.sql.SqlAddForeignKey;
 import org.apache.calcite.sql.SqlAddFullTextIndex;
@@ -54,6 +58,7 @@ import org.apache.calcite.sql.SqlAddIndex;
 import org.apache.calcite.sql.SqlAddPrimaryKey;
 import org.apache.calcite.sql.SqlAddSpatialIndex;
 import org.apache.calcite.sql.SqlAddUniqueIndex;
+import org.apache.calcite.sql.SqlAlterCheck;
 import org.apache.calcite.sql.SqlAlterColumnDefaultVal;
 import org.apache.calcite.sql.SqlAlterSpecification;
 import org.apache.calcite.sql.SqlAlterTable;
@@ -64,6 +69,7 @@ import org.apache.calcite.sql.SqlChangeColumn;
 import org.apache.calcite.sql.SqlColumnDeclaration;
 import org.apache.calcite.sql.SqlConvertToCharacterSet;
 import org.apache.calcite.sql.SqlDataTypeSpec;
+import org.apache.calcite.sql.SqlDropCheck;
 import org.apache.calcite.sql.SqlDropColumn;
 import org.apache.calcite.sql.SqlDropForeignKey;
 import org.apache.calcite.sql.SqlIndexColumnName;
@@ -171,13 +177,28 @@ public class AlterTableValidateTask extends BaseValidateTask {
         tableMeta.getAllColumns().forEach(c -> columnsBeforeDdlType.put(c.getName(),
             SqlDataTypeSpec.DrdsTypeName.from(c.getDataType().getStringSqlType().toUpperCase())));
         Set<String> constraints = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        // foreign key constraints
         constraints.addAll(
             tableMeta.getForeignKeys().values().stream().map(c -> c.constraint).collect(Collectors.toList()));
+        // check constraints
+        constraints.addAll(tableMeta.getConstraintsByType(ConstraintType.CHECK.name()));
 
         Set<String> columns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
         Set<String> columnsBeforeDdl = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
         columns.addAll(tableMeta.getAllColumns().stream().map(c -> c.getName()).collect(Collectors.toList()));
         columnsBeforeDdl.addAll(tableMeta.getAllColumns().stream().map(c -> c.getName()).collect(Collectors.toList()));
+        // Externalized columns: ColumnMeta.getName() returns the LOGICAL name
+        // (GmsTableMetaManager.buildColumnMeta translates physical "x_addr_" to
+        // logical "x"). For DROP COLUMN we rewrite "x" to "x_addr_" in the
+        // Handler so the DN sees the actual physical column, but ValidateTask
+        // must still accept the physical name as "existing" — register both.
+        tableMeta.getAllColumns().forEach(c -> {
+            if (c.isExternalizedColumn()) {
+                String addrName = ExternalizedColumnInfo.toAddrColumnName(c.getName());
+                columns.add(addrName);
+                columnsBeforeDdl.add(addrName);
+            }
+        });
         // We need manually add this column since it is not in getAllColumns
         if (tableMeta.getColumnMultiWriteTargetColumnMeta() != null) {
             columns.add(tableMeta.getColumnMultiWriteTargetColumnMeta().getName());
@@ -199,6 +220,10 @@ public class AlterTableValidateTask extends BaseValidateTask {
             OptimizerContext.getContext(schemaName).getLatestSchemaManager().getGsi(tableName, IndexStatus.ALL);
 
         boolean existsPrimary = tableMeta.getPrimaryIndex() != null;
+
+        // For pure columnar table, only ALTER TABLE DROP INDEX is allowed
+        checkAlterWithPureColumnar(executionContext, sqlAlterTable);
+
         if (sqlAlterTable.getAlters().size() > 1 && pushDownMultipleStatement) {
             validateMultipleStatement(tableMeta, sqlAlterTable);
             return;
@@ -236,6 +261,7 @@ public class AlterTableValidateTask extends BaseValidateTask {
             case MODIFY_COLUMN:
                 checkColumnExists(columnsBeforeDdl, ((SqlModifyColumn) alterItem).getColName().getLastName());
                 checkWithCci(executionContext, alterItem.getKind());
+                checkNotExternalizedColumn(((SqlModifyColumn) alterItem).getColName().getLastName(), "MODIFY");
                 if (((SqlModifyColumn) alterItem).getAfterColumn() != null) {
                     checkColumnExists(columns, ((SqlModifyColumn) alterItem).getAfterColumn().getLastName());
                 }
@@ -248,11 +274,15 @@ public class AlterTableValidateTask extends BaseValidateTask {
                 checkColumnExists(columnsBeforeDdl,
                     ((SqlAlterColumnDefaultVal) alterItem).getColumnName().getLastName());
                 checkWithCci(executionContext, alterItem.getKind());
+                checkNotExternalizedColumn(
+                    ((SqlAlterColumnDefaultVal) alterItem).getColumnName().getLastName(),
+                    "ALTER COLUMN DEFAULT on");
                 break;
 
             case CHANGE_COLUMN:
                 checkColumnExists(columnsBeforeDdl, ((SqlChangeColumn) alterItem).getOldName().getLastName());
                 checkWithCci(executionContext, alterItem.getKind());
+                checkNotExternalizedColumn(((SqlChangeColumn) alterItem).getOldName().getLastName(), "CHANGE");
                 checkLBAC(((SqlChangeColumn) alterItem).getOldName().getLastName());
                 columns.remove(((SqlChangeColumn) alterItem).getOldName().getLastName());
                 checkColumnNotExists(columns, ((SqlChangeColumn) alterItem).getNewName().getLastName());
@@ -275,6 +305,7 @@ public class AlterTableValidateTask extends BaseValidateTask {
                 for (SqlIndexColumnName column : ((SqlAddIndex) alterItem).getIndexDef().getColumns()) {
                     checkColumnExists(columns, column.getColumnName().getLastName());
                 }
+                checkNoExternalizedColumnsInIndex(((SqlAddIndex) alterItem).getIndexDef().getColumns());
 
                 if (((SqlAddIndex) alterItem).getIndexName() != null) {
                     checkIndexNotExists(indexes, ((SqlAddIndex) alterItem).getIndexName().getLastName());
@@ -286,6 +317,7 @@ public class AlterTableValidateTask extends BaseValidateTask {
                 for (SqlIndexColumnName column : ((SqlAddFullTextIndex) alterItem).getIndexDef().getColumns()) {
                     checkColumnExists(columns, column.getColumnName().getLastName());
                 }
+                checkNoExternalizedColumnsInIndex(((SqlAddFullTextIndex) alterItem).getIndexDef().getColumns());
                 if (((SqlAddFullTextIndex) alterItem).getIndexName() != null) {
                     checkIndexNotExists(indexes, ((SqlAddFullTextIndex) alterItem).getIndexName().getLastName());
                     indexes.add(((SqlAddFullTextIndex) alterItem).getIndexName().getLastName());
@@ -296,6 +328,7 @@ public class AlterTableValidateTask extends BaseValidateTask {
                 for (SqlIndexColumnName column : ((SqlAddUniqueIndex) alterItem).getIndexDef().getColumns()) {
                     checkColumnExists(columns, column.getColumnName().getLastName());
                 }
+                checkNoExternalizedColumnsInIndex(((SqlAddUniqueIndex) alterItem).getIndexDef().getColumns());
                 if (((SqlAddUniqueIndex) alterItem).getIndexName() != null) {
                     checkIndexNotExists(indexes, ((SqlAddUniqueIndex) alterItem).getIndexName().getLastName());
                     indexes.add(((SqlAddUniqueIndex) alterItem).getIndexName().getLastName());
@@ -306,6 +339,7 @@ public class AlterTableValidateTask extends BaseValidateTask {
                 for (SqlIndexColumnName column : ((SqlAddSpatialIndex) alterItem).getIndexDef().getColumns()) {
                     checkColumnExists(columns, column.getColumnName().getLastName());
                 }
+                checkNoExternalizedColumnsInIndex(((SqlAddSpatialIndex) alterItem).getIndexDef().getColumns());
                 if (((SqlAddSpatialIndex) alterItem).getIndexName() != null) {
                     checkIndexNotExists(indexes, ((SqlAddSpatialIndex) alterItem).getIndexName().getLastName());
                     indexes.add(((SqlAddSpatialIndex) alterItem).getIndexName().getLastName());
@@ -333,6 +367,7 @@ public class AlterTableValidateTask extends BaseValidateTask {
                     for (SqlIndexColumnName column : ((SqlAddPrimaryKey) alterItem).getColumns()) {
                         checkColumnExists(columns, column.getColumnName().getLastName());
                     }
+                    checkNoExternalizedColumnsInIndex(((SqlAddPrimaryKey) alterItem).getColumns());
                     checkPrimaryKeyNotExists(existsPrimary);
                     existsPrimary = true;
                 }
@@ -357,6 +392,7 @@ public class AlterTableValidateTask extends BaseValidateTask {
                 if (((SqlAddForeignKey) alterItem).getConstraint() != null) {
                     checkFkConstraintsExists(constraints, ((SqlAddForeignKey) alterItem).getConstraint().getLastName());
                 }
+                checkNoExternalizedColumnsInIndex(((SqlAddForeignKey) alterItem).getIndexDef().getColumns());
                 break;
             case DROP_FOREIGN_KEY:
                 checkFkConstraintsNotExists(constraints, ((SqlDropForeignKey) alterItem).getConstraint().getLastName());
@@ -365,6 +401,24 @@ public class AlterTableValidateTask extends BaseValidateTask {
                 if (checkForeignKey) {
                     checkFkCharset(((SqlConvertToCharacterSet) alterItem).getCharset());
                 }
+                if (tableMeta != null && tableMeta.hasExternalizedColumn()) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER,
+                        "ALTER TABLE ... CONVERT TO CHARACTER SET is not supported on tables "
+                            + "with externalized columns. Drop and recreate the table to change charset.");
+                }
+                break;
+            case ADD_CHECK:
+                checkAddCheck(constraints, ((SqlAddCheck) alterItem).getCheck().getConstraint().getLastName());
+                if (tableMeta != null && tableMeta.hasExternalizedColumn()) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER,
+                        "ADD CHECK is not supported on tables with externalized columns.");
+                }
+                break;
+            case DROP_CHECK:
+                checkDropCheck(constraints, ((SqlDropCheck) alterItem).getConstraint().getLastName());
+                break;
+            case ALTER_CHECK:
+                checkAlterCheck(constraints, ((SqlAlterCheck) alterItem).getConstraint().getLastName());
                 break;
             }
         }
@@ -397,6 +451,20 @@ public class AlterTableValidateTask extends BaseValidateTask {
 
     // refer: sql_table.cc#mysql_prepare_alter_table
     private void validateMultipleStatement(TableMeta tableMeta, SqlAlterTable sqlAlterTable) {
+        // A multi-operation ALTER containing MODIFY/CHANGE on a table with externalized columns is
+        // rejected outright: the single-statement column checks are bypassed on this path and the
+        // physical MODIFY/CHANGE would otherwise be dispatched to DNs that no longer carry the
+        // plaintext columns. Multi-ADD (e.g. several ADD COLUMN ... EXTERNALIZE) stays supported.
+        if (tableMeta != null && (tableMeta.hasExternalizedColumn() || tableMeta.hasColumnInMceLifecycle())) {
+            for (SqlAlterSpecification alterItem : sqlAlterTable.getAlters()) {
+                SqlKind kind = alterItem.getKind();
+                if (kind == SqlKind.MODIFY_COLUMN || kind == SqlKind.CHANGE_COLUMN) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER,
+                        "Multiple ALTER operations in one statement are not supported on tables with "
+                            + "externalized columns when they contain MODIFY/CHANGE COLUMN.");
+                }
+            }
+        }
         boolean existsPrimary = tableMeta.getPrimaryIndex() != null;
         List<SqlAlterSpecification> alterItems = new LinkedList<>(sqlAlterTable.getAlters());
         // oldColumnMetas:  all the column of original table
@@ -934,6 +1002,64 @@ public class AlterTableValidateTask extends BaseValidateTask {
         boolean forbidDdlWithCci = executionContext.getParamManager().getBoolean(ConnectionParams.FORBID_DDL_WITH_CCI);
         if (forbidDdlWithCci && tableMeta.withCci()) {
             throw new TddlRuntimeException(ErrorCode.ERR_DDL_WITH_CCI, sqlKind.name());
+        }
+    }
+
+    private void checkNotExternalizedColumn(String columnName, String operation) {
+        if (tableMeta == null) {
+            return;
+        }
+        ColumnMeta cm = tableMeta.getColumn(columnName);
+        if (cm != null && cm.isExternalizedColumn()) {
+            throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER,
+                String.format("Cannot %s externalized column '%s'.", operation, columnName));
+        }
+    }
+
+    private void checkNoExternalizedColumnsInIndex(List<SqlIndexColumnName> indexColumns) {
+        if (tableMeta == null || !tableMeta.hasExternalizedColumn()) {
+            return;
+        }
+        for (SqlIndexColumnName col : indexColumns) {
+            String colName = col.getColumnName().getLastName();
+            ColumnMeta cm = tableMeta.getColumn(colName);
+            if (cm != null && cm.isExternalizedColumn()) {
+                throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER,
+                    String.format("Cannot create index on externalized column '%s'.", colName));
+            }
+        }
+    }
+
+    private void checkAlterWithPureColumnar(ExecutionContext executionContext, SqlAlterTable sqlAlterTable) {
+        boolean forbid = executionContext.getParamManager()
+            .getBoolean(ConnectionParams.FORBID_DDL_WITH_PURE_COLUMNAR);
+        if (!forbid || tableMeta == null || !Engine.isPureColumnar(tableMeta.getEngine())) {
+            return;
+        }
+        for (SqlAlterSpecification alterItem : sqlAlterTable.getAlters()) {
+            if (alterItem.getKind() != SqlKind.DROP_INDEX) {
+                throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
+                    "DDL operation " + alterItem.getKind().name()
+                        + " is not supported on pure columnar table '" + tableName + "'");
+            }
+        }
+    }
+
+    private void checkAddCheck(Set<String> constraints, String constraintName) {
+        if (constraints.contains(constraintName)) {
+            throw new TddlRuntimeException(ErrorCode.ERR_ADD_CHECK_CONSTRAINT, constraintName);
+        }
+    }
+
+    private void checkDropCheck(Set<String> constraints, String constraintName) {
+        if (!constraints.contains(constraintName)) {
+            throw new TddlRuntimeException(ErrorCode.ERR_DROP_CHECK_CONSTRAINT, constraintName);
+        }
+    }
+
+    private void checkAlterCheck(Set<String> constraints, String constraintName) {
+        if (!constraints.contains(constraintName)) {
+            throw new TddlRuntimeException(ErrorCode.ERR_ALTER_CHECK_CONSTRAINT, constraintName);
         }
     }
 

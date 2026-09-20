@@ -50,6 +50,10 @@ public class DefaultValueTest extends CrudBasedLockTestCase {
         + ") {0} ";
     private static final String PARTITIONS_METHOD = "dbpartition by hash(pk) tbpartition by hash(pk) tbpartitions 2";
     private static final String SELECT_COLUMN = "c1,c2,c3,c4,c5,c6,c7,c8";
+    private static final String FORBID_RELOCATE_RETURNING_HINT =
+        "/*+TDDL:cmd_extra(OPTIMIZE_RELOCATE_BY_RETURNING=false)*/";
+    private static final String ENABLE_RELOCATE_RETURNING_HINT =
+        "/*+TDDL:cmd_extra(OPTIMIZE_RELOCATE_BY_RETURNING=true)*/";
     private static final List<String> SUPPORT_INSERT = new ArrayList<>();
     private static final List<String> UN_SUPPORT_INSERT = new ArrayList<>();
     private static final List<String> SUPPORT_UPDATE = new ArrayList<>();
@@ -160,6 +164,9 @@ public class DefaultValueTest extends CrudBasedLockTestCase {
 
         JdbcUtil.executeUpdateSuccess(mysqlConnection, MessageFormat.format(CREAT_TABLE, ""));
         JdbcUtil.executeUpdateSuccess(tddlConnection, MessageFormat.format(CREAT_TABLE, PARTITIONS_METHOD));
+
+        setSqlMode("STRICT_TRANS_TABLES", tddlConnection);
+        setSqlMode("STRICT_TRANS_TABLES", mysqlConnection);
     }
 
     private void truncateData(String tableName) {
@@ -243,6 +250,7 @@ public class DefaultValueTest extends CrudBasedLockTestCase {
     public void updateDefaultOkTest() {
         for (String sql : SUPPORT_UPDATE) {
             truncateData(TABLE_NAME);
+            sql = FORBID_RELOCATE_RETURNING_HINT + sql;
             String prepareData = "insert into " + TABLE_NAME
                 + "(pk, c1, c2, c3, c4, c5, c6, c7, c8) values(200, 200, 200, 200, 200, 200, '200', '200', '200')";
             executeOnMysqlAndTddl(mysqlConnection, tddlConnection, prepareData, null);
@@ -258,6 +266,40 @@ public class DefaultValueTest extends CrudBasedLockTestCase {
     public void updateDefaultErrTest() {
         for (String sql : UN_SUPPORT_UPDATE) {
             truncateData(TABLE_NAME);
+            sql = FORBID_RELOCATE_RETURNING_HINT + sql;
+            String prepareData = "insert into " + TABLE_NAME
+                + "(pk, c1, c2, c3, c4, c5, c6, c7, c8) values(200, 200, 200, 200, 200, 200, '200', '200', '200')";
+            executeOnMysqlAndTddl(mysqlConnection, tddlConnection, prepareData, null);
+            //String mysqlError = JdbcUtil.executeUpdateFailedReturn(mysqlConnection, sql);
+            JdbcUtil.executeUpdateFailedReturn(tddlConnection, sql);
+        }
+    }
+
+    @Test
+    public void updateDefaultOkTestWithReturning() {
+        if (!isMySQL80()) {
+            return;
+        }
+
+        for (String sql : SUPPORT_UPDATE) {
+            truncateData(TABLE_NAME);
+            sql = ENABLE_RELOCATE_RETURNING_HINT + sql;
+            String prepareData = "insert into " + TABLE_NAME
+                + "(pk, c1, c2, c3, c4, c5, c6, c7, c8) values(200, 200, 200, 200, 200, 200, '200', '200', '200')";
+            executeOnMysqlAndTddl(mysqlConnection, tddlConnection, prepareData, null);
+
+            executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
+
+            String select = "select * from " + TABLE_NAME;
+            selectContentSameAssert(select, null, mysqlConnection, tddlConnection);
+        }
+    }
+
+    @Test
+    public void updateDefaultErrTestWithReturning() {
+        for (String sql : UN_SUPPORT_UPDATE) {
+            truncateData(TABLE_NAME);
+            sql = ENABLE_RELOCATE_RETURNING_HINT + sql;
             String prepareData = "insert into " + TABLE_NAME
                 + "(pk, c1, c2, c3, c4, c5, c6, c7, c8) values(200, 200, 200, 200, 200, 200, '200', '200', '200')";
             executeOnMysqlAndTddl(mysqlConnection, tddlConnection, prepareData, null);

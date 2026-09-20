@@ -1,0 +1,53 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+set ENABLE_SHOW_STORAGE_PARTITIONS=true;
+
+## ======== hash =========
+drop table if exists key_storage_part;
+create table key_storage_part (
+  a bigint not null，
+  b bigint,
+  primary key(a)
+) charset utf8mb4 collate utf8mb4_general_ci
+/*!storage
+partition by key(a)
+partitions 8
+*/
+partition by key(b)
+partitions 4;
+show create table key_storage_part;
+
+create table dble_storage_part_with_sp(
+  a bigint not null,
+  b bigint,
+  primary key(a,b)
+) charset utf8mb4 collate utf8mb4_general_ci
+/*!storage
+partition by key(a)
+partitions 4
+*/
+partition by udf_hash(
+ `a` with udf_params(
+ 	'dble/hash',
+  '{
+ 		"partitionCount" : "4",
+ 		"partitionLength" : "1"
+ 	}'
+
+  )
+  )
+partitions 4
+subpartition by udf_hash(
+  `b` with udf_params(
+  'dble/hash',
+  '{
+ 		"partitionCount" : "4",
+ 		"partitionLength" : "1"
+ 	}'
+
+  )
+)
+subpartitions 4;
+show create table dble_storage_part_with_sp;

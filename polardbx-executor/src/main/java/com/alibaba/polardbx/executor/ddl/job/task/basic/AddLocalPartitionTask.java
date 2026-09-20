@@ -22,6 +22,7 @@ import com.alibaba.polardbx.executor.ddl.job.meta.TableMetaChanger;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseGmsTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.scheduler.ScheduledJobsManager;
+import com.alibaba.polardbx.executor.utils.DdlUtils;
 import com.alibaba.polardbx.gms.scheduler.ScheduledJobExecutorType;
 import com.alibaba.polardbx.gms.scheduler.ScheduledJobsRecord;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -39,6 +40,10 @@ public class AddLocalPartitionTask extends BaseGmsTask {
     public AddLocalPartitionTask(LocalPartitionDefinitionInfo localPartitionDefinitionInfo) {
         super(localPartitionDefinitionInfo.getTableSchema(), localPartitionDefinitionInfo.getTableName());
         this.localPartitionDefinitionInfo = localPartitionDefinitionInfo;
+    }
+
+    @Override
+    protected void beforeTransaction(ExecutionContext executionContext) {
     }
 
     @Override

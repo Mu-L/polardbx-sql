@@ -42,7 +42,7 @@ public class InformationSchemaFunctionCacheCapacityHandler extends BaseVirtualVi
 
     @Override
     public Cursor handle(VirtualView virtualView, ExecutionContext executionContext, ArrayResultCursor cursor) {
-        List<List<Map<String, Object>>> results = SyncManagerHelper.sync(new FetchFunctionCacheCapacitySyncAction(),
+        List<List<Map<String, Object>>> results = SyncManagerHelper.syncIgnoreExceptions(new FetchFunctionCacheCapacitySyncAction(),
             SyncScope.ALL);
 
         for (List<Map<String, Object>> nodeRows : results) {

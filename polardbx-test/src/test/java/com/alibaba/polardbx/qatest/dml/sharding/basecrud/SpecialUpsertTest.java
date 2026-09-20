@@ -84,7 +84,8 @@ public class SpecialUpsertTest extends CrudBasedLockTestCase {
         prepareData(tableName, 3);
 
         executeAndTraceUpsert(
-            "/*+TDDL:CMD_EXTRA(DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=true)*/ " + UPSERT_WITH_AFTER_VALUE_DEF,
+            "/*+TDDL:CMD_EXTRA(DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=true,"
+                + "DML_PARTITION_LOCAL_PK_DUP_CHECK=false)*/ " + UPSERT_WITH_AFTER_VALUE_DEF,
             tableName);
 
         checkTraceRowCount(topology.size() + 2);

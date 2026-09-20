@@ -21,6 +21,7 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.ddl.job.validator.TableValidator;
+import com.alibaba.polardbx.executor.utils.DdlUtils;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupAccessor;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
@@ -96,7 +97,7 @@ public class AlterTableGroupBaseBuilder {
                 createAlterTableGroupItemPreparedData(tableName, groupDetailInfoExRecords);
             alterTableGroupItemPreparedData.setOperateOnSubPartition(preparedData.isOperateOnSubPartition());
             AlterTableGroupItemBuilder itemBuilder =
-                new AlterTableGroupItemBuilder(relDdl, alterTableGroupItemPreparedData, executionContext);
+                createAlterTableGroupItemBuilder(relDdl, alterTableGroupItemPreparedData, executionContext);
             List<PhyDdlTableOperation> phyDdlTableOperations = itemBuilder.build().getPhysicalPlans();
             tablesTopologyMap.put(tableName, itemBuilder.getTableTopology());
             sourceTablesTopology.put(tableName, itemBuilder.getSourcePhyTables());
@@ -138,16 +139,29 @@ public class AlterTableGroupBaseBuilder {
         return orderedTargetTablesLocations;
     }
 
+    public AlterTableGroupItemBuilder createAlterTableGroupItemBuilder(DDL ddl,
+                                                                       AlterTableGroupItemPreparedData preparedData,
+                                                                       ExecutionContext executionContext) {
+        return new AlterTableGroupItemBuilder(ddl, preparedData, executionContext);
+    }
+
     public AlterTableGroupItemPreparedData createAlterTableGroupItemPreparedData(String tableName,
                                                                                  List<GroupDetailInfoExRecord> groupDetailInfoExRecords) {
+        AlterTableGroupItemPreparedData alterTableGroupItemPreparedData =
+            new AlterTableGroupItemPreparedData(preparedData.getSchemaName(), tableName);
+        prepareAlterTableGroupItemPreparedData(tableName, groupDetailInfoExRecords, alterTableGroupItemPreparedData);
+        return alterTableGroupItemPreparedData;
+    }
+
+    public void prepareAlterTableGroupItemPreparedData(String tableName,
+                                                       List<GroupDetailInfoExRecord> groupDetailInfoExRecords,
+                                                       AlterTableGroupItemPreparedData alterTableGroupItemPreparedData) {
         TableMeta tableMeta =
             getExecutionContext().getSchemaManager(getPreparedData().getSchemaName()).getTable(tableName);
         if (tableMeta.withCci()) {
             TableValidator.validateTableWithCCI(getExecutionContext(), getPreparedData().getTaskType());
         }
 
-        AlterTableGroupItemPreparedData alterTableGroupItemPreparedData =
-            new AlterTableGroupItemPreparedData(preparedData.getSchemaName(), tableName);
         PartitionInfo partitionInfo =
             OptimizerContext.getContext(preparedData.getSchemaName()).getPartitionInfoManager()
                 .getPartitionInfo(tableName);
@@ -180,8 +194,7 @@ public class AlterTableGroupBaseBuilder {
                 executionContext.getSchemaManager(preparedData.getSchemaName()).getTable(primaryTableName)
                     .getVersion());
         alterTableGroupItemPreparedData.setColumnarIndex(tableMeta.isColumnar());
-
-        return alterTableGroupItemPreparedData;
+        alterTableGroupItemPreparedData.setDdlVersionId(DdlUtils.generateVersionId(executionContext));
     }
 
     public AlterTableGroupBasePreparedData getPreparedData() {

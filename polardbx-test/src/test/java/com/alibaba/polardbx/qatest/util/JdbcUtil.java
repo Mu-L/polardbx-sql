@@ -43,6 +43,7 @@ import java.sql.Statement;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
@@ -122,6 +123,23 @@ public class JdbcUtil {
             Assert.fail(errorMs + " \n " + e);
         }
         return statement;
+    }
+
+    /**
+     * 执行sql,如果失败则assertError
+     */
+    public static void executeSuccessWithoutEscape(Connection conn, String sql) {
+        Statement statement = createStatement(conn);
+        try {
+            statement.setEscapeProcessing(false);
+            statement.execute(sql);
+        } catch (SQLException e) {
+            String errorMs = "[Statement execute] failed:" + sql;
+            log.error(errorMs, e);
+            Assert.fail(errorMs + " \n " + e);
+        } finally {
+            close(statement);
+        }
     }
 
     /**
@@ -904,7 +922,8 @@ public class JdbcUtil {
     }
 
     public static List<List<String>> getAllStringResultWithColumnNames(ResultSet rs, boolean ignoreException,
-                                                                       List<Integer> ignoreColumn) {
+                                                                       List<Integer> ignoreColumn,
+                                                                       boolean columnNameUpperCase) {
         List<List<String>> allResults = new ArrayList<>();
         ResultSetMetaData metaData = getMetaData(rs);
         int columnCount = getColumnCount(metaData);
@@ -913,7 +932,11 @@ public class JdbcUtil {
             for (int i = 1; i < columnCount + 1; i++) {
                 if (ignoreColumn == null || ignoreColumn.size() == 0 ||
                     !ignoreColumn.contains(i)) {
-                    columnName.add(metaData.getColumnName(i));
+                    if (columnNameUpperCase) {
+                        columnName.add(metaData.getColumnName(i).toUpperCase());
+                    } else {
+                        columnName.add(metaData.getColumnName(i));
+                    }
                 }
             }
             allResults.add(columnName);
@@ -1253,11 +1276,14 @@ public class JdbcUtil {
                     sql.append(" and ");
                 }
             }
-            PreparedStatement tddlPs = preparedStatementSet(sql.toString(), values, connection);
-            ResultSet tddlRs = executeQuery(sql.toString(), tddlPs);
-            Assert.assertTrue(
-                sql + " params: " + values.stream().map(o -> "[" + o.toString() + "]").collect(Collectors.joining()),
-                tddlRs.next());
+            try (PreparedStatement tddlPs = preparedStatementSet(sql.toString(), values, connection)) {
+                try (ResultSet tddlRs = executeQuery(sql.toString(), tddlPs)) {
+                    Assert.assertTrue(
+                        sql + " params: " + values.stream().map(o -> "[" + o.toString() + "]")
+                            .collect(Collectors.joining()),
+                        tddlRs.next());
+                }
+            }
         }
     }
 
@@ -1284,6 +1310,83 @@ public class JdbcUtil {
     public static boolean dbExists(Connection conn, String db) {
         List<String> dbs = showDatabases(conn);
         return dbs.contains(db.toLowerCase());
+    }
+
+    public static String getTrxId(Connection connection) throws SQLException {
+        try (ResultSet rs = executeQuerySuccess(connection, "select current_trans_id()")) {
+            Assert.assertTrue(rs.next());
+            return rs.getString(1);
+        }
+    }
+
+    public static String getTrxType(Connection connection, String trxId) throws SQLException {
+        try (ResultSet rs = JdbcUtil.executeQuerySuccess(connection,
+            "SELECT * FROM INFORMATION_SCHEMA.polardbx_trx WHERE trx_id = '" + trxId + "'")) {
+            Assert.assertTrue("Can not find the trx.", rs.next());
+
+            return rs.getString("TRX_TYPE");
+        }
+    }
+
+    /**
+     * @return SELECT count(0) FROM {tableName} where id in (ids...)
+     */
+    public static String getSelectCountSql(String tableName, int... ids) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("select count(0) from ")
+            .append(tableName)
+            .append(" where id in (");
+        for (int id : ids) {
+            builder.append(id).append(",");
+        }
+        builder.delete(builder.length() - 1, builder.length());
+        builder.append(")");
+        return builder.toString();
+    }
+
+    public static String getInsertSql(String tableName, int... ids) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("insert into ")
+            .append(tableName)
+            .append(" (id) values ");
+        for (int id : ids) {
+            builder.append("(").append(id).append("),");
+        }
+        builder.delete(builder.length() - 1, builder.length());
+        return builder.toString();
+    }
+
+    public static String getInsertSql(String tableName, int id, int a) {
+        return "insert into "
+            + tableName
+            + " (id, a) values "
+            + "(" + id + "," + a + ")";
+    }
+
+    public static String getUpdateSql(String tableName, int... ids) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("update ")
+            .append(tableName)
+            .append(" set a = 100 where id in (");
+        for (int id : ids) {
+            builder.append(id).append(",");
+        }
+        builder.delete(builder.length() - 1, builder.length());
+        builder.append(")");
+        return builder.toString();
+    }
+
+    public static String getDeleteSql(String tableName, int... ids) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("delete from ")
+            .append(tableName)
+            .append(" where id in (");
+        for (int id : ids) {
+            builder.append(id).append(",");
+        }
+        builder.delete(builder.length() - 1, builder.length());
+        builder.append(")");
+        return builder.toString();
     }
 
     public static class MyNumber {
@@ -1687,6 +1790,22 @@ public class JdbcUtil {
         executeFailed(conn, sql, new String[] {errorMsg});
     }
 
+    public static boolean isQuerySuccess(String sql, Connection conn) throws SQLException {
+        boolean querySuccess;
+        try (Statement ps = JdbcUtil.createStatement(conn)) {
+            try {
+                final ResultSet rs = ps.executeQuery(sql);
+                rs.close();
+                querySuccess = true;
+            } catch (SQLException e) {
+                String errorMs = "[Execute preparedStatement query] failed! sql is: " + sql;
+                log.error(e.getMessage(), e);
+                querySuccess = false;
+            }
+        }
+        return querySuccess;
+    }
+
     public static DruidDataSource getDruidDataSource(String url, String user, String password) {
         DruidDataSource druidDs = new DruidDataSource();
         druidDs.setUrl(url);
@@ -2008,13 +2127,14 @@ public class JdbcUtil {
     public static void createColumnarIndex(Connection tddlConnection, String indexName, String tableName,
                                            String sortKey, String partKey, int partCount) {
         final String createColumnarIdx = "create clustered columnar index %s on %s(%s) "
-            + " engine='EXTERNAL_DISK' partition by hash(%s) partitions %s";
+            + " partition by hash(%s) partitions %s";
         JdbcUtil.executeSuccess(tddlConnection,
             String.format(createColumnarIdx, indexName, tableName, sortKey, partKey, partCount));
     }
 
     public static void waitUntilVariableChanged(Connection conn, String varKey, String expectedVal, int timeoutSec)
         throws SQLException, InterruptedException {
+        System.out.println("Wait for variable " + varKey + " to " + expectedVal);
         long time = 0;
         while (true) {
             ResultSet rs = executeQuerySuccess(conn,
@@ -2022,6 +2142,26 @@ public class JdbcUtil {
             if (rs.next() && rs.getString("Value").equalsIgnoreCase(expectedVal)) {
                 break;
             }
+            System.out.println("current val: " + rs.getString("Value"));
+            if (time++ > timeoutSec * 10L) {
+                throw new RuntimeException("Timeout.");
+            }
+            Thread.sleep(100);
+        }
+    }
+
+    public static void waitUntilVariableChangedMetaDb(Connection conn, String varKey, String expectedVal,
+                                                      int timeoutSec)
+        throws SQLException, InterruptedException {
+        System.out.println("Wait for variable " + varKey + " to " + expectedVal);
+        long time = 0;
+        while (true) {
+            ResultSet rs = executeQuerySuccess(conn,
+                String.format("select param_val from metadb.inst_config where param_key like '%s'", varKey));
+            if (rs.next() && rs.getString("param_val").equalsIgnoreCase(expectedVal)) {
+                break;
+            }
+            System.out.println("metadb current val: " + rs.getString("param_val"));
             if (time++ > timeoutSec * 10L) {
                 throw new RuntimeException("Timeout.");
             }
@@ -2047,16 +2187,58 @@ public class JdbcUtil {
         useDb(polarxConn, logDb);
     }
 
+    public static String getTransId(Connection polarxConn) throws SQLException {
+        try (Statement stmt = polarxConn.createStatement()) {
+            ResultSet rs = stmt.executeQuery("select CURRENT_TRANS_ID()");
+            if (rs.next()) {
+                return rs.getString(1);
+            }
+        }
+        return null;
+    }
+
+    public static Set<com.alibaba.polardbx.common.utils.Pair<String, String>> getTraceSet(String sql,
+                                                                                          Connection tddlConnection)
+        throws Exception {
+        JdbcUtil.getAllResult(JdbcUtil.executeQuery("trace " + sql, tddlConnection));
+        ResultSet rs = JdbcUtil.executeQuery("show trace;", tddlConnection);
+        Set<com.alibaba.polardbx.common.utils.Pair<String, String>> traceSet = new HashSet<>();
+        while (rs.next()) {
+            traceSet.add(com.alibaba.polardbx.common.utils.Pair.of(rs.getString("DBKEY_NAME"), rs.getString("PARAMS")));
+        }
+        return traceSet;
+    }
+
+    public static void disableExplainShowPhysicalPlan(Connection connection) throws SQLException {
+        connection.createStatement().execute("set " + ConnectionProperties.EXPLAIN_SHOW_PHYSICAL_PLAN + "=false");
+    }
+
     public static Connection getPolarxPreparedConnection(String user, String password, String db) throws SQLException {
         Properties props = new Properties();
         props.setProperty("user", user);
         props.setProperty("password", password);
         props.setProperty("useServerPrepStmts", "true");
 
-        String dbUrl = String.format("jdbc:mysql://%s:%s/%s",
-                ConnectionManager.getInstance().getPolardbxAddress(), ConnectionManager.getInstance().getPolardbxPort(), db);
+        String dbUrl = String.format("jdbc:mysql://%s:%s/%s?%s",
+            ConnectionManager.getInstance().getPolardbxAddress(), ConnectionManager.getInstance().getPolardbxPort(),
+            db, PropertiesUtil.getConnectionProperties());
         Driver driver = DriverManager.getDriver(dbUrl);
         return driver.connect(dbUrl, props);
+    }
+
+    public static long getColumnarLatency(Connection conn) {
+        try (Statement statement = conn.createStatement();
+            ResultSet rs = statement.executeQuery("show columnar offset")) {
+            while (rs.next()) {
+                String type = rs.getString("TYPE");
+                if (type.equalsIgnoreCase("COLUMNAR_LATENCY")) {
+                    return rs.getLong("LATENCY(ms)");
+                }
+            }
+            return -1;
+        } catch (Throwable t) {
+            throw new RuntimeException(t);
+        }
     }
 
 }

@@ -16,7 +16,7 @@ public class AnsiQuotesTest extends BaseTestCase {
             + "  `TRX_SEQ` BIGINT UNSIGNED NOT NULL DEFAULT 18446744073709551615 COMMENT 'DEFAULT INVALID_SEQUENCE_NUMBER',\n"
             + "  `N_PARTICIPANTS` INT UNSIGNED NOT NULL DEFAULT 0,\n"
             + "  PRIMARY KEY (`TXID`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
 
     public static final String CREATE_GLOBAL_TX_TABLE_V2_OLD =
         "CREATE TABLE IF NOT EXISTS " + TABLE_NAME + "_1"
@@ -25,7 +25,7 @@ public class AnsiQuotesTest extends BaseTestCase {
             + "  `TRX_SEQ` BIGINT UNSIGNED NOT NULL DEFAULT 18446744073709551615 COMMENT \"DEFAULT INVALID_SEQUENCE_NUMBER\",\n"
             + "  `N_PARTICIPANTS` INT UNSIGNED NOT NULL DEFAULT 0,\n"
             + "  PRIMARY KEY (`TXID`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci";
 
     @Test
     public void test() throws SQLException {

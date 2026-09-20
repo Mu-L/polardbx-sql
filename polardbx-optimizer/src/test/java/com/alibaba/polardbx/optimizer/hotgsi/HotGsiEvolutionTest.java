@@ -73,7 +73,7 @@ public class HotGsiEvolutionTest extends HotGsiTestCommon {
 
     protected String validator(SqlParameterized sqlParameterized, ExecutionPlan executionPlan,
                                ExecutionContext executionContext) {
-        PlanManager.getInstance().getBaselineMap().clear();
+        PlanManager.getInstance().invalidateSchema(appName);
 
         invokeEvolve(sqlParameterized, executionPlan, executionContext);
         Assert.assertTrue(PlanManager.getInstance().getBaselineMap(appName).size() == 1);

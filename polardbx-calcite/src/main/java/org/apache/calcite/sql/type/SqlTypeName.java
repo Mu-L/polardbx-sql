@@ -150,6 +150,7 @@ public enum SqlTypeName {
         SqlTypeFamily.ANY),
     JSON(PrecScale.NO_NO, false, Types.VARCHAR, SqlTypeFamily.CHARACTER),
     GEOMETRY(PrecScale.NO_NO, true, ExtraSqlTypes.GEOMETRY, SqlTypeFamily.GEO),
+    VECTOR(PrecScale.NO_NO | PrecScale.YES_NO, false, ExtraSqlTypes.VECTOR, SqlTypeFamily.ANY),
     USER_SYMBOL(PrecScale.NO_NO | PrecScale.YES_NO, false, Types.CHAR, SqlTypeFamily.CHARACTER);
 
     public static final int MAX_DATETIME_PRECISION = MySQLTimeTypeUtil.MAX_DATETIME_PRECISION;

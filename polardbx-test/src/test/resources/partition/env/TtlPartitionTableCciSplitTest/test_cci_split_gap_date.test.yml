@@ -1,0 +1,35 @@
+## DISABLE_FAST_SQL_PARSER
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2025-09-01 00:00:00';
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+
+create table test_cci_split_gap_date(
+a int not null auto_increment,
+b date default null,
+primary key(a)
+)
+ttl = ttl_definition( TTL_ENABLE = 'OFF' TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00' TTL_JOB = CRON '0 0 1 */2 * ? *' TIMEZONE '+08:00' ARCHIVE_TABLE_PRE_ALLOCATE = 2 ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+partition by key(a) partitions 2;
+show create table test_cci_split_gap_date;
+create table test_cci_split_gap_date_bk like test_cci_split_gap_date engine='columnar' archive_mode='ttl';
+show create table test_cci_split_gap_date;
+
+## split pmax to build a large gap with far-future reserved partitions
+alter index arctmp_test_cci_split_gap_date_bk on table test_cci_split_gap_date
+  split partition pmax into (
+    partition p20980101 values less than ('2098-01-01 00:00:00'),
+    partition p20990101 values less than ('2099-01-01 00:00:00'),
+    partition p21000101 values less than ('2100-01-01 00:00:00'),
+    partition pmax values less than (maxvalue)
+  );
+show create table test_cci_split_gap_date;
+
+## enable nearest split + reserved gap threshold, should split from the nearest reserved part
+alter table test_cci_split_gap_date modify ttl set ARCHIVE_TABLE_PRE_ALLOCATE=7;
+/*+TDDL:cmd_extra(TTL_ENABLE_CCI_SPLIT_FROM_NEAREST_PART=true,TTL_CCI_RESERVED_PART_GAP_COUNT=24)*/ alter table test_cci_split_gap_date cleanup expired data;
+show create table test_cci_split_gap_date;
+
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI=false;
+drop table test_cci_split_gap_date;

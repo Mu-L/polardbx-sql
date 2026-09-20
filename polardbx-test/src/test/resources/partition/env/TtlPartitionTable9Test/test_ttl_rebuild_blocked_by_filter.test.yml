@@ -1,0 +1,49 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+## test_ttl_rebuild_blocked_by_filter
+## Verify TTL table with TTL_FILTER cannot use rebuild policy
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set sql_mode='';
+set TTL_ADD_MAXVAL_PART_ON_CCI_CREATING=true;
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+
+CREATE TABLE `ttl_rb6` (
+  `a` bigint(20) NOT NULL AUTO_INCREMENT,
+  `b` datetime DEFAULT NULL,
+  PRIMARY KEY(a)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+TTL = TTL_DEFINITION (
+  TTL_ENABLE = 'OFF',
+  TTL_EXPR = `b` EXPIRE AFTER 1 month TIMEZONE '+08:00',
+  TTL_JOB = CRON '0 0 2 * * ? *',
+  TTL_CLEANUP = 'ON',
+  TTL_FILTER = COND_EXPR( `b` IS NOT NULL ),
+  ARCHIVE_TYPE = 'ROW',
+  ARCHIVE_TABLE_NAME = '',
+  ARCHIVE_TABLE_PRE_ALLOCATE = 12,
+  ARCHIVE_TABLE_POST_ALLOCATE = 12
+)
+PARTITION BY KEY(`a`)
+PARTITIONS 4;
+
+insert into ttl_rb6 values (1, null);
+insert into ttl_rb6 values (2, '2025-01-10 00:00:00');
+insert into ttl_rb6 values (3, '2025-02-10 00:00:00');
+insert into ttl_rb6 values (4, '2025-03-10 00:00:00');
+insert into ttl_rb6 values (5, '2025-04-15 00:00:00');
+insert into ttl_rb6 values (6, '2025-04-20 00:00:00');
+insert into ttl_rb6 values (7, null);
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-04-27 00:00:00';
+
+select a, date_format(b, '%Y-%m-%d %H:%i:%s') as b_val from ttl_rb6 order by a;
+
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=true,TTL_FORCE_USE_REBUILD_POLICY_FOR_CLEANUP_EXPIRED_DATA=true)*/ alter table ttl_rb6 cleanup expired data;
+
+select a, date_format(b, '%Y-%m-%d %H:%i:%s') as b_val from ttl_rb6 order by a;
+
+drop table ttl_rb6;

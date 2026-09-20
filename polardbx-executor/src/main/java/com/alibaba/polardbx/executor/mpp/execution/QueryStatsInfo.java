@@ -29,6 +29,7 @@
  */
 package com.alibaba.polardbx.executor.mpp.execution;
 
+import com.alibaba.polardbx.executor.mpp.client.FailureInfo;
 import com.alibaba.polardbx.executor.mpp.operator.TaskStats;
 import com.alibaba.polardbx.util.MoreObjects;
 import com.fasterxml.jackson.annotation.JsonCreator;
@@ -49,6 +50,7 @@ public class QueryStatsInfo {
     private final String query;
     private final QueryStats queryStats;
     private final StageStatsInfo outputStage;
+    private final FailureInfo failureInfo;
 
     @JsonCreator
     public QueryStatsInfo(
@@ -63,8 +65,8 @@ public class QueryStatsInfo {
         @JsonProperty("queryStats")
         QueryStats queryStats,
         @JsonProperty("outputStage")
-        StageStatsInfo outputStage
-    ) {
+        StageStatsInfo outputStage,
+        FailureInfo failureInfo) {
         requireNonNull(queryId, "queryId is null");
         requireNonNull(session, "session is null");
         requireNonNull(state, "state is null");
@@ -76,6 +78,7 @@ public class QueryStatsInfo {
         this.query = query;
         this.queryStats = queryStats;
         this.outputStage = outputStage;
+        this.failureInfo = failureInfo;
     }
 
     @JsonProperty
@@ -108,17 +111,23 @@ public class QueryStatsInfo {
         return outputStage;
     }
 
+    public static QueryStatsInfo from(QueryInfo queryInfo) {
+        return new QueryStatsInfo(queryInfo.getQueryId(), queryInfo.getSession(), queryInfo.getState(),
+            queryInfo.getQuery(),
+            queryInfo.getQueryStats(),
+            StageStatsInfo.from(queryInfo.getOutputStage()),
+            queryInfo.getFailureInfo()
+        );
+    }
+
     @Override
     public String toString() {
         return MoreObjects.toStringHelper(this).add("queryId", queryId).add("state", state).toString();
     }
 
-    public static QueryStatsInfo from(QueryInfo queryInfo) {
-        return new QueryStatsInfo(queryInfo.getQueryId(), queryInfo.getSession(), queryInfo.getState(),
-            queryInfo.getQuery(),
-            queryInfo.getQueryStats(),
-            StageStatsInfo.from(queryInfo.getOutputStage())
-        );
+    @JsonProperty
+    public FailureInfo getFailureInfo() {
+        return failureInfo;
     }
 
     public static class StageStatsInfo {

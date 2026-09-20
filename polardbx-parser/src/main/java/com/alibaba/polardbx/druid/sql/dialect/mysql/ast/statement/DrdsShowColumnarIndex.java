@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement;
 
+import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
 import com.alibaba.polardbx.druid.sql.ast.SQLName;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLShowStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.visitor.MySqlASTVisitor;
@@ -23,6 +24,7 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.visitor.MySqlASTVisitor;
 public class DrdsShowColumnarIndex extends MySqlStatementImpl implements SQLShowStatement {
 
     private SQLName tableName = null;
+    private SQLExpr tso = null;
 
     public void accept0(MySqlASTVisitor visitor) {
         visitor.visit(this);
@@ -36,6 +38,15 @@ public class DrdsShowColumnarIndex extends MySqlStatementImpl implements SQLShow
     public void setTableName(SQLName tableName) {
         tableName.setParent(this);
         this.tableName = tableName;
+    }
+
+    public SQLExpr getTso() {
+        return tso;
+    }
+
+    public void setTso(SQLExpr tso) {
+        tso.setParent(this);
+        this.tso = tso;
     }
 
 }

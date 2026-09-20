@@ -43,10 +43,11 @@ public class SqlDropDatabase extends SqlDdl {
     final boolean                           ifExists;
     final SqlIdentifier                     dbName;
 
-    public SqlDropDatabase(SqlParserPos pos, boolean ifExists, SqlIdentifier dbName){
+    public SqlDropDatabase(SqlParserPos pos, boolean ifExists, SqlIdentifier dbName, Boolean dryRunDdl){
         super(OPERATOR, pos);
         this.ifExists = ifExists;
         this.dbName = dbName;
+        this.dryrun = dryRunDdl;
     }
 
     @Override
@@ -58,6 +59,11 @@ public class SqlDropDatabase extends SqlDdl {
         }
 
         dbName.unparse(writer, leftPrec, rightPrec);
+
+        Boolean dryRun = getDryrun();
+        if (dryRun != null && dryRun) {
+            writer.keyword(" DRYRUN = TRUE");
+        }
     }
 
     @Override

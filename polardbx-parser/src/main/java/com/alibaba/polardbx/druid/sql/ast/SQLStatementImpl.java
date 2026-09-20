@@ -28,6 +28,8 @@ public abstract class SQLStatementImpl extends SQLObjectImpl implements SQLState
     protected boolean afterSemi;
     protected List<SQLCommentHint> headHints;
     protected Boolean async = null;
+    protected Boolean dryrun = null;
+    protected String perfMode = null; // "boost" or "default"
 
     public SQLStatementImpl() {
 
@@ -100,5 +102,21 @@ public abstract class SQLStatementImpl extends SQLObjectImpl implements SQLState
 
     public void setAsync(Boolean async) {
         this.async = async;
+    }
+
+    public Boolean getDryrun() {
+        return dryrun;
+    }
+
+    public void setDryrun(Boolean dryrun) {
+        this.dryrun = dryrun;
+    }
+
+    public String getPerfMode() {
+        return perfMode;
+    }
+
+    public void setPerfMode(String perfMode) {
+        this.perfMode = perfMode;
     }
 }

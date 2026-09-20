@@ -20,13 +20,6 @@ import com.alibaba.polardbx.common.datatype.Decimal;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
-import com.google.common.base.Preconditions;
-import com.google.common.io.BaseEncoding;
-import com.mysql.jdbc.StringUtils;
-import com.alibaba.polardbx.common.jdbc.ZeroDate;
-import com.alibaba.polardbx.common.jdbc.ZeroTime;
-import com.alibaba.polardbx.common.jdbc.ZeroTimestamp;
-import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.ParameterMethod;
 import com.alibaba.polardbx.common.properties.PropUtil;
@@ -40,8 +33,13 @@ import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
 import com.google.common.base.Preconditions;
 import com.google.common.io.BaseEncoding;
+import com.mysql.jdbc.StringUtils;
+import com.alibaba.polardbx.common.jdbc.ZeroDate;
+import com.alibaba.polardbx.common.jdbc.ZeroTime;
+import com.alibaba.polardbx.common.jdbc.ZeroTimestamp;
 import io.airlift.slice.Slice;
 
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
@@ -51,6 +49,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.BiFunction;
@@ -121,11 +120,17 @@ public class Transformer {
 
     public static List<Map<Integer, ParameterContext>> convertUpperBoundWithDefaultForFastChecker(Cursor cursor,
                                                                                                   boolean useBinary,
-                                                                                                  List<List<Object>> rowValues) {
+                                                                                                  List<List<Object>> rowValues,
+                                                                                                  double downSampleRate) {
         final List<Map<Integer, ParameterContext>> batchParams = new ArrayList<>();
 
         Row row;
+        Random random = new Random();
         while ((row = cursor.next()) != null) {
+            double rand = random.nextDouble();
+            if (rand > downSampleRate) {
+                continue;
+            }
             final List<ColumnMeta> columns = row.getParentCursorMeta().getColumns();
 
             final Map<Integer, ParameterContext> params = new HashMap<>(columns.size());
@@ -251,7 +256,7 @@ public class Transformer {
                     method = ParameterMethod.setString;
                 } else if (DataTypeUtil
                     .anyMatchSemantically(columnType, DataTypes.BinaryType, DataTypes.BlobType,
-                        DataTypes.BinaryStringType)) {
+                        DataTypes.BinaryStringType, DataTypes.VectorType)) {
                     // 使用 setBytes 标记，序列化时使用16进制字符串
                     value = resultSet.getBytes(i);
                     method = ParameterMethod.setBytes;
@@ -335,11 +340,11 @@ public class Transformer {
                     method = ParameterMethod.setDouble;
                 } else if (DataTypeUtil.anyMatchSemantically(columnType, DataTypes.ULongType)) {
                     // BIGINT(64) UNSIGNED
-                    value = row.getString(i);
-                    method = ParameterMethod.setString;
+                    value = row.getBigDecimal(i);
+                    method = ParameterMethod.setBigDecimal;
                 } else if (DataTypeUtil
                     .anyMatchSemantically(columnType, DataTypes.BinaryType, DataTypes.BlobType,
-                        DataTypes.BinaryStringType)) {
+                        DataTypes.BinaryStringType, DataTypes.VectorType)) {
                     // 使用 setBytes 标记，序列化时使用16进制字符串
                     value = row.getBytes(i);
                     method = ParameterMethod.setBytes;
@@ -424,7 +429,7 @@ public class Transformer {
                     value = stringVal;
                     method = ParameterMethod.setString;
                 } else if (DataTypeUtil.anyMatchSemantically(columnType, DataTypes.BinaryType, DataTypes.BlobType,
-                    DataTypes.BinaryStringType) && stringVal != null) {
+                    DataTypes.BinaryStringType, DataTypes.VectorType) && stringVal != null) {
                     // 使用 setBytes 标记，序列化时使用16进制字符串
                     value = stringVal.getBytes(charset);
                     method = ParameterMethod.setBytes;
@@ -480,6 +485,8 @@ public class Transformer {
             return Double.valueOf(value);
         case setBytes:
             return BaseEncoding.base16().decode(value);
+        case setBigDecimal:
+            return new BigDecimal(value);
         default:
             return value;
         }

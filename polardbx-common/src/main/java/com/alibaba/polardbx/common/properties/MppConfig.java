@@ -18,12 +18,15 @@ package com.alibaba.polardbx.common.properties;
 
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
+import io.airlift.slice.DataSize;
+import io.airlift.slice.Duration;
 import org.slf4j.Logger;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_ENABLE_UI;
@@ -44,13 +47,19 @@ import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_HT
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_HTTP_CLIENT_MAX_CONNECTIONS_PER_SERVER;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_HTTP_CLIENT_MAX_THREADS;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_HTTP_CLIENT_MIN_THREADS;
+import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_HTTP_CONNECT_TIMEOUT;
+import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_HTTP_IDLE_TIMEOUT;
+import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_HTTP_MAX_CONTENT_LENGTH;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_HTTP_MAX_REQUESTS_PER_DESTINATION;
-import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_HTTP_RESPONSE_THREAD_SIZE;
+import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_HTTP_REQUEST_TIMEOUT;
+import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_HTTP_DATA_RESPONSE_THREAD_SIZE;
+import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_HTTP_CONTROL_RESPONSE_THREAD_SIZE;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_HTTP_SERVER_MAX_THREADS;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_HTTP_SERVER_MIN_THREADS;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_HTTP_TIMEOUT_THREAD_SIZE;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_INFO_UPDATE_INTERVAL;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_LESS_REVOKE_BYTES;
+import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_LOG_PATHS;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_LOW_PRIORITY_ENABLED;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_MAX_QUERY_EXPIRED_RESERVETION_TIME;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_MAX_QUERY_HISTORY;
@@ -70,6 +79,7 @@ import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_QU
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_QUERY_REMOTE_TASK_MAX_ERROR;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_QUERY_REMOTE_TASK_MIN_ERROR;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_REMOTE_TASK_CALLBACK_THREAD_SIZE;
+import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_RESERVED_SLOW_QUERY_TIME;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_SCHEMA_MAX_MEM;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_SPILL_PATHS;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.MPP_SPLIT_RUN_QUANTA;
@@ -106,6 +116,9 @@ public class MppConfig {
                 break;
             case MPP_MIN_QUERY_EXPIRE_TIME:
                 minQueryExpireTime = parseValue(value, Long.class, DEFAULT_MPP_MIN_QUERY_EXPIRE_TIME);
+                break;
+            case MPP_RESERVED_SLOW_QUERY_TIME:
+                reservedSlowQueryTime = parseValue(value, Long.class, Long.MAX_VALUE);
                 break;
             case MPP_QUERY_MAX_DELAY_TIME:
                 queryMaxDelayTime = parseValue(value, Long.class, DEFAULT_MPP_QUERY_MAX_DELAY_TIME);
@@ -186,8 +199,12 @@ public class MppConfig {
                 taskInfoCacheMaxAliveMillis =
                     parseValue(value, Long.class, DEFAULT_MPP_TASKINFO_CACHE_MAX_ALIVE_MILLIS);
                 break;
-            case MPP_HTTP_RESPONSE_THREAD_SIZE:
-                httpResponseThreads = parseValue(value, Integer.class, DEFAULT_MPP_HTTP_RESPONSE_THREADS);
+            case MPP_HTTP_DATA_RESPONSE_THREAD_SIZE:
+                httpDataResponseThreads = parseValue(value, Integer.class, DEFAULT_MPP_HTTP_DATA_RESPONSE_THREADS);
+                break;
+            case MPP_HTTP_CONTROL_RESPONSE_THREAD_SIZE:
+                httpControlResponseThreads =
+                    parseValue(value, Integer.class, DEFAULT_MPP_HTTP_CONTROL_RESPONSE_THREADS);
                 break;
             case MPP_HTTP_TIMEOUT_THREAD_SIZE:
                 httpTimeoutThreads = parseValue(value, Integer.class, DEFAULT_MPP_HTTP_TIMEOUT_THREADS);
@@ -280,8 +297,25 @@ public class MppConfig {
                     Splitter.on(",").trimResults().omitEmptyStrings().split(value));
                 spillPaths = spillPathsSplit.stream().map(path -> Paths.get(path)).collect(Collectors.toList());
                 break;
+            case MPP_LOG_PATHS:
+                List<String> logPathsSplit = ImmutableList.copyOf(
+                    Splitter.on(",").trimResults().omitEmptyStrings().split(value));
+                logPaths = logPathsSplit.stream().map(path -> Paths.get(path)).collect(Collectors.toList());
+                break;
             case MPP_ENABLE_UI:
-                this.enableMppUI = parseValue(value, Boolean.class, DEFAULT_ENABLE_MPP_UI);
+                this.enableMppUI = parseValue(value, Boolean.class, DEFAULT_MPP_ENABLE_UI);
+                break;
+            case MPP_HTTP_IDLE_TIMEOUT:
+                httpIdleTimeout = parseValue(value, Integer.class, DEFAULT_MPP_HTTP_IDLE_TIMEOUT);
+                break;
+            case MPP_HTTP_REQUEST_TIMEOUT:
+                httpRequestTimeout = parseValue(value, Integer.class, DEFAULT_MPP_HTTP_REQUEST_TIMEOUT);
+                break;
+            case MPP_HTTP_CONNECT_TIMEOUT:
+                httpConnectTimeout = parseValue(value, Integer.class, DEFAULT_MPP_HTTP_CONNECT_TIMEOUT);
+                break;
+            case MPP_HTTP_MAX_CONTENT_LENGTH:
+                httpMaxContentLength = parseValue(value, Integer.class, DEFAULT_MPP_HTTP_MAX_CONTENT_LENGTH);
                 break;
             default:
                 logger.warn("unknown mpp config:" + key + ",value=" + value);
@@ -290,11 +324,11 @@ public class MppConfig {
     }
 
     //-------------------------------------------- web UI ----------------------------------------------------
-    private static final boolean DEFAULT_ENABLE_MPP_UI = true;
+    private static final boolean DEFAULT_MPP_ENABLE_UI = true;
     /**
      * Requires restart
      */
-    private boolean enableMppUI = DEFAULT_ENABLE_MPP_UI;
+    private boolean enableMppUI = DEFAULT_MPP_ENABLE_UI;
 
     public boolean isEnableMppUI() {
         return enableMppUI;
@@ -396,6 +430,15 @@ public class MppConfig {
         return queryMinDelayPendingRatio;
     }
 
+    private long reservedSlowQueryTime = Long.MAX_VALUE;
+
+    /**
+     * @return ms
+     */
+    public long getReservedSlowQueryTime() {
+        return reservedSlowQueryTime;
+    }
+
     private static final long DEFAULT_MPP_MIN_QUERY_EXPIRE_TIME = 0L;
     private long minQueryExpireTime = DEFAULT_MPP_MIN_QUERY_EXPIRE_TIME;
 
@@ -495,14 +538,14 @@ public class MppConfig {
         return taskFutureCallbackThreads;
     }
 
-    private static final int DEFAULT_MPP_TP_TASK_WORKER_THREADS_RATIO = 4;
+    private static final int DEFAULT_MPP_TP_TASK_WORKER_THREADS_RATIO = 8;
     private int tpTaskWorkerThreadsRatio = DEFAULT_MPP_TP_TASK_WORKER_THREADS_RATIO;
 
     public int getTpTaskWorkerThreadsRatio() {
         return tpTaskWorkerThreadsRatio;
     }
 
-    private static final int DEFAULT_MPP_TASK_WORKER_THREADS_RATIO = 4;
+    private static final int DEFAULT_MPP_TASK_WORKER_THREADS_RATIO = 8;
     private int taskWorkerThreadsRatio = DEFAULT_MPP_TASK_WORKER_THREADS_RATIO;
 
     public int getTaskWorkerThreadsRatio() {
@@ -516,7 +559,7 @@ public class MppConfig {
         return splitRunQuanta;
     }
 
-    private static final long DEFAULT_MPP_STATUS_REFRESH_MAX_WAIT = 300000L;
+    private static final long DEFAULT_MPP_STATUS_REFRESH_MAX_WAIT = 15000L;
     private long statusRefreshMaxWait = DEFAULT_MPP_STATUS_REFRESH_MAX_WAIT;
 
     public long getStatusRefreshMaxWait() {
@@ -586,11 +629,18 @@ public class MppConfig {
         return exchangeClientThreads;
     }
 
-    private static final int DEFAULT_MPP_HTTP_RESPONSE_THREADS = 100;
-    private int httpResponseThreads = DEFAULT_MPP_HTTP_RESPONSE_THREADS;
+    private static final int DEFAULT_MPP_HTTP_DATA_RESPONSE_THREADS = 100;
+    private int httpDataResponseThreads = DEFAULT_MPP_HTTP_DATA_RESPONSE_THREADS;
 
-    public int getHttpResponseThreads() {
-        return httpResponseThreads;
+    public int getHttpDataResponseThreads() {
+        return httpDataResponseThreads;
+    }
+
+    private static final int DEFAULT_MPP_HTTP_CONTROL_RESPONSE_THREADS = 50;
+    private int httpControlResponseThreads = DEFAULT_MPP_HTTP_CONTROL_RESPONSE_THREADS;
+
+    public int getHttpControlResponseThreads() {
+        return httpControlResponseThreads;
     }
 
     private static final int DEFAULT_MPP_HTTP_TIMEOUT_THREADS = 3;
@@ -628,7 +678,7 @@ public class MppConfig {
         return httpClientMinThreads;
     }
 
-    private static final int DEFAULT_MPP_HTTP_CLIENT_MAX_CONNECTIONS = 1024;
+    private static final int DEFAULT_MPP_HTTP_CLIENT_MAX_CONNECTIONS = 5000;
     private int httpClientMaxConnections = DEFAULT_MPP_HTTP_CLIENT_MAX_CONNECTIONS;
 
     public int getHttpClientMaxConnections() {
@@ -642,11 +692,39 @@ public class MppConfig {
         return httpClientMaxConnectionsPerServer;
     }
 
-    private static final int DEFAULT_MPP_HTTP_MAX_REQUESTS_PER_DESTINATION = 50000;
+    private static final int DEFAULT_MPP_HTTP_MAX_REQUESTS_PER_DESTINATION = 5000;
     private int httpMaxRequestsPerDestination = DEFAULT_MPP_HTTP_MAX_REQUESTS_PER_DESTINATION;
 
     public int getHttpMaxRequestsPerDestination() {
         return httpMaxRequestsPerDestination;
+    }
+
+    private static final int DEFAULT_MPP_HTTP_IDLE_TIMEOUT = 1;
+    private int httpIdleTimeout = DEFAULT_MPP_HTTP_IDLE_TIMEOUT;
+
+    public int getHttpIdleTimeout() {
+        return httpIdleTimeout;
+    }
+
+    private static final int DEFAULT_MPP_HTTP_REQUEST_TIMEOUT = 25;
+    private int httpRequestTimeout = DEFAULT_MPP_HTTP_REQUEST_TIMEOUT;
+
+    public int getHttpRequestTimeout() {
+        return httpRequestTimeout;
+    }
+
+    private static final int DEFAULT_MPP_HTTP_CONNECT_TIMEOUT = 3;
+    private int httpConnectTimeout = DEFAULT_MPP_HTTP_CONNECT_TIMEOUT;
+
+    public int getHttpConnectTimeout() {
+        return httpConnectTimeout;
+    }
+
+    private static final int DEFAULT_MPP_HTTP_MAX_CONTENT_LENGTH = 128;
+    private int httpMaxContentLength = DEFAULT_MPP_HTTP_MAX_CONTENT_LENGTH;
+
+    public int getHttpMaxContentLength() {
+        return httpMaxContentLength;
     }
 
     private static final int DEFAULT_MPP_TABLESCAN_CONNECTION_STRATEGY = 0;
@@ -693,16 +771,30 @@ public class MppConfig {
 
     private static final List<Path> DEFAULT_SPILL_PATHS = initDefaultPathList();
 
+    private static final List<Path> DEFAULT_LOG_PATHS = initDefaultLogPathList();
+
     private static List<Path> initDefaultPathList() {
         List<Path> paths = new ArrayList<>();
         paths.add(Paths.get("../spill"));
         return paths;
     }
 
+    private static List<Path> initDefaultLogPathList() {
+        List<Path> paths = new ArrayList<>();
+        paths.add(Paths.get("../logs"));
+        return paths;
+    }
+
     private List<Path> spillPaths = DEFAULT_SPILL_PATHS;
+
+    private List<Path> logPaths = DEFAULT_LOG_PATHS;
 
     public List<Path> getSpillPaths() {
         return spillPaths;
+    }
+
+    public List<Path> getLogPaths() {
+        return logPaths;
     }
 
     public static <T> T parseValue(String value, Class<T> type, T defaultValue) {

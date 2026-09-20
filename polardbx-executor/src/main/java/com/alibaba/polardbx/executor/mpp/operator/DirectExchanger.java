@@ -16,16 +16,19 @@
 
 package com.alibaba.polardbx.executor.mpp.operator;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.OutputBufferMemoryManager;
 import com.alibaba.polardbx.executor.operator.ConsumerExecutor;
 import com.google.common.collect.ImmutableList;
+import org.openjdk.jol.info.ClassLayout;
 
 public class DirectExchanger extends LocalExchanger {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(DirectExchanger.class).instanceSize();
 
     public DirectExchanger(OutputBufferMemoryManager bufferMemoryManager, ConsumerExecutor executor,
-                           LocalExchangersStatus status) {
-        super(bufferMemoryManager, ImmutableList.of(executor), status, true);
+                           LocalExchangersStatus status, long waitNotFullInMillis) {
+        super(bufferMemoryManager, ImmutableList.of(executor), status, true, waitNotFullInMillis);
     }
 
     @Override
@@ -50,5 +53,13 @@ public class DirectExchanger extends LocalExchanger {
     @Override
     public void buildConsume() {
         this.executors.get(0).buildConsume();
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+
+            // super class
+            + FastMemoryCounter.sizeOf(opened);
     }
 }

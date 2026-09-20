@@ -84,7 +84,7 @@ public final class ServerParse {
 
     private static final Pattern ALTER_PROCEDURE_PATTERN = Pattern.compile("^\\s*alter\\s+procedure\\s+[\\s\\S]*$",
         Pattern.CASE_INSENSITIVE);
-    private static final Pattern CREATE_USER_PATTERN = Pattern.compile("^\\s*create\\s+user\\s+.*$",
+    private static final Pattern CREATE_USER_PATTERN = Pattern.compile("^\\s*create\\s+(dba_)?user\\s+.*$",
         Pattern.CASE_INSENSITIVE);
     private static final Pattern CREATE_ROLE_PATTERN = Pattern.compile("^\\s*create\\s+role\\s+.*$",
         Pattern.CASE_INSENSITIVE);
@@ -332,7 +332,7 @@ public final class ServerParse {
     }
 
     private static int deCheck(ByteString stmt, int offset) {
-        String stmtStr = stmt.toString().substring(offset - 1);
+        String stmtStr = stmt.substring(offset - 1);
         if (stmt.length() > ++offset) {
             if (DEBUG_PROCEDURE_DEBUG_PATTERN.matcher(stmtStr).matches()) {
                 return DEBUG_PROCEDURE_DEBUG;
@@ -355,7 +355,7 @@ public final class ServerParse {
     }
 
     private static int drCheck(ByteString stmt, int offset) {
-        String stmtStr = stmt.toString().substring(offset - 1);
+        String stmtStr = stmt.substring(offset - 1);
         if (stmt.length() > ++offset) {
             if (DROP_USER_PATTERN.matcher(stmtStr).matches()) {
                 return DROP_USER;
@@ -826,7 +826,7 @@ public final class ServerParse {
     }
 
     private static int crCheck(ByteString stmt, int offset) {
-        String str = stmt.toString().substring(offset - 1);
+        String str = stmt.substring(offset - 1);
         if (stmt.length() > ++offset) {
             if (CREATE_USER_PATTERN.matcher(str).matches()) {
                 return CREATE_USER;
@@ -1057,13 +1057,13 @@ public final class ServerParse {
             case 'T':
             case 't':
                 // 先匹配看看是不是set password语句
-                Matcher m = SET_PASSWORD_PATTERN.matcher(stmt.toString().substring(offset - 2));
+                Matcher m = SET_PASSWORD_PATTERN.matcher(stmt.substring(offset - 2));
                 if (m.matches()) {
                     return SET_PASSWORD;
                 }
 
                 // set default role 走plan
-                if (SET_DEFAULT_ROLE_PATTERN.matcher(stmt.toString().substring(offset - 2)).matches()) {
+                if (SET_DEFAULT_ROLE_PATTERN.matcher(stmt.substring(offset - 2)).matches()) {
                     return OTHER;
                 }
 

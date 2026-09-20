@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.common.encdb.utils;
 
 import com.alibaba.polardbx.common.encdb.EncdbException;
+import com.alibaba.polardbx.common.encdb.cipher.SymCrypto;
 import com.alibaba.polardbx.common.encdb.enums.CCFlags;
 import com.alibaba.polardbx.common.encdb.enums.Constants;
 import org.bouncycastle.crypto.digests.MD5Digest;
@@ -194,8 +195,9 @@ public class Utils {
             rootKeyStr = rootKeyStr.substring(2);
         }
 
-        if (rootKeyStr.length() != ENCDB_KEY_SIZE * 2) {
-            logger.error("expect root key lenght is 16 bytes(32-chars) in hex string format.");
+        if (rootKeyStr.length() != ENCDB_KEY_SIZE * 2
+            && rootKeyStr.length() != SymCrypto.AES_256_KEY_SIZE * 2) {
+            logger.error("expect root key length is 16 bytes(32-chars) or 32 bytes(64-chars) in hex string format.");
             return null;
         }
         return Hex.decode(rootKeyStr);
@@ -227,8 +229,16 @@ public class Utils {
     }
 
     public static byte[] generateIv(int ivLen) {
+        return generateIv(ivLen, null);
+    }
+
+    public static byte[] generateIv(int ivLen, SecureRandom secureRandom) {
         byte[] iv = new byte[ivLen];
-        new SecureRandom().nextBytes(iv);
+        if (secureRandom == null) {
+            new SecureRandom().nextBytes(iv);
+        } else {
+            secureRandom.nextBytes(iv);
+        }
         return iv;
     }
 

@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.qatest.ddl.sharding.autoPartition;
 
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -886,6 +887,7 @@ public class AutoPartitionColumnTest extends AutoPartitionTestBase {
 
     // Set not nullable to others and rollback(back to no default).
     @Test
+    @IcbcIgnore(ignoreReason = "explicit_defaults_for_timestamp")
     public void changeColumnDefaultRollbackTest1() throws Throwable {
 
         // Init default to null.

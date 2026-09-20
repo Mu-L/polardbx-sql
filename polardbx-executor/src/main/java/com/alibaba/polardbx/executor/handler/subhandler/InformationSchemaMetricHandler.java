@@ -13,10 +13,10 @@ import com.alibaba.polardbx.optimizer.view.VirtualView;
 import com.alibaba.polardbx.stats.metric.FeatureStats;
 import com.alibaba.polardbx.stats.metric.FeatureStatsItem;
 import com.google.common.collect.Maps;
-import jdk.nashorn.internal.runtime.QuotedStringTokenizer;
 
 import java.util.List;
 import java.util.Map;
+import java.util.StringTokenizer;
 
 /**
  * @author fangwu
@@ -78,9 +78,20 @@ public class InformationSchemaMetricHandler extends BaseVirtualViewSubClassHandl
         return cursor;
     }
 
+    /*
+     * Change context:
+     * - Before: decodeReal() used jdk.nashorn.internal.runtime.QuotedStringTokenizer, an internal class of the
+     *   jdk.scripting.nashorn module removed since JDK 15, causing NoClassDefFoundError on JDK 15+/21.
+     *   Its quote-handling was never exercised: the real metric string produced by RealStatsLog.statLog()
+     *   is strictly TYPE:number,TYPE:number,... with no quoted or comma-containing values.
+     * - Path impact: only the information_schema.metric virtual view decode path is affected; feat metric
+     *   decoding (FeatureStats.deserialize) and MetricSyncAllAction serialization are unchanged.
+     * - Capability regression: None. java.util.StringTokenizer skips empty tokens on consecutive separators
+     *   exactly like QuotedStringTokenizer does, so parsing results are identical for all real data.
+     */
     public static Map<String, String> decodeReal(String real) {
         Map<String, String> map = Maps.newHashMap();
-        QuotedStringTokenizer tokenizer = new QuotedStringTokenizer(real, ",");
+        StringTokenizer tokenizer = new StringTokenizer(real, ",");
 
         while (tokenizer.hasMoreTokens()) {
             String kv = tokenizer.nextToken();

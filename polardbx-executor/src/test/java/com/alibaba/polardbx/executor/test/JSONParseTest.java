@@ -49,7 +49,8 @@ public class JSONParseTest {
         List<List<ParameterContext>> params = buildParams();
         List<List<String>> tableNames = buildTableNames();
         JdbcSplit jdbcSplit =
-            new JdbcSplit("ca", "sc", "db0", hint, bytesSql, null, params, "127.1", tableNames, ITransaction.RW.WRITE,
+            new JdbcSplit("ca", "sc", "db0", hint, bytesSql, null, null, params, "127.1", tableNames,
+                ITransaction.RW.WRITE,
                 true, null, new byte[] {0x01, 0x02, 0x03}, true, null, null);
         String data = JSON.toJSONString(jdbcSplit, SerializerFeature.WriteClassName);
         ParserConfig parserConfig = ParserConfig.getGlobalInstance();

@@ -16,17 +16,18 @@
 
 package org.apache.calcite.sql;
 
-import java.util.List;
-
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.util.Pair;
 
+import java.util.List;
+
 /**
  * @author shicai.xsc 2021/3/5 13:08
- * @desc
  * @since 5.0.0.0
  */
 public class SqlStartSlave extends SqlReplicationBase {
+
+    private final boolean ddlLoad;
 
     {
         operator = new SqlStartSlaveOperator();
@@ -34,13 +35,19 @@ public class SqlStartSlave extends SqlReplicationBase {
         keyWord = "START SLAVE";
     }
 
-    public SqlStartSlave(SqlParserPos pos, List<Pair<SqlNode, SqlNode>> options, SqlNode channel, SqlNode subChannel){
+    public SqlStartSlave(SqlParserPos pos, List<Pair<SqlNode, SqlNode>> options, SqlNode channel, SqlNode subChannel,
+                         boolean ddlLoad) {
         super(pos, options, channel, subChannel);
+        this.ddlLoad = ddlLoad;
+    }
+
+    public boolean isDdlLoad() {
+        return ddlLoad;
     }
 
     public static class SqlStartSlaveOperator extends SqlReplicationOperator {
 
-        public SqlStartSlaveOperator(){
+        public SqlStartSlaveOperator() {
             super(SqlKind.START_SLAVE);
         }
     }

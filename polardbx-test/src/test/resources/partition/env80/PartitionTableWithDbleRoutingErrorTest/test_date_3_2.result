@@ -1,0 +1,91 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+set ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC=true;
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=true;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+create table two_node_hash_date_tbl_3_2(id date)
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/date',
+  '{
+"dateFormat" : "yyyy-MM-dd",
+"sBeginDate" : "1000-01-01",
+"sEndDate" : "1000-01-20",
+"sPartionDay" : "10",
+"defaultNode" : "0"
+}'
+  )
+  )
+  partitions 2;
+select part_route('','two_node_hash_date_tbl_3_2','1000-01-01');
+part_route('', 'two_node_hash_date_tbl_3_2', '1000-01-01')
+p1
+create table two_node_hash_date_tbl_3_2_2(id date)
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/date',
+  '{
+"dateFormat" : "yyyy-MM-dd",
+"sBeginDate" : "9999-12-12",
+"sEndDate" : "9999-12-31",
+"sPartionDay" : "10",
+"defaultNode" : "0"
+}'
+  )
+  )
+  partitions 2;
+select part_route('','two_node_hash_date_tbl_3_2_2','9999-12-31');
+part_route('', 'two_node_hash_date_tbl_3_2_2', '9999-12-31')
+p2
+create table two_node_hash_date_tbl_3_2_3(id date)
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/date',
+  '{
+"dateFormat" : "yyyy-MM-dd",
+"sBeginDate" : "1970-01-01",
+"sEndDate" : "1970-01-20",
+"sPartionDay" : "10",
+"defaultNode" : "0"
+}'
+  )
+  )
+  partitions 2;
+select part_route('','two_node_hash_date_tbl_3_2_3','1970-01-01');
+part_route('', 'two_node_hash_date_tbl_3_2_3', '1970-01-01')
+p1
+create table two_node_hash_date_tbl_3_2_4(id date)
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/date',
+  '{
+"dateFormat" : "yyyy-MM-dd",
+"sBeginDate" : "2038-01-19",
+"sEndDate" : "2038-01-31",
+"sPartionDay" : "10",
+"defaultNode" : "0"
+}'
+  )
+  )
+  partitions 2;
+select part_route('','two_node_hash_date_tbl_3_2_4','2038-01-19');
+part_route('', 'two_node_hash_date_tbl_3_2_4', '2038-01-19')
+p1
+create table two_node_hash_date_tbl_3_2_5(id date)
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/date',
+  '{
+"dateFormat" : "yyyy-MM-dd",
+"sBeginDate" : "0000-01-01",
+"sEndDate" : "0000-01-20",
+"sPartionDay" : "10",
+"defaultNode" : "0"
+}'
+  )
+  )
+  partitions 2;
+select part_route('','two_node_hash_date_tbl_3_2_5','0000-01-01');
+part_route('', 'two_node_hash_date_tbl_3_2_5', '0000-01-01')
+p1

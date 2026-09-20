@@ -30,6 +30,16 @@ public class MySqlCheckTableStatement extends MySqlStatementImpl {
 
     private String displayMode = "";
 
+    public boolean isPhysical() {
+        return physical;
+    }
+
+    public void setPhysical(boolean physical) {
+        this.physical = physical;
+    }
+
+    private boolean physical;
+
     public MySqlCheckTableStatement() {
 
     }

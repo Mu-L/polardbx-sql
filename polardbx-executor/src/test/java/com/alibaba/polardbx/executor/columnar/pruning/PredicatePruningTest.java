@@ -101,6 +101,13 @@ public class PredicatePruningTest extends ColumnarPruneTest {
                 rexBuilder.makeDateLiteral(d),
                 rexBuilder.makeInputRef(scan, 11));
         }, mockPruner(DataTypes.DateType), -1L, new Parameters(), "shipDate_11 LESS_THAN 1998-09-01"));
+
+        // l_shipdate IS NULL  -- exercises ColumnarPredicatePruningVisitor#visitIsNull,
+        // verifying the SqlTypeName is carried from the RexInputRef into the predicate.
+        params.add(buildPredicateCase((rexBuilder, scan) -> rexBuilder.makeCall(
+                SqlStdOperatorTable.IS_NULL,
+                rexBuilder.makeInputRef(scan, 11)),
+            mockPruner(DataTypes.DateType), -1L, new Parameters(), "shipDate_11 IS NULL "));
         return params;
     }
 

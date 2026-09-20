@@ -37,11 +37,13 @@ import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupsSyncTask
 import com.alibaba.polardbx.executor.ddl.job.validator.GsiValidator;
 import com.alibaba.polardbx.executor.ddl.job.validator.TableValidator;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlExceptionAction;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4CreatePartitionGsi;
 import com.alibaba.polardbx.executor.ddl.util.ChangeSetUtils;
+import com.alibaba.polardbx.executor.partitionmanagement.AlterTableGroupUtils;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupRecord;
 import com.alibaba.polardbx.gms.util.TableGroupNameUtil;
@@ -70,12 +72,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.common.TddlConstants.IMPLICIT_COL_NAME;
+import static com.alibaba.polardbx.executor.gsi.GsiUtils.getAvaliableNodeList;
 import static org.apache.calcite.sql.SqlIdentifier.surroundWithBacktick;
 
 /**
  * @author wumu
  */
-public class RebuildTableJobFactory extends DdlJobFactory {
+public class RebuildTableJobFactory extends OnlineDdlJobFactory {
     private final String schemaName;
     private final String primaryTableName;
     private final String backfillSourceTableName;
@@ -102,7 +105,7 @@ public class RebuildTableJobFactory extends DdlJobFactory {
     private final List<String> addNewColumns;
     private final List<String> dropColumns;
 
-    private long versionId;
+    private final long versionId;
 
     public RebuildTableJobFactory(String schemaName, String primaryTableName, String backfillSourceTableName,
                                   List<Pair<CreateGlobalIndexPreparedData, PhysicalPlanData>> globalIndexPrepareData,
@@ -110,6 +113,7 @@ public class RebuildTableJobFactory extends DdlJobFactory {
                                   RebuildTablePrepareData rebuildTablePrepareData,
                                   PhysicalPlanData oldPhysicalPlanData,
                                   ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.OMC20);
         this.schemaName = schemaName;
         this.primaryTableName = primaryTableName;
         this.backfillSourceTableName = backfillSourceTableName;
@@ -139,6 +143,7 @@ public class RebuildTableJobFactory extends DdlJobFactory {
         TableValidator.validateTableExistence(schemaName, primaryTableName, executionContext);
         GsiValidator.validateAllowDdlOnTable(schemaName, primaryTableName, executionContext);
         GsiValidator.validateGsiSupport(schemaName, executionContext);
+        AlterTableGroupUtils.validateRepartitionPermit(schemaName, executionContext);
 
         for (String indexTableName : tableNameMap.values()) {
             GsiValidator.validateCreateOnGsi(schemaName, indexTableName, executionContext);
@@ -271,6 +276,21 @@ public class RebuildTableJobFactory extends DdlJobFactory {
                     if (useChangeSet && ChangeSetUtils.supportUseChangeSet(
                         ComplexTaskMetaManager.ComplexTaskType.ONLINE_MODIFY_COLUMN, gsiTableMeta)) {
                         createGsiJobFactory.setUseChangeSet(mirrorCopy);
+                    }
+                } else if (createGlobalIndexPreparedData.isLogicalOptimizeTable()) {
+                    // 涉及 changeset 优化、insert select backfill 优化，不涉及列名映射，校验等流程
+                    createGsiJobFactory.setOnlineModifyColumn(true);
+
+                    String oldIndexName = tableNameMapReverse.get(createGlobalIndexPreparedData.getIndexTableName());
+                    createGsiJobFactory.setBackfillSourceTableName(oldIndexName);
+
+                    if (enableBackFillPushDown) {
+                        createGsiJobFactory.setMirrorCopy(true);
+                    }
+                    TableMeta gsiTableMeta = executionContext.getSchemaManager(schemaName).getTable(oldIndexName);
+                    if (useChangeSet && ChangeSetUtils.supportUseChangeSet(
+                        ComplexTaskMetaManager.ComplexTaskType.ONLINE_MODIFY_COLUMN, gsiTableMeta)) {
+                        createGsiJobFactory.setUseChangeSet(true);
                     }
                 } else {
                     // 普通重建 GSI 流程
@@ -410,6 +430,10 @@ public class RebuildTableJobFactory extends DdlJobFactory {
                 ddlJob.appendTask(tableGroupsSyncTask);
             }
         }
+
+        ddlJob.setMppNodeList(getAvaliableNodeList(executionContext, ConnectionParams.FORBID_REMOTE_DDL_TASK));
+        int gsiMaxParallelism = executionContext.getParamManager().getInt(ConnectionParams.GSI_JOB_MAX_PARALLELISM);
+        ddlJob.setMaxParallelism(gsiMaxParallelism);
 
         ddlJob.labelAsHead(validateTask);
         return ddlJob;

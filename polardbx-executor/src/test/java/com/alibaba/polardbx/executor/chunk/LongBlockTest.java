@@ -91,6 +91,67 @@ public class LongBlockTest extends BaseBlockTest {
     }
 
     @Test
+    public void testWriteInt() {
+        LongBlockBuilder blockBuilder = new LongBlockBuilder(CHUNK_SIZE);
+        int[] intValues = {-123, 0, 123, Integer.MAX_VALUE, Integer.MIN_VALUE};
+
+        for (int value : intValues) {
+            blockBuilder.writeInt(value);
+        }
+
+        assertEquals(intValues.length, blockBuilder.getPositionCount());
+        for (int i = 0; i < intValues.length; i++) {
+            assertFalse(blockBuilder.isNull(i));
+            assertEquals((long) intValues[i], blockBuilder.getLong(i));
+        }
+
+        Block block = blockBuilder.build();
+        assertEquals(intValues.length, block.getPositionCount());
+        for (int i = 0; i < intValues.length; i++) {
+            assertFalse(block.isNull(i));
+            assertEquals((long) intValues[i], block.getLong(i));
+        }
+    }
+
+    @Test
+    public void testIntegerBlockToLongBlockBuilder() {
+        Integer[] intValues = new Integer[] {-123, 0, 123, null, Integer.MAX_VALUE, Integer.MIN_VALUE};
+
+        IntegerBlockBuilder intBuilder = new IntegerBlockBuilder(CHUNK_SIZE);
+        for (Integer value : intValues) {
+            if (value != null) {
+                intBuilder.writeInt(value);
+            } else {
+                intBuilder.appendNull();
+            }
+        }
+        Block integerBlock = intBuilder.build();
+
+        LongBlockBuilder longBuilder = new LongBlockBuilder(CHUNK_SIZE);
+        for (int i = 0; i < intValues.length; i++) {
+            integerBlock.writePositionTo(i, longBuilder);
+
+            if (intValues[i] != null) {
+                assertFalse(longBuilder.isNull(i));
+                assertEquals((long) intValues[i], longBuilder.getLong(i));
+            } else {
+                assertTrue(longBuilder.isNull(i));
+            }
+        }
+
+        Block longBlock = longBuilder.build();
+        assertEquals(intValues.length, longBlock.getPositionCount());
+        for (int i = 0; i < intValues.length; i++) {
+            if (intValues[i] != null) {
+                assertFalse(longBlock.isNull(i));
+                assertEquals((long) intValues[i], longBlock.getLong(i));
+            } else {
+                assertTrue(longBlock.isNull(i));
+            }
+        }
+    }
+
+    @Test
     public void testNotSupportedOperation() {
         LongBlock longBlock = LongBlock.of(1L, 2L, 3L, 4L);
         expectUnsupportedException(() -> longBlock.getByte(0));

@@ -39,7 +39,6 @@ import lombok.Getter;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 
 import static com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcMarkUtil.buildExtendParameter;
 
@@ -143,11 +142,10 @@ public class RenameTablesCdcSyncTask extends TablesSyncTask {
 
         // road table meta
         try {
-            SyncManagerHelper.sync(
+            SyncManagerHelper.syncThrowExceptions(
                 new TablesMetaChangePreemptiveSyncAction(schemaName, tableNames, preemptiveTime,
                     uniqueConnId, false),
-                SyncScope.ALL,
-                true);
+                SyncScope.ALL);
         } catch (Throwable t) {
             LOGGER.error(String.format(
                 "error occurs while sync table meta, schemaName:%s, tableNames:%s", schemaName, tableNames.toString()));

@@ -31,6 +31,7 @@ import org.apache.calcite.rel.RelShuttle;
 import org.apache.calcite.rel.RelWriter;
 import org.apache.calcite.rel.core.Window;
 import org.apache.calcite.rel.externalize.RelDrdsWriter;
+import org.apache.calcite.rel.externalize.RexExplainVisitor;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
@@ -102,13 +103,15 @@ public class HashWindow extends Window {
             if (fieldName == null) {
                 fieldName = "field#" + field.i;
             }
-
             pw.item(fieldName, field.e.getName());
         }
         for (Ord<Group> window : Ord.zip(groups)) {
             for (int i = 0; i < window.getValue().aggCalls.size(); i++) {
                 RexWinAggCall rexWinAggCall = window.getValue().aggCalls.get(i);
-                String fieldName = "f" + (i + inputFieldCount) + "w" + window.i + "$o" + i;
+                String fieldName = getRowType().getFieldList().get(inputFieldCount + i).getName();
+                if (fieldName == null) {
+                    fieldName = "f" + (i + inputFieldCount) + "w" + window.i + "$o" + i;
+                }
                 pw.item(fieldName, "window#" + window.i + rexWinAggCall.toString());
             }
         }

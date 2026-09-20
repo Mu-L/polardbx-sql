@@ -16,13 +16,17 @@
 
 package com.alibaba.polardbx.optimizer.index;
 
+import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import org.apache.calcite.rel.metadata.RelColumnOrigin;
 
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * @author dylan
@@ -75,4 +79,19 @@ public class CoverableColumnSet {
             }
         }
     }
+
+    public static Set<String> getCCICoverableColumns(String schemaName, String tableName,
+                                                     Collection<String> indexColumnNames) {
+        Set<String> coverableColumns =
+            OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(tableName).getAllColumns()
+                .stream()
+                .map(ColumnMeta::getName)
+                .map(String::toLowerCase)
+                .collect(Collectors.toSet());
+        for (String indexColumnName : indexColumnNames) {
+            coverableColumns.remove(indexColumnName.toLowerCase());
+        }
+        return coverableColumns;
+    }
+
 }

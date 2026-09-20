@@ -1338,12 +1338,12 @@ public interface BatchBlockWriter {
 
         @Override
         public boolean isDecimal64() {
-            return state.isDecimal64() || (state.isUnset() && decimalType.isDecimal64());
+            return state.isDecimal64();
         }
 
         @Override
         public boolean isDecimal128() {
-            return state.isDecimal128() || (state.isUnset() && decimalType.isDecimal128());
+            return state.isDecimal128();
         }
 
         @Override

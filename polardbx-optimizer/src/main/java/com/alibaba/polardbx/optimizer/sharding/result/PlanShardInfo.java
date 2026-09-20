@@ -51,19 +51,6 @@ public class PlanShardInfo {
         return allTableCompInfo;
     }
 
-    public Map<String, Map<String, Comparative>> getAllTableFullComparative(String schemaName) {
-        Map<String, Map<String, Comparative>> allTableCompInfo = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
-        allRelShardInfo.forEach((k, v) -> {
-            String dbName = v.getSchemaName();
-            if (dbName.equalsIgnoreCase(schemaName)) {
-                Map<String, Comparative> tmpAllFullComps = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
-                tmpAllFullComps.putAll(v.getAllFullComps());
-                allTableCompInfo.put(v.getTableName(), tmpAllFullComps);
-            }
-        });
-        return allTableCompInfo;
-    }
-
     public void putRelShardInfo(String schemaName, String tableName, RelShardInfo relShardInfo) {
         allRelShardInfo.put(buildFullTableNameKey(schemaName, tableName), relShardInfo);
     }

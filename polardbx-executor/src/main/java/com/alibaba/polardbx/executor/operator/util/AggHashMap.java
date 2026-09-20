@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableIntArrayList;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.google.common.util.concurrent.ListenableFuture;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
@@ -24,11 +26,7 @@ import java.util.List;
 
 public interface AggHashMap extends GroupHashMap {
 
-    void putChunk(Chunk keyChunk, Chunk inputChunk, IntArrayList groupIdResult);
-
-    List<Chunk> getGroupChunkList();
-
-    List<Chunk> getValueChunkList();
+    void putChunk(Chunk keyChunk, Chunk inputChunk, MemoryCountableIntArrayList groupIdResult);
 
     AggResultIterator buildChunks();
 
@@ -47,7 +45,7 @@ public interface AggHashMap extends GroupHashMap {
      * To consume chunks, build hash table,
      * maintain the groupId, and accumulate agg-function.
      */
-    interface GroupBy {
+    interface GroupBy extends MemoryCountable {
         /**
          * The key-chunk and input chunk will share the same blocks.
          *
@@ -65,5 +63,7 @@ public interface AggHashMap extends GroupHashMap {
         long fixedEstimatedSize();
 
         void close();
+
+        int getCardinality();
     }
 }

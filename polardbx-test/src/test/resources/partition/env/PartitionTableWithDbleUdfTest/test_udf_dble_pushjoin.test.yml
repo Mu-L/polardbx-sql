@@ -1,0 +1,121 @@
+## DISABLE_FAST_SQL_PARSER
+
+select pattrngd0p1024i(0);
+select pattrngd0p1024i(1);
+select pattrngd0p1024i(255);
+select pattrngd0p1024i(256);
+select pattrngd0p1024i(257);
+select pattrngd0p1024i(511);
+select pattrngd0p1024i(512);
+select pattrngd0p1024i(513);
+select pattrngd0p1024i(767);
+select pattrngd0p1024i(768);
+select pattrngd0p1024i(769);
+select pattrngd0p1024i(1023);
+select pattrngd0p1024i(1024);
+select pattrngd0p1024i(1025);
+
+
+drop tablegroup if exists tg_dble_udf_join;
+create tablegroup if not exists tg_dble_udf_join
+partition by udf_hash(bigint)
+partition 5
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3),
+partition p3 values less than (4),
+partition pm values less than (9223372036854775807)
+)
+;
+
+drop table if exists myuh_t1;
+create table myuh_t1(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(pattrngd0p1024i(c1))
+tablegroup=tg_dble_udf_join;
+
+drop table if exists myuh_t2;
+create table myuh_t2(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(pattrngd0p1024i(c1))
+tablegroup=tg_dble_udf_join;
+
+drop table if exists myuh_t3;
+create table myuh_t3(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(pattrngd0p1024i(c1))
+tablegroup=tg_dble_udf_join;
+
+show create table myuh_t1;
+show create table myuh_t2;
+show create table myuh_t3;
+
+
+
+insert into myuh_t1 values (0,0);
+insert into myuh_t1 values (255,255);
+insert into myuh_t1 values (256,256);
+insert into myuh_t1 values (257,257);
+insert into myuh_t1 values (511,511);
+insert into myuh_t1 values (512,512);
+insert into myuh_t1 values (513,513);
+insert into myuh_t1 values (767,767);
+insert into myuh_t1 values (768,768);
+insert into myuh_t1 values (769,769);
+insert into myuh_t1 values (1023,1023);
+insert into myuh_t1 values (1024,1024);
+insert into myuh_t1 values (1025,1025);
+
+insert into myuh_t2 values (0,0);
+insert into myuh_t2 values (255,255);
+insert into myuh_t2 values (256,256);
+insert into myuh_t2 values (257,257);
+insert into myuh_t2 values (511,511);
+insert into myuh_t2 values (512,512);
+insert into myuh_t2 values (513,513);
+insert into myuh_t2 values (767,767);
+insert into myuh_t2 values (768,768);
+insert into myuh_t2 values (769,769);
+insert into myuh_t2 values (1023,1023);
+insert into myuh_t2 values (1024,1024);
+insert into myuh_t2 values (1025,1025);
+
+insert into myuh_t3 values (0,0);
+insert into myuh_t3 values (255,255);
+insert into myuh_t3 values (256,256);
+insert into myuh_t3 values (257,257);
+insert into myuh_t3 values (511,511);
+insert into myuh_t3 values (512,512);
+insert into myuh_t3 values (513,513);
+insert into myuh_t3 values (767,767);
+insert into myuh_t3 values (768,768);
+insert into myuh_t3 values (769,769);
+insert into myuh_t3 values (1023,1023);
+insert into myuh_t3 values (1024,1024);
+insert into myuh_t3 values (1025,1025);
+
+explain select a.c1 from myuh_t1 a where a.c1 between 510 and 515 order by a.c1;
+select a.c1 from myuh_t1 a where a.c1 between 510 and 515 order by a.c1;
+
+explain select a.c1 from myuh_t1 a join myuh_t2 b on a.c1=b.c1 where a.c1=257;
+select a.c1 from myuh_t1 a join myuh_t2 b on a.c1=b.c1 where a.c1=257;
+
+explain select a.c1 from myuh_t2 a join myuh_t3 b on a.c1=b.c1 where a.c1=257;
+select a.c1 from myuh_t2 a join myuh_t3 b on a.c1=b.c1 where a.c1=257;
+
+explain select a.c1 from myuh_t1 a join myuh_t2 b on a.c1=b.c1 join myuh_t3 c on a.c1=c.c1 where a.c1=257;
+select a.c1 from myuh_t1 a join myuh_t2 b on a.c1=b.c1 join myuh_t3 c on a.c1=c.c1 where a.c1=257;
+
+explain select a.c1 from myuh_t1 a join myuh_t2 b on a.c1=b.c1 join myuh_t3 c on a.c1=c.c1 where a.c1<1024 order by a.c1;
+select a.c1 from myuh_t1 a join myuh_t2 b on a.c1=b.c1 join myuh_t3 c on a.c1=c.c1 where a.c1<1024 order by a.c1;
+
+explain select a.c1 from myuh_t1 a join myuh_t2 b on a.c1=b.c1 join myuh_t3 c on a.c1=c.c1 where a.c1 between 510 and 515 order by a.c1;
+select a.c1 from myuh_t1 a join myuh_t2 b on a.c1=b.c1 join myuh_t3 c on a.c1=c.c1 where a.c1 between 510 and 515 order by a.c1;
+

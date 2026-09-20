@@ -1,0 +1,40 @@
+SQL:
+  # External catalog: simple INSERT VALUES
+  - sql: |
+      insert into mock$$dwd.events (event_id, user_id, event_type, dt) values (1, 100, 'click', '2026-01-01')
+    plan: |
+      ExternalInsert(table="events", sink="DefaultTableSink{table=[mock$$dwd, events]}")
+        Project(event_id="?0", user_id="?1", event_type="?2", dt="?3")
+          Values(table="dual")
+
+  # External catalog: INSERT multiple rows
+  - sql: |
+      insert into mock$$dwd.events (event_id, user_id, event_type, dt) values (1, 100, 'click', '2026-01-01'), (2, 200, 'view', '2026-01-02')
+    plan: |
+      ExternalInsert(table="events", sink="DefaultTableSink{table=[mock$$dwd, events]}")
+        Project(event_id="?0", user_id="?1", event_type="?2", dt="?3")
+          Values(table="dual")
+
+  # External catalog: INSERT ... SELECT from another external table
+  - sql: |
+      insert into mock$$dwd.events (event_id, user_id, event_type, dt) select user_id, user_id, 'login', '2026-01-01' from mock$$dwd.user_profile where age > 18
+    plan: |
+      ExternalInsert(table="events", sink="DefaultTableSink{table=[mock$$dwd, events]}")
+        ExternalTable(name=[mock$$dwd, user_profile], source="inmemorytablesource", pushDown="sql:select `user_id` as `$f0`, `user_id` as `$f1`, ? as `$f2`, ? as `$f3` from `user_profile` where (`age` > ?)")
+
+DDL:
+  mock$$dwd.events:
+    CREATE TABLE `events` (
+    `event_id` bigint(20) NOT NULL,
+    `user_id` bigint(20) NOT NULL,
+    `event_type` varchar(32) DEFAULT NULL,
+    `dt` varchar(10) DEFAULT NULL
+    ) DEFAULT CHARSET = utf8mb4
+  mock$$dwd.user_profile:
+    CREATE TABLE `user_profile` (
+    `user_id` bigint(20) NOT NULL,
+    `age` int(11) DEFAULT NULL,
+    `city` varchar(64) DEFAULT NULL
+    ) DEFAULT CHARSET = utf8mb4
+STATISTICS:
+CONFIG:

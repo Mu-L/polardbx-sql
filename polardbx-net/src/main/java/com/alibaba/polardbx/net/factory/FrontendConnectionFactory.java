@@ -20,6 +20,8 @@ import java.io.IOException;
 import java.net.Socket;
 import java.nio.channels.SocketChannel;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.net.FrontendConnection;
 import com.alibaba.polardbx.net.buffer.BufferQueue;
 
@@ -60,6 +62,10 @@ public abstract class FrontendConnectionFactory {
         c.setPacketHeaderSize(packetHeaderSize);
         c.setMaxPacketSize(maxPacketSize);
         c.setWriteQueue(new BufferQueue(writeQueueCapcity));
+        //set global WAIT_TIMEOUT = xxx，单位为s
+        if (InstConfUtil.getLong(ConnectionParams.WAIT_TIMEOUT) * 1000 != idleTimeout){
+            idleTimeout = InstConfUtil.getLong(ConnectionParams.WAIT_TIMEOUT) * 1000;
+        }
         c.setIdleTimeout(idleTimeout);
         c.setCharset(charset);
         c.setCompressPacketHeaderSize(compressPacketHeaderSize);

@@ -237,7 +237,8 @@ public class SimpleColumnarCollationTest extends ColumnarReadBaseTestCase {
     }
 
     public void testPairWiseJoin() {
-        String sql = "/*+TDDL:cmd_extra(ENABLE_BROADCAST_JOIN=false)*/ select * from %s %s join %s on %s.c2 = %s.c2";
+        String sql =
+            "/*+TDDL:cmd_extra(PARTITION_WISE_THRESHOLD=4 ENABLE_PARTITION_WISE_GROUP_OPT=false ENABLE_BROADCAST_JOIN=false ENABLE_BKA_JOIN=false)*/ select * from %s %s join %s on %s.c2 = %s.c2";
         checkPairWiseJoin(String.format(sql, table1, "inner", table3, table1, table3));
         checkPairWiseJoin(String.format(sql, table3, "left", table1, table1, table3));
         checkPairWiseJoin(String.format(sql, table1, "right", table3, table1, table3));

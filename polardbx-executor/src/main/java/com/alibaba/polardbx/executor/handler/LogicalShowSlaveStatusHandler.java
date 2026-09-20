@@ -19,23 +19,30 @@ package com.alibaba.polardbx.executor.handler;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.TypeReference;
 import com.alibaba.polardbx.common.cdc.CdcConstants;
+import com.alibaba.polardbx.common.cdc.CdcManagerHelper;
 import com.alibaba.polardbx.common.cdc.ResultCode;
+import com.alibaba.polardbx.common.cdc.entity.DdlLoadStatusInfo;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.utils.PooledHttpHelper;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.cursor.impl.ArrayResultCursor;
 import com.alibaba.polardbx.executor.spi.IRepository;
+import com.alibaba.polardbx.gms.topology.InstConfigRecord;
+import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.net.util.CdcTargetUtil;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.rel.dal.LogicalDal;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
+import lombok.SneakyThrows;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.sql.SqlShowSlaveStatus;
 import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.http.entity.ContentType;
 
 import java.util.LinkedHashMap;
@@ -59,6 +66,43 @@ public class LogicalShowSlaveStatusHandler extends LogicalReplicationBaseHandler
         LogicalDal dal = (LogicalDal) logicalPlan;
         SqlShowSlaveStatus sqlNode = (SqlShowSlaveStatus) dal.getNativeSqlNode();
 
+        if (sqlNode.isDdlLoad()) {
+            return showSlaveStatusDdlLoad(executionContext);
+        } else {
+            return showSlaveStatusNormal(sqlNode, executionContext);
+        }
+
+    }
+
+    @SneakyThrows
+    private Cursor showSlaveStatusDdlLoad(ExecutionContext executionContext) {
+        ArrayResultCursor result = new ArrayResultCursor("SHOW SLAVE STATUS");
+        result.addColumn("MAX_DDL_ID", DataTypes.LongType, true);
+        result.addColumn("EXEC_DDL_ID", DataTypes.LongType, true);
+        result.addColumn("DELAY_TIME", DataTypes.LongType, true);
+        result.addColumn("DELAY_COUNT", DataTypes.LongType, true);
+        result.addColumn("ERROR_INFO", DataTypes.StringType, true);
+        result.addColumn("STATUS", DataTypes.StringType, true);
+        result.initMeta();
+
+        InstConfigRecord instConfigRecord1 = MetaDbUtil.getGlobal(ConnectionProperties.ASYNC_LOAD_GDN_DDL_SQL_ENABLE);
+        if (instConfigRecord1 == null || StringUtils.equalsIgnoreCase("false", instConfigRecord1.paramVal)) {
+            return result;
+        }
+
+        DdlLoadStatusInfo ddlLoadStatusInfo = CdcManagerHelper.getInstance().getDdlLoadStatusInfo();
+        result.addRow(new Object[] {
+            ddlLoadStatusInfo.getMaxDdlId(),
+            ddlLoadStatusInfo.getExecDdlId(),
+            ddlLoadStatusInfo.getDelayTime(),
+            ddlLoadStatusInfo.getDelayCount(),
+            ddlLoadStatusInfo.getErrorInfo(),
+            ddlLoadStatusInfo.getStatus()
+        });
+        return result;
+    }
+
+    public ArrayResultCursor showSlaveStatusNormal(SqlShowSlaveStatus sqlNode, ExecutionContext executionContext) {
         String daemonEndpoint = CdcTargetUtil.getReplicaDaemonMasterTarget();
         String res;
         try {

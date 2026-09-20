@@ -32,22 +32,22 @@ show create table nottl_tbl;
 show create table ttl_tbl_without_arc;
 show create table ttl_tbl_with_arc;
   
-  ## error_msg: $# not a ttl-defined #$
+## error_msg: $# not a ttl-defined #$
 create table like_t1 like nottl_tbl engine='columnar' archive_mode='ttl';
-  ## error_msg: $# not a ttl-defined #$
+## error_msg: $# not a ttl-defined #$
 create table like_t1 like nottl_tbl engine='columnar';
-  ## error_msg: $# cannot create #$
+## error_msg: $# cannot create #$
 create table like_t1 like nottl_tbl archive_mode='ttl';
   
-  ## error_msg: $# without specifying both #$
+## error_msg: $# without specifying both #$
 create table like_t1 like ttl_tbl_without_arc archive_mode='ttl';
-  ## error_msg: $# without specifying both #$
+## error_msg: $# without specifying both #$
 create table like_t1 like ttl_tbl_without_arc engine='columnar';
 
 create table like_t1 like ttl_tbl_without_arc;
 show create table like_t1;
   
-  ## error_msg: $#cannot create #$
+## error_msg: $#cannot create #$
 create table like_t2 like ttl_tbl_with_arc;
 set ALLOW_CREATE_TABLE_LIKE_IGNORE_ARCHIVE_CCI=true;
 create table like_t2 like ttl_tbl_with_arc;

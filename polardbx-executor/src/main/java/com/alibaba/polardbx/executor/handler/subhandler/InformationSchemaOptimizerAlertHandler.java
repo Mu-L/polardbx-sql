@@ -43,7 +43,7 @@ public class InformationSchemaOptimizerAlertHandler extends BaseVirtualViewSubCl
 
     @Override
     public Cursor handle(VirtualView virtualView, ExecutionContext executionContext, ArrayResultCursor cursor) {
-        List<List<Map<String, Object>>> results = SyncManagerHelper.syncWithDefaultDB(
+        List<List<Map<String, Object>>> results = SyncManagerHelper.syncIgnoreExceptions(
             new OptimizerAlertViewSyncAction(), SyncScope.CURRENT_ONLY);
 
         for (List<Map<String, Object>> nodeRows : results) {

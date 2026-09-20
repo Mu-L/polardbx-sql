@@ -203,6 +203,10 @@ public class ComplexTaskMetaManager extends AbstractLifecycle {
             return WRITE_REORG == this;
         }
 
+        public boolean isCreating() {
+            return CREATING == this;
+        }
+
         public boolean isDeleteOnly() {
             return DELETE_ONLY == this;
         }
@@ -389,7 +393,8 @@ public class ComplexTaskMetaManager extends AbstractLifecycle {
         SPLIT_HOT_VALUE(11),
         REORGANIZE_PARTITION(12),
         TWO_PHASE_ALTER_TABLE(13),
-        ONLINE_MODIFY_COLUMN(14);
+        ONLINE_MODIFY_COLUMN(14),
+        INPLACE_SPLIT_PARTITION(15);
 
         private final int value;
 
@@ -423,9 +428,15 @@ public class ComplexTaskMetaManager extends AbstractLifecycle {
                 return TWO_PHASE_ALTER_TABLE;
             case 14:
                 return ONLINE_MODIFY_COLUMN;
+            case 15:
+                return INPLACE_SPLIT_PARTITION;
             default:
                 return null;
             }
+        }
+
+        public static boolean isSplitTask(ComplexTaskType complexTaskType) {
+            return SPLIT_PARTITION == complexTaskType || SPLIT_HOT_VALUE == complexTaskType;
         }
 
         ComplexTaskType(int value) {
@@ -437,7 +448,7 @@ public class ComplexTaskMetaManager extends AbstractLifecycle {
         }
     }
 
-    static class ParentComplexTaskStatusInfo {
+    public static class ParentComplexTaskStatusInfo {
         //for movedatabase tableGroupName is null
         protected final String tableGroupName;
         //ojectName is sourceGroup for movedatabase
@@ -453,6 +464,22 @@ public class ComplexTaskMetaManager extends AbstractLifecycle {
             this.objectName = objectName;
             this.status = status;
             this.taskType = taskType;
+        }
+
+        public String getTableGroupName() {
+            return tableGroupName;
+        }
+
+        public String getObjectName() {
+            return objectName;
+        }
+
+        public ComplexTaskStatus getStatus() {
+            return status;
+        }
+
+        public ComplexTaskType getTaskType() {
+            return taskType;
         }
     }
 
@@ -533,6 +560,19 @@ public class ComplexTaskMetaManager extends AbstractLifecycle {
             return false;
         }
 
+        public boolean isAllNeedSwitchDatasource() {
+            if (GeneralUtil.isEmpty(parentComplexTaskStatusInfoMap)) {
+                return false;
+            } else {
+                for (Map.Entry<String, ParentComplexTaskStatusInfo> entry : parentComplexTaskStatusInfoMap.entrySet()) {
+                    if (!entry.getValue().status.isNeedSwitchDatasource()) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
         public boolean canWrite() {
             if (GeneralUtil.isEmpty(partitionTableMetaMap)) {
                 return false;
@@ -566,6 +606,14 @@ public class ComplexTaskMetaManager extends AbstractLifecycle {
                 }
             }
             return false;
+        }
+
+        public boolean isCreatingOrAbsent(String partitionName) {
+            if (GeneralUtil.isEmpty(partitionTableMetaMap) || partitionTableMetaMap.get(partitionName) == null) {
+                return true;
+            } else {
+                return partitionTableMetaMap.get(partitionName).isCreating();
+            }
         }
 
         public boolean isDeleteOnly(String partitionName) {

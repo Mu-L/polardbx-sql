@@ -2,15 +2,19 @@ package com.alibaba.polardbx.optimizer.config.table.statistic;
 
 import com.alibaba.fastjson.JSONObject;
 import com.alibaba.polardbx.common.utils.Assert;
+import com.alibaba.polardbx.gms.config.impl.MetaDbInstConfigManager;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.google.common.collect.ImmutableList;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.sql.Date;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Random;
+import java.util.function.Consumer;
+import java.util.stream.IntStream;
+
+import static com.alibaba.polardbx.optimizer.config.table.statistic.TopN.validateTopNValues;
 import java.util.function.Consumer;
 
 import static com.alibaba.polardbx.optimizer.config.table.statistic.TopN.validateTopNValues;
@@ -19,6 +23,11 @@ import static com.alibaba.polardbx.optimizer.config.table.statistic.TopN.validat
  * test topn of statistic module
  */
 public class TopNTest {
+
+    @Before
+    public void setUp() {
+        MetaDbInstConfigManager.setConfigFromMetaDb(false);
+    }
 
     /**
      * test topn interface in cacheline:
@@ -139,6 +148,24 @@ public class TopNTest {
                 checkRangeCount(topN, keys[i], keys[j], dataType, values, counts);
             }
         }
+    }
+
+    @Test
+    public void testBuildEmptyNewTopN() {
+        TopN topN = new TopN(DataTypes.IntegerType, 1.0);
+        IntStream.range(0, 10).forEach(i -> topN.offer(i));
+        boolean rs = topN.build(true, 10, 1.0);
+        System.out.println(rs);
+        assert !rs;
+    }
+
+    @Test
+    public void testBuildEmptyTopN() {
+        TopN topN = new TopN(DataTypes.IntegerType, 1.0);
+        IntStream.range(0, 30).forEach(i -> topN.offer(i, 3));
+        boolean rs = topN.build(false, 10, 1.0);
+        System.out.println(rs);
+        assert !rs;
     }
 
     @Test
@@ -305,8 +332,9 @@ public class TopNTest {
         for (int i = 0; i < values.length; i++) {
             topN.offer(values[i], counts[i]);
         }
-        topN.buildNew(3, 1, true);
+        boolean r = topN.buildNew(3, 1, true);
         assert topN.getValueArr().length == 0;
+        assert !r;
 
         topN = new TopN(dataType, 1.0);
         counts = new int[] {1, 1, 11, 100};
@@ -340,4 +368,5 @@ public class TopNTest {
         topN.buildNew(4, 0, true);
         assert topN.getValueArr().length == 2;
     }
+
 }

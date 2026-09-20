@@ -26,9 +26,11 @@ import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.exception.TableNotFoundException;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.pruning.PhysicalPartitionInfo;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
+import com.alibaba.polardbx.optimizer.utils.PlannerUtils;
 import com.alibaba.polardbx.rule.TableRule;
 import com.clearspring.analytics.util.Lists;
 import org.apache.calcite.sql.SqlDelete;
@@ -102,8 +104,17 @@ public class ReplaceTblWithPhyTblVisitor extends ReplaceTableNameWithSomethingVi
         if (isPartitionHint) {
             Assert.assertTrue(StringUtils.isNotEmpty(pHint));
             if (tableRule == null) {
+                // Check if this is a CTE name defined in the current statement's WITH clause.
+                // CTEs don't have table rules or schema metadata, so both tableRule and tb
+                // will be null. We should pass CTE names through without throwing.
+                if (cteNames != null && cteNames.contains(logicalTableName.toLowerCase())) {
+                    return sqlNode;
+                }
                 TableMeta tb =
-                    OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(logicalTableName);
+                    OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTableWithNull(logicalTableName);
+                if (tb == null) {
+                    throw new TableNotFoundException(ErrorCode.ERR_TABLE_NOT_EXIST, logicalTableName);
+                }
                 Assert.assertTrue(tb != null);
                 // auto table
                 PartitionInfo pi = tb.getPartitionInfo();
@@ -116,9 +127,8 @@ public class ReplaceTblWithPhyTblVisitor extends ReplaceTableNameWithSomethingVi
                 // record and check table group id
                 if (tableGroupId == -1L) {
                     tableGroupId = pi.getTableGroupId();
-                } else if (tableGroupId != pi.getTableGroupId()) {
-                    throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_HINT,
-                        "different table group in partition hint mode");
+                } else {
+                    checkGroupIdTheSame(schemaName, tableGroupId, pi.getTableGroupId());
                 }
                 List<String> partitionList = Lists.newArrayList();
                 partitionList.add(pHint);
@@ -153,6 +163,12 @@ public class ReplaceTblWithPhyTblVisitor extends ReplaceTableNameWithSomethingVi
                 // drds table partition hint: groupname_xxxx
                 Pair<String, Integer> topologyTarget = decodePartitionHintForShardingTable(pHint);
                 uniqGroupName = topologyTarget.getKey();
+                if (tableRule.isBroadcast()) {
+                    Map<String, Set<String>> topology = tableRule.getActualTopology();
+                    broadcastGroupName = topology.keySet().iterator().next();
+                    String physicalTblName = topology.values().iterator().next().iterator().next();
+                    return new SqlIdentifier(physicalTblName, SqlParserPos.ZERO);
+                }
                 Map<String, Set<String>> topology = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
                 topology.putAll(tableRule.getActualTopology());
                 if (topology.containsKey(topologyTarget.getKey())) {
@@ -203,6 +219,29 @@ public class ReplaceTblWithPhyTblVisitor extends ReplaceTableNameWithSomethingVi
 
         return new SqlIdentifier(tableRule.getTbNamePattern(), SqlParserPos.ZERO);
     }
+    /**
+     * Validate that the given table group IDs are consistent when partition hint is used.
+     * If the schema is configured to use physical DB configs, the check is skipped entirely.
+     * Returns immediately when the IDs are equal; otherwise throws an exception to indicate
+     * mismatched table groups under partition hint mode.
+     *
+     * @param schema the schema name used to determine whether physical DB configs apply
+     * @param tableGroupId the table group ID of the current table
+     * @param otherTableGroupId the table group ID to compare against
+     * @throws TddlRuntimeException if tableGroupId differs from otherTableGroupId and
+     * physical DB configs are not in use
+     */
+    public static void checkGroupIdTheSame(String schema, long tableGroupId, long otherTableGroupId) {
+        if (PlannerUtils.checkIfUseSchemaUsePhyDbConfigs(schema)) {
+            return;
+        }
+        if (tableGroupId == otherTableGroupId) {
+            return;
+        }
+        throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_HINT,
+            "different table group in partition hint mode");
+    }
+
     /**
      * partition hint decode for sharding table
      * groupname_00xx

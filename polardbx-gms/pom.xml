@@ -93,6 +93,11 @@
             <version>${jetty.version}</version>
             <scope>test</scope>
         </dependency>
+
+        <dependency>
+            <groupId>com.alibaba.polardbx</groupId>
+            <artifactId>polardbx-cache</artifactId>
+        </dependency>
     </dependencies>
 
 </project>

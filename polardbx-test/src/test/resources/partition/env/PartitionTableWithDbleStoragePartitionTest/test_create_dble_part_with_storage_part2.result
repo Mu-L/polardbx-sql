@@ -1,0 +1,396 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+use polardbx;
+## ======== create dbledb =========
+drop database if exists dblesp;
+## USE_DN_LIST_MSG
+create database if not exists dblesp
+mode = 'auto'
+locality='dble_config={
+  "group_config":{
+    "dblesp_g1":["$dn1","dblesp_00"],
+    "dblesp_g2":["$dn2","dblesp_01"],
+    "dblesp_g3":["$dn1","dblesp_02"],
+    "dblesp_g4":["$dn2","dblesp_03"]
+  }
+}';
+use dblesp;
+set ENABLE_SHOW_STORAGE_PARTITIONS=true;
+## ======== hash + storage_partitions =========
+drop table if exists key_storage_part2;
+create table key_storage_part2 (
+  a bigint not null，
+  b bigint,
+  primary key(a)
+) charset utf8mb4 collate utf8mb4_general_ci
+partition by key(b)
+partitions 4
+/*!storage
+partition by key(a)
+partitions 8
+*/;
+show create table key_storage_part2;
+Table,Create Table
+key_storage_part2,CREATE TABLE `key_storage_part2` (
+	`a` bigint(20) NOT NULL,
+	`b` bigint(20) DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+/*!STORAGE
+PARTITION BY KEY (a)
+PARTITIONS 8
+*/
+PARTITION BY KEY(`b`)
+PARTITIONS 4
+insert into key_storage_part2 values (1,1),(3,3);
+select a,b from key_storage_part2　where (a,b) in ((1,1),(3,3))  order by a,b;
+a,b
+1,1
+3,3
+## ======== dble_partition + storage_partition =========
+drop table if exists dble_hash_storage_part2;
+create table dble_hash_storage_part2 (
+  a bigint not null，
+  b bigint,
+  primary key(a)
+) charset utf8mb4 collate utf8mb4_general_ci
+partition by udf_hash(
+  `b` with udf_params(
+    'dble/hash',
+    '{
+      "partitionCount" : "4",
+      "partitionLength" : "1"
+    }'
+  )
+)
+partitions 4
+/*!storage
+partition by key(a)
+partitions 8
+*/;
+show create table dble_hash_storage_part2;
+Table,Create Table
+dble_hash_storage_part2,CREATE TABLE `dble_hash_storage_part2` (
+	`a` bigint(20) NOT NULL,
+	`b` bigint(20) DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+/*!STORAGE
+PARTITION BY KEY (a)
+PARTITIONS 8
+*/
+PARTITION BY UDF_HASH(`b` WITH UDF_PARAMS (
+'dble/hash',
+'{
+      "partitionCount" : "4",
+      "partitionLength" : "1"
+    }'
+))
+PARTITIONS 4
+(PARTITION p1 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (2) ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN (3) ENGINE = InnoDB,
+ PARTITION p4 VALUES LESS THAN (9223372036854775807) ENGINE = InnoDB)
+insert into dble_hash_storage_part2 values (1,1),(3,3);
+select a,b from dble_hash_storage_part2　where (a,b) in ((1,1),(3,3))  order by a,b;
+a,b
+1,1
+3,3
+## ======== dble_subpartition + storage_partition =========
+drop table if exists dble_storage_part_with_sp2;
+create table dble_storage_part_with_sp2(
+  a bigint not null,
+  b bigint,
+  primary key(a,b)
+) charset utf8mb4 collate utf8mb4_general_ci
+partition by udf_hash(
+ `a` with udf_params(
+ 	'dble/hash',
+  '{
+ 		"partitionCount" : "4",
+ 		"partitionLength" : "1"
+ 	}'
+  )
+  )
+partitions 4
+subpartition by udf_hash(
+  `b` with udf_params(
+  'dble/hash',
+  '{
+ 		"partitionCount" : "4",
+ 		"partitionLength" : "1"
+ 	}'
+  )
+)
+subpartitions 4
+/*!storage
+partition by range(a)
+subpartition by key(b)
+(
+  partition p1 values less than(1) (
+    subpartition sp1,
+    subpartition sp2
+  ),
+  partition p2 values less than(10) (
+    subpartition sp3,
+    subpartition sp4
+  )
+)
+*/;
+show create table dble_storage_part_with_sp2;
+Table,Create Table
+dble_storage_part_with_sp2,CREATE TABLE `dble_storage_part_with_sp2` (
+	`a` bigint(20) NOT NULL,
+	`b` bigint(20) NOT NULL,
+	PRIMARY KEY (`a`, `b`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+/*!STORAGE
+PARTITION BY RANGE (a)
+SUBPARTITION BY KEY (b)
+(PARTITION p1 VALUES LESS THAN (1)
+ (SUBPARTITION sp1 ENGINE = InnoDB,
+  SUBPARTITION sp2 ENGINE = InnoDB),
+ PARTITION p2 VALUES LESS THAN (10)
+ (SUBPARTITION sp3 ENGINE = InnoDB,
+  SUBPARTITION sp4 ENGINE = InnoDB))
+*/
+PARTITION BY UDF_HASH(`a` WITH UDF_PARAMS (
+'dble/hash',
+'{
+ 		"partitionCount" : "4",
+ 		"partitionLength" : "1"
+ 	}'
+))
+PARTITIONS 4
+SUBPARTITION BY UDF_HASH(`b` WITH UDF_PARAMS (
+'dble/hash',
+'{
+ 		"partitionCount" : "4",
+ 		"partitionLength" : "1"
+ 	}'
+))
+SUBPARTITIONS 4
+(SUBPARTITION sp1 VALUES LESS THAN (1),
+ SUBPARTITION sp2 VALUES LESS THAN (2),
+ SUBPARTITION sp3 VALUES LESS THAN (3),
+ SUBPARTITION sp4 VALUES LESS THAN (9223372036854775807))
+(PARTITION p1 VALUES LESS THAN (1),
+ PARTITION p2 VALUES LESS THAN (2),
+ PARTITION p3 VALUES LESS THAN (3),
+ PARTITION p4 VALUES LESS THAN (9223372036854775807))
+insert into dble_storage_part_with_sp2 values (1,1),(3,3);
+select a,b from dble_storage_part_with_sp2　where (a,b) in ((1,1),(3,3))  order by a,b;
+a,b
+1,1
+3,3
+## ======== dble_replicas + storage_partition =========
+drop table if exists dble_replicas_storage_part2;
+create table dble_replicas_storage_part2 (
+  a bigint not null，
+  b bigint,
+  primary key(a)
+) charset utf8mb4 collate utf8mb4_general_ci
+replicas
+locality='db_set=dblesp_g2,dblesp_g3,dblesp_g4'
+/*!storage
+partition by key(a)
+partitions 8
+*/;
+show create table dble_replicas_storage_part2;
+Table,Create Table
+dble_replicas_storage_part2,CREATE TABLE `dble_replicas_storage_part2` (
+	`a` bigint(20) NOT NULL,
+	`b` bigint(20) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+/*!STORAGE
+PARTITION BY KEY (a)
+PARTITIONS 8
+*/
+/* LOCALITY='db_set=dblesp_g2,dblesp_g3,dblesp_g4' */
+REPLICAS
+insert into dble_replicas_storage_part2 values (1,1),(3,3);
+select a,b from dble_replicas_storage_part2　where (a,b) in ((1,1),(3,3))  order by a,b;
+a,b
+1,1
+3,3
+drop table if exists dble_replicas_storage_part3;
+create table dble_replicas_storage_part3 (
+  a bigint not null，
+  b bigint,
+  primary key(a)
+) charset utf8mb4 collate utf8mb4_general_ci
+replicas
+locality='db_pools=dblesp_g2,dblesp_g3,dblesp_g4'
+/*!storage
+partition by key(a)
+partitions 8
+*/;
+show create table dble_replicas_storage_part3;
+Table,Create Table
+dble_replicas_storage_part3,CREATE TABLE `dble_replicas_storage_part3` (
+	`a` bigint(20) NOT NULL,
+	`b` bigint(20) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+/*!STORAGE
+PARTITION BY KEY (a)
+PARTITIONS 8
+*/
+/* LOCALITY='db_pools=dblesp_g2,dblesp_g3,dblesp_g4' */
+REPLICAS
+insert into dble_replicas_storage_part3 values (1,1),(3,3);
+select a,b from dble_replicas_storage_part3　where (a,b) in ((1,1),(3,3))  order by a,b;
+a,b
+1,1
+3,3
+## ======== dble_nopkpart + storage_partition =========
+drop table if exists dble_nopkpart_storage_part2;
+create table dble_nopkpart_storage_part2 (
+  a bigint not null，
+  b bigint,
+  primary key(a)
+) charset utf8mb4 collate utf8mb4_general_ci
+partition by udf_hash()
+locality='db_set=dblesp_g2,dblesp_g3,dblesp_g4'
+/*!storage
+partition by key(a)
+partitions 8
+*/;
+show create table dble_nopkpart_storage_part2;
+Table,Create Table
+dble_nopkpart_storage_part2,CREATE TABLE `dble_nopkpart_storage_part2` (
+	`a` bigint(20) NOT NULL,
+	`b` bigint(20) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+/*!STORAGE
+PARTITION BY KEY (a)
+PARTITIONS 8
+*/
+/* LOCALITY='db_set=dblesp_g2,dblesp_g3,dblesp_g4' */
+PARTITION BY UDF_HASH()
+select a,b from dble_nopkpart_storage_part2　where (a,b) in ((1,1),(3,3))  order by a,b;
+a,b
+## ======== single + storage_partition =========
+drop table if exists sig_storage_part2;
+create table sig_storage_part2 (
+a bigint not null，
+b bigint,
+primary key(a)
+) charset utf8mb4 collate utf8mb4_general_ci
+single
+/*!storage
+partition by key(a)
+partitions 8
+*/;
+show create table sig_storage_part2;
+Table,Create Table
+sig_storage_part2,CREATE TABLE `sig_storage_part2` (
+	`a` bigint(20) NOT NULL,
+	`b` bigint(20) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+/*!STORAGE
+PARTITION BY KEY (a)
+PARTITIONS 8
+*/
+SINGLE
+insert into sig_storage_part2 values (1,1),(3,3);
+select a,b from sig_storage_part2　where (a,b) in ((1,1),(3,3))  order by a,b;
+a,b
+1,1
+3,3
+## ======== broadcast + storage_partition =========
+drop table if exists bro_storage_part2;
+create table bro_storage_part2 (
+a bigint not null，
+b bigint,
+primary key(a)
+) charset utf8mb4 collate utf8mb4_general_ci
+broadcast
+/*!storage
+partition by key(a)
+partitions 8
+*/;
+show create table bro_storage_part2;
+Table,Create Table
+bro_storage_part2,CREATE TABLE `bro_storage_part2` (
+	`a` bigint(20) NOT NULL,
+	`b` bigint(20) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+/*!STORAGE
+PARTITION BY KEY (a)
+PARTITIONS 8
+*/
+BROADCAST
+insert into bro_storage_part2 values (1,1),(3,3);
+select a,b from bro_storage_part2　where (a,b) in ((1,1),(3,3))  order by a,b;
+a,b
+1,1
+3,3
+## ======== single + storage_partition =========
+drop table if exists sig_storage_part2;
+create table sig_storage_part2 (
+a bigint not null，
+b bigint,
+primary key(a)
+) charset utf8mb4 collate utf8mb4_general_ci
+single
+/*!storage
+partition by key(a)
+partitions 8
+*/;
+show create table sig_storage_part2;
+Table,Create Table
+sig_storage_part2,CREATE TABLE `sig_storage_part2` (
+	`a` bigint(20) NOT NULL,
+	`b` bigint(20) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+/*!STORAGE
+PARTITION BY KEY (a)
+PARTITIONS 8
+*/
+SINGLE
+insert into sig_storage_part2 values (1,1),(3,3);
+select a,b from sig_storage_part2　where (a,b) in ((1,1),(3,3))  order by a,b;
+a,b
+1,1
+3,3
+## ======== broadcast + storage_partition =========
+drop table if exists bro_storage_part2;
+create table bro_storage_part2 (
+a bigint not null，
+b bigint,
+primary key(a)
+) charset utf8mb4 collate utf8mb4_general_ci
+broadcast
+/*!storage
+partition by key(a)
+partitions 8
+*/;
+show create table bro_storage_part2;
+Table,Create Table
+bro_storage_part2,CREATE TABLE `bro_storage_part2` (
+	`a` bigint(20) NOT NULL,
+	`b` bigint(20) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+/*!STORAGE
+PARTITION BY KEY (a)
+PARTITIONS 8
+*/
+BROADCAST
+insert into bro_storage_part2 values (1,1),(3,3);
+select a,b from bro_storage_part2　where (a,b) in ((1,1),(3,3))  order by a,b;
+a,b
+1,1
+3,3
+use polardbx;
+drop database if exists dblesp;

@@ -1,0 +1,17 @@
+## DISABLE_FAST_SQL_PARSER
+drop database if exists checkrouting_db2
+create database if not exists checkrouting_db2 mode='auto'
+use checkrouting_db2
+create table ctt_t1
+(a int, b int, c int)
+partition by key(a)
+partitions 4
+create global index gsi_b on ctt_t1(b)
+partition by key(b)
+partitions 4
+check index routing gsi_b on ctt_t1
+route_part,real_part,b
+check index routing gsi_b partition(p1,p3) on ctt_t1
+route_part,real_part,b
+use polardbx
+drop database if exists checkrouting_db2;

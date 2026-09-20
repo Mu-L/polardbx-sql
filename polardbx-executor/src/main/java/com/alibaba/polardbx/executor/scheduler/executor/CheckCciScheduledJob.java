@@ -12,7 +12,6 @@ import com.alibaba.polardbx.common.utils.logger.MDC;
 import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.scheduler.ScheduledJobsManager;
-import com.alibaba.polardbx.executor.scheduler.executor.trx.CleanLogTableScheduledJob;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarCheckpointsAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingAccessor;
@@ -44,7 +43,7 @@ import static com.alibaba.polardbx.gms.scheduler.ScheduledJobExecutorType.CHECK_
 import static com.alibaba.polardbx.gms.topology.SystemDbHelper.DEFAULT_DB_NAME;
 
 public class CheckCciScheduledJob extends SchedulerExecutor {
-    private static final Logger logger = LoggerFactory.getLogger(CleanLogTableScheduledJob.class);
+    private static final Logger logger = LoggerFactory.getLogger(CheckCciScheduledJob.class);
 
     private final ExecutableScheduledJob executableScheduledJob;
 

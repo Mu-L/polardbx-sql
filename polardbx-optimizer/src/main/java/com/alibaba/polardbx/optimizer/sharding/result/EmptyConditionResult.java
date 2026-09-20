@@ -16,17 +16,16 @@
 
 package com.alibaba.polardbx.optimizer.sharding.result;
 
+import com.alibaba.polardbx.common.model.sqljep.Comparative;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import org.apache.calcite.rex.RexNode;
+
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import com.alibaba.polardbx.optimizer.context.ExecutionContext;
-import org.apache.calcite.rex.RexNode;
-
-import com.alibaba.polardbx.common.model.sqljep.Comparative;
 
 /**
  * @author chenmo.cm
@@ -55,17 +54,12 @@ class EmptyConditionResult implements ConditionResult {
     }
 
     @Override
-    public Map<String, Comparative> toPartitionCondition(ExecutionContext executionContext) {
+    public Map<String, Comparative> toPartitionCondition(ExecutionContext executionContext, boolean enableConstExpr) {
         return new HashMap<>();
     }
 
     @Override
-    public Map<String, Comparative> toColumnCondition(List<String> columns) {
-        return new HashMap<>();
-    }
-
-    @Override
-    public Map<String, Comparative> toFullPartitionCondition(ExecutionContext executionContext) {
+    public Map<String, Comparative> toColumnCondition(List<String> columns, ExecutionContext context) {
         return new HashMap<>();
     }
 

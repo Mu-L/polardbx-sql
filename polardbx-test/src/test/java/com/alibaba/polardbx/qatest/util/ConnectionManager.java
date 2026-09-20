@@ -33,6 +33,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Properties;
 
+import static com.alibaba.polardbx.qatest.BaseTestCase.setNoNeedPkIn80;
 import static com.alibaba.polardbx.qatest.util.JdbcUtil.getSqlMode;
 import static com.alibaba.polardbx.qatest.util.PropertiesUtil.POLARDBX_SERVER_ID_CONF;
 import static com.alibaba.polardbx.qatest.util.PropertiesUtil.dnCount;
@@ -65,11 +66,13 @@ public class ConnectionManager {
     private String mysqlPortSecond;
     private String mysqlAddressSecond;
 
+    private boolean skipInitPolarDBX = false;
     private String polardbxUser;
     private String polardbxPassword;
     private String polardbxPort;
     private String polardbxAddress;
 
+    private boolean skipInitMetaDb = false;
     private String metaUser;
     private String metaPassword;
     private String metaPort;
@@ -163,11 +166,13 @@ public class ConnectionManager {
         this.mysqlPortSecond = configProp.getProperty(ConfigConstant.MYSQL_PORT_SECOND);
         this.mysqlAddressSecond = configProp.getProperty(ConfigConstant.MYSQL_ADDRESS_SECOND);
 
+        this.skipInitPolarDBX = Boolean.parseBoolean(configProp.getProperty(ConfigConstant.SKIP_INIT_POLARDBX));
         this.polardbxUser = configProp.getProperty(ConfigConstant.POLARDBX_USER);
         this.polardbxPassword = configProp.getProperty(ConfigConstant.POLARDBX_PASSWORD);
         this.polardbxPort = configProp.getProperty(ConfigConstant.POLARDBX_PORT);
         this.polardbxAddress = configProp.getProperty(ConfigConstant.POLARDBX_ADDRESS);
 
+        this.skipInitMetaDb = Boolean.parseBoolean(configProp.getProperty(ConfigConstant.SKIP_INIT_META_DB));
         this.metaUser = configProp.getProperty(ConfigConstant.META_USER);
         this.metaPassword = PasswdUtil.decrypt(configProp.getProperty(ConfigConstant.META_PASSWORD));
         this.metaPort = configProp.getProperty(ConfigConstant.META_PORT);
@@ -191,23 +196,28 @@ public class ConnectionManager {
                 }
             }
 
-            this.metaDataSource =
-                getDruidDataSource(metaAddress, metaPort, metaUser, metaPassword, PropertiesUtil.getMetaDB, true);
-
-            this.polardbxDataSource = getDruidDataSource(polardbxAddress, polardbxPort, polardbxUser, polardbxPassword,
-                PropertiesUtil.polardbXDBName1(false), false);
-
-            try (Connection polardbxCon = polardbxDataSource.getConnection()) {
-                this.polardbxMode = getSqlMode(polardbxCon);
+            if (!skipInitMetaDb) {
+                this.metaDataSource =
+                    getDruidDataSource(metaAddress, metaPort, metaUser, metaPassword, PropertiesUtil.getMetaDB, true);
             }
 
-            try (Connection polardbxCon = polardbxDataSource.getConnection()) {
-                com.alibaba.polardbx.qatest.util.JdbcUtil.useDb(polardbxCon, CdcTableUtil.CDC_TABLE_SCHEMA);
-                polardbxCon.createStatement().execute(String
-                    .format("alter table %s add index idx_job_id(`JOB_ID`)",
-                        CdcTableUtil.CDC_DDL_RECORD_TABLE));
-            } catch (Throwable t) {
-                //ignore
+            if (!skipInitPolarDBX) {
+                this.polardbxDataSource =
+                    getDruidDataSource(polardbxAddress, polardbxPort, polardbxUser, polardbxPassword,
+                        PropertiesUtil.polardbXDBName1(false), false);
+
+                try (Connection polardbxCon = polardbxDataSource.getConnection()) {
+                    this.polardbxMode = getSqlMode(polardbxCon);
+                }
+
+                try (Connection polardbxCon = polardbxDataSource.getConnection()) {
+                    com.alibaba.polardbx.qatest.util.JdbcUtil.useDb(polardbxCon, CdcTableUtil.CDC_TABLE_SCHEMA);
+                    polardbxCon.createStatement().execute(String
+                        .format("alter table %s add index idx_job_id(`JOB_ID`)",
+                            CdcTableUtil.CDC_DDL_RECORD_TABLE));
+                } catch (Throwable t) {
+                    //ignore
+                }
             }
 
         } catch (Throwable t) {
@@ -220,8 +230,6 @@ public class ConnectionManager {
 
     private void setMysqlParameter(DataSource dataSource) {
         try (Connection mysqlConnection = dataSource.getConnection()) {
-            com.alibaba.polardbx.qatest.util.JdbcUtil.executeUpdate(mysqlConnection,
-                "set global innodb_buffer_pool_size=6442450944;");
             com.alibaba.polardbx.qatest.util.JdbcUtil.executeUpdate(mysqlConnection,
                 "set global table_open_cache=20000;");
             com.alibaba.polardbx.qatest.util.JdbcUtil.executeUpdate(mysqlConnection,
@@ -292,6 +300,16 @@ public class ConnectionManager {
         String url =
             String.format(ConfigConstant.URL_PATTERN + getConnectionProperties(), polardbxAddress, polardbxPort);
         return JdbcUtil.createConnection(url, polardbxUser, polardbxPassword);
+    }
+
+    public Connection newPolarDBXConnection(String db) {
+        String url =
+            String.format(ConfigConstant.URL_DB_PATTERN + getConnectionProperties(), polardbxAddress, polardbxPort, db);
+        return JdbcUtil.createConnection(url, polardbxUser, polardbxPassword);
+    }
+
+    public String getPolarDBxUrl() {
+        return String.format(ConfigConstant.URL_PATTERN + getConnectionProperties(), polardbxAddress, polardbxPort);
     }
 
     public static Connection newPolarDBXConnection0() {
@@ -365,7 +383,9 @@ public class ConnectionManager {
             connProp += "&useAffectedRows=true";
         }
         String url = String.format(ConfigConstant.URL_PATTERN + connProp, mysqlAddress, mysqlPort);
-        return JdbcUtil.createConnection(url, mysqlUser, mysqlPassword);
+        Connection mysqlConnection = JdbcUtil.createConnection(url, mysqlUser, mysqlPassword);
+        setNoNeedPkIn80(mysqlConnection);
+        return mysqlConnection;
     }
 
     public Connection newMysqlConnectionWithExtraParams(String extraParams) {
@@ -469,6 +489,14 @@ public class ConnectionManager {
 
     public String getMetaPassword() {
         return metaPassword;
+    }
+
+    public String getMysqlUser() {
+        return mysqlUser;
+    }
+
+    public String getMysqlPassword() {
+        return mysqlPassword;
     }
 
     public String getMetaPort() {

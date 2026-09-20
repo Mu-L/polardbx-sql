@@ -4,6 +4,7 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
+import com.alibaba.polardbx.optimizer.config.table.IndexColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.IndexMeta;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.core.TddlOperatorTable;
@@ -33,7 +34,6 @@ import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.runtime.PredicateImpl;
-import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.tools.RelBuilderFactory;
@@ -54,38 +54,16 @@ public class PagingForceToJoinRule extends RelOptRule {
         }
     };
 
-    static final Predicate<LogicalFilter> FILTER_NO_SUBQUERY = new PredicateImpl<LogicalFilter>() {
-        @Override
-        public boolean test(LogicalFilter logicalFilter) {
-            return logicalFilter != null && !RexUtil.hasSubQuery(logicalFilter.getCondition());
-        }
-    };
-
-    static final Predicate<LogicalProject> PROJECT_NO_SUBQUERY = new PredicateImpl<LogicalProject>() {
-        @Override
-        public boolean test(LogicalProject logicalProject) {
-            if (logicalProject == null) {
-                return false;
-            }
-            for (RexNode rexNode : logicalProject.getProjects()) {
-                if (RexUtil.hasSubQuery(rexNode)) {
-                    return false;
-                }
-            }
-            return true;
-        }
-    };
-
     public static final PagingForceToJoinRule INSTANCE = new PagingForceToJoinRule(
         operand(LogicalSort.class, null, LIMIT,
-            operand(LogicalFilter.class, null, FILTER_NO_SUBQUERY,
+            operand(LogicalFilter.class, null, ForceIndexUtil.FILTER_NO_SUBQUERY,
                 operand(TableScan.class, null, PagingForceRemoveRule.PAGING, none()))),
         RelFactories.LOGICAL_BUILDER, "INSTANCE");
 
     public static final PagingForceToJoinRule PROJECT = new PagingForceToJoinRule(
         operand(LogicalSort.class, null, LIMIT,
-            operand(LogicalProject.class, null, PROJECT_NO_SUBQUERY,
-                operand(LogicalFilter.class, null, FILTER_NO_SUBQUERY,
+            operand(LogicalProject.class, null, ForceIndexUtil.PROJECT_NO_SUBQUERY,
+                operand(LogicalFilter.class, null, ForceIndexUtil.FILTER_NO_SUBQUERY,
                     operand(TableScan.class, null, PagingForceRemoveRule.PAGING, none())))),
         RelFactories.LOGICAL_BUILDER, "PROJECT");
 
@@ -171,16 +149,18 @@ public class PagingForceToJoinRule extends RelOptRule {
         // build bitSet of columns of index
         Map<String, Integer> columnOrd = ForceIndexUtil.buildColumnarOrdinalMap(tm);
         ImmutableBitSet.Builder builder = ImmutableBitSet.builder();
-        for (ColumnMeta columnMeta : indexMeta.getKeyColumns()) {
-            int loc = columnOrd.getOrDefault(columnMeta.getName().toLowerCase(), -1);
-            if (loc >= 0) {
-                builder.set(loc);
+        for (IndexColumnMeta indexColumnMeta : indexMeta.getKeyColumnsExt()) {
+            if (indexColumnMeta.hasColumn()) {
+                int loc = columnOrd.getOrDefault(indexColumnMeta.getColumnMeta().getName(), -1);
+                if (loc >= 0) {
+                    builder.set(loc);
+                }
             }
         }
 
         List<Integer> pkList = getPkList(tm, columnOrd);
         List<Integer> skList = ForceIndexUtil.getSkList(tm, columnOrd);
-        if (CollectionUtils.isEmpty(pkList) || skList == null) {
+        if (CollectionUtils.isEmpty(pkList)) {
             return null;
         }
         // remove sk column in pkList
@@ -355,7 +335,7 @@ public class PagingForceToJoinRule extends RelOptRule {
                 Object value = DrdsRexFolder.fold(leftRex, plannerContext);
                 if (value != null && inputRef >= 0) {
                     value = DrdsRexFolder.fold(rightRex, plannerContext);
-                    if (value != null ) {
+                    if (value != null) {
                         bitSet[0].set(inputRef);
                     }
                     bitSet[0].set(inputRef);
@@ -405,7 +385,7 @@ public class PagingForceToJoinRule extends RelOptRule {
                 if (value != null) {
                     List<RexNode> inRefs = leftRex.getOperands();
                     for (RexNode inRef : inRefs) {
-                        if (inRef instanceof RexInputRef && ((RexInputRef) inRef).getIndex() > 0) {
+                        if (inRef instanceof RexInputRef && ((RexInputRef) inRef).getIndex() >= 0) {
                             bitSet[0].set(((RexInputRef) inRef).getIndex());
                         }
                     }
@@ -418,7 +398,7 @@ public class PagingForceToJoinRule extends RelOptRule {
                 if (value != null) {
                     List<RexNode> inRefs = leftRex.getOperands();
                     for (RexNode inRef : inRefs) {
-                        if (inRef instanceof RexInputRef && ((RexInputRef) inRef).getIndex() > 0) {
+                        if (inRef instanceof RexInputRef && ((RexInputRef) inRef).getIndex() >= 0) {
                             bitSet[0].set(((RexInputRef) inRef).getIndex());
                         }
                     }

@@ -16,6 +16,10 @@
 
 package com.alibaba.polardbx.executor.mpp.operator;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableIntArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
@@ -29,6 +33,9 @@ import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.objects.MemoryCountableInt2Int2OpenHashMap;
+import org.openjdk.jol.info.ClassLayout;
+import org.roaringbitmap.RoaringBitmap;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -41,19 +48,29 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 public class PartitioningExchanger extends LocalExchanger {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(PartitioningExchanger.class).instanceSize();
     private final LocalHashBucketFunction partitionGenerator;
-    private final List<Integer> partitionChannels;
+
+    @FieldMemoryCounter(value = false)
     private List<DataType> types;
+
+    private int[] columnIndex;
+
+    @FieldMemoryCounter(value = false)
     private final List<AtomicBoolean> consumings;
+
+    @FieldMemoryCounter(value = false)
     private ChunkConverter keyConverter;
+
+    @FieldMemoryCounter(value = false)
     private ExecutionContext context;
 
-    private List<ChunkBuilder> chunkBuildersPrimary;
+    private ChunkBuilder[] chunkBuildersPrimary;
 
     /**
      * used to stash overflow records when enable batch
      */
-    private List<ChunkBuilder> chunkBuildersBackUp;
+    private ChunkBuilder[] chunkBuildersBackUp;
 
     private final boolean enableBatch;
 
@@ -66,18 +83,50 @@ public class PartitioningExchanger extends LocalExchanger {
     private final int[] selSizes;
     private final boolean optimizePartition;
 
+    @FieldMemoryCounter(value = false)
     private final ObjectPools objectPools;
     private final boolean shouldRecycle;
 
     // for random order
-    private final List<Integer> randomOrderList;
+    private final MemoryCountableIntArrayList randomOrderList;
 
     private boolean chunkExchange;
 
     /**
      * used by partition wise mode
      */
-    private Map<Integer, Integer> partCounter = new HashMap<>();
+    private MemoryCountableInt2Int2OpenHashMap partCounter = new MemoryCountableInt2Int2OpenHashMap();
+
+    @FieldMemoryCounter(value = false)
+    private RoaringBitmap objectBitmap;
+
+    @Override
+    public long getMemoryUsage() {
+        if (objectBitmap == null) {
+            objectBitmap = new RoaringBitmap();
+        }
+        try {
+            MemoryTrackerManager.setCurrentRoaringBitmap(objectBitmap);
+
+            return INSTANCE_SIZE
+
+                // super class
+                + FastMemoryCounter.sizeOf(opened)
+
+                // this class
+                + FastMemoryCounter.sizeOf(partitionGenerator)
+                + FastMemoryCounter.sizeOf(columnIndex)
+                + FastMemoryCounter.sizeOf(chunkBuildersPrimary)
+                + FastMemoryCounter.sizeOf(chunkBuildersBackUp)
+                + FastMemoryCounter.sizeOf(partitionSelections)
+                + FastMemoryCounter.sizeOf(selSizes)
+                + FastMemoryCounter.sizeOf(randomOrderList)
+                + FastMemoryCounter.sizeOf(partCounter);
+        } finally {
+            MemoryTrackerManager.removeCurrentRoaringBitmap();
+            objectBitmap.clear();
+        }
+    }
 
     public PartitioningExchanger(OutputBufferMemoryManager bufferMemoryManager, List<ConsumerExecutor> executors,
                                  LocalExchangersStatus status,
@@ -86,27 +135,32 @@ public class PartitioningExchanger extends LocalExchanger {
                                  List<Integer> partitionChannels,
                                  List<DataType> keyTargetTypes,
                                  ExecutionContext context,
-                                 boolean chunkExchange) {
-        super(bufferMemoryManager, executors, status, asyncConsume);
+                                 boolean chunkExchange,
+                                 long waitNotFullInMillis) {
+        super(bufferMemoryManager, executors, status, asyncConsume, waitNotFullInMillis);
 
         // for random order.
-        this.randomOrderList = new ArrayList<>();
+        this.randomOrderList = new MemoryCountableIntArrayList();
         for (int i = 0; i < executors.size(); i++) {
             randomOrderList.add(i);
         }
+        // random order to avoid lock race.
+        Collections.shuffle(randomOrderList);
 
         this.types = types;
         this.context = context;
         this.partitionGenerator = new LocalHashBucketFunction(executors.size());
-        this.partitionChannels = partitionChannels;
         this.consumings = status.getConsumings();
+
+        // build columnIndex
+        columnIndex = new int[partitionChannels.size()];
+        for (int i = 0; i < partitionChannels.size(); i++) {
+            columnIndex[i] = partitionChannels.get(i);
+        }
+
         if (keyTargetTypes.isEmpty()) {
             this.keyConverter = null;
         } else {
-            int[] columnIndex = new int[partitionChannels.size()];
-            for (int i = 0; i < partitionChannels.size(); i++) {
-                columnIndex[i] = partitionChannels.get(i);
-            }
             this.keyConverter = Converters.createChunkConverter(columnIndex, types, keyTargetTypes, context);
         }
 
@@ -123,10 +177,17 @@ public class PartitioningExchanger extends LocalExchanger {
 
         this.shouldRecycle = context.getParamManager().getBoolean(ConnectionParams.ENABLE_DRIVER_OBJECT_POOL);
         this.objectPools = ObjectPools.create();
-        this.chunkBuildersPrimary = IntStream.range(0, executors.size()).boxed()
-            .map(i -> new ChunkBuilder(types, chunkLimit, context, objectPools)).collect(Collectors.toList());
-        this.chunkBuildersBackUp = IntStream.range(0, executors.size()).boxed()
-            .map(i -> new ChunkBuilder(types, chunkLimit, context, objectPools)).collect(Collectors.toList());
+
+        this.chunkBuildersPrimary = new ChunkBuilder[executors.size()];
+        for (int i = 0; i < chunkBuildersPrimary.length; i++) {
+            chunkBuildersPrimary[i] = new ChunkBuilder(types, chunkLimit, context, objectPools);
+        }
+
+        this.chunkBuildersBackUp = new ChunkBuilder[executors.size()];
+        for (int i = 0; i < chunkBuildersBackUp.length; i++) {
+            chunkBuildersBackUp[i] = new ChunkBuilder(types, chunkLimit, context, objectPools);
+        }
+
         this.chunkExchange = chunkExchange;
     }
 
@@ -139,7 +200,12 @@ public class PartitioningExchanger extends LocalExchanger {
             // don't recycle because chunk is cached.
 
         } else if (optimizePartition) {
-            partitionChunks = tupleExchangeWithoutAllocation(chunk);
+            try {
+                MemoryTrackerManager.setCurrentMemoryOwner(consumerMemoryOwnerId);
+                partitionChunks = tupleExchangeWithoutAllocation(chunk);
+            } finally {
+                MemoryTrackerManager.removeCurrentMemoryOwner();
+            }
 
             // should recycle
             if (shouldRecycle) {
@@ -170,9 +236,6 @@ public class PartitioningExchanger extends LocalExchanger {
         if (partitionChunks == null) {
             return;
         }
-
-        // random order to avoid lock race.
-        Collections.shuffle(randomOrderList);
 
         if (asyncConsume) {
             for (int i = 0; i < randomOrderList.size(); i++) {
@@ -315,7 +378,7 @@ public class PartitioningExchanger extends LocalExchanger {
     }
 
     private boolean writeToChunkBuilder(Integer partition, IntArrayList positions, Chunk chunk) {
-        ChunkBuilder builder = chunkBuildersPrimary.get(partition);
+        ChunkBuilder builder = chunkBuildersPrimary[partition];
         int resetCount = chunkLimit - builder.getDeclarePosition();
         int arrayListIndex = 0;
         int primaryLimit = Math.min(resetCount, positions.size());
@@ -329,7 +392,7 @@ public class PartitioningExchanger extends LocalExchanger {
         }
 
         // if primary chunk builder is full, write reset to back up
-        builder = chunkBuildersBackUp.get(partition);
+        builder = chunkBuildersBackUp[partition];
         for (; arrayListIndex < positions.size(); arrayListIndex++) {
             int pos = positions.getInt(arrayListIndex);
             builder.declarePosition();
@@ -342,7 +405,7 @@ public class PartitioningExchanger extends LocalExchanger {
     }
 
     private void swapPrimaryAndBackUp() {
-        List<ChunkBuilder> tmp = chunkBuildersPrimary;
+        ChunkBuilder[] tmp = chunkBuildersPrimary;
         chunkBuildersPrimary = chunkBuildersBackUp;
         chunkBuildersBackUp = tmp;
     }
@@ -364,7 +427,7 @@ public class PartitioningExchanger extends LocalExchanger {
             final int selSize = selSizes[partition];
 
             if (selSize > 0) {
-                ChunkBuilder builder = chunkBuildersPrimary.get(partition);
+                ChunkBuilder builder = chunkBuildersPrimary[partition];
                 final int resetCount = chunkLimit - builder.getDeclarePosition();
                 final int primaryLimit = Math.min(resetCount, selSize);
 
@@ -378,7 +441,7 @@ public class PartitioningExchanger extends LocalExchanger {
 
                 // if primary chunk builder is full, write reset to back up
                 if (primaryLimit < selSize) {
-                    builder = chunkBuildersBackUp.get(partition);
+                    builder = chunkBuildersBackUp[partition];
 
                     // update chunk builder position
                     builder.updateDeclarePosition(selSize - primaryLimit);
@@ -400,21 +463,23 @@ public class PartitioningExchanger extends LocalExchanger {
 
     private Map<Integer, Chunk> buildPartitionChunk(boolean reset) {
         Map<Integer, Chunk> partitionChunks = new HashMap<>();
-        for (int idx = 0; idx < chunkBuildersPrimary.size(); ++idx) {
-            if (!chunkBuildersPrimary.get(idx).isEmpty()) {
-                partitionChunks.put(idx, chunkBuildersPrimary.get(idx).build());
+        for (int idx = 0; idx < chunkBuildersPrimary.length; ++idx) {
+            if (!chunkBuildersPrimary[idx].isEmpty()) {
+                partitionChunks.put(idx, chunkBuildersPrimary[idx].build());
             }
         }
         if (reset) {
-            chunkBuildersPrimary.forEach(ChunkBuilder::reset);
+            for (int idx = 0; idx < chunkBuildersPrimary.length; ++idx) {
+                chunkBuildersPrimary[idx].reset();
+            }
         }
         return partitionChunks;
     }
 
     private Chunk getPartitionFunctionArguments(Chunk page) {
-        Block[] blocks = new Block[partitionChannels.size()];
+        Block[] blocks = new Block[columnIndex.length];
         for (int i = 0; i < blocks.length; i++) {
-            blocks[i] = page.getBlock(partitionChannels.get(i));
+            blocks[i] = page.getBlock(columnIndex[i]);
         }
         return new Chunk(page.getPositionCount(), blocks);
     }

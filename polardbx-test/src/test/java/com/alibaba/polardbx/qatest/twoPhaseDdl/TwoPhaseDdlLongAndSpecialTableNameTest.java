@@ -41,6 +41,7 @@ public class TwoPhaseDdlLongAndSpecialTableNameTest extends DDLBaseNewDBTestCase
 
     @Before
     public void init() {
+        this.schemaPrefix = "long_and_special_";
         this.tableName = schemaPrefix + randomTableName("two_phase", 4);
     }
 

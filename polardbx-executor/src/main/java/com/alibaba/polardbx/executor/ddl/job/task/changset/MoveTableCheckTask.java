@@ -27,7 +27,7 @@ import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.corrector.Checker;
 import com.alibaba.polardbx.executor.corrector.Reporter;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseBackfillTask;
-import com.alibaba.polardbx.executor.ddl.job.task.RemoteExecutableDdlTask;
+import com.alibaba.polardbx.executor.ddl.job.task.RemoteExecutableDdlRebalanceTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlEngineAccessorDelegate;
 import com.alibaba.polardbx.executor.ddl.util.ChangeSetUtils;
@@ -58,7 +58,7 @@ import java.util.Set;
 
 @TaskName(name = "MoveTableCheckTask")
 @Getter
-public class MoveTableCheckTask extends BaseBackfillTask implements RemoteExecutableDdlTask {
+public class MoveTableCheckTask extends BaseBackfillTask implements RemoteExecutableDdlRebalanceTask {
     final private String logicalTableName;
     final private Map<String, String> sourceTargetGroup;
     final private Map<String, Set<String>> sourcePhyTableNames;
@@ -129,7 +129,7 @@ public class MoveTableCheckTask extends BaseBackfillTask implements RemoteExecut
             // sync to restore the status of table meta
             PreemptiveTime preemptiveTime = PreemptiveTime.getPreemptiveTimeFromExecutionContext(executionContext,
                 ConnectionParams.PREEMPTIVE_MDL_INITWAIT, ConnectionParams.PREEMPTIVE_MDL_INTERVAL);
-            SyncManagerHelper.sync(
+            SyncManagerHelper.syncThrowExceptions(
                 new TablesMetaChangePreemptiveSyncAction(schemaName, relatedTables, preemptiveTime), SyncScope.ALL);
         }
     }
@@ -359,7 +359,7 @@ public class MoveTableCheckTask extends BaseBackfillTask implements RemoteExecut
     }
 
     @Override
-    public List<String> explainInfo() {
+    public List<String> explainInfo(ExecutionContext ec) {
         String backfillTask = "MOVE_TABLE_CHECK_TASK(" + logicalTableName + ")";
         List<String> command = new ArrayList<>(1);
         command.add(backfillTask);

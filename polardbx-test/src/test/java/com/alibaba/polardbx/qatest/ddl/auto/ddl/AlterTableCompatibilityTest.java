@@ -1,6 +1,7 @@
 package com.alibaba.polardbx.qatest.ddl.auto.ddl;
 
 import net.jcip.annotations.NotThreadSafe;
+import org.junit.Ignore;
 import org.junit.Test;
 
 @NotThreadSafe
@@ -63,6 +64,7 @@ public class AlterTableCompatibilityTest extends AlterTableCompatBaseTest {
         executeAndFail(alterTable, tableName, "Duplicate column");
     }
 
+    @Ignore("multi-phase DDL is force-disabled")
     @Test
     public void testDropUnknownColumn() {
         String tableName = "test_drop_unknown_column";

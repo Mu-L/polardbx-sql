@@ -65,6 +65,7 @@ public enum Token {
     SEQUENCE("SEQUENCE"),
     TRIGGER("TRIGGER"),
     USER("USER"),
+    DBA_USER("DBA_USER"),
     ROLE("ROLE"),
     INDEX("INDEX"),
     SESSION("SESSION"),
@@ -146,6 +147,7 @@ public enum Token {
     PASSWORD("PASSWORD"),
     DUAL("DUAL"),
     BINARY("BINARY"),
+    STREAM("STREAM"),
     SHOW("SHOW"),
     REPLACE("REPLACE"),
     PERIOD("PERIOD"),
@@ -169,6 +171,7 @@ public enum Token {
     SQLSTATE("SQLSTATE"),
     CONDITION("CONDITION"),
     DIV("DIV"),
+    REGEXP_REPLACE("REGEXP_REPLACE"),
 
     //postgresql
     WINDOW("WINDOW"),
@@ -264,6 +267,7 @@ public enum Token {
     EXCEPTIONS("EXCEPTIONS"),
     PURGE("PURGE"),
     SNAPSHOT("SNAPSHOT"),
+    COLUMNAR("COLUMNAR"),
 
     COMPUTE("COMPUTE"),
     ANALYZE("ANALYZE"),

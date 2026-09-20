@@ -1,6 +1,10 @@
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import org.openjdk.jol.info.ClassLayout;
+
 public class ConcurrentBitSetImpl implements ConcurrentBitSet {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(ConcurrentBitSetImpl.class).instanceSize();
     private final AtomicIntegerArray bitArray;
     private final int size;
 
@@ -8,6 +12,11 @@ public class ConcurrentBitSetImpl implements ConcurrentBitSet {
         this.size = size;
         // Create an AtomicIntegerArray of the required size, with each int storing information for 32 bits.
         this.bitArray = new AtomicIntegerArray((size + 31) / 32);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(bitArray);
     }
 
     @Override

@@ -28,12 +28,12 @@ public class AccumulatorBuildTest {
     public void testCountAccumulator() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new CountV2(new int[] {0}, false, null, -1), DataTypes.LongType,
-                new DataType[] {DataTypes.LongType}, 100, getExecutionContext());
+                new DataType[] {DataTypes.LongType}, 100, getExecutionContext(), null);
         Assert.assertTrue(accumulator instanceof CountAccumulator);
 
         Accumulator accumulator2 =
             AccumulatorBuilders.create(new CountV2(new int[0], false, null, -1), DataTypes.LongType,
-                new DataType[] {DataTypes.LongType}, 100, getExecutionContext());
+                new DataType[] {DataTypes.LongType}, 100, getExecutionContext(), null);
         Assert.assertTrue(accumulator2 instanceof CountRowsAccumulator);
     }
 
@@ -41,17 +41,17 @@ public class AccumulatorBuildTest {
     public void testSumAccumulator() {
         Accumulator longAccumulator =
             AccumulatorBuilders.create(new SumV2(), DataTypes.LongType, new DataType[] {DataTypes.LongType}, 100,
-                getExecutionContext());
+                getExecutionContext(), null);
         Assert.assertTrue(longAccumulator instanceof LongSumAccumulator);
 
         Accumulator decimalAccumulator =
             AccumulatorBuilders.create(new SumV2(), DataTypes.DecimalType, new DataType[] {DataTypes.DecimalType}, 100,
-                getExecutionContext());
+                getExecutionContext(), null);
         Assert.assertTrue(decimalAccumulator instanceof DecimalSumAccumulator);
 
         Accumulator doubleAccumulator =
             AccumulatorBuilders.create(new SumV2(), DataTypes.DoubleType, new DataType[] {DataTypes.DoubleType}, 100,
-                getExecutionContext());
+                getExecutionContext(), null);
         Assert.assertTrue(doubleAccumulator instanceof DoubleSumAccumulator);
     }
 
@@ -59,7 +59,7 @@ public class AccumulatorBuildTest {
     public void testSum0Accumulator() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new Sum0(), DataTypes.LongType, new DataType[] {DataTypes.LongType}, 100,
-                getExecutionContext());
+                getExecutionContext(), null);
         Assert.assertTrue(accumulator instanceof LongSum0Accumulator);
     }
 
@@ -67,29 +67,29 @@ public class AccumulatorBuildTest {
     public void testMinMaxAccumulator() {
         Accumulator longAccumulator =
             AccumulatorBuilders.create(new MinV2(), DataTypes.LongType, new DataType[] {DataTypes.LongType}, 100,
-                getExecutionContext());
+                getExecutionContext(), null);
         Assert.assertTrue(longAccumulator instanceof LongMaxMinAccumulator);
         Accumulator longAccumulator2 =
             AccumulatorBuilders.create(new MaxV2(), DataTypes.LongType, new DataType[] {DataTypes.LongType}, 100,
-                getExecutionContext());
+                getExecutionContext(), null);
         Assert.assertTrue(longAccumulator2 instanceof LongMaxMinAccumulator);
 
         Accumulator decimalAccumulator =
             AccumulatorBuilders.create(new MinV2(), DataTypes.DecimalType, new DataType[] {DataTypes.DecimalType}, 100,
-                getExecutionContext());
+                getExecutionContext(), null);
         Assert.assertTrue(decimalAccumulator instanceof DecimalMaxMinAccumulator);
         Accumulator decimalAccumulator2 =
             AccumulatorBuilders.create(new MaxV2(), DataTypes.DecimalType, new DataType[] {DataTypes.DecimalType}, 100,
-                getExecutionContext());
+                getExecutionContext(), null);
         Assert.assertTrue(decimalAccumulator2 instanceof DecimalMaxMinAccumulator);
 
         Accumulator doubleAccumulator =
             AccumulatorBuilders.create(new MinV2(), DataTypes.DoubleType, new DataType[] {DataTypes.DoubleType}, 100,
-                getExecutionContext());
+                getExecutionContext(), null);
         Assert.assertTrue(doubleAccumulator instanceof DoubleMaxMinAccumulator);
         Accumulator doubleAccumulator2 =
             AccumulatorBuilders.create(new MaxV2(), DataTypes.DoubleType, new DataType[] {DataTypes.DoubleType}, 100,
-                getExecutionContext());
+                getExecutionContext(), null);
         Assert.assertTrue(doubleAccumulator2 instanceof DoubleMaxMinAccumulator);
     }
 
@@ -97,12 +97,12 @@ public class AccumulatorBuildTest {
     public void testAvgAccumulator() {
         Accumulator decimalAccumulator =
             AccumulatorBuilders.create(new AvgV2(0, false, null, -1), DataTypes.DecimalType,
-                new DataType[] {DataTypes.DecimalType}, 100, getExecutionContext());
+                new DataType[] {DataTypes.DecimalType}, 100, getExecutionContext(), null);
         Assert.assertTrue(decimalAccumulator instanceof DecimalAvgAccumulator);
 
         Accumulator doubleAccumulator =
             AccumulatorBuilders.create(new AvgV2(0, false, null, -1), DataTypes.DoubleType,
-                new DataType[] {DataTypes.DoubleType}, 100, getExecutionContext());
+                new DataType[] {DataTypes.DoubleType}, 100, getExecutionContext(), null);
         Assert.assertTrue(doubleAccumulator instanceof DoubleAvgAccumulator);
     }
 
@@ -110,7 +110,7 @@ public class AccumulatorBuildTest {
     public void testBitOrAccumulator() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new BitOr(), DataTypes.LongType, new DataType[] {DataTypes.LongType}, 100,
-                getExecutionContext());
+                getExecutionContext(), null);
         Assert.assertTrue(accumulator instanceof LongBitOrAccumulator);
     }
 
@@ -118,7 +118,7 @@ public class AccumulatorBuildTest {
     public void testBitXorAccumulator() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new BitXor(), DataTypes.LongType, new DataType[] {DataTypes.LongType}, 100,
-                getExecutionContext());
+                getExecutionContext(), null);
         Assert.assertTrue(accumulator instanceof LongBitXorAccumulator);
     }
 
@@ -126,7 +126,7 @@ public class AccumulatorBuildTest {
     public void testFirstValueAccumulator() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new InternalFirstValue(0, -1), DataTypes.LongType,
-                new DataType[] {DataTypes.LongType}, 100, getExecutionContext());
+                new DataType[] {DataTypes.LongType}, 100, getExecutionContext(), null);
         Assert.assertTrue(accumulator instanceof FirstValueAccumulator);
     }
 
@@ -134,7 +134,7 @@ public class AccumulatorBuildTest {
     public void testHllAccumulator() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new HyperLoglog(new int[] {0}, -1), DataTypes.LongType,
-                new DataType[] {DataTypes.LongType}, 100, getExecutionContext());
+                new DataType[] {DataTypes.LongType}, 100, getExecutionContext(), null);
         Assert.assertTrue(accumulator instanceof HyperLogLogAccumulator);
     }
 
@@ -142,7 +142,7 @@ public class AccumulatorBuildTest {
     public void testPartialHllAccumulator() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new PartialHyperLoglog(new int[] {0}, -1), DataTypes.LongType,
-                new DataType[] {DataTypes.LongType}, 100, getExecutionContext());
+                new DataType[] {DataTypes.LongType}, 100, getExecutionContext(), null);
         Assert.assertTrue(accumulator instanceof PartialHyperLogLogAccumulator);
     }
 
@@ -150,7 +150,7 @@ public class AccumulatorBuildTest {
     public void testFinalHllAccumulator() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new FinalHyperLoglog(new int[] {0}, -1), DataTypes.LongType,
-                new DataType[] {DataTypes.LongType}, 100, getExecutionContext());
+                new DataType[] {DataTypes.LongType}, 100, getExecutionContext(), null);
         Assert.assertTrue(accumulator instanceof FinalHyperLogLogAccumulator);
     }
 
@@ -158,7 +158,7 @@ public class AccumulatorBuildTest {
     public void testCheckSumAccumulator() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new CheckSum(new int[] {0}, -1), DataTypes.LongType,
-                new DataType[] {DataTypes.LongType}, 100, getExecutionContext());
+                new DataType[] {DataTypes.LongType}, 100, getExecutionContext(), null);
         Assert.assertTrue(accumulator instanceof CheckSumAccumulator);
     }
 
@@ -166,7 +166,7 @@ public class AccumulatorBuildTest {
     public void testCheckSumMergeAccumulator() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new CheckSumMerge(), DataTypes.LongType, new DataType[] {DataTypes.LongType},
-                100, getExecutionContext());
+                100, getExecutionContext(), null);
         Assert.assertTrue(accumulator instanceof CheckSumMergeAccumulator);
     }
 
@@ -174,7 +174,7 @@ public class AccumulatorBuildTest {
     public void testCheckSumV2Accumulator() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new CheckSumV2(new int[] {0}, -1), DataTypes.LongType,
-                new DataType[] {DataTypes.LongType}, 100, getExecutionContext());
+                new DataType[] {DataTypes.LongType}, 100, getExecutionContext(), null);
         Assert.assertTrue(accumulator instanceof CheckSumV2Accumulator);
     }
 
@@ -182,7 +182,7 @@ public class AccumulatorBuildTest {
     public void testCheckSumV2MergeAccumulator() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new CheckSumV2Merge(), DataTypes.LongType, new DataType[] {DataTypes.LongType},
-                100, getExecutionContext());
+                100, getExecutionContext(), null);
         Assert.assertTrue(accumulator instanceof CheckSumV2MergeAccumulator);
     }
 

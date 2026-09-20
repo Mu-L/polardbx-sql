@@ -20,15 +20,12 @@ import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.model.lifecycle.AbstractLifecycle;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
-import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.listener.ConfigListener;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbConfigManager;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
-import com.alibaba.polardbx.gms.privilege.PolarAccount;
-import com.alibaba.polardbx.gms.topology.ConfigListenerAccessor;
 import com.alibaba.polardbx.gms.util.MetaDbLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 
@@ -36,12 +33,9 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * @author pangzhaoxing
@@ -50,11 +44,13 @@ public class EncdbRuleManager extends AbstractLifecycle {
 
     private static final Logger logger = LoggerFactory.getLogger(EncdbRuleManager.class);
 
-    public static final String ENCDB_SPREADED_RULE_ = "encdb_spreaded_rule_";
+    public static final String ENCDB_SPREADED_RULE_PREFIX = "_encdb_spreaded_rule_";
 
     private static final EncdbRuleManager INSTANCE = new EncdbRuleManager();
 
+    private Map<String, EncdbRule> allRules;
     private EncdbRuleMatchTree ruleMatchTree;
+    private EncdbUserPrivilegeManager userPrivilegeManager;
 
     public static EncdbRuleManager getInstance() {
         if (!INSTANCE.isInited()) {
@@ -88,20 +84,34 @@ public class EncdbRuleManager extends AbstractLifecycle {
         try (Connection conn = MetaDbUtil.getConnection()) {
             EncdbRuleAccessor accessor = new EncdbRuleAccessor();
             accessor.setConnection(conn);
+            Map<String, EncdbRule> newAllRules = new HashMap<>();
             EncdbRuleMatchTree newRuleMatchTree = new EncdbRuleMatchTree();
-            for (EncdbRule rule : accessor.queryAllEnabledRules()) {
-                newRuleMatchTree.insertRule(rule);
+            EncdbUserPrivilegeManager newUserPrivilegeManager = new EncdbUserPrivilegeManager();
+            for (EncdbRule rule : accessor.queryAllRules()) {
+                //将user privilege rule单独处理
+                if (EncdbUserPrivilegeManager.isUserPrivilegeRule(rule)) {
+                    newUserPrivilegeManager.loadUserPrivilegeRule(rule);
+                    continue;
+                }
+                newAllRules.put(rule.getName(), rule);
+                //只需要将enabled的rule插入EncdbRuleMatchTree
+                if (rule.isEnable()) {
+                    newRuleMatchTree.insertRule(rule);
+                }
             }
+            this.allRules = newAllRules;
             this.ruleMatchTree = newRuleMatchTree;
+            this.userPrivilegeManager = newUserPrivilegeManager;
         } catch (SQLException e) {
             MetaDbLogUtil.META_DB_LOG.error(e);
             throw GeneralUtil.nestedException(e);
         }
     }
 
-    public void insertEncRules(List<EncdbRule> rules) {
+    public static int insertEncRules(List<EncdbRule> rules) {
+        int affectRows = 0;
         if (rules == null || rules.isEmpty()) {
-            return;
+            return affectRows;
         }
         try (Connection conn = MetaDbUtil.getConnection()) {
             try {
@@ -109,7 +119,7 @@ public class EncdbRuleManager extends AbstractLifecycle {
                 accessor.setConnection(conn);
                 conn.setAutoCommit(false);
                 for (EncdbRule rule : rules) {
-                    accessor.insertRule(rule);
+                    affectRows += accessor.insertRule(rule);
                 }
                 MetaDbConfigManager.getInstance().notify(MetaDbDataIdBuilder.ENCDB_RULE_DATA_ID, conn);
                 conn.commit();
@@ -124,11 +134,13 @@ public class EncdbRuleManager extends AbstractLifecycle {
         } catch (SQLException e) {
             throw GeneralUtil.nestedException(e);
         }
+        return affectRows;
     }
 
-    public void replaceEncRules(List<EncdbRule> rules) {
+    public static int replaceEncRules(List<EncdbRule> rules) {
+        int affectRows = 0;
         if (rules == null || rules.isEmpty()) {
-            return;
+            return affectRows;
         }
         try (Connection conn = MetaDbUtil.getConnection()) {
             try {
@@ -136,7 +148,7 @@ public class EncdbRuleManager extends AbstractLifecycle {
                 accessor.setConnection(conn);
                 conn.setAutoCommit(false);
                 for (EncdbRule rule : rules) {
-                    accessor.replaceRule(rule);
+                    affectRows += accessor.replaceRule(rule);
                 }
                 MetaDbConfigManager.getInstance().notify(MetaDbDataIdBuilder.ENCDB_RULE_DATA_ID, conn);
                 conn.commit();
@@ -151,9 +163,10 @@ public class EncdbRuleManager extends AbstractLifecycle {
         } catch (SQLException e) {
             throw GeneralUtil.nestedException(e);
         }
+        return affectRows;
     }
 
-    public int deleteEncRule(String ruleName) {
+    public static int deleteEncRule(String ruleName) {
         try (Connection conn = MetaDbUtil.getConnection()) {
             EncdbRuleAccessor accessor = new EncdbRuleAccessor();
             accessor.setConnection(conn);
@@ -167,9 +180,10 @@ public class EncdbRuleManager extends AbstractLifecycle {
         }
     }
 
-    public void deleteEncRules(Collection<String> ruleNames) {
+    public static int deleteEncRules(Collection<String> ruleNames) {
+        int affectRows = 0;
         if (ruleNames == null || ruleNames.isEmpty()) {
-            return;
+            return affectRows;
         }
         try (Connection conn = MetaDbUtil.getConnection()) {
             try {
@@ -177,7 +191,7 @@ public class EncdbRuleManager extends AbstractLifecycle {
                 accessor.setConnection(conn);
                 conn.setAutoCommit(false);
                 for (String ruleName : ruleNames) {
-                    accessor.deleteRuleByName(ruleName);
+                    affectRows += accessor.deleteRuleByName(ruleName);
                 }
                 MetaDbConfigManager.getInstance().notify(MetaDbDataIdBuilder.ENCDB_RULE_DATA_ID, conn);
                 conn.commit();
@@ -192,14 +206,23 @@ public class EncdbRuleManager extends AbstractLifecycle {
         } catch (SQLException e) {
             throw GeneralUtil.nestedException(e);
         }
+        return affectRows;
     }
 
     public EncdbRule getEncRule(String ruleName) {
-        return ruleMatchTree.getRule(ruleName);
+        return allRules.get(ruleName);
+    }
+
+    public List<EncdbRule> getAllEncRule(){
+        return new ArrayList<>(allRules.values());
     }
 
     public EncdbRuleMatchTree getRuleMatchTree() {
         return ruleMatchTree;
+    }
+
+    public EncdbUserPrivilegeManager getUserPrivilegeManager() {
+        return userPrivilegeManager;
     }
 
     protected static class EncdbRuleConfigListener implements ConfigListener {

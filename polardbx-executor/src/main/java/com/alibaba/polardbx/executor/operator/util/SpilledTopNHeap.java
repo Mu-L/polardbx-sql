@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.memory.DefinedMemoryUsage;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.chunk.Chunk;
@@ -42,6 +43,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.BiPredicate;
 
+import static com.alibaba.polardbx.executor.operator.SpilledTopNExec.MIN_POSITIONS_TO_COMPACT;
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
@@ -52,11 +54,12 @@ import static com.google.common.util.concurrent.Futures.immediateFuture;
 import static io.airlift.slice.SizeOf.sizeOf;
 import static java.util.Objects.requireNonNull;
 
-public class SpilledTopNHeap {
+// The memory countable interface is not implemented because SpilledTopNHeap used in TP_LOCAL mode.
+@DefinedMemoryUsage
+public class SpilledTopNHeap implements TopNHeap {
 
     private static final Logger log = LoggerFactory.getLogger(SpilledTopNHeap.class);
 
-    private static final int MIN_POSITIONS_TO_COMPACT = 8 * 1024;
     private final int chunkLimit;
 
     private List<DataType> sourceTypes;
@@ -75,7 +78,7 @@ public class SpilledTopNHeap {
     private Optional<Spiller> spiller = Optional.empty();
     private Spiller memSpiller;
     private ListenableFuture<?> spillInProgress = immediateFuture(null);
-    private Optional<Row> spilledNThRow = Optional.empty();
+    private Optional<Chunk.ChunkRow> spilledNThRow = Optional.empty();
 
     private long spilledRows;
     private long totalSpilledRows;
@@ -107,6 +110,12 @@ public class SpilledTopNHeap {
 
     private ExecutionContext context;
 
+    @Override
+    public long getMemoryUsage() {
+        // not implemented.
+        return memorySizeInBytes;
+    }
+
     public SpilledTopNHeap(List<DataType> sourceTypes, ChunkWithPositionComparator pageWithPositionComparator,
                            SpillerFactory spillerFactory, long topN, int compactThreshold,
                            OperatorMemoryAllocatorCtx memoryAllocator, int chunkLimit, SpillMonitor spillMonitor,
@@ -134,6 +143,7 @@ public class SpilledTopNHeap {
         adjustMemoryPool();
     }
 
+    @Override
     public void processChunk(Chunk newPage) {
 
         checkArgument(newPage != null);
@@ -252,6 +262,7 @@ public class SpilledTopNHeap {
         lastMemorySizeInBytes = memorySizeInBytes;
     }
 
+    @Override
     public Chunk nextChunk() {
         if (!outputIterator.hasNext()) {
             return null;
@@ -264,6 +275,7 @@ public class SpilledTopNHeap {
         return chunk.get();
     }
 
+    @Override
     public void buildResult() {
         this.spillIterator = new SpillableChunkIterator(new ResultIterator());
         List<WorkProcessor<Chunk>> spilledPages = getSpilledPages();
@@ -272,6 +284,11 @@ public class SpilledTopNHeap {
         } else {
             this.outputIterator = mergeSpilledAndMemoryPages(spilledPages, spillIterator).yieldingIterator();
         }
+    }
+
+    @Override
+    public <T> T first(Class<T> clazz) {
+        throw new UnsupportedOperationException();
     }
 
     private List<WorkProcessor<Chunk>> getSpilledPages() {
@@ -296,11 +313,12 @@ public class SpilledTopNHeap {
             sortedStreams, pageWithPositionComparator, sourceTypes, chunkLimit, chunkBreakPredicate, null, context);
     }
 
-    private Row getTheRow(IndexRow rowAddress) {
+    private Chunk.ChunkRow getTheRow(IndexRow rowAddress) {
 
         return pageReferences.get(rowAddress.getPageId()).getPage().rowAt(rowAddress.getPosition());
     }
 
+    @Override
     public ListenableFuture<?> startMemoryRevoke() {
         checkState(spillInProgress.isDone());
 
@@ -369,6 +387,7 @@ public class SpilledTopNHeap {
         return spillInProgress;
     }
 
+    @Override
     public void finishMemoryRevoke() {
         checkState(spillInProgress.isDone());
         resetBuilder();
@@ -380,6 +399,7 @@ public class SpilledTopNHeap {
         usedPositions = 0L;
     }
 
+    @Override
     public void close() {
         if (spiller.isPresent()) {
             spiller.get().close();
@@ -387,6 +407,11 @@ public class SpilledTopNHeap {
         if (memSpiller != null) {
             memSpiller.close();
         }
+    }
+
+    @Override
+    public boolean useLimitedFetch() {
+        return false;
     }
 
     private static class PageReference {

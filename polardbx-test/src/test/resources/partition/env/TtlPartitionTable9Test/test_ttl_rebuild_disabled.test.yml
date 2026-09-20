@@ -1,0 +1,46 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+## test_ttl_rebuild_disabled
+## Verify that when rebuild policy is disabled (default), traditional row-level delete is used
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set sql_mode='';
+set TTL_ADD_MAXVAL_PART_ON_CCI_CREATING=true;
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+
+CREATE TABLE `ttl_rb3` (
+  `a` bigint(20) NOT NULL AUTO_INCREMENT,
+  `b` datetime DEFAULT NULL,
+  PRIMARY KEY(a)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+TTL = TTL_DEFINITION (
+  TTL_ENABLE = 'OFF',
+  TTL_EXPR = `b` EXPIRE AFTER 1 month TIMEZONE '+08:00',
+  TTL_JOB = CRON '0 0 2 * * ? *',
+  TTL_CLEANUP = 'ON',
+  ARCHIVE_TYPE = 'ROW',
+  ARCHIVE_TABLE_NAME = '',
+  ARCHIVE_TABLE_PRE_ALLOCATE = 12,
+  ARCHIVE_TABLE_POST_ALLOCATE = 12
+)
+PARTITION BY KEY(`a`)
+PARTITIONS 4;
+
+insert into ttl_rb3 values (1, '2025-01-10 00:00:00');
+insert into ttl_rb3 values (2, '2025-02-10 00:00:00');
+insert into ttl_rb3 values (3, '2025-03-10 00:00:00');
+insert into ttl_rb3 values (4, '2025-04-15 00:00:00');
+insert into ttl_rb3 values (5, '2025-04-20 00:00:00');
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-04-27 00:00:00';
+
+select a, date_format(b, '%Y-%m-%d %H:%i:%s') as b_val from ttl_rb3 order by a;
+
+alter table ttl_rb3 cleanup expired data;
+
+select a, date_format(b, '%Y-%m-%d %H:%i:%s') as b_val from ttl_rb3 order by a;
+
+drop table ttl_rb3;

@@ -94,7 +94,7 @@ import static java.util.concurrent.Executors.newScheduledThreadPool;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 public class FileMergeCacheManager implements CacheManager {
-    private static final Logger log = LoggerFactory.getLogger("oss");
+    private static final Logger log = LoggerFactory.getLogger("mpp_log");
 
     private static final String EXTENSION = ".cache";
 

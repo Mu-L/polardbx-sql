@@ -1,7 +1,9 @@
 package com.alibaba.polardbx.qatest.ddl.auto.partition;
 
 import com.alibaba.polardbx.qatest.ddl.datamigration.locality.LocalityTestCaseUtils.LocalityTestUtils;
+import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.server.util.StringUtil;
+import org.junit.Before;
 import org.junit.runners.Parameterized;
 
 import java.util.List;
@@ -16,6 +18,15 @@ public class OmcLocalityTest extends PartitionAutoLoadSqlTestBase {
         super(parameter);
         parameter.ignoreLocality = true;
         parameter.supportAutoPart = true;
+    }
+
+    @Before
+    public void beforeMethod() {
+        if (isMySQL80()) {
+            JdbcUtil.executeUpdateSuccess(tddlConnection, "set ENABLE_OMC_30 = true");
+        } else {
+            JdbcUtil.executeUpdateSuccess(tddlConnection, "set ENABLE_OMC_30 = false");
+        }
     }
 
     @Parameterized.Parameters(name = "{index}: SubTestCase {0}")

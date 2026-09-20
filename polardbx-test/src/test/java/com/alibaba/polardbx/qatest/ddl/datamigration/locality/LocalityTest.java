@@ -114,7 +114,7 @@ public class LocalityTest extends LocalityTestBase {
         // check information_schema.locality_info
 
         // check show topology
-        List<String> actualDn = getDnListOfTable(databaseName, tableName);
+        List<String> actualDn = getDnListOfTable(tddlConnection, databaseName, tableName);
         Assert.assertEquals(Arrays.asList(dn), actualDn);
 
         // drop and check again
@@ -170,12 +170,71 @@ public class LocalityTest extends LocalityTestBase {
         dropDatabase(dbName);
     }
 
+    @Test
+    public void testShowCreateTableWithLocality() {
+        String dbName = "test_show_create_table_locality";
+
+        dropDatabase(dbName);
+        createDatabase(dbName);
+        useDatabase(dbName);
+
+        String locality = String.format(" LOCALITY='dn=%s'", chooseDatanode(tddlConnection));
+
+        String createTable =
+            String.format("create table if not exists %s (id int not null primary key) %s single",
+                tableName, locality);
+
+        execute(createTable);
+
+        String showCreateTable =
+            "/*+TDDL:cmd_extra(OUTPUT_LOCALITY_WITHOUT_COMMENT=true)*/show create table " + tableName;
+        String showCreateTableRes =
+            JdbcUtil.executeQueryAndGetStringResult(showCreateTable, tddlConnection, 2);
+
+        Assert.assertFalse(showCreateTableRes.contains("*"));
+
+        useDatabase("polardbx");
+        dropDatabase(dbName);
+    }
+
+    @Test
+    @Ignore("we don't support locality in drds mode any more")
+    public void testShowCreateTableWithLocality2() {
+        String dbName = "test_show_create_table_locality_drds";
+
+        dropDatabase(dbName);
+        createDatabaseDrds(dbName);
+        useDatabase(dbName);
+
+        String locality = String.format(" LOCALITY='dn=%s'", chooseDatanode(tddlConnection));
+
+        String createTable =
+            String.format("create table if not exists %s (id int not null primary key) %s single",
+                tableName, locality);
+
+        execute(createTable);
+
+        String showCreateTable =
+            "/*+TDDL:cmd_extra(OUTPUT_LOCALITY_WITHOUT_COMMENT=true)*/show create table " + tableName;
+        String showCreateTableRes =
+            JdbcUtil.executeQueryAndGetStringResult(showCreateTable, tddlConnection, 2);
+
+        Assert.assertFalse(showCreateTableRes.contains("*"));
+
+        useDatabase("polardbx");
+        dropDatabase(dbName);
+    }
+
     private void dropDatabase(String dbName) {
         execute(String.format("drop database if exists %s", dbName));
     }
 
     private void createDatabase(String dbName) {
         execute(String.format("create database if not exists %s mode='auto'", dbName));
+    }
+
+    private void createDatabaseDrds(String dbName) {
+        execute(String.format("create database if not exists %s mode='drds'", dbName));
     }
 
     private void useDatabase(String dbName) {

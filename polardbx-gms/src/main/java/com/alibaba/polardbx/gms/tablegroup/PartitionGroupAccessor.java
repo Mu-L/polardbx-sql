@@ -33,6 +33,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Created by luoyanxin.
@@ -42,25 +43,30 @@ import java.util.Map;
 public class PartitionGroupAccessor extends AbstractAccessor {
     private static final Logger LOGGER = LoggerFactory.getLogger(PartitionGroupAccessor.class);
     private static final String ALL_COLUMNS =
-        "`id`,`partition_name`,`gmt_create`,`gmt_modified`,`phy_db`,`locality`,`primary_zone`,`tg_id`,`pax_group_id`, `meta_version`, `visible`";
+        "`id`,`partition_name`,`gmt_create`,`gmt_modified`,`phy_db`,`group_name`,`locality`,`primary_zone`,`tg_id`,`pax_group_id`, `meta_version`, `visible`";
 
-    private static final String ALL_VALUES = "(null,?,null,now(),?,?,?,?,?,?,?)";
-    private static final String ALL_VALUES_WITH_ID = "(?,?,?,now(),?,?,?,?,?,?,?)";
+    private static final String ALL_VALUES = "(null,?,now(),now(),?,?,?,?,?,?,?,?)";
+    private static final String ALL_VALUES_WITH_ID = "(?,?,?,now(),?,?,?,?,?,?,?,?)";
 
     //  phy_db    | locality | primary_zone | pax_group_id | meta_version | visible
     private static final String UPSERT_PART =
-        " on duplicate key update phy_db=?, locality=?, primary_zone=?, pax_group_id=?, meta_version=?, visible=?, gmt_modified=now()";
+        " on duplicate key update phy_db=?, group_name=?, locality=?, primary_zone=?, pax_group_id=?, meta_version=?, visible=?, gmt_modified=now()";
 
     private static final String INSERT_IGNORE_PARTITION_GROUP =
         "insert ignore into " + GmsSystemTables.PARTITION_GROUP + " (" + ALL_COLUMNS + ") VALUES " + ALL_VALUES;
 
     private static final String INSERT_IGNORE_PARTITION_GROUP_DELTA =
         "insert ignore into " + GmsSystemTables.PARTITION_GROUP_DELTA + " (" + ALL_COLUMNS + ",`type`) VALUES "
-            + "(null,?,null,now(),?,?,?,?,?,?,?,?)";
+            + "(null,?,now(),now(),?,?,?,?,?,?,?,?,?)";
+
+    private static final String INSERT_IGNORE_PARTITION_GROUP_ARCHIVE =
+        "insert ignore into " + GmsSystemTables.PARTITION_GROUP_ARCHIVE + " (`task_id`," + ALL_COLUMNS
+            + ",insert_time) "
+            + " select ?, " + ALL_COLUMNS + ",? from " + GmsSystemTables.PARTITION_GROUP + " where tg_id=?";
 
     private static final String INSERT_OUTDATE_PATITION_INTO_PARTITION_GROUP_DELTA =
         "insert into " + GmsSystemTables.PARTITION_GROUP_DELTA + " (" + ALL_COLUMNS + " ,`type`) VALUES "
-            + "(?,?,null,now(),?,?,?,?,?,?,?,?)";
+            + "(?,?,now(),now(),?,?,?,?,?,?,?,?,?)";
 
     private static final String UPSERT_PARTITION_GROUP =
         "insert into " + GmsSystemTables.PARTITION_GROUP + " (" + ALL_COLUMNS + ") VALUES " + ALL_VALUES + UPSERT_PART;
@@ -74,12 +80,6 @@ public class PartitionGroupAccessor extends AbstractAccessor {
 
     private static final String GET_TABLE_GROUP_BY_TG_ID =
         "select " + ALL_COLUMNS + " from " + GmsSystemTables.PARTITION_GROUP + " where tg_id=? and visible=1";
-
-    private static final String GET_TABLE_GROUP_BY_TG_ID_S =
-        "select " + ALL_COLUMNS + " from " + GmsSystemTables.PARTITION_GROUP + " where tg_id in (%s) and visible=1";
-
-    private static final String GET_UNVISIABLE_TABLE_GROUP_BY_TG_ID =
-        "select " + ALL_COLUMNS + " from " + GmsSystemTables.PARTITION_GROUP + " where tg_id=? and visible=0";
 
     private static final String GET_UNVISIABLE_PARTITION_GROUP_FROM_DELTA_BY_TG_ID =
         "select " + ALL_COLUMNS + " from " + GmsSystemTables.PARTITION_GROUP_DELTA
@@ -95,7 +95,7 @@ public class PartitionGroupAccessor extends AbstractAccessor {
         "select " + ALL_COLUMNS + " from " + GmsSystemTables.PARTITION_GROUP;
 
     private static final String GET_PHYSICAL_TB_CNT_PER_PG =
-        "select a.phy_db, a.tg_id, count(1) phy_tb_cnt from (select phy_db, tg_id, id from partition_group where visible=1 and tg_id in (select id from table_group where schema_name=?)) a inner join table_partitions b on a.id=b.group_id where b.next_level = -1 and b.table_schema=? group by phy_db";
+        "select a.phy_db,a.group_name, max(a.tg_id) as tg_id, count(1) phy_tb_cnt from (select phy_db,group_name, tg_id, id from partition_group where visible=1 and tg_id in (select id from table_group where schema_name=?)) a inner join table_partitions b on a.id=b.group_id where b.next_level = -1 and b.table_schema=? group by phy_db, group_name";
 
     private static final String DELETE_PART_GROUP_BY_TG_ID =
         "delete from " + GmsSystemTables.PARTITION_GROUP + " where tg_id=?";
@@ -122,7 +122,7 @@ public class PartitionGroupAccessor extends AbstractAccessor {
         " update " + GmsSystemTables.PARTITION_GROUP + " set locality=? where id=?";
 
     private static final String UPDATE_PHY_DB_BY_ID =
-        " update " + GmsSystemTables.PARTITION_GROUP + " set phy_db=? where id=?";
+        " update " + GmsSystemTables.PARTITION_GROUP + " set phy_db=?,group_name=? where id=?";
 
     private static final String UPDATE_PARTITION_NAME_BY_ID =
         " update " + GmsSystemTables.PARTITION_GROUP + " set partition_name=? where id=?";
@@ -145,6 +145,9 @@ public class PartitionGroupAccessor extends AbstractAccessor {
         " select " + ALL_COLUMNS + " from " + GmsSystemTables.PARTITION_GROUP
             + " where tg_id in ( select id from " + GmsSystemTables.TABLE_GROUP
             + " where schema_name = ? )";
+
+    private static final String DELETE_OUTDATE_ARCHIVE = "delete from " + GmsSystemTables.PARTITION_GROUP_ARCHIVE
+        + " where insert_time <= ? limit 10000";
 
     public List<PartitionGroupRecord> getAllPartitionGroups() {
         try {
@@ -259,6 +262,7 @@ public class PartitionGroupAccessor extends AbstractAccessor {
             int index = 1;
             MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.partition_name);
             MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.phy_db);
+            MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.group_Name);
             MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.locality);
             MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.primary_zone);
             MetaDbUtil.setParameter(index++, params, ParameterMethod.setLong, partRecord.tg_id);
@@ -282,6 +286,7 @@ public class PartitionGroupAccessor extends AbstractAccessor {
             int index = 1;
             MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.partition_name);
             MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.phy_db);
+            MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.group_Name);
             MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.locality);
             MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.primary_zone);
             MetaDbUtil.setParameter(index++, params, ParameterMethod.setLong, partRecord.tg_id);
@@ -293,6 +298,7 @@ public class PartitionGroupAccessor extends AbstractAccessor {
             }
             if (useUpsert) {
                 MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.phy_db);
+                MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.group_Name);
                 MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.locality);
                 MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.primary_zone);
                 MetaDbUtil.setParameter(index++, params, ParameterMethod.setLong, partRecord.pax_group_id);
@@ -334,6 +340,7 @@ public class PartitionGroupAccessor extends AbstractAccessor {
             MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.partition_name);
             MetaDbUtil.setParameter(index++, params, ParameterMethod.setTimestamp1, partRecord.gmt_create);
             MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.phy_db);
+            MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.group_Name);
             MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.locality);
             MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.primary_zone);
             MetaDbUtil.setParameter(index++, params, ParameterMethod.setLong, partRecord.tg_id);
@@ -420,11 +427,12 @@ public class PartitionGroupAccessor extends AbstractAccessor {
         }
     }
 
-    public void updatePhyDbById(Long id, String newPhyDb) {
+    public void updatePhyDbById(Long id, String newPhyDb, String newGroupName) {
         try {
             Map<Integer, ParameterContext> params = new HashMap<>();
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, newPhyDb);
-            MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, id);
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setString, newGroupName);
+            MetaDbUtil.setParameter(3, params, ParameterMethod.setLong, id);
 
             DdlMetaLogUtil.logSql(UPDATE_PHY_DB_BY_ID, params);
 
@@ -581,6 +589,7 @@ public class PartitionGroupAccessor extends AbstractAccessor {
                 MetaDbUtil.setParameter(index++, params, ParameterMethod.setLong, partRecord.id);
                 MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.partition_name);
                 MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.phy_db);
+                MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.group_Name);
                 MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.locality);
                 MetaDbUtil.setParameter(index++, params, ParameterMethod.setString, partRecord.primary_zone);
                 MetaDbUtil.setParameter(index++, params, ParameterMethod.setLong, partRecord.tg_id);
@@ -672,4 +681,38 @@ public class PartitionGroupAccessor extends AbstractAccessor {
         }
     }
 
+    public void archivePartitionGroups(long tableGroupId, long taskId) {
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>();
+
+            long currentTimestamp = System.currentTimeMillis();
+            int index = 1;
+            MetaDbUtil.setParameter(index++, params, ParameterMethod.setLong, taskId);
+            MetaDbUtil.setParameter(index++, params, ParameterMethod.setLong, currentTimestamp);
+            MetaDbUtil.setParameter(index++, params, ParameterMethod.setLong, tableGroupId);
+            DdlMetaLogUtil.logSql(INSERT_IGNORE_PARTITION_GROUP_ARCHIVE, params);
+
+            MetaDbUtil.insert(INSERT_IGNORE_PARTITION_GROUP_ARCHIVE, params, this.connection);
+        } catch (Exception e) {
+            LOGGER.error("Failed to query the system table " + GmsSystemTables.PARTITION_GROUP, e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
+                e.getMessage());
+        }
+    }
+
+    public int deletePartitionGroupArchive(Long minutes) {
+        try {
+
+            long outdateTime = System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(minutes);
+            Map<Integer, ParameterContext> params = new HashMap<>();
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, outdateTime);
+            DdlMetaLogUtil.logSql(DELETE_OUTDATE_ARCHIVE, params);
+
+            return MetaDbUtil.update(DELETE_OUTDATE_ARCHIVE, params, connection);
+        } catch (Exception e) {
+            LOGGER.error("Failed to query the system table " + GmsSystemTables.PARTITION_GROUP_ARCHIVE, e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
+                e.getMessage());
+        }
+    }
 }

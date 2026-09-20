@@ -280,7 +280,7 @@ public class ExpressionRewriter {
                         newOperandList.add(literalNode);
                     }
 
-                }  else if (value instanceof String || value instanceof Number) {
+                } else if (value instanceof String || value instanceof Number) {
                     // prepare mode
                     SqlTypeName typeName = DataTypeUtil.typeNameOfParam(value);
                     RelDataType relDataType = TYPE_FACTORY.createSqlType(typeName);

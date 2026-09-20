@@ -30,6 +30,7 @@ import com.alibaba.polardbx.executor.balancer.action.ActionUtils;
 import com.alibaba.polardbx.executor.balancer.action.BalanceAction;
 import com.alibaba.polardbx.executor.balancer.policy.PolicyDataBalance;
 import com.alibaba.polardbx.executor.balancer.policy.PolicyDrainNode;
+import com.alibaba.polardbx.executor.balancer.solver.MixedModel;
 import com.alibaba.polardbx.executor.balancer.stats.BalanceStats;
 import com.alibaba.polardbx.executor.balancer.stats.GroupStats;
 import com.alibaba.polardbx.gms.rebalance.RebalanceTarget;
@@ -39,6 +40,8 @@ import com.google.common.collect.Sets;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.val;
+import org.apache.calcite.sql.SqlRebalance;
+import org.apache.calcite.sql.parser.SqlParserPos;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -142,6 +145,16 @@ public class TestBalancer {
         protected boolean isStorageReady(String storageInst) {
             return true;
         }
+
+        @Override
+        protected boolean isStoragePoolTriggered() {
+            return false;
+        }
+
+        @Override
+        protected List<String> getStoragePoolDnList() {
+            return Collections.emptyList();
+        }
     }
 
     private List<BalanceAction> drainNode(Map<String, List<GroupStats.GroupsOfStorage>> groups,
@@ -175,6 +188,16 @@ public class TestBalancer {
 
         @Override
         protected void doValidate(DrainNodeInfo info) {
+        }
+
+        @Override
+        protected boolean isStoragePoolTriggered() {
+            return false;
+        }
+
+        @Override
+        protected List<String> getStoragePoolDnList() {
+            return Collections.emptyList();
         }
     }
 
@@ -521,5 +544,44 @@ public class TestBalancer {
         ar2 = new ActionLockResource("schema1", Sets.newHashSet("b"));
         Assert.assertNotEquals(ar1, ar2);
         Assert.assertNotEquals(ar1.hashCode(), ar2.hashCode());
+    }
+
+    /**
+     * Test that SqlRebalance.unparse() correctly serializes solve_level.
+     * This is critical: in the cluster-level drain path, applyToMultiDb() serializes the
+     * SqlRebalance node to a SQL string via toString() → unparse(), then passes it to
+     * ActionDrainDatabase. If solve_level is lost, the per-database drain falls back
+     * to default global rebalancing.
+     */
+    @Test
+    public void testSqlRebalanceUnparseSolveLevel() {
+        SqlRebalance node = new SqlRebalance(SqlParserPos.ZERO);
+        node.setRebalanceDatabase();
+        node.setPolicy("drain_node");
+        node.setDrainNode("dn1,dn2");
+        node.setSolveLevel("DRAIN_ONLY");
+        node.setAsync(true);
+        node.setDebug(false);
+        node.setExplain(false);
+
+        String sql = node.toString();
+        Assert.assertTrue("SQL should contain SOLVE_LEVEL='DRAIN_ONLY', got: " + sql,
+            sql.contains("SOLVE_LEVEL='DRAIN_ONLY'"));
+        Assert.assertTrue("SQL should contain drain_node", sql.contains("drain_node="));
+    }
+
+    @Test
+    public void testSqlRebalanceUnparseWithoutSolveLevel() {
+        SqlRebalance node = new SqlRebalance(SqlParserPos.ZERO);
+        node.setRebalanceDatabase();
+        node.setPolicy("drain_node");
+        node.setDrainNode("dn1");
+        node.setAsync(true);
+        node.setDebug(false);
+        node.setExplain(false);
+
+        String sql = node.toString();
+        Assert.assertFalse("SQL should NOT contain SOLVE_LEVEL when not set, got: " + sql,
+            sql.contains("SOLVE_LEVEL="));
     }
 }

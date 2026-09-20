@@ -27,6 +27,8 @@ import com.alibaba.polardbx.gms.metadb.GmsSystemTables;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 
 import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -66,6 +68,8 @@ public class SchemaChangeManager extends AbstractLifecycle {
     public void handle() {
         try (Connection metaDbConn = MetaDbUtil.getConnection()) {
             schemaChangeAccessor.setConnection(metaDbConn);
+
+            ensureInnodbLargePrefix(metaDbConn);
 
             boolean locked = false;
 
@@ -242,6 +246,23 @@ public class SchemaChangeManager extends AbstractLifecycle {
      */
     void setSchemaChangeBuilder(SchemaChangeBuilder schemaChangeBuilder) {
         this.schemaChangeBuilder = schemaChangeBuilder;
+    }
+
+    static void ensureInnodbLargePrefix(Connection conn) {
+        try (Statement stmt = conn.createStatement()) {
+            try (ResultSet rs = stmt.executeQuery("SHOW VARIABLES LIKE 'innodb_large_prefix'")) {
+                if (rs.next()) {
+                    String value = rs.getString("Value");
+                    if ("OFF".equalsIgnoreCase(value)) {
+                        stmt.executeUpdate("SET GLOBAL innodb_large_prefix = ON");
+                        LOGGER.info("Set innodb_large_prefix = ON for MetaDB");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.warn("Failed to check/set innodb_large_prefix, "
+                + "may cause issue for system tables with large index keys: " + e.getMessage());
+        }
     }
 
 }

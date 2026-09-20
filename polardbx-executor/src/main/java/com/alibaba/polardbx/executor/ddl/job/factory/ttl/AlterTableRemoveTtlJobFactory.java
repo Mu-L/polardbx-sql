@@ -1,43 +1,32 @@
 package com.alibaba.polardbx.executor.ddl.job.factory.ttl;
 
-import com.alibaba.polardbx.executor.ddl.job.task.basic.AddTtlInfoTask;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.AlterTtlInfoTask;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.RemoveLocalPartitionTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.RemoveTtlInfoTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
-import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcAlterTableModifyTtlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcAlterTableRemoveTtlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.ValidateTableVersionTask;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.exception.TtlJobRuntimeException;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
-import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
-import com.alibaba.polardbx.optimizer.ttl.TtlConfigUtil;
 import com.alibaba.polardbx.optimizer.ttl.TtlDefinitionInfo;
-import com.alibaba.polardbx.optimizer.ttl.TtlMetaValidationUtil;
 import org.apache.calcite.rel.core.DDL;
 import org.apache.calcite.sql.SqlAlterTable;
-import org.apache.calcite.sql.SqlAlterTableModifyTtlOptions;
 import org.apache.calcite.sql.SqlAlterTableRemoveTtlOptions;
-import org.apache.calcite.sql.SqlNode;
-import org.apache.calcite.sql.SqlTimeToLiveExpr;
-import org.apache.calcite.sql.SqlTimeToLiveJobExpr;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * @author chenghui.lch
  */
-public class AlterTableRemoveTtlJobFactory extends DdlJobFactory {
+public class AlterTableRemoveTtlJobFactory extends OnlineDdlJobFactory {
 
     private DDL ddl;
     private SqlAlterTable sqlAlterTableAst;
@@ -53,6 +42,7 @@ public class AlterTableRemoveTtlJobFactory extends DdlJobFactory {
                                          DDL ddl,
                                          SqlAlterTable sqlAlterTable,
                                          ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.META_ONLY);
         this.schemaName = schemaName;
         this.primaryTableName = primaryTableName;
         this.ddl = ddl;

@@ -16,12 +16,13 @@
 
 package com.alibaba.polardbx.executor.accumulator.datastruct;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.common.utils.MathUtils;
+import com.alibaba.polardbx.common.utils.memory.SizeOf;
 import com.google.common.base.Preconditions;
 import org.openjdk.jol.info.ClassLayout;
-
-import java.util.ArrayList;
-import java.util.List;
+import org.openjdk.jol.util.VMSupport;
 
 /**
  * Boolean Segmented Array List
@@ -34,13 +35,13 @@ public class BooleanSegmentArrayList implements SegmentArrayList {
 
     private static final int SEGMENT_SIZE = 1024;
 
-    private List<boolean[]> arrays;
+    private MemoryCountableArrayList<boolean[]> arrays;
 
     private int size;
     private int capacity;
 
     public BooleanSegmentArrayList(int capacity) {
-        this.arrays = new ArrayList<>(MathUtils.ceilDiv(capacity, SEGMENT_SIZE));
+        this.arrays = new MemoryCountableArrayList<>(MathUtils.ceilDiv(capacity, SEGMENT_SIZE));
         this.size = 0;
         this.capacity = arrays.size() * SEGMENT_SIZE;
     }
@@ -73,5 +74,20 @@ public class BooleanSegmentArrayList implements SegmentArrayList {
     @Override
     public long estimateSize() {
         return INSTANCE_SIZE + (long) arrays.size() * SEGMENT_SIZE;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        long size = INSTANCE_SIZE;
+
+        if (arrays != null) {
+            size += FastMemoryCounter.sizeOf(arrays);
+            for (int i = 0; i < arrays.size(); i++) {
+                boolean[] array = arrays.get(i);
+                size += VMSupport.align((int) SizeOf.sizeOf(array));
+            }
+        }
+
+        return size;
     }
 }

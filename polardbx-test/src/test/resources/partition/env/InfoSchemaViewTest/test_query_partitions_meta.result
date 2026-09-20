@@ -1,0 +1,36 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+use polardbx;
+select table_schema, table_name from information_schema.partitions_meta where TABLE_NAME='' limit 1;
+table_schema,table_name
+desc information_schema.partitions_meta;
+Field,Type,Null,Key,Default,Extra
+PART_NUM,bigint,YES,,NULL,
+TABLE_SCHEMA,varchar,YES,,NULL,
+TABLE_NAME,varchar,YES,,NULL,
+INDEX_NAME,varchar,YES,,NULL,
+PRIM_TABLE,varchar,YES,,NULL,
+TABLE_TYPE,varchar,YES,,NULL,
+TG_NAME,varchar,YES,,NULL,
+PART_METHOD,varchar,YES,,NULL,
+PART_COL,varchar,YES,,NULL,
+PART_COL_TYPE,varchar,YES,,NULL,
+PART_EXPR,varchar,YES,,NULL,
+PART_NAME,varchar,YES,,NULL,
+PART_POSI,bigint,YES,,NULL,
+PART_DESC,varchar,YES,,NULL,
+PART_ARC_STATE,varchar,YES,,NULL,
+SUBPART_METHOD,varchar,YES,,NULL,
+SUBPART_COL,varchar,YES,,NULL,
+SUBPART_COL_TYPE,varchar,YES,,NULL,
+SUBPART_EXPR,varchar,YES,,NULL,
+SUBPART_NAME,varchar,YES,,NULL,
+SUBPART_TEMP_NAME,varchar,YES,,NULL,
+SUBPART_POSI,bigint,YES,,NULL,
+SUBPART_DESC,varchar,YES,,NULL,
+SUBPART_ARC_STATE,varchar,YES,,NULL,
+PG_NAME,varchar,YES,,NULL,
+PHY_GROUP,varchar,YES,,NULL,
+PHY_DB,varchar,YES,,NULL,
+PHY_TB,varchar,YES,,NULL,
+RW_DN,varchar,YES,,NULL,

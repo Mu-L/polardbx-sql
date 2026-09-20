@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.util.Arrays;
 
 import org.apache.hadoop.hive.ql.exec.vector.ColumnVector;
+import org.apache.orc.customized.ORCFieldMemoryCounter;
 import org.apache.orc.customized.ORCProfile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,8 +43,10 @@ public class RunLengthIntegerReaderV2 implements IntegerReader {
   private int used = 0;
   private final boolean skipCorrupt;
   private final SerializationUtils utils;
-  private RunLengthIntegerWriterV2.EncodingType currentEncoding;
 
+  @ORCFieldMemoryCounter(value = false)
+  private RunLengthIntegerWriterV2.EncodingType currentEncoding;
+  @ORCFieldMemoryCounter(value = false)
   private ORCProfile memoryCounter;
 
   public RunLengthIntegerReaderV2(InStream input, boolean signed,
@@ -52,6 +55,14 @@ public class RunLengthIntegerReaderV2 implements IntegerReader {
     this.signed = signed;
     this.skipCorrupt = skipCorrupt;
     this.utils = new SerializationUtils();
+  }
+
+  public InStream getInput() {
+    return input;
+  }
+
+  public SerializationUtils getSerializationUtils() {
+    return utils;
   }
 
   public void setMemoryCounter(ORCProfile memoryCounter) {

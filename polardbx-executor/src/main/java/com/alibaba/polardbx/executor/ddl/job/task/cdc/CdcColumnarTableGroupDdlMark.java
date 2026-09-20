@@ -50,15 +50,13 @@ import static com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcSqlUtils.SQL_PAR
 @Setter
 @Slf4j
 public class CdcColumnarTableGroupDdlMark extends BaseDdlTask {
-    private String tableGroup;
     private List<String> tableNames;
     private Long versionId;
 
     @JSONCreator
-    public CdcColumnarTableGroupDdlMark(String tableGroup, String schemaName, List<String> tableNames,
+    public CdcColumnarTableGroupDdlMark(String schemaName, List<String> tableNames,
                                         Long versionId) {
         super(schemaName);
-        this.tableGroup = tableGroup;
         this.tableNames = tableNames;
         this.versionId = versionId;
     }

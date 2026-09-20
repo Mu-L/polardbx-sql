@@ -17,8 +17,10 @@
 package com.alibaba.polardbx.optimizer.core.planner.rule.columnar;
 
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.optimizer.PlannerContext;
+import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.core.planner.rule.implement.LogicalViewConvertRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
@@ -32,6 +34,7 @@ import org.apache.calcite.rel.RelDistribution;
 import org.apache.calcite.rel.RelDistributions;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlNode;
+import org.apache.calcite.util.ImmutableBitSet;
 
 import java.util.List;
 
@@ -52,39 +55,18 @@ public class COLLogicalViewConvertRule extends LogicalViewConvertRule {
             return;
         }
 
-        TableMeta tm = CBOUtil.getTableMeta(logicalView.getTable());
-        if (!TableTopologyUtil.isShard(tm)) {
+        Pair<Integer, Integer> pair = getShardColumn((OSSTableScan) logicalView);
+        if (pair == null) {
             basicOssTableScan(call, logicalView);
             return;
         }
-
-        boolean enableMock = PlannerContext.getPlannerContext(logicalView).getParamManager()
-            .getBoolean(ConnectionParams.ENABLE_OSS_MOCK_COLUMNAR);
-        // only support partition by direct_hash
-        if (!canPartitionWise(tm, enableMock)) {
-            basicOssTableScan(call, logicalView);
-            return;
-        }
-        int shard = tm.getPartitionInfo().getPartitionBy().getPartitions().size();
-        List<String> columns = tm.getPartitionInfo().getPartitionColumns();
-        if (columns.isEmpty()) {
-            basicOssTableScan(call, logicalView);
-            return;
-        }
-        String column = columns.get(0);
-        if (StringUtils.isEmpty(column)) {
-            basicOssTableScan(call, logicalView);
-            return;
-        }
-        int target = -1;
-        for (int i = 0; i < logicalView.getRowType().getFieldList().size(); i++) {
-            if (logicalView.getRowType().getFieldList().get(i).getName().equalsIgnoreCase(column)) {
-                target = i;
-                break;
-            }
-        }
-        if (target == -1) {
-            basicOssTableScan(call, logicalView);
+        int target = pair.getKey();
+        int shard = pair.getValue();
+        if (target < 0 || CBOUtil.groupSmall(logicalView, ImmutableBitSet.of(target))) {
+            LogicalView newLogicalView =
+                logicalView.copy(logicalView.getTraitSet().simplify().replace(outConvention));
+            call.transformTo(convert(newLogicalView,
+                newLogicalView.getTraitSet().simplify().replace(RelDistributions.RANDOM_DISTRIBUTED)));
             return;
         }
         RelDistribution relDistribution = RelDistributions.hashOss(Lists.newArrayList(target), shard);
@@ -93,7 +75,39 @@ public class COLLogicalViewConvertRule extends LogicalViewConvertRule {
         call.transformTo(newLogicalView);
     }
 
-    private boolean canPartitionWise(TableMeta tm, boolean enableMock) {
+    public static Pair<Integer, Integer> getShardColumn(OSSTableScan ossTableScan) {
+        TableMeta tm = CBOUtil.getTableMeta(ossTableScan.getTable());
+        if (!TableTopologyUtil.isShard(tm, PlannerContext.getPlannerContext(ossTableScan))) {
+            return null;
+        }
+
+        boolean enableMock = PlannerContext.getPlannerContext(ossTableScan).getParamManager()
+            .getBoolean(ConnectionParams.ENABLE_OSS_MOCK_COLUMNAR);
+        // only support partition by direct_hash
+        if (!canPartitionWise(tm, enableMock)) {
+            return null;
+        }
+
+        List<String> columns = tm.getPartitionInfo().getPartitionColumns();
+        if (columns.isEmpty()) {
+            return null;
+        }
+        String column = columns.get(0);
+        if (StringUtils.isEmpty(column)) {
+            return null;
+        }
+        int target = -1;
+        for (int i = 0; i < ossTableScan.getRowType().getFieldList().size(); i++) {
+            if (ossTableScan.getRowType().getFieldList().get(i).getName().equalsIgnoreCase(column)) {
+                target = i;
+                break;
+            }
+        }
+        int shard = tm.getPartitionInfo().getPartitionBy().getPartitions().size();
+        return Pair.of(target, shard);
+    }
+
+    public static boolean canPartitionWise(TableMeta tm, boolean enableMock) {
         PartitionByDefinition definition = tm.getPartitionInfo().getPartitionBy();
         if (enableMock) {
             // for oss table test, support key

@@ -18,6 +18,8 @@ package com.alibaba.polardbx.executor.ddl.util;
 
 import com.alibaba.polardbx.common.ddl.newengine.DdlTaskState;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.BytesSql;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.Parameters;
@@ -28,7 +30,6 @@ import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.executor.ExecutorHelper;
 import com.alibaba.polardbx.executor.changeset.ChangeSetManager;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
-import com.alibaba.polardbx.executor.common.TopologyHandler;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.changset.ChangeSetApplyFinishTask;
@@ -38,6 +39,8 @@ import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterComplexTaskUpd
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlEngineAccessorDelegate;
 import com.alibaba.polardbx.executor.ddl.newengine.utils.TaskHelper;
+import com.alibaba.polardbx.executor.ddl.omc.OmcStorageInfo;
+import com.alibaba.polardbx.executor.ddl.omc.OmcUtils;
 import com.alibaba.polardbx.executor.gsi.GsiUtils;
 import com.alibaba.polardbx.executor.gsi.PhysicalPlanBuilder;
 import com.alibaba.polardbx.executor.gsi.utils.Transformer;
@@ -76,6 +79,7 @@ import com.alibaba.polardbx.optimizer.core.rel.PhyTableOperationFactory;
 import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.alibaba.polardbx.optimizer.utils.PlannerUtils;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
+import com.alibaba.polardbx.rpc.compatible.XDataSource;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
 import com.google.common.collect.ImmutableList;
 import org.apache.calcite.sql.SqlBasicCall;
@@ -108,14 +112,14 @@ import java.util.stream.IntStream;
 
 import static com.alibaba.polardbx.common.properties.ConnectionParams.CHANGE_SET_APPLY_OPTIMIZATION;
 import static com.alibaba.polardbx.common.properties.ConnectionParams.CHANGE_SET_CHECK_TWICE;
-import static com.alibaba.polardbx.executor.columns.ColumnBackfillExecutor.isAllDnUseXDataSource;
 
 public class ChangeSetUtils {
-    public final static String SQL_START_CHANGESET = "call polarx.changeset_start(%s, %s);";
+    public final static String SQL_START_CHANGESET = "call polarx.changeset_start(%s, %s, %s);";
     public final static String SQL_FETCH_CHANGESET_TIMES = "call polarx.changeset_times(%s);";
-    public final static String SQL_FETCH_CAHNGESET = "call polarx.changeset_fetch(%s, %d);";
+    public final static String SQL_FETCH_CHANGESET = "call polarx.changeset_fetch(%s, %d);";
     public final static String SQL_FINISH_CHANGESET = "call polarx.changeset_finish(%s);";
     public final static String SQL_CALL_CHANGESET_STATS = "call polarx.changeset_stats('');";
+    public final static String SQL_CALL_CHANGESET_BACKPRESSURE = "call polarx.changeset_backpressure(%s, %s, %s, %s);";
 
     public static final int RETRY_COUNT = 10;
     public static final long[] RETRY_WAIT = new long[RETRY_COUNT];
@@ -127,6 +131,10 @@ public class ChangeSetUtils {
     public static boolean isChangeSetProcedure(ExecutionContext ec) {
         return ec.getParamManager().getBoolean(ConnectionParams.CN_ENABLE_CHANGESET)
             && ExecutorContext.getContext(ec.getSchemaName()).getStorageInfoManager().supportChangeSet();
+    }
+
+    public static boolean supportChangeSetBackPressure(ExecutionContext ec) {
+        return ExecutorContext.getContext(ec.getSchemaName()).getStorageInfoManager().supportChangeSetBackPressure();
     }
 
     /**
@@ -157,24 +165,32 @@ public class ChangeSetUtils {
         return true;
     }
 
-    public static void execGroup(ExecutionContext ec, String schema, String groupName, String sql) {
-        queryGroup(ec, schema, groupName, sql);
+    public static List<List<Object>> queryGroup(String schema, String groupName, OmcStorageInfo omcStorageInfo,
+                                                String sql, Connection conn) {
+        if (conn == null) {
+            return queryGroup(schema, groupName, omcStorageInfo, sql);
+        } else {
+            return queryGroup(conn, sql);
+        }
     }
 
     /**
      * Execute SQL on a physical group, used in change-set management
      */
-    public static List<List<Object>> queryGroup(ExecutionContext ec, String schema, String groupName, String sql) {
-        List<List<Object>> result = new ArrayList<>();
-        if (ec.getParamManager().getBoolean(ConnectionParams.SKIP_CHANGE_SET)) {
-            return result;
+    public static List<List<Object>> queryGroup(String schema, String groupName, OmcStorageInfo omcStorageInfo,
+                                                String sql) {
+        try (Connection conn = getPhysicalConnection(schema, groupName, omcStorageInfo)) {
+            return queryGroup(conn, sql);
+        } catch (SQLException e) {
+            throw GeneralUtil.nestedException(
+                String.format("failed to execute on group(%s,%s): %s , Caused by: %s", groupName, omcStorageInfo, sql,
+                    e.getMessage()), e);
         }
+    }
 
-        ExecutorContext executorContext = ExecutorContext.getContext(schema);
-        IGroupExecutor ge = executorContext.getTopologyExecutor().getGroupExecutor(groupName);
-
-        try (Connection conn = ge.getDataSource().getConnection()) {
-            Statement stmt = conn.createStatement();
+    public static List<List<Object>> queryGroup(Connection connection, String sql) {
+        List<List<Object>> result = new ArrayList<>();
+        try (Statement stmt = connection.createStatement()) {
             try (ResultSet rs = stmt.executeQuery(sql)) {
                 int columns = rs.getMetaData().getColumnCount();
                 while (rs.next()) {
@@ -188,8 +204,22 @@ public class ChangeSetUtils {
             return result;
         } catch (SQLException e) {
             throw GeneralUtil.nestedException(
-                String.format("failed to execute on group(%s): %s , Caused by: %s", groupName, sql, e.getMessage()), e);
+                String.format("failed to execute %s, Caused by: %s", sql, e.getMessage()), e);
         }
+    }
+
+    public static Connection getPhysicalConnection(String schema, String groupName, OmcStorageInfo omcStorageInfo)
+        throws SQLException {
+        if (omcStorageInfo != null) {
+            XDataSource dataSource = OmcUtils.initializeDataSource(omcStorageInfo, "ChangeSet");
+            return dataSource.getConnection();
+        }
+        if (groupName != null) {
+            ExecutorContext executorContext = ExecutorContext.getContext(schema);
+            IGroupExecutor ge = executorContext.getTopologyExecutor().getGroupExecutor(groupName);
+            return ge.getDataSource().getConnection();
+        }
+        throw new TddlRuntimeException(ErrorCode.ERR_CHANGESET, "get physical connection failed");
     }
 
     public static CursorMeta buildCursorMeta(String schemaName, String tableName) {
@@ -436,6 +466,18 @@ public class ChangeSetUtils {
                                                                              List<String> modifyStringColumns,
                                                                              ComplexTaskMetaManager.ComplexTaskType taskType,
                                                                              Long changeSetId) {
+        return genChangeSetCatchUpTasks(schemaName, tableName, indexName, sourcePhyTableNames, targetTableLocations,
+            null, modifyStringColumns, taskType, changeSetId);
+    }
+
+    public static Map<String, ChangeSetCatchUpTask> genChangeSetCatchUpTasks(String schemaName,
+                                                                             String tableName, String indexName,
+                                                                             Map<String, Set<String>> sourcePhyTableNames,
+                                                                             Map<String, String> targetTableLocations,
+                                                                             Map<String, Set<String>> srcTargetPhyTableNames,
+                                                                             List<String> modifyStringColumns,
+                                                                             ComplexTaskMetaManager.ComplexTaskType taskType,
+                                                                             Long changeSetId) {
         Map<String, ChangeSetCatchUpTask> catchUpTasks = new HashMap<>(6);
         catchUpTasks.put(
             ChangeSetManager.ChangeSetCatchUpStatus.ABSENT.toString(),
@@ -445,6 +487,7 @@ public class ChangeSetUtils {
                 indexName,
                 sourcePhyTableNames,
                 targetTableLocations,
+                srcTargetPhyTableNames,
                 ChangeSetManager.ChangeSetCatchUpStatus.ABSENT,
                 taskType,
                 changeSetId,
@@ -460,6 +503,7 @@ public class ChangeSetUtils {
                 indexName,
                 sourcePhyTableNames,
                 targetTableLocations,
+                srcTargetPhyTableNames,
                 ChangeSetManager.ChangeSetCatchUpStatus.DELETE_ONLY,
                 taskType,
                 changeSetId,
@@ -475,6 +519,7 @@ public class ChangeSetUtils {
                 indexName,
                 sourcePhyTableNames,
                 targetTableLocations,
+                srcTargetPhyTableNames,
                 ChangeSetManager.ChangeSetCatchUpStatus.WRITE_ONLY,
                 taskType,
                 changeSetId,
@@ -490,6 +535,7 @@ public class ChangeSetUtils {
                 indexName,
                 sourcePhyTableNames,
                 targetTableLocations,
+                srcTargetPhyTableNames,
                 ChangeSetManager.ChangeSetCatchUpStatus.ABSENT_FINAL,
                 taskType,
                 changeSetId,
@@ -505,6 +551,7 @@ public class ChangeSetUtils {
                 indexName,
                 sourcePhyTableNames,
                 targetTableLocations,
+                srcTargetPhyTableNames,
                 ChangeSetManager.ChangeSetCatchUpStatus.DELETE_ONLY_FINAL,
                 taskType,
                 changeSetId,
@@ -520,6 +567,7 @@ public class ChangeSetUtils {
                 indexName,
                 sourcePhyTableNames,
                 targetTableLocations,
+                srcTargetPhyTableNames,
                 ChangeSetManager.ChangeSetCatchUpStatus.WRITE_ONLY_FINAL,
                 taskType,
                 changeSetId,
@@ -746,7 +794,7 @@ public class ChangeSetUtils {
 
         try {
             PreemptiveTime preemptiveTime = PreemptiveTime.newDefaultPreemptiveTime();
-            SyncManagerHelper.sync(
+            SyncManagerHelper.syncThrowExceptions(
                 new TablesMetaChangePreemptiveSyncAction(schemaName, relatedTables, preemptiveTime),
                 SyncScope.ALL);
         } catch (Throwable t) {

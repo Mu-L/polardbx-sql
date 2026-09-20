@@ -16,17 +16,19 @@
 
 package org.apache.calcite.sql;
 
-import com.google.common.collect.Lists;
 import org.apache.calcite.sql.parser.SqlParserPos;
 
 import java.util.List;
 
 public class SqlShowBinaryStreams extends SqlShow {
     private SqlNode with;
+    private boolean full;
 
-    public SqlShowBinaryStreams(SqlParserPos pos, List<SqlSpecialIdentifier> specialIdentifiers, SqlNode with) {
+    public SqlShowBinaryStreams(SqlParserPos pos, List<SqlSpecialIdentifier> specialIdentifiers, SqlNode with,
+                                boolean full) {
         super(pos, specialIdentifiers);
         this.with = with;
+        this.full = full;
     }
 
     @Override
@@ -36,5 +38,9 @@ public class SqlShowBinaryStreams extends SqlShow {
 
     public SqlNode getWith() {
         return with;
+    }
+
+    public boolean isFull() {
+        return full;
     }
 }

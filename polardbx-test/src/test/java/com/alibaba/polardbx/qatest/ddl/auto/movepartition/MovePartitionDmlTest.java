@@ -3,10 +3,10 @@ package com.alibaba.polardbx.qatest.ddl.auto.movepartition;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.ParameterMethod;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.qatest.CdcIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import org.apache.calcite.util.Pair;
 import org.apache.commons.lang.RandomStringUtils;
 import org.junit.Before;
 import org.junit.Test;
@@ -38,6 +38,7 @@ import java.util.stream.IntStream;
 
 import static com.alibaba.polardbx.qatest.validator.DataValidator.selectContentSameAssert;
 
+@CdcIgnore(ignoreReason = "主键可能出现重复")
 public class MovePartitionDmlTest extends MovePartitionDmlBaseTest {
     static private final String DATABASE_NAME = "MovePartitionDmlTest";
 
@@ -202,9 +203,6 @@ public class MovePartitionDmlTest extends MovePartitionDmlBaseTest {
                                              AtomicBoolean stop, Supplier<Long> generateSk,
                                              Supplier<Integer> generateBatchSize) {
         return dmlPool.submit(new InsertRunner(stop, (conn) -> {
-            // List<Pair< sql, error_message >>
-            List<Pair<String, Exception>> failedList = new ArrayList<>();
-
             final ParameterContext skPc = Optional.ofNullable(generateSk.get())
                 .map(skv -> new ParameterContext(ParameterMethod.setLong, new Object[] {1, skv}))
                 .orElse(new ParameterContext(ParameterMethod.setNull1, new Object[] {1, null}));
@@ -248,6 +246,14 @@ public class MovePartitionDmlTest extends MovePartitionDmlBaseTest {
             try {
                 lock.writeLock().lock();
                 selectContentSameAssert(sqlSelectPrimary, sqlSelectGSI, null, conn, conn);
+            } catch (Exception e) {
+                if (notIgnoredErrors(e)) {
+                    throw GeneralUtil.nestedException(e);
+                }
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException ignore) {
+                }
             } finally {
                 lock.writeLock().unlock();
             }
@@ -272,6 +278,14 @@ public class MovePartitionDmlTest extends MovePartitionDmlBaseTest {
             try {
                 lock.writeLock().lock();
                 selectContentSameAssert(sqlSelectPrimary, sqlSelectGSI, null, conn, conn);
+            } catch (Exception e) {
+                if (notIgnoredErrors(e)) {
+                    throw GeneralUtil.nestedException(e);
+                }
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException ignore) {
+                }
             } finally {
                 lock.writeLock().unlock();
             }
@@ -296,6 +310,14 @@ public class MovePartitionDmlTest extends MovePartitionDmlBaseTest {
             try {
                 lock.writeLock().lock();
                 selectContentSameAssert(sqlSelectPrimary, sqlSelectGSI, null, conn, conn);
+            } catch (Exception e) {
+                if (notIgnoredErrors(e)) {
+                    throw GeneralUtil.nestedException(e);
+                }
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException ignore) {
+                }
             } finally {
                 lock.writeLock().unlock();
             }

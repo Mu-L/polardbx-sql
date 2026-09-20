@@ -28,6 +28,7 @@ import com.alibaba.polardbx.gms.metadb.GmsSystemTables;
 import com.alibaba.polardbx.gms.metadb.accessor.AbstractAccessor;
 import com.alibaba.polardbx.gms.metadb.record.CountRecord;
 import com.alibaba.polardbx.gms.metadb.record.MaxValueRecord;
+import com.alibaba.polardbx.gms.topology.DbTopologyManager;
 import com.alibaba.polardbx.gms.util.DdlMetaLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.rpc.compatible.XResultSetMetaData;
@@ -40,6 +41,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -110,6 +112,14 @@ public class ColumnsAccessor extends AbstractAccessor {
 
     private static final String SELECT_ALL_TABLE_COLUMNS =
         SELECT_CLAUSE + SELECT_CLAUSE_EXT + " from " + COLUMNS_TABLE + WHERE_SCHEMA + ORDER_BY_ORDINAL_POSITION;
+
+    private static final String EXISTS_EXTERNALIZED_COLUMN_BY_SCHEMA =
+        "select 1 from " + COLUMNS_TABLE + WHERE_SCHEMA + " and (`flag` & "
+            + ColumnsRecord.FLAG_EXTERNALIZED_COLUMN + ") <> 0 limit 1";
+
+    private static final String EXISTS_EXTERNALIZED_COLUMN =
+        "select 1 from " + COLUMNS_TABLE + " where (`flag` & "
+            + ColumnsRecord.FLAG_EXTERNALIZED_COLUMN + ") <> 0 limit 1";
 
     private static final String SELECT_ONE_COLUMN =
         SELECT_CLAUSE + SELECT_CLAUSE_EXT + " from " + COLUMNS_TABLE + WHERE_SCHEMA_TABLE_ONE_COLUMN;
@@ -314,13 +324,14 @@ public class ColumnsAccessor extends AbstractAccessor {
     }
 
     public Map<String, Map<String, Object>> queryColumnJdbcExtInfo(String phyTableSchema, String phyTableName,
-                                                                   DataSource dataSource) {
+                                                                   String dnId) {
         Map<String, Map<String, Object>> columnExtInfo = new HashMap<>();
         String sql =
             String.format(SELECT_JDBC_TYPES, surroundWithBacktick(phyTableSchema), surroundWithBacktick(phyTableName));
-        try (Connection phyDbConn = dataSource.getConnection();
-            PreparedStatement ps = phyDbConn.prepareStatement(sql);
-            ResultSet rs = ps.executeQuery()) {
+        try (Connection phyDbConn = DbTopologyManager.getConnectionForStorage(dnId);
+            Statement stmt = phyDbConn.createStatement()) {
+            stmt.execute("set @@character_set_results = 'utf8mb4'");
+            ResultSet rs = stmt.executeQuery(sql);
             ResultSetMetaData rsmd = rs.getMetaData();
             if (rsmd != null) {
                 for (int i = 1; i <= rsmd.getColumnCount(); i++) {
@@ -371,6 +382,18 @@ public class ColumnsAccessor extends AbstractAccessor {
 
     public List<ColumnsRecord> query(String tableSchema) {
         return query(SELECT_ALL_TABLE_COLUMNS, COLUMNS_TABLE, ColumnsRecord.class, tableSchema);
+    }
+
+    public boolean hasExternalizedColumn(String tableSchema) {
+        List<CountRecord> records =
+            query(EXISTS_EXTERNALIZED_COLUMN_BY_SCHEMA, COLUMNS_TABLE, CountRecord.class, tableSchema);
+        return records != null && !records.isEmpty();
+    }
+
+    public boolean hasExternalizedColumn() {
+        List<CountRecord> records =
+            query(EXISTS_EXTERNALIZED_COLUMN, COLUMNS_TABLE, CountRecord.class);
+        return records != null && !records.isEmpty();
     }
 
     public List<ColumnsRecord> query(String tableSchema, String tableName) {

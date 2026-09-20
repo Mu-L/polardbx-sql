@@ -78,8 +78,9 @@ public class LogicalShowPartitionsHeatmapHandler extends HandlerCommon {
 
         } else {
             // Otherwise, get information from leader
-            results = SyncManagerHelper.sync(new FetchPartitionHeatmapSyncAction(schemaName, timeRange, type),
-                schemaName, SyncScope.MASTER_ONLY);
+            results =
+                SyncManagerHelper.syncIgnoreExceptions(new FetchPartitionHeatmapSyncAction(schemaName, timeRange, type),
+                    schemaName, SyncScope.MASTER_ONLY);
         }
 
         if (CollectionUtils.isNotEmpty(results)) {

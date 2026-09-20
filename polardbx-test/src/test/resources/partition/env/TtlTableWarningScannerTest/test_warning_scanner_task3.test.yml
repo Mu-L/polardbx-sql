@@ -1,0 +1,99 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS
+
+use polardbx;
+drop database if exists test_warning_scan_db3;
+create database if not exists test_warning_scan_db3 mode='auto';
+use test_warning_scan_db3;
+
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set ENABLE_DROP_TRUNCATE_CCI_PARTITION =true;
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set TTL_DEBUG_WARNING_SCAN_TTLINFO_MODIFIED_TIME='2024-05-27 00:00:00';
+set TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true;
+set TTL_ONLY_WARNING_FOR_THE_LAST_PART=true;
+set TTL_WARNING_DELAY_SECONDS_AFTER_TTL_MODIFIED=1;
+set TTL_DEBUG_WARNING_SCAN_TARGET_SCHEMA='test_warning_scan_db3';
+
+drop table if exists ttl_wrong_cci;
+create table ttl_wrong_cci(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by key(a)
+partitions 4
+;
+alter table ttl_wrong_cci modify ttl set TTL_ENABLE='ON', TTL_CLEANUP='ON', TTL_EXPR = `b` EXPIRE AFTER 2 DAY TIMEZONE '+08:00',ARCHIVE_TABLE_PRE_ALLOCATE = 7,ARCHIVE_TABLE_POST_ALLOCATE = 2, ARCHIVE_TYPE='ROW';
+create table ttl_wrong_cci_arc like ttl_wrong_cci engine='columnar' archive_mode='ttl';
+show create table ttl_wrong_cci;
+
+/*ignore_result_set*/call polardbx.columnar_set_config('test_warning_scan_db3', 'ttl_wrong_cci', 'arctmp_ttl_wrong_cci_arc', 'type', 'default');
+reload table ttl_wrong_cci;
+set TTL_DEBUG_WARNING_SCAN_TARGET_SCHEMA='test_warning_scan_db3';
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_wrong_cci';
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_wrong_cci;
+alter table ttl_wrong_cci cleanup expired data;
+
+/*ignore_result_set*/call polardbx.columnar_set_config('test_warning_scan_db3', 'ttl_wrong_cci', 'arctmp_ttl_wrong_cci_arc', 'type', 'archive');
+reload table ttl_wrong_cci;
+set TTL_DEBUG_WARNING_SCAN_TARGET_SCHEMA='test_warning_scan_db3';
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_wrong_cci';
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_wrong_cci;
+alter table ttl_wrong_cci cleanup expired data;
+
+drop table if exists ttl_wrong_cci;
+
+
+drop table if exists ttl_wrong_cci2;
+create table ttl_wrong_cci2(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by range columns(b)
+(
+partition p0 values less than ('2024-06-24 00:00:00'),
+partition p1 values less than ('2024-06-25 00:00:00'),
+partition p2 values less than ('2024-06-26 00:00:00'),
+partition p3 values less than ('2024-06-27 00:00:00'),
+partition p4 values less than ('2024-06-28 00:00:00')
+)
+;
+alter table ttl_wrong_cci2 modify ttl 
+set 
+TTL_ENABLE='ON', 
+TTL_CLEANUP='ON', 
+TTL_EXPR = `b` EXPIRE AFTER 1 DAY TIMEZONE '+08:00',
+TTL_PART_INTERVAL = INTERVAL(1,DAY),
+ARCHIVE_TABLE_PRE_ALLOCATE = 7,
+ARCHIVE_TABLE_POST_ALLOCATE = 2, 
+ARCHIVE_TYPE='PARTITION';
+create table ttl_wrong_cci2_arc like ttl_wrong_cci2 engine='columnar' archive_mode='ttl';
+show create table ttl_wrong_cci2;
+
+/*ignore_result_set*/call polardbx.columnar_set_config('test_warning_scan_db3', 'ttl_wrong_cci2', 'arctmp_ttl_wrong_cci2_arc', 'type', 'default');
+reload table ttl_wrong_cci2;
+set ENABLE_CHECK_DDL_BINDING_FILE_STORAGE=false;
+set TTL_DEBUG_WARNING_SCAN_TARGET_SCHEMA='test_warning_scan_db3';
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_wrong_cci2';
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_wrong_cci2;
+alter table ttl_wrong_cci2 cleanup expired data;
+show create table ttl_wrong_cci2;
+
+/*ignore_result_set*/call polardbx.columnar_set_config('test_warning_scan_db3', 'ttl_wrong_cci2', 'arctmp_ttl_wrong_cci2_arc', 'type', 'archive');
+reload table ttl_wrong_cci2;
+set TTL_DEBUG_WARNING_SCAN_TARGET_SCHEMA='test_warning_scan_db3';
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_wrong_cci2';
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_wrong_cci2;
+alter table ttl_wrong_cci2 cleanup expired data;
+show create table ttl_wrong_cci2;
+
+drop table if exists ttl_wrong_cci2;
+
+use polardbx;
+drop database if exists test_warning_scan_db3;
+use polardbx;

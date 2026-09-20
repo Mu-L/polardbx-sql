@@ -177,7 +177,8 @@ public class DdlPlanAccessor extends AbstractAccessor {
     }
 
     private static final String SELECT_DDL_BY_TYPE =
-        "SELECT * FROM " + DDL_PLAN + " WHERE `ddl_type`=? AND `state` != 'SUCCESS' AND `state` != 'TERMINATED'";
+        "SELECT * FROM " + DDL_PLAN
+            + " WHERE `ddl_type`=? AND `state` != 'SUCCESS' AND `state` != 'TERMINATED' ORDER BY GMT_CREATED";
 
     public List<DdlPlanRecord> queryByType(String ddlType) {
         try {

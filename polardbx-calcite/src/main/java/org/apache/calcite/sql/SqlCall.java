@@ -304,7 +304,7 @@ public abstract class SqlCall extends SqlNode {
     return null;
   }
 
-  public String computeAttributesString() {return "";}
+  public void computeAttributesString(SqlWriter writer) {}
 }
 
 // End SqlCall.java

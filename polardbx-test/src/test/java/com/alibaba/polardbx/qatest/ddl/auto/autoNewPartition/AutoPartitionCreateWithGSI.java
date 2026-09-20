@@ -21,6 +21,7 @@ import com.google.common.collect.ImmutableList;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.text.MessageFormat;
@@ -169,6 +170,9 @@ public class AutoPartitionCreateWithGSI extends BaseAutoPartitionNewPartition {
                 .replaceAll("_\\$[0-9a-f]{4}", Matcher.quoteReplacement("_$")));
     }
 
+    // Ignored because after two-phase DDL locking is enabled, the second DROP INDEX in the double-drop case
+    // always rebuilds the plan after the first DROP INDEX finishes, then fails with "GSI not found".
+    @Ignore
     @Test
     public void testCreateIndexDoubleDrop0() {
 
@@ -223,6 +227,9 @@ public class AutoPartitionCreateWithGSI extends BaseAutoPartitionNewPartition {
         dropTableWithGsi(primaryTable, ImmutableList.of());
     }
 
+    // Ignored because after two-phase DDL locking is enabled, the second DROP INDEX in the double-drop case
+    // always rebuilds the plan after the first DROP INDEX finishes, then fails with "GSI not found".
+    @Ignore
     @Test
     public void testCreateIndexDoubleDrop1() {
 

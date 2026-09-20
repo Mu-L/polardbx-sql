@@ -37,7 +37,7 @@ import java.util.List;
 import java.util.Map;
 
 public class ColumnarTableEvolutionAccessor extends AbstractAccessor {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     private static final String COLUMNAR_TABLE_MAPPING_TABLE = wrap(GmsSystemTables.COLUMNAR_TABLE_MAPPING);
 
@@ -45,10 +45,10 @@ public class ColumnarTableEvolutionAccessor extends AbstractAccessor {
 
     private static final String INSERT_COLUMNAR_TABLE_EVOLUTION_RECORDS =
         "insert into " + COLUMNAR_TABLE_EVOLUTION_TABLE +
-            "(`version_id`, `table_id`, `table_schema`, `table_name`, `index_name`, `ddl_job_id`, `ddl_type`, `commit_ts`, `columns`, `partitions`, `options`) values (?, ?, ?, ?, ?, ?, ?, ? ,? ,?, ?)";
+            "(`version_id`, `table_id`, `table_schema`, `table_name`, `index_name`, `ddl_job_id`, `ddl_type`, `commit_ts`, `columns`, `partitions`, `primary_keys`, `sort_keys`, `options`) values (?, ?, ?, ?, ?, ?, ?, ? ,? ,?, ?, ?, ?)";
 
     private static final String SELECT_ALL_COLUMNS =
-        "select `version_id`, `table_id`, `table_schema`, `table_name`, `index_name`, `ddl_job_id`, `ddl_type`, `commit_ts`, `columns`, `partitions`, `options`";
+        "select `version_id`, `table_id`, `table_schema`, `table_name`, `index_name`, `ddl_job_id`, `ddl_type`, `commit_ts`, `columns`, `partitions`, `primary_keys`, `sort_keys`, `options`";
 
     private static final String FROM_TABLE = " from " + COLUMNAR_TABLE_EVOLUTION_TABLE;
 
@@ -85,6 +85,8 @@ public class ColumnarTableEvolutionAccessor extends AbstractAccessor {
 
     private static final String AND_TABLE_ID = " and `table_id` = ?";
 
+    private static final String AND_LAST_COMMIT_TS = " and `commit_ts` <= ? order by commit_ts desc";
+
     private static final String WHERE_BY_SCHEMA_TABLE_INDEX =
         " where `table_id` in (select `table_id` from " + COLUMNAR_TABLE_MAPPING_TABLE
             + " where `table_schema` = ? and `table_name` = ? and `index_name` = ?) order by `commit_ts`";
@@ -99,14 +101,23 @@ public class ColumnarTableEvolutionAccessor extends AbstractAccessor {
 
     private static final String DELETE_SCHEMA = "delete " + FROM_TABLE + WHERE_BY_SCHEMA;
 
-    private static final String UPDATE_COMMIT_TS_VERSION_ID =
-        "update " + COLUMNAR_TABLE_EVOLUTION_TABLE + " set commit_ts=? " + WHERE_BY_VERSION_ID;
+    private static final String UPDATE_COMMIT_TS_TABLE_ID_VERSION_ID =
+        "update " + COLUMNAR_TABLE_EVOLUTION_TABLE + " set commit_ts=? " + WHERE_BY_TABLE_ID_VERSION_ID;
 
     private static final String UPDATE_DDL_TYPE_BY_VERSION_ID =
         "update " + COLUMNAR_TABLE_EVOLUTION_TABLE + " set ddl_type=? " + WHERE_BY_VERSION_ID;
 
+    private static final String UPDATE_INDEX_NAME_BY_TABLE_ID =
+        "update " + COLUMNAR_TABLE_EVOLUTION_TABLE + " set index_name=? " + WHERE_BY_TABLE_ID;
+
     private static final String UPDATE_PARTITIONS_BY_TABLE_ID =
         "update " + COLUMNAR_TABLE_EVOLUTION_TABLE + " set partitions=? " + WHERE_BY_TABLE_ID;
+
+    private static final String UPDATE_PRIMARY_KEYS_BY_TABLE_ID =
+        "update " + COLUMNAR_TABLE_EVOLUTION_TABLE + " set primary_keys=? " + WHERE_BY_TABLE_ID;
+
+    private static final String UPDATE_SORT_KEYS_BY_TABLE_ID =
+        "update " + COLUMNAR_TABLE_EVOLUTION_TABLE + " set sort_keys=? " + WHERE_BY_TABLE_ID;
 
     private static final String WITH_READ_LOCK = " LOCK IN SHARE MODE";
 
@@ -138,19 +149,31 @@ public class ColumnarTableEvolutionAccessor extends AbstractAccessor {
     private static final String SELECT_LATEST_BY_VERSION_ID =
         SELECT_ALL_COLUMNS + FROM_TABLE + WHERE_BY_VERSION_ID;
 
+    private static final String SELECT_LATEST_BY_VERSION_ID_AND_TABLE_ID =
+        SELECT_ALL_COLUMNS + FROM_TABLE + WHERE_BY_VERSION_ID + AND_TABLE_ID;
+
     private static final String SELECT_ALL_BY_OVER_COMMIT_TS =
         SELECT_ALL_COLUMNS + FROM_TABLE + WHERE_BY_OVER_COMMIT_TS;
 
+    private static final String SELECT_TABLE_ID_AND_COMMIT_TS =
+        SELECT_ALL_COLUMNS + FROM_TABLE + WHERE_BY_TABLE_ID + AND_LAST_COMMIT_TS;
+
     private static final String WHERE_PARTITION_IS_NULL = " where `partitions` is null";
+    private static final String WHERE_PRIMARY_KEY_IS_NULL = " where `primary_keys` is null";
+    private static final String WHERE_SORT_KEY_IS_NULL = " where `sort_keys` is null";
 
     private static final String GROUP_BY_TABLE_ID = " group by table_id";
 
-    private static final String SELECT_BY_PARTITION_NULL_GROUP_BY_CCI =
-        SELECT_ALL_COLUMNS + FROM_TABLE + WHERE_PARTITION_IS_NULL + GROUP_BY_TABLE_ID;
+    private static final String SELECT_BY_PARTITION_NULL =
+        SELECT_ALL_COLUMNS + FROM_TABLE + WHERE_PARTITION_IS_NULL + " for update";
+    private static final String SELECT_BY_PRIMARY_KEY_NULL =
+        SELECT_ALL_COLUMNS + FROM_TABLE + WHERE_PRIMARY_KEY_IS_NULL + " for update";
+    private static final String SELECT_BY_SORT_KEY_NULL =
+        SELECT_ALL_COLUMNS + FROM_TABLE + WHERE_SORT_KEY_IS_NULL + " for update";
 
     private static final String DELETE_TABLE_ID = "delete " + FROM_TABLE + WHERE_BY_TABLE_ID;
 
-    private static final String HAVE_DONE_DDL = "SELECT COUNT(0) " + FROM_TABLE + WHERE_BY_TABLE_ID;
+    private static final String EXISTS_DDL = "SELECT COUNT(0) " + FROM_TABLE + WHERE_BY_TABLE_ID;
 
     private static final String UPDATE_COMMIT_TS_BY_OVER_COMMIT_TS =
         "update " + COLUMNAR_TABLE_EVOLUTION_TABLE + " set commit_ts=" + Long.MAX_VALUE + " " + WHERE_BY_OVER_COMMIT_TS;
@@ -218,6 +241,12 @@ public class ColumnarTableEvolutionAccessor extends AbstractAccessor {
             versionId);
     }
 
+    public List<ColumnarTableEvolutionRecord> queryByVersionIdLatestAndTableId(Long versionId, Long tableId) {
+        return query(SELECT_LATEST_BY_VERSION_ID_AND_TABLE_ID, COLUMNAR_TABLE_EVOLUTION_TABLE,
+            ColumnarTableEvolutionRecord.class,
+            versionId, tableId);
+    }
+
     public List<ColumnarTableEvolutionRecord> queryCommitTs(long commitTs) {
         return query(SELECT_COMMIT_TS, COLUMNAR_TABLE_EVOLUTION_TABLE, ColumnarTableEvolutionRecord.class,
             commitTs);
@@ -233,6 +262,11 @@ public class ColumnarTableEvolutionAccessor extends AbstractAccessor {
             commitTs, tableId);
     }
 
+    public List<ColumnarTableEvolutionRecord> queryTableIdAndLessThanCommitTs(long tableId, long commitTs) {
+        return query(SELECT_TABLE_ID_AND_COMMIT_TS, COLUMNAR_TABLE_MAPPING_TABLE, ColumnarTableEvolutionRecord.class,
+            tableId, commitTs);
+    }
+
     public void deleteSchemaTableIndex(String schemaName, String tableName, String indexName) {
         Map<Integer, ParameterContext> params = new HashMap<>(3);
         MetaDbUtil.setParameter(1, params, ParameterMethod.setString, schemaName);
@@ -241,11 +275,12 @@ public class ColumnarTableEvolutionAccessor extends AbstractAccessor {
         delete(DELETE_SCHEMA_TABLE_INDEX, COLUMNAR_TABLE_EVOLUTION_TABLE, params);
     }
 
-    public void updateCommitTs(long commitTs, long versionId) {
-        Map<Integer, ParameterContext> params = new HashMap<>(2);
+    public void updateCommitTs(long commitTs, long tableId, long versionId) {
+        Map<Integer, ParameterContext> params = new HashMap<>(3);
         MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, commitTs);
-        MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, versionId);
-        update(UPDATE_COMMIT_TS_VERSION_ID, COLUMNAR_TABLE_EVOLUTION_TABLE, params);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, tableId);
+        MetaDbUtil.setParameter(3, params, ParameterMethod.setLong, versionId);
+        update(UPDATE_COMMIT_TS_TABLE_ID_VERSION_ID, COLUMNAR_TABLE_EVOLUTION_TABLE, params);
     }
 
     public int updateCommitTs(long commitTs) {
@@ -259,6 +294,13 @@ public class ColumnarTableEvolutionAccessor extends AbstractAccessor {
         MetaDbUtil.setParameter(1, params, ParameterMethod.setString, ddlType);
         MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, ddlId);
         update(UPDATE_DDL_TYPE_BY_VERSION_ID, COLUMNAR_TABLE_EVOLUTION_TABLE, params);
+    }
+
+    public void updateIndexName(String indexName, long tableId) {
+        Map<Integer, ParameterContext> params = new HashMap<>(2);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, indexName);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, tableId);
+        update(UPDATE_INDEX_NAME_BY_TABLE_ID, COLUMNAR_TABLE_EVOLUTION_TABLE, params);
     }
 
     public List<ColumnarTableEvolutionRecord> querySchema(String schemaName) {
@@ -276,7 +318,17 @@ public class ColumnarTableEvolutionAccessor extends AbstractAccessor {
     }
 
     public List<ColumnarTableEvolutionRecord> queryPartitionEmptyRecords() {
-        return query(SELECT_BY_PARTITION_NULL_GROUP_BY_CCI, COLUMNAR_TABLE_EVOLUTION_TABLE,
+        return query(SELECT_BY_PARTITION_NULL, COLUMNAR_TABLE_EVOLUTION_TABLE,
+            ColumnarTableEvolutionRecord.class);
+    }
+
+    public List<ColumnarTableEvolutionRecord> queryPrimaryKeyEmptyRecords() {
+        return query(SELECT_BY_PRIMARY_KEY_NULL, COLUMNAR_TABLE_EVOLUTION_TABLE,
+            ColumnarTableEvolutionRecord.class);
+    }
+
+    public List<ColumnarTableEvolutionRecord> querySortKeyEmptyRecords() {
+        return query(SELECT_BY_SORT_KEY_NULL, COLUMNAR_TABLE_EVOLUTION_TABLE,
             ColumnarTableEvolutionRecord.class);
     }
 
@@ -286,6 +338,22 @@ public class ColumnarTableEvolutionAccessor extends AbstractAccessor {
             ColumnarTableEvolutionRecord.serializeToJson(partitions));
         MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, tableId);
         update(UPDATE_PARTITIONS_BY_TABLE_ID, COLUMNAR_TABLE_EVOLUTION_TABLE, params);
+    }
+
+    public void updatePrimaryKey(long tableId, List<Long> indexes) {
+        Map<Integer, ParameterContext> params = new HashMap<>(2);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString,
+            ColumnarTableEvolutionRecord.serializeToJson(indexes));
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, tableId);
+        update(UPDATE_PRIMARY_KEYS_BY_TABLE_ID, COLUMNAR_TABLE_EVOLUTION_TABLE, params);
+    }
+
+    public void updateSortKey(long tableId, List<Long> indexes) {
+        Map<Integer, ParameterContext> params = new HashMap<>(2);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString,
+            ColumnarTableEvolutionRecord.serializeToJson(indexes));
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, tableId);
+        update(UPDATE_SORT_KEYS_BY_TABLE_ID, COLUMNAR_TABLE_EVOLUTION_TABLE, params);
     }
 
     public int deleteSchema(String schemaName) {
@@ -305,8 +373,8 @@ public class ColumnarTableEvolutionAccessor extends AbstractAccessor {
         return delete(DELETE_TABLE_ID, COLUMNAR_TABLE_EVOLUTION_TABLE, params);
     }
 
-    public boolean haveDoneDdl(long tableId) {
-        try (PreparedStatement stmt = connection.prepareStatement(HAVE_DONE_DDL)) {
+    public boolean existsDdl(long tableId) {
+        try (PreparedStatement stmt = connection.prepareStatement(EXISTS_DDL)) {
             stmt.setLong(1, tableId);
             try (ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) {

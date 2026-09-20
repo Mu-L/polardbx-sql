@@ -16,6 +16,9 @@
 
 package com.alibaba.polardbx.optimizer.optimizeralert;
 
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.exception.code.ErrorType;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.ExceptionUtils;
@@ -57,7 +60,15 @@ public class OptimizerAlertUtil {
         }
         try {
             if (bkaShouldAlert(ec, logicalView, phySqlCount)) {
-                OptimizerAlertManager.getInstance().log(OptimizerAlertType.BKA_TOO_MUCH, ec);
+                if (logicalView.isLookupTable() && logicalView.getLookupInfo().isGsiLookup()) {
+                    OptimizerAlertManager.getInstance().log(OptimizerAlertType.GSI_TOO_MUCH, ec);
+                } else {
+                    // disable bka too much alert by default
+                    if (!DynamicConfig.getInstance().optimizerAlertBka()) {
+                        return;
+                    }
+                    OptimizerAlertManager.getInstance().log(OptimizerAlertType.BKA_TOO_MUCH, ec);
+                }
             }
         } catch (Exception e) {
             // ignore
@@ -88,22 +99,36 @@ public class OptimizerAlertUtil {
         }
     }
 
-    public static void spmAlert(ExecutionContext ec, Throwable throwable) {
+    public static void spmAlert(OptimizerAlertType type, ExecutionContext ec, Throwable throwable) {
         if (!DynamicConfig.getInstance().optimizerAlert()) {
             return;
         }
-        try {
-            OptimizerAlertManager.getInstance().log(OptimizerAlertType.SPM_ERR, ec, throwable);
-        } catch (Exception e) {
-            // ignore
+        if (throwable instanceof TddlRuntimeException) {
+            TddlRuntimeException tde = (TddlRuntimeException) throwable;
+            if (tde.getErrorCodeType() == ErrorCode.ERR_VALIDATE) {
+                return;
+            }
+            if (tde.getErrorCodeType().getType() == ErrorType.Optimizer ||
+                tde.getErrorCodeType().getType() == ErrorType.Executor) {
+                try {
+                    OptimizerAlertManager.getInstance().log(type, ec, throwable);
+                } catch (Exception e) {
+                    // ignore
+                }
+            }
         }
     }
 
-    public static void statisticsAlert(String schema, String table, OptimizerAlertType type, ExecutionContext ec, Object obj) {
+    public static void optimizerSlowAlert(ExecutionContext ec) {
+        OptimizerAlertManager.getInstance().log(OptimizerAlertType.OPTIMIZER_SLOW, ec);
+    }
+
+    public static void statisticsAlert(String schema, String table, OptimizerAlertType type, ExecutionContext ec,
+                                       Object obj) {
         Map<String, Object> extraMap = new HashMap<>();
         extraMap.put("schema", schema);
         extraMap.put("table", table);
-        if (obj instanceof Throwable){
+        if (obj instanceof Throwable) {
             obj = ExceptionUtils.exceptionStackTrace((Throwable) obj);
         }
         OptimizerAlertManager.getInstance().log(type, ec, obj, extraMap);
@@ -112,13 +137,13 @@ public class OptimizerAlertUtil {
     /**
      * check if any statistic info(both topn&histogram) missing
      */
-    public static void checkStatisticsMiss(String schema, String table, StatisticManager.CacheLine c, int sampleRowSize) {
+    public static void checkStatisticsMiss(String schema, String table, StatisticManager.CacheLine c,
+                                           int sampleRowSize) {
         if (SystemDbHelper.isDBBuildIn(schema)) {
             return;
         }
         // if table row count == 0 ,skip check
-        if (c.getRowCount() == 0L ||
-                (c.getRowCount() < InstConfUtil.getInt(ConnectionParams.STATISTICS_MISS_MIN_ROWCOUNT) && sampleRowSize == 0)) {
+        if (sampleRowSize == 0) {
             return;
         }
         List<ColumnMeta> columnMetas = StatisticUtils.getColumnMetas(false, schema, table);

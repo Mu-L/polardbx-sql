@@ -9,6 +9,7 @@
 package com.alibaba.polardbx.executor.vectorized.compare;
 
 import com.alibaba.polardbx.common.utils.time.core.OriginalDate;
+import com.alibaba.polardbx.common.utils.time.core.OriginalTimestamp;
 import com.alibaba.polardbx.common.utils.time.core.TimeStorage;
 import com.alibaba.polardbx.executor.chunk.DateBlock;
 import com.alibaba.polardbx.executor.chunk.LongBlock;
@@ -22,6 +23,7 @@ import com.alibaba.polardbx.executor.vectorized.VectorizedExpression;
 import com.alibaba.polardbx.executor.vectorized.VectorizedExpressionUtils;
 import com.alibaba.polardbx.executor.vectorized.metadata.ExpressionSignatures;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
+import com.alibaba.polardbx.optimizer.core.datatype.DateTimeType;
 
 import static com.alibaba.polardbx.executor.vectorized.metadata.ArgumentKind.Const;
 import static com.alibaba.polardbx.executor.vectorized.metadata.ArgumentKind.Variable;
@@ -43,37 +45,37 @@ public class ${className} extends AbstractVectorizedExpression {
         if (rightIsNull) {
             right = 0;
         } else {
-            OriginalDate date = (OriginalDate) DataTypes.DateType.convertFrom(rightValue);
-            right = date == null ? 0 : TimeStorage.writeDate(date.getMysqlDateTime());
+			OriginalTimestamp datetime = (OriginalTimestamp) DateTimeType.DATE_TIME_TYPE_6.convertFrom(rightValue);
+			right = datetime == null ? 0 : TimeStorage.writeTimestamp(datetime.getMysqlDateTime());
         }
     }
 
-    @Override
+	@Override
     public void eval(EvaluationContext ctx) {
         children[0].eval(ctx);
 
-		MutableChunk chunk = ctx.getPreAllocatedChunk();
-		int batchSize = chunk.batchSize();
-		boolean isSelectionInUse = chunk.isSelectionInUse();
-		int[] sel = chunk.selection();
+        MutableChunk chunk = ctx.getPreAllocatedChunk();
+        int batchSize = chunk.batchSize();
+        boolean isSelectionInUse = chunk.isSelectionInUse();
+        int[] sel = chunk.selection();
 
-		RandomAccessBlock outputVectorSlot = chunk.slotIn(outputIndex, outputDataType);
-		RandomAccessBlock leftInputVectorSlot =
-		chunk.slotIn(children[0].getOutputIndex(), children[0].getOutputDataType());
+        RandomAccessBlock outputVectorSlot = chunk.slotIn(outputIndex, outputDataType);
+        RandomAccessBlock leftInputVectorSlot =
+            chunk.slotIn(children[0].getOutputIndex(), children[0].getOutputDataType());
 
-		if (leftInputVectorSlot instanceof DateBlock) {
-		long[] array1 = (leftInputVectorSlot.cast(DateBlock.class)).getPacked();
-		long[] res = (outputVectorSlot.cast(LongBlock.class)).longArray();
+        if (leftInputVectorSlot instanceof DateBlock) {
+            long[] array1 = (leftInputVectorSlot.cast(DateBlock.class)).getPacked();
+            long[] res = (outputVectorSlot.cast(LongBlock.class)).longArray();
 
-		if (rightIsNull) {
-		boolean[] outputNulls = outputVectorSlot.nulls();
-		if (isSelectionInUse) {
-		for (int i = 0; i < batchSize; i++) {
-		int j = sel[i];
-		outputNulls[j] = true;
-		}
-		} else {
-		for (int i = 0; i < batchSize; i++) {
+            if (rightIsNull) {
+                boolean[] outputNulls = outputVectorSlot.nulls();
+                if (isSelectionInUse) {
+                    for (int i = 0; i < batchSize; i++) {
+                        int j = sel[i];
+                        outputNulls[j] = true;
+                    }
+                } else {
+                    for (int i = 0; i < batchSize; i++) {
                         outputNulls[i] = true;
                     }
                 }
@@ -86,23 +88,23 @@ public class ${className} extends AbstractVectorizedExpression {
                 } else {
                     for (int i = 0; i < batchSize; i++) {
                         res[i] = (array1[i] ${operator.op} right) ? LongBlock.TRUE_VALUE : LongBlock.FALSE_VALUE;
-		}
-		}
+                    }
+                }
 
-		VectorizedExpressionUtils.mergeNulls(chunk, outputIndex, children[0].getOutputIndex());
-		}
-		} else if (leftInputVectorSlot instanceof ReferenceBlock) {
-		long[] res = (outputVectorSlot.cast(LongBlock.class)).longArray();
-		if (rightIsNull) {
-		boolean[] outputNulls = outputVectorSlot.nulls();
-		if (isSelectionInUse) {
-		for (int i = 0; i < batchSize; i++) {
-		int j = sel[i];
-		outputNulls[j] = true;
-		}
-		} else {
-		for (int i = 0; i < batchSize; i++) {
-		outputNulls[i] = true;
+                VectorizedExpressionUtils.mergeNulls(chunk, outputIndex, children[0].getOutputIndex());
+            }
+        } else if (leftInputVectorSlot instanceof ReferenceBlock) {
+            long[] res = (outputVectorSlot.cast(LongBlock.class)).longArray();
+            if (rightIsNull) {
+                boolean[] outputNulls = outputVectorSlot.nulls();
+                if (isSelectionInUse) {
+                    for (int i = 0; i < batchSize; i++) {
+                        int j = sel[i];
+                        outputNulls[j] = true;
+                    }
+                } else {
+                    for (int i = 0; i < batchSize; i++) {
+                        outputNulls[i] = true;
                     }
                 }
             } else {

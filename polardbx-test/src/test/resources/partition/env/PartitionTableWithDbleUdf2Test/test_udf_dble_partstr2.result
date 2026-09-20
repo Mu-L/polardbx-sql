@@ -1,0 +1,44 @@
+## DISABLE_FAST_SQL_PARSER
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=false
+select partstrc4l256sm40('aaaabbb0000')
+partstrc4l256sm40('aaaabbb0000')
+0
+select partstrc4l256sm40('aaaabbb2359')
+partstrc4l256sm40('aaaabbb2359')
+0
+select partstrc4l256sm40('')
+partstrc4l256sm40('')
+0
+select partstrc4l256sm40(null)
+partstrc4l256sm40(NULL)
+0
+drop table if exists partstr_t1
+create table partstr_t1(
+c1 varchar(32),
+c2 varchar(32)
+)
+partition by udf_hash(partstrc4l256sm40(c1))
+(
+  partition p1 values less than(1),
+  partition p2 values less than(2)
+)
+insert into partstr_t1 values ('','')
+insert into partstr_t1 values (null,null)
+select c1, part_route('', 'partstr_t1', c1) as route_rs, part_hash('', 'partstr_t1', c1) as hash_rs from partstr_t1 where c1=''
+c1,route_rs,hash_rs
+,p1,(0)
+select c1, part_route('', 'partstr_t1', c1) as route_rs, part_hash('', 'partstr_t1', c1) as hash_rs from partstr_t1 where c1 is null
+c1,route_rs,hash_rs
+null,p1,(0)
+show create table partstr_t1
+Table,Create Table
+partstr_t1,CREATE TABLE `partstr_t1` (
+	`c1` varchar(32) DEFAULT NULL,
+	`c2` varchar(32) DEFAULT NULL,
+	KEY `auto_shard_key_c1` USING BTREE (`c1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY UDF_HASH(partstrc4l256sm40(`c1`))
+PARTITIONS 2
+(PARTITION p1 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (2) ENGINE = InnoDB)
+drop table partstr_t1;

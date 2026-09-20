@@ -35,13 +35,13 @@ public class HotGsiEvolutionDisableEvolutionTest extends HotGsiEvolutionTest {
         try {
             DynamicConfig.getInstance()
                 .loadValue(null, ConnectionProperties.ENABLE_HOT_GSI_EVOLUTION, String.valueOf(false));
-            PlanManager.getInstance().getBaselineMap().clear();
+            PlanManager.getInstance().invalidateSchema(appName);
             invokeEvolve(sqlParameterized, executionPlan, executionContext);
             Assert.assertTrue(PlanManager.getInstance().getBaselineMap(appName).isEmpty());
 
             DynamicConfig.getInstance()
                 .loadValue(null, ConnectionProperties.ENABLE_HOT_GSI_EVOLUTION, String.valueOf(true));
-            PlanManager.getInstance().getBaselineMap().clear();
+            PlanManager.getInstance().invalidateSchema(appName);
             invokeEvolve(sqlParameterized, executionPlan, executionContext);
             Assert.assertTrue(PlanManager.getInstance().getBaselineMap(appName).size() == 1);
             String planStr = RelUtils

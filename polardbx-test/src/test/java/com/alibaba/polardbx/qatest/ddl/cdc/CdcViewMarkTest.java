@@ -3,9 +3,12 @@ package com.alibaba.polardbx.qatest.ddl.cdc;
 import com.alibaba.polardbx.common.cdc.DdlScope;
 import com.alibaba.polardbx.qatest.ddl.cdc.entity.DdlCheckContext;
 import com.alibaba.polardbx.qatest.ddl.cdc.entity.DdlRecordInfo;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
@@ -15,10 +18,23 @@ import java.util.List;
  * author: ziyang.lb
  * create: 2023-08-30 17:43
  **/
+@Slf4j
 public class CdcViewMarkTest extends CdcBaseTest {
 
     @Test
     public void testCdcDdlRecord() throws SQLException {
+        try (Statement statement = tddlConnection.createStatement()) {
+            ResultSet resultSet = statement.executeQuery(
+                "select param_val from metadb.inst_config where param_key = 'ENABLE_CREATE_VIEW'");
+            if (resultSet.next()) {
+                String value = resultSet.getString(1);
+                if (StringUtils.equalsIgnoreCase(value, "false")) {
+                    log.info("ENABLE_CREATE_VIEW is false, skip test.");
+                    return;
+                }
+            }
+        }
+
         try (Statement stmt = tddlConnection.createStatement()) {
             stmt.executeUpdate("drop database if exists cdc_view_test");
             stmt.executeUpdate("create database cdc_view_test mode = 'auto'");

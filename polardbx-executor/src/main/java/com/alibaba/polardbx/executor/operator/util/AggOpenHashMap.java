@@ -16,6 +16,14 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableIntArrayList;
+import com.alibaba.polardbx.common.collection.MemoryCountableObjectArrayList;
+import com.alibaba.polardbx.common.datatype.Decimal;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.memory.SizeOf;
 import com.alibaba.polardbx.executor.accumulator.Accumulator;
@@ -29,85 +37,213 @@ import com.alibaba.polardbx.executor.chunk.ChunkConverter;
 import com.alibaba.polardbx.executor.chunk.Converters;
 import com.alibaba.polardbx.executor.chunk.IntegerBlock;
 import com.alibaba.polardbx.executor.chunk.SliceBlock;
+import com.alibaba.polardbx.executor.chunk.columnar.LazyBlock;
 import com.alibaba.polardbx.executor.mpp.operator.WorkProcessor;
-import com.alibaba.polardbx.executor.operator.scan.impl.DictionaryMapping;
+import com.alibaba.polardbx.executor.operator.scan.impl.DictionaryMappingImpl;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
+import com.alibaba.polardbx.optimizer.core.datatype.DecimalType;
 import com.alibaba.polardbx.optimizer.core.datatype.IntegerType;
 import com.alibaba.polardbx.optimizer.core.datatype.LongType;
 import com.alibaba.polardbx.optimizer.core.datatype.SliceType;
 import com.alibaba.polardbx.optimizer.core.expression.calc.Aggregator;
+import com.alibaba.polardbx.optimizer.core.expression.calc.aggfunctions.SumV2;
 import com.alibaba.polardbx.optimizer.memory.OperatorMemoryAllocatorCtx;
 import com.google.common.base.Preconditions;
 import it.unimi.dsi.fastutil.HashCommon;
 import it.unimi.dsi.fastutil.ints.AbstractIntComparator;
 import it.unimi.dsi.fastutil.ints.AbstractIntIterator;
-import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntArrays;
 import it.unimi.dsi.fastutil.ints.IntComparator;
 import it.unimi.dsi.fastutil.ints.IntIterator;
+import it.unimi.dsi.fastutil.longs.MemoryCountableLong2IntOpenHashMap;
+import it.unimi.dsi.fastutil.objects.MemoryCountableInt2Int2OpenHashMap;
 import org.apache.calcite.util.Util;
+import org.openjdk.jol.info.ClassLayout;
+import org.openjdk.jol.util.VMSupport;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 
-public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
+import static it.unimi.dsi.fastutil.Hash.DEFAULT_LOAD_FACTOR;
 
+public class AggOpenHashMap implements AggHashMap {
+    protected static final int INSTANCE_SIZE = ClassLayout.parseClass(AggOpenHashMap.class).instanceSize();
+    private static final int INT_BATCH_GROUP_BY_INSTANCE_SIZE =
+        ClassLayout.parseClass(IntBatchGroupBy.class).instanceSize();
+    private static final int LONG_BATCH_GROUP_BY_INSTANCE_SIZE =
+        ClassLayout.parseClass(LongBatchGroupBy.class).instanceSize();
+    private static final int SLICE_INT_BATCH_GROUP_BY_INSTANCE_SIZE =
+        ClassLayout.parseClass(SliceIntBatchGroupBy.class).instanceSize();
+    private static final int INT_INT_BATCH_GROUP_BY_INSTANCE_SIZE =
+        ClassLayout.parseClass(IntIntBatchGroupBy.class).instanceSize();
+    private static final int DEFAULT_GROUP_BY_INSTANCE_SIZE =
+        ClassLayout.parseClass(DefaultGroupBy.class).instanceSize();
+    private static final int LONG_LONG_BATCH_GROUP_BY_INSTANCE_SIZE =
+        ClassLayout.parseClass(LongLongBatchGroupBy.class).instanceSize();
+    private static final int INT_128_ARRAY_INSTANCE_SIZE =
+        ClassLayout.parseClass(LongLongBatchGroupBy.Int128Array.class).instanceSize();
+    private static final int NO_GROUP_BY_INSTANCE_SIZE = ClassLayout.parseClass(NoGroupBy.class).instanceSize();
+
+    protected static final int NOT_EXISTS = -1;
+
+    protected final int expectedSize;
+
+    protected final int chunkSize;
+
+    @FieldMemoryCounter(value = false)
+    protected final DataType[] groupKeyType;
+
+    protected TypedBuffer groupKeyBuffer;
+
+    @FieldMemoryCounter(value = false)
+    protected ExecutionContext context;
+
+    protected int groupCount;
+
+    protected final float loadFactor;
+
+    @FieldMemoryCounter(value = false)
     private final List<Aggregator> aggregators;
+    private final int aggregatorSize;
 
-    protected List<Chunk> groupChunks;
+    protected BlockBuilder[] valueBlockBuilders;
 
-    protected List<Chunk> valueChunks;
-
-    protected final BlockBuilder[] valueBlockBuilders;
-
+    @FieldMemoryCounter(value = false)
     private ChunkConverter[] valueConverters;
 
     private Accumulator[] valueAccumulators;
 
     private int[] filterArgs;
 
-    private DistinctSet[] distinctSets;
+    @FieldMemoryCounter(value = false)
+    private final DataType[] aggValueType;
 
-    private DataType[] aggValueType;
+    @FieldMemoryCounter(value = false)
+    private final DataType[] inputType;
 
     private GroupBy groupBy;
 
+    @FieldMemoryCounter(value = false)
     private final OperatorMemoryAllocatorCtx memoryAllocator;
+
+    private DistinctSet[] distinctSets;
+    private MemoryCountableIntArrayList distinctAggIndex;
+    //indicates whether elements is distinct in each distinct aggregator
+    //the size is isDistinctArray[distinctAggNum][CHUNK_LIMIT]
+    //e.g. isDistinctArray[2][3] indicates the 4th value of 3th aggregator is distinct
+    private boolean[][] isDistinctArray;
+    //record the distinct values, e.g. distinctIdlSel[1] indicates the 2th distinct value
+    protected int[] distinctIdSel;
+
+    @FieldMemoryCounter(value = false)
+    OperatorMemoryOwnerId memoryOwnerId;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(groupKeyBuffer)
+            + FastMemoryCounter.sizeOf(valueBlockBuilders)
+            + FastMemoryCounter.sizeOf(valueAccumulators)
+            + FastMemoryCounter.sizeOf(filterArgs)
+            + FastMemoryCounter.sizeOf(distinctSets)
+            + FastMemoryCounter.sizeOf(groupBy)
+            + FastMemoryCounter.sizeOf(distinctAggIndex)
+            + FastMemoryCounter.sizeOf(isDistinctArray)
+            + FastMemoryCounter.sizeOf(distinctIdSel);
+    }
 
     public AggOpenHashMap(DataType[] groupKeyType, List<Aggregator> aggregators, DataType[] aggValueType,
                           DataType[] inputType, int expectedSize, int chunkSize, ExecutionContext context,
-                          OperatorMemoryAllocatorCtx memoryAllocator) {
+                          OperatorMemoryAllocatorCtx memoryAllocator, OperatorMemoryOwnerId memoryOwnerId) {
         this(groupKeyType, aggregators, aggValueType, inputType, expectedSize, DEFAULT_LOAD_FACTOR, chunkSize, context,
-            memoryAllocator);
+            memoryAllocator, memoryOwnerId);
     }
 
     public AggOpenHashMap(DataType[] groupKeyType, List<Aggregator> aggregators, DataType[] aggValueType,
                           DataType[] inputType, int expectedSize, float loadFactor, int chunkSize,
-                          ExecutionContext context, OperatorMemoryAllocatorCtx memoryAllocator) {
-        super(groupKeyType, expectedSize, loadFactor, chunkSize, context);
+                          ExecutionContext context, OperatorMemoryAllocatorCtx memoryAllocator,
+                          OperatorMemoryOwnerId memoryOwnerId) {
+        this.loadFactor = loadFactor;
+        this.aggregators = aggregators;
+        this.groupKeyType = groupKeyType;
+        this.groupKeyBuffer = TypedBuffer.create(groupKeyType, chunkSize, context);
+        this.chunkSize = chunkSize;
+        this.expectedSize = expectedSize;
+        this.context = context;
 
         Preconditions.checkArgument(loadFactor > 0 && loadFactor <= 1,
             "Load factor must be greater than 0 and smaller than or equal to 1");
         Preconditions.checkArgument(expectedSize >= 0, "The expected number of elements must be non-negative");
 
-        this.aggregators = aggregators;
+        this.aggregatorSize = aggregators.size();
+
         this.memoryAllocator = memoryAllocator;
+        this.aggValueType = aggValueType;
+        this.inputType = inputType;
 
-        this.valueAccumulators = new Accumulator[aggregators.size()];
+        this.memoryOwnerId = memoryOwnerId;
 
-        this.valueConverters = new ChunkConverter[aggregators.size()];
-        this.filterArgs = new int[aggregators.size()];
-        this.distinctSets = new DistinctSet[aggregators.size()];
+        initialize(true);
+    }
+
+    public void initialize(boolean isFirst) {
+
+        this.valueAccumulators = new Accumulator[aggregatorSize];
+        this.valueConverters = new ChunkConverter[aggregatorSize];
+        this.filterArgs = new int[aggregatorSize];
+        this.distinctSets = new DistinctSet[aggregatorSize];
+        this.distinctAggIndex = new MemoryCountableIntArrayList();
+
+        if (!isFirst) {
+            this.groupKeyBuffer = TypedBuffer.create(groupKeyType, chunkSize, context);
+            this.groupCount = 0;
+            // release all previous allocated memory
+            this.memoryAllocator.releaseReservedMemory(this.memoryAllocator.getReservedAllocated(), true);
+        }
+
+        // Prerequisites:
+        // 1. ENABLE_VEC_ACCUMULATOR=true
+        // 2. group by column is not empty.
+        // 3. has no filter args in any aggregator.
+        boolean enableVecAccumulator =
+            context.getParamManager().getBoolean(ConnectionParams.ENABLE_VEC_ACCUMULATOR)
+                && aggregators.stream().allMatch(aggregator -> aggregator.getFilterArg() < 0);
+
+        boolean noDistinct = aggregators.stream().allMatch(aggregator -> !aggregator.isDistinct());
+
+        //check no group by
+        boolean useNoGroupBy = false;
+        if (enableVecAccumulator && noGroupBy() && noDistinct) {
+            useNoGroupBy = true;
+            //we use NoGroupBy operator only when all valueAccumulators can be initialized by createNoGroupBy
+            for (int i = 0; i < aggregators.size(); i++) {
+                final Aggregator aggregator = aggregators.get(i);
+                valueAccumulators[i] =
+                    AccumulatorBuilders.createNoGroupBy(aggregator, aggValueType[i], inputType, expectedSize, context,
+                        memoryOwnerId);
+                if (valueAccumulators[i] == null) {
+                    useNoGroupBy = false;
+                    break;
+                }
+            }
+        }
+        if (!useNoGroupBy) {
+            for (int i = 0; i < aggregatorSize; i++) {
+                final Aggregator aggregator = aggregators.get(i);
+                valueAccumulators[i] =
+                    AccumulatorBuilders.create(aggregator, aggValueType[i], inputType, expectedSize, context,
+                        memoryOwnerId);
+            }
+        }
+
+        //initialize distinct set
         for (int i = 0; i < aggregators.size(); i++) {
             final Aggregator aggregator = aggregators.get(i);
-            valueAccumulators[i] =
-                AccumulatorBuilders.create(aggregator, aggValueType[i], inputType, expectedSize, context);
-
             DataType[] originalInputTypes = DataTypeUtils.gather(inputType, aggregator.getInputColumnIndexes());
             DataType[] accumulatorInputTypes = Util.first(valueAccumulators[i].getInputTypes(), originalInputTypes);
             valueConverters[i] =
@@ -115,30 +251,31 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
                     context);
             filterArgs[i] = aggregator.getFilterArg();
             if (aggregator.isDistinct()) {
+                distinctAggIndex.add(i);
+                //distinctIndexes indicates the indexes of distinct columns in Chunk.
                 int[] distinctIndexes = aggregator.getNewForAccumulator().getAggTargetIndexes();
                 distinctSets[i] =
-                    new DistinctSet(accumulatorInputTypes, distinctIndexes, expectedSize, chunkSize, context);
+                    new DistinctSet(accumulatorInputTypes, distinctIndexes, expectedSize, chunkSize, context,
+                        memoryAllocator, noGroupBy());
             }
         }
 
-        this.aggValueType = aggValueType;
-        this.valueBlockBuilders = new BlockBuilder[aggregators.size()];
-        for (int i = 0; i < aggregators.size(); i++) {
+        isDistinctArray = new boolean[distinctAggIndex.size()][];
+        this.valueBlockBuilders = new BlockBuilder[aggregatorSize];
+        for (int i = 0; i < aggregatorSize; i++) {
+            // in AVG(Long) agg, optimizer set precision = 65 in default which make Decimal64 and Decimal128 invalid,
+            // so we rescale precision to speed AVG agg
+            if (aggregators.get(i) instanceof SumV2 && aggValueType[i] instanceof DecimalType
+                && ((DecimalType) aggValueType[i]).isDefaultScale()) {
+                aggValueType[i] = new DecimalType(Decimal.MAX_64_BIT_PRECISION, 0);
+            }
             valueBlockBuilders[i] = BlockBuilders.create(aggValueType[i], context);
         }
 
         if (noGroupBy()) {
-            appendGroup(new Chunk(1), 0); // add an empty chunk
+            // add an empty chunk
+            appendGroup(new Chunk(1), 0);
         }
-
-        // Prerequisites:
-        // 1. ENABLE_VEC_ACCUMULATOR=true
-        // 2. group by column is not empty.
-        // 3. has no distinct keyword in any aggregator.
-        // 4. has no filter args in any aggregator.
-        boolean enableVecAccumulator = context.getParamManager().getBoolean(ConnectionParams.ENABLE_VEC_ACCUMULATOR)
-            && groupKeyType.length > 0
-            && aggregators.stream().allMatch(aggregator -> !aggregator.isDistinct() && aggregator.getFilterArg() < 0);
 
         // check if group keys consist of (int, int), (varchar, varchar), (int, varchar), (varchar ,int)
         // and don't use compatible mode.
@@ -149,6 +286,13 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
             || (groupKeyType[0] instanceof SliceType && groupKeyType[1] instanceof IntegerType)
             || (groupKeyType[0] instanceof SliceType && groupKeyType[1] instanceof SliceType)
         );
+
+        //group by long and long
+        boolean groupKeyLongAndLong = groupKeyType != null
+            && groupKeyType.length == 2 && !context.isEnableOssCompatible()
+            && ((groupKeyType[0] instanceof IntegerType && groupKeyType[1] instanceof LongType)
+            || (groupKeyType[0] instanceof LongType && groupKeyType[1] instanceof IntegerType)
+            || (groupKeyType[0] instanceof LongType && groupKeyType[1] instanceof LongType));
 
         // group by long
         boolean singleGroupKeyLong = groupKeyType != null
@@ -162,10 +306,14 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
 
         if (enableVecAccumulator && groupKeyIntegerAndSlice) {
             this.groupBy = new SliceIntBatchGroupBy();
+        } else if (enableVecAccumulator && groupKeyLongAndLong) {
+            this.groupBy = new LongLongBatchGroupBy();
         } else if (enableVecAccumulator && singleGroupKeyLong) {
             this.groupBy = new LongBatchGroupBy();
         } else if (enableVecAccumulator && singleGroupKeyInteger) {
             this.groupBy = new IntBatchGroupBy();
+        } else if (enableVecAccumulator && useNoGroupBy && noDistinct) {
+            this.groupBy = new NoGroupBy();
         } else {
             this.groupBy = new DefaultGroupBy();
         }
@@ -173,8 +321,90 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
         memoryAllocator.allocateReservedMemory(groupBy.fixedEstimatedSize());
     }
 
+    boolean noGroupBy() {
+        return groupKeyType.length == 0;
+    }
+
+    public int getGroupCount() {
+        return groupCount;
+    }
+
     protected final static int GROUP_ID_COUNT_THRESHOLD = 16;
     protected final static long SERIALIZED_MASK = ((long) 0x7fffffff) << 1 | 1;
+
+    public void handleDistinctInOrder(int[] groupIds, Chunk inputChunk, Chunk[] aggregatorInputs) {
+        Preconditions.checkArgument(groupIds != null && groupIds.length > 0);
+        int distinctSelIndex = 0;
+        int groupId = groupIds[0];
+        for (int aggIndex = 0; aggIndex < distinctAggIndex.size(); aggIndex++) {
+            int originalIndex = distinctAggIndex.get(aggIndex);
+            //groupIds is initialized with fix length, so we need to truncate it here
+            isDistinctArray[aggIndex] =
+                distinctSets[originalIndex].checkDistinct(
+                    IntegerBlock.wrap(
+                        Arrays.copyOfRange(groupIds, 0, aggregatorInputs[originalIndex].getPositionCount())),
+                    aggregatorInputs[originalIndex]);
+            for (int pos = 0; pos < inputChunk.getPositionCount(); pos++) {
+                if (groupIds[pos] != groupId) {
+                    valueAccumulators[originalIndex].accumulate(groupId, aggregatorInputs[originalIndex],
+                        distinctIdSel, distinctSelIndex);
+                    distinctSelIndex = 0;
+                    groupId = groupIds[pos];
+                }
+                if (isDistinctArray[aggIndex][pos]) {
+                    distinctIdSel[distinctSelIndex++] = pos;
+                }
+            }
+            if (distinctSelIndex > 0) {
+                valueAccumulators[originalIndex].accumulate(groupId,
+                    aggregatorInputs[originalIndex],
+                    distinctIdSel, distinctSelIndex);
+                distinctSelIndex = 0;
+            }
+        }
+    }
+
+    public void handleDistinctWithSmallNDV(int[] groupIds, int positionCount, Chunk[] aggregatorInputs) {
+        Preconditions.checkArgument(groupIds != null && groupIds.length > 0);
+        for (int aggIndex = 0; aggIndex < distinctAggIndex.size(); aggIndex++) {
+            int originalIndex = distinctAggIndex.get(aggIndex);
+            isDistinctArray[aggIndex] =
+                distinctSets[originalIndex].checkDistinct(
+                    IntegerBlock.wrap(
+                        Arrays.copyOfRange(groupIds, 0, aggregatorInputs[originalIndex].getPositionCount())),
+                    aggregatorInputs[originalIndex]);
+            for (int groupId = 0; groupId < groupCount; groupId++) {
+                int distinctSelIndex = 0;
+                for (int position = 0; position < positionCount; position++) {
+                    //isDistinctArray is accessed sequentially
+                    if (groupIds[position] == groupId && isDistinctArray[aggIndex][position]) {
+                        distinctIdSel[distinctSelIndex++] = position;
+                    }
+                }
+                if (distinctSelIndex > 0) {
+                    valueAccumulators[originalIndex]
+                        .accumulate(groupId, aggregatorInputs[originalIndex], distinctIdSel, distinctSelIndex);
+                }
+            }
+        }
+    }
+
+    public void handleDistinctWithNormalMode(int[] groupIds, Chunk inputChunk, Chunk[] aggregatorInputs) {
+        Preconditions.checkArgument(groupIds != null && groupIds.length > 0);
+        for (int aggIndex = 0; aggIndex < distinctAggIndex.size(); aggIndex++) {
+            int originalIndex = distinctAggIndex.get(aggIndex);
+            isDistinctArray[aggIndex] =
+                distinctSets[originalIndex].checkDistinct(
+                    IntegerBlock.wrap(
+                        Arrays.copyOfRange(groupIds, 0, aggregatorInputs[originalIndex].getPositionCount())),
+                    aggregatorInputs[originalIndex]);
+            for (int pos = 0; pos < inputChunk.getPositionCount(); pos++) {
+                if (isDistinctArray[aggIndex][pos]) {
+                    valueAccumulators[originalIndex].accumulate(groupIds[pos], aggregatorInputs[originalIndex], pos);
+                }
+            }
+        }
+    }
 
     private class IntBatchGroupBy implements GroupBy {
         protected int[] groupIds = new int[chunkSize];
@@ -201,9 +431,21 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
         protected final float f;
 
         public IntBatchGroupBy() {
+
+            OperatorMemoryOwnerId operatorMemoryOwnerId = MemoryTrackerManager.getCurrentMemoryOwner();
+            if (operatorMemoryOwnerId != null) {
+                MemoryTrackerManager.tryAllocate(operatorMemoryOwnerId,
+                    VMSupport.align((int) SizeOf.sizeOfIntArray(chunkSize)) * 3
+                );
+            }
+
             this.nullBitmap = new BitSet(chunkSize);
             this.containsZeroKey = false;
             this.groupIdOfNull = -1;
+
+            if (distinctAggIndex.size() > 0) {
+                distinctIdSel = new int[chunkSize];
+            }
 
             this.f = loadFactor;
             final int expected = expectedSize;
@@ -217,12 +459,30 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
 
                     // large memory allocation: hash-table for aggregation.
                     memoryAllocator.allocateReservedMemory(2 * SizeOf.sizeOfIntArray(n + 1));
+
+                    if (operatorMemoryOwnerId != null) {
+                        MemoryTrackerManager.tryAllocate(operatorMemoryOwnerId,
+                            2 * VMSupport.align((int) SizeOf.sizeOfIntArray(n + 1))
+                        );
+                    }
+
                     this.key = new int[this.n + 1];
                     this.value = new int[this.n + 1];
                 }
             } else {
                 throw new IllegalArgumentException("Load factor must be greater than 0 and smaller than or equal to 1");
             }
+        }
+
+        @Override
+        public long getMemoryUsage() {
+            return INT_BATCH_GROUP_BY_INSTANCE_SIZE
+                + FastMemoryCounter.sizeOf(groupIds)
+                + FastMemoryCounter.sizeOf(sourceArray)
+                + FastMemoryCounter.sizeOf(groupIdSelection)
+                + FastMemoryCounter.sizeOf(key)
+                + FastMemoryCounter.sizeOf(value)
+                + FastMemoryCounter.sizeOf(nullBitmap);
         }
 
         @Override
@@ -234,8 +494,8 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
             hasNull = false;
 
             // get input chunks for aggregators.
-            Chunk[] aggregatorInputs = new Chunk[aggregators.size()];
-            for (int i = 0; i < aggregators.size(); i++) {
+            Chunk[] aggregatorInputs = new Chunk[aggregatorSize];
+            for (int i = 0; i < aggregatorSize; i++) {
                 aggregatorInputs[i] = valueConverters[i].apply(inputChunk);
             }
 
@@ -263,12 +523,17 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
                 // CASE 1. (best case) the long value of key block is in order.
                 int groupId = groupIds[0];
                 int startIndex = 0;
+
+                handleDistinctInOrder(groupIds, inputChunk, aggregatorInputs);
+
                 for (int i = 0; i < positionCount; i++) {
                     if (groupIds[i] != groupId) {
                         // accumulate in range.
-                        for (int aggIndex = 0; aggIndex < aggregators.size(); aggIndex++) {
-                            valueAccumulators[aggIndex]
-                                .accumulate(groupId, aggregatorInputs[aggIndex], startIndex, i);
+                        for (int aggIndex = 0; aggIndex < aggregatorSize; aggIndex++) {
+                            if (distinctSets[aggIndex] == null) {
+                                valueAccumulators[aggIndex]
+                                    .accumulate(groupId, aggregatorInputs[aggIndex], startIndex, i);
+                            }
                         }
 
                         // update for the next range
@@ -279,14 +544,18 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
 
                 // for the rest range
                 if (startIndex < positionCount) {
-                    for (int aggIndex = 0; aggIndex < aggregators.size(); aggIndex++) {
-                        valueAccumulators[aggIndex]
-                            .accumulate(groupId, aggregatorInputs[aggIndex], startIndex, positionCount);
+                    for (int aggIndex = 0; aggIndex < aggregatorSize; aggIndex++) {
+                        if (distinctSets[aggIndex] == null) {
+                            valueAccumulators[aggIndex]
+                                .accumulate(groupId, aggregatorInputs[aggIndex], startIndex, positionCount);
+                        }
                     }
                 }
 
             } else if (groupCount <= GROUP_ID_COUNT_THRESHOLD) {
                 // CASE 2. (good case) the ndv is small.
+
+                handleDistinctWithSmallNDV(groupIds, positionCount, aggregatorInputs);
 
                 for (int groupId = 0; groupId < groupCount; groupId++) {
                     // collect the position that groupIds[position] = groupId into selection array.
@@ -299,17 +568,24 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
 
                     // for each aggregator function
                     if (selSize > 0) {
-                        for (int aggIndex = 0; aggIndex < aggregators.size(); aggIndex++) {
-                            valueAccumulators[aggIndex]
-                                .accumulate(groupId, aggregatorInputs[aggIndex], groupIdSelection, selSize);
+                        for (int aggIndex = 0; aggIndex < aggregatorSize; aggIndex++) {
+                            if (distinctSets[aggIndex] == null) {
+                                valueAccumulators[aggIndex]
+                                    .accumulate(groupId, aggregatorInputs[aggIndex], groupIdSelection, selSize);
+                            }
                         }
                     }
                 }
             } else {
                 // Normal execution mode.
-                for (int aggIndex = 0; aggIndex < aggregators.size(); aggIndex++) {
-                    valueAccumulators[aggIndex]
-                        .accumulate(groupIds, aggregatorInputs[aggIndex], positionCount);
+
+                handleDistinctWithNormalMode(groupIds, inputChunk, aggregatorInputs);
+
+                for (int aggIndex = 0; aggIndex < aggregatorSize; aggIndex++) {
+                    if (distinctSets[aggIndex] == null) {
+                        valueAccumulators[aggIndex]
+                            .accumulate(groupIds, aggregatorInputs[aggIndex], positionCount);
+                    }
                 }
             }
 
@@ -403,7 +679,14 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
             int groupId = groupCount++;
 
             // Also add an initial value to accumulators
-            for (int i = 0; i < aggregators.size(); i++) {
+            for (int i = 0; i < aggregatorSize; i++) {
+
+                // pre-allocate memory for possible growth.
+                long estimateGrowSize = valueAccumulators[i].estimatedGrowSize();
+                if (estimateGrowSize > 0) {
+                    MemoryTrackerManager.tryAllocate(memoryOwnerId, estimateGrowSize);
+                }
+
                 valueAccumulators[i].appendInitValue();
             }
             return groupId;
@@ -416,6 +699,8 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
 
             // large memory allocation: rehash of hash-table for aggregation.
             memoryAllocator.allocateReservedMemory(2 * SizeOf.sizeOfIntArray(newN + 1));
+            MemoryTrackerManager.tryAllocate(memoryOwnerId,
+                2 * VMSupport.align((int) SizeOf.sizeOfIntArray(newN + 1)));
 
             int[] newKey = new int[newN + 1];
             int[] newValue = new int[newN + 1];
@@ -439,6 +724,8 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
             this.n = newN;
             this.mask = mask;
             this.maxFill = HashCommon.maxFill(this.n, this.f);
+
+            long memoryUsage = FastMemoryCounter.sizeOf(this.key) + FastMemoryCounter.sizeOf(this.value);
             this.key = newKey;
             this.value = newValue;
         }
@@ -454,6 +741,11 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
             groupIds = null;
             sourceArray = null;
             groupIdSelection = null;
+        }
+
+        @Override
+        public int getCardinality() {
+            return groupCount;
         }
     }
 
@@ -479,9 +771,20 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
         protected int groupIdOfNull;
 
         public LongBatchGroupBy() {
+            OperatorMemoryOwnerId operatorMemoryOwnerId = MemoryTrackerManager.getCurrentMemoryOwner();
+            if (operatorMemoryOwnerId != null) {
+                MemoryTrackerManager.tryAllocate(operatorMemoryOwnerId,
+                    VMSupport.align((int) SizeOf.sizeOfIntArray(chunkSize)) * 2
+                        + VMSupport.align((int) SizeOf.sizeOfLongArray(chunkSize))
+                );
+            }
+
             this.nullBitmap = new BitSet(chunkSize);
             this.containsZeroKey = false;
             this.groupIdOfNull = -1;
+            if (distinctAggIndex.size() > 0) {
+                distinctIdSel = new int[chunkSize];
+            }
 
             final int expected = expectedSize;
             this.f = loadFactor;
@@ -495,6 +798,14 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
 
                     // large memory allocation: hash-table for aggregation.
                     memoryAllocator.allocateReservedMemory(2 * SizeOf.sizeOfLongArray(n + 1));
+
+                    if (operatorMemoryOwnerId != null) {
+                        MemoryTrackerManager.tryAllocate(operatorMemoryOwnerId,
+                            VMSupport.align((int) SizeOf.sizeOfIntArray(n + 1))
+                                + VMSupport.align((int) SizeOf.sizeOfLongArray(n + 1))
+                        );
+                    }
+
                     this.key = new long[this.n + 1];
                     this.value = new int[this.n + 1];
                 }
@@ -504,15 +815,29 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
         }
 
         @Override
+        public long getMemoryUsage() {
+            return LONG_BATCH_GROUP_BY_INSTANCE_SIZE
+                + FastMemoryCounter.sizeOf(groupIds)
+                + FastMemoryCounter.sizeOf(sourceArray)
+                + FastMemoryCounter.sizeOf(groupIdSelection)
+                + FastMemoryCounter.sizeOf(key)
+                + FastMemoryCounter.sizeOf(value)
+                + FastMemoryCounter.sizeOf(nullBitmap);
+        }
+
+        @Override
         public void putChunk(Chunk keyChunk, Chunk inputChunk, IntArrayList groupIdResult) {
             Preconditions.checkArgument(keyChunk.getBlockCount() == 1);
 
             // clear null state.
             nullBitmap.clear();
             hasNull = false;
+            for (int i = 0; i < distinctAggIndex.size(); i++) {
+                isDistinctArray[i] = new boolean[chunkSize];
+            }
 
-            Chunk[] aggregatorInputs = new Chunk[aggregators.size()];
-            for (int i = 0; i < aggregators.size(); i++) {
+            Chunk[] aggregatorInputs = new Chunk[aggregatorSize];
+            for (int i = 0; i < aggregatorSize; i++) {
                 aggregatorInputs[i] = valueConverters[i].apply(inputChunk);
             }
 
@@ -539,14 +864,18 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
             if (inOrder) {
                 // CASE 1. (best case) the long value of key block is in order.
 
+                handleDistinctInOrder(groupIds, inputChunk, aggregatorInputs);
+
                 int groupId = groupIds[0];
                 int startIndex = 0;
                 for (int i = 0; i < positionCount; i++) {
                     if (groupIds[i] != groupId) {
                         // accumulate in range.
-                        for (int aggIndex = 0; aggIndex < aggregators.size(); aggIndex++) {
-                            valueAccumulators[aggIndex]
-                                .accumulate(groupId, aggregatorInputs[aggIndex], startIndex, i);
+                        for (int aggIndex = 0; aggIndex < aggregatorSize; aggIndex++) {
+                            if (distinctSets[aggIndex] == null) {
+                                valueAccumulators[aggIndex]
+                                    .accumulate(groupId, aggregatorInputs[aggIndex], startIndex, i);
+                            }
                         }
 
                         // update for the next range
@@ -557,7 +886,7 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
 
                 // for the rest range
                 if (startIndex < positionCount) {
-                    for (int aggIndex = 0; aggIndex < aggregators.size(); aggIndex++) {
+                    for (int aggIndex = 0; aggIndex < aggregatorSize; aggIndex++) {
                         valueAccumulators[aggIndex]
                             .accumulate(groupId, aggregatorInputs[aggIndex], startIndex, positionCount);
                     }
@@ -565,6 +894,9 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
 
             } else if (groupCount <= GROUP_ID_COUNT_THRESHOLD) {
                 // CASE 2. (good case) the ndv is small.
+
+                //specially handle distinct aggregator
+                handleDistinctWithSmallNDV(groupIds, positionCount, aggregatorInputs);
 
                 for (int groupId = 0; groupId < groupCount; groupId++) {
                     // collect the position that groupIds[position] = groupId into selection array.
@@ -577,18 +909,25 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
 
                     // for each aggregator function
                     if (selSize > 0) {
-                        for (int aggIndex = 0; aggIndex < aggregators.size(); aggIndex++) {
-                            valueAccumulators[aggIndex]
-                                .accumulate(groupId, aggregatorInputs[aggIndex], groupIdSelection, selSize);
+                        for (int aggIndex = 0; aggIndex < aggregatorSize; aggIndex++) {
+                            if (distinctSets[aggIndex] == null) {
+                                valueAccumulators[aggIndex]
+                                    .accumulate(groupId, aggregatorInputs[aggIndex], groupIdSelection, selSize);
+                            }
                         }
                     }
                 }
             } else {
                 // Normal execution mode.
-                for (int aggIndex = 0; aggIndex < aggregators.size(); aggIndex++) {
-                    valueAccumulators[aggIndex]
-                        .accumulate(groupIds, aggregatorInputs[aggIndex], positionCount);
+                handleDistinctWithNormalMode(groupIds, inputChunk, aggregatorInputs);
+
+                for (int aggIndex = 0; aggIndex < aggregatorSize; aggIndex++) {
+                    if (distinctSets[aggIndex] == null) {
+                        valueAccumulators[aggIndex]
+                            .accumulate(groupIds, aggregatorInputs[aggIndex], positionCount);
+                    }
                 }
+
             }
             if (groupIdResult != null) {
                 for (int i = 0; i < positionCount; i++) {
@@ -670,7 +1009,14 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
             int groupId = groupCount++;
 
             // Also add an initial value to accumulators
-            for (int i = 0; i < aggregators.size(); i++) {
+            for (int i = 0; i < aggregatorSize; i++) {
+
+                // pre-allocate memory for possible growth.
+                long estimateGrowSize = valueAccumulators[i].estimatedGrowSize();
+                if (estimateGrowSize > 0) {
+                    MemoryTrackerManager.tryAllocate(memoryOwnerId, estimateGrowSize);
+                }
+
                 valueAccumulators[i].appendInitValue();
             }
             return groupId;
@@ -683,6 +1029,9 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
 
             // large memory allocation: rehash of hash-table for aggregation.
             memoryAllocator.allocateReservedMemory(2 * SizeOf.sizeOfLongArray(newN + 1));
+            MemoryTrackerManager.tryAllocate(memoryOwnerId,
+                2 * VMSupport.align((int) SizeOf.sizeOfIntArray(newN + 1)));
+
             long[] newKey = new long[newN + 1];
             int[] newValue = new int[newN + 1];
             int i = this.n;
@@ -705,8 +1054,12 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
             this.n = newN;
             this.mask = mask;
             this.maxFill = HashCommon.maxFill(this.n, this.f);
+
+            long memoryUsage = FastMemoryCounter.sizeOf(this.key) + FastMemoryCounter.sizeOf(this.value);
             this.key = newKey;
             this.value = newValue;
+            // release old key & value
+            MemoryTrackerManager.releaseReference(memoryOwnerId, memoryUsage);
         }
 
         private int realSize() {
@@ -720,6 +1073,11 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
             groupIds = null;
             sourceArray = null;
             groupIdSelection = null;
+        }
+
+        @Override
+        public int getCardinality() {
+            return groupCount;
         }
 
         @Override
@@ -742,16 +1100,38 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
         DefaultGroupBy normalGroupBy;
 
         @Override
+        public long getMemoryUsage() {
+            return SLICE_INT_BATCH_GROUP_BY_INSTANCE_SIZE
+                + FastMemoryCounter.sizeOf(dictIntBatchGroupBy)
+                + FastMemoryCounter.sizeOf(normalGroupBy);
+        }
+
+        @Override
         public void putChunk(Chunk keyChunk, Chunk inputChunk, IntArrayList groupIdResult) {
             Preconditions.checkArgument(keyChunk.getBlockCount() == 2);
+
+            Block block0 = keyChunk.getBlock(0);
+            Block block1 = keyChunk.getBlock(1);
+            boolean unwrapped = false;
+            if (block0 instanceof LazyBlock) {
+                ((LazyBlock) block0).load();
+                block0 = ((LazyBlock) block0).getLoaded();
+                unwrapped = true;
+            }
+            if (block1 instanceof LazyBlock) {
+                ((LazyBlock) block1).load();
+                block1 = ((LazyBlock) block1).getLoaded();
+                unwrapped = true;
+            }
+            if (unwrapped) {
+                keyChunk = new Chunk(keyChunk.getPositionCount(), block0, block1);
+            }
 
             if (normalGroupBy != null) {
                 // Already fall back to normal group by.
                 normalGroupBy.putChunk(keyChunk, inputChunk, groupIdResult);
-            } else if ((keyChunk.getBlock(0) instanceof SliceBlock
-                && ((SliceBlock) keyChunk.getBlock(0)).getDictionary() == null)
-                || (keyChunk.getBlock(1) instanceof SliceBlock
-                && ((SliceBlock) keyChunk.getBlock(1)).getDictionary() == null)) {
+            } else if ((block0 instanceof SliceBlock && ((SliceBlock) block0).getDictionary() == null)
+                || (block1 instanceof SliceBlock && ((SliceBlock) block1).getDictionary() == null)) {
                 // if any block is a slice block but don't have dictionary.
 
                 if (normalGroupBy == null) {
@@ -795,6 +1175,17 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
                 dictIntBatchGroupBy.close();
             }
         }
+
+        @Override
+        public int getCardinality() {
+            if (normalGroupBy != null) {
+                return normalGroupBy.getCardinality();
+            }
+            if (dictIntBatchGroupBy != null) {
+                return dictIntBatchGroupBy.getCardinality();
+            }
+            return 1;
+        }
     }
 
     private class IntIntBatchGroupBy implements GroupBy {
@@ -804,8 +1195,8 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
         protected long[] serializedBlock = new long[chunkSize];
         protected int[] groupIdSelection = new int[chunkSize];
 
-        protected DictionaryMapping dictionaryMapping1 = DictionaryMapping.create();
-        protected DictionaryMapping dictionaryMapping2 = DictionaryMapping.create();
+        protected DictionaryMappingImpl dictionaryMapping1 = new DictionaryMappingImpl();
+        protected DictionaryMappingImpl dictionaryMapping2 = new DictionaryMappingImpl();
 
         protected long[] key;
         protected int[] value;
@@ -819,20 +1210,46 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
         // handle null value.
         // It's for pair of key: (null, xxx) and not initialized.
         // Storing the mapping of (xxx) - (groupId).
-        Int2IntOpenHashMap keyMap1;
+        MemoryCountableInt2Int2OpenHashMap keyMap1;
         boolean hasNull1;
         BitSet nullBitmap1;
 
         // It's for pair of key: (xxx, null) and not initialized.
         // Storing the mapping of (xxx) - (groupId).
-        Int2IntOpenHashMap keyMap2;
+        MemoryCountableInt2Int2OpenHashMap keyMap2;
         boolean hasNull2;
         BitSet nullBitmap2;
 
         // The groupId of key: (null, null).
         int groupIdOfDoubleNull;
 
+        @Override
+        public long getMemoryUsage() {
+            return INT_INT_BATCH_GROUP_BY_INSTANCE_SIZE
+                + FastMemoryCounter.sizeOf(groupIds)
+                + FastMemoryCounter.sizeOf(intBlock1)
+                + FastMemoryCounter.sizeOf(intBlock2)
+                + FastMemoryCounter.sizeOf(serializedBlock)
+                + FastMemoryCounter.sizeOf(groupIdSelection)
+                + FastMemoryCounter.sizeOf(key)
+                + FastMemoryCounter.sizeOf(value)
+                + FastMemoryCounter.sizeOf(nullBitmap1)
+                + FastMemoryCounter.sizeOf(nullBitmap2)
+                + FastMemoryCounter.sizeOf(dictionaryMapping1)
+                + FastMemoryCounter.sizeOf(dictionaryMapping2)
+                + FastMemoryCounter.sizeOf(keyMap1)
+                + FastMemoryCounter.sizeOf(keyMap2);
+        }
+
         public IntIntBatchGroupBy() {
+            OperatorMemoryOwnerId operatorMemoryOwnerId = MemoryTrackerManager.getCurrentMemoryOwner();
+            if (operatorMemoryOwnerId != null) {
+                MemoryTrackerManager.tryAllocate(operatorMemoryOwnerId,
+                    VMSupport.align((int) SizeOf.sizeOfIntArray(chunkSize)) * 4
+                        + VMSupport.align((int) SizeOf.sizeOfLongArray(chunkSize))
+                );
+            }
+
             keyMap1 = null;
             keyMap2 = null;
             hasNull1 = false;
@@ -840,6 +1257,10 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
             nullBitmap1 = new BitSet(chunkSize);
             nullBitmap2 = new BitSet(chunkSize);
             groupIdOfDoubleNull = -1;
+
+            if (distinctAggIndex.size() > 0) {
+                distinctIdSel = new int[chunkSize];
+            }
 
             final int expected = expectedSize;
             this.f = loadFactor;
@@ -854,6 +1275,14 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
                     // large memory allocation: hash-table for aggregation.
                     memoryAllocator.allocateReservedMemory(
                         SizeOf.sizeOfIntArray(n + 1) + SizeOf.sizeOfLongArray(n + 1));
+
+                    if (operatorMemoryOwnerId != null) {
+                        MemoryTrackerManager.tryAllocate(operatorMemoryOwnerId,
+                            VMSupport.align((int) SizeOf.sizeOfIntArray(n + 1))
+                                + VMSupport.align((int) SizeOf.sizeOfLongArray(n + 1))
+                        );
+                    }
+
                     this.key = new long[this.n + 1];
                     this.value = new int[this.n + 1];
                 }
@@ -872,8 +1301,8 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
             nullBitmap1.clear();
             nullBitmap2.clear();
 
-            Chunk[] aggregatorInputs = new Chunk[aggregators.size()];
-            for (int i = 0; i < aggregators.size(); i++) {
+            Chunk[] aggregatorInputs = new Chunk[aggregatorSize];
+            for (int i = 0; i < aggregatorSize; i++) {
                 aggregatorInputs[i] = valueConverters[i].apply(inputChunk);
             }
 
@@ -917,6 +1346,9 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
             // step 4. accumulator with selection array.
             int groupCount = getGroupCount();
             if (groupCount <= GROUP_ID_COUNT_THRESHOLD) {
+
+                handleDistinctWithSmallNDV(groupIds, positionCount, aggregatorInputs);
+
                 for (int groupId = 0; groupId < groupCount; groupId++) {
                     // collect the position that groupIds[position] = groupId into selection array.
                     int selSize = 0;
@@ -928,18 +1360,24 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
 
                     // for each aggregator function
                     if (selSize > 0) {
-                        for (int aggIndex = 0; aggIndex < aggregators.size(); aggIndex++) {
-                            valueAccumulators[aggIndex]
-                                .accumulate(groupId, aggregatorInputs[aggIndex], groupIdSelection, selSize);
+                        for (int aggIndex = 0; aggIndex < aggregatorSize; aggIndex++) {
+                            if (distinctSets[aggIndex] == null) {
+                                valueAccumulators[aggIndex]
+                                    .accumulate(groupId, aggregatorInputs[aggIndex], groupIdSelection, selSize);
+                            }
                         }
                     }
                 }
             } else {
                 // Fall back to row-by-row execution mode.
-                for (int aggIndex = 0; aggIndex < aggregators.size(); aggIndex++) {
+                handleDistinctWithNormalMode(groupIds, inputChunk, aggregatorInputs);
+
+                for (int aggIndex = 0; aggIndex < aggregatorSize; aggIndex++) {
                     for (int pos = 0; pos < positionCount; pos++) {
-                        valueAccumulators[aggIndex]
-                            .accumulate(groupIds[pos], aggregatorInputs[aggIndex], pos);
+                        if (distinctSets[aggIndex] == null) {
+                            valueAccumulators[aggIndex]
+                                .accumulate(groupIds[pos], aggregatorInputs[aggIndex], pos);
+                        }
                     }
                 }
             }
@@ -987,6 +1425,11 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
             }
         }
 
+        @Override
+        public int getCardinality() {
+            return groupCount;
+        }
+
         public void putHashTable(Chunk keyChunk, int positionCount) {
             for (int position = 0; position < positionCount; position++) {
                 groupIds[position] = findGroupId(serializedBlock, keyChunk, position);
@@ -1008,7 +1451,7 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
                     // case2: key of (null, xxx)
                     if (keyMap1 == null) {
                         // initialize keyMap1.
-                        keyMap1 = new Int2IntOpenHashMap();
+                        keyMap1 = new MemoryCountableInt2Int2OpenHashMap();
                         keyMap1.defaultReturnValue(NOT_EXISTS);
                     }
 
@@ -1024,7 +1467,7 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
                     // case3: key of (xxx, null)
                     if (keyMap2 == null) {
                         // initialize keyMap1.
-                        keyMap2 = new Int2IntOpenHashMap();
+                        keyMap2 = new MemoryCountableInt2Int2OpenHashMap();
                         keyMap2.defaultReturnValue(NOT_EXISTS);
                     }
 
@@ -1087,7 +1530,14 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
             int groupId = groupCount++;
 
             // Also add an initial value to accumulators
-            for (int i = 0; i < aggregators.size(); i++) {
+            for (int i = 0; i < aggregatorSize; i++) {
+
+                // pre-allocate memory for possible growth.
+                long estimateGrowSize = valueAccumulators[i].estimatedGrowSize();
+                if (estimateGrowSize > 0) {
+                    MemoryTrackerManager.tryAllocate(memoryOwnerId, estimateGrowSize);
+                }
+
                 valueAccumulators[i].appendInitValue();
             }
             return groupId;
@@ -1100,6 +1550,9 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
 
             // large memory allocation: rehash of hash-table for aggregation.
             memoryAllocator.allocateReservedMemory(SizeOf.sizeOfIntArray(newN + 1) + SizeOf.sizeOfLongArray(newN + 1));
+            MemoryTrackerManager.tryAllocate(memoryOwnerId,
+                2 * VMSupport.align((int) SizeOf.sizeOfIntArray(newN + 1)));
+
             long[] newKey = new long[newN + 1];
             int[] newValue = new int[newN + 1];
             int i = this.n;
@@ -1122,14 +1575,485 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
             this.n = newN;
             this.mask = mask;
             this.maxFill = HashCommon.maxFill(this.n, this.f);
+
+            long memoryUsage = FastMemoryCounter.sizeOf(this.key) + FastMemoryCounter.sizeOf(this.value);
             this.key = newKey;
             this.value = newValue;
+            // release old key & value
+            MemoryTrackerManager.releaseReference(memoryOwnerId, memoryUsage);
         }
 
         private int realSize() {
             return this.containsZeroKey ? this.size - 1 : this.size;
         }
 
+    }
+
+    private class LongLongBatchGroupBy implements GroupBy {
+        protected int[] groupIds = new int[chunkSize];
+        protected long[] longBlock1 = new long[chunkSize];
+        protected long[] longBlock2 = new long[chunkSize];
+
+        protected Int128Array serializedBlock;
+
+        protected Int128Array key;
+        protected int[] groupIdSelection = new int[chunkSize];
+
+        protected DictionaryMappingImpl dictionaryMapping1 = new DictionaryMappingImpl();
+        protected DictionaryMappingImpl dictionaryMapping2 = new DictionaryMappingImpl();
+
+        protected int[] value;
+        protected int mask;
+        protected boolean containsZeroKey;
+        protected int n;
+        protected int maxFill;
+        protected int size;
+        protected final float f;
+
+        // handle null value.
+        // It's for pair of key: (null, xxx) and not initialized.
+        // Storing the mapping of (xxx) - (groupId).
+        MemoryCountableLong2IntOpenHashMap keyMap1;
+        boolean hasNull1;
+        BitSet nullBitmap1;
+
+        // It's for pair of key: (xxx, null) and not initialized.
+        // Storing the mapping of (xxx) - (groupId).
+        MemoryCountableLong2IntOpenHashMap keyMap2;
+        boolean hasNull2;
+        BitSet nullBitmap2;
+
+        // The groupId of key: (null, null).
+        int groupIdOfDoubleNull;
+
+        @Override
+        public long getMemoryUsage() {
+            return LONG_LONG_BATCH_GROUP_BY_INSTANCE_SIZE
+                + FastMemoryCounter.sizeOf(groupIds)
+                + FastMemoryCounter.sizeOf(longBlock1)
+                + FastMemoryCounter.sizeOf(longBlock2)
+                + (serializedBlock == null ? 0 : INT_128_ARRAY_INSTANCE_SIZE)
+                + FastMemoryCounter.sizeOf(key)
+                + FastMemoryCounter.sizeOf(groupIdSelection)
+                + FastMemoryCounter.sizeOf(dictionaryMapping1)
+                + FastMemoryCounter.sizeOf(dictionaryMapping2)
+                + FastMemoryCounter.sizeOf(value)
+                + FastMemoryCounter.sizeOf(keyMap1)
+                + FastMemoryCounter.sizeOf(keyMap2)
+                + FastMemoryCounter.sizeOf(nullBitmap1)
+                + FastMemoryCounter.sizeOf(nullBitmap2);
+        }
+
+        private class Int128Array implements MemoryCountable {
+            long[] low;
+            long[] high;
+
+            @Override
+            public long getMemoryUsage() {
+                return INT_128_ARRAY_INSTANCE_SIZE
+                    + VMSupport.align((int) SizeOf.sizeOf(low))
+                    + VMSupport.align((int) SizeOf.sizeOf(high));
+            }
+
+            Int128Array(int size) {
+                low = new long[size];
+                high = new long[size];
+            }
+
+            Int128Array(long[] low, long[] high) {
+                this.low = low;
+                this.high = high;
+            }
+
+            final boolean isZero(final int position) {
+                return (low[position] == 0 && high[position] == 0);
+            }
+
+            void setValue(int position, Int128Array right, int rightPosition) {
+                this.low[position] = right.getLow(rightPosition);
+                this.high[position] = right.getHigh(rightPosition);
+            }
+
+            long getLow(int position) {
+                return low[position];
+            }
+
+            long getHigh(int position) {
+                return high[position];
+            }
+
+            boolean slotEqual(int leftPosition, Int128Array right, int rightPosition) {
+                return low[leftPosition] == right.getLow(rightPosition) &&
+                    high[leftPosition] == right.getHigh(rightPosition);
+            }
+
+            int hash(int position, int mask) {
+                long lowHash = HashCommon.mix(low[position]);
+                long highHash = HashCommon.mix(high[position]);
+                return (int) ((lowHash ^ highHash) & mask);
+            }
+        }
+
+        public LongLongBatchGroupBy() {
+            keyMap1 = null;
+            keyMap2 = null;
+            hasNull1 = false;
+            hasNull2 = false;
+            nullBitmap1 = new BitSet(chunkSize);
+            nullBitmap2 = new BitSet(chunkSize);
+            groupIdOfDoubleNull = -1;
+
+            final int expected = expectedSize;
+            this.f = loadFactor;
+            if (!(f <= 0.0F) && !(f > 1.0F)) {
+                if (expected < 0) {
+                    throw new IllegalArgumentException("The expected number of elements must be nonnegative");
+                } else {
+                    this.n = HashCommon.arraySize(expected, f);
+                    this.mask = this.n - 1;
+                    this.maxFill = HashCommon.maxFill(this.n, f);
+
+                    // large memory allocation: hash-table for aggregation.
+                    memoryAllocator.allocateReservedMemory(
+                        SizeOf.sizeOfIntArray(n + 1) + SizeOf.sizeOfLongArray(n + 1));
+
+                    OperatorMemoryOwnerId operatorMemoryOwnerId = MemoryTrackerManager.getCurrentMemoryOwner();
+                    if (operatorMemoryOwnerId != null) {
+                        MemoryTrackerManager.tryAllocate(operatorMemoryOwnerId,
+                            VMSupport.align((int) SizeOf.sizeOfIntArray(n + 1))
+                                + VMSupport.align((int) SizeOf.sizeOfLongArray(n + 1)) * 2
+                        );
+                    }
+
+                    this.key = new Int128Array(this.n + 1);
+                    this.value = new int[this.n + 1];
+                }
+            } else {
+                throw new IllegalArgumentException("Load factor must be greater than 0 and smaller than or equal to 1");
+            }
+        }
+
+        @Override
+        public void putChunk(Chunk keyChunk, Chunk inputChunk, IntArrayList groupIdResult) {
+            Preconditions.checkArgument(keyChunk.getBlockCount() == 2);
+
+            // clear null state
+            hasNull1 = false;
+            hasNull2 = false;
+            nullBitmap1.clear();
+            nullBitmap2.clear();
+
+            Chunk[] aggregatorInputs = new Chunk[aggregators.size()];
+            for (int i = 0; i < aggregators.size(); i++) {
+                aggregatorInputs[i] = valueConverters[i].apply(inputChunk);
+            }
+
+            final int positionCount = inputChunk.getPositionCount();
+
+            // step 1. copy blocks into arrays
+            // step 2. serialize to long
+            // step 3. long type-specific hash, and put group value when first hit.
+            // step 4. accumulator with selection array.
+
+            // step 1. copy blocks into arrays
+            Block keyBlock1 = keyChunk.getBlock(0).cast(Block.class);
+            Block keyBlock2 = keyChunk.getBlock(1).cast(Block.class);
+
+            keyBlock1.copyToLongArray(0, positionCount, longBlock1, 0);
+            keyBlock2.copyToLongArray(0, positionCount, longBlock2, 0);
+
+            // collect null value for all key blocks.
+            if (keyBlock1.mayHaveNull()) {
+                keyBlock1.collectNulls(0, positionCount, nullBitmap1, 0);
+                hasNull1 = !nullBitmap1.isEmpty();
+            }
+            if (keyBlock2.mayHaveNull()) {
+                keyBlock2.collectNulls(0, positionCount, nullBitmap2, 0);
+                hasNull2 = !nullBitmap2.isEmpty();
+            }
+
+            // DictMapping.merge(dict)
+            // int[] remapping = DictMapping.get(hashCode)
+            // int newDictId = remapping[dictId]
+
+            // step 2. serialize to Int128
+            serializedBlock = new Int128Array(longBlock1, longBlock2);
+
+            // step 3. long type-specific hash
+            putHashTable(keyChunk, positionCount);
+
+            // step 4. accumulator with selection array.
+            int groupCount = getGroupCount();
+            if (groupCount <= GROUP_ID_COUNT_THRESHOLD) {
+                for (int groupId = 0; groupId < groupCount; groupId++) {
+                    // collect the position that groupIds[position] = groupId into selection array.
+                    int selSize = 0;
+                    for (int position = 0; position < positionCount; position++) {
+                        if (groupIds[position] == groupId) {
+                            groupIdSelection[selSize++] = position;
+                        }
+                    }
+
+                    // for each aggregator function
+                    if (selSize > 0) {
+                        for (int aggIndex = 0; aggIndex < aggregators.size(); aggIndex++) {
+                            valueAccumulators[aggIndex]
+                                .accumulate(groupId, aggregatorInputs[aggIndex], groupIdSelection, selSize);
+                        }
+                    }
+                }
+            } else {
+                // Fall back to row-by-row execution mode.
+                for (int aggIndex = 0; aggIndex < aggregators.size(); aggIndex++) {
+                    for (int pos = 0; pos < positionCount; pos++) {
+                        valueAccumulators[aggIndex]
+                            .accumulate(groupIds[pos], aggregatorInputs[aggIndex], pos);
+                    }
+                }
+            }
+            if (groupIdResult != null) {
+                for (int i = 0; i < positionCount; i++) {
+                    groupIdResult.add(groupIds[i]);
+                }
+            }
+        }
+
+        @Override
+        public long fixedEstimatedSize() {
+            // The groupId and value map is always growing during aggregation.
+            return getMemoryUsage();
+        }
+
+        @Override
+        public void close() {
+            key = null;
+            value = null;
+            groupIds = null;
+            longBlock1 = null;
+            longBlock2 = null;
+            serializedBlock = null;
+            groupIdSelection = null;
+            dictionaryMapping1.close();
+            dictionaryMapping2.close();
+            dictionaryMapping1 = null;
+            dictionaryMapping2 = null;
+
+            if (keyMap1 != null) {
+                keyMap1.clear();
+                keyMap1 = null;
+            }
+
+            if (keyMap2 != null) {
+                keyMap2.clear();
+                keyMap2 = null;
+            }
+        }
+
+        @Override
+        public int getCardinality() {
+            return groupCount;
+        }
+
+        public void putHashTable(Chunk keyChunk, int positionCount) {
+            for (int position = 0; position < positionCount; position++) {
+                groupIds[position] = findGroupId(serializedBlock, keyChunk, position);
+            }
+        }
+
+        private int findGroupId(Int128Array serializedBlock, Chunk keyChunk, final int position) {
+
+            if (hasNull1 || hasNull2) {
+                // handle null.
+                if (hasNull1 && hasNull2 && nullBitmap1.get(position) && nullBitmap2.get(position)) {
+                    // case1: both keys are null.
+                    if (groupIdOfDoubleNull == -1) {
+                        // allocate new group id
+                        groupIdOfDoubleNull = allocateGroupId(keyChunk, position);
+                    }
+                    return groupIdOfDoubleNull;
+                } else if (hasNull1 && nullBitmap1.get(position)) {
+                    // case2: key of (null, xxx)
+                    if (keyMap1 == null) {
+                        // initialize keyMap1.
+                        keyMap1 = new MemoryCountableLong2IntOpenHashMap();
+                        keyMap1.defaultReturnValue(NOT_EXISTS);
+                    }
+
+                    // put the xxx into key map and allocate group id if needed.
+                    long longValue = longBlock2[position];
+                    int groupId;
+                    if ((groupId = keyMap1.get(longValue)) == NOT_EXISTS) {
+                        groupId = allocateGroupId(keyChunk, position);
+                        keyMap1.put(longValue, groupId);
+                    }
+                    return groupId;
+                } else if (hasNull2 && nullBitmap2.get(position)) {
+                    // case3: key of (xxx, null)
+                    if (keyMap2 == null) {
+                        // initialize keyMap1.
+                        keyMap2 = new MemoryCountableLong2IntOpenHashMap();
+                        keyMap2.defaultReturnValue(NOT_EXISTS);
+                    }
+
+                    // put the xxx into key map and allocate group id if needed.
+                    long longValue = longBlock1[position];
+                    int groupId;
+                    if ((groupId = keyMap2.get(longValue)) == NOT_EXISTS) {
+                        groupId = allocateGroupId(keyChunk, position);
+                        keyMap2.put(longValue, groupId);
+                    }
+                    return groupId;
+                }
+
+                // case 4: the key pair in this position is not (null, null), (null, xxx) or (xxx, null)
+            }
+
+            int pos;
+            if (serializedBlock.isZero(position)) {
+                if (this.containsZeroKey) {
+                    return value[this.n];
+                }
+
+                this.containsZeroKey = true;
+                pos = this.n;
+            } else {
+                pos = serializedBlock.hash(position, this.mask);
+                if (!key.isZero(pos)) {
+                    if (key.slotEqual(pos, serializedBlock, position)) {
+                        return value[pos];
+                    }
+                    while (!key.isZero(pos = pos + 1 & this.mask)) {
+                        if (key.slotEqual(pos, serializedBlock, position)) {
+                            return value[pos];
+                        }
+                    }
+                }
+
+                // not found, insert new key.
+                key.setValue(pos, serializedBlock, position);
+            }
+
+            // allocate new group id
+            int groupId = allocateGroupId(keyChunk, position);
+
+            this.value[pos] = groupId;
+            if (this.size++ >= this.maxFill) {
+                this.rehash(HashCommon.arraySize(this.size + 1, this.f));
+            }
+
+            return groupId;
+        }
+
+        private int allocateGroupId(Chunk keyChunk, int position) {
+            // use groupCount as group value array index.
+            groupKeyBuffer.appendRow(keyChunk, position);
+
+            int groupId = groupCount++;
+
+            // Also add an initial value to accumulators
+            for (int i = 0; i < aggregators.size(); i++) {
+
+                // pre-allocate memory for possible growth.
+                long estimateGrowSize = valueAccumulators[i].estimatedGrowSize();
+                if (estimateGrowSize > 0) {
+                    MemoryTrackerManager.tryAllocate(memoryOwnerId, estimateGrowSize);
+                }
+
+                valueAccumulators[i].appendInitValue();
+            }
+            return groupId;
+        }
+
+        protected void rehash(int newN) {
+            int[] value = this.value;
+            int mask = newN - 1;
+
+            // large memory allocation: rehash of hash-table for aggregation.
+            memoryAllocator.allocateReservedMemory(SizeOf.sizeOfIntArray(newN + 1) + SizeOf.sizeOfLongArray(newN + 1));
+            MemoryTrackerManager.tryAllocate(memoryOwnerId,
+                INT_128_ARRAY_INSTANCE_SIZE +
+                    3 * VMSupport.align((int) SizeOf.sizeOfIntArray(newN + 1)));
+
+            Int128Array newKey = new Int128Array(newN + 1);
+            int[] newValue = new int[newN + 1];
+            int i = this.n;
+
+            int pos;
+            for (int j = this.realSize(); j-- != 0; newValue[pos] = value[i]) {
+                do {
+                    --i;
+                } while (key.isZero(i));
+
+                if (!newKey.isZero(pos = key.hash(i, mask))) {
+                    while (!newKey.isZero(pos = pos + 1 & mask)) {
+                    }
+                }
+                newKey.setValue(pos, key, i);
+            }
+
+            newValue[newN] = value[this.n];
+            this.n = newN;
+            this.mask = mask;
+            this.maxFill = HashCommon.maxFill(this.n, this.f);
+
+            long memoryUsage = FastMemoryCounter.sizeOf(this.key) + FastMemoryCounter.sizeOf(this.value);
+            this.key = newKey;
+            this.value = newValue;
+            // release old key & value
+            MemoryTrackerManager.releaseReference(memoryOwnerId, memoryUsage);
+        }
+
+        private int realSize() {
+            return this.containsZeroKey ? this.size - 1 : this.size;
+        }
+
+    }
+
+    private class NoGroupBy implements GroupBy {
+
+        public NoGroupBy() {
+        }
+
+        //keyChunk and inputChunk are same here
+        @Override
+        public void putChunk(Chunk keyChunk, Chunk inputChunk, IntArrayList groupIdResult) {
+            Chunk[] aggregatorInputs = new Chunk[aggregators.size()];
+            for (int i = 0; i < aggregators.size(); i++) {
+                aggregatorInputs[i] = valueConverters[i].apply(inputChunk);
+            }
+
+            for (int aggIndex = 0; aggIndex < aggregators.size(); aggIndex++) {
+                //TODO: support distinct
+                valueAccumulators[aggIndex]
+                    .accumulate(aggregatorInputs[aggIndex], inputChunk);
+            }
+
+            if (groupIdResult != null) {
+                final int positionCount = inputChunk.getPositionCount();
+                for (int i = 0; i < positionCount; i++) {
+                    groupIdResult.add(0);
+                }
+            }
+        }
+
+        @Override
+        public long fixedEstimatedSize() {
+            return (chunkSize * Integer.BYTES) * 2;
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public int getCardinality() {
+            return 1;
+        }
+
+        @Override
+        public long getMemoryUsage() {
+            return NO_GROUP_BY_INSTANCE_SIZE;
+        }
     }
 
     private class DefaultGroupBy implements GroupBy {
@@ -1173,10 +2097,15 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
         }
 
         @Override
+        public long getMemoryUsage() {
+            return DEFAULT_GROUP_BY_INSTANCE_SIZE + FastMemoryCounter.sizeOf(keys);
+        }
+
+        @Override
         public void putChunk(Chunk keyChunk, Chunk inputChunk, IntArrayList groupIdResult) {
             Chunk[] aggregatorInputs;
-            aggregatorInputs = new Chunk[aggregators.size()];
-            for (int i = 0; i < aggregators.size(); i++) {
+            aggregatorInputs = new Chunk[aggregatorSize];
+            for (int i = 0; i < aggregatorSize; i++) {
                 aggregatorInputs[i] = valueConverters[i].apply(inputChunk);
             }
 
@@ -1193,7 +2122,7 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
             }
 
             final Block groupIdBlock = IntegerBlock.wrap(groupIds);
-            for (int aggIndex = 0; aggIndex < aggregators.size(); aggIndex++) {
+            for (int aggIndex = 0; aggIndex < aggregatorSize; aggIndex++) {
                 Chunk aggInputChunk = aggregatorInputs[aggIndex];
                 boolean[] isDistinct = null;
                 if (distinctSets[aggIndex] != null) {
@@ -1236,6 +2165,11 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
         @Override
         public void close() {
             this.keys = null;
+        }
+
+        @Override
+        public int getCardinality() {
+            return groupCount;
         }
 
         /**
@@ -1314,9 +2248,15 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
 
             // large memory allocation: rehash of hash-table for aggregation.
             memoryAllocator.allocateReservedMemory(SizeOf.sizeOfIntArray(n));
+            MemoryTrackerManager.tryAllocate(memoryOwnerId, VMSupport.align((int) SizeOf.sizeOfIntArray(n)));
+
             int[] keys = new int[n];
             Arrays.fill(keys, NOT_EXISTS);
+
+            long memoryUsage = FastMemoryCounter.sizeOf(this.keys);
             this.keys = keys;
+            // release old key & value
+            MemoryTrackerManager.releaseReference(memoryOwnerId, memoryUsage);
 
             List<Chunk> groupChunks = groupKeyBuffer.buildChunks();
             int groupId = 0;
@@ -1329,33 +2269,30 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
     }
 
     @Override
-    public void putChunk(Chunk keyChunk, Chunk inputChunk, IntArrayList groupIdResult) {
+    public void putChunk(Chunk keyChunk, Chunk inputChunk, MemoryCountableIntArrayList groupIdResult) {
         groupBy.putChunk(keyChunk, inputChunk, groupIdResult);
     }
 
-    @Override
     int appendGroup(Chunk chunk, int position) {
-        int groupId = super.appendGroup(chunk, position);
+        groupKeyBuffer.appendRow(chunk, position);
+        int groupId = groupCount++;
 
         // Also add an initial value to accumulators
-        for (int i = 0; i < aggregators.size(); i++) {
+        for (int i = 0; i < aggregatorSize; i++) {
+
+            // pre-allocate memory for possible growth.
+            long estimateGrowSize = valueAccumulators[i].estimatedGrowSize();
+            if (estimateGrowSize > 0) {
+                MemoryTrackerManager.tryAllocate(memoryOwnerId, estimateGrowSize);
+            }
+
             valueAccumulators[i].appendInitValue();
         }
         return groupId;
     }
 
-    @Override
-    public List<Chunk> getGroupChunkList() {
-        return groupChunks;
-    }
-
-    @Override
-    public List<Chunk> getValueChunkList() {
-        return valueChunks;
-    }
-
-    protected List<Chunk> buildValueChunks() {
-        List<Chunk> chunks = new ArrayList<>();
+    protected MemoryCountableObjectArrayList<Chunk> buildValueChunks() {
+        MemoryCountableObjectArrayList<Chunk> chunks = new MemoryCountableObjectArrayList<>();
         int offset = 0;
         for (int groupId = 0; groupId < getGroupCount(); groupId++) {
             for (int i = 0; i < valueAccumulators.length; i++) {
@@ -1385,23 +2322,44 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
             blocks[i] = valueBlockBuilders[i].build();
             valueBlockBuilders[i] = valueBlockBuilders[i].newBlockBuilder();
         }
-        return new Chunk(blocks);
+        Chunk chunk = new Chunk(blocks);
+        MemoryTrackerManager.tryReverseReference(memoryOwnerId, FastMemoryCounter.sizeOf(chunk));
+        return chunk;
     }
 
     @Override
     public AggResultIterator buildChunks() {
-        groupChunks = buildGroupChunks();
-        valueChunks = buildValueChunks();
+        MemoryCountableObjectArrayList<Chunk> groupChunks = buildGroupChunks();
+        MemoryCountableObjectArrayList<Chunk> valueChunks = buildValueChunks();
         return new HashAggResultIterator(groupChunks, valueChunks);
     }
 
-    @Override
-    List<Chunk> buildGroupChunks() {
-        List<Chunk> result = super.buildGroupChunks();
+    public PartialHashAggResultIterator buildPartialAggChunks() {
+        MemoryCountableObjectArrayList<Chunk> groupChunks = buildGroupChunks();
+        MemoryCountableObjectArrayList<Chunk> valueChunks = buildValueChunks();
+        return new PartialHashAggResultIterator(groupChunks, valueChunks);
+    }
+
+    public int getCardinality() {
+        return groupBy.getCardinality();
+    }
+
+    MemoryCountableObjectArrayList<Chunk> buildGroupChunks() {
+        MemoryCountableObjectArrayList<Chunk> result = groupKeyBuffer.buildChunks();
+
+        // set null to deallocate memory
+        groupKeyBuffer = null;
+
         if (groupBy != null) {
             groupBy.close();
             groupBy = null;
         }
+        //close group by in distinct set
+        for (int originIndex : distinctAggIndex) {
+            distinctSets[originIndex].close();
+        }
+
+        MemoryTrackerManager.adjustMemoryUsage(memoryOwnerId);
 
         return result;
     }
@@ -1411,7 +2369,7 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
     }
 
     private IntIterator hashSortedGroupIds() {
-        this.groupChunks = groupKeyBuffer.buildChunks();
+        MemoryCountableObjectArrayList<Chunk> groupChunks = groupKeyBuffer.buildChunks();
         if (this.groupBy != null) {
             this.groupBy.close();
         }
@@ -1496,23 +2454,25 @@ public class AggOpenHashMap extends GroupOpenHashMap implements AggHashMap {
     public void close() {
     }
 
+    public void reset() {
+        this.valueAccumulators = null;
+        this.filterArgs = null;
+        this.distinctSets = null;
+        this.distinctAggIndex = null;
+
+        initialize(false);
+    }
+
     @Override
     public long estimateSize() {
-        long size = super.estimateSize();
-        if (groupChunks != null) {
-            for (Chunk chunk : groupChunks) {
-                size += chunk.estimateSize();
-            }
-        }
-        if (valueChunks != null) {
-            for (Chunk chunk : valueChunks) {
-                size += chunk.estimateSize();
-            }
-        } else {
-            for (int i = 0; i < aggregators.size(); i++) {
-                size += valueAccumulators[i].estimateSize();
-            }
-        }
-        return size;
+        return getMemoryUsage();
+    }
+
+    public List<Aggregator> getAggregators() {
+        return aggregators;
+    }
+
+    public ChunkConverter[] getValueConverters() {
+        return valueConverters;
     }
 }

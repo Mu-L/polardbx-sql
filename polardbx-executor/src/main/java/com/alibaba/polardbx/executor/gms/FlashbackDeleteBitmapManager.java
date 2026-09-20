@@ -74,6 +74,10 @@ public class FlashbackDeleteBitmapManager extends AbstractLifecycle {
             if (readPos < 0) {
                 maxLength =
                     ((DynamicColumnarManager) ColumnarManager.getInstance()).getMaxLength(deleteFileName, flashbackTso);
+                if (maxLength == 0) {
+                    // short path: avoid access OSS for empty file
+                    continue;
+                }
             }
 
             try (SimpleDeletionFileReader fileReader = new SimpleDeletionFileReader()) {
@@ -93,9 +97,11 @@ public class FlashbackDeleteBitmapManager extends AbstractLifecycle {
                 DeletionFileReader.DeletionEntry entry;
                 // readPos < 0 means auto position for flashback query
                 while ((readPos < 0 || fileReader.position() < readPos) && (entry = fileReader.next()) != null) {
-                    final long tso = entry.getTso();
-                    if (tso > flashbackTso) {
-                        break;
+                    if (readPos < 0) {
+                        final long tso = entry.getTso();
+                        if (tso > flashbackTso) {
+                            break;
+                        }
                     }
                     final int fileId = entry.getFileId();
                     final RoaringBitmap bitmap = entry.getBitmap();

@@ -25,6 +25,7 @@ import com.alibaba.polardbx.common.properties.StringConfigParam;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.ttl.TtlInfoRecord;
+import org.jetbrains.annotations.NotNull;
 
 import java.time.ZoneId;
 import java.util.Calendar;
@@ -32,6 +33,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.TimeZone;
 
+import static com.alibaba.polardbx.common.properties.ConnectionParams.*;
 import static com.alibaba.polardbx.common.properties.ConnectionParams.MAINTENANCE_TIME_END;
 import static com.alibaba.polardbx.common.properties.ConnectionParams.MAINTENANCE_TIME_START;
 import static com.alibaba.polardbx.common.properties.ConnectionParams.REBALANCE_MAINTENANCE_ENABLE;
@@ -66,12 +68,51 @@ public class InstConfUtil {
             REBALANCE_MAINTENANCE_ENABLE);
     }
 
-    public static boolean isInTtlJobMaintenanceTimeWindow() {
-        boolean enabled = getBool(TTL_JOB_MAINTENANCE_ENABLE);
+    public static boolean isInPurgePhyRecyclebinMaintenanceTimeWindow() {
+        return isInPurgePhyRecyclebinMaintenanceTimeWindow(PURGE_PHY_RECYCLEBIN_MAINTENANCE_TIME_START,
+            PURGE_PHY_RECYCLEBIN_MAINTENANCE_TIME_END,
+            PURGE_PHY_RECYCLEBIN_MAINTENANCE_ENABLE);
+    }
+
+    public static boolean isInPurgePhyRecyclebinMaintenanceTimeWindow(StringConfigParam maintenanceTimeStart,
+                                                                      StringConfigParam maintenanceTimeEnd,
+                                                                      BooleanConfigParam purgePhyRecyclebinMainTenanceEnable) {
+        boolean enabled = getBool(purgePhyRecyclebinMainTenanceEnable);
         if (!enabled) {
             return true;// no limit, always works.
         }
+        String startTime = getOriginVal(maintenanceTimeStart);
+        String endTime = getOriginVal(maintenanceTimeEnd);
+        try {
+            int startTimeInt = getMinute(startTime);
+            int endTimeInt = getMinute(endTime);
+            if (startTimeInt == endTimeInt) {
+                return true;// no limit, always works.
+            }
+        } catch (Exception e) {
+            logger.error(
+                "purge physical recyclebin maintenance time parse error, check config  " + maintenanceTimeStart + "/"
+                    + maintenanceTimeEnd,
+                e);
+            return false;
+        }
+        return isInMaintenanceTimeWindow(Calendar.getInstance(),
+            maintenanceTimeStart, maintenanceTimeEnd);
+    }
 
+    public static boolean isUsingTtlJobMaintenanceTimeWindow() {
+        boolean enabled = getBool(TTL_JOB_MAINTENANCE_ENABLE);
+        return enabled;
+    }
+
+    public static boolean isInTtlJobMaintenanceTimeWindow() {
+        boolean enabled = getBool(TTL_JOB_MAINTENANCE_ENABLE);
+        if (!enabled) {
+            /**
+             * if ttl_job maintenance time window is disabled, then use normal maintenance time window
+             */
+            return isInMaintenanceTimeWindow();
+        }
         ZoneId zoneId = ZoneId.of(TtlInfoRecord.TTL_JOB_CRON_DEFAULT_TIME_ZONE);
         TimeZone cronTimezone = TimeZone.getTimeZone(zoneId);
         return isInMaintenanceTimeWindow(Calendar.getInstance(cronTimezone), TTL_JOB_MAINTENANCE_TIME_START,
@@ -129,6 +170,71 @@ public class InstConfUtil {
                 "maintenance time parse error, check config  " + maintenanceTimeStart + "/" + maintenanceTimeEnd,
                 e);
             return false;
+        }
+    }
+
+    public static boolean isInMaintenanceTimeWindowByStartEndValue(Calendar calendar,
+                                                                   String maintenanceTimeStartStr,
+                                                                   String maintenanceTimeEndStr) {
+
+        int currentMinute = calendar.get(Calendar.MINUTE) + calendar.get(Calendar.HOUR_OF_DAY) * 60;
+        String startTime = maintenanceTimeStartStr;
+        String endTime = maintenanceTimeEndStr;
+        try {
+            int startTimeInt = getMinute(startTime);
+            int endTimeInt = getMinute(endTime);
+
+            // check time config valid
+            checkTimeValid(startTimeInt, endTimeInt);
+
+            if (startTimeInt <= endTimeInt) {
+                return startTimeInt <= currentMinute && currentMinute <= endTimeInt;
+            } else {
+                return (MAX_TIME_CONFIG >= currentMinute && currentMinute >= startTimeInt)
+                    || endTimeInt >= currentMinute;
+            }
+
+        } catch (Exception e) {
+            logger.error(
+                "maintenance time parse error, check config  " + maintenanceTimeStartStr + "/" + maintenanceTimeEndStr,
+                e);
+            return false;
+        }
+    }
+
+    public static int remainTimeInMaintenanceTimeWindow(Calendar calendar, String startTime, String endTime) {
+
+        int currentMinute = calendar.get(Calendar.MINUTE) + calendar.get(Calendar.HOUR_OF_DAY) * 60;
+        try {
+            int startTimeInt = getMinute(startTime);
+            int endTimeInt = getMinute(endTime);
+
+            // check time config valid
+            checkTimeValid(startTimeInt, endTimeInt);
+
+            if (startTimeInt <= endTimeInt) {
+                if (currentMinute >= endTimeInt) {
+                    return 0;
+                } else {
+                    return (endTimeInt - currentMinute) * 60;
+                }
+            } else {
+                if (currentMinute <= endTimeInt) {
+                    return (endTimeInt - currentMinute) * 60;
+                } else {
+                    if (currentMinute <= startTimeInt) {
+                        return 0;
+                    } else {
+                        return (MAX_TIME_CONFIG - currentMinute + endTimeInt) * 60;
+                    }
+                }
+            }
+
+        } catch (Exception e) {
+            logger.error(
+                "maintenance time parse error, check config  " + startTime + "/" + endTime,
+                e);
+            return 0;
         }
     }
 
@@ -245,6 +351,7 @@ public class InstConfUtil {
         return intValue;
     }
 
+    @NotNull
     public static String getOriginVal(ConfigParam c) {
         String val = MetaDbInstConfigManager.getInstance().propertiesInfoMap.getProperty(c.getName());
         if (val == null) {
@@ -254,5 +361,9 @@ public class InstConfUtil {
             val = "";
         }
         return val;
+    }
+
+    public static String getValNoDefault(ConfigParam c) {
+        return MetaDbInstConfigManager.getInstance().propertiesInfoMap.getProperty(c.getName());
     }
 }

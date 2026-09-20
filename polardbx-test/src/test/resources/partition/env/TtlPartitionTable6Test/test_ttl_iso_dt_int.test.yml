@@ -1,0 +1,78 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set sql_mode='';
+
+drop table if exists r_iso_dt_int;
+create table r_iso_dt_int
+(
+a bigint unsigned,
+b datetime,
+c varchar(32),
+primary key(a)
+)
+partition by range columns(a)
+(
+partition p20250501 values less than(20250501000000),
+partition p20250502 values less than(20250502000000),
+partition p20250503 values less than(20250503000000),
+partition p20250504 values less than(20250504000000),
+partition p20250505 values less than(20250505000000)
+);
+
+alter table r_iso_dt_int modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = `a` expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+ttl_col_encoder=date_format(?, '%Y%m%d%H%i%s'),
+ttl_col_decoder=str_to_date(?, '%Y%m%d%H%i%s'),
+archive_type='partition',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_iso_dt_int cleanup expired data;
+show create table r_iso_dt_int;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_iso_dt_int cleanup expired data;
+show create table r_iso_dt_int;
+
+alter table r_iso_dt_int modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = `a` expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+ttl_col_encoder=date_format(?, '%Y%m%d%H%i%s'),
+ttl_col_decoder=str_to_date(?, '%Y%m%d%H%i%s'),
+archive_type='row',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+
+insert into r_iso_dt_int(a,b,c) values (20250501000000, from_unixtime(1746028800), from_unixtime(1746028800));
+insert into r_iso_dt_int(a,b,c) values (20250627000000, from_unixtime(1750953600), from_unixtime(1750953600));
+insert into r_iso_dt_int(a,b,c) values (20250628000000, from_unixtime(1751040000), from_unixtime(1751040000));
+
+set time_zone='+08:00';
+
+select a,b,c from r_iso_dt_int order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_iso_dt_int cleanup expired data;
+select a,b,c from r_iso_dt_int order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-28 00:00:00';
+alter table r_iso_dt_int cleanup expired data;
+select a,b,c from r_iso_dt_int order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-29 00:00:00';
+alter table r_iso_dt_int cleanup expired data;
+select a,b,c from r_iso_dt_int order by a,b,c;
+
+drop table r_iso_dt_int;

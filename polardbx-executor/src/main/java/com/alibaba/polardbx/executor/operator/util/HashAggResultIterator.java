@@ -16,26 +16,46 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableObjectArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.google.common.base.Preconditions;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class HashAggResultIterator implements AggResultIterator {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(HashAggResultIterator.class).instanceSize();
+    private static final int ATOMIC_INTEGER_SIZE = ClassLayout.parseClass(AtomicInteger.class).instanceSize();
 
-    private final List<Chunk> groupChunks;
-    private final List<Chunk> valueChunks;
+    private final MemoryCountableObjectArrayList<Chunk> groupChunks;
+    private final MemoryCountableObjectArrayList<Chunk> valueChunks;
 
     private final AtomicInteger current = new AtomicInteger();
     private final int size;
 
     public HashAggResultIterator(List<Chunk> groupChunks, List<Chunk> valueChunks) {
         Preconditions.checkArgument(groupChunks.size() == valueChunks.size());
+        this.groupChunks = new MemoryCountableObjectArrayList(groupChunks);
+        this.valueChunks = new MemoryCountableObjectArrayList(valueChunks);
+        this.size = groupChunks.size();
+    }
+
+    public HashAggResultIterator(MemoryCountableObjectArrayList<Chunk> groupChunks,
+                                 MemoryCountableObjectArrayList<Chunk> valueChunks) {
+        Preconditions.checkArgument(groupChunks.size() == valueChunks.size());
         this.groupChunks = groupChunks;
         this.valueChunks = valueChunks;
         this.size = groupChunks.size();
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + ATOMIC_INTEGER_SIZE
+            + FastMemoryCounter.sizeOf(groupChunks)
+            + FastMemoryCounter.sizeOf(valueChunks);
     }
 
     @Override
@@ -47,6 +67,10 @@ public class HashAggResultIterator implements AggResultIterator {
 
         Chunk groupChunk = groupChunks.get(index);
         Chunk valueChunk = valueChunks.get(index);
+
+        // clear fetched chunk.
+        groupChunks.set(index, null);
+        valueChunks.set(index, null);
 
         int valueBlockCount = valueChunk.getBlockCount();
         int groupBlockCount = groupChunk.getBlockCount();

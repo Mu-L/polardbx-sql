@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.optimizer.partition.datatype.function;
 
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.time.MySQLTimeTypeUtil;
 import com.alibaba.polardbx.common.utils.time.calculator.MySQLIntervalType;
 import com.alibaba.polardbx.common.utils.time.calculator.MySQLTimeCalculator;
@@ -43,6 +44,8 @@ public class ToDaysPartitionIntFunction extends PartitionIntFunction {
     @Override
     public Monotonicity getMonotonicity(DataType<?> fieldType) {
         if (fieldType.getSqlType() == Types.DATE) {
+            return MONOTONIC_STRICT_INCREASING_NOT_NULL;
+        } else if (fieldType.getSqlType() == Types.TIMESTAMP) {
             return MONOTONIC_STRICT_INCREASING_NOT_NULL;
         } else if (fieldType.getSqlType() == MySQLTimeTypeUtil.DATETIME_SQL_TYPE) {
             return MONOTONIC_INCREASING_NOT_NULL;

@@ -36,41 +36,22 @@ import java.util.TreeMap;
  */
 public class PolarLoginErrConfig {
 
-    private static class UserLoginErrConfig {
-
-        private final int passwordMaxErrorCount;
-        /**
-         * 错误次数重置的时间
-         */
-        private final long expireSeconds;
-        private final Date passwordExpireDate;
-
-        UserLoginErrConfig(int passwordMaxErrorCount, long expireSeconds, Date passwordExpireDate) {
-            this.passwordMaxErrorCount = passwordMaxErrorCount;
-            this.expireSeconds = expireSeconds;
-            this.passwordExpireDate = passwordExpireDate;
-        }
-
-        public UserLoginErrConfig(UserLoginErrConfig defaultConfig) {
-            this.passwordMaxErrorCount = defaultConfig.passwordMaxErrorCount;
-            this.expireSeconds = defaultConfig.expireSeconds;
-            this.passwordExpireDate = defaultConfig.passwordExpireDate;
-        }
-
-        static UserLoginErrConfig getDefaultConfig() {
-            return new UserLoginErrConfig(0, 0, null);
-        }
-    }
+    protected static final UserLoginErrConfig EMPTY_LOGIN_ERR_CONFIG = UserLoginErrConfig.getDefaultConfig();
 
     protected static final Logger logger = LoggerFactory.getLogger(PolarLoginErrConfig.class);
 
     public static final String PASSWORD_MAX_ERROR_COUNT_KEY = "passwordMaxErrorCount";
     public static final String EXPIRE_SECONDS_KEY = "expireSeconds";
     public static final String PASSWORD_EXPIRE_DATE_KEY = "passwordExpireDate";
-
+    public static final String INITIAL_EXPIRE_SECONDS_KEY = "initialExpireSeconds";
     public static final SimpleDateFormat EXPIRE_DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
-    private final UserLoginErrConfig DEFAULT_LOGIN_ERR_CONFIG;
+    public Date  getPasswordExpireDate(String username) {
+        UserLoginErrConfig config = getUserLoginErrConfig(username);
+        return config.passwordExpireDate;
+    }
+
+    private UserLoginErrConfig DEFAULT_LOGIN_ERR_CONFIG;
     private final Map<String, UserLoginErrConfig> userLoginErrConfigMap =
         Collections.synchronizedSortedMap(new TreeMap<>(String.CASE_INSENSITIVE_ORDER));
 
@@ -118,7 +99,7 @@ public class PolarLoginErrConfig {
                     userLoginErrConfig = new UserLoginErrConfig(defaultConfig);
                 } else {
                     int passwordMaxErrorCount;
-                    long expireSeconds;
+                    long expireSeconds, initialExpireSeconds;
                     Date passwordExpireDate;
 
                     if (userConfig.containsKey(PASSWORD_MAX_ERROR_COUNT_KEY)) {
@@ -136,8 +117,13 @@ public class PolarLoginErrConfig {
                     } else {
                         passwordExpireDate = defaultConfig.passwordExpireDate;
                     }
-                    userLoginErrConfig =
-                        new UserLoginErrConfig(passwordMaxErrorCount, expireSeconds, passwordExpireDate);
+                    if (userConfig.containsKey(INITIAL_EXPIRE_SECONDS_KEY)) {
+                        initialExpireSeconds = getInitialExpireSeconds(userConfig);
+                    } else {
+                        initialExpireSeconds = defaultConfig.initialExpireSeconds;
+                    }
+                    userLoginErrConfig = new UserLoginErrConfig(passwordMaxErrorCount,
+                        expireSeconds, passwordExpireDate, initialExpireSeconds);
                 }
 
                 userLoginErrConfigMap.put(username, userLoginErrConfig);
@@ -156,7 +142,9 @@ public class PolarLoginErrConfig {
         int passwordMaxErrorCount = getPasswordMaxErrorCount(userConfig);
         long expireSeconds = getExpireSeconds(userConfig);
         Date passwordExpireDate = getPasswordExpireDate(userConfig);
-        return new UserLoginErrConfig(passwordMaxErrorCount, expireSeconds, passwordExpireDate);
+        long initialExpireSeconds = getInitialExpireSeconds(userConfig);
+        return new UserLoginErrConfig(passwordMaxErrorCount, expireSeconds,
+            passwordExpireDate, initialExpireSeconds);
     }
 
     private static int getPasswordMaxErrorCount(JSONObject userConfig) {
@@ -173,6 +161,14 @@ public class PolarLoginErrConfig {
             expireSeconds = 0;
         }
         return expireSeconds;
+    }
+
+    private static long getInitialExpireSeconds(JSONObject userConfig) {
+        long initialExpireSeconds = userConfig.getLongValue(INITIAL_EXPIRE_SECONDS_KEY);
+        if (initialExpireSeconds <= 0) {
+            initialExpireSeconds = 0;
+        }
+        return initialExpireSeconds;
     }
 
     private static Date getPasswordExpireDate(JSONObject userConfig) {
@@ -198,17 +194,78 @@ public class PolarLoginErrConfig {
         return config.expireSeconds;
     }
 
-    public Date getPasswordExpireDate(String username) {
+    public long getInitialExpireSeconds(String username) {
         UserLoginErrConfig config = getUserLoginErrConfig(username);
-        return config.passwordExpireDate;
+        return config.initialExpireSeconds;
     }
 
-    private UserLoginErrConfig getUserLoginErrConfig(String username) {
+     public UserLoginErrConfig getUserLoginErrConfig(String username) {
+        if (StringUtils.equalsIgnoreCase(username, PolarPrivUtil.POLAR_ROOT)) {
+            return EMPTY_LOGIN_ERR_CONFIG;
+        }
         UserLoginErrConfig config = userLoginErrConfigMap.get(username);
         if (config == null) {
             config = DEFAULT_LOGIN_ERR_CONFIG;
         }
         return config;
+    }
+
+    public UserLoginErrConfig getDefaultLoginErrConfig() {
+        return DEFAULT_LOGIN_ERR_CONFIG;
+    }
+
+    public void setDefaultLoginErrConfig(UserLoginErrConfig defaultLoginErrConfig) {
+        this.DEFAULT_LOGIN_ERR_CONFIG = defaultLoginErrConfig;
+    }
+
+    public static class UserLoginErrConfig {
+
+        private final int passwordMaxErrorCount;
+        /**
+         * 错误次数重置的时间
+         */
+        private final long expireSeconds;
+        private final Date passwordExpireDate;
+        private final long initialExpireSeconds;
+
+        public UserLoginErrConfig(int passwordMaxErrorCount, long expireSeconds,
+                           Date passwordExpireDate, long initialExpireSeconds) {
+            this.passwordMaxErrorCount = passwordMaxErrorCount;
+            this.expireSeconds = expireSeconds;
+            this.passwordExpireDate = passwordExpireDate;
+            this.initialExpireSeconds = initialExpireSeconds;
+        }
+
+        public UserLoginErrConfig(UserLoginErrConfig defaultConfig) {
+            this.passwordMaxErrorCount = defaultConfig.passwordMaxErrorCount;
+            this.expireSeconds = defaultConfig.expireSeconds;
+            this.passwordExpireDate = defaultConfig.passwordExpireDate;
+            this.initialExpireSeconds = defaultConfig.initialExpireSeconds;
+        }
+
+        static UserLoginErrConfig getDefaultConfig() {
+            return new UserLoginErrConfig(0, 0, null, 0);
+        }
+
+        public long getInitialExpireSeconds() {
+            return initialExpireSeconds;
+        }
+
+        public boolean enableExpireTimeBackoff() {
+            return initialExpireSeconds > 0;
+        }
+
+        public int getPasswordMaxErrorCount() {
+            return passwordMaxErrorCount;
+        }
+
+        public long getExpireSeconds() {
+            return expireSeconds;
+        }
+
+        public Date getPasswordExpireDate() {
+            return passwordExpireDate;
+        }
     }
 
     public String getPasswordExpireDateString(String username) {

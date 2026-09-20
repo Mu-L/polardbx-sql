@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.chunk;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableLongArrayList;
 import com.alibaba.polardbx.common.datatype.Decimal;
 import com.alibaba.polardbx.common.datatype.DecimalConverter;
 import com.alibaba.polardbx.common.datatype.DecimalStructure;
@@ -54,6 +55,7 @@ public class DecimalBlockBuilder extends AbstractBlockBuilder implements Segment
     /**
      * UNSET / DECIMAL_64 / DECIMAL_128 /
      */
+    @FieldMemoryCounter(value = false)
     DecimalBlockState state;
 
     private int scale;
@@ -85,7 +87,6 @@ public class DecimalBlockBuilder extends AbstractBlockBuilder implements Segment
             + FastMemoryCounter.sizeOf(sliceOutput)
             + FastMemoryCounter.sizeOf(decimal64List)
             + FastMemoryCounter.sizeOf(decimal128HighList)
-            + (state == null ? 0 : state.memorySize())
             + FastMemoryCounter.sizeOf(decimalBuffer)
             + FastMemoryCounter.sizeOf(decimalResult);
     }

@@ -1,0 +1,16 @@
+# clean
+drop table if exists `account_0`;
+
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/
+CREATE TABLE `account_0` (
+`id` BIGINT NOT NULL,
+`balance` DECIMAL(10, 2) NOT NULL,
+PRIMARY KEY (`id`)
+) PARTITION BY KEY(`id`) COMMENT '__POLARDBX_BLOCK_CHAIN__';
+
+show full create table `account_0`;
+
+show full create table `__account_0_hist`;
+
+  # cleanup
+drop table if exists `account_0`;

@@ -1,37 +1,28 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.executor.operator;
 
-import com.alibaba.polardbx.executor.utils.ConditionUtils;
-import com.alibaba.polardbx.executor.vectorized.BuiltInFunctionVectorizedExpression;
-import com.alibaba.polardbx.executor.vectorized.VectorizedExpression;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.MutableChunk;
 import com.alibaba.polardbx.executor.chunk.RandomAccessBlock;
+import com.alibaba.polardbx.executor.utils.ConditionUtils;
 import com.alibaba.polardbx.executor.vectorized.EvaluationContext;
+import com.alibaba.polardbx.executor.vectorized.VectorizedExpression;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.List;
 
 public class VectorizedFilterExec extends AbstractExecutor {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(VectorizedFilterExec.class).instanceSize();
+
+    @FieldMemoryCounter(value = false)
     protected final Executor input;
+    @FieldMemoryCounter(value = false)
     protected VectorizedExpression condition;
 
     private MutableChunk preAllocatedChunk;
@@ -46,6 +37,19 @@ public class VectorizedFilterExec extends AbstractExecutor {
         this.condition = condition;
         this.preAllocatedChunk = preAllocatedChunk;
         position = 0;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+
+            // super class
+            + FastMemoryCounter.sizeOf(blockBuilders)
+            + FastMemoryCounter.sizeOf(executorName)
+
+            // this class
+            + FastMemoryCounter.sizeOf(preAllocatedChunk)
+            + FastMemoryCounter.sizeOf(inputChunk);
     }
 
     @Override
@@ -88,7 +92,14 @@ public class VectorizedFilterExec extends AbstractExecutor {
         for (int i = 0; i < blockCount; i++) {
             preAllocatedChunk.setSlotAt((RandomAccessBlock) chunk.getBlock(i), i);
         }
-        preAllocatedChunk.reallocate(chunkSize, blockCount);
+
+        try {
+            MemoryTrackerManager.setCurrentMemoryOwner(producerMemoryOwnerId);
+            preAllocatedChunk.reallocate(chunkSize, blockCount);
+        } finally {
+            MemoryTrackerManager.removeCurrentMemoryOwner();
+        }
+
 
         EvaluationContext evaluationContext = new EvaluationContext(preAllocatedChunk, context);
         condition.eval(evaluationContext);

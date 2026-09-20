@@ -1,0 +1,4 @@
+test_replicas_table_dml
+test_replicas_table_dml_with_ddl
+test_replicas_table_dml_with_func
+test_replicas_table_dml_complex_update

@@ -17,20 +17,19 @@
 package com.alibaba.polardbx.qatest.dql.auto.join;
 
 import com.alibaba.polardbx.common.utils.Assert;
-import com.alibaba.polardbx.qatest.data.ExecuteTableSelect;
 import com.alibaba.polardbx.qatest.AutoReadBaseTestCase;
+import com.alibaba.polardbx.qatest.data.ExecuteTableSelect;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import org.junit.Test;
 import org.junit.runners.Parameterized;
 
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.List;
 
-import static com.alibaba.polardbx.qatest.validator.DataValidator.selectContentSameAssert;
 import static com.alibaba.polardbx.qatest.validator.DataValidator.selectContentSameAssertWithDiffSql;
-import static com.alibaba.polardbx.qatest.validator.DataValidator.updateErrorAssert;
 
 /**
  * @author dylan
@@ -311,6 +310,56 @@ public class CTETest extends AutoReadBaseTestCase {
         }
 
         Assert.assertTrue(count == 1);
+    }
+
+    @Test
+    public void recursiveCteTestJoin() throws SQLException {
+        String dbName = "recursive_cte_test_join";
+
+        // prepare data
+        String createTable = "CREATE TABLE `path_test` (\n"
+            + "\t`id` int NOT NULL COMMENT '主键ID',\n"
+            + "\t`parent_id` int NOT NULL COMMENT '父级ID',\n"
+            + "\tPRIMARY KEY USING BTREE (`id`)\n"
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_unicode_ci COMMENT ''\n"
+            + "PARTITION BY KEY(`id`)\n"
+            + "PARTITIONS 4";
+        try (Connection c = getPolardbxConnection()) {
+            c.createStatement().execute("create database " + dbName + " mode=auto");
+            c.createStatement().execute("use " + dbName);
+            c.createStatement().execute(createTable);
+
+            c.createStatement().execute("insert into path_test values(1,5)");
+            c.createStatement().execute("insert into path_test values(2,5)");
+            c.createStatement().execute("insert into path_test values(3,6)");
+            c.createStatement().execute("insert into path_test values(4,6)");
+            c.createStatement().execute("insert into path_test values(5,-1)");
+            c.createStatement().execute("insert into path_test values(6,-1)");
+        }
+
+        // test recursive cte
+        try (Connection c = getPolardbxConnection()) {
+            c.createStatement().execute("use " + dbName);
+            String sql =
+                " WITH RECURSIVE cte2 AS\n"
+                    + "  (SELECT id, parent_id FROM path_test WHERE id='6'\n"
+                    + "   UNION SELECT path_test.id, path_test.parent_id FROM path_test JOIN cte2 ON path_test.parent_id = cte2.id)\n"
+                    + "SELECT sum(id) FROM cte2";
+
+            ResultSet resultSet = c.createStatement().executeQuery(sql);
+            resultSet.next();
+            Assert.assertTrue(resultSet.getInt(1) == 13);
+
+            sql =
+                " WITH RECURSIVE cte2 AS\n"
+                    + "  (SELECT id, parent_id FROM path_test WHERE id='5'\n"
+                    + "   UNION SELECT path_test.id, path_test.parent_id FROM path_test JOIN cte2 ON path_test.parent_id = cte2.id)\n"
+                    + "SELECT sum(id) FROM cte2";
+
+            resultSet = c.createStatement().executeQuery(sql);
+            resultSet.next();
+            Assert.assertTrue(resultSet.getInt(1) == 8);
+        }
     }
 }
 

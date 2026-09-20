@@ -34,7 +34,6 @@ import com.google.common.collect.ImmutableList;
 import lombok.Getter;
 
 import java.sql.Connection;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -110,6 +109,11 @@ public class GsiInsertColumnMetaTask extends BaseGmsTask {
     }
 
     @Override
+    protected void beforeTransaction(ExecutionContext executionContext) {
+        // 存在并发加列，不校验版本
+    }
+
+    @Override
     protected void rollbackImpl(Connection metaDbConnection, ExecutionContext executionContext) {
         for (String column : this.getColumns()) {
             ExecutorContext
@@ -123,10 +127,6 @@ public class GsiInsertColumnMetaTask extends BaseGmsTask {
                 indexName,
                 column));
         }
-
-        //sync have to be successful to continue
-        SyncManagerHelper.sync(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
-        executionContext.refreshTableMeta();
 
         LOGGER.info(String.format("Rollback Change GSI meta. schema:%s, table:%s, index:%s",
             schemaName,

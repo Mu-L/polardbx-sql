@@ -31,7 +31,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class OSSBackFillConsumer implements BatchConsumer {
     private static final Logger LOGGER = LoggerFactory
-        .getLogger("oss");
+        .getLogger("mpp_log");
 
     private final Map<Pair<String, String>, OSSBackFillWriterTask> tasks = new ConcurrentHashMap<>();
 

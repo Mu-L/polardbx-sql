@@ -16,9 +16,13 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.common.utils.memory.SizeOf;
+import org.openjdk.jol.info.ClassLayout;
+import org.openjdk.jol.util.VMSupport;
 
-public interface TypedList {
+public interface TypedList extends MemoryCountable {
     int INITIAL_SIZE = 1024;
 
     static TypedList createLong(int fixedSize) {
@@ -58,10 +62,16 @@ public interface TypedList {
     }
 
     class LongTypedList implements TypedList {
+        private static final int INSTANCE_SIZE = ClassLayout.parseClass(LongTypedList.class).instanceSize();
         long[] array;
 
         public LongTypedList(int fixedSize) {
             this.array = new long[fixedSize];
+        }
+
+        @Override
+        public long getMemoryUsage() {
+            return INSTANCE_SIZE + FastMemoryCounter.sizeOf(array);
         }
 
         @Override
@@ -85,15 +95,21 @@ public interface TypedList {
         }
 
         public static long estimatedSizeInBytes(int fixedSize) {
-            return SizeOf.sizeOfLongArray(fixedSize);
+            return INSTANCE_SIZE + VMSupport.align((int) SizeOf.sizeOfLongArray(fixedSize));
         }
     }
 
     class IntTypedList implements TypedList {
+        private static final int INSTANCE_SIZE = ClassLayout.parseClass(IntTypedList.class).instanceSize();
         int[] array;
 
         public IntTypedList(int fixedSize) {
             array = new int[fixedSize];
+        }
+
+        @Override
+        public long getMemoryUsage() {
+            return INSTANCE_SIZE + FastMemoryCounter.sizeOf(array);
         }
 
         @Override
@@ -117,7 +133,7 @@ public interface TypedList {
         }
 
         public static long estimatedSizeInBytes(int fixedSize) {
-            return SizeOf.sizeOfIntArray(fixedSize);
+            return INSTANCE_SIZE + VMSupport.align((int) SizeOf.sizeOfIntArray(fixedSize));
         }
     }
 }

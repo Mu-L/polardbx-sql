@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.ORCMemoryCounterUtil;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.chunk.ByteArrayBlock;
 import com.alibaba.polardbx.executor.chunk.RandomAccessBlock;
@@ -27,15 +29,34 @@ import io.airlift.slice.Slice;
 import io.airlift.slice.SliceOutput;
 import org.apache.orc.customized.ORCDataOutput;
 import org.apache.orc.impl.OrcIndex;
+import org.openjdk.jol.info.ClassLayout;
+import org.apache.orc.impl.PositionProviderBuilder;
 
 import java.io.IOException;
 
 public class DirectBinaryColumnReader extends DirectVarcharColumnReader {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(DirectBinaryColumnReader.class).instanceSize();
 
     public DirectBinaryColumnReader(int columnId, boolean isPrimaryKey, StripeLoader stripeLoader,
-                                    OrcIndex orcIndex, RuntimeMetrics metrics,
+                                    PositionProviderBuilder orcIndex, RuntimeMetrics metrics,
                                     int indexStride, boolean enableMetrics) {
         super(columnId, isPrimaryKey, stripeLoader, orcIndex, metrics, indexStride, enableMetrics);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            // from AbstractColumnReader
+            + FastMemoryCounter.sizeOf(refCount)
+            + FastMemoryCounter.sizeOf(isClosed)
+            + FastMemoryCounter.sizeOf(hasNoMoreBlocks)
+            // from AbstractLongColumnReader
+            + FastMemoryCounter.sizeOf(openFailed)
+            + FastMemoryCounter.sizeOf(initializeOnlyOnce)
+            + FastMemoryCounter.sizeOf(isOpened)
+            + ORCMemoryCounterUtil.sizeOfBitFieldReader(present)
+            + ORCMemoryCounterUtil.sizeOfInStream(dataStream)
+            + ORCMemoryCounterUtil.sizeOfIntegerReader(lengthReader);
     }
 
     @Override

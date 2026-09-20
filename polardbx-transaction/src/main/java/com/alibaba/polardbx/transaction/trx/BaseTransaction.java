@@ -21,27 +21,39 @@ import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.IConnection;
 import com.alibaba.polardbx.common.jdbc.IDataSource;
+import com.alibaba.polardbx.common.jdbc.MasterSlave;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.type.TransactionType;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.druid.sql.ast.SqlType;
+import com.alibaba.polardbx.executor.common.ExecutorContext;
+import com.alibaba.polardbx.executor.common.TopologyHandler;
 import com.alibaba.polardbx.executor.spi.ITransactionManager;
+import com.alibaba.polardbx.executor.utils.GroupingFetchLSN;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.utils.ITransaction;
 import com.alibaba.polardbx.optimizer.utils.ITransactionManagerUtil;
 import com.alibaba.polardbx.optimizer.utils.InventoryMode;
+import com.alibaba.polardbx.optimizer.utils.OptimizerUtils;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
 import com.alibaba.polardbx.stats.CurrentTransactionStatistics;
 import com.alibaba.polardbx.stats.TransactionStatistics;
 import com.alibaba.polardbx.transaction.TransactionLogger;
 import com.alibaba.polardbx.transaction.TransactionManager;
+import org.apache.commons.lang3.StringUtils;
 
 import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Supplier;
 
 import static com.alibaba.polardbx.common.jdbc.ITransactionPolicy.TransactionClass.SUPPORT_INVENTORY_TRANSACTION;
 
@@ -68,6 +80,12 @@ public abstract class BaseTransaction implements ITransaction {
     private volatile boolean closed;
     private ErrorCode errorCode;
 
+    private Boolean externalStagingEnabled;
+    private Boolean externalizedBinlogCompatibility;
+
+    private final List<Runnable> closeHooks = new ArrayList<>();
+    private boolean closeHooksRun;
+
     private String originalError;
 
     protected final ITransactionManager manager;
@@ -83,8 +101,17 @@ public abstract class BaseTransaction implements ITransaction {
     private final long idleTimeout;
     private final long idleROTimeout;
     private final long idleRWTimeout;
-
     protected boolean useTrxLogV2 = false;
+    protected final boolean consistentReplicaRead;
+    private Map<String, Long> dnLsnMap = null;
+
+    private final boolean userSql;
+
+    protected String traceId;
+    protected final String clientIp;
+    private String user = null;
+
+    protected String[] readOnlyDnList = null;
 
     public BaseTransaction(ExecutionContext executionContext, ITransactionManager manager) {
         super();
@@ -98,8 +125,18 @@ public abstract class BaseTransaction implements ITransaction {
         this.idleTimeout = executionContext.getIdleTrxTimeout();
         this.idleROTimeout = executionContext.getIdleROTrxTimeout();
         this.idleRWTimeout = executionContext.getIdleRWTrxTimeout();
-        // Register to manager so that we can see it in SHOW TRANS
-        manager.register(this);
+        this.consistentReplicaRead =
+            executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_CONSISTENT_REPLICA_READ);
+        this.userSql = executionContext.isUserSql();
+        this.traceId = executionContext.getTraceId();
+        if (executionContext.getConnection() != null && executionContext.getConnection().getUser() != null) {
+            this.user = executionContext.getConnection().getUser();
+        }
+        this.clientIp = executionContext.getClientIp();
+        String readOnlyDnStr = executionContext.getReadonlyDnList();
+        if (!StringUtils.isEmpty(readOnlyDnStr)) {
+            readOnlyDnList = readOnlyDnStr.split(",");
+        }
     }
 
     @Override
@@ -115,8 +152,8 @@ public abstract class BaseTransaction implements ITransaction {
     }
 
     @Override
-    public void setExecutionContext(ExecutionContext executionContext) {
-        this.executionContext = executionContext;
+    public void setTraceId(String traceId) {
+        this.traceId = traceId;
     }
 
     @Override
@@ -189,6 +226,70 @@ public abstract class BaseTransaction implements ITransaction {
     }
 
     @Override
+    public boolean pinExternalStagingEnabled(boolean enabled) {
+        lock.lock();
+        try {
+            if (externalStagingEnabled == null) {
+                externalStagingEnabled = enabled;
+            }
+            return externalStagingEnabled;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public boolean pinExternalizedBinlogCompatibility(boolean enabled) {
+        lock.lock();
+        try {
+            if (externalizedBinlogCompatibility == null) {
+                externalizedBinlogCompatibility = enabled;
+            }
+            return externalizedBinlogCompatibility;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    @Override
+    public void registerCloseHook(Runnable hook) {
+        if (hook == null) {
+            throw new IllegalArgumentException("Transaction close hook is null");
+        }
+        lock.lock();
+        try {
+            if (closed || closeHooksRun) {
+                throw new IllegalStateException("Transaction is already closed");
+            }
+            closeHooks.add(hook);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    protected void runCloseHooks() {
+        final List<Runnable> hooks;
+        lock.lock();
+        try {
+            if (closeHooksRun) {
+                return;
+            }
+            closeHooksRun = true;
+            hooks = new ArrayList<>(closeHooks);
+            closeHooks.clear();
+        } finally {
+            lock.unlock();
+        }
+        for (Runnable hook : hooks) {
+            try {
+                hook.run();
+            } catch (Throwable t) {
+                logger.error("Transaction close hook failed", t);
+            }
+        }
+    }
+
+    @Override
     public State getState() {
         // For 1PC transactions there is only one state
         return State.RUNNING;
@@ -200,7 +301,7 @@ public abstract class BaseTransaction implements ITransaction {
     }
 
     @Override
-    public boolean isStrongConsistent() {
+    public boolean isDistributedWriteTrx() {
         return false;
     }
 
@@ -216,6 +317,11 @@ public abstract class BaseTransaction implements ITransaction {
     @Override
     public long getStartTimeInMs() {
         return stat.startTimeInMs;
+    }
+
+    @Override
+    public long getStartTimeInNano() {
+        return stat.startTime;
     }
 
     @Override
@@ -265,12 +371,12 @@ public abstract class BaseTransaction implements ITransaction {
     }
 
     @Override
-    public boolean handleStatementError(Throwable t) {
+    public boolean handleStatementError(Throwable t, String traceId) {
         return false;
     }
 
     @Override
-    public void releaseAutoSavepoint() {
+    public void releaseAutoSavepoint(String traceId) {
         // do nothing
     }
 
@@ -307,6 +413,13 @@ public abstract class BaseTransaction implements ITransaction {
             default:
                 break;
             }
+            if (this instanceof XATsoTransaction) {
+                stats.countXATSO.incrementAndGet();
+            } else if (this instanceof TsoOptTransaction) {
+                stats.countTsoOpt.incrementAndGet();
+            } else if (this instanceof AsyncCommitTransaction) {
+                stats.countAsyncCommit.incrementAndGet();
+            }
         });
 
         TransactionLogger.debug(id, getType() + " transaction begins");
@@ -331,17 +444,18 @@ public abstract class BaseTransaction implements ITransaction {
 
         if (DynamicConfig.getInstance().isEnableTransactionStatistics()
             && DynamicConfig.getInstance().getSlowTransThreshold() < durationTimeInMs
-            && executionContext.isUserSql()) {
+            && userSql) {
             stat.finishTimeInMs = stat.startTimeInMs + durationTimeInMs;
             stat.readOnly = !isRwTransaction();
             stat.transactionType = getType();
-            stat.sqlCount = null == executionContext.getSqlId() ? 0 : executionContext.getSqlId();
+            stat.sqlCount =
+                (null == executionContext || null == executionContext.getSqlId()) ? 0 : executionContext.getSqlId();
             stat.activeTime = stat.readTime + stat.writeTime;
             stat.idleTime = stat.durationTime - stat.activeTime - stat.commitTime - stat.rollbackTime;
 
             // Record slow trans in log, time unit is microsecond.
             SQLRecorderLogger.slowTransLogger.info(SQLRecorderLogger.slowTransFormat.format(new Object[] {
-                "V1", executionContext.getTraceId(), stat.transactionType, String.valueOf(stat.startTimeInMs),
+                "V1", traceId, stat.transactionType, String.valueOf(stat.startTimeInMs),
                 String.valueOf(stat.finishTimeInMs), String.valueOf(stat.durationTime / 1000), stat.status,
                 String.valueOf(stat.activeTime / 1000), String.valueOf(stat.idleTime / 1000),
                 String.valueOf(stat.writeTime / 1000), String.valueOf(stat.readTime / 1000),
@@ -427,5 +541,50 @@ public abstract class BaseTransaction implements ITransaction {
     @Override
     public long getIdleRWTimeout() {
         return idleRWTimeout;
+    }
+
+    @Override
+    public String getUser() {
+        return user;
+    }
+
+    protected void sendLsn(
+        IConnection connection, String schemaName, String group, MasterSlave masterSlave, Supplier<Long> tso)
+        throws SQLException {
+        TopologyHandler topology;
+        if (schemaName != null) {
+            topology = ExecutorContext.getContext(schemaName).getTopologyExecutor().getTopology();
+        } else {
+            topology = ((com.alibaba.polardbx.transaction.TransactionManager) manager).getTransactionExecutor()
+                .getTopology();
+        }
+        long masterLsn = GroupingFetchLSN.getInstance().fetchLSN(topology, group, getLsnMap(), tso.get());
+        connection.executeLater(String.format("SET read_lsn = %d", masterLsn));
+    }
+
+    protected boolean getConsistentReplicaRead() {
+        return !OptimizerUtils.enableStaleRead(executionContext) && consistentReplicaRead;
+    }
+
+    protected Map<String, Long> getLsnMap() {
+        if (this.dnLsnMap == null) {
+            this.dnLsnMap = new ConcurrentHashMap<>(8);
+        }
+        return this.dnLsnMap;
+    }
+
+    protected void checkReadonlyDnList(RW rw, ExecutionContext ec, IDataSource ds) {
+        if (null != readOnlyDnList && readOnlyDnList.length > 0 && rw.equals(RW.WRITE) && ec.isUserSql()) {
+            // for broadcast
+            if (ec.isAllowBroadcastWriteForReadonlyDn() && ec.isModifyBroadcastTable()) {
+                return;
+            }
+            for (String readOnlyDn : readOnlyDnList) {
+                if (StringUtils.equalsIgnoreCase(readOnlyDn, ds.getMasterDNId())) {
+                    setCrucialError(ErrorCode.ERR_WRITE_FOR_READ_ONLY_DN, "Write for readonly dn is forbidden.");
+                    throw new TddlRuntimeException(ErrorCode.ERR_WRITE_FOR_READ_ONLY_DN, readOnlyDn);
+                }
+            }
+        }
     }
 }

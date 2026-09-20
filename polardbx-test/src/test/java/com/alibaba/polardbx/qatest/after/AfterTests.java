@@ -17,9 +17,13 @@ public class AfterTests extends BaseTestCase {
             String sql = "show storage";
             ResultSet rs = JdbcUtil.executeQuerySuccess(polarxConn, sql);
             while (rs.next()) {
-                long delay = rs.getLong("DELAY");
+                String delay = rs.getString("DELAY");
                 String id = rs.getString("STORAGE_INST_ID");
-                Assert.assertTrue(delay < 10, "delay " + delay + " too long for " + id);
+                if (delay == null || "null".equalsIgnoreCase(delay)) {
+                    System.out.println("delay is null for " + id);
+                    continue;
+                }
+                Assert.assertTrue(Long.parseLong(delay) < 10, "delay " + delay + " too long for " + id);
             }
 
             // 检查事务泄露
@@ -33,7 +37,7 @@ public class AfterTests extends BaseTestCase {
                 long duration = rs.getLong("DURATION_TIME");
                 String cn = rs.getString("CN_ADDRESS");
                 String sql2 = rs.getString("SQL");
-                if (!sql.equals(sql2)) {
+                if (!sql.equals(sql2) && !"__cdc__".equalsIgnoreCase(schema)) {
                     System.out.println("txid: " + txid + ", schema: " + schema
                         + ", duration: " + duration + ", cn: " + cn + ", sql: " + sql2);
                 }

@@ -98,8 +98,9 @@ public class MysqlTableScan extends TableScan implements MysqlRel {
         if (join != null) {
             Index index = IndexUtil.selectJoinIndex(join, false);
             if (index != null) {
-                this.accessIndexList = new ArrayList<>();
-                this.accessIndexList.add(index);
+                List<Index> newAccessIndexList = new ArrayList<>();
+                newAccessIndexList.add(index);
+                this.accessIndexList = newAccessIndexList;
                 double selectivity = index.getTotalSelectivity();
                 double rows = Math.max(table.getRowCount() * selectivity, 1);
                 double cpu = Math.max(table.getRowCount() * selectivity, 1);

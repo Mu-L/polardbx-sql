@@ -28,6 +28,7 @@ public class ConcurrentDMLBaseTest extends DDLBaseNewDBTestCase {
 
     protected static final String USE_OMC_ALGORITHM = " ALGORITHM=OMC";
     protected static final String OMC_FORCE_TYPE_CONVERSION = "OMC_FORCE_TYPE_CONVERSION=TRUE";
+    protected static final String OMC_DISABLE_30 = "ENABLE_OMC_30=FALSE";
     // Use logical execution since result may be different from pushdown execution
     protected static final String USE_LOGICAL_EXECUTION = "DML_EXECUTION_STRATEGY=LOGICAL";
     protected static final String DISABLE_DML_RETURNING = "DML_USE_RETURNING=FALSE";
@@ -75,16 +76,7 @@ public class ConcurrentDMLBaseTest extends DDLBaseNewDBTestCase {
                                        boolean fillData, boolean withGsi, boolean isModifyPartitionKey)
         throws Exception {
         concurrentTestInternal(tableName, colDef, alterSql, selectSql, generator1, generator2, checker, fillData,
-            withGsi, isModifyPartitionKey, true, null, true, !isModifyPartitionKey);
-    }
-
-    public void concurrentTestInternalWithPhyDdl(String tableName, String colDef, String alterSql, String selectSql,
-                                                 Function<Integer, String> generator1,
-                                                 Function<Integer, String> generator2,
-                                                 QuadFunction<Integer, Integer, String, String, Boolean> checker,
-                                                 boolean fillData, boolean withGsi) throws Exception {
-        concurrentTestInternal(tableName, colDef, alterSql, selectSql, generator1, generator2, checker, fillData,
-            withGsi, false, true, null, false, false);
+            withGsi, isModifyPartitionKey, true, null, true);
     }
 
     public void concurrentTestInternalWithoutGeneratedColumn(String tableName, String colDef, String alterSql,
@@ -95,7 +87,7 @@ public class ConcurrentDMLBaseTest extends DDLBaseNewDBTestCase {
                                                              boolean fillData, boolean withGsi)
         throws Exception {
         concurrentTestInternal(tableName, colDef, alterSql, selectSql, generator1, generator2, checker, fillData,
-            withGsi, false, true, null, false, true);
+            withGsi, false, true, null, false);
     }
 
     public void concurrentTestInternalWithoutGeneratedColumn(String tableName, String colDef, String alterSql,
@@ -107,7 +99,7 @@ public class ConcurrentDMLBaseTest extends DDLBaseNewDBTestCase {
                                                              boolean isModifyPartitionKey)
         throws Exception {
         concurrentTestInternal(tableName, colDef, alterSql, selectSql, generator1, generator2, checker, fillData,
-            withGsi, isModifyPartitionKey, true, null, false, !isModifyPartitionKey);
+            withGsi, isModifyPartitionKey, true, null, false);
     }
 
     public void concurrentTestInternalWithNotStrict(String tableName, String colDef, String alterSql, String selectSql,
@@ -117,7 +109,7 @@ public class ConcurrentDMLBaseTest extends DDLBaseNewDBTestCase {
                                                     boolean fillData, boolean withGsi)
         throws Exception {
         concurrentTestInternal(tableName, colDef, alterSql, selectSql, generator1, generator2, checker, fillData,
-            withGsi, false, false, null, false, true);
+            withGsi, false, false, null, false);
     }
 
     public void concurrentTestInternalWithCreateSql(String tableName, String colDef, String alterSql, String selectSql,
@@ -127,15 +119,14 @@ public class ConcurrentDMLBaseTest extends DDLBaseNewDBTestCase {
                                                     boolean fillData, boolean withGsi, String createSql)
         throws Exception {
         concurrentTestInternal(tableName, colDef, alterSql, selectSql, generator1, generator2, checker, fillData,
-            withGsi, false, true, createSql, false, true);
+            withGsi, false, true, createSql, false);
     }
 
     public void concurrentTestInternal(String tableName, String colDef, String alterSql, String selectSql,
                                        Function<Integer, String> generator1, Function<Integer, String> generator2,
                                        QuadFunction<Integer, Integer, String, String, Boolean> checker,
                                        boolean fillData, boolean withGsi, boolean isModifyPartitionKey,
-                                       boolean isStrictMode, String createTableSql, boolean hasGeneratedColumns,
-                                       boolean isOmc)
+                                       boolean isStrictMode, String createTableSql, boolean hasGeneratedColumns)
         throws Exception {
         tableName = tableName + RandomUtils.getStringBetween(1, 5);
         dropTableIfExists(tableName);
@@ -297,7 +288,7 @@ public class ConcurrentDMLBaseTest extends DDLBaseNewDBTestCase {
                             JdbcUtil.updateDataTddl(connection, sql, null);
                         }
                         Thread.sleep(1000);
-                        String algorithm = isOmc ? USE_OMC_ALGORITHM : "";
+                        String algorithm = isModifyPartitionKey ? "" : USE_OMC_ALGORITHM;
                         String batchHint = "/*+TDDL:cmd_extra(GSI_BACKFILL_BATCH_SIZE=50,CHANGE_SET_APPLY_BATCH=32)*/";
                         String sql = batchHint + String.format(alterSql, finalTableName) + algorithm;
                         try {

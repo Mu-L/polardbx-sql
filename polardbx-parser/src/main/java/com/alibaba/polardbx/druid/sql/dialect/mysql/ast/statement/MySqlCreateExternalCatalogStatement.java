@@ -17,19 +17,19 @@ package com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement;
 
 import com.alibaba.polardbx.druid.DbType;
 import com.alibaba.polardbx.druid.sql.ast.SQLName;
-import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterStatement;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLCreateStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.visitor.MySqlASTVisitor;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
-public class MySqlCreateExternalCatalogStatement extends MySqlStatementImpl implements SQLAlterStatement {
+public class MySqlCreateExternalCatalogStatement extends MySqlStatementImpl implements SQLCreateStatement {
     private SQLName name;
 
     private boolean ifNotExists;
 
-    private Map<SQLName, SQLName> properties = new HashMap<SQLName, SQLName>();
-    private SQLName comment;
+    private Map<String, String> properties = new LinkedHashMap<>();
+    private String comment;
 
     public MySqlCreateExternalCatalogStatement() {
         setDbType(DbType.mysql);
@@ -46,18 +46,15 @@ public class MySqlCreateExternalCatalogStatement extends MySqlStatementImpl impl
         this.name = name;
     }
 
-    public SQLName getComment() {
+    public String getComment() {
         return comment;
     }
 
-    public void setComment(SQLName comment) {
-        if (comment != null) {
-            comment.setParent(this);
-        }
+    public void setComment(String comment) {
         this.comment = comment;
     }
 
-    public Map<SQLName, SQLName> getProperties() {
+    public Map<String, String> getProperties() {
         return properties;
     }
 
@@ -72,7 +69,6 @@ public class MySqlCreateExternalCatalogStatement extends MySqlStatementImpl impl
     public void accept0(MySqlASTVisitor visitor) {
         if (visitor.visit(this)) {
             acceptChild(visitor, name);
-            acceptChild(visitor, comment);
         }
         visitor.endVisit(this);
     }

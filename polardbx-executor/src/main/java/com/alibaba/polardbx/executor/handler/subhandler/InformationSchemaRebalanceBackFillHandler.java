@@ -133,7 +133,7 @@ public class InformationSchemaRebalanceBackFillHandler extends BaseVirtualViewSu
             throttleInfoMap.put(throttleInfo.getBackFillId(), throttleInfo);
         }
         try {
-            List<List<Map<String, Object>>> result = SyncManagerHelper.sync(
+            List<List<Map<String, Object>>> result = SyncManagerHelper.syncIgnoreExceptions(
                 new DdlBackFillSpeedSyncAction(), SystemDbHelper.DEFAULT_DB_NAME, SyncScope.MASTER_ONLY);
             for (List<Map<String, Object>> list : GeneralUtil.emptyIfNull(result)) {
                 for (Map<String, Object> map : GeneralUtil.emptyIfNull(list)) {

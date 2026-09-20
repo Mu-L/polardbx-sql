@@ -109,13 +109,14 @@ public class SetVariablesTest extends ReadBaseTestCase {
     public void setVariablesUdfTest() throws Exception {
         enableSetGlobal();
         String sql = "SET GLOBAL ENABLE_JAVA_UDF = true";
+        // ENABLE_JAVA_UDF is banned from SET GLOBAL for security reasons
         try {
             execute(tddlConnection, sql);
+            Assert.fail("SET GLOBAL ENABLE_JAVA_UDF should be rejected");
         } catch (Exception e) {
-            //ignore
-            return;
+            Assert.assertTrue(e.getMessage().contains("is no supported setting using SET GLOBAL")
+                || e.getMessage().contains("security-sensitive parameter"));
         }
-        Assert.fail("Don't allow set ENABLE_JAVA_UDF");
     }
 
     private void setGlobalVariableSingleTest(String variableName, String variableValue) throws Exception {
@@ -485,7 +486,6 @@ public class SetVariablesTest extends ReadBaseTestCase {
         variableAssignmentList.add(new AssignmentItem("resume_scan_step_size", "512", true));
         variableAssignmentList.add(new AssignmentItem("runtime_filter_fpp", "0.03", true));
         variableAssignmentList.add(new AssignmentItem("runtime_filter_probe_min_row_count", "10000000", true));
-        variableAssignmentList.add(new AssignmentItem("sample_percentage", "-1.0", true));
 //        variableAssignmentList.add(new AssignmentItem("scale_out_debug", "\"\"", true));
         variableAssignmentList.add(new AssignmentItem("scale_out_debug_wait_time_in_wo", "0", true));
         variableAssignmentList

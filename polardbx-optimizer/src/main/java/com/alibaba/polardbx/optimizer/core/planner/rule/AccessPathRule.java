@@ -29,6 +29,7 @@ import com.alibaba.polardbx.optimizer.config.table.GlobalIndexMeta;
 import com.alibaba.polardbx.optimizer.config.table.GlobalIndexMeta.IndexType;
 import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
+import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.DrdsConvention;
 import com.alibaba.polardbx.optimizer.core.planner.rule.implement.LogicalJoinToBKAJoinRule;
@@ -208,11 +209,21 @@ public abstract class AccessPathRule extends RelOptRule {
                     final IndexScanVisitor indexScanVisitor =
                         new IndexScanVisitor(primaryTable, indexTable, call.builder());
                     final LogicalIndexScan logicalIndexScan =
-                        new LogicalIndexScan(plan.accept(indexScanVisitor), indexTable, logicalView.getHints(),
+                        new LogicalIndexScan(Util.last(primaryTable.getQualifiedName()), plan.accept(indexScanVisitor),
+                            indexTable, logicalView.getHints(),
                             lockMode, logicalView.getFlashback(), logicalView.aggIsPushed());
                     logicalIndexScan.rebuildPartRoutingPlanInfo();
 
-                    if (shouldPruneGsi(logicalIndexScan, mq, primaryCanUseIndex, logicalView)) {
+                    // Disable XPlan for tables with externalized columns.
+                    // The pushed plan uses physical column names (e.g. content_addr_ BIGINT) in IndexTableScan,
+                    // and RelXPlanOptimizer's HepPlanner rules (ProjectFilterTransposeRule) would expose
+                    // these physical types causing type mismatch assertions.
+                    TableMeta primaryMeta = CBOUtil.getTableMeta(primaryTable);
+                    if (primaryMeta != null && primaryMeta.hasExternalizedColumn()) {
+                        logicalIndexScan.disableXPlanForExternalizedColumns();
+                    }
+
+                    if (shouldPruneGsi(gsiName, ec, logicalIndexScan, mq, primaryCanUseIndex, logicalView)) {
                         continue;
                     }
                     // use non convention for match CBO push join rule
@@ -241,7 +252,7 @@ public abstract class AccessPathRule extends RelOptRule {
                         continue;
                     }
                     RelNode expandNode = optimizeByTableLookupRule(node, plannerContext);
-                    if (shouldPruneGsi(expandNode, mq, primaryCanUseIndex, logicalView)) {
+                    if (shouldPruneGsi(gsiName, ec, expandNode, mq, primaryCanUseIndex, logicalView)) {
                         continue;
                     }
                     RelNode convertNode = convert(expandNode,
@@ -281,31 +292,45 @@ public abstract class AccessPathRule extends RelOptRule {
         }
 
         /**
-         * check if the gsi can't use local index and primary can use local index
+         * Determines whether a GSI should be pruned (skipped) during index selection.
          *
-         * @param node the root of transformed gsi
-         * @param mq the metadata query
-         * @param originCanUseIndex whether the primary table can use index
-         * @param origin origin logicalView
-         * @return true if the gsi can be pruned
+         * @param gsiName The name of the Global Secondary Index being evaluated
+         * @param ec The execution context containing runtime information
+         * @param node The relational expression node representing the GSI access path
+         * @param mq Metadata query utility for accessing relational metadata
+         * @param originCanUseIndex Indicates whether the original table can utilize local indexes
+         * @param origin The original LogicalView before GSI transformation
+         * @return true if the GSI should be pruned (not used), false otherwise
+         * <p>
+         * The method applies several pruning rules:
+         * 1. If GSI pruning is disabled in the planner context, no pruning occurs
+         * 2. For multi-table queries, no pruning is performed
+         * 3. For small shard GSIs (where the GSI has significantly fewer shards),
+         * pruning occurs unless the original table cannot use indexes but the GSI can
+         * 4. For regular cases, if the original table can use indexes but the GSI cannot,
+         * then the GSI is pruned
          */
-        private boolean shouldPruneGsi(RelNode node,
+        private boolean shouldPruneGsi(String gsiName,
+                                       ExecutionContext ec,
+                                       RelNode node,
                                        RelMetadataQuery mq,
                                        IndexAbleType originCanUseIndex,
                                        LogicalView origin) {
             if (!PlannerContext.getPlannerContext(origin).isGsiPrune()) {
                 return false;
             }
-            if (!IndexAbleType.YES.equals(originCanUseIndex)) {
-                // origin table can't use gsi
-                return false;
-            }
+
             // multiple tables
             if (origin.getTableNames().size() > 1) {
                 return false;
             }
 
-            return IndexAbleType.NO.equals(canUseLocalIndex(node, mq));
+            IndexAbleType gsiCanUseIndex = canUseLocalIndex(node, mq);
+            if (AccessPathRule.smallShardGsi(origin.getSchemaName(), origin.getLogicalTableName(), gsiName, ec)) {
+                return !(IndexAbleType.NO.equals(originCanUseIndex) && IndexAbleType.YES.equals(gsiCanUseIndex));
+            }
+
+            return IndexAbleType.YES.equals(originCanUseIndex) && IndexAbleType.NO.equals(gsiCanUseIndex);
         }
 
         /**
@@ -356,8 +381,9 @@ public abstract class AccessPathRule extends RelOptRule {
             final String tableName = logicalView.getLogicalTableName();
             final List<String> shardColumns;
 
+            ExecutionContext context = PlannerContext.getPlannerContext(logicalView).getExecutionContext();
             TddlRuleManager tddlRuleManager =
-                PlannerContext.getPlannerContext(logicalView).getExecutionContext().getSchemaManager(schemaName)
+                context.getSchemaManager(schemaName)
                     .getTddlRuleManager();
 
             if (!logicalView.isNewPartDbTbl()) {
@@ -378,7 +404,7 @@ public abstract class AccessPathRule extends RelOptRule {
             }
 
             Map<String, Map<String, Comparative>> allComps = new HashMap<>();
-            ConditionExtractor.predicateFrom(logicalView).extract().allColumnCondition(allComps, shardColumns);
+            ConditionExtractor.predicateFrom(logicalView).extract().allColumnCondition(allComps, shardColumns, context);
             if (allComps.isEmpty()) {
                 return false;
             }
@@ -436,7 +462,6 @@ public abstract class AccessPathRule extends RelOptRule {
             // do index selection for single logical table only
             logicalTableName = logicalView.getLogicalTableName();
             gsiPublishedNameList = GlobalIndexMeta.getPublishedIndexNames(logicalTableName, schemaName, ec);
-            gsiPublishedNameList = filterVisibleIndex(schemaName, logicalTableName, gsiPublishedNameList, ec);
         } else if (logicalView.getTableNames().size() > 1) {
             // do index selection for shard logical table with multi broadcast table
             List<String> tableNames = logicalView.getTableNames();
@@ -453,9 +478,8 @@ public abstract class AccessPathRule extends RelOptRule {
                 return null;
             }
             gsiPublishedNameList = GlobalIndexMeta.getPublishedIndexNames(logicalTableName, schemaName, ec);
-            gsiPublishedNameList = filterVisibleIndex(schemaName, logicalTableName, gsiPublishedNameList, ec);
         }
-
+        gsiPublishedNameList = filterVisibleIndex(schemaName, logicalTableName, gsiPublishedNameList, ec);
         if (logicalView.getIndexNode() != null) {
             gsiPublishedNameList =
                 filterUseIgnoreIndex(schemaName, logicalTableName, gsiPublishedNameList, logicalView.getIndexNode(),
@@ -472,7 +496,7 @@ public abstract class AccessPathRule extends RelOptRule {
                                                     List<String> gsiNameList, SqlNode indexNode, ExecutionContext ec) {
         Set<String> gsiNameSet = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
 
-        if (gsiNameList == null) {
+        if (CollectionUtils.isEmpty(gsiNameList)) {
             return new ArrayList<>();
         }
 
@@ -564,6 +588,25 @@ public abstract class AccessPathRule extends RelOptRule {
         }
 
         return result;
+    }
+
+    private static boolean smallShardGsi(String schemaName, String primaryTable, String gsiName,
+                                         ExecutionContext ec) {
+        if (ec.getParamManager().getInt(ConnectionParams.GSI_SHARD_DIFFERENCE_THRESHOLD) < 0) {
+            return false;
+        }
+        if (ec.getSchemaManager(schemaName) == null || ec.getSchemaManager(schemaName).getTable(primaryTable) == null) {
+            return false;
+        }
+        if (!DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
+            return false;
+        }
+        final TableMeta table = ec.getSchemaManager(schemaName).getTable(primaryTable);
+        long threshold = table.getPartitionInfo().getPartitionBy().getPartitions().size()
+            - ec.getParamManager().getInt(ConnectionParams.GSI_SHARD_DIFFERENCE_THRESHOLD);
+        TableMeta gsiTableMeta = ec.getSchemaManager(schemaName).getTableWithNull(gsiName);
+        return gsiTableMeta != null &&
+            gsiTableMeta.getPartitionInfo().getPartitionBy().getPartitions().size() <= threshold;
     }
 
     public static void nomoralizeIndexNode(LogicalView logicalView) {
@@ -730,7 +773,8 @@ public abstract class AccessPathRule extends RelOptRule {
                 LogicalTableScan.create(scan.getCluster(), this.indexTable, scan.getHints(), force,
                     scan.getFlashback(), scan.getFlashbackOperator(),
                     null);
-            final LogicalIndexScan index = new LogicalIndexScan(this.indexTable, indexTableScan, lockMode);
+            final LogicalIndexScan index =
+                new LogicalIndexScan(primaryTable.getQualifiedName().get(1), this.indexTable, indexTableScan, lockMode);
             index.setFlashback(scan.getFlashback());
             index.setFlashbackOperator(scan.getFlashbackOperator());
             LogicalTableLookup logicalTableLookup = RelUtils.createTableLookup(primary, index, index.getTable());
@@ -786,6 +830,7 @@ public abstract class AccessPathRule extends RelOptRule {
         private final RelOptTable index;
         private final Map<String, Integer> indexColumnRefMap;
         private final RelBuilder relBuilder;
+        private final TableMeta primaryTableMeta;
 
         private IndexScanVisitor(RelOptTable primary, RelOptTable index, RelBuilder relBuilder) {
             this.primary = primary;
@@ -797,6 +842,7 @@ public abstract class AccessPathRule extends RelOptRule {
                     (x, y) -> y,
                     TreeMaps::caseInsensitiveMap));
             this.relBuilder = relBuilder;
+            this.primaryTableMeta = CBOUtil.getTableMeta(primary);
         }
 
         @Override
@@ -858,13 +904,35 @@ public abstract class AccessPathRule extends RelOptRule {
 
             final RexBuilder rexBuilder = scan.getCluster().getRexBuilder();
             final RelDataType rowType = index.getRowType();
+            final RelDataType primaryRowType = primary.getRowType();
             final List<RexNode> projects = primary.getRowType().getFieldNames().stream().map(cn -> {
-                final Integer ref = indexColumnRefMap.getOrDefault(cn, -1);
+                Integer ref = indexColumnRefMap.getOrDefault(cn, -1);
+                if (ref < 0 && primaryTableMeta != null) {
+                    // For externalized columns, the index table uses physical name (e.g. "content_addr_")
+                    // while the primary table uses logical name (e.g. "content").
+                    // Look up by physical mapping name.
+                    ColumnMeta colMeta = primaryTableMeta.getColumnIgnoreCase(cn);
+                    if (colMeta != null && colMeta.isExternalizedColumn() && colMeta.getMappingName() != null) {
+                        ref = indexColumnRefMap.getOrDefault(colMeta.getMappingName(), -1);
+                    }
+                }
                 if (ref < 0) {
-                    // NULL for columns not int index table
+                    // NULL for columns not in index table
                     return rexBuilder.constantNull();
                 } else {
-                    final RelDataType type = rowType.getFieldList().get(ref).getType();
+                    // For externalized columns, use the primary table's logical type (e.g. VARCHAR(0))
+                    // instead of the index table's physical type (BIGINT content_addr_).
+                    // This keeps LogicalIndexScan.deriveRowType() consistent with the original LogicalView.
+                    RelDataType type = rowType.getFieldList().get(ref).getType();
+                    if (primaryTableMeta != null) {
+                        ColumnMeta colMeta = primaryTableMeta.getColumnIgnoreCase(cn);
+                        if (colMeta != null && colMeta.isExternalizedColumn()) {
+                            RelDataTypeField primaryField = primaryRowType.getField(cn, true, false);
+                            if (primaryField != null) {
+                                type = primaryField.getType();
+                            }
+                        }
+                    }
                     return rexBuilder.makeInputRef(type, ref);
                 }
             }).collect(Collectors.toList());

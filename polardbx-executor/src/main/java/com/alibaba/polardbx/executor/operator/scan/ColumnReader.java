@@ -16,9 +16,10 @@
 
 package com.alibaba.polardbx.executor.operator.scan;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
-import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.executor.chunk.RandomAccessBlock;
+import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.orc.OrcProto;
 import org.apache.orc.impl.InStream;
 import org.apache.orc.impl.IntegerReader;
@@ -37,7 +38,7 @@ import java.util.concurrent.locks.StampedLock;
  * There are seekBytes and seekRow method because the element position
  * and byte location are not aligned due to compression.
  */
-public interface ColumnReader {
+public interface ColumnReader extends MemoryCountable {
     String COLUMN_READER_MEMORY = "ColumnReader.Memory";
     String COLUMN_READER_TIMER = "ColumnReader.Timer";
 
@@ -71,6 +72,8 @@ public interface ColumnReader {
      * Check if the resource of this column reader has been opened.
      */
     boolean isOpened();
+
+    void init() throws IOException;
 
     /**
      * Open the resource of column reader.
@@ -124,6 +127,8 @@ public interface ColumnReader {
     boolean needCache();
 
     boolean isClosed();
+
+    ListenableFuture<?> getClosedFuture();
 
     static IntegerReader createIntegerReader(InStream dataStream, OrcProto.ColumnEncoding.Kind kind)
         throws IOException {

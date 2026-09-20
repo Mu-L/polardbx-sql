@@ -38,7 +38,9 @@ import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.orc.impl.TypeUtils;
 import org.jetbrains.annotations.NotNull;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.util.List;
@@ -53,7 +55,7 @@ import static com.alibaba.polardbx.executor.archive.columns.ColumnProvider.longF
 public class RawOrcTypeCsvReader implements CSVFileReader {
 
     private int fieldNum;
-    private FSDataInputStream inputStream;
+    private InputStream inputStream;
     private List<ColumnMeta> columnMetas;
     private ByteCSVReader rowReader;
     private ExecutionContext context;
@@ -68,12 +70,12 @@ public class RawOrcTypeCsvReader implements CSVFileReader {
         this.chunkLimit = chunkLimit;
         this.context = context;
         this.fieldNum = columnMetas.size();
+        this.length = length;
 
-        this.inputStream = FileSystemUtils.openStreamFileWithBuffer(csvFileName, engine, true);
-        if (offset > 0) {
-            inputStream.seek(offset);
-        }
-        this.length = length == EOF ? Integer.MAX_VALUE : length;
+        byte[] buffer = new byte[length];
+        FileSystemUtils.readFile(csvFileName, offset, length, buffer, engine, true);
+
+        this.inputStream = new ByteArrayInputStream(buffer);
 
         this.columnMetas = columnMetas;
 

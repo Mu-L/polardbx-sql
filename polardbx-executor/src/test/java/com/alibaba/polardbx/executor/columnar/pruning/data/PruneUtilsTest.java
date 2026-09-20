@@ -147,7 +147,8 @@ public class PruneUtilsTest {
         ColumnPredicatePruningInf columnPredicatePruningInf = PruneUtils.transformRexToIndexMergeTree(rexNodes, ipc);
 
         RoaringBitmap bitmap = RoaringBitmap.bitmapOfRange(10, 100);
-        columnPredicatePruningInf.sortKey(LongSortKeyIndex.build(0, new long[] {1, 10, 11, 100}, DataTypes.LongType),
+        columnPredicatePruningInf.sortKey(
+            LongSortKeyIndex.build(0, new long[] {1, 10, 11, 100}, DataTypes.LongType, true),
             null,
             bitmap);
         columnPredicatePruningInf.zoneMap(

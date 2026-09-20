@@ -32,6 +32,7 @@ public class MySqlChangeMasterStatement extends SQLStatementImpl {
     private List<SQLAssignItem> options = new ArrayList<SQLAssignItem>();
     private SQLCharExpr channel;
     private SQLCharExpr subChannel;
+    private boolean ddlLoad;
 
     @Override
     protected void accept0(SQLASTVisitor v) {
@@ -66,5 +67,13 @@ public class MySqlChangeMasterStatement extends SQLStatementImpl {
 
     public void setSubChannel(SQLCharExpr subChannel) {
         this.subChannel = subChannel;
+    }
+
+    public boolean isDdlLoad() {
+        return ddlLoad;
+    }
+
+    public void setDdlLoad(boolean ddlLoad) {
+        this.ddlLoad = ddlLoad;
     }
 }

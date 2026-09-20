@@ -99,7 +99,12 @@ public class ReplacePushDownTest extends BaseTestCase {
                 JdbcUtil.executeSuccess(tddlConnection, "set transaction_isolation = 'READ-COMMITTED'");
                 shouldPushDown(tddlConnection, String.format(replaceSql, canPushDownTable0));
                 shouldPushDown(tddlConnection, String.format(replaceSql, canPushDownTable1));
-                shouldNotPushDown(tddlConnection, String.format(replaceSql, canNotPushDownTable0));
+
+                // 对于returning 优化的replace,不存在select后对replace和delete+insert的选择问题，trace中一定包含replace
+                // 这里仅验证原流程是否下推，增加hint OPTIMIZE_REPLACE_BY_RETURNING = false;
+                String replaceSqlForNotPushdown =
+                    "trace /*+TDDL:cmd_extra(OPTIMIZE_REPLACE_BY_RETURNING=false)*/ replace into %s (a, b, c, d, data) values (10, 10, 10, 10, 100)";
+                shouldNotPushDown(tddlConnection, String.format(replaceSqlForNotPushdown, canNotPushDownTable0));
                 // shouldNotPushDown(tddlConnection, String.format(replaceSql, canNotPushDownTable1));
             } finally {
                 clean(tddlConnection);

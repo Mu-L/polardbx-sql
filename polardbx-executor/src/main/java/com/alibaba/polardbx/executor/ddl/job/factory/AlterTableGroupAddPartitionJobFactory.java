@@ -29,6 +29,7 @@ import com.alibaba.polardbx.executor.ddl.job.task.shared.EmptyTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.*;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
 import com.alibaba.polardbx.gms.tablegroup.PartitionGroupRecord;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
@@ -63,8 +64,8 @@ public class AlterTableGroupAddPartitionJobFactory extends AlterTableGroupBaseJo
                                                  Map<String, Map<String, Pair<String, String>>> orderedTargetTablesLocations,
                                                  ExecutionContext executionContext) {
         super(ddl, preparedData, tablesPrepareData, newPartitionsPhysicalPlansMap, tablesTopologyMap,
-                targetTablesTopology, sourceTablesTopology, orderedTargetTablesLocations,
-                ComplexTaskMetaManager.ComplexTaskType.ADD_PARTITION, executionContext);
+            targetTablesTopology, sourceTablesTopology, orderedTargetTablesLocations,
+            ComplexTaskMetaManager.ComplexTaskType.ADD_PARTITION, executionContext);
     }
 
     @Override
@@ -75,47 +76,53 @@ public class AlterTableGroupAddPartitionJobFactory extends AlterTableGroupBaseJo
     @Override
     protected ExecutableDdlJob doCreate() {
         AlterTableGroupAddPartitionPreparedData alterTableGroupAddPartitionPreparedData =
-                (AlterTableGroupAddPartitionPreparedData) preparedData;
+            (AlterTableGroupAddPartitionPreparedData) preparedData;
         String schemaName = alterTableGroupAddPartitionPreparedData.getSchemaName();
         TableGroupConfig tableGroupConfig = OptimizerContext.getContext(schemaName).getTableGroupInfoManager()
-                .getTableGroupConfigByName(alterTableGroupAddPartitionPreparedData.getTableGroupName());
-        List<String> targetDbList = new ArrayList<>();
+            .getTableGroupConfigByName(alterTableGroupAddPartitionPreparedData.getTableGroupName());
+        List<Pair<String, String>> targetDbList = new ArrayList<>();
         List<String> newPartitions = new ArrayList<>();
         List<String> localities = new ArrayList<>();
         for (int i = 0; i < preparedData.getNewPartitionNames().size(); i++) {
-            targetDbList.add(preparedData.getInvisiblePartitionGroups().get(i)
-                    .getPhy_db());
-            newPartitions.add(preparedData.getNewPartitionNames().get(i));
-            localities.add(preparedData.getInvisiblePartitionGroups().get(i)
-                    .getLocality());
+            String newPartitionName = preparedData.getNewPartitionNames().get(i);
+            PartitionGroupRecord partitionGroupRecord =
+                preparedData.getInvisiblePartitionGroupsMap().get(newPartitionName);
+            assert partitionGroupRecord != null;
+            targetDbList.add(new Pair<>(partitionGroupRecord.getPhy_db(),
+                partitionGroupRecord.getGroup_Name()));
+            newPartitions.add(newPartitionName);
+            localities.add(partitionGroupRecord.getLocality());
         }
 
         ExecutableDdlJob executableDdlJob = new ExecutableDdlJob();
 
         Map<String, Long> tablesVersion = getTablesVersion();
         DdlTask validateTask =
-                new AlterTableGroupValidateTask(schemaName, alterTableGroupAddPartitionPreparedData.getTableGroupName(),
-                        tablesVersion, true, alterTableGroupAddPartitionPreparedData.getTargetPhysicalGroups(), false);
+            new AlterTableGroupValidateTask(schemaName, alterTableGroupAddPartitionPreparedData.getTableGroupName(),
+                tablesVersion, true, alterTableGroupAddPartitionPreparedData.getTargetPhysicalGroups(), false);
         AlterTableGroupAddPartitionGroupMetaTask addPartitionGroupMetaTask =
-                new AlterTableGroupAddPartitionGroupMetaTask(schemaName, tableGroupConfig.getTableGroupRecord().id, targetDbList, newPartitions, localities);
+            new AlterTableGroupAddPartitionGroupMetaTask(schemaName, tableGroupConfig.getTableGroupRecord().id,
+                targetDbList, newPartitions, localities);
 
         executableDdlJob.addSequentialTasks(Lists.newArrayList(validateTask, addPartitionGroupMetaTask));
         List<DdlTask> bringUpAlterTableGroupTasks = generateSyncTask();
 
         final String finalStatus =
-                executionContext.getParamManager().getString(ConnectionParams.TABLEGROUP_REORG_FINAL_TABLE_STATUS_DEBUG);
+            executionContext.getParamManager().getString(ConnectionParams.TABLEGROUP_REORG_FINAL_TABLE_STATUS_DEBUG);
         boolean stayAtPublic = true;
         if (StringUtils.isNotEmpty(finalStatus)) {
             stayAtPublic =
-                    StringUtils.equalsIgnoreCase(ComplexTaskMetaManager.ComplexTaskStatus.PUBLIC.name(), finalStatus);
+                StringUtils.equalsIgnoreCase(ComplexTaskMetaManager.ComplexTaskStatus.PUBLIC.name(), finalStatus);
         }
 
         if (stayAtPublic) {
             executableDdlJob.addSequentialTasks(bringUpAlterTableGroupTasks);
-            constructSubTasks(schemaName, executableDdlJob, addPartitionGroupMetaTask, bringUpAlterTableGroupTasks, null);
+            constructSubTasks(schemaName, executableDdlJob, addPartitionGroupMetaTask, bringUpAlterTableGroupTasks,
+                null);
         } else {
             PauseCurrentJobTask pauseCurrentJobTask = new PauseCurrentJobTask(schemaName);
-            constructSubTasks(schemaName, executableDdlJob, addPartitionGroupMetaTask, ImmutableList.of(pauseCurrentJobTask), null);
+            constructSubTasks(schemaName, executableDdlJob, addPartitionGroupMetaTask,
+                ImmutableList.of(pauseCurrentJobTask), null);
         }
 
         executableDdlJob.labelAsTail(bringUpAlterTableGroupTasks.get(bringUpAlterTableGroupTasks.size() - 1));
@@ -126,22 +133,22 @@ public class AlterTableGroupAddPartitionJobFactory extends AlterTableGroupBaseJo
     public static ExecutableDdlJob create(@Deprecated DDL ddl, AlterTableGroupAddPartitionPreparedData preparedData,
                                           ExecutionContext executionContext) {
         AlterTableGroupAddPartitionBuilder alterTableGroupAddPartitionBuilder =
-                new AlterTableGroupAddPartitionBuilder(ddl, preparedData, executionContext);
+            new AlterTableGroupAddPartitionBuilder(ddl, preparedData, executionContext);
         Map<String, TreeMap<String, List<List<String>>>> tablesTopologyMap =
-                alterTableGroupAddPartitionBuilder.build().getTablesTopologyMap();
+            alterTableGroupAddPartitionBuilder.build().getTablesTopologyMap();
         Map<String, Map<String, Set<String>>> targetTablesTopology =
-                alterTableGroupAddPartitionBuilder.getTargetTablesTopology();
+            alterTableGroupAddPartitionBuilder.getTargetTablesTopology();
         Map<String, Map<String, Set<String>>> sourceTablesTopology =
-                alterTableGroupAddPartitionBuilder.getSourceTablesTopology();
+            alterTableGroupAddPartitionBuilder.getSourceTablesTopology();
         Map<String, AlterTableGroupItemPreparedData> tableGroupItemPreparedDataMap =
-                alterTableGroupAddPartitionBuilder.getTablesPreparedData();
+            alterTableGroupAddPartitionBuilder.getTablesPreparedData();
         Map<String, List<PhyDdlTableOperation>> newPartitionsPhysicalPlansMap =
-                alterTableGroupAddPartitionBuilder.getNewPartitionsPhysicalPlansMap();
+            alterTableGroupAddPartitionBuilder.getNewPartitionsPhysicalPlansMap();
         Map<String, Map<String, Pair<String, String>>> orderedTargetTablesLocations =
-                alterTableGroupAddPartitionBuilder.getOrderedTargetTablesLocations();
+            alterTableGroupAddPartitionBuilder.getOrderedTargetTablesLocations();
         return new AlterTableGroupAddPartitionJobFactory(ddl, preparedData, tableGroupItemPreparedDataMap,
-                newPartitionsPhysicalPlansMap, tablesTopologyMap, targetTablesTopology, sourceTablesTopology,
-                orderedTargetTablesLocations, executionContext).create();
+            newPartitionsPhysicalPlansMap, tablesTopologyMap, targetTablesTopology, sourceTablesTopology,
+            orderedTargetTablesLocations, executionContext).create();
     }
 
     @Override
@@ -149,33 +156,35 @@ public class AlterTableGroupAddPartitionJobFactory extends AlterTableGroupBaseJo
                                   List<DdlTask> bringUpAlterTableGroupTasks, String targetPartitionName) {
         boolean firstTable = true;
 
-        AlterTableGroupAddPartitionRemoveMetaTask removeMetaTask = new AlterTableGroupAddPartitionRemoveMetaTask(schemaName, preparedData.getTableGroupName());
+        AlterTableGroupAddPartitionRemoveMetaTask removeMetaTask =
+            new AlterTableGroupAddPartitionRemoveMetaTask(schemaName, preparedData.getTableGroupName());
         for (Map.Entry<String, TreeMap<String, List<List<String>>>> entry : tablesTopologyMap.entrySet()) {
             AlterTableGroupAddPartitionSubTaskJobFactory subTaskJobFactory =
-                    new AlterTableGroupAddPartitionSubTaskJobFactory(ddl,
-                            (AlterTableGroupAddPartitionPreparedData) preparedData,
-                            tablesPrepareData.get(entry.getKey()),
-                            newPartitionsPhysicalPlansMap.get(entry.getKey()),
-                            tablesTopologyMap.get(entry.getKey()),
-                            targetTablesTopology.get(entry.getKey()),
-                            sourceTablesTopology.get(entry.getKey()),
-                            orderedTargetTablesLocations.get(entry.getKey()),
-                            "",
-                            false,
-                            taskType,
-                            executionContext);
+                new AlterTableGroupAddPartitionSubTaskJobFactory(ddl,
+                    (AlterTableGroupAddPartitionPreparedData) preparedData,
+                    tablesPrepareData.get(entry.getKey()),
+                    newPartitionsPhysicalPlansMap.get(entry.getKey()),
+                    tablesTopologyMap.get(entry.getKey()),
+                    targetTablesTopology.get(entry.getKey()),
+                    sourceTablesTopology.get(entry.getKey()),
+                    orderedTargetTablesLocations.get(entry.getKey()),
+                    "",
+                    false,
+                    taskType,
+                    executionContext);
             ExecutableDdlJob subDdlJob = subTaskJobFactory.create();
             executableDdlJob.combineTasks(subDdlJob);
             executableDdlJob.addTaskRelationship(tailTask, subDdlJob.getHead());
 
             executableDdlJob.getExcludeResources().addAll(subDdlJob.getExcludeResources());
+            executableDdlJob.getSharedResources().addAll(subDdlJob.getSharedResources());
             if (subTaskJobFactory.getCdcTableGroupDdlMarkTask() != null) {
                 executableDdlJob.addTaskRelationship(subDdlJob.getTail(),
                         subTaskJobFactory.getCdcTableGroupDdlMarkTask());
                 executableDdlJob.addTaskRelationship(subTaskJobFactory.getCdcTableGroupDdlMarkTask(), removeMetaTask);
                 if (firstTable) {
                     executableDdlJob.addTaskRelationship(removeMetaTask,
-                            bringUpAlterTableGroupTasks.get(0));
+                        bringUpAlterTableGroupTasks.get(0));
                 }
                 firstTable = false;
             }
@@ -193,13 +202,13 @@ public class AlterTableGroupAddPartitionJobFactory extends AlterTableGroupBaseJo
         Set<String> primaryLogicalTables = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
         List<String> logicalTableNames = new ArrayList<>();
         TableGroupConfig tableGroupConfig = OptimizerContext.getContext(schemaName).getTableGroupInfoManager()
-                .getTableGroupConfigByName(tableGroupName);
+            .getTableGroupConfigByName(tableGroupName);
         for (String logicalTable : tableGroupConfig.getAllTables()) {
             TableMeta tableMeta = executionContext.getSchemaManager(schemaName).getTable(logicalTable);
             if (tableMeta.isGsi()) {
                 //all the gsi table version change will be behavior by primary table
                 assert
-                        tableMeta.getGsiTableMetaBean() != null && tableMeta.getGsiTableMetaBean().gsiMetaBean != null;
+                    tableMeta.getGsiTableMetaBean() != null && tableMeta.getGsiTableMetaBean().gsiMetaBean != null;
                 logicalTable = tableMeta.getGsiTableMetaBean().gsiMetaBean.tableName;
             }
             if (!primaryLogicalTables.contains(logicalTable)) {
@@ -209,7 +218,7 @@ public class AlterTableGroupAddPartitionJobFactory extends AlterTableGroupBaseJo
         }
         List<DdlTask> tasks = new ArrayList<>(3);
         DdlTask tableGroupSyncTask =
-                new TableGroupSyncTask(preparedData.getSchemaName(), preparedData.getTableGroupName());
+            new TableGroupSyncTask(preparedData.getSchemaName(), preparedData.getTableGroupName());
 
         DdlTask updateTablesVersionTask = new UpdateTablesVersionTask(schemaName, logicalTableNames);
         //not use preemptive sync to interrupt dml， just wait for the sync task to finish
@@ -220,4 +229,10 @@ public class AlterTableGroupAddPartitionJobFactory extends AlterTableGroupBaseJo
         return tasks;
     }
 
+    @Override
+    protected void updateOnlineDdlInfo(OnlineDdlInfo onlineDdlInfo) {
+        onlineDdlInfo.setOnlineDdlType(OnlineDdlInfo.DdlType.ONLINE_DDL);
+        onlineDdlInfo.setOnlineDdlAlgorithm(OnlineDdlInfo.DdlAlgorithm.META_ONLY);
+        onlineDdlInfo.setAdviceOnlineDdlSql(String.format("%s", executionContext.getOriginSql()));
+    }
 }

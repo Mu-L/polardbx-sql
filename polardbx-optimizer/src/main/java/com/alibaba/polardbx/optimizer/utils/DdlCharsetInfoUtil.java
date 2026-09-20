@@ -85,9 +85,9 @@ public class DdlCharsetInfoUtil {
         CollationName collateDef;
 
         if (specifyCharset) {
-            charset = ddlSpecifyCharset;
+            charset = SQLUtils.normalize(ddlSpecifyCharset);
             if (specifyCollate) {
-                collate = ddlSpecifyCollate;
+                collate = SQLUtils.normalize(ddlSpecifyCollate);
                 charsetDef = CharsetName.of(charset);
                 collateDef = CollationName.of(collate);
             } else {
@@ -97,7 +97,7 @@ public class DdlCharsetInfoUtil {
             }
         } else {
             if (specifyCollate) {
-                collate = ddlSpecifyCollate;
+                collate = SQLUtils.normalize(ddlSpecifyCollate);
             } else {
                 collate = parentCollation;
             }

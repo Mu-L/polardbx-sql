@@ -2,7 +2,7 @@
 ## test create table(date)
 CREATE TABLE `w1` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(DAYOFWEEK(`d`))
 PARTITIONS 16;
 show create table w1;
@@ -32,7 +32,7 @@ explain select * from w1 where d > '2022-07-18' and d < '2022-07-24' order by d;
 ## test create table(datetime)
 CREATE TABLE `w2` (
 `dt` datetime DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(DAYOFWEEK(`dt`))
 PARTITIONS 16;
 show create table w2;
@@ -62,7 +62,7 @@ explain select * from w2 where dt > '2022-07-18 00:00:00' and dt < '2022-07-24 0
 ## test range partition
 CREATE TABLE `w3` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY RANGE(DAYOFWEEK(`d`))
 (PARTITION `p2` VALUES LESS THAN (2) ENGINE = InnoDB,
 PARTITION `p3` VALUES LESS THAN (3) ENGINE = InnoDB,
@@ -106,7 +106,7 @@ explain select * from w3 where d < '2022-07-23' and d > '2022-07-20' order by d;
 ## test list
 CREATE TABLE `w4` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY LIST(DAYOFWEEK(`d`))
 (PARTITION `p1` VALUES IN (1) ENGINE = InnoDB,
 PARTITION `p2` VALUES IN (2) ENGINE = InnoDB,
@@ -151,7 +151,7 @@ explain select * from w4 where d < '2022-07-23' and d > '2022-07-20' order by d;
 ## test: spanning weeks and year
 CREATE TABLE `w5` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(dayofweek(`d`))
 PARTITIONS 7;
 # prepare data

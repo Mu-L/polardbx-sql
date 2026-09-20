@@ -41,8 +41,8 @@ public class FailPointFromHintTest {
 
     @After
     public void after() {
-        FailPoint.disable("key1");
-        FailPoint.disable("key2");
+        FailPoint.disable("FailPointFromHintTestKey1");
+        FailPoint.disable("FailPointFromHintTestKey2");
     }
 
     private void addHint(String key, Object value) {
@@ -56,7 +56,7 @@ public class FailPointFromHintTest {
     @Test
     public void testInject1() {
 
-        String key = "key1";
+        String key = "FailPointFromHintTestKey1";
 
         /**
          * haven't register any key, so no error will be thrown
@@ -68,20 +68,20 @@ public class FailPointFromHintTest {
         thrown.expect(RuntimeException.class);
         FailPoint.enable(key, "value");
         /**
-         * since key1 registered, RuntimeException will be thrown
+         * since FailPointFromHintTestKey1 registered, RuntimeException will be thrown
          */
         FailPoint.injectFromHint(key, executionContext, () -> {
             throw new RuntimeException("injected error message");
         });
         /**
-         * since key2 is not registered, IllegalArgumentException won't be thrown
+         * since FailPointFromHintTestKey2 is not registered, IllegalArgumentException won't be thrown
          */
-        FailPoint.injectFromHint("key2", executionContext, () -> {
+        FailPoint.injectFromHint("FailPointFromHintTestKey2", executionContext, () -> {
             throw new IllegalArgumentException("injected error message");
         });
 
         /**
-         * since key1 deRegistered, RuntimeException won't be thrown
+         * since FailPointFromHintTestKey1 deRegistered, RuntimeException won't be thrown
          */
         FailPoint.disable(key);
         FailPoint.injectFromHint(key, executionContext, () -> {
@@ -93,7 +93,7 @@ public class FailPointFromHintTest {
     @Test
     public void testInject2() {
 
-        String key = "key1";
+        String key = "FailPointFromHintTestKey1";
 
         FailPoint.injectFromHint(key, executionContext, () -> {
             throw new RuntimeException("injected error message");
@@ -113,11 +113,11 @@ public class FailPointFromHintTest {
     @Test
     public void testInject3() {
 
-        String key = "key1";
+        String key = "FailPointFromHintTestKey1";
 
         long start = System.currentTimeMillis();
 
-        FailPoint.enable("key1", "value");
+        FailPoint.enable("FailPointFromHintTestKey1", "value");
         FailPoint.injectFromHint(key, executionContext, () -> {
             try {
                 Thread.sleep(3 * 1000);

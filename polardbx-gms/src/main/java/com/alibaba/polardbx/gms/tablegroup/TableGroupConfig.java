@@ -149,6 +149,10 @@ public class TableGroupConfig {
         return tableGroupRecord != null && tableGroupRecord.isColumnarTableGroup();
     }
 
+    public boolean isReplicasTableGroup() {
+        return tableGroupRecord != null && tableGroupRecord.isReplicasTableGroup();
+    }
+
     public String getPreDefinePartitionInfo() {
         if (isPreDefinePartitionInfo()) {
             return tableGroupRecord.getPartition_definition();

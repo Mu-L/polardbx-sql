@@ -1,0 +1,118 @@
+DROP TABLE IF EXISTS `t_decimal_0`
+DROP TABLE IF EXISTS `t_decimal_1`
+CREATE TABLE `t_decimal_0` (
+	`id` bigint(11) NOT NULL,
+	`order_id` varchar(20) DEFAULT NULL,
+	`buyer_id` varchar(20) DEFAULT NULL,
+	`seller_id` varchar(20) DEFAULT NULL,
+	`c1` decimal(12, 3) NOT NULL,
+	`c2` decimal(47, 15) NOT NULL,
+	PRIMARY KEY (`c1`)
+)
+PARTITION BY KEY (`c1`) PARTITIONS 3
+CREATE TABLE `t_decimal_1` (
+	`id` bigint(11) NOT NULL,
+	`order_id` varchar(20) DEFAULT NULL,
+	`buyer_id` varchar(20) DEFAULT NULL,
+	`seller_id` varchar(20) DEFAULT NULL,
+	`c1` decimal(12, 3) NOT NULL,
+	`c2` decimal(47, 15) NOT NULL,
+	PRIMARY KEY (`c2`)
+)
+PARTITION BY KEY (`c1`) PARTITIONS 3
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/CREATE CLUSTERED COLUMNAR INDEX `cci_t_decimal_0` ON `t_decimal_0` (`c1`) PARTITION BY HASH (`c1`) PARTITIONS 4
+/*+TDDL:CMD_EXTRA(ALTER_CCI_STATUS=true, ALTER_CCI_STATUS_BEFORE=CREATING, ALTER_CCI_STATUS_AFTER=PUBLIC)*/ALTER TABLE `t_decimal_0`
+	 ALTER INDEX `cci_t_decimal_0` VISIBLE
+SHOW FULL CREATE TABLE `t_decimal_0`
+Table,Create Table
+t_decimal_0,CREATE TABLE `t_decimal_0` (
+	`id` bigint(11) NOT NULL,
+	`order_id` varchar(20) DEFAULT NULL,
+	`buyer_id` varchar(20) DEFAULT NULL,
+	`seller_id` varchar(20) DEFAULT NULL,
+	`c1` decimal(12, 3) NOT NULL,
+	`c2` decimal(47, 15) NOT NULL,
+	PRIMARY KEY (`c1`),
+	CLUSTERED COLUMNAR INDEX /* cci_t_decimal_0_$ */ `cci_t_decimal_0` (`c1`)
+		PARTITION BY HASH(`c1`)
+		PARTITIONS 4 ENGINE=OSS
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`c1`)
+PARTITIONS 3
+/* tablegroup = `tg` */
+CHECK COLUMNAR INDEX `cci_t_decimal_0` ON `t_decimal_0` meta
+CCI,error_type,status,primary_key,details
+`cci_t_decimal_0_$` ON `test_create_cci__1633166199`.`t_decimal_0`,SUMMARY,--,--,OK (metadata of columnar index checked) Finish time: %
+DROP INDEX `cci_t_decimal_0` ON `t_decimal_0`
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/CREATE CLUSTERED COLUMNAR INDEX `cci_t_decimal_0` ON `t_decimal_0` (`c2`) PARTITION BY KEY (`c2`) PARTITIONS 4
+SHOW FULL CREATE TABLE `t_decimal_0`
+Table,Create Table
+t_decimal_0,CREATE TABLE `t_decimal_0` (
+	`id` bigint(11) NOT NULL,
+	`order_id` varchar(20) DEFAULT NULL,
+	`buyer_id` varchar(20) DEFAULT NULL,
+	`seller_id` varchar(20) DEFAULT NULL,
+	`c1` decimal(12, 3) NOT NULL,
+	`c2` decimal(47, 15) NOT NULL,
+	PRIMARY KEY (`c1`),
+	CLUSTERED COLUMNAR INDEX /* cci_t_decimal_0_$ */ `cci_t_decimal_0` (`c2`)
+		PARTITION BY KEY(`c2`)
+		PARTITIONS 4 ENGINE=OSS
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`c1`)
+PARTITIONS 3
+/* tablegroup = `tg` */
+CHECK COLUMNAR INDEX `cci_t_decimal_0` ON `t_decimal_0` meta
+CCI,error_type,status,primary_key,details
+`cci_t_decimal_0_$` ON `test_create_cci__1633166199`.`t_decimal_0`,SUMMARY,--,--,OK (metadata of columnar index checked) Finish time: %
+DROP INDEX `cci_t_decimal_0` ON `t_decimal_0`
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/CREATE CLUSTERED COLUMNAR INDEX `cci_t_decimal_1` ON `t_decimal_1` (`c1`) PARTITION BY KEY (`c1`) PARTITIONS 4
+/*+TDDL:CMD_EXTRA(ALTER_CCI_STATUS=true, ALTER_CCI_STATUS_BEFORE=CREATING, ALTER_CCI_STATUS_AFTER=PUBLIC)*/ALTER TABLE `t_decimal_1`
+	 ALTER INDEX `cci_t_decimal_1` VISIBLE
+SHOW FULL CREATE TABLE `t_decimal_1`
+Table,Create Table
+t_decimal_1,CREATE TABLE `t_decimal_1` (
+	`id` bigint(11) NOT NULL,
+	`order_id` varchar(20) DEFAULT NULL,
+	`buyer_id` varchar(20) DEFAULT NULL,
+	`seller_id` varchar(20) DEFAULT NULL,
+	`c1` decimal(12, 3) NOT NULL,
+	`c2` decimal(47, 15) NOT NULL,
+	PRIMARY KEY (`c2`),
+	CLUSTERED COLUMNAR INDEX /* cci_t_decimal_1_$ */ `cci_t_decimal_1` (`c1`)
+		PARTITION BY KEY(`c1`)
+		PARTITIONS 4 ENGINE=OSS,
+	LOCAL KEY `auto_shard_key_c1` USING BTREE (`c1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`c1`)
+PARTITIONS 3
+/* tablegroup = `tg` */
+CHECK COLUMNAR INDEX `cci_t_decimal_1` ON `t_decimal_1` meta
+CCI,error_type,status,primary_key,details
+`cci_t_decimal_1_$` ON `test_create_cci__1633166199`.`t_decimal_1`,SUMMARY,--,--,OK (metadata of columnar index checked) Finish time: %
+DROP INDEX `cci_t_decimal_1` ON `t_decimal_1`
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/CREATE CLUSTERED COLUMNAR INDEX `cci_t_decimal_1` ON `t_decimal_1` (`c2`) PARTITION BY HASH (`c2`) PARTITIONS 4
+SHOW FULL CREATE TABLE `t_decimal_1`
+Table,Create Table
+t_decimal_1,CREATE TABLE `t_decimal_1` (
+	`id` bigint(11) NOT NULL,
+	`order_id` varchar(20) DEFAULT NULL,
+	`buyer_id` varchar(20) DEFAULT NULL,
+	`seller_id` varchar(20) DEFAULT NULL,
+	`c1` decimal(12, 3) NOT NULL,
+	`c2` decimal(47, 15) NOT NULL,
+	PRIMARY KEY (`c2`),
+	CLUSTERED COLUMNAR INDEX /* cci_t_decimal_1_$ */ `cci_t_decimal_1` (`c2`)
+		PARTITION BY HASH(`c2`)
+		PARTITIONS 4 ENGINE=OSS,
+	LOCAL KEY `auto_shard_key_c1` USING BTREE (`c1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`c1`)
+PARTITIONS 3
+/* tablegroup = `tg` */
+CHECK COLUMNAR INDEX `cci_t_decimal_1` ON `t_decimal_1` meta
+CCI,error_type,status,primary_key,details
+`cci_t_decimal_1_$` ON `test_create_cci__1633166199`.`t_decimal_1`,SUMMARY,--,--,OK (metadata of columnar index checked) Finish time: %
+DROP INDEX `cci_t_decimal_1` ON `t_decimal_1`
+DROP TABLE IF EXISTS `t_decimal_0`
+DROP TABLE IF EXISTS `t_decimal_1`;

@@ -27,10 +27,13 @@ import com.alibaba.polardbx.executor.backfill.BatchConsumer;
 import com.alibaba.polardbx.executor.backfill.Extractor;
 import com.alibaba.polardbx.executor.backfill.Loader;
 import com.alibaba.polardbx.executor.cursor.Cursor;
+import com.alibaba.polardbx.executor.gsi.BackfillParameterManager;
+import com.alibaba.polardbx.executor.gsi.backfill.InplaceBackfillExtractor;
 import com.alibaba.polardbx.executor.partitionmanagement.backfill.AlterTableGroupExtractor;
 import com.alibaba.polardbx.executor.partitionmanagement.backfill.AlterTableGroupLoader;
 import com.alibaba.polardbx.executor.scaleout.backfill.ChangeSetExecutor;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.utils.PhyTableOperationUtil;
 import org.apache.calcite.rel.RelNode;
 
 import java.util.HashMap;
@@ -61,10 +64,15 @@ public class BackfillExecutor {
                         Map<String, Set<String>> targetPhyTables,
                         boolean movePartitions,
                         boolean useChangeSet) {
-        final long batchSize = baseEc.getParamManager().getLong(ConnectionParams.SCALEOUT_BACKFILL_BATCH_SIZE);
-        final long speedMin = baseEc.getParamManager().getLong(ConnectionParams.SCALEOUT_BACKFILL_SPEED_MIN);
-        final long speedLimit = baseEc.getParamManager().getLong(ConnectionParams.SCALEOUT_BACKFILL_SPEED_LIMITATION);
-        final long parallelism = baseEc.getParamManager().getLong(ConnectionParams.SCALEOUT_BACKFILL_PARALLELISM);
+        // 使用BackfillParameterManager根据perfMode自动设置backfill参数
+        BackfillParameterManager.BackfillConcurrencyParameter backfillParams =
+            BackfillParameterManager.newBackfillParameter(
+                baseEc, schemaName, tableName);
+
+        final long batchSize = backfillParams.getBatchSize();
+        final long speedMin = backfillParams.getSpeedMin();
+        final long speedLimit = backfillParams.getSpeedLimit();
+        final long parallelism = backfillParams.getParallelism();
         final boolean useBinary = baseEc.getParamManager().getBoolean(ConnectionParams.BACKFILL_USING_BINARY);
 
         if (null == baseEc.getServerVariables()) {
@@ -135,6 +143,57 @@ public class BackfillExecutor {
                 }
             }
         } while (!finished);
+
+        return affectRows.get();
+    }
+
+    /**
+     * 支持存储层下推的回填方法
+     * 使用polardbx_hasher函数在存储层计算路由信息，避免数据在CN节点传输
+     */
+    public int inplaceBackfill(String schemaName,
+                               String primaryTable,
+                               Map<String, Set<String>> sourceTableTopology,
+                               Map<String, Set<String>> srcTargetTableMap,
+                               Map<String, List<Pair<Long, Long>>> targetTablePartitionBounds,
+                               Map<String, List<Pair<Long, Long>>> sourceTablePartitionBounds,
+                               List<List<String>> activePartitionKeys,
+                               boolean useChangeSet,
+                               boolean useBinary,
+                               ExecutionContext baseEc) {
+        //force not use binary
+        useBinary = false;
+        if (null == baseEc.getServerVariables()) {
+            baseEc.setServerVariables(new HashMap<>());
+        }
+
+        ExecutionContext executionContext = baseEc.copy();
+        PhyTableOperationUtil.disableIntraGroupParallelism(schemaName, executionContext);
+
+        InplaceBackfillExtractor extractor =
+            InplaceBackfillExtractor.create(schemaName, primaryTable,
+                srcTargetTableMap,
+                targetTablePartitionBounds,
+                sourceTablePartitionBounds,
+                activePartitionKeys,
+                sourceTableTopology,
+                useChangeSet, useBinary, baseEc);
+        extractor.loadBackfillMeta(executionContext);
+
+        final AtomicInteger affectRows = new AtomicInteger();
+        extractor.foreachBatch(executionContext, new BatchConsumer() {
+            @Override
+            public void consume(List<Map<Integer, ParameterContext>> batch,
+                                Pair<ExecutionContext, Pair<String, String>> extractEcAndIndexPair) {
+                // pass
+            }
+
+            @Override
+            public void consume(String sourcePhySchema, String sourcePhyTable, Cursor cursor, ExecutionContext context,
+                                List<Map<Integer, ParameterContext>> mockResult) {
+                // pass
+            }
+        });
 
         return affectRows.get();
     }

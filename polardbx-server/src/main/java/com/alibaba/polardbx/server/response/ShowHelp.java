@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.server.response;
 
 import com.alibaba.polardbx.Fields;
+import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.net.buffer.ByteBufferHolder;
 import com.alibaba.polardbx.net.compress.IPacketOutputProxy;
 import com.alibaba.polardbx.net.compress.PacketOutputProxyFactory;
@@ -27,7 +28,6 @@ import com.alibaba.polardbx.net.packet.RowDataPacket;
 import com.alibaba.polardbx.server.ServerConnection;
 import com.alibaba.polardbx.server.util.PacketUtil;
 import com.alibaba.polardbx.server.util.StringUtil;
-import com.alibaba.polardbx.config.ConfigDataMode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -140,6 +140,10 @@ public final class ShowHelp {
         datas.add(new HelpData("explain execute SQL",
             "Report sql on physical db plan info",
             "explain execute select count(*) from user"));
+        datas.add(new HelpData("explain routing SQL", "Report routing process of sql",
+            "explain routing select count(*) from user"));
+        datas.add(new HelpData("explain keyword SQL", "Report keywords of sql",
+            "explain keyword select count(*) from user"));
         datas.add(new HelpData("show sequences", "Report all sequences status", ""));
         datas.add(new HelpData("create sequence NAME [start with COUNT]",
             "Create sequence",
@@ -161,16 +165,30 @@ public final class ShowHelp {
         datas.add(new HelpData("show stc", "Report all requst stats by partition", "show stc"));
         datas.add(new HelpData("show htc", "Report the CPU/LOAD/MEM/NET/GC stats", "show htc"));
         //ccl
+        if (ConfigDataMode.isPolarDbX()) {
+            datas.add(new HelpData("show ccl_rules", "Report the ccl rule info", "show ccl_rules"));
+            datas.add(new HelpData("clear ccl_rules", "Clear the ccl rules", "clear ccl_rules"));
+            datas.add(new HelpData("show ccl_blockers", "Report the ccl trigger info", "show ccl_blockers"));
+            datas.add(new HelpData("clear ccl_blockers", "Clear the ccl triggers", "clear ccl_blockers"));
+        }
+        datas.add(new HelpData("show routing_rules", "Report the routing rule info", "show routing_rules limit 2"));
         datas.add(new HelpData("show ccl_rules", "Report the ccl rule info", "show ccl_rules"));
         datas.add(new HelpData("clear ccl_rules", "Clear the ccl rules", "clear ccl_rules"));
-        datas.add(new HelpData("show ccl_triggers", "Report the ccl trigger info", "show ccl_triggers"));
-        datas.add(new HelpData("clear ccl_triggers", "Clear the ccl triggers", "clear ccl_triggers"));
-
+        datas.add(new HelpData("show ccl_blockers", "Report the ccl trigger info", "show ccl_blockers"));
+        datas.add(new HelpData("clear ccl_blockers", "Clear the ccl triggers", "clear ccl_blockers"));
         datas.add(new HelpData("show global/local deadlocks",
             "Show global deadlocks caused by global transactions, or show local deadlocks on each DN",
             "show global deadlocks"));
         //deprecated
         //datas.add(new HelpData("show git_commit", "Report the release info ", "show git_commit"));
+
+        // NL2SQL
+        datas.add(new HelpData("<natural language>",
+            "Type natural language directly, AI agent will query the database and answer",
+            "How many tables are in this database?"));
+        datas.add(new HelpData("clear context",
+            "Clear NL2SQL conversation context",
+            "clear context"));
     }
 
     public static class HelpData {
@@ -184,6 +202,5 @@ public final class ShowHelp {
             this.desc = desc;
             this.example = example;
         }
-
     }
 }

@@ -14,26 +14,31 @@
 
 import React from "react";
 import Reactable from "reactable";
+import * as xlsx from 'xlsx/dist/xlsx.full.min.js';
 
 import {
     addToHistory,
-    computeRate,
     formatCount,
     formatDataSize,
     formatDataSizeBytes,
-    formatDurationMs, formatDurationNs,
+    formatDurationMs,
+    formatDurationNs,
     formatShortDateTime,
-    getFirstParameter, getFullSplitIdSuffix,
+    getFirstParameter,
+    getFormattedHtmlHrefUrl,
+    getFormattedStatsUrl, getFullSplitIdSuffix,
+    getDriverIdOnly,
     getHostAndPort,
     getHostname,
-    getStageNumber, getStagePipelineFromDriverId,
+    getStageNumber,
+    getStagePipelineFromDriverId,
     getStageStateColor,
     getTaskIdSuffix,
     getTaskNumber,
     GLYPHICON_HIGHLIGHT,
     parseDataSize,
     parseDuration,
-    precisionRound
+    precisionRound, WEBSHELL_MPPUI
 } from "../utils";
 import {QueryHeader} from "./QueryHeader";
 
@@ -73,16 +78,17 @@ class TaskList extends React.Component {
     static formatState(state, fullyBlocked) {
         if (fullyBlocked && state === "RUNNING") {
             return "BLOCKED";
-        }
-        else {
+        } else {
             return state;
         }
     }
 
     openStageDetail(event, id: number) {
         const queryId = this.props.queryId;
-        this.setState({ selectedStageId: id });
-        const url : string = "/ui/stage.html?" + queryId + "." + id;
+        const stageId = queryId + "." + id;
+        const url: string = !WEBSHELL_MPPUI ? '/ui/stage.html?' + stageId :
+            '/mppui/stage.html?' + stageId + '&host=' + host + '&mppPort=' + mppPort;
+        this.setState({selectedStageId: id});
         event.preventDefault();
         window.open(url, '_blank');
     }
@@ -97,8 +103,29 @@ class TaskList extends React.Component {
                 </div>);
         }
 
-        const renderTasks = (taskList) => taskList.map(task => {
-            if (typeof(task.detailedStats) === "undefined") {
+        // separate each stage
+        let stageToTaskMap = new Map();
+        tasks.forEach(task => {
+            let taskId = getTaskIdSuffix(task.taskStatus.taskId);
+            // find stageId, like: 0.0 and 0.1 => 0
+            let stageId = taskId.substring(0, taskId.indexOf('.'));
+
+            if (!stageToTaskMap.has(stageId)) {
+                stageToTaskMap.set(stageId, []);
+            }
+
+            stageToTaskMap.get(stageId).push(task);
+        });
+
+        const stageIdKeys = Array.from(stageToTaskMap.keys());
+        stageIdKeys.sort((a, b) => {
+            const key1 = Number(a);
+            const key2 = Number(b);
+            return key1 - key2;
+        });
+
+        const renderTaskList = (taskList) => taskList.map(task => {
+            if (typeof (task.detailedStats) === "undefined") {
                 return (
                     <Tr key={task.taskStatus.taskId}>
                         <Td column="id" value={task.taskStatus.taskId}>
@@ -154,7 +181,8 @@ class TaskList extends React.Component {
                             {getTaskIdSuffix(task.taskStatus.taskId)}
                         </Td>
                         <Td column="host" value={getHostname(task.taskStatus.self)}>
-                            <a href={"worker.html?" + task.taskStatus.nodeId} target="_blank">
+                            <a href={getFormattedHtmlHrefUrl("worker.html?" + task.taskStatus.nodeId)}
+                               target="_blank">
                                 {getHostAndPort(task.taskStatus.self)}
                             </a>
                         </Td>
@@ -196,42 +224,22 @@ class TaskList extends React.Component {
             }
         });
 
-        // separate each stage
-        let stageTaskMap = new Map();
-        tasks.forEach(task => {
-            let taskId = getTaskIdSuffix(task.taskStatus.taskId);
-            // find stageId, like: 0.0 and 0.1 => 0
-            let stageId = taskId.substring(0, taskId.indexOf('.'));
-
-            if (!stageTaskMap.has(stageId)) {
-                stageTaskMap.set(stageId, []);
-            }
-
-            stageTaskMap.get(stageId).push(task);
-        });
-
-        const stageKeys = Array.from(stageTaskMap.keys());
-        stageKeys.sort((a, b) => {
-            const numA = Number(a);
-            const numB = Number(b);
-            return numA - numB;
-        });
-        // console.debug("stages: " + stageKeys);
-
-        var renderedStages = [];
-        for (const stageId of stageKeys) {
-            const taskList = stageTaskMap.get(stageId);
-            if (!taskList) {
+        var toRenderStageList = [];
+        for (const stageId of stageIdKeys) {
+            const taskListFromStage = stageToTaskMap.get(stageId);
+            if (!taskListFromStage) {
                 continue;
             }
-            const tableId = "stage-" + stageId;
-            // console.debug("Rendering table:" + tableId);
-            renderedStages.push(
+            const stageTableId = "stage-" + stageId;
+            toRenderStageList.push(
                 <div key={stageId}>
                     <h4>
-                        <a href="javascript:void(0);" onClick={(event) => this.openStageDetail(event, Number(stageId))}>{tableId}</a>
+                        <a href="javascript:void(0);"
+                           onClick={(event) => this.openStageDetail(event, Number(stageId))}>
+                            {stageTableId}
+                        </a>
                     </h4>
-                    <Table id={tableId} className="table table-striped sortable" sortable=
+                    <Table id={stageTableId} className="table table-striped sortable" sortable=
                         {[
                             {
                                 column: 'id',
@@ -255,13 +263,16 @@ class TaskList extends React.Component {
                             <Th column="id">ID</Th>
                             <Th column="host">Host</Th>
                             <Th column="state">State</Th>
-                            <Th column="splitsPending"><span key={"Pending"} className="glyphicon glyphicon-pause" style={GLYPHICON_HIGHLIGHT}
+                            <Th column="splitsPending"><span key={"Pending"} className="glyphicon glyphicon-pause"
+                                                             style={GLYPHICON_HIGHLIGHT}
                                                              data-toggle="tooltip" data-placement="top"
                                                              title="Pending splits"></span></Th>
-                            <Th column="splitsRunning"><span key={"Running"} className="glyphicon glyphicon-play" style={GLYPHICON_HIGHLIGHT}
+                            <Th column="splitsRunning"><span key={"Running"} className="glyphicon glyphicon-play"
+                                                             style={GLYPHICON_HIGHLIGHT}
                                                              data-toggle="tooltip" data-placement="top"
                                                              title="Running splits"></span></Th>
-                            <Th column="splitsDone"><span key={"Completed"} className="glyphicon glyphicon-ok" style={GLYPHICON_HIGHLIGHT}
+                            <Th column="splitsDone"><span key={"Completed"} className="glyphicon glyphicon-ok"
+                                                          style={GLYPHICON_HIGHLIGHT}
                                                           data-toggle="tooltip" data-placement="top"
                                                           title="Completed splits"></span></Th>
                             <Th column="outputRows">OutputRows</Th>
@@ -272,12 +283,12 @@ class TaskList extends React.Component {
                             <Th column="processTime">Process</Th>
                             <Th column="dataFinishTime">DataFinish</Th>
                         </Thead>
-                        {renderTasks(taskList)}
+                        {renderTaskList(taskListFromStage)}
                     </Table>
                 </div>);
         }
 
-        return renderedStages;
+        return toRenderStageList;
     }
 }
 
@@ -311,16 +322,15 @@ class SplitList extends React.Component {
     static formatState(state, fullyBlocked) {
         if (fullyBlocked && state === "RUNNING") {
             return "BLOCKED";
-        }
-        else {
+        } else {
             return state;
         }
     }
 
     openStageDetail(event, id: number) {
         const queryId = this.props.queryId;
-        this.setState({ selectedStageId: id });
-        const url : string = "/ui/stage.html?" + queryId + "." + id;
+        this.setState({selectedStageId: id});
+        const url: string = "/ui/stage.html?" + queryId + "." + id;
         event.preventDefault();
         window.open(url, '_blank');
     }
@@ -335,32 +345,97 @@ class SplitList extends React.Component {
                 </div>);
         }
 
-        const renderSplits = (splitList) => splitList.map(split => {
+        const renderSplitsHeader = (splits) => {
+            if (splits === undefined || splits.length === 0 || splits[0].driverRuntimeStatistics) {
+                // new behavior
+                return (
+                    <Thead>
+                        <Th column="id">ID</Th>
+                        <Th column="outputRows">OutputRows</Th>
+                        <Th column="inputRows">InputRows</Th>
+                        <Th column="splitStats">Stats</Th>
+                        <Th column="totalCost">TotalCost</Th>
+                        <Th column="runningCost">RunningCost</Th>
+                        <Th column="blockedCost">BlockedCost</Th>
+                        <Th column="pendingCost">PendingCost</Th>
+                    </Thead>
+                );
+            }
+            // old behavior
             return (
-                <Tr key={split.driverId}>
-                    <Td column="id" value={split.driverId}>
-                        {getFullSplitIdSuffix(split.driverId)}
-                    </Td>
-                    {/*<Td column="state">*/}
-                    {/*    {split.state}*/}
-                    {/*</Td>*/}
-                    <Td column="outputRows">
-                        {formatCount(split.outputPositions)}
-                    </Td>
-                    <Td column="inputRows">
-                        {formatCount(split.inputPositions)}
-                    </Td>
-                    <Td column="elapsedTime">
-                        {formatDurationMs(split.endMillis - split.startMillis)}
-                    </Td>
-                    <Td column="blockTime">
-                        {formatDurationNs(split.blockedNanos)}
-                    </Td>
-                    <Td column="processTime">
-                        {formatDurationNs(split.processNanos)}
-                    </Td>
-                </Tr>
+                <Thead>
+                    <Th column="id">ID</Th>
+                    {/*<Th column="state">State</Th>*/}
+                    <Th column="outputRows">OutputRows</Th>
+                    <Th column="inputRows">InputRows</Th>
+                    {/*<Th column="inputBytes">inputBytes</Th>*/}
+                    <Th column="elapsedTime">Elapsed</Th>
+                    <Th column="blockTime">Blocked</Th>
+                    <Th column="processTime">Process</Th>
+                </Thead>
             );
+        }
+
+        const renderSplits = (splitList) => splitList.map(split => {
+            if (!split.driverRuntimeStatistics) {
+                return (
+                    <Tr key={split.driverId}>
+                        <Td column="id" value={split.driverId}>
+                            {getFullSplitIdSuffix(split.driverId)}
+                        </Td>
+                        {/*<Td column="state">*/}
+                        {/*    {split.state}*/}
+                        {/*</Td>*/}
+                        <Td column="outputRows">
+                            {formatCount(split.outputPositions)}
+                        </Td>
+                        <Td column="inputRows">
+                            {formatCount(split.inputPositions)}
+                        </Td>
+                        <Td column="elapsedTime">
+                            {formatDurationMs(split.endMillis - split.startMillis)}
+                        </Td>
+                        <Td column="blockTime">
+                            {formatDurationNs(split.blockedNanos)}
+                        </Td>
+                        <Td column="processTime">
+                            {formatDurationNs(split.processNanos)}
+                        </Td>
+                    </Tr>
+                );
+            } else {
+                return (
+                    <Tr key={split.driverId}>
+                        <Td column="id" value={split.driverId}>
+                            {getFullSplitIdSuffix(split.driverId)}
+                        </Td>
+                        <Td column="outputRows">
+                            {formatCount(split.outputPositions)}
+                        </Td>
+                        <Td column="inputRows">
+                            {formatCount(split.inputPositions)}
+                        </Td>
+                        <Td column="splitStats">
+                            {split.driverRuntimeStatistics.splitStatistics}
+                        </Td>
+                        <Td column="totalCost">
+                            {formatDurationNs(split.driverRuntimeStatistics.totalCost)}
+                        </Td>
+                        <Td column="runningCost">
+                            {formatDurationNs(split.driverRuntimeStatistics.runningCost)
+                                + " (" + split.driverRuntimeStatistics.runningCount + ")"}
+                        </Td>
+                        <Td column="blockedCost">
+                            {formatDurationNs(split.driverRuntimeStatistics.blockedCost)
+                                + " (" + split.driverRuntimeStatistics.blockedCount + ")"}
+                        </Td>
+                        <Td column="pendingCost">
+                            {formatDurationNs(split.driverRuntimeStatistics.pendingCost)
+                                + " (" + split.driverRuntimeStatistics.pendingCount + ")"}
+                        </Td>
+                    </Tr>
+                );
+            }
         });
 
         // separate each pipeline
@@ -402,7 +477,8 @@ class SplitList extends React.Component {
             renderedSplits.push(
                 <div key={pipelineId}>
                     <h4>
-                        <a href="javascript:void(0);" onClick={(event) => this.openStageDetail(event, Number(stageId))}>{tableId}</a>
+                        <a href="javascript:void(0);"
+                           onClick={(event) => this.openStageDetail(event, Number(stageId))}>{tableId}</a>
                     </h4>
                     <Table id={tableId} className="table table-striped sortable" sortable=
                         {[
@@ -419,16 +495,7 @@ class SplitList extends React.Component {
                             'processTime',
                         ]}
                            defaultSort={{column: 'id', direction: 'asc'}}>
-                        <Thead>
-                            <Th column="id">ID</Th>
-                            {/*<Th column="state">State</Th>*/}
-                            <Th column="outputRows">OutputRows</Th>
-                            <Th column="inputRows">InputRows</Th>
-                            {/*<Th column="inputBytes">inputBytes</Th>*/}
-                            <Th column="elapsedTime">Elapsed</Th>
-                            <Th column="blockTime">Blocked</Th>
-                            <Th column="processTime">Process</Th>
-                        </Thead>
+                        {renderSplitsHeader(splitList)}
                         {renderSplits(splitList)}
                     </Table>
                 </div>
@@ -477,20 +544,6 @@ class StageSummary extends React.Component {
         };
     }
 
-    getExpandedIcon() {
-        return this.state.expanded ? "glyphicon-chevron-up" : "glyphicon-chevron-down";
-    }
-
-    getExpandedStyle() {
-        return this.state.expanded ? {} : {display: "none"};
-    }
-
-    toggleExpanded() {
-        this.setState({
-            expanded: !this.state.expanded,
-        })
-    }
-
     static renderHistogram(histogramId, inputData, numberFormatter) {
         const numBuckets = Math.min(HISTOGRAM_WIDTH, Math.sqrt(inputData.length));
         const dataMin = Math.min.apply(null, inputData);
@@ -500,8 +553,7 @@ class StageSummary extends React.Component {
         let histogramData = [];
         if (bucketSize === 0) {
             histogramData = [inputData.length];
-        }
-        else {
+        } else {
             for (let i = 0; i < numBuckets + 1; i++) {
                 histogramData.push(0);
             }
@@ -525,6 +577,20 @@ class StageSummary extends React.Component {
         $(histogramId).sparkline(histogramData, stageHistogramProperties);
     }
 
+    getExpandedIcon() {
+        return this.state.expanded ? "glyphicon-chevron-up" : "glyphicon-chevron-down";
+    }
+
+    getExpandedStyle() {
+        return this.state.expanded ? {} : {display: "none"};
+    }
+
+    toggleExpanded() {
+        this.setState({
+            expanded: !this.state.expanded,
+        })
+    }
+
     componentDidUpdate() {
         const stage = this.props.stage;
         const numTasks = stage.taskStats.length;
@@ -533,14 +599,14 @@ class StageSummary extends React.Component {
         stage.taskStats.sort((taskA, taskB) => getTaskNumber(taskA.taskStatus.taskId) - getTaskNumber(taskB.taskStatus.taskId));
 
         const scheduledTimes = stage.taskStats.map(task => {
-            if (typeof(task.stats) === "undefined") {
+            if (typeof (task.stats) === "undefined") {
                 parseDuration(0);
             } else {
                 parseDuration(task.stats.totalScheduledTime);
             }
         });
         const cpuTimes = stage.taskStats.map(task => {
-                if (typeof(task.stats) === "undefined") {
+            if (typeof (task.stats) === "undefined") {
                     parseDuration(0);
                 } else {
                     parseDuration(task.stats.totalCpuTime);
@@ -962,7 +1028,7 @@ export class QueryDetail extends React.Component {
     }
 
     static formatErrorCode(errorCode) {
-        if (typeof(errorCode) === "undefined") {
+        if (typeof (errorCode) === "undefined") {
             return ""
         } else {
             return errorCode.name + " (" + errorCode.code + ")"
@@ -1024,7 +1090,7 @@ export class QueryDetail extends React.Component {
     refreshLoop() {
         clearTimeout(this.timeoutId); // to stop multiple series of refreshLoop from going on simultaneously
         const queryId = getFirstParameter(window.location.search);
-        $.get('/v1/query/stats/' + queryId, function (query) {
+        $.get(getFormattedStatsUrl('/v1/query/stats/' + queryId), function (query) {
             let lastSnapshotStages = this.state.lastSnapshotStage;
             if (this.state.stageRefresh) {
                 lastSnapshotStages = query.outputStage;
@@ -1098,8 +1164,7 @@ export class QueryDetail extends React.Component {
                 taskRefresh: false,
                 lastSnapshotTasks: this.state.query.outputStage,
             });
-        }
-        else {
+        } else {
             this.setState({
                 taskRefresh: true,
             });
@@ -1112,8 +1177,7 @@ export class QueryDetail extends React.Component {
                 splitRefresh: false,
                 // lastSnapshotTasks: this.state.query.outputStage,
             });
-        }
-        else {
+        } else {
             this.setState({
                 splitRefresh: true,
             });
@@ -1124,8 +1188,7 @@ export class QueryDetail extends React.Component {
         if (this.state.taskRefresh) {
             return <button className="btn btn-info live-button"
                            onClick={this.handleTaskRefreshClick.bind(this)}>Auto-Refresh: On</button>
-        }
-        else {
+        } else {
             return <button className="btn btn-info live-button"
                            onClick={this.handleTaskRefreshClick.bind(this)}>Auto-Refresh: Off</button>
         }
@@ -1135,11 +1198,67 @@ export class QueryDetail extends React.Component {
         if (this.state.splitRefresh) {
             return <button className="btn btn-info live-button"
                            onClick={this.handleSplitRefreshClick.bind(this)}>Auto-Refresh: On</button>
-        }
-        else {
+        } else {
             return <button className="btn btn-info live-button"
                            onClick={this.handleSplitRefreshClick.bind(this)}>Auto-Refresh: Off</button>
         }
+    }
+
+    downloadSplitsToExcel(splits) {
+        if (splits === undefined || splits.length === 0) {
+            alert("Splits are empty!");
+            return;
+        }
+        const workbook = xlsx.utils.book_new();
+        const splitData = splits.map(split => {
+            const fullDriverId = getFullSplitIdSuffix(split.driverId);
+            const parts = fullDriverId.split('.');
+            const stageId = parts[0];
+            const nodeId = parts[1];
+            const pipelineId = parts[2];
+            const driverId = getDriverIdOnly(split.driverId);
+
+            if (!split.driverRuntimeStatistics) {
+                return {
+                    "stageId": stageId,
+                    "pipelineId": pipelineId,
+                    "nodeId": nodeId,
+                    "driverId": driverId,
+                    "inputRows": split.driverRuntimeStatistics.inputRows,
+                    "outputRows": split.driverRuntimeStatistics.outputRows,
+                    "elapsedTime": formatDurationMs(split.endMillis - split.startMillis),
+                    "blockTime": formatDurationNs(split.blockedNanos),
+                    "processTime": formatDurationNs(split.processNanos)
+                }
+            } else {
+                return {
+                    "stageId": stageId,
+                    "pipelineId": pipelineId,
+                    "nodeId": nodeId,
+                    "driverId": driverId,
+                    "runningCost": split.driverRuntimeStatistics.runningCost,
+                    "pendingCost": split.driverRuntimeStatistics.pendingCost,
+                    "blockedCost": split.driverRuntimeStatistics.blockedCost,
+                    "openCost": split.driverRuntimeStatistics.openCost,
+                    "totalCost": split.driverRuntimeStatistics.totalCost,
+                    "runningCount": split.driverRuntimeStatistics.runningCount,
+                    "pendingCount": split.driverRuntimeStatistics.pendingCount,
+                    "blockedCount": split.driverRuntimeStatistics.blockedCount,
+                    "stats": split.driverRuntimeStatistics.splitStatistics,
+                    "readBytes": split.driverRuntimeStatistics.readBytes,
+                    "inputRows": split.driverRuntimeStatistics.inputRows,
+                    "outputRows": split.driverRuntimeStatistics.outputRows,
+                    "blockStats": split.driverRuntimeStatistics.blockingStatistics
+                }
+            }
+        });
+        const worksheet = xlsx.utils.json_to_sheet(splitData);
+        xlsx.utils.book_append_sheet(workbook, worksheet, 'splits');
+        xlsx.writeFile(workbook, this.state.query.queryId + '.xlsx');
+    }
+
+    downloadSplitsButton(splits) {
+        return <button className="btn btn-info live-button" onClick={() => this.downloadSplitsToExcel(splits)}>下载完整文件</button>
     }
 
     handleStageRefreshClick() {
@@ -1148,8 +1267,7 @@ export class QueryDetail extends React.Component {
                 stageRefresh: false,
                 lastSnapshotStages: this.state.query.outputStage,
             });
-        }
-        else {
+        } else {
             this.setState({
                 stageRefresh: true,
             });
@@ -1160,8 +1278,7 @@ export class QueryDetail extends React.Component {
         if (this.state.stageRefresh) {
             return <button className="btn btn-info live-button"
                            onClick={this.handleStageRefreshClick.bind(this)}>Auto-Refresh: On</button>
-        }
-        else {
+        } else {
             return <button className="btn btn-info live-button"
                            onClick={this.handleStageRefreshClick.bind(this)}>Auto-Refresh: Off</button>
         }
@@ -1286,6 +1403,7 @@ export class QueryDetail extends React.Component {
                                     </div>
                                 </td>
                                 <td>&nbsp;&nbsp;{this.renderSplitRefreshButton()}</td>
+                                <td>&nbsp;&nbsp;{this.downloadSplitsButton(splits)}</td>
                             </tr>
                             </tbody>
                         </table>
@@ -1293,7 +1411,7 @@ export class QueryDetail extends React.Component {
                 </div>
                 <div className="row">
                     <div className="col-xs-12">
-                        <SplitList key={this.state.query.queryId} splits={splits}  queryId={this.state.query.queryId}/>
+                        <SplitList key={this.state.query.queryId} splits={splits} queryId={this.state.query.queryId}/>
                     </div>
                 </div>
             </div>
@@ -1347,6 +1465,53 @@ export class QueryDetail extends React.Component {
                 <div className="row">
                     <div className="col-xs-12">
                         <TaskList key={this.state.query.queryId} tasks={tasks} queryId={this.state.query.queryId}/>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    renderExtraInfo() {
+        if (this.state.lastSnapshotTasks === null) {
+            return;
+        }
+        const query = this.state.query;
+        if (!query.failureInfo) {
+            return;
+        }
+        return (
+            <div className="info-container-next">
+                <div className="row">
+                    <div className="col-xs-6">
+                        <h3 className="container-title">Extra</h3>
+                    </div>
+                    <div className="col-xs-6">
+
+                    </div>
+                </div>
+                <div className="row">
+                    <div className="col-xs-12">
+                        <h3>Error Information</h3>
+                        <hr className="h3-hr"/>
+                        <table className="table">
+                            <tbody>
+                            <tr>
+                                <td className="info-title">
+                                    Stack Trace
+                                    <a className="btn copy-button" data-clipboard-target="#stack-trace"
+                                       data-toggle="tooltip" data-placement="right" title="Copy to clipboard">
+                                        <span className="glyphicon glyphicon-copy" aria-hidden="true"
+                                              alt="Copy to clipboard"/>
+                                    </a>
+                                </td>
+                                <td className="info-text">
+                                <pre id="stack-trace">
+                                    {QueryDetail.formatStackTrace(query.failureInfo)}
+                                </pre>
+                                </td>
+                            </tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
@@ -1408,8 +1573,7 @@ export class QueryDetail extends React.Component {
                     </div>
                 </div>
             );
-        }
-        else {
+        } else {
             return null;
         }
     }
@@ -1490,8 +1654,7 @@ export class QueryDetail extends React.Component {
                     </div>
                 </div>
             );
-        }
-        else {
+        } else {
             return "";
         }
     }
@@ -1799,6 +1962,7 @@ export class QueryDetail extends React.Component {
                 {this.renderStages()}
                 {this.renderTasks()}
                 {this.renderSplits()}
+                {this.renderExtraInfo()}
             </div>
         );
     }

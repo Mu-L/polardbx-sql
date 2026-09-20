@@ -39,13 +39,10 @@ public class LogicalTableGsiPkRangeBackfillTask extends BaseBackfillTask impleme
 
     public String sourceTableName;
     public String targetTableName;
-    public Map<String, String> virtualColumns;
-    public Map<String, String> backfillColumnMap;
     public List<String> modifyStringColumns;
     public List<Integer> pkColumnIndexes;
     public boolean useChangeSet;
     public boolean modifyColumn;
-    public boolean mirrorCopy;
     public Map<Integer, List<String>> leftRow;
     public Map<Integer, List<String>> rightRow;
     public long batchRows;
@@ -59,12 +56,9 @@ public class LogicalTableGsiPkRangeBackfillTask extends BaseBackfillTask impleme
     public LogicalTableGsiPkRangeBackfillTask(String schemaName,
                                               String sourceTableName,
                                               String targetTableName,
-                                              Map<String, String> virtualColumns,
-                                              Map<String, String> backfillColumnMap,
                                               List<String> modifyStringColumns,
                                               List<Integer> pkColumnList,
                                               boolean useChangeSet,
-                                              boolean mirrorCopy,
                                               boolean modifyColumn,
                                               Map<Integer, List<String>> leftRow,
                                               Map<Integer, List<String>> rightRow,
@@ -78,13 +72,10 @@ public class LogicalTableGsiPkRangeBackfillTask extends BaseBackfillTask impleme
         super(schemaName);
         this.sourceTableName = sourceTableName;
         this.targetTableName = targetTableName;
-        this.virtualColumns = virtualColumns;
-        this.backfillColumnMap = backfillColumnMap;
         this.modifyStringColumns = modifyStringColumns;
         this.pkColumnIndexes = pkColumnList;
         this.useChangeSet = useChangeSet;
         this.modifyColumn = modifyColumn;
-        this.mirrorCopy = mirrorCopy;
         this.leftRow = leftRow;
         this.rightRow = rightRow;
         this.batchRows = batchRows;
@@ -124,10 +115,8 @@ public class LogicalTableGsiPkRangeBackfillTask extends BaseBackfillTask impleme
                         copyExecutionContext);
                 backFillPlan.setUseChangeSet(useChangeSet);
                 backFillPlan.setOnlineModifyColumn(modifyColumn);
-                backFillPlan.setMirrorCopy(mirrorCopy);
+                backFillPlan.setMirrorCopy(false);
                 backFillPlan.setModifyStringColumns(modifyStringColumns);
-                backFillPlan.setDstCheckColumnMap(backfillColumnMap);
-                backFillPlan.setSrcCheckColumnMap(virtualColumns);
                 backFillPlan.setPkRange(Pair.of(rows.get(i - 1), rows.get(i)));
                 backFillPlan.setTotalThreadCount(totalThreadCount);
                 FailPoint.injectRandomExceptionFromHint(copyExecutionContext);

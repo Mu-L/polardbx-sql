@@ -75,9 +75,9 @@ public class ImportTableSpaceDdlNormalTask extends BasePhyDdlTask {
         return "|alter table " + sb + " import tablespace";
     }
 
-    public List<String> explainInfo() {
+    public List<String> explainInfo(ExecutionContext ec) {
         StringBuilder sb = new StringBuilder();
-        sb.append("(");
+        sb.append("IMPORT_TABLESPACE_IF_NOTEXISTS(");
         for (Map.Entry<String, List<List<String>>> entry : tableTopology.entrySet()) {
             sb.append(entry.getKey());
             sb.append(".(");

@@ -28,10 +28,17 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.thread.ExecutorTemplate;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.executor.cursor.ResultCursor;
+import com.alibaba.polardbx.executor.sync.FailPointClearSyncAction;
+import com.alibaba.polardbx.executor.sync.FailPointDisableSyncAction;
+import com.alibaba.polardbx.executor.sync.FailPointEnableSyncAction;
 import com.alibaba.polardbx.executor.sync.ISyncManager;
+import com.alibaba.polardbx.executor.sync.TableMetaChangePreemptiveSyncAction;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import com.alibaba.polardbx.gms.node.GmsNodeManager;
 import com.alibaba.polardbx.gms.node.GmsNodeManager.GmsNode;
+import com.alibaba.polardbx.gms.sync.GmsSyncConnectionFailInjector;
 import com.alibaba.polardbx.gms.sync.GmsSyncDataSource;
 import com.alibaba.polardbx.gms.sync.IGmsSyncAction;
 import com.alibaba.polardbx.gms.sync.ISyncResultHandler;
@@ -150,8 +157,11 @@ public class ClusterSyncManager extends AbstractLifecycle implements ISyncManage
 
         Map<String, String> nodeExceptions = new HashMap<>();
 
+        prepareSyncConnectionFailInjection(action);
+        final boolean syncLocalViaManager = FailPoint.isKeyEnable(FailPointKey.FP_SYNC_LOCAL_VIA_MANAGER);
+
         for (final GmsNode remoteNode : remoteNodes) {
-            if (remoteNode == null || remoteNode.equals(localNode)) {
+            if (remoteNode == null || (!syncLocalViaManager && remoteNode.equals(localNode))) {
                 // The node info is null (for defence) or already do sync action for local node.
                 continue;
             }
@@ -186,7 +196,28 @@ public class ClusterSyncManager extends AbstractLifecycle implements ISyncManage
             StringBuilder buf = new StringBuilder();
             buf.append("Failed to SYNC to the following nodes:").append("\n");
             nodeExceptions.forEach((key, value) -> buf.append(key).append(" - ").append(value).append(";\n"));
+            logger.error(buf.toString());
             throw GeneralUtil.nestedException(buf.toString());
+        }
+    }
+
+    private void prepareSyncConnectionFailInjection(IGmsSyncAction action) {
+        // Fail point management syncs must not touch the injector, otherwise enabling/disabling
+        // the fail point itself would be disturbed by the injected failures.
+        if (action instanceof FailPointEnableSyncAction
+            || action instanceof FailPointDisableSyncAction
+            || action instanceof FailPointClearSyncAction) {
+            return;
+        }
+        if (FailPoint.isKeyEnable(FailPointKey.FP_GMS_SYNC_CONN_FAIL_TIMES)) {
+            int failTimes = 0;
+            try {
+                failTimes = Integer.parseInt(FailPoint.getValueOfKey(FailPointKey.FP_GMS_SYNC_CONN_FAIL_TIMES));
+            } catch (NumberFormatException ignored) {
+            }
+            GmsSyncConnectionFailInjector.armOnce(failTimes);
+        } else {
+            GmsSyncConnectionFailInjector.disarm();
         }
     }
 

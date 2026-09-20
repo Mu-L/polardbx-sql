@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.mpp.operator.factory;
 
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.executor.operator.Executor;
 import com.alibaba.polardbx.executor.operator.LimitExec;
@@ -53,6 +55,15 @@ public class LimitExecFactory extends ExecutorFactory {
             fetch = getRexParam(limit.fetch, params);
             if (limit.offset != null) {
                 skip = getRexParam(limit.offset, params);
+            }
+            // Re-validate the sign here because a plan-cache hit skips the CBO-time
+            // checks in CBOUtil#validateNonNegativeFetch/calPushDownFetch, which only run
+            // while the plan is being built, not on every re-execution of a cached plan.
+            if (fetch < 0) {
+                throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER, "get rex " + fetch);
+            }
+            if (skip < 0) {
+                throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER, "get rex " + skip);
             }
         }
         Executor exec = new LimitExec(inputs, skip, fetch, context);

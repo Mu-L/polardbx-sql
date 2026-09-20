@@ -19,6 +19,8 @@
 package com.alibaba.polardbx.optimizer.core.planner.Xplanner;
 
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.BaseTableOperation;
@@ -27,6 +29,7 @@ import com.alibaba.polardbx.optimizer.core.rel.LogicalInsert;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.PhyQueryOperation;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableOperation;
+import com.alibaba.polardbx.optimizer.core.rel.dml.writer.InsertWriter;
 import com.alibaba.polardbx.optimizer.utils.RexUtils;
 import com.google.common.collect.ImmutableList;
 import org.apache.calcite.rel.RelNode;
@@ -249,5 +252,94 @@ public class PartitionGatherTest {
         Assert.assertEquals(2, gather.getTargetGroups().get("schema").size());
         Assert.assertTrue(gather.getTargetGroups().get("schema").get("group0"));
         Assert.assertTrue(gather.getTargetGroups().get("schema").get("group1"));
+    }
+
+    /**
+     * Cover line 67: resolveRethrowOnError returns true when FORCE_SWITCHOVER_CHECK_FOR_TEST = true.
+     * Cover line 192: rethrowOnError=true causes the exception to be rethrown.
+     */
+    @Test
+    public void testRethrowOnErrorWhenForceCheckEnabled() {
+        final ExecutionContext ec = Mockito.mock(ExecutionContext.class);
+        final ParamManager pm = Mockito.mock(ParamManager.class);
+        Mockito.when(ec.getParamManager()).thenReturn(pm);
+        Mockito.when(pm.getBoolean(ConnectionParams.FORCE_SWITCHOVER_CHECK_FOR_TEST)).thenReturn(true);
+
+        // Use a LogicalView that throws to trigger the catch branch.
+        final LogicalView rel = Mockito.mock(LogicalView.class);
+        Mockito.when(rel.getSchemaName()).thenReturn("schema");
+        Mockito.when(rel.getTargetTables(any())).thenThrow(new RuntimeException("mock error"));
+
+        final PartitionGather gather = new PartitionGather(ec);
+        try {
+            gather.go(rel);
+            Assert.fail("Expected exception to be rethrown when rethrowOnError=true");
+        } catch (Exception e) {
+            Assert.assertTrue(
+                e.getMessage().contains("mock error")
+                    || e.getCause().getMessage().contains("mock error"));
+        }
+    }
+
+    /**
+     * Cover line 69: resolveRethrowOnError catch branch when getParamManager throws.
+     * Verify that rethrowOnError defaults to false and errors are swallowed.
+     */
+    @Test
+    public void testResolveRethrowOnErrorCatchBranch() {
+        final ExecutionContext ec = Mockito.mock(ExecutionContext.class);
+        Mockito.when(ec.getParamManager()).thenThrow(new RuntimeException("param manager broken"));
+
+        // Despite getParamManager() throwing, the gather should construct successfully
+        // with rethrowOnError=false, and swallow any visit error.
+        final LogicalView rel = Mockito.mock(LogicalView.class);
+        Mockito.when(rel.getSchemaName()).thenReturn("schema");
+        Mockito.when(rel.getTargetTables(any())).thenThrow(new RuntimeException("visit error"));
+
+        final PartitionGather gather = new PartitionGather(ec);
+        // Should NOT throw — rethrowOnError is false due to the catch branch.
+        gather.go(rel);
+        Assert.assertTrue(gather.getTargetGroups().isEmpty());
+    }
+
+    /**
+     * Cover line 210: gatherInsertPhyPlan uses getPrimaryInsertWriter().getInput() for upsert.
+     */
+    @Test
+    public void testGatherInsertPhyPlanUsesInsertWriterForUpsert() {
+        final ExecutionContext ec = Mockito.mock(ExecutionContext.class);
+        final Map<Integer, ParameterContext> params = new HashMap<>();
+        Mockito.when(ec.getParamMap()).thenReturn(params);
+        Mockito.when(ec.getSchemaName()).thenReturn("schema");
+
+        final LogicalInsert rel = Mockito.mock(LogicalInsert.class);
+        final LogicalDynamicValues input = Mockito.mock(LogicalDynamicValues.class);
+        Mockito.when(rel.getInput()).thenReturn(input);
+        Mockito.when(rel.isSourceSelect()).thenReturn(false);
+        Mockito.when(rel.getBatchSize()).thenReturn(0);
+        Mockito.when(rel.getTargetTablesHintCache()).thenReturn(null);
+        // Mark as upsert so gatherInsertPhyPlan takes the INSERT writer branch.
+        Mockito.when(rel.isUpsert()).thenReturn(true);
+
+        final InsertWriter primaryWriter = Mockito.mock(InsertWriter.class);
+        Mockito.when(rel.getPrimaryInsertWriter()).thenReturn(primaryWriter);
+
+        try (MockedStatic<RexUtils> mockRexUtils = mockStatic(RexUtils.class)) {
+            mockRexUtils.when(() -> RexUtils.calculateAndUpdateAllRexCallParams(any(), any())).then(i -> null);
+            mockRexUtils.when(() -> RexUtils.updateParam(any(), any(), anyBoolean(), any())).then(i -> null);
+
+            final PhyTableOperation phy0 = Mockito.mock(PhyTableOperation.class);
+            Mockito.when(primaryWriter.getInput(any())).thenReturn(ImmutableList.of(phy0));
+            Mockito.when(phy0.getSchemaName()).thenReturn("schema");
+            Mockito.when(phy0.getDbIndex()).thenReturn("group0");
+
+            final PartitionGather gather = new PartitionGather(ec);
+            gather.go(rel);
+
+            Assert.assertFalse(gather.getTargetGroups().isEmpty());
+            Assert.assertTrue(gather.getTargetGroups().get("schema").get("group0"));
+            // Verify that getPhyPlanForDisplay was NOT called (the upsert branch used the writer).
+            Mockito.verify(rel, Mockito.never()).getPhyPlanForDisplay(any(), any());
+        }
     }
 }

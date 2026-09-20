@@ -16,8 +16,10 @@
 
 package com.alibaba.polardbx.common.datatype;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.common.utils.time.parser.StringNumericParser;
 import com.google.common.primitives.Longs;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.io.Serializable;
 import java.math.BigDecimal;
@@ -27,12 +29,17 @@ import static com.alibaba.polardbx.common.datatype.UInt64Utils.UNSIGNED_MASK;
 import static com.alibaba.polardbx.common.utils.time.parser.StringNumericParser.ERROR_INDEX;
 
 
-public class UInt64 extends Number implements Comparable<UInt64>, Serializable {
-
+public class UInt64 extends Number implements Comparable<UInt64>, Serializable, MemoryCountable {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(UInt64.class).instanceSize();
     public static final UInt64 MAX_UINT64 = new UInt64(0xFFFFFFFFFFFFFFFFL);
     public static final UInt64 UINT64_ZERO = new UInt64(0L);
 
     private final long value;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE;
+    }
 
     public UInt64(long value) {
         this.value = value;

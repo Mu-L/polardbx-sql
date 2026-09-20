@@ -65,7 +65,7 @@ public class SQLCreateDatabaseStatement extends SQLStatementImpl implements SQLC
     protected final List<SQLName> excludeTables = new ArrayList<>();
 
     protected boolean withLock = true;
-    protected boolean dryRun = false;
+    protected boolean dryRunCreateAs = false;
     protected boolean createTables = true;
 
     //adb
@@ -359,12 +359,12 @@ public class SQLCreateDatabaseStatement extends SQLStatementImpl implements SQLC
         this.withLock = withLock;
     }
 
-    public boolean isDryRun() {
-        return dryRun;
+    public boolean isDryRunCreateAs() {
+        return dryRunCreateAs;
     }
 
-    public void setDryRun(boolean dryRun) {
-        this.dryRun = dryRun;
+    public void setDryRunCreateAs(boolean dryRunCreateAs) {
+        this.dryRunCreateAs = dryRunCreateAs;
     }
 
     public boolean isCreateTables() {

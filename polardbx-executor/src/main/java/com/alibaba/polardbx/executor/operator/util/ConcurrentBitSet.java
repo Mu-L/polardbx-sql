@@ -1,6 +1,8 @@
 package com.alibaba.polardbx.executor.operator.util;
 
-public interface ConcurrentBitSet {
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+
+public interface ConcurrentBitSet extends MemoryCountable {
     void set(int bitIndex);
 
     void clear(int bitIndex);

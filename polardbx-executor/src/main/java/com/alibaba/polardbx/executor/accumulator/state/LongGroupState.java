@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.accumulator.state;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.executor.accumulator.datastruct.LongSegmentArrayList;
 import org.openjdk.jol.info.ClassLayout;
 
@@ -49,5 +50,11 @@ public class LongGroupState implements GroupState {
     @Override
     public long estimateSize() {
         return INSTANCE_SIZE + values.estimateSize();
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(values);
     }
 }

@@ -73,6 +73,9 @@ public class AlterTableChangeMetaTask extends BaseGmsTask {
 
     private final long versionId;
 
+    private List<String> addConstraints;
+    private List<String> dropConstraints;
+
     public AlterTableChangeMetaTask(String schemaName,
                                     String logicalTableName,
                                     String dbIndex,
@@ -98,7 +101,9 @@ public class AlterTableChangeMetaTask extends BaseGmsTask {
                                     String tableRowFormat,
                                     SequenceBean sequenceBean,
                                     boolean onlineModifyColumnIndexTask,
-                                    long versionId) {
+                                    long versionId,
+                                    List<String> addConstraints,
+                                    List<String> dropConstraints) {
         super(schemaName, logicalTableName);
         this.dbIndex = dbIndex;
         this.phyTableName = phyTableName;
@@ -124,6 +129,8 @@ public class AlterTableChangeMetaTask extends BaseGmsTask {
         this.sequenceBean = sequenceBean;
         this.onlineModifyColumnIndexTask = onlineModifyColumnIndexTask;
         this.versionId = versionId;
+        this.addConstraints = addConstraints;
+        this.dropConstraints = dropConstraints;
     }
 
     @Override
@@ -139,10 +146,11 @@ public class AlterTableChangeMetaTask extends BaseGmsTask {
             specialDefaultValues, specialDefaultValueFlags, droppedIndexes, addedIndexes, addedIndexesWithoutNames,
             renamedIndexes, primaryKeyDropped, addedPrimaryKeyColumns,
             columnAfterAnother, requireLogicalColumnOrder, tableComment, tableRowFormat, sequenceBean,
-            onlineModifyColumnIndexTask, changeFileStore, executionContext);
+            onlineModifyColumnIndexTask, addConstraints, dropConstraints, changeFileStore, executionContext);
 
         // Change columnar table meta in same transaction
-        // columnar_table_mapping, columnar_table_evolution, columnar_column_evolution
+        // columnar_table_mapping, columnar_table_evolution, columnar_column_evolution,
+        // columnar_partition_evolution, columnar_index_evolution
         TableMetaChanger.changeColumnarTableMeta(metaDbConnection, schemaName, logicalTableName, addedColumns,
             droppedColumns, updatedColumns, changedColumns, renamedIndexes, versionId, jobId);
 

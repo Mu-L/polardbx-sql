@@ -18,6 +18,8 @@ package com.alibaba.polardbx.qatest.ddl.datamigration.locality;
 
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.gms.util.GroupInfoUtil;
+import com.alibaba.polardbx.qatest.ddl.datamigration.locality.LocalityTestCaseUtils.LocalityTestUtils;
+import com.alibaba.polardbx.qatest.twoPhaseDdl.TwoPhaseDdlTestUtils.DdlStateCheckUtil;
 import com.alibaba.polardbx.qatest.util.ConnectionManager;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import lombok.Value;
@@ -91,7 +93,7 @@ public class LocalityPartDbTest extends LocalityTestBase {
         JdbcUtil.executeUpdateSuccess(tddlConnection, dropDbSql);
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createDbSql);
-        List<DSBean> dsList = getDsListOfSchema(dbName);
+        List<DSBean> dsList = getDsListOfSchema(tddlConnection, dbName);
         Assert.assertTrue(
             "dsList is " + dsList,
             dsList.stream()
@@ -167,7 +169,8 @@ public class LocalityPartDbTest extends LocalityTestBase {
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTableSql);
         // check table topology
         DSBean ds =
-            getDsListOfSchema(currentDatabase).stream().filter(x -> x.storageInst.equalsIgnoreCase(dn)).findFirst()
+            getDsListOfSchema(tddlConnection, currentDatabase).stream().filter(x -> x.storageInst.equalsIgnoreCase(dn))
+                .findFirst()
                 .get();
         List<TopologyVO> topologyVOList = showTableTopology(tableName);
         Assert.assertTrue(
@@ -199,9 +202,10 @@ public class LocalityPartDbTest extends LocalityTestBase {
         String[] localitySqls = {
             TStringUtil.quoteString("storage_pools='_default'"), TStringUtil.quoteString("storage_pools='_DEFAULT'"),
             TStringUtil.quoteString("storage_pools=\"_DEFAULT\""),
-            TStringUtil.quoteString("STOrage_Pools='_default'"), TStringUtil.quoteString("Storage_Pools='_Default',primary_Storage_pool='_default'"),
+            TStringUtil.quoteString("STOrage_Pools='_default'"),
+            TStringUtil.quoteString("Storage_Pools='_Default',primary_Storage_pool='_default'"),
             TStringUtil.quoteString("Storage_Pools='_Default';primary_Storage_pool='_default'")
-            };
+        };
         for (String localitySql : localitySqls) {
             String createDbSql = String.format("create database %s mode = auto locality = %s", dbName, localitySql);
             String showCreateDbSql = String.format("show create database %s", dbName);
@@ -226,7 +230,8 @@ public class LocalityPartDbTest extends LocalityTestBase {
         String dropStoragePool = String.format("drop storage pool %s", "hulu");
         JdbcUtil.executeUpdateSuccess(tddlConnection, createStoragePool);
         String[] localitySqls = {
-            TStringUtil.quoteString("storage_pools='_default,Hulu'"), TStringUtil.quoteString("storage_pools='_DEFAULT,HULU'"),
+            TStringUtil.quoteString("storage_pools='_default,Hulu'"),
+            TStringUtil.quoteString("storage_pools='_DEFAULT,HULU'"),
             TStringUtil.quoteString("Storage_Pools='_Default,hulu';primary_Storage_pool='_default'")
         };
         for (String localitySql : localitySqls) {
@@ -294,7 +299,7 @@ public class LocalityPartDbTest extends LocalityTestBase {
     public void testPartitionGroupLocality() throws SQLException {
 
         List<String> dnList = getDatanodes(tddlConnection);
-        List<DSBean> dsList = getDsBeanList();
+        List<DSBean> dsList = getDsBeanList(tddlConnection);
         Assume.assumeTrue(dnList.size() >= 2);
 
         final String dn1 = dnList.get(0);
@@ -352,6 +357,35 @@ public class LocalityPartDbTest extends LocalityTestBase {
         String tg3 = getTableGroupOfTable(tableName3);
         Assert.assertNotEquals(tg2, tg3);
         Assert.assertTrue(showTableTopology(tableName3).stream().allMatch(x -> targetDs3.contains(x.getGroupName())));
+    }
+
+    @Test
+    public void testRebalanceTablegroup() throws InterruptedException {
+
+        final String dnName = "testRebalanceTablegroup";
+        final String tgName = "tgRebalanceTablegroup";
+        final String tableName = "tbRebalanceTablegroup";
+        final String createDatabaseSql = "create database " + dnName + " mode = auto";
+        final String createTableGroup = "create tablegroup " + tgName;
+        final String createTableSql =
+            String.format("create table %s(id int) partition by key(id) partitions 3 tablegroup=%s", tableName, tgName);
+        final String dropTableSql = "drop table " + tableName;
+        final String dropDatabaseSql = "drop database if exists " + dnName;
+        final String rebalanceTableGroup = "rebalance tablegroup " + tgName + " POLICY='data_balance'";
+        JdbcUtil.executeUpdateSuccess(tddlConnection, dropDatabaseSql);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, createDatabaseSql);
+        JdbcUtil.useDb(tddlConnection, dnName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, createTableGroup);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, createTableSql);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, rebalanceTableGroup);
+        Long jobId = DdlStateCheckUtil.getDdlJobIdFromPattern(tddlConnection, rebalanceTableGroup, true);
+        DdlStateCheckUtil.waitTillDdlDone(tddlConnection, jobId, "random1");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, dropTableSql);
+
+        JdbcUtil.executeUpdateSuccess(tddlConnection, rebalanceTableGroup);
+        jobId = DdlStateCheckUtil.getDdlJobIdFromPattern(tddlConnection, rebalanceTableGroup, true);
+        DdlStateCheckUtil.waitTillDdlDone(tddlConnection, jobId, "random2");
+        JdbcUtil.executeUpdateSuccess(tddlConnection, dropDatabaseSql);
     }
 
     private List<TopologyVO> showTableTopology(String table) throws SQLException {

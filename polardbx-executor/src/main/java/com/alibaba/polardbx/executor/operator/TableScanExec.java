@@ -65,7 +65,6 @@ public class TableScanExec extends SourceExec implements Closeable {
     protected volatile boolean isFinish = false;
     private final SpillerFactory spillerFactory;
     private final boolean useParameterDelegate;
-    private boolean randomSplits = false;
 
     public TableScanExec(LogicalView logicalView, ExecutionContext context, TableScanClient scanClient,
                          long maxRowCount, SpillerFactory spillerFactory, List<DataType> dataTypeList) {
@@ -77,10 +76,6 @@ public class TableScanExec extends SourceExec implements Closeable {
         this.spillerFactory = spillerFactory;
         this.dataTypeList = dataTypeList;
         this.useParameterDelegate = ExecUtils.useParameterDelegate(context);
-    }
-
-    public void setRandomSplits(boolean randomSplits) {
-        this.randomSplits = randomSplits;
     }
 
     @Override
@@ -132,9 +127,7 @@ public class TableScanExec extends SourceExec implements Closeable {
                 throw new TddlRuntimeException(ERR_EXECUTE_ON_MYSQL, "input splits are not ready!");
             }
 
-            if (randomSplits) {
-                Collections.shuffle(scanClient.splitList);
-            }
+            scanClient.reorderSplits();
 
             if (dataTypes == null) {
                 createDataTypes();
@@ -205,11 +198,6 @@ public class TableScanExec extends SourceExec implements Closeable {
                 }
             }
         } else {
-            // update prefetch num under adaptive range scan  mode
-            if (scanClient.getRangeScanMode() == RangeScanMode.ADAPTIVE) {
-                int nextPrefetch = ((AdaptiveRangeScanClient) scanClient).calcNextPrefetch();
-                scanClient.setPrefetchNum(nextPrefetch);
-            }
             if (scanClient.connectionCount() > 0) {
                 if (scanClient.beingConnectionCount() > 0) {
                     //存在正在建连的split，这时我们只需要根据prefetch值判断要不要继续下发split
@@ -348,5 +336,10 @@ public class TableScanExec extends SourceExec implements Closeable {
     public void setTargetPlanStatGroup(RuntimeStatistics.OperatorStatisticsGroup targetPlanStatGroup) {
         scanClient.setTargetPlanStatGroup(targetPlanStatGroup);
         super.setTargetPlanStatGroup(targetPlanStatGroup);
+    }
+
+    @Override
+    public String getSourceName() {
+        return logicalView.getSchemaName() + "." + logicalView.getLogicalTableName();
     }
 }

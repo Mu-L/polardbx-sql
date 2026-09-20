@@ -1,0 +1,19 @@
+DROP TABLE IF EXISTS test_t1
+SET @@session.character_set_results = 'binary'
+CREATE TABLE `test_t1` (
+	`id` bigint(20) AUTO_INCREMENT,
+	`a` mediumtext,
+	`b` text,
+	`c` longtext,
+	`d` tinytext,
+	`e` varchar(150),
+	PRIMARY KEY (`id`)
+) DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY (id)
+SET @@session.character_set_results = 'utf8mb4'
+INSERT INTO test_t1 (a, b, c, d, e)
+VALUES ('🤔圣人立象以尽义(＾-＾)ノ聖を立てて義を尽くす', '🤔圣人立象以尽义(＾-＾)ノ聖を立てて義を尽くす', '🤔圣人立象以尽义(＾-＾)ノ聖を立てて義を尽くす', '🤔圣人立象以尽义(＾-＾)ノ聖を立てて義を尽くす', '🤔圣人立象以尽义(＾-＾)ノ聖を立てて義を尽くす')
+SELECT *
+FROM test_t1
+id,a,b,c,d,e
+1,🤔圣人立象以尽义(＾-＾)ノ聖を立てて義を尽くす,🤔圣人立象以尽义(＾-＾)ノ聖を立てて義を尽くす,🤔圣人立象以尽义(＾-＾)ノ聖を立てて義を尽くす,🤔圣人立象以尽义(＾-＾)ノ聖を立てて義を尽くす,🤔圣人立象以尽义(＾-＾)ノ聖を立てて義を尽くす

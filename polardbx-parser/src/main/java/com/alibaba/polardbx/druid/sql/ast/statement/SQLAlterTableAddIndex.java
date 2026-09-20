@@ -33,7 +33,7 @@ public class SQLAlterTableAddIndex extends SQLObjectImpl implements SQLAlterTabl
         this.indexDefinition = indexDefinition;
     }
 
-    private SQLIndexDefinition indexDefinition = new SQLIndexDefinition();
+    protected SQLIndexDefinition indexDefinition = new SQLIndexDefinition();
 
     public SQLAlterTableAddIndex() {
         indexDefinition.setParent(this);
@@ -178,6 +178,10 @@ public class SQLAlterTableAddIndex extends SQLObjectImpl implements SQLAlterTabl
 
     public String getDistanceMeasure() {
         return indexDefinition.getDistanceMeasure();
+    }
+
+    public String getDistance() {
+        return indexDefinition.getDistance();
     }
 
     public String getAlgorithm() {

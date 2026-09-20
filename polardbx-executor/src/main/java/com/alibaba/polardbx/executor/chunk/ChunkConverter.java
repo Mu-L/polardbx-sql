@@ -18,6 +18,7 @@ package com.alibaba.polardbx.executor.chunk;
 
 import com.google.common.base.Preconditions;
 
+import java.util.Arrays;
 import java.util.function.Function;
 
 /**
@@ -28,20 +29,33 @@ public class ChunkConverter implements Function<Chunk, Chunk> {
 
     private final int[] columnIndexes;
     private final BlockConverter[] blockConverters;
+    private int[] blockRefIndexes;
 
     public ChunkConverter(BlockConverter[] blockConverters, int[] columnIndexes) {
         Preconditions.checkArgument(blockConverters.length == columnIndexes.length);
         this.columnIndexes = columnIndexes;
         this.blockConverters = blockConverters;
+
+        this.blockRefIndexes = new int[columnIndexes.length];
+        int index = 0;
+        for (int i = 0; i < columnIndexes.length; i++) {
+            if (blockConverters[i] != null && blockConverters[i].isIdentity()) {
+                blockRefIndexes[index++] = i;
+            }
+        }
+        blockRefIndexes = index == 0 ? null : Arrays.copyOf(blockRefIndexes, index);
     }
 
     @Override
     public Chunk apply(Chunk chunk) {
         Block[] blocks = new Block[columnIndexes.length];
+
         for (int i = 0; i < columnIndexes.length; i++) {
             blocks[i] = blockConverters[i].apply(chunk.getBlock(columnIndexes[i]));
         }
-        return new Chunk(blocks);
+        Chunk newChunk = new Chunk(blocks);
+        newChunk.setBlockRefIndexes(blockRefIndexes);
+        return newChunk;
     }
 
     public int columnWidth() {

@@ -16,7 +16,12 @@
 
 package com.alibaba.polardbx.optimizer.core.function;
 
-import org.apache.calcite.sql.*;
+import org.apache.calcite.sql.SqlCall;
+import org.apache.calcite.sql.SqlDialect;
+import org.apache.calcite.sql.SqlFunction;
+import org.apache.calcite.sql.SqlFunctionCategory;
+import org.apache.calcite.sql.SqlKind;
+import org.apache.calcite.sql.SqlWriter;
 import org.apache.calcite.sql.type.OperandTypes;
 import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlReturnTypeInference;
@@ -46,6 +51,8 @@ public class FunctionWithoutArg extends SqlFunction {
     public static FunctionWithoutArg LOCALTIME = new FunctionWithoutArg("LOCALTIME", ReturnTypes.TIMESTAMP);
     public static FunctionWithoutArg SCHEMA = new FunctionWithoutArg("SCHEMA", ReturnTypes.VARCHAR_2000);
     public static FunctionWithoutArg CHECK_FIREWORKS = new FunctionWithoutArg("CHECK_FIREWORKS", ReturnTypes.INTEGER);
+    public static FunctionWithoutArg DDL_JOB_ID = new FunctionWithoutArg("DDL_JOB_ID", ReturnTypes.BIGINT);
+    public static FunctionWithoutArg DDL_PLAN_ID = new FunctionWithoutArg("DDL_PLAN_ID", ReturnTypes.BIGINT);
 
     @Override
     public boolean isDynamicFunction() {

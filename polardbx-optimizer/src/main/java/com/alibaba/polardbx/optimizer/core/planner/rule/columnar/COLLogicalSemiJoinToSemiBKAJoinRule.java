@@ -24,11 +24,11 @@ import com.alibaba.polardbx.optimizer.hint.operator.HintType;
 import com.alibaba.polardbx.optimizer.hint.util.CheckJoinHint;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.google.common.collect.ImmutableList;
+import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelOptCost;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptRuleOperand;
 import org.apache.calcite.plan.RelOptUtil;
-import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelDistributionTraitDef;
 import org.apache.calcite.rel.RelDistributions;
 import org.apache.calcite.rel.RelNode;
@@ -39,7 +39,7 @@ public class COLLogicalSemiJoinToSemiBKAJoinRule extends LogicalSemiJoinToSemiBK
 
     public static final LogicalSemiJoinToSemiBKAJoinRule INSTANCE = new COLLogicalSemiJoinToSemiBKAJoinRule(
         operand(LogicalSemiJoin.class,
-            operand(RelSubset.class, any()),
+            operand(RelNode.class, Convention.NONE, any()),
             operand(LogicalView.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION, any())), "INSTANCE");
 
     COLLogicalSemiJoinToSemiBKAJoinRule(RelOptRuleOperand operand, String desc) {
@@ -70,7 +70,7 @@ public class COLLogicalSemiJoinToSemiBKAJoinRule extends LogicalSemiJoinToSemiBK
             bkaJoin.setFixedCost(fixedCost);
         }
         right.setIsMGetEnabled(true);
-        right.setJoin(bkaJoin);
+        right.setLookupInfo(bkaJoin);
         RelUtils.changeRowType(bkaJoin, join.getRowType());
         if (join.getTraitSet().getTrait(RelDistributionTraitDef.INSTANCE) == RelDistributions.SINGLETON) {
             call.transformTo(convert(bkaJoin, bkaJoin.getTraitSet().replace(RelDistributions.SINGLETON)));

@@ -43,6 +43,7 @@ public enum MasterSlave {
      * 2. 不指定follower hint的时候:
      * a）有只读实例的时候，忽略follower read
      * b) 没有只读实例的时候，按照读写分离逻辑路由给follower
+     * 3. 命中follower的规则路由，强制路由给follower
      */
     FOLLOWER_ONLY;
 

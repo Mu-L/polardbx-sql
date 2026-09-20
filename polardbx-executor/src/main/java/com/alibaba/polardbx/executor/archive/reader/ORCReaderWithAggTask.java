@@ -80,9 +80,9 @@ public class ORCReaderWithAggTask extends UnPushableORCReaderTask {
     public void init() {
         try {
             startTime = System.nanoTime() / 1000_000;
-            // fetch file footer
+            // fetch file footer — honor per-statement GeneralCache override (HINT/session).
             this.reader = OrcFile.createReader(new Path(ossFileUri),
-                OrcFile.readerOptions(configuration).filesystem(fileSystem).orcTail(fileMeta.getOrcTail()));
+                OrcFile.readerOptions(configuration).filesystem(wrapWithStatementOverride()));
 
             if (aggPruningResult.noscan()) {
                 closeRecordReader();

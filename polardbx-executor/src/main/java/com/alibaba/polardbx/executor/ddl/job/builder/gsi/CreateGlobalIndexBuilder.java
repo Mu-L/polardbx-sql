@@ -33,6 +33,8 @@ import com.alibaba.polardbx.druid.sql.ast.expr.SQLHexExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIntegerExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLMethodInvokeExpr;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLCheck;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnCheck;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnConstraint;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnDefinition;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnPrimaryKey;
@@ -49,6 +51,8 @@ import com.alibaba.polardbx.druid.util.JdbcConstants;
 import com.alibaba.polardbx.executor.ddl.job.builder.CreateTableBuilder;
 import com.alibaba.polardbx.executor.ddl.job.builder.DdlPhyPlanBuilder;
 import com.alibaba.polardbx.executor.gsi.GsiUtils;
+import com.alibaba.polardbx.gms.metadb.table.ColumnsRecord;
+import com.alibaba.polardbx.gms.metadb.table.ExternalizedColumnInfo;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
@@ -728,6 +732,30 @@ public class CreateGlobalIndexBuilder extends DdlPhyPlanBuilder {
         List<SQLSelectOrderByItem> pkList = new ArrayList<>();
         TableMeta primaryTableMeta = ec.getSchemaManager(schemaName).getTableWithNull(primaryTableName);
 
+        // The filter loop below (line ~779) removes columns from the index table DDL
+        // if they are not in coveringColumns/indexColumns/shardingKey/PK.
+        // For externalized columns, the user writes COVERING(content) with the logical name,
+        // but the physical DDL uses the addr column name (content_addr_).
+        // Add the physical name so the addr column survives the filter.
+        for (String logicalName : new ArrayList<>(coveringColumns)) {
+            if (primaryTableMeta != null) {
+                ColumnMeta cm = primaryTableMeta.getColumnIgnoreCase(logicalName);
+                if (cm != null && cm.isExternalizedColumn() && cm.getMappingName() != null) {
+                    coveringColumns.add(cm.getMappingName());
+                }
+            } else {
+                // inline CREATE TABLE + GSI: primaryTableMeta not yet available,
+                // use the exact physical externalized-column flag propagated from the CREATE AST.
+                String addrColumnName = ExternalizedColumnInfo.toAddrColumnName(logicalName);
+                Map<String, Long> specialFlags =
+                    gsiPreparedData.getIndexTablePreparedData().getSpecialDefaultValueFlags();
+                Long flags = specialFlags == null ? null : specialFlags.get(addrColumnName);
+                if (flags != null && (flags & ColumnsRecord.FLAG_EXTERNALIZED_COLUMN) != 0L) {
+                    coveringColumns.add(addrColumnName);
+                }
+            }
+        }
+
         Boolean buildLocalIndexLater =
             (unique || ec.getForbidBuildLocalIndexLater()) ? false :
                 ec.getParamManager().getBoolean(ConnectionParams.GSI_BUILD_LOCAL_INDEX_LATER);
@@ -762,6 +790,7 @@ public class CreateGlobalIndexBuilder extends DdlPhyPlanBuilder {
          *    11. keep local index when alter table to single or broadcast table
          *    12. add local index (the partition key of gsi) when alter table with gsi to single or broadcast table
          *    13. check if we need set binary default value manually
+         *    14. remove check constraint
          * </pre>
          */
         while (it.hasNext()) {
@@ -803,6 +832,8 @@ public class CreateGlobalIndexBuilder extends DdlPhyPlanBuilder {
                                 }
                             } else if (constraint instanceof SQLColumnReference) {
                                 // remove foreign key
+                                constraintIt.remove();
+                            } else if (constraint instanceof SQLColumnCheck) {
                                 constraintIt.remove();
                             }
                         }
@@ -941,6 +972,13 @@ public class CreateGlobalIndexBuilder extends DdlPhyPlanBuilder {
                     duplicatedIndexName = indexName;
                 }
 
+                it.remove();
+            } else if (tableElement instanceof SQLCheck) {
+                final SQLCheck sqlCheck = (SQLCheck) tableElement;
+                final String indexName = ((SQLIdentifierExpr) sqlCheck.getName()).normalizedName();
+                if (TStringUtil.equalsIgnoreCase(indexName, gsiName)) {
+                    duplicatedIndexName = indexName;
+                }
                 it.remove();
             }
         }
@@ -1150,6 +1188,7 @@ public class CreateGlobalIndexBuilder extends DdlPhyPlanBuilder {
          *     4. check no DEFAULT CURRENT_TIMESTAMP specified for index or covering column
          *     5. check no ON UPDATE CURRENT_TIMESTAMP specified for index or covering column
          *     6. check all timestamp type columns has default value other than CURRENT_TIMESTAMP
+         *     7. remove check constraint
          * </pre>
          */
         while (it.hasNext()) {
@@ -1179,6 +1218,9 @@ public class CreateGlobalIndexBuilder extends DdlPhyPlanBuilder {
                             pkList.add(new SQLSelectOrderByItem(columnDefinition.getName()));
                         } else if (constraint instanceof SQLColumnReference) {
                             // remove foreign key
+                            constraintIt.remove();
+                        } else if (constraint instanceof SQLCheck) {
+                            // remove check constraint
                             constraintIt.remove();
                         }
                     }
@@ -1238,6 +1280,13 @@ public class CreateGlobalIndexBuilder extends DdlPhyPlanBuilder {
                     duplicatedIndexName = indexName;
                 }
 
+                it.remove();
+            } else if (tableElement instanceof SQLCheck) {
+                final SQLCheck sqlCheck = (SQLCheck) tableElement;
+                final String indexName = ((SQLIdentifierExpr) sqlCheck.getName()).normalizedName();
+                if (TStringUtil.equalsIgnoreCase(indexName, gsiName)) {
+                    duplicatedIndexName = indexName;
+                }
                 it.remove();
             }
         }

@@ -20,13 +20,16 @@ import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.executor.ddl.job.factory.AlterTableSplitPartitionJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJob;
+import com.alibaba.polardbx.executor.ddl.util.ChangeSetUtils;
 import com.alibaba.polardbx.executor.partitionmanagement.AlterTableGroupUtils;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.executor.utils.DdlUtils;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.config.table.ComplexTaskMetaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableSplitPartition;
@@ -38,6 +41,9 @@ import org.apache.calcite.sql.SqlAlterTableSplitPartition;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.util.Util;
 
+import java.util.Map;
+import java.util.Set;
+
 public class LogicalAlterTableSplitPartitionHandler extends LogicalCommonDdlHandler {
 
     public LogicalAlterTableSplitPartitionHandler(IRepository repo) {
@@ -45,10 +51,29 @@ public class LogicalAlterTableSplitPartitionHandler extends LogicalCommonDdlHand
     }
 
     @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        String tableName = logicalDdlPlan.getTableName();
+        exclusiveResources.add(concatWithDot(logicalDdlPlan.getSchemaName(), tableName));
+        TableMeta tableMeta =
+            executionContext.getSchemaManager(logicalDdlPlan.getSchemaName()).getTableWithNull(tableName);
+        if (tableMeta != null) {
+            tableVersions.put(tableName, tableMeta.getVersion());
+        }
+    }
+
+    @Override
     protected DdlJob buildDdlJob(BaseDdlOperation logicalDdlPlan, ExecutionContext executionContext) {
         LogicalAlterTableSplitPartition alterTableSplitPartition =
             (LogicalAlterTableSplitPartition) logicalDdlPlan;
-        alterTableSplitPartition.preparedData(executionContext);
+        String schemaName = alterTableSplitPartition.getSchemaName();
+        String logicalTableName = Util.last(((SqlIdentifier) alterTableSplitPartition.relDdl.getTableName()).names);
+        TableMeta tm = executionContext.getSchemaManager(schemaName).getTable(logicalTableName);
+        final boolean useChangeSet =
+            ChangeSetUtils.isChangeSetProcedure(executionContext) && ChangeSetUtils.supportUseChangeSet(
+                ComplexTaskMetaManager.ComplexTaskType.SPLIT_PARTITION, tm);
+        alterTableSplitPartition.preparedData(executionContext, useChangeSet);
         alterTableSplitPartition.getPreparedData().setDdlVersionId(DdlUtils.generateVersionId(executionContext));
         return AlterTableSplitPartitionJobFactory
             .create(alterTableSplitPartition.relDdl,

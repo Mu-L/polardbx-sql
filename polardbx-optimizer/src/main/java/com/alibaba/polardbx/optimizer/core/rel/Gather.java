@@ -17,7 +17,6 @@
 package com.alibaba.polardbx.optimizer.core.rel;
 
 import com.alibaba.polardbx.common.utils.GeneralUtil;
-import com.alibaba.polardbx.optimizer.config.meta.DrdsRelMetadataProvider;
 import com.alibaba.polardbx.optimizer.core.DrdsConvention;
 import com.alibaba.polardbx.optimizer.utils.PlannerUtils;
 import org.apache.calcite.plan.RelOptCluster;
@@ -77,7 +76,7 @@ public final class Gather extends Exchange {
                 logicalView = ((RelSubset) logicalView).getOriginal();
             }
             if (logicalView instanceof LogicalView) {
-                ((LogicalView) logicalView).setJoin(join);
+                ((LogicalView) logicalView).setLookupInfo(join);
             } else {
                 GeneralUtil
                     .nestedException("Unexpected RelNode type :" + logicalView.getClass() + ", expect LogicalView");

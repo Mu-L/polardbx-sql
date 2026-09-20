@@ -1,0 +1,134 @@
+## DISABLE_FAST_SQL_PARSER
+## -------------------------------------------------------
+## Case 1: default behavior (ENABLE_AUTO_SHARD_KEY_INDEX = true)
+## should contain auto_shard_key_a
+## -------------------------------------------------------
+drop table if exists t_default_on
+create table t_default_on (
+  a int,
+  b varchar(32)
+) partition by key(a) partitions 4
+show full create table t_default_on
+Table,Create Table
+t_default_on,CREATE TABLE `t_default_on` (
+	`a` int DEFAULT NULL,
+	`b` varchar(32) DEFAULT NULL,
+	`_drds_implicit_id_` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`_drds_implicit_id_`),
+	LOCAL KEY `auto_shard_key_a` USING BTREE (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`a`)
+PARTITIONS 4
+/* tablegroup = `tg` */
+drop table if exists t_default_on
+## -------------------------------------------------------
+## Case 2: multi-column partition key, default on
+## should contain auto_shard_key_a_b
+## -------------------------------------------------------
+drop table if exists t_multi_col
+create table t_multi_col (
+  a int,
+  b int,
+  c varchar(32)
+) partition by key(a, b) partitions 4
+show full create table t_multi_col
+Table,Create Table
+t_multi_col,CREATE TABLE `t_multi_col` (
+	`a` int DEFAULT NULL,
+	`b` int DEFAULT NULL,
+	`c` varchar(32) DEFAULT NULL,
+	`_drds_implicit_id_` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`_drds_implicit_id_`),
+	LOCAL KEY `auto_shard_key_a_b` USING BTREE (`a`, `b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`a`,`b`)
+PARTITIONS 4
+/* tablegroup = `tg` */
+drop table if exists t_multi_col
+## -------------------------------------------------------
+## Case 3: partition key covered by PRIMARY KEY
+## should NOT contain auto_shard_key
+## -------------------------------------------------------
+drop table if exists t_pk_covered
+create table t_pk_covered (
+  a int,
+  b varchar(32),
+  primary key(a)
+) partition by key(a) partitions 4
+show full create table t_pk_covered
+Table,Create Table
+t_pk_covered,CREATE TABLE `t_pk_covered` (
+	`a` int NOT NULL,
+	`b` varchar(32) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`a`)
+PARTITIONS 4
+/* tablegroup = `tg` */
+drop table if exists t_pk_covered
+## -------------------------------------------------------
+## Case 4: switch off, should NOT contain auto_shard_key
+## -------------------------------------------------------
+set ENABLE_AUTO_SHARD_KEY_INDEX = false
+drop table if exists t_switch_off
+create table t_switch_off (
+  a int,
+  b varchar(32)
+) partition by key(a) partitions 4
+show full create table t_switch_off
+Table,Create Table
+t_switch_off,CREATE TABLE `t_switch_off` (
+	`a` int DEFAULT NULL,
+	`b` varchar(32) DEFAULT NULL,
+	`_drds_implicit_id_` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`_drds_implicit_id_`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`a`)
+PARTITIONS 4
+/* tablegroup = `tg` */
+drop table if exists t_switch_off
+## -------------------------------------------------------
+## Case 5: switch off, multi-column partition key
+## should NOT contain auto_shard_key
+## -------------------------------------------------------
+drop table if exists t_switch_off_multi
+create table t_switch_off_multi (
+  a int,
+  b int,
+  c varchar(32)
+) partition by key(a, b) partitions 4
+show full create table t_switch_off_multi
+Table,Create Table
+t_switch_off_multi,CREATE TABLE `t_switch_off_multi` (
+	`a` int DEFAULT NULL,
+	`b` int DEFAULT NULL,
+	`c` varchar(32) DEFAULT NULL,
+	`_drds_implicit_id_` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`_drds_implicit_id_`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`a`,`b`)
+PARTITIONS 4
+/* tablegroup = `tg` */
+drop table if exists t_switch_off_multi
+## -------------------------------------------------------
+## Case 6: switch back to true, should contain auto_shard_key again
+## -------------------------------------------------------
+set ENABLE_AUTO_SHARD_KEY_INDEX = true
+drop table if exists t_switch_back_on
+create table t_switch_back_on (
+  a int,
+  b varchar(32)
+) partition by key(a) partitions 4
+show full create table t_switch_back_on
+Table,Create Table
+t_switch_back_on,CREATE TABLE `t_switch_back_on` (
+	`a` int DEFAULT NULL,
+	`b` varchar(32) DEFAULT NULL,
+	`_drds_implicit_id_` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`_drds_implicit_id_`),
+	LOCAL KEY `auto_shard_key_a` USING BTREE (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`a`)
+PARTITIONS 4
+/* tablegroup = `tg` */
+drop table if exists t_switch_back_on;

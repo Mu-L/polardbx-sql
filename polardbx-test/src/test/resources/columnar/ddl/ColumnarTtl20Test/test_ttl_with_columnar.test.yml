@@ -1,0 +1,37 @@
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+set time_zone='+08:00';
+set MAX_CCI_COUNT=3;
+set enable_htap=true;
+set enable_mpp=true;
+set ENABLE_COLUMNAR_OPTIMIZER=true;
+set EXPLAIN_SHOW_PHYSICAL_PLAN=false;
+
+create table my_modify_ttl_col_t1(
+a int not null auto_increment,
+b datetime default current_timestamp,
+primary key(a)
+)
+TTL = TTL_DEFINITION (
+TTL_ENABLE = 'OFF',
+TTL_EXPR = `b` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00',
+TTL_JOB = CRON '*/1 * * * * ?' TIMEZONE '+08:00',
+ARCHIVE_TYPE = '' ARCHIVE_TABLE_SCHEMA = '',
+ARCHIVE_TABLE_NAME = '',
+ARCHIVE_TABLE_PRE_ALLOCATE = 3,
+ARCHIVE_TABLE_POST_ALLOCATE = 4
+)
+partition by key(a) partitions 2;
+
+show create table my_modify_ttl_col_t1;
+
+create table my_modify_arc_t1 like my_modify_ttl_col_t1 engine='columnar' archive_mode='ttl';
+create clustered columnar index cci_my_modify_ttl_col_t1 on my_modify_ttl_col_t1(a) partition by hash(a) partitions 4;
+show create table my_modify_ttl_col_t1;
+set workload_type=ap;
+explain select * from my_modify_ttl_col_t1;
+explain select * from my_modify_ttl_col_t1 ignore index(cci_my_modify_ttl_col_t1);
+explain select * from my_modify_arc_t1;

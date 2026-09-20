@@ -27,9 +27,13 @@ import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.executor.cursor.Cursor;
+import com.alibaba.polardbx.executor.cursor.ResultCursor;
 import com.alibaba.polardbx.executor.cursor.impl.AffectRowCursor;
 import com.alibaba.polardbx.executor.handler.HandlerCommon;
 import com.alibaba.polardbx.executor.spi.IRepository;
+import com.alibaba.polardbx.executor.sync.ISyncAction;
+import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
+import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.gms.topology.DbGroupInfoManager;
 import com.alibaba.polardbx.group.config.Weight;
 import com.alibaba.polardbx.group.jdbc.TGroupDataSource;
@@ -66,6 +70,17 @@ public class LogicalKillHandler extends HandlerCommon {
     public final static String ALL = "ALL";
     public final static String SHOW_PROCESSLIST_SQL = "SHOW PROCESSLIST";
 
+    private static Class killAllColumnarSyncActionClass;
+
+    static {
+        try {
+            killAllColumnarSyncActionClass =
+                Class.forName("com.alibaba.polardbx.server.response.KillAllColumnarSyncAction");
+        } catch (ClassNotFoundException e) {
+            // Expected when running outside server context (e.g., unit tests)
+        }
+    }
+
     public LogicalKillHandler(IRepository repo) {
         super(repo);
     }
@@ -84,7 +99,7 @@ public class LogicalKillHandler extends HandlerCommon {
         }
 
         if (TStringUtil.equalsIgnoreCase(ALL, processId)) {
-            return killall(schemaName);
+            return killall(schemaName, executionContext);
         }
         String[] strs = TStringUtil.split(processId, "-");
         if (strs.length != 3) {
@@ -148,7 +163,13 @@ public class LogicalKillHandler extends HandlerCommon {
 
     }
 
-    private Cursor killall(String schemaName) {
+    private Cursor killall(String schemaName, ExecutionContext executionContext) {
+        // For columnar read-only instances, kill all sessions via CN frontend connections
+        // since there are no DN physical connections to kill.
+        if (ConfigDataMode.isColumnarMode()) {
+            return killallColumnar(schemaName, executionContext);
+        }
+
         MyRepository repo = (MyRepository) this.repo;
         int affectRow = 0;
         for (Group group : OptimizerContext.getContext(schemaName).getMatrix().getGroups()) {
@@ -240,5 +261,47 @@ public class LogicalKillHandler extends HandlerCommon {
 
         return new AffectRowCursor(new int[] {affectRow});
 
+    }
+
+    /**
+     * Kill all sessions on a columnar read-only instance by closing CN frontend connections.
+     * Uses the SyncAction pattern to access CobarServer (in polardbx-server module) since
+     * polardbx-executor does not have a compile-time dependency on polardbx-server.
+     */
+    private Cursor killallColumnar(String schemaName, ExecutionContext executionContext) {
+        if (killAllColumnarSyncActionClass == null) {
+            throw new TddlRuntimeException(ErrorCode.ERR_CONFIG,
+                "KillAllColumnarSyncAction class not found, kill 'all' is not supported in this context");
+        }
+
+        try {
+            ISyncAction killAllAction = (ISyncAction) killAllColumnarSyncActionClass
+                .getConstructor(Long.TYPE)
+                .newInstance(executionContext.getConnId());
+
+            List<List<Map<String, Object>>> results =
+                SyncManagerHelper.sync(killAllAction, schemaName, SyncScope.CURRENT_ONLY, true);
+
+            int affectRow = 0;
+            if (results != null) {
+                for (List<Map<String, Object>> nodeResult : results) {
+                    if (nodeResult != null) {
+                        for (Map<String, Object> row : nodeResult) {
+                            Object val = row.get(ResultCursor.AFFECT_ROW);
+                            if (val != null) {
+                                affectRow += ((Number) val).intValue();
+                            }
+                        }
+                    }
+                }
+            }
+
+            return new AffectRowCursor(new int[] {affectRow});
+        } catch (TddlRuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR, e,
+                "Failed to kill all sessions in columnar mode: " + e.getMessage());
+        }
     }
 }

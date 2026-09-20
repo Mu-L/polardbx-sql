@@ -523,6 +523,63 @@ public class CastExpressionTest {
         validateToDecimalResult(outputBlock, result);
     }
 
+    @Test
+    public void testCharConstToDate() {
+        String date = "2024-09-05";
+        VectorizedExpression[] children = new VectorizedExpression[1];
+        children[0] = new LiteralVectorizedExpression(DataTypes.CharType, date, 0);
+        CastCharConstToDateVectorizedExpression expr =
+            new CastCharConstToDateVectorizedExpression(DataTypes.DateType, 0, children);
+        DateBlock outputBlock = new DateBlock(count, TimeZone.getDefault());
+        MutableChunk chunk = new MutableChunk(outputBlock);
+        setSelection(chunk);
+        EvaluationContext evaluationContext = new EvaluationContext(chunk, executionContext);
+        expr.eval(evaluationContext);
+
+        validateToDateResult(outputBlock, date);
+    }
+
+    @Test
+    public void testIllegalCharConstToDate() {
+        String date = "2024";
+        VectorizedExpression[] children = new VectorizedExpression[1];
+        children[0] = new LiteralVectorizedExpression(DataTypes.CharType, date, 0);
+        CastCharConstToDateVectorizedExpression expr =
+            new CastCharConstToDateVectorizedExpression(DataTypes.DateType, 0, children);
+        DateBlock outputBlock = new DateBlock(count, TimeZone.getDefault());
+        MutableChunk chunk = new MutableChunk(outputBlock);
+        setSelection(chunk);
+        EvaluationContext evaluationContext = new EvaluationContext(chunk, executionContext);
+        expr.eval(evaluationContext);
+
+        if (!withSelection) {
+            for (int i = 0; i < positionCount; i++) {
+                Assert.assertTrue(outputBlock.isNull(i));
+            }
+        } else {
+            for (int i = 0; i < positionCount; i++) {
+                int j = sel[i];
+                Assert.assertTrue(outputBlock.isNull(j));
+            }
+        }
+    }
+
+    @Test
+    public void testCharConstToDateRef() {
+        String date = "2024-09-05";
+        VectorizedExpression[] children = new VectorizedExpression[1];
+        children[0] = new LiteralVectorizedExpression(DataTypes.CharType, date, 0);
+        CastCharConstToDateVectorizedExpression expr =
+            new CastCharConstToDateVectorizedExpression(DataTypes.DateType, 0, children);
+        ReferenceBlock outputBlock = new ReferenceBlock(DataTypes.DateType, count);
+        MutableChunk chunk = new MutableChunk(outputBlock);
+        setSelection(chunk);
+        EvaluationContext evaluationContext = new EvaluationContext(chunk, executionContext);
+        expr.eval(evaluationContext);
+
+        validateToDateResult(outputBlock, date);
+    }
+
     private void validateToSignedResult(LongBlock outputBlock, long[] result) {
         if (!withSelection) {
             for (int i = 0; i < positionCount; i++) {

@@ -55,6 +55,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.stream.Collectors;
 
 /**
  * @author minggong.zm 2018/2/7
@@ -238,6 +239,91 @@ public class ReplaceSequenceWithLiteralVisitor extends SqlShuttle {
         }
 
         return autoIncrementUsingSeq;
+    }
+
+    public boolean replaceDynamicParamBatch(List<RexNode> values, List<Map<Integer, ParameterContext>> curParamsList,
+                                            Set<Integer> autoIncColumnIndex) {
+        if (GeneralUtil.isEmpty(autoIncColumnIndex)) {
+            return false;
+        }
+
+        // Parameter index set which will be replaced with same sequence value
+        final List<Set<Integer>> implicitSeqParamIndexList =
+            curParamsList.stream().map(e -> implicitSeqParamIndex(values, autoIncColumnIndex, e))
+                .collect(Collectors.toList());
+
+        // Replace parameter with sequence value
+        boolean result = true;
+
+        long maxSqlValue = 0L;
+        for (int i = 0; i < curParamsList.size(); i++) {
+            boolean autoIncrementUsingSeq = false;
+            Map<Integer, ParameterContext> curParams = curParamsList.get(i);
+            Set<Integer> currentImplicitSeqParamIndex = implicitSeqParamIndexList.get(i);
+            Set<Integer> nextImplicitSeqParamIndex = i + 1 < curParamsList.size() ?
+                implicitSeqParamIndexList.get(i + 1) : null;
+            boolean needUpdateSequence = nextImplicitSeqParamIndex == null;
+
+            for (Ord<RexNode> o : Ord.zip(values)) {
+                final Integer columnIndex = o.getKey();
+                final RexNode value = o.getValue();
+
+                if (!(value instanceof RexDynamicParam)) {
+                    continue;
+                }
+
+                final int paramIndex = ((RexDynamicParam) value).getIndex();
+                if (nextImplicitSeqParamIndex != null) {
+                    // next row Implicit sequence call
+                    needUpdateSequence |= nextImplicitSeqParamIndex.contains(paramIndex);
+                }
+
+                if (currentImplicitSeqParamIndex.contains(paramIndex)) {
+                    // Implicit sequence call
+                    final Long seqValue = assignImplicitValue(false);
+
+                    ParameterContext newPc = new ParameterContext(ParameterMethod.setObject1, new Object[] {
+                        paramIndex + 1, seqValue});
+                    curParams.put(paramIndex + 1, newPc);
+                    autoIncrementUsingSeq = true;
+                    continue;
+                }
+
+                final boolean isSeqCall = value instanceof RexSequenceParam;
+                final boolean isAutoIncColumn = autoIncColumnIndex.contains(columnIndex);
+
+                if (isSeqCall) {
+                    // Explicit sequence call
+                    final String seqName = ((RexSequenceParam) value).getSequenceName();
+
+                    // Assign sequence value independently
+                    final Long nextVal = SequenceManagerProxy.getInstance().nextValue(schemaName, seqName);
+                    ParameterContext newPc = new ParameterContext(ParameterMethod.setObject1, new Object[] {
+                        paramIndex + 1, nextVal});
+                    curParams.put(paramIndex + 1, newPc);
+
+                    if (isAutoIncColumn) {
+                        autoIncrementUsingSeq = true;
+                    }
+                    maxSqlValue = Math.max(maxSqlValue, nextVal);
+                } else if (isAutoIncColumn) {
+                    // Update sequence with specified value of auto increment column
+                    final ParameterContext autoIncPc = curParams.get(paramIndex + 1);
+                    final long newValue = RexUtils.valueOfObject1(autoIncPc.getValue());
+                    maxSqlValue = Math.max(maxSqlValue, newValue);
+
+                    returnedLastInsertId = newValue;
+                }
+            }
+
+            if (maxSqlValue > 0 && needUpdateSequence) {
+                SequenceManagerProxy.getInstance().updateValue(schemaName, seqName, maxSqlValue);
+            }
+
+            result &= autoIncrementUsingSeq;
+        }
+
+        return result;
     }
 
     /**

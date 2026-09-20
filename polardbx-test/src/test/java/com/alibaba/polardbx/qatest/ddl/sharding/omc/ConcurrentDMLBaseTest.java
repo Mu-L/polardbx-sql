@@ -27,6 +27,7 @@ public class ConcurrentDMLBaseTest extends DDLBaseNewDBTestCase {
 
     protected static final String USE_OMC_ALGORITHM = " ALGORITHM=OMC";
     protected static final String OMC_FORCE_TYPE_CONVERSION = "OMC_FORCE_TYPE_CONVERSION=TRUE";
+    protected static final String OMC_DISABLE_30 = "ENABLE_OMC_30=FALSE";
     // Use logical execution since result may be different from pushdown execution
     protected static final String USE_LOGICAL_EXECUTION = "DML_EXECUTION_STRATEGY=LOGICAL";
     protected static final String DISABLE_DML_RETURNING = "DML_USE_RETURNING=FALSE";

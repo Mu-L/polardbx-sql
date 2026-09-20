@@ -23,18 +23,20 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.TruncateTableValidateTas
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcDdlMarkTask;
 import com.alibaba.polardbx.executor.ddl.job.task.columnar.TruncateColumnarTableTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.ValidateTableVersionTask;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.google.common.collect.Lists;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
-public class TruncateTableJobFactory extends DdlJobFactory {
+public class TruncateTableJobFactory extends OnlineDdlJobFactory {
 
     private final PhysicalPlanData physicalPlanData;
     private final String schemaName;
@@ -44,7 +46,8 @@ public class TruncateTableJobFactory extends DdlJobFactory {
     private final boolean withCci;
 
     public TruncateTableJobFactory(PhysicalPlanData physicalPlanData, long tableVersion, long versionId,
-                                   boolean withCci) {
+                                   boolean withCci, ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.DEFAULT);
         this.physicalPlanData = physicalPlanData;
         this.schemaName = physicalPlanData.getSchemaName();
         this.logicalTableName = physicalPlanData.getLogicalTableName();

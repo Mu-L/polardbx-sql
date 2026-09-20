@@ -71,7 +71,7 @@ select * from brd_t1_jyc order by id;
 create table single_t2_jyc select * from single_tbl_jyc;
 show create table single_t2_jyc;
 
-create table t2_jyc(test_varchar varchar(255) character set utf8, test_2 varchar(255) character set utf8mb4);
+create table t2_jyc(test_varchar varchar(255) character set utf8, test_2 varchar(255) character set utf8mb4 collate utf8mb4_general_ci);
 show create table t2_jyc;
 
 create table t3_jyc select * from t2_jyc;

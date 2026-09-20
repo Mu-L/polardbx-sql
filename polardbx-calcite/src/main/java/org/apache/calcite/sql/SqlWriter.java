@@ -459,6 +459,8 @@ public interface SqlWriter {
    */
   boolean inQuery();
 
+  boolean forView();
+
   //~ Inner Interfaces -------------------------------------------------------
 
   /**

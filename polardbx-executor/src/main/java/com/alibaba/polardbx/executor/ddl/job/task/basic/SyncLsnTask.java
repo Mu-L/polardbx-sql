@@ -48,12 +48,14 @@ public class SyncLsnTask extends BaseGmsTask {
     @Override
     public void executeImpl(Connection metaDbConnection, ExecutionContext executionContext) {
         //make sure the table schema in the follower node is the same as source leader node
-        boolean fromLeader = executionContext.getParamManager().getBoolean(ConnectionParams.PHYSICAL_BACKFILL_CLONE_DATA_FROM_LEADER);
-        if(!fromLeader) {
-            PhysicalBackfillUtils.waitLsn(schemaName, sourceGroupAndStorageIdMap, false, executionContext);
+        boolean fromLeader =
+            executionContext.getParamManager().getBoolean(ConnectionParams.PHYSICAL_BACKFILL_CLONE_DATA_FROM_LEADER);
+        if (!fromLeader) {
+            PhysicalBackfillUtils.waitLsn(getRootJobId(), schemaName, sourceGroupAndStorageIdMap, false,
+                executionContext);
         }
         //make sure the create table/discard tablespace has been executed in follower/learner node
-        PhysicalBackfillUtils.waitLsn(schemaName, targetGroupAndStorageIdMap, false, executionContext);
+        PhysicalBackfillUtils.waitLsn(getRootJobId(), schemaName, targetGroupAndStorageIdMap, false, executionContext);
     }
 
     protected void onRollbackSuccess(ExecutionContext executionContext) {

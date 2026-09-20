@@ -16,9 +16,9 @@
 
 package com.alibaba.polardbx.executor.chunk;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableByteArrayList;
+import com.alibaba.polardbx.common.collection.MemoryCountableIntArrayList;
 import com.google.common.base.Preconditions;
-import it.unimi.dsi.fastutil.bytes.ByteArrayList;
-import it.unimi.dsi.fastutil.ints.IntArrayList;
 import org.openjdk.jol.info.ClassLayout;
 
 import java.util.Arrays;

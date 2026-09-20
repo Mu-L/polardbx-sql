@@ -22,7 +22,7 @@ import com.alibaba.polardbx.executor.mpp.operator.WorkProcessor;
 import com.alibaba.polardbx.executor.operator.util.ChunkWithPosition;
 import com.alibaba.polardbx.executor.operator.util.ChunkWithPositionComparator;
 import com.alibaba.polardbx.executor.operator.util.MergeSortedChunks;
-import com.alibaba.polardbx.executor.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.google.common.util.concurrent.ListenableFuture;

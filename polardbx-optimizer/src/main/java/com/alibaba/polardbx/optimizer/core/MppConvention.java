@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.optimizer.core;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.core.planner.rule.mpp.MppExpandConversionRule;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelTraitSet;
@@ -43,10 +45,11 @@ public class MppConvention extends Convention.Impl {
             // left Convert Rule to deal with
             return null;
         } else if (input.getConvention() == MppConvention.INSTANCE) {
-            return MppExpandConversionRule.enforce(input, required);
+            return MppExpandConversionRule.enforce(input, required,
+                PlannerContext.getPlannerContext(input).getParamManager().getBoolean(
+                    ConnectionParams.CONVERTER_IN_ONE_RELSET));
         } else {
             throw new AssertionError("Unable to convert input to " + INSTANCE + ", input = " + input);
         }
     }
 }
-

@@ -65,6 +65,8 @@ public class DdlConstants {
     public static final int DEFAULT_RUNNING_DDL_RESCHEDULE_INTERVAL_IN_MINUTES = 1;
     // 默认每隔120分钟，重新调度失败的任务
     public static final int DEFAULT_PAUSED_DDL_RESCHEDULE_INTERVAL_IN_MINUTES = 120;
+    // 清理 INITIAL 状态失败任务的缓冲时间，实际超时 = acquireResource 超时分钟数(DDL_ACQUIRE_LOCK_TIMEOUT_MINUTES) + 该缓冲
+    public static final int INITIAL_DDL_TIMEOUT_BUFFER_IN_MINUTES = 15;
 
     public static final int MAX_TABLE_NAME_LENGTH_MYSQL_ALLOWS = 64;
     public static final int RANDOM_SUFFIX_LENGTH_OF_PHYSICAL_TABLE_NAME = 4;
@@ -99,6 +101,11 @@ public class DdlConstants {
     public static final long TRANSIENT_SUB_JOB_ID = -1L;
 
     public static final String SUB_JOB_RETRY_ERRER_MESSAGE = "please retry this command";
+
+    public static final String GDN_DUPLICATE_DDL_LOAD_MSG_PREFIX = "[GDN_DUPLICATE_DDL_LOAD]";
+
+    public static final String DDL_SQL_LOAD_REPEATEDLY_MSG = GDN_DUPLICATE_DDL_LOAD_MSG_PREFIX
+        + "this ddl sql id %s is before cdc ddl load checkpoint %s, maybe repeatedly applied!";
 
     public static final long ROLLBACK_DDL_WAIT_TIMES = 10L;
 }

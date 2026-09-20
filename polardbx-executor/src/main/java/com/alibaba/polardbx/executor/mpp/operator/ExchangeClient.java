@@ -16,10 +16,14 @@
 
 package com.alibaba.polardbx.executor.mpp.operator;
 
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
 import com.alibaba.polardbx.common.exception.MemoryNotEnoughException;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.executor.mpp.execution.MppMetricsCounters;
 import com.alibaba.polardbx.executor.mpp.execution.SystemMemoryUsageListener;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.ChunkCompression;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.SerializedChunk;
@@ -27,9 +31,7 @@ import com.alibaba.polardbx.executor.mpp.metadata.TaskLocation;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.memory.MemorySetting;
 import com.google.common.base.Throwables;
-import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.SettableFuture;
 import io.airlift.http.client.HttpClient;
 import io.airlift.units.DataSize;
 import io.airlift.units.Duration;
@@ -49,6 +51,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -92,7 +95,7 @@ public class ExchangeClient implements Closeable, IExchangeClient {
     private final LinkedBlockingDeque<SerializedChunk> pageBuffer = new LinkedBlockingDeque<>();
 
     @GuardedBy("this")
-    private final List<SettableFuture<?>> blockedCallers = new ArrayList<>();
+    private final List<BlockingFuture<?>> blockedCallers = new ArrayList<>();
 
     @GuardedBy("this")
     private long bufferBytes;
@@ -107,6 +110,8 @@ public class ExchangeClient implements Closeable, IExchangeClient {
 //    private AtomicLong extBytes = new AtomicLong(0);
 
     private final SystemMemoryUsageListener systemMemoryUsageListener;
+
+    private final long waitExchangeClientMillis;
 
     public ExchangeClient(ExecutionContext executionContext,
                           DataSize maxResponseSize,
@@ -128,6 +133,11 @@ public class ExchangeClient implements Closeable, IExchangeClient {
         this.supportSpill =
             MemorySetting.ENABLE_SPILL && executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_SPILL);
         this.maxBufferedBytes = executionContext.getParamManager().getLong(ConnectionParams.MPP_OUTPUT_MAX_BUFFER_SIZE);
+        this.waitExchangeClientMillis =
+            executionContext.getParamManager().getLong(ConnectionParams.WAIT_FOR_EXCHANGE_CLIENT_MS);
+
+        // 所有初始化成功后，通过全局计数器记录客户端创建，避免对象注册表导致的内存泄漏
+        MppMetricsCounters.getInstance().onClientCreated();
     }
 
     @Override
@@ -281,6 +291,7 @@ public class ExchangeClient implements Closeable, IExchangeClient {
                     preferLocalExchange);
                 allClients.put(location, client);
                 queuedClients.add(client);
+                MppMetricsCounters.getInstance().onClientEnqueued();
             }
         }
 
@@ -301,6 +312,7 @@ public class ExchangeClient implements Closeable, IExchangeClient {
                 // no more clients available
                 return;
             }
+            MppMetricsCounters.getInstance().onClientDequeued();
             client.scheduleRequest();
         }
     }
@@ -357,6 +369,14 @@ public class ExchangeClient implements Closeable, IExchangeClient {
             return;
         }
 
+        MppMetricsCounters.getInstance().onClientClosed();
+
+        int queuedResidual = queuedClients.size();
+        if (queuedResidual > 0) {
+            MppMetricsCounters.getInstance().addDequeued(queuedResidual);
+            queuedClients.clear();
+        }
+
         for (HttpPageBufferClient client : allClients.values()) {
             client.closeQuietly();
         }
@@ -392,6 +412,7 @@ public class ExchangeClient implements Closeable, IExchangeClient {
                 HttpPageBufferClient client = buildHttpPageBufferClient(location);
                 allClients.put(location, client);
                 queuedClients.add(client);
+                MppMetricsCounters.getInstance().onClientEnqueued();
             }
         }
 
@@ -412,6 +433,7 @@ public class ExchangeClient implements Closeable, IExchangeClient {
                 // no more clients available
                 return;
             }
+            MppMetricsCounters.getInstance().onClientDequeued();
             client.scheduleRequest();
         }
     }
@@ -432,10 +454,21 @@ public class ExchangeClient implements Closeable, IExchangeClient {
     @Override
     public synchronized ListenableFuture<?> isBlocked() {
         if (isClosed() || isFailed() || pageBuffer.peek() != null) {
-            return Futures.immediateFuture(true);
+            return BlockingFuture.immediateFuture(true, BlockingReason.NOT_BLOCKED);
         }
-        SettableFuture<?> future = SettableFuture.create();
+        BlockingFuture<?> future = BlockingFuture.create(BlockingReason.WAIT_FOR_EXCHANGE_CLIENT);
         blockedCallers.add(future);
+
+        if (waitExchangeClientMillis > 0 && !future.isDone()) {
+            try {
+                future.get(waitExchangeClientMillis, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException e) {
+                return future;
+            } catch (Throwable t) {
+                throw GeneralUtil.nestedException(t);
+            }
+        }
+
         return future;
     }
 
@@ -475,9 +508,9 @@ public class ExchangeClient implements Closeable, IExchangeClient {
     }
 
     private synchronized void notifyBlockedCallers() {
-        for (int i = 0; i < blockedCallers.size(); i++) {
-            SettableFuture<?> blockedCaller = blockedCallers.get(i);
-            blockedCaller.set(null);
+        for (BlockingFuture<?> blockedCaller : blockedCallers) {
+            // BlockingFuture.complete() automatically calculates waitCost and creates BlockingState
+            blockedCaller.complete(null);
         }
         blockedCallers.clear();
     }
@@ -485,6 +518,7 @@ public class ExchangeClient implements Closeable, IExchangeClient {
     private synchronized void requestComplete(HttpPageBufferClient client) {
         if (!queuedClients.contains(client)) {
             queuedClients.add(client);
+            MppMetricsCounters.getInstance().onClientEnqueued();
         }
         scheduleRequestIfNecessary();
     }
@@ -540,6 +574,198 @@ public class ExchangeClient implements Closeable, IExchangeClient {
             requireNonNull(client, "client is null");
             requireNonNull(cause, "cause is null");
             ExchangeClient.this.clientFailed(cause);
+        }
+    }
+
+    /**
+     * 获取所有 HttpPageBufferClient 用于指标采集
+     * 线程安全：allClients 是 ConcurrentMap
+     */
+    public ConcurrentMap<TaskLocation, HttpPageBufferClient> getAllClients() {
+        return allClients;
+    }
+
+    /**
+     * 获取排队的客户端数量
+     * 需要同步访问 queuedClients
+     */
+    public synchronized int getQueuedClientsSize() {
+        return queuedClients.size();
+    }
+
+    /**
+     * 获取 ExchangeClient 的聚合统计信息
+     * 实时采集，无缓存
+     */
+    public ExchangeClientStats getStats() {
+        long totalInputRows = 0;
+        long totalInputPages = 0;
+        long totalRequestsCompleted = 0;
+        long totalIoBytes = 0;
+        long totalResponseTime = 0;
+        long totalWaitConnectionTime = 0;
+        int clientCount = 0;
+
+        // 遍历所有客户端聚合统计
+        for (HttpPageBufferClient client : allClients.values()) {
+            PageBufferClientStatus status = client.getStatus();
+            totalInputRows += status.getRowsReceived();
+            totalInputPages += status.getPagesReceived();
+            totalRequestsCompleted += status.getRequestsCompleted();
+            totalIoBytes += client.getBytesReceived();
+
+            // 累加响应时间和连接等待时间
+            totalResponseTime += client.getAverageResponseTimeMs();
+            totalWaitConnectionTime += client.getAverageWaitConnectionTimeMs();
+            clientCount++;
+        }
+
+        int queuedClientsSize = getQueuedClientsSize();
+
+        // 计算平均值
+        long avgResponseTimeMs = clientCount > 0 ? totalResponseTime / clientCount : 0;
+        long avgWaitConnectionTimeMs = clientCount > 0 ? totalWaitConnectionTime / clientCount : 0;
+
+        return new ExchangeClientStats(
+            totalInputRows,
+            totalInputPages,
+            totalRequestsCompleted,
+            queuedClientsSize,
+            totalIoBytes,
+            avgResponseTimeMs,
+            avgWaitConnectionTimeMs
+        );
+    }
+
+    /**
+     * ExchangeClient 统计快照
+     */
+    public static class ExchangeClientStats {
+        private final long inputRows;
+        private final long inputPages;
+        private final long requestsCompleted;
+        private final int queuedClients;
+        private final long ioBytes;
+        private final long avgResponseTimeMs;
+        private final long avgWaitConnectionTimeMs;
+
+        public ExchangeClientStats(long inputRows, long inputPages,
+                                   long requestsCompleted, int queuedClients,
+                                   long ioBytes, long avgResponseTimeMs,
+                                   long avgWaitConnectionTimeMs) {
+            this.inputRows = inputRows;
+            this.inputPages = inputPages;
+            this.requestsCompleted = requestsCompleted;
+            this.queuedClients = queuedClients;
+            this.ioBytes = ioBytes;
+            this.avgResponseTimeMs = avgResponseTimeMs;
+            this.avgWaitConnectionTimeMs = avgWaitConnectionTimeMs;
+        }
+
+        public long getInputRows() {
+            return inputRows;
+        }
+
+        public long getInputPages() {
+            return inputPages;
+        }
+
+        public long getRequestsCompleted() {
+            return requestsCompleted;
+        }
+
+        public int getQueuedClients() {
+            return queuedClients;
+        }
+
+        public long getIoBytes() {
+            return ioBytes;
+        }
+
+        public long getAvgResponseTimeMs() {
+            return avgResponseTimeMs;
+        }
+
+        public long getAvgWaitConnectionTimeMs() {
+            return avgWaitConnectionTimeMs;
+        }
+    }
+
+    /**
+     * 聚合所有 HTAP/MPP 指标统计
+     * 使用全局计数器，无对象注册表，无内存泄漏风险
+     */
+    public static AggregatedStats getAllStats() {
+        MppMetricsCounters.Snapshot snapshot = MppMetricsCounters.getInstance().snapshot();
+        return new AggregatedStats(
+            (int) snapshot.getActiveClientCount(),
+            snapshot.getTotalInputRows(),
+            snapshot.getTotalInputPages(),
+            snapshot.getTotalRequestsCompleted(),
+            (int) snapshot.getTotalQueuedClients(),
+            snapshot.getTotalIoBytes(),
+            snapshot.getAvgResponseTimeMs(),
+            snapshot.getAvgWaitConnectionTimeMs()
+        );
+    }
+
+    /**
+     * 聚合统计结果
+     */
+    public static class AggregatedStats {
+        private final int activeClientCount;
+        private final long totalInputRows;
+        private final long totalInputPages;
+        private final long totalRequestsCompleted;
+        private final int totalQueuedClients;
+        private final long totalIoBytes;
+        private final long avgResponseTimeMs;
+        private final long avgWaitConnectionTimeMs;
+
+        public AggregatedStats(int activeClientCount, long totalInputRows,
+                               long totalInputPages, long totalRequestsCompleted,
+                               int totalQueuedClients, long totalIoBytes,
+                               long avgResponseTimeMs, long avgWaitConnectionTimeMs) {
+            this.activeClientCount = activeClientCount;
+            this.totalInputRows = totalInputRows;
+            this.totalInputPages = totalInputPages;
+            this.totalRequestsCompleted = totalRequestsCompleted;
+            this.totalQueuedClients = totalQueuedClients;
+            this.totalIoBytes = totalIoBytes;
+            this.avgResponseTimeMs = avgResponseTimeMs;
+            this.avgWaitConnectionTimeMs = avgWaitConnectionTimeMs;
+        }
+
+        public int getActiveClientCount() {
+            return activeClientCount;
+        }
+
+        public long getTotalInputRows() {
+            return totalInputRows;
+        }
+
+        public long getTotalInputPages() {
+            return totalInputPages;
+        }
+
+        public long getTotalRequestsCompleted() {
+            return totalRequestsCompleted;
+        }
+
+        public int getTotalQueuedClients() {
+            return totalQueuedClients;
+        }
+
+        public long getTotalIoBytes() {
+            return totalIoBytes;
+        }
+
+        public long getAvgResponseTimeMs() {
+            return avgResponseTimeMs;
+        }
+
+        public long getAvgWaitConnectionTimeMs() {
+            return avgWaitConnectionTimeMs;
         }
     }
 }

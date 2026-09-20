@@ -19,8 +19,10 @@ package com.alibaba.polardbx.executor.chunk;
 import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.executor.operator.util.DriverObjectPool;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
+import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.google.common.base.Preconditions;
 
+import java.util.Arrays;
 import java.util.function.Consumer;
 
 /**
@@ -48,6 +50,17 @@ public abstract class AbstractBlock implements Block, RandomAccessBlock {
 
     @FieldMemoryCounter(false)
     protected DriverObjectPool.Recycler recycler;
+
+    protected boolean isCached;
+
+    @Override
+    public boolean isMemoryCountable() {
+        return !isCached;
+    }
+
+    public void setCached(boolean cached) {
+        isCached = cached;
+    }
 
     AbstractBlock(int arrayOffset, int positionCount, boolean[] valueIsNull) {
         this(null, arrayOffset, positionCount, valueIsNull);
@@ -192,6 +205,19 @@ public abstract class AbstractBlock implements Block, RandomAccessBlock {
             } else {
                 System.arraycopy(isNull, 0, valuesIsNullInOutput, 0, size);
             }
+        } else if (size > 0) {
+            // Source has no nulls (hasNull=false): clear output nulls for selected positions
+            // to avoid stale null marks from previous operations persisting (AONE #82291339)
+            output.setHasNull(false);
+            boolean[] valuesIsNullInOutput = output.nulls();
+            if (selectedInUse) {
+                for (int i = 0; i < size; i++) {
+                    int j = sel[i];
+                    valuesIsNullInOutput[j] = false;
+                }
+            } else {
+                Arrays.fill(valuesIsNullInOutput, 0, size, false);
+            }
         }
     }
 
@@ -240,6 +266,25 @@ public abstract class AbstractBlock implements Block, RandomAccessBlock {
     @Override
     public String toString() {
         return getDigest();
+    }
+
+    // Should be overwritten
+    @Override
+    public int compareAssertedSameType(int position, Block otherBlock, int otherPosition) {
+        Object c1 = getObjectForCmp(position);
+        Object c2 = otherBlock.getObjectForCmp(otherPosition);
+
+        if (c1 == null && c2 == null) {
+            return 0;
+        }
+        return comp(c1, c2, dataType);
+    }
+
+    private static int comp(Object c1, Object c2, DataType type) {
+        if (type == null) {
+            type = DataTypeUtil.getTypeOfObject(c1);
+        }
+        return type.compare(c1, c2);
     }
 
     /**

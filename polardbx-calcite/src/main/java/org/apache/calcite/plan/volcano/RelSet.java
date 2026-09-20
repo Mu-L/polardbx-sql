@@ -16,6 +16,7 @@
  */
 package org.apache.calcite.plan.volcano;
 
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.google.common.collect.ImmutableList;
 import org.apache.calcite.plan.*;
 import org.apache.calcite.rel.RelNode;
@@ -230,19 +231,42 @@ class RelSet {
       }
 
       if (needsConverter) {
-        final RelNode enforcer;
         if (useAbstractConverter) {
-          enforcer = new AbstractConverter(
+          RelNode enforcer = new AbstractConverter(
               cluster, from, null, to.getTraitSet());
-        } else {
-          Convention convention = requireNonNull(
-              subset.getConvention(),
-              () -> "convention is null for " + subset);
-          enforcer = convention.enforce(from, to.getTraitSet());
-        }
-
-        if (enforcer != null) {
           cluster.getPlanner().register(enforcer, to);
+        } else {
+            Convention convention = requireNonNull(subset.getConvention(), () -> "convention is null for " + subset);
+            boolean converterInOneRelSet = false;
+            if (cluster.getPlanner() instanceof VolcanoPlanner) {
+                converterInOneRelSet = ((VolcanoPlanner)cluster.getPlanner()).isConverterInOneRelSet();
+            }
+            if (!converterInOneRelSet) {
+                RelNode enforcer = convention.enforce(from, to.getTraitSet());
+                if (enforcer != null) {
+                    cluster.getPlanner().register(enforcer, to);
+                }
+                continue;
+            }
+            RelSubset prev = from;
+            RelNode enforcer = convention.enforce(prev, to.getTraitSet());
+            while (enforcer != null) {
+                boolean finish = true;
+                for (RelTrait fromTrait : difference) {
+                    RelTraitDef traitDef = fromTrait.getTraitDef();
+                    RelTrait toTrait = to.getTraitSet().getTrait(traitDef);
+                    RelTrait enforcerTrait = enforcer.getTraitSet().getTrait(traitDef);
+                    if (enforcerTrait == null || !enforcerTrait.satisfies(toTrait)) {
+                        finish = false;
+                    }
+                }
+                if (conversions.add(Pair.of(prev.getTraitSet(), enforcer.getTraitSet())) || finish) {
+                    cluster.getPlanner().register(enforcer, to);
+                }
+                conversions.add(Pair.of(from.getTraitSet(), enforcer.getTraitSet()));
+                prev = getSubset(enforcer.getTraitSet());
+                enforcer = convention.enforce(prev, to.getTraitSet());
+            }
         }
       }
     }

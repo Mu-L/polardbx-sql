@@ -1,0 +1,96 @@
+## DISABLE_FAST_SQL_PARSER
+
+## -------------------------------------------------------
+## Case 1: default behavior (ENABLE_AUTO_SHARD_KEY_INDEX = true)
+## should contain auto_shard_key_a
+## -------------------------------------------------------
+drop table if exists t_default_on;
+
+create table t_default_on (
+  a int,
+  b varchar(32)
+) partition by key(a) partitions 4;
+
+show full create table t_default_on;
+
+drop table if exists t_default_on;
+
+## -------------------------------------------------------
+## Case 2: multi-column partition key, default on
+## should contain auto_shard_key_a_b
+## -------------------------------------------------------
+drop table if exists t_multi_col;
+
+create table t_multi_col (
+  a int,
+  b int,
+  c varchar(32)
+) partition by key(a, b) partitions 4;
+
+show full create table t_multi_col;
+
+drop table if exists t_multi_col;
+
+## -------------------------------------------------------
+## Case 3: partition key covered by PRIMARY KEY
+## should NOT contain auto_shard_key
+## -------------------------------------------------------
+drop table if exists t_pk_covered;
+
+create table t_pk_covered (
+  a int,
+  b varchar(32),
+  primary key(a)
+) partition by key(a) partitions 4;
+
+show full create table t_pk_covered;
+
+drop table if exists t_pk_covered;
+
+## -------------------------------------------------------
+## Case 4: switch off, should NOT contain auto_shard_key
+## -------------------------------------------------------
+set ENABLE_AUTO_SHARD_KEY_INDEX = false;
+
+drop table if exists t_switch_off;
+
+create table t_switch_off (
+  a int,
+  b varchar(32)
+) partition by key(a) partitions 4;
+
+show full create table t_switch_off;
+
+drop table if exists t_switch_off;
+
+## -------------------------------------------------------
+## Case 5: switch off, multi-column partition key
+## should NOT contain auto_shard_key
+## -------------------------------------------------------
+drop table if exists t_switch_off_multi;
+
+create table t_switch_off_multi (
+  a int,
+  b int,
+  c varchar(32)
+) partition by key(a, b) partitions 4;
+
+show full create table t_switch_off_multi;
+
+drop table if exists t_switch_off_multi;
+
+## -------------------------------------------------------
+## Case 6: switch back to true, should contain auto_shard_key again
+## -------------------------------------------------------
+set ENABLE_AUTO_SHARD_KEY_INDEX = true;
+
+drop table if exists t_switch_back_on;
+
+create table t_switch_back_on (
+  a int,
+  b varchar(32)
+) partition by key(a) partitions 4;
+
+show full create table t_switch_back_on;
+
+drop table if exists t_switch_back_on;

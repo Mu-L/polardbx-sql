@@ -1,0 +1,104 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+  drop table if exists dble_k_sp_t1;
+  create table dble_k_sp_t1
+  (a bigint，b bigint)
+  partition by udf_hash(
+    `a` with udf_params (
+      'dble/hash',
+      '{"partitionCount": "4","partitionLength" : "100"}'
+    )
+  )
+  partitions 4
+  subpartition by key(b)
+  subpartitions 2;
+  show create table dble_k_sp_t1;
+  drop table dble_k_sp_t1;
+  
+  drop table if exists k_dble_sp_t1;
+  create table k_dble_sp_t1
+  (a bigint，b bigint)
+  partition by key(b)
+  partitions 2
+  subpartition by udf_hash(
+    `a` with udf_params (
+      'dble/hash',
+      '{"partitionCount": "4","partitionLength" : "100"}'
+     )
+  )
+  subpartitions 4;
+  show create table k_dble_sp_t1;
+  insert into k_dble_sp_t1 values (1,1),(150,150);
+  select a,b, part_route('', 'k_dble_sp_t1', a,b) part from k_dble_sp_t1 where (a,b) in ((1,1),(150,150)) order by b;
+  drop table k_dble_sp_t1;
+  
+  drop table if exists dble_dble_sp_t1;
+  create table dble_dble_sp_t1
+  (a bigint，b bigint)
+  partition by udf_hash(
+  `b` with udf_params (
+  'dble/hash',
+  '{"partitionCount": "2","partitionLength" : "100"}'
+  )
+  )
+  partitions 2
+  subpartition by udf_hash(
+  `a` with udf_params (
+  'dble/hash',
+  '{"partitionCount": "4","partitionLength" : "100"}'
+  )
+  )
+  subpartitions 4;
+  show create table dble_dble_sp_t1;   
+  insert into dble_dble_sp_t1 values (1,1),(150,150);
+  select a,b, part_route('', 'dble_dble_sp_t1', a,b) part from dble_dble_sp_t1 where (a,b) in ((1,1),(150,150))  order by b;         
+  drop table dble_dble_sp_t1;
+
+  
+  drop table if exists dble_r_sp_ntp_t1;
+  create table dble_r_sp_ntp_t1
+  (a bigint，b bigint)
+  partition by udf_hash(
+  `a` with udf_params (
+    'dble/hash',
+    '{"partitionCount": "2","partitionLength" : "100"}'
+    )
+  )
+  partitions 2
+  subpartition by key(`b`)
+  (
+    partition p1 values less than(1) subpartitions 2 (
+      subpartition p1sp1,
+      subpartition p1sp2                       
+    ),
+    partition p2 values less than(2) subpartitions 3 (
+      subpartition p2sp1,
+      subpartition p2sp2,
+      subpartition p2sp3                       
+    )
+  );
+  insert into dble_r_sp_ntp_t1 values (1,1),(150,150);
+  select a,b, part_route('', 'dble_r_sp_ntp_t1', a,b) part from dble_r_sp_ntp_t1 where (a,b) in ((1,1),(150,150))  order by b;
+      
+  drop table if exists r_dble_sp_ntp_t1;
+  ## error_msg: $# not support #$
+  create table r_dble_sp_ntp_t1
+  (a bigint，b bigint)
+  partition by range(b)
+  subpartition by udf_hash(
+  `a` with udf_params (
+  'dble/hash',
+  '{"partitionCount": "4","partitionLength" : "100"}'
+  )
+  )
+  (
+  partition p1 values less than(1000) subpartitions 2 (
+    subpartition p1sp1 values less than(1),
+    subpartition p1sp2 values less than(2)
+  ),
+  partition p2 values less than(2000) subpartitions 1 (
+    subpartition p2sp1 values less than(1)
+  )
+  );

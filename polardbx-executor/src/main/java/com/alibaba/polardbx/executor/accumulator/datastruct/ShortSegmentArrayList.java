@@ -16,11 +16,12 @@
 
 package com.alibaba.polardbx.executor.accumulator.datastruct;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.common.utils.MathUtils;
+import com.alibaba.polardbx.common.utils.memory.SizeOf;
 import org.openjdk.jol.info.ClassLayout;
-
-import java.util.ArrayList;
-import java.util.List;
+import org.openjdk.jol.util.VMSupport;
 
 /**
  * Short Segmented Array List
@@ -33,15 +34,30 @@ public class ShortSegmentArrayList implements SegmentArrayList {
 
     private static final int SEGMENT_SIZE = 1024;
 
-    private List<short[]> arrays;
+    private MemoryCountableArrayList<short[]> arrays;
 
     private int size;
     private int capacity;
 
     public ShortSegmentArrayList(int capacity) {
-        this.arrays = new ArrayList<>(MathUtils.ceilDiv(capacity, SEGMENT_SIZE));
+        this.arrays = new MemoryCountableArrayList<>(MathUtils.ceilDiv(capacity, SEGMENT_SIZE));
         this.size = 0;
         this.capacity = arrays.size() * SEGMENT_SIZE;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        long size = INSTANCE_SIZE;
+
+        if (arrays != null) {
+            size += FastMemoryCounter.sizeOf(arrays);
+            for (int i = 0; i < arrays.size(); i++) {
+                short[] array = arrays.get(i);
+                size += VMSupport.align((int) SizeOf.sizeOf(array));
+            }
+        }
+
+        return size;
     }
 
     public void add(short value) {

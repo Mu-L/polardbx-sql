@@ -21,7 +21,6 @@ import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.ComplexTaskPlanUtils;
-import com.alibaba.polardbx.optimizer.config.table.TableColumnUtils;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.BaseQueryOperation;
@@ -62,7 +61,7 @@ public class ReplaceRelocateWriter extends RelocateWriter {
                                  boolean containsAllUk,
                                  boolean usePartFieldChecker) {
         super(targetTable, deleteWriter, insertWriter, modifyWriter, skTargetMapping, skSourceMapping, skMetas, false,
-            usePartFieldChecker);
+            usePartFieldChecker, false);
         this.parent = parent;
         this.containsAllUk = containsAllUk;
     }
@@ -134,8 +133,7 @@ public class ReplaceRelocateWriter extends RelocateWriter {
             final InsertWriter replaceWriter = getModifyWriter().unwrap(InsertWriter.class);
 
             List<RelNode> inputs = replaceWriter.getInput(replaceEc);
-            outModifyPlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                Collectors.toList()));
+            addPhaseExecutionPlans(inputs, outModifyPlans);
             replicateOutModifyPlans
                 .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                     Collectors.toList()));
@@ -143,8 +141,7 @@ public class ReplaceRelocateWriter extends RelocateWriter {
 
         if (!deleteRows.isEmpty()) {
             List<RelNode> inputs = getDeleteWriter().getInput(ec, (w) -> deleteRows);
-            outDeletePlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                Collectors.toList()));
+            addPhaseExecutionPlans(inputs, outDeletePlans);
             replicateOutDeletePlans
                 .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                     Collectors.toList()));
@@ -157,8 +154,7 @@ public class ReplaceRelocateWriter extends RelocateWriter {
             final InsertWriter insertWriter = getInsertWriter().unwrap(InsertWriter.class);
 
             List<RelNode> inputs = insertWriter.getInput(insertEc);
-            outInsertPlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                Collectors.toList()));
+            addPhaseExecutionPlans(inputs, outInsertPlans);
             replicateOutInsertPlans
                 .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                     Collectors.toList()));

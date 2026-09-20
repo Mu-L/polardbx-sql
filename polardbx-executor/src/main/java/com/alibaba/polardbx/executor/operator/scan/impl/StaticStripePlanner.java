@@ -16,6 +16,10 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.orc.FastPositionIndex;
+import com.alibaba.polardbx.common.orc.FastPositionIndexPositionProviderBuilder;
+import com.alibaba.polardbx.common.orc.FastStreamIndex;
+import com.alibaba.polardbx.common.orc.PreheatFileMeta;
 import com.google.protobuf.CodedInputStream;
 import org.apache.orc.DataReader;
 import org.apache.orc.EncryptionAlgorithm;
@@ -61,6 +65,36 @@ public class StaticStripePlanner {
         // fill the encoding info of stripe context.
         buildEncodings(stripeContext, footer, columnInclude);
         findStreams(streamManager, stripeContext, stripe.getOffset(), footer, columnInclude);
+
+        // figure out whether each column has null values in this stripe
+        boolean[] hasNull = stripeContext.getHasNull();
+        Arrays.fill(hasNull, false);
+        for (StreamInformation stream : streamManager.getDataStreams()) {
+            if (stream.kind == OrcProto.Stream.Kind.PRESENT) {
+                hasNull[stream.column] = true;
+            }
+        }
+        return streamManager;
+    }
+
+    public static StreamManager parseStripe(
+        StripeContext stripeContext,
+        boolean[] columnInclude,
+        PreheatFileMeta preheatFileMeta,
+        int stripeId) {
+        StripeInformation stripe = stripeContext.getStripeInformation();
+        stripeContext.setCurrentStripeId(stripe.getStripeId());
+        stripeContext.setOriginalStripeId(stripe.getEncryptionStripeId());
+
+        String writerTimezone = preheatFileMeta.getWriterTimeZone(stripeId);
+        stripeContext.setWriterTimezone(writerTimezone);
+
+        StreamManager streamManager = new StreamManager();
+        streamManager.setStripeContext(stripeContext);
+
+        // fill the encoding info of stripe context.
+        buildEncodings(stripeContext, preheatFileMeta, stripeId, columnInclude);
+        findStreams(streamManager, stripeContext, stripe.getOffset(), preheatFileMeta, stripeId, columnInclude);
 
         // figure out whether each column has null values in this stripe
         boolean[] hasNull = stripeContext.getHasNull();
@@ -161,6 +195,37 @@ public class StaticStripePlanner {
         StripeContext stripeContext,
         StreamManager streamManager,
         InStream.StreamOptions streamOptions,
+        FastPositionIndexPositionProviderBuilder fastPositionIndexPositionProviderBuilder,
+        Map<Integer, boolean[]> rowGroupIncludeMap,
+        boolean[] selectedColumns) {
+        BufferChunkList chunks = new BufferChunkList();
+
+        boolean isCompressed = streamOptions.getCodec() != null;
+        int bufferSize = streamOptions.getBufferSize();
+
+        for (StreamInformation stream : streamManager.getDataStreams()) {
+            // Check the column id.
+            // The count of matched streams is >= 1 because there are many stream kind in one column.
+            if (stream.column < selectedColumns.length && selectedColumns[stream.column]) {
+                processStream(
+                    stripeContext,
+                    stream,
+                    chunks,
+                    fastPositionIndexPositionProviderBuilder,
+                    0,
+                    rowGroupIncludeMap.get(stream.column),
+                    isCompressed,
+                    bufferSize);
+            }
+        }
+
+        return chunks;
+    }
+
+    public static BufferChunkList planGroupsInColumn(
+        StripeContext stripeContext,
+        StreamManager streamManager,
+        InStream.StreamOptions streamOptions,
         OrcIndex index,
         boolean[] rowGroupInclude,
         int columnId) {
@@ -181,6 +246,93 @@ public class StaticStripePlanner {
         }
 
         return chunks;
+    }
+
+    public static BufferChunkList planGroupsInColumn(
+        StripeContext stripeContext,
+        StreamManager streamManager,
+        InStream.StreamOptions streamOptions,
+        FastPositionIndexPositionProviderBuilder fastPositionIndexPositionProviderBuilder,
+        boolean[] rowGroupInclude,
+        int columnId) {
+        BufferChunkList chunks = new BufferChunkList();
+
+        boolean isCompressed = streamOptions.getCodec() != null;
+        int bufferSize = streamOptions.getBufferSize();
+
+        for (StreamInformation stream : streamManager.getDataStreams()) {
+            // Check the column id.
+            // The count of matched streams is >= 1 because there are many stream kind in one column.
+            if (stream.column == columnId) {
+
+                processStream(stripeContext, stream, chunks, fastPositionIndexPositionProviderBuilder, 0,
+                    rowGroupInclude, isCompressed, bufferSize);
+            }
+        }
+
+        return chunks;
+    }
+
+    private static void processStream(
+        StripeContext stripeContext,
+        StreamInformation stream,
+        BufferChunkList result,
+        FastPositionIndexPositionProviderBuilder fastPositionIndexPositionProviderBuilder,
+        int startGroup,
+        boolean[] includedRowGroups,
+        boolean isCompressed,
+        int bufferSize) {
+
+        // check existence of row-groups.
+        if (!hasTrue(includedRowGroups)) {
+            return;
+        }
+
+        OrcProto.ColumnEncoding[] encodings = stripeContext.getEncodings();
+        TypeDescription schema = stripeContext.getSchema();
+        boolean[] hasNull = stripeContext.getHasNull();
+
+        if (RecordReaderUtils.isDictionary(stream.kind, encodings[stream.column])) {
+            addChunk1(stripeContext, result, stream, stream.offset, stream.length);
+        } else {
+            int column = stream.column;
+
+            TypeDescription.Category kind = schema.findSubtype(column).getCategory();
+            long alreadyRead = 0;
+            for (int group = startGroup; group < includedRowGroups.length; ++group) {
+                if (includedRowGroups[group]) {
+                    // find the last group that is selected
+                    int endGroup = group;
+                    while (endGroup < includedRowGroups.length - 1 &&
+                        includedRowGroups[endGroup + 1]) {
+                        endGroup += 1;
+                    }
+                    int posn = RecordReaderUtils.getIndexPosition(
+                        encodings[stream.column].getKind(), kind, stream.kind,
+                        isCompressed, hasNull[column]);
+
+                    long start = Math.max(alreadyRead,
+                        stream.offset
+                            + (group == 0 ? 0 :
+                            fastPositionIndexPositionProviderBuilder.getPosition(column, group, posn)));
+                    long end = stream.offset;
+                    if (endGroup == includedRowGroups.length - 1) {
+                        end += stream.length;
+                    } else {
+                        long nextGroupOffset =
+                            fastPositionIndexPositionProviderBuilder.getPosition(column, endGroup + 1, posn);
+                        end += RecordReaderUtils.estimateRgEndOffset(isCompressed,
+                            bufferSize, false, nextGroupOffset,
+                            stream.length);
+                    }
+                    if (alreadyRead < end) {
+                        addChunk1(stripeContext, result, stream, start, end - start);
+                        alreadyRead = end;
+                    }
+                    group = endGroup;
+                }
+            }
+        }
     }
 
     private static void processStream(
@@ -437,6 +589,23 @@ public class StaticStripePlanner {
         }
     }
 
+    // fill the encoding info of stripe context.
+    private static void buildEncodings(
+        StripeContext stripeContext,
+        PreheatFileMeta preheatFileMeta,
+        int stripeId,
+        boolean[] columnInclude) {
+
+        OrcProto.ColumnEncoding[] encodings = stripeContext.getEncodings();
+        ReaderEncryption encryption = stripeContext.getEncryption();
+
+        for (int c = 0; c < encodings.length; ++c) {
+            if (columnInclude == null || columnInclude[c]) {
+                encodings[c] = preheatFileMeta.getColumnEncoding(stripeId, c);
+            }
+        }
+    }
+
     /**
      * Find the complete list of streams.
      *
@@ -469,6 +638,83 @@ public class StaticStripePlanner {
                     handleStream(streamManager, stripeContext, currentOffset, columnInclude, stream, variant);
             }
         }
+    }
+
+    private static void findStreams(
+        StreamManager streamManager,
+        StripeContext stripeContext,
+        long streamStart,
+        PreheatFileMeta preheatFileMeta,
+        int stripeId,
+        boolean[] columnInclude) {
+        OrcProto.Stream.Kind[] bloomFilterKinds = stripeContext.getBloomFilterKinds();
+        long currentOffset = streamStart;
+        Arrays.fill(bloomFilterKinds, null);
+
+        FastStreamIndex fastStreamIndex = preheatFileMeta.getFastStreamIndex(stripeId);
+        int streamListSize = fastStreamIndex.getStreamListSize();
+
+        for (int streamIndex = 0; streamIndex < streamListSize; streamIndex++) {
+            currentOffset +=
+                handleStream(streamManager, stripeContext, currentOffset, columnInclude, fastStreamIndex, streamIndex,
+                    null);
+        }
+    }
+
+    private static long handleStream(
+        StreamManager streamManager,
+        StripeContext stripeContext,
+        long offset,
+        boolean[] columnInclude,
+        FastStreamIndex fastStreamIndex,
+        int streamIndex,
+        ReaderEncryptionVariant variant) {
+        OrcProto.Stream.Kind[] bloomFilterKinds = stripeContext.getBloomFilterKinds();
+        ReaderEncryption encryption = stripeContext.getEncryption();
+        boolean ignoreNonUtf8BloomFilter = stripeContext.isIgnoreNonUtf8BloomFilter();
+        TypeDescription schema = stripeContext.getSchema();
+        OrcFile.WriterVersion version = stripeContext.getVersion();
+
+        int column = fastStreamIndex.getColumnId(streamIndex);
+        long streamLength = fastStreamIndex.getLength(streamIndex);
+        OrcProto.Stream.Kind kind;
+        if ((kind = fastStreamIndex.getKind(streamIndex)) != null) {
+
+            if (kind == OrcProto.Stream.Kind.ENCRYPTED_INDEX ||
+                kind == OrcProto.Stream.Kind.ENCRYPTED_DATA) {
+                // Ignore the placeholders that shouldn't count toward moving the
+                // offsets.
+                return 0;
+            }
+
+            if (columnInclude[column] && encryption.getVariant(column) == variant) {
+                // Ignore any broken bloom filters unless the user forced us to use
+                // them.
+                if (kind != OrcProto.Stream.Kind.BLOOM_FILTER ||
+                    !ignoreNonUtf8BloomFilter ||
+                    !hadBadBloomFilters(schema.findSubtype(column).getCategory(),
+                        version)) {
+                    // record what kind of bloom filters we are using
+                    if (kind == OrcProto.Stream.Kind.BLOOM_FILTER_UTF8 ||
+                        kind == OrcProto.Stream.Kind.BLOOM_FILTER) {
+                        bloomFilterKinds[column] = kind;
+                    }
+                    StreamInformation info =
+                        new StreamInformation(kind, column, offset, streamLength);
+                    switch (StreamName.getArea(kind)) {
+                    case DATA:
+                        streamManager.getDataStreams().add(info);
+                        break;
+                    case INDEX:
+                        streamManager.getIndexStreams().add(info);
+                        break;
+                    default:
+                    }
+                    streamManager.getStreams().put(new StreamName(column, kind), info);
+                }
+            }
+        }
+        return streamLength;
     }
 
     /**

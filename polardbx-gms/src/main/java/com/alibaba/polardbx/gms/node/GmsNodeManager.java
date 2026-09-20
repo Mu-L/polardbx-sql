@@ -104,6 +104,12 @@ public class GmsNodeManager extends AbstractLifecycle {
      */
     private List<GmsNode> allNodes = new ArrayList<>();
 
+    /**
+     * /**
+     * Marks whether the system tables of the current instance are empty
+     */
+    private boolean emptyCurrentSet = true;
+
     private int currentIndex = -1;
     private int readOnlyNodeCpuCore = -1;
     private int readOnlyColumnarCpuCore = -1;
@@ -259,9 +265,12 @@ public class GmsNodeManager extends AbstractLifecycle {
                 if (TStringUtil.equalsIgnoreCase(gmsNode.host, AddressUtils.getHostIp())
                     && gmsNode.serverPort == localServerPort) {
                     localNode = gmsNode;
+                    // Set subInstId
+                    InstIdUtil.setSubInstId(gmsNode.subInstId);
                 } else {
                     remoteNodes.add(gmsNode);
                 }
+                emptyCurrentSet = false;
             }
         }
 
@@ -270,6 +279,9 @@ public class GmsNodeManager extends AbstractLifecycle {
         if (allNodes.isEmpty()) {
             // Need one node at least for local test even if it's null.
             allNodes.add(localNode);
+        } else if (this.localNode == null) {
+            LOGGER.error("Local node is null, please check the server info, and the all nodes: " + allNodes
+                + ", maybe exit multi network.");
         }
 
         this.remoteNodes = remoteNodes;
@@ -315,6 +327,7 @@ public class GmsNodeManager extends AbstractLifecycle {
         node.rpcPort = record.mppPort;
         node.status = record.status;
         node.instId = record.instId;
+        node.subInstId = record.subInstId;
         node.instType = record.instType;
         node.cpuCore = record.cpuCore;
         return node;
@@ -412,7 +425,6 @@ public class GmsNodeManager extends AbstractLifecycle {
 
     private void refreshLocalGmsNode(int localServerPort) {
         if (localNode != null) {
-            TddlNode.setInstId(InstIdUtil.getInstId());
             TddlNode.setHost(localNode.host);
             TddlNode.setPort(localNode.serverPort);
             TddlNode.setNodeId(localNode.uniqueId);
@@ -434,6 +446,7 @@ public class GmsNodeManager extends AbstractLifecycle {
         public int rpcPort;
         public int status;
         public String instId;
+        public String subInstId;
         public int instType;
         public int cpuCore;
 
@@ -451,6 +464,14 @@ public class GmsNodeManager extends AbstractLifecycle {
 
         public String getManagerKey() {
             return host + SEPARATOR_COLON + managerPort;
+        }
+
+        public String getInstId() {
+            return instId;
+        }
+
+        public String getSubInstId() {
+            return subInstId;
         }
 
         public GmsSyncDataSource getManagerDataSource() {
@@ -485,6 +506,7 @@ public class GmsNodeManager extends AbstractLifecycle {
             print(nodeInfo, "instId", instId);
             print(nodeInfo, "instType", instType);
             print(nodeInfo, "cpuCore", cpuCore);
+            print(nodeInfo, "subInstId", subInstId);
             return nodeInfo.toString();
         }
 
@@ -582,4 +604,7 @@ public class GmsNodeManager extends AbstractLifecycle {
         return readOnlyColumnarCpuCore;
     }
 
+    public boolean isEmptyCurrentSet() {
+        return emptyCurrentSet;
+    }
 }

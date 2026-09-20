@@ -16,18 +16,24 @@
 
 package com.alibaba.polardbx.optimizer.core.rel.ddl.data;
 
+import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
 import com.alibaba.polardbx.common.exception.NotSupportException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.TStringUtil;
+import com.alibaba.polardbx.common.utils.logger.Logger;
+import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.locality.LocalityDesc;
 import com.alibaba.polardbx.gms.tablegroup.JoinGroupInfoRecord;
 import com.alibaba.polardbx.gms.tablegroup.JoinGroupUtils;
 import com.alibaba.polardbx.gms.tablegroup.PartitionGroupRecord;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
+import com.alibaba.polardbx.gms.tablegroup.TableGroupLocation;
 import com.alibaba.polardbx.gms.topology.GroupDetailInfoExRecord;
 import com.alibaba.polardbx.gms.topology.GroupDetailInfoRecord;
+import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ComplexTaskMetaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
@@ -36,6 +42,7 @@ import com.alibaba.polardbx.optimizer.locality.LocalityInfoUtils;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfoUtil;
 import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
+import lombok.Getter;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlPartition;
@@ -45,10 +52,14 @@ import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.StringUtils;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -57,6 +68,8 @@ import java.util.stream.Collectors;
 import static com.alibaba.polardbx.optimizer.partition.PartitionInfoUtil.IGNORE_PARTNAME_LOCALITY;
 
 public class AlterTableGroupBasePreparedData extends DdlPreparedData {
+
+    protected static Logger ddlLog = LoggerFactory.getLogger("ddl");
 
     public AlterTableGroupBasePreparedData() {
     }
@@ -97,8 +110,21 @@ public class AlterTableGroupBasePreparedData extends DdlPreparedData {
     private List<String> logicalParts;
 
     protected boolean usePhysicalBackfill = false;
+    protected Long tempJobId = null;
+    protected boolean inplaceBackfill = false;
 
     protected List<GroupDetailInfoExRecord> targetGroupDetailInfoExRecords;
+
+    /**
+     * change foreign key to physical or logical when repartition
+     * Foreign key.
+     */
+    @Getter
+    private List<ForeignKeyData> modifyForeignKeys = new ArrayList<>();
+    @Getter
+    private List<Pair<String, String>> addForeignKeySql = new ArrayList<>();
+    @Getter
+    private List<Pair<String, String>> dropForeignKeySql = new ArrayList<>();
 
     public String getTableGroupName() {
         return tableGroupName;
@@ -110,6 +136,83 @@ public class AlterTableGroupBasePreparedData extends DdlPreparedData {
 
     public List<String> getNewPartitionNames() {
         return newPartitionNames;
+    }
+
+    /**
+     * 获取随机排序的新分区名称列表
+     * 该方法会对逻辑分区组中的子分区进行交错排列，然后进行随机打乱，
+     * 确保不会将属于同一逻辑分区组的所有子分区分配到同一个数据库中
+     *
+     * @param logicalPartitionGroups 逻辑分区组映射，key为组名，value为该组下的子分区名称列表
+     * @param targetDbCount 目标数据库数量
+     * @return 随机排序后的分区名称列表
+     * @throws TddlRuntimeException 当分区数量不匹配或参数无效时抛出异常
+     * @throws IllegalArgumentException 当参数为null或无效时抛出异常
+     */
+    public List<String> getNewPartitionNamesRandOrder(Map<String, List<String>> logicalPartitionGroups,
+                                                      int targetDbCount) {
+        // 存储交错排列后的分区名称
+        List<String> interleaved = new ArrayList<>();
+        // 标记当前排序是否有效（是否将同一逻辑组的所有子分区分配到同一数据库）
+        boolean badShuffle = false;
+        // 最大重试次数
+        int maxTry = 10;
+
+        do {
+            badShuffle = false;
+            interleaved.clear();
+
+            // 获取最大的子分区数量
+            int maxSubPartitions = logicalPartitionGroups.values().stream()
+                .mapToInt(List::size)
+                .max()
+                .orElse(0);
+
+            // 交错排列各逻辑分区组中的子分区
+            for (int i = 0; i < maxSubPartitions; i++) {
+                for (List<String> group : logicalPartitionGroups.values()) {
+                    if (i < group.size()) {
+                        interleaved.add(group.get(i));
+                    }
+                }
+            }
+
+            // 检查交错排列后的分区数量是否与新分区名称数量一致
+            if (interleaved.size() != newPartitionNames.size()) {
+                throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
+                    String.format("subpartition size not match,%s,%s", newPartitionNames, interleaved));
+            }
+
+            // 生成随机种子并进行随机打乱
+            Random randomSeed = new Random();
+            long seed = Objects.hash(getSchemaName(), getTableName()) ^ randomSeed.nextLong();
+            Random random = new Random(seed);
+            Collections.shuffle(interleaved, random);
+            ddlLog.warn(
+                "shuffle new partition names, seed: " + seed + ", new partition names after shuffle: " + interleaved);
+
+            // 将打乱后的分区分配到各个数据库中
+            Map<Long, Set<String>> dnOrderPartMap = new HashMap<>();
+            int index = 0;
+            for (String orderPart : interleaved) {
+                dnOrderPartMap.computeIfAbsent(Long.valueOf(index % targetDbCount), K -> new HashSet<>())
+                    .add(orderPart);
+                index++;
+            }
+
+            // 检查是否有逻辑分区组的所有子分区被分配到了同一个数据库
+            for (Map.Entry<String, List<String>> entry : logicalPartitionGroups.entrySet()) {
+                Optional<Set<String>> find =
+                    dnOrderPartMap.values().stream().filter(v -> v.containsAll(entry.getValue())).findAny();
+                if (find.isPresent() && entry.getValue().size() > 1) {
+                    badShuffle = true;
+                    ddlLog.warn("bad shuffle order");
+                    break;
+                }
+            }
+        } while (badShuffle && --maxTry > 0);
+
+        return interleaved;
     }
 
     public void setNewPartitionNames(List<String> newPartitionNames) {
@@ -138,6 +241,14 @@ public class AlterTableGroupBasePreparedData extends DdlPreparedData {
 
     public void setInvisiblePartitionGroups(List<PartitionGroupRecord> invisiblePartitionGroups) {
         this.invisiblePartitionGroups = invisiblePartitionGroups;
+    }
+
+    public Map<String, PartitionGroupRecord> getInvisiblePartitionGroupsMap() {
+        TreeMap<String, PartitionGroupRecord> invisiblePartitionGroupsMap = new TreeMap<>(String::compareToIgnoreCase);
+        for (PartitionGroupRecord partitionGroupRecord : GeneralUtil.emptyIfNull(invisiblePartitionGroups)) {
+            invisiblePartitionGroupsMap.put(partitionGroupRecord.getPartition_name(), partitionGroupRecord);
+        }
+        return invisiblePartitionGroupsMap;
     }
 
     public List<String> getExcludeStorageInstIds() {
@@ -173,6 +284,11 @@ public class AlterTableGroupBasePreparedData extends DdlPreparedData {
     }
 
     public void prepareInvisiblePartitionGroup(Boolean withSubPartition) {
+        prepareInvisiblePartitionGroup(withSubPartition, false, null);
+    }
+
+    public void prepareInvisiblePartitionGroup(Boolean withSubPartition, Boolean randOrderAllocate,
+                                               Map<String, List<String>> logicalPartitionGroups) {
         TableGroupConfig tableGroupConfig = OptimizerContext.getContext(getSchemaName()).getTableGroupInfoManager()
             .getTableGroupConfigByName(tableGroupName);
         int i = 0;
@@ -189,8 +305,16 @@ public class AlterTableGroupBasePreparedData extends DdlPreparedData {
                         tableGroupConfig.getPartitionGroupByName(oldPartitionNames.get(0)).locality);
             }
         }
+        boolean isAddPartition = taskType != null && (taskType == ComplexTaskMetaManager.ComplexTaskType.ADD_PARTITION);
         do {
-            for (String newPartitionName : getNewPartitionNames()) {
+            List<String> localNewPartitionNames;
+            if (isAddPartition && useTemplatePart && randOrderAllocate && GeneralUtil.isNotEmpty(
+                logicalPartitionGroups)) {
+                localNewPartitionNames = getNewPartitionNamesRandOrder(logicalPartitionGroups, targetDbCount);
+            } else {
+                localNewPartitionNames = getNewPartitionNames();
+            }
+            for (String newPartitionName : localNewPartitionNames) {
                 PartitionGroupRecord partitionGroupRecord = new PartitionGroupRecord();
                 partitionGroupRecord.visible = 0;
                 LocalityDesc localityDesc = LocalityInfoUtils.parse(newPartitionLocalities.get(newPartitionName));
@@ -201,23 +325,37 @@ public class AlterTableGroupBasePreparedData extends DdlPreparedData {
                 }
                 partitionGroupRecord.tg_id = tableGroupId;
                 if (localityDesc.holdEmptyLocality() && defaultLocalityDesc.holdEmptyLocality()) {
-                    partitionGroupRecord.phy_db = targetGroupDetailInfoExRecords.get(i % targetDbCount).phyDbName;
+                    partitionGroupRecord.setPhy_db(
+                        targetGroupDetailInfoExRecords.get(i % targetDbCount).getPhyDbName());
+                    partitionGroupRecord.setGroup_Name(
+                        targetGroupDetailInfoExRecords.get(i % targetDbCount).getGroupName());
                     partitionGroupRecord.locality = "";
                     i++;
                 } else if (!localityDesc.holdEmptyLocality()) {
-                    partitionGroupRecord.phy_db = LocalityInfoUtils.allocatePhyDb(getSchemaName(), localityDesc);
+                    LocalityInfoUtils.allocatePhyDb(getSchemaName(), localityDesc, partitionGroupRecord);
                     if (!withSubPartition) {
                         partitionGroupRecord.locality = localityDesc.toString();
                     } else {
                         partitionGroupRecord.locality = "";
                     }
                 } else {
-                    partitionGroupRecord.phy_db = LocalityInfoUtils.allocatePhyDb(getSchemaName(), defaultLocalityDesc);
+                    LocalityInfoUtils.allocatePhyDb(getSchemaName(), defaultLocalityDesc, partitionGroupRecord);
                     if (!withSubPartition) {
                         partitionGroupRecord.locality = defaultLocalityDesc.toString();
                     } else {
                         partitionGroupRecord.locality = "";
                     }
+                }
+
+                if (tableGroupConfig.isColumnarTableGroup()) {
+                    // 对于 columnar 表组，使用特殊的组分配逻辑
+                    TableGroupLocation.GroupAllocator columnarGroupAllocator =
+                        TableGroupLocation.buildGroupAllocatorForNonDeletable(getSchemaName());
+                    String groupKey = columnarGroupAllocator.allocate();
+                    partitionGroupRecord.setGroup_Name(groupKey);
+                    partitionGroupRecord.setPhy_db(
+                        GroupInfoUtil.buildPhysicalDbNameFromGroupName(getSchemaName(), groupKey));
+                    partitionGroupRecord.locality = defaultLocalityDesc.toString();
                 }
 
                 partitionGroupRecord.pax_group_id = 0L;
@@ -332,6 +470,30 @@ public class AlterTableGroupBasePreparedData extends DdlPreparedData {
         this.targetImplicitTableGroupName = targetImplicitTableGroupName;
     }
 
+    public boolean isInplaceBackfill() {
+        return false;
+    }
+
+    public boolean isFirstPartitionLevelActiveForInplaceBackfill() {
+        throw new UnsupportedOperationException();
+    }
+
+    public Map<String, Set<String>> getSrcTargetPartitionMap() {
+        throw new UnsupportedOperationException();
+    }
+
+    public void setInplaceBackfill(boolean inplaceBackfill) {
+        this.inplaceBackfill = inplaceBackfill;
+    }
+
+    public Long getTempJobId() {
+        return tempJobId;
+    }
+
+    public void setTempJobId(Long tempJobId) {
+        this.tempJobId = tempJobId;
+    }
+
     public void updatePrepareDate(TableGroupConfig targetTableConfig, PartitionInfo curPartitionInfo,
                                   PartitionInfo newPartitionInfo) {
         List<PartitionGroupRecord> partitionGroupRecords = targetTableConfig.getPartitionGroupRecords();
@@ -403,6 +565,7 @@ public class AlterTableGroupBasePreparedData extends DdlPreparedData {
                 joinGroup, partitionNamePrefix,
                 flag,
                 operateOnSubPartition, taskType, newPartNamesMap, subNewPartNamesMap, ec);
+
         if (candidateTGConfig != null) {
             setMoveToExistTableGroup(true);
             setTargetTableGroup(candidateTGConfig.getTableGroupRecord().tg_name);
@@ -443,13 +606,14 @@ public class AlterTableGroupBasePreparedData extends DdlPreparedData {
                         inVisiblePartitionGroups.add(partitionGroupRecord.get());
                         Optional<GroupDetailInfoExRecord> groupDetailInfoExRecord =
                             targetGroupDetailInfoExRecords.stream()
-                                .filter(o -> o.phyDbName.equalsIgnoreCase(partitionGroupRecord.get().phy_db))
+                                .filter(
+                                    o -> o.getGroupName().equalsIgnoreCase(partitionGroupRecord.get().getGroup_Name()))
                                 .findFirst();
                         if (!groupDetailInfoExRecord.isPresent()) {
                             throw new TddlRuntimeException(ErrorCode.ERR_TABLEGROUP_META_TOO_OLD, String.format(
-                                "the metadata of tableGroup[%s].[%s] is too old, physical database[%s] is not available, please retry this command",
+                                "the metadata of tableGroup[%s].[%s] is too old, group[%s] is not available, please retry this command",
                                 candidateTGConfig.getTableGroupRecord().tg_name,
-                                partitionGroupRecord.get().getPhy_db()));
+                                partitionGroupRecord.get().getGroup_Name()));
                         }
                         newGroupDetailInfoExRecords.add(groupDetailInfoExRecord.get());
                     }
@@ -477,19 +641,21 @@ public class AlterTableGroupBasePreparedData extends DdlPreparedData {
                             .findFirst();
                     if (partitionGroupRecord.isPresent()) {
                         invisiblePartitionGroupRecord.setPhy_db(partitionGroupRecord.get().getPhy_db());
+                        invisiblePartitionGroupRecord.setGroup_Name(partitionGroupRecord.get().getGroup_Name());
                         invisiblePartitionGroupRecord.setId(partitionGroupRecord.get().getId());
                         invisiblePartitionGroupRecord.setTg_id(partitionGroupRecord.get().getTg_id());
                         invisiblePartitionGroupRecord.setLocality(partitionGroupRecord.get().getLocality());
                         invisiblePartitionGroupRecord.setVisible(partitionGroupRecord.get().getVisible());
                         Optional<GroupDetailInfoExRecord> groupDetailInfoExRecord =
                             targetGroupDetailInfoExRecords.stream()
-                                .filter(o -> o.phyDbName.equalsIgnoreCase(partitionGroupRecord.get().phy_db))
+                                .filter(
+                                    o -> o.getGroupName().equalsIgnoreCase(partitionGroupRecord.get().getGroup_Name()))
                                 .findFirst();
                         if (!groupDetailInfoExRecord.isPresent()) {
                             throw new TddlRuntimeException(ErrorCode.ERR_TABLEGROUP_META_TOO_OLD, String.format(
-                                "the metadata of tableGroup[%s].[%s] is too old, physical database[%s] is not available, please retry this command",
+                                "the metadata of tableGroup[%s].[%s] is too old, group[%s] is not available, please retry this command",
                                 candidateTGConfig.getTableGroupRecord().tg_name,
-                                partitionGroupRecord.get().getPhy_db()));
+                                partitionGroupRecord.get().getGroup_Name()));
                         }
                         newTargetGroupDetailInfoExRecords.add(groupDetailInfoExRecord.get());
                     } else {

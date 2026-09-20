@@ -2,12 +2,14 @@ package com.alibaba.polardbx.qatest.dml.auto.basecrud;
 
 import com.alibaba.polardbx.qatest.ReadBaseTestCase;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
+import com.google.common.truth.Truth;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.List;
 
 public class RangeScanTransTest extends ReadBaseTestCase {
     String tableName = "order1";
@@ -52,6 +54,17 @@ public class RangeScanTransTest extends ReadBaseTestCase {
             try {
                 connection.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
                 connection.setAutoCommit(false);
+                List<List<Object>> result =
+                    JdbcUtil.getAllResult(JdbcUtil.executeQuery("explain physical " + sql, connection));
+                boolean hasRangeScan = false;
+                for (List<Object> row : result) {
+                    for (Object obj : row) {
+                        if (obj != null && obj.toString().toLowerCase().contains("rangescan")) {
+                            hasRangeScan = true;
+                        }
+                    }
+                }
+                Truth.assertThat(hasRangeScan).isFalse();
                 JdbcUtil.executeQuery(sql, connection);
             } finally {
                 connection.rollback();
@@ -66,6 +79,17 @@ public class RangeScanTransTest extends ReadBaseTestCase {
             try {
                 connection.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
                 connection.setAutoCommit(false);
+                List<List<Object>> result =
+                    JdbcUtil.getAllResult(JdbcUtil.executeQuery("explain physical " + sql, connection));
+                boolean hasRangeScan = false;
+                for (List<Object> row : result) {
+                    for (Object obj : row) {
+                        if (obj != null && obj.toString().toLowerCase().contains("rangescan")) {
+                            hasRangeScan = true;
+                        }
+                    }
+                }
+                Truth.assertThat(hasRangeScan).isTrue();
                 JdbcUtil.executeQuery(sql, connection);
             } finally {
                 connection.rollback();

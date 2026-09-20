@@ -1,0 +1,14 @@
+- sql: |
+    select id from(
+        select 
+        id, 
+        row_number() over(partition by name order by create_time) as rn 
+        from t_shard_id1)
+      where rn < 1;
+  plan: |
+    project(id="id")
+      filter(condition="f3w0$o0 < 1")
+        sortwindow(id="id", name="name", create_time="create_time", f3w0$o0="window#0row_number()", reference windows="window#0=window(partition {1} order by [2 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+          grouptopn(sort="create_time asc", fetch=1, group={1})
+            gather(concurrent=true)
+              logicalview(tables="[0000-0003].t_shard_id1", shardcount=4, sql="select `id`, `name`, `create_time` from `t_shard_id1` as `t_shard_id1`")

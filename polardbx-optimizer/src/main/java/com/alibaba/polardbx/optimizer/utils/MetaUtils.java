@@ -480,7 +480,8 @@ public class MetaUtils {
                     .map(s -> s.getKeyColumns().stream().map(ColumnMeta::getName).collect(Collectors.toSet()))
                     .collect(Collectors.toList()));
 
-                if (null != partitionInfo.getPartitionColumns()) {
+                if (null != partitionInfo.getPartitionColumns() && !partitionInfo.isSingleTable()
+                    && !partitionInfo.isBroadcastOrReplicas() && !partitionInfo.isNoPartitionKeyTable()) {
                     shardingKeys.addAll(partitionInfo.getPartitionColumnsNotReorder());
                     actualPartitionKeys.addAll(partitionInfo.getActualPartitionColumnsNotReorder());
                 }
@@ -496,23 +497,25 @@ public class MetaUtils {
                         .getPartitionInfoManager()
                         .getPartitionInfo(indexTableName);
 
-                    gsiUniqueKeys.put(indexTableName,
-                        indexTableMeta.getUniqueIndexes(false)
-                            .stream()
-                            .map(s -> s.getKeyColumns().stream().map(ColumnMeta::getName).collect(Collectors.toSet()))
-                            .collect(Collectors.toList()));
-
-                    gsiShardingKeys.put(indexTableName, new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER));
-                    gsiActualPartitionKeys.put(indexTableName, new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER));
-                    if (null != indexTablePartitionInfo.getPartitionColumns()) {
-                        gsiShardingKeys.get(indexTableName)
-                            .addAll(indexTablePartitionInfo.getPartitionColumnsNotReorder());
-                        gsiActualPartitionKeys.get(indexTableName)
-                            .addAll(indexTablePartitionInfo.getActualPartitionColumnsNotReorder());
-                    }
-
                     final GsiIndexMetaBean indexMeta = gsiEntry.getValue();
                     if (!indexMeta.columnarIndex) {
+                        gsiUniqueKeys.put(indexTableName,
+                            indexTableMeta.getUniqueIndexes(false)
+                                .stream()
+                                .map(s -> s.getKeyColumns().stream().map(ColumnMeta::getName)
+                                    .collect(Collectors.toSet()))
+                                .collect(Collectors.toList()));
+
+                        gsiShardingKeys.put(indexTableName, new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER));
+                        gsiActualPartitionKeys.put(indexTableName,
+                            new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER));
+                        if (null != indexTablePartitionInfo.getPartitionColumns()) {
+                            gsiShardingKeys.get(indexTableName)
+                                .addAll(indexTablePartitionInfo.getPartitionColumnsNotReorder());
+                            gsiActualPartitionKeys.get(indexTableName)
+                                .addAll(indexTablePartitionInfo.getActualPartitionColumnsNotReorder());
+                        }
+
                         gsiIndexColumns.put(indexTableName,
                             indexMeta.indexColumns.stream().map(s -> s.columnName).collect(Collectors.toSet()));
 
@@ -572,6 +575,27 @@ public class MetaUtils {
             }
 
             for (Entry<String, Set<String>> entry : gsiCoveringColumns.entrySet()) {
+                for (String c : entry.getValue()) {
+                    if (StringUtils.equalsIgnoreCase(c, columnName)) {
+                        result.add(entry.getKey());
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        public Set<String> getCciNameByColumn(String columnName) {
+            final Set<String> result = new HashSet<>();
+            for (Entry<String, Set<String>> entry : columnarIndexColumns.entrySet()) {
+                for (String c : entry.getValue()) {
+                    if (StringUtils.equalsIgnoreCase(c, columnName)) {
+                        result.add(entry.getKey());
+                    }
+                }
+            }
+
+            for (Entry<String, Set<String>> entry : columnarShardingKeys.entrySet()) {
                 for (String c : entry.getValue()) {
                     if (StringUtils.equalsIgnoreCase(c, columnName)) {
                         result.add(entry.getKey());

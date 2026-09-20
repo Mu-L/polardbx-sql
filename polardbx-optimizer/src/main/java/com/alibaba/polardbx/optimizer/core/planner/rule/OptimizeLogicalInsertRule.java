@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.optimizer.core.planner.rule;
 
+import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
@@ -46,7 +47,11 @@ import com.alibaba.polardbx.optimizer.core.rel.LogicalInsert;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalInsertIgnore;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalReplace;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalUpsert;
+import com.alibaba.polardbx.optimizer.core.rel.UkCheckEntry;
 import com.alibaba.polardbx.optimizer.core.rel.dml.DistinctWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedWriteBinding;
+import com.alibaba.polardbx.optimizer.core.rel.dml.RowWriteBinding;
 import com.alibaba.polardbx.optimizer.core.rel.dml.WriterFactory;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.LogicalWriteUtil.ReplaceRexWithParamHandlerCall;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.MappingBuilder;
@@ -78,6 +83,7 @@ import org.apache.calcite.plan.RelOptSchema;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.core.TableModify;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexBuilder;
@@ -96,6 +102,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -139,7 +146,7 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
     public void onMatch(RelOptRuleCall call) {
         ExecutionContext ec = PlannerContext.getPlannerContext(call).getExecutionContext();
 
-        final LogicalInsert origin = call.rel(0);
+        LogicalInsert origin = call.rel(0);
         final PlannerContext context = call.getPlanner().getContext().unwrap(PlannerContext.class);
 
         final ExecutionStrategyResult executionStrategyRs =
@@ -148,6 +155,48 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
 
         origin.setPushablePrimaryKeyCheck(executionStrategyRs.pushablePrimaryKeyCheck);
         origin.setPushableForeignConstraintCheck(executionStrategyRs.pushableForeignConstraintCheck);
+
+        // For pure columnar table, REPLACE/UPSERT/INSERT IGNORE are not supported by default
+        // because Blackhole engine has no unique keys, duplicate handling is meaningless.
+        // This check must be before the execution strategy switch, because pure columnar tables
+        // with CCI may use DETERMINISTIC_PUSHDOWN strategy, which would bypass a check inside LOGICAL.
+        if ((origin.isReplace() || origin.isUpsert() || origin.isInsertIgnore())
+            && isPureColumnarTable(origin, ec)) {
+            boolean forbid = ec.getParamManager()
+                .getBoolean(ConnectionParams.FORBID_COMPLEX_DML_WITH_PURE_COLUMNAR);
+            if (forbid) {
+                String op = origin.isReplace() ? "REPLACE" :
+                    origin.isUpsert() ? "INSERT ... ON DUPLICATE KEY UPDATE" : "INSERT IGNORE";
+                throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
+                    op + " on pure columnar table '" + origin.getLogicalTableName() + "'");
+            }
+            // Degrade to plain INSERT
+            if (origin.isReplace()) {
+                // REPLACE uses immutable Operation field, must create new LogicalInsert with INSERT operation
+                origin = new LogicalInsert(
+                    origin.getCluster(),
+                    origin.getTraitSet(),
+                    origin.getTable(),
+                    origin.getCatalogReader(),
+                    origin.getInput(),
+                    TableModify.Operation.INSERT,
+                    origin.isFlattened(),
+                    origin.getInsertRowType(),
+                    ImmutableList.of(),
+                    ImmutableList.of(),
+                    origin.getBatchSize(),
+                    origin.getAppendedColumnIndex(),
+                    origin.getHints(),
+                    origin.getTableInfo(),
+                    ImmutableList.of());
+                origin.setPushablePrimaryKeyCheck(executionStrategyRs.pushablePrimaryKeyCheck);
+                origin.setPushableForeignConstraintCheck(executionStrategyRs.pushableForeignConstraintCheck);
+            } else {
+                // INSERT IGNORE / UPSERT use mutable fields, just clear them
+                origin.setKeywords(ImmutableList.of());
+                origin.setDuplicateKeyUpdateList(ImmutableList.of());
+            }
+        }
 
         RelNode updated = origin;
         switch (executionStrategy) {
@@ -195,8 +244,16 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
 
         // Replace call parameter and sequence
         final LogicalInsert newInsert = replaceExpAndSeqWithParam(origin, false, deterministicPushdown, ec);
+        newInsert.setUkContainsAllSkAndGsiContainsAllUk(origin.isUkContainsAllSkAndGsiContainsAllUk());
 
         final TableMeta primaryTableMeta = ec.getSchemaManager(schema).getTable(logicalTableName);
+        if (newInsert.isUpsert() && ExternalizedDmlRewriter.needsHandling(primaryTableMeta)) {
+            // Keep the ordinary InsertWriter/physical UPSERT route. The externalized extension only compiles
+            // safe conflict assignments into explicit parameter bindings that the existing handler materializes
+            // after RexCallParam expansion; unsafe expressions never select this strategy.
+            ExternalizedDmlRewriter.prepareExternalizedUpsertPushdown(
+                newInsert, primaryTableMeta, getMaxAllocatedParamIndex(newInsert));
+        }
         final List<TableMeta> gsiMetas = GlobalIndexMeta.getIndex(primaryTable, ec);
         final RelOptSchema catalog = RelUtils.buildCatalogReader(schema, ec);
         final List<String> primaryColumnNames = sourceRowType.getFieldNames();
@@ -224,7 +281,7 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
 
         final OptimizerContext oc = OptimizerContext.getContext(schema);
         assert null != oc;
-        final boolean isBroadcast = oc.getRuleManager().isBroadCast(logicalTableName);
+        final boolean isBroadCastOrReplicas = oc.getRuleManager().isBroadCastOrReplicas(logicalTableName);
         final boolean isSingleTable = oc.getRuleManager().isTableInSingleDb(logicalTableName);
         final boolean isReplace = origin.isReplace();
         final boolean isValueSource = !origin.isSourceSelect();
@@ -236,7 +293,8 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
         // Build writers
         final InsertWriter writer = WriterFactory
             .createInsertOrReplaceWriter(newInsert, primaryTable, sourceRowType, valuePermute, primaryTableMeta,
-                newInsert.getKeywords(), newDuplicatedUpdateList, isReplace, isBroadcast, isSingleTable, isValueSource,
+                newInsert.getKeywords(), newDuplicatedUpdateList, isReplace, isBroadCastOrReplicas, isSingleTable,
+                isValueSource,
                 ec);
 
         // Push insert ignore for upsert on table with gsi and not update any column in gsi
@@ -276,6 +334,13 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
         return newInsert;
     }
 
+    private boolean isPureColumnarTable(LogicalInsert insert, ExecutionContext ec) {
+        final String schema = insert.getSchemaName();
+        final String tableName = insert.getLogicalTableName();
+        final TableMeta tableMeta = ec.getSchemaManager(schema).getTable(tableName);
+        return tableMeta != null && Engine.isPureColumnar(tableMeta.getEngine());
+    }
+
     private LogicalInsert handleInsert(LogicalInsert insert, PlannerContext context,
                                        ExecutionStrategyResult executionStrategyRs, ExecutionContext ec) {
         return handlePushdown(insert, true, ec);
@@ -289,7 +354,7 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
         final OptimizerContext oc = OptimizerContext.getContext(schema);
         assert null != oc;
 
-        final boolean isBroadcast = oc.getRuleManager().isBroadCast(targetTable);
+        final boolean isBroadCastOrReplicas = oc.getRuleManager().isBroadCastOrReplicas(targetTable);
         final boolean isSingleTable = oc.getRuleManager().isTableInSingleDb(targetTable);
         final RelOptTable primaryTable = insert.getTable();
         final List<String> primaryColumnNames = insert.getInsertRowType().getFieldNames();
@@ -313,6 +378,7 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
 
         // Replace call parameter and sequence
         final LogicalInsert newInsert = replaceExpAndSeqWithParam(insert, true, false, ec);
+        newInsert.setUkContainsAllSkAndGsiContainsAllUk(insert.isUkContainsAllSkAndGsiContainsAllUk());
 
         // Writer for primary table
         final List<Integer> primaryValuePermute =
@@ -322,10 +388,10 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
             WriterFactory
                 .createInsertOrReplaceWriter(newInsert, primaryTable, newInsert.getInsertRowType(), primaryValuePermute,
                     primaryMeta,
-                    null, null, false, isBroadcast, isSingleTable, !newInsert.isSourceSelect(), ec);
+                    null, null, false, isBroadCastOrReplicas, isSingleTable, !newInsert.isSourceSelect(), ec);
         // Delete writer for inserted duplicated row
         DistinctWriter primaryDeleteWriter = null;
-        if (isBroadcast) {
+        if (isBroadCastOrReplicas) {
             primaryDeleteWriter = WriterFactory.createBroadcastDeleteWriter(newInsert, primaryTable, 0, ec);
         } else if (isSingleTable) {
             primaryDeleteWriter = WriterFactory.createSingleDeleteWriter(newInsert, primaryTable, 0, ec);
@@ -366,14 +432,15 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
 
         // Writer for Scaleout pushdown when NOT hit ScaleOut Group Build writers
         InsertWriter scaleoutPushdownWriter = null;
-        if (!withGsi && !isBroadcast && !isSingleTable && scaleOutCanWrite) {
+        if (!withGsi && !isBroadCastOrReplicas && !isSingleTable && scaleOutCanWrite) {
             // Only do this optimization for non-gsi table not-broadcast table
             // and its status is on scale-out writable
             if (!useStrategyByHintParams && (pushDuplicateCheckByHintParams || canPushDuplicateIgnoreScaleOutCheck)) {
                 scaleoutPushdownWriter = WriterFactory
                     .createInsertOrReplaceWriter(newInsert, primaryTable, originSourceRowType, originSourceValuePermute,
                         primaryMeta,
-                        newInsert.getKeywords(), null, false, isBroadcast, isSingleTable, isOriginValueSource, ec);
+                        newInsert.getKeywords(), null, false, isBroadCastOrReplicas, isSingleTable, isOriginValueSource,
+                        ec);
             }
         }
 
@@ -397,8 +464,7 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
         insertIgnore.setTargetTableIsReadyToPublish(scaleOutReadyToPublish);
         insertIgnore.setSourceTablesIsReadyToPublish(false);
         insertIgnore.setPushDownInsertWriter(scaleoutPushdownWriter);
-        insertIgnore.getUkGroupByTable().putAll(groupUkByTable(insertIgnore, ec));
-        insertIgnore.getLocalIndexPhyName().putAll(getLocalIndexName(insertIgnore.getUkGroupByTable(), schema, ec));
+        initDuplicateCheckPlan(insertIgnore, schema, ec);
         insertIgnore.getColumnMetaMap().putAll(getColumnMetaMap(primaryMeta, insertIgnore.getUkGroupByTable()));
         insertIgnore.setUsePartFieldChecker(isNewPartDb && allColumnsSupportPartField(insertIgnore.getColumnMetaMap()));
         insertIgnore.setUkContainGeneratedColumn(
@@ -419,7 +485,7 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
         final OptimizerContext oc = OptimizerContext.getContext(schema);
         assert null != oc;
 
-        final boolean isBroadcast = oc.getRuleManager().isBroadCast(targetTable);
+        final boolean isBroadCastOrReplicas = oc.getRuleManager().isBroadCastOrReplicas(targetTable);
         final boolean isSingleTable = oc.getRuleManager().isTableInSingleDb(targetTable);
         final RelOptTable primaryTable = replace.getTable();
         final List<String> primaryColumnNames = replace.getInsertRowType().getFieldNames();
@@ -459,7 +525,7 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
         // SELECT --> deduplicate --> REPLACE or DELETE + INSERT
         primaryReplaceRelocateWriter =
             WriterFactory.createReplaceRelocateWriter(newInsert, primaryTable, primaryValuePermute, primaryMeta,
-                containsAllUk, false, isBroadcast, isSingleTable, ec);
+                containsAllUk, false, isBroadCastOrReplicas, isSingleTable, ec);
 
         // Writer for gsi
         final List<ReplaceRelocateWriter> gsiReplaceRelocateWriters = new ArrayList<>();
@@ -481,7 +547,7 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
 
         // Writer for Scaleout pushdown when NOT hit ScaleOut Group Build writers
         InsertWriter scaleoutPushdownWriter = null;
-        if (!withGsi && !isBroadcast && !isSingleTable && scaleOutCanWrite) {
+        if (!withGsi && !isBroadCastOrReplicas && !isSingleTable && scaleOutCanWrite) {
             // Only do this optimization for non-gsi table not-broadcast table
             // and its status is on scale-out writable
             if (!useStrategyByHintParams && (pushDuplicateCheckByHintParams || canPushDuplicateIgnoreScaleOutCheck)) {
@@ -490,20 +556,67 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
                 scaleoutPushdownWriter = WriterFactory
                     .createInsertOrReplaceWriter(newInsert, primaryTable, originSourceRowType, originSourceValuePermute,
                         primaryMeta,
-                        newInsert.getKeywords(), null, true, isBroadcast, isSingleTable, isOriginValueSource, ec);
+                        newInsert.getKeywords(), null, true, isBroadCastOrReplicas, isSingleTable, isOriginValueSource,
+                        ec);
             }
         }
         final boolean isNewPartDb = DbInfoManager.getInstance().isNewPartitionDb(schema);
 
+        // not optimize by returning for replace select
+        // not optimize by returning for DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN = true
+        // not optimize by returning for no gsi
+        boolean canUseReturning = ec.getParamManager().getBoolean(ConnectionParams.DML_USE_RETURNING) &&
+            ec.getParamManager().getBoolean(ConnectionParams.OPTIMIZE_REPLACE_BY_RETURNING) &&
+            !ec.getParamManager().getBoolean(ConnectionParams.DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN)
+            && !gsiMetas.isEmpty()
+            && !replace.isSourceSelect()
+            && !ExternalizedDmlRewriter.isReturningForbidden(primaryMeta);
+
+        DistinctWriter primaryDeleteWriter = null;
+        List<DistinctWriter> gsiDeleteWriters = new ArrayList<>();
+        if (canUseReturning) {
+            // for returning need to construct replace writer and delete writer for fix
+            // replace writer for primary
+            primaryInsertWriter =
+                WriterFactory.createInsertOrReplaceWriter(newInsert, primaryTable, originSourceRowType,
+                    originSourceValuePermute, primaryMeta, newInsert.getKeywords(), null, true, isBroadCastOrReplicas,
+                    isSingleTable, isOriginValueSource, ec);
+
+            // replace writer for gsi
+            IntStream.range(0, gsiMetas.size()).forEach(i -> {
+                final TableMeta gsiMeta = gsiMetas.get(i);
+                final RelOptTable gsiTable =
+                    catalog.getTableForMember(ImmutableList.of(schema, gsiMeta.getTableName()));
+                final List<Integer> gsiValuePermute = gsiColumnMappings.get(i);
+                final boolean isGsiBroadcast = TableTopologyUtil.isBroadcast(gsiMeta);
+                final boolean isGsiSingle = TableTopologyUtil.isSingle(gsiMeta);
+                gsiInsertWriters.add(WriterFactory
+                    .createInsertOrReplaceWriter(newInsert, gsiTable, originSourceRowType, gsiValuePermute, gsiMeta,
+                        newInsert.getKeywords(),
+                        null, true, isGsiBroadcast, isGsiSingle, isOriginValueSource, ec));
+            });
+
+            // delete writer for primary
+            primaryDeleteWriter = WriterFactory.createDeleteWriter(newInsert, primaryTable, 0, ec);
+
+            // delete writer for gsi
+            IntStream.range(0, gsiMetas.size()).forEach(i -> {
+                final TableMeta gsiMeta = gsiMetas.get(i);
+                final RelOptTable gsiTable =
+                    catalog.getTableForMember(ImmutableList.of(schema, gsiMeta.getTableName()));
+                gsiDeleteWriters.add(WriterFactory.createDeleteWriter(newInsert, gsiTable, 0, ec));
+            });
+        }
+
         final LogicalReplace newReplace =
             new LogicalReplace(newInsert, primaryInsertWriter, primaryReplaceRelocateWriter, gsiInsertWriters,
-                gsiReplaceRelocateWriters, null, primaryColumnNames, hasJsonColumn);
+                gsiReplaceRelocateWriters, primaryDeleteWriter, gsiDeleteWriters, null, primaryColumnNames,
+                hasJsonColumn, canUseReturning);
         newReplace.setTargetTableIsWritable(scaleOutCanWrite);
         newReplace.setTargetTableIsReadyToPublish(scaleOutReadyToPublish);
         newReplace.setSourceTablesIsReadyToPublish(false);
         newReplace.setPushDownInsertWriter(scaleoutPushdownWriter);
-        newReplace.getUkGroupByTable().putAll(groupUkByTable(newReplace, ec));
-        newReplace.getLocalIndexPhyName().putAll(getLocalIndexName(newReplace.getUkGroupByTable(), schema, ec));
+        initDuplicateCheckPlan(newReplace, schema, ec);
         newReplace.getColumnMetaMap().putAll(getColumnMetaMap(primaryMeta, newReplace.getUkGroupByTable()));
         newReplace.setUsePartFieldChecker(isNewPartDb && allColumnsSupportPartField(newReplace.getColumnMetaMap()));
         newReplace.setUkContainGeneratedColumn(
@@ -528,7 +641,7 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
         assert null != oc;
         final TddlRuleManager rule = oc.getRuleManager();
 
-        final boolean isBroadcast = oc.getRuleManager().isBroadCast(targetTable);
+        final boolean isBroadCastOrReplicas = oc.getRuleManager().isBroadCastOrReplicas(targetTable);
         final boolean isSingleTable = oc.getRuleManager().isTableInSingleDb(targetTable);
 
         final List<List<String>> uniqueKeys = GlobalIndexMeta.getUniqueKeys(targetTable, schema, true, tm -> true, ec);
@@ -537,7 +650,7 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
         if (withoutPkAndUk) {
             // Without pk and uk, upsert can be pushdown.
             // Assuming than table with scale out running or gsi must have primary key
-            return handlePushdown(upsert, isBroadcast, ec);
+            return handlePushdown(upsert, isBroadCastOrReplicas, ec);
         }
 
         if (upsert.withIgnore()) {
@@ -577,15 +690,27 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
         // Build column mapping for columns to be update
         final Map<Integer, List<Integer>> primaryUpdateColumnMappings = new HashMap<>();
         final Map<Integer, List<List<Integer>>> gsiUpdateColumnMappings = new HashMap<>();
-        BuildPlanUtils
-            .buildColumnMappings(updateColumnList, updateColumnList.stream().map(c -> 0).collect(Collectors.toList()),
-                ImmutableMap.of(0, gsiMetas), primaryUpdateColumnMappings, gsiUpdateColumnMappings);
+        BuildPlanUtils.buildColumnMappings(updateColumnList,
+            updateColumnList.stream().map(c -> 0).collect(Collectors.toList()),
+            ImmutableMap.of(0, gsiMetas), primaryUpdateColumnMappings, gsiUpdateColumnMappings);
 
         final boolean allGsiPublished = GlobalIndexMeta.isAllGsiPublished(gsiMetas, context);
         AtomicBoolean modifyPartitionKey = new AtomicBoolean();
         final boolean modifyUniqueKey = isModifyUniqueKey(updateColumnList, targetTable, schema, ec);
 
         final LogicalInsert newInsert = replaceExpAndSeqWithParam(upsert, true, false, ec);
+
+        // Record terminal replacements and migration (contentIdx, addrIdx) pairs in the final
+        // "after" row index space. Migration addr slots are appended columns, so a newly generated
+        // BlobRef must not make the logical identical-row check report a content change.
+        final List<RowWriteBinding> externalizedConflictWriteBindings =
+            compileExternalizedConflictWriteBindings(schema, targetTable, primaryTargetColumns, primaryMeta,
+                updateColumnList);
+        for (RowWriteBinding binding : externalizedConflictWriteBindings) {
+            if (binding.getAction() == ExternalizedWriteBinding.Action.MIGRATION_APPEND) {
+                newInsert.getAppendedColumnIndex().add(binding.getTargetRowIndex());
+            }
+        }
 
         // Build writer for primary table
         InsertWriter primaryInsertWriter = null;
@@ -598,7 +723,10 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
         final MappingBuilder mappingBuilder = MappingBuilder.create(primaryTargetColumns);
         // Get all columns of target table
         selectListForDuplicateCheck.addAll(mappingBuilder.getTarget());
-        // Build update column mapping
+        // Map each ON DUPLICATE KEY UPDATE target ordinal into the complete before/after row selected for duplicate
+        // checking. For example, target columns [id, body, note] and UPDATE [note, body] produce [2, 1]. The handler
+        // uses this shared row space both to apply final logical SET values and to locate externalized write bindings.
+        // This is the existing UPSERT mapping; externalized tables only add bindings that refer to its slots.
         beforeUpdateMapping.addAll(mappingBuilder.source(updateColumnList).getMapping());
         // Check ON DUPLICATE KEY UPDATE part reference before value of duplicate row
         withColumnRefInDuplicateKeyUpdate.set(
@@ -620,12 +748,13 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
             // SELECT --> deduplicate --> INSERT or UPDATE
             primaryUpsertWriter = WriterFactory.createUpsertWriter(newInsert, primaryTable, updateColumnList,
                 primaryUpdateColumnMappings.get(0), primaryValuePermute, selectListForDuplicateCheck,
-                false, primaryMeta, false, isBroadcast, isSingleTable, ec);
+                false, primaryMeta, false, isBroadCastOrReplicas, isSingleTable, ec);
         } else {
             // SELECT --> deduplicate --> INSERT(values) or UPDATE or DELETE + INSERT(selected)
-            primaryRelocateWriter = WriterFactory.createUpsertRelocateWriter(newInsert, primaryTable, updateColumnList,
-                primaryUpdateColumnMappings.get(0), primaryValuePermute, selectListForDuplicateCheck, updateColumnList,
-                primaryMeta, false, isBroadcast, isSingleTable, ec);
+            primaryRelocateWriter =
+                WriterFactory.createUpsertRelocateWriter(newInsert, primaryTable, updateColumnList,
+                    primaryUpdateColumnMappings.get(0), primaryValuePermute, selectListForDuplicateCheck,
+                    updateColumnList, primaryMeta, false, isBroadCastOrReplicas, isSingleTable, ec);
         }
         modifyPartitionKey.set(primaryDoRelocate);
 
@@ -698,8 +827,7 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
         result.setSourceTablesIsReadyToPublish(false);
         result.setTargetTableIsWritable(scaleOutCanWrite);
         result.setTargetTableIsReadyToPublish(scaleOutReadyToPublish);
-        result.getUkGroupByTable().putAll(groupUkByTable(result, ec));
-        result.getLocalIndexPhyName().putAll(getLocalIndexName(result.getUkGroupByTable(), schema, ec));
+        initDuplicateCheckPlan(result, schema, ec);
         result.getColumnMetaMap().putAll(getColumnMetaMap(primaryMeta, result.getUkGroupByTable()));
         result.setUsePartFieldChecker(isNewPartDb && allColumnsSupportPartField(result.getColumnMetaMap()));
         result.setUkContainGeneratedColumn(ukContainGeneratedColumn(primaryMeta, result.getColumnMetaMap().keySet()));
@@ -711,6 +839,14 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
         DefaultExprUtil.buildDefaultExprColumns(primaryMeta, result, ec);
 
         return result;
+    }
+
+    static List<RowWriteBinding> compileExternalizedConflictWriteBindings(String schemaName, String tableName,
+                                                                          List<String> targetColumns,
+                                                                          TableMeta tableMeta,
+                                                                          List<String> updateColumns) {
+        return ExternalizedDmlRewriter.compileUpsertConflictWriteBindings(schemaName, tableName, targetColumns,
+            tableMeta, updateColumns);
     }
 
     private LogicalInsert handleInsertSelect(LogicalInsert insert, ExecutionContext ec) {
@@ -725,7 +861,7 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
         final TddlRuleManager or = Objects.requireNonNull(OptimizerContext.getContext(insert.getSchemaName()))
             .getRuleManager();
 
-        final boolean isBroadcast = or.isBroadCast(insert.getLogicalTableName());
+        final boolean isBroadCastOrReplicas = or.isBroadCastOrReplicas(insert.getLogicalTableName());
         final boolean canGsiConcurrentWrite = !hasIndex || gsiConcurrentWrite;
         //能否多线程执行Insert,即将select的数据切割，可并行执行doExecute：
         // 1.广播表策略FIRST_THEN_CONCURRENT,不用多线程
@@ -739,17 +875,22 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
         final boolean isColumnMultiWriting = TableColumnUtils.isModifying(schemaName, tableName, ec);
         final boolean containGeneratedColumn = tableMeta.hasLogicalGeneratedColumn();
 
-        final boolean canMultiInsert =
-            !isBroadcast && canGsiConcurrentWrite && !isColumnMultiWriting && !containGeneratedColumn;
+        final boolean requiresWriteRewrite = ExternalizedDmlRewriter.needsHandling(tableMeta);
+        final boolean canMultiInsert = !isBroadCastOrReplicas && canGsiConcurrentWrite && !isColumnMultiWriting
+            && !containGeneratedColumn && !requiresWriteRewrite;
         boolean insertSelectByMpp = ec.getParamManager().getBoolean(ConnectionParams.INSERT_SELECT_MPP);
         //用户通过hint指定MPP运行
         if (insertSelectByMpp) {
-            if (!canMultiInsert) {
-                throw new TddlRuntimeException(ErrorCode.ERR_INSERT_SELECT,
-                    "This InsertSelect SQL isn't supported use MPP.");
+            // Externalized columns require CN-side blob_addr transform which MPP bypasses;
+            // silently fall through to non-MPP path.
+            if (!requiresWriteRewrite) {
+                if (!canMultiInsert) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_INSERT_SELECT,
+                        "This InsertSelect SQL isn't supported use MPP.");
+                }
+                insert.setInsertSelectMode(LogicalInsert.InsertSelectMode.MPP);
+                return insert;
             }
-            insert.setInsertSelectMode(LogicalInsert.InsertSelectMode.MPP);
-            return insert;
         }
         //默认开启:多线程执行insert,可hint关闭
         boolean insertSelectByMulti = ec.getParamManager().getBoolean(ConnectionParams.MODIFY_SELECT_MULTI);
@@ -900,6 +1041,225 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
         }
 
         return tableUkMap;
+    }
+
+    private void initDuplicateCheckPlan(LogicalInsertIgnore insert, String schemaName,
+                                        ExecutionContext executionContext) {
+        final Map<String, List<List<String>>> ukGroupByTable = groupUkByTable(insert, executionContext);
+        final Map<String, List<String>> localIndexNames =
+            getLocalIndexName(ukGroupByTable, schemaName, executionContext);
+
+        insert.getUkGroupByTable().putAll(ukGroupByTable);
+        insert.getLocalIndexPhyName().putAll(localIndexNames);
+        insert.getCandidateUkChecks().putAll(
+            buildPartitionLocalUniqueCandidate(insert, ukGroupByTable, localIndexNames, executionContext));
+    }
+
+    protected Map<String, List<UkCheckEntry>> buildPartitionLocalUniqueCandidate(
+        LogicalInsertIgnore insert,
+        Map<String, List<List<String>>> legacyUkGroupByTable,
+        Map<String, List<String>> legacyLocalIndexNames,
+        ExecutionContext executionContext) {
+        if (!executionContext.getParamManager().getBoolean(ConnectionParams.DML_GET_DUP_USING_GSI)) {
+            return ImmutableMap.of();
+        }
+
+        final String schemaName = insert.getSchemaName();
+        final String primaryTableName = insert.getLogicalTableName();
+        final SchemaManager schemaManager = executionContext.getSchemaManager(schemaName);
+        final TableMeta primaryTableMeta = schemaManager.getTable(primaryTableName);
+        final TddlRuleManager ruleManager = OptimizerContext.getContext(schemaName).getRuleManager();
+        final Map<String, List<UkCheckEntry>> candidate = new LinkedHashMap<>();
+
+        legacyUkGroupByTable.forEach((tableName, uniqueKeys) -> {
+            final List<String> indexNames = legacyLocalIndexNames.get(tableName);
+            final List<UkCheckEntry> entries = new ArrayList<>(uniqueKeys.size());
+            for (int i = 0; i < uniqueKeys.size(); i++) {
+                final String indexName = indexNames == null || i >= indexNames.size() ? null : indexNames.get(i);
+                entries.add(new UkCheckEntry(uniqueKeys.get(i), indexName, false));
+            }
+            candidate.put(tableName, entries);
+        });
+
+        final List<List<String>> primaryLegacyUks = legacyUkGroupByTable.entrySet().stream()
+            .filter(entry -> TStringUtil.equalsIgnoreCase(entry.getKey(), primaryTableName))
+            .map(Map.Entry::getValue)
+            .findFirst()
+            .orElse(ImmutableList.of());
+        final Set<String> primaryKey = getColumnSet(GlobalIndexMeta.getPrimaryKeys(primaryTableMeta));
+        final List<TableMeta> writableGsiMetas =
+            GlobalIndexMeta.getIndex(primaryTableName, schemaName, executionContext).stream()
+                .filter(tableMeta -> !tableMeta.isColumnar())
+                .filter(tableMeta -> GlobalIndexMeta.canWrite(executionContext, tableMeta))
+                .collect(Collectors.toList());
+
+        final List<List<String>> partitionLocalKeys = new ArrayList<>(primaryLegacyUks);
+        legacyUkGroupByTable.values().stream()
+            .flatMap(List::stream)
+            .filter(uniqueKey -> sameColumns(getColumnSet(uniqueKey), primaryKey))
+            .findFirst()
+            .filter(uniqueKey -> partitionLocalKeys.stream()
+                .noneMatch(existing -> sameColumns(getColumnSet(existing), primaryKey)))
+            .ifPresent(partitionLocalKeys::add);
+
+        boolean optimized = false;
+        for (List<String> uniqueKey : partitionLocalKeys) {
+            final Set<String> uniqueKeySet = getColumnSet(uniqueKey);
+            final boolean primaryKeyCheck = sameColumns(uniqueKeySet, primaryKey);
+            if (isLegacyCheckPartitionPruned(legacyUkGroupByTable, uniqueKeySet, ruleManager)
+                || matchesWritableUgsi(uniqueKeySet, writableGsiMetas)) {
+                continue;
+            }
+
+            final IndexMeta primaryLocalIndex = primaryKeyCheck
+                ? getPlainPrimaryIndex(primaryTableMeta, uniqueKeySet)
+                : getPlainLocalUniqueIndex(primaryTableMeta, uniqueKeySet);
+            if (primaryLocalIndex == null) {
+                continue;
+            }
+
+            final Map<String, String> partitionLocalScopes =
+                new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+            partitionLocalScopes.put(primaryTableName, primaryLocalIndex.getPhysicalIndexName());
+
+            boolean allScopesStable = true;
+            for (TableMeta gsiMeta : writableGsiMetas) {
+                final List<IndexMeta> matchingLocalIndexes =
+                    getMatchingLocalUniqueIndexes(gsiMeta, uniqueKeySet, primaryKeyCheck);
+                if (matchingLocalIndexes.isEmpty()) {
+                    continue;
+                }
+                if (!GlobalIndexMeta.isPublished(executionContext, gsiMeta)
+                    || matchingLocalIndexes.stream().anyMatch(indexMeta -> !isPlainFullLengthIndex(indexMeta))) {
+                    allScopesStable = false;
+                    break;
+                }
+                final IndexMeta localIndex = matchingLocalIndexes.get(0);
+                partitionLocalScopes.put(gsiMeta.getTableName(), localIndex.getPhysicalIndexName());
+            }
+            if (!allScopesStable) {
+                continue;
+            }
+
+            applyPartitionLocalScopes(candidate, uniqueKey, uniqueKeySet, partitionLocalScopes);
+            optimized = true;
+        }
+
+        candidate.entrySet().removeIf(entry -> entry.getValue().isEmpty());
+        return optimized ? candidate : ImmutableMap.of();
+    }
+
+    private static boolean isLegacyCheckPartitionPruned(Map<String, List<List<String>>> legacyUkGroupByTable,
+                                                        Set<String> uniqueKey, TddlRuleManager ruleManager) {
+        return legacyUkGroupByTable.entrySet().stream()
+            .filter(entry -> entry.getValue().stream()
+                .anyMatch(columns -> sameColumns(getColumnSet(columns), uniqueKey)))
+            .anyMatch(entry -> isTablePartitionByColumns(entry.getKey(), uniqueKey, ruleManager));
+    }
+
+    private static boolean matchesWritableUgsi(Set<String> uniqueKey, List<TableMeta> writableGsiMetas) {
+        for (TableMeta gsiMeta : writableGsiMetas) {
+            if (gsiMeta.getGsiTableMetaBean() == null
+                || gsiMeta.getGsiTableMetaBean().gsiMetaBean == null) {
+                return true;
+            }
+            final GsiMetaManager.GsiIndexMetaBean gsiMetaBean =
+                gsiMeta.getGsiTableMetaBean().gsiMetaBean;
+            if (gsiMetaBean.nonUnique) {
+                continue;
+            }
+            if (gsiMetaBean.indexColumns == null) {
+                return true;
+            }
+            final Set<String> indexColumns = getColumnSet(gsiMetaBean.indexColumns.stream()
+                .map(column -> column.columnName)
+                .collect(Collectors.toList()));
+            if (sameColumns(uniqueKey, indexColumns)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static IndexMeta getPlainLocalUniqueIndex(TableMeta tableMeta, Set<String> uniqueKey) {
+        final List<IndexMeta> matchingIndexes = getMatchingLocalUniqueIndexes(tableMeta, uniqueKey, false);
+        if (matchingIndexes.isEmpty()
+            || matchingIndexes.stream().anyMatch(indexMeta -> !isPlainFullLengthIndex(indexMeta))) {
+            return null;
+        }
+        return matchingIndexes.get(0);
+    }
+
+    private static IndexMeta getPlainPrimaryIndex(TableMeta tableMeta, Set<String> primaryKey) {
+        final IndexMeta primaryIndex = tableMeta.getPrimaryIndex();
+        if (primaryIndex == null
+            || !sameColumns(primaryKey, getColumnSet(primaryIndex.getKeyColumns().stream()
+            .map(ColumnMeta::getName)
+            .collect(Collectors.toList())))) {
+            return null;
+        }
+        final List<IndexMeta> matchingIndexes = getMatchingLocalUniqueIndexes(tableMeta, primaryKey, true);
+        if (matchingIndexes.isEmpty()
+            || matchingIndexes.stream().anyMatch(indexMeta -> !isPlainFullLengthIndex(indexMeta))) {
+            return null;
+        }
+        return primaryIndex;
+    }
+
+    private static List<IndexMeta> getMatchingLocalUniqueIndexes(TableMeta tableMeta, Set<String> uniqueKey,
+                                                                 boolean includingPrimaryIndex) {
+        return tableMeta.getUniqueIndexes(includingPrimaryIndex).stream()
+            .filter(indexMeta -> sameColumns(uniqueKey, getColumnSet(indexMeta.getKeyColumns().stream()
+                .map(ColumnMeta::getName)
+                .collect(Collectors.toList()))))
+            .collect(Collectors.toList());
+    }
+
+    private static boolean isPlainFullLengthIndex(IndexMeta indexMeta) {
+        return !indexMeta.isFunctionIndex()
+            && indexMeta.getKeyColumnsExt().stream()
+            .allMatch(indexColumn -> indexColumn.hasColumn() && indexColumn.getSubPart() == 0);
+    }
+
+    private static void applyPartitionLocalScopes(Map<String, List<UkCheckEntry>> candidate, List<String> uniqueKey,
+                                                  Set<String> uniqueKeySet,
+                                                  Map<String, String> partitionLocalScopes) {
+        final Set<String> existingScopes = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        candidate.forEach((tableName, entries) -> {
+            final String localIndexName = partitionLocalScopes.entrySet().stream()
+                .filter(entry -> entry.getKey().equalsIgnoreCase(tableName))
+                .map(Map.Entry::getValue)
+                .findFirst()
+                .orElse(null);
+            for (int i = entries.size() - 1; i >= 0; i--) {
+                if (!sameColumns(uniqueKeySet, getColumnSet(entries.get(i).getUkColumns()))) {
+                    continue;
+                }
+                if (localIndexName == null) {
+                    entries.remove(i);
+                } else {
+                    entries.set(i, new UkCheckEntry(uniqueKey, localIndexName, true));
+                    existingScopes.add(tableName);
+                }
+            }
+        });
+
+        partitionLocalScopes.forEach((tableName, indexName) -> {
+            if (!existingScopes.contains(tableName)) {
+                candidate.computeIfAbsent(tableName, ignored -> new ArrayList<>())
+                    .add(new UkCheckEntry(uniqueKey, indexName, true));
+            }
+        });
+    }
+
+    private static Set<String> getColumnSet(List<String> columns) {
+        final Set<String> columnSet = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        columnSet.addAll(columns);
+        return columnSet;
+    }
+
+    private static boolean sameColumns(Set<String> left, Set<String> right) {
+        return left.size() == right.size() && left.containsAll(right);
     }
 
     /**
@@ -1443,7 +1803,7 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
         }
 
         TddlRuleManager or = OptimizerContext.getContext(schemaName).getRuleManager();
-        if (or.isTableInSingleDb(tableName) || or.isBroadCast(tableName)) {
+        if (or.isTableInSingleDb(tableName) || or.isBroadCastOrReplicas(tableName)) {
             if (!SequenceManagerProxy.getInstance().isUsingSequence(schemaName, tableName)) {
                 // It's using MySQL auto increment rule
                 return logicalInsert;
@@ -1624,6 +1984,7 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
                     result.getDefaultExprColRexNodes(), result.getDefaultExprEvalFieldsMapping(),
                     result.isPushablePrimaryKeyCheck(), result.isPushableForeignConstraintCheck(),
                     result.isModifyForeignKey(), result.isUkContainsAllSkAndGsiContainsAllUk(),
+                    result.isCanSkipPkCheck(),
                     new ArrayList<>(), null);
             /**
              * 2、update the index of RexDynamicParam in onDuplicatedUpdate list recursively
@@ -1697,6 +2058,33 @@ public class OptimizeLogicalInsertRule extends RelOptRule {
             params.stream().map(RexDynamicParam::getIndex).max(Integer::compareTo).ifPresent(maxParamIndex::set);
         }
         return maxParamIndex;
+    }
+
+    /**
+     * Return the highest parameter index that is already owned by the current plan, including the index of a
+     * {@link RexCallParam} itself.
+     *
+     * <p>{@link RexUtils.ParamFinder} intentionally unwraps a RexCallParam and reports only the dynamic parameters
+     * referenced by its expression. That behavior is correct for expression dependency analysis, but not for
+     * allocating another execution parameter: SQL2Rel's synthetic MCE addr NULL has already become a RexCallParam,
+     * and reusing its index would alias the incoming addr slot with the UPSERT conflict addr slot.
+     */
+    private static AtomicInteger getMaxAllocatedParamIndex(LogicalInsert insertOrReplace) {
+        final List<RexNode> allocatedParams = new ArrayList<>();
+        if (!insertOrReplace.isSourceSelect()) {
+            final LogicalDynamicValues input = RelUtils.getRelInput(insertOrReplace);
+            input.tuples.forEach(allocatedParams::addAll);
+        }
+        Optional.ofNullable(insertOrReplace.getDuplicateKeyUpdateList()).ifPresent(allocatedParams::addAll);
+        return new AtomicInteger(maxAllocatedParamIndex(allocatedParams));
+    }
+
+    static int maxAllocatedParamIndex(List<? extends RexNode> rexNodes) {
+        return rexNodes.stream()
+            .flatMap(rex -> RexUtils.getDynamicParams(rex).stream())
+            .map(RexDynamicParam::getIndex)
+            .max(Integer::compareTo)
+            .orElse(-1);
     }
 
     private ImmutableList<ImmutableList<RexNode>> buildNewTupleForLogicalDynamicValue(LogicalDynamicValues sourceRel,

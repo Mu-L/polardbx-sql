@@ -5,16 +5,20 @@ import com.alibaba.polardbx.executor.chunk.IntegerBlock;
 import com.alibaba.polardbx.executor.chunk.LongBlock;
 import com.alibaba.polardbx.executor.chunk.MutableChunk;
 import com.alibaba.polardbx.executor.chunk.RandomAccessBlock;
+import com.alibaba.polardbx.executor.chunk.SliceBlock;
 import com.alibaba.polardbx.executor.chunk.TimestampBlock;
-import com.alibaba.polardbx.executor.vectorized.AbstractVectorizedExpression;
+import com.alibaba.polardbx.executor.operator.scan.BlockDictionary;
 import com.alibaba.polardbx.executor.vectorized.EvaluationContext;
 import com.alibaba.polardbx.executor.vectorized.InValuesVectorizedExpression;
 import com.alibaba.polardbx.executor.vectorized.VectorizedExpression;
 import com.alibaba.polardbx.executor.vectorized.VectorizedExpressionUtils;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Iterables;
 
-public class FastNotInVectorizedExpression extends AbstractVectorizedExpression {
+import java.util.Iterator;
+
+public class FastNotInVectorizedExpression extends FastInVectorizedExpression {
 
     private final InValuesVectorizedExpression.InValueSet inValuesSet;
     private final boolean operandsHaveNull;
@@ -83,6 +87,20 @@ public class FastNotInVectorizedExpression extends AbstractVectorizedExpression 
             return;
         }
 
+        if (leftInputVectorSlot.isInstanceOf(SliceBlock.class)) {
+            evalSliceNotIn(output, leftInputVectorSlot.cast(SliceBlock.class), batchSize, isSelectionInUse, sel);
+            return;
+        }
+
+        evalWithTypeConversion(output, leftInputVectorSlot, batchSize, isSelectionInUse, sel);
+    }
+
+    /**
+     * Slow path
+     */
+    private void evalWithTypeConversion(long[] output, RandomAccessBlock leftInputVectorSlot,
+                                        int batchSize, boolean isSelectionInUse,
+                                        int[] sel) {
         if (isSelectionInUse) {
             for (int i = 0; i < batchSize; i++) {
                 int j = sel[i];
@@ -93,6 +111,51 @@ public class FastNotInVectorizedExpression extends AbstractVectorizedExpression 
             for (int i = 0; i < batchSize; i++) {
                 output[i] = inValuesSet.contains(leftInputVectorSlot.elementAt(i)) ?
                     LongBlock.FALSE_VALUE : LongBlock.TRUE_VALUE;
+            }
+        }
+    }
+
+    /**
+     * Tmp implementation, to be refactored
+     */
+    private void evalSliceNotIn(long[] output, SliceBlock sliceBlock,
+                                int batchSize, boolean isSelectionInUse,
+                                int[] sel) {
+        if (sliceBlock.getDictionary() != null) {
+            BlockDictionary blockDictionary = sliceBlock.getDictionary();
+            boolean[] dictInResult = getDictInResult(blockDictionary);
+            if (isSelectionInUse) {
+                for (int i = 0; i < batchSize; i++) {
+                    int j = sel[i];
+                    int dictId = sliceBlock.getDictId(j);
+                    output[j] = (dictId >= 0 && dictInResult[dictId])
+                        ? LongBlock.FALSE_VALUE
+                        : LongBlock.TRUE_VALUE;
+                }
+            } else {
+                for (int i = 0; i < batchSize; i++) {
+                    int dictId = sliceBlock.getDictId(i);
+                    output[i] = (dictId >= 0 && dictInResult[dictId])
+                        ? LongBlock.FALSE_VALUE
+                        : LongBlock.TRUE_VALUE;
+                }
+            }
+            return;
+        }
+
+        // without dictionary
+        if (!inValuesSet.isSliceType()) {
+            evalWithTypeConversion(output, sliceBlock, batchSize, isSelectionInUse, sel);
+            return;
+        }
+        if (isSelectionInUse) {
+            for (int i = 0; i < batchSize; i++) {
+                int j = sel[i];
+                output[j] = sliceBlock.anyMatch(j, getComparables()) ^ 1;
+            }
+        } else {
+            for (int i = 0; i < batchSize; i++) {
+                output[i] = sliceBlock.anyMatch(i, getComparables()) ^ 1;
             }
         }
     }

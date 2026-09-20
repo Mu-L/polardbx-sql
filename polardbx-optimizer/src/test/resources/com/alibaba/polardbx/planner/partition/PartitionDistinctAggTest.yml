@@ -227,7 +227,7 @@
     project(group_concat(c_nationkey)="group_concat(c_nationkey)", avg(c_nationkey)="$f2 / $f3")
       hashagg(group="c_custkey", group_concat(c_nationkey)="group_concat(group_concat(c_nationkey))", $f2="sum($f2)", $f3="sum($f3)")
         gather(concurrent=true)
-          logicalview(tables="customer_test[p1,p2,p3,p4]", shardcount=4, sql="select `c_custkey`, group_concat(`c_nationkey`  ) as `group_concat(c_nationkey)`, sum(`c_nationkey`) as `$f2`, count(*) as `$f3` from `customer_test` as `customer_test` group by `c_custkey`")
+          logicalview(tables="customer_test[p1,p2,p3,p4]", shardcount=4, sql="select `c_custkey`, group_concat(`c_nationkey`) as `group_concat(c_nationkey)`, sum(`c_nationkey`) as `$f2`, count(*) as `$f3` from `customer_test` as `customer_test` group by `c_custkey`")
 
 - sql: |
     /*+TDDL:PUSH_AGG_INPUT_ROW_COUNT_THRESHOLD=100000 ENABLE_PUSH_AGG=false enable_sort_agg=false ENABLE_EXPAND_DISTINCTAGG=false*/select group_concat(c_nationkey), avg(c_nationkey) from customer_test group by c_custkey;
@@ -236,7 +236,7 @@
     project(group_concat(c_nationkey)="group_concat(c_nationkey)", avg(c_nationkey)="$f2 / $f3")
       hashagg(group="c_custkey", group_concat(c_nationkey)="group_concat(group_concat(c_nationkey))", $f2="sum($f2)", $f3="sum($f3)")
         gather(concurrent=true)
-          logicalview(tables="customer_test[p1,p2,p3,p4]", shardcount=4, sql="select `c_custkey`, group_concat(`c_nationkey`  ) as `group_concat(c_nationkey)`, sum(`c_nationkey`) as `$f2`, count(*) as `$f3` from `customer_test` as `customer_test` group by `c_custkey`")
+          logicalview(tables="customer_test[p1,p2,p3,p4]", shardcount=4, sql="select `c_custkey`, group_concat(`c_nationkey`) as `group_concat(c_nationkey)`, sum(`c_nationkey`) as `$f2`, count(*) as `$f3` from `customer_test` as `customer_test` group by `c_custkey`")
 
 - sql: |
     /*+TDDL:PUSH_AGG_INPUT_ROW_COUNT_THRESHOLD=100000 ENABLE_PUSH_AGG=false enable_sort_agg=false ENABLE_EXPAND_DISTINCTAGG=false*/select sum(distinct c_nationkey), count(distinct c_custkey, c_address) from customer_test;
@@ -293,3 +293,14 @@
 
   plan: |
     phytableoperation(tables="customer[p1]", sql="select count(1) as `count(1)`, count(distinct `customer`.`c_custkey`, `customer`.`c_nationkey`, `customer`.`c_address`) as `count(distinct c_custkey, c_nationkey, c_address)` from ? as `customer` where (`customer`.`c_custkey` = 3)")
+
+- sql: |
+    SELECT DISTINCT 71, - COUNT( * ) AS col2 FROM random_1000_6_tab4 AS cor0 WHERE NOT - 15 IS NOT NULL ;
+
+  plan: |
+    hashagg(group="71,col2")
+      project(71="71", col2="-($f0)")
+        hashagg($f0="sum($f0)")
+          gather(concurrent=true)
+            logicalview(tables="random_1000_6_tab4[p1,p2,p3,p4]", shardcount=4, sql="select count(*) as `$f0` from `random_1000_6_tab4` as `random_1000_6_tab4` where (not (-15 is not null))")
+    

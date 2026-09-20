@@ -17,35 +17,41 @@
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
 import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.columnar.ColumnarScanMetrics;
+import com.alibaba.polardbx.common.orc.PreheatFileMeta;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.archive.reader.OSSColumnTransformer;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.gms.ColumnarManager;
+import com.alibaba.polardbx.executor.gms.DynamicColumnarManager;
+import com.alibaba.polardbx.executor.mpp.metadata.SplitType;
+import com.alibaba.polardbx.executor.mpp.planner.EarlyStopManager;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFItem;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFItemKey;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFManager;
 import com.alibaba.polardbx.executor.operator.scan.BlockCacheManager;
 import com.alibaba.polardbx.executor.operator.scan.ColumnReader;
+import com.alibaba.polardbx.executor.operator.scan.ColumnarMemoryPermitManager;
 import com.alibaba.polardbx.executor.operator.scan.ColumnarSplit;
 import com.alibaba.polardbx.executor.operator.scan.LazyEvaluator;
 import com.alibaba.polardbx.executor.operator.scan.LogicalRowGroup;
-import com.alibaba.polardbx.executor.operator.scan.RowGroupIterator;
 import com.alibaba.polardbx.executor.operator.scan.ScanPolicy;
 import com.alibaba.polardbx.executor.operator.scan.ScanPreProcessor;
 import com.alibaba.polardbx.executor.operator.scan.ScanWork;
 import com.alibaba.polardbx.executor.operator.scan.metrics.ProfileAccumulatorType;
 import com.alibaba.polardbx.executor.operator.scan.metrics.ProfileUnit;
 import com.alibaba.polardbx.executor.operator.scan.metrics.RuntimeMetrics;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.statis.OperatorStatistics;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.google.common.base.Preconditions;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.orc.ColumnStatistics;
 import org.apache.orc.CompressionKind;
 import org.apache.orc.OrcFile;
 import org.apache.orc.OrcProto;
@@ -64,6 +70,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
@@ -156,9 +163,27 @@ public class MorselColumnarSplit implements ColumnarSplit {
 
     private final FragmentRFManager fragmentRFManager;
     private final Map<FragmentRFItemKey, Integer> rfFilterRefInFileMap;
+
+    private final EarlyStopManager earlyStopManager;
+    private final List<OrderByOption> scanOrderByOptions;
+    private final List<Integer> orderByInProjects;
+    private final boolean useDescending;
+
     private final OperatorStatistics operatorStatistics;
 
-    public MorselColumnarSplit(ExecutionContext executionContext, ExecutorService ioExecutor, Engine engine,
+    private String filePrefix;
+
+    private ColumnarMemoryPermitManager columnarMemoryPermitManager;
+    private String logicalSchema;
+    private String logicalTable;
+
+    private Integer priority = null;
+
+    private static final Random random = new Random();
+
+    public MorselColumnarSplit(ExecutionContext executionContext, ExecutorService ioExecutor,
+                               ColumnarMemoryPermitManager columnarMemoryPermitManager,
+                               Engine engine,
                                FileSystem fileSystem,
                                Configuration configuration, int sequenceId, int fileId, Path filePath,
                                OSSColumnTransformer ossColumnTransformer, int[] primaryKeyColIds,
@@ -170,10 +195,14 @@ public class MorselColumnarSplit implements ColumnarSplit {
                                int partNum, int nodePartCount, MemoryAllocatorCtx memoryAllocatorCtx,
                                FragmentRFManager fragmentRFManager,
                                Map<FragmentRFItemKey, Integer> rfFilterRefInFileMap,
-                               OperatorStatistics operatorStatistics)
+                               EarlyStopManager earlyStopManager, List<OrderByOption> scanOrderByOptions,
+                               List<Integer> orderByInProjects, boolean useDescending,
+                               OperatorStatistics operatorStatistics,
+                               String logicalTable, String logicalSchema)
         throws IOException {
         this.executionContext = executionContext;
         this.ioExecutor = ioExecutor;
+        this.columnarMemoryPermitManager = columnarMemoryPermitManager;
         this.engine = engine;
         this.fileSystem = fileSystem;
         this.configuration = configuration;
@@ -196,7 +225,23 @@ public class MorselColumnarSplit implements ColumnarSplit {
         this.memoryAllocatorCtx = memoryAllocatorCtx;
         this.fragmentRFManager = fragmentRFManager;
         this.rfFilterRefInFileMap = rfFilterRefInFileMap;
+        this.earlyStopManager = earlyStopManager;
+        this.scanOrderByOptions = scanOrderByOptions;
+        this.orderByInProjects = orderByInProjects;
+        this.useDescending = useDescending;
         this.operatorStatistics = operatorStatistics;
+
+        this.logicalSchema = logicalSchema;
+        this.logicalTable = logicalTable;
+
+        this.filePrefix = new StringBuilder()
+            .append("ScanWork$")
+            .append(executionContext.getTraceId()).append('$')
+            .append(filePath.toString()).toString();
+
+        if (executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_COLUMNAR_SCAN_RANDOM_SPLIT)) {
+            this.priority = random.nextInt();
+        }
     }
 
     public static ColumnarSplitBuilder newBuilder() {
@@ -404,10 +449,7 @@ public class MorselColumnarSplit implements ColumnarSplit {
 
             encodingMap = stripeInformationList.stream().collect(Collectors.toMap(
                 stripe -> (int) stripe.getStripeId(),
-                stripe -> StaticStripePlanner.buildEncodings(
-                    encryption,
-                    columnIncluded,
-                    preheatFileMeta.getStripeFooter((int) stripe.getStripeId())),
+                stripe -> preheatFileMeta.buildEncodings((int) stripe.getStripeId(), columnIncluded),
                 (s1, s2) -> s1,
                 () -> new TreeMap<>()
             ));
@@ -416,7 +458,7 @@ public class MorselColumnarSplit implements ColumnarSplit {
             ignoreNonUtf8BloomFilter = false;
 
             // max buffer size in single IO task.
-            maxBufferSize = Integer.MAX_VALUE - 1024;
+            maxBufferSize = executionContext.getParamManager().getInt(ConnectionParams.COLUMNAR_SCAN_MAX_BUFFER_SIZE);
 
             // the max row count in one row group.
             indexStride = orcTail.getFooter().getRowIndexStride();
@@ -425,7 +467,10 @@ public class MorselColumnarSplit implements ColumnarSplit {
                 UserMetadataUtil.ENABLE_DECIMAL_64, false);
 
             // When reading stripes >2GB, specify max limit for the chunk size.
-            maxDiskRangeChunkLimit = Integer.MAX_VALUE - 1024;
+            maxDiskRangeChunkLimit =
+                executionContext.getParamManager().getInt(ConnectionParams.COLUMNAR_SCAN_MAX_DISK_RANGE_SIZE);
+
+            Preconditions.checkArgument(maxDiskRangeChunkLimit >= maxBufferSize);
 
             // max merge distance of disk io
             maxMergeDistance = executionContext.getParamManager().getLong(ConnectionParams.OSS_ORC_MAX_MERGE_DISTANCE);
@@ -472,6 +517,12 @@ public class MorselColumnarSplit implements ColumnarSplit {
                 .getBoolean(ConnectionParams.ENABLE_LAZY_BLOCK_ACTIVE_LOADING);
             boolean useInFlightBlockCache = executionContext.getParamManager()
                 .getBoolean(ConnectionParams.ENABLE_USE_IN_FLIGHT_BLOCK_CACHE);
+            int ioStatusBoundSize = executionContext.getParamManager()
+                .getInt(ConnectionParams.IO_STATUS_BOUND_SIZE);
+            long ioStatusIsFullMaxWait = executionContext.getParamManager()
+                .getLong(ConnectionParams.IO_STATUS_IS_FULL_MAX_WAIT_MS);
+            boolean isWarmup = executionContext.isWarmup();
+            ColumnarScanMetrics columnarScanMetrics = executionContext.getColumnarScanMetrics();
 
             RuntimeMetrics metrics = RuntimeMetrics.create(scanWorkId);
 
@@ -499,7 +550,7 @@ public class MorselColumnarSplit implements ColumnarSplit {
             }
 
             if (currentRange != null) {
-                RowGroupIterator<Block, ColumnStatistics> rowGroupIterator = new RowGroupIteratorImpl(
+                RowGroupIteratorBuilder rowGroupIteratorBuilder = new RowGroupIteratorBuilder(
                     metrics,
 
                     // The range of this row-group iterator.
@@ -528,7 +579,8 @@ public class MorselColumnarSplit implements ColumnarSplit {
                     maxBufferSize, maxDiskRangeChunkLimit, maxMergeDistance,
                     chunkLimit, blockCacheManager, ossColumnTransformer,
                     executionContext, columnIncluded, indexStride, enableDecimal64,
-                    memoryAllocatorCtx);
+                    memoryAllocatorCtx, operatorStatistics
+                );
 
                 ScanPolicy scanPolicy = ScanPolicy.of(scanPolicyId);
 
@@ -540,23 +592,55 @@ public class MorselColumnarSplit implements ColumnarSplit {
                         metrics,
                         enableMetrics,
                         lazyEvaluator,
-                        rowGroupIterator, deletion,
+                        rowGroupIteratorBuilder.build(), deletion,
                         currentRange, inputRefsForFilter, inputRefsForProject,
                         partNum, nodePartCount,
                         enableCancelLoading,
                         ossColumnTransformer);
                     break;
+                case ADAPTIVE: {
+
+                    // for task granularity control
+                    int granularityReductionScale = executionContext.getParamManager()
+                        .getInt(ConnectionParams.COLUMNAR_SCAN_GRANULARITY_REDUCTION_SCALE);
+                    double threadLimitReductionFactor = executionContext.getParamManager()
+                        .getFloat(ConnectionParams.COLUMNAR_SCAN_THREAD_LIMIT_REDUCTION_FACTOR);
+
+                    scanWork = new AdaptiveColumnarScanWork(
+                        scanWorkId,
+                        columnarMemoryPermitManager,
+                        granularityReductionScale,
+                        threadLimitReductionFactor,
+                        metrics,
+                        enableMetrics,
+                        lazyEvaluator,
+                        rowGroupIteratorBuilder, deletion,
+                        currentRange, inputRefsForFilter, inputRefsForProject,
+                        partNum, nodePartCount,
+                        activeLoading, chunkLimit, useInFlightBlockCache, isWarmup,
+                        fragmentRFManager, rfFilterRefInFileMap,
+                        earlyStopManager, scanOrderByOptions, orderByInProjects,
+                        operatorStatistics,
+                        ossColumnTransformer, columnarScanMetrics,
+                        logicalTable, logicalSchema);
+                }
+
+                break;
                 case FILTER_PRIORITY:
                     scanWork = new FilterPriorityScanWork(
                         scanWorkId,
                         metrics,
                         enableMetrics,
                         lazyEvaluator,
-                        rowGroupIterator, deletion,
+                        rowGroupIteratorBuilder.build(), deletion,
                         currentRange, inputRefsForFilter, inputRefsForProject,
                         partNum, nodePartCount,
                         activeLoading, chunkLimit, useInFlightBlockCache,
-                        fragmentRFManager, rfFilterRefInFileMap, operatorStatistics,
+                        ioStatusBoundSize, ioStatusIsFullMaxWait,
+                        isWarmup,
+                        fragmentRFManager, rfFilterRefInFileMap,
+                        earlyStopManager, scanOrderByOptions, orderByInProjects,
+                        operatorStatistics, columnarScanMetrics,
                         ossColumnTransformer);
                     break;
                 case MERGE_IO:
@@ -565,7 +649,7 @@ public class MorselColumnarSplit implements ColumnarSplit {
                         metrics,
                         enableMetrics,
                         lazyEvaluator,
-                        rowGroupIterator, deletion,
+                        rowGroupIteratorBuilder.build(), deletion,
                         currentRange, inputRefsForFilter, inputRefsForProject,
                         partNum, nodePartCount,
                         enableCancelLoading,
@@ -624,8 +708,33 @@ public class MorselColumnarSplit implements ColumnarSplit {
         }
     }
 
+    private List<ScanWork> descendingScanWorks = new ArrayList<>();
+    private int descendingScanWorkIndex = -1;
+
     @Override
     public <SplitT extends ColumnarSplit, BATCH> ScanWork<SplitT, BATCH> nextWork() {
+        if (!useDescending) {
+            return nextAscendingWork();
+        } else {
+            if (descendingScanWorks.isEmpty()) {
+                // Collecting all available scan work first.
+                ScanWork<SplitT, BATCH> nextWork;
+                while ((nextWork = nextAscendingWork()) != null) {
+                    descendingScanWorks.add(nextWork);
+                    descendingScanWorkIndex++;
+                }
+            }
+
+            // Has no more scan work.
+            if (descendingScanWorkIndex < 0) {
+                return null;
+            }
+
+            return descendingScanWorks.get(descendingScanWorkIndex--);
+        }
+    }
+
+    public <SplitT extends ColumnarSplit, BATCH> ScanWork<SplitT, BATCH> nextAscendingWork() {
         if (scanWorkIterator == null) {
             // The pre-processor must have been done.
             if (!preProcessor.isPrepared()) {
@@ -646,13 +755,21 @@ public class MorselColumnarSplit implements ColumnarSplit {
     }
 
     @Override
-    public ColumnarSplitPriority getPriority() {
-        return ColumnarSplitPriority.ORC_SPLIT_PRIORITY;
+    public int getPriority() {
+        if (priority != null) {
+            return priority;
+        }
+        return ColumnarSplitPriority.ORC_SPLIT_PRIORITY.getValue();
     }
 
     @Override
     public String getHostAddress() {
         return filePath.toString();
+    }
+
+    @Override
+    public SplitType getSplitType() {
+        return SplitType.ORC;
     }
 
     @Override
@@ -665,7 +782,7 @@ public class MorselColumnarSplit implements ColumnarSplit {
         return fileId;
     }
 
-    protected static String generateScanWorkId(String traceId, String file, int stripeId, int workIndex) {
+    public static String generateScanWorkId(String traceId, String file, int stripeId, int workIndex) {
         return new StringBuilder()
             .append("ScanWork$")
             .append(traceId).append('$')
@@ -674,12 +791,38 @@ public class MorselColumnarSplit implements ColumnarSplit {
             .append(workIndex).toString();
     }
 
+    public static String getPrefix(String str) {
+        String[] parts = str.split("\\$");
+
+        if (parts.length >= 3) {
+            return parts[0] + "$" + parts[1] + "$" + parts[2];
+        } else {
+            return null;
+        }
+    }
+
+    public static String getSuffix(String str) {
+        String[] parts = str.split("\\$");
+
+        if (parts.length >= 5) {
+            return parts[3] + "$" + parts[4];
+        } else {
+            return null;
+        }
+    }
+
+    @Override
+    public String getFilePrefix() {
+        return filePrefix;
+    }
+
     /**
      * Builder for morsel-columnar-split.
      */
     static class MorselColumnarSplitBuilder implements ColumnarSplitBuilder {
         private ExecutionContext executionContext;
         private ExecutorService ioExecutor;
+        private ColumnarMemoryPermitManager ColumnarMemoryPermitManager;
         private Engine engine;
         private FileSystem fileSystem;
         private Configuration configuration;
@@ -697,6 +840,11 @@ public class MorselColumnarSplit implements ColumnarSplit {
         private LazyEvaluator<Chunk, BitSet> lazyEvaluator;
         private ScanPreProcessor preProcessor;
         private ColumnarManager columnarManager;
+        private EarlyStopManager earlyStopManager;
+        private List<OrderByOption> scanOrderByOptions;
+        private List<Integer> orderByInProjects;
+
+        private boolean useDescending;
         private Long tso;
         private boolean isColumnarMode;
 
@@ -720,18 +868,32 @@ public class MorselColumnarSplit implements ColumnarSplit {
 
                 Map<FragmentRFItemKey, Integer> rfFilterRefInFileMap = new HashMap<>();
                 if (fragmentRFManager != null) {
-
+                    // Get the columnar field id list.
+                    TableMeta tableMeta = executionContext.getSchemaManager(logicalSchema).getTable(logicalTable);
+                    List<Long> columnarFieldIdList = null;
+                    if (tso != null) {
+                        Long tableId = ((DynamicColumnarManager) columnarManager)
+                            .getTableId(tso, logicalSchema, logicalTable, tableMeta);
+                        columnarFieldIdList = tableMeta.getColumnarFieldIdList(tableId);
+                    }
                     // For each item, mapping the source ref to file column ref.
                     for (Map.Entry<FragmentRFItemKey, FragmentRFItem> itemEntry
                         : fragmentRFManager.getAllItems().entrySet()) {
-                        List<Integer> rfFilterChannels = new ArrayList<>();
-                        rfFilterChannels.add(itemEntry.getValue().getSourceRefInFile());
+                        int rfFilterChannel = itemEntry.getValue().getSourceRefInFile();
 
-                        rfFilterChannels = isColumnarMode
-                            ? columnarManager.getPhysicalColumnIndexes(tso, filePath.getName(), rfFilterChannels)
-                            : rfFilterChannels;
+                        int orcPhysicalIndex;
+                        if (isColumnarMode) {
+                            Map<Long, Integer> orcIndexesMap = columnarManager
+                                .getPhysicalColumnIndexes(filePath.getName());
 
-                        rfFilterRefInFileMap.put(itemEntry.getKey(), rfFilterChannels.get(0));
+                            long columnarFieldId = columnarFieldIdList.get(rfFilterChannel);
+
+                            orcPhysicalIndex = orcIndexesMap.get(columnarFieldId);
+                        } else {
+                            orcPhysicalIndex = rfFilterChannel;
+                        }
+
+                        rfFilterRefInFileMap.put(itemEntry.getKey(), orcPhysicalIndex);
                     }
                 }
 
@@ -740,7 +902,9 @@ public class MorselColumnarSplit implements ColumnarSplit {
 
                 // To distinguish the columnar mode from archive mode
                 return new MorselColumnarSplit(
-                    executionContext, ioExecutor, engine, fileSystem,
+                    executionContext, ioExecutor,
+                    ColumnarMemoryPermitManager,
+                    engine, fileSystem,
                     configuration, sequenceId, fileId, filePath,
                     ossColumnTransformer, primaryKeyColIds,
 
@@ -749,8 +913,14 @@ public class MorselColumnarSplit implements ColumnarSplit {
                     chunkLimit, blockCacheManager,
                     rgThreshold, lazyEvaluator,
                     preProcessor,
-                    partNum, nodePartCount, memoryAllocatorCtx, fragmentRFManager, rfFilterRefInFileMap,
-                    operatorStatistics);
+                    partNum, nodePartCount, memoryAllocatorCtx,
+                    fragmentRFManager, rfFilterRefInFileMap,
+
+                    // for top-k early stop.
+                    earlyStopManager, scanOrderByOptions, orderByInProjects,
+                    useDescending,
+
+                    operatorStatistics, logicalTable, logicalSchema);
             } catch (IOException e) {
                 throw GeneralUtil.nestedException("Fail to build columnar split.", e);
             }
@@ -765,6 +935,13 @@ public class MorselColumnarSplit implements ColumnarSplit {
         @Override
         public ColumnarSplitBuilder ioExecutor(ExecutorService ioExecutor) {
             this.ioExecutor = ioExecutor;
+            return this;
+        }
+
+        @Override
+        public ColumnarSplitBuilder columnarMemoryPermitManager(
+            ColumnarMemoryPermitManager columnarMemoryPermitManager) {
+            this.ColumnarMemoryPermitManager = columnarMemoryPermitManager;
             return this;
         }
 
@@ -847,6 +1024,22 @@ public class MorselColumnarSplit implements ColumnarSplit {
         @Override
         public ColumnarSplitBuilder columnarManager(ColumnarManager columnarManager) {
             this.columnarManager = columnarManager;
+            return this;
+        }
+
+        @Override
+        public ColumnarSplitBuilder earlyStopManager(EarlyStopManager earlyStopManager,
+                                                     List<OrderByOption> scanOrderByOptions,
+                                                     List<Integer> orderByInProjects) {
+            this.earlyStopManager = earlyStopManager;
+            this.scanOrderByOptions = scanOrderByOptions;
+            this.orderByInProjects = orderByInProjects;
+            return this;
+        }
+
+        @Override
+        public ColumnarSplitBuilder useDescending(boolean useDescending) {
+            this.useDescending = useDescending;
             return this;
         }
 

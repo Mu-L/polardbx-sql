@@ -139,14 +139,7 @@ public class AlterSystemCompatibilityHandler {
         AtomicLong maxTrxId = new AtomicLong(Long.MIN_VALUE);
         ITopologyExecutor executor = ExecutorContext.getContext(DEFAULT_DB_NAME).getTopologyExecutor();
         ConcurrentLinkedQueue<Exception> exceptions = new ConcurrentLinkedQueue<>();
-        Set<String> dnIds = new HashSet<>();
-        Set<String> addresses = new HashSet<>();
-        for (StorageInstHaContext ctx : StorageHaManager.getInstance().getMasterStorageList()) {
-            // Filter same host:port.
-            if (addresses.add(ctx.getCurrAvailableNodeAddr())) {
-                dnIds.add(ctx.getStorageInstId());
-            }
-        }
+        Set<String> dnIds = StorageHaManager.getAllDnId(true);
         ExecUtils.scanRecoveredTrans(dnIds, executor, exceptions, minTrxId, maxTrxId);
         // Wait at most 30s.
         int retry = 0;

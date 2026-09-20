@@ -57,9 +57,11 @@ public class AlterTableGroupMovePartitionBuilder extends AlterTableGroupBaseBuil
         for (String tableName : allTables) {
             AlterTableGroupItemPreparedData alterTableGroupItemPreparedData =
                 createAlterTableGroupItemPreparedData(tableName, groupDetailInfoExRecords);
-            AlterTableGroupItemBuilder itemBuilder =
-                new AlterTableGroupMovePartitionItemBuilder(relDdl, alterTableGroupItemPreparedData, executionContext);
+            AlterTableGroupMovePartitionItemBuilder itemBuilder =
+                new AlterTableGroupMovePartitionItemBuilder(relDdl, alterTableGroupItemPreparedData,
+                    preparedData.isUsePhysicalBackfill(), executionContext);
             List<PhyDdlTableOperation> phyDdlTableOperations = itemBuilder.build().getPhysicalPlans();
+            alterTableGroupItemPreparedData.setContainPhysicalPartition(itemBuilder.isContainPhysicalPartition());
             tablesTopologyMap.put(tableName, itemBuilder.getTableTopology());
             sourceTablesTopology.put(tableName, itemBuilder.getSourcePhyTables());
             targetTablesTopology.put(tableName, itemBuilder.getTargetPhyTables());

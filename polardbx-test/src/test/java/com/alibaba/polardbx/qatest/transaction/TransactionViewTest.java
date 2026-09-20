@@ -51,6 +51,7 @@ public class TransactionViewTest extends ReadBaseTestCase {
         ResultSet rs = JdbcUtil.executeQuerySuccess(tddlConnection, "select current_trans_id()");
         Assert.assertTrue(rs.next());
         trxId = rs.getString(1);
+        System.out.println("trxId: " + trxId);
 
         rs = JdbcUtil.executeQuerySuccess(tddlConnection, String.format(SELECT_INNODB_TRX, trxId));
         Assert.assertTrue(rs.next());
@@ -59,6 +60,7 @@ public class TransactionViewTest extends ReadBaseTestCase {
         new Thread(() -> {
             try (Connection conn = ConnectionManager.newPolarDBXConnection0()) {
                 JdbcUtil.executeUpdate(conn, "use " + SCHEMA_NAME);
+                JdbcUtil.executeUpdate(conn, "set innodb_lock_wait_timeout = 50");
                 System.out.println("trx 2 starts.");
                 JdbcUtil.executeQuerySuccess(conn, sql);
                 JdbcUtil.executeUpdate(conn, "rollback");
@@ -80,6 +82,8 @@ public class TransactionViewTest extends ReadBaseTestCase {
                 Assert.assertTrue(rs.getLong(1) > 0);
                 success = true;
                 break;
+            } else {
+                System.out.println("innodb_locks query failed.");
             }
         } while (retry++ < 10);
         Assert.assertTrue(success);

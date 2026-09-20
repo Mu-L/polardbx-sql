@@ -23,6 +23,7 @@ import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.partition.PartitionByDefinition;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
+import com.alibaba.polardbx.optimizer.partition.PartitionInfoBuilder;
 import com.alibaba.polardbx.optimizer.partition.common.PartKeyLevel;
 import com.alibaba.polardbx.optimizer.partition.common.PartitionStrategy;
 import com.alibaba.polardbx.optimizer.partition.datatype.PartitionField;
@@ -60,6 +61,8 @@ public class PartEnumRouteFunction extends PartRouteFunction {
         this.matchLevel = partKeyLevel;
         this.inclMin = inclMin;
         this.inclMax = inclMax;
+        this.strategy = partKeyLevel == PartKeyLevel.SUBPARTITION_KEY ? partInfo.getPartitionBy().getStrategy() :
+            partInfo.getPartitionBy().getStrategy();
         this.partIntFunc = partKeyLevel == PartKeyLevel.SUBPARTITION_KEY ?
             partInfo.getPartitionBy().getSubPartitionBy().getPartIntFunc() : partInfo.getPartitionBy().getPartIntFunc();
         this.containPartIntFunc = partIntFunc != null;
@@ -93,25 +96,60 @@ public class PartEnumRouteFunction extends PartRouteFunction {
 
             DataType fldDataType = partBy.getQuerySpaceComparator().getDatumDrdsDataTypes()[0];
             int partitionCount = partBy.getPartitions().size();
-            PartitionFieldIterator iterator =
-                PartitionFieldIterators.getIterator(fldDataType, partBy.getIntervalType(),
-                    partIntFunc);
-            iterator.range(min.getSingletonValue().getValue(), max.getSingletonValue().getValue(), inclMin, inclMax);
 
             boolean isListOrListCol = partBy.getStrategy() == PartitionStrategy.LIST
                 || partBy.getStrategy() == PartitionStrategy.LIST_COLUMNS;
+            boolean useEnumIntervalByPartFunc = PartitionInfoBuilder.useEnumIntervalByPartFunc(strategy, partIntFunc);
+
+            PartitionIntFunction tartPartFunc = null;
+            if (useEnumIntervalByPartFunc) {
+                /**
+                 * No use the interval of partIntFunc ,so tartPartFunc is set null
+                 */
+                tartPartFunc = partIntFunc;
+            }
+            PartitionFieldIterator iterator =
+                PartitionFieldIterators.getIterator(fldDataType, partBy.getIntervalType(), tartPartFunc);
+            iterator.range(min.getSingletonValue().getValue(), max.getSingletonValue().getValue(), inclMin, inclMax);
+
             while (iterator.hasNext()) {
                 PartitionField partPruningFld = null;
+                /**
+                 * <pre>
+                 *     if the iterator use the interval of partIntFunc,
+                 *     then the evalObj from iterator.next() is computed
+                 *     by evalObj = part_func(min + n * interval),
+                 *     so evalObj must be an integer
+                 *
+                 *     if the iterator does not use the interval of partIntFunc,
+                 *     then the evalObj from iterator.next() is computed
+                 *     by evalObj = Long.of(min + n*1) or Decimal.of(min + n*1)
+                 * </pre>
+                 */
                 Object evalObj = iterator.next();
-                if (containPartIntFunc) {
+                if (useEnumIntervalByPartFunc) {
                     partPruningFld = PartitionPrunerUtils.buildPartField(evalObj,
                         DataTypes.LongType, partIntFunc.getReturnType(), null, context,
                         PartFieldAccessType.QUERY_PRUNING);
                 } else {
-                    partPruningFld = PartitionPrunerUtils.buildPartField(evalObj,
+                    PartitionField partColFldEnumVal = PartitionPrunerUtils.buildPartField(evalObj,
                         fldDataType, fldDataType, null, context, PartFieldAccessType.QUERY_PRUNING);
+                    if (partIntFunc != null) {
+                        /**
+                         * Use the fldVal of enum to compute the partFunc Result
+                         */
+                        partPruningFld = PartitionPrunerUtils
+                            .evalPartFuncVal(partColFldEnumVal, partIntFunc, getStrategy(), context, null,
+                                PartFieldAccessType.QUERY_PRUNING);
+                    } else {
+                        partPruningFld = partColFldEnumVal;
+                    }
                 }
                 SearchDatumInfo tmpSearchDatumInfo = SearchDatumInfo.createFromField(partPruningFld);
+
+                /**
+                 * Use partColEnumVal=?  or partFunc(partColEnumVal)=? to route partitions
+                 */
                 PartitionRouter.RouterResult result =
                     router.routePartitions(context, ComparisonKind.EQUAL, tmpSearchDatumInfo);
                 if (!isListOrListCol) {

@@ -68,7 +68,7 @@ public class ConvertSequenceInSchemasTask extends BaseGmsTask {
         for (String schema : schemaNames) {
             if (SeqTypeUtil.isNewSeqSupported(schema) || newSeqNotInvolved) {
                 try {
-                    SyncManagerHelper.sync(new ClearSeqCacheSyncAction(schema, null, true, false), SyncScope.ALL);
+                    SyncManagerHelper.syncThrowExceptions(new ClearSeqCacheSyncAction(schema, null, true, false), SyncScope.ALL);
                 } catch (Exception e) {
                     throw new TddlNestableRuntimeException(e);
                 }

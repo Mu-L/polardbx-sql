@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.executor.operator;
 
 import com.alibaba.polardbx.common.jdbc.Parameters;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.operator.util.RowChunksBuilder;
 import com.alibaba.polardbx.optimizer.core.TddlOperatorTable;
@@ -58,8 +59,14 @@ public class FilterExecTest extends BaseExecTest {
         IExpression condition = RexUtils.buildRexNode(call, context);
 
         FilterExec filter = new FilterExec(input, condition, null, context);
+
+        MemoryCountable.checkDeviation(filter, 0d, true);
         List<Chunk> expects = RowChunksBuilder.rowChunksBuilder(DataTypes.IntegerType, DataTypes.IntegerType)
             .row(2, 2).row(3, 3).row(4, 4).build();
+
+        MemoryCountable.checkDeviation(filter, 0d, true);
         execForSmpMode(filter, expects, false);
+
+        MemoryCountable.checkDeviation(filter, 0d, true);
     }
 }

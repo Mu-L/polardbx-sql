@@ -1,0 +1,137 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+use polardbx;
+drop database if exists test_replicas_db;
+set session FORBID_CROSS_GROUP_WRITE_FOR_EXPLICIT_TRX=true;
+set session ENABLE_PUSH_DOWN_AUTO_INCREMENT = true;
+set session sql_mode='STRICT_TRANS_TABLES,NO_AUTO_VALUE_ON_ZERO';
+## USE_DN_LIST_MSG
+create database if not exists test_replicas_db charset = utf8 collate = utf8_general_ci mode = 'auto' locality='dble_config={"group_config":{"p1":["$dn1","p_01"],"p2":["$dn1","p_02"],"p3":["$dn2","p_03"],"p4":["$dn2","p_04"]}}';
+use test_replicas_db;
+CREATE TABLE `replicas_dml_tb` (
+`pk` bigint(20) NOT NULL,
+`integer_test` int(11) DEFAULT NULL,
+`varchar_test` varchar(255) DEFAULT NULL,
+`char_test` char(255) DEFAULT NULL,
+`blob_test` blob,
+`tinyint_test` tinyint(4) DEFAULT NULL,
+`smallint_test` smallint(6) DEFAULT NULL,
+`mediumint_test` mediumint(9) DEFAULT NULL,
+`bit_test` bit(1) DEFAULT NULL,
+`bigint_test` bigint(20) DEFAULT NULL,
+`float_test` float DEFAULT NULL,
+`double_test` double DEFAULT NULL,
+`decimal_test` decimal(10, 0) DEFAULT NULL,
+`date_test` date DEFAULT NULL,
+`time_test` time DEFAULT NULL,
+`datetime_test` datetime DEFAULT NULL,
+`timestamp_test` timestamp NULL DEFAULT NULL,
+`year_test` year(4) DEFAULT NULL,
+PRIMARY KEY (`pk`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 replicas locality='db_set=p1,p2';
+CREATE TABLE `replicas_dml_two_tb` (
+`pk` bigint(20) NOT NULL,
+`integer_test` int(11) DEFAULT NULL,
+`varchar_test` varchar(255) DEFAULT NULL,
+`char_test` char(255) DEFAULT NULL,
+`blob_test` blob,
+`tinyint_test` tinyint(4) DEFAULT NULL,
+`smallint_test` smallint(6) DEFAULT NULL,
+`mediumint_test` mediumint(9) DEFAULT NULL,
+`bit_test` bit(1) DEFAULT NULL,
+`bigint_test` bigint(20) DEFAULT NULL,
+`float_test` float DEFAULT NULL,
+`double_test` double DEFAULT NULL,
+`decimal_test` decimal(10, 0) DEFAULT NULL,
+`date_test` date DEFAULT NULL,
+`time_test` time DEFAULT NULL,
+`datetime_test` datetime DEFAULT NULL,
+`timestamp_test` timestamp NULL DEFAULT NULL,
+`year_test` year(4) DEFAULT NULL,
+PRIMARY KEY (`pk`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 replicas locality='db_set=p1,p2';
+-- 模拟 tableDataPrepare 为表一插入 20 条初始数据
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (0, 100, 'text_0', '2023-01-01 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (1, 101, 'text_1', '2023-01-02 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (2, 102, 'text_2', '2023-01-03 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (3, 103, 'text_3', '2023-01-04 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (4, 104, 'text_4', '2023-01-05 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (5, 105, 'text_5', '2023-01-06 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (6, 106, 'text_6', '2023-01-07 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (7, 107, 'text_7', '2023-01-08 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (8, 108, 'text_8', '2023-01-09 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (9, 109, 'text_9', '2023-01-10 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (10, 110, 'text_10', '2023-01-11 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (11, 111, 'text_11', '2023-01-12 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (12, 112, 'text_12', '2023-01-13 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (13, 113, 'text_13', '2023-01-14 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (14, 114, 'text_14', '2023-01-15 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (15, 115, 'text_15', '2023-01-16 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (16, 116, 'text_16', '2023-01-17 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (17, 117, 'text_17', '2023-01-18 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (18, 118, 'text_18', '2023-01-19 10:00:00');
+INSERT INTO `replicas_dml_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (19, 119, 'text_19', '2023-01-20 10:00:00');
+-- 模拟 tableDataPrepare 为表二插入 20 条初始数据
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (0, 200, 'text_2_0', '2023-02-01 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (1, 201, 'text_2_1', '2023-02-02 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (2, 202, 'text_2_2', '2023-02-03 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (3, 203, 'text_2_3', '2023-02-04 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (4, 204, 'text_2_4', '2023-02-05 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (5, 205, 'text_2_5', '2023-02-06 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (6, 206, 'text_2_6', '2023-02-07 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (7, 207, 'text_2_7', '2023-02-08 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (8, 208, 'text_2_8', '2023-02-09 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (9, 209, 'text_2_9', '2023-02-10 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (10, 210, 'text_2_10', '2023-02-11 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (11, 211, 'text_2_11', '2023-02-12 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (12, 212, 'text_2_12', '2023-02-13 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (13, 213, 'text_2_13', '2023-02-14 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (14, 214, 'text_2_14', '2023-02-15 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (15, 215, 'text_2_15', '2023-02-16 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (16, 216, 'text_2_16', '2023-02-17 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (17, 217, 'text_2_17', '2023-02-18 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (18, 218, 'text_2_18', '2023-02-19 10:00:00');
+INSERT INTO `replicas_dml_two_tb` (pk, integer_test, varchar_test, timestamp_test) VALUES (19, 219, 'text_2_19', '2023-02-20 10:00:00');
+UPDATE replicas_dml_tb a , replicas_dml_two_tb b
+SET a.integer_test=21
+WHERE a.pk=5 and a.pk = b.pk;
+-- 验证点：a.pk=5 的 integer_test 字段被更新为 21
+SELECT * FROM replicas_dml_tb WHERE pk=5;
+pk,integer_test,varchar_test,char_test,blob_test,tinyint_test,smallint_test,mediumint_test,bit_test,bigint_test,float_test,double_test,decimal_test,date_test,time_test,datetime_test,timestamp_test,year_test
+5,21,text_5,null,null,null,null,null,null,null,null,null,null,null,null,null,2023-01-06 10:00:00.0,null
+-- 注意：这条 SQL 在逻辑上没有做任何事，因为 SET a.pk=5 的条件就是 a.pk=5。但测试用例用它来验证语法和执行的正确性。
+UPDATE replicas_dml_tb a , replicas_dml_two_tb b
+SET a.pk=5
+WHERE a.pk=5 and a.pk = b.pk;
+UPDATE replicas_dml_tb a , replicas_dml_two_tb b
+SET a.integer_test=21, b.integer_test=21
+WHERE a.pk=5 and a.pk = b.pk;
+-- 验证点：两张表中 pk=5 的 integer_test 字段都被更新为 21
+SELECT * FROM replicas_dml_tb WHERE pk=5;
+pk,integer_test,varchar_test,char_test,blob_test,tinyint_test,smallint_test,mediumint_test,bit_test,bigint_test,float_test,double_test,decimal_test,date_test,time_test,datetime_test,timestamp_test,year_test
+5,21,text_5,null,null,null,null,null,null,null,null,null,null,null,null,null,2023-01-06 10:00:00.0,null
+SELECT * FROM replicas_dml_two_tb WHERE pk=5;
+pk,integer_test,varchar_test,char_test,blob_test,tinyint_test,smallint_test,mediumint_test,bit_test,bigint_test,float_test,double_test,decimal_test,date_test,time_test,datetime_test,timestamp_test,year_test
+5,21,text_2_5,null,null,null,null,null,null,null,null,null,null,null,null,null,2023-02-06 10:00:00.0,null
+UPDATE replicas_dml_tb a , replicas_dml_two_tb b
+SET a.pk=5, b.pk=5, a.integer_test=21, b.integer_test=21
+WHERE a.pk=5 and a.pk = b.pk;
+UPDATE replicas_dml_tb a , replicas_dml_two_tb b
+SET a.integer_test=21, a.timestamp_test='2023-05-26 20:12:12', b.integer_test=21
+WHERE a.pk=5 and a.pk = b.pk;
+-- 验证点：a 表的 integer_test 和 timestamp_test 被更新, b 表的 integer_test 被更新
+SELECT * FROM replicas_dml_tb WHERE pk=5;
+pk,integer_test,varchar_test,char_test,blob_test,tinyint_test,smallint_test,mediumint_test,bit_test,bigint_test,float_test,double_test,decimal_test,date_test,time_test,datetime_test,timestamp_test,year_test
+5,21,text_5,null,null,null,null,null,null,null,null,null,null,null,null,null,2023-05-26 20:12:12.0,null
+SELECT * FROM replicas_dml_two_tb WHERE pk=5;
+pk,integer_test,varchar_test,char_test,blob_test,tinyint_test,smallint_test,mediumint_test,bit_test,bigint_test,float_test,double_test,decimal_test,date_test,time_test,datetime_test,timestamp_test,year_test
+5,21,text_2_5,null,null,null,null,null,null,null,null,null,null,null,null,null,2023-02-06 10:00:00.0,null
+UPDATE replicas_dml_tb a , replicas_dml_two_tb b
+SET a.pk=5, b.pk=5, a.timestamp_test='2023-05-26 20:12:12', a.integer_test=21, b.integer_test=21
+WHERE a.pk=5 and a.pk = b.pk;
+UPDATE replicas_dml_tb a , replicas_dml_two_tb b
+SET a.pk=5, b.pk=5, a.timestamp_test=CURRENT_TIMESTAMP(), a.integer_test=21, b.integer_test=21, b.timestamp_test=CURRENT_TIMESTAMP()
+WHERE a.pk=5 and a.pk = b.pk;
+use polardbx;
+drop database if exists test_replicas_db;

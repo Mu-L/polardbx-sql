@@ -23,12 +23,14 @@ import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.GlobalIndexMeta;
+import com.alibaba.polardbx.optimizer.config.table.TableColumnUtils;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.TddlOperatorTable;
 import com.alibaba.polardbx.optimizer.core.dialect.DbType;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableInsertSharder.PhyTableShardResult;
 import com.alibaba.polardbx.optimizer.core.rel.dml.DistinctWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ParameterWriteBinding;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.LogicalWriteUtil;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.InsertWriter;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
@@ -62,11 +64,13 @@ import org.apache.calcite.rex.RexCallParam;
 import org.apache.calcite.rex.RexDynamicParam;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.sql.SqlInsert;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -200,6 +204,23 @@ public class LogicalInsert extends TableModify {
 
     protected boolean ukContainsAllSkAndGsiContainsAllUk = false;
 
+    /**
+     * Parameter slots that must be materialized before a pushed UPSERT reaches the DN.
+     *
+     * <p>The Planner compiles these bindings only for statement-constant assignments on an externalized content
+     * column. Identity {@code content = VALUES(content)} needs no extra binding because the incoming INSERT slot
+     * is already materialized by the normal INSERT path. Keeping the bindings on the execution plan avoids
+     * re-deriving parameter positions from physical SQL in the Handler.
+     */
+    private List<ParameterWriteBinding> externalizedUpsertPushdownBindings = Collections.emptyList();
+
+    /**
+     * INSERT 时是否可以跳过pk check，在主键为自增列且insert没有指定该列时可以跳过
+     */
+    @Getter
+    @Setter
+    protected boolean canSkipPkCheck = false;
+
     public LogicalInsert(TableModify modify) {
         this(modify.getCluster(),
             modify.getTraitSet(),
@@ -256,7 +277,8 @@ public class LogicalInsert extends TableModify {
                          List<ColumnMeta> defaultExprColMetas, List<RexNode> defaultExprColRexNodes,
                          List<Integer> defaultExprEvalFieldsMapping, boolean pushablePrimaryKeyCheck,
                          boolean pushableForeignConstraintCheck, boolean modifyForeignKey,
-                         boolean ukContainsAllSkAndGsiContainsAllUk, List<RexCallParam> dynamicImplicitDefaultParams,
+                         boolean ukContainsAllSkAndGsiContainsAllUk, boolean canSkipPkCheck,
+                         List<RexCallParam> dynamicImplicitDefaultParams,
                          List<RexCallParam> unoptimizedDynamicImplicitDefaultParams) {
         super(cluster, traitSet, table, catalogReader, input, operation, null, null, flattened, keywords, batchSize,
             appendedColumnIndex, hints, tableInfo);
@@ -281,6 +303,7 @@ public class LogicalInsert extends TableModify {
         this.pushableForeignConstraintCheck = pushableForeignConstraintCheck;
         this.modifyForeignKey = modifyForeignKey;
         this.ukContainsAllSkAndGsiContainsAllUk = ukContainsAllSkAndGsiContainsAllUk;
+        this.canSkipPkCheck = canSkipPkCheck;
     }
 
     /**
@@ -306,6 +329,17 @@ public class LogicalInsert extends TableModify {
 
     public void setInsertRowType(RelDataType insertRowType) {
         this.insertRowType = insertRowType;
+    }
+
+    public List<ParameterWriteBinding> getExternalizedUpsertPushdownBindings() {
+        return externalizedUpsertPushdownBindings;
+    }
+
+    public void setExternalizedUpsertPushdownBindings(
+        List<ParameterWriteBinding> externalizedUpsertPushdownBindings) {
+        this.externalizedUpsertPushdownBindings = externalizedUpsertPushdownBindings == null
+            ? Collections.emptyList()
+            : Collections.unmodifiableList(new ArrayList<>(externalizedUpsertPushdownBindings));
     }
 
     /**
@@ -547,9 +581,24 @@ public class LogicalInsert extends TableModify {
 
     private SqlNode buildSqlTemplate() {
         SqlNode sqlTemplate = getNativeSqlNode();
-        ReplaceTableNameWithQuestionMarkVisitor visitor = new ReplaceTableNameWithQuestionMarkVisitor(schemaName,
-            PlannerContext.getPlannerContext(this).getExecutionContext());
-        return sqlTemplate.accept(visitor);
+
+        ExecutionContext executionContext = PlannerContext.getPlannerContext(this).getExecutionContext();
+        ReplaceTableNameWithQuestionMarkVisitor visitor =
+            new ReplaceTableNameWithQuestionMarkVisitor(schemaName, executionContext);
+        SqlNode physicalSqlTemplate = sqlTemplate.accept(visitor);
+
+        // Root LogicalInsert plans are used by returning and explicit routing-hint paths, while
+        // normal logical DML uses child writers. Apply the terminal externalized-column rename here
+        // as well so both paths share the same physical column list.
+        TableMeta tableMeta = getTable().unwrap(TableMeta.class);
+        if (tableMeta != null && (tableMeta.hasExternalizedColumn() || tableMeta.hasColumnInMceMigration())) {
+            Map<String, String> externalizedColumnMapping =
+                TableColumnUtils.buildExternalizedColumnMapping(tableMeta);
+            if (physicalSqlTemplate instanceof SqlInsert && !externalizedColumnMapping.isEmpty()) {
+                TableColumnUtils.rewriteSqlTemplate((SqlInsert) physicalSqlTemplate, externalizedColumnMapping);
+            }
+        }
+        return physicalSqlTemplate;
     }
 
     public SqlNode getNativeSqlNode() {
@@ -905,7 +954,7 @@ public class LogicalInsert extends TableModify {
 
         TddlRuleManager or = OptimizerContext.getContext(schemaName).getRuleManager();
 
-        if (or.isTableInSingleDb(tableName) || or.isBroadCast(tableName)) {
+        if (or.isTableInSingleDb(tableName) || or.isBroadCastOrReplicas(tableName)) {
             if (!SequenceManagerProxy.getInstance().isUsingSequence(schemaName, tableName)) {
                 // It's using MySQL auto increment rule
                 return;
@@ -933,7 +982,7 @@ public class LogicalInsert extends TableModify {
     public boolean needConsistency() {
         String tableName = getLogicalTableName();
         TddlRuleManager or = OptimizerContext.getContext(schemaName).getRuleManager();
-        return or.isBroadCast(tableName) || GlobalIndexMeta
+        return or.isBroadCastOrReplicas(tableName) || GlobalIndexMeta
             .hasGsi(tableName, schemaName, PlannerContext.getPlannerContext(this).getExecutionContext());
     }
 
@@ -976,6 +1025,7 @@ public class LogicalInsert extends TableModify {
             isPushableForeignConstraintCheck(),
             isModifyForeignKey(),
             isUkContainsAllSkAndGsiContainsAllUk(),
+            isCanSkipPkCheck(),
             getDynamicImplicitDefaultParams(),
             getUnoptimizedDynamicImplicitDefaultParams());
         newLogicalInsert.sqlTemplate = sqlTemplate;
@@ -983,6 +1033,7 @@ public class LogicalInsert extends TableModify {
         newLogicalInsert.seqColumnIndex = seqColumnIndex;
         newLogicalInsert.tupleRoutingInfo = tupleRoutingInfo;
         newLogicalInsert.insertSelectMode = insertSelectMode;
+        newLogicalInsert.setExternalizedUpsertPushdownBindings(getExternalizedUpsertPushdownBindings());
         return newLogicalInsert;
     }
 
@@ -1016,6 +1067,7 @@ public class LogicalInsert extends TableModify {
             isPushableForeignConstraintCheck(),
             isModifyForeignKey(),
             isUkContainsAllSkAndGsiContainsAllUk(),
+            isCanSkipPkCheck(),
             dynamicImplicitDefaultParams,
             getUnoptimizedDynamicImplicitDefaultParams());
         newLogicalInsert.sqlTemplate = sqlTemplate;
@@ -1023,6 +1075,7 @@ public class LogicalInsert extends TableModify {
         newLogicalInsert.seqColumnIndex = seqColumnIndex;
         newLogicalInsert.tupleRoutingInfo = tupleRoutingInfo;
         newLogicalInsert.insertSelectMode = insertSelectMode;
+        newLogicalInsert.setExternalizedUpsertPushdownBindings(getExternalizedUpsertPushdownBindings());
         return newLogicalInsert;
     }
 

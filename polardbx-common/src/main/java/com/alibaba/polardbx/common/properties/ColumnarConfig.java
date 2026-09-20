@@ -1,18 +1,19 @@
 package com.alibaba.polardbx.common.properties;
 
 import com.alibaba.polardbx.common.columnar.ColumnarOption;
-import com.alibaba.polardbx.common.exception.TddlRuntimeException;
-import com.alibaba.polardbx.common.exception.code.ErrorCode;
 
 import java.util.Map;
 
 /**
  * Declare options in ColumnarOptions, and define them in ColumnarConfigHandler.
+ *
  * @author yaozhili
  */
 public final class ColumnarConfig {
     public static String DEFAULT = "DEFAULT";
     public static String SNAPSHOT = "SNAPSHOT";
+    public static String ARCHIVE = "ARCHIVE";
+    public static String IGNORE = "COLUMNAR_IGNORE";
     // Key in upper case.
     private static Map<String, ColumnarOption> CONFIG = null;
 

@@ -29,7 +29,7 @@ public class XidTooLongTest extends CrudBasedLockTestCase {
         JdbcUtil.executeSuccess(polarxConn, "create database " + SCHEMA + " mode = auto ");
         JdbcUtil.executeSuccess(polarxConn, "use " + SCHEMA);
         JdbcUtil.executeSuccess(polarxConn, "create table if not exists "
-            + TABLE + " (id int primary key) partition by key(id)");
+            + TABLE + " (id int primary key) partition by key(id) partitions 16");
 
         JdbcUtil.executeSuccess(polarxConn, "set transaction_policy = TSO");
         JdbcUtil.executeSuccess(polarxConn, "begin");
@@ -43,6 +43,7 @@ public class XidTooLongTest extends CrudBasedLockTestCase {
         String hint = "/* +TDDL:cmd_extra(FAILURE_INJECTION='FAIL_AFTER_PRIMARY_COMMIT') */";
         JdbcUtil.executeSuccess(polarxConn, "begin");
         JdbcUtil.executeSuccess(polarxConn, hint + "insert into " + TABLE + " values(1), (2), (3), (4)");
+        JdbcUtil.executeSuccess(polarxConn, "delete from " + TABLE);
         JdbcUtil.executeFailed(polarxConn, "commit", "Failed");
 
         ResultSet rs = JdbcUtil.executeQuerySuccess(polarxConn, "select * from " + TABLE

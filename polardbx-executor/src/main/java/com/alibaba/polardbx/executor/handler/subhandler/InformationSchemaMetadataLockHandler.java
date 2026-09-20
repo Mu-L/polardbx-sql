@@ -65,7 +65,7 @@ public class InformationSchemaMetadataLockHandler extends BaseVirtualViewSubClas
         } catch (Exception e) {
             throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, e, e.getMessage());
         }
-        List<List<Map<String, Object>>> results = SyncManagerHelper.sync(syncAction, SyncScope.CURRENT_ONLY);
+        List<List<Map<String, Object>>> results = SyncManagerHelper.syncIgnoreExceptions(syncAction, SyncScope.CURRENT_ONLY);
 
         for (List<Map<String, Object>> rs : results) {
             if (rs == null) {

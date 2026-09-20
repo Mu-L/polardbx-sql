@@ -1,0 +1,73 @@
+## DISABLE_FAST_SQL_PARSER
+select mypartlongc4l360(0)
+mypartlongc4l360(0)
+0
+select mypartlongc4l360(359)
+mypartlongc4l360(359)
+0
+select mypartlongc4l360(360)
+mypartlongc4l360(360)
+1
+select mypartlongc4l360(719)
+mypartlongc4l360(719)
+1
+select mypartlongc4l360(720)
+mypartlongc4l360(720)
+2
+select mypartlongc4l360(1439)
+mypartlongc4l360(1439)
+3
+select mypartlongc4l360(1440)
+mypartlongc4l360(1440)
+0
+select mypartlongc4l360(2879)
+mypartlongc4l360(2879)
+3
+select mypartlongc4l360(2880)
+mypartlongc4l360(2880)
+0
+drop database if exists mypocdb
+create database if not exists mypocdb mode = auto locality = "db_config=qk1:polardbx-storage-0-master,qk2:polardbx-storage-0-master,qk3:polardbx-storage-1-master,qk4:polardbx-storage-1-master"
+use mypocdb
+drop tablegroup if exists tg_my_udf1
+create tablegroup if not exists tg_my_udf1
+partition by udf_hash(bigint)
+partition 4
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3),
+partition p3 values less than (4)
+)
+drop table if exists myt1
+create table myt1(a int, b int) partition by hash(a) partitions 4 locality="db_pools=qk1,qk2,qk3,qk4"
+drop table if exists uh_myt1
+create table uh_myt1(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(mypartlongc4l360(c1))
+tablegroup=tg_my_udf1
+locality="db_pools=qk1,qk2,qk3,qk4"
+insert into uh_myt1 values (0,0)
+insert into uh_myt1 values (359,359)
+insert into uh_myt1 values (360,360)
+select c1, part_route('', 'uh_myt1', c1) as route_rs, part_hash('', 'uh_myt1', c1) as hash_rs from uh_myt1 where c1=0
+c1,route_rs,hash_rs
+0,p0,(0)
+select c1, part_route('', 'uh_myt1', c1) as route_rs, part_hash('', 'uh_myt1', c1) as hash_rs from uh_myt1 where c1=359
+c1,route_rs,hash_rs
+359,p0,(0)
+select c1, part_route('', 'uh_myt1', c1) as route_rs, part_hash('', 'uh_myt1', c1) as hash_rs from uh_myt1 where c1=360
+c1,route_rs,hash_rs
+360,p1,(1)
+explain select c1 from uh_myt1 where c1 between 359 and 360 order by c1
+Logical ExecutionPlan
+MergeSort(sort="c1 ASC")
+  LogicalView(tables="uh_myt1[p0,p1]", shardCount=2, sql="SELECT `c1` FROM `uh_myt1` AS `uh_myt1` WHERE (`c1` BETWEEN ? AND ?) ORDER BY `c1`")
+select c1 from uh_myt1 where c1 between 359 and 360 order by c1
+c1
+359
+360
+use polardbx
+drop database mypocdb;

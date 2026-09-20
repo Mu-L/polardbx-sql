@@ -69,7 +69,7 @@ public class GsiStatisticsInfoSyncTask extends BaseDdlTask {
     @Override
     protected void onExecutionSuccess(ExecutionContext executionContext) {
         try {
-            SyncManagerHelper.sync(new GsiStatisticsSyncAction(schemaName, gsiName, newValue, alterKind),
+            SyncManagerHelper.syncThrowExceptions(new GsiStatisticsSyncAction(schemaName, gsiName, newValue, alterKind),
                 SyncScope.ALL);
         } catch (Throwable ignore) {
             LOGGER.error(
@@ -82,10 +82,10 @@ public class GsiStatisticsInfoSyncTask extends BaseDdlTask {
     protected void onRollbackSuccess(ExecutionContext executionContext) {
         try {
             if (alterKind == GsiStatisticsSyncAction.RENAME_RECORD) {
-                SyncManagerHelper.sync(new GsiStatisticsSyncAction(schemaName, newValue, gsiName, alterKind),
+                SyncManagerHelper.syncThrowExceptions(new GsiStatisticsSyncAction(schemaName, newValue, gsiName, alterKind),
                     SyncScope.ALL);
             } else {
-                SyncManagerHelper.sync(new GsiStatisticsSyncAction(schemaName, gsiName, newValue, alterKind),
+                SyncManagerHelper.syncThrowExceptions(new GsiStatisticsSyncAction(schemaName, gsiName, newValue, alterKind),
                     SyncScope.ALL);
             }
         } catch (Throwable ignore) {

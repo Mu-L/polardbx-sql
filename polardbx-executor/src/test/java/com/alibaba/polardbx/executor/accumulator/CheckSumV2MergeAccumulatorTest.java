@@ -1,6 +1,7 @@
 package com.alibaba.polardbx.executor.accumulator;
 
 import com.alibaba.polardbx.common.RevisableOrderInvariantHash;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.LongBlock;
@@ -25,10 +26,11 @@ public class CheckSumV2MergeAccumulatorTest {
     public void before() {
         Accumulator accumulator =
             AccumulatorBuilders.create(new CheckSumV2Merge(), DataTypes.LongType, new DataType[] {DataTypes.LongType},
-                COUNT, new ExecutionContext());
+                COUNT, new ExecutionContext(), null);
 
         this.accumulator = (CheckSumV2MergeAccumulator) accumulator;
         this.random = new Random();
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 
     @Test
@@ -51,6 +53,7 @@ public class CheckSumV2MergeAccumulatorTest {
         for (int i = 0; i < block.getPositionCount(); i++) {
             accumulator.accumulate(0, chunk, i);
         }
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
 
         LongBlockBuilder resultBuilder = new LongBlockBuilder(COUNT);
         accumulator.writeResultTo(0, resultBuilder);
@@ -60,16 +63,19 @@ public class CheckSumV2MergeAccumulatorTest {
 
         long size = accumulator.estimateSize();
         Assert.assertTrue(size > 0);
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 
     @Test
     public void testCheckSumV2MergeWithAllNull() {
         accumulator.appendInitValue();
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
 
         LongBlockBuilder resultBuilder = new LongBlockBuilder(COUNT);
         accumulator.writeResultTo(0, resultBuilder);
         Block resultBlock = resultBuilder.build();
         Assert.assertEquals(1, resultBlock.getPositionCount());
         Assert.assertTrue(resultBlock.isNull(0));
+        MemoryCountable.checkDeviation(accumulator, 0d, true);
     }
 }

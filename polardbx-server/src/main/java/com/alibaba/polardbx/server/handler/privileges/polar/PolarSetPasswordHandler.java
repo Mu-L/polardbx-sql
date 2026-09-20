@@ -17,8 +17,11 @@
 package com.alibaba.polardbx.server.handler.privileges.polar;
 
 import com.alibaba.polardbx.CobarServer;
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
 import com.alibaba.polardbx.druid.sql.parser.SQLParserFeature;
+import com.alibaba.polardbx.gms.privilege.AccountType;
 import com.alibaba.polardbx.server.ServerConnection;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLCharExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLMethodInvokeExpr;
@@ -27,8 +30,6 @@ import com.alibaba.polardbx.druid.sql.ast.statement.SQLSetStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.expr.MySqlUserName;
 import com.alibaba.polardbx.druid.sql.parser.ByteString;
 import com.alibaba.polardbx.common.audit.AuditAction;
-import com.alibaba.polardbx.common.exception.TddlRuntimeException;
-import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.privilege.UserPasswdChecker;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
@@ -36,7 +37,7 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.privilege.PolarAccount;
 import com.alibaba.polardbx.gms.privilege.PolarAccountInfo;
 import com.alibaba.polardbx.gms.privilege.PolarPrivManager;
-import com.alibaba.polardbx.gms.privilege.audit.AuditPrivilege;
+import com.alibaba.polardbx.server.util.AuditPrivilege;
 import com.alibaba.polardbx.optimizer.parse.FastsqlUtils;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.commons.lang.StringUtils;
@@ -46,8 +47,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import static com.alibaba.polardbx.gms.privilege.PolarPrivUtil.POLAR_ROOT;
 import static com.alibaba.polardbx.server.handler.privileges.polar.PolarHandlerCommon.PASSWORD;
-import static com.alibaba.polardbx.server.handler.privileges.polar.PolarHandlerCommon.checkDrdsRoot;
 import static com.alibaba.polardbx.server.handler.privileges.polar.PolarHandlerCommon.encryptPassword;
 import static com.alibaba.polardbx.server.handler.privileges.polar.PolarHandlerCommon.getMatchGranter;
 
@@ -125,8 +126,15 @@ public class PolarSetPasswordHandler extends AbstractPrivilegeCommandHandler {
         return userInfos;
     }
 
-    private static void checkGrantees(List<PolarAccountInfo> grantees) {
-        checkDrdsRoot(grantees);
+    private static void checkGrantees(PolarAccountInfo granter, List<PolarAccountInfo> grantees, ServerConnection c) {
+        for (PolarAccountInfo grantee : grantees) {
+            if (StringUtils.equalsIgnoreCase(grantee.getUsername(), POLAR_ROOT)) {
+                if (!granter.isGod()) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_OPERATION_NOT_ALLOWED,
+                        String.format("Can not modify %s", POLAR_ROOT));
+                }
+            }
+        }
 
         for (PolarAccountInfo user : grantees) {
             UserPasswdChecker.verifyPassword(user.getPassword(),
@@ -148,10 +156,10 @@ public class PolarSetPasswordHandler extends AbstractPrivilegeCommandHandler {
         PolarAccountInfo granter = getMatchGranter(c);
 
         List<PolarAccountInfo> grantees = getGrantees(sql, granter);
-        checkGrantees(grantees);
+        checkGrantees(granter, grantees, c);
         encryptPassword(grantees);
         PolarPrivManager.getInstance().setPassword(granter, c.getActiveRoles(), grantees.get(0));
-        AuditPrivilege.polarAudit(getServerConn().getConnectionInfo(),
+        AuditPrivilege.polarAudit(getServerConn(),
             grantees.stream()
                 .map(PolarAccountInfo::getIdentifier)
                 .collect(Collectors.joining()),

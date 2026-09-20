@@ -6,6 +6,7 @@ import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.executor.utils.transaction.GroupConnPair;
 import com.alibaba.polardbx.executor.utils.transaction.TrxLookupSet;
+import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.group.jdbc.TGroupDataSource;
 import com.alibaba.polardbx.rpc.compatible.ArrayResultSet;
 import com.alibaba.polardbx.transaction.utils.DiGraph;
@@ -24,17 +25,19 @@ import java.util.ArrayList;
 import static com.alibaba.polardbx.transaction.async.DeadlockDetectionTask.SQL_QUERY_DEADLOCKS;
 import static com.alibaba.polardbx.transaction.async.DeadlockDetectionTask.SQL_QUERY_LOCK_WAITS_80;
 import static com.alibaba.polardbx.transaction.async.DeadlockDetectionTask.SQL_QUERY_TRX_80;
+import static org.mockito.ArgumentMatchers.any;
 
 public class DeadlockDetectionTest {
     @Test
     public void test1() throws SQLException {
         DynamicConfig.getInstance().loadValue(null, ConnectionProperties.DEADLOCK_DETECTION_80_FETCH_TRX_ROWS, "5");
+        boolean isMysql80 = InstanceVersion.isMYSQL80();
         InstanceVersion.setMYSQL80(true);
-        MockStatus.setMock(true);
-        DeadlockDetectionTask task = new DeadlockDetectionTask(new ArrayList<>());
 
-        try (MockedStatic<DeadlockDetectionTask> deadlockDetectionTaskMockedStatic =
-            Mockito.mockStatic(DeadlockDetectionTask.class)) {
+        try (MockStatus status = new MockStatus();
+            MockedStatic<DeadlockDetectionTask> deadlockDetectionTaskMockedStatic =
+                Mockito.mockStatic(DeadlockDetectionTask.class)) {
+            DeadlockDetectionTask task = new DeadlockDetectionTask(new ArrayList<>());
             Connection connection = Mockito.mock(Connection.class);
             Statement stmt = Mockito.mock(Statement.class);
             TrxLookupSet lookupSet = new TrxLookupSet();
@@ -42,7 +45,7 @@ public class DeadlockDetectionTest {
             addTrx(lookupSet, 20000L, "test_group_00000", 200L, 2000L, 2L, "blocking_sql");
 
             deadlockDetectionTaskMockedStatic
-                .when(() -> DeadlockDetectionTask.createPhysicalConnectionForLeaderStorage(Mockito.any()))
+                .when(() -> DeadlockDetectionTask.createPhysicalConnectionForLeaderStorage(any()))
                 .thenReturn(connection);
             Mockito.when(connection.createStatement()).thenReturn(stmt);
             Mockito.when(stmt.executeQuery(Mockito.anyString()))
@@ -76,21 +79,29 @@ public class DeadlockDetectionTest {
                 graph);
             TrxLookupSet.Transaction trx1 = lookupSet.getTransaction(10000L);
             TrxLookupSet.Transaction trx2 = lookupSet.getTransaction(20000L);
-            Assert.assertEquals("waiting_physical_sql", trx1.getLocalTransaction("test_group_00000").getPhysicalSql());
-            Assert.assertEquals("blocking_physical_sql", trx2.getLocalTransaction("test_group_00000").getPhysicalSql());
+            Assert.assertEquals("waiting_physical_sql",
+                trx1.getLocalTransaction("test_group_00000-100").getPhysicalSql());
+            Assert.assertEquals("blocking_physical_sql",
+                trx2.getLocalTransaction("test_group_00000-200").getPhysicalSql());
             System.out.println(graph);
+            graph.detect().ifPresent((cycle) -> {
+                task.handleGlobalDeadlocks(cycle, graph);
+            });
+        } finally {
+            InstanceVersion.setMYSQL80(isMysql80);
         }
     }
 
     @Test
     public void test2() throws SQLException {
         DynamicConfig.getInstance().loadValue(null, ConnectionProperties.DEADLOCK_DETECTION_80_FETCH_TRX_ROWS, "5");
+        boolean isMysql80 = InstanceVersion.isMYSQL80();
         InstanceVersion.setMYSQL80(false);
-        MockStatus.setMock(true);
-        DeadlockDetectionTask task = new DeadlockDetectionTask(new ArrayList<>());
 
-        try (MockedStatic<DeadlockDetectionTask> deadlockDetectionTaskMockedStatic =
-            Mockito.mockStatic(DeadlockDetectionTask.class)) {
+        try (MockStatus status = new MockStatus();
+            MockedStatic<DeadlockDetectionTask> deadlockDetectionTaskMockedStatic =
+                Mockito.mockStatic(DeadlockDetectionTask.class)) {
+            DeadlockDetectionTask task = new DeadlockDetectionTask(new ArrayList<>());
             Connection connection = Mockito.mock(Connection.class);
             Statement stmt = Mockito.mock(Statement.class);
             TrxLookupSet lookupSet = new TrxLookupSet();
@@ -98,7 +109,7 @@ public class DeadlockDetectionTest {
             addTrx(lookupSet, 20000L, "test_group_00000", 200L, 2000L, 2L, "blocking_sql");
 
             deadlockDetectionTaskMockedStatic
-                .when(() -> DeadlockDetectionTask.createPhysicalConnectionForLeaderStorage(Mockito.any()))
+                .when(() -> DeadlockDetectionTask.createPhysicalConnectionForLeaderStorage(any()))
                 .thenReturn(connection);
             Mockito.when(connection.createStatement()).thenReturn(stmt);
             Mockito.when(stmt.executeQuery(Mockito.anyString()))
@@ -117,9 +128,16 @@ public class DeadlockDetectionTest {
                 graph);
             TrxLookupSet.Transaction trx1 = lookupSet.getTransaction(10000L);
             TrxLookupSet.Transaction trx2 = lookupSet.getTransaction(20000L);
-            Assert.assertEquals("waiting_physical_sql", trx1.getLocalTransaction("test_group_00000").getPhysicalSql());
-            Assert.assertEquals("blocking_physical_sql", trx2.getLocalTransaction("test_group_00000").getPhysicalSql());
+            Assert.assertEquals("waiting_physical_sql",
+                trx1.getLocalTransaction("test_group_00000-100").getPhysicalSql());
+            Assert.assertEquals("blocking_physical_sql",
+                trx2.getLocalTransaction("test_group_00000-200").getPhysicalSql());
             System.out.println(graph);
+            graph.detect().ifPresent((cycle) -> {
+                task.handleGlobalDeadlocks(cycle, graph);
+            });
+        } finally {
+            InstanceVersion.setMYSQL80(isMysql80);
         }
     }
 
@@ -127,22 +145,27 @@ public class DeadlockDetectionTest {
     public void test3() throws SQLException {
         DynamicConfig.getInstance()
             .loadValue(null, ConnectionProperties.DEADLOCK_DETECTION_DATA_LOCK_WAITS_THRESHOLD, "50000");
+        boolean isMysql80 = InstanceVersion.isMYSQL80();
         InstanceVersion.setMYSQL80(true);
-        MockStatus.setMock(true);
-        DeadlockDetectionTask task = new DeadlockDetectionTask(new ArrayList<>());
 
-        try (MockedStatic<DeadlockDetectionTask> deadlockDetectionTaskMockedStatic =
-            Mockito.mockStatic(DeadlockDetectionTask.class)) {
+        try (MockStatus status = new MockStatus();
+            MockedStatic<DeadlockDetectionTask> deadlockDetectionTaskMockedStatic =
+                Mockito.mockStatic(DeadlockDetectionTask.class)) {
+            deadlockDetectionTaskMockedStatic.when(() -> DeadlockDetectionTask.maybeTooManyDataLockWaits(any()))
+                .thenCallRealMethod();
+            DeadlockDetectionTask task = new DeadlockDetectionTask(new ArrayList<>());
             Connection connection = Mockito.mock(Connection.class);
             Statement stmt = Mockito.mock(Statement.class);
             deadlockDetectionTaskMockedStatic
-                .when(() -> DeadlockDetectionTask.createPhysicalConnectionForLeaderStorage(Mockito.any()))
+                .when(() -> DeadlockDetectionTask.createPhysicalConnectionForLeaderStorage(any()))
                 .thenReturn(connection);
             Mockito.when(connection.createStatement()).thenReturn(stmt);
             Mockito.when(stmt.executeQuery(Mockito.anyString()))
                 .thenReturn(getHotspotRs1());
 
-            Assert.assertFalse(task.maybeTooManyDataLockWaits(Mockito.mock(TGroupDataSource.class)));
+            Assert.assertFalse(DeadlockDetectionTask.maybeTooManyDataLockWaits(Mockito.mock(TGroupDataSource.class)));
+        } finally {
+            InstanceVersion.setMYSQL80(isMysql80);
         }
     }
 
@@ -150,36 +173,152 @@ public class DeadlockDetectionTest {
     public void test4() throws SQLException {
         DynamicConfig.getInstance()
             .loadValue(null, ConnectionProperties.DEADLOCK_DETECTION_DATA_LOCK_WAITS_THRESHOLD, "50000");
+        boolean isMysql80 = InstanceVersion.isMYSQL80();
         InstanceVersion.setMYSQL80(false);
-        MockStatus.setMock(true);
-        DeadlockDetectionTask task = new DeadlockDetectionTask(new ArrayList<>());
 
-        try (MockedStatic<DeadlockDetectionTask> deadlockDetectionTaskMockedStatic =
-            Mockito.mockStatic(DeadlockDetectionTask.class)) {
+        try (MockStatus status = new MockStatus();
+            MockedStatic<DeadlockDetectionTask> deadlockDetectionTaskMockedStatic =
+                Mockito.mockStatic(DeadlockDetectionTask.class)) {
+            deadlockDetectionTaskMockedStatic.when(() -> DeadlockDetectionTask.maybeTooManyDataLockWaits(any()))
+                .thenCallRealMethod();
             Connection connection = Mockito.mock(Connection.class);
             Statement stmt = Mockito.mock(Statement.class);
             deadlockDetectionTaskMockedStatic
-                .when(() -> DeadlockDetectionTask.createPhysicalConnectionForLeaderStorage(Mockito.any()))
+                .when(() -> DeadlockDetectionTask.createPhysicalConnectionForLeaderStorage(any()))
                 .thenReturn(connection);
             Mockito.when(connection.createStatement()).thenReturn(stmt);
             Mockito.when(stmt.executeQuery(Mockito.anyString()))
                 .thenReturn(getHotspotRs2());
 
-            Assert.assertTrue(task.maybeTooManyDataLockWaits(Mockito.mock(TGroupDataSource.class)));
+            Assert.assertTrue(DeadlockDetectionTask.maybeTooManyDataLockWaits(Mockito.mock(TGroupDataSource.class)));
+        } finally {
+            InstanceVersion.setMYSQL80(isMysql80);
         }
     }
 
     @Test
     public void test5() {
-        MockStatus.setMock(true);
-        ArrayList<TrxLookupSet.Transaction> cycle = new ArrayList<>();
-        TrxLookupSet.Transaction trx = new TrxLookupSet.Transaction(100L);
-        trx.setDdl(true);
-        trx.setSql("alter table drop column a");
-        trx.setFrontendConnId(1024L);
-        trx.setStartTime(System.currentTimeMillis());
-        cycle.add(trx);
-        DeadlockDetectionTask.printDdlDeadlock(cycle, new StringBuilder("test"));
+        try (MockStatus mockStatus = new MockStatus()) {
+            ArrayList<TrxLookupSet.Transaction> cycle = new ArrayList<>();
+            TrxLookupSet.Transaction trx = new TrxLookupSet.Transaction(100L);
+            trx.setDdl(true);
+            trx.setSql("alter table drop column a");
+            trx.setFrontendConnId(1024L);
+            trx.setStartTime(System.currentTimeMillis());
+            cycle.add(trx);
+            DeadlockDetectionTask.printDdlDeadlock(cycle, new StringBuilder("test"));
+        }
+    }
+
+    @Test
+    public void testFetchLockWaitsMySql80() throws SQLException {
+        DynamicConfig.getInstance().loadValue(null, ConnectionProperties.DEADLOCK_DETECTION_80_FETCH_TRX_ROWS, "5");
+        boolean isMysql80 = InstanceVersion.isMYSQL80();
+        InstanceVersion.setMYSQL80(true);
+
+        try (MockStatus status = new MockStatus();
+            MockedStatic<DeadlockDetectionTask> deadlockDetectionTaskMockedStatic =
+                Mockito.mockStatic(DeadlockDetectionTask.class)) {
+            DeadlockDetectionTask task = new DeadlockDetectionTask(new ArrayList<>());
+            Connection connection = Mockito.mock(Connection.class);
+            Statement stmt = Mockito.mock(Statement.class);
+            TrxLookupSet lookupSet = new TrxLookupSet();
+            addTrx(lookupSet, 10000L, "test_group_00000", 100L, 1000L, 1L, "waiting_sql");
+            addTrx(lookupSet, 10000L, "test_group_00000", 200L, 1000L, 2L, "blocking_sql");
+
+            deadlockDetectionTaskMockedStatic
+                .when(() -> DeadlockDetectionTask.createPhysicalConnectionForLeaderStorage(any()))
+                .thenReturn(connection);
+            Mockito.when(connection.createStatement()).thenReturn(stmt);
+            Mockito.when(stmt.executeQuery(Mockito.anyString()))
+                .thenAnswer(
+                    invocation -> {
+                        String sql = invocation.getArgument(0);
+                        if (sql.contains(SQL_QUERY_TRX_80)) {
+                            ArrayResultSet rs = getTrx80Rs();
+                            rs.getRows().add(new Object[] {
+                                1, 100, "LOCK WAIT", "waiting_physical_sql", "operation_state", 6, 7, 8, 9, 5
+                            });
+                            rs.getRows().add(new Object[] {
+                                2, 200, "RUNNING", "blocking_physical_sql", "operation_state", 6, 7, 8, 9, 2
+                            });
+                            return rs;
+                        } else if (sql.contains(SQL_QUERY_LOCK_WAITS_80)) {
+                            ArrayResultSet rs = new ArrayResultSet();
+                            rs.getColumnName().add("waiting_trx_id");
+                            rs.getColumnName().add("blocking_trx_id");
+                            rs.getRows().add(new Object[] {
+                                1, 2
+                            });
+                            return rs;
+                        } else {
+                            return null;
+                        }
+                    }
+                );
+            DiGraph<TrxLookupSet.Transaction> graph = new DiGraph<>();
+            task.fetchLockWaits(Mockito.mock(TGroupDataSource.class), ImmutableList.of("test_group_00000"), lookupSet,
+                graph);
+            TrxLookupSet.Transaction trx1 = lookupSet.getTransaction(10000L);
+            Assert.assertEquals("waiting_physical_sql",
+                trx1.getLocalTransaction("test_group_00000-100").getPhysicalSql());
+            Assert.assertEquals("blocking_physical_sql",
+                trx1.getLocalTransaction("test_group_00000-200").getPhysicalSql());
+            System.out.println(graph);
+            graph.detect().ifPresent((cycle) -> {
+                task.handleGlobalDeadlocks(cycle, graph);
+            });
+        } finally {
+            InstanceVersion.setMYSQL80(isMysql80);
+        }
+    }
+
+    @Test
+    public void testFetchLockWaitsNotMySql80() throws SQLException {
+        DynamicConfig.getInstance().loadValue(null, ConnectionProperties.DEADLOCK_DETECTION_80_FETCH_TRX_ROWS, "5");
+        boolean isMysql80 = InstanceVersion.isMYSQL80();
+        InstanceVersion.setMYSQL80(false);
+
+        try (MockStatus status = new MockStatus();
+            MockedStatic<DeadlockDetectionTask> deadlockDetectionTaskMockedStatic =
+                Mockito.mockStatic(DeadlockDetectionTask.class)) {
+            DeadlockDetectionTask task = new DeadlockDetectionTask(new ArrayList<>());
+            Connection connection = Mockito.mock(Connection.class);
+            Statement stmt = Mockito.mock(Statement.class);
+            TrxLookupSet lookupSet = new TrxLookupSet();
+            addTrx(lookupSet, 10000L, "test_group_00000", 100L, 1000L, 1L, "waiting_sql");
+            addTrx(lookupSet, 10000L, "test_group_00000", 200L, 1000L, 2L, "blocking_sql");
+
+            deadlockDetectionTaskMockedStatic
+                .when(() -> DeadlockDetectionTask.createPhysicalConnectionForLeaderStorage(any()))
+                .thenReturn(connection);
+            Mockito.when(connection.createStatement()).thenReturn(stmt);
+            Mockito.when(stmt.executeQuery(Mockito.anyString()))
+                .thenAnswer(
+                    invocation -> {
+                        String sql = invocation.getArgument(0);
+                        if (sql.contains(SQL_QUERY_DEADLOCKS)) {
+                            return getDeadlocksRs();
+                        } else {
+                            return null;
+                        }
+                    }
+                );
+            DiGraph<TrxLookupSet.Transaction> graph = new DiGraph<>();
+            task.fetchLockWaits(Mockito.mock(TGroupDataSource.class), ImmutableList.of("test_group_00000"), lookupSet,
+                graph);
+            TrxLookupSet.Transaction trx1 = lookupSet.getTransaction(10000L);
+            Assert.assertEquals("waiting_physical_sql",
+                trx1.getLocalTransaction("test_group_00000-100").getPhysicalSql());
+            Assert.assertEquals("blocking_physical_sql",
+                trx1.getLocalTransaction("test_group_00000-200").getPhysicalSql());
+            System.out.println(graph);
+            graph.detect().ifPresent((cycle) -> {
+                task.handleGlobalDeadlocks(cycle, graph);
+            });
+        } finally {
+            InstanceVersion.setMYSQL80(isMysql80);
+        }
     }
 
     @NotNull
@@ -271,7 +410,103 @@ public class DeadlockDetectionTest {
         return rs;
     }
 
-    private static void addTrx(TrxLookupSet lookupSet, Long transId, String group, long connId, long frontendConnId,
+    @Test
+    public void testHandleGlobalDeadlocks() throws SQLException {
+        DynamicConfig.getInstance().loadValue(null, ConnectionProperties.DEADLOCK_DETECTION_80_FETCH_TRX_ROWS, "5");
+        boolean isMysql80 = InstanceVersion.isMYSQL80();
+        InstanceVersion.setMYSQL80(true);
+
+        try (MockStatus status = new MockStatus();
+            MockedStatic<DeadlockDetectionTask> deadlockDetectionTaskMockedStatic =
+                Mockito.mockStatic(DeadlockDetectionTask.class);
+            MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = Mockito.mockStatic(MetaDbUtil.class)) {
+            DeadlockDetectionTask task = new DeadlockDetectionTask(new ArrayList<>());
+            Connection connection = Mockito.mock(Connection.class);
+            Statement stmt = Mockito.mock(Statement.class);
+            TrxLookupSet lookupSet = new TrxLookupSet();
+
+            // Create a deadlock cycle: trx1 -> trx2 -> trx3 -> trx1
+            // trx1: waiting on trx2
+            addTrx(lookupSet, 10001L, "test_group_00001", 101L, 1001L, 1L, "SELECT * FROM t1 WHERE id = 1 FOR UPDATE");
+            // trx2: waiting on trx3
+            addTrx(lookupSet, 10002L, "test_group_00001", 102L, 1002L, 2L, "SELECT * FROM t2 WHERE id = 2 FOR UPDATE");
+            // trx3: waiting on trx1
+            addTrx(lookupSet, 10003L, "test_group_00001", 103L, 1003L, 3L, "SELECT * FROM t3 WHERE id = 3 FOR UPDATE");
+
+            deadlockDetectionTaskMockedStatic
+                .when(() -> DeadlockDetectionTask.createPhysicalConnectionForLeaderStorage(any()))
+                .thenReturn(connection);
+            Mockito.when(connection.createStatement()).thenReturn(stmt);
+            Mockito.when(stmt.executeQuery(Mockito.anyString()))
+                .thenAnswer(
+                    invocation -> {
+                        String sql = invocation.getArgument(0);
+                        if (sql.contains(SQL_QUERY_TRX_80)) {
+                            ArrayResultSet rs = getTrx80Rs();
+                            rs.getRows().add(new Object[] {
+                                1, 101, "LOCK WAIT", "SELECT * FROM t1_phy WHERE id = 1 FOR UPDATE", "operation_state",
+                                1, 1, 1, 100, 5
+                            });
+                            rs.getRows().add(new Object[] {
+                                2, 102, "LOCK WAIT", "SELECT * FROM t2_phy WHERE id = 2 FOR UPDATE", "operation_state",
+                                1, 1, 1, 100, 5
+                            });
+                            rs.getRows().add(new Object[] {
+                                3, 103, "LOCK WAIT", "SELECT * FROM t3_phy WHERE id = 3 FOR UPDATE", "operation_state",
+                                1, 1, 1, 100, 5
+                            });
+                            return rs;
+                        } else if (sql.contains(SQL_QUERY_LOCK_WAITS_80)) {
+                            ArrayResultSet rs = new ArrayResultSet();
+                            rs.getColumnName().add("waiting_trx_id");
+                            rs.getColumnName().add("blocking_trx_id");
+                            // trx1 waiting on trx2
+                            rs.getRows().add(new Object[] {
+                                1, 2
+                            });
+                            // trx2 waiting on trx3
+                            rs.getRows().add(new Object[] {
+                                2, 3
+                            });
+                            // trx3 waiting on trx1
+                            rs.getRows().add(new Object[] {
+                                3, 1
+                            });
+                            return rs;
+                        } else {
+                            return null;
+                        }
+                    }
+                );
+            DiGraph<TrxLookupSet.Transaction> graph = new DiGraph<>();
+            task.fetchLockWaits(Mockito.mock(TGroupDataSource.class), ImmutableList.of("test_group_00001"), lookupSet,
+                graph);
+
+            // Verify the deadlock cycle
+            TrxLookupSet.Transaction trx1 = lookupSet.getTransaction(10001L);
+            TrxLookupSet.Transaction trx2 = lookupSet.getTransaction(10002L);
+            TrxLookupSet.Transaction trx3 = lookupSet.getTransaction(10003L);
+            Assert.assertNotNull(trx1);
+            Assert.assertNotNull(trx2);
+            Assert.assertNotNull(trx3);
+
+            metaDbUtilMockedStatic.when(MetaDbUtil::getConnection).thenReturn(Mockito.mock(Connection.class));
+
+            // Detect and handle deadlock
+            graph.detect().ifPresent((cycle) -> {
+                Assert.assertEquals(3, cycle.size());
+                try {
+                    task.handleGlobalDeadlocks(cycle, graph);
+                } catch (Throwable t) {
+                    // ignored
+                }
+            });
+        } finally {
+            InstanceVersion.setMYSQL80(isMysql80);
+        }
+    }
+
+    private static void addTrx(TrxLookupSet lookupSet, Long transId, String group, long connId, Long frontendConnId,
                                Long startTime, String sql) {
         final GroupConnPair entry = new GroupConnPair(group, connId);
         lookupSet.addNewTransaction(entry, transId);

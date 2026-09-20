@@ -26,6 +26,7 @@ public class SQLShowCreateTableStatement extends SQLStatementImpl implements SQL
     private SQLName name;
     private boolean all;
     private boolean full;
+    private boolean forExport;
     private SQLName likeMapping; // for DLA
 
     public void accept0(SQLASTVisitor visitor) {
@@ -69,6 +70,14 @@ public class SQLShowCreateTableStatement extends SQLStatementImpl implements SQL
 
     public void setFull(boolean full) {
         this.full = full;
+    }
+
+    public boolean isForExport() {
+        return forExport;
+    }
+
+    public void setForExport(boolean forExport) {
+        this.forExport = forExport;
     }
 
     @Override

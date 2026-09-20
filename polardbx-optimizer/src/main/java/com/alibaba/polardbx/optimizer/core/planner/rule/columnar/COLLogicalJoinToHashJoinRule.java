@@ -69,10 +69,8 @@ public class COLLogicalJoinToHashJoinRule extends LogicalJoinToHashJoinRule {
                                   CBOUtil.RexNodeHolder equalConditionHolder,
                                   CBOUtil.RexNodeHolder otherConditionHolder) {
         List<Pair<RelDistribution, Pair<RelNode, RelNode>>> implementationList = new ArrayList<>();
-
         JoinInfo joinInfo = JoinInfo.of(left, right, equalConditionHolder.getRexNode());
         List<Pair<List<Integer>, List<Integer>>> keyPairList = new ArrayList<>();
-
         for (IntPair pair : joinInfo.pairs()) {
             keyPairList.add(Pair.of(ImmutableIntList.of(pair.source), ImmutableIntList.of(pair.target)));
         }
@@ -84,34 +82,21 @@ public class COLLogicalJoinToHashJoinRule extends LogicalJoinToHashJoinRule {
                 right.getRowType().getFieldCount());
 
         if (PlannerContext.getPlannerContext(call).getParamManager()
-            .getBoolean(ConnectionParams.ENABLE_PARTITION_WISE_JOIN)) {
-            CBOUtil.columnarHashDistribution(
-                keyPairList,
-                join,
-                left,
-                right,
-                mapping,
-                implementationList);
-        }
-        if (CollectionUtils.isEmpty(implementationList)) {
-            // default hash join
-            RelDataType keyDataType = CalciteUtils.getJoinKeyDataType(
-                join.getCluster().getTypeFactory(), join, joinInfo.leftKeys, joinInfo.rightKeys);
-            RelNode hashLeft = RuleUtils.ensureKeyDataTypeDistribution(left, keyDataType, joinInfo.leftKeys);
-            RelNode hashRight = RuleUtils.ensureKeyDataTypeDistribution(right, keyDataType, joinInfo.rightKeys);
-            implementationList.add(Pair.of(hashLeft.getTraitSet().getDistribution(), Pair.of(hashLeft, hashRight)));
-            implementationList
-                .add(Pair.of(hashRight.getTraitSet().getDistribution().apply(mapping),
-                    Pair.of(hashLeft, hashRight)));
+            .getBoolean(ConnectionParams.ENABLE_SHUFFLE_JOIN)) {
+            if (PlannerContext.getPlannerContext(call).getParamManager()
+                .getBoolean(ConnectionParams.ENABLE_PARTITION_WISE) &&
+                PlannerContext.getPlannerContext(call).getParamManager()
+                    .getBoolean(ConnectionParams.ENABLE_PARTITION_WISE_JOIN)) {
+                CBOUtil.columnarHashDistribution(keyPairList, join, left, right, mapping, implementationList);
+            }
+            if (CollectionUtils.isEmpty(implementationList)) {
+                nonePartitionWiseJoin(join, left, right, joinInfo, mapping, implementationList);
+            }
         }
 
         if (PlannerContext.getPlannerContext(call).getParamManager()
             .getBoolean(ConnectionParams.ENABLE_BROADCAST_JOIN)) {
-            CBOUtil.columnarBroadcastDistribution(
-                join,
-                left,
-                right,
-                implementationList);
+            CBOUtil.columnarBroadcastDistribution(join, left, right, implementationList);
         }
         for (Pair<RelDistribution, Pair<RelNode, RelNode>> implementation : implementationList) {
             HashJoin hashJoin = HashJoin.create(
@@ -142,6 +127,25 @@ public class COLLogicalJoinToHashJoinRule extends LogicalJoinToHashJoinRule {
             } else {
                 call.transformTo(hashJoin);
             }
+        }
+    }
+
+    private void nonePartitionWiseJoin(LogicalJoin join,
+                                       RelNode left,
+                                       RelNode right,
+                                       JoinInfo joinInfo,
+                                       Mappings.TargetMapping mapping,
+                                       List<Pair<RelDistribution, Pair<RelNode, RelNode>>> implementationList) {
+        if (CollectionUtils.isEmpty(implementationList)) {
+            // default hash join
+            RelDataType keyDataType = CalciteUtils.getJoinKeyDataType(
+                join.getCluster().getTypeFactory(), join, joinInfo.leftKeys, joinInfo.rightKeys);
+            RelNode hashLeft = RuleUtils.ensureKeyDataTypeDistribution(left, keyDataType, joinInfo.leftKeys);
+            RelNode hashRight = RuleUtils.ensureKeyDataTypeDistribution(right, keyDataType, joinInfo.rightKeys);
+            implementationList.add(Pair.of(hashLeft.getTraitSet().getDistribution(), Pair.of(hashLeft, hashRight)));
+            implementationList
+                .add(Pair.of(hashRight.getTraitSet().getDistribution().apply(mapping),
+                    Pair.of(hashLeft, hashRight)));
         }
     }
 }

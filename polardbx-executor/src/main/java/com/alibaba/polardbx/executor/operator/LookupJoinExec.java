@@ -17,7 +17,9 @@
 package com.alibaba.polardbx.executor.operator;
 
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.memory.SizeOf;
+import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.ChunkConverter;
 import com.alibaba.polardbx.executor.chunk.Converters;
@@ -30,12 +32,15 @@ import com.alibaba.polardbx.optimizer.core.expression.calc.IExpression;
 import com.alibaba.polardbx.optimizer.core.join.EquiJoinKey;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.memory.MemoryPoolUtils;
+import com.alibaba.polardbx.stats.metric.FeatureStats;
+import com.alibaba.polardbx.stats.metric.FeatureStatsItem;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.calcite.rel.core.JoinRelType;
 
 import java.util.Arrays;
 import java.util.List;
 
+import static com.alibaba.polardbx.common.properties.ConnectionParams.ENABLE_GSI_LOOKUP_OPTIMIZE;
 import static com.alibaba.polardbx.executor.utils.ExecUtils.buildOneChunk;
 
 /**
@@ -71,16 +76,29 @@ public class LookupJoinExec extends AbstractBufferedJoinExec implements ResumeEx
      */
     boolean allowMultiReadConnStreaming;
 
-    public LookupJoinExec(Executor outerInput, Executor innerInput,
-                          JoinRelType joinType, boolean maxOneRow,
+    int shardCount;
+
+    boolean isAdaptiveLookupOptimizationReady;
+
+    boolean ignoreOuterData = false;
+
+    public LookupJoinExec(Executor outerInput, Executor innerInput, JoinRelType joinType, boolean maxOneRow,
                           List<EquiJoinKey> joinKeys, List<EquiJoinKey> allJoinKeys, IExpression otherCondition,
-                          ExecutionContext context,
-                          int shardCount,
-                          int parallelism,
+                          ExecutionContext context, int shardCount, int parallelism,
                           boolean allowMultiReadConnStreaming) {
+        this(outerInput, innerInput, joinType, maxOneRow, joinKeys, allJoinKeys, otherCondition, context, shardCount,
+            parallelism, allowMultiReadConnStreaming, false);
+    }
+
+    public LookupJoinExec(Executor outerInput, Executor innerInput, JoinRelType joinType, boolean maxOneRow,
+                          List<EquiJoinKey> joinKeys, List<EquiJoinKey> allJoinKeys, IExpression otherCondition,
+                          ExecutionContext context, int shardCount, int parallelism,
+                          boolean allowMultiReadConnStreaming, boolean isAdaptiveLookupOptimizationReady) {
         super(outerInput, innerInput, joinType, maxOneRow, joinKeys, otherCondition, null, null, context);
         getInnerLookupTableExec();
         getOuterExec();
+        this.shardCount = shardCount;
+        this.isAdaptiveLookupOptimizationReady = isAdaptiveLookupOptimizationReady;
         initBatchSize(shardCount, parallelism);
 
         this.blocked = ProducerExecutor.NOT_BLOCKED;
@@ -88,8 +106,7 @@ public class LookupJoinExec extends AbstractBufferedJoinExec implements ResumeEx
         DataType[] keyColumnTypes = allJoinKeys.stream().map(t -> t.getUnifiedType()).toArray(DataType[]::new);
         int[] outerKeyColumns = allJoinKeys.stream().mapToInt(t -> t.getOuterIndex()).toArray();
         this.allOuterKeyChunkGetter =
-            Converters.createChunkConverter(
-                outerInput.getDataTypes(), outerKeyColumns, keyColumnTypes, context);
+            Converters.createChunkConverter(outerInput.getDataTypes(), outerKeyColumns, keyColumnTypes, context);
 
         this.streamJoin = true;
         this.allowMultiReadConnStreaming = allowMultiReadConnStreaming;
@@ -103,8 +120,8 @@ public class LookupJoinExec extends AbstractBufferedJoinExec implements ResumeEx
         int batchSize;
         int maxTotalLookupSize = context.getParamManager().getInt(ConnectionParams.LOOKUP_JOIN_MAX_BATCH_SIZE);
         if (lookupTableExec.shardEnabled() && shardCount > 0) {
-            batchSize = shardCount *
-                context.getParamManager().getInt(ConnectionParams.LOOKUP_JOIN_BLOCK_SIZE_PER_SHARD);
+            batchSize =
+                shardCount * context.getParamManager().getInt(ConnectionParams.LOOKUP_JOIN_BLOCK_SIZE_PER_SHARD);
             // 防止裁剪后存在数据倾斜 设置上限
             batchSize = Math.min(maxTotalLookupSize, batchSize);
         } else {
@@ -174,6 +191,12 @@ public class LookupJoinExec extends AbstractBufferedJoinExec implements ResumeEx
                 this.isFinish = true;
                 return null;
             }
+        } else if (ignoreOuterData) {
+            Chunk c = buildJoinChunk(innerInput.nextChunk());
+            if (innerInput.produceIsFinished()) {
+                isFinish = true;
+            }
+            return c;
         }
 
         if (beingConsumeOuter) {
@@ -222,6 +245,29 @@ public class LookupJoinExec extends AbstractBufferedJoinExec implements ResumeEx
         }
     }
 
+    private Chunk buildJoinChunk(Chunk rows) {
+        if (rows == null) {
+            return null;
+        }
+        int outColNum = outerInput.getDataTypes().size();
+        int rowCount = rows.getPositionCount();
+        Block[] outputBlocks = new Block[this.dataTypes.size()];
+        for (int i = 0; i < outColNum; i++) {
+            for (int j = 0; j < rowCount; j++) {
+                blockBuilders[i].appendNull();
+            }
+            outputBlocks[i] = blockBuilders[i].build();
+        }
+        for (int i = 0; i < rows.getBlockCount(); i++) {
+            outputBlocks[i + outColNum] = rows.getBlock(i);
+        }
+        // reset block builders
+        for (int i = 0; i < outColNum; i++) {
+            blockBuilders[i] = blockBuilders[i].newBlockBuilder();
+        }
+        return new Chunk(outputBlocks);
+    }
+
     @Override
     public boolean resume() {
         outerNoMoreData = false;
@@ -255,10 +301,21 @@ public class LookupJoinExec extends AbstractBufferedJoinExec implements ResumeEx
 
     @Override
     Chunk nextProbeChunk() {
-        if (this.savePopChunk == null) {
+        if (!ignoreOuterData && this.savePopChunk == null) {
             buildChunks = new ChunksIndex();
             buildKeyChunks = new ChunksIndex();
             savePopChunk = batchQueue.pop();
+            if (isLookupSizeTooMuch(innerIsOpen, isAdaptiveLookupOptimizationReady, savePopChunk,
+                this.shardCount, context)) {
+                if (!innerIsOpen) {
+                    getLookupTableExec().switchNoMgetSql();
+                    innerInput.open();
+                    innerIsOpen = true;
+                    ignoreOuterData = true;
+                    FeatureStats.getInstance().increment(FeatureStatsItem.GSI_LOOKUP_FALLBACK_MAINTABLE_TIMES);
+                }
+                return null;
+            }
             if (savePopChunk != null) {
                 getLookupTableExec().releaseConditionMemory();
                 Chunk allJoinKeys = allOuterKeyChunkGetter.apply(savePopChunk);
@@ -305,6 +362,31 @@ public class LookupJoinExec extends AbstractBufferedJoinExec implements ResumeEx
                 return null;
             }
         }
+    }
+
+    public static boolean isLookupSizeTooMuch(boolean innerIsOpen,
+                                              boolean isAdaptiveLookupOptimizationReady,
+                                              Chunk savePopChunk,
+                                              int shardCount,
+                                              ExecutionContext context) {
+        if (innerIsOpen) {
+            return false;
+        }
+        if (!isAdaptiveLookupOptimizationReady) {
+            return false;
+        }
+        if (savePopChunk == null) {
+            return false;
+        }
+
+        int lookupSize = savePopChunk.getPositionCount();
+        if (context.getParamManager().getBoolean(ENABLE_GSI_LOOKUP_OPTIMIZE)) {
+            if (shardCount == 0 || lookupSize == 0) {
+                return false;
+            }
+            return lookupSize >= (shardCount * DynamicConfig.getInstance().getGsiLookupOptimizeThreshold());
+        }
+        return false;
     }
 
     void buildHashTable() {

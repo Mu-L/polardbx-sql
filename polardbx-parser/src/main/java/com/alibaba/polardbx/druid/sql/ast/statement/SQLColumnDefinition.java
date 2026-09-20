@@ -91,6 +91,8 @@ public class SQLColumnDefinition extends SQLObjectImpl
 
     private SQLIdentifierExpr securedWith;
 
+    protected boolean externalize = false; // for column externalization (store TEXT/BLOB in OSS Blob File)
+
     public SQLColumnDefinition() {
 
     }
@@ -621,7 +623,13 @@ public class SQLColumnDefinition extends SQLObjectImpl
             }
         }
 
+        x.setSequenceType(sequenceType);
+        x.setUnitCount(unitCount);
+        x.setUnitIndex(unitIndex);
+
         x.setDefaultExprHasLp(this.isDefaultExprHasLp());
+
+        x.setExternalize(this.externalize);
 
         return x;
     }
@@ -852,5 +860,13 @@ public class SQLColumnDefinition extends SQLObjectImpl
 
     public void setSecuredWith(SQLIdentifierExpr securedWith) {
         this.securedWith = securedWith;
+    }
+
+    public boolean isExternalize() {
+        return externalize;
+    }
+
+    public void setExternalize(boolean externalize) {
+        this.externalize = externalize;
     }
 }

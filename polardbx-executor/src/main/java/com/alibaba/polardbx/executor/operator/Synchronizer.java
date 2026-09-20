@@ -16,105 +16,130 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableIntArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.common.utils.bloomfilter.ConcurrentIntBloomFilter;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
-import com.alibaba.polardbx.common.utils.memory.SizeOf;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.mpp.execution.TaskExecutor;
 import com.alibaba.polardbx.executor.operator.util.ChunksIndex;
 import com.alibaba.polardbx.executor.operator.util.ConcurrentBitSet;
-import com.alibaba.polardbx.executor.operator.util.ConcurrentBitSetImpl;
 import com.alibaba.polardbx.executor.operator.util.ConcurrentRawDirectHashTable;
 import com.alibaba.polardbx.executor.operator.util.ConcurrentRawHashTable;
+import com.alibaba.polardbx.executor.operator.util.TypedListHandle;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
+import com.google.common.util.concurrent.ListenableFuture;
+import it.unimi.dsi.fastutil.ints.MemoryCountableInt2ObjectArrayMap;
 import org.apache.calcite.rel.core.JoinRelType;
+import org.openjdk.jol.info.ClassLayout;
 
-import java.text.MessageFormat;
-import java.util.Arrays;
-import java.util.BitSet;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static com.alibaba.polardbx.executor.utils.ExecUtils.buildOneChunk;
 
-public class Synchronizer {
+public class Synchronizer implements MemoryCountable {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(Synchronizer.class).instanceSize();
     private static final Logger LOGGER = LoggerFactory.getLogger(TaskExecutor.class);
     private final static int DEFAULT_CHUNK_LIMIT = 1000;
 
-    /**
-     * How many degrees of parallelism in this Synchronizer instance.
-     */
+    // ------- 1. Owned by this Synchronizer object, and belonging to executor whose operator_id = 0 -------
+    // for runtime filter.
+    MemoryCountableInt2ObjectArrayMap<SynchronizerRFMerger> synchronizerRFMergers =
+        new MemoryCountableInt2ObjectArrayMap<>(
+            synchronizerRFMerger -> FastMemoryCounter.sizeOf(synchronizerRFMerger)
+        );
+    // parallel hash join exec sharing this Synchronizer.
+    @FieldMemoryCounter(value = false)
+    final ParallelHashJoinExec[] hashJoinExecs;
+    @FieldMemoryCounter(value = false)
+    ListenableFuture<?> listenableFuture;
+
+    volatile boolean hashTableInitialized = false;
+
+    // How many degrees of parallelism in this Synchronizer instance.
     final int numberOfExec;
-
-    /**
-     * How many partitions in this Synchronizer instance.
-     * It's useful in local partition mode.
-     */
+    // How many partitions in this Synchronizer instance.It's useful in local partition mode.
     final int numberOfDataPartition;
-
+    // How many partitions in this Synchronizer instance.
     final AtomicInteger buildCount = new AtomicInteger();
-
-    /**
-     * used to synchronize probe side of reverse anti join
-     */
+    // used to synchronize probe side of reverse anti join
     final AtomicInteger antiProbeCount = new AtomicInteger();
-
-    ConcurrentRawDirectHashTable antiProbeFinished;
-
-    volatile List<Integer> antJoinOutputRowId;
-
-    // Shared States
-    final ChunksIndex builderChunks;
-    final ChunksIndex builderKeyChunks;
-
-    volatile ConcurrentRawHashTable hashTable;
-    int[] positionLinks;
-    ConcurrentIntBloomFilter bloomFilter;
+    @FieldMemoryCounter(value = false)
+    AtomicReference<TypedListHandle> chunkIndexTypedListHandle = new AtomicReference<>(null);
+    @FieldMemoryCounter(value = false)
+    AtomicReference<TypedListHandle> keyChunkIndexTypedListHandle = new AtomicReference<>(null);
     boolean alreadyUseRuntimeFilter;
     boolean useBloomFilter;
-
+    @FieldMemoryCounter(value = false)
     // exception during initializing hash table (e.g. MemoryNotEnoughException)
     volatile Throwable initException;
-
-    volatile ConcurrentBitSet joinNullRowBitSet;
     Object isBitSetInitialized = new Object();
-
+    // for build outer.
     int maxIndex = -1;
     AtomicInteger nextIndexId = new AtomicInteger(0);
-
+    @FieldMemoryCounter(value = false)
     // To Record if an executor in thread have been finished.
     final ConcurrentHashMap<Integer, Object> operatorIdBitmap = new ConcurrentHashMap<>();
-
-    ConcurrentRawDirectHashTable matchedPosition;
-
     // Thread Local arrays for hash code vector
     final int chunkLimit;
+    @FieldMemoryCounter(value = false)
     final ThreadLocal<int[]> hashCodeResultsThreadLocal;
+    @FieldMemoryCounter(value = false)
     final ThreadLocal<int[]> intermediatesThreadLocal;
+    @FieldMemoryCounter(value = false)
     final ThreadLocal<int[]> blockHashCodesThreadLocal;
-
+    @FieldMemoryCounter(value = false)
     final JoinRelType joinType;
     final boolean outerDriver;
 
-    // partition-level chunk index to avoid lock
-    final ParallelHashJoinExec.PartitionChunksIndex[] partitionChunksIndexes;
-    final AtomicLong nextPartition;
-
     final boolean isHashTableShared;
-    Map<Integer, SynchronizerRFMerger> synchronizerRFMergers;
-
     private int probeParallelism;
+    // for outer anti join.
+    ConcurrentRawDirectHashTable antiProbeFinished;
+
+    // ------- 2. Owned by executor that open consume -------
+    // partition-level chunk index to avoid lock
+    // @FieldMemoryCounter(value = false)
+    // final ParallelHashJoinExec[] partitionChunksIndexes;
+
+    // ------- 3. Owned by executor that building hash table -------
+    @FieldMemoryCounter(value = false)
+    ChunksIndex builderChunks = null;
+    @FieldMemoryCounter(value = false)
+    ChunksIndex builderKeyChunks = null;
+    @FieldMemoryCounter(value = false)
+    volatile ConcurrentRawHashTable hashTable;
+    @FieldMemoryCounter(value = false)
+    int[] positionLinks;
+    @FieldMemoryCounter(value = false)
+    ConcurrentIntBloomFilter bloomFilter;
+    @FieldMemoryCounter(value = false)
+    ConcurrentRawDirectHashTable buildOuterMatchedPosition;
+
+    // ------- 4. Owned by first producer executor -------
+    @FieldMemoryCounter(value = false)
+    volatile MemoryCountableIntArrayList antJoinOutputRowId;
+    @FieldMemoryCounter(value = false)
+    volatile ConcurrentBitSet joinNullRowBitSet;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(synchronizerRFMergers)
+            + FastMemoryCounter.sizeOf(buildCount)
+            + FastMemoryCounter.sizeOf(antiProbeCount)
+            + FastMemoryCounter.sizeOf(nextIndexId)
+            + FastMemoryCounter.OBJECT_INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(antiProbeFinished);
+
+    }
 
     public Synchronizer(JoinRelType joinType, boolean outerDriver, int numberOfExec,
                         boolean alreadyUseRuntimeFilter, boolean useBloomFilter, int chunkLimit,
@@ -126,8 +151,6 @@ public class Synchronizer {
         this.numberOfExec = numberOfExec;
         this.alreadyUseRuntimeFilter = alreadyUseRuntimeFilter;
         this.useBloomFilter = useBloomFilter;
-        this.builderChunks = new ChunksIndex();
-        this.builderKeyChunks = new ChunksIndex();
 
         this.chunkLimit = chunkLimit;
         hashCodeResultsThreadLocal = ThreadLocal.withInitial(() -> new int[chunkLimit]);
@@ -139,14 +162,9 @@ public class Synchronizer {
             this.antiProbeFinished = new ConcurrentRawDirectHashTable(probeParallelism);
         }
 
-        this.partitionChunksIndexes = new ParallelHashJoinExec.PartitionChunksIndex[numberOfExec];
-        this.nextPartition = new AtomicLong(0L);
-        for (int i = 0; i < numberOfExec; i++) {
-            partitionChunksIndexes[i] = new ParallelHashJoinExec.PartitionChunksIndex();
-        }
+        this.hashJoinExecs = new ParallelHashJoinExec[probeParallelism];
         this.numberOfDataPartition = numberOfDataPartition;
         this.probeParallelism = probeParallelism;
-        this.synchronizerRFMergers = new TreeMap<>();
     }
 
     // Just for test
@@ -156,83 +174,27 @@ public class Synchronizer {
             probeParallelism, -1, false);
     }
 
+    public void setChunkIndexTypedHashTable(TypedListHandle typedListHandle) {
+        this.chunkIndexTypedListHandle.compareAndSet(null, typedListHandle);
+    }
+
+    public void setKeyChunkIndexTypedHashTable(TypedListHandle typedListHandle) {
+        this.keyChunkIndexTypedListHandle.compareAndSet(null, typedListHandle);
+    }
+
     public void putSynchronizerRFMerger(int ordinal, SynchronizerRFMerger synchronizerRFMerger) {
         synchronizerRFMergers.put(ordinal, synchronizerRFMerger);
     }
 
-    public ParallelHashJoinExec.PartitionChunksIndex nextPartition() {
-        return partitionChunksIndexes[(int) (nextPartition.getAndIncrement() % numberOfExec)];
+    public void registerOperator(int operatorId, ParallelHashJoinExec exec) {
+        hashJoinExecs[operatorId] = exec;
     }
 
-    public void initHashTable(MemoryAllocatorCtx ctx) {
-        if (hashTable == null) {
-            long start = System.nanoTime();
-
-            // merge chunk index
-            List<ChunksIndex> partitionBuilderChunks = Arrays.stream(partitionChunksIndexes)
-                .map(ParallelHashJoinExec.PartitionChunksIndex::getBuilderChunks).collect(Collectors.toList());
-            List<ChunksIndex> partitionBuilderKeyChunks = Arrays.stream(partitionChunksIndexes)
-                .map(ParallelHashJoinExec.PartitionChunksIndex::getBuilderKeyChunks).collect(Collectors.toList());
-            builderChunks.merge(partitionBuilderChunks);
-            builderKeyChunks.merge(partitionBuilderKeyChunks);
-
-            final int size = builderKeyChunks.getPositionCount();
-
-            // large memory allocation: hash table for build-side
-            ctx.allocateReservedMemory(ConcurrentRawHashTable.estimateSizeInBytes(size));
-            hashTable = new ConcurrentRawHashTable(size);
-
-            if (outerDriver && (joinType == JoinRelType.ANTI || joinType == JoinRelType.SEMI)) {
-                // large memory allocation: hash table for reversed anti/semi join
-                ctx.allocateReservedMemory(ConcurrentRawDirectHashTable.estimatedSizeInBytes(size));
-                matchedPosition = new ConcurrentRawDirectHashTable(size);
-            }
-
-            // large memory allocation: linked list for build-side.
-            ctx.allocateReservedMemory(SizeOf.sizeOfIntArray(size));
-            positionLinks = new int[size];
-            Arrays.fill(positionLinks, AbstractHashJoinExec.LIST_END);
-
-            // large memory allocation: type-specific lists in key columns chunks index.
-            ctx.allocateReservedMemory(builderKeyChunks.estimateTypedListSizeInBytes());
-            builderKeyChunks.openTypedHashTable();
-
-            // large memory allocation: type-specific lists in full columns chunks index.
-            ctx.allocateReservedMemory(builderChunks.estimateTypedListSizeInBytes());
-            builderChunks.openTypedHashTable();
-
-            if (useBloomFilter && !alreadyUseRuntimeFilter
-                && size <= AbstractJoinExec.BLOOM_FILTER_ROWS_LIMIT_FOR_PARALLEL
-                && size > 0) {
-                // large memory allocation: bloom-filter
-                ctx.allocateReservedMemory(
-                    ConcurrentIntBloomFilter.estimatedSizeInBytes(size, ConcurrentIntBloomFilter.DEFAULT_FPP));
-                bloomFilter = ConcurrentIntBloomFilter.create(size);
-            }
-
-            if (LOGGER.isDebugEnabled()) {
-                LOGGER.debug(
-                    MessageFormat.format("initialize hash table time cost = {0} ns, positionCount = {1}, "
-                        + "hash table size = {2}", (System.nanoTime() - start), size, hashTable.size()));
-            }
-
-        }
-    }
-
+    // Forbid any memory allocation here.
     public void buildHashTable(int partition, MemoryAllocatorCtx ctx, int[] ignoreNullBlocks,
                                int ignoreNullBlocksSize) {
-
-        synchronized (this) {
-            if (hashTable == null && initException == null) {
-                try {
-                    initHashTable(ctx);
-                } catch (Throwable t) {
-                    // Avoid allocating hash table after encountering out-of-memory exception.
-                    this.initException = t;
-                    throw t;
-                }
-            }
-        }
+        // Check initialization.
+        Preconditions.checkArgument(hashTable != null || initException != null);
 
         final int partitionSize = -Math.floorDiv(-builderKeyChunks.getChunkCount(), numberOfExec);
         final int startChunkId = partitionSize * partition;
@@ -268,8 +230,8 @@ public class Synchronizer {
         // step3. add fragment-level runtime filter.
         if (synchronizerRFMergers != null && !synchronizerRFMergers.isEmpty()) {
 
-            for (Map.Entry<Integer, SynchronizerRFMerger> entry : synchronizerRFMergers.entrySet()) {
-                SynchronizerRFMerger merger = entry.getValue();
+            for (int i : synchronizerRFMergers.keySet()) {
+                SynchronizerRFMerger merger = synchronizerRFMergers.get(i);
 
                 switch (merger.getFragmentItem().getRFType()) {
                 case BROADCAST:
@@ -281,16 +243,10 @@ public class Synchronizer {
                     break;
                 }
             }
+
         }
 
         assert position == endPosition;
-    }
-
-    public synchronized void buildAntiJoinOutputRowIds() {
-        if (antJoinOutputRowId != null) {
-            return;
-        }
-        antJoinOutputRowId = matchedPosition.getNotMarkedPosition();
     }
 
     // No lock is needed here because it executes only during the operator creation.
@@ -303,17 +259,6 @@ public class Synchronizer {
     public boolean consumeInputIsFinish(int operatorId) {
         this.operatorIdBitmap.remove(operatorId);
         return this.operatorIdBitmap.isEmpty();
-    }
-
-    public void buildNullBitSets(int buildSize) {
-        if (joinNullRowBitSet == null) {
-            synchronized (isBitSetInitialized) {
-                if (joinNullRowBitSet == null) {
-                    joinNullRowBitSet = new ConcurrentBitSetImpl(buildSize);
-                    maxIndex = buildSize;
-                }
-            }
-        }
     }
 
     public void markUsedKeys(int matchedPosition) {
@@ -353,10 +298,6 @@ public class Synchronizer {
 
     public int getProbeParallelism() {
         return probeParallelism;
-    }
-
-    public ConcurrentRawDirectHashTable getMatchedPosition() {
-        return matchedPosition;
     }
 
     public void close() {

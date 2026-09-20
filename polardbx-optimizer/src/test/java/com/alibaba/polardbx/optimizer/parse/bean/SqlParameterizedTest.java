@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.optimizer.parse.bean;
 
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
+import com.alibaba.polardbx.gms.config.impl.MetaDbInstConfigManager;
 import com.alibaba.polardbx.optimizer.parse.SqlParameterizeUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -27,6 +28,7 @@ import java.util.Map;
 public class SqlParameterizedTest {
     @Test
     public void test() {
+        MetaDbInstConfigManager.setConfigFromMetaDb(false);
         doTest(
             "select * from t where integer_test in (1, '2', 9223372036854775807, 18446744073709551615, 18446744073709551616, 8.8)",
             "SELECT *\n"

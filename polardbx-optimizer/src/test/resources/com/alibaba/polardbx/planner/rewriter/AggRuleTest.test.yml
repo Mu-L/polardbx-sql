@@ -103,7 +103,7 @@
   plan: |
     project(count(distinct userid)="count(distinct userid)", group_concat(operation, ',')="group_concat(operation, ',')")
       logicalagg(group="name,actiondate", count(distinct userid)="sum(count(distinct userid))", group_concat(operation, ',')="group_concat(group_concat(operation, ','))")
-        logicalview(tables="[0000-0003].user_log_[0-6]", shardcount=28, sql="select `name`, `actiondate`, count(distinct `userid`) as `count(distinct userid)`, group_concat(`operation`, ','  ) as `group_concat(operation, ',')` from `user_log` as `user_log` group by `name`, `actiondate`")
+        logicalview(tables="[0000-0003].user_log_[0-6]", shardcount=28, sql="select `name`, `actiondate`, count(distinct `userid`) as `count(distinct userid)`, group_concat(`operation`, ',') as `group_concat(operation, ',')` from `user_log` as `user_log` group by `name`, `actiondate`")
 
 - sql: |
     select count(*) from user_log limit 1
@@ -117,7 +117,7 @@
     select count(userid),group_concat(operation, ',') from user_log group by userid, name, actionDate
 
   plan: |
-    LogicalView(tables="[0000-0003].user_log_[0-6]", shardCount=28, sql="SELECT COUNT(`userId`) AS `count(userid)`, GROUP_CONCAT(`operation`, ','  ) AS `group_concat(operation, ',')` FROM `user_log` AS `user_log` GROUP BY `userId`, `name`, `actionDate`")
+    LogicalView(tables="[0000-0003].user_log_[0-6]", shardCount=28, sql="SELECT COUNT(`userId`) AS `count(userid)`, GROUP_CONCAT(`operation`, ',') AS `group_concat(operation, ',')` FROM `user_log` AS `user_log` GROUP BY `userId`, `name`, `actionDate`")
 
 - sql: |
     select count(*) from user_log

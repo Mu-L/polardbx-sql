@@ -33,8 +33,6 @@ import java.util.TimeZone;
  * @author fangwu
  */
 public abstract class BaseColumnIndex implements ColumnIndex {
-    private static final ZoneId DEFAULT_TIME_ZONE = TimeZone.getTimeZone("GMT+08:00").toZoneId();
-
     private long rgNum;
 
     protected BaseColumnIndex(long rgNum) {
@@ -51,7 +49,7 @@ public abstract class BaseColumnIndex implements ColumnIndex {
      * @param dt: column data type
      * @param clazz: excepted input data type
      */
-    protected <T> T paramTransform(Object value, DataType dt, Class<T> clazz) {
+    protected <T> T paramTransform(Object value, DataType dt, IndexPruneContext ipc, Class<T> clazz) {
         Preconditions.checkArgument(value != null && dt != null, "value and DataType can't be null here");
         if (DataTypeUtil.isIntType(dt)) {
             if (clazz.equals(Long.class) && value instanceof Number) {
@@ -68,7 +66,8 @@ public abstract class BaseColumnIndex implements ColumnIndex {
             }
             if (clazz.equals(Long.class)) {
                 if (DataTypeUtil.equalsSemantically(DataTypes.TimestampType, dt)) {
-                    return clazz.cast(convertToLongFromMysqlDateTime(date));
+                    ZoneId id = ipc == null ? ZoneId.systemDefault() : ipc.getZoneId();
+                    return clazz.cast(convertToLongFromMysqlDateTime(date, id));
                 } else {
                     return clazz.cast(date.toPackedLong());
                 }
@@ -80,10 +79,10 @@ public abstract class BaseColumnIndex implements ColumnIndex {
     /**
      * 将字符串时间转成的MysqlDateTime转成MySQLTimeVal，再转成long, 与columnar写入对齐
      */
-    public static long convertToLongFromMysqlDateTime(MysqlDateTime t) {
+    public static long convertToLongFromMysqlDateTime(MysqlDateTime t, ZoneId zoneId) {
         TimeParseStatus timeParseStatus = new TimeParseStatus();
         MySQLTimeVal timeVal = MySQLTimeConverter.convertDatetimeToTimestampWithoutCheck(t, timeParseStatus,
-            DEFAULT_TIME_ZONE);
+            zoneId);
         if (timeVal == null) {
             // for error time value, set to zero.
             timeVal = new MySQLTimeVal();

@@ -75,6 +75,7 @@
     <SystemTable name="ddl_engine_archive">
         <Create><![CDATA[
             create table if not exists `ddl_engine_archive` (
+              `pk` bigint unsigned not null auto_increment primary key,
               `id` bigint unsigned not null,
               `job_id` bigint unsigned not null,
               `ddl_type` varchar(64) not null,
@@ -104,10 +105,14 @@
         <Change><![CDATA[
            alter table ddl_engine_archive add index (`gmt_created`);
         ]]></Change>
+        <Change><![CDATA[
+           alter table ddl_engine_archive add column `pk` bigint unsigned not null auto_increment primary key first;
+        ]]></Change>
     </SystemTable>
     <SystemTable name="ddl_engine_task_archive">
         <Create><![CDATA[
             create table if not exists `ddl_engine_task_archive` (
+              `id` bigint unsigned not null auto_increment primary key,
               `job_id` bigint(20) unsigned not null,
               `task_id` bigint(20) unsigned not null,
               `schema_name` varchar(64) not null,
@@ -136,10 +141,14 @@
         <Change><![CDATA[
            alter table ddl_engine_task_archive add index `root_job_id` (`root_job_id`);
         ]]></Change>
+        <Change><![CDATA[
+           alter table ddl_engine_task_archive add column `id` bigint unsigned not null auto_increment primary key;
+        ]]></Change>
     </SystemTable>
     <SystemTable name="read_write_lock">
         <Create><![CDATA[
             create table if not exists `read_write_lock` (
+              `id` bigint unsigned not null auto_increment primary key,
               `schema_name` varchar(64) not null,
               `owner` varchar(128) not null,
               `resource` varchar(255) not null,
@@ -153,6 +162,28 @@
         <Change><![CDATA[
            alter table read_write_lock add index `schema_name`(schema_name);
         ]]></Change>
+        <Change><![CDATA[
+           alter table read_write_lock add column `id` bigint unsigned not null auto_increment primary key;
+        ]]></Change>
+    </SystemTable>
+    <SystemTable name="read_write_lock_waiting">
+        <Create><![CDATA[
+            create table if not exists `read_write_lock_waiting` (
+              `id` bigint unsigned not null auto_increment primary key,
+              `schema_name` varchar(64) not null,
+              `owner` varchar(128) not null,
+              `resource` varchar(255) not null,
+              `type` varchar(128) not null,
+              `queue_seq` bigint unsigned not null,
+              `gmt_created` timestamp not null default current_timestamp,
+              `gmt_modified` timestamp not null default current_timestamp on update current_timestamp,
+              unique key `uk_owner_resource` (`owner`, `resource`),
+              unique key `uk_resource_seq` (`resource`, `queue_seq`),
+              key `idx_resource_seq` (`resource`, `queue_seq`),
+              key `idx_owner` (`owner`),
+              key `idx_schema_name` (`schema_name`)
+            ) default charset=utf8
+        ]]></Create>
     </SystemTable>
     <SystemTable name="ddl_plan">
         <Create><![CDATA[
@@ -186,6 +217,26 @@
             ALTER TABLE `ddl_plan` ADD INDEX `job_id`(job_id);
         ]]></Change>
     </SystemTable>
+    <SystemTable name="ddl_table_meta_info">
+        <Create><![CDATA[
+            create table if not exists `ddl_table_meta_info` (
+              `id` bigint unsigned not null auto_increment,
+              `job_id` bigint unsigned not null,
+              `source_job_id` bigint unsigned not null default 0,
+              `ddl_type` varchar(64) not null,
+              `ddl_stmt` longtext,
+              `schema_name` varchar(64) not null,
+              `table_name` varchar(64) not null,
+              `table_meta_info` longtext,
+              `gmt_created` timestamp not null  default current_timestamp,
+              `gmt_modified` timestamp not null default current_timestamp on update current_timestamp,
+              primary key (`id`),
+              unique key (`job_id`),
+              key(`source_job_id`),
+              key (`schema_name`, `table_name`)
+            ) charset=utf8
+        ]]></Create>
+    </SystemTable>
     <SystemTable name="lease">
         <Create><![CDATA[
             create table if not exists `lease` (
@@ -201,6 +252,52 @@
               unique key(lease_key),
               key(expire_at)
             ) default charset=utf8
+        ]]></Create>
+    </SystemTable>
+    <SystemTable name="ddl_task_barrier">
+        <Create><![CDATA[
+            create table if not exists `ddl_task_barrier` (
+              `table_schema` varchar(255) not null,
+              `barrier_name`  varchar(255) not null,
+              `ref_cnt` bigint not null,
+              `gmt_created` timestamp not null default current_timestamp,
+              `gmt_modified` timestamp not null default current_timestamp on update current_timestamp,
+              `last_updated_task_id` bigint not null,
+              primary key(table_schema,barrier_name)
+            ) default charset=utf8
+        ]]></Create>
+    </SystemTable>
+    <SystemTable name="ddl_load_meta_info">
+        <Create><![CDATA[
+            create table if not exists `ddl_load_meta_info` (
+              `id` bigint not null auto_increment,
+              `config_key` varchar(64) not null,
+              `config_value` text not null,
+              primary key(id),
+              unique key(config_key)
+            ) default charset=utf8mb4
+        ]]></Create>
+    </SystemTable>
+    <SystemTable name="expand_partition_tasks">
+        <Create><![CDATA[
+            create table if not exists `expand_partition_tasks` (
+              `id`                      bigint unsigned not null auto_increment,
+              `schema_name`             varchar(64)     not null default '' comment 'logical schema name',
+              `table_name`              varchar(64)     not null default '' comment 'logical table name',
+              `table_id`                bigint unsigned not null default 0  comment 'physical table id in GMS, used to detect table drop-and-recreate',
+              `initial_partition_count` bigint          not null default 0  comment 'C0: partition count when EXPAND was issued',
+              `target_partition_count`  bigint          not null default 0  comment 'N: desired final partition count',
+              `plan_json`               longtext                            comment 'JSON snapshot of the split plan: items + per-partition status',
+              `status`                  int             not null default 0  comment '0:RUNNING 1:COMPLETED 2:CANCELLED 3:FAILED 4:PAUSED',
+              `completed_partitions`    bigint          not null default 0  comment 'number of original partitions already split',
+              `pending_partitions`      bigint          not null default 0  comment 'number of original partitions still to be split',
+              `ddl_job_id`              bigint          not null default 0  comment 'DDL job id of the underlying EXPAND DDL job',
+              `extra_info`              longtext                            comment 'reserved for future use',
+              `gmt_created`             timestamp       not null default current_timestamp,
+              `gmt_modified`            timestamp       not null default current_timestamp on update current_timestamp,
+              primary key (`id`),
+              unique key `uk_schema_table` (`schema_name`, `table_name`)
+            ) charset=utf8mb4 comment='tracks progress of ALTER TABLE ... EXPAND PARTITIONS TO N'
         ]]></Create>
     </SystemTable>
 </SystemTables>

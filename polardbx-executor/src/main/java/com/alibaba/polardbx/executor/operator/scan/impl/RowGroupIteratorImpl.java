@@ -16,6 +16,12 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableIntArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
+import com.alibaba.polardbx.common.orc.PreheatFileMeta;
+import com.alibaba.polardbx.common.oss.filesystem.OSSCacheAdapter;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.archive.reader.OSSColumnTransformer;
@@ -27,13 +33,20 @@ import com.alibaba.polardbx.executor.operator.scan.LogicalRowGroup;
 import com.alibaba.polardbx.executor.operator.scan.RowGroupIterator;
 import com.alibaba.polardbx.executor.operator.scan.StripeLoader;
 import com.alibaba.polardbx.executor.operator.scan.metrics.RuntimeMetrics;
+import com.alibaba.polardbx.gms.engine.DynamicCacheFileSystem;
+import com.alibaba.polardbx.gms.engine.OssGeneralCacheOverrideFileSystem;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.BigBitType;
 import com.alibaba.polardbx.optimizer.core.datatype.BinaryType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.SliceType;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
+import com.alibaba.polardbx.optimizer.statis.OperatorStatistics;
 import com.google.common.base.Preconditions;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.MoreExecutors;
+import it.unimi.dsi.fastutil.ints.Int2MemoryCountableArrayMap;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -43,20 +56,22 @@ import org.apache.orc.OrcFile;
 import org.apache.orc.OrcProto;
 import org.apache.orc.StripeInformation;
 import org.apache.orc.TypeDescription;
-import org.apache.orc.impl.OrcIndex;
+import org.apache.orc.impl.PositionProviderBuilder;
 import org.apache.orc.impl.TypeUtils;
 import org.apache.orc.impl.reader.ReaderEncryption;
+import org.openjdk.jol.info.ClassLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.text.MessageFormat;
 import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 
 public class RowGroupIteratorImpl implements RowGroupIterator<Block, ColumnStatistics> {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(RowGroupIteratorImpl.class).instanceSize();
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
     /**
      * Stripe id of this row-group iterator.
      */
@@ -73,57 +88,96 @@ public class RowGroupIteratorImpl implements RowGroupIterator<Block, ColumnStati
      * The bitmap of selected row-groups, shared by all scan-works in one split.
      * The length of bitmap rowGroupIncluded is equal to count of row-groups in stripe.
      */
+    @FieldMemoryCounter(value = false)
     private final boolean[] rowGroupIncluded;
     /**
      * The column ids of primary keys in the file.
      * It may be null.
      */
+    @FieldMemoryCounter(value = false)
     private final int[] primaryKeyColIds;
     // parameters for IO processing
+    @FieldMemoryCounter(value = false)
     private final ExecutorService ioExecutor;
+
+    @FieldMemoryCounter(value = false)
     private final FileSystem fileSystem;
+
+    @FieldMemoryCounter(value = false)
     private final Configuration configuration;
+
+    @FieldMemoryCounter(value = false)
     protected final Path filePath;
     // for compression
     private final int compressionSize;
+
+    @FieldMemoryCounter(value = false)
     private final CompressionKind compressionKind;
+
     // preheated meta of this stripe
+    @FieldMemoryCounter(value = false)
     private final PreheatFileMeta preheatFileMeta;
+
     // context for stripe parser
+    @FieldMemoryCounter(value = false)
     private final StripeInformation stripeInformation;
+
     private final long startRowOfStripe;
+
+    @FieldMemoryCounter(value = false)
     protected final TypeDescription fileSchema;
+
+    @FieldMemoryCounter(value = false)
     private final OrcFile.WriterVersion version;
+
+    @FieldMemoryCounter(value = false)
     private final ReaderEncryption encryption;
+
+    @FieldMemoryCounter(value = false)
     protected final OrcProto.ColumnEncoding[] encodings;
     private final boolean ignoreNonUtf8BloomFilter;
     private final long maxBufferSize;
     private final int indexStride;
+    @FieldMemoryCounter(value = false)
     protected final boolean[] columnIncluded;
     protected final int chunkLimit;
+
+    @FieldMemoryCounter(value = false)
     protected final BlockCacheManager<Block> blockCacheManager;
+
+    @FieldMemoryCounter(value = false)
     protected final OSSColumnTransformer ossColumnTransformer;
+
+    @FieldMemoryCounter(value = false)
     protected final ExecutionContext context;
+
     private final boolean enableMetrics;
     private final boolean enableDecimal64;
     private final int maxDiskRangeChunkLimit;
     private final long maxMergeDistance;
     private final boolean enableBlockCache;
+
+    @FieldMemoryCounter(value = false)
     private final MemoryAllocatorCtx memoryAllocatorCtx;
+    @FieldMemoryCounter(value = false)
+    private final OperatorStatistics operatorStatistics;
     /**
      * Metrics in scan-work level.
      */
+    @FieldMemoryCounter(value = false)
     protected RuntimeMetrics metrics;
-    private OrcIndex orcIndex;
+
+    @FieldMemoryCounter(value = false)
+    private PositionProviderBuilder orcIndex;
     private StripeLoader stripeLoader;
     /**
      * The mapping from columnId to column-reader.
      */
-    protected Map<Integer, ColumnReader> columnReaders;
+    protected Int2MemoryCountableArrayMap<ColumnReader> columnReaders;
     /**
      * The Mapping from columnId to cache-reader.
      */
-    protected Map<Integer, CacheReader<Block>> cacheReaders;
+    protected Int2MemoryCountableArrayMap<CacheReader<Block>> cacheReaders;
     /**
      * The current effective group id.
      */
@@ -136,7 +190,26 @@ public class RowGroupIteratorImpl implements RowGroupIterator<Block, ColumnStati
     /**
      * To store the fetched row-groups with it's groupId.
      */
-    protected Map<Integer, LogicalRowGroup<Block, ColumnStatistics>> rowGroupMap;
+    protected Int2MemoryCountableArrayMap<LogicalRowGroup<Block, ColumnStatistics>> rowGroupMap;
+
+    // for reversed row-group iterator.
+    protected AtomicBoolean reversed = new AtomicBoolean(false);
+    protected MemoryCountableIntArrayList reversedRowGroupIds = new MemoryCountableIntArrayList();
+    protected int reversedRowGroupIdsIndex = -1;
+
+    @FieldMemoryCounter(value = false)
+    private OperatorMemoryOwnerId operatorMemoryOwnerId;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(stripeLoader)
+            + FastMemoryCounter.sizeOf(columnReaders)
+            + FastMemoryCounter.sizeOf(cacheReaders)
+            + FastMemoryCounter.sizeOf(rowGroupMap)
+            + FastMemoryCounter.sizeOf(reversed)
+            + FastMemoryCounter.sizeOf(reversedRowGroupIds);
+    }
 
     public RowGroupIteratorImpl(
         RuntimeMetrics metrics,
@@ -162,7 +235,8 @@ public class RowGroupIteratorImpl implements RowGroupIterator<Block, ColumnStati
         ExecutionContext context, boolean[] columnIncluded, int indexStride,
         // chunk size config
         // global block cache manager
-        boolean enableDecimal64, MemoryAllocatorCtx memoryAllocatorCtx) {
+        boolean enableDecimal64, MemoryAllocatorCtx memoryAllocatorCtx,
+        OperatorStatistics operatorStatistics) {
         this.metrics = metrics;
         this.stripeId = stripeId;
         this.startRowGroupId = startRowGroupId;
@@ -197,12 +271,64 @@ public class RowGroupIteratorImpl implements RowGroupIterator<Block, ColumnStati
         this.enableDecimal64 = enableDecimal64;
         this.enableBlockCache = context.getParamManager().getBoolean(ConnectionParams.ENABLE_BLOCK_CACHE);
         this.memoryAllocatorCtx = memoryAllocatorCtx;
-        init();
+        this.operatorStatistics = operatorStatistics;
+    }
+
+    @Override
+    public RowGroupIterator<Block, ColumnStatistics> rebuild() {
+        return new RowGroupIteratorImpl(
+            metrics,
+
+            // The range of this row-group iterator.
+            stripeId,
+            startRowGroupId,
+            effectiveGroupCount,
+            rowGroupIncluded,
+
+            // primary key col ids.
+            primaryKeyColIds,
+
+            // parameters for IO task.
+            ioExecutor,
+            fileSystem,
+            configuration,
+            filePath,
+
+            // for compression
+            compressionSize,
+            compressionKind,
+            preheatFileMeta,
+
+            // for stripe-level parser
+            stripeInformation,
+            startRowOfStripe,
+            fileSchema,
+            version,
+            encryption,
+            encodings,
+            ignoreNonUtf8BloomFilter,
+            maxBufferSize,
+            maxDiskRangeChunkLimit,
+            maxMergeDistance,
+            chunkLimit,
+
+            // for cache
+            blockCacheManager,
+
+            // for column-mapping
+            ossColumnTransformer,
+
+            context,
+            columnIncluded,
+            indexStride,
+            enableDecimal64,
+            memoryAllocatorCtx,
+            operatorStatistics);
     }
 
     static ColumnReader getDecimalReader(boolean enableDecimal64, ExecutionContext context, DataType inputType,
                                          int colId, boolean isPrimaryKey,
-                                         StripeLoader stripeLoader, OrcIndex orcIndex,
+                                         StripeLoader stripeLoader, PositionProviderBuilder orcIndex,
                                          RuntimeMetrics metrics, int indexStride,
                                          OrcProto.ColumnEncoding encoding, boolean enableMetrics) {
 
@@ -236,23 +362,54 @@ public class RowGroupIteratorImpl implements RowGroupIterator<Block, ColumnStati
         }
     }
 
-    private void init() {
+    @Override
+    public int getStartRowGroupId() {
+        return startRowGroupId;
+    }
+
+    @Override
+    public int getEffectiveGroupCount() {
+        return effectiveGroupCount;
+    }
+
+    @Override
+    public boolean enableBlockCache() {
+        return enableBlockCache;
+    }
+
+    @Override
+    public void open(OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        this.operatorMemoryOwnerId = operatorMemoryOwnerId;
+        init(operatorMemoryOwnerId);
+    }
+
+    private void init(OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        // Apply per-statement GeneralCache override (HINT/session takes precedence over DynamicConfig).
+        FileSystem effectiveFs = fileSystem;
+        Boolean ossCacheOverride = OSSCacheAdapter.extractStatementOverride(context.getExtraCmds());
+        if (ossCacheOverride != null && fileSystem instanceof DynamicCacheFileSystem) {
+            effectiveFs = new OssGeneralCacheOverrideFileSystem(
+                (DynamicCacheFileSystem) fileSystem, ossCacheOverride);
+        }
+
         this.stripeLoader = new AsyncStripeLoader(
-            ioExecutor, fileSystem, configuration, filePath,
+            ioExecutor, effectiveFs, configuration, filePath,
             columnIncluded, compressionSize, compressionKind,
             preheatFileMeta,
             stripeInformation, fileSchema, version, encryption,
             encodings, ignoreNonUtf8BloomFilter, maxBufferSize,
             maxDiskRangeChunkLimit, maxMergeDistance, metrics,
-            enableMetrics, memoryAllocatorCtx);
+            enableMetrics, memoryAllocatorCtx, operatorStatistics);
+        this.stripeLoader.setOperatorMemoryOwnerId(operatorMemoryOwnerId);
+        this.stripeLoader.setVersionStorageStatistics(context.getVersionStorageStatistics());
         stripeLoader.open();
 
-        this.orcIndex = preheatFileMeta.getOrcIndex(
+        this.orcIndex = preheatFileMeta.getPositionProviderBuilder(
             stripeInformation.getStripeId()
         );
 
-        columnReaders = new HashMap<>();
-        cacheReaders = new HashMap<>();
+        columnReaders = new Int2MemoryCountableArrayMap<>();
+        cacheReaders = new Int2MemoryCountableArrayMap<>();
 
         // Build cache readers for each column
         for (int colId = 1; colId <= fileSchema.getMaximumId(); colId++) {
@@ -306,7 +463,15 @@ public class RowGroupIteratorImpl implements RowGroupIterator<Block, ColumnStati
 
         currentGroupId = -1;
         nextGroupId = -1;
-        rowGroupMap = new HashMap<>();
+        rowGroupMap = new Int2MemoryCountableArrayMap<>();
+
+        ListenableFuture<?> allColumnReaderClosed = Futures.allAsList(
+            columnReaders.values().stream().map(ColumnReader::getClosedFuture).collect(Collectors.toList())
+        );
+
+        allColumnReaderClosed.addListener(() -> {
+            stripeLoader.release();
+        }, MoreExecutors.directExecutor());
     }
 
     private void generateColumnReader(boolean enableMetrics, int colId, OrcProto.ColumnEncoding encoding,
@@ -761,7 +926,7 @@ public class RowGroupIteratorImpl implements RowGroupIterator<Block, ColumnStati
                 getRowCount(currentGroupId), startRowId(currentGroupId),
                 fileSchema, ossColumnTransformer, encodings, columnIncluded, chunkLimit,
                 columnReaders, cacheReaders, blockCacheManager,
-                context)
+                context, operatorMemoryOwnerId)
         );
         return logicalRowGroup;
     }
@@ -773,6 +938,38 @@ public class RowGroupIteratorImpl implements RowGroupIterator<Block, ColumnStati
 
     @Override
     public boolean hasNext() {
+        if (!reversed.get()) {
+            return doHasNext();
+        } else {
+
+            if (reversedRowGroupIds.isEmpty()) {
+                while (doHasNext()) {
+                    doNext();
+                    reversedRowGroupIds.add(currentGroupId);
+                    reversedRowGroupIdsIndex++;
+                }
+            }
+
+            // has no more groups
+            if (reversedRowGroupIdsIndex < 0) {
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    @Override
+    public Void next() {
+        if (!reversed.get()) {
+            return doNext();
+        } else {
+            currentGroupId = reversedRowGroupIds.get(reversedRowGroupIdsIndex--);
+            return null;
+        }
+    }
+
+    private boolean doHasNext() {
         // start from param: startRowGroupId
         // end with bitmap length or fetchedRowGroupCount
         for (int groupId = currentGroupId + 1;
@@ -788,8 +985,7 @@ public class RowGroupIteratorImpl implements RowGroupIterator<Block, ColumnStati
         return false;
     }
 
-    @Override
-    public Void next() {
+    private Void doNext() {
         // check if the next group exist.
         Preconditions.checkArgument(nextGroupId != -1);
         currentGroupId = nextGroupId;
@@ -844,6 +1040,11 @@ public class RowGroupIteratorImpl implements RowGroupIterator<Block, ColumnStati
     }
 
     @Override
+    public void reverse() {
+        reversed.compareAndSet(false, true);
+    }
+
+    @Override
     public void close(boolean force) {
         columnReaders.forEach((colId, colReader) -> {
             if (LOGGER.isDebugEnabled()) {
@@ -857,6 +1058,10 @@ public class RowGroupIteratorImpl implements RowGroupIterator<Block, ColumnStati
                 colReader.close();
             }
         });
+
+        if (force) {
+            stripeLoader.release();
+        }
     }
 
     public boolean checkIfAllReadersClosed() {

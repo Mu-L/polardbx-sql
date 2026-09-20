@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.gms;
 
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
@@ -28,6 +29,7 @@ import com.alibaba.polardbx.executor.chunk.LongBlock;
 import com.alibaba.polardbx.executor.columnar.DeletionFileReader;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarAppendedFilesRecord;
 import com.alibaba.polardbx.optimizer.config.table.FileMeta;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.LoadingCache;
 import org.apache.hadoop.hive.ql.exec.vector.LongColumnVector;
@@ -48,7 +50,7 @@ import java.util.stream.Collectors;
  * 2. Maintain the multi-version csv/del data. (build/purge/read)
  */
 public class FileVersionStorage implements Closeable, Purgeable {
-    private static final Logger LOGGER = LoggerFactory.getLogger("COLUMNAR_TRANS");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     public static final int CSV_CHUNK_LIMIT = 1000;
 
@@ -91,7 +93,7 @@ public class FileVersionStorage implements Closeable, Purgeable {
             .removalListener((key, value, cause) -> {
                 if (value != null) {
                     csvCacheSizeInBytes.addAndGet(
-                    -((MultiVersionCsvData) value).getCurrentMemoryUsed());
+                        -((MultiVersionCsvData) value).getCurrentMemoryUsed());
                 }
             })
             // TODO(siyun): support spill to disk while being evicted
@@ -103,7 +105,7 @@ public class FileVersionStorage implements Closeable, Purgeable {
             .removalListener((key, value, cause) -> {
                 if (value != null) {
                     delCacheSizeInBytes.addAndGet(
-                    -((MultiVersionDelData) value).getCurrentMemoryUsed());
+                        -((MultiVersionDelData) value).getCurrentMemoryUsed());
                 }
             })
             .build(key -> new MultiVersionDelData(delCacheSizeInBytes));
@@ -153,7 +155,7 @@ public class FileVersionStorage implements Closeable, Purgeable {
     /**
      * @param csvCheckpointTso this tso must be taken from columnar_appended_files
      */
-    public List<Chunk> csvData(long csvCheckpointTso, long readTso, String csvFileName) {
+    public List<Chunk> csvData(long csvCheckpointTso, long readTso, String csvFileName, ExecutionContext ec) {
         MultiVersionCsvData data;
 
         data = csvDataMap.get(csvFileName);
@@ -173,16 +175,22 @@ public class FileVersionStorage implements Closeable, Purgeable {
         }
 
         // Case: csv cache missed
+        long startMillis = System.currentTimeMillis();
         missCount.getAndIncrement();
         Lock writeLock = data.getLock();
         writeLock.lock();
         try {
-            data.loadUntilTso(columnarManager.getMinTso(), csvCheckpointTso);
+            data.loadUntilTso(columnarManager.getMinTso(), csvCheckpointTso, ec);
 
             return Objects.requireNonNull(data.getChunksWithTso(csvCheckpointTso, readTso)).values().stream()
                 .flatMap(part -> part.getValue().stream()).collect(Collectors.toList());
         } finally {
             writeLock.unlock();
+
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateCsvStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
@@ -275,6 +283,10 @@ public class FileVersionStorage implements Closeable, Purgeable {
     }
 
     public RoaringBitmap getDeleteBitMap(FileMeta fileMeta, long tso) {
+        return getDeleteBitMap(fileMeta, tso, null);
+    }
+
+    public RoaringBitmap getDeleteBitMap(FileMeta fileMeta, long tso, Boolean cacheOverride) {
         MultiVersionDelPartitionInfo delInfo;
         PartitionId partitionId = PartitionId.of(
             fileMeta.getPartitionName(),
@@ -296,6 +308,7 @@ public class FileVersionStorage implements Closeable, Purgeable {
         }
 
         // cache miss
+        long startMillis = System.currentTimeMillis();
         missCount.getAndIncrement();
         Lock writeLock = delInfo.getLock();
         writeLock.lock();
@@ -305,14 +318,19 @@ public class FileVersionStorage implements Closeable, Purgeable {
                 fileMeta.getLogicalTableSchema(),
                 fileMeta.getLogicalTableName(),
                 fileMeta.getPartitionName(),
-                columnarManager.getMinTso(),
                 tso,
-                this::loadDeleteBitMapFromFile
+                this::loadDeleteBitMapFromFile,
+                cacheOverride
             );
 
             return buildDeleteBitMap(fileMeta.getFileName(), tso);
         } finally {
             writeLock.unlock();
+
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateDelStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
@@ -362,6 +380,14 @@ public class FileVersionStorage implements Closeable, Purgeable {
             total += delDataMap.estimatedSize();
         }
         return total;
+    }
+
+    public long getCsvCacheSize() {
+        return csvDataMap == null ? 0 : csvDataMap.estimatedSize();
+    }
+
+    public long getDelCacheSize() {
+        return delDataMap == null ? 0 : delDataMap.estimatedSize();
     }
 
     public long getUsedCacheSize() {

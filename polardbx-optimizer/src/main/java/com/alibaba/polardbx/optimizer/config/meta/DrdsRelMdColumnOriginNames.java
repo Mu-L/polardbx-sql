@@ -16,18 +16,24 @@
 
 package com.alibaba.polardbx.optimizer.config.meta;
 
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import com.alibaba.polardbx.optimizer.core.rel.BaseTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.DirectTableOperation;
+import com.alibaba.polardbx.optimizer.core.rel.ExternalTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.GroupTopN;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.MysqlTableScan;
-import com.google.common.collect.ImmutableSet;
+import com.alibaba.polardbx.optimizer.core.rel.PhysicalCTEConsumer;
 import com.alibaba.polardbx.optimizer.view.ViewPlan;
+import com.google.common.collect.ImmutableSet;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.hep.HepRelVertex;
 import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.AggregateCall;
+import org.apache.calcite.rel.core.CTEAnchor;
+import org.apache.calcite.rel.core.CTEProducer;
 import org.apache.calcite.rel.core.Correlate;
 import org.apache.calcite.rel.core.Exchange;
 import org.apache.calcite.rel.core.Filter;
@@ -37,6 +43,9 @@ import org.apache.calcite.rel.core.SetOp;
 import org.apache.calcite.rel.core.Sort;
 import org.apache.calcite.rel.core.TableFunctionScan;
 import org.apache.calcite.rel.core.TableLookup;
+import org.apache.calcite.rel.core.Window;
+import org.apache.calcite.rel.logical.LogicalCTEConsumer;
+import org.apache.calcite.rel.logical.LogicalExpand;
 import org.apache.calcite.rel.metadata.BuiltInMetadata;
 import org.apache.calcite.rel.metadata.MetadataDef;
 import org.apache.calcite.rel.metadata.MetadataHandler;
@@ -45,11 +54,9 @@ import org.apache.calcite.rel.metadata.RelColumnMapping;
 import org.apache.calcite.rel.metadata.RelColumnOrigin;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
-import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexDynamicParam;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
-import org.apache.calcite.rex.RexSubQuery;
 import org.apache.calcite.rex.RexVisitor;
 import org.apache.calcite.rex.RexVisitorImpl;
 import org.apache.calcite.util.BuiltInMethod;
@@ -112,6 +119,40 @@ public class DrdsRelMdColumnOriginNames implements MetadataHandler<BuiltInMetada
                 }
             }
             result.add(set);
+        }
+        return result;
+    }
+
+    public List<Set<RelColumnOrigin>> getColumnOriginNames(Window rel, final RelMetadataQuery mq) {
+        final RelNode input = rel.getInput();
+
+        final List<Set<RelColumnOrigin>> origins = mq.getColumnOriginNames(input);
+
+        if (null == origins) {
+            return null;
+        }
+
+        final List<Set<RelColumnOrigin>> result = new ArrayList<>();
+        for (int iOutputColumn = 0; iOutputColumn < input.getRowType().getFieldCount(); iOutputColumn++) {
+            result.add(origins.get(iOutputColumn));
+        }
+
+        for (Window.Group group : rel.groups) {
+            Set<RelColumnOrigin> tmp = new HashSet<>();
+            group.keys.forEach(x -> tmp.addAll(origins.get(x)));
+            group.orderKeys.getFieldCollations().forEach(x ->
+                tmp.addAll(origins.get(x.getFieldIndex())));
+            for (AggregateCall call : group.getAggregateCalls(rel)) {
+                final Set<RelColumnOrigin> set = new HashSet<>(tmp);
+                for (Integer iInput : call.getArgList()) {
+                    Set<RelColumnOrigin> inputSet = origins.get(iInput);
+                    inputSet = createDerivedColumnOrigins(inputSet);
+                    if (inputSet != null) {
+                        set.addAll(inputSet);
+                    }
+                }
+                result.add(set);
+            }
         }
         return result;
     }
@@ -239,8 +280,117 @@ public class DrdsRelMdColumnOriginNames implements MetadataHandler<BuiltInMetada
         return result;
     }
 
+    public List<Set<RelColumnOrigin>> getColumnOriginNames(LogicalExpand rel, final RelMetadataQuery mq) {
+        try {
+            final RelNode input = rel.getInput();
+            final List<Set<RelColumnOrigin>> origins = mq.getColumnOriginNames(input);
+
+            if (null == origins) {
+                return null;
+            }
+
+            final List<Set<RelColumnOrigin>> result = new ArrayList<>();
+            final List<List<RexNode>> projects = rel.getProjects();
+            final int fieldCount = rel.getRowType().getFieldCount();
+
+            for (int i = 0; i < fieldCount; i++) {
+                final Set<RelColumnOrigin> set = new HashSet<>();
+                for (List<RexNode> project : projects) {
+                    if (i >= project.size()) {
+                        continue;
+                    }
+                    RexNode rexNode = project.get(i);
+                    if (rexNode instanceof RexInputRef) {
+                        final RexInputRef inputRef = (RexInputRef) rexNode;
+                        if (inputRef.getIndex() < origins.size()) {
+                            Set<RelColumnOrigin> inputOrigins = origins.get(inputRef.getIndex());
+                            if (inputOrigins != null) {
+                                set.addAll(inputOrigins);
+                            }
+                        }
+                    } else {
+                        // For non-input-ref expressions (e.g. literals, expand_id),
+                        // collect input refs within and mark as derived
+                        final Set<RelColumnOrigin> derivedSet = new HashSet<>();
+                        final RexVisitor<Void> visitor = new RexVisitorImpl<Void>(true) {
+                            @Override
+                            public Void visitInputRef(RexInputRef inputRef) {
+                                if (inputRef.getIndex() < origins.size()) {
+                                    Set<RelColumnOrigin> inputOrigins = origins.get(inputRef.getIndex());
+                                    if (inputOrigins != null) {
+                                        derivedSet.addAll(inputOrigins);
+                                    }
+                                }
+                                return null;
+                            }
+                        };
+                        rexNode.accept(visitor);
+                        Set<RelColumnOrigin> derived = createDerivedColumnOrigins(derivedSet);
+                        if (derived != null) {
+                            set.addAll(derived);
+                        }
+                    }
+                }
+                result.add(set);
+            }
+            return result;
+        } catch (Throwable e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
     public List<Set<RelColumnOrigin>> getColumnOriginNames(TableLookup rel, final RelMetadataQuery mq) {
         return mq.getColumnOriginNames(rel.getProject());
+    }
+
+    public List<Set<RelColumnOrigin>> getColumnOriginNames(GroupTopN rel, RelMetadataQuery mq) {
+        return mq.getColumnOriginNames(rel.getInput());
+    }
+
+    public List<Set<RelColumnOrigin>> getColumnOriginNames(CTEAnchor rel, RelMetadataQuery mq) {
+        return mq.getColumnOriginNames(rel.getRight());
+    }
+
+    public List<Set<RelColumnOrigin>> getColumnOriginNames(CTEProducer rel, RelMetadataQuery mq) {
+        return mq.getColumnOriginNames(rel.getInput());
+    }
+
+    public List<Set<RelColumnOrigin>> getColumnOriginNames(PhysicalCTEConsumer rel, RelMetadataQuery mq) {
+        final List<Set<RelColumnOrigin>> origins = mq.getColumnOriginNames(CBOUtil.getCteProducer(rel));
+        List<RexNode> projects = rel.getProjects();
+        if (origins == null || projects == null || projects.isEmpty()) {
+            return origins;
+        }
+
+        // Remap through projects (similar to Project handler)
+        final List<Set<RelColumnOrigin>> result = new ArrayList<>();
+        for (RexNode rexNode : projects) {
+            Set<RelColumnOrigin> columnOrigins;
+            if (rexNode instanceof RexInputRef) {
+                final int index = ((RexInputRef) rexNode).getIndex();
+                columnOrigins = index < origins.size() ? origins.get(index) : ImmutableSet.of();
+            } else {
+                final Set<RelColumnOrigin> set = new HashSet<>();
+                final RexVisitor<Void> visitor = new RexVisitorImpl<Void>(true) {
+                    @Override
+                    public Void visitInputRef(RexInputRef inputRef) {
+                        if (inputRef.getIndex() < origins.size()) {
+                            set.addAll(origins.get(inputRef.getIndex()));
+                        }
+                        return null;
+                    }
+                };
+                rexNode.accept(visitor);
+                columnOrigins = createDerivedColumnOrigins(set);
+            }
+            result.add(columnOrigins);
+        }
+        return result;
+    }
+
+    public List<Set<RelColumnOrigin>> getColumnOriginNames(LogicalCTEConsumer rel, RelMetadataQuery mq) {
+        return mq.getColumnOriginNames(rel.getInnerRel());
     }
 
     public List<Set<RelColumnOrigin>> getColumnOriginNames(Filter rel, RelMetadataQuery mq) {
@@ -261,6 +411,11 @@ public class DrdsRelMdColumnOriginNames implements MetadataHandler<BuiltInMetada
 
     public List<Set<RelColumnOrigin>> getColumnOriginNames(MysqlTableScan rel, RelMetadataQuery mq) {
         return mq.getColumnOriginNames(rel.getNodeForMetaQuery());
+    }
+
+    public List<Set<RelColumnOrigin>> getColumnOriginNames(
+        ExternalTableScan rel, RelMetadataQuery mq) {
+        return rel.getColumnOriginNames(mq);
     }
 
     public List<Set<RelColumnOrigin>> getColumnOriginNames(TableFunctionScan rel, RelMetadataQuery mq) {
@@ -306,6 +461,10 @@ public class DrdsRelMdColumnOriginNames implements MetadataHandler<BuiltInMetada
     }
 
     public List<Set<RelColumnOrigin>> getColumnOriginNames(DirectTableOperation rel, RelMetadataQuery mq) {
+        if (rel.getOriginPlan() != null) {
+            return mq.getColumnOriginNames(rel.getOriginPlan());
+        }
+
         List<Set<RelColumnOrigin>> pushedOrigins = mq.getColumnOriginNames(rel.getParent());
         try {
             List<String> pushedColNames = rel.getParent().getRowType().getFieldNames();

@@ -3,6 +3,7 @@ package com.alibaba.polardbx.qatest.NotThreadSafe.udf.sql;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.qatest.BaseTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.ConnectionManager;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.qatest.util.PropertiesUtil;
@@ -29,6 +30,7 @@ import java.util.stream.Collectors;
 import static com.alibaba.polardbx.qatest.validator.DataValidator.selectContentSameAssert;
 
 @NotThreadSafe
+@IcbcIgnore(ignoreReason = "icbc don't test udf")
 public class ProcedureMtrTest extends BaseTestCase {
     protected static final Log log = LogFactory.getLog(ProcedureMtrTest.class);
 

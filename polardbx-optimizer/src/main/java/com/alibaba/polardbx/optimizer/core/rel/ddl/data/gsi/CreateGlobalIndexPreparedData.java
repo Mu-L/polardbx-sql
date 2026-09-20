@@ -89,6 +89,13 @@ public class CreateGlobalIndexPreparedData extends DdlPreparedData {
     // for omc
     private boolean omcRebuildPrimaryTable;
 
+    // for logical optimize table
+    private boolean logicalOptimizeTable;
+
+    // rebuild cci
+    private Long taskMarkSeq = 1L;
+    private boolean markByHint = false;
+
     public CreateGlobalIndexPreparedData() {
     }
 
@@ -422,12 +429,36 @@ public class CreateGlobalIndexPreparedData extends DdlPreparedData {
         this.omcRebuildPrimaryTable = omcRebuildPrimaryTable;
     }
 
+    public boolean isLogicalOptimizeTable() {
+        return logicalOptimizeTable;
+    }
+
+    public void setLogicalOptimizeTable(boolean logicalOptimizeTable) {
+        this.logicalOptimizeTable = logicalOptimizeTable;
+    }
+
     public boolean isCreateTableWithIndex() {
         return createTableWithIndex;
     }
 
     public void setCreateTableWithIndex(boolean createTableWithIndex) {
         this.createTableWithIndex = createTableWithIndex;
+    }
+
+    public Long getTaskMarkSeq() {
+        return this.taskMarkSeq;
+    }
+
+    public void setTaskMarkSeq(Long taskMarkSeq) {
+        this.taskMarkSeq = taskMarkSeq;
+    }
+
+    public boolean isMarkByHint() {
+        return markByHint;
+    }
+
+    public void setMarkByHint(boolean markByHint) {
+        this.markByHint = markByHint;
     }
 
     public SqlIndexDefinition getOrBuildIndexDefinition() {

@@ -20,6 +20,7 @@ import org.apache.calcite.linq4j.Ord;
 import org.apache.calcite.rel.core.TableFunctionScan;
 import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.logical.LogicalAggregate;
+import org.apache.calcite.rel.logical.LogicalCTEConsumer;
 import org.apache.calcite.rel.logical.LogicalCorrelate;
 import org.apache.calcite.rel.logical.LogicalExchange;
 import org.apache.calcite.rel.logical.LogicalExpand;
@@ -119,6 +120,20 @@ public class RelShuttleImpl implements RelShuttle {
 
   public RelNode visit(LogicalCorrelate correlate) {
     return visitChildren(correlate);
+  }
+
+  public RelNode visit(LogicalCTEConsumer cteConsumer) {
+      stack.push(cteConsumer);
+      try {
+          RelNode child = cteConsumer.getInnerRel();
+          RelNode child2 = child.accept(this);
+          if (child2 != child) {
+              return cteConsumer.copy(cteConsumer.getTraitSet(), child2).setHints(cteConsumer.getHints());
+          }
+          return cteConsumer;
+      } finally {
+          stack.pop();
+      }
   }
 
   public RelNode visit(MultiJoin mjoin) { return visitChildren(mjoin); }

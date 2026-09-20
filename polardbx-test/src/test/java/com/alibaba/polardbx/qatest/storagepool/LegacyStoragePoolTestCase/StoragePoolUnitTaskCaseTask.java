@@ -65,7 +65,7 @@ public class StoragePoolUnitTaskCaseTask {
 
         Map<String, String> expectedSQLs = new HashMap<>();
         if (singleTestCase.getExpectedSQLs() != null) {
-            singleTestCase.getExpectedSQLs().stream().collect(
+            expectedSQLs = singleTestCase.getExpectedSQLs().stream().collect(
                 Collectors.toMap(StoragePoolTestCaseBean.ExpectedSQL::getSql,
                     StoragePoolTestCaseBean.ExpectedSQL::getResult));
         }
@@ -455,5 +455,4 @@ public class StoragePoolUnitTaskCaseTask {
             .map(checker -> ((CheckItemValueAndCollectName) checker).collectedName)
             .collect(Collectors.toMap(Map.Entry<String, String>::getKey, Map.Entry<String, String>::getValue));
     }
-
 }

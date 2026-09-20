@@ -1,0 +1,59 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+  set ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC=true;
+  set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=true;
+  set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+#允许值路由转换验证
+create table two_node_hash_enum_tbl1(id int)
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/enum',
+  '{
+"defaultNode": "0",
+"type": "0",
+"mapFile" :
+  "
+            1=0
+            0=0
+            2147483647=0
+            -2147483648=1
+            -1=1      
+          "
+}'
+  )
+)
+partitions 2;
+ 
+select part_route('','two_node_hash_enum_tbl1',-1);
+select part_route('','two_node_hash_enum_tbl1',1);
+select part_route('','two_node_hash_enum_tbl1',0);
+select part_route('','two_node_hash_enum_tbl1',2147483647);
+select part_route('','two_node_hash_enum_tbl1',-2147483648);
+  
+create table two_node_hash_enum_tbl2(id bigint)
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/enum',
+  '{
+"defaultNode": "0",
+"type": "0",
+"mapFile" :
+  "
+            1=0
+            0=0
+            2147483647=0
+            -2147483648=1
+            -1=1
+            -9223372036854775808=1
+            9223372036854775807=0
+          "
+}'
+  )
+  )
+  partitions 2;
+
+## error_msg: $# Please check if the format satisfied #$
+select part_route('','two_node_hash_enum_tbl2',-9223372036854775808);
+## error_msg: $# Please check if the format satisfied #$
+select part_route('','two_node_hash_enum_tbl2',9223372036854775807);

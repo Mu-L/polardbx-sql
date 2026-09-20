@@ -19,8 +19,8 @@ package com.alibaba.polardbx.optimizer.core.rel;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.core.rel.dml.DmlWriteContext;
 import com.alibaba.polardbx.optimizer.utils.OptimizerUtils;
-import lombok.Getter;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.TableModify;
@@ -37,7 +37,6 @@ import java.util.Map;
  * @author lingce.ldm 2018-01-31 13:48
  */
 public class LogicalModifyView extends LogicalView {
-    @Getter
     private final LogicalModify.ModifyTopNInfo modifyTopNInfo;
 
     public LogicalModifyView(LogicalView logicalView) {
@@ -147,11 +146,22 @@ public class LogicalModifyView extends LogicalView {
                 pruningMap);
             relNodes.addAll(phyTableModifyBuilder.build(executionContext));
         }
+        DmlWriteContext writeContext = executionContext.getDmlWriteContext();
+        List<RelNode> stagingPlans = writeContext == null
+            ? Collections.emptyList() : writeContext.buildModifyViewStagingPlans(relNodes, executionContext);
+        List<RelNode> primaryPlans;
         if (relNodes.size() > 1 && relNodes.get(0) instanceof PhyTableOperation && !noMergeGroupNode) {
-            return mergeGroupNode(relNodes, executionContext);
+            primaryPlans = mergeGroupNode(relNodes, executionContext);
         } else {
-            return relNodes;
+            primaryPlans = relNodes;
         }
+        if (stagingPlans.isEmpty()) {
+            return primaryPlans;
+        }
+        List<RelNode> executablePlans = new ArrayList<>(stagingPlans.size() + primaryPlans.size());
+        executablePlans.addAll(stagingPlans);
+        executablePlans.addAll(primaryPlans);
+        return executablePlans;
     }
 
     @Override
@@ -163,14 +173,17 @@ public class LogicalModifyView extends LogicalView {
         return this.pushDownOpt.getTableModify();
     }
 
+    public LogicalModify.ModifyTopNInfo getModifyTopNInfo() {
+        return modifyTopNInfo;
+    }
+
     public boolean optimizeModifyTopNByReturning() {
         return null != modifyTopNInfo && modifyTopNInfo.isOptimizeByReturning();
     }
 
     @Override
     public LogicalModifyView copy(RelTraitSet traitSet) {
-        LogicalModifyView logicalModifyView =
-            new LogicalModifyView(this, this.modifyTopNInfo);
+        LogicalModifyView logicalModifyView = new LogicalModifyView(this, this.modifyTopNInfo);
         logicalModifyView.traitSet = traitSet;
         logicalModifyView.pushDownOpt = pushDownOpt.copy(this, this.getPushedRelNode());
         return logicalModifyView;

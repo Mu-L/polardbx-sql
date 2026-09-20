@@ -1,0 +1,32 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+drop table if exists dblemur_t1;
+create table dblemur_t1
+  (a varchar(64)，b bigint)
+  partition by udf_hash(
+  `a` with udf_params (
+  'dble/unitmurmurhash',
+  '{"partitionCount": "2"}'
+  )
+  )
+ partitions 2;
+insert into dblemur_t1 values ('1', 1);
+select * from dblemur_t1 where a='1';
+a,b
+1,1
+select part_route('','dblemur_t1', '1');
+part_route('', 'dblemur_t1', '1')
+p2
+## error_msg: $# check routeKey #$
+select part_route('','dblemur_t1', '');
+check routeKey
+## error_msg: $# check routeKey #$
+select part_route('','dblemur_t1', null);
+check routeKey
+## error_msg: $# check routeKey #$
+select part_route('','dblemur_t1', '1234567890123456');
+check routeKey
+## error_msg: $# check routeKey #$
+select part_route('','dblemur_t1', 'aa');
+check routeKey
+drop table dblemur_t1;

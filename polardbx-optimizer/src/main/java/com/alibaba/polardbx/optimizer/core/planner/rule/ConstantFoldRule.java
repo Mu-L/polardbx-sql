@@ -102,6 +102,9 @@ public class ConstantFoldRule extends RelOptRule {
                     return super.visitCall(call);
                 }
 
+                if (obj == null) {
+                    return super.visitCall(call);
+                }
                 try {
                     switch (call.getType().getSqlTypeName()) {
                     case TIME:

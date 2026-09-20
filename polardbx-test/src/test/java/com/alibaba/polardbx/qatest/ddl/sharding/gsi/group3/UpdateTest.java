@@ -64,12 +64,19 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
         .add("blob")
         .add("varchar(4096)")
         .add("varchar(4096) character set binary")
-        .add("varchar(4096) character set utf8mb4")
+        .add("varchar(4096) character set utf8mb4 collate utf8mb4_general_ci")
         .add("varbinary(4096)")
         .build();
 
+    private static final String FORBID_RELOCATE_RETURNING_HINT =
+        "/*+TDDL:cmd_extra(OPTIMIZE_RELOCATE_BY_RETURNING=false)*/";
+    private static final String ENABLE_RELOCATE_RETURNING_HINT =
+        "/*+TDDL:cmd_extra(OPTIMIZE_RELOCATE_BY_RETURNING=true)*/";
+
     @Test
     public void updateBlobTest() {
+        setSqlMode("STRICT_TRANS_TABLES", tddlConnection);
+        setSqlMode("STRICT_TRANS_TABLES", mysqlConnection);
         for (String colDef : colDefs) {
             final String tableName = "update_test_blob";
             final String gsiName = "g_update_test_blob";
@@ -82,7 +89,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
                 + "`userId` int(11) DEFAULT NULL,\n"
                 + "`blobfield` " + colDef + ",\n"
                 + "PRIMARY KEY (`id`)\n"
-                + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4";
+                + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci";
             final String partitionDef = " dbpartition by hash(`zoneId`) tbpartition by hash(`zoneId`) tbpartitions 3";
 
             JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -133,7 +140,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
                 + "`userId` int(11) DEFAULT NULL,\n"
                 + "`blobfield` " + colDef + ",\n"
                 + "PRIMARY KEY (`id`)\n"
-                + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4";
+                + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci";
             final String partitionDef = " dbpartition by hash(`zoneId`) tbpartition by hash(`zoneId`) tbpartitions 3";
 
             JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -176,7 +183,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
             + "`userId` int(11) DEFAULT NULL,\n"
             + "`blobfield` varbinary(512),\n"
             + "PRIMARY KEY (`id`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4";
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci";
         final String partitionDef = " dbpartition by hash(`zoneId`) tbpartition by hash(`zoneId`) tbpartitions 3";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -218,7 +225,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
             + "`b` int(11) DEFAULT NULL,\n"
             + "`c` TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),\n"
             + "PRIMARY KEY (`id`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4";
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci";
         final String partitionDef = " DBPARTITION BY HASH(`id`) ";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
 
@@ -249,7 +256,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
             + "`id` bigint(20) NOT NULL AUTO_INCREMENT,\n"
             + "`b` int(11) DEFAULT NULL,\n"
             + "PRIMARY KEY (`id`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4";
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci";
         final String partitionDef = " DBPARTITION BY HASH(`id`) ";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
 
@@ -271,6 +278,8 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
      */
     @Test
     public void updateAutoIncNullValueTest() throws SQLException {
+        setSqlMode("STRICT_TRANS_TABLES", tddlConnection);
+        setSqlMode("STRICT_TRANS_TABLES", mysqlConnection);
         final String tableName = "update_auto_inc_null_test";
         dropTableIfExists(tableName);
         dropTableIfExistsInMySql(tableName);
@@ -279,7 +288,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
             + "`id` bigint(20) NOT NULL AUTO_INCREMENT,\n"
             + "`b` int(11) DEFAULT NULL,\n"
             + "PRIMARY KEY (`id`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4";
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci";
         final String partitionDef = " DBPARTITION BY HASH(`b`) ";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
 
@@ -313,7 +322,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
             + "  `b` bigint(20) NOT NULL,\n"
             + "  `c` bigint(20) NOT NULL,\n"
             + "  PRIMARY KEY(`a`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8 dbpartition by hash(`c`)";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci dbpartition by hash(`c`)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable);
 
         for (int i = 0; i < 15; i++) {
@@ -375,7 +384,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
         dropTableIfExists(tableName);
         dropTableIfExists(gsiName);
         String sql = String.format(
-            "create table %s (id int, b int, t timestamp(6) default current_timestamp(6) on update current_timestamp(6)) dbpartition by hash(b);",
+            "create table %s (id int, b int, t timestamp(6) default current_timestamp(6) on update current_timestamp(6)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci dbpartition by hash(b);",
             tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         sql = String.format("create global index %s on %s(b) covering(t) dbpartition by hash(b);", gsiName, tableName);
@@ -397,7 +406,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
         dropTableIfExists(tableName);
         dropTableIfExists(gsiName);
         String sql = String.format(
-            "create table %s (id int, b int, t timestamp(6) default current_timestamp(6) on update current_timestamp(6)) dbpartition by hash(b);",
+            "create table %s (id int, b int, t timestamp(6) default current_timestamp(6) on update current_timestamp(6)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci dbpartition by hash(b);",
             tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         sql = String.format("create global index %s on %s(b) covering(t) dbpartition by hash(b);", gsiName, tableName);
@@ -419,7 +428,8 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
         dropTableIfExists(tableName);
         dropTableIfExists(gsiName);
         String sql =
-            String.format("create table %s (id int primary key, b int, c int) dbpartition by hash(id);",
+            String.format(
+                "create table %s (id int primary key, b int, c int) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci dbpartition by hash(id);",
                 tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 
@@ -427,13 +437,13 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 
         // Skip
-        sql = String.format("trace update %s set id=1 where id=1", tableName);
+        sql = "trace " + FORBID_RELOCATE_RETURNING_HINT + String.format("update %s set id=1 where id=1", tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         assertEquals(getTrace(tddlConnection).size(), 1);
 
         // Push UPDATE
-        sql = String.format(
-            "trace /*+TDDL:CMD_EXTRA(DML_RELOCATE_SKIP_UNCHANGED_ROW=FALSE)*/ update %s set id=1 where id=1",
+        sql = "trace " + FORBID_RELOCATE_RETURNING_HINT + String.format(
+            "/*+TDDL:CMD_EXTRA(DML_RELOCATE_SKIP_UNCHANGED_ROW=FALSE)*/ update %s set id=1 where id=1",
             tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         assertEquals(getTrace(tddlConnection).size(), 2);
@@ -443,17 +453,70 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 
         // Skip
-        sql = String.format("trace update %s set id=1,c=3 where id=1", tableName);
+        sql = "trace " + FORBID_RELOCATE_RETURNING_HINT + String.format("update %s set id=1,c=3 where id=1", tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         assertEquals(getTrace(tddlConnection).size(), 1);
 
         // Push UPDATE
-        sql = String.format(
-            "trace /*+TDDL:CMD_EXTRA(DML_RELOCATE_SKIP_UNCHANGED_ROW=FALSE)*/ update %s set id=1,c=3 where id=1",
+        sql = "trace " + FORBID_RELOCATE_RETURNING_HINT + String.format(
+            "/*+TDDL:CMD_EXTRA(DML_RELOCATE_SKIP_UNCHANGED_ROW=FALSE)*/ update %s set id=1,c=3 where id=1",
             tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         System.out.println(getTrace(tddlConnection));
         assertEquals(getTrace(tddlConnection).size(), 3);
+
+        checkGsi(tddlConnection, gsiName);
+    }
+
+    @Test
+    public void testRelocateSkipHintWithReturning() throws Exception {
+        if (!isMySQL80()) {
+            return;
+        }
+        String tableName = "update_relocate_skip_hint_tb";
+        String gsiName = tableName + "_gsi";
+        dropTableIfExists(tableName);
+        dropTableIfExists(gsiName);
+        String sql =
+            String.format(
+                "create table %s (id int primary key, b int, c int) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci dbpartition by hash(id);",
+                tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+
+        sql = String.format("insert into %s(id,b,c) values(1,2,3)", tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+
+        // Skip
+        sql = "trace " + ENABLE_RELOCATE_RETURNING_HINT + String.format("update %s set id=1 where id=1", tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        assertEquals(getTrace(tddlConnection).size(), 1);
+
+        // Push UPDATE
+        sql = "trace " + ENABLE_RELOCATE_RETURNING_HINT + String.format(
+            "/*+TDDL:CMD_EXTRA(DML_RELOCATE_SKIP_UNCHANGED_ROW=FALSE)*/ update %s set id=1 where id=1",
+            tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        // with relocate returning，trace size = 1 even if DML_RELOCATE_SKIP_UNCHANGED_ROW=FALSE
+        assertEquals(getTrace(tddlConnection).size(), 1);
+
+        sql = String.format("create global index %s on %s(c) covering(b) dbpartition by hash(c)", gsiName,
+            tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+
+        // Skip
+        sql =
+            "trace " + ENABLE_RELOCATE_RETURNING_HINT + String.format(" update %s set id=1,c=3 where id=1", tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        assertEquals(getTrace(tddlConnection).size(), 1);
+
+        // Push UPDATE
+        sql = "trace " + ENABLE_RELOCATE_RETURNING_HINT + String.format(
+            "/*+TDDL:CMD_EXTRA(DML_RELOCATE_SKIP_UNCHANGED_ROW=FALSE)*/ update %s set id=1,c=3 where id=1",
+            tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        System.out.println(getTrace(tddlConnection));
+        // with relocate returning，trace size = 2 even if DML_RELOCATE_SKIP_UNCHANGED_ROW=FALSE
+        assertEquals(getTrace(tddlConnection).size(), 2);
 
         checkGsi(tddlConnection, gsiName);
     }
@@ -464,7 +527,9 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
         dropTableIfExists(tableName);
         dropTableIfExistsInMySql(tableName);
 
-        String createSql = String.format("create table %s (id int primary key, a varchar(100)) ", tableName);
+        String createSql = String.format(
+            "create table %s (id int primary key, a varchar(100))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci ",
+            tableName);
         String partitionDef = "dbpartition by hash(id)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createSql + partitionDef);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, createSql);
@@ -485,8 +550,12 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
         String tableName1 = "update_test_single_tbl_1";
         String tableName2 = "update_test_single_tbl_2";
 
-        String create1 = String.format("create table %s (a int primary key, b int) single", tableName1);
-        String create2 = String.format("create table %s (a int primary key, b int) single", tableName2);
+        String create1 = String.format(
+            "create table %s (a int primary key, b int)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci single",
+            tableName1);
+        String create2 = String.format(
+            "create table %s (a int primary key, b int)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci single",
+            tableName2);
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, create1);
         JdbcUtil.executeUpdateSuccess(tddlConnection, create2);
@@ -511,9 +580,12 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
         String tableName1 = "update_test_multi_tbl_col_1";
         String tableName2 = "update_test_multi_tbl_col_2";
 
-        String create1 = String.format("create table %s (a int primary key, b int) dbpartition by hash(a)", tableName1);
+        String create1 = String.format(
+            "create table %s (a int primary key, b int)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci dbpartition by hash(a)",
+            tableName1);
         String create2 =
-            String.format("create table %s (c int primary key, d int, e int, f int) dbpartition by hash(c)",
+            String.format(
+                "create table %s (c int primary key, d int, e int, f int)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci dbpartition by hash(c)",
                 tableName2);
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, create1);
@@ -524,6 +596,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
             String.format("create global index %s on %s(b) dbpartition by hash(b)", gsiName1, tableName1);
         JdbcUtil.executeUpdateSuccess(tddlConnection, createGsi);
 
+        String hint = "/*+TDDL:CMD_EXTRA(ENABLE_MULTI_TABLE_UPDATE_MODIFY_GSI_SHARDING_KEY=TRUE)*/ ";
         String sql = String.format("insert into %s values (1,2)", tableName1);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         sql = String.format("insert into %s values (1,2,3,4)", tableName2);
@@ -531,7 +604,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
 
         sql = String.format("update %s as t1 inner join %s as t2 on t1.a=t2.c set t2.d=40,t2.e=40,t2.f=40,t1.b=20",
             tableName1, tableName2);
-        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, hint + sql);
 
         ResultSet rs = JdbcUtil.executeQuery(String.format("select * from %s", tableName1), tddlConnection);
         rs.next();
@@ -559,7 +632,8 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
             "primary key (a)", "primary key (a,b)", "primary key (a), unique index g1(c)",
             "primary key (a,b), index g1(c)"};
         String createSql = String.format(
-            "create table %s (a int, b datetime DEFAULT '0000-00-00 00:00:00', c int, d int, %%s) ", tableName);
+            "create table %s (a int, b datetime DEFAULT '1970-01-01 00:00:01', c int, d int, %%s)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci ",
+            tableName);
         String[] partDefs =
             {"dbpartition by hash(a)", "dbpartition by YYYYMM(b)", "dbpartition by hash(c)", "single", "broadcast"};
 
@@ -606,7 +680,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
                     JdbcUtil.executeUpdateSuccess(mysqlConnection, insert);
                     sqlExecuted.add(insert);
 
-                    update = String.format("update %s set b='0000-00-00 00:00:00', c=4 where a=3", tableName);
+                    update = String.format("update %s set b='1970-01-01 00:00:01', c=4 where a=3", tableName);
                     JdbcUtil.executeUpdateSuccess(tddlConnection, update);
                     JdbcUtil.executeUpdateSuccess(mysqlConnection, update);
                     sqlExecuted.add(update);
@@ -616,7 +690,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
                         checkGsi(tddlConnection, "g1");
                     }
 
-                    update = String.format("update %s set a=a+1 where b='0000-00-00 00:00:00'", tableName);
+                    update = String.format("update %s set a=a+1 where b='1970-01-01 00:00:01'", tableName);
                     JdbcUtil.executeUpdateSuccess(tddlConnection, "trace " + update);
                     JdbcUtil.executeUpdateSuccess(mysqlConnection, update);
                     sqlExecuted.add(update);
@@ -676,7 +750,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
         String gsiName = tableName + "_gsi";
 
         String create = String.format(
-            "create table %s (a int primary key, b timestamp default '2022-12-12 12:12:12' on update current_timestamp(), c int) dbpartition by hash(a)",
+            "create table %s (a int primary key, b timestamp default '2022-12-12 12:12:12' on update current_timestamp(), c int)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci dbpartition by hash(a)",
             tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, create);
         create =
@@ -703,7 +777,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
         String gsiName = tableName + "_gsi";
 
         String create = String.format(
-            "create table %s (a int primary key, b timestamp default '2022-12-12 12:12:12' on update current_timestamp(), c int) dbpartition by hash(a)",
+            "create table %s (a int primary key, b timestamp default '2022-12-12 12:12:12' on update current_timestamp(), c int)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci dbpartition by hash(a)",
             tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, create);
         create = String.format("create global index %s on %s(b) dbpartition by YYYYMM(b)", gsiName, tableName);
@@ -726,7 +800,9 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
     @Test
     public void testUpdateBinaryFunc1() throws SQLException {
         String tableName = "update_update_binary_tbl1";
-        String create = String.format("create table %s (a int primary key auto_increment, b varbinary(32))", tableName);
+        String create = String.format(
+            "create table %s (a int primary key auto_increment, b varbinary(32))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci ",
+            tableName);
         String partDef = "dbpartition by hash(a)";
 
         dropTableIfExists(tableName);
@@ -789,7 +865,9 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
     @Test
     public void testUpdateBinaryFunc2() throws SQLException {
         String tableName = "update_update_binary_tbl2";
-        String create = String.format("create table %s (a int primary key auto_increment, b varbinary(32))", tableName);
+        String create = String.format(
+            "create table %s (a int primary key auto_increment, b varbinary(32))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci ",
+            tableName);
         String partDef = "dbpartition by hash(a)";
 
         dropTableIfExists(tableName);
@@ -862,7 +940,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`, `c2`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci";
 
         final String gsiName = "g_update_c2_write_only";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -878,7 +956,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`c1`, `c2`),\n"
             + "  GLOBAL INDEX " + gsiName
             + "(`c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_unicode_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 3";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);

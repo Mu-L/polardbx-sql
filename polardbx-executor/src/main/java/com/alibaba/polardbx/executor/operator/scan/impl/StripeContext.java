@@ -16,26 +16,38 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import org.apache.orc.OrcFile;
 import org.apache.orc.OrcProto;
 import org.apache.orc.StripeInformation;
 import org.apache.orc.TypeDescription;
 import org.apache.orc.impl.InStream;
 import org.apache.orc.impl.reader.ReaderEncryption;
+import org.openjdk.jol.info.ClassLayout;
 
-public class StripeContext {
+public class StripeContext implements MemoryCountable {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(StripeContext.class).instanceSize();
+    @FieldMemoryCounter(value = false)
     private final StripeInformation stripeInformation;
 
     // global information
+    @FieldMemoryCounter(value = false)
     private final TypeDescription schema;
+    @FieldMemoryCounter(value = false)
     private final OrcFile.WriterVersion version;
+    @FieldMemoryCounter(value = false)
     private final OrcProto.ColumnEncoding[] encodings;
+    @FieldMemoryCounter(value = false)
     private final ReaderEncryption encryption;
-
+    @FieldMemoryCounter(value = false)
     private final InStream.StreamOptions streamOptions;
 
     private final boolean ignoreNonUtf8BloomFilter;
     private final long maxBufferSize;
+
+    @FieldMemoryCounter(value = false)
     private final OrcProto.Stream.Kind[] bloomFilterKinds;
 
     // does each column have a null stream?
@@ -47,6 +59,14 @@ public class StripeContext {
     private long originalStripeId;
 
     private boolean[] columnInclude;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(hasNull)
+            + FastMemoryCounter.sizeOf(writerTimezone)
+            + FastMemoryCounter.sizeOf(columnInclude);
+    }
 
     public StripeContext(StripeInformation stripeInformation,
                          TypeDescription schema,

@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.handler.subhandler;
 
+import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.cursor.impl.ArrayResultCursor;
 import com.alibaba.polardbx.executor.handler.VirtualViewHandler;
@@ -202,34 +203,6 @@ public class InformationSchemaCollationsHandler extends BaseVirtualViewSubClassH
         {"utf32_croatian_ci", "utf32", 181, "", "Yes", 8, "PAD SPACE"},
         {"utf32_unicode_520_ci", "utf32", 182, "", "Yes", 8, "PAD SPACE"},
         {"utf32_vietnamese_ci", "utf32", 183, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_general_ci", "utf8", 33, "Yes", "Yes", 1, "PAD SPACE"},
-        {"utf8_tolower_ci", "utf8", 76, "", "Yes", 1, "PAD SPACE"},
-        {"utf8_bin", "utf8", 83, "", "Yes", 1, "PAD SPACE"},
-        {"utf8_unicode_ci", "utf8", 192, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_icelandic_ci", "utf8", 193, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_latvian_ci", "utf8", 194, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_romanian_ci", "utf8", 195, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_slovenian_ci", "utf8", 196, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_polish_ci", "utf8", 197, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_estonian_ci", "utf8", 198, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_spanish_ci", "utf8", 199, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_swedish_ci", "utf8", 200, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_turkish_ci", "utf8", 201, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_czech_ci", "utf8", 202, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_danish_ci", "utf8", 203, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_lithuanian_ci", "utf8", 204, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_slovak_ci", "utf8", 205, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_spanish2_ci", "utf8", 206, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_roman_ci", "utf8", 207, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_persian_ci", "utf8", 208, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_esperanto_ci", "utf8", 209, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_hungarian_ci", "utf8", 210, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_sinhala_ci", "utf8", 211, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_german2_ci", "utf8", 212, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_croatian_ci", "utf8", 213, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_unicode_520_ci", "utf8", 214, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_vietnamese_ci", "utf8", 215, "", "Yes", 8, "PAD SPACE"},
-        {"utf8_general_mysql500_ci", "utf8", 223, "", "Yes", 1, "PAD SPACE"},
         {"utf8mb4_general_ci", "utf8mb4", 45, "", "Yes", 1, "PAD SPACE"},
         {"utf8mb4_bin", "utf8mb4", 46, "", "Yes", 1, "PAD SPACE"},
         {"utf8mb4_unicode_ci", "utf8mb4", 224, "", "Yes", 8, "PAD SPACE"},
@@ -306,6 +279,69 @@ public class InformationSchemaCollationsHandler extends BaseVirtualViewSubClassH
         {"utf8mb4_zh_0900_as_cs", "utf8mb4", 308, "", "Yes", 0, "NO PAD"},
     };
 
+    /**
+     * For MySQL 5.7
+     */
+    public static Object[][] UTF8_COLLATIONS = new Object[][] {
+        {"utf8_general_ci", "utf8", 33, "Yes", "Yes", 1, "PAD SPACE"},
+        {"utf8_bin", "utf8", 83, "", "Yes", 1, "PAD SPACE"},
+        {"utf8_unicode_ci", "utf8", 192, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_icelandic_ci", "utf8", 193, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_latvian_ci", "utf8", 194, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_romanian_ci", "utf8", 195, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_slovenian_ci", "utf8", 196, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_polish_ci", "utf8", 197, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_estonian_ci", "utf8", 198, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_spanish_ci", "utf8", 199, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_swedish_ci", "utf8", 200, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_turkish_ci", "utf8", 201, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_czech_ci", "utf8", 202, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_danish_ci", "utf8", 203, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_lithuanian_ci", "utf8", 204, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_slovak_ci", "utf8", 205, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_spanish2_ci", "utf8", 206, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_roman_ci", "utf8", 207, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_persian_ci", "utf8", 208, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_esperanto_ci", "utf8", 209, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_hungarian_ci", "utf8", 210, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_sinhala_ci", "utf8", 211, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_german2_ci", "utf8", 212, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_croatian_ci", "utf8", 213, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_unicode_520_ci", "utf8", 214, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_vietnamese_ci", "utf8", 215, "", "Yes", 8, "PAD SPACE"},
+        {"utf8_general_mysql500_ci", "utf8", 223, "", "Yes", 1, "PAD SPACE"},
+    };
+
+    public static Object[][] UTF8MB3_COLLATIONS = new Object[][] {
+        {"utf8mb3_general_ci", "utf8mb3", 33, "Yes", "Yes", 1, "PAD SPACE"},
+        {"utf8mb3_bin", "utf8mb3", 83, "", "Yes", 1, "PAD SPACE"},
+        {"utf8mb3_unicode_ci", "utf8mb3", 192, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_icelandic_ci", "utf8mb3", 193, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_latvian_ci", "utf8mb3", 194, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_romanian_ci", "utf8mb3", 195, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_slovenian_ci", "utf8mb3", 196, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_polish_ci", "utf8mb3", 197, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_estonian_ci", "utf8mb3", 198, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_spanish_ci", "utf8mb3", 199, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_swedish_ci", "utf8mb3", 200, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_turkish_ci", "utf8mb3", 201, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_czech_ci", "utf8mb3", 202, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_danish_ci", "utf8mb3", 203, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_lithuanian_ci", "utf8mb3", 204, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_slovak_ci", "utf8mb3", 205, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_spanish2_ci", "utf8mb3", 206, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_roman_ci", "utf8mb3", 207, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_persian_ci", "utf8mb3", 208, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_esperanto_ci", "utf8mb3", 209, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_hungarian_ci", "utf8mb3", 210, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_sinhala_ci", "utf8mb3", 211, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_german2_ci", "utf8mb3", 212, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_croatian_ci", "utf8mb3", 213, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_unicode_520_ci", "utf8mb3", 214, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_vietnamese_ci", "utf8mb3", 215, "", "Yes", 8, "PAD SPACE"},
+        {"utf8mb3_general_mysql500_ci", "utf8mb3", 223, "", "Yes", 1, "PAD SPACE"},
+    };
+
     @Override
     public boolean isSupport(VirtualView virtualView) {
         return virtualView instanceof InformationSchemaCollations;
@@ -314,8 +350,22 @@ public class InformationSchemaCollationsHandler extends BaseVirtualViewSubClassH
     @Override
     public Cursor handle(VirtualView virtualView, ExecutionContext executionContext, ArrayResultCursor cursor) {
         InformationSchemaCollations informationSchemaCollations = (InformationSchemaCollations) virtualView;
-        for (Object[] collation : COLLATIONS) {
+        return getCursor(cursor, COLLATIONS, UTF8MB3_COLLATIONS, UTF8_COLLATIONS);
+    }
+
+    static Cursor getCursor(ArrayResultCursor cursor, Object[][] collations, Object[][] utf8mb3Collations,
+                            Object[][] utf8Collations) {
+        for (Object[] collation : collations) {
             cursor.addRow(collation);
+        }
+        if (InstanceVersion.isMYSQL80()) {
+            for (Object[] collation : utf8mb3Collations) {
+                cursor.addRow(collation);
+            }
+        } else {
+            for (Object[] collation : utf8Collations) {
+                cursor.addRow(collation);
+            }
         }
         return cursor;
     }

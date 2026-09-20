@@ -16,10 +16,10 @@
 
 package com.alibaba.polardbx.net.compress;
 
-import com.alibaba.polardbx.net.FrontendConnection;
-import com.alibaba.polardbx.net.buffer.ByteBufferHolder;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.net.FrontendConnection;
+import com.alibaba.polardbx.net.buffer.ByteBufferHolder;
 
 /**
  * Created by simiao on 15-4-17.
@@ -27,10 +27,11 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 public class RawPacketByteBufferOutputProxy extends PacketByteBufferOutputProxy {
 
     /**
-     * 记录当前复合packet的调用深度，当深度为0时的packetEnd才做压缩并发送
-     * 不使用AtomicInteger，因为不会多线程使用同一个proxy，可以提高性能
+     * Tracks nested output scopes. The proxy flushes and unregisters when the outermost scope ends.
      */
     private int nestedPacketCount = 0;
+
+    private boolean dirtyMarked;
 
     public RawPacketByteBufferOutputProxy(FrontendConnection c) {
         super(c);
@@ -40,20 +41,54 @@ public class RawPacketByteBufferOutputProxy extends PacketByteBufferOutputProxy 
         super(c, buffer);
     }
 
+    private void markDirtyOnFirstWrite() {
+        if (!dirtyMarked) {
+            dirtyMarked = true;
+            c.markPacketOutputDirty();
+        }
+    }
+
     /**
-     * 针对非压缩的情况，直接通过conn边写边发送了，所以这个方法不需要特别处理
+     * Marks every completed packet as aligned and flushes when the outermost output scope ends.
      */
     @Override
     public void packetEnd() {
         int nested = --nestedPacketCount;
         if (nested < 0) {
             throw new TddlRuntimeException(ErrorCode.ERR_PACKET_COMPOSE, "packetEnd nested: " + nested);
-        } else if (nested == 0) {
-            /**
-             * 只有最外层结束时才把缓冲区剩余的内容发送
-             */
-            c.write(currentBuffer);
         }
+
+        if (nested == 0) {
+            try {
+                flushPendingBuffer();
+            } finally {
+                c.clearActivePacketOutputProxy(this);
+            }
+        }
+
+        if (dirtyMarked) {
+            c.markPacketOutputClean();
+            dirtyMarked = false;
+        }
+    }
+
+    /**
+     * Submit complete packets currently retained by this proxy.
+     */
+    public void flushPendingBuffer() {
+        ByteBufferHolder buffer = currentBuffer;
+        if (buffer == null) {
+            return;
+        }
+
+        currentBuffer = null;
+
+        if (buffer.position() == 0) {
+            c.recycle(buffer);
+            return;
+        }
+
+        c.write(buffer);
     }
 
     /**
@@ -68,16 +103,33 @@ public class RawPacketByteBufferOutputProxy extends PacketByteBufferOutputProxy 
 
     @Override
     public void write(byte[] src) {
+        if (src.length > 0) {
+            markDirtyOnFirstWrite();
+        }
         currentBuffer = c.writeToBuffer(src, currentBuffer);
     }
 
     @Override
     public void write(byte[] src, int off, int len) {
+        if (len > 0) {
+            markDirtyOnFirstWrite();
+        }
         currentBuffer = c.writeToBuffer(src, off, len, currentBuffer);
     }
 
     @Override
     public void packetBegin() {
+        if (nestedPacketCount == 0) {
+            // Keep the proxy reachable if result-set construction fails.
+            c.registerActivePacketOutputProxy(this);
+        }
         ++nestedPacketCount;
+    }
+
+    @Override
+    public ByteBufferHolder put(byte b) {
+        ByteBufferHolder buffer = super.put(b);
+        markDirtyOnFirstWrite();
+        return buffer;
     }
 }

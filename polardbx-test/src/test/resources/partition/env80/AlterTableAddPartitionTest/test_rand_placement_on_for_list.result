@@ -1,0 +1,719 @@
+## DISABLE_FAST_SQL_PARSER
+  ## r_h_tp
+set ENABLE_RANDOM_PARTITION_PLACEMENT=true
+create table if not exists l_h_tp1 (
+a bigint unsigned not null,
+b bigint unsigned not null,
+c datetime NOT NULL,
+d varchar(16) NOT NULL,
+e varchar(16) NOT NULL
+)
+partition by list (to_days(c))
+subpartition by hash (a,b) subpartitions 4
+(
+partition p1 values in ( to_days('2010-01-01') ),
+partition p2 values in ( to_days('2020-01-01'), to_days('2040-01-01') )
+)
+create table if not exists l_h_tp2 (
+a bigint unsigned not null,
+b bigint unsigned not null,
+c datetime NOT NULL,
+d varchar(16) NOT NULL,
+e varchar(16) NOT NULL
+)
+partition by list (to_days(c))
+subpartition by hash (a,b) subpartitions 4
+(
+partition p1 values in ( to_days('2010-01-01') ),
+partition p2 values in ( to_days('2020-01-01'), to_days('2040-01-01') )
+)
+insert into l_h_tp1 values (100,2,'2010-01-01','a','b')
+insert into l_h_tp1 values (200,2,'2020-01-01','a','b')
+insert into l_h_tp1 values (300,2,'2040-01-01','a','b')
+alter table l_h_tp1 add partition ( partition p3 values in ( to_days('2049-01-01') ))
+insert into l_h_tp1 values (400,2,'2010-01-01','a','b')
+insert into l_h_tp1 values (500,2,'2020-01-01','a','b')
+insert into l_h_tp1 values (600,2,'2049-01-01','a','b')
+insert into l_h_tp2 values (100,2,'2010-01-01','a','b')
+insert into l_h_tp2 values (200,2,'2020-01-01','a','b')
+insert into l_h_tp2 values (300,2,'2040-01-01','a','b')
+alter table l_h_tp2 add partition ( partition p3 values in ( to_days('2048-01-01') ))
+insert into l_h_tp2 values (400,2,'2010-01-01','a','b')
+insert into l_h_tp2 values (500,2,'2020-01-01','a','b')
+insert into l_h_tp2 values (600,2,'2048-01-01','a','b')
+alter tablegroup by table l_h_tp1 add partition ( partition p4 values in ( to_days('2050-01-01') ), partition p5 values in ( to_days('2052-01-01') ))
+alter table l_h_tp2 add partition ( partition p6 values in ( to_days('2053-01-01') ), partition p7 values in ( to_days('2054-01-01') ))
+show full create table l_h_tp1
+Table,Create Table
+l_h_tp1,CREATE TABLE `l_h_tp1` (
+	`a` bigint UNSIGNED NOT NULL,
+	`b` bigint UNSIGNED NOT NULL,
+	`c` datetime NOT NULL,
+	`d` varchar(16) NOT NULL,
+	`e` varchar(16) NOT NULL,
+	`_drds_implicit_id_` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`_drds_implicit_id_`),
+	LOCAL KEY `auto_shard_key_c` USING BTREE (`c`),
+	LOCAL KEY `auto_shard_key_a_b` USING BTREE (`a`, `b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST(TO_DAYS(`c`))
+SUBPARTITION BY HASH(`a`,`b`)
+SUBPARTITIONS 4
+(PARTITION p1 VALUES IN (734138),
+ PARTITION p2 VALUES IN (737790,745095),
+ PARTITION p3 VALUES IN (748383),
+ PARTITION p4 VALUES IN (748748),
+ PARTITION p5 VALUES IN (749478))
+/* tablegroup = `tg` */
+show full create table l_h_tp2
+Table,Create Table
+l_h_tp2,CREATE TABLE `l_h_tp2` (
+	`a` bigint UNSIGNED NOT NULL,
+	`b` bigint UNSIGNED NOT NULL,
+	`c` datetime NOT NULL,
+	`d` varchar(16) NOT NULL,
+	`e` varchar(16) NOT NULL,
+	`_drds_implicit_id_` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`_drds_implicit_id_`),
+	LOCAL KEY `auto_shard_key_c` USING BTREE (`c`),
+	LOCAL KEY `auto_shard_key_a_b` USING BTREE (`a`, `b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST(TO_DAYS(`c`))
+SUBPARTITION BY HASH(`a`,`b`)
+SUBPARTITIONS 4
+(PARTITION p1 VALUES IN (734138),
+ PARTITION p2 VALUES IN (737790,745095),
+ PARTITION p3 VALUES IN (748017),
+ PARTITION p6 VALUES IN (749844),
+ PARTITION p7 VALUES IN (750209))
+/* tablegroup = `tg` */
+select * from l_h_tp1 order by a,b,c,d,e
+a,b,c,d,e
+100,2,2010-01-01 00:00:00.0,a,b
+200,2,2020-01-01 00:00:00.0,a,b
+300,2,2040-01-01 00:00:00.0,a,b
+400,2,2010-01-01 00:00:00.0,a,b
+500,2,2020-01-01 00:00:00.0,a,b
+600,2,2049-01-01 00:00:00.0,a,b
+select * from l_h_tp2 order by a,b,c,d,e
+a,b,c,d,e
+100,2,2010-01-01 00:00:00.0,a,b
+200,2,2020-01-01 00:00:00.0,a,b
+300,2,2040-01-01 00:00:00.0,a,b
+400,2,2010-01-01 00:00:00.0,a,b
+500,2,2020-01-01 00:00:00.0,a,b
+600,2,2048-01-01 00:00:00.0,a,b
+create table if not exists l_l_tp1 (
+a bigint unsigned not null,
+b bigint unsigned not null,
+c datetime NOT NULL,
+d varchar(16) NOT NULL,
+e varchar(16) NOT NULL
+)
+partition by list (to_days(c))
+subpartition by list (a)
+(
+subpartition sp1 values in ( 100, 200, 300, 400 ),
+subpartition sp2 values in ( 1500, 2000, 3000, 6000 )
+)
+(
+partition p1 values in ( to_days('2010-01-01'), to_days('2011-01-01') ),
+partition p2 values in ( to_days('2020-01-01'), to_days('2041-01-01') )
+)
+create table if not exists l_l_tp2 (
+a bigint unsigned not null,
+b bigint unsigned not null,
+c datetime NOT NULL,
+d varchar(16) NOT NULL,
+e varchar(16) NOT NULL
+)
+partition by list (to_days(c))
+subpartition by list (a)
+(
+subpartition sp1 values in ( 100, 200, 300, 400 ),
+subpartition sp2 values in ( 1500, 2000, 3000, 6000 )
+)
+(
+partition p1 values in ( to_days('2010-01-01'), to_days('2011-01-01') ),
+partition p2 values in ( to_days('2020-01-01'), to_days('2041-01-01') )
+)
+insert into l_l_tp1 values (100,2,'2010-01-01','a','b')
+insert into l_l_tp1 values (2000,2,'2020-01-01','a','b')
+insert into l_l_tp1 values (3000,2,'2041-01-01','a','b')
+alter tablegroup by table l_l_tp1 add subpartition ( subpartition sp3 values in ( 500, 700 ))
+alter table l_l_tp1 add partition ( partition p3 values in ( to_days('2049-01-01') ))
+insert into l_l_tp1 values (200,2,'2010-01-01','a','b')
+insert into l_l_tp1 values (1500,2,'2020-01-01','a','b')
+insert into l_l_tp1 values (3000,2,'2049-01-01','a','b')
+alter table l_l_tp1 add partition ( partition p4 values in ( to_days('2050-01-01') ))
+insert into l_l_tp1 values (400,2,'2010-01-01','a','b')
+insert into l_l_tp1 values (500,2,'2050-01-01','a','b')
+insert into l_l_tp1 values (700,2,'2041-01-01','a','b')
+insert into l_l_tp2 values (100,2,'2010-01-01','a','b')
+insert into l_l_tp2 values (2000,2,'2020-01-01','a','b')
+insert into l_l_tp2 values (3000,2,'2041-01-01','a','b')
+alter table l_l_tp2 add partition ( partition p3 values in ( to_days('2049-01-01') ))
+insert into l_l_tp2 values (200,2,'2010-01-01','a','b')
+insert into l_l_tp2 values (1500,2,'2011-01-01','a','b')
+insert into l_l_tp2 values (3000,2,'2049-01-01','a','b')
+alter table l_l_tp2 drop subpartition sp2
+insert into l_l_tp2 values (400,2,'2010-01-01','a','b')
+insert into l_l_tp2 values (500,2,'2011-01-01','a','b')
+insert into l_l_tp2 values (700,2,'2049-01-01','a','b')
+alter table l_l_tp1 add subpartition(subpartition sp4 values in ( 800, 900 ))
+alter table l_l_tp2 add subpartition(subpartition sp4 values in ( 800, 900 ), subpartition sp5 values in ( 1000, 1100 ))
+show full create table l_l_tp1
+Table,Create Table
+l_l_tp1,CREATE TABLE `l_l_tp1` (
+	`a` bigint UNSIGNED NOT NULL,
+	`b` bigint UNSIGNED NOT NULL,
+	`c` datetime NOT NULL,
+	`d` varchar(16) NOT NULL,
+	`e` varchar(16) NOT NULL,
+	`_drds_implicit_id_` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`_drds_implicit_id_`),
+	LOCAL KEY `auto_shard_key_c` USING BTREE (`c`),
+	LOCAL KEY `auto_shard_key_a` USING BTREE (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST(TO_DAYS(`c`))
+SUBPARTITION BY LIST(`a`)
+(SUBPARTITION sp1 VALUES IN (100,200,300,400),
+ SUBPARTITION sp3 VALUES IN (500,700),
+ SUBPARTITION sp4 VALUES IN (800,900),
+ SUBPARTITION sp2 VALUES IN (1500,2000,3000,6000))
+(PARTITION p1 VALUES IN (734138,734503),
+ PARTITION p2 VALUES IN (737790,745461),
+ PARTITION p3 VALUES IN (748383),
+ PARTITION p4 VALUES IN (748748))
+/* tablegroup = `tg` */
+show full create table l_l_tp2
+Table,Create Table
+l_l_tp2,CREATE TABLE `l_l_tp2` (
+	`a` bigint UNSIGNED NOT NULL,
+	`b` bigint UNSIGNED NOT NULL,
+	`c` datetime NOT NULL,
+	`d` varchar(16) NOT NULL,
+	`e` varchar(16) NOT NULL,
+	`_drds_implicit_id_` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`_drds_implicit_id_`),
+	LOCAL KEY `auto_shard_key_c` USING BTREE (`c`),
+	LOCAL KEY `auto_shard_key_a` USING BTREE (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST(TO_DAYS(`c`))
+SUBPARTITION BY LIST(`a`)
+(SUBPARTITION sp1 VALUES IN (100,200,300,400),
+ SUBPARTITION sp3 VALUES IN (500,700),
+ SUBPARTITION sp4 VALUES IN (800,900),
+ SUBPARTITION sp5 VALUES IN (1000,1100))
+(PARTITION p1 VALUES IN (734138,734503),
+ PARTITION p2 VALUES IN (737790,745461),
+ PARTITION p3 VALUES IN (748383))
+/* tablegroup = `tg` */
+select * from l_l_tp1 order by a,b,c,d,e
+a,b,c,d,e
+100,2,2010-01-01 00:00:00.0,a,b
+200,2,2010-01-01 00:00:00.0,a,b
+400,2,2010-01-01 00:00:00.0,a,b
+500,2,2050-01-01 00:00:00.0,a,b
+700,2,2041-01-01 00:00:00.0,a,b
+1500,2,2020-01-01 00:00:00.0,a,b
+2000,2,2020-01-01 00:00:00.0,a,b
+3000,2,2041-01-01 00:00:00.0,a,b
+3000,2,2049-01-01 00:00:00.0,a,b
+select * from l_l_tp2 order by a,b,c,d,e
+a,b,c,d,e
+100,2,2010-01-01 00:00:00.0,a,b
+200,2,2010-01-01 00:00:00.0,a,b
+400,2,2010-01-01 00:00:00.0,a,b
+500,2,2011-01-01 00:00:00.0,a,b
+700,2,2049-01-01 00:00:00.0,a,b
+## rc_h_tp
+create table if not exists lc_h_tp1 (
+a bigint unsigned not null,
+b bigint unsigned not null,
+c datetime NOT NULL,
+d varchar(16) NOT NULL,
+e varchar(16) NOT NULL
+)
+partition by list columns (c,d)
+subpartition by hash (a,b) subpartitions 4
+(
+partition p1 values in ( ('2010-01-01','a'), ('2011-01-01','b') ),
+partition p2 values in ( ('2020-01-01','a'), ('2040-01-01','b') )
+)
+create table if not exists lc_h_tp2 (
+a bigint unsigned not null,
+b bigint unsigned not null,
+c datetime NOT NULL,
+d varchar(16) NOT NULL,
+e varchar(16) NOT NULL
+)
+partition by list columns (c,d)
+subpartition by hash (a,b) subpartitions 4
+(
+partition p1 values in ( ('2010-01-01','a'), ('2011-01-01','b') ),
+partition p2 values in ( ('2020-01-01','a'), ('2040-01-01','b') )
+)
+insert into lc_h_tp1 values (1,2,'2010-01-01','a','b')
+insert into lc_h_tp1 values (2,2,'2020-01-01','a','b')
+insert into lc_h_tp1 values (3,2,'2040-01-01','b','b')
+alter table lc_h_tp1 add partition ( partition p3 values in ( ('2049-01-01','a') ))
+insert into lc_h_tp1 values (2,2,'2010-01-01','a','b')
+insert into lc_h_tp1 values (3,2,'2011-01-01','b','b')
+insert into lc_h_tp1 values (3,2,'2049-01-01','a','b')
+insert into lc_h_tp2 values (1,2,'2010-01-01','a','b')
+insert into lc_h_tp2 values (2,2,'2020-01-01','a','b')
+insert into lc_h_tp2 values (3,2,'2040-01-01','b','b')
+alter table lc_h_tp2 add partition ( partition p3 values in ( ('2048-01-01','a') ))
+insert into lc_h_tp2 values (2,2,'2010-01-01','a','b')
+insert into lc_h_tp2 values (3,2,'2011-01-01','b','b')
+insert into lc_h_tp2 values (3,2,'2048-01-01','a','b')
+alter tablegroup by table lc_h_tp1 add partition ( partition p4 values in ( ('2050-01-01','a') ), partition p5 values in ( ('2051-01-01','a') ) )
+alter table lc_h_tp2 add partition ( partition p6 values in ( ('2052-01-01','a') ), partition p7 values in ( ('2053-01-01','a') ) )
+show full create table lc_h_tp1
+Table,Create Table
+lc_h_tp1,CREATE TABLE `lc_h_tp1` (
+	`a` bigint UNSIGNED NOT NULL,
+	`b` bigint UNSIGNED NOT NULL,
+	`c` datetime NOT NULL,
+	`d` varchar(16) NOT NULL,
+	`e` varchar(16) NOT NULL,
+	`_drds_implicit_id_` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`_drds_implicit_id_`),
+	LOCAL KEY `auto_shard_key_c_d` USING BTREE (`c`, `d`),
+	LOCAL KEY `auto_shard_key_a_b` USING BTREE (`a`, `b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST COLUMNS(`c`,`d`)
+SUBPARTITION BY HASH(`a`,`b`)
+SUBPARTITIONS 4
+(PARTITION p1 VALUES IN (('2010-01-01 00:00:00','a'),('2011-01-01 00:00:00','b')),
+ PARTITION p2 VALUES IN (('2020-01-01 00:00:00','a'),('2040-01-01 00:00:00','b')),
+ PARTITION p3 VALUES IN (('2049-01-01 00:00:00','a')),
+ PARTITION p4 VALUES IN (('2050-01-01 00:00:00','a')),
+ PARTITION p5 VALUES IN (('2051-01-01 00:00:00','a')))
+/* tablegroup = `tg` */
+show full create table lc_h_tp2
+Table,Create Table
+lc_h_tp2,CREATE TABLE `lc_h_tp2` (
+	`a` bigint UNSIGNED NOT NULL,
+	`b` bigint UNSIGNED NOT NULL,
+	`c` datetime NOT NULL,
+	`d` varchar(16) NOT NULL,
+	`e` varchar(16) NOT NULL,
+	`_drds_implicit_id_` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`_drds_implicit_id_`),
+	LOCAL KEY `auto_shard_key_c_d` USING BTREE (`c`, `d`),
+	LOCAL KEY `auto_shard_key_a_b` USING BTREE (`a`, `b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST COLUMNS(`c`,`d`)
+SUBPARTITION BY HASH(`a`,`b`)
+SUBPARTITIONS 4
+(PARTITION p1 VALUES IN (('2010-01-01 00:00:00','a'),('2011-01-01 00:00:00','b')),
+ PARTITION p2 VALUES IN (('2020-01-01 00:00:00','a'),('2040-01-01 00:00:00','b')),
+ PARTITION p3 VALUES IN (('2048-01-01 00:00:00','a')),
+ PARTITION p6 VALUES IN (('2052-01-01 00:00:00','a')),
+ PARTITION p7 VALUES IN (('2053-01-01 00:00:00','a')))
+/* tablegroup = `tg` */
+select * from lc_h_tp1 order by a,b,c,d,e
+a,b,c,d,e
+1,2,2010-01-01 00:00:00.0,a,b
+2,2,2010-01-01 00:00:00.0,a,b
+2,2,2020-01-01 00:00:00.0,a,b
+3,2,2011-01-01 00:00:00.0,b,b
+3,2,2040-01-01 00:00:00.0,b,b
+3,2,2049-01-01 00:00:00.0,a,b
+select * from lc_h_tp2 order by a,b,c,d,e
+a,b,c,d,e
+1,2,2010-01-01 00:00:00.0,a,b
+2,2,2010-01-01 00:00:00.0,a,b
+2,2,2020-01-01 00:00:00.0,a,b
+3,2,2011-01-01 00:00:00.0,b,b
+3,2,2040-01-01 00:00:00.0,b,b
+3,2,2048-01-01 00:00:00.0,a,b
+## rc_r_tp
+create table if not exists lc_l_tp1 (
+a bigint unsigned not null,
+b bigint unsigned not null,
+c datetime NOT NULL,
+d varchar(16) NOT NULL,
+e varchar(16) NOT NULL
+)
+partition by list columns (c,d)
+subpartition by list (a)
+(
+subpartition sp1 values in ( 100, 150, 200, 400 ),
+subpartition sp2 values in ( 1500, 2000, 3000, 6000 )
+)
+(
+partition p1 values in ( ('2010-01-01','a'), ('2011-01-01','b') ),
+partition p2 values in ( ('2020-01-01','a'), ('2041-01-01','b') )
+)
+create table if not exists lc_l_tp2 (
+a bigint unsigned not null,
+b bigint unsigned not null,
+c datetime NOT NULL,
+d varchar(16) NOT NULL,
+e varchar(16) NOT NULL
+)
+partition by list columns (c,d)
+subpartition by list (a)
+(
+subpartition sp1 values in ( 100, 150, 200, 400 ),
+subpartition sp2 values in ( 1500, 2000, 3000, 6000 )
+)
+(
+partition p1 values in ( ('2010-01-01','a'), ('2011-01-01','b') ),
+partition p2 values in ( ('2020-01-01','a'), ('2041-01-01','b') )
+)
+insert into lc_l_tp1 values (100,2,'2010-01-01','a','b')
+insert into lc_l_tp1 values (1500,2,'2020-01-01','a','b')
+insert into lc_l_tp1 values (3000,2,'2041-01-01','b','b')
+alter table lc_l_tp1 add partition ( partition p3 values in ( ('2049-01-01','a') ))
+insert into lc_l_tp1 values (150,2,'2010-01-01','a','b')
+insert into lc_l_tp1 values (3000,2,'2011-01-01','b','b')
+insert into lc_l_tp1 values (3000,2,'2049-01-01','a','b')
+alter table lc_l_tp1 add partition ( partition p4 values in ( ('2050-01-01','a') ))
+insert into lc_l_tp1 values (100,2,'2010-01-01','a','b')
+insert into lc_l_tp1 values (1500,2,'2049-01-01','a','b')
+insert into lc_l_tp1 values (3000,2,'2050-01-01','a','b')
+insert into lc_l_tp2 values (150,2,'2010-01-01','a','b')
+insert into lc_l_tp2 values (1500,2,'2020-01-01','a','b')
+insert into lc_l_tp2 values (3000,2,'2041-01-01','b','b')
+alter table lc_l_tp2 add partition ( partition p3 values in ( ('2048-01-01','a') ))
+insert into lc_l_tp2 values (150,2,'2010-01-01','a','b')
+insert into lc_l_tp2 values (3000,2,'2011-01-01','b','b')
+insert into lc_l_tp2 values (3000,2,'2048-01-01','a','b')
+alter table lc_l_tp2 add partition ( partition p4 values in ( ('2049-01-01','a') ))
+insert into lc_l_tp2 values (150,2,'2010-01-01','a','b')
+insert into lc_l_tp2 values (1500,2,'2048-01-01','a','b')
+insert into lc_l_tp2 values (3000,2,'2049-01-01','a','b')
+alter table lc_l_tp1 add subpartition(subpartition sp3 values in ( 500, 700 ))
+alter table lc_l_tp2 add subpartition(subpartition sp3 values in ( 500, 700 ), subpartition sp4 values in ( 800, 900 ))
+show full create table lc_l_tp1
+Table,Create Table
+lc_l_tp1,CREATE TABLE `lc_l_tp1` (
+	`a` bigint UNSIGNED NOT NULL,
+	`b` bigint UNSIGNED NOT NULL,
+	`c` datetime NOT NULL,
+	`d` varchar(16) NOT NULL,
+	`e` varchar(16) NOT NULL,
+	`_drds_implicit_id_` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`_drds_implicit_id_`),
+	LOCAL KEY `auto_shard_key_c_d` USING BTREE (`c`, `d`),
+	LOCAL KEY `auto_shard_key_a` USING BTREE (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST COLUMNS(`c`,`d`)
+SUBPARTITION BY LIST(`a`)
+(SUBPARTITION sp1 VALUES IN (100,150,200,400),
+ SUBPARTITION sp3 VALUES IN (500,700),
+ SUBPARTITION sp2 VALUES IN (1500,2000,3000,6000))
+(PARTITION p1 VALUES IN (('2010-01-01 00:00:00','a'),('2011-01-01 00:00:00','b')),
+ PARTITION p2 VALUES IN (('2020-01-01 00:00:00','a'),('2041-01-01 00:00:00','b')),
+ PARTITION p3 VALUES IN (('2049-01-01 00:00:00','a')),
+ PARTITION p4 VALUES IN (('2050-01-01 00:00:00','a')))
+/* tablegroup = `tg` */
+show full create table lc_l_tp2
+Table,Create Table
+lc_l_tp2,CREATE TABLE `lc_l_tp2` (
+	`a` bigint UNSIGNED NOT NULL,
+	`b` bigint UNSIGNED NOT NULL,
+	`c` datetime NOT NULL,
+	`d` varchar(16) NOT NULL,
+	`e` varchar(16) NOT NULL,
+	`_drds_implicit_id_` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`_drds_implicit_id_`),
+	LOCAL KEY `auto_shard_key_c_d` USING BTREE (`c`, `d`),
+	LOCAL KEY `auto_shard_key_a` USING BTREE (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST COLUMNS(`c`,`d`)
+SUBPARTITION BY LIST(`a`)
+(SUBPARTITION sp1 VALUES IN (100,150,200,400),
+ SUBPARTITION sp3 VALUES IN (500,700),
+ SUBPARTITION sp4 VALUES IN (800,900),
+ SUBPARTITION sp2 VALUES IN (1500,2000,3000,6000))
+(PARTITION p1 VALUES IN (('2010-01-01 00:00:00','a'),('2011-01-01 00:00:00','b')),
+ PARTITION p2 VALUES IN (('2020-01-01 00:00:00','a'),('2041-01-01 00:00:00','b')),
+ PARTITION p3 VALUES IN (('2048-01-01 00:00:00','a')),
+ PARTITION p4 VALUES IN (('2049-01-01 00:00:00','a')))
+/* tablegroup = `tg` */
+select * from lc_l_tp1 order by a,b,c,d,e
+a,b,c,d,e
+100,2,2010-01-01 00:00:00.0,a,b
+100,2,2010-01-01 00:00:00.0,a,b
+150,2,2010-01-01 00:00:00.0,a,b
+1500,2,2020-01-01 00:00:00.0,a,b
+1500,2,2049-01-01 00:00:00.0,a,b
+3000,2,2011-01-01 00:00:00.0,b,b
+3000,2,2041-01-01 00:00:00.0,b,b
+3000,2,2049-01-01 00:00:00.0,a,b
+3000,2,2050-01-01 00:00:00.0,a,b
+select * from lc_l_tp2 order by a,b,c,d,e
+a,b,c,d,e
+150,2,2010-01-01 00:00:00.0,a,b
+150,2,2010-01-01 00:00:00.0,a,b
+150,2,2010-01-01 00:00:00.0,a,b
+1500,2,2020-01-01 00:00:00.0,a,b
+1500,2,2048-01-01 00:00:00.0,a,b
+3000,2,2011-01-01 00:00:00.0,b,b
+3000,2,2041-01-01 00:00:00.0,b,b
+3000,2,2048-01-01 00:00:00.0,a,b
+3000,2,2049-01-01 00:00:00.0,a,b
+create table if not exists l_h_ntp1 (
+a bigint unsigned not null,
+b bigint unsigned not null,
+c datetime NOT NULL,
+d varchar(16) NOT NULL,
+e varchar(16) NOT NULL
+)
+partition by list (to_days(c))
+subpartition by hash (a,b)
+(
+partition p1 values in ( to_days('2010-01-01') ),
+partition p2 values in ( to_days('2020-01-01'), to_days('2040-01-01') )
+)
+create table if not exists l_h_ntp2 (
+a bigint unsigned not null,
+b bigint unsigned not null,
+c datetime NOT NULL,
+d varchar(16) NOT NULL,
+e varchar(16) NOT NULL
+)
+partition by list (to_days(c))
+subpartition by hash (a,b)
+(
+partition p1 values in ( to_days('2010-01-01') ),
+partition p2 values in ( to_days('2020-01-01'), to_days('2040-01-01') )
+)
+insert into l_h_ntp1 values (1,2,'2010-01-01','a','b')
+insert into l_h_ntp1 values (2,2,'2020-01-01','a','b')
+insert into l_h_ntp1 values (3,2,'2040-01-01','a','b')
+alter table l_h_ntp1 add partition(partition p3 values in ( to_days('2049-01-01') ))
+alter table l_h_ntp1 add partition(partition p4 values in ( to_days('2050-01-01') ))
+insert into l_h_ntp1 values (4,2,'2010-01-01','a','b')
+insert into l_h_ntp1 values (5,2,'2049-01-01','a','b')
+insert into l_h_ntp1 values (6,2,'2050-01-01','a','b')
+insert into l_h_ntp2 values (1,2,'2010-01-01','a','b')
+insert into l_h_ntp2 values (2,2,'2020-01-01','a','b')
+insert into l_h_ntp2 values (3,2,'2040-01-01','a','b')
+alter table l_h_ntp2 add partition(partition p3 values in ( to_days('2048-01-01') ))
+alter table l_h_ntp2 add partition(partition p4 values in ( to_days('2050-01-01') ), partition p5 values in ( to_days('2051-01-01') ))
+insert into l_h_ntp2 values (4,2,'2048-01-01','a','b')
+insert into l_h_ntp2 values (5,2,'2050-01-01','a','b')
+insert into l_h_ntp2 values (6,2,'2010-01-01','a','b')
+show full create table l_h_ntp1
+Table,Create Table
+l_h_ntp1,CREATE TABLE `l_h_ntp1` (
+	`a` bigint UNSIGNED NOT NULL,
+	`b` bigint UNSIGNED NOT NULL,
+	`c` datetime NOT NULL,
+	`d` varchar(16) NOT NULL,
+	`e` varchar(16) NOT NULL,
+	`_drds_implicit_id_` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`_drds_implicit_id_`),
+	LOCAL KEY `auto_shard_key_c` USING BTREE (`c`),
+	LOCAL KEY `auto_shard_key_a_b` USING BTREE (`a`, `b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST(TO_DAYS(`c`))
+SUBPARTITION BY HASH(`a`,`b`)
+(PARTITION p1 VALUES IN (734138)
+ (SUBPARTITION p1sp1 ENGINE = InnoDB),
+ PARTITION p2 VALUES IN (737790,745095)
+ (SUBPARTITION p2sp1 ENGINE = InnoDB),
+ PARTITION p3 VALUES IN (748383)
+ (SUBPARTITION p3sp1 ENGINE = InnoDB),
+ PARTITION p4 VALUES IN (748748)
+ (SUBPARTITION p4sp1 ENGINE = InnoDB))
+/* tablegroup = `tg` */
+show full create table l_h_ntp2
+Table,Create Table
+l_h_ntp2,CREATE TABLE `l_h_ntp2` (
+	`a` bigint UNSIGNED NOT NULL,
+	`b` bigint UNSIGNED NOT NULL,
+	`c` datetime NOT NULL,
+	`d` varchar(16) NOT NULL,
+	`e` varchar(16) NOT NULL,
+	`_drds_implicit_id_` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`_drds_implicit_id_`),
+	LOCAL KEY `auto_shard_key_c` USING BTREE (`c`),
+	LOCAL KEY `auto_shard_key_a_b` USING BTREE (`a`, `b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST(TO_DAYS(`c`))
+SUBPARTITION BY HASH(`a`,`b`)
+(PARTITION p1 VALUES IN (734138)
+ (SUBPARTITION p1sp1 ENGINE = InnoDB),
+ PARTITION p2 VALUES IN (737790,745095)
+ (SUBPARTITION p2sp1 ENGINE = InnoDB),
+ PARTITION p3 VALUES IN (748017)
+ (SUBPARTITION p3sp1 ENGINE = InnoDB),
+ PARTITION p4 VALUES IN (748748)
+ (SUBPARTITION p4sp1 ENGINE = InnoDB),
+ PARTITION p5 VALUES IN (749113)
+ (SUBPARTITION p5sp1 ENGINE = InnoDB))
+/* tablegroup = `tg` */
+select * from l_h_ntp1 order by a,b,c,d,e
+a,b,c,d,e
+1,2,2010-01-01 00:00:00.0,a,b
+2,2,2020-01-01 00:00:00.0,a,b
+3,2,2040-01-01 00:00:00.0,a,b
+4,2,2010-01-01 00:00:00.0,a,b
+5,2,2049-01-01 00:00:00.0,a,b
+6,2,2050-01-01 00:00:00.0,a,b
+select * from l_h_ntp2 order by a,b,c,d,e
+a,b,c,d,e
+1,2,2010-01-01 00:00:00.0,a,b
+2,2,2020-01-01 00:00:00.0,a,b
+3,2,2040-01-01 00:00:00.0,a,b
+4,2,2048-01-01 00:00:00.0,a,b
+5,2,2050-01-01 00:00:00.0,a,b
+6,2,2010-01-01 00:00:00.0,a,b
+create table if not exists l_lc_ntp1 (
+a bigint unsigned not null,
+b bigint unsigned not null,
+c datetime NOT NULL,
+d varchar(16) NOT NULL,
+e varchar(16) NOT NULL
+)
+partition by list (to_days(c))
+subpartition by list columns (a,b)
+(
+partition p1 values in ( to_days('2010-01-01'), to_days('2011-01-01') ) (
+subpartition p1sp1 values in ( (1000,2), (400,2), (500,2) ),
+subpartition p1sp2 values in ( (999999,99999), (2000,2), (6000,2) )
+),
+partition p2 values in ( to_days('2020-01-01'), to_days('2022-01-01') ) (
+subpartition p2sp1 values in ( (1000,2), (400,2), (500,2) ),
+subpartition p2sp2 values in ( (999999,99999), (2000,2), (6000,2) )
+),
+partition p3 values in ( to_days('2041-01-01'), to_days('2061-01-01') ) (
+subpartition p3sp1 values in ( (1000,2), (400,2), (500,2) ),
+subpartition p3sp2 values in ( (2000,10000), (1600,2) ),
+subpartition p3sp3 values in ( (999999,99999), (2000,2), (6000,2), (7000,2) )
+)
+)
+create table if not exists l_lc_ntp2 (
+a bigint unsigned not null,
+b bigint unsigned not null,
+c datetime NOT NULL,
+d varchar(16) NOT NULL,
+e varchar(16) NOT NULL
+)
+partition by list (to_days(c))
+subpartition by list columns (a,b)
+(
+partition p1 values in ( to_days('2010-01-01'), to_days('2011-01-01') ) (
+subpartition p1sp1 values in ( (1000,2), (400,2), (500,2) ),
+subpartition p1sp2 values in ( (999999,99999), (2000,2), (6000,2) )
+),
+partition p2 values in ( to_days('2020-01-01'), to_days('2022-01-01') ) (
+subpartition p2sp1 values in ( (1000,2), (400,2), (500,2) ),
+subpartition p2sp2 values in ( (999999,99999), (2000,2), (6000,2) )
+),
+partition p3 values in ( to_days('2041-01-01'), to_days('2061-01-01') ) (
+subpartition p3sp1 values in ( (1000,2), (400,2), (500,2) ),
+subpartition p3sp2 values in ( (2000,10000), (1600,2) ),
+subpartition p3sp3 values in ( (999999,99999), (2000,2), (6000,2), (7000,2) )
+)
+)
+insert into l_lc_ntp1 values (1000,2,'2010-01-01','a','b')
+insert into l_lc_ntp1 values (2000,2,'2020-01-01','a','b')
+insert into l_lc_ntp1 values (1600,2,'2041-01-01','a','b')
+alter tablegroup by table l_lc_ntp1 modify partition p1 add subpartition (subpartition p1sp3 values in ( (999999,199999), (999999,299999) ), subpartition p1sp4 values in ( (99999000,10000) ))
+alter table l_lc_ntp1 add partition(partition p4 values in ( to_days('2069-01-01') ) (
+subpartition p4sp1 values in ( (1000,2), (400,2), (500,2) ),
+subpartition p4sp2 values in ( (99999000,10000) )))
+insert into l_lc_ntp1 values (400,2,'2010-01-01','a','b')
+insert into l_lc_ntp1 values (500,2,'2020-01-01','a','b')
+insert into l_lc_ntp1 values (6000,2,'2041-01-01','a','b')
+alter table l_lc_ntp1 add partition(partition p5 values in ( to_days('2070-01-01') )(
+subpartition p5sp1 values in ( (1000,2), (400,2), (500,2) ),
+subpartition p5sp2 values in ( (99999000,10000) )))
+insert into l_lc_ntp1 values (500,2,'2010-01-01','a','b')
+insert into l_lc_ntp1 values (400,2,'2020-01-01','a','b')
+insert into l_lc_ntp2 values (1000,2,'2010-01-01','a','b')
+insert into l_lc_ntp2 values (2000,2,'2020-01-01','a','b')
+insert into l_lc_ntp2 values (1600,2,'2041-01-01','a','b')
+alter table l_lc_ntp2 add partition(partition p4 values in ( to_days('2069-01-01') ))
+insert into l_lc_ntp2 values (400,2,'2010-01-01','a','b')
+insert into l_lc_ntp2 values (500,2,'2020-01-01','a','b')
+insert into l_lc_ntp2 values (6000,2,'2041-01-01','a','b')
+alter table l_lc_ntp2 drop subpartition p2sp1,p3sp2
+insert into l_lc_ntp2 values (500,2,'2010-01-01','a','b')
+show full create table l_lc_ntp1
+Table,Create Table
+l_lc_ntp1,CREATE TABLE `l_lc_ntp1` (
+	`a` bigint UNSIGNED NOT NULL,
+	`b` bigint UNSIGNED NOT NULL,
+	`c` datetime NOT NULL,
+	`d` varchar(16) NOT NULL,
+	`e` varchar(16) NOT NULL,
+	`_drds_implicit_id_` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`_drds_implicit_id_`),
+	LOCAL KEY `auto_shard_key_c` USING BTREE (`c`),
+	LOCAL KEY `auto_shard_key_a_b` USING BTREE (`a`, `b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST(TO_DAYS(`c`))
+SUBPARTITION BY LIST COLUMNS(`a`,`b`)
+(PARTITION p1 VALUES IN (734138,734503)
+ (SUBPARTITION p1sp1 VALUES IN ((400,2),(500,2),(1000,2)) ENGINE = InnoDB,
+  SUBPARTITION p1sp2 VALUES IN ((2000,2),(6000,2),(999999,99999)) ENGINE = InnoDB,
+  SUBPARTITION p1sp3 VALUES IN ((999999,199999),(999999,299999)) ENGINE = InnoDB,
+  SUBPARTITION p1sp4 VALUES IN ((99999000,10000)) ENGINE = InnoDB),
+ PARTITION p2 VALUES IN (737790,738521)
+ (SUBPARTITION p2sp1 VALUES IN ((400,2),(500,2),(1000,2)) ENGINE = InnoDB,
+  SUBPARTITION p2sp2 VALUES IN ((2000,2),(6000,2),(999999,99999)) ENGINE = InnoDB),
+ PARTITION p3 VALUES IN (745461,752766)
+ (SUBPARTITION p3sp1 VALUES IN ((400,2),(500,2),(1000,2)) ENGINE = InnoDB,
+  SUBPARTITION p3sp2 VALUES IN ((1600,2),(2000,10000)) ENGINE = InnoDB,
+  SUBPARTITION p3sp3 VALUES IN ((2000,2),(6000,2),(7000,2),(999999,99999)) ENGINE = InnoDB),
+ PARTITION p4 VALUES IN (755688)
+ (SUBPARTITION p4sp1 VALUES IN ((400,2),(500,2),(1000,2)) ENGINE = InnoDB,
+  SUBPARTITION p4sp2 VALUES IN ((99999000,10000)) ENGINE = InnoDB),
+ PARTITION p5 VALUES IN (756053)
+ (SUBPARTITION p5sp1 VALUES IN ((400,2),(500,2),(1000,2)) ENGINE = InnoDB,
+  SUBPARTITION p5sp2 VALUES IN ((99999000,10000)) ENGINE = InnoDB))
+/* tablegroup = `tg` */
+show full create table l_lc_ntp2
+Table,Create Table
+l_lc_ntp2,CREATE TABLE `l_lc_ntp2` (
+	`a` bigint UNSIGNED NOT NULL,
+	`b` bigint UNSIGNED NOT NULL,
+	`c` datetime NOT NULL,
+	`d` varchar(16) NOT NULL,
+	`e` varchar(16) NOT NULL,
+	`_drds_implicit_id_` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`_drds_implicit_id_`),
+	LOCAL KEY `auto_shard_key_c` USING BTREE (`c`),
+	LOCAL KEY `auto_shard_key_a_b` USING BTREE (`a`, `b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST(TO_DAYS(`c`))
+SUBPARTITION BY LIST COLUMNS(`a`,`b`)
+(PARTITION p1 VALUES IN (734138,734503)
+ (SUBPARTITION p1sp1 VALUES IN ((400,2),(500,2),(1000,2)) ENGINE = InnoDB,
+  SUBPARTITION p1sp2 VALUES IN ((2000,2),(6000,2),(999999,99999)) ENGINE = InnoDB,
+  SUBPARTITION p1sp3 VALUES IN ((999999,199999),(999999,299999)) ENGINE = InnoDB,
+  SUBPARTITION p1sp4 VALUES IN ((99999000,10000)) ENGINE = InnoDB),
+ PARTITION p2 VALUES IN (737790,738521)
+ (SUBPARTITION p2sp2 VALUES IN ((2000,2),(6000,2),(999999,99999)) ENGINE = InnoDB),
+ PARTITION p3 VALUES IN (745461,752766)
+ (SUBPARTITION p3sp1 VALUES IN ((400,2),(500,2),(1000,2)) ENGINE = InnoDB,
+  SUBPARTITION p3sp3 VALUES IN ((2000,2),(6000,2),(7000,2),(999999,99999)) ENGINE = InnoDB),
+ PARTITION p4 VALUES IN (755688)
+ (SUBPARTITION p4sp1 VALUES IN (DEFAULT) ENGINE = InnoDB))
+/* tablegroup = `tg` */
+select * from l_lc_ntp1 order by a,b,c,d,e
+a,b,c,d,e
+400,2,2010-01-01 00:00:00.0,a,b
+400,2,2020-01-01 00:00:00.0,a,b
+500,2,2010-01-01 00:00:00.0,a,b
+500,2,2020-01-01 00:00:00.0,a,b
+1000,2,2010-01-01 00:00:00.0,a,b
+1600,2,2041-01-01 00:00:00.0,a,b
+2000,2,2020-01-01 00:00:00.0,a,b
+6000,2,2041-01-01 00:00:00.0,a,b
+select * from l_lc_ntp2 order by a,b,c,d,e
+a,b,c,d,e
+400,2,2010-01-01 00:00:00.0,a,b
+500,2,2010-01-01 00:00:00.0,a,b
+1000,2,2010-01-01 00:00:00.0,a,b
+2000,2,2020-01-01 00:00:00.0,a,b
+6000,2,2041-01-01 00:00:00.0,a,b

@@ -21,6 +21,7 @@ import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.cursor.impl.ArrayResultCursor;
 import com.alibaba.polardbx.executor.handler.VirtualViewHandler;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.IndexMeta;
@@ -70,6 +71,12 @@ public class VirtualStatisticHandler extends BaseVirtualViewSubClassHandler {
                 continue;
             }
             String schema = entryTmp.getKey();
+            // External row counts are cached here for cost estimation, but this view is
+            // about local statistics. Resolving those keys would send one remote metadata
+            // request per table and let getContext() evict a schema still in use.
+            if (ExternalNameValidator.isExternalSchema(schema)) {
+                continue;
+            }
             for (Map.Entry<String, StatisticManager.CacheLine> entry : entryTmp.getValue().entrySet()) {
                 String tableName = entry.getKey();
                 StatisticManager.CacheLine cacheLine = entry.getValue();

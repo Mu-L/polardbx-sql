@@ -1,0 +1,132 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+  
+## ===== test create database with locality =======
+use polardbx;
+drop database if exists dbledb4g;
+  ## USE_DN_LIST_MSG
+create database if not exists dbledb4g mode = 'auto' locality='db_config={"g[1-4]":["set[1,2,1,2]","dbledb4g_0[0-3]"]}';
+show create database dbledb4g;
+use dbledb4g;
+show tables;
+
+## ===== test create tbl using dble/hash tbl with 4 partitions =======
+  ## USE_DN_LIST_MSG
+create table if not exists dblehash_p4_t1 (a int , b bigint not null auto_increment, primary key(b))
+partition by udf_hash(
+  `a` with udf_params(
+  'dble/hash',
+  '{"partitionCount": "4", "partitionLength" : "100"}'
+  )
+) 
+partitions 4
+locality='db_pools=g1,g2,g3,g4';
+show create table dblehash_p4_t1;
+
+## ===== test create tbl using dble/hash tbl with 2 partitions =======
+create table if not exists dblehash_p2_t1 (a varchar(4) , b bigint not null auto_increment, primary key(b))
+partition by udf_hash(
+  `a` with udf_params(
+  'dble/hash',
+  '{"partitionCount": "2", "partitionLength" : "100"}'
+  )
+)
+partitions 2
+locality='db_pools=g1,g3';
+show create table dblehash_p2_t1;
+  
+## ===== test create tbl using dble/unitmurmurhash tbl with 4 partitions =======
+create table if not exists dblemurhash_p4_t1 (a varchar(4) , b bigint not null auto_increment, primary key(b))
+partition by udf_hash(
+  `a` with udf_params(
+    'dble/unitmurmurhash',
+    '{
+            "partitionCount": "4",
+            "isDigitCheck" : "1",
+            "leftPaddingChar" : "NO",
+            "shardingValueMaxLength" : "15"
+    }'
+  )
+)
+partitions 4
+locality='db_pools=g1,g2,g3,g4';
+show create table dblemurhash_p4_t1;
+  
+## ===== test create tbl using dble_ext/mynewpartrange which mynewpartrange is user-defined dble udf =======
+create table dble_mynumrng_p8_t2(a bigint，b bigint)
+partition by udf_hash(
+  `a` with udf_params (
+    'dble_ext/partbyrangeudf',
+    '{
+        "defaultNode" : "0",　
+        "mapFile" :
+              "
+                [range_definition]
+                3-3=0
+                4700-4700=1
+                5001-5001=1
+                5002-5002=2
+                5101-5101=2
+                5102-5102=3
+                5103-5103=3
+                [segments_default]
+                0-1249=0
+                1250-2499=0
+                2500-3749=1
+                3750-4999=1
+                5000-6249=2
+                6250-7499=2
+                7500-8749=3
+                8750-99999=3
+              "
+    }'
+  )
+)
+partitions 4
+locality='db_pools=g1,g2,g3,g4';
+show create table dble_mynumrng_p8_t2;
+
+## ===== test create replica tbl which locate on 1 replicas =======
+create table if not exists replicas_1p_t1 (a bigint , b bigint not null auto_increment, primary key(b))
+replicas
+locality='db_set=g1';
+show create table replicas_1p_t1;
+  
+## ===== test create replica tbl which locate on 2 replicas =======
+create table if not exists replicas_g1g2_t1 (a bigint , b bigint not null auto_increment, primary key(b))
+replicas
+locality='db_set=g1,g2';
+show create table replicas_g1g2_t1;
+  
+## ===== test create replica tbl which locate on 4 replicas =======
+create table if not exists replicas_all_t1 (a bigint , b bigint not null auto_increment, primary key(b))
+replicas
+locality='db_set=g1,g2,g3,g4';
+show create table replicas_all_t1;
+
+## ===== test create single tbl with locality =======
+create table if not exists sig_tbl_t1 (a bigint , b bigint not null auto_increment, primary key(b))
+single
+locality='db_set=g3';
+show create table sig_tbl_t1;
+  
+## ===== test create tbl without def =======
+## error_msg: $# requires partition definitions #$
+create table if not exists no_partition_def_tbl_t1 (a bigint , b bigint not null auto_increment, primary key(b));
+
+## error_msg: $# requires partition definitions #$
+create table if not exists no_partition_def_tbl_t1 (a bigint , b bigint not null auto_increment, primary key(b))
+locality='db_set=g3';
+                           
+set auto_partition = false;
+/*+TDDL:cmd_extra(ENABLE_DBLE_WITHOUT_PARTITION_DEF=true)*/create table if not exists no_partition_def_tbl_t1 (a bigint , b bigint not null auto_increment, primary key(b));
+show create table no_partition_def_tbl_t1;
+
+## ====== clear test env ======
+use polardbx;
+drop database if exists dbledb4g;

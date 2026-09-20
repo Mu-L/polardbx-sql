@@ -52,6 +52,10 @@ public final class Constants {
         "fs.oss.connection.secure.enabled";
     public static final boolean SECURE_CONNECTIONS_DEFAULT = false;
 
+    // Private cloud mode (disable CNAME support)
+    public static final String PRIVATE_CLOUD_KEY = "fs.oss.private.cloud";
+    public static final boolean PRIVATE_CLOUD_DEFAULT = false;
+
     // Use a custom endpoint
     public static final String ENDPOINT_KEY = "fs.oss.endpoint";
 
@@ -177,4 +181,6 @@ public final class Constants {
 
     public static final String AZURE_WASBS_SCHEME = "wasbs";
     public static final String AZURE_WASB_SCHEME = "wasb";
+
+    public static final String GENERAL_CACHE_WORKING_DIR = "fs.oss.general_cache.working_dir";
 }

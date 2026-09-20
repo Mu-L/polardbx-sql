@@ -20,8 +20,9 @@ import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.DropEmptyJoinGroupTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcDropJoinGroupMarkTask;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.DropJoinGroupPreparedData;
@@ -33,7 +34,7 @@ import java.util.Set;
  *
  * @author luoyanxin
  */
-public class DropJoinGroupJobFactory extends DdlJobFactory {
+public class DropJoinGroupJobFactory extends OnlineDdlJobFactory {
 
     @Deprecated
     protected final DropJoinGroupPreparedData preparedData;
@@ -41,6 +42,7 @@ public class DropJoinGroupJobFactory extends DdlJobFactory {
 
     public DropJoinGroupJobFactory(DropJoinGroupPreparedData preparedData,
                                    ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.META_ONLY);
         this.preparedData = preparedData;
         this.executionContext = executionContext;
     }

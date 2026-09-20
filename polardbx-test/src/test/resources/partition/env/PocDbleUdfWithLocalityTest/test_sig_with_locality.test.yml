@@ -1,0 +1,45 @@
+## DISABLE_FAST_SQL_PARSER
+
+drop database if exists mypocsigdb;
+create database if not exists mypocsigdb mode = auto locality = "db_config=mypocsigdb_db00:polardbx-storage-0-master,mypocsigdb_db01:polardbx-storage-1-master";
+use mypocsigdb;
+
+create table mysig_t1(
+c1 bigint not null,
+c2 bigint not null
+)
+single
+locality="db_pools=mypocsigdb_db00";
+show create table mysig_t1;
+
+create table mysig_t2(
+c1 bigint not null,
+c2 bigint not null
+)
+single
+locality="db_pools=mypocsigdb_db00";
+show create table mysig_t2;
+/*+TDDL:node=0*/show create table mysig_t2;
+
+create table mysig_t3(
+c1 bigint not null,
+c2 bigint not null
+)
+single
+locality="db_pools=mypocsigdb_db01";
+/*+TDDL:node=1*/show create table mysig_t3;
+
+show topology from mysig_t1;
+show topology from mysig_t2;
+show topology from mysig_t3;
+
+insert into mysig_t1 values (1,1);
+insert into mysig_t2 values (1,1);
+insert into mysig_t3 values (1,1);
+
+select * from mysig_t1 a join mysig_t2 b on a.c1=b.c1;
+explain select * from mysig_t1 a join mysig_t3 b on a.c1=b.c1;
+select * from mysig_t1 a join mysig_t3 b on a.c1=b.c1;
+
+use polardbx;
+drop database if exists mypocsigdb;

@@ -228,7 +228,13 @@ public class SpecifiedOrcScanWork extends AbstractScanWork {
      */
     @Override
     protected Chunk rebuildProject(Chunk chunk, int[] selection, int selSize) {
-        Block[] blocks = new Block[inputRefsForProject.size() + 1];
+        Block[] blocks;
+        if (tsoV0 > 0 && tsoV1 > 0) {
+            // Add tso column as the last block.
+            blocks = new Block[inputRefsForProject.size() + 1];
+        } else {
+            blocks = new Block[inputRefsForProject.size()];
+        }
         int blockIndex = 0;
 
         for (int projectRef : inputRefsForProject) {

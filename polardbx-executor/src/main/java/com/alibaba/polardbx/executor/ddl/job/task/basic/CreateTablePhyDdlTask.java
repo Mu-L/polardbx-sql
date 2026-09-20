@@ -43,6 +43,12 @@ public class CreateTablePhyDdlTask extends BasePhyDdlTask {
     }
 
     @Override
+    public void executeImpl(ExecutionContext executionContext) {
+        List<RelNode> physicalPlans = getPhysicalPlans(executionContext);
+        executePhyDdl(physicalPlans, executionContext);
+    }
+
+    @Override
     protected List<RelNode> genRollbackPhysicalPlans(ExecutionContext executionContext) {
         DdlPhyPlanBuilder
             dropPhyTableBuilder = DropPhyTableBuilder

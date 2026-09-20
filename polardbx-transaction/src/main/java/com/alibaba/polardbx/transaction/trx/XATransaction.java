@@ -20,6 +20,7 @@ import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.IConnection;
 import com.alibaba.polardbx.common.jdbc.ITransactionPolicy;
+import com.alibaba.polardbx.common.jdbc.MasterSlave;
 import com.alibaba.polardbx.common.type.TransactionType;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
@@ -37,6 +38,8 @@ import java.sql.SQLException;
 import java.sql.SQLIntegrityConstraintViolationException;
 import java.sql.Statement;
 import java.text.MessageFormat;
+
+import static com.alibaba.polardbx.transaction.connection.TransactionConnectionHolder.needReadLsn;
 
 /**
  * DRDS XA 事务
@@ -61,6 +64,15 @@ public class XATransaction extends ShareReadViewTransaction {
     @Override
     public TransactionType getType() {
         return TransactionType.XA;
+    }
+
+    @Override
+    public void beginNonParticipant(String schema, String group, IConnection conn, MasterSlave masterSlave)
+        throws SQLException {
+        super.beginNonParticipant(schema, group, conn, masterSlave);
+        if (needReadLsn(this, schema, masterSlave, getConsistentReplicaRead())) {
+            super.sendLsn(conn, schema, group, masterSlave, () -> -1L);
+        }
     }
 
     /**
@@ -93,16 +105,15 @@ public class XATransaction extends ShareReadViewTransaction {
             throw new UnsupportedOperationException("Don't support the Inventory Hint on XA with readview! "
                 + "Try with setting share_read_view=off.");
         } else {
-            conn.executeLater(TURN_ON_TXN_GROUP_SQL);
-            conn.executeLater("XA START " + getXid(group, conn));
+            xaStart(getXid(group, conn), conn);
         }
     }
 
     private void beginWithoutShareReadView(String group, IConnection conn) throws SQLException {
-        if (primaryConnection != null) {
-            conn.executeLater("XA START " + getXid(group, conn));
+        if (primaryHeldConn != null) {
+            xaStart(getXid(group, conn), conn);
         } else {
-            conn.executeLater("begin");
+            begin(conn);
         }
     }
 
@@ -143,20 +154,17 @@ public class XATransaction extends ShareReadViewTransaction {
 
     @Override
     protected void innerCommitOneShardTrx(String group, IConnection conn) throws SQLException {
-        try (Statement stmt = conn.createStatement()) {
-            if (shareReadView) {
-                String xid = getXid(group, conn);
-                stmt.execute(getXACommitOnePhaseSqls(xid));
-            } else {
-                stmt.execute("COMMIT");
-            }
+        if (shareReadView) {
+            xaEndAndCommitOnePhase(getXid(group, conn), conn);
+        } else {
+            commit(conn);
         }
     }
 
     @Override
     protected void innerRollback(String group, IConnection conn) {
-        if (!shareReadView && conn == primaryConnection) {
-            rollbackPrimary(group, primaryConnection);
+        if (!shareReadView && conn == primaryHeldConn.getRawConnection()) {
+            rollbackPrimary(group, primaryHeldConn.getRawConnection());
             return;
         }
         super.innerRollback(group, conn);
@@ -167,8 +175,9 @@ public class XATransaction extends ShareReadViewTransaction {
      */
     private void rollbackPrimary(String group, IConnection conn) {
         try {
-            conn.forceRollback();
+            rollback(conn, false);
         } catch (Throwable e) {
+            conn.discard(e);
             logger.warn("Rollback primary failed on group " + group, e);
         }
     }
@@ -189,6 +198,9 @@ public class XATransaction extends ShareReadViewTransaction {
              */
             prepareConnections();
             stat.prepareTime = System.nanoTime() - prepareStartTime;
+            if (this.getExecutionContext().getRuntimeStatistics() != null) {
+                this.getExecutionContext().getRuntimeStatistics().addCommitPrepareTimecost(stat.prepareTime);
+            }
             this.prepared = true;
             this.state = State.PREPARED;
 
@@ -196,11 +208,13 @@ public class XATransaction extends ShareReadViewTransaction {
              * Step 2. XA COMMIT ONE PHASE 提交 primary group 来更新事务状态（标志着事务的成功）
              */
             long logStartTime = System.nanoTime();
-            try (Statement stmt = primaryConnection.createStatement()) {
+            try {
                 beforePrimaryCommit();
                 commitState = TransactionCommitState.UNKNOWN;
                 duringPrimaryCommit();
-                commitPrimary(stmt);
+
+                commitPrimary();
+
                 afterPrimaryCommit();
                 commitState = TransactionCommitState.SUCCESS;
             } catch (Throwable ex) {
@@ -210,6 +224,9 @@ public class XATransaction extends ShareReadViewTransaction {
                 throw new TddlRuntimeException(ErrorCode.ERR_TRANS_COMMIT, ex, message);
             }
             stat.trxLogTime = System.nanoTime() - logStartTime;
+            if (this.getExecutionContext().getRuntimeStatistics() != null) {
+                this.getExecutionContext().getRuntimeStatistics().addCommitLoggerTimecost(stat.trxLogTime);
+            }
         } catch (RuntimeException ex) {
             exception = ex;
         }
@@ -226,9 +243,14 @@ public class XATransaction extends ShareReadViewTransaction {
             /*
              * XA 提交成功：XA COMMIT 提交刚才 PREPARE 的其他连接
              */
+            long commitStartTime = System.nanoTime();
             commitConnections();
 
             TransactionLogger.info(id, "Committed (XA)");
+            if (this.getExecutionContext().getRuntimeStatistics() != null) {
+                this.getExecutionContext().getRuntimeStatistics()
+                    .addCommitCommitTimecost(System.nanoTime() - commitStartTime);
+            }
         } else {
             /*
              * Transaction state is unknown so we cannot do anything unless we know the actual transaction state.
@@ -250,12 +272,12 @@ public class XATransaction extends ShareReadViewTransaction {
     /**
      * Commit the primary connection
      */
-    private void commitPrimary(Statement stmt) throws SQLException {
+    private void commitPrimary() throws SQLException {
+        IConnection primaryConn = primaryHeldConn.getRawConnection();
         if (shareReadView) {
-            String xid = getXid(primaryGroup, primaryConnection);
-            stmt.execute(getXACommitOnePhaseSqls(xid));
+            xaEndAndCommitOnePhase(getXid(primaryGroup, primaryConn), primaryConn);
         } else {
-            stmt.execute("COMMIT");
+            commit(primaryConn);
         }
     }
 
@@ -270,7 +292,7 @@ public class XATransaction extends ShareReadViewTransaction {
             public void execute(TransactionConnectionHolder.HeldConnection heldConn) {
                 final IConnection conn = heldConn.getRawConnection();
                 final String group = heldConn.getGroup();
-                if (conn == primaryConnection) {
+                if (conn == primaryHeldConn.getRawConnection()) {
                     writeCommitLog(conn);
                     return;
                 }
@@ -290,8 +312,8 @@ public class XATransaction extends ShareReadViewTransaction {
             private void prepare(String group, IConnection conn) {
                 // XA transaction must be 'ACTIVE' state here.
                 String xid = getXid(group, conn);
-                try (Statement stmt = conn.createStatement()) {
-                    stmt.execute("XA END " + xid + "; XA PREPARE " + xid);
+                try {
+                    xaEndAndPrepare(xid, conn);
                 } catch (SQLException e) {
                     throw new TddlRuntimeException(ErrorCode.ERR_TRANS_COMMIT, e, "XA PREPARE failed: " + xid);
                 }
@@ -305,7 +327,7 @@ public class XATransaction extends ShareReadViewTransaction {
             @Override
             public boolean condition(TransactionConnectionHolder.HeldConnection heldConn) {
                 // Commit non-primary and write connections.
-                return heldConn.getRawConnection() != primaryConnection && heldConn.isParticipated();
+                return heldConn != primaryHeldConn && heldConn.isParticipated();
             }
 
             @Override
@@ -314,26 +336,24 @@ public class XATransaction extends ShareReadViewTransaction {
                 final String group = heldConn.getGroup();
                 // XA transaction must be 'PREPARED' state here.
                 String xid = getXid(group, conn);
-                try (Statement stmt = conn.createStatement()) {
-                    try {
-                        stmt.execute("XA COMMIT " + xid);
-                    } catch (SQLException ex) {
-                        if (ex.getErrorCode() == ErrorCode.ER_XAER_NOTA.getCode()) {
-                            logger.warn("XA COMMIT got ER_XAER_NOTA: " + xid, ex);
-                        } else {
-                            throw GeneralUtil.nestedException(ex);
-                        }
-                    }
+                try {
+                    xaCommit(xid, conn);
                 } catch (Throwable e) {
-                    // discard connection if something failed.
-                    conn.discard(e);
+                    if (e instanceof SQLException
+                        && ((SQLException) e).getErrorCode() == ErrorCode.ER_XAER_NOTA.getCode()) {
+                        // This branch is already committed.
+                        logger.warn("XA COMMIT got ER_XAER_NOTA: " + xid, e);
+                    } else {
+                        // discard connection if something failed.
+                        conn.discard(e);
 
-                    logger.warn("XA COMMIT failed: " + xid, e);
+                        logger.warn("XA COMMIT failed: " + xid, e);
 
-                    // Retry XA COMMIT in asynchronous task.
-                    AsyncTaskQueue asyncQueue = getManager().getTransactionExecutor().getAsyncQueue();
-                    asyncQueue.submit(
-                        () -> XAUtils.commitUntilSucceed(id, xid, dataSourceCache.get(group)));
+                        // Retry XA COMMIT in asynchronous task.
+                        AsyncTaskQueue asyncQueue = getManager().getTransactionExecutor().getAsyncQueue();
+                        asyncQueue.submit(
+                            () -> XAUtils.commitUntilSucceed(id, xid, dataSourceCache.get(group)));
+                    }
                 }
             }
         });
@@ -344,12 +364,12 @@ public class XATransaction extends ShareReadViewTransaction {
         if (conn.isClosed()) {
             return;
         }
-        if (!shareReadView && conn == primaryConnection) {
-            conn.forceRollback();
+        if (!shareReadView && conn == primaryHeldConn.getRawConnection()) {
+            rollbackPrimary(group, conn);
         } else {
             String xid = getXid(group, conn);
-            try (Statement stmt = conn.createStatement()) {
-                stmt.execute(getXARollbackSqls(xid));
+            try {
+                xaEndAndXaRollback(xid, conn);
             } catch (SQLException e) {
                 // discard connection if cleanup failed.
                 throw GeneralUtil.nestedException("XA END and ROLLBACK failed: " + xid, e);

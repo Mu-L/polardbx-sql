@@ -35,9 +35,9 @@ public class XPlanGbkTest extends ReadBaseTestCase {
 
     private static final String TABLE_TEMPLATE = "create table {0} (\n"
         + "    pk bigint not null auto_increment,\n"
-        + "    `c1` varchar(255) CHARSET utf8mb4,\n"
-        + "    `c2` varchar(255) CHARSET utf8mb3,\n"
-        + "    `c3` varchar(255) CHARSET gbk,\n"
+        + "    `c1` varchar(255) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,\n"
+        + "    `c2` varchar(255) CHARSET utf8mb3 COLLATE utf8_general_ci,\n"
+        + "    `c3` varchar(255) CHARSET gbk COLLATE gbk_chinese_ci,\n"
         + "    key ic1(c1),\n"
         + "    key ic2(c2),\n"
         + "    key ic3(c3),\n"

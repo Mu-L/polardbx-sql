@@ -1,0 +1,178 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+set ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC=true;
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=true;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+#算法功能验证
+## error_msg: $# invalid init params #$
+create table date_table(id date)
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/date',
+  '{
+"sEndDate" : "2018-01-31",
+"sPartionDay" : "10",
+"dateFormat" : "yyyy-MM-dd"
+}'
+  )
+)
+partitions 4;
+invalid init params
+## error_msg: $# please make sure table datanode size = function partition size #$
+create table date_table(id date)
+partition by udf_hash(
+  `id` with udf_params(
+    'dble/date',
+  '{
+"sBeginDate" : "2017-01-31",
+"sEndDate" : "2018-01-31",
+"sPartionDay" : "10",
+"dateFormat" : "yyyy-MM-dd"
+}'
+  )
+  )
+partitions 2;
+please make sure table datanode size = function partition size
+create table date_table(id date)
+partition by udf_hash(
+  `id` with udf_params(
+    'dble/date',
+  '{
+　　　 "dateFormat" : "yyyy-MM-dd",
+                     "sBeginDate" : "2017-12-01",
+                     "sEndDate" : "2018-01-08",
+                     "sPartionDay" : "10",
+                     "defaultNode" : "3"
+}'
+  )
+  )
+  partitions 4;
+select part_route('','date_table',null);
+part_route('', 'date_table', NULL)
+p4
+select part_route('','date_table','2017-11-11');
+part_route('', 'date_table', '2017-11-11')
+p4
+select part_route('','date_table','2017-12-01');
+part_route('', 'date_table', '2017-12-01')
+p1
+select part_route('','date_table','2017-12-11');
+part_route('', 'date_table', '2017-12-11')
+p2
+select part_route('','date_table','2017-12-21');
+part_route('', 'date_table', '2017-12-21')
+p3
+select part_route('','date_table','2017-12-31');
+part_route('', 'date_table', '2017-12-31')
+p4
+select part_route('','date_table','2018-1-8');
+part_route('', 'date_table', '2018-1-8')
+p4
+select part_route('','date_table','2018-01-9');
+part_route('', 'date_table', '2018-01-9')
+p4
+create table  date_table_2(id date)
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/date',
+  '{
+    　　　 "dateFormat" : "yyyy-MM-dd",
+          "sBeginDate" : "2017-12-01",
+          "sEndDate" : "2018-01-8",
+          "sPartionDay" : "10"
+    }'
+  )
+  )
+  partitions 4;
+## error_msg: $# can't find any valid data node #$
+select part_route('','date_table_2',null);
+can't find any valid data node
+select part_route('','date_table_2','2017-12-01');
+part_route('', 'date_table_2', '2017-12-01')
+p1
+select part_route('','date_table_2','2017-12-11');
+part_route('', 'date_table_2', '2017-12-11')
+p2
+select part_route('','date_table_2','2017-12-21');
+part_route('', 'date_table_2', '2017-12-21')
+p3
+select part_route('','date_table_2','2017-12-31');
+part_route('', 'date_table_2', '2017-12-31')
+p4
+select part_route('','date_table_2','2018-1-8');
+part_route('', 'date_table_2', '2018-1-8')
+p4
+select part_route('','date_table_2','2018-1-9');
+part_route('', 'date_table_2', '2018-1-9')
+p4
+## error_msg: $# can't find any valid data node #$
+select part_route('','date_table_2','2017-11-11');
+can't find any valid data node
+create table date_table_3(id date)
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/date',
+  '{
+    　　　 "dateFormat" : "yyyy-MM-dd",
+          "sBeginDate" : "2017-12-01",
+          "sPartionDay" : "10",
+        　"defaultNode" : "3"
+    }'
+  )
+  )
+  partitions 4;
+select part_route('','date_table_3','2017-11-11');
+part_route('', 'date_table_3', '2017-11-11')
+p4
+select part_route('','date_table_3','2017-12-01');
+part_route('', 'date_table_3', '2017-12-01')
+p1
+select part_route('','date_table_3','2017-12-11');
+part_route('', 'date_table_3', '2017-12-11')
+p2
+select part_route('','date_table_3','2017-12-21');
+part_route('', 'date_table_3', '2017-12-21')
+p3
+select part_route('','date_table_3','2017-12-31');
+part_route('', 'date_table_3', '2017-12-31')
+p4
+select part_route('','date_table_3','2018-1-8');
+part_route('', 'date_table_3', '2018-1-8')
+p4
+## error_msg: $# can't find any valid data node #$
+select part_route('','date_table_3','2018-11-11');
+can't find any valid data node
+create table date_table_4(id date)
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/date',
+  '{
+    　　　 "dateFormat" : "yyyy-MM-dd",
+          "sBeginDate" : "2017-12-01",
+          "sPartionDay" : "10"
+    }'
+  )
+  )
+partitions 4;
+select part_route('','date_table_4','2017-12-01');
+part_route('', 'date_table_4', '2017-12-01')
+p1
+select part_route('','date_table_4','2017-12-11');
+part_route('', 'date_table_4', '2017-12-11')
+p2
+select part_route('','date_table_4','2017-12-21');
+part_route('', 'date_table_4', '2017-12-21')
+p3
+select part_route('','date_table_4','2017-12-31');
+part_route('', 'date_table_4', '2017-12-31')
+p4
+select part_route('','date_table_4','2018-1-8');
+part_route('', 'date_table_4', '2018-1-8')
+p4
+## error_msg: $# can't find any valid data node #$
+select part_route('','date_table_4','2017-11-11');
+can't find any valid data node
+## error_msg: $# can't find any valid data node #$
+select part_route('','date_table_4','2018-11-11');
+can't find any valid data node

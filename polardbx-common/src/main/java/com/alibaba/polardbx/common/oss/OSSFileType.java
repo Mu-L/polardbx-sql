@@ -32,7 +32,15 @@ public enum OSSFileType {
     PK_IDX_LOG_META("meta", "%s_%s_%s_%s_%s.%s", "/tmp/%s_%s_%s_%s_%s.%s"),
     PK_IDX_SNAPSHOT("snapshot", "%s_%s_%s_%s_%s.%s", "/tmp/%s_%s_%s_%s_%s.%s"),
     PK_IDX_LOCK("lock", "%s_%s_%s_%s_%s.%s", "/tmp/%s_%s_%s_%s_%s.%s"),
-    PK_IDX_SST("sst", "%s_%s_%s_%s_%s.%s", "/tmp/%s_%s_%s_%s_%s.%s");
+    PK_IDX_SST("sst", "%s_%s_%s_%s_%s.%s", "/tmp/%s_%s_%s_%s_%s.%s"),
+
+    /**
+     * Columnar blob orphan manifest: one object per group commit listing blob
+     * addresses freed by DELETE/UPDATE on externalized columns. Path is
+     * {@code blob_orphans/<commitTso>.orphan}; metadata is tracked in the
+     * {@code files} table with this {@code file_type}.
+     */
+    BLOB_ORPHAN_MANIFEST("orphan", "blob_orphans/%s.%s", "/tmp/blob_orphans_%s.%s");
 
     String suffix;
     String remotePathFormat;

@@ -16,6 +16,9 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.ORCMemoryCounterUtil;
 import com.alibaba.polardbx.common.utils.time.MySQLTimeConverter;
 import com.alibaba.polardbx.common.utils.time.core.MySQLTimeVal;
 import com.alibaba.polardbx.common.utils.time.core.MysqlDateTime;
@@ -31,6 +34,8 @@ import com.alibaba.polardbx.rpc.result.XResultUtil;
 import com.google.common.base.Preconditions;
 import org.apache.orc.OrcProto;
 import org.apache.orc.impl.OrcIndex;
+import org.openjdk.jol.info.ClassLayout;
+import org.apache.orc.impl.PositionProviderBuilder;
 
 import java.io.IOException;
 import java.time.ZoneId;
@@ -38,17 +43,34 @@ import java.time.ZoneId;
 import static com.alibaba.polardbx.rpc.result.XResultUtil.ZERO_TIMESTAMP_LONG_VAL;
 
 public class TimestampColumnReader extends AbstractLongColumnReader {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(TimestampColumnReader.class).instanceSize();
 
+    @FieldMemoryCounter(value = false)
     private final ZoneId zoneId;
 
     public TimestampColumnReader(int columnId, boolean isPrimaryKey,
                                  StripeLoader stripeLoader,
-                                 OrcIndex orcIndex,
+                                 PositionProviderBuilder orcIndex,
                                  RuntimeMetrics metrics,
                                  OrcProto.ColumnEncoding.Kind kind, int indexStride,
                                  boolean enableMetrics, ExecutionContext context) {
         super(columnId, isPrimaryKey, stripeLoader, orcIndex, metrics, kind, indexStride, enableMetrics);
         this.zoneId = TimestampUtils.getZoneId(context);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            // from AbstractColumnReader
+            + FastMemoryCounter.sizeOf(refCount)
+            + FastMemoryCounter.sizeOf(isClosed)
+            + FastMemoryCounter.sizeOf(hasNoMoreBlocks)
+            // from AbstractLongColumnReader
+            + FastMemoryCounter.sizeOf(openFailed)
+            + FastMemoryCounter.sizeOf(initializeOnlyOnce)
+            + FastMemoryCounter.sizeOf(isOpened)
+            + ORCMemoryCounterUtil.sizeOfBitFieldReader(present)
+            + ORCMemoryCounterUtil.sizeOfIntegerReader(data);
     }
 
     @Override

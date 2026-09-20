@@ -31,6 +31,7 @@ import com.alibaba.polardbx.optimizer.core.rel.PhyTableInsertSharder;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.SingleTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.dml.ReplicationWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.RoutedInsertInput;
 import com.alibaba.polardbx.optimizer.partition.common.PartitionLocation;
 import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
 import com.alibaba.polardbx.rule.TableRule;
@@ -56,7 +57,8 @@ public class ReplicateSingleInsertWriter extends SingleInsertWriter implements R
 
     @Override
     public List<RelNode> getInput(ExecutionContext executionContext) {
-        List<RelNode> primaryRelNodes = super.getInput(executionContext);
+        List<RelNode> inputs = super.getInput(executionContext);
+        List<RelNode> primaryRelNodes = primaryWritePlans(inputs);
         boolean isNewPart = DbInfoManager.getInstance().isNewPartitionDb(tableMeta.getSchemaName());
         List<RelNode> replicateRelNodes;
         if (isNewPart) {
@@ -68,9 +70,9 @@ public class ReplicateSingleInsertWriter extends SingleInsertWriter implements R
                     (BaseQueryOperation) relNode,
                     executionContext);
             }
-            primaryRelNodes.addAll(replicateRelNodes);
+            inputs.addAll(replicateRelNodes);
         }
-        return primaryRelNodes;
+        return inputs;
     }
 
     List<RelNode> getReplicateInput(List<RelNode> primaryRelNode, ExecutionContext executionContext) {

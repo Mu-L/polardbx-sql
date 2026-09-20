@@ -22,7 +22,6 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 
 import java.sql.Connection;
 import java.util.List;
-import java.util.Map;
 
 public interface DdlTask {
 
@@ -99,6 +98,8 @@ public interface DdlTask {
      */
     DdlTask onExceptionTryRecoveryThenPause();
 
+    DdlTask onExceptionTryWaitAndRecoveryThenPause();
+
     /**
      * another form of 'setExceptionAction'
      *
@@ -126,7 +127,7 @@ public interface DdlTask {
      */
     String nodeInfo();
 
-    List<String> explainInfo();
+    List<String> explainInfo(ExecutionContext ec);
 
     String executionInfo();
 

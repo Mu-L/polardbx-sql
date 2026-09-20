@@ -113,6 +113,9 @@ public class PolarDbXSystemTableNDVSketchStatistic implements SystemTableNDVSket
     private static final String UPDATE_SQL = "UPDATE `" + TABLE_NAME
         + "` SET `COMPOSITE_CARDINALITY` = ? WHERE  `SCHEMA_NAME` = ? AND `TABLE_NAME` = ? AND `COLUMN_NAMES` = ?";
 
+    private static final int retryTimesIfNeed = 3;
+
+
     private static PolarDbXSystemTableNDVSketchStatistic polarDbXSystemTableNDVSketchStatistic =
         new PolarDbXSystemTableNDVSketchStatistic();
 
@@ -333,16 +336,60 @@ public class PolarDbXSystemTableNDVSketchStatistic implements SystemTableNDVSket
         return rows.toArray(new SketchRow[0]);
     }
 
+    public static SketchRow[] loadByTableName(String schemaName, String tableName, Connection conn) {
+        PreparedStatement ps = null;
+        ResultSet rs = null;
+        List<SketchRow> rows = Lists.newLinkedList();
+        try {
+            ps = conn.prepareStatement(LOAD_BY_TABLE_NAME_SQL);
+            ps.setString(1, schemaName);
+            ps.setString(2, tableName);
+            rs = ps.executeQuery();
+
+            while (rs.next()) {
+                try {
+                    SketchRow row = new SketchRow(
+                        rs.getString("SCHEMA_NAME"),
+                        rs.getString("TABLE_NAME"),
+                        rs.getString("COLUMN_NAMES"),
+                        rs.getString("SHARD_PART"),
+                        rs.getString("INDEX_NAME"),
+                        rs.getLong("DN_CARDINALITY"),
+                        rs.getLong("COMPOSITE_CARDINALITY"),
+                        rs.getString("SKETCH_TYPE"),
+                        rs.getTimestamp("GMT_CREATED").getTime(),
+                        rs.getTimestamp("GMT_MODIFIED").getTime()
+                    );
+                    rows.add(row);
+                } catch (Exception e) {
+                    logger.error("parse row of " + TABLE_NAME + " error", e);
+                }
+            }
+        } catch (Exception e) {
+            logger.error("select " + TABLE_NAME + " error", e);
+        } finally {
+            JdbcUtils.close(rs);
+            JdbcUtils.close(ps);
+        }
+        return rows.toArray(new SketchRow[0]);
+    }
+
     @Override
     public void batchReplace(SketchRow[] sketchRows) throws SQLException {
         if (FailPoint.isKeyEnable(FailPointKey.FP_INJECT_IGNORE_PERSIST_NDV_STATISTIC)) {
             throw new SQLException("ignore persist ndv statistic");
         }
+        innerBatchReplaceAndRetryIfNeed(sketchRows, retryTimesIfNeed);
+    }
 
+    public void innerBatchReplaceAndRetryIfNeed(final SketchRow[] sketchRows, int retryTimes) throws SQLException{
         Connection conn = null;
         PreparedStatement ps = null;
+        int originTransactionLevel = -1;
         try {
             conn = MetaDbDataSource.getInstance().getDataSource().getConnection();
+            originTransactionLevel = conn.getTransactionIsolation();
+            conn.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
             ps = conn.prepareStatement(REPLACE_SQL);
             for (SketchRow sketchRow : sketchRows) {
                 //`SCHEMA_NAME`, `TABLE_NAME`, `COLUMN_NAMES`, `SHARD_PART`, `DN_CARDINALITY`, `SKETCH_BYTES`, `SKETCH_TYPE`
@@ -359,11 +406,27 @@ public class PolarDbXSystemTableNDVSketchStatistic implements SystemTableNDVSket
             }
             ps.executeBatch();
         } catch (SQLException e) {
+            if (e.getMessage() != null
+                    && e.getMessage().toLowerCase().contains("deadlock") && retryTimes > 0){
+                innerBatchReplaceAndRetryIfNeed(sketchRows, retryTimes - 1);
+                return;
+            }
             logger.error("select " + TABLE_NAME + " error", e);
             throw e;
         } finally {
-            JdbcUtils.close(ps);
-            JdbcUtils.close(conn);
+            if (ps != null){
+                JdbcUtils.close(ps);
+            }
+            if (conn != null){
+                if (originTransactionLevel >= 0){
+                    try {
+                        conn.setTransactionIsolation(originTransactionLevel);
+                    } catch (SQLException e) {
+                        //ignore
+                    }
+                }
+                JdbcUtils.close(conn);
+            }
         }
     }
 

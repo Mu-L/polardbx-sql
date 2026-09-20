@@ -73,7 +73,7 @@ public class InspectRuleVersionHandler extends AbstractDalHandler {
         Pair<Integer, Integer> tableCount = fetchTableCount(executionContext.getSchemaName());
         resultCursor.addRow(new Object[] {"META_DB", tableCount.getKey() + "/" + tableCount.getValue(), "", "", ""});
 
-        List<List<Map<String, Object>>> resultSets = SyncManagerHelper.sync(new InspectRuleVersionSyncAction(),
+        List<List<Map<String, Object>>> resultSets = SyncManagerHelper.syncIgnoreExceptions(new InspectRuleVersionSyncAction(),
             SyncScope.CURRENT_ONLY);
         for (List<Map<String, Object>> resultSet : resultSets) {
             if (resultSet != null && resultSet.size() > 0) {

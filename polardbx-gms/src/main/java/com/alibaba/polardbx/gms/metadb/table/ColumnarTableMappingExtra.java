@@ -6,4 +6,6 @@ import lombok.Data;
 public class ColumnarTableMappingExtra {
     // Latest tso generated automatically.
     private Long tso;
+    // Whether to ignore this cci.
+    private boolean ignore;
 }

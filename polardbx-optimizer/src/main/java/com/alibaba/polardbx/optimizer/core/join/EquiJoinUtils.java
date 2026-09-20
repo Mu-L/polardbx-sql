@@ -16,7 +16,6 @@
 
 package com.alibaba.polardbx.optimizer.core.join;
 
-import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.optimizer.core.TddlOperatorTable;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
@@ -24,7 +23,6 @@ import com.alibaba.polardbx.optimizer.core.rel.BKAJoin;
 import com.alibaba.polardbx.optimizer.core.rel.Gather;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalIndexScan;
 import com.alibaba.polardbx.optimizer.core.rel.MaterializedSemiJoin;
-import com.alibaba.polardbx.optimizer.core.rel.SemiBKAJoin;
 import com.alibaba.polardbx.optimizer.utils.CalciteUtils;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.rel.RelNode;
@@ -174,7 +172,7 @@ public class EquiJoinUtils {
                 input = ((Gather) input).getInput();
             }
             if (input instanceof LogicalIndexScan) {
-                return ((LogicalIndexScan) input).getJoin() != null;
+                return ((LogicalIndexScan) input).isLookupTable();
             }
         } else if (relNode instanceof Project) {
             // after expand
@@ -197,7 +195,7 @@ public class EquiJoinUtils {
             node = ((Gather) node).getInput();
         }
         if (node instanceof LogicalIndexScan) {
-            isLookUpGsi = ((LogicalIndexScan) node).getJoin() != null;
+            isLookUpGsi = ((LogicalIndexScan) node).isLookupTable();
         }
         return isLookUpGsi;
     }

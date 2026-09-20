@@ -1,0 +1,54 @@
+dbName: "test_ghost_ddl"
+tableName: "gh_ost_test"
+sqlMode: "STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE"
+prepareDb:
+  - "use information_schema"
+  - "drop database if exists test_ghost_ddl "
+  - "create database test_ghost_ddl"
+  - "use test_ghost_ddl;"
+  - "set names utf8mb4"
+prepareTables:
+  - "drop table if exists gh_ost_test_child;"
+  - "drop table if exists gh_ost_test;"
+  - "create table gh_ost_test (
+  id int auto_increment,
+  primary key(id)
+) engine=innodb auto_increment=1;"
+  - "create table gh_ost_test_child (
+  id int auto_increment,
+  i int not null,
+  parent_id int not null,
+  constraint test_fk foreign key (parent_id) references gh_ost_test (id) on delete no action,
+  primary key(id)
+) engine=innodb;"
+  - "insert into gh_ost_test (id) values (1),(2),(3);"
+prepareEvents:
+  - "drop event if exists gh_ost_test;"
+  - "drop event if exists gh_ost_test_cleanup;"
+  - "create event gh_ost_test
+  on schedule every 1 second
+  starts current_timestamp
+  ends current_timestamp + interval 60 second
+  on completion not preserve
+  enable
+  do
+begin
+  insert into gh_ost_test_child values (null, 11, 1);
+  insert into gh_ost_test_child values (null, 13, 2);
+  insert into gh_ost_test_child values (null, 17, 3);
+end"
+  - "create event gh_ost_test_cleanup
+  on schedule at current_timestamp + interval 60 second
+  on completion not preserve
+  enable
+  do
+begin
+  drop table if exists gh_ost_test_child;
+end"
+alterTableCommand:
+  - "alter table test_ghost_ddl.gh_ost_test engine=innodb"
+expectFailure: "Do not support online modify column when table is referenced by foreign key"
+expectTableStructure:
+cleanupDDLs:
+  - "use information_schema"
+  - "drop database if exists test_ghost_ddl;"

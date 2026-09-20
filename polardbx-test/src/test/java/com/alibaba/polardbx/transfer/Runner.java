@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * @author wuzhe
@@ -37,7 +38,7 @@ public class Runner {
         System.exit(BasePlugin.success() ? 0 : 1);
     }
 
-    public static void runAllPlugins() {
+    public static void runAllPlugins() throws InterruptedException {
         List<IPlugin> plugins = loadPlugins();
         for (IPlugin plugin : plugins) {
             plugin.run();
@@ -51,6 +52,15 @@ public class Runner {
             BasePlugin.waitUtilTimeout(timeout * 1000);
         } catch (Throwable t) {
             logger.warn("Error", t);
+        }
+
+        AtomicBoolean stop = Utils.getStopSignal();
+        while (!stop.get()) {
+            synchronized (stop) {
+                if (!stop.get()) {
+                    stop.wait();
+                }
+            }
         }
 
         monitorThread.interrupt();

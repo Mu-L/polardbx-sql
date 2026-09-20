@@ -16,12 +16,16 @@
 
 package com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement;
 
+import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLCreateStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.visitor.MySqlASTVisitor;
 
 public class DrdsFireScheduleStatement extends MySqlStatementImpl implements SQLCreateStatement {
 
-    private Long scheduleId;
+    private Long scheduleId = 0L;
+    private Boolean byScheduleName = false;
+    private Boolean byTableName = false;
+    private SQLExpr targetExpr = null;
 
     public DrdsFireScheduleStatement() {
 
@@ -39,6 +43,15 @@ public class DrdsFireScheduleStatement extends MySqlStatementImpl implements SQL
         if (this.scheduleId != null) {
             x.setScheduleId(this.scheduleId);
         }
+        if (this.byScheduleName != null) {
+            x.setByScheduleName(this.byScheduleName);
+        }
+        if (this.byTableName != null) {
+            x.setByTableName(this.byTableName);
+        }
+        if (this.targetExpr != null) {
+            x.setTargetExpr(targetExpr.clone());
+        }
         return x;
     }
 
@@ -48,5 +61,37 @@ public class DrdsFireScheduleStatement extends MySqlStatementImpl implements SQL
 
     public void setScheduleId(final Long scheduleId) {
         this.scheduleId = scheduleId;
+    }
+
+    public boolean isByScheduleName() {
+        return byScheduleName;
+    }
+
+    public void setByScheduleName(boolean byScheduleName) {
+        this.byScheduleName = byScheduleName;
+    }
+
+    public Boolean getByTableName() {
+        return byTableName;
+    }
+
+    public void setByTableName(Boolean byTableName) {
+        this.byTableName = byTableName;
+    }
+
+    public Boolean getByScheduleName() {
+        return byScheduleName;
+    }
+
+    public void setByScheduleName(Boolean byScheduleName) {
+        this.byScheduleName = byScheduleName;
+    }
+
+    public SQLExpr getTargetExpr() {
+        return targetExpr;
+    }
+
+    public void setTargetExpr(SQLExpr targetExpr) {
+        this.targetExpr = targetExpr;
     }
 }

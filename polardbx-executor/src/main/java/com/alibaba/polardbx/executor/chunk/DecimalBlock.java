@@ -25,14 +25,12 @@ import com.alibaba.polardbx.common.datatype.RawBytesDecimalUtils;
 import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
-import com.alibaba.polardbx.common.utils.MathUtils;
 import com.alibaba.polardbx.common.utils.hash.IStreamingHasher;
 import com.alibaba.polardbx.executor.operator.util.BatchBlockWriter;
 import com.alibaba.polardbx.executor.operator.util.DriverObjectPool;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DecimalType;
 import com.google.common.base.Preconditions;
-import io.airlift.slice.BasicSliceOutput;
 import io.airlift.slice.DynamicSliceOutput;
 import io.airlift.slice.Slice;
 import io.airlift.slice.SliceOutput;
@@ -90,6 +88,7 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
      * (a2 * 10^(9*-1) + a1 * 10^(9*0) + b * 10^(9*-1)).
      * In other word, the int word and frac word is 0 or 1.
      */
+    @FieldMemoryCounter(value = false)
     private DecimalBlockState state;
 
     @FieldMemoryCounter(value = false)
@@ -170,7 +169,7 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
         this.decimal128HighValues = decimal128High;
         this.selection = selection;
 
-        this.state = DecimalBlockState.DECIMAL_128;
+        setThisState128();
         updateSizeInfo();
     }
 
@@ -194,6 +193,10 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
         updateSizeInfo();
     }
 
+    private void setThisState128() {
+        this.state = DecimalBlockState.DECIMAL_128;
+    }
+
     public static DecimalBlock buildDecimal128Block(DataType dataType, int positionCount, boolean hasNull,
                                                     boolean[] valueIsNull,
                                                     long[] decimal128Low, long[] decimal128High) {
@@ -202,7 +205,7 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
         decimalBlock.decimal128HighValues = decimal128High;
         decimalBlock.selection = null;
 
-        decimalBlock.state = DecimalBlockState.DECIMAL_128;
+        decimalBlock.setThisState128();
         decimalBlock.updateSizeInfo();
         return decimalBlock;
     }
@@ -310,7 +313,7 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
     }
 
     @Override
-    public void sum(int[] groupSelected, int selSize, long[] results) {
+    public void sum(int[] groupSelected, int selSize, long[] results, boolean enableDecimal128) {
         Preconditions.checkArgument(selSize <= positionCount);
         if (isDecimal64()) {
             boolean overflow64 = false;
@@ -368,7 +371,7 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
                     sumLow = addResult;
                 }
             }
-            if (!overflow128) {
+            if (!overflow128 && enableDecimal128) {
                 results[0] = sumLow;
                 results[1] = sumHigh;
                 results[2] = E_DEC_DEC128;
@@ -414,7 +417,7 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
                     sumLow = newDecimal128Low;
                 }
             }
-            if (!overflow128) {
+            if (!overflow128 && enableDecimal128) {
                 results[0] = sumLow;
                 results[1] = sumHigh;
                 results[2] = E_DEC_DEC128;
@@ -434,7 +437,7 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
     }
 
     @Override
-    public void sum(int startIndexIncluded, int endIndexExcluded, long[] results) {
+    public void sum(int startIndexIncluded, int endIndexExcluded, long[] results, boolean enableDecimal128) {
         Preconditions.checkArgument(endIndexExcluded <= positionCount);
         if (isDecimal64()) {
             boolean overflow64 = false;
@@ -491,7 +494,7 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
                     sumLow = addResult;
                 }
             }
-            if (!overflow128) {
+            if (!overflow128 && enableDecimal128) {
                 results[0] = sumLow;
                 results[1] = sumHigh;
                 results[2] = E_DEC_DEC128;
@@ -536,7 +539,7 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
                     sumLow = newDecimal128Low;
                 }
             }
-            if (!overflow128) {
+            if (!overflow128 && enableDecimal128) {
                 results[0] = sumLow;
                 results[1] = sumHigh;
                 results[2] = E_DEC_DEC128;
@@ -557,7 +560,7 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
 
     @Override
     public void sum(int startIndexIncluded, int endIndexExcluded, long[] sumResultArray, int[] sumStatusArray,
-                    int[] normalizedGroupIds) {
+                    int[] normalizedGroupIds, boolean enableDecimal128) {
         Preconditions.checkArgument(endIndexExcluded <= positionCount);
         if (isDecimal64()) {
             boolean overflow = false;
@@ -716,7 +719,7 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
                 this.decimal64Values = new long[positionCount];
                 this.decimal128HighValues = new long[positionCount];
             }
-            this.state = DecimalBlockState.DECIMAL_128;
+            setThisState128();
         } else if (isDecimal64()) {
             // will not clear existing decimal64Values to reduce operations,
             // caller should be aware of this behavior
@@ -730,7 +733,7 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
             } else {
                 this.decimal128HighValues = new long[positionCount];
             }
-            this.state = DecimalBlockState.DECIMAL_128;
+            setThisState128();
         } else if (this.state.isNormal()) {
             throw new IllegalStateException("Should not allocate decimal128 inside a normal decimal block");
         }
@@ -763,7 +766,9 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
             return;
         }
         if (isDecimal64()) {
-            if (b.isDecimal64() || b.isDecimal128() || b.state.isUnset()) {
+            if ((b.isDecimal64() && b.getScale() == getScale())
+                || (b.isDecimal128() && b.getScale() == getScale())
+                || b.state.isUnset()) {
                 b.setScale(getScale());
                 b.writeLong(getLongInner(position));
             } else {
@@ -773,7 +778,9 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
         }
 
         if (isDecimal128()) {
-            if (b.isDecimal64() || b.isDecimal128() || b.state.isUnset()) {
+            if ((b.isDecimal64() && b.getScale() == getScale())
+                || (b.isDecimal128() && b.getScale() == getScale())
+                || b.state.isUnset()) {
                 b.writeDecimal128(getDecimal128LowInner(position), getDecimal128HighInner(position));
             } else {
                 b.writeDecimal(getDecimalInner(position));
@@ -842,16 +849,50 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
     }
 
     private DecimalStructure getRegionTmpBuffer() {
-        if (this.regionTmpBuffer == null) {
-            this.regionTmpBuffer = new DecimalStructure();
-        }
-        return this.regionTmpBuffer;
+        return new DecimalStructure();
     }
 
     @Override
     public boolean equals(int position, Block other, int otherPosition) {
         position = realPositionOf(position);
         return equalsInner(position, other, otherPosition);
+    }
+
+    @Override
+    public int compareAssertedSameType(int position, Block other, int otherPosition) {
+        position = realPositionOf(position);
+        return compareAssertedSameTypeInner(position, other, otherPosition);
+    }
+
+    private int compareAssertedSameTypeInner(int realPosition, Block other, int otherPosition) {
+        boolean isNullLeft = isNullInner(realPosition);
+        boolean isNullRight = other.isNull(otherPosition);
+        if (isNullLeft && isNullRight) {
+            return 0;
+        } else if (isNullLeft) {
+            return -1;
+        } else if (isNullRight) {
+            return 1;
+        }
+
+        DecimalBlock otherBlock = (DecimalBlock) other;
+        boolean useDecimal64Cmp = isDecimal64() && otherBlock.isDecimal64() && getScale() == otherBlock.getScale();
+        boolean useDecimal128Cmp = !useDecimal64Cmp
+            && isDecimal128() && otherBlock.isDecimal128() && getScale() == otherBlock.getScale();
+
+        if (useDecimal64Cmp) {
+            // dec64 cmp dec64
+            return Long.compare(getLongInner(realPosition), other.getLong(otherPosition));
+        } else if (useDecimal128Cmp) {
+            // dec128 cmp dec128
+            long leftLow = getDecimal128LowInner(realPosition);
+            long leftHigh = getDecimal128HighInner(realPosition);
+            long rightLow = otherBlock.getDecimal128Low(otherPosition);
+            long rightHigh = otherBlock.getDecimal128High(otherPosition);
+            return (leftHigh < rightHigh) || (leftHigh == rightHigh && leftLow < rightLow) ? -1 : 1;
+        } else {
+            return getDecimalInner(realPosition).compareTo(otherBlock.getDecimal(otherPosition));
+        }
     }
 
     @Override
@@ -872,9 +913,9 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
             DecimalBlock outputVectorSlot = output.cast(DecimalBlock.class);
             if (outputVectorSlot.isUnalloc()) {
                 copySelectedToUnalloc(selectedInUse, sel, size, outputVectorSlot);
-            } else if (outputVectorSlot.isDecimal64()) {
+            } else if (outputVectorSlot.isDecimal64() && outputVectorSlot.getScale() == getScale()) {
                 copySelectedToDecimal64(selectedInUse, sel, size, outputVectorSlot);
-            } else if (outputVectorSlot.isDecimal128()) {
+            } else if (outputVectorSlot.isDecimal128() && outputVectorSlot.getScale() == getScale()) {
                 copySelectedToDecimal128(selectedInUse, sel, size, outputVectorSlot);
             } else {
                 copySelectedToNormal(selectedInUse, sel, size, outputVectorSlot);
@@ -1324,7 +1365,9 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
 
         // normal decimal compare
         Slice memorySegment1 = this.segmentUncheckedAtInner(realPosition);
-        Slice memorySegment2 = otherBlock.segmentUncheckedAt(otherPosition);
+
+        Decimal otherDecimal = ((Block) otherBlock).getDecimal(otherPosition);
+        Slice memorySegment2 = otherDecimal != null ? otherDecimal.getMemorySegment() : Slices.EMPTY_SLICE;
         return RawBytesDecimalUtils.equals(memorySegment1, memorySegment2);
     }
 
@@ -1559,7 +1602,6 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
         if (isUnalloc()) {
             // maybe not allocated yet, or all nulls
             elementUsedBytes = INSTANCE_SIZE
-                + (state == null ? 0 : state.memorySize())
                 + VMSupport.align((int) sizeOf(isNull))
                 + VMSupport.align((int) sizeOf(selection));
 
@@ -1573,7 +1615,6 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
         if (isDecimal64()) {
 
             elementUsedBytes = INSTANCE_SIZE
-                + (state == null ? 0 : state.memorySize())
                 + VMSupport.align((int) sizeOf(isNull))
                 + VMSupport.align((int) sizeOf(decimal64Values))
                 + VMSupport.align((int) sizeOf(selection));
@@ -1587,7 +1628,6 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
         } else if (isDecimal128()) {
 
             elementUsedBytes = INSTANCE_SIZE
-                + (state == null ? 0 : state.memorySize())
                 + VMSupport.align((int) sizeOf(isNull))
                 + VMSupport.align((int) sizeOf(decimal64Values))
                 + VMSupport.align((int) sizeOf(decimal128HighValues))
@@ -1601,7 +1641,6 @@ public class DecimalBlock extends AbstractBlock implements SegmentedDecimalBlock
 
         } else {
             elementUsedBytes = INSTANCE_SIZE
-                + (state == null ? 0 : state.memorySize())
                 + VMSupport.align((int) sizeOf(isNull))
                 + FastMemoryCounter.sizeOf(memorySegments)
                 + VMSupport.align((int) sizeOf(selection));

@@ -168,7 +168,7 @@ public class DynamicParamExpression extends AbstractExpression {
     /**
      * Convert parameters from FastSQL to DRDS data types, e.g. BigDecimal to Decimal
      */
-    private static Object convertParameterType(Object in) {
+    public static Object convertParameterType(Object in) {
         if (in instanceof BigDecimal) {
             return Decimal.fromBigDecimal((BigDecimal) in);
         }

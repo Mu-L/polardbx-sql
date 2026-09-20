@@ -3,7 +3,9 @@ package com.alibaba.polardbx.net.util;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.polardbx.common.cdc.CdcConstants;
 import com.alibaba.polardbx.common.cdc.ResultCode;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.PooledHttpHelper;
+import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.rpc.cdc.DumpRequest;
 import lombok.SneakyThrows;
 import org.junit.After;
@@ -23,6 +25,7 @@ public class CdcTargetUtilTest {
 
     private MockedStatic<PooledHttpHelper> pooledHttpHelper;
     private MockedStatic<CdcTargetUtil> cdcTargetUtilMockedStatic;
+    private MockedStatic<InstConfUtil> instConfUtilMockedStatic;
 
     @Before
     @SneakyThrows
@@ -30,6 +33,7 @@ public class CdcTargetUtilTest {
         // 设置模拟行为
         pooledHttpHelper = mockStatic(PooledHttpHelper.class);
         cdcTargetUtilMockedStatic = mockStatic(CdcTargetUtil.class);
+        instConfUtilMockedStatic = mockStatic(InstConfUtil.class);
 
         pooledHttpHelper.when(() -> doPost(any(String.class), any(), any(String.class), anyInt()))
             .thenAnswer(invocation -> {
@@ -50,12 +54,15 @@ public class CdcTargetUtilTest {
             .thenCallRealMethod();
         cdcTargetUtilMockedStatic.when(CdcTargetUtil::getDumperMasterTarget).thenReturn("dumperMasterTarget");
         cdcTargetUtilMockedStatic.when(CdcTargetUtil::getDaemonMasterTarget).thenReturn("daemonMasterTarget");
+        instConfUtilMockedStatic.when(
+            () -> InstConfUtil.getInt(ConnectionParams.BINLOG_GET_DUMPER_SOCKET_TIME_MILLISECOND)).thenReturn(5000);
     }
 
     @After
     public void clear() {
         pooledHttpHelper.close();
         cdcTargetUtilMockedStatic.close();
+        instConfUtilMockedStatic.close();
     }
 
     @Test

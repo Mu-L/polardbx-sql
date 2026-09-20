@@ -16,9 +16,6 @@
 
 package com.alibaba.polardbx.server.handler.privileges.polar;
 
-import com.alibaba.polardbx.common.cdc.CdcManagerHelper;
-import com.alibaba.polardbx.common.cdc.CdcDdlMarkVisibility;
-import com.alibaba.polardbx.common.ddl.newengine.DdlType;
 import com.alibaba.polardbx.server.ServerConnection;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateRoleStatement;
 import com.alibaba.polardbx.druid.sql.parser.ByteString;
@@ -31,8 +28,7 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.privilege.PolarAccount;
 import com.alibaba.polardbx.gms.privilege.PolarAccountInfo;
 import com.alibaba.polardbx.gms.privilege.PolarPrivManager;
-import com.alibaba.polardbx.gms.privilege.audit.AuditPrivilege;
-import com.google.common.collect.Maps;
+import com.alibaba.polardbx.server.util.AuditPrivilege;
 import org.apache.calcite.sql.SqlKind;
 
 import java.util.List;
@@ -71,7 +67,7 @@ public class PolarCreateRoleHandler extends AbstractPrivilegeCommandHandler {
         logger.info(String.format("CREATE ROLE succeed, sql: %s, granter: %s", getSql(), granter.getIdentifier()));
         PolarPrivManager.getInstance().createAccount(granter, getServerConn().getActiveRoles(),
             grantees, stmt.isIfNotExists());
-        AuditPrivilege.polarAudit(getServerConn().getConnectionInfo(), getSql().toString(), AuditAction.CREATE_ROLE);
+        AuditPrivilege.polarAudit(getServerConn(), getSql().toString(), AuditAction.CREATE_ROLE);
     }
 
     @Override

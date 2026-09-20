@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.qatest.ddl.sharding.autoPartition;
 
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.collect.ImmutableList;
 import org.junit.After;
@@ -28,6 +29,7 @@ import java.text.MessageFormat;
 /**
  * @version 1.0
  */
+@IcbcIgnore(ignoreReason = "TIMESTAMP")
 public class AutoPartitionAddDropIndexWithClustered extends AutoPartitionTestBase {
 
     private final String TABLE_NAME = "auto_idx_with_clustered_o";

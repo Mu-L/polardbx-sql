@@ -1,10 +1,10 @@
 package com.alibaba.polardbx.optimizer.ttl;
 
 import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
-import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
@@ -12,37 +12,33 @@ import com.alibaba.polardbx.common.utils.timezone.InternalTimeZone;
 import com.alibaba.polardbx.common.utils.timezone.TimeZoneUtils;
 import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLBinaryOpExpr;
-import com.alibaba.polardbx.druid.sql.ast.expr.SQLBooleanExpr;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLInListExpr;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLLiteralExpr;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.parser.MySqlExprParser;
 import com.alibaba.polardbx.druid.sql.parser.ByteString;
 import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
-import com.alibaba.polardbx.gms.ttl.TtlInfoRecord;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.config.server.IServerConfigManager;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager;
 import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
-import com.alibaba.polardbx.optimizer.core.TddlOperatorTable;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
+import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.exception.TableNotFoundException;
 import com.alibaba.polardbx.optimizer.partition.PartitionByDefinition;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
-import com.alibaba.polardbx.optimizer.partition.common.PartKeyLevel;
 import com.alibaba.polardbx.optimizer.partition.datatype.function.PartitionFunctionBuilder;
-import com.alibaba.polardbx.optimizer.partition.datatype.function.PartitionFunctionMeta;
 import com.alibaba.polardbx.optimizer.partition.datatype.function.PartitionIntFunction;
 import com.alibaba.polardbx.optimizer.sql.sql2rel.TddlSqlToRelConverter;
 import com.alibaba.polardbx.optimizer.view.SystemTableView;
 import com.alibaba.polardbx.optimizer.view.ViewManager;
 import com.cronutils.model.Cron;
 import com.cronutils.model.CronType;
-import com.cronutils.model.definition.CronDefinition;
 import com.cronutils.model.definition.CronDefinitionBuilder;
-import com.cronutils.model.field.CronFieldName;
-import com.cronutils.model.time.ExecutionTime;
 import com.cronutils.parser.CronParser;
 import org.apache.calcite.sql.SqlCreateTable;
 import org.apache.calcite.sql.SqlIdentifier;
@@ -50,18 +46,14 @@ import org.apache.calcite.sql.SqlIndexDefinition;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.util.Pair;
 
-import java.time.Duration;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Date;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
-import java.util.TreeSet;
+import java.util.TreeMap;
 
 /**
  * @author chenghui.lch
@@ -70,14 +62,25 @@ public class TtlMetaValidationUtil {
 
     private static final Logger logger = LoggerFactory.getLogger(TtlMetaValidationUtil.class);
 
-    protected static Set<TtlTimeUnit> supportedTtlUnit = new HashSet<>();
+    protected static Set<TtlTimeUnit> supportedTtlExpireIntervalUnit = new HashSet<>();
+    protected static Set<TtlTimeUnit> supportedArcPartIntervalUnit = new HashSet<>();
 
     static {
-        supportedTtlUnit.add(TtlTimeUnit.UNDEFINED);
-        supportedTtlUnit.add(TtlTimeUnit.DAY);
-        supportedTtlUnit.add(TtlTimeUnit.MONTH);
-        supportedTtlUnit.add(TtlTimeUnit.YEAR);
-        supportedTtlUnit.add(TtlTimeUnit.NUMBER);
+        supportedTtlExpireIntervalUnit.add(TtlTimeUnit.UNDEFINED);
+        supportedTtlExpireIntervalUnit.add(TtlTimeUnit.DAY);
+//        supportedTtlExpireIntervalUnit.add(TtlTimeUnit.WEEK);
+        supportedTtlExpireIntervalUnit.add(TtlTimeUnit.MONTH);
+        supportedTtlExpireIntervalUnit.add(TtlTimeUnit.YEAR);
+        supportedTtlExpireIntervalUnit.add(TtlTimeUnit.NUMBER);
+    }
+
+    static {
+        supportedArcPartIntervalUnit.add(TtlTimeUnit.UNDEFINED);
+        supportedArcPartIntervalUnit.add(TtlTimeUnit.DAY);
+        supportedArcPartIntervalUnit.add(TtlTimeUnit.WEEK);
+        supportedArcPartIntervalUnit.add(TtlTimeUnit.MONTH);
+        supportedArcPartIntervalUnit.add(TtlTimeUnit.YEAR);
+        supportedArcPartIntervalUnit.add(TtlTimeUnit.NUMBER);
     }
 
     public static void validateTtlInfoChange(TtlDefinitionInfo oldTtlInfo,
@@ -160,7 +163,7 @@ public class TtlMetaValidationUtil {
         TtlArchiveKind oldArcKind = TtlArchiveKind.of(oldTtlInfo.getTtlInfoRecord().getArcKind());
         TtlArchiveKind newArcKind = TtlArchiveKind.of(newTtlInfo.getTtlInfoRecord().getArcKind());
 
-        boolean alreadyBoundArchiveTable = oldTtlInfo.alreadyBoundArchiveTable();
+        boolean alreadyBoundArchiveTable = oldTtlInfo.needPerformExpiredDataArchiving();
         String newArcTblSchema = newTtlInfo.getArchiveTableSchema();
         String newArcTblName = newTtlInfo.getArchiveTableName();
         if (newArcKind == TtlArchiveKind.UNDEFINED) {
@@ -189,18 +192,6 @@ public class TtlMetaValidationUtil {
             }
         } else {
 
-            if (StringUtils.isEmpty(newArcTblSchema) || StringUtils.isEmpty(newArcTblName)) {
-                if (!newArcKind.archivedByPartitions()) {
-                    if (alreadyBoundArchiveTable) {
-                        // found archive table changed
-                        throw new TddlRuntimeException(ErrorCode.ERR_TTL_PARAMS,
-                            String.format(
-                                "Failed to modify ttl definition because archive table must be not empty when the arcKind is %s",
-                                newArcKind.getArchiveKindStr()));
-                    }
-                }
-            }
-
             if (oldArcKind == TtlArchiveKind.UNDEFINED) {
                 /**
                  * arcKind from undefined to defined,
@@ -223,6 +214,54 @@ public class TtlMetaValidationUtil {
 //                            oldTtlInfo.getTtlInfoRecord().getTableName()));
                 }
             }
+        }
+
+    }
+
+    public static void validateTtlRefCol(TtlDefinitionInfo ttlInfo,
+                                         TableMeta ttlTableMeta,
+                                         ExecutionContext ec) {
+        try {
+            String ttlTblSchema = ttlInfo.getTtlInfoRecord().getTableSchema();
+            String ttlTblName = ttlInfo.getTtlInfoRecord().getTableName();
+
+            List<String> ttlRefCols = ttlInfo.getTtlInfoRecord().getExtra().getTtlRefColList();
+            if (ttlRefCols == null || ttlRefCols.isEmpty()) {
+                return;
+            }
+            for (String ttlRefCol : ttlRefCols) {
+                if (ttlTableMeta.getColumn(ttlRefCol) == null) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_TTL_COLUMN_NOT_FOUND,
+                        String.format(
+                            "Failed to create ttl definition because the column `%s` of `%s`.`%s` does not exist",
+                            ttlRefCol, ttlTblSchema, ttlTblName));
+                }
+            }
+
+        } catch (Throwable ex) {
+            throw new TddlRuntimeException(ErrorCode.ERR_TTL, ex.getMessage(), ex);
+        }
+    }
+
+    public static void validateTtlHybrid(TtlDefinitionInfo ttlInfo,
+                                         TableMeta ttlTableMeta,
+                                         ExecutionContext ec,
+                                         boolean ignoreTtlHybrid) {
+        if (!ignoreTtlHybrid && !Optional.ofNullable(ttlInfo.getTtlInfoRecord().getExtra().getTtlHybrid())
+            .orElse(false)) {
+            return;
+        }
+        ColumnMeta ttColumnMeta = ttlTableMeta.getColumn(ttlInfo.getTtlInfoRecord().getTtlCol());
+        if (ttlInfo.getTtlInfoRecord().getTtlFilter() != null
+            && ttlInfo.getTtlInfoRecord().getTtlFilter().trim().length() > 0) {
+            throw new TddlRuntimeException(ErrorCode.ERR_TTL_PARAMS, "the ttl_filter is not null");
+        }
+        if (ttColumnMeta.isNullable()
+            && ec.getParamManager().getBoolean(ConnectionParams.FORCE_TTL_COL_NOT_NULL)) {
+            throw new TddlRuntimeException(ErrorCode.ERR_TTL_PARAMS, "the ttl_col is nullable");
+        }
+        if (ttlInfo.useExpireOverPartitionsPolicy()) {
+            throw new TddlRuntimeException(ErrorCode.ERR_TTL_PARAMS, "the ttl table use expire over partitions policy");
         }
 
     }
@@ -269,7 +308,7 @@ public class TtlMetaValidationUtil {
                  * Come here, ttlColDt will be numberType or mysqlTimeType(date/datetime/timestamp)
                  */
 
-                boolean useTtlColFunExpr = ttlInfo.isTtlColUseFuncExpr();
+                boolean useTtlColFunExpr = ttlInfo.isTtlColUseFuncExpr();//use isTtlColUseExprEncoding
                 boolean useExpireOverPolicy = ttlInfo.useExpireOverPartitionsPolicy();
                 boolean useNoExpirePolicy = ttlInfo.useUndefinedExpirePolicy();
                 boolean useNumberAsPartUnit = ttlInfo.useNumberAsPartIntervalUnit();
@@ -375,7 +414,7 @@ public class TtlMetaValidationUtil {
                     }
 
                     TtlTimeUnit partIntervalUnit = TtlTimeUnit.of(partIntervalUnitCode);
-                    if (!TtlMetaValidationUtil.supportedTtlUnit.contains(partIntervalUnit)) {
+                    if (!TtlMetaValidationUtil.supportedTtlExpireIntervalUnit.contains(partIntervalUnit)) {
                         throw new TddlRuntimeException(ErrorCode.ERR_TTL_PARAMS, String.format(
                             "Failed to create ttl definition because the time unit of ttl_part_interval `%s` is not supported yet",
                             partIntervalUnit.getUnitName()));
@@ -393,7 +432,7 @@ public class TtlMetaValidationUtil {
                 Integer ttlUnitCode = ttlInfo.getTtlInfoRecord().getTtlUnit();
                 if (ttlUnitCode != null) {
                     TtlTimeUnit ttlUnit = TtlTimeUnit.of(ttlUnitCode);
-                    if (!TtlMetaValidationUtil.supportedTtlUnit.contains(ttlUnit)) {
+                    if (!TtlMetaValidationUtil.supportedTtlExpireIntervalUnit.contains(ttlUnit)) {
                         throw new TddlRuntimeException(ErrorCode.ERR_TTL_PARAMS, String.format(
                             "Failed to create ttl definition because the ttl time unit `%s` is not supported yet",
                             ttlUnit.getUnitName()));
@@ -403,7 +442,7 @@ public class TtlMetaValidationUtil {
                 Integer artPartUnitCode = ttlInfo.getTtlInfoRecord().getArcPartUnit();
                 if (artPartUnitCode != null) {
                     TtlTimeUnit artPartUnit = TtlTimeUnit.of(artPartUnitCode);
-                    if (!TtlMetaValidationUtil.supportedTtlUnit.contains(artPartUnit)) {
+                    if (!TtlMetaValidationUtil.supportedArcPartIntervalUnit.contains(artPartUnit)) {
                         throw new TddlRuntimeException(ErrorCode.ERR_TTL_PARAMS, String.format(
                             "Failed to create ttl definition because the arc partition unit `%s` is not supported yet",
                             artPartUnit.getUnitName()));
@@ -429,7 +468,7 @@ public class TtlMetaValidationUtil {
                             partIntervalUnit.getUnitName()));
                     }
 
-                    if (!TtlMetaValidationUtil.supportedTtlUnit.contains(partIntervalUnit)) {
+                    if (!TtlMetaValidationUtil.supportedArcPartIntervalUnit.contains(partIntervalUnit)) {
                         throw new TddlRuntimeException(ErrorCode.ERR_TTL_PARAMS, String.format(
                             "Failed to create ttl definition because the time unit of ttl_part_interval `%s` is not supported yet",
                             partIntervalUnit.getUnitName()));
@@ -465,7 +504,7 @@ public class TtlMetaValidationUtil {
                             partIntervalUnit.getUnitName()));
                     }
 
-                    if (!TtlMetaValidationUtil.supportedTtlUnit.contains(partIntervalUnit)) {
+                    if (!TtlMetaValidationUtil.supportedTtlExpireIntervalUnit.contains(partIntervalUnit)) {
                         throw new TddlRuntimeException(ErrorCode.ERR_TTL_PARAMS, String.format(
                             "Failed to create ttl definition because the time unit of ttl_part_interval `%s` is not supported in using no-expire policy",
                             partIntervalUnit.getUnitName()));
@@ -527,13 +566,13 @@ public class TtlMetaValidationUtil {
 
     }
 
-    protected static String getFirstColumnarName(boolean isValidateForNewCreateTable,
-                                                 TableMeta primTableMeta,
-                                                 SqlCreateTable newCreateTableAst) {
+    protected static String getFirstArcColumnarName(boolean isValidateForNewCreateTable,
+                                                    TableMeta primTableMeta,
+                                                    SqlCreateTable newCreateTableAst) {
 
         String firstCciNameStr = null;
         if (!isValidateForNewCreateTable) {
-            Map<String, GsiMetaManager.GsiIndexMetaBean> cciBeanInfo = primTableMeta.getColumnarIndexPublished();
+            Map<String, GsiMetaManager.GsiIndexMetaBean> cciBeanInfo = primTableMeta.getArchiveColumnarIndexPublished();
 
             if (cciBeanInfo == null || cciBeanInfo.isEmpty()) {
                 return firstCciNameStr;
@@ -550,7 +589,7 @@ public class TtlMetaValidationUtil {
                 firstCciNameStr = TddlSqlToRelConverter.unwrapGsiName(cciInfo.indexName);
             }
         } else {
-            firstCciNameStr = TtlUtil.getFirstColumnarIndexName(newCreateTableAst);
+            firstCciNameStr = TtlUtil.getFirstArchiveColumnarIndexName(newCreateTableAst);
         }
         return firstCciNameStr;
     }
@@ -578,7 +617,7 @@ public class TtlMetaValidationUtil {
                 arcTblSchema, arcCciTblSchema));
         }
 
-        String realCciName = getFirstColumnarName(validateForNewCreateTable, tableMeta, sqlCreateTableAst);
+        String realCciName = getFirstArcColumnarName(validateForNewCreateTable, tableMeta, sqlCreateTableAst);
         String tmpCciName = TtlUtil.buildArcTmpNameByArcTblName(arcTblName);
 
 //        TtlArchiveKind archiveKind = TtlArchiveKind.of(ttlInfo.getTtlInfoRecord().getArcKind());
@@ -647,6 +686,95 @@ public class TtlMetaValidationUtil {
         }
     }
 
+    public static void validateEncoderDecoderForTtlCol(
+        TtlDefinitionInfo ttlInfo,
+        TableMeta ttlTableMeta,
+        ExecutionContext ec,
+        IServerConfigManager svrMgr) {
+        TtlColFuncExprInfo ttlColFuncExprInfo = ttlInfo.getTtlColFuncExprInfo();
+        boolean useTtlColFunc = ttlInfo.isTtlColUseFuncExpr();
+        if (!useTtlColFunc || ttlColFuncExprInfo == null) {
+            return;
+        }
+
+        String tarSchema = ttlInfo.getTtlInfoRecord().getTableSchema();
+        String ttlColName = ttlInfo.getTtlInfoRecord().getTtlCol();
+        ColumnMeta cmOfTtlCol = ttlTableMeta.getColumn(ttlColName);
+
+        DataType dtOfTtlCol = cmOfTtlCol.getDataType();
+        boolean isNumbericType = DataTypeUtil.isUnderBigintUnsignedTypeOrZeroScaledDecimalType(dtOfTtlCol);
+        if (!isNumbericType) {
+            throw new TddlRuntimeException(ErrorCode.ERR_TTL_PARAMS, String.format(
+                "Failed to create ttl definition because the ttl_col_encoder/ttl_col_decoder does not supported using on ttl_col `%s` with non-number datatype '%s'",
+                ttlColName, dtOfTtlCol.getStringSqlType()));
+        }
+
+        boolean enableTtlColEncoderValidation =
+            ec.getParamManager().getBoolean(ConnectionParams.ENABLE_TTL_COL_ENCODER_DECODER_VALIDATION);
+        if (!enableTtlColEncoderValidation) {
+            return;
+        }
+
+        String ttlColEncoderValidationValue =
+            ec.getParamManager().getString(ConnectionParams.TTL_COL_ENCODER_DECODER_VALIDATION_VALUE);
+
+        try {
+            String encoderValidationExprTemp = ttlColFuncExprInfo.getTtlColValidationExprTemplate();
+            String validationExprInputRawValue = String.format("'%s'", ttlColEncoderValidationValue);
+            SQLExpr encoderValidationExprTempAst = TtlUtil.parseExprString(encoderValidationExprTemp);
+            String encoderValidationExprStr =
+                TtlUtil.replaceParamsAndBuildExprSql(validationExprInputRawValue, encoderValidationExprTempAst);
+            String encoderValidationQuerySql =
+                String.format(
+                    "select raw_val, query_val, raw_val=query_val as is_same from (select %s as raw_val, %s as query_val from dual) tmp",
+                    validationExprInputRawValue, encoderValidationExprStr);
+
+            if (svrMgr != null) {
+
+                String ttlTimezoneStr = ttlInfo.getTtlInfoRecord().getTtlTimezone();
+                String charsetEncoding = TtlConfigUtil.getDefaultCharsetEncodingOnTransConn();
+                String sqlModeSetting = TtlConfigUtil.getDefaultSqlModeOnTransConn();
+                Map<String, Object> sessionVariables = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+                sessionVariables.put("time_zone", ttlTimezoneStr);
+                sessionVariables.put("names", charsetEncoding);
+                sessionVariables.put("sql_mode", sqlModeSetting);
+
+                Throwable ex = null;
+                Object innerConn = null;
+                List<Map<String, Object>> queryRs = null;
+                try {
+                    innerConn = svrMgr.getTransConnection(tarSchema, sessionVariables);
+                    queryRs = svrMgr.executeBackgroundQueryByTransConnection(encoderValidationQuerySql, tarSchema, null,
+                        innerConn);
+                    Object isSameVal = queryRs.get(0).get("is_same");
+                    String isSameStrVal = String.valueOf(isSameVal);
+                    if (!isSameStrVal.equals("1")) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_TTL_PARAMS, String.format(
+                            "Failed to create ttl definition because the ttl_col_encoder['%s']/ttl_col_decoder['%s'] does not match",
+                            ttlColFuncExprInfo.getTtlColEncoderStr(), ttlColFuncExprInfo.getTtlColDecoderStr()));
+                    }
+                } catch (Throwable sqlEx) {
+                    ex = sqlEx;
+                    if (queryRs != null) {
+                        throw ex;
+                    } else {
+                        throw new TddlRuntimeException(ErrorCode.ERR_TTL_PARAMS, ex, String.format(
+                            "Failed to create ttl definition because some runtime exception happened during the validation of the ttl_col_encoder['%s']/ttl_col_decoder['%s'], err msg is %s",
+                            ttlColFuncExprInfo.getTtlColEncoderStr(), ttlColFuncExprInfo.getTtlColDecoderStr(),
+                            ex.getMessage()));
+                    }
+                } finally {
+                    if (innerConn != null) {
+                        svrMgr.closeTransConnection(innerConn);
+                    }
+                }
+            }
+
+        } catch (Throwable ex) {
+            throw new TddlNestableRuntimeException(ex);
+        }
+    }
+
     public static void validateTtlFilterExpr(TtlDefinitionInfo ttlInfo,
                                              TableMeta ttlTableMeta,
                                              ExecutionContext ec) {
@@ -663,9 +791,10 @@ public class TtlMetaValidationUtil {
         ByteString byteStrMySql = ByteString.from(ttlFilterExpr);
         MySqlExprParser mySqlExprParser = new MySqlExprParser(byteStrMySql);
         SQLExpr filterExpr = mySqlExprParser.expr();
-        if (!(filterExpr instanceof SQLBinaryOpExpr)) {
+        if (!(filterExpr instanceof SQLBinaryOpExpr) && !(filterExpr instanceof SQLLiteralExpr)
+            && !(filterExpr instanceof SQLInListExpr)) {
             throw new TddlRuntimeException(ErrorCode.ERR_TTL_PARAMS, String.format(
-                "Failed to create ttl definition because the ttl_filter '%s' is not a binary-op expression",
+                "Failed to create ttl definition because the ttl_filter '%s' is not a binary-op/in-list expression or literal expression",
                 ttlFilterExpr));
         }
     }
@@ -685,6 +814,7 @@ public class TtlMetaValidationUtil {
 
         boolean checkForNewCreateTableWithTtlDef = newCreatedTblPartInfo != null;
         boolean arcByPartOrSubPart = ttlInfo.performArchiveByPartitionOrSubPartition();
+        boolean ttlCleanupEnabled = ttlInfo.isCleanupEnabled();
         PartitionInfo partInfo = ttlTableMeta.getPartitionInfo();
         if (partInfo == null || checkForNewCreateTableWithTtlDef) {
             partInfo = newCreatedTblPartInfo;
@@ -704,10 +834,13 @@ public class TtlMetaValidationUtil {
         }
 
         if (containGsi) {
-            // add switch
-            throw new TddlRuntimeException(ErrorCode.ERR_TTL_PARAMS,
-                String.format(
-                    "Failed to create ttl definition because a partition table with gsi is not supported for using partition/subpartition archive_type"));
+            if (ttlCleanupEnabled) {
+                // add switch
+                throw new TddlRuntimeException(ErrorCode.ERR_TTL_PARAMS,
+                    String.format(
+                        "Failed to create ttl definition with ttl_cleanup='on' because a partition table with gsi is not supported for using partition/subpartition archive_type"));
+            }
+
         }
 
         if (arcByPartOrSubPart) {
@@ -862,7 +995,8 @@ public class TtlMetaValidationUtil {
                                              TableMeta ttlTableMeta,
                                              PartitionInfo newCreatedTblPartInfo,
                                              SqlCreateTable sqlCreateTableAst,
-                                             ExecutionContext ec) {
+                                             ExecutionContext ec,
+                                             IServerConfigManager svrMgr) {
         TtlMetaValidationUtil.validateAllowedCreatingNewTtlInfo(ttlInfo, ttlTableMeta, newCreatedTblPartInfo, ec);
         TtlMetaValidationUtil.validateArchiveTableInfo(ttlInfo, ttlTableMeta, ec);
         TtlMetaValidationUtil.validateTtlArchiveType(ttlInfo, ttlTableMeta,
@@ -874,9 +1008,11 @@ public class TtlMetaValidationUtil {
         TtlMetaValidationUtil.validateTtlColExpr(ttlInfo, ttlTableMeta, ec);
         TtlMetaValidationUtil.validateTtlCronExpr(ttlInfo, ec);
         TtlMetaValidationUtil.validateTtlCleanup(ttlInfo, ttlTableMeta, sqlCreateTableAst, ec);
+        TtlMetaValidationUtil.validateEncoderDecoderForTtlCol(ttlInfo, ttlTableMeta, ec, svrMgr);
         TtlMetaValidationUtil.validateTtlFilterExpr(ttlInfo, ttlTableMeta, ec);
         TtlMetaValidationUtil.validateArchiveTableAllocateInfo(ttlInfo, ttlTableMeta, ec);
-
+        TtlMetaValidationUtil.validateTtlRefCol(ttlInfo, ttlTableMeta, ec);
+        TtlMetaValidationUtil.validateTtlHybrid(ttlInfo, ttlTableMeta, ec, false);
     }
 
     public static void validateAllowedBoundingArchiveTable(TtlDefinitionInfo ttlInfo,
@@ -988,14 +1124,14 @@ public class TtlMetaValidationUtil {
             isOssTbl = Engine.isFileStore(ttlTableMeta.getEngine());
 
             if (isSingleTbl) {
-                throw new TddlRuntimeException(ErrorCode.ERR_TTL, String.format(
-                    "Failed to create ttl definition because the broadcast/single table `%s`.`%s` is not allowed",
-                    ttlTblSchema, ttlTblName));
+//                throw new TddlRuntimeException(ErrorCode.ERR_TTL, String.format(
+//                    "Failed to create ttl definition because the ssingle table `%s`.`%s` is not allowed",
+//                    ttlTblSchema, ttlTblName));
             }
 
             if (isBroadcastTbl) {
                 throw new TddlRuntimeException(ErrorCode.ERR_TTL, String.format(
-                    "Failed to create ttl definition because the broadcast/single table `%s`.`%s` is not allowed",
+                    "Failed to create ttl definition because the broadcast table `%s`.`%s` is not allowed",
                     ttlTblSchema, ttlTblName));
             }
 

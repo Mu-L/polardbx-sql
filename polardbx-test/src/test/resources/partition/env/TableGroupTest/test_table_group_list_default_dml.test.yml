@@ -42,7 +42,7 @@ testCases:
             answer: 0,2
           - query: select a from tb where a > 0 and a < 4;
             answer: 2
-          - query: replace into tb values(0,1000), (4,0);
+          - query: /*+TDDL:CMD_EXTRA(OPTIMIZE_REPLACE_BY_RETURNING=false)*/ replace into tb values(0,1000), (4,0);
             answer: null
           - query: select a from tb partition(p0);
             answer: 4
@@ -168,7 +168,7 @@ testCases:
             answer: 0,2
           - query: select a from tb where a > 0 and a < 4;
             answer: 2
-          - query: replace into tb values(0,1000), (4,0);
+          - query: /*+TDDL:CMD_EXTRA(OPTIMIZE_REPLACE_BY_RETURNING=false)*/ replace into tb values(0,1000), (4,0);
             answer: null
           - query: select a from tb partition(p0);
             answer: 4
@@ -287,7 +287,7 @@ testCases:
             answer: 4
           - query: select a from tb where b != 4;
             answer: 0,2
-          - query: replace into tb values(0,1000,1000), (4, 0, 0);
+          - query: /*+TDDL:CMD_EXTRA(OPTIMIZE_REPLACE_BY_RETURNING=false)*/ replace into tb values(0,1000,1000), (4, 0, 0);
             answer: null
           - query: select a from tb partition(p0);
             answer: 4

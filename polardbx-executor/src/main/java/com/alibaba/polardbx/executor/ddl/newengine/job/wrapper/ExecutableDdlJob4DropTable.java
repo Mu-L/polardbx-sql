@@ -21,6 +21,7 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.DropTableRemoveMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.DropTableValidateTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcDdlMarkTask;
+import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
 import lombok.Data;
 
@@ -33,7 +34,14 @@ public class ExecutableDdlJob4DropTable extends ExecutableDdlJob {
     private DropTableValidateTask validateTask;
     private DropTableRemoveMetaTask removeMetaTask;
     private TableSyncTask tableSyncTaskAfterRemoveMeta;
-    private DropTablePhyDdlTask phyDdlTask;
+    private DdlTask phyDdlTask;
     private CdcDdlMarkTask cdcDdlMarkTask;
+    /**
+     * Optional successor anchor for dropping GSIs together with the primary table.
+     *
+     * <p>Only the external-column lifecycle overrides it. A plain DRDS DROP leaves it null and
+     * keeps using {@link #cdcDdlMarkTask} as before.</p>
+     */
+    private DdlTask dropGsiTaskAnchor;
 
 }

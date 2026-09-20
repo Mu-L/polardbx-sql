@@ -35,9 +35,10 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcAlterTableColumnDdlMarkTask;
 import com.alibaba.polardbx.executor.ddl.job.task.shared.EmptyTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlExceptionAction;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.gms.metadb.table.ColumnStatus;
 import com.alibaba.polardbx.gms.metadb.table.ColumnsRecord;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
@@ -60,7 +61,7 @@ import java.util.TreeMap;
 
 import static com.alibaba.polardbx.common.cdc.ICdcManager.DEFAULT_DDL_VERSION_ID;
 
-public class AlterTableGeneratedColumnJobFactory extends DdlJobFactory {
+public class AlterTableGeneratedColumnJobFactory extends OnlineDdlJobFactory {
     private final PhysicalPlanData physicalPlanData;
     private final String schemaName;
     private final String logicalTableName;
@@ -81,6 +82,7 @@ public class AlterTableGeneratedColumnJobFactory extends DdlJobFactory {
 
     public AlterTableGeneratedColumnJobFactory(PhysicalPlanData physicalPlanData, AlterTablePreparedData preparedData,
                                                LogicalAlterTable logicalAlterTable, ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.INPLACE);
         this.physicalPlanData = physicalPlanData;
         this.schemaName = logicalAlterTable.getSchemaName();
         this.logicalTableName = logicalAlterTable.getTableName();
@@ -178,7 +180,8 @@ public class AlterTableGeneratedColumnJobFactory extends DdlJobFactory {
                 prepareData.isPrimaryKeyDropped(), prepareData.getAddedPrimaryKeyColumns(),
                 prepareData.getColumnAfterAnother(), prepareData.isLogicalColumnOrder(), prepareData.getTableComment(),
                 prepareData.getTableRowFormat(), physicalPlanData.getSequence(),
-                prepareData.isOnlineModifyColumnIndexTask(), DEFAULT_DDL_VERSION_ID);
+                prepareData.isOnlineModifyColumnIndexTask(), DEFAULT_DDL_VERSION_ID,
+                prepareData.getAddConstraints(), prepareData.getDropConstraints());
         DdlTask updateMetaSyncTask = new TableSyncTask(schemaName, logicalTableName);
 
         List<DdlTask> allTasks =

@@ -1,0 +1,44 @@
+## DISABLE_FAST_SQL_PARSER
+select partstrc2l512sm40('aaaabbb0000')
+partstrc2l512sm40('aaaabbb0000')
+0
+select partstrc2l512sm40('aaaabbb2359')
+partstrc2l512sm40('aaaabbb2359')
+0
+drop tablegroup if exists tg_dble_udf3
+create tablegroup if not exists tg_dble_udf3
+partition by udf_hash(bigint)
+partition 3
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition pm values less than (9223372036854775807)
+)
+drop table if exists uh_t3
+create table uh_t3(
+c1 varchar(32) not null,
+c2 varchar(32) not null
+)
+partition by udf_hash(partstrc2l512sm40(c1))
+tablegroup=tg_dble_udf3
+insert into uh_t3 values ('aaaabbb0000','aaaabbb0000')
+insert into uh_t3 values ('aaaabbb2359','aaaabbb2359')
+select c1, part_route('', 'uh_t3', c1) as route_rs, part_hash('', 'uh_t3', c1) as hash_rs from uh_t3 where c1='aaaabbb0000'
+c1,route_rs,hash_rs
+aaaabbb0000,p0,(0)
+select c1, part_route('', 'uh_t3', c1) as route_rs, part_hash('', 'uh_t3', c1) as hash_rs from uh_t3 where c1='aaaabbb2359'
+c1,route_rs,hash_rs
+aaaabbb2359,p0,(0)
+show create table uh_t3
+Table,Create Table
+uh_t3,CREATE TABLE `uh_t3` (
+	`c1` varchar(32) NOT NULL,
+	`c2` varchar(32) NOT NULL,
+	KEY `auto_shard_key_c1` USING BTREE (`c1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY UDF_HASH(partstrc2l512sm40(`c1`))
+PARTITIONS 3
+(PARTITION p0 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p1 VALUES LESS THAN (2) ENGINE = InnoDB,
+ PARTITION pm VALUES LESS THAN (9223372036854775807) ENGINE = InnoDB)
+tablegroup = `tg_dble_udf3`

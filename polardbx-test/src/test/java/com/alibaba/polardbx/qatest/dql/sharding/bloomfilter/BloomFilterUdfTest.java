@@ -31,6 +31,7 @@ import com.alibaba.polardbx.optimizer.core.datatype.CharType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.rel.util.RuntimeFilterDynamicParamInfo;
 import com.alibaba.polardbx.qatest.BaseTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.ConnectionManager;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.base.Joiner;
@@ -64,6 +65,7 @@ import static org.junit.Assert.assertTrue;
 /**
  * 验证DN层BloomFilter UDF的正确性
  */
+@IcbcIgnore(ignoreReason = "icbc don't test udf")
 public class BloomFilterUdfTest extends BaseTestCase {
     private static final Log logger = LogFactory.getLog(BloomFilterUdfTest.class);
 

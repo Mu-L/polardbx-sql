@@ -21,6 +21,7 @@ import com.alibaba.fastjson.JSONObject;
 import com.alibaba.polardbx.common.ddl.newengine.DdlConstants;
 import com.alibaba.polardbx.common.ddl.newengine.DdlState;
 import com.alibaba.polardbx.common.utils.TStringUtil;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.CheckPhyTableTask;
 import com.alibaba.polardbx.executor.ddl.job.task.twophase.InitTwoPhaseDdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlEngineAccessorDelegate;
 import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlEngineSchedulerManager;
@@ -31,12 +32,15 @@ import com.alibaba.polardbx.gms.metadb.misc.DdlEngineTaskRecord;
 import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.PhyDdlExecutionRecord;
 import com.alibaba.polardbx.optimizer.core.function.calc.scalar.filter.In;
+import org.apache.calcite.util.Pair;
 
 import java.sql.Connection;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static com.alibaba.polardbx.common.ddl.newengine.DdlConstants.SEMICOLON;
+import static com.alibaba.polardbx.executor.ddl.job.task.basic.CheckPhyTableTask.MSG_TEXT;
 import static com.alibaba.polardbx.executor.ddl.newengine.sync.DdlResponse.Response;
 
 public class DdlJobManagerUtils {
@@ -190,6 +194,26 @@ public class DdlJobManagerUtils {
         } else {
             return new HashMap<>();
         }
+    }
+
+    public static Map<Pair<String, String>, String> reloadCheckPhyTask(Long jobId) {
+        List<DdlEngineTaskRecord> records =
+            SCHEDULER_MANAGER.fetchAllTaskRecord(jobId, CheckPhyTableTask.TASK_NAME);
+        Map<Pair<String, String>, String> notOkPhysicalTable = new HashMap<>();
+        for (DdlEngineTaskRecord record : records) {
+            if (records != null && TStringUtil.isNotEmpty(record.value)) {
+                CheckPhyTableTask checkPhyTableTask =
+                    (CheckPhyTableTask) TaskHelper.deSerializeTask(CheckPhyTableTask.TASK_NAME,
+                        record.value);
+                Map<String, String> checkResult = checkPhyTableTask.getCheckResult();
+                String result = checkResult.getOrDefault(MSG_TEXT, "unknown");
+                if (!result.equalsIgnoreCase("ok")) {
+                    notOkPhysicalTable.put(
+                        Pair.of(checkPhyTableTask.getGroupKey(), checkPhyTableTask.getPhyTableName()), result);
+                }
+            }
+        }
+        return notOkPhysicalTable;
     }
 
     /**

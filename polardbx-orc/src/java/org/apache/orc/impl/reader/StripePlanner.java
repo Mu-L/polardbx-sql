@@ -42,6 +42,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * This class handles parsing the stripe information and handling the necessary
@@ -450,6 +451,99 @@ public class StripePlanner {
         case ROW_INDEX:
           indexes[column] = OrcProto.RowIndex.parseFrom(data);
           break;
+        case BLOOM_FILTER:
+        case BLOOM_FILTER_UTF8:
+          if (sargColumns != null && sargColumns[column]) {
+            blooms[column] = OrcProto.BloomFilterIndex.parseFrom(data);
+          }
+          break;
+        case BITMAP_INDEX:
+          bitmaps[column] = OrcProto.BitmapIndex.parseFrom(data);
+          break;
+        default:
+          break;
+        }
+      }
+    }
+    return output;
+  }
+
+  /**
+   * Read and parse the indexes for the current stripe.
+   * @param sargColumns the columns we can use bloom filters for
+   * @param output an OrcIndex to reuse
+   * @param sortKeyColumn column of sort key.
+   * @return the indexes for the required columns
+   */
+  public OrcIndex readRowIndex(boolean[] sargColumns,
+                               OrcIndex output, Set<Integer> sortKeyColumn, boolean enableZoneMapPrune) throws IOException {
+    int typeCount = schema.getMaximumId() + 1;
+    if (output == null) {
+      output = new OrcIndex(new OrcProto.RowIndex[typeCount],
+          new OrcProto.Stream.Kind[typeCount],
+          new OrcProto.BloomFilterIndex[typeCount],
+          new OrcProto.BitmapIndex[typeCount]);
+    }
+    System.arraycopy(bloomFilterKinds, 0, output.getBloomFilterKinds(), 0,
+        bloomFilterKinds.length);
+    BufferChunkList ranges = planIndexReading(sargColumns);
+    dataReader.readFileData(ranges, false);
+    OrcProto.RowIndex[] indexes = output.getRowGroupIndex();
+    OrcProto.BloomFilterIndex[] blooms = output.getBloomFilterIndex();
+    OrcProto.BitmapIndex[] bitmaps = output.getBitmapIndex();
+
+    for(StreamInformation stream: indexStreams) {
+      int column = stream.column;
+      if (stream.firstChunk != null) {
+        CodedInputStream data = InStream.createCodedInputStream(InStream.create(
+            "index", stream.firstChunk, stream.offset,
+            stream.length, getStreamOptions(column, stream.kind)));
+        switch (stream.kind) {
+        case ROW_INDEX: {
+          if (sortKeyColumn.contains(column)) {
+            // normal sort key row-index parsing.
+            indexes[column] = OrcProto.RowIndex.parseFrom(data);
+          } else {
+            // for zone map, we only support int column statistics or date column statistics
+
+            // original row index
+            OrcProto.RowIndex rowIndex = OrcProto.RowIndex.parseFrom(data);
+
+            // simplified row index
+            OrcProto.RowIndex.Builder rowIndexBuilder = OrcProto.RowIndex.newBuilder();
+
+            for (OrcProto.RowIndexEntry rowIndexEntry : rowIndex.getEntryList()) {
+              OrcProto.RowIndexEntry.Builder entryBuilder = OrcProto.RowIndexEntry.newBuilder(rowIndexEntry);
+
+              if (rowIndexEntry.hasStatistics()) {
+                if (!enableZoneMapPrune) {
+                  entryBuilder.clearStatistics();
+                } else {
+                  OrcProto.ColumnStatistics.Builder statsBuilder = entryBuilder.getStatisticsBuilder();
+
+                  // preserve intStatistics，and clear other type.
+                  statsBuilder.clearDoubleStatistics();
+                  statsBuilder.clearStringStatistics();
+                  statsBuilder.clearBucketStatistics();
+
+                  statsBuilder.clearDecimalStatistics();
+                  statsBuilder.clearBinaryStatistics();
+                  statsBuilder.clearTimestampStatistics();
+                  statsBuilder.clearCollectionStatistics();
+
+                  // clear bytes on disk.
+                  statsBuilder.clearBytesOnDisk();
+                }
+
+              }
+              OrcProto.RowIndexEntry clearedEntry = entryBuilder.build();
+              rowIndexBuilder.addEntry(clearedEntry);
+            }
+
+            indexes[column] = rowIndexBuilder.build();
+          }
+          break;
+        }
         case BLOOM_FILTER:
         case BLOOM_FILTER_UTF8:
           if (sargColumns != null && sargColumns[column]) {

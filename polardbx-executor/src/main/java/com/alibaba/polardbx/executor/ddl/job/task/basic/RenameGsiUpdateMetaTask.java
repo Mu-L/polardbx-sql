@@ -73,7 +73,7 @@ public class RenameGsiUpdateMetaTask extends RenameTableUpdateMetaTask {
         }
 
         //sync have to be successful to continue
-        SyncManagerHelper.sync(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
+        SyncManagerHelper.syncThrowExceptions(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
         executionContext.refreshTableMeta();
     }
 }

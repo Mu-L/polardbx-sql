@@ -30,7 +30,7 @@ public class RunLengthIntegerWriter implements IntegerWriter {
   static final int MIN_REPEAT_SIZE = 3;
   static final int MAX_DELTA = 127;
   static final int MIN_DELTA = -128;
-  static final int MAX_LITERAL_SIZE = 128;
+  public static final int MAX_LITERAL_SIZE = 128;
   private static final int MAX_REPEAT_SIZE = 127 + MIN_REPEAT_SIZE;
   private final PositionedOutputStream output;
   private final boolean signed;

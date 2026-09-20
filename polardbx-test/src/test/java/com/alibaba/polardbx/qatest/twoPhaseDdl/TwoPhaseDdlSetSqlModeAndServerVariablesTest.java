@@ -41,6 +41,7 @@ public class TwoPhaseDdlSetSqlModeAndServerVariablesTest extends DDLBaseNewDBTes
 
     @Before
     public void init() {
+        this.schemaPrefix = "set_sql_mode_";
         this.tableName = schemaPrefix + randomTableName("two_phase", 4);
     }
 

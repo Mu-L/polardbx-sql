@@ -1,10 +1,10 @@
 package com.alibaba.polardbx.qatest.storagepool.importDatabase;
 
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
-import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.gms.topology.StorageInfoRecord;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.collect.ImmutableList;
+import org.junit.Assert;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -55,7 +55,7 @@ public class HintTest extends ImportDatabaseBase {
             String result = null;
             while (rs.next()) {
                 result = rs.getString("STATE");
-                Assert.assertTrue("ALL SUCCESS".equalsIgnoreCase(result));
+                Assert.assertTrue(result, "ALL SUCCESS".equalsIgnoreCase(result));
             }
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
@@ -74,9 +74,11 @@ public class HintTest extends ImportDatabaseBase {
         try (Connection polardbxConn = getPolardbxConnection(phyDatabaseName);
             Connection storageConn = buildJdbcConnectionByStorageInstId(instName)) {
             //logical table not exist
-            Assert.assertTrue(!checkTableExist(polardbxConn, phyDatabaseName, "tb0"));
+            Assert.assertTrue(phyDatabaseName + ".tb0 is exists",
+                !checkTableExist(polardbxConn, phyDatabaseName, "tb0"));
             //physical table exist
-            Assert.assertTrue(checkTableExist(storageConn, phyDatabaseName, "tb0"));
+            Assert.assertTrue(phyDatabaseName + ".tb0 is not exists",
+                checkTableExist(storageConn, phyDatabaseName, "tb0"));
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
         }
@@ -93,9 +95,11 @@ public class HintTest extends ImportDatabaseBase {
         try (Connection polardbxConn = getPolardbxConnection(phyDatabaseName);
             Connection storageConn = buildJdbcConnectionByStorageInstId(instName)) {
             //logical table not exist
-            Assert.assertTrue(!checkTableExist(polardbxConn, phyDatabaseName, "tb1"));
+            Assert.assertTrue(phyDatabaseName + ".tb1 is exists",
+                !checkTableExist(polardbxConn, phyDatabaseName, "tb1"));
             //physical table not exist
-            Assert.assertTrue(!checkTableExist(storageConn, phyDatabaseName, "tb1"));
+            Assert.assertTrue(phyDatabaseName + ".tb1 is exists",
+                !checkTableExist(storageConn, phyDatabaseName, "tb1"));
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
         }
@@ -112,9 +116,11 @@ public class HintTest extends ImportDatabaseBase {
         try (Connection polardbxConn = getPolardbxConnection(phyDatabaseName);
             Connection storageConn = buildJdbcConnectionByStorageInstId(instName)) {
             //logical table not exist
-            Assert.assertTrue(!checkTableExist(polardbxConn, phyDatabaseName, "tb2"));
+            Assert.assertTrue(phyDatabaseName + ".tb2 is exists",
+                !checkTableExist(polardbxConn, phyDatabaseName, "tb2"));
             //physical table not exist
-            Assert.assertTrue(!checkTableExist(storageConn, phyDatabaseName, "tb2"));
+            Assert.assertTrue(phyDatabaseName + ".tb2 is exists",
+                !checkTableExist(storageConn, phyDatabaseName, "tb2"));
         } catch (Exception e) {
             throw new TddlNestableRuntimeException(e);
         }
@@ -174,7 +180,7 @@ public class HintTest extends ImportDatabaseBase {
                 String result = null;
                 while (rs.next()) {
                     result = rs.getString("STATE");
-                    Assert.assertTrue("ALL SUCCESS".equalsIgnoreCase(result));
+                    Assert.assertTrue(result, "ALL SUCCESS".equalsIgnoreCase(result));
                 }
             } catch (Exception e) {
                 throw new TddlNestableRuntimeException(e);

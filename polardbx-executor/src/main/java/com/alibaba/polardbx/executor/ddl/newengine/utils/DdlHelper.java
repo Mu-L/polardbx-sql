@@ -26,9 +26,11 @@ import com.alibaba.polardbx.common.ddl.newengine.DdlType;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.jdbc.IDataSource;
 import com.alibaba.polardbx.common.jdbc.MasterSlave;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.model.Group;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.AddressUtils;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
@@ -49,6 +51,7 @@ import com.alibaba.polardbx.executor.ddl.newengine.DdlEngineScheduler;
 import com.alibaba.polardbx.executor.ddl.newengine.sync.DdlInterruptSyncAction;
 import com.alibaba.polardbx.executor.ddl.newengine.sync.DdlRequest;
 import com.alibaba.polardbx.executor.ddl.newengine.sync.KillActivePhyDdlSyncAction;
+import com.alibaba.polardbx.executor.ddl.twophase.TwoPhaseDdlUtils;
 import com.alibaba.polardbx.executor.physicalbackfill.PhysicalBackfillUtils;
 import com.alibaba.polardbx.executor.spi.IGroupExecutor;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
@@ -76,6 +79,7 @@ import com.alibaba.polardbx.optimizer.utils.OptimizerHelper;
 import com.alibaba.polardbx.repo.mysql.spi.MyRepository;
 import com.alibaba.polardbx.rpc.compatible.XDataSource;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
+import com.google.common.collect.Lists;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlNode;
@@ -504,7 +508,7 @@ public class DdlHelper {
     private static final String QUERY_INFO_SCHEMA_PROCESSLIST =
         "select * from " + INFO_SCHEMA_PROCESSLIST + " where info like '%%%s%%'";
 
-    private static final String KILL_PHY_PROCESS = "kill %s";
+    private static final String KILL_PHY_PROCESS = "kill query %s";
 
     public static void waitUntilPhyDDLDone(String schemaName, String groupName, String phyTableName, String traceId) {
         while (isPhyDDLStillRunning(schemaName, groupName, phyTableName, traceId)) {
@@ -576,9 +580,16 @@ public class DdlHelper {
         }
     }
 
-    public static void interruptJobs(String schemaName, List<Long> jobIds) {
+    public static void interruptJobs(String schemaName, List<Long> jobIds, Boolean pauseElseTransition) {
         DdlRequest ddlRequest = new DdlRequest(schemaName, jobIds);
-        GmsSyncManagerHelper.sync(new DdlInterruptSyncAction(ddlRequest), schemaName, SyncScope.ALL);
+        GmsSyncManagerHelper.sync(new DdlInterruptSyncAction(ddlRequest, pauseElseTransition), schemaName,
+            SyncScope.ALL);
+        if (jobIds != null) {
+            LOGGER.info(
+                String.format("Interrupted jobs %s on schema %s",
+                    jobIds,
+                    schemaName));
+        }
     }
 
     public static void killActivePhyDDLs(String schemaName, List<String> traceIds) {
@@ -594,6 +605,10 @@ public class DdlHelper {
             String leaderKey = ExecUtils.getLeaderKey(schemaName);
             GmsSyncManagerHelper.sync(new KillActivePhyDdlSyncAction(schemaName, traceId), schemaName, leaderKey);
         }
+        LOGGER.info(
+            String.format("Killed active physical DDLs %s on schema %s",
+                traceId,
+                schemaName));
     }
 
     public static void killActivePhyDDLsUntilNone(String schemaName, String traceId) {
@@ -622,7 +637,8 @@ public class DdlHelper {
                 continue;
             }
 
-            List<TAtomDataSource> atomDataSources = groupDataSource.getAtomDataSources();
+            List<TAtomDataSource> atomDataSources =
+                Collections.singletonList(TwoPhaseDdlUtils.findMasterAtomForGroup(groupDataSource));
 
             for (TAtomDataSource atomDataSource : atomDataSources) {
                 try (Connection conn = getPhyConnection(atomDataSource);
@@ -711,6 +727,16 @@ public class DdlHelper {
             }
         }
         return null;
+    }
+
+    public static String getDnId(TGroupDataSource groupDataSource) {
+        if (groupDataSource != null && groupDataSource.getConfigManager() != null) {
+            TAtomDataSource atomDataSource = groupDataSource.getConfigManager().getDataSource(MasterSlave.MASTER_ONLY);
+            if (atomDataSource != null) {
+                return atomDataSource.getDnId();
+            }
+        }
+        return IDataSource.EMPTY;
     }
 
     public static TGroupDataSource getPhyDataSource(String schemaName, String groupName) {
@@ -842,6 +868,29 @@ public class DdlHelper {
 
     public static boolean isGzip(String content) {
         return StringUtils.startsWith(content, "H4");
+    }
+
+    public static boolean isBoostPerfMode(String perfMode) {
+        if (StringUtils.equalsIgnoreCase(perfMode, "boost")) {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    public static boolean isBoostPerfMode(ExecutionContext executionContext) {
+        return isBoostPerfMode(getPerfMode(executionContext));
+    }
+
+    public static boolean isExplain(ExecutionContext executionContext) {
+        return executionContext.getDdlContext() != null && executionContext.getDdlContext().getExplain() != null
+            && executionContext.getDdlContext().getExplain();
+    }
+
+    public static String getPerfMode(ExecutionContext executionContext) {
+        String perfMode = executionContext.getParamManager().getString(ConnectionParams.PERF_DDL_MODE);
+        return isBoostPerfMode(perfMode) ? "boost" : "default";
+
     }
 
 }

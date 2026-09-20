@@ -1,0 +1,33 @@
+drop database if exists test_statistics;
+
+create database test_statistics mode = auto;
+use test_statistics;
+
+drop table if exists t_statistics;
+
+create table t_statistics(
+id int,
+name varchar(60),
+NAME2 varchar(60),
+Name3 varchar(60),
+primary key(id)
+) partition by key(id) partitions 4;
+
+alter table t_statistics add index idx_name(name);
+alter table t_statistics add index idx_name2(name, name3);
+alter table t_statistics add index idx_name3(name, name2(10), name3);
+alter table t_statistics add index idx_name4(nAme(5));
+alter table t_statistics add index idx_name5(naMe(4), name2(10));
+alter table t_statistics add index idx_name6(name(10), namE2(10), name3(10));
+
+show create table t_statistics;
+
+SELECT * FROM INFORMATION_SCHEMA.STATISTICS  WHERE TABLE_SCHEMA = 'test_statistics' and table_name = "t_statistics"
+order by index_name, seq_in_index;
+
+alter table t_statistics modify column NAME varchar(5), modify column name2 text, modify column name3 bigint;
+
+show create table t_statistics;
+
+SELECT * FROM INFORMATION_SCHEMA.STATISTICS  WHERE TABLE_SCHEMA = 'test_statistics' and table_name = "t_statistics" 
+order by index_name, seq_in_index;

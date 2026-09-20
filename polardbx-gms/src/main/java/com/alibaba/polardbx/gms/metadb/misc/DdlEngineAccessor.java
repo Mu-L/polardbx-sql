@@ -27,6 +27,7 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.metadb.GmsSystemTables;
 import com.alibaba.polardbx.gms.metadb.accessor.AbstractAccessor;
 import com.alibaba.polardbx.gms.metadb.record.CountRecord;
+import com.alibaba.polardbx.gms.metadb.record.MaxValueRecord;
 import com.alibaba.polardbx.gms.util.DdlMetaLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.google.common.base.Preconditions;
@@ -59,18 +60,32 @@ public class DdlEngineAccessor extends AbstractAccessor {
             + "`gmt_created`, `gmt_modified`, `max_parallelism`, `supported_commands`, `paused_policy`, `rollback_paused_policy`) "
             + "values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
+    private static final String FULL_COLUMN_WITH_ID =
+        "`id`, `job_id`, `ddl_type`, `schema_name`, `object_name`, `response_node`, `execution_node`, "
+            + "`state`, `resources`, `progress`, `trace_id`, `context`, `task_graph`, `result`, `ddl_stmt`, "
+            + "`gmt_created`, `gmt_modified`, `max_parallelism`, `supported_commands`, `paused_policy`, `rollback_paused_policy`";
+
     private static final String SELECT_FULL =
         "select `job_id`, `ddl_type`, `schema_name`, `object_name`, `response_node`, `execution_node`, "
             + "`state`, `resources`, `progress`, `trace_id`, `context`, `task_graph`, `result`, `ddl_stmt`, "
             + "`gmt_created`, `gmt_modified`, `max_parallelism`, `supported_commands`, `paused_policy`, `rollback_paused_policy`";
 
+    private static final String SELECT_INFO =
+        "select `job_id`, `ddl_type`, `schema_name`, `object_name`, `state`, `result`, `ddl_stmt`, `gmt_created`, `gmt_modified`";
+
     private static final String FROM_TABLE = " from " + DDL_ENGINE_TABLE;
 
     private static final String WHERE_JOB_ID = " where `job_id` = ?";
 
+    private static final String WHERE_JOB_ID_AND_INITIAL =
+        " where `job_id` = ? and `state` = '" + DdlState.INITIAL.name() + "'";
+
     private static final String WHERE_JOB_ID_LIST = " where `job_id` in (%s)";
 
     private static final String WHERE_SCHEMA = " where `schema_name` = ?";
+
+    private static final String WHERE_SCHEMA_TABLE_DDLSTMT =
+        " where `schema_name` = ? and `object_name` = ? and `ddl_stmt` like ?";
 
     private static final String WHERE_SCHEMA_OBJECT = WHERE_SCHEMA + " and `object_name` = ?";
 
@@ -100,6 +115,13 @@ public class DdlEngineAccessor extends AbstractAccessor {
 
     private static final String UPDATE_BASE = "update " + DDL_ENGINE_TABLE + " set `gmt_modified` = ?, ";
 
+    private static final String UPDATE_ALL =
+        "update " + DDL_ENGINE_TABLE + " set"
+            + "  `ddl_type` = ?, `schema_name` = ?, `object_name` = ?, `response_node` = ?, `execution_node` = ?, "
+            + "  `state` = ?, `resources` = ?, `progress` = ?, `trace_id` = ?, `context` = ?, `task_graph` = ?, `result` = ?, "
+            + "  `ddl_stmt` = ?, `gmt_modified` = ?, `max_parallelism` = ?, `supported_commands` = ?, "
+            + "  `paused_policy` = ?, `rollback_paused_policy` = ?" + WHERE_JOB_ID_AND_INITIAL;
+
     private static final String FORCE_UPDATE_STATE = UPDATE_BASE + "`state` = ?" + WHERE_JOB_ID;
 
     private static final String CAS_STATE = UPDATE_BASE + "`state` = ?" + WHERE_JOB_ID + " and `state` = ?";
@@ -124,6 +146,9 @@ public class DdlEngineAccessor extends AbstractAccessor {
     private static final String SELECT_ARCHIVE_SPECIFIC =
         SELECT_FULL + " from " + DDL_ENGINE_TABLE_ARCHIVE + WHERE_JOB_ID;
 
+    private static final String SELECT_ARCHIVE_SPECIFIC_BY_SCHEMA_TABLE_DDLSTMT =
+        SELECT_FULL + " from " + DDL_ENGINE_TABLE_ARCHIVE + WHERE_SCHEMA_TABLE_DDLSTMT;
+
     private static final String DELETE_ARCHIVE_BASE = "delete from " + DDL_ENGINE_TABLE_ARCHIVE;
 
     private static final String DELETE_ARCHIVE_BY_JOB_ID = DELETE_ARCHIVE_BASE + WHERE_JOB_ID;
@@ -131,7 +156,8 @@ public class DdlEngineAccessor extends AbstractAccessor {
     private static final String DELETE_ARCHIVE_BY_SCHEMA_NAME = DELETE_ARCHIVE_BASE + WHERE_SCHEMA;
 
     private static final String ARCHIVE_BASE =
-        "insert into " + DDL_ENGINE_TABLE_ARCHIVE + " select * from " + DDL_ENGINE_TABLE;
+        "insert into " + DDL_ENGINE_TABLE_ARCHIVE + " (" + FULL_COLUMN_WITH_ID + ") select " + FULL_COLUMN_WITH_ID
+            + " from " + DDL_ENGINE_TABLE;
 
     private static final String ARCHIVE_SPECIFIC = ARCHIVE_BASE + WHERE_JOB_ID;
 
@@ -143,6 +169,22 @@ public class DdlEngineAccessor extends AbstractAccessor {
 
     private static final String SELECT_ARCHIVE_SCHEMA =
         SELECT_FULL + " from " + DDL_ENGINE_TABLE_ARCHIVE + WHERE_SCHEMA;
+
+    private static final String SELECT_CURRENT_INFO_SPECIFIC =
+        SELECT_INFO + " from " + DDL_ENGINE_TABLE + WHERE_JOB_ID;
+
+    private static final String SELECT_ARCHIVE_INFO_SPECIFIC =
+        SELECT_INFO + " from " + DDL_ENGINE_TABLE_ARCHIVE + WHERE_JOB_ID;
+
+    private static final String SELECT_ALL_CURRENT_INFO = SELECT_INFO + " from " + DDL_ENGINE_TABLE;
+
+    private static final String SELECT_ALL_ARCHIVE_INFO = SELECT_INFO + " from " + DDL_ENGINE_TABLE_ARCHIVE;
+
+    public static final String SELECT_MAX_ID = "SELECT MAX(max_id) AS max_id FROM ("
+        + "  SELECT max(id) as max_id FROM " + DDL_ENGINE_TABLE
+        + "  UNION ALL"
+        + "  SELECT max(id) as max_id FROM " + DDL_ENGINE_TABLE_ARCHIVE
+        + ") AS combined_tables";
 
     public int insert(DdlEngineRecord record) {
         try {
@@ -204,6 +246,14 @@ public class DdlEngineAccessor extends AbstractAccessor {
         return 0;
     }
 
+    public long maxId() {
+        List<MaxValueRecord> records = query(SELECT_MAX_ID, DDL_ENGINE_TABLE, MaxValueRecord.class);
+        if (records != null && !records.isEmpty()) {
+            return records.get(0).maxValue;
+        }
+        return 0;
+    }
+
     public DdlEngineRecord query(long jobId) {
         try {
             final Map<Integer, ParameterContext> params =
@@ -233,6 +283,76 @@ public class DdlEngineAccessor extends AbstractAccessor {
                 return records.get(0);
             }
             return null;
+        } catch (Exception e) {
+            throw logAndThrow("Failed to query from " + DDL_ENGINE_TABLE_ARCHIVE, "query from", e);
+        }
+    }
+
+    public DdlEngineRecord queryArchiveBySchemaTableDdlStmt(String schemaName,
+                                                            String tableName,
+                                                            String ddlStmtKeyWord) {
+        try {
+            final Map<Integer, ParameterContext> params =
+                MetaDbUtil.buildParameters(ParameterMethod.setString,
+                    new String[] {schemaName, tableName, ddlStmtKeyWord});
+            List<DdlEngineRecord> records =
+                MetaDbUtil.query(SELECT_ARCHIVE_SPECIFIC_BY_SCHEMA_TABLE_DDLSTMT, params, DdlEngineRecord.class,
+                    connection);
+
+            if (records != null && records.size() > 0) {
+                return records.get(0);
+            }
+            return null;
+        } catch (Exception e) {
+            throw logAndThrow("Failed to query from " + DDL_ENGINE_TABLE_ARCHIVE, "query from", e);
+        }
+    }
+
+    public DdlInfoRecord queryDdlInfo(long jobId) {
+        try {
+            final Map<Integer, ParameterContext> params =
+                MetaDbUtil.buildParameters(ParameterMethod.setLong, new Long[] {jobId});
+
+            List<DdlInfoRecord> records =
+                MetaDbUtil.query(SELECT_CURRENT_INFO_SPECIFIC, params, DdlInfoRecord.class, connection);
+
+            if (records != null && records.size() > 0) {
+                return records.get(0);
+            }
+            return null;
+        } catch (Exception e) {
+            throw logAndThrow("Failed to query from " + DDL_ENGINE_TABLE, "query from", e);
+        }
+    }
+
+    public DdlInfoRecord queryArchiveDdlInfo(long jobId) {
+        try {
+            final Map<Integer, ParameterContext> params =
+                MetaDbUtil.buildParameters(ParameterMethod.setLong, new Long[] {jobId});
+
+            List<DdlInfoRecord> records =
+                MetaDbUtil.query(SELECT_ARCHIVE_INFO_SPECIFIC, params, DdlInfoRecord.class, connection);
+
+            if (records != null && records.size() > 0) {
+                return records.get(0);
+            }
+            return null;
+        } catch (Exception e) {
+            throw logAndThrow("Failed to query from " + DDL_ENGINE_TABLE_ARCHIVE, "query from", e);
+        }
+    }
+
+    public List<DdlInfoRecord> queryAllCurrentDdlInfo() {
+        try {
+            return MetaDbUtil.query(SELECT_ALL_CURRENT_INFO, null, DdlInfoRecord.class, connection);
+        } catch (Exception e) {
+            throw logAndThrow("Failed to query from " + DDL_ENGINE_TABLE_ARCHIVE, "query from", e);
+        }
+    }
+
+    public List<DdlInfoRecord> queryAllArchiveDdlInfo() {
+        try {
+            return MetaDbUtil.query(SELECT_ALL_ARCHIVE_INFO, null, DdlInfoRecord.class, connection);
         } catch (Exception e) {
             throw logAndThrow("Failed to query from " + DDL_ENGINE_TABLE_ARCHIVE, "query from", e);
         }
@@ -335,6 +455,19 @@ public class DdlEngineAccessor extends AbstractAccessor {
         }
     }
 
+    public int updateFull(DdlEngineRecord jobRecord) {
+        try {
+            final Map<Integer, ParameterContext> params = jobRecord.buildUpdateFullParams();
+            MetaDbUtil.setParameter(params.size() + 1, params, ParameterMethod.setLong, jobRecord.jobId);
+            DdlMetaLogUtil.logSql(UPDATE_ALL, params);
+            return MetaDbUtil.update(UPDATE_ALL, params, connection);
+        } catch (Exception e) {
+            throw logAndThrow(
+                "Failed to update " + DDL_ENGINE_TABLE + " for job " + jobRecord.jobId +
+                    "from state INITIAL with ", "updateFull", e);
+        }
+    }
+
     public int update(long jobId, String content, boolean isContext) {
         try {
             final Map<Integer, ParameterContext> params = new HashMap<>(3);
@@ -357,6 +490,17 @@ public class DdlEngineAccessor extends AbstractAccessor {
             deleteArchive(jobId);
             archive(jobId);
             return MetaDbUtil.delete(DELETE_SPECIFIC, params, connection);
+        } catch (Exception e) {
+            throw logAndThrow("Failed to delete from " + DDL_ENGINE_TABLE + " for job " + jobId, "delete from", e);
+        }
+    }
+
+    public int deleteIfInitial(long jobId) {
+        try {
+            final Map<Integer, ParameterContext> params =
+                MetaDbUtil.buildParameters(ParameterMethod.setLong, new Long[] {jobId});
+            DdlMetaLogUtil.logSql(DELETE_BASE + WHERE_JOB_ID_AND_INITIAL, params);
+            return MetaDbUtil.delete(DELETE_BASE + WHERE_JOB_ID_AND_INITIAL, params, connection);
         } catch (Exception e) {
             throw logAndThrow("Failed to delete from " + DDL_ENGINE_TABLE + " for job " + jobId, "delete from", e);
         }

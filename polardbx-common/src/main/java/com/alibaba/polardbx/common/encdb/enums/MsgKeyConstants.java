@@ -28,7 +28,12 @@ public class MsgKeyConstants {
 
     public static final String VERSION = "version";
     public static final String TEE_TYPE = "tee_type";
-
+    public static final String KMS_MODE = "kms_mode";
+    public static final String KMS_REGION = "kms_region";
+    public static final String KMS_ENC_MEK = "kms_enc_mek";
+    public static final String KMS_KEY_ID = "kms_key_id";
+    public static final String KMS_IV = "kms_iv";
+    public static final String KMS_MEK_VERSION = "kms_mek_version";
     public static final String CIPHER_SUITE = "cipher_suite";
     public static final String PUBLIC_KEY = "public_key";
     public static final String PUBLIC_KEY_HASH = "public_key_hash";
@@ -116,6 +121,7 @@ public class MsgKeyConstants {
 
     public static final String USERS = "users";
 
+    public static final String NODE_ACCESS = "noneAccess";
     public static final String RESTRICTED_ACCESS = "restrictedAccess";
     public static final String FULL_ACCESS = "fullAccess";
 
@@ -127,9 +133,17 @@ public class MsgKeyConstants {
 
     public static final String DESCRIPTION = "description";
 
+    public static final String TYPE = "type";
+
     public static final String STATUS = "status";
 
+    public static final String ALGO = "algo";
+
+    public static final String PARAMS = "params";
+
     public static final String BODY = "body";
+
+    public static final String AFFECT_ROWS = "affectRows";
 
     public static final int BCL_VERSION_1 = 1;
     public static final int BRL_VERSION_1 = 1;

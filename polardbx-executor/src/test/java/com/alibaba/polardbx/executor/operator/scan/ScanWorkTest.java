@@ -1,9 +1,17 @@
 package com.alibaba.polardbx.executor.operator.scan;
 
 import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.memory.GlobalMemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.datatype.Decimal;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.executor.archive.reader.OSSColumnTransformer;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
+import com.alibaba.polardbx.executor.chunk.DecimalBlockBuilder;
 import com.alibaba.polardbx.executor.operator.scan.impl.AbstractScanWork;
 import com.alibaba.polardbx.executor.operator.scan.impl.DefaultLazyEvaluator;
 import com.alibaba.polardbx.executor.operator.scan.impl.MorselColumnarSplit;
@@ -16,6 +24,7 @@ import com.alibaba.polardbx.optimizer.core.TddlRelDataTypeSystemImpl;
 import com.alibaba.polardbx.optimizer.core.TddlTypeFactoryImpl;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.datatype.VarcharType;
+import com.alibaba.polardbx.optimizer.statis.OperatorStatistics;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -44,7 +53,9 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.text.MessageFormat;
 import java.util.BitSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
@@ -106,6 +117,91 @@ public class ScanWorkTest extends ScanTestBase {
         inputRefsForFilter = ImmutableList.of(0);
 
         deletionBitmap = buildDeletionBitmap((int) (1_000_000L / 2));
+    }
+
+    @Test
+    public void testReuse() throws Throwable {
+        // set ENABLE_REUSE_VECTOR = true
+        // set CHUNK_SIZE = 1000
+        Map map = new HashMap();
+        map.put(ConnectionParams.ENABLE_REUSE_VECTOR.getName(), true);
+        map.put(ConnectionParams.CHUNK_SIZE, 1000);
+        map.put(ConnectionParams.SCAN_POLICY, 2);
+        ParamManager paramManager = new ParamManager(map);
+        context.setParamManager(paramManager);
+
+        // column a and literal 1
+        RexInputRef inputRef0 = REX_BUILDER.makeInputRef(TYPE_FACTORY.createSqlType(SqlTypeName.DECIMAL), 0);
+        RexInputRef inputRef1 = REX_BUILDER.makeInputRef(TYPE_FACTORY.createSqlType(SqlTypeName.DECIMAL), 1);
+
+        // call: dec+dec
+        RexNode plus = REX_BUILDER.makeCall(
+            TYPE_FACTORY.createSqlType(SqlTypeName.DECIMAL),
+            TddlOperatorTable.PLUS,
+            ImmutableList.of(
+                // column
+                inputRef0,
+                // const
+                inputRef1
+            )
+        );
+
+        // call: (dec+dec) is not null
+        RexNode predicate = REX_BUILDER.makeCall(
+            TYPE_FACTORY.createSqlType(BIGINT),
+            TddlOperatorTable.IS_NOT_NULL,
+            ImmutableList.of(
+                // input rex
+                plus
+            )
+        );
+
+        // NOTE: The inputRefs in RexNode must be in consistent with inputRefForFilter.
+        evaluator = DefaultLazyEvaluator.builder()
+            .setContext(context)
+            .setRexNode(predicate)
+            .setRatio(RATIO)
+            .setInputTypes(ImmutableList.of(DataTypes.DecimalType, DataTypes.DecimalType)) // input type: bigint.
+            .build();
+
+        DecimalBlockBuilder decimalBlockBuilder0 = new DecimalBlockBuilder(16);
+        decimalBlockBuilder0.writeDecimal(Decimal.fromString("0.1"));
+        decimalBlockBuilder0.writeDecimal(Decimal.fromString("0.2"));
+        decimalBlockBuilder0.writeDecimal(Decimal.fromString("0.3"));
+        Block block0 = decimalBlockBuilder0.build();
+
+        DecimalBlockBuilder decimalBlockBuilder1 = new DecimalBlockBuilder(16);
+        decimalBlockBuilder1.writeDecimal(Decimal.fromString("0.1"));
+        decimalBlockBuilder1.writeDecimal(Decimal.fromString("0.2"));
+        decimalBlockBuilder1.writeDecimal(Decimal.fromString("0.3"));
+        Block block1 = decimalBlockBuilder1.build();
+
+        Chunk inputChunk = new Chunk(block0.getPositionCount(), block0, block1);
+
+        // reuse block size = 3
+        evaluator.eval(inputChunk, block0.getPositionCount(), 3, new RoaringBitmap());
+
+        decimalBlockBuilder0 = new DecimalBlockBuilder(16);
+        decimalBlockBuilder0.writeDecimal(Decimal.fromString("0.1"));
+        decimalBlockBuilder0.writeDecimal(Decimal.fromString("0.2"));
+        decimalBlockBuilder0.writeDecimal(Decimal.fromString("0.3"));
+        decimalBlockBuilder0.writeDecimal(Decimal.fromString("0.4"));
+        decimalBlockBuilder0.writeDecimal(Decimal.fromString("0.5"));
+        block0 = decimalBlockBuilder0.build();
+
+        decimalBlockBuilder1 = new DecimalBlockBuilder(16);
+        decimalBlockBuilder1.writeDecimal(Decimal.fromString("0.1"));
+        decimalBlockBuilder1.writeDecimal(Decimal.fromString("0.2"));
+        decimalBlockBuilder1.writeDecimal(Decimal.fromString("0.3"));
+        decimalBlockBuilder1.writeDecimal(Decimal.fromString("0.4"));
+        decimalBlockBuilder1.writeDecimal(Decimal.fromString("0.5"));
+        block1 = decimalBlockBuilder1.build();
+
+        inputChunk = new Chunk(block0.getPositionCount(), block0, block1);
+
+        // reuse block size = 3
+        // java.lang.IndexOutOfBoundsException: end index (160) must not be greater than size (120)
+        evaluator.eval(inputChunk, 0, block0.getPositionCount(), new RoaringBitmap());
     }
 
     @Test
@@ -198,6 +294,14 @@ public class ScanWorkTest extends ScanTestBase {
     )
         throws Throwable {
         context = new ExecutionContext();
+
+        Map map = new HashMap();
+        map.put(ConnectionParams.ENABLE_REUSE_VECTOR.getName(), true);
+        map.put(ConnectionParams.CHUNK_SIZE.getName(), 1000);
+        map.put(ConnectionParams.SCAN_POLICY.getName(), 2);
+        ParamManager paramManager = new ParamManager(map);
+        context.setParamManager(paramManager);
+
         context.setTraceId(TRACE_ID);
 
         final int morselUnit = MORSEL_UNIT;
@@ -229,13 +333,30 @@ public class ScanWorkTest extends ScanTestBase {
             .prepare(preProcessor)
             .columnarManager(mockColumnarManager)
             .memoryAllocator(memoryAllocatorCtx)
+            .operatorStatistic(new OperatorStatistics())
             .build();
 
         // Check data consistency of orc vector and block
         Checker checker = new Checker(inputRefsForProject);
 
+        GlobalMemoryTrackerManager globalMemoryTrackerManager =
+            MemoryTrackerManager.getGlobalMemoryTrackerManager();
+
+        globalMemoryTrackerManager.resize(1L << 30);
+
+        OperatorMemoryOwnerId operatorMemoryOwnerId = globalMemoryTrackerManager
+            .createQueryMemoryOwnerId("1985e6e8db400000")
+            .createChild(1, 0)
+            .createChild(1)
+            .createChild(2, "ColumnarScanExec");
+
         ScanWork<ColumnarSplit, Chunk> scanWork;
         while ((scanWork = split.nextWork()) != null) {
+
+            ((AbstractScanWork) scanWork).selectionOf(new BitSet());
+
+            MemoryCountable.checkDeviation(scanWork, 0.05d, true);
+
             System.out.println(scanWork.getWorkId());
 
             MorselColumnarSplit.ScanRange scanRange =
@@ -244,7 +365,7 @@ public class ScanWorkTest extends ScanTestBase {
 
             // get status
             IOStatus<Chunk> ioStatus = scanWork.getIOStatus();
-            scanWork.invoke(SCAN_WORK_EXECUTOR);
+            scanWork.invoke(SCAN_WORK_EXECUTOR, null);
 
             // Get chunks according to state.
             boolean isCompleted = false;
@@ -269,10 +390,17 @@ public class ScanWorkTest extends ScanTestBase {
                     break;
                 }
                 case FINISHED:
+
+                    MemoryCountable.checkDeviation(scanWork, 0.05d, true);
+                    MemoryCountable.checkDeviation(ioStatus, 0.05d, true);
+
                     while ((result = ioStatus.popResult()) != null) {
                         check(checker, result, scanRange.getStripeId());
                     }
                     isCompleted = true;
+
+                    MemoryCountable.checkDeviation(scanWork, 0.05d, true);
+
                     break;
                 case FAILED:
                     isCompleted = true;
@@ -285,7 +413,7 @@ public class ScanWorkTest extends ScanTestBase {
 
             }
             Preconditions.checkArgument(((AbstractScanWork) scanWork).checkIfAllReadersClosed());
-
+            MemoryCountable.checkDeviation(scanWork, 0.05d, true);
         }
 
         checker.close();

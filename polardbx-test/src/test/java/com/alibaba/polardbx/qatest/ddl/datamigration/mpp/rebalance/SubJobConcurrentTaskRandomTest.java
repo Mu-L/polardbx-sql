@@ -82,7 +82,7 @@ public class SubJobConcurrentTaskRandomTest extends DDLBaseNewDBTestCase {
         int maxConcurrent = 16;
         String rebalanceDdl =
             String.format(
-                "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_TASK_PARALISM=%d)*/rebalance database shuffle_data_dist=1;",
+                "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_DB_PARALLELISM=%d)*/rebalance database shuffle_data_dist=1;",
                 maxConcurrent);
         concurrentTaskSubJobTest(tddlConnection, schemaName, minConcurrent, maxConcurrent, rebalanceDdl, waitTime);
     }
@@ -116,7 +116,7 @@ public class SubJobConcurrentTaskRandomTest extends DDLBaseNewDBTestCase {
         int maxConcurrent = 32;
         String rebalanceDdl =
             String.format(
-                "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_TASK_PARALISM=%d)*/rebalance database shuffle_data_dist=1;",
+                "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_DB_PARALLELISM=%d)*/rebalance database shuffle_data_dist=1;",
                 maxConcurrent);
         concurrentTaskSubJobTest(tddlConnection, schemaName, minConcurrent, maxConcurrent, rebalanceDdl, waitTime);
     }
@@ -150,7 +150,7 @@ public class SubJobConcurrentTaskRandomTest extends DDLBaseNewDBTestCase {
         int maxConcurrent = 64;
         String rebalanceDdl =
             String.format(
-                "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_TASK_PARALISM=%d)*/rebalance database shuffle_data_dist=1;",
+                "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_DB_PARALLELISM=%d)*/rebalance database shuffle_data_dist=1;",
                 maxConcurrent);
         concurrentTaskSubJobTest(tddlConnection, schemaName, minConcurrent, maxConcurrent, rebalanceDdl, waitTime);
     }
@@ -184,7 +184,7 @@ public class SubJobConcurrentTaskRandomTest extends DDLBaseNewDBTestCase {
         int maxConcurrent = 6;
         String rebalanceDdl =
             String.format(
-                "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_TASK_PARALISM=%d)*/rebalance database shuffle_data_dist=1;",
+                "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_DB_PARALLELISM=%d)*/rebalance database shuffle_data_dist=1;",
                 maxConcurrent);
         concurrentTaskSubJobTest(tddlConnection, schemaName, minConcurrent, maxConcurrent, rebalanceDdl, waitTime);
     }
@@ -218,7 +218,7 @@ public class SubJobConcurrentTaskRandomTest extends DDLBaseNewDBTestCase {
         int maxConcurrent = 12;
         String rebalanceDdl =
             String.format(
-                "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_TASK_PARALISM=%d)*/rebalance database shuffle_data_dist=1;",
+                "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_DB_PARALLELISM=%d)*/rebalance database shuffle_data_dist=1;",
                 maxConcurrent);
         concurrentTaskSubJobTest(tddlConnection, schemaName, minConcurrent, maxConcurrent, rebalanceDdl, waitTime);
     }
@@ -255,7 +255,7 @@ public class SubJobConcurrentTaskRandomTest extends DDLBaseNewDBTestCase {
         dns.remove(undeletableDn);
         String dn = dns.get(0);
         String rebalanceDdl = String.format(
-            "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_TASK_PARALISM=%d)*/rebalance database drain_node = '%s'",
+            "/*+TDDL:cmd_extra(REBALANCE_MAX_UNIT_PARTITION_COUNT=2,REBALANCE_DB_PARALLELISM=%d)*/rebalance database drain_node = '%s'",
             maxConcurrent, dn);
         concurrentTaskSubJobTest(tddlConnection, schemaName, minConcurrent, maxConcurrent, rebalanceDdl, waitTime);
     }

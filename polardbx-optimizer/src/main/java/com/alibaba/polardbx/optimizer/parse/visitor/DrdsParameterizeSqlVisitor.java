@@ -16,34 +16,41 @@
 
 package com.alibaba.polardbx.optimizer.parse.visitor;
 
+import com.alibaba.polardbx.common.charset.CharsetName;
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
+import com.alibaba.polardbx.druid.sql.ast.SQLDataType;
+import com.alibaba.polardbx.druid.sql.ast.SQLDataTypeImpl;
 import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
+import com.alibaba.polardbx.druid.sql.ast.SQLName;
 import com.alibaba.polardbx.druid.sql.ast.SQLObject;
 import com.alibaba.polardbx.druid.sql.ast.SQLOver;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLAllColumnExpr;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLCastExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLCharExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLInListExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIntegerExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIntervalExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIntervalUnit;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLListExpr;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLLiteralExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLMethodInvokeExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLNumberExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLPropertyExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLUnaryExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLUnaryOperator;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLVariantRefExpr;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLCharacterDataType;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLSelectItem;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLSetStatement;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLValuesTableSource;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.expr.MySqlCharExpr;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.visitor.MySqlOutputVisitor;
-import com.alibaba.polardbx.common.charset.CharsetName;
-import com.alibaba.polardbx.common.exception.TddlRuntimeException;
-import com.alibaba.polardbx.common.exception.code.ErrorCode;
-import com.alibaba.polardbx.common.utils.TStringUtil;
-import com.alibaba.polardbx.druid.sql.visitor.VisitorFeature;
-import com.alibaba.polardbx.druid.util.Pair;
+import com.alibaba.polardbx.druid.sql.visitor.ExportParameterVisitorUtils;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.function.calc.scalar.LastInsertId;
 import com.alibaba.polardbx.optimizer.core.function.calc.scalar.datatime.Now;
@@ -51,7 +58,6 @@ import com.alibaba.polardbx.optimizer.parse.SqlParameterizeUtils;
 import com.alibaba.polardbx.optimizer.parse.bean.PreparedParamRef;
 import org.apache.calcite.sql.SqlCollation;
 import org.apache.calcite.util.NlsString;
-import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang.StringUtils;
 
@@ -61,10 +67,8 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.Objects;
 import java.util.Set;
-import java.util.TimeZone;
 import java.util.TreeSet;
 
 public class DrdsParameterizeSqlVisitor extends MySqlOutputVisitor {
@@ -74,8 +78,14 @@ public class DrdsParameterizeSqlVisitor extends MySqlOutputVisitor {
 
     private boolean hasIn = false;
 
+    private boolean enableDynamicValuesOptimization = false;
+
     public boolean isHasIn() {
         return hasIn;
+    }
+
+    public void setEnableDynamicValuesOptimization(boolean enableDynamicValuesOptimization) {
+        this.enableDynamicValuesOptimization = enableDynamicValuesOptimization;
     }
 
     private static final BigInteger MAX_SIGNED_INT64 = BigInteger.valueOf(Long.MAX_VALUE);
@@ -139,6 +149,16 @@ public class DrdsParameterizeSqlVisitor extends MySqlOutputVisitor {
         }
     }
 
+    private static class FoldedValuesInfo {
+        private final List<SQLCastExpr> templateCasts;
+        private final List<List<Object>> columnValues;
+
+        private FoldedValuesInfo(List<SQLCastExpr> templateCasts, List<List<Object>> columnValues) {
+            this.templateCasts = templateCasts;
+            this.columnValues = columnValues;
+        }
+    }
+
     private ExecutionContext executionContext;
 
     public DrdsParameterizeSqlVisitor(Appendable appender, boolean parameterized, ExecutionContext executionContext) {
@@ -180,6 +200,19 @@ public class DrdsParameterizeSqlVisitor extends MySqlOutputVisitor {
     public boolean visit(SQLInListExpr x) {
         hasIn = true;
         return super.visit(x);
+    }
+
+    @Override
+    public boolean visit(SQLValuesTableSource x) {
+        if (!parameterized || !enableDynamicValuesOptimization) {
+            return super.visit(x);
+        }
+        FoldedValuesInfo foldedValuesInfo = collectFoldedValuesInfo(x);
+        if (foldedValuesInfo == null) {
+            return super.visit(x);
+        }
+        printFoldedValuesTableSource(x, foldedValuesInfo);
+        return false;
     }
 
     @Override
@@ -453,7 +486,16 @@ public class DrdsParameterizeSqlVisitor extends MySqlOutputVisitor {
 
     @Override
     protected void printInteger(SQLIntegerExpr x, boolean parameterized) {
-        if (parameterized && x.getNumber() instanceof BigInteger) {
+        if (parameterized) {
+            normalizeBigIntegerLiteral(x);
+        }
+
+        super.printInteger(x, parameterized);
+    }
+
+    // Keep folded and scalar parameter types identical for out-of-range integers.
+    private void normalizeBigIntegerLiteral(SQLIntegerExpr x) {
+        if (x.getNumber() instanceof BigInteger) {
             BigInteger number = (BigInteger) x.getNumber();
 
             // The boundary value of bigint is min value of longlong and max value of ulonglong.
@@ -466,8 +508,234 @@ public class DrdsParameterizeSqlVisitor extends MySqlOutputVisitor {
                 x.setNumber(x.getNumber().longValue());
             }
         }
+    }
 
-        super.printInteger(x, parameterized);
+    /**
+     * Collect a foldable VALUES table source into per-column value arrays.
+     * Returns null (fall back to the default row-by-row parameterization) unless every value is a
+     * plain literal wrapped in CAST and all rows share the same CAST target type per column.
+     */
+    private FoldedValuesInfo collectFoldedValuesInfo(SQLValuesTableSource valuesTableSource) {
+        List<SQLListExpr> rows = valuesTableSource.getValues();
+        // Folding needs at least two rows; ORDER BY / LIMIT depend on row order and count,
+        // which the single-tuple form cannot represent.
+        if (rows == null || rows.size() <= 1 || valuesTableSource.getOrderBy() != null
+            || valuesTableSource.getLimit() != null) {
+            return null;
+        }
+
+        int columnCount = rows.get(0).getItems().size();
+        if (columnCount == 0) {
+            return null;
+        }
+
+        // The result is transposed: row-major AST values become column-major parameter arrays,
+        // one array per output column. templateCasts[i] is the CAST of column i taken from row 0.
+        List<SQLCastExpr> templateCasts = new ArrayList<>(columnCount);
+        List<List<Object>> columnValues = new ArrayList<>(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            columnValues.add(new ArrayList<>(rows.size()));
+        }
+        List<Object> exported = new ArrayList<>(1);
+
+        for (int rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
+            SQLListExpr row = rows.get(rowIndex);
+            if (row.getItems().size() != columnCount) {
+                return null;
+            }
+
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                SQLExpr item = row.getItems().get(columnIndex);
+                // Only the typed form CAST(literal AS type) is foldable; it fixes the target
+                // type of the single folded placeholder.
+                if (!(item instanceof SQLCastExpr)) {
+                    return null;
+                }
+
+                SQLCastExpr castExpr = (SQLCastExpr) item;
+                // Rejects non-literals (?, expressions) and charset-tagged string literals.
+                if (!isFoldableValuesAtom(castExpr.getExpr())) {
+                    return null;
+                }
+
+                // Row 0 defines the per-column template; later rows must CAST to the same type,
+                // otherwise one placeholder could not carry mixed types.
+                if (rowIndex == 0) {
+                    templateCasts.add(castExpr);
+                } else if (!isSameCastTarget(templateCasts.get(columnIndex), castExpr)) {
+                    return null;
+                }
+
+                // Apply the same out-of-range integer normalization as the scalar printInteger
+                // path, so folded and unfolded parameters keep identical Java types.
+                if (castExpr.getExpr() instanceof SQLIntegerExpr) {
+                    normalizeBigIntegerLiteral((SQLIntegerExpr) castExpr.getExpr());
+                }
+                exported.clear();
+                ExportParameterVisitorUtils.exportParameter(exported, castExpr.getExpr());
+                // Exactly one literal must produce exactly one parameter value.
+                if (exported.size() != 1) {
+                    return null;
+                }
+                columnValues.get(columnIndex).add(exported.get(0));
+            }
+        }
+
+        return new FoldedValuesInfo(templateCasts, columnValues);
+    }
+
+    private boolean isFoldableValuesAtom(SQLExpr expr) {
+        if (expr instanceof MySqlCharExpr && ((MySqlCharExpr) expr).getCharset() != null) {
+            // Charset-tagged literals are exported with collation metadata only by visit(MySqlCharExpr).
+            return false;
+        }
+        return expr instanceof SQLLiteralExpr;
+    }
+
+    private boolean isSameCastTarget(SQLCastExpr left, SQLCastExpr right) {
+        if (left.isTry() != right.isTry() || left.isHasArray() != right.isHasArray()) {
+            return false;
+        }
+        return isSameDataType(left.getDataType(), right.getDataType());
+    }
+
+    /**
+     * Exhaustive CAST-target comparison for folding, following the BasicTypeBuilders idiom:
+     * only explicitly whitelisted types may fold, each family compares the attributes that are
+     * semantically meaningful for it, and any unlisted type (JSON / ENUM / SET / BIT / spatial /
+     * future additions) falls through to reject. Adding a foldable type requires opting in here.
+     */
+    private boolean isSameDataType(SQLDataType left, SQLDataType right) {
+        if (left == right) {
+            return true;
+        }
+        if (left == null || right == null || left.getClass() != right.getClass()
+            || !(left instanceof SQLDataTypeImpl)) {
+            return false;
+        }
+        SQLDataTypeImpl leftImpl = (SQLDataTypeImpl) left;
+        SQLDataTypeImpl rightImpl = (SQLDataTypeImpl) right;
+
+        String typeName = StringUtils.upperCase(leftImpl.getName());
+        if (!typeName.equals(StringUtils.upperCase(rightImpl.getName()))) {
+            return false;
+        }
+
+        switch (typeName) {
+        case "TINYINT":
+        case "SMALLINT":
+        case "MEDIUMINT":
+        case "INT":
+        case "INTEGER":
+        case "BIGINT":
+        case "DECIMAL":
+        case "FLOAT":
+        case "DOUBLE":
+            // Numeric types: precision/scale/display-width arguments plus unsigned/zerofill.
+            return sameArguments(leftImpl, rightImpl)
+                && leftImpl.isUnsigned() == rightImpl.isUnsigned()
+                && leftImpl.isZerofill() == rightImpl.isZerofill();
+        case "DATE":
+        case "DATETIME":
+        case "TIMESTAMP":
+        case "TIME":
+            // Temporal types: fractional-seconds argument plus timezone flags.
+            return sameArguments(leftImpl, rightImpl)
+                && Objects.equals(leftImpl.getWithTimeZone(), rightImpl.getWithTimeZone())
+                && leftImpl.isWithLocalTimeZone() == rightImpl.isWithLocalTimeZone();
+        case "CHAR":
+        case "VARCHAR":
+            // Character types: length argument plus charset/collation attributes.
+            if (!sameArguments(leftImpl, rightImpl)
+                || !(leftImpl instanceof SQLCharacterDataType)
+                || !(rightImpl instanceof SQLCharacterDataType)) {
+                return false;
+            }
+            SQLCharacterDataType leftChar = (SQLCharacterDataType) leftImpl;
+            SQLCharacterDataType rightChar = (SQLCharacterDataType) rightImpl;
+            return StringUtils.equalsIgnoreCase(leftChar.getCharSetName(), rightChar.getCharSetName())
+                && StringUtils.equalsIgnoreCase(leftChar.getCollate(), rightChar.getCollate())
+                && StringUtils.equalsIgnoreCase(leftChar.getCharType(), rightChar.getCharType())
+                && leftChar.isHasBinary() == rightChar.isHasBinary()
+                && Objects.equals(leftChar.getHints(), rightChar.getHints());
+        case "BINARY":
+        case "VARBINARY":
+        case "TINYTEXT":
+        case "TEXT":
+        case "MEDIUMTEXT":
+        case "LONGTEXT":
+        case "TINYBLOB":
+        case "BLOB":
+        case "MEDIUMBLOB":
+        case "LONGBLOB":
+            // Binary and large-object types: only the length argument (empty for LOBs).
+            return sameArguments(leftImpl, rightImpl);
+        default:
+            // Not a reviewed foldable type; fall back to per-row parameterization.
+            return false;
+        }
+    }
+
+    private boolean sameArguments(SQLDataTypeImpl left, SQLDataTypeImpl right) {
+        List<SQLExpr> leftArgs = left.getArguments();
+        List<SQLExpr> rightArgs = right.getArguments();
+        if (leftArgs.size() != rightArgs.size()) {
+            return false;
+        }
+        return leftArgs.equals(rightArgs);
+    }
+
+    private void printFoldedValuesTableSource(
+        SQLValuesTableSource valuesTableSource, FoldedValuesInfo foldedValuesInfo) {
+        if (valuesTableSource.isBracket()) {
+            print('(');
+        }
+        print0(ucase ? "VALUES ROW(" : "values row(");
+        for (int i = 0; i < foldedValuesInfo.templateCasts.size(); i++) {
+            if (i != 0) {
+                print0(", ");
+            }
+            printFoldedCast(foldedValuesInfo.templateCasts.get(i));
+        }
+        print(')');
+        if (valuesTableSource.isBracket()) {
+            print(')');
+        }
+        printValuesAlias(valuesTableSource);
+        if (this.parameters != null) {
+            this.parameters.addAll(foldedValuesInfo.columnValues);
+        }
+    }
+
+    private void printFoldedCast(SQLCastExpr castExpr) {
+        if (castExpr.isTry()) {
+            print0(ucase ? "TRY_CAST(" : "try_cast(");
+        } else {
+            print0(ucase ? "CAST(" : "cast(");
+        }
+        print('?');
+        incrementReplaceCunt();
+        print0(ucase ? " AS " : " as ");
+        castExpr.getDataType().accept(this);
+        if (castExpr.isHasArray()) {
+            print0(ucase ? " ARRAY" : " array");
+        }
+        print(')');
+    }
+
+    private void printValuesAlias(SQLValuesTableSource valuesTableSource) {
+        String alias = valuesTableSource.getAlias();
+        if (alias == null) {
+            return;
+        }
+        print0(ucase ? " AS " : " as ");
+        printName0(alias);
+        List<SQLName> columns = valuesTableSource.getColumns();
+        if (columns.size() > 0) {
+            print0(" (");
+            printAndAccept(columns, ", ");
+            print(')');
+        }
     }
 
     private String getAliasNew(String alias) {

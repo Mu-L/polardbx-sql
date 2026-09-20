@@ -21,6 +21,8 @@ import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.executor.ddl.newengine.dag.DirectedAcyclicGraph;
 import com.alibaba.polardbx.executor.ddl.newengine.dag.TaskScheduler;
+import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.google.common.base.Preconditions;
 import io.grpc.netty.shaded.io.netty.util.internal.StringUtil;
 import org.apache.commons.collections.CollectionUtils;
@@ -39,6 +41,8 @@ public abstract class AbstractDdlJob implements DdlJob {
     protected final Set<String> excludeResources = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
     protected final Set<String> sharedResources = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
     protected int maxParallelism = 1;
+
+    protected OnlineDdlInfo onlineDdlInfo = new OnlineDdlInfo();
 
     protected String ddlJobFactoryName;
 
@@ -263,8 +267,12 @@ public abstract class AbstractDdlJob implements DdlJob {
         return taskGraph.vertexCount();
     }
 
+    public List<String> getExtraExplainInfo(ExecutionContext ec) {
+        return new ArrayList<>();
+    }
+
     @Override
-    public List<String> getExplainInfo() {
+    public List<String> getExplainInfo(ExecutionContext ec) {
         try {
             List<String> result = new ArrayList<>();
             List<DirectedAcyclicGraph.Vertex> vertexes = taskGraph.clone().getSequentialVertexByTopologyOrder();
@@ -274,7 +282,7 @@ public abstract class AbstractDdlJob implements DdlJob {
 
             for (DirectedAcyclicGraph.Vertex vertex : vertexes) {
                 DdlTask ddlTask = vertex.object;
-                List<String> taskExplainInfos = ddlTask.explainInfo();
+                List<String> taskExplainInfos = ddlTask.explainInfo(ec);
                 for (String taskExplainInfo : taskExplainInfos) {
                     if (!StringUtils.isEmpty(taskExplainInfo)) {
                         result.add(taskExplainInfo);
@@ -291,12 +299,21 @@ public abstract class AbstractDdlJob implements DdlJob {
             if (!StringUtil.isNullOrEmpty(shareResource)) {
                 result.add(String.format("SHARE_RESOURCE( %s )", shareResource));
             }
+            List<String> extraResult = getExtraExplainInfo(ec);
+            if (!GeneralUtil.isEmpty(extraResult)) {
+                result.addAll(extraResult);
+            }
 
             return result;
         } catch (Throwable t) {
             throw GeneralUtil.nestedException("explainTasks failed:  " + t.getMessage(), t);
         }
 
+    }
+
+    @Override
+    public OnlineDdlInfo getExplainOnlineDdlInfo() {
+        return onlineDdlInfo;
     }
 
     public void setDdlJobFactoryName(String ddlJobFactoryName) {

@@ -23,6 +23,7 @@ import com.alibaba.polardbx.executor.backfill.Loader;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.gsi.InsertIndexExecutor;
 import com.alibaba.polardbx.executor.gsi.PhysicalPlanBuilder;
+import com.alibaba.polardbx.gms.metadb.table.ExternalizedColumnInfo;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -92,7 +93,9 @@ public class AlterTableGroupLoader extends Loader {
             indexTableMeta.getAllColumns()
                 .stream()
                 .filter(columnMeta -> !columnMeta.isGeneratedColumn())
-                .map(columnMeta -> new SqlIdentifier(columnMeta.getName(), SqlParserPos.ZERO))
+                .map(columnMeta -> new SqlIdentifier(ExternalizedColumnInfo.getBackfillColumnName(
+                    columnMeta.getName(), columnMeta.getMappingName(), columnMeta.isExternalizedColumn()),
+                    SqlParserPos.ZERO))
                 .collect(Collectors.toList()),
             SqlParserPos.ZERO);
 

@@ -23,12 +23,16 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ITransactionPolicy;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.Parameters;
+import com.alibaba.polardbx.common.properties.BooleanConfigParam;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.TStringUtil;
+import com.alibaba.polardbx.executor.backfill.Extractor;
 import com.alibaba.polardbx.executor.ddl.job.converter.PhysicalPlanData;
+import com.alibaba.polardbx.executor.ddl.job.task.RemoteExecutableDdlTask;
+import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
 import com.alibaba.polardbx.executor.ddl.twophase.DnStats;
 import com.alibaba.polardbx.executor.gsi.GsiBackfillManager.BackfillObjectRecord;
 import com.alibaba.polardbx.executor.gsi.GsiBackfillManager.BackfillRecord;
@@ -558,10 +562,14 @@ public class GsiUtils {
         return indexRecords;
     }
 
+    /**
+     * collations的顺序和columns的顺序保持一致
+     */
     public static void buildIndexMetaFromPrimary(List<IndexRecord> indexRecords,
                                                  TableMeta sourceTableMeta,
                                                  String indexName,
                                                  List<String> columns,
+                                                 List<String> collations,
                                                  List<Long> subParts,
                                                  List<String> covering,
                                                  boolean nonUnique,
@@ -593,6 +601,11 @@ public class GsiUtils {
             if (columnMapping != null && !columnMapping.isEmpty() && columnMapping.containsKey(column.toLowerCase())) {
                 oldColumn = columnMapping.get(column.toLowerCase());
             }
+            String collation = null;
+            if (collations != null && collations.size() >= seqInIndex) {
+                //注意顺序
+                collation = collations.get(seqInIndex - 1);
+            }
             Long subPart = null;
             if (subParts != null && subParts.size() >= seqInIndex) {
                 subPart = subParts.get(seqInIndex - 1);
@@ -613,6 +626,7 @@ public class GsiUtils {
                 column,
                 clusteredIndex,
                 columnarIndex,
+                collation,
                 subPart));
             seqInIndex++;
         }
@@ -679,7 +693,9 @@ public class GsiUtils {
     private static String nullable(TableMeta tableMeta, String columnName) {
         List<ColumnMeta> columnMetaList = tableMeta.getPhysicalColumns();
         Optional<ColumnMeta> columnMetaOptional =
-            columnMetaList.stream().filter(e -> StringUtils.equalsIgnoreCase(e.getName(), columnName)).findAny();
+            columnMetaList.stream().filter(e -> StringUtils.equalsIgnoreCase(e.getName(), columnName)
+                    || (e.getMappingName() != null && StringUtils.equalsIgnoreCase(e.getMappingName(), columnName)))
+                .findAny();
         if (!columnMetaOptional.isPresent()) {
             throw new TddlNestableRuntimeException("unknown column name: " + columnName);
         }
@@ -831,8 +847,7 @@ public class GsiUtils {
                                                  String indexType, int indexLocation, IndexStatus indexStatus,
                                                  long version, String indexComment, int seqInIndex,
                                                  String columnName, boolean clusteredIndex, boolean columnarIndex,
-                                                 Long subPart) {
-        final String collation = null;
+                                                 String collation, Long subPart) {
         final String packed = null;
         final String comment = "INDEX";
         long flag = 0L;
@@ -1215,6 +1230,23 @@ public class GsiUtils {
         } while (true);
     }
 
+    public static void incrementTaskIdSubtaskCount(Long taskId, Integer count) {
+        Extractor.backfillTaskActiveSubTaskMap.asMap().compute(taskId, (k, oldValue) -> {
+            if (oldValue == null) {
+                return count; // 初始化
+            }
+            return oldValue + count; // 递增
+        });
+    }
+
+    public static Integer getSubtaskCountByTaskId(Long taskId) {
+        return Extractor.backfillTaskActiveSubTaskMap.asMap().getOrDefault(taskId, 0);
+    }
+
+    public static void clearTaskIdSubtaskCount(Long taskId) {
+        // TODO
+    }
+
     /**
      * create gsi for repartition
      *
@@ -1256,23 +1288,26 @@ public class GsiUtils {
         return result;
     }
 
+    public static List<String> getAvaliableNodeList(ExecutionContext executionContext,
+                                                    BooleanConfigParam remoteDdlTaskParam) {
+        ParamManager paramManager = executionContext.getParamManager();
+        Boolean forbidRemote = paramManager.getBoolean(remoteDdlTaskParam);
+        Boolean isBoostMode = DdlHelper.isBoostPerfMode(executionContext);
+        List<String> nodes = RemoteExecutableDdlTask.chooseCandidate(forbidRemote, isBoostMode);
+        return nodes;
+    }
+
     public static int getAvaliableNodeNum(String schemaName, String logicalTableName,
-                                          ExecutionContext executionContext) {
+                                          ExecutionContext executionContext, BooleanConfigParam remoteDdlTaskParam) {
         int maxNodeNum = 1;
         ParamManager paramManager = executionContext.getParamManager();
-        Boolean enableRemote = !paramManager.getBoolean(ConnectionParams.FORBID_REMOTE_DDL_TASK);
-        Boolean enableStandby = paramManager.getBoolean(ConnectionParams.ENABLE_STANDBY_BACKFILL);
-        Boolean forceStandby = paramManager.getBoolean(ConnectionParams.FORCE_STANDBY_BACKFILL);
-        if (enableRemote) {
-            int masterNodeNum = GmsNodeManager.getInstance().getMasterNodes().size();
-            int standbyNodeNum = GmsNodeManager.getInstance().getStandbyNodes().size();
-            int cnNodeNum = masterNodeNum;
-            if (forceStandby) {
-                cnNodeNum = standbyNodeNum;
-            } else if (!enableStandby) {
-                cnNodeNum = masterNodeNum - standbyNodeNum;
-            }
+        Boolean forbidRemote = paramManager.getBoolean(remoteDdlTaskParam);
+        Boolean isBoostMode = DdlHelper.isBoostPerfMode(executionContext);
+        List<String> nodes = RemoteExecutableDdlTask.chooseCandidate(forbidRemote, isBoostMode);
+        if (!forbidRemote || isBoostMode) {
+            int cnNodeNum = nodes.size();
             if (schemaName != null && logicalTableName != null) {
+                // takes dn numbers into consideration
                 Map<String, String> sourceGroupDnMap =
                     DnStats.buildGroupToDnMap(schemaName, logicalTableName, executionContext);
                 int dnNodeNum = sourceGroupDnMap.values().stream().collect(Collectors.toSet()).size();
@@ -1281,7 +1316,7 @@ public class GsiUtils {
                 maxNodeNum = cnNodeNum;
             }
         }
-        // only for local deploy mode.
+        // only valid for local deploy mode.
         maxNodeNum = Math.max(maxNodeNum, 1);
         return maxNodeNum;
     }

@@ -17,10 +17,12 @@
 package com.alibaba.polardbx.executor.ddl.job.task.cdc;
 
 import com.alibaba.polardbx.common.cdc.ICdcManager;
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.executor.mpp.metadata.NotNull;
-import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import org.apache.commons.lang3.StringUtils;
 
@@ -28,10 +30,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
+import static com.alibaba.polardbx.common.cdc.ICdcManager.CDC_MARK_ROOT_DDL_JOB_ID;
 import static com.alibaba.polardbx.common.cdc.ICdcManager.CDC_MARK_SQL_MODE;
 import static com.alibaba.polardbx.common.cdc.ICdcManager.DDL_ID;
 import static com.alibaba.polardbx.common.cdc.ICdcManager.DEFAULT_DDL_VERSION_ID;
+import static com.alibaba.polardbx.common.cdc.ICdcManager.EXTRA_DDL;
 import static com.alibaba.polardbx.common.cdc.ICdcManager.POLARDBX_SERVER_ID;
+import static com.alibaba.polardbx.common.properties.ConnectionParams.ENABLE_PUSH_DOWN_AUTO_INCREMENT;
 
 /**
  * created by ziyang.lb
@@ -88,10 +93,29 @@ public class CdcMarkUtil {
             parameter.put(ICdcManager.CDC_ORIGINAL_DDL, originalDdl);
         }
 
+        if (isExternalColumnDdl(executionContext)) {
+            parameter.put(ICdcManager.CDC_EXTERNAL_COLUMN_DDL, true);
+            if (StringUtils.isBlank((String) parameter.get(ICdcManager.CDC_ORIGINAL_DDL))) {
+                throw new TddlRuntimeException(ErrorCode.ERR_CDC_GENERIC,
+                    "External-column DDL must provide a canonical original DDL");
+            }
+        }
+
         if (executionContext.getParamManager()
             .getBoolean(ConnectionParams.TTL_MARK_DROP_PARTITION_AS_ARCHIVE_CLEANUP_FOR_CDC)) {
             parameter.put(ICdcManager.CDC_ARCHIVE_DROP_PARTITION, "true");
         }
+
+        if (executionContext.getParamManager()
+            .getBoolean(ConnectionParams.DRY_RUN_PHYSICAL_DDL)) {
+            parameter.put(ICdcManager.CDC_DRY_RUN_DDL_FLAG, "true");
+        }
+
+        if (executionContext.getParamManager().getBoolean(ENABLE_PUSH_DOWN_AUTO_INCREMENT)) {
+            parameter.put(ICdcManager.CDC_PUSH_DOWN_AUTO_INCREMENT_FLAG, true);
+        }
+
+        addRootJobId(executionContext, parameter);
 
         return parameter;
     }
@@ -119,6 +143,25 @@ public class CdcMarkUtil {
         return StringUtils.equalsIgnoreCase("true", useOriginalDDL);
     }
 
+    private static boolean isExternalColumnDdl(ExecutionContext executionContext) {
+        Object value = executionContext.getExtraCmds().get(ICdcManager.CDC_EXTERNAL_COLUMN_DDL);
+        return value != null && Boolean.parseBoolean(value.toString());
+    }
+
+    private static void addRootJobId(ExecutionContext executionContext, Map<String, Object> parameter) {
+        if (executionContext.getDdlContext() != null) {
+            parameter.put(CDC_MARK_ROOT_DDL_JOB_ID, getRootJobId(executionContext.getDdlContext()));
+        }
+    }
+
+    private static Long getRootJobId(DdlContext ddlContext) {
+        if (ddlContext.getParentDdlContext() != null) {
+            return getRootJobId(ddlContext.getParentDdlContext());
+        } else {
+            return ddlContext.getJobId();
+        }
+    }
+
     @Deprecated
     public static boolean isUseFkOriginalDDL(ExecutionContext executionContext) {
         Map<String, Object> parameter = executionContext.getExtraCmds();
@@ -137,8 +180,17 @@ public class CdcMarkUtil {
         return String.format("/*%s=%s*/", DDL_ID, versionId);
     }
 
+    public static String getExtraDdlHint(String sql) {
+        return String.format("/*%s=%s*/", EXTRA_DDL, sql);
+    }
+
     public static void useOriginalDDL(ExecutionContext executionContext) {
         executionContext.getExtraCmds().put(ICdcManager.USE_ORIGINAL_DDL, "true");
+    }
+
+    public static void useExternalColumnDdl(ExecutionContext executionContext) {
+        useOriginalDDL(executionContext);
+        executionContext.getExtraCmds().put(ICdcManager.CDC_EXTERNAL_COLUMN_DDL, true);
     }
 
     public static void useDdlVersionId(ExecutionContext executionContext, Long versionId) {

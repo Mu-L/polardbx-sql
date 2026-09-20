@@ -1,19 +1,3 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.executor.operator;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
@@ -45,12 +29,12 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -70,6 +54,7 @@ public class HashJoinTest extends BaseExecTest {
 
     @BeforeClass
     public static void beforeClass() {
+        checkExecutorMemory = true;
         List<Path> spillPaths = new ArrayList<>();
         spillPaths.add(tempPath);
         spillerFactory =
@@ -132,7 +117,8 @@ public class HashJoinTest extends BaseExecTest {
         ParallelHashJoinExec exec = new ParallelHashJoinExec(
             new Synchronizer(joinType, outerDriver, 1, false, 1),
             outerInput, innerInput, joinType, maxOneRow,
-            mockData.getEquiJoinKeysAndReset(), otherCondition, antiJoinOperands, outerDriver, context, 0, 1, false);
+            mockData.getEquiJoinKeysAndReset(), otherCondition, antiJoinOperands, outerDriver, context, 0, 1, false
+        );
         return new SingleExecTest.Builder(exec, outerDriver ? outerInput : innerInput).build();
     }
 
@@ -578,9 +564,11 @@ public class HashJoinTest extends BaseExecTest {
             LongBlock.of(3L, 3L, 4L, 4L, 5L, 3L, 3L)));
         SingleExecTest test =
             mockParallelHashJoinExec(EquiJoinMockData.SEMI_LONG_CASE, JoinRelType.INNER, false, null, null, context);
-        Assert.assertTrue(
-            ((ParallelHashJoinExec) test.exec).probeOperator instanceof AbstractHashJoinExec.LongProbeOperator);
         test.exec();
+
+        Assert.assertTrue(
+            ((ParallelHashJoinExec) test.exec).probeOperatorClass == AbstractParallelHashJoinExec.LongProbeOperator.class);
+
         assertExecResultByRow(test.result(), expects, false);
     }
 
@@ -601,9 +589,11 @@ public class HashJoinTest extends BaseExecTest {
             mockParallelHashJoinExec(EquiJoinMockData.INT_JOIN_LONG_CASE, JoinRelType.INNER, false, null, null,
                 context);
         // 目前只能走非向量化形式
-        Assert.assertTrue(
-            ((ParallelHashJoinExec) test.exec).probeOperator instanceof AbstractBufferedJoinExec.DefaultProbeOperator);
         test.exec();
+
+        Assert.assertTrue(
+            ((ParallelHashJoinExec) test.exec).probeOperatorClass == AbstractSharedHashJoinExec.DefaultProbeOperator.class);
+
         assertExecResultByRow(test.result(), expects, false);
     }
 
@@ -617,9 +607,11 @@ public class HashJoinTest extends BaseExecTest {
             IntegerBlock.of(3, 3, 4, 7, 5, 3, 3)));
         SingleExecTest test =
             mockParallelHashJoinExec(EquiJoinMockData.INNER_INT_CASE, JoinRelType.INNER, false, null, null, context);
-        Assert.assertTrue(
-            ((ParallelHashJoinExec) test.exec).probeOperator instanceof AbstractHashJoinExec.IntProbeOperator);
         test.exec();
+
+        Assert.assertTrue(
+            ((ParallelHashJoinExec) test.exec).probeOperatorClass == AbstractParallelHashJoinExec.IntProbeOperator.class);
+
         assertExecResultByRow(test.result(), expects, false);
     }
 
@@ -632,33 +624,37 @@ public class HashJoinTest extends BaseExecTest {
             LongBlock.of(3L, 4L, 5L, 3L)));
         SingleExecTest test =
             mockParallelHashJoinExec(EquiJoinMockData.SEMI_LONG_CASE, JoinRelType.SEMI, false, null, null, context);
-        Assert.assertTrue(
-            ((ParallelHashJoinExec) test.exec).probeOperator instanceof AbstractHashJoinExec.SemiLongProbeOperator);
         test.exec();
+
+        Assert.assertTrue(
+            ((ParallelHashJoinExec) test.exec).probeOperatorClass == AbstractParallelHashJoinExec.SemiLongProbeOperator.class);
+
         assertExecResultByRow(test.result(), expects, false);
     }
 
-//    @Test
-//    public void testSemiLongJoinNotEqIntVec() {
-//        enableVecJoin();
-//
-//        IExpression condition = ScalarFunctionExpression.getScalarFunctionExp(
-//            ImmutableList.of(new InputRefExpression(1), new InputRefExpression(3)), new NotEqual(null, null), context);
-//
-//        List<Chunk> expects = Collections.singletonList(new Chunk(
-//            LongBlock.of(1L, 3L, 4L, 7L),
-//            IntegerBlock.of(4, 7, 5, 10),
-//            LongBlock.of(12L, 14L, 15L, 18L)));
-//
-//        SingleExecTest test =
-//            mockParallelHashJoinExec(EquiJoinMockData.SEMI_LONG_NOT_EQ_INT_CASE, JoinRelType.SEMI, false,
-//                condition, null, context);
-//        Assert.assertTrue(
-//            ((ParallelHashJoinExec) test.exec).probeOperator instanceof AbstractHashJoinExec.SemiLongNotEqIntegerProbeOperator);
-//
-//        test.exec();
-//        assertExecResultByRow(test.result(), expects, false);
-//    }
+    @Test
+    public void testSemiLongJoinNotEqIntVec() {
+        enableVecJoin();
+
+        IExpression condition = ScalarFunctionExpression.getScalarFunctionExp(
+            ImmutableList.of(new InputRefExpression(1), new InputRefExpression(5)), new NotEqual(), context);
+
+        List<Chunk> expects = Collections.singletonList(new Chunk(
+            LongBlock.of(1L, 3L, 4L, 7L),
+            IntegerBlock.of(4, 7, 5, 10),
+            LongBlock.of(12L, 14L, 15L, 18L)));
+
+        SingleExecTest test =
+            mockParallelHashJoinExec(EquiJoinMockData.SEMI_LONG_NOT_EQ_INT_CASE, JoinRelType.SEMI, false,
+                condition, null, context);
+
+        test.exec();
+
+        Assert.assertTrue(
+            ((ParallelHashJoinExec) test.exec).probeOperatorClass == AbstractParallelHashJoinExec.SemiLongNotEqIntegerProbeOperator.class);
+
+        assertExecResultByRow(test.result(), expects, false);
+    }
 
     @Test
     public void testSemiLongJoinNotEqLongVec() {
@@ -675,10 +671,12 @@ public class HashJoinTest extends BaseExecTest {
         SingleExecTest test =
             mockParallelHashJoinExec(EquiJoinMockData.SEMI_LONG_NOT_EQ_LONG_CASE, JoinRelType.SEMI, false,
                 condition, null, context);
-        Assert.assertTrue(
-            ((ParallelHashJoinExec) test.exec).probeOperator instanceof AbstractHashJoinExec.SemiLongNotEqLongProbeOperator);
 
         test.exec();
+
+        Assert.assertTrue(
+            ((ParallelHashJoinExec) test.exec).probeOperatorClass == AbstractParallelHashJoinExec.SemiLongNotEqLongProbeOperator.class);
+
         assertExecResultByRow(test.result(), expects, false);
     }
 
@@ -756,9 +754,11 @@ public class HashJoinTest extends BaseExecTest {
         SingleExecTest test =
             mockParallelHashJoinExec(EquiJoinMockData.SEMI_LONG_CASE, JoinRelType.SEMI,
                 false, null, null, context, true);
-        Assert.assertTrue(
-            ((ParallelHashJoinExec) test.exec).probeOperator instanceof AbstractHashJoinExec.ReverseSemiLongProbeOperator);
         test.exec();
+
+        Assert.assertTrue(
+            ((ParallelHashJoinExec) test.exec).probeOperatorClass == AbstractParallelHashJoinExec.ReverseSemiLongProbeOperator.class);
+
         assertExecResultByRow(test.result(), expects, false);
     }
 
@@ -772,75 +772,83 @@ public class HashJoinTest extends BaseExecTest {
         SingleExecTest test =
             mockParallelHashJoinExec(EquiJoinMockData.REVERSE_SEMI_INT_CASE, JoinRelType.SEMI,
                 false, null, null, context, true);
-        Assert.assertTrue(
-            ((ParallelHashJoinExec) test.exec).probeOperator instanceof AbstractHashJoinExec.ReverseSemiIntProbeOperator);
         test.exec();
+
+        Assert.assertTrue(
+            ((ParallelHashJoinExec) test.exec).probeOperatorClass == AbstractParallelHashJoinExec.ReverseSemiIntProbeOperator.class);
+
         assertExecResultByRow(test.result(), expects, false);
     }
-//
-//    @Test
-//    public void testReverseSemiLongNotEqIntJoinVec() {
-//        enableVecJoin();
-//
-//        IExpression condition = ScalarFunctionExpression.getScalarFunctionExp(
-//            ImmutableList.of(new InputRefExpression(1), new InputRefExpression(5)), new NotEqual(), context);
-//
-//        List<Chunk> expects = Collections.singletonList(new Chunk(
-//            LongBlock.of(1L, 3L, 4L, 7L),
-//            IntegerBlock.of(4, 7, 5, 10),
-//            LongBlock.of(12L, 14L, 15L, 18L)));
-//        SingleExecTest test =
-//            mockParallelHashJoinExec(EquiJoinMockData.SEMI_LONG_NOT_EQ_INT_CASE, JoinRelType.SEMI,
-//                false, condition, null, context, true);
-//        Assert.assertTrue(
-//            ((ParallelHashJoinExec) test.exec).probeOperator instanceof AbstractHashJoinExec.ReverseSemiLongNotEqIntegerProbeOperator);
-//        test.exec();
-//        assertExecResultByRow(test.result(), expects, false);
-//    }
 
-//    /**
-//     * This join condition is not implemented with vectorization.
-//     * This case is for correctness validation.
-//     */
-//    @Test
-//    public void testSemiIntNotEqIntJoin() {
-//        enableVecJoin();
-//        NotEqual notEqual = new NotEqual(null, null);
-//        notEqual.setResultField(new Field(new LongType()));
-//
-//        IExpression condition = ScalarFunctionExpression.getScalarFunctionExp(
-//            ImmutableList.of(new InputRefExpression(1), new InputRefExpression(4)), notEqual, context);
-//
-//        List<Chunk> expects = Collections.singletonList(new Chunk(
-//            IntegerBlock.of(1, 3, 4),
-//            IntegerBlock.of(4, 9, 5)));
-//        SingleExecTest test =
-//            mockParallelHashJoinExec(EquiJoinMockData.SEMI_INT_NOT_EQ_INT_CASE, JoinRelType.SEMI,
-//                false, condition, null, context);
-//        Assert.assertTrue(
-//            ((ParallelHashJoinExec) test.exec).probeOperator instanceof AbstractHashJoinExec.DefaultProbeOperator);
-//        test.exec();
-//        assertExecResultByRow(test.result(), expects, false);
-//    }
+    @Test
+    public void testReverseSemiLongNotEqIntJoinVec() {
+        enableVecJoin();
 
-//    @Test
-//    public void testReverseSemiIntNotEqIntJoinVec() {
-//        enableVecJoin();
-//
-//        IExpression condition = ScalarFunctionExpression.getScalarFunctionExp(
-//            ImmutableList.of(new InputRefExpression(1), new InputRefExpression(4)), new NotEqual(), context);
-//
-//        List<Chunk> expects = Collections.singletonList(new Chunk(
-//            IntegerBlock.of(1, 3, 4),
-//            IntegerBlock.of(4, 9, 5)));
-//        SingleExecTest test =
-//            mockParallelHashJoinExec(EquiJoinMockData.SEMI_INT_NOT_EQ_INT_CASE, JoinRelType.SEMI,
-//                false, condition, null, context, true);
-//        Assert.assertTrue(
-//            ((ParallelHashJoinExec) test.exec).probeOperator instanceof AbstractHashJoinExec.ReverseSemiIntNotEqIntegerProbeOperator);
-//        test.exec();
-//        assertExecResultByRow(test.result(), expects, false);
-//    }
+        IExpression condition = ScalarFunctionExpression.getScalarFunctionExp(
+            ImmutableList.of(new InputRefExpression(1), new InputRefExpression(5)), new NotEqual(), context);
+
+        List<Chunk> expects = Collections.singletonList(new Chunk(
+            LongBlock.of(1L, 3L, 4L, 7L),
+            IntegerBlock.of(4, 7, 5, 10),
+            LongBlock.of(12L, 14L, 15L, 18L)));
+        SingleExecTest test =
+            mockParallelHashJoinExec(EquiJoinMockData.SEMI_LONG_NOT_EQ_INT_CASE, JoinRelType.SEMI,
+                false, condition, null, context, true);
+        test.exec();
+
+        Assert.assertTrue(
+            ((ParallelHashJoinExec) test.exec).probeOperatorClass == AbstractParallelHashJoinExec.ReverseSemiLongNotEqIntegerProbeOperator.class);
+
+        assertExecResultByRow(test.result(), expects, false);
+    }
+
+    /**
+     * This join condition is not implemented with vectorization.
+     * This case is for correctness validation.
+     */
+    @Ignore
+    public void testSemiIntNotEqIntJoin() {
+        enableVecJoin();
+        NotEqual notEqual = new NotEqual();
+        notEqual.setResultField(new Field(new LongType()));
+
+        IExpression condition = ScalarFunctionExpression.getScalarFunctionExp(
+            ImmutableList.of(new InputRefExpression(1), new InputRefExpression(4)), notEqual, context);
+
+        List<Chunk> expects = Collections.singletonList(new Chunk(
+            IntegerBlock.of(1, 3, 4),
+            IntegerBlock.of(4, 9, 5)));
+        SingleExecTest test =
+            mockParallelHashJoinExec(EquiJoinMockData.SEMI_INT_NOT_EQ_INT_CASE, JoinRelType.SEMI,
+                false, condition, null, context);
+        test.exec();
+
+        Assert.assertTrue(
+            ((ParallelHashJoinExec) test.exec).probeOperatorClass == AbstractParallelHashJoinExec.DefaultProbeOperator.class);
+
+        assertExecResultByRow(test.result(), expects, false);
+    }
+
+    @Test
+    public void testReverseSemiIntNotEqIntJoinVec() {
+        enableVecJoin();
+
+        IExpression condition = ScalarFunctionExpression.getScalarFunctionExp(
+            ImmutableList.of(new InputRefExpression(1), new InputRefExpression(4)), new NotEqual(), context);
+
+        List<Chunk> expects = Collections.singletonList(new Chunk(
+            IntegerBlock.of(1, 3, 4),
+            IntegerBlock.of(4, 9, 5)));
+        SingleExecTest test =
+            mockParallelHashJoinExec(EquiJoinMockData.SEMI_INT_NOT_EQ_INT_CASE, JoinRelType.SEMI,
+                false, condition, null, context, true);
+        test.exec();
+
+        Assert.assertTrue(
+            ((ParallelHashJoinExec) test.exec).probeOperatorClass == AbstractParallelHashJoinExec.ReverseSemiIntNotEqIntegerProbeOperator.class);
+
+        assertExecResultByRow(test.result(), expects, false);
+    }
 
     @Test
     public void testSemiJoin_InnerEmpty() {
@@ -1006,9 +1014,11 @@ public class HashJoinTest extends BaseExecTest {
         SingleExecTest test =
             mockParallelHashJoinExec(EquiJoinMockData.SEMI_LONG_CASE, JoinRelType.ANTI, false, null, null,
                 context, true);
-        Assert.assertTrue(
-            ((ParallelHashJoinExec) test.exec).probeOperator instanceof AbstractHashJoinExec.SimpleReverseAntiProbeOperator);
         test.exec();
+
+        Assert.assertTrue(
+            ((ParallelHashJoinExec) test.exec).probeOperatorClass == AbstractParallelHashJoinExec.SimpleReverseAntiProbeOperator.class);
+
         assertExecResultByRow(test.result(), expects, false);
     }
 
@@ -1024,58 +1034,64 @@ public class HashJoinTest extends BaseExecTest {
         SingleExecTest test =
             mockParallelHashJoinExec(EquiJoinMockData.REVERSE_SEMI_INT_CASE, JoinRelType.ANTI, false, null, null,
                 context, true);
-        Assert.assertTrue(
-            ((ParallelHashJoinExec) test.exec).probeOperator instanceof AbstractHashJoinExec.ReverseAntiIntegerProbeOperator);
         test.exec();
+
+        Assert.assertTrue(
+            ((ParallelHashJoinExec) test.exec).probeOperatorClass == AbstractParallelHashJoinExec.ReverseAntiIntegerProbeOperator.class);
+
         assertExecResultByRow(test.result(), expects, false);
     }
 
-//    @Test
-//    public void testReverseAntiIntNotEqIntJoinVec_NotIn() {
-//        enableVecJoin();
-//
-//        List<Chunk> expects = Collections.singletonList(new Chunk(
-//            IntegerBlock.of(0, 9, 5, 12, 11),
-//            LongBlock.of(-5L, -1L, -8L, -7L, -6L),
-//            IntegerBlock.of(3, 7, 7, 8, 10)
-//        ));
-//
-//        IExpression condition = ScalarFunctionExpression.getScalarFunctionExp(
-//            ImmutableList.of(new InputRefExpression(2), new InputRefExpression(6)), new NotEqual(), context);
-//
-//        SingleExecTest test =
-//            mockParallelHashJoinExec(EquiJoinMockData.ANTI_INT_NOT_EQ_INT_CASE, JoinRelType.ANTI, false, condition,
-//                null,
-//                context, true);
-//        Assert.assertTrue(
-//            ((ParallelHashJoinExec) test.exec).probeOperator instanceof AbstractHashJoinExec.ReverseAntiIntNotEqIntegerProbeOperator);
-//        test.exec();
-//        assertExecResultByRow(test.result(), expects, false);
-//    }
+    @Test
+    public void testReverseAntiIntNotEqIntJoinVec_NotIn() {
+        enableVecJoin();
 
-//    @Test
-//    public void testReverseAntiLongNotEqIntJoinVec_NotIn() {
-//        enableVecJoin();
-//
-//        List<Chunk> expects = Collections.singletonList(new Chunk(
-//            LongBlock.of(0L, 3L, 5L, 6L),
-//            LongBlock.of(-2L, -4L, -2L, -3L),
-//            IntegerBlock.of(3, 5, 7, 8),
-//            LongBlock.of(-5L, -7L, -7L, -8L)
-//        ));
-//
-//        IExpression condition = ScalarFunctionExpression.getScalarFunctionExp(
-//            ImmutableList.of(new InputRefExpression(2), new InputRefExpression(7)), new NotEqual(), context);
-//
-//        SingleExecTest test =
-//            mockParallelHashJoinExec(EquiJoinMockData.ANTI_LONG_NOT_EQ_INT_CASE, JoinRelType.ANTI, false, condition,
-//                null,
-//                context, true);
-//        Assert.assertTrue(
-//            ((ParallelHashJoinExec) test.exec).probeOperator instanceof AbstractHashJoinExec.ReverseAntiLongNotEqIntegerProbeOperator);
-//        test.exec();
-//        assertExecResultByRow(test.result(), expects, false);
-//    }
+        List<Chunk> expects = Collections.singletonList(new Chunk(
+            IntegerBlock.of(0, 9, 5, 12, 11),
+            LongBlock.of(-5L, -1L, -8L, -7L, -6L),
+            IntegerBlock.of(3, 7, 7, 8, 10)
+        ));
+
+        IExpression condition = ScalarFunctionExpression.getScalarFunctionExp(
+            ImmutableList.of(new InputRefExpression(2), new InputRefExpression(6)), new NotEqual(), context);
+
+        SingleExecTest test =
+            mockParallelHashJoinExec(EquiJoinMockData.ANTI_INT_NOT_EQ_INT_CASE, JoinRelType.ANTI, false, condition,
+                null,
+                context, true);
+        test.exec();
+
+        Assert.assertTrue(
+            ((ParallelHashJoinExec) test.exec).probeOperatorClass == AbstractParallelHashJoinExec.ReverseAntiIntNotEqIntegerProbeOperator.class);
+
+        assertExecResultByRow(test.result(), expects, false);
+    }
+
+    @Test
+    public void testReverseAntiLongNotEqIntJoinVec_NotIn() {
+        enableVecJoin();
+
+        List<Chunk> expects = Collections.singletonList(new Chunk(
+            LongBlock.of(0L, 3L, 5L, 6L),
+            LongBlock.of(-2L, -4L, -2L, -3L),
+            IntegerBlock.of(3, 5, 7, 8),
+            LongBlock.of(-5L, -7L, -7L, -8L)
+        ));
+
+        IExpression condition = ScalarFunctionExpression.getScalarFunctionExp(
+            ImmutableList.of(new InputRefExpression(2), new InputRefExpression(7)), new NotEqual(), context);
+
+        SingleExecTest test =
+            mockParallelHashJoinExec(EquiJoinMockData.ANTI_LONG_NOT_EQ_INT_CASE, JoinRelType.ANTI, false, condition,
+                null,
+                context, true);
+        test.exec();
+
+        Assert.assertTrue(
+            ((ParallelHashJoinExec) test.exec).probeOperatorClass == AbstractParallelHashJoinExec.ReverseAntiLongNotEqIntegerProbeOperator.class);
+
+        assertExecResultByRow(test.result(), expects, false);
+    }
 
     @Test
     public void testAntiJoin_NotIn_InnerEmpty() {

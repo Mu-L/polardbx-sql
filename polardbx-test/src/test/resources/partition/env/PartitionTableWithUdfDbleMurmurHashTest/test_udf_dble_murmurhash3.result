@@ -1,0 +1,16 @@
+## DISABLE_FAST_SQL_PARSER
+select unitmurhash16('0')
+unitmurhash16('0')
+14
+select unitmurhash16('1')
+unitmurhash16('1')
+8
+select unitmurhash16('2')
+unitmurhash16('2')
+12
+select unitmurhash16('3')
+unitmurhash16('3')
+3
+select unitmurhash16('4')
+unitmurhash16('4')
+13

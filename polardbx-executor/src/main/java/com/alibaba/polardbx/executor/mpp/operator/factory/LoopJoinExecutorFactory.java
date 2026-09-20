@@ -67,8 +67,9 @@ public class LoopJoinExecutorFactory extends ExecutorFactory {
 
     private synchronized List<Executor> createAllExecutor(ExecutionContext context) {
         if (executors.isEmpty()) {
-            NestedLoopJoinExec.Synchronizer synchronizer = new NestedLoopJoinExec.Synchronizer();
+            NestedLoopJoinExec.Synchronizer synchronizer = new NestedLoopJoinExec.Synchronizer(probeParallelism);
             for (int i = 0; i < probeParallelism; i++) {
+                final int operatorId = i;
                 final Executor inner = getInputs().get(0).createExecutor(context, i);
                 final Executor outerInput = getInputs().get(1).createExecutor(context, i);
                 IExpression otherCondition = convertExpression(otherCond, context);
@@ -79,7 +80,7 @@ public class LoopJoinExecutorFactory extends ExecutorFactory {
                 }
                 NestedLoopJoinExec exec = new NestedLoopJoinExec(outerInput, inner, join.getJoinType(),
                     maxOneRow, otherCondition, antiJoinOperands, convertExpression(antiCondition, context), context,
-                    synchronizer
+                    synchronizer, operatorId
                 );
                 exec.setStreamJoin(streamJoin);
                 registerRuntimeStat(exec, join, context);

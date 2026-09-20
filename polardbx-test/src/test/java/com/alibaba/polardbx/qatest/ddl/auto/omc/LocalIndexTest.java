@@ -40,10 +40,11 @@ public class LocalIndexTest extends DDLBaseNewDBTestCase {
     @Before
     public void beforeMethod() {
         org.junit.Assume.assumeTrue(supportsAlterType);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "set ENABLE_OMC_30 = false");
     }
 
     private static final String OMC_FORCE_TYPE_CONVERSION = "OMC_FORCE_TYPE_CONVERSION=TRUE";
-    private static final String OMC_ALTER_TABLE_WITH_GSI = "OMC_ALTER_TABLE_WITH_GSI=TRUE";
+    private static final String OMC_DISABLE_30 = "ENABLE_OMC_30=false";
 
     private static String buildCmdExtra(String... params) {
         if (0 == params.length) {
@@ -105,8 +106,9 @@ public class LocalIndexTest extends DDLBaseNewDBTestCase {
 
         assertSameIndexInfo(tableName);
 
+        String hint = buildCmdExtra(OMC_DISABLE_30);
         for (int i = 0; i < params.length; i++) {
-            String alterSql = String.format(params[i], tableName);
+            String alterSql = hint + String.format(params[i], tableName);
             execDdlWithRetry(tddlDatabase1, tableName, alterSql + USE_OMC_ALGORITHM, tddlConnection);
             JdbcUtil.executeUpdateSuccess(mysqlConnection, alterSql);
             assertSameIndexInfo(tableName);
@@ -190,11 +192,10 @@ public class LocalIndexTest extends DDLBaseNewDBTestCase {
         assertSameIndexInfoClusteredIndex(getRealGsiName(tddlConnection, tableName, gsiTableName),
             getRealGsiName(tddlConnection, refTableName, refGsiTableName), false);
 
+        String hint = buildCmdExtra(OMC_DISABLE_30);
         for (int i = 0; i < params.length; i++) {
-            JdbcUtil.executeUpdateSuccess(tddlConnection,
-                buildCmdExtra(OMC_ALTER_TABLE_WITH_GSI) + String.format(params[i], refTableName));
-            execDdlWithRetry(tddlDatabase1, tableName,
-                buildCmdExtra(OMC_ALTER_TABLE_WITH_GSI) + String.format(params[i], tableName) + USE_OMC_ALGORITHM,
+            JdbcUtil.executeUpdateSuccess(tddlConnection, String.format(params[i], refTableName));
+            execDdlWithRetry(tddlDatabase1, tableName, hint + String.format(params[i], tableName) + USE_OMC_ALGORITHM,
                 tddlConnection);
 
             assertSameIndexInfoClusteredIndex(tableName, refTableName, false);
@@ -247,7 +248,8 @@ public class LocalIndexTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateSuccess(tddlConnection, String.format(createIndexSqlTemplate, tableName));
         JdbcUtil.executeUpdateSuccess(mysqlConnection, String.format(createIndexSqlTemplate, tableName));
 
-        String alterSqlTemplate = "alter table %s change column b c bigint";
+        String hint = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION);
+        String alterSqlTemplate = hint + "alter table %s change column b c bigint";
         execDdlWithRetry(tddlDatabase1, tableName, String.format(alterSqlTemplate, tableName) + USE_OMC_ALGORITHM,
             tddlConnection);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, String.format(alterSqlTemplate, tableName));
@@ -274,7 +276,7 @@ public class LocalIndexTest extends DDLBaseNewDBTestCase {
         assertSameIndexInfo(tableName);
 
         String alterSqlTemplate =
-            buildCmdExtra(OMC_FORCE_TYPE_CONVERSION) + "alter table %s modify column b bigint";
+            buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30) + "alter table %s modify column b bigint";
         execDdlWithRetry(tddlDatabase1, tableName, String.format(alterSqlTemplate, tableName) + USE_OMC_ALGORITHM,
             tddlConnection);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, String.format(alterSqlTemplate, tableName));
@@ -300,7 +302,8 @@ public class LocalIndexTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTableSql + partitionDef);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, createTableSql);
 
-        String alterSqlTemplate = "alter table %s change column b c bigint";
+        String hint = buildCmdExtra(OMC_DISABLE_30);
+        String alterSqlTemplate = hint + "alter table %s change column b c bigint";
         execDdlWithRetry(tddlDatabase1, tableName, String.format(alterSqlTemplate, tableName) + USE_OMC_ALGORITHM,
             tddlConnection);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, String.format(alterSqlTemplate, tableName));
@@ -327,7 +330,7 @@ public class LocalIndexTest extends DDLBaseNewDBTestCase {
         assertSameIndexInfo(tableName);
 
         String alterSqlTemplate =
-            buildCmdExtra(OMC_FORCE_TYPE_CONVERSION) + "alter table %s modify column b bigint";
+            buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30) + "alter table %s modify column b bigint";
         execDdlWithRetry(tddlDatabase1, tableName, String.format(alterSqlTemplate, tableName) + USE_OMC_ALGORITHM,
             tddlConnection);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, String.format(alterSqlTemplate, tableName));
@@ -370,8 +373,8 @@ public class LocalIndexTest extends DDLBaseNewDBTestCase {
         assertSameIndexInfoClusteredIndex(getRealGsiName(tddlConnection, tableName, gsiTableName),
             getRealGsiName(tddlConnection, refTableName, refGsiTableName), false);
 
-        String alterSqlTemplate =
-            buildCmdExtra(OMC_ALTER_TABLE_WITH_GSI) + "alter table %s change column b c bigint";
+        String hint = buildCmdExtra(OMC_DISABLE_30);
+        String alterSqlTemplate = hint + "alter table %s change column b c bigint";
         execDdlWithRetry(tddlDatabase1, tableName, String.format(alterSqlTemplate, tableName) + USE_OMC_ALGORITHM,
             tddlConnection);
         JdbcUtil.executeUpdateSuccess(tddlConnection, String.format(alterSqlTemplate, refTableName));
@@ -404,7 +407,7 @@ public class LocalIndexTest extends DDLBaseNewDBTestCase {
         assertSameIndexInfoClusteredIndex(getRealGsiName(tddlConnection, tableName, gsiTableName),
             getRealGsiName(tddlConnection, refTableName, refGsiTableName), false);
 
-        String alterSqlTemplate = buildCmdExtra(OMC_ALTER_TABLE_WITH_GSI, OMC_FORCE_TYPE_CONVERSION)
+        String alterSqlTemplate = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + "alter table %s modify column b bigint";
         execDdlWithRetry(tddlDatabase1, tableName, String.format(alterSqlTemplate, tableName) + USE_OMC_ALGORITHM,
             tddlConnection);
@@ -444,7 +447,8 @@ public class LocalIndexTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateSuccess(tddlConnection, String.format(createIndexSqlTemplate, tableName));
         JdbcUtil.executeUpdateSuccess(mysqlConnection, String.format(createIndexSqlTemplate, tableName));
 
-        String alterSqlTemplate = "alter table %s change column b c bigint";
+        String hint = buildCmdExtra(OMC_DISABLE_30);
+        String alterSqlTemplate = hint + "alter table %s change column b c bigint";
         JdbcUtil.executeUpdateSuccess(tddlConnection, String.format(alterSqlTemplate, tableName) + USE_OMC_ALGORITHM);
     }
 
@@ -466,7 +470,7 @@ public class LocalIndexTest extends DDLBaseNewDBTestCase {
         assertSameIndexInfo(tableName);
 
         String alterSqlTemplate =
-            buildCmdExtra(OMC_FORCE_TYPE_CONVERSION) + "alter table %s modify column b bigint";
+            buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30) + "alter table %s modify column b bigint";
         execDdlWithRetry(tddlDatabase1, tableName, String.format(alterSqlTemplate, tableName) + USE_OMC_ALGORITHM,
             tddlConnection);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, String.format(alterSqlTemplate, tableName));
@@ -491,7 +495,8 @@ public class LocalIndexTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTableSql);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, createTableSql);
 
-        String alterSqlTemplate = "alter table %s change column b c bigint";
+        String hint = buildCmdExtra(OMC_DISABLE_30);
+        String alterSqlTemplate = hint + "alter table %s change column b c bigint";
         execDdlWithRetry(tddlDatabase1, tableName, String.format(alterSqlTemplate, tableName) + USE_OMC_ALGORITHM,
             tddlConnection);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, String.format(alterSqlTemplate, tableName));
@@ -517,7 +522,7 @@ public class LocalIndexTest extends DDLBaseNewDBTestCase {
         assertSameIndexInfo(tableName);
 
         String alterSqlTemplate =
-            buildCmdExtra(OMC_FORCE_TYPE_CONVERSION) + "alter table %s modify column b bigint";
+            buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30) + "alter table %s modify column b bigint";
         execDdlWithRetry(tddlDatabase1, tableName, String.format(alterSqlTemplate, tableName) + USE_OMC_ALGORITHM,
             tddlConnection);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, String.format(alterSqlTemplate, tableName));
@@ -560,8 +565,8 @@ public class LocalIndexTest extends DDLBaseNewDBTestCase {
         assertSameIndexInfoClusteredIndex(getRealGsiName(tddlConnection, tableName, gsiTableName),
             getRealGsiName(tddlConnection, refTableName, refGsiTableName), true);
 
-        String alterSqlTemplate =
-            buildCmdExtra(OMC_ALTER_TABLE_WITH_GSI) + "alter table %s change column b c bigint";
+        String hint = buildCmdExtra(OMC_DISABLE_30);
+        String alterSqlTemplate = hint + "alter table %s change column b c bigint";
         execDdlWithRetry(tddlDatabase1, tableName, String.format(alterSqlTemplate, tableName) + USE_OMC_ALGORITHM,
             tddlConnection);
         JdbcUtil.executeUpdateSuccess(tddlConnection, String.format(alterSqlTemplate, refTableName));
@@ -594,7 +599,7 @@ public class LocalIndexTest extends DDLBaseNewDBTestCase {
         assertSameIndexInfoClusteredIndex(getRealGsiName(tddlConnection, tableName, gsiTableName),
             getRealGsiName(tddlConnection, refTableName, refGsiTableName), true);
 
-        String alterSqlTemplate = buildCmdExtra(OMC_ALTER_TABLE_WITH_GSI, OMC_FORCE_TYPE_CONVERSION)
+        String alterSqlTemplate = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + "alter table %s modify column b bigint";
         execDdlWithRetry(tddlDatabase1, tableName, String.format(alterSqlTemplate, tableName) + USE_OMC_ALGORITHM,
             tddlConnection);
@@ -629,7 +634,7 @@ public class LocalIndexTest extends DDLBaseNewDBTestCase {
 
         try {
             setSqlMode("", conn);
-            String hint = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION);
+            String hint = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30);
             String alterSql =
                 hint + String.format("alter table %s modify column b bigint, algorithm=omc", tableName);
             JdbcUtil.executeUpdateFailed(conn, alterSql, "");

@@ -16,10 +16,7 @@ public class TriggerSyncPointTrx extends BaseInnerProcedure {
         cursor.addColumn("RESULT", DataTypes.StringType);
 
         SyncPointExecutor executor = SyncPointExecutor.getInstance();
-        if (executor.execute()) {
-            cursor.addRow(new Object[] {"OK"});
-        } else {
-            cursor.addRow(new Object[] {"FAIL"});
-        }
+        long tso = executor.execute(0);
+        cursor.addRow(new Object[] {tso});
     }
 }

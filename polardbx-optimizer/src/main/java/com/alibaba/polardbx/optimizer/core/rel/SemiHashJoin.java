@@ -341,6 +341,11 @@ public class SemiHashJoin extends SemiJoin implements PhysicalNode {
         double cpu = buildWeight * buildRowCount + probeWeight * probeRowCount;
         double memory = MemoryEstimator.estimateRowSizeInHashTable(build.getRowType()) * buildRowCount;
 
+        RelOptCost cost = CBOUtil.compensationWeightForJoin(this, mq);
+        if (cost != null) {
+            return planner.getCostFactory().makeCost(rowCount, cpu, memory, 0, 0).plus(cost);
+        }
+
         return planner.getCostFactory().makeCost(rowCount, cpu, memory, 0, 0);
     }
 

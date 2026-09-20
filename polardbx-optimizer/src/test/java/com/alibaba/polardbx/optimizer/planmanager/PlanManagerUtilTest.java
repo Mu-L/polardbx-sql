@@ -4,19 +4,29 @@ import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.ParameterMethod;
 import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.common.jdbc.RawString;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
+import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.common.utils.Pair;
+import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
+import com.alibaba.polardbx.gms.metadb.external.ExternalCatalogManager;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.optimizer.BaseRuleTest;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
+import com.alibaba.polardbx.optimizer.core.planner.Planner;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.parse.FastsqlParser;
+import com.alibaba.polardbx.optimizer.parse.SqlParameterizeUtils;
+import com.alibaba.polardbx.optimizer.parse.bean.SqlParameterized;
 import com.clearspring.analytics.util.Lists;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import org.apache.calcite.adapter.java.JavaTypeFactory;
 import org.apache.calcite.jdbc.JavaTypeFactoryImpl;
+import org.apache.calcite.plan.RelOptTable;
+import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.logical.LogicalFilter;
 import org.apache.calcite.rel.logical.LogicalTableScan;
 import org.apache.calcite.rel.type.RelDataType;
@@ -28,10 +38,12 @@ import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.junit.Assert;
 import org.junit.Test;
+import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -42,7 +54,9 @@ import static com.alibaba.polardbx.optimizer.planmanager.PlanManagerUtil.getRexN
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.AND;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -52,33 +66,123 @@ import static org.mockito.Mockito.when;
  */
 public class PlanManagerUtilTest extends BaseRuleTest {
 
+    private SqlParameterized parameterize(String sql) {
+        return SqlParameterizeUtils.parameterize(sql);
+    }
+
+    private ExecutionContext executionContext(String schemaName) {
+        ExecutionContext ec = new ExecutionContext(schemaName);
+        Map<String, Object> props = new HashMap<>();
+        props.put(ConnectionParams.PLAN_CACHE.getName(), "true");
+        props.put(ConnectionParams.MAX_CACHE_PARAMS.getName(), "100");
+        ec.setParamManager(new ParamManager(props));
+        return ec;
+    }
+
+    @Test
+    public void useSpmReturnsFalseForExternalCurrentSchema() {
+        SqlParameterized sqlParameterized = parameterize("select * from t");
+        String schemaName = ExternalNameValidator.encodeSchemaName("ext_cat", "ext_db");
+
+        try (MockedStatic<ExternalCatalogManager> mocked = mockStatic(ExternalCatalogManager.class)) {
+            ExternalCatalogManager manager = Mockito.mock(ExternalCatalogManager.class);
+            mocked.when(ExternalCatalogManager::getInstance).thenReturn(manager);
+            Mockito.when(manager.exists("ext_cat")).thenReturn(true);
+
+            Assert.assertFalse(PlanManagerUtil.useSpm(sqlParameterized, executionContext(schemaName)));
+        }
+    }
+
+    @Test
+    public void useSpmReturnsFalseForThreePartExternalTable() {
+        ExecutionContext ec = executionContext("normal_schema");
+
+        try (MockedStatic<ExternalCatalogManager> mocked = mockStatic(ExternalCatalogManager.class)) {
+            ExternalCatalogManager manager = Mockito.mock(ExternalCatalogManager.class);
+            mocked.when(ExternalCatalogManager::getInstance).thenReturn(manager);
+            Mockito.when(manager.exists("ext_cat")).thenReturn(true);
+
+            SqlParameterized sqlParameterized = parameterize("select * from ext_cat.ext_db.orders");
+
+            Assert.assertFalse(PlanManagerUtil.useSpm(sqlParameterized, ec));
+        }
+    }
+
+    @Test
+    public void useSpmReturnsFalseForFilesTableSource() {
+        SqlParameterized sqlParameterized =
+            parameterize("select * from files('connector'='mock', 'mock.columns'='v:int')");
+        ExecutionContext ec = executionContext("normal_schema");
+
+        Assert.assertFalse(PlanManagerUtil.useSpm(sqlParameterized, ec));
+    }
+
+    @Test
+    public void useSpmReturnsFalseForNativeQueryTableSource() {
+        ExecutionContext ec = executionContext("normal_schema");
+
+        try (MockedStatic<ExternalCatalogManager> mocked = mockStatic(ExternalCatalogManager.class)) {
+            ExternalCatalogManager manager = Mockito.mock(ExternalCatalogManager.class);
+            mocked.when(ExternalCatalogManager::getInstance).thenReturn(manager);
+            Mockito.when(manager.exists("ext_cat")).thenReturn(true);
+
+            SqlParameterized sqlParameterized =
+                parameterize("select * from table(ext_cat.native_query('select 1 as v'))");
+
+            Assert.assertFalse(PlanManagerUtil.useSpm(sqlParameterized, ec));
+        }
+    }
+
+    @Test
+    public void useSpmKeepsPlanCacheForInternalTable() {
+        SqlParameterized sqlParameterized = parameterize("select * from internal_table");
+        ExecutionContext ec = executionContext("normal_schema");
+
+        Assert.assertTrue(PlanManagerUtil.useSpm(sqlParameterized, ec));
+    }
+
     @Test
     public void testRelNodeToJsonWithNullPlan() {
         assert null == PlanManagerUtil.relNodeToJson(null, false);
     }
 
     @Test
+    public void testDuplicateColumn() {
+        String sql1 = "select EMP_SK,EMP_SK from dim_saleman_info where SALEMAN_SK=1";
+        SqlNode sqlNode1 = new FastsqlParser().parse(sql1).get(0);
+        try (MockedStatic<InstConfUtil> instConfUtilMockedStatic = mockStatic(InstConfUtil.class)) {
+            when(InstConfUtil.getBool(any())).thenReturn(false);
+            Assert.assertFalse(PlanManagerUtil.containsDuplicateCol(sqlNode1));
+
+            when(InstConfUtil.getBool(any())).thenReturn(true);
+            Assert.assertTrue(PlanManagerUtil.containsDuplicateCol(sqlNode1));
+
+            sql1 = "select count(1) from (select EMP_SK,EMP_SK from dim_saleman_info where SALEMAN_SK=1)";
+            sqlNode1 = new FastsqlParser().parse(sql1).get(0);
+            Assert.assertTrue(PlanManagerUtil.containsDuplicateCol(sqlNode1));
+
+            sql1 = "select count(1) from (select EMP_SK,EMP_SK1 from dim_saleman_info where SALEMAN_SK=1)";
+            sqlNode1 = new FastsqlParser().parse(sql1).get(0);
+            Assert.assertFalse(PlanManagerUtil.containsDuplicateCol(sqlNode1));
+
+            sql1 = "select count(1) from (select EMP_SK,EMP_SK1 as EMP_SK from dim_saleman_info where SALEMAN_SK=1)";
+            sqlNode1 = new FastsqlParser().parse(sql1).get(0);
+            Assert.assertTrue(PlanManagerUtil.containsDuplicateCol(sqlNode1));
+
+            sql1 =
+                "select count(1) from (select 1+1 as EMP_SK,EMP_SK1 as EMP_SK from dim_saleman_info where SALEMAN_SK=1)";
+            sqlNode1 = new FastsqlParser().parse(sql1).get(0);
+            Assert.assertTrue(PlanManagerUtil.containsDuplicateCol(sqlNode1));
+        }
+    }
+
+    @Test
     public void testGettingTableSetFromAst() {
-        String sql1 = "WITH tb AS (\n"
-            + "  SELECT\n"
-            + "    a.c1 x, b.c2 y\n"
-            + "  FROM \n"
-            + "    db1.t1 a\n"
-            + "    JOIN db4.t2 b on a.name=b.name\n"
-            + ")\n"
-            + "\n"
-            + "SELECT \n"
-            + "  (tb.x + 1),\n"
-            + "  concat(tb.y, 'xx', a.name),\n"
-            + "  (select max(salary) from db5.t3),\n"
-            + "  b.salary\n"
-            + "FROM \n"
-            + "  db2.t1 a \n"
-            + "  JOIN db3.t2 b on a.id = b.id\n"
-            + "  JOIN tb c on a.age = c.age\n"
-            + "WHERE\n"
-            + "\tb.val > (select avg(val) from db6.t1)\n"
-            + "  AND NOT EXISTS ( SELECT 1 FROM t1 d WHERE d.id > 0);";
+        String sql1 = "WITH tb AS (\n" + "  SELECT\n" + "    a.c1 x, b.c2 y\n" + "  FROM \n" + "    db1.t1 a\n"
+            + "    JOIN db4.t2 b on a.name=b.name\n" + ")\n" + "\n" + "SELECT \n" + "  (tb.x + 1),\n"
+            + "  concat(tb.y, 'xx', a.name),\n" + "  (select max(salary) from db5.t3),\n" + "  b.salary\n" + "FROM \n"
+            + "  db2.t1 a \n" + "  JOIN db3.t2 b on a.id = b.id\n" + "  JOIN tb c on a.age = c.age\n" + "WHERE\n"
+            + "\tb.val > (select avg(val) from db6.t1)\n" + "  AND NOT EXISTS ( SELECT 1 FROM t1 d WHERE d.id > 0);";
         SqlNode sqlNode1 = new FastsqlParser().parse(sql1).get(0);
         Set<Pair<String, String>> tableSet1 = PlanManagerUtil.getTableSetFromAst(sqlNode1);
         Set<Pair<String, String>> real1 = new HashSet<>();
@@ -201,16 +305,14 @@ public class PlanManagerUtilTest extends BaseRuleTest {
                 .put(2, new ParameterContext(ParameterMethod.setInt, new Object[] {2, 2}));
             executionContext.getParams().getCurrentParameter()
                 .put(3, new ParameterContext(ParameterMethod.setObject1, new Object[] {
-                    3, new RawString(
-                    ImmutableList.of("1", "2", "3"))}));
+                    3, new RawString(ImmutableList.of("1", "2", "3"))}));
             executionContext.getParams().getCurrentParameter()
                 .put(4, new ParameterContext(ParameterMethod.setObject1, new Object[] {
-                    4, new RawString(
-                    ImmutableList.of(1, 2, 3))}));
+                    4, new RawString(ImmutableList.of(1, 2, 3))}));
 
             ExecutionPlan plan = mock(ExecutionPlan.class);
-            LogicalTableScan scan = LogicalTableScan.create(relOptCluster,
-                schema.getTableForMember(Arrays.asList("optest", "emp")));
+            LogicalTableScan scan =
+                LogicalTableScan.create(relOptCluster, schema.getTableForMember(Arrays.asList("optest", "emp")));
             LogicalView logicalView = LogicalView.create(scan, scan.getTable());
             final RexBuilder rexBuilder = relOptCluster.getRexBuilder();
             JavaTypeFactory typeFactory = new JavaTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
@@ -222,33 +324,28 @@ public class PlanManagerUtilTest extends BaseRuleTest {
                 rexBuilder.makeFieldAccess(rexBuilder.makeRangeReference(logicalView), "userId", true),
                 rexBuilder.makeDynamicParam(rowTypeChar, 0));
 
-            condition = rexBuilder.makeCall(AND, condition, rexBuilder.makeCall(SqlStdOperatorTable.EQUALS,
-                rexBuilder.makeDynamicParam(rowTypeChar, 0),
-                rexBuilder.makeFieldAccess(rexBuilder.makeRangeReference(logicalView), "userId", true)
-            ));
+            condition = rexBuilder.makeCall(AND, condition,
+                rexBuilder.makeCall(SqlStdOperatorTable.EQUALS, rexBuilder.makeDynamicParam(rowTypeChar, 0),
+                    rexBuilder.makeFieldAccess(rexBuilder.makeRangeReference(logicalView), "userId", true)));
 
             // varchar = int
-            condition = rexBuilder.makeCall(AND, condition, rexBuilder.makeCall(SqlStdOperatorTable.EQUALS,
-                rexBuilder.makeDynamicParam(rowTypeInt, 1),
-                rexBuilder.makeFieldAccess(rexBuilder.makeRangeReference(logicalView), "name", true)));
+            condition = rexBuilder.makeCall(AND, condition,
+                rexBuilder.makeCall(SqlStdOperatorTable.EQUALS, rexBuilder.makeDynamicParam(rowTypeInt, 1),
+                    rexBuilder.makeFieldAccess(rexBuilder.makeRangeReference(logicalView), "name", true)));
 
             condition = rexBuilder.makeCall(AND, condition, rexBuilder.makeCall(SqlStdOperatorTable.EQUALS,
                 rexBuilder.makeFieldAccess(rexBuilder.makeRangeReference(logicalView), "name", true),
                 rexBuilder.makeDynamicParam(rowTypeInt, 1)));
 
             // int IN ROW(varchar)
-            condition = rexBuilder.makeCall(AND, condition,
-                rexBuilder.makeCall(SqlStdOperatorTable.IN,
-                    rexBuilder.makeFieldAccess(rexBuilder.makeRangeReference(logicalView), "userId", true),
-                    rexBuilder.makeCall(SqlStdOperatorTable.ROW, rexBuilder.makeDynamicParam(rowTypeChar, 2)))
-            );
+            condition = rexBuilder.makeCall(AND, condition, rexBuilder.makeCall(SqlStdOperatorTable.IN,
+                rexBuilder.makeFieldAccess(rexBuilder.makeRangeReference(logicalView), "userId", true),
+                rexBuilder.makeCall(SqlStdOperatorTable.ROW, rexBuilder.makeDynamicParam(rowTypeChar, 2))));
 
             // varchar IN ROW(int)
-            condition = rexBuilder.makeCall(AND, condition,
-                rexBuilder.makeCall(SqlStdOperatorTable.IN,
-                    rexBuilder.makeFieldAccess(rexBuilder.makeRangeReference(logicalView), "name", true),
-                    rexBuilder.makeCall(SqlStdOperatorTable.ROW, rexBuilder.makeDynamicParam(rowTypeInt, 3)))
-            );
+            condition = rexBuilder.makeCall(AND, condition, rexBuilder.makeCall(SqlStdOperatorTable.IN,
+                rexBuilder.makeFieldAccess(rexBuilder.makeRangeReference(logicalView), "name", true),
+                rexBuilder.makeCall(SqlStdOperatorTable.ROW, rexBuilder.makeDynamicParam(rowTypeInt, 3))));
 
             LogicalFilter filter = LogicalFilter.create(logicalView, condition);
             when(plan.getPlan()).thenReturn(filter);
@@ -312,6 +409,18 @@ public class PlanManagerUtilTest extends BaseRuleTest {
         String actualOutput = PlanManagerUtil.generateTemplateId(input);
 
         assertEquals(expectedOutput.toLowerCase(), actualOutput); // Perform comparison in uppercase for consistency
+    }
+
+    @Test
+    public void testComputeTablesVersion() {
+        int emptyVersio = PlanManagerUtil.computeTablesVersion(Sets.newHashSet(), "optest", new ExecutionContext());
+        Assert.assertTrue(emptyVersio == 1);
+
+        // empty execution context and not exist table
+        Set<Pair<String, String>> schemaTables = Sets.newHashSet();
+        schemaTables.add(Pair.of("optest", "emp"));
+        emptyVersio = PlanManagerUtil.computeTablesVersion(schemaTables, "optest", null);
+        Assert.assertTrue(emptyVersio == 1);
     }
 
     @Test
@@ -428,5 +537,67 @@ public class PlanManagerUtilTest extends BaseRuleTest {
         assertTrue(executionContext.getParams().getCurrentParameter().get(2).getParameterMethod()
             == ParameterMethod.setObject1);
         assertEquals(objList, result.getObjList());
+    }
+
+    @Test
+    public void testGetRexNodeTableNameMap() {
+        String tableName = "table_name";
+        RelNode rel = mock(RelNode.class);
+        Map<LogicalTableScan, RexNode> mockMap = Maps.newHashMap();
+        List<String> tableNames = ImmutableList.of("schema_name", tableName);
+        LogicalTableScan mockScan1 = mock(LogicalTableScan.class);
+        RelOptTable table1 = mock(RelOptTable.class);
+        when(mockScan1.getTable()).thenReturn(table1);
+        when(table1.getQualifiedName()).thenReturn(tableNames);
+        RexNode rex1 = mock(RexNode.class);
+        mockMap.put(mockScan1, rex1);
+        try (MockedStatic<PlanManagerUtil> mockedStatic = mockStatic(PlanManagerUtil.class)) {
+            mockedStatic.when(() -> PlanManagerUtil.getRexNodeTableMap(rel)).thenReturn(mockMap);
+            mockedStatic.when(() -> PlanManagerUtil.getRexNodeTableNameMap(rel)).thenCallRealMethod();
+            Map<String, RexNode> rs = PlanManagerUtil.getRexNodeTableNameMap(rel);
+
+            assert rs.get(tableName) == rex1;
+        }
+    }
+
+    @Test
+    public void testBuildRexNode() {
+        // test in and = expr
+        ExecutionContext executionContext = new ExecutionContext(SCHEMA_NAME);
+
+        String sql = "select * from emp where userid=132";
+        executionContext.setParams(new Parameters());
+        ExecutionPlan plan = Planner.getInstance().plan(sql, executionContext);
+
+        SqlNode sqlNode = PlanInfo.buildExpr("emp.userid=1");
+        Map<String, RexNode> rexNodeTableMap = PlanManagerUtil.getRexNodeTableNameMap(plan.getPlan());
+
+        RexNode rexNode =
+            PlanManagerUtil.buildRexNode(sqlNode, SCHEMA_NAME, rexNodeTableMap, plan.getPlan(),
+                executionContext);
+
+        System.out.println(rexNode);
+        Assert.assertTrue(rexNode.toString().equalsIgnoreCase("=(?0, 1)"));
+
+        sql = "select * from emp where name ='abC'";
+        executionContext.setParams(new Parameters());
+        plan = Planner.getInstance().plan(sql, executionContext);
+
+        sqlNode = PlanInfo.buildExpr("emp.name='1'");
+        rexNodeTableMap = PlanManagerUtil.getRexNodeTableNameMap(plan.getPlan());
+
+        rexNode =
+            PlanManagerUtil.buildRexNode(sqlNode, SCHEMA_NAME, rexNodeTableMap, plan.getPlan(),
+                executionContext);
+
+        System.out.println(rexNode);
+        Assert.assertTrue(rexNode.toString().equalsIgnoreCase("=(?0, '1')"));
+    }
+
+    @Test
+    public void testIsVersionCompatible() {
+        Assert.assertTrue(PlanManagerUtil.isVersionCompatible(1, 1));
+        Assert.assertTrue(PlanManagerUtil.isVersionCompatible(1, 0));
+        Assert.assertFalse(PlanManagerUtil.isVersionCompatible(1, 2));
     }
 }

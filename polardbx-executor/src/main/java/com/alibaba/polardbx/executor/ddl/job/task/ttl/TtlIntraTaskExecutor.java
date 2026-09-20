@@ -12,8 +12,10 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
@@ -44,6 +46,13 @@ public class TtlIntraTaskExecutor extends AbstractLifecycle {
     protected volatile ThreadPoolExecutor deleteTaskExecutor;
     protected TtlIntraTaskExecutorAutoAdjustWorkerSubListener subListener =
         new TtlIntraTaskExecutorAutoAdjustWorkerSubListener();
+
+    /**
+     * Global per-DN semaphore map shared across all TTL tables in batch-resubmit mode.
+     * Key: dnId (case-insensitive storage instance id), Value: Semaphore limiting concurrent workers on that DN.
+     * Kept here (not per-table) so that multiple TTL tables targeting the same DN share the same concurrency budget.
+     */
+    protected final ConcurrentHashMap<String, Semaphore> globalDnSemaphoreMap = new ConcurrentHashMap<>();
 
     protected class TtlIntraTaskExecutorAutoAdjustWorkerSubListener
         implements StorageHaManager.StorageInfoConfigSubListener {
@@ -153,6 +162,25 @@ public class TtlIntraTaskExecutor extends AbstractLifecycle {
     }
 
     /**
+     * Submit a single delete task runner (used by batch-resubmit mode to requeue a task after one batch).
+     */
+    public Future submitOneDeleteTaskRunner(TtlIntraTaskRunner runner) {
+        return this.deleteTaskExecutor.submit(runner);
+    }
+
+    /**
+     * Get or create the global Semaphore for the given DN in batch-resubmit mode.
+     * The semaphore is shared across all TTL tables so the total concurrency on a single DN
+     * never exceeds {@code maxWorkerPerDn}, regardless of how many tables are being cleaned.
+     *
+     * @param dnId target storage instance id
+     * @param maxWorkerPerDn permits to use when creating a new semaphore (ignored if one already exists)
+     */
+    public Semaphore getOrCreateDnSemaphore(String dnId, int maxWorkerPerDn) {
+        return globalDnSemaphoreMap.computeIfAbsent(dnId, k -> new Semaphore(maxWorkerPerDn));
+    }
+
+    /**
      * Auto adjust the task worker count when rw-dn list changed
      */
     public static void autoAdjustWorkerCountForChangedRwDnList() {
@@ -201,6 +229,8 @@ public class TtlIntraTaskExecutor extends AbstractLifecycle {
                         oldExecutor.shutdown();
                     }
                     TtlConfigUtil.setTtlGlobalDeleteWorkerCount(newMaxWorkerCount);
+                    // Clear cached semaphores so they are re-created with the new maxWorkerPerDn on next submit
+                    globalDnSemaphoreMap.clear();
                 }
             }
         } catch (Throwable ex) {

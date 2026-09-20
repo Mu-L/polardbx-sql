@@ -112,7 +112,7 @@ public class PolarDBXLockingFunctionHandle implements LockingFunctionHandle {
      */
     private Integer tryAcquireLockInner(final String lockName, final long restTime, final int retryTime)
         throws SQLException, InterruptedException {
-        if (restTime <= 0 || retryTime > LockingConfig.MAX_RETRY_TIMES) {
+        if (restTime < 0 || retryTime > LockingConfig.MAX_RETRY_TIMES) {
             return 0;
         }
         long startTs = System.currentTimeMillis();

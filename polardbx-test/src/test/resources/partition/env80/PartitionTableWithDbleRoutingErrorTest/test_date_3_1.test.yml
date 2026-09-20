@@ -1,0 +1,48 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+set ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC=true;
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=true;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+#边界值验证
+create table date_table_5(id date)
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/date',
+  '{
+    　　　 "dateFormat" : "yyyy-MM-dd",
+          "sBeginDate" : "2017-12-01",
+          "sPartionDay" : "10",
+        　"defaultNode" : "3"
+    }'
+  )
+  )
+  partitions 4;
+  select part_route('','date_table_5',null);
+  ## error_msg: $# check if the format satisfied #$
+  select part_route('','date_table_5','');
+  select part_route('','date_table_5','2017-11-11');
+  ## error_msg: $# can't find any valid data node #$
+  select part_route('','date_table_5','2018-11-11');
+  
+  create table date_table_6(id date)
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/date',
+  '{
+　　　 "dateFormat" : "yyyy-MM-dd",
+                     "sBeginDate" : "2017-12-01",
+                     "sEndDate" : "2018-01-08",
+                     "sPartionDay" : "10",
+                     　"defaultNode" : "3"
+}'
+  )
+  )
+  partitions 4;
+  select part_route('','date_table_6',null);
+  ## error_msg: $# check if the format satisfied #$
+  select part_route('','date_table_6','');
+  select part_route('','date_table_6','2017-11-11');
+  select part_route('','date_table_6','2018-01-9');
+
+

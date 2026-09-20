@@ -1,0 +1,827 @@
+SQL:
+  - sql: |
+      SELECT * FROM t0 WHERE EXISTS (
+        WITH cte_sub AS (SELECT v4, v5 FROM t1 WHERE t1.v4 = t0.v1)
+        SELECT 1 FROM cte_sub WHERE v5 > t0.v2
+      );
+    plan: |
+      cteanchor(cte_id=1)
+        cteproducer(cte_id=1)
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+        semihashjoin(condition="v1 = v1 and v2 = v2", type="semi", build="inner")
+          cteconsumer(cte_id="1_2")
+          cteanchor(cte_id=0)
+            cteproducer(cte_id=0)
+              project(v5="v5", v1="v1", v2="v2")
+                hashjoin(condition="v1 = v4 and v5 > v2", type="inner")
+                  gather(concurrent=true)
+                    logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5` from `t1` as `t1`")
+                  cteconsumer(cte_id="1_1", projects=[$0, $1])
+            cteconsumer(cte_id="0_0", projects=[?0, $1, $2], conditions=[>($0, $2)])
+  - sql: |
+      SELECT * FROM t0 WHERE EXISTS (
+        WITH cte_sub AS (SELECT v4, v5 FROM t1 WHERE t1.v4 = t0.v1)
+        SELECT 1 FROM cte_sub c1, cte_sub c2 WHERE c1.v5 > t0.v2 and c2.v5 = t0.v2
+      );
+    plan: |
+      cteanchor(cte_id=1)
+        cteproducer(cte_id=1)
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+        semihashjoin(condition="v1 = v1 and v2 = v2", type="semi", build="inner")
+          cteconsumer(cte_id="1_2")
+          cteanchor(cte_id=0)
+            cteproducer(cte_id=0)
+              project(v5="v5", v1="v1", v2="v2")
+                hashjoin(condition="v1 = v4", type="inner")
+                  gather(concurrent=true)
+                    logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5` from `t1` as `t1`")
+                  cteconsumer(cte_id="1_1", projects=[$0, $1])
+            project(1="?0", v1="v1", v2="v2")
+              hashjoin(condition="v5 = v2 and v1 <=> v40 and v2 <=> v50", type="inner")
+                cteconsumer(cte_id="0_1")
+                cteconsumer(cte_id="0_0", projects=[$1, $2], conditions=[>($0, $2)])
+  - sql: |
+      SELECT * FROM t0 WHERE EXISTS (
+        WITH cte_sub AS (SELECT v4, v5 FROM t1 WHERE t1.v4 = t0.v1 or t1.v5 = t0.v3)
+        SELECT 1 FROM cte_sub c1, cte_sub c2 WHERE c1.v5 > t0.v2
+      );
+    plan: |
+      cteanchor(cte_id=1)
+        cteproducer(cte_id=1)
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+        semihashjoin(condition="v1 = v1 and v2 = v2 and v3 = v3", type="semi", build="inner")
+          cteconsumer(cte_id="1_3")
+          cteanchor(cte_id=0)
+            cteproducer(cte_id=0)
+              project(v5="v5", v1="v1", v2="v2", v3="v3")
+                nljoin(condition="v4 = v1 or v5 = v3", type="inner")
+                  gather(concurrent=true)
+                    logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5` from `t1` as `t1`")
+                  cteconsumer(cte_id="1_2")
+            project(1="?0", v1="v10", v2="v20", v3="v30")
+              hashjoin(condition="v1 <=> v1 and v2 <=> v2 and v3 <=> v3", type="inner")
+                cteconsumer(cte_id="0_1", projects=[$1, $2, $3])
+                cteconsumer(cte_id="0_0", projects=[$1, $2, $3], conditions=[>($0, $2)])
+  - sql: |
+      WITH sub AS (SELECT EXISTS(SELECT 1 FROM t1 WHERE t0.v2 = t1.v5) AS c1, (NULL AND NULL) AS c2 FROM t0 INNER JOIN t1 ON t0.v2 = t1.v4) SELECT s.c2 FROM sub s WHERE true;
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          cteanchor(cte_id=2)
+            cteproducer(cte_id=2)
+              project(v2="v2")
+                hashjoin(condition="v2 = v4", type="inner")
+                  gather(concurrent=true)
+                    logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4` from `t1` as `t1`")
+                  gather(concurrent=true)
+                    logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v2` from `t0` as `t0`")
+            project(c2="null and null")
+              hashjoin(condition="v2 = v50", type="right")
+                project(v50="v50")
+                  hashagg(group="i,v50")
+                    gather(concurrent=true)
+                      logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select true as `i`, `v5` as `v50` from `t1` as `t1` where (`v5` = `v5`) group by true, `v5`")
+                cteconsumer(cte_id="2_0", projects=[$0])
+        cteconsumer(cte_id="0_0")
+  - sql: |
+      WITH sub AS (SELECT EXISTS(SELECT 1 FROM t1 WHERE t0.v2 = t1.v4) AS c1, (NULL AND NULL) AS c2 FROM t0 INNER JOIN t1 ON t0.v2 = t1.v4) SELECT s.c2 FROM sub s WHERE s.c2 IS NULL;
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          cteanchor(cte_id=2)
+            cteproducer(cte_id=2)
+              project(v2="v2")
+                hashjoin(condition="v2 = v4", type="inner")
+                  gather(concurrent=true)
+                    logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4` from `t1` as `t1`")
+                  gather(concurrent=true)
+                    logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v2` from `t0` as `t0` where ((null and null) is null)")
+            project(c2="null and null")
+              hashjoin(condition="v2 = v40", type="right", build="right")
+                gather(concurrent=true)
+                  logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4` as `v40` from `t1` as `t1` where (`v4` = `v4`)")
+                cteconsumer(cte_id="2_0", projects=[$0], conditions=[is null(and(null, null))])
+        cteconsumer(cte_id="0_0", conditions=[is null($0)])
+  - sql: |
+      WITH cte_join AS (SELECT t0.v1, t0.v2, t1.v5 FROM t0 JOIN t1 ON t0.v1 = t1.v4)
+      SELECT * FROM t0
+      WHERE EXISTS (
+        SELECT 1 FROM cte_join
+        WHERE cte_join.v1 = t0.v1 AND cte_join.v5 > t0.v2
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3],t1[p1,p2,p3]", shardcount=3, sql="select `t0`.`v1`, `t0`.`v2`, `t1`.`v5` from `t0` as `t0` inner join `t1` as `t1` on (`t0`.`v1` = `t1`.`v4`)")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+          semihashjoin(condition="v1 = v1 and v2 = v2", type="semi", build="inner")
+            cteconsumer(cte_id="1_1")
+            project(v1="v10", v2="v20", v10="v1", v20="v2", v5="v5")
+              hashjoin(condition="v1 = v1 and v5 > v2", type="inner")
+                cteconsumer(cte_id="0_0")
+                cteconsumer(cte_id="1_0", projects=[$0, $1])
+  - sql: |
+      WITH cte_j AS (SELECT t0.v1, t0.v2, t1.v6 FROM t0 JOIN t1 ON t0.v2 = t1.v5)
+      SELECT * FROM t1
+      WHERE t1.v4 IN (
+        SELECT v1 FROM cte_j
+        WHERE cte_j.v2 = t1.v5 OR cte_j.v6 = t1.v6
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          project(v1="v1", v2="v2", v6="v6")
+            hashjoin(condition="v5 = v2", type="inner")
+              gather(concurrent=true)
+                logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v5`, `v6` from `t1` as `t1`")
+              gather(concurrent=true)
+                logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2` from `t0` as `t0`")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            gather(concurrent=true)
+              logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+          semihashjoin(condition="v4 = v4 and v5 = v5 and v6 = v6", type="semi", build="inner")
+            cteconsumer(cte_id="1_1")
+            project(v1="v1", v4="v4", v5="v5", v6="v60")
+              hashjoin(condition="v4 = v1 and (v2 = v5 or v6 = v6)", type="inner")
+                cteconsumer(cte_id="0_0")
+                cteconsumer(cte_id="1_0")
+  - sql: |
+      WITH cte_sorted_join AS (
+        SELECT t0.v1, t0.v3, t1.v5 FROM t0 JOIN t1 ON t0.v2 = t1.v5 ORDER BY t1.v5
+      )
+      SELECT * FROM t1
+      WHERE EXISTS (
+        SELECT 1 FROM cte_sorted_join
+        WHERE v1 = t1.v4 OR v5 = t1.v5
+      ) AND t1.v6 > 0;
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          project(v1="v1", v3="v3", v5="v5")
+            hashjoin(condition="v5 = v2", type="inner")
+              mergesort(sort="v5 asc")
+                logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v5` from `t1` as `t1` order by `v5`")
+              gather(concurrent=true)
+                logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            gather(concurrent=true)
+              logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+          semisortmergejoin(condition="v4 = v4 and v5 = v5", type="semi")
+            memsort(sort="v4 asc,v5 asc")
+              cteconsumer(cte_id="1_1", conditions=[>($2, ?1)])
+            nljoin(condition="v1 = v4 or v5 = v5", type="inner")
+              memsort(sort="v4 asc,v5 asc")
+                cteconsumer(cte_id="1_0", projects=[$0, $1])
+              cteconsumer(cte_id="0_0")
+  - sql: |
+      WITH cte_js AS (
+        SELECT t0.v1, t1.v5 FROM t0 JOIN t1 ON t0.v2 = t1.v4 ORDER BY t1.v5
+      )
+      SELECT * FROM t0
+      WHERE t0.v1 NOT IN (
+        SELECT v1 FROM cte_js WHERE v5 > t0.v3
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          memsort(sort="v5 asc")
+            project(v1="v1", v5="v5")
+              hashjoin(condition="v2 = v4", type="inner")
+                gather(concurrent=true)
+                  logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5` from `t1` as `t1`")
+                gather(concurrent=true)
+                  logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2` from `t0` as `t0`")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+          semihashjoin(condition="v1 = v11 and v3 = v3", type="anti", build="inner")
+            cteconsumer(cte_id="1_1")
+            project(v1="v1", v11="v10", v3="v3")
+              hashjoin(condition="v1 = v1 and v5 > v3", type="inner")
+                cteconsumer(cte_id="0_0")
+                cteconsumer(cte_id="1_0", projects=[$0, $2])
+  - sql: |
+      WITH cte_agg AS (SELECT v4, COUNT(*) AS cnt FROM t1 GROUP BY v4)
+      SELECT * FROM t0
+      WHERE t0.v1 IN (
+        SELECT v4 FROM cte_agg WHERE cnt > t0.v2
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, count(*) as `cnt` from `t1` as `t1` group by `v4`")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+          semihashjoin(condition="v1 = v1 and v2 = v2", type="semi", build="inner")
+            cteconsumer(cte_id="1_1")
+            project(v4="v4", v1="v1", v2="v2")
+              hashjoin(condition="v1 = v4 and cnt > v2", type="inner")
+                cteconsumer(cte_id="0_0")
+                cteconsumer(cte_id="1_0", projects=[$0, $1])
+  - sql: |
+      WITH cte_gh AS (
+        SELECT v4, SUM(v5) AS sv5 FROM t1 GROUP BY v4 HAVING SUM(v5) > 0
+      )
+      SELECT * FROM t0
+      WHERE EXISTS (
+        SELECT 1 FROM cte_gh WHERE v4 = t0.v1 OR sv5 > t0.v2
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, sum(`v5`) as `sv5` from `t1` as `t1` group by `v4` having (sum(`v5`) > ?)")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+          semisortmergejoin(condition="v1 = v1 and v2 = v2", type="semi")
+            memsort(sort="v1 asc,v2 asc")
+              cteconsumer(cte_id="1_1")
+            nljoin(condition="v4 = v1 or sv5 > v2", type="inner")
+              memsort(sort="v1 asc,v2 asc")
+                cteconsumer(cte_id="1_0", projects=[$0, $1])
+              cteconsumer(cte_id="0_0")
+  - sql: |
+      WITH agg_t0 AS (SELECT v1, COUNT(*) AS c0 FROM t0 GROUP BY v1),
+           agg_t1 AS (SELECT v4, COUNT(*) AS c1 FROM t1 GROUP BY v4)
+      SELECT * FROM t0
+      WHERE t0.v1 IN (SELECT v1 FROM agg_t0 WHERE c0 > 1)
+         OR t0.v1 IN (SELECT v4 FROM agg_t1 WHERE agg_t1.v4 = t0.v1 AND c1 > 2);
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, count(*) as `c0` from `t0` as `t0` group by `v1` having ((count(*) > ?) and (`v1` = `v1`))")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            gather(concurrent=true)
+              logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, count(*) as `c1` from `t1` as `t1` group by `v4` having ((count(*) > ?) and (`v4` = `v4`))")
+          cteanchor(cte_id=3)
+            cteproducer(cte_id=3)
+              cteanchor(cte_id=2)
+                cteproducer(cte_id=2)
+                  gather(concurrent=true)
+                    logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+                project(v1="v11", v2="v2", v3="v3", v10="v1")
+                  hashjoin(condition="v1 = v10", type="right")
+                    cteconsumer(cte_id="0_0", projects=[$0, $0], conditions=[>($1, ?0), =($0, $0)])
+                    cteconsumer(cte_id="2_0")
+            project(v1="v1", v2="v2", v3="v3")
+              filter(condition="cast(is not null(v10)) or cast(is not null(v4))")
+                hashjoin(condition="v1 = v40", type="left", build="left")
+                  cteconsumer(cte_id="3_0")
+                  cteconsumer(cte_id="1_0", projects=[$0, $0], conditions=[and(=($0, $0), >($1, ?1)), =($0, $0)])
+  - sql: |
+      WITH cte_l1 AS (SELECT v1, v2 FROM t0),
+           cte_l2 AS (SELECT v1 FROM cte_l1 WHERE v2 > 0)
+      SELECT * FROM t1
+      WHERE NOT EXISTS (
+        SELECT 1 FROM cte_l2 WHERE cte_l2.v1 = t1.v4
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2` from `t0` as `t0` where ((`v2` > ?) or ((`v2` > ?) and (`v1` = `v1`)))")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            cteconsumer(cte_id="0_0", projects=[$0], conditions=[>($1, ?0), =($0, $0)])
+          cteanchor(cte_id=2)
+            cteproducer(cte_id=2)
+              gather(concurrent=true)
+                logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+            semihashjoin(condition="v4 = v10", type="anti", build="inner")
+              cteconsumer(cte_id="2_0")
+              cteconsumer(cte_id="1_0", projects=[$0, $0], conditions=[=($0, $0)])
+  - sql: |
+      WITH cte_base AS (SELECT t0.v1, t0.v2 FROM t0 JOIN t1 ON t0.v1 = t1.v4),
+           cte_nest AS (SELECT v1, v2 FROM cte_base WHERE v2 > 0)
+      SELECT * FROM t1
+      WHERE EXISTS (
+        SELECT 1 FROM cte_nest
+        WHERE cte_nest.v1 = t1.v4 AND cte_nest.v2 > t1.v5
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3],t1[p1,p2,p3]", shardcount=3, sql="select `t0`.`v1`, `t0`.`v2` from `t0` as `t0` inner join `t1` as `t1` on (`t0`.`v1` = `t1`.`v4`) where (`t0`.`v2` > ?)")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            cteconsumer(cte_id="0_0", conditions=[>($1, ?0)])
+          cteanchor(cte_id=2)
+            cteproducer(cte_id=2)
+              gather(concurrent=true)
+                logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+            semihashjoin(condition="v4 = v4 and v5 = v5", type="semi", build="inner")
+              cteconsumer(cte_id="2_1")
+              hashjoin(condition="v1 = v4 and v2 > v5", type="inner")
+                cteconsumer(cte_id="2_0", projects=[$0, $1])
+                cteconsumer(cte_id="1_0")
+  - sql: |
+      WITH cte_raw AS (SELECT v4, v5, v6 FROM t1 WHERE v6 > 0),
+           cte_aggd AS (SELECT v4, COUNT(*) AS cnt FROM cte_raw GROUP BY v4)
+      SELECT * FROM t0
+      WHERE t0.v1 IN (
+        SELECT v4 FROM cte_aggd WHERE cnt > t0.v2
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4` from `t1` as `t1` where (`v6` > ?)")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            hashagg(group="v4", cnt="count()")
+              cteconsumer(cte_id="0_0")
+          cteanchor(cte_id=2)
+            cteproducer(cte_id=2)
+              gather(concurrent=true)
+                logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            semihashjoin(condition="v1 = v1 and v2 = v2", type="semi", build="inner")
+              cteconsumer(cte_id="2_1")
+              project(v4="v4", v1="v1", v2="v2")
+                hashjoin(condition="v1 = v4 and cnt > v2", type="inner")
+                  cteconsumer(cte_id="1_0")
+                  cteconsumer(cte_id="2_0", projects=[$0, $1])
+  - sql: |
+      WITH cte1 AS (SELECT v1, v2 FROM t0 WHERE v3 > 0),
+           cte2 AS (SELECT cte1.v1, t1.v5 FROM cte1 JOIN t1 ON cte1.v1 = t1.v4),
+           cte3 AS (SELECT v1, SUM(v5) AS sv FROM cte2 GROUP BY v1)
+      SELECT * FROM t1
+      WHERE t1.v4 IN (
+        SELECT v1 FROM cte3
+        WHERE sv > t1.v5
+           OR v1 IN (SELECT v1 FROM cte1 WHERE cte1.v2 = t1.v5)
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2` from `t0` as `t0` where (`v3` > ?)")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            project(v1="v1", v5="v5")
+              hashjoin(condition="v1 = v4", type="inner")
+                gather(concurrent=true)
+                  logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5` from `t1` as `t1`")
+                cteconsumer(cte_id="0_0", projects=[$0])
+          cteanchor(cte_id=2)
+            cteproducer(cte_id=2)
+              hashagg(group="v1", sv="sum(v5)")
+                cteconsumer(cte_id="1_0")
+            cteanchor(cte_id=3)
+              cteproducer(cte_id=3)
+                gather(concurrent=true)
+                  logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+              semihashjoin(condition="v4 = v4 and v5 = v5", type="semi", build="inner")
+                cteconsumer(cte_id="3_3")
+                cteanchor(cte_id=4)
+                  cteproducer(cte_id=4)
+                    hashjoin(condition="v4 = v1", type="inner")
+                      cteconsumer(cte_id="3_0", projects=[$0, $1])
+                      cteconsumer(cte_id="2_0")
+                  project(v1="v1", v4="v4", v5="v5")
+                    filter(condition="sv > v5 or cast(is not null(v10))")
+                      hashjoin(condition="v4 = v4 and v5 = v5 and v1 = v13", type="left")
+                        cteconsumer(cte_id="4_1", conditions=[=($0, $2)])
+                        project(v1="v1", v4="v4", v5="v5", v13="v10")
+                          hashjoin(condition="v2 = v5 and v1 = v1", type="inner")
+                            cteconsumer(cte_id="0_3")
+                            cteconsumer(cte_id="4_0", projects=[$0, $1, $2], conditions=[=($0, $2)])
+  - sql: |
+      SELECT * FROM t0
+      WHERE EXISTS (
+        WITH cte_inline AS (SELECT v4, v5 FROM t1 WHERE t1.v5 > t0.v2)
+        SELECT 1 FROM cte_inline
+        WHERE v4 = t0.v1 OR v5 > t0.v3
+      );
+    plan: |
+      cteanchor(cte_id=1)
+        cteproducer(cte_id=1)
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+        semihashjoin(condition="v1 = v1 and v2 = v2 and v3 = v3", type="semi", build="inner")
+          cteconsumer(cte_id="1_2")
+          cteanchor(cte_id=0)
+            cteproducer(cte_id=0)
+              nljoin(condition="v5 > v2 and (v4 = v1 or v5 > v3)", type="inner")
+                gather(concurrent=true)
+                  logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5` from `t1` as `t1`")
+                cteconsumer(cte_id="1_1")
+            cteconsumer(cte_id="0_0", projects=[?0, $2, $3, $4], conditions=[or(=($0, $2), >($1, $4))])
+  - sql: |
+      SELECT * FROM t0
+      WHERE EXISTS (
+        WITH cte_sub AS (SELECT v4, v5 FROM t1 WHERE t1.v4 = t0.v1 OR t1.v5 = t0.v2)
+        SELECT 1 FROM cte_sub c1, cte_sub c2
+        WHERE c1.v5 > t0.v2
+      );
+    plan: |
+      cteanchor(cte_id=1)
+        cteproducer(cte_id=1)
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+        semihashjoin(condition="v1 = v1 and v2 = v2", type="semi", build="inner")
+          cteconsumer(cte_id="1_3")
+          cteanchor(cte_id=0)
+            cteproducer(cte_id=0)
+              project(v5="v5", v1="v1", v2="v2")
+                nljoin(condition="v4 = v1 or v5 = v2", type="inner")
+                  gather(concurrent=true)
+                    logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5` from `t1` as `t1`")
+                  cteconsumer(cte_id="1_2", projects=[$0, $1])
+            project(1="?0", v1="v10", v2="v20")
+              hashjoin(condition="v1 <=> v1 and v2 <=> v2", type="inner")
+                cteconsumer(cte_id="0_1", projects=[$1, $2])
+                cteconsumer(cte_id="0_0", projects=[$1, $2], conditions=[>($0, $2)])
+  - sql: |
+      SELECT * FROM t0
+      WHERE t0.v1 IN (
+        WITH cte_filter AS (SELECT v4 FROM t1 WHERE v5 = t0.v2 OR v6 = t0.v3)
+        SELECT v4 FROM cte_filter WHERE v4 > 0
+      );
+    plan: |
+      cteanchor(cte_id=1)
+        cteproducer(cte_id=1)
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+        semihashjoin(condition="v1 = v1 and v2 = v2 and v3 = v3", type="semi", build="inner")
+          cteconsumer(cte_id="1_2")
+          cteanchor(cte_id=0)
+            cteproducer(cte_id=0)
+              project(v4="v4", v1="v1", v2="v2", v3="v3")
+                hashjoin(condition="(v5 = v2 or v6 = v3) and v1 = v4", type="inner")
+                  cteconsumer(cte_id="1_1")
+                  gather(concurrent=true)
+                    logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1` where (`v4` > ?)")
+            cteconsumer(cte_id="0_0", conditions=[>($0, ?0), =($1, $0)])
+  - sql: |
+      WITH cte_x AS (SELECT t0.v1, t0.v2 FROM t0 JOIN t1 ON t0.v3 = t1.v6),
+           cte_y AS (SELECT t0.v1, t1.v5 FROM t0 JOIN t1 ON t0.v1 = t1.v4)
+      SELECT * FROM t1
+      WHERE EXISTS (SELECT 1 FROM cte_x WHERE v1 = t1.v4)
+         OR EXISTS (SELECT 1 FROM cte_y WHERE v1 = t1.v4 AND v5 = t1.v5);
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          project(v1="v1")
+            hashjoin(condition="v6 = v3", type="inner")
+              gather(concurrent=true)
+                logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v6` from `t1` as `t1`")
+              gather(concurrent=true)
+                logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v3` from `t0` as `t0` where (`v1` = `v1`)")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3],t1[p1,p2,p3]", shardcount=3, sql="select `t0`.`v1`, `t1`.`v5` from `t0` as `t0` inner join `t1` as `t1` on (`t0`.`v1` = `t1`.`v4`) where ((`t0`.`v1` = `t0`.`v1`) and (`t1`.`v5` = `t1`.`v5`))")
+          cteanchor(cte_id=3)
+            cteproducer(cte_id=3)
+              cteanchor(cte_id=2)
+                cteproducer(cte_id=2)
+                  gather(concurrent=true)
+                    logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+                project(v4="v4", v5="v5", v6="v6", i="i")
+                  hashjoin(condition="v4 = v10", type="right")
+                    hashagg(group="i,v10")
+                      cteconsumer(cte_id="0_0", projects=[true, $0], conditions=[=($0, $0)])
+                    cteconsumer(cte_id="2_0")
+            project(v4="v4", v5="v5", v6="v6")
+              filter(condition="is not null(i) or is not null(i0)")
+                hashjoin(condition="v4 = v10 and v5 = v50", type="left")
+                  cteconsumer(cte_id="3_0")
+                  hashagg(group="i,v10,v50")
+                    cteconsumer(cte_id="1_0", projects=[true, $0, $1], conditions=[and(=($0, $0), =($1, $1))])
+  - sql: |
+      WITH cte_agg AS (SELECT v4, SUM(v5) AS total FROM t1 GROUP BY v4),
+           cte_join AS (SELECT t0.v1, t0.v3 FROM t0 JOIN t1 ON t0.v1 = t1.v4)
+      SELECT * FROM t0
+      WHERE EXISTS (SELECT 1 FROM cte_agg WHERE v4 = t0.v1)
+        AND EXISTS (SELECT 1 FROM cte_join WHERE v1 = t0.v1 AND v3 > t0.v2);
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, sum(`v5`) as `total` from `t1` as `t1` group by `v4` having (`v4` = `v4`)")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3],t1[p1,p2,p3]", shardcount=3, sql="select `t0`.`v1`, `t0`.`v3` from `t0` as `t0` inner join `t1` as `t1` on (`t0`.`v1` = `t1`.`v4`)")
+          cteanchor(cte_id=3)
+            cteproducer(cte_id=3)
+              cteanchor(cte_id=2)
+                cteproducer(cte_id=2)
+                  gather(concurrent=true)
+                    logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+                semihashjoin(condition="v1 = v40", type="semi", build="inner")
+                  cteconsumer(cte_id="2_0")
+                  cteconsumer(cte_id="0_0", projects=[$0, $1, $0], conditions=[=($0, $0)])
+            semihashjoin(condition="v1 = v1 and v2 = v2", type="semi", build="inner")
+              cteconsumer(cte_id="3_1")
+              hashjoin(condition="v1 = v1 and v3 > v2", type="inner")
+                cteconsumer(cte_id="3_0", projects=[$0, $1])
+                cteconsumer(cte_id="1_0")
+  - sql: |
+      WITH cte_a AS (SELECT v4, MAX(v5) AS mx FROM t1 GROUP BY v4),
+           cte_b AS (SELECT v1, MIN(v2) AS mn FROM t0 GROUP BY v1)
+      SELECT * FROM t0
+      WHERE t0.v1 IN (
+        SELECT v4 FROM cte_a
+        WHERE mx > (SELECT mn FROM cte_b WHERE cte_b.v1 = t0.v1)
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, max(`v5`) as `mx` from `t1` as `t1` group by `v4`")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, min(`v2`) as `mn` from `t0` as `t0` group by `v1` having (`v1` = `v1`)")
+          cteanchor(cte_id=2)
+            cteproducer(cte_id=2)
+              gather(concurrent=true)
+                logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            semisortmergejoin(condition="v1 = v1", type="semi")
+              memsort(sort="v1 asc")
+                cteconsumer(cte_id="2_1")
+              project(v4="v4", v1="v1")
+                hashjoin(condition="v4 = v1 and mx > $f1", type="inner")
+                  project(v1="v1", $f1="$f1")
+                    hashjoin(condition="v1 <=> v10", type="left")
+                      memsort(sort="v1 asc")
+                        cteconsumer(cte_id="2_0", projects=[$0])
+                      hashagg(group="v10", $f1="single_value(mn)")
+                        cteconsumer(cte_id="1_0", projects=[$1, $0], conditions=[=($0, $0)])
+                  cteconsumer(cte_id="0_0", projects=[$0, $1])
+  - sql: |
+      WITH cte_jn AS (
+        SELECT t0.v1, t0.v2, t1.v4, t1.v5 FROM t0 JOIN t1 ON t0.v1 = t1.v4
+      )
+      SELECT * FROM t0
+      WHERE t0.v1 IN (
+        SELECT v1 FROM cte_jn cj
+        WHERE cj.v2 > (
+          SELECT AVG(v6) FROM t1 WHERE t1.v4 = cj.v4 AND t1.v5 = t0.v2
+        )
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3],t1[p1,p2,p3]", shardcount=3, sql="select `t0`.`v1`, `t0`.`v2`, `t1`.`v4` from `t0` as `t0` inner join `t1` as `t1` on (`t0`.`v1` = `t1`.`v4`)")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+          semihashjoin(condition="v1 = v13 and v2 = v24", type="semi", build="inner")
+            cteconsumer(cte_id="1_4")
+            cteanchor(cte_id=2)
+              cteproducer(cte_id=2)
+                project(v1="v10", v2="v20", v10="v1", v20="v2", v4="v4")
+                  nljoin(condition="true", type="inner")
+                    cteconsumer(cte_id="0_0")
+                    cteconsumer(cte_id="1_0", projects=[$0, $1])
+              project(v1="v100", v13="v10", v24="v20")
+                hashjoin(condition="v4 = v4 and v1 = v1 and v1 = v10 and v2 = v2 and v20 > avg(v6)", type="inner")
+                  project(v1="v10", v2="v20", v4="v40", avg(v6)="avg(v6)")
+                    hashjoin(condition="v1 <=> v1 and v2 <=> v2 and v4 <=> v4", type="right", build="right")
+                      project(v1="v1", v2="v2", v4="v4", avg(v6)="$f3 / $f4")
+                        hashagg(group="v1,v2,v4", $f3="sum(v6)", $f4="count()")
+                          hashjoin(condition="v5 = v2 and v4 = v4", type="inner")
+                            cteconsumer(cte_id="2_0", projects=[$0, $1, $4])
+                            gather(concurrent=true)
+                              logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+                      cteconsumer(cte_id="2_1", projects=[$0, $1, $4], conditions=[=($0, $4)])
+                  cteconsumer(cte_id="2_2", projects=[$0, $1, $2, $3, $4], conditions=[and(=($0, $2), =($0, $4), =($2, $0))])
+  - sql: |
+      WITH cte_full AS (
+        SELECT t0.v1, t0.v2, t1.v5, t1.v6 FROM t0 JOIN t1 ON t0.v1 = t1.v4
+      )
+      SELECT * FROM t0
+      WHERE EXISTS (
+        SELECT 1 FROM cte_full cf
+        WHERE cf.v1 = t0.v1
+          AND NOT EXISTS (
+            SELECT 1 FROM t1 WHERE t1.v4 = cf.v1 AND t1.v5 > t0.v2
+          )
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3],t1[p1,p2,p3]", shardcount=3, sql="select `t0`.`v1`, `t0`.`v2`, `t1`.`v5`, `t1`.`v6` from `t0` as `t0` inner join `t1` as `t1` on (`t0`.`v1` = `t1`.`v4`)")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+          semihashjoin(condition="v1 = v1 and v2 = v2", type="semi", build="inner")
+            cteconsumer(cte_id="1_3")
+            cteanchor(cte_id=2)
+              cteproducer(cte_id=2)
+                project(v1="v10", v2="v20", v10="v1", v20="v2", v5="v5", v6="v6")
+                  nljoin(condition="true", type="inner")
+                    cteconsumer(cte_id="0_0")
+                    cteconsumer(cte_id="1_0", projects=[$0, $1])
+              project(v10="v10", v20="v20", v5="v5", v6="v6", v1="v1", v2="v2")
+                semihashjoin(condition="v1 = v1 and v2 = v2 and v10 = v10 and v10 = v1", type="anti", build="inner")
+                  cteconsumer(cte_id="2_1", conditions=[=($2, $0)])
+                  project(v1="v1", v2="v2", v10="v10")
+                    hashjoin(condition="v10 = v4 and v5 > v2", type="inner")
+                      cteconsumer(cte_id="2_0", projects=[$0, $1, $2])
+                      gather(concurrent=true)
+                        logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5` from `t1` as `t1`")
+  - sql: |
+      /*+TDDL:cmd_extra(OPTIMIZER_TYPE=MPP)*/
+      WITH cte_full AS (
+        SELECT t0.v1, t0.v2, t1.v5, t1.v6 FROM t0 JOIN t1 ON t0.v1 = t1.v4
+      )
+      SELECT * FROM t0
+      WHERE EXISTS (
+        SELECT 1 FROM cte_full cf
+        WHERE cf.v1 = t0.v1
+          AND NOT EXISTS (
+            SELECT 1 FROM t1 WHERE t1.v4 = cf.v1 AND t1.v5 > t0.v2
+          )
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          logicalview(tables="t0[p1,p2,p3],t1[p1,p2,p3]", shardcount=3, sql="select `t0`.`v1`, `t0`.`v2`, `t1`.`v5`, `t1`.`v6` from `t0` as `t0` inner join `t1` as `t1` on (`t0`.`v1` = `t1`.`v4`)")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+          semihashjoin(condition="v1 = v1 and v2 = v2", type="semi", build="inner")
+            exchange(distribution=hash[0, 1], collation=[])
+              cteconsumer(cte_id="1_3")
+            exchange(distribution=hash[4, 5], collation=[])
+              cteanchor(cte_id=2)
+                cteproducer(cte_id=2)
+                  project(v1="v10", v2="v20", v10="v1", v20="v2", v5="v5", v6="v6")
+                    nljoin(condition="true", type="inner")
+                      exchange(distribution=single, collation=[])
+                        cteconsumer(cte_id="0_0")
+                      exchange(distribution=single, collation=[])
+                        cteconsumer(cte_id="1_0", projects=[$0, $1])
+                project(v10="v10", v20="v20", v5="v5", v6="v6", v1="v1", v2="v2")
+                  semihashjoin(condition="v1 = v1 and v2 = v2 and v10 = v10 and v10 = v1", type="anti", build="inner")
+                    exchange(distribution=hash[0, 1, 2], collation=[])
+                      cteconsumer(cte_id="2_1", conditions=[=($2, $0)])
+                    exchange(distribution=hash[0, 1, 2], collation=[])
+                      project(v1="v1", v2="v2", v10="v10")
+                        hashjoin(condition="v10 = v4 and v5 > v2", type="inner")
+                          cteconsumer(cte_id="2_0", projects=[$0, $1, $2])
+                          exchange(distribution=broadcast, collation=[])
+                            logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5` from `t1` as `t1`")
+  - sql: |
+      WITH base_agg AS (
+        SELECT v4, COUNT(*) AS cnt, MAX(v5) AS mx FROM t1 GROUP BY v4
+      )
+      SELECT * FROM t0
+      WHERE EXISTS (
+        SELECT 1 FROM base_agg
+        WHERE v4 = t0.v1
+          AND cnt > (
+            SELECT MIN(v2) FROM t0 t_inner WHERE t_inner.v1 = t0.v1
+          )
+           OR mx = t0.v2
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, count(*) as `cnt`, max(`v5`) as `mx` from `t1` as `t1` group by `v4`")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+          semihashjoin(condition="v1 = v1 and v2 = v2", type="semi", build="inner")
+            cteconsumer(cte_id="1_3")
+            project(v4="v4", cnt="cnt", mx="mx", v1="v1", v2="v2")
+              filter(condition="(v4 = v1 and cnt > min(v2)) or mx = v2")
+                hashjoin(condition="v1 <=> v1 and v2 <=> v2 and true", type="left")
+                  project(v1="v1", v2="v2", v4="v4", cnt="cnt", mx="mx")
+                    nljoin(condition="true", type="inner")
+                      cteconsumer(cte_id="0_0")
+                      cteconsumer(cte_id="1_0", projects=[$0, $1])
+                  project(v1="v1", v2="v2", min(v2)="min(v2)")
+                    hashjoin(condition="v1 <=> v1 and v2 <=> v2", type="left")
+                      cteconsumer(cte_id="1_2", projects=[$0, $1])
+                      hashagg(group="v1,v2", min(v2)="min(v20)")
+                        hashjoin(condition="v1 = v1", type="inner")
+                          cteconsumer(cte_id="1_1", projects=[$0, $1])
+                          gather(concurrent=true)
+                            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2` from `t0` as `t0`")
+  - sql: |
+      WITH cte_win AS (
+        SELECT v4, v5, v6,
+               ROW_NUMBER() OVER (PARTITION BY v4 ORDER BY v5 DESC) AS rn
+        FROM t1
+      )
+      SELECT * FROM t0
+      WHERE EXISTS (
+        SELECT 1 FROM cte_win
+        WHERE cte_win.v4 = t0.v1
+          AND cte_win.rn = 1
+          AND cte_win.v5 > t0.v2
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          filter(condition="f3w0$o0 = ?1")
+            sortwindow(v4="v4", v5="v5", v6="v6", f3w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 desc-nulls-last] rows between unbounded preceding and current row aggs [row_number()])")
+              grouptopn(sort="v5 desc", fetch=?1, group={0})
+                gather(concurrent=true)
+                  logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            gather(concurrent=true)
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+          semihashjoin(condition="v1 = v1 and v2 = v2", type="semi", build="inner")
+            cteconsumer(cte_id="1_1")
+            project(v1="v1", v2="v2", v4="v4", v5="v5", v6="v6", f3w0$o0="f3w0$o0")
+              hashjoin(condition="v1 = v4 and v5 > v2", type="inner")
+                cteconsumer(cte_id="0_0", conditions=[=($3, ?1)])
+                cteconsumer(cte_id="1_0", projects=[$0, $1])
+  - sql: |
+      WITH cte_base AS (
+        SELECT t0.v1, t0.v2, t1.v5, t1.v6 FROM t0 JOIN t1 ON t0.v1 = t1.v4
+      ),
+      cte_win AS (
+        SELECT v1, v2, v5,
+               RANK() OVER (PARTITION BY v1 ORDER BY v5) AS rnk,
+               SUM(v5) OVER (PARTITION BY v1) AS win_sum
+        FROM cte_base
+      )
+      SELECT * FROM t0
+      WHERE t0.v1 IN (
+        SELECT v1 FROM cte_win
+        WHERE rnk = 1 AND win_sum > t0.v2
+           OR v2 = t0.v3
+      );
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="t0[p1,p2,p3],t1[p1,p2,p3]", shardcount=3, sql="select `t0`.`v1`, `t0`.`v2`, `t1`.`v5` from `t0` as `t0` inner join `t1` as `t1` on (`t0`.`v1` = `t1`.`v4`)")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            project(v1="v1", v2="v2", f4w0$o0="f4w0$o0", f5w1$o0="f5w1$o0")
+              filter(condition="f4w0$o0 = ?0 and f4w0$o0 = ?0")
+                sortwindow(v1="v1", v2="v2", v5="v5", f4w0$o0="f4w0$o0", f5w1$o0="window#0sum($2)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [sum($2)])")
+                  sortwindow(v1="v1", v2="v2", v5="v5", f4w0$o0="window#0rank($2)", reference windows="window#0=window(partition {0} order by [2 asc-nulls-first] rows between unbounded preceding and current row aggs [rank($2)])")
+                    memsort(sort="v1 asc,v5 asc")
+                      cteconsumer(cte_id="0_0")
+          cteanchor(cte_id=2)
+            cteproducer(cte_id=2)
+              gather(concurrent=true)
+                logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            semihashjoin(condition="v1 = v11 and v2 = v2 and v3 = v3", type="semi", build="inner")
+              cteconsumer(cte_id="2_1")
+              project(v1="v10", v11="v1", v2="v2", v3="v3")
+                hashjoin(condition="v1 = v1 and ((= and win_sum > v2) or v2 = v3)", type="inner")
+                  cteconsumer(cte_id="2_0", projects=[$0, $1, $2])
+                  cteconsumer(cte_id="1_0", projects=[$0, $1, $3, =($2, ?0)], conditions=[=($2, ?0), =($2, ?0)])
+DDL:
+  t0:
+    CREATE TABLE `t0` (
+    `v1` int(11) NOT NULL,
+    `v2` int(11) NOT NULL,
+    `v3` int(11) NOT NULL,
+    PRIMARY KEY (`v1`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 partition by hash(`v1`) PARTITIONS 3;
+
+  t1:
+    CREATE TABLE `t1` (
+    `v4` int(11) NOT NULL,
+    `v5` int(11) NOT NULL,
+    `v6` int(11) NOT NULL,
+    PRIMARY KEY (`v4`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 partition by hash(`v4`) PARTITIONS 3;
+
+STATISTICS:
+  t0:
+    168648768
+  t1:
+    6860984320
+CONFIG:
+  CTE_MODE:
+    REUSE
+  FORCE_HOLISTIC_SUBQUERY_UNNEST:
+    true
+  defaltxxAPPName.isNew:
+    true

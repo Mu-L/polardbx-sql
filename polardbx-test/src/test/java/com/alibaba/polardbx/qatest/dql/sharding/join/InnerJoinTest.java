@@ -21,7 +21,6 @@ import com.alibaba.polardbx.qatest.data.ColumnDataGenerator;
 import com.alibaba.polardbx.qatest.data.ExecuteTableName;
 import com.alibaba.polardbx.qatest.data.ExecuteTableSelect;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
-import com.alibaba.polardbx.qatest.validator.DataValidator;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -33,7 +32,6 @@ import java.sql.ResultSet;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import static com.alibaba.polardbx.qatest.dql.sharding.join.JoinUtils.bkaHint;
 import static com.alibaba.polardbx.qatest.dql.sharding.join.JoinUtils.bkaWithoutHashJoinHint;
@@ -48,10 +46,7 @@ import static com.alibaba.polardbx.qatest.validator.DataValidator.selectOrderAss
  * @since 5.0.1
  */
 
-
 public class InnerJoinTest extends ReadBaseTestCase {
-
-    private static AtomicBoolean shardingAdvise = new AtomicBoolean(false);
 
     protected ColumnDataGenerator columnDataGenerator = new ColumnDataGenerator();
 
@@ -96,11 +91,6 @@ public class InnerJoinTest extends ReadBaseTestCase {
                 + baseTwoTableName
                 + "  " + "using(pk, integer_test, varchar_test)";
         selectContentSameAssert(sql, null, mysqlConnection, tddlConnection);
-
-        if (shardingAdvise.compareAndSet(false, true)) {
-            sql = "/*+TDDL:cmd_extra(SHARDING_ADVISOR_BROADCAST_THRESHOLD=100)*/shardingadvise";
-            DataValidator.sqlMayErrorAssert(sql, tddlConnection, "ERR_TABLE_NOT_EXIST");
-        }
     }
 
     @Test

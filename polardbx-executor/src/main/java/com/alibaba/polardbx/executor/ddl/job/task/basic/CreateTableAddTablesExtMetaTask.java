@@ -69,7 +69,7 @@ public class CreateTableAddTablesExtMetaTask extends BaseGmsTask {
         TableMetaChanger.removeTableExt(metaDbConnection, schemaName, logicalTableName);
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
-        SyncManagerHelper.sync(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
+        SyncManagerHelper.syncThrowExceptions(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
     }
 
     private boolean isCreateTableSupported(ExecutionContext executionContext) {

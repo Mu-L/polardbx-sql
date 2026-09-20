@@ -374,7 +374,8 @@ public class NewSequenceDao extends FunctionalSequenceDao {
                 errMsg.contains("Client removed") ||
                 errMsg.contains("closed") ||
                 errMsg.contains("EOF") ||
-                errMsg.contains("Query execution was interrupted"));
+                errMsg.contains("Query execution was interrupted") ||
+                errMsg.contains("not allowed to do current operation"));
 
         return errorsIgnorable && (System.currentTimeMillis() - startRequestTime < TOTAL_REQUEST_TIMEOUT);
     }

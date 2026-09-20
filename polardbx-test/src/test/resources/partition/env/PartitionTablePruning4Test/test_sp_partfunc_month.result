@@ -49,15 +49,15 @@ SUBPARTITION BY RANGE(MONTH(`snap_time`))
 explain select `snap_time` from `sp_k_r_month` t where t.snap_time >= '2024-05-21 17:30:27' and t.snap_time <= '2024-05-21 17:30:40' order by t.snap_time limit 10;
 Logical ExecutionPlan
 MergeSort(sort="snap_time ASC", offset=0, fetch=?2)
-  LogicalView(tables="sp_k_r_month[p1sp5,p2sp5]", shardCount=2, sql="SELECT `snap_time` FROM `sp_k_r_month` AS `sp_k_r_month` WHERE ((`snap_time` >= ?) AND (`snap_time` <= ?)) ORDER BY `snap_time` LIMIT (? + 0)")
+  LogicalView(tables="sp_k_r_month[p1sp5,p2sp5]", shardCount=2, sql="SELECT `snap_time` FROM `sp_k_r_month` AS `sp_k_r_month` WHERE ((`snap_time` >= ?) AND (`snap_time` <= ?)) ORDER BY `snap_time` LIMIT ?")
 explain select `snap_time` from `sp_k_r_month` t where t.snap_time >= '2024-05-21 17:30:27' and t.snap_time <= '2024-06-21 17:30:40' order by t.snap_time limit 10;
 Logical ExecutionPlan
 MergeSort(sort="snap_time ASC", offset=0, fetch=?2)
-  LogicalView(tables="sp_k_r_month[p1sp5,p1sp6,p2sp5,p2sp6]", shardCount=4, sql="SELECT `snap_time` FROM `sp_k_r_month` AS `sp_k_r_month` WHERE ((`snap_time` >= ?) AND (`snap_time` <= ?)) ORDER BY `snap_time` LIMIT (? + 0)")
+  LogicalView(tables="sp_k_r_month[p1sp5,p1sp6,p2sp5,p2sp6]", shardCount=4, sql="SELECT `snap_time` FROM `sp_k_r_month` AS `sp_k_r_month` WHERE ((`snap_time` >= ?) AND (`snap_time` <= ?)) ORDER BY `snap_time` LIMIT ?")
 explain select `snap_time` from `sp_k_r_month` t where t.snap_time >= '2024-05-21 17:30:27' and t.snap_time <= '2024-07-21 17:30:40' order by t.snap_time limit 10;
 Logical ExecutionPlan
 MergeSort(sort="snap_time ASC", offset=0, fetch=?2)
-  LogicalView(tables="sp_k_r_month[p1sp5,p1sp6,p1sp7,p2sp5,p2sp6,p2sp7]", shardCount=6, sql="SELECT `snap_time` FROM `sp_k_r_month` AS `sp_k_r_month` WHERE ((`snap_time` >= ?) AND (`snap_time` <= ?)) ORDER BY `snap_time` LIMIT (? + 0)")
+  LogicalView(tables="sp_k_r_month[p1sp5,p1sp6,p1sp7,p2sp5,p2sp6,p2sp7]", shardCount=6, sql="SELECT `snap_time` FROM `sp_k_r_month` AS `sp_k_r_month` WHERE ((`snap_time` >= ?) AND (`snap_time` <= ?)) ORDER BY `snap_time` LIMIT ?")
 insert into sp_k_r_month values (null, '2024-01-22 00:00:00', 0);
 insert into sp_k_r_month values (null, '2024-05-21 17:30:33', 0);
 insert into sp_k_r_month values (null, '2024-06-22 00:00:00', 0);

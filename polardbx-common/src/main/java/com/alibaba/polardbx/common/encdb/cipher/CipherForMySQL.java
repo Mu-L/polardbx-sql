@@ -61,7 +61,7 @@ public class CipherForMySQL {
         return computed == expected;
     }
 
-    private CipherForMySQL(int type, Constants.EncAlgo algo) {
+    protected CipherForMySQL(int type, Constants.EncAlgo algo) {
         this.type = type;
         this.algo = algo;
         this.data = null;
@@ -131,6 +131,7 @@ public class CipherForMySQL {
         try {
             switch (this.algo) {
             case AES_128_GCM:
+            case AES_256_GCM:
                 ivSub =
                     Arrays.copyOfRange(this.data, this.body_start_inclu, this.body_start_inclu + SymCrypto.GCMIVLength);
                 // EncDB CipherForMySQL format: TAG || DATA, convert to java format: DATA || TAG
@@ -149,6 +150,7 @@ public class CipherForMySQL {
                 tmpData = SymCrypto.sm4GcmDecrypt(key, dataSub, ivSub);
                 break;
             case AES_128_CBC:
+            case AES_256_CBC:
                 ivSub =
                     Arrays.copyOfRange(this.data, this.body_start_inclu, this.body_start_inclu + SymCrypto.CBCIVLength);
                 dataSub =
@@ -157,6 +159,7 @@ public class CipherForMySQL {
                 tmpData = SymCrypto.aesCBCDecrypt(key, dataSub, ivSub);
                 break;
             case AES_128_ECB:
+            case AES_256_ECB:
                 tmpData = SymCrypto.aesECBDecrypt(key,
                     Arrays.copyOfRange(this.data, this.body_start_inclu, this.body_end_exclu));
                 break;
@@ -172,6 +175,7 @@ public class CipherForMySQL {
                     Arrays.copyOfRange(this.data, this.body_start_inclu, this.body_end_exclu));
                 break;
             case AES_128_CTR:
+            case AES_256_CTR:
                 ivSub =
                     Arrays.copyOfRange(this.data, this.body_start_inclu, this.body_start_inclu + SymCrypto.CTRIVLength);
                 dataSub =
@@ -207,6 +211,7 @@ public class CipherForMySQL {
         int ivLen = 0;
         switch (algo) {
         case AES_128_GCM:
+        case AES_256_GCM:
         case SM4_128_GCM:
             ivLen = SymCrypto.GCMIVLength;
             if (flag == CCFlags.DET) {
@@ -218,9 +223,11 @@ public class CipherForMySQL {
                 return Utils.generateIv(ivLen);
             }
         case AES_128_ECB:
+        case AES_256_ECB:
         case SM4_128_ECB:
             break;
         case AES_128_CBC:
+        case AES_256_CBC:
         case SM4_128_CBC:
             ivLen = SymCrypto.CBCIVLength;
             if (flag == CCFlags.DET) {
@@ -229,6 +236,20 @@ public class CipherForMySQL {
                     (algo == Constants.EncAlgo.SM4_128_CBC) ? HashUtil.doSM3(dataIn) :
                         HashUtil.doSHA256(dataIn);
 
+                List<Byte> ivTmp = Bytes.asList(tmp);
+                assert ivLen <= tmp.length;
+                return Bytes.toArray(ivTmp.subList(0, ivLen));
+            } else {
+                return Utils.generateIv(ivLen);
+            }
+        case AES_128_CTR:
+        case AES_256_CTR:
+        case SM4_128_CTR:
+            ivLen = SymCrypto.CTRIVLength;
+            if (flag == CCFlags.DET) {
+                byte[] tmp =
+                    (algo == Constants.EncAlgo.SM4_128_CTR) ? HashUtil.doSM3(dataIn) :
+                        HashUtil.doSHA256(dataIn);
                 List<Byte> ivTmp = Bytes.asList(tmp);
                 assert ivLen <= tmp.length;
                 return Bytes.toArray(ivTmp.subList(0, ivLen));
@@ -265,15 +286,18 @@ public class CipherForMySQL {
         byte[] tmpData = null;
         switch (algo) {
         case AES_128_GCM:
+        case AES_256_GCM:
             encBytes.addAll(Bytes.asList(iv));
             tmpData = SymCrypto.aesGcmEncrypt(key, inputWCheckCode, iv);
             // Java format: DATA || TAG, convert to EncDB CipherV0 format: TAG || DATA
             encBytes.addAll(swapBytesByPivot(tmpData, tmpData.length - SymCrypto.GCMTagLength));
             break;
         case AES_128_ECB:
+        case AES_256_ECB:
             encBytes.addAll(Bytes.asList(SymCrypto.aesECBEncrypt(key, inputWCheckCode)));
             break;
         case AES_128_CBC:
+        case AES_256_CBC:
             encBytes.addAll(Bytes.asList(iv));
             encBytes.addAll(Bytes.asList(SymCrypto.aesCBCEncrypt(key, inputWCheckCode, iv)));
             break;
@@ -289,6 +313,15 @@ public class CipherForMySQL {
             encBytes.addAll(Bytes.asList(iv));
             tmpData = SymCrypto.sm4GcmEncrypt(key, inputWCheckCode, iv);
             encBytes.addAll(swapBytesByPivot(tmpData, tmpData.length - SymCrypto.GCMTagLength));
+            break;
+        case AES_128_CTR:
+        case AES_256_CTR:
+            encBytes.addAll(Bytes.asList(iv));
+            encBytes.addAll(Bytes.asList(SymCrypto.aesCTREncrypt(key, inputWCheckCode, iv)));
+            break;
+        case SM4_128_CTR:
+            encBytes.addAll(Bytes.asList(iv));
+            encBytes.addAll(Bytes.asList(SymCrypto.sm4CTREncrypt(key, inputWCheckCode, iv)));
             break;
         default:
             throw new NoSuchAlgorithmException("Unsupported algorithm " + algo.name());

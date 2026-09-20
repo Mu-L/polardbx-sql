@@ -112,6 +112,7 @@ public class COLLogicalViewConvertRuleTest {
             }
         );
 
-        Assert.assertEquals(method.invoke(COLLogicalViewConvertRule.INSTANCE, tm, mockSource.enableTest), result);
+        Assert.assertEquals(method.invoke(COLLogicalViewConvertRule.INSTANCE, tm, mockSource.enableTest),
+            result);
     }
 }

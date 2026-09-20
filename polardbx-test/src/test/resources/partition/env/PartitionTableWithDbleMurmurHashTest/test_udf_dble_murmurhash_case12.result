@@ -1,0 +1,48 @@
+## DISABLE_FAST_SQL_PARSER
+## normal
+select unitmurhashc12('5')
+unitmurhashc12('5')
+0
+## error_msg: $# routeKey is legal #$
+select unitmurhashc12('')
+routeKey is legal
+## error_msg: $# routeKey is legal #$
+select unitmurhashc12(null)
+routeKey is legal
+## error_msg: $# routeKey is legal #$
+select unitmurhashc12('1234567891234567891234567')
+routeKey is legal
+## error_msg: $# routeKey is legal #$
+select unitmurhashc12('a')
+routeKey is legal
+create table dble_t12
+(a varchar(64), b int)
+partition by udf_hash(unitmurhashc12(a))
+partitions 2
+(
+partition p1 values less than(1),
+partition p2 values less than(2)
+)
+insert into dble_t12 values ('2', 2)
+## error_msg: $# routeKey is legal #$
+insert into dble_t12 values (null, 3)
+routeKey is legal
+select * from dble_t12 where a='2'
+a,b
+2,2
+select part_route('','dble_t12', '2')
+part_route('', 'dble_t12', '2')
+p2
+## error_msg: $# routeKey is legal #$
+select part_route('','dble_t12', '')
+routeKey is legal
+## error_msg: $# routeKey is legal #$
+select part_route('','dble_t12', null)
+routeKey is legal
+## error_msg: $# routeKey is legal #$
+select part_route('','dble_t12', '1234567891234567891234567')
+routeKey is legal
+## error_msg: $# routeKey is legal #$
+select part_route('','dble_t12', 'aaa')
+routeKey is legal
+drop table dble_t12;

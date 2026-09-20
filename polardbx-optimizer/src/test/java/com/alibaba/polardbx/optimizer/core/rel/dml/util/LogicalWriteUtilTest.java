@@ -19,6 +19,7 @@ import org.apache.calcite.rex.RexDynamicParam;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.SqlTypeFactoryImpl;
 import org.apache.calcite.sql.type.SqlTypeName;
 
@@ -326,6 +327,8 @@ public class LogicalWriteUtilTest extends TestCase {
         final RexNode nullRex = rexBuilder.makeNullLiteral(typeFactory.createSqlType(SqlTypeName.NULL));
         final RexNode nonNullRex = rexBuilder.makeIntLiteral(7527);
         final RexCall rexCall = (RexCall) rexBuilder.makeCall(TddlOperatorTable.PLUS, nullRex, nonNullRex);
+        final RexNode genColWrappedTimestamp = rexBuilder.makeCall(
+            SqlStdOperatorTable.GEN_COL_WRAPPER_FUNC, defaultRex);
 
         final ImmutableList<RexHandlerCallTestBuilder> rexHandlerCallTestBuilders = ImmutableList.of(
             new RexHandlerCallTestBuilder("1.1.1", false, false, false, false, false, nullRex, defaultRex, false,
@@ -336,16 +339,20 @@ public class LogicalWriteUtilTest extends TestCase {
                 nullRex),
             new RexHandlerCallTestBuilder("1.2.2", false, false, true, false, false, rexCall, defaultRex, false,
                 rexCall),
+            new RexHandlerCallTestBuilder("1.2.3", false, false, true, false, false, genColWrappedTimestamp, defaultRex,
+                false, genColWrappedTimestamp),
             new RexHandlerCallTestBuilder("1.3.1", false, false, true, true, false, nullRex, defaultRex, false,
                 nullRex),
-            new RexHandlerCallTestBuilder("1.3.1", false, false, true, true, true, nullRex, defaultRex, true,
+            new RexHandlerCallTestBuilder("1.3.2", false, false, true, true, true, nullRex, defaultRex, true,
                 defaultRex),
-            new RexHandlerCallTestBuilder("1.3.2", false, false, true, true, true, nonNullRex, defaultRex, true,
+            new RexHandlerCallTestBuilder("1.3.3", false, false, true, true, true, nonNullRex, defaultRex, true,
                 nonNullRex),
-            new RexHandlerCallTestBuilder("1.3.3", false, false, true, true, true, defaultRex, defaultRex, true,
+            new RexHandlerCallTestBuilder("1.3.4", false, false, true, true, true, defaultRex, defaultRex, true,
                 defaultRex),
-            new RexHandlerCallTestBuilder("1.3.4", false, false, true, true, true, rexCall, defaultRex, true,
+            new RexHandlerCallTestBuilder("1.3.5", false, false, true, true, true, rexCall, defaultRex, true,
                 RexUtils.ifNullDefault(rexCall, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("1.3.6", false, false, true, true, true, genColWrappedTimestamp, defaultRex,
+                true, RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder)),
             new RexHandlerCallTestBuilder("1.4.1", false, true, false, false, false, nullRex, defaultRex, false,
                 nullRex),
             new RexHandlerCallTestBuilder("1.5.1", false, true, true, false, false, nullRex, defaultRex, false,
@@ -358,6 +365,8 @@ public class LogicalWriteUtilTest extends TestCase {
                 defaultRex),
             new RexHandlerCallTestBuilder("1.6.4", false, true, true, true, false, rexCall, defaultRex, true,
                 RexUtils.ifNullDefault(rexCall, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("1.6.5", false, true, true, true, false, genColWrappedTimestamp, defaultRex,
+                true, RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder)),
             new RexHandlerCallTestBuilder("1.7.1", false, true, true, true, true, nullRex, defaultRex, true,
                 defaultRex),
             new RexHandlerCallTestBuilder("1.7.2", false, true, true, true, true, nonNullRex, defaultRex, true,
@@ -366,6 +375,8 @@ public class LogicalWriteUtilTest extends TestCase {
                 defaultRex),
             new RexHandlerCallTestBuilder("1.7.4", false, true, true, true, true, rexCall, defaultRex, true,
                 RexUtils.ifNullDefault(rexCall, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("1.7.5", false, true, true, true, true, genColWrappedTimestamp, defaultRex,
+                true, RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder)),
             new RexHandlerCallTestBuilder("1.8.1", true, false, false, false, false, nullRex, defaultRex, false,
                 nullRex),
             new RexHandlerCallTestBuilder("1.9.1", true, false, true, false, false, nullRex, defaultRex, true,
@@ -376,6 +387,8 @@ public class LogicalWriteUtilTest extends TestCase {
                 defaultRex),
             new RexHandlerCallTestBuilder("1.9.4", true, false, true, false, false, rexCall, defaultRex, true,
                 RexUtils.ifNullDefault(rexCall, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("1.9.5", true, false, true, false, false, genColWrappedTimestamp, defaultRex,
+                true, RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder)),
             new RexHandlerCallTestBuilder("1.10.1", true, false, true, true, false, nullRex, defaultRex, true,
                 defaultRex),
             new RexHandlerCallTestBuilder("1.10.2", true, false, true, true, false, nonNullRex, defaultRex, true,
@@ -392,6 +405,8 @@ public class LogicalWriteUtilTest extends TestCase {
                 defaultRex),
             new RexHandlerCallTestBuilder("1.11.4", true, false, true, true, true, rexCall, defaultRex, true,
                 RexUtils.ifNullDefault(rexCall, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("1.11.5", true, false, true, true, true, genColWrappedTimestamp, defaultRex,
+                true, RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder)),
             new RexHandlerCallTestBuilder("1.12.1", true, true, true, true, true, nullRex, defaultRex, true,
                 defaultRex),
             new RexHandlerCallTestBuilder("1.12.2", true, true, true, true, true, nonNullRex, defaultRex, true,
@@ -399,7 +414,9 @@ public class LogicalWriteUtilTest extends TestCase {
             new RexHandlerCallTestBuilder("1.12.3", true, true, true, true, true, defaultRex, defaultRex, true,
                 defaultRex),
             new RexHandlerCallTestBuilder("1.12.4", true, true, true, true, true, rexCall, defaultRex, true,
-                RexUtils.ifNullDefault(rexCall, defaultRex, rexBuilder))
+                RexUtils.ifNullDefault(rexCall, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("1.12.5", true, true, true, true, true, genColWrappedTimestamp, defaultRex,
+                true, RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder))
         );
 
         rexDynamicImplicitDefaultHandlerCallBuilders.addAll(rexHandlerCallTestBuilders);
@@ -469,6 +486,8 @@ public class LogicalWriteUtilTest extends TestCase {
         final RexNode nullRex = rexBuilder.makeNullLiteral(typeFactory.createSqlType(SqlTypeName.NULL));
         final RexNode nonNullLiteral = rexBuilder.makeIntLiteral(7527);
         final RexNode nullableRex = rexBuilder.makeCall(TddlOperatorTable.PLUS, nullRex, nonNullLiteral);
+        final RexNode genColWrappedTimestamp = rexBuilder.makeCall(
+            SqlStdOperatorTable.GEN_COL_WRAPPER_FUNC, defaultRex);
 
         final RexLiteral rexLiteral = rexBuilder.makeLiteral("null");
         final RexInputRef rexInputRef = rexBuilder.makeInputRef(typeFactory.createSqlType(SqlTypeName.VARCHAR), 0);
@@ -486,6 +505,8 @@ public class LogicalWriteUtilTest extends TestCase {
                 defaultRex, false, nullRex),
             new RexHandlerCallTestBuilder("2.2.2", false, false, true, false, false, nextParamIndex, nullableRex,
                 defaultRex, false, nullableRex),
+            new RexHandlerCallTestBuilder("2.2.3", false, false, true, false, false, nextParamIndex,
+                genColWrappedTimestamp, defaultRex, false, genColWrappedTimestamp),
             new RexHandlerCallTestBuilder("2.3.1", false, false, true, true, false, nextParamIndex, nullRex, defaultRex,
                 false, nullRex),
             new RexHandlerCallTestBuilder("2.4.1", false, false, true, true, true, nextParamIndex, nullRex, defaultRex,
@@ -496,6 +517,9 @@ public class LogicalWriteUtilTest extends TestCase {
                 defaultRex, true, false, defaultRex),
             new RexHandlerCallTestBuilder("2.4.4", false, false, true, true, true, nextParamIndex, nullableRex,
                 defaultRex, true, false, RexUtils.ifNullDefault(nullableRex, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("2.4.5", false, false, true, true, true, nextParamIndex,
+                genColWrappedTimestamp, defaultRex, true, false,
+                RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder)),
             new RexHandlerCallTestBuilder("2.5.1", false, true, false, false, false, nextParamIndex, nullRex,
                 defaultRex, false, nullRex),
             new RexHandlerCallTestBuilder("2.6.1", false, true, true, false, false, nextParamIndex, nullRex, defaultRex,
@@ -508,6 +532,9 @@ public class LogicalWriteUtilTest extends TestCase {
                 defaultRex, true, defaultRex),
             new RexHandlerCallTestBuilder("2.7.4", false, true, true, true, false, nextParamIndex, nullableRex,
                 defaultRex, true, RexUtils.ifNullDefault(nullableRex, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("2.7.5", false, true, true, true, false, nextParamIndex,
+                genColWrappedTimestamp, defaultRex, true,
+                RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder)),
             new RexHandlerCallTestBuilder("2.8.1", false, true, true, true, true, nextParamIndex, nullRex, defaultRex,
                 true, defaultRex),
             new RexHandlerCallTestBuilder("2.8.2", false, true, true, true, true, nextParamIndex, nonNullLiteral,
@@ -516,6 +543,9 @@ public class LogicalWriteUtilTest extends TestCase {
                 defaultRex, true, defaultRex),
             new RexHandlerCallTestBuilder("2.8.4", false, true, true, true, true, nextParamIndex, nullableRex,
                 defaultRex, true, RexUtils.ifNullDefault(nullableRex, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("2.8.5", false, true, true, true, true, nextParamIndex,
+                genColWrappedTimestamp, defaultRex, true,
+                RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder)),
             new RexHandlerCallTestBuilder("2.9.1", true, false, false, false, false, nextParamIndex, nullRex,
                 defaultRex, true, nullRex),
             new RexHandlerCallTestBuilder("2.10.1", true, false, true, false, false, nextParamIndex, nullRex,
@@ -527,6 +557,9 @@ public class LogicalWriteUtilTest extends TestCase {
                 defaultRex, true, defaultRex),
             new RexHandlerCallTestBuilder("2.10.4", true, false, true, false, false, nextParamIndex, nullableRex,
                 defaultRex, true, RexUtils.ifNullDefault(nullableRex, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("2.10.5", true, false, true, false, false, nextParamIndex,
+                genColWrappedTimestamp, defaultRex, true,
+                RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder)),
             new RexHandlerCallTestBuilder("2.11.1", true, false, true, true, false, nextParamIndex, nullRex, defaultRex,
                 true, defaultRex),
             new RexHandlerCallTestBuilder("2.11.2", true, false, true, true, false, nextParamIndex, nonNullLiteral,
@@ -543,6 +576,9 @@ public class LogicalWriteUtilTest extends TestCase {
                 defaultRex, true, defaultRex),
             new RexHandlerCallTestBuilder("2.12.4", true, false, true, true, true, nextParamIndex, nullableRex,
                 defaultRex, true, RexUtils.ifNullDefault(nullableRex, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("2.12.5", true, false, true, true, true, nextParamIndex,
+                genColWrappedTimestamp, defaultRex, true,
+                RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder)),
             new RexHandlerCallTestBuilder("2.13.1", true, true, true, true, true, nextParamIndex, nullRex, defaultRex,
                 true, defaultRex),
             new RexHandlerCallTestBuilder("2.13.2", true, true, true, true, true, nextParamIndex, nonNullLiteral,
@@ -550,7 +586,10 @@ public class LogicalWriteUtilTest extends TestCase {
             new RexHandlerCallTestBuilder("2.13.3", true, true, true, true, true, nextParamIndex, defaultRex,
                 defaultRex, true, defaultRex),
             new RexHandlerCallTestBuilder("2.13.4", true, true, true, true, true, nextParamIndex, nullableRex,
-                defaultRex, true, RexUtils.ifNullDefault(nullableRex, defaultRex, rexBuilder))
+                defaultRex, true, RexUtils.ifNullDefault(nullableRex, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("2.13.5", true, true, true, true, true, nextParamIndex,
+                genColWrappedTimestamp, defaultRex, true,
+                RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder))
         );
 
         rexReplaceRexWithParamHandlerCallBuilders.addAll(rexHandlerCallTestBuilders);
@@ -598,6 +637,8 @@ public class LogicalWriteUtilTest extends TestCase {
         final RexDynamicParam rexDynamicParam =
             rexBuilder.makeDynamicParam(typeFactory.createSqlType(SqlTypeName.VARCHAR), 0);
         final RexNode rexCall = rexBuilder.makeCall(TddlOperatorTable.PLUS, nullRex, nonNullRex);
+        final RexNode genColWrappedTimestamp = rexBuilder.makeCall(
+            SqlStdOperatorTable.GEN_COL_WRAPPER_FUNC, defaultRex);
 
         final AtomicInteger nextParamIndex = new AtomicInteger(0);
 
@@ -614,6 +655,8 @@ public class LogicalWriteUtilTest extends TestCase {
                 defaultRex, false, rexCall),
             new RexHandlerCallTestBuilder("3.2.3", false, false, true, false, false, nextParamIndex, rexInputRef,
                 defaultRex, true, rexInputRef),
+            new RexHandlerCallTestBuilder("3.2.4", false, false, true, false, false, nextParamIndex,
+                genColWrappedTimestamp, defaultRex, false, genColWrappedTimestamp),
             new RexHandlerCallTestBuilder("3.3.1", false, false, true, true, false, nextParamIndex, nullRex, defaultRex,
                 false, nullRex),
             new RexHandlerCallTestBuilder("3.3.2", false, false, true, true, false, nextParamIndex, rexInputRef,
@@ -632,6 +675,9 @@ public class LogicalWriteUtilTest extends TestCase {
                 defaultRex, false, rexLiteral),
             new RexHandlerCallTestBuilder("3.4.7", false, false, true, true, true, nextParamIndex, rexDynamicParam,
                 defaultRex, false, RexUtils.ifNullDefault(rexDynamicParam, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("3.4.8", false, false, true, true, true, nextParamIndex,
+                genColWrappedTimestamp, defaultRex, false,
+                RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder)),
             new RexHandlerCallTestBuilder("3.5.1", false, true, false, false, false, nextParamIndex, nullRex,
                 defaultRex, false, nullRex),
             new RexHandlerCallTestBuilder("3.5.2", false, true, false, false, false, nextParamIndex, rexInputRef,
@@ -654,6 +700,9 @@ public class LogicalWriteUtilTest extends TestCase {
                 defaultRex, false, rexLiteral),
             new RexHandlerCallTestBuilder("3.7.7", false, true, true, true, false, nextParamIndex, rexDynamicParam,
                 defaultRex, true, RexUtils.ifNullDefault(rexDynamicParam, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("3.7.8", false, true, true, true, false, nextParamIndex,
+                genColWrappedTimestamp, defaultRex, true,
+                RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder)),
             new RexHandlerCallTestBuilder("3.8.1", false, true, true, true, true, nextParamIndex, nullRex, defaultRex,
                 true, defaultRex),
             new RexHandlerCallTestBuilder("3.8.2", false, true, true, true, true, nextParamIndex, nonNullRex,
@@ -668,6 +717,9 @@ public class LogicalWriteUtilTest extends TestCase {
                 defaultRex, false, rexLiteral),
             new RexHandlerCallTestBuilder("3.8.7", false, true, true, true, true, nextParamIndex, rexDynamicParam,
                 defaultRex, true, RexUtils.ifNullDefault(rexDynamicParam, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("3.8.8", false, true, true, true, true, nextParamIndex,
+                genColWrappedTimestamp, defaultRex, true,
+                RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder)),
             new RexHandlerCallTestBuilder("3.9.1", true, false, false, false, false, nextParamIndex, nullRex,
                 defaultRex, true, nullRex),
             new RexHandlerCallTestBuilder("3.10.1", true, false, true, false, false, nextParamIndex, nullRex,
@@ -678,6 +730,9 @@ public class LogicalWriteUtilTest extends TestCase {
                 defaultRex, true, defaultRex),
             new RexHandlerCallTestBuilder("3.10.4", true, false, true, false, false, nextParamIndex, rexCall,
                 defaultRex, true, RexUtils.ifNullDefault(rexCall, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("3.10.5", true, false, true, false, false, nextParamIndex,
+                genColWrappedTimestamp, defaultRex, true,
+                RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder)),
             new RexHandlerCallTestBuilder("3.11.1", true, false, true, true, false, nextParamIndex, nullRex, defaultRex,
                 true, defaultRex),
             new RexHandlerCallTestBuilder("3.11.2", true, false, true, true, false, nextParamIndex, nonNullRex,
@@ -694,6 +749,9 @@ public class LogicalWriteUtilTest extends TestCase {
                 defaultRex, true, defaultRex),
             new RexHandlerCallTestBuilder("3.12.4", true, false, true, true, true, nextParamIndex, rexCall,
                 defaultRex, true, RexUtils.ifNullDefault(rexCall, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("3.12.5", true, false, true, true, true, nextParamIndex,
+                genColWrappedTimestamp, defaultRex, true,
+                RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder)),
             new RexHandlerCallTestBuilder("3.13.1", true, true, true, true, true, nextParamIndex, nullRex, defaultRex,
                 true, defaultRex),
             new RexHandlerCallTestBuilder("3.13.2", true, true, true, true, true, nextParamIndex, nonNullRex,
@@ -701,7 +759,10 @@ public class LogicalWriteUtilTest extends TestCase {
             new RexHandlerCallTestBuilder("3.13.3", true, true, true, true, true, nextParamIndex, defaultRex,
                 defaultRex, true, defaultRex),
             new RexHandlerCallTestBuilder("3.13.4", true, true, true, true, true, nextParamIndex, rexCall,
-                defaultRex, true, RexUtils.ifNullDefault(rexCall, defaultRex, rexBuilder))
+                defaultRex, true, RexUtils.ifNullDefault(rexCall, defaultRex, rexBuilder)),
+            new RexHandlerCallTestBuilder("3.13.5", true, true, true, true, true, nextParamIndex,
+                genColWrappedTimestamp, defaultRex, true,
+                RexUtils.ifNullDefault(genColWrappedTimestamp, defaultRex, rexBuilder))
         );
 
         rexReplaceRexWithParamHandlerBuilders.addAll(rexHandlerCallTestBuilders);

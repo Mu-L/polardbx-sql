@@ -16,16 +16,48 @@
 
 package com.alibaba.polardbx.gms.util;
 
+import com.alibaba.polardbx.druid.util.StringUtils;
+import com.alibaba.polardbx.gms.listener.impl.MetaDbConfigManager;
+import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
+import com.alibaba.polardbx.gms.topology.SubInstConfigAccessor;
+
 /**
  * @author chenghui.lch
  */
 public class InstIdUtil {
+
+    private static volatile String subInstId;
 
     public static String getInstId() {
         // If Server startup by gms,
         // instanceId must be put into System.properties
         String instId = System.getProperty("instanceId");
         return instId;
+    }
+
+    public static String getSubInstId() {
+        if (StringUtils.isEmpty(subInstId)) {
+            return getInstId();
+        } else {
+            return subInstId;
+        }
+    }
+
+    public static boolean isClusterInstId() {
+        String instId = getInstId();
+        return instId != null && instId.equalsIgnoreCase(getSubInstId());
+    }
+
+    public static void setSubInstId(String subInstId) {
+
+        if (!StringUtils.isEmpty(subInstId) && !subInstId.equalsIgnoreCase(InstIdUtil.subInstId)) {
+            // Register sub-instance configuration if sub-instance ID exists
+            String subInstDataId = MetaDbDataIdBuilder.getSubInstConfigDataId(subInstId);
+            MetaDbConfigManager.getInstance().register(subInstDataId, null);
+            MetaDbConfigManager.getInstance()
+                .bindListener(subInstDataId, new SubInstConfigAccessor.SubInstPropertiesConfigListener());
+        }
+        InstIdUtil.subInstId = subInstId;
     }
 
     public static String getMasterInstId() {

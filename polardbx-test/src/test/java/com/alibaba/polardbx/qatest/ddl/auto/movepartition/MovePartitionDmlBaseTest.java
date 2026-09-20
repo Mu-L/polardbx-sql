@@ -20,11 +20,10 @@ public class MovePartitionDmlBaseTest extends DDLBaseNewDBTestCase {
     protected static final String SELECT_FORCE_TMPL =
         "/*+TDDL: cmd_extra(ENABLE_MPP = false)*/select id,c1,c2 from {0} force index({1}) order by id";
 
-    protected static final String SLOW_HINT =
-        "/*+TDDL: cmd_extra(GSI_DEBUG=\"slow\")*/";
+    protected static final String SLOW_HINT = "/*+TDDL: cmd_extra(GSI_DEBUG=\"slow\")*/";
 
     protected static final String SHOW_DS = "show ds where db='%s'";
-    protected static final String MOVE_PARTITION_COMMAND = "alter table %s move partitions %s to '%s'";
+    protected static final String MOVE_PARTITION_COMMAND = "alter tablegroup by table %s move partitions %s to '%s'";
 
     protected static final String SELECT_FROM_TABLE_DETAIL =
         "select storage_inst_id,table_group_name from information_schema.table_detail where table_schema='%s' and table_name='%s' and partition_name='%s'";
@@ -42,7 +41,9 @@ public class MovePartitionDmlBaseTest extends DDLBaseNewDBTestCase {
         return !e.getMessage().contains("Deadlock found when trying to get lock") &&
             !e.getMessage().contains("Incorrect string value") &&
             !e.getMessage().contains("Lock wait timeout exceeded") &&
-            !e.getMessage().contains("Duplicate entry");
+            !e.getMessage().contains("Duplicate entry") &&
+            !e.getMessage().contains("Table is in readonly status") &&
+            (isMySQL80() || !e.getMessage().contains("doesn't exist"));
     }
 
     protected static final Consumer<Exception> throwException = (e) -> {

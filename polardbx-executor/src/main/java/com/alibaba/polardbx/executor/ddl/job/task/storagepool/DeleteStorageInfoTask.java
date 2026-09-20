@@ -21,12 +21,15 @@ import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.sync.AlterStoragePoolSyncAction;
 import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
+import com.alibaba.polardbx.gms.listener.impl.MetaDbConfigManager;
+import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
 import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.gms.topology.StorageInfoAccessor;
 import com.alibaba.polardbx.gms.topology.StorageInfoExtraFieldJSON;
 import com.alibaba.polardbx.gms.topology.StorageInfoRecord;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.locality.StoragePoolManager;
+import com.alibaba.polardbx.optimizer.locality.StoragePoolUtils;
 import lombok.Getter;
 import org.apache.commons.lang.StringUtils;
 
@@ -35,85 +38,68 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-import static com.alibaba.polardbx.executor.ddl.job.factory.storagepool.StoragePoolUtils.RECYCLE_STORAGE_POOL;
+import static com.alibaba.polardbx.gms.topology.StorageInfoRecord.STORAGE_STATUS_READY;
+import static com.alibaba.polardbx.gms.topology.StorageInfoRecord.STORAGE_STATUS_REMOVED;
+import static com.alibaba.polardbx.optimizer.locality.StoragePoolUtils.RECYCLE_STORAGE_POOL;
 
 @Getter
 @TaskName(name = "DeleteStorageInfoTask")
-public class DeleteStorageInfoTask extends BaseDdlTask {
-
-    String schemaName;
-
-    String instId;
-
-    List<String> dnIds;
-
-    String undeletableDnId;
-    String storagePoolName;
+public class DeleteStorageInfoTask extends BaseStoragePoolInfoTask {
 
     @JSONCreator
     public DeleteStorageInfoTask(String schemaName, String instId, List<String> dnIds, String undeletableDnId,
                                  String storagePoolName) {
-        super(schemaName);
-        this.schemaName = schemaName;
-        this.dnIds = dnIds;
-        this.undeletableDnId = undeletableDnId;
-        this.instId = instId;
-        this.storagePoolName = storagePoolName;
+        super(schemaName, instId, dnIds, undeletableDnId, storagePoolName);
     }
 
     @Override
     public void duringTransaction(Connection metaDbConnection, ExecutionContext executionContext) {
-        StorageInfoAccessor storageInfoAccessor = new StorageInfoAccessor();
-        storageInfoAccessor.setConnection(metaDbConnection);
-        List<StorageInfoRecord> originalInfoRecords =
-            storageInfoAccessor.getStorageInfosByInstId(instId).stream().filter(o -> dnIds.contains(o.storageInstId))
-                .collect(Collectors.toList());
-        for (StorageInfoRecord record : originalInfoRecords) {
-            StorageInfoExtraFieldJSON extras =
-                Optional.ofNullable(record.extras).orElse(new StorageInfoExtraFieldJSON());
-            extras.setStoragePoolName(RECYCLE_STORAGE_POOL);
-            storageInfoAccessor.updateStoragePoolName(record.storageInstId, extras);
-//            if(record.storageInstId.equals(undeletableDnId)){
-//                storageInfoAccessor.updateStorageInfoDeletable(undeletableDnId, false);
-//            }
-        }
-        StoragePoolManager storagePoolManager = StoragePoolManager.getInstance();
-        storagePoolManager.updateStoragePoolName(storagePoolName, RECYCLE_STORAGE_POOL);
+        updateSupportedCommands(true, false, metaDbConnection);
 
+        // init storage pool
+        initBaseStoragePoolInfoTask(metaDbConnection);
+
+        // update storage pool name
+        StoragePoolTaskUtils.updateStoragePoolName(storageInfoAccessor, filteredStorageInfoRecords,
+            RECYCLE_STORAGE_POOL);
+
+        // update storage status
+        StoragePoolTaskUtils.updateStorageStatus(storageInfoAccessor, dnIds, STORAGE_STATUS_REMOVED);
+
+        // remove storage pool
+        storagePoolManager.mergeIntoStoragePool(metaDbConnection, storagePoolName, RECYCLE_STORAGE_POOL);
+
+        MetaDbConfigManager.getInstance()
+            .notify(MetaDbDataIdBuilder.getStorageInfoDataId(instId), metaDbConnection);
     }
 
     @Override
     protected void duringRollbackTransaction(Connection metaDbConnection, ExecutionContext executionContext) {
 //        rollbackImpl(metaDbConnection, executionContext);
-        StorageInfoAccessor storageInfoAccessor = new StorageInfoAccessor();
-        storageInfoAccessor.setConnection(metaDbConnection);
-        List<StorageInfoRecord> originalInfoRecords =
-            storageInfoAccessor.getStorageInfosByInstId(instId).stream().filter(o -> dnIds.contains(o.storageInstId))
-                .collect(Collectors.toList());
-        for (StorageInfoRecord record : originalInfoRecords) {
-            StorageInfoExtraFieldJSON extras =
-                Optional.ofNullable(record.extras).orElse(new StorageInfoExtraFieldJSON());
-            extras.setStoragePoolName(storagePoolName);
-            storageInfoAccessor.updateStoragePoolName(record.storageInstId, extras);
-//            if(record.storageInstId.equals(undeletableDnId)){
-//                storageInfoAccessor.updateStorageInfoDeletable(undeletableDnId, false);
-//            }
-        }
-        StoragePoolManager storagePoolManager = StoragePoolManager.getInstance();
-        String dnIdString = StringUtils.join(dnIds, ",");
-        storagePoolManager.addStoragePool(storagePoolName, dnIdString, undeletableDnId);
-
+//        initBaseStoragePoolInfoTask(metaDbConnection);
+//        // update storage pool name
+//        StoragePoolTaskUtils.updateStoragePoolName(storageInfoAccessor, filteredStorageInfoRecords, storagePoolName);
+//
+//        // add storage pool
+//        storagePoolManager.addStoragePool(metaDbConnection, storagePoolName, dnIdStr, undeletableDnId);
+//
+//        // update status
+//        StoragePoolTaskUtils.updateStorageStatus(storageInfoAccessor, dnIds, STORAGE_STATUS_READY);
+//
+//        // nodify storage info
+//        MetaDbConfigManager.getInstance()
+//            .notify(MetaDbDataIdBuilder.getStorageInfoDataId(instId), metaDbConnection);
     }
 
     @Override
     protected void onRollbackSuccess(ExecutionContext executionContext) {
-        SyncManagerHelper.sync(new AlterStoragePoolSyncAction("", ""),
+        SyncManagerHelper.syncThrowExceptions(new AlterStoragePoolSyncAction("", ""),
             SyncScope.ALL);
     }
 
     @Override
     protected void onExecutionSuccess(ExecutionContext executionContext) {
-        SyncManagerHelper.sync(new AlterStoragePoolSyncAction("", ""),
+        SyncManagerHelper.syncThrowExceptions(new AlterStoragePoolSyncAction("", ""),
             SyncScope.ALL);
     }
 

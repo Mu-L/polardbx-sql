@@ -16,11 +16,11 @@
 
 package org.apache.calcite.sql;
 
-import java.util.List;
-
 import org.apache.calcite.sql.SqlWriter.Frame;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.util.ImmutableNullableList;
+
+import java.util.List;
 
 /**
  * @author chenmo.cm
@@ -34,6 +34,9 @@ public class SqlIndexColumnName extends SqlCall {
     private final SqlIdentifier             columnName;
     /** null is possible */
     private final SqlLiteral                length;
+    /**
+     * 默认为null，true为显式填入ASC，false为显式填入DESC
+     */
     private final Boolean                   asc;
 
     public SqlIndexColumnName(SqlParserPos pos, SqlIdentifier columnName, SqlLiteral length, Boolean asc){
@@ -82,6 +85,13 @@ public class SqlIndexColumnName extends SqlCall {
 
     public Boolean isAsc() {
         return asc;
+    }
+
+    /**
+     * 获取索引列的排序方式,默认升序, null的时候返回null
+     */
+    public String getCollation() {
+        return asc == null ? null : asc ? "A" : "D";
     }
 
     public String getColumnNameStr() {

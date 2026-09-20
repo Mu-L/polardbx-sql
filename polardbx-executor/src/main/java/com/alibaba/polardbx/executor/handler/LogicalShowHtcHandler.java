@@ -58,7 +58,7 @@ public class LogicalShowHtcHandler extends HandlerCommon {
 
         result.addColumn("CURRENT_TIME", DataTypes.LongType);// 当前系统时间
         result.addColumn("CPU", DataTypes.DoubleType);// 当前实例时CPU百分比
-        result.addColumn("LOAD", DataTypes.DoubleType);// 当前实例时的机器load
+        result.addColumn("LOAD", DataTypes.VarcharType);// 当前实例时的机器load
         result.addColumn("FREEMEM", DataTypes.DoubleType);// 当前机器内存的剩余内存,单位K
 
         result.addColumn("NETIN", DataTypes.LongType);// 当前机器网络数据接收量，Byte

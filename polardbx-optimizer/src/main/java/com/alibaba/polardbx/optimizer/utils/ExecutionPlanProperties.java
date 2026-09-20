@@ -62,6 +62,10 @@ public final class ExecutionPlanProperties {
 
     public static final int MODIFY_FOREIGN_KEY = 15;
 
+    public static final int EXISTS_JOIN_WITH_BROADCAST_TABLE_WITH_LOCALITY = 16;
+
+    public static final int MODIFY_EXTERNALIZED_DATA = 17;
+
     public static final Set<Integer> MDL_REQUIRED = ImmutableSet
         .of(MODIFY_TABLE, MODIFY_GSI_TABLE, MODIFY_BROADCAST_TABLE, MODIFY_SHARDING_COLUMN, MODIFY_CROSS_DB,
             MODIFY_SCALE_OUT_GROUP, REPLICATE_TABLE);

@@ -26,6 +26,8 @@ import com.alibaba.polardbx.druid.sql.ast.SQLCurrentTimeExpr;
 import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLMethodInvokeExpr;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLCheck;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnCheck;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnConstraint;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnDefinition;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnPrimaryKey;
@@ -39,19 +41,13 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateTab
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlTableIndex;
 import com.alibaba.polardbx.druid.util.JdbcConstants;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
-import com.alibaba.polardbx.optimizer.utils.GsiUtils;
-import com.google.common.collect.Maps;
-import com.alibaba.polardbx.common.exception.TddlRuntimeException;
-import com.alibaba.polardbx.common.exception.code.ErrorCode;
-import com.alibaba.polardbx.common.properties.ConnectionParams;
-import com.alibaba.polardbx.common.utils.GeneralUtil;
-import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ReplaceTableNameWithQuestionMarkVisitor;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.gsi.CreateGlobalIndexPreparedData;
 import com.alibaba.polardbx.optimizer.parse.custruct.FastSqlConstructUtils;
 import com.alibaba.polardbx.optimizer.parse.visitor.ContextParameters;
+import com.alibaba.polardbx.optimizer.utils.GsiUtils;
 import com.alibaba.polardbx.rule.TableRule;
 import com.google.common.collect.Maps;
 import org.apache.calcite.rel.core.DDL;
@@ -371,6 +367,7 @@ public class CreateGlobalIndexBuilder {
          *     8. check no DEFAULT CURRENT_TIMESTAMP specified for index or covering column
          *     9. check no ON UPDATE CURRENT_TIMESTAMP specified for index or covering column
          *    10. check all timestamp type columns has default value other than CURRENT_TIMESTAMP
+         *    11. remove check constraint
          * </pre>
          */
         while (it.hasNext()) {
@@ -461,6 +458,13 @@ public class CreateGlobalIndexBuilder {
                     duplicatedIndexName = indexName;
                 }
 
+                it.remove();
+            } else if (tableElement instanceof SQLCheck) {
+                final SQLCheck sqlCheck = (SQLCheck) tableElement;
+                final String indexName = ((SQLIdentifierExpr) sqlCheck.getName()).normalizedName();
+                if (TStringUtil.equalsIgnoreCase(indexName, gsiName)) {
+                    duplicatedIndexName = indexName;
+                }
                 it.remove();
             }
         }
@@ -591,6 +595,7 @@ public class CreateGlobalIndexBuilder {
          *     4. check no DEFAULT CURRENT_TIMESTAMP specified for index or covering column
          *     5. check no ON UPDATE CURRENT_TIMESTAMP specified for index or covering column
          *     6. check all timestamp type columns has default value other than CURRENT_TIMESTAMP
+         *     7. remove check constraint
          * </pre>
          */
         while (it.hasNext()) {
@@ -614,6 +619,9 @@ public class CreateGlobalIndexBuilder {
                             withoutPk = false;
                         } else if (constraint instanceof SQLColumnReference) {
                             // remove foreign key
+                            constraintIt.remove();
+                        } else if (constraint instanceof SQLColumnCheck) {
+                            // remove check constraint
                             constraintIt.remove();
                         }
                     }
@@ -654,6 +662,13 @@ public class CreateGlobalIndexBuilder {
                     duplicatedIndexName = indexName;
                 }
 
+                it.remove();
+            } else if (tableElement instanceof SQLCheck) {
+                final SQLCheck sqlCheck = (SQLCheck) tableElement;
+                final String indexName = ((SQLIdentifierExpr) sqlCheck.getName()).normalizedName();
+                if (TStringUtil.equalsIgnoreCase(indexName, gsiName)) {
+                    duplicatedIndexName = indexName;
+                }
                 it.remove();
             }
         }

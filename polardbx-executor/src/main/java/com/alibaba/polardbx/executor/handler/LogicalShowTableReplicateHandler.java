@@ -65,6 +65,7 @@ public class LogicalShowTableReplicateHandler extends HandlerCommon {
         result.addColumn("REPLICATE_STATUS", DataTypes.StringType);
         result.addColumn("GSI_STATUS", DataTypes.StringType);
         result.addColumn("GSI_VISIBILITY", DataTypes.StringType);
+        result.addColumn("VERSION", DataTypes.LongType);
         result.initMeta();
         return result;
     }
@@ -83,6 +84,7 @@ public class LogicalShowTableReplicateHandler extends HandlerCommon {
             }
 
             List<Object> row = new ArrayList<>();
+            long version = tableMeta.getVersion();
             ComplexTaskMetaManager.ComplexTaskStatus complexTaskStatus =
                 tableMeta.getComplexTaskTableMetaBean().getFirstPartStatus();
             if (tableMeta.isGsi()) {
@@ -94,12 +96,14 @@ public class LogicalShowTableReplicateHandler extends HandlerCommon {
                 row.add(complexTaskStatus);
                 row.add(indexStatus);
                 row.add(indexVisibility);
+                row.add(version);
             } else {
                 row.add(tableName);
                 row.add("-");
                 row.add(complexTaskStatus);
                 row.add("-");
                 row.add("-");
+                row.add(version);
             }
 
             result.addRow(row.toArray());

@@ -1,0 +1,4 @@
+## DISABLE_FAST_SQL_PARSER
+
+select newpartdated0sp10('2013-01-01');
+select newpartdated0sp10('2014-01-01');

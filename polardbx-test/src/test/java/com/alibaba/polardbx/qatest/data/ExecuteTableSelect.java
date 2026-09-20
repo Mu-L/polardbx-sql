@@ -989,7 +989,7 @@ public class ExecuteTableSelect {
         + "  `c_multipolygon` multipolygon DEFAULT NULL,\n"
         + "  `c_geometrycollection` geometrycollection DEFAULT NULL,\n"
         + "  PRIMARY KEY ({1})\n"
-        + ") ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COMMENT=\"10000000\"\n {2}";
+        + ") ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT=\"10000000\"\n {2}";
 
     public static final String FULL_TYPE_TABLE_TEMPLATE_SUPPORTED_GSI = "CREATE TABLE `{0}` (\n"
         + "  `id` bigint(20) NOT NULL AUTO_INCREMENT,\n"
@@ -1063,10 +1063,10 @@ public class ExecuteTableSelect {
         + "  `c_multipolygon` multipolygon DEFAULT NULL,\n"
         + "  `c_geometrycollection` geometrycollection DEFAULT NULL,\n"
         + "  PRIMARY KEY {1}\n"
-        + ") ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COMMENT=\"10000000\"\n {2}";
+        + ") ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT=\"10000000\"\n {2}";
 
     public static final String TABLE_TEMPLATE =
-        "CREATE TABLE `{0}` ({1},\n {2}) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 {3}";
+        "CREATE TABLE `{0}` ({1},\n {2}) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci {3}";
 
     public static final String PRIMARY_KEY_TEMPLATE = "PRIMARY KEY (`{0}`)";
 

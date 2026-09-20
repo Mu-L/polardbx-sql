@@ -22,6 +22,7 @@ import org.junit.Test;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -70,4 +71,54 @@ public class SQLModeTest {
         );
     }
 
+    /**
+     * 专门测试 MODE_TIME_TRUNCATE_FRACTIONAL 的编码解码功能
+     */
+    @Test
+    public void testTimeTruncateFractionalEncodeDecode() {
+        // 测试单独的 TIME_TRUNCATE_FRACTIONAL 模式
+        String singleMode = "TIME_TRUNCATE_FRACTIONAL";
+        long flag = SQLMode.convertToFlag(singleMode);
+        
+        // 验证编码结果
+        Assert.assertTrue(flag == SQLModeFlags.MODE_TIME_TRUNCATE_FRACTIONAL);
+
+        // 验证解码结果
+        Set<SQLMode> decodedModes = SQLMode.convertFromFlag(flag);
+        Assert.assertTrue(decodedModes.contains(SQLMode.TIME_TRUNCATE_FRACTIONAL));
+        Assert.assertTrue(decodedModes.size() == 1);
+
+        // 测试与其他模式组合
+        String combinedMode = "STRICT_TRANS_TABLES,TIME_TRUNCATE_FRACTIONAL,NO_ZERO_DATE";
+        long combinedFlag = SQLMode.convertToFlag(combinedMode);
+
+        // 验证组合编码结果包含 TIME_TRUNCATE_FRACTIONAL
+        Assert.assertTrue((combinedFlag & SQLModeFlags.MODE_TIME_TRUNCATE_FRACTIONAL) != 0);
+
+        // 验证组合解码结果
+        Set<SQLMode> combinedDecodedModes = SQLMode.convertFromFlag(combinedFlag);
+        Assert.assertTrue(combinedDecodedModes.contains(SQLMode.TIME_TRUNCATE_FRACTIONAL));
+        Assert.assertTrue(combinedDecodedModes.contains(SQLMode.STRICT_TRANS_TABLES));
+        Assert.assertTrue(combinedDecodedModes.contains(SQLMode.NO_ZERO_DATE));
+
+        // 测试编码解码的对称性
+        long reEncodedFlag = 0L;
+        for (SQLMode mode : combinedDecodedModes) {
+            reEncodedFlag |= mode.getModeFlag();
+        }
+        Assert.assertTrue(reEncodedFlag == combinedFlag);
+
+        // 测试边界情况：空字符串
+        long emptyFlag = SQLMode.convertToFlag("");
+        Assert.assertTrue(emptyFlag == 0L);
+
+        // 测试边界情况：null
+        long nullFlag = SQLMode.convertToFlag(null);
+        Assert.assertTrue(nullFlag == 0L);
+
+        // 测试包含但不完全匹配的情况
+        String partialMatch = "TIME_TRUNCATE_FRACTIONAL_EXTRA";
+        long partialFlag = SQLMode.convertToFlag(partialMatch);
+        Assert.assertTrue((partialFlag & SQLModeFlags.MODE_TIME_TRUNCATE_FRACTIONAL) != 0);
+    }
 }

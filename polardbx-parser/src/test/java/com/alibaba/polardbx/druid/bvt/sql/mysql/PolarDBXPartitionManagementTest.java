@@ -22,6 +22,7 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.parser.MySqlStatementParser;
 import com.alibaba.polardbx.druid.sql.parser.ByteString;
 import com.alibaba.polardbx.druid.sql.parser.SQLParserFeature;
 import com.alibaba.polardbx.druid.sql.parser.SQLStatementParser;
+import com.alibaba.polardbx.druid.sql.visitor.SQLASTOutputVisitor;
 import org.junit.Assert;
 import org.junit.Ignore;
 
@@ -354,4 +355,50 @@ public class PolarDBXPartitionManagementTest extends MysqlTest {
         SQLStatementParser parser = new MySqlStatementParser(ByteString.from(sql), SQLParserFeature.DrdsMisc);
         List<SQLStatement> stmtList = parser.parseStatementList();
     }
+
+    public void testAlterTableChangesetSecondaryEngineAttribute() {
+        String sql1 = "ALTER TABLE T1\n"
+            + "\tSECONDARY_ENGINE_ATTRIBUTE = '';";
+        SQLStatementParser parser = new MySqlStatementParser(ByteString.from(sql1), SQLParserFeature.DrdsMisc);
+        List<SQLStatement> stmtList = parser.parseStatementList();
+        SQLStatement result = stmtList.get(0);
+        Assert.assertEquals(sql1.toUpperCase().trim(), result.toString().toUpperCase().trim());
+        StringBuilder out = new StringBuilder();
+        SQLASTOutputVisitor visitor = new SQLASTOutputVisitor(out);
+        result.accept(visitor);
+        Assert.assertEquals(sql1.toUpperCase().trim(), out.toString().toUpperCase().trim());
+
+        String sql = "ALTER TABLE T1\n"
+            + "\tSECONDARY_ENGINE_ATTRIBUTE = '{\"POLARX.READONLY\":TRUE}';";
+        parser = new MySqlStatementParser(ByteString.from(sql), SQLParserFeature.DrdsMisc);
+        stmtList = parser.parseStatementList();
+        result = stmtList.get(0);
+        Assert.assertEquals(sql.toUpperCase().trim(), result.toString().toUpperCase().trim());
+        out = new StringBuilder();
+        visitor = new SQLASTOutputVisitor(out);
+        result.accept(visitor);
+        Assert.assertEquals(sql.toUpperCase().trim(), out.toString().toUpperCase().trim());
+
+        sql = "ALTER TABLE T1\n"
+            + "\tSECONDARY_ENGINE_ATTRIBUTE = null;";
+        parser = new MySqlStatementParser(ByteString.from(sql), SQLParserFeature.DrdsMisc);
+        stmtList = parser.parseStatementList();
+        result = stmtList.get(0);
+        Assert.assertEquals(sql1.toUpperCase().trim(), result.toString().toUpperCase().trim());
+        out = new StringBuilder();
+        visitor = new SQLASTOutputVisitor(out);
+        result.accept(visitor);
+        Assert.assertEquals(sql1.toUpperCase().trim(), out.toString().toUpperCase().trim());
+
+        sql = "ALTER TABLE T1\n"
+            + "\tSECONDARY_ENGINE_ATTRIBUTE = 1;";
+        parser = new MySqlStatementParser(ByteString.from(sql), SQLParserFeature.DrdsMisc);
+        try {
+            parser.parseStatementList();
+        } catch (Exception e) {
+            Assert.assertTrue(e.getMessage().contains("SECONDARY_ENGINE_ATTRIBUTE expects a string value or NULL"));
+        }
+
+    }
+
 }

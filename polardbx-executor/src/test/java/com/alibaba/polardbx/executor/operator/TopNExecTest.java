@@ -16,12 +16,13 @@
 
 package com.alibaba.polardbx.executor.operator;
 
-import com.alibaba.polardbx.common.properties.MppConfig;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.executor.operator.spill.AsyncFileSingleStreamSpillerFactory;
 import com.alibaba.polardbx.executor.operator.spill.GenericSpillerFactory;
 import com.alibaba.polardbx.executor.operator.spill.SpillerFactory;
 import com.alibaba.polardbx.executor.operator.spill.SyncFileCleaner;
-import com.alibaba.polardbx.executor.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
@@ -32,6 +33,7 @@ import com.google.common.io.MoreFiles;
 import com.google.common.io.RecursiveDeleteOption;
 import org.apache.calcite.rel.RelFieldCollation;
 import org.junit.AfterClass;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -40,7 +42,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 public class TopNExecTest extends BaseExecTest {
@@ -61,6 +65,13 @@ public class TopNExecTest extends BaseExecTest {
         MoreFiles.deleteRecursively(tempPath, RecursiveDeleteOption.ALLOW_INSECURE);
     }
 
+    @Before
+    public void setUpContext() {
+        Map connectionMap = new HashMap();
+        connectionMap.put(ConnectionParams.ENABLE_PARALLEL_TOP_N.getName(), false);
+        context.setParamManager(new ParamManager(connectionMap));
+    }
+
     @Test
     public void testIntegerTopN() {
         MockExec input = MockExec.builder(DataTypes.IntegerType, DataTypes.IntegerType)
@@ -75,7 +86,7 @@ public class TopNExecTest extends BaseExecTest {
         List<OrderByOption> orderByOptions = Lists.newArrayList();
         orderByOptions.add(orderByOption);
 
-        SpilledTopNExec exec = new SpilledTopNExec(input.getDataTypes(), orderByOptions, 4, context);
+        SpilledTopNExec exec = new SpilledTopNExec(input.getDataTypes(), orderByOptions, 4, context, 0);
         SingleExecTest test = new SingleExecTest.Builder(exec, input).build();
         test.exec();
 
@@ -101,7 +112,7 @@ public class TopNExecTest extends BaseExecTest {
         orderByOptions.add(orderByOption1);
         orderByOptions.add(orderByOption2);
 
-        SpilledTopNExec exec = new SpilledTopNExec(input.getDataTypes(), orderByOptions, 8, context);
+        SpilledTopNExec exec = new SpilledTopNExec(input.getDataTypes(), orderByOptions, 8, context, 0);
 
         SingleExecTest test = new SingleExecTest.Builder(exec, input).build();
         test.exec();
@@ -129,7 +140,7 @@ public class TopNExecTest extends BaseExecTest {
         orderByOptions.add(orderByOption1);
         orderByOptions.add(orderByOption2);
 
-        SpilledTopNExec exec = new SpilledTopNExec(input.getDataTypes(), orderByOptions, 8, context);
+        SpilledTopNExec exec = new SpilledTopNExec(input.getDataTypes(), orderByOptions, 8, context, 0);
 
         SingleExecTest test = new SingleExecTest.Builder(exec, input).build();
         test.exec();
@@ -159,7 +170,7 @@ public class TopNExecTest extends BaseExecTest {
         orderByOptions.add(orderByOption1);
         orderByOptions.add(orderByOption2);
 
-        SpilledTopNExec exec = new SpilledTopNExec(input.getDataTypes(), orderByOptions, 8, context);
+        SpilledTopNExec exec = new SpilledTopNExec(input.getDataTypes(), orderByOptions, 8, context, 0);
 
         SingleExecTest test = new SingleExecTest.Builder(exec, input).build();
         test.exec();
@@ -190,7 +201,7 @@ public class TopNExecTest extends BaseExecTest {
         orderByOptions.add(orderByOption1);
         orderByOptions.add(orderByOption2);
 
-        SpilledTopNExec exec = new SpilledTopNExec(input.getDataTypes(), orderByOptions, 8, context);
+        SpilledTopNExec exec = new SpilledTopNExec(input.getDataTypes(), orderByOptions, 8, context, 0);
 
         SingleExecTest test = new SingleExecTest.Builder(exec, input).build();
         test.exec();
@@ -221,7 +232,7 @@ public class TopNExecTest extends BaseExecTest {
         orderByOptions.add(orderByOption1);
         orderByOptions.add(orderByOption2);
 
-        SpilledTopNExec exec = new SpilledTopNExec(input.getDataTypes(), orderByOptions, 7, context);
+        SpilledTopNExec exec = new SpilledTopNExec(input.getDataTypes(), orderByOptions, 7, context, 0);
 
         SingleExecTest test = new SingleExecTest.Builder(exec, input).build();
         test.exec();
@@ -251,7 +262,7 @@ public class TopNExecTest extends BaseExecTest {
         orderByOptions.add(orderByOption1);
         orderByOptions.add(orderByOption2);
 
-        SpilledTopNExec exec = new SpilledTopNExec(input.getDataTypes(), orderByOptions, 90, context);
+        SpilledTopNExec exec = new SpilledTopNExec(input.getDataTypes(), orderByOptions, 90, context, 0);
         SingleExecTest test = new SingleExecTest.Builder(exec, input).build();
         test.exec();
 

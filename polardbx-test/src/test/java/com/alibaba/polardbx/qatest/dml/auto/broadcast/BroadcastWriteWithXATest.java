@@ -100,7 +100,7 @@ public class BroadcastWriteWithXATest extends AutoCrudBasedLockTestCase {
             executeErrorAssert(tddlConnection,
                 sql,
                 null,
-                "[TDDL-4603][ERR_ACCROSS_DB_TRANSACTION] Transaction accross db is not supported in current transaction policy");
+                "[TDDL-4603][ERR_CROSS_GROUP_TRANSACTION] Transaction accross db is not supported in current transaction policy");
 
             sql = "ROLLBACK";
             executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
@@ -131,7 +131,7 @@ public class BroadcastWriteWithXATest extends AutoCrudBasedLockTestCase {
             executeErrorAssert(tddlConnection,
                 sql,
                 null,
-                "[TDDL-4603][ERR_ACCROSS_DB_TRANSACTION] Transaction accross db is not supported in current transaction policy");
+                "[TDDL-4603][ERR_CROSS_GROUP_TRANSACTION] Transaction accross db is not supported in current transaction policy");
         }
 
         sql = "ROLLBACK";
@@ -234,12 +234,14 @@ public class BroadcastWriteWithXATest extends AutoCrudBasedLockTestCase {
             } else {
 
                 sql =
-                    "/*+TDDL:cmd_extra(PUSHDOWN_HINT_ON_BROADCAST=true) node(1)*/DELETE FROM " + physicalSimpleTableName
+                    "/*+TDDL:cmd_extra(PUSHDOWN_HINT_ON_BROADCAST=true,"
+                        + "ENABLE_FORBID_PUSH_DML_WITH_HINT=false) node(1)*/DELETE FROM " + physicalSimpleTableName
                         + " WHERE pk = 1";
                 JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 
                 sql =
-                    "/*+TDDL:cmd_extra(PUSHDOWN_HINT_ON_BROADCAST=true) node(1)*/INSERT INTO " + physicalSimpleTableName
+                    "/*+TDDL:cmd_extra(PUSHDOWN_HINT_ON_BROADCAST=true,"
+                        + "ENABLE_FORBID_PUSH_DML_WITH_HINT=false) node(1)*/INSERT INTO " + physicalSimpleTableName
                         + "(pk, varchar_test, integer_test) VALUES"
                         + "(4, 'something in broadcast table', 999);";
                 JdbcUtil.executeUpdateSuccess(tddlConnection, sql);

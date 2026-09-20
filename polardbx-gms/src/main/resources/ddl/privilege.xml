@@ -27,6 +27,7 @@
                 `replication_client_priv` tinyint(1) NOT NULL DEFAULT '0',
                 `replication_slave_priv` tinyint(1) NOT NULL DEFAULT '0',
                 `plugin` varchar(64) COLLATE utf8_bin NOT NULL DEFAULT '',
+                `account_locked` tinyint(1) NOT NULL DEFAULT '0',
                 PRIMARY KEY (`id`),
                 UNIQUE KEY `uk` (`user_name`, `host`)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci COMMENT='Users and global privileges'
@@ -58,6 +59,12 @@
         <Change><![CDATA[
             ALTER TABLE `user_priv` ADD COLUMN `plugin` varchar(64) COLLATE utf8_bin NOT NULL DEFAULT ''
         ]]></Change>
+        <Change><![CDATA[
+            ALTER TABLE `user_priv` ADD COLUMN `account_locked` tinyint(1) NOT NULL DEFAULT '0'
+        ]]></Change>
+        <Change><![CDATA[
+            ALTER TABLE `user_priv` ADD COLUMN `nl2sql_priv` tinyint(1) NOT NULL DEFAULT '0'
+        ]]></Change>
     </SystemTable>
     <SystemTable name="db_priv">
         <Create><![CDATA[
@@ -67,6 +74,7 @@
                 `gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 `user_name` char(32) NOT NULL DEFAULT '',
                 `host` char(60) NOT NULL DEFAULT '',
+                `catalog_name` char(64) NOT NULL DEFAULT '',
                 `db_name` char(64) NOT NULL DEFAULT '',
                 `select_priv` tinyint(1) NOT NULL DEFAULT '0',
                 `insert_priv` tinyint(1) NOT NULL DEFAULT '0',
@@ -82,7 +90,7 @@
                 `replication_client_priv` tinyint(1) NOT NULL DEFAULT '0',
                 `replication_slave_priv` tinyint(1) NOT NULL DEFAULT '0',
                 PRIMARY KEY (`id`),
-                UNIQUE KEY `uk` (`user_name`, `host`, `db_name`)
+                UNIQUE KEY `uk` (`user_name`, `host`, `catalog_name`, `db_name`)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Database privileges'
         ]]></Create>
         <Change><![CDATA[
@@ -97,6 +105,12 @@
         <Change><![CDATA[
             UPDATE `db_priv` SET `replication_client_priv` = 1, `replication_slave_priv` = 1 WHERE `select_priv` = 1
         ]]></Change>
+        <Change><![CDATA[
+            ALTER TABLE `db_priv` ADD COLUMN `catalog_name` char(64) NOT NULL DEFAULT '' AFTER `host`
+        ]]></Change>
+        <Change><![CDATA[
+            ALTER TABLE `db_priv` DROP INDEX `uk`, ADD UNIQUE KEY `uk` (`user_name`, `host`, `catalog_name`, `db_name`)
+        ]]></Change>
     </SystemTable>
     <SystemTable name="table_priv">
         <Create><![CDATA[
@@ -106,6 +120,7 @@
                 `gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 `user_name` char(32) NOT NULL DEFAULT '',
                 `host` char(60) NOT NULL DEFAULT '',
+                `catalog_name` char(32) NOT NULL DEFAULT '',
                 `db_name` char(64) NOT NULL DEFAULT '',
                 `table_name` char(64) NOT NULL DEFAULT '',
                 `select_priv` tinyint(1) NOT NULL DEFAULT '0',
@@ -122,7 +137,7 @@
                 `replication_client_priv` tinyint(1) NOT NULL DEFAULT '0',
                 `replication_slave_priv` tinyint(1) NOT NULL DEFAULT '0',
                 PRIMARY KEY (`id`),
-                UNIQUE KEY `uk` (`user_name`, `host`, `db_name`,`table_name`)
+                UNIQUE KEY `uk` (`user_name`, `host`, `catalog_name`, `db_name`, `table_name`)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='Table privileges'
         ]]></Create>
         <Change><![CDATA[
@@ -137,6 +152,27 @@
         <Change><![CDATA[
             UPDATE `table_priv` SET `replication_client_priv` = 1, `replication_slave_priv` = 1 WHERE `select_priv` = 1
         ]]></Change>
+        <Change><![CDATA[
+            ALTER TABLE `table_priv` ADD COLUMN `catalog_name` char(32) NOT NULL DEFAULT '' AFTER `host`
+        ]]></Change>
+        <Change><![CDATA[
+            ALTER TABLE `table_priv` DROP INDEX `uk`, ADD UNIQUE KEY `uk` (`user_name`, `host`, `catalog_name`, `db_name`, `table_name`)
+        ]]></Change>
+    </SystemTable>
+<!--  To distinguish it from mysql.columns_priv  -->
+    <SystemTable name="column_priv">
+        <Create><![CDATA[
+            CREATE TABLE `column_priv` (
+                `Host` char(60) COLLATE utf8_bin NOT NULL DEFAULT '',
+                `Db` char(64) COLLATE utf8_bin NOT NULL DEFAULT '',
+                `User` char(32) COLLATE utf8_bin NOT NULL DEFAULT '',
+                `Table_name` char(64) COLLATE utf8_bin NOT NULL DEFAULT '',
+                `Column_name` char(64) COLLATE utf8_bin NOT NULL DEFAULT '',
+                `Timestamp` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                `Column_priv` set('Select','Insert','Update','References') CHARACTER SET utf8 NOT NULL DEFAULT '',
+                    PRIMARY KEY (`Host`,`Db`,`User`,`Table_name`,`Column_name`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='Column privileges'
+        ]]></Create>
     </SystemTable>
     <SystemTable name="quarantine_config">
         <Create><![CDATA[
@@ -204,6 +240,8 @@
                 `name` varchar(128) NOT NULL,
                 `enable` TINYINT(1) DEFAULT 1,
                 `description` varchar(128) DEFAULT NULL,
+                `type` varchar(20) DEFAULT 'ENCRYPTION',
+                `algo` TEXT DEFAULT NULL,
                 `meta` TEXT DEFAULT NULL,
                 `users` TEXT DEFAULT NULL,
                 `gmt_created` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -211,12 +249,18 @@
                 PRIMARY KEY (`name`)
               ) ENGINE=InnoDB AUTO_INCREMENT=57 DEFAULT CHARSET=utf8mb4
         ]]></Create>
+        <Change><![CDATA[
+            ALTER TABLE `encdb_rule` ADD COLUMN `type` varchar(20) DEFAULT 'ENCRYPTION'
+        ]]></Change>
+        <Change><![CDATA[
+            ALTER TABLE `encdb_rule` ADD COLUMN `algo` TEXT DEFAULT NULL
+        ]]></Change>
     </SystemTable>
     <SystemTable name="encdb_key">
         <Create><![CDATA[
             CREATE TABLE `encdb_key` (
                 `id` bigint(11) NOT NULL AUTO_INCREMENT,
-                `key` varchar(128) NOT NULL,
+                `key` varchar(1024) NOT NULL,
                 `type` varchar(128) NOT NULL,
                 `gmt_created` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 `gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -224,6 +268,9 @@
                 UNIQUE INDEX `uk_type_key` (`type`)
               ) ENGINE=InnoDB AUTO_INCREMENT=57 DEFAULT CHARSET=utf8mb4
         ]]></Create>
+        <Change><![CDATA[
+            ALTER TABLE `encdb_key` MODIFY COLUMN `key` varchar(1024) NOT NULL
+        ]]></Change>
     </SystemTable>
     <SystemTable name="lbac_components">
         <Create><![CDATA[

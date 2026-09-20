@@ -34,7 +34,7 @@ import java.util.Map;
 import static com.alibaba.polardbx.gms.metadb.GmsSystemTables.COLUMNAR_DATA_CONSISTENCY_LOCK;
 
 public class ColumnarDataConsistencyLockAccessor extends AbstractAccessor {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     private static final String COLUMNAR_DATA_CONSISTENCY_LOCK_TABLE = wrap(COLUMNAR_DATA_CONSISTENCY_LOCK);
 

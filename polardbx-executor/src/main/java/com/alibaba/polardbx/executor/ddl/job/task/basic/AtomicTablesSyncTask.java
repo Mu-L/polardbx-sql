@@ -48,10 +48,9 @@ public class AtomicTablesSyncTask extends BaseSyncTask {
     @Override
     public void executeImpl(ExecutionContext executionContext) {
         try {
-            SyncManagerHelper.sync(
+            SyncManagerHelper.syncThrowExceptions(
                 new TablesMetaChangeCrossDBPreemptiveSyncAction(schemaName, multiSchemas, logicalTables, preemptiveTime),
-                SyncScope.ALL,
-                true);
+                SyncScope.ALL);
         } catch (Throwable t) {
             LOGGER.error(String.format(
                 "error occurs while sync table meta, schemaName:%s, tableNames:%s", multiSchemas,
@@ -63,10 +62,9 @@ public class AtomicTablesSyncTask extends BaseSyncTask {
     @Override
     protected void onRollbackSuccess(ExecutionContext executionContext) {
         try {
-            SyncManagerHelper.sync(
+            SyncManagerHelper.syncThrowExceptions(
                 new TablesMetaChangeCrossDBPreemptiveSyncAction(schemaName, multiSchemas, logicalTables, preemptiveTime),
-                    SyncScope.ALL,
-                true);
+                    SyncScope.ALL);
         } catch (Throwable t) {
             LOGGER.error(String.format(
                 "error occurs while sync table meta, schemaName:%s, tableNames:%s", multiSchemas,

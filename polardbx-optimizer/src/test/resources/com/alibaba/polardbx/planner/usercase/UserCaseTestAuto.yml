@@ -1,0 +1,8 @@
+- sql : |
+    /*+TDDL:ENABLE_AGG_PRUNING=true*/ SELECT * FROM (SELECT stock.WAREHOUSE_ID, ITEM.ITEM_CODE    FROM TEST_A stock    INNER JOIN TEST_B ITEM ON ITEM.ITEM_CODE = stock.ITEM_CODE    GROUP BY stock.WAREHOUSE_ID,  ITEM.BRAND_ID, ITEM.BRAND_NAME, ITEM.ITEM_CODE) tmp1 GROUP BY WAREHOUSE_ID, ITEM_CODE;
+
+  plan : |
+    project(warehouse_id="warehouse_id", item_code="item_code0")
+      hashagg(group="warehouse_id,item_code0", brand_id="__first_value(brand_id)", brand_name="__first_value(brand_name)")
+        gather(concurrent=true)
+          logicalview(tables="test_a[p1,p2,p3,...p24],test_b", shardcount=24, sql="select `test_a`.`warehouse_id`, `test_b`.`item_code` as `item_code0`, (`test_b`.`brand_id`) as `brand_id`, (`test_b`.`brand_name`) as `brand_name` from `test_a` as `test_a` inner join `test_b` as `test_b` on (`test_a`.`item_code` = `test_b`.`item_code`) group by `test_a`.`warehouse_id`, `test_b`.`item_code`")

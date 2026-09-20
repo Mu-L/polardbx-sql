@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.mpp.execution.buffer;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.mpp.OutputBuffers;
 import com.alibaba.polardbx.executor.mpp.execution.StateMachine;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -24,7 +25,7 @@ import io.airlift.units.DataSize;
 
 import java.util.List;
 
-public interface OutputBuffer {
+public interface OutputBuffer extends MemoryCountable {
     /**
      * Gets the current state of this buffer.  This method is guaranteed to not block or acquire
      * contended locks, but the stats in the info object may be internally inconsistent.

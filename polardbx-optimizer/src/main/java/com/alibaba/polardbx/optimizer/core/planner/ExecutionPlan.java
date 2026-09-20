@@ -27,6 +27,7 @@ import com.alibaba.polardbx.optimizer.core.rel.GatherReferencedGsiNameRelVisitor
 import com.alibaba.polardbx.optimizer.hint.util.HintConverter;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
 import com.alibaba.polardbx.optimizer.sharding.result.PlanShardInfo;
+import com.alibaba.polardbx.optimizer.ttl.query.TtlQueryType;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.google.common.collect.Maps;
 import org.apache.calcite.rel.RelNode;
@@ -38,10 +39,13 @@ import org.apache.calcite.sql.SqlUpdate;
 import org.apache.calcite.util.BitSets;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -155,10 +159,39 @@ public class ExecutionPlan {
 
     private boolean flashbackArea = false;
 
+    private boolean asOfCrossDdl = false;
+
+    private boolean containsBlockChainTable = false;
+
+    private String blockChainSchema = null;
+
+    private String blockChainTable = null;
+
     /**
      * plan输出的列对应的的origin column name
      */
     private List<List<String[]>> originColumnNames;
+
+    /**
+     * Maximum number of execution time records to keep
+     */
+    private static final int MAX_EXECUTION_TIME_RECORDS = 10;
+
+    /**
+     * Recent execution time records (ring buffer, lock-free implementation)
+     * Initialized to -1 to indicate empty slots
+     */
+    private final double[] recentExecutionTimes;
+
+    /**
+     * Write position index (lock-free implementation)
+     */
+    private final AtomicInteger writeIndex = new AtomicInteger(0);
+
+    {
+        recentExecutionTimes = new double[MAX_EXECUTION_TIME_RECORDS];
+        Arrays.fill(recentExecutionTimes, -1.0);
+    }
 
     public ExecutionPlan(SqlNode ast, RelNode plan, CursorMeta columnMeta, ConcurrentHashSet<Integer> planProperties) {
         this(ast, plan, columnMeta);
@@ -259,6 +292,10 @@ public class ExecutionPlan {
         newExecutionPlan.originColumnNames = this.originColumnNames;
         newExecutionPlan.checkTpSlow = this.checkTpSlow;
         newExecutionPlan.flashbackArea = this.flashbackArea;
+        newExecutionPlan.asOfCrossDdl = this.asOfCrossDdl;
+        newExecutionPlan.containsBlockChainTable = this.containsBlockChainTable;
+        newExecutionPlan.blockChainSchema = this.blockChainSchema;
+        newExecutionPlan.blockChainTable = this.blockChainTable;
         return newExecutionPlan;
     }
 
@@ -329,6 +366,10 @@ public class ExecutionPlan {
 
     public int incrementAndGetErrorCount() {
         return errorCount.incrementAndGet();
+    }
+
+    public int getErrorCount() {
+        return errorCount.get();
     }
 
     public int incrementAndGetHtapFeedCount() {
@@ -456,6 +497,78 @@ public class ExecutionPlan {
 
     public void setFlashbackArea(boolean flashbackArea) {
         this.flashbackArea = flashbackArea;
+    }
+
+    public boolean isAsOfCrossDdl() {
+        return asOfCrossDdl;
+    }
+
+    public void setAsOfCrossDdl(boolean asOfCrossDdl) {
+        this.asOfCrossDdl = asOfCrossDdl;
+    }
+
+    public boolean isContainsBlockChainTable() {
+        return containsBlockChainTable;
+    }
+
+    public void setContainsBlockChainTable(boolean containsBlockChainTable) {
+        this.containsBlockChainTable = containsBlockChainTable;
+    }
+
+    public String getBlockChainTable() {
+        return blockChainTable;
+    }
+
+    public void setBlockChainTable(String blockChainTable) {
+        this.blockChainTable = blockChainTable;
+    }
+
+    public String getBlockChainSchema() {
+        return blockChainSchema;
+    }
+
+    public void setBlockChainSchema(String blockChainSchema) {
+        this.blockChainSchema = blockChainSchema;
+    }
+
+    /**
+     * Record an execution RT (Response Time) - lock-free version
+     * Keeps the most recent records using a ring buffer approach
+     * Note: Does not guarantee precision; reads may get partially stale data
+     *
+     * @param executeTimeMs execution time in milliseconds
+     */
+    public void recordExecutionTime(double executeTimeMs) {
+        int index = writeIndex.getAndIncrement() % MAX_EXECUTION_TIME_RECORDS;
+        recentExecutionTimes[index] = executeTimeMs;
+    }
+
+    /**
+     * Get the average of recent execution RTs - lock-free version
+     *
+     * @return average value, returns 0.0 if no records exist
+     */
+    public double getAverageExecutionTime() {
+        double sum = 0.0;
+        int count = 0;
+
+        for (int i = 0; i < MAX_EXECUTION_TIME_RECORDS; i++) {
+            double time = recentExecutionTimes[i];
+            if (time >= 0) {
+                sum += time;
+                count++;
+            }
+        }
+
+        return count > 0 ? sum / count : 0.0;
+    }
+
+    /**
+     * Clear all recorded RTs - lock-free version
+     */
+    public void clearExecutionTimes() {
+        Arrays.fill(recentExecutionTimes, -1.0);
+        writeIndex.set(0);
     }
 }
 

@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.executor.ddl.newengine.job;
 
 import com.alibaba.polardbx.common.ddl.newengine.DdlTaskState;
+import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.utils.logger.Logger;
@@ -36,10 +37,10 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.commons.lang3.StringUtils;
 
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.BooleanSupplier;
 
 import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_EACH_DDL_TASK_FAIL_ONCE;
@@ -78,35 +79,94 @@ public abstract class AbstractDdlTask extends HandlerCommon implements DdlTask {
         beginExecuteTs = System.nanoTime();
         skipExecuteWrapper("beforeTransaction", () -> beforeTransaction(executionContext));
         final DdlTask currentTask = this;
-        DdlEngineAccessorDelegate delegate = new DdlEngineAccessorDelegate<Integer>() {
+        int maxAttempts = Math.max(1, getMetaDbDeadlockMaxAttempts());
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            DdlEngineAccessorDelegate delegate = new DdlEngineAccessorDelegate<Integer>() {
 
-            @Override
-            protected Integer invoke() {
-                int result = 0;
-                skipExecuteWrapper("duringTransaction", () -> duringTransaction(getConnection(), executionContext));
-                DdlEngineTaskRecord taskRecord = TaskHelper.toDdlEngineTaskRecord(currentTask);
-                taskRecord.setState(DdlTaskState.SUCCESS.name());
-                result += engineTaskAccessor.updateTask(taskRecord);
+                @Override
+                protected Integer invoke() {
+                    int result = 0;
+                    skipExecuteWrapper("duringTransaction",
+                        () -> duringTransaction(getConnection(), executionContext));
+                    DdlEngineTaskRecord taskRecord = TaskHelper.toDdlEngineTaskRecord(currentTask);
+                    taskRecord.setState(DdlTaskState.SUCCESS.name());
+                    result += engineTaskAccessor.updateTask(taskRecord);
 
-                //inject exceptions
-                injectOnce(executionContext);
-                FailPoint.injectFromHint(FP_FAIL_ON_DDL_TASK_NAME, executionContext, (k, v) -> {
-                    if (StringUtils.equalsIgnoreCase(currentTask.getName(), v)) {
-                        FailPoint.throwException(String.format("injected failure at: [%s]", getName()));
+                    //inject exceptions
+                    injectOnce(executionContext);
+                    FailPoint.injectFromHint(FP_FAIL_ON_DDL_TASK_NAME, executionContext, (k, v) -> {
+                        if (StringUtils.equalsIgnoreCase(currentTask.getName(), v)) {
+                            FailPoint.throwException(String.format("injected failure at: [%s]", getName()));
+                        }
+                    });
+
+                    if (result <= 0) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_UNEXPECTED, "update task status error");
                     }
-                });
-
-                if (result <= 0) {
-                    throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_UNEXPECTED, "update task status error");
+                    return result;
                 }
-                return result;
+            };
+            try {
+                delegate.execute();
+                break;
+            } catch (RuntimeException e) {
+                if (attempt >= maxAttempts || !isMetaDbDeadlock(e)) {
+                    throw e;
+                }
+                long backoffMillis = getMetaDbDeadlockBackoffMillis(attempt);
+                LOGGER.warn(String.format(
+                    "Retry DDL task MetaDB transaction after deadlock, jobId=%s, taskId=%s, task=%s, "
+                        + "attempt=%s/%s, backoff=%sms",
+                    jobId, taskId, getName(), attempt, maxAttempts, backoffMillis), e);
+                try {
+                    MILLISECONDS.sleep(backoffMillis);
+                } catch (InterruptedException interruptedException) {
+                    Thread.currentThread().interrupt();
+                    throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, interruptedException,
+                        "Interrupted while retrying MetaDB deadlock");
+                }
             }
-        };
-        delegate.execute();
+        }
         //will not execute this if there's a failure
         skipExecuteWrapper("onExecutionSuccess", () -> onExecutionSuccess(executionContext));
         currentTask.setState(DdlTaskState.SUCCESS);
         endExecuteTs = System.nanoTime();
+    }
+
+    /**
+     * The number of attempts for the transactional part of a DDL task when MetaDB reports a deadlock.
+     * The default keeps the historical behavior. Tasks may opt in only when their MetaDB mutations are
+     * safe to replay after the victim transaction has been rolled back.
+     */
+    protected int getMetaDbDeadlockMaxAttempts() {
+        return 1;
+    }
+
+    protected long getMetaDbDeadlockBackoffMillis(int failedAttempt) {
+        long exponentialBackoff = 50L << Math.min(Math.max(failedAttempt - 1, 0), 4);
+        return exponentialBackoff + ThreadLocalRandom.current().nextLong(50L);
+    }
+
+    private boolean isMetaDbDeadlock(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof SQLException) {
+                SQLException sqlException = (SQLException) current;
+                if (sqlException.getErrorCode() == ErrorCode.ER_LOCK_DEADLOCK.getCode()
+                    || "40001".equals(sqlException.getSQLState())) {
+                    return true;
+                }
+            }
+            if (current instanceof TddlNestableRuntimeException) {
+                TddlNestableRuntimeException tddlException = (TddlNestableRuntimeException) current;
+                if (tddlException.getErrorCode() == ErrorCode.ER_LOCK_DEADLOCK.getCode()
+                    || "40001".equals(tddlException.getSQLState())) {
+                    return true;
+                }
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     protected abstract void beforeTransaction(final ExecutionContext executionContext);
@@ -268,6 +328,11 @@ public abstract class AbstractDdlTask extends HandlerCommon implements DdlTask {
     }
 
     @Override
+    public DdlTask onExceptionTryWaitAndRecoveryThenPause() {
+        return onExceptionTry(DdlExceptionAction.TRY_WAIT_AND_RECOVERY_THEN_PAUSE);
+    }
+
+    @Override
     public DdlTask onExceptionTryRollback() {
         return onExceptionTry(DdlExceptionAction.ROLLBACK);
     }
@@ -353,7 +418,7 @@ public abstract class AbstractDdlTask extends HandlerCommon implements DdlTask {
     }
 
     @Override
-    public List<String> explainInfo() {
+    public List<String> explainInfo(ExecutionContext ec) {
         return new ArrayList<>();
     }
 

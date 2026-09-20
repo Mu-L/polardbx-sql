@@ -1,0 +1,4 @@
+## DISABLE_FAST_SQL_PARSER
+select unitmurhash64('32')
+unitmurhash64('32')
+26

@@ -19,9 +19,7 @@ package com.alibaba.polardbx.optimizer.core.planner.rule;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptUtil;
-import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.logical.LogicalSemiJoin;
@@ -50,8 +48,7 @@ public class SemiJoinSemiJoinTransposeRule extends RelOptRule {
     public SemiJoinSemiJoinTransposeRule(RelBuilderFactory relBuilderFactory) {
         super(
             operand(LogicalSemiJoin.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION,
-                operand(LogicalSemiJoin.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION, any()),
-                operand(RelSubset.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION, any())),
+                operand(LogicalSemiJoin.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION, any())),
             relBuilderFactory, "SemiJoinSemiJoinTransposeRule");
     }
 
@@ -73,9 +70,9 @@ public class SemiJoinSemiJoinTransposeRule extends RelOptRule {
     public void onMatch(RelOptRuleCall call) {
         final LogicalSemiJoin topJoin = call.rel(0);
         final LogicalSemiJoin bottomJoin = call.rel(1);
-        final RelNode relC = call.rel(2);
         final RelNode relA = bottomJoin.getLeft();
         final RelNode relB = bottomJoin.getRight();
+        final RelNode relC = topJoin.getRight();
 
         //        topJoin
         //        /     \

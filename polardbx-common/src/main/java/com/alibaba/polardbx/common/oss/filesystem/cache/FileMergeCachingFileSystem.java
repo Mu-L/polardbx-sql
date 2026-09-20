@@ -30,6 +30,8 @@
 
 package com.alibaba.polardbx.common.oss.filesystem.cache;
 
+import com.alibaba.polardbx.common.oss.filesystem.OSSFileSystem;
+import com.google.common.base.Preconditions;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
@@ -68,6 +70,32 @@ public final class FileMergeCachingFileSystem
             path,
             cacheManager.getMaxCacheQuota(),
             cacheValidationEnabled);
+    }
+
+    /**
+     * Open an FSDataInputStream at the indicated Path with specified buffer size and range.
+     * This method is optimized for OSSFileSystem to avoid getting file length from fileStatus.
+     *
+     * @param path the file to open
+     * @param position the position to start reading from
+     * @param length the number of bytes to read
+     * @return FSDataInputStream
+     */
+    public FSDataInputStream open(Path path, long position, long length) throws IOException {
+        // Check if dataTier is OSSFileSystem and call the optimized open method
+        FileSystem innerDataTier = getDataTier();
+        Preconditions.checkArgument(innerDataTier instanceof OSSFileSystem, "dataTier is not OSSFileSystem");
+        OSSFileSystem ossFileSystem = (OSSFileSystem) innerDataTier;
+        // Try to call the optimized open method with position and length
+        FSDataInputStream inputStream = new FileMergeCachingInputStream(
+            ossFileSystem.uncheckedOpen(path, position + length),
+            cacheManager,
+            path,
+            cacheManager.getMaxCacheQuota(),
+            cacheValidationEnabled);
+        inputStream.seek(position);
+
+        return inputStream;
     }
 
     public CacheManager getCacheManager() {

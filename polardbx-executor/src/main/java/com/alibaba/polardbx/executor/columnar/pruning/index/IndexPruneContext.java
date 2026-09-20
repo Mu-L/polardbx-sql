@@ -29,6 +29,7 @@ import org.jetbrains.annotations.Nullable;
 import java.sql.Date;
 import java.sql.Time;
 import java.sql.Timestamp;
+import java.time.ZoneId;
 import java.util.Optional;
 
 /**
@@ -37,6 +38,8 @@ import java.util.Optional;
 public class IndexPruneContext {
     private Parameters parameters;
     private ColumnarTracer pruneTracer;
+    // timezone for pruner
+    private ZoneId zoneId;
 
     public Object acquireFromParameter(int paramIndex, DataType dataType, SqlTypeName type) {
         return parameters.getCurrentParameter().get(paramIndex + 1).getValue();
@@ -104,5 +107,16 @@ public class IndexPruneContext {
 
     public void setPruneTracer(ColumnarTracer pruneTracer) {
         this.pruneTracer = pruneTracer;
+    }
+
+    public void setZoneId(ZoneId zoneId) {
+        this.zoneId = zoneId;
+    }
+
+    public ZoneId getZoneId() {
+        if (zoneId == null) {
+            return ZoneId.systemDefault();
+        }
+        return zoneId;
     }
 }

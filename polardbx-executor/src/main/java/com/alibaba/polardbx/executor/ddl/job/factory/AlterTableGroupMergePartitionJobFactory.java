@@ -100,12 +100,15 @@ public class AlterTableGroupMergePartitionJobFactory extends AlterTableGroupBase
         LocalityDesc targetLocality =
             isIdentical ? LocalityInfoUtils.parse(firstPartitionLocality) : new LocalityDesc();
         List<String> localities = new ArrayList<>();
-        List<String> targetDbList = new ArrayList<>();
+        List<Pair<String, String>> targetDbList = new ArrayList<>();
         int targetDbCnt = alterTableGroupMergePartitionPreparedData.getTargetGroupDetailInfoExRecords().size();
         List<String> newPartitions = new ArrayList<>();
         for (int i = 0; i < alterTableGroupMergePartitionPreparedData.getNewPartitionGroupNames().size(); i++) {
-            targetDbList.add(alterTableGroupMergePartitionPreparedData.getTargetGroupDetailInfoExRecords()
-                .get(i % targetDbCnt).phyDbName);
+            targetDbList.add(new Pair<>(
+                alterTableGroupMergePartitionPreparedData.getTargetGroupDetailInfoExRecords().get(i % targetDbCnt)
+                    .getPhyDbName(),
+                alterTableGroupMergePartitionPreparedData.getTargetGroupDetailInfoExRecords().get(i % targetDbCnt)
+                    .getGroupName()));
             newPartitions.add(alterTableGroupMergePartitionPreparedData.getNewPartitionGroupNames().get(i));
             String partitionLocality =
                 StringUtils.isEmpty(outdatedPartitionGroupLocalities.get(i)) ? StringUtils.EMPTY :
@@ -133,7 +136,7 @@ public class AlterTableGroupMergePartitionJobFactory extends AlterTableGroupBase
         ));
         List<DdlTask> bringUpAlterTableGroupTasks =
             ComplexTaskFactory.bringUpAlterTableGroup(schemaName, tableGroupName, null,
-                taskType, preparedData.getDdlVersionId(), executionContext);
+                preparedData.getOldPartitionNames(), taskType, preparedData.getDdlVersionId(), executionContext);
 
         final String finalStatus =
             executionContext.getParamManager().getString(ConnectionParams.TABLEGROUP_REORG_FINAL_TABLE_STATUS_DEBUG);

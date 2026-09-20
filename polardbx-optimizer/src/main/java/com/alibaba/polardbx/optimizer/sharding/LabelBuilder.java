@@ -18,7 +18,10 @@ package com.alibaba.polardbx.optimizer.sharding;
 
 import com.alibaba.polardbx.optimizer.core.rel.HashGroupJoin;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalDynamicValues;
+import com.alibaba.polardbx.optimizer.core.rel.PhysicalCTEAnchor;
+import com.alibaba.polardbx.optimizer.core.rel.PhysicalCTEConsumer;
 import com.alibaba.polardbx.optimizer.sharding.label.AggregateLabel;
+import com.alibaba.polardbx.optimizer.sharding.label.CTEConsumerLabel;
 import com.alibaba.polardbx.optimizer.sharding.label.CorrelateLabel;
 import com.alibaba.polardbx.optimizer.sharding.label.FilterSubqueryWrapperLabel;
 import com.alibaba.polardbx.optimizer.sharding.label.JoinCondition;
@@ -40,6 +43,8 @@ import com.alibaba.polardbx.common.exception.NotSupportException;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
+import org.apache.calcite.rel.core.CTEAnchor;
+import org.apache.calcite.rel.core.CTEConsumer;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.DynamicValues;
 import org.apache.calcite.rel.core.Filter;
@@ -103,6 +108,19 @@ public class LabelBuilder {
         final TableScanLabel tableScanLabel = TableScanLabel.create(scan);
         inputStack.push(tableScanLabel);
         return tableScanLabel;
+    }
+
+    public Label cteConsumer(CTEConsumer cteConsumer) {
+        final CTEConsumerLabel cteConsumerLabel = CTEConsumerLabel.create(cteConsumer);
+        inputStack.push(cteConsumerLabel);
+        return cteConsumerLabel;
+    }
+
+    public Label cteAnchor(CTEAnchor cteAnchor) {
+        final Label right = inputStack.pop();
+        final Label left = inputStack.pop();
+        inputStack.push(right);
+        return right;
     }
 
     public Label aggregate(Aggregate aggregate) {

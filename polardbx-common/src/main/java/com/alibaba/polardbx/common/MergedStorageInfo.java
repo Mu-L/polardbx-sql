@@ -28,7 +28,7 @@ public class MergedStorageInfo {
     private final boolean supportPurgeTso;
     private final boolean supportTsoHeartbeat;
     private final boolean supportCtsTransaction;
-    private final boolean supportAsyncCommit;
+    private final boolean supportAsyncCommit57;
     private final boolean supportLizard1PCTransaction;
     private final boolean supportDeadlockDetection;
     private final boolean supportMdlDeadlockDetection;
@@ -36,6 +36,7 @@ public class MergedStorageInfo {
     private final boolean supportOpenSSL;
     private final boolean supportSharedReadView;
     private final boolean supportsReturning;
+    private final boolean supportsReturningAll;
     private final boolean supportsBackfillReturning;
     private final boolean supportsAlterType;
     private final boolean readOnly;
@@ -54,6 +55,8 @@ public class MergedStorageInfo {
 
     private final boolean supportChangeSet;
 
+    private final boolean supportChangeSetBackPressure;
+
     private final boolean supportXOptForAutoSp;
 
     private final boolean supportXRpc;
@@ -65,4 +68,16 @@ public class MergedStorageInfo {
     private final boolean supportSyncPoint;
 
     private final boolean supportFlashbackArea;
+
+    private final boolean supportAsOfCrossDdl;
+
+    private final boolean supportTsoOpt;
+
+    private final boolean supportAsyncCommit8032;
+
+    private final boolean supportsModifyOnUpdate;
+
+    private final boolean supportGetCidx;
+
+    private final boolean supportsVectorIndexes;
 }

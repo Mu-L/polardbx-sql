@@ -16,14 +16,13 @@
 
 package org.apache.calcite.sql;
 
-import java.util.List;
-
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.util.Pair;
 
+import java.util.List;
+
 /**
  * @author shicai.xsc 2021/3/5 13:08
- * @desc
  * @since 5.0.0.0
  */
 public class SqlStopSlave extends SqlReplicationBase {
@@ -34,13 +33,21 @@ public class SqlStopSlave extends SqlReplicationBase {
         keyWord = "STOP SLAVE";
     }
 
-    public SqlStopSlave(SqlParserPos pos, List<Pair<SqlNode, SqlNode>> options, SqlNode channel, SqlNode subChannel){
+    private boolean ddlLoad = false;
+
+    public SqlStopSlave(SqlParserPos pos, List<Pair<SqlNode, SqlNode>> options, SqlNode channel, SqlNode subChannel,
+                        boolean ddlLoad) {
         super(pos, options, channel, subChannel);
+        this.ddlLoad = ddlLoad;
+    }
+
+    public boolean isDdlLoad() {
+        return ddlLoad;
     }
 
     public static class SqlStopSlaveOperator extends SqlReplicationOperator {
 
-        public SqlStopSlaveOperator(){
+        public SqlStopSlaveOperator() {
             super(SqlKind.STOP_SLAVE);
         }
     }

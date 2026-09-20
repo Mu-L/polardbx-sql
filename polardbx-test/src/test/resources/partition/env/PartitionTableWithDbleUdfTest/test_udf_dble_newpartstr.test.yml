@@ -1,0 +1,4 @@
+## DISABLE_FAST_SQL_PARSER
+
+select newpartstrc2l512sm40('aaaabbb0000');
+select newpartstrc2l512sm40('aaaabbb2359');

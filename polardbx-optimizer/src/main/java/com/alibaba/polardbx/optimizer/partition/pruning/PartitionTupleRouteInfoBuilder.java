@@ -543,7 +543,6 @@ public class PartitionTupleRouteInfoBuilder {
             return partitionSpec;
         }
 
-        assert partBitSet.size() == 1;
         int pos = partBitSet.nextSetBit(0);
         if (partLevel == PartKeyLevel.SUBPARTITION_KEY) {
             PartitionSpec parentPartitionSpec = partInfo.getPartitionBy().getNthPartition(parentPartPosi);
@@ -818,7 +817,7 @@ public class PartitionTupleRouteInfoBuilder {
             PartitionIntFunction partIntFunc = null;
             SqlCall partFuncCall = PartitionFunctionBuilder.getPartFuncCall(level, keyIdx, partInfo);
             if (partFuncCall != null) {
-                partIntFunc = PartitionFunctionBuilder.createPartFuncByPartFuncCal(partFuncCall, partColMetas);
+                partIntFunc = PartitionFunctionBuilder.createPartFuncByPartFuncCall(partFuncCall, partColMetas);
             }
 
             PartClauseExprExec targetExprExecInfo = new PartClauseExprExec(PartitionBoundValueKind.DATUM_NORMAL_VALUE);

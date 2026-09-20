@@ -16,38 +16,45 @@
 
 package com.alibaba.polardbx.optimizer.config.meta;
 
+import com.alibaba.polardbx.common.properties.PropUtil;
+import com.alibaba.polardbx.druid.util.StringUtils;
+import com.alibaba.polardbx.optimizer.config.meta.CostModel.CostModelWeightService;
+import com.alibaba.polardbx.optimizer.config.meta.CostModel.ICostModelWeightService;
+import com.alibaba.polardbx.optimizer.config.meta.CostModel.ImmutableCostModelWeightV1;
+import com.alibaba.polardbx.optimizer.config.meta.CostModel.ImmutableCostModelWeightV2;
+import com.google.common.collect.ImmutableMap;
+
 public class CostModelWeight {
-    public static final CostModelWeight INSTANCE = new CostModelWeight();
+    public static final String EARLIEST = "V1";
+    public static final String LATEST_KEY = "LATEST";
 
-    private double memoryWeight = 0.001;
+    private static String CURRENT = EARLIEST;
+    private static final ImmutableMap<String, ICostModelWeightService> versionMap =
+        ImmutableMap.<String, ICostModelWeightService>builder()
+            .put("V1", new ImmutableCostModelWeightV1())
+            .put("V2", new ImmutableCostModelWeightV2())
+            .build();
 
-    private double ioWeight = 5000;
+    public static final CostModelWeightService INSTANCE = new CostModelWeightService(versionMap.get(EARLIEST));
 
-    private double netWeight = 5000000;
-
-    private double buildWeight = 2;
-
-    private double probeWeight = 1.1;
-
-    private double reverseSemiProbeWeight = 1.6;
-
-    private double reverseAntiProbeWeight = 1.85;
-
-    private double mergeWeight = 1.2;
-
-    private double nlWeight = 1.1;
-
-    private double hashAggWeight = 1.5;
-
-    private double sortAggWeight = 1.0;
-
-    private double sortWindowWeight = 1.2;
-
-    private double sortWeight = 1.05;
-
-    private double avgTupleMatch = 10;
-
-    private double shardWeight = 0.25;
+    public static void setVersion(String version) {
+        String targetVersion = StringUtils.isEmpty(version) ?
+            PropUtil.COST_MODEL_LATEST : version.toUpperCase();
+        if (LATEST_KEY.equals(targetVersion)) {
+            targetVersion = PropUtil.COST_MODEL_LATEST;
+        }
+        if (!versionMap.containsKey(targetVersion)) {
+            targetVersion = PropUtil.COST_MODEL_LATEST;
+        }
+        if (!targetVersion.equals(CURRENT)) {
+            synchronized (INSTANCE) {
+                if (!targetVersion.equals(CURRENT)) {
+                    CURRENT = targetVersion;
+                    INSTANCE.setImmutable(versionMap.get(targetVersion));
+                }
+            }
+        }
+    }
 
     public static double SINGLETON_CPU_COST = 0.125;
 
@@ -69,6 +76,12 @@ public class CostModelWeight {
 
     public static final double OSS_PAGE_SIZE = 1000;
 
+    public static final double OSS_ROW_GROUP_SIZE = 10000;
+
+    public static final double OSS_COLUMN_DECOMPRESS_WEIGHT = 0.1;
+
+    public static final double OSS_ROW_GROUP_FANOUT = 2;
+
     public static final double OSS_MAX_ROWS_PER_FILE = 1000 * 1000;
 
     public static final double BLOOM_FILTER_READ_COST = 10;
@@ -86,127 +99,4 @@ public class CostModelWeight {
     public static final int LOOKUP_START_UP_NET = 12;
 
     public static final int GUESS_AGG_OUTPUT_NUM = 100;
-
-    private CostModelWeight() {
-    }
-
-    public double getMemoryWeight() {
-        return memoryWeight;
-    }
-
-    public void setMemoryWeight(double memoryWeight) {
-        this.memoryWeight = memoryWeight;
-    }
-
-    public double getIoWeight() {
-        return ioWeight;
-    }
-
-    public void setIoWeight(double ioWeight) {
-        this.ioWeight = ioWeight;
-    }
-
-    public double getNetWeight() {
-        return netWeight;
-    }
-
-    public void setNetWeight(double netWeight) {
-        this.netWeight = netWeight;
-    }
-
-    public double getBuildWeight() {
-        return buildWeight;
-    }
-
-    public void setBuildWeight(double buildWeight) {
-        this.buildWeight = buildWeight;
-    }
-
-    public double getProbeWeight() {
-        return probeWeight;
-    }
-
-    public void setProbeWeight(double probeWeight) {
-        this.probeWeight = probeWeight;
-    }
-
-    public double getReverseSemiProbeWeight() {
-        return reverseSemiProbeWeight;
-    }
-
-    public void setReverseSemiProbeWeight(double reverseSemiProbeWeight) {
-        this.reverseSemiProbeWeight = reverseSemiProbeWeight;
-    }
-
-    public double getReverseAntiProbeWeight() {
-        return reverseAntiProbeWeight;
-    }
-
-    public void setReverseAntiProbeWeight(double reverseAntiProbeWeight) {
-        this.reverseAntiProbeWeight = reverseAntiProbeWeight;
-    }
-
-    public double getMergeWeight() {
-        return mergeWeight;
-    }
-
-    public void setMergeWeight(double mergeWeight) {
-        this.mergeWeight = mergeWeight;
-    }
-
-    public double getHashAggWeight() {
-        return hashAggWeight;
-    }
-
-    public void setHashAggWeight(double hashAggWeight) {
-        this.hashAggWeight = hashAggWeight;
-    }
-
-    public double getSortAggWeight() {
-        return sortAggWeight;
-    }
-
-    public void setSortAggWeight(double sortAggWeight) {
-        this.sortAggWeight = sortAggWeight;
-    }
-
-    public double getSortWindowWeight() {
-        return sortWindowWeight;
-    }
-
-    public void setSortWindowWeight(double sortWindowWeight) {
-        this.sortWindowWeight = sortWindowWeight;
-    }
-
-    public double getSortWeight() {
-        return sortWeight;
-    }
-
-    public void setSortWeight(double sortWeight) {
-        this.sortWeight = sortWeight;
-    }
-
-    public double getAvgTupleMatch() {
-        return avgTupleMatch;
-    }
-
-    public void setAvgTupleMatch(double avgTupleMatch) {
-        this.avgTupleMatch = avgTupleMatch;
-    }
-
-    public double getShardWeight() {
-        return shardWeight;
-    }
-
-    public void setShardWeight(double shardWeight) {
-        this.shardWeight = shardWeight;
-    }
-
-    public double getNlWeight() {
-        return nlWeight;
-    }
-
-    public void setNlWeight(double nlWeight) {
-        this.nlWeight = nlWeight;
-    }
 }

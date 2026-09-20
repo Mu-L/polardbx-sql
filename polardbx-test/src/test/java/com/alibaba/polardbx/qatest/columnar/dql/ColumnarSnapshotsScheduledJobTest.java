@@ -12,7 +12,7 @@ public class ColumnarSnapshotsScheduledJobTest extends ColumnarReadBaseTestCase 
     private static final String CREATE_TABLE_SQL = "CREATE TABLE IF NOT EXISTS " + TABLE_NAME + " ("
         + " id int primary key auto_increment, "
         + " name varchar(255), "
-        + " CLUSTERED COLUMNAR INDEX `my_snapshot` (`id`) partition by key(`id`) engine='EXTERNAL_DISK' "
+        + " CLUSTERED COLUMNAR INDEX `my_snapshot` (`id`) partition by key(`id`) "
         + " columnar_options='{\"type\":\"snapshot\", \"snapshot_retention_days\":\"7\", \"auto_gen_columnar_snapshot_interval\":\"3\"}'"
         + ") partition by key (id)";
     private static final String DROP_TABLE_SQL = "DROP TABLE IF EXISTS " + TABLE_NAME;
@@ -61,6 +61,7 @@ public class ColumnarSnapshotsScheduledJobTest extends ColumnarReadBaseTestCase 
                 found = true;
                 break;
             }
+            Thread.sleep(1000);
         } while (retry++ < 10);
         Assert.assertTrue(found);
         long tso2 = rs.getLong(1);

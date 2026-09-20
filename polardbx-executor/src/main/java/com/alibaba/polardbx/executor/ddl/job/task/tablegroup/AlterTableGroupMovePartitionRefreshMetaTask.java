@@ -18,37 +18,46 @@ package com.alibaba.polardbx.executor.ddl.job.task.tablegroup;
 
 import com.alibaba.fastjson.annotation.JSONCreator;
 import com.alibaba.polardbx.common.oss.OSSFileType;
+import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.gms.metadb.table.ColumnMetaAccessor;
 import com.alibaba.polardbx.gms.metadb.table.FilesAccessor;
 import com.alibaba.polardbx.gms.metadb.table.FilesRecord;
 import com.alibaba.polardbx.gms.partition.TablePartitionAccessor;
+import com.alibaba.polardbx.gms.partition.TablePartitionDeltaRecord;
 import com.alibaba.polardbx.gms.partition.TablePartitionRecord;
 import com.alibaba.polardbx.gms.tablegroup.PartitionGroupAccessor;
 import com.alibaba.polardbx.gms.tablegroup.PartitionGroupRecord;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
+import com.alibaba.polardbx.gms.tablegroup.TableGroupUtils;
 import com.alibaba.polardbx.gms.topology.DbGroupInfoAccessor;
 import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.gms.util.TableGroupNameUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.google.common.collect.ImmutableList;
 import lombok.Getter;
 import org.apache.commons.collections.CollectionUtils;
 
 import java.sql.Connection;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
+import java.util.stream.Collectors;
 
+/**
+ * @author luoyanxin.pt
+ */
 @Getter
 @TaskName(name = "AlterTableGroupMovePartitionRefreshMetaTask")
 public class AlterTableGroupMovePartitionRefreshMetaTask extends AlterTableGroupRefreshMetaBaseTask {
 
+    List<String> oldPartitions;
+
     @JSONCreator
-    public AlterTableGroupMovePartitionRefreshMetaTask(String schemaName, String tableGroupName, Long versionId) {
+    public AlterTableGroupMovePartitionRefreshMetaTask(String schemaName, String tableGroupName,
+                                                       List<String> oldPartitions, Long versionId) {
         super(schemaName, tableGroupName, versionId);
+        this.oldPartitions = oldPartitions;
     }
 
     /**
@@ -57,7 +66,7 @@ public class AlterTableGroupMovePartitionRefreshMetaTask extends AlterTableGroup
      * 3、cleanup table_partition_delta
      */
     @Override
-    public void refreshTableGroupMeta(Connection metaDbConnection) {
+    public void refreshTableGroupMeta(Connection metaDbConnection, ExecutionContext executionContext) {
 
         TableGroupConfig tableGroupConfig = OptimizerContext.getContext(schemaName).getTableGroupInfoManager()
             .getTableGroupConfigByName(tableGroupName);
@@ -86,19 +95,53 @@ public class AlterTableGroupMovePartitionRefreshMetaTask extends AlterTableGroup
             }
         }
 
+        List<TablePartitionDeltaRecord> tablePartitionDeltas =
+            tablePartitionAccessor.getTablePartitionsFromDeltaBySchTgIdForUpdate(schemaName, tableGroupId);
         List<PartitionGroupRecord> outDatedPartRecords =
             partitionGroupAccessor.getOutDatedPartitionGroupsByTableGroupIdFromDelta(tableGroupId);
         List<PartitionGroupRecord> newPartitionGroups = partitionGroupAccessor
             .getPartitionGroupsByTableGroupId(tableGroupId, true);
+
+        boolean maybeMultiPgCocurrent = GeneralUtil.isNotEmpty(oldPartitions);
+        if (maybeMultiPgCocurrent) {
+            Set<String> partNameSet = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+            partNameSet.addAll(oldPartitions);
+            Iterator<PartitionGroupRecord> iterator = outDatedPartRecords.iterator();
+            while (iterator.hasNext()) {
+                PartitionGroupRecord partitionGroupRecord = iterator.next();
+                if (!partNameSet.contains(partitionGroupRecord.partition_name)) {
+                    iterator.remove();
+                }
+            }
+            iterator = newPartitionGroups.iterator();
+            while (iterator.hasNext()) {
+                PartitionGroupRecord partitionGroupRecord = iterator.next();
+                if (!partNameSet.contains(partitionGroupRecord.partition_name)) {
+                    iterator.remove();
+                }
+            }
+        }
+
         for (PartitionGroupRecord record : outDatedPartRecords) {
+
             // 1、update the partition group's physical location
             PartitionGroupRecord newRecord = newPartitionGroups.stream()
                 .filter(o -> o.getPartition_name().equalsIgnoreCase(record.getPartition_name())).findFirst()
                 .orElse(null);
             assert newRecord != null;
-            partitionGroupAccessor.updatePhyDbById(record.id, newRecord.phy_db);
+            partitionGroupAccessor.updatePhyDbById(record.id, newRecord.getPhy_db(), newRecord.getGroup_Name());
+            // 2、cleanup partition_group_delta
+            partitionGroupAccessor.deleteOldDatedPartitionGroupFromDelta(ImmutableList.of(record.id));
+            for (String tableName : tableGroupConfig.getTables()) {
+                // 3、reset to table_partitions by not delete from table_partitions_delta
+                List<TablePartitionRecord> tablePartitionRecords =
+                    tablePartitionAccessor.getTablePartitionsByDbNameTbNamePtName(schemaName, tableName,
+                        record.getPartition_name());
+                tablePartitionAccessor
+                    .addNewTablePartitionsInfo(tablePartitionRecords, true, true);
+            }
             if (isFileStore) {
-                if (StringUtils.equals(record.phy_db, newRecord.phy_db)) {
+                if (StringUtils.equals(record.getGroup_Name(), newRecord.getGroup_Name())) {
                     continue;
                 }
                 List<TablePartitionRecord> tablePartitionRecords =
@@ -106,13 +149,18 @@ public class AlterTableGroupMovePartitionRefreshMetaTask extends AlterTableGroup
                         record.getPartition_name());
                 if (!CollectionUtils.isEmpty(tablePartitionRecords)) {
                     phyTableToNewGroup.put(genConcat(logtb, tablePartitionRecords.get(0).getPhyTable()),
-                        GroupInfoUtil.buildGroupNameFromPhysicalDb(newRecord.phy_db));
+                        newRecord.getGroup_Name());
                 }
 
             }
         }
-
-        if (isFileStore && phyTableToNewGroup.size() > 0) {
+        if (GeneralUtil.isNotEmpty(outDatedPartRecords)) {
+            TableGroupUtils
+                .deleteNewPartitionGroupFromDeltaTableByTgIDAndPartNames(tableGroupId,
+                    outDatedPartRecords.stream().map(PartitionGroupRecord::getPartition_name).collect(
+                        Collectors.toList()), metaDbConnection);
+        }
+        if (isFileStore && !phyTableToNewGroup.isEmpty()) {
             // 1.1 switch archive table physical db group to new physical db group
             FilesAccessor filesAccessor = new FilesAccessor();
             filesAccessor.setConnection(metaDbConnection);
@@ -154,14 +202,22 @@ public class AlterTableGroupMovePartitionRefreshMetaTask extends AlterTableGroup
                 }
             }
         }
-        // 2、cleanup partition_group_delta
-        partitionGroupAccessor.deletePartitionGroupsByTableGroupId(tableGroupId, true);
 
-        for (String tableName : tableGroupConfig.getAllTables()) {
-            // 3、cleanup table_partition_delta
-            // only delete the related records
-            tablePartitionAccessor
-                .deleteTablePartitionConfigsForDeltaTable(schemaName, tableName);
+        if (GeneralUtil.isNotEmpty(tablePartitionDeltas)) {
+            boolean requestDecrease = false;
+            for (TablePartitionDeltaRecord record : GeneralUtil.emptyIfNull(tablePartitionDeltas)) {
+                // 3、cleanup table_partition_delta only if refCount == 0
+                // otherwise only delete the related records
+                if (record.refCount == 1) {
+                    tablePartitionAccessor.deleteTablePartitionConfigsForDeltaTable(schemaName, record.tableName);
+                } else {
+                    requestDecrease = true;
+                }
+            }
+            if (requestDecrease) {
+                tablePartitionAccessor
+                    .decreaseRefCountBySchTgidFromDeltaTable(schemaName, tableGroupId);
+            }
         }
 
     }

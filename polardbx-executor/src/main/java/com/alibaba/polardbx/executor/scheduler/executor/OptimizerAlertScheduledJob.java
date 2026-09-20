@@ -27,7 +27,7 @@ import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
 import com.alibaba.polardbx.gms.scheduler.ExecutableScheduledJob;
 import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
-import com.alibaba.polardbx.optimizer.optimizeralert.statisticalert.StatisticAlertLoggerBaseImpl;
+import com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertType;
 import com.google.common.collect.Sets;
 import org.apache.commons.collections.CollectionUtils;
 
@@ -49,6 +49,8 @@ public class OptimizerAlertScheduledJob extends SchedulerExecutor {
     public static final String HAS_OPTIMIZER_ALERT = " optimizer alerts found:";
 
     public static final String HAS_STATISTIC_ALERT = " statistic alerts found:";
+    public static final String HAS_SPM_ALERT = " spm alerts found:";
+
     private static final Logger logger = LoggerFactory.getLogger(OptimizerAlertScheduledJob.class);
 
     private final ExecutableScheduledJob executableScheduledJob;
@@ -74,54 +76,9 @@ public class OptimizerAlertScheduledJob extends SchedulerExecutor {
                 remark = "Skipped because OPTIMIZER_ALERT is disabled";
             } else {
                 // enable OPTIMIZER_ALERT
-                List<List<Map<String, Object>>> results = SyncManagerHelper.syncWithDefaultDB(
+                List<List<Map<String, Object>>> results = SyncManagerHelper.syncWithDefaultDb(
                     new OptimizerAlertScheduleSyncAction(), SyncScope.CURRENT_ONLY);
-
-                StringBuilder optimizeAlertSb = new StringBuilder();
-                long optimizeAlertCountSum = 0L;
-                Set<String> optimizeAlertSets = Sets.newHashSet();
-                StringBuilder statisticAlertSb = new StringBuilder();
-                long statisticAlertCountSum = 0L;
-                Set<String> statisticAlertSets = Sets.newHashSet();
-
-                for (List<Map<String, Object>> nodeRows : results) {
-                    if (CollectionUtils.isEmpty(nodeRows)) {
-                        continue;
-                    }
-                    optimizeAlertSb.append(DataTypes.StringType.convertFrom(nodeRows.get(0).get("COMPUTE_NODE"))).append("{");
-                    statisticAlertSb.append(DataTypes.StringType.convertFrom(nodeRows.get(0).get("COMPUTE_NODE"))).append("{");
-                    for (Map<String, Object> row : nodeRows) {
-                        long count = DataTypes.LongType.convertFrom(row.get("COUNT"));
-                        String type = DataTypes.StringType.convertFrom(row.get("ALERT_TYPE"));
-                        if (StatisticAlertLoggerBaseImpl.isStatisticAlertType(type)){
-                            statisticAlertSets.add(type);
-                            statisticAlertSb.append(type).append(":").append(count).append(",");
-                            statisticAlertCountSum += count;
-                        }else{
-                            optimizeAlertSets.add(type);
-                            optimizeAlertSb.append(type).append(":").append(count).append(",");
-                            optimizeAlertCountSum += count;
-                        }
-                    }
-                    optimizeAlertSb.append("},");
-                    statisticAlertSb.append("},");
-                }
-
-                StringJoiner remarkSj = new StringJoiner(",");
-                if (optimizeAlertCountSum > 0){
-                    EventLogger.log(EventType.OPTIMIZER_ALERT, optimizeAlertSb.toString());
-                    remarkSj.add(optimizeAlertCountSum + HAS_OPTIMIZER_ALERT + String.join(",", optimizeAlertSets));
-                }
-                if (statisticAlertCountSum > 0){
-                    EventLogger.log(EventType.STATISTIC_ALERT, statisticAlertSb.toString());
-                    remarkSj.add(statisticAlertCountSum + HAS_STATISTIC_ALERT + String.join(",", statisticAlertSets));
-                }
-                if (optimizeAlertCountSum + statisticAlertCountSum > 0){
-                    remark = remarkSj.toString();
-                }else{
-                    // no alter found
-                    remark = NO_ALERT;
-                }
+                remark = genRemark(results);
             }
             //mark as SUCCESS
             long finishTime = ZonedDateTime.now().toEpochSecond();
@@ -137,6 +94,88 @@ public class OptimizerAlertScheduledJob extends SchedulerExecutor {
                 "process scheduled optimizer alert job:[%s] error, fireTime:[%s]", scheduleId, fireTime), t);
             ScheduledJobsManager.updateState(scheduleId, fireTime, FAILED, null, t.getMessage());
             return false;
+        }
+    }
+
+    protected String genRemark(List<List<Map<String, Object>>> results) {
+        long statisticAlertCountSum = 0L;
+        StringBuilder statisticAlertSb = new StringBuilder();
+        Set<String> statisticAlertSets = Sets.newHashSet();
+
+        long spmAlertCountSum = 0L;
+        StringBuilder spmAlertSb = new StringBuilder();
+        Set<String> spmAlertSets = Sets.newHashSet();
+
+        long optimizeAlertCountSum = 0L;
+        StringBuilder optimizeAlertSb = new StringBuilder();
+        Set<String> optimizeAlertSets = Sets.newHashSet();
+
+        for (List<Map<String, Object>> nodeRows : results) {
+            if (CollectionUtils.isEmpty(nodeRows)) {
+                continue;
+            }
+            boolean hitStat = false;
+            boolean hitSpm = false;
+            boolean hitOp = false;
+            for (Map<String, Object> row : nodeRows) {
+                long count = DataTypes.LongType.convertFrom(row.get("COUNT"));
+                String type = DataTypes.StringType.convertFrom(row.get("ALERT_TYPE"));
+                String node = DataTypes.StringType.convertFrom(row.get("COMPUTE_NODE"));
+                if (OptimizerAlertType.isStatisticAlertType(type)) {
+                    if (!hitStat) {
+                        statisticAlertSb.append(node).append("{");
+                        hitStat = true;
+                    }
+                    statisticAlertSets.add(type);
+                    statisticAlertSb.append(type).append(":").append(count).append(",");
+                    statisticAlertCountSum += count;
+                } else if (OptimizerAlertType.isSpmAlertType(type)) {
+                    if (!hitSpm) {
+                        spmAlertSb.append(node).append("{");
+                        hitSpm = true;
+                    }
+                    spmAlertSets.add(type);
+                    spmAlertSb.append(type).append(":").append(count).append(",");
+                    spmAlertCountSum += count;
+                } else {
+                    if (!hitOp) {
+                        optimizeAlertSb.append(node).append("{");
+                        hitOp = true;
+                    }
+                    optimizeAlertSets.add(type);
+                    optimizeAlertSb.append(type).append(":").append(count).append(",");
+                    optimizeAlertCountSum += count;
+                }
+            }
+            if (hitOp) {
+                optimizeAlertSb.append("},");
+            }
+            if (hitStat) {
+                statisticAlertSb.append("},");
+            }
+            if (hitSpm) {
+                spmAlertSb.append("},");
+            }
+        }
+
+        StringJoiner remarkSj = new StringJoiner(",");
+        if (statisticAlertCountSum > 0) {
+            EventLogger.log(EventType.STATISTIC_ALERT, statisticAlertSb.toString());
+            remarkSj.add(statisticAlertCountSum + HAS_STATISTIC_ALERT + String.join(",", statisticAlertSets));
+        }
+        if (spmAlertCountSum > 0) {
+            EventLogger.log(EventType.SPM_ALERT, spmAlertSb.toString());
+            remarkSj.add(spmAlertCountSum + HAS_SPM_ALERT + String.join(",", spmAlertSets));
+        }
+        if (optimizeAlertCountSum > 0) {
+            EventLogger.log(EventType.OPTIMIZER_ALERT, optimizeAlertSb.toString());
+            remarkSj.add(optimizeAlertCountSum + HAS_OPTIMIZER_ALERT + String.join(",", optimizeAlertSets));
+        }
+        if (statisticAlertCountSum + spmAlertCountSum + optimizeAlertCountSum > 0) {
+            return remarkSj.toString();
+        } else {
+            // no alter found
+            return NO_ALERT;
         }
     }
 }

@@ -1,0 +1,37 @@
+## DISABLE_FAST_SQL_PARSER
+
+
+create table normal_sig_t1(
+c1 bigint not null,
+c2 bigint not null
+)
+single;
+show create table normal_sig_t1;
+select count(1) from normal_sig_t1;
+
+create table normal_sig_t2(
+c1 bigint not null,
+c2 bigint not null
+)
+single;
+show create table normal_sig_t2;
+select count(1) from normal_sig_t2;
+
+create table normal_bro_t3(
+c1 bigint not null,
+c2 bigint not null
+)
+single;
+show create table normal_bro_t3;
+select count(1) from normal_bro_t3;
+
+select count(1) from normal_sig_t1 t1;
+select count(1) from normal_sig_t1 t1 join normal_sig_t2 t2 on t1.c1=t2.c1;
+#explain select count(1) from normal_sig_t1 t1 join normal_sig_t2 t2 on t1.c1=t2.c1;
+
+#explain select count(1) from normal_sig_t1 t1 join normal_bro_t3 t2 on t1.c1=t2.c1;
+select count(1) from normal_sig_t1 t1 join normal_bro_t3 t2 on t1.c1=t2.c1;
+select count(1) from normal_sig_t1 t1 join normal_bro_t3 t2 on t1.c1=t2.c1;
+select count(1) from normal_sig_t1 t1 join normal_bro_t3 t2 on t1.c1=t2.c1;
+
+

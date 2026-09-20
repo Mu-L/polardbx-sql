@@ -23,9 +23,10 @@ import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterTableGroupSetP
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterTableGroupValidateTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.BackgroupRebalanceTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupSyncTask;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.gms.locality.LocalityDetailInfoRecord;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
@@ -46,7 +47,7 @@ import java.util.TreeMap;
 /**
  * @author taojinkun
  */
-public class AlterTableGroupSetPartitionsLocalityJobFactory extends DdlJobFactory {
+public class AlterTableGroupSetPartitionsLocalityJobFactory extends OnlineDdlJobFactory {
 
     @Deprecated
     protected final DDL ddl;
@@ -56,6 +57,7 @@ public class AlterTableGroupSetPartitionsLocalityJobFactory extends DdlJobFactor
     public AlterTableGroupSetPartitionsLocalityJobFactory(DDL ddl,
                                                           AlterTableGroupSetPartitionsLocalityPreparedData preparedData,
                                                           ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.OSC);
         this.preparedData = preparedData;
         this.ddl = ddl;
         this.executionContext = executionContext;

@@ -20,6 +20,7 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.core.TddlOperatorTable;
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.PushUtil;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
@@ -151,7 +152,7 @@ public class PushProjectRule extends RelOptRule {
         }
 
         // 判断是否有需要特殊处理的Project
-        if (remainProject(project) || RelUtils.existLastInsertId(project)) {
+        if (!PushUtil.isPushable(project)) {
             // 不下压或者构造新的project下压，保留原先的project
 
             // if project has subquery with single table && logicalview only possess single table,
@@ -237,10 +238,6 @@ public class PushProjectRule extends RelOptRule {
         dynamicFinder.getCorrelateScalar().stream().map(s -> RelOptUtil.findTables(s.getRel()))
             .forEach(t -> tables.addAll(t));
         return TableTopologyUtil.isAllSingleTableInSamePhysicalDB(tables);
-    }
-
-    protected boolean remainProject(Project project) {
-        return doNotPush(project);
     }
 
     public static boolean doNotPush(Project project) {

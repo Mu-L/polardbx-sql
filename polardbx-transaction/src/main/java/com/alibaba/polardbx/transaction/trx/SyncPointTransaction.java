@@ -5,6 +5,7 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.IConnection;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.thread.LockUtils;
+import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.rpc.pool.XConnection;
@@ -23,7 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class SyncPointTransaction extends TsoTransaction {
     private final static String MARK_SYNC_POINT_SQL = "set enable_polarx_mark_sync_point = true";
-    private final AtomicInteger commitPartitions = new AtomicInteger(0);
+    private final AtomicInteger commitParticipants = new AtomicInteger(0);
 
     public SyncPointTransaction(ExecutionContext executionContext,
                                 TransactionManager manager) {
@@ -61,18 +62,29 @@ public class SyncPointTransaction extends TsoTransaction {
     }
 
     @Override
-    protected void beforeCommitOneBranchHook(TransactionConnectionHolder.HeldConnection heldConn) {
-        IConnection conn = heldConn.getRawConnection();
-        try {
-            conn.executeLater(MARK_SYNC_POINT_SQL);
-        } catch (SQLException ex) {
-            throw GeneralUtil.nestedException(ex);
+    protected void commitOneBranch(TransactionConnectionHolder.HeldConnection heldConn) {
+        if (!InstanceVersion.isMYSQL80()) {
+            IConnection conn = heldConn.getRawConnection();
+            try {
+                conn.executeLater(MARK_SYNC_POINT_SQL);
+            } catch (SQLException ex) {
+                throw GeneralUtil.nestedException(ex);
+            }
         }
+        super.commitOneBranch(heldConn);
     }
 
     @Override
     protected void executeXaCommit(IConnection conn, String xid, Statement stmt) {
         try {
+            // For 80.
+            if (InstanceVersion.isMYSQL80()) {
+                super.executeXaCommit(conn, xid, stmt);
+                commitParticipants.getAndIncrement();
+                return;
+            }
+
+            // For 57.
             if (conn.isWrapperFor(XConnection.class)) {
                 XConnection xConnection = conn.unwrap(XConnection.class);
                 conn.unwrap(XConnection.class).getSession().setChunkResult(false);
@@ -81,12 +93,12 @@ public class SyncPointTransaction extends TsoTransaction {
                 xConnection.setLazyCommitSeq(commitTimestamp);
                 try (Statement xStmt = xConnection.createStatement();
                     ResultSet rs = xStmt.executeQuery("XA COMMIT " + xid);) {
-                    if (-1 != commitPartitions.get() && rs.next() && 0 == rs.getInt(1)) {
+                    if (-1 != commitParticipants.get() && rs.next() && 0 == rs.getInt(1)) {
                         // Commit sync point successfully.
-                        commitPartitions.getAndIncrement();
+                        commitParticipants.getAndIncrement();
                     } else {
                         // Commit failed.
-                        commitPartitions.set(-1);
+                        commitParticipants.set(-1);
                     }
                 }
                 if (shareReadView) {
@@ -98,12 +110,12 @@ public class SyncPointTransaction extends TsoTransaction {
 
                 if (stmt.getMoreResults()) {
                     try (ResultSet rs = stmt.getResultSet()) {
-                        if (-1 != commitPartitions.get() && rs.next() && 0 == rs.getInt(1)) {
+                        if (-1 != commitParticipants.get() && rs.next() && 0 == rs.getInt(1)) {
                             // Commit sync point successfully.
-                            commitPartitions.getAndIncrement();
+                            commitParticipants.getAndIncrement();
                         } else {
                             // Commit failed.
-                            commitPartitions.set(-1);
+                            commitParticipants.set(-1);
                         }
                     }
                 } else {
@@ -126,11 +138,7 @@ public class SyncPointTransaction extends TsoTransaction {
         }
     }
 
-    public int getNumberOfPartitions() {
-        return commitPartitions.get();
-    }
-
-    public long getCommitTso() {
-        return commitTimestamp;
+    public int getNumberOfParticipants() {
+        return commitParticipants.get();
     }
 }

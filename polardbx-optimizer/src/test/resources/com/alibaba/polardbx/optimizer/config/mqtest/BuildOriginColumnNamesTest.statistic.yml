@@ -1,0 +1,21 @@
+wxorder_order:
+  100000
+wxorder_order.id.cardinality:
+  100000
+wxorder_order.ware_id.cardinality:
+  5000
+wxorder_order.channel_id.cardinality:
+  200
+wxorder_order.tenant_id.cardinality:
+  50
+wxorder_order.control_status.cardinality:
+  5
+
+wxorder_ware:
+  10000
+wxorder_ware.id.cardinality:
+  10000
+wxorder_ware.tenant_id.cardinality:
+  50
+wxorder_ware.type.cardinality:
+  10

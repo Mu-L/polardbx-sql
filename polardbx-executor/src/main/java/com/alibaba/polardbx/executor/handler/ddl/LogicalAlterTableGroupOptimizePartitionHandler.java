@@ -11,11 +11,24 @@ import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableGroupOptimizePartition;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableGroupTruncatePartition;
 import org.apache.calcite.sql.SqlAlterTableGroup;
+import org.apache.calcite.sql.SqlIdentifier;
+
+import java.util.Map;
+import java.util.Set;
 
 public class LogicalAlterTableGroupOptimizePartitionHandler extends LogicalCommonDdlHandler {
 
     public LogicalAlterTableGroupOptimizePartitionHandler(IRepository repo) {
         super(repo);
+    }
+
+    @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        SqlAlterTableGroup sqlAlterTableGroup = (SqlAlterTableGroup) logicalDdlPlan.getNativeSqlNode();
+        String tableGroupName = ((SqlIdentifier) sqlAlterTableGroup.getTableGroupName()).getLastName();
+        exclusiveResources.add(concatWithDot(logicalDdlPlan.getSchemaName(), tableGroupName));
     }
 
     @Override

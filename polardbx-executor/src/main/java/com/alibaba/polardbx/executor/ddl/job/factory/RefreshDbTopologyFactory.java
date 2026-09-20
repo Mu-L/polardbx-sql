@@ -89,12 +89,14 @@ public class RefreshDbTopologyFactory extends AlterTableGroupBaseJobFactory {
         DdlTask InitNewStorageInstTask =
             new InitNewStorageInstTask(schemaName, refreshTopologyPreparedData.getInstGroupDbInfo());
 
-        List<String> targetDbList = new ArrayList<>();
+        List<Pair<String, String>> targetDbList = new ArrayList<>();
         int targetDbCnt = refreshTopologyPreparedData.getTargetGroupDetailInfoExRecords().size();
         List<String> newPartitions = refreshTopologyPreparedData.getNewPartitionNames();
         for (int i = 0; i < newPartitions.size(); i++) {
-            targetDbList.add(refreshTopologyPreparedData.getTargetGroupDetailInfoExRecords()
-                .get(i % targetDbCnt).phyDbName);
+            targetDbList.add(new Pair<>(refreshTopologyPreparedData.getTargetGroupDetailInfoExRecords()
+                .get(i % targetDbCnt).getPhyDbName(),
+                refreshTopologyPreparedData.getTargetGroupDetailInfoExRecords()
+                    .get(i % targetDbCnt).getGroupName()));
         }
 
         DdlTask addMetaTask = new RefreshTopologyAddMetaTask(schemaName,
@@ -114,7 +116,7 @@ public class RefreshDbTopologyFactory extends AlterTableGroupBaseJobFactory {
         ));
         List<DdlTask> bringUpAlterTableGroupTasks =
             ComplexTaskFactory.bringUpAlterTableGroup(schemaName, tableGroupName, null,
-                taskType, preparedData.getDdlVersionId(), executionContext);
+                null, taskType, preparedData.getDdlVersionId(), executionContext);
 
         executableDdlJob.addSequentialTasks(bringUpAlterTableGroupTasks);
         constructSubTasks(schemaName, executableDdlJob, addMetaTask, bringUpAlterTableGroupTasks, null);
@@ -188,6 +190,7 @@ public class RefreshDbTopologyFactory extends AlterTableGroupBaseJobFactory {
             }
 
             executableDdlJob.getExcludeResources().addAll(subTask.getExcludeResources());
+            executableDdlJob.getSharedResources().addAll(subTask.getSharedResources());
         }
     }
 

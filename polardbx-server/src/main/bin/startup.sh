@@ -40,6 +40,38 @@ function usage() {
         exit 0;
 }
 
+function configure_jdk() {
+    if [ x"$jdk_ver" == "x" ]; then
+        jdk_ver="21"
+        echo "try use default jdk21"
+    fi
+}
+
+# Change context:
+# - Before: only the AJDK11 ElasticHeap elasticHeapMode==1 branch appended
+#   -XX:ObjectAlignmentInBytes=16 -XX:+UseCompressedClassPointers -XX:+UseCompressedOops.
+#   JDK21 does not support ElasticHeap flags (elasticHeapMode is always -1 there), so JDK21
+#   G1 instances started with JVM defaults for object alignment and compressed pointers,
+#   whose enable state flips implicitly with heap size and cannot be relied upon per spec.
+# - Path impact: invoked only when jdk_ver == "21", the JDK21 binary is present and heap_mb
+#   is set (fixed-spec tiers >= 8G, after adjust_heap_mb). AJDK11 ElasticHeap mode 1/2
+#   branches, <8G tiers (heap_mb unset) and 32-bit paths keep prior behavior.
+# - Capability regression: None for non-JDK21 paths; on JDK21 this pins the intended
+#   compressed-pointer state per final heap size (<=30720MB: align 8 with oops;
+#   30721-63488MB: align 16 with oops; >63488MB: align 8 without oops, class pointers on)
+#   instead of relying on JVM defaults. Decision uses the final heap_mb after
+#   cacheOffheapMemory adjustment and is decoupled from elasticHeapMode.
+function configure_g1_compressed_pointers() {
+    local final_heap_mb=$1
+    if [ $final_heap_mb -le 30720 ]; then
+        JAVA_OPTS="$JAVA_OPTS -XX:ObjectAlignmentInBytes=8 -XX:+UseCompressedOops -XX:+UseCompressedClassPointers"
+    elif [ $final_heap_mb -le 63488 ]; then
+        JAVA_OPTS="$JAVA_OPTS -XX:ObjectAlignmentInBytes=16 -XX:+UseCompressedOops -XX:+UseCompressedClassPointers"
+    else
+        JAVA_OPTS="$JAVA_OPTS -XX:ObjectAlignmentInBytes=8 -XX:-UseCompressedOops -XX:+UseCompressedClassPointers"
+    fi
+}
+
 current_path=`pwd`
 case "`uname`" in
     Linux)
@@ -68,6 +100,7 @@ mockDRDS=
 mockAppName=
 polardbx=false
 fast_mock=
+jdk_ver=
 initializeGms=false
 vDnPasswordKey=
 dnList=
@@ -94,7 +127,7 @@ if [ x"$checkuser" = x"root" ];then
    exit 1;
 fi
 
-TEMP=`getopt -o q:d:b:p:l:m:c:a:f:i:w:s:r:u:S:A:P:e:hDMIF --long uri:,ep:,ak:,sk: -- "$@"`
+TEMP=`getopt -o q:d:p:l:m:c:a:f:i:w:s:A:J:hDM -- "$@"`
 eval set -- "$TEMP"
 while true ; do
   case "$1" in
@@ -121,6 +154,8 @@ while true ; do
         --sk) secretKey=$2; shift 2;;
         -i) idc=`echo $2|sed "s/'//g"`; shift 2 ;;
         -w) wisp=`echo $2|sed "s/'//g"`; shift 2 ;;
+        -J) jdk_ver=`echo $2|sed "s/'//g"`; shift 2 ;;
+        -g) cgroup=`echo $2|sed "s/'//g"`; shift 2 ;;
         -c) cluster=`echo $2|sed "s/'//g"`; shift 2 ;;
         -f) tddl_conf=`echo $2|sed "s/'//g"`; shift 2 ;;
         -s) instanceId=`echo $2|sed "s/'//g"`; shift 2 ;;
@@ -280,6 +315,10 @@ if [ x"$serverPort" != "x" ]; then
 		TDDL_OPTS=" $TDDL_OPTS -DloggerRoot=../$serverPort"
 	fi
 
+  if [ x"$adminPort" != "x" ]; then
+    let managerPort=$adminPort
+  fi
+
 	if [ x"$managerPort" == "x" ]; then
 		let managerPort=serverPort+100
 	fi
@@ -350,13 +389,17 @@ if [ ! -d $base_log ] ; then
 	mkdir -p $base_log
 fi
 
+configure_jdk
+
 ## set java path
-TAOBAO_JAVA="/opt/taobao/java_coroutine/bin/java"
+TAOBAO_JAVA="/opt/taobao/install/ajdk11/bin/java"
 ALIBABA_JAVA="/usr/alibaba/java/bin/java"
-DRAGONWELL_JAVA="/opt/java/dragonwell/bin/java"
-if [ -f $TAOBAO_JAVA ] ; then
+JDK21="/opt/taobao/java21/bin/java"
+if [ "$jdk_ver" == "21" ] && [ -f $JDK21 ]; then
+  JAVA=$JDK21
+elif [ -f $TAOBAO_JAVA ] ; then
 	JAVA=$TAOBAO_JAVA
-	JGROUP="/opt/taobao/java_coroutine/bin/jgroup"
+	JGROUP="/opt/taobao/install/ajdk11/bin/jgroup"
 elif [ -f $ALIBABA_JAVA ] ; then
 	JAVA=$ALIBABA_JAVA
 elif [ -f $DRAGONWELL_JAVA ] ; then
@@ -391,8 +434,9 @@ fi
 # 1: <= 64G mode
 # 2: > 64G mode
 jvmElasticHeapSupport=`$JAVA -XX:+PrintFlagsFinal -version 2> /dev/null | grep ElasticHeapMinHeapSize`
+elasticHeapMaxMem=`$JAVA -XX:+PrintFlagsFinal -version 2> /dev/null | grep ElasticHeapCurrentHeapAsMaxMemory | grep true`
 elasticHeapMode=0
-if [ x"$jvmElasticHeapSupport" == "x" ]; then
+if [ x"$jvmElasticHeapSupport" == "x" ] || [ x"$elasticHeapMaxMem" == "x" ]; then
   elasticHeapMode=-1
 fi
 
@@ -408,27 +452,58 @@ if [ -n "$str" ]; then
         freecount=`expr $memory / 1024 / 1024`
     fi
 
+    # cacheOffheapMemory aware heap sizing: read cacheOffheapMemory (bytes) from env, default 1GB.
+    # For heap configs >= 8G, subtract cacheOffheapMemory from heap, capped at heap/2 (i.e. cache never exceeds half of heap).
+    if [ x"$cacheOffheapMemory" == "x" ]; then
+        cacheOffheapMemory=1073741824
+    fi
+    cacheOffheapMemoryMB=`expr $cacheOffheapMemory / 1024 / 1024`
+    echo "cacheOffheapMemory: ${cacheOffheapMemoryMB}MB (raw: $cacheOffheapMemory bytes)"
+
+    # subtract cacheOffheapMemory (capped at heap/2) from the given heap in MB, print the adjusted heap in MB
+    function adjust_heap_mb() {
+        local heap_mb=$1
+        local max_cache=`expr $heap_mb / 2`
+        local actual_cache=$cacheOffheapMemoryMB
+        if [ $actual_cache -gt $max_cache ]; then
+            echo "[WARN] cacheOffheapMemory(${cacheOffheapMemoryMB}MB) exceeds half of heap(${heap_mb}MB), cap to ${max_cache}MB" >&2
+            actual_cache=$max_cache
+        fi
+        expr $heap_mb - $actual_cache
+    }
+
+    # warn once when total memory < 8GB: cacheOffheapMemory adjustment is NOT applied for heap tiers < 8G
+    if [ $freecount -lt 8192 ]; then
+        echo "[WARN] total memory(${freecount}MB) is less than 8GB, cacheOffheapMemory(${cacheOffheapMemoryMB}MB) will NOT be subtracted from heap" >&2
+    fi
+
     if [ $elasticHeapMode -ge 0 ]; then
         if [ $freecount -ge 262144 ] ; then
-            JAVA_OPTS="-server -Xms220g -Xmx220g -XX:MaxDirectMemorySize=20g "
+            heap_mb=`adjust_heap_mb 225280`
+            JAVA_OPTS="-server -Xms${heap_mb}m -Xmx${heap_mb}m -XX:G1SoftMinHeapSize=${heap_mb}m -XX:G1SoftMaxHeapSize=${heap_mb}m -XX:MaxDirectMemorySize=20g -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=1024m "
             elasticHeapMode=2
         elif [ $freecount -ge 131072 ] ; then
-            JAVA_OPTS="-server -Xms110g -Xmx110g -XX:MaxDirectMemorySize=16g "
+            heap_mb=`adjust_heap_mb 112640`
+            JAVA_OPTS="-server -Xms${heap_mb}m -Xmx${heap_mb}m -XX:G1SoftMinHeapSize=${heap_mb}m -XX:G1SoftMaxHeapSize=${heap_mb}m -XX:MaxDirectMemorySize=16g -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=1024m "
             elasticHeapMode=2
         elif [ $freecount -ge 65536 ] ; then
-            JAVA_OPTS="-server -Xms50g -Xmx50g -XX:MaxDirectMemorySize=12g "
+            heap_mb=`adjust_heap_mb 51200`
+            JAVA_OPTS="-server -Xms${heap_mb}m -Xmx${heap_mb}m -XX:G1SoftMinHeapSize=${heap_mb}m -XX:G1SoftMaxHeapSize=${heap_mb}m -XX:MaxDirectMemorySize=12g -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=1024m "
             elasticHeapMode=1
         elif [ $freecount -ge 32768  ] ; then
-            JAVA_OPTS="-server -Xms24g -Xmx24g -XX:MaxDirectMemorySize=6g "
+            heap_mb=`adjust_heap_mb 24576`
+            JAVA_OPTS="-server -Xms${heap_mb}m -Xmx${heap_mb}m -XX:G1SoftMinHeapSize=${heap_mb}m -XX:G1SoftMaxHeapSize=${heap_mb}m -XX:MaxDirectMemorySize=6g -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=1024m "
             elasticHeapMode=1
         elif [ $freecount -ge 16384  ] ; then
-            JAVA_OPTS="-server -Xms10g -Xmx10g -XX:MaxDirectMemorySize=3g "
+            heap_mb=`adjust_heap_mb 10240`
+            JAVA_OPTS="-server -Xms${heap_mb}m -Xmx${heap_mb}m -XX:G1SoftMinHeapSize=${heap_mb}m -XX:G1SoftMaxHeapSize=${heap_mb}m -XX:MaxDirectMemorySize=3g -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=1024m "
             elasticHeapMode=1
         elif [ $freecount -ge 8192 ] ; then
-            JAVA_OPTS="-server -Xms4g -Xmx4g "
+            heap_mb=`adjust_heap_mb 4096`
+            JAVA_OPTS="-server -Xms${heap_mb}m -Xmx${heap_mb}m -XX:G1SoftMinHeapSize=${heap_mb}m -XX:G1SoftMaxHeapSize=${heap_mb}m -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=1024m "
             elasticHeapMode=1
         elif [ $freecount -ge 4096 ] ; then
-            JAVA_OPTS="-server -Xms2g -Xmx2g "
+            JAVA_OPTS="-server -Xms2g -Xmx2g -XX:G1SoftMinHeapSize=2g -XX:G1SoftMaxHeapSize=2g "
             elasticHeapMode=1
         elif [ $freecount -ge 2048 ] ; then
             JAVA_OPTS="-server -Xms1024m -Xmx1024m "
@@ -446,17 +521,23 @@ if [ -n "$str" ]; then
     else
         # do not support elasticHeap
         if [ $freecount -ge 262144 ] ; then
-            JAVA_OPTS="-server -Xms220g -Xmx220g -XX:MaxDirectMemorySize=20g "
+            heap_mb=`adjust_heap_mb 225280`
+            JAVA_OPTS="-server -Xms${heap_mb}m -Xmx${heap_mb}m -XX:MaxDirectMemorySize=20g -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=1024m "
         elif [ $freecount -ge 131072 ] ; then
-            JAVA_OPTS="-server -Xms110g -Xmx110g -XX:MaxDirectMemorySize=16g "
+            heap_mb=`adjust_heap_mb 112640`
+            JAVA_OPTS="-server -Xms${heap_mb}m -Xmx${heap_mb}m -XX:MaxDirectMemorySize=16g -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=1024m "
         elif [ $freecount -ge 65536 ] ; then
-            JAVA_OPTS="-server -Xms50g -Xmx50g -XX:MaxDirectMemorySize=12g "
+            heap_mb=`adjust_heap_mb 51200`
+            JAVA_OPTS="-server -Xms${heap_mb}m -Xmx${heap_mb}m -XX:MaxDirectMemorySize=12g -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=1024m "
         elif [ $freecount -ge 32768  ] ; then
-            JAVA_OPTS="-server -Xms24g -Xmx24g -XX:MaxDirectMemorySize=6g "
+            heap_mb=`adjust_heap_mb 24576`
+            JAVA_OPTS="-server -Xms${heap_mb}m -Xmx${heap_mb}m -XX:MaxDirectMemorySize=6g -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=1024m "
         elif [ $freecount -ge 16384  ] ; then
-            JAVA_OPTS="-server -Xms10g -Xmx10g -XX:MaxDirectMemorySize=3g "
+            heap_mb=`adjust_heap_mb 10240`
+            JAVA_OPTS="-server -Xms${heap_mb}m -Xmx${heap_mb}m -XX:MaxDirectMemorySize=3g -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=1024m "
         elif [ $freecount -ge 8192 ] ; then
-            JAVA_OPTS="-server -Xms4g -Xmx4g "
+            heap_mb=`adjust_heap_mb 4096`
+            JAVA_OPTS="-server -Xms${heap_mb}m -Xmx${heap_mb}m -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=1024m "
         elif [ $freecount -ge 4096 ] ; then
             JAVA_OPTS="-server -Xms2g -Xmx2g "
         elif [ $freecount -ge 2048 ] ; then
@@ -470,22 +551,63 @@ if [ -n "$str" ]; then
         fi
     fi
 
+    # JDK21 fixed-spec G1 path only: pin object alignment / compressed pointers by final heap_mb
+    if [ "$jdk_ver" == "21" ] && [ -f $JDK21 ] && [ x"$heap_mb" != "x" ]; then
+        configure_g1_compressed_pointers $heap_mb
+    fi
+
 else
 	echo "not support 32-bit java startup"
 	exit
 fi
 
+# Change context:
+# - Before: the JDK21 add-opens whitelist below did not include java.base/java.util.zip, so
+#   polardbx-cache's CrcUtil (reflectively sets CRC32.crc accessible) threw
+#   InaccessibleObjectException under JDK21's strict JPMS enforcement (JDK17+ removed the
+#   permissive "warn and allow" illegal-access mode that masked this on JDK11).
+# - Path impact: only affects CN processes launched via startup.sh on jdk_ver == "21"; other
+#   add-opens entries and JDK8/JDK11 startup paths are unaffected.
+# - Capability regression: None; this restores local disk cache (LocalBlockCache) CRC
+#   verification that was silently broken on JDK21.
+if [ "$jdk_ver" == "21" ] && [ -f $JDK21 ]; then
+  if [ "$wisp" == "wisp" ] ; then
+    JAVA_OPTS="$JAVA_OPTS -XX:+UnlockExperimentalVMOptions -Djava.lang.VirtualThreadConfig.autoVirtualTransition=true -Djava.lang.VirtualThreadConfig.autoVirtualTransition.white=*"
+  else
+    JAVA_OPTS="$JAVA_OPTS -XX:+UnlockExperimentalVMOptions -Djava.lang.VirtualThreadConfig.autoVirtualTransition=false"
+  fi
+    JAVA_OPTS="$JAVA_OPTS --enable-preview --add-opens java.base/jdk.internal.misc=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED --add-opens java.base/sun.nio.ch=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.lang.reflect=ALL-UNNAMED --add-opens java.base/java.lang.invoke=ALL-UNNAMED --add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.util.zip=ALL-UNNAMED"
+    JAVA_OPTS="$JAVA_OPTS -Xss4m -XX:-OmitStackTraceInFastThrow "
+else
+    JAVA_OPTS="$JAVA_OPTS -Xss4m -XX:+AggressiveOpts -XX:-UseBiasedLocking -XX:-OmitStackTraceInFastThrow "
+fi
+
 #2.6.32-220.23.2.al.ali1.1.alios6.x86_64 not support Wisp2
-if [ "$wisp" == "wisp" ] && [ "$KERNEL_VERSION" != "2.6.32-220.23.2.al.ali1.1.alios6.x86_64" ]; then
+if [ "$jdk_ver" != "21" ] && [ "$wisp" == "wisp" ] && [ "$KERNEL_VERSION" != "2.6.32-220.23.2.al.ali1.1.alios6.x86_64" ]; then
     JAVA_OPTS="$JAVA_OPTS -XX:+UnlockExperimentalVMOptions -XX:+UseWisp2 -Dio.grpc.netty.shaded.io.netty.transport.noNative=true -Dio.netty.transport.noNative=true"
     JAVA_OPTS="$JAVA_OPTS -XX:+UnlockExperimentalVMOptions -XX:+UseWisp2"
+fi
 
+MAX_PARALLEL_GC_THREADS=-1
+if [ $elasticHeapMode -eq 1 ]; then
+    MAX_PARALLEL_GC_THREADS=32
+    # <= 64G mode, set max heap size to 62G to enable CompressedOops
+    JAVA_OPTS="$JAVA_OPTS -XX:ElasticHeapMinHeapSize=1g -XX:ElasticHeapMaxHeapSize=62g -XX:MaxParallelGCThreads=$MAX_PARALLEL_GC_THREADS -XX:ObjectAlignmentInBytes=16 -XX:+UseCompressedClassPointers -XX:+UseCompressedOops"
+elif [ $elasticHeapMode -eq 2 ]; then
+    MAX_PARALLEL_GC_THREADS=64
+    # > 64G mode
+    JAVA_OPTS="$JAVA_OPTS -XX:ElasticHeapMinHeapSize=1g -XX:ElasticHeapMaxHeapSize=256g -XX:MaxParallelGCThreads=$MAX_PARALLEL_GC_THREADS"
+else
+    # do not support elasticHeap
+    JAVA_OPTS="$JAVA_OPTS"
 fi
 
 #disable netty-native in order to support Wisp2
 TDDL_OPTS=" $TDDL_OPTS -Dio.grpc.netty.shaded.io.netty.transport.noNative=true -Dio.netty.transport.noNative=true"
 #disable logback in Wisp2
 TDDL_OPTS=" $TDDL_OPTS -Dcom.alibaba.wisp.threadAsWisp.black=name:logback-*"
+# nio buffer size limit
+TDDL_OPTS=" $TDDL_OPTS -Djdk.nio.maxCachedBufferSize=16777216"
 
 if [ "$cgroup" == "cgroup" ] ; then
     JAVA_OPTS="$JAVA_OPTS -XX:+MultiTenant -XX:+TenantCpuThrottling -XX:+TenantCpuAccounting"
@@ -502,13 +624,17 @@ fi
 
 # in docker container, limit cpu cores
 if [ x"$cpu_cores" != "x" ]; then
-    JAVA_OPTS="$JAVA_OPTS -XX:ActiveProcessorCount=$cpu_cores -XX:ParallelGCThreads=$cpu_cores"
+    parallel_gc_threads=$cpu_cores
+    # limit parallel gc thread to MaxParallelGCThreads
+    if [ $MAX_PARALLEL_GC_THREADS -gt 0 ] && [ $MAX_PARALLEL_GC_THREADS -lt $parallel_gc_threads ]; then
+        parallel_gc_threads=$MAX_PARALLEL_GC_THREADS
+    fi
+
+    JAVA_OPTS="$JAVA_OPTS -XX:ActiveProcessorCount=$cpu_cores -XX:ParallelGCThreads=$parallel_gc_threads"
 fi
 
 #https://workitem.aone.alibaba-inc.com/req/33334239
 JAVA_OPTS="$JAVA_OPTS -Dtxc.vip.skip=true "
-
-JAVA_OPTS="$JAVA_OPTS -Xss4m -XX:+AggressiveOpts -XX:-UseBiasedLocking -XX:-OmitStackTraceInFastThrow "
 
 if [ $JavaVersion -ge 11 ] ; then
   JAVA_OPTS="$JAVA_OPTS"
@@ -550,6 +676,10 @@ then
 		# Caution: put polardbx-calcite first to avoid conflict
 		CALCITEPATH=$(echo "$base"/lib/*.jar | awk 'BEGIN{RS="[ \n]"} /polardbx-calcite/ {printf "%s:",$0}')
 		OTHERPATH=$(echo "$base"/lib/*.jar | awk 'BEGIN{RS="[ \n]"} !/polardbx-calcite/ && !/^$/ {printf "%s:",$0}')
+		if [ "$jdk_ver" == "21" ] && [ -f $JDK21 ]; then
+		    JDK21PATH=$(echo "$base"/lib/jdk21/*.jar | awk 'BEGIN{RS="[ \n]"} !/polardbx-calcite/ && !/^$/ {printf "%s:",$0}')
+		    OTHERPATH="$JDK21PATH$OTHERPATH"
+		fi
 		CLASSPATH="$CALCITEPATH$OTHERPATH$CLASSPATH"
 	fi
 

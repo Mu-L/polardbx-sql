@@ -27,7 +27,10 @@ import com.alibaba.polardbx.optimizer.core.planner.rule.JoinConditionSimplifyRul
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.PhysicalProject;
 import com.alibaba.polardbx.optimizer.utils.RexUtils;
+import com.clearspring.analytics.util.Lists;
+import com.google.common.collect.Maps;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
@@ -39,8 +42,15 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.logical.LogicalSemiJoin;
 import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.rel.type.RelDataTypeFactory;
+import org.apache.calcite.rel.type.RelDataTypeField;
+import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.util.ImmutableBitSet;
+
+import java.util.List;
+import java.util.Map;
 
 public abstract class LogicalSemiJoinToMaterializedSemiJoinRule extends RelOptRule {
     protected Convention outConvention = DrdsConvention.INSTANCE;
@@ -76,7 +86,7 @@ public abstract class LogicalSemiJoinToMaterializedSemiJoinRule extends RelOptRu
         if (logicalView instanceof OSSTableScan) {
             return;
         }
-        RelNode right = call.rel(2);
+        RelNode right = semiJoin.getRight();
 
         RexNode newCondition =
             JoinConditionSimplifyRule.simplifyCondition(semiJoin.getCondition(), semiJoin.getCluster().getRexBuilder());
@@ -92,10 +102,30 @@ public abstract class LogicalSemiJoinToMaterializedSemiJoinRule extends RelOptRu
             return;
         }
 
-        RelTraitSet inputTraitSet = semiJoin.getCluster().getPlanner().emptyTraitSet().replace(outConvention);
-
+        RelTraitSet inputTraitSet = right.getCluster().getPlanner().emptyTraitSet().replace(outConvention);
         LogicalView left = logicalView.copy(inputTraitSet);
         right = convert(right, inputTraitSet);
+
+        ImmutableBitSet inputBitSet = RelOptUtil.InputFinder.bits(newCondition);
+        List<RexNode> projects = Lists.newArrayList();
+        Map<Integer, Integer> mappings = Maps.newHashMap();
+        int leftTypeCount = left.getRowType().getFieldCount();
+        final RelDataTypeFactory.Builder typeBuilder = right.getCluster().getTypeFactory().builder();
+        List<RelDataTypeField> inputRowTypeList = right.getRowType().getFieldList();
+        int cnt = leftTypeCount;
+        for (int i : inputBitSet) {
+            if (i < leftTypeCount) {
+                continue;
+            }
+            mappings.put(i, cnt++);
+            projects.add(RexInputRef.of(i - leftTypeCount, inputRowTypeList));
+            typeBuilder.add(inputRowTypeList.get(i - leftTypeCount));
+        }
+        if (projects.size() < inputRowTypeList.size()) {
+            right = new PhysicalProject(right.getCluster(), inputTraitSet, right, projects, typeBuilder.build());
+        }
+
+        newCondition = RexUtil.shift(newCondition, mappings);
 
         ImmutableBitSet rightBitSet = ImmutableBitSet.range(0, right.getRowType().getFieldCount());
         Boolean rightInputUnique = semiJoin.getCluster().getMetadataQuery().areColumnsUnique(right, rightBitSet);

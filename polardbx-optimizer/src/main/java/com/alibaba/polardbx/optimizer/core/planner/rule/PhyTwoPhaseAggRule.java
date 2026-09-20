@@ -99,7 +99,10 @@ public class PhyTwoPhaseAggRule extends RelOptRule {
             return false;
         }
         // forbid agg with filter
-        return !((HashAgg) call.rels[0]).getAggCallList().stream().anyMatch(AggregateCall::hasFilter);
+        return !((HashAgg) call.rels[0])
+            .getAggCallList()
+            .stream()
+            .anyMatch(AggregateCall::hasFilter);
     }
 
     @Override

@@ -19,7 +19,6 @@ import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptRuleOperand;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.RelTraitSet;
-import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.logical.LogicalSemiJoin;
 import org.apache.calcite.rel.logical.LogicalSort;
@@ -38,8 +37,7 @@ public class SMPLogicalSortSemiJoinToMaterializedSemiJoinRule extends RelOptRule
     public static final SMPLogicalSortSemiJoinToMaterializedSemiJoinRule INSTANCE =
         new SMPLogicalSortSemiJoinToMaterializedSemiJoinRule(
             operand(LogicalSemiJoin.class,
-                operand(LogicalSort.class, operand(LogicalView.class, any())),
-                operand(RelSubset.class, any())), "INSTANCE");
+                operand(LogicalSort.class, operand(LogicalView.class, any()))), "INSTANCE");
 
     public SMPLogicalSortSemiJoinToMaterializedSemiJoinRule(RelOptRuleOperand operand, String desc) {
         super(operand, "LogicalSortSemiJoinToMaterializedSemiJoinRule:" + desc);
@@ -73,7 +71,7 @@ public class SMPLogicalSortSemiJoinToMaterializedSemiJoinRule extends RelOptRule
         if (logicalView instanceof OSSTableScan) {
             return;
         }
-        RelNode right = call.rel(3);
+        RelNode right = semiJoin.getRight();
 
         RexNode newCondition =
             JoinConditionSimplifyRule.simplifyCondition(semiJoin.getCondition(), semiJoin.getCluster().getRexBuilder());
@@ -106,7 +104,7 @@ public class SMPLogicalSortSemiJoinToMaterializedSemiJoinRule extends RelOptRule
         }
         newLogicalView.setIsMGetEnabled(true);
         newLogicalView.setInToUnionAll(true);
-        newLogicalView.setJoin(materializedSemiJoin);
+        newLogicalView.setLookupInfo(materializedSemiJoin);
         call.transformTo(materializedSemiJoin);
     }
 

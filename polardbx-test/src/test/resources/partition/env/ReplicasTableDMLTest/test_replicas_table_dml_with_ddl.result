@@ -1,0 +1,69 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+use polardbx;
+drop database if exists test_replicas_db;
+set session FORBID_CROSS_GROUP_WRITE_FOR_EXPLICIT_TRX=true;
+set session ENABLE_PUSH_DOWN_AUTO_INCREMENT = true;
+set session sql_mode='STRICT_TRANS_TABLES,NO_AUTO_VALUE_ON_ZERO';
+## USE_DN_LIST_MSG
+create database if not exists test_replicas_db charset = utf8 collate = utf8_general_ci mode = 'auto' locality='dble_config={"group_config":{"p1":["$dn1","p_01"],"p2":["$dn1","p_02"],"p3":["$dn2","p_03"],"p4":["$dn2","p_04"]}}';
+use test_replicas_db;
+create table rt1_p1p2(a int,b datetime,c int,PRIMARY KEY (`a`)) replicas locality='db_set=p1,p2';
+create table rt2_p3p4(a int,b datetime,c int,PRIMARY KEY (`a`)) replicas locality='db_set=p3,p4';
+insert into rt1_p1p2 (a,b,c) values (1,'2025-01-01',1);
+insert into rt1_p1p2 (a,b,c) values (2,'2025-01-01',2);
+insert into rt1_p1p2 (a,b,c) values (3,'2025-01-01',3);
+insert into rt1_p1p2 (a,b,c) values (4,'2025-01-01',4);
+delete from rt1_p1p2 where b <=date_sub(curdate(), interval　60　day) ORDER BY b ASC limit 2;
+select * from rt1_p1p2;
+a,b,c
+3,2025-01-01 00:00:00.0,3
+4,2025-01-01 00:00:00.0,4
+alter table rt1_p1p2 change column a aa int;
+delete from rt1_p1p2 where b <=date_sub(curdate(), interval　60　day);
+select * from rt1_p1p2;
+aa,b,c
+insert ignore into rt1_p1p2 values (5,'2025-01-02',5),(6,'2025-01-02',6);
+replace into rt1_p1p2 values (6,'2025-01-03',6);
+select * from rt1_p1p2;
+aa,b,c
+5,2025-01-02 00:00:00.0,5
+6,2025-01-03 00:00:00.0,6
+update rt1_p1p2 set c = case when  10>(c+aa) then last_insert_id(c+aa) else last_insert_id(1) end where aa = 5;
+insert into rt1_p1p2 values (6,'2025-01-04',6) on duplicate key update b = '2025-01-04';
+select * from rt1_p1p2;
+aa,b,c
+5,2025-01-02 00:00:00.0,1
+6,2025-01-04 00:00:00.0,6
+insert into rt2_p3p4 select * from rt1_p1p2;
+select * from rt2_p3p4;
+a,b,c
+5,2025-01-02 00:00:00.0,1
+6,2025-01-04 00:00:00.0,6
+## test relocate with partition table and replicas table
+set session ENABLE_MODIFY_SHARDING_COLUMN = true;
+set session ENABLE_MULTI_TABLE_UPDATE_MODIFY_GSI_SHARDING_KEY = true;
+create table pt1(a int,b datetime,c int,PRIMARY KEY (`a`)) partition by key(`c`) partitions 3;
+insert into pt1 values(1,'2025-01-01',1);
+insert into rt1_p1p2 (aa,b,c) values (1,'2025-01-01',1);
+update pt1 p,rt1_p1p2 r set p.c = 100, r.c=100 where p.a = r.aa and p.a = 1;
+select * from pt1;
+a,b,c
+1,2025-01-01 00:00:00.0,100
+select * from rt1_p1p2;
+aa,b,c
+1,2025-01-01 00:00:00.0,100
+5,2025-01-02 00:00:00.0,1
+6,2025-01-04 00:00:00.0,6
+set session ENABLE_MODIFY_SHARDING_COLUMN = false;
+set session ENABLE_MULTI_TABLE_UPDATE_MODIFY_GSI_SHARDING_KEY = false;
+## test current_timestamp and local auto_increment
+create table rt3_p1p2(a int AUTO_INCREMENT,b timestamp(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)  ,c int,PRIMARY KEY (`a`)) replicas locality='db_set=p1,p2';
+insert into rt3_p1p2 (c) values (1);
+insert into rt3_p1p2 (a,c) values (1,2) on duplicate key update c = 2;
+select a,c from rt3_p1p2;
+a,c
+1,2
+use polardbx;
+drop database if exists test_replicas_db;

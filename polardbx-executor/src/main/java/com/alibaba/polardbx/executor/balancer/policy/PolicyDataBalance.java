@@ -115,6 +115,32 @@ public class PolicyDataBalance implements BalancePolicy {
         return SqlRebalance.POLICY_DATA_BALANCE;
     }
 
+    /**
+     * Check if StoragePoolManager is triggered. Can be overridden in tests.
+     */
+    protected boolean isStoragePoolTriggered() {
+        try {
+            StoragePoolManager storagePoolManager = StoragePoolManager.getInstance();
+            return storagePoolManager != null && storagePoolManager.isTriggered();
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
+    /**
+     * Get DN list from default storage pool. Can be overridden in tests.
+     */
+    protected List<String> getStoragePoolDnList() {
+        try {
+            StoragePoolManager storagePoolManager = StoragePoolManager.getInstance();
+            return storagePoolManager.getStoragePoolInfo(
+                    StoragePoolManager.DEFAULT_STORAGE_POOL_NAME)
+                .getDnLists();
+        } catch (Throwable e) {
+            return Collections.emptyList();
+        }
+    }
+
     public class MoveInfo {
         PartitionStat partitionStat;
         String targetDn;
@@ -179,10 +205,8 @@ public class PolicyDataBalance implements BalancePolicy {
         if (CollectionUtils.isEmpty(groupList)) {
             return Collections.emptyList();
         }
-        if (StoragePoolManager.getInstance().isTriggered()) {
-            List<String> storageInsts =
-                StoragePoolManager.getInstance().getStoragePoolInfo(StoragePoolManager.DEFAULT_STORAGE_POOL_NAME)
-                    .getDnLists();
+        if (isStoragePoolTriggered()) {
+            List<String> storageInsts = getStoragePoolDnList();
             groupList =
                 groupList.stream().filter(o -> storageInsts.contains(o.storageInst)).collect(Collectors.toList());
         }
@@ -865,8 +889,9 @@ public class PolicyDataBalance implements BalancePolicy {
                 String targetInst = "";
                 List<PolicyDrainNode.MoveInDn> dnList =
                     availableInstListForPartitionGroup.getOrDefault(partition.getPartitionName(), availableInstList);
-                Set<String> allowedDnList = dnList.stream().map(o->o.getDnDiskInfo().getInstance()).collect(Collectors.toSet());
-                if(!allowedDnList.contains(inst)) {
+                Set<String> allowedDnList =
+                    dnList.stream().map(o -> o.getDnDiskInfo().getInstance()).collect(Collectors.toSet());
+                if (!allowedDnList.contains(inst)) {
                     targetInst = chooseTargetInst(dnList);
                     moved.add(partition);
                     movePartitions.add(Pair.of(partition, targetInst));
@@ -906,7 +931,9 @@ public class PolicyDataBalance implements BalancePolicy {
             new ActionTaskAdapter(schemaName, topologySyncThenReleaseXLockTask);
         // combine actions
         actions.add(lock);
-        actions.add(drainNodeValidateTaskAdapter);
+        if (GeneralUtil.isNotEmpty(partitionStats)) {
+            actions.add(drainNodeValidateTaskAdapter);
+        }
         actions.add(actionTopologySyncThenReleaseXLockTask);
         actions.addAll(actionMovePartitions);
         actions.add(syncTableGroupAction);

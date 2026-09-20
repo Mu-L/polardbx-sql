@@ -22,6 +22,7 @@ import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.Correlate;
 import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.GroupJoin;
+import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.SemiJoin;
 import org.apache.calcite.rel.core.Sort;
@@ -133,6 +134,10 @@ public class RelMdSelectivity
     // semijoin filter and pass it to getSelectivity
     RexBuilder rexBuilder = rel.getCluster().getRexBuilder();
     RexNode newPred = RelMdUtil.makeSemiJoinSelectivityRexNode(mq, rel);
+    if(rel.getJoinType()!=JoinRelType.SEMI&&rel.getJoinType()!=JoinRelType.ANTI){
+      return mq.getSelectivity(rel.getLeft(), newPred);
+    }
+
     if (predicate != null) {
       newPred =
           rexBuilder.makeCall(

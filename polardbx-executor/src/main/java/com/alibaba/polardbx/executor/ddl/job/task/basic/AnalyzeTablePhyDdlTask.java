@@ -32,20 +32,30 @@ import com.alibaba.polardbx.gms.module.LogLevel;
 import com.alibaba.polardbx.gms.module.LogPattern;
 import com.alibaba.polardbx.gms.module.Module;
 import com.alibaba.polardbx.gms.module.ModuleLogInfo;
+import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.statistic.StatisticManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.repo.mysql.checktable.TableCheckResult;
 import com.alibaba.polardbx.repo.mysql.spi.DatasourceMySQLImplement;
 import lombok.Getter;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static com.alibaba.polardbx.common.properties.ConnectionParams.ENABLE_HLL;
 import static com.alibaba.polardbx.common.properties.ConnectionParams.SKIP_PHYSICAL_ANALYZE;
 import static com.alibaba.polardbx.executor.gms.util.StatisticFullProcessUtils.forceAnalyzeColumnsDdl;
+import static com.alibaba.polardbx.executor.ddl.job.task.basic.CheckPhyTableTask.MSG_TEXT;
+import static com.alibaba.polardbx.executor.ddl.job.task.basic.CheckPhyTableTask.MSG_TYPE;
+import static com.alibaba.polardbx.executor.ddl.job.task.basic.CheckPhyTableTask.OP_COLUMN;
+import static com.alibaba.polardbx.executor.ddl.job.task.basic.CheckPhyTableTask.TABLE_COLUMN;
 
 @Getter
 @TaskName(name = "AnalyzeTablePhyDdlTask")
@@ -53,6 +63,8 @@ public class AnalyzeTablePhyDdlTask extends BaseDdlTask {
     private static final Logger logger = LoggerUtil.statisticsLogger;
 
     public final String ANALYZE_TABLE_SQL = "ANALYZE TABLE ";
+
+    public final String CHECK_TABLE_SQL = "CHECK TABLE ";
 
     private List<String> schemaNames;
     private List<String> tableNames;
@@ -139,7 +151,7 @@ public class AnalyzeTablePhyDdlTask extends BaseDdlTask {
             }
         }
         long endNanos = System.nanoTime();
-        logger.info(String.format("Analyze all phyTables of logical table %s.%s consumed %.2fs",
+        logger.warn(String.format("Analyze all phyTables of logical table %s.%s consumed %.2fs",
             schemaName, logicalTableName, (endNanos - startNanos) / 1_000_000_000D));
     }
 
@@ -160,6 +172,56 @@ public class AnalyzeTablePhyDdlTask extends BaseDdlTask {
         } catch (Exception e) {
             logger.error("Analyze physical table " + physicalTableName + " ERROR: " + e.getMessage());
         } finally {
+            JdbcUtils.close(stmt);
+            JdbcUtils.close(conn);
+        }
+    }
+
+    protected Map<String, String> doCheckOnePhysicalTable(String group, String physicalTableName, IDataSourceGetter mysqlDsGetter, String traceId, Long jobId)
+        throws SQLException {
+        DataSource ds = mysqlDsGetter.getDataSource(group);
+
+        String table;
+        String op;
+        String msgType;
+        String msgText;
+        Map<String, String> result = new HashMap<>();
+        if (ds == null) {
+            logger.error("Check physical table " + physicalTableName
+                + " cannot be fetched, datasource is null, group name is " + group);
+            return null;
+        }
+        Connection conn = null;
+        PreparedStatement stmt = null;
+        ResultSet resultSet = null;
+        String hint = "";
+        if(traceId != null) {
+            hint = String.format("/* drds_check_table(%s)*/", traceId);
+        }
+        try {
+            conn = ds.getConnection();
+            String analyzeSql = hint +  CHECK_TABLE_SQL + physicalTableName;
+            stmt = conn.prepareStatement(analyzeSql);
+            resultSet = stmt.executeQuery();
+            while(resultSet.next()) {
+                table = resultSet.getString(TABLE_COLUMN);
+                op = resultSet.getString(OP_COLUMN);
+                msgType = resultSet.getString(MSG_TYPE);
+                msgText = resultSet.getString(MSG_TEXT);
+                result.put(OP_COLUMN, op);
+                result.put(TABLE_COLUMN, table);
+                result.put(MSG_TYPE, msgType);
+                result.put(MSG_TEXT, msgText);
+                if(!msgText.equalsIgnoreCase("ok")){
+                    return result;
+                }
+            }
+            return result;
+        } catch (Exception e) {
+            logger.error("Check physical table " + physicalTableName + " ERROR: " + e.getMessage());
+            throw e;
+        } finally {
+            JdbcUtils.close(resultSet);
             JdbcUtils.close(stmt);
             JdbcUtils.close(conn);
         }

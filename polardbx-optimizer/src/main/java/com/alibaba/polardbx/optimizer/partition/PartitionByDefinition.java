@@ -41,9 +41,11 @@ import com.alibaba.polardbx.optimizer.partition.datatype.PartitionField;
 import com.alibaba.polardbx.optimizer.partition.datatype.function.PartitionIntFunction;
 import com.alibaba.polardbx.optimizer.partition.pruning.SearchDatumComparator;
 import com.alibaba.polardbx.optimizer.partition.pruning.SearchDatumInfo;
+import com.alibaba.polardbx.optimizer.partition.pruning.UdfHashPartRouter;
 import com.google.common.collect.Lists;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.sql.SqlCall;
+import org.apache.calcite.sql.SqlColumnWithUdfParamsExpr;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlNode;
 
@@ -566,6 +568,39 @@ public class PartitionByDefinition extends PartitionByDefinitionBase {
                                 }
                             }
                         }
+                    } else {
+
+                        /**
+                         * both localPartIntFunc and otherPartIntFunc are null
+                         */
+
+                        if (localStrategy == PartitionStrategy.UDF_HASH) {
+                            List<SqlNode> localPartExprList = localPartByDef.getPartitionExprList();
+                            List<SqlNode> otherPartExprList = otherPartByDef.getPartitionExprList();
+
+                            if (localPartExprList.size() != otherPartExprList.size()) {
+                                return false;
+                            }
+
+                            for (int j = 0; j < localPartExprList.size(); j++) {
+                                SqlNode localPartColExpr = localPartExprList.get(i);
+                                SqlNode otherPartColExpr = otherPartExprList.get(i);
+
+                                boolean localUseUdfParams = localPartColExpr instanceof SqlColumnWithUdfParamsExpr;
+                                boolean otherUserUdfParams = otherPartColExpr instanceof SqlColumnWithUdfParamsExpr;
+
+                                if (localUseUdfParams != otherUserUdfParams) {
+                                    return false;
+                                }
+
+                                UdfHashPartRouter localRouter = (UdfHashPartRouter) localPartByDef.getRouter();
+                                UdfHashPartRouter otherRouter = (UdfHashPartRouter) otherPartByDef.getRouter();
+                                if (!localRouter.equals(otherRouter)) {
+                                    return false;
+                                }
+                            }
+                        }
+
                     }
                 } else {
                     PartitionIntFunction tmpLocalPartFunc = localPartIntFuncArr[i];
@@ -1216,6 +1251,9 @@ public class PartitionByDefinition extends PartitionByDefinitionBase {
                         }
                     }
                     sb.append(")");
+                } else if (sqlNode instanceof SqlColumnWithUdfParamsExpr) {
+                    SqlColumnWithUdfParamsExpr colWithUdfParamExpr = (SqlColumnWithUdfParamsExpr) sqlNode;
+                    sb.append(colWithUdfParamExpr.toString());
                 } else {
                     sb.append(SqlIdentifier.surroundWithBacktick((columnMeta.getName())));
                 }
@@ -1554,9 +1592,7 @@ public class PartitionByDefinition extends PartitionByDefinitionBase {
         List<String> newPartitionColumnNameList = new ArrayList<>();
         newPartitionColumnNameList.addAll(this.getPartitionColumnNameList());
         newPartDef.setPartitionColumnNameList(newPartitionColumnNameList);
-
         newPartDef.setNeedEnumRange(this.isNeedEnumRange());
-
         newPartDef.setPruningSpaceComparator(this.getPruningSpaceComparator());
         newPartDef.setHasher(this.getHasher());
         newPartDef.setBoundSpaceComparator(this.getBoundSpaceComparator());
@@ -1960,5 +1996,15 @@ public class PartitionByDefinition extends PartitionByDefinitionBase {
             int ret = bndSpaceComp.compare(o1Datum, o2Datum);
             return ret;
         }
+    }
+
+    public boolean containsMaxValuePartition() {
+        List<PartitionSpec> psList = getPartitions();
+        int partCnt = psList.size();
+        PartitionSpec lastPs = psList.get(partCnt - 1);
+        if (lastPs.getBoundSpec().containMaxValues()) {
+            return true;
+        }
+        return false;
     }
 }

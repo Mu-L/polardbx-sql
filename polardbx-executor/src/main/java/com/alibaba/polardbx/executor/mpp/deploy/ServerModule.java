@@ -69,7 +69,9 @@ public class ServerModule extends AbstractConfigurationAwareModule {
         jaxrsBinder(binder).bind(DdlResource.class);
         jaxrsBinder(binder).bind(StageResource.class);
         jaxrsBinder(binder).bind(ClusterStatsResource.class);
-        httpClientBinder(binder).bindHttpClient("queryInfo", ForQueryInfo.class);
+        httpClientBinder(binder).bindHttpClient("queryInfo", ForQueryInfo.class).withConfigDefaults(config -> {
+            HttpClientConfigUtils.configureQueryInfoHttpClient(config);
+        });
         //---------------- server web ui ----------------------
     }
 }

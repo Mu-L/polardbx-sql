@@ -1,19 +1,3 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.common;
 
 /**
@@ -23,6 +7,14 @@ package com.alibaba.polardbx.common;
  */
 public class TddlConstants {
 
+    /**
+     * 初次获取diamond配置超时时间
+     */
+    public static final long DIAMOND_GET_DATA_TIMEOUT = 10 * 1000;
+
+    /**
+     * default cache expire time, 30000ms
+     */
     public static final long DEFAULT_TABLE_META_EXPIRE_TIME = 300 * 1000;
 
     public static final long DEFAULT_VIEW_CACHE_EXPIRE_TIME = 300 * 1000;
@@ -55,6 +47,11 @@ public class TddlConstants {
 
     public static final long DEFAULT_RETAIN_HOURS = 2L;
 
+    public static final Object INVALID = new Object();
+
+    /**
+     * tddl rule properties
+     */
     public static final String RULE_BROADCAST = "rule.broadcast";
     public static final String RULE_ALLOW_FULL_TABLE_SCAN = "rule.allowFullTableScan";
 
@@ -64,8 +61,10 @@ public class TddlConstants {
     public static final String ANONAMOUS_DBKEY = "ANONAMOUS";
     public static final String CURRENT_DBKEY = "CURRENT_DBKEY";
 
+    // batch size of selected data each time
     public static final long DML_SELECT_BATCH_SIZE_DEFAULT = 1000L;
 
+    // limitation of selected data if it is to be selected once
     public static final long DML_SELECT_LIMIT_DEFAULT = 10000L;
 
     public static final String IMPLICIT_COL_NAME = "_drds_implicit_id_";
@@ -108,6 +107,15 @@ public class TddlConstants {
 
     public static final String COLUMNAR_AUTO_SNAPSHOT_CONFIG = "COLUMNAR_AUTO_SNAPSHOT_CONFIG";
 
+    // add this mark to avoid slow sql being shown in DAS
+    public static final String RDS_INTERNAL_MARK = " /* rds internal mark */ ";
+
     //MySQL80的information_schema表缓存时间，单位秒, 默认一天过期
     public static final int INFORMATION_SCHEMA_STATS_EXPIRY_TIME = 86400;
+
+    public static final String POLARDBX_BLOCK_CHAIN = "__POLARDBX_BLOCK_CHAIN__";
+
+    public static final String POLARDBX_BLOCK_CHAIN_ROW_DIGEST_COLUMN_NAME = "_polardbx_hash_digest_";
+
+    public static final long MAGICAL_NUM = 2389616374380765L;
 }

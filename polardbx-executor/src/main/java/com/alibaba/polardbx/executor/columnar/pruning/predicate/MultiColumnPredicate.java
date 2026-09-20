@@ -21,6 +21,7 @@ import com.alibaba.polardbx.executor.columnar.pruning.index.BitMapRowGroupIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.BloomFilterIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.ColumnIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.IndexPruneContext;
+import com.alibaba.polardbx.executor.columnar.pruning.index.MultiSortKeyIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.SortKeyIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.ZoneMapIndex;
 import com.google.common.collect.Lists;
@@ -82,6 +83,12 @@ public abstract class MultiColumnPredicate implements ColumnPredicatePruningInf,
     @Override
     public void zoneMap(@NotNull ZoneMapIndex zoneMapIndex, IndexPruneContext ipc, @NotNull RoaringBitmap cur) {
         handleMulti(zoneMapIndex, ipc, (p, c, i, r) -> p.zoneMap(zoneMapIndex, ipc, r), cur);
+    }
+
+    @Override
+    public void multiSortKey(@NotNull MultiSortKeyIndex multiSortKeyIndex, IndexPruneContext ipc,
+                             @NotNull RoaringBitmap cur) {
+        handleMulti(multiSortKeyIndex, ipc, (p, c, i, r) -> p.multiSortKey(multiSortKeyIndex, ipc, r), cur);
     }
 
     @Override

@@ -200,8 +200,10 @@ public class RuntimeStatHelper {
 
         long timeCostOfLvOperator = 0;
         long rowCountOfLv = 0;
+        long ioBytesOfLv = 0;
         for (OperatorStatistics stat : lvStatGroup.statistics) {
             rowCountOfLv += stat.getRowCount();
+            ioBytesOfLv += stat.getIOReadBytes();
         }
         timeCostOfLvOperator = lvStatGroup.processLvTimeCost.get();
         timeCostOfLvOperator += lvStatGroup.selfAsyncTaskTimeCost.get();
@@ -211,6 +213,7 @@ public class RuntimeStatHelper {
             - lvStatGroup.execJdbcStmtDuration.get();
         lvStatGroup.fetchJdbcResultSetDuration.addAndGet(fetchRsTimeCostOfInput);
         lvStatGroup.phyResultSetRowCount.addAndGet(rowCountOfLv);
+        lvStatGroup.ioBytesCount.addAndGet(ioBytesOfLv);
         RuntimeStatHelper.addAsyncTaskCpuTimeToParent(lvStatGroup);
 
     }

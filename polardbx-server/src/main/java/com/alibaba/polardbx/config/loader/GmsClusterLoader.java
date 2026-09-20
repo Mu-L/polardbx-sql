@@ -1,37 +1,21 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.config.loader;
 
+import com.alibaba.polardbx.gms.metadb.external.ExternalCatalogManager;
+import com.alibaba.polardbx.common.secret.CredentialResolver;
+import com.alibaba.polardbx.optimizer.external.catalog.ExternalSchemaReclaimer;
+import com.alibaba.polardbx.optimizer.secret.SecretManager;
 import com.alibaba.polardbx.ClusterSyncManager;
 import com.alibaba.polardbx.CobarServer;
 import com.alibaba.polardbx.PolarQuarantineManager;
 import com.alibaba.polardbx.common.IdGenerator;
 import com.alibaba.polardbx.common.TrxIdGenerator;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
-import com.alibaba.polardbx.common.IdGenerator;
-import com.alibaba.polardbx.common.TrxIdGenerator;
-import com.alibaba.polardbx.common.properties.SystemPropertiesHelper;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
-import com.alibaba.polardbx.common.utils.InstanceRole;
+import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.common.utils.thread.ExecutorUtil;
 import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.config.ConfigDataMode;
-import com.alibaba.polardbx.config.InstanceRoleManager;
 import com.alibaba.polardbx.config.SchemaConfig;
 import com.alibaba.polardbx.config.SystemConfig;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.pl.accessor.FunctionAccessor;
@@ -55,13 +39,16 @@ import com.alibaba.polardbx.gms.topology.DbTopologyManager;
 import com.alibaba.polardbx.gms.topology.InstLockAccessor;
 import com.alibaba.polardbx.gms.topology.InstLockRecord;
 import com.alibaba.polardbx.gms.topology.ServerInstIdManager;
+import com.alibaba.polardbx.gms.topology.ServerInstSubManager;
+import com.alibaba.polardbx.gms.topology.SubInstConfigAccessor;
+import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.matrix.jdbc.TDataSource;
 import com.alibaba.polardbx.matrix.jdbc.utils.TDataSourceInitUtils;
 import com.alibaba.polardbx.optimizer.ccl.CclManager;
 import com.alibaba.polardbx.optimizer.core.expression.JavaFunctionManager;
-import com.alibaba.polardbx.transaction.DeadlockManager;
+import com.alibaba.polardbx.optimizer.htaprouting.RoutingRuleManager;
 import org.apache.commons.lang.StringUtils;
 
 import java.sql.Connection;
@@ -80,10 +67,6 @@ public class GmsClusterLoader extends ClusterLoader {
 
     private final SystemConfig systemConfig;
     private String instanceId;
-    protected String instanceName;
-    protected String instanceType;
-    protected boolean isUsing = false;
-    protected Long opVersion = -1L;
     /**
      * A thread executor for async warming up new created db
      */
@@ -125,6 +108,32 @@ public class GmsClusterLoader extends ClusterLoader {
             //here register the new storageIds listener after load the new learner InstId.
             ServerInstIdManager.getInstance().registerLearnerStorageInstId();
             this.gmsClusterLoader.loadNodeInfos();
+        }
+    }
+
+    protected static class ServerSubClusterInfoListener implements ConfigListener {
+        protected GmsClusterLoader gmsClusterLoader;
+
+        public ServerSubClusterInfoListener(GmsClusterLoader clusterLoader) {
+            this.gmsClusterLoader = clusterLoader;
+        }
+
+        @Override
+        public void onHandleConfig(String dataId, long newOpVersion) {
+            ServerInstSubManager.getInstance().loadNodeSubCluster();
+        }
+    }
+
+    protected static class ServerLoadWeightInfoListener implements ConfigListener {
+        protected GmsClusterLoader gmsClusterLoader;
+
+        public ServerLoadWeightInfoListener(GmsClusterLoader clusterLoader) {
+            this.gmsClusterLoader = clusterLoader;
+        }
+
+        @Override
+        public void onHandleConfig(String dataId, long newOpVersion) {
+            ServerInstSubManager.getInstance().loadNodeLoadWeight();
         }
     }
 
@@ -177,6 +186,7 @@ public class GmsClusterLoader extends ClusterLoader {
 
         @Override
         public void run() {
+
             if (schema == null) {
                 return;
             }
@@ -184,6 +194,11 @@ public class GmsClusterLoader extends ClusterLoader {
             if (schema.isDropped()) {
                 return;
             }
+
+            if (TStringUtil.equalsIgnoreCase(schema.getName(), SystemDbHelper.CDC_DB_NAME)) {
+                return;
+            }
+
             final TDataSource ds = schema.getDataSource();
             if (ds == null) {
                 return;
@@ -237,11 +252,16 @@ public class GmsClusterLoader extends ClusterLoader {
     }
 
     protected void loadLock() {
-        String instId = InstIdUtil.getInstId();
-        processInstLockByGms(instId);
-        MetaDbConfigManager.getInstance().register(MetaDbDataIdBuilder.getInstLockDataId(instId), null);
-        MetaDbConfigManager.getInstance().bindListener(MetaDbDataIdBuilder.getInstLockDataId(instId),
-            new InstLockConfigListener());
+
+        if (ConfigDataMode.isPolarDbX()) {
+            String instId = InstIdUtil.getInstId();
+            processInstLockByGms(instId);
+            MetaDbConfigManager.getInstance().register(MetaDbDataIdBuilder.getInstLockDataId(instId), null);
+            MetaDbConfigManager.getInstance().bindListener(MetaDbDataIdBuilder.getInstLockDataId(instId),
+                new InstLockConfigListener());
+        } else {
+            //ignore
+        }
     }
 
     protected static void processInstLockByGms(String instId) {
@@ -250,8 +270,11 @@ public class GmsClusterLoader extends ClusterLoader {
             instLockAccessor.setConnection(metaDbConn);
             InstLockRecord instLockRecord =
                 instLockAccessor.getInstLockByInstId(instId);
-            CobarServer.getInstance().getConfig().getClusterLoader().isLock =
-                (instLockRecord != null && instLockRecord.locked == InstLockRecord.INST_LOCKED);
+            if (instLockRecord != null && instLockRecord.locked == InstLockRecord.INST_LOCKED) {
+                CobarServer.getInstance().getConfig().getClusterLoader().isLock = true;
+            } else {
+                CobarServer.getInstance().getConfig().getClusterLoader().isLock = false;
+            }
         } catch (Throwable ex) {
             throw GeneralUtil.nestedException(ex);
         }
@@ -261,7 +284,11 @@ public class GmsClusterLoader extends ClusterLoader {
     public void loadCluster() {
         logger.info("loadCluster:" + cluster + ",ConfigDataMode=" + ConfigDataMode.getMode());
         try {
-            loadPolarDbXCluster();
+            if (!ConfigDataMode.isPolarDbX()) {
+                //ignore
+            } else {
+                loadPolarDbXCluster();
+            }
         } catch (Throwable ex) {
             throw GeneralUtil.nestedException(ex);
         }
@@ -274,6 +301,9 @@ public class GmsClusterLoader extends ClusterLoader {
 
         // load node info from server_info in metaDb
         loadServerNodeInfos();
+
+        loadServerLoadWeightInfos();
+        loadServerSubClusterInfos();
 
         // load properties from inst_config in metaDb
         this.loadProperties(instanceId);
@@ -302,7 +332,6 @@ public class GmsClusterLoader extends ClusterLoader {
     }
 
     private void initBackgroundTasks() {
-        DeadlockManager.getInstance();
     }
 
     private void registerStoredFunction() {
@@ -352,35 +381,20 @@ public class GmsClusterLoader extends ClusterLoader {
         InstanceVersion.reloadVersion(instanceVersion);
     }
 
-    protected void initInstanceRoleConfig(InstanceRole instanceRole) {
-        /*
-         * no found any instRole from manager, use default instRole from
-         * ReadOnlyInstManager，
-         */
-        if (instanceRole == null) {
-            // the default role is master
-            instanceRole = InstanceRoleManager.INSTANCE.getInstanceRole();
-        }
+    protected void loadServerSubClusterInfos() {
+        String subClusterInfoDataId = MetaDbDataIdBuilder.getServerSubClusterDataId(InstIdUtil.getInstId());
+        MetaDbConfigManager.getInstance()
+            .register(subClusterInfoDataId, null);
+        MetaDbConfigManager.getInstance()
+            .bindListener(subClusterInfoDataId, new ServerSubClusterInfoListener(this));
+    }
 
-        /*
-         * If found instInfo is specified by local system.properties, use it
-         * instead of instRole from manager.
-         */
-        String instInfoOfSystemProperties =
-            (String) SystemPropertiesHelper.getPropertyValue(SystemPropertiesHelper.INST_ROLE);
-        if (instInfoOfSystemProperties != null) {
-            instanceRole = InstanceRole.valueOf(instInfoOfSystemProperties);
-        }
-
-        InstanceRoleManager.INSTANCE.setInstanceRole(instanceRole);
-
-        /*
-         * Must put instRole into System.properties because it is used by
-         * Master-Slave routing in GroupDataSource
-         */
-        if (instanceRole != null) {
-            SystemPropertiesHelper.setPropertyValue(SystemPropertiesHelper.INST_ROLE, instanceRole.toString());
-        }
+    protected void loadServerLoadWeightInfos() {
+        String loadWeightInfoDataId = MetaDbDataIdBuilder.getServerLoadWeightDataId(InstIdUtil.getInstId());
+        MetaDbConfigManager.getInstance()
+            .register(loadWeightInfoDataId, null);
+        MetaDbConfigManager.getInstance()
+            .bindListener(loadWeightInfoDataId, new ServerLoadWeightInfoListener(this));
     }
 
     protected void loadNodeInfos() {
@@ -412,6 +426,12 @@ public class GmsClusterLoader extends ClusterLoader {
         CobarServer.getInstance().getConfig().setInstanceId(this.instanceId);
         CobarServer.getInstance().getConfig().getSystem().setInstanceId(this.instanceId);
 
+        // init external catalog
+        ExternalCatalogManager.getInstance().loadFromGms();
+        SecretManager.getInstance().loadFromGms();
+        CredentialResolver.setResolver(SecretManager.getInstance()::resolve);
+        ExternalSchemaReclaimer.getInstance().init();
+
         // init instance-level quarantine config
         PolarQuarantineManager.getInstance().init();
 
@@ -421,6 +441,7 @@ public class GmsClusterLoader extends ClusterLoader {
         ((GmsAppLoader) appLoader).initDbUserPrivsInfo(this.instanceId);
 
         warmingLogicalDb();
+        RoutingRuleManager.getInstance().init();
 
         // open the server port and accept query now!
         CobarServer.getInstance().online();
@@ -477,6 +498,10 @@ public class GmsClusterLoader extends ClusterLoader {
     }
 
     public void loadProperties(String instId) {
+        if (!ConfigDataMode.isPolarDbX()) {
+            //ignore
+            return;
+        }
         MetaDbInstConfigManager.getInstance().registerInstReceiver(new InstConfigReceiver() {
             @Override
             public void apply(Properties props) {
@@ -486,6 +511,16 @@ public class GmsClusterLoader extends ClusterLoader {
         String dataId = MetaDbDataIdBuilder.getInstConfigDataId(InstIdUtil.getInstId());
         MetaDbConfigManager.getInstance().register(dataId, null);
         MetaDbConfigManager.getInstance().bindListener(dataId, new InstPropertiesConfigListener());
+
+        // Register sub-instance configuration if sub-instance ID exists
+        String subInstId = InstIdUtil.getSubInstId();
+        if (subInstId != null) {
+            String subInstDataId = MetaDbDataIdBuilder.getSubInstConfigDataId(subInstId);
+            MetaDbConfigManager.getInstance().register(subInstDataId, null);
+            MetaDbConfigManager.getInstance()
+                .bindListener(subInstDataId, new SubInstConfigAccessor.SubInstPropertiesConfigListener());
+        }
+
         MetaDbConfigManager.getInstance().register(MetaDbDataIdBuilder.getVariableConfigDataId(instId), null);
         MetaDbConfigManager.getInstance()
             .bindListener(MetaDbDataIdBuilder.getVariableConfigDataId(instId),
@@ -495,7 +530,7 @@ public class GmsClusterLoader extends ClusterLoader {
             new MetaDbVariableConfigManager.CdcSystemConfigListener());
     }
 
-    protected void reloadDbInfoFromMetaDB() {
+    protected synchronized void reloadDbInfoFromMetaDB() {
 
         // Fetch all SchemaConfigs that are load in memory
         Map<String, SchemaConfig> allSchemaConfigMap = CobarServer.getInstance().getConfig().getSchemas();
@@ -532,6 +567,29 @@ public class GmsClusterLoader extends ClusterLoader {
                     dbInfoToUnLoadMap.putIfAbsent(schemaName, null);
                 }
             }
+        } else {
+            // In master mode, check for schemas that have been physically deleted from MetaDB
+            // (not just DROPPING) but still reside in memory, caused by a missed DROP DATABASE sync.
+            for (String schemaName : allSchemaConfigMap.keySet()) {
+                if (!newAddedDbInfoMap.containsKey(schemaName)
+                    && !dbInfoToUnLoadMap.containsKey(schemaName)
+                    && !SystemDbHelper.isDBBuildIn(schemaName)) {
+                    if (DynamicConfig.getInstance().isEnableFixStaleSchemaConfig()) {
+                        // Fix mode: schedule the stale schema for release.
+                        logger.warn(String.format(
+                            "reloadDbInfoFromMetaDB: schema '%s' exists in memory but absent from MetaDB "
+                                + "(isMasterMode=true), scheduling release to fix stale SchemaConfig",
+                            schemaName));
+                        dbInfoToUnLoadMap.putIfAbsent(schemaName, null);
+                    } else {
+                        // Diagnostic mode: log only, do not release.
+                        logger.warn(String.format(
+                            "reloadDbInfoFromMetaDB: schema '%s' exists in memory but absent from MetaDB, "
+                                + "isMasterMode=true, skipped release (ENABLE_FIX_STALE_SCHEMA_CONFIG=false)",
+                            schemaName));
+                    }
+                }
+            }
         }
 
         // Reload priv info
@@ -550,6 +608,26 @@ public class GmsClusterLoader extends ClusterLoader {
     }
 
     protected void allocResourceForLogicalDb(String dbName) {
+        Map<String, SchemaConfig> currentSchemas = CobarServer.getInstance().getConfig().getSchemas();
+        SchemaConfig staleSchema = currentSchemas.get(dbName);
+        if (staleSchema != null && !staleSchema.isDropped()) {
+            // A stale SchemaConfig (dropped=false) exists for a db being newly allocated.
+            // This indicates a missed DROP DATABASE sync on this CN node (e.g. network timeout).
+            if (DynamicConfig.getInstance().isEnableFixStaleSchemaConfig()) {
+                // Fix mode: force unload the stale SchemaConfig before loading the new one.
+                logger.warn(String.format(
+                    "allocResourceForLogicalDb: schema '%s' has stale SchemaConfig in memory (dropped=false), "
+                        + "force releasing before reload (ENABLE_FIX_STALE_SCHEMA_CONFIG=true)",
+                    dbName));
+                releaseResourceForLogicalDb(dbName);
+            } else {
+                // Diagnostic mode: log only, do not release.
+                logger.warn(String.format(
+                    "allocResourceForLogicalDb: schema '%s' has stale SchemaConfig in memory (dropped=false), "
+                        + "skipped release (ENABLE_FIX_STALE_SCHEMA_CONFIG=false)",
+                    dbName));
+            }
+        }
         this.appLoader.loadApp(dbName);
         this.submitWarmingUpOneSchemaTask(dbName);
     }
@@ -562,46 +640,6 @@ public class GmsClusterLoader extends ClusterLoader {
 
         // ---- clear all group HaSwitcher for db
         StorageHaManager.getInstance().clearHaSwitcher(dbName);
-    }
-
-    public String getInstanceId() {
-        return instanceId;
-    }
-
-    public void setInstanceId(String instanceId) {
-        this.instanceId = instanceId;
-    }
-
-    public String getInstanceName() {
-        return instanceName;
-    }
-
-    public void setInstanceName(String instanceName) {
-        this.instanceName = instanceName;
-    }
-
-    public String getInstanceType() {
-        return instanceType;
-    }
-
-    public void setInstanceType(String instanceType) {
-        this.instanceType = instanceType;
-    }
-
-    public boolean isUsing() {
-        return isUsing;
-    }
-
-    public void setUsing(boolean using) {
-        isUsing = using;
-    }
-
-    public Long getOpVersion() {
-        return opVersion;
-    }
-
-    public void setOpVersion(Long opVersion) {
-        this.opVersion = opVersion;
     }
 
     protected void initAsyncDbWarmingUpExecutor() {

@@ -44,6 +44,7 @@ public class TwoPhaseDdlPauseModifyColumnInplaceTest extends DDLBaseNewDBTestCas
 
     @Before
     public void init() {
+        this.schemaPrefix = "modify_column_inplace_";
         this.tableName = schemaPrefix + randomTableName("two_phase", 4);
     }
 

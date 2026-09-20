@@ -1,0 +1,68 @@
+## DISABLE_FAST_SQL_PARSER
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set sql_mode='';
+
+drop table if exists r_yymmdd;
+create table r_yymmdd
+(
+a int ,
+b datetime,
+c varchar(32),
+primary key(a)
+)
+partition by range(a)
+(
+partition p1 values less than(250601),
+partition p2 values less than(250602),
+partition p3 values less than(250603),
+partition p4 values less than(250604),
+partition p5 values less than(250605)
+);
+
+
+alter table r_yymmdd modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = `a` expire after 2 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+ttl_col_encoder=date_format(?, '%y%m%d'),
+ttl_col_decoder=str_to_date(?, '%y%m%d'),
+archive_type='partition',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-04 00:00:00';
+alter table r_yymmdd cleanup expired data;
+show create table r_yymmdd;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-05 00:00:00';
+alter table r_yymmdd cleanup expired data;
+show create table r_yymmdd;
+
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-06 00:00:00';
+alter table r_yymmdd cleanup expired data;
+show create table r_yymmdd;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-07 00:00:00';
+alter table r_yymmdd cleanup expired data;
+show create table r_yymmdd;
+
+create table r_yymmdd_arc like r_yymmdd engine='Columnar' archive_mode='ttl';
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-06 12:00:00';
+alter table r_yymmdd cleanup expired data;
+show create table r_yymmdd;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-08 12:00:00';
+alter table r_yymmdd cleanup expired data;
+show create table r_yymmdd;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-09 12:00:00';
+alter table r_yymmdd cleanup expired data;
+show create table r_yymmdd;
+
+/*TDDL:cmd_extra(TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI=false)*/drop table if exists r_yymmdd;

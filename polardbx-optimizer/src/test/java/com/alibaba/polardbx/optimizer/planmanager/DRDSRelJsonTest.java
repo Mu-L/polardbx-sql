@@ -103,6 +103,7 @@ public class DRDSRelJsonTest extends BaseRuleTest {
             + "      \"schemaName\": \"optest\",\n"
             + "      \"partitions\": [],\n"
             + "      \"flashback\": null,\n"
+            + "      \"isSingleGroup\": false,\n"
             + "      \"xplan\": {\n"
             + "        \"template\": \"080532710A59080322550A1208021A0E0A0C1204080950001A0408095001120A08084A060A026964102D120C08084A080A046E616D65102D121108084A0D0A096F7065726174696F6E102D121208084A0E0A0A616374696F6E44617465102D1214080532100A023D3D120408095002120408095000\",\n"
             + "        \"schemaNames\": [\n"

@@ -19,18 +19,19 @@
 package com.alibaba.polardbx.qatest.ddl.auto.columnar.alterCciPartition;
 
 import com.alibaba.polardbx.optimizer.partition.common.PartitionStrategy;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import net.jcip.annotations.NotThreadSafe;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-@RunWith(Parameterized.class)
+@IcbcIgnore(ignoreReason = "icbc not support cci")
 @NotThreadSafe
 public class AlterCciAddPartitionTest extends AlterCciPartitionBaseTest {
     static List<PartitionRuleInfo> partitionRuleInfos = new ArrayList<>(Arrays
@@ -66,8 +67,20 @@ public class AlterCciAddPartitionTest extends AlterCciPartitionBaseTest {
     }
 
     @Test
-    public void testDDLOnly() {
+    public void testDDLOnly() throws SQLException {
+        // 验证所有 CCI 的分区记录
+        compareTablePartitionRecords(logicalDatabase, tableName, cciNames);
 
+        // 验证新增分区的分区组信息（对所有 CCI）
+        List<String> newPartitionNames = Arrays.asList("p9"); // 新增的分区名
+        for (String cciName : cciNames) {
+            validatePartitionGroupInfo(logicalDatabase, tableName, cciName, newPartitionNames);
+        }
+
+        // 验证所有 columnar 表使用 NonDeletable 组
+        for (String cciName : cciNames) {
+            validateColumnarPartitionUsesNonDeletableGroups(logicalDatabase, cciName);
+        }
     }
 
     @Parameterized.Parameters(name = "{index}:partitionRuleInfo={0}")

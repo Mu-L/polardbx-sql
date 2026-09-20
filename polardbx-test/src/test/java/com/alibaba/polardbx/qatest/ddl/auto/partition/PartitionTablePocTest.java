@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.qatest.ddl.auto.partition;
 
+import net.jcip.annotations.NotThreadSafe;
+import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.util.List;
@@ -24,6 +26,7 @@ import java.util.List;
  * @author chenghui.lch
  */
 
+@NotThreadSafe
 public class PartitionTablePocTest extends PartitionAutoLoadSqlTestBase {
 
     public PartitionTablePocTest(AutoLoadSqlTestCaseParams parameter) {

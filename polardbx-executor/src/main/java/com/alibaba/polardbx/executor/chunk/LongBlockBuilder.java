@@ -45,6 +45,11 @@ public class LongBlockBuilder extends AbstractBlockBuilder {
     }
 
     @Override
+    public void writeInt(int value) {
+        writeLong(value);
+    }
+
+    @Override
     public void writeLong(long value) {
         values.add(value);
         valueIsNull.add(false);

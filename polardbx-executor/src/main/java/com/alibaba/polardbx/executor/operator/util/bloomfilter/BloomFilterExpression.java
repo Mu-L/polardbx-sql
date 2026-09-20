@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.operator.util.bloomfilter;
 
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
 import com.alibaba.polardbx.common.utils.bloomfilter.BloomFilterInfo;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
@@ -44,8 +46,12 @@ public class BloomFilterExpression {
         }
 
         if (supportBlock) {
-            this.waitBloomFuture = Futures.allAsList(
-                bloomFilterConsumes.stream().map(BloomFilterConsume::getFuture).collect(Collectors.toList()));
+            List<ListenableFuture<BloomFilterInfo>> bloomFutures = new ArrayList<>();
+            for (BloomFilterConsume consume : bloomFilterConsumes) {
+                bloomFutures.add(consume.getFuture());
+            }
+            this.waitBloomFuture =
+                BlockingFuture.allAsListFromListenableFutures(bloomFutures, BlockingReason.WAIT_FOR_BLOOM_FILTER);
         }
     }
 

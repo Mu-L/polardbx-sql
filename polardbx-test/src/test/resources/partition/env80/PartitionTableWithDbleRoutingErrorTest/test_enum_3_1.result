@@ -1,0 +1,71 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+set ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC=true;
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=true;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+#边界值测试
+  create table enum_table_2(id int)
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/enum',
+  '{
+    　　　 "type" : "0",
+          "defaultNode" : "3",
+          "mapFile" :
+           "
+            0=0
+            aaa=0
+            1=1
+            bbb=1
+            2=2
+            3=3
+           "
+    }'
+  )
+  )
+  partitions 4;
+select part_route('','enum_table_2',null);
+part_route('', 'enum_table_2', NULL)
+p4
+## error_msg: $# Please check if the format satisfied #$
+  select part_route('','enum_table_2','');
+Please check if the format satisfied
+select part_route('','enum_table_2',4);
+part_route('', 'enum_table_2', 4)
+p4
+## error_msg: $# Please check if the format satisfied #$
+  select part_route('','enum_table_2','eee');
+Please check if the format satisfied
+create table enum_table_3_1(id int)
+    partition by udf_hash(
+    `id` with udf_params(
+    'dble/enum',
+    '{
+    　　　 "type" : "0",
+          "defaultNode" : "3",
+          "mapFile" :
+           "
+            0=0
+            aaa=0
+            1=1
+            bbb=1
+            2=2
+            3=3
+           "
+    }'
+    )
+    )
+    partitions 4;
+select part_route('','enum_table_3_1',null);
+part_route('', 'enum_table_3_1', NULL)
+p4
+## error_msg: $# Please check if the format satisfied #$
+select part_route('','enum_table_3_1','');
+Please check if the format satisfied
+select part_route('','enum_table_3_1',4);
+part_route('', 'enum_table_3_1', 4)
+p4
+## error_msg: $# Please check if the format satisfied #$
+select part_route('','enum_table_3_1','eee');
+Please check if the format satisfied

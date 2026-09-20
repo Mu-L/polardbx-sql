@@ -17,6 +17,8 @@
 package com.alibaba.polardbx.executor.ddl.job.factory;
 
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
+import com.alibaba.polardbx.executor.ddl.job.builder.DropPartitionTableBuilder;
+import com.alibaba.polardbx.executor.ddl.job.builder.DropTableBuilder;
 import com.alibaba.polardbx.executor.ddl.job.builder.gsi.DropPartitionTableWithGsiBuilder;
 import com.alibaba.polardbx.executor.ddl.job.builder.gsi.DropTableWithGsiBuilder;
 import com.alibaba.polardbx.executor.ddl.job.converter.DdlJobDataConverter;
@@ -33,21 +35,36 @@ import com.alibaba.polardbx.executor.ddl.job.task.ttl.TtlTaskSqlBuilder;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4DropBlockChainTable;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4DropColumnarIndex;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4DropPartitionGsi;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4DropPartitionTable;
 import com.alibaba.polardbx.executor.sync.GsiStatisticsSyncAction;
+import com.alibaba.polardbx.gms.metadb.table.BlockChainHistoryTable;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
+import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
+import com.alibaba.polardbx.optimizer.core.planner.Planner;
 import com.alibaba.polardbx.optimizer.core.rel.PhyDdlTableOperation;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalDropTable;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.data.DropTablePreparedData;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.gsi.DropGlobalIndexPreparedData;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.gsi.DropTableWithGsiPreparedData;
+import com.alibaba.polardbx.optimizer.parse.FastsqlParser;
 import com.alibaba.polardbx.optimizer.ttl.TtlDefinitionInfo;
 import com.alibaba.polardbx.optimizer.ttl.TtlUtil;
 import org.apache.calcite.rel.core.DDL;
+import org.apache.calcite.sql.SqlDropTable;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 /**
  * @author guxu
@@ -115,46 +132,20 @@ public class DropPartitionTableWithGsiJobFactory extends DdlJobFactory {
         result.combineTasks(dropPrimaryTableJob);
 
         result.addExcludeResources(dropPrimaryTableJob.getExcludeResources());
+        result.addSharedResources(dropPrimaryTableJob.getSharedResources());
 
         ValidateTableVersionTask validateTableVersionTask =
             new ValidateTableVersionTask(preparedData.getPrimaryTablePreparedData().getSchemaName(), tableVersions);
+        result.addTask(validateTableVersionTask);
+        result.addTaskRelationship(validateTableVersionTask, validateTask);
 
-        boolean foundColumnarIndex = false;
+        DdlTask lastValidatorTask = validateTask;
         Map<String, DropGlobalIndexPreparedData> gsiPreparedDataMap = preparedData.getIndexTablePreparedDataMap();
         for (Map.Entry<String, DropGlobalIndexPreparedData> entry : gsiPreparedDataMap.entrySet()) {
             final DropGlobalIndexPreparedData gsiPreparedData = entry.getValue();
             final String indexTableName = gsiPreparedData.getIndexTableName();
 
-            if (entry.getValue().isColumnar()) {
-                foundColumnarIndex = true;
-                // columnar index will be destroyed automatically
-                ExecutableDdlJob4DropColumnarIndex dropCciJob = (ExecutableDdlJob4DropColumnarIndex)
-                    DropColumnarIndexJobFactory.create(gsiPreparedData, executionContext, true, false);
-                result.addTask(dropCciJob.getValidateTask());
-                result.addTaskRelationship(dropCciJob.getValidateTask(),
-                    dropCciJob.getDropColumnarTableHideTableMetaTask());
-                result.addTaskRelationship(
-                    dropCciJob.getDropColumnarTableHideTableMetaTask(), dropCciJob.getCciSchemaEvolutionTask());
-                result.addTaskRelationship(
-                    dropCciJob.getCciSchemaEvolutionTask(), dropCciJob.getGsiDropCleanUpTask());
-                result.addTaskRelationship(
-                    dropCciJob.getGsiDropCleanUpTask(), dropCciJob.getDropColumnarTableRemoveMetaTask());
-                TableSyncTask indexTableSyncTask = new TableSyncTask(schemaName, indexTableName);
-                TableSyncTask tableSyncTask = new TableSyncTask(schemaName, primaryTableName);
-                result.addTaskRelationship(
-                    dropCciJob.getDropColumnarTableRemoveMetaTask(), indexTableSyncTask);
-                result.addTaskRelationship(indexTableSyncTask, tableSyncTask);
-
-                // Add Relationship before cdc mark tasks
-                result.addTaskRelationship(tableSyncTask, dropPrimaryTableJob.getHead());
-                result.addTaskRelationship(validateTableVersionTask, dropCciJob.getValidateTask());
-
-                result.addExcludeResources(dropCciJob.getExcludeResources());
-                tableVersions.put(gsiPreparedData.getTableName(),
-                    gsiPreparedData.getTableVersion());
-
-                result.addTask(validateTableVersionTask);
-            } else {
+            if (!entry.getValue().isColumnar()) {
                 ExecutableDdlJob4DropPartitionGsi dropGsiJob = (ExecutableDdlJob4DropPartitionGsi)
                     DropPartitionGsiJobFactory.create(gsiPreparedData, executionContext, true, false);
 
@@ -165,7 +156,10 @@ public class DropPartitionTableWithGsiJobFactory extends DdlJobFactory {
                     GsiStatisticsSyncAction.DELETE_RECORD,
                     null);
                 dropGsiJob.appendTask(gsiStatisticsInfoTask);
-                result.addTaskRelationship(validateTask, dropGsiJob.getValidateTask());
+                result.addTaskRelationship(lastValidatorTask, dropGsiJob.getValidateTask());
+                lastValidatorTask = dropGsiJob.getValidateTask();
+
+                // append after drop primary table
                 result.addTaskRelationship(dropPrimaryTableSyncTask, dropGsiJob.getDropGsiTableHideTableMetaTask());
                 result.addTaskRelationship(
                     dropGsiJob.getDropGsiTableHideTableMetaTask(), dropGsiJob.getDropGsiPhyDdlTask());
@@ -176,13 +170,48 @@ public class DropPartitionTableWithGsiJobFactory extends DdlJobFactory {
                 result.addTaskRelationship(
                     dropGsiJob.getDropGsiTableRemoveMetaTask(), new TableSyncTask(schemaName, indexTableName));
                 result.addExcludeResources(dropGsiJob.getExcludeResources());
+                result.addSharedResources(dropGsiJob.getSharedResources());
                 tableVersions.put(gsiPreparedData.getTableName(),
                     gsiPreparedData.getTableVersion());
-
-                result.addTask(validateTableVersionTask);
-                result.addTaskRelationship(validateTableVersionTask, dropPrimaryTableJob.getHead());
             }
         }
+
+        DdlTask lastTask = lastValidatorTask;
+        for (Map.Entry<String, DropGlobalIndexPreparedData> entry : gsiPreparedDataMap.entrySet()) {
+            final DropGlobalIndexPreparedData gsiPreparedData = entry.getValue();
+            final String indexTableName = gsiPreparedData.getIndexTableName();
+
+            if (entry.getValue().isColumnar()) {
+                // columnar index will be destroyed automatically
+                ExecutableDdlJob4DropColumnarIndex dropCciJob = (ExecutableDdlJob4DropColumnarIndex)
+                    DropColumnarIndexJobFactory.create(gsiPreparedData, executionContext, true, false);
+                result.addTask(dropCciJob.getValidateTask());
+                result.addTaskRelationship(dropCciJob.getValidateTask(),
+                    dropCciJob.getDropColumnarTableHideTableMetaTask());
+                TableSyncTask indexTableSyncTask = new TableSyncTask(schemaName, indexTableName);
+                TableSyncTask tableSyncTask = new TableSyncTask(schemaName, primaryTableName);
+                TableSyncTask tableSyncAfterCleanUpTask = new TableSyncTask(schemaName, primaryTableName);
+                TableSyncTask indexTableSyncAfterRemoveMetaTask = new TableSyncTask(schemaName, indexTableName);
+                result.addTaskRelationship(dropCciJob.getDropColumnarTableHideTableMetaTask(), indexTableSyncTask);
+                result.addTaskRelationship(indexTableSyncTask, dropCciJob.getCciSchemaEvolutionTask());
+                result.addTaskRelationship(dropCciJob.getCciSchemaEvolutionTask(), tableSyncTask);
+                result.addTaskRelationship(tableSyncTask, dropCciJob.getGsiDropCleanUpTask());
+                result.addTaskRelationship(dropCciJob.getGsiDropCleanUpTask(), tableSyncAfterCleanUpTask);
+                result.addTaskRelationship(tableSyncAfterCleanUpTask, dropCciJob.getDropColumnarTableRemoveMetaTask());
+                result.addTaskRelationship(
+                    dropCciJob.getDropColumnarTableRemoveMetaTask(), indexTableSyncAfterRemoveMetaTask);
+
+                // Add Relationship before cdc mark tasks
+                result.addTaskRelationship(lastTask, dropCciJob.getValidateTask());
+                lastTask = indexTableSyncAfterRemoveMetaTask;
+
+                result.addExcludeResources(dropCciJob.getExcludeResources());
+                result.addSharedResources(dropCciJob.getSharedResources());
+            }
+        }
+        result.removeTaskRelationship(dropPrimaryTableJob.getValidateTask(),
+            dropPrimaryTableJob.getDropTableHideTableMetaTask());
+        result.addTaskRelationship(lastTask, dropPrimaryTableJob.getDropTableHideTableMetaTask());
 
         List<String> tableNames = new ArrayList<>();
         tableNames.add(primaryTableName);
@@ -216,6 +245,21 @@ public class DropPartitionTableWithGsiJobFactory extends DdlJobFactory {
         }
 
 //        result.setMaxParallelism(gsiPreparedDataMap.size() + 1);
+        TableMeta primaryTableMeta = executionContext.getSchemaManager(this.schemaName).getTable(this.primaryTableName);
+        if (primaryTableMeta != null && primaryTableMeta.isPolardbxBlockChain()) {
+            //区块链表，删除历史记录表
+            String blockChainHistoryTableName = String.format(BlockChainHistoryTable.tableNameFormat, primaryTableName);
+            if (executionContext.getSchemaManager(this.schemaName).getTableWithNull(blockChainHistoryTableName)
+                != null) {
+                //存在历史记录表
+                ExecutableDdlJob4DropBlockChainTable
+                    dropBlockChainTable = buildDropBlockChainTable(schemaName, primaryTableName, executionContext);
+                result.combineTasks(dropBlockChainTable);
+                result.addTaskRelationship(dropPrimaryTableJob.getTail(), dropBlockChainTable.getValidateTask());
+                result.addExcludeResources(dropBlockChainTable.getExcludeResources());
+                result.addSharedResources(dropBlockChainTable.getSharedResources());
+            }
+        }
 
         return result;
     }
@@ -232,6 +276,30 @@ public class DropPartitionTableWithGsiJobFactory extends DdlJobFactory {
 
     @Override
     protected void sharedResources(Set<String> resources) {
+    }
+
+    public static ExecutableDdlJob4DropBlockChainTable buildDropBlockChainTable(String schemaName, String tableName,
+                                                                                ExecutionContext ec) {
+        ExecutionContext ecCopy = ec.copy();
+        String blockChainHistoryTableName = String.format(BlockChainHistoryTable.tableNameFormat, tableName);
+        String dropTableSql = String.format("DROP TABLE IF EXISTS `%s`.`%s`", schemaName, blockChainHistoryTableName);
+        SqlDropTable dropTableAst = (SqlDropTable) new FastsqlParser().parse(dropTableSql).get(0);
+        PlannerContext plannerContext = PlannerContext.fromExecutionContext(ecCopy);
+        ExecutionPlan dropTablePlan = Planner.getInstance().getPlan(dropTableAst, plannerContext);
+        LogicalDropTable logicalDropTable = (LogicalDropTable) dropTablePlan.getPlan();
+        logicalDropTable.prepareData();
+
+        DropTablePreparedData dropTablePreparedData = logicalDropTable.getDropTablePreparedData();
+
+        DropTableBuilder dropTableBuilder =
+            new DropPartitionTableBuilder(logicalDropTable.relDdl, dropTablePreparedData, ecCopy).build();
+        PhysicalPlanData physicalPlanData = dropTableBuilder.genPhysicalPlanData();
+
+        ExecutableDdlJob4DropPartitionTable ret = (ExecutableDdlJob4DropPartitionTable)
+            new DropPartitionTableJobFactory(physicalPlanData, ecCopy, dropTablePreparedData).create();
+
+        //去除cdc打标，cdcMark用的是同一个ExecutionContext，两个cdcMark任务无法区分
+        return ExecutableDdlJob4DropBlockChainTable.buildFrom(ret, schemaName, tableName, blockChainHistoryTableName);
     }
 
 }

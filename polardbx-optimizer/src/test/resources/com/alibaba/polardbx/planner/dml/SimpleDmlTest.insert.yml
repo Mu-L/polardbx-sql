@@ -3,110 +3,109 @@
 
   plan: |
 
-    PhyTableOperation(tables="optest_0001.[test_hash_tb]", sql="INSERT INTO ? (`id`, `name`, `create_time`) VALUES(?, ?, CAST(? AS DATETIME))", params="`test_hash_tb`,1,a,?")
+    phytableoperation(tables="optest_0001.[test_hash_tb]", sql="insert into ? (`id`, `name`, `create_time`) values(?, ?, cast(? as datetime))", params="`test_hash_tb`,1,a,?")
 
 - sql: |
     insert into test_hash_tb values(1, 'a', now()), (2, 'b', now()), (3, 'c', NULL), (4, NULL, NULL);
 
   plan: |
 
-    PhyTableOperation(tables="optest_0003.[test_hash_tb]", sql="INSERT INTO ? (`id`, `name`, `create_time`) VALUES(?, ?, ?)", params="`test_hash_tb`,3,c,NULL")
-    PhyTableOperation(tables="optest_0000.[test_hash_tb]", sql="INSERT INTO ? (`id`, `name`, `create_time`) VALUES(?, ?, ?)", params="`test_hash_tb`,4,NULL,NULL")
-    PhyTableOperation(tables="optest_0001.[test_hash_tb]", sql="INSERT INTO ? (`id`, `name`, `create_time`) VALUES(?, ?, CAST(? AS DATETIME))", params="`test_hash_tb`,1,a,?")
-    PhyTableOperation(tables="optest_0002.[test_hash_tb]", sql="INSERT INTO ? (`id`, `name`, `create_time`) VALUES(?, ?, CAST(? AS DATETIME))", params="`test_hash_tb`,2,b,?")
+    phytableoperation(tables="optest_0003.[test_hash_tb]", sql="insert into ? (`id`, `name`, `create_time`) values(?, ?, ?)", params="`test_hash_tb`,3,c,null")
+    phytableoperation(tables="optest_0000.[test_hash_tb]", sql="insert into ? (`id`, `name`, `create_time`) values(?, ?, ?)", params="`test_hash_tb`,4,null,null")
+    phytableoperation(tables="optest_0001.[test_hash_tb]", sql="insert into ? (`id`, `name`, `create_time`) values(?, ?, cast(? as datetime))", params="`test_hash_tb`,1,a,?")
+    phytableoperation(tables="optest_0002.[test_hash_tb]", sql="insert into ? (`id`, `name`, `create_time`) values(?, ?, cast(? as datetime))", params="`test_hash_tb`,2,b,?")
 
 - sql: |
     insert into test_hash_tb values(1, 'a', "2018-4-1"), (2, 'b', "2018-4-1");
 
   plan: |
 
-    PhyTableOperation(tables="optest_0001.[test_hash_tb]", sql="INSERT INTO ? (`id`, `name`, `create_time`) VALUES(?, ?, ?)", params="`test_hash_tb`,1,a,2018-4-1")
-    PhyTableOperation(tables="optest_0002.[test_hash_tb]", sql="INSERT INTO ? (`id`, `name`, `create_time`) VALUES(?, ?, ?)", params="`test_hash_tb`,2,b,2018-4-1")
+    phytableoperation(tables="optest_0001.[test_hash_tb]", sql="insert into ? (`id`, `name`, `create_time`) values(?, ?, ?)", params="`test_hash_tb`,1,a,2018-4-1")
+    phytableoperation(tables="optest_0002.[test_hash_tb]", sql="insert into ? (`id`, `name`, `create_time`) values(?, ?, ?)", params="`test_hash_tb`,2,b,2018-4-1")
 
 - sql: |
     insert into test_hash_tb(id, name) values(1, 'a');
 
   plan: |
 
-    PhyTableOperation(tables="optest_0001.[test_hash_tb]", sql="INSERT INTO ? (`id`, `name`) VALUES(?, ?)", params="`test_hash_tb`,1,a")
+    phytableoperation(tables="optest_0001.[test_hash_tb]", sql="insert into ? (`id`, `name`) values(?, ?)", params="`test_hash_tb`,1,a")
 
 - sql: |
     insert into test_hash_tb(id, create_time) values(1, now());
 
   plan: |
 
-    PhyTableOperation(tables="optest_0001.[test_hash_tb]", sql="INSERT INTO ? (`id`, `create_time`) VALUES(?, CAST(? AS DATETIME))", params="`test_hash_tb`,1,?")
+    phytableoperation(tables="optest_0001.[test_hash_tb]", sql="insert into ? (`id`, `create_time`) values(?, cast(? as datetime))", params="`test_hash_tb`,1,?")
 
 - sql: |
     insert into test_hash_tb(id, create_time, name) values(1, now(), 'a');
 
   plan: |
 
-    PhyTableOperation(tables="optest_0001.[test_hash_tb]", sql="INSERT INTO ? (`id`, `name`, `create_time`) VALUES(?, ?, CAST(? AS DATETIME))", params="`test_hash_tb`,1,a,?")
+    phytableoperation(tables="optest_0001.[test_hash_tb]", sql="insert into ? (`id`, `name`, `create_time`) values(?, ?, cast(? as datetime))", params="`test_hash_tb`,1,a,?")
 
 - sql: |
     insert into test_hash_tb(name, create_time, id) values('a', now(), 1);
 
   plan: |
 
-    PhyTableOperation(tables="optest_0001.[test_hash_tb]", sql="INSERT INTO ? (`id`, `name`, `create_time`) VALUES(?, ?, CAST(? AS DATETIME))", params="`test_hash_tb`,1,a,?")
+    phytableoperation(tables="optest_0001.[test_hash_tb]", sql="insert into ? (`id`, `name`, `create_time`) values(?, ?, cast(? as datetime))", params="`test_hash_tb`,1,a,?")
 
 - sql: |
     insert into test_hash_tb(id) values(1);
 
   plan: |
 
-    PhyTableOperation(tables="optest_0001.[test_hash_tb]", sql="INSERT INTO ? (`id`) VALUES(?)", params="`test_hash_tb`,1")
+    phytableoperation(tables="optest_0001.[test_hash_tb]", sql="insert into ? (`id`) values(?)", params="`test_hash_tb`,1")
 
 - sql: |
     insert into test_single(id, name) values(1, 'a');
 
   plan: |
 
-    PhyTableOperation(tables="optest_0000.[test_single]", sql="INSERT INTO ? (`id`, `name`) VALUES(?, ?)", params="`test_single`,1,a")
+    phytableoperation(tables="optest_0000.[test_single]", sql="insert into ? (`id`, `name`) values(?, ?)", params="`test_single`,1,a")
 
 - sql: |
     insert into test_single(id, create_time) values(1, now());
 
   plan: |
 
-    PhyTableOperation(tables="optest_0000.[test_single]", sql="INSERT INTO ? (`id`, `create_time`) VALUES(?, CAST(? AS DATETIME))", params="`test_single`,1,?")
+    phytableoperation(tables="optest_0000.[test_single]", sql="insert into ? (`id`, `create_time`) values(?, cast(? as datetime))", params="`test_single`,1,?")
 
 - sql: |
     insert into test_single(id, create_time, name) values(1, now(), 'a');
 
   plan: |
 
-    PhyTableOperation(tables="optest_0000.[test_single]", sql="INSERT INTO ? (`id`, `name`, `create_time`) VALUES(?, ?, CAST(? AS DATETIME))", params="`test_single`,1,a,?")
+    phytableoperation(tables="optest_0000.[test_single]", sql="insert into ? (`id`, `name`, `create_time`) values(?, ?, cast(? as datetime))", params="`test_single`,1,a,?")
 
 - sql: |
     insert into test_single(name, create_time, id) values('a', now(), 1);
 
   plan: |
 
-    PhyTableOperation(tables="optest_0000.[test_single]", sql="INSERT INTO ? (`id`, `name`, `create_time`) VALUES(?, ?, CAST(? AS DATETIME))", params="`test_single`,1,a,?")
+    phytableoperation(tables="optest_0000.[test_single]", sql="insert into ? (`id`, `name`, `create_time`) values(?, ?, cast(? as datetime))", params="`test_single`,1,a,?")
 
 - sql: |
     insert into test_single(id) values(1);
 
   plan: |
 
-    PhyTableOperation(tables="optest_0000.[test_single]", sql="INSERT INTO ? (`id`) VALUES(?)", params="`test_single`,1")
+    phytableoperation(tables="optest_0000.[test_single]", sql="insert into ? (`id`) values(?)", params="`test_single`,1")
 
 - sql: |
     insert into test_single values(1, 'a', now());
 
   plan: |
 
-    PhyTableOperation(tables="optest_0000.[test_single]", sql="INSERT INTO ? (`id`, `name`, `create_time`) VALUES(?, ?, CAST(? AS DATETIME))", params="`test_single`,1,a,?")
-    
+    phytableoperation(tables="optest_0000.[test_single]", sql="insert into ? (`id`, `name`, `create_time`) values(?, ?, cast(? as datetime))", params="`test_single`,1,a,?")
+
 - sql: |
     insert into test_hash_tb(id, name,  name) values(1, 'a', 'a');
 
   plan: |
 
     err-code: [tddl-4501][err_optimizer] optimize error by column 'name' specified twice.
-
 
 - sql: |
     insert into test_hash_tb(id, name,  name) values(1, 'a', 'a'), (2, 'b', 'b');
@@ -120,19 +119,19 @@
 
   plan: |
 
-    PhyTableOperation(tables="optest_0001.[test_group_sequence]", sql="insert into ? (`id`, `name`, `create_time`) values(?, null, current_timestamp(0))", params="`test_group_sequence`,1")
+    phytableoperation(tables="optest_0001.[test_group_sequence]", sql="insert into ? (`id`, `name`, `create_time`) values(?, null, current_timestamp(0))", params="`test_group_sequence`,1")
 
 - sql: |
     insert into test_group_sequence values();
 
   plan: |
 
-    PhyTableOperation(tables="optest_0002.[test_group_sequence]", sql="insert into ? (`id`, `name`, `create_time`) values(?, null, current_timestamp(0))", params="`test_group_sequence`,2")
+    phytableoperation(tables="optest_0002.[test_group_sequence]", sql="insert into ? (`id`, `name`, `create_time`) values(?, null, current_timestamp(0))", params="`test_group_sequence`,2")
 
 - sql: |
     insert into test_group_sequence values(),();
 
   plan: |
 
-    PhyTableOperation(tables="optest_0000.[test_group_sequence]", sql="insert into ? (`id`, `name`, `create_time`) values(?, null, current_timestamp(0))", params="`test_group_sequence`,4")
-    PhyTableOperation(tables="optest_0003.[test_group_sequence]", sql="insert into ? (`id`, `name`, `create_time`) values(?, null, current_timestamp(0))", params="`test_group_sequence`,3")
+    phytableoperation(tables="optest_0000.[test_group_sequence]", sql="insert into ? (`id`, `name`, `create_time`) values(?, null, current_timestamp(0))", params="`test_group_sequence`,4")
+    phytableoperation(tables="optest_0003.[test_group_sequence]", sql="insert into ? (`id`, `name`, `create_time`) values(?, null, current_timestamp(0))", params="`test_group_sequence`,3")

@@ -17,7 +17,7 @@ select * from bl_scan_test;
 set global FULL_SCAN_TABLE_BLACK_LIST='blsc_db.bl_scan_test';
 select sleep(2);
 
-## error_msg: $# now allowed #$
+## error_msg: $# not allowed #$
 select * from bl_scan_test;
 
 select * from bl_scan_test where a='123';

@@ -1,0 +1,347 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+## test dble_db
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+set ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING=true;
+set ENABLE_RANDOM_PHY_TABLE_NAME=false;
+set ENABLE_REPLICAS_RANDOM_READ= false;
+use polardbx;
+drop database if exists mydbledb2;
+## USE_DN_LIST_MSG
+create database if not exists mydbledb2 mode = 'auto' locality='dble_config={"group_config":{"mydbledb2_g1":["$dn1","mydbledb2_00"],"mydbledb2_g2":["$dn2","mydbledb2_01"] }}';
+use mydbledb2;
+#bro   sig   part
+#bro     ok     ok    ok
+#sig     ok     ok    no
+#part    ok     no    maybe
+#
+#
+#
+#bro   sig   	part      rep
+#bro     ok     ok    	ok        ok
+#sig     ok     ok    	no		  maybe
+#part    ok     no    	maybe     maybe*
+#rep     ok     maybe  	maybe*	  maybe*
+#
+#
+#rep-rep
+CREATE TABLE `k_t1` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+PARTITION BY KEY(a)
+PARTITIONS 2
+LOCALITY='db_pools=mydbledb2_g1,mydbledb2_g2';
+CREATE TABLE `k_t2` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+PARTITION BY KEY(a)
+PARTITIONS 2
+LOCALITY='db_pools=mydbledb2_g1,mydbledb2_g2';
+CREATE TABLE `s_t_g1` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+SINGLE
+LOCALITY='db_pools=mydbledb2_g1';
+CREATE TABLE `s_t_g2` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+SINGLE
+LOCALITY='db_pools=mydbledb2_g2';
+CREATE TABLE `b_t1` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+BROADCAST
+LOCALITY='db_pools=mydbledb2_g1,mydbledb2_g2';
+CREATE TABLE `r_t_all` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb2_g1,mydbledb2_g2';
+CREATE TABLE `r_t2_all` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb2_g2,mydbledb2_g1';
+CREATE TABLE `r_t_all2` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb2_g1,mydbledb2_g2';
+CREATE TABLE `r_t_g1` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb2_g1';
+CREATE TABLE `r_t2_g1` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb2_g1';
+CREATE TABLE `r_t_g2` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb2_g2';
+CREATE TABLE `r_t2_g2` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb2_g2';
+CREATE TABLE `t3_g2` (
+`a` int DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb2_g2';
+select t1.a from t3_g2 t1 join k_t1 t2 on t1.a=t2.a where t2.a=100;
+a
+## push join
+explain select t1.a from r_t_g1 t1 join s_t_g1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb2_g1.r_t_g1,s_t_g1", sql="SELECT `t1`.`a` AS `a` FROM `r_t_g1` AS `t1` INNER JOIN `s_t_g1` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## push join
+explain select t1.a from r_t_g2 t1 join s_t_g2 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb2_g2.r_t_g2,s_t_g2", sql="SELECT `t1`.`a` AS `a` FROM `r_t_g2` AS `t1` INNER JOIN `s_t_g2` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## push join
+explain select t1.a from r_t_all t1 join s_t_g1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb2_g1.r_t_all,s_t_g1", sql="SELECT `t1`.`a` AS `a` FROM `r_t_all` AS `t1` INNER JOIN `s_t_g1` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## push join
+explain select t1.a from r_t_all t1 join s_t_g2 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb2_g2.r_t_all,s_t_g2", sql="SELECT `t1`.`a` AS `a` FROM `r_t_all` AS `t1` INNER JOIN `s_t_g2` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## push join
+explain select t1.a from r_t_all t1 join k_t1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+PhyTableOperation(tables="r_t_all[p1],k_t1[p1]", sql="SELECT `t1`.`a` AS `a` FROM ? AS `t1` INNER JOIN ? AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## push join
+explain select t1.a from r_t_all t1 join k_t1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+PhyTableOperation(tables="r_t_all[p1],k_t1[p1]", sql="SELECT `t1`.`a` AS `a` FROM ? AS `t1` INNER JOIN ? AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## push join
+explain select t1.a from r_t_all t1 join k_t1 t2 on t1.a=t2.a where t2.a in (100);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="r_t_all,k_t1[p1]", sql="SELECT `r_t_all`.`a` FROM `r_t_all` AS `r_t_all` INNER JOIN `k_t1` AS `k_t1` ON ((`r_t_all`.`a` = `k_t1`.`a`) AND (`k_t1`.`a` IN(?)))")
+## push join
+explain select t1.a from r_t_all t1 join k_t1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+PhyTableOperation(tables="r_t_all[p1],k_t1[p1]", sql="SELECT `t1`.`a` AS `a` FROM ? AS `t1` INNER JOIN ? AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## push join
+explain select t1.a from b_t1 t1 inner join k_t1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="k_t1[p1],b_t1", sql="SELECT `b_t1`.`a` FROM `k_t1` AS `k_t1` INNER JOIN `b_t1` AS `b_t1` ON ((`b_t1`.`a` = ?) AND (`k_t1`.`a` = ?) AND (`k_t1`.`a` = `b_t1`.`a`))")
+## push join
+explain select t1.a from r_t_all t3
+    inner join b_t1 t1 on t1.a=t3.a
+    inner join k_t1 t2 on t1.a=t2.a
+where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="r_t_all,b_t1,k_t1[p1]", sql="SELECT `b_t1`.`a` FROM `r_t_all` AS `r_t_all` INNER JOIN `b_t1` AS `b_t1` ON ((`r_t_all`.`a` = ?) AND (`b_t1`.`a` = ?) AND (`r_t_all`.`a` = `b_t1`.`a`)) INNER JOIN `k_t1` AS `k_t1` ON ((`k_t1`.`a` = ?) AND (`r_t_all`.`a` = `k_t1`.`a`) AND (`b_t1`.`a` = `k_t1`.`a`))")
+## no push join
+explain select t1.a from r_t_g2 t1 join k_t1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+Project(a="a0")
+  HashJoin(condition="a = a", type="inner")
+    LogicalView(tables="k_t1[p1]", sql="SELECT `a` FROM `k_t1` AS `k_t1` WHERE (`a` = ?)")
+    LogicalView(tables="r_t_g2[p1]", sql="SELECT `a` FROM `r_t_g2` AS `r_t_g2` WHERE (`a` = ?)")
+## no push join
+explain select t1.a from r_t_g1 t1 join k_t1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+PhyTableOperation(tables="r_t_g1[p1],k_t1[p1]", sql="SELECT `t1`.`a` AS `a` FROM ? AS `t1` INNER JOIN ? AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+##  == replicas_tbl & single_tbl ===
+  ##  push join for replicas_tbl at g1 join single_tbl at g1
+explain select t1.a from r_t_g1 t1 join s_t_g1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb2_g1.r_t_g1,s_t_g1", sql="SELECT `t1`.`a` AS `a` FROM `r_t_g1` AS `t1` INNER JOIN `s_t_g1` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## push join for replicas_tbl at all join single_tbl at g1
+explain select t1.a from r_t_all t1 join s_t_g1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb2_g1.r_t_all,s_t_g1", sql="SELECT `t1`.`a` AS `a` FROM `r_t_all` AS `t1` INNER JOIN `s_t_g1` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## push join for replicas_tbl at all join single_tbl at g2
+explain select t1.a from r_t_all t1 join s_t_g2 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb2_g2.r_t_all,s_t_g2", sql="SELECT `t1`.`a` AS `a` FROM `r_t_all` AS `t1` INNER JOIN `s_t_g2` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## no push join for replicas_tbl at g2 join single_tbl at g1
+explain select t1.a from r_t_g2 t1 join s_t_g1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+Project(a="a0")
+  HashJoin(condition="a = a", type="inner")
+    LogicalView(tables="s_t_g1[p1]", sql="SELECT `a` FROM `s_t_g1` AS `s_t_g1` WHERE (`a` = ?)")
+    LogicalView(tables="r_t_g2[p1]", sql="SELECT `a` FROM `r_t_g2` AS `r_t_g2` WHERE (`a` = ?)")
+##  push join for replicas_tbl at g1 join single_tbl at g1
+explain select t1.a from s_t_g1 t1 join r_t_g1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb2_g1.s_t_g1,r_t_g1", sql="SELECT `t1`.`a` AS `a` FROM `s_t_g1` AS `t1` INNER JOIN `r_t_g1` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## push join for replicas_tbl at all join single_tbl at g1
+explain select t1.a from s_t_g1 t1 join r_t_all t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb2_g1.s_t_g1,r_t_all", sql="SELECT `t1`.`a` AS `a` FROM `s_t_g1` AS `t1` INNER JOIN `r_t_all` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## push join for replicas_tbl at all join single_tbl at g2
+explain select t1.a from s_t_g2 t1 join r_t_all t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb2_g2.s_t_g2,r_t_all", sql="SELECT `t1`.`a` AS `a` FROM `s_t_g2` AS `t1` INNER JOIN `r_t_all` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## no push join for replicas_tbl at g2 join single_tbl at g1
+explain select t1.a from s_t_g1 t1 join r_t_g2 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+Project(a="a0")
+  HashJoin(condition="a = a", type="inner")
+    LogicalView(tables="r_t_g2[p1]", sql="SELECT `a` FROM `r_t_g2` AS `r_t_g2` WHERE (`a` = ?)")
+    LogicalView(tables="s_t_g1[p1]", sql="SELECT `a` FROM `s_t_g1` AS `s_t_g1` WHERE (`a` = ?)")
+##  == replicas_tbl & broadcast_tbl ===
+  ## push join for replicas_tbl at g1 join broadcast_tbl
+explain select t1.a from r_t_g1 t1 join b_t1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="r_t_g1,b_t1", shardCount=0, sql="SELECT `r_t_g1`.`a` FROM `r_t_g1` AS `r_t_g1` INNER JOIN `b_t1` AS `b_t1` ON ((`r_t_g1`.`a` = ?) AND (`b_t1`.`a` = ?) AND (`r_t_g1`.`a` = `b_t1`.`a`))")
+## push join for replicas_tbl at g2 join broadcast_tbl
+explain select t1.a from r_t_g2 t1 join b_t1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="r_t_g2,b_t1", shardCount=0, sql="SELECT `r_t_g2`.`a` FROM `r_t_g2` AS `r_t_g2` INNER JOIN `b_t1` AS `b_t1` ON ((`r_t_g2`.`a` = ?) AND (`b_t1`.`a` = ?) AND (`r_t_g2`.`a` = `b_t1`.`a`))")
+## push join for replicas_tbl at all join broadcast_tbl
+explain select t1.a from r_t_all t1 join b_t1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="r_t_all,b_t1", shardCount=0, sql="SELECT `r_t_all`.`a` FROM `r_t_all` AS `r_t_all` INNER JOIN `b_t1` AS `b_t1` ON ((`r_t_all`.`a` = ?) AND (`b_t1`.`a` = ?) AND (`r_t_all`.`a` = `b_t1`.`a`))")
+## push join for replicas_tbl at g1 join broadcast_tbl
+explain select t1.a from b_t1 t1 join r_t_g1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="r_t_g1,b_t1", shardCount=0, sql="SELECT `b_t1`.`a` FROM `r_t_g1` AS `r_t_g1` INNER JOIN `b_t1` AS `b_t1` ON ((`b_t1`.`a` = ?) AND (`r_t_g1`.`a` = ?) AND (`r_t_g1`.`a` = `b_t1`.`a`))")
+## push join for replicas_tbl at g2 join broadcast_tbl
+explain select t1.a from b_t1 t1 join r_t_g2 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="r_t_g2,b_t1", shardCount=0, sql="SELECT `b_t1`.`a` FROM `r_t_g2` AS `r_t_g2` INNER JOIN `b_t1` AS `b_t1` ON ((`b_t1`.`a` = ?) AND (`r_t_g2`.`a` = ?) AND (`r_t_g2`.`a` = `b_t1`.`a`))")
+## push join for replicas_tbl at all join broadcast_tbl
+explain select t1.a from b_t1 t1 join r_t_all t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="r_t_all,b_t1", shardCount=0, sql="SELECT `b_t1`.`a` FROM `r_t_all` AS `r_t_all` INNER JOIN `b_t1` AS `b_t1` ON ((`b_t1`.`a` = ?) AND (`r_t_all`.`a` = ?) AND (`r_t_all`.`a` = `b_t1`.`a`))")
+##  == replicas_tbl & replicas_tbl ===
+  ## push join for replicas_tbl at g1 join replicas_tbl at g1
+explain select t1.a from r_t_g1 t1 join r_t2_g1 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb2_g1.r_t_g1,r_t2_g1", sql="SELECT `t1`.`a` AS `a` FROM `r_t_g1` AS `t1` INNER JOIN `r_t2_g1` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## no push join for replicas_tbl at g1 join replicas_tbl at g2
+explain select t1.a from r_t_g1 t1 join r_t_g2 t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+Project(a="a0")
+  HashJoin(condition="a = a", type="inner")
+    LogicalView(tables="r_t_g2[p1]", sql="SELECT `a` FROM `r_t_g2` AS `r_t_g2` WHERE (`a` = ?)")
+    LogicalView(tables="r_t_g1[p1]", sql="SELECT `a` FROM `r_t_g1` AS `r_t_g1` WHERE (`a` = ?)")
+## push join for replicas_tbl at g1,g2 join replicas_tbl at g2,g1
+explain select t1.a from r_t_all t1 join r_t2_all t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb2_g1.r_t_all,r_t2_all", sql="SELECT `t1`.`a` AS `a` FROM `r_t_all` AS `t1` INNER JOIN `r_t2_all` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## push join for replicas_tbl at g2,g1 join replicas_tbl at g1,g2
+explain select t1.a from r_t2_all t1 join r_t_all t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb2_g1.r_t2_all,r_t_all", sql="SELECT `t1`.`a` AS `a` FROM `r_t2_all` AS `t1` INNER JOIN `r_t_all` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## no push join for replicas_tbl at g1 join replicas_tbl at all
+explain select t1.a from r_t_g1 t1 join r_t_all t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb2_g1.r_t_g1,r_t_all", sql="SELECT `t1`.`a` AS `a` FROM `r_t_g1` AS `t1` INNER JOIN `r_t_all` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## no push join for replicas_tbl at g2 join replicas_tbl at all
+explain select t1.a from r_t_g2 t1 join r_t_all t2 on t1.a=t2.a where t2.a=100;
+Logical ExecutionPlan
+LogicalView(tables="mydbledb2_g2.r_t_g2,r_t_all", sql="SELECT `t1`.`a` AS `a` FROM `r_t_g2` AS `t1` INNER JOIN `r_t_all` AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+##  == replicas_tbl & partition_tbl ===
+  ## no push join for replicas_tbl at g1 join part_tbl at g1,g2
+explain select t1.a from r_t_g1 t1 join k_t1 t2 on t1.a=t2.a where t2.a>100;
+Logical ExecutionPlan
+Project(a="a")
+  BKAJoin(condition="a = a", type="inner")
+    LogicalView(tables="r_t_g1[p1]", sql="SELECT `a` FROM `r_t_g1` AS `r_t_g1` WHERE (`a` > ?)")
+    Gather(concurrent=true)
+      LogicalView(tables="k_t1[p1,p2]", shardCount=2, sql="SELECT `a` FROM `k_t1` AS `k_t1` WHERE ((`a` > ?) AND (`a` IN (...)))")
+## no push join for replicas_tbl at g2 join part_tbl at g1,g2
+explain select t1.a from r_t_g2 t1 join k_t1 t2 on t1.a=t2.a where t2.a>100;
+Logical ExecutionPlan
+Project(a="a")
+  BKAJoin(condition="a = a", type="inner")
+    LogicalView(tables="r_t_g2[p1]", sql="SELECT `a` FROM `r_t_g2` AS `r_t_g2` WHERE (`a` > ?)")
+    Gather(concurrent=true)
+      LogicalView(tables="k_t1[p1,p2]", shardCount=2, sql="SELECT `a` FROM `k_t1` AS `k_t1` WHERE ((`a` > ?) AND (`a` IN (...)))")
+## push join for replicas_tbl at all join part_tbl at g1,g2
+explain select t1.a from r_t_all t1 join k_t1 t2 on t1.a=t2.a where t2.a>100;
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="r_t_all,k_t1[p1,p2]", shardCount=2, sql="SELECT `r_t_all`.`a` FROM `r_t_all` AS `r_t_all` INNER JOIN `k_t1` AS `k_t1` ON ((`r_t_all`.`a` = `k_t1`.`a`) AND (`k_t1`.`a` > ?))")
+## no push join for replicas_tbl at g1 join part_tbl at g1,g2
+explain select t1.a from k_t1 t1 join r_t_g1 t2 on t1.a=t2.a where t2.a>100;
+Logical ExecutionPlan
+Project(a="a0")
+  BKAJoin(condition="a = a", type="inner")
+    LogicalView(tables="r_t_g1[p1]", sql="SELECT `a` FROM `r_t_g1` AS `r_t_g1` WHERE (`a` > ?)")
+    Gather(concurrent=true)
+      LogicalView(tables="k_t1[p1,p2]", shardCount=2, sql="SELECT `a` FROM `k_t1` AS `k_t1` WHERE ((`a` > ?) AND (`a` IN (...)))")
+## no push join for replicas_tbl at g2 join part_tbl at g1,g2
+explain select t1.a from k_t1 t1 join r_t_g2 t2 on t1.a=t2.a where t2.a>100;
+Logical ExecutionPlan
+Project(a="a0")
+  BKAJoin(condition="a = a", type="inner")
+    LogicalView(tables="r_t_g2[p1]", sql="SELECT `a` FROM `r_t_g2` AS `r_t_g2` WHERE (`a` > ?)")
+    Gather(concurrent=true)
+      LogicalView(tables="k_t1[p1,p2]", shardCount=2, sql="SELECT `a` FROM `k_t1` AS `k_t1` WHERE ((`a` > ?) AND (`a` IN (...)))")
+## push join for replicas_tbl at all join part_tbl at g1,g2
+explain select t1.a from k_t1 t1 join r_t_all t2 on t1.a=t2.a where t2.a>100;
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="k_t1[p1,p2],r_t_all", shardCount=2, sql="SELECT `k_t1`.`a` FROM `k_t1` AS `k_t1` INNER JOIN `r_t_all` AS `r_t_all` ON ((`k_t1`.`a` = `r_t_all`.`a`) AND (`r_t_all`.`a` > ?))")
+##  == replicas_tbl & partition_tbl with point-select ===
+  ## push join for replicas_tbl at g1 join part_tbl at g1(a=100)
+explain select t1.a from r_t_g1 t1 join k_t1 t2 on t1.a=t2.a where t2.a = 100;
+Logical ExecutionPlan
+PhyTableOperation(tables="r_t_g1[p1],k_t1[p1]", sql="SELECT `t1`.`a` AS `a` FROM ? AS `t1` INNER JOIN ? AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## no push join for replicas_tbl at g1 join part_tbl at g2(a=200)
+explain select t1.a from r_t_g2 t1 join k_t1 t2 on t1.a=t2.a where t2.a = 100;
+Logical ExecutionPlan
+Project(a="a0")
+  HashJoin(condition="a = a", type="inner")
+    LogicalView(tables="k_t1[p1]", sql="SELECT `a` FROM `k_t1` AS `k_t1` WHERE (`a` = ?)")
+    LogicalView(tables="r_t_g2[p1]", sql="SELECT `a` FROM `r_t_g2` AS `r_t_g2` WHERE (`a` = ?)")
+## no push join for replicas_tbl at g2 join part_tbl at g1(a=100)
+explain select t1.a from r_t_g2 t1 join k_t1 t2 on t1.a=t2.a where t2.a = 100;
+Logical ExecutionPlan
+Project(a="a0")
+  HashJoin(condition="a = a", type="inner")
+    LogicalView(tables="k_t1[p1]", sql="SELECT `a` FROM `k_t1` AS `k_t1` WHERE (`a` = ?)")
+    LogicalView(tables="r_t_g2[p1]", sql="SELECT `a` FROM `r_t_g2` AS `r_t_g2` WHERE (`a` = ?)")
+## push join for replicas_tbl at g2 join part_tbl at g2(a=200)
+explain select t1.a from r_t_g2 t1 join k_t1 t2 on t1.a=t2.a where t2.a = 200;
+Logical ExecutionPlan
+PhyTableOperation(tables="r_t_g2[p1],k_t1[p2]", sql="SELECT `t1`.`a` AS `a` FROM ? AS `t1` INNER JOIN ? AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="200")
+## push join for replicas_tbl at all join part_tbl at at g1(a=100)
+explain select t1.a from r_t_all t1 join k_t1 t2 on t1.a=t2.a where t2.a = 100;
+Logical ExecutionPlan
+PhyTableOperation(tables="r_t_all[p1],k_t1[p1]", sql="SELECT `t1`.`a` AS `a` FROM ? AS `t1` INNER JOIN ? AS `t2` ON (`t1`.`a` = `t2`.`a`) WHERE (`t2`.`a` = ?)", params="100")
+## push join for replicas_tbl at all join part_tbl at at g1(a in 100)
+explain select t1.a from r_t_all t1 join k_t1 t2 on t1.a=t2.a where t2.a in(100);
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="r_t_all,k_t1[p1]", sql="SELECT `r_t_all`.`a` FROM `r_t_all` AS `r_t_all` INNER JOIN `k_t1` AS `k_t1` ON ((`r_t_all`.`a` = `k_t1`.`a`) AND (`k_t1`.`a` IN(?)))")
+##  == replicas_tbl & partition_tbl with select partitions  ===
+  ## push join for replicas_tbl at g1 join part_tbl at g1(p1)
+explain select t1.a from r_t_g1 t1 join k_t1 partition(p1) t2 on t1.a=t2.a;
+Logical ExecutionPlan
+PhyTableOperation(tables="r_t_g1[p1],k_t1[p1]", sql="SELECT `t1`.`a` AS `a` FROM ? AS `t1` INNER JOIN ? AS `t2` ON (`t1`.`a` = `t2`.`a`)")
+## push join for part_tbl at g1(p1) join replicas_tbl at g1
+explain select t1.a from k_t1 partition(p1) t1 join r_t_g1 t2 on t1.a=t2.a;
+Logical ExecutionPlan
+PhyTableOperation(tables="k_t1[p1],r_t_g1[p1]", sql="SELECT `t1`.`a` AS `a` FROM ? AS `t1` INNER JOIN ? AS `t2` ON (`t1`.`a` = `t2`.`a`)")
+##  == replicas_tbl & partition_tbl with select partitions  ===
+  ## no push join for replicas_tbl at g1 join part_tbl at g1(p2)
+explain select t1.a from r_t_g1 t1 join k_t1 partition(p2) t2 on t1.a=t2.a;
+Logical ExecutionPlan
+Project(a="a")
+  BKAJoin(condition="a = a", type="inner")
+    LogicalView(tables="r_t_g1[p1]", sql="SELECT `a` FROM `r_t_g1` AS `r_t_g1`")
+    LogicalView(tables="k_t1[p2]", sql="SELECT `a` FROM `k_t1` AS `k_t1` WHERE (`a` IN (...))")
+## no push join for part_tbl at g1(p2) join replicas_tbl at g1
+explain select t1.a from k_t1 partition(p2) t1 join r_t_g1 t2 on t1.a=t2.a;
+Logical ExecutionPlan
+Project(a="a0")
+  BKAJoin(condition="a = a", type="inner")
+    LogicalView(tables="r_t_g1[p1]", sql="SELECT `a` FROM `r_t_g1` AS `r_t_g1`")
+    LogicalView(tables="k_t1[p2]", sql="SELECT `a` FROM `k_t1` AS `k_t1` WHERE (`a` IN (...))")
+use polardbx;
+drop database mydbledb2;

@@ -16,12 +16,14 @@
 
 package com.alibaba.polardbx.optimizer.memory;
 
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
+import com.alibaba.polardbx.common.BlockingState;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.SettableFuture;
 import com.alibaba.polardbx.common.exception.MemoryNotEnoughException;
 import com.alibaba.polardbx.common.properties.MppConfig;
 
@@ -39,6 +41,9 @@ import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
  */
 @NotThreadSafe
 public class OperatorMemoryAllocatorCtx implements MemoryAllocatorCtx {
+    private static final BlockingState MEMORY_BLOCKING_STATE = BlockingState.create(
+        BlockingReason.WAIT_FOR_MEMORY, 0L
+    );
 
     private final MemoryPool memoryPool;
     private final AtomicLong reservedFree = new AtomicLong(0L);
@@ -54,7 +59,7 @@ public class OperatorMemoryAllocatorCtx implements MemoryAllocatorCtx {
 
     private final MemoryAllocateFuture allocateFuture = new MemoryAllocateFuture();
 
-    private SettableFuture<?> memoryRevokingRequestedFuture;
+    private BlockingFuture<?> memoryRevokingRequestedFuture;
 
     private final boolean revocable;
 
@@ -62,15 +67,15 @@ public class OperatorMemoryAllocatorCtx implements MemoryAllocatorCtx {
         this.memoryPool = memoryPool;
         this.allocateBytesFuture = new AtomicReference<>();
         this.allocateBytesFuture.set(MemoryNotFuture.create());
-        this.allocateBytesFuture.get().set(null);
+        this.allocateBytesFuture.get().set(MEMORY_BLOCKING_STATE);
 
         this.tryAllocateBytesFuture = new AtomicReference<>();
         this.tryAllocateBytesFuture.set(MemoryNotFuture.create());
-        this.tryAllocateBytesFuture.get().set(null);
+        this.tryAllocateBytesFuture.get().set(MEMORY_BLOCKING_STATE);
 
         this.revocable = revocable;
         if (this.revocable) {
-            memoryRevokingRequestedFuture = SettableFuture.create();
+            memoryRevokingRequestedFuture = BlockingFuture.create(BlockingReason.WAIT_FOR_MEMORY_REVOKE);
         }
     }
 
@@ -223,7 +228,7 @@ public class OperatorMemoryAllocatorCtx implements MemoryAllocatorCtx {
         return tryAllocateBytesFuture.get();
     }
 
-    public synchronized SettableFuture<?> getMemoryRevokingRequestedFuture() {
+    public synchronized BlockingFuture<?> getMemoryRevokingRequestedFuture() {
         return memoryRevokingRequestedFuture;
     }
 
@@ -231,7 +236,7 @@ public class OperatorMemoryAllocatorCtx implements MemoryAllocatorCtx {
         checkState(revocable, "requestMemoryRevoking for unRevocable operator");
         boolean alreadyRequested = isMemoryRevokingRequested();
         if (!alreadyRequested && revocableAllocated.get() > 0) {
-            memoryRevokingRequestedFuture.set(null);
+            memoryRevokingRequestedFuture.complete(null);
             return revocableAllocated.get();
         }
         if (alreadyRequested) {
@@ -251,11 +256,11 @@ public class OperatorMemoryAllocatorCtx implements MemoryAllocatorCtx {
         if (!revocable) {
             return;
         }
-        SettableFuture<?> currentFuture = memoryRevokingRequestedFuture;
+        BlockingFuture<?> currentFuture = memoryRevokingRequestedFuture;
         if (!currentFuture.isDone()) {
             return;
         }
-        memoryRevokingRequestedFuture = SettableFuture.create();
+        memoryRevokingRequestedFuture = BlockingFuture.create(BlockingReason.WAIT_FOR_MEMORY_REVOKE);
     }
 
     private void updateMemoryFuture(ListenableFuture<?> memoryPoolFuture,
@@ -268,17 +273,17 @@ public class OperatorMemoryAllocatorCtx implements MemoryAllocatorCtx {
                 MemoryNotFuture<?> settableFuture = MemoryNotFuture.create();
                 targetFutureReference.set(settableFuture);
             }
-            MemoryNotFuture<?> finalMemoryFuture = targetFutureReference.get();
+            MemoryNotFuture finalMemoryFuture = targetFutureReference.get();
             // Create a new future, so that this operator can un-block before the pool does, if it's moved to a new pool
             Futures.addCallback(memoryPoolFuture, new FutureCallback<Object>() {
                 @Override
                 public void onSuccess(Object result) {
-                    finalMemoryFuture.set(null);
+                    finalMemoryFuture.set(MEMORY_BLOCKING_STATE);
                 }
 
                 @Override
                 public void onFailure(Throwable t) {
-                    finalMemoryFuture.set(null);
+                    finalMemoryFuture.set(MEMORY_BLOCKING_STATE);
                 }
             }, directExecutor());
         }

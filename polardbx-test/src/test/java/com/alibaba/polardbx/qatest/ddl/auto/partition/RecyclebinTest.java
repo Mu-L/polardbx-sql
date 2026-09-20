@@ -180,7 +180,7 @@ public class RecyclebinTest extends BaseAutoPartitionNewPartition {
             try {
                 c.createStatement().execute(sql);
             } catch (Throwable t) {
-                Assert.assertTrue(t.getMessage().contains("truncate table with gsi is not supported in recycle bin"));
+                Assert.assertTrue(t.getMessage().contains("truncate table with gsi/cci is not supported in recycle bin"));
             }
 
             sql = "/!TDDL:ENABLE_RECYCLEBIN=false*/truncate table " + name;

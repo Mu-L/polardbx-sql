@@ -851,6 +851,10 @@ public class ReaderImpl implements Reader {
     return new OrcTail(fileTailBuilder.build(), buffer, modificationTime, this);
   }
 
+  public OrcTail getOrcTail() {
+    return tail;
+  }
+
   @Override
   public ByteBuffer getSerializedFileFooter() {
     return tail.getSerializedTail();

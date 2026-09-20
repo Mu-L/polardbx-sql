@@ -22,7 +22,6 @@ import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.Strong;
-import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinRelType;
@@ -60,8 +59,7 @@ public class OuterJoinAssocRule extends RelOptRule {
     public OuterJoinAssocRule(RelBuilderFactory relBuilderFactory) {
         super(
             operand(LogicalJoin.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION,
-                operand(LogicalJoin.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION, any()),
-                operand(RelSubset.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION, any())),
+                operand(LogicalJoin.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION, any())),
             relBuilderFactory, "OuterJoinReorderRule:OuterJoinAssocRule");
     }
 
@@ -92,7 +90,7 @@ public class OuterJoinAssocRule extends RelOptRule {
         final Join bottomJoin = call.rel(1);
         final RelNode relA = bottomJoin.getLeft();
         final RelNode relB = bottomJoin.getRight();
-        final RelSubset relC = call.rel(2);
+        final RelNode relC = topJoin.getRight();
         final RelOptCluster cluster = topJoin.getCluster();
         final RexBuilder rexBuilder = cluster.getRexBuilder();
 

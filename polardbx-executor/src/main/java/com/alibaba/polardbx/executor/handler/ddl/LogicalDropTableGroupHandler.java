@@ -25,11 +25,17 @@ import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalDropTableGroup;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.DropTableGroupPreparedData;
 import com.alibaba.polardbx.optimizer.tablegroup.TableGroupInfoManager;
+import org.apache.calcite.sql.SqlCreateTableGroup;
+import org.apache.calcite.sql.SqlDropTableGroup;
+
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Created by luoyanxin.
@@ -40,6 +46,15 @@ public class LogicalDropTableGroupHandler extends LogicalCommonDdlHandler {
 
     public LogicalDropTableGroupHandler(IRepository repo) {
         super(repo);
+    }
+
+    @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        SqlDropTableGroup sqlDropTableGroup = (SqlDropTableGroup) logicalDdlPlan.getNativeSqlNode();
+        String tableGroupName = sqlDropTableGroup.getTableGroupName();
+        exclusiveResources.add(concatWithDot(logicalDdlPlan.getSchemaName(), tableGroupName));
     }
 
     @Override

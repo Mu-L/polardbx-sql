@@ -16,8 +16,10 @@
 
 package com.alibaba.polardbx.executor.mpp.operator.factory;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.operator.Executor;
 import com.alibaba.polardbx.executor.operator.HashAggExec;
+import com.alibaba.polardbx.executor.operator.PreHashAggExec;
 import com.alibaba.polardbx.executor.operator.spill.SpillerFactory;
 import com.alibaba.polardbx.executor.operator.util.AggregateUtils;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -26,7 +28,7 @@ import com.alibaba.polardbx.optimizer.core.expression.calc.Aggregator;
 import com.alibaba.polardbx.optimizer.core.rel.HashAgg;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.utils.CalciteUtils;
-import com.alibaba.polardbx.statistics.RuntimeStatHelper;
+import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.util.ImmutableBitSet;
 
 import java.util.ArrayList;
@@ -74,19 +76,46 @@ public class HashAggExecutorFactory extends ExecutorFactory {
             int estimateHashTableSize = AggregateUtils.estimateHashTableSize(expectedOutputRowCount, context);
 
             for (int j = 0; j < parallelism; j++) {
+                final int parallelism = j;
                 MemoryAllocatorCtx memoryAllocator = context.getMemoryPool().getMemoryAllocatorCtx();
 
                 List<Aggregator> aggregators =
                     AggregateUtils.convertAggregators(hashAgg.getAggCallList(), context, memoryAllocator);
 
-                HashAggExec exec =
-                    new HashAggExec(inputDataTypes, groups, aggregators, CalciteUtils.getTypes(hashAgg.getRowType()),
-                        estimateHashTableSize, spillerFactory, context);
+                Executor exec;
+
+                if (useStreamPartialAgg(context)) {
+                    exec =
+                        new PreHashAggExec(inputDataTypes, groups, aggregators,
+                            CalciteUtils.getTypes(hashAgg.getRowType()),
+                            estimateHashTableSize, context);
+                } else {
+
+                    exec =
+                        new HashAggExec(inputDataTypes, groups, aggregators,
+                            CalciteUtils.getTypes(hashAgg.getRowType()),
+                            estimateHashTableSize, spillerFactory, context);
+                }
+
                 registerRuntimeStat(exec, hashAgg, context);
                 executors.add(exec);
             }
         }
         return executors;
+    }
+
+    public boolean useStreamPartialAgg(ExecutionContext context) {
+        // there is no need to support spill in STREAM Partial Agg
+        boolean useStreamPartialAgg = spillerFactory == null;
+        for (AggregateCall aggCall : hashAgg.getAggCallList()) {
+            if (aggCall.isDistinct()) {
+                useStreamPartialAgg = false;
+                break;
+            }
+        }
+        // there is no need to support spill in STREAM Partial Agg
+        return hashAgg.isPartial() && context.getParamManager()
+            .getBoolean(ConnectionParams.ENABLE_STREAM_PARTIAL_AGG) && useStreamPartialAgg;
     }
 
     public static int[] convertFrom(ImmutableBitSet gp) {

@@ -34,13 +34,10 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.Collection;
 import java.util.HashMap;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.stream.Collectors;
 
 /**
  * @author chenghui.lch
@@ -52,29 +49,22 @@ public class InstConfigAccessor extends AbstractAccessor {
     private static final String SELECT_INST_CONFIGS_BY_INST_ID =
         "select * from " + INST_CONFIG_TABLE + " where inst_id=?";
 
+    private static final String QUERY_INST_CONFIGS_BY_INST_ID_AND_PARAM_KEY =
+        "select * from " + INST_CONFIG_TABLE + " where inst_id=? and param_key=?";
+
     private static final String INSERT_IGNORE_INST_CONFIGS =
-        "insert ignore into " + INST_CONFIG_TABLE
-            + " (id, gmt_created, gmt_modified, inst_id, param_key, param_val) values (null, now(), now(), ?, ?, ?)";
+        "insert ignore into " + INST_CONFIG_TABLE + " (inst_id, param_key, param_val) values (?, ?, ?)";
 
     private static final String DELETE_INST_CONFIGS_BY_INST_ID =
         "delete from " + INST_CONFIG_TABLE + " where inst_id=?";
 
-    private static final String UPDATE_INST_CONFIGS_BY_INST_ID_AND_PARAM_KEY =
-        "replace into " + INST_CONFIG_TABLE + " set param_val=?, param_key=?, inst_id=?";
-
-    private static final String QUERY_INST_CONFIGS_BY_INST_ID_AND_PARAM_KEY =
-        "select * from " + INST_CONFIG_TABLE + " where inst_id=? and param_key=?";
+    private static final String REPLACE_INST_CONFIG =
+        "replace into " + INST_CONFIG_TABLE + "set param_val=?, param_key=?, inst_id=?";
 
     // Whether the oldest record was created within 1 day.
-    private static final String QUERY_OLDEST_RECORD =
+    public static final String QUERY_OLDEST_RECORD =
         "select now() < date_add(gmt_created, interval 1 day) from " + INST_CONFIG_TABLE
             + " order by gmt_created limit 1;";
-
-    private static final String QUERY_INST_CONFIGS_BY_PARAM_KEYS =
-        "select * from " + INST_CONFIG_TABLE + " where inst_id = ? and param_key in (%s)";
-
-    private static final String UPDATE_INST_CONFIGS_BY_INST_ID_AND_PARAM_KEY_AND_GMT_MODIFIED =
-        "replace into " + INST_CONFIG_TABLE + " set param_val=?, param_key=?, inst_id=? where gmt_modified<?";
 
     public List<InstConfigRecord> getAllInstConfigsByInstId(String instId) {
         try {
@@ -87,43 +77,6 @@ public class InstConfigAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 INST_CONFIG_TABLE,
                 e.getMessage());
-        }
-    }
-
-    public List<InstConfigRecord> queryByParamKeys(String instId, Collection<String> paramKeys) {
-        Map<Integer, ParameterContext> params = new HashMap<>(3);
-        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, instId);
-        String keys = paramKeys
-            .stream()
-            .map(InstConfigAccessor::wrapWithQuotes)
-            .collect(Collectors.joining(","));
-        try {
-            return MetaDbUtil.query(String.format(QUERY_INST_CONFIGS_BY_PARAM_KEYS, keys), params,
-                InstConfigRecord.class,
-                connection);
-        } catch (Exception e) {
-            logger.error("Failed to query the system table " + INST_CONFIG_TABLE + ", query: "
-                + QUERY_INST_CONFIGS_BY_PARAM_KEYS, e);
-            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
-                INST_CONFIG_TABLE,
-                e.getMessage());
-        }
-    }
-
-    private static String wrapWithQuotes(String s) {
-        return "'" + s + "'";
-    }
-
-    public List<InstConfigRecord> queryByParamKey(String instId, String paramKey) {
-        Map<Integer, ParameterContext> params = new HashMap<>(3);
-        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, instId);
-        MetaDbUtil.setParameter(2, params, ParameterMethod.setString, paramKey);
-        try {
-            DdlMetaLogUtil.logSql(QUERY_INST_CONFIGS_BY_INST_ID_AND_PARAM_KEY, params);
-            return MetaDbUtil.query(QUERY_INST_CONFIGS_BY_INST_ID_AND_PARAM_KEY, params, InstConfigRecord.class,
-                connection);
-        } catch (Exception e) {
-            throw GeneralUtil.nestedException(e);
         }
     }
 
@@ -156,43 +109,8 @@ public class InstConfigAccessor extends AbstractAccessor {
         }
     }
 
-    private int[] updateBySql(String sql, List<Map<Integer, ParameterContext>> paramsList) {
-        try {
-            return MetaDbUtil.update(sql, paramsList, connection);
-        } catch (Throwable t) {
-            logger.error("Failed to update the system table " + INST_CONFIG_TABLE, t);
-            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, t, "update", INST_CONFIG_TABLE,
-                t.getMessage());
-        }
-    }
-
-    public int[] updateInstConfigValue(String instId, Properties props) {
-        List<Map<Integer, ParameterContext>> paramsList = new LinkedList<>();
-        for (String paramKey : props.stringPropertyNames()) {
-            Map<Integer, ParameterContext> params = new HashMap<>();
-            MetaDbUtil.setParameter(1, params, ParameterMethod.setString, props.getProperty(paramKey));
-            MetaDbUtil.setParameter(2, params, ParameterMethod.setString, paramKey);
-            MetaDbUtil.setParameter(3, params, ParameterMethod.setString, instId);
-            paramsList.add(params);
-        }
-        int[] updateResult = updateBySql(UPDATE_INST_CONFIGS_BY_INST_ID_AND_PARAM_KEY, paramsList);
-        MetaDbConfigManager.getInstance().notify(MetaDbDataIdBuilder.getInstConfigDataId(instId), connection);
-        return updateResult;
-    }
-
-    public int[] updateInstConfigValueByGmtModified(String instId, Properties props, String gmtModified) {
-        List<Map<Integer, ParameterContext>> paramsList = new LinkedList<>();
-        for (String paramKey : props.stringPropertyNames()) {
-            Map<Integer, ParameterContext> params = new HashMap<>();
-            MetaDbUtil.setParameter(1, params, ParameterMethod.setString, props.getProperty(paramKey));
-            MetaDbUtil.setParameter(2, params, ParameterMethod.setString, paramKey);
-            MetaDbUtil.setParameter(3, params, ParameterMethod.setString, instId);
-            MetaDbUtil.setParameter(4, params, ParameterMethod.setString, gmtModified);
-            paramsList.add(params);
-        }
-        int[] updateResult = updateBySql(UPDATE_INST_CONFIGS_BY_INST_ID_AND_PARAM_KEY_AND_GMT_MODIFIED, paramsList);
-        MetaDbConfigManager.getInstance().notify(MetaDbDataIdBuilder.getInstConfigDataId(instId), connection);
-        return updateResult;
+    public void updateInstConfigValue(String instId, Properties props) {
+        upsertConfigValue(instId, props, INST_CONFIG_TABLE, REPLACE_INST_CONFIG, MetaDbDataIdBuilder.getInstConfigDataId(instId));
     }
 
     /***
@@ -208,5 +126,18 @@ public class InstConfigAccessor extends AbstractAccessor {
             logger.error("Failed to query the system table " + INST_CONFIG_TABLE, e);
         }
         return -1;
+    }
+
+    public List<InstConfigRecord> queryByParamKey(String instId, String paramKey) {
+        Map<Integer, ParameterContext> params = new HashMap<>(3);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, instId);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setString, paramKey);
+        try {
+            DdlMetaLogUtil.logSql(QUERY_INST_CONFIGS_BY_INST_ID_AND_PARAM_KEY, params);
+            return MetaDbUtil.query(QUERY_INST_CONFIGS_BY_INST_ID_AND_PARAM_KEY, params, InstConfigRecord.class,
+                connection);
+        } catch (Exception e) {
+            throw GeneralUtil.nestedException(e);
+        }
     }
 }

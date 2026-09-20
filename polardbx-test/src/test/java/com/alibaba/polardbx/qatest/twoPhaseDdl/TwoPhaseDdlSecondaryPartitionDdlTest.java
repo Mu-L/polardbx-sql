@@ -56,6 +56,7 @@ public class TwoPhaseDdlSecondaryPartitionDdlTest extends DDLBaseNewDBTestCase {
 
     @Before
     public void init() {
+        this.schemaPrefix = "secondary_part_ddl_";
         this.tableName = schemaPrefix + randomTableName("two_phase", 4);
     }
 

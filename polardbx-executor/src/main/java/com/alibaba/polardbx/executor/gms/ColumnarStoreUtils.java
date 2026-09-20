@@ -43,7 +43,12 @@ public class ColumnarStoreUtils {
     public static final int IMPLICIT_COLUMN_CNT = 2;
 
     public static ExecutionContext newEcForCache() {
+        return newEcForCache(null);
+    }
+
+    public static ExecutionContext newEcForCache(ExecutionContext originEc) {
         ExecutionContext ec = new ExecutionContext();
+        ec.setTraceId(originEc == null ? "" : originEc.getTraceId());
         if (ConfigDataMode.isColumnarMode()) {
             ec.setEnableOssCompatible(Boolean.FALSE);
         } else {

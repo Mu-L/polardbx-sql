@@ -1,0 +1,41 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+set ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC=true;
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=true;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+create table jumpstring_hash_table(id varchar(10))
+partition by udf_hash(
+  `id` with udf_params(
+    'dble/jumpstringhash',
+  '{
+"partitionCount" : "4",
+"hashSlice":"0:2"
+}'
+  )
+)
+partitions 4;
+select part_route('','jumpstring_hash_table',null);
+part_route('', 'jumpstring_hash_table', NULL)
+p1
+select part_route('','jumpstring_hash_table','aa');
+part_route('', 'jumpstring_hash_table', 'aa')
+p3
+select part_route('','jumpstring_hash_table','bb');
+part_route('', 'jumpstring_hash_table', 'bb')
+p3
+select part_route('','jumpstring_hash_table','jj');
+part_route('', 'jumpstring_hash_table', 'jj')
+p3
+select part_route('','jumpstring_hash_table','rr');
+part_route('', 'jumpstring_hash_table', 'rr')
+p1
+select part_route('','jumpstring_hash_table','zz');
+part_route('', 'jumpstring_hash_table', 'zz')
+p4
+select part_route('','jumpstring_hash_table','');
+part_route('', 'jumpstring_hash_table', '')
+p1
+select part_route('','jumpstring_hash_table',NULL);
+part_route('', 'jumpstring_hash_table', NULL)
+p1

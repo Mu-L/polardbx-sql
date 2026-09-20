@@ -17,7 +17,9 @@
 package com.alibaba.polardbx.executor.utils;
 
 import com.alibaba.polardbx.common.model.Group;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
+import com.alibaba.polardbx.druid.sql.ast.AutoIncrementType;
 import com.alibaba.polardbx.druid.sql.ast.SQLDataTypeImpl;
 import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
 import com.alibaba.polardbx.druid.sql.ast.SQLIndexDefinition;
@@ -159,7 +161,9 @@ public class DrdsToAutoTableCreationSqlUtil {
         Map<String, Integer> columnsLengthsInBytes =
             tryToCaclColumnsMaxLenInBytes(drdsCreateTableStatement.getColumnDefinitions(), tableCharset);
 
-        handleDrdsModeSequence(drdsCreateTableStatement);
+        final boolean useGroupSeqAsDefault = ec.getParamManager()
+            .getBoolean(ConnectionParams.GROUP_SEQ_AS_DEFAULT);
+        handleDrdsModeSequence(drdsCreateTableStatement, useGroupSeqAsDefault);
 
         MySqlCreateTableStatement autoModeCreateTableStatement = drdsCreateTableStatement.clone();
 
@@ -365,16 +369,19 @@ public class DrdsToAutoTableCreationSqlUtil {
     /**
      * convert all kinds of sequence to default sequence(for auto mode, it's new sequence)
      */
-    private static void handleDrdsModeSequence(MySqlCreateTableStatement statement) {
+    private static void handleDrdsModeSequence(MySqlCreateTableStatement statement, boolean useGroupSeqAsDefault) {
         List<SQLTableElement> elementList = statement.getTableElementList();
         for (int i = 0; i < elementList.size(); i++) {
             SQLTableElement element = elementList.get(i);
             if (element instanceof SQLColumnDefinition) {
                 SQLColumnDefinition colDef = (SQLColumnDefinition) element;
                 if (colDef.isAutoIncrement()) {
-                    colDef.setUnitCount(null);
-                    colDef.setUnitIndex(null);
-                    colDef.setSequenceType(null);
+                    boolean isGroupSeq = useGroupSeqAsDefault && colDef.getSequenceType() == AutoIncrementType.GROUP;
+                    if (!isGroupSeq) {
+                        colDef.setUnitCount(null);
+                        colDef.setUnitIndex(null);
+                        colDef.setSequenceType(null);
+                    }
                 }
             }
         }

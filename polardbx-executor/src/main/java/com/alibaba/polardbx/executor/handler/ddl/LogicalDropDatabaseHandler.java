@@ -47,7 +47,7 @@ import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalDropDatabase;
 import com.alibaba.polardbx.optimizer.locality.LocalityManager;
-import com.alibaba.polardbx.optimizer.utils.ITimestampOracle;
+import com.alibaba.polardbx.common.trx.ITimestampOracle;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.sql.SqlDropDatabase;
 
@@ -80,6 +80,11 @@ public class LogicalDropDatabaseHandler extends HandlerCommon {
         final SqlDropDatabase sqlDropDatabase = (SqlDropDatabase) dropDatabase.getNativeSqlNode();
         final LocalityManager localityManager = LocalityManager.getInstance();
 
+        Boolean dryRunDdlOption = false;
+        if (sqlDropDatabase.getDryrun() != null) {
+            dryRunDdlOption = sqlDropDatabase.getDryrun();
+        }
+
         final String dbName = sqlDropDatabase.getDbName().getSimple();
         final DbInfoRecord dbInfo = DbInfoManager.getInstance().getDbInfo(dbName);
 
@@ -109,13 +114,14 @@ public class LogicalDropDatabaseHandler extends HandlerCommon {
         dropDbInfo.setVersionId(DdlUtils.generateVersionId(executionContext));
         dropDbInfo.setConnId(connId);
         dropDbInfo.setTraceId(executionContext.getTraceId());
+        dropDbInfo.setDryRunDdl(dryRunDdlOption);
 
         DbTopologyManager.dropLogicalDb(dropDbInfo);
         CdcManagerHelper.getInstance()
             .notifyDdl(dbName, null, sqlDropDatabase.getKind().name(), executionContext.getOriginSql(),
                 null, CdcDdlMarkVisibility.Public, buildExtendParameter(executionContext));
 
-        SyncManagerHelper.syncWithDefaultDB(new BaselineInvalidateSchemaSyncAction(dbName), SyncScope.ALL);
+        SyncManagerHelper.syncWithDefaultDb(new BaselineInvalidateSchemaSyncAction(dbName), SyncScope.ALL);
 
         if (dbInfo != null) {
             localityManager.deleteLocalityOfDb(dbInfo.id);
@@ -129,7 +135,8 @@ public class LogicalDropDatabaseHandler extends HandlerCommon {
     }
 
     private void dropGsiStatistic(String dbName) {
-        SyncManagerHelper.sync(new GsiStatisticsSyncAction(dbName, null, null, GsiStatisticsSyncAction.DELETE_SCHEMA),
+        SyncManagerHelper.syncWithDefaultDb(
+            new GsiStatisticsSyncAction(dbName, null, null, GsiStatisticsSyncAction.DELETE_SCHEMA),
             SyncScope.ALL);
     }
 
@@ -139,7 +146,7 @@ public class LogicalDropDatabaseHandler extends HandlerCommon {
             dropProcedureParamsInfo(connection, dbName);
 
             // sync unregister procedure info
-            SyncManagerHelper.sync(new DropDbRelatedProcedureSyncAction(dbName),
+            SyncManagerHelper.syncThrowExceptions(new DropDbRelatedProcedureSyncAction(dbName),
                 TddlConstants.INFORMATION_SCHEMA,
                 SyncScope.ALL);
         } catch (Exception ex) {
@@ -172,7 +179,7 @@ public class LogicalDropDatabaseHandler extends HandlerCommon {
 
             List<List<Object>> res;
             try {
-                res = ChangeSetUtils.queryGroup(ec, schemaName, groupName, ChangeSetUtils.SQL_CALL_CHANGESET_STATS);
+                res = ChangeSetUtils.queryGroup(schemaName, groupName, null, ChangeSetUtils.SQL_CALL_CHANGESET_STATS);
             } catch (Throwable e) {
                 continue;
             }

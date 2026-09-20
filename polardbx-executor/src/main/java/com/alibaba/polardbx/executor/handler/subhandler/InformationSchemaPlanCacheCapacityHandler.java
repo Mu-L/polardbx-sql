@@ -48,7 +48,8 @@ public class InformationSchemaPlanCacheCapacityHandler extends BaseVirtualViewSu
     @Override
     public Cursor handle(VirtualView virtualView, ExecutionContext executionContext, ArrayResultCursor cursor) {
         List<List<Map<String, Object>>> results =
-            SyncManagerHelper.sync(new FetchPlanCacheCapacitySyncAction(), SystemDbHelper.INFO_SCHEMA_DB_NAME,
+            SyncManagerHelper.syncIgnoreExceptions(new FetchPlanCacheCapacitySyncAction(),
+                SystemDbHelper.INFO_SCHEMA_DB_NAME,
                 SyncScope.CURRENT_ONLY);
 
         for (List<Map<String, Object>> nodeRows : results) {
@@ -62,12 +63,14 @@ public class InformationSchemaPlanCacheCapacityHandler extends BaseVirtualViewSu
                 final String cacheKeyCount = DataTypes.StringType.convertFrom(row.get("CACHE_KEY_CNT"));
                 final Long capacity = DataTypes.LongType.convertFrom(row.get("CAPACITY"));
 
-                cursor.addRow(new Object[] {
-                    host,
-                    schema,
-                    cacheKeyCount,
-                    capacity
-                });
+                if (!schema.equalsIgnoreCase(SystemDbHelper.CDC_DB_NAME)) {
+                    cursor.addRow(new Object[] {
+                        host,
+                        schema,
+                        cacheKeyCount,
+                        capacity
+                    });
+                }
             }
         }
         return cursor;

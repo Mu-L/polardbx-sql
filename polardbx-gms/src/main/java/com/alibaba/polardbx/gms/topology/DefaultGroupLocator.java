@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.gms.topology;
 
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.gms.locality.LocalityDesc;
 import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.google.common.collect.Lists;
@@ -23,9 +25,11 @@ import com.google.common.collect.Lists;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 
 /**
  * @author chenghui.lch
@@ -47,7 +51,9 @@ public class DefaultGroupLocator implements GroupLocator {
         this.groupPhyDbMap = groupPhyDbMap;
         this.storageInstList = storageInstList;
         this.localityDesc = localityDesc;
-        if (localityDesc.holdEmptyDnList()) {
+        if (localityDesc.hasProxyConfig()) {
+            this.singleGroupStorageInstList = singleGroupStorageInstList;
+        } else if (localityDesc.holdEmptyDnList()) {
             this.singleGroupStorageInstList = singleGroupStorageInstList;
         } else if (localityDesc.hasStoragePoolDefinition()) {
             //TODO by yijn in merge: judge whethere statement hold storage pool
@@ -60,17 +66,26 @@ public class DefaultGroupLocator implements GroupLocator {
     @Override
     public void buildGroupLocationInfo(Map<String, List<String>> normalGroupMap,
                                        Map<String, List<String>> singleGroupMap) {
-        buildGroupLocationInfoInner(this.groupPhyDbMap, normalGroupMap, singleGroupMap);
+        buildGroupLocationInfoInner(this.groupPhyDbMap, normalGroupMap, singleGroupMap, null);
+    }
+
+    @Override
+    public void buildGroupLocationInfo(Map<String, List<String>> normalGroupMap,
+                                       Map<String, List<String>> singleGroupMap,
+                                       Map<String, List<String>> proxyConfig) {
+        buildGroupLocationInfoInner(this.groupPhyDbMap, normalGroupMap, singleGroupMap, proxyConfig);
     }
 
     protected void buildGroupLocationInfoInner(Map<String, String> groupPhyDbMap,
                                                Map<String, List<String>> outputNormalGroupMap,
-                                               Map<String, List<String>> outputSingleGroupMap) {
+                                               Map<String, List<String>> outputSingleGroupMap,
+                                               Map<String, List<String>> proxyConfig) {
 
         List<String> groupKeyList = Lists.newArrayList();
         groupKeyList.addAll(groupPhyDbMap.keySet());
         Collections.sort(groupKeyList);
         int instCount = storageInstList.size();
+        Set<String> storageInstSet = new HashSet<>(storageInstList);
         int grpCnt = groupPhyDbMap.size();
         int curInstIdx = 0;
 
@@ -82,8 +97,18 @@ public class DefaultGroupLocator implements GroupLocator {
             boolean isSingleGrp = GroupInfoUtil.isSingleGroup(grpVal);
             boolean isFirstPartGroup = i == 0 && this.dbType == DbInfoRecord.DB_TYPE_NEW_PART_DB;
             String storageInstId = null;
-
-            if (isFirstPartGroup) {
+            if (proxyConfig != null && this.dbType == DbInfoRecord.DB_TYPE_NEW_PART_DB) {
+                String phyDbVal = groupPhyDbMap.get(grpVal);
+                if (proxyConfig.get(grpVal) != null) {
+                    storageInstId = proxyConfig.get(grpVal).get(0);
+                }
+                if (storageInstId == null || !storageInstSet.contains(storageInstId)) {
+                    String errMsg = String.format(" we can't find storage inst id for db %s", phyDbVal);
+                    throw new TddlRuntimeException(ErrorCode.ERR_NO_FOUND_DATASOURCE, errMsg);
+                }
+                List<String> grpList = outputNormalGroupMap.computeIfAbsent(storageInstId, x -> Lists.newArrayList());
+                grpList.add(grpVal);
+            } else if (isFirstPartGroup) {
                 int singeInstIdx = Math.abs(Math.abs(rand.nextInt()) % singleInstCnt);
                 storageInstId = singleGroupStorageInstList.get(singeInstIdx);
 
@@ -92,7 +117,6 @@ public class DefaultGroupLocator implements GroupLocator {
                 if (idx != -1) {
                     curInstIdx = (idx + 1) % instCount;
                 }
-
                 outputNormalGroupMap.computeIfAbsent(storageInstId, x -> Lists.newArrayList()).add(grpVal);
             } else if (!isSingleGrp || singleInstCnt == 0) {
                 // Get Storage Inst id for non-single group

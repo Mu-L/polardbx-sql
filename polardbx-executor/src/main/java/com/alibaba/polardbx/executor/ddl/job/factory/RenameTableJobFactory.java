@@ -24,28 +24,30 @@ import com.alibaba.polardbx.executor.ddl.job.factory.util.FactoryUtils;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameGsiUpdateMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameTableAddMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameTablePhyDdlTask;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameTableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameTableUpdateMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameTableValidateTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.TablesSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcDdlMarkTask;
 import com.alibaba.polardbx.executor.ddl.job.task.columnar.RenameColumnarTableMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.validator.GsiValidator;
 import com.alibaba.polardbx.executor.ddl.job.validator.TableValidator;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.google.common.collect.ImmutableList;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
-public class RenameTableJobFactory extends DdlJobFactory {
+public class RenameTableJobFactory extends OnlineDdlJobFactory {
 
     private final PhysicalPlanData physicalPlanData;
     private final String schemaName;
@@ -56,6 +58,7 @@ public class RenameTableJobFactory extends DdlJobFactory {
     protected final Long versionId;
 
     public RenameTableJobFactory(PhysicalPlanData physicalPlanData, ExecutionContext executionContext, Long versionId) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.META_ONLY);
         this.physicalPlanData = physicalPlanData;
         this.schemaName = physicalPlanData.getSchemaName();
         this.logicalTableName = physicalPlanData.getLogicalTableName();
@@ -93,7 +96,7 @@ public class RenameTableJobFactory extends DdlJobFactory {
         } else {
             updateMetaTask =
                 new RenameTableUpdateMetaTask(schemaName, logicalTableName, newLogicalTableName, needRenamePhyTables);
-            syncTask = new RenameTableSyncTask(schemaName, logicalTableName, newLogicalTableName);
+            syncTask = new TablesSyncTask(schemaName, ImmutableList.of(logicalTableName, newLogicalTableName), true);
         }
 
         SchemaManager schemaManager = executionContext.getSchemaManager(schemaName);
@@ -150,5 +153,4 @@ public class RenameTableJobFactory extends DdlJobFactory {
     @Override
     protected void sharedResources(Set<String> resources) {
     }
-
 }

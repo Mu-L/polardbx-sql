@@ -17,20 +17,16 @@
 package com.alibaba.polardbx.executor.ddl.job.task.tablegroup;
 
 import com.alibaba.fastjson.annotation.JSONCreator;
-import com.alibaba.polardbx.common.ddl.newengine.DdlType;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
+import com.alibaba.polardbx.executor.ddl.job.task.columnar.ColumnarTaskUtil;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarPartitionEvolutionAccessor;
-import com.alibaba.polardbx.gms.metadb.table.ColumnarPartitionEvolutionRecord;
-import com.alibaba.polardbx.gms.metadb.table.ColumnarPartitionStatus;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableEvolutionAccessor;
-import com.alibaba.polardbx.gms.metadb.table.ColumnarTableEvolutionRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingAccessor;
-import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingRecord;
 import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
 import com.alibaba.polardbx.gms.partition.TablePartRecordInfoContext;
 import com.alibaba.polardbx.gms.partition.TablePartitionAccessor;
@@ -50,7 +46,6 @@ import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfoUtil;
 import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
-import com.google.common.collect.ImmutableList;
 import lombok.Getter;
 
 import java.sql.Connection;
@@ -77,7 +72,7 @@ public class AlterTableGroupRefreshMetaBaseTask extends BaseDdlTask {
     }
 
     public void executeImpl(Connection metaDbConnection, ExecutionContext executionContext) {
-        refreshTableGroupMeta(metaDbConnection);
+        refreshTableGroupMeta(metaDbConnection, executionContext);
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
     }
@@ -106,7 +101,7 @@ public class AlterTableGroupRefreshMetaBaseTask extends BaseDdlTask {
      * 5、cleanup partition_group_delta
      * 6、cleanup table_partition_delta
      */
-    public void refreshTableGroupMeta(Connection metaDbConnection) {
+    public void refreshTableGroupMeta(Connection metaDbConnection, ExecutionContext ec) {
 
         boolean isUpsert = true;
         TableGroupConfig tableGroupConfig = OptimizerContext.getContext(schemaName).getTableGroupInfoManager()
@@ -181,8 +176,9 @@ public class AlterTableGroupRefreshMetaBaseTask extends BaseDdlTask {
              * At this time, the old partInfo and the new partInfo has been switched,
              * so the new partInfo should be got from tableMeta.getPartitionInfo()
              */
-            PartitionInfo newPartitionInfo = tableMeta.getPartitionInfo();
-            PartitionInfo partitionInfo = tableMeta.getNewPartitionInfo();
+            List<PartitionInfo> partitionInfos = getPartitionInfos(tableMeta, ec);
+            PartitionInfo newPartitionInfo = partitionInfos.get(1);
+            PartitionInfo partitionInfo = partitionInfos.get(0);
             if (newPartitionInfo == null || partitionInfo == null) {
                 throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
                     String.format("Failed to get partition info for table[%s]", tableName));
@@ -261,8 +257,9 @@ public class AlterTableGroupRefreshMetaBaseTask extends BaseDdlTask {
                 isUpsert, false);
 
             // 4.5 insert new columnar table partition to columnar evolution
-            updateColumnarEvolutionSysTables(tableMeta, tableName, tablePartitionAccessor, columnarTableMappingAccessor,
-                columnarPartitionEvolutionAccessor, columnarTableEvolutionAccessor, versionId, jobId);
+            ColumnarTaskUtil.updateColumnarEvolutionSysTables(schemaName, tableName, tablePartitionAccessor,
+                columnarTableMappingAccessor, columnarPartitionEvolutionAccessor, columnarTableEvolutionAccessor,
+                versionId, jobId);
 
             // 5、cleanup table_partition_delta
             //only delete the related records
@@ -296,8 +293,8 @@ public class AlterTableGroupRefreshMetaBaseTask extends BaseDdlTask {
         SchemaManager schemaManager = executionContext.getSchemaManager(schemaName);
         for (String tableName : tableGroupConfig.getAllTables()) {
             TableMeta tableMeta = schemaManager.getTable(tableName);
-            if (tableMeta.isGsi()) {
-                //all the gsi table version change will be behavior by primary table
+            if (tableMeta.isGsi() || tableMeta.isColumnar()) {
+                //all the gsi/cci table version change will be behavior by primary table
                 assert
                     tableMeta.getGsiTableMetaBean() != null && tableMeta.getGsiTableMetaBean().gsiMetaBean != null;
                 tableName = tableMeta.getGsiTableMetaBean().gsiMetaBean.tableName;
@@ -314,104 +311,11 @@ public class AlterTableGroupRefreshMetaBaseTask extends BaseDdlTask {
         }
     }
 
-    public void updateColumnarEvolutionSysTables(TableMeta tableMeta, String tableName,
-                                                 TablePartitionAccessor tablePartitionAccessor,
-                                                 ColumnarTableMappingAccessor columnarTableMappingAccessor,
-                                                 ColumnarPartitionEvolutionAccessor columnarPartitionEvolutionAccessor,
-                                                 ColumnarTableEvolutionAccessor columnarTableEvolutionAccessor,
-                                                 long versionId, long jobId) {
-        if (tableMeta.isColumnar()) {
-            // Insert column evolution records
-            List<TablePartitionRecord> partitionRecords =
-                tablePartitionAccessor.getTablePartitionsByDbNameTbName(schemaName, tableName, false);
-
-            List<ColumnarTableMappingRecord> records =
-                columnarTableMappingAccessor.querySchemaIndex(schemaName, tableName);
-            if (records == null || records.isEmpty()) {
-                throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
-                    String.format("Failed to get columnar table mapping for table[%s]", tableName));
-            }
-
-            // get columnar table mapping
-            ColumnarTableMappingRecord record = records.get(0);
-            // get latest columnar table evolution
-            ColumnarTableEvolutionRecord columnarTableEvolutionRecord =
-                columnarTableEvolutionAccessor.queryTableIdLatest(record.tableId).get(0);
-
-            List<Long> partitions = columnarTableEvolutionRecord.partitions;
-
-            List<ColumnarPartitionEvolutionRecord> columnarPartitionEvolutionRecords =
-                columnarPartitionEvolutionAccessor.queryIdsWithOrder(columnarTableEvolutionRecord.partitions);
-
-            // find first changed partition(except logic partition)
-            int pos = getPos(partitionRecords, columnarPartitionEvolutionRecords);
-
-            List<ColumnarPartitionEvolutionRecord> partitionEvolutionRecords = new ArrayList<>();
-
-            // old logic partition
-//            columnarPartitionEvolutionRecords.get(0).status = ColumnarPartitionStatus.ABSENT.getValue();
-//            partitionEvolutionRecords.add(columnarPartitionEvolutionRecords.get(0));
-            // new logic partition
-            partitionEvolutionRecords.add(
-                new ColumnarPartitionEvolutionRecord(record.tableId, partitionRecords.get(0).partName,
-                    versionId, jobId, partitionRecords.get(0), ColumnarPartitionStatus.PUBLIC.getValue()));
-
-            // other level partitions
-            for (int i = pos; i < partitionRecords.size(); i++) {
-                partitionEvolutionRecords.add(
-                    new ColumnarPartitionEvolutionRecord(record.tableId, partitionRecords.get(i).partName,
-                        versionId, jobId, partitionRecords.get(i), ColumnarPartitionStatus.PUBLIC.getValue()));
-            }
-//            for (int i = pos; i < columnarPartitionEvolutionRecords.size(); i++) {
-//                columnarPartitionEvolutionRecords.get(i).status = ColumnarPartitionStatus.ABSENT.getValue();
-//                partitionEvolutionRecords.add(columnarPartitionEvolutionRecords.get(i));
-//            }
-
-            if (!partitionEvolutionRecords.isEmpty()) {
-                columnarPartitionEvolutionAccessor.insert(partitionEvolutionRecords);
-                columnarPartitionEvolutionAccessor.updatePartitionIdAsId(record.tableId, versionId);
-            }
-
-            partitionEvolutionRecords =
-                columnarPartitionEvolutionAccessor.queryTableIdAndNotInStatus(record.tableId, versionId,
-                    ColumnarPartitionStatus.ABSENT.getValue());
-
-            // first partition must be logic partition
-            partitions = partitions.subList(1, Math.min(pos, partitionRecords.size()));
-            partitions.add(0, partitionEvolutionRecords.get(0).id);
-            // other partitions
-            for (int i = 1; i < partitionEvolutionRecords.size(); i++) {
-                partitions.add(partitionEvolutionRecords.get(i).id);
-            }
-
-            ColumnarTableEvolutionRecord latest =
-                columnarTableEvolutionAccessor.queryTableIdLatest(record.tableId).get(0);
-            latest.versionId = versionId;
-            latest.commitTs = Long.MAX_VALUE;
-            latest.ddlType = DdlType.ALTER_TABLE.name();
-            latest.ddlJobId = jobId;
-            latest.partitions = partitions;
-            columnarTableEvolutionAccessor.insert(ImmutableList.of(latest));
-            columnarTableMappingAccessor.updateVersionId(versionId, record.tableId);
-        }
-    }
-
-    private static int getPos(List<TablePartitionRecord> partitionRecords,
-                              List<ColumnarPartitionEvolutionRecord> columnarPartitionEvolutionRecords) {
-        int pos = -1;
-        // first is logic partition
-        for (int i = 1; i < Math.min(columnarPartitionEvolutionRecords.size(), partitionRecords.size()); i++) {
-            ColumnarPartitionEvolutionRecord evolutionRecord = columnarPartitionEvolutionRecords.get(i);
-            TablePartitionRecord partitionRecord = partitionRecords.get(i);
-            if (!TablePartitionRecord.isPartitionRecordEqual(partitionRecord, evolutionRecord.partitionRecord)) {
-                pos = i;
-                break;
-            }
-        }
-        // add/drop column last
-        if (pos == -1) {
-            pos = columnarPartitionEvolutionRecords.size();
-        }
-        return pos;
+    protected List<PartitionInfo> getPartitionInfos(TableMeta tableMeta, ExecutionContext ec) {
+        List<PartitionInfo> partitionInfos = new ArrayList<>();
+        //index0: oldPartitionInfo, index1: newPartitionInfo
+        partitionInfos.add(tableMeta.getNewPartitionInfo());
+        partitionInfos.add(tableMeta.getPartitionInfo());
+        return partitionInfos;
     }
 }

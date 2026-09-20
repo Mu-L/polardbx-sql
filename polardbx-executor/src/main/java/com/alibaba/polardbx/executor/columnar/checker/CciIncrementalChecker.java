@@ -42,13 +42,9 @@ import static com.alibaba.polardbx.gms.topology.SystemDbHelper.DEFAULT_DB_NAME;
 /**
  * @author yaozhili
  */
-public class CciIncrementalChecker implements ICciChecker {
+public class CciIncrementalChecker extends AbstractCciChecker {
     private static final Logger logger = LoggerFactory.getLogger(CciIncrementalChecker.class);
-    private final String schemaName;
-    private final String tableName;
-    private final String indexName;
     private long finalCount;
-    private final List<String> errors = new ArrayList<>();
     /**
      * Record connection id in use.
      * If the checking thread is interrupted, kill these connections.
@@ -74,15 +70,22 @@ public class CciIncrementalChecker implements ICciChecker {
             + "SOCKET_TIMEOUT=259200000 MPP_TASK_MAX_RUN_TIME=259200000 %s */";
 
     public CciIncrementalChecker(String schemaName, String tableName, String indexName) {
-        this.schemaName = schemaName;
-        this.tableName = tableName;
-        this.indexName = indexName;
+        super(schemaName, tableName, indexName);
     }
 
     @Override
-    public void check(ExecutionContext ec, long tsoV0, long tsoV1, long innodbTso) throws Throwable {
-        SQLRecorderLogger.ddlLogger.info("[Incremental checker] Check cci increment for " + schemaName + "."
-            + indexName + " " + tsoV0 + " " + tsoV1 + " " + innodbTso);
+    protected void log(String msg) {
+        SQLRecorderLogger.ddlLogger.warn("[CCI Incremental Checker] " + msg);
+    }
+
+    @Override
+    protected void error(String msg, Throwable t) {
+        SQLRecorderLogger.ddlLogger.error("[CCI Incremental Checker] " + msg, t);
+    }
+
+    @Override
+    public void checkIncrement(ExecutionContext ec, long tsoV0, long tsoV1, long innodbTso) throws Throwable {
+        log("Check cci increment for " + schemaName + "." + indexName + " " + tsoV0 + " " + tsoV1 + " " + innodbTso);
         long begin = System.nanoTime();
         ExecutorContext executorContext = ExecutorContext.getContext(schemaName);
         IInnerConnectionManager connectionManager = executorContext.getInnerConnectionManager();
@@ -156,8 +159,7 @@ public class CciIncrementalChecker implements ICciChecker {
             }
         } finally {
             connections.clear();
-            SQLRecorderLogger.ddlLogger.info(
-                "[Incremental checker] Total cost: " + (System.nanoTime() - begin) / 1_000_000 + " ms");
+            log("Total cost: " + (System.nanoTime() - begin) / 1_000_000 + " ms");
         }
     }
 
@@ -261,15 +263,13 @@ public class CciIncrementalChecker implements ICciChecker {
         Map<String, IDeltaReadOption> deltaFiles;
         // Get v0 orc files.
         long startTime = System.nanoTime();
-        final long tableId = ICciChecker.getTableId(schemaName, indexName);
-        SQLRecorderLogger.ddlLogger.info(
-            "[Incremental checker] Get table id cost: " + (System.nanoTime() - startTime) / 1_000_000 + " ms");
+        final long tableId = getTableId(schemaName, indexName);
+        log("Get table id cost: " + (System.nanoTime() - startTime) / 1_000_000 + " ms");
 
         startTime = System.nanoTime();
         Map<String, Set<String>> orcFilesV0 = new HashMap<>();
-        List<FilesRecordSimplifiedWithChecksum> filesRecords = ICciChecker.getFilesRecords(tsoV0, tableId, schemaName);
-        SQLRecorderLogger.ddlLogger.info(
-            "[Incremental checker] Get all files cost: " + (System.nanoTime() - startTime) / 1_000_000 + " ms");
+        List<FilesRecordSimplifiedWithChecksum> filesRecords = getFilesRecords(tsoV0, tableId, schemaName);
+        log("Get all files cost: " + (System.nanoTime() - startTime) / 1_000_000 + " ms");
 
         for (FilesRecordSimplified filesRecord : filesRecords) {
             String fileName = filesRecord.fileName;
@@ -284,7 +284,7 @@ public class CciIncrementalChecker implements ICciChecker {
         // Get v1 orc/csv/del files.
         Map<String, Set<String>> orcFilesV1 = new HashMap<>();
         Set<String> deltaFilesV1 = new HashSet<>();
-        filesRecords = ICciChecker.getFilesRecords(tsoV1, tableId, schemaName);
+        filesRecords = getFilesRecords(tsoV1, tableId, schemaName);
         for (FilesRecordSimplified filesRecord : filesRecords) {
             String fileName = filesRecord.fileName;
             String partitionName = filesRecord.partitionName.toLowerCase();
@@ -308,9 +308,7 @@ public class CciIncrementalChecker implements ICciChecker {
         orcFiles = ExecUtils.diffOrcFiles(orcFilesV0, orcFilesV1);
         startTime = System.nanoTime();
         deltaFiles = ExecUtils.diffDeltaFiles(tsoV0, tsoV1, tableId, deltaFilesV1);
-        SQLRecorderLogger.ddlLogger.info(
-            "[Incremental checker] Get all delta files info cost: "
-                + (System.nanoTime() - startTime) / 1_000_000 + " ms");
+        log("Get all delta files info cost: " + (System.nanoTime() - startTime) / 1_000_000 + " ms");
 
         // Make sure all partitions in orcFiles has corresponding delta files.
         for (Map.Entry<String, Set<String>> entry : orcFiles.entrySet()) {
@@ -328,12 +326,11 @@ public class CciIncrementalChecker implements ICciChecker {
         try (Statement stmt = conn.createStatement()) {
             conn.addExecutionContextInjectHook(
                 (e) -> {
-                    ((ExecutionContext) e).setCheckingCci(true);
                     ((ExecutionContext) e).setReadOrcFiles(orcFiles);
                     ((ExecutionContext) e).setReadDeltaFiles(deltaFiles);
                 });
             StringBuilder sb = new StringBuilder();
-            ICciChecker.setBasicHint(ec, sb);
+            setBasicHint(ec, sb);
             sb.append(" SNAPSHOT_TS=")
                 .append(tsoV1)
                 .append(" ");
@@ -341,9 +338,7 @@ public class CciIncrementalChecker implements ICciChecker {
             String hint = String.format(COLUMNAR_HINT, sb);
             startTime = System.nanoTime();
             rs = stmt.executeQuery(hint + " select * from " + tableName + " force index(" + indexName + ") ");
-            SQLRecorderLogger.ddlLogger.info(
-                "[Incremental checker] Get incremental insert data cost: "
-                    + (System.nanoTime() - startTime) / 1_000_000 + " ms");
+            log("Get incremental insert data cost: " + (System.nanoTime() - startTime) / 1_000_000 + " ms");
             return rs;
         }
     }
@@ -354,12 +349,12 @@ public class CciIncrementalChecker implements ICciChecker {
             String report = String.format("Incremental check passed for schema %s, table %s, index %s , "
                 + "increment insert count %s ", schemaName, tableName, indexName, finalCount);
             reports.add(report);
-            SQLRecorderLogger.ddlLogger.info(report);
+            log(report);
             return true;
         }
         String report = String.format("Incremental check failed for schema %s, table %s, index %s",
             schemaName, tableName, indexName);
-        SQLRecorderLogger.ddlLogger.warn(report);
+        log(report);
         reports.add(report);
         reports.addAll(errors);
         return false;

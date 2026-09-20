@@ -284,13 +284,13 @@ public class AlterTableGroupTestBase extends DDLBaseNewDBTestCase {
     protected void reCreateDatabase(Connection tddlConnection, String targetDbName) {
         String tddlSql = "use information_schema";
         JdbcUtil.executeUpdateSuccess(tddlConnection, tddlSql);
-        tddlSql = "drop database if exists " + targetDbName;
+        tddlSql = "drop database if exists `" + targetDbName + "`";
         JdbcUtil.executeUpdateSuccess(tddlConnection, tddlSql);
         tddlSql = "use information_schema";
         JdbcUtil.executeUpdateSuccess(tddlConnection, tddlSql);
-        tddlSql = "create database " + targetDbName + " " + partitionMode;
+        tddlSql = "create database `" + targetDbName + "` " + partitionMode;
         JdbcUtil.executeUpdateSuccess(tddlConnection, tddlSql);
-        tddlSql = "use " + targetDbName;
+        tddlSql = "use `" + targetDbName + "`";
         JdbcUtil.executeUpdateSuccess(tddlConnection, tddlSql);
         tddlSql = "create tablegroup " + tableGroupName;
         JdbcUtil.executeUpdateSuccess(tddlConnection, tddlSql);
@@ -333,7 +333,7 @@ public class AlterTableGroupTestBase extends DDLBaseNewDBTestCase {
                     + "ENABLE_SLIDE_WINDOW_BACKFILL = true, SLIDE_WINDOW_SPLIT_SIZE = 2, SLIDE_WINDOW_TIME_INTERVAL = 1000, PHYSICAL_BACKFILL_ENABLE=false)*/";
         } else if (usePhysicalBackfill) {
             sqlHint =
-                "/*+TDDL:CMD_EXTRA(PHYSICAL_BACKFILL_ENABLE=true, PHYSICAL_BACKFILL_SPEED_TEST=false)*/";
+                "/*+TDDL:CMD_EXTRA(PHYSICAL_BACKFILL_ENABLE=true, PHYSICAL_BACKFILL_SPEED_TEST=false, TABLE_SIZE_THRESHOLD_TO_ENABLE_PHYSICAL_BACKFILL=1)*/";
         }
         String ignoreErr = "The DDL job has been cancelled or interrupted";
         Set<String> ignoreErrs = new HashSet<>();
@@ -1043,7 +1043,8 @@ subpartition p3sp3 values less than (2023)
             int id = 0;
 
             executeDml(
-                String.format("insert ignore into `%s`(id,c_int_32,c_varchar,c_char,c_datetime) values(%d,%d,%s,%s,%s);",
+                String.format(
+                    "insert ignore into `%s`(id,c_int_32,c_varchar,c_char,c_datetime) values(%d,%d,%s,%s,%s);",
                     tableName, id, c_int_32, "'abc1'", "'def" + i + "'", "'" + year + "-01-01 00:00:00'")
                 , connection);
         });
@@ -1090,7 +1091,8 @@ subpartition p3sp3 values in ((31,'def3'), (32,'def3'), (33,'def3'))
             int id = 0;
 
             executeDml(
-                String.format("insert ignore into `%s`(id,c_int_32,c_varchar,c_char,c_datetime) values(%d,%d,%s,%s,%s);",
+                String.format(
+                    "insert ignore into `%s`(id,c_int_32,c_varchar,c_char,c_datetime) values(%d,%d,%s,%s,%s);",
                     tableName, id, c_int_32, "'abc1'", c_char, "'" + year + "-01-01 00:00:00'")
                 , connection);
         });
@@ -1137,7 +1139,8 @@ subpartition p3sp3 values in ((31,'def3'), (32,'def3'), (33,'def3'))
             int id = 0;
 
             executeDml(
-                String.format("insert ignore into `%s`(id,c_int_32,c_varchar,c_char,c_datetime) values(%d,%d,%s,%s,%s);",
+                String.format(
+                    "insert ignore into `%s`(id,c_int_32,c_varchar,c_char,c_datetime) values(%d,%d,%s,%s,%s);",
                     tableName, id, c_int_32, "'abc1'", c_char, "'" + year + "-01-01 00:00:00'")
                 , connection);
         });
@@ -1173,7 +1176,8 @@ partition p3 values less than ('2023-01-01 00:00:00',31) subpartitions 3
             int id = 0;
 
             executeDml(
-                String.format("insert ignore into `%s`(id,c_int_32,c_varchar,c_char,c_datetime) values(%d,%d,%s,%s,%s);",
+                String.format(
+                    "insert ignore into `%s`(id,c_int_32,c_varchar,c_char,c_datetime) values(%d,%d,%s,%s,%s);",
                     tableName, id, c_int_32, "'abc1'", c_char, "'" + year + "-01-01 00:00:00'")
                 , connection);
         });
@@ -1209,7 +1213,8 @@ partition p3 values less than (2023) subpartitions 3
             int id = 0;
 
             executeDml(
-                String.format("insert ignore into `%s`(id,c_int_32,c_varchar,c_char,c_datetime) values(%d,%d,%s,%s,%s);",
+                String.format(
+                    "insert ignore into `%s`(id,c_int_32,c_varchar,c_char,c_datetime) values(%d,%d,%s,%s,%s);",
                     tableName, id, c_int_32, "'abc1'", c_char, "'" + year + "-01-01 00:00:00'")
                 , connection);
         });

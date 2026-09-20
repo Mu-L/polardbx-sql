@@ -21,8 +21,11 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.utils.AddressUtils;
 import com.alibaba.polardbx.common.utils.Pair;
+import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.druid.util.HexBin;
 import com.alibaba.polardbx.gms.config.impl.MetaDbInstConfigManager;
+import com.alibaba.polardbx.gms.topology.DbGroupInfoManager;
+import com.alibaba.polardbx.gms.topology.DbGroupInfoRecord;
 import com.alibaba.polardbx.gms.topology.DbTopologyManager;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import org.apache.commons.lang.StringUtils;
@@ -153,7 +156,7 @@ public class GroupInfoUtil {
         return DbTopologyManager.getDbNameByGroupKey(groupName);
     }
 
-    public static String buildGroupNameFromPhysicalDb(String physicalDb) {
+    public static String buildGroupNameFromPhysicalDbForDebug(String physicalDb) {
         /**
          * 修复正常physicalDb的名字后缀带s时，被误strip掉的问题
          **/
@@ -168,12 +171,29 @@ public class GroupInfoUtil {
         return groupName.toUpperCase();
     }
 
-    public static String buildPhysicalDbNameFromGroupName(String groupName) {
+    public static String buildPhysicalDbNameFromGroupNameOnlyForTest(String groupName) {
         if (groupName == null) {
             return null;
         }
         String physicalDbName = groupName.substring(0, groupName.length() - "_group".length());
         return physicalDbName.toLowerCase();
+    }
+
+    public static String buildPhysicalDbNameFromGroupName(String schemaName, String groupName) {
+        if (!ConfigDataMode.isPolarDbX()) {
+            return buildPhysicalDbNameFromGroupNameOnlyForTest(groupName);
+        }
+        DbGroupInfoRecord dbGroupInfoRecord = DbGroupInfoManager.getInstance().queryGroupInfo(schemaName, groupName);
+        String phyDbName = dbGroupInfoRecord == null ? null : dbGroupInfoRecord.phyDbName;
+        if (StringUtils.isEmpty(phyDbName)) {
+            dbGroupInfoRecord = DbTopologyManager.getDbGroupInfoFromMetaDb(schemaName, groupName);
+            phyDbName = dbGroupInfoRecord == null ? null : dbGroupInfoRecord.phyDbName;
+        }
+        if (StringUtils.isEmpty(phyDbName)) {
+            return buildPhysicalDbNameFromGroupNameOnlyForTest(groupName);
+        } else {
+            return phyDbName;
+        }
     }
 
     public static boolean isSingleGroup(String grpName) {

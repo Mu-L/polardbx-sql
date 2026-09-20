@@ -23,7 +23,11 @@ import com.alibaba.polardbx.common.TrxIdGenerator;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ITransactionPolicy;
+import com.alibaba.polardbx.common.jdbc.MasterSlave;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.ConnectionProperties;
+import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
@@ -38,6 +42,11 @@ import com.alibaba.polardbx.executor.cursor.AbstractCursor;
 import com.alibaba.polardbx.executor.cursor.ResultCursor;
 import com.alibaba.polardbx.executor.mdl.MdlContext;
 import com.alibaba.polardbx.executor.mdl.MdlManager;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
+import com.alibaba.polardbx.gms.privilege.ActiveRoles;
+import com.alibaba.polardbx.gms.privilege.PolarAccountInfo;
+import com.alibaba.polardbx.gms.privilege.PolarPrivManager;
 import com.alibaba.polardbx.gms.privilege.PolarPrivUtil;
 import com.alibaba.polardbx.gms.topology.DbTopologyManager;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
@@ -48,6 +57,7 @@ import com.alibaba.polardbx.matrix.jdbc.TResultSet;
 import com.alibaba.polardbx.net.ClusterAcceptIdGenerator;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.parse.privilege.PrivilegeContext;
 import com.alibaba.polardbx.optimizer.core.CursorMeta;
 import com.alibaba.polardbx.optimizer.core.row.ArrayRow;
 import com.alibaba.polardbx.optimizer.core.row.Row;
@@ -81,6 +91,8 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
+import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_FAIL_INNER_CONN_CLOSE;
+
 /**
  * 1. 一个精简版的Jdbc Connection实现，用于封装和屏蔽TConnection的细节，方便编写业务逻辑代码，提供原生JDBC的使用体验
  * 2. 如果有在Server内部使用逻辑库表、分布式事务等的需求，可以使用该Connection
@@ -91,6 +103,8 @@ import java.util.function.Consumer;
 public class InnerConnection implements IInnerConnection {
     private final static Logger logger = LoggerFactory.getLogger(InnerConnection.class);
 
+    // Inner sql executed by InnerConnection
+    public final static Logger innerSqlLogger = LoggerFactory.getLogger(InnerConnection.class);
     private final Long id;
     private final String schemaName;
     private final TConnection connection;
@@ -106,7 +120,8 @@ public class InnerConnection implements IInnerConnection {
     private final List<Consumer<Object>> executionContextInjectHooks = new ArrayList<>();
     private final AtomicBoolean statementExecuting = new AtomicBoolean(false);
     private long lastActiveTime = System.nanoTime();
-    private String user = PolarPrivUtil.POLAR_ROOT + '@' + "127.0.0.1";
+    private String user = PolarPrivUtil.POLAR_ROOT;
+    private String callerHost = "127.0.0.1";
     private String sqlSample = null;
     final private Map<String, Object> extraServerVariables = new HashMap<>();
     private AtomicBoolean isClosed = new AtomicBoolean(false);
@@ -125,6 +140,77 @@ public class InnerConnection implements IInnerConnection {
 
     public InnerConnection(String schemaName, boolean recordCommitTso) throws SQLException {
         this(schemaName, recordCommitTso, Maps.newHashMap());
+    }
+
+    /**
+     * Constructor that executes SQL with the specified user's privileges
+     * and optional master/slave routing preference.
+     * All caller-specific behavior is injected via ExecutionContext hooks
+     * so that beforeExecution() stays generic.
+     */
+    public InnerConnection(String schemaName, String user, String host,
+                           MasterSlave masterSlave) throws SQLException {
+        this(schemaName, user, host, masterSlave, Maps.newHashMap(), ActiveRoles.defaultValue(),
+            Connection.TRANSACTION_REPEATABLE_READ, false);
+    }
+
+    /**
+     * Constructor used by internal callers that need to preserve selected
+     * session semantics and the caller's active roles.
+     */
+    public InnerConnection(String schemaName, String user, String host,
+                           MasterSlave masterSlave, Map<String, Object> sessionVariables,
+                           ActiveRoles activeRoles, int transactionIsolation,
+                           boolean readOnly) throws SQLException {
+        this(schemaName, false, sessionVariables);
+        this.user = user;
+        this.callerHost = host;
+        this.connection.setUser(user);
+        this.connection.setFrontendConnectionInfo(user + "@" + host + ":00000");
+        this.connection.setTransactionIsolation(transactionIsolation);
+        this.connection.setReadOnly(readOnly);
+
+        addExecutionContextInjectHook(ec -> {
+            ExecutionContext execCtx = (ExecutionContext) ec;
+
+            // Override clientIp with actual caller host
+            execCtx.setClientIp(host);
+
+            // Enforce caller's privileges instead of running as polardbx_root
+            try {
+                PrivilegeContext privCtx = new PrivilegeContext();
+                privCtx.setUser(user);
+                privCtx.setHost(host);
+                privCtx.setSchema(execCtx.getSchemaName());
+                PolarAccountInfo polarUserInfo =
+                    PolarPrivManager.getInstance().getMatchUser(user, host);
+                if (polarUserInfo != null) {
+                    privCtx.setPolarUserInfo(polarUserInfo);
+                }
+                privCtx.setActiveRoles(activeRoles == null ? ActiveRoles.defaultValue() : activeRoles);
+                execCtx.setPrivilegeContext(privCtx);
+                execCtx.setPrivilegeMode(true);
+                execCtx.setInnerConnection(false);
+            } catch (Exception e) {
+                logger.warn("Failed to set privilege context for user: " + user, e);
+                execCtx.setInnerConnection(true);
+            }
+
+            // Master/slave routing hint
+            if (masterSlave != null) {
+                Map<String, Object> extraCmds = execCtx.getExtraCmds();
+                switch (masterSlave) {
+                case MASTER_ONLY:
+                    extraCmds.put(ConnectionProperties.MASTER, Boolean.TRUE);
+                    break;
+                case SLAVE_ONLY:
+                    extraCmds.put(ConnectionProperties.SLAVE, Boolean.TRUE);
+                    break;
+                default:
+                    break;
+                }
+            }
+        });
     }
 
     public InnerConnection(String schemaName,
@@ -149,12 +235,16 @@ public class InnerConnection implements IInnerConnection {
             ds.init();
         }
 
+        if (InstConfUtil.getBool(ConnectionParams.ENABLE_USERNAME_PUSHDOWN)) {
+            serverVariables.put("polarx_slow_query_pushdown_username", user);
+        }
+
         // 对connection进行初始化，部分参数直接写死，使用root用户
         OptimizerContext.setContext(ds.getConfigHolder().getOptimizerContext());
         this.connection = (TConnection) ds.getConnection();
         this.connection.setMdlContext(mdlContext);
         this.connection.setUser(user);
-        this.connection.setFrontendConnectionInfo(user + ':' + "1111");
+        this.connection.setFrontendConnectionInfo(user + "@127.0.0.1:00000");
         this.connection.setId(id);
         this.connection.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
         this.connection.setAutoCommit(autoCommit);
@@ -226,10 +316,21 @@ public class InnerConnection implements IInnerConnection {
                     if (trxPolicyStr.equalsIgnoreCase("archive")) {
                         this.setTrxPolicy(ITransactionPolicy.ARCHIVE);
                         this.connection.setTrxPolicy(ITransactionPolicy.ARCHIVE, false);
+                    } else if (trxPolicyStr.equalsIgnoreCase("xa")) {
+                        this.setTrxPolicy(ITransactionPolicy.XA);
+                        this.connection.setTrxPolicy(ITransactionPolicy.XA, false);
+                    } else if (trxPolicyStr.equalsIgnoreCase("NO_TRANSACTION")) {
+                        this.setTrxPolicy(ITransactionPolicy.NO_TRANSACTION);
+                        this.connection.setTrxPolicy(ITransactionPolicy.NO_TRANSACTION, false);
                     }
                 }
                 continue;
             }
+
+            if (key.equalsIgnoreCase("polardbx_server_id")) {
+                setExtraServerVariables(key, val);
+            }
+
             sessionVariablesToBeSetOnDn.put(key, val);
         }
 
@@ -371,14 +472,17 @@ public class InnerConnection implements IInnerConnection {
                 if (exception instanceof SQLException) {
                     throw (SQLException) exception;
                 } else {
-                    throw new RuntimeException("sql execute error!", exception);
+                    // Propagate the original error message for better diagnostics
+                    String errMsg = exception.getMessage() != null
+                        ? exception.getMessage() : "sql execute error!";
+                    throw new RuntimeException(errMsg, exception);
                 }
             } else {
                 return result;
             }
         } finally {
             // Record sql.
-            SQLRecorderLogger.innerSqlLogger.info(SQLRecorderLogger.innerSqlFormat.format(new Object[] {
+            innerSqlLogger.info(SQLRecorderLogger.innerSqlFormat.format(new Object[] {
                 sql,
                 success ? "0" : "1",
                 // in milliseconds
@@ -416,6 +520,11 @@ public class InnerConnection implements IInnerConnection {
         connection.getExecutionContext().setInternalSystemSql(false);
         connection.getExecutionContext().setLogicalSqlStartTimeInMs(System.currentTimeMillis());
         connection.getExecutionContext().setLogicalSqlStartTime(System.nanoTime());
+        connection.getExecutionContext().setInnerConnection(true);
+        // Set session variables or hint.
+        ParamManager paramManager = connection.getExecutionContext().getParamManager();
+        ParamManager.setVal(paramManager.getProps(), ConnectionParams.ENABLE_TSO_OPT, "false", true);
+        ParamManager.setVal(paramManager.getProps(), ConnectionParams.ENABLE_ASYNC_COMMIT_80, "false", true);
     }
 
     @Override
@@ -567,6 +676,9 @@ public class InnerConnection implements IInnerConnection {
 
     @Override
     public void close() {
+        if (FailPoint.isKeyEnable(FP_FAIL_INNER_CONN_CLOSE)) {
+            throw new RuntimeException(FP_FAIL_INNER_CONN_CLOSE);
+        }
         if (!isClosed.compareAndSet(false, true)) {
             return;
         }
@@ -866,7 +978,7 @@ public class InnerConnection implements IInnerConnection {
 
     public void releaseAutoSavepoint() {
         if (null != this.connection && null != this.connection.getTrx()) {
-            this.connection.getTrx().releaseAutoSavepoint();
+            this.connection.getTrx().releaseAutoSavepoint(traceId);
         }
     }
 

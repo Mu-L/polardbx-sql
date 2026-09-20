@@ -83,7 +83,8 @@ public class DefaultLazyEvaluatorBuilder implements LazyEvaluatorBuilder<Chunk, 
         return this;
     }
 
-    public DefaultLazyEvaluatorBuilder rewriteIn(Map<Integer, Map<String, List>> rewriterParams, String currentPhyTable) {
+    public DefaultLazyEvaluatorBuilder rewriteIn(Map<Integer, Map<String, List>> rewriterParams,
+                                                 String currentPhyTable) {
         this.rewriterParams = rewriterParams;
         this.currentPhyTable = currentPhyTable;
         return this;
@@ -91,11 +92,6 @@ public class DefaultLazyEvaluatorBuilder implements LazyEvaluatorBuilder<Chunk, 
 
     @Override
     public LazyEvaluator<Chunk, BitSet> build() {
-        RexNode root = VectorizedExpressionBuilder.rewriteRoot(rexNode, true);
-
-        InputRefTypeChecker inputRefTypeChecker = new InputRefTypeChecker(inputTypes);
-        root = root.accept(inputRefTypeChecker);
-
         Rex2VectorizedExpressionVisitor converter =
             new Rex2VectorizedExpressionVisitor(context, inputTypes.size());
 
@@ -103,7 +99,7 @@ public class DefaultLazyEvaluatorBuilder implements LazyEvaluatorBuilder<Chunk, 
             converter.rewriteIn(rewriterParams, currentPhyTable);
         }
 
-        VectorizedExpression condition = root.accept(converter);
+        VectorizedExpression condition = rexNode.accept(converter);
 
         // Data types of intermediate results or final results.
         List<DataType<?>> filterOutputTypes = converter.getOutputDataTypes();

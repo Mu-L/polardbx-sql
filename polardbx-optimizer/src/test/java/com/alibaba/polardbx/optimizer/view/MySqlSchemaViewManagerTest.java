@@ -28,4 +28,17 @@ public class MySqlSchemaViewManagerTest {
             Assert.assertTrue(mysqlSchemaViewManager.select("user").getColumnList().contains("password"));
         }
     }
+
+    @Test
+    public void testDbAndTablesPrivViewsFilterCatalogGrants() {
+        MysqlSchemaViewManager mysqlSchemaViewManager = MysqlSchemaViewManager.getInstance();
+        try (MockedStatic<ConfigDataMode> configDataModeMockedStatic = mockStatic(ConfigDataMode.class)) {
+            configDataModeMockedStatic.when(() -> ConfigDataMode.isPolarDbX()).thenReturn(true);
+            mysqlSchemaViewManager.doInit();
+            Assert.assertTrue(
+                mysqlSchemaViewManager.select("db").getViewDefinition().contains("where catalog_name = ''"));
+            Assert.assertTrue(
+                mysqlSchemaViewManager.select("tables_priv").getViewDefinition().contains("where catalog_name = ''"));
+        }
+    }
 }

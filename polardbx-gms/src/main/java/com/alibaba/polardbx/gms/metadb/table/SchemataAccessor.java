@@ -18,7 +18,9 @@ package com.alibaba.polardbx.gms.metadb.table;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
+import com.alibaba.polardbx.common.jdbc.ParameterMethod;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.gms.metadb.GmsSystemTables;
@@ -53,6 +55,8 @@ public class SchemataAccessor extends AbstractAccessor {
 
     private static final String SELECT_ALL = SELECT_CLAUSE + SCHEMATA_TABLE;
 
+    private static final String SELECT_EXTERNAL = SELECT_TABLES + " where `schema_name` like ? limit 1";
+
     private static final String DELETE_TABLES = "delete from " + SCHEMATA_TABLE + WHERE_CLAUSE;
 
     public int insert(SchemataRecord record) {
@@ -82,6 +86,20 @@ public class SchemataAccessor extends AbstractAccessor {
         List<SchemataRecord> records = null;
         try {
             records = MetaDbUtil.query(SELECT_ALL, params, SchemataRecord.class, connection);
+        } catch (Exception e) {
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
+                SCHEMATA_TABLE, e.getMessage());
+        }
+        return records;
+    }
+
+    public List<SchemataRecord> queryExternal() {
+        Map<Integer, ParameterContext> params = new HashMap<>();
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString,
+            "%" + ExternalNameValidator.SCHEMA_SEPARATOR + "%");
+        List<SchemataRecord> records;
+        try {
+            records = MetaDbUtil.query(SELECT_EXTERNAL, params, SchemataRecord.class, connection);
         } catch (Exception e) {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 SCHEMATA_TABLE, e.getMessage());

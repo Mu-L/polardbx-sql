@@ -26,6 +26,7 @@ import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.archive.writer.OSSBackFillExecutor;
 import com.alibaba.polardbx.executor.archive.writer.OSSBackFillWriterTask;
 import com.alibaba.polardbx.executor.ddl.job.meta.TableMetaChanger;
+import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseGmsTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.gsi.GsiBackfillManager;
@@ -54,8 +55,9 @@ import java.util.Set;
 
 @Getter
 @TaskName(name = "MoveDataToFileStoreTask")
-public class MoveDataToFileStoreTask extends BaseGmsTask {
+public class MoveDataToFileStoreTask extends BaseDdlTask {
 
+    private final String logicalTableName;
     private final String loadTableSchema;
     private final String loadTableName;
 
@@ -71,7 +73,8 @@ public class MoveDataToFileStoreTask extends BaseGmsTask {
                                    String targetTableName,
                                    String loadTableSchema, String loadTableName, Engine tableEngine,
                                    List<String> filterPartNames) {
-        super(schemaName, logicalTableName);
+        super(schemaName);
+        this.logicalTableName = logicalTableName;
         this.loadTableSchema = loadTableSchema;
         this.loadTableName = loadTableName;
         this.tableEngine = tableEngine;
@@ -82,7 +85,7 @@ public class MoveDataToFileStoreTask extends BaseGmsTask {
     }
 
     @Override
-    protected void executeImpl(Connection metaDbConnection, ExecutionContext executionContext) {
+    protected void beforeTransaction(ExecutionContext executionContext) {
         executionContext.setBackfillId(getTaskId());
         executionContext.setTaskId(getTaskId());
         try (Connection metaDbConn = MetaDbUtil.getConnection()) {
@@ -108,7 +111,7 @@ public class MoveDataToFileStoreTask extends BaseGmsTask {
     }
 
     @Override
-    protected void rollbackImpl(Connection metaDbConnection, ExecutionContext executionContext) {
+    protected void duringRollbackTransaction(Connection metaDbConnection, ExecutionContext executionContext) {
         List<FilesRecord> files =
             TableMetaChanger.lockOssFileMeta(metaDbConnection, getTaskId(), schemaName, logicalTableName);
         for (FilesRecord record : files) {

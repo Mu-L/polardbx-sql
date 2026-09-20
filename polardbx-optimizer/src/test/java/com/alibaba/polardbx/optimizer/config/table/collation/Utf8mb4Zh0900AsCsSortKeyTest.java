@@ -126,10 +126,6 @@ public class Utf8mb4Zh0900AsCsSortKeyTest {
             try {
                 Assert.assertTrue(equals(full_answer_with_pad, result, maxLen));
 
-                System.out.println("success: ");
-                print(result, maxLen);
-                System.out.println();
-
             } catch (AssertionError e) {
                 System.out.println("max len:");
                 System.out.println(maxLen);
@@ -252,10 +248,6 @@ public class Utf8mb4Zh0900AsCsSortKeyTest {
 
         try {
             Assert.assertTrue(equals(results, expected, results.length));
-
-            System.out.println("success: ");
-            print(results, results.length);
-            System.out.println();
 
         } catch (AssertionError e) {
             System.out.println("fail: ");

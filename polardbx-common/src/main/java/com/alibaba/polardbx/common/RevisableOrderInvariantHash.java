@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.common;
 
+import org.openjdk.jol.info.ClassLayout;
+
 /**
  * @author yaozhili
  * <p>
@@ -31,6 +33,9 @@ package com.alibaba.polardbx.common;
  * See {@link RevisableOrderInvariantHashTest} for usage examples.
  */
 public class RevisableOrderInvariantHash implements IOrderInvariantHash {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(RevisableOrderInvariantHash.class).instanceSize();
+    private static final int MOD_INSTANCE_SIZE = ClassLayout.parseClass(ModularInverseSolver.class).instanceSize();
+    private static final int LONG_INSTANCE_SIZE = ClassLayout.parseClass(Long.class).instanceSize();
     private static final long p = 3860031L;
     private static final long q = 2779L;
     private static final long r = 2L;
@@ -43,6 +48,11 @@ public class RevisableOrderInvariantHash implements IOrderInvariantHash {
      * Similarly, When n DynamicHash are added, remember to remove (n-1) 0 from the result.
      */
     private Long result = 0L;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + MOD_INSTANCE_SIZE + LONG_INSTANCE_SIZE;
+    }
 
     public static long mod(long x) {
         // Calculate x mod 2^31 equals getting the low 30-bit of x.

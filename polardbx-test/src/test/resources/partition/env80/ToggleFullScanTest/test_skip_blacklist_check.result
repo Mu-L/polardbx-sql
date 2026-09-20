@@ -1,0 +1,495 @@
+## DISABLE_FAST_SQL_PARSER
+drop database if exists test_skip_blacklist_db
+create database test_skip_blacklist_db mode=auto
+use test_skip_blacklist_db
+create table t_range(id int, name varchar(20))
+partition by range(id)
+(
+  partition p1 values less than(10),
+  partition p2 values less than(20),
+  partition p3 values less than(30)
+)
+insert into t_range values(1,'a'),(5,'b'),(15,'c'),(25,'d')
+create table t_sub(id int, name varchar(20))
+partition by range(id)
+subpartition by hash(name) subpartitions 2
+(
+  partition p1 values less than(10),
+  partition p2 values less than(30)
+)
+insert into t_sub values(1,'a'),(5,'b'),(15,'c'),(25,'d')
+create table t_join(id int, val varchar(20))
+partition by range(id)
+(
+  partition p1 values less than(10),
+  partition p2 values less than(30)
+)
+insert into t_join values(1,'x'),(15,'y')
+alter table t_range disable full_scan
+alter table t_sub disable full_scan
+alter table t_join disable full_scan
+select table_schema, table_name, allow_full_scan from information_schema.table_properties where table_schema = 'test_skip_blacklist_db' order by table_name
+table_schema,table_name,allow_full_scan
+test_skip_blacklist_db,t_join,0
+test_skip_blacklist_db,t_range,0
+test_skip_blacklist_db,t_sub,0
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_range order by id
+is not allowed to perform full table scan
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_sub order by id
+is not allowed to perform full table scan
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_join order by id
+is not allowed to perform full table scan
+select * from t_range where 1=2 order by id
+id,name
+select * from t_range where 1>2 order by id
+id,name
+select * from t_range where 1!=1 order by id
+id,name
+select * from t_sub where 1=2 order by id
+id,name
+select * from t_join where 1=2 order by id
+id,val
+select * from t_range where 1=2 and id=1 order by id
+id,name
+select * from t_range where 1=2 or id=1 order by id
+id,name
+1,a
+select * from t_range partition(p1) order by id
+id,name
+1,a
+5,b
+select * from t_range partition(p1, p2) order by id
+id,name
+1,a
+5,b
+15,c
+select * from t_range partition(p1) where 1=2 order by id
+id,name
+select a.id, a.name, b.val from t_range partition(p1) a join t_join partition(p1) b on a.id=b.id order by a.id
+id,name,val
+1,a,x
+select * from t_sub partition(p1) order by id
+id,name
+1,a
+5,b
+## ========== AND/OR combinations on t_range ==========
+## AND range on partition key: prunes, allowed
+select * from t_range where id > 5 and id < 25 order by id
+id,name
+15,c
+## OR on partition key: Combine step, allowed
+select * from t_range where id = 1 or id = 25 order by id
+id,name
+1,a
+25,d
+## AND: partition-key + non-partition-key filter: prunes on id, allowed
+select * from t_range where id = 1 and name = 'a' order by id
+id,name
+1,a
+## OR: partition-key + non-partition-key: can't prune, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_range where id = 1 or name = 'a' order by id
+is not allowed to perform full table scan
+## Complex: (OR partition-key) AND non-partition filter: prunes, allowed
+select * from t_range where (id = 1 or id = 15) and name = 'a' order by id
+id,name
+1,a
+## OR non-partition-key only: full scan, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_range where name = 'a' or name = 'b' order by id
+is not allowed to perform full table scan
+## always-false AND: always-false dominates, allowed (empty)
+select * from t_range where 1=2 and (id = 1 or id = 15) order by id
+id,name
+## always-false OR non-partition-key: simplifies to name='a', BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_range where 1=2 or name = 'a' order by id
+is not allowed to perform full table scan
+## contradictory AND on partition key: empty result, allowed
+select * from t_range where id = 1 and id = 25 order by id
+id,name
+## ========== AND/OR combinations on t_sub ==========
+## AND: partition key + subpartition key: both levels prune, allowed
+select * from t_sub where id = 5 and name = 'b' order by id
+id,name
+5,b
+## Only partition key: first level prunes, allowed
+select * from t_sub where id = 5 order by id
+id,name
+5,b
+## Only subpartition key: sub level prunes (not full scan), allowed
+select * from t_sub where name = 'a' order by id
+id,name
+1,a
+## OR on subpartition key: 2 hash values cover all 2 sub-buckets, full physical scan, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_sub where name = 'a' or name = 'b' order by id
+is not allowed to perform full table scan
+## OR: partition key + subpartition key: cross-level OR causes full scan at both levels, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_sub where id = 5 or name = 'a' order by id
+is not allowed to perform full table scan
+## Range AND on partition key of sub-part table: first level prunes, allowed
+select * from t_sub where id > 5 and id < 25 order by id
+id,name
+15,c
+## Complex: (OR partition-key) AND subpartition filter on t_sub: allowed
+select * from t_sub where (id = 1 or id = 15) and name = 'a' order by id
+id,name
+1,a
+## ========== Join AND/OR ==========
+## Join with partition-key WHERE on driving table: allowed
+select a.id, a.name, b.val from t_range a join t_join b on a.id=b.id where a.id = 1 order by a.id
+id,name,val
+1,a,x
+## Join with non-partition-key WHERE: full scan, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select a.id, a.name, b.val from t_range a join t_join b on a.id=b.id where a.name = 'a' order by a.id
+is not allowed to perform full table scan
+## --- t_sub extended: range on first-level partition key ---
+## range that doesn't cover all parts: first level prunes, allowed
+select * from t_sub where id > 5 order by id
+id,name
+15,c
+25,d
+## range covering all parts (id>=1): first level step is range-type (not forceFullScan), allowed
+select * from t_sub where id >= 1 order by id
+id,name
+1,a
+5,b
+15,c
+25,d
+## OR on first-level eq: first level can prune, allowed
+select * from t_sub where id = 5 or id = 15 order by id
+id,name
+5,b
+15,c
+## --- t_sub extended: range on sub-partition key (hash) ---
+## range on hash sub-key: hash can't prune range, first-level gives up (name not partition key), BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_sub where name > 'a' order by id
+is not allowed to perform full table scan
+## sub-partition eq on hash: sub level prunes, allowed
+select * from t_sub where name = 'a' order by id
+id,name
+1,a
+## --- t_sub extended: AND cross-level combinations ---
+## first-level range + sub-level eq: both levels have valid predicates, allowed
+select * from t_sub where id > 5 and name = 'a' order by id
+id,name
+## first-level eq + sub-level range(hash): both levels have predicates, allowed
+select * from t_sub where id = 5 and name > 'a' order by id
+id,name
+5,b
+## first-level range + sub-level range: both levels have predicates, allowed
+select * from t_sub where id > 5 and name > 'a' order by id
+id,name
+15,c
+25,d
+## first-level eq + sub-level OR eq: both levels prune, allowed
+select * from t_sub where id = 5 and (name = 'a' or name = 'b') order by id
+id,name
+5,b
+## first-level range AND + sub-level eq: allowed
+select * from t_sub where id > 5 and id < 25 and name = 'a' order by id
+id,name
+## --- t_sub extended: OR cross-level (all BLOCKED) ---
+## first-level range OR sub-level eq: cross-level OR, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_sub where id > 10 or name = 'a' order by id
+is not allowed to perform full table scan
+## first-level eq OR sub-level range: cross-level OR, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_sub where id = 5 or name > 'a' order by id
+is not allowed to perform full table scan
+## first-level eq OR (sub AND sub contradictory): cross-level OR, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_sub where id = 5 or (name = 'a' and name = 'b') order by id
+is not allowed to perform full table scan
+## ========== KEY+KEY sub-partition table (t_kk) ==========
+create table t_kk(id int, name varchar(20))
+partition by key(id) partitions 2
+subpartition by key(name) subpartitions 2
+insert into t_kk values(1,'a'),(5,'b'),(15,'c'),(25,'d')
+alter table t_kk disable full_scan
+## KEY+KEY: first-level eq: prunes, allowed
+select * from t_kk where id = 5 order by id
+id,name
+5,b
+## KEY+KEY: sub-level eq: prunes, allowed
+select * from t_kk where name = 'a' order by id
+id,name
+1,a
+## KEY+KEY: both eq: prunes, allowed
+select * from t_kk where id = 5 and name = 'b' order by id
+id,name
+5,b
+## KEY+KEY: first-level range (KEY can't prune range, BitSet full): BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_kk where id > 5 order by id
+is not allowed to perform full table scan
+## KEY+KEY: sub-level range (KEY can't prune range, BitSet full): BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_kk where name > 'a' order by id
+is not allowed to perform full table scan
+## KEY+KEY: first-level range + sub-level eq: allowed
+select * from t_kk where id > 5 and name = 'a' order by id
+id,name
+## KEY+KEY: cross-level OR eq: BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_kk where id = 5 or name = 'a' order by id
+is not allowed to perform full table scan
+## KEY+KEY: cross-level OR range: BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_kk where id > 5 or name = 'a' order by id
+is not allowed to perform full table scan
+## KEY+KEY: full scan: BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_kk order by id
+is not allowed to perform full table scan
+## KEY+KEY: 1=2 bypass: allowed
+select * from t_kk where 1=2 order by id
+id,name
+## ========== KEY partition range predicates ==========
+create table t_key(id int, name varchar(20))
+partition by key(id) partitions 3
+insert into t_key values(1,'a'),(5,'b'),(10,'c'),(15,'d'),(25,'e')
+alter table t_key disable full_scan
+## equality: prunes to single bucket, allowed
+select * from t_key where id = 5 order by id
+id,name
+5,b
+## IN: prunes to specific buckets, allowed
+select * from t_key where id in (1, 5) order by id
+id,name
+1,a
+5,b
+## range >=: KEY can't prune range, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_key where id >= 10 order by id
+is not allowed to perform full table scan
+## range <=: KEY can't prune range, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_key where id <= 20 order by id
+is not allowed to perform full table scan
+## range AND (between): KEY can't prune, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_key where id >= 10 and id <= 20 order by id
+is not allowed to perform full table scan
+## BETWEEN: same as range AND, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_key where id between 1 and 100 order by id
+is not allowed to perform full table scan
+## >: KEY can't prune, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_key where id > 1 order by id
+is not allowed to perform full table scan
+## <: KEY can't prune, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_key where id < 100 order by id
+is not allowed to perform full table scan
+## !=: KEY can't prune, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_key where id != 5 order by id
+is not allowed to perform full table scan
+## eq AND range: equality dominates (prunes), allowed
+select * from t_key where id = 1 and id > 0 order by id
+id,name
+1,a
+## OR with full-scan branch: BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_key where id = 1 or id > 10 order by id
+is not allowed to perform full table scan
+## non-partition-key: full scan, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_key where name = 'a' order by id
+is not allowed to perform full table scan
+## 1=2 on KEY table: always-false bypass, allowed (empty)
+select * from t_key where 1=2 order by id
+id,name
+## PARTITION syntax on KEY table: allowed
+select * from t_key partition(p1) order by id
+id,name
+5,b
+15,d
+## ========== LIST partition ==========
+create table t_list(id int, name varchar(20))
+partition by list(id)
+(
+  partition p1 values in(1,2,3),
+  partition p2 values in(10,11,12),
+  partition p3 values in(20,21,22)
+)
+insert into t_list values(1,'a'),(3,'b'),(10,'c'),(20,'d')
+alter table t_list disable full_scan
+## LIST: eq on partition key: prunes, allowed
+select * from t_list where id = 1 order by id
+id,name
+1,a
+## LIST: IN on partition key: prunes, allowed
+select * from t_list where id in (1, 10) order by id
+id,name
+1,a
+10,c
+## LIST: range > on partition key: LIST can prune range (excludes partitions), allowed
+select * from t_list where id > 5 order by id
+id,name
+10,c
+20,d
+## LIST: range AND covers all partitions: LIST can't prune range + BitSet full, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_list where id >= 1 and id <= 20 order by id
+is not allowed to perform full table scan
+## LIST: OR on partition key eq: prunes, allowed
+select * from t_list where id = 1 or id = 10 order by id
+id,name
+1,a
+10,c
+## LIST: eq AND non-partition-key: partition key prunes, allowed
+select * from t_list where id = 1 and name = 'a' order by id
+id,name
+1,a
+## LIST: non-partition-key only: full scan, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_list where name = 'a' order by id
+is not allowed to perform full table scan
+## LIST: eq OR non-partition-key: can't prune, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_list where id = 1 or name = 'a' order by id
+is not allowed to perform full table scan
+## LIST: no WHERE: full scan, BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_list order by id
+is not allowed to perform full table scan
+## LIST: 1=2 always-false bypass: allowed
+select * from t_list where 1=2 order by id
+id,name
+## LIST: PARTITION syntax: allowed
+select * from t_list partition(p1) order by id
+id,name
+1,a
+3,b
+## LIST: contradictory AND: empty result (conflict), allowed
+select * from t_list where id = 1 and id = 10 order by id
+id,name
+## ========== TDDL:scan() hint ==========
+## scan() forces full scan. On disable_full_scan tables, BLOCKED unless query has effective bypass (eq/1=2/session-var)
+## scan() with no predicate: BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+/*+TDDL:scan()*/select * from t_range order by id
+is not allowed to perform full table scan
+## scan('table') with no predicate: BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+/*+TDDL:scan('t_range')*/select * from t_range order by id
+is not allowed to perform full table scan
+## scan() on KEY partition table: BLOCKED
+## error_msg: $# is not allowed to perform full table scan #$
+/*+TDDL:scan()*/select * from t_key order by id
+is not allowed to perform full table scan
+## scan() with eq pruning predicate: pruning takes effect, ALLOWED
+/*+TDDL:scan()*/select * from t_range where id = 1 order by id
+id,name
+1,a
+## scan() with 1=2 always-false: empty result bypass, ALLOWED
+/*+TDDL:scan()*/select * from t_range where 1=2 order by id
+id,name
+## scan() with ALLOW_FULL_TABLE_SCAN=true: session var bypass, ALLOWED
+set ALLOW_FULL_TABLE_SCAN=true
+/*+TDDL:scan()*/select * from t_range order by id
+id,name
+1,a
+5,b
+15,c
+25,d
+/*+TDDL:scan('t_key')*/select * from t_key order by id
+id,name
+1,a
+5,b
+10,c
+15,d
+25,e
+set ALLOW_FULL_TABLE_SCAN=false
+## ========== TDDL:NODE() hint ==========
+## NODE hint routes to specific physical partition, equivalent to PARTITION(...) syntax, all ALLOWED
+/*+TDDL:NODE('p1')*/select * from t_range order by id
+id,name,_drds_implicit_id_
+1,a,100001
+5,b,100002
+/*+TDDL:NODE('p1','p2')*/select * from t_range order by id
+id,name,_drds_implicit_id_
+1,a,100001
+5,b,100002
+15,c,100003
+/*+TDDL:NODE('p1')*/select * from t_range where id = 1 order by id
+id,name,_drds_implicit_id_
+1,a,100001
+/*+TDDL:NODE('p1')*/select * from t_range where 1=2 order by id
+id,name,_drds_implicit_id_
+/*+TDDL:NODE('p1')*/select * from t_key order by id
+id,name,_drds_implicit_id_
+5,b,100002
+15,d,100004
+set ALLOW_FULL_TABLE_SCAN=true
+select count(*) from t_range
+count(*)
+4
+select count(*) from t_sub
+count(*)
+4
+select count(*) from t_join
+count(*)
+2
+select * from t_range where name='a' order by id
+id,name
+1,a
+set ALLOW_FULL_TABLE_SCAN=false
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_range order by id
+is not allowed to perform full table scan
+## error_msg: $# is not allowed to perform full table scan #$
+select * from t_sub order by id
+is not allowed to perform full table scan
+set ALLOW_FULL_TABLE_SCAN=true
+select count(*) from t_range
+count(*)
+4
+set ALLOW_FULL_TABLE_SCAN=false
+select * from t_range where 1=2 order by id
+id,name
+select * from t_range partition(p1) order by id
+id,name
+1,a
+5,b
+alter table t_range enable full_scan
+alter table t_sub enable full_scan
+alter table t_join enable full_scan
+alter table t_key enable full_scan
+alter table t_kk enable full_scan
+alter table t_list enable full_scan
+select table_schema, table_name, allow_full_scan from information_schema.table_properties where table_schema = 'test_skip_blacklist_db' order by table_name
+table_schema,table_name,allow_full_scan
+test_skip_blacklist_db,t_join,1
+test_skip_blacklist_db,t_key,1
+test_skip_blacklist_db,t_kk,1
+test_skip_blacklist_db,t_list,1
+test_skip_blacklist_db,t_range,1
+test_skip_blacklist_db,t_sub,1
+select * from t_range order by id
+id,name
+1,a
+5,b
+15,c
+25,d
+select * from t_sub order by id
+id,name
+1,a
+5,b
+15,c
+25,d
+select * from t_join order by id
+id,val
+1,x
+15,y

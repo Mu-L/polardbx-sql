@@ -1,0 +1,233 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+set ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING=true;
+set ENABLE_REPLICAS_RANDOM_READ= false;
+
+
+use polardbx;
+drop database if exists reprr_db;
+## USE_DN_LIST_MSG
+create database if not exists `reprr_db` CHARSET = `utf8mb4` COLLATE = `utf8mb4_general_ci` MODE = 'auto'
+LOCALITY = 'dble_config={"group_config":{
+  "reprr_db_g0":["$dn1","reprr_db_g0"],
+  "reprr_db_g1":["$dn2","reprr_db_g1"],
+  "reprr_db_g2":["$dn1","reprr_db_g2"],
+  "reprr_db_g3":["$dn2","reprr_db_g3"],
+  "reprr_db_g4":["$dn1","reprr_db_g4"],
+  "reprr_db_g5":["$dn2","reprr_db_g5"]
+}}';
+use reprr_db;
+  
+
+
+DROP TABLE IF EXISTS `rep_t1_g0g1g2`;
+CREATE TABLE IF NOT EXISTS `rep_t1_g0g1g2` (
+  `id` bigint(20) NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=reprr_db_g0,reprr_db_g1,reprr_db_g2'
+;
+  
+DROP TABLE IF EXISTS `rep_t2_g0g1g2`;
+CREATE TABLE IF NOT EXISTS  `rep_t2_g0g1g2` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=reprr_db_g0,reprr_db_g1,reprr_db_g2'
+;
+
+DROP TABLE IF EXISTS `rep_t3_g1g2`;
+CREATE TABLE IF NOT EXISTS `rep_t3_g1g2` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=reprr_db_g1,reprr_db_g2'
+;
+
+DROP TABLE IF EXISTS `rep_t4_g2g3`;
+CREATE TABLE IF NOT EXISTS `rep_t4_g2g3` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=reprr_db_g2,reprr_db_g3'
+;
+
+DROP TABLE IF EXISTS `rep_t5_g3g4`;
+CREATE TABLE IF NOT EXISTS `rep_t5_g3g4` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=reprr_db_g3,reprr_db_g4'
+;
+
+DROP TABLE IF EXISTS `rep_t6_g5`;
+CREATE TABLE IF NOT EXISTS `rep_t6_g5` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=reprr_db_g5'
+;
+  
+DROP TABLE IF EXISTS `rep_t7_g0g3g4`;
+CREATE TABLE IF NOT EXISTS `rep_t7_g0g3g4` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=reprr_db_g0,reprr_db_g3,reprr_db_g4'
+;
+
+DROP TABLE IF EXISTS `rep_t8_g1g3g4`;
+CREATE TABLE IF NOT EXISTS `rep_t8_g1g3g4` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=reprr_db_g1,reprr_db_g3,reprr_db_g4'
+;
+
+  
+DROP TABLE IF EXISTS `part_t1_g0g1g2`;
+CREATE TABLE IF NOT EXISTS `part_t1_g0g1g2` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 3
+LOCALITY='db_pools=reprr_db_g0,reprr_db_g1,reprr_db_g2'
+;
+  
+DROP TABLE IF EXISTS `part_t2_g0g1g2`;
+CREATE TABLE IF NOT EXISTS `part_t2_g0g1g2` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 3
+LOCALITY='db_pools=reprr_db_g0,reprr_db_g1,reprr_db_g2'
+;
+  
+DROP TABLE IF EXISTS `part_t3_g3g4`;
+CREATE TABLE IF NOT EXISTS `part_t3_g3g4` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 2
+LOCALITY='db_pools=reprr_db_g3,reprr_db_g4'
+;
+
+DROP TABLE IF EXISTS `part_t4_g3g4`;
+CREATE TABLE IF NOT EXISTS `part_t4_g3g4` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 2
+LOCALITY='db_pools=reprr_db_g3,reprr_db_g4'
+;
+  
+  
+  
+DROP TABLE IF EXISTS `part_t5_g2`;
+CREATE TABLE IF NOT EXISTS `part_t5_g2` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 1
+LOCALITY='db_pools=reprr_db_g2'
+;
+  
+DROP TABLE IF EXISTS `part_t6_g5`;
+CREATE TABLE IF NOT EXISTS `part_t6_g5` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 1
+LOCALITY='db_pools=reprr_db_g5'
+;
+
+
+insert into rep_t1_g0g1g2 values (1),(2),(3),(4),(5);
+insert into rep_t2_g0g1g2 values (1),(2),(3),(4),(5);
+insert into rep_t3_g1g2 values (1),(2),(3),(4),(5);
+insert into rep_t4_g2g3 values (1),(2),(3),(4),(5);
+insert into rep_t5_g3g4 values (1),(2),(3),(4),(5);
+insert into rep_t6_g5 values (1),(2),(3),(4),(5);
+insert into rep_t7_g0g3g4 values (1),(2),(3),(4),(5);
+insert into rep_t8_g1g3g4 values (1),(2),(3),(4),(5);
+
+insert into part_t1_g0g1g2 values (1),(2),(3),(4),(5);
+insert into part_t2_g0g1g2 values (1),(2),(3),(4),(5);
+insert into part_t3_g3g4 values (1),(2),(3),(4),(5);
+insert into part_t4_g3g4 values (1),(2),(3),(4),(5);
+insert into part_t5_g2 values (1),(2),(3),(4),(5);
+insert into part_t6_g5 values (1),(2),(3),(4),(5);
+  
+ ## for generale stable plan, here close random read
+set ENABLE_REPLICAS_RANDOM_READ= false;
+
+ ### replicas-table random-read test ###
+
+ ## random-read: sig-rep-tbl
+explain select id from rep_t1_g0g1g2 where id = 1 order by id;
+  
+ ## random-read: rep-join direct-pushdown
+explain select t1.id from rep_t1_g0g1g2 t1 join rep_t3_g1g2 t3 on t1.id=t3.id where t1.id = 1 order by t1.id;
+
+ ## random-read: rep-filter-corr-subquery direct-pushdown
+explain select t1.id 
+from rep_t1_g0g1g2 t1 
+join rep_t3_g1g2 t3 
+on t1.id=t3.id 
+where t1.id = 1 and exists (select rt2.id from rep_t2_g0g1g2 rt2 where rt2.id=t1.id)
+order by t1.id;
+  
+ ## random-read: rep-column-corr-subquery direct-pushdown
+explain 
+select t1.id,
+(select rt2.id from rep_t2_g0g1g2 rt2 where rt2.id=t1.id) as rt2_id
+from rep_t1_g0g1g2 t1
+join rep_t3_g1g2 t3
+on t1.id=t3.id
+where t1.id = 1
+order by t1.id;
+  
+ ## random-read: rep-part-join pushdown
+explain select t1.id from rep_t1_g0g1g2 t1 join part_t5_g2 t5 on t1.id=t5.id where t5.id = 1 order by t5.id;
+  
+ ## random-read: rep-join no-pushdown
+explain select t3.id from rep_t3_g1g2 t3 join rep_t7_g0g3g4 t7 on t3.id=t7.id where t3.id = 1 order by t3.id;
+  
+ ## random-read: rep-tbl-join in some lv
+explain select t3.id from 
+rep_t1_g0g1g2 t1 
+join rep_t3_g1g2 t3 on t1.id=t3.id
+join rep_t7_g0g3g4 t7 on t3.id=t7.id where t3.id = 1
+order by t3.id;
+  
+ ## random-read: rep-part-join in some lv
+explain select rt5.id from
+rep_t5_g3g4 rt5
+join part_t6_g5 pt6 on pt6.id=rt5.id
+join rep_t6_g5 rt6 on rt6.id=pt6.id
+join rep_t7_g0g3g4 rt7 on rt5.id=rt7.id 
+where rt5.id = 3
+order by rt5.id;
+
+use polardbx;
+drop database if exists reprr_db;

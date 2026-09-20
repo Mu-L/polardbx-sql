@@ -1,0 +1,88 @@
+DROP DATABASE IF EXISTS test_statistics3
+CREATE DATABASE test_statistics3 MODE auto
+USE test_statistics3
+DROP TABLE IF EXISTS t_statistics3
+CREATE TABLE t_statistics3 (
+	id int,
+	name varchar(60),
+	NAME2 varchar(60),
+	Name3 varchar(60),
+	PRIMARY KEY (id)
+)
+PARTITION BY KEY (id) PARTITIONS 4
+ALTER TABLE T_statistics3
+	ADD INDEX IDX_name (Name, NAME2(10), namE3)
+ALTER TABLE t_STATISTICS3
+	ADD INDEX idx_NAME2 (nAme(10), naMe2(10), name3(10))
+ALTER TABLE t_statistics3
+	ADD GLOBAL INDEX idx_Name3 (Name, NAME2(10), namE3) PARTITION BY KEY (name)
+ALTER TABLE t_statistics3
+	ADD GLOBAL INDEX idx_name4 (nAme(10), naMe2(10), name3(10)) PARTITION BY KEY (name)
+SHOW CREATE TABLE t_statistics3
+TABLE,CREATE TABLE
+t_statistics3,CREATE TABLE `t_statistics3` (
+	`id` int(11) NOT NULL,
+	`name` varchar(60) DEFAULT NULL,
+	`NAME2` varchar(60) DEFAULT NULL,
+	`Name3` varchar(60) DEFAULT NULL,
+	PRIMARY KEY (`id`),
+	GLOBAL INDEX `idx_Name3` (`Name`, `NAME2`(10), `namE3`)
+		PARTITION BY KEY(`name`)
+		PARTITIONS 3,
+	GLOBAL INDEX `idx_name4` (`nAme`(10), `naMe2`(10), `name3`(10))
+		PARTITION BY KEY(`name`)
+		PARTITIONS 3,
+	KEY `IDX_name` (`name`, `NAME2`(10), `Name3`),
+	KEY `idx_NAME2` (`name`(10), `NAME2`(10), `Name3`(10))
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`id`)
+PARTITIONS 4
+SELECT *
+FROM INFORMATION_SCHEMA.STATISTICS
+WHERE TABLE_SCHEMA = 'test_statistics3'
+	AND table_name = 't_statistics3'
+ORDER BY index_name, seq_in_index
+TABLE_CATALOG,TABLE_SCHEMA,TABLE_NAME,NON_UNIQUE,INDEX_SCHEMA,INDEX_NAME,SEQ_IN_INDEX,COLUMN_NAME,COLLATION,CARDINALITY,SUB_PART,PACKED,NULLABLE,INDEX_TYPE,COMMENT,INDEX_COMMENT
+def,test_statistics3,t_statistics3,1,test_statistics3,IDX_name,1,name,A,0,null,null,YES,BTREE,,
+def,test_statistics3,t_statistics3,1,test_statistics3,IDX_name,2,NAME2,A,0,10,null,YES,BTREE,,
+def,test_statistics3,t_statistics3,1,test_statistics3,IDX_name,3,Name3,A,0,null,null,YES,BTREE,,
+def,test_statistics3,t_statistics3,1,test_statistics3,idx_NAME2,1,name,A,0,10,null,YES,BTREE,,
+def,test_statistics3,t_statistics3,1,test_statistics3,idx_NAME2,2,NAME2,A,0,10,null,YES,BTREE,,
+def,test_statistics3,t_statistics3,1,test_statistics3,idx_NAME2,3,Name3,A,0,10,null,YES,BTREE,,
+def,test_statistics3,t_statistics3,0,test_statistics3,PRIMARY,1,id,A,0,null,null,,BTREE,,
+ALTER TABLE t_statistics3
+	MODIFY COLUMN NAME varchar(5),
+	MODIFY COLUMN name2 text,
+	MODIFY COLUMN name3 bigint
+SHOW CREATE TABLE t_statistics3
+TABLE,CREATE TABLE
+t_statistics3,CREATE TABLE `t_statistics3` (
+	`id` int(11) NOT NULL,
+	`NAME` varchar(5) DEFAULT NULL,
+	`name2` text,
+	`name3` bigint(20) DEFAULT NULL,
+	PRIMARY KEY (`id`),
+	GLOBAL INDEX `idx_Name3` (`name`, `name2`(10), `name3`)
+		PARTITION BY KEY(`NAME`)
+		PARTITIONS 3,
+	GLOBAL INDEX `idx_name4` (`name`, `name2`(10), `name3`)
+		PARTITION BY KEY(`NAME`)
+		PARTITIONS 3,
+	KEY `IDX_name` (`NAME`, `name2`(10), `name3`),
+	KEY `idx_NAME2` (`NAME`, `name2`(10), `name3`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`id`)
+PARTITIONS 4
+SELECT *
+FROM INFORMATION_SCHEMA.STATISTICS
+WHERE TABLE_SCHEMA = 'test_statistics3'
+	AND table_name = 't_statistics3'
+ORDER BY index_name, seq_in_index
+TABLE_CATALOG,TABLE_SCHEMA,TABLE_NAME,NON_UNIQUE,INDEX_SCHEMA,INDEX_NAME,SEQ_IN_INDEX,COLUMN_NAME,COLLATION,CARDINALITY,SUB_PART,PACKED,NULLABLE,INDEX_TYPE,COMMENT,INDEX_COMMENT
+def,test_statistics3,t_statistics3,1,test_statistics3,IDX_name,1,NAME,A,0,null,null,YES,BTREE,,
+def,test_statistics3,t_statistics3,1,test_statistics3,IDX_name,2,name2,A,0,10,null,YES,BTREE,,
+def,test_statistics3,t_statistics3,1,test_statistics3,IDX_name,3,name3,A,0,null,null,YES,BTREE,,
+def,test_statistics3,t_statistics3,1,test_statistics3,idx_NAME2,1,NAME,A,0,null,null,YES,BTREE,,
+def,test_statistics3,t_statistics3,1,test_statistics3,idx_NAME2,2,name2,A,0,10,null,YES,BTREE,,
+def,test_statistics3,t_statistics3,1,test_statistics3,idx_NAME2,3,name3,A,0,null,null,YES,BTREE,,
+def,test_statistics3,t_statistics3,0,test_statistics3,PRIMARY,1,id,A,0,null,null,,BTREE,,

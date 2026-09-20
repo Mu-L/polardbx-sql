@@ -21,6 +21,7 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.visitor.MySqlASTVisitor;
 public class MySqlShowSlaveStatusStatement extends MySqlStatementImpl implements MySqlShowStatement {
     private SQLCharExpr channel;
     private SQLCharExpr subChannel;
+    private boolean ddlLoad;
 
     @Override
     public void accept0(MySqlASTVisitor visitor) {
@@ -42,5 +43,13 @@ public class MySqlShowSlaveStatusStatement extends MySqlStatementImpl implements
 
     public void setSubChannel(SQLCharExpr subChannel) {
         this.subChannel = subChannel;
+    }
+
+    public boolean isDdlLoad() {
+        return ddlLoad;
+    }
+
+    public void setDdlLoad(boolean ddlLoad) {
+        this.ddlLoad = ddlLoad;
     }
 }

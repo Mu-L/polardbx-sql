@@ -62,11 +62,10 @@ public class RenameTablesUpdateMetaTask extends BaseGmsTask {
             if (isNewPartitionDb) {
                 TableMetaChanger
                     .renamePartitionTableMeta(metaDbConnection, schemaName, tableName, newTableName,
-                        executionContext, false, false);
+                        executionContext, false);
             } else {
                 TableMetaChanger
-                    .renameTableMeta(metaDbConnection, schemaName, tableName, newTableName, executionContext, false,
-                        false);
+                    .renameTableMeta(metaDbConnection, schemaName, tableName, newTableName, executionContext, false);
             }
             TableMetaChanger.renameTtlTableForTtlInfo(metaDbConnection, schemaName, tableName, schemaName,
                 newTableName);

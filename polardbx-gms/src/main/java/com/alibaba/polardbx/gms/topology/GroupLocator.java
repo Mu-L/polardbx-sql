@@ -32,4 +32,8 @@ public interface GroupLocator {
     void buildGroupLocationInfo(Map<String, List<String>> normalGroupMap,
                                 Map<String, List<String>> singleGroupMap);
 
+    void buildGroupLocationInfo(Map<String, List<String>> normalGroupMap,
+                                Map<String, List<String>> singleGroupMap,
+                                Map<String, List<String>> proxyConfig);
+
 }

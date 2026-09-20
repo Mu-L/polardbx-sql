@@ -31,6 +31,7 @@ import com.alibaba.polardbx.common.utils.time.parser.NumericTimeParser;
 import com.alibaba.polardbx.common.utils.time.parser.StringTimeParser;
 import com.alibaba.polardbx.common.utils.time.parser.TimeParseStatus;
 import com.alibaba.polardbx.common.utils.time.parser.TimeParserFlags;
+import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.optimizer.config.table.charset.CollationHandlers;
 import com.alibaba.polardbx.optimizer.config.table.collation.CollationHandler;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
@@ -354,6 +355,9 @@ public class DatetimeField extends AbstractTemporalField {
         if (SQLModeFlags.check(sqlModeFlag, SQLModeFlags.MODE_INVALID_DATES)) {
             flag |= TimeParserFlags.FLAG_TIME_INVALID_DATES;
         }
+        if (SQLModeFlags.check(sqlModeFlag, SQLModeFlags.MODE_TIME_TRUNCATE_FRACTIONAL)) {
+            flag |= TimeParserFlags.FLAG_TIME_TRUNCATE_FRACTIONAL;
+        }
         return flag;
     }
 
@@ -376,6 +380,12 @@ public class DatetimeField extends AbstractTemporalField {
     }
 
     private TypeConversionStatus storeMysqlDatetime(MysqlDateTime mysqlDateTime, SessionProperties sessionProperties) {
+        if (InstanceVersion.isMYSQL80()
+            && SQLModeFlags.check(sessionProperties.getSqlModeFlag(), SQLModeFlags.MODE_TIME_TRUNCATE_FRACTIONAL)) {
+            mysqlDateTime = mysqlDateTime.clone();
+            MySQLTimeCalculator.timeTruncate(mysqlDateTime, fieldType.getScale());
+        }
+
         int sqlType = mysqlDateTime.getSqlType();
         switch (mysqlDateTime.getSqlType()) {
         case MySQLTimeTypeUtil.DATETIME_SQL_TYPE:
@@ -456,7 +466,8 @@ public class DatetimeField extends AbstractTemporalField {
             reset();
         } else {
             typeConversionStatus = TypeConversionStatus.fromParseStatus(status);
-            TypeConversionStatus typeConversionStatus1 = storeInternalWithRound(mysqlDateTime, typeConversionStatus);
+            TypeConversionStatus typeConversionStatus1 =
+                storeInternalWithRound(mysqlDateTime, sessionProperties, typeConversionStatus);
 
             if (typeConversionStatus1.getCode() > typeConversionStatus.getCode()) {
                 typeConversionStatus = typeConversionStatus1;
@@ -466,7 +477,15 @@ public class DatetimeField extends AbstractTemporalField {
     }
 
     private TypeConversionStatus storeInternalWithRound(MysqlDateTime mysqlDateTime,
+                                                        SessionProperties sessionProperties,
                                                         TypeConversionStatus typeConversionStatus) {
+
+        if (InstanceVersion.isMYSQL80()
+            && SQLModeFlags.check(sessionProperties.getSqlModeFlag(), SQLModeFlags.MODE_TIME_TRUNCATE_FRACTIONAL)) {
+            mysqlDateTime = mysqlDateTime.clone();
+            MySQLTimeCalculator.timeTruncate(mysqlDateTime, fieldType.getScale());
+        }
+
         // check if need to round.
         int scale = fieldType.getScale();
         if (MySQLTimeCalculator.needToRound((int) mysqlDateTime.getSecondPart(), scale)) {

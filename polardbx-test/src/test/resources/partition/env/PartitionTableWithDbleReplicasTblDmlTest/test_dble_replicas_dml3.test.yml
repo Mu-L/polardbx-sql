@@ -1,0 +1,99 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+## test dble_db
+
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+set ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING=true;
+set GROUP_PARALLELISM=1;
+
+use polardbx;
+drop database if exists dbledbdml3;
+ 
+  ## USE_DN_LIST_MSG
+create database if not exists dbledbdml3 mode = 'auto'
+locality='dble_config={"group_config":{ "dbledbdml3_g1":["$dn1","dbledbdml3_01"],"dbledbdml3_g2":["$dn2","dbledbdml3_02"],"dbledbdml3_g3":["$dn1","dbledbdml3_03"],"dbledbdml3_g4":["$dn2","dbledbdml3_04"] }}';
+use dbledbdml3;
+
+drop table if exists tb1;
+drop table if exists tb2;
+create table tb1(a int,b datetime,c int,PRIMARY KEY (`a`)) replicas locality='db_set=dbledbdml3_g1,dbledbdml3_g2';
+create table tb2(a int,b datetime,c int,PRIMARY KEY (`a`)) replicas locality='db_set=dbledbdml3_g1,dbledbdml3_g2';
+
+insert into tb1 (a,b,c) values (1,'2025-01-01',1);
+insert into tb1 (a,b,c) values (2,'2025-01-01',2);
+insert into tb1 (a,b,c) values (3,'2025-01-01',3);
+insert into tb1 (a,b,c) values (4,'2025-01-01',4);
+
+
+insert into tb2 (a,b,c) values (1,'2025-01-01',10);
+insert into tb2 (a,b,c) values (2,'2025-01-01',20);
+insert into tb2 (a,b,c) values (3,'2025-01-01',30);
+
+
+SELECT
+a,
+b,
+c,
+ROW_NUMBER() OVER (ORDER BY a) AS row_number
+FROM tb1
+ORDER BY a;
+
+
+SELECT
+t1.a AS t1_a,
+t1.c AS t1_c,
+t2.a AS t2_a,
+t2.c AS t2_c,
+ROW_NUMBER() OVER (ORDER BY t1.a) AS join_seq
+FROM tb1 t1
+INNER JOIN tb2 t2 ON t1.a = t2.a
+ORDER BY t1.a;
+
+
+SELECT
+a,
+c,
+ROW_NUMBER() OVER (ORDER BY c DESC) AS ordered_row
+FROM tb1
+WHERE c > 1
+ORDER BY c DESC;
+
+
+SELECT
+DATE(b) AS day,
+SUM(c) AS total_c,
+ROW_NUMBER() OVER (ORDER BY DATE(b)) AS group_index
+FROM tb1
+GROUP BY DATE(b)
+ORDER BY day;
+
+
+INSERT INTO tb1 (a, b, c) VALUES (5, '2025-01-02', 5);
+
+SELECT * FROM tb1 order by a;
+
+UPDATE tb1
+SET
+c = c + 10,
+b = '2025-01-01 12:00:00',
+a = a
+WHERE a <= 3;
+
+SELECT * FROM tb1 order by a;
+
+DELETE FROM tb1
+WHERE a > (
+SELECT threshold FROM (
+SELECT 2 AS threshold
+) AS vars
+);
+
+
+SELECT * FROM tb1 order by a;
+
+use polardbx;
+drop database dbledbdml3;

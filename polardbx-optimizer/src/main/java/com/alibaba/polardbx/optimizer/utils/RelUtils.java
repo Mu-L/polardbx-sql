@@ -27,11 +27,14 @@ import com.alibaba.polardbx.common.model.Matrix;
 import com.alibaba.polardbx.common.model.sqljep.Comparative;
 import com.alibaba.polardbx.common.model.sqljep.ComparativeAND;
 import com.alibaba.polardbx.common.model.sqljep.ComparativeOR;
-import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.common.utils.TreeMaps;
+import com.alibaba.polardbx.common.utils.logger.Logger;
+import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
+import com.alibaba.polardbx.optimizer.external.files.EphemeralFilesSchemaManager;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.PlannerContext;
@@ -46,6 +49,8 @@ import com.alibaba.polardbx.optimizer.config.table.TableColumnUtils;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.TddlJavaTypeFactoryImpl;
+import com.alibaba.polardbx.optimizer.core.TddlOperatorTable;
+import com.alibaba.polardbx.optimizer.core.datatype.BlobType;
 import com.alibaba.polardbx.optimizer.core.dialect.DbType;
 import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
 import com.alibaba.polardbx.optimizer.core.planner.rule.PushModifyRule;
@@ -60,6 +65,7 @@ import com.alibaba.polardbx.optimizer.core.rel.LogicalIndexScan;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalInsert;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalModify;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalModifyView;
+import com.alibaba.polardbx.optimizer.core.rel.LogicalRelocate;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.MergeSort;
 import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
@@ -97,9 +103,11 @@ import org.apache.calcite.plan.hep.HepRelVertex;
 import org.apache.calcite.prepare.CalciteCatalogReader;
 import org.apache.calcite.prepare.RelOptTableImpl;
 import org.apache.calcite.rel.AbstractRelNode;
+import org.apache.calcite.rel.RelDistribution;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelShuttleImpl;
 import org.apache.calcite.rel.RelVisitor;
+import org.apache.calcite.rel.RelWriter;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.Correlate;
 import org.apache.calcite.rel.core.CorrelationId;
@@ -157,6 +165,7 @@ import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.SqlNumericLiteral;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlSelect;
+import org.apache.calcite.sql.SqlShow;
 import org.apache.calcite.sql.SqlUpdate;
 import org.apache.calcite.sql.SqlUtil;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
@@ -172,6 +181,7 @@ import org.apache.commons.lang.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.HashMap;
@@ -196,6 +206,8 @@ import static org.apache.calcite.sql.SqlKind.IS_NULL;
 
 public class RelUtils {
 
+    private static final Logger logger = LoggerFactory.getLogger(RelUtils.class);
+
     /**
      * 使用synchronized来解决并发问题
      */
@@ -218,6 +230,10 @@ public class RelUtils {
      */
     public static String toNativeSql(final SqlNode sqlNode, final DbType dbType) {
         return sqlNode.toSqlString(dbType.getDialect().getCalciteSqlDialect()).getSql();
+    }
+
+    public static String toNativeSqlView(final SqlNode sqlNode, final DbType dbType) {
+        return sqlNode.toSqlStringForView(dbType.getDialect().getCalciteSqlDialect(), true).getSql();
     }
 
     /**
@@ -288,6 +304,17 @@ public class RelUtils {
 
     public static String toString(SqlExplainLevel sqlExplainLevel, RelNode rel, Map<Integer, ParameterContext> params) {
         RelDrdsWriter relWriter = new RelDrdsWriter(sqlExplainLevel, params);
+        rel.explainForDisplay(relWriter);
+        return relWriter.asString();
+    }
+
+    /**
+     * @param indent space count
+     */
+    public static String toString(SqlExplainLevel sqlExplainLevel, RelNode rel,
+                                  Map<Integer, ParameterContext> params, int indent) {
+        RelDrdsWriter relWriter = new RelDrdsWriter(sqlExplainLevel, params);
+        relWriter.setSpaces(indent);
         rel.explainForDisplay(relWriter);
         return relWriter.asString();
     }
@@ -900,6 +927,22 @@ public class RelUtils {
         }
     }
 
+    public static boolean findRandomDistribution(RelNode node) {
+        try {
+            new RelVisitor() {
+                public void visit(RelNode node, int ordinal, RelNode parent) {
+                    if (node.getTraitSet().getDistribution().getType() == RelDistribution.Type.RANDOM_DISTRIBUTED) {
+                        throw Util.FoundOne.NULL;
+                    }
+                    super.visit(node, ordinal, parent);
+                }
+            }.go(node);
+            return false;
+        } catch (Util.FoundOne e) {
+            return true;
+        }
+    }
+
     static class CacheFinder extends RelVisitor {
 
         List<RelNode> cacheNodes = Lists.newArrayList();
@@ -953,10 +996,6 @@ public class RelUtils {
     }
 
     public static boolean findCorrelate(RelNode node) {
-        if (PlannerContext.getPlannerContext(node).getParamManager()
-            .getBoolean(ConnectionParams.ENABLE_COLUMNAR_CORRELATE)) {
-            return false;
-        }
         try {
             new RelVisitor() {
                 public void visit(RelNode node, int ordinal, RelNode parent) {
@@ -1022,7 +1061,7 @@ public class RelUtils {
      */
     public static boolean allTableBroadcast(Map<String, TableProperties> tablePropertiesMap) {
         for (Map.Entry<String, TableProperties> entry : tablePropertiesMap.entrySet()) {
-            if (!entry.getValue().isBroadcast()) {
+            if (!entry.getValue().isBroadcastOrReplicas()) {
                 return false;
             }
         }
@@ -1035,7 +1074,7 @@ public class RelUtils {
      */
     public static boolean allTableNotBroadcast(Map<String, TableProperties> tablePropertiesMap) {
         for (Map.Entry<String, TableProperties> entry : tablePropertiesMap.entrySet()) {
-            if (entry.getValue().isBroadcast()) {
+            if (entry.getValue().isBroadcastOrReplicas()) {
                 return false;
             }
         }
@@ -1054,7 +1093,7 @@ public class RelUtils {
                 continue;
             }
 
-            result |= tableProperties.isBroadcast();
+            result |= tableProperties.isBroadcastOrReplicas();
 
             if (result) {
                 break;
@@ -1156,6 +1195,10 @@ public class RelUtils {
     public static Map<String, TableProperties> buildTablePropertiesMap(List<String> tableNames, String schemaName,
                                                                        ExecutionContext ec) {
         String schema = schemaName != null ? schemaName : DefaultSchema.getSchemaName();
+        if (ExternalNameValidator.isExternalSchema(schema)
+            || EphemeralFilesSchemaManager.SCHEMA_NAME.equals(schema)) {   // 基于名，不需 ctx
+            return new HashMap<>();
+        }
         final TddlRuleManager or = OptimizerContext.getContext(schema).getRuleManager();
         final Map<String, TableProperties> result = new HashMap<>();
         for (String table : tableNames) {
@@ -1211,6 +1254,12 @@ public class RelUtils {
         }
 
         return result;
+    }
+
+    // for sqlyog: SHOW COLUMNS FROM mysql.`user`/mysql.`db`;
+    public static boolean isMySqlSchemaWithTable(SqlShow desc) {
+        return (desc.getDbName() instanceof SqlIdentifier) && ((SqlIdentifier) desc.getDbName()).names.size() == 1
+            && ((SqlIdentifier) desc.getDbName()).names.get(0).equalsIgnoreCase("mysql");
     }
 
     public static CalciteCatalogReader buildCatalogReader(String schema, ExecutionContext ec) {
@@ -1401,6 +1450,18 @@ public class RelUtils {
             return tableRule.isBroadcast();
         }
 
+        public boolean isBroadcastOrReplicas() {
+
+            if (partInfo != null) {
+                return partInfo.isBroadcastOrReplicas();
+            }
+
+            if (null == tableRule) {
+                return false;
+            }
+            return tableRule.isBroadcast();
+        }
+
         /**
          * without considering broadcast tables.
          */
@@ -1431,7 +1492,7 @@ public class RelUtils {
         public String getSingleDbIndex() {
 
             if (partInfo != null) {
-                if (partInfo.isBroadcastTable()) {
+                if (partInfo.isBroadcastOrReplicas()) {
                     // for broadcast, return default group index
                     return partInfo.defaultDbIndex();
                 } else {
@@ -1447,7 +1508,7 @@ public class RelUtils {
                 }
             }
 
-            if (isBroadcast()) {
+            if (isBroadcastOrReplicas()) {
                 return tddlRule.getDefaultDbIndex();
             }
 
@@ -1602,6 +1663,7 @@ public class RelUtils {
             primaryRowType);
 
         final List<RexNode> projects = new ArrayList<>();
+        final String schemaName = primary.getSchemaName();
         primaryRowType.getFieldNames().forEach(cn -> {
             final Integer ref = indexColumnRefMap.getOrDefault(cn, leftCount + primaryColumnRefMap.get(cn));
             final RelDataType type = rowType.getFieldList().get(ref).getType();
@@ -1881,7 +1943,10 @@ public class RelUtils {
         } else {
             return false;
         }
+        return isLastInsertId(childExps);
+    }
 
+    public static boolean isLastInsertId(List<RexNode> childExps) {
         boolean operands = false;
         boolean isLastInsertId = false;
         for (RexNode node : childExps) {
@@ -2167,6 +2232,12 @@ public class RelUtils {
         LogicalModifyView buildForPrimary(List<RelNode> bindings);
     }
 
+    public interface LogicalModifyViewBuilderFromRelocate {
+        List<RelNode> bindPlan(LogicalRelocate relocate);
+
+        LogicalModifyView buildForPrimary(List<RelNode> bindings);
+    }
+
     public static class FlashbackVisitor extends RelShuttleImpl {
         private boolean containFlashback = false;
 
@@ -2194,6 +2265,28 @@ public class RelUtils {
         FlashbackVisitor visitor = new FlashbackVisitor();
         relNode.accept(visitor);
         return visitor.isContainFlashback();
+    }
+
+    public static void displayPhysicalPlan(RelNode relNode, RelWriter pw, ExecutionContext executionContext) {
+        try {
+            //优化器模块调用执行器模块，反射调用
+            Class clazz = Class.forName("com.alibaba.polardbx.executor.utils.ExplainExecutorUtil");
+            Method method =
+                clazz.getDeclaredMethod("getExplainExecuteResultForDisplay", RelNode.class, ExecutionContext.class);
+            method.setAccessible(true);
+            ExecutionContext ec = executionContext.copy();
+            ExplainResult explainResult = new ExplainResult();
+            explainResult.explainMode = ExplainResult.ExplainMode.EXECUTE;
+            ec.setExplain(explainResult);
+            Object result = method.invoke(null, relNode, ec);
+            if (result == null) {
+                return;
+            }
+            pw.item("physicalPlan", result.toString());
+        } catch (Throwable e) {
+            logger.error("explain show physicalPlan failed", e);
+        }
+
     }
 
     public static class NullRefFinder extends RelVisitor {

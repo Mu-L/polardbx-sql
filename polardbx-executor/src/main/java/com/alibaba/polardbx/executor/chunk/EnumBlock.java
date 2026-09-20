@@ -79,7 +79,7 @@ public class EnumBlock extends AbstractCommonBlock {
                 Arrays.copyOf(other.data, other.data.length), other.enumValues);
         } else {
             EnumBlockBuilder enumBlockBuilder =
-                new EnumBlockBuilder(selSize, other.data.length / (other.positionCount + 1) * selSize,
+                new EnumBlockBuilder(selSize, other.data.length / (other.positionCount + 1),
                     other.enumValues);
             for (int i = 0; i < selSize; i++) {
                 if (other.isNull(selection[i])) {

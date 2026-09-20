@@ -61,7 +61,7 @@ public class LogicalAlterTableGroupSplitPartitionByHotValue extends LogicalAlter
     }
 
     @Override
-    public void preparedData(ExecutionContext executionContext) {
+    public void preparedData(ExecutionContext executionContext, boolean supportChangeset) {
         AlterTableGroupSplitPartitionByHotValue alterTableGroupSplitPartitionByHotValue =
             (AlterTableGroupSplitPartitionByHotValue) relDdl;
         String tableGroupName = alterTableGroupSplitPartitionByHotValue.getTableGroupName();

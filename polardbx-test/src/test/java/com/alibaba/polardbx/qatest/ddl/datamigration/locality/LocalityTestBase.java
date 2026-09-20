@@ -30,6 +30,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -159,6 +160,25 @@ public abstract class LocalityTestBase extends BaseTestCase {
             .collect(Collectors.toList());
     }
 
+    public static List<String> getDatanodes(Connection tddlConnection, String storagePool) {
+        String getStoragePoolDnList =
+            "select dn_id_list, UNDELETABLE_DN_ID from information_schema.storage_pool_info where name = '"
+                + storagePool + "'";
+        List<String> dnList = new ArrayList<>();
+        String firstDn = null;
+        try (ResultSet resultSet = JdbcUtil.executeQuerySuccess(tddlConnection, getStoragePoolDnList)) {
+            while (resultSet.next()) {
+                dnList = Arrays.stream(resultSet.getString("dn_id_list").split(",")).collect(Collectors.toList());
+                firstDn = resultSet.getString("UNDELETABLE_DN_ID");
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+        String finalFirstDn = firstDn;
+        dnList.sort(Comparator.comparing(o -> !finalFirstDn.equalsIgnoreCase(o)));
+        return dnList;
+    }
+
     public List<String> getDatanodesForDelete() {
         List<StorageNodeBean> dnList = getStorageInfo(tddlConnection);
         return dnList.stream()
@@ -208,6 +228,15 @@ public abstract class LocalityTestBase extends BaseTestCase {
         return firstDn ? dnList.get(0) : dnList.get(1 + random.nextInt(dnList.size() - 1));
     }
 
+    public static String chooseDatanode(Connection tddlConnection, String storagePool, Boolean firstDn) {
+        List<String> dnList = getDatanodes(tddlConnection, storagePool);
+        if (dnList.isEmpty()) {
+            throw new RuntimeException("datanode is empty");
+        }
+        Random random = new Random();
+        return firstDn ? dnList.get(0) : dnList.get(1 + random.nextInt(dnList.size() - 1));
+    }
+
     public List<LocalityBean> getLocalityBeanInfos() {
         return getLocalityInfo();
     }
@@ -249,17 +278,17 @@ public abstract class LocalityTestBase extends BaseTestCase {
         }
     }
 
-    public List<DSBean> getDsListOfSchema(String schema) {
-        return getDsList().stream()
+    public static List<DSBean> getDsListOfSchema(Connection tddlConnection, String schema) {
+        return getDsList(tddlConnection).stream()
             .filter(x -> x.database.equalsIgnoreCase(schema))
             .collect(Collectors.toList());
     }
 
-    public List<DSBean> getDsBeanList() {
-        return getDsList();
+    public static List<DSBean> getDsBeanList(Connection tddlConnection) {
+        return getDsList(tddlConnection);
     }
 
-    public List<String> getDnListOfDb(String dbName, boolean includeSingleGroup) {
+    public static List<String> getDnListOfDb(Connection tddlConnection, String dbName, boolean includeSingleGroup) {
         final String sql = "show ds where db = '" + dbName.replaceAll("`", "") + "'";
         Set<String> dnList = new HashSet<>();
         try (ResultSet result = JdbcUtil.executeQuerySuccess(tddlConnection, sql)) {
@@ -275,7 +304,7 @@ public abstract class LocalityTestBase extends BaseTestCase {
         }
     }
 
-    public List<DSBean> getDsList() {
+    public static List<DSBean> getDsList(Connection tddlConnection) {
         final String sql = "show ds";
         List<DSBean> res = new ArrayList<>();
 
@@ -302,7 +331,7 @@ public abstract class LocalityTestBase extends BaseTestCase {
      * | 0  | HEHE_000000_GROUP | gg         |
      * +----+-------------------+------------+
      */
-    public List<String> getDnListOfTable(String dbName, String tableName) {
+    public static List<String> getDnListOfTable(Connection tddlConnection, String dbName, String tableName) {
         final String sql = "show topology from " + tableName;
         List<String> groups = new ArrayList<>();
 
@@ -315,7 +344,7 @@ public abstract class LocalityTestBase extends BaseTestCase {
             throw new RuntimeException(e);
         }
 
-        List<DSBean> dsList = getDsList();
+        List<DSBean> dsList = getDsList(tddlConnection);
         List<String> dnList = new ArrayList<>();
         for (String group : groups) {
             String dn = dsList.stream().filter(ds -> ds.group.equals(group)).findFirst().get().storageInst;

@@ -63,7 +63,7 @@ public class CdcColumnarTableGroupDdlMarkTest {
     @Before
     public void setUp() {
         cdcColumnarTableGroupDdlMark =
-            new CdcColumnarTableGroupDdlMark("tg_test", "test_schema", Collections.singletonList("test_table"), 1L);
+            new CdcColumnarTableGroupDdlMark("test_schema", Collections.singletonList("test_table"), 1L);
         Mockito.when(executionContext.copy()).thenReturn(ecCopy);
         Mockito.when(ecCopy.getDdlContext()).thenReturn(ddlContext);
     }

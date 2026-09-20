@@ -41,7 +41,9 @@ public enum VisitorFeature {
     OutputPlOnlyDefinition,
     OutputHashPartitionsByRange,
     OutputMySQLIndentString,
-    OutputUppercaseAgg;
+    OutputUppercaseAgg,
+    OutputMaskPassword,
+    OutputLineCommentAsBlockComment;
 
     private VisitorFeature() {
         mask = (1 << ordinal());

@@ -20,11 +20,10 @@ import com.alibaba.polardbx.executor.operator.Executor;
 import com.alibaba.polardbx.executor.operator.SortExec;
 import com.alibaba.polardbx.executor.operator.spill.SpillerFactory;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
-import com.alibaba.polardbx.executor.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.rel.MemSort;
-import com.alibaba.polardbx.statistics.RuntimeStatHelper;
 import org.apache.calcite.rel.RelFieldCollation;
 
 import java.util.ArrayList;

@@ -36,17 +36,23 @@ public class NodeInfoAccessor extends AbstractAccessor {
     private static final String NODE_INFO_TABLE = GmsSystemTables.NODE_INFO;
 
     private static final String ALL_COLUMNS =
-        "id, cluster, inst_id, nodeid, version, ip, port, rpc_port, role, status, gmt_created, gmt_modified";
+        "id, cluster, inst_id, sub_inst_id, nodeid, version, ip, port, rpc_port, role, status, gmt_created, gmt_modified";
     private static final String WHERE_GMT_MODIFIED = " WHERE gmt_modified > subtime(now(), ?)";
 
     private static final String WHERE_GMT_MODIFIED_AND_MASTER =
         " WHERE gmt_modified > subtime(now(), ?) and (role & " + NodeStatusManager.ROLE_MASTER + " ) <> 0 ";
+    private static final String WHERE_GMT_MODIFIED_AND_MASTER_AND_NO_COLUMNAR =
+        " WHERE gmt_modified > subtime(now(), ?) and (role & " + NodeStatusManager.ROLE_MASTER + " ) <> 0 and (role & "
+            + NodeStatusManager.ROLE_COLUMNAR + ") = 0 ";
     private static final String SELECT_NODE_INFO_BY_GMT_MODIFIED = "select " + ALL_COLUMNS + " from " + NODE_INFO_TABLE
         + WHERE_GMT_MODIFIED;
 
     private static final String SELECT_NODE_INFO_BY_GMT_MODIFIED_AND_MASTER =
         "select " + ALL_COLUMNS + " from " + NODE_INFO_TABLE
             + WHERE_GMT_MODIFIED_AND_MASTER;
+    private static final String SELECT_NODE_INFO_BY_GMT_MODIFIED_AND_MASTER_AND_NO_COLUMNAR =
+        "select " + ALL_COLUMNS + " from " + NODE_INFO_TABLE
+            + WHERE_GMT_MODIFIED_AND_MASTER_AND_NO_COLUMNAR;
 
     private static final String SELECT_NODE_INFO_BY_GMT_MODIFIED_AND_LEADER =
         "select " + ALL_COLUMNS + " from " + NODE_INFO_TABLE
@@ -66,6 +72,16 @@ public class NodeInfoAccessor extends AbstractAccessor {
         Map<Integer, ParameterContext> params = new HashMap<>(1);
         MetaDbUtil.setParameter(1, params, ParameterMethod.setString, "0:2:0");
         return query(SELECT_NODE_INFO_BY_GMT_MODIFIED_AND_MASTER, NODE_INFO_TABLE, NodeInfoRecord.class, params);
+    }
+
+    /**
+     * 获取主实例的节点,但是不包含列存节点，可访问dn的节点
+     */
+    public List<NodeInfoRecord> queryLatestMasterActiveNoColumnar() {
+        Map<Integer, ParameterContext> params = new HashMap<>(1);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, "0:2:0");
+        return query(SELECT_NODE_INFO_BY_GMT_MODIFIED_AND_MASTER_AND_NO_COLUMNAR, NODE_INFO_TABLE,
+            NodeInfoRecord.class, params);
     }
 
     /**

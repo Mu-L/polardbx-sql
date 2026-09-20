@@ -32,6 +32,7 @@ public class NodeInfoRecord implements SystemTableRecord {
     public long id;
     public String cluster;
     public String instId;
+    public String subInstId;
     public String nodeId;
     public String version;
     public String ip;
@@ -47,6 +48,7 @@ public class NodeInfoRecord implements SystemTableRecord {
         this.id = rs.getLong("id");
         this.cluster = rs.getString("cluster");
         this.instId = rs.getString("inst_id");
+        this.subInstId = rs.getString("sub_inst_id");
         this.nodeId = rs.getString("nodeid");
         this.version = rs.getString("version");
         this.ip = rs.getString("ip");

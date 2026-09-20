@@ -120,6 +120,10 @@ public class TwoPhaseAggUtil {
 
         for (int i = 0; i < agg.getAggCallList().size(); i++) {
             AggregateCall aggCall = agg.getAggCallList().get(i);
+            if (aggCall.isDistinct() && !withDistinct){
+                //不支持两阶段的distinct agg
+                return null;
+            }
             boolean isDistinct = aggCall.isDistinct() && withDistinct;
             try {
                 if (isDistinct) {

@@ -1,11 +1,11 @@
 ## DISABLE_FAST_SQL_PARSER
 
 CREATE PARTITION TABLE `test` (
-`iD` bigint(20) NOT NULL,
+`id` bigint(20) NOT NULL,
 `boolean_test` tinyint(4) DEFAULT NULL,
 `BYTE_test` tinyint(4) DEFAULT NULL,
 `short_test` smallint(6) DEFAULT NULL,
-`INT_TEST` int(11) DEFAULT NULL,
+`int_test` int(11) DEFAULT NULL,
 `long_test` bigint(20) DEFAULT NULL,
 `multivalue_test` varchar(255) DEFAULT NULL,
 `multivalue_string` varchar(255) DEFAULT NULL,

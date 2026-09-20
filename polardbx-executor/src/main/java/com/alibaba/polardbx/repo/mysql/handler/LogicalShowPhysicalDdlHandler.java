@@ -38,6 +38,7 @@ import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.rel.dal.LogicalShow;
 import com.alibaba.polardbx.repo.mysql.spi.MyRepository;
 import com.alibaba.polardbx.rpc.compatible.XDataSource;
+import com.alibaba.polardbx.rpc.pool.XConnection;
 import io.grpc.netty.shaded.io.netty.util.internal.StringUtil;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.sql.SqlShowPhysicalDdl;
@@ -81,6 +82,10 @@ public class LogicalShowPhysicalDdlHandler extends HandlerCommon {
     }
 
     public class PhysicalDdlResult {
+        public String getGroupName() {
+            return groupName;
+        }
+
         public String getPhysicalDbName() {
             return physicalDbName;
         }
@@ -102,6 +107,7 @@ public class LogicalShowPhysicalDdlHandler extends HandlerCommon {
         }
 
         String key;
+        String groupName;
         String physicalDbName;
 
         String physicalTableName;
@@ -148,11 +154,16 @@ public class LogicalShowPhysicalDdlHandler extends HandlerCommon {
             this.time = time;
         }
 
-        public PhysicalDdlResult(String key, String physicalDbName, String physicalTableName, Long processId,
+        public PhysicalDdlResult(String key,
+                                 String groupName,
+                                 String physicalDbName,
+                                 String physicalTableName,
+                                 Long processId,
                                  String phase,
                                  String state
         ) {
             this.key = key;
+            this.groupName = groupName;
             this.physicalDbName = physicalDbName;
             this.physicalTableName = physicalTableName;
             this.processId = processId;
@@ -265,6 +276,7 @@ public class LogicalShowPhysicalDdlHandler extends HandlerCommon {
                     Long processId = rsPhysicalDdlStats.getLong("PROCESS_ID");
                     PhysicalDdlResult physicalDdlResult = new PhysicalDdlResult(
                         key,
+                        group.getName(),
                         phyDbName,
                         physicalTableName,
                         processId,
@@ -314,7 +326,8 @@ public class LogicalShowPhysicalDdlHandler extends HandlerCommon {
         physicalDdlResults.addAll(physicalDdlResultMap.values());
         Set<String> groupNames = DbTopologyManager.getGroupNameToStorageInstIdMap(schemaName).keySet();
         Set<String> physicalDbNames =
-            groupNames.stream().map(GroupInfoUtil::buildPhysicalDbNameFromGroupName).collect(Collectors.toSet());
+            groupNames.stream().map(groupName -> GroupInfoUtil.buildPhysicalDbNameFromGroupName(schemaName, groupName))
+                .collect(Collectors.toSet());
         physicalDdlResults =
             physicalDdlResults.stream().filter(o -> physicalDbNames.contains(o.physicalDbName)).collect(
                 Collectors.toList());
@@ -371,7 +384,7 @@ public class LogicalShowPhysicalDdlHandler extends HandlerCommon {
             if (!phyDbStatus.containsKey(physicalDdlResult.key)) {
                 String logicalTableName =
                     TwoPhaseDdlUtils.buildLogicalTableNameFromTwoPhaseKeyAndPhyDbName(physicalDdlResult.key,
-                        physicalDdlResult.physicalDbName);
+                        physicalDdlResult.getGroupName());
                 phyDbStatus.put(physicalDdlResult.key,
                     new ClusterPhyDbStatus(physicalDdlResult.physicalDbName, logicalTableName,
                         physicalDdlResult.phase));

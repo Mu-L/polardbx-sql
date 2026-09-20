@@ -19,6 +19,9 @@ package com.alibaba.polardbx.executor.ddl.job.task;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
+import com.alibaba.polardbx.executor.ddl.job.task.backfill.LogicalTableBackFillTask;
+import com.alibaba.polardbx.executor.ddl.job.task.backfill.LogicalTablePhysicalPartitionBackFillTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.PhysicalBackfillTask;
 import com.alibaba.polardbx.executor.ddl.newengine.dag.TaskScheduler;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.resource.DdlEngineResources;
@@ -61,7 +64,7 @@ public interface RemoteExecutableDdlTask extends DdlTask {
         return serverKeys;
     }
 
-    default List<String> chooseCandidate() {
+    public static List<String> chooseCandidate(Boolean forbidRemote, Boolean isBoostMode) {
         // choose standby node
         List<String> candidates = new ArrayList<>();
         // we should only choose master node here.(master node = master + standby cn).
@@ -70,9 +73,16 @@ public interface RemoteExecutableDdlTask extends DdlTask {
         List<GmsNode> remoteNodeList = GmsNodeManager.getInstance().getRemoteNodes();
         Set<String> masterNodeKeySet = fetchServerKeyFromGmsNode(masterNodeList);
         Set<String> standbyNodeKeySet = fetchServerKeyFromGmsNode(standbyNodeList);
+        Boolean forceStandbyNode = forceStandbyNode();
+        Boolean enableStandbyNode = enableStandbyNode();
+        if (isBoostMode) {
+            forbidRemote = false;
+            if (!standbyNodeKeySet.isEmpty()) {
+                forceStandbyNode = true;
+            }
+        }
         // non-standby node.
         Set<String> backfillMppCnKeys = new HashSet<>();
-        Boolean forbidRemote = forbidRemoteDdlTask();
         if (!forbidRemote && fetchBackfillMppCnKeys(backfillMppCnKeys)) {
             candidates.addAll(masterNodeKeySet);
             candidates.addAll(standbyNodeKeySet);
@@ -84,13 +94,13 @@ public interface RemoteExecutableDdlTask extends DdlTask {
                 }
             }
             candidates = new ArrayList<>(finalCandidates);
-        } else if (!forbidRemote && forceStandbyNode()) {
+        } else if (!forbidRemote && forceStandbyNode) {
             candidates.addAll(standbyNodeKeySet);
-        } else if (!forbidRemote && !enableStandbyNode()) {
+        } else if (!forbidRemote && !enableStandbyNode) {
             // non-standby node.
             candidates.addAll(masterNodeKeySet);
             candidates.removeAll(standbyNodeKeySet);
-        } else if (!forbidRemote && enableStandbyNode()) {
+        } else if (!forbidRemote && enableStandbyNode) {
             // all master node.
             candidates.addAll(masterNodeKeySet);
         }
@@ -107,10 +117,13 @@ public interface RemoteExecutableDdlTask extends DdlTask {
         return new DdlEngineResources();
     }
 
-    default String detectServerFromCandidate(Map<String, Integer> runningTaskNum) {
-        List<String> candidates = chooseCandidate();
+    default String detectServerFromCandidate(Map<String, Integer> runningTaskNum,
+                                             Map<String, Integer> runningSubTaskNum,
+                                             Boolean isBoostMode) {
+        Boolean forbidRemote = forbidRemoteDdlTask();
+        List<String> candidates = chooseCandidate(forbidRemote, isBoostMode);
         DdlEngineResources ddlEngineResources = getDdlEngineResources();
-        if (forbidRemoteDdlTask()) {
+        if (forbidRemote && !isBoostMode) {
             return null;
         }
         List<String> finalCandidates = new ArrayList<>();
@@ -132,7 +145,13 @@ public interface RemoteExecutableDdlTask extends DdlTask {
             return null;
         }
 
-        finalCandidates.sort(Comparator.comparingInt(o -> runningTaskNum.getOrDefault(normalizeServerKey(o), 0)));
+        if (this instanceof LogicalTableBackFillTask || this instanceof LogicalTablePhysicalPartitionBackFillTask) {
+            finalCandidates.sort(
+                Comparator.comparingInt(o -> runningSubTaskNum.getOrDefault(normalizeServerKey((String) o), 0))
+                    .thenComparingInt(o -> runningTaskNum.getOrDefault(normalizeServerKey((String) o), 0)));
+        } else {
+            finalCandidates.sort(Comparator.comparingInt(o -> runningTaskNum.getOrDefault(normalizeServerKey(o), 0)));
+        }
 
         String result = finalCandidates.get(0);
 //        SQLRecorderLogger.ddlEngineLogger.info(
@@ -149,21 +168,21 @@ public interface RemoteExecutableDdlTask extends DdlTask {
         return StringUtils.equalsIgnoreCase(forbidRemoteDdlTaskStr, Boolean.TRUE.toString());
     }
 
-    default boolean enableStandbyNode() {
+    public static boolean enableStandbyNode() {
         String enableStandbyNodeStr =
             MetaDbInstConfigManager.getInstance()
                 .getInstProperty(ConnectionProperties.ENABLE_STANDBY_BACKFILL, Boolean.TRUE.toString());
         return StringUtils.equalsIgnoreCase(enableStandbyNodeStr, Boolean.TRUE.toString());
     }
 
-    default boolean forceStandbyNode() {
+    public static boolean forceStandbyNode() {
         String forceStandbyNodeStr =
             MetaDbInstConfigManager.getInstance()
                 .getInstProperty(ConnectionProperties.FORCE_STANDBY_BACKFILL, Boolean.FALSE.toString());
         return StringUtils.equalsIgnoreCase(forceStandbyNodeStr, Boolean.TRUE.toString());
     }
 
-    default Boolean fetchBackfillMppCnKeys(Set<String> validCnKeys) {
+    public static Boolean fetchBackfillMppCnKeys(Set<String> validCnKeys) {
         String backfillMppCnKeys =
             MetaDbInstConfigManager.getInstance()
                 .getInstProperty(ConnectionProperties.BACKFILL_MPP_CN_KEYS, "");

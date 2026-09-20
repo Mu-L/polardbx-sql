@@ -458,7 +458,7 @@ public class SqlDataTypeSpec extends SqlNode {
                 if (charSetName.equalsIgnoreCase("UTF-8")) {
                     writer.keyword("utf8");
                 } else {
-                    writer.identifier(charSetName);
+                    writer.keyword(charSetName);
                 }
             }
 
@@ -752,12 +752,14 @@ public class SqlDataTypeSpec extends SqlNode {
         JSON(SqlTypeName.JSON),
         BOOLEAN(SqlTypeName.BOOLEAN),
 
+        VECTOR(SqlTypeName.VECTOR),
+
         UNSIGNED(SqlTypeName.UNSIGNED), // only for CAST
         SIGNED(SqlTypeName.SIGNED), // only for CAST
         ;
 
         public static final EnumSet TYPE_WITH_LENGTH =
-            EnumSet.of(TINYINT, SMALLINT, MEDIUMINT, INTEGER, BIGINT, DOUBLE, REAL, FLOAT, DECIMAL, BIT);
+            EnumSet.of(TINYINT, SMALLINT, MEDIUMINT, INTEGER, BIGINT, DOUBLE, REAL, FLOAT, DECIMAL, BIT, VECTOR);
 
         public static final EnumSet TYPE_WITH_LENGTH_DECIMALS =
             EnumSet.of(DOUBLE, REAL, FLOAT, DECIMAL);
@@ -806,6 +808,9 @@ public class SqlDataTypeSpec extends SqlNode {
                 // Produces a signed integer value.
                 return SIGNED;
             default:
+                if (value.startsWith("VECTOR")) {
+                    return VECTOR;
+                }
                 return DrdsTypeName.valueOf(value);
             }
         }

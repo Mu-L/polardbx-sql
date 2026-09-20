@@ -35,6 +35,7 @@ public class DrdsSplitPartition extends SQLObjectImpl implements SQLAlterTableIt
     private final List<SQLObject> partitions = new ArrayList<SQLObject>(4);
     private SQLExpr atValue;
     private SQLName splitPartitionName;
+    private final List<SQLName> splitPartitionNames = new ArrayList<SQLName>(4);
     private SQLName newPartitionNamePrefix;
     private SQLIntegerExpr newPartitionNum;
     private boolean subPartitionsSplit;
@@ -60,10 +61,24 @@ public class DrdsSplitPartition extends SQLObjectImpl implements SQLAlterTableIt
 
     public void setSplitPartitionName(SQLName splitPartitionName) {
         this.splitPartitionName = splitPartitionName;
+        if (this.splitPartitionNames.isEmpty()) {
+            this.splitPartitionNames.add(splitPartitionName);
+        }
     }
 
     public SQLName getSplitPartitionName() {
         return splitPartitionName;
+    }
+
+    public List<SQLName> getSplitPartitionNames() {
+        return splitPartitionNames;
+    }
+
+    public void addSplitPartitionName(SQLName name) {
+        if (name != null) {
+            name.setParent(this);
+        }
+        this.splitPartitionNames.add(name);
     }
 
     public SQLName getNewPartitionNamePrefix() {
@@ -94,6 +109,7 @@ public class DrdsSplitPartition extends SQLObjectImpl implements SQLAlterTableIt
     protected void accept0(SQLASTVisitor visitor) {
         if (visitor.visit(this)) {
             acceptChild(visitor, atValue);
+            acceptChild(visitor, splitPartitionNames);
             acceptChild(visitor, partitions);
         }
         visitor.endVisit(this);

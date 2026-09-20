@@ -1,0 +1,67 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+use polardbx;
+drop database if exists test_omc30_rb_dis_db;
+create database if not exists test_omc30_rb_dis_db mode='auto' default character set utf8mb4 default collate utf8mb4_bin;
+use test_omc30_rb_dis_db;
+## case1: table with GSI - rebuild policy must be disabled (allowedUseRebuildPolicy=false)
+drop table if exists rb_dis_gsi_t1;
+create table rb_dis_gsi_t1(
+  a int not null,
+  b datetime not null,
+  c varchar(32),
+  d int,
+  primary key(a),
+  global index rb_dis_gsi_t1_idx1(d) covering(b) partition by hash(d) partitions 4
+) default character set utf8mb4 default collate utf8mb4_bin
+partition by hash(a) partitions 4;
+alter table rb_dis_gsi_t1 modify ttl set
+  TTL_ENABLE='on',
+  TTL_CLEANUP='on',
+  TTL_EXPR=`b` expire after 1 day timezone '+08:00';
+insert into rb_dis_gsi_t1 values(1, '2020-01-01 00:00:00', 'expired1', 10);
+insert into rb_dis_gsi_t1 values(2, '2020-01-02 00:00:00', 'expired2', 20);
+insert into rb_dis_gsi_t1 values(3, '2030-01-01 00:00:00', 'valid1', 30);
+insert into rb_dis_gsi_t1 values(4, '2030-01-02 00:00:00', 'valid2', 40);
+set TTL_DEBUG_CURRENT_DATETIME='2025-01-01 00:00:00';
+## GSI present: rebuild policy forced on via hint but allowedUseRebuildPolicy=false, must fall back to row-delete
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=true,TTL_FORCE_USE_REBUILD_POLICY_FOR_CLEANUP_EXPIRED_DATA=true,TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY=0,TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY=0)*/alter table rb_dis_gsi_t1 cleanup expired data;
+## verify: expired rows removed via row-delete (not rebuild), valid rows remain
+select a, c from rb_dis_gsi_t1 order by a;
+a,c
+3,valid1
+4,valid2
+drop table if exists rb_dis_gsi_t1;
+## case2: table with TTL_FILTER - rebuild policy must be disabled (usingTtlFilter=true)
+drop table if exists rb_dis_flt_t1;
+create table rb_dis_flt_t1(
+  a int not null,
+  b datetime not null,
+  c int,
+  primary key(a)
+) default character set utf8mb4 default collate utf8mb4_bin
+partition by hash(a) partitions 4;
+alter table rb_dis_flt_t1 modify ttl set
+  TTL_ENABLE='on',
+  TTL_CLEANUP='on',
+  TTL_EXPR=`b` expire after 1 day timezone '+08:00',
+  TTL_FILTER=cond_expr(`c` in (1,2));
+insert into rb_dis_flt_t1 values(1, '2020-01-01 00:00:00', 1);
+insert into rb_dis_flt_t1 values(2, '2020-01-02 00:00:00', 2);
+insert into rb_dis_flt_t1 values(3, '2020-01-03 00:00:00', 3);
+insert into rb_dis_flt_t1 values(4, '2030-01-01 00:00:00', 1);
+insert into rb_dis_flt_t1 values(5, '2030-01-02 00:00:00', 2);
+set TTL_DEBUG_CURRENT_DATETIME='2025-01-01 00:00:00';
+## TTL_FILTER present: rebuild policy forced on via hint but allowedUseRebuildPolicy=false, must fall back to row-delete
+## only rows matching ttl_filter (c in 1,2) AND expired (b < upper bound) should be deleted
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=true,TTL_FORCE_USE_REBUILD_POLICY_FOR_CLEANUP_EXPIRED_DATA=true,TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY=0,TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY=0)*/alter table rb_dis_flt_t1 cleanup expired data;
+## verify: rows 1 and 2 deleted (expired+filter match) - row 3 kept (expired but c=3 not in filter) - rows 4 and 5 kept (valid)
+select a, c from rb_dis_flt_t1 order by a;
+a,c
+3,3
+4,1
+5,2
+drop table if exists rb_dis_flt_t1;
+use polardbx;
+drop database if exists test_omc30_rb_dis_db;
+use polardbx;

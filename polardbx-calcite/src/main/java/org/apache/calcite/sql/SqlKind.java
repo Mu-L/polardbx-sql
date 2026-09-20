@@ -228,6 +228,7 @@ public enum SqlKind {
      * OVER operator
      */
     OVER,
+    JSON_TABLE,
 
     /**
      * FILTER operator
@@ -1252,6 +1253,11 @@ public enum SqlKind {
      */
     ADD_FOREIGN_KEY,
 
+    /**
+     * REBUILD INDEX
+     */
+    REBUILD_INDEX,
+
     // DDL and session control statements follow. The list is not exhaustive: feel
     // free to add more.
 
@@ -1372,6 +1378,16 @@ public enum SqlKind {
     DROP_INDEX,
 
     /**
+     * {@code CREATE [COLUMNAR] INDEX IN DATABASE} DDL statement.
+     */
+    CREATE_INDEX_IN_DATABASE,
+
+    /**
+     * {@code DROP [COLUMNAR] INDEX IN DATABASE} DDL statement.
+     */
+    DROP_INDEX_IN_DATABASE,
+
+    /**
      * {@code ALTER INDEX VISIBILITY} DDL statement.
      */
     ALTER_INDEX_VISIBILITY,
@@ -1382,6 +1398,11 @@ public enum SqlKind {
     DROP_FILE,
 
     /**
+     * {@code ADD CONSTRAINT} DDL statement.
+     */
+    DROP_CONSTRAINT,
+
+    /**
      * {@code DROP PRIMARY KEY} DDL statement.
      */
     DROP_PRIMARY_KEY,
@@ -1390,6 +1411,21 @@ public enum SqlKind {
      * {@code DROP FOREIGN KEY} DDL statement.
      */
     DROP_FOREIGN_KEY,
+
+    /**
+     * {@code ADD CHECK} DDL statement.
+     */
+    ADD_CHECK,
+
+    /**
+     * {@code ADD CHECK} DDL statement.
+     */
+    DROP_CHECK,
+
+    /**
+     * {@code ALTER CHECK} DDL statement.
+     */
+    ALTER_CHECK,
 
     /**
      * {@code ADD PRIMARY KEY} DDL statement.
@@ -1457,9 +1493,13 @@ public enum SqlKind {
 
     CREATE_JAVA_FUNCTION,
 
+    CREATE_ROUTING_RULE,
+
+    DROP_ROUTING_RULE,
+
     CREATE_CCL_RULE,
 
-    CREATE_CCL_TRIGGER,
+    CREATE_CCL_BLOCKER,
 
     CREATE_SCHEDULE,
 
@@ -1500,7 +1540,7 @@ public enum SqlKind {
 
     DROP_CCL_RULE,
 
-    DROP_CCL_TRIGGER,
+    DROP_CCL_BLOCKER,
 
     /**
      * ALTER SYSTEM CHANGE_CONSENSUS_LEADER
@@ -1542,6 +1582,11 @@ public enum SqlKind {
      */
     OTHER_DDL,
 
+    COLLECT_STATISTIC,
+
+    CANCEL_COLLECT_STATISTIC,
+    SHOW_COLLECT_STATISTIC,
+
     SHOW,
 
     SHOW_DATASOURCES,
@@ -1581,6 +1626,26 @@ public enum SqlKind {
     SHOW_TABLE_STATUS,
 
     SHOW_TABLE_REPLICATE,
+
+    SHOW_ROUTING_RULES,
+
+    SHOW_EXTERNAL_CATALOGS,
+
+    SHOW_SECRETS,
+
+    SHOW_CONNECTORS,
+
+    SHOW_CREATE_EXTERNAL_CATALOG,
+
+    SHOW_TABLES_FROM_CATALOG,
+
+    DESCRIBE_EXTERNAL_CATALOG,
+
+    DESCRIBE_EXTERNAL_TABLE,
+
+    SHOW_CREATE_SECRET,
+
+    SHOW_DATABASES_FROM_CATALOG,
 
     SHOW_SLOW,
 
@@ -1648,6 +1713,8 @@ public enum SqlKind {
 
     SHOW_LOCAL_DEADLOCKS,
 
+    SHOW_EXPAND_STATUS,
+
     SHOW_PARTITONS_HEATMAP,
 
     SHOW_METADATA_LOCK,
@@ -1656,10 +1723,14 @@ public enum SqlKind {
 
     SHOW_TRANS_STATS,
 
+    SHOW_AI_FUNCTION,
+
+    SHOW_AI_MODEL,
+
     SHOW_CCL_RULE,
 
-    SHOW_CCL_TRIGGER,
-
+    SHOW_CCL_BLOCKER,
+    SHOW_DN_CCL,
     SHOW_CDC_STORAGE,
 
     SHOW_BINARY_STREAMS,
@@ -1731,6 +1802,8 @@ public enum SqlKind {
 
     CHECK_GLOBAL_INDEX, // As a special DDL.
 
+    CHECK_TABLE_ROUTING,
+
     ANALYZE_TABLE,
 
     OPTIMIZE_TABLE,
@@ -1787,19 +1860,23 @@ public enum SqlKind {
 
     REMOVE_DDL_JOB,
 
+    PURGE_BINARY_STREAM,
+
     INSPECT_DDL_JOB_CACHE,
 
     CLEAR_DDL_JOB_CACHE,
 
     CLEAR_CCL_RULES,
 
-    CLEAR_CCL_TRIGGERS,
+    CLEAR_CCL_BLOCKERS,
 
     SLOW_SQL_CCL,
 
     CHANGE_DDL_JOB,
 
     BASELINE,
+    WARMUP,
+    WARMUP_CONTROL,
 
     MOVE_DATABASE,
     SHOW_MOVE_DATABASE,
@@ -1844,6 +1921,15 @@ public enum SqlKind {
      * partition management: alter table group split partition
      */
     SPLIT_PARTITION,
+    /**
+     * partition management: alter table expand partitions to N
+     */
+    EXPAND_PARTITIONS,
+
+    /**
+     * partition management: alter table cancel expand
+     */
+    CANCEL_EXPAND,
     /**
      * partition management: alter table group merge partition
      */
@@ -1890,6 +1976,10 @@ public enum SqlKind {
 
     SHOW_CREATE_TABLEGROUP,
 
+    SHOW_JAVA_FUNCTIONS,
+
+    SHOW_CREATE_JAVA_FUNCTION,
+
     /**
      * partition management: create new tablegroup
      */
@@ -1917,6 +2007,9 @@ public enum SqlKind {
      * unarchive oss tables
      */
     DROP_STORAGE_POOL,
+
+    ALTER_USER,
+
     UNARCHIVE,
 
     /**
@@ -1928,6 +2021,14 @@ public enum SqlKind {
      * file storage management: create fileStorage
      */
     CREATE_FILESTORAGE,
+
+    CREATE_EXTERNAL_CATALOG,
+    DROP_EXTERNAL_CATALOG,
+    ALTER_EXTERNAL_CATALOG,
+    REFRESH_EXTERNAL_CATALOG,
+    CREATE_SECRET,
+    DROP_SECRET,
+    ALTER_SECRET,
 
     /**
      * file storage management: alter fileStorage
@@ -1978,6 +2079,11 @@ public enum SqlKind {
      * expire local partition
      */
     CLEANUP_EXPIRED_DATA,
+
+    /**
+     * Rebuild a table while filtering rows that match a cleanup predicate.
+     */
+    REBUILD_CLEANUP,
 
     LOCAL_PARTITION,
 
@@ -2135,12 +2241,27 @@ public enum SqlKind {
         SHOW_METADATA_LOCK,
         SHOW_TRANS,
         SHOW_TRANS_STATS,
+        SHOW_AI_FUNCTION,
+        SHOW_AI_MODEL,
         SHOW_LOCAL_DEADLOCKS,
+        SHOW_EXPAND_STATUS,
         SHOW_GLOBAL_DEADLOCKS,
         SHOW_PARTITONS_HEATMAP,
         SHOW_CHANGESET_STATS,
         SHOW_CREATE_TABLEGROUP,
-        SHOW_TABLE_ACCESS);
+        SHOW_TABLE_ACCESS,
+        SHOW_ROUTING_RULES,
+        SHOW_EXTERNAL_CATALOGS,
+        SHOW_SECRETS,
+        SHOW_CONNECTORS,
+        SHOW_CREATE_EXTERNAL_CATALOG,
+        SHOW_TABLES_FROM_CATALOG,
+        DESCRIBE_EXTERNAL_CATALOG,
+        DESCRIBE_EXTERNAL_TABLE,
+        SHOW_CREATE_SECRET,
+        SHOW_DATABASES_FROM_CATALOG,
+        SHOW_JAVA_FUNCTIONS,
+        SHOW_CREATE_JAVA_FUNCTION);
 
     public static final EnumSet<SqlKind> LOGICAL_SHOW_WITH_TABLE = EnumSet.of(SHOW_CREATE_TABLE,
         SHOW_TOPOLOGY,
@@ -2171,6 +2292,7 @@ public enum SqlKind {
     public static final EnumSet<SqlKind> TABLE_MAINTENANCE_QUERY = EnumSet.of(CHECK_TABLE,
         CHECK_GLOBAL_INDEX,
         CHECK_COLUMNAR_INDEX,
+        CHECK_TABLE_ROUTING,
         CHECK_COLUMNAR_PARTITION,
         CHECK_COLUMNAR_SNAPSHOT,
         ANALYZE_TABLE,
@@ -2187,18 +2309,25 @@ public enum SqlKind {
         RESUME_REBALANCE_JOB,
         SKIP_REBALANCE_SUBJOB,
         REMOVE_DDL_JOB,
+        PURGE_BINARY_STREAM,
         INSPECT_DDL_JOB_CACHE,
         CLEAR_DDL_JOB_CACHE,
         CHANGE_DDL_JOB,
         INSPECT_RULE_VERSION,
         REFRESH_LOCAL_RULES,
+        REFRESH_EXTERNAL_CATALOG,
         CLEAR_SEQ_CACHE,
         INSPECT_SEQ_RANGE,
         CONVERT_ALL_SEQUENCES,
         BASELINE,
+        WARMUP,
+        WARMUP_CONTROL,
         MOVE_DATABASE,
         REBALANCE,
-        CHECK_TABLEGROUP
+        COLLECT_STATISTIC,
+        CANCEL_COLLECT_STATISTIC,
+        CHECK_TABLEGROUP,
+        ALTER_USER
     );
 
     public static final EnumSet<SqlKind> SQL_SET_QUERY = EnumSet.of(SQL_SET,
@@ -2301,9 +2430,12 @@ public enum SqlKind {
             CHANGE_CONSENSUS_ROLE, ALTER_SYSTEM_SET_CONFIG, ALTER_TABLE_SET_TABLEGROUP,
             REFRESH_TOPOLOGY, DROP_TABLEGROUP,
             ALTER_FILESTORAGE, DROP_FILESTORAGE, CLEAR_FILESTORAGE, CREATE_FILESTORAGE,
+            CREATE_EXTERNAL_CATALOG, DROP_EXTERNAL_CATALOG, ALTER_EXTERNAL_CATALOG,
+            CREATE_SECRET, DROP_SECRET, ALTER_SECRET,
             CREATE_JOINGROUP, DROP_JOINGROUP, ALTER_JOINGROUP,
             OPTIMIZE_TABLE, ANALYZE_TABLE,
-            CREATE_STORAGE_POOL, ALTER_STORAGE_POOL, DROP_STORAGE_POOL, ALTER_INSTANCE
+            CREATE_STORAGE_POOL, ALTER_STORAGE_POOL, DROP_STORAGE_POOL, ALTER_INSTANCE, CREATE_INDEX_IN_DATABASE,
+            DROP_INDEX_IN_DATABASE
         ));
 
     public static final EnumSet<SqlKind> DDL_SUPPORTED_BY_NEW_ENGINE =
@@ -2316,7 +2448,10 @@ public enum SqlKind {
             CREATE_FUNCTION,
             DROP_FUNCTION, ALTER_FUNCTION, CREATE_PROCEDURE, DROP_PROCEDURE, ALTER_PROCEDURE, ALTER_DATABASE,
             IMPORT_DATABASE, IMPORT_SEQUENCE,
-            CREATE_STORAGE_POOL, ALTER_STORAGE_POOL, DROP_STORAGE_POOL, ALTER_INSTANCE);
+            CREATE_STORAGE_POOL, ALTER_STORAGE_POOL, DROP_STORAGE_POOL, ALTER_INSTANCE, CREATE_INDEX_IN_DATABASE,
+            DROP_INDEX_IN_DATABASE,
+            CREATE_EXTERNAL_CATALOG, DROP_EXTERNAL_CATALOG, ALTER_EXTERNAL_CATALOG,
+            CREATE_SECRET, DROP_SECRET, ALTER_SECRET);
 
     public static final EnumSet<SqlKind> SUPPORT_DDL =
         EnumSet.of(CREATE_TABLE, ALTER_TABLE, DROP_TABLE,
@@ -2337,24 +2472,29 @@ public enum SqlKind {
             REBALANCE, ALLOCATE_LOCAL_PARTITION, REPARTITION_LOCAL_PARTITION,
             CREATE_JOINGROUP, DROP_JOINGROUP, ALTER_JOINGROUP, MERGE_TABLEGROUP, ALTER_TABLEGROUP_ADD_TABLE,
             OPTIMIZE_TABLE, ANALYZE_TABLE, ALTER_TABLE_DISCARD_TABLESPACE, ALTER_TABLE_IMPORT_TABLESPACE,
-            ALTER_INSTANCE);
+            ALTER_INSTANCE, CREATE_INDEX_IN_DATABASE, DROP_INDEX_IN_DATABASE);
 
     public static final EnumSet<SqlKind> SUPPORT_SHADOW_DDL =
         EnumSet.of(CREATE_TABLE, ALTER_TABLE, DROP_TABLE,
-            CREATE_INDEX, ALTER_INDEX, DROP_INDEX, ALTER_RENAME_INDEX, RENAME_TABLE, TRUNCATE_TABLE);
+            CREATE_INDEX, ALTER_INDEX, DROP_INDEX, ALTER_RENAME_INDEX, RENAME_TABLE, TRUNCATE_TABLE,
+            CREATE_INDEX_IN_DATABASE, DROP_INDEX_IN_DATABASE);
 
     public static final EnumSet<SqlKind> SEQUENCE_DDL =
         EnumSet.of(CREATE_SEQUENCE, ALTER_SEQUENCE, DROP_SEQUENCE, RENAME_SEQUENCE);
 
     public static final EnumSet<SqlKind> SUPPORT_CCL =
-        EnumSet.of(CREATE_CCL_RULE, DROP_CCL_RULE, SHOW_CCL_RULE, CLEAR_CCL_RULES, CREATE_CCL_TRIGGER, DROP_CCL_TRIGGER,
-            SHOW_CCL_TRIGGER, CLEAR_CCL_TRIGGERS, SLOW_SQL_CCL);
+        EnumSet.of(CREATE_ROUTING_RULE, DROP_ROUTING_RULE, CREATE_CCL_RULE, DROP_CCL_RULE, SHOW_CCL_RULE,
+            CLEAR_CCL_RULES, CREATE_CCL_BLOCKER, DROP_CCL_BLOCKER,
+            SHOW_CCL_BLOCKER, CLEAR_CCL_BLOCKERS, SLOW_SQL_CCL, SHOW_DN_CCL);
 
     public static final EnumSet<SqlKind> SUPPORT_SCHEDULE =
         EnumSet.of(CREATE_SCHEDULE, DROP_SCHEDULE, PAUSE_SCHEDULE, CONTINUE_SCHEDULE, FIRE_SCHEDULE);
 
     public static final EnumSet<SqlKind> SUPPORT_LBAC_SECURITY =
-        EnumSet.of(SqlKind.CREATE_SECURITY_LABEL_COMPONENT, SqlKind.DROP_SECURITY_LABEL_COMPONENT, SqlKind.CREATE_SECURITY_LABEL, SqlKind.DROP_SECURITY_LABEL, SqlKind.CREATE_SECURITY_POLICY, SqlKind.DROP_SECURITY_POLICY, SqlKind.GRANT_SECURITY_LABEL, SqlKind.REVOKE_SECURITY_LABEL, SqlKind.CREATE_SECURITY_ENTITY, SqlKind.DROP_SECURITY_ENTITY);
+        EnumSet.of(SqlKind.CREATE_SECURITY_LABEL_COMPONENT, SqlKind.DROP_SECURITY_LABEL_COMPONENT,
+            SqlKind.CREATE_SECURITY_LABEL, SqlKind.DROP_SECURITY_LABEL, SqlKind.CREATE_SECURITY_POLICY,
+            SqlKind.DROP_SECURITY_POLICY, SqlKind.GRANT_SECURITY_LABEL, SqlKind.REVOKE_SECURITY_LABEL,
+            SqlKind.CREATE_SECURITY_ENTITY, SqlKind.DROP_SECURITY_ENTITY);
 
     public static final EnumSet<SqlKind> SUPPORT_ALTER_SYSTEM_DAL =
         EnumSet.of(ALTER_SYSTEM_REFRESH_STORAGE, ALTER_SYSTEM_RELOAD_STORAGE, ALTER_SYSTEM_LEADER);
@@ -2610,6 +2750,17 @@ public enum SqlKind {
         LIKE,
         AND,
         OR);
+
+    public static final Set<SqlKind> INDEXABLE_FOR_CCI = EnumSet.of(IN,
+            EQUALS,
+            LESS_THAN,
+            GREATER_THAN,
+            GREATER_THAN_OR_EQUAL,
+            LESS_THAN_OR_EQUAL,
+            BETWEEN,
+            IS_NULL,
+            AND,
+            OR);
 
     public static final Set<SqlKind> SELECTABLE = EnumSet.of(IN,
         EQUALS,

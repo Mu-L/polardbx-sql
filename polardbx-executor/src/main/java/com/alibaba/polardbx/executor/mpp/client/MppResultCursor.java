@@ -16,12 +16,17 @@
 
 package com.alibaba.polardbx.executor.mpp.client;
 
+import com.alibaba.polardbx.common.columnar.ColumnarScanMetrics;
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.cursor.AbstractCursor;
 import com.alibaba.polardbx.executor.mpp.execution.QueryInfo;
+import com.alibaba.polardbx.executor.mpp.execution.StageInfo;
+import com.alibaba.polardbx.executor.mpp.execution.TaskId;
 import com.alibaba.polardbx.executor.mpp.operator.OperatorStats;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.CursorMeta;
@@ -29,8 +34,10 @@ import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.alibaba.polardbx.statistics.RuntimeStatistics;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Future;
 
 import static com.alibaba.polardbx.executor.mpp.server.StatementResource.Query.toQueryError;
@@ -38,13 +45,15 @@ import static com.alibaba.polardbx.executor.mpp.server.StatementResource.Query.t
 public class MppResultCursor extends AbstractCursor {
 
     private static final Logger log = LoggerFactory.getLogger(MppResultCursor.class);
+    public static final long EXPLAIN_SQL_WAIT_QUERY_INFO_TIME_IN_MILLIS = 100;
     private final LocalStatementClient client;
     private final ExecutionContext ec;
     private Row currentValue;
     private Iterator<Object> currentChunks;
     private Chunk currentChunk;
     private int nextPos;
-    private boolean bWaitQueryInfo;
+    private boolean bWaitQueryInfo = true;
+    private long waitQueryInfoTimeInMillis = 0;
     private CursorMeta cursorMeta;
     private Runnable closeListenable;
 
@@ -120,6 +129,42 @@ public class MppResultCursor extends AbstractCursor {
                                 throw GeneralUtil.nestedException(failureInfo.toExceptionWithoutType());
                             }
                         }
+
+                        // task-level
+                        if (queryInfo.getOutputStage().isPresent()) {
+                            StageInfo rootStage = queryInfo.getOutputStage().get();
+                            Map<TaskId, VersionStorageStatistics> versionStorageStatisticsMap = new HashMap<>();
+                            Map<TaskId, ColumnarScanMetrics> columnarScanMetricsMap = new HashMap<>();
+                            Map<String, Long> maximumQueryMemoryUsageMap = new HashMap<>();
+
+                            StageInfo.collectTaskStatistics(
+                                rootStage, versionStorageStatisticsMap, maximumQueryMemoryUsageMap,
+                                columnarScanMetricsMap);
+
+                            RuntimeStatistics runtimeStatistics = null;
+                            if (ec.getRuntimeStatistics() != null
+                                && ec.getRuntimeStatistics() instanceof RuntimeStatistics) {
+                                runtimeStatistics = (RuntimeStatistics) ec.getRuntimeStatistics();
+                            }
+
+                            if (runtimeStatistics != null) {
+
+                                if (maximumQueryMemoryUsageMap != null) {
+                                    runtimeStatistics.updateSqlMemoryMaxUsageInfo(maximumQueryMemoryUsageMap);
+                                }
+
+                                if (versionStorageStatisticsMap != null) {
+                                    runtimeStatistics.updateVersionStorageStatistics(versionStorageStatisticsMap);
+                                }
+
+                                if (columnarScanMetricsMap != null) {
+                                    runtimeStatistics.updateColumnarScanMetrics(columnarScanMetricsMap);
+                                }
+
+                            }
+                        }
+
+                        // operator-level
                         List<OperatorStats> operatorStats = queryInfo.getQueryStats().getOperatorSummaries();
                         for (OperatorStats operatorStat : operatorStats) {
 
@@ -148,7 +193,8 @@ public class MppResultCursor extends AbstractCursor {
         if (bWaitQueryInfo) {
             Future<QueryInfo> blockedQueryInfo = client.getBlockedQueryInfo();
             while (!blockedQueryInfo.isDone()) {
-                Thread.sleep(100);
+                Thread.sleep(waitQueryInfoTimeInMillis == 0 ? EXPLAIN_SQL_WAIT_QUERY_INFO_TIME_IN_MILLIS :
+                    waitQueryInfoTimeInMillis);
                 client.tryGetQueryInfo();
             }
             return blockedQueryInfo.get();
@@ -158,7 +204,8 @@ public class MppResultCursor extends AbstractCursor {
         }
     }
 
-    public void waitQueryInfo(boolean bWaitQueryInfo) {
+    public void waitQueryInfo(boolean bWaitQueryInfo, long waitQueryInfoTimeInMillis) {
         this.bWaitQueryInfo = bWaitQueryInfo;
+        this.waitQueryInfoTimeInMillis = waitQueryInfoTimeInMillis;
     }
 }

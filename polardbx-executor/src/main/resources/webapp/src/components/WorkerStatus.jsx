@@ -14,7 +14,15 @@
 
 import React from "react";
 
-import {addToHistory, formatCount, formatDataSize, getFirstParameter, precisionRound} from "../utils";
+import {
+    addToHistory,
+    formatCount,
+    formatDataSize,
+    getFirstParameter,
+    getFormattedHtmlHrefUrl,
+    getFormattedUrl,
+    precisionRound
+} from "../utils";
 
 const SMALL_SPARKLINE_PROPERTIES = {
     width: '100%',
@@ -55,7 +63,7 @@ export class WorkerStatus extends React.Component {
         clearTimeout(this.timeoutId); // to stop multiple series of refreshLoop from going on simultaneously
         const nodeId = getFirstParameter(window.location.search);
         if (nodeId) {
-            $.get('/v1/worker/' + nodeId + '/status', function (serverInfo) {
+            $.get(getFormattedUrl('/v1/worker/' + nodeId + '/status'), function (serverInfo) {
                 this.setState({
                     serverInfo: serverInfo,
                     initialized: true,
@@ -75,7 +83,7 @@ export class WorkerStatus extends React.Component {
                 this.resetTimer();
                 }.bind(this));
         } else {
-            $.get('/v1/status', function (serverInfo) {
+            $.get(getFormattedUrl('/v1/status'), function (serverInfo) {
                 this.setState({
                     serverInfo: serverInfo,
                     initialized: true,
@@ -156,7 +164,7 @@ export class WorkerStatus extends React.Component {
                 <td>
                     <div className="row query-memory-list-header">
                         <div className="col-xs-2">
-                            <a href={"query.html?" + query} target="_blank">
+                            <a href={getFormattedHtmlHrefUrl("query.html?" + query)} target="_blank">
                                 {query}
                             </a>
                         </div>

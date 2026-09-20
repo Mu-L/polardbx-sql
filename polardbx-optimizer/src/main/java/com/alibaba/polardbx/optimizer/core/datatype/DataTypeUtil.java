@@ -1,3 +1,4 @@
+package com.alibaba.polardbx.optimizer.core.datatype;
 /*
  * Copyright [2013-2021], Alibaba Group Holding Limited
  *
@@ -14,7 +15,6 @@
  * limitations under the License.
  */
 
-package com.alibaba.polardbx.optimizer.core.datatype;
 
 import com.alibaba.polardbx.common.charset.CharsetName;
 import com.alibaba.polardbx.common.datatype.Decimal;
@@ -25,6 +25,7 @@ import com.alibaba.polardbx.common.jdbc.ZeroDate;
 import com.alibaba.polardbx.common.jdbc.ZeroTime;
 import com.alibaba.polardbx.common.jdbc.ZeroTimestamp;
 import com.alibaba.polardbx.common.utils.TStringUtil;
+import com.alibaba.polardbx.common.type.MySQLStandardFieldType;
 import com.alibaba.polardbx.common.utils.time.MySQLTimeConverter;
 import com.alibaba.polardbx.common.utils.time.MySQLTimeTypeUtil;
 import com.alibaba.polardbx.common.utils.time.calculator.MySQLTimeCalculator;
@@ -36,6 +37,9 @@ import com.alibaba.polardbx.common.utils.time.core.OriginalTimestamp;
 import com.alibaba.polardbx.common.utils.time.parser.NumericTimeParser;
 import com.alibaba.polardbx.common.utils.time.parser.StringTimeParser;
 import com.alibaba.polardbx.druid.sql.ast.SQLDataType;
+import com.alibaba.polardbx.druid.sql.ast.SQLDataTypeImpl;
+import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLCharExpr;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.TddlRelDataTypeSystemImpl;
@@ -47,6 +51,7 @@ import com.alibaba.polardbx.optimizer.core.expression.bean.LobVal;
 import com.alibaba.polardbx.optimizer.core.expression.bean.NullValue;
 import com.alibaba.polardbx.optimizer.exception.OptimizerException;
 import com.alibaba.polardbx.optimizer.exception.SqlValidateException;
+import com.alibaba.polardbx.optimizer.parse.FastsqlUtils;
 import com.alibaba.polardbx.rpc.result.XResultUtil;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
@@ -460,6 +465,14 @@ public class DataTypeUtil {
         return DataTypeUtil.equalsSemantically(type, DataTypes.DecimalType);
     }
 
+    public static boolean isZeroScaledDecimalType(DataType type) {
+        boolean isDecimal = isDecimalType(type);
+        if (!isDecimal) {
+            return false;
+        }
+        return type.getScale() == 0;
+    }
+
     public static boolean isTimezoneDependentType(DataType dataType) {
         return dataType.getSqlType() == Types.TIMESTAMP || dataType.getSqlType() == Types.TIME;
     }
@@ -470,6 +483,10 @@ public class DataTypeUtil {
 
     public static boolean isUnderBigintUnsignedType(DataType dataType) {
         return isUnderBigintType(dataType) || isBigintUnsigned(dataType);
+    }
+
+    public static boolean isUnderBigintUnsignedTypeOrZeroScaledDecimalType(DataType dataType) {
+        return isUnderBigintUnsignedType(dataType) || isZeroScaledDecimalType(dataType);
     }
 
     public static boolean isStringType(DataType type) {
@@ -676,17 +693,10 @@ public class DataTypeUtil {
         default:
             if (columnTypeUpper.startsWith("ENUM")) {
                 EnumType enumType = parseEnumType(columnTypeName);
-                final ImmutableList.Builder<String> builder = ImmutableList.builder();
-
-                final Set<String> strings = enumType.getEnumValues().keySet();
-                for (String enumValue : strings) {
-                    builder.add(enumValue);
-                }
-
-                final ImmutableList<String> build = builder.build();
+                List<String> enumList = new ArrayList<>(enumType.getEnumList());
 
                 calciteTypeName = SqlTypeName.ENUM;
-                RelDataType calciteType = factory.createEnumSqlType(calciteTypeName, build);
+                RelDataType calciteType = factory.createEnumSqlType(calciteTypeName, enumList);
                 return calciteType;
             }
             if (columnTypeUpper.startsWith("SET")) {
@@ -695,6 +705,15 @@ public class DataTypeUtil {
                 calciteTypeName = SqlTypeName.CHAR;
                 return factory.createSetSqlType(calciteTypeName, (int) Long.min(precision, Integer.MAX_VALUE),
                     setType.getSetValues());
+            }
+            if (columnTypeUpper.startsWith("VECTOR")) {
+                // DN stores VECTOR as varbinary, but column_type from information_schema
+                // correctly reports "vector(N)". Parse dimension from "vector(N)" format.
+                int vectorDim = parseVectorDimension(columnTypeName);
+                calciteTypeName = SqlTypeName.VECTOR;
+                RelDataType calciteType = factory.createSqlType(calciteTypeName, vectorDim);
+                calciteType = factory.createTypeWithNullability(calciteType, nullable);
+                return calciteType;
             }
             boolean unsigned = columnTypeUpper.contains("UNSIGNED");
             if (unsigned) {
@@ -772,19 +791,53 @@ public class DataTypeUtil {
     }
 
     public static EnumType parseEnumType(String typeSpec) {
-        String[] enums = TStringUtil.substringBetween(typeSpec, "(", ")").split(",");
-        for (int i = 0; i < enums.length; i++) {
-            enums[i] = TStringUtil.substringBetween(enums[i], "'");
+        SQLDataTypeImpl columnDefinition = (SQLDataTypeImpl) FastsqlUtils.parseDataType(typeSpec).get(0);
+        List<String> enums = new ArrayList<>(columnDefinition.getArguments().size());
+        for (SQLExpr arg : columnDefinition.getArguments()) {
+            if (arg instanceof SQLCharExpr) {
+                enums.add(((SQLCharExpr) arg).getText());
+            } else {
+                enums.add(arg.toString());
+            }
         }
-        return new EnumType(Arrays.asList(enums));
+        return new EnumType(enums);
     }
 
     public static SetType parseSetType(String typeSpec) {
-        String[] setValues = TStringUtil.substringBetween(typeSpec, "(", ")").split(",");
-        for (int i = 0; i < setValues.length; i++) {
-            setValues[i] = TStringUtil.substringBetween(setValues[i], "'");
+        SQLDataTypeImpl columnDefinition = (SQLDataTypeImpl) FastsqlUtils.parseDataType(typeSpec).get(0);
+        List<String> setValues = new ArrayList<>(columnDefinition.getArguments().size());
+        for (SQLExpr arg : columnDefinition.getArguments()) {
+            if (arg instanceof SQLCharExpr) {
+                setValues.add(((SQLCharExpr) arg).getText());
+            } else {
+                setValues.add(arg.toString());
+            }
         }
-        return new SetType(Arrays.asList(setValues));
+        return new SetType(setValues);
+    }
+
+    /**
+     * Parse vector dimension from column type string like "vector(4)" or "VECTOR(16)".
+     * Returns 0 if no dimension is specified (e.g., "vector").
+     */
+    public static int parseVectorDimension(String typeSpec) {
+        if (typeSpec == null) {
+            return 0;
+        }
+        String trimmed = typeSpec.trim();
+        int parenStart = trimmed.indexOf('(');
+        if (parenStart < 0) {
+            return 0;
+        }
+        int parenEnd = trimmed.indexOf(')', parenStart);
+        if (parenEnd < 0) {
+            return 0;
+        }
+        String dimStr = trimmed.substring(parenStart + 1, parenEnd).trim();
+        if (dimStr.isEmpty()) {
+            return 0;
+        }
+        return Integer.parseInt(dimStr);
     }
 
     /**
@@ -801,6 +854,8 @@ public class DataTypeUtil {
             calciteTypeName = SqlTypeName.BIG_BIT;
         } else if (type instanceof EnumType) {
             calciteTypeName = SqlTypeName.ENUM;
+        } else if (type instanceof VectorType) {
+            calciteTypeName = SqlTypeName.VECTOR;
         } else if (type.isUnsigned()) {
             // then deal with unsigned type
             if (type.getSqlType() == DataType.MEDIUMINT_SQL_TYPE) {
@@ -1035,5 +1090,12 @@ public class DataTypeUtil {
             dataType.getSqlType() == Types.NCHAR ||
             dataType.getSqlType() == Types.NVARCHAR ||
             dataType.getSqlType() == Types.LONGNVARCHAR;
+    }
+
+    public static boolean ifSafeCompareDataType(DataType dataType) {
+        if (dataType.fieldType() == MySQLStandardFieldType.MYSQL_TYPE_GEOMETRY) {
+            return false;
+        }
+        return true;
     }
 }

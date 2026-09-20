@@ -21,6 +21,7 @@ import org.apache.orc.StripeInformation;
 import org.apache.orc.TypeDescription;
 import org.apache.orc.impl.InStream;
 import org.apache.orc.impl.OrcIndex;
+import org.apache.orc.impl.PositionProviderBuilder;
 import org.apache.orc.impl.StreamName;
 import org.junit.Test;
 
@@ -70,7 +71,7 @@ public class DictDecimalColumnReader3Test extends DecimalScanTestBase {
         throws IOException {
         final StripeInformation stripeInformation = stripeInformationMap.get(stripeId);
         final ExecutionContext context = new ExecutionContext();
-        final OrcIndex orcIndex = preheatFileMeta.getOrcIndex(
+        final PositionProviderBuilder orcIndex = preheatFileMeta.getPositionProviderBuilder(
             stripeInformation.getStripeId()
         );
 
@@ -101,10 +102,7 @@ public class DictDecimalColumnReader3Test extends DecimalScanTestBase {
             SortedMap<Integer, OrcProto.ColumnEncoding[]> encodingMap =
                 stripeInformationList.stream().collect(Collectors.toMap(
                     stripe -> (int) stripe.getStripeId(),
-                    stripe -> StaticStripePlanner.buildEncodings(
-                        encryption,
-                        columnIncluded,
-                        preheatFileMeta.getStripeFooter((int) stripe.getStripeId())),
+                    stripe -> preheatFileMeta.buildEncodings((int) stripe.getStripeId(), columnIncluded),
                     (s1, s2) -> s1,
                     () -> new TreeMap<>()
                 ));

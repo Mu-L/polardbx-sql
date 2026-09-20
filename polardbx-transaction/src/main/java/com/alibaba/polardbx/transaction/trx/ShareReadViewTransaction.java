@@ -18,14 +18,19 @@ package com.alibaba.polardbx.transaction.trx;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.jdbc.BytesSql;
 import com.alibaba.polardbx.common.jdbc.IConnection;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.thread.LockUtils;
+import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.rpc.client.XSession;
+import com.alibaba.polardbx.rpc.pool.XConnection;
 import com.alibaba.polardbx.stats.TransactionStatistics;
 import com.alibaba.polardbx.transaction.TransactionLogger;
 import com.alibaba.polardbx.transaction.TransactionManager;
@@ -33,6 +38,7 @@ import com.alibaba.polardbx.transaction.async.AsyncTaskQueue;
 import com.alibaba.polardbx.transaction.connection.TransactionConnectionHolder;
 import com.alibaba.polardbx.transaction.utils.XAUtils;
 
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Collection;
@@ -57,7 +63,7 @@ public abstract class ShareReadViewTransaction extends AbstractTransaction {
      */
     private static final int MAX_READ_VIEW_COUNT = 10000;
 
-    private final AtomicInteger readViewConnCounter = new AtomicInteger(0);
+    private final AtomicInteger readViewConnCounter = new AtomicInteger(1);
 
     protected Collection<Pair<StampedLock, Long>> txSharedLocks = null;
 
@@ -71,7 +77,6 @@ public abstract class ShareReadViewTransaction extends AbstractTransaction {
         if (conn.getTrxXid() != null) {
             return conn.getTrxXid();
         }
-        conn.setInShareReadView(shareReadView);
         String xid;
         if (shareReadView) {
             xid = XAUtils.toXidString(id, group, primaryGroupUid, getReadViewSeq(group));
@@ -80,6 +85,189 @@ public abstract class ShareReadViewTransaction extends AbstractTransaction {
         }
         conn.setTrxXid(xid);
         return xid;
+    }
+
+    /**
+     * Always defer xa start statement.
+     */
+    protected void xaStart(String xid, IConnection conn) throws SQLException {
+        // Enable share read view if necessary.
+        if (shareReadView) {
+            conn.executeLater(TURN_ON_TXN_GROUP_SQL);
+        }
+        if (conn.isWrapperFor(XConnection.class)) {
+            // X
+            conn.flushUnsent();
+            final XConnection xConnection = conn.unwrap(XConnection.class);
+            byte[] hint = getTraceHintBytes();
+            xConnection.execUpdate(BytesSql.getBytesSql("XA START " + xid), hint, null, true);
+        } else {
+            // JDBC
+            conn.executeLater("XA START " + xid);
+        }
+    }
+
+    protected void xaEndAndPrepare(String xid, IConnection conn) throws SQLException {
+        if (DynamicConfig.getInstance().isEnableTrxDebugMode()) {
+            try (Statement stmt = conn.createStatement()) {
+                printDebugInfo(conn, xid, stmt);
+            }
+        }
+        if (conn.isWrapperFor(XConnection.class)) {
+            // X pipeline
+            conn.flushUnsent();
+            XConnection xConnection = conn.unwrap(XConnection.class);
+            byte[] hint = getTraceHintBytes();
+            xConnection.execUpdate(BytesSql.getBytesSql("XA END " + xid), hint, null, true);
+            xConnection.execUpdate(BytesSql.getBytesSql("XA PREPARE " + xid), hint, null, false);
+        } else {
+            // JDBC multi statements
+            String hint = getTraceHintString();
+            final String sql = hint + "XA END " + xid + ";" + hint + "XA PREPARE " + xid;
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute(sql);
+            }
+        }
+    }
+
+    protected void xaCommit(String xid, IConnection conn) throws SQLException {
+        if (conn.isWrapperFor(XConnection.class)) {
+            // X pipeline
+            conn.flushUnsent();
+            XConnection xConnection = conn.unwrap(XConnection.class);
+            byte[] hint = getTraceHintBytes();
+            xConnection.execUpdate(BytesSql.getBytesSql("XA COMMIT " + xid), hint, null, false);
+            if (shareReadView) {
+                xConnection.execUpdate(BytesSql.getBytesSql(TURN_OFF_TXN_GROUP_SQL), hint, null, true);
+            }
+        } else {
+            // JDBC multi statements
+            String hint = getTraceHintString();
+            String sql = hint + "XA COMMIT " + xid;
+            if (shareReadView) {
+                sql += "; " + TURN_OFF_TXN_GROUP_SQL;
+            }
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute(sql);
+            }
+        }
+    }
+
+    protected void xaEndAndCommitOnePhase(String xid, IConnection conn) throws SQLException {
+        if (conn.isWrapperFor(XConnection.class)) {
+            // X pipeline
+            conn.flushUnsent();
+            XConnection xConnection = conn.unwrap(XConnection.class);
+            byte[] hint = getTraceHintBytes();
+            xConnection.execUpdate(BytesSql.getBytesSql("XA END " + xid), hint, null, true);
+            xConnection.execUpdate(BytesSql.getBytesSql("XA COMMIT " + xid + " ONE PHASE"), hint, null, false);
+            if (shareReadView) {
+                xConnection.execUpdate(BytesSql.getBytesSql(TURN_OFF_TXN_GROUP_SQL), hint, null, true);
+            }
+        } else {
+            // JDBC multi statements
+            String hint = getTraceHintString();
+            String sql = hint + "XA END " + xid + ";" + hint + "XA COMMIT " + xid + " ONE PHASE";
+            if (shareReadView) {
+                sql += "; " + TURN_OFF_TXN_GROUP_SQL;
+            }
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute(sql);
+            }
+        }
+    }
+
+    protected void commit(IConnection conn) throws SQLException {
+        if (conn.isWrapperFor(XConnection.class)) {
+            // X pipeline
+            conn.flushUnsent();
+            XConnection xConnection = conn.unwrap(XConnection.class);
+            byte[] hint = getTraceHintBytes();
+            xConnection.execUpdate(BytesSql.getBytesSql("COMMIT"), hint, null, false);
+            if (shareReadView) {
+                xConnection.execUpdate(BytesSql.getBytesSql(TURN_OFF_TXN_GROUP_SQL), hint, null, true);
+            }
+        } else {
+            // JDBC multi statements
+            String hint = getTraceHintString();
+            String sql = hint + "COMMIT";
+            if (shareReadView) {
+                sql += "; " + TURN_OFF_TXN_GROUP_SQL;
+            }
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute(sql);
+            }
+        }
+    }
+
+    protected void xaRollback(String xid, IConnection conn) throws SQLException {
+        if (conn.isWrapperFor(XConnection.class)) {
+            // X pipeline
+            conn.flushUnsent();
+            XConnection xConnection = conn.unwrap(XConnection.class);
+            byte[] hint = getTraceHintBytes();
+            xConnection.execUpdate(BytesSql.getBytesSql("XA ROLLBACK " + xid), hint, null, false);
+            if (shareReadView) {
+                xConnection.execUpdate(BytesSql.getBytesSql(TURN_OFF_TXN_GROUP_SQL), hint, null, true);
+            }
+        } else {
+            // JDBC multi statements
+            String hint = getTraceHintString();
+            String sql = hint + "XA ROLLBACK " + xid;
+            if (shareReadView) {
+                sql += "; " + TURN_OFF_TXN_GROUP_SQL;
+            }
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute(sql);
+            }
+        }
+    }
+
+    protected void xaEndAndXaRollback(String xid, IConnection conn) throws SQLException {
+        if (conn.isWrapperFor(XConnection.class)) {
+            // X pipeline
+            conn.flushUnsent();
+            XConnection xConnection = conn.unwrap(XConnection.class);
+            byte[] hint = getTraceHintBytes();
+            xConnection.execUpdate(BytesSql.getBytesSql("XA END " + xid), hint, null, true);
+            xConnection.execUpdate(BytesSql.getBytesSql("XA ROLLBACK " + xid), hint, null, false);
+            if (shareReadView) {
+                xConnection.execUpdate(BytesSql.getBytesSql(TURN_OFF_TXN_GROUP_SQL), hint, null, true);
+            }
+        } else {
+            // JDBC multi statements
+            String hint = getTraceHintString();
+            String sql = hint + "XA END " + xid + ";" + hint + "XA ROLLBACK " + xid;
+            if (shareReadView) {
+                sql += "; " + TURN_OFF_TXN_GROUP_SQL;
+            }
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute(sql);
+            }
+        }
+    }
+
+    private void printDebugInfo(IConnection conn, String xid, Statement stmt) throws SQLException {
+        Long xSessionId = null;
+        if (conn.isWrapperFor(XConnection.class)) {
+            XSession xSession = conn.unwrap(XConnection.class).getSession();
+            xSession.setChunkResult(false);
+            xSessionId = xSession.getSessionId();
+        }
+        ResultSet rs = stmt.executeQuery("SELECT trx_id, trx_mysql_thread_id "
+            + "FROM information_schema.innodb_trx "
+            + "WHERE trx_mysql_thread_id = CONNECTION_ID()");
+        StringBuilder sb = new StringBuilder();
+        while (rs.next()) {
+            sb.append("dn trx id: ").append(rs.getString(1)).append(", ")
+                .append("dn conn id: ").append(rs.getString(2)).append(". ");
+        }
+        logger.warn(this.getClass().getSimpleName()
+            + " cn trx id: " + Long.toHexString(id)
+            + ", xid: " + xid
+            + "x-session id: " + xSessionId
+            + ", trx info: "
+            + sb);
     }
 
     /**
@@ -95,37 +283,9 @@ public abstract class ShareReadViewTransaction extends AbstractTransaction {
         return readViewCount % MAX_READ_VIEW_COUNT;
     }
 
-    protected String getXAIdleRollbackSqls(String xid) {
-        if (shareReadView) {
-            return String.format("XA ROLLBACK %s ;" + TURN_OFF_TXN_GROUP_SQL, xid);
-        } else {
-            return String.format("XA ROLLBACK %s ;", xid);
-        }
-    }
-
-    protected String getXARollbackSqls(String xid) {
-        if (shareReadView) {
-            return String.format("XA END %s ; XA ROLLBACK %s ;" + TURN_OFF_TXN_GROUP_SQL,
-                xid, xid);
-        } else {
-            return String.format("XA END %s ; XA ROLLBACK %s ;",
-                xid, xid);
-        }
-    }
-
-    protected String getXACommitOnePhaseSqls(String xid) {
-        if (shareReadView) {
-            return String.format("XA END %s ; XA COMMIT %s ONE PHASE ;" + TURN_OFF_TXN_GROUP_SQL,
-                xid, xid);
-        } else {
-            return String.format("XA END %s ; XA COMMIT %s ONE PHASE ;",
-                xid, xid);
-        }
-    }
-
     protected void rollbackNonParticipantShareReadViewSync(String group, IConnection conn) {
-        try (Statement stmt = conn.createStatement()) {
-            stmt.execute(getXARollbackSqls(getXid(group, conn)));
+        try {
+            xaEndAndXaRollback(getXid(group, conn), conn);
         } catch (Throwable e) {
             logger.error("Rollback non-participant share readview group failed on " + group, e);
             conn.discard(e);
@@ -147,15 +307,21 @@ public abstract class ShareReadViewTransaction extends AbstractTransaction {
                 rollbackNonParticipantShareReadViewSync(heldConn.getGroup(), heldConn.getRawConnection());
                 break;
             case WRITTEN:
-                if (heldConn.getRawConnection() != primaryConnection) {
+                if (heldConn != primaryHeldConn) {
                     throw new AssertionError("commitOneShardTrx with non-primary participant");
                 }
 
+                long commitStartTime = System.nanoTime();
                 try {
                     innerCommitOneShardTrx(heldConn.getGroup(), heldConn.getRawConnection());
                 } catch (Throwable e) {
                     logger.error("XA COMMIT ONE PHASE failed on " + primaryGroup, e);
                     throw GeneralUtil.nestedException(e);
+                } finally {
+                    if (getExecutionContext().getRuntimeStatistics() != null) {
+                        getExecutionContext().getRuntimeStatistics()
+                            .addCommitCommitTimecost(System.nanoTime() - commitStartTime);
+                    }
                 }
                 break;
             }
@@ -177,8 +343,8 @@ public abstract class ShareReadViewTransaction extends AbstractTransaction {
 
         // XA transaction must be 'ACTIVE' state on cleanup.
         String xid = getXid(group, conn);
-        try (Statement stmt = conn.createStatement()) {
-            stmt.execute(getXARollbackSqls(xid));
+        try {
+            xaEndAndXaRollback(xid, conn);
         } catch (SQLException e) {
             // discard connection if cleanup failed.
             throw GeneralUtil.nestedException("XA END and ROLLBACK failed: " + xid, e);
@@ -206,13 +372,13 @@ public abstract class ShareReadViewTransaction extends AbstractTransaction {
     protected void innerRollback(String group, IConnection conn) {
         // XA transaction must in 'ACTIVE', 'IDLE' or 'PREPARED' state, so ROLLBACK first.
         String xid = getXid(group, conn);
-        try (Statement stmt = conn.createStatement()) {
+        try {
             try {
-                stmt.execute(getXAIdleRollbackSqls(xid));
+                xaRollback(xid, conn);
             } catch (SQLException ex) {
                 if (ex.getErrorCode() == ErrorCode.ER_XAER_RMFAIL.getCode()) {
                     // XA ROLLBACK got ER_XAER_RMFAIL, XA transaction must in 'ACTIVE' state, so END and ROLLBACK.
-                    stmt.execute(getXARollbackSqls(xid));
+                    xaEndAndXaRollback(xid, conn);
                 } else if (ex.getErrorCode() == ErrorCode.ER_XAER_NOTA.getCode()) {
                     logger.warn("XA ROLLBACK got ER_XAER_NOTA: " + xid, ex);
                 } else {
@@ -337,7 +503,7 @@ public abstract class ShareReadViewTransaction extends AbstractTransaction {
     }
 
     @Override
-    public boolean isStrongConsistent() {
+    public boolean isDistributedWriteTrx() {
         return true;
     }
 

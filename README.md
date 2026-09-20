@@ -92,13 +92,13 @@ PolarDB-X provides tool to manage the above components through K8S Operator, and
 
 | **Component Name**        | **Repository**                                                    | **Version**    |
 |---------------------------|-------------------------------------------------------------------|----------------|
-| CN (Compute Node)         | [polardbx-sql](https://github.com/polardb/polardbx-sql)           | v5.4.19        |
-| GMS (Global Meta Service) | [polardbx-engine](https://github.com/polardb/polardbx-engine)     | v8.4.20        |
-| DN (Data Node)            | [polardbx-engine](https://github.com/polardb/polardbx-engine)     | v8.4.20        |
-| CDC (Change Data Capture) | [polardbx-cdc](https://github.com/polardb/polardbx-cdc)           | v5.4.19        |
-| RPC                       | [polardbx-glue](https://github.com/polardb/polardbx-glue)         | v5.4.19        |
+| CN (Compute Node)         | [polardbx-sql](https://github.com/polardb/polardbx-sql)           | v5.4.21        |
+| GMS (Global Meta Service) | [polardbx-engine](https://github.com/polardb/polardbx-engine)     | v8.4.21        |
+| DN (Data Node)            | [polardbx-engine](https://github.com/polardb/polardbx-engine)     | v8.4.21        |
+| CDC (Change Data Capture) | [polardbx-cdc](https://github.com/polardb/polardbx-cdc)           | v5.4.21        |
+| RPC                       | [polardbx-glue](https://github.com/polardb/polardbx-glue)         | v5.4.21        |
 | K8S Operator              | [polardbx-operator](https://github.com/polardb/polardbx-operator) | v1.7.0         |
-| polardbx-proxy            | [polardbx-proxy](https://github.com/polardb/polardbx-proxy)       | v5.4.19        |
+| polardbx-proxy            | [polardbx-proxy](https://github.com/polardb/polardbx-proxy)       | v5.4.21        |
 
 
 ## What is PolarDB-X SQL ？

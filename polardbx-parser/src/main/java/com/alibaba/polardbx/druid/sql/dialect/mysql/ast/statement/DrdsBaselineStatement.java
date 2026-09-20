@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement;
 
+import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
+import com.alibaba.polardbx.druid.sql.ast.SQLCommentHint;
 import com.alibaba.polardbx.druid.sql.ast.SQLStatement;
 import com.alibaba.polardbx.druid.sql.ast.SqlType;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLSelect;
@@ -39,6 +41,12 @@ public class DrdsBaselineStatement extends MySqlStatementImpl implements SQLStat
     private SQLStatement subStatement;
 
     private String targetSql;
+
+    private SQLExpr expr;
+
+    private Integer grayRatio;
+
+    private List<SQLCommentHint> inlineHint;
 
     public void accept0(MySqlASTVisitor visitor) {
         visitor.visit(this);
@@ -88,5 +96,32 @@ public class DrdsBaselineStatement extends MySqlStatementImpl implements SQLStat
 
     public void setTargetSql(String targetSql) {
         this.targetSql = targetSql;
+    }
+
+    public SQLExpr getExpr() {
+        return expr;
+    }
+
+    public void setExpr(SQLExpr expr) {
+        this.expr = expr;
+    }
+
+    public Integer getGrayRatio() {
+        return grayRatio;
+    }
+
+    public void setGrayRatio(Integer grayRatio) {
+        this.grayRatio = grayRatio;
+    }
+
+    /**
+     * inline hint only work for baseline bind
+     */
+    public List<SQLCommentHint> getInlineHint() {
+        return inlineHint;
+    }
+
+    public void setInlineHint(List<SQLCommentHint> inlineHint) {
+        this.inlineHint = inlineHint;
     }
 }

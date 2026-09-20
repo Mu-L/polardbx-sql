@@ -29,8 +29,12 @@
  */
 package com.alibaba.polardbx.executor.mpp.spi;
 
+import com.alibaba.polardbx.executor.mpp.metadata.SplitType;
+
 public interface ConnectorSplit {
     String getHostAddress();
 
     Object getInfo();
+
+    SplitType getSplitType();
 }

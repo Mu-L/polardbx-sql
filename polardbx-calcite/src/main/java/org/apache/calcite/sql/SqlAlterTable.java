@@ -23,15 +23,21 @@ import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
 import com.alibaba.polardbx.druid.sql.ast.SQLStatement;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLPropertyExpr;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableDropCheck;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableItem;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableStatement;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLCheck;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnCheck;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlAlterTableChangeColumn;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlAlterTableCheckConstraint;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlAlterTableModifyColumn;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateTableStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlRenameTableStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.visitor.MySqlOutputVisitor;
+import com.alibaba.polardbx.druid.sql.visitor.VisitorFeature;
 import com.alibaba.polardbx.druid.util.JdbcConstants;
+import com.alibaba.polardbx.gms.metadb.limit.LimitValidator;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.dialect.MysqlSqlDialect;
 import org.apache.calcite.sql.parser.SqlParserPos;
@@ -60,6 +66,9 @@ public class SqlAlterTable extends SqlCreate {
         ADD, MODIFY, CHANGE, DROP
     }
 
+    // 给schema唯一的constraint名称加后缀
+    private String phyTableHash;
+
     private final SqlTableOptions tableOptions;
     private final List<SqlAlterSpecification> alters;
     private List<SqlAlterSpecification> skAlters = new ArrayList<>();
@@ -84,6 +93,8 @@ public class SqlAlterTable extends SqlCreate {
 
     private String targetImplicitTableGroupName;
     private Map<String, String> indexTableGroupMap = new TreeMap<>();
+
+    private String ghostDdlDataNode = null;
 
     /**
      * Creates a SqlCreateIndex.
@@ -245,6 +256,11 @@ public class SqlAlterTable extends SqlCreate {
         List<SQLStatement> statementList =
             SQLUtils.parseStatementsWithDefaultFeatures(sqlForExecute, JdbcConstants.MYSQL);
         SQLAlterTableStatement stmt = (SQLAlterTableStatement) statementList.get(0);
+        SQLUtils.FormatOption compactFormat = new SQLUtils.FormatOption(true, false);
+        String compactSql = SQLUtils.toSQLString(stmt, JdbcConstants.MYSQL, compactFormat);
+        compactFormat.config(VisitorFeature.OutputLineCommentAsBlockComment, true);
+        String lineCommentSafeSql = SQLUtils.toSQLString(stmt, JdbcConstants.MYSQL, compactFormat);
+        boolean hasLineComment = !compactSql.equals(lineCommentSafeSql);
         if (this.name instanceof SqlDynamicParam) {
             StringBuilder sql = new StringBuilder();
             MySqlOutputVisitor questionarkTableSource = new MySqlOutputVisitor(sql) {
@@ -280,9 +296,78 @@ public class SqlAlterTable extends SqlCreate {
                         super.printReferencedTableName(expr);
                     }
                 }
+
+                @Override
+                public boolean visit(SQLCheck x) {
+                    if (phyTableHash == null) {
+                        return false;
+                    }
+                    String name = SQLUtils.normalizeNoTrim(x.getName().getSimpleName());
+                    String phyName = SqlIdentifier.surroundWithBacktick(name + "_" + phyTableHash);
+                    LimitValidator.validateConstraintNameLength(phyName);
+                    x.setName(phyName);
+                    super.visit(x);
+                    return false;
+                }
+
+                @Override
+                public boolean visit(SQLAlterTableDropCheck x) {
+                    if (phyTableHash == null) {
+                        return false;
+                    }
+                    String name = SQLUtils.normalizeNoTrim(x.getCheckName().getSimpleName());
+                    String phyName = SqlIdentifier.surroundWithBacktick(name + "_" + phyTableHash);
+                    LimitValidator.validateConstraintNameLength(phyName);
+                    x.setCheckName(phyName);
+                    super.visit(x);
+                    return false;
+                }
+
+                @Override
+                public boolean visit(SQLColumnCheck x) {
+                    if (phyTableHash == null) {
+                        return false;
+                    }
+                    String name = SQLUtils.normalizeNoTrim(x.getName().getSimpleName());
+                    String phyName = SqlIdentifier.surroundWithBacktick(name + "_" + phyTableHash);
+                    LimitValidator.validateConstraintNameLength(phyName);
+                    x.setName(phyName);
+                    super.visit(x);
+                    return false;
+                }
+
+                @Override
+                public boolean visit(MySqlAlterTableCheckConstraint x) {
+                    if (phyTableHash == null) {
+                        return false;
+                    }
+                    String name = SQLUtils.normalizeNoTrim(x.getCheckName().getSimpleName());
+                    String phyName = SqlIdentifier.surroundWithBacktick(name + "_" + phyTableHash);
+                    LimitValidator.validateConstraintNameLength(phyName);
+                    x.setCheckName(new SQLIdentifierExpr(phyName));
+                    super.visit(x);
+                    return false;
+                }
+
             };
+            if (hasLineComment) {
+                questionarkTableSource.setPrettyFormat(false);
+                questionarkTableSource.config(VisitorFeature.OutputLineCommentAsBlockComment, true);
+            }
             questionarkTableSource.visit(stmt);
             return sql.toString();
+        }
+
+        if (hasLineComment) {
+            /*
+             * Change context: Preserve ALTER TABLE statements when physical SQL is flattened to one line.
+             * Before: Druid retained -- and # comments because the historical rendering path used stmt.toString();
+             * replacing its line break later could extend a comment over the remaining DDL. Historical rationale not confirmed.
+             * Path impact: Only SqlAlterTable ASTs containing line comments use compact feature output; dynamic-table ALTERs,
+             * other DDL types, and ALTERs without line comments retain their existing rendering paths.
+             * Capability regression: None; Druid's existing comment semantics preserve comment text without changing defaults.
+             */
+            return lineCommentSafeSql;
         }
         return stmt.toString();
     }
@@ -361,6 +446,10 @@ public class SqlAlterTable extends SqlCreate {
         return addIndex() && ((SqlAddIndex) alters.get(0)).indexDef.isColumnar();
     }
 
+    public boolean rebuildCci() {
+        return rebuildIndex() && ((SqlAddIndex) alters.get(0)).indexDef.isColumnar();
+    }
+
     public boolean isAllocateLocalPartition() {
         return alters != null && alters.size() == 1 && alters.get(0) instanceof SqlAlterTableAllocateLocalPartition;
     }
@@ -371,6 +460,10 @@ public class SqlAlterTable extends SqlCreate {
 
     public boolean isCleanupExpiredData() {
         return alters != null && alters.size() == 1 && alters.get(0) instanceof SqlAlterTableCleanupExpiredData;
+    }
+
+    public boolean isRebuildCleanup() {
+        return alters != null && alters.size() == 1 && alters.get(0) instanceof SqlAlterTableRebuildCleanup;
     }
 
     public boolean isAlterIndexVisibility() {
@@ -453,7 +546,11 @@ public class SqlAlterTable extends SqlCreate {
     }
 
     public boolean addIndex() {
-        return alters.size() > 0 && alters.get(0) instanceof SqlAddIndex;
+        return alters.size() > 0 && alters.get(0) instanceof SqlAddIndex && !(alters.get(0) instanceof SqlRebuildIndex);
+    }
+
+    public boolean rebuildIndex() {
+        return alters.size() > 0 && alters.get(0) instanceof SqlRebuildIndex;
     }
 
     public boolean dropIndex() {
@@ -572,5 +669,21 @@ public class SqlAlterTable extends SqlCreate {
 
     public void addIndexTableGroup(String index, String tableGroupName) {
         this.indexTableGroupMap.put(index, tableGroupName);
+    }
+
+    public void setPhyTableHash(String phyTableHash) {
+        this.phyTableHash = phyTableHash;
+    }
+
+    public String getPhyTableHash() {
+        return phyTableHash;
+    }
+
+    public String getGhostDdlDataNode() {
+        return ghostDdlDataNode;
+    }
+
+    public void setGhostDdlDataNode(String ghostDdlDataNode) {
+        this.ghostDdlDataNode = ghostDdlDataNode;
     }
 }

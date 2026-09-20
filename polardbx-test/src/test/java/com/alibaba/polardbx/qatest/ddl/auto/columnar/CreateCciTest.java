@@ -18,16 +18,19 @@
 
 package com.alibaba.polardbx.qatest.ddl.auto.columnar;
 
+import com.alibaba.polardbx.qatest.ColumnarRelatedMetaTest;
 import com.alibaba.polardbx.qatest.ddl.auto.partition.PartitionAutoLoadSqlTestBase;
 import org.junit.runners.Parameterized;
 
 import java.util.List;
 
+@ColumnarRelatedMetaTest
 public class CreateCciTest extends PartitionAutoLoadSqlTestBase {
 
     public CreateCciTest(AutoLoadSqlTestCaseParams parameter) {
         super(parameter);
         // Generate test.yml and .result
+        //parameter.debugPrint = true;
     }
 
     @Parameterized.Parameters(name = "{index}: SubTestCase {0}")

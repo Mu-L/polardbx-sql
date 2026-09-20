@@ -12,6 +12,7 @@ import com.alibaba.polardbx.executor.mpp.planner.FragmentRFItemKey;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFManager;
 import com.alibaba.polardbx.executor.operator.scan.BlockCacheManager;
 import com.alibaba.polardbx.executor.operator.scan.ColumnReader;
+import com.alibaba.polardbx.executor.operator.scan.ColumnarMemoryPermitManager;
 import com.alibaba.polardbx.executor.operator.scan.ColumnarSplit;
 import com.alibaba.polardbx.executor.operator.scan.LazyEvaluator;
 import com.alibaba.polardbx.executor.operator.scan.LogicalRowGroup;
@@ -63,10 +64,10 @@ public class SpecifiedOrcColumnarSplit extends MorselColumnarSplit {
                                      OperatorStatistics operatorStatistics,
                                      long tsoV0, long tsoV1)
         throws IOException {
-        super(executionContext, ioExecutor, engine, fileSystem, configuration, sequenceId, fileId, filePath,
+        super(executionContext, ioExecutor, null, engine, fileSystem, configuration, sequenceId, fileId, filePath,
             ossColumnTransformer, primaryKeyColIds, inputRefsForFilter, inputRefsForProject, chunkLimit,
             blockCacheManager, rgThreshold, lazyEvaluator, preProcessor, partNum, nodePartCount, memoryAllocatorCtx,
-            fragmentRFManager, rfFilterRefInFileMap, operatorStatistics);
+            fragmentRFManager, rfFilterRefInFileMap, null, null, null, false, operatorStatistics, null, null);
         this.tsoV0 = tsoV0;
         this.tsoV1 = tsoV1;
     }
@@ -167,7 +168,7 @@ public class SpecifiedOrcColumnarSplit extends MorselColumnarSplit {
                     maxBufferSize, maxDiskRangeChunkLimit, maxMergeDistance,
                     chunkLimit, blockCacheManager, ossColumnTransformer,
                     executionContext, columnIncluded, indexStride, enableDecimal64,
-                    memoryAllocatorCtx);
+                    memoryAllocatorCtx, null);
 
                 ScanWork<ColumnarSplit, Chunk> scanWork;
                 if (executionContext.isEnableOrcDeletedScan()) {
@@ -299,6 +300,12 @@ public class SpecifiedOrcColumnarSplit extends MorselColumnarSplit {
         public ColumnarSplitBuilder ioExecutor(ExecutorService ioExecutor) {
             this.ioExecutor = ioExecutor;
             return this;
+        }
+
+        @Override
+        public ColumnarSplitBuilder columnarMemoryPermitManager(
+            ColumnarMemoryPermitManager columnarMemoryPermitManager) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

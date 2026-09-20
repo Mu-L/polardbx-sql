@@ -1,0 +1,33 @@
+## DISABLE_FAST_SQL_PARSER
+
+select partstrc2l512sm40('aaaabbb0000');
+select partstrc2l512sm40('aaaabbb2359');
+
+drop tablegroup if exists tg_dble_udf3;
+create tablegroup if not exists tg_dble_udf3
+partition by udf_hash(bigint)
+partition 3
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition pm values less than (9223372036854775807)
+)
+;
+
+drop table if exists uh_t3;
+create table uh_t3(
+c1 varchar(32) not null,
+c2 varchar(32) not null
+)
+partition by udf_hash(partstrc2l512sm40(c1))
+tablegroup=tg_dble_udf3;
+
+insert into uh_t3 values ('aaaabbb0000','aaaabbb0000');
+insert into uh_t3 values ('aaaabbb2359','aaaabbb2359');
+select c1, part_route('', 'uh_t3', c1) as route_rs, part_hash('', 'uh_t3', c1) as hash_rs from uh_t3 where c1='aaaabbb0000';
+select c1, part_route('', 'uh_t3', c1) as route_rs, part_hash('', 'uh_t3', c1) as hash_rs from uh_t3 where c1='aaaabbb2359';
+
+show create table uh_t3;
+
+
+

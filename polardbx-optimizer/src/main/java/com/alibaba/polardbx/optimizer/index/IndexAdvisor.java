@@ -17,8 +17,11 @@
 package com.alibaba.polardbx.optimizer.index;
 
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
+import com.alibaba.polardbx.common.utils.Column;
 import com.alibaba.polardbx.common.utils.Pair;
+import com.alibaba.polardbx.common.utils.Table;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.partition.TablePartitionRecord;
@@ -37,26 +40,36 @@ import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
 import com.alibaba.polardbx.optimizer.core.planner.Planner;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
+import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
+import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
+import com.alibaba.polardbx.optimizer.htaprouting.OptimizerType;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfoBuilder;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfoManager;
 import com.alibaba.polardbx.optimizer.partition.common.PartitionTableType;
+import com.alibaba.polardbx.optimizer.planmanager.LogicalViewFinder;
 import com.alibaba.polardbx.optimizer.planmanager.PlanManagerUtil;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.alibaba.polardbx.optimizer.utils.RexUtils;
 import com.alibaba.polardbx.rule.TableRule;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
 import org.apache.calcite.plan.RelOptCost;
+import org.apache.calcite.plan.RelOptSchema;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.prepare.RelOptTableImpl;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.RelShuttleImpl;
 import org.apache.calcite.rel.core.TableScan;
+import org.apache.calcite.rel.logical.LogicalTableScan;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -92,11 +105,19 @@ public class IndexAdvisor {
 
     private AdviseType adviseType;
 
+    private Map<String, Map<String, Pair<OSSTableScan, RelOptCost>>> ossTableScanCostMap;
+
+    RelOptCost finalCost;
+    RelNode finalPlan;
+
+    Set<CandidateIndex> finalCandidateSet;
+
     public enum AdviseType {
         LOCAL_INDEX,
         GLOBAL_INDEX,
         GLOBAL_COVERING_INDEX,
-        BROADCAST
+        BROADCAST,
+        COLUMNAR_INDEX
     }
 
     public static final String ANALYZE_FORMAT = "`%s`.`%s`";
@@ -220,28 +241,105 @@ public class IndexAdvisor {
             }
         } else {
             // find indexable column
-            IndexableColumnSet indexableColumnSet = analyzeIndexableColumn(logicalPlan);
+            IndexableColumnSet indexableColumnSet = null;
+            if (adviseType == AdviseType.COLUMNAR_INDEX) {
+                //行存rbo有join下推，所以使用列存rbo的结果分析indexableColumn
+                RelNode columnRbo = Planner.getInstance()
+                    .optimizeByColumnarRBO(unOptimizedPlan, executionContext.getParamManager(), plannerContext, false);
+                indexableColumnSet = analyzeIndexableColumn(columnRbo, adviseType);
+            } else {
+                indexableColumnSet = analyzeIndexableColumn(logicalPlan, adviseType);
+            }
 
             // find coverable column
-            coverableColumnSet = analyzeCoverableColumn(logicalPlan);
+            coverableColumnSet = analyzeCoverableColumn(logicalPlan, adviseType);
 
             // find partition rule
-            partitionRuleSet = analyzePartitionRule(indexableColumnSet);
+            partitionRuleSet = analyzePartitionRule(indexableColumnSet, adviseType);
 
-            partitionPolicyMap = analyzePartitionPolicyMap(partitionRuleSet);
+            partitionPolicyMap = analyzePartitionPolicyMap(partitionRuleSet, adviseType);
 
             // find candidate index
-            Map<String, Map<String, Set<CandidateIndex>>> candidateMap = buildCandidateIndex(indexableColumnSet);
+            Map<String, Map<String, Set<CandidateIndex>>> candidateMap =
+                buildCandidateIndex(indexableColumnSet, adviseType);
+
+            //对于列存索引推荐，其cost的基准不应该来自行存执行计划（目前行列计划的代价不可比较），所以构建默认CCI，作为列存索引推荐的基准
+            Set<CandidateIndex> initCCICandidateSet = null;
+            RelNode initCCIPlan = null;
+            if (adviseType == AdviseType.COLUMNAR_INDEX) {
+                //生成默认CCI下的Cost基准
+                initCCICandidateSet = new HashSet<>();
+                addDefaultCci(initCCICandidateSet);
+                //强制进入列存优化器
+                plannerContext.getParamManager().getProps()
+                    .put(ConnectionProperties.OPTIMIZER_TYPE, OptimizerType.COLUMNAR.name());
+                //打开列存索引代价估算
+                plannerContext.getParamManager().getProps().put(ConnectionProperties.ENABLE_COLUMNAR_SCAN_COST, "true");
+                WhatIfContext whatIfContext = beginWhatIf(unOptimizedPlan, initCCICandidateSet);
+                initCCIPlan =
+                    Planner.getInstance().optimizeByPlanEnumerator(unOptimizedPlan, logicalPlan, plannerContext);
+                originalCost = mq.getCumulativeCost(initCCIPlan);
+
+                LogicalViewFinder logicalViewFinder = new LogicalViewFinder();
+                initCCIPlan.accept(logicalViewFinder);
+                ossTableScanCostMap = new HashMap<>();
+                for (LogicalView logicalView : logicalViewFinder.getResult()) {
+                    OSSTableScan ossTableScan = (OSSTableScan) logicalView;
+                    ossTableScanCostMap.putIfAbsent(ossTableScan.getSchemaName(), new HashMap<>());
+                    String tbName = executionContext.getSchemaManager(ossTableScan.getSchemaName())
+                        .getTable(ossTableScan.getTableNames().get(0)).getGsiTableMetaBean().gsiMetaBean.tableName;
+                    ossTableScanCostMap.get(ossTableScan.getSchemaName())
+                        .put(tbName, Pair.of(ossTableScan, mq.getCumulativeCost(ossTableScan)));
+                }
+
+                endWhatIf(whatIfContext);
+                adviceResult = new AdviceResult(originalCost, initCCIPlan);
+            }
 
             // enumerate configuration
-            Set<CandidateIndex> finalCandidateSet = enumerateConfiguration(candidateMap, logicalPlan, originalCost);
-            WhatIfContext whatIfContext = beginWhatIf(logicalPlan, finalCandidateSet);
-            RelNode finalPlan =
-                Planner.getInstance().optimizeByPlanEnumerator(unOptimizedPlan, logicalPlan, plannerContext);
-            RelOptCost finalCost = mq.getCumulativeCost(finalPlan);
-            endWhatIf(whatIfContext);
+            this.finalCandidateSet = enumerateConfiguration(candidateMap, logicalPlan, originalCost);
 
-            if (lessThan(finalCost, originalCost)) {
+            if (adviseType == AdviseType.COLUMNAR_INDEX) {
+                //因为cci的枚举是根据indexColumn生成的，如果有些表没有indexColumn，则enumerateConfiguration就没有为其生成cci，但是目前要求列存查询每张表都必须有cci
+                finalCandidateSet = addDefaultCci(finalCandidateSet);
+                WhatIfContext whatIfContext = beginWhatIf(unOptimizedPlan, finalCandidateSet);
+                this.finalPlan =
+                    Planner.getInstance().optimizeByPlanEnumerator(unOptimizedPlan, logicalPlan, plannerContext);
+                this.finalCost = mq.getCumulativeCost(finalPlan);
+                endWhatIf(whatIfContext);
+
+                //枚举分区键
+                enumeratePartColumn(new ArrayList<>(finalCandidateSet), indexableColumnSet, logicalPlan,
+                    executionContext.getParamManager().getBoolean(ConnectionParams.CCI_ADVISOR_FAST_ENUMERATION),
+                    executionContext.getParamManager().getBoolean(ConnectionParams.CCI_ADVISOR_PREFER_PARTITION_WISE),
+                    finalCost);
+
+            } else {
+                WhatIfContext whatIfContext = beginWhatIf(logicalPlan, finalCandidateSet);
+                finalPlan =
+                    Planner.getInstance().optimizeByPlanEnumerator(unOptimizedPlan, logicalPlan, plannerContext);
+                finalCost = mq.getCumulativeCost(finalPlan);
+                endWhatIf(whatIfContext);
+            }
+
+            if (lessThan(finalCost, originalCost) || (adviseType == AdviseType.COLUMNAR_INDEX && looseLessThan(
+                finalCost, originalCost))) {
+                Configuration finalConfiguration = new Configuration(finalCandidateSet, finalCost);
+                adviceResult.setConfiguration(finalConfiguration);
+                WhatIfContext ctx = beginWhatIf(finalPlan, finalCandidateSet);
+                adviceResult.setAfterPlan(finalPlan, "\n" + RelUtils
+                    .toString(finalPlan, executionContext.getParams().getCurrentParameter(),
+                        RexUtils.getEvalFunc(executionContext), executionContext));
+                endWhatIf(ctx);
+                adviceResult.setInfo(adviseType.name());
+                return adviceResult;
+            }
+
+            //对于列存索引推荐，默认CCI可能也是最佳的索引结构
+            if (adviseType == AdviseType.COLUMNAR_INDEX) {
+                finalCandidateSet = initCCICandidateSet;
+                finalPlan = initCCIPlan;
+                finalCost = originalCost;
                 Configuration finalConfiguration = new Configuration(finalCandidateSet, finalCost);
                 adviceResult.setConfiguration(finalConfiguration);
                 WhatIfContext ctx = beginWhatIf(finalPlan, finalCandidateSet);
@@ -270,21 +368,24 @@ public class IndexAdvisor {
         return adviceResult;
     }
 
-    private IndexableColumnSet analyzeIndexableColumn(RelNode logicalPlan) {
-        IndexableColumnRelFinder indexableColumnRelFinder = new IndexableColumnRelFinder(mq);
+    private IndexableColumnSet analyzeIndexableColumn(RelNode logicalPlan, AdviseType adviseType) {
+        IndexableColumnRelFinder indexableColumnRelFinder = new IndexableColumnRelFinder(mq, adviseType);
         indexableColumnRelFinder.go(logicalPlan);
         IndexableColumnSet indexableColumnSet = indexableColumnRelFinder.getIndexableColumnSet();
         return indexableColumnSet;
     }
 
-    private CoverableColumnSet analyzeCoverableColumn(RelNode logicalPlan) {
+    private CoverableColumnSet analyzeCoverableColumn(RelNode logicalPlan, AdviseType adviseType) {
+        if (adviseType == AdviseType.COLUMNAR_INDEX) {
+            return null;
+        }
         CoverableColumnRelFinder coverableColumnRelFinder = new CoverableColumnRelFinder(mq);
         coverableColumnRelFinder.go(logicalPlan);
         CoverableColumnSet coverableColumnSet = coverableColumnRelFinder.getCoverableColumnSet();
         return coverableColumnSet;
     }
 
-    private PartitionRuleSet analyzePartitionRule(IndexableColumnSet indexableColumnSet) {
+    private PartitionRuleSet analyzePartitionRule(IndexableColumnSet indexableColumnSet, AdviseType adviseType) {
         PartitionRuleSet partitionRuleSet = new PartitionRuleSet();
         for (String schemaName : indexableColumnSet.m.keySet()) {
             for (String tableName : indexableColumnSet.m.get(schemaName).keySet()) {
@@ -315,7 +416,8 @@ public class IndexAdvisor {
         return partitionRuleSet;
     }
 
-    private Map<String, Collection<HumanReadableRule>> analyzePartitionPolicyMap(PartitionRuleSet partitionRuleSet) {
+    private Map<String, Collection<HumanReadableRule>> analyzePartitionPolicyMap(PartitionRuleSet partitionRuleSet,
+                                                                                 AdviseType adviseType) {
         Map<String, Collection<HumanReadableRule>> result = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
         for (String schemaName : partitionRuleSet.m.keySet()) {
             result.put(schemaName.toLowerCase(), partitionRuleSet.getPartitionPolicys(schemaName));
@@ -323,8 +425,12 @@ public class IndexAdvisor {
         return result;
     }
 
-    private Map<String, Map<String, Set<CandidateIndex>>> buildCandidateIndex(IndexableColumnSet indexableColumnSet) {
+    private Map<String, Map<String, Set<CandidateIndex>>> buildCandidateIndex(IndexableColumnSet indexableColumnSet,
+                                                                              AdviseType adviseType) {
         int MAX_MULTI_COLUMN_INDEX_SIZE = 2;
+        if (adviseType == AdviseType.COLUMNAR_INDEX) {
+            MAX_MULTI_COLUMN_INDEX_SIZE = 1;
+        }
         // First, consider every single column index
         Set<CandidateIndex> singleColumnCandidateIndexSet = getSingleColumnCandidateIndexSet(indexableColumnSet);
         Set<CandidateIndex> candidateIndexLevelOne = new HashSet<>();
@@ -343,13 +449,16 @@ public class IndexAdvisor {
             Set<CandidateIndex> lastLevelCandidateIndexSet = candidateIndexLevel.get(lastLevelidx);
             // currentLevel = lastLevel + levelOne
             for (CandidateIndex lastLevelCandidateIndex : lastLevelCandidateIndexSet) {
+                Set<String> hasLevelUp = new HashSet<>();
                 for (CandidateIndex levelOneCandidateIndex : candidateIndexLevelOne) {
                     if (lastLevelCandidateIndex.isContainGsiPartColOfUnsupportedDataType()
                         || levelOneCandidateIndex.isContainGsiPartColOfUnsupportedDataType()) {
                         continue;
                     }
-                    Set<CandidateIndex> levelUpIndexSet =
-                        levelUp(lastLevelCandidateIndex, levelOneCandidateIndex);
+                    if (!hasLevelUp.add(levelOneCandidateIndex.getColumnNames().get(0))) {
+                        continue;
+                    }
+                    Set<CandidateIndex> levelUpIndexSet = levelUp(lastLevelCandidateIndex, levelOneCandidateIndex);
                     if (levelUpIndexSet == null) {
                         continue;
                     }
@@ -357,6 +466,7 @@ public class IndexAdvisor {
                         selectCandidateIndex(currentLevelCandidateIndex, currentLevelCandidateIndexSet);
                     }
                 }
+
             }
             candidateIndexLevel.add(currentLevelCandidateIndexSet);
             currentLevel++;
@@ -391,12 +501,14 @@ public class IndexAdvisor {
     private Set<CandidateIndex> enumerateConfiguration
         (Map<String, Map<String, Set<CandidateIndex>>> candidateMap,
          RelNode logicalPlan, RelOptCost originalCost) {
+
         // configuration enumeration - greedy search
         // schema.table.configuration independent property
         // we enumerate every schema.table best configuration and then add them together
         // best configuration with max-cost-improve and min-candidateIndex-num
         int MAX_INDEX_PER_CONFIGURATION = 2;
-        if (adviseType == AdviseType.GLOBAL_COVERING_INDEX || adviseType == AdviseType.GLOBAL_INDEX) {
+        if (adviseType == AdviseType.GLOBAL_COVERING_INDEX || adviseType == AdviseType.GLOBAL_INDEX
+            || adviseType == AdviseType.COLUMNAR_INDEX) {
             MAX_INDEX_PER_CONFIGURATION = 1;
         }
 
@@ -407,7 +519,11 @@ public class IndexAdvisor {
                     Set<Set<CandidateIndex>> combinationSet =
                         Sets.combinations(notExistsCandidateSet, combinationSize);
                     for (Set<CandidateIndex> candidateIndexSet : combinationSet) {
-                        tryConfiguration(logicalPlan, originalCost, candidateIndexSet);
+                        if (adviseType == AdviseType.COLUMNAR_INDEX) {
+                            tryConfigurationForCCIByScanCost(logicalPlan, originalCost, candidateIndexSet);
+                        } else {
+                            tryConfiguration(logicalPlan, originalCost, candidateIndexSet);
+                        }
                     }
                 }
             }
@@ -440,6 +556,322 @@ public class IndexAdvisor {
         }
 
         return finalCandidateSet;
+    }
+
+    private boolean tryConfigurationForCCIByScanCost(RelNode logicalPlan, RelOptCost originalCost,
+                                                     Set<CandidateIndex> candidateIndexSet) {
+        CandidateIndex candidateIndex = candidateIndexSet.iterator().next();
+        Pair<OSSTableScan, RelOptCost> ossPair =
+            ossTableScanCostMap.get(candidateIndex.getSchemaName()).get(candidateIndex.getTableName());
+        WhatIfContext whatIfContext =
+            beginWhatIf(plannerContext.getExecutionContext().getUnOptimizedPlan(), candidateIndexSet);
+        OSSTableScan oldScan = ossPair.getKey();
+        final RelOptSchema catalog = RelUtils.buildCatalogReader(candidateIndex.getSchemaName(), executionContext);
+        final RelOptTable indexTable =
+            catalog.getTableForMember(ImmutableList.of(candidateIndex.getSchemaName(), candidateIndex.getIndexName()));
+        LogicalTableScan logicalTableScan =
+            LogicalTableScan.create(oldScan.getCluster(), indexTable, oldScan.getHints(), null, null, null, null);
+        OSSTableScan newScan = new OSSTableScan(logicalTableScan, oldScan.getLockMode());
+        newScan =
+            (OSSTableScan) newScan.copy(newScan.getTraitSet(), oldScan.getPushedRelNode().accept(new RelShuttleImpl() {
+                @Override
+                public RelNode visit(TableScan scan) {
+                    return logicalTableScan;
+                }
+            }));
+
+        RelOptCost newCost = mq.getCumulativeCost(newScan);
+        endWhatIf(whatIfContext);
+        if (newCost.isLe(ossPair.getValue())) {
+            ossTableScanCostMap.get(candidateIndex.getSchemaName())
+                .put(candidateIndex.getTableName(), Pair.of(ossPair.getKey(), newCost));
+            Configuration configuration = new Configuration(candidateIndexSet, newCost);
+            String schemaName = candidateIndexSet.iterator().next().getSchemaName().toLowerCase();
+            String tableName = candidateIndexSet.iterator().next().getTableName().toLowerCase();
+            Map<String, Configuration> tableConfigurationMap = configurationMap.get(schemaName);
+            if (tableConfigurationMap == null) {
+                tableConfigurationMap = new HashMap<>();
+                configurationMap.put(schemaName, tableConfigurationMap);
+            }
+            tableConfigurationMap.put(tableName, configuration);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 一个表增加列存索引
+     */
+    private boolean tryConfigurationForCCIByOptimizer(RelNode logicalPlan, RelOptCost originalCost,
+                                                      Set<CandidateIndex> candidateIndexSet) {
+
+        //补充默认CCI
+        Set<CandidateIndex> allCci = new HashSet<>(candidateIndexSet);
+        allCci = addDefaultCci(allCci);
+
+        WhatIfContext whatIfContext = beginWhatIf(plannerContext.getExecutionContext().getUnOptimizedPlan(), allCci);
+
+        //impossible to happen
+        if (!CBOUtil.allTablesHaveColumnarIndex(plannerContext.getExecutionContext().getUnOptimizedPlan(),
+            plannerContext.getExecutionContext())) {
+            throw new RuntimeException("not all table has columnar");
+        }
+
+        RelNode physicalPlan = Planner.getInstance()
+            .optimizeByPlanEnumerator(plannerContext.getExecutionContext().getUnOptimizedPlan(), logicalPlan,
+                plannerContext);
+
+        RelOptCost newCost = mq.getCumulativeCost(physicalPlan);
+        endWhatIf(whatIfContext);
+        // make the plan cost lower!
+        if (newCost.isLe(originalCost)) {
+            Configuration configuration = new Configuration(candidateIndexSet, newCost);
+            String schemaName = candidateIndexSet.iterator().next().getSchemaName().toLowerCase();
+            String tableName = candidateIndexSet.iterator().next().getTableName().toLowerCase();
+            Map<String, Configuration> tableConfigurationMap = configurationMap.get(schemaName);
+            if (tableConfigurationMap == null) {
+                tableConfigurationMap = new HashMap<>();
+                configurationMap.put(schemaName, tableConfigurationMap);
+            }
+            Configuration oldConfiguration = tableConfigurationMap.get(tableName);
+            if (oldConfiguration == null || configuration.getAfterCost().isLt(oldConfiguration.getAfterCost())) {
+                tableConfigurationMap.put(tableName, configuration);
+            } else if (configuration.getAfterCost().equals(oldConfiguration.getAfterCost())) {
+                //选取索引列少的索引
+                if (configuration.getCandidateIndexSet().iterator().next().getColumnNames().size()
+                    < oldConfiguration.getCandidateIndexSet().iterator().next().getColumnNames().size()) {
+                    tableConfigurationMap.put(tableName, configuration);
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private Set<CandidateIndex> addDefaultCci(Set<CandidateIndex> candidateIndexSet) {
+        Set<Pair<String, String>> tableSet = executionPlan.getTableSet();
+        for (Pair<String, String> tablePair : tableSet) {
+            if (tablePair.getKey() == null) {
+                tablePair = Pair.of(executionContext.getSchemaName(), tablePair.getValue());
+            }
+            boolean addDefaultCci = true;
+            for (CandidateIndex candidateIndex : candidateIndexSet) {
+                if (candidateIndex.getSchemaName().equalsIgnoreCase(tablePair.getKey()) && candidateIndex.getTableName()
+                    .equalsIgnoreCase(tablePair.getValue())) {
+                    addDefaultCci = false;
+                    break;
+                }
+            }
+            if (addDefaultCci) {
+                TableMeta tableMeta = OptimizerContext.getContext(tablePair.getKey()).getLatestSchemaManager()
+                    .getTable(tablePair.getValue());
+                List<String> defaultCciSortColumns =
+                    tableMeta.getPrimaryIndex().getKeyColumns().stream().map(ColumnMeta::getName)
+                        .collect(Collectors.toList());
+                if (defaultCciSortColumns.size() > 1) {
+                    defaultCciSortColumns = Collections.singletonList(defaultCciSortColumns.get(0));
+                }
+                List<String> defaultCciPartColumns = tableMeta.getPartitionInfo().getPartitionColumns();
+                if (defaultCciPartColumns == null || defaultCciPartColumns.isEmpty()) {
+                    defaultCciPartColumns = Collections.singletonList(defaultCciSortColumns.get(0));
+                } else {
+                    defaultCciPartColumns = Collections.singletonList(defaultCciPartColumns.get(0));
+                }
+                CandidateIndex candidateIndex = new CandidateIndex(tablePair.getKey(), tablePair.getValue(),
+                    defaultCciSortColumns, defaultCciPartColumns, true, true,
+                    CoverableColumnSet.getCCICoverableColumns(tablePair.getKey(), tablePair.getValue(),
+                        defaultCciSortColumns));
+                candidateIndexSet.add(candidateIndex);
+            }
+        }
+        return candidateIndexSet;
+    }
+
+    private void enumeratePartColumn(List<CandidateIndex> candidateIndexList, IndexableColumnSet indexableColumnSet,
+                                     RelNode logicalPlan, boolean fast, boolean preferPartitionWise,
+                                     RelOptCost nowCost) {
+        if (!fast) {
+            enumerateAllPartColumn(candidateIndexList, indexableColumnSet, logicalPlan, 0);
+            return;
+        }
+        fastEnumeratePartColumn(candidateIndexList, indexableColumnSet, logicalPlan, preferPartitionWise, nowCost);
+    }
+
+    /**
+     * 1. 根据join关系对所有的表进行分区，具有join关系的所有表为一个JoinTableGroup <=> Set<Table>
+     * 2. 根据join关系，对所有的join列进行分区，具有等值关系的join列为一个JoinColumnGroup <=> Set<Column>
+     * 3. 基于JoinTableGroup，对所有的JoinColumnGroup按照所属的表再分组，很明显一个JoinTableGroup =》 List<JoinColumnGroup>
+     * 4. 对于每一个JoinTableGroup，尝试将其对应的List<JoinColumnGroup>进行merge操作，即JoinColumnGroup之间没有表重叠的情况时，合并成一个JoinColumnGroup
+     * 5. JoinColumnGroup包含的列越多，说明join分区对齐的程度越大，优先选择join分区对齐度高的JoinColumnGroup
+     * 6. 对于每一个JoinTableGroup, 基于其对应的JoinColumnGroup，选择cci的分区键进行优化器计算代价，代价最小的JoinColumnGroup确定cci的分区键
+     * 7. 每个JoinTableGroup的分区键枚举是互不影响的，所以最后聚合所有JoinTableGroup的分区键枚举结果
+     */
+    private void fastEnumeratePartColumn(List<CandidateIndex> candidateIndexList, IndexableColumnSet indexableColumnSet,
+                                         RelNode logicalPlan, boolean preferPartitionWise,
+                                         RelOptCost nowCost) {
+        Map<Table, Integer> tableIndexMap = new HashMap<>();
+        for (int i = 0; i < candidateIndexList.size(); i++) {
+            CandidateIndex candidateIndex = candidateIndexList.get(i);
+            String schemaName = candidateIndex.getSchemaName();
+            String tableName = candidateIndex.getTableName();
+            tableIndexMap.put(Table.of(schemaName, tableName), i);
+        }
+        //1.
+        List<Set<Table>> joinTableGroupList = indexableColumnSet.joinTbs.getAllGroup();
+        //2.
+        List<Set<Column>> allJoinColGroupList = indexableColumnSet.joinCols.getAllGroup();
+
+        //3.
+        List<List<Set<Column>>> JoinColumnGroupListForAllTable = new ArrayList<>(joinTableGroupList.size());
+        for (int i = 0; i < joinTableGroupList.size(); i++) {
+            Set<Table> joinTableGroup = joinTableGroupList.get(i);
+            JoinColumnGroupListForAllTable.add(new ArrayList<>());
+            loop:
+            for (Set<Column> joinColGroup : allJoinColGroupList) {
+                for (Column joinCol : joinColGroup) {
+                    if (joinTableGroup.contains(joinCol.getTable())) {
+                        JoinColumnGroupListForAllTable.get(i).add(joinColGroup);
+                        continue loop;
+                    }
+                }
+            }
+        }
+
+        //4. 对不重叠的join列组合进行合并，最大化join分区对齐
+        for (int i = 0; i < JoinColumnGroupListForAllTable.size(); i++) {
+            List<Set<Column>> joinColumnGroupList = JoinColumnGroupListForAllTable.get(i);
+            List<Set<Column>> newJoinColumnGroupList = new ArrayList<>();
+            mergeJoinColumnGroup(joinColumnGroupList, newJoinColumnGroupList, new HashSet<>(), new HashSet<>(), 0);
+            //5.
+            newJoinColumnGroupList.sort((o1, o2) -> Integer.compare(o2.size(), o1.size()));
+            int maxSize = 5;
+            int endIndex = 2;
+            for (; endIndex < newJoinColumnGroupList.size() && endIndex < maxSize; endIndex++) {
+                if (newJoinColumnGroupList.get(endIndex).size() + newJoinColumnGroupList.get(endIndex - 1).size()
+                    <= newJoinColumnGroupList.get(endIndex - 2).size()) {
+                    break;
+                }
+            }
+            JoinColumnGroupListForAllTable.set(i, endIndex > newJoinColumnGroupList.size() ? newJoinColumnGroupList :
+                newJoinColumnGroupList.subList(0, endIndex));
+        }
+
+        //6. 对每一个join表组，独立的进行join列分区对齐枚举
+        for (int i = 0; i < joinTableGroupList.size(); i++) {
+            Set<Table> joinTableGroup = joinTableGroupList.get(i);
+            if (joinTableGroup.size() == 1) {
+                continue;
+            }
+            List<Set<Column>> joinColumnGroupList = JoinColumnGroupListForAllTable.get(i);
+            //如果优先考虑PartitionWise，则不与当前的final cost进行比较，这样一定会选择join分区对齐的方式
+            RelOptCost bestJoinTableGroupCost = preferPartitionWise ? null : nowCost;
+            Set<Column> bestJoinColumnGroup = null;
+            List<CandidateIndex> bestJoinCandidateIndices = null;
+            for (Set<Column> joinColumnGroup : joinColumnGroupList) {
+                List<CandidateIndex> joinCandidateIndexList = new ArrayList<>(candidateIndexList);
+                for (Column joinCol : joinColumnGroup) {
+                    int index = tableIndexMap.get(joinCol.getTable());
+                    CandidateIndex oldCandidateIndex = joinCandidateIndexList.get(index);
+                    if (oldCandidateIndex.getPartColumns().get(0).equalsIgnoreCase(joinCol.getColumnName())) {
+                        continue;
+                    }
+                    CandidateIndex newCandidateIndex = new CandidateIndex(
+                        oldCandidateIndex.getSchemaName(), oldCandidateIndex.getTableName(),
+                        oldCandidateIndex.getColumnNames(), Arrays.asList(joinCol.getColumnName()), true, true,
+                        oldCandidateIndex.getCoveringColumns()
+                    );
+                    joinCandidateIndexList.set(index, newCandidateIndex);
+                }
+
+                Set<CandidateIndex> joinCandidateIndexSet = new HashSet<>(joinCandidateIndexList);
+                WhatIfContext whatIfContext =
+                    beginWhatIf(plannerContext.getExecutionContext().getUnOptimizedPlan(), joinCandidateIndexSet);
+                RelNode physicalPlan = Planner.getInstance()
+                    .optimizeByPlanEnumerator(plannerContext.getExecutionContext().getUnOptimizedPlan(), logicalPlan,
+                        plannerContext);
+                RelOptCost newCost = mq.getCumulativeCost(physicalPlan);
+                endWhatIf(whatIfContext);
+                //更新candidateIndexList
+                if (bestJoinTableGroupCost == null || looseLessThan(newCost, bestJoinTableGroupCost)) {
+                    bestJoinTableGroupCost = newCost;
+                    bestJoinColumnGroup = joinColumnGroup;
+                    bestJoinCandidateIndices = joinCandidateIndexList;
+                }
+            }
+
+            if (bestJoinColumnGroup != null) {
+                for (Column col : bestJoinColumnGroup) {
+                    int index = tableIndexMap.get(col.getTable());
+                    candidateIndexList.set(index, bestJoinCandidateIndices.get(index));
+                }
+            }
+        }
+
+        //7. final check
+        Set<CandidateIndex> candidateIndexSet = new HashSet<>(candidateIndexList);
+        tryReplaceFinalCandidateSet(plannerContext.getExecutionContext().getUnOptimizedPlan(), logicalPlan,
+            candidateIndexSet, preferPartitionWise);
+    }
+
+    private void mergeJoinColumnGroup(List<Set<Column>> joinColumnGroupList,
+                                      List<Set<Column>> newJoinColumnGroupList,
+                                      Set<Table> tmpJoinTables,
+                                      Set<Column> tmpJoinCols,
+                                      int i) {
+        if (i >= joinColumnGroupList.size()) {
+            if (tmpJoinCols.size() > 0) {
+                newJoinColumnGroupList.add(new HashSet<>(tmpJoinCols));
+            }
+            return;
+        }
+
+        mergeJoinColumnGroup(joinColumnGroupList, newJoinColumnGroupList, tmpJoinTables, tmpJoinCols, i + 1);
+
+        Set<Column> joinCols = joinColumnGroupList.get(i);
+        for (Column joinCol : joinCols) {
+            if (tmpJoinTables.contains(joinCol.getTable())) {
+                return;
+            }
+        }
+        tmpJoinCols.addAll(joinCols);
+        for (Column joinCol : joinCols) {
+            tmpJoinTables.add(joinCol.getTable());
+        }
+        mergeJoinColumnGroup(joinColumnGroupList, newJoinColumnGroupList, tmpJoinTables, tmpJoinCols, i + 1);
+        tmpJoinCols.removeAll(joinCols);
+        for (Column joinCol : joinCols) {
+            tmpJoinTables.remove(joinCol.getTable());
+        }
+
+    }
+
+    private void enumerateAllPartColumn(List<CandidateIndex> candidateIndexList, IndexableColumnSet indexableColumnSet,
+                                        RelNode logicalPlan, int i) {
+        if (i >= candidateIndexList.size()) {
+            Set<CandidateIndex> candidateIndexSet = new HashSet<>(candidateIndexList);
+            tryReplaceFinalCandidateSet(plannerContext.getExecutionContext().getUnOptimizedPlan(), logicalPlan,
+                candidateIndexSet, false);
+            return;
+        }
+
+        CandidateIndex oldCandidateIndex = candidateIndexList.get(i);
+        if (indexableColumnSet.partColumns.containsKey(oldCandidateIndex.getSchemaName())
+            && indexableColumnSet.partColumns.get(oldCandidateIndex.getSchemaName())
+            .containsKey(oldCandidateIndex.getTableName())) {
+            for (String partCol : indexableColumnSet.partColumns.get(oldCandidateIndex.getSchemaName())
+                .get(oldCandidateIndex.getTableName())) {
+                CandidateIndex newCandidateIndex = new CandidateIndex(
+                    oldCandidateIndex.getSchemaName(), oldCandidateIndex.getTableName(),
+                    oldCandidateIndex.getColumnNames(), Arrays.asList(partCol), true, true,
+                    oldCandidateIndex.getCoveringColumns()
+                );
+                candidateIndexList.set(i, newCandidateIndex);
+                enumerateAllPartColumn(candidateIndexList, indexableColumnSet, logicalPlan, i + 1);
+            }
+        } else {
+            enumerateAllPartColumn(candidateIndexList, indexableColumnSet, logicalPlan, i + 1);
+        }
+        candidateIndexList.set(i, oldCandidateIndex);
     }
 
     /**
@@ -485,6 +917,22 @@ public class IndexAdvisor {
             return true;
         }
         return false;
+    }
+
+    private void tryReplaceFinalCandidateSet(RelNode originInput, RelNode input, Set<CandidateIndex> candidateIndexSet,
+                                             boolean force) {
+        WhatIfContext whatIfContext =
+            beginWhatIf(plannerContext.getExecutionContext().getUnOptimizedPlan(), candidateIndexSet);
+        RelNode physicalPlan = Planner.getInstance()
+            .optimizeByPlanEnumerator(plannerContext.getExecutionContext().getUnOptimizedPlan(), input,
+                plannerContext);
+        RelOptCost newCost = mq.getCumulativeCost(physicalPlan);
+        endWhatIf(whatIfContext);
+        if (force || looseLessThan(newCost, finalCost)) {
+            finalCost = newCost;
+            finalPlan = physicalPlan;
+            finalCandidateSet = candidateIndexSet;
+        }
     }
 
     class WhatIfContext {
@@ -868,6 +1316,12 @@ public class IndexAdvisor {
             return;
         }
 
+        //列存索引直接加入
+        if (currentLevelCandidateIndex.isCci()) {
+            currentLevelCandidateIndexSet.add(currentLevelCandidateIndex);
+            return;
+        }
+
         // consider cardinality
         if (currentLevelCandidateIndex.isHighCardinality()
             && (currentLevelCandidateIndex.isNotCoverPrimaryUniqueKey() || currentLevelCandidateIndex.isGsi())
@@ -957,6 +1411,13 @@ public class IndexAdvisor {
                 }
             }
             break;
+        case COLUMNAR_INDEX:
+            //直接使用第一个候选索引的分区键，减少枚举情况
+            List<String> newPartCols = new ArrayList<>(a.getPartColumns());
+            candidateIndex = new CandidateIndex(schemaName, tableName, newColumnNames, newPartCols, true, true,
+                CoverableColumnSet.getCCICoverableColumns(schemaName, tableName, newColumnNames));
+            candidateIndexSet.add(candidateIndex);
+            break;
         default:
             throw new AssertionError("unKnown type");
         }
@@ -968,6 +1429,8 @@ public class IndexAdvisor {
         Set<CandidateIndex> candidateIndexSet = new HashSet<>();
         for (String schemaName : indexableColumnSet.m.keySet()) {
             for (String tableName : indexableColumnSet.m.get(schemaName).keySet()) {
+                TableMeta tableMeta =
+                    OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(tableName);
                 for (String columnName : indexableColumnSet.m.get(schemaName).get(tableName)) {
                     List<String> index = new ArrayList<>();
                     index.add(columnName);
@@ -1038,6 +1501,19 @@ public class IndexAdvisor {
                         }
                         break;
                     }
+                    case COLUMNAR_INDEX: {
+                        //目前只支持单列分区
+                        for (String partCol : indexableColumnSet.m.get(schemaName).get(tableName)) {
+                            List<String> partCols = new ArrayList<>();
+                            partCols.add(partCol);
+                            if (checkIfAllIndexColDataTypeSupportPartition(schemaName, tableName, partCols)) {
+                                candidateIndex = new CandidateIndex(schemaName, tableName, index, partCols, true, true,
+                                    CoverableColumnSet.getCCICoverableColumns(schemaName, tableName, index));
+                                candidateIndexSet.add(candidateIndex);
+                            }
+                        }
+                        break;
+                    }
                     default:
                         throw new AssertionError("unKnown type");
                     }
@@ -1050,6 +1526,10 @@ public class IndexAdvisor {
     private boolean lessThan(RelOptCost cost1, RelOptCost cost2) {
         return cost1.isLt(cost2) && (cost1.getIo() < 0.95 * cost2.getIo()
             || cost1.getNet() < 0.95 * cost2.getNet());
+    }
+
+    private boolean looseLessThan(RelOptCost cost1, RelOptCost cost2) {
+        return cost1.isLt(cost2);
     }
 
     private boolean checkIfAllIndexColDataTypeSupportPartition(String dbName, String tbName, List<String> idxCols) {

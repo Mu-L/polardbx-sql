@@ -11,10 +11,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.alibaba.polardbx.common.ddl.newengine.DdlState;
+import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.SubJobTask;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineAccessor;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineRecord;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineTaskAccessor;
+import com.alibaba.polardbx.gms.partition.TablePartitionAccessor;
+import com.alibaba.polardbx.gms.tablegroup.PartitionGroupAccessor;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import org.junit.After;
 import org.junit.Assert;
@@ -36,11 +39,14 @@ public class DdlJobManagerTest {
     private DdlEngineAccessor engineAccessor;
 
     private DdlEngineTaskAccessor engineTaskAccessor;
-
+    private TablePartitionAccessor tablePartitionAccessor;
+    private PartitionGroupAccessor partitionGroupAccessor;
     private Connection mockConnection;
     private MockedStatic<MetaDbUtil> mockMetaDbUtil;
     private MockedConstruction<DdlEngineAccessor> mockEngineCtor;
     private MockedConstruction<DdlEngineTaskAccessor> mockTaskCtor;
+    private MockedConstruction<TablePartitionAccessor> mockTablePartitionsCtor;
+    private MockedConstruction<PartitionGroupAccessor> mockPartitionGroupCtor;
 
     @Before
     public void setUp() throws Exception {
@@ -50,6 +56,9 @@ public class DdlJobManagerTest {
         engineAccessor = mock(DdlEngineAccessor.class);
 
         engineTaskAccessor = mock(DdlEngineTaskAccessor.class);
+
+        tablePartitionAccessor = mock(TablePartitionAccessor.class);
+        partitionGroupAccessor = mock(PartitionGroupAccessor.class);
 
         mockMetaDbUtil = Mockito.mockStatic(MetaDbUtil.class); // 模拟静态方法所在的类
 
@@ -67,12 +76,22 @@ public class DdlJobManagerTest {
                 .thenAnswer(i -> engineAccessor.query((long) i.getArgument(0)));
             Mockito.when(mock.delete(anyLong()))
                 .thenAnswer(i -> engineAccessor.delete(i.getArgument(0)));
+            Mockito.when(mock.deleteIfInitial(anyLong()))
+                .thenAnswer(i -> engineAccessor.deleteIfInitial(i.getArgument(0)));
         });
         mockTaskCtor = Mockito.mockConstruction(DdlEngineTaskAccessor.class, (mock, context) -> {
             Mockito.when(mock.deleteArchiveByJobId(anyLong()))
                 .thenAnswer(i -> engineTaskAccessor.deleteArchiveByJobId(i.getArgument(0)));
             Mockito.when(mock.deleteByJobId(anyLong()))
                 .thenAnswer(i -> engineTaskAccessor.deleteByJobId(i.getArgument(0)));
+        });
+        mockTablePartitionsCtor = Mockito.mockConstruction(TablePartitionAccessor.class, (mock, context) -> {
+            Mockito.when(mock.deleteTablePartitionsArchive(anyLong()))
+                .thenAnswer(i -> tablePartitionAccessor.deleteTablePartitionsArchive(i.getArgument(0)));
+        });
+        mockPartitionGroupCtor = Mockito.mockConstruction(PartitionGroupAccessor.class, (mock, context) -> {
+            Mockito.when(mock.deletePartitionGroupArchive(anyLong()))
+                .thenAnswer(i -> partitionGroupAccessor.deletePartitionGroupArchive(i.getArgument(0)));
         });
     }
 
@@ -86,6 +105,12 @@ public class DdlJobManagerTest {
         }
         if (mockTaskCtor != null) {
             mockTaskCtor.close();
+        }
+        if (mockPartitionGroupCtor != null) {
+            mockPartitionGroupCtor.close();
+        }
+        if (mockTablePartitionsCtor != null) {
+            mockTablePartitionsCtor.close();
         }
     }
 
@@ -113,7 +138,8 @@ public class DdlJobManagerTest {
         records.add(mock(DdlEngineRecord.class));
         when(engineAccessor.queryOutdateArchiveDDLEngine(anyLong())).thenReturn(records);
         when(engineAccessor.deleteArchive(anyLong())).thenReturn(1);
-        when(engineTaskAccessor.deleteArchiveByJobId(anyLong())).thenReturn(1);
+        when(tablePartitionAccessor.deleteTablePartitionsArchive(anyLong())).thenReturn(1);
+        when(partitionGroupAccessor.deletePartitionGroupArchive(anyLong())).thenReturn(1);
 
         DdlJobManager manager = new DdlJobManager();
         int result = manager.cleanUpArchive(0l);
@@ -121,6 +147,8 @@ public class DdlJobManagerTest {
         verify(engineAccessor, times(1)).queryOutdateArchiveDDLEngine(0l);
         verify(engineAccessor, times(1)).deleteArchive(anyLong());
         verify(engineTaskAccessor, times(1)).deleteArchiveByJobId(anyLong());
+        verify(tablePartitionAccessor, times(1)).deleteTablePartitionsArchive(0L);
+        verify(partitionGroupAccessor, times(1)).deletePartitionGroupArchive(0L);
     }
 
     @Test
@@ -180,5 +208,110 @@ public class DdlJobManagerTest {
         verify(engineAccessor, times(1)).query(1L);
         verify(spyManager, times(1)).fetchSubJobsRecursive(anyLong(), any(DdlEngineTaskAccessor.class), anyBoolean());
         verify(engineAccessor, times(5)).delete(anyLong());
+    }
+
+    @Test
+    public void testRemoveInitialJobDeletesAndReleasesResource() {
+        when(engineAccessor.deleteIfInitial(1L)).thenReturn(1);
+        DdlEngineResourceManager resourceManager = mock(DdlEngineResourceManager.class);
+        DdlJobManager manager = new DdlJobManager();
+        manager.resourceManager = resourceManager;
+
+        Assert.assertTrue(manager.removeInitialJob(1L));
+
+        verify(engineAccessor, times(1)).deleteIfInitial(1L);
+        verify(resourceManager, times(1)).releaseResource(mockConnection, 1L);
+    }
+
+    @Test
+    public void testRemoveInitialJobReturnsFalseWhenDeleteMisses() {
+        when(engineAccessor.deleteIfInitial(1L)).thenReturn(0);
+        DdlEngineResourceManager resourceManager = mock(DdlEngineResourceManager.class);
+        DdlJobManager manager = new DdlJobManager();
+        manager.resourceManager = resourceManager;
+
+        Assert.assertFalse(manager.removeInitialJob(1L));
+
+        verify(engineAccessor, times(1)).deleteIfInitial(1L);
+        verify(resourceManager, never()).releaseResource(any(Connection.class), anyLong());
+    }
+
+    private static TddlNestableRuntimeException deadlockException() {
+        return new TddlNestableRuntimeException("Deadlock found when trying to get lock; try restarting transaction");
+    }
+
+    @Test
+    public void testReleaseResourceWithRetrySucceedsAfterDeadlock() {
+        DdlEngineResourceManager resourceManager = mock(DdlEngineResourceManager.class);
+        doThrow(deadlockException()).doThrow(deadlockException()).doReturn(0)
+            .when(resourceManager).releaseResource(any(Connection.class), anyLong());
+        DdlJobManager manager = new DdlJobManager();
+        manager.resourceManager = resourceManager;
+
+        manager.releaseResourceWithRetry(mockConnection, 1L, 5, 1L);
+
+        verify(resourceManager, times(3)).releaseResource(mockConnection, 1L);
+    }
+
+    @Test
+    public void testReleaseResourceWithRetryExhausted() {
+        DdlEngineResourceManager resourceManager = mock(DdlEngineResourceManager.class);
+        doThrow(deadlockException()).when(resourceManager).releaseResource(any(Connection.class), anyLong());
+        DdlJobManager manager = new DdlJobManager();
+        manager.resourceManager = resourceManager;
+
+        try {
+            manager.releaseResourceWithRetry(mockConnection, 1L, 3, 1L);
+            Assert.fail("should throw after retries exhausted");
+        } catch (TddlNestableRuntimeException e) {
+            Assert.assertTrue(e.getMessage().toLowerCase().contains("deadlock"));
+        }
+
+        verify(resourceManager, times(3)).releaseResource(mockConnection, 1L);
+    }
+
+    @Test
+    public void testReleaseResourceWithRetryNoRetryOnNonDeadlock() {
+        DdlEngineResourceManager resourceManager = mock(DdlEngineResourceManager.class);
+        doThrow(new TddlNestableRuntimeException("connection refused"))
+            .when(resourceManager).releaseResource(any(Connection.class), anyLong());
+        DdlJobManager manager = new DdlJobManager();
+        manager.resourceManager = resourceManager;
+
+        try {
+            manager.releaseResourceWithRetry(mockConnection, 1L, 5, 1L);
+            Assert.fail("should throw non-deadlock exception immediately");
+        } catch (TddlNestableRuntimeException e) {
+            Assert.assertTrue(e.getMessage().contains("connection refused"));
+        }
+
+        verify(resourceManager, times(1)).releaseResource(mockConnection, 1L);
+    }
+
+    @Test
+    public void testRemoveJobRetriesReleaseResourceOnDeadlock() {
+        when(engineTaskAccessor.deleteByJobId(anyLong())).thenReturn(1);
+        DdlEngineRecord ddlEngineRecord = mock(DdlEngineRecord.class);
+        ddlEngineRecord.state = DdlState.COMPLETED.name();
+        when(engineAccessor.query(anyLong())).thenReturn(ddlEngineRecord);
+        when(engineAccessor.delete(anyLong())).thenReturn(1);
+
+        DdlEngineResourceManager resourceManager = mock(DdlEngineResourceManager.class);
+        doThrow(deadlockException()).doReturn(0)
+            .when(resourceManager).releaseResource(any(Connection.class), anyLong());
+
+        DdlJobManager manager = new DdlJobManager();
+        manager.resourceManager = resourceManager;
+        DdlJobManager spyManager = Mockito.spy(manager);
+        doCallRealMethod().when(spyManager).removeJob(anyLong());
+        Mockito.doReturn(new ArrayList<SubJobTask>()).when(spyManager)
+            .fetchSubJobsRecursive(anyLong(), any(DdlEngineTaskAccessor.class), anyBoolean());
+        Mockito.doNothing().when(spyManager).validateDdlStateContains(any(), any());
+
+        Assert.assertTrue(spyManager.removeJob(1L));
+
+        verify(resourceManager, times(2)).releaseResource(mockConnection, 1L);
+        verify(engineAccessor, times(1)).delete(1L);
+        verify(engineTaskAccessor, times(1)).deleteByJobId(1L);
     }
 }

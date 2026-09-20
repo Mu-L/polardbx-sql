@@ -236,4 +236,31 @@ public class DataTypeTest {
         Assert.assertArrayEquals("b".getBytes(), ((Slice) enumType.convertTo(varcharType, enumValueB)).getBytes());
         Assert.assertArrayEquals("".getBytes(), ((Slice) enumType.convertTo(varcharType, enumValueEmpty)).getBytes());
     }
+
+    /**
+     * Test that MD5 hash strings starting with '0e' are correctly converted to numeric zero.
+     * <p>
+     * MD5 returns 32-character hex strings like '0e45bc9382e3705be7814b0d985e9cb9'.
+     * When used in arithmetic operations (e.g., modulo), these strings need to be converted to numbers.
+     * The NUMBER_PATTERN regex incorrectly matches '0e45' as scientific notation (0 × 10^45),
+     * creating BigDecimal("0E+45") which has scale=-45. The old code used equals(BigDecimal.ZERO)
+     * which returns false for 0E+45 (different scale), causing TruncatedDoubleValueOverflowException.
+     *
+     * @see <a href="https://aone.alibaba-inc.com/issue/80667120">AONE-80667120</a>
+     */
+    @Test
+    public void testMd5StringStartingWith0e() {
+        IntegerType integerType = new IntegerType();
+
+        // MD5 hash strings that start with '0e' followed by digits
+        // These should be converted to 0 (numeric zero) without throwing exception
+        String md5Hash1 = "0e45bc9382e3705be7814b0d985e9cb9";
+        String md5Hash2 = "0e78abc123def456789abc123def4567";
+        String md5Hash3 = "0e00000000000000000000000000000a";
+
+        // These conversions should return 0 without throwing TruncatedDoubleValueOverflowException
+        Assert.assertEquals(Integer.valueOf(0), integerType.convertFrom(md5Hash1));
+        Assert.assertEquals(Integer.valueOf(0), integerType.convertFrom(md5Hash2));
+        Assert.assertEquals(Integer.valueOf(0), integerType.convertFrom(md5Hash3));
+    }
 }

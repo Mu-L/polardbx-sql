@@ -22,11 +22,9 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.core.TddlRelDataTypeSystemImpl;
 import com.alibaba.polardbx.optimizer.core.TddlTypeFactoryImpl;
-import com.alibaba.polardbx.optimizer.core.function.SqlJsonArrayAggFunction;
 import com.alibaba.polardbx.optimizer.core.function.SqlJsonArrayGlobalAggFunction;
-import com.alibaba.polardbx.optimizer.core.function.SqlJsonObjectAggFunction;
 import com.alibaba.polardbx.optimizer.core.function.SqlJsonObjectGlobalAggFunction;
-import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.PushUtil;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
@@ -65,7 +63,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import static com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil.isGroupSets;
 import static com.alibaba.polardbx.optimizer.utils.PlannerUtils.buildNewGroupSet;
 import static com.alibaba.polardbx.optimizer.utils.PlannerUtils.canSplitDistinct;
 
@@ -94,20 +91,13 @@ public abstract class PushAggRule extends RelOptRule {
     @Override
     public boolean matches(RelOptRuleCall call) {
         LogicalAggregate aggregate = (LogicalAggregate) call.rels[0];
-        if (aggregate.getGroupSets().size() > 1) {
+        if (!PushUtil.isPushable(aggregate)) {
             return false;
         }
+
         LogicalView tableScan = (LogicalView) call.rels[1];
 
         if (tableScan instanceof OSSTableScan) {
-            return false;
-        }
-
-        if (CBOUtil.isCheckSum(aggregate) || CBOUtil.isSingleValue(aggregate) || CBOUtil.isGroupSets(aggregate)) {
-            return false;
-        }
-
-        if (CBOUtil.containUnpushableAgg(aggregate)) {
             return false;
         }
 

@@ -80,7 +80,8 @@ public class AlterTableDropPartition2Test extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateSuccessIgnoreErr(tddlConnection, sql,
             ignoreErrs);
 
-        sql = "trace select * from " + tb1;
+        String hintStr = " /*+TDDL:cmd_extra(MERGE_UNION=false)*/ ";
+        sql = "trace" + hintStr + "select * from " + tb1;
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         List<List<String>> trace = getTrace(tddlConnection);
         Assert.assertThat(trace.toString(), trace.size(), is(4));
@@ -107,7 +108,8 @@ public class AlterTableDropPartition2Test extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateSuccessIgnoreErr(tddlConnection, sql,
             ignoreErrs);
 
-        sql = "trace select * from " + tb1;
+        String hintStr = " /*+TDDL:cmd_extra(MERGE_UNION=false)*/ ";
+        sql = "trace" + hintStr + "select * from " + tb1;
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         List<List<String>> trace = getTrace(tddlConnection);
         Assert.assertThat(trace.toString(), trace.size(), is(2));

@@ -202,9 +202,9 @@ public class ValidateFileStorageBindingDDLTest extends DDLBaseNewDBTestCase {
 
         // add check
         sql = "alter table " + innodbHashTable + " add check (b > 0)";
-        JdbcUtil.executeUpdateFailed(getInnodbConn(), sql, NOT_SUPPORTED);
+        JdbcUtil.executeUpdateFailed(getInnodbConn(), sql, INVOLVE_FILE_STORAGE);
         sql = "alter table " + ossHashTable + " add check (b > 0)";
-        JdbcUtil.executeUpdateFailed(getFileStoreConn(), sql, NOT_SUPPORTED);
+        JdbcUtil.executeUpdateFailed(getFileStoreConn(), sql, FAIL_BOUND);
 
         // set default charset
         sql = "alter table " + innodbHashTable + " DEFAULT CHARACTER SET = gbk";

@@ -17,18 +17,24 @@
 package com.alibaba.polardbx.executor.accumulator;
 
 import com.alibaba.polardbx.common.RevisableOrderInvariantHash;
+import com.alibaba.polardbx.common.IOrderInvariantHash;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.executor.accumulator.state.NullableCheckSumGroupState;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
+import org.openjdk.jol.info.ClassLayout;
 
 /**
  * @author yaozhili
  */
-public class CheckSumV2MergeAccumulator implements Accumulator {
+public class CheckSumV2MergeAccumulator extends AbstractAccumulator {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(CheckSumV2MergeAccumulator.class).instanceSize();
 
+    @FieldMemoryCounter(value = false)
     private static final DataType[] INPUT_TYPES = new DataType[] {DataTypes.LongType};
 
     private final NullableCheckSumGroupState groupState;
@@ -38,6 +44,11 @@ public class CheckSumV2MergeAccumulator implements Accumulator {
 
     public CheckSumV2MergeAccumulator(int capacity) {
         this.groupState = new NullableCheckSumGroupState(capacity, RevisableOrderInvariantHash.class);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(groupState);
     }
 
     @Override

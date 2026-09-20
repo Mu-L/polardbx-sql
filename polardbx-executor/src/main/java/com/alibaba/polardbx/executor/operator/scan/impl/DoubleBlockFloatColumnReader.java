@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.ORCMemoryCounterUtil;
 import com.alibaba.polardbx.executor.chunk.DoubleBlock;
 import com.alibaba.polardbx.executor.chunk.FloatBlock;
 import com.alibaba.polardbx.executor.chunk.RandomAccessBlock;
@@ -23,17 +25,36 @@ import com.alibaba.polardbx.executor.operator.scan.StripeLoader;
 import com.alibaba.polardbx.executor.operator.scan.metrics.RuntimeMetrics;
 import com.google.common.base.Preconditions;
 import org.apache.orc.impl.OrcIndex;
+import org.openjdk.jol.info.ClassLayout;
+import org.apache.orc.impl.PositionProviderBuilder;
 
 import java.io.IOException;
 
 public class DoubleBlockFloatColumnReader extends FloatColumnReader {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(DoubleBlockFloatColumnReader.class).instanceSize();
 
     public DoubleBlockFloatColumnReader(int columnId, boolean isPrimaryKey,
                                         StripeLoader stripeLoader,
-                                        OrcIndex orcIndex,
+                                        PositionProviderBuilder orcIndex,
                                         RuntimeMetrics metrics,
                                         int indexStride, boolean enableMetrics) {
         super(columnId, isPrimaryKey, stripeLoader, orcIndex, metrics, indexStride, enableMetrics);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            // from AbstractColumnReader
+            + FastMemoryCounter.sizeOf(refCount)
+            + FastMemoryCounter.sizeOf(isClosed)
+            + FastMemoryCounter.sizeOf(hasNoMoreBlocks)
+            // from AbstractLongColumnReader
+            + FastMemoryCounter.sizeOf(openFailed)
+            + FastMemoryCounter.sizeOf(initializeOnlyOnce)
+            + FastMemoryCounter.sizeOf(isOpened)
+            + ORCMemoryCounterUtil.sizeOfBitFieldReader(present)
+            + ORCMemoryCounterUtil.sizeOfInStream(dataStream)
+            + ORCMemoryCounterUtil.sizeOfSerializationUtils(utils);
     }
 
     @Override

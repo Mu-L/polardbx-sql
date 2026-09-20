@@ -60,6 +60,7 @@ import java.util.TreeSet;
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.optimizer.core.TddlOperatorTable.CARTESIAN;
+import static com.alibaba.polardbx.optimizer.core.planner.rule.util.ForceIndexUtil.EqualColumnsCollector.checkInDynamicApply;
 import static com.alibaba.polardbx.optimizer.core.planner.rule.util.ForceIndexUtil.hasIndexHint;
 
 public class FilterLookupTableRule extends RelOptRule {
@@ -115,7 +116,7 @@ public class FilterLookupTableRule extends RelOptRule {
         }
         TableMeta tableMeta = CBOUtil.getTableMeta(logicalView.getTable());
         //Only support the sharding table
-        boolean isSharding = TableTopologyUtil.isShard(tableMeta);
+        boolean isSharding = TableTopologyUtil.isShard(tableMeta, PlannerContext.getPlannerContext(call));
         return isSharding;
     }
 
@@ -259,6 +260,7 @@ public class FilterLookupTableRule extends RelOptRule {
         // disable post planner
         PlannerContext.getPlannerContext(call).getExtraCmds().put(ConnectionProperties.ENABLE_POST_PLANNER, false);
 
+        PlannerContext.getPlannerContext(call).setHasExpandIn(true);
         call.transformTo(newProject);
     }
 
@@ -352,6 +354,18 @@ public class FilterLookupTableRule extends RelOptRule {
                     dynamicListParam = newRexDynamicList(rb, leftRexNode, rightRexNode.getType());
                 }
                 kindType = 2;
+            } else if (SqlKind.IN.equals(rexNode.getKind()) && rexNode instanceof RexCall) {
+                RexNode leftRexNode = ((RexCall) rexNode).getOperands().get(0);
+                RexNode rightRexNode = ((RexCall) rexNode).getOperands().get(1);
+                PlannerContext pc = PlannerContext.getPlannerContext(call);
+                if (leftRexNode instanceof RexInputRef && checkInDynamicApply(pc, rightRexNode)) {
+                    index = ((RexInputRef) leftRexNode).getIndex();
+                    kindType = 0;
+                } else if (rightRexNode instanceof RexInputRef && checkInDynamicApply(pc, leftRexNode)) {
+                    index = ((RexInputRef) rightRexNode).getIndex();
+                    kindType = 0;
+                }
+                newPredicates.add(rexNode);
             } else {
                 newPredicates.add(rexNode);
             }
@@ -424,8 +438,9 @@ public class FilterLookupTableRule extends RelOptRule {
     private Pair<IndexMeta, Set<Integer>> getForceIndexMeta(
         List<IndexMeta> indexMetas, Set<String> equalSetColumns, List<String> referenceByColumns,
         List<String> inValuesColumns) {
-        List<Pair<IndexMeta, Set<Integer>>> rets = new ArrayList<>();
+        Pair<IndexMeta, Set<Integer>> bestPair = null;
         int maxMatchInSize = -1;
+        int maxEqualInPrefix = -1;
         for (IndexMeta indexMeta : indexMetas) {
             Set<Integer> matchInIndexs = new HashSet<>();
             List<String> localIndex =
@@ -453,8 +468,10 @@ public class FilterLookupTableRule extends RelOptRule {
 
             //make sure the prefix columns of the equal set are in the index
             boolean returnFlag = true;
+            int equalInPrefix = 0;
             for (int i = 0; i < startOffsetForOrderBy; i++) {
                 if (equalSetColumns.contains(localIndex.get(i))) {
+                    equalInPrefix++;
                     continue;
                 } else {
                     if (inValuesColumns.contains(localIndex.get(i))) {
@@ -470,19 +487,16 @@ public class FilterLookupTableRule extends RelOptRule {
             }
 
             if (!matchInIndexs.isEmpty()) {
-                maxMatchInSize = matchInIndexs.size() > maxMatchInSize ? matchInIndexs.size() : maxMatchInSize;
-                rets.add(new Pair<>(indexMeta, matchInIndexs));
-            }
-        }
-
-        if (!rets.isEmpty()) {
-            for (Pair<IndexMeta, Set<Integer>> pair : rets) {
-                if (pair.getValue().size() == maxMatchInSize) {
-                    return pair;
+                if (matchInIndexs.size() > maxMatchInSize ||
+                    (matchInIndexs.size() == maxMatchInSize && equalInPrefix > maxEqualInPrefix)) {
+                    maxMatchInSize = matchInIndexs.size();
+                    maxEqualInPrefix = equalInPrefix;
+                    bestPair = new Pair<>(indexMeta, matchInIndexs);
                 }
             }
         }
-        return null;
+
+        return bestPair;
     }
 
     private void forceIndex(LogicalView logicalView, IndexMeta targetIndexMeta) {

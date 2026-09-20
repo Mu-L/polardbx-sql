@@ -1,0 +1,128 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set sql_mode='';
+
+drop table if exists r_unix_ts_ms;
+create table r_unix_ts_ms
+(
+a bigint ,
+b datetime,
+c varchar(32),
+primary key(a)
+)
+partition by range(a)
+(
+partition p20250501 values less than(1746028800000),
+partition p20250502 values less than(1746115200000),
+partition p20250503 values less than(1746201600000),
+partition p20250504 values less than(1746288000000),
+partition p20250505 values less than(1746374400000)
+);
+
+alter table r_unix_ts_ms modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = `a` expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+ttl_col_encoder=unix_timestamp(?) * 1000,
+ttl_col_decoder=from_unixtime(? / 1000),
+archive_type='partition',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_unix_ts_ms cleanup expired data;
+show create table r_unix_ts_ms;
+
+alter table r_unix_ts_ms cleanup expired data;
+show create table r_unix_ts_ms;
+
+alter table r_unix_ts_ms modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = `a` expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+ttl_col_encoder=unix_timestamp(?) * 1000,
+ttl_col_decoder=from_unixtime(? / 1000),
+archive_type='row',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+
+insert into r_unix_ts_ms(a,b,c) values (1746028800000, from_unixtime(1746028800), from_unixtime(1746028800));
+insert into r_unix_ts_ms(a,b,c) values (1750953600000, from_unixtime(1750953600), from_unixtime(1750953600));
+insert into r_unix_ts_ms(a,b,c) values (1751040000000, from_unixtime(1751040000), from_unixtime(1751040000));
+
+set time_zone='+08:00';
+select a,b,c from r_unix_ts_ms order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_unix_ts_ms cleanup expired data;
+select a,b,c from r_unix_ts_ms order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-28 00:00:00';
+alter table r_unix_ts_ms cleanup expired data;
+select a,b,c from r_unix_ts_ms order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-29 00:00:00';
+alter table r_unix_ts_ms cleanup expired data;
+select a,b,c from r_unix_ts_ms order by a,b,c;
+
+drop table r_unix_ts_ms;
+
+
+drop table if exists r_unix_ts_ms2;
+create table r_unix_ts_ms2
+(
+a bigint ,
+b datetime,
+c varchar(32),
+primary key(a)
+)
+partition by range(a)
+(
+partition p20250501 values less than(1746028800000),
+partition p20250502 values less than(1746115200000),
+partition p20250503 values less than(1746201600000),
+partition p20250504 values less than(1746288000000),
+partition p20250505 values less than(1746374400000)
+);
+
+alter table r_unix_ts_ms2 modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = from_unixtime(`a` / 1000) expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='partition',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_unix_ts_ms2 cleanup expired data;
+show create table r_unix_ts_ms2;
+
+insert into r_unix_ts_ms2(a,b,c) values (1746028800000, from_unixtime(1746028800), from_unixtime(1746028800));
+insert into r_unix_ts_ms2(a,b,c) values (1750953600000, from_unixtime(1750953600), from_unixtime(1750953600));
+insert into r_unix_ts_ms2(a,b,c) values (1751040000000, from_unixtime(1751040000), from_unixtime(1751040000));
+
+set time_zone='+08:00';
+
+select a,b,c from r_unix_ts_ms2 order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_unix_ts_ms2 cleanup expired data;
+select a,b,c from r_unix_ts_ms2 order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-28 00:00:00';
+alter table r_unix_ts_ms2 cleanup expired data;
+select a,b,c from r_unix_ts_ms2 order by a,b,c;
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-29 00:00:00';
+alter table r_unix_ts_ms2 cleanup expired data;
+select a,b,c from r_unix_ts_ms2 order by a,b,c;

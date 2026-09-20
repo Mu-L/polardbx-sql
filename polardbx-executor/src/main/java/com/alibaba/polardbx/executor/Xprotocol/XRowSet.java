@@ -110,7 +110,8 @@ public class XRowSet extends AbstractRow implements IXRowChunk {
     }
 
     public byte[] fastGetBytes(int index, String targetCharset) throws Exception {
-        return XResultUtil.resultToBytes(metaData.get(index), row.get(index), targetCharset);
+        return XResultUtil.resultToBytes(metaData.get(index), row.get(index),
+            result.getSession().getResultMetaEncodingMySQL(), targetCharset);
     }
 
     public void fastParseToColumnVector(int index, String targetCharset, ColumnVector columnVector, int rowNumber,
@@ -156,7 +157,8 @@ public class XRowSet extends AbstractRow implements IXRowChunk {
             return cache[index].getValue();
         }
         try {
-            cache[index] = XResultUtil.resultToObject(metaData.get(index), row.get(index), true, timeZone);
+            cache[index] = XResultUtil.resultToObject(metaData.get(index), row.get(index), true, timeZone,
+                result.getSession().getResultMetaEncodingMySQL());
             return cache[index].getValue();
         } catch (Exception e) {
             throw GeneralUtil.nestedException(e);
@@ -169,7 +171,8 @@ public class XRowSet extends AbstractRow implements IXRowChunk {
             return cache[index].getValue();
         }
         try {
-            cache[index] = XResultUtil.resultToObject(metaData.get(index), row.get(index), true, timeZone);
+            cache[index] = XResultUtil.resultToObject(metaData.get(index), row.get(index), true, timeZone,
+                result.getSession().getResultMetaEncodingMySQL());
             final Object obj = cache[index].getKey();
             if (obj instanceof Date || obj instanceof Time || obj instanceof Timestamp) {
                 return (new String(cache[index].getValue())).getBytes(TStringUtil.javaEncoding(encoding));
@@ -207,7 +210,8 @@ public class XRowSet extends AbstractRow implements IXRowChunk {
         }
 
         try {
-            cache[index] = XResultUtil.resultToObject(metaData.get(index), row.get(index), true, timeZone);
+            cache[index] = XResultUtil.resultToObject(metaData.get(index), row.get(index), true, timeZone,
+                result.getSession().getResultMetaEncodingMySQL());
             return convert(index, cache[index].getKey());
         } catch (Exception e) {
             throw GeneralUtil.nestedException(e);
@@ -305,6 +309,7 @@ public class XRowSet extends AbstractRow implements IXRowChunk {
             throw new TddlRuntimeException(ErrorCode.ERR_X_PROTOCOL_RESULT, "XRow column number mismatch.");
         }
 
+        final String sourceCharset = result.getSession().getResultMetaEncodingMySQL();
         try {
             for (int columnId = 0; columnId < dataTypes.length; ++columnId) {
                 final Class clazz = dataTypes[columnId].getDataClass();
@@ -429,7 +434,7 @@ public class XRowSet extends AbstractRow implements IXRowChunk {
                 } else if (clazz == String.class) {
                     final Pair<Object, byte[]> pair =
                         XResultUtil.resultToObject(meta, byteString, true,
-                            result.getSession().getDefaultTimezone());
+                            result.getSession().getDefaultTimezone(), sourceCharset);
                     if (pair.getKey() instanceof String) {
                         builder.writeString((String) pair.getKey());
                     } else {
@@ -438,7 +443,7 @@ public class XRowSet extends AbstractRow implements IXRowChunk {
                 } else if (clazz == Slice.class) {
                     final Pair<Object, byte[]> pair =
                         XResultUtil.resultToObject(meta, byteString, true,
-                            result.getSession().getDefaultTimezone());
+                            result.getSession().getDefaultTimezone(), sourceCharset);
                     if (pair.getKey() instanceof String) {
                         builder.writeString((String) pair.getKey());
                     } else {
@@ -447,7 +452,7 @@ public class XRowSet extends AbstractRow implements IXRowChunk {
                 } else if (clazz == BigInteger.class || clazz == UInt64.class) {
                     final Object val =
                         XResultUtil.resultToObject(meta, byteString, true,
-                                result.getSession().getDefaultTimezone())
+                                result.getSession().getDefaultTimezone(), sourceCharset)
                             .getKey();
                     if (val instanceof BigInteger) {
                         builder.writeBigInteger((BigInteger) val);
@@ -523,7 +528,7 @@ public class XRowSet extends AbstractRow implements IXRowChunk {
                     }
                 } else if (clazz == Timestamp.class) {
                     Pair<Object, byte[]> pair = XResultUtil.resultToObject(meta, byteString, true,
-                        result.getSession().getDefaultTimezone());
+                        result.getSession().getDefaultTimezone(), sourceCharset);
                     final Object val = pair.getKey();
                     final byte[] bytes = pair.getValue();
                     if (val instanceof Timestamp || val instanceof Date) {
@@ -536,7 +541,7 @@ public class XRowSet extends AbstractRow implements IXRowChunk {
                     }
                 } else if (clazz == Date.class) {
                     Pair<Object, byte[]> pair = XResultUtil.resultToObject(meta, byteString, true,
-                        result.getSession().getDefaultTimezone());
+                        result.getSession().getDefaultTimezone(), sourceCharset);
                     final Object val = pair.getKey();
                     final byte[] bytes = pair.getValue();
                     if (val instanceof Timestamp || val instanceof Date) {
@@ -549,7 +554,7 @@ public class XRowSet extends AbstractRow implements IXRowChunk {
                     }
                 } else if (clazz == Time.class) {
                     Pair<Object, byte[]> pair = XResultUtil.resultToObject(meta, byteString, true,
-                        result.getSession().getDefaultTimezone());
+                        result.getSession().getDefaultTimezone(), sourceCharset);
                     final Object val = pair.getKey();
                     final byte[] bytes = pair.getValue();
                     if (val instanceof Time) {
@@ -563,19 +568,19 @@ public class XRowSet extends AbstractRow implements IXRowChunk {
                 } else if (clazz == byte[].class) {
                     final byte[] val =
                         XResultUtil.resultToObject(meta, byteString, true,
-                                result.getSession().getDefaultTimezone())
+                                result.getSession().getDefaultTimezone(), sourceCharset)
                             .getValue();
                     builder.writeByteArray(val);
                 } else if (clazz == java.sql.Blob.class) {
                     final byte[] bytes =
                         XResultUtil.resultToObject(meta, byteString, true,
-                                result.getSession().getDefaultTimezone())
+                                result.getSession().getDefaultTimezone(), sourceCharset)
                             .getValue();
                     builder.writeBlob(new Blob(bytes));
                 } else if (clazz == Enum.class) {
                     final Pair<Object, byte[]> pair =
                         XResultUtil.resultToObject(meta, byteString, true,
-                            result.getSession().getDefaultTimezone());
+                            result.getSession().getDefaultTimezone(), sourceCharset);
                     if (pair.getKey() instanceof String) {
                         builder.writeString((String) pair.getKey());
                     } else {
@@ -594,6 +599,7 @@ public class XRowSet extends AbstractRow implements IXRowChunk {
                                                ExecutionContext context) throws Exception {
         final List<ByteString> row = xResult.current().getRow();
         final List<PolarxResultset.ColumnMetaData> metaData = xResult.getMetaData();
+        final String sourceCharset = xResult.getSession().getResultMetaEncodingMySQL();
         for (int i = 0; i < dataTypes.length; i++) {
             final BlockBuilder builder = blockBuilders[i];
             final PolarxResultset.ColumnMetaData meta = metaData.get(i);
@@ -715,7 +721,7 @@ public class XRowSet extends AbstractRow implements IXRowChunk {
             case MYSQL_TYPE_BLOB:
             case MYSQL_TYPE_ENUM:
             case MYSQL_TYPE_JSON: {
-                byte[] bytes = XResultUtil.resultToBytes(meta, data, "utf8");
+                byte[] bytes = XResultUtil.resultToBytes(meta, data, sourceCharset, "utf8");
                 builder.writeByteArray(bytes);
                 break;
             }

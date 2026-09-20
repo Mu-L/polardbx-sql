@@ -242,6 +242,40 @@ public class CharPartitionFieldTest {
     }
 
     @Test
+    public void testGB180302022Padding() {
+        final int precision = 80;
+        DataType type = new CharType(CollationName.GB18030_2022_CHINESE_CI, precision);
+
+        PartitionField f = PartitionFieldBuilder.createField(type);
+
+        String s = "this is test string 中文字符串";
+        f.store(s, type);
+
+        String res = f.stringValue().toStringUtf8();
+
+        Assert.assertEquals(s, res);
+
+        f.hash(new long[] {1L, 4L});
+    }
+
+    @Test
+    public void testGB180302022Truncate() {
+        final int precision = 8;
+        DataType type = new CharType(CollationName.GB18030_2022_CHINESE_CI, precision);
+
+        PartitionField f = PartitionFieldBuilder.createField(type);
+
+        String s = "this is test string 中文字符串";
+        f.store(s, type);
+
+        String res = f.stringValue().toStringUtf8();
+
+        Assert.assertEquals("this is", res);
+
+        f.hash(new long[] {1L, 4L});
+    }
+
+    @Test
     public void testSetNull() {
         final int precision = 255;
         DataType type = new CharType(CollationName.UTF8MB4_GENERAL_CI, precision);

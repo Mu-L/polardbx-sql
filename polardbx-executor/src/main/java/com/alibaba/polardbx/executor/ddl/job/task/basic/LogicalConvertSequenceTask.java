@@ -18,6 +18,7 @@ package com.alibaba.polardbx.executor.ddl.job.task.basic;
 
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.annotation.JSONCreator;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
@@ -64,7 +65,7 @@ public class LogicalConvertSequenceTask extends BaseDdlTask {
         onExceptionTryRecoveryThenRollback();
     }
 
-    public void executeImpl() {
+    public void executeImpl(ExecutionContext ec) {
         if (doNothing) {
             return;
         }
@@ -75,7 +76,9 @@ public class LogicalConvertSequenceTask extends BaseDdlTask {
             if (onlyAlterImplictSeq) {
                 sqls = DrdsToAutoSequenceUtil.convertOnlyTableSequences(needDoCreationTables, srcSchemaName);
             } else {
-                sqls = DrdsToAutoSequenceUtil.convertAllDrdsSequences(needDoCreationTables, srcSchemaName);
+                boolean useGroupSeqAsDefault = ec.getParamManager().getBoolean(ConnectionParams.GROUP_SEQ_AS_DEFAULT);
+                sqls = DrdsToAutoSequenceUtil.convertAllDrdsSequences(needDoCreationTables, srcSchemaName,
+                    useGroupSeqAsDefault);
             }
         } catch (Throwable e) {
             this.errorHappened = true;
@@ -98,7 +101,7 @@ public class LogicalConvertSequenceTask extends BaseDdlTask {
 
     @Override
     protected void beforeTransaction(ExecutionContext executionContext) {
-        executeImpl();
+        executeImpl(executionContext);
     }
 
     @Override

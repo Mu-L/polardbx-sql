@@ -26,6 +26,7 @@ import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.metadb.GmsSystemTables;
 import com.alibaba.polardbx.gms.metadb.accessor.AbstractAccessor;
+import com.alibaba.polardbx.gms.partition.TablePartitionRecord;
 import com.alibaba.polardbx.gms.util.DdlMetaLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import org.apache.commons.collections.CollectionUtils;
@@ -38,7 +39,7 @@ import java.util.List;
 import java.util.Map;
 
 public class ColumnarPartitionEvolutionAccessor extends AbstractAccessor {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     private static final String COLUMNAR_PARTITION_EVOLUTION_TABLE = wrap(GmsSystemTables.COLUMNAR_PARTITION_EVOLUTION);
 
@@ -71,6 +72,9 @@ public class ColumnarPartitionEvolutionAccessor extends AbstractAccessor {
     private static final String SELECT_BY_TABLE_ID_VERSION_ID_ORDER_BY_ID =
         SELECT_ALL_COLUMNS + FROM_TABLE + WHERE_BY_TABLE_ID_VERSION_ID + ORDER_BY_ID;
 
+    private static final String SELECT_BY_TABLE_ID_ORDER_BY_ID =
+        SELECT_ALL_COLUMNS + FROM_TABLE + WHERE_BY_TABLE_ID;
+
     private static final String SELECT_BY_TABLE_ID_AND_VERSION_IDS_ORDER_BY_ID =
         SELECT_ALL_COLUMNS + FROM_TABLE + WHERE_BY_TABLE_ID_AND_VERSION_IDS + ORDER_BY_ID;
 
@@ -93,6 +97,9 @@ public class ColumnarPartitionEvolutionAccessor extends AbstractAccessor {
         "update " + COLUMNAR_PARTITION_EVOLUTION_TABLE + " set `partition_id`=`id`" + WHERE_BY_TABLE_ID_VERSION_ID
             + AND_PARTITION_ID_ZERO;
 
+    private static final String UPDATE_TABLE_PARTITION_RECORD_BY_ID =
+        "update " + COLUMNAR_PARTITION_EVOLUTION_TABLE + " set `partition_record`=? where `id`=?";
+
     private static final String DELETE_TABLE_ID = "delete " + FROM_TABLE + WHERE_BY_TABLE_ID;
 
     public int[] insert(List<ColumnarPartitionEvolutionRecord> records) {
@@ -109,6 +116,13 @@ public class ColumnarPartitionEvolutionAccessor extends AbstractAccessor {
                 COLUMNAR_PARTITION_EVOLUTION_TABLE,
                 e.getMessage());
         }
+    }
+
+    public List<ColumnarPartitionEvolutionRecord> queryTableIdOrderById(Long tableId) {
+        return query(SELECT_BY_TABLE_ID_ORDER_BY_ID,
+            COLUMNAR_PARTITION_EVOLUTION_TABLE,
+            ColumnarPartitionEvolutionRecord.class,
+            tableId);
     }
 
     public List<ColumnarPartitionEvolutionRecord> queryTableIdVersionIdOrderById(Long tableId, Long versionId) {
@@ -181,6 +195,14 @@ public class ColumnarPartitionEvolutionAccessor extends AbstractAccessor {
         MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, tableId);
         MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, versionId);
         update(UPDATE_FIELD_ID_AS_ID_BY_TABLE_ID_VERSION_ID, COLUMNAR_PARTITION_EVOLUTION_TABLE, params);
+    }
+
+    public void updateTablePartitionRecord(TablePartitionRecord tablePartitionRecord, long id) {
+        Map<Integer, ParameterContext> params = new HashMap<>(2);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString,
+            ColumnarPartitionEvolutionRecord.serializeToJson(tablePartitionRecord));
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, id);
+        update(UPDATE_TABLE_PARTITION_RECORD_BY_ID, COLUMNAR_PARTITION_EVOLUTION_TABLE, params);
     }
 
     public int deleteId(long tableId) {

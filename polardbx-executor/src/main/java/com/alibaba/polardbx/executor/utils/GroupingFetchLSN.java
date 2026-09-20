@@ -33,6 +33,7 @@ import com.alibaba.polardbx.group.jdbc.TGroupDataSource;
 import com.google.common.util.concurrent.SettableFuture;
 
 import java.sql.SQLException;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -237,12 +238,12 @@ public class GroupingFetchLSN extends AbstractLifecycle {
      * fetch the log sequence number from the master DN.
      *
      * @param group mark the dn from group
-     * @param dnLsnMap The param dnLsnMap usually is null. The method is only invoke  by MPP if the param is not null.
+     * @param dnLsnMap The param dnLsnMap usually is null.
      * @param tso Task to send a timestamp to storage nodes in order to keep their latest timestamp up-to-date.
      * @return the log sequence number.
      */
     public long fetchLSN(
-        TopologyHandler topology, String group, ConcurrentHashMap<String, Long> dnLsnMap, long tso) {
+        TopologyHandler topology, String group, Map<String, Long> dnLsnMap, long tso) {
         TGroupDataSource groupDataSource = (TGroupDataSource) topology.get(group).getDataSource();
         String masterId = groupDataSource.getMasterDNId();
         long retLsn = -1;

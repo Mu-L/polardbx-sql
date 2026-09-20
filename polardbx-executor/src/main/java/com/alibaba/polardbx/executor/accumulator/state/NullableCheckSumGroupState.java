@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.executor.accumulator.state;
 
 import com.alibaba.polardbx.common.IOrderInvariantHash;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.executor.accumulator.datastruct.BooleanSegmentArrayList;
 import com.alibaba.polardbx.executor.accumulator.datastruct.ObjectSegmentArrayList;
 import org.openjdk.jol.info.ClassLayout;
@@ -36,10 +37,17 @@ public class NullableCheckSumGroupState implements GroupState {
 
     private final int capacity;
 
-    public NullableCheckSumGroupState(int capacity, Class clazz) {
+    public NullableCheckSumGroupState(int capacity, Class<? extends IOrderInvariantHash> clazz) {
         this.capacity = capacity;
         this.valueIsNull = new BooleanSegmentArrayList(capacity);
         this.hasherList = new ObjectSegmentArrayList(capacity, clazz);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(valueIsNull)
+            + FastMemoryCounter.sizeOf(hasherList);
     }
 
     public void set(int groupId, IOrderInvariantHash value) {

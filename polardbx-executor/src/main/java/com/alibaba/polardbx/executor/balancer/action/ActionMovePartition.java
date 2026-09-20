@@ -166,7 +166,8 @@ public class ActionMovePartition implements BalanceAction, Comparable<ActionMove
                     PartitionStat::getTableGroupName,
                     Collectors.mapping(PartitionStat::getPartitionName, Collectors.toList())))
             .forEach((tableGroupName, partList) -> {
-                res.add(createMoveToInst(schema, tableGroupName, partList, toInst, stats));
+                Boolean isSubpartition = partitions.get(0).isSubPartition();
+                res.add(createMoveToInst(schema, tableGroupName, partList, toInst, stats, isSubpartition));
             });
 
         return res;
@@ -191,13 +192,14 @@ public class ActionMovePartition implements BalanceAction, Comparable<ActionMove
                                                         String tgName,
                                                         List<String> partitions,
                                                         String toInst,
-                                                        BalanceStats stats) {
+                                                        BalanceStats stats,
+                                                        Boolean isSubpartition) {
         ActionMovePartition res = new ActionMovePartition(schema);
         res.tableGroupName = tgName;
         res.partitionNames = partitions;
         res.toInst = toInst;
         res.stats = stats;
-        res.isSubpartition = false;
+        res.isSubpartition = isSubpartition;
         return res;
     }
 
@@ -299,33 +301,36 @@ public class ActionMovePartition implements BalanceAction, Comparable<ActionMove
             List<PartitionStat> partitionStatList =
                 stats.filterPartitionStat(tableGroupName, Sets.newHashSet(partitionNames));
             partitionNames.clear();
-            Map<String, PartitionStat> partitionStatMap = new HashMap<>();
+            Map<String, PartitionGroupStat> partitionGroupStatMap = new HashMap<>();
             for (PartitionStat partitionStat : partitionStatList) {
-                partitionStatMap.put(partitionStat.getPartitionName(), partitionStat);
+                PartitionGroupStat pgStat = partitionGroupStatMap.computeIfAbsent(partitionStat.getPartitionName(),
+                    key -> new PartitionGroupStat());
+                pgStat.pg = partitionStat.getPartitionGroupRecord();
+                pgStat.partitions.add(partitionStat);
+                partitionGroupStatMap.put(partitionStat.getPartitionName(), pgStat);
             }
             Map<String, String> groupNameToInsts = getGroupNameToStorageInstIdMap(schema);
             for (ActionMovePartition actionMovePartition : moves) {
                 List<String> movePartitionsNames = actionMovePartition.getPartitionNames();
                 if (actionMovePartition.getToInst() != null) {
                     for (String movePartitionName : movePartitionsNames) {
-                        PartitionStat partitionStat = partitionStatMap.get(movePartitionName);
-                        String phyDb = partitionStat.getPartitionGroupRecord().getPhy_db();
-                        String originalInstId = groupNameToInsts.get(GroupInfoUtil.buildGroupNameFromPhysicalDb(phyDb));
+                        PartitionGroupStat partitionStat = partitionGroupStatMap.get(movePartitionName);
+                        String groupName = partitionStat.getPartitionGroupRecord().getGroup_Name();
+                        String originalInstId = groupNameToInsts.get(groupName);
                         if (!actionMovePartition.getToInst().equalsIgnoreCase(originalInstId)) {
                             partitionNames.add(movePartitionName);
-                            totalRows += partitionStat.getPartitionRows();
-                            totalSize += partitionStat.getPartitionDiskSize();
+                            totalRows += partitionStat.getTotalRows();
+                            totalSize += partitionStat.getTotalDiskSize();
                         }
                     }
                 } else if (actionMovePartition.getToGroup() != null) {
                     for (String movePartitionName : movePartitionsNames) {
-                        PartitionStat partitionStat = partitionStatMap.get(movePartitionName);
-                        String phyDb = partitionStat.getPartitionGroupRecord().getPhy_db();
-                        String originalGroupName = GroupInfoUtil.buildGroupNameFromPhysicalDb(phyDb);
+                        PartitionGroupStat partitionStat = partitionGroupStatMap.get(movePartitionName);
+                        String originalGroupName = partitionStat.getPartitionGroupRecord().getGroup_Name();
                         if (!actionMovePartition.getToGroup().equalsIgnoreCase(originalGroupName)) {
                             partitionNames.add(movePartitionName);
-                            totalRows += partitionStat.getPartitionRows();
-                            totalSize += partitionStat.getPartitionDiskSize();
+                            totalRows += partitionStat.getDataRows();
+                            totalSize += partitionStat.getTotalDiskSize();
                         }
                     }
                 }

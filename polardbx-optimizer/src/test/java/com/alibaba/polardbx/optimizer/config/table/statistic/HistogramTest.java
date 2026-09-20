@@ -18,23 +18,16 @@ package com.alibaba.polardbx.optimizer.config.table.statistic;
 
 import com.alibaba.fastjson.JSONObject;
 import com.alibaba.polardbx.common.utils.time.core.TimeStorage;
-import com.alibaba.polardbx.optimizer.config.table.statistic.Histogram;
-import com.alibaba.polardbx.gms.module.LogLevel;
-import com.alibaba.polardbx.gms.module.LogPattern;
-import com.alibaba.polardbx.gms.module.Module;
-import com.alibaba.polardbx.gms.module.ModuleLogInfo;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.datatype.IntegerType;
-import com.google.common.collect.Lists;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Calendar;
-import java.util.List;
 import java.util.Random;
 import java.util.stream.IntStream;
 
@@ -227,9 +220,6 @@ public class HistogramTest {
             // Re-serialize the newly created histogram object.
             String reSerializedHistogram = Histogram.serializeToJson(deserializedHistogram);
 
-            System.out.println("Original Serialized: " + serializedHistogram);
-            System.out.println("Re-Serialized: " + reSerializedHistogram);
-
             // Assert that the original serialization equals the re-serialization.
             assert serializedHistogram.equals(reSerializedHistogram);
 
@@ -335,7 +325,6 @@ public class HistogramTest {
             + "bucket4 count:1429 ndv:1429 preSum:5716 lower:5716 upper:7144 \n"
             + "bucket5 count:1429 ndv:1429 preSum:7145 lower:7145 upper:8573 \n"
             + "bucket6 count:1426 ndv:1426 preSum:8574 lower:8574 upper:9999 \n";
-        System.out.println(h.manualReading());
         assert h.manualReading().equals(expectInt);
 
         testTimeTypeReading(DataTypes.DatetimeType);
@@ -489,7 +478,6 @@ public class HistogramTest {
         Histogram h1 = new Histogram(64, type, 1.0F);
         h1.buildFromData(mockFixedData(10240, type));
 
-        System.out.println(h1.manualReading());
         assert expectStr.equals(h1.manualReading());
     }
 
@@ -503,14 +491,10 @@ public class HistogramTest {
         for (Object testVal : testVals) {
             long count = h.rangeCount(testVal, true, testVal, true);
             Assert.assertTrue(count > 0);
-            System.out.println(count);
             String json = Histogram.serializeToJson(h);
-            System.out.println(json);
             Histogram newHis = Histogram.deserializeFromJson(json);
             long newCount = newHis.rangeCount(testVal, true, testVal, true);
-            System.out.println("new count:" + newCount);
-            System.out.println("test val:" + testVal);
-            System.out.println(Histogram.serializeToJson(newHis));
+            Histogram.serializeToJson(newHis);
             Assert.assertTrue(DataTypeUtil.equalsSemantically(h.getDataType(), newHis.getDataType()));
             Assert.assertTrue(count == newCount);
         }

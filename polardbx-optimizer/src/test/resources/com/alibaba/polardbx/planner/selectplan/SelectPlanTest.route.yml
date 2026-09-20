@@ -1,0 +1,51 @@
+- sql: |
+    /*+TDDL:ENABLE_DRDS_REX_ROUTE=false ENABLE_DRDS_OPTIMIZE_REX_ROUTE=false*/select id from test_hash_tb a where a.id=123;
+  plan: |
+
+    phytableoperation(tables="optest_0003.[test_hash_tb]", sql="select `a`.`id` from ? as `a` where (`a`.`id` = 123)")
+
+- sql: |
+    /*+TDDL:ENABLE_DRDS_REX_ROUTE=false ENABLE_DRDS_OPTIMIZE_REX_ROUTE=false*/select id from test_hash_tb a where a.id=123+1;
+  plan: |
+
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id` from `test_hash_tb` as `test_hash_tb` where (`id` = (123 + 1))")
+
+- sql: |
+    /*+TDDL:ENABLE_DRDS_REX_ROUTE=true*/select id from test_hash_tb a where a.id=123+1;
+  plan: |
+
+    phytableoperation(tables="optest_0000.[test_hash_tb]", sql="select `a`.`id` from ? as `a` where (`a`.`id` = (123 + 1))")
+
+- sql: |
+    /*+TDDL:ENABLE_DRDS_REX_ROUTE=true*/select id from test_hash_tb a where a.id=convert('123' using utf8mb4);
+  plan: |
+
+    phytableoperation(tables="optest_0003.[test_hash_tb]", sql="select `a`.`id` from ? as `a` where (`a`.`id` = convert('123' using 'utf8mb4'))")
+
+- sql: |
+    select id from test_hash_tb a where a.id=convert('123' using utf8mb4);
+  plan: |
+
+    phytableoperation(tables="optest_0003.[test_hash_tb]", sql="select `a`.`id` from ? as `a` where (`a`.`id` = convert('123' using 'utf8mb4'))")
+
+- sql: |
+    select id from test_hash_tb a where a.id+123=1;
+  plan: |
+
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id` from `test_hash_tb` as `test_hash_tb` where ((`id` + 123) = 1)")
+
+- sql: |
+    select id from test_hash_tb a where a.id in (1,2,3) or a.id=1;
+  plan: |
+
+    gather(concurrent=true)
+      logicalview(tables="[0001-0003].test_hash_tb", shardcount=3, sql="select `id` from `test_hash_tb` as `test_hash_tb` where ((`id` in(1, 2, 3)) or (`id` = 1))")
+
+- sql: |
+    /*+TDDL:ENABLE_DRDS_REX_ROUTE=true*/select id from test_hash_tb a where a.id in ( id);
+  plan: |
+
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id` from `test_hash_tb` as `test_hash_tb` where (`id` in(`id`))")

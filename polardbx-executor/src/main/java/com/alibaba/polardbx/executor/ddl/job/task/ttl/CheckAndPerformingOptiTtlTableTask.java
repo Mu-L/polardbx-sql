@@ -8,6 +8,8 @@ import com.alibaba.polardbx.executor.ddl.job.task.ttl.log.NotifyOptiTblTaskLogIn
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.log.TtlLoggerUtil;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.scheduler.TtlScheduledJobStatManager;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineAccessor;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineRecord;
@@ -54,6 +56,9 @@ public class CheckAndPerformingOptiTtlTableTask extends AbstractTtlJobTask {
     }
 
     protected void executeInner(Connection metaDbConnection, ExecutionContext executionContext) {
+        FailPoint.injectSuspendFromHint(FailPointKey.FP_TTL_JOB_SUSPEND_TIME_ON_OPTI_TBL, executionContext);
+        FailPoint.injectExceptionFromHint(FailPointKey.FP_TTL_JOB_FAILED_ON_OPTI_TBL, executionContext);
+
         /**
          * Check if arcTmp table contains ready-state partitions
          */
@@ -249,7 +254,8 @@ public class CheckAndPerformingOptiTtlTableTask extends AbstractTtlJobTask {
                     }
                 }
 
-                boolean currTtlJobOutOfMaintainInterval = !checkIfTtlJobInMaintainTimeWindow(metaDbConnection, jobId);
+                boolean currTtlJobOutOfMaintainInterval =
+                    !checkIfTtlJobInMaintainTimeWindow(executionContext, metaDbConnection, jobId);
                 boolean isInterrupted = executionContext.getDdlContext().isInterrupted();
                 logInfo.isInterrupted = isInterrupted;
                 logInfo.isMaintenancePeriodOver = currTtlJobOutOfMaintainInterval;
@@ -302,8 +308,8 @@ public class CheckAndPerformingOptiTtlTableTask extends AbstractTtlJobTask {
         }
     }
 
-    protected boolean checkIfTtlJobInMaintainTimeWindow(Connection metaDbConn, Long jobId) {
-        return TtlJobUtil.checkIfInTtlMaintainWindow();
+    protected boolean checkIfTtlJobInMaintainTimeWindow(ExecutionContext ec, Connection metaDbConn, Long jobId) {
+        return TtlJobUtil.checkIfInTtlMaintainWindow(ec);
     }
 
     protected boolean recoverOptiTblJob(Connection metaDbConn,
@@ -589,8 +595,8 @@ public class CheckAndPerformingOptiTtlTableTask extends AbstractTtlJobTask {
                                           String cmdSql) {
 
         String ttlTimezoneStr = this.jobContext.getTtlInfo().getTtlInfoRecord().getTtlTimezone();
-        String charsetEncoding = TtlConfigUtil.defaultCharsetEncodingOnTransConn;
-        String sqlModeSetting = TtlConfigUtil.defaultSqlModeOnTransConn;
+        String charsetEncoding = TtlConfigUtil.getDefaultCharsetEncodingOnTransConn();
+        String sqlModeSetting = TtlConfigUtil.getDefaultSqlModeOnTransConn();
         Map<String, Object> sessionVariables = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
         sessionVariables.put("time_zone", ttlTimezoneStr);
         sessionVariables.put("names", charsetEncoding);

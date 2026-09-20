@@ -49,6 +49,8 @@ public class TypeDescription
   // type attributes
   public static final String ENCRYPT_ATTRIBUTE = "encrypt";
   public static final String MASK_ATTRIBUTE = "mask";
+  public static final String CHARSET_ATTRIBUTE = "charset";
+  public static final String COLLATION_ATTRIBUTE = "collation";
 
   @Override
   public int compareTo(TypeDescription other) {

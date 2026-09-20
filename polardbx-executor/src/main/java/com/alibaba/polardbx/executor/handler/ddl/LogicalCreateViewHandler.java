@@ -25,12 +25,15 @@ import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalCreateView;
 import com.alibaba.polardbx.optimizer.view.ViewManager;
 
 import java.io.UnsupportedEncodingException;
+import java.util.Map;
+import java.util.Set;
 
 import static com.alibaba.polardbx.common.properties.ConnectionParams.ENABLE_CREATE_VIEW;
 
@@ -44,6 +47,13 @@ public class LogicalCreateViewHandler extends LogicalCommonDdlHandler {
 
     public LogicalCreateViewHandler(IRepository repo) {
         super(repo);
+    }
+
+    @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        exclusiveResources.add(concatWithDot(logicalDdlPlan.getSchemaName(), logicalDdlPlan.getTableName()));
     }
 
     @Override

@@ -25,7 +25,7 @@ import com.alibaba.polardbx.executor.chunk.SliceBlockBuilder;
 import com.alibaba.polardbx.executor.operator.scan.BlockDictionary;
 import com.alibaba.polardbx.executor.operator.scan.impl.LocalBlockDictionary;
 import com.alibaba.polardbx.executor.operator.spill.MemoryRevoker;
-import com.alibaba.polardbx.executor.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.Field;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -54,7 +54,7 @@ import static com.google.common.truth.Truth.assertWithMessage;
 import static io.airlift.concurrent.MoreFutures.getFutureValue;
 
 public abstract class BaseExecTest {
-
+    public static boolean checkExecutorMemory = true;
     public final ExecutionContext context;
 
     {

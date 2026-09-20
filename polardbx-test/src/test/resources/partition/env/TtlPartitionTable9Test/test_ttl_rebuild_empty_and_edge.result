@@ -1,0 +1,111 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## test_ttl_rebuild_empty_and_edge
+## Verify edge cases: empty table, low expired percent, low row count
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set sql_mode='';
+set TTL_ADD_MAXVAL_PART_ON_CCI_CREATING=true;
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+## Scenario 7a: Empty table with rebuild enabled
+CREATE TABLE `ttl_rb7a` (
+  `a` bigint(20) NOT NULL AUTO_INCREMENT,
+  `b` datetime DEFAULT NULL,
+  PRIMARY KEY(a)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+TTL = TTL_DEFINITION (
+  TTL_ENABLE = 'OFF',
+  TTL_EXPR = `b` EXPIRE AFTER 1 month TIMEZONE '+08:00',
+  TTL_JOB = CRON '0 0 2 * * ? *',
+  TTL_CLEANUP = 'ON',
+  ARCHIVE_TYPE = 'ROW',
+  ARCHIVE_TABLE_NAME = '',
+  ARCHIVE_TABLE_PRE_ALLOCATE = 12,
+  ARCHIVE_TABLE_POST_ALLOCATE = 12
+)
+PARTITION BY KEY(`a`)
+PARTITIONS 2;
+set TTL_DEBUG_CURRENT_DATETIME='2025-04-27 00:00:00';
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=true,TTL_FORCE_USE_REBUILD_POLICY_FOR_CLEANUP_EXPIRED_DATA=true)*/ alter table ttl_rb7a cleanup expired data;
+select count(*) as cnt from ttl_rb7a;
+cnt
+0
+## Scenario 7b: Low expired percent - should not trigger rebuild, falls back to row-level delete
+CREATE TABLE `ttl_rb7b` (
+  `a` bigint(20) NOT NULL AUTO_INCREMENT,
+  `b` datetime DEFAULT NULL,
+  PRIMARY KEY(a)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+TTL = TTL_DEFINITION (
+  TTL_ENABLE = 'OFF',
+  TTL_EXPR = `b` EXPIRE AFTER 1 month TIMEZONE '+08:00',
+  TTL_JOB = CRON '0 0 2 * * ? *',
+  TTL_CLEANUP = 'ON',
+  ARCHIVE_TYPE = 'ROW',
+  ARCHIVE_TABLE_NAME = '',
+  ARCHIVE_TABLE_PRE_ALLOCATE = 12,
+  ARCHIVE_TABLE_POST_ALLOCATE = 12
+)
+PARTITION BY KEY(`a`)
+PARTITIONS 2;
+insert into ttl_rb7b values (1, '2025-01-10 00:00:00');
+insert into ttl_rb7b values (2, '2025-04-10 00:00:00');
+insert into ttl_rb7b values (3, '2025-04-11 00:00:00');
+insert into ttl_rb7b values (4, '2025-04-12 00:00:00');
+insert into ttl_rb7b values (5, '2025-04-13 00:00:00');
+insert into ttl_rb7b values (6, '2025-04-14 00:00:00');
+insert into ttl_rb7b values (7, '2025-04-15 00:00:00');
+insert into ttl_rb7b values (8, '2025-04-16 00:00:00');
+insert into ttl_rb7b values (9, '2025-04-17 00:00:00');
+insert into ttl_rb7b values (10, '2025-04-18 00:00:00');
+insert into ttl_rb7b values (11, '2025-04-19 00:00:00');
+select count(*) as cnt from ttl_rb7b;
+cnt
+11
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=true,TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY=50,TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY=1)*/ alter table ttl_rb7b cleanup expired data;
+select a, date_format(b, '%Y-%m-%d %H:%i:%s') as b_val from ttl_rb7b order by a;
+a,b_val
+2,2025-04-10 00:00:00
+3,2025-04-11 00:00:00
+4,2025-04-12 00:00:00
+5,2025-04-13 00:00:00
+6,2025-04-14 00:00:00
+7,2025-04-15 00:00:00
+8,2025-04-16 00:00:00
+9,2025-04-17 00:00:00
+10,2025-04-18 00:00:00
+11,2025-04-19 00:00:00
+## Scenario 7c: Low row count - should not trigger rebuild, falls back to row-level delete
+CREATE TABLE `ttl_rb7c` (
+  `a` bigint(20) NOT NULL AUTO_INCREMENT,
+  `b` datetime DEFAULT NULL,
+  PRIMARY KEY(a)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+TTL = TTL_DEFINITION (
+  TTL_ENABLE = 'OFF',
+  TTL_EXPR = `b` EXPIRE AFTER 1 month TIMEZONE '+08:00',
+  TTL_JOB = CRON '0 0 2 * * ? *',
+  TTL_CLEANUP = 'ON',
+  ARCHIVE_TYPE = 'ROW',
+  ARCHIVE_TABLE_NAME = '',
+  ARCHIVE_TABLE_PRE_ALLOCATE = 12,
+  ARCHIVE_TABLE_POST_ALLOCATE = 12
+)
+PARTITION BY KEY(`a`)
+PARTITIONS 2;
+insert into ttl_rb7c values (1, '2025-01-01 00:00:00');
+insert into ttl_rb7c values (2, '2025-01-02 00:00:00');
+insert into ttl_rb7c values (3, '2025-01-03 00:00:00');
+insert into ttl_rb7c values (4, '2025-01-04 00:00:00');
+insert into ttl_rb7c values (5, '2025-04-20 00:00:00');
+select count(*) as cnt from ttl_rb7c;
+cnt
+5
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=true,TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY=1,TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY=1000000)*/ alter table ttl_rb7c cleanup expired data;
+select a, date_format(b, '%Y-%m-%d %H:%i:%s') as b_val from ttl_rb7c order by a;
+a,b_val
+5,2025-04-20 00:00:00
+drop table ttl_rb7a;
+drop table ttl_rb7b;
+drop table ttl_rb7c;

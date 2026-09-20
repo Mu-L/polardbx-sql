@@ -17,7 +17,7 @@
 package com.alibaba.polardbx.transaction.tso;
 
 import com.alibaba.polardbx.common.model.lifecycle.AbstractLifecycle;
-import com.alibaba.polardbx.optimizer.utils.ITimestampOracle;
+import com.alibaba.polardbx.common.trx.ITimestampOracle;
 
 import java.util.concurrent.atomic.AtomicLong;
 

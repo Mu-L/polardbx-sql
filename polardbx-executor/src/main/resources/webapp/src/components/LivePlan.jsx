@@ -25,7 +25,8 @@ import {
     getStageStateColor,
     initializeGraph,
     initializeSvg,
-    truncateString
+    truncateString,
+    getFormattedUrl, getFormattedStatsUrl
 } from "../utils";
 import {QueryHeader} from "./QueryHeader";
 
@@ -228,7 +229,7 @@ export class LivePlan extends React.Component<LivePlanProps, LivePlanState> {
 
     refreshLoop() {
         clearTimeout(this.timeoutId); // to stop multiple series of refreshLoop from going on simultaneously
-        fetch('/v1/query/stats/' + this.props.queryId)
+        fetch(getFormattedStatsUrl('/v1/query/stats/' + this.props.queryId))
             .then(response => response.json())
             .then(query => {
                 this.setState({

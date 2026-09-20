@@ -1,4 +1,5 @@
 # clean
+SET MAX_CCI_COUNT = 5;
 drop table if exists `t_order_single_1`;
 drop table if exists `t_order_single_2`;
 drop table if exists `t_order_single_3`;

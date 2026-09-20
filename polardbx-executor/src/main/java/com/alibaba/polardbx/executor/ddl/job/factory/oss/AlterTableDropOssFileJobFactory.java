@@ -19,20 +19,21 @@ package com.alibaba.polardbx.executor.ddl.job.factory.oss;
 import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.oss.UpdateFileRemoveTsTask;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTablePreparedData;
-import com.alibaba.polardbx.optimizer.utils.ITimestampOracle;
+import com.alibaba.polardbx.common.trx.ITimestampOracle;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
-public class AlterTableDropOssFileJobFactory extends DdlJobFactory {
+public class AlterTableDropOssFileJobFactory extends OnlineDdlJobFactory {
     private String schemaName;
     private String logicalTableName;
     private ExecutionContext executionContext;
@@ -42,6 +43,7 @@ public class AlterTableDropOssFileJobFactory extends DdlJobFactory {
                                            String logicalTableName,
                                            AlterTablePreparedData alterTablePreparedData,
                                            ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.META_ONLY);
         this.schemaName = schemaName;
         this.logicalTableName = logicalTableName;
         this.executionContext = executionContext;

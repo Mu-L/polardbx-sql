@@ -33,6 +33,8 @@ public class MySqlExplainStatement extends SQLExplainStatement implements MySqlS
 
     private boolean distributeInfo = false; // for ads
 
+    private boolean showExplain = true;
+
     public MySqlExplainStatement() {
         super(DbType.mysql);
     }
@@ -126,6 +128,14 @@ public class MySqlExplainStatement extends SQLExplainStatement implements MySqlS
 
     public void setDistributeInfo(boolean distributeInfo) {
         this.distributeInfo = distributeInfo;
+    }
+
+    public boolean isShowExplain() {
+        return showExplain;
+    }
+
+    public void setShowExplain(boolean showExplain) {
+        this.showExplain = showExplain;
     }
 
     @Override

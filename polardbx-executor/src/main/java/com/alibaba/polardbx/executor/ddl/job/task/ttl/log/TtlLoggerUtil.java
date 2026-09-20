@@ -137,4 +137,20 @@ public class TtlLoggerUtil {
         }
     }
 
+    public static void logAddPartsWarningMsg(Long logTs,
+                                             String ttlTbl,
+                                             String alterMsg) {
+        String logMsg =
+            String.format("Found ttl table add parts warnings at ts [%s], msg is [ %s / %s ]", logTs, ttlTbl, alterMsg);
+        TTL_TASK_LOGGER.info(logMsg);
+    }
+
+    public static void logInvalidTtlMetaMsg(Long logTs,
+                                            String ttlTbl,
+                                            String alterMsg) {
+        String logMsg =
+            String.format("Found invalid ttl info warnings at ts [%s], msg is [ %s / %s ]", logTs, ttlTbl, alterMsg);
+        TTL_TASK_LOGGER.info(logMsg);
+    }
+
 }

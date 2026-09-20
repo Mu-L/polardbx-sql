@@ -18,16 +18,20 @@ package com.alibaba.polardbx.optimizer.config.schema;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.gms.metadb.table.TableStatus;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.server.IServerConfigManager;
+import com.alibaba.polardbx.optimizer.config.table.ExternalSchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.planner.SqlConverter;
 import com.alibaba.polardbx.optimizer.exception.TableNotFoundException;
+import com.alibaba.polardbx.optimizer.external.files.EphemeralFilesSchemaManager;
 import com.alibaba.polardbx.optimizer.parse.FastsqlParser;
 import com.alibaba.polardbx.optimizer.utils.OptimizerHelper;
 import com.alibaba.polardbx.optimizer.view.DrdsViewTable;
@@ -137,6 +141,26 @@ public class TddlCalciteSchema extends CalciteSchema {
             // notify server to init new db(TDataSource) by schema
             Object ds = serverConfigManager.getAndInitDataSourceByDbName(schemaName);
             if (ds == null) {
+                if (ExternalNameValidator.isExternalSchema(schemaName)) {
+                    OptimizerContext extCtx = OptimizerContext.getContext(schemaName);
+                    if (extCtx != null) {
+                        SchemaManager sm = extCtx.getLatestSchemaManager();
+                        if (schemaManagers != null) {
+                            schemaManagers.put(schemaName, sm);
+                        }
+                        return new TddlCalciteSchema(schemaName, schemaManagers, this,
+                            new TddlSchema(schemaName, sm), schemaName);
+                    }
+                }
+                if (schemaManagers != null && schemaManagers.containsKey(schemaName)) {
+                    SchemaManager schemaManager = schemaManagers.get(schemaName);
+                    if (!((schemaManager instanceof ExternalSchemaManager)
+                        || (schemaManager instanceof EphemeralFilesSchemaManager))) {
+                        return null;
+                    }
+                    TddlSchema tddlSchema = new TddlSchema(schemaName, schemaManagers.get(schemaName));
+                    return new TddlCalciteSchema(schemaName, schemaManagers, this, tddlSchema, schemaName);
+                }
                 return null;
             } else {
                 if (schemaManagers == null) {
@@ -231,10 +255,18 @@ public class TddlCalciteSchema extends CalciteSchema {
                 throw new TableNotFoundException(ErrorCode.ERR_TABLE_NOT_EXIST, tableName);
             }
         } catch (Throwable t) {
-            if (OptimizerContext.getContext(schemaName) == null) {
+            OptimizerContext ctx = OptimizerContext.getContext(schemaName);
+            if (ctx == null) {
                 throw new RuntimeException(t);
             }
-            SystemTableView.Row row = OptimizerContext.getContext(schemaName).getViewManager().select(tableName);
+            if (ctx.isExternalSchema()) {
+                if (t instanceof TddlRuntimeException) {
+                    throw t;
+                } else {
+                    throw new TddlRuntimeException(ErrorCode.ERR_CANNOT_FETCH_TABLE_META, t, tableName, t.getMessage());
+                }
+            }
+            SystemTableView.Row row = ctx.getViewManager().select(tableName);
             if (row != null) {
                 String viewDefinition = row.getViewDefinition();
                 List<String> columnList = row.getColumnList();
@@ -243,7 +275,13 @@ public class TddlCalciteSchema extends CalciteSchema {
                     VirtualViewType virtualViewType = row.getVirtualViewType();
                     relProtoDataType = new VirtualViewProtoDataType(schemaName, virtualViewType);
                 } else {
-                    relProtoDataType = new ViewProtoDataType(schemaName, columnList, viewDefinition);
+                    // check enable use view
+                    if (DynamicConfig.getInstance().enableUseView()) {
+                        relProtoDataType = new ViewProtoDataType(schemaName, columnList, viewDefinition);
+                    } else {
+                        throw new TddlRuntimeException(ErrorCode.ERR_VIEW,
+                            "view is not enabled, check variable ENABLE_USE_VIEW");
+                    }
                 }
                 table = new DrdsViewTable(null, relProtoDataType, row, ImmutableList.<String>of(), null);
             } else if (t instanceof TddlRuntimeException) {

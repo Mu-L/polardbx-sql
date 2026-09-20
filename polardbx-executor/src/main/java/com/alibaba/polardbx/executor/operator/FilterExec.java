@@ -16,6 +16,10 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableBooleanArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.executor.chunk.BooleanBlockBuilder;
@@ -26,10 +30,9 @@ import com.alibaba.polardbx.executor.utils.ConditionUtils;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.expression.calc.IExpression;
-import com.alibaba.polardbx.optimizer.core.expression.calc.ScalarFunctionExpression;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
-import it.unimi.dsi.fastutil.booleans.BooleanArrayList;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.List;
 
@@ -38,8 +41,11 @@ import java.util.List;
  *
  */
 public class FilterExec extends AbstractExecutor {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(FilterExec.class).instanceSize();
 
+    @FieldMemoryCounter(value = false)
     protected final Executor input;
+    @FieldMemoryCounter(value = false)
     protected IExpression condition;
 
     protected BlockBuilder conditionBlockBuilder;
@@ -48,8 +54,25 @@ public class FilterExec extends AbstractExecutor {
     protected Chunk inputChunk;
     protected Block conditionBlock;
     protected int position;
+
+    @FieldMemoryCounter(value = false)
     private BloomFilterExpressionFilter bloomFilterExpressionFilter;
-    private BooleanArrayList bloomFilterResult;
+    private MemoryCountableBooleanArrayList bloomFilterResult;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+
+            // super class
+            + FastMemoryCounter.sizeOf(blockBuilders)
+            + FastMemoryCounter.sizeOf(executorName)
+
+            // this class
+            + FastMemoryCounter.sizeOf(conditionBlockBuilder)
+            + FastMemoryCounter.sizeOf(inputChunk)
+            + FastMemoryCounter.sizeOf(conditionBlock)
+            + FastMemoryCounter.sizeOf(bloomFilterResult);
+    }
 
     public FilterExec(Executor input,
                       IExpression condition,
@@ -174,9 +197,10 @@ public class FilterExec extends AbstractExecutor {
 
     private void ensureBloomFilterResultSize(int size) {
         if (bloomFilterResult == null) {
-            bloomFilterResult = new BooleanArrayList(size);
+            bloomFilterResult = new MemoryCountableBooleanArrayList(size);
         }
         bloomFilterResult.size(size);
+        MemoryTrackerManager.tryReverseReference(producerMemoryOwnerId, FastMemoryCounter.sizeOf(bloomFilterResult));
     }
 
     @Override

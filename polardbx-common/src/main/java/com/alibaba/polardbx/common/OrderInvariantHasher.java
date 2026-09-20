@@ -16,7 +16,11 @@
 
 package com.alibaba.polardbx.common;
 
+import org.openjdk.jol.info.ClassLayout;
+
 public class OrderInvariantHasher implements IOrderInvariantHash {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(OrderInvariantHasher.class).instanceSize();
+    private static final int LONG_INSTANCE_SIZE = ClassLayout.parseClass(Long.class).instanceSize();
     private final long p;
     private final long q;
     private final long r;
@@ -28,6 +32,11 @@ public class OrderInvariantHasher implements IOrderInvariantHash {
         q = 2779L;
         r = 2L;
         result = null;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + (result == null ? 0 : LONG_INSTANCE_SIZE);
     }
 
     @Override

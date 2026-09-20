@@ -7,26 +7,32 @@ test_type = "all-types-test"
 runmode = 'local'
 
 # number of rows (the actual value will be slightly greater)
-row_count = 100
+row_count = 10000000
 
 # the following suffix will be appended to CREATE TABLE SQL
-create_table_suffix = 'PARTITION BY KEY(id) PARTITIONS 16'
+create_table_suffix = 'PARTITION BY KEY(id)'
 
 # report statistics interval, in seconds, -1 means no print
 report_interval = 5
 
 # max test time, in seconds
-timeout = 30
+timeout = 3000
 
 # prepare data threads
-threads = 4
+threads = 16
 
 big_column = false
 
 [write_only]
 enabled = true
-threads = 1
+# 0: no skip, 1: skip, 2: 50/50 skip
+skip_trx = 1
+threads = 16
 
 [check_columnar]
 enabled = true
+fast_check = false
+inc_check = false
+snapshot_check = false
+simple_check = true
 threads = 1

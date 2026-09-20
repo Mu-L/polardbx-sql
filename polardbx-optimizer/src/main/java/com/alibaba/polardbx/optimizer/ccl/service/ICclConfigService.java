@@ -17,10 +17,10 @@
 package com.alibaba.polardbx.optimizer.ccl.service;
 
 import com.alibaba.polardbx.gms.metadb.ccl.CclRuleRecord;
-import com.alibaba.polardbx.gms.metadb.ccl.CclTriggerRecord;
+import com.alibaba.polardbx.gms.metadb.ccl.CclBlockerRecord;
 import com.alibaba.polardbx.optimizer.ccl.common.CclRuleInfo;
 import com.alibaba.polardbx.optimizer.ccl.common.CclRuleRecordsWrapper;
-import com.alibaba.polardbx.optimizer.ccl.common.CclTriggerInfo;
+import com.alibaba.polardbx.optimizer.ccl.common.CclBlockerInfo;
 
 import java.util.List;
 import java.util.Set;
@@ -35,13 +35,13 @@ public interface ICclConfigService {
 
     void refreshWithRules(CclRuleRecordsWrapper cclRuleRecordsWrapper);
 
-    void refreshWithTrigger(Set<CclTriggerRecord> cclTriggerRecords);
+    void refreshWithTrigger(Set<CclBlockerRecord> cclBlockerRecords);
 
     List<CclRuleInfo> getCclRuleInfos();
 
     CclRuleRecordsWrapper getLatestCclRuleRecords();
 
-    void init(ICclService cclService, ICclTriggerService cclTriggerService);
+    void init(ICclService cclService, ICclBlockerService cclBlockerService);
 
     boolean mightContainKeyword(String keyword);
 
@@ -49,7 +49,7 @@ public interface ICclConfigService {
 
     void reloadConfig();
 
-    List<CclTriggerInfo> getCclTriggerInfos();
+    List<CclBlockerInfo> getCclBlockerInfos();
 
     void setDataId(String dataId);
 

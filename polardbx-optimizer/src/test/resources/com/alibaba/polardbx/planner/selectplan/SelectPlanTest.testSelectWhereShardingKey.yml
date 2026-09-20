@@ -3,11 +3,12 @@
 
 
   plan: |
+
     phytableoperation(tables="optest_0001.[test_hash_tb]", sql="select `a`.`id` from ? as `a` where (`a`.`id` = 1)")
 
 - sql: |
     Select * from tf_f_user_service where user_id IN (3015020529145996) AND product_id IN (90657326) AND end_date > now() AND province_code = '30' AND partition_id = RIGHT(CAST(3015020529145996 AS char), 4) limit 2001
 
   plan: |
-    mergesort(sort="", offset=0, fetch=2001)
-      logicalview(tables="optest_0000.tf_f_user_service_[00-10]", shardcount=11, sql="select `partition_id`, `user_id`, `service_id`, `main_tag`, `start_date`, `end_date`, `service_item_id`, `package_id`, `product_id`, `update_time`, `eparchy_code`, `province_code`, `prior_order_time` from `tf_f_user_service` as `tf_f_user_service` where ((`province_code` = '30') and (`product_id` in(90657326)) and (`user_id` in(3015020529145996)) and (`end_date` > now()) and (`partition_id` = right(cast(3015020529145996 as char), 4))) limit 2001")
+
+    phytableoperation(tables="optest_0000.[tf_f_user_service_01]", sql="select `tf_f_user_service`.`partition_id`, `tf_f_user_service`.`user_id`, `tf_f_user_service`.`service_id`, `tf_f_user_service`.`main_tag`, `tf_f_user_service`.`start_date`, `tf_f_user_service`.`end_date`, `tf_f_user_service`.`service_item_id`, `tf_f_user_service`.`package_id`, `tf_f_user_service`.`product_id`, `tf_f_user_service`.`update_time`, `tf_f_user_service`.`eparchy_code`, `tf_f_user_service`.`province_code`, `tf_f_user_service`.`prior_order_time` from ? as `tf_f_user_service` where ((`tf_f_user_service`.`user_id` in (3015020529145996)) and (`tf_f_user_service`.`product_id` in (90657326)) and (`tf_f_user_service`.`end_date` > now()) and (`tf_f_user_service`.`province_code` = '30') and (`tf_f_user_service`.`partition_id` = right(cast(3015020529145996 as char), 4))) limit 2001 offset 0")

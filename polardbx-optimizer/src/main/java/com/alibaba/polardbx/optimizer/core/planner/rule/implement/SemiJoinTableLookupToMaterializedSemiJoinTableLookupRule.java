@@ -63,7 +63,7 @@ public abstract class SemiJoinTableLookupToMaterializedSemiJoinTableLookupRule e
         final LogicalSemiJoin semiJoin = call.rel(0);
         final LogicalTableLookup logicalTableLookup = call.rel(1);
         final LogicalIndexScan logicalIndexScan = call.rel(2);
-        RelNode right = call.rel(3);
+        RelNode right = semiJoin.getRight();
 
         RexNode newCondition =
             JoinConditionSimplifyRule.simplifyCondition(semiJoin.getCondition(), semiJoin.getCluster().getRexBuilder());
@@ -104,7 +104,7 @@ public abstract class SemiJoinTableLookupToMaterializedSemiJoinTableLookupRule e
             logicalTableLookup.getJoin(),
             logicalTableLookup.isRelPushedToPrimary(),
             logicalTableLookup.getHints());
-        right = convert(right, right.getTraitSet().replace(outConvention));
+        right = convert(right, right.getTraitSet().simplify().replace(outConvention));
 
         ImmutableBitSet rightBitSet = ImmutableBitSet.range(0, right.getRowType().getFieldCount());
         Boolean rightInputUnique = semiJoin.getCluster().getMetadataQuery().areColumnsUnique(right, rightBitSet);

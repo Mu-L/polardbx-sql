@@ -22,6 +22,7 @@ import org.apache.orc.StripeInformation;
 import org.apache.orc.TypeDescription;
 import org.apache.orc.impl.InStream;
 import org.apache.orc.impl.OrcIndex;
+import org.apache.orc.impl.PositionProviderBuilder;
 import org.apache.orc.impl.StreamName;
 import org.junit.Assert;
 import org.junit.Test;
@@ -83,7 +84,7 @@ public class Decimal64ColumnReaderTest extends DecimalScanTestBase {
         throws IOException {
         final StripeInformation stripeInformation = stripeInformationMap.get(stripeId);
         final ExecutionContext context = new ExecutionContext();
-        final OrcIndex orcIndex = preheatFileMeta.getOrcIndex(
+        final PositionProviderBuilder orcIndex = preheatFileMeta.getPositionProviderBuilder(
             stripeInformation.getStripeId()
         );
 

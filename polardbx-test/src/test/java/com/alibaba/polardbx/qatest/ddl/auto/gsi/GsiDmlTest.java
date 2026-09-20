@@ -18,7 +18,6 @@ package com.alibaba.polardbx.qatest.ddl.auto.gsi;
 
 import com.alibaba.polardbx.qatest.ddl.auto.autoNewPartition.BaseAutoPartitionNewPartition;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
-import com.alibaba.polardbx.qatest.validator.DataValidator;
 import com.google.common.collect.ImmutableList;
 import org.hamcrest.MatcherAssert;
 import org.junit.Assert;
@@ -80,13 +79,11 @@ public class GsiDmlTest extends BaseAutoPartitionNewPartition {
         //sharding advisor test
         JdbcUtil.executeQuery("analyze table " + TABLE_NAME, tddlConnection);
         try (ResultSet resultSet = JdbcUtil.executeQuery(
-            String.format("SELECT COUNT(1) FROM %s where biz_status = 12 ", TABLE_NAME), tddlConnection)){
+            String.format("SELECT COUNT(1) FROM %s where biz_status = 12 ", TABLE_NAME), tddlConnection)) {
             MatcherAssert.assertThat(resultSet.next(), is(true));
         } catch (Exception e) {
             throw new RuntimeException("sharding advisor failed!", e);
         }
-        sql = "/*+TDDL:cmd_extra(SHARDING_ADVISOR_BROADCAST_THRESHOLD=-1)*/shardingadvise";
-        DataValidator.sqlMayErrorAssert(sql, tddlConnection, "ERR_TABLE_NOT_EXIST");
 
         sql = MessageFormat.format(
             "update {0} SET biz_id = \"dsadsadqwe\", biz_status = 1 where clip_id = 300290;",

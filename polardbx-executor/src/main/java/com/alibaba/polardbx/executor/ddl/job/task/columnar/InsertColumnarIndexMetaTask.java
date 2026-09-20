@@ -19,21 +19,18 @@ package com.alibaba.polardbx.executor.ddl.job.task.columnar;
 import com.alibaba.fastjson.annotation.JSONCreator;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.ddl.job.meta.GsiMetaChanger;
-import com.alibaba.polardbx.executor.ddl.job.meta.TableMetaChanger;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseGmsTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.gms.GmsTableMetaManager;
 import com.alibaba.polardbx.executor.gsi.GsiUtils;
-import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
-import com.alibaba.polardbx.executor.sync.TableMetaChangeSyncAction;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
 import com.alibaba.polardbx.gms.metadb.table.IndexStatus;
 import com.alibaba.polardbx.gms.metadb.table.LackLocalIndexStatus;
 import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
 import com.alibaba.polardbx.gms.metadb.table.TablesExtRecord;
-import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.gms.util.AppNameUtil;
 import com.alibaba.polardbx.gms.util.InstIdUtil;
+import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -42,7 +39,9 @@ import lombok.Getter;
 
 import java.sql.Connection;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * generate & insert columnar index table's metadata based on primaryTable's metadata
@@ -55,6 +54,10 @@ public class InsertColumnarIndexMetaTask extends BaseGmsTask {
 
     final String indexName;
     final List<String> columns;
+    /**
+     * columns排序键对应的collation，事实上值是A｜D｜NULL，NULL代表默认值，A代表升序asc，D代表降序desc
+     */
+    final List<String> collations;
     final List<String> coverings;
     final boolean unique;
     final String indexComment;
@@ -68,6 +71,7 @@ public class InsertColumnarIndexMetaTask extends BaseGmsTask {
                                        String logicalTableName,
                                        String indexName,
                                        List<String> columns,
+                                       List<String> collations,
                                        List<String> coverings,
                                        boolean unique,
                                        String indexComment,
@@ -77,6 +81,7 @@ public class InsertColumnarIndexMetaTask extends BaseGmsTask {
         super(schemaName, logicalTableName);
         this.indexName = indexName;
         this.columns = ImmutableList.copyOf(columns);
+        this.collations = new ArrayList<>(collations);
         this.coverings = ImmutableList.copyOf(coverings);
         this.unique = unique;
         this.indexComment = indexComment == null ? "" : indexComment;
@@ -97,11 +102,31 @@ public class InsertColumnarIndexMetaTask extends BaseGmsTask {
 
         FailPoint.assertNotNull(primaryTableMeta);
         primaryTableMeta.setSchemaName(schemaName);
+
+        // For externalized columns, the tableMeta has logical names (e.g. "content")
+        // but the columns/coverings lists have physical names (e.g. "content_addr_").
+        // Build a columnMapping (physical addr name → logical name) so that
+        // nullable() can look up the column in tableMeta, while the CCI index
+        // records still keep the physical address column names.
+        Map<String, String> columnMapping = null;
+        if (primaryTableMeta.hasExternalizedColumn()) {
+            columnMapping = new HashMap<>();
+            for (ColumnMeta cm : primaryTableMeta.getPhysicalColumns()) {
+                if (cm.isExternalizedColumn() && cm.getMappingName() != null) {
+                    columnMapping.put(cm.getMappingName().toLowerCase(), cm.getName());
+                }
+            }
+            if (columnMapping.isEmpty()) {
+                columnMapping = null;
+            }
+        }
+
         GsiUtils.buildIndexMetaFromPrimary(
             indexRecords,
             primaryTableMeta,
             indexName,
             columns,
+            collations,
             null,
             coverings,
             !unique,
@@ -111,7 +136,7 @@ public class InsertColumnarIndexMetaTask extends BaseGmsTask {
             LackLocalIndexStatus.NO_LACKIING,
             clusteredIndex,
             true,
-            null,
+            columnMapping,
             null
         );
 
@@ -136,7 +161,7 @@ public class InsertColumnarIndexMetaTask extends BaseGmsTask {
         GsiMetaChanger.changeTableToColumnar(metaDbConnection, schemaName, indexName);
 
         //3. notify listeners
-        TableMetaChanger.notifyCreateColumnarIndex(metaDbConnection, schemaName, logicalTableName);
+        // TableMetaChanger.notifyCreateColumnarIndex(metaDbConnection, schemaName, logicalTableName);
         LOGGER.info(String.format("Insert ColumnarIndex meta. schema:%s, table:%s, index:%s, state:%s",
             schemaName,
             logicalTableName,
@@ -159,15 +184,16 @@ public class InsertColumnarIndexMetaTask extends BaseGmsTask {
         }
         GsiMetaChanger.removeIndexMeta(metaDbConnection, schemaName, logicalTableName, indexName);
 
-        //sync have to be successful to continue
-        SyncManagerHelper.sync(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
-        executionContext.refreshTableMeta();
-
         LOGGER.info(String.format("Rollback Insert ColumnarIndex meta. schema:%s, table:%s, index:%s, state:%s",
             schemaName,
             logicalTableName,
             indexName,
             indexStatus.name()
         ));
+    }
+
+    @Override
+    protected String remark() {
+        return "|tableName: " + logicalTableName;
     }
 }

@@ -36,6 +36,7 @@ import com.alibaba.polardbx.optimizer.partition.datatype.function.udf.UdfJavaFun
 import com.alibaba.polardbx.optimizer.partition.datatype.function.udf.UdfJavaFunctionMeta;
 import com.alibaba.polardbx.optimizer.partition.datatype.function.udf.UdfPartitionIntFunctionTemplate;
 import org.apache.calcite.sql.SqlCall;
+import org.apache.calcite.sql.SqlColumnWithUdfParamsExpr;
 import org.apache.calcite.sql.SqlFunction;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlNode;
@@ -65,6 +66,10 @@ public class PartitionFunctionBuilder {
         new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
     protected static Set<String> supportedBuiltInTimeBasedFamilyPartFunctionsForPartitionTypeTtl =
         new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+
+    protected static Set<String> allTimeBasedPartFuncSet = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+    protected static Set<String> partFuncNeedEnumInHashStrategy = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+    protected static Set<String> partFuncNeedEnumInRangeListStrategy = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
 
     static {
 
@@ -114,6 +119,14 @@ public class PartitionFunctionBuilder {
         supportedBuiltInTimeBasedFamilyPartFunctionsForPartitionTypeTtl.add(TddlOperatorTable.TO_MONTHS.getName());
         supportedBuiltInTimeBasedFamilyPartFunctionsForPartitionTypeTtl.add(TddlOperatorTable.UNIX_TIMESTAMP.getName());
 
+        partFuncNeedEnumInHashStrategy.addAll(supportedBuiltInTimeBasedFamilyPartFunctions);
+
+        partFuncNeedEnumInRangeListStrategy.add(TddlOperatorTable.DAYOFMONTH.getName());
+        partFuncNeedEnumInRangeListStrategy.add(TddlOperatorTable.DAYOFWEEK.getName());
+        partFuncNeedEnumInRangeListStrategy.add(TddlOperatorTable.DAYOFYEAR.getName());
+        partFuncNeedEnumInRangeListStrategy.add(TddlOperatorTable.WEEKOFYEAR.getName());
+        partFuncNeedEnumInRangeListStrategy.add(TddlOperatorTable.MONTH.getName());
+
     }
 
     public static boolean isStringFamilyPartitionFunction(String partFunOpName) {
@@ -133,17 +146,19 @@ public class PartitionFunctionBuilder {
     }
 
     public static PartitionIntFunction create(SqlOperator sqlOperator, List<SqlNode> operands) {
-        return createPartitionFunction(sqlOperator, operands, null);
+        return createPartitionFunction(sqlOperator, operands, null, null);
     }
 
-    public static PartitionIntFunction create(SqlOperator sqlOperator, List<SqlNode> operands,
+    public static PartitionIntFunction create(SqlOperator sqlOperator,
+                                              List<SqlNode> operands,
                                               List<ColumnMeta> partColMetas) {
-        return createPartitionFunction(sqlOperator, operands, partColMetas);
+        return createPartitionFunction(sqlOperator, operands, partColMetas, null);
     }
 
     protected static PartitionIntFunction createPartitionFunction(SqlOperator sqlOperator,
                                                                   List<SqlNode> operands,
-                                                                  List<ColumnMeta> partColMetas) {
+                                                                  List<ColumnMeta> partColMetas,
+                                                                  FunctionInitParams initParams) {
         if (sqlOperator == TddlOperatorTable.YEAR) {
             return new YearPartitionIntFunction(null, null);
         } else if (sqlOperator == TddlOperatorTable.DAYOFMONTH) {
@@ -167,11 +182,13 @@ public class PartitionFunctionBuilder {
         } else if (sqlOperator == TddlOperatorTable.MONTH) {
             return new MonthPartitionIntFunction(null, null);
         } else if (supportedBuiltInFunctions.contains(sqlOperator.getName())) {
-            PartitionFunctionMeta partFuncMata = createPartitionFunctionMeta(sqlOperator, operands, partColMetas);
+            PartitionFunctionMeta partFuncMata =
+                createPartitionFunctionMeta(sqlOperator, operands, partColMetas, initParams);
             PartitionFunctionProxy funcProxy = new PartitionFunctionProxy(partFuncMata);
             return funcProxy;
-        } else if (sqlOperator instanceof SqlUserDefinedFunction) {
-            PartitionFunctionMeta partFuncMata = createPartitionFunctionMeta(sqlOperator, operands, partColMetas);
+        } else if ((sqlOperator instanceof SqlUserDefinedFunction) || (sqlOperator == TddlOperatorTable.DBLE_ROUTE)) {
+            PartitionFunctionMeta partFuncMata =
+                createPartitionFunctionMeta(sqlOperator, operands, partColMetas, initParams);
             PartitionFunctionProxy funcProxy = new PartitionFunctionProxy(partFuncMata);
             return funcProxy;
         }
@@ -180,11 +197,12 @@ public class PartitionFunctionBuilder {
 
     protected static PartitionFunctionMeta createPartitionFunctionMeta(SqlOperator sqlOperator,
                                                                        List<SqlNode> operands,
-                                                                       List<ColumnMeta> partColMetas) {
+                                                                       List<ColumnMeta> partColMetas,
+                                                                       FunctionInitParams initParams) {
         if (sqlOperator instanceof SqlSubStrFunction || sqlOperator instanceof SqlSubstringFunction) {
             SubStrPartitionFunction partFunc = new SubStrPartitionFunction();
             List<DataType> fullParamDatatypes =
-                prepareParamsDatatypesForStringFamilyPartFunc(sqlOperator, operands, partColMetas, partFunc);
+                prepareParamsDataTypesForStringFamilyPartFunc(sqlOperator, operands, partColMetas, partFunc);
             PartitionFunctionMeta subStrPartFuncMeta =
                 new PartitionFunctionMetaImpl(partFunc, sqlOperator, operands, fullParamDatatypes);
             return subStrPartFuncMeta;
@@ -220,7 +238,7 @@ public class PartitionFunctionBuilder {
 
             RightPartitionFunction partFunc = new RightPartitionFunction(null, null);
             List<DataType> fullParamDatatypes =
-                prepareParamsDatatypesForStringFamilyPartFunc(partFunc.getSqlOperator(), operands, partColMetas,
+                prepareParamsDataTypesForStringFamilyPartFunc(partFunc.getSqlOperator(), operands, partColMetas,
                     partFunc);
             PartitionFunctionMeta rightPartFuncMeta =
                 new PartitionFunctionMetaImpl(partFunc, sqlOperator, operands, fullParamDatatypes);
@@ -257,15 +275,16 @@ public class PartitionFunctionBuilder {
 
             LeftPartitionFunction partFunc = new LeftPartitionFunction(null, null);
             List<DataType> fullParamDatatypes =
-                prepareParamsDatatypesForStringFamilyPartFunc(partFunc.getSqlOperator(), operands, partColMetas,
+                prepareParamsDataTypesForStringFamilyPartFunc(partFunc.getSqlOperator(), operands, partColMetas,
                     partFunc);
             PartitionFunctionMeta leftPartFuncMeta =
                 new PartitionFunctionMetaImpl(partFunc, sqlOperator, operands, fullParamDatatypes);
             return leftPartFuncMeta;
-        } else if (sqlOperator instanceof SqlUserDefinedFunction || sqlOperator instanceof SqlUnresolvedFunction) {
+        } else if ((sqlOperator instanceof SqlUserDefinedFunction || sqlOperator instanceof SqlUnresolvedFunction)
+            || (sqlOperator == TddlOperatorTable.DBLE_ROUTE)) {
             String udfName = sqlOperator.getName();
             UdfJavaFunctionMeta udfJavaFuncMeta =
-                UdfJavaFunctionHelper.createUdfJavaFunctionMetaByName(udfName, sqlOperator);
+                UdfJavaFunctionHelper.createUdfJavaFunctionMetaByNameAndInitParams(udfName, sqlOperator, initParams);
             UdfPartitionIntFunctionTemplate partFuncTemp = new UdfPartitionIntFunctionTemplate(udfJavaFuncMeta);
             PartitionFunctionMeta udfFuncMeta = new PartitionFunctionMetaImpl(partFuncTemp, sqlOperator, operands);
             return udfFuncMeta;
@@ -274,7 +293,7 @@ public class PartitionFunctionBuilder {
     }
 
     @NotNull
-    private static List<DataType> prepareParamsDatatypesForStringFamilyPartFunc(SqlOperator sqlOperator,
+    private static List<DataType> prepareParamsDataTypesForStringFamilyPartFunc(SqlOperator sqlOperator,
                                                                                 List<SqlNode> operands,
                                                                                 List<ColumnMeta> partColMetas,
                                                                                 PartitionIntFunction partFunc) {
@@ -381,16 +400,38 @@ public class PartitionFunctionBuilder {
     /**
      * Create a part func by the sqlcall ast like "xxx_fn(part_col, param1, param2, ....)"
      */
-    public static PartitionIntFunction createPartFuncByPartFuncCal(SqlNode partFuncCall,
-                                                                   List<ColumnMeta> partColMetas) {
+    public static PartitionIntFunction createPartFuncByPartFuncCall(SqlNode partFuncCall,
+                                                                    List<ColumnMeta> partColMetas) {
         if (partFuncCall instanceof SqlCall) {
             SqlCall call = (SqlCall) partFuncCall;
             SqlOperator operator = call.getOperator();
             List<SqlNode> operands = call.getOperandList();
-            PartitionIntFunction partIntFunc = createPartitionFunction(operator, operands, partColMetas);
+            PartitionIntFunction partIntFunc = createPartitionFunction(operator, operands, partColMetas, null);
             return partIntFunc;
         }
         return null;
+    }
+
+    public static PartitionIntFunction createPartFuncByPartFuncCallWithInitParams(SqlNode partFuncCall,
+                                                                                  List<ColumnMeta> partColMetas,
+                                                                                  FunctionInitParams initParams) {
+        if (partFuncCall instanceof SqlCall) {
+            SqlCall call = (SqlCall) partFuncCall;
+            SqlOperator operator = call.getOperator();
+            List<SqlNode> operands = call.getOperandList();
+            PartitionIntFunction partIntFunc = createPartitionFunction(operator, operands, partColMetas, initParams);
+            return partIntFunc;
+        }
+        return null;
+    }
+
+    public static PartitionIntFunction createPartFuncBySqlOperatorWithInitParams(SqlOperator sqlOperator,
+                                                                                 List<ColumnMeta> partColMetas,
+                                                                                 FunctionInitParams initParams) {
+        SqlOperator operator = sqlOperator;
+        List<SqlNode> operands = new ArrayList<>();
+        PartitionIntFunction partIntFunc = createPartitionFunction(operator, operands, partColMetas, initParams);
+        return partIntFunc;
     }
 
     /**
@@ -410,9 +451,10 @@ public class PartitionFunctionBuilder {
             return null;
         } else if (partKeyExpr instanceof SqlCall) {
             SqlCall partKeyExprSqlCall = (SqlCall) partKeyExpr;
-
             return partKeyExprSqlCall;
-        } else {
+        } else if (partKeyExpr instanceof SqlColumnWithUdfParamsExpr) {
+            return null;
+        }else {
             throw new NotSupportException("should not be here");
         }
     }
@@ -478,7 +520,7 @@ public class PartitionFunctionBuilder {
             return;
         }
 
-        PartitionFunctionMeta partFuncMeta = createPartitionFunctionMeta(operator, operands, partColMetas);
+        PartitionFunctionMeta partFuncMeta = createPartitionFunctionMeta(operator, operands, partColMetas, null);
         List<Integer> partColPositions = partFuncMeta.getPartColInputPositions();
         if (partColPositions.isEmpty()) {
             throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_INVALID_PARAMS,
@@ -531,7 +573,7 @@ public class PartitionFunctionBuilder {
         }
 
         UdfJavaFunctionMeta udfJavaFuncMeta =
-            UdfJavaFunctionHelper.createUdfJavaFunctionMetaByName(udfFuncName, udfFuncOp);
+            UdfJavaFunctionHelper.createUdfJavaFunctionMetaByNameAndInitParams(udfFuncName, udfFuncOp, null);
 
         /**
          * Check udfFunc state
@@ -589,14 +631,29 @@ public class PartitionFunctionBuilder {
                         partColDataType.getStringSqlType(), colName));
             }
 
-            if (isNullable) {
-                throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_INVALID_PARAMS,
-                    String.format(
-                        "The nullable partition column [%s] is not allowed using as input of partition function",
-                        colName));
-            }
+//            if (isNullable) {
+//                throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_INVALID_PARAMS,
+//                    String.format(
+//                        "The nullable partition column [%s] is not allowed using as input of partition function",
+//                        colName));
+//            }
         }
         return true;
     }
 
+    public static boolean checkIfTimeBasedPartFunc(String partIntFunctionName) {
+        return PartitionFunctionBuilder.allTimeBasedPartFuncSet.contains(partIntFunctionName);
+    }
+
+    //all the partition function can be used to do enumrate, except substr
+    public static boolean partFuncCanDoEnumInHashStrategy(String partIntFunctionName) {
+        return PartitionFunctionBuilder.partFuncNeedEnumInHashStrategy.contains(partIntFunctionName);
+    }
+
+    /**
+     * all the NON_MONOTONIC partition function, except substr, can be used to do enumerate in range and list case
+     */
+    public static boolean partFuncNeedDoEnumInRangeAndListStrategy(String partIntFunctionName) {
+        return PartitionFunctionBuilder.partFuncNeedEnumInRangeListStrategy.contains(partIntFunctionName);
+    }
 }

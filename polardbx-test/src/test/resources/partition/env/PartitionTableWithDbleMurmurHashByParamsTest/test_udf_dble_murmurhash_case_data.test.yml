@@ -1,0 +1,58 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+  drop table if exists dblemur_sb;
+  create table dblemur_sb
+  (id int)
+  partition by udf_hash(
+  `id` with udf_params (
+  'dble/unitmurmurhash',
+  '{"partitionCount": "8","isDigitCheck": "1","leftPaddingChar": "NO","shardingValueMaxLength": "15"}'
+  )
+  )
+  partitions 8;
+
+
+  ## p1, 14 rows
+insert into dblemur_sb (id) values 
+(11),(17),(20),(25),(28),(35),(39),(47),(55),(66),(71),(88),(92),(95);
+select count(1) from dblemur_sb partition(p1);
+
+## p2, 19 rows
+insert into dblemur_sb (id) values
+(3),(14),(27),(30),(41),(52),(56),(64),(65),(67),(70),(74),(94),(107),(108),(112),(114),(134),(142);
+select count(1) from dblemur_sb partition(p2);
+
+## p3, 20 rows
+insert into dblemur_sb (id) values 
+(12),(16),(19),(33),(36),(46),(48),(57),(63),(77),(80),(93),(99),(104),(111),(138),(152),(154),(158),(159);
+select count(1) from dblemur_sb partition(p3);
+
+## p4, 24 rows
+insert into dblemur_sb (id) values 
+(5),(6),(7),(9),(18),(24),(29),(31),(59),(68),(73),(75),(79),(86),(91),(106),(109),(122),(125),(126),(129),(130),(143),(150);
+select count(1) from dblemur_sb partition(p4);
+
+## p5, 7 rows
+insert into dblemur_sb (id) values 
+(1),(43),(45),(49),(81),(96),(101);
+select count(1) from dblemur_sb partition(p5);
+
+## p6 16 rows
+insert into dblemur_sb (id) values 
+(13),(26),(37),(40),(42),(44),(51),(58),(72),(78),(82),(83),(89),(90),(100),(123);
+select count(1) from dblemur_sb partition(p6);
+
+## p7,  8 rows
+insert into dblemur_sb (id) values 
+(2),(4),(8),(10),(15),(21),(22),(32);
+select count(1) from dblemur_sb partition(p7);
+
+## p8, 11 rows
+insert into dblemur_sb (id) values 
+(23),(38),(50),(54),(61),(85),(118),(124),(131),(141),(145);
+select count(1) from dblemur_sb partition(p8);
+
+check table routing dblemur_sb;
+
+drop table dblemur_sb;

@@ -31,12 +31,14 @@ public class BreakpointResumeTest extends DDLBaseNewDBTestCase {
 
     private void prepareTable() {
         String createTable =
-            String.format("create table %s(a varchar(60) primary key, b int) %s", TABLE_NAME, partitionBy);
+            String.format(
+                "create table %s(a varchar(60), b bigint unsigned, primary key(a, b), c int) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci %s",
+                TABLE_NAME, partitionBy);
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable);
 
         StringBuilder sb = new StringBuilder(String.format("insert into %s values", TABLE_NAME));
         for (int i = 0; i < 1024; i++) {
-            sb.append(String.format("(UUID(), %s)", i));
+            sb.append(String.format("(UUID(), %s, %s)", nextUnsignedLongAbove(9223372036854775807L), i));
             if (i != 1023) {
                 sb.append(",");
             }
@@ -64,8 +66,9 @@ public class BreakpointResumeTest extends DDLBaseNewDBTestCase {
         System.out.println("prepareData success");
 
         String hint =
-            "/*+TDDL:cmd_extra(PHYSICAL_TABLE_BACKFILL_PARALLELISM=8,PHYSICAL_TABLE_START_SPLIT_SIZE = 10, ENABLE_INSERT_IGNORE_FOR_OMC=true)*/";
-        String sql = hint + String.format("alter table %s modify column a varchar(100), algorithm = omc, async=true",
+            "/*+TDDL:cmd_extra(ENABLE_OMC_30=false,PHYSICAL_TABLE_BACKFILL_PARALLELISM=8,PHYSICAL_TABLE_START_SPLIT_SIZE = 10, ENABLE_INSERT_IGNORE_FOR_OMC=true)*/";
+        String sql = hint + String.format(
+            "alter table %s modify column a varchar(100), add column e varchar(100) default '199' first, add column f int default 123 after a,algorithm = omc, async=true",
             TABLE_NAME);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 
@@ -148,14 +151,18 @@ public class BreakpointResumeTest extends DDLBaseNewDBTestCase {
 
     private void checkDdlJobBackfillObjects(Long jobId) {
         String sql = String.format(
-            "select last_value = max_value from metadb.backfill_objects "
+            "select last_value = max_value,last_value,max_value from metadb.backfill_objects "
                 + "where job_id in "
                 + "(select task_id from metadb.ddl_engine_task_archive where job_id = %s and name = 'LogicalTableBackFillTask') "
                 + "and physical_db is not null and physical_table is not null", jobId);
         try (PreparedStatement ps = tddlConnection.prepareStatement(sql);
             ResultSet rs = ps.executeQuery()) {
             while (rs.next()) {
-                Assert.assertTrue(rs.getInt(1) == 1);
+                int eq = rs.getInt(1);
+                String lastValue = rs.getString(2);
+                String maxValue = rs.getString(3);
+                Assert.assertTrue(eq == 1,
+                    String.format("assert failed, last_value: %s, max_value: %s", lastValue, maxValue));
             }
         } catch (SQLException e) {
             throw new RuntimeException(e);

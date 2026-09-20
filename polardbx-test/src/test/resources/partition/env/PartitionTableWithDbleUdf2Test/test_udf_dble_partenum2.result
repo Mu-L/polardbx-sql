@@ -1,0 +1,132 @@
+## DISABLE_FAST_SQL_PARSER
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=false
+drop table if exists partenumstr_t1
+create table partenumstr_t1(
+c1 varchar(32),
+c2 varchar(32)
+)
+partition by udf_hash(partenumstr(c1))
+(
+partition p1 values less than(1),
+partition p2 values less than(2)
+)
+select part_route('','partenumstr_t1', null)
+part_route('', 'partenumstr_t1', NULL)
+p1
+select part_route('','partenumstr_t1', '')
+part_route('', 'partenumstr_t1', '')
+p1
+select part_route('','partenumstr_t1', 'x')
+part_route('', 'partenumstr_t1', 'x')
+p1
+select part_route('','partenumstr_t1', '0')
+part_route('', 'partenumstr_t1', '0')
+p1
+select part_route('','partenumstr_t1', 'A')
+part_route('', 'partenumstr_t1', 'A')
+p1
+select part_route('','partenumstr_t1', 'B')
+part_route('', 'partenumstr_t1', 'B')
+p2
+select part_route('','partenumstr_t1', 'C')
+part_route('', 'partenumstr_t1', 'C')
+p1
+drop table if exists partenumstr2_t1
+create table partenumstr2_t1(
+c1 varchar(32),
+c2 varchar(32)
+)
+partition by udf_hash(partenumstr2(c1))
+(
+partition p1 values less than(1),
+partition p2 values less than(2)
+)
+## error_msg: $# can't find any valid data node #$
+select part_route('','partenumstr2_t1', null)
+can't find any valid data node
+## error_msg: $# can't find any valid data node #$
+select part_route('','partenumstr2_t1', '')
+can't find any valid data node
+## error_msg: $# can't find any valid data node #$
+select part_route('','partenumstr2_t1', 'x')
+can't find any valid data node
+## error_msg: $# can't find any valid data node #$
+select part_route('','partenumstr2_t1', '0')
+can't find any valid data node
+select part_route('','partenumstr2_t1', 'A')
+part_route('', 'partenumstr2_t1', 'A')
+p1
+select part_route('','partenumstr2_t1', 'B')
+part_route('', 'partenumstr2_t1', 'B')
+p2
+## error_msg: $# can't find any valid data node #$
+select part_route('','partenumstr2_t1', 'C')
+can't find any valid data node
+drop table if exists partenumi_t1
+create table partenumi_t1(
+c1 bigint,
+c2 bigint
+)
+partition by udf_hash(partenumi(c1))
+(
+partition p1 values less than(1),
+partition p2 values less than(2)
+)
+select part_route('','partenumi_t1', null)
+part_route('', 'partenumi_t1', NULL)
+p1
+## error_msg: $# invalid type conversion #$
+select part_route('','partenumi_t1', '')
+invalid type conversion
+## error_msg: $# invalid type conversion #$
+select part_route('','partenumi_t1', 'a')
+invalid type conversion
+select part_route('','partenumi_t1', 0)
+part_route('', 'partenumi_t1', 0)
+p1
+select part_route('','partenumi_t1', 10000)
+part_route('', 'partenumi_t1', 10000)
+p1
+select part_route('','partenumi_t1', 10010)
+part_route('', 'partenumi_t1', 10010)
+p2
+select part_route('','partenumi_t1', 20000)
+part_route('', 'partenumi_t1', 20000)
+p1
+drop table if exists partenumi2_t1
+create table partenumi2_t1(
+c1 bigint,
+c2 bigint
+)
+partition by udf_hash(partenumi2(c1))
+(
+partition p1 values less than(1),
+partition p2 values less than(2)
+)
+## error_msg: $# can't find any valid data node #$
+select part_route('','partenumi2_t1', null)
+can't find any valid data node
+## error_msg: $# invalid type conversion #$
+select part_route('','partenumi2_t1', '')
+invalid type conversion
+## error_msg: $# invalid type conversion #$
+select part_route('','partenumi2_t1', 'a')
+invalid type conversion
+## error_msg: $# can't find any valid data node #$
+select part_route('','partenumi2_t1', 0)
+can't find any valid data node
+select part_route('','partenumi2_t1', 10000)
+part_route('', 'partenumi2_t1', 10000)
+p1
+select part_route('','partenumi2_t1', 10010)
+part_route('', 'partenumi2_t1', 10010)
+p2
+## error_msg: $# can't find any valid data node #$
+select part_route('','partenumi2_t1', 20000)
+can't find any valid data node
+select partenumstr(null)
+partenumstr(NULL)
+0
+select partenumstr('')
+partenumstr('')
+0

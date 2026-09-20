@@ -117,6 +117,7 @@ public class LogicalShowPartitionsHandler extends HandlerCommon {
             result.addColumn("PART_NAME", DataTypes.StringType);
             result.addColumn("PART_POSI", DataTypes.LongType);
             result.addColumn("PART_DESC", DataTypes.StringType);
+            result.addColumn("PART_ARC_STATE", DataTypes.StringType);
 
             result.addColumn("SUBPART_METHOD", DataTypes.StringType);
             result.addColumn("SUBPART_COL", DataTypes.StringType);
@@ -128,6 +129,7 @@ public class LogicalShowPartitionsHandler extends HandlerCommon {
             result.addColumn("SUBPART_TEMP_NAME", DataTypes.StringType);
             result.addColumn("SUBPART_POSI", DataTypes.LongType);
             result.addColumn("SUBPART_DESC", DataTypes.StringType);
+            result.addColumn("SUBPART_ARC_STATE", DataTypes.StringType);
 
             result.addColumn("PG_NAME", DataTypes.StringType);
             result.addColumn("PHY_GROUP", DataTypes.StringType);

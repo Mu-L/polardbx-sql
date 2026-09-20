@@ -5,6 +5,7 @@ import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.qatest.util.RandomUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.List;
@@ -20,6 +21,11 @@ public class OMCMultiWriteTest extends DDLBaseNewDBTestCase {
 
     protected final String dmlHintStr =
         " /*+TDDL:cmd_extra(PLAN_CACHE=false,DML_SKIP_DUPLICATE_CHECK_FOR_PK=FALSE,DML_USE_RETURNING=FALSE)*/ ";
+
+    @Before
+    public void beforeMethod() {
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "set ENABLE_OMC_30 = false");
+    }
 
     @Override
     public boolean usingNewPartDb() {

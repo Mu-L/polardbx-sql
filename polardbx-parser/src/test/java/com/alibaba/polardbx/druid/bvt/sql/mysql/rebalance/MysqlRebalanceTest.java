@@ -43,7 +43,9 @@ public class MysqlRebalanceTest {
             "REBALANCE CLUSTER drain_node='abc'",
             "REBALANCE DATABASE",
             "REBALANCE CLUSTER ASYNC=true",
-            "REBALANCE CLUSTER DEBUG=true"
+            "REBALANCE CLUSTER DEBUG=true",
+            "REBALANCE CLUSTER drain_node='dn1,dn2' SOLVE_LEVEL='DRAIN_ONLY'",
+            "REBALANCE DATABASE SOLVE_LEVEL='MIN_COST'"
         );
 
         for (String sql : testCases) {

@@ -4,6 +4,7 @@ import com.alibaba.polardbx.common.columnar.ColumnarUtils;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
+import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.gms.util.SyncUtil;
 import org.junit.Assert;
 import org.junit.Test;
@@ -32,7 +33,8 @@ public class AutoSnapshotManagerTest {
             MockedStatic<ColumnarUtils> columnarUtilsMockedStatic = Mockito.mockStatic(ColumnarUtils.class);
             MockedStatic<DynamicConfig> dynamicConfigMockedStatic = Mockito.mockStatic(DynamicConfig.class);
             MockedStatic<ConfigDataMode> configDataModeMockedStatic = Mockito.mockStatic(ConfigDataMode.class);
-            MockedStatic<SyncUtil> syncUtilMockedStatic = Mockito.mockStatic(SyncUtil.class)) {
+            MockedStatic<SyncUtil> syncUtilMockedStatic = Mockito.mockStatic(SyncUtil.class);
+            MockedStatic<InstIdUtil> instIdUtilMockedStatic = Mockito.mockStatic(InstIdUtil.class)) {
             AtomicInteger counter = new AtomicInteger(0);
             Map<String, String> config = new HashMap<>();
             config.put("ZONE_ID", "+08:00");
@@ -102,6 +104,7 @@ public class AutoSnapshotManagerTest {
             Assert.assertEquals(counter.get(), before);
 
             // case 6: current instance is leader of columnar instance, and option on, should run task.
+            instIdUtilMockedStatic.when(InstIdUtil::isClusterInstId).thenReturn(true);
             Mockito.when(dynamicConfig.isEnableColumnarReadInstanceAutoGenerateSnapshot()).thenReturn(true);
             configDataModeMockedStatic.when(ConfigDataMode::isColumnarMode).thenReturn(true);
             syncUtilMockedStatic.when(SyncUtil::isNodeWithSmallestId).thenReturn(true);

@@ -16,14 +16,23 @@
 
 package com.alibaba.polardbx.executor.accumulator;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.expression.calc.Aggregator;
+import org.openjdk.jol.info.ClassLayout;
 
 public class PartialHyperLogLogAccumulator extends HyperLogLogAccumulator {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(PartialHyperLogLogAccumulator.class).instanceSize();
 
     public PartialHyperLogLogAccumulator(Aggregator aggregator, DataType[] rowInputType, int capacity) {
         super(aggregator, rowInputType, capacity);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(groupState);
     }
 
     @Override

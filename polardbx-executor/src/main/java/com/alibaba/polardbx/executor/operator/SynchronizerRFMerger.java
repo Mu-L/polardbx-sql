@@ -16,6 +16,9 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.common.utils.bloomfilter.ConcurrentIntBloomFilter;
 import com.alibaba.polardbx.common.utils.bloomfilter.RFBloomFilter;
 import com.alibaba.polardbx.common.utils.logger.Logger;
@@ -25,6 +28,7 @@ import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFItem;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFManager;
 import com.alibaba.polardbx.executor.operator.util.ChunksIndex;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.text.MessageFormat;
 import java.util.List;
@@ -32,17 +36,22 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
-public class SynchronizerRFMerger implements RuntimeFilterMerger {
+public class SynchronizerRFMerger implements RuntimeFilterMerger, MemoryCountable {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(SynchronizerRFMerger.class).instanceSize();
     private static final Logger LOGGER = LoggerFactory.getLogger(FragmentRFManager.class);
 
     // plan fragment level runtime filter manager.
+    @FieldMemoryCounter(value = false)
     private final FragmentRFManager fragmentRFManager;
+    @FieldMemoryCounter(value = false)
     private final FragmentRFItem rfItem;
 
     private final int buildSideParallelism;
     private final int blockChannel;
 
     private RFBloomFilter[] rfBloomFilters;
+
+    @FieldMemoryCounter(value = false)
     private Lock[] bfInitializingLocks;
     private AtomicInteger bfParallelismCounter;
     private AtomicInteger bfPartitionCounter;
@@ -70,6 +79,15 @@ public class SynchronizerRFMerger implements RuntimeFilterMerger {
 
         final int partitionsOfNode = fragmentRFManager.getPartitionsOfNode();
         bfPartitionCounter = new AtomicInteger(partitionsOfNode);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(rfBloomFilters)
+            + FastMemoryCounter.sizeOf(globalRFBloomFilter)
+            + FastMemoryCounter.sizeOf(bfParallelismCounter)
+            + FastMemoryCounter.sizeOf(bfPartitionCounter);
     }
 
     @Override

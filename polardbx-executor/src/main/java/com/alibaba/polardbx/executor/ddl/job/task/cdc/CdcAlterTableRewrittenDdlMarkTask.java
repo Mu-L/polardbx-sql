@@ -45,6 +45,7 @@ public class CdcAlterTableRewrittenDdlMarkTask extends BaseCdcTask {
     private PhysicalPlanData physicalPlanData;
     private String logicalSql;
     private boolean foreignKeys;
+    private boolean externalColumnDdl;
 
     @JSONCreator
     public CdcAlterTableRewrittenDdlMarkTask(String schemaName, PhysicalPlanData physicalPlanData, String logicalSql,
@@ -64,6 +65,10 @@ public class CdcAlterTableRewrittenDdlMarkTask extends BaseCdcTask {
 
         DdlContext ddlContext = executionContext.getDdlContext();
         AlterTablePreparedData alterTablePreparedData = physicalPlanData.getAlterTablePreparedData();
+
+        if (externalColumnDdl) {
+            CdcMarkUtil.useExternalColumnDdl(executionContext);
+        }
 
         // 加减列操作，可能会导致逻辑表结构和物理表结构不一致，重新对
         if (alterTablePreparedData != null) {

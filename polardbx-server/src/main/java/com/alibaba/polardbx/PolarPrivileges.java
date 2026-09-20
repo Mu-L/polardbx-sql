@@ -16,9 +16,13 @@
 
 package com.alibaba.polardbx;
 
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.model.DbPriv;
 import com.alibaba.polardbx.common.model.TbPriv;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.gms.privilege.AccountType;
 import com.alibaba.polardbx.gms.privilege.ActiveRoles;
 import com.alibaba.polardbx.gms.privilege.PolarAccountInfo;
@@ -75,6 +79,10 @@ public class PolarPrivileges extends CobarPrivileges implements Privileges {
         PolarAccountInfo userInfo = getMatchUser(user, host);
         Set<String> res = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
         if (userInfo == null) {
+            if (DynamicConfig.getInstance().isEnableConsistentErrorCode()) {
+                throw new TddlRuntimeException(ErrorCode.ER_ACCESS_DENIED_ERROR,
+                    String.format("Access denied for user '%s'@'%s'", user, host));
+            }
             throw GeneralUtil.nestedException(String.format("user '%s'@'%s' does not exist", user, host));
         }
 
@@ -104,12 +112,19 @@ public class PolarPrivileges extends CobarPrivileges implements Privileges {
 
     @Override
     public boolean schemaExists(String schema) {
+        if (ExternalNameValidator.isExternalSchema(schema)) {
+            return true;
+        }
         return privManager.getAllDbs().contains(schema);
     }
 
     public PolarAccountInfo checkAndGetMatchUser(String user, String host) {
         PolarAccountInfo userInfo = getMatchUser(user, host);
         if (userInfo == null) {
+            if (DynamicConfig.getInstance().isEnableConsistentErrorCode()) {
+                throw new TddlRuntimeException(ErrorCode.ER_ACCESS_DENIED_ERROR,
+                    String.format("Access denied for user '%s'@'%s'", user, host));
+            }
             throw GeneralUtil.nestedException(String.format("user '%s'@'%s' does not exist", user, host));
         }
         return userInfo;

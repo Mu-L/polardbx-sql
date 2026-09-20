@@ -17,6 +17,7 @@
 package org.apache.calcite.rel;
 
 import org.apache.calcite.plan.RelOptCluster;
+import org.apache.calcite.plan.RelOptSchema;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.core.AggregateCall;
@@ -81,12 +82,17 @@ public interface RelInput {
    */
   int getInteger(String tag);
 
+  RelNode getCTERef(Integer integer);
+
   /**
    * Returns an enum value. Throws if not a valid member.
    */
   <E extends Enum<E>> E getEnum(String tag, Class<E> enumClass);
+  <E extends Enum<E>> E getEnum(String tag, Class<E> enumClass, E default_);
 
   List<RexNode> getExpressionList(String tag);
+
+  List<RexNode> getExpressionList(String tag, List<RelNode> inputs);
 
   List<List<RexNode>> getExpressionListList(String tag);
 
@@ -99,6 +105,8 @@ public interface RelInput {
   RelDataType getRowType(String tag);
 
   RelDataType getRowType(String expressionsTag, String fieldsTag);
+
+  RelCollation getInnerCollation();
 
   RelCollation getCollation();
 

@@ -78,7 +78,8 @@ public class ScheduledJobsAccessor extends AbstractAccessor {
             "`schedule_policy`  = ?," +
             "`table_group_name` = ?";
 
-    private static final String ALL_VALUES = "(null,null,null,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+    private static final String ALL_VALUES =
+        "(null,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
 
     private static final String INSERT_TABLE_SCHEDULED_JOBS =
         "insert into " + SCHEDULED_JOBS + " (" + ALL_COLUMNS + ") VALUES " + ALL_VALUES;

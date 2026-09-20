@@ -1,0 +1,100 @@
+DROP DATABASE IF EXISTS test_statistics2
+CREATE DATABASE test_statistics2 MODE auto
+USE test_statistics2
+DROP TABLE IF EXISTS t_statistics2
+CREATE TABLE t_statistics2 (
+	id int,
+	name varchar(60),
+	NAME2 varchar(60),
+	Name3 varchar(60),
+	PRIMARY KEY (id)
+)
+PARTITION BY KEY (id) PARTITIONS 4
+ALTER TABLE t_statistics2
+	ADD INDEX idx_name (name)
+ALTER TABLE t_statistics2
+	ADD INDEX idx_name2 (name, name3)
+ALTER TABLE t_statistics2
+	ADD INDEX idx_name3 (nAme, name2(2), name3)
+ALTER TABLE t_statistics2
+	ADD INDEX idx_name4 (name(5))
+ALTER TABLE t_statistics2
+	ADD INDEX idx_name5 (naMe(4), name2(10))
+ALTER TABLE t_statistics2
+	ADD INDEX idx_name6 (name(10), namE2(10), name3(10))
+SHOW CREATE TABLE t_statistics2
+TABLE,CREATE TABLE
+t_statistics2,CREATE TABLE `t_statistics2` (
+	`id` int(11) NOT NULL,
+	`name` varchar(60) DEFAULT NULL,
+	`NAME2` varchar(60) DEFAULT NULL,
+	`Name3` varchar(60) DEFAULT NULL,
+	PRIMARY KEY (`id`),
+	KEY `idx_name` (`name`),
+	KEY `idx_name2` (`name`, `Name3`),
+	KEY `idx_name3` (`name`, `NAME2`(2), `Name3`),
+	KEY `idx_name4` (`name`(5)),
+	KEY `idx_name5` (`name`(4), `NAME2`(10)),
+	KEY `idx_name6` (`name`(10), `NAME2`(10), `Name3`(10))
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`id`)
+PARTITIONS 4
+SELECT *
+FROM INFORMATION_SCHEMA.STATISTICS
+WHERE TABLE_SCHEMA = 'test_statistics2'
+	AND table_name = 't_statistics2'
+ORDER BY index_name, seq_in_index
+TABLE_CATALOG,TABLE_SCHEMA,TABLE_NAME,NON_UNIQUE,INDEX_SCHEMA,INDEX_NAME,SEQ_IN_INDEX,COLUMN_NAME,COLLATION,CARDINALITY,SUB_PART,PACKED,NULLABLE,INDEX_TYPE,COMMENT,INDEX_COMMENT
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name,1,name,A,0,null,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name2,1,name,A,0,null,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name2,2,Name3,A,0,null,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name3,1,name,A,0,null,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name3,2,NAME2,A,0,2,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name3,3,Name3,A,0,null,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name4,1,name,A,0,5,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name5,1,name,A,0,4,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name5,2,NAME2,A,0,10,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name6,1,name,A,0,10,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name6,2,NAME2,A,0,10,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name6,3,Name3,A,0,10,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,0,test_statistics2,PRIMARY,1,id,A,0,null,null,,BTREE,,
+ALTER TABLE t_statistics2
+	CHANGE COLUMN name NEW_name varchar(5),
+	CHANGE COLUMN name2 new_NAME2 text,
+	CHANGE COLUMN name3 new_name3 bigint
+SHOW CREATE TABLE t_statistics2
+TABLE,CREATE TABLE
+t_statistics2,CREATE TABLE `t_statistics2` (
+	`id` int(11) NOT NULL,
+	`NEW_name` varchar(5) DEFAULT NULL,
+	`new_NAME2` text,
+	`new_name3` bigint(20) DEFAULT NULL,
+	PRIMARY KEY (`id`),
+	KEY `idx_name` (`NEW_name`),
+	KEY `idx_name2` (`NEW_name`, `new_name3`),
+	KEY `idx_name3` (`NEW_name`, `new_NAME2`(2), `new_name3`),
+	KEY `idx_name4` (`NEW_name`),
+	KEY `idx_name5` (`NEW_name`(4), `new_NAME2`(10)),
+	KEY `idx_name6` (`NEW_name`, `new_NAME2`(10), `new_name3`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`id`)
+PARTITIONS 4
+SELECT *
+FROM INFORMATION_SCHEMA.STATISTICS
+WHERE TABLE_SCHEMA = 'test_statistics2'
+	AND table_name = 't_statistics2'
+ORDER BY index_name, seq_in_index
+TABLE_CATALOG,TABLE_SCHEMA,TABLE_NAME,NON_UNIQUE,INDEX_SCHEMA,INDEX_NAME,SEQ_IN_INDEX,COLUMN_NAME,COLLATION,CARDINALITY,SUB_PART,PACKED,NULLABLE,INDEX_TYPE,COMMENT,INDEX_COMMENT
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name,1,NEW_name,A,0,null,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name2,1,NEW_name,A,0,null,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name2,2,new_name3,A,0,null,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name3,1,NEW_name,A,0,null,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name3,2,new_NAME2,A,0,2,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name3,3,new_name3,A,0,null,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name4,1,NEW_name,A,0,null,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name5,1,NEW_name,A,0,4,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name5,2,new_NAME2,A,0,10,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name6,1,NEW_name,A,0,null,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name6,2,new_NAME2,A,0,10,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,1,test_statistics2,idx_name6,3,new_name3,A,0,null,null,YES,BTREE,,
+def,test_statistics2,t_statistics2,0,test_statistics2,PRIMARY,1,id,A,0,null,null,,BTREE,,

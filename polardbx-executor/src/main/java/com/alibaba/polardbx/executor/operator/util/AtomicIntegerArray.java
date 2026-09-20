@@ -21,6 +21,9 @@ import java.util.Arrays;
 import java.util.function.IntUnaryOperator;
 import java.util.function.IntBinaryOperator;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import org.openjdk.jol.info.ClassLayout;
 import sun.misc.Unsafe;
 
 /**
@@ -32,7 +35,8 @@ import sun.misc.Unsafe;
  * @author Doug Lea
  * @since 1.5
  */
-public class AtomicIntegerArray implements java.io.Serializable {
+public class AtomicIntegerArray implements java.io.Serializable, MemoryCountable {
+    public static final int INSTANCE_SIZE = ClassLayout.parseClass(AtomicIntegerArray.class).instanceSize();
     private static final long serialVersionUID = 2862133569453604235L;
 
     private static Unsafe unsafe;
@@ -100,6 +104,11 @@ public class AtomicIntegerArray implements java.io.Serializable {
     public AtomicIntegerArray(int[] array) {
         // Visibility guaranteed by final field guarantees
         this.array = array.clone();
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(array);
     }
 
     /**

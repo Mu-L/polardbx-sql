@@ -1,5 +1,7 @@
 package com.alibaba.polardbx.qatest.ddl.datamigration.locality;
 
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.qatest.twoPhaseDdl.TwoPhaseDdlTestUtils.DdlStateCheckUtil;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import net.jcip.annotations.NotThreadSafe;
@@ -11,9 +13,12 @@ import org.junit.Test;
 
 import java.io.FileNotFoundException;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+
+import static com.alibaba.polardbx.qatest.twoPhaseDdl.TwoPhaseDdlTestUtils.DdlStateCheckUtil.TOPOLOGY_DN_ID;
 
 @NotThreadSafe
 public class AlterLocalityTest extends LocalityTestBase {
@@ -27,7 +32,8 @@ public class AlterLocalityTest extends LocalityTestBase {
     }
 
     @Test
-    public void testMultipleRoundSetPartitionLocality() throws FileNotFoundException, InterruptedException, SQLException {
+    public void testMultipleRoundSetPartitionLocality()
+        throws FileNotFoundException, InterruptedException, SQLException {
         final String createTableSql1 =
             "create table t1 (a int) partition by hash(a) partitions 8";
         final String tableName1 = "t1";
@@ -46,15 +52,16 @@ public class AlterLocalityTest extends LocalityTestBase {
         // check information_schema.locality_info
 
         // check show topology
-        List<String> dnListOfDb = getDnListOfDb(dbName, true);
-        List<String> actualDn = getDnListOfTable(dbName, tableName1);
+        List<String> dnListOfDb = getDnListOfDb(tddlConnection, dbName, true);
+        List<String> actualDn = getDnListOfTable(tddlConnection, dbName, tableName1);
         Assert.assertEquals(new HashSet<String>(dnListOfDb), new HashSet<String>(actualDn));
 
         // drop and check again
-        final Map<String, List<String>> topology = DdlStateCheckUtil.getTableTopology(tddlConnection, tableName1);
+        final Map<String, Map<String, String>> topology =
+            DdlStateCheckUtil.getTableTopology(tddlConnection, tableName1);
         Map<String, String> tableToTableGroupMap = DdlStateCheckUtil.getTableToTableGroupMap(tddlConnection, dbName);
-        String p1dn = topology.get("p1").get(0);
-        String p2dn = topology.get("p2").get(0);
+        String p1dn = topology.get("p1").get(TOPOLOGY_DN_ID);
+        String p2dn = topology.get("p2").get(TOPOLOGY_DN_ID);
         String tg = tableToTableGroupMap.get(tableName1);
         // first round
         final String alterLocalityOnce =
@@ -63,14 +70,14 @@ public class AlterLocalityTest extends LocalityTestBase {
 
         DdlStateCheckUtil.waitPlanIdOrSchemaNameFinish(tddlConnection, dbName);
         // wait for rebalance complete
-        final Map<String, List<String>> topologyAfterFirstRound =
+        final Map<String, Map<String, String>> topologyAfterFirstRound =
             DdlStateCheckUtil.getTableTopology(tddlConnection, tableName1);
         Assert.assertEquals("alter tablegroup should make effect for p1 partition ",
-            topologyAfterFirstRound.get("p1").get(0), p2dn);
+            topologyAfterFirstRound.get("p1").get(TOPOLOGY_DN_ID), p2dn);
         for (int i = 2; i <= 8; i++) {
             String pName = String.format("p%s", i);
             Assert.assertEquals("alter tablegroup should make no effect for " + pName + " partition ",
-                topologyAfterFirstRound.get(pName).get(0), topology.get(pName).get(0));
+                topologyAfterFirstRound.get(pName).get(TOPOLOGY_DN_ID), topology.get(pName).get(TOPOLOGY_DN_ID));
         }
 
         // second round
@@ -85,14 +92,14 @@ public class AlterLocalityTest extends LocalityTestBase {
         final String updatePlanState =
             String.format(" update metadb.ddl_plan set state = 'SUCCESS' where plan_id = '%s'", planId);
         JdbcUtil.executeUpdateSuccess(tddlConnection, updatePlanState);
-        final Map<String, List<String>> topologyAfterSecondRound =
+        final Map<String, Map<String, String>> topologyAfterSecondRound =
             DdlStateCheckUtil.getTableTopology(tddlConnection, tableName1);
         Assert.assertEquals("alter tablegroup should not make effect for p1 partition ",
-            topologyAfterSecondRound.get("p1").get(0), p2dn);
+            topologyAfterSecondRound.get("p1").get(TOPOLOGY_DN_ID), p2dn);
         for (int i = 2; i <= 8; i++) {
             String pName = String.format("p%s", i);
             Assert.assertEquals("alter tablegroup should make no effect for " + pName + " partition ",
-                topologyAfterSecondRound.get(pName).get(0), topology.get(pName).get(0));
+                topologyAfterSecondRound.get(pName).get(TOPOLOGY_DN_ID), topology.get(pName).get(TOPOLOGY_DN_ID));
         }
 
         // third round
@@ -100,14 +107,14 @@ public class AlterLocalityTest extends LocalityTestBase {
             String.format("alter tablegroup %s set partitions p1 locality='dn=%s'", tg, p1dn);
         JdbcUtil.executeUpdateSuccess(tddlConnection, alterLocalityThird);
         DdlStateCheckUtil.waitPlanIdOrSchemaNameFinish(tddlConnection, dbName);
-        final Map<String, List<String>> topologyAfterThirdRound =
+        final Map<String, Map<String, String>> topologyAfterThirdRound =
             DdlStateCheckUtil.getTableTopology(tddlConnection, tableName1);
         Assert.assertEquals("alter tablegroup should make effect for p1 partition ",
-            topologyAfterThirdRound.get("p1").get(0), p1dn);
+            topologyAfterThirdRound.get("p1").get(TOPOLOGY_DN_ID), p1dn);
         for (int i = 2; i <= 8; i++) {
             String pName = String.format("p%s", i);
             Assert.assertEquals("alter tablegroup should make no effect for " + pName + " partition ",
-                topologyAfterThirdRound.get(pName).get(0), topology.get(pName).get(0));
+                topologyAfterThirdRound.get(pName).get(TOPOLOGY_DN_ID), topology.get(pName).get(TOPOLOGY_DN_ID));
         }
     }
 
@@ -131,15 +138,16 @@ public class AlterLocalityTest extends LocalityTestBase {
         // check information_schema.locality_info
 
         // check show topology
-        List<String> dnListOfDb = getDnListOfDb(dbName, true);
-        List<String> actualDn = getDnListOfTable(dbName, tableName1);
+        List<String> dnListOfDb = getDnListOfDb(tddlConnection, dbName, true);
+        List<String> actualDn = getDnListOfTable(tddlConnection, dbName, tableName1);
         Assert.assertEquals(new HashSet<String>(dnListOfDb), new HashSet<String>(actualDn));
 
         // drop and check again
-        final Map<String, List<String>> topology = DdlStateCheckUtil.getTableTopology(tddlConnection, tableName1);
+        final Map<String, Map<String, String>> topology =
+            DdlStateCheckUtil.getTableTopology(tddlConnection, tableName1);
         Map<String, String> tableToTableGroupMap = DdlStateCheckUtil.getTableToTableGroupMap(tddlConnection, dbName);
-        String p1dn = topology.get("p1").get(0);
-        String p2dn = topology.get("p2").get(0);
+        String p1dn = topology.get("p1").get(TOPOLOGY_DN_ID);
+        String p2dn = topology.get("p2").get(TOPOLOGY_DN_ID);
         String tg = tableToTableGroupMap.get(tableName1);
         // first round
         final String alterLocalityOnce =
@@ -148,12 +156,12 @@ public class AlterLocalityTest extends LocalityTestBase {
 
         DdlStateCheckUtil.waitPlanIdOrSchemaNameFinish(tddlConnection, dbName);
         // wait for rebalance complete
-        final Map<String, List<String>> topologyAfterFirstRound =
+        final Map<String, Map<String, String>> topologyAfterFirstRound =
             DdlStateCheckUtil.getTableTopology(tddlConnection, tableName1);
         for (int i = 1; i <= 8; i++) {
             String pName = String.format("p%s", i);
             Assert.assertEquals("alter tablegroup should make effect for " + pName + " partition ",
-                topologyAfterFirstRound.get(pName).get(0), p2dn);
+                topologyAfterFirstRound.get(pName).get(TOPOLOGY_DN_ID), p2dn);
         }
 
         // second round
@@ -168,30 +176,28 @@ public class AlterLocalityTest extends LocalityTestBase {
         final String updatePlanState =
             String.format(" update metadb.ddl_plan set state = 'SUCCESS' where plan_id = '%s'", planId);
         JdbcUtil.executeUpdateSuccess(tddlConnection, updatePlanState);
-        final Map<String, List<String>> topologyAfterSecondRound =
+        final Map<String, Map<String, String>> topologyAfterSecondRound =
             DdlStateCheckUtil.getTableTopology(tddlConnection, tableName1);
         for (int i = 1; i <= 8; i++) {
             String pName = String.format("p%s", i);
             Assert.assertEquals("alter tablegroup should make no effect for " + pName + " partition ",
-                topologyAfterSecondRound.get(pName).get(0), p2dn);
+                topologyAfterSecondRound.get(pName).get(TOPOLOGY_DN_ID), p2dn);
         }
-
 
         // third round
         final String alterLocalityThird =
             String.format("alter tablegroup %s set partitions p1 locality='dn=%s'", tg, p1dn);
         JdbcUtil.executeUpdateSuccess(tddlConnection, alterLocalityThird);
         DdlStateCheckUtil.waitPlanIdOrSchemaNameFinish(tddlConnection, dbName);
-        final Map<String, List<String>> topologyAfterThirdRound =
+        final Map<String, Map<String, String>> topologyAfterThirdRound =
             DdlStateCheckUtil.getTableTopology(tddlConnection, tableName1);
         Assert.assertEquals("alter tablegroup should make effect for p1 partition ",
-            topologyAfterThirdRound.get("p1").get(0), p1dn);
+            topologyAfterThirdRound.get("p1").get(TOPOLOGY_DN_ID), p1dn);
         for (int i = 1; i <= 8; i++) {
             String pName = String.format("p%s", i);
             Assert.assertEquals("alter tablegroup should make effect for " + pName + " partition ",
-                topologyAfterThirdRound.get(pName).get(0), p1dn);
+                topologyAfterThirdRound.get(pName).get(TOPOLOGY_DN_ID), p1dn);
         }
     }
-
 
 }

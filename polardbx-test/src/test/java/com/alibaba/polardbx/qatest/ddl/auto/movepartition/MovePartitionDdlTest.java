@@ -57,7 +57,7 @@ public class MovePartitionDdlTest extends MovePartitionBaseTest {
             + "v_a bigint GENERATED ALWAYS AS (b + 1) virtual,"
             + "v_b bigint GENERATED ALWAYS AS (c) virtual,"
             + "v_c timestamp GENERATED ALWAYS AS (c) virtual"
-            + ") ";
+            + ") CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci";
 
     private static final String INSERT_SQL = "insert into `%s` (b, c) values (1, now())";
 
@@ -117,7 +117,9 @@ public class MovePartitionDdlTest extends MovePartitionBaseTest {
     public void test01AlterTableMovePartitionToMultipleDnTest() throws Exception {
         String tableName1 = "alterTableMovePartitionTest_" + RandomUtils.getStringBetween(3, 5);
         useDb(tddlConnection, DATABASE_NAME);
-        String sql = String.format("create table %s(a int, b int) partition by hash(a,b) partitions 8", tableName1);
+        String sql = String.format(
+            "create table %s(a int, b int) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci partition by hash(a,b) partitions 8",
+            tableName1);
         JdbcUtil.executeSuccess(tddlConnection, sql);
         String tg1 = getTableGroupByTableName(tableName1, tddlConnection);
         Map<String, String> partInstIdMap = getPartInstIdMap(tableName1, tddlConnection);
@@ -140,7 +142,9 @@ public class MovePartitionDdlTest extends MovePartitionBaseTest {
         String tableName1 = "alterTableMovePartitionTest_" + RandomUtils.getStringBetween(3, 5);
         String tableName2 = "alterTableMovePartitionTest_" + RandomUtils.getStringBetween(3, 5);
         useDb(tddlConnection, DATABASE_NAME);
-        String sql = String.format("create table %s(a int, b int) partition by hash(a,b) partitions 2", tableName1);
+        String sql = String.format(
+            "create table %s(a int, b int) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci partition by hash(a,b) partitions 2",
+            tableName1);
         JdbcUtil.executeSuccess(tddlConnection, sql);
         sql = String.format("create table %s like %s", tableName2, tableName1);
         JdbcUtil.executeSuccess(tddlConnection, sql);
@@ -167,7 +171,7 @@ public class MovePartitionDdlTest extends MovePartitionBaseTest {
             + "    `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '消息落库时间',\n"
             + "    `update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '消息更新时间',\n"
             + "    PRIMARY KEY (`create_time`)\n"
-            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4\n"
+            + ") ENGINE = InnoDB CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci\n"
             + "PARTITION BY KEY(`id`)\n"
             + "PARTITIONS 16\n"
             + "LOCAL PARTITION BY RANGE (create_time)\n"
@@ -205,13 +209,19 @@ public class MovePartitionDdlTest extends MovePartitionBaseTest {
         String tableName2 = "alterTableMovePartitionExternalTest2_" + RandomUtils.getStringBetween(3, 5);
         String tableName3 = "alterTableMovePartitionExternalTest3_" + RandomUtils.getStringBetween(3, 5);
         useDb(tddlConnection, DATABASE_NAME);
-        String sql = String.format("create table %s(a int, b int) partition by hash(a,b) partitions 8", tableName1);
+        String sql = String.format(
+            "create table %s(a int, b int) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci partition by hash(a,b) partitions 8",
+            tableName1);
         JdbcUtil.executeSuccess(tddlConnection, sql);
 
-        sql = String.format("create table %s(a int, b int) partition by hash(a,b) partitions 16", tableName2);
+        sql = String.format(
+            "create table %s(a int, b int) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci partition by hash(a,b) partitions 16",
+            tableName2);
         JdbcUtil.executeSuccess(tddlConnection, sql);
 
-        sql = String.format("create table %s(a int, b int) partition by hash(a,b) partitions 24", tableName3);
+        sql = String.format(
+            "create table %s(a int, b int) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci partition by hash(a,b) partitions 24",
+            tableName3);
         JdbcUtil.executeSuccess(tddlConnection, sql);
         String tg1 = getTableGroupByTableName(tableName1, tddlConnection);
         Map<String, String> tableToTableGroupName =

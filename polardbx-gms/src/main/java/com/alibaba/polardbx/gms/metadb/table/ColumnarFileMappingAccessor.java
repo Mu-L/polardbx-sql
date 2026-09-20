@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.gms.metadb.table;
 
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
@@ -36,7 +37,7 @@ import java.util.Map;
 import static com.alibaba.polardbx.gms.metadb.GmsSystemTables.COLUMNAR_FILE_MAPPING;
 
 public class ColumnarFileMappingAccessor extends AbstractAccessor {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
     private static final String COLUMNAR_FILE_MAPPING_TABLE = wrap(COLUMNAR_FILE_MAPPING);
 
     private static final String INSERT_FILE_MAPPING_RECORD = "insert into " + COLUMNAR_FILE_MAPPING_TABLE
@@ -91,6 +92,7 @@ public class ColumnarFileMappingAccessor extends AbstractAccessor {
 
     public List<ColumnarFileMappingRecord> queryByPartition(String logicalSchema, String tableId,
                                                             String logicalPartition) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(4);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, logicalSchema);
@@ -104,11 +106,17 @@ public class ColumnarFileMappingAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_FILE_MAPPING_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<ColumnarFileMappingRecord> queryByFileId(
         String logicalSchema, String tableId, String logicalPartition, int columnarFileId) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(4);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, logicalSchema);
@@ -123,11 +131,17 @@ public class ColumnarFileMappingAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_FILE_MAPPING_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<ColumnarFileMappingRecord> queryByFileIdList(Collection<String> columnarFileIds,
                                                              String schema, long table) {
+        long startMillis = System.currentTimeMillis();
         try {
             String fileIds = String.join(",", columnarFileIds);
             String sql = String.format(QUERY_BY_FILE_ID_LIST, fileIds, schema, table);
@@ -138,11 +152,17 @@ public class ColumnarFileMappingAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_FILE_MAPPING_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public int updateLevelByFileId(int level, String logicalSchema, String tableId, String logicalPartition,
                                    int columnarFileId) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(5);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setInt, level);
@@ -157,6 +177,11 @@ public class ColumnarFileMappingAccessor extends AbstractAccessor {
             LOGGER.error("Failed to update the system table level" + COLUMNAR_FILE_MAPPING_TABLE, e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "update",
                 COLUMNAR_FILE_MAPPING_TABLE, e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 

@@ -394,6 +394,9 @@ message Footer {
   // information about the encryption in this file
   optional Encryption encryption = 10;
   optional CalendarKind calendar = 11;
+
+  optional RedundantMetadata redundant_metadata = 1001;
+  optional BinaryMetadata binary_metadata = 1002;
 }
 
 enum CompressionKind {
@@ -465,4 +468,47 @@ message FileTail {
   optional Footer footer = 2;
   optional uint64 fileLength = 3;
   optional uint64 postscriptLength = 4;
+}
+
+message RowIndexWithColumn {
+  required uint32 column = 1;
+  required RowIndex row_index = 2;
+}
+
+message BinaryRowIndex {
+  required bytes binaryEntry = 1;
+}
+
+message BinaryRowIndexWithColumn {
+  required uint32 column = 1;
+  required bytes binaryEntry = 2;
+}
+
+message StripeFooterWithId {
+  required uint32 stripe = 1;
+  required StripeFooter stripe_footer = 2;
+}
+
+message BinaryMetadata {
+  required uint32 stripe_size = 1;
+  repeated bytes streams = 2; // list[stripe_id]-> streamsList= [stream {long (column,kind), long length}]
+  repeated bytes column_encodings = 3; // list[column]->column_encodings[stripe_id]=column_encodings {int (kind, bloomEncoding), int dictionarySize}
+  repeated string writerTimeZones = 4; // list[stripe_id] -> writerTimeZone string
+
+  required sint32 total_row_group_count = 5;
+  repeated sint32 accumulated_row_group_count_per_stripe = 6;
+  repeated bytes binary_positions = 7; // list[col_id] -> binary positions of (stripe_id, rg_id)
+  repeated bytes column_position_unit_size = 8; // list[col_id][stripe_id] -> binary positions address of (stripe_id, rg_id)
+  repeated bytes binary_statistics = 9; // list[col_id] -> binary statistics of (stripe_id, rg_id)
+  repeated bytes binary_statistics_null_bitmap = 10; // list[col_id] -> binary statistics null bitmap of (stripe_id, rg_id)
+  repeated sint32 column_statistics_type = 11; // list[col_id] -> binary statistics type of (stripe_id, rg_id)
+}
+
+message RedundantStripeMetadata {
+  repeated RowIndexWithColumn row_index = 1; // RowIndexes for all column
+  required StripeFooterWithId stripe_footer = 2; // StripeFooter
+}
+
+message RedundantMetadata {
+  repeated RedundantStripeMetadata stripes = 1; // 按stripe顺序存储
 }

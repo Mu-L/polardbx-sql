@@ -20,6 +20,7 @@ import com.alibaba.polardbx.common.TddlConstants;
 import com.alibaba.polardbx.common.exception.NotSupportException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
 import com.alibaba.polardbx.druid.sql.ast.SQLIndex;
@@ -38,6 +39,7 @@ import com.alibaba.polardbx.gms.tablegroup.TableGroupRecord;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.CreateTablePreparedData;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.gsi.CreateGlobalIndexPreparedData;
+import com.alibaba.polardbx.optimizer.partition.PartitionByDefinition;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfoUtil;
 import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
@@ -61,6 +63,7 @@ import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -163,8 +166,17 @@ public class CreatePartitionGlobalIndexBuilder extends CreateGlobalIndexBuilder 
                 }
             }
         } else {
+            boolean isShuffle =
+                executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_RANDOM_PARTITION_PLACEMENT);
+            PartitionByDefinition partByDef = indexPartInfo.getPartitionBy();
+            PartitionByDefinition subPartByDef = partByDef.getSubPartitionBy();
+            if (isShuffle && subPartByDef != null && subPartByDef.isUseSubPartTemplate() && (
+                subPartByDef.getStrategy().isRange()
+                    || subPartByDef.getStrategy().isList())) {
+                //do not align with target table
+                return;
+            }
             boolean partInfoEqual = partitionInfoEqual(indexPartInfo, targetPartInfo);
-            ;
             if (partInfoEqual && targetPartInfo.getTableGroupId() == TableGroupRecord.INVALID_TABLE_GROUP_ID
                 && indexPartInfo.getTableGroupId() == TableGroupRecord.INVALID_TABLE_GROUP_ID) {
                 physicalLocationAlignWithPrimaryTable(targetPartInfo, indexPartInfo);

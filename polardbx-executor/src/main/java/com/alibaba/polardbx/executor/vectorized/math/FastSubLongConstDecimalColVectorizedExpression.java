@@ -21,6 +21,7 @@ import com.alibaba.polardbx.common.datatype.DecimalStructure;
 import com.alibaba.polardbx.common.datatype.DecimalTypeBase;
 import com.alibaba.polardbx.common.datatype.FastDecimalUtils;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.MathUtils;
 import com.alibaba.polardbx.executor.chunk.DecimalBlock;
 import com.alibaba.polardbx.executor.chunk.MutableChunk;
@@ -52,9 +53,11 @@ public class FastSubLongConstDecimalColVectorizedExpression extends AbstractVect
     private final long left;
     private final boolean useLeftWithScale;
     private final long leftWithScale;
+    private boolean enableDecimal128;
 
     public FastSubLongConstDecimalColVectorizedExpression(int outputIndex, VectorizedExpression[] children) {
         super(DataTypes.DecimalType, outputIndex, children);
+        this.enableDecimal128 = DynamicConfig.getInstance().enableDecimal128();
         Object leftValue = ((LiteralVectorizedExpression) children[0]).getConvertedValue();
         if (leftValue == null) {
             leftIsNull = true;
@@ -191,6 +194,11 @@ public class FastSubLongConstDecimalColVectorizedExpression extends AbstractVect
         }
         if (!isOverflowDec64) {
             return true;
+        }
+
+        if (!enableDecimal128) {
+            outputVectorSlot.deallocateDecimal64();
+            return false;
         }
 
         outputVectorSlot.allocateDecimal128();

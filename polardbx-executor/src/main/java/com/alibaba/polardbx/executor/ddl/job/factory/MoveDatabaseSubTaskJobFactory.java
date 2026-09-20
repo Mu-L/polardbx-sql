@@ -18,26 +18,30 @@ package com.alibaba.polardbx.executor.ddl.job.factory;
 
 import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.ddl.job.converter.DdlJobDataConverter;
 import com.alibaba.polardbx.executor.ddl.job.converter.PhysicalPlanData;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.AddLogicalForeignKeyTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.CreatePhyTableWithRollbackCheckTask;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.DropLogicalForeignKeyTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.MoveDatabaseAddMetaTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.SubJobTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
-import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ComplexTaskMetaManager;
-import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.PhyDdlTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.MoveDatabaseItemPreparedData;
+import com.alibaba.polardbx.optimizer.utils.ForeignKeyUtils;
 import com.google.common.collect.ImmutableList;
 import org.apache.calcite.rel.core.DDL;
 import org.apache.commons.lang.StringUtils;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * Created by luoyanxin.
@@ -90,16 +94,13 @@ public class MoveDatabaseSubTaskJobFactory extends DdlJobFactory {
         //1. validate
         //taskList.add(validateTask);
 
-        //1. add logical foreign key
-        DdlTask addLogicalForeignKeyTask = getPushDownForeignKeysTask(schemaName, tableName, true);
-        taskList.add(addLogicalForeignKeyTask);
-
         //2. create physical table
         //2.1 insert meta to complex_task_outline
         taskList.add(addMetaTask);
         //2.2 create partitioned physical table
         PhysicalPlanData physicalPlanData =
-            DdlJobDataConverter.convertToPhysicalPlanData(tableTopology, phyDdlTableOperations, executionContext);
+            DdlJobDataConverter.convertToPhysicalPlanData(tableTopology, phyDdlTableOperations, true, false,
+                executionContext);
         DdlTask phyDdlTask =
             new CreatePhyTableWithRollbackCheckTask(schemaName, physicalPlanData.getLogicalTableName(),
                 physicalPlanData, sourceTableTopology);
@@ -123,15 +124,11 @@ public class MoveDatabaseSubTaskJobFactory extends DdlJobFactory {
         //3.2 status: CREATING -> DELETE_ONLY -> WRITE_ONLY -> WRITE_REORG -> READY_TO_PUBLIC
         taskList.addAll(bringUpNewPartitions);
 
-        // drop logical foreign key
-        DdlTask dropLogicalForeignKeyTask = getPushDownForeignKeysTask(schemaName, tableName, false);
-        taskList.add(dropLogicalForeignKeyTask);
-
         //todo(ziyang) cdc ddl mark task
 
         final ExecutableDdlJob executableDdlJob = new ExecutableDdlJob();
         executableDdlJob.addSequentialTasks(taskList);
-        executableDdlJob.labelAsHead(addLogicalForeignKeyTask);
+        executableDdlJob.labelAsHead(taskList.get(0));
         if (!stayAtCreating) {
             executableDdlJob.labelAsTail(bringUpNewPartitions.get(bringUpNewPartitions.size() - 1));
         } else {
@@ -150,17 +147,6 @@ public class MoveDatabaseSubTaskJobFactory extends DdlJobFactory {
 
     @Override
     protected void sharedResources(Set<String> resources) {
-    }
-
-    DdlTask getPushDownForeignKeysTask(String schemaName, String tableName, boolean add) {
-        TableMeta tableMeta = OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(tableName);
-        List<ForeignKeyData> pushDownForeignKeys = new ArrayList<>(tableMeta.getForeignKeys().values());
-
-        if (add) {
-            return new AddLogicalForeignKeyTask(schemaName, tableName, pushDownForeignKeys);
-        } else {
-            return new DropLogicalForeignKeyTask(schemaName, tableName, pushDownForeignKeys);
-        }
     }
 
     public List<DdlTask> getBackfillTaskEdgeNodes() {

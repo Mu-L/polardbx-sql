@@ -20,6 +20,7 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.ExecutorMode;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
+import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.alibaba.polardbx.optimizer.core.expression.calc.Aggregator;
 import com.alibaba.polardbx.optimizer.core.expression.calc.aggfunctions.AvgV2;
 import com.alibaba.polardbx.optimizer.core.expression.calc.aggfunctions.BitAnd;
@@ -103,7 +104,19 @@ public abstract class AggregateUtils {
                 break;
             }
             case SUM: {
-                aggList.add(new SumV2(index, isDistinct, memoryAllocator, filterArg));
+                // Change context:
+                // - Before: SumV2 got no return type from the plan; Aggregator.aggregate() lazily
+                //   inferred it from the first input value (DataTypeUtil.getTypeOfObject). When CN
+                //   aggregated raw tinyint rows directly (columnar scan / agg push-down disabled),
+                //   the accumulator became ByteType and sums > 127 threw ERR_CONVERTOR (AONE-85360670).
+                // - Path impact: all executors building aggregators here (SortAgg/HashAgg fallback/
+                //   window/hash-group-join). Min/Max/other aggs keep their existing lazy inference;
+                //   the HashAgg DecimalSumAccumulator/LongSumAccumulator main path is untouched.
+                // - Capability regression: None. The type equals the plan SUM type (DECIMAL for
+                //   integer inputs, MySQL semantics), so accumulation stays in Decimal and the
+                //   existing output conversion keeps results identical.
+                DataType returnType = DataTypeUtil.calciteToDrdsType(call.getType());
+                aggList.add(new SumV2(index, isDistinct, memoryAllocator, filterArg, returnType));
                 break;
             }
             case SUM0: {

@@ -35,6 +35,30 @@ public final class Assert {
         assertTrue(expression, null);
     }
 
+    public static void assertEqual(String expected, String actual) {
+        if (TStringUtil.isEmpty(expected) || TStringUtil.isEmpty(actual)) {
+            throw new TddlRuntimeException(ErrorCode.ERR_ASSERT_NULL, "expected:" + expected + ", actual:" + actual);
+        }
+        if (!expected.equalsIgnoreCase(actual)) {
+            throw new TddlRuntimeException(ErrorCode.ERR_ASSERT_NULL, "expected:" + expected + ", actual:" + actual);
+        }
+    }
+
+    public static void assertEqual(int expected, int actual) {
+        if (expected != actual) {
+            throw new TddlRuntimeException(ErrorCode.ERR_ASSERT_NULL, "expected:" + expected + ", actual:" + actual);
+        }
+    }
+
+    public static void assertEqual(boolean expected, boolean actual) {
+        if (expected != actual) {
+            throw new TddlRuntimeException(ErrorCode.ERR_ASSERT_NULL, "expected:" + expected + ", actual:" + actual);
+        }
+    }
+
+    /**
+     * 确保表达式为真，否则抛出<code>TddlRuntimeException + ErrorCode.ERR_ASSERT_TRUE</code>
+     */
     public static void assertTrue(boolean expression, String message) {
         if (!expression) {
             throw new TddlRuntimeException(ErrorCode.ERR_ASSERT_TRUE, message);

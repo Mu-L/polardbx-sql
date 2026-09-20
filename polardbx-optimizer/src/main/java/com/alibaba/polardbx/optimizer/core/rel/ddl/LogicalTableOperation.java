@@ -169,6 +169,14 @@ public class LogicalTableOperation extends BaseDdlOperation {
                 specialDefaultValueFlags.put(columnMeta.getName(), ColumnsRecord.FLAG_LOGICAL_GENERATED_COLUMN);
             }
         }
+
+        // Add externalized column flags for GSI covering columns
+        for (ColumnMeta columnMeta : primaryTableMeta.getAllColumns()) {
+            if (columnMeta.isExternalizedColumn() && columnMeta.getMappingName() != null) {
+                specialDefaultValues.put(columnMeta.getMappingName(), "0");
+                specialDefaultValueFlags.put(columnMeta.getMappingName(), ColumnsRecord.FLAG_EXTERNALIZED_COLUMN);
+            }
+        }
         indexTablePreparedData.setSpecialDefaultValues(specialDefaultValues);
         indexTablePreparedData.setSpecialDefaultValueFlags(specialDefaultValueFlags);
         preparedData.setIndexTablePreparedData(indexTablePreparedData);

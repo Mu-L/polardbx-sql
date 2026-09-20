@@ -39,17 +39,12 @@ public class TrxLookupSet {
      * Map: pair(group name, DN connection id) -> transaction id
      * Different group-connection pair can be mapped to the same transaction id
      */
-    private final Map<GroupConnPair, Long> groupConn2Tran;
+    private final Map<GroupConnPair, Long> groupConn2Tran = new HashMap<>();
 
     /**
      * transaction id -> transaction
      */
-    private final Map<Long, Transaction> transactionMap;
-
-    public TrxLookupSet() {
-        groupConn2Tran = new HashMap<>();
-        transactionMap = new HashMap<>();
-    }
+    private final Map<Long, Transaction> transactionMap = new HashMap<>();
 
     /**
      * Update transaction with transaction id.
@@ -155,7 +150,7 @@ public class TrxLookupSet {
         private Long startTime;
         private boolean ddl;
         /**
-         * group name -> local transaction
+         * group name -> local transaction list
          */
         private final Map<String, LocalTransaction> localTransactions;
 

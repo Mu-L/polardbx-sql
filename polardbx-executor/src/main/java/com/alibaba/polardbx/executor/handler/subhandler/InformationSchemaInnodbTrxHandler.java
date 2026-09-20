@@ -24,8 +24,8 @@ import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.executor.utils.transaction.TransactionUtils;
 import com.alibaba.polardbx.executor.utils.transaction.TrxLookupSet;
 import com.alibaba.polardbx.group.jdbc.TGroupDataSource;
-import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.utils.OptimizerHelper;
 import com.alibaba.polardbx.optimizer.view.InformationSchemaInnodbTrx;
 import com.alibaba.polardbx.optimizer.view.VirtualView;
 
@@ -56,7 +56,7 @@ public class InformationSchemaInnodbTrxHandler extends BaseVirtualViewSubClassHa
     @Override
     public Cursor handle(VirtualView virtualView, ExecutionContext executionContext, ArrayResultCursor cursor) {
         Set<Long> processedTranId = new HashSet<>();
-        Set<String> schemaNames = OptimizerContext.getActiveSchemaNames();
+        List<String> schemaNames = OptimizerHelper.getServerConfigManager().getLoadedSchemas();
         TrxLookupSet lookupSet = TransactionUtils.getTrxLookupSet(schemaNames);
 
         Map<String, List<TGroupDataSource>> instId2GroupList = ExecUtils.getInstId2GroupList(schemaNames);
@@ -116,8 +116,7 @@ public class InformationSchemaInnodbTrxHandler extends BaseVirtualViewSubClassHa
                         cursor.addRow(new Object[] {
                             Long.toHexString(tranId),
                             trx_state,
-                            lookupSet.getStartTime(tranId) != null ?
-                                new Timestamp(lookupSet.getStartTime(tranId)) : trx_started,
+                            calTrxStartTime(lookupSet, tranId, trx_started),
                             trx_requested_lock_id,
                             trx_wait_started,
                             trx_weight,
@@ -150,6 +149,14 @@ public class InformationSchemaInnodbTrxHandler extends BaseVirtualViewSubClassHa
         }
 
         return cursor;
+    }
+
+    static Timestamp calTrxStartTime(TrxLookupSet lookupSet, Long tranId, Timestamp trx_started) {
+        if (lookupSet.getStartTime(tranId) != null && lookupSet.getStartTime(tranId) > 0) {
+            return new Timestamp(lookupSet.getStartTime(tranId));
+        } else {
+            return trx_started;
+        }
     }
 
 }

@@ -24,7 +24,7 @@ on pg.partition_name=tp.part_name
 and tp.part_level=2 and tp.table_name='mylist_tbl_test'
 where pg.tg_id=(select group_id from metadb.table_partitions where table_name='mylist_tbl_test' and part_level in (0))
 order by name;
-is_pg_id_equal,name
+is_pg_id_equal,part_name
 1,p1sp1
 1,p2sp1
 1,p3sp1

@@ -14,7 +14,16 @@
 
 import React from "react";
 
-import {getProgressBarPercentage, getProgressBarTitle, getQueryStateColor, isQueryEnded} from "../utils";
+import {
+    getProgressBarPercentage,
+    getProgressBarTitle,
+    getQueryStateColor,
+    isQueryEnded,
+    getFormattedUrl,
+    getFormattedHtmlHrefUrl,
+    getFormattedKilledUrl,
+    getFormattedJsonUrl
+} from "../utils";
 
 export class QueryHeader extends React.Component {
     constructor(props) {
@@ -55,7 +64,7 @@ export class QueryHeader extends React.Component {
                     </td>
                     <td>
                         <a onClick={() => $.ajax({
-                            url: '/v1/query/' + query.queryId + '/killed',
+                            url: getFormattedKilledUrl(query.queryId),
                             type: 'PUT',
                             data: "Killed via web UI"
                         })} className="btn btn-warning"
@@ -72,10 +81,11 @@ export class QueryHeader extends React.Component {
     renderTab(path, name) {
         const queryId = this.props.query.queryId;
         if (window.location.pathname.includes(path)) {
-            return <a href={path + '?' + queryId} className="btn btn-info navbar-btn nav-disabled">{name}</a>;
+            return <a href={getFormattedHtmlHrefUrl(path + '?' + queryId)}
+                      className="btn btn-info navbar-btn nav-disabled">{name}</a>;
         }
 
-        return <a href={path + '?' + queryId} className="btn btn-info navbar-btn">{name}</a>;
+        return <a href={getFormattedHtmlHrefUrl(path + '?' + queryId)} className="btn btn-info navbar-btn">{name}</a>;
     }
 
     render() {
@@ -105,7 +115,7 @@ export class QueryHeader extends React.Component {
                                     &nbsp;
                                     {this.renderTab("timeline.html", "Splits")}
                                     &nbsp;
-                                    <a href={"/v1/query/" + query.queryId + "?pretty"}
+                                    <a href={getFormattedJsonUrl(query.queryId)}
                                        className="btn btn-info navbar-btn" target="_blank">JSON</a>
                                 </td>
                             </tr>

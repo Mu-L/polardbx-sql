@@ -45,6 +45,7 @@ import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.PhyDdlTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.MoveDatabaseItemPreparedData;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.data.MoveDatabasePreparedData;
 import com.google.common.collect.ImmutableList;
 import com.mysql.cj.polarx.protobuf.PolarxPhysicalBackfill;
 import org.apache.calcite.rel.core.DDL;
@@ -70,8 +71,10 @@ public class MoveDatabaseChangeSetJobFactory extends MoveDatabaseSubTaskJobFacto
     protected List<List<DdlTask>> physicalyTaskPipeLine = new ArrayList<>();
     protected final Map<String, String> sourceAndTarDnMap;
     protected final Map<String, Pair<String, String>> storageInstAndUserInfos;
+    protected final MoveDatabasePreparedData parentPreparedData;
 
-    public MoveDatabaseChangeSetJobFactory(DDL ddl, MoveDatabaseItemPreparedData preparedData,
+    public MoveDatabaseChangeSetJobFactory(DDL ddl, MoveDatabasePreparedData parentPreparedData,
+                                           MoveDatabaseItemPreparedData preparedData,
                                            List<PhyDdlTableOperation> phyDdlTableOperations,
                                            List<PhyDdlTableOperation> discardTableSpaceOperations,
                                            Map<String, String> sourceAndTarDnMap,
@@ -93,6 +96,7 @@ public class MoveDatabaseChangeSetJobFactory extends MoveDatabaseSubTaskJobFacto
         this.storageInstAndUserInfos = storageInstAndUserInfos;
         this.sourceAndTarDnMap = sourceAndTarDnMap;
         this.usePhysicalBackfill = usePhysicalBackfill;
+        this.parentPreparedData = parentPreparedData;
     }
 
     @Override
@@ -119,7 +123,8 @@ public class MoveDatabaseChangeSetJobFactory extends MoveDatabaseSubTaskJobFacto
         taskList.add(addMetaTask);
         //2.2 create partitioned physical table
         PhysicalPlanData physicalPlanData =
-            DdlJobDataConverter.convertToPhysicalPlanData(tableTopology, phyDdlTableOperations, executionContext);
+            DdlJobDataConverter.convertToPhysicalPlanData(tableTopology, phyDdlTableOperations, true, false,
+                executionContext);
         DdlTask phyDdlTask =
             new CreatePhyTableWithRollbackCheckTask(schemaName, physicalPlanData.getLogicalTableName(),
                 physicalPlanData, sourceTableTopology);
@@ -181,7 +186,7 @@ public class MoveDatabaseChangeSetJobFactory extends MoveDatabaseSubTaskJobFacto
         boolean healthyCheck =
             executionContext.getParamManager().getBoolean(ConnectionParams.PHYSICAL_BACKFILL_STORAGE_HEALTHY_CHECK);
 
-        long totalDataSize = 0l;
+        long totalDataSize = 0L;
         if (usePhysicalBackfill) {
             for (Map.Entry<String, Set<String>> entry : sourceTableTopology.entrySet()) {
                 String srcGroupName = entry.getKey();
@@ -238,8 +243,12 @@ public class MoveDatabaseChangeSetJobFactory extends MoveDatabaseSubTaskJobFacto
                     } else {
                         temPhyPartNames.addAll(phyPartNames);
                     }
+                    if (parentPreparedData.getTempJobId() == null) {
+                        parentPreparedData.setTempJobId(ID_GENERATOR.nextId());
+                    }
                     PolarxPhysicalBackfill.GetFileInfoOperator fileInfoOperator =
-                        PhysicalBackfillUtils.checkFileExistence(srcDnUserAndPasswd, srcDbAndGroup.getKey(),
+                        PhysicalBackfillUtils.checkFileExistence(parentPreparedData.getTempJobId(),
+                            srcDnUserAndPasswd, srcDbAndGroup.getKey(),
                             phyTb.toLowerCase(),
                             temPhyPartNames,
                             hasNoPhyPart,
@@ -357,10 +366,12 @@ public class MoveDatabaseChangeSetJobFactory extends MoveDatabaseSubTaskJobFacto
         return executableDdlJob;
     }
 
+    @Override
     public List<DdlTask> getBackfillTaskEdgeNodes() {
         return backfillTaskEdgeNodes;
     }
 
+    @Override
     public List<List<DdlTask>> getPhysicalyTaskPipeLine() {
         return physicalyTaskPipeLine;
     }

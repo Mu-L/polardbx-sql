@@ -39,7 +39,8 @@ public class CclRuleRecord implements SystemTableRecord {
     public static final int DEFAULT_QUEUE_SIZE = 0;
     public static final int DEFAULT_WAIT_TIMEOUT = 600;
     public static final int DEFAULT_FAST_MATCH = 1;
-    public static final int DEFAULT_TRIGGER_PRIORITY = -1;
+    public static final int DEFAULT_DRY_RUN = 0;
+    public static final int DEFAULT_BLOCKER_PRIORITY = -1;
     public static final int DEFAULT_LIGHT_WAIT = 0;
 
     public static final int THREAD_WAIT = 0;
@@ -62,8 +63,9 @@ public class CclRuleRecord implements SystemTableRecord {
     public int waitTimeout;
     public int fastMatch;
     public int lightWait;
+    public int dryRun;
 
-    public int triggerPriority;
+    public int blockerPriority;
 
     public Date gmtCreated;
     public Date gmtUpdated;
@@ -86,8 +88,9 @@ public class CclRuleRecord implements SystemTableRecord {
         this.priority = rs.getInt("priority");
         this.waitTimeout = rs.getInt("wait_timeout");
         this.fastMatch = rs.getInt("fast_match");
+        this.dryRun = rs.getInt("dry_run");
         this.lightWait = rs.getInt("light_wait");
-        this.triggerPriority = rs.getInt("trigger_priority");
+        this.blockerPriority = rs.getInt("blocker_priority");
         this.priority = rs.getInt("priority");
         this.gmtCreated = rs.getTimestamp("gmt_created");
         this.gmtUpdated = rs.getTimestamp("gmt_updated");
@@ -95,7 +98,7 @@ public class CclRuleRecord implements SystemTableRecord {
     }
 
     public Map<Integer, ParameterContext> buildParams() {
-        Map<Integer, ParameterContext> params = new HashMap<>(18);
+        Map<Integer, ParameterContext> params = new HashMap<>(19);
         int index = 0;
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.id);
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.sqlType);
@@ -112,8 +115,9 @@ public class CclRuleRecord implements SystemTableRecord {
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, this.queueSize);
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, this.waitTimeout);
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, this.fastMatch);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, this.dryRun);
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, this.lightWait);
-        MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, this.triggerPriority);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setInt, this.blockerPriority);
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, InstIdUtil.getInstId());
         return params;
     }
@@ -136,8 +140,9 @@ public class CclRuleRecord implements SystemTableRecord {
         cclRuleRecord.priority = this.priority;
         cclRuleRecord.waitTimeout = this.waitTimeout;
         cclRuleRecord.fastMatch = this.fastMatch;
+        cclRuleRecord.dryRun = this.dryRun;
         cclRuleRecord.lightWait = this.lightWait;
-        cclRuleRecord.triggerPriority = this.triggerPriority;
+        cclRuleRecord.blockerPriority = this.blockerPriority;
         cclRuleRecord.gmtCreated = this.gmtCreated;
         cclRuleRecord.gmtUpdated = this.gmtUpdated;
         return cclRuleRecord;

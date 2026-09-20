@@ -23,7 +23,7 @@ public class DriverRuntimeStatisticsUpdaterTest {
         statisticsUpdater.finishPending();
 
         // Check the costs and counts
-        DriverContext.DriverRuntimeStatistics stats = statisticsUpdater.build();
+        DriverContext.DriverRuntimeStatistics stats = statisticsUpdater.build(0, 0, 0, "");
         assertTrue("Pending cost should match expected", stats.getPendingCost() > 100);
         assertEquals("Pending count should be 1", 1, stats.getPendingCount());
         assertEquals("Running count should be 0", 0, stats.getRunningCount());
@@ -37,7 +37,7 @@ public class DriverRuntimeStatisticsUpdaterTest {
         statisticsUpdater.finishRunning();
 
         // Check the costs and counts
-        DriverContext.DriverRuntimeStatistics stats = statisticsUpdater.build();
+        DriverContext.DriverRuntimeStatistics stats = statisticsUpdater.build(0, 0, 0, "");
         assertTrue("Running cost should match expected", 200 < stats.getRunningCost());
         assertEquals("Running count should be 1", 1, stats.getRunningCount());
         assertEquals("Pending count should be 0", 0, stats.getPendingCount());
@@ -51,7 +51,7 @@ public class DriverRuntimeStatisticsUpdaterTest {
         statisticsUpdater.finishBlocked();
 
         // Check the costs and counts
-        DriverContext.DriverRuntimeStatistics stats = statisticsUpdater.build();
+        DriverContext.DriverRuntimeStatistics stats = statisticsUpdater.build(0, 0, 0, "");
         assertTrue("Blocked cost should match expected", 150 > stats.getBlockedCost());
         assertEquals("Blocked count should be 1", 1, stats.getBlockedCount());
         assertEquals("Running count should be 0", 0, stats.getRunningCount());
@@ -73,7 +73,7 @@ public class DriverRuntimeStatisticsUpdaterTest {
         statisticsUpdater.finishRunning();
 
         // Check the costs and counts
-        DriverContext.DriverRuntimeStatistics stats = statisticsUpdater.build();
+        DriverContext.DriverRuntimeStatistics stats = statisticsUpdater.build(0, 0, 0, "");
         assertTrue("Pending cost should match expected", 50 < stats.getPendingCost());
         assertTrue("Blocked cost should match expected", 100 > stats.getBlockedCost());
         assertTrue("Running cost should match expected", 200 < stats.getRunningCost());

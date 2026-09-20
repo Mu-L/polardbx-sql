@@ -1,0 +1,97 @@
+## DISABLE_FAST_SQL_PARSER
+
+
+use polardbx;
+drop database if exists test_warning_scan_db2;
+create database if not exists test_warning_scan_db2 mode='auto';
+use test_warning_scan_db2;
+
+
+
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set ENABLE_DROP_TRUNCATE_CCI_PARTITION =true;
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set TTL_DEBUG_WARNING_SCAN_TTLINFO_MODIFIED_TIME='2024-05-27 00:00:00';
+set TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true;
+set TTL_ONLY_WARNING_FOR_THE_LAST_PART=true;
+set TTL_WARNING_DELAY_SECONDS_AFTER_TTL_MODIFIED=1;
+set TTL_DEBUG_WARNING_SCAN_TARGET_SCHEMA='test_warning_scan_db2';
+
+  ## case 0: datetime + day
+drop table if exists ttl_key_t0;
+create table ttl_key_t0(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by key(a)
+partitions 4
+;
+alter table ttl_key_t0 modify ttl set TTL_ENABLE='ON', TTL_EXPR = `b` EXPIRE AFTER 2 DAY TIMEZONE '+08:00',ARCHIVE_TABLE_PRE_ALLOCATE = 7,ARCHIVE_TABLE_POST_ALLOCATE = 2, ARCHIVE_TYPE='ROW';
+create table ttl_key_t0_arc like ttl_key_t0 engine='columnar' archive_mode='ttl';
+show create table ttl_key_t0;
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_key_t0';
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_key_t0;
+
+alter table ttl_key_t0 modify ttl set ARCHIVE_TABLE_PRE_ALLOCATE = 40;
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_key_t0';
+set TTL_ONLY_WARNING_FOR_THE_LAST_PART=false;
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_key_t0;
+
+alter table ttl_key_t0 modify ttl set ARCHIVE_TABLE_PRE_ALLOCATE = 20;
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_key_t0';
+set TTL_ONLY_WARNING_FOR_THE_LAST_PART=false;
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_key_t0;
+
+
+set TTL_DEBUG_CURRENT_DATETIME='2024-07-06 00:00:00';
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_key_t0';
+set TTL_ONLY_WARNING_FOR_THE_LAST_PART=true;
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_key_t0;
+
+drop table if exists ttl_key_t0;
+
+  ## case 1: timestamp + day
+
+drop table if exists ttl_key_t1;
+create table ttl_key_t1(
+a int not null auto_increment,
+b timestamp not null default current_timestamp,
+primary key(a)
+)
+partition by key(a)
+partitions 4
+;
+
+alter table ttl_key_t1 modify ttl set TTL_ENABLE='ON', TTL_EXPR = `b` EXPIRE AFTER 2 DAY TIMEZONE '+08:00',ARCHIVE_TABLE_PRE_ALLOCATE = 7,ARCHIVE_TABLE_POST_ALLOCATE = 2, ARCHIVE_TYPE='ROW';
+create table ttl_key_t1_arc like ttl_key_t1 engine='columnar' archive_mode='ttl';
+show create table ttl_key_t1;
+
+set TTL_ONLY_WARNING_FOR_THE_LAST_PART=true;
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_key_t1;
+
+
+alter table ttl_key_t1 modify ttl set ARCHIVE_TABLE_PRE_ALLOCATE = 40;
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_key_t1';
+set TTL_ONLY_WARNING_FOR_THE_LAST_PART=false;
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_key_t1;
+
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_key_t1';
+set TTL_ONLY_WARNING_FOR_THE_LAST_PART=true;
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_key_t1;
+
+
+set TTL_DEBUG_WARNING_SCAN_TARGET_TABLE='ttl_key_t1';
+set TTL_DEBUG_CURRENT_DATETIME='2024-07-15 00:00:00';
+set TTL_ONLY_WARNING_FOR_THE_LAST_PART=true;
+/*+TDDL:cmd_extra(TTL_ONLY_SCHEDULED_WARNING_SCANNER_TASK=true)*/fire schedule by table ttl_key_t1;
+
+drop table if exists ttl_key_t1;
+
+use polardbx;
+drop database if exists test_warning_scan_db2;
+use polardbx;

@@ -23,15 +23,20 @@ import com.alibaba.polardbx.qatest.ddl.cdc.ImplicitTableGroupChecker;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.collect.ImmutableList;
 import com.google.common.truth.Truth;
+import lombok.SneakyThrows;
+import lombok.extern.slf4j.Slf4j;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Formatter;
 import java.util.List;
 import java.util.Random;
 
+@Slf4j
 public class CreateCciCdcDdlRecordTest extends DDLBaseNewDBTestCase {
     private static final String PRIMARY_TABLE_PREFIX = "create_cci_cdc_prim";
     private static final String INDEX_PREFIX = "create_cci_cdc_cci";
@@ -206,14 +211,39 @@ public class CreateCciCdcDdlRecordTest extends DDLBaseNewDBTestCase {
     }
 
     private String buildExpectedOriginalDdlSql1(String createCciSql) {
-        return implicitTableGroupChecker.attachImplicitTg(getDdlSchema(), primaryTableName, createCciSql);
+        if (supportImplicitTableGroup()) {
+            return implicitTableGroupChecker.attachImplicitTg(getDdlSchema(), primaryTableName, createCciSql);
+        } else {
+            return createCciSql;
+        }
     }
 
     private String buildExpectedOriginalDdlSql2(String indexDef) {
-        return implicitTableGroupChecker.attachImplicitTg(getDdlSchema(), primaryTableName,
-            String.format(
-                CREATE_TABLE_WITH_CCI_ORIGIN_DDL_TMPL,
-                primaryTableName,
-                String.format(indexDef, indexName)));
+        if (supportImplicitTableGroup()) {
+            return implicitTableGroupChecker.attachImplicitTg(getDdlSchema(), primaryTableName,
+                String.format(
+                    CREATE_TABLE_WITH_CCI_ORIGIN_DDL_TMPL,
+                    primaryTableName,
+                    String.format(indexDef, indexName)));
+        } else {
+            return String.format(indexDef, indexName);
+        }
+    }
+
+    @SneakyThrows
+    protected boolean supportImplicitTableGroup() {
+        try (Statement statement = tddlConnection.createStatement()) {
+            ResultSet resultSet = statement.executeQuery(
+                "select param_val from metadb.inst_config where param_key = 'ENABLE_IMPLICIT_TABLE_GROUP'");
+            if (resultSet.next()) {
+                String value = resultSet.getString(1);
+                if (org.apache.commons.lang3.StringUtils.equalsIgnoreCase(value, "false")) {
+                    log.info("ENABLE_IMPLICIT_TABLE_GROUP is false, skip test.");
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 }

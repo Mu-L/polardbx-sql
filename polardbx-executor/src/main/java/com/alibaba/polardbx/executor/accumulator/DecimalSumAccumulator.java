@@ -20,6 +20,9 @@ import com.alibaba.polardbx.common.datatype.Decimal;
 import com.alibaba.polardbx.common.datatype.DecimalBox;
 import com.alibaba.polardbx.common.datatype.DecimalStructure;
 import com.alibaba.polardbx.common.datatype.FastDecimalUtils;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.MathUtils;
 import com.alibaba.polardbx.executor.accumulator.state.DecimalBoxGroupState;
 import com.alibaba.polardbx.executor.chunk.Block;
@@ -30,6 +33,7 @@ import com.alibaba.polardbx.executor.chunk.DecimalBlockBuilder;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DecimalType;
 import com.google.common.annotations.VisibleForTesting;
+import org.openjdk.jol.info.ClassLayout;
 
 import static com.alibaba.polardbx.common.datatype.DecimalTypeBase.E_DEC_DEC128;
 import static com.alibaba.polardbx.common.datatype.DecimalTypeBase.E_DEC_DEC64;
@@ -38,8 +42,10 @@ import static com.alibaba.polardbx.common.datatype.DecimalTypeBase.E_DEC_DEC64;
  * does not support mixed scale input
  */
 public class DecimalSumAccumulator extends AbstractAccumulator {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(DecimalSumAccumulator.class).instanceSize();
     private final DecimalStructure decimalStructure = new DecimalStructure();
 
+    @FieldMemoryCounter(value = false)
     private final DataType[] inputTypes;
     private final DecimalBoxGroupState state;
     private int scale;
@@ -49,6 +55,7 @@ public class DecimalSumAccumulator extends AbstractAccumulator {
      */
     private final long[] results = new long[3];
     private final boolean useFastDecimal;
+    private boolean enableDecimal128 = DynamicConfig.getInstance().enableDecimal128();
 
     public DecimalSumAccumulator(int capacity, DataType inputType) {
         this(capacity, inputType, true);
@@ -61,6 +68,19 @@ public class DecimalSumAccumulator extends AbstractAccumulator {
         this.useFastDecimal = useFastDecimal;
 
         this.state = new DecimalBoxGroupState(capacity, scale);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(decimalStructure)
+            + FastMemoryCounter.sizeOf(state)
+            + FastMemoryCounter.sizeOf(results);
+    }
+
+    @Override
+    public long estimatedGrowSize() {
+        return state.estimatedGrowthMemoryUsage();
     }
 
     @Override
@@ -77,7 +97,7 @@ public class DecimalSumAccumulator extends AbstractAccumulator {
         Block inputBlock = inputChunk.getBlock(0);
         DecimalBlock decimalBlock = inputBlock.cast(DecimalBlock.class);
 
-        if (decimalBlock.isDecimal64()) {
+        if (decimalBlock.isDecimal64() && canBeRescaled(decimalBlock.getScale())) {
             rescale(decimalBlock.getScale());
             boolean[] nullArray = decimalBlock.mayHaveNull() ? decimalBlock.nulls() : null;
             long[] decimalValueArray = decimalBlock.getDecimal64Values();
@@ -126,7 +146,7 @@ public class DecimalSumAccumulator extends AbstractAccumulator {
                     }
                 }
             }
-        } else if (decimalBlock.isDecimal128()) {
+        } else if (decimalBlock.isDecimal128() && canBeRescaled(decimalBlock.getScale())) {
             rescale(decimalBlock.getScale());
             boolean[] nullArray = decimalBlock.mayHaveNull() ? decimalBlock.nulls() : null;
             long[] decimal128LowValues = decimalBlock.getDecimal128LowValues();
@@ -195,14 +215,14 @@ public class DecimalSumAccumulator extends AbstractAccumulator {
 
         // Prepare result array and execute summary in vectorization mode.
         results[0] = results[1] = results[2] = 0;
-        decimalBlock.cast(Block.class).sum(startIndexIncluded, endIndexExcluded, results);
+        decimalBlock.cast(Block.class).sum(startIndexIncluded, endIndexExcluded, results, enableDecimal128);
 
         // Check sum result state and try to directly append sum result.
-        if (results[2] == E_DEC_DEC64) {
+        if (results[2] == E_DEC_DEC64 && canBeRescaled(decimalBlock.getScale())) {
             rescale(decimalBlock.getScale());
             long sumResult = results[0];
             accumulateDecimal64(groupId, sumResult);
-        } else if (results[2] == E_DEC_DEC128) {
+        } else if (results[2] == E_DEC_DEC128 && canBeRescaled(decimalBlock.getScale())) {
             rescale(decimalBlock.getScale());
             long decimal128Low = results[0];
             long decimal128High = results[1];
@@ -222,14 +242,14 @@ public class DecimalSumAccumulator extends AbstractAccumulator {
 
         // Prepare result array and execute summary in vectorization mode.
         results[0] = results[1] = results[2] = 0;
-        decimalBlock.cast(Block.class).sum(groupIdSelection, selSize, results);
+        decimalBlock.cast(Block.class).sum(groupIdSelection, selSize, results, enableDecimal128);
 
         // Check sum result state and try to directly append sum result.
-        if (results[2] == E_DEC_DEC64) {
+        if (results[2] == E_DEC_DEC64 && canBeRescaled(decimalBlock.getScale())) {
             rescale(decimalBlock.getScale());
             long sumResult = results[0];
             accumulateDecimal64(groupId, sumResult);
-        } else if (results[2] == E_DEC_DEC128) {
+        } else if (results[2] == E_DEC_DEC128 && canBeRescaled(decimalBlock.getScale())) {
             rescale(decimalBlock.getScale());
             long decimal128Low = results[0];
             long decimal128High = results[1];
@@ -250,9 +270,9 @@ public class DecimalSumAccumulator extends AbstractAccumulator {
         }
 
         DecimalBlock decimalBlock = block.cast(DecimalBlock.class);
-        if (decimalBlock.isDecimal64()) {
+        if (decimalBlock.isDecimal64() && canBeRescaled(decimalBlock.getScale())) {
             accumulateDecimal64(groupId, decimalBlock, position);
-        } else if (decimalBlock.isDecimal128()) {
+        } else if (decimalBlock.isDecimal128() && canBeRescaled(decimalBlock.getScale())) {
             accumulateDecimal128(groupId, decimalBlock, position);
         } else {
             accumulateDecimal(groupId, decimalBlock, position);
@@ -268,8 +288,16 @@ public class DecimalSumAccumulator extends AbstractAccumulator {
             long oldResult = state.getLong(groupId);
             long addResult = decimal64Val + oldResult;
             if (MathUtils.longAddOverflow(decimal64Val, oldResult, addResult)) {
-                // decimal64 overflow to decimal128
-                accumulateDecimal64ToDecimal128(groupId, decimal64Val);
+
+                if (enableDecimal128) {
+                    // decimal64 overflow to decimal128
+                    accumulateDecimal64ToDecimal128(groupId, decimal64Val);
+                } else {
+                    // already overflowed
+                    // fall back to normal decimal add
+                    normalAddDecimal64(groupId, decimal64Val);
+                }
+
             } else {
                 state.set(groupId, addResult);
             }
@@ -304,8 +332,14 @@ public class DecimalSumAccumulator extends AbstractAccumulator {
             long oldResult = state.getLong(groupId);
             long addResult = decimal64Val + oldResult;
             if (MathUtils.longAddOverflow(decimal64Val, oldResult, addResult)) {
-                // decimal64 overflow to decimal128
-                accumulateDecimal64ToDecimal128(groupId, decimal64Val);
+                if (enableDecimal128) {
+                    // decimal64 overflow to decimal128
+                    accumulateDecimal64ToDecimal128(groupId, decimal64Val);
+                } else {
+                    // already overflowed
+                    // fall back to normal decimal add
+                    normalAddDecimal64(groupId, decimal64Val);
+                }
             } else {
                 state.set(groupId, addResult);
             }
@@ -505,12 +539,18 @@ public class DecimalSumAccumulator extends AbstractAccumulator {
         }
     }
 
+    private boolean canBeRescaled(int newScale) {
+        return scale == newScale || ((DecimalType) inputTypes[0]).isDefaultScale();
+    }
+
     private void rescale(int newScale) {
         if (scale == newScale) {
             return;
         }
         if (!((DecimalType) inputTypes[0]).isDefaultScale()) {
-            throw new IllegalStateException("Decimal sum agg input scale does not match in runtime");
+            throw new IllegalStateException("Decimal sum agg input scale does not match in runtime, scale: " + scale
+                + ", newScale: " + newScale
+                + ", inputType scale: " + ((DecimalType) inputTypes[0]).getScale());
         }
         this.scale = newScale;
         this.inputTypes[0] = new DecimalType(inputTypes[0].getPrecision(), newScale);
@@ -567,5 +607,15 @@ public class DecimalSumAccumulator extends AbstractAccumulator {
             return false;
         }
         return state.isDecimalBox(groupId);
+    }
+
+    @VisibleForTesting
+    public void setEnableDecimal128(boolean enableDecimal128) {
+        this.enableDecimal128 = enableDecimal128;
+    }
+
+    @VisibleForTesting
+    public boolean enableDecimal128() {
+        return enableDecimal128;
     }
 }

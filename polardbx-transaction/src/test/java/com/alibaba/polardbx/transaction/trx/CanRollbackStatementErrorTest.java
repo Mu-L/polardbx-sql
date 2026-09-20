@@ -36,59 +36,111 @@ public class CanRollbackStatementErrorTest {
         SQLException e;
         e = new SQLException(
             "Error occurs when execute on GROUP 'DRDS_POLARX1_QATEST_APP_000002_GROUP' ATOM 'dskey_drds_polarx1_qatest_app_000002_group#polardbx-storage-0-master#11.167.60.147-3777#drds_polarx1_qatest_app_000002': Data too long for column 'c' at row 1 ");
-        Assert.assertTrue(tx.shouldRollbackStatement(e));
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
 
         e = new SQLException(
             "Error occurs when execute on GROUP 'DRDS_POLARX1_QATEST_APP_000000_GROUP' ATOM 'dskey_drds_polarx1_qatest_app_000000_group#polardbx-storage-0-master#11.167.60.147-3777#drds_polarx1_qatest_app_000000': Duplicate entry '1' for key 'PRIMARY'");
-        Assert.assertTrue(tx.shouldRollbackStatement(e));
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
 
         e = new SQLException(
             "Error occurs when execute on GROUP 'DRDS_POLARX1_QATEST_APP_000000_GROUP' ATOM 'dskey_drds_polarx1_qatest_app_000000_group#polardbx-storage-0-master#11.167.60.147-3777#drds_polarx1_qatest_app_000000': Duplicate entry '1' for key 'PRIMARY'");
-        Assert.assertTrue(tx.shouldRollbackStatement(e));
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
 
         e = new SQLException(
             "Error occurs when execute on GROUP 'DRDS_POLARX1_QATEST_APP_000000_GROUP' ATOM 'dskey_drds_polarx1_qatest_app_000000_group#polardbx-storage-0-master#11.167.60.147-3777#drds_polarx1_qatest_app_000000': Duplicate entry '1' for key UGSI 'auto_savepoint_test_gsi_tablexa'");
-        Assert.assertTrue(tx.shouldRollbackStatement(e));
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
 
         e = new SQLException(
             "Error occurs when execute on GROUP 'DRDS_POLARX1_QATEST_APP_000002_GROUP' ATOM 'dskey_drds_polarx1_qatest_app_000002_group#polardbx-storage-0-master#11.167.60.147-3777#drds_polarx1_qatest_app_000002': Out of range value for column 'd' at row 1 ");
-        Assert.assertTrue(tx.shouldRollbackStatement(e));
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
 
         e = new SQLException(
             "[TDDL-4602][ERR_CONVERTOR] convertor error: java.lang.Long value '10000000000000' is too large for java.lang.Integer ");
-        Assert.assertTrue(tx.shouldRollbackStatement(e));
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
 
         e = new SQLException(
             "Error occurs when execute on GROUP 'DRDS_POLARX1_QATEST_APP_000000_GROUP' ATOM 'dskey_drds_polarx1_qatest_app_000000_group#polardbx-storage-0-master#11.167.60.147-3777#drds_polarx1_qatest_app_000000': Field 'd' doesn't have a default value ");
-        Assert.assertTrue(tx.shouldRollbackStatement(e));
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
 
         e = new SQLException(
             "Error occurs when execute on GROUP 'DRDS_POLARX1_QATEST_APP_000001_GROUP' ATOM 'dskey_drds_polarx1_qatest_app_000001_group#polardbx-storage-1-master#11.167.60.147-3777#drds_polarx1_qatest_app_000001': Incorrect datetime value: 'bad' for column 'time1' at row 1 ");
-        Assert.assertTrue(tx.shouldRollbackStatement(e));
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
 
         e = new SQLException(
             "Error occurs when execute on GROUP 'DRDS_POLARX1_QATEST_APP_000000_GROUP' ATOM 'dskey_drds_polarx1_qatest_app_000000_group#polardbx-storage-0-master#11.167.60.147-3777#drds_polarx1_qatest_app_000000': Incorrect time value: 'bad' for column 'time2' at row 1 ");
-        Assert.assertTrue(tx.shouldRollbackStatement(e));
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
 
         e = new SQLException(
             "Error occurs when execute on GROUP 'DB2_P00000_GROUP' ATOM 'dskey_db2_p00000_group#polardbx-storage-0-master#11.167.60.147-3777#db2_p00000': Column 'name' cannot be null");
-        Assert.assertTrue(tx.shouldRollbackStatement(e));
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
 
         e = new SQLException("Cannot delete or update a parent row: a foreign key constraint fails");
-        Assert.assertTrue(tx.shouldRollbackStatement(e));
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
 
         e = new SQLException("Option SET_DEFAULT");
-        Assert.assertTrue(tx.shouldRollbackStatement(e));
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
+
+        // --- Messages containing newline characters (U+0085 / \n) should still match ---
+        e = new SQLException(
+            "Error occurs when execute on GROUP 'G1':\nDuplicate entry '1' for key 'PRIMARY'");
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
+
+        e = new SQLException(
+            "Error occurs when execute on GROUP 'G1':\nData too long for column 'c' at row 1");
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
+
+        e = new SQLException(
+            "Error occurs when execute on GROUP 'G1':\nOut of range value for column 'd' at row 1");
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
+
+        e = new SQLException(
+            "Error occurs when execute on GROUP 'G1':\n[TDDL-4602][ERR_CONVERTOR] convertor error");
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
+
+        e = new SQLException(
+            "Error occurs when execute on GROUP 'G1':\nIncorrect datetime value: 'bad' for column 'c' at row 1");
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
+
+        e = new SQLException(
+            "Error occurs when execute on GROUP 'G1':\nIncorrect time value: 'bad' for column 'c' at row 1");
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
+
+        e = new SQLException(
+            "Error occurs when execute on GROUP 'G1':\nData truncated for column 'c' at row 1");
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
+
+        e = new SQLException(
+            "Error occurs when execute on GROUP 'G1':\nField 'c' doesn't have a default value");
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
+
+        e = new SQLException(
+            "Error occurs when execute on GROUP 'G1':\nCannot delete or update a parent row: a foreign key constraint fails");
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
+
+        e = new SQLException("prefix line\nOption SET_DEFAULT");
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
+
+        e = new SQLException(
+            "Error occurs when execute on GROUP 'G1':\nColumn 'name' cannot be null");
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
+
+        e = new SQLException(
+            "Error occurs when execute on GROUP 'G1':\nLock wait timeout exceeded; try restarting transaction");
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
+
+        // NEL character (U+0085) as line separator should also be handled
+        e = new SQLException("prefix\u0085Duplicate entry '1' for key 'PRIMARY'");
+        Assert.assertTrue(tx.shouldRollbackStatement(e, null));
 
         // Connection error cannot be rolled back.
         e = new SQLException("No operations allowed after connection closed");
-        Assert.assertFalse(tx.shouldRollbackStatement(e));
+        Assert.assertFalse(tx.shouldRollbackStatement(e, null));
 
         e = new SQLException("Connection killed");
-        Assert.assertFalse(tx.shouldRollbackStatement(e));
+        Assert.assertFalse(tx.shouldRollbackStatement(e, null));
 
         e = new SQLException("Communications link failure");
-        Assert.assertFalse(tx.shouldRollbackStatement(e));
+        Assert.assertFalse(tx.shouldRollbackStatement(e, null));
     }
 
     private static class MockTransaction extends AbstractTransaction {

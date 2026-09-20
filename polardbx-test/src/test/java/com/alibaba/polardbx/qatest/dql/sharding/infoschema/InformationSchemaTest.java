@@ -3,6 +3,7 @@ package com.alibaba.polardbx.qatest.dql.sharding.infoschema;
 import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
+import com.alibaba.polardbx.qatest.util.PropertiesUtil;
 import com.alibaba.polardbx.qatest.validator.DataValidator;
 import com.google.common.collect.ImmutableList;
 import org.apache.commons.lang.StringUtils;
@@ -23,6 +24,9 @@ import static com.google.common.truth.Truth.assertWithMessage;
 public class InformationSchemaTest extends DDLBaseNewDBTestCase {
 
     static private final String case_tb = "cASE_tB";
+    private static final String ENABLE_LOWER_CASE_TABLE_NAMES = "ENABLE_LOWER_CASE_TABLE_NAMES";
+
+    private Boolean originalEnableLowerCaseTableNames;
 
     private static final String CREATE_TABLE_FORMAT_MIX_CASE = String.format("CREATE TABLE `%s` (\n"
         + "\t`pk` bigint(11) NOT NULL,\n"
@@ -52,8 +56,14 @@ public class InformationSchemaTest extends DDLBaseNewDBTestCase {
             + " from information_schema.table_constraints where table_schema = '%s' and table_name = '%s'";
 
     @Override
+    public synchronized Connection getPolardbxConnection() {
+        String db = tddlDatabase1 != null ? tddlDatabase1 : PropertiesUtil.polardbXDBName1(usingNewPartDb());
+        return super.getPolardbxConnection(db);
+    }
+
+    @Override
     protected Connection getTddlConnection1() {
-        if (tddlConnection == null) {
+        if (tddlConnection == null || tddlDatabase1 == null || isClosed(tddlConnection)) {
             String database1 = getTestDBName("");
             String myDatabase1 = database1;
             this.tddlConnection = createTddlDb(database1);
@@ -65,6 +75,14 @@ public class InformationSchemaTest extends DDLBaseNewDBTestCase {
         return tddlConnection;
     }
 
+    private boolean isClosed(Connection connection) {
+        try {
+            return connection.isClosed();
+        } catch (SQLException e) {
+            return true;
+        }
+    }
+
     @Override
     protected String getTestDBName(String schemaPrefix) {
         String database1 = schemaPrefix + Math.abs(Thread.currentThread().getName().hashCode());
@@ -73,14 +91,38 @@ public class InformationSchemaTest extends DDLBaseNewDBTestCase {
     }
 
     @Before
-    public void prepareVariable() {
-        JdbcUtil.executeUpdateSuccess(getPolardbxConnection(), "set global ENABLE_LOWER_CASE_TABLE_NAMES=true");
+    public void prepareVariable() throws SQLException {
+        try (ResultSet rs = JdbcUtil.executeQuerySuccess(getPolardbxConnection(),
+            "show global variables like '" + ENABLE_LOWER_CASE_TABLE_NAMES + "'")) {
+            if (!rs.next()) {
+                originalEnableLowerCaseTableNames = null;
+                return;
+            }
+            String originalValue = rs.getString(2);
+            Assert.assertNotNull(originalValue,
+                "Missing value for global variable " + ENABLE_LOWER_CASE_TABLE_NAMES);
+            Assert.assertTrue(originalValue.matches("(?i:true|false|on|off|0|1)"),
+                "Unexpected value for global variable " + ENABLE_LOWER_CASE_TABLE_NAMES + ": "
+                    + originalValue);
+            originalEnableLowerCaseTableNames = "true".equalsIgnoreCase(originalValue)
+                || "on".equalsIgnoreCase(originalValue) || "1".equals(originalValue);
+        }
+        JdbcUtil.executeUpdateSuccess(getPolardbxConnection(),
+            "set global " + ENABLE_LOWER_CASE_TABLE_NAMES + "=true");
     }
 
     @After
     public void clearVariable() {
-        JdbcUtil.executeUpdateSuccess(getPolardbxConnection(), "set global ENABLE_LOWER_CASE_TABLE_NAMES=false");
-        cleanDataBase();
+        try {
+            // This switch is instance-wide. Restore the value observed by this test instead of forcing false,
+            // otherwise later cases become dependent on the DN57/DN80 suite execution order.
+            if (originalEnableLowerCaseTableNames != null) {
+                JdbcUtil.executeUpdateSuccess(getPolardbxConnection(),
+                    "set global " + ENABLE_LOWER_CASE_TABLE_NAMES + "=" + originalEnableLowerCaseTableNames);
+            }
+        } finally {
+            cleanDataBase();
+        }
     }
 
     @Test

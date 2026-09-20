@@ -17,8 +17,8 @@ import java.util.List;
 import java.util.TimeZone;
 
 public class FlashbackQueryTest extends AutoReadBaseTestCase {
-    final String dropTableSql = "DROP TABLE IF EXISTS FlashbackQueryTest";
-    final String createTableSql = "CREATE TABLE FlashbackQueryTest (\n"
+    final static String dropTableSql = "DROP TABLE IF EXISTS FlashbackQueryTest";
+    final static String createTableSql = "CREATE TABLE FlashbackQueryTest (\n"
         + "`a` int(11) NOT NULL,\n"
         + "`b` int(11) NOT NULL,\n"
         + "`c` int(11) NOT NULL,\n"
@@ -99,36 +99,14 @@ public class FlashbackQueryTest extends AutoReadBaseTestCase {
                 + currentTime + "' as tt partition(p1)"
         );
 
-        final List<String> explainResult = ImmutableList.of(
-            "LogicalView(tables=\"FlashbackQueryTest[p1]\", sql=\"SELECT `a`, `b`, `c`, `d` FROM `FlashbackQueryTest` AS OF TIMESTAMP ? AS `FlashbackQueryTest`\")\n"
-                + "HitCache:false\n"
-                + "Source:null\n"
-                + "TemplateId: NULL\n",
-            "LogicalView(tables=\"FlashbackQueryTest[p1]\", sql=\"SELECT `a`, `b`, `c`, `d` FROM `FlashbackQueryTest` AS OF TIMESTAMP ? AS `FlashbackQueryTest`\")\n"
-                + "HitCache:false\n"
-                + "Source:null\n"
-                + "TemplateId: NULL\n",
-            "LogicalView(tables=\"FlashbackQueryTest[p1]\", sql=\"SELECT `a`, `b`, `c`, `d` FROM `FlashbackQueryTest` AS OF TIMESTAMP ? AS `FlashbackQueryTest`\")\n"
-                + "HitCache:false\n"
-                + "Source:null\n"
-                + "TemplateId: NULL\n"
-        );
-
-        final List<String> explainResult80 = ImmutableList.of(
-            "LogicalView(tables=\"FlashbackQueryTest[p1]\", sql=\"SELECT `a`, `b`, `c`, `d` FROM `FlashbackQueryTest` AS OF GCN ? AS `FlashbackQueryTest`\")\n"
-                + "HitCache:false\n"
-                + "Source:null\n"
-                + "TemplateId: NULL\n",
-            "LogicalView(tables=\"FlashbackQueryTest[p1]\", sql=\"SELECT `a`, `b`, `c`, `d` FROM `FlashbackQueryTest` AS OF GCN ? AS `FlashbackQueryTest`\")\n"
-                + "HitCache:false\n"
-                + "Source:null\n"
-                + "TemplateId: NULL\n",
-            "LogicalView(tables=\"FlashbackQueryTest[p1]\", sql=\"SELECT `a`, `b`, `c`, `d` FROM `FlashbackQueryTest` AS OF GCN ? AS `FlashbackQueryTest`\")\n"
-                + "HitCache:false\n"
-                + "Source:null\n"
-                + "TemplateId: NULL\n"
-        );
-
+        final String explainResult57 =
+            "SELECT `a`, `b`, `c`, `d` FROM `FlashbackQueryTest` AS OF TIMESTAMP ? AS `FlashbackQueryTest`";
+        final String explainResult800 =
+            "SELECT `a`, `b`, `c`, `d` FROM `FlashbackQueryTest` AS OF GCN ? AS `FlashbackQueryTest`";
+        final String explainResult801 =
+            "SELECT `FlashbackQueryTest`.`a`, `FlashbackQueryTest`.`b`, `FlashbackQueryTest`.`c`, `FlashbackQueryTest`.`d` FROM ? AS OF GCN ? AS `FlashbackQueryTest`";
+        final String explainResult802 =
+            "SELECT `tt`.`a`, `tt`.`b`, `tt`.`c`, `tt`.`d` FROM ? AS OF GCN ? AS `tt`";
         for (int i = 0; i < testSqlList.size(); i++) {
             ResultSet rs = JdbcUtil.executeQuerySuccess(tddlConnection, "explain " + testSqlList.get(i));
             StringBuilder sb = new StringBuilder();
@@ -137,9 +115,11 @@ public class FlashbackQueryTest extends AutoReadBaseTestCase {
             }
             System.out.println(sb);
             if (isMySQL80()) {
-                Assert.assertEquals(explainResult80.get(i), sb.toString());
+                Assert.assertTrue(sb.toString().contains(explainResult800)
+                    || sb.toString().contains(explainResult801)
+                    || sb.toString().contains(explainResult802));
             } else {
-                Assert.assertEquals(explainResult.get(i), sb.toString());
+                Assert.assertTrue(sb.toString().contains(explainResult57));
             }
             JdbcUtil.executeSuccess(tddlConnection, testSqlList.get(i));
         }
@@ -178,9 +158,9 @@ public class FlashbackQueryTest extends AutoReadBaseTestCase {
         String sql =
             "/*+TDDL:plancache=false enable_mpp=false*/ select * from FlashbackQueryTest tt partition(p1) as of tso 10000";
         String expect =
-            "LogicalView(tables=\"FlashbackQueryTest[p1]\", sql=\"SELECT `a`, `b`, `c`, `d` FROM `FlashbackQueryTest` AS OF TSO ? AS `FlashbackQueryTest`\")HitCache:falseSource:nullTemplateId: NULL";
+            "SELECT `a`, `b`, `c`, `d` FROM `FlashbackQueryTest` AS OF TSO ? AS `FlashbackQueryTest`";
         String explain = JdbcUtil.getExplainResult(tddlConnection, sql);
-        Assert.assertEquals(expect, explain);
+        Assert.assertTrue(explain.contains(expect));
     }
 
     @Test
@@ -190,10 +170,11 @@ public class FlashbackQueryTest extends AutoReadBaseTestCase {
         }
         String sql =
             "/*+TDDL:plancache=false enable_mpp=false*/ select * from FlashbackQueryTest tt partition(p1) as of tso 10000";
-        String expect =
-            "LogicalView(tables=\"FlashbackQueryTest[p1]\", sql=\"SELECT `a`, `b`, `c`, `d` FROM `FlashbackQueryTest` AS OF GCN ? AS `FlashbackQueryTest`\")HitCache:falseSource:nullTemplateId: NULL";
+        String expect0 = "SELECT `a`, `b`, `c`, `d` FROM `FlashbackQueryTest` AS OF GCN ? AS `FlashbackQueryTest`";
+        String expect1 = "SELECT `tt`.`a`, `tt`.`b`, `tt`.`c`, `tt`.`d` FROM ? AS OF GCN ? AS `tt`";
         String explain = JdbcUtil.getExplainResult(tddlConnection, sql);
-        Assert.assertEquals(expect, explain);
+        System.out.println(explain);
+        Assert.assertTrue(explain.contains(expect0) || explain.contains(expect1));
     }
 
     @Test

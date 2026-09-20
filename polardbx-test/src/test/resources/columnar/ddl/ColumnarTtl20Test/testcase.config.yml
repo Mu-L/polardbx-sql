@@ -21,3 +21,4 @@ test_ttl_special_val_dt
 test_ttl_special_val_d
 test_ttl_special_val_ts
 query_ttl_date_by_day
+test_ttl_with_columnar

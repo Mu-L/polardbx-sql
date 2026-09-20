@@ -21,7 +21,42 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.optimizer.PlannerContext;
-import com.alibaba.polardbx.optimizer.core.rel.*;
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
+import com.alibaba.polardbx.optimizer.core.rel.BKAJoin;
+import com.alibaba.polardbx.optimizer.core.rel.ExternalTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.GroupTopN;
+import com.alibaba.polardbx.optimizer.core.rel.HashAgg;
+import com.alibaba.polardbx.optimizer.core.rel.HashGroupJoin;
+import com.alibaba.polardbx.optimizer.core.rel.HashJoin;
+import com.alibaba.polardbx.optimizer.core.rel.HashWindow;
+import com.alibaba.polardbx.optimizer.core.rel.Limit;
+import com.alibaba.polardbx.optimizer.core.rel.LogicalIndexScan;
+import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
+import com.alibaba.polardbx.optimizer.core.rel.LookupJoin;
+import com.alibaba.polardbx.optimizer.core.rel.MaterializedSemiJoin;
+import com.alibaba.polardbx.optimizer.core.rel.MemSort;
+import com.alibaba.polardbx.optimizer.core.rel.MergeSort;
+import com.alibaba.polardbx.optimizer.core.rel.MysqlAgg;
+import com.alibaba.polardbx.optimizer.core.rel.MysqlHashJoin;
+import com.alibaba.polardbx.optimizer.core.rel.MysqlIndexNLJoin;
+import com.alibaba.polardbx.optimizer.core.rel.MysqlLimit;
+import com.alibaba.polardbx.optimizer.core.rel.MysqlMaterializedSemiJoin;
+import com.alibaba.polardbx.optimizer.core.rel.MysqlNLJoin;
+import com.alibaba.polardbx.optimizer.core.rel.MysqlSemiHashJoin;
+import com.alibaba.polardbx.optimizer.core.rel.MysqlSemiIndexNLJoin;
+import com.alibaba.polardbx.optimizer.core.rel.MysqlSort;
+import com.alibaba.polardbx.optimizer.core.rel.MysqlTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.MysqlTopN;
+import com.alibaba.polardbx.optimizer.core.rel.NLJoin;
+import com.alibaba.polardbx.optimizer.core.rel.PhysicalCTEConsumer;
+import com.alibaba.polardbx.optimizer.core.rel.SemiBKAJoin;
+import com.alibaba.polardbx.optimizer.core.rel.SemiHashJoin;
+import com.alibaba.polardbx.optimizer.core.rel.SemiNLJoin;
+import com.alibaba.polardbx.optimizer.core.rel.SemiSortMergeJoin;
+import com.alibaba.polardbx.optimizer.core.rel.SortAgg;
+import com.alibaba.polardbx.optimizer.core.rel.SortMergeJoin;
+import com.alibaba.polardbx.optimizer.core.rel.SortWindow;
+import com.alibaba.polardbx.optimizer.core.rel.TopN;
 import com.alibaba.polardbx.optimizer.index.Index;
 import com.alibaba.polardbx.optimizer.index.IndexUtil;
 import com.alibaba.polardbx.optimizer.memory.MemoryEstimator;
@@ -32,14 +67,24 @@ import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
-import org.apache.calcite.rel.core.Join;
+import org.apache.calcite.rel.core.CTEAnchor;
+import org.apache.calcite.rel.core.CTEConsumer;
+import org.apache.calcite.rel.core.CTEProducer;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.Sort;
+import org.apache.calcite.rel.logical.LogicalCTEConsumer;
 import org.apache.calcite.rel.logical.LogicalFilter;
 import org.apache.calcite.rel.logical.LogicalTableLookup;
-import org.apache.calcite.rel.metadata.*;
+import org.apache.calcite.rel.metadata.ChainedRelMetadataProvider;
+import org.apache.calcite.rel.metadata.CyclicMetadataException;
+import org.apache.calcite.rel.metadata.ReflectiveRelMetadataProvider;
+import org.apache.calcite.rel.metadata.RelMdPercentageOriginalRows;
+import org.apache.calcite.rel.metadata.RelMetadataProvider;
+import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.util.BuiltInMethod;
 import org.apache.calcite.util.Util;
 
@@ -115,8 +160,7 @@ public class DrdsRelMdCost extends RelMdPercentageOriginalRows {
         }
 
         if (lookupNode instanceof LogicalIndexScan) {
-            Join join = ((LogicalIndexScan) lookupNode).getJoin();
-            if (join != null) {
+            if (((LogicalIndexScan) lookupNode).isLookupTable()) {
                 // This TableLookup is lookup side of lookup join such as (BKA, Materialized Semi Join)
                 return LookupJoin.getLookupCost(mq, rel.getProject());
             }
@@ -149,6 +193,37 @@ public class DrdsRelMdCost extends RelMdPercentageOriginalRows {
 
     public Double getPercentageOriginalRows(LogicalView rel, RelMetadataQuery mq) {
         return mq.getPercentageOriginalRows(rel.getOptimizedPushedRelNodeForMetaQuery());
+    }
+
+    public Double getPercentageOriginalRows(GroupTopN rel, RelMetadataQuery mq) {
+        return mq.getPercentageOriginalRows(rel.getInput());
+    }
+
+    public Double getPercentageOriginalRows(CTEAnchor rel, RelMetadataQuery mq) {
+        return mq.getPercentageOriginalRows(rel.getRight());
+    }
+
+    public Double getPercentageOriginalRows(CTEProducer rel, RelMetadataQuery mq) {
+        return mq.getPercentageOriginalRows(rel.getInput());
+    }
+
+    public Double getPercentageOriginalRows(LogicalCTEConsumer rel, RelMetadataQuery mq) {
+        return mq.getPercentageOriginalRows(rel.getInnerRel());
+    }
+
+    public Double getPercentageOriginalRows(PhysicalCTEConsumer rel, RelMetadataQuery mq) {
+        Double percentage = mq.getPercentageOriginalRows(CBOUtil.getCteProducer(rel));
+        if (percentage != null && !rel.getConditions().isEmpty()) {
+            RexNode condition = RexUtil.composeConjunction(
+                rel.getCluster().getRexBuilder(), rel.getConditions(), true);
+            if (condition != null) {
+                Double selectivity = mq.getSelectivity(CBOUtil.getCteProducer(rel), condition);
+                if (selectivity != null) {
+                    percentage *= selectivity;
+                }
+            }
+        }
+        return percentage;
     }
 
     public Double getPercentageOriginalRows(LogicalTableLookup rel, RelMetadataQuery mq) {
@@ -661,12 +736,29 @@ public class DrdsRelMdCost extends RelMdPercentageOriginalRows {
 //        return mq.getStartUpCost(rel.getInput());
     }
 
+    public RelOptCost getStartUpCost(GroupTopN rel, RelMetadataQuery mq) {
+        return mq.getCumulativeCost(rel.getInput());
+    }
+
     public RelOptCost getStartUpCost(SortWindow rel, RelMetadataQuery mq) {
         return mq.getCumulativeCost(rel.getInput());
     }
 
     public RelOptCost getStartUpCost(HashWindow rel, RelMetadataQuery mq) {
         return mq.getCumulativeCost(rel.getInput());
+    }
+
+    public RelOptCost getStartUpCost(CTEAnchor rel, RelMetadataQuery mq) {
+        return mq.getCumulativeCost(rel.getLeft()).plus(
+            mq.getCumulativeCost(rel.getRight()));
+    }
+
+    public RelOptCost getStartUpCost(CTEProducer rel, RelMetadataQuery mq) {
+        return mq.getCumulativeCost(rel.getInput());
+    }
+
+    public RelOptCost getStartUpCost(CTEConsumer rel, RelMetadataQuery mq) {
+        return rel.getCluster().getPlanner().getCostFactory().makeTinyCost();
     }
 
     public RelOptCost getStartUpCost(RelSubset rel, RelMetadataQuery mq) {
@@ -758,5 +850,20 @@ public class DrdsRelMdCost extends RelMdPercentageOriginalRows {
         // [left join + limit]
         // for mysql table scan StartUpCost need to consider the cost of closing connection
         return rel.getCluster().getPlanner().getCostFactory().makeCost(10000, 10000, 0, 1, 0);
+    }
+
+    public RelOptCost getCumulativeCost(ExternalTableScan rel,
+                                        RelMetadataQuery mq) {
+        return mq.getNonCumulativeCost(rel);
+    }
+
+    public RelOptCost getNonCumulativeCost(ExternalTableScan rel,
+                                           RelMetadataQuery mq) {
+        return rel.getNonCumulativeCost(rel.getCluster().getPlanner(), mq);
+    }
+
+    public RelOptCost getStartUpCost(ExternalTableScan rel,
+                                     RelMetadataQuery mq) {
+        return rel.getStartUpCost(rel.getCluster().getPlanner(), mq);
     }
 }

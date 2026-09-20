@@ -18,6 +18,7 @@ package com.alibaba.polardbx.qatest.ddl.auto.gsi.group3;
 
 import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.ConnectionManager;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.collect.ImmutableList;
@@ -68,6 +69,8 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
             mysqlConnection = ConnectionManager.getInstance().newMysqlConnectionWithUseAffectedRows();
             useDb(mysqlConnection, mysqlDatabase1);
         }
+        setSqlMode("STRICT_TRANS_TABLES", tddlConnection);
+        setSqlMode("STRICT_TRANS_TABLES", mysqlConnection);
     }
 
     @After
@@ -112,9 +115,14 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
         .add("blob")
         .add("varchar(4096)")
         .add("varchar(4096) character set binary")
-        .add("varchar(4096) character set utf8mb4")
+        .add("varchar(4096) character set utf8mb4 collate utf8mb4_general_ci")
         .add("varbinary(4096)")
         .build();
+
+    private static final String FORBID_RELOCATE_RETURNING_HINT =
+        "/*+TDDL:cmd_extra(OPTIMIZE_RELOCATE_BY_RETURNING=false)*/";
+    private static final String ENABLE_RELOCATE_RETURNING_HINT =
+        "/*+TDDL:cmd_extra(OPTIMIZE_RELOCATE_BY_RETURNING=true)*/";
 
     @Test
     public void updateBlobTest() {
@@ -130,7 +138,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
                 + "`userId` int(11) DEFAULT NULL,\n"
                 + "`blobfield` " + colDef + ",\n"
                 + "PRIMARY KEY (`id`)\n"
-                + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4";
+                + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4 COLLATE=utf8mb4_general_ci";
             final String partitionDef = " partition by hash(`zoneId`) partition 3";
 
             JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -181,7 +189,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
                 + "`userId` int(11) DEFAULT NULL,\n"
                 + "`blobfield` " + colDef + ",\n"
                 + "PRIMARY KEY (`id`)\n"
-                + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4";
+                + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4 COLLATE=utf8mb4_general_ci";
             final String partitionDef = " partition by hash(`zoneId`) partition 3";
 
             JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -224,7 +232,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
             + "`userId` int(11) DEFAULT NULL,\n"
             + "`blobfield` varbinary(512),\n"
             + "PRIMARY KEY (`id`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4";
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4 COLLATE=utf8mb4_general_ci";
         final String partitionDef = " partition by hash(`zoneId`) partitions 3";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -266,7 +274,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
             + "`b` int(11) DEFAULT NULL,\n"
             + "`c` TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),\n"
             + "PRIMARY KEY (`id`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4";
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4 COLLATE=utf8mb4_general_ci";
         final String partitionDef = " PARTITION BY HASH(`id`) PARTITIONS 3";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
 
@@ -297,7 +305,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
             + "`id` bigint(20) NOT NULL AUTO_INCREMENT,\n"
             + "`b` int(11) DEFAULT NULL,\n"
             + "PRIMARY KEY (`id`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4";
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4 COLLATE=utf8mb4_general_ci";
         final String partitionDef = " PARTITION BY HASH(`id`) PARTITIONS 3";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
 
@@ -327,7 +335,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
             + "`id` bigint(20) NOT NULL AUTO_INCREMENT,\n"
             + "`b` int(11) DEFAULT NULL,\n"
             + "PRIMARY KEY (`id`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4";
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 100004 DEFAULT CHARSET = utf8mb4 COLLATE=utf8mb4_general_ci";
         final String partitionDef = " PARTITION BY HASH(`b`) PARTITIONS 3";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
 
@@ -477,13 +485,13 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 
         // Skip
-        sql = String.format("trace update %s set id=1 where id=1", tableName);
+        sql = "trace " + FORBID_RELOCATE_RETURNING_HINT + String.format(" update %s set id=1 where id=1", tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         assertEquals(getTrace(tddlConnection).size(), 1);
 
         // Push UPDATE
-        sql = String.format(
-            "trace /*+TDDL:CMD_EXTRA(DML_RELOCATE_SKIP_UNCHANGED_ROW=FALSE)*/ update %s set id=1 where id=1",
+        sql = "trace " + FORBID_RELOCATE_RETURNING_HINT + String.format(
+            " /*+TDDL:CMD_EXTRA(DML_RELOCATE_SKIP_UNCHANGED_ROW=FALSE)*/ update %s set id=1 where id=1",
             tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         assertEquals(getTrace(tddlConnection).size(), 2);
@@ -493,17 +501,70 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 
         // Skip
-        sql = String.format("trace update %s set id=1,c=3 where id=1", tableName);
+        sql =
+            "trace " + FORBID_RELOCATE_RETURNING_HINT + String.format(" update %s set id=1,c=3 where id=1", tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         assertEquals(getTrace(tddlConnection).size(), 1);
 
         // Push UPDATE
-        sql = String.format(
-            "trace /*+TDDL:CMD_EXTRA(DML_RELOCATE_SKIP_UNCHANGED_ROW=FALSE)*/ update %s set id=1,c=3 where id=1",
+        sql = "trace " + FORBID_RELOCATE_RETURNING_HINT + String.format(
+            " /*+TDDL:CMD_EXTRA(DML_RELOCATE_SKIP_UNCHANGED_ROW=FALSE)*/ update %s set id=1,c=3 where id=1",
             tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         System.out.println(getTrace(tddlConnection));
         assertEquals(getTrace(tddlConnection).size(), 3);
+
+        checkGsi(tddlConnection, getRealGsiName(tddlConnection, tableName, gsiName));
+    }
+
+    @Test
+    public void testRelocateSkipHintWithReturning() throws Exception {
+        if (!isMySQL80()) {
+            return;
+        }
+        String tableName = "update_relocate_skip_hint_tb";
+        String gsiName = tableName + "_gsi";
+        dropTableIfExists(tableName);
+        dropTableIfExists(gsiName);
+        String sql =
+            String.format("create table %s (id int primary key, b int, c int) partition by hash(id) PARTITIONS 3;",
+                tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+
+        sql = String.format("insert into %s(id,b,c) values(1,2,3)", tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+
+        // Skip
+        sql = "trace " + ENABLE_RELOCATE_RETURNING_HINT + String.format(" update %s set id=1 where id=1", tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        assertEquals(getTrace(tddlConnection).size(), 1);
+
+        // Push UPDATE
+        sql = "trace " + ENABLE_RELOCATE_RETURNING_HINT + String.format(
+            "/*+TDDL:CMD_EXTRA(DML_RELOCATE_SKIP_UNCHANGED_ROW=FALSE)*/ update %s set id=1 where id=1",
+            tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        // with relocate returning，trace size = 1 even if DML_RELOCATE_SKIP_UNCHANGED_ROW=FALSE
+        assertEquals(getTrace(tddlConnection).size(), 1);
+
+        sql = String.format("create global index %s on %s(c) covering(b) partition by hash(c) PARTITIONS 3;", gsiName,
+            tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+
+        // Skip
+        sql =
+            "trace " + ENABLE_RELOCATE_RETURNING_HINT + String.format(" update %s set id=1,c=3 where id=1", tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        assertEquals(getTrace(tddlConnection).size(), 1);
+
+        // Push UPDATE
+        sql = "trace " + ENABLE_RELOCATE_RETURNING_HINT + String.format(
+            " /*+TDDL:CMD_EXTRA(DML_RELOCATE_SKIP_UNCHANGED_ROW=FALSE)*/ update %s set id=1,c=3 where id=1",
+            tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        System.out.println(getTrace(tddlConnection));
+        // with relocate returning，trace size = 2 even if DML_RELOCATE_SKIP_UNCHANGED_ROW=FALSE
+        assertEquals(getTrace(tddlConnection).size(), 2);
 
         checkGsi(tddlConnection, getRealGsiName(tddlConnection, tableName, gsiName));
     }
@@ -644,6 +705,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
         String createGsi = String.format("create global index %s on %s(b) partition by hash(b)", gsiName1, tableName1);
         JdbcUtil.executeUpdateSuccess(tddlConnection, createGsi);
 
+        String hint = "/*+TDDL:CMD_EXTRA(ENABLE_MULTI_TABLE_UPDATE_MODIFY_GSI_SHARDING_KEY=TRUE)*/ ";
         String sql = String.format("insert into %s values (1,2)", tableName1);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         sql = String.format("insert into %s values (1,2,3,4)", tableName2);
@@ -651,7 +713,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
 
         sql = String.format("update %s as t1 inner join %s as t2 on t1.a=t2.c set t2.d=40,t2.e=40,t2.f=40,t1.b=20",
             tableName1, tableName2);
-        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, hint + sql);
 
         ResultSet rs = JdbcUtil.executeQuery(String.format("select * from %s", tableName1), tddlConnection);
         rs.next();
@@ -668,6 +730,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
         rs.close();
     }
 
+    @IcbcIgnore(ignoreReason = "NO_ZERO_DATE")
     @Test
     public void testUpdateZeroDate() throws SQLException {
         String tableName = "update_zero_date_tbl";
@@ -832,6 +895,54 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateSuccess(tddlConnection, update);
 
         checkGsi(tddlConnection, getRealGsiName(tddlConnection, tableName, gsiName));
+    }
+
+    @Test
+    public void testUpdateOnUpdateTimeStampForUnchangedRows() throws SQLException {
+        String tableName = "update_cur_ts_for_unchanged_rows_tbl";
+        String gsiName = tableName + "_gsi";
+
+        String create = String.format(
+            "CREATE TABLE `%s` (\n"
+                + "\t`a` int NOT NULL AUTO_INCREMENT,\n"
+                + "\t`b` int DEFAULT NULL,\n"
+                + "\t`c` int DEFAULT NULL,\n"
+                + "\t`updated_at` datetime NOT NULL DEFAULT '2022-12-12 12:12:12' ON UPDATE CURRENT_TIMESTAMP COMMENT'更新时间',\n"
+                + "\tPRIMARY KEY (`a`),\n"
+                + "\tglobal index %s (`b`) covering(`c`,`updated_at`) partition by key(`b`) partitions 3\n"
+                + ") ENGINE = InnoDB\n"
+                + "partition by key(`a`) partitions 3;",
+            tableName, gsiName);
+        dropTableIfExists(tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, create);
+        String insert = String.format("insert into %s(a,b,c) values (1,2,3)", tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, insert);
+        // 仅修改拆分键
+        String update = String.format("update %s set a = 1,b = 2 where a = 1", tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, update);
+        checkGsi(tddlConnection, getRealGsiName(tddlConnection, tableName, gsiName));
+
+        // 仅修改非拆分键
+        update = String.format("update %s set c = 3 where a = 1", tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, update);
+        checkGsi(tddlConnection, getRealGsiName(tddlConnection, tableName, gsiName));
+
+        // 修改拆分键以及非拆分键
+        update = String.format("update %s set a = 1,b = 2,c = 3 where a = 1", tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, update);
+        checkGsi(tddlConnection, getRealGsiName(tddlConnection, tableName, gsiName));
+
+        // after 3 update, updated_at should stay unchanged
+        String select =
+            String.format("select count(*) from %s where a = 1 and updated_at = '2022-12-12 12:12:12'", tableName);
+
+        // 判断select结果是否为1
+        ResultSet rs = JdbcUtil.executeQuerySuccess(tddlConnection, select);
+        // rs应该只有一行数据
+        if (rs.next()) {
+            assertEquals(1, rs.getInt(1));
+        }
+        rs.close();
     }
 
     @Test
@@ -1033,7 +1144,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
             + "\t`b` json DEFAULT NULL,\n"
             + "\t`update_time` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n"
             + "\tPRIMARY KEY (`id`)\n"
-            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4";
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE=utf8mb4_general_ci";
         final String tddlCreatTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
             + "\t`id` bigint(20) NOT NULL AUTO_INCREMENT BY GROUP,\n"
             + "\t`a` varchar(32) DEFAULT NULL,\n"
@@ -1041,7 +1152,7 @@ public class UpdateTest extends DDLBaseNewDBTestCase {
             + "\t`b` json DEFAULT NULL,\n"
             + "\t`update_time` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n"
             + "\tPRIMARY KEY (`id`)\n"
-            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 broadcast";
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE=utf8mb4_general_ci broadcast";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, tddlCreatTable);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, mysqlCreatTable);

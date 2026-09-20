@@ -229,7 +229,22 @@ public class PhyTableScanBuilder extends PhyOperationBuilderCommon {
                 return;
             }
 
-            if (fetch instanceof SqlLiteral || fetch instanceof SqlDynamicParam) {
+            if (fetch instanceof SqlLiteral) {
+                return;
+            }
+
+            if (fetch instanceof SqlDynamicParam) {
+                // Re-validate the sign here because this method runs on every physical SQL
+                // build (every execution), while CBOUtil#validateNonNegativeFetch only runs
+                // when the plan is built/optimized. A plan-cache hit reuses this lone
+                // dynamic-param fetch node as-is, so a negative rebound parameter would
+                // otherwise slip through unvalidated.
+                if (params != null) {
+                    long fetchVal = resolveDynamicParamValue((SqlDynamicParam) fetch);
+                    if (fetchVal < 0) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER, "get rex " + fetchVal);
+                    }
+                }
                 return;
             }
 
@@ -268,6 +283,25 @@ public class PhyTableScanBuilder extends PhyOperationBuilderCommon {
                     sqlTemplate
                         .setFetch(SqlLiteral.createExactNumeric(String.valueOf(fetchVal), fetch.getParserPosition()));
                 }
+            }
+        }
+
+        private long resolveDynamicParamValue(SqlDynamicParam dynamicParam) {
+            int index = dynamicParam.getIndex();
+            try {
+                return Long.parseLong(String.valueOf(params.get(index + 1).getValue()));
+            } catch (NumberFormatException e) {
+                Object obj = params.get(index + 1).getValue();
+                if (obj instanceof BigInteger) {
+                    return ((BigInteger) obj).signum() < 0 ? -1 : Long.MAX_VALUE;
+                }
+                if (obj instanceof BigDecimal) {
+                    if (((BigDecimal) obj).scale() > 0) {
+                        throw e;
+                    }
+                    return ((BigDecimal) obj).signum() < 0 ? -1 : Long.MAX_VALUE;
+                }
+                throw e;
             }
         }
 
@@ -557,6 +591,7 @@ public class PhyTableScanBuilder extends PhyOperationBuilderCommon {
         Map<Integer, ParameterContext> currentParams = getPruneParams(group, tables);
         int tableIndex = -1;
         int applyInValueIndex = -1;
+        int applyDynamicSortIndex = -1;
         for (DynamicParamInfo dynamicParamInfo : dynamicParamList) {
             if (dynamicParamInfo instanceof IndexedDynamicParamInfo) {
                 int i = ((IndexedDynamicParamInfo) dynamicParamInfo).getParamIndex();
@@ -580,7 +615,20 @@ public class PhyTableScanBuilder extends PhyOperationBuilderCommon {
                     // do nothing
                     applyInValueIndex += 1;
                     results.add(
-                        new ParameterContext(ParameterMethod.setDelegateInValue, new Object[] {applyInValueIndex, null}));
+                        new ParameterContext(ParameterMethod.setDelegateInValue,
+                            new Object[] {applyInValueIndex, null}));
+                } else if (i == PlannerUtils.DYNAMIC_SORT_PARAM_BOOL_INDEX) {
+                    // do nothing
+                    applyDynamicSortIndex += 1;
+                    results.add(
+                        new ParameterContext(ParameterMethod.setDelegateDynamicSort,
+                            new Object[] {applyDynamicSortIndex, true}));
+                } else if (i == PlannerUtils.DYNAMIC_SORT_PARAM_INDEX) {
+                    // do nothing
+                    applyDynamicSortIndex += 1;
+                    results.add(
+                        new ParameterContext(ParameterMethod.setDelegateDynamicSort,
+                            new Object[] {applyDynamicSortIndex, null}));
                 } else {
                     if (currentParams != null) {
                         results.add(currentParams.get(i + 1));

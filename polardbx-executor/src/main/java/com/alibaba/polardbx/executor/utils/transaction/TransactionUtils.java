@@ -81,7 +81,7 @@ public class TransactionUtils {
             }
 
             final List<List<Map<String, Object>>> results =
-                SyncManagerHelper.sync(fetchAllTransSyncAction, schemaName, SyncScope.CURRENT_ONLY);
+                SyncManagerHelper.syncIgnoreExceptions(fetchAllTransSyncAction, schemaName, SyncScope.CURRENT_ONLY);
 
             updateTrxLookupSet(results, lookupSet);
         }
@@ -130,7 +130,7 @@ public class TransactionUtils {
         for (final String schemaName : allSchemaNames) {
             final OptimizerContext optimizerContext = OptimizerContext.getContext(schemaName);
 
-            if (null == optimizerContext) {
+            if (null == optimizerContext || optimizerContext.isExternalSchema()) {
                 continue;
             }
 

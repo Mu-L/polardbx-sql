@@ -25,6 +25,8 @@ import com.alibaba.polardbx.executor.mdl.MdlManager;
 import com.alibaba.polardbx.executor.mdl.MdlRequest;
 import com.alibaba.polardbx.executor.mdl.MdlTicket;
 import com.alibaba.polardbx.executor.mpp.metadata.NotNull;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 
 import java.util.Iterator;
 import java.util.List;
@@ -121,6 +123,31 @@ public class MdlContextStamped extends MdlContext {
                 if (null == ticket || !ticket.isValidate() || ticket.getType() != request.getType()) {
                     ticket = mdlManager.acquireLock(request, this);
                 }
+                // MDL leak reproduction: pause inside compute lambda after stamp acquired
+                // Must be interrupt-resistant: Path A's f.cancel(true) sends interrupt
+                // to DML thread, but we need to hold bucket lock for full duration
+                FailPoint.inject(FailPointKey.FP_MDL_ACQUIRE_INSIDE_COMPUTE, (k, v) -> {
+                    try {
+                        String[] parts = v.split(",");
+                        String targetTable = parts[0];
+                        int sleepMs = Integer.parseInt(parts[1]);
+                        if (request.getKey().getTableName().contains(targetTable)) {
+                            boolean interrupted = false;
+                            long deadline = System.currentTimeMillis() + sleepMs;
+                            while (System.currentTimeMillis() < deadline) {
+                                try {
+                                    Thread.sleep(Math.max(1, deadline - System.currentTimeMillis()));
+                                } catch (InterruptedException e) {
+                                    interrupted = true; // remember, but keep sleeping
+                                }
+                            }
+                            if (interrupted) {
+                                Thread.currentThread().interrupt(); // restore flag
+                            }
+                        }
+                    } catch (Exception ignored) {
+                    }
+                });
                 return ticket;
             });
         } finally {
@@ -140,7 +167,12 @@ public class MdlContextStamped extends MdlContext {
     public void releaseLock(@NotNull Long trxId, @NotNull final MdlTicket ticket) {
         final MdlManager mdlManager = getMdlManager(ticket.getLock().getKey().getDbName());
 
-        final long l = lock.readLock();
+        // writeLock: serialize with concurrent acquireLock (readLock) to prevent
+        // ConcurrentHashMap.compute() visibility race on KILL path.
+        // Same race as releaseTransactionalLocks: if acquireLock's compute() is
+        // in progress, ticketMap.isEmpty() may return true (entry invisible),
+        // causing premature TransactionInfo removal and stamp orphaning.
+        final long l = lock.writeLock();
         try {
             tickets.computeIfPresent(new TransactionInfo(trxId), (tid, ticketMap) -> {
                 ticketMap.computeIfPresent(ticket.getLock().getKey(), (k, t) -> {
@@ -153,13 +185,17 @@ public class MdlContextStamped extends MdlContext {
                 return ticketMap.isEmpty() ? null : ticketMap;
             });
         } finally {
-            lock.unlockRead(l);
+            lock.unlockWrite(l);
         }
     }
 
     @Override
     public void releaseTransactionalLocks(Long trxId) {
-        final long l = lock.readLock();
+        // writeLock: serialize with concurrent acquireLock (readLock) to prevent
+        // ConcurrentHashMap.compute() visibility race on KILL path.
+        // Without writeLock, weakly-consistent iterators miss entries being modified
+        // inside compute(), causing ticketMap.isEmpty() to return true prematurely.
+        final long l = lock.writeLock();
         try {
             tickets.computeIfPresent(new TransactionInfo(trxId), (tid, ticketMap) -> {
                 releaseTransactionalLocks(ticketMap);
@@ -167,7 +203,7 @@ public class MdlContextStamped extends MdlContext {
                 return ticketMap.isEmpty() ? null : ticketMap;
             });
         } finally {
-            lock.unlockRead(l);
+            lock.unlockWrite(l);
         }
     }
 

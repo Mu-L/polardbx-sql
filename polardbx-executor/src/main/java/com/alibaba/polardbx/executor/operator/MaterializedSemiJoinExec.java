@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.operator.util.BufferInputBatchQueue;
@@ -75,6 +77,19 @@ public class MaterializedSemiJoinExec extends AbstractJoinExec implements Consum
                 outerChild = outerChild.getInputs().get(0);
             }
         }
+    }
+
+    @FieldMemoryCounter(value = false)
+    protected OperatorMemoryOwnerId consumerMemoryOwnerId;
+
+    @Override
+    public void setConsumerOperatorMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        this.consumerMemoryOwnerId = operatorMemoryOwnerId;
+    }
+
+    @Override
+    public OperatorMemoryOwnerId getConsumerMemoryOwnerId() {
+        return consumerMemoryOwnerId;
     }
 
     @Override
@@ -180,5 +195,10 @@ public class MaterializedSemiJoinExec extends AbstractJoinExec implements Consum
     @Override
     public ListenableFuture<?> produceIsBlocked() {
         return blocked;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return 0;
     }
 }

@@ -16,17 +16,26 @@
 
 package com.alibaba.polardbx.optimizer.config.meta;
 
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
+import com.alibaba.polardbx.optimizer.core.rel.ExternalTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.GroupTopN;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.MysqlTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.PhysicalCTEConsumer;
 import com.alibaba.polardbx.optimizer.view.ViewPlan;
 import org.apache.calcite.plan.volcano.RelSubset;
+import org.apache.calcite.rel.core.CTEAnchor;
+import org.apache.calcite.rel.core.CTEProducer;
 import org.apache.calcite.rel.core.TableLookup;
+import org.apache.calcite.rel.logical.LogicalCTEConsumer;
 import org.apache.calcite.rel.logical.LogicalTableScan;
 import org.apache.calcite.rel.metadata.ReflectiveRelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMdPopulationSize;
 import org.apache.calcite.rel.metadata.RelMdUtil;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
+import org.apache.calcite.rex.RexInputRef;
+import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.util.BuiltInMethod;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.Util;
@@ -54,6 +63,46 @@ public class DrdsRelMdPopulationSize extends RelMdPopulationSize {
         }
     }
 
+    public Double getPopulationSize(GroupTopN rel, RelMetadataQuery mq,
+                                    ImmutableBitSet groupKey) {
+        return mq.getPopulationSize(rel.getInput(), groupKey);
+    }
+
+    public Double getPopulationSize(CTEAnchor rel, RelMetadataQuery mq,
+                                    ImmutableBitSet groupKey) {
+        return mq.getPopulationSize(rel.getRight(), groupKey);
+    }
+
+    public Double getPopulationSize(CTEProducer rel, RelMetadataQuery mq,
+                                    ImmutableBitSet groupKey) {
+        return mq.getPopulationSize(rel.getInput(), groupKey);
+    }
+
+    public Double getPopulationSize(LogicalCTEConsumer rel, RelMetadataQuery mq,
+                                    ImmutableBitSet groupKey) {
+        return mq.getPopulationSize(rel.getInnerRel(), groupKey);
+    }
+
+    public Double getPopulationSize(PhysicalCTEConsumer rel, RelMetadataQuery mq,
+                                    ImmutableBitSet groupKey) {
+        java.util.List<RexNode> projects = rel.getProjects();
+        if (projects != null && !projects.isEmpty()) {
+            ImmutableBitSet.Builder mappedKey = ImmutableBitSet.builder();
+            for (int bit : groupKey) {
+                if (bit < projects.size()) {
+                    RexNode project = projects.get(bit);
+                    if (project instanceof RexInputRef) {
+                        mappedKey.set(((RexInputRef) project).getIndex());
+                    } else {
+                        mappedKey.addAll(org.apache.calcite.plan.RelOptUtil.InputFinder.bits(project));
+                    }
+                }
+            }
+            groupKey = mappedKey.build();
+        }
+        return mq.getPopulationSize(CBOUtil.getCteProducer(rel), groupKey);
+    }
+
     public Double getPopulationSize(TableLookup rel, RelMetadataQuery mq, ImmutableBitSet groupKey) {
         return mq.getPopulationSize(rel.getProject(), groupKey);
     }
@@ -64,5 +113,11 @@ public class DrdsRelMdPopulationSize extends RelMdPopulationSize {
 
     public Double getPopulationSize(MysqlTableScan rel, RelMetadataQuery mq, ImmutableBitSet groupKey) {
         return mq.getPopulationSize(rel.getNodeForMetaQuery(), groupKey);
+    }
+
+    public Double getPopulationSize(
+        ExternalTableScan rel,
+        RelMetadataQuery mq, ImmutableBitSet groupKey) {
+        return rel.getPopulationSize(mq, groupKey);
     }
 }

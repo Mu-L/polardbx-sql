@@ -41,10 +41,17 @@ import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.util.ReflectiveSqlOperatorTable;
 import org.apache.calcite.sql.validate.SqlUserDefinedFunction;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.stream.Collectors;
 
 public class UdfUtils {
+
+    public static boolean checkIfSqlUdfByFunctionName(String functionName) {
+        ReflectiveSqlOperatorTable.Key key = new ReflectiveSqlOperatorTable.Key(functionName, SqlSyntax.FUNCTION);
+        boolean contains = TddlOperatorTable.instance().getOperators().containsKey(key);
+        return contains;
+    }
     public static void registerSqlUdf(String createFunctionStr, boolean canPush) {
         SqlUserDefinedFunction udf = createSqlUdf(createFunctionStr, canPush);
         synchronized (TddlOperatorTable.instance()) {

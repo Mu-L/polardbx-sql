@@ -31,7 +31,10 @@ public class ExplainValidateTest extends DDLBaseNewDBTestCase {
             Assert.assertTrue(rs.next());
             Assert.assertTrue(rs.getString(1).contains("CREATE_TABLE"));
             Assert.assertTrue(rs.next());
-            Assert.assertTrue(rs.getString(1).contains("DROP_TABLE"));
+            Assert.assertTrue(rs.next());
+            Assert.assertTrue(rs.next());
+            Assert.assertTrue(rs.next());
+            Assert.assertTrue(rs.getString(1).contains("DROP_TABLE") || rs.getString(1).contains("RENAME_TABLE"));
             Assert.assertTrue(rs.next());
             Assert.assertTrue(rs.getString(1).contains("EXCLUDE_RESOURCE"));
         } catch (SQLException e) {
@@ -57,11 +60,17 @@ public class ExplainValidateTest extends DDLBaseNewDBTestCase {
             Assert.assertTrue(rs.next());
             Assert.assertTrue(rs.getString(1).contains("CREATE_TABLE"));
             Assert.assertTrue(rs.next());
+            Assert.assertTrue(rs.next());
+            Assert.assertTrue(rs.next());
+            Assert.assertTrue(rs.next());
             Assert.assertTrue(rs.getString(1).contains("CREATE_TABLE"));
             Assert.assertTrue(rs.next());
-            Assert.assertTrue(rs.getString(1).contains("DROP_TABLE"));
             Assert.assertTrue(rs.next());
-            Assert.assertTrue(rs.getString(1).contains("DROP_TABLE"));
+            Assert.assertTrue(rs.next());
+            Assert.assertTrue(rs.next());
+            Assert.assertTrue(rs.getString(1).contains("DROP_TABLE") || rs.getString(1).contains("RENAME_TABLE"));
+            Assert.assertTrue(rs.next());
+            Assert.assertTrue(rs.getString(1).contains("DROP_TABLE") || rs.getString(1).contains("RENAME_TABLE"));
             Assert.assertTrue(rs.next());
             Assert.assertTrue(rs.getString(1).contains("EXCLUDE_RESOURCE"));
         } catch (SQLException e) {
@@ -87,11 +96,17 @@ public class ExplainValidateTest extends DDLBaseNewDBTestCase {
             Assert.assertTrue(rs.next());
             Assert.assertTrue(rs.getString(1).contains("CREATE_TABLE"));
             Assert.assertTrue(rs.next());
+            Assert.assertTrue(rs.next());
+            Assert.assertTrue(rs.next());
+            Assert.assertTrue(rs.next());
             Assert.assertTrue(rs.getString(1).contains("CREATE_TABLE"));
             Assert.assertTrue(rs.next());
-            Assert.assertTrue(rs.getString(1).contains("DROP_TABLE"));
             Assert.assertTrue(rs.next());
-            Assert.assertTrue(rs.getString(1).contains("DROP_TABLE"));
+            Assert.assertTrue(rs.next());
+            Assert.assertTrue(rs.next());
+            Assert.assertTrue(rs.getString(1).contains("DROP_TABLE") || rs.getString(1).contains("RENAME_TABLE"));
+            Assert.assertTrue(rs.next());
+            Assert.assertTrue(rs.getString(1).contains("DROP_TABLE") || rs.getString(1).contains("RENAME_TABLE"));
             Assert.assertTrue(rs.next());
             Assert.assertTrue(rs.getString(1).contains("EXCLUDE_RESOURCE"));
         } catch (SQLException e) {

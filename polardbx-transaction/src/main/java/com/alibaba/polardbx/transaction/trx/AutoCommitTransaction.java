@@ -22,16 +22,13 @@ import com.alibaba.polardbx.common.jdbc.IConnection;
 import com.alibaba.polardbx.common.jdbc.IDataSource;
 import com.alibaba.polardbx.common.jdbc.ITransactionPolicy;
 import com.alibaba.polardbx.common.jdbc.MasterSlave;
-import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.oss.blob.BlobWriteTracker;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.type.TransactionType;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
-import com.alibaba.polardbx.executor.common.ExecutorContext;
-import com.alibaba.polardbx.executor.common.TopologyHandler;
 import com.alibaba.polardbx.executor.spi.ITransactionManager;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
-import com.alibaba.polardbx.executor.utils.GroupingFetchLSN;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.utils.IConnectionHolder;
@@ -43,7 +40,9 @@ import com.alibaba.polardbx.transaction.connection.AutoCommitConnectionHolder;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.sql.SQLException;
+import java.util.HashSet;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 
 import static com.alibaba.polardbx.transaction.connection.TransactionConnectionHolder.needReadLsn;
@@ -57,14 +56,11 @@ public class AutoCommitTransaction extends BaseTransaction {
     protected final static Logger logger = LoggerFactory.getLogger(AutoCommitTransaction.class);
 
     final protected AutoCommitConnectionHolder ch;
-
-    protected final boolean consistentReplicaRead;
+    private volatile BlobWriteTracker blobWriteTracker;
 
     public AutoCommitTransaction(ExecutionContext ec, ITransactionManager manager) {
         super(ec, manager);
         ch = new AutoCommitConnectionHolder(ec);
-        this.consistentReplicaRead = executionContext.getParamManager().getBoolean(
-            ConnectionParams.ENABLE_CONSISTENT_REPLICA_READ);
     }
 
     @Override
@@ -82,15 +78,20 @@ public class AutoCommitTransaction extends BaseTransaction {
             throw new TddlRuntimeException(ErrorCode.ERR_TRANS,
                 "Should not get write connection when ENABLE_EXTERNAL_CONSISTENCY_FOR_WRITE_TRX is true");
         }
+        checkReadonlyDnList(rw, ec, ds);
         MasterSlave masterSlave = ExecUtils.getMasterSlave(false, rw.equals(RW.WRITE), ec);
         IConnection connection = getRealConnection(schemaName, groupName, ds, masterSlave);
-        boolean needSetFlashbackArea = executionContext.isFlashbackArea() && rw == ITransaction.RW.READ;
-        return sendLsn(connection, schemaName, groupName, masterSlave, () -> -1L)
-            .enableFlashbackArea(needSetFlashbackArea);
+        boolean needSetFlashbackArea = executionContext.isFlashbackArea() && rw == ITransaction.RW.READ
+            && executionContext.getStorageInfo(schemaName).isSupportFlashbackArea();
+        boolean needSetAsOfCrossDdl = executionContext.isAsOfCrossDdl() && rw == ITransaction.RW.READ
+            && executionContext.getStorageInfo(schemaName).isSupportAsOfCrossDdl();
+        return getConnectionWithLsn(connection, schemaName, groupName, masterSlave, () -> -1L)
+            .enableFlashbackArea(needSetFlashbackArea)
+            .enableAsOfCrossDdl(needSetAsOfCrossDdl);
     }
 
-    protected IConnection getRealConnection(
-        String schemaName, String groupName, IDataSource ds, MasterSlave masterSlave)
+    protected IConnection getRealConnection(String schemaName, String groupName, IDataSource ds,
+                                            MasterSlave masterSlave)
         throws SQLException {
         if (groupName == null) {
             throw new IllegalArgumentException("group name is null");
@@ -117,21 +118,12 @@ public class AutoCommitTransaction extends BaseTransaction {
         }
     }
 
-    protected IConnection sendLsn(
+    protected IConnection getConnectionWithLsn(
         IConnection connection, String schemaName, String group, MasterSlave masterSlave, Supplier<Long> tso)
         throws SQLException {
-        boolean needReadLsn = needReadLsn(this, schemaName, masterSlave, consistentReplicaRead);
+        boolean needReadLsn = needReadLsn(this, schemaName, masterSlave, getConsistentReplicaRead());
         if (needReadLsn) {
-
-            TopologyHandler topology;
-            if (schemaName != null) {
-                topology = ExecutorContext.getContext(schemaName).getTopologyExecutor().getTopology();
-            } else {
-                topology = ((com.alibaba.polardbx.transaction.TransactionManager) manager).getTransactionExecutor()
-                    .getTopology();
-            }
-            long masterLsn = GroupingFetchLSN.getInstance().fetchLSN(topology, group, null, tso.get());
-            connection.executeLater(String.format("SET read_lsn = %d", masterLsn));
+            super.sendLsn(connection, schemaName, group, masterSlave, tso);
         }
         return connection;
     }
@@ -166,9 +158,32 @@ public class AutoCommitTransaction extends BaseTransaction {
         lock.lock();
 
         try {
+            // Reset DN session vars before returning the connection to the pool,
+            // so the next caller starts from a clean state. Autocommit transactions
+            // do not have AbstractTransaction's clearAsOfCrossDdl/clearFlashbackArea
+            // path; without this hook the SET would leak across pooled sessions
+            // if the DN ever stops auto-resetting these vars per statement.
+            resetSessionVarsBeforeRecycle(conn);
             this.getConnectionHolder().tryClose(conn, groupName);
         } finally {
             lock.unlock();
+        }
+    }
+
+    private void resetSessionVarsBeforeRecycle(IConnection conn) {
+        if (executionContext.isAsOfCrossDdl()) {
+            try {
+                conn.disableAsOfCrossDdl();
+            } catch (Throwable t) {
+                logger.warn("disableAsOfCrossDdl on tryClose failed", t);
+            }
+        }
+        if (executionContext.isFlashbackArea()) {
+            try {
+                conn.disableFlashbackArea();
+            } catch (Throwable t) {
+                logger.warn("disableFlashbackArea on tryClose failed", t);
+            }
         }
     }
 
@@ -265,6 +280,26 @@ public class AutoCommitTransaction extends BaseTransaction {
         if (tryClose != null) {
             tryClose.apply(conn, groupName);
         }
+    }
+
+    @Override
+    public BlobWriteTracker getBlobWriteTracker() {
+        BlobWriteTracker tracker = blobWriteTracker;
+        if (tracker == null) {
+            synchronized (this) {
+                tracker = blobWriteTracker;
+                if (tracker == null) {
+                    tracker = new BlobWriteTracker();
+                    blobWriteTracker = tracker;
+                }
+            }
+        }
+        return tracker;
+    }
+
+    @Override
+    public BlobWriteTracker getBlobWriteTrackerOrNull() {
+        return blobWriteTracker;
     }
 
     public interface ReleaseCallback {

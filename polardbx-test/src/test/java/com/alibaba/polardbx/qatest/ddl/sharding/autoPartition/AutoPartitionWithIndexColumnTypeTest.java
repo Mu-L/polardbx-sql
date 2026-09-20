@@ -18,13 +18,14 @@ package com.alibaba.polardbx.qatest.ddl.sharding.autoPartition;
 
 import com.alibaba.polardbx.qatest.constant.GsiConstant;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
-import com.alibaba.polardbx.qatest.util.RandomUtils;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.alibaba.polardbx.qatest.ddl.sharding.gsi.group2.ParallelGsiRunner;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.sql.ResultSet;
@@ -48,6 +49,7 @@ import static org.hamcrest.Matchers.is;
  * @version 1.0
  */
 
+@RunWith(ParallelGsiRunner.class)
 public class AutoPartitionWithIndexColumnTypeTest extends AutoPartitionTestBase {
     private static final String CREATE_TEMPLATE = "CREATE PARTITION TABLE {0} ({1} {2})";
     private static final String INSERT_TEMPLATE = "INSERT INTO {0}({1}) VALUES({2})";
@@ -90,9 +92,19 @@ public class AutoPartitionWithIndexColumnTypeTest extends AutoPartitionTestBase 
 
     @Before
     public void before() {
-        TABLE_NAME = "auto_partition_idx_tb" + RandomUtils.getStringBetween(1, 10);
-        INDEX_NAME = "ap_index" + RandomUtils.getStringBetween(1, 10);
+        // 用列名+方法名摘要做确定性表名, 避免随机后缀在类内并发时撞名
+        final String tag = indexColumnRaw + "_" + methodTag();
+        TABLE_NAME = "auto_partition_idx_tb_" + tag;
+        INDEX_NAME = "ap_index_" + tag;
         dropTableWithGsi(TABLE_NAME, ImmutableList.of(INDEX_NAME));
+    }
+
+    /**
+     * 方法名摘要: 参数化方法名带 "[index:param]" 后缀, 取 hash 后 4 位十六进制;
+     * 同列 16 个方法共享表会互踩, 用方法维度区分
+     */
+    private String methodTag() {
+        return Integer.toHexString(testName.getMethodName().hashCode() & 0xFFFF);
     }
 
     @After
@@ -115,6 +127,7 @@ public class AutoPartitionWithIndexColumnTypeTest extends AutoPartitionTestBase 
             Statement ps = null;
             try {
                 ps = tddlConnection.createStatement();
+                ps.execute("set sql_mode='STRICT_TRANS_TABLES'");
                 ps.executeUpdate(insertSql);
             } catch (SQLSyntaxErrorException msee) {
                 throw msee;

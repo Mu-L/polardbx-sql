@@ -21,6 +21,7 @@ import java.io.EOFException;
 import java.io.IOException;
 
 import org.apache.hadoop.hive.ql.exec.vector.ColumnVector;
+import org.apache.orc.customized.ORCFieldMemoryCounter;
 import org.apache.orc.customized.ORCProfile;
 
 /**
@@ -36,6 +37,7 @@ public class RunLengthByteReader {
   private int used = 0;
   private boolean repeat = false;
 
+  @ORCFieldMemoryCounter(value = false)
   private ORCProfile memoryCounter;
 
   public RunLengthByteReader(InStream input) {
@@ -48,6 +50,10 @@ public class RunLengthByteReader {
     if (memoryCounter != null) {
       memoryCounter.update(literals.length);
     }
+  }
+
+  public InStream getInput() {
+    return input;
   }
 
   public void setInStream(InStream input) {

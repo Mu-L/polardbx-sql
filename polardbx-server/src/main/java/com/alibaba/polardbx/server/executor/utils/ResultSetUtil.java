@@ -19,6 +19,7 @@ package com.alibaba.polardbx.server.executor.utils;
 import com.alibaba.druid.proxy.jdbc.ResultSetMetaDataProxy;
 import com.alibaba.polardbx.common.charset.CharsetName;
 import com.alibaba.polardbx.common.exception.NotSupportException;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.Xprotocol.XRowSet;
 import com.alibaba.polardbx.matrix.jdbc.TResultSet;
@@ -38,6 +39,8 @@ import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
+import com.alibaba.polardbx.server.ServerConnection;
+import com.alibaba.polardbx.server.encdb.EncryptedResultSet;
 import com.alibaba.polardbx.server.util.StringUtil;
 import com.mysql.jdbc.Field;
 
@@ -73,6 +76,10 @@ public class ResultSetUtil {
             flags |= 128;
 
             // is blob
+            flags |= 16;
+        } else if (DataTypeUtil.equalsSemantically(dataType, DataTypes.VectorType)) {
+            // VECTOR is binary data (float32 little-endian)
+            flags |= 128;
             flags |= 16;
         } else if (DataTypeUtil.equalsSemantically(dataType, DataTypes.VarcharType)
             && dataType.getCharsetName() == CharsetName.BINARY) {
@@ -170,6 +177,10 @@ public class ResultSetUtil {
         // 先执行一次next，因为存在lazy-init处理，可能写了packet head包出去，但实际获取数据时出错导致客户端出现lost
         // connection，没有任何其他异常
         boolean existNext = rs.next();
+        final boolean useUtf8mb4JsonTargetCharset =
+            DynamicConfig.getInstance().isEnableJsonResultCharsetCompatibility()
+                && c instanceof ServerConnection
+                && ((ServerConnection) c).isCharacterSetResultsNullOrBinary();
 
         java.sql.ResultSetMetaData metaData = rs.getMetaData();
         int columnCount = metaData.getColumnCount();
@@ -225,12 +236,18 @@ public class ResultSetUtil {
                                 if (DataTypeUtil.anyMatchSemantically(meta.getDataType(), DataTypes.BinaryType,
                                     DataTypes.BlobType)) {
                                     packet.fieldPackets[i].charsetIndex = 63; // iso-8859-1
+                                } else if (DataTypeUtil.equalsSemantically(meta.getDataType(), DataTypes.VectorType)) {
+                                    packet.fieldPackets[i].charsetIndex = 63; // binary
                                 } else if (DataTypeUtil.equalsSemantically(meta.getDataType(), DataTypes.VarcharType)
                                     && meta.getDataType().getCharsetName() == CharsetName.BINARY) {
                                     packet.fieldPackets[i].charsetIndex = 63; // iso-8859-1
                                 } else {
                                     packet.fieldPackets[i].charsetIndex = charsetIndex;
                                 }
+                            }
+                            if (useUtf8mb4JsonTargetCharset
+                                && DataTypeUtil.equalsSemantically(meta.getDataType(), DataTypes.JsonType)) {
+                                packet.fieldPackets[i].charsetIndex = 63;
                             }
 
                             int sqlType = ((TResultSetMetaData) metaData).getColumnType(j, true);
@@ -257,6 +274,14 @@ public class ResultSetUtil {
                             }
                         } else {
                             throw new NotSupportException();
+                        }
+
+                        if (rs instanceof EncryptedResultSet) {
+                            //加密列需要修改列类型
+                            if (((EncryptedResultSet) rs).isEncrypted(i + 1) || ((EncryptedResultSet) rs).isMasked(
+                                i + 1)) {
+                                packet.fieldPackets[i].type = (byte) MysqlDefs.FIELD_TYPE_VAR_STRING;
+                            }
                         }
                     }
                 }
@@ -292,11 +317,15 @@ public class ResultSetUtil {
                     resetUndecidedType(rs, i, packet, undecidedTypeIndexes);
                 }
 
+                final String targetCharset =
+                    useUtf8mb4JsonTargetCharset
+                        && MysqlDefs.MySQLTypeUInt(packet.fieldPackets[i].type) == MysqlDefs.FIELD_TYPE_JSON
+                        ? "utf8mb4" : charset;
                 if (xRowSet != null) {
                     // Fast path of X-Protocol.
-                    row.fieldValues.add(xRowSet.fastGetBytes(i, charset));
+                    row.fieldValues.add(xRowSet.fastGetBytes(i, targetCharset));
                 } else if (rs instanceof TResultSet) {
-                    row.fieldValues.add(((TResultSet) rs).getBytes(j, charset));
+                    row.fieldValues.add(((TResultSet) rs).getBytes(j, targetCharset));
                 } else {
                     row.fieldValues.add(rs.getBytes(j));
                 }

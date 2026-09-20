@@ -1,0 +1,112 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+## error_msg: $# same constant in list #$
+CREATE TABLE `list_esc_route_t0` (
+`a` varchar(8) DEFAULT NULL,
+`b` varchar(8) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST COLUMNS(`a`)
+(
+PARTITION p1 VALUES IN(''),
+PARTITION p2 VALUES IN('\''),
+PARTITION p3 VALUES IN(''''),
+PARTITION p4 VALUES IN('\\r'),
+PARTITION p5 VALUES IN('\\n'),
+PARTITION p6 VALUES IN('\\'),
+PARTITION p7 VALUES IN('\\\\'),
+PARTITION p8 VALUES IN('"'),
+PARTITION p9 VALUES IN(DEFAULT)
+)
+;
+
+CREATE TABLE `list_esc_route_t1` (
+`a` varchar(8) DEFAULT NULL,
+`b` varchar(8) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST COLUMNS(`a`)
+(
+PARTITION p1 VALUES IN(''),
+PARTITION p2 VALUES IN('\''),
+PARTITION p3 VALUES IN('\\t'),
+PARTITION p4 VALUES IN('\\r'),
+PARTITION p5 VALUES IN('\\n'),
+PARTITION p6 VALUES IN('\\'),
+PARTITION p7 VALUES IN('\\\\'),
+PARTITION p8 VALUES IN('"'),
+PARTITION p9 VALUES IN(DEFAULT)
+)
+;
+show create table list_esc_route_t1;
+
+insert into list_esc_route_t1 
+(a,b) 
+values 
+('',''),
+('\'',''''),
+('\\t','\\t'),
+('\\r','\\r'),
+('\\n','\\n'),
+('\\','\\'),
+('\\\\','\\\\'),
+('"','"');
+
+select a, part_route('','list_esc_route_t1', a) part from list_esc_route_t1 order by a;
+
+CREATE TABLE `list_esc_route_t2` (
+`a` varchar(8) DEFAULT NULL,
+`b` varchar(8) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST COLUMNS(`a`)
+(
+PARTITION p1 VALUES IN(''),
+PARTITION p2 VALUES IN('\'\"'),
+PARTITION p3 VALUES IN('\\t\\r\\n')
+)
+;
+show create table list_esc_route_t2;
+
+insert into list_esc_route_t2
+(a,b)
+values
+('',''),
+('\'"','''\"'),
+('\\t\\r\\n','\\t\\r\\n');
+
+select a, part_route('','list_esc_route_t2', a) part from list_esc_route_t2 order by a;
+
+
+CREATE TABLE `list_esc_route_t3` (
+`a` varchar(8) DEFAULT NULL,
+`b` varchar(8) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST COLUMNS(`a`,`b`)
+(
+PARTITION p1 VALUES IN(('','')),
+PARTITION p2 VALUES IN(('\'','''')),
+PARTITION p3 VALUES IN(('\\t','\\t')),
+PARTITION p4 VALUES IN(('\\r','\\r')),
+PARTITION p5 VALUES IN(('\\n','\\n')),
+PARTITION p6 VALUES IN(('\\','\\')),
+PARTITION p7 VALUES IN(('\\\\','\\\\')),
+PARTITION p8 VALUES IN(('"','"'))
+)
+;
+show create table list_esc_route_t3;
+
+insert into list_esc_route_t3
+(a,b)
+values
+('',''),
+('\'',''''),
+('\\t','\\t'),
+('\\r','\\r'),
+('\\n','\\n'),
+('\\','\\'),
+('\\\\','\\\\'),
+('"','"');
+
+select a,b, part_route('','list_esc_route_t3', a,b) part from list_esc_route_t3 order by a;
+
+
+

@@ -29,9 +29,11 @@
  */
 package com.alibaba.polardbx.executor.mpp.split;
 
+import com.alibaba.polardbx.executor.mpp.metadata.SplitType;
 import com.alibaba.polardbx.executor.mpp.metadata.TaskLocation;
 import com.alibaba.polardbx.executor.mpp.spi.ConnectorSplit;
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
@@ -54,6 +56,12 @@ public class RemoteSplit implements ConnectorSplit {
     @Override
     public Object getInfo() {
         return this;
+    }
+
+    @Override
+    @JsonIgnore
+    public SplitType getSplitType() {
+        return SplitType.REMOTE;
     }
 
     @Override

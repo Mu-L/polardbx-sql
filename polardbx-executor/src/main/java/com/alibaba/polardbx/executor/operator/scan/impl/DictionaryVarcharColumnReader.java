@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.ORCMemoryCounterUtil;
 import com.alibaba.polardbx.executor.chunk.RandomAccessBlock;
 import com.alibaba.polardbx.executor.chunk.SliceBlock;
 import com.alibaba.polardbx.executor.operator.scan.StripeLoader;
@@ -27,6 +29,8 @@ import io.airlift.slice.SliceOutput;
 import io.airlift.slice.Slices;
 import org.apache.orc.OrcProto;
 import org.apache.orc.impl.OrcIndex;
+import org.openjdk.jol.info.ClassLayout;
+import org.apache.orc.impl.PositionProviderBuilder;
 
 import java.io.IOException;
 
@@ -35,16 +39,38 @@ import java.io.IOException;
  * the dictionary-encoding data from orc into slice block.
  */
 public class DictionaryVarcharColumnReader extends AbstractDictionaryColumnReader {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(DictionaryVarcharColumnReader.class).instanceSize();
 
     private final boolean enableSliceDict;
     private SliceOutput sliceOutputBuffer = null;
 
     public DictionaryVarcharColumnReader(int columnId, boolean isPrimaryKey,
-                                         StripeLoader stripeLoader, OrcIndex orcIndex,
+                                         StripeLoader stripeLoader, PositionProviderBuilder orcIndex,
                                          RuntimeMetrics metrics, OrcProto.ColumnEncoding encoding, int indexStride,
                                          boolean enableMetrics, boolean enableSliceDict) {
         super(columnId, isPrimaryKey, stripeLoader, orcIndex, metrics, encoding, indexStride, enableMetrics);
         this.enableSliceDict = enableSliceDict;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            // from AbstractColumnReader
+            + FastMemoryCounter.sizeOf(refCount)
+            + FastMemoryCounter.sizeOf(isClosed)
+            + FastMemoryCounter.sizeOf(hasNoMoreBlocks)
+
+            // from AbstractDictionaryColumnReader
+            + FastMemoryCounter.sizeOf(openFailed)
+            + FastMemoryCounter.sizeOf(initializeOnlyOnce)
+            + FastMemoryCounter.sizeOf(isOpened)
+            + ORCMemoryCounterUtil.sizeOfBitFieldReader(present)
+            + ORCMemoryCounterUtil.sizeOfIntegerReader(dictIdReader)
+            + FastMemoryCounter.sizeOf(dictionary)
+
+            // for DictionaryVarcharColumnReader
+            + FastMemoryCounter.sizeOf(sliceOutputBuffer);
+
     }
 
     @Override

@@ -20,6 +20,7 @@ package com.alibaba.polardbx.gms.metadb.columnar;
 
 import com.alibaba.polardbx.gms.metadb.table.ColumnarAppendedFilesAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarAppendedFilesRecord;
+import com.alibaba.polardbx.gms.metadb.table.CommonIntegerRecord;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import org.junit.Assert;
 import org.junit.Test;
@@ -59,6 +60,12 @@ public class ColumnarAppendedFilesAccessorTest {
 
             result = columnarAppendedFilesAccessor.queryLastValidCSVAppendByTsoAndTableId(111L, "db", "table");
             Assert.assertEquals(1, result.size());
+
+            result = columnarAppendedFilesAccessor.queryFileLastAppendedRecord("file2");
+            Assert.assertEquals(1, result.size());
+
+            result = columnarAppendedFilesAccessor.queryFilesByTsoLimitTwo("file1", 123L);
+            Assert.assertEquals(1, result.size());
         }
     }
 
@@ -88,6 +95,10 @@ public class ColumnarAppendedFilesAccessorTest {
             deleteCount.set(18);
             count = columnarAppendedFilesAccessor.deleteLimitByTableAndFileName("schema", "table", "file1", 123L);
             Assert.assertEquals(18, count);
+
+            deleteCount.set(20);
+            count = columnarAppendedFilesAccessor.deleteLimitByFileNameAndTso("file1", 123L, 100L);
+            Assert.assertEquals(20, count);
         }
     }
 
@@ -104,6 +115,121 @@ public class ColumnarAppendedFilesAccessorTest {
             } catch (Exception e) {
                 Assert.assertTrue(e.getMessage().contains("mock error"));
             }
+        }
+    }
+
+    @Test
+    public void testQueryFileHaveRowsTrue() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            // Mock: have rows, returns value=1
+            List<CommonIntegerRecord> records = new ArrayList<>();
+            CommonIntegerRecord intRecord = new CommonIntegerRecord();
+            intRecord.value = 1;
+            records.add(intRecord);
+
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.eq(CommonIntegerRecord.class), Mockito.any())).thenReturn(records);
+
+            ColumnarAppendedFilesAccessor accessor = new ColumnarAppendedFilesAccessor();
+            boolean result = accessor.queryFileHaveRows("testFile.csv", 5L);
+            Assert.assertTrue(result);
+        }
+    }
+
+    @Test
+    public void testQueryFileHaveRowsFalseValueZero() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            // Mock: not enough rows, returns value=0
+            List<CommonIntegerRecord> records = new ArrayList<>();
+            CommonIntegerRecord intRecord = new CommonIntegerRecord();
+            intRecord.value = 0;
+            records.add(intRecord);
+
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.eq(CommonIntegerRecord.class), Mockito.any())).thenReturn(records);
+
+            ColumnarAppendedFilesAccessor accessor = new ColumnarAppendedFilesAccessor();
+            boolean result = accessor.queryFileHaveRows("testFile.csv", 5L);
+            Assert.assertFalse(result);
+        }
+    }
+
+    @Test
+    public void testQueryFileHaveRowsFalseEmptyList() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            // Mock: empty result list
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.eq(CommonIntegerRecord.class), Mockito.any())).thenReturn(new ArrayList<>());
+
+            ColumnarAppendedFilesAccessor accessor = new ColumnarAppendedFilesAccessor();
+            boolean result = accessor.queryFileHaveRows("nonexistent.csv", 3L);
+            Assert.assertFalse(result);
+        }
+    }
+
+    @Test
+    public void testQueryFileHaveRowsFalseNullList() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            // Mock: null result list
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.eq(CommonIntegerRecord.class), Mockito.any())).thenReturn(null);
+
+            ColumnarAppendedFilesAccessor accessor = new ColumnarAppendedFilesAccessor();
+            boolean result = accessor.queryFileHaveRows("nullFile.csv", 1L);
+            Assert.assertFalse(result);
+        }
+    }
+
+    @Test
+    public void testDeleteLimitByFileNameAndTso() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            AtomicInteger deleteCount = new AtomicInteger(0);
+
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.delete(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.any())).thenAnswer(invocationOnMock -> deleteCount.get());
+
+            ColumnarAppendedFilesAccessor accessor = new ColumnarAppendedFilesAccessor();
+
+            deleteCount.set(5);
+            int count = accessor.deleteLimitByFileNameAndTso("file1.csv", 1000L, 10L);
+            Assert.assertEquals(5, count);
+
+            deleteCount.set(0);
+            count = accessor.deleteLimitByFileNameAndTso("nonexistent.csv", 500L, 100L);
+            Assert.assertEquals(0, count);
+
+            deleteCount.set(100);
+            count = accessor.deleteLimitByFileNameAndTso("bigfile.csv", Long.MAX_VALUE, 1000L);
+            Assert.assertEquals(100, count);
+        }
+    }
+
+    @Test
+    public void testQueryFilesByTsoLimitTwoEmpty() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.eq(ColumnarAppendedFilesRecord.class), Mockito.any())).thenReturn(new ArrayList<>());
+
+            ColumnarAppendedFilesAccessor accessor = new ColumnarAppendedFilesAccessor();
+            List<ColumnarAppendedFilesRecord> result = accessor.queryFilesByTsoLimitTwo("nofile.csv", 999L);
+            Assert.assertNotNull(result);
+            Assert.assertTrue(result.isEmpty());
+        }
+    }
+
+    @Test
+    public void testQueryFilesByTsoLimitTwoMultipleResults() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            List<ColumnarAppendedFilesRecord> twoRecords = new ArrayList<>();
+            twoRecords.add(new ColumnarAppendedFilesRecord());
+            twoRecords.add(new ColumnarAppendedFilesRecord());
+
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.eq(ColumnarAppendedFilesRecord.class), Mockito.any())).thenReturn(twoRecords);
+
+            ColumnarAppendedFilesAccessor accessor = new ColumnarAppendedFilesAccessor();
+            List<ColumnarAppendedFilesRecord> result = accessor.queryFilesByTsoLimitTwo("file1.csv", 2000L);
+            Assert.assertEquals(2, result.size());
         }
     }
 }

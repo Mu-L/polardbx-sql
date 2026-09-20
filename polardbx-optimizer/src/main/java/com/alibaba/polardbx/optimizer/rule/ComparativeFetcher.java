@@ -131,6 +131,18 @@ public class ComparativeFetcher {
                     throw new IllegalArgumentException(
                         "RexDynamicParam should not be enter here, might cause by params missing.");
                 }
+            } else if (paramVal instanceof RexNode) {
+                //only for UT test
+                // Construct a temporary ExecutionContext to wrap parameters
+                ExecutionContext context = new ExecutionContext();
+                Parameters parameters = new Parameters();
+                parameters.setParams(param);
+                context.setParams(parameters);
+                context.setTimeZone(shardRouterTimeZone);
+
+                // Eval with null row (must be constant here)
+                IExpression expression = RexUtils.buildRexNode((RexNode) paramVal, context);
+                paramVal = expression.eval(null);
             }
             if (paramVal != null) {
                 DataType dataType = dataTypeMap.get(colName);

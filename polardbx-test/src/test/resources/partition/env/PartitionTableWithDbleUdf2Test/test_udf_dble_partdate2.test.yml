@@ -1,0 +1,66 @@
+## DISABLE_FAST_SQL_PARSER
+
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=false;
+
+  ## part_col: datetime
+  ## defaultNode = 0
+  ## sBeginDate=2014-01-01,
+  ## sPartionDay=10
+drop table if exists partdate_t1;
+create table partdate_t1(
+c1 datetime not null,
+c2 datetime not null
+)
+partition by udf_hash(partdated0(c1))
+partition 4
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3),
+partition p3 values less than (4)
+)
+;
+
+select part_route('','partdate_t1', null);
+  ## error_msg: $# invalid type conversion #$
+select part_route('','partdate_t1', '');
+select part_route('','partdate_t1', '2013-01-01');
+select part_route('','partdate_t1', '2014-01-01');
+select part_route('','partdate_t1', '2014-01-10');
+select part_route('','partdate_t1', '2014-01-11');
+select part_route('','partdate_t1', '2014-01-20');
+  ## error_msg: $# has no partition #$
+select part_route('','partdate_t1', '2014-04-21');
+
+
+  ## part_col: datetime
+  ## defaultNode = 0
+  ## sBeginDate=2014-01-01,
+  ## sEndDate=2014-01-30,
+  ## sPartionDay=10
+drop table if exists partdate_t2;
+create table partdate_t2(
+c1 datetime not null,
+c2 datetime not null
+)
+partition by udf_hash(partdated0ed(c1))
+partition 4
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3),
+partition p3 values less than (4)
+)
+;
+
+select part_route('','partdate_t2', null);
+  ## error_msg: $# invalid type conversion #$
+select part_route('','partdate_t2', '');
+select part_route('','partdate_t2', '2013-01-01');
+select part_route('','partdate_t2', '2014-01-01');
+select part_route('','partdate_t2', '2014-01-10');
+select part_route('','partdate_t2', '2014-01-11');
+select part_route('','partdate_t2', '2014-01-20');
+select part_route('','partdate_t2', '2014-01-21');
+select part_route('','partdate_t2', '2014-04-21');
+

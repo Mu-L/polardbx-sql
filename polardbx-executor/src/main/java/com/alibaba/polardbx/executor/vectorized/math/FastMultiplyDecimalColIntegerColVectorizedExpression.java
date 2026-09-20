@@ -19,6 +19,7 @@ package com.alibaba.polardbx.executor.vectorized.math;
 import com.alibaba.polardbx.common.datatype.DecimalConverter;
 import com.alibaba.polardbx.common.datatype.DecimalStructure;
 import com.alibaba.polardbx.common.datatype.FastDecimalUtils;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.MathUtils;
 import com.alibaba.polardbx.executor.chunk.DecimalBlock;
 import com.alibaba.polardbx.executor.chunk.IntegerBlock;
@@ -40,9 +41,11 @@ import static com.alibaba.polardbx.executor.vectorized.metadata.ExpressionPriori
 public class FastMultiplyDecimalColIntegerColVectorizedExpression extends AbstractVectorizedExpression {
 
     private final boolean isRightUnsigned;
+    private boolean enableDecimal128;
 
     public FastMultiplyDecimalColIntegerColVectorizedExpression(int outputIndex, VectorizedExpression[] children) {
         super(DataTypes.DecimalType, outputIndex, children);
+        this.enableDecimal128 = DynamicConfig.getInstance().enableDecimal128();
         isRightUnsigned = children[1].getOutputDataType().isUnsigned();
     }
 
@@ -120,9 +123,15 @@ public class FastMultiplyDecimalColIntegerColVectorizedExpression extends Abstra
                 int y = rightArray[j];
                 long result = leftArray[j] * rightArray[j];
                 if (MathUtils.longMultiplyOverflow(x, y, result)) {
-                    return doDecimal64MulTo128(batchSize, isSelectionInUse, sel, leftInputVectorSlot,
-                        rightInputVectorSlot,
-                        outputVectorSlot);
+                    if (enableDecimal128) {
+                        return doDecimal64MulTo128(batchSize, isSelectionInUse, sel, leftInputVectorSlot,
+                            rightInputVectorSlot,
+                            outputVectorSlot);
+                    } else {
+                        outputVectorSlot.deallocateDecimal64();
+                        return false;
+                    }
+
                 }
 
                 decimal64Output[j] = result;
@@ -133,9 +142,15 @@ public class FastMultiplyDecimalColIntegerColVectorizedExpression extends Abstra
                 int y = rightArray[i];
                 long result = x * y;
                 if (MathUtils.longMultiplyOverflow(x, y, result)) {
-                    return doDecimal64MulTo128(batchSize, isSelectionInUse, sel, leftInputVectorSlot,
-                        rightInputVectorSlot,
-                        outputVectorSlot);
+                    if (enableDecimal128) {
+                        return doDecimal64MulTo128(batchSize, isSelectionInUse, sel, leftInputVectorSlot,
+                            rightInputVectorSlot,
+                            outputVectorSlot);
+                    } else {
+                        outputVectorSlot.deallocateDecimal64();
+                        return false;
+                    }
+
                 }
 
                 decimal64Output[i] = result;

@@ -4,23 +4,24 @@ import com.alibaba.polardbx.common.charset.MySQLUnicodeUtils;
 import com.alibaba.polardbx.common.datatype.DecimalConverter;
 import com.alibaba.polardbx.common.datatype.DecimalStructure;
 import com.alibaba.polardbx.common.datatype.FastDecimalUtils;
+import com.alibaba.polardbx.common.orc.ORCMetaReader;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.executor.chunk.BlockBuilders;
 import com.alibaba.polardbx.executor.chunk.DecimalBlock;
 import com.alibaba.polardbx.executor.operator.scan.impl.AsyncStripeLoader;
-import com.alibaba.polardbx.executor.operator.scan.impl.PreheatFileMeta;
+import com.alibaba.polardbx.common.orc.PreheatFileMeta;
 import com.alibaba.polardbx.executor.operator.scan.impl.StaticStripePlanner;
 import com.alibaba.polardbx.executor.operator.scan.metrics.RuntimeMetrics;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
-import com.alibaba.polardbx.optimizer.core.datatype.DecimalType;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.memory.MemoryManager;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
 import com.alibaba.polardbx.optimizer.memory.MemoryPoolUtils;
-import com.alibaba.polardbx.optimizer.workload.WorkloadUtil;
+import com.alibaba.polardbx.optimizer.statis.OperatorStatistics;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadUtil;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -218,9 +219,7 @@ public abstract class DecimalScanTestBase {
     protected StripeLoader createStripeLoader(int stripeId, boolean[] columnIncluded, RuntimeMetrics runtimeMetrics) {
         StripeLoader stripeLoader;
 
-        OrcProto.ColumnEncoding[] encodings = StaticStripePlanner.buildEncodings(
-            encryption, columnIncluded, preheatFileMeta.getStripeFooter(stripeId)
-        );
+        OrcProto.ColumnEncoding[] encodings = preheatFileMeta.getColumnEncodings(stripeId);
 
         stripeLoader = new AsyncStripeLoader(
             IO_EXECUTOR,
@@ -238,7 +237,7 @@ public abstract class DecimalScanTestBase {
             encodings, ignoreNonUtf8BloomFilter,
             maxBufferSize,
             maxDiskRangeChunkLimit, maxMergeDistance, runtimeMetrics,
-            true, memoryAllocatorCtx);
+            true, memoryAllocatorCtx, new OperatorStatistics());
         return stripeLoader;
     }
 

@@ -22,6 +22,7 @@ import com.alibaba.polardbx.common.ddl.newengine.DdlState;
 import com.alibaba.polardbx.common.eventlogger.EventLogger;
 import com.alibaba.polardbx.common.eventlogger.EventType;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.LoggerUtil;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
@@ -31,6 +32,8 @@ import com.alibaba.polardbx.common.utils.thread.NamedThreadFactory;
 import com.alibaba.polardbx.common.utils.thread.ServerThreadPool;
 import com.alibaba.polardbx.executor.changeset.ChangeSetApplyExecutorMap;
 import com.alibaba.polardbx.executor.ddl.newengine.dag.TaskScheduler;
+import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlEngineAccessorDelegate;
 import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlJobManager;
 import com.alibaba.polardbx.executor.ddl.newengine.sync.DdlRequest;
 import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
@@ -44,6 +47,7 @@ import com.alibaba.polardbx.gms.metadb.lease.LeaseRecord;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineRecord;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
 import com.google.common.collect.Sets;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.Collections;
@@ -65,6 +69,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.common.ddl.newengine.DdlConstants.DDL_ARCHIVE_CLEANER_NAME;
 import static com.alibaba.polardbx.common.ddl.newengine.DdlConstants.DDL_DISPATCHER_NAME;
@@ -75,12 +80,14 @@ import static com.alibaba.polardbx.common.ddl.newengine.DdlConstants.DDL_SCHEDUL
 import static com.alibaba.polardbx.common.ddl.newengine.DdlConstants.DEFAULT_LOGICAL_DDL_PARALLELISM;
 import static com.alibaba.polardbx.common.ddl.newengine.DdlConstants.DEFAULT_PAUSED_DDL_RESCHEDULE_INTERVAL_IN_MINUTES;
 import static com.alibaba.polardbx.common.ddl.newengine.DdlConstants.DEFAULT_RUNNING_DDL_RESCHEDULE_INTERVAL_IN_MINUTES;
+import static com.alibaba.polardbx.common.ddl.newengine.DdlConstants.INITIAL_DDL_TIMEOUT_BUFFER_IN_MINUTES;
 import static com.alibaba.polardbx.common.ddl.newengine.DdlConstants.MEDIAN_WAITING_TIME;
 import static com.alibaba.polardbx.common.ddl.newengine.DdlConstants.MORE_WAITING_TIME;
 import static com.alibaba.polardbx.common.ddl.newengine.DdlConstants.ROLLBACK_DDL_WAIT_TIMES;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.LOGICAL_DDL_PARALLELISM;
 import static com.alibaba.polardbx.gms.topology.SystemDbHelper.DEFAULT_DB_NAME;
 
+@Slf4j
 public class DdlEngineScheduler {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(DdlEngineScheduler.class);
@@ -108,7 +115,7 @@ public class DdlEngineScheduler {
         new ThreadPoolExecutor.DiscardPolicy());
 
     private final DdlJobScheduler ddlJobScheduler = new DdlJobScheduler();
-    private Map<String, DdlJobSchedulerConfig> activeSchemaDdlConfig = new ConcurrentHashMap<>();
+    private final Map<String, DdlJobSchedulerConfig> activeSchemaDdlConfig = new ConcurrentHashMap<>();
 
     /**
      * Job executing version number, increments version number by 1 for each Job executed
@@ -202,7 +209,8 @@ public class DdlEngineScheduler {
         return performVersion.get();
     }
 
-    public synchronized boolean compareAndExecute(long expectVersion, Supplier<?> supplier) throws TimeoutException {
+    public synchronized boolean compareAndExecute(long expectVersion, long expectMaxId, Supplier<?> supplier)
+        throws TimeoutException {
         try {
             if (expectVersion != performVersion.get()) {
                 return false;
@@ -214,7 +222,12 @@ public class DdlEngineScheduler {
                 boolean allIdle = ddlJobScheduler.isIdle();
 
                 if (allIdle) {
-                    if (expectVersion == performVersion.get()) {
+                    if (existsNoneCompleteDdl(new DdlJobManager())) {
+                        log.warn("exists paused ddl, can not execute supplier action.");
+                        return false;
+                    }
+
+                    if (expectVersion == performVersion.get() && expectMaxId == getMaxId()) {
                         supplier.get();
                         return true;
                     } else {
@@ -231,6 +244,17 @@ public class DdlEngineScheduler {
         } finally {
             suspending.set(false);
         }
+    }
+
+    public boolean existsNoneCompleteDdl(DdlJobManager ddlJobManager) {
+        List<DdlEngineRecord> records = ddlJobManager.fetchRecords(DdlState.ALL_STATES);
+        log.warn("find none complete ddl job for suspend checking , job ids :" +
+            records.stream().map(e -> e.jobId).collect(Collectors.toSet()));
+        return !records.isEmpty();
+    }
+
+    public long getMaxId() {
+        return new DdlJobManager().getMaxId();
     }
 
     private class DdlArchiveCleaner implements Runnable {
@@ -311,6 +335,7 @@ public class DdlEngineScheduler {
                         processQueue();
                         processRunning();
                         processPaused();
+                        processInitial();
                     }
                 } catch (InterruptedException e) {
                     try {
@@ -346,7 +371,7 @@ public class DdlEngineScheduler {
             // job queue directly to see if any job was left to handle.
             List<DdlEngineRecord> records =
                 ddlJobManager.fetchRecords(
-                    Sets.newHashSet(DdlState.RUNNING, DdlState.ROLLBACK_RUNNING, DdlState.ROLLBACK_TO_READY),
+                    Sets.newHashSet(Sets.difference(DdlState.RUNNABLE, Sets.newHashSet(DdlState.QUEUED))),
                     DEFAULT_RUNNING_DDL_RESCHEDULE_INTERVAL_IN_MINUTES);
             dispatch(records);
         }
@@ -377,6 +402,35 @@ public class DdlEngineScheduler {
                     EventLogger.log(EventType.DDL_WARN, "reschedule paused ddl error: " + t.getMessage());
                     LOGGER.error("reschedule paused ddl error: " + t.getMessage(), t);
                 }
+            }
+        }
+
+        private void processInitial() {
+            // The INITIAL cleanup timeout should always cover the acquireResource timeout,
+            // plus a buffer for the rest of the job creation phase.
+            int initialDdlTimeoutInMinutes =
+                (int) DynamicConfig.getInstance().getDdlAcquireLockTimeoutMinutes()
+                    + INITIAL_DDL_TIMEOUT_BUFFER_IN_MINUTES;
+            List<DdlEngineRecord> records =
+                ddlJobManager.fetchRecords(
+                    Sets.newHashSet(DdlState.INITIAL),
+                    initialDdlTimeoutInMinutes);
+            for (DdlEngineRecord record : records) {
+                try {
+                    new DdlEngineAccessorDelegate<Boolean>() {
+                        @Override
+                        protected Boolean invoke() {
+                            int del = engineAccessor.deleteIfInitial(record.jobId);
+                            if (del > 0) {
+                                ddlJobManager.getResourceManager().releaseResource(connection, record.jobId);
+                            }
+                            return del > 0;
+                        }
+                    }.execute();
+                } catch (Throwable t) {
+                    LOGGER.error(t);
+                }
+                LOGGER.warn(String.format("DDL: %d is too old and has been cleaned up.", record.jobId));
             }
         }
 
@@ -453,10 +507,9 @@ public class DdlEngineScheduler {
         }
     }
 
-    private class DdlJobScheduler implements Runnable {
+    class DdlJobScheduler implements Runnable {
 
         private volatile boolean scheduleSuspended;
-
 
         private DdlJobScheduler() {
         }
@@ -512,16 +565,18 @@ public class DdlEngineScheduler {
 
         public boolean isIdle() {
             boolean idleFlag = suspending.get() && scheduleSuspended;
-            if (idleFlag == false) {
+            if (!idleFlag) {
                 return false;
             }
             synchronized (activeSchemaDdlConfig) {
                 for (Map.Entry<String, DdlJobSchedulerConfig> entry : activeSchemaDdlConfig.entrySet()) {
                     DdlJobSchedulerConfig schedulerConfig = entry.getValue();
                     if (schedulerConfig.semaphore.availablePermits() != schedulerConfig.maxParallelism) {
+                        log.warn("schema:{} is not in idle state", entry.getKey());
                         //there are executing DDLs
                         return false;
                     }
+
                 }
             }
             return true;

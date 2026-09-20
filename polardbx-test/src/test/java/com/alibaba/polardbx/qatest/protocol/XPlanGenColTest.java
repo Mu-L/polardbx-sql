@@ -202,7 +202,10 @@ public class XPlanGenColTest extends ReadBaseTestCase {
             JdbcUtil.getAllStringResult(JdbcUtil.executeQuery("show trace", tddlConnection), false,
                 ImmutableList.of());
         final String trace = result.get(0).get(11);
-        Assert.assertTrue(trace.contains("/*PolarDB-X Connection*/") && trace.contains("plan_digest"));
+        Assert.assertTrue(
+            "Expected XPlan markers in the first physical trace. SQL: " + sql
+                + ", first trace: " + trace + ", all trace rows: " + result,
+            trace.contains("/*PolarDB-X Connection*/") && trace.contains("plan_digest"));
     }
 
 }

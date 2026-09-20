@@ -29,6 +29,7 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.executor.function.calc.FetchBlob;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.executor.utils.GroupKey;
@@ -39,17 +40,22 @@ import com.alibaba.polardbx.optimizer.config.table.GeneratedColumnUtil;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.CursorMeta;
+import com.alibaba.polardbx.optimizer.core.datatype.BlobType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.alibaba.polardbx.optimizer.core.rel.BaseQueryOperation;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalDynamicValues;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalInsert;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalUpsert;
 import com.alibaba.polardbx.optimizer.core.rel.dml.DistinctWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.RoutedWriteInput;
+import com.alibaba.polardbx.optimizer.core.rel.dml.WritePlanHook;
 import com.alibaba.polardbx.optimizer.core.rel.dml.Writer;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.DuplicateCheckResult;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.RowClassifier;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.SourceRows;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.RelocateWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.writer.InsertWriter;
 import com.alibaba.polardbx.optimizer.core.row.ArrayRow;
 import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
@@ -63,6 +69,7 @@ import com.alibaba.polardbx.optimizer.utils.RexUtils;
 import com.alibaba.polardbx.optimizer.utils.RexUtils.ReplaceValuesCall;
 import com.google.common.collect.ImmutableList;
 import org.apache.calcite.linq4j.Ord;
+import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexCallParam;
@@ -75,6 +82,7 @@ import org.apache.calcite.util.mapping.Mappings;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -110,7 +118,7 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
         final String schemaName = upsert.getSchemaName();
         final String tableName = upsert.getLogicalTableName();
         final TddlRuleManager or = OptimizerContext.getContext(schemaName).getRuleManager();
-        final boolean isBroadcast = or.isBroadCast(tableName);
+        final boolean isBroadcast = or.isBroadCastOrReplicas(tableName);
 
         if (upsert.isUkContainGeneratedColumn()) {
             throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
@@ -132,8 +140,14 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
         final boolean gsiConcurrentWrite =
             executionContext.getParamManager().getBoolean(ConnectionParams.GSI_CONCURRENT_WRITE_OPTIMIZE);
         executionContext.getExtraCmds().put(ConnectionProperties.GSI_CONCURRENT_WRITE, gsiConcurrentWrite);
-
         PhyTableOperationUtil.enableIntraGroupParallelism(schemaName, executionContext);
+
+        final boolean needsExternalWrite = ExternalizedDmlRewriter.needsHandling(tableMeta)
+            || GeneralUtil.isNotEmpty(upsert.getExternalizedUpsertPushdownBindings());
+        if (needsExternalWrite && upsert.hasHint()) {
+            throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
+                "Externalized INSERT-family DML with target-table hint is not supported");
+        }
 
         // Upsert with NODE/SCAN hint specified
         if (upsert.hasHint()) {
@@ -178,7 +192,8 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
 
             try {
                 if (gsiConcurrentWrite) {
-                    affectRows = concurrentExecute(upsert, classifiedRows, upsertEc);
+                    affectRows = concurrentExecute(upsert, classifiedRows, upsertEc, tableMeta,
+                        needsExternalWrite);
                 } else {
 //                        affectRows = deletedRows + sequentialExecute(upsert, duplicateValues, upsertEc);
                 }
@@ -194,11 +209,12 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
     }
 
     private int concurrentExecute(LogicalUpsert upsert, List<DuplicateCheckResult> classifiedRows,
-                                  ExecutionContext executionContext) {
+                                  ExecutionContext executionContext,
+                                  TableMeta tableMeta, boolean needsExternalWrite) {
         final String schemaName = upsert.getSchemaName();
         final String tableName = upsert.getLogicalTableName();
         final TddlRuleManager or = OptimizerContext.getContext(schemaName).getRuleManager();
-        final boolean isBroadcast = or.isBroadCast(tableName);
+        final boolean isBroadcast = or.isBroadCastOrReplicas(tableName);
 
         int affectRows;
 
@@ -220,6 +236,14 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
 
         final List<DuplicateCheckResult> inputValues = new ArrayList<>();
         final SourceRows rowBuilder = SourceRows.createFromValues(classifiedRows);
+        if (needsExternalWrite) {
+            final IdentityHashMap<List<Object>, Object> canonicalRowKeys = buildCanonicalRowKeys(classifiedRows);
+            final ExternalizedDmlWriteContext writeContext = new ExternalizedDmlWriteContext(upsert, tableMeta,
+                ExternalizedDmlRewriter.buildUpsertExactRowTransforms(upsert, executionContext), canonicalRowKeys,
+                executionContext);
+            executionContext.setDmlWriteContext(writeContext);
+            deduplicatedEc.setDmlWriteContext(writeContext);
+        }
         if (!upsert.isModifyPartitionKey()) {
             // Do not modify partition key
 
@@ -271,9 +295,10 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
         // For gsi contains no column in ON DUPLICATE KEY UPDATE statement
         upsert.getGsiInsertWriters()
             .forEach(writer -> {
-                List<RelNode> inputs = writer.getInput(deduplicatedEc.copy());
+                final ExecutionContext gsiInsertEc = deduplicatedEc.copy();
+                List<RelNode> inputs = writer.getInput(gsiInsertEc);
                 gsiInsertPlans
-                    .addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
+                    .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isPrimaryWriteRelNode()).collect(
                         Collectors.toList()));
                 gsiReplicateInsertPlans
                     .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
@@ -312,6 +337,22 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
         affectRows = inputValues.stream().mapToInt(row -> row.affectedRows).sum();
 
         return affectRows;
+    }
+
+    private static IdentityHashMap<List<Object>, Object> buildCanonicalRowKeys(
+        List<DuplicateCheckResult> classifiedRows) {
+        final IdentityHashMap<List<Object>, Object> result = new IdentityHashMap<>();
+        for (DuplicateCheckResult row : classifiedRows) {
+            if (row.after == null) {
+                continue;
+            }
+            final Object key = row.after;
+            result.put(row.after, key);
+            if (row.updateSource != null) {
+                result.put(row.updateSource, key);
+            }
+        }
+        return result;
     }
 
     protected RowClassifier buildRowClassifier(final LogicalUpsert upsert,
@@ -417,7 +458,7 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
         final int seqColumnIndex = upsert.getSeqColumnIndex();
         final boolean autoValueOnZero = SequenceAttribute.getAutoValueOnZero(upsertEc.getSqlMode());
         final boolean modifyPartitionKey = upsert.isModifyPartitionKey();
-
+        final String schemaName = upsert.getSchemaName();
         final boolean skipTrivialUpdate =
             !(upsertEc.getParamManager().getBoolean(ConnectionParams.DML_SKIP_IDENTICAL_ROW_CHECK) || (
                 upsert.isHasJsonColumn() && upsertEc.getParamManager()
@@ -429,7 +470,6 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
         final Map<String, RexNode> columnValueMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         Ord.zip(insertColumns).forEach(o -> columnValueMap.put(o.getValue(), rexRow.get(o.getKey())));
 
-        final String schemaName = upsert.getSchemaName();
         final String tableName = upsert.getLogicalTableName();
         TableMeta tableMeta = upsertEc.getSchemaManager(schemaName).getTable(tableName);
         for (String generatedColumnName : tableMeta.getGeneratedColumnNames()) {
@@ -491,6 +531,9 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
                 // Duplicated with existing row in table or previously inserted row
 
                 final int rowIndex = duplicatedRowIndex.get();
+                // beforeRow is the tracked row as it stands before this incoming tuple is applied; afterRow is the
+                // next snapshot of the same logical row. Both describe one table row, not two different rows: the
+                // copy constructor shares before/after/keyList, and doUpdate() below advances the snapshot.
                 final DuplicateCheckRow beforeRow = checkerRows.get(rowIndex);
                 final DuplicateCheckRow afterRow = new DuplicateCheckRow(beforeRow, rowIndex);
 
@@ -520,11 +563,14 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
             } else {
                 // Add new row
 
-                // Build row value for future duplicate check
-                final List<Object> after = RexUtils.buildRowValue(rexRow, null, newRow, upsertEc);
+                // Keep both views because a later incoming row in the same statement can conflict
+                // with this newly inserted row before any physical writer runs.
+                final List<Object> physicalAfter = RexUtils.buildRowValue(rexRow, null, newRow, upsertEc);
+                final List<Object> logicalAfter = new ArrayList<>(physicalAfter);
 
                 final DuplicateCheckRow newDuplicateCheckRow = new DuplicateCheckRow();
-                newDuplicateCheckRow.after = after;
+                newDuplicateCheckRow.after = physicalAfter;
+                newDuplicateCheckRow.logicalAfter = logicalAfter;
                 newDuplicateCheckRow.insertRow = true;
                 newDuplicateCheckRow.insertParam = newRow;
                 newDuplicateCheckRow.keyList = keys;
@@ -561,9 +607,15 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
                     // Update or Insert-then-Update
                     rowResult.before = row.before;
                     rowResult.after = row.after;
+                    // updateSource is the parameter row consumed by the UPDATE writers: the whole before-row
+                    // followed by the SET-target values projected out of the after-row. For the class example it is
+                    // [1, 'old', 'keep'] ++ ['old-x'], which feeds "UPDATE t SET c2=? WHERE id=? AND ..." — the
+                    // leading part supplies the WHERE keys and identical-sharding-key comparison, the trailing part
+                    // supplies the new values.
                     rowResult.updateSource = new ArrayList<>(row.before);
                     rowResult.updateSource
-                        .addAll(Mappings.permute(row.after, Mappings.source(beforeUpdateMapping, tableColumns.size())));
+                        .addAll(
+                            Mappings.permute(row.after, Mappings.source(beforeUpdateMapping, tableColumns.size())));
                     rowResult.onDuplicateKeyUpdateParam = row.duplicateUpdateParam;
 
                     if (seqColumnIndex >= 0 && (rowResult.doInsert || modifyPartitionKey)) {
@@ -647,7 +699,13 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
             newRow = new ArrayRow(newRowObject.toArray());
         } else {
             newBeforeUpdateMapping = beforeUpdateMapping;
-            newRow = row;
+            // newRow is a method-local mutable copy: the loop below writes each evaluated SET value back into it
+            // so that a later assignment observes the result of an earlier one (MySQL evaluates the duplicate-key
+            // update list left to right). Previously this branch aliased the caller's row and wrote into it, while
+            // the isInputInValueColumnOrder branch above already built its own ArrayRow. Copying here makes both
+            // branches side-effect free without changing evaluation order. The current sole caller passes a
+            // throwaway ArrayRow built from a detached array, so the former write-back was never observable.
+            newRow = new ArrayRow(row.getParentCursorMeta(), row.getValues().toArray());
         }
 
         final Map<Integer, ParameterContext> result = new HashMap<>(param.size());
@@ -688,6 +746,7 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
 
             // Update row
             String columnName = upsert.getTable().getRowType().getFieldNames().get(newBeforeUpdateMapping.get(i));
+
             boolean strict = SQLMode.isStrictMode(upsertEc.getSqlModeFlags());
             if (haveGeneratedColumn && (referencedColumns.contains(columnName) || tableMeta.getColumn(columnName)
                 .isLogicalGeneratedColumn())) {
@@ -706,6 +765,140 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
         }
 
         return result;
+    }
+
+    /**
+     * Derive the logical current-row view used by ON DUPLICATE KEY UPDATE from the duplicate-check SELECT result.
+     *
+     * <p>The physical row remains unchanged for UPDATE/relocate writers. Only READ_ADDR/EXTERNALIZED content slots
+     * requested by the caller are restored through FETCH_BLOB in this execution-local copy; DUAL_WRITE still reads
+     * its plaintext content slot directly. SET evaluation initially requests only referenced/compared columns. If
+     * the original UpsertRelocateWriter later classifies the conflict as DELETE + INSERT, the same helper is invoked
+     * again for untouched externalized columns that the primary reinsert must rematerialize. Thus
+     * {@code ON DUPLICATE KEY UPDATE note=VALUES(note)} reuses an unrelated {@code body} address for an in-place
+     * update. If a later Writer classifies the row as DELETE+INSERT, ExternalizedExactRowTransformer fetches a
+     * terminal value only inside the selected primary reinsert leaf. Tables without read-from-addr columns therefore
+     * pay only for the row copy.
+     */
+    static List<Object> buildLogicalUpsertCurrentRow(List<Object> physicalRow,
+                                                     List<String> rowColumns,
+                                                     Set<Integer> requiredLogicalColumns,
+                                                     TableMeta tableMeta,
+                                                     String schemaName,
+                                                     String tableName,
+                                                     ExecutionContext upsertEc) {
+        if (physicalRow == null || rowColumns == null || requiredLogicalColumns == null
+            || tableMeta == null || upsertEc == null) {
+            throw invalidExternalizedUpsertExecution("logical current-row input is null");
+        }
+        if (physicalRow.size() != rowColumns.size()) {
+            throw invalidExternalizedUpsertExecution("current row width " + physicalRow.size()
+                + " does not match column width " + rowColumns.size());
+        }
+
+        // Ordinary tables have no read-from-addr slots: keep the execution-local copy contract but
+        // skip the per-column MCE probe on the cached O(1) flags.
+        if (!tableMeta.hasExternalizedColumn() && !tableMeta.hasColumnInMceMigration()) {
+            return new ArrayList<>(physicalRow);
+        }
+
+        final List<Object> logicalRow = new ArrayList<>(physicalRow);
+        final FetchBlob fetchBlob = new FetchBlob();
+        for (int contentIndex = 0; contentIndex < rowColumns.size(); contentIndex++) {
+            if (!requiredLogicalColumns.contains(contentIndex)) {
+                continue;
+            }
+            final String contentColumn = rowColumns.get(contentIndex);
+            if (!tableMeta.getColumnMceState(contentColumn).isReadAddr()) {
+                continue;
+            }
+
+            final int blobRefIndex;
+            if (tableMeta.getColumnMceState(contentColumn).isRenameToAddr()) {
+                // Terminal plans retain the logical content name at this execution-row slot;
+                // WriterFactory maps the slot to the physical addr column.
+                blobRefIndex = contentIndex;
+            } else {
+                final String addrColumn = tableMeta.getMceAddrColumnName(contentColumn);
+                blobRefIndex = indexOfIgnoreCase(rowColumns, addrColumn);
+                if (blobRefIndex < 0) {
+                    throw invalidExternalizedUpsertExecution("READ_ADDR column " + contentColumn
+                        + " is missing its addr slot " + addrColumn);
+                }
+            }
+
+            final Object blobRef = physicalRow.get(blobRefIndex);
+            if (blobRef == null) {
+                logicalRow.set(contentIndex, null);
+                continue;
+            }
+            if (FetchBlob.decodeBlobRef(blobRef) == null) {
+                throw invalidExternalizedUpsertExecution("physical current-row column " + contentColumn
+                    + " is not a valid BlobRef");
+            }
+            final ColumnMeta columnMeta = tableMeta.getColumnIgnoreCase(contentColumn);
+            if (columnMeta == null) {
+                throw invalidExternalizedUpsertExecution("logical metadata is missing for " + contentColumn);
+            }
+            final String typeFamily = columnMeta.getDataType() instanceof BlobType ? "BLOB" : "TEXT";
+            final Object logicalValue = fetchBlob.compute(
+                new Object[] {blobRef, schemaName, tableName, contentColumn, typeFamily}, upsertEc);
+            logicalRow.set(contentIndex, logicalValue);
+        }
+        return logicalRow;
+    }
+
+    /**
+     * Find old-row values that ON DUPLICATE KEY UPDATE really needs in logical form.
+     *
+     * <p>Every updated target is included when identical-row checking is enabled because it compares the old value
+     * with the new value. Input references from the SET expressions are always included because they participate in
+     * evaluation. Thus
+     * {@code body=?} fetches old {@code body} only for comparison, {@code note=CONCAT(body, note)} fetches both
+     * referenced columns, and {@code note=VALUES(note)} does not fetch an unrelated externalized {@code body}.
+     */
+    private static Set<Integer> requiredLogicalUpsertColumns(List<RexNode> updateExpressions,
+                                                             List<Integer> updateTargets,
+                                                             List<RexNode> columnValueMapping,
+                                                             boolean includeUpdatedTargets,
+                                                             int rowWidth) {
+        final Set<Integer> required = new TreeSet<>();
+        if (includeUpdatedTargets && updateTargets != null) {
+            updateTargets.stream()
+                .filter(index -> index != null && index >= 0 && index < rowWidth)
+                .forEach(required::add);
+        }
+        if (updateExpressions == null) {
+            return required;
+        }
+        for (RexNode expression : updateExpressions) {
+            RexNode valueExpression = expression;
+            if (valueExpression instanceof RexCallParam) {
+                valueExpression = ((RexCallParam) valueExpression).getRexCall();
+            }
+            if (valueExpression == null) {
+                continue;
+            }
+            if (columnValueMapping != null) {
+                // VALUES(body) reads the incoming INSERT value, not old-row body. Analyze the same replaced
+                // expression that buildParamForDuplicateKeyUpdate evaluates so it does not trigger FETCH_BLOB.
+                valueExpression = valueExpression.accept(new ReplaceValuesCall(columnValueMapping));
+            }
+            if (valueExpression == null) {
+                continue;
+            }
+            for (int inputIndex : RelOptUtil.InputFinder.bits(valueExpression)) {
+                if (inputIndex >= 0 && inputIndex < rowWidth) {
+                    required.add(inputIndex);
+                }
+            }
+        }
+        return required;
+    }
+
+    private static TddlRuntimeException invalidExternalizedUpsertExecution(String detail) {
+        return new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+            "Invalid externalized UPSERT conflict execution layout: " + detail);
     }
 
     private static List<Map<GroupKey, SortedMap<Integer, DuplicateCheckRow>>> buildDuplicateCheckers(
@@ -830,15 +1023,53 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
         beforeUpdateFkCascade(upsert, schemaName, tableName, fkEc, values, null, null, fkPlans, 1);
     }
 
+    /**
+     * One tracked row of an UPSERT statement, used to emulate MySQL duplicate-key semantics on CN.
+     *
+     * <p>Terminology by example: table {@code t(id INT PRIMARY KEY, c1 VARCHAR, c2 VARCHAR)} already holds
+     * {@code (1, 'old', 'keep')} and the statement is
+     * {@code INSERT INTO t(id, c1) VALUES (1, 'new') ON DUPLICATE KEY UPDATE c2 = CONCAT(c1, '-x')}.
+     * The row objects involved then hold:</p>
+     *
+     * <pre>
+     * before                [1, 'old', 'keep']    pre-image selected from DN, null when the row is brand new
+     * newRow                {1:1, 2:'new'}        incoming INSERT parameters, what VALUES(c1) reads
+     * currentRow            [1, 'old', 'keep']    what a bare column reference in the SET list reads, so bare
+     *                                             c1 yields 'old' and not 'new'; progressively overwritten in
+     *                                             buildParamForDuplicateKeyUpdate because MySQL evaluates the
+     *                                             SET list left to right
+     * after                 [1, 'old', 'old-x']   post-image, before with the evaluated SET results applied;
+     *                                             physical layout, so an externalized column keeps its BlobRef
+     * logicalAfter          [1, 'old', 'old-x']   same row with externalized content restored to its logical
+     *                                             value, identical to after for an ordinary table; the view a
+     *                                             later conflict in the same statement evaluates against
+     * keyList               group key of id=1     unique-key values used to match later incoming rows to this
+     *                                             row
+     * duplicateUpdateParam  {n:'old-x'}           bound parameters of the physical SET clause
+     * </pre>
+     *
+     * <p>{@link #before} and {@link #after} are indexed by {@code upsert.getInsertRowType()}; the derived
+     * {@code DuplicateCheckResult.updateSource} concatenates the full before-row with the SET-target values
+     * taken from {@link #after}.</p>
+     *
+     * <p>A row may be visited several times: each incoming tuple that collides with it produces a new snapshot
+     * through {@link #DuplicateCheckRow(DuplicateCheckRow, int)} and one more {@link #doUpdate} call, so
+     * {@link #after} is "current value so far" rather than "final value".</p>
+     */
     private static class DuplicateCheckRow implements Comparable<DuplicateCheckRow> {
         /**
          * Origin row value from table, null if to-be-inserted row not duplicate with existing row in table
          */
         public List<Object> before;
         /**
-         * Current row value, might have been updated several times
+         * Current physical row value, might have been updated several times.
          */
         public List<Object> after;
+        /**
+         * Current logical row value. It is restored lazily for rows selected from DN and retained
+         * explicitly for rows formed from incoming VALUES in the same statement.
+         */
+        public List<Object> logicalAfter;
         /**
          * Parameters for insert
          */
@@ -871,6 +1102,7 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
         public DuplicateCheckRow(DuplicateCheckRow beforeRow, int thisRowIndex) {
             this.before = beforeRow.before;
             this.after = beforeRow.after;
+            this.logicalAfter = beforeRow.logicalAfter;
             this.insertParam = beforeRow.insertParam;
 
             this.insertRow = beforeRow.insertRow;
@@ -901,10 +1133,32 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
             final CursorMeta meta = CursorMeta.build(upsert.getTableColumnMetaList());
             final boolean usePartFieldChecker = upsert.isUsePartFieldChecker() && upsertEc.getParamManager()
                 .getBoolean(ConnectionParams.DML_USE_NEW_DUP_CHECKER);
+            final String schemaName = upsert.getSchemaName();
+            final String tableName = upsert.getLogicalTableName();
+            final TableMeta currentTableMeta = upsertEc.getSchemaManager(schemaName).getTable(tableName);
+            final List<String> afterColumnNames = upsert.getInsertRowType().getFieldNames();
+            final boolean skipIdenticalRowCheck =
+                upsertEc.getParamManager().getBoolean(ConnectionParams.DML_SKIP_IDENTICAL_ROW_CHECK) || (
+                    upsert.isHasJsonColumn() && upsertEc.getParamManager()
+                        .getBoolean(ConnectionParams.DML_SKIP_IDENTICAL_JSON_ROW_CHECK));
+            final Set<Integer> requiredLogicalColumns = requiredLogicalUpsertColumns(
+                duplicateKeyUpdateValues, beforeUpdateMapping, columnValueMapping, !skipIdenticalRowCheck,
+                afterColumnNames.size());
+
+            // buildSelects() keeps READ_ADDR rows physical as
+            // [body="hello", body_addr_=BlobRef(A)]. This execution-local logical copy fetches body
+            // from body_addr_ so expressions such as body=CONCAT(body, '-tail') use the logical value,
+            // while this.after retains the physical pair for UpsertWriter/UpsertRelocateWriter.
+            final List<Object> currentLogicalRow = this.logicalAfter == null ?
+                buildLogicalUpsertCurrentRow(this.after, afterColumnNames, requiredLogicalColumns, currentTableMeta,
+                    schemaName, tableName, upsertEc) : new ArrayList<>(this.logicalAfter);
 
             // Get update values
+            // currentRow is the "current row in the table" that bare column references in the SET list read from
+            // (the c1 in "SET c2 = CONCAT(c1, '-x')"), while newRow holds the incoming INSERT parameters that
+            // VALUES(...) reads from. Wrapping the list as a Row lets RexNode evaluation address columns by index.
             final List<Object> updateValues = new ArrayList<>();
-            final ArrayRow currentRow = new ArrayRow(meta, this.after.toArray());
+            final ArrayRow currentRow = new ArrayRow(meta, currentLogicalRow.toArray());
             this.duplicateUpdateParam = buildParamForDuplicateKeyUpdate(upsert,
                 duplicateKeyUpdateValues,
                 currentRow,
@@ -915,10 +1169,10 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
                 beforeUpdateMapping);
 
             // Do update
-            final List<Object> withoutAppended = new ArrayList<>(this.after);
-            final List<Object> withAppended = new ArrayList<>(this.after);
+            final List<Object> logicalWithoutAppended = new ArrayList<>(currentLogicalRow);
+            final List<Object> logicalWithAppended = new ArrayList<>(currentLogicalRow);
             final List<RexNode> rexNodes = new ArrayList<>();
-            for (int i = 0; i < this.after.size(); i++) {
+            for (int i = 0; i < currentLogicalRow.size(); i++) {
                 rexNodes.add(null);
             }
             Ord.zip(updateValues).forEach(o -> {
@@ -926,31 +1180,59 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
                 final Integer columnIndex = beforeUpdateMapping.get(updateValueIndex);
                 rexNodes.set(columnIndex, duplicateKeyUpdateValues.get(updateValueIndex));
 
-                withAppended.set(columnIndex, o.getValue());
+                logicalWithAppended.set(columnIndex, o.getValue());
                 if (!appendedColumnIndex.contains(columnIndex)) {
                     // Skip column with 'on update current_timestamp', for identical row check
-                    withoutAppended.set(columnIndex, o.getValue());
+                    logicalWithoutAppended.set(columnIndex, o.getValue());
                 }
             });
 
-            final boolean skipIdenticalRowCheck =
-                upsertEc.getParamManager().getBoolean(ConnectionParams.DML_SKIP_IDENTICAL_ROW_CHECK) || (
-                    upsert.isHasJsonColumn() && upsertEc.getParamManager()
-                        .getBoolean(ConnectionParams.DML_SKIP_IDENTICAL_JSON_ROW_CHECK));
             final boolean checkJsonByStringCompare =
                 upsertEc.getParamManager().getBoolean(ConnectionParams.DML_CHECK_JSON_BY_STRING_COMPARE);
-            // Check identical row
+            // Compare logical values before any BlobRef is allocated. An identical update keeps the
+            // current physical row intact, including the original terminal addr slot.
             final boolean isIdenticalRow =
-                !skipIdenticalRowCheck && identicalRow(withoutAppended, this.after, rowColumnMeta,
+                !skipIdenticalRowCheck && identicalRow(logicalWithoutAppended, currentLogicalRow, rowColumnMeta,
                     checkJsonByStringCompare);
-            final List<Object> updated = isIdenticalRow ? withoutAppended : withAppended;
+            final List<Object> logicalUpdated = isIdenticalRow ? logicalWithoutAppended : logicalWithAppended;
+            final List<Object> physicalUpdated;
+            if (isIdenticalRow) {
+                // Retain the current physical after-row instead of publishing the freshly evaluated values.
+                // identicalRow() compares through GroupKey#equalsForUpdate, which is type-aware rather than
+                // object equality, so the evaluated values are semantically equal to the current ones but may
+                // carry a different runtime representation (for example a DN Slice versus an evaluated String).
+                // Keeping the current row preserves the original terminal addr slot for externalized columns and
+                // avoids reinterpreting an unchanged row. The evaluated view is still published as logicalAfter
+                // below, so a later conflict on this row in the same statement evaluates against the same values
+                // the previous behaviour would have stored.
+                //
+                // Consumers of this.after stay consistent: for a pure UPDATE conflict (doInsert == false) the
+                // result assembly marks the row trivial and DuplicateCheckResult#skipUpdate drops it before any
+                // Writer, and identicalRow(before, after) still holds because both sides describe the unchanged
+                // row. For insert-then-update (doInsert == true) trivial is not evaluated and the row is written
+                // with the retained representation; that is accepted because equalsForUpdate guarantees the value
+                // is unchanged, the physical SET parameters come from duplicateUpdateParam, and sharding-key
+                // comparison over updateSource sees identical before/after slots so the row stays in place.
+                physicalUpdated = this.after;
+            } else {
+                physicalUpdated = new ArrayList<>(this.after);
+                Ord.zip(updateValues).forEach(o -> {
+                    final Integer columnIndex = beforeUpdateMapping.get(o.getKey());
+                    physicalUpdated.set(columnIndex, o.getValue());
+                });
+
+                // Keep the final after-row in the existing mixed logical/physical layout. Updated externalized
+                // slots contain evaluated logical values; untouched terminal/addr slots retain their old BlobRefs.
+                // The selected leaf Writer routes this row later, and its execution-scoped input builder performs
+                // the final logical-value -> physical-BlobRef conversion without redoing classification here.
+            }
             this.affectedRows += isIdenticalRow ? (upsertEc.isClientFoundRows() ? 1 : 0) : 2;
 
             if (upsert.isModifyUniqueKey()) {
                 // Update group key
                 this.keyList = usePartFieldChecker ?
-                    buildNewGroupKeys(beforeUkMapping, ukColumnMetas, updated, rexNodes, upsertEc) :
-                    buildGroupKeys(beforeUkMapping, ukColumnMetas, updated::get);
+                    buildNewGroupKeys(beforeUkMapping, ukColumnMetas, logicalUpdated, rexNodes, upsertEc) :
+                    buildGroupKeys(beforeUkMapping, ukColumnMetas, logicalUpdated::get);
             }
 
             // Add before value for INSERT-then-UPDATE
@@ -959,7 +1241,8 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
             }
 
             this.duplicated = true;
-            this.after = updated;
+            this.after = physicalUpdated;
+            this.logicalAfter = logicalUpdated;
         }
 
         public boolean isUpdateRow() {
@@ -978,5 +1261,17 @@ public class LogicalUpsertHandler extends LogicalInsertIgnoreHandler {
         public int compareTo(DuplicateCheckRow that) {
             return this.keyList.get(this.sortKeyIndex).compareTo(that.keyList.get(that.sortKeyIndex));
         }
+    }
+
+    private static int indexOfIgnoreCase(List<String> names, String target) {
+        if (target == null) {
+            return -1;
+        }
+        for (int i = 0; i < names.size(); i++) {
+            if (names.get(i).equalsIgnoreCase(target)) {
+                return i;
+            }
+        }
+        return -1;
     }
 }

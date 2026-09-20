@@ -37,14 +37,11 @@ public class CteExecFactory extends ExecutorFactory {
 
     private final RecursiveCTE cte;
     private ExecutorFactory anchorExecutorFactory;
-    private ExecutorFactory recursiveExecutorFactory;
 
     public CteExecFactory(RecursiveCTE cte,
-                          ExecutorFactory anchorExecutorFactory,
-                          ExecutorFactory recursiveExecutorFactory) {
+                          ExecutorFactory anchorExecutorFactory) {
         this.cte = cte;
         this.anchorExecutorFactory = anchorExecutorFactory;
-        this.recursiveExecutorFactory = recursiveExecutorFactory;
     }
 
     @Override
@@ -66,7 +63,7 @@ public class CteExecFactory extends ExecutorFactory {
 
         Executor anchorExecutor = anchorExecutorFactory.createExecutor(context, index);
         RecursiveCTEExec recursiveCTEExec =
-            new RecursiveCTEExec(cte.getCteName(), anchorExecutor, recursiveExecutorFactory, fetchSize, context);
+            new RecursiveCTEExec(cte.getCteName(), cte, anchorExecutor, fetchSize, context);
         recursiveCTEExec.setId(cte.getRelatedId());
         if (context.getRuntimeStatistics() != null) {
             RuntimeStatHelper.registerStatForExec(cte, recursiveCTEExec, context);

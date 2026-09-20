@@ -18,6 +18,7 @@ package com.alibaba.polardbx.executor.operator;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.jdbc.BytesSql;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.MathUtils;
 import com.alibaba.polardbx.executor.chunk.Chunk;
@@ -91,6 +92,52 @@ public class LookupTableScanExec extends TableScanExec implements LookupTableExe
         this.mppMode = ExecUtils.isMppMode(context);
         this.predicate = predicate;
         this.allJoinKeys = allJoinKeys;
+    }
+
+    @Override
+    public void switchNoMgetSql() {
+        if (!scanClient.noMoreSplit()) {
+            throw new TddlRuntimeException(ERR_EXECUTE_ON_MYSQL, "input split not ready");
+        }
+
+        if (reservedSplits == null) {
+            reservedSplits = new ArrayList<>();
+            reservedSplits.addAll(scanClient.getSplitList());
+        }
+        scanClient.getSplitList().clear();
+        for (Split split : reservedSplits) {
+            JdbcSplit jdbcSplit = (JdbcSplit) split.getConnectorSplit();
+            JdbcSplit newSplit = createSwitchedJdbcSplit(jdbcSplit);
+            scanClient.addSplit(split.copyWithSplit(newSplit));
+        }
+    }
+
+    /**
+     * Create a new JdbcSplit with sqlTemplateWithoutMget for both sqlTemplate and sqlTemplateWithoutMget.
+     * This is more efficient and readable than using the long constructor.
+     */
+    private JdbcSplit createSwitchedJdbcSplit(JdbcSplit original) {
+        BytesSql sqlTemplateWithoutMget = original.getSqlTemplateWithoutMget();
+        return new JdbcSplit(
+            original.getCatalogName(),
+            original.getSchemaName(),
+            original.getDbIndex(),
+            original.getHint(),
+            // Use sqlTemplateWithoutMget for sqlTemplate
+            sqlTemplateWithoutMget,
+            // Keep sqlTemplateWithoutMget unchanged
+            sqlTemplateWithoutMget,
+            original.getOrderBy(),
+            original.getParams(),
+            original.getHostAddress(),
+            original.getTableNames(),
+            original.getTransactionRw(),
+            original.isContainSelect(),
+            original.getIntraGroupSortKey(),
+            original.getGalaxyDigest(),
+            original.isSupportGalaxyPrepare(),
+            original.getSelect(),
+            original.getStartSql());
     }
 
     @Override
@@ -343,5 +390,4 @@ public class LookupTableScanExec extends TableScanExec implements LookupTableExe
             reservedSplits.clear();
         }
     }
-
 }

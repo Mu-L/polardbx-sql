@@ -1,0 +1,15 @@
+address_balance_chain:
+  CREATE TABLE address_balance_chain (
+  address varchar(64) NOT NULL,
+  chain_index varchar(16) NOT NULL,
+  token_address varchar(128) NOT NULL,
+  coin_type int,
+  sub_balance_raw decimal(30,0),
+  sub_balance_height bigint,
+  ext_data varchar(256),
+  sub_last_transaction_time bigint,
+  sub_upd_time bigint,
+  primary key(address, chain_index, token_address)
+  )
+  PARTITION BY KEY(address)
+  PARTITIONS 8;

@@ -2,7 +2,7 @@
 ## test create table(date)
 CREATE TABLE `y1` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(DAYOFYEAR(`d`))
 PARTITIONS 16;
 show create table y1;
@@ -10,7 +10,7 @@ Table,Create Table
 y1,CREATE TABLE `y1` (
 	`d` date DEFAULT NULL,
 	KEY `auto_shard_key_d` USING BTREE (`d`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(DAYOFYEAR(`d`))
 PARTITIONS 16
 ## prepare data
@@ -75,7 +75,7 @@ MergeSort(sort="d ASC")
 ## test datetime
 CREATE TABLE `y2` (
 `dt` datetime DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(DAYOFYEAR(`dt`))
 PARTITIONS 16;
 show create table y2;
@@ -83,7 +83,7 @@ Table,Create Table
 y2,CREATE TABLE `y2` (
 	`dt` datetime DEFAULT NULL,
 	KEY `auto_shard_key_dt` USING BTREE (`dt`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(DAYOFYEAR(`dt`))
 PARTITIONS 16
 ## prepare data
@@ -148,7 +148,7 @@ MergeSort(sort="dt ASC")
 ## test range
 CREATE TABLE `y3` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY RANGE(DAYOFYEAR(`d`))
 (PARTITION p0 VALUES LESS THAN(10),
 PARTITION p1 VALUES LESS THAN(20),
@@ -159,7 +159,7 @@ Table,Create Table
 y3,CREATE TABLE `y3` (
 	`d` date DEFAULT NULL,
 	KEY `auto_shard_key_d` USING BTREE (`d`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY RANGE(DAYOFYEAR(`d`))
 (PARTITION p0 VALUES LESS THAN (10) ENGINE = InnoDB,
  PARTITION p1 VALUES LESS THAN (20) ENGINE = InnoDB,
@@ -228,7 +228,7 @@ Gather(concurrent=true)
 ## test list
 CREATE TABLE `y4` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY LIST(DAYOFYEAR(`d`))
 (PARTITION p0 VALUES IN(1,2,3,4,5),
 PARTITION p1 VALUES IN(6,7,8,9,10),
@@ -239,7 +239,7 @@ Table,Create Table
 y4,CREATE TABLE `y4` (
 	`d` date DEFAULT NULL,
 	KEY `auto_shard_key_d` USING BTREE (`d`)
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY LIST(DAYOFYEAR(`d`))
 (PARTITION p0 VALUES IN (1,2,3,4,5) ENGINE = InnoDB,
  PARTITION p1 VALUES IN (6,7,8,9,10) ENGINE = InnoDB,
@@ -306,7 +306,7 @@ MergeSort(sort="d ASC")
 ## test leap year and spanning years
 create table `y5` (
 `d` date default null
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 partition by hash(dayofyear(`d`)) partitions 366;
 #prepare data
 insert into y5 values('2020-02-28'),('2020-02-29'),('2020-03-01'),('2021-02-28'),('2021-03-01'),('2022-12-30'),('2022-12-31'),('2023-01-01');

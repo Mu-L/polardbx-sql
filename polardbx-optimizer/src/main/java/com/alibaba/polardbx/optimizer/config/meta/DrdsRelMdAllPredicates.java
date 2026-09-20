@@ -16,12 +16,19 @@
 
 package com.alibaba.polardbx.optimizer.config.meta;
 
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
+import com.alibaba.polardbx.optimizer.core.rel.GroupTopN;
+import com.alibaba.polardbx.optimizer.core.rel.ExternalTableScan;
 import com.alibaba.polardbx.optimizer.core.rel.MysqlTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.PhysicalCTEConsumer;
 import com.alibaba.polardbx.optimizer.view.ViewPlan;
 import org.apache.calcite.plan.RelOptPredicateList;
+import org.apache.calcite.rel.core.CTEAnchor;
+import org.apache.calcite.rel.core.CTEProducer;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.core.SemiJoin;
 import org.apache.calcite.rel.core.TableLookup;
+import org.apache.calcite.rel.logical.LogicalCTEConsumer;
 import org.apache.calcite.rel.metadata.ReflectiveRelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMdAllPredicates;
 import org.apache.calcite.rel.metadata.RelMetadataProvider;
@@ -69,5 +76,30 @@ public class DrdsRelMdAllPredicates extends RelMdAllPredicates {
 
     public RelOptPredicateList getAllPredicates(MysqlTableScan rel, RelMetadataQuery mq) {
         return mq.getAllPredicates(rel.getNodeForMetaQuery());
+    }
+
+    public RelOptPredicateList getAllPredicates(
+        ExternalTableScan rel, RelMetadataQuery mq) {
+        return rel.getAllPredicates(mq);
+    }
+
+    public RelOptPredicateList getAllPredicates(GroupTopN groupTopN, RelMetadataQuery mq) {
+        return mq.getAllPredicates(groupTopN.getInput());
+    }
+
+    public RelOptPredicateList getAllPredicates(CTEAnchor rel, RelMetadataQuery mq) {
+        return mq.getAllPredicates(rel.getRight());
+    }
+
+    public RelOptPredicateList getAllPredicates(CTEProducer rel, RelMetadataQuery mq) {
+        return mq.getAllPredicates(rel.getInput());
+    }
+
+    public RelOptPredicateList getAllPredicates(LogicalCTEConsumer rel, RelMetadataQuery mq) {
+        return mq.getAllPredicates(rel.getInnerRel());
+    }
+
+    public RelOptPredicateList getAllPredicates(PhysicalCTEConsumer rel, RelMetadataQuery mq) {
+        return mq.getAllPredicates(CBOUtil.getCteProducer(rel));
     }
 }

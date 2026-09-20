@@ -3,6 +3,8 @@ package com.alibaba.polardbx.executor.vectorized.math;
 import com.alibaba.polardbx.common.datatype.Decimal;
 import com.alibaba.polardbx.common.datatype.DecimalTypeBase;
 import com.alibaba.polardbx.common.datatype.FastDecimalUtils;
+import com.alibaba.polardbx.common.properties.ConnectionProperties;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.DecimalBlock;
 import com.alibaba.polardbx.executor.chunk.DecimalBlockBuilder;
@@ -107,7 +109,7 @@ public class FastSubLongDecimalTest {
 
     @Test
     public void testSubLongConstDecimalVar() {
-
+        DynamicConfig.getInstance().loadValue(null, ConnectionProperties.ENABLE_DECIMAL_128, "true");
         final VectorizedExpression[] children = new VectorizedExpression[2];
         children[0] = new LiteralVectorizedExpression(DataTypes.LongType, leftConstVal, 1);
         children[1] = new InputRefVectorizedExpression(decimalType, 0, 0);
@@ -164,6 +166,95 @@ public class FastSubLongDecimalTest {
                     "Expect output block to be decimal128 when overflowed from decimal_64, got: "
                         + outputBlock.getState(),
                     outputBlock.getState().isDecimal128());
+                break;
+            case SIMPLE:
+                // Overflow 的 SIMPLE_3 不支持简单计算
+                Assert.assertTrue(
+                    "Expect output block to full when input is simple overflowed, got: " + outputBlock.getState(),
+                    outputBlock.getState().isFull());
+                break;
+            case FULL:
+                Assert.assertTrue("Expect output block to full when input is full, got: " + outputBlock.getState(),
+                    outputBlock.getState().isFull());
+                break;
+            }
+        }
+
+        // check result
+        Assert.assertEquals("Incorrect output block positionCount", COUNT, outputBlock.getPositionCount());
+        if (withSelection) {
+            for (int i = 0; i < sel.length; i++) {
+                int j = sel[i];
+                Assert.assertEquals("Incorrect value for: " + leftBlock.getDecimal(j).toString() + " at pos: " + i,
+                    targetResult[j], outputBlock.getDecimal(j));
+            }
+        } else {
+            for (int i = 0; i < COUNT; i++) {
+                Assert.assertEquals("Incorrect value for: " + leftBlock.getDecimal(i).toString() + " at pos: " + i,
+                    targetResult[i], outputBlock.getDecimal(i));
+            }
+        }
+    }
+
+    @Test
+    public void testSubLongConstDecimalVar2() {
+        DynamicConfig.getInstance().loadValue(null, ConnectionProperties.ENABLE_DECIMAL_128, "false");
+        final VectorizedExpression[] children = new VectorizedExpression[2];
+        children[0] = new LiteralVectorizedExpression(DataTypes.LongType, leftConstVal, 1);
+        children[1] = new InputRefVectorizedExpression(decimalType, 0, 0);
+        FastSubLongConstDecimalColVectorizedExpression expr = new FastSubLongConstDecimalColVectorizedExpression(
+            OUTPUT_INDEX, children);
+
+        MutableChunk chunk = preAllocatedChunk();
+        EvaluationContext evaluationContext = new EvaluationContext(chunk, executionContext);
+        DecimalBlock leftBlock = (DecimalBlock) Objects.requireNonNull(chunk.slotIn(0));
+        Assert.assertEquals("Expect left block to be decimal64: " + isDecimal64(),
+            leftBlock.isDecimal64(), isDecimal64() || inputState == InputState.NULL);
+
+        DecimalBlock outputBlock = (DecimalBlock) Objects.requireNonNull(chunk.slotIn(OUTPUT_INDEX));
+
+        Assert.assertTrue("Expect to be unallocated before evaluation", outputBlock.isUnalloc());
+
+        expr.eval(evaluationContext);
+
+        if (inputState == InputState.NULL) {
+            Assert.assertTrue("Expect to be unallocated after evaluation when null", outputBlock.isUnalloc());
+        } else {
+            Assert.assertFalse("Expect to be allocated after evaluation", outputBlock.isUnalloc());
+        }
+
+        if (!overflow) {
+            switch (inputState) {
+            case DECIMAL_64:
+                Assert.assertTrue(
+                    "Expect output block to be decimal64 when not overflowed, got: " + outputBlock.getState(),
+                    outputBlock.isDecimal64());
+                break;
+            case SIMPLE:
+                if (withSelection) {
+                    Assert.assertTrue(
+                        "Expect output block to simple when input is simple, got: " + outputBlock.getState(),
+                        outputBlock.getState().isFull());
+                } else {
+                    // simple mode does not support selection
+                    Assert.assertTrue("Expect output block to full when input is simple with selection, got: "
+                            + outputBlock.getState(),
+                        outputBlock.isSimple());
+                }
+
+                break;
+            case FULL:
+                Assert.assertTrue("Expect output block to full when input is full got: " + outputBlock.getState(),
+                    outputBlock.getState().isFull());
+                break;
+            }
+        } else {
+            switch (inputState) {
+            case DECIMAL_64:
+                Assert.assertTrue(
+                    "Expect output block to be decimal128 when overflowed from decimal_64, got: "
+                        + outputBlock.getState(),
+                    outputBlock.getState().isFull());
                 break;
             case SIMPLE:
                 // Overflow 的 SIMPLE_3 不支持简单计算

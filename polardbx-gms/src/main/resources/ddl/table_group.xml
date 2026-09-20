@@ -43,6 +43,7 @@
               `pax_group_id` bigint not null default -1,
               `meta_version` bigint unsigned not null default '1',
               `visible` int not null default '1',
+              `group_name` varchar(128) default '',
                primary key (`id`),
                unique key `u_pname`(`tg_id`,`partition_name`, `meta_version`)
         ) charset=utf8
@@ -52,6 +53,9 @@
         ]]></Change>
         <Change><![CDATA[
             alter table `partition_group` drop index `idx_tgid`
+        ]]></Change>
+        <Change><![CDATA[
+           alter table `partition_group` add column `group_name` varchar(128) default ''
         ]]></Change>
     </SystemTable>
 
@@ -70,7 +74,8 @@
                   `meta_version` bigint unsigned not null default '1',
                   `type` int not null default 1 comment '1:new partition group 0:outdated partition group',
                   `visible` int not null default '1',
-                   unique key `u_pname`(`tg_id`,`partition_name`, `type`)
+                  `group_name` varchar(128) default '',
+                   primary key (`tg_id`,`partition_name`, `type`)
             ) charset=utf8
             ]]></Create>
         <Change><![CDATA[
@@ -79,6 +84,35 @@
         <Change><![CDATA[
             alter table `partition_group_delta` drop index `idx_tgid`
         ]]></Change>
+        <Change><![CDATA[
+            alter table `partition_group_delta` drop index `u_pname`, add primary key (`tg_id`, `partition_name`, `type`);
+        ]]></Change>
+        <Change><![CDATA[
+           alter table `partition_group_delta` add column `group_name` varchar(128) default ''
+        ]]></Change>
+    </SystemTable>
+
+    <SystemTable name="partition_group_archive">
+        <Create><![CDATA[
+        create table if not exists `partition_group_archive` (
+              `task_id` bigint not null,
+              `id` bigint not null,
+              `partition_name` varchar(64) not null,
+              `tg_id` bigint not null,
+              `gmt_create` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              `gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+              `phy_db` varchar(64) not null ,
+              `locality` text default null,
+              `primary_zone` text default null,
+              `pax_group_id` bigint not null default -1,
+              `meta_version` bigint unsigned not null default '1',
+              `visible` int not null default '1',
+              `group_name` varchar(128) default '',
+              `insert_time` bigint unsigned not null,
+               primary key (`task_id`,`id`),
+               key `idx_insert_time`(`insert_time`)
+        ) charset=utf8
+        ]]></Create>
     </SystemTable>
 
     <SystemTable name="complex_task_outline">

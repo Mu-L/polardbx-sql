@@ -21,6 +21,7 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.executor.columnar.pruning.index.BitMapRowGroupIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.BloomFilterIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.IndexPruneContext;
+import com.alibaba.polardbx.executor.columnar.pruning.index.MultiSortKeyIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.SortKeyIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.ZoneMapIndex;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
@@ -41,6 +42,8 @@ public class BinaryColumnPredicate extends ColumnPredicate {
     private final int paramIndex;
     private final Object param;
 
+    // e.g. create_time < null
+    private boolean paraIsNull = false;
     public BinaryColumnPredicate(SqlTypeName type, int colId, SqlKind operator, int paramIndex) {
         super(type, colId);
         checkOperator(operator);
@@ -55,6 +58,15 @@ public class BinaryColumnPredicate extends ColumnPredicate {
         this.operator = operator;
         this.param = param;
         this.paramIndex = -1;
+    }
+
+    public BinaryColumnPredicate(SqlTypeName type, int colId, SqlKind operator, Object param, boolean paramIsNull) {
+        super(type, colId);
+        checkOperator(operator);
+        this.operator = operator;
+        this.param = param;
+        this.paramIndex = -1;
+        this.paraIsNull = true;
     }
 
     private void checkOperator(SqlKind operator) {
@@ -89,9 +101,10 @@ public class BinaryColumnPredicate extends ColumnPredicate {
     @Override
     public void sortKey(@NotNull SortKeyIndex sortKeyIndex,
                         IndexPruneContext ipc, @NotNull RoaringBitmap cur) {
-        if (!sortKeyIndex.checkSupport(colId, type)) {
+        if (!sortKeyIndex.checkSupport(colId, type) || paraIsNull) {
             return;
         }
+
         // get args
         Object arg = getArg(sortKeyIndex.getColumnDataType(colId), type, paramIndex, param, ipc);
 
@@ -100,15 +113,15 @@ public class BinaryColumnPredicate extends ColumnPredicate {
         }
         switch (operator) {
         case EQUALS:
-            sortKeyIndex.pruneRange(arg, arg, cur);
+            sortKeyIndex.pruneRange(arg, arg, cur, ipc);
             return;
         case LESS_THAN_OR_EQUAL:
         case LESS_THAN:
-            sortKeyIndex.pruneRange(null, arg, cur);
+            sortKeyIndex.pruneRange(null, arg, cur, ipc);
             return;
         case GREATER_THAN:
         case GREATER_THAN_OR_EQUAL:
-            sortKeyIndex.pruneRange(arg, null, cur);
+            sortKeyIndex.pruneRange(arg, null, cur, ipc);
             return;
         default:
             throw new TddlRuntimeException(ErrorCode.ERR_BINARY_PREDICATE,
@@ -120,7 +133,7 @@ public class BinaryColumnPredicate extends ColumnPredicate {
     @Override
     public void bitmap(@Nonnull @NotNull BitMapRowGroupIndex bitMapIndex, IndexPruneContext ipc,
                        @NotNull RoaringBitmap cur) {
-        if (!bitMapIndex.checkSupport(colId, type)) {
+        if (!bitMapIndex.checkSupport(colId, type) || paraIsNull) {
             return;
         }
         // get args
@@ -149,7 +162,7 @@ public class BinaryColumnPredicate extends ColumnPredicate {
 
     @Override
     public void zoneMap(@NotNull ZoneMapIndex zoneMapIndex, IndexPruneContext ipc, @NotNull RoaringBitmap cur) {
-        if (!zoneMapIndex.checkSupport(colId, type)) {
+        if (!zoneMapIndex.checkSupport(colId, type) || paraIsNull) {
             return;
         }
         // get args
@@ -160,15 +173,45 @@ public class BinaryColumnPredicate extends ColumnPredicate {
         }
         switch (operator) {
         case EQUALS:
-            zoneMapIndex.prune(colId, arg, true, arg, true, cur);
+            zoneMapIndex.prune(colId, arg, true, arg, true, cur, ipc);
             return;
         case LESS_THAN_OR_EQUAL:
         case LESS_THAN:
-            zoneMapIndex.prune(colId, null, true, arg, true, cur);
+            zoneMapIndex.prune(colId, null, true, arg, true, cur, ipc);
             return;
         case GREATER_THAN:
         case GREATER_THAN_OR_EQUAL:
-            zoneMapIndex.prune(colId, arg, true, null, true, cur);
+            zoneMapIndex.prune(colId, arg, true, null, true, cur, ipc);
+            return;
+        default:
+            throw new TddlRuntimeException(ErrorCode.ERR_BINARY_PREDICATE,
+                "not support operator for BinaryColumnPredicate");
+        }
+    }
+
+    @Override
+    public void multiSortKey(@NotNull MultiSortKeyIndex multiSortKeyIndex, IndexPruneContext ipc,
+                             @NotNull RoaringBitmap cur) {
+        if (!multiSortKeyIndex.checkSupport(colId, type) || paraIsNull) {
+            return;
+        }
+        // get args
+        Object arg = getArg(multiSortKeyIndex.getColumnDataType(colId), type, paramIndex, param, ipc);
+
+        if (arg == null) {
+            return;
+        }
+        switch (operator) {
+        case EQUALS:
+            multiSortKeyIndex.prune(colId, arg, true, arg, true, cur, ipc);
+            return;
+        case LESS_THAN_OR_EQUAL:
+        case LESS_THAN:
+            multiSortKeyIndex.prune(colId, null, true, arg, true, cur, ipc);
+            return;
+        case GREATER_THAN:
+        case GREATER_THAN_OR_EQUAL:
+            multiSortKeyIndex.prune(colId, arg, true, null, true, cur, ipc);
             return;
         default:
             throw new TddlRuntimeException(ErrorCode.ERR_BINARY_PREDICATE,

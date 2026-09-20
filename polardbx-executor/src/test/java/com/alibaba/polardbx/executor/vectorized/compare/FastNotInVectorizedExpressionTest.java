@@ -10,6 +10,8 @@ import com.alibaba.polardbx.executor.chunk.RandomAccessBlock;
 import com.alibaba.polardbx.executor.chunk.SliceBlock;
 import com.alibaba.polardbx.executor.chunk.SliceBlockBuilder;
 import com.alibaba.polardbx.executor.chunk.TimestampBlockBuilder;
+import com.alibaba.polardbx.executor.operator.scan.BlockDictionary;
+import com.alibaba.polardbx.executor.operator.scan.impl.LocalBlockDictionary;
 import com.alibaba.polardbx.executor.vectorized.EvaluationContext;
 import com.alibaba.polardbx.executor.vectorized.InValuesVectorizedExpression;
 import com.alibaba.polardbx.executor.vectorized.InputRefVectorizedExpression;
@@ -20,7 +22,10 @@ import com.alibaba.polardbx.optimizer.core.TddlTypeFactoryImpl;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.datatype.DateTimeType;
+import com.alibaba.polardbx.optimizer.core.datatype.SliceType;
 import com.google.common.collect.ImmutableList;
+import io.airlift.slice.Slice;
+import io.airlift.slice.Slices;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rex.RexBuilder;
@@ -38,6 +43,11 @@ public class FastNotInVectorizedExpressionTest {
         new TddlTypeFactoryImpl(TddlRelDataTypeSystemImpl.getInstance());
     private final static RexBuilder REX_BUILDER = new RexBuilder(TYPE_FACTORY);
 
+    private final RelDataType longRelType = TYPE_FACTORY.createSqlType(SqlTypeName.BIGINT);
+    private final RelDataType intRelType = TYPE_FACTORY.createSqlType(SqlTypeName.INTEGER);
+    private final RelDataType varcharRelType = TYPE_FACTORY.createSqlType(SqlTypeName.VARCHAR);
+    private final RelDataType dateRelType = TYPE_FACTORY.createSqlType(SqlTypeName.DATE);
+
     @Test
     public void testIntNotInLong() {
         IntegerBlock integerBlock = IntegerBlock.of(1, 2, 100, null, 200, 1000, null, 100, -1000);
@@ -45,7 +55,7 @@ public class FastNotInVectorizedExpressionTest {
         long[] inValues = {1, 100, 1000};
         LongBlock expectBlock = LongBlock.of(0L, 1L, 0L, null, 1L, 0L, null, 0L, 1L);
 
-        doTest(DataTypes.IntegerType, inputChunk, convertInValues(inValues), expectBlock);
+        doTest(DataTypes.IntegerType, inputChunk, convertInValues(inValues, intRelType), expectBlock);
     }
 
     @Test
@@ -55,7 +65,7 @@ public class FastNotInVectorizedExpressionTest {
         int[] inValues = {1, 100, 1000};
         LongBlock expectBlock = LongBlock.of(0L, 1L, 0L, null, 1L, 0L, null, 0L, 1L);
 
-        doTest(DataTypes.IntegerType, inputChunk, convertInValues(inValues), expectBlock);
+        doTest(DataTypes.IntegerType, inputChunk, convertInValues(inValues, intRelType), expectBlock);
     }
 
     @Test
@@ -66,7 +76,7 @@ public class FastNotInVectorizedExpressionTest {
         int[] inValues = {1, 100, 1000};
         LongBlock expectBlock = LongBlock.of(0L, 1L, 0L, null, 1L, 0L, null, 0L, 1L);
 
-        doTest(DataTypes.IntegerType, inputChunk, convertInValues(inValues), expectBlock, sel);
+        doTest(DataTypes.IntegerType, inputChunk, convertInValues(inValues, intRelType), expectBlock, sel);
     }
 
     @Test
@@ -76,7 +86,7 @@ public class FastNotInVectorizedExpressionTest {
         long[] inValues = {1, 100, 1000};
         LongBlock expectBlock = LongBlock.of(0L, 1L, 0L, null, 1L, 0L, null, 0L, 1L);
 
-        doTest(DataTypes.LongType, inputChunk, convertInValues(inValues), expectBlock);
+        doTest(DataTypes.LongType, inputChunk, convertInValues(inValues, longRelType), expectBlock);
     }
 
     @Test
@@ -87,7 +97,7 @@ public class FastNotInVectorizedExpressionTest {
         long[] inValues = {1, 100, 1000};
         LongBlock expectBlock = LongBlock.of(0L, 1L, 0L, null, 1L, 0L, null, 0L, 1L);
 
-        doTest(DataTypes.LongType, inputChunk, convertInValues(inValues), expectBlock, sel);
+        doTest(DataTypes.LongType, inputChunk, convertInValues(inValues, longRelType), expectBlock, sel);
     }
 
     @Test
@@ -97,7 +107,7 @@ public class FastNotInVectorizedExpressionTest {
         String[] inValues = {"1", "100", "1000"};
         LongBlock expectBlock = LongBlock.of(0L, 1L, 0L, null, 1L, 0L, null, 0L, 1L);
 
-        doTest(DataTypes.LongType, inputChunk, convertInValues(inValues), expectBlock);
+        doTest(DataTypes.LongType, inputChunk, convertInValues(inValues, intRelType), expectBlock);
     }
 
     @Test
@@ -107,7 +117,7 @@ public class FastNotInVectorizedExpressionTest {
         String[] inValues = {"1", "100", "1000"};
         LongBlock expectBlock = LongBlock.of(0L, 1L, 0L, null, 1L, 0L, null, 0L, 1L);
 
-        doTest(DataTypes.LongType, inputChunk, convertInValues(inValues), expectBlock);
+        doTest(DataTypes.LongType, inputChunk, convertInValues(inValues, longRelType), expectBlock);
     }
 
     @Test
@@ -129,7 +139,7 @@ public class FastNotInVectorizedExpressionTest {
         long[] inValues = {1, 100, 1000};
         LongBlock expectBlock = LongBlock.of(0L, 1L, 0L, null, 1L, 0L, null, 0L, 1L);
 
-        doTest(DataTypes.LongType, inputChunk, convertInValues(inValues), expectBlock);
+        doTest(DataTypes.VarcharType, inputChunk, convertInValues(inValues, varcharRelType), expectBlock);
     }
 
     @Test
@@ -151,7 +161,7 @@ public class FastNotInVectorizedExpressionTest {
         String[] inValues = {"1", "100", "1000"};
         LongBlock expectBlock = LongBlock.of(0L, 1L, 0L, null, 1L, 0L, null, 0L, 1L);
 
-        doTest(DataTypes.LongType, inputChunk, convertInValues(inValues), expectBlock);
+        doTest(DataTypes.VarcharType, inputChunk, convertInValues(inValues, varcharRelType), expectBlock);
     }
 
     @Test
@@ -174,7 +184,56 @@ public class FastNotInVectorizedExpressionTest {
         String[] inValues = {"1", "100", "1000"};
         LongBlock expectBlock = LongBlock.of(0L, 1L, 0L, null, 1L, 0L, null, 0L, 1L);
 
-        doTest(DataTypes.LongType, inputChunk, convertInValues(inValues), expectBlock, sel);
+        doTest(DataTypes.VarcharType, inputChunk, convertInValues(inValues, varcharRelType), expectBlock, sel);
+    }
+
+    @Test
+    public void testDictNotInString() {
+        LongBlock longBlock = LongBlock.of(1L, 2L, 100L, null, 200L, 1000L, null, 100L, -1000L);
+
+        Slice[] slices = new Slice[] {
+            Slices.utf8Slice("1"),
+            Slices.utf8Slice("2"),
+            Slices.utf8Slice("100"),
+            Slices.utf8Slice("200"),
+            Slices.utf8Slice("1000"),
+            Slices.utf8Slice("-1000")
+        };
+        BlockDictionary dictionary = new LocalBlockDictionary(slices);
+        int[] dictId = new int[] { 0, 1, 2, -1, 3, 4, -1, 2, 5 };
+        SliceBlock sliceBlock = new SliceBlock(new SliceType(), 0, longBlock.getPositionCount(), longBlock.nulls(),
+            dictionary, dictId, null, false);
+
+        Chunk inputChunk = new Chunk(sliceBlock.getPositionCount(), sliceBlock);
+        String[] inValues = {"1", "100", "1000"};
+        LongBlock expectBlock = LongBlock.of(0L, 1L, 0L, null, 1L, 0L, null, 0L, 1L);
+
+        doTest(DataTypes.VarcharType, inputChunk, convertInValues(inValues, varcharRelType), expectBlock);
+    }
+
+    @Test
+    public void testDictNotInStringWithSelection() {
+        int[] sel = new int[] {0, 3, 5, 8};
+        LongBlock longBlock = LongBlock.of(1L, 2L, 100L, null, 200L, 1000L, null, 100L, -1000L);
+
+        Slice[] slices = new Slice[] {
+            Slices.utf8Slice("1"),
+            Slices.utf8Slice("2"),
+            Slices.utf8Slice("100"),
+            Slices.utf8Slice("200"),
+            Slices.utf8Slice("1000"),
+            Slices.utf8Slice("-1000")
+        };
+        BlockDictionary dictionary = new LocalBlockDictionary(slices);
+        int[] dictId = new int[] { 0, 1, 2, -1, 3, 4, -1, 2, 5 };
+        SliceBlock sliceBlock = new SliceBlock(new SliceType(), 0, longBlock.getPositionCount(), longBlock.nulls(),
+            dictionary, dictId, null, false);
+
+        Chunk inputChunk = new Chunk(sliceBlock.getPositionCount(), sliceBlock);
+        String[] inValues = {"1", "100", "1000"};
+        LongBlock expectBlock = LongBlock.of(0L, 1L, 0L, null, 1L, 0L, null, 0L, 1L);
+
+        doTest(DataTypes.VarcharType, inputChunk, convertInValues(inValues, varcharRelType), expectBlock, sel);
     }
 
     @Test
@@ -184,7 +243,7 @@ public class FastNotInVectorizedExpressionTest {
         Long[] inValues = {1L, 100L, null};
         LongBlock expectBlock = LongBlock.of(null, null, null, null, null, null, null, null, null);
 
-        doTest(DataTypes.LongType, inputChunk, convertInValues(inValues), expectBlock);
+        doTest(DataTypes.LongType, inputChunk, convertInValues(inValues, longRelType), expectBlock);
     }
 
     @Test
@@ -206,7 +265,7 @@ public class FastNotInVectorizedExpressionTest {
         LongBlock expectBlock = LongBlock.of(0L, 1L, 0L, 1L, 0L, null, 1L, null);
 
         doTest(DataTypes.DateType, inputChunk,
-            convertInValues(inValues, TYPE_FACTORY.createSqlType(SqlTypeName.DATE)),
+            convertInValues(inValues, dateRelType),
             expectBlock);
     }
 
@@ -244,9 +303,9 @@ public class FastNotInVectorizedExpressionTest {
         return rexNodeList;
     }
 
-    private List<RexNode> convertInValues(long[] inValues) {
+    private List<RexNode> convertInValues(long[] inValues, RelDataType dataType) {
         List<RexNode> rexNodeList = new ArrayList<>(inValues.length + 1);
-        rexNodeList.add(new RexInputRef(1, TYPE_FACTORY.createSqlType(SqlTypeName.BIGINT)));
+        rexNodeList.add(new RexInputRef(1, dataType));
         for (long inValue : inValues) {
             RexNode rexNode = REX_BUILDER.makeLiteral(inValue,
                 TYPE_FACTORY.createSqlType(SqlTypeName.BIGINT), false);
@@ -255,9 +314,12 @@ public class FastNotInVectorizedExpressionTest {
         return rexNodeList;
     }
 
-    private List<RexNode> convertInValues(Long[] inValues) {
+    /**
+     * @param dataType col data type
+     */
+    private List<RexNode> convertInValues(Long[] inValues, RelDataType dataType) {
         List<RexNode> rexNodeList = new ArrayList<>(inValues.length + 1);
-        rexNodeList.add(new RexInputRef(1, TYPE_FACTORY.createSqlType(SqlTypeName.BIGINT)));
+        rexNodeList.add(new RexInputRef(1, dataType));
         for (Long inValue : inValues) {
             RexNode rexNode = REX_BUILDER.makeLiteral(inValue,
                 TYPE_FACTORY.createSqlType(SqlTypeName.BIGINT), false);
@@ -266,23 +328,12 @@ public class FastNotInVectorizedExpressionTest {
         return rexNodeList;
     }
 
-    private List<RexNode> convertInValues(int[] inValues) {
+    private List<RexNode> convertInValues(int[] inValues, RelDataType dataType) {
         List<RexNode> rexNodeList = new ArrayList<>(inValues.length + 1);
-        rexNodeList.add(new RexInputRef(1, TYPE_FACTORY.createSqlType(SqlTypeName.BIGINT)));
+        rexNodeList.add(new RexInputRef(1, dataType));
         for (long inValue : inValues) {
             RexNode rexNode = REX_BUILDER.makeLiteral(inValue,
                 TYPE_FACTORY.createSqlType(SqlTypeName.INTEGER), false);
-            rexNodeList.add(rexNode);
-        }
-        return rexNodeList;
-    }
-
-    private List<RexNode> convertInValues(String[] inValues) {
-        List<RexNode> rexNodeList = new ArrayList<>(inValues.length + 1);
-        rexNodeList.add(new RexInputRef(1, TYPE_FACTORY.createSqlType(SqlTypeName.BIGINT)));
-        for (String inValue : inValues) {
-            RexNode rexNode = REX_BUILDER.makeLiteral(inValue,
-                TYPE_FACTORY.createSqlType(SqlTypeName.VARCHAR), false);
             rexNodeList.add(rexNode);
         }
         return rexNodeList;

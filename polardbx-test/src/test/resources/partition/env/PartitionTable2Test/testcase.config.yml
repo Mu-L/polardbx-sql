@@ -1,3 +1,7 @@
 #test_part_name_len(unstable_case)
 test_gsi_with_text
 test_part_col_escape
+test_removing_tbl
+test_gh_poc_cases
+test_create_table_with_charset_result
+test_match_tbl_name

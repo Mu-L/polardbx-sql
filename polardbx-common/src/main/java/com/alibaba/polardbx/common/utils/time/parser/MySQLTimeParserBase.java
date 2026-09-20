@@ -48,8 +48,24 @@ public class MySQLTimeParserBase {
         return b >= '0' && b <= '9';
     }
 
+    // Change context:
+    // - Before: only '.', ',', '-' and ':' were treated as punctuation in this early
+    //   minimal port of MySQL's str_to_datetime, so literals with other separators
+    //   (e.g. '2021/08/11') failed to parse and were silently turned into null.
+    // - Path impact: shared by StringTimeParser field-separator skipping and the
+    //   STR_TO_DATE '.' format token; partition pruning, runtime date/datetime/time
+    //   conversion and X-Protocol result decoding all route through here. Digit,
+    //   alpha and space classification is unchanged, and inputs that parsed before
+    //   still parse identically.
+    // - Capability regression: None; the widened set matches MySQL my_ispunct exactly
+    //   (0x21-0x2F, 0x3A-0x40, 0x5B-0x60, 0x7B-0x7E), restoring MySQL-compatible
+    //   parsing without adding any new error behavior.
     protected static boolean isPunctuation(byte b) {
-        return b == '.' || b == ',' || b == '-' || b == ':';
+        int c = Byte.toUnsignedInt(b);
+        return (c >= 0x21 && c <= 0x2F)
+            || (c >= 0x3A && c <= 0x40)
+            || (c >= 0x5B && c <= 0x60)
+            || (c >= 0x7B && c <= 0x7E);
     }
 
     protected static boolean isAlpha(byte b) {

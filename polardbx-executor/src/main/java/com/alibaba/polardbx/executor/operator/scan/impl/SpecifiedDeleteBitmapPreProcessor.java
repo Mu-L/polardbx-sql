@@ -13,12 +13,14 @@ import com.alibaba.polardbx.executor.columnar.pruning.data.PruneUtils;
 import com.alibaba.polardbx.executor.columnar.pruning.predicate.ColumnPredicatePruningInf;
 import com.alibaba.polardbx.executor.gms.ColumnarManager;
 import com.alibaba.polardbx.executor.gms.DynamicColumnarManager;
+import com.alibaba.polardbx.common.orc.PreheatMetaManager;
 import com.alibaba.polardbx.gms.engine.FileSystemManager;
 import com.alibaba.polardbx.gms.engine.FileSystemUtils;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarFileMappingAccessor;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.statis.ColumnarTracer;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
@@ -30,6 +32,7 @@ import org.roaringbitmap.RoaringBitmap;
 
 import java.io.IOException;
 import java.sql.Connection;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -63,13 +66,17 @@ public class SpecifiedDeleteBitmapPreProcessor extends DefaultScanPreProcessor {
                                              double groupsRatio, double deletionRatio,
                                              ColumnarManager columnarManager, Long tso,
                                              List<Long> columnFieldIdList,
+                                             List<OrderByOption> sortKeys,
                                              List<String> delFiles,
                                              List<Long> delBeginPos,
                                              List<Long> delEndPos,
                                              Engine engine,
-                                             long tableId) {
+                                             long tableId,
+                                             ListenableFuture<?> isClosed,
+                                             ZoneId zoneId) {
         super(configuration, fileSystem, schemaName, logicalTableName, enableIndexPruning, enableOssCompatible, columns,
-            rexList, params, groupsRatio, deletionRatio, columnarManager, tso, columnFieldIdList);
+            rexList, params, groupsRatio, deletionRatio, columnarManager, tso, columnFieldIdList, sortKeys, false, null,
+            isClosed, zoneId);
         if (null == delFiles) {
             Preconditions.checkArgument(delBeginPos == null && delEndPos == null);
             this.delFiles = new ArrayList<>();
@@ -117,9 +124,7 @@ public class SpecifiedDeleteBitmapPreProcessor extends DefaultScanPreProcessor {
                         // only preheat orc file meta
                         if (filePath.getName().toUpperCase().endsWith(ColumnarFileType.ORC.name())) {
                             // preheat all meta from orc file.
-                            PreheatFileMeta preheat = PREHEATED_CACHE.get(filePath, () -> preheat(filePath));
-
-                            preheatFileMetaMap.put(filePath, preheat);
+                            PreheatMetaManager.INSTANCE.get(filePath, fileSystem);
 
                             // if pruning is disabled, mark all row-groups as selected.
                             generateFullMatrix(filePath);
@@ -132,7 +137,7 @@ public class SpecifiedDeleteBitmapPreProcessor extends DefaultScanPreProcessor {
                             stripeNum, rgNum, pruneRgLeft);
                     }
                     generateDeletion();
-                } catch (Exception e) {
+                } catch (Throwable e) {
                     throwable = e;
                     future.set(null);
                     return;

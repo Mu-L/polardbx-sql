@@ -18,26 +18,46 @@ package com.alibaba.polardbx.executor.operator.util;
 
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
-import com.alibaba.polardbx.executor.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
-import com.alibaba.polardbx.optimizer.core.row.Row;
 
 import java.util.Comparator;
 import java.util.List;
 
 public class ChunkWithPositionComparator {
-
-    private final Comparator<Row> rowComparator;
+    private final Comparator<Chunk.ChunkRow> rowComparator;
+    private final List<OrderByOption> orderBys;
+    private final List<DataType> columnMetas;
 
     public ChunkWithPositionComparator(List<OrderByOption> orderBys, List<DataType> columnMetas) {
-        this.rowComparator = ExecUtils.getComparator(orderBys, columnMetas);
+        this.rowComparator = ExecUtils.getAssertedSameTypeComparator(orderBys, columnMetas);
+        this.orderBys = orderBys;
+        this.columnMetas = columnMetas;
     }
 
     public int compareTo(Chunk left, int leftPosition, Chunk right, int rightPosition) {
-        return rowComparator.compare(left.rowAt(leftPosition), right.rowAt(rightPosition));
+        int n = 0;
+        final int orderByOptionSize = orderBys.size();
+        for (int i = 0; i < orderByOptionSize; i++) {
+            OrderByOption option = orderBys.get(i);
+
+            // NOTE: null == null
+            n = left.compare(leftPosition, right, rightPosition, option.index);
+
+            if (n == 0) {
+                continue;
+            }
+
+            if (!option.asc) {
+                n = n < 0 ? 1 : -1;
+            }
+
+            break;
+        }
+        return n;
     }
 
-    public int compareTo(Row row, Chunk right, int rightPosition) {
+    public int compareTo(Chunk.ChunkRow row, Chunk right, int rightPosition) {
         return rowComparator.compare(row, right.rowAt(rightPosition));
     }
 }

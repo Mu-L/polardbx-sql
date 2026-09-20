@@ -94,7 +94,7 @@ import java.util.stream.Collectors;
 import static com.alibaba.polardbx.executor.gsi.utils.Transformer.buildColumnParam;
 
 public class OSSBackFillWriterTask {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     private String taskName;
     private VectorizedRowBatch batch;

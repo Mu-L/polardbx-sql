@@ -23,7 +23,8 @@ public class SyncPointMetaAccessor extends AbstractAccessor {
         "INSERT INTO " + GmsSystemTables.CDC_SYNC_POINT_META + " (id, participants, tso, valid) values (?, ?, ?, ?)";
 
     private final static String DELETE_SQL =
-        "DELETE FROM " + GmsSystemTables.CDC_SYNC_POINT_META + " where gmt_created < (NOW() - INTERVAL 7 DAY)";
+        "DELETE FROM " + GmsSystemTables.CDC_SYNC_POINT_META
+            + " where gmt_created < (NOW() - INTERVAL 7 DAY) limit 1000";
 
     public int delete() {
         try {

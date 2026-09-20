@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.ORCMemoryCounterUtil;
 import com.alibaba.polardbx.executor.chunk.BlobBlock;
 import com.alibaba.polardbx.executor.chunk.RandomAccessBlock;
 import com.alibaba.polardbx.executor.operator.scan.StripeLoader;
@@ -25,15 +27,35 @@ import com.google.common.base.Preconditions;
 import io.airlift.slice.Slice;
 import org.apache.orc.OrcProto;
 import org.apache.orc.impl.OrcIndex;
+import org.openjdk.jol.info.ClassLayout;
+import org.apache.orc.impl.PositionProviderBuilder;
 
 import java.io.IOException;
 
 public class DictionaryBlobColumnReader extends AbstractDictionaryColumnReader {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(DictionaryBlobColumnReader.class).instanceSize();
 
-    public DictionaryBlobColumnReader(int columnId, boolean isPrimaryKey, StripeLoader stripeLoader, OrcIndex orcIndex,
+    public DictionaryBlobColumnReader(int columnId, boolean isPrimaryKey, StripeLoader stripeLoader,
+                                      PositionProviderBuilder orcIndex,
                                       RuntimeMetrics metrics, OrcProto.ColumnEncoding encoding, int indexStride,
                                       boolean enableMetrics) {
         super(columnId, isPrimaryKey, stripeLoader, orcIndex, metrics, encoding, indexStride, enableMetrics);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            // from AbstractColumnReader
+            + FastMemoryCounter.sizeOf(refCount)
+            + FastMemoryCounter.sizeOf(isClosed)
+            + FastMemoryCounter.sizeOf(hasNoMoreBlocks)
+            // from AbstractLongColumnReader
+            + FastMemoryCounter.sizeOf(openFailed)
+            + FastMemoryCounter.sizeOf(initializeOnlyOnce)
+            + FastMemoryCounter.sizeOf(isOpened)
+            + ORCMemoryCounterUtil.sizeOfBitFieldReader(present)
+            + ORCMemoryCounterUtil.sizeOfIntegerReader(dictIdReader)
+            + FastMemoryCounter.sizeOf(dictionary);
     }
 
     @Override

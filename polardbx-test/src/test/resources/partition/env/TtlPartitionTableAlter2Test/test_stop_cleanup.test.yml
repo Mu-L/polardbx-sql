@@ -1,0 +1,61 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+set ENABLE_LOGICAL_TABLE_META=true;
+
+drop database if exists alter_ttl_db3;
+create database if not exists alter_ttl_db3 mode='auto';
+use alter_ttl_db3;
+
+drop table if exists part_with_arc;
+create table part_with_arc (
+a int, 
+name varchar(20),
+created_at datetime,
+b int,
+primary key(a))
+partition by key(a)
+partitions 4;
+
+alter table part_with_arc modify ttl set 
+TTL_EXPR = created_at EXPIRE AFTER 3 DAY TIMEZONE '+08:00',
+TTL_ENABLE = 'OFF',
+TTL_CLEANUP = 'ON',
+TTL_PART_INTERVAL = INTERVAL(1, DAY),
+ARCHIVE_TABLE_POST_ALLOCATE = 8;
+
+create table part_with_arc_bk like part_with_arc engine=Columnar archive_mode='ttl';
+show create table part_with_arc;
+
+insert into part_with_arc values (1, 'a', '2024-05-27 00:00:00', 1), (2, 'b', '2024-05-27 00:00:00', 2), (3, 'c', '2024-05-27 00:00:00', 3);
+select * from part_with_arc order by a;
+
+set TTL_STOP_CLEANUP_DATA= true;
+set TTL_DEBUG_CURRENT_DATETIME='2024-07-01 00:00:00';
+alter table part_with_arc cleanup expired data;
+show create table part_with_arc;
+
+select * from part_with_arc order by a;
+
+set TTL_DEBUG_CURRENT_DATETIME='2024-07-02 00:00:00';
+set TTL_SKIP_PREPARING_CLEANUP_INTERVAL=true;
+alter table part_with_arc cleanup expired data;
+show create table part_with_arc;
+select * from part_with_arc order by a;
+
+set TTL_STOP_CLEANUP_DATA= false;
+set TTL_DEBUG_CURRENT_DATETIME='2024-07-03 00:00:00';
+alter table part_with_arc cleanup expired data;
+show create table part_with_arc;
+select * from part_with_arc order by a;
+
+use polardbx;
+drop database if exists alter_ttl_db3;
+
+
+

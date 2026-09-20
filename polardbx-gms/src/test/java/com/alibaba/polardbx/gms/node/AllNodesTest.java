@@ -60,7 +60,7 @@ public class AllNodesTest {
 
     @Test
     public void testGetAllCoordinators() {
-        List<Node> coordinators = allNodes.getAllCoordinators();
+        List<InternalNode> coordinators = allNodes.getAllCoordinators();
         assertEquals(1, coordinators.size());
     }
 }

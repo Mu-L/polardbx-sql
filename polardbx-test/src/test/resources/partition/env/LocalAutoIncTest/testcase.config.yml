@@ -1,0 +1,5 @@
+test_local_auto_inc
+test_local_auto_inc_sql_mode_empty
+test_local_auto_inc_modify_column
+test_local_auto_inc_add_column
+test_cdc_new_sequence

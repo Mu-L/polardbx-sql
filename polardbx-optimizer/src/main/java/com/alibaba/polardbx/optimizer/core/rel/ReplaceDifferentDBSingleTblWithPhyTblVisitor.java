@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.optimizer.core.rel;
 
 import com.alibaba.polardbx.config.ConfigDataMode;
+import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
@@ -75,10 +76,11 @@ public class ReplaceDifferentDBSingleTblWithPhyTblVisitor extends ReplaceTableNa
                 .getPartitionInfoManager()
                 .getPartitionInfo(logicalTableName);
             if (partitionInfo == null) {
-                physicalDBName = schemaName;
-                physicalTableName = logicalTableName;
+                // might be a cte name
+                return new SqlIdentifier(logicalTableName, SqlParserPos.ZERO);
             } else {
                 physicalDBName = GroupInfoUtil.buildPhysicalDbNameFromGroupName(
+                    partitionInfo.getTableSchema(),
                     partitionInfo.getPartitionBy().getPartitions().get(0).getLocation().getGroupKey());
                 physicalTableName = partitionInfo.getPrefixTableName();
             }
@@ -87,10 +89,11 @@ public class ReplaceDifferentDBSingleTblWithPhyTblVisitor extends ReplaceTableNa
                 .getRuleManager()
                 .getTableRule(logicalTableName);
             if (tableRule == null) {
-                physicalDBName = schemaName;
-                physicalTableName = logicalTableName;
+                // might be a cte name
+                return new SqlIdentifier(logicalTableName, SqlParserPos.ZERO);
             } else {
-                physicalDBName = GroupInfoUtil.buildPhysicalDbNameFromGroupName(tableRule.getDbNamePattern());
+                physicalDBName =
+                    GroupInfoUtil.buildPhysicalDbNameFromGroupName(schemaName, tableRule.getDbNamePattern());
                 physicalTableName = tableRule.getTbNamePattern();
             }
         }

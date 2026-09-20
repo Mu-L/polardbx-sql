@@ -30,6 +30,7 @@ public class CclMetric {
     public final static int RUN = 3;
     public final static int WAIT_K = 4;
     public final static int RESCHEDULE = 5;
+    public final static int DRY_RUN = 6;
 
     private final int type;
     private final long value;

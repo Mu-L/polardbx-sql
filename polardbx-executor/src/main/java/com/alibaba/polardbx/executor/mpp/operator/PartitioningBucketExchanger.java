@@ -16,7 +16,10 @@
 
 package com.alibaba.polardbx.executor.mpp.operator;
 
-import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.collection.MemoryCountableObjectArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.ChunkBuilder;
@@ -29,25 +32,63 @@ import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.google.common.collect.ImmutableList;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntList;
+import org.openjdk.jol.info.ClassLayout;
+import org.roaringbitmap.RoaringBitmap;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class PartitioningBucketExchanger extends LocalExchanger {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(PartitioningBucketExchanger.class).instanceSize();
+
     private final LocalHashBucketFunction bucketGenerator;
-    private final List<Integer> partitionChannels;
+
+    @FieldMemoryCounter(value = false)
     private final List<AtomicBoolean> consumings;
+
+    @FieldMemoryCounter(value = false)
     private final ChunkConverter keyConverter;
     private final int totalBucketNum;
+
+    @FieldMemoryCounter(value = false)
     private final ExecutionContext context;
     private final int chunkLimit;
     private final int bucketNum;
+
+    @FieldMemoryCounter(value = false)
     private final List<DataType> types;
+    private int[] columnIndex;
 
     //防止内存膨胀的一种优化策略
-    private List<ChunkBuilder> pageBuilders;
-    private List<Chunk>[] chunkArraylist;
+    private ChunkBuilder[] pageBuilders;
+    private MemoryCountableObjectArrayList<Chunk>[] chunkArraylist;
+
+    @FieldMemoryCounter(value = false)
+    private RoaringBitmap objectBitmap;
+
+    @Override
+    public long getMemoryUsage() {
+        if (objectBitmap == null) {
+            objectBitmap = new RoaringBitmap();
+        }
+        try {
+            MemoryTrackerManager.setCurrentRoaringBitmap(objectBitmap);
+
+            return INSTANCE_SIZE
+
+                // super class
+                + FastMemoryCounter.sizeOf(opened)
+
+                // this class
+                + FastMemoryCounter.sizeOf(bucketGenerator)
+                + FastMemoryCounter.sizeOf(columnIndex)
+                + FastMemoryCounter.sizeOf(pageBuilders)
+                + FastMemoryCounter.sizeOf(chunkArraylist);
+        } finally {
+            MemoryTrackerManager.removeCurrentRoaringBitmap();
+            objectBitmap.clear();
+        }
+    }
 
     public PartitioningBucketExchanger(OutputBufferMemoryManager bufferMemoryManager, List<ConsumerExecutor> executors,
                                        LocalExchangersStatus status,
@@ -56,17 +97,20 @@ public class PartitioningBucketExchanger extends LocalExchanger {
                                        List<Integer> partitionChannels,
                                        List<DataType> keyTypes,
                                        int bucketNum,
-                                       int chunkLimit, ExecutionContext context) {
-        super(bufferMemoryManager, executors, status, asyncConsume);
-        this.partitionChannels = partitionChannels;
+                                       int chunkLimit, ExecutionContext context,
+                                       long waitNotFullInMillis) {
+        super(bufferMemoryManager, executors, status, asyncConsume, waitNotFullInMillis);
         this.consumings = status.getConsumings();
+
+        // build columnIndex
+        columnIndex = new int[partitionChannels.size()];
+        for (int i = 0; i < partitionChannels.size(); i++) {
+            columnIndex[i] = partitionChannels.get(i);
+        }
+
         if (keyTypes.isEmpty()) {
             this.keyConverter = null;
         } else {
-            int[] columnIndex = new int[partitionChannels.size()];
-            for (int i = 0; i < partitionChannels.size(); i++) {
-                columnIndex[i] = partitionChannels.get(i);
-            }
             this.keyConverter = Converters.createChunkConverter(columnIndex, types, keyTypes, context);
         }
         this.totalBucketNum = executors.size() * bucketNum;
@@ -86,10 +130,10 @@ public class PartitioningBucketExchanger extends LocalExchanger {
             for (int i = 0; i < totalBucketNum; i++) {
                 pageBuilders.add(new ChunkBuilder(types, bucketChunkLimit, context));
             }
-            this.pageBuilders = pageBuilders.build();
-            this.chunkArraylist = new List[totalBucketNum];
+            this.pageBuilders = pageBuilders.build().toArray(new ChunkBuilder[0]);
+            this.chunkArraylist = new MemoryCountableObjectArrayList[totalBucketNum];
             for (int i = 0; i < totalBucketNum; i++) {
-                this.chunkArraylist[i] = new ArrayList<>();
+                this.chunkArraylist[i] = new MemoryCountableObjectArrayList<>();
             }
         }
     }
@@ -119,7 +163,7 @@ public class PartitioningBucketExchanger extends LocalExchanger {
             List<Integer> positions = partitionAssignments[bucket];
             if (!positions.isEmpty()) {
                 for (Integer pos : positions) {
-                    ChunkBuilder chunkBuilder = pageBuilders.get(bucket);
+                    ChunkBuilder chunkBuilder = pageBuilders[bucket];
                     chunkBuilder.declarePosition();
                     for (int i = 0; i < chunk.getBlockCount(); i++) {
                         chunkBuilder.appendTo(chunk.getBlock(i), i, pos);
@@ -154,8 +198,8 @@ public class PartitioningBucketExchanger extends LocalExchanger {
         if (pageBuilders == null) {
             return;
         }
-        for (int bucketIndex = 0; bucketIndex < pageBuilders.size(); bucketIndex++) {
-            ChunkBuilder partitionPageBuilder = pageBuilders.get(bucketIndex);
+        for (int bucketIndex = 0; bucketIndex < pageBuilders.length; bucketIndex++) {
+            ChunkBuilder partitionPageBuilder = pageBuilders[bucketIndex];
             if (!partitionPageBuilder.isEmpty() && (force || partitionPageBuilder.isFull())) {
                 Chunk pageBucket = partitionPageBuilder.build();
                 partitionPageBuilder.reset();
@@ -184,9 +228,9 @@ public class PartitioningBucketExchanger extends LocalExchanger {
     }
 
     private Chunk getPartitionFunctionArguments(Chunk page) {
-        Block[] blocks = new Block[partitionChannels.size()];
+        Block[] blocks = new Block[columnIndex.length];
         for (int i = 0; i < blocks.length; i++) {
-            blocks[i] = page.getBlock(partitionChannels.get(i));
+            blocks[i] = page.getBlock(columnIndex[i]);
         }
         return new Chunk(page.getPositionCount(), blocks);
     }

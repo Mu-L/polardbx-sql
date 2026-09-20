@@ -18,12 +18,14 @@ package com.alibaba.polardbx.gms.util;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
 import com.alibaba.polardbx.gms.rebalance.RebalanceTarget;
 import com.alibaba.polardbx.gms.topology.ConfigListenerAccessor;
+import com.alibaba.polardbx.gms.topology.ConfigListenerRecord;
 import com.alibaba.polardbx.gms.topology.DatabaseDdlContext;
 
 import java.sql.Connection;
@@ -78,30 +80,39 @@ public class LockUtil {
     }
 
     public static void waitToAcquireMetaDbLock(String errMsg,
+                                               String succMsg,
                                                Connection metaDbLockConn,
                                                DatabaseDdlContext ddlContext) {
         try {
             setConnectionLockWaitTimeout(metaDbLockConn, META_DB_LOCK_WAIT_TIMEOUT_EACH_LOOP);
             while (true) {
                 if (checkIfInterrupted(ddlContext)) {
-                    MetaDbLogUtil.META_DB_LOG.warn(errMsg + ", and ddl has been interrupted");
+                    MetaDbLogUtil.DDL_ENGINE_LOG.warn(errMsg + ", and ddl has been interrupted");
                     throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC,
                         errMsg + ", and ddl has been interrupted");
                 }
 
                 try {
-                    LockUtil.acquireMetaDbLockByForUpdate(metaDbLockConn);
+                    boolean fetchLockSucc = LockUtil.acquireMetaDbLockByForUpdate(metaDbLockConn);
                     if (checkIfInterrupted(ddlContext)) {
-                        MetaDbLogUtil.META_DB_LOG.warn(errMsg + ", and ddl has been interrupted");
+                        MetaDbLogUtil.DDL_ENGINE_LOG.warn(errMsg + ", and ddl has been interrupted");
                         throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC,
                             errMsg + ", and ddl has been interrupted");
                     }
-
+                    if (!fetchLockSucc) {
+                        MetaDbLogUtil.DDL_ENGINE_LOG.warn(errMsg + String.format(", no found the record of dataId[%s]",
+                            MetaDbDataIdBuilder.getMetadbLockDataId()));
+                        continue;
+                    } else {
+                        if (succMsg != null) {
+                            MetaDbLogUtil.DDL_ENGINE_LOG.warn(succMsg);
+                        }
+                    }
                     break;
                 } catch (Throwable ex) {
                     if (ex.getMessage() != null && ex.getMessage().contains("Lock wait timeout exceeded")) {
                         logger.warn(errMsg);
-                        MetaDbLogUtil.META_DB_LOG.warn(errMsg);
+                        MetaDbLogUtil.DDL_ENGINE_LOG.warn(errMsg);
 
                         try {
                             Thread.sleep(100);
@@ -138,7 +149,10 @@ public class LockUtil {
         }
         ConfigListenerAccessor listenerAccessor = new ConfigListenerAccessor();
         listenerAccessor.setConnection(metaDbConn);
-        listenerAccessor.getDataId(MetaDbDataIdBuilder.getMetadbLockDataId(), true);
+        ConfigListenerRecord lockRec = listenerAccessor.getDataId(MetaDbDataIdBuilder.getMetadbLockDataId(), true);
+        if (lockRec == null) {
+            return false;
+        }
         return true;
     }
 
@@ -175,7 +189,7 @@ public class LockUtil {
                 stmt.execute(setLockWaitTimeOutStr);
             }
         } catch (Throwable ex) {
-            MetaDbLogUtil.META_DB_LOG.warn("Failed to set innodb_lock_wait_timeout to %s s" + lockWaitTimeout, ex);
+            MetaDbLogUtil.DDL_ENGINE_LOG.warn("Failed to set innodb_lock_wait_timeout to %s s" + lockWaitTimeout, ex);
             // Should log to a special log file for meta db
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_GET_CONNECTION, ex, ex.getMessage());
         }
@@ -189,7 +203,7 @@ public class LockUtil {
                 stmt.execute(setLockWaitTimeOutStr);
             }
         } catch (Throwable ex) {
-            MetaDbLogUtil.META_DB_LOG.warn("Failed to reset innodb_lock_wait_timeout to 50s", ex);
+            MetaDbLogUtil.DDL_ENGINE_LOG.warn("Failed to reset innodb_lock_wait_timeout to 50s", ex);
         }
     }
 }

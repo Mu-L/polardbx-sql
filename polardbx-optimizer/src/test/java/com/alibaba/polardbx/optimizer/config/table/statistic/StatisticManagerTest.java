@@ -4,6 +4,7 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.common.utils.time.core.TimeStorage;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.config.impl.MetaDbInstConfigManager;
@@ -18,13 +19,17 @@ import org.junit.Test;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadPoolExecutor;
 
+import static com.alibaba.polardbx.common.properties.ConnectionParams.COMPENSATION_REDUNDANCY_TIME;
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.ENABLE_STATISTIC_FEEDBACK;
+import static com.alibaba.polardbx.common.utils.Assert.assertNotNull;
+import static com.alibaba.polardbx.common.utils.GeneralUtil.unixTimeStamp;
 import static com.alibaba.polardbx.gms.module.LogPattern.PROCESS_END;
 import static com.alibaba.polardbx.gms.module.LogPattern.PROCESS_SKIPPED;
 import static com.alibaba.polardbx.optimizer.config.table.statistic.StatisticUtils.buildSketchKey;
@@ -40,6 +45,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -54,7 +60,7 @@ public class StatisticManagerTest {
         StatisticResult rowCount = StatisticResult.build().setValue(0L, null);
         StatisticResult ndv = StatisticResult.build().setValue(0L, null);
         StatisticResult statisticResult =
-            StatisticManager.handleInFrequencyDegradation(rowCount, ndv, null, null, null, null, true, -1L);
+            StatisticManager.handleInFrequencyDegradation(rowCount, ndv, null, null, null, 1, true);
         assert statisticResult.getLongValue() == 0L;
 
         rowCount.setValue(100000L, null);
@@ -64,13 +70,13 @@ public class StatisticManagerTest {
             rowList.add(i);
         }
         statisticResult =
-            StatisticManager.handleInFrequencyDegradation(rowCount, ndv, null, null, null, rowList, true, -1L);
+            StatisticManager.handleInFrequencyDegradation(rowCount, ndv, null, null, null, rowList.size(), true);
         assert statisticResult.getLongValue() == 1000L;
     }
 
     @Test
     public void testNdvOutlierIllegalArg1() {
-        try (MockedStatic<ConfigDataMode> configDataMode = Mockito.mockStatic(ConfigDataMode.class)) {
+        try (MockedStatic<ConfigDataMode> configDataMode = mockStatic(ConfigDataMode.class)) {
             configDataMode.when(() -> ConfigDataMode.isFastMock()).thenReturn(true);
             // test illegal args
             StatisticManager statisticManager = StatisticManager.getInstance();
@@ -88,7 +94,7 @@ public class StatisticManagerTest {
         String schema = "schema";
         String table = "table";
         String col = "col";
-        try (MockedStatic<ConfigDataMode> configDataMode = Mockito.mockStatic(ConfigDataMode.class)) {
+        try (MockedStatic<ConfigDataMode> configDataMode = mockStatic(ConfigDataMode.class)) {
             configDataMode.when(() -> ConfigDataMode.isFastMock()).thenReturn(true);
             StatisticManager statisticManager = StatisticManager.getInstance();
 
@@ -105,7 +111,7 @@ public class StatisticManagerTest {
         String schema = "schema";
         String table = "table";
         String col = "col";
-        try (MockedStatic<ConfigDataMode> configDataMode = Mockito.mockStatic(ConfigDataMode.class)) {
+        try (MockedStatic<ConfigDataMode> configDataMode = mockStatic(ConfigDataMode.class)) {
             configDataMode.when(() -> ConfigDataMode.isFastMock()).thenReturn(true);
             StatisticManager statisticManager = StatisticManager.getInstance();
             statisticManager.sds = MockStatisticDatasource.getInstance();
@@ -170,7 +176,7 @@ public class StatisticManagerTest {
         String schema = "schema";
         String table = "table";
         String col = "col";
-        try (MockedStatic<ConfigDataMode> configDataMode = Mockito.mockStatic(ConfigDataMode.class)) {
+        try (MockedStatic<ConfigDataMode> configDataMode = mockStatic(ConfigDataMode.class)) {
             configDataMode.when(() -> ConfigDataMode.isFastMock()).thenReturn(true);
             StatisticManager statisticManager = StatisticManager.getInstance();
             statisticManager.sds = MockStatisticDatasource.getInstance();
@@ -254,7 +260,7 @@ public class StatisticManagerTest {
         Map<String, Long> ndvMap = new HashMap<>();
         ndvMap.put(columnName.toLowerCase(), 100L);
 
-        try (MockedStatic<GeneralUtil> generalUtilMockedStatic = Mockito.mockStatic(GeneralUtil.class)) {
+        try (MockedStatic<GeneralUtil> generalUtilMockedStatic = mockStatic(GeneralUtil.class)) {
             generalUtilMockedStatic.when(() -> GeneralUtil.isWithinPercentage(anyLong(), anyLong(), anyDouble()))
                 .thenReturn(true);
             Map<String, Histogram> map = new HashMap<>();
@@ -308,7 +314,7 @@ public class StatisticManagerTest {
         when(statisticManager.getFrequencyInner(schema, logicalTableName, columnName, value,
             isNeedTrace)).thenCallRealMethod();
 
-        try (MockedStatic<GeneralUtil> generalUtilMockedStatic = Mockito.mockStatic(GeneralUtil.class)) {
+        try (MockedStatic<GeneralUtil> generalUtilMockedStatic = mockStatic(GeneralUtil.class)) {
             generalUtilMockedStatic.when(() -> GeneralUtil.isWithinPercentage(anyLong(), anyLong(), anyDouble()))
                 .thenReturn(false);
 
@@ -328,8 +334,8 @@ public class StatisticManagerTest {
 
         String schema = "schema";
         String tbl = "tbl";
-        try (MockedStatic<ModuleLogInfo> moduleLogInfoMockedStatic = Mockito.mockStatic(ModuleLogInfo.class);
-            MockedStatic<InstConfUtil> instConfUtilMockedStatic = Mockito.mockStatic(InstConfUtil.class)) {
+        try (MockedStatic<ModuleLogInfo> moduleLogInfoMockedStatic = mockStatic(ModuleLogInfo.class);
+            MockedStatic<InstConfUtil> instConfUtilMockedStatic = mockStatic(InstConfUtil.class)) {
             moduleLogInfoMockedStatic.when(() -> ModuleLogInfo.getInstance()).thenReturn(moduleLogInfo);
             Mockito.doCallRealMethod().when(statisticManager).feedback(anyString(), anyString());
             // 1 branch, cache line is null
@@ -366,8 +372,8 @@ public class StatisticManagerTest {
     @Test
     public void testFeedbackJob() {
         ModuleLogInfo moduleLogInfo = mock(ModuleLogInfo.class);
-        try (MockedStatic<ModuleLogInfo> moduleLogInfoMockedStatic = Mockito.mockStatic(ModuleLogInfo.class);
-            MockedStatic<InstConfUtil> instConfUtilMockedStatic = Mockito.mockStatic(InstConfUtil.class)) {
+        try (MockedStatic<ModuleLogInfo> moduleLogInfoMockedStatic = mockStatic(ModuleLogInfo.class);
+            MockedStatic<InstConfUtil> instConfUtilMockedStatic = mockStatic(InstConfUtil.class)) {
             moduleLogInfoMockedStatic.when(() -> ModuleLogInfo.getInstance()).thenReturn(moduleLogInfo);
             StatisticManager statisticManager = new MockStatisticManager();
 
@@ -445,4 +451,174 @@ public class StatisticManagerTest {
 
         assertNull(result);
     }
+
+    /**
+     * testMaxStatisticVal
+     * 测试用例1: 当缓存行或统计图映射为空时返回-1
+     */
+    @Test
+    public void testMaxStatisticValWhenCacheOrMapIsNull() {
+        StatisticManager.CacheLine mockCacheLine = mock(StatisticManager.CacheLine.class);
+
+        when(mockCacheLine.getHistogramMap()).thenReturn(null);
+        assertEquals(-1L, StatisticManager.maxStatisticVal(mockCacheLine, "testColumn"));
+
+        when(mockCacheLine.getHistogramMap()).thenReturn(new HashMap<>());
+        when(mockCacheLine.getTopN("testColumn")).thenReturn(null);
+        assertEquals(-1L, StatisticManager.maxStatisticVal(mockCacheLine, "testColumn"));
+        assertEquals(-1L, StatisticManager.minStatisticVal(mockCacheLine, "testColumn"));
+    }
+
+    /**
+     * testMaxStatisticVal
+     * 测试用例2: 当指定列名没有对应的历史数据时返回-1
+     */
+    @Test
+    public void testMaxStatisticValWhenNoCorrespondingHistogram() {
+        StatisticManager.CacheLine mockCacheLine = mock(StatisticManager.CacheLine.class);
+        TopN mockTopN = mock(TopN.class);
+
+        Map<String, Histogram> map = new HashMap<>();
+        when(mockCacheLine.getHistogramMap()).thenReturn(map);
+        when(mockCacheLine.getTopN("testColumn")).thenReturn(mockTopN);
+        assertEquals(-1L, StatisticManager.maxStatisticVal(mockCacheLine, "testColumn"));
+        assertEquals(-1L, StatisticManager.minStatisticVal(mockCacheLine, "testColumn"));
+    }
+
+    /**
+     * testMaxStatisticVal
+     * 测试用例3: 当最后一个桶的上限不是长整型时返回-1
+     */
+    @Test
+    public void testMaxStatisticValWhenLastBucketIsNotLong() {
+        StatisticManager.CacheLine mockCacheLine = mock(StatisticManager.CacheLine.class);
+        TopN mockTopN = mock(TopN.class);
+        Histogram mockHistogram = mock(Histogram.class);
+
+        List<Histogram.Bucket> buckets = new ArrayList<>();
+        Histogram.Bucket bucket = mock(Histogram.Bucket.class);
+        when(bucket.getUpper()).thenReturn("not a number");
+        when(bucket.getLower()).thenReturn("not a number");
+        buckets.add(bucket);
+        when(mockHistogram.getBuckets()).thenReturn(buckets);
+        Map<String, Histogram> map = new HashMap<>();
+        map.put("testColumn", mockHistogram);
+        when(mockCacheLine.getHistogramMap()).thenReturn(map);
+        when(mockCacheLine.getTopN("testColumn")).thenReturn(mockTopN);
+        assertEquals(-1L, StatisticManager.maxStatisticVal(mockCacheLine, "testColumn"));
+        assertEquals(-1L, StatisticManager.minStatisticVal(mockCacheLine, "testColumn"));
+    }
+
+    /**
+     * testMaxStatisticVal
+     * 测试用例4: 正常情况下获取最大值并转换时间戳
+     */
+    @Test
+    public void testMaxStatisticValNormalCase() {
+        StatisticManager.CacheLine mockCacheLine = mock(StatisticManager.CacheLine.class);
+        TopN mockTopN = mock(TopN.class);
+        Histogram mockHistogram = mock(Histogram.class);
+
+        List<Histogram.Bucket> buckets = new ArrayList<>();
+        Histogram.Bucket bucket = mock(Histogram.Bucket.class);
+        when(bucket.getUpper()).thenReturn(100L);
+        when(bucket.getLower()).thenReturn(1L);
+        buckets.add(bucket);
+        when(mockHistogram.getBuckets()).thenReturn(buckets);
+
+        Object[] values = {10L, 20L};
+        when(mockTopN.getValueArr()).thenReturn(values);
+
+        Map<String, Histogram> map = new HashMap<>();
+        map.put("testColumn", mockHistogram);
+        when(mockCacheLine.getHistogramMap()).thenReturn(map);
+        when(mockCacheLine.getTopN("testColumn")).thenReturn(mockTopN);
+
+        assertEquals(TimeStorage.readTimestamp(20L).toEpochMillsForDatetime(),
+            StatisticManager.maxStatisticVal(mockCacheLine, "testColumn"));
+        assertEquals(TimeStorage.readTimestamp(1L).toEpochMillsForDatetime(),
+            StatisticManager.minStatisticVal(mockCacheLine, "testColumn"));
+    }
+
+    @Test
+    public void testGetCacheLine() {
+        StatisticManager statisticManager = new MockStatisticManager();
+        statisticManager.getStatisticCache().put("schema", new HashMap<>());
+        statisticManager.getStatisticCache().get("schema").put("table", new StatisticManager.CacheLine());
+        StatisticManager.CacheLine cacheLine = statisticManager.getCacheLine("schema", "table");
+        assertNotNull(cacheLine);
+    }
+
+    /**
+     * 测试基本功能，包括时间转换、区间计算和补偿值计算。
+     * 输入参数均为有效值，预期返回正确的统计结果。
+     */
+    @Test
+    public void testDatetimeTypeCompensationBasic() throws Exception {
+        String schema = "schema";
+        String logicalTableName = "logicalTableName";
+        String columnName = "columnName";
+        MetaDbInstConfigManager.setConfigFromMetaDb(false);
+
+        Histogram mockHistogram = mock(Histogram.class);
+        StatisticManager.CacheLine cacheLine = new StatisticManager.CacheLine();
+        StatisticManager statisticManager = new MockStatisticManager();
+        statisticManager.getStatisticCache().put(schema, new HashMap<>());
+        statisticManager.getStatisticCache().get(schema).put(logicalTableName.toLowerCase(), cacheLine);
+        cacheLine.setLastModifyTime(unixTimeStamp() - 24 * 60 * 60L);
+        cacheLine.getHistogramMap().put(columnName.toLowerCase(), mockHistogram);
+
+        when(mockHistogram.rangeCount(anyString(), anyBoolean(), anyString(), anyBoolean())).thenReturn(10L);
+
+        long max = StatisticManager.transformDateToUnixTimestamp("2023-01-02 00:00:00", DataTypes.TimestampType);
+        long min = StatisticManager.transformDateToUnixTimestamp("2023-01-01 00:00:00", DataTypes.TimestampType);
+        // 准备
+        try (MockedStatic<StatisticManager> statisticManagerMockedStatic = mockStatic(StatisticManager.class)) {
+            statisticManagerMockedStatic.when(() -> StatisticManager.getInstance()).thenReturn(statisticManager);
+            statisticManagerMockedStatic.when(() -> StatisticManager.transformDateToUnixTimestamp(anyString(), any()))
+                .thenCallRealMethod();
+            statisticManagerMockedStatic.when(() -> StatisticManager.getStatisticUpdateTime(any()))
+                .thenCallRealMethod();
+
+            statisticManagerMockedStatic.when(() -> StatisticManager.maxStatisticVal(cacheLine, columnName))
+                .thenReturn(max);
+            statisticManagerMockedStatic.when(() -> StatisticManager.minStatisticVal(cacheLine, columnName))
+                .thenReturn(
+                    min);
+            statisticManagerMockedStatic.when(() -> StatisticManager.getSourceTableName(schema, logicalTableName))
+                .thenCallRealMethod();
+
+            // 执行
+            StatisticResult result = statisticManager.datetimeTypeCompensation(
+                schema,
+                logicalTableName,
+                columnName,
+                "2023-01-02 00:00:00",
+                true,
+                "2023-01-03 00:00:00",
+                true,
+                false,
+                DataTypes.TimestampType,
+                new StatisticResult().setValue(5L, null)
+            );
+
+            // 验证
+            assertEquals(15L, result.getLongValue());
+        }
+    }
+
+    @Test
+    public void testGetCompensationTimeMillis() {
+        try (MockedStatic<InstConfUtil> instConfUtilMockedStatic = mockStatic(InstConfUtil.class)) {
+            instConfUtilMockedStatic.when(() -> InstConfUtil.getLong(COMPENSATION_REDUNDANCY_TIME))
+                .thenReturn(3 * 24 * 60 * 60 * 1000L);
+
+            long now = System.currentTimeMillis();
+            long redundancy = 3 * 24 * 60 * 60 * 1000L;
+            long compensationTimeMillis = StatisticManager.getCompensationTimeMillis();
+            Assert.assertTrue(compensationTimeMillis >= now + redundancy);
+        }
+
+    }
+
 }

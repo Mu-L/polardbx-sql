@@ -26,9 +26,15 @@ import com.alibaba.polardbx.gms.metadb.cdc.BinlogStreamRecord;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
-import com.alibaba.polardbx.statistics.SQLRecorderLogger;
 import com.alibaba.polardbx.optimizer.core.rel.dal.LogicalShow;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
+import com.alibaba.polardbx.rpc.CdcRpcClient;
+import com.alibaba.polardbx.rpc.cdc.CdcServiceGrpc;
+import com.alibaba.polardbx.rpc.cdc.FullMasterStatus;
+import com.alibaba.polardbx.rpc.cdc.Request;
+import com.alibaba.polardbx.statistics.SQLRecorderLogger;
+import io.grpc.Channel;
+import io.grpc.ManagedChannel;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlShowBinaryStreams;
@@ -50,13 +56,7 @@ public class LogicalShowBinaryStreamsHandler extends HandlerCommon {
             (SqlShowBinaryStreams) ((LogicalShow) logicalPlan).getNativeSqlNode();
         SqlNode with = sqlShowBinaryStreams.getWith();
         String groupName = with == null ? null : RelUtils.lastStringValue(with);
-
-        ArrayResultCursor result = new ArrayResultCursor("SHOW BINARY STREAMS");
-        result.addColumn("Group", DataTypes.StringType);
-        result.addColumn("Stream", DataTypes.StringType);
-        result.addColumn("File", DataTypes.StringType);
-        result.addColumn("Position", DataTypes.LongType);
-        result.initMeta();
+        ArrayResultCursor result = null;
 
         BinlogStreamAccessor binlogStreamAccessor = new BinlogStreamAccessor();
         try (Connection metaDbConn = MetaDbUtil.getConnection()) {
@@ -70,13 +70,80 @@ public class LogicalShowBinaryStreamsHandler extends HandlerCommon {
             if (streams == null) {
                 throw new TddlNestableRuntimeException("binlog multi stream is not support...");
             }
-            for (BinlogStreamRecord stream : streams) {
-                result.addRow(new Object[] {
-                    stream.getGroupName(), stream.getStreamName(), stream.getFileName(), stream.getPosition()});
+
+            if (sqlShowBinaryStreams.isFull()) {
+                result = new ArrayResultCursor("SHOW FULL BINARY STREAMS");
+                result.addColumn("Group", DataTypes.StringType);
+                result.addColumn("Stream", DataTypes.StringType);
+                result.addColumn("File", DataTypes.StringType);
+                result.addColumn("Position", DataTypes.LongType);
+                result.addColumn("Status", DataTypes.LongType);
+                result.addColumn("LastTso", DataTypes.StringType);
+                result.addColumn("DelayTimeMs", DataTypes.LongType);
+                result.addColumn("AvgRevEps", DataTypes.LongType);
+                result.addColumn("AvgRevBps", DataTypes.LongType);
+                result.addColumn("AvgWriteEps", DataTypes.LongType);
+                result.addColumn("AvgWriteBps", DataTypes.LongType);
+                result.addColumn("AvgWriteTps", DataTypes.LongType);
+                result.addColumn("AvgUploadBps", DataTypes.LongType);
+                result.addColumn("AvgDumpBps", DataTypes.LongType);
+                result.addColumn("ExtInfo", DataTypes.StringType);
+                result.initMeta();
+
+                for (BinlogStreamRecord stream : streams) {
+                    CdcServiceGrpc.CdcServiceBlockingStub cdcServiceBlockingStub =
+                        CdcRpcClient.getCdcRpcClient().getCdcServiceBlockingStub(stream.getStreamName());
+                    try {
+                        FullMasterStatus fullMasterStatus =
+                            cdcServiceBlockingStub.showFullMasterStatus(
+                                Request.newBuilder().setStreamName(stream.getStreamName()).build());
+
+                        result.addRow(new Object[] {
+                            stream.getGroupName(),
+                            stream.getStreamName(),
+                            fullMasterStatus.getFile(),
+                            fullMasterStatus.getPosition(),
+                            getStatusDesc(stream.getStatus()),
+                            fullMasterStatus.getLastTso(),
+                            fullMasterStatus.getDelayTime(),
+                            fullMasterStatus.getAvgRevEps(),
+                            fullMasterStatus.getAvgRevBps(),
+                            fullMasterStatus.getAvgWriteEps(),
+                            fullMasterStatus.getAvgWriteBps(),
+                            fullMasterStatus.getAvgWriteTps(),
+                            fullMasterStatus.getAvgUploadBps(),
+                            fullMasterStatus.getAvgDumpBps(),
+                            fullMasterStatus.getExtInfo()
+                        });
+                    } finally {
+                        Channel channel = cdcServiceBlockingStub.getChannel();
+                        if (channel instanceof ManagedChannel) {
+                            ((ManagedChannel) channel).shutdown();
+                        }
+                    }
+                }
+            } else {
+                result = new ArrayResultCursor("SHOW BINARY STREAMS");
+                result.addColumn("Group", DataTypes.StringType);
+                result.addColumn("Stream", DataTypes.StringType);
+                result.addColumn("File", DataTypes.StringType);
+                result.addColumn("Position", DataTypes.LongType);
+                result.addColumn("Status", DataTypes.LongType);
+                result.initMeta();
+
+                for (BinlogStreamRecord stream : streams) {
+                    result.addRow(new Object[] {
+                        stream.getGroupName(), stream.getStreamName(), stream.getFileName(),
+                        stream.getPosition(), getStatusDesc(stream.getStatus())});
+                }
             }
         } catch (SQLException e) {
             cdcLogger.error("get binlog x stream fail", e);
         }
         return result;
+    }
+
+    private String getStatusDesc(int status) {
+        return status == 0 ? "Normal" : "Pending";
     }
 }

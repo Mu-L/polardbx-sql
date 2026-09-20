@@ -37,26 +37,38 @@ public class PreemptiveTimeTestBase {
         logger.info(" dml thread: sleep for " + timeDelayInMs + " ms");
         Thread.sleep(timeDelayInMs);
         logger.info(" dml thread: commit");
-        if (expectedDmlSuccess) {
+        if (Boolean.TRUE.equals(expectedDmlSuccess)) {
             JdbcUtil.executeUpdateSuccess(connection, "commit");
             logger.info(" dml thread: commit success, EXPECTED");
         } else {
-            JdbcUtil.executeUpdateFailed(connection, "commit", errMsg);
-            logger.info(" dml thread: commit failed for " + errMsg + ", EXPECTED");
+            try {
+                connection.createStatement().execute("commit");
+                if (Boolean.FALSE.equals(expectedDmlSuccess)) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, " expected error, but success");
+                }
+                logger.info(" dml thread: commit success, ALLOWED");
+            } catch (SQLException e) {
+                if (!isExpectedCommitFailure(e, errMsg)) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, e,
+                        " unexpected commit failure: " + e.getMessage());
+                }
+                logger.info(" dml thread: commit failed for " + e.getMessage() + ", ALLOWED");
+            }
         }
     }
 
     public static void emitDmlConcurrent(Logger logger, Lock lock, Connection connection, int i,
                                          AtomicInteger totalCount, AtomicBoolean killed, int maxCount, String dml,
                                          String ddl,
-                                         AtomicLong jobId,
+                                         AtomicLong jobId, AtomicBoolean jobLookupTried,
                                          long timeDelayInMs, Boolean expectedDmlSuccess, String errMsg)
         throws InterruptedException {
         Boolean connectionKilled = false;
         do {
             try {
                 lock.lock();
-                if (connectionKilled || (jobId.get() != -1 && DdlStateCheckUtil.checkIfTerminate(connection, jobId.get()))
+                if (connectionKilled || (jobId.get() != -1 && DdlStateCheckUtil.checkIfTerminate(connection,
+                    jobId.get()))
                     || totalCount.get() >= maxCount) {
                     lock.unlock();
                     break;
@@ -65,12 +77,23 @@ public class PreemptiveTimeTestBase {
                 logger.info(threadString + "  begin ");
                 JdbcUtil.executeUpdateSuccess(connection, "begin");
                 logger.info(threadString + " start dml " + dml);
-                JdbcUtil.executeUpdateSuccess(connection, dml);
+                try {
+                    JdbcUtil.executeUpdate(connection, dml);
+                } catch (Exception e) {
+                    if (e.getMessage().contains("Duplicate entry") && e.getMessage().contains("PRIMARY")) {
+                    } else {
+                        throw e;
+                    }
+                }
                 if (jobId.get() == -1L) {
                     try {
-                        jobId.set(DdlStateCheckUtil.getDdlJobIdFromPattern(connection, ddl));
-                    }catch (Exception | AssertionError e) {
-                        if(e.getMessage().contains("Communications link failure")){
+                        // 仅首个线程做带等待的查找(等待 DDL job 出现); 语句匹配失败时其余线程不再重复
+                        // 200s 等待, 避免 12 线程在全局锁内串行空转放大到 ~40 分钟
+                        jobId.set(DdlStateCheckUtil.getDdlJobIdFromPattern(connection, ddl,
+                            jobLookupTried.getAndSet(true)));
+                    } catch (Exception | AssertionError e) {
+                        if (e.getMessage().contains("Communications link failure")
+                            || e.getMessage().contains("No operations allowed after connection closed")) {
                             connectionKilled = true;
                             killed.set(true);
                         }
@@ -85,28 +108,31 @@ public class PreemptiveTimeTestBase {
                 Thread.sleep(timeDelayInMs - firstStop);
 
                 logger.info(threadString + " commit");
-                if (expectedDmlSuccess) {
-                    if(connectionKilled){
+                if (Boolean.TRUE.equals(expectedDmlSuccess)) {
+                    if (connectionKilled) {
                         throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, " expected success, but error");
                     }
                     JdbcUtil.executeUpdateSuccess(connection, "commit");
                     logger.info(threadString + " commit success, EXPECTED");
                 } else {
-                    if(!connectionKilled) {
+                    if (!connectionKilled) {
 
                         try {
                             Statement stmt = connection.createStatement();
                             stmt.execute("commit");
                         } catch (Exception e) {
-                            if (e.getMessage().contains(errMsg) || e.getMessage()
-                                .contains("Could not retrieve transation read-only status server")) {
+                            logger.info("commit failed " + e.getMessage());
+                            if (isExpectedCommitFailure(e, errMsg)) {
                                 logger.info(threadString + " commit failed for " + errMsg + ", EXPECTED");
                                 connectionKilled = true;
                                 killed.set(true);
+                            } else {
+                                throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, e,
+                                    " unexpected commit failure: " + e.getMessage());
                             }
                         }
                     }
-                    if (!connectionKilled && !killed.get()) {
+                    if (Boolean.FALSE.equals(expectedDmlSuccess) && !connectionKilled && !killed.get()) {
                         throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, " expected error, but success");
                     }
                 }
@@ -121,6 +147,15 @@ public class PreemptiveTimeTestBase {
                 break;
             }
         } while (true);
+    }
+
+    private static boolean isExpectedCommitFailure(Throwable error, String expectedMessage) {
+        String message = error.getMessage();
+        if (message == null) {
+            return false;
+        }
+        return (!String.valueOf(expectedMessage).isEmpty() && message.contains(expectedMessage))
+            || message.contains("Could not retrieve transation read-only status server");
     }
 
     public static void executeConcurrentSuccessiveDmlWhenDdlRunning(Logger logger, List<Connection> connections,
@@ -139,7 +174,11 @@ public class PreemptiveTimeTestBase {
         final Lock lock = new ReentrantLock();
         AtomicInteger totalCount = new AtomicInteger(0);
         AtomicBoolean killed = new AtomicBoolean(false);
-        int maxCount = 1000;
+        // job 查找只由首个线程带等待执行, 其余线程 dontWait 立即返回
+        AtomicBoolean jobLookupTried = new AtomicBoolean(false);
+        // DML 总轮次上限, 仅在 DDL 长期不完成且 terminate 检测失效时触及;
+        // 正常用例 DDL 完成后即终止(约 7~13 轮), 100 轮足够覆盖最长正常用例(约 400s)
+        int maxCount = 100;
         List<Future> futures = Lists.newArrayList();
         for (int i = 0; i < totalThread; i++) {
             int finalI = i;
@@ -151,6 +190,7 @@ public class PreemptiveTimeTestBase {
                         emitDmlConcurrent(logger, lock, connections.get(finalI), finalI, totalCount, killed, maxCount,
                             dml, ddl,
                             jobId,
+                            jobLookupTried,
                             timeDelayInMs, expectedDmlSuccess, errMsg);
                     } catch (InterruptedException e) {
                         throw new RuntimeException(e);

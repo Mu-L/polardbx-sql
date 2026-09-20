@@ -1,0 +1,5 @@
+alter_table_change_column_statistics
+alter_table_modify_column_statistics
+alter_table_with_upper_case_statistics
+auto_partition_with_upper_case_statistics
+multi_alters_statistics

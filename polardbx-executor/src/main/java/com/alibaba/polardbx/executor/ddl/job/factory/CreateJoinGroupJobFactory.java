@@ -20,8 +20,9 @@ import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.CreateJoinGroupTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcCreateJoinGroupMarkTask;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 
@@ -32,7 +33,7 @@ import java.util.Set;
  *
  * @author ziyang.lb
  */
-public class CreateJoinGroupJobFactory extends DdlJobFactory {
+public class CreateJoinGroupJobFactory extends OnlineDdlJobFactory {
 
     private String schemaName;
     private String joinGroupName;
@@ -42,6 +43,7 @@ public class CreateJoinGroupJobFactory extends DdlJobFactory {
 
     public CreateJoinGroupJobFactory(String schemaName, String joinGroupName, String locality, boolean isIfNotExists,
                                      ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.META_ONLY);
         this.schemaName = schemaName;
         this.joinGroupName = joinGroupName;
         this.locality = locality;

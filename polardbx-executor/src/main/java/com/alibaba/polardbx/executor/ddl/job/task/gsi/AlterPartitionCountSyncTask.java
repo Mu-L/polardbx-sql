@@ -55,7 +55,7 @@ public class AlterPartitionCountSyncTask extends BaseSyncTask {
             FailPoint.injectRandomExceptionFromHint(executionContext);
             FailPoint.injectRandomSuspendFromHint(executionContext);
             // Sync will reload and clear cross status transaction.
-            SyncManagerHelper.sync(
+            SyncManagerHelper.syncThrowExceptions(
                 new AlterPartitionCountSyncAction(schemaName,
                     primaryTableName,
                     executionContext.getConnId(),

@@ -16,19 +16,10 @@
 
 package com.alibaba.polardbx.server.encdb;
 
-import com.alibaba.polardbx.gms.metadb.encdb.EncdbRule;
-import com.alibaba.polardbx.gms.metadb.encdb.EncdbRuleManager;
-import com.alibaba.polardbx.gms.privilege.PolarAccount;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.server.executor.utils.MysqlDefs;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Set;
-import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * @author pangzhaoxing
@@ -47,6 +38,44 @@ public class EncdbUtils {
             mysqlType = MysqlDefs.FIELD_TYPE_STRING; // 默认设置为string
         }
         return mysqlType;
+    }
+
+    /**
+     * @param encjdbcVersion x.x.x
+     */
+    public static int compareEncjdbcVersion(String encjdbcVersion, String version) {
+        if (encjdbcVersion.endsWith("-SNAPSHOT")) {
+            encjdbcVersion = encjdbcVersion.substring(0, encjdbcVersion.length() - 9);
+        }
+        if (version.endsWith("-SNAPSHOT")) {
+            version = version.substring(0, version.length() - 9);
+        }
+        String[] version1 = encjdbcVersion.split("\\.");
+        String[] version2 = version.split("\\.");
+        if (version1.length != version2.length) {
+            return -1;
+        }
+        for (int i = 0; i < version1.length; i++) {
+            if (Integer.parseInt(version1[i]) > Integer.parseInt(version2[i])) {
+                return 1;
+            } else if (Integer.parseInt(version1[i]) < Integer.parseInt(version2[i])) {
+                return -1;
+            }
+        }
+        return 0;
+    }
+
+    public static boolean checkEncjdbcKmsVersion(String encjdbcVersion) {
+        String version = InstConfUtil.getOriginVal(ConnectionParams.ENCJDBC_KMS_MIN_VERSION);
+        if (version.isEmpty()) {
+            return true;
+        }
+        if (encjdbcVersion == null) {
+            return false;
+        }
+        return
+            compareEncjdbcVersion(encjdbcVersion, version)
+                >= 0;
     }
 
 }

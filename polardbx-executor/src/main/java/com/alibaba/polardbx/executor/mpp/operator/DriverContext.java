@@ -29,6 +29,9 @@
  */
 package com.alibaba.polardbx.executor.mpp.operator;
 
+import com.alibaba.polardbx.common.BlockingReason;
+import com.alibaba.polardbx.common.BlockingState;
+import com.alibaba.polardbx.common.BlockingStatistics;
 import com.alibaba.polardbx.executor.mpp.deploy.ServiceProvider;
 import com.alibaba.polardbx.executor.mpp.execution.PipelineContext;
 import com.alibaba.polardbx.executor.mpp.execution.TaskId;
@@ -37,6 +40,7 @@ import com.alibaba.polardbx.executor.mpp.execution.TaskState;
 import com.alibaba.polardbx.executor.mpp.execution.TaskStatus;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.BufferState;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.OutputBufferInfo;
+import com.alibaba.polardbx.executor.mpp.metadata.SplitType;
 import com.alibaba.polardbx.executor.mpp.metadata.TaskLocation;
 import com.alibaba.polardbx.executor.operator.SourceExec;
 import com.fasterxml.jackson.annotation.JsonCreator;
@@ -50,7 +54,10 @@ import javax.annotation.Nullable;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadMXBean;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 import java.util.concurrent.atomic.AtomicReference;
@@ -126,6 +133,7 @@ public class DriverContext {
     private List<Integer> driverInputs = new ArrayList<>();
 
     // Use Supplier to proactively dump the current statistics from TaskExecutor.
+    private Map<SplitType, Integer> splitStatisticsMap = new HashMap<>();
     private DriverRuntimeStatisticsUpdater updater = new DriverRuntimeStatisticsUpdater();
 
     public DriverContext(PipelineContext pipelineContext, boolean partitioned, int driverId) {
@@ -143,6 +151,10 @@ public class DriverContext {
 
     public DriverRuntimeStatisticsUpdater getUpdater() {
         return updater;
+    }
+
+    public Map<SplitType, Integer> getSplitStatisticsMap() {
+        return splitStatisticsMap;
     }
 
     public TaskId getTaskId() {
@@ -294,6 +306,11 @@ public class DriverContext {
         return driverId;
     }
 
+    public long getStagePipelineId() {
+        return ((long) pipelineContext.getTaskId().getStageId().getId() << 32)
+            | (pipelineContext.getPipelineId() & 0xFFFFFFFFL);
+    }
+
     public String getUniqueId() {
         if (uniqueId == null) {
             this.uniqueId = String.format("%s.%d.%d", pipelineContext.getTaskId(),
@@ -325,34 +342,104 @@ public class DriverContext {
 
     public DriverStats getDriverStats() {
         DriverExec driverExec = this.driverExecRef.get();
+
         if (driverExec != null) {
-            long inputDataSize = 0;
-            long inputPositions = 0;
-            long outputDataSize = 0;
-            long outputPositions = 0;
-            for (List<SourceExec> sources : driverExec.getSourceExecs().values()) {
-                for (SourceExec source : sources) {
-                    inputDataSize += source.getInputDataSize();
-                    inputPositions += source.getInputPositions();
+            synchronized (driverExec) {
+                long inputDataSize = 0;
+                long inputPositions = 0;
+                long outputDataSize = 0;
+                long outputPositions = 0;
+                for (List<SourceExec> sources : driverExec.getSourceExecs().values()) {
+                    for (SourceExec source : sources) {
+                        inputDataSize += source.getInputDataSize();
+                        inputPositions += source.getInputPositions();
+                    }
                 }
+                if (driverExec.getConsumer() instanceof OutputCollector) {
+                    outputDataSize += ((OutputCollector) driverExec.getConsumer()).getOutputDataSize();
+                    outputPositions += ((OutputCollector) driverExec.getConsumer()).getOutputPositions();
+                } else {
+                    outputPositions += driverOutputPosition;
+                }
+                long runningTime = processWallNanosUpdater.get(this);
+
+                // calculated from driver context.
+                long ioReadBytes = getIOReadBytes();
+                long inputRows = getInputPositions();
+                long outputRows = getOutputPositions();
+                String splitStatistics = getSplitStatistics();
+
+                // if called by split-runner, it will lead to stack overflow
+                return new DriverStats(getUniqueId(), inputDataSize, inputPositions, outputDataSize, outputPositions,
+                    startMillis, endMillis, runningTime, blockedWallNanosLong,
+                    updater == null ? null : updater.build(ioReadBytes, inputRows, outputRows, splitStatistics));
             }
-            if (driverExec.getConsumer() instanceof OutputCollector) {
-                outputDataSize += ((OutputCollector) driverExec.getConsumer()).getOutputDataSize();
-                outputPositions += ((OutputCollector) driverExec.getConsumer()).getOutputPositions();
-            } else {
-                outputPositions += driverOutputPosition;
-            }
-            long runningTime = processWallNanosUpdater.get(this);
-            return new DriverStats(getUniqueId(), inputDataSize, inputPositions, outputDataSize, outputPositions,
-                startMillis, endMillis, runningTime, blockedWallNanosLong,
-                updater == null ? null : updater.build());
         } else if (driverStats.get() != null) {
             return driverStats.get();
         }
         long runningTime = processWallNanosUpdater.get(this);
         return new DriverStats(getUniqueId(), 0, 0, 0, 0,
             startMillis, endMillis, runningTime, blockedWallNanosLong,
-            updater == null ? null : updater.build());
+            updater == null ? null : updater.build(0, 0, 0, ""));
+    }
+
+    public String getSplitStatistics() {
+        StringBuilder stringBuilder = new StringBuilder();
+        int size = splitStatisticsMap.size();
+        int count = 0;
+        for (Map.Entry<SplitType, Integer> entry : splitStatisticsMap.entrySet()) {
+            stringBuilder.append(entry.getKey() + ":" + entry.getValue());
+            count++;
+            if (count < size) {
+                stringBuilder.append(" | ");
+            }
+        }
+        return stringBuilder.toString();
+    }
+
+    public long getIOReadBytes() {
+        DriverExec driverExec = this.driverExecRef.get();
+        if (driverExec != null) {
+            long ioReadBytes = 0;
+            for (List<SourceExec> sources : driverExec.getSourceExecs().values()) {
+                for (SourceExec source : sources) {
+                    ioReadBytes += source.getIoBytesSize();
+                }
+            }
+            return ioReadBytes;
+        } else {
+            return 0;
+        }
+    }
+
+    public long getInputPositions() {
+        DriverExec driverExec = this.driverExecRef.get();
+        if (driverExec != null) {
+            long inputPositions = 0;
+            for (List<SourceExec> sources : driverExec.getSourceExecs().values()) {
+                for (SourceExec source : sources) {
+                    inputPositions += source.getInputPositions();
+                }
+            }
+            return inputPositions;
+        } else {
+            return 0;
+        }
+    }
+
+    public long getOutputPositions() {
+        DriverExec driverExec = this.driverExecRef.get();
+        if (driverExec != null) {
+            long outputPositions = 0;
+            if (driverExec.getConsumer() instanceof OutputCollector) {
+                outputPositions += ((OutputCollector) driverExec.getConsumer()).getOutputPositions();
+            } else {
+                outputPositions += driverOutputPosition;
+            }
+            return outputPositions;
+        } else {
+            return 0;
+        }
     }
 
     private TaskStats getTaskStatsBySecond() {
@@ -425,7 +512,7 @@ public class DriverContext {
             taskStats.getRunningPipelineExecs(),
             taskStats.getMemoryReservation());
 
-        return new TaskInfo(
+        TaskInfo taskInfo = new TaskInfo(
             taskStatus,
             taskStats.getCreateTime(),
             outputBufferInfo,
@@ -444,6 +531,8 @@ public class DriverContext {
             taskStats.getTotalScheduledTimeNanos(),
             0,
             taskStats.getDeliveryTimeMillis());
+        taskInfo.collectNodeStatistics(pipelineContext.getTaskContext().getContext(), taskId);
+        return taskInfo;
     }
 
     private TaskState getState() {
@@ -474,6 +563,11 @@ public class DriverContext {
         private final int runningCount;
         private final int pendingCount;
         private final int blockedCount;
+        private final String splitStatistics;
+        private final long ioReadBytes;
+        private final long inputRows;
+        private final long outputRows;
+        private final String blockingStatistics;
 
         @JsonCreator
         public DriverRuntimeStatistics(
@@ -484,7 +578,13 @@ public class DriverContext {
             @JsonProperty("totalCost") long totalCost,
             @JsonProperty("runningCount") int runningCount,
             @JsonProperty("pendingCount") int pendingCount,
-            @JsonProperty("blockedCount") int blockedCount) {
+            @JsonProperty("blockedCount") int blockedCount,
+            @JsonProperty("splitStatistics") String splitStatistics,
+            @JsonProperty("ioReadBytes") long ioReadBytes,
+            @JsonProperty("inputRows") long inputRows,
+            @JsonProperty("outputRows") long outputRows,
+            @JsonProperty("blockingStatistics") String blockingStatistics
+        ) {
             this.runningCost = runningCost;
             this.pendingCost = pendingCost;
             this.blockedCost = blockedCost;
@@ -493,6 +593,11 @@ public class DriverContext {
             this.runningCount = runningCount;
             this.pendingCount = pendingCount;
             this.blockedCount = blockedCount;
+            this.splitStatistics = splitStatistics;
+            this.ioReadBytes = ioReadBytes;
+            this.inputRows = inputRows;
+            this.outputRows = outputRows;
+            this.blockingStatistics = blockingStatistics;
         }
 
         @JsonProperty
@@ -534,6 +639,31 @@ public class DriverContext {
         public int getBlockedCount() {
             return blockedCount;
         }
+
+        @JsonProperty
+        public String getSplitStatistics() {
+            return splitStatistics;
+        }
+
+        @JsonProperty
+        public long getIoReadBytes() {
+            return ioReadBytes;
+        }
+
+        @JsonProperty
+        public long getInputRows() {
+            return inputRows;
+        }
+
+        @JsonProperty
+        public long getOutputRows() {
+            return outputRows;
+        }
+
+        @JsonProperty
+        public String getBlockingStatistics() {
+            return blockingStatistics;
+        }
     }
 
     public static class DriverRuntimeStatisticsUpdater {
@@ -553,11 +683,28 @@ public class DriverContext {
         private long pendingCount = 0L;
         private long runningCount = 0L;
 
-        public DriverRuntimeStatistics build() {
+        private Map<BlockingReason, BlockingStatistics> blockingStatisticsMap = new ConcurrentHashMap<>();
+
+        public DriverRuntimeStatistics build(
+            long ioReadBytes, long inputRows, long outputRows, String splitStatistics) {
+            // print blocking Statistics info from map.
+            StringBuilder stringBuilder = new StringBuilder();
+            int size = blockingStatisticsMap.size();
+            int count = 0;
+            for (BlockingStatistics blockingStatistics : blockingStatisticsMap.values()) {
+                stringBuilder.append(blockingStatistics.print());
+                count++;
+                if (count < size) {
+                    stringBuilder.append(" | ");
+                }
+            }
             return new DriverRuntimeStatistics(
                 runningCost, pendingCost, blockedCost, openCost,
                 (System.nanoTime() - startNanoTimestamp),
-                (int) runningCount, (int) pendingCount, (int) blockedCount);
+                (int) runningCount, (int) pendingCount, (int) blockedCount,
+                splitStatistics,
+                ioReadBytes, inputRows, outputRows,
+                stringBuilder.toString());
         }
 
         public void markStartTimestamp() {
@@ -600,6 +747,16 @@ public class DriverContext {
 
         public void finishRunning() {
             runningCost += System.nanoTime() - runningNanoTimestamp;
+        }
+
+        public void updateBlockingState(BlockingState blockingState) {
+            blockingStatisticsMap.compute(blockingState.getReason(), (blockingReason, blockingStatistics) -> {
+                if (blockingStatistics == null) {
+                    blockingStatistics = new BlockingStatistics(blockingReason);
+                }
+                blockingStatistics.update(blockingState.getWaitCost());
+                return blockingStatistics;
+            });
         }
     }
 

@@ -2,6 +2,7 @@ package com.alibaba.polardbx.qatest.dql.sharding.explain;
 
 import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.qatest.AutoReadBaseTestCase;
+import com.alibaba.polardbx.qatest.FileStoreIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import org.apache.commons.lang.StringUtils;
 import org.junit.After;
@@ -30,7 +31,7 @@ public class ExplainPhysicalTest extends AutoReadBaseTestCase {
     @Test
     public void testTpLocal() throws SQLException {
         ResultSet rs = JdbcUtil.executeQuery(String.format(
-            "explain physical " + "/*+TDDL: WORKLOAD_TYPE=TP ENABLE_MPP=FALSE ENABLE_MASTER_MPP=FALSE*/" + CHECK_SQL,
+            "explain physical /*+TDDL: WORKLOAD_TYPE=TP ENABLE_MPP=FALSE ENABLE_MASTER_MPP=FALSE*/" + CHECK_SQL,
             TABLE_NAME), tddlConnection);
         if (rs.next()) {
             Assert.assertTrue(rs.getObject(1).toString().contains("TP_LOCAL"), "execute mode should be tp_local");
@@ -44,7 +45,11 @@ public class ExplainPhysicalTest extends AutoReadBaseTestCase {
                 String[] elems = StringUtils.split(content, " ");
                 for (int i = 0; i < elems.length; ++i) {
                     if (elems[i].startsWith("parallelism")) {
-                        Integer parallelism = Integer.valueOf(elems[i + 1]);
+                        String[] parts = elems[i].split("=");
+                        if (parts[1].contains("(")) {
+                            parts[1] = parts[1].substring(0, parts[1].indexOf("("));
+                        }
+                        Integer parallelism = Integer.valueOf(parts[1]);
                         Assert.assertTrue(parallelism == 1, "parallelism of fragments should be 1");
                     }
                 }
@@ -53,30 +58,31 @@ public class ExplainPhysicalTest extends AutoReadBaseTestCase {
     }
 
     @Test
+    @FileStoreIgnore
     public void testMpp() throws SQLException {
         String result = getExplainPhysicalResult(tddlConnection, String.format(
-            "/*+TDDL: WORKLOAD_TYPE=AP ENABLE_MPP=TRUE ENABLE_MASTER_MPP=TRUE MPP_NODE_SIZE=2 MPP_PARALLELISM=4*/"
+            "/*+TDDL: WORKLOAD_TYPE=AP ENABLE_MPP=TRUE ENABLE_MASTER_MPP=TRUE MPP_NODE_SIZE=1 MPP_PARALLELISM=4*/"
                 + CHECK_SQL,
             TABLE_NAME));
-        String expect = "ExecutorType: MPP\n"
+        String expect = "ExecutorMode: MPP\n"
             + "The Query's MaxConcurrentParallelism: 8\n"
-            + "Fragment 1 \n"
-            + "    Output partitioning: SINGLE [] Parallelism: 4 \n"
-            + "    HashAgg(group=\"c2\", count(*)=\"SUM(count(*))\")\n"
-            + "  RemoteSource(sourceFragmentIds=[0], type=RecordType(INTEGER c2, BIGINT count(*)))\n"
-            + "Pipeline 0 dependency: [] parallelism: 2 \n"
-            + " RemoteSource(sourceFragmentIds=[0], type=RecordType(INTEGER c2, BIGINT count(*)))\n"
-            + "Pipeline 1 dependency: [] parallelism: 2 \n"
-            + " LocalBuffer\n"
-            + "  RemoteSource(sourceFragmentIds=[0], type=RecordType(INTEGER c2, BIGINT count(*)))\n"
-            + "Pipeline 2 dependency: [0, 1] parallelism: 2 \n"
-            + " HashAgg(group=\"c2\", count(*)=\"SUM(count(*))\")\n"
-            + "  RemoteSource(sourceFragmentIds=[1], type=RecordType(INTEGER c2, BIGINT count(*)))\n"
-            + "Fragment 0 \n"
-            + "    Output partitioning: FIXED [0] Parallelism: 4 Splits: 4 \n"
-            + "    LogicalView(tables=\"test_explain_physical[p1,p2,p3,p4]\", shardCount=4, sql=\"SELECT `c2`, COUNT(*) AS `count(*)` FROM `test_explain_physical` AS `test_explain_physical` GROUP BY `c2`\")\n"
-            + "Pipeline 0 dependency: [] parallelism: 2 \n"
-            + " LogicalView(tables=\"test_explain_physical[p1,p2,p3,p4]\", shardCount=4, sql=\"SELECT `c2`, COUNT(*) AS `count(*)` FROM `test_explain_physical` AS `test_explain_physical` GROUP BY `c2`\")\n";
+            + "MPP node size: 1\n"
+            + "Fragment=1 Parallelism=4\n"
+            + "  Output partitioning: SINGLE []\n"
+            + "    pipeline=0 dependency=[] parallelism=4(per node)\n"
+            + "      [Producer]: RemoteSource(sourceIds=[0],distribution=hash[0])\n"
+            + "      [Consumer]: PartitioningExchanger --> LocalBufferExec\n"
+            + "    pipeline=1 dependency=[] parallelism=4(per node)\n"
+            + "      [Producer]: LocalBufferExec\n"
+            + "      [Consumer]: HashAggExec\n"
+            + "    pipeline=2 dependency=[0, 1] parallelism=4(per node)\n"
+            + "      [Producer]: HashAggExec\n"
+            + "      [Consumer]: SingleExchanger --> LocalBufferExec\n"
+            + "Fragment=0 Parallelism=4\n"
+            + "  Output partitioning: FIXED [0]\n"
+            + "    pipeline=0 dependency=[] parallelism=4(per node)\n"
+            + "      [Producer]: TableScanExec(drds_polarx1_part_qatest_app.test_explain_physical)\n"
+            + "      [Consumer]: SingleExchanger --> LocalBufferExec\n";
         Assert.assertTrue(StringUtils.equals(result, expect),
             String.format("result of explain physical not expect, expect %s, but was %s", expect, result));
     }

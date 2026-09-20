@@ -192,8 +192,10 @@ public class AlterTableBuilder extends DdlPhyPlanBuilder {
                 if (TStringUtil.isNotEmpty(newSql)) {
                     String origSql = sqlAlterTable.getSourceSql();
                     sqlAlterTable.setSourceSql(newSql);
-                    BytesSql nativeSql = BytesSql.getBytesSql(RelUtils.toNativeSql(sqlAlterTable));
                     for (PhyDdlTableOperation phyDdl : physicalPlans) {
+                        // 对于物理计划不同的情况
+                        sqlAlterTable.setPhyTableHash(phyDdl.getPhyTableHash());
+                        BytesSql nativeSql = BytesSql.getBytesSql(RelUtils.toNativeSql(sqlAlterTable));
                         phyDdl.setBytesSql(nativeSql);
                     }
                     sqlAlterTable.setSourceSql(origSql);

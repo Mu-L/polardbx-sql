@@ -107,7 +107,6 @@ public class ColumnarOption {
         public String tableName;
         public String indexName;
         public Long tableId;
-        public Object serverConnection;
 
         public Param shallowCopy() {
             Param newParam = new Param();
@@ -119,6 +118,14 @@ public class ColumnarOption {
             newParam.indexName = this.indexName;
             newParam.tableId = this.tableId;
             return newParam;
+        }
+
+        public Param() {}
+
+        public Param(String key, String value) {
+            this.tableId = 0L;
+            this.key = key;
+            this.value = value;
         }
     }
 }

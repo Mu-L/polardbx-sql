@@ -20,9 +20,10 @@ import com.alibaba.polardbx.optimizer.config.meta.CostModelWeight;
 import com.alibaba.polardbx.optimizer.config.meta.TableScanIOEstimator;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
-import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptCost;
@@ -31,6 +32,7 @@ import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelWriter;
+import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.externalize.RelDrdsWriter;
 import org.apache.calcite.rel.externalize.RexExplainVisitor;
@@ -46,10 +48,12 @@ import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.validate.SqlValidatorUtil;
+import org.apache.calcite.util.ImmutableIntList;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.optimizer.config.meta.CostModelWeight.TUPLE_HEADER_SIZE;
@@ -67,10 +71,6 @@ public class OrcTableScan extends TableScan {
 
     private ImmutableList<String> inProjectNames;
 
-    private ImmutableList<Integer> outProjectsNotEmpty;
-
-    private ImmutableList<Integer> inProjectsNotEmpty;
-
     private RelDataType inputProjectRowType;
 
     private RelNode nodeForMetaQuery;
@@ -78,24 +78,127 @@ public class OrcTableScan extends TableScan {
     OSSTableScan.OSSIndexContext indexContext;
 
     OrcTableScan(RelOptCluster cluster, RelTraitSet traitSet,
-                 RelOptTable table, ImmutableList<Integer> outProjects, ImmutableList<RexNode> filters,
-                 ImmutableList<Integer> inProjects, SqlNodeList hints, SqlNode indexNode, RexNode flashback,
+                 RelOptTable table, List<Integer> outProjects, List<RexNode> filters,
+                 List<Integer> inProjects, SqlNodeList hints, SqlNode indexNode, RexNode flashback,
                  SqlOperator flashbackOperator, SqlNode partitions) {
         super(cluster, traitSet, table, hints, indexNode, flashback, flashbackOperator, partitions);
-        this.outProjects = Preconditions.checkNotNull(outProjects);
-        this.filters = Preconditions.checkNotNull(filters);
-        this.inProjects = Preconditions.checkNotNull(inProjects);
-        indexContext = null;
+        this.outProjects = ImmutableList.copyOf(outProjects);
+        this.filters = ImmutableList.copyOf(filters);
+        this.inProjects = ImmutableList.copyOf(inProjects);
+        this.indexContext = null;
     }
 
-    public static OrcTableScan create(RelOptCluster cluster,
-                                      RelOptTable table, List<Integer> outProjects, List<RexNode> filters,
-                                      List<Integer> inProjects, SqlNodeList hints, SqlNode indexNode, RexNode flashback,
+    public static OrcTableScan create(RelOptCluster cluster, RelOptTable table,
+                                      SqlNodeList hints, SqlNode indexNode, RexNode flashback,
                                       SqlOperator flashbackOperator,
                                       SqlNode partitions) {
-        return new OrcTableScan(cluster, cluster.traitSetOf(Convention.NONE), table, ImmutableList.copyOf(outProjects),
-            ImmutableList.copyOf(filters), ImmutableList.copyOf(inProjects), hints, indexNode, flashback,
-            flashbackOperator, partitions);
+        return new OrcTableScan(cluster, cluster.traitSetOf(Convention.NONE), table,
+            ImmutableIntList.identity(table.getRowType().getFieldCount()),
+            ImmutableList.of(), ImmutableIntList.identity(table.getRowType().getFieldCount()),
+            hints, indexNode, flashback, flashbackOperator, partitions);
+    }
+
+    public OrcTableScan copy(RelTraitSet traitSet, List<RelNode> inputs) {
+        return new OrcTableScan(getCluster(), traitSet, table, outProjects, filters, inProjects,
+            hints, indexNode, flashback, flashbackOperator, partitions);
+    }
+
+    public void push(RelNode relNode) {
+        if (relNode instanceof LogicalFilter) {
+            pushFilter((LogicalFilter) relNode);
+        } else if (relNode instanceof LogicalProject) {
+            pushProject((LogicalProject) relNode);
+        }
+        this.nodeForMetaQuery = null;
+    }
+
+    /**
+     * Pushes a LogicalFilter down into this OrcTableScan by merging its filter conditions
+     * with the existing filters, adjusting column references as needed.
+     * <p>
+     * This method combines the existing filters with new filter conditions from the
+     * LogicalFilter node, ensuring that column indices are properly mapped between
+     * the different projection layers.
+     *
+     * @param filter The LogicalFilter containing additional filter conditions to be pushed down
+     */
+    public void pushFilter(LogicalFilter filter) {
+        // Create a mapping from current output project positions to original input column indices
+        Map<Integer, Integer> shiftMap = Maps.newHashMap();
+        for (int i = 0; i < outProjects.size(); i++) {
+            shiftMap.put(i, outProjects.get(i));
+        }
+
+        // Build a new filter list by combining existing filters with the new filters
+        // The new filters are adjusted using the shiftMap to align column references
+        ImmutableList.Builder<RexNode> builder = ImmutableList.builder();
+        builder.addAll(filters)                          // Add existing filters
+            .addAll(RexUtil.shift(filter.getChildExps(), shiftMap)); // Add adjusted new filters
+        this.filters = builder.build();                  // Update the filters list
+    }
+
+    /**
+     * Push down a Project operation into this OrcTableScan, optimizing column references
+     * and adjusting filters accordingly.
+     * <p>
+     * This method reorganizes the scan's column projections by:
+     * 1. Identifying the original column references needed by the project operation
+     * 2. Collecting all columns required by existing filters
+     * 3. Creating a new minimal input projection that includes all necessary columns
+     * 4. Adjusting filter expressions to match the new column layout
+     * 5. Updating output projections to reflect the new column positions
+     *
+     * @param project The LogicalProject operation to push down containing desired output expressions
+     */
+    public void pushProject(Project project) {
+        // Extract the original column indices referenced by the project expressions
+        List<Integer> originCol = Lists.newArrayList();
+        for (int ref : getColumnRefProjects(project.getProjects())) {
+            // Map the projected column reference to the actual input column index
+            originCol.add(inProjects.get(outProjects.get(ref)));
+        }
+
+        // Collect all column references that need to be preserved
+        // Start with columns needed by the project operation
+        Set<Integer> refs = Sets.newTreeSet(originCol);
+        // Add columns referenced by existing filters to ensure they're available
+        for (RexInputRef ref : RexUtil.findAllIndex(filters)) {
+            refs.add(inProjects.get(ref.getIndex()));
+        }
+
+        // Create new input projects list from the collected column references (automatically sorted)
+        List<Integer> newInProjects = new ArrayList<>(refs);
+
+        // Build mapping from original column indices to their new positions in newInProjects
+        Map<Integer, Integer> colMapAfterIn = Maps.newHashMap();
+        for (int i = 0; i < newInProjects.size(); i++) {
+            colMapAfterIn.put(newInProjects.get(i), i);
+        }
+
+        // Create shift mapping to adjust filter expressions to new column positions
+        Map<Integer, Integer> shiftMap = Maps.newHashMap();
+        for (int i = 0; i < inProjects.size(); i++) {
+            // Map old position to new position, or -1 if column is no longer needed
+            shiftMap.put(i, colMapAfterIn.getOrDefault(inProjects.get(i), -1));
+        }
+        // Adjust filter expressions according to the new column mapping
+        List<RexNode> newFilters = RexUtil.shift(filters, shiftMap);
+
+        // Build new output projects list based on the new column positions
+        List<Integer> newOutProjects = Lists.newArrayList();
+        for (int ref : originCol) {
+            // Map each originally referenced column to its new position
+            newOutProjects.add(colMapAfterIn.get(ref));
+        }
+
+        // Update the scan's projection and filter information with the new mappings
+        this.outProjects = ImmutableList.copyOf(newOutProjects);
+        this.filters = ImmutableList.copyOf(newFilters);
+        this.inProjects = ImmutableList.copyOf(newInProjects);
+    }
+
+    private List<Integer> getColumnRefProjects(List<RexNode> projects) {
+        return projects.stream().map(expr -> ((RexInputRef) expr).getIndex()).collect(Collectors.toList());
     }
 
     public void setIndexAble(OSSTableScan.OSSIndexContext indexContext) {
@@ -151,6 +254,29 @@ public class OrcTableScan extends TableScan {
         return remainPage;
     }
 
+    public static long getGroupNumberForRandomDistribution(double estimateRowCount, double totalRowCount, int size) {
+        int totalPage = (int) Math.ceil(totalRowCount / size);
+        // the groups have to read
+        int remainPage = totalPage;
+        /**
+         * an estimation of the page has to be read
+         * it is assumed that the data has no skew and each row is queried in equal probability
+         * the formula is pageNum*(1-(1-row/totalRow)^pageSize, which is implemented by Fast Exponentiation
+         */
+        double base = 1 - Math.min(1D, estimateRowCount / totalRowCount);
+        double pow = 1D;
+        int n = size;
+        while (n > 0) {
+            if (n % 2 == 1) {
+                pow *= base;
+            }
+            base *= base;
+            n >>= 1;
+        }
+        remainPage = (int) Math.min(totalPage, Math.ceil(totalPage * (1 - pow)));
+        return remainPage;
+    }
+
     public RelOptCost getShardedReadCost(RelOptPlanner planner, double estimateRowCount, double totalRowCount) {
         long remainPage = getGroupNumber(estimateRowCount, totalRowCount, (int) CostModelWeight.OSS_PAGE_SIZE);
 
@@ -162,18 +288,7 @@ public class OrcTableScan extends TableScan {
     }
 
     public ImmutableList<Integer> getOutProjects() {
-        if (outProjectsNotEmpty != null) {
-            return outProjectsNotEmpty;
-        }
-
-        if (outProjects.isEmpty()) {
-            ImmutableList.Builder<Integer> builder = ImmutableList.<Integer>builder();
-            for (int i = 0; i < getNodeForMetaQuery().getRowType().getFieldCount(); i++) {
-                builder.add(i);
-            }
-            return outProjectsNotEmpty = builder.build();
-        }
-        return outProjectsNotEmpty = outProjects;
+        return outProjects;
     }
 
     public ImmutableList<RexNode> getFilters() {
@@ -189,17 +304,7 @@ public class OrcTableScan extends TableScan {
     }
 
     public ImmutableList<Integer> getInProjects() {
-        if (inProjectsNotEmpty != null) {
-            return inProjectsNotEmpty;
-        }
-        if (inProjects.isEmpty()) {
-            ImmutableList.Builder<Integer> builder = ImmutableList.<Integer>builder();
-            for (int i = 0; i < table.getRowType().getFieldCount(); i++) {
-                builder.add(i);
-            }
-            return inProjectsNotEmpty = builder.build();
-        }
-        return inProjectsNotEmpty = inProjects;
+        return inProjects;
     }
 
     public ImmutableList<String> getInputProjectName() {

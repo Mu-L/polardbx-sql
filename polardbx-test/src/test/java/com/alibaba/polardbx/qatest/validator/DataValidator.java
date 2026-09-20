@@ -44,6 +44,7 @@ import java.util.Set;
 import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import static com.google.common.truth.Truth.assertWithMessage;
 
@@ -447,8 +448,16 @@ public class DataValidator {
         ResultSet tddlRs = null;
 
         try {
-            mysqlRs = JdbcUtil.executeQuery(mysqlSql, mysqlConnection);
-            tddlRs = JdbcUtil.executeQuery(tddlSql, tddlConnection);
+            if (null == param || param.isEmpty()) {
+                mysqlRs = JdbcUtil.executeQuery(mysqlSql, mysqlConnection);
+                tddlRs = JdbcUtil.executeQuery(tddlSql, tddlConnection);
+            } else {
+                final PreparedStatement mysqlPs = JdbcUtil.preparedStatementSet(mysqlSql, param, mysqlConnection);
+                mysqlRs = JdbcUtil.executeQuery(mysqlSql, mysqlPs);
+
+                final PreparedStatement tddlPs = JdbcUtil.preparedStatementSet(tddlSql, param, tddlConnection);
+                tddlRs = JdbcUtil.executeQuery(tddlSql, tddlPs);
+            }
 
             metaInfoCheckSame(mysqlRs, tddlRs);
             List<List<String>> mysqlResults = JdbcUtil.getStringResult(mysqlRs, false);
@@ -464,8 +473,11 @@ public class DataValidator {
             }
             // 不允许为空结果集合
             if (!allowEmptyResultSet) {
-                Assert.assertTrue("sql语句:" + tddlSql + " 查询的结果集为空，请修改sql语句，保证有结果集",
-                    mysqlResults.size() != 0);
+                Assert.assertTrue("sql语句:" + tddlSql +
+                        ", 参数：" + (param == null ? "" :
+                        param.stream().map(String::valueOf).collect(Collectors.joining(",")))
+                        + " 查询的结果集为空，请修改sql语句，保证有结果集",
+                    !mysqlResults.isEmpty());
             }
             assertWithMessage(" 非顺序情况下：mysql 返回结果与tddl 返回结果不一致 \n sql 语句为：" + tddlSql + " 参数为 :"
                 + param).that(tddlResults).containsExactlyElementsIn(mysqlResults);

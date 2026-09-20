@@ -17,12 +17,42 @@
 package org.apache.calcite.sql;
 
 import org.apache.calcite.sql.parser.SqlParserPos;
+import org.apache.calcite.util.EqualsContext;
+import org.apache.calcite.util.Litmus;
 
 /**
  * @author chenghui.lch
  */
 public class SqlSubPartitionByUdfHash extends SqlSubPartitionBy {
+
+    protected SqlNode sqlUdfParams = null;
+
     public SqlSubPartitionByUdfHash( SqlParserPos sqlParserPos) {
         super(sqlParserPos);
+    }
+
+    @Override
+    public SqlNode clone(SqlParserPos pos) {
+        return super.clone(pos);
+    }
+
+    @Override
+    public boolean equalsDeep(SqlNode node, Litmus litmus, EqualsContext context) {
+        if (!super.equalsDeep(node, litmus, context)) {
+            return false;
+        }
+        SqlPartitionByUdfHash objPartBy = (SqlPartitionByUdfHash) node;
+        if (!equalDeep(this.sqlUdfParams, objPartBy.sqlUdfParams, litmus, context)) {
+            return false;
+        }
+        return true;
+    }
+
+    public SqlNode getSqlUdfParams() {
+        return sqlUdfParams;
+    }
+
+    public void setSqlUdfParams(SqlNode sqlUdfParams) {
+        this.sqlUdfParams = sqlUdfParams;
     }
 }

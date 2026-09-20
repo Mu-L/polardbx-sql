@@ -192,6 +192,57 @@ public class SetCommandTest extends DirectConnectionBaseTestCase {
         }
     }
 
+    @Test
+    public void testSelectTxReadOnlyFalse() throws Exception {
+        tddlConnection.setReadOnly(false);
+        tddlConnection.setAutoCommit(false);
+
+        try (Statement stmt = tddlConnection.createStatement();) {
+
+            ResultSet rs = stmt.executeQuery("select @@SESSION.TRANSACTION_READ_ONLY");
+            Assert.assertTrue(rs.next());
+            boolean trxReadOnly = rs.getBoolean(1);
+            Assert.assertFalse("@@SESSION.TRANSACTION_READ_ONLY should be false when this is not a readonly trx",
+                trxReadOnly);
+            rs.close();
+            tddlConnection.commit();
+
+            rs = stmt.executeQuery("select @@SESSION.TX_READ_ONLY");
+            Assert.assertTrue(rs.next());
+            boolean txReadOnly = rs.getBoolean(1);
+            Assert.assertFalse("@@SESSION.TX_READ_ONLY should be false when this is not a readonly trx",
+                txReadOnly);
+            rs.close();
+
+            tddlConnection.commit();
+        }
+    }
+    @Test
+    public void testSelectTxReadOnlyTrue() throws Exception {
+        tddlConnection.setReadOnly(true);
+        tddlConnection.setAutoCommit(false);
+
+        try (Statement stmt = tddlConnection.createStatement();) {
+
+            ResultSet rs = stmt.executeQuery("select @@SESSION.TRANSACTION_READ_ONLY");
+            Assert.assertTrue(rs.next());
+            boolean trxReadOnly = rs.getBoolean(1);
+            Assert.assertTrue("@@SESSION.TRANSACTION_READ_ONLY should be false when this is not a readonly trx",
+                trxReadOnly);
+            rs.close();
+            tddlConnection.commit();
+
+            rs = stmt.executeQuery("select @@SESSION.TX_READ_ONLY");
+            Assert.assertTrue(rs.next());
+            boolean txReadOnly = rs.getBoolean(1);
+            Assert.assertTrue("@@SESSION.TX_READ_ONLY should be false when this is not a readonly trx",
+                txReadOnly);
+            rs.close();
+
+            tddlConnection.commit();
+        }
+    }
+
     private boolean getBooleanValue(String sql) {
         boolean value = false;
         ResultSet rs = null;

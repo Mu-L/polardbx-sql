@@ -18,14 +18,19 @@ package com.alibaba.polardbx.server.handler;
 
 import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.druid.sql.parser.ByteString;
+import com.alibaba.polardbx.executor.ai.AgentSession;
+import com.alibaba.polardbx.net.compress.PacketOutputProxyFactory;
+import com.alibaba.polardbx.net.packet.OkPacket;
 import com.alibaba.polardbx.server.ServerConnection;
 import com.alibaba.polardbx.server.parser.ServerParseClear;
 import com.alibaba.polardbx.server.response.ClearFileSystemCache;
+import com.alibaba.polardbx.server.response.ClearIndexUsage;
 import com.alibaba.polardbx.server.response.ClearPartitionsHeatmapCache;
 import com.alibaba.polardbx.server.response.ClearPlanCache;
 import com.alibaba.polardbx.server.response.ClearProcedureCache;
 import com.alibaba.polardbx.server.response.ClearSQLSlow;
 import com.alibaba.polardbx.server.response.ClearStoredFunctionCache;
+import com.alibaba.polardbx.server.response.ClearTtlQueryStat;
 import com.alibaba.polardbx.server.util.LogUtils;
 
 /**
@@ -60,6 +65,16 @@ public final class ClearHandler {
                 return ClearProcedureCache.response(c, hasMore);
             case ServerParseClear.FUNCTION_CACHE:
                 return ClearStoredFunctionCache.response(c, hasMore);
+            case ServerParseClear.TTL_QUERY_STAT:
+                return ClearTtlQueryStat.response(c, hasMore);
+            case ServerParseClear.INDEX_USAGE:
+                return ClearIndexUsage.response(c, hasMore);
+            case ServerParseClear.CONTEXT:
+                AgentSession session = c.getAgentSession();
+                session.clear();
+                PacketOutputProxyFactory.getInstance().createProxy(c)
+                    .writeArrayAsPacket(hasMore ? OkPacket.OK_WITH_MORE : OkPacket.OK);
+                return true;
             default:
                 recordSql = false;
                 return c.execute(stmt, hasMore);

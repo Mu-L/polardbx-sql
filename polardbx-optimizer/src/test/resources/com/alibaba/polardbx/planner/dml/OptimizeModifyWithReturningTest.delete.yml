@@ -28,17 +28,16 @@
               indexscan(tables="t1_i_b[p1sp1,p1sp2,p2sp1,...p64sp2]", shardcount=128, sql="select `pk`, `c1`, `c2`, `c5` from `t1_i_b` as `t1_i_b` for update")
             gather(concurrent=true)
               logicalview(tables="t1[p1sp1,p1sp2,p1sp3,...p64sp7]", shardcount=448, sql="select `pk`, `c1`, `c3`, `c4`, `c6`, `c7`, `c8` from `t1` as `t1` force index(`primary`) where (`pk` in (...)) for update")
-
 - sql: |
     delete a from t1 a where a.c3 = 1;
 
   plan: |
     logicalmodify(type="delete", tables="optest.t1", optimizebyreturning=true)
-      project(pk="pk", c1="c1", c2="c2", c3="c3", c4="c4", c5="c5", c6="c6", c7="c7", c8="c8")
+      project(pk="pk0", c1="c10", c2="c2", c3="c3", c4="c4", c5="c5", c6="c6", c7="c7", c8="c8")
         bkajoin(condition="pk = pk and c1 <=> c1", type="inner")
-          indexscan(tables="t1_i_a[p4sp1]", sql="select `pk`, `c1`, `c3`, `c5`, `c6` from `t1_i_a` as `t1_i_a` force index(`auto_shard_key_c3`) where (`c3` = ?) for update")
+          indexscan(tables="t1_i_a[p4sp1]", sql="select `pk`, `c1` from `t1_i_a` as `t1_i_a` force index(`auto_shard_key_c3`) where (`c3` = ?) for update")
           gather(concurrent=true)
-            logicalview(tables="t1[p1sp1,p1sp2,p1sp3,...p64sp7]", shardcount=448, sql="select `pk`, `c1`, `c2`, `c4`, `c7`, `c8` from `t1` as `t1` force index(`primary`) where ((`c3` = ?) and (`pk` in (...))) for update")
+            logicalview(tables="t1[p1sp1,p1sp2,p1sp3,...p64sp7]", shardcount=448, sql="select `pk`, `c1`, `c2`, `c4`, `c7`, `c8`, `c3`, `c5`, `c6` from `t1` as `t1` force index(`primary`) where ((`c3` = ?) and (`pk` in (...))) for update")
 
 - sql: |
     delete a from t1 a, t2 b where a.c3 = b.c3 and a.c3 = 1;
@@ -46,11 +45,11 @@
   plan: |
     logicalmodify(type="delete", tables="optest.t1")
       bkajoin(condition="c3 = c3", type="inner")
-        project(pk="pk", c1="c1", c2="c2", c3="c3", c4="c4", c5="c5", c6="c6", c7="c7", c8="c8")
+        project(pk="pk0", c1="c10", c2="c2", c3="c3", c4="c4", c5="c5", c6="c6", c7="c7", c8="c8")
           bkajoin(condition="pk = pk and c1 <=> c1", type="inner")
-            indexscan(tables="t1_i_a[p4sp1]", sql="select `pk`, `c1`, `c3`, `c5`, `c6` from `t1_i_a` as `t1_i_a` force index(`auto_shard_key_c3`) where (`c3` = ?) for update")
+            indexscan(tables="t1_i_a[p4sp1]", sql="select `pk`, `c1` from `t1_i_a` as `t1_i_a` force index(`auto_shard_key_c3`) where (`c3` = ?) for update")
             gather(concurrent=true)
-              logicalview(tables="t1[p1sp1,p1sp2,p1sp3,...p64sp7]", shardcount=448, sql="select `pk`, `c1`, `c2`, `c4`, `c7`, `c8` from `t1` as `t1` force index(`primary`) where ((`c3` = ?) and (`pk` in (...))) for update")
+              logicalview(tables="t1[p1sp1,p1sp2,p1sp3,...p64sp7]", shardcount=448, sql="select `pk`, `c1`, `c2`, `c4`, `c7`, `c8`, `c3`, `c5`, `c6` from `t1` as `t1` force index(`primary`) where ((`c3` = ?) and (`pk` in (...))) for update")
         gather(concurrent=true)
           logicalview(tables="t2[p1sp1,p1sp2,p2sp1,...p64sp2]", shardcount=128, sql="select `pk`, `c1`, `c2`, `c3`, `c4`, `c5`, `c6`, `c7`, `c8` from `t2` as `t2` where ((`c3` = ?) and (`c3` in (...))) for update")
 

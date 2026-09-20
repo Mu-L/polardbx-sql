@@ -21,6 +21,7 @@ import com.google.common.base.Preconditions;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -55,8 +56,30 @@ public class PolarPrivilegeData {
 
     public PolarPrivilegeData(boolean rightsSeparationEnabled) {
         this.rightsSeparationEnabled = rightsSeparationEnabled;
-        updateAccountData(asList(PolarReservedAccounts.ROLE_DBA_ACCOUNT, PolarReservedAccounts.ROLE_ADMIN_ACCOUNT, PolarReservedAccounts.ROLE_SECURITY_OFFICER_ACCOUNT,
+        updateAccountData(asList(PolarReservedAccounts.ROLE_DBA_ACCOUNT, PolarReservedAccounts.ROLE_ADMIN_ACCOUNT,
+            PolarReservedAccounts.ROLE_SECURITY_OFFICER_ACCOUNT,
             PolarReservedAccounts.ROLE_AUDITOR_ACCOUNT));
+    }
+
+    public static void updateDBAPolarAccountInfo(PolarAccountInfo accountInfo, boolean rightsSeparationEnabled) {
+        accountInfo.clearAllPrivileges();
+        List<PolarAccountInfo> roleList;
+        if (rightsSeparationEnabled) {
+            roleList = singletonList(PolarReservedAccounts.ROLE_DBA_ACCOUNT);
+        } else {
+            roleList = asList(PolarReservedAccounts.ROLE_DBA_ACCOUNT, PolarReservedAccounts.ROLE_ADMIN_ACCOUNT,
+                PolarReservedAccounts.ROLE_SECURITY_OFFICER_ACCOUNT,
+                PolarReservedAccounts.ROLE_AUDITOR_ACCOUNT);
+        }
+        accountInfo.getRolePrivileges().replaceRoles(roleList);
+        accountInfo.getRolePrivileges().updateDefaultRole(PolarRolePrivilege.DefaultRoleState.ALL, emptyList());
+        if (accountInfo.getInstPriv() != null) {
+            PolarInstPriv instPriv = accountInfo.getInstPriv();
+            for (PolarAccountInfo roleInfo : roleList) {
+                instPriv.copyPriv(roleInfo.getInstPriv());
+            }
+        }
+
     }
 
     private static PolarAccountInfo newDBAPolarAccountInfo(PolarAccountInfo value, boolean rightsSeparationEnabled) {
@@ -67,7 +90,8 @@ public class PolarPrivilegeData {
                 .replaceRoles(singletonList(PolarReservedAccounts.ROLE_DBA_ACCOUNT));
         } else {
             newAccountInfo.getRolePrivileges()
-                .replaceRoles(asList(PolarReservedAccounts.ROLE_DBA_ACCOUNT, PolarReservedAccounts.ROLE_ADMIN_ACCOUNT, PolarReservedAccounts.ROLE_SECURITY_OFFICER_ACCOUNT,
+                .replaceRoles(asList(PolarReservedAccounts.ROLE_DBA_ACCOUNT, PolarReservedAccounts.ROLE_ADMIN_ACCOUNT,
+                    PolarReservedAccounts.ROLE_SECURITY_OFFICER_ACCOUNT,
                     PolarReservedAccounts.ROLE_AUDITOR_ACCOUNT));
         }
         newAccountInfo.getRolePrivileges().updateDefaultRole(PolarRolePrivilege.DefaultRoleState.ALL, emptyList());
@@ -99,7 +123,8 @@ public class PolarPrivilegeData {
     private static PolarAccountInfo newGodAccountInfo(PolarAccountInfo value) {
         PolarAccountInfo newAccountInfo = value.deepCopy();
         newAccountInfo.getRolePrivileges()
-            .replaceRoles(asList(PolarReservedAccounts.ROLE_DBA_ACCOUNT, PolarReservedAccounts.ROLE_ADMIN_ACCOUNT, PolarReservedAccounts.ROLE_SECURITY_OFFICER_ACCOUNT,
+            .replaceRoles(asList(PolarReservedAccounts.ROLE_DBA_ACCOUNT, PolarReservedAccounts.ROLE_ADMIN_ACCOUNT,
+                PolarReservedAccounts.ROLE_SECURITY_OFFICER_ACCOUNT,
                 PolarReservedAccounts.ROLE_AUDITOR_ACCOUNT));
         newAccountInfo.getRolePrivileges().updateDefaultRole(PolarRolePrivilege.DefaultRoleState.ALL, emptyList());
         return newAccountInfo;
@@ -111,6 +136,10 @@ public class PolarPrivilegeData {
 
     public int getAccountCount() {
         return userInfoMap.size();
+    }
+
+    public Collection<PolarAccountInfo> getAccountInfo() {
+        return userInfoMap.values();
     }
 
     public void updateAccountData(PolarAccountInfo value) {
@@ -217,7 +246,7 @@ public class PolarPrivilegeData {
         return getAndCheckExactUser(PolarAccount.newBuilder().setUsername(username).setHost(host).build());
     }
 
-    private PolarAccountInfo getReservedUser(AccountType accountType) {
+    public PolarAccountInfo getReservedUser(AccountType accountType) {
         return Optional.ofNullable(reservedUsers.get(accountType))
             .map(this::getExactUser)
             .orElse(null);

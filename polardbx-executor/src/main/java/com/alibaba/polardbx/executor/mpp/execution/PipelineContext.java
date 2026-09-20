@@ -285,7 +285,7 @@ public class PipelineContext {
                             operators.add(new OperatorStats(Optional.of(stageId), operator.getPipelineId(),
                                 operator.getOperatorType(),
                                 operator.getOperatorId(), operator.getOutputRowCount(),
-                                operator.getRuntimeFilteredCount(),
+                                operator.getIoBytesCount(), operator.getRuntimeFilteredCount(),
                                 operator.getOutputBytes(), operator.getStartupDuration(), operator.getDuration(),
                                 operator.getMemory(), operator.getInstances(), operator.getSpillCnt()));
                         }

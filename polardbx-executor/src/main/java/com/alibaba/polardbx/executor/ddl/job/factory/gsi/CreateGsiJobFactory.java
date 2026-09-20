@@ -26,19 +26,24 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.CreateTableAddTablesExtM
 import com.alibaba.polardbx.executor.ddl.job.task.basic.CreateTableAddTablesMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.CreateTableShowTableMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.SubJobTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.factory.GsiTaskFactory;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.CreateGsiPhyDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.CreateGsiValidateTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.GsiInsertIndexMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.validator.GsiValidator;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4CreateGsi;
+import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
+import com.alibaba.polardbx.executor.partitionmanagement.AlterTableGroupUtils;
 import com.alibaba.polardbx.gms.metadb.table.IndexStatus;
 import com.alibaba.polardbx.gms.metadb.table.IndexVisibility;
 import com.alibaba.polardbx.gms.metadb.table.LackLocalIndexStatus;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
+import com.alibaba.polardbx.optimizer.config.table.TableColumnUtils;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.gsi.CreateGlobalIndexPreparedData;
@@ -66,7 +71,7 @@ import static com.alibaba.polardbx.gms.metadb.table.IndexStatus.WRITE_ONLY;
  *
  * @author guxu
  */
-public class CreateGsiJobFactory extends DdlJobFactory {
+public class CreateGsiJobFactory extends OnlineDdlJobFactory {
 
     protected final String schemaName;
     protected final String primaryTableName;
@@ -150,8 +155,11 @@ public class CreateGsiJobFactory extends DdlJobFactory {
             globalIndexPreparedData.getIndexTablePreparedData() != null ?
                 globalIndexPreparedData.getIndexTablePreparedData().getSpecialDefaultValueFlags() :
                 new TreeMap<>(String.CASE_INSENSITIVE_ORDER),
-            executionContext.getParamManager().getBoolean(ConnectionParams.GSI_BACKFILL_BY_PK_RANGE),
-            executionContext.getParamManager().getBoolean(ConnectionParams.GSI_BACKFILL_BY_PARTITION),
+            executionContext.getParamManager().getBoolean(ConnectionParams.GSI_BACKFILL_BY_PK_RANGE)
+                && !TableColumnUtils.hasExternalizedColumn(executionContext, globalIndexPreparedData.getSchemaName(),
+                globalIndexPreparedData.getPrimaryTableName()),
+            DdlHelper.isBoostPerfMode(executionContext) || executionContext.getParamManager()
+                .getBoolean(ConnectionParams.GSI_BACKFILL_BY_PARTITION),
             physicalPlanData,
             physicalPlanDataForLocalIndex,
             create4CreateTableWithGsi,
@@ -192,6 +200,7 @@ public class CreateGsiJobFactory extends DdlJobFactory {
                                   Boolean create4CreateTableWithGsi,
                                   List<ForeignKeyData> addedForeignKeys,
                                   ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.OSC);
         this.schemaName = schemaName;
         this.primaryTableName = primaryTableName;
         this.indexTableName = indexTableName;
@@ -218,12 +227,14 @@ public class CreateGsiJobFactory extends DdlJobFactory {
     protected void validate() {
         GsiValidator.validateGsiSupport(schemaName, executionContext);
         GsiValidator.validateCreateOnGsi(schemaName, indexTableName, executionContext);
+        AlterTableGroupUtils.validateRepartitionPermit(schemaName, executionContext);
     }
 
     @Override
     protected ExecutableDdlJob doCreate() {
         CreateGsiValidateTask validateTask =
-            new CreateGsiValidateTask(schemaName, primaryTableName, indexTableName, null, null, removePartitioning, false);
+            new CreateGsiValidateTask(schemaName, primaryTableName, indexTableName, null, null, removePartitioning,
+                false);
 
         final String finalStatus =
             executionContext.getParamManager().getString(ConnectionParams.GSI_FINAL_STATUS_DEBUG);
@@ -277,7 +288,8 @@ public class CreateGsiJobFactory extends DdlJobFactory {
                 gsiCdcMark,
                 onlineModifyColumn,
                 mirrorCopy,
-                executionContext.getOriginSql()
+                executionContext.getOriginSql(),
+                executionContext
             );
         } else {
             // create table with gsi, not use schema change
@@ -350,6 +362,9 @@ public class CreateGsiJobFactory extends DdlJobFactory {
 
         //3.1 insert indexes meta for primary table
         taskList.add(addIndexMetaTask.onExceptionTryRecoveryThenRollback());
+        if (needOnlineSchemaChange) {
+            taskList.add(new TableSyncTask(schemaName, primaryTableName));
+        }
         //3.2 gsi status: CREATING -> DELETE_ONLY -> WRITE_ONLY -> WRITE_REORG -> PUBLIC
         taskList.addAll(bringUpGsi);
 
@@ -400,17 +415,6 @@ public class CreateGsiJobFactory extends DdlJobFactory {
         CreateGsiJobFactory gsiJobFactory =
             new CreateGsiJobFactory(globalIndexPreparedData, physicalPlanData, null, true, ec);
         gsiJobFactory.needOnlineSchemaChange = false;
-        return gsiJobFactory.create();
-    }
-
-    public static ExecutableDdlJob create(@Deprecated DDL ddl,
-                                          CreateGlobalIndexPreparedData preparedData,
-                                          ExecutionContext ec) {
-        DdlPhyPlanBuilder builder = new CreateGlobalIndexBuilder(ddl, preparedData, ec).build();
-        PhysicalPlanData physicalPlanData = builder.genPhysicalPlanData();
-        PhysicalPlanData physicalPlanDataForLocalIndex = DdlPhyPlanBuilder.getPhysicalPlanDataForLocalIndex(builder, false);
-
-        CreateGsiJobFactory gsiJobFactory = CreateGsiJobFactory.create(preparedData, physicalPlanData, physicalPlanDataForLocalIndex, ec);
         return gsiJobFactory.create();
     }
 

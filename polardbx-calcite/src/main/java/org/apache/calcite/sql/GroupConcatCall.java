@@ -53,25 +53,24 @@ public class GroupConcatCall extends SqlBasicCall {
         return orderOperands;
     }
 
-    @Override public String computeAttributesString() {
-        String result = "";
+    @Override public void computeAttributesString(SqlWriter writer) {
         if (orderOperands != null && orderOperands.size() != 0) {
-            result += " ORDER BY ";
             boolean first = true;
+            writer.print(" ORDER BY ");
             for (int i = 0; i < orderOperands.size(); i++) {
                 SqlNode sqlNode = orderOperands.get(i);
                 String ascOrDesc = ascOrDescList.get(i);
                 if (first) {
                     first = false;
                 } else {
-                    result += ", ";
+                    writer.print(", ");;
                 }
-                result += sqlNode.toString() + " " + ascOrDesc;
+                sqlNode.unparse(writer, 0, 0);
+                writer.print(" " + ascOrDesc);
             }
         }
         if (separator != null) {
-            result += " SEPARATOR '" + separator + "'";
+            writer.print(" SEPARATOR '" + separator + "'");
         }
-        return result;
     }
 }

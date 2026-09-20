@@ -16,12 +16,16 @@
 
 package com.alibaba.polardbx.executor.mpp.execution.buffer;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableObjectArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.executor.mpp.OutputBuffers;
 import com.alibaba.polardbx.executor.mpp.execution.StateMachine;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
 import io.airlift.units.DataSize;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -35,19 +39,31 @@ import static java.util.Objects.requireNonNull;
 
 public class PartitionedOutputBuffer
     implements OutputBuffer {
+
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(PartitionedOutputBuffer.class).instanceSize();
+
     private static final AtomicLongFieldUpdater<PartitionedOutputBuffer> totalPagesAddedUpdater =
         AtomicLongFieldUpdater.newUpdater(PartitionedOutputBuffer.class, "totalPagesAddedLong");
     private static final AtomicLongFieldUpdater<PartitionedOutputBuffer> totalRowsAddedUpdater =
         AtomicLongFieldUpdater.newUpdater(PartitionedOutputBuffer.class, "totalRowsAddedLong");
+
+    @FieldMemoryCounter(value = false)
     private final StateMachine<BufferState> state;
+    @FieldMemoryCounter(value = false)
     private final OutputBuffers outputBuffers;
+    @FieldMemoryCounter(value = false)
     private final OutputBufferMemoryManager memoryManager;
     private final int metricLevel;
 
-    private final List<ClientBuffer> partitions;
+    private final MemoryCountableObjectArrayList<ClientBuffer> partitions;
 
     private volatile long totalPagesAddedLong = 0L;
     private volatile long totalRowsAddedLong = 0L;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(partitions);
+    }
 
     public PartitionedOutputBuffer(
         String taskInstanceId,
@@ -64,12 +80,11 @@ public class PartitionedOutputBuffer
 
         this.memoryManager = memoryManager;
 
-        ImmutableList.Builder<ClientBuffer> partitions = ImmutableList.builder();
+        this.partitions = new MemoryCountableObjectArrayList<>();
         for (OutputBuffers.OutputBufferId bufferId : outputBuffers.getBuffers().keySet()) {
             ClientBuffer partition = new ClientBuffer(taskInstanceId, bufferId);
             partitions.add(partition);
         }
-        this.partitions = partitions.build();
 
         state.compareAndSet(BufferState.OPEN, BufferState.NO_MORE_BUFFERS);
         state.compareAndSet(BufferState.NO_MORE_PAGES, BufferState.FLUSHING);

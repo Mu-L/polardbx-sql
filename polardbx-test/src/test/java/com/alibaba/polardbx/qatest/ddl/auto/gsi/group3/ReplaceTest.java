@@ -168,7 +168,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
 
         final String hint = "/*+TDDL:CMD_EXTRA(DML_EXECUTION_STRATEGY=LOGICAL,DML_FORCE_PUSHDOWN_RC_REPLACE=TRUE)*/ ";
         final String insert = "replace into " + tableName
-                + "(id, c1, c5, c8) values(1, 1, 'a', '2020-06-16 06:49:32'), (2, 2, 'b', '2020-06-16 06:49:32'), (3, 3, 'c', '2020-06-16 06:49:32')";
+            + "(id, c1, c5, c8) values(1, 1, 'a', '2020-06-16 06:49:32'), (2, 2, 'b', '2020-06-16 06:49:32'), (3, 3, 'c', '2020-06-16 06:49:32')";
 
         // DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN = true
         String hint1 = hint + "/*+TDDL:CMD_EXTRA(DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=TRUE)*/ ";
@@ -286,7 +286,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
 
         final String hint = "/*+TDDL:CMD_EXTRA(DML_EXECUTION_STRATEGY=LOGICAL,DML_FORCE_PUSHDOWN_RC_REPLACE=TRUE)*/ ";
         final String insert = "replace into " + tableName
-                + "(c1, c5, c8) values(3, 'a', '2020-06-16 06:49:32'), (3, 'b', '2020-06-16 06:49:32'), (3, 'c', '2020-06-16 06:49:32')";
+            + "(c1, c5, c8) values(3, 'a', '2020-06-16 06:49:32'), (3, 'b', '2020-06-16 06:49:32'), (3, 'c', '2020-06-16 06:49:32')";
         // VALUES 中有重复，affected rows 可能会比 MySQL 返回的小 1
         // DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN = true
         executeTwiceThenCheckDataAndTraceResult(
@@ -501,9 +501,10 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
 
         final List<Pair<String, String>> topology = JdbcUtil.getTopology(tddlConnection, tableName);
 
-        final String hint = "/*+TDDL:CMD_EXTRA(DML_EXECUTION_STRATEGY=LOGICAL,DML_SKIP_DUPLICATE_CHECK_FOR_PK=FALSE,DML_FORCE_PUSHDOWN_RC_REPLACE=TRUE)*/ ";
+        final String hint =
+            "/*+TDDL:CMD_EXTRA(DML_EXECUTION_STRATEGY=LOGICAL,DML_SKIP_DUPLICATE_CHECK_FOR_PK=FALSE,DML_FORCE_PUSHDOWN_RC_REPLACE=TRUE)*/ ";
         final String insert = "replace into " + tableName
-                + "(c1, c5, c8) values(1, 'a', '2020-06-16 06:49:32'), (null, 'b', '2020-06-16 06:49:32'), (3, 'c', '2020-06-16 06:49:32')";
+            + "(c1, c5, c8) values(1, 'a', '2020-06-16 06:49:32'), (null, 'b', '2020-06-16 06:49:32'), (3, 'c', '2020-06-16 06:49:32')";
 
         // DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN = true
         executeTwiceThenCheckDataAndTraceResult(
@@ -605,13 +606,13 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
 
         final String hint = "/*+TDDL:CMD_EXTRA(DML_EXECUTION_STRATEGY=LOGICAL,DML_FORCE_PUSHDOWN_RC_REPLACE=TRUE)*/ ";
         final String insert = "replace into " + tableName
-                + "(c1, c2, c3, c5, c8) values"
-                + "(1, 2, 3, 'a', '2020-06-16 06:49:32'), "
-                + "(null, 2, 3, 'b', '2020-06-16 06:49:32'), " // u_c2_c3 冲突, replace
-                + "(1, null, 3, 'c', '2020-06-16 06:49:32'), " // 不冲突
-                + "(1, 2, null, 'd', '2020-06-16 06:49:32')," // u_c1_c2 与第一行冲突，但是第一行被 replace, 这行保留
-                + "(1, 2, 4, 'e', '2020-06-16 06:49:32')," // u_c1_c2 冲突，replace
-                + "(2, 2, 4, 'f', '2020-06-16 06:49:32')"; // u_c2_c3 冲突，replace
+            + "(c1, c2, c3, c5, c8) values"
+            + "(1, 2, 3, 'a', '2020-06-16 06:49:32'), "
+            + "(null, 2, 3, 'b', '2020-06-16 06:49:32'), " // u_c2_c3 冲突, replace
+            + "(1, null, 3, 'c', '2020-06-16 06:49:32'), " // 不冲突
+            + "(1, 2, null, 'd', '2020-06-16 06:49:32')," // u_c1_c2 与第一行冲突，但是第一行被 replace, 这行保留
+            + "(1, 2, 4, 'e', '2020-06-16 06:49:32')," // u_c1_c2 冲突，replace
+            + "(2, 2, 4, 'f', '2020-06-16 06:49:32')"; // u_c2_c3 冲突，replace
 
         final List<String> columnNames = ImmutableList.of("c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8");
         // DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN = true
@@ -2590,8 +2591,10 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
 
         final String replace =
             "replace into " + tableName + "(id, c1, c2, c5, c8) values(2, 1, 1, 'd', '2020-06-16 06:49:32')";
+        final String hint = "/*+TDDL:CMD_EXTRA(DML_PARTITION_LOCAL_PK_DUP_CHECK=FALSE,"
+            + "OPTIMIZE_REPLACE_BY_RETURNING=FALSE,DML_USE_RETURNING=FALSE)*/ ";
 
-        executeOnMysqlAndTddl(mysqlConnection, tddlConnection, replace, "trace " + replace, null, true);
+        executeOnMysqlAndTddl(mysqlConnection, tddlConnection, replace, "trace " + hint + replace, null, true);
         final List<List<String>> trace = getTrace(tddlConnection);
 
         final List<Pair<String, String>> primaryTopology = JdbcUtil.getTopology(tddlConnection, tableName);
@@ -3264,7 +3267,8 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
 
         String replace = "replace into " + tableName + " values (1,2,3),(2,2,3)";
-        JdbcUtil.executeUpdateSuccess(tddlConnection, "trace " + buildCmdExtra("DML_GET_DUP_USING_UNION_EQUAL=TRUE") + replace);
+        JdbcUtil.executeUpdateSuccess(tddlConnection,
+            "trace " + buildCmdExtra("DML_GET_DUP_USING_UNION_EQUAL=TRUE") + replace);
         List<List<String>> trace = getTrace(tddlConnection);
         String phySql = trace.get(0).get(trace.get(0).size() - 4);
         Assert.assertTrue(phySql, phySql.contains("UNION"));
@@ -3627,7 +3631,8 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             setSqlMode("", conn);
 
             String sql = String.format("insert into %s values (1,'fdsa'),(2,'rew')", tableName);
-            String hint = buildCmdExtra(DML_USE_NEW_DUP_CHECKER);
+            String hint = buildCmdExtra(DML_USE_NEW_DUP_CHECKER,
+                "DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=TRUE");
             JdbcUtil.executeUpdateSuccess(conn, sql);
 
             // data should be truncated
@@ -3931,7 +3936,8 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
 
         String sql = String.format("insert into %s values (1,1,1,1,null)", tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
-        sql = String.format("replace into %s values (1,2,3,4,'{\"a\":\"b\"}')", tableName);
+        sql = "/*+TDDL:CMD_EXTRA(DML_PARTITION_LOCAL_PK_DUP_CHECK=FALSE)*/ "
+            + String.format("replace into %s values (1,2,3,4,'{\"a\":\"b\"}')", tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 
         checkGsi(tddlConnection, getRealGsiName(tddlConnection, tableName, gsiName));
@@ -3943,5 +3949,61 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
         Assert.assertEquals("3", allResult.get(0).get(2).toString());
         Assert.assertEquals("4", allResult.get(0).get(3).toString());
         Assert.assertEquals("{\"a\": \"b\"}", allResult.get(0).get(4).toString());
+    }
+
+    @Test
+    public void testBackQuoteTableName() throws Exception {
+        //useAffectedRows to control this case only run once, ignore Parameterized.Parameters
+        if (useAffectedRows) {
+            return;
+        }
+
+        final String[] tableNames = {
+            "back_quote_table_name`_replace",
+//            "``_replace", // not support consecutive back quotes
+//            "``_replace``", // not support consecutive back quotes
+            "`_replace",
+            "`_replace_`"
+        };
+        final String[] partitionDefs = {
+            "PARTITION BY KEY(`partition_key`)\n" + "PARTITIONS 2",
+            "PARTITION BY KEY(`partition_key`)\n" + "PARTITIONS 32",
+            "SINGLE",
+            "BROADCAST"};
+        final String createTableTmpl = "CREATE TABLE {0} (\n"
+            + "\t`id` int NOT NULL,\n"
+            + "\t`partition_key` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,\n"
+            + "\t`partition_key2` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,\n"
+            + "\t`name` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,\n"
+            + "\tPRIMARY KEY (`id`),\n"
+            + "\tKEY `auto_shard_key_partition_key` USING BTREE (`partition_key`)\n"
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_general_ci\n {1}";
+        final String sqlTmpl = "REPLACE INTO {0} (id, partition_key, partition_key2, name) "
+            + "VALUES (251, 254, 252, \"name_253\");";
+
+        for (String tableName : tableNames) {
+            for (String partitionDef : partitionDefs) {
+                dropTableWithGsi(tableName, ImmutableList.of());
+
+                final String quotedTableName = quoteSpecialName(tableName);
+
+                final String createTable = MessageFormat.format(createTableTmpl, quotedTableName, partitionDef);
+                JdbcUtil.executeUpdateSuccess(tddlConnection, createTable);
+
+                final String sql = MessageFormat.format(sqlTmpl, quotedTableName);
+                JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+
+                final String hint = buildCmdExtra(DML_EXECUTION_STRATEGY_LOGICAL, DISABLE_RETURNING);
+                JdbcUtil.executeUpdateSuccess(tddlConnection, "trace " + hint + sql);
+
+                checkTrace(tddlConnection,
+                    Matchers.greaterThanOrEqualTo(1),
+                    (t, builder) -> {
+                        builder.that(t.get(0).get(11)).contains("SELECT ");
+                        builder.that(t.get(0).get(12))
+                            .contains(quotedTableName.substring(1, quotedTableName.length() - 2));
+                    });
+            }
+        }
     }
 }

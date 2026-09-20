@@ -19,6 +19,7 @@ package com.alibaba.polardbx.optimizer;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.gms.module.LogLevel;
 import com.alibaba.polardbx.gms.module.LogPattern;
@@ -26,10 +27,17 @@ import com.alibaba.polardbx.gms.module.Module;
 import com.alibaba.polardbx.gms.module.ModuleLogInfo;
 import com.alibaba.polardbx.optimizer.config.table.statistic.StatisticTrace;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.core.planner.rule.cte.CTEContext;
+import com.alibaba.polardbx.optimizer.exception.ColumnarCBOTimeoutException;
+import com.alibaba.polardbx.optimizer.htaprouting.HtapTrace;
+import com.alibaba.polardbx.optimizer.htaprouting.OptimizerType;
+import com.alibaba.polardbx.optimizer.htaprouting.PlanType;
+import com.alibaba.polardbx.optimizer.htaprouting.RoutingType;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadType;
 import com.alibaba.polardbx.optimizer.planmanager.BaselineInfo;
 import com.alibaba.polardbx.optimizer.planmanager.PlanInfo;
+import com.alibaba.polardbx.optimizer.ttl.query.TtlQueryType;
 import com.alibaba.polardbx.optimizer.utils.RexUtils;
-import com.alibaba.polardbx.optimizer.workload.WorkloadType;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import org.apache.calcite.plan.Context;
@@ -54,12 +62,15 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 public class PlannerContext implements Context, PlannerContextWithParam {
 
     public static final PlannerContext EMPTY_CONTEXT = new PlannerContext(new ExecutionContext());
+    public static final int MAX_STATISTIC_TRACE_SIZE = 5000;
 
     private final AtomicInteger runtimeFilterId = new AtomicInteger(0);
 
@@ -80,6 +91,8 @@ public class PlannerContext implements Context, PlannerContextWithParam {
     private RelOptCost cost = null;
 
     private boolean isExplain = false;
+
+    private boolean asyncDDLJobRecovered = false;
 
     /**
      * cache flag
@@ -144,8 +157,8 @@ public class PlannerContext implements Context, PlannerContextWithParam {
     /**
      * statistic trace
      */
-    private boolean isNeedStatisticTrace = false;
-    private List<StatisticTrace> statisticTraces = null;
+    private boolean isNeedStatisticTrace = true;
+    private ConcurrentLinkedDeque<StatisticTrace> statisticTraces = new ConcurrentLinkedDeque<>();
 
     /**
      * record
@@ -153,6 +166,11 @@ public class PlannerContext implements Context, PlannerContextWithParam {
     private boolean enableSelectStatistics = false;
 
     private Map<String, Set<String>> viewMap = null;
+
+    private boolean hasView = false;
+
+    private boolean hasExternalTableOperation = false;
+
     private Set<Integer> constantParamIndex = null;
 
     /**
@@ -166,21 +184,41 @@ public class PlannerContext implements Context, PlannerContextWithParam {
      */
     private long ruleCount = 0;
 
+    private boolean enablePlannerTimeout = false;
+
+    private long timeoutThreshold = 0L;
+
     private boolean hasConstantFold = false;
 
     private boolean hasPagingForce = false;
 
     private boolean hasAutoPagination = false;
 
+    private boolean hasExpandIn = false;
+
     private boolean useColumnarPlanCache = false;
 
     private boolean inExprToLookupJoin = false;
 
+    private CTEContext cteContext = new CTEContext();
+
     private int columnarMaxShardCnt = 20;
 
-    private boolean useColumnar = false;
+    // routing type for current sql, not null only if the following conditions are met, valid when the plan is not from spm
+    // current sql hits manually HTAP routing rules
+    private RoutingType routingType;
+
+    // optimizer type used for current plan, valid when the plan is not from spm
+    private OptimizerType optimizerType;
+
+    // schedule type for current plan, determined by the of plan, valid when the plan is generated
+    private PlanType planType = PlanType.ROW;
+
+    private boolean duplicateColumnName = false;
 
     private boolean localIndexHint = false;
+
+    private TtlQueryType ttlQueryType;
 
     public <T> T unwrap(Class<T> clazz) {
         return clazz.isInstance(this) ? clazz.cast(this) : null;
@@ -201,6 +239,7 @@ public class PlannerContext implements Context, PlannerContextWithParam {
             this.params = executionContext.getParams().clone();
         }
         this.isExplain = executionContext.getExplain() != null;
+        this.asyncDDLJobRecovered = executionContext.getAsyncDDLContext().isJobRecovered();
         this.isAutoCommit = executionContext.isAutoCommit();
 
         this.addForcePrimary = executionContext.isTsoTransaction() && executionContext.enableForcePrimaryForTso();
@@ -219,45 +258,53 @@ public class PlannerContext implements Context, PlannerContextWithParam {
             this.params = executionContext.getParams().clone();
         }
         this.isExplain = executionContext.getExplain() != null;
+        this.asyncDDLJobRecovered = executionContext.getAsyncDDLContext().isJobRecovered();
         this.isAutoCommit = executionContext.isAutoCommit();
         this.sqlKind = sqlkind;
         this.isInSubquery = isInSubquery;
 
         this.addForcePrimary = executionContext.isTsoTransaction() && executionContext.enableForcePrimaryForTso();
         this.useColumnarPlanCache = executionContext.isColumnarPlanCache();
+        this.routingType = executionContext.getRoutingType();
     }
 
     protected PlannerContext(ExecutionContext executionContext,
                              Map<String, Object> extraCmds, Parameters params,
                              boolean isExplain,
+                             boolean asyncDDLJobRecovered,
                              boolean isAutoCommit,
                              SqlKind sqlkind,
                              boolean isInSubquery,
                              boolean shouldUseHeuOrder,
-                             WorkloadType workloadType) {
+                             WorkloadType workloadType,
+                             CTEContext cteContext) {
         this.executionContext = executionContext;
         this.schemaName = executionContext.getSchemaName();
         this.extraCmds = extraCmds;
         this.paramManager = new ParamManager(extraCmds);
         this.params = params.clone();
         this.isExplain = isExplain;
+        this.asyncDDLJobRecovered = asyncDDLJobRecovered;
         this.isAutoCommit = isAutoCommit;
         this.sqlKind = sqlkind;
         this.isInSubquery = isInSubquery;
         this.shouldUseHeuOrder = shouldUseHeuOrder;
         this.workloadType = workloadType;
         this.useColumnarPlanCache = executionContext.isColumnarPlanCache();
+        this.cteContext = cteContext;
     }
 
     public PlannerContext copyWithInSubquery() {
         PlannerContext ret = new PlannerContext(executionContext, extraCmds,
             params,
             isExplain,
+            asyncDDLJobRecovered,
             isAutoCommit,
             sqlKind,
             isInSubquery,
             shouldUseHeuOrder,
-            workloadType);
+            workloadType,
+            cteContext);
         ret.isInSubquery = true;
         ret.joinCount = joinCount;
         return ret;
@@ -326,6 +373,14 @@ public class PlannerContext implements Context, PlannerContextWithParam {
 
     public void setExplain(boolean explain) {
         isExplain = explain;
+    }
+
+    public boolean isAsyncDDLJobRecovered() {
+        return asyncDDLJobRecovered;
+    }
+
+    public void setAsyncDDLJobRecovered(boolean asyncDDLJobRecovered) {
+        this.asyncDDLJobRecovered = asyncDDLJobRecovered;
     }
 
     public boolean isNeedSPM() {
@@ -436,9 +491,26 @@ public class PlannerContext implements Context, PlannerContextWithParam {
         }
     }
 
+    public Optional<HtapTrace> getHtapTrace() {
+        return executionContext == null ? Optional.empty() : executionContext.getHtapTrace();
+    }
+
     @Override
     public Optional<CalcitePlanOptimizerTrace> getCalcitePlanOptimizerTrace() {
         return executionContext == null ? Optional.empty() : executionContext.getCalcitePlanOptimizerTrace();
+    }
+
+    public void optimizerTrace(Consumer<? super CalcitePlanOptimizerTrace> consumer) {
+        getCalcitePlanOptimizerTrace().ifPresent(consumer);
+    }
+
+    @Override
+    public void checkTimeOut() {
+        if (enablePlannerTimeout) {
+            if (System.currentTimeMillis() > timeoutThreshold) {
+                throw new ColumnarCBOTimeoutException();
+            }
+        }
     }
 
     @Override
@@ -459,9 +531,8 @@ public class PlannerContext implements Context, PlannerContextWithParam {
         Map<String, Object> extendedParams = new HashMap<>();
 
         // Add parameters to the map
-        extendedParams.put("useColumnar", this.isUseColumnar());
         extendedParams.put("columnarMaxShardCnt", this.getColumnarMaxShardCnt());
-
+        extendedParams.put("isSkipPostOpt", this.isSkipPostOpt());
         try {
             // Convert the map to a JSON string using the JsonBuilder
             return jsonBuilder.toJsonString(extendedParams);
@@ -488,13 +559,9 @@ public class PlannerContext implements Context, PlannerContextWithParam {
             // Parse the extension argument string into a Map object.
             Map<String, Object> extendMap = JSON.parseObject(extend, HashMap.class);
 
-            // Set whether to use columnar storage, defaulting to false.
-            this.useColumnar = (Boolean) extendMap.getOrDefault("useColumnar", false);
-
             // Set the maximum number of shards for columnar storage, defaulting to 20
             this.columnarMaxShardCnt = (Integer) extendMap.getOrDefault("columnarMaxShardCnt", 20);
-
-            //this.hasAutoPagination = (Boolean) extendMap.getOrDefault("hasAutoPagination", false);
+            this.isSkipPostOpt = (Boolean) extendMap.getOrDefault("isSkipPostOpt", false);
         } catch (Exception e) {
             // Handle any potential exceptions during conversion
             ModuleLogInfo.getInstance().logRecord(Module.SPM, LogPattern.UNEXPECTED,
@@ -639,12 +706,28 @@ public class PlannerContext implements Context, PlannerContextWithParam {
         this.viewMap.get(schema).add(view);
     }
 
+    public void setHasView(boolean hasView) {
+        this.hasView = hasView;
+    }
+
+    public boolean isHasView() {
+        return hasView;
+    }
+
+    public void setHasExternalTableOperation(boolean hasExternalTableOperation) {
+        this.hasExternalTableOperation = hasExternalTableOperation;
+    }
+
+    public boolean hasExternalTableOperation() {
+        return hasExternalTableOperation;
+    }
+
     public Map<String, Set<String>> getViewMap() {
         return viewMap;
     }
 
     public boolean isNeedStatisticTrace() {
-        return isNeedStatisticTrace;
+        return isNeedStatisticTrace && DynamicConfig.getInstance().isEnableStatisticTrace();
     }
 
     public void setNeedStatisticTrace(boolean needStatisticTrace) {
@@ -655,22 +738,20 @@ public class PlannerContext implements Context, PlannerContextWithParam {
      * recode statistic trace info into planner context
      */
     public void recordStatisticTrace(StatisticTrace trace) {
-        if (statisticTraces == null) {
-            statisticTraces = Lists.newArrayList();
+        if (trace == null) {
+            return;
+        }
+        if (statisticTraces.size() >= MAX_STATISTIC_TRACE_SIZE) {
+            return;
         }
         statisticTraces.add(trace);
     }
 
-    public void clearStatisticTraceInfo() {
-        if (statisticTraces != null) {
-            statisticTraces.clear();
-        }
-    }
-
     /**
      * transform statistic trace info from Map to string
+     * and clear it
      */
-    public String formatStatisticTrace() {
+    public String formatAndClearStatisticTrace() {
         if (statisticTraces == null) {
             return "";
         }
@@ -688,7 +769,7 @@ public class PlannerContext implements Context, PlannerContextWithParam {
             }
             sb.append(e.getKey()).append("\n");
         }
-
+        statisticTraces.clear();
         return sb.toString();
     }
 
@@ -724,17 +805,37 @@ public class PlannerContext implements Context, PlannerContextWithParam {
     }
 
     public void setColumnarMaxShardCnt(int columnarMaxShardCnt) {
-        if (columnarMaxShardCnt > 0) {
+        if (columnarMaxShardCnt >= getParamManager().getInt(ConnectionParams.PARTITION_WISE_THRESHOLD)) {
             this.columnarMaxShardCnt = columnarMaxShardCnt;
         }
     }
 
-    public boolean isUseColumnar() {
-        return useColumnar;
+    public boolean isColumnarOptimizer() {
+        return optimizerType == OptimizerType.COLUMNAR;
     }
 
-    public void setUseColumnar(boolean useColumnar) {
-        this.useColumnar = useColumnar;
+    public OptimizerType getOptimizerType() {
+        return optimizerType;
+    }
+
+    public void setOptimizerType(OptimizerType optimizerType) {
+        this.optimizerType = optimizerType;
+    }
+
+    public RoutingType getRoutingType() {
+        return routingType;
+    }
+
+    public void setRoutingType(RoutingType routingType) {
+        this.routingType = routingType;
+    }
+
+    public PlanType getPlanType() {
+        return planType;
+    }
+
+    public void setPlanType(PlanType planType) {
+        this.planType = planType;
     }
 
     public boolean isUseColumnarPlanCache() {
@@ -755,6 +856,18 @@ public class PlannerContext implements Context, PlannerContextWithParam {
 
     public void setInExprToLookupJoin(boolean inExprToLookupJoin) {
         this.inExprToLookupJoin = inExprToLookupJoin;
+    }
+
+    public void setEnablePlannerTimeout(boolean enablePlannerTimeout) {
+        this.enablePlannerTimeout = enablePlannerTimeout;
+        if (enablePlannerTimeout) {
+            timeoutThreshold =
+                System.currentTimeMillis() + getParamManager().getLong(ConnectionParams.PLANNER_MAX_TIME);
+        }
+    }
+
+    public CTEContext getCteContext() {
+        return cteContext;
     }
 
     public boolean isHasConstantFold() {
@@ -781,11 +894,35 @@ public class PlannerContext implements Context, PlannerContextWithParam {
         this.hasAutoPagination = hasAutoPagination;
     }
 
+    public boolean isHasExpandIn() {
+        return hasExpandIn;
+    }
+
+    public void setHasExpandIn(boolean hasExpandIn) {
+        this.hasExpandIn = hasExpandIn;
+    }
+
+    public boolean isDuplicateColumnName() {
+        return duplicateColumnName;
+    }
+
+    public void setDuplicateColumnName(boolean duplicateColumnName) {
+        this.duplicateColumnName = duplicateColumnName;
+    }
+
     public boolean hasLocalIndexHint() {
         return localIndexHint;
     }
 
     public void setLocalIndexHint(boolean localIndexHint) {
         this.localIndexHint = localIndexHint;
+    }
+
+    public TtlQueryType getTtlQueryType() {
+        return ttlQueryType;
+    }
+
+    public void setTtlQueryType(TtlQueryType ttlQueryType) {
+        this.ttlQueryType = ttlQueryType;
     }
 }

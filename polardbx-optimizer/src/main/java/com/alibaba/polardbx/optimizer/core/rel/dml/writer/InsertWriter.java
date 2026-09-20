@@ -35,6 +35,10 @@ import com.alibaba.polardbx.optimizer.core.rel.PhyTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableOperationFactory;
 import com.alibaba.polardbx.optimizer.core.rel.ShardProcessor;
 import com.alibaba.polardbx.optimizer.core.rel.SingleTableInsert;
+import com.alibaba.polardbx.optimizer.core.rel.dml.DmlWriteContext;
+import com.alibaba.polardbx.optimizer.core.rel.dml.PhysicalRoute;
+import com.alibaba.polardbx.optimizer.core.rel.dml.RoutedInsertInput;
+import com.alibaba.polardbx.optimizer.core.rel.dml.RoutedModifyInput;
 import com.alibaba.polardbx.optimizer.core.rel.dml.Writer;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
 import com.alibaba.polardbx.optimizer.utils.PlannerUtils;
@@ -117,6 +121,7 @@ public class InsertWriter extends AbstractSingleWriter {
     public List<RelNode> getInput(ExecutionContext executionContext, boolean withoutSingleTableOptimize) {
         final LogicalDynamicValues input = RelUtils.getRelInput(insert);
         final Parameters paramRows = executionContext.getParams();
+        final DmlWriteContext writeContext = executionContext.getDmlWriteContext();
 
         final List<RelNode> result = new ArrayList<>();
         if (!withoutSingleTableOptimize && null != this.singleTableOperation && input.getTuples().size() == 1
@@ -131,6 +136,14 @@ public class InsertWriter extends AbstractSingleWriter {
 
             Map<Integer, ParameterContext> params =
                 executionContext.getParams() == null ? null : executionContext.getParams().getCurrentParameter();
+            if (writeContext != null) {
+                Pair<String, String> route = singleTableOperation.getPhyGroupAndPhyTablePair(params, executionContext);
+                Map<Integer, PhysicalRoute> routes = new java.util.HashMap<>();
+                routes.put(0, new PhysicalRoute(insert.getSchemaName(), route.getKey(), route.getValue()));
+                writeContext.beforeInsertPlans(this, new RoutedInsertInput(routes), executionContext);
+                params = executionContext.getParams() == null ? null
+                    : executionContext.getParams().getCurrentParameter();
+            }
             List<List<String>> phyTableNamesOutput = new ArrayList<>();
             Pair<String, Map<Integer, ParameterContext>> dbIndexAndParam =
                 this.singleTableOperation.getDbIndexAndParam(params, phyTableNamesOutput, executionContext);
@@ -173,6 +186,14 @@ public class InsertWriter extends AbstractSingleWriter {
                 insertPartitioner
                     .shardValues(insert.getInput(), insert.getLogicalTableName(), executionContext));
 
+            if (writeContext != null) {
+                final int rowCount = paramRows.isBatch()
+                    ? paramRows.getBatchParameters().size() : input.getTuples().size();
+                writeContext.beforeInsertPlans(this, new RoutedInsertInput(
+                        RoutedModifyInput.buildInsertRoutes(insert.getSchemaName(), shardResults, rowCount)),
+                    executionContext);
+            }
+
             final PhyTableInsertBuilder phyTableInsertbuilder =
                 new PhyTableInsertBuilder(insertPartitioner.getSqlTemplate(),
                     executionContext,
@@ -183,7 +204,7 @@ public class InsertWriter extends AbstractSingleWriter {
             result.addAll(phyTableInsertbuilder.build(shardResults));
         }
 
-        return result;
+        return writeContext == null ? result : writeContext.afterInsertPlans(this, result, executionContext);
     }
 
     @Override
@@ -202,6 +223,16 @@ public class InsertWriter extends AbstractSingleWriter {
 
     public List<RelNode> getInputByShardResults(ExecutionContext executionContext,
                                                 List<PhyTableInsertSharder.PhyTableShardResult> shardResults) {
+        final DmlWriteContext writeContext = executionContext.getDmlWriteContext();
+        if (writeContext != null) {
+            final LogicalDynamicValues input = RelUtils.getRelInput(insert);
+            final Parameters parameters = executionContext.getParams();
+            final int rowCount = parameters.isBatch()
+                ? parameters.getBatchParameters().size() : input.getTuples().size();
+            writeContext.beforeInsertPlans(this, new RoutedInsertInput(
+                    RoutedModifyInput.buildInsertRoutes(insert.getSchemaName(), shardResults, rowCount)),
+                executionContext);
+        }
         final PhyTableInsertSharder insertPartitioner = new PhyTableInsertSharder(insert,
             executionContext.getParams(),
             SequenceAttribute.getAutoValueOnZero(executionContext.getSqlMode()));
@@ -211,6 +242,7 @@ public class InsertWriter extends AbstractSingleWriter {
             insert.getDbType(),
             insert.getSchemaName());
         final List<RelNode> result = phyTableInsertbuilder.build(shardResults);
-        return result;
+        return writeContext == null ? result : writeContext.afterInsertPlans(this, result, executionContext);
     }
+
 }

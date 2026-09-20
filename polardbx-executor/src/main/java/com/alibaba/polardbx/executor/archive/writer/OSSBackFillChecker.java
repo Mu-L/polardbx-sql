@@ -63,7 +63,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 public class OSSBackFillChecker {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     private String sourceLogicalSchemaName;
     private String sourceLogicalTableName;

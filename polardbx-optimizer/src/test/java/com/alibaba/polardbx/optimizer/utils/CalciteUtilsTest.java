@@ -16,8 +16,16 @@
 
 package com.alibaba.polardbx.optimizer.utils;
 
+import com.alibaba.polardbx.optimizer.core.TddlRelDataTypeSystemImpl;
+import com.alibaba.polardbx.optimizer.core.TddlTypeFactoryImpl;
+import com.alibaba.polardbx.optimizer.core.datatype.DataType;
+import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
+import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.rel.type.RelDataTypeFactory;
+import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.commons.lang.StringUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -28,6 +36,22 @@ import java.util.ArrayList;
  * @author chenmo.cm
  */
 public class CalciteUtilsTest {
+
+    private static final RelDataTypeFactory FACTORY =
+        new TddlTypeFactoryImpl(TddlRelDataTypeSystemImpl.getInstance());
+
+    @Test
+    public void getUnifiedDataType_binaryJoinKeys_resolveToBinaryType() {
+        RelDataType leftBinary = FACTORY.createSqlType(SqlTypeName.BINARY, 16);
+        RelDataType rightBinary = FACTORY.createSqlType(SqlTypeName.BINARY, 16);
+        DataType unified = CalciteUtils.getUnifiedDataType(leftBinary, rightBinary);
+        Assert.assertTrue(DataTypeUtil.equalsSemantically(unified, DataTypes.BinaryType));
+
+        RelDataType leftVarbinary = FACTORY.createSqlType(SqlTypeName.VARBINARY, 32);
+        RelDataType rightVarbinary = FACTORY.createSqlType(SqlTypeName.VARBINARY, 32);
+        DataType unifiedVarbinary = CalciteUtils.getUnifiedDataType(leftVarbinary, rightVarbinary);
+        Assert.assertTrue(DataTypeUtil.equalsSemantically(unifiedVarbinary, DataTypes.BinaryType));
+    }
 
     @Test
     public void compressName() throws Exception {
@@ -69,7 +93,7 @@ public class CalciteUtilsTest {
                     "logic_table_0010")), null));
         Assert.assertEquals("logic_table_[0001,0002,0005,0007]",
             ExplainUtils.compressPhyTableString(ImmutableMap.of("logic_table",
-                ImmutableSet.of("logic_table_0001", "logic_table_0002", "logic_table_0005", "logic_table_0007")),
+                    ImmutableSet.of("logic_table_0001", "logic_table_0002", "logic_table_0005", "logic_table_0007")),
                 null));
         Assert.assertEquals("logic_table_[0001,0002,0005-0007,0009,0010]",
             ExplainUtils.compressPhyTableString(ImmutableMap.of("logic_table",

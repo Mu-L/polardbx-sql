@@ -27,8 +27,8 @@ public class UniformDistributionDataGenerator implements DataGenerator {
 
             data = randomInt.uniformDistribution(100_0000, 0);
 
-        } else if (StringUtils.containsIgnoreCase(fieldType, "char")) {
-
+        } else if (StringUtils.containsIgnoreCase(fieldType, "char") || StringUtils.containsIgnoreCase(fieldType,
+            "varchar") || StringUtils.containsIgnoreCase(fieldType, "text")) {
             data = String.valueOf(randomInt.uniformDistribution(100_0000, 0));
 
         } else if (StringUtils.containsIgnoreCase(fieldType, "double")) {
@@ -54,11 +54,11 @@ public class UniformDistributionDataGenerator implements DataGenerator {
             data = Timestamp.valueOf(
                 TimeStampGenerator.millisToZonedDateTime(timeStampGenerator.generateTs(1000 * 6000),
                     ZoneId.systemDefault()).toLocalDateTime());
-        } else if(StringUtils.containsIgnoreCase(fieldType, "year")) {
+        } else if (StringUtils.containsIgnoreCase(fieldType, "year")) {
             data = randomInt.uniformDistribution(50, 50);
-        } else if(StringUtils.containsIgnoreCase(fieldType, "binary")) {
+        } else if (StringUtils.containsIgnoreCase(fieldType, "binary")) {
             data = String.valueOf(randomInt.uniformDistribution(100_0000, 0));
-        } else{
+        } else {
             throw new RuntimeException("not supported");
         }
 

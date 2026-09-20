@@ -44,7 +44,7 @@ public class ColumnarConfigHandler {
 
             .put(ColumnarOptions.TYPE, new ColumnarOption(
                 ColumnarOptions.TYPE, "default",
-                "Columnar index type, choices: default, snapshot.",
+                "Columnar index type, choices: default, snapshot, archive.",
                 ColumnarConfigHandler::setIndexType,
                 null,
                 ColumnarConfigHandler::validateType,
@@ -87,6 +87,108 @@ public class ColumnarConfigHandler {
                 ColumnarOption.CaseSensitive.LOWERCASE_KEY
             ))
 
+            .put(ColumnarOptions.COLUMNAR_IGNORE, new ColumnarOption(
+                ColumnarOptions.COLUMNAR_IGNORE, "false",
+                "Whether ignore columnar index.",
+                null,
+                ColumnarConfigHandler::setColumnarConfig,
+                ColumnarConfigHandler::validateBoolean,
+                ColumnarOption.CaseSensitive.LOWERCASE_KEY
+            ))
+
+            .put(ColumnarOptions.ENABLE_COLUMNAR_CDC_CLIENT, new ColumnarOption(
+                ColumnarOptions.ENABLE_COLUMNAR_CDC_CLIENT, "false",
+                "Whether enable columnar cdc client.",
+                null,
+                ColumnarConfigHandler::setColumnarConfig,
+                ColumnarConfigHandler::validateBoolean,
+                ColumnarOption.CaseSensitive.LOWERCASE_KEY_LOWERCASE_VALUE
+            ))
+
+            .put(ColumnarOptions.COLUMNAR_CDC_CLIENT_PARALLELISM, new ColumnarOption(
+                ColumnarOptions.COLUMNAR_CDC_CLIENT_PARALLELISM, "1",
+                "Columnar cdc client parallelism, default: 1.",
+                null,
+                ColumnarConfigHandler::setColumnarConfig,
+                (param -> {
+                    if (Integer.parseInt(param.value) <= 0) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, "Value should > 0");
+                    }
+                }),
+                ColumnarOption.CaseSensitive.LOWERCASE_KEY
+            ))
+
+            .put(ColumnarOptions.COLUMNAR_CDC_CLIENT_RING_BUFFER_SIZE, new ColumnarOption(
+                ColumnarOptions.COLUMNAR_CDC_CLIENT_RING_BUFFER_SIZE, "1",
+                "Columnar cdc client ring buffer size.",
+                null,
+                ColumnarConfigHandler::setColumnarConfig,
+                (param -> {
+                    long value = Long.parseLong(param.value);
+                    if (value <= 0 || (value & (value - 1)) != 0) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, "Value be power of 2");
+                    }
+                }),
+                ColumnarOption.CaseSensitive.LOWERCASE_KEY
+            ))
+
+            .put(ColumnarOptions.CDC_BINLOG_DOWNLOAD_PARALLELISM_PER_FILE, new ColumnarOption(
+                ColumnarOptions.CDC_BINLOG_DOWNLOAD_PARALLELISM_PER_FILE, "5",
+                "Parallelism for oss downloading a single binlog file.",
+                null,
+                ColumnarConfigHandler::setColumnarConfig,
+                (param -> {
+                    if (Integer.parseInt(param.value) <= 0) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, "Value should > 0");
+                    }
+                }),
+                ColumnarOption.CaseSensitive.LOWERCASE_KEY
+            ))
+
+            .put(ColumnarOptions.CDC_BINLOG_DOWNLOAD_PART_SIZE, new ColumnarOption(
+                ColumnarOptions.CDC_BINLOG_DOWNLOAD_PART_SIZE, "10485760",
+                "Downloading size for one parallelism.",
+                null,
+                ColumnarConfigHandler::setColumnarConfig,
+                (param -> {
+                    if (Integer.parseInt(param.value) <= 0) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, "Value should > 0");
+                    }
+                }),
+                ColumnarOption.CaseSensitive.LOWERCASE_KEY
+            ))
+
+            .put(ColumnarOptions.CDC_BINLOG_DOWNLOAD_WINDOW_SIZE, new ColumnarOption(
+                ColumnarOptions.CDC_BINLOG_DOWNLOAD_WINDOW_SIZE, "3",
+                "Number of pre-downloaded binlog file.",
+                null,
+                ColumnarConfigHandler::setColumnarConfig,
+                (param -> {
+                    if (Integer.parseInt(param.value) <= 0) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, "Value should > 0");
+                    }
+                }),
+                ColumnarOption.CaseSensitive.LOWERCASE_KEY
+            ))
+
+            .put(ColumnarOptions.OPTIMIZE_CDC_CLIENT_FILTER, new ColumnarOption(
+                ColumnarOptions.OPTIMIZE_CDC_CLIENT_FILTER, "false",
+                "Enable better filter for cdc client, default: false.",
+                null,
+                ColumnarConfigHandler::setColumnarConfig,
+                ColumnarConfigHandler::validateBoolean,
+                ColumnarOption.CaseSensitive.LOWERCASE_KEY_LOWERCASE_VALUE
+            ))
+
+            .put(ColumnarOptions.ENABLE_OPTIMIZED_STREAMING, new ColumnarOption(
+                ColumnarOptions.ENABLE_OPTIMIZED_STREAMING, "false",
+                "Enable better streaming process, default: false.",
+                null,
+                ColumnarConfigHandler::setColumnarConfig,
+                ColumnarConfigHandler::validateBoolean,
+                ColumnarOption.CaseSensitive.LOWERCASE_KEY_LOWERCASE_VALUE
+            ))
+
             .build();
 
     private static void setParamAndUpdateMeta(ColumnarOption.Param param) {
@@ -110,7 +212,8 @@ public class ColumnarConfigHandler {
             try {
                 connection.setAutoCommit(false);
                 if (!param.value.equalsIgnoreCase(currentType)) {
-                    if (ColumnarConfig.DEFAULT.equalsIgnoreCase(currentType)) {
+                    if (ColumnarConfig.DEFAULT.equalsIgnoreCase(currentType)
+                        && ColumnarConfig.SNAPSHOT.equalsIgnoreCase(param.value)) {
                         // default -> snapshot
                         Preconditions.checkArgument(ColumnarConfig.SNAPSHOT.equalsIgnoreCase(param.value));
                         // If SNAPSHOT_RETENTION_DAYS not set, set a default one.
@@ -149,7 +252,8 @@ public class ColumnarConfigHandler {
                         accessor.setConnection(connection);
                         accessor.updateTypeByTableId(param.tableId, ColumnarConfig.SNAPSHOT);
                         accessor.UpdateExtraByTableId(param.tableId, null);
-                    } else {
+                    } else if (ColumnarConfig.SNAPSHOT.equalsIgnoreCase(currentType)
+                        && ColumnarConfig.DEFAULT.equalsIgnoreCase(param.value)) {
                         // snapshot -> default
                         Preconditions.checkArgument(ColumnarConfig.SNAPSHOT.equalsIgnoreCase(currentType));
                         Preconditions.checkArgument(ColumnarConfig.DEFAULT.equalsIgnoreCase(param.value));
@@ -168,6 +272,30 @@ public class ColumnarConfigHandler {
                         ColumnarTableMappingAccessor accessor = new ColumnarTableMappingAccessor();
                         accessor.setConnection(connection);
                         accessor.updateTypeByTableId(param.tableId, null);
+                    } else if (ColumnarConfig.DEFAULT.equalsIgnoreCase(currentType)
+                        && ColumnarConfig.ARCHIVE.equalsIgnoreCase(param.value)) {
+                        // default -> archive
+                        // Force backup.
+                        {
+                            ColumnarOption.Param tmpParam = param.shallowCopy();
+                            tmpParam.key = ColumnarOptions.COLUMNAR_BACKUP_ENABLE;
+                            tmpParam.value = "true";
+                            tmpParam.caseSensitive = ColumnarOption.CaseSensitive.LOWERCASE_KEY;
+                            setColumnarConfig(tmpParam, connection);
+                        }
+                        ColumnarTableMappingAccessor accessor = new ColumnarTableMappingAccessor();
+                        accessor.setConnection(connection);
+                        accessor.updateTypeByTableId(param.tableId, ColumnarConfig.ARCHIVE);
+                    } else if (ColumnarConfig.ARCHIVE.equalsIgnoreCase(currentType)
+                        && ColumnarConfig.DEFAULT.equalsIgnoreCase(param.value)) {
+                        // archive -> default
+                        ColumnarTableMappingAccessor accessor = new ColumnarTableMappingAccessor();
+                        accessor.setConnection(connection);
+                        accessor.updateTypeByTableId(param.tableId, null);
+                    } else {
+                        // todo: 目前禁止 ARCHIVE 与 SNAPSHOT 类型之间的转换
+                        throw new TddlRuntimeException(ErrorCode.ERR_CONFIG,
+                            "Can not change columnar type from " + currentType + " to " + param.value);
                     }
                     setColumnarConfig(param, connection);
                     connection.commit();
@@ -185,9 +313,10 @@ public class ColumnarConfigHandler {
     }
 
     private static void validateType(ColumnarOption.Param param) {
-        if (!isOneOfString(param.value, ColumnarConfig.DEFAULT, ColumnarConfig.SNAPSHOT)) {
+        if (!isOneOfString(param.value, ColumnarConfig.DEFAULT, ColumnarConfig.SNAPSHOT, ColumnarConfig.ARCHIVE)) {
             throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, "Invalid type " + param.value
-                + ", choices: " + ColumnarConfig.DEFAULT + ", " + ColumnarConfig.SNAPSHOT);
+                + ", choices: " + ColumnarConfig.DEFAULT + ", " + ColumnarConfig.SNAPSHOT + ", "
+                + ColumnarConfig.ARCHIVE);
         }
         param.value = param.value.toUpperCase();
     }

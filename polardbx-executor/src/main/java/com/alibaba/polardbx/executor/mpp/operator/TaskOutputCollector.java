@@ -16,6 +16,9 @@
 
 package com.alibaba.polardbx.executor.mpp.operator;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.ChunkConverter;
 import com.alibaba.polardbx.executor.chunk.Converters;
@@ -26,18 +29,29 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.google.common.collect.Lists;
 import com.google.common.util.concurrent.ListenableFuture;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.List;
 
 import static java.util.Objects.requireNonNull;
 
 public class TaskOutputCollector extends OutputCollector {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(TaskOutputCollector.class).instanceSize();
 
     private final OutputBuffer outputBuffer;
+
+    @FieldMemoryCounter(value = false)
     private final PagesSerde serde;
+    @FieldMemoryCounter(value = false)
     private ListenableFuture<?> blocked = NOT_BLOCKED;
     private boolean finished;
+    @FieldMemoryCounter(value = false)
     private ChunkConverter chunkConverter;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(outputBuffer);
+    }
 
     public TaskOutputCollector(
         List<DataType> inputType,
@@ -77,11 +91,17 @@ public class TaskOutputCollector extends OutputCollector {
         if (page.getPositionCount() == 0) {
             return;
         }
-        ClientBuffer buffer = outputBuffer.getClientBuffer(0);
-        ListenableFuture<?> future = outputBuffer.enqueue(Lists.newArrayList(
-            serde.serialize(buffer != null && buffer.isPreferLocal(), chunkConverter.apply(page))));
-        if (!future.isDone()) {
-            this.blocked = future;
+
+        try {
+            MemoryTrackerManager.setCurrentMemoryOwner(consumerMemoryOwnerId);
+            ClientBuffer buffer = outputBuffer.getClientBuffer(0);
+            ListenableFuture<?> future = outputBuffer.enqueue(Lists.newArrayList(
+                serde.serialize(buffer != null && buffer.isPreferLocal(), chunkConverter.apply(page))));
+            if (!future.isDone()) {
+                this.blocked = future;
+            }
+        } finally {
+            MemoryTrackerManager.removeCurrentMemoryOwner();
         }
     }
 

@@ -1,7 +1,11 @@
 package com.alibaba.polardbx.executor.ddl.job.task.ttl.log;
 
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.TtlJobContext;
+import com.alibaba.polardbx.executor.ddl.job.task.ttl.TtlIntraTaskRunner;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
+
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * @author chenghui.lch
@@ -30,6 +34,32 @@ public class CleanupExpiredDataLogInfo extends BaseTtlTaskLogInfo {
     public long arcTmpTblDataLengthLimit = 0;
 
     public long waitCleanupTaskRunningLoopRound = 0;
+
+    /**
+     * Only used in batch-resubmit schedule mode.
+     * Tracks how many partitions are still being processed (including those resubmitted to the thread pool).
+     * null means the original partition-hold-thread mode is active.
+     */
+    public volatile AtomicInteger batchResubmitPendingPartCount = null;
+
+    /**
+     * Scheduling mode label written at task start; printed in every log line so it is easy
+     * to tell which code path is active without checking config.
+     * Values: "batch-resubmit" | "partition-hold-thread"
+     */
+    public String scheduleMode = "partition-hold-thread";
+
+    /**
+     * Max concurrent workers allowed per DN in batch-resubmit mode (0 means not applicable).
+     */
+    public int batchResubmitMaxWorkerPerDn = 0;
+
+    /**
+     * Snapshot of all partition task runners submitted in batch-resubmit mode.
+     * Used by the monitor to print per-partition batch-round progress without any extra counters.
+     * null in partition-hold-thread mode.
+     */
+    public volatile List<TtlIntraTaskRunner> batchResubmitTaskRunners = null;
 
     public long deleteAvgRt = 0;
     public long deleteRowsSpeed = 0;
@@ -73,6 +103,16 @@ public class CleanupExpiredDataLogInfo extends BaseTtlTaskLogInfo {
                 logInfo.needPerformArchiving,
                 logInfo.arcTmpTblSchema,
                 logInfo.arcTmpTblName);
+
+            logMsg += msgPrefix;
+            logMsg += String.format("invalidArcCciInfo: %s\n", logInfo.invalidArcCciInfo);
+
+            logMsg += msgPrefix;
+            logMsg += String.format("scheduleMode: %s, maxWorkerPerDn: %s, pendingParts: %s\n",
+                logInfo.scheduleMode,
+                logInfo.batchResubmitMaxWorkerPerDn > 0 ? logInfo.batchResubmitMaxWorkerPerDn : "n/a",
+                logInfo.batchResubmitPendingPartCount != null
+                    ? logInfo.batchResubmitPendingPartCount.get() : "n/a");
 
             logMsg += msgPrefix;
             logMsg += String.format("allTaskFinished: %s, interrupted: %s, loopRound: %s\n",

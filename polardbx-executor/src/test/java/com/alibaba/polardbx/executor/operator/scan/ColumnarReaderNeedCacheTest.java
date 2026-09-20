@@ -12,6 +12,7 @@ import com.alibaba.polardbx.executor.operator.scan.impl.NonBlockedScanPreProcess
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
+import com.alibaba.polardbx.optimizer.statis.OperatorStatistics;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.calcite.rex.RexNode;
@@ -56,6 +57,12 @@ public class ColumnarReaderNeedCacheTest extends ScanTestBase {
     @Before
     public void prepare() throws IOException {
         context = new ExecutionContext();
+        Map map = new HashMap();
+        map.put(ConnectionParams.ENABLE_REUSE_VECTOR.getName(), true);
+        map.put(ConnectionParams.CHUNK_SIZE.getName(), 1000);
+        map.put(ConnectionParams.SCAN_POLICY.getName(), 2);
+        ParamManager paramManager = new ParamManager(map);
+        context.setParamManager(paramManager);
         context.setTraceId(TRACE_ID);
 
         // Cached ranges
@@ -91,6 +98,9 @@ public class ColumnarReaderNeedCacheTest extends ScanTestBase {
         // open ONLY_CACHE_PRIMARY_KEY_IN_BLOCK_CACHE
         Map connectionMap = new HashMap();
         connectionMap.put(ConnectionParams.ONLY_CACHE_PRIMARY_KEY_IN_BLOCK_CACHE.getName(), true);
+
+        connectionMap.put(ConnectionParams.SCAN_POLICY.getName(), 2);
+
         context.setParamManager(new ParamManager(connectionMap));
 
         doTest();
@@ -128,6 +138,7 @@ public class ColumnarReaderNeedCacheTest extends ScanTestBase {
         // close ONLY_CACHE_PRIMARY_KEY_IN_BLOCK_CACHE
         Map connectionMap = new HashMap();
         connectionMap.put(ConnectionParams.ONLY_CACHE_PRIMARY_KEY_IN_BLOCK_CACHE.getName(), false);
+        connectionMap.put(ConnectionParams.SCAN_POLICY.getName(), 2);
         context.setParamManager(new ParamManager(connectionMap));
 
         doTest();
@@ -187,6 +198,7 @@ public class ColumnarReaderNeedCacheTest extends ScanTestBase {
             .tso(0L)
             .columnarManager(mockColumnarManager)
             .memoryAllocator(memoryAllocatorCtx)
+            .operatorStatistic(new OperatorStatistics())
             .build();
 
         ScanWork<ColumnarSplit, Chunk> scanWork;
@@ -199,7 +211,7 @@ public class ColumnarReaderNeedCacheTest extends ScanTestBase {
 
             // get status
             IOStatus<Chunk> ioStatus = scanWork.getIOStatus();
-            scanWork.invoke(SCAN_WORK_EXECUTOR);
+            scanWork.invoke(SCAN_WORK_EXECUTOR, null);
 
             // Get chunks according to state.
             boolean isCompleted = false;

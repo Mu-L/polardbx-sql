@@ -28,7 +28,7 @@ import java.util.stream.Collectors;
  * @since 2022/08
  */
 public class TestBalanceSolver {
-    public static Logger logger =  LoggerFactory.getLogger(TestBalanceSolver.class);
+    public static Logger logger = LoggerFactory.getLogger(TestBalanceSolver.class);
 
     public static void testMixedSolver(int M, int N, int[] originalPlace, double[] weight, double moveRate,
                                        double overRate) {
@@ -70,24 +70,30 @@ public class TestBalanceSolver {
         Assert.assertTrue(actualOverRate < overRate);
     }
 
-    public static DataDistInfo.DnInfo mockDnInfo(int i){
+    public static DataDistInfo.DnInfo mockDnInfo(int i) {
         return new DataDistInfo.DnInfo("dn" + i, "group_" + i);
     }
 
-    public static DataDistInfo.TgDataDistInfo mockTgDataDistInfo(int N, int[] originalPlace, double[] weight, int[] targetPlace) {
+    public static DataDistInfo.TgDataDistInfo mockTgDataDistInfo(int N, int[] originalPlace, double[] weight,
+                                                                 int[] targetPlace) {
         String tgName = "mock_tg";
         String tableName = "mock_table";
         List<DataDistInfo.PgDataDistInfo> pgDataDistInfos = Lists.newArrayList();
         for (int i = 0; i < N; i++) {
             String pgName = "pg" + i;
-            pgDataDistInfos.add(new DataDistInfo.PgDataDistInfo(tgName, pgName, (long) weight[i], (long)weight[i], originalPlace[i], targetPlace[i], ""));
+            pgDataDistInfos.add(
+                new DataDistInfo.PgDataDistInfo(tgName, pgName, (long) weight[i], (long) weight[i], originalPlace[i],
+                    targetPlace[i], ""));
         }
-        DataDistInfo.TgDataDistInfo tgDataDistInfo = new DataDistInfo.TgDataDistInfo(tgName, pgDataDistInfos, Lists.newArrayList(tableName));
+        DataDistInfo.TgDataDistInfo tgDataDistInfo =
+            new DataDistInfo.TgDataDistInfo(tgName, pgDataDistInfos, Lists.newArrayList(tableName));
         return tgDataDistInfo;
     }
-    public static String visualizeCase(int M, int N, int[] originalPlace, double[] weight, int[] targetPlace){
+
+    public static String visualizeCase(int M, int N, int[] originalPlace, double[] weight, int[] targetPlace) {
         String schemaName = "mock_db";
-        List<DataDistInfo.DnInfo> dnInfoList = new IntRange(0, M - 1).stream().map(o->mockDnInfo(o)).collect(Collectors.toList());
+        List<DataDistInfo.DnInfo> dnInfoList =
+            new IntRange(0, M - 1).stream().map(o -> mockDnInfo(o)).collect(Collectors.toList());
         DataDistInfo.TgDataDistInfo tgDataDistInfo = mockTgDataDistInfo(N, originalPlace, weight, targetPlace);
         DataDistInfo dataDistInfo = new DataDistInfo(schemaName, dnInfoList, Lists.newArrayList(tgDataDistInfo));
         String result = JSON.toJSONString(dataDistInfo);
@@ -284,7 +290,6 @@ public class TestBalanceSolver {
         }
     }
 
-
     @Test
     public void testSequentialSolver() {
         int N = 16;
@@ -474,9 +479,6 @@ public class TestBalanceSolver {
         testSolverFromFile(sampleName, "mixed");
     }
 
-
-
-
     @Test
     public void testMixedSolverDrainNode256_16() throws FileNotFoundException {
         String sampleName = "rebalance_256_16_mixedDrainNode";
@@ -535,5 +537,169 @@ public class TestBalanceSolver {
     public void testMixedSolver8192_16() throws FileNotFoundException {
         String sampleName = "rebalance_8192_16_mixed";
         testSolverFromFile(sampleName, "mixed");
+    }
+
+    // --- DrainOnly solver tests ---
+
+    /**
+     * Helper: verify DrainOnly solver guarantees:
+     * 1. No partitions remain on drain nodes
+     * 2. Only drain-node partitions are moved (non-drain partitions stay in place)
+     * 3. Solution is valid
+     */
+    public static void testDrainOnlySolver(int M, int N, int[] originalPlace, double[] weight,
+                                           int[] drainIndexes) {
+        Solution solution = MixedModel.solveMovePartitionDrainOnly(M, N, originalPlace, weight, drainIndexes);
+        Assert.assertTrue(solution.withValidSolve);
+        Assert.assertEquals("DrainOnly", solution.strategy);
+
+        int[] targetPlace = solution.targetPlace;
+        Set<Integer> drainIndexSet = Arrays.stream(drainIndexes).boxed().collect(Collectors.toSet());
+
+        for (int i = 0; i < N; i++) {
+            // No partition should remain on a drain node
+            Assert.assertFalse("Partition " + i + " still on drain node " + targetPlace[i],
+                drainIndexSet.contains(targetPlace[i]));
+
+            // Non-drain-node partitions must NOT be moved
+            if (!drainIndexSet.contains(originalPlace[i])) {
+                Assert.assertEquals("Non-drain partition " + i + " was moved unexpectedly",
+                    originalPlace[i], targetPlace[i]);
+            }
+        }
+    }
+
+    @Test
+    public void testDrainOnlySolver_basic() {
+        // 4 nodes, 12 partitions, drain node 3
+        int M = 4, N = 12;
+        int[] originalPlace = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3};
+        double[] weight = {100, 200, 300, 100, 200, 300, 100, 200, 300, 50, 100, 150};
+        int[] drainIndexes = {3};
+        testDrainOnlySolver(M, N, originalPlace, weight, drainIndexes);
+    }
+
+    @Test
+    public void testDrainOnlySolver_multiDrain() {
+        // 4 nodes, 12 partitions, drain nodes 2 and 3
+        int M = 4, N = 12;
+        int[] originalPlace = {0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3};
+        double[] weight = {100, 200, 300, 100, 200, 300, 100, 200, 300, 50, 100, 150};
+        int[] drainIndexes = {2, 3};
+        testDrainOnlySolver(M, N, originalPlace, weight, drainIndexes);
+    }
+
+    @Test
+    public void testDrainOnlySolver_noDrainPartitions() {
+        // Drain node has 0 partitions — should be a no-op
+        int M = 4, N = 9;
+        int[] originalPlace = {0, 0, 0, 1, 1, 1, 2, 2, 2};
+        double[] weight = {100, 200, 300, 100, 200, 300, 100, 200, 300};
+        int[] drainIndexes = {3};
+        Solution solution = MixedModel.solveMovePartitionDrainOnly(M, N, originalPlace, weight, drainIndexes);
+        Assert.assertTrue(solution.withValidSolve);
+        Assert.assertArrayEquals(originalPlace, solution.targetPlace);
+    }
+
+    @Test
+    public void testDrainOnlySolver_allOnDrain() {
+        // All partitions on drain node
+        int M = 3, N = 6;
+        int[] originalPlace = {2, 2, 2, 2, 2, 2};
+        double[] weight = {100, 200, 300, 400, 500, 600};
+        int[] drainIndexes = {2};
+        testDrainOnlySolver(M, N, originalPlace, weight, drainIndexes);
+    }
+
+    @Test
+    public void testDrainOnlySolver_singleRemaining() {
+        // Only 1 non-drain node remaining
+        int M = 3, N = 6;
+        int[] originalPlace = {0, 0, 1, 1, 2, 2};
+        double[] weight = {100, 200, 100, 200, 100, 200};
+        int[] drainIndexes = {1, 2};
+        testDrainOnlySolver(M, N, originalPlace, weight, drainIndexes);
+        // All drain partitions must go to node 0
+        Solution solution = MixedModel.solveMovePartitionDrainOnly(M, N, originalPlace, weight, drainIndexes);
+        for (int i = 0; i < N; i++) {
+            Assert.assertEquals(0, solution.targetPlace[i]);
+        }
+    }
+
+    /**
+     * Compare DRAIN_ONLY vs default solver: DRAIN_ONLY should move strictly less data.
+     * Simulates the user's real scenario: DN1=1000GB, DN2=500GB, DN3=700GB, DN4=200GB, drain DN4.
+     * Default solver may also move data between DN1/DN2/DN3 for global balance,
+     * but DRAIN_ONLY should only move DN4's data.
+     */
+    @Test
+    public void testDrainOnlyVsDefaultMoveCost() {
+        // 4 nodes, imbalanced data distribution, drain node 3 (least loaded)
+        int M = 4, N = 24;
+        // DN0: 10 partitions (~1000), DN1: 5 partitions (~500), DN2: 7 partitions (~700), DN3: 2 partitions (~200)
+        int[] originalPlace = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 3};
+        double[] weight = {
+            100, 100, 100, 100, 100, 100, 100, 100, 100, 100,
+            100, 100, 100, 100, 100,
+            100, 100, 100, 100, 100, 100, 100,
+            100, 100};
+        int[] drainIndexes = {3};
+
+        // DRAIN_ONLY
+        Solution drainOnlySolution = MixedModel.solveMovePartitionDrainOnly(M, N, originalPlace, weight, drainIndexes);
+        Assert.assertTrue(drainOnlySolution.withValidSolve);
+
+        // Default solver
+        Solution defaultSolution = MixedModel.solveMovePartition(M, N, originalPlace, weight, drainIndexes);
+        Assert.assertTrue(defaultSolution.withValidSolve);
+
+        // Count moves for each
+        int drainOnlyMoves = 0;
+        double drainOnlyMoveCost = 0;
+        int defaultMoves = 0;
+        double defaultMoveCost = 0;
+        for (int i = 0; i < N; i++) {
+            if (drainOnlySolution.targetPlace[i] != originalPlace[i]) {
+                drainOnlyMoves++;
+                drainOnlyMoveCost += weight[i];
+            }
+            if (defaultSolution.targetPlace[i] != originalPlace[i]) {
+                defaultMoves++;
+                defaultMoveCost += weight[i];
+            }
+        }
+
+        // DRAIN_ONLY should move exactly the drain node's partitions (2 partitions)
+        Assert.assertEquals("DRAIN_ONLY should only move drain node partitions", 2, drainOnlyMoves);
+        // Default solver may move more partitions for global balance
+        Assert.assertTrue("DRAIN_ONLY should move <= default",
+            drainOnlyMoveCost <= defaultMoveCost);
+    }
+
+    /**
+     * Test DRAIN_ONLY with a realistic AUTO-mode scenario:
+     * multiple tablegroups each solved independently.
+     * Verify each tablegroup's drain partitions go to least-loaded remaining node.
+     */
+    @Test
+    public void testDrainOnlySolver_multiTablegroup() {
+        // Simulate 2 tablegroups on 4 nodes, drain node 0
+        int M = 4;
+        int[] drainIndexes = {0};
+
+        // Tablegroup 1: 8 partitions
+        {
+            int N = 8;
+            int[] originalPlace = {0, 0, 1, 1, 2, 2, 3, 3};
+            double[] weight = {300, 200, 100, 100, 100, 100, 100, 100};
+            testDrainOnlySolver(M, N, originalPlace, weight, drainIndexes);
+        }
+        // Tablegroup 2: 4 partitions
+        {
+            int N = 4;
+            int[] originalPlace = {0, 1, 2, 3};
+            double[] weight = {500, 100, 100, 100};
+            testDrainOnlySolver(M, N, originalPlace, weight, drainIndexes);
+        }
     }
 }

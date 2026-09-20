@@ -58,12 +58,15 @@ public class LiteralVectorizedExpression extends AbstractVectorizedExpression im
         RandomAccessBlock outputSlot = chunk.slotIn(outputIndex);
         int batchSize = chunk.batchSize();
 
-        // lazy allocation
-        if (outputSlot == null || ((Block) outputSlot).getPositionCount() == 0) {
-            int positionCount = batchSize;
-            if (chunk.isSelectionInUse()) {
-                positionCount = Math.max(positionCount, chunk.selection().length);
-            }
+        // lazy allocation: also re-allocate when the reused slot is too small
+        // for the current batch, otherwise selection[i] may overrun the underlying
+        // primitive array when this chunk is reused across batches of growing size
+        // (see Aone #72390158).
+        int positionCount = batchSize;
+        if (chunk.isSelectionInUse()) {
+            positionCount = Math.max(positionCount, chunk.selection().length);
+        }
+        if (outputSlot == null || ((Block) outputSlot).getPositionCount() < positionCount) {
             outputSlot = BlockUtils.createBlock(outputDataType, positionCount);
             outputSlot.resize(positionCount);
             chunk.setSlotAt(outputSlot, outputIndex);

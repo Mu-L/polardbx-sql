@@ -71,7 +71,7 @@ public class LogicalShowGlobalDeadlocksHandler extends HandlerCommon {
             }
         } else {
             // Otherwise, get deadlock information from leader
-            results = SyncManagerHelper.sync(new FetchDeadlockInfoSyncAction(schemaName), schemaName,
+            results = SyncManagerHelper.syncIgnoreExceptions(new FetchDeadlockInfoSyncAction(schemaName), schemaName,
                 SyncScope.MASTER_ONLY);
         }
 

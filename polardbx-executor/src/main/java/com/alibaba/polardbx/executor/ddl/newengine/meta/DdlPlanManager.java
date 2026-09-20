@@ -18,6 +18,7 @@ package com.alibaba.polardbx.executor.ddl.newengine.meta;
 
 import com.alibaba.polardbx.common.ddl.newengine.DdlPlanState;
 import com.alibaba.polardbx.common.ddl.newengine.DdlType;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.ddl.job.task.CostEstimableDdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
 import com.alibaba.polardbx.executor.ddl.newengine.utils.TaskHelper;

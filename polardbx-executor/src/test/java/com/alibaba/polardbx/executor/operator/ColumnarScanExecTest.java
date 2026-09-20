@@ -3,15 +3,19 @@ package com.alibaba.polardbx.executor.operator;
 import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ParamManager;
+import com.alibaba.polardbx.executor.gms.DynamicColumnarManager;
 import com.alibaba.polardbx.executor.mpp.split.OssSplit;
-import com.alibaba.polardbx.optimizer.config.table.TableMeta;
-import com.alibaba.polardbx.optimizer.context.ExecutionContext;
-import com.alibaba.polardbx.executor.gms.ColumnarManager;
+import com.alibaba.polardbx.executor.operator.scan.ColumnarMemoryPermitManager;
+import com.alibaba.polardbx.executor.operator.scan.impl.ColumnarMemoryPermitManagerImpl;
 import com.alibaba.polardbx.executor.operator.scan.impl.DefaultScanPreProcessor;
 import com.alibaba.polardbx.executor.operator.scan.impl.FlashbackScanPreProcessor;
+import com.alibaba.polardbx.executor.operator.scan.impl.SpecifiedDeleteBitmapPreProcessor;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
 import com.alibaba.polardbx.optimizer.core.rel.OrcTableScan;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
+import com.google.common.util.concurrent.SettableFuture;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.junit.Before;
@@ -20,10 +24,14 @@ import org.junit.Test;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.concurrent.ExecutorService;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class ColumnarScanExecTest {
 
@@ -32,7 +40,7 @@ public class ColumnarScanExecTest {
     private TableMeta tableMeta;
     private FileSystem fileSystem;
     private Configuration configuration;
-    private ColumnarManager columnarManager;
+    private DynamicColumnarManager columnarManager;
     private OSSTableScan ossTableScan;
 
     @Before
@@ -42,7 +50,7 @@ public class ColumnarScanExecTest {
         tableMeta = mock(TableMeta.class);
         fileSystem = mock(FileSystem.class);
         configuration = new Configuration();
-        columnarManager = mock(ColumnarManager.class);
+        columnarManager = mock(DynamicColumnarManager.class);
 
         MemoryPool mockMemoryPool = mock(MemoryPool.class);
         when(mockMemoryPool.getOrCreatePool(anyString(), any())).thenReturn(mockMemoryPool);
@@ -63,13 +71,22 @@ public class ColumnarScanExecTest {
         ossTableScan = mock(OSSTableScan.class);
         when(ossTableScan.getOrcNode()).thenReturn(mock(OrcTableScan.class));
         when(ossTableScan.isFlashbackQuery()).thenReturn(true);
+
+        // create limited executor service for scan work.
+        String groupName = "MOCK_GROUP_NAME";
+        ExecutorService scanExecutor = ColumnarScanExec.SCAN_EXECUTOR.acquireGroup(groupName, 32);
+        ColumnarMemoryPermitManager columnarMemoryPermitManager =
+            new ColumnarMemoryPermitManagerImpl(Integer.MAX_VALUE);
+
         // Initialize ColumnarScanExec
-        columnarScanExec = new ColumnarScanExec(ossTableScan, context, new ArrayList<>());
+        columnarScanExec = new ColumnarScanExec(ossTableScan, context, new ArrayList<>(),
+            scanExecutor, columnarMemoryPermitManager);
 
         // Setup common mock behavior
         when(ossSplit.getDeltaReadOption()).thenReturn(null);
         when(ossSplit.getCheckpointTso()).thenReturn(1L);
-        when(tableMeta.getColumnarFieldIdList()).thenReturn(new ArrayList<>());
+        when(tableMeta.getColumnarFieldIdList(1L)).thenReturn(new ArrayList<>());
+        when(tableMeta.getColumnarSortKeys(1L)).thenReturn(new ArrayList<>());
     }
 
     @Test
@@ -83,7 +100,8 @@ public class ColumnarScanExecTest {
 
         // Execute
         DefaultScanPreProcessor preProcessor = columnarScanExec.getPreProcessor(
-            ossSplit, "testSchema", "testTable", tableMeta, fileSystem, configuration, columnarManager
+            ossSplit, "testSchema", "testTable", tableMeta, fileSystem, configuration, columnarManager,
+            SettableFuture.create()
         );
 
         // Verify
@@ -114,12 +132,19 @@ public class ColumnarScanExecTest {
         when(parameters.getCurrentParameter()).thenReturn(new HashMap<>());
         when(ossTableScan.isFlashbackQuery()).thenReturn(false);
 
+        // create limited executor service for scan work.
+        String groupName = "MOCK_GROUP_NAME";
+        ExecutorService scanExecutor = ColumnarScanExec.SCAN_EXECUTOR.acquireGroup(groupName, 32);
+        ColumnarMemoryPermitManager columnarMemoryPermitManager =
+            new ColumnarMemoryPermitManagerImpl(Integer.MAX_VALUE);
+
         ColumnarScanExec columnarScanExecWithParams =
-            new ColumnarScanExec(ossTableScan, context, new ArrayList<>());
+            new ColumnarScanExec(ossTableScan, context, new ArrayList<>(), scanExecutor, columnarMemoryPermitManager);
 
         // Execute
         DefaultScanPreProcessor preProcessor = columnarScanExecWithParams.getPreProcessor(
-            ossSplit, "testSchema", "testTable", tableMeta, fileSystem, configuration, columnarManager
+            ossSplit, "testSchema", "testTable", tableMeta, fileSystem, configuration, columnarManager,
+            SettableFuture.create()
         );
 
         // Verify
@@ -138,10 +163,36 @@ public class ColumnarScanExecTest {
 
         // Execute
         DefaultScanPreProcessor preProcessor = columnarScanExec.getPreProcessor(
-            ossSplit, "testSchema", "testTable", tableMeta, fileSystem, configuration, columnarManager
+            ossSplit, "testSchema", "testTable", tableMeta, fileSystem, configuration, columnarManager,
+            SettableFuture.create()
         );
 
         // Verify
         assertFalse(preProcessor instanceof FlashbackScanPreProcessor);
+    }
+
+    @Test
+    public void testColumnarSpecifiedScanExec() {
+        MemoryPool mockMemoryPool = mock(MemoryPool.class);
+        when(mockMemoryPool.getOrCreatePool(anyString(), any())).thenReturn(mockMemoryPool);
+
+        // Create an ExecutionContext with a mocked ParamManager
+        ExecutionContext context = mock(ExecutionContext.class);
+        when(context.getMemoryPool()).thenReturn(mockMemoryPool);
+
+        ParamManager paramManager = mock(ParamManager.class);
+        Parameters parameters = mock(Parameters.class);
+        when(context.getParams()).thenReturn(parameters);
+        when(parameters.getCurrentParameter()).thenReturn(new HashMap<>());
+        when(context.getParamManager()).thenReturn(paramManager);
+
+        ColumnarSpecifiedScanExec scanExec = new ColumnarSpecifiedScanExec(ossTableScan, context, new ArrayList<>());
+
+        DefaultScanPreProcessor preProcessor = scanExec.getPreProcessor(
+            ossSplit, "testSchema", "testTable", tableMeta, fileSystem, configuration, columnarManager,
+            SettableFuture.create()
+        );
+
+        assertTrue(preProcessor instanceof SpecifiedDeleteBitmapPreProcessor);
     }
 }

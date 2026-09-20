@@ -27,6 +27,8 @@ import com.alibaba.polardbx.gms.config.InstConfigReceiver;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
 import com.alibaba.polardbx.gms.topology.InstConfigAccessor;
 import com.alibaba.polardbx.gms.topology.InstConfigRecord;
+import com.alibaba.polardbx.gms.topology.SubInstConfigAccessor;
+import com.alibaba.polardbx.gms.topology.SubInstConfigRecord;
 import com.alibaba.polardbx.gms.util.InstIdUtil;
 import org.apache.commons.lang.StringUtils;
 
@@ -175,6 +177,37 @@ public class MetaDbInstConfigManager extends AbstractLifecycle implements InstCo
             List<InstConfigRecord> instConfigs = instConfigAcc.getAllInstConfigsByInstId(instId);
             for (int i = 0; i < instConfigs.size(); i++) {
                 props.put(instConfigs.get(i).paramKey, instConfigs.get(i).paramVal);
+            }
+            // Load and merge sub-instance configuration if sub-instance ID exists
+            String subInstId = InstIdUtil.getSubInstId();
+            if (subInstId != null) {
+                Properties subInstProps = loadSubInstPropertiesFromMetaDbConn(conn, InstIdUtil.getInstId(), subInstId);
+                // Sub-instance configuration overrides instance configuration
+                props.putAll(subInstProps);
+            }
+        } catch (Throwable ex) {
+            throw GeneralUtil.nestedException(ex);
+        }
+        return props;
+    }
+
+    /**
+     * Load sub-instance configuration properties from MetaDB connection
+     *
+     * @param conn Database connection
+     * @param instId Instance ID
+     * @param subInstId Sub-instance ID
+     * @return Properties containing sub-instance configuration
+     */
+    private static Properties loadSubInstPropertiesFromMetaDbConn(Connection conn, String instId, String subInstId) {
+        Properties props = new Properties();
+        try {
+            SubInstConfigAccessor subInstConfigAcc = new SubInstConfigAccessor();
+            subInstConfigAcc.setConnection(conn);
+            List<SubInstConfigRecord> subInstConfigs =
+                subInstConfigAcc.getAllSubInstConfigsByInstIdAndSubInstId(instId, subInstId);
+            for (SubInstConfigRecord config : subInstConfigs) {
+                props.put(config.paramKey, config.paramVal);
             }
         } catch (Throwable ex) {
             throw GeneralUtil.nestedException(ex);

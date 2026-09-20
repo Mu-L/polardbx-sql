@@ -1,7 +1,9 @@
 package com.alibaba.polardbx.executor.operator.scan;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.orc.ORCMetaReader;
 import com.alibaba.polardbx.executor.operator.scan.impl.AsyncStripeLoader;
-import com.alibaba.polardbx.executor.operator.scan.impl.PreheatFileMeta;
+import com.alibaba.polardbx.common.orc.PreheatFileMeta;
 import com.alibaba.polardbx.executor.operator.scan.impl.StaticStripePlanner;
 import com.alibaba.polardbx.executor.operator.scan.metrics.ProfileAccumulatorType;
 import com.alibaba.polardbx.executor.operator.scan.metrics.ProfileUnit;
@@ -11,7 +13,8 @@ import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.memory.MemoryManager;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
 import com.alibaba.polardbx.optimizer.memory.MemoryPoolUtils;
-import com.alibaba.polardbx.optimizer.workload.WorkloadUtil;
+import com.alibaba.polardbx.optimizer.statis.OperatorStatistics;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadUtil;
 import com.google.common.collect.ImmutableList;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
@@ -240,9 +243,7 @@ public class StripeLoaderTest {
         runtimeMetrics.addDerivedCounter(LogicalRowGroup.BLOCK_MEMORY_COUNTER,
             null, ProfileUnit.BYTES, ProfileAccumulatorType.SUM);
 
-        OrcProto.ColumnEncoding[] encodings = StaticStripePlanner.buildEncodings(
-            encryption, columnIncluded, preheatFileMeta.getStripeFooter(stripeId)
-        );
+        OrcProto.ColumnEncoding[] encodings = preheatFileMeta.getColumnEncodings(stripeId);
 
         try {
             stripeLoader = new AsyncStripeLoader(
@@ -261,9 +262,13 @@ public class StripeLoaderTest {
                 encodings, ignoreNonUtf8BloomFilter,
                 maxBufferSize,
                 maxDiskRangeChunkLimit, maxMergeDistance, runtimeMetrics,
-                true, memoryAllocatorCtx);
+                true, memoryAllocatorCtx, new OperatorStatistics());
+
+            MemoryCountable.checkDeviation(stripeLoader, 0d, true);
 
             stripeLoader.open();
+
+            MemoryCountable.checkDeviation(stripeLoader, 0d, true);
 
             CompletableFuture<Map<StreamName, InStream>> loadFuture =
                 stripeLoader.load(columnId, rowGroupIncluded);
@@ -272,6 +277,8 @@ public class StripeLoaderTest {
             // {column 1 kind DATA=uncompressed stream column 1 kind DATA
             // position: 0 length: 629 range: 0 offset: 4028 position: 0 limit: 629}
             Map<StreamName, InStream> result = loadFuture.get();
+
+            MemoryCountable.checkDeviation(stripeLoader, 0d, true);
 
             Assert.assertTrue(result.size() == 0);
             StreamName streamName = new StreamName(columnId, OrcProto.Stream.Kind.DATA);
@@ -287,6 +294,8 @@ public class StripeLoaderTest {
         } finally {
             if (stripeLoader != null) {
                 stripeLoader.close();
+
+                MemoryCountable.checkDeviation(stripeLoader, 0d, true);
             }
         }
     }
@@ -326,9 +335,7 @@ public class StripeLoaderTest {
         runtimeMetrics.addDerivedCounter(LogicalRowGroup.BLOCK_MEMORY_COUNTER,
             null, ProfileUnit.BYTES, ProfileAccumulatorType.SUM);
 
-        OrcProto.ColumnEncoding[] encodings = StaticStripePlanner.buildEncodings(
-            encryption, columnIncluded, preheatFileMeta.getStripeFooter(stripeId)
-        );
+        OrcProto.ColumnEncoding[] encodings = preheatFileMeta.getColumnEncodings(stripeId);
 
         try {
             stripeLoader = new AsyncStripeLoader(
@@ -347,9 +354,13 @@ public class StripeLoaderTest {
                 encodings, ignoreNonUtf8BloomFilter,
                 maxBufferSize,
                 maxDiskRangeChunkLimit, maxMergeDistance, runtimeMetrics,
-                true, memoryAllocatorCtx);
+                true, memoryAllocatorCtx, new OperatorStatistics());
+
+            MemoryCountable.checkDeviation(stripeLoader, 0d, true);
 
             stripeLoader.open();
+
+            MemoryCountable.checkDeviation(stripeLoader, 0d, true);
 
             CompletableFuture<Map<StreamName, InStream>> loadFuture =
                 stripeLoader.load(columnId, rowGroupIncluded);
@@ -358,6 +369,8 @@ public class StripeLoaderTest {
             // {column 1 kind DATA=uncompressed stream column 1 kind DATA
             // position: 0 length: 629 range: 0 offset: 4028 position: 0 limit: 629}
             Map<StreamName, InStream> result = loadFuture.get();
+
+            MemoryCountable.checkDeviation(stripeLoader, 0d, true);
 
             Assert.assertTrue(result.size() == 1);
             StreamName streamName = new StreamName(columnId, OrcProto.Stream.Kind.DATA);
@@ -373,6 +386,7 @@ public class StripeLoaderTest {
         } finally {
             if (stripeLoader != null) {
                 stripeLoader.close();
+                MemoryCountable.checkDeviation(stripeLoader, 0d, true);
             }
         }
     }
@@ -422,9 +436,7 @@ public class StripeLoaderTest {
         runtimeMetrics.addDerivedCounter(LogicalRowGroup.BLOCK_MEMORY_COUNTER,
             null, ProfileUnit.BYTES, ProfileAccumulatorType.SUM);
 
-        OrcProto.ColumnEncoding[] encodings = StaticStripePlanner.buildEncodings(
-            encryption, columnIncluded, preheatFileMeta.getStripeFooter(stripeId)
-        );
+        OrcProto.ColumnEncoding[] encodings = preheatFileMeta.getColumnEncodings(stripeId);
         try {
             stripeLoader = new AsyncStripeLoader(
                 IO_EXECUTOR,
@@ -442,14 +454,20 @@ public class StripeLoaderTest {
                 encodings, ignoreNonUtf8BloomFilter,
                 maxBufferSize,
                 maxDiskRangeChunkLimit, maxMergeDistance, runtimeMetrics,
-                true, memoryAllocatorCtx);
+                true, memoryAllocatorCtx, new OperatorStatistics());
+
+            MemoryCountable.checkDeviation(stripeLoader, 0d, true);
 
             stripeLoader.open();
+
+            MemoryCountable.checkDeviation(stripeLoader, 0d, true);
 
             CompletableFuture<Map<StreamName, InStream>> loadFuture =
                 stripeLoader.load(columnId, rowGroupIncluded);
 
             Map<StreamName, InStream> result = loadFuture.get();
+
+            MemoryCountable.checkDeviation(stripeLoader, 0d, true);
 
             Assert.assertTrue(result.size() == 2);
 
@@ -484,6 +502,7 @@ public class StripeLoaderTest {
         } finally {
             if (stripeLoader != null) {
                 stripeLoader.close();
+                MemoryCountable.checkDeviation(stripeLoader, 0d, true);
             }
         }
 
@@ -570,9 +589,7 @@ public class StripeLoaderTest {
         runtimeMetrics.addDerivedCounter(LogicalRowGroup.BLOCK_MEMORY_COUNTER,
             null, ProfileUnit.BYTES, ProfileAccumulatorType.SUM);
 
-        OrcProto.ColumnEncoding[] encodings = StaticStripePlanner.buildEncodings(
-            encryption, columnIncluded, preheatFileMeta.getStripeFooter(stripeId)
-        );
+        OrcProto.ColumnEncoding[] encodings = preheatFileMeta.getColumnEncodings(stripeId);
         try {
             stripeLoader = new AsyncStripeLoader(
                 IO_EXECUTOR,
@@ -590,9 +607,13 @@ public class StripeLoaderTest {
                 encodings, ignoreNonUtf8BloomFilter,
                 maxBufferSize,
                 maxDiskRangeChunkLimit, maxMergeDistance, runtimeMetrics,
-                true, memoryAllocatorCtx);
+                true, memoryAllocatorCtx, new OperatorStatistics());
+
+            MemoryCountable.checkDeviation(stripeLoader, 0d, true);
 
             stripeLoader.open();
+
+            MemoryCountable.checkDeviation(stripeLoader, 0d, true);
 
             CompletableFuture<Map<StreamName, InStream>> loadFuture =
                 stripeLoader.load(selectedColumns, matrix);
@@ -603,6 +624,9 @@ public class StripeLoaderTest {
             // column 3 kind LENGTH, compressed stream column 3 kind LENGTH position: 0 length: 79633 range: 0 offset: 0 limit: 79633 range 0 = 16605793 to 16685426
             // column 3 kind PRESENT, compressed stream column 3 kind PRESENT position: 0 length: 22078 range: 0 offset: 0 limit: 22078 range 0 = 14349961 to 14372039;  range 1 = 14463453 to 14999852;  range 2 = 15468913 to 15822474;  range 3 = 15822474 to 16096652;  range 4 = 16096652 to 16279479;  range 5 = 16605793 to 16685426
             Map<StreamName, InStream> result = loadFuture.get();
+
+            MemoryCountable.checkDeviation(stripeLoader, 0d, true);
+
             AtomicLong accumulator = new AtomicLong(0L);
 
             result.forEach((streamName, inStream) -> {
@@ -664,9 +688,7 @@ public class StripeLoaderTest {
         runtimeMetrics.addDerivedCounter(LogicalRowGroup.BLOCK_MEMORY_COUNTER,
             null, ProfileUnit.BYTES, ProfileAccumulatorType.SUM);
 
-        OrcProto.ColumnEncoding[] encodings = StaticStripePlanner.buildEncodings(
-            encryption, columnIncluded, preheatFileMeta.getStripeFooter(stripeId)
-        );
+        OrcProto.ColumnEncoding[] encodings = preheatFileMeta.getColumnEncodings(stripeId);
         try {
             stripeLoader = new AsyncStripeLoader(
                 IO_EXECUTOR,
@@ -684,9 +706,13 @@ public class StripeLoaderTest {
                 encodings, ignoreNonUtf8BloomFilter,
                 maxBufferSize,
                 maxDiskRangeChunkLimit, maxMergeDistance, runtimeMetrics,
-                true, memoryAllocatorCtx);
+                true, memoryAllocatorCtx, new OperatorStatistics());
+
+            MemoryCountable.checkDeviation(stripeLoader, 0d, true);
 
             stripeLoader.open();
+
+            MemoryCountable.checkDeviation(stripeLoader, 0d, true);
 
             CompletableFuture<Map<StreamName, InStream>> loadFuture =
                 stripeLoader.load(columnId, rowGroupIncluded);
@@ -695,6 +721,8 @@ public class StripeLoaderTest {
             // {column 1 kind DATA=uncompressed stream column 1 kind DATA
             // position: 0 length: 629 range: 0 offset: 4028 position: 0 limit: 629}
             Map<StreamName, InStream> result = loadFuture.get();
+
+            MemoryCountable.checkDeviation(stripeLoader, 0d, true);
 
             Assert.assertTrue(result.size() == 1);
             StreamName streamName = new StreamName(columnId, OrcProto.Stream.Kind.DATA);
@@ -731,6 +759,8 @@ public class StripeLoaderTest {
         } finally {
             if (stripeLoader != null) {
                 stripeLoader.close();
+
+                MemoryCountable.checkDeviation(stripeLoader, 0d, true);
             }
         }
     }
@@ -775,7 +805,7 @@ public class StripeLoaderTest {
 
             System.out.println(preheatFileMeta.getPreheatStripes());
             System.out.println(preheatFileMeta.getPreheatTail());
-            System.out.println(preheatFileMeta.getOrcIndex(0));
+            System.out.println(preheatFileMeta.getPositionProviderBuilder(0));
         } finally {
             metaReader.close();
         }

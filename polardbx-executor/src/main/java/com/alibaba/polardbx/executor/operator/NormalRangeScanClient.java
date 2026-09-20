@@ -3,7 +3,9 @@ package com.alibaba.polardbx.executor.operator;
 import com.alibaba.polardbx.executor.mpp.operator.RangeScanMode;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.CursorMeta;
+import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -11,15 +13,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * @author yuehan.wcf
  */
-public class NormalRangeScanClient extends TableScanClient {
+public class NormalRangeScanClient extends RangeScanClientBase {
 
     Map<Integer, SplitResultSet> notReadyResultSet = new HashMap<>();
 
     AtomicInteger sequence = new AtomicInteger(0);
 
     public NormalRangeScanClient(ExecutionContext context, CursorMeta meta,
-                                 boolean useTransaction, int prefetchNum, RangeScanMode rangeScanMode) {
-        super(context, meta, useTransaction, prefetchNum, rangeScanMode);
+                                 boolean useTransaction, int prefetchNum, RangeScanMode rangeScanMode,
+                                 LogicalView logicalView) {
+        super(context, meta, useTransaction, prefetchNum, rangeScanMode, logicalView);
     }
 
     /**

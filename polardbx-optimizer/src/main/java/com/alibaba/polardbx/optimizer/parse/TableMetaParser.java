@@ -29,6 +29,7 @@ import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.gms.topology.DbInfoRecord;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.Field;
+import com.alibaba.polardbx.optimizer.config.table.IndexColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.IndexMeta;
 import com.alibaba.polardbx.optimizer.config.table.IndexType;
 import com.alibaba.polardbx.optimizer.config.table.Relationship;
@@ -37,6 +38,8 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.TddlRelDataTypeSystemImpl;
 import com.alibaba.polardbx.optimizer.core.TddlTypeFactoryImpl;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.alibaba.polardbx.rpc.jdbc.CharsetMapping;
 import com.alibaba.polardbx.rpc.result.XMetaUtil;
 import com.alibaba.polardbx.rpc.result.XResultUtil;
@@ -55,13 +58,13 @@ import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.SqlTypeUtil;
 import org.apache.calcite.util.Pair;
+import org.jetbrains.annotations.TestOnly;
 
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.stream.Collectors;
@@ -79,21 +82,14 @@ public class TableMetaParser {
      * Parse TableMeta from FastSql's statements.
      * !!!! JUST FOR TEST !!!!!
      */
-    @Deprecated
+    @TestOnly
     public TableMeta parse(MySqlCreateTableStatement stmt) {
-        SqlNode sqlNode =
-            FastsqlParser.convertStatementToSqlNode(stmt, Collections.emptyList(), new ExecutionContext());
-        return parse((SqlCreateTable) sqlNode);
+        return parse(stmt, new ExecutionContext());
     }
 
-    /**
-     * Parse TableMeta from FastSql's statements.
-     * !!!! JUST FOR TEST !!!!!
-     */
-    @Deprecated
+    @TestOnly
     public TableMeta parse(MySqlCreateTableStatement stmt, ExecutionContext ec) {
-        SqlNode sqlNode =
-            FastsqlParser.convertStatementToSqlNode(stmt, Collections.emptyList(), ec);
+        SqlNode sqlNode = FastsqlParser.convertStatementToSqlNode(stmt, Collections.emptyList(), ec);
         return parse((SqlCreateTable) sqlNode);
     }
 
@@ -199,18 +195,19 @@ public class TableMetaParser {
                         null,
                         false,
                         true,
-                        null), true, true);
+                        null),
+                    true, true);
             }
         }
 
         List<IndexMeta> keys = sqlCreateTable.getKeys() == null ? Collections.emptyList() :
             sqlCreateTable.getKeys().stream()
-                .map(p -> parseIndex(tableName, columnsMap, p.right))
+                .map(p -> parseIndex(tableName, columnsMap, p.right, false, false))
                 .collect(Collectors.toList());
 
         List<IndexMeta> uniqueKeys = sqlCreateTable.getUniqueKeys() == null ? Collections.emptyList() :
             sqlCreateTable.getUniqueKeys().stream()
-                .map(p -> parseIndex(tableName, columnsMap, p.right, true, false))
+                .map(p -> parseIndex(tableName, columnsMap, p.right, false, true))
                 .collect(Collectors.toList());
 
         List<IndexMeta> secondaryIndexes = ImmutableList.<IndexMeta>builder()
@@ -220,7 +217,7 @@ public class TableMetaParser {
         TableMeta tableMeta =
             new TableMeta(schemaName, tableName, columns, primaryKey, secondaryIndexes, primaryKey != null,
                 TableStatus.PUBLIC,
-                0, 0);
+                0, 0, sqlCreateTable.getComment());
         tableMeta.setEngine(sqlCreateTable.getEngine());
         String encryptInfo = null;
         if (sqlCreateTable.getEncryption() != null) {
@@ -282,6 +279,9 @@ public class TableMetaParser {
         if (def.isGeneratedAlwaysLogical()) {
             columnMeta = new ColumnMeta(tableName, columnName, null, field, ColumnStatus.PUBLIC,
                 ColumnsRecord.FLAG_LOGICAL_GENERATED_COLUMN, null);
+        } else if (def.isExternalize()) {
+            columnMeta = new ColumnMeta(tableName, columnName, null, field, ColumnStatus.PUBLIC,
+                ColumnsRecord.FLAG_EXTERNALIZED_COLUMN, null);
         } else {
             columnMeta = new ColumnMeta(tableName, columnName, null, field);
         }
@@ -289,43 +289,39 @@ public class TableMetaParser {
         return Pair.of(columnName, columnMeta);
     }
 
-    private static IndexMeta parseIndex(String tableName, Map<String, ColumnMeta> columnsMap, SqlIndexDefinition def) {
-        return parseIndex(tableName, columnsMap, def, false, false);
-    }
-
     private static IndexMeta parseIndex(String tableName, Map<String, ColumnMeta> columnsMap, SqlIndexDefinition def,
-                                        boolean isUnique, boolean isPrimaryKey) {
-        List<ColumnMeta> columns = def.getColumns().stream()
-            .map(c -> columnsMap.get(c.getColumnNameStr()))
-            .filter(Objects::nonNull)
-            .collect(Collectors.toList());
+                                        boolean isPrimary, boolean isUnique) {
+        List<IndexColumnMeta> columns = new ArrayList<>(def.getColumns().size());
+        int idx = 0;
+        for (SqlIndexColumnName c : def.getColumns()) {
+            ColumnMeta columnMeta = columnsMap.get(c.getColumnNameStr());
+            final Long subPart = null == c.getLength() ? null : (RelUtils.longValue(c.getLength()));
+            final String collation = null == c.isAsc() ? null : (c.isAsc() ? "A" : "D");
+            boolean asc = collation == null || "A".equalsIgnoreCase(collation);
+            final OrderByOption orderByOption = new OrderByOption(idx++, asc, !asc);
+            columns.add(new IndexColumnMeta(columnMeta, null == subPart ? 0 : subPart, orderByOption));
+        }
 
         String indexName = def.getIndexName() == null ? "PRIMARY" : def.getIndexName().getSimple();
 
         return new IndexMeta(tableName,
             columns,
             new ArrayList<>(),
-            convertIndexType(def.getIndexType()),
+            convertIndexType(def.getType()),
             Relationship.NONE,
             true,
-            isPrimaryKey,
+            isPrimary,
             isUnique,
+            columns.stream().anyMatch(x -> !x.hasColumn()),
             indexName);
     }
 
-    private static IndexType convertIndexType(SqlIndexDefinition.SqlIndexType indexType) {
-        if (indexType == null) {
+    private static IndexType convertIndexType(String indexType) {
+        if (indexType == null || indexType.equalsIgnoreCase("PRIMARY")
+            || indexType.equalsIgnoreCase("UNIQUE")) {
             return IndexType.NONE;
         }
-        switch (indexType) {
-        case BTREE:
-            return IndexType.BTREE;
-        case HASH:
-            return IndexType.HASH;
-        case INVERSE:
-            return IndexType.INVERSE;
-        }
-        return IndexType.NONE;
+        return IndexType.valueOf(indexType.toUpperCase());
     }
 
     public static ColumnMeta buildColumnMeta(PolarxResultset.ColumnMetaData metaData, String characterSet,

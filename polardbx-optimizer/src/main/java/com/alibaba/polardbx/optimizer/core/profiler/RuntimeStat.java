@@ -66,6 +66,20 @@ public abstract class RuntimeStat implements CpuCollector {
 
     public abstract void addPhyConnTimecost(long phyConnTimecost);
 
+    public abstract void addFetchTSOTimecost(long totalFetchTSOTimecost);
+
+    public abstract void addFetchSequenceTimecost(long totalFetchSequenceTimecost);
+
+    public abstract void setTrxType(String trxType);
+
+    public abstract void addCommitPrepareTimecost(long commitPrepareTimecost);
+
+    public abstract void addCommitLoggerTimecost(long commitLoggerTimecost);
+
+    public abstract void addCommitTsoTimecost(long commitTsoTimecost);
+
+    public abstract void addCommitCommitTimecost(long commitCommitTimecost);
+
     public abstract void addColumnarSnapshotTimecost(long columnarSnapshotTimecost);
 
     public abstract void setSqlType(SqlType sqlType);

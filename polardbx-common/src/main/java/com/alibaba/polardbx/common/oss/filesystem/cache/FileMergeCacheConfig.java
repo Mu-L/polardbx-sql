@@ -37,8 +37,13 @@ import static io.airlift.slice.DataSize.Unit.GIGABYTE;
 import static java.util.concurrent.TimeUnit.DAYS;
 
 public class FileMergeCacheConfig {
+    /**
+     * Default max cached file entries for disk file cache (2^16 - 1 = 65535).
+     */
+    public static final int DEFAULT_MAX_CACHED_ENTRIES = (1 << 16) - 1;
+
     private boolean enableCache = true;
-    private int maxCachedEntries = 2048;
+    private int maxCachedEntries = DEFAULT_MAX_CACHED_ENTRIES;
     private Duration cacheTtl = new Duration(2, DAYS);
     private DataSize maxInMemoryCacheSize = new DataSize(2, GIGABYTE);
     private DataSize maxInDiskCacheSize = new DataSize(100, GIGABYTE);

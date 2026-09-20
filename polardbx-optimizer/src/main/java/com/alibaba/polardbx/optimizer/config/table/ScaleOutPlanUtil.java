@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.optimizer.config.table;
 
+import com.alibaba.polardbx.common.IdGenerator;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
@@ -23,6 +24,7 @@ import com.alibaba.polardbx.common.jdbc.ParameterMethod;
 import com.alibaba.polardbx.common.model.Group;
 import com.alibaba.polardbx.common.model.Matrix;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.gms.ha.HaSwitchParams;
@@ -41,7 +43,9 @@ import com.alibaba.polardbx.gms.topology.StorageInfoRecord;
 import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.gms.util.MetaDbLogUtil;
+import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
@@ -52,8 +56,10 @@ import org.apache.calcite.sql.SqlMoveDatabase;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.util.Pair;
 import org.apache.commons.collections.SetUtils;
+import org.apache.commons.lang3.RandomStringUtils;
 
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.EnumSet;
@@ -62,6 +68,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
+
+import static com.alibaba.polardbx.common.ddl.Attribute.RANDOM_SUFFIX_LENGTH_OF_PHYSICAL_TABLE_NAME;
+
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -71,6 +81,7 @@ public class ScaleOutPlanUtil {
     public static final EnumSet<SqlKind> MODIFY_DML =
         //never push the replace dml in delete_only status
         EnumSet.of(/*SqlKind.REPLACE, */SqlKind.DELETE, SqlKind.UPDATE);
+    private static final IdGenerator ID_GENERATOR = IdGenerator.getIdGenerator();
 
     // default enable for polardbx codeline
     public static boolean isEnabledScaleOut(ParamManager paramManager) {
@@ -468,4 +479,47 @@ public class ScaleOutPlanUtil {
         return resultMap;
     }
 
+    public static Map<String, String> buildGroup2StorageInstMapping(String schemaName) {
+        try (Connection metaDbConn = MetaDbUtil.getConnection()) {
+            GroupDetailInfoAccessor groupDetailInfoAccessor = new GroupDetailInfoAccessor();
+            groupDetailInfoAccessor.setConnection(metaDbConn);
+
+            return groupDetailInfoAccessor.getGroupDetailInfoByInstIdAndDbName(InstIdUtil.getInstId(), schemaName)
+                .stream()
+                .collect(Collectors.toMap(g -> g.groupName, g -> g.storageInstId));
+        } catch (Exception ex) {
+            throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+                "failed to get group info from meta db", ex);
+        }
+    }
+
+    public static String genenateUniqueTbName() {
+        StringBuffer sb = new StringBuffer();
+        sb.append("__");
+        sb.append(ID_GENERATOR.nextId());
+        sb.append("_");
+        sb.append(RandomStringUtils.randomAlphanumeric(RANDOM_SUFFIX_LENGTH_OF_PHYSICAL_TABLE_NAME));
+        sb.append("__");
+        return sb.toString();
+    }
+
+    public static boolean isSubJobFactory(ExecutionContext executionContext) {
+        DdlContext ddlContext = executionContext.getDdlContext();
+        return ddlContext != null && ddlContext.isSubJob();
+    }
+
+    public static boolean isMovePartitionConcurrently(ExecutionContext executionContext) {
+        boolean enableMovePartitionGroupConcurrently =
+            executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_MOVE_PARTITIONGROUP_CONCURRENTLY);
+        boolean downGradeToRLock =
+            executionContext.getParamManager().getBoolean(ConnectionParams.FORCE_DOWNGRADE_RW_LOCK_FOR_TABLEGROUP);
+        boolean enableState =
+            enableMovePartitionGroupConcurrently && (isSubJobFactory(executionContext) || downGradeToRLock);
+        return enableState;
+    }
+
+    public static boolean isPhyRecyclebinEnable(ExecutionContext ec) {
+        boolean enable = ec.getParamManager().getBoolean(ConnectionParams.ENABLE_PHY_RECYCLEBIN);
+        return enable;
+    }
 }

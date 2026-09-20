@@ -40,6 +40,7 @@ import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.GlobalIndexMeta;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.context.LoadDataContext;
 import com.alibaba.polardbx.optimizer.core.CursorMeta;
@@ -49,6 +50,7 @@ import com.alibaba.polardbx.optimizer.core.rel.PhyTableInsertSharder;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ShardProcessor;
 import com.alibaba.polardbx.optimizer.core.rel.SimpleShardProcessor;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.InsertWriter;
 import com.alibaba.polardbx.optimizer.core.row.ArrayRow;
 import com.alibaba.polardbx.optimizer.core.row.Row;
@@ -160,10 +162,12 @@ public class LogicalLoadDataHandler extends LogicalInsertHandler {
             loadDataContext.getParamManager().getBoolean(ConnectionParams.GSI_CONCURRENT_WRITE_OPTIMIZE);
         PhyTableOperationUtil.enableIntraGroupParallelism(schemaName, executionContext);
         final TddlRuleManager or = OptimizerContext.getContext(schemaName).getRuleManager();
-        final boolean isBroadcast = or.isBroadCast(logicalInsert.getLogicalTableName());
+        final boolean isBroadcast = or.isBroadCastOrReplicas(logicalInsert.getLogicalTableName());
         final boolean inSingleDb = or.isTableInSingleDb(logicalInsert.getLogicalTableName());
+        final TableMeta tableMeta = getInsertTargetTableMeta(logicalInsert, executionContext);
+        final boolean requiresWriteRewrite = ExternalizedDmlRewriter.needsHandling(tableMeta);
         loadDataContext.setInSingleDb(inSingleDb);
-        if (!isBroadcast &&
+        if (!requiresWriteRewrite && !isBroadcast &&
             (!hasIndex ||
                 (gsiConcurrentWrite &&
                     logicalInsert.isSimpleInsert(ignoreIsSimpleInsert &&
@@ -174,6 +178,15 @@ public class LogicalLoadDataHandler extends LogicalInsertHandler {
                 useBatchMode = false;
             }
             loadDataContext.setUseBatch(useBatchMode);
+
+            // Handle sequence
+            final int seqColumnIndex = logicalInsert.getSeqColumnIndex();
+            final boolean usingSequence = seqColumnIndex >= 0;
+
+            if (null != handlerParams) {
+                handlerParams.usingSequence = usingSequence;
+            }
+
             Pair<List<ShardConsumer>, List<AdaptiveLoadDataCursor>> cursors = null;
             List<ListenableFuture<?>> waitFutures = new ArrayList<>();
             try {

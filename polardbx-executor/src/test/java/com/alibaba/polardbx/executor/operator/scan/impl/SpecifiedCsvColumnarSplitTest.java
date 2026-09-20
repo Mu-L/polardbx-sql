@@ -21,7 +21,9 @@ import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.statis.ColumnarTracer;
+import com.alibaba.polardbx.optimizer.statis.OperatorStatistics;
 import com.google.common.collect.ImmutableList;
+import com.google.common.util.concurrent.SettableFuture;
 import org.apache.hadoop.fs.Path;
 import org.junit.Assert;
 import org.junit.Before;
@@ -124,11 +126,14 @@ public class SpecifiedCsvColumnarSplitTest extends FileVersionStorageTestBase {
             DynamicColumnarManager.getInstance(),
             tsoV1,
             new ArrayList<>(),
+            new ArrayList<>(),
             delFiles,
             delBeginPos,
             delEndPos,
             Engine.LOCAL_DISK,
-            1
+            1,
+            SettableFuture.create(),
+            null
         );
 
         if (!localFlag) {
@@ -170,7 +175,7 @@ public class SpecifiedCsvColumnarSplitTest extends FileVersionStorageTestBase {
             .nodePartCount(8)
             .memoryAllocator(null)
             .fragmentRFManager(null)
-            .operatorStatistic(null)
+            .operatorStatistic(new OperatorStatistics())
             .begin(csvBegin)
             .end(csvEnd)
             .tsoV0(tsoV0)
@@ -215,6 +220,13 @@ public class SpecifiedCsvColumnarSplitTest extends FileVersionStorageTestBase {
         mockFsUtils.when(
             () -> FileSystemUtils.readFile(
                 anyString(), anyInt(), anyInt(), any(byte[].class), any(Engine.class), anyBoolean()
+            )
+        ).thenAnswer(
+            mockFileReadAnswer
+        );
+        mockFsUtils.when(
+            () -> FileSystemUtils.readFile(
+                anyString(), anyInt(), anyInt(), any(byte[].class), any(Engine.class), anyBoolean(), any()
             )
         ).thenAnswer(
             mockFileReadAnswer

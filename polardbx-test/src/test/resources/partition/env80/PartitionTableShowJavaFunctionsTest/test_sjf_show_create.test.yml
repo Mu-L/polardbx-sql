@@ -1,0 +1,19 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+SHOW CREATE JAVA FUNCTION sjf_cr_func1;
+
+SHOW CREATE JAVA FUNCTION SJF_CR_FUNC2;
+
+SHOW CREATE JAVA FUNCTION `sjf_cr_func1`;
+
+SHOW CREATE JAVA FUNCTION `SJF_CR_FUNC2`;
+
+## error_msg: $# ERR_UDF_NOT_FOUND #$
+SHOW CREATE JAVA FUNCTION sjf_nonexist_func;
+
+## error_msg: $# ERR_UDF_NOT_FOUND #$
+SHOW CREATE JAVA FUNCTION `sjf_nonexist_func`;
+
+drop java function if exists sjf_cr_func1;
+drop java function if exists sjf_cr_func2;

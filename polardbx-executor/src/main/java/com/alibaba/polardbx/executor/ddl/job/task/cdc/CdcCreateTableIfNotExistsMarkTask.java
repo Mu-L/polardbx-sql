@@ -19,6 +19,7 @@ package com.alibaba.polardbx.executor.ddl.job.task.cdc;
 import com.alibaba.fastjson.annotation.JSONCreator;
 import com.alibaba.polardbx.common.cdc.CdcDdlMarkVisibility;
 import com.alibaba.polardbx.common.cdc.CdcManagerHelper;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.ddl.job.validator.TableValidator;
@@ -66,11 +67,15 @@ public class CdcCreateTableIfNotExistsMarkTask extends BaseDdlTask {
             // 历史上cdc下游依据job_id是否为空来判断是否需要对打标sql进行apply，如果不为空则进行apply，如果为空则不进行apply
             // 所以此处需要继续保持job_id为空，来解决兼容性问题。否则，当只升级CN、没有升级CDC时，老版本的CDC无法识别是真实建表，还是单纯打标，会触发问题
             CdcManagerHelper.getInstance().notifyDdlNew(schemaName, tableName, SqlKind.CREATE_TABLE.name(),
-                ddlContext.getDdlStmt(), ddlContext.getDdlType(), null, getTaskId(),
-                CdcDdlMarkVisibility.Public, buildExtendParameter(executionContext));
+                ddlContext.getDdlStmt(), ddlContext.getDdlType(), isMarkJobId(executionContext) ? jobId : null,
+                getTaskId(), CdcDdlMarkVisibility.Public, buildExtendParameter(executionContext));
         } else {
             log.warn("table {} has been dropped, cdc ddl mark for creating table with if not exits is ignored, sql {}",
                 tableName, ddlContext.getDdlStmt());
         }
+    }
+
+    private boolean isMarkJobId(ExecutionContext executionContext) {
+        return executionContext.getParamManager().getBoolean(ConnectionParams.CDC_DDL_MARK_WITH_DETAIL_META_ENABLE);
     }
 }

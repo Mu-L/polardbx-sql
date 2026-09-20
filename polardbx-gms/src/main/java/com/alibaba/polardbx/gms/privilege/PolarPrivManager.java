@@ -25,12 +25,15 @@ import com.alibaba.polardbx.common.utils.ExceptionUtils;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.gms.lbac.accessor.LBACAccessorUtils;
 import com.alibaba.polardbx.gms.listener.ConfigListener;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbConfigManager;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
+import com.alibaba.polardbx.gms.metadb.htap.RoutingRuleAccessor;
 import com.alibaba.polardbx.gms.privilege.authorize.PolarAuthorizer;
-import com.alibaba.polardbx.gms.lbac.accessor.LBACAccessorUtils;
+import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
@@ -121,9 +124,76 @@ public class PolarPrivManager {
             PolarAccountInfo userInfo = data.getExactUser(priv.getUserName(), priv.getHost());
 
             if (userInfo != null) {
-                userInfo.getDbPrivMap().put(priv.getIdentifier(), priv);
+                userInfo.addDbPriv(priv);
             }
         });
+    }
+
+    protected static long calcExpireTime(int errorCount, int max, long initialExpireSeconds,
+                                         long expireSeconds, boolean enableExpireTimeBackoff,
+                                         long lastExpireTime, String limitKey) {
+        long expireTime = System.currentTimeMillis();
+        if (!enableExpireTimeBackoff && errorCount == max) {
+            // when backoff is not enabled, just use expire seconds
+            expireTime += expireSeconds * 1000;
+        } else if (enableExpireTimeBackoff) {
+            int exceedingCount = errorCount - max;
+            if (exceedingCount == 0) {
+                expireTime += initialExpireSeconds * 1000;
+            } else if (exceedingCount > 0) {
+                // preventing expireTime overflow when exceedingCount is too large
+                if (exceedingCount >= Long.BYTES * 8 - 1) {
+                    expireTime += expireSeconds * 1000;
+                } else {
+                    long backoffTime = initialExpireSeconds * (1L << exceedingCount);
+                    if (backoffTime <= 0) {
+                        backoffTime = expireSeconds * 1000;
+                    } else {
+                        backoffTime = Math.min(backoffTime, expireSeconds) * 1000;
+                    }
+                    expireTime = lastExpireTime + backoffTime / 2;
+                }
+            }
+        }
+        if (logger.isInfoEnabled()) {
+            logger.info(limitKey + " last expire time: " + new Timestamp(lastExpireTime) +
+                ", next expire time: " + new Timestamp(expireTime));
+        }
+        return expireTime;
+    }
+
+    private static void waitMilliseconds() {
+        try {
+            TimeUnit.MILLISECONDS.sleep(10);
+        } catch (InterruptedException e) {
+            Thread.interrupted();//ignore exception
+        }
+    }
+
+    private static void insertLoginErr(String limitKey, int max, Connection connection) throws SQLException {
+        Map<Integer, ParameterContext> insertParams = Maps.newHashMap();
+        MetaDbUtil.setParameter(1, insertParams, ParameterMethod.setString, limitKey);
+        MetaDbUtil.setParameter(2, insertParams, ParameterMethod.setInt, max);
+        MetaDbUtil.setParameter(3, insertParams, ParameterMethod.setInt, 1);
+        MetaDbUtil.insert(PolarPrivUtil.INSERT_LOGIN_ERROR_INFO, insertParams, connection);
+    }
+
+    private static int updateLoginErr(String limitKey, int errorCount, int max, Timestamp expireDate, int oldErrCount,
+                                      Connection connection) throws SQLException {
+        Map<Integer, ParameterContext> insertParams = Maps.newHashMap();
+        MetaDbUtil.setParameter(1, insertParams, ParameterMethod.setInt, errorCount);
+        MetaDbUtil.setParameter(2, insertParams, ParameterMethod.setTimestamp1, expireDate);
+        MetaDbUtil.setParameter(3, insertParams, ParameterMethod.setInt, max);
+        MetaDbUtil.setParameter(4, insertParams, ParameterMethod.setString, limitKey);
+        MetaDbUtil.setParameter(5, insertParams, ParameterMethod.setInt, oldErrCount);
+        // set error_count = ? ,expire_date = ?, max_error_limit = ? where limit_key = ? and error_count = ?
+        return MetaDbUtil.update(PolarPrivUtil.UPDATE_LOGIN_ERROR_INFO, insertParams, connection);
+    }
+
+    private static int deleteLoginErr(String limitKey, Connection connection) throws SQLException {
+        Map<Integer, ParameterContext> params = Maps.newHashMap();
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, limitKey);
+        return MetaDbUtil.delete(PolarPrivUtil.DELETE_LOGIN_ERROR_INFO, params, connection);
     }
 
     private PolarLoginErr selectLoginErr(String userName, String host) {
@@ -179,13 +249,15 @@ public class PolarPrivManager {
 
     private void incrementLoginErrorCount(String userName, String limitKey, Connection connection)
         throws SQLException {
-        PolarLoginErrConfig polarLoginErrConfig = getPolarLoginErrConfig();
-        int max = polarLoginErrConfig.getPasswordMaxErrorCount(userName);
+        PolarLoginErrConfig.UserLoginErrConfig config = getPolarLoginErrConfig().getUserLoginErrConfig(userName);
+        int max = config.getPasswordMaxErrorCount();
         if (max <= 0) {
             return;
         }
-        long expireSeconds = polarLoginErrConfig.getExpireSeconds(userName);
-        //if cache do not contains it ,insert first and return
+        long expireSeconds = config.getExpireSeconds();
+        boolean enableExpireTimeBackoff = config.enableExpireTimeBackoff();
+        long initialExpireSeconds = config.getInitialExpireSeconds();
+        //if cache does not contain it, insert first and return
         if (!getLoginErrMap().containsKey(limitKey)) {
             try {
                 insertLoginErr(limitKey, max, connection);
@@ -219,19 +291,28 @@ public class PolarPrivManager {
             needUpdate = true;
         } else {
             if (polarLoginErr.getExpireDate().getTime() < System.currentTimeMillis()) {
+                // refresh error count and expire date
                 errorCount = 1;
                 needUpdate = true;
+            } else if (enableExpireTimeBackoff) {
+                long diff = errorCount - max;
+                // if expireSecondes already reaches max value, no need to increment error count
+                if (diff < Long.BYTES * 8 - 1 && (initialExpireSeconds << diff) <= expireSeconds) {
+                    // still increment error count for exponential backoff
+                    errorCount++;
+                    needUpdate = true;
+                }
+
             }
         }
         if (needUpdate) {
-            long l = System.currentTimeMillis();
-            if (errorCount == max) {
-                l += expireSeconds * 1000;
-            }
+            long expireTime = calcExpireTime(errorCount, max,
+                initialExpireSeconds, expireSeconds, enableExpireTimeBackoff,
+                polarLoginErr.getExpireDate().getTime(), limitKey);
             if (logger.isInfoEnabled()) {
-                logger.info("login error, and the limit key is " + limitKey + ", and the error count is " + errorCount);
+                logger.info(limitKey + " login error, and the error count is " + errorCount);
             }
-            Timestamp expireDate = new Timestamp(l);
+            Timestamp expireDate = new Timestamp(expireTime);
             int i = updateLoginErr(limitKey, errorCount, max, expireDate, oldErrorCount, connection);
             polarLoginErr.setErrorCount(errorCount);
             polarLoginErr.setMaxErrorLimit(max);
@@ -245,32 +326,48 @@ public class PolarPrivManager {
         }
     }
 
-    private static void waitMilliseconds() {
-        try {
-            TimeUnit.MILLISECONDS.sleep(10);
-        } catch (InterruptedException e) {
-            Thread.interrupted();//ignore exception
+    public void clearLoginErrorCount(String userName, String host) {
+        if (PolarPrivUtil.POLAR_ROOT.equalsIgnoreCase(userName)) {
+            return;
         }
+        String limitKey = userName.toUpperCase() + "@" + host;
+        if (getLoginErrMap() == null || !getLoginErrMap().containsKey(limitKey)) {
+            return;
+        }
+        PolarLoginErrConfig polarLoginErrConfig = getPolarLoginErrConfig();
+        int max = polarLoginErrConfig.getPasswordMaxErrorCount(userName);
+        if (max <= 0) {
+            return;
+        }
+        runWithMetaDBConnection(connection -> {
+            try {
+                connection.setAutoCommit(false);
+                clearLoginErrorCount(userName, limitKey, connection);
+                connection.commit();
+            } catch (SQLException e) {
+                logger.error(e.getMessage());
+                try {
+                    connection.rollback();
+                } catch (SQLException ex) {
+                    //ignore
+                }
+            } finally {
+                //after commit, we can reload it
+                MetaDbConfigManager.getInstance().notify(MetaDbDataIdBuilder.LOGIN_ERROR_DATA_ID, null);
+                MetaDbConfigManager.getInstance().sync(MetaDbDataIdBuilder.LOGIN_ERROR_DATA_ID);
+            }
+        });
     }
 
-    private static void insertLoginErr(String limitKey, int max, Connection connection) throws SQLException {
-        Map<Integer, ParameterContext> insertParams = Maps.newHashMap();
-        MetaDbUtil.setParameter(1, insertParams, ParameterMethod.setString, limitKey);
-        MetaDbUtil.setParameter(2, insertParams, ParameterMethod.setInt, max);
-        MetaDbUtil.setParameter(3, insertParams, ParameterMethod.setInt, 1);
-        MetaDbUtil.insert(PolarPrivUtil.INSERT_LOGIN_ERROR_INFO, insertParams, connection);
-    }
-
-    private static int updateLoginErr(String limitKey, int errorCount, int max, Timestamp expireDate, int oldErrCount,
-                                      Connection connection) throws SQLException {
-        Map<Integer, ParameterContext> insertParams = Maps.newHashMap();
-        MetaDbUtil.setParameter(1, insertParams, ParameterMethod.setInt, errorCount);
-        MetaDbUtil.setParameter(2, insertParams, ParameterMethod.setTimestamp1, expireDate);
-        MetaDbUtil.setParameter(3, insertParams, ParameterMethod.setInt, max);
-        MetaDbUtil.setParameter(4, insertParams, ParameterMethod.setString, limitKey);
-        MetaDbUtil.setParameter(5, insertParams, ParameterMethod.setInt, oldErrCount);
-        // set error_count = ? ,expire_date = ?, max_error_limit = ? where limit_key = ? and error_count = ?
-        return MetaDbUtil.update(PolarPrivUtil.UPDATE_LOGIN_ERROR_INFO, insertParams, connection);
+    private void clearLoginErrorCount(String userName, String limitKey, Connection connection) throws SQLException {
+        if (!getLoginErrMap().containsKey(limitKey)) {
+            return;
+        }
+        PolarLoginErr polarLoginErr = getLoginErrMap().get(limitKey);
+        if (polarLoginErr.getErrorCount() == 0) {
+            return;
+        }
+        deleteLoginErr(limitKey, connection);
     }
 
     public Map<String, String> getDbNameAppNameMap() {
@@ -303,10 +400,42 @@ public class PolarPrivManager {
     public void init() {
         if (metaDbDataSource == null) {
             metaDbDataSource = MetaDbDataSource.getInstance();
+            upgradePrivilegeSchema();
             reloadPriv();
             reloadLoginErr();
             registerConfigListener();
             registerLoginErrListener();
+        }
+    }
+
+    /**
+     * Ensure MetaDB user_priv table has all required privilege columns.
+     * This handles schema evolution when new privilege types are added.
+     * Uses direct ALTER TABLE and catches duplicate column errors (MySQL error 1060).
+     */
+    private void upgradePrivilegeSchema() {
+        try (Connection conn = metaDbDataSource.getConnection();
+            Statement stmt = conn.createStatement()) {
+            for (PrivilegeKind kind : PrivilegeKind.kindsByScope(PrivilegeScope.INSTANCE)) {
+                String colName = kind.getColumnName();
+                if (colName == null) {
+                    continue;
+                }
+                try {
+                    String alterSql = String.format(
+                        "ALTER TABLE %s ADD COLUMN `%s` tinyint(1) NOT NULL DEFAULT 0",
+                        PolarPrivUtil.USER_PRIV_TABLE, colName);
+                    stmt.executeUpdate(alterSql);
+                    logger.info("Added missing privilege column: " + colName);
+                } catch (SQLException e) {
+                    // MySQL error 1060 = Duplicate column name - column already exists, safe to ignore
+                    if (e.getErrorCode() != 1060) {
+                        logger.warn("Failed to add privilege column " + colName + ": " + e.getMessage());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to upgrade privilege schema (non-fatal): " + e.getMessage());
         }
     }
 
@@ -464,11 +593,36 @@ public class PolarPrivManager {
                               boolean ifNotExists) {
         Preconditions.checkNotNull(granter, "Creator can't be null!");
         Preconditions.checkArgument(!Iterables.isEmpty(grantees), "Accounts list can't be empty!");
-        Preconditions.checkArgument(grantees.stream()
-                .map(PolarAccountInfo::getAccountType)
-                .distinct()
-                .count() == 1,
+        List<AccountType> distinctAccountType = grantees.stream()
+            .map(PolarAccountInfo::getAccountType)
+            .distinct().collect(Collectors.toList());
+        Preconditions.checkArgument(distinctAccountType.size() == 1,
             "All accounts must have same account type!");
+
+        AccountType granteeType = distinctAccountType.get(0);
+        if (granteeType == AccountType.DBA) {
+            if (grantees.size() > 1) {
+                throw new TddlRuntimeException(ErrorCode.ERR_CREATE_DBA_USER_FAILED,
+                    "Only one DBA user is allowed");
+            }
+
+            PolarAccountInfo reservedUser = accountPrivilegeData.getReservedUser(AccountType.DBA);
+            if (reservedUser != null) {
+                throw new TddlRuntimeException(ErrorCode.ERR_CREATE_DBA_USER_FAILED,
+                    String.format("DBA user[%s] already exists", reservedUser.getUsername()));
+            }
+
+            // prevent creating/dropping dba_user when the db is in right-separation mode
+            // to avoid account metadata inconsistency
+            if (config.isRightsSeparationEnabled()) {
+                throw new TddlRuntimeException(ErrorCode.ERR_CREATE_DBA_USER_FAILED,
+                    "Can not create DBA user when the right-separation mode is enabled");
+            }
+
+            // fill dba account privileges
+            PolarAccountInfo dbaInfo = grantees.get(0);
+            PolarPrivilegeData.updateDBAPolarAccountInfo(dbaInfo, config.isRightsSeparationEnabled());
+        }
 
         // Check permission
         checkModifyReservedAccounts(granter, grantees, false);
@@ -566,6 +720,10 @@ public class PolarPrivManager {
                     .map(PolarAccountInfo::getAccountId)
                     .collect(Collectors.toList());
 
+                List<String> accountNames = grantees.stream().map(PolarAccountInfo::getAccount)
+                    .map(acc -> accountPrivilegeData.getExactUser(acc, !ifExists))
+                    .filter(Objects::nonNull).map(PolarAccountInfo::getUsername).collect(Collectors.toList());
+
                 // Delete data from database.
                 conn.setAutoCommit(false);
                 logger.info("Starting to drop users.");
@@ -579,7 +737,7 @@ public class PolarPrivManager {
 
                 PolarRolePrivilege.dropAccounts(conn, accountIds);
                 LBACAccessorUtils.dropUserSecurityAttr(grantees, conn);
-
+                RoutingRuleAccessor.create(conn).deleteByUser(accountNames);
                 conn.commit();
                 logger.info("Finished deleting account data!");
             } catch (SQLException e) {
@@ -591,6 +749,7 @@ public class PolarPrivManager {
         reloadPriv();
         triggerReload();
         triggerLBACReload();
+        triggerRoutingRuleReload();
     }
 
     public void grantPrivileges(PolarAccountInfo granter, ActiveRoles activeRoles, List<PolarAccountInfo> grantees) {
@@ -605,6 +764,7 @@ public class PolarPrivManager {
             PolarAccountInfo samplePermission = grantees.get(0).deepCopy();
             samplePermission.addGrantOptionToAll();
 
+            grantCatalogPrivileges(granter, samplePermission);
             for (Permission permission : samplePermission.toPermissions()) {
                 PermissionCheckContext context = new PermissionCheckContext(granter.getAccountId(), activeRoles,
                     permission);
@@ -645,7 +805,35 @@ public class PolarPrivManager {
         triggerReload();
     }
 
+    private void grantCatalogPrivileges(PolarAccountInfo granter, PolarAccountInfo samplePermission) {
+        PolarAccountInfo granterAccount = accountPrivilegeData.getAndCheckById(granter.getAccountId());
+        if (!samplePermission.getCatalogDbPrivMap().isEmpty()
+            || !samplePermission.getCatalogTbPrivMap().isEmpty()) {
+            for (PolarDbPriv catPriv : samplePermission.getCatalogDbPrivMap().values()) {
+                if (!checkExternalPrivilege(granterAccount,
+                    catPriv.getCatalogName(), catPriv.getDbName(), null,
+                    PrivilegeKind.GRANT_OPTION)) {
+                    throw new TddlRuntimeException(ERR_GRANTER_NO_GRANT_PRIV, granter.getIdentifier(),
+                        samplePermission.getIdentifier());
+                }
+            }
+            for (PolarTbPriv catPriv : samplePermission.getCatalogTbPrivMap().values()) {
+                if (!checkExternalPrivilege(granterAccount,
+                    catPriv.getCatalogName(), catPriv.getDbName(), catPriv.getTbName(),
+                    PrivilegeKind.GRANT_OPTION)) {
+                    throw new TddlRuntimeException(ERR_GRANTER_NO_GRANT_PRIV, granter.getIdentifier(),
+                        samplePermission.getIdentifier());
+                }
+            }
+        }
+    }
+
     public void revokePrivileges(PolarAccountInfo granter, ActiveRoles activeRoles, List<PolarAccountInfo> grantees) {
+        revokePrivileges(granter, activeRoles, grantees, false);
+    }
+
+    public void revokePrivileges(PolarAccountInfo granter, ActiveRoles activeRoles, List<PolarAccountInfo> grantees,
+                                 boolean ifExists) {
         checkModifyReservedAccounts(granter, grantees, false);
         // check granter privilege
         // If has create user permission, it should be able to grant privileges to all
@@ -655,6 +843,9 @@ public class PolarPrivManager {
         if (!hasCreateUserPermission) {
             PolarAccountInfo samplePermission = grantees.get(0).deepCopy();
             samplePermission.addGrantOptionToAll();
+
+            // Catalog privilege granter check via hierarchical matching
+            grantCatalogPrivileges(granter, samplePermission);
 
             for (Permission permission : samplePermission.toPermissions()) {
                 PermissionCheckContext context = new PermissionCheckContext(granter.getAccountId(), activeRoles,
@@ -737,7 +928,7 @@ public class PolarPrivManager {
         PolarTbPriv.loadTbPriv(rs, priv -> {
             PolarAccountInfo userInfo = data.getExactUser(priv.getUserName(), priv.getHost());
             if (userInfo != null) {
-                userInfo.getTbPrivMap().put(priv.getIdentifier(), priv);
+                userInfo.addTbPriv(priv);
             }
         });
     }
@@ -777,6 +968,13 @@ public class PolarPrivManager {
 
     public String encryptPassword(String password) {
         return PrivilegeUtil.encryptPassword(password).getPassword();
+    }
+
+    /**
+     * @return true if the user has wrong password backoff
+     */
+    public boolean enableLoginBackoff(String userName) {
+        return getPolarLoginErrConfig().getUserLoginErrConfig(userName).enableExpireTimeBackoff();
     }
 
     public boolean checkUserLoginErrMaxCount(String userName, String host) {
@@ -827,6 +1025,12 @@ public class PolarPrivManager {
     public void triggerLBACReload() {
         MetaDbConfigManager.getInstance().notify(MetaDbDataIdBuilder.getLBACSecurityDataId(), null);
         MetaDbConfigManager.getInstance().sync(MetaDbDataIdBuilder.getLBACSecurityDataId());
+    }
+
+    public void triggerRoutingRuleReload() {
+        MetaDbConfigManager.getInstance()
+            .notify(MetaDbDataIdBuilder.getRoutingRuleDataId(InstIdUtil.getInstId()), null);
+        MetaDbConfigManager.getInstance().sync(MetaDbDataIdBuilder.getRoutingRuleDataId(InstIdUtil.getInstId()));
     }
 
     private void registerLoginErrListener() {
@@ -928,6 +1132,28 @@ public class PolarPrivManager {
      */
     public boolean checkPermission(PermissionCheckContext context) {
         PolarAccountInfo account = accountPrivilegeData.getAndCheckById(context.getAccountId());
+
+        // External catalog schema short-circuit: identify catalog$$db format
+        Permission permission = context.getPermission();
+        if (permission.getDatabase() != null
+            && ExternalNameValidator.isExternalSchema(permission.getDatabase())) {
+            // GOD + DBA exemption
+            if (account.getAccountType().isSuperUser()) {
+                return true;
+            }
+            String[] parts = ExternalNameValidator.splitSchemaName(permission.getDatabase());
+            if (parts == null) {
+                return false;
+            }
+            if (permission.isAnyPermission()) {
+                // CanAccessTable path: check "has any privilege"
+                return hasAnyExternalPrivilege(account, parts[0], parts[1], permission.getTable());
+            }
+            // Exact privilege check
+            return checkExternalPrivilege(account, parts[0], parts[1], permission.getTable(),
+                permission.getPrivilege());
+        }
+
         if (PolarAuthorizer.hasPermission(account, context.getPermission())) {
             return true;
         }
@@ -951,26 +1177,6 @@ public class PolarPrivManager {
     @VisibleForTesting
     public void setAccountPrivilegeData(PolarPrivilegeData accountPrivilegeData) {
         this.accountPrivilegeData = accountPrivilegeData;
-    }
-
-    protected static class PrivilegeInfoConfigListener implements ConfigListener {
-
-        @Override
-        public void onHandleConfig(String dataId, long newOpVersion) {
-            logger.info(String.format("start reload privilege config, newOpVersion: %d", newOpVersion));
-            PolarPrivManager.getInstance().reloadPriv();
-            logger.info("finish reload privilege config");
-        }
-    }
-
-    protected static class UserLoginErrorChangeListener implements ConfigListener {
-
-        @Override
-        public void onHandleConfig(String dataId, long newOpVersion) {
-            logger.info(String.format("start reload login config, newOpVersion: %d", newOpVersion));
-            PolarPrivManager.getInstance().reloadLoginErr();
-            logger.info("finish reload privilege config");
-        }
     }
 
     private void checkModifyReservedAccount(PolarAccountInfo user, PolarAccount account, boolean godAllowed) {
@@ -1047,6 +1253,20 @@ public class PolarPrivManager {
                         identifier, "def", tbPriv.getDbName(), tbPriv.getTbName(),
                         priv.getKey().getSqlName(), isGrantable})
                     .forEach(ret::add));
+            // Catalog table privileges
+            user.getCatalogTbPrivMap().values().forEach(catTbPriv -> {
+                String catalogDisplay = catTbPriv.getCatalogName().toLowerCase();
+                String dbDisplay = catTbPriv.getDbName().toLowerCase();
+                String tbDisplay = catTbPriv.getTbName().toLowerCase();
+                String grantable = catTbPriv.hasPrivilege(PrivilegeKind.GRANT_OPTION) ? "YES" : "NO";
+                catTbPriv.getPrivileges().entrySet().stream()
+                    .filter(priv -> priv.getKey().hasSqlName())
+                    .filter(Map.Entry::getValue)
+                    .map(priv -> new Object[] {
+                        identifier, catalogDisplay, dbDisplay, tbDisplay,
+                        priv.getKey().getSqlName(), grantable})
+                    .forEach(ret::add);
+            });
         });
         return ret;
     }
@@ -1078,11 +1298,121 @@ public class PolarPrivManager {
                     .map(priv -> new Object[] {
                         identifier, "def", entry.getKey(), priv.getKey().getSqlName(), isGrantable})
                     .forEach(ret::add));
+            // Catalog privileges
+            user.getCatalogDbPrivMap().values().forEach(catDbPriv -> {
+                String catalogDisplay = catDbPriv.getCatalogName().toLowerCase();
+                String dbDisplay = catDbPriv.getDbName().toLowerCase();
+                String grantable = catDbPriv.hasPrivilege(PrivilegeKind.GRANT_OPTION) ? "YES" : "NO";
+                catDbPriv.getPrivileges().entrySet().stream()
+                    .filter(priv -> priv.getKey().hasSqlName())
+                    .filter(Map.Entry::getValue)
+                    .map(priv -> new Object[] {
+                        identifier, catalogDisplay, dbDisplay, priv.getKey().getSqlName(), grantable})
+                    .forEach(ret::add);
+            });
         });
         return ret;
     }
 
     public synchronized void changeRightsSeparationMode(boolean enabled) {
         accountPrivilegeData.changeRightsSeparationMode(enabled);
+    }
+
+    protected static class PrivilegeInfoConfigListener implements ConfigListener {
+
+        @Override
+        public void onHandleConfig(String dataId, long newOpVersion) {
+            logger.info(String.format("start reload privilege config, newOpVersion: %d", newOpVersion));
+            PolarPrivManager.getInstance().reloadPriv();
+            logger.info("finish reload privilege config");
+        }
+    }
+
+    public static boolean checkExternalPrivilege(PolarAccountInfo account,
+                                                 String catalogName, String dbName, String tb,
+                                                 PrivilegeKind privilege) {
+        // 1. Global wildcard: catalog_name='*', db_name='*'
+        PolarDbPriv globalWildcard = account.getCatalogDbPriv("*", "*");
+        if (globalWildcard != null && globalWildcard.hasPrivilege(privilege)) {
+            return true;
+        }
+        // 2. Catalog-level wildcard: catalog_name=X, db_name='*'
+        PolarDbPriv catalogWildcard = account.getCatalogDbPriv(catalogName, "*");
+        if (catalogWildcard != null && catalogWildcard.hasPrivilege(privilege)) {
+            return true;
+        }
+        // 3. Exact DB level
+        PolarDbPriv dbPriv = account.getCatalogDbPriv(catalogName, dbName);
+        if (dbPriv != null && dbPriv.hasPrivilege(privilege)) {
+            return true;
+        }
+        // 4. Exact table level
+        if (tb != null && !tb.isEmpty()) {
+            PolarTbPriv tbPriv = account.getCatalogTbPriv(catalogName, dbName, tb);
+            if (tbPriv != null && tbPriv.hasPrivilege(privilege)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static boolean hasAnyExternalPrivilege(PolarAccountInfo account,
+                                                  String catalogName, String dbName, String tb) {
+        // 1. Global wildcard
+        PolarDbPriv globalWildcard = account.getCatalogDbPriv("*", "*");
+        if (globalWildcard != null && globalWildcard.hasUsagePriv()) {
+            return true;
+        }
+        // 2. Catalog-level wildcard
+        PolarDbPriv catalogWildcard = account.getCatalogDbPriv(catalogName, "*");
+        if (catalogWildcard != null && catalogWildcard.hasUsagePriv()) {
+            return true;
+        }
+        // 3. Exact DB level
+        PolarDbPriv dbPriv = account.getCatalogDbPriv(catalogName, dbName);
+        if (dbPriv != null && dbPriv.hasUsagePriv()) {
+            return true;
+        }
+        // 4. Exact table level
+        if (tb != null && !tb.isEmpty()) {
+            PolarTbPriv tbPriv = account.getCatalogTbPriv(catalogName, dbName, tb);
+            if (tbPriv != null && tbPriv.hasUsagePriv()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static boolean hasAnyPrivOnCatalog(PolarAccountInfo account, String catalogName) {
+        if (account.getAccountType().isSuperUser()) {
+            return true;
+        }
+        // Global wildcard
+        PolarDbPriv global = account.getCatalogDbPriv("*", "*");
+        if (global != null && global.hasUsagePriv()) {
+            return true;
+        }
+        // Any record under this catalog
+        for (PolarDbPriv priv : account.getCatalogDbPrivMap().values()) {
+            if (priv.getCatalogName().equalsIgnoreCase(catalogName) && priv.hasUsagePriv()) {
+                return true;
+            }
+        }
+        for (PolarTbPriv priv : account.getCatalogTbPrivMap().values()) {
+            if (priv.getCatalogName().equalsIgnoreCase(catalogName) && priv.hasUsagePriv()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    protected static class UserLoginErrorChangeListener implements ConfigListener {
+
+        @Override
+        public void onHandleConfig(String dataId, long newOpVersion) {
+            logger.info(String.format("start reload login config, newOpVersion: %d", newOpVersion));
+            PolarPrivManager.getInstance().reloadLoginErr();
+            logger.info("finish reload privilege config");
+        }
     }
 }

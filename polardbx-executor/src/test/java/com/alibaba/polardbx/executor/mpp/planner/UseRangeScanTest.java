@@ -35,7 +35,7 @@ public class UseRangeScanTest {
             when(paramManager.getBoolean(ConnectionParams.ENABLE_RANGE_SCAN)).thenReturn(true);
             when(context.getSqlType()).thenReturn(SqlType.SELECT);
             when(logicalView.getTableNames()).thenReturn(Lists.newArrayList("table1"));
-            when(logicalView.isSingleGroup()).thenReturn(false);
+            when(logicalView.isSingleGroupForExecutor()).thenReturn(false);
             when(PartitionUtils.isNewPartShardTable(logicalView)).thenReturn(true);
             when(logicalView.buildTargetTableInfosForPartitionTb(context)).thenReturn(targetTableInfo);
             when(targetTableInfo.getTargetTableInfoList()).thenReturn(Lists.newArrayList(tableInfo));
@@ -75,7 +75,7 @@ public class UseRangeScanTest {
             when(paramManager.getBoolean(ConnectionParams.ENABLE_RANGE_SCAN)).thenReturn(true);
             when(context.getSqlType()).thenReturn(SqlType.SELECT);
             when(logicalView.getTableNames()).thenReturn(Lists.newArrayList("table1"));
-            when(logicalView.isSingleGroup()).thenReturn(false);
+            when(logicalView.isSingleGroupForExecutor()).thenReturn(false);
             when(PartitionUtils.isNewPartShardTable(logicalView)).thenReturn(true);
             when(logicalView.buildTargetTableInfosForPartitionTb(context)).thenReturn(targetTableInfo);
             when(targetTableInfo.getTargetTableInfoList()).thenReturn(Lists.newArrayList(tableInfo));

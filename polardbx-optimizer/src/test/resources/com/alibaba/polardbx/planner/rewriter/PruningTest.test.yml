@@ -1,0 +1,23 @@
+- sql: |
+    /*TDDL:PARTITION_PRUNING_STEP_COUNT_LIMIT=9*/SELECT id,name,create_time FROM test_key_tb WHERE id in (1,2,3,4,5,6,7,8,9,0)
+
+  plan: |
+    gather(concurrent=true)
+      logicalview(tables="test_key_tb[p1,p2,p3,...p32]", shardcount=32, sql="select `id`, `name`, `create_time` from `test_key_tb` as `test_key_tb` where (`id` in(?))", pruninginfo="all size:10*9(part), pruning size:80")
+- sql: |
+    /*TDDL:PARTITION_PRUNING_STEP_COUNT_LIMIT=11*/SELECT id,name,create_time FROM test_key_tb WHERE id in (1,2,3,4,5,6,7,8,9,0)
+
+  plan: |
+    gather(concurrent=true)
+      logicalview(tables="test_key_tb[p1,p3,p4,p9,p13,p17,p19,p27,p32]", shardcount=9, sql="select `id`, `name`, `create_time` from `test_key_tb` as `test_key_tb` where (`id` in(?))", pruninginfo="all size:10*9(part), pruning size:80")
+
+- sql: |
+    /*TDDL:PARTITION_PRUNING_STEP_COUNT_LIMIT=5*/SELECT id,name,create_time FROM test_key_tb WHERE id=5 and age in (1,2,3,4,5,6,7,8,9,0)
+
+  plan: |
+    logicalview(tables="test_key_tb[p9]", sql="select `id`, `name`, `create_time` from `test_key_tb` as `test_key_tb` where ((`id` = ?) and (`age` in(?)))")
+
+- sql: |
+    WITH RECURSIVE sub_categories AS ( SELECT id FROM tcc_test WHERE deleted_flag = 0 AND id = 1001465 UNION ALL SELECT n.id FROM tcc_test n INNER JOIN sub_categories na ON na.parent_category_id = n.id AND n.deleted_flag = 0 ) SELECT * FROM sub_categories;
+  plan: |
+    err-code: [pxc-4518][err_validate] column 'parent_category_id' not found in table 'na'

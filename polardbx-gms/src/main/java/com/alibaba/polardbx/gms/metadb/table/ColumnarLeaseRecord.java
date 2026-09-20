@@ -25,12 +25,14 @@ public class ColumnarLeaseRecord implements SystemTableRecord {
     public int id;
     public String owner;
     public long lease;
+    public long fencingToken;
 
     @Override
     public ColumnarLeaseRecord fill(ResultSet rs) throws SQLException {
         this.id = rs.getInt("id");
         this.owner = rs.getString("owner");
         this.lease = rs.getLong("lease");
+        this.fencingToken = rs.getLong("fencing_token");
         return this;
     }
 }

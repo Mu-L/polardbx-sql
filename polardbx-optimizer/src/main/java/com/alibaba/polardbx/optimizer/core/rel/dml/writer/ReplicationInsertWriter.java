@@ -33,6 +33,7 @@ import com.alibaba.polardbx.optimizer.core.rel.PhyTableModifyBuilder;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.SingleTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.dml.ReplicationWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.RoutedInsertInput;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.rel.RelNode;
 
@@ -62,7 +63,8 @@ public class ReplicationInsertWriter extends InsertWriter implements Replication
 
     @Override
     public List<RelNode> getInput(ExecutionContext executionContext) {
-        List<RelNode> primaryRelNodes = super.getInput(executionContext);
+        List<RelNode> inputs = super.getInput(executionContext);
+        List<RelNode> primaryRelNodes = primaryWritePlans(inputs);
         boolean isNewPart = DbInfoManager.getInstance().isNewPartitionDb(tableMeta.getSchemaName());
         List<RelNode> replicateRelNodes;
         if (isNewPart) {
@@ -76,8 +78,8 @@ public class ReplicationInsertWriter extends InsertWriter implements Replication
                 (BaseQueryOperation) relNode,
                 executionContext);
         }
-        primaryRelNodes.addAll(replicateRelNodes);
-        return primaryRelNodes;
+        inputs.addAll(replicateRelNodes);
+        return inputs;
     }
 
     private List<RelNode> getInputForMoveDatabase(List<RelNode> relNodes, ExecutionContext executionContext) {

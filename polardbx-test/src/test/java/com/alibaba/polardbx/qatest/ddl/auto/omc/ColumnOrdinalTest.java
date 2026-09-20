@@ -162,7 +162,7 @@ public class ColumnOrdinalTest extends DDLBaseNewDBTestCase {
         String insert = String.format("insert into %s values (1,2,3,4,5),(6,7,8,9,10)", tableName);
         executeOnMysqlAndTddl(mysqlConnection, tddlConnection, insert, insert, null, false);
 
-        String hint = "";
+        String hint = "/*+TDDL:cmd_extra(ENABLE_OMC_30=false)*/";
         for (int i = 0; i < params.length; i++) {
             String alterSql = hint + String.format(params[i], tableName);
             execDdlWithRetry(tddlDatabase1, tableName, alterSql + USE_OMC_ALGORITHM, tddlConnection);
@@ -266,28 +266,29 @@ public class ColumnOrdinalTest extends DDLBaseNewDBTestCase {
         String partDef = " partition by hash(a)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partDef);
 
-        String alter = String.format("alter table %s modify column b bigint first, algorithm=omc", tableName);
+        String hint = "/*+TDDL:cmd_extra(ENABLE_OMC_30=false)*/ ";
+        String alter = hint + String.format("alter table %s modify column b bigint first, algorithm=omc", tableName);
         JdbcUtil.executeUpdateFailed(tddlConnection, alter, "");
 
-        alter = String.format("alter table %s modify column b bigint after e, algorithm=omc", tableName);
+        alter = hint + String.format("alter table %s modify column b bigint after e, algorithm=omc", tableName);
         JdbcUtil.executeUpdateFailed(tddlConnection, alter, "");
 
-        alter = String.format("alter table %s modify column d bigint first, algorithm=omc", tableName);
+        alter = hint + String.format("alter table %s modify column d bigint first, algorithm=omc", tableName);
         JdbcUtil.executeUpdateFailed(tddlConnection, alter, "");
 
-        alter = String.format("alter table %s modify column d bigint after e, algorithm=omc", tableName);
+        alter = hint + String.format("alter table %s modify column d bigint after e, algorithm=omc", tableName);
         JdbcUtil.executeUpdateFailed(tddlConnection, alter, "");
 
-        alter = String.format("alter table %s change column b f bigint first, algorithm=omc", tableName);
+        alter = hint + String.format("alter table %s change column b f bigint first, algorithm=omc", tableName);
         JdbcUtil.executeUpdateFailed(tddlConnection, alter, "");
 
-        alter = String.format("alter table %s change column b f bigint after e, algorithm=omc", tableName);
+        alter = hint + String.format("alter table %s change column b f bigint after e, algorithm=omc", tableName);
         JdbcUtil.executeUpdateFailed(tddlConnection, alter, "");
 
-        alter = String.format("alter table %s change column d f bigint first, algorithm=omc", tableName);
+        alter = hint + String.format("alter table %s change column d f bigint first, algorithm=omc", tableName);
         JdbcUtil.executeUpdateFailed(tddlConnection, alter, "");
 
-        alter = String.format("alter table %s change column d f bigint after e, algorithm=omc", tableName);
+        alter = hint + String.format("alter table %s change column d f bigint after e, algorithm=omc", tableName);
         JdbcUtil.executeUpdateFailed(tddlConnection, alter, "");
     }
 }

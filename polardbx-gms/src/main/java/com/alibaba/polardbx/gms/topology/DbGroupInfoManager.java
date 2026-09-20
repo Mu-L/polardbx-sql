@@ -21,6 +21,7 @@ import com.alibaba.polardbx.common.model.lifecycle.AbstractLifecycle;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbConfigManager;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
+import com.alibaba.polardbx.gms.locality.LocalityDesc;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
 import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.gms.util.MetaDbLogUtil;
@@ -30,6 +31,8 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -67,7 +70,28 @@ public class DbGroupInfoManager extends AbstractLifecycle {
         }
     }
 
-    public void reloadGroupsOfDb(String schema) {
+    public synchronized Boolean valiateGroupAndPhyDbName(String dbName, LocalityDesc localityDesc) {
+        Set<String> fullGroupSet = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        Set<String> fullPhyDbNameSet = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        for (String schema : cache.keySet()) {
+            if (schema.equalsIgnoreCase(dbName)) {
+                return true;
+            }
+            for (String group : cache.get(schema).keySet()) {
+                fullGroupSet.add(group);
+                fullPhyDbNameSet.add(cache.get(schema).get(group).phyDbName);
+            }
+
+        }
+        Boolean groupValid =
+            localityDesc.getProxyConfig().keySet().stream().noneMatch(groupKey -> fullGroupSet.contains(groupKey));
+        Boolean phyDbValid =
+            localityDesc.fetchPhyDbList().stream().noneMatch(phyDb -> fullPhyDbNameSet.contains(phyDb));
+        Boolean valid = (groupValid && phyDbValid);
+        return valid;
+    }
+
+    public synchronized void reloadGroupsOfDb(String schema) {
         try (Connection conn = MetaDbDataSource.getInstance().getConnection()) {
             DbGroupInfoAccessor dbGroupInfoAccessor = new DbGroupInfoAccessor();
             dbGroupInfoAccessor.setConnection(conn);
@@ -75,7 +99,6 @@ public class DbGroupInfoManager extends AbstractLifecycle {
             List<DbGroupInfoRecord> records = dbGroupInfoAccessor.queryDbGroupByDbName(schema);
             Map<String, DbGroupInfoRecord> dbGroups =
                 records.stream().collect(Collectors.toMap(x -> x.groupName, x -> x));
-
             // replace existed cache
             schema = schema.toLowerCase();
             cache.put(schema, dbGroups);
@@ -127,7 +150,9 @@ public class DbGroupInfoManager extends AbstractLifecycle {
         }
         for (String dbName : removed.keySet()) {
             dbName = dbName.toLowerCase();
-            cache.remove(dbName);
+            if (cache.containsKey(dbName)) {
+                cache.remove(dbName);
+            }
         }
     }
 

@@ -16,6 +16,8 @@ public class SqlAlterTableModifyTtlOptions extends SqlAlterSpecification {
     private String ttlEnable = null;
     private SqlNode ttlExpr = null;
     private SqlNode ttlJob = null;
+    private SqlNode ttlColEncoder = null;
+    private SqlNode ttlColDecoder = null;
     private SqlNode ttlFilter = null;
     private SqlNode ttlCleanup = null;
     private SqlNode ttlPartInterval = null;
@@ -24,6 +26,8 @@ public class SqlAlterTableModifyTtlOptions extends SqlAlterSpecification {
     private String archiveKind = null;
     private Integer arcPreAllocate = null;
     private Integer arcPostAllocate = null;
+    private SqlNode ttlRefColList = null;
+    private SqlNode ttlHybrid = null;
 
     public SqlAlterTableModifyTtlOptions(SqlParserPos pos) {
         super(pos);
@@ -69,6 +73,24 @@ public class SqlAlterTableModifyTtlOptions extends SqlAlterSpecification {
             }
             writer.print("TTL_JOB = ");
             ttlJob.unparse(writer,leftPrec, rightPrec);
+        }
+
+        if (ttlColEncoder != null) {
+            alterOptionCount++;
+            if (alterOptionCount > 1) {
+                writer.print(", ");
+            }
+            writer.print("TTL_COL_ENCODER = ");
+            ttlColEncoder.unparse(writer,leftPrec, rightPrec);
+        }
+
+        if (ttlColDecoder != null) {
+            alterOptionCount++;
+            if (alterOptionCount > 1) {
+                writer.print(", ");
+            }
+            writer.print("TTL_COL_DECODER = ");
+            ttlColDecoder.unparse(writer,leftPrec, rightPrec);
         }
 
         if (ttlFilter != null) {
@@ -142,6 +164,24 @@ public class SqlAlterTableModifyTtlOptions extends SqlAlterSpecification {
             }
             writer.print("ARCHIVE_TABLE_POST_ALLOCATE = ");
             writer.print(arcPostAllocate);
+        }
+
+        if (ttlRefColList != null) {
+            alterOptionCount++;
+            if (alterOptionCount > 1) {
+                writer.print(", ");
+            }
+            writer.print("TTL_REF_COL_LIST = ");
+            ttlRefColList.unparse(writer,leftPrec, rightPrec);
+        }
+
+        if (ttlHybrid != null) {
+            alterOptionCount++;
+            if (alterOptionCount > 1) {
+                writer.print(", ");
+            }
+            writer.print("TTL_HYBRID = ");
+            ttlHybrid.unparse(writer,leftPrec, rightPrec);
         }
 
         writer.endList(frame);
@@ -235,4 +275,33 @@ public class SqlAlterTableModifyTtlOptions extends SqlAlterSpecification {
         this.ttlPartInterval = ttlPartInterval;
     }
 
+    public SqlNode getTtlColEncoder() {
+        return ttlColEncoder;
+    }
+
+    public void setTtlColEncoder(SqlNode ttlColEncoder) {
+        this.ttlColEncoder = ttlColEncoder;
+    }
+
+    public SqlNode getTtlColDecoder() {
+        return ttlColDecoder;
+    }
+
+    public void setTtlColDecoder(SqlNode ttlColDecoder) {
+        this.ttlColDecoder = ttlColDecoder;
+    }
+    public SqlNode getTtlRefColList() {
+        return ttlRefColList;
+    }
+
+    public void setTtlRefColList(SqlNode ttlRefColList) {
+        this.ttlRefColList = ttlRefColList;
+    }
+
+    public SqlNode getTtlHybrid() {
+        return ttlHybrid;
+    }
+    public void setTtlHybrid(SqlNode ttlHybrid) {
+        this.ttlHybrid = ttlHybrid;
+    }
 }

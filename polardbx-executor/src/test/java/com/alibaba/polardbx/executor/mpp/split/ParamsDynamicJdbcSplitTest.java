@@ -51,7 +51,8 @@ public class ParamsDynamicJdbcSplitTest {
         tableNames.add(tableName);
 
         this.jdbcSplit =
-            new JdbcSplit("ca", "sc", "db0", hint, bytesSql, null, params, "127.1", tableNames, ITransaction.RW.WRITE,
+            new JdbcSplit("ca", "sc", "db0", hint, bytesSql, null, null, params, "127.1", tableNames,
+                ITransaction.RW.WRITE,
                 true, null, new byte[] {0x01, 0x02, 0x03}, true, null, null);
 
     }

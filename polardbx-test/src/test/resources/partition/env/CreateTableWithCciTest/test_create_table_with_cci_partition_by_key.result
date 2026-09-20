@@ -1,0 +1,73 @@
+SET MAX_CCI_COUNT = 5
+DROP TABLE IF EXISTS t_order_0
+DROP TABLE IF EXISTS t_order_1
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/CREATE TABLE `t_order_0` (
+	`id` bigint(11) NOT NULL AUTO_INCREMENT BY GROUP,
+	`order_id` varchar(20) DEFAULT NULL,
+	`buyer_id` varchar(20) DEFAULT NULL,
+	`order_snapshot` longtext,
+	PRIMARY KEY (`id`),
+	CLUSTERED COLUMNAR INDEX `cci_0`(`buyer_id`) PARTITION BY KEY (`id`),
+	CLUSTERED COLUMNAR INDEX `cci_1`(`id`) PARTITION BY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+PARTITION BY KEY (`order_id`)
+SHOW FULL CREATE TABLE t_order_0
+Table,Create Table
+t_order_0,CREATE TABLE `t_order_0` (
+	`id` bigint(11) NOT NULL AUTO_INCREMENT,
+	`order_id` varchar(20) DEFAULT NULL,
+	`buyer_id` varchar(20) DEFAULT NULL,
+	`order_snapshot` longtext,
+	PRIMARY KEY (`id`),
+	CLUSTERED COLUMNAR INDEX /* cci_0_$ */ `cci_0` (`buyer_id`)
+		PARTITION BY KEY(`id`)
+		PARTITIONS 16 ENGINE=OSS,
+	CLUSTERED COLUMNAR INDEX /* cci_1_$ */ `cci_1` (`id`)
+		PARTITION BY KEY(`id`)
+		PARTITIONS 16 ENGINE=OSS,
+	LOCAL KEY `auto_shard_key_order_id` USING BTREE (`order_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+PARTITION BY KEY(`order_id`)
+PARTITIONS 3
+/* tablegroup = `tg` */
+CHECK COLUMNAR INDEX `cci_0` ON `t_order_0` META
+CCI,error_type,status,primary_key,details
+`cci_0_$` ON `test_create_tabl_873775442`.`t_order_0`,SUMMARY,--,--,OK (metadata of columnar index checked) Finish time: %
+DROP INDEX `cci_0` ON `t_order_0`
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/CREATE TABLE `t_order_1` (
+	`id` bigint(11) NOT NULL AUTO_INCREMENT BY GROUP,
+	`order_id` varchar(20) DEFAULT NULL,
+	`buyer_id` varchar(20) DEFAULT NULL,
+	`order_snapshot` longtext,
+	PRIMARY KEY (`id`),
+	CLUSTERED COLUMNAR INDEX `cci_0`(`buyer_id`) PARTITION BY KEY (`id`),
+	CLUSTERED COLUMNAR INDEX `cci_1`(`id`) PARTITION BY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+PARTITION BY KEY (`order_id`)
+SHOW FULL CREATE TABLE t_order_1
+Table,Create Table
+t_order_1,CREATE TABLE `t_order_1` (
+	`id` bigint(11) NOT NULL AUTO_INCREMENT,
+	`order_id` varchar(20) DEFAULT NULL,
+	`buyer_id` varchar(20) DEFAULT NULL,
+	`order_snapshot` longtext,
+	PRIMARY KEY (`id`),
+	CLUSTERED COLUMNAR INDEX /* cci_0_$ */ `cci_0` (`buyer_id`)
+		PARTITION BY KEY(`id`)
+		PARTITIONS 16 ENGINE=OSS,
+	CLUSTERED COLUMNAR INDEX /* cci_1_$ */ `cci_1` (`id`)
+		PARTITION BY KEY(`id`)
+		PARTITIONS 16 ENGINE=OSS,
+	LOCAL KEY `auto_shard_key_order_id` USING BTREE (`order_id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+PARTITION BY KEY(`order_id`)
+PARTITIONS 3
+/* tablegroup = `tg` */
+CHECK COLUMNAR INDEX `cci_0` ON `t_order_1` META
+CCI,error_type,status,primary_key,details
+`cci_0_$` ON `test_create_tabl_873775442`.`t_order_1`,SUMMARY,--,--,OK (metadata of columnar index checked) Finish time: %
+CHECK COLUMNAR INDEX `cci_1` ON `t_order_1` META
+CCI,error_type,status,primary_key,details
+`cci_1_$` ON `test_create_tabl_873775442`.`t_order_1`,SUMMARY,--,--,OK (metadata of columnar index checked) Finish time: %
+DROP TABLE IF EXISTS t_order_0
+DROP TABLE IF EXISTS t_order_1;

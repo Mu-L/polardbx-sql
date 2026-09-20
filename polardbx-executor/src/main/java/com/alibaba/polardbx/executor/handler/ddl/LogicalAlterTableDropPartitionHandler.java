@@ -81,7 +81,7 @@ public class LogicalAlterTableDropPartitionHandler extends LogicalCommonDdlHandl
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC,
                 "can't execute the drop partition command in a non-auto mode database");
         }
-
+        AlterTableGroupUtils.validateRepartitionPermit(schemaName, executionContext);
         TableValidator.validateTableExistence(schemaName, logicalTableName, executionContext);
 
         PartitionInfo partitionInfo =

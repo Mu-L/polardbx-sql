@@ -16,11 +16,17 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
+import com.alibaba.polardbx.common.BlockingState;
+import com.alibaba.polardbx.common.utils.logger.Logger;
+import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.mpp.execution.RecordMemSystemListener;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.PagesSerde;
 import com.alibaba.polardbx.executor.mpp.metadata.Split;
 import com.alibaba.polardbx.executor.mpp.metadata.TaskLocation;
+import com.alibaba.polardbx.executor.mpp.operator.Driver;
 import com.alibaba.polardbx.executor.mpp.operator.DriverYieldSignal;
 import com.alibaba.polardbx.executor.mpp.operator.ExchangeClient;
 import com.alibaba.polardbx.executor.mpp.operator.ExchangeClientSupplier;
@@ -28,7 +34,7 @@ import com.alibaba.polardbx.executor.mpp.operator.WorkProcessor;
 import com.alibaba.polardbx.executor.mpp.split.RemoteSplit;
 import com.alibaba.polardbx.executor.operator.util.ChunkWithPositionComparator;
 import com.alibaba.polardbx.executor.operator.util.MergeSortedChunks;
-import com.alibaba.polardbx.executor.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
@@ -36,27 +42,29 @@ import com.alibaba.polardbx.optimizer.memory.MemoryPoolUtils;
 import com.google.common.collect.ImmutableList;
 import com.google.common.io.Closer;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.SettableFuture;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.List;
 
+import static com.alibaba.polardbx.common.BlockingReason.WAIT_FOR_NO_MORE_SPLIT;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static java.util.Objects.requireNonNull;
 
 public class SortMergeExchangeExec extends SourceExec implements Closeable {
-
+    private static final Logger MPP_LOGGER = LoggerFactory.getLogger(Driver.class);
     private final Integer sourceId;
     private final PagesSerde serde;
     private final List<OrderByOption> orderBys;
 
     private final ExchangeClientSupplier supplier;
     private final Closer closer = Closer.create();
-    private final SettableFuture<Void> blockedOnSplits = SettableFuture.create();
+    private final BlockingFuture<?> blockedOnSplits = BlockingFuture.create(BlockingReason.WAIT_FOR_NO_MORE_SPLIT);
+    private long firstCallTime = 0L;
     private final List<WorkProcessor<Chunk>> pageProducers = new ArrayList<>();
     private WorkProcessor<Chunk> mergedPages;
     private boolean closed;
@@ -68,9 +76,14 @@ public class SortMergeExchangeExec extends SourceExec implements Closeable {
     private boolean doOpen = false;
     private MemoryPool memoryPool;
 
+    // for stream-based early stopping.
+    private Long topSize = null;
+    private long totalPositionCount = 0;
+    private boolean earlyStopped = false;
+
     public SortMergeExchangeExec(ExecutionContext context, Integer sourceId, ExchangeClientSupplier supplier,
                                  PagesSerde serde, List<OrderByOption> orderBys,
-                                 List<DataType> types) {
+                                 List<DataType> types, Long topSize) {
         super(context);
         requireNonNull(sourceId, "sourceId is null");
         this.sourceId = sourceId;
@@ -78,6 +91,7 @@ public class SortMergeExchangeExec extends SourceExec implements Closeable {
         this.types = types;
         this.serde = serde;
         this.orderBys = orderBys;
+        this.topSize = topSize;
         this.memoryPool =
             MemoryPoolUtils.createOperatorTmpTablePool(getExecutorName(), context.getMemoryPool());
     }
@@ -111,7 +125,7 @@ public class SortMergeExchangeExec extends SourceExec implements Closeable {
     @Override
     public void noMoreSplits() {
         noMoreLocation = true;
-        blockedOnSplits.set(null);
+        blockedOnSplits.complete(null);
         if (closed) {
             //the operator is already closed!
             return;
@@ -171,21 +185,34 @@ public class SortMergeExchangeExec extends SourceExec implements Closeable {
 
     @Override
     Chunk doSourceNextChunk() {
-        if (closed || mergedPages == null || !mergedPages.process() || mergedPages.isFinished()) {
+        if (earlyStopped || closed || mergedPages == null || !mergedPages.process() || mergedPages.isFinished()) {
             return null;
         }
         Chunk page = mergedPages.getResult();
+
+        totalPositionCount += (page == null ? 0 : page.getPositionCount());
+        if (topSize != null && totalPositionCount >= topSize.longValue()) {
+            earlyStopped = true;
+            if (MPP_LOGGER.isDebugEnabled()) {
+                MPP_LOGGER.debug(MessageFormat.format("exchangeExec: {0}, early stop, totalPositionCount = {1}",
+                    this.toString(), totalPositionCount));
+            }
+        }
         return page;
     }
 
     @Override
     public boolean produceIsFinished() {
-        return closed || (mergedPages != null && mergedPages.isFinished());
+        return earlyStopped || closed || (mergedPages != null && mergedPages.isFinished());
     }
 
     @Override
     public ListenableFuture<?> produceIsBlocked() {
         if (doOpen) {
+            if (firstCallTime == 0L) {
+                firstCallTime = System.nanoTime();
+            }
+
             if (!blockedOnSplits.isDone()) {
                 return blockedOnSplits;
             }

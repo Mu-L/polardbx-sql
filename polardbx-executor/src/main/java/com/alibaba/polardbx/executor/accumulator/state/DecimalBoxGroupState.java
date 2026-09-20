@@ -16,10 +16,12 @@
 
 package com.alibaba.polardbx.executor.accumulator.state;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableByteArrayList;
 import com.alibaba.polardbx.common.datatype.Decimal;
 import com.alibaba.polardbx.common.datatype.DecimalBox;
 import com.alibaba.polardbx.common.datatype.DecimalStructure;
 import com.alibaba.polardbx.common.datatype.FastDecimalUtils;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.executor.accumulator.datastruct.LongSegmentArrayList;
 import com.alibaba.polardbx.executor.accumulator.datastruct.ObjectSegmentArrayList;
 import it.unimi.dsi.fastutil.bytes.ByteArrayList;
@@ -46,7 +48,7 @@ public class DecimalBoxGroupState implements GroupState {
     private final ObjectSegmentArrayList<DecimalBox> decimalBoxes;
     private final ObjectSegmentArrayList<Decimal> decimals;
 
-    private final ByteArrayList flags;
+    private final MemoryCountableByteArrayList flags;
 
     private final int capacity;
     private int scale;
@@ -61,7 +63,17 @@ public class DecimalBoxGroupState implements GroupState {
         this.decimalBoxes = new ObjectSegmentArrayList<>(capacity, DecimalBox.class);
         this.decimals = new ObjectSegmentArrayList<>(capacity, Decimal.class);
 
-        this.flags = new ByteArrayList(capacity);
+        this.flags = new MemoryCountableByteArrayList(capacity);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(decimal64List)
+            + FastMemoryCounter.sizeOf(decimal128HighList)
+            + FastMemoryCounter.sizeOf(decimalBoxes)
+            + FastMemoryCounter.sizeOf(decimals)
+            + FastMemoryCounter.sizeOf(flags);
     }
 
     public void set(int groupId, DecimalBox value) {
@@ -91,6 +103,14 @@ public class DecimalBoxGroupState implements GroupState {
         decimalBoxes.add(null);
         decimals.add(null);
         flags.add(IS_NULL);
+    }
+
+    @Override
+    public long estimatedGrowthMemoryUsage() {
+        return decimal64List.estimateGrowthMemoryUsage()
+            + decimal128HighList.estimateGrowthMemoryUsage()
+            + decimalBoxes.estimateGrowthMemoryUsage()
+            + decimals.estimateGrowthMemoryUsage();
     }
 
     public boolean isNull(int groupId) {

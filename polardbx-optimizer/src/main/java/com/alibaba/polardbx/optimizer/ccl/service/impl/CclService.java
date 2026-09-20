@@ -16,6 +16,16 @@
 
 package com.alibaba.polardbx.optimizer.ccl.service.impl;
 
+import com.alibaba.polardbx.common.TddlConstants;
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.jdbc.ParameterContext;
+import com.alibaba.polardbx.common.jdbc.ParameterMethod;
+import com.alibaba.polardbx.common.jdbc.Parameters;
+import com.alibaba.polardbx.common.privilege.PrivilegeVerifyItem;
+import com.alibaba.polardbx.common.utils.logger.Logger;
+import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.gms.metadb.ccl.CclRuleRecord;
 import com.alibaba.polardbx.optimizer.ccl.common.CclAction;
 import com.alibaba.polardbx.optimizer.ccl.common.CclContext;
 import com.alibaba.polardbx.optimizer.ccl.common.CclMetric;
@@ -28,24 +38,15 @@ import com.alibaba.polardbx.optimizer.ccl.service.ICclService;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
 import com.alibaba.polardbx.optimizer.core.planner.PlanCache;
+import com.alibaba.polardbx.optimizer.parse.privilege.PrivilegeContext;
+import com.alibaba.polardbx.optimizer.utils.CclUtils;
+import com.alibaba.polardbx.optimizer.utils.SqlKeywordMatchUtils;
+import com.alibaba.polardbx.druid.sql.SQLUtils;
 import com.google.common.base.Objects;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.Lists;
-import com.alibaba.polardbx.common.TddlConstants;
-import com.alibaba.polardbx.common.exception.TddlRuntimeException;
-import com.alibaba.polardbx.common.exception.code.ErrorCode;
-import com.alibaba.polardbx.common.jdbc.ParameterContext;
-import com.alibaba.polardbx.common.jdbc.ParameterMethod;
-import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.taobao.tddl.common.privilege.PrivilegePoint;
-import com.alibaba.polardbx.common.privilege.PrivilegeVerifyItem;
-import com.alibaba.polardbx.common.utils.logger.Logger;
-import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
-import com.alibaba.polardbx.gms.metadb.ccl.CclRuleRecord;
-import com.alibaba.polardbx.optimizer.parse.privilege.PrivilegeContext;
-import com.alibaba.polardbx.optimizer.utils.CclUtils;
-import com.alibaba.polardbx.optimizer.utils.SqlKeywordMatchUtils;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.StringUtils;
 
@@ -293,6 +294,11 @@ public class CclService implements ICclService {
         executionContext.setCclContext(cclContext);
 
         if (!CclUtils.enterStaying(matchRule)) {
+            if (CclUtils.isDryRun(matchRule)) {
+                CclUtils.updateCountInDryRun(matchRule);
+                cclContext.setDryRun(true);
+                return CclAction.RUN;
+            }
             return CclAction.KILL;
         }
 
@@ -374,7 +380,8 @@ public class CclService implements ICclService {
 
             CclRuleRecord cclRuleRecord = cclRuleInfo.getCclRuleRecord();
             //match user
-            if (cclRuleInfo.isNeedMatchUser() && !StringUtils.equals(currentUser, cclRuleRecord.userName)) {
+            if (cclRuleInfo.isNeedMatchUser() && !CclBlockerService.matchUser(cclRuleRecord.userName,
+                cclRuleRecord.clientIp, currentUser, currentHost)) {
                 continue;
             }
 
@@ -436,7 +443,7 @@ public class CclService implements ICclService {
 
                     //match db
                     if (cclRuleInfo.isNeedMatchDb()) {
-                        String db = privilegeVerifyItem.getDb();
+                        String db = SQLUtils.normalizeNoTrim(privilegeVerifyItem.getDb());
                         if (StringUtils.isEmpty(db)) {
                             db = privilegeContext.getSchema();
                         }
@@ -447,10 +454,7 @@ public class CclService implements ICclService {
 
                     //match table
                     if (cclRuleInfo.isNeedMatchTable()) {
-                        String table = privilegeVerifyItem.getTable();
-                        if (StringUtils.startsWith(table, "`")) {
-                            table = StringUtils.replace(table, "`", "");
-                        }
+                        String table = SQLUtils.normalizeNoTrim(privilegeVerifyItem.getTable());
                         if (!StringUtils.equals(cclRuleRecord.tableName, table) && !StringUtils.equals("*", table)) {
                             continue;
                         }

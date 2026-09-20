@@ -10,6 +10,7 @@
                 )
 
   plan: |
+
     gather(concurrent=true)
       logicalview(tables="[0000-0003].test_hash_tb,test_hash_tb2", shardcount=4, sql="select `id` from `test_hash_tb` as `test_hash_tb` where (`id` in (select `id` from `test_hash_tb2` as `test_hash_tb2` where ((`test_hash_tb`.`id` = `id`) and (`name` = `test_hash_tb`.`name`))))")
 
@@ -26,12 +27,13 @@
                 )
 
   plan: |
-    Project(id="id")
-      MaterializedSemiJoin(condition="id = id + 1 AND name = name", type="semi")
-        Gather(concurrent=true)
-          LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id`, `name` FROM `test_hash_tb` AS `test_hash_tb` WHERE (((`id`, `name`)) IN (...))")
-        Gather(concurrent=true)
-          LogicalView(tables="[0000-0003].test_hash_tb2", shardCount=4, sql="SELECT (`id` + 1) AS `id + 1`, `name` FROM `test_hash_tb2` AS `test_hash_tb2`")
+
+    project(id="id")
+      materializedsemijoin(condition="id = id + 1 and name = name", type="semi")
+        gather(concurrent=true)
+          logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id`, `name` from `test_hash_tb` as `test_hash_tb` where (((`id`, `name`)) in (...))")
+        gather(concurrent=true)
+          logicalview(tables="[0000-0003].test_hash_tb2", shardcount=4, sql="select (`id` + 1) as `id + 1`, `name` from `test_hash_tb2` as `test_hash_tb2`")
 
 - sql: |
     select a.id
@@ -45,9 +47,9 @@
                 )
 
   plan: |
-    gather(concurrent=true)
-      logicalview(tables="[0000-0003].test_hash_tb,test_hash_tb2", shardcount=4, sql="select `id` from `test_hash_tb` as `test_hash_tb` where (`id` = some (select `id` from `test_hash_tb2` as `test_hash_tb2` where ((`test_hash_tb`.`id` = `id`) and (`name` = `test_hash_tb`.`name`))))")
 
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].test_hash_tb,test_hash_tb2", shardcount=4, sql="select `id` from `test_hash_tb` as `test_hash_tb` where (`id` in (select `id` from `test_hash_tb2` as `test_hash_tb2` where ((`test_hash_tb`.`id` = `id`) and (`name` = `test_hash_tb`.`name`))))")
 - sql: |
     select a.id
     from
@@ -61,12 +63,12 @@
 
   plan: |
 
-    Project(id="id")
-      SemiNLJoin(condition="id <> id + 1 AND name = name", type="anti")
-        Gather(concurrent=true)
-          LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id`, `name` FROM `test_hash_tb` AS `test_hash_tb`")
-        Gather(concurrent=true)
-          LogicalView(tables="[0000-0003].test_hash_tb2", shardCount=4, sql="SELECT (`id` + 1) AS `id + 1`, `name` FROM `test_hash_tb2` AS `test_hash_tb2`")
+    project(id="id")
+      seminljoin(condition="id <> id + 1 and name = name", type="anti")
+        gather(concurrent=true)
+          logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id`, `name` from `test_hash_tb` as `test_hash_tb`")
+        gather(concurrent=true)
+          logicalview(tables="[0000-0003].test_hash_tb2", shardcount=4, sql="select (`id` + 1) as `id + 1`, `name` from `test_hash_tb2` as `test_hash_tb2`")
 
 - sql: |
     select a.id
@@ -80,9 +82,9 @@
                 )
 
   plan: |
-    gather(concurrent=true)
-      logicalview(tables="[0000-0003].test_hash_tb,test_hash_tb2", shardcount=4, sql="select `id` from `test_hash_tb` as `test_hash_tb` where (`id` = some (select `id` from `test_hash_tb2` as `test_hash_tb2` where ((`test_hash_tb`.`id` = `id`) and (`name` = `test_hash_tb`.`name`))))")
 
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].test_hash_tb,test_hash_tb2", shardcount=4, sql="select `id` from `test_hash_tb` as `test_hash_tb` where (`id` in (select `id` from `test_hash_tb2` as `test_hash_tb2` where ((`test_hash_tb`.`id` = `id`) and (`name` = `test_hash_tb`.`name`))))")
 - sql: |
     select a.id
     from
@@ -98,6 +100,7 @@
                 )
 
   plan: |
+
     gather(concurrent=true)
       logicalview(tables="[0000-0003].test_hash_tb,test_hash_tb2", shardcount=4, sql="select `id` from `test_hash_tb` as `test_hash_tb` where (`id` in (select `id` from `test_hash_tb2` as `test_hash_tb2` where ((`test_hash_tb`.`id` = `id`) and (`name` = `test_hash_tb`.`name`) and (`test_hash_tb`.`create_time` = `create_time`))))")
 
@@ -117,22 +120,21 @@
 
   plan: |
 
-    Project(id="id")
-      Filter(condition="APPLY_BOOLEAN")
-        CorrelateApply(cor=$cor0, leftConditions=[$0], opKind=EQUALS, type=SEMI)
-          Gather(concurrent=true)
-            LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id`, `name`, `create_time` FROM `test_hash_tb` AS `test_hash_tb`")
-          Project($f0="id")
-            Filter(condition="name = $cor0.name OR $cor0.create_time = create_time")
-              Gather(concurrent=true)
-                LogicalView(tables="[0000-0003].test_hash_tb2", shardCount=4, sql="SELECT `id`, `name`, `create_time` FROM `test_hash_tb2` AS `test_hash_tb2`")
+    project(id="id")
+      filter(condition="apply_boolean")
+        correlateapply(cor=$cor0, leftconditions=[$0], opkind=equals, type=semi)
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id`, `name`, `create_time` from `test_hash_tb` as `test_hash_tb`")
+          project($f0="id")
+            filter(condition="name = $cor0.name or $cor0.create_time = create_time")
+              gather(concurrent=true)
+                logicalview(tables="[0000-0003].test_hash_tb2", shardcount=4, sql="select `id`, `name`, `create_time` from `test_hash_tb2` as `test_hash_tb2`")
     cache node:
-
-    Gather(concurrent=true)
-      LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id`, `name`, `create_time` FROM `test_hash_tb` AS `test_hash_tb`")
-    Gather(concurrent=true)
-      LogicalView(tables="[0000-0003].test_hash_tb2", shardCount=4, sql="SELECT `id`, `name`, `create_time` FROM `test_hash_tb2` AS `test_hash_tb2`")
-
+    
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id`, `name`, `create_time` from `test_hash_tb` as `test_hash_tb`")
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].test_hash_tb2", shardcount=4, sql="select `id`, `name`, `create_time` from `test_hash_tb2` as `test_hash_tb2`")
 
 - sql: |
     select a.id
@@ -148,21 +150,21 @@
 
   plan: |
 
-    Project(id="id")
-      Filter(condition="APPLY_BOOLEAN")
-        CorrelateApply(cor=$cor0, leftConditions=[$0], opKind=EQUALS, type=SEMI)
-          Gather(concurrent=true)
-            LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id`, `name` FROM `test_hash_tb` AS `test_hash_tb`")
-          Project($f0="id")
-            Filter(condition="name = LEFT($cor0.name, 3)")
-              Gather(concurrent=true)
-                LogicalView(tables="[0000-0003].test_hash_tb2", shardCount=4, sql="SELECT `id`, `name` FROM `test_hash_tb2` AS `test_hash_tb2`")
+    project(id="id")
+      filter(condition="apply_boolean")
+        correlateapply(cor=$cor0, leftconditions=[$0], opkind=equals, type=semi)
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id`, `name` from `test_hash_tb` as `test_hash_tb`")
+          project($f0="id")
+            filter(condition="name = left($cor0.name, 3)")
+              gather(concurrent=true)
+                logicalview(tables="[0000-0003].test_hash_tb2", shardcount=4, sql="select `id`, `name` from `test_hash_tb2` as `test_hash_tb2`")
     cache node:
-
-    Gather(concurrent=true)
-      LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id`, `name` FROM `test_hash_tb` AS `test_hash_tb`")
-    Gather(concurrent=true)
-      LogicalView(tables="[0000-0003].test_hash_tb2", shardCount=4, sql="SELECT `id`, `name` FROM `test_hash_tb2` AS `test_hash_tb2`")
+    
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id`, `name` from `test_hash_tb` as `test_hash_tb`")
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].test_hash_tb2", shardcount=4, sql="select `id`, `name` from `test_hash_tb2` as `test_hash_tb2`")
 
 - sql: |
     select a.id
@@ -183,16 +185,16 @@
 
   plan: |
 
-    Project(id="id")
-      SemiHashJoin(condition="id = id AND name > name", type="semi", build="inner")
-        Gather(concurrent=true)
-          LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id`, `name` FROM `test_hash_tb` AS `test_hash_tb`")
-        Project(id="id", name="name0")
-          BKAJoin(condition="name = name", type="inner")
-            Gather(concurrent=true)
-              LogicalView(tables="[0000-0003].test_hash_tb3", shardCount=4, sql="SELECT `name` FROM `test_hash_tb3` AS `test_hash_tb3`")
-            Gather(concurrent=true)
-              LogicalView(tables="[0000-0003].test_hash_tb2", shardCount=4, sql="SELECT `id`, `name` FROM `test_hash_tb2` AS `test_hash_tb2` WHERE (`name` IN (...))")
+    project(id="id")
+      semihashjoin(condition="id = id and name > name", type="semi", build="inner")
+        gather(concurrent=true)
+          logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id`, `name` from `test_hash_tb` as `test_hash_tb`")
+        project(id="id", name="name")
+          hashjoin(condition="name = name", type="inner")
+            gather(concurrent=true)
+              logicalview(tables="[0000-0003].test_hash_tb2", shardcount=4, sql="select `id`, `name` from `test_hash_tb2` as `test_hash_tb2`")
+            gather(concurrent=true)
+              logicalview(tables="[0000-0003].test_hash_tb3", shardcount=4, sql="select `name` from `test_hash_tb3` as `test_hash_tb3`")
 
 - sql: |
     select a.id
@@ -217,6 +219,7 @@
                 )
 
   plan: |
+
     gather(concurrent=true)
       logicalview(tables="[0000-0003].test_hash_tb,test_hash_tb2,test_hash_tb3", shardcount=4, sql="select `id` from `test_hash_tb` as `test_hash_tb` where (`id` in (select `id` from `test_hash_tb2` as `test_hash_tb2` where ((`name` = 'xx') and (`id` in (select `id` from `test_hash_tb3` as `test_hash_tb3` where ((`name` = 'xx') and (`test_hash_tb2`.`id` = `id`) and (`name` = `test_hash_tb2`.`name`)))))))")
 
@@ -251,19 +254,20 @@
                 )
 
   plan: |
-    MaterializedSemiJoin(condition="id = id", type="semi")
-      Gather(concurrent=true)
-        LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id` FROM `test_hash_tb` AS `test_hash_tb` WHERE (`id` IN (...))")
-      Project(id="id")
-        MaterializedSemiJoin(condition="id = id AND name = name", type="semi")
-          Gather(concurrent=true)
-            LogicalView(tables="[0000-0003].test_hash_tb2", shardCount=4, sql="SELECT `id`, `name` FROM `test_hash_tb2` AS `test_hash_tb2` WHERE ((`name` = 'xx') AND (((`id`, `name`)) IN (...)))")
-          Project(id="id", name="name")
-            SemiBKAJoin(condition="id = id AND create_time = create_time", type="semi")
-              Gather(concurrent=true)
-                LogicalView(tables="[0000-0003].test_hash_tb3", shardCount=4, sql="SELECT `id`, `name`, `create_time` FROM `test_hash_tb3` AS `test_hash_tb3` WHERE (`name` = 'xx')")
-              Gather(concurrent=true)
-                LogicalView(tables="[0000-0003].test_hash_tb4_[0,1]", shardCount=8, sql="SELECT `id`, `create_time` FROM `test_hash_tb4` AS `test_hash_tb4` WHERE (((`id`, `create_time`)) IN (...))")
+
+    materializedsemijoin(condition="id = id", type="semi")
+      gather(concurrent=true)
+        logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id` from `test_hash_tb` as `test_hash_tb` where (`id` in (...))")
+      project(id="id")
+        materializedsemijoin(condition="id = id and name = name", type="semi")
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].test_hash_tb2", shardcount=4, sql="select `id`, `name` from `test_hash_tb2` as `test_hash_tb2` where ((`name` = 'xx') and (`id` in (...)))")
+          project(id="id", name="name")
+            semibkajoin(condition="id = id and create_time = create_time", type="semi")
+              gather(concurrent=true)
+                logicalview(tables="[0000-0003].test_hash_tb3", shardcount=4, sql="select `id`, `name`, `create_time` from `test_hash_tb3` as `test_hash_tb3` where (`name` = 'xx')")
+              gather(concurrent=true)
+                logicalview(tables="[0000-0003].test_hash_tb4_[0,1]", shardcount=8, sql="select `id`, `create_time` from `test_hash_tb4` as `test_hash_tb4` where (((`id`, `create_time`)) in (...))")
 
 - sql: |
     select a.id
@@ -288,24 +292,25 @@
                 )
 
   plan: |
-    Project(id="id")
-      Filter(condition="APPLY_BOOLEAN")
-        CorrelateApply(cor=$cor0, leftConditions=[$0], opKind=EQUALS, type=SEMI)
-          Gather(concurrent=true)
-            LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id`, `name` FROM `test_hash_tb` AS `test_hash_tb`")
-          MaterializedSemiJoin(condition="$f0 = $f0", type="semi")
-            Gather(concurrent=true)
-              LogicalView(tables="[0000-0003].test_hash_tb2", shardCount=4, sql="SELECT `id` AS `$f0` FROM `test_hash_tb2` AS `test_hash_tb2` WHERE ((`name` = 'xx') AND (`id` IN (...)))")
-            Project($f0="id")
-              Filter(condition="name = $cor0.name")
-                Gather(concurrent=true)
-                  LogicalView(tables="[0000-0003].test_hash_tb3", shardCount=4, sql="SELECT `id`, `name` FROM `test_hash_tb3` AS `test_hash_tb3`")
-    cache node:
 
-    Gather(concurrent=true)
-      LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id`, `name` FROM `test_hash_tb` AS `test_hash_tb`")
-    Gather(concurrent=true)
-      LogicalView(tables="[0000-0003].test_hash_tb3", shardCount=4, sql="SELECT `id`, `name` FROM `test_hash_tb3` AS `test_hash_tb3`")
+    project(id="id")
+      filter(condition="apply_boolean")
+        correlateapply(cor=$cor0, leftconditions=[$0], opkind=equals, type=semi)
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id`, `name` from `test_hash_tb` as `test_hash_tb`")
+          materializedsemijoin(condition="$f0 = $f0", type="semi")
+            gather(concurrent=true)
+              logicalview(tables="[0000-0003].test_hash_tb2", shardcount=4, sql="select `id` as `$f0` from `test_hash_tb2` as `test_hash_tb2` where ((`name` = 'xx') and (`id` in (...)))")
+            project($f0="id")
+              filter(condition="name = $cor0.name")
+                gather(concurrent=true)
+                  logicalview(tables="[0000-0003].test_hash_tb3", shardcount=4, sql="select `id`, `name` from `test_hash_tb3` as `test_hash_tb3`")
+    cache node:
+    
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id`, `name` from `test_hash_tb` as `test_hash_tb`")
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].test_hash_tb3", shardcount=4, sql="select `id`, `name` from `test_hash_tb3` as `test_hash_tb3`")
 
 - sql: |
     select a.id
@@ -330,6 +335,7 @@
                 )
 
   plan: |
+
     gather(concurrent=true)
       logicalview(tables="[0000-0003].test_hash_tb,test_hash_tb2,test_hash_tb3", shardcount=4, sql="select `id` from `test_hash_tb` as `test_hash_tb` where (exists (select `id` from `test_hash_tb2` as `test_hash_tb2` where ((`id` = `test_hash_tb`.`id`) and (`name` = 'xx') and (`id` in (select `id` from `test_hash_tb3` as `test_hash_tb3` where ((`name` = 'xx') and (`test_hash_tb2`.`id` = `id`) and (`name` = `test_hash_tb2`.`name`)))))))")
 
@@ -347,6 +353,7 @@
         ) c
 
   plan: |
+
     project(null="null", id="id", 1500000039="1500000039", null0="null", 92822="92822", 2020-03-03 18:20:17="2020-03-03 18:20:17", null1="null")
       hashagg(group="id,1500000039,null,92822,2020-03-03 18:20:17")
         project(id="id", 1500000039="1500000039", null="null", 92822="92822", 2020-03-03 18:20:17="'2020-03-03 18:20:17'")

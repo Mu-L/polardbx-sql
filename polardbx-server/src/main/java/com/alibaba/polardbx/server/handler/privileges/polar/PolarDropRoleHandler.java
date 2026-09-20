@@ -25,7 +25,7 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.privilege.PolarAccount;
 import com.alibaba.polardbx.gms.privilege.PolarAccountInfo;
 import com.alibaba.polardbx.gms.privilege.PolarPrivManager;
-import com.alibaba.polardbx.gms.privilege.audit.AuditPrivilege;
+import com.alibaba.polardbx.server.util.AuditPrivilege;
 import org.apache.calcite.sql.SqlKind;
 
 import java.util.List;
@@ -75,7 +75,7 @@ public class PolarDropRoleHandler extends AbstractPrivilegeCommandHandler {
 
         logger.info(String.format("DROP ROLE succeed, sql: %s, granter: %s", getSql(), granter.getIdentifier()));
         PolarPrivManager.getInstance().dropAccount(granter, getServerConn().getActiveRoles(), grantees, true);
-        AuditPrivilege.polarAudit(getServerConn().getConnectionInfo(), getSql().toString(), AuditAction.DROP_ROLE);
+        AuditPrivilege.polarAudit(getServerConn(), getSql().toString(), AuditAction.DROP_ROLE);
     }
 
     @Override

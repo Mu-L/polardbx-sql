@@ -56,7 +56,7 @@ public class LogicalAlterTableGroupSplitPartition extends LogicalAlterTableSplit
         super(ddl, true);
     }
 
-    public void preparedData(ExecutionContext ec) {
+    public void preparedData(ExecutionContext ec, boolean enableChangeset) {
         AlterTableGroupSplitPartition alterTableGroupSplitPartition = (AlterTableGroupSplitPartition) relDdl;
         String tableGroupName = alterTableGroupSplitPartition.getTableGroupName();
         Map<SqlNode, RexNode> partBoundExprInfo = alterTableGroupSplitPartition.getPartBoundExprInfo();
@@ -79,6 +79,16 @@ public class LogicalAlterTableGroupSplitPartition extends LogicalAlterTableSplit
         assert sqlAlterTableGroup.getAlters().get(0) instanceof SqlAlterTableGroupSplitPartition;
         SqlAlterTableGroupSplitPartition sqlAlterTableGroupSplitPartition =
             (SqlAlterTableGroupSplitPartition) sqlAlterTableGroup.getAlters().get(0);
+
+        // Multi-partition split is only supported at the table level (ALTER TABLE), not at the table group level.
+        // Reject early to avoid silent errors where only the first partition name would be processed.
+        if (sqlAlterTableGroupSplitPartition.getSplitPartitionNames() != null
+            && sqlAlterTableGroupSplitPartition.getSplitPartitionNames().size() > 1) {
+            throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
+                "Multi-partition split is not supported for ALTER TABLEGROUP. "
+                    + "Please use ALTER TABLE ... SPLIT PARTITION p1, p2, ... instead");
+        }
+
         String splitPartitionName =
             Util.last(((SqlIdentifier) (sqlAlterTableGroupSplitPartition.getSplitPartitionName())).names);
         List<String> splitPartitions = new ArrayList<>();

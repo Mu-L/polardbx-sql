@@ -98,7 +98,13 @@ public class PhyTableOperationFactory extends PhyOperationBuilderCommon {
      * Only used by PhyTableOperation.copy
      */
     public PhyTableOperation copyFrom(PhyTableOperation targetPhyOp) {
-        return buildPhyTableOperationByPhyOpInner(targetPhyOp, null, false);
+        PhyTableOperation copied = buildPhyTableOperationByPhyOpInner(targetPhyOp, null, false);
+        // PhyTableOperation.copy() is a semantic clone, so preserve whether the physical plan is
+        // a replica or staging write. A caller that intentionally changes the execution role must
+        // update the corresponding marker explicitly after copying.
+        copied.setReplicateRelNode(targetPhyOp.isReplicateRelNode());
+        copied.setStagingRelNode(targetPhyOp.isStagingRelNode());
+        return copied;
     }
 
     private PhyTableOperation buildPhyTableOperationByPhyOpInner(PhyTableOperation targetPhyOp,

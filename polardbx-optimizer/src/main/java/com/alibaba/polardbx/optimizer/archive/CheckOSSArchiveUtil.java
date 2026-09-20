@@ -144,8 +144,11 @@ public class CheckOSSArchiveUtil {
         }
 
         TtlDefinitionInfo ttlDefInfo = tableMeta.getTtlDefinitionInfo();
-        if (ttlDefInfo != null && ttlDefInfo.alreadyBoundArchiveTable()) {
-            return false;
+        if (ttlDefInfo != null) {
+            /**
+             * Ttl20 table must not be bound to the oss table (the special archive table of ttl 1.0)
+             */
+            return true;
         }
 
         LocalPartitionDefinitionInfo localPartitionDefinitionInfo = tableMeta.getLocalPartitionDefinitionInfo();

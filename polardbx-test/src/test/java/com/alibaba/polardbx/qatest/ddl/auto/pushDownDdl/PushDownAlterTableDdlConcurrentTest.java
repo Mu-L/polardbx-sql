@@ -93,7 +93,7 @@ public class PushDownAlterTableDdlConcurrentTest extends DDLBaseNewDBTestCase {
         Long jobId = DdlStateCheckUtil.getDdlJobIdFromPattern(tddlConnection, sql);
         logger.info(" now pause ddl " + jobId);
         JdbcUtil.executeUpdateSuccess(tddlConnection, "pause ddl " + jobId);
-        Boolean paused = DdlStateCheckUtil.checkIfPauseSuccessful(tddlConnection, jobId);
+        Boolean paused = DdlStateCheckUtil.checkIfPauseSuccessful(tddlConnection, jobId, log);
         if (!paused) {
             throw new RuntimeException("failed to pause ddl!");
         }

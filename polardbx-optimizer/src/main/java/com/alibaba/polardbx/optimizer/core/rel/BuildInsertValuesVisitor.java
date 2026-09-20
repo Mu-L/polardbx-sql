@@ -157,10 +157,13 @@ public class BuildInsertValuesVisitor extends SqlShuttle {
 
         if (parameters != null) {
             ParameterContext oldPc;
+            java.util.Map<Integer, ParameterContext> readMap;
             if (isBatch) {
-                oldPc = parameters.getBatchParameters().get(curValueIndex).get(oldIndex + 1);
+                readMap = parameters.getBatchParameters().get(curValueIndex);
+                oldPc = readMap.get(oldIndex + 1);
             } else {
-                oldPc = parameters.getCurrentParameter().get(oldIndex + 1);
+                readMap = parameters.getCurrentParameter();
+                oldPc = readMap.get(oldIndex + 1);
             }
 
             ParameterContext newPc = PlannerUtils.changeParameterContextIndex(oldPc, newIndex + 1);

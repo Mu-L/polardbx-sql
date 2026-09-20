@@ -16,11 +16,23 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableObjectArrayList;
+import com.alibaba.polardbx.common.columnar.ColumnarScanMetrics;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.columnar.ColumnarScanMetrics;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.bloomfilter.RFBloomFilter;
+import com.alibaba.polardbx.common.utils.logger.Logger;
+import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.archive.reader.OSSColumnTransformer;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.columnar.LazyBlock;
+import com.alibaba.polardbx.executor.mpp.planner.EarlyStopManager;
+import com.alibaba.polardbx.executor.mpp.planner.EarlyStopManagerImpl;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFItem;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFItemKey;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFManager;
@@ -32,43 +44,57 @@ import com.alibaba.polardbx.executor.operator.scan.RowGroupIterator;
 import com.alibaba.polardbx.executor.operator.scan.RowGroupReader;
 import com.alibaba.polardbx.executor.operator.scan.metrics.RuntimeMetrics;
 import com.alibaba.polardbx.optimizer.statis.OperatorStatistics;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.google.common.base.Preconditions;
+import com.google.common.util.concurrent.ListenableFuture;
+import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+import it.unimi.dsi.fastutil.ints.MemoryCountableInt2ObjectArrayMap;
 import org.apache.hadoop.fs.Path;
 import org.apache.orc.ColumnStatistics;
+import org.openjdk.jol.info.ClassLayout;
 import org.roaringbitmap.RoaringBitmap;
 
+import java.text.MessageFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Example of scan work
  */
 public class FilterPriorityScanWork extends AbstractScanWork {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(FilterPriorityScanWork.class).instanceSize();
+    private static final Logger LOGGER = LoggerFactory.getLogger(EarlyStopManagerImpl.class);
 
     public static final int INITIAL_LIST_CAPACITY = 16;
     private final boolean activeLoading;
     private final int chunkLimit;
     private final boolean useInFlightBlockCache;
+    private final boolean isWarmup;
 
     /**
      * The Fragment-level runtime filter manager.
      */
+    @FieldMemoryCounter(value = false)
     private final FragmentRFManager fragmentRFManager;
 
     /**
      * Record the actual file column channel for a given item key.
      */
+    @FieldMemoryCounter(value = false)
     private final Map<FragmentRFItemKey, Integer> rfFilterRefInFileMap;
 
     /**
      * Record the existence of bloom filter for each item keys.
      */
+    @FieldMemoryCounter(value = false)
     private Map<FragmentRFItemKey, RFBloomFilter[]> rfBloomFilters;
 
+    @FieldMemoryCounter(value = false)
     private final OperatorStatistics operatorStatistics;
 
     private volatile RFLazyEvaluator rfEvaluator;
@@ -78,6 +104,48 @@ public class FilterPriorityScanWork extends AbstractScanWork {
      * if evaluator is a constant expression, we should not skip the evaluation.
      */
     private boolean skipEvaluation;
+
+    @FieldMemoryCounter(value = false)
+    private final EarlyStopManager earlyStopManager;
+    @FieldMemoryCounter(value = false)
+    private List<OrderByOption> scanOrderByOptions;
+    @FieldMemoryCounter(value = false)
+    private List<Integer> orderByInProjects;
+
+    @FieldMemoryCounter(value = false)
+    private ColumnarScanMetrics columnarScanMetrics;
+
+    private boolean[] bitmap;
+
+    // current chunk produced from row-group iterator.
+    private Chunk currentChunk;
+
+    // Get and lazily evaluate chunks until row group count exceeds the threshold.
+    // NOTE: the row-group and chunk must be in order.
+    final MemoryCountableInt2ObjectArrayMap<MemoryCountableObjectArrayList<Chunk>> chunksWithGroup =
+        new MemoryCountableInt2ObjectArrayMap<>(
+            list -> FastMemoryCounter.sizeOf(list)
+        );
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+
+            // from Abstract Scan work
+            + FastMemoryCounter.sizeOf(workId)
+            + FastMemoryCounter.sizeOf(rgIterator)
+            + FastMemoryCounter.sizeOf(inputRefsForFilter)
+            + FastMemoryCounter.sizeOf(inputRefsForProject)
+            + FastMemoryCounter.sizeOf(chunkRefMap)
+            + FastMemoryCounter.sizeOf(isIOCanceled)
+            + FastMemoryCounter.sizeOf(ioStatus)
+
+            // from this class
+            + FastMemoryCounter.sizeOf(rfEvaluator)
+            + FastMemoryCounter.sizeOf(bitmap)
+            + FastMemoryCounter.sizeOf(currentChunk)
+            + FastMemoryCounter.sizeOf(chunksWithGroup);
+    }
 
     public FilterPriorityScanWork(String workId,
                                   RuntimeMetrics metrics,
@@ -90,19 +158,38 @@ public class FilterPriorityScanWork extends AbstractScanWork {
                                   List<Integer> inputRefsForProject,
                                   int partNum,
                                   int nodePartCount, boolean activeLoading, int chunkLimit,
-                                  boolean useInFlightBlockCache, FragmentRFManager fragmentRFManager,
+                                  boolean useInFlightBlockCache,
+
+                                  int ioStatusBoundSize, long ioStatusIsFullMaxWait,
+
+                                  boolean isWarmup,
+                                  FragmentRFManager fragmentRFManager,
                                   Map<FragmentRFItemKey, Integer> rfFilterRefInFileMap,
+
+                                  // for top-k early stop
+                                  EarlyStopManager earlyStopManager,
+                                  List<OrderByOption> scanOrderByOptions,
+                                  List<Integer> orderByInProjects,
+
                                   OperatorStatistics operatorStatistics,
+                                  ColumnarScanMetrics columnarScanMetrics,
                                   OSSColumnTransformer columnTransformer) {
         super(workId, metrics, enableMetrics, lazyEvaluator, rgIterator, deletionBitmap, scanRange, inputRefsForFilter,
-            inputRefsForProject, partNum, nodePartCount, columnTransformer);
+            inputRefsForProject, partNum, nodePartCount, columnTransformer, ioStatusBoundSize, ioStatusIsFullMaxWait);
         this.activeLoading = activeLoading;
         this.chunkLimit = chunkLimit;
+        this.bitmap = new boolean[chunkLimit];
         this.useInFlightBlockCache = useInFlightBlockCache;
+        this.isWarmup = isWarmup;
         this.fragmentRFManager = fragmentRFManager;
         this.rfFilterRefInFileMap = rfFilterRefInFileMap;
         this.rfBloomFilters = new HashMap<>();
         this.operatorStatistics = operatorStatistics;
+        this.columnarScanMetrics = columnarScanMetrics;
+
+        this.earlyStopManager = earlyStopManager;
+        this.scanOrderByOptions = scanOrderByOptions;
+        this.orderByInProjects = orderByInProjects;
 
         // Check should we use skip-eval mode.
         int filterColumns = inputRefsForFilter.size();
@@ -121,6 +208,29 @@ public class FilterPriorityScanWork extends AbstractScanWork {
 
     @Override
     protected void handleNextWork() throws Throwable {
+        long totalScanRows = 0L;
+        long totalScanBytes = 0L;
+        long totalFilteredRows = 0L;
+
+        if (earlyStopManager != null) {
+            // Check early stop by preceding scan works.
+            if (earlyStopManager.isEarlyStopRegistered(workId)) {
+                if (LOGGER.isDebugEnabled()) {
+                    LOGGER.debug("early stop scan work: " + workId);
+                }
+
+                releaseMemory();
+                ioStatus.finish();
+                if (operatorStatistics != null) {
+                    totalScanBytes += operatorStatistics.getIOReadBytes();
+                }
+                if (columnarScanMetrics != null) {
+                    columnarScanMetrics.updateTotalScanRows(totalScanRows, totalScanBytes, totalFilteredRows);
+                }
+                return;
+            }
+        }
+
         final Path filePath = rgIterator.filePath();
         final int stripeId = rgIterator.stripeId();
 
@@ -129,9 +239,6 @@ public class FilterPriorityScanWork extends AbstractScanWork {
         final int rowGroupCount = prunedRowGroupBitmap.length;
         final BlockCacheManager<Block> blockCacheManager = rgIterator.getCacheManager();
 
-        // Get and lazily evaluate chunks until row group count exceeds the threshold.
-        // NOTE: the row-group and chunk must be in order.
-        final Map<Integer, List<Chunk>> chunksWithGroup = new TreeMap<>();
         final List<Integer> selectedRowGroups = new ArrayList<>();
 
         // for filter column, initialize or open the related modules.
@@ -152,9 +259,40 @@ public class FilterPriorityScanWork extends AbstractScanWork {
                 useInFlightBlockCache);
         }
 
-        boolean[] bitmap = new boolean[chunkLimit];
+        if (earlyStopManager != null && scanOrderByOptions != null) {
 
+            // Get file column ref from in project index.
+            List<Integer> earlyStopChannels = new ArrayList<>();
+            for (int i = 0; i < orderByInProjects.size(); i++) {
+                int inProjectIndex = orderByInProjects.get(i);
+
+                // avoid repeatedly reading the same column.
+                if (inputRefsForFilter.indexOf(inProjectIndex) == -1) {
+                    earlyStopChannels.add(inProjectIndex);
+                }
+            }
+            mergeIO(filePath, stripeId,
+                earlyStopChannels,
+                blockCacheManager,
+                prunedRowGroupBitmap,
+                useInFlightBlockCache);
+
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("earlyStopChannels = " + earlyStopChannels);
+            }
+        }
+
+        Arrays.fill(bitmap, false);
+        boolean needEarlyStop = false;
+        if (earlyStopManager != null && earlyStopManager.isDesc()) {
+            rgIterator.reverse();
+        }
         while (!isCanceled && rgIterator.hasNext()) {
+
+            if (needEarlyStop) {
+                // early stop
+                break;
+            }
             rgIterator.next();
             LogicalRowGroup<Block, ColumnStatistics> logicalRowGroup = rgIterator.current();
             final int rowGroupId = logicalRowGroup.groupId();
@@ -165,10 +303,36 @@ public class FilterPriorityScanWork extends AbstractScanWork {
             // A flag for each row group to indicate that at least one block selected in row group.
             boolean rgSelected = false;
 
-            int handledChunksBeforeRF = 0;
             Chunk chunk;
-            RowGroupReader<Chunk> rowGroupReader = logicalRowGroup.getReader();
-            while ((chunk = rowGroupReader.nextBatch()) != null) {
+            RowGroupReader<Chunk> rowGroupReader = earlyStopManager != null && earlyStopManager.isDesc()
+                ? logicalRowGroup.getReversedReader()
+                : logicalRowGroup.getReader();
+            while (!isCanceled && ((currentChunk = rowGroupReader.nextBatch()) != null)) {
+                final int[] batchRange = rowGroupReader.batchRange();
+
+                totalScanRows += batchRange[1];
+
+                // Try top-k early stop.
+                if (earlyStopManager != null && scanOrderByOptions != null) {
+
+                    final int firstReadablePosition = earlyStopManager.isDesc()
+                        ? lastReadablePosition(batchRange, deletionBitmap)
+                        : firstReadablePosition(batchRange, deletionBitmap);
+                    if (firstReadablePosition != -1) {
+                        // Check the first readable position in chunk.
+                        needEarlyStop = earlyStopManager.needEarlyStop(
+                            currentChunk, scanOrderByOptions, firstReadablePosition, workId);
+
+                        if (needEarlyStop) {
+                            if (LOGGER.isDebugEnabled()) {
+                                LOGGER.debug("early stop register: " + workId);
+                            }
+
+                            earlyStopManager.registerEarlyStop(workId);
+                            break;
+                        }
+                    }
+                }
 
                 // Check the runtime filter and invoke single IO before evaluation.
                 if (fragmentRFManager != null) {
@@ -194,14 +358,13 @@ public class FilterPriorityScanWork extends AbstractScanWork {
                     }
                 }
 
-                int[] batchRange = rowGroupReader.batchRange();
                 if (skipEvaluation) {
 
                     int[] preSelection = null;
                     if (rfEvaluator != null) {
                         // Filter the chunk use fragment RF.
                         int selectCount =
-                            rfEvaluator.eval(chunk, batchRange[0], batchRange[1], deletionBitmap, bitmap);
+                            rfEvaluator.eval(currentChunk, batchRange[0], batchRange[1], deletionBitmap, bitmap);
 
                         preSelection = selectionOf(bitmap, selectCount);
                     } else {
@@ -210,13 +373,14 @@ public class FilterPriorityScanWork extends AbstractScanWork {
 
                     if (preSelection != null) {
                         // rebuild chunk according to project refs.
-                        chunk = rebuildProject(chunk, preSelection, preSelection.length);
+                        currentChunk = rebuildProject(currentChunk, preSelection, preSelection.length);
                     }
 
                     // no evaluation, just buffer the unloaded chunks.
-                    List<Chunk> chunksInGroup =
-                        chunksWithGroup.computeIfAbsent(rowGroupId, any -> new ArrayList<>(INITIAL_LIST_CAPACITY));
-                    chunksInGroup.add(chunk);
+                    List<Chunk> chunksInGroup = chunksWithGroup.computeIfAbsent(rowGroupId,
+                        any -> new MemoryCountableObjectArrayList<>(INITIAL_LIST_CAPACITY));
+                    chunksInGroup.add(currentChunk);
+                    currentChunk = null;
                     rgSelected = true;
                     continue;
                 }
@@ -228,7 +392,7 @@ public class FilterPriorityScanWork extends AbstractScanWork {
 
                     // all blocks in chunk is lazy
                     // NOTE: explicit type cast?
-                    LazyBlock filterBlock = (LazyBlock) chunk.getBlock(chunkIndex);
+                    LazyBlock filterBlock = (LazyBlock) currentChunk.getBlock(chunkIndex);
 
                     // Proactively invoke loading, or we can load it during evaluation.
                     filterBlock.load();
@@ -239,7 +403,7 @@ public class FilterPriorityScanWork extends AbstractScanWork {
                 // Get selection array of this range [n * 1000, (n+1) * 1000] in row group,
                 // and then evaluate the filter.
                 int selectCount =
-                    lazyEvaluator.eval(chunk, batchRange[0], batchRange[1], deletionBitmap, bitmap);
+                    lazyEvaluator.eval(currentChunk, batchRange[0], batchRange[1], deletionBitmap, bitmap);
 
                 // check zeros in selection array,
                 // and mark whether this row group is selected or not
@@ -253,13 +417,14 @@ public class FilterPriorityScanWork extends AbstractScanWork {
                     }
 
                     // The created chunk and block-loader will be abandoned here.
-                    releaseRef(chunk);
+                    releaseRef(currentChunk);
                     continue;
                 }
 
                 Chunk projectChunk;
-                if (selectCount == chunk.getPositionCount()) {
-                    projectChunk = rebuildProject(chunk);
+                if (selectCount == currentChunk.getPositionCount()) {
+                    projectChunk = rebuildProject(currentChunk);
+                    currentChunk = null;
                 } else {
                     // hold this chunk util all row groups in scan work are handled.
                     int[] selection = selectionOf(bitmap, selectCount);
@@ -268,11 +433,12 @@ public class FilterPriorityScanWork extends AbstractScanWork {
                     }
 
                     // rebuild chunk according to project refs.
-                    projectChunk = rebuildProject(chunk, selection, selection.length);
+                    projectChunk = rebuildProject(currentChunk, selection, selection.length);
+                    currentChunk = null;
                 }
 
-                List<Chunk> chunksInGroup = chunksWithGroup.computeIfAbsent(rowGroupId, any -> new ArrayList<>(
-                    INITIAL_LIST_CAPACITY));
+                List<Chunk> chunksInGroup = chunksWithGroup.computeIfAbsent(rowGroupId,
+                    any -> new MemoryCountableObjectArrayList<>(INITIAL_LIST_CAPACITY));
                 chunksInGroup.add(projectChunk);
             }
             // the chunk in this row group is run out, change to the next.
@@ -287,12 +453,23 @@ public class FilterPriorityScanWork extends AbstractScanWork {
             }
         }
 
+        if (isCanceled) {
+            throw GeneralUtil.nestedException(MessageFormat.format("scan work: {0} is canceled", workId));
+        }
+
         // There is no more chunk produced by this row group iterator.
         rgIterator.noMoreChunks();
 
         // no group is selected.
         if (selectedRowGroups.isEmpty()) {
+            releaseMemory();
             ioStatus.finish();
+            if (operatorStatistics != null) {
+                totalScanBytes += operatorStatistics.getIOReadBytes();
+            }
+            if (columnarScanMetrics != null) {
+                columnarScanMetrics.updateTotalScanRows(totalScanRows, totalScanBytes, totalFilteredRows);
+            }
             return;
         }
 
@@ -304,38 +481,109 @@ public class FilterPriorityScanWork extends AbstractScanWork {
         mergeIO(filePath, stripeId, inputRefsForProject, blockCacheManager, rowGroupIncluded);
 
         final int blockIndexSize = inputRefsForProject.size();
-        List<Chunk> chunkResults = new ArrayList();
+        // List<Chunk> chunkResults = new ArrayList();
 
         // load project columns
-        for (Map.Entry<Integer, List<Chunk>> entry : chunksWithGroup.entrySet()) {
-            List<Chunk> chunksInGroup = entry.getValue();
+        if (isWarmup) {
 
-            chunkResults.clear();
-            for (int blockIndex = 0; blockIndex < blockIndexSize; blockIndex++) {
-                for (Chunk bufferedChunk : chunksInGroup) {
+            for (Int2ObjectMap.Entry<MemoryCountableObjectArrayList<Chunk>> entry : chunksWithGroup.int2ObjectEntrySet()) {
+                MemoryCountableObjectArrayList<Chunk> chunksInGroup = entry.getValue();
 
-                    // The target chunk may be in lazy mode or changed to be in normal mode.
-                    Chunk targetChunk = bufferedChunk;
-                    if (activeLoading) {
-                        Block[] blocks = bufferedChunk.getBlocks();
+                for (int blockIndex = 0; blockIndex < blockIndexSize; blockIndex++) {
+                    for (Chunk bufferedChunk : chunksInGroup) {
 
-                        LazyBlock lazyBlock = (LazyBlock) blocks[blockIndex];
-                        lazyBlock.load();
+                        // Just warmup with data loading.
+                        if (activeLoading) {
+                            Block[] blocks = bufferedChunk.getBlocks();
 
-                        blocks[blockIndex] = lazyBlock.getLoaded();
+                            LazyBlock lazyBlock = (LazyBlock) blocks[blockIndex];
+                            lazyBlock.warmup();
+                        }
+
                     }
-
-                    if (blockIndex == 0) {
-                        targetChunk.setPartIndex(partNum);
-                        targetChunk.setPartCount(nodePartCount);
-                        chunkResults.add(targetChunk);
-                    }
-
                 }
             }
-            ioStatus.addResults(chunkResults);
+
+        } else {
+            // load project columns
+            for (Int2ObjectMap.Entry<MemoryCountableObjectArrayList<Chunk>> entry : chunksWithGroup.int2ObjectEntrySet()) {
+                MemoryCountableObjectArrayList<Chunk> chunksInGroup = entry.getValue();
+
+                // chunkResults.clear();
+
+                long memorySizeBeforeLoaded = 0L;
+                for (int chunkIndex = 0; chunkIndex < chunksInGroup.size(); chunkIndex++) {
+                    memorySizeBeforeLoaded += chunksInGroup.get(chunkIndex).getMemoryUsage();
+                }
+
+                for (int blockIndex = 0; blockIndex < blockIndexSize; blockIndex++) {
+                    for (Chunk bufferedChunk : chunksInGroup) {
+
+                        // The target chunk may be in lazy mode or changed to be in normal mode.
+                        Chunk targetChunk = bufferedChunk;
+                        if (activeLoading) {
+                            Block[] blocks = bufferedChunk.getBlocks();
+
+                            LazyBlock lazyBlock = (LazyBlock) blocks[blockIndex];
+                            lazyBlock.load();
+
+                            blocks[blockIndex] = lazyBlock.getLoaded();
+                        }
+
+                        if (blockIndex == 0) {
+                            targetChunk.setPartIndex(partNum);
+                            targetChunk.setPartCount(nodePartCount);
+                            // chunkResults.add(targetChunk);
+                        }
+
+                    }
+                }
+
+                long memorySizeAfterLoaded = 0L;
+                for (int chunkIndex = 0; chunkIndex < chunksInGroup.size(); chunkIndex++) {
+                    memorySizeAfterLoaded += chunksInGroup.get(chunkIndex).getMemoryUsage();
+                }
+
+                if (memorySizeAfterLoaded > memorySizeBeforeLoaded) {
+                    MemoryTrackerManager.tryReverseReference(memoryOwnerId,
+                        memorySizeAfterLoaded - memorySizeBeforeLoaded);
+                }
+
+                for (int chunkResultIndex = 0; chunkResultIndex < chunksInGroup.size(); chunkResultIndex++) {
+                    Chunk chunk = chunksInGroup.get(chunkResultIndex);
+                    if (chunk != null) {
+                        totalFilteredRows += chunk.getPositionCount();
+                    }
+
+                    while (!ioStatus.addResult(chunk)) {
+                        ListenableFuture<?> waitForEmpty = ioStatus.waitForEmpty();
+
+                        // case 1. signal by IOStatus.popResult.
+                        // case 2. could throw CancellationException due to cancel of IOStatus.close().
+                        waitForEmpty.get();
+                    }
+
+                    // remove from source.
+                    chunksInGroup.set(chunkResultIndex, null);
+                }
+
+                chunksInGroup.clear();
+            }
+
         }
 
+        releaseMemory();
+
+        ioStatus.finish();
+        if (operatorStatistics != null) {
+            totalScanBytes += operatorStatistics.getIOReadBytes();
+        }
+        if (columnarScanMetrics != null) {
+            columnarScanMetrics.updateTotalScanRows(totalScanRows, totalScanBytes, totalFilteredRows);
+        }
+    }
+
+    private void releaseMemory() {
         if (activeLoading) {
             // force columnar reader to close.
             forceClose(inputRefsForFilter);
@@ -345,8 +593,6 @@ public class FilterPriorityScanWork extends AbstractScanWork {
             // when using active loading, the row group iterator will not be accessed anymore.
             rgIterator = null;
         }
-
-        ioStatus.finish();
     }
 
     private void forceClose(List<Integer> inputRefs) {

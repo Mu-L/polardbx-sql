@@ -19,12 +19,16 @@ public class XidTest {
         Assert.assertTrue(xidString01.length() <= 128);
 
         String bqual00 = getBqual(xidString00);
-        XAUtils.XATransInfo xatransInfo = new XAUtils.XATransInfo(trxId, bqual00, primaryGroupId0);
-        Assert.assertEquals(xatransInfo.toXidString(), xidString00);
+        XAUtils.XATransInfo xatransInfo =
+            new XAUtils.XATransInfo(String.format("drds-%s@%s", "17cda2cd95800000", Long.toHexString(primaryGroupId0)),
+                bqual00, 1, trxId, primaryGroupId0);
+        Assert.assertEquals(xatransInfo.toXidString(), xidString00 + ", 1");
 
         String bqual01 = getBqual(xidString01);
-        xatransInfo = new XAUtils.XATransInfo(trxId, bqual01, primaryGroupId0);
-        Assert.assertEquals(xatransInfo.toXidString(), xidString01);
+        xatransInfo =
+            new XAUtils.XATransInfo(String.format("drds-%s@%s", "17cda2cd95800000", Long.toHexString(primaryGroupId0)),
+                bqual01, 1, trxId, primaryGroupId0);
+        Assert.assertEquals(xatransInfo.toXidString(), xidString01 + ", 1");
 
         String schema1 = "test_schema_1";
         long primaryGroupId1 = IServerConfigManager.getGroupUniqueId(schema1, group00);
@@ -34,12 +38,16 @@ public class XidTest {
         Assert.assertTrue(xidString11.length() < 128);
 
         String bqual10 = getBqual(xidString00);
-        xatransInfo = new XAUtils.XATransInfo(trxId, bqual10, primaryGroupId1);
-        Assert.assertEquals(xatransInfo.toXidString(), xidString10);
+        xatransInfo =
+            new XAUtils.XATransInfo(String.format("drds-%s@%s", "17cda2cd95800000", Long.toHexString(primaryGroupId1)),
+                bqual10, 1, trxId, primaryGroupId1);
+        Assert.assertEquals(xatransInfo.toXidString(), xidString10 + ", 1");
 
         String bqual11 = getBqual(xidString01);
-        xatransInfo = new XAUtils.XATransInfo(trxId, bqual11, primaryGroupId1);
-        Assert.assertEquals(xatransInfo.toXidString(), xidString11);
+        xatransInfo =
+            new XAUtils.XATransInfo(String.format("drds-%s@%s", "17cda2cd95800000", Long.toHexString(primaryGroupId1)),
+                bqual11, 1, trxId, primaryGroupId1);
+        Assert.assertEquals(xatransInfo.toXidString(), xidString11 + ", 1");
 
         // Same group names with different schema should have different xid.
         Assert.assertNotEquals(xidString00, xidString10);

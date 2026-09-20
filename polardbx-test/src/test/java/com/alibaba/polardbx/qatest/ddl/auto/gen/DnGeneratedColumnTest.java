@@ -156,6 +156,8 @@ public class DnGeneratedColumnTest extends DDLBaseNewDBTestCase {
         String partDef = " partition by hash(a)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partDef);
 
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "set ENABLE_OMC_30 = false");
+
         String alter = String.format("alter table %s modify column b bigint algorithm=omc", tableName);
         JdbcUtil.executeUpdateFailed(tddlConnection, alter, "");
 

@@ -160,6 +160,10 @@ public class TddlNestableRuntimeException extends RuntimeException
         }
     }
 
+    public void setSQLState(String SQLState) {
+        this.SQLState = SQLState;
+    }
+
     public String getSQLState() {
         return SQLState;
     }

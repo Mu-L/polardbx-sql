@@ -1,16 +1,20 @@
 package com.alibaba.polardbx.executor.ddl.job.factory.ttl;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.AddTtlInfoTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.AlterTtlInfoTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcAlterTableModifyTtlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.ValidateTableVersionTask;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
+import com.alibaba.polardbx.executor.ddl.job.task.ttl.TtlJobUtil;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.gms.ttl.TtlInfoRecord;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.ttl.BuildTtlInfoParams;
@@ -20,6 +24,7 @@ import com.alibaba.polardbx.optimizer.ttl.TtlMetaValidationUtil;
 import org.apache.calcite.rel.core.DDL;
 import org.apache.calcite.sql.SqlAlterTable;
 import org.apache.calcite.sql.SqlAlterTableModifyTtlOptions;
+import org.apache.calcite.sql.SqlCharStringLiteral;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlTimeToLiveExpr;
 import org.apache.calcite.sql.SqlTimeToLiveJobExpr;
@@ -28,12 +33,14 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * @author chenghui.lch
  */
-public class AlterTableModifyTtlJobFactory extends DdlJobFactory {
+public class AlterTableModifyTtlJobFactory extends OnlineDdlJobFactory {
 
     private DDL ddl;
     private SqlAlterTable sqlAlterTableAst;
@@ -50,6 +57,7 @@ public class AlterTableModifyTtlJobFactory extends DdlJobFactory {
                                          DDL ddl,
                                          SqlAlterTable sqlAlterTable,
                                          ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.META_ONLY);
         this.schemaName = schemaName;
         this.primaryTableName = primaryTableName;
         this.ddl = ddl;
@@ -68,26 +76,58 @@ public class AlterTableModifyTtlJobFactory extends DdlJobFactory {
         String ttlEnableStr = modifyTtlOptions.getTtlEnable();
         SqlNode ttlExpr = modifyTtlOptions.getTtlExpr();
         SqlNode ttlJobExpr = modifyTtlOptions.getTtlJob();
+        SqlNode ttlColEncoderExpr = modifyTtlOptions.getTtlColEncoder();
+        SqlNode ttlColDecoderExpr = modifyTtlOptions.getTtlColDecoder();
         SqlNode ttlFilterExpr = modifyTtlOptions.getTtlFilter();
         SqlNode ttlCleanupExpr = modifyTtlOptions.getTtlCleanup();
         SqlNode ttlPartIntervalExpr = modifyTtlOptions.getTtlPartInterval();
         String archiveTableSchema = modifyTtlOptions.getArchiveTableSchema();
         String archiveTableName = modifyTtlOptions.getArchiveTableName();
         String archiveKind = modifyTtlOptions.getArchiveKind();
+        SqlNode ttlRefColList = modifyTtlOptions.getTtlRefColList();
+        SqlNode ttlHybrid = modifyTtlOptions.getTtlHybrid();
 
         Integer arcPreAllocate = modifyTtlOptions.getArcPreAllocate();
         Integer arcPostAllocate = modifyTtlOptions.getArcPostAllocate();
 
+        List<ColumnMeta> pkColMetas = primaryTableMeta.getPrimaryKey().stream().collect(Collectors.toList());
+        List<String> pkColNames = new ArrayList<>();
+        for (int i = 0; i < pkColMetas.size(); i++) {
+            ColumnMeta pkCm = pkColMetas.get(i);
+            pkColNames.add(pkCm.getName());
+        }
         currTtlInfo = primaryTableMeta.getTtlDefinitionInfo();
         hasTtlInfo = currTtlInfo != null;
 
         newTtlInfo = null;
         if (hasTtlInfo) {
 
+            String ttlColEncoderStr = null;
+            if (ttlColEncoderExpr != null) {
+                if (ttlColEncoderExpr instanceof SqlCharStringLiteral) {
+                    ttlColEncoderStr = SQLUtils.normalizeNoTrim(((SqlCharStringLiteral) ttlColEncoderExpr).toValue());
+                } else {
+                    ttlColEncoderStr = SQLUtils.normalizeNoTrim(ttlColEncoderExpr.toString());
+                }
+            }
+
+            String ttlColDecoderStr = null;
+            if (ttlColDecoderExpr != null) {
+                if (ttlColDecoderExpr instanceof SqlCharStringLiteral) {
+                    ttlColDecoderStr = SQLUtils.normalizeNoTrim(((SqlCharStringLiteral) ttlColDecoderExpr).toValue());
+                } else {
+                    ttlColDecoderStr = SQLUtils.normalizeNoTrim(ttlColDecoderExpr.toString());
+                }
+            }
+
             String ttlFilterStr = null;
             if (ttlFilterExpr != null) {
                 ttlFilterStr = SQLUtils.normalizeNoTrim(ttlFilterExpr.toString());
+                if (ttlFilterStr.equalsIgnoreCase("TRUE")) {
+                    ttlFilterStr = "";
+                }
             }
+
             String ttlCleanupStr = null;
             if (ttlCleanupExpr != null) {
                 /**
@@ -96,12 +136,30 @@ public class AlterTableModifyTtlJobFactory extends DdlJobFactory {
                 ttlCleanupStr = SQLUtils.normalizeNoTrim(ttlCleanupExpr.toString());
             }
 
+            Integer arcPreAllocateVal = currTtlInfo.getTtlInfoRecord().getArcPrePartCnt();
+            if (arcPreAllocate != null) {
+                arcPreAllocateVal = arcPreAllocate;
+            }
+            if (arcPreAllocateVal <= 0) {
+                arcPreAllocateVal = TtlConfigUtil.getPreBuiltPartCntForCreatColumnarIndex();
+            }
+
+            Integer arcPostAllocateVal = currTtlInfo.getTtlInfoRecord().getArcPostPartCnt();
+            if (arcPostAllocate != null) {
+                arcPostAllocateVal = arcPostAllocate;
+            }
+            if (arcPostAllocateVal <= 0) {
+                arcPostAllocateVal = TtlConfigUtil.getPostBuiltPartCntForCreateColumnarIndex();
+            }
+
             BuildTtlInfoParams modifyTtlInfoParams = new BuildTtlInfoParams();
             modifyTtlInfoParams.setTableSchema(schemaName);
             modifyTtlInfoParams.setTableName(primaryTableName);
             modifyTtlInfoParams.setTtlEnable(ttlEnableStr);
             modifyTtlInfoParams.setTtlExpr((SqlTimeToLiveExpr) ttlExpr);
             modifyTtlInfoParams.setTtlJob((SqlTimeToLiveJobExpr) ttlJobExpr);
+            modifyTtlInfoParams.setTtlColEncoder(ttlColEncoderStr);
+            modifyTtlInfoParams.setTtlColDecoder(ttlColDecoderStr);
             modifyTtlInfoParams.setTtlFilter(ttlFilterStr);
             modifyTtlInfoParams.setTtlCleanup(ttlCleanupStr);
             modifyTtlInfoParams.setTtlPartInterval(ttlPartIntervalExpr);
@@ -112,11 +170,24 @@ public class AlterTableModifyTtlJobFactory extends DdlJobFactory {
             modifyTtlInfoParams.setArcPostAllocateCount(arcPostAllocate);
             modifyTtlInfoParams.setTtlTableMeta(primaryTableMeta);
             modifyTtlInfoParams.setEc(executionContext);
+            modifyTtlInfoParams.setServerConfigManager(TtlJobUtil.getServerConfigManager());
+            modifyTtlInfoParams.setTtlRefColList(ttlRefColList);
+            modifyTtlInfoParams.setTtlHybrid(ttlHybrid);
             newTtlInfo = TtlDefinitionInfo.buildModifiedTtlInfo(
                 currTtlInfo,
                 modifyTtlInfoParams
             );
         } else {
+
+            String ttlColEncoderStr = null;
+            if (ttlColEncoderExpr != null) {
+                ttlColEncoderStr = SQLUtils.normalizeNoTrim(ttlColEncoderExpr.toString());
+            }
+
+            String ttlColDecoderStr = null;
+            if (ttlColDecoderExpr != null) {
+                ttlColDecoderStr = SQLUtils.normalizeNoTrim(ttlColDecoderExpr.toString());
+            }
 
             String ttlFilterStr = null;
             if (ttlFilterExpr != null) {
@@ -144,6 +215,8 @@ public class AlterTableModifyTtlJobFactory extends DdlJobFactory {
             createTtlInfoParams.setTtlEnable(ttlEnableStr);
             createTtlInfoParams.setTtlExpr((SqlTimeToLiveExpr) ttlExpr);
             createTtlInfoParams.setTtlJob((SqlTimeToLiveJobExpr) ttlJobExpr);
+            createTtlInfoParams.setTtlColEncoder(ttlColEncoderStr);
+            createTtlInfoParams.setTtlColDecoder(ttlColDecoderStr);
             createTtlInfoParams.setTtlFilter(ttlFilterStr);
             createTtlInfoParams.setTtlCleanup(ttlCleanupStr);
             createTtlInfoParams.setTtlPartInterval(ttlPartIntervalExpr);
@@ -154,6 +227,9 @@ public class AlterTableModifyTtlJobFactory extends DdlJobFactory {
             createTtlInfoParams.setArcPostAllocateCount(arcPostAllocateVal);
             createTtlInfoParams.setTtlTableMeta(primaryTableMeta);
             createTtlInfoParams.setEc(executionContext);
+            createTtlInfoParams.setServerConfigManager(TtlJobUtil.getServerConfigManager());
+            createTtlInfoParams.setTtlRefColList(ttlRefColList);
+            createTtlInfoParams.setTtlHybrid(ttlHybrid);
             newTtlInfo = TtlDefinitionInfo.createNewTtlInfo(
                 createTtlInfoParams,
                 null,
@@ -197,6 +273,15 @@ public class AlterTableModifyTtlJobFactory extends DdlJobFactory {
         taskList.add(cdcModifyTtlTask);
 
         executableDdlJob.addSequentialTasks(taskList);
+
+        if (Optional.ofNullable(newTtlInfo.getTtlInfoRecord().getExtra().getTtlHybrid()).orElse(false)
+            && executionContext.getParamManager().getBoolean(ConnectionParams.TTL_HYBRID_AUTO_CREATE_ARCHIVE_CCI)) {
+            //已经有归档cci 就不再创建
+            if (priTblMeta.getArchiveColumnarIndexPublished() == null || priTblMeta.getArchiveColumnarIndexPublished()
+                .isEmpty()) {
+                executableDdlJob.appendJob2(TtlJobUtil.buildCreateArchiveCciJob(newTtlInfo));
+            }
+        }
 
         return executableDdlJob;
     }

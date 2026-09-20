@@ -16,7 +16,9 @@
 
 package com.alibaba.polardbx.common;
 
-public interface IOrderInvariantHash {
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+
+public interface IOrderInvariantHash extends MemoryCountable {
     IOrderInvariantHash add(long x);
 
     Long getResult();

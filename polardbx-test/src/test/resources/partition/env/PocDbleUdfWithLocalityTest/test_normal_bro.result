@@ -1,0 +1,34 @@
+## DISABLE_FAST_SQL_PARSER
+create table normal_bro_t1(
+c1 bigint not null,
+c2 bigint not null
+)
+broadcast
+show create table normal_bro_t1
+Table,Create Table
+normal_bro_t1,CREATE TABLE `normal_bro_t1` (
+	`c1` bigint(20) NOT NULL,
+	`c2` bigint(20) NOT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+BROADCAST
+select count(1) from normal_bro_t1
+count(1)
+0
+create table normal_bro_t2(
+c1 bigint not null,
+c2 bigint not null
+)
+broadcast
+show create table normal_bro_t2
+Table,Create Table
+normal_bro_t2,CREATE TABLE `normal_bro_t2` (
+	`c1` bigint(20) NOT NULL,
+	`c2` bigint(20) NOT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+BROADCAST
+select count(1) from normal_bro_t2
+count(1)
+0
+select count(1) from normal_bro_t1 t1 join normal_bro_t2 t2 on t1.c1=t2.c1
+count(1)
+0

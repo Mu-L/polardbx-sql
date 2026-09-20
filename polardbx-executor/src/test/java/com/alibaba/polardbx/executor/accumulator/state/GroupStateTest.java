@@ -1,6 +1,9 @@
 package com.alibaba.polardbx.executor.accumulator.state;
 
+import com.alibaba.polardbx.common.OrderInvariantHasher;
 import com.alibaba.polardbx.common.datatype.Decimal;
+import com.alibaba.polardbx.common.datatype.DecimalBox;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import org.junit.Test;
 
 import java.util.Random;
@@ -14,7 +17,80 @@ public class GroupStateTest {
     private final Random random = new Random();
 
     @Test
-    public void testNullableDecimal() {
+    public void testDecimalBoxGroupState() {
+        DecimalBoxGroupState state = new DecimalBoxGroupState(1024, 8);
+
+        // add decimal box.
+        int groupId = 0;
+        for (; groupId < 100; groupId++) {
+            state.appendNull();
+            state.set(groupId, new DecimalBox(8));
+        }
+        MemoryCountable.checkDeviation(state, 0.01d, true);
+
+        // add decimal 64
+        for (; groupId < 200; groupId++) {
+            state.appendNull();
+            state.set(groupId, groupId * 99999);
+        }
+        MemoryCountable.checkDeviation(state, 0.01d, true);
+
+        // add decimal 128
+        for (; groupId < 300; groupId++) {
+            state.appendNull();
+            state.set(groupId, groupId * 99, groupId * 999);
+        }
+        MemoryCountable.checkDeviation(state, 0.01d, true);
+
+        // add normal decimal
+        for (; groupId < 400; groupId++) {
+            state.appendNull();
+            state.set(groupId, Decimal.fromString("12438941285712957492142134.43295342"));
+        }
+        MemoryCountable.checkDeviation(state, 0.01d, true);
+    }
+
+    @Test
+    public void testLongGroupState() {
+        final int COUNT = 1000;
+        long[] values = new long[COUNT];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = random.nextLong();
+        }
+
+        LongGroupState state = new LongGroupState(COUNT / 10);
+        for (int i = 0; i < values.length; i++) {
+            state.append(values[i]);
+        }
+        MemoryCountable.checkDeviation(state, 0.01d, true);
+
+        for (int i = 0; i < values.length / 2; i += 2) {
+            long l = random.nextLong();
+            state.set(i, l);
+            values[i] = l;
+        }
+        MemoryCountable.checkDeviation(state, 0.01d, true);
+
+        for (int i = 0; i < values.length; i++) {
+            assertEquals(values[i], state.get(i));
+        }
+        MemoryCountable.checkDeviation(state, 0.01d, true);
+    }
+
+    @Test
+    public void testNullableCheckSumGroupState() {
+        NullableCheckSumGroupState state = new NullableCheckSumGroupState(1024, OrderInvariantHasher.class);
+
+        int groupId = 0;
+        for (; groupId < 1024; groupId++) {
+            state.appendNull();
+            state.set(groupId, new OrderInvariantHasher());
+        }
+        MemoryCountable.checkDeviation(state, 0.01d, true);
+    }
+
+    @Test
+    public void testNullableDecimalGroupState() {
         final Decimal[] values = new Decimal[] {
             null,
             Decimal.fromString("3.14"),
@@ -31,6 +107,7 @@ public class GroupStateTest {
                 state.set(i, value);
             }
         }
+        MemoryCountable.checkDeviation(state, 0.01d, true);
 
         values[2] = Decimal.fromLong(1);
         state.set(2, values[2]);
@@ -45,34 +122,25 @@ public class GroupStateTest {
                 assertTrue(state.isNull(i));
             }
         }
+        MemoryCountable.checkDeviation(state, 0.01d, true);
     }
 
     @Test
-    public void testLong() {
-        final int COUNT = 1000;
-        long[] values = new long[COUNT];
-        for (int i = 0; i < values.length; i++) {
-            values[i] = random.nextLong();
-        }
+    public void testNullableDecimalLongGroupState() {
+        NullableDecimalLongGroupState state = new NullableDecimalLongGroupState(
+            1024
+        );
 
-        LongGroupState state = new LongGroupState(COUNT / 10);
-        for (int i = 0; i < values.length; i++) {
-            state.append(values[i]);
+        int groupId = 0;
+        for (; groupId < 1024; groupId++) {
+            state.appendNull();
+            state.set(groupId, Decimal.fromString("1234" + groupId + ".5435938"), groupId);
         }
-
-        for (int i = 0; i < values.length / 2; i += 2) {
-            long l = random.nextLong();
-            state.set(i, l);
-            values[i] = l;
-        }
-
-        for (int i = 0; i < values.length; i++) {
-            assertEquals(values[i], state.get(i));
-        }
+        MemoryCountable.checkDeviation(state, 0.01d, true);
     }
 
     @Test
-    public void testNullableDouble() {
+    public void testNullableDoubleGroupState() {
         final int COUNT = 1000;
         Double[] values = new Double[COUNT];
         for (int i = 0; i < values.length; i++) {
@@ -91,12 +159,14 @@ public class GroupStateTest {
                 state.appendNull();
             }
         }
+        MemoryCountable.checkDeviation(state, 0.01d, true);
 
         for (int i = 0; i < values.length / 2; i += 2) {
             double d = random.nextDouble();
             state.set(i, d);
             values[i] = d;
         }
+        MemoryCountable.checkDeviation(state, 0.01d, true);
 
         for (int i = 0; i < values.length; i++) {
             if (values[i] != null) {
@@ -106,5 +176,44 @@ public class GroupStateTest {
                 assertTrue(state.isNull(i));
             }
         }
+        MemoryCountable.checkDeviation(state, 0.01d, true);
+    }
+
+    @Test
+    public void testNullableDoubleLongGroupState() {
+        NullableDoubleLongGroupState state = new NullableDoubleLongGroupState(
+            1024
+        );
+
+        int groupId = 0;
+        for (; groupId < 1024; groupId++) {
+            state.appendNull();
+            state.set(groupId, Double.valueOf(groupId + ".534"), groupId);
+        }
+        MemoryCountable.checkDeviation(state, 0.01d, true);
+    }
+
+    @Test
+    public void testNullableHyperLogLogGroupState() {
+        NullableHyperLogLogGroupState state = new NullableHyperLogLogGroupState(
+          1024
+        );
+        int groupId = 0;
+        for (; groupId < 1024; groupId++) {
+            state.append();
+            state.set(groupId, (groupId + "_").getBytes());
+        }
+        MemoryCountable.checkDeviation(state, 0.01d, true);
+    }
+
+    @Test
+    public void testNullableLongGroupState() {
+        NullableLongGroupState state = new NullableLongGroupState(1024);
+        int groupId = 0;
+        for (; groupId < 1024; groupId++) {
+            state.appendNull();
+            state.append(groupId * 1000);
+        }
+        MemoryCountable.checkDeviation(state, 0.01d, true);
     }
 }

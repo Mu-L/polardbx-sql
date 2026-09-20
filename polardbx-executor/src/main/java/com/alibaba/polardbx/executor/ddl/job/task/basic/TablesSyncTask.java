@@ -22,6 +22,8 @@ import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
 import com.alibaba.polardbx.executor.sync.TablesMetaChangePreemptiveSyncAction;
 import com.alibaba.polardbx.executor.sync.TablesMetaChangeSyncAction;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.optimizer.config.table.PreemptiveTime;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -39,7 +41,6 @@ public class TablesSyncTask extends BaseSyncTask {
     final boolean forceSyncFailed;
     final boolean forceNoPreemptive;
     PreemptiveTime preemptiveTime;
-
 
     public TablesSyncTask(String schemaName,
                           List<String> tableNames) {
@@ -66,7 +67,7 @@ public class TablesSyncTask extends BaseSyncTask {
     public TablesSyncTask(String schemaName,
                           List<String> tableNames,
                           boolean preemptive,
-                          PreemptiveTime preemptiveTime){
+                          PreemptiveTime preemptiveTime) {
         super(schemaName);
         this.tableNames = tableNames;
         this.preemptive = preemptive;
@@ -105,17 +106,20 @@ public class TablesSyncTask extends BaseSyncTask {
     @Override
     public void executeImpl(ExecutionContext executionContext) {
         try {
+            FailPoint.injectExceptionFromHint(FailPointKey.FP_FAILED_TABLES_SYNC, executionContext);
             if (!preemptive) {
-                SyncManagerHelper.sync(new TablesMetaChangeSyncAction(schemaName, tableNames, forceSyncFailed, forceNoPreemptive), SyncScope.ALL, true);
+                SyncManagerHelper.syncThrowExceptions(
+                    new TablesMetaChangeSyncAction(schemaName, tableNames, forceSyncFailed, forceNoPreemptive),
+                    SyncScope.ALL);
             } else {
-                SyncManagerHelper.sync(
+                SyncManagerHelper.syncThrowExceptions(
                     new TablesMetaChangePreemptiveSyncAction(schemaName, tableNames, preemptiveTime, forceSyncFailed),
-                    SyncScope.ALL,
-                    true);
+                    SyncScope.ALL);
             }
+            FailPoint.injectSuspendFromHint(FailPointKey.FP_TABLES_SYNC_TASK_SUSPEND, executionContext);
         } catch (Throwable t) {
             LOGGER.error(String.format(
-                    "error occurs while sync table meta, schemaName:%s, tableNames:%s", schemaName, tableNames.toString()));
+                "error occurs while sync table meta, schemaName:%s, tableNames:%s", schemaName, tableNames.toString()));
             throw GeneralUtil.nestedException(t);
         }
     }

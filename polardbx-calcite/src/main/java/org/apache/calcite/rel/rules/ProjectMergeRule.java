@@ -20,6 +20,7 @@ import com.google.common.collect.Sets;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptUtil;
+import org.apache.calcite.plan.hep.HepRelVertex;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelDistribution;
 import org.apache.calcite.rel.RelNode;
@@ -27,6 +28,7 @@ import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.core.RelFactories.ProjectFactory;
+import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.tools.RelBuilder;
@@ -109,7 +111,12 @@ public class ProjectMergeRule extends RelOptRule {
                     return;
                 }
                 final Permutation product = topPermutation.product(bottomPermutation);
-                relBuilder.push(bottomProject.getInput());
+                if (bottomProject.getInput() instanceof HepRelVertex
+                    && !(((HepRelVertex) bottomProject.getInput()).getCurrentRel() instanceof TableScan)) {
+                    relBuilder.push(((HepRelVertex) bottomProject.getInput()).getCurrentRel());
+                } else {
+                    relBuilder.push(bottomProject.getInput());
+                }
                 relBuilder.project(relBuilder.fields(product),
                     topProject.getRowType().getFieldNames());
                 RelNode output = relBuilder.build();

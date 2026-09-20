@@ -20,6 +20,7 @@ import com.alibaba.polardbx.common.TddlNode;
 import com.alibaba.polardbx.executor.mpp.deploy.ServiceProvider;
 import com.alibaba.polardbx.gms.node.NodeState;
 import com.alibaba.polardbx.gms.node.NodeVersion;
+import com.alibaba.polardbx.gms.util.InstIdUtil;
 import io.airlift.node.NodeInfo;
 
 import javax.inject.Inject;
@@ -52,7 +53,7 @@ public class ServerInfoResource {
         NodeVersion nodeVersion, NodeInfo nodeInfo) {
         this.version = requireNonNull(nodeVersion, "nodeVersion is null");
         this.environment = requireNonNull(nodeInfo, "nodeInfo is null").getEnvironment();
-        this.workerId = String.format("%s_%s", TddlNode.getInstId(), TddlNode.getNodeId());
+        this.workerId = String.format("%s_%s", InstIdUtil.getSubInstId(), TddlNode.getNodeId());
     }
 
     @GET

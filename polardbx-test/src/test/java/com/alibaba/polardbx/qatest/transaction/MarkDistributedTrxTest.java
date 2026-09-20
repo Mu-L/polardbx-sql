@@ -40,7 +40,6 @@ public class MarkDistributedTrxTest extends CrudBasedLockTestCase {
         if (isMySQL80()) {
             return;
         }
-        JdbcUtil.executeUpdate(tddlConnection, "SET GLOBAL CONN_POOL_XPROTO_SLOW_THRESH = 0");
         JdbcUtil.executeUpdateSuccess(polarxConn, "set global ENABLE_TRX_DEBUG_MODE = true");
         JdbcUtil.executeUpdateSuccess(polarxConn, "set enable_xa_tso = true");
         JdbcUtil.executeUpdateSuccess(polarxConn, "set enable_auto_commit_tso = true");
@@ -60,7 +59,6 @@ public class MarkDistributedTrxTest extends CrudBasedLockTestCase {
         if (isMySQL80()) {
             return;
         }
-        JdbcUtil.executeUpdate(tddlConnection, "SET GLOBAL CONN_POOL_XPROTO_SLOW_THRESH = 1000");
         JdbcUtil.executeUpdateSuccess(polarxConn, "set global ENABLE_TRX_DEBUG_MODE = false");
         tddlConnection.setAutoCommit(true);
         polarxConn.setAutoCommit(true);

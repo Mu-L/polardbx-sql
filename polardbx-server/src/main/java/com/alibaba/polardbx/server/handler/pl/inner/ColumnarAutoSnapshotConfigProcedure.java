@@ -1,6 +1,8 @@
 package com.alibaba.polardbx.server.handler.pl.inner;
 
 import com.alibaba.fastjson.JSON;
+import com.alibaba.polardbx.common.utils.logger.Logger;
+import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.timezone.TimeZoneUtils;
 import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLCharExpr;
@@ -31,9 +33,9 @@ import static com.cronutils.model.CronType.QUARTZ;
 
 public class ColumnarAutoSnapshotConfigProcedure extends BaseInnerProcedure {
     private final String syntaxErrorMsg = "Bad arguments. Usage: "
-        + "call polardbx.columnar_auto_snapshot_config('ENABLE', '0 0 * * * ?', '+08:00') "
-        + "or call polardbx.columnar_auto_snapshot_config('SHOW') "
-        + "or call polardbx.columnar_auto_snapshot_config('DISABLE')";
+            + "call polardbx.columnar_auto_snapshot_config('ENABLE', '0 0 * * * ?', '+08:00') "
+            + "or call polardbx.columnar_auto_snapshot_config('SHOW') "
+            + "or call polardbx.columnar_auto_snapshot_config('DISABLE')";
 
     private enum Action {
         SHOW, ENABLE, DISABLE;
@@ -53,7 +55,7 @@ public class ColumnarAutoSnapshotConfigProcedure extends BaseInnerProcedure {
     }
 
     @Override
-    void execute(ServerConnection c, SQLCallStatement statement, ArrayResultCursor cursor) {
+    public void execute(ServerConnection c, SQLCallStatement statement, ArrayResultCursor cursor) {
         List<SQLExpr> params = statement.getParameters();
         if (params.isEmpty()) {
             throw new RuntimeException(syntaxErrorMsg);
@@ -68,17 +70,17 @@ public class ColumnarAutoSnapshotConfigProcedure extends BaseInnerProcedure {
             throw new RuntimeException(syntaxErrorMsg);
         }
         switch (actionEnum) {
-        case SHOW:
-            show(cursor);
-            return;
-        case ENABLE:
-            enable(params, cursor);
-            return;
-        case DISABLE:
-            disable(cursor);
-            return;
-        default:
-            throw new RuntimeException(syntaxErrorMsg);
+            case SHOW:
+                show(cursor);
+                return;
+            case ENABLE:
+                enable(params, cursor);
+                return;
+            case DISABLE:
+                disable(cursor);
+                return;
+            default:
+                throw new RuntimeException(syntaxErrorMsg);
         }
 
     }
@@ -93,13 +95,13 @@ public class ColumnarAutoSnapshotConfigProcedure extends BaseInnerProcedure {
             throw new RuntimeException(e);
         }
         cursor.addColumn("result", DataTypes.StringType);
-        cursor.addRow(new Object[] {"Disable auto generated snapshot."});
+        cursor.addRow(new Object[]{"Disable auto generated snapshot."});
         if (null != beforeConfig) {
-            cursor.addRow(new Object[] {
-                "Before config: cron expression: " + beforeConfig.get(CRON_EXPR)
-                    + " zone id: " + beforeConfig.get(ZONE_ID)});
+            cursor.addRow(new Object[]{
+                    "Before config: cron expression: " + beforeConfig.get(CRON_EXPR)
+                            + " zone id: " + beforeConfig.get(ZONE_ID)});
         } else {
-            cursor.addRow(new Object[] {"Before config: null"});
+            cursor.addRow(new Object[]{"Before config: null"});
         }
     }
 
@@ -129,27 +131,27 @@ public class ColumnarAutoSnapshotConfigProcedure extends BaseInnerProcedure {
             throw new RuntimeException(e);
         }
         cursor.addColumn("result", DataTypes.StringType);
-        cursor.addRow(new Object[] {"Enable new auto generated snapshot."});
+        cursor.addRow(new Object[]{"Enable new auto generated snapshot."});
         if (null != beforeConfig) {
-            cursor.addRow(new Object[] {
-                "Before config: cron expression: " + beforeConfig.get(CRON_EXPR)
-                    + " zone id: " + beforeConfig.get(ZONE_ID)});
+            cursor.addRow(new Object[]{
+                    "Before config: cron expression: " + beforeConfig.get(CRON_EXPR)
+                            + " zone id: " + beforeConfig.get(ZONE_ID)});
         } else {
-            cursor.addRow(new Object[] {"Before config: null"});
+            cursor.addRow(new Object[]{"Before config: null"});
         }
-        cursor.addRow(new Object[] {
-            "Current config: cron expression: " + cron.asString() + " zone id: " + zoneId.getId()});
+        cursor.addRow(new Object[]{
+                "Current config: cron expression: " + cron.asString() + " zone id: " + zoneId.getId()});
     }
 
     private void show(ArrayResultCursor cursor) {
         Map<String, String> config = ExecUtils.getColumnarAutoSnapshotConfig();
         cursor.addColumn("result", DataTypes.StringType);
         if (null == config) {
-            cursor.addRow(new Object[] {"No config found."});
+            cursor.addRow(new Object[]{"No config found."});
         } else {
-            cursor.addRow(new Object[] {
-                "Auto snapshot config: "
-                    + "cron expression: " + config.get(CRON_EXPR) + " zone id: " + config.get(ZONE_ID)});
+            cursor.addRow(new Object[]{
+                    "Auto snapshot config: "
+                        + "cron expression: " + config.get(CRON_EXPR) + " zone id: " + config.get(ZONE_ID)});
         }
     }
 }

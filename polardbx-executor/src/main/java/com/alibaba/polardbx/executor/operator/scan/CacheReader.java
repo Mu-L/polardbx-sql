@@ -16,6 +16,9 @@
 
 package com.alibaba.polardbx.executor.operator.scan;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.memory.MemoryCounter;
+
 import java.util.Map;
 
 /**
@@ -23,7 +26,7 @@ import java.util.Map;
  *
  * @param <VECTOR> class of block.
  */
-public interface CacheReader<VECTOR> {
+public interface CacheReader<VECTOR> extends MemoryCountable {
     /**
      * Initialize the cache reader with given cached blocks.
      *

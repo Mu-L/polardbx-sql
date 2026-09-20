@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.executor.accumulator.state;
 
 import com.alibaba.polardbx.common.datatype.Decimal;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.executor.accumulator.datastruct.BooleanSegmentArrayList;
 import com.alibaba.polardbx.executor.accumulator.datastruct.ObjectSegmentArrayList;
 import org.openjdk.jol.info.ClassLayout;
@@ -33,12 +34,12 @@ public class NullableDecimalGroupState implements GroupState {
     /**
      * The null value bitmap.
      */
-    private final BooleanSegmentArrayList valueIsNull;
+    protected final BooleanSegmentArrayList valueIsNull;
 
     /**
      * Disaggregated stored decimal objects.
      */
-    private final ObjectSegmentArrayList<Decimal> decimals;
+    protected final ObjectSegmentArrayList<Decimal> decimals;
 
     public NullableDecimalGroupState(int capacity) {
         this.valueIsNull = new BooleanSegmentArrayList(capacity);
@@ -50,6 +51,13 @@ public class NullableDecimalGroupState implements GroupState {
         ObjectSegmentArrayList<Decimal> decimals) {
         this.valueIsNull = valueIsNull;
         this.decimals = decimals;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(valueIsNull)
+            + FastMemoryCounter.sizeOf(decimals);
     }
 
     public void set(int groupId, Decimal value) {

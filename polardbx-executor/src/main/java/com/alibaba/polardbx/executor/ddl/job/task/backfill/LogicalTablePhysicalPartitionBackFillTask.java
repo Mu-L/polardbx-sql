@@ -1,8 +1,8 @@
 package com.alibaba.polardbx.executor.ddl.job.task.backfill;
 
 import com.alibaba.fastjson.annotation.JSONCreator;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.ExecutorHelper;
-import com.alibaba.polardbx.executor.ddl.job.task.BaseBackfillTask;
 import com.alibaba.polardbx.executor.ddl.job.task.RemoteExecutableDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.ddl.newengine.resource.DdlEngineResources;
@@ -11,6 +11,8 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.GsiPartitionBackfill;
 import lombok.Getter;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -19,16 +21,9 @@ import static com.alibaba.polardbx.executor.ddl.newengine.utils.DdlResourceManag
 
 @TaskName(name = "LogicalTablePhysicalPartitionBackFillTask")
 @Getter
-public class LogicalTablePhysicalPartitionBackFillTask extends BaseBackfillTask implements RemoteExecutableDdlTask {
+public class LogicalTablePhysicalPartitionBackFillTask extends LogicalTableBackFillTask
+    implements RemoteExecutableDdlTask {
 
-    public String sourceTableName;
-    public String targetTableName;
-    public Map<String, String> virtualColumns;
-    public Map<String, String> backfillColumnMap;
-    public List<String> modifyStringColumns;
-    public boolean useChangeSet;
-    public boolean modifyColumn;
-    public boolean mirrorCopy;
     public List<String> physicalPartitions;
     public int cpuAcquired;
 
@@ -36,25 +31,19 @@ public class LogicalTablePhysicalPartitionBackFillTask extends BaseBackfillTask 
     public LogicalTablePhysicalPartitionBackFillTask(String schemaName,
                                                      String sourceTableName,
                                                      String targetTableName,
-                                                     Map<String, String> virtualColumns,
-                                                     Map<String, String> backfillColumnMap,
+                                                     Map<String, String> srcVirtualColumns,
+                                                     Map<String, String> dstVirtualColumns,
                                                      List<String> modifyStringColumns,
                                                      boolean useChangeSet,
-                                                     boolean mirrorCopy,
                                                      boolean modifyColumn,
                                                      List<String> physicalPartitions,
-                                                     int cpuAcquired) {
-        super(schemaName);
-        this.sourceTableName = sourceTableName;
-        this.targetTableName = targetTableName;
-        this.virtualColumns = virtualColumns;
-        this.backfillColumnMap = backfillColumnMap;
-        this.modifyStringColumns = modifyStringColumns;
-        this.useChangeSet = useChangeSet;
-        this.modifyColumn = modifyColumn;
-        this.mirrorCopy = mirrorCopy;
+                                                     int cpuAcquired,
+                                                     int subtaskCount) {
+        super(schemaName, sourceTableName, targetTableName, srcVirtualColumns, dstVirtualColumns, modifyStringColumns,
+            useChangeSet, false, modifyColumn);
         this.physicalPartitions = physicalPartitions;
         this.cpuAcquired = cpuAcquired;
+        this.subtaskCount = subtaskCount;
         setResourceAcquired(buildResourceRequired());
         onExceptionTryRecoveryThenRollback();
     }
@@ -71,8 +60,8 @@ public class LogicalTablePhysicalPartitionBackFillTask extends BaseBackfillTask 
         backFillPlan.setOnlineModifyColumn(modifyColumn);
         backFillPlan.setMirrorCopy(mirrorCopy);
         backFillPlan.setModifyStringColumns(modifyStringColumns);
-        backFillPlan.setSrcCheckColumnMap(backfillColumnMap);
-        backFillPlan.setDstCheckColumnMap(virtualColumns);
+        backFillPlan.setSrcCheckColumnMap(this.getSrcCheckColumnMap());
+        backFillPlan.setDstCheckColumnMap(this.getDstCheckColumnMap());
         backFillPlan.setPartitionList(physicalPartitions);
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
@@ -83,8 +72,9 @@ public class LogicalTablePhysicalPartitionBackFillTask extends BaseBackfillTask 
         DdlEngineResources resourceRequired = new DdlEngineResources();
         String owner =
             "LogicalBackfill:" + sourceTableName + ": " + physicalPartitions;
-        resourceRequired.request(CN_NETWORK, 5L, owner);
+        resourceRequired.request(CN_NETWORK, 1L, owner);
         resourceRequired.request(CN_CPU, Long.valueOf(cpuAcquired), owner);
+//        resourceRequired.request(CN_TASK_COUNT, Long.valueOf(taskCount), owner);
         return resourceRequired;
     }
 
@@ -99,4 +89,24 @@ public class LogicalTablePhysicalPartitionBackFillTask extends BaseBackfillTask 
             + ")";
     }
 
+    @Override
+    public List<String> fillExplainContent(ExecutionContext ec) {
+        List<String> results = new ArrayList<>();
+        String partitionPerfInfo = String.format("PART_NAME(%s), SUBTASK_COUNT(%d)", physicalPartitions, subtaskCount);
+        results.add(partitionPerfInfo);
+        results.addAll(super.fillExplainContent(ec));
+        return results;
+    }
+
+    @Override
+    public List<String> explainInfo(ExecutionContext ec) {
+        if (!ec.getParamManager().getBoolean(ConnectionParams.EXPLAIN_SHOW_PERF_PARAMS)) {
+            String partitionPerfInfo =
+                String.format("LOGICAL_BACKFILL( PART_NAME(%s), SUBTASK_COUNT(%d) )", physicalPartitions, subtaskCount);
+            return Collections.singletonList(partitionPerfInfo);
+        } else {
+            return super.explainInfo(ec);
+        }
+
+    }
 }

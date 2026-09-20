@@ -27,9 +27,9 @@ public class IgnoreBinlogTransactionTest {
             .contains(ITransactionPolicy.TransactionClass.IGNORE_BINLOG_TRANSACTION.name()));
         IConnection connection = mock(IConnection.class);
         String xid = ((IgnoreBinlogTransaction) trx).getXid("group", connection);
-        Assert.assertTrue(xid.endsWith("'group@0000', 4"));
-        xid = ((IgnoreBinlogTransaction) trx).getXid("group", connection);
         Assert.assertTrue(xid.endsWith("'group@0001', 4"));
+        xid = ((IgnoreBinlogTransaction) trx).getXid("group", connection);
+        Assert.assertTrue(xid.endsWith("'group@0002', 4"));
     }
 
     @Test

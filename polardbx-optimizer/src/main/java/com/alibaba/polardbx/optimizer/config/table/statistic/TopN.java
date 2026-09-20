@@ -39,6 +39,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+import static com.alibaba.polardbx.common.TddlConstants.INVALID;
+
 public class TopN {
     private static final Logger logger = LoggerUtil.statisticsLogger;
     /**
@@ -78,6 +80,9 @@ public class TopN {
     }
 
     public void offer(Object o, long count) {
+        if (o == INVALID) {
+            return;
+        }
         valueMap.merge(o, count, Long::sum);
     }
 
@@ -255,6 +260,9 @@ public class TopN {
             prefixCountArr[i] = (i == 0 ? 0 : prefixCountArr[i - 1]) + countArr[i];
             maxCount = Math.max(maxCount, countArr[i]);
         }
+        if (valueArr.length == 0 || countArr.length == 0) {
+            return false;
+        }
         this.build = true;
         valueMap.clear();
         return true;
@@ -318,6 +326,11 @@ public class TopN {
         for (int i = 0; i < valueArr.length; i++) {
             prefixCountArr[i] = (i == 0 ? 0 : prefixCountArr[i - 1]) + countArr[i];
         }
+
+        if (valueArr.length == 0 || countArr.length == 0) {
+            return false;
+        }
+
         this.build = true;
         valueMap.clear();
         return true;
@@ -329,7 +342,7 @@ public class TopN {
 
     // static method
     public static String serializeToJson(TopN topN) {
-        if (topN == null) {
+        if (topN == null || topN.build == false) {
             return null;
         }
         String type = StatisticUtils.encodeDataType(topN.dataType);

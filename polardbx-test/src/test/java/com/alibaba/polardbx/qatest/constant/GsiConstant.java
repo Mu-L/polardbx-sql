@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.qatest.constant;
 
+import com.alibaba.polardbx.qatest.util.PropertiesUtil;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
@@ -280,79 +281,181 @@ public class GsiConstant {
                 "insert into " + primaryTableName + "(id,c_double_un) values(null,'100.003');\n",
                 "insert into " + primaryTableName + "(id,c_double_un) values(null,'-100.003');\n",
                 "insert into " + primaryTableName + "(id,c_double_un) values(null,'-100.0000001');\n"));
-        builder.put(C_DATE,
-            ImmutableList.of("insert into " + primaryTableName + "(id,c_date) values(null,'0000-00-00');\n",
-                "insert into " + primaryTableName + "(id,c_date) values(null,'9999-12-31');\n",
-                "insert into " + primaryTableName + "(id,c_date) values(null,'0000-00-00 01:01:01');\n",
-                "insert into " + primaryTableName + "(id,c_date) values(null,'1969-09-00');\n",
-                "insert into " + primaryTableName + "(id,c_date) values(null,'2018-00-00');\n",
-                "insert into " + primaryTableName + "(id,c_date) values(null,'2017-12-12');\n"));
-        builder.put(C_DATETIME,
-            ImmutableList.of(
-                "insert into " + primaryTableName + "(id,c_datetime) values(null,'0000-00-00 00:00:00');\n",
-                "insert into " + primaryTableName + "(id,c_datetime) values(null,'9999-12-31 23:59:59');\n",
-                "insert into " + primaryTableName + "(id,c_datetime) values(null,'0000-00-00 01:01:01');\n",
-                "insert into " + primaryTableName + "(id,c_datetime) values(null,'1969-09-00 23:59:59');\n",
-                "insert into " + primaryTableName + "(id,c_datetime) values(null,'2018-00-00 00:00:00');\n",
-                "insert into " + primaryTableName + "(id,c_datetime) values(null,'2017-12-12 23:59:59');\n"));
-        builder.put(C_DATETIME_1,
-            ImmutableList.of(
-                "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'0000-00-00 00:00:00.0');\n",
-                "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'9999-12-31 23:59:59.9');\n",
-                "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'0000-00-00 01:01:01.12');\n",
-                "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'1969-09-00 23:59:59.06');\n",
-                "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'2018-00-00 00:00:00.04');\n",
-                "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'2017-12-12 23:59:59.045');\n"));
-        builder.put(C_DATETIME_3,
-            ImmutableList.of(
-                "insert into " + primaryTableName + "(id,c_datetime_3) values(null,'0000-00-00 00:00:00.000');\n",
-                "insert into " + primaryTableName + "(id,c_datetime_3) values(null,'9999-12-31 23:59:59.999');\n",
-                "insert into " + primaryTableName + "(id,c_datetime_3) values(null,'0000-00-00 01:01:01.121');\n",
-                "insert into " + primaryTableName + "(id,c_datetime_3) values(null,'1969-09-00 23:59:59.0006');\n",
-                "insert into " + primaryTableName + "(id,c_datetime_3) values(null,'2018-00-00 00:00:00.0004');\n",
-                "insert into " + primaryTableName + "(id,c_datetime_3) values(null,'2017-12-12 23:59:59.00045');\n"));
-        builder.put(C_DATETIME_6,
-            ImmutableList.of(
-                "insert into " + primaryTableName + "(id,c_datetime_6) values(null,'0000-00-00 00:00:00.000000');\n",
-                "insert into " + primaryTableName + "(id,c_datetime_6) values(null,'9999-12-31 23:59:59.999999');\n",
-                "insert into " + primaryTableName + "(id,c_datetime_6) values(null,'0000-00-00 01:01:01.121121');\n",
-                "insert into " + primaryTableName + "(id,c_datetime_6) values(null,'1969-09-00 23:59:59.0000006');\n",
-                "insert into " + primaryTableName + "(id,c_datetime_6) values(null,'2018-00-00 00:00:00.0000004');\n",
-                "insert into " + primaryTableName
-                    + "(id,c_datetime_6) values(null,'2017-12-12 23:59:59.00000045');\n"));
-        builder.put(C_TIMESTAMP,
-            ImmutableList.of(
-                "insert into " + primaryTableName + "(id,c_timestamp) values(null,'0000-00-00 00:00:00');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp) values(null,'9999-12-31 23:59:59');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp) values(null,'0000-00-00 01:01:01');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp) values(null,'1969-09-00 23:59:59');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp) values(null,'2018-00-00 00:00:00');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp) values(null,'2017-12-12 23:59:59');\n"));
-        builder.put(C_TIMESTAMP_1,
-            ImmutableList.of(
-                "insert into " + primaryTableName + "(id,c_timestamp_1) values(null,'0000-00-00 00:00:00.0');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp_1) values(null,'9999-12-31 23:59:59.9');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp_1) values(null,'0000-00-00 01:01:01.12');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp_1) values(null,'1969-09-00 23:59:59.06');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp_1) values(null,'2018-00-00 00:00:00.04');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp_1) values(null,'2017-12-12 23:59:59.045');\n"));
-        builder.put(C_TIMESTAMP_3,
-            ImmutableList.of(
-                "insert into " + primaryTableName + "(id,c_timestamp_3) values(null,'0000-00-00 00:00:00.000');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp_3) values(null,'9999-12-31 23:59:59.999');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp_3) values(null,'0000-00-00 01:01:01.121');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp_3) values(null,'1969-09-00 23:59:59.0006');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp_3) values(null,'2018-00-00 00:00:00.0004');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp_3) values(null,'2017-12-12 23:59:59.00045');\n"));
-        builder.put(C_TIMESTAMP_6,
-            ImmutableList.of(
-                "insert into " + primaryTableName + "(id,c_timestamp_6) values(null,'0000-00-00 00:00:00.000000');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp_6) values(null,'9999-12-31 23:59:59.999999');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp_6) values(null,'0000-00-00 01:01:01.121121');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp_6) values(null,'1969-09-00 23:59:59.0000006');\n",
-                "insert into " + primaryTableName + "(id,c_timestamp_6) values(null,'2018-00-00 00:00:00.0000004');\n",
-                "insert into " + primaryTableName
-                    + "(id,c_timestamp_6) values(null,'2017-12-12 23:59:59.00000045');\n"));
+        if (PropertiesUtil.icbcTest()) {
+            builder.put(C_DATE,
+                ImmutableList.of("insert into " + primaryTableName + "(id,c_date) values(null,'1970-01-01');\n",
+                    "insert into " + primaryTableName + "(id,c_date) values(null,'9999-12-31');\n",
+                    "insert into " + primaryTableName + "(id,c_date) values(null,'1970-01-01 01:01:01');\n",
+                    "insert into " + primaryTableName + "(id,c_date) values(null,'1970-09-01');\n",
+                    "insert into " + primaryTableName + "(id,c_date) values(null,'2018-01-01');\n",
+                    "insert into " + primaryTableName + "(id,c_date) values(null,'2017-12-12');\n"));
+            builder.put(C_DATETIME,
+                ImmutableList.of(
+                    "insert into " + primaryTableName + "(id,c_datetime) values(null,'1970-01-01 00:00:00');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime) values(null,'9999-12-31 23:59:59');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime) values(null,'1970-01-01 01:01:01');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime) values(null,'1970-09-01 23:59:59');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime) values(null,'2018-01-01 00:00:00');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime) values(null,'2017-12-12 23:59:59');\n"));
+            builder.put(C_DATETIME_1,
+                ImmutableList.of(
+                    "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'1970-01-01 00:00:00.0');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'9999-12-31 23:59:59.9');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'1970-01-01 01:01:01.12');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'1970-09-01 23:59:59.06');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'2018-01-01 00:00:00.04');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'2017-12-12 23:59:59.045');\n"));
+            builder.put(C_DATETIME_3,
+                ImmutableList.of(
+                    "insert into " + primaryTableName + "(id,c_datetime_3) values(null,'1970-01-01 00:00:00.000');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_3) values(null,'9999-12-31 23:59:59.999');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_3) values(null,'1970-01-01 01:01:01.121');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_3) values(null,'1970-09-01 23:59:59.0006');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_3) values(null,'2018-01-01 00:00:00.0004');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_datetime_3) values(null,'2017-12-12 23:59:59.00045');\n"));
+            builder.put(C_DATETIME_6,
+                ImmutableList.of(
+                    "insert into " + primaryTableName
+                        + "(id,c_datetime_6) values(null,'1970-01-01 00:00:00.000000');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_datetime_6) values(null,'9999-12-31 23:59:59.999999');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_datetime_6) values(null,'1970-01-01 01:01:01.121121');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_datetime_6) values(null,'1970-09-01 23:59:59.0000006');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_datetime_6) values(null,'2018-01-01 00:00:00.0000004');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_datetime_6) values(null,'2017-12-12 23:59:59.00000045');\n"));
+            builder.put(C_TIMESTAMP,
+                ImmutableList.of(
+                    "insert into " + primaryTableName + "(id,c_timestamp) values(null,'1970-01-01 00:00:00');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp) values(null,'9999-12-31 23:59:59');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp) values(null,'1970-01-01 01:01:01');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp) values(null,'1970-09-01 23:59:59');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp) values(null,'2018-01-01 00:00:00');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp) values(null,'2017-12-12 23:59:59');\n"));
+            builder.put(C_TIMESTAMP_1,
+                ImmutableList.of(
+                    "insert into " + primaryTableName + "(id,c_timestamp_1) values(null,'1970-01-01 00:00:00.0');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp_1) values(null,'9999-12-31 23:59:59.9');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp_1) values(null,'1970-01-01 01:01:01.12');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp_1) values(null,'1970-09-01 23:59:59.06');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp_1) values(null,'2018-01-01 00:00:00.04');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_timestamp_1) values(null,'2017-12-12 23:59:59.045');\n"));
+            builder.put(C_TIMESTAMP_3,
+                ImmutableList.of(
+                    "insert into " + primaryTableName + "(id,c_timestamp_3) values(null,'1970-01-01 00:00:00.000');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp_3) values(null,'9999-12-31 23:59:59.999');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp_3) values(null,'1970-01-01 01:01:01.121');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp_3) values(null,'1970-09-01 23:59:59.0006');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp_3) values(null,'2018-01-01 00:00:00.0004');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_timestamp_3) values(null,'2017-12-12 23:59:59.00045');\n"));
+            builder.put(C_TIMESTAMP_6,
+                ImmutableList.of(
+                    "insert into " + primaryTableName
+                        + "(id,c_timestamp_6) values(null,'1970-01-01 00:00:00.000000');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_timestamp_6) values(null,'9999-12-31 23:59:59.999999');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_timestamp_6) values(null,'1970-01-01 01:01:01.121121');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_timestamp_6) values(null,'1970-09-01 23:59:59.0000006');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_timestamp_6) values(null,'2018-01-01 00:00:00.0000004');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_timestamp_6) values(null,'2017-12-12 23:59:59.00000045');\n"));
+        } else {
+            builder.put(C_DATE,
+                ImmutableList.of("insert into " + primaryTableName + "(id,c_date) values(null,'0000-00-00');\n",
+                    "insert into " + primaryTableName + "(id,c_date) values(null,'9999-12-31');\n",
+                    "insert into " + primaryTableName + "(id,c_date) values(null,'0000-00-00 01:01:01');\n",
+                    "insert into " + primaryTableName + "(id,c_date) values(null,'1969-09-00');\n",
+                    "insert into " + primaryTableName + "(id,c_date) values(null,'2018-00-00');\n",
+                    "insert into " + primaryTableName + "(id,c_date) values(null,'2017-12-12');\n"));
+            builder.put(C_DATETIME,
+                ImmutableList.of(
+                    "insert into " + primaryTableName + "(id,c_datetime) values(null,'0000-00-00 00:00:00');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime) values(null,'9999-12-31 23:59:59');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime) values(null,'0000-00-00 01:01:01');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime) values(null,'1969-09-00 23:59:59');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime) values(null,'2018-00-00 00:00:00');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime) values(null,'2017-12-12 23:59:59');\n"));
+            builder.put(C_DATETIME_1,
+                ImmutableList.of(
+                    "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'0000-00-00 00:00:00.0');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'9999-12-31 23:59:59.9');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'0000-00-00 01:01:01.12');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'1969-09-00 23:59:59.06');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'2018-00-00 00:00:00.04');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_1) values(null,'2017-12-12 23:59:59.045');\n"));
+            builder.put(C_DATETIME_3,
+                ImmutableList.of(
+                    "insert into " + primaryTableName + "(id,c_datetime_3) values(null,'0000-00-00 00:00:00.000');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_3) values(null,'9999-12-31 23:59:59.999');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_3) values(null,'0000-00-00 01:01:01.121');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_3) values(null,'1969-09-00 23:59:59.0006');\n",
+                    "insert into " + primaryTableName + "(id,c_datetime_3) values(null,'2018-00-00 00:00:00.0004');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_datetime_3) values(null,'2017-12-12 23:59:59.00045');\n"));
+            builder.put(C_DATETIME_6,
+                ImmutableList.of(
+                    "insert into " + primaryTableName
+                        + "(id,c_datetime_6) values(null,'0000-00-00 00:00:00.000000');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_datetime_6) values(null,'9999-12-31 23:59:59.999999');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_datetime_6) values(null,'0000-00-00 01:01:01.121121');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_datetime_6) values(null,'1969-09-00 23:59:59.0000006');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_datetime_6) values(null,'2018-00-00 00:00:00.0000004');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_datetime_6) values(null,'2017-12-12 23:59:59.00000045');\n"));
+            builder.put(C_TIMESTAMP,
+                ImmutableList.of(
+                    "insert into " + primaryTableName + "(id,c_timestamp) values(null,'0000-00-00 00:00:00');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp) values(null,'9999-12-31 23:59:59');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp) values(null,'0000-00-00 01:01:01');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp) values(null,'1969-09-00 23:59:59');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp) values(null,'2018-00-00 00:00:00');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp) values(null,'2017-12-12 23:59:59');\n"));
+            builder.put(C_TIMESTAMP_1,
+                ImmutableList.of(
+                    "insert into " + primaryTableName + "(id,c_timestamp_1) values(null,'0000-00-00 00:00:00.0');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp_1) values(null,'9999-12-31 23:59:59.9');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp_1) values(null,'0000-00-00 01:01:01.12');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp_1) values(null,'1969-09-00 23:59:59.06');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp_1) values(null,'2018-00-00 00:00:00.04');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_timestamp_1) values(null,'2017-12-12 23:59:59.045');\n"));
+            builder.put(C_TIMESTAMP_3,
+                ImmutableList.of(
+                    "insert into " + primaryTableName + "(id,c_timestamp_3) values(null,'0000-00-00 00:00:00.000');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp_3) values(null,'9999-12-31 23:59:59.999');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp_3) values(null,'0000-00-00 01:01:01.121');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp_3) values(null,'1969-09-00 23:59:59.0006');\n",
+                    "insert into " + primaryTableName + "(id,c_timestamp_3) values(null,'2018-00-00 00:00:00.0004');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_timestamp_3) values(null,'2017-12-12 23:59:59.00045');\n"));
+            builder.put(C_TIMESTAMP_6,
+                ImmutableList.of(
+                    "insert into " + primaryTableName
+                        + "(id,c_timestamp_6) values(null,'0000-00-00 00:00:00.000000');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_timestamp_6) values(null,'9999-12-31 23:59:59.999999');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_timestamp_6) values(null,'0000-00-00 01:01:01.121121');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_timestamp_6) values(null,'1969-09-00 23:59:59.0000006');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_timestamp_6) values(null,'2018-00-00 00:00:00.0000004');\n",
+                    "insert into " + primaryTableName
+                        + "(id,c_timestamp_6) values(null,'2017-12-12 23:59:59.00000045');\n"));
+        }
         builder.put(C_TIME,
             ImmutableList.of("insert into " + primaryTableName + "(id,c_time) values(null,'-838:59:59');\n",
                 "insert into " + primaryTableName + "(id,c_time) values(null,'838:59:59');\n",
@@ -512,7 +615,7 @@ public class GsiConstant {
      * @return insert sql list
      */
     public static List<String> getInsertWithShardKey(String PRIMARY_TABLE_NAME, String pk, String sk) {
-        ImmutableMap<String, List<String>> base = ImmutableMap.<String, List<String>>builder()
+        ImmutableMap.Builder<String, List<String>> builder = ImmutableMap.<String, List<String>>builder()
             .put(C_ID, ImmutableList.of(
                 "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk + ") values(null               , 0  );\n ",
                 "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk + ") values(null               , 1  );\n ",
@@ -732,125 +835,245 @@ public class GsiConstant {
                 "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
                     + ", c_double_un) values(null        , 158, '-100.003');\n ",
                 "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_double_un) values(null        , 159, '-100.0000001');\n "))
-            .put(C_DATE, ImmutableList.of(
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_date) values(null             , 161, '0000-00-00');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_date) values(null             , 162, '9999-12-31');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_date) values(null             , 163, '0000-00-00 01:01:01');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_date) values(null             , 164, '1969-09-00');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_date) values(null             , 165, '2018-00-00');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_date) values(null             , 166, '2017-12-12');\n "))
-            .put(C_DATETIME, ImmutableList.of(
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime) values(null         , 168, '0000-00-00 00:00:00');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime) values(null         , 169, '9999-12-31 23:59:59');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime) values(null         , 170, '0000-00-00 01:01:01');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime) values(null         , 171, '1969-09-00 23:59:59');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime) values(null         , 172, '2018-00-00 00:00:00');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime) values(null         , 173, '2017-12-12 23:59:59');\n "))
-            .put(C_DATETIME_1, ImmutableList.of(
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_1) values(null       , 175, '0000-00-00 00:00:00.0');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_1) values(null       , 176, '9999-12-31 23:59:59.9');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_1) values(null       , 177, '0000-00-00 01:01:01.12');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_1) values(null       , 178, '1969-09-00 23:59:59.06');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_1) values(null       , 179, '2018-00-00 00:00:00.04');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_1) values(null       , 180, '2017-12-12 23:59:59.045');\n "))
-            .put(C_DATETIME_3, ImmutableList.of(
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_3) values(null       , 182, '0000-00-00 00:00:00.000');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_3) values(null       , 183, '9999-12-31 23:59:59.999');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_3) values(null       , 184, '0000-00-00 01:01:01.121');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_3) values(null       , 185, '1969-09-00 23:59:59.0006');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_3) values(null       , 186, '2018-00-00 00:00:00.0004');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_3) values(null       , 187, '2017-12-12 23:59:59.00045');\n "))
-            .put(C_DATETIME_6, ImmutableList.of(
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_6) values(null       , 189, '0000-00-00 00:00:00.000000');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_6) values(null       , 190, '9999-12-31 23:59:59.999999');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_6) values(null       , 191, '0000-00-00 01:01:01.121121');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_6) values(null       , 192, '1969-09-00 23:59:59.0000006');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_6) values(null       , 193, '2018-00-00 00:00:00.0000004');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_datetime_6) values(null       , 194, '2017-12-12 23:59:59.00000045');\n "))
-            .put(C_TIMESTAMP, ImmutableList.of(
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp) values(null        , 196, '0000-00-00 00:00:00');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp) values(null        , 197, '9999-12-31 23:59:59');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp) values(null        , 198, '0000-00-00 01:01:01');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp) values(null        , 199, '1969-09-00 23:59:59');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp) values(null        , 200, '2018-00-00 00:00:00');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp) values(null        , 201, '2017-12-12 23:59:59');\n "))
-            .put(C_TIMESTAMP_1, ImmutableList.of(
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_1) values(null      , 203, '0000-00-00 00:00:00.0');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_1) values(null      , 204, '9999-12-31 23:59:59.9');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_1) values(null      , 205, '0000-00-00 01:01:01.12');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_1) values(null      , 206, '1969-09-00 23:59:59.06');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_1) values(null      , 207, '2018-00-00 00:00:00.04');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_1) values(null      , 208, '2017-12-12 23:59:59.045');\n "))
-            .put(C_TIMESTAMP_3, ImmutableList.of(
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_3) values(null      , 210, '0000-00-00 00:00:00.000');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_3) values(null      , 211, '9999-12-31 23:59:59.999');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_3) values(null      , 212, '0000-00-00 01:01:01.121');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_3) values(null      , 213, '1969-09-00 23:59:59.0006');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_3) values(null      , 214, '2018-00-00 00:00:00.0004');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_3) values(null      , 215, '2017-12-12 23:59:59.00045');\n "))
-            .put(C_TIMESTAMP_6, ImmutableList.of(
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_6) values(null      , 217, '0000-00-00 00:00:00.000000');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_6) values(null      , 218, '9999-12-31 23:59:59.999999');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_6) values(null      , 219, '0000-00-00 01:01:01.121121');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_6) values(null      , 220, '1969-09-00 23:59:59.0000006');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_6) values(null      , 221, '2018-00-00 00:00:00.0000004');\n ",
-                "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_timestamp_6) values(null      , 222, '2017-12-12 23:59:59.00000045');\n "))
-            .put(C_TIME, ImmutableList.of(
+                    + ", c_double_un) values(null        , 159, '-100.0000001');\n "));
+        if (PropertiesUtil.icbcTest()) {
+            builder.put(C_DATE, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_date) values(null             , 161, '1970-01-01');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_date) values(null             , 162, '9999-12-31');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_date) values(null             , 163, '1970-01-01 01:01:01');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_date) values(null             , 164, '1970-09-01');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_date) values(null             , 165, '2018-01-01');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_date) values(null             , 166, '2017-12-12');\n "))
+                .put(C_DATETIME, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime) values(null         , 168, '1970-01-01 00:00:00');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime) values(null         , 169, '9999-12-31 23:59:59');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime) values(null         , 170, '1970-01-01 01:01:01');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime) values(null         , 171, '1970-09-01 23:59:59');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime) values(null         , 172, '2018-01-01 00:00:00');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime) values(null         , 173, '2017-12-12 23:59:59');\n "))
+                .put(C_DATETIME_1, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_1) values(null       , 175, '1970-01-01 00:00:00.0');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_1) values(null       , 176, '9999-12-31 23:59:59.9');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_1) values(null       , 177, '1970-01-01 01:01:01.12');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_1) values(null       , 178, '1970-09-01 23:59:59.06');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_1) values(null       , 179, '2018-01-01 00:00:00.04');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_1) values(null       , 180, '2017-12-12 23:59:59.045');\n "))
+                .put(C_DATETIME_3, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_3) values(null       , 182, '1970-01-01 00:00:00.000');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_3) values(null       , 183, '9999-12-31 23:59:59.999');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_3) values(null       , 184, '1970-01-01 01:01:01.121');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_3) values(null       , 185, '1970-09-01 23:59:59.0006');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_3) values(null       , 186, '2018-01-01 00:00:00.0004');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_3) values(null       , 187, '2017-12-12 23:59:59.00045');\n "))
+                .put(C_DATETIME_6, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_6) values(null       , 189, '1970-01-01 00:00:00.000000');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_6) values(null       , 190, '9999-12-31 23:59:59.999999');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_6) values(null       , 191, '1970-01-01 01:01:01.121121');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_6) values(null       , 192, '1970-09-01 23:59:59.0000006');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_6) values(null       , 193, '2018-01-01 00:00:00.0000004');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_6) values(null       , 194, '2017-12-12 23:59:59.00000045');\n "))
+                .put(C_TIMESTAMP, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp) values(null        , 196, '1970-01-01 00:00:00');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp) values(null        , 197, '9999-12-31 23:59:59');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp) values(null        , 198, '1970-01-01 01:01:01');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp) values(null        , 199, '1970-09-01 23:59:59');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp) values(null        , 200, '2018-01-01 00:00:00');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp) values(null        , 201, '2017-12-12 23:59:59');\n "))
+                .put(C_TIMESTAMP_1, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_1) values(null      , 203, '1970-01-01 00:00:00.0');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_1) values(null      , 204, '9999-12-31 23:59:59.9');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_1) values(null      , 205, '1970-01-01 01:01:01.12');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_1) values(null      , 206, '1970-09-01 23:59:59.06');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_1) values(null      , 207, '2018-01-01 00:00:00.04');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_1) values(null      , 208, '2017-12-12 23:59:59.045');\n "))
+                .put(C_TIMESTAMP_3, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_3) values(null      , 210, '1970-01-01 00:00:00.000');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_3) values(null      , 211, '9999-12-31 23:59:59.999');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_3) values(null      , 212, '1970-01-01 01:01:01.121');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_3) values(null      , 213, '1970-09-01 23:59:59.0006');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_3) values(null      , 214, '2018-01-01 00:00:00.0004');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_3) values(null      , 215, '2017-12-12 23:59:59.00045');\n "))
+                .put(C_TIMESTAMP_6, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_6) values(null      , 217, '1970-01-01 00:00:00.000000');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_6) values(null      , 218, '9999-12-31 23:59:59.999999');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_6) values(null      , 219, '1970-01-01 01:01:01.121121');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_6) values(null      , 220, '1970-09-01 23:59:59.0000006');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_6) values(null      , 221, '2018-01-01 00:00:00.0000004');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_6) values(null      , 222, '2017-12-12 23:59:59.00000045');\n "));
+        } else {
+            builder.put(C_DATE, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_date) values(null             , 161, '0000-00-00');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_date) values(null             , 162, '9999-12-31');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_date) values(null             , 163, '0000-00-00 01:01:01');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_date) values(null             , 164, '1969-09-00');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_date) values(null             , 165, '2018-00-00');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_date) values(null             , 166, '2017-12-12');\n "))
+                .put(C_DATETIME, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime) values(null         , 168, '0000-00-00 00:00:00');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime) values(null         , 169, '9999-12-31 23:59:59');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime) values(null         , 170, '0000-00-00 01:01:01');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime) values(null         , 171, '1969-09-00 23:59:59');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime) values(null         , 172, '2018-00-00 00:00:00');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime) values(null         , 173, '2017-12-12 23:59:59');\n "))
+                .put(C_DATETIME_1, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_1) values(null       , 175, '0000-00-00 00:00:00.0');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_1) values(null       , 176, '9999-12-31 23:59:59.9');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_1) values(null       , 177, '0000-00-00 01:01:01.12');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_1) values(null       , 178, '1969-09-00 23:59:59.06');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_1) values(null       , 179, '2018-00-00 00:00:00.04');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_1) values(null       , 180, '2017-12-12 23:59:59.045');\n "))
+                .put(C_DATETIME_3, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_3) values(null       , 182, '0000-00-00 00:00:00.000');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_3) values(null       , 183, '9999-12-31 23:59:59.999');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_3) values(null       , 184, '0000-00-00 01:01:01.121');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_3) values(null       , 185, '1969-09-00 23:59:59.0006');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_3) values(null       , 186, '2018-00-00 00:00:00.0004');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_3) values(null       , 187, '2017-12-12 23:59:59.00045');\n "))
+                .put(C_DATETIME_6, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_6) values(null       , 189, '0000-00-00 00:00:00.000000');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_6) values(null       , 190, '9999-12-31 23:59:59.999999');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_6) values(null       , 191, '0000-00-00 01:01:01.121121');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_6) values(null       , 192, '1969-09-00 23:59:59.0000006');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_6) values(null       , 193, '2018-00-00 00:00:00.0000004');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_datetime_6) values(null       , 194, '2017-12-12 23:59:59.00000045');\n "))
+                .put(C_TIMESTAMP, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp) values(null        , 196, '0000-00-00 00:00:00');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp) values(null        , 197, '9999-12-31 23:59:59');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp) values(null        , 198, '0000-00-00 01:01:01');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp) values(null        , 199, '1969-09-00 23:59:59');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp) values(null        , 200, '2018-00-00 00:00:00');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp) values(null        , 201, '2017-12-12 23:59:59');\n "))
+                .put(C_TIMESTAMP_1, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_1) values(null      , 203, '0000-00-00 00:00:00.0');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_1) values(null      , 204, '9999-12-31 23:59:59.9');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_1) values(null      , 205, '0000-00-00 01:01:01.12');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_1) values(null      , 206, '1969-09-00 23:59:59.06');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_1) values(null      , 207, '2018-00-00 00:00:00.04');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_1) values(null      , 208, '2017-12-12 23:59:59.045');\n "))
+                .put(C_TIMESTAMP_3, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_3) values(null      , 210, '0000-00-00 00:00:00.000');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_3) values(null      , 211, '9999-12-31 23:59:59.999');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_3) values(null      , 212, '0000-00-00 01:01:01.121');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_3) values(null      , 213, '1969-09-00 23:59:59.0006');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_3) values(null      , 214, '2018-00-00 00:00:00.0004');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_3) values(null      , 215, '2017-12-12 23:59:59.00045');\n "))
+                .put(C_TIMESTAMP_6, ImmutableList.of(
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_6) values(null      , 217, '0000-00-00 00:00:00.000000');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_6) values(null      , 218, '9999-12-31 23:59:59.999999');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_6) values(null      , 219, '0000-00-00 01:01:01.121121');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_6) values(null      , 220, '1969-09-00 23:59:59.0000006');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_6) values(null      , 221, '2018-00-00 00:00:00.0000004');\n ",
+                    "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
+                        + ", c_timestamp_6) values(null      , 222, '2017-12-12 23:59:59.00000045');\n "));
+        }
+        builder.put(C_TIME, ImmutableList.of(
                 "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
                     + ", c_time) values(null             , 224, '-838:59:59');\n ",
                 "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
@@ -1073,10 +1296,9 @@ public class GsiConstant {
                 "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
                     + ", c_polygon) VALUE (null          , 326, ST_POINTFROMTEXT('POLYGON((0 0,10 0,10 10,0 10,0 0),(5 5,7 5,7 7,5 7,5 5))'));\n ",
                 "insert into " + PRIMARY_TABLE_NAME + "(id, " + sk
-                    + ", c_geometory) VALUE (null        , 327, ST_POINTFROMTEXT('POINT(15 20)'));\n "))
-            .build();
+                    + ", c_geometory) VALUE (null        , 327, ST_POINTFROMTEXT('POINT(15 20)'));\n "));
 
-        return base.entrySet()
+        return builder.build().entrySet()
             .stream()
             .filter(e -> !e.getKey().equalsIgnoreCase(sk))
             .filter(e -> !e.getKey().equalsIgnoreCase(pk))
@@ -1248,77 +1470,151 @@ public class GsiConstant {
                 "'100.003'",
                 "'-100.003'",
                 "'-100.0000001'"));
-        builder.put(C_DATE,
-            ImmutableList.of("'0000-00-00'",
-                "'9999-12-31'",
-                "'0000-00-00 01:01:01'",
-                "'1969-09-00'",
-                "'2018-00-00'",
-                "'2017-12-12'"));
-        builder.put(C_DATETIME,
-            ImmutableList.of(
-                "'0000-00-00 00:00:00'",
-                "'9999-12-31 23:59:59'",
-                "'0000-00-00 01:01:01'",
-                "'1969-09-00 23:59:59'",
-                "'2018-00-00 00:00:00'",
-                "'2017-12-12 23:59:59'"));
-        builder.put(C_DATETIME_1,
-            ImmutableList.of(
-                "'0000-00-00 00:00:00.0'",
-                "'9999-12-31 23:59:59.9'",
-                "'0000-00-00 01:01:01.12'",
-                "'1969-09-00 23:59:59.06'",
-                "'2018-00-00 00:00:00.04'",
-                "'2017-12-12 23:59:59.045'"));
-        builder.put(C_DATETIME_3,
-            ImmutableList.of(
-                "'0000-00-00 00:00:00.000'",
-                "'9999-12-31 23:59:59.999'",
-                "'0000-00-00 01:01:01.121'",
-                "'1969-09-00 23:59:59.0006'",
-                "'2018-00-00 00:00:00.0004'",
-                "'2017-12-12 23:59:59.00045'"));
-        builder.put(C_DATETIME_6,
-            ImmutableList.of(
-                "'0000-00-00 00:00:00.000000'",
-                "'9999-12-31 23:59:59.999999'",
-                "'0000-00-00 01:01:01.121121'",
-                "'1969-09-00 23:59:59.0000006'",
-                "'2018-00-00 00:00:00.0000004'",
-                "'2017-12-12 23:59:59.00000045'"));
-        builder.put(C_TIMESTAMP,
-            ImmutableList.of(
-                "'0000-00-00 00:00:00'",
-                "'9999-12-31 23:59:59'",
-                "'0000-00-00 01:01:01'",
-                "'1969-09-00 23:59:59'",
-                "'2018-00-00 00:00:00'",
-                "'2017-12-12 23:59:59'"));
-        builder.put(C_TIMESTAMP_1,
-            ImmutableList.of(
-                "'0000-00-00 00:00:00.0'",
-                "'9999-12-31 23:59:59.9'",
-                "'0000-00-00 01:01:01.12'",
-                "'1969-09-00 23:59:59.06'",
-                "'2018-00-00 00:00:00.04'",
-                "'2017-12-12 23:59:59.045'"));
-        builder.put(C_TIMESTAMP_3,
-            ImmutableList.of(
-                "'0000-00-00 00:00:00.000'",
-                "'9999-12-31 23:59:59.999'",
-                "'0000-00-00 01:01:01.121'",
-                "'1969-09-00 23:59:59.0006'",
-                "'2018-00-00 00:00:00.0004'",
-                "'2017-12-12 23:59:59.00045'"));
-        builder.put(C_TIMESTAMP_6,
-            ImmutableList.of(
-                "'0000-00-00 00:00:00.000000'",
-                "'9999-12-31 23:59:59.999999'",
-                "'0000-00-00 01:01:01.121121'",
-                "'1969-09-00 23:59:59.0000006'",
-                "'2018-00-00 00:00:00.0000004'",
-                "'2017-12-12 23:59:59.00000045'"));
+        if (PropertiesUtil.icbcTest()) {
+            builder.put(C_DATE,
+                ImmutableList.of("'1970-01-01'",
+                    "'9999-12-31'",
+                    "'1970-01-01 01:01:01'",
+                    "'1970-09-01'",
+                    "'2018-01-01'",
+                    "'2017-12-12'"));
+            builder.put(C_DATETIME,
+                ImmutableList.of(
+                    "'1970-01-01 00:00:00'",
+                    "'9999-12-31 23:59:59'",
+                    "'1970-01-01 01:01:01'",
+                    "'1970-09-01 23:59:59'",
+                    "'2018-01-01 00:00:00'",
+                    "'2017-12-12 23:59:59'"));
+            builder.put(C_DATETIME_1,
+                ImmutableList.of(
+                    "'1970-01-01 00:00:00.0'",
+                    "'9999-12-31 23:59:59.9'",
+                    "'1970-01-01 01:01:01.12'",
+                    "'1970-09-01 23:59:59.06'",
+                    "'2018-01-01 00:00:00.04'",
+                    "'2017-12-12 23:59:59.045'"));
+            builder.put(C_DATETIME_3,
+                ImmutableList.of(
+                    "'1970-01-01 00:00:00.000'",
+                    "'9999-12-31 23:59:59.999'",
+                    "'1970-01-01 01:01:01.121'",
+                    "'1970-09-01 23:59:59.0006'",
+                    "'2018-01-01 00:00:00.0004'",
+                    "'2017-12-12 23:59:59.00045'"));
+            builder.put(C_DATETIME_6,
+                ImmutableList.of(
+                    "'1970-01-01 00:00:00.000000'",
+                    "'9999-12-31 23:59:59.999999'",
+                    "'1970-01-01 01:01:01.121121'",
+                    "'1970-09-01 23:59:59.0000006'",
+                    "'2018-01-01 00:00:00.0000004'",
+                    "'2017-12-12 23:59:59.00000045'"));
+            builder.put(C_TIMESTAMP,
+                ImmutableList.of(
+                    "'1970-01-01 00:00:00'",
+                    "'9999-12-31 23:59:59'",
+                    "'1970-01-01 01:01:01'",
+                    "'1970-09-01 23:59:59'",
+                    "'2018-01-01 00:00:00'",
+                    "'2017-12-12 23:59:59'"));
+            builder.put(C_TIMESTAMP_1,
+                ImmutableList.of(
+                    "'1970-01-01 00:00:00.0'",
+                    "'9999-12-31 23:59:59.9'",
+                    "'1970-01-01 01:01:01.12'",
+                    "'1970-09-01 23:59:59.06'",
+                    "'2018-01-01 00:00:00.04'",
+                    "'2017-12-12 23:59:59.045'"));
+            builder.put(C_TIMESTAMP_3,
+                ImmutableList.of(
+                    "'1970-01-01 00:00:00.000'",
+                    "'9999-12-31 23:59:59.999'",
+                    "'1970-01-01 01:01:01.121'",
+                    "'1970-09-01 23:59:59.0006'",
+                    "'2018-01-01 00:00:00.0004'",
+                    "'2017-12-12 23:59:59.00045'"));
+            builder.put(C_TIMESTAMP_6,
+                ImmutableList.of(
+                    "'1970-01-01 00:00:00.000000'",
+                    "'9999-12-31 23:59:59.999999'",
+                    "'1970-01-01 01:01:01.121121'",
+                    "'1970-09-01 23:59:59.0000006'",
+                    "'2018-01-01 00:00:00.0000004'",
+                    "'2017-12-12 23:59:59.00000045'"));
+        } else {
+            builder.put(C_DATE,
+                ImmutableList.of("'0000-00-00'",
+                    "'9999-12-31'",
+                    "'0000-00-00 01:01:01'",
+                    "'1969-09-00'",
+                    "'2018-00-00'",
+                    "'2017-12-12'"));
+            builder.put(C_DATETIME,
+                ImmutableList.of(
+                    "'0000-00-00 00:00:00'",
+                    "'9999-12-31 23:59:59'",
+                    "'0000-00-00 01:01:01'",
+                    "'1969-09-00 23:59:59'",
+                    "'2018-00-00 00:00:00'",
+                    "'2017-12-12 23:59:59'"));
+            builder.put(C_DATETIME_1,
+                ImmutableList.of(
+                    "'0000-00-00 00:00:00.0'",
+                    "'9999-12-31 23:59:59.9'",
+                    "'0000-00-00 01:01:01.12'",
+                    "'1969-09-00 23:59:59.06'",
+                    "'2018-00-00 00:00:00.04'",
+                    "'2017-12-12 23:59:59.045'"));
+            builder.put(C_DATETIME_3,
+                ImmutableList.of(
+                    "'0000-00-00 00:00:00.000'",
+                    "'9999-12-31 23:59:59.999'",
+                    "'0000-00-00 01:01:01.121'",
+                    "'1969-09-00 23:59:59.0006'",
+                    "'2018-00-00 00:00:00.0004'",
+                    "'2017-12-12 23:59:59.00045'"));
+            builder.put(C_DATETIME_6,
+                ImmutableList.of(
+                    "'0000-00-00 00:00:00.000000'",
+                    "'9999-12-31 23:59:59.999999'",
+                    "'0000-00-00 01:01:01.121121'",
+                    "'1969-09-00 23:59:59.0000006'",
+                    "'2018-00-00 00:00:00.0000004'",
+                    "'2017-12-12 23:59:59.00000045'"));
+            builder.put(C_TIMESTAMP,
+                ImmutableList.of(
+                    "'0000-00-00 00:00:00'",
+                    "'9999-12-31 23:59:59'",
+                    "'0000-00-00 01:01:01'",
+                    "'1969-09-00 23:59:59'",
+                    "'2018-00-00 00:00:00'",
+                    "'2017-12-12 23:59:59'"));
+            builder.put(C_TIMESTAMP_1,
+                ImmutableList.of(
+                    "'0000-00-00 00:00:00.0'",
+                    "'9999-12-31 23:59:59.9'",
+                    "'0000-00-00 01:01:01.12'",
+                    "'1969-09-00 23:59:59.06'",
+                    "'2018-00-00 00:00:00.04'",
+                    "'2017-12-12 23:59:59.045'"));
+            builder.put(C_TIMESTAMP_3,
+                ImmutableList.of(
+                    "'0000-00-00 00:00:00.000'",
+                    "'9999-12-31 23:59:59.999'",
+                    "'0000-00-00 01:01:01.121'",
+                    "'1969-09-00 23:59:59.0006'",
+                    "'2018-00-00 00:00:00.0004'",
+                    "'2017-12-12 23:59:59.00045'"));
+            builder.put(C_TIMESTAMP_6,
+                ImmutableList.of(
+                    "'0000-00-00 00:00:00.000000'",
+                    "'9999-12-31 23:59:59.999999'",
+                    "'0000-00-00 01:01:01.121121'",
+                    "'1969-09-00 23:59:59.0000006'",
+                    "'2018-00-00 00:00:00.0000004'",
+                    "'2017-12-12 23:59:59.00000045'"));
+        }
         builder.put(C_TIME,
             ImmutableList.of("'-838:59:59'",
                 "'838:59:59'",

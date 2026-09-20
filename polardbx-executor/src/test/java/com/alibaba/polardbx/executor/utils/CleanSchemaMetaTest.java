@@ -18,23 +18,28 @@
 
 package com.alibaba.polardbx.executor.utils;
 
+import com.alibaba.polardbx.executor.columnar.ExtColumnMappingManager;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbConfigManager;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
+import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.mockito.junit.MockitoJUnitRunner;
 
 import java.sql.Connection;
+import java.util.Collections;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.when;
 
 @RunWith(MockitoJUnitRunner.class)
 public class CleanSchemaMetaTest {
@@ -64,17 +69,28 @@ public class CleanSchemaMetaTest {
         final long versionId = 123L;
 
         MetaDbConfigManager metaDbConfigManager = Mockito.mock(MetaDbConfigManager.class);
+        ExtColumnMappingManager extColumnMappingManager = Mockito.mock(ExtColumnMappingManager.class);
         doNothing().when(metaDbConfigManager).unregister(anyString(), any());
         try (
-            MockedStatic<MetaDbDataIdBuilder> mockMetaDbDataIdBuilder = Mockito.mockStatic(MetaDbDataIdBuilder.class)) {
+            MockedConstruction<TableInfoManager> mockTableInfoManager =
+                Mockito.mockConstruction(TableInfoManager.class, (mock, context) -> {
+                    when(mock.hasExternalizedColumn(schemaName)).thenReturn(true);
+                    when(mock.queryTables(schemaName)).thenReturn(Collections.emptyList());
+                });
+            MockedStatic<MetaDbDataIdBuilder> mockMetaDbDataIdBuilder = Mockito.mockStatic(MetaDbDataIdBuilder.class);
+            MockedStatic<ExtColumnMappingManager> mockExtColumnMappingManager =
+                Mockito.mockStatic(ExtColumnMappingManager.class)) {
             try (MockedStatic<MetaDbConfigManager> mockMetaDbConfigManager = Mockito.mockStatic(
                 MetaDbConfigManager.class)) {
                 mockMetaDbDataIdBuilder.when(() -> MetaDbDataIdBuilder.getTableListDataId(anyString()))
                     .thenReturn("table");
                 mockMetaDbConfigManager.when(() -> MetaDbConfigManager.getInstance())
                     .thenAnswer(invocation -> metaDbConfigManager);
+                mockExtColumnMappingManager.when(ExtColumnMappingManager::getInstance)
+                    .thenReturn(extColumnMappingManager);
 
                 polarDbXSchemaMetaCleaner.clearSchemaMeta(schemaName, metaDbConn, versionId);
+                Mockito.verify(extColumnMappingManager).markDropBySchema(metaDbConn, schemaName);
             }
         }
     }

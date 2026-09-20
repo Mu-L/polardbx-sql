@@ -51,6 +51,7 @@ public class MultiPartDdlRandomTest extends DDLBaseNewDBTestCase {
 
     @Before
     public void init() {
+        this.schemaPrefix = "multi_part_";
         this.tableName = schemaPrefix + randomTableName("pushdown", 4);
     }
 

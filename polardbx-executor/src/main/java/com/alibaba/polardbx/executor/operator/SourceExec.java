@@ -24,7 +24,6 @@ import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 
 public abstract class SourceExec extends AbstractExecutor {
 
-    //TODO 由于现在SourceExec本身没有太多复杂逻辑，所以inputData 和 outputData 现在是一样的
     private static final AtomicLongFieldUpdater<SourceExec> inputDataSizeUpdater =
         AtomicLongFieldUpdater.newUpdater(SourceExec.class, "inputDataSizeLong");
     private static final AtomicLongFieldUpdater<SourceExec> inputPositionsUpdater =
@@ -45,6 +44,10 @@ public abstract class SourceExec extends AbstractExecutor {
 
     abstract Chunk doSourceNextChunk();
 
+    public String getSourceName() {
+        return "";
+    }
+
     @Override
     public Chunk doNextChunk() {
         Chunk ret = doSourceNextChunk();
@@ -61,5 +64,9 @@ public abstract class SourceExec extends AbstractExecutor {
 
     public long getInputPositions() {
         return inputPositionsUpdater.get(this);
+    }
+
+    public long getIoBytesSize() {
+        return statistics.getIOReadBytes();
     }
 }

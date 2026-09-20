@@ -1,0 +1,32 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+set ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC=true;
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=true;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+create table dblemurhash_tbl10 (
+  id varchar(30) not null primary key,
+  name varchar(20)
+  )
+  partition by UDF_HASH(
+  `id` with udf_params(
+  'dble/unitmurmurhash',
+  '{
+"partitionCount" : "2",
+"isDigitCheck" : "0",
+"leftPaddingChar" : "NO"
+}'
+  )
+)
+partitions 2;
+insert into dblemurhash_tbl10(id, name) values('123456789123456789123', 'a');
+select * from dblemurhash_tbl10 where id = '123456789123456789123';
+id,name
+123456789123456789123,a
+insert into dblemurhash_tbl10(id, name) values('d', 'a');
+select * from dblemurhash_tbl10 where id = 'd';
+id,name
+d,a
+## error_msg: $# routeField is null or "" ! #$
+insert into dblemurhash_tbl10(id, name) values('', 'a');
+routeField is null or "" !

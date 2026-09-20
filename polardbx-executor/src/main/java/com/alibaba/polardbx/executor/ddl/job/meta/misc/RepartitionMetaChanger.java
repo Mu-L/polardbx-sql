@@ -20,6 +20,7 @@ import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
+import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.ddl.job.meta.GsiMetaChanger;
 import com.alibaba.polardbx.executor.ddl.job.meta.TableMetaChanger;
@@ -47,6 +48,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.optimizer.config.table.GsiMetaManager.TableType.BROADCAST;
+import static com.alibaba.polardbx.optimizer.config.table.GsiMetaManager.TableType.COLUMNAR;
 import static com.alibaba.polardbx.optimizer.config.table.GsiMetaManager.TableType.GSI;
 import static com.alibaba.polardbx.optimizer.config.table.GsiMetaManager.TableType.SHARDING;
 import static com.alibaba.polardbx.optimizer.config.table.GsiMetaManager.TableType.SINGLE;
@@ -67,7 +69,8 @@ public class RepartitionMetaChanger {
                                final boolean isSingle,
                                final boolean isBroadcast,
                                final boolean isAuto,
-                               final boolean isGsi) {
+                               final boolean isGsi,
+                               final boolean isCci) {
         TableInfoManager tableInfoManager = new TableInfoManager();
         tableInfoManager.setConnection(metaDbConn);
 
@@ -79,6 +82,8 @@ public class RepartitionMetaChanger {
                 primaryTableType = BROADCAST;
             } else if (isGsi) {
                 primaryTableType = GSI;
+            } else if (isCci) {
+                primaryTableType = COLUMNAR;
             } else {
                 primaryTableType = SHARDING;
             }
@@ -126,6 +131,15 @@ public class RepartitionMetaChanger {
 
         long newVersion = Math.max(sourceTableExt.version, targetTableExt.version) + 1;
 
+        boolean isShardingDb =
+            TStringUtil.isNotBlank(sourceTableExt.dbPartitionKey) && sourceTableExt.dbPartitionCount > 1;
+        boolean isShardingTb =
+            TStringUtil.isNotBlank(sourceTableExt.tbPartitionKey) && sourceTableExt.tbPartitionCount > 1;
+
+        //for single table, the default fullTableScan=0, but single table always allow 'full tableScan', so it should not be transferred when repartition
+        if ((isShardingDb || isShardingTb)) {
+            tableInfoManager.updateFullTableScanFlag(schemaName, targetTableName, sourceTableExt.fullTableScan);
+        }
         tableInfoManager
             .alterTableExtNameAndTypeAndFlag(schemaName, sourceTableName, random, GSI.getValue(), targetFlag);
         switch (primaryTableType) {
@@ -183,8 +197,26 @@ public class RepartitionMetaChanger {
         long newVersion =
             Math.max(sourceTablePartition.get(0).metaVersion, targetTablePartition.get(0).metaVersion) + 1;
 
-        tableInfoManager.repartitionCutOver(schemaName, sourceTableName, random,
-            PartitionTableType.GSI_TABLE.getTableTypeIntValue());
+        /**
+         * 对于普通的rebuild table，会建成一个GSI然后做cut over，
+         * 但是对于列存，会默认建成CCI，并且快照CCI不会删除，这里在变更类型的时候需要区分，避免CCI退化成GSI
+         */
+        if (primaryTableType == COLUMNAR) {
+            tableInfoManager.repartitionCutOver(schemaName, sourceTableName, random,
+                PartitionTableType.COLUMNAR_TABLE.getTableTypeIntValue());
+        } else {
+            tableInfoManager.repartitionCutOver(schemaName, sourceTableName, random,
+                PartitionTableType.GSI_TABLE.getTableTypeIntValue());
+        }
+
+        long srcPartFlags = sourceTablePartition.get(0).partFlags;
+        long tarPrtFlags = targetTablePartition.get(0).partFlags;
+        if ((srcPartFlags & TablePartitionRecord.FLAG_BLOCK_FULL_TABLE_SCAN) != 0) {
+            tarPrtFlags |= TablePartitionRecord.FLAG_BLOCK_FULL_TABLE_SCAN;
+        } else {
+            tarPrtFlags &= ~TablePartitionRecord.FLAG_BLOCK_FULL_TABLE_SCAN;
+        }
+        tableInfoManager.updatePartFlagsBySchTb(schemaName, targetTableName, tarPrtFlags);
 
         Long tableId = tableInfoManager.queryTable(schemaName, sourceTableName, false).id;
         switch (primaryTableType) {
@@ -200,6 +232,10 @@ public class RepartitionMetaChanger {
             tableInfoManager.repartitionCutOver(schemaName, targetTableName, sourceTableName,
                 PartitionTableType.GSI_TABLE.getTableTypeIntValue());
             break;
+        case COLUMNAR:
+            tableInfoManager.repartitionCutOver(schemaName, targetTableName, sourceTableName,
+                PartitionTableType.COLUMNAR_TABLE.getTableTypeIntValue());
+            break;
         case SHARDING:
             tableInfoManager.repartitionCutOver(schemaName, targetTableName, sourceTableName,
                 PartitionTableType.PARTITION_TABLE.getTableTypeIntValue());
@@ -208,8 +244,13 @@ public class RepartitionMetaChanger {
             throw new TddlNestableRuntimeException("unknown primary table type");
         }
 
-        tableInfoManager.repartitionCutOver(schemaName, random, targetTableName,
-            PartitionTableType.GSI_TABLE.getTableTypeIntValue());
+        if (primaryTableType == COLUMNAR) {
+            tableInfoManager.repartitionCutOver(schemaName, random, targetTableName,
+                PartitionTableType.COLUMNAR_TABLE.getTableTypeIntValue());
+        } else {
+            tableInfoManager.repartitionCutOver(schemaName, random, targetTableName,
+                PartitionTableType.GSI_TABLE.getTableTypeIntValue());
+        }
 
         tableInfoManager.updateTablePartitionsVersion(schemaName, sourceTableName, newVersion);
         tableInfoManager.updateTablePartitionsVersion(schemaName, targetTableName, newVersion);
@@ -276,11 +317,11 @@ public class RepartitionMetaChanger {
         tableNameMap.forEach((tableName, newTableName) -> {
             if (!StringUtils.equalsIgnoreCase(tableName, logicalTableName)) {
                 // index table
-                cutOver(metaDbConn, schemaName, tableName, newTableName, false, false, false, true);
+                cutOver(metaDbConn, schemaName, tableName, newTableName, false, false, false, true, false);
                 cutOverIndexes(metaDbConn, schemaName, logicalTableName, tableName, newTableName);
             } else {
                 // primary table
-                cutOver(metaDbConn, schemaName, tableName, newTableName, false, false, true, false);
+                cutOver(metaDbConn, schemaName, tableName, newTableName, false, false, true, false, false);
             }
         });
     }
@@ -308,16 +349,16 @@ public class RepartitionMetaChanger {
         tableNameMap.forEach((tableName, newTableName) -> {
             if (!StringUtils.equalsIgnoreCase(tableName, logicalTableName)) {
                 // index table
-                cutOver(metaDbConn, schemaName, tableName, newTableName, false, false, false, true);
+                cutOver(metaDbConn, schemaName, tableName, newTableName, false, false, false, true, false);
                 cutOverIndexes(metaDbConn, schemaName, logicalTableName, tableName, newTableName);
                 cutOverColumns(metaDbConn, schemaName, tableName, newTableName, addColumns, dropColumns,
-                    changeColumnsMap, modifyColumns, versionId, jobId);
+                    changeColumnsMap, modifyColumns, versionId, jobId, false);
             } else {
                 // primary table
                 cutOver(metaDbConn, schemaName, tableName, newTableName, single, broadcast, autoPartition,
-                    false);
+                    false, false);
                 cutOverColumns(metaDbConn, schemaName, tableName, newTableName, addColumns, dropColumns,
-                    changeColumnsMap, modifyColumns, versionId, jobId);
+                    changeColumnsMap, modifyColumns, versionId, jobId, false);
             }
         });
     }
@@ -384,7 +425,8 @@ public class RepartitionMetaChanger {
                                       final Map<String, String> changeColumnsMap,
                                       final List<String> modifyColumns,
                                       long versionId,
-                                      long jobId) {
+                                      long jobId,
+                                      boolean isRebuildCci) {
         TableInfoManager tableInfoManager = new TableInfoManager();
         tableInfoManager.setConnection(metaDbConn);
 
@@ -422,7 +464,7 @@ public class RepartitionMetaChanger {
 
             // add evolution record for cci
             Set<Pair<Long, String>> columnarIndexes = tableInfoManager.queryCci(schemaName, sourceTableName);
-            if (GeneralUtil.isNotEmpty(columnarIndexes)) {
+            if (GeneralUtil.isNotEmpty(columnarIndexes) && !isRebuildCci) {
                 List<String> indexNames = columnarIndexes.stream().map(Pair::getValue).collect(Collectors.toList());
                 Map<String, String> isNullable = new HashMap<>();
                 for (ColumnsRecord columnsRecord : targetTableColumns) {
@@ -436,7 +478,7 @@ public class RepartitionMetaChanger {
 
                 // columns, indexes
                 changeCciRelatedMeta(metaDbConn, tableInfoManager, schemaName, sourceTableName, indexNames, addColumns,
-                    dropColumns, changeColumnsList, isNullable);
+                    dropColumns, changeColumnsList, modifyColumns, isNullable);
 
                 TableMetaChanger.changeColumnarTableMeta(metaDbConn, schemaName, sourceTableName, addColumns,
                     dropColumns, modifyColumns, changeColumnsList, new ArrayList<>(), versionId, jobId);
@@ -451,6 +493,7 @@ public class RepartitionMetaChanger {
                                             String schemaName,
                                             String logicalTableName, List<String> indexNames, List<String> addColumns,
                                             List<String> dropColumns, List<Pair<String, String>> changeColumns,
+                                            List<String> modifyColumns,
                                             Map<String, String> isNullable) {
 
         for (String indexName : indexNames) {
@@ -491,6 +534,7 @@ public class RepartitionMetaChanger {
             GsiMetaChanger.addIndexColumnMeta(metaDbConnection, schemaName, logicalTableName, indexRecords);
 
             tableInfoManager.changeColumnarIndexColumnMeta(schemaName, logicalTableName, changeColumns, indexName);
+            tableInfoManager.modifyColumnarIndexColumnMeta(schemaName, logicalTableName, modifyColumns, indexName);
 
             tableInfoManager.changeColumnarIndexTableColumns(indexNames, schemaName, logicalTableName);
         }

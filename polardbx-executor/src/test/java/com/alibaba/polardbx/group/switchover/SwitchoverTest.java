@@ -22,6 +22,7 @@ import com.alibaba.polardbx.atom.TAtomDataSource;
 import com.alibaba.polardbx.atom.config.TAtomDsConfDO;
 import com.alibaba.polardbx.atom.config.gms.TAtomDsGmsConfigHelper;
 import com.alibaba.polardbx.common.jdbc.MasterSlave;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.gms.config.impl.ConnPoolConfig;
 import com.alibaba.polardbx.group.config.MasterFailedSlaveGroupDataSourceHolder;
 import com.alibaba.polardbx.group.config.MasterOnlyGroupDataSourceHolder;
@@ -40,17 +41,25 @@ import com.mysql.cj.x.protobuf.Polarx;
 import com.mysql.cj.x.protobuf.PolarxDatatypes;
 import org.junit.Assert;
 import org.junit.Test;
+import org.mockito.MockedStatic;
 
 import javax.sql.DataSource;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
 import java.sql.SQLException;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiFunction;
 
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class SwitchoverTest {
@@ -105,7 +114,8 @@ public class SwitchoverTest {
         frameBuilder.setPayload(ByteString.copyFrom(allocate.array(), 0, allocate.position()));
         frameBuilder.setType(PolarxNotice.Frame.Type.SESSION_STATE_CHANGED_VALUE);
         final XPacket packet = new XPacket(123, Polarx.ServerMessages.Type.NOTICE_VALUE, frameBuilder.build());
-        final XClientPool pool = new XClientPool(XConnectionManager.getInstance(), SERVER_ADDR, SERVER_PORT, SERVER_USR, SERVER_PSW_ENC);
+        final XClientPool pool =
+            new XClientPool(XConnectionManager.getInstance(), SERVER_ADDR, SERVER_PORT, SERVER_USR, SERVER_PSW_ENC);
         pool.getInstInfo().add("test");
         final XClient client = mock(XClient.class);
         when(client.getPool()).thenReturn(pool);
@@ -144,7 +154,7 @@ public class SwitchoverTest {
     public void testMasterOnlyGroupDataSourceHolder() {
         final MasterOnlyGroupDataSourceHolder groupDataSourceHolder =
             new MasterOnlyGroupDataSourceHolder(
-                atomDS(TAtomDataSource.AtomSourceFrom.MASTER_DB, "dn1", SERVER_PORT + 1));
+                atomDS(TAtomDataSource.AtomSourceFrom.MASTER_DB, "dn1", SERVER_PORT + 1), false);
         Assert.assertFalse(groupDataSourceHolder.isChangingLeader(MasterSlave.MASTER_ONLY).getKey());
     }
 
@@ -152,7 +162,7 @@ public class SwitchoverTest {
     public void testMasterOnlyGroupDataSourceHolderThrow() {
         final TAtomDataSource ds = mock(TAtomDataSource.class);
         when(ds.getDataSource()).thenThrow(new RuntimeException("mock exception"));
-        final MasterOnlyGroupDataSourceHolder groupDataSourceHolder = new MasterOnlyGroupDataSourceHolder(ds);
+        final MasterOnlyGroupDataSourceHolder groupDataSourceHolder = new MasterOnlyGroupDataSourceHolder(ds, false);
         Assert.assertFalse(groupDataSourceHolder.isChangingLeader(MasterSlave.MASTER_ONLY).getKey());
     }
 
@@ -161,7 +171,7 @@ public class SwitchoverTest {
         final TAtomDataSource ds = mock(TAtomDataSource.class);
         final DataSource dataSource = mock(DataSource.class);
         when(ds.getDataSource()).thenReturn(dataSource);
-        final MasterOnlyGroupDataSourceHolder groupDataSourceHolder = new MasterOnlyGroupDataSourceHolder(ds);
+        final MasterOnlyGroupDataSourceHolder groupDataSourceHolder = new MasterOnlyGroupDataSourceHolder(ds, false);
         Assert.assertFalse(groupDataSourceHolder.isChangingLeader(MasterSlave.MASTER_ONLY).getKey());
     }
 
@@ -237,5 +247,41 @@ public class SwitchoverTest {
         final MasterSlaveGroupDataSourceHolder groupDataSourceHolder =
             new MasterSlaveGroupDataSourceHolder(ds, ImmutableList.of());
         Assert.assertFalse(groupDataSourceHolder.isChangingLeader(MasterSlave.MASTER_ONLY).getKey());
+    }
+
+    @Test
+    public void testReloadForLeaderChange() throws Exception {
+        try (MockedStatic<DynamicConfig> mockedDynamicConfig = mockStatic(DynamicConfig.class)) {
+            DynamicConfig mockDynamicConfig = mock(DynamicConfig.class);
+            mockedDynamicConfig.when(DynamicConfig::getInstance).thenReturn(mockDynamicConfig);
+            when(mockDynamicConfig.isEnableSmoothSwitchover()).thenReturn(false);
+
+            final XClientPool pool =
+                new XClientPool(XConnectionManager.getInstance(), SERVER_ADDR, SERVER_PORT, SERVER_USR, SERVER_PSW_ENC);
+
+            // 使用反射设置 changingLeaderReload 为 false，使 CAS 操作成功
+            Field field = XClientPool.class.getDeclaredField("changingLeaderReload");
+            field.setAccessible(true);
+            field.setBoolean(pool, false);
+
+            // 创建 spy 对象来监控 reload 方法调用
+            XClientPool spyPool = spy(pool);
+            doNothing().when(spyPool).reload();
+            doReturn(false).when(spyPool).isChangingLeader();
+            spyPool.reloadForLeaderChange();
+            verify(spyPool, never()).reload();
+
+            doReturn(true).when(spyPool).isChangingLeader();
+            // 执行：调用 reloadForLeaderChange 方法
+            spyPool.reloadForLeaderChange();
+
+            // 验证：verify reload 方法被调用一次
+            verify(spyPool, times(1)).reload();
+
+            // 执行：调用 reloadForLeaderChange 方法
+            spyPool.reloadForLeaderChange();
+            // 验证：verify reload 方法被调用一次
+            verify(spyPool, times(1)).reload();
+        }
     }
 }

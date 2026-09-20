@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.ORCMemoryCounterUtil;
 import com.alibaba.polardbx.executor.chunk.BlockBuilders;
 import com.alibaba.polardbx.executor.chunk.EnumBlock;
 import com.alibaba.polardbx.executor.chunk.RandomAccessBlock;
@@ -26,16 +28,35 @@ import io.airlift.slice.Slice;
 import it.unimi.dsi.fastutil.chars.CharArrayList;
 import org.apache.orc.OrcProto;
 import org.apache.orc.impl.OrcIndex;
+import org.openjdk.jol.info.ClassLayout;
+import org.apache.orc.impl.PositionProviderBuilder;
 
 import java.io.IOException;
 import java.util.Arrays;
 
 public class DictionaryEnumColumnReader extends AbstractDictionaryColumnReader {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(DictionaryEnumColumnReader.class).instanceSize();
 
-    public DictionaryEnumColumnReader(int columnId, boolean isPrimaryKey, StripeLoader stripeLoader, OrcIndex orcIndex,
+    public DictionaryEnumColumnReader(int columnId, boolean isPrimaryKey, StripeLoader stripeLoader,
+                                      PositionProviderBuilder orcIndex,
                                       RuntimeMetrics metrics, OrcProto.ColumnEncoding encoding, int indexStride,
                                       boolean enableMetrics) {
         super(columnId, isPrimaryKey, stripeLoader, orcIndex, metrics, encoding, indexStride, enableMetrics);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            // from AbstractColumnReader
+            + FastMemoryCounter.sizeOf(refCount)
+            + FastMemoryCounter.sizeOf(isClosed)
+            + FastMemoryCounter.sizeOf(hasNoMoreBlocks)
+            // from AbstractLongColumnReaderFastMemoryCounter.sizeOf(openFailed)
+            + FastMemoryCounter.sizeOf(initializeOnlyOnce)
+            + FastMemoryCounter.sizeOf(isOpened)
+            + ORCMemoryCounterUtil.sizeOfBitFieldReader(present)
+            + ORCMemoryCounterUtil.sizeOfIntegerReader(dictIdReader)
+            + FastMemoryCounter.sizeOf(dictionary);
     }
 
     @Override
@@ -81,6 +102,7 @@ public class DictionaryEnumColumnReader extends AbstractDictionaryColumnReader {
                 if (present.next() != 1) {
                     // for present
                     nulls[i] = true;
+                    offsets[i] = data.size();
                 } else {
                     // if not null
                     int dictId = (int) dictIdReader.next();

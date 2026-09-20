@@ -25,8 +25,10 @@ import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.executor.mpp.client.LocalStatementClient;
 import com.alibaba.polardbx.executor.mpp.discover.PolarDBXNodeStatusManager;
 import com.alibaba.polardbx.executor.mpp.execution.QueryManager;
+import com.alibaba.polardbx.executor.mpp.execution.SqlQueryManager;
 import com.alibaba.polardbx.executor.mpp.execution.TaskExecutor;
 import com.alibaba.polardbx.executor.mpp.execution.TaskManager;
+import com.alibaba.polardbx.executor.mpp.execution.SqlTaskManager;
 import com.alibaba.polardbx.executor.mpp.server.StatementResource;
 import com.alibaba.polardbx.executor.operator.spill.SpillerFactory;
 import com.alibaba.polardbx.gms.node.GmsNodeManager;
@@ -65,6 +67,7 @@ public class MppServer extends Server {
     private boolean isMppWorker;
 
     protected final Map<String, String> bootstrapProperties = new HashMap<>();
+    private Injector injector;
 
     public MppServer(int id, boolean isMppServer, boolean isMppWorker, String serverHost, int mppHttpPort) {
         super(id, mppHttpPort);
@@ -85,12 +88,15 @@ public class MppServer extends Server {
         bootstrapProperties.put(BootstrapConfig.CONFIG_KEY_HTTP_SERVER_MIN_THREADS,
             String.valueOf(MppConfig.getInstance().getHttpServerMinThreads()));
         boolean htap = true;
-        GmsNodeManager.GmsNode gmsNode = GmsNodeManager.getInstance().getLocalNode();
-        htap = ConfigDataMode.isMasterMode() || gmsNode == null
-            || gmsNode.instType == ServerInfoRecord.INST_TYPE_HTAP_SLAVE;
+        if (ConfigDataMode.isPolarDbX()) {
+            GmsNodeManager.GmsNode gmsNode = GmsNodeManager.getInstance().getLocalNode();
+            htap = ConfigDataMode.isMasterMode() || gmsNode == null
+                || gmsNode.instType == ServerInfoRecord.INST_TYPE_HTAP_SLAVE;
+        }
         String instId = InstIdUtil.getInstId();
+        String subInstId = InstIdUtil.getSubInstId();
         this.localNode = new InternalNode(
-            nodeId, getCluster(MppConfig.getInstance().getDefaultCluster()), instId, serverHost,
+            nodeId, getCluster(MppConfig.getInstance().getDefaultCluster()), instId, subInstId, serverHost,
             TddlNode.getPort(), mppPort,
             new NodeVersion(Version.getVersion()), isMppServer, isMppWorker, false, htap);
         if (ConfigDataMode.isMasterMode()) {
@@ -117,7 +123,6 @@ public class MppServer extends Server {
         }
 
         Bootstrap app = new Bootstrap(modules.build());
-        Injector injector;
         try {
             injector = app.strictConfig().setRequiredConfigurationProperties(bootstrapProperties).initialize();
             injector.getInstance(HttpServer.class).start();
@@ -148,15 +153,12 @@ public class MppServer extends Server {
         return taskManager;
     }
 
-    public synchronized void updateNodeId(int nodeId) {
-        log.warn("update mppServer nodeId=" + nodeId);
-        this.nodeId = NODEID_PREFIX + nodeId;
-        bootstrapProperties.put(BootstrapConfig.CONFIG_KEY_NODE_ID, this.nodeId);
-        this.localNode.setNodeIdentifier(this.nodeId);
-    }
 
 
-    public LocalStatementClient newLocalStatementClient(
+
+public Injector getInjector() {
+        return injector;
+    }    public LocalStatementClient newLocalStatementClient(
         ExecutionContext executionContext, RelNode node) {
         if (statementResource == null) {
             throw new TddlRuntimeException(ErrorCode.ERR_EXECUTE_MPP, "Server not ready, is starting up");
@@ -168,5 +170,62 @@ public class MppServer extends Server {
     @Override
     public boolean isCoordinator() {
         return isMppServer;
+    }
+
+    @Override
+    public void stop() {
+        super.stop();
+
+        try {
+            // Shutdown HTTP server
+            if (injector != null) {
+                HttpServer httpServer = injector.getInstance(HttpServer.class);
+                if (httpServer != null) {
+                    httpServer.stop();
+                }
+            }
+        } catch (Throwable t) {
+            log.error("Error stopping HTTP server", t);
+        }
+
+        try {
+            // Shutdown task manager if it's a worker
+            if (isMppWorker && taskManager != null) {
+                if (taskManager instanceof SqlTaskManager) {
+                    ((SqlTaskManager) taskManager).close();
+                }
+            }
+        } catch (Throwable t) {
+            log.error("Error stopping task manager", t);
+        }
+
+        try {
+            // Shutdown query manager if it's a server
+            if (isMppServer && queryManager != null) {
+                if (queryManager instanceof SqlQueryManager) {
+                    ((SqlQueryManager) queryManager).stop();
+                }
+            }
+        } catch (Throwable t) {
+            log.error("Error stopping query manager", t);
+        }
+
+        try {
+            // Shutdown task executor
+            if (taskExecutor != null) {
+                taskExecutor.stop();
+            }
+        } catch (Throwable t) {
+            log.error("Error stopping task executor", t);
+        }
+
+        try {
+            // Shutdown injector
+            if (injector != null && injector instanceof AutoCloseable) {
+                ((AutoCloseable) injector).close();
+            }
+        } catch (Throwable t) {
+            log.error("Error closing injector", t);
+        }
     }
 }

@@ -288,6 +288,60 @@ public class VarcharPartitionFieldTest {
     }
 
     @Test
+    public void testGB180302022() {
+        final int precision = 80;
+        DataType type = new VarcharType(CollationName.GB18030_2022_CHINESE_CI, precision);
+
+        PartitionField f = PartitionFieldBuilder.createField(type);
+
+        ExecutionContext context = new ExecutionContext();
+        context.setEncoding("GB18030_2022");
+
+        ByteString bs = new ByteString(new byte[] {(byte) 0xCA, (byte) 0xC0, (byte) 0xBD, (byte) 0xE7});
+        f.store(bs, type, SessionProperties.fromExecutionContext(context));
+
+        String res = f.stringValue().toStringUtf8();
+
+        Assert.assertTrue(Arrays.equals(bs.getBytes(), res.getBytes(Charset.forName("GB18030"))));
+
+        f.hash(new long[] {1L, 4L});
+    }
+
+    @Test
+    public void testGB180302022Padding() {
+        final int precision = 80;
+        DataType type = new VarcharType(CollationName.GB18030_2022_CHINESE_CI, precision);
+
+        PartitionField f = PartitionFieldBuilder.createField(type);
+
+        String s = "this is test string 中文字符串";
+        f.store(s, type);
+
+        String res = f.stringValue().toStringUtf8();
+
+        Assert.assertEquals(s, res);
+
+        f.hash(new long[] {1L, 4L});
+    }
+
+    @Test
+    public void testGB180302022Truncate() {
+        final int precision = 8;
+        DataType type = new VarcharType(CollationName.GB18030_2022_CHINESE_CI, precision);
+
+        PartitionField f = PartitionFieldBuilder.createField(type);
+
+        String s = "this is test string 中文字符串";
+        f.store(s, type);
+
+        String res = f.stringValue().toStringUtf8();
+
+        Assert.assertEquals("this is ", res);
+
+        f.hash(new long[] {1L, 4L});
+    }
+
+    @Test
     public void testSetNull() {
         final int precision = 255;
         DataType type = new VarcharType(CollationName.UTF8MB4_GENERAL_CI, precision);

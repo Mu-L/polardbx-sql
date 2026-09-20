@@ -17,16 +17,10 @@
 package com.alibaba.polardbx.executor.sync;
 
 import com.alibaba.polardbx.common.encdb.EncdbException;
-import com.alibaba.polardbx.common.encdb.enums.HashAlgo;
-import com.alibaba.polardbx.common.encdb.utils.HashUtil;
-import com.alibaba.polardbx.common.utils.encrypt.SecurityUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.cursor.ResultCursor;
 import com.alibaba.polardbx.gms.metadb.encdb.EncdbKeyManager;
-
-import java.security.NoSuchAlgorithmException;
-import java.util.Arrays;
 
 /**
  * @author pangzhaoxing
@@ -37,7 +31,10 @@ public class EncdbMekProvisionSyncAction implements ISyncAction {
 
     private byte[] mek;
 
-    public EncdbMekProvisionSyncAction(byte[] mek) {
+    boolean kmsMode;
+
+    public EncdbMekProvisionSyncAction(byte[] mek, boolean kmsMode) {
+        this.kmsMode = kmsMode;
         this.mek = mek;
     }
 
@@ -49,10 +46,18 @@ public class EncdbMekProvisionSyncAction implements ISyncAction {
         this.mek = mek;
     }
 
+    public boolean isKmsMode() {
+        return kmsMode;
+    }
+
+    public void setKmsMode(boolean kmsMode) {
+        this.kmsMode = kmsMode;
+    }
+
     @Override
     public ResultCursor sync() {
         try {
-            if (!EncdbKeyManager.getInstance().setMek(mek)) {
+            if (!EncdbKeyManager.getInstance().verifyMek(mek, kmsMode)) {
                 throw new EncdbException("the mekHash is inconsistent with mek");
             }
         } catch (Exception e) {

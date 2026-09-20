@@ -28,6 +28,7 @@ import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcDdlMarkTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -49,9 +50,13 @@ import static com.alibaba.polardbx.common.cdc.ICdcManager.DEFAULT_DDL_VERSION_ID
 public class CreateIndexJobFactory extends DdlJobFactory {
 
     private final List<PhysicalPlanData> physicalPlanDataList;
+    private final ExecutionContext ec;
+    private final boolean lock;
 
-    public CreateIndexJobFactory(List<PhysicalPlanData> physicalPlanDataList) {
+    public CreateIndexJobFactory(List<PhysicalPlanData> physicalPlanDataList, ExecutionContext ec, boolean lock) {
         this.physicalPlanDataList = physicalPlanDataList;
+        this.ec = ec;
+        this.lock = lock;
     }
 
     @Override
@@ -100,6 +105,7 @@ public class CreateIndexJobFactory extends DdlJobFactory {
         return Lists.newArrayList(
             validateTask,
             addMetaTask,
+            new TableSyncTask(schemaName, logicalTableName),
             phyDdlTask,
             cdcDdlMarkTask,
             showMetaTask,
@@ -146,7 +152,21 @@ public class CreateIndexJobFactory extends DdlJobFactory {
                 .map(x -> buildLocalIndexData(ddl, x, x.isOnGsi(), sqlNode, ec))
                 .collect(Collectors.toList());
 
-        return new CreateIndexJobFactory(localIndexData).create();
+        boolean lock = localIndexPreparedData.stream().anyMatch(CreateLocalIndexPreparedData::isLock);
+
+        return new CreateIndexJobFactory(localIndexData, ec, lock).create();
+    }
+
+    @Override
+    protected void updateOnlineDdlInfo(OnlineDdlInfo onlineDdlInfo) {
+        if (lock) {
+            onlineDdlInfo.setOnlineDdlType(OnlineDdlInfo.DdlType.LOCK_TABLE);
+        } else {
+            onlineDdlInfo.setOnlineDdlType(OnlineDdlInfo.DdlType.ONLINE_DDL);
+            onlineDdlInfo.setAdviceOnlineDdlSql(String.format("%s", ec.getOriginSql()));
+        }
+
+        onlineDdlInfo.setOnlineDdlAlgorithm(OnlineDdlInfo.DdlAlgorithm.INPLACE);
     }
 
     @Override

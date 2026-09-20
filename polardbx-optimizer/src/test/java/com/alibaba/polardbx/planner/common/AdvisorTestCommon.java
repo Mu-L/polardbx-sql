@@ -67,8 +67,10 @@ public abstract class AdvisorTestCommon extends PlanTestCommon {
         executionContext.getExtraCmds().put(ConnectionProperties.ENABLE_AUTO_FORCE_INDEX, enableAutoForceIndex);
         executionContext.getExtraCmds().putAll(configMaps);
         executionContext.getExtraCmds().put(ConnectionProperties.ENABLE_RANDOM_PHY_TABLE_NAME, false);
+        executionContext.getExtraCmds().put(ConnectionProperties.IGNORE_INVALID_TOPOLOGY_IN_POST_PLANNER, true);
         executionContext.getExtraCmds().put(ConnectionProperties.PARALLELISM, enableParallelQuery ? -1 : 0);
         executionContext.getExtraCmds().put(ConnectionProperties.ENABLE_JOIN_CLUSTERING, enableJoinClustering);
+        executionContext.getExtraCmds().put(ConnectionProperties.ENABLE_GSI_LOOKUP_OPTIMIZE, true);
         executionContext.getExtraCmds().put(ConnectionProperties.ENABLE_MPP, enableMpp);
         executionContext.getExtraCmds().put(ConnectionProperties.STORAGE_SUPPORTS_BLOOM_FILTER,
             storageSupportsBloomFilter);

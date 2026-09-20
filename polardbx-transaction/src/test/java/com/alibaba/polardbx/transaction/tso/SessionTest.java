@@ -6,7 +6,7 @@ import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.common.StorageInfoManager;
 import com.alibaba.polardbx.executor.mpp.Session;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
-import com.alibaba.polardbx.transaction.ColumnarTransaction;
+import com.alibaba.polardbx.transaction.trx.ColumnarTransaction;
 import com.alibaba.polardbx.transaction.TransactionManager;
 import com.alibaba.polardbx.transaction.trx.AutoCommitSingleShardTsoTransaction;
 import org.junit.Assert;

@@ -876,6 +876,47 @@ public class ImplicitTableGroupTest {
         Assert.assertEquals(expectedSql, parseResult.get(0).toString());
     }
 
+    @Test
+    public void testAlterTableSetTableGroup() {
+        // test attach implicit table group
+        String sql = "alter table t4 set tablegroup=''";
+        sql = ImplicitTableGroupUtil.tryAttachImplicitTableGroup("xx", "t4", sql);
+        String expectedSql = "ALTER TABLE t4\n"
+            + "\tSET tablegroup = 'tgi2' IMPLICIT";
+        Assert.assertEquals(expectedSql, sql);
+
+        SQLStatementParser parser = SQLParserUtils.createSQLStatementParser(sql, DbType.mysql, SQL_PARSE_FEATURES);
+        List<SQLStatement> parseResult = parser.parseStatementList();
+        Assert.assertEquals(expectedSql, parseResult.get(0).toString());
+
+        // test attach implicit table group and check tg name, success
+        sql = "alter table t4 set tablegroup='tgi2' implicit";
+        ImplicitTableGroupUtil.tryAttachImplicitTableGroup("xx", "t4", sql);
+
+        // test attach implicit table group and check tg name, fail
+        try {
+            sql = "alter table t4 set tablegroup='tgi2xx' implicit";
+            ImplicitTableGroupUtil.tryAttachImplicitTableGroup("xx", "t4", sql);
+            Assert.fail("should throw exception");
+        } catch (Throwable t) {
+            if (StringUtils.equalsIgnoreCase(t.getMessage(), "should throw exception")) {
+                throw t;
+            }
+        }
+
+        // test tg name not surrounded by ''
+        sql = "ALTER TABLE `split_by_hot_value_primary` SET tablegroup = tgi2 IMPLICIT";
+        ImplicitTableGroupUtil.tryAttachImplicitTableGroup("xx", "split_by_hot_value_primary", sql);
+
+        // test gsi
+        ImplicitTableGroupUtil.isGsiDdl.set(true);
+        sql = "alter table t4.k_1 set tablegroup='tgi2' implicit";
+        sql = ImplicitTableGroupUtil.tryAttachImplicitTableGroup("xx", "t4", sql);
+        expectedSql = "ALTER TABLE t4.k_1\n"
+            + "\tSET tablegroup = 'tgi2' IMPLICIT";
+        Assert.assertEquals(expectedSql, sql);
+    }
+
     private void processImplicitTableGroup4Index(SQLAlterTableStatement alterTableStatement, String tableGroupName) {
         for (SQLAlterTableItem item : alterTableStatement.getItems()) {
             if (item instanceof SQLAlterTableAddIndex) {

@@ -4,6 +4,8 @@ import com.alibaba.polardbx.common.datatype.Decimal;
 import com.alibaba.polardbx.common.datatype.DecimalConverter;
 import com.alibaba.polardbx.common.datatype.DecimalStructure;
 import com.alibaba.polardbx.common.datatype.FastDecimalUtils;
+import com.alibaba.polardbx.common.properties.ConnectionProperties;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.DecimalBlock;
 import com.alibaba.polardbx.executor.chunk.DecimalBlockBuilder;
@@ -86,6 +88,8 @@ public class FastMultiplyDecimalIntegerTest {
 
     @Test
     public void testMultiplyDecimal64() {
+        DynamicConfig.getInstance().loadValue(null, ConnectionProperties.ENABLE_DECIMAL_128, "true");
+
         final VectorizedExpression[] children = new VectorizedExpression[2];
         children[0] = new InputRefVectorizedExpression(leftDecimalType, 0, 0);
         children[1] = new InputRefVectorizedExpression(DataTypes.IntegerType, 1, 1);
@@ -109,6 +113,40 @@ public class FastMultiplyDecimalIntegerTest {
             Assert.assertTrue("Output should be decimal64 when not overflowed", outputBlock.isDecimal64());
         } else {
             Assert.assertTrue("Output should be decimal128 when overflowed", outputBlock.isDecimal128());
+        }
+
+        // check result
+        Assert.assertEquals("Incorrect output block positionCount", COUNT, outputBlock.getPositionCount());
+        validateResult(outputBlock, leftBlock, rightBlock);
+    }
+
+    @Test
+    public void testMultiplyDecimal64V2() {
+        DynamicConfig.getInstance().loadValue(null, ConnectionProperties.ENABLE_DECIMAL_128, "false");
+
+        final VectorizedExpression[] children = new VectorizedExpression[2];
+        children[0] = new InputRefVectorizedExpression(leftDecimalType, 0, 0);
+        children[1] = new InputRefVectorizedExpression(DataTypes.IntegerType, 1, 1);
+        FastMultiplyDecimalColIntegerColVectorizedExpression expr =
+            new FastMultiplyDecimalColIntegerColVectorizedExpression(
+                OUTPUT_INDEX, children);
+
+        MutableChunk chunk = buildDecimal64Chunk(false);
+        EvaluationContext evaluationContext = new EvaluationContext(chunk, executionContext);
+
+        DecimalBlock outputBlock = (DecimalBlock) Objects.requireNonNull(chunk.slotIn(OUTPUT_INDEX));
+        DecimalBlock leftBlock = (DecimalBlock) Objects.requireNonNull(chunk.slotIn(0));
+        IntegerBlock rightBlock = (IntegerBlock) Objects.requireNonNull(chunk.slotIn(1));
+
+        Assert.assertTrue("Expect to be unallocated before evaluation", outputBlock.isUnalloc());
+
+        expr.eval(evaluationContext);
+
+        Assert.assertFalse("Expect to be allocated after evaluation", outputBlock.isUnalloc());
+        if (!overflow) {
+            Assert.assertTrue("Output should be decimal64 when not overflowed", outputBlock.isDecimal64());
+        } else {
+            Assert.assertTrue("Output should be decimal128 when overflowed", outputBlock.getState().isFull());
         }
 
         // check result

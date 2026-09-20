@@ -107,38 +107,38 @@ public class ColumnarPartitionEvolutionRecord implements SystemTableRecord {
 
     public static TablePartitionRecord deserializeFromJson(String json) {
         TablePartitionRecord partitionRecord = new TablePartitionRecord();
-        JSONObject columnRecordJson = JSON.parseObject(json);
+        JSONObject partitionRecordJson = JSON.parseObject(json);
 
         try {
-            partitionRecord.id = columnRecordJson.getLongValue("id");
+            partitionRecord.id = partitionRecordJson.getLongValue("id");
         } catch (Exception e) {
             // id may be not exists in old version
             log.warn(
                 "Cannot deserialize id from json because old version columnar_partition_evolution record's id not exist, use default value -1");
             partitionRecord.id = -1L;
         }
-        partitionRecord.parentId = columnRecordJson.getLongValue("parentId");
-        partitionRecord.tableSchema = columnRecordJson.getString("tableSchema");
-        partitionRecord.tableName = columnRecordJson.getString("tableName");
-        partitionRecord.spTempFlag = columnRecordJson.getIntValue("spTempFlag");
-        partitionRecord.groupId = columnRecordJson.getLongValue("groupId");
-        partitionRecord.metaVersion = columnRecordJson.getLongValue("metaVersion");
-        partitionRecord.autoFlag = columnRecordJson.getIntValue("autoFlag");
-        partitionRecord.tblType = columnRecordJson.getIntValue("tblType");
-        partitionRecord.partName = columnRecordJson.getString("partName");
-        partitionRecord.partTempName = columnRecordJson.getString("partTempName");
-        partitionRecord.partLevel = columnRecordJson.getIntValue("partLevel");
-        partitionRecord.nextLevel = columnRecordJson.getIntValue("nextLevel");
-        partitionRecord.partStatus = columnRecordJson.getIntValue("partStatus");
-        partitionRecord.partPosition = columnRecordJson.getLongValue("partPosition");
-        partitionRecord.partMethod = columnRecordJson.getString("partMethod");
-        partitionRecord.partExpr = columnRecordJson.getString("partExpr");
-        partitionRecord.partDesc = columnRecordJson.getString("partDesc");
-        partitionRecord.partComment = columnRecordJson.getString("partComment");
-        partitionRecord.partEngine = columnRecordJson.getString("partEngine");
-        partitionRecord.partExtras = ExtraFieldJSON.fromJson(columnRecordJson.getString("partExtras"));
-        partitionRecord.partFlags = columnRecordJson.getLongValue("partFlags");
-        partitionRecord.phyTable = columnRecordJson.getString("phyTable");
+        partitionRecord.parentId = partitionRecordJson.getLongValue("parentId");
+        partitionRecord.tableSchema = partitionRecordJson.getString("tableSchema");
+        partitionRecord.tableName = partitionRecordJson.getString("tableName");
+        partitionRecord.spTempFlag = partitionRecordJson.getIntValue("spTempFlag");
+        partitionRecord.groupId = partitionRecordJson.getLongValue("groupId");
+        partitionRecord.metaVersion = partitionRecordJson.getLongValue("metaVersion");
+        partitionRecord.autoFlag = partitionRecordJson.getIntValue("autoFlag");
+        partitionRecord.tblType = partitionRecordJson.getIntValue("tblType");
+        partitionRecord.partName = partitionRecordJson.getString("partName");
+        partitionRecord.partTempName = partitionRecordJson.getString("partTempName");
+        partitionRecord.partLevel = partitionRecordJson.getIntValue("partLevel");
+        partitionRecord.nextLevel = partitionRecordJson.getIntValue("nextLevel");
+        partitionRecord.partStatus = partitionRecordJson.getIntValue("partStatus");
+        partitionRecord.partPosition = partitionRecordJson.getLongValue("partPosition");
+        partitionRecord.partMethod = partitionRecordJson.getString("partMethod");
+        partitionRecord.partExpr = partitionRecordJson.getString("partExpr");
+        partitionRecord.partDesc = partitionRecordJson.getString("partDesc");
+        partitionRecord.partComment = partitionRecordJson.getString("partComment");
+        partitionRecord.partEngine = partitionRecordJson.getString("partEngine");
+        partitionRecord.partExtras = ExtraFieldJSON.fromJson(partitionRecordJson.getString("partExtras"));
+        partitionRecord.partFlags = partitionRecordJson.getLongValue("partFlags");
+        partitionRecord.phyTable = partitionRecordJson.getString("phyTable");
 
         return partitionRecord;
     }

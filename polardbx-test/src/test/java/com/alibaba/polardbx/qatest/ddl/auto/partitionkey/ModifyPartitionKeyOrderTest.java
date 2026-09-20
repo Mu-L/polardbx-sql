@@ -3,7 +3,9 @@ package com.alibaba.polardbx.qatest.ddl.auto.partitionkey;
 import com.alibaba.polardbx.druid.sql.repository.SchemaRepository;
 import com.alibaba.polardbx.druid.util.JdbcConstants;
 import com.alibaba.polardbx.executor.common.StorageInfoManager;
+import com.alibaba.polardbx.qatest.CommonCaseRunner;
 import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
+import com.alibaba.polardbx.qatest.ReplicaIgnore;
 import com.alibaba.polardbx.qatest.util.ConnectionManager;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.qatest.util.RandomUtils;
@@ -11,11 +13,14 @@ import net.jcip.annotations.NotThreadSafe;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.Description;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static com.alibaba.polardbx.cdc.CdcTableUtil.CDC_DDL_RECORD_TABLE;
@@ -62,11 +67,58 @@ public class ModifyPartitionKeyOrderTest extends DDLBaseNewDBTestCase {
         testColumnOrdinalInternal(tableName, MODIFY_PARAMS, false);
     }
 
+    @ReplicaIgnore(ignoreReason = "CHANGE COLUMN on partition key triggers OMC rebuild without implicit"
+        + " table-group marking in CDC DDL records, which forks table groups between source and replica")
     @Test
     public void testChangeColumnOrdinal() throws SQLException {
         String tableName = "omc_change_column_ordinal_test_tbl";
         testColumnOrdinalInternal(tableName, CHANGE_PARAMS, true);
         testColumnOrdinalInternal(tableName, CHANGE_PARAMS, false);
+    }
+
+    @Test
+    public void testChangeColumnOrdinalIgnoredInReplicaLab() throws Throwable {
+        String oldSkipCdc = System.getProperty("skip_cdc");
+        String oldCdcTestType = System.getProperty("cdc_test_type");
+        try {
+            System.setProperty("skip_cdc", "false");
+            System.setProperty("cdc_test_type", "replica");
+
+            CommonCaseRunner runner = new CommonCaseRunner(ModifyPartitionKeyOrderTest.class);
+            Set<String> runnableMethods = new HashSet<>();
+            collectRunnableMethodNames(runner.getDescription(), runnableMethods);
+
+            Assert.assertFalse(
+                "testChangeColumnOrdinal must be filtered out in replica lab because CHANGE COLUMN on the"
+                    + " partition key triggers OMC rebuild without implicit table-group marking, which forks"
+                    + " table groups between the source and the replica. Add @ReplicaIgnore to it.",
+                runnableMethods.contains("testChangeColumnOrdinal"));
+            Assert.assertTrue(
+                "testModifyColumnOrdinal must remain runnable in replica lab because MODIFY COLUMN carries"
+                    + " the implicit table-group marking correctly.",
+                runnableMethods.contains("testModifyColumnOrdinal"));
+        } finally {
+            restoreSystemProperty("skip_cdc", oldSkipCdc);
+            restoreSystemProperty("cdc_test_type", oldCdcTestType);
+        }
+    }
+
+    private static void collectRunnableMethodNames(Description description, Set<String> methodNames) {
+        if (description.isTest()) {
+            methodNames.add(description.getMethodName());
+            return;
+        }
+        for (Description child : description.getChildren()) {
+            collectRunnableMethodNames(child, methodNames);
+        }
+    }
+
+    private static void restoreSystemProperty(String key, String oldValue) {
+        if (oldValue == null) {
+            System.clearProperty(key);
+        } else {
+            System.setProperty(key, oldValue);
+        }
     }
 
     private void testColumnOrdinalInternal(String tableName, String[] params, boolean withGsi)

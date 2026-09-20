@@ -22,7 +22,26 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.TStringUtil;
+import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
+import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLAssignItem;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLCheck;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnCheck;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnDefinition;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnPrimaryKey;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnReference;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnUniqueKey;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLPrimaryKey;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLTableElement;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLUnique;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.MySqlKey;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.MySqlUnique;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.MysqlForeignKey;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateTableStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlTableIndex;
+import com.alibaba.polardbx.druid.util.JdbcConstants;
 import com.alibaba.polardbx.executor.ExecutorHelper;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.ddl.job.validator.JoinGroupValidator;
@@ -33,7 +52,6 @@ import com.alibaba.polardbx.gms.tablegroup.PartitionGroupRecord;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupRecord;
 import com.alibaba.polardbx.gms.topology.DbTopologyManager;
-import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.gms.util.PartitionNameUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
@@ -50,6 +68,7 @@ import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableAddPartition
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableDropPartition;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableExtractPartition;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableModifyPartition;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableExchangePartitionPreparedData;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableGroupAddTablePreparedData;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.MergeTableGroupPreparedData;
 import com.alibaba.polardbx.optimizer.core.row.Row;
@@ -75,7 +94,9 @@ import com.alibaba.polardbx.optimizer.partition.pruning.SearchDatumComparator;
 import com.alibaba.polardbx.optimizer.partition.pruning.SearchDatumInfo;
 import com.alibaba.polardbx.optimizer.tablegroup.TableGroupInfoManager;
 import com.alibaba.polardbx.optimizer.utils.KeyWordsUtil;
+import com.alibaba.polardbx.optimizer.utils.PlannerUtils;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.core.DDL;
 import org.apache.calcite.rel.ddl.AlterTable;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rex.RexCall;
@@ -125,9 +146,11 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
@@ -143,6 +166,7 @@ import static com.alibaba.polardbx.gms.partition.TablePartitionRecord.PARTITION_
 public class AlterTableGroupUtils {
     public static void alterTableGroupPreCheck(SqlAlterTableGroup sqlAlterTableGroup, String schemaName,
                                                ExecutionContext executionContext) {
+        validateRepartitionPermit(schemaName, executionContext);
         List<SqlAlterSpecification> alterSpecifications = sqlAlterTableGroup.getAlters();
         SqlIdentifier original = (SqlIdentifier) sqlAlterTableGroup.getTableGroupName();
         String tableGroupName = Util.last(original.names);
@@ -190,7 +214,7 @@ public class AlterTableGroupUtils {
 
             } else if (alterSpecifications.get(0) instanceof SqlAlterTableGroupMovePartition) {
                 alterTableGroupMovePartitionCheck((SqlAlterTableGroupMovePartition) alterSpecifications.get(0),
-                    tableGroupConfig, schemaName);
+                    tableGroupConfig, schemaName, executionContext);
 
             } else if (alterSpecifications.get(0) instanceof SqlAlterTableGroupExtractPartition) {
                 final SqlAlterTableGroupExtractPartition sqlAlterTableGroupExtractPartition =
@@ -250,6 +274,7 @@ public class AlterTableGroupUtils {
                                                           boolean isAlterTableGroup,
                                                           ExecutionContext executionContext, String schemaName) {
 
+        validateRepartitionPermit(schemaName, executionContext);
         boolean alterTableOnly = !(sqlAlterTableSplitPartition instanceof SqlAlterTableGroupSplitPartition);
         String tgSchema = tableGroupConfig.getTableGroupRecord().getSchema();
         final SchemaManager schemaManager = OptimizerContext.getContext(tgSchema).getLatestSchemaManager();
@@ -260,9 +285,98 @@ public class AlterTableGroupUtils {
 
         PartitionInfo partitionInfo = tableMeta.getPartitionInfo();
 
-        if (partitionInfo.isSingleTable() || partitionInfo.isBroadcastTable()) {
+        if (partitionInfo.isSingleTable() || partitionInfo.isBroadcastTable() || partitionInfo.isReplicasTable()) {
             throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
-                "can't split the partition group for single/broadcast tables");
+                "can't split the partition group for single/broadcast/replicas tables");
+        }
+
+        // Multi-partition split validation: when multiple partition names are specified,
+        // validate each partition and return early (detailed bound checking is not needed for HASH/KEY inplace split)
+        List<SqlNode> splitPartitionNames = sqlAlterTableSplitPartition.getSplitPartitionNames();
+        if (splitPartitionNames != null && splitPartitionNames.size() > 1) {
+            // Validate INTO PARTITIONS N >= 2
+            SqlNode newPartNumNode = sqlAlterTableSplitPartition.getNewPartitionNum();
+            if (newPartNumNode instanceof SqlNumericLiteral) {
+                int splitIntoParts = ((SqlNumericLiteral) newPartNumNode).intValue(true);
+                if (splitIntoParts < 2) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
+                        "The partitions number should be greater than 1 for multi-partition split");
+                }
+            }
+            PartitionStrategy strategy;
+            if (sqlAlterTableSplitPartition.isSubPartitionsSplit()) {
+                PartitionByDefinition subPartBy = partitionInfo.getPartitionBy().getSubPartitionBy();
+                if (subPartBy == null) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
+                        "Table does not have sub-partitions");
+                }
+                strategy = subPartBy.getStrategy();
+            } else {
+                strategy = partitionInfo.getPartitionBy().getStrategy();
+            }
+            if (strategy != PartitionStrategy.HASH && strategy != PartitionStrategy.KEY) {
+                throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
+                    sqlAlterTableSplitPartition.isSubPartitionsSplit()
+                        ? "Multi-partition split is only supported for HASH/KEY sub-partition strategy"
+                        : "Multi-partition split is only supported for HASH/KEY first-level partition strategy");
+            }
+            Set<String> seenNames = new TreeSet<>(String::compareToIgnoreCase);
+            if (sqlAlterTableSplitPartition.isSubPartitionsSplit()) {
+                boolean useTemplate = partitionInfo.getSpTemplateFlag()
+                    == TablePartitionRecord.SUBPARTITION_TEMPLATE_USING;
+                for (SqlNode nameNode : splitPartitionNames) {
+                    String partName = Util.last(((SqlIdentifier) nameNode).names);
+                    if (!seenNames.add(partName)) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
+                            "Duplicate partition name in multi-partition split: " + partName);
+                    }
+                    boolean found = false;
+                    if (useTemplate) {
+                        for (PartitionSpec spec : partitionInfo.getPartitionBy().getPhysicalPartitions()) {
+                            if (spec.getTemplateName().equalsIgnoreCase(partName)) {
+                                found = true;
+                                break;
+                            }
+                        }
+                    } else {
+                        for (PartitionSpec spec : partitionInfo.getPartitionBy().getPartitions()) {
+                            for (PartitionSpec sub : spec.getSubPartitions()) {
+                                if (sub.getName().equalsIgnoreCase(partName)) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (found) {
+                                break;
+                            }
+                        }
+                    }
+                    if (!found) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_NAME_NOT_EXISTS,
+                            "the partition:" + partName + " does not exist");
+                    }
+                }
+            } else {
+                for (SqlNode nameNode : splitPartitionNames) {
+                    String partName = Util.last(((SqlIdentifier) nameNode).names);
+                    if (!seenNames.add(partName)) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
+                            "Duplicate partition name in multi-partition split: " + partName);
+                    }
+                    boolean found = false;
+                    for (PartitionSpec spec : partitionInfo.getPartitionBy().getPartitions()) {
+                        if (spec.getName().equalsIgnoreCase(partName)) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_NAME_NOT_EXISTS,
+                            "the partition:" + partName + " does not exist");
+                    }
+                }
+            }
+            return;
         }
 
         String mayTempPartitionName =
@@ -693,7 +807,8 @@ public class AlterTableGroupUtils {
             throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT, "Missing the new partitions spec");
         }
         if (GeneralUtil.isNotEmpty(sqlAlter.getNewPartitions())) {
-            assert sqlAlter.getNewPartitions().size() >= 2;
+            // TODO(chenyi-yijin)
+//            assert sqlAlter.getNewPartitions().size() >= 2;
             for (SqlPartition sqlPartition : sqlAlter.getNewPartitions()) {
                 String partitionName = Util.last(((SqlIdentifier) (sqlPartition.getName())).names);
                 PartitionGroupRecord partitionGroupRecord = tableGroupConfig.getPartitionGroupRecords().stream()
@@ -717,9 +832,10 @@ public class AlterTableGroupUtils {
                                                           TableGroupConfig tableGroupConfig, String targetPartitionName,
                                                           Set<String> partitionsToBeMerged,
                                                           ExecutionContext executionContext) {
+
         String schemaName = tableGroupConfig.getTableGroupRecord().getSchema();
         final SchemaManager schemaManager = executionContext.getSchemaManager(schemaName);
-
+        validateRepartitionPermit(schemaName, executionContext);
         String tableInCurrentGroup = tableGroupConfig.getAllTables().get(0);
         TableMeta tableMeta = schemaManager.getTable(tableInCurrentGroup);
         PartitionInfo partitionInfo = tableMeta.getPartitionInfo();
@@ -767,9 +883,9 @@ public class AlterTableGroupUtils {
             }
         }
 
-        if (partitionInfo.isBroadcastTable()) {
+        if (partitionInfo.isBroadcastTable() || partitionInfo.isReplicasTable()) {
             throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
-                "can't merge the partition group for broadcast tables");
+                "can't merge the partition group for broadcast/replicas tables");
         }
 
         if (partRecord != null && !partitionsToBeMerged.contains(partRecord.partition_name)) {
@@ -839,7 +955,7 @@ public class AlterTableGroupUtils {
         final SchemaManager schemaManager = executionContext.getSchemaManager(schemaName);
         String firstTableName = tableGroupConfig.getAllTables().get(0);
         PartitionInfo partitionInfo = schemaManager.getTable(firstTableName).getPartitionInfo();
-
+        validateRepartitionPermit(schemaName, executionContext);
         PartitionByDefinition partByDef = partitionInfo.getPartitionBy();
         PartitionByDefinition subPartByDef = partByDef.getSubPartitionBy();
 
@@ -1380,12 +1496,15 @@ public class AlterTableGroupUtils {
     }
 
     public static void alterTableGroupMovePartitionCheck(SqlAlterTableMovePartition sqlAlterTableMovePartition,
-                                                         TableGroupConfig tableGroupConfig, String schemaName) {
-        if (tableGroupConfig.getTableGroupRecord().isBroadCastTableGroup()) {
+                                                         TableGroupConfig tableGroupConfig,
+                                                         String schemaName,
+                                                         ExecutionContext executionContext) {
+        if (tableGroupConfig.getTableGroupRecord().isBroadCastTableGroup() ||
+            tableGroupConfig.isReplicasTableGroup()) {
             throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
-                "can't move the partition for broadcast tables");
+                "can't move the partition for broadcast/replicas tables");
         }
-
+        validateRepartitionPermit(schemaName, executionContext);
         String tgSchema = tableGroupConfig.getTableGroupRecord().getSchema();
         String firstTableName = tableGroupConfig.getAllTables().get(0);
         PartitionInfo partitionInfo =
@@ -1419,7 +1538,7 @@ public class AlterTableGroupUtils {
             for (String partition : actualPartitionsToMove) {
                 PartitionGroupRecord partitionGroupRecord = tableGroupConfig.getPartitionGroupByName(partition);
 
-                String sourceGroupKey = GroupInfoUtil.buildGroupNameFromPhysicalDb(partitionGroupRecord.phy_db);
+                String sourceGroupKey = partitionGroupRecord.getGroup_Name();
                 final String sourceInstId = DbTopologyManager.getStorageInstIdByGroupName(InstIdUtil.getInstId(),
                     tableGroupConfig.getTableGroupRecord().getSchema(), sourceGroupKey);
 
@@ -1473,7 +1592,7 @@ public class AlterTableGroupUtils {
         TableMeta tableMeta = schemaManager.getTable(logicalTableName);
         PartitionInfo partitionInfo = tableMeta.getPartitionInfo();
         assert GeneralUtil.isNotEmpty(rexExprInfo);
-
+        validateRepartitionPermit(schemaName, executionContext);
         if (partitionInfo.isSingleTable() || partitionInfo.isBroadcastTable()) {
             throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
                 "can't execute the extract partition command for single/broadcast tables");
@@ -1508,7 +1627,7 @@ public class AlterTableGroupUtils {
         PartitionInfo partitionInfo = tableMeta.getPartitionInfo();
         assert GeneralUtil.isNotEmpty(sqlAlterTableGroup.getPartRexInfoCtxByLevel());
 
-        if (partitionInfo.isSingleTable() || partitionInfo.isBroadcastTable()) {
+        if (partitionInfo.isSingleTable() || partitionInfo.isBroadcastTable() || partitionInfo.isReplicasTable()) {
             throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
                 "can't split the partition group for single/broadcast tables");
         }
@@ -1574,7 +1693,7 @@ public class AlterTableGroupUtils {
                                                                Map<SqlNode, RexNode> rexExprInfo,
                                                                ExecutionContext executionContext) {
         final SchemaManager schemaManager = executionContext.getSchemaManager(schemaName);
-
+        validateRepartitionPermit(schemaName, executionContext);
         TableMeta tableMeta = schemaManager.getTable(logicalTableName);
         PartitionInfo partitionInfo = tableMeta.getPartitionInfo();
         assert GeneralUtil.isNotEmpty(rexExprInfo);
@@ -1643,7 +1762,7 @@ public class AlterTableGroupUtils {
         final SchemaManager schemaManager = executionContext.getSchemaManager(schemaName);
         String tableInCurrentGroup = tableGroupConfig.getAllTables().get(0);
         PartitionInfo partitionInfo = schemaManager.getTable(tableInCurrentGroup).getPartitionInfo();
-
+        validateRepartitionPermit(schemaName, executionContext);
         PartitionByDefinition partByDef = partitionInfo.getPartitionBy();
         PartitionByDefinition subPartByDef = partByDef.getSubPartitionBy();
 
@@ -1810,7 +1929,7 @@ public class AlterTableGroupUtils {
     }
 
     public static void checkTruncateGsiPartition(TableMeta tbMeta, String tableName) {
-        if (tbMeta.withGsi()) {
+        if (tbMeta.withGsiExcludingPureCci()) {
             throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
                 String.format("it's not support to truncate partition/subpartition when table[%s] with GSI",
                     tableName));
@@ -2337,6 +2456,7 @@ public class AlterTableGroupUtils {
             throw new TddlRuntimeException(ErrorCode.ERR_TABLE_GROUP_NOT_EXISTS,
                 "tablegroup:[" + targetTableGroup + "] is not exists");
         }
+        validateRepartitionPermit(preparedData.getSchemaName(), ec);
         PartitionInfo partitionInfo = null;
         if (GeneralUtil.isNotEmpty(tableGroupConfig.getAllTables())) {
             String firstTable = tableGroupConfig.getAllTables().get(0);
@@ -2446,6 +2566,127 @@ public class AlterTableGroupUtils {
         }
     }
 
+    private static boolean validateExchangePartitionTableType(TableMeta tableMeta) {
+        boolean invalidType = tableMeta.isGsi() || tableMeta.withGsi() ||
+            tableMeta.isColumnar() || tableMeta.withColumnar() || tableMeta.isEncryption() ||
+            tableMeta.hasForeignKey() || tableMeta.hasReferencedForeignKey() || tableMeta.getPartitionInfo() == null
+            || tableMeta.getPartitionInfo().isBroadcastTable();
+        return !invalidType;
+    }
+
+    private static String normalizeCreateTableIgnoreAttToString(boolean ignoreComment, boolean ignoreSequence,
+                                                                String createPhyTbSqlNode) {
+
+        final MySqlCreateTableStatement tableStatement =
+            (MySqlCreateTableStatement) SQLUtils.parseStatementsWithDefaultFeatures(createPhyTbSqlNode,
+                    JdbcConstants.MYSQL)
+                .get(0);
+        SQLExpr comment = null;
+        if (ignoreComment) {
+            for (SQLTableElement tableElement : tableStatement.getTableElementList()) {
+                if (tableElement instanceof SQLColumnDefinition) {
+                    ((SQLColumnDefinition) tableElement).setComment(comment);
+                } else if (tableElement instanceof MySqlKey) {
+                    ((MySqlKey) tableElement).setComment(comment);
+                } else if (tableElement instanceof SQLPrimaryKey) {
+                    ((SQLPrimaryKey) tableElement).setComment(comment);
+                } else if (tableElement instanceof MySqlTableIndex) {
+                    ((MySqlTableIndex) tableElement).setComment(comment);
+                } else if (tableElement instanceof MySqlUnique) {
+                    ((MySqlUnique) tableElement).setComment(comment);
+                } else if (tableElement instanceof MysqlForeignKey) {
+                    ((MysqlForeignKey) tableElement).setComment(comment);
+                } else if (tableElement instanceof SQLCheck) {
+                    ((SQLCheck) tableElement).setComment(comment);
+                } else if (tableElement instanceof SQLColumnCheck) {
+                    ((SQLColumnCheck) tableElement).setComment(comment);
+                } else if (tableElement instanceof SQLColumnPrimaryKey) {
+                    ((SQLColumnPrimaryKey) tableElement).setComment(comment);
+                } else if (tableElement instanceof SQLColumnReference) {
+                    ((SQLColumnReference) tableElement).setComment(comment);
+                } else if (tableElement instanceof SQLColumnUniqueKey) {
+                    ((SQLColumnUniqueKey) tableElement).setComment(comment);
+                } else if (tableElement instanceof SQLUnique) {
+                    ((SQLUnique) tableElement).setComment(comment);
+                }
+            }
+        }
+        tableStatement.setName(new SQLIdentifierExpr("t1"));
+        tableStatement.setComment(comment);
+        Iterator<SQLAssignItem> iterator = GeneralUtil.emptyIfNull(tableStatement.getTableOptions()).iterator();
+        while (iterator.hasNext()) {
+            SQLAssignItem sqlAssignItem = iterator.next();
+            if ("AUTO_INCREMENT".equalsIgnoreCase(((SQLIdentifierExpr) sqlAssignItem.getTarget()).getName())) {
+                if (ignoreSequence) {
+                    iterator.remove();
+                }
+            }
+            if ("CHARSET".equalsIgnoreCase(((SQLIdentifierExpr) sqlAssignItem.getTarget()).getName())) {
+                iterator.remove();
+            }
+            if ("COLLATE".equalsIgnoreCase(((SQLIdentifierExpr) sqlAssignItem.getTarget()).getName())) {
+                iterator.remove();
+            }
+        }
+        return SQLUtils.toSQLString(tableStatement, com.alibaba.polardbx.druid.DbType.mysql);
+    }
+
+    public static void alterTableExchangePartitionCheck(DDL ddl, AlterTableExchangePartitionPreparedData preparedData,
+                                                        ExecutionContext ec) {
+
+        SchemaManager schemaManager = ec.getSchemaManager(preparedData.getSchemaName());
+        TableMeta sourceTableMeta = schemaManager.getTable(preparedData.getSourceTableName());
+        TableMeta targetTableMeta = schemaManager.getTable(preparedData.getTargetTableName());
+
+        if (!StringUtils.equalsIgnoreCase(sourceTableMeta.getDefaultCollation(),
+            targetTableMeta.getDefaultCollation())) {
+            throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
+                String.format("The collation of table:[%s] is not match with the collation of table:[%s]",
+                    preparedData.getSourceTableName(), preparedData.getTargetTableName()));
+        }
+
+        if (!StringUtils.equalsIgnoreCase(sourceTableMeta.getDefaultCharset(), targetTableMeta.getDefaultCharset())) {
+            throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
+                String.format("The charset of table:[%s] is not match with the charset of table:[%s]",
+                    preparedData.getSourceTableName(), preparedData.getTargetTableName()));
+        }
+
+        PartitionInfo srcPartitionInfo = sourceTableMeta.getPartitionInfo();
+        PartitionInfo targetPartitionInfo = targetTableMeta.getPartitionInfo();
+        boolean validateType = validateExchangePartitionTableType(sourceTableMeta);
+        if (!validateType) {
+            throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
+                String.format("The table type of table:[%s] is invalid", preparedData.getSourceTableName()));
+        }
+        validateType = validateExchangePartitionTableType(targetTableMeta);
+        if (!validateType) {
+            throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
+                String.format("The table type of table:[%s] is invalid", preparedData.getTargetTableName()));
+        }
+        if (preparedData.getSourcePartitionNames().size() != 1) {
+            throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
+                "Only one partition is permitted to be exchanged per statement");
+        }
+        for (int i = 0; i < preparedData.getSourcePartitionNames().size(); i++) {
+            PartitionSpec srcPartSpec = srcPartitionInfo.getPartitionBy()
+                .getPhysicalPartitionByPartName(preparedData.getSourcePartitionNames().get(i));
+            PartitionSpec targetPartSpec = targetPartitionInfo.getPartitionBy()
+                .getPhysicalPartitionByPartName(preparedData.getTargetPartitionNames().get(i));
+            String srcPhyTbDef = fetchCreateTableDefinition(ddl, ec, srcPartSpec.getLocation().getGroupKey(),
+                srcPartSpec.getLocation().getPhyTableName(), preparedData.getSchemaName());
+            String srcPhyTbDefAfterNormalize = normalizeCreateTableIgnoreAttToString(true, true, srcPhyTbDef);
+            String targetPhyTbDef = fetchCreateTableDefinition(ddl, ec, targetPartSpec.getLocation().getGroupKey(),
+                targetPartSpec.getLocation().getPhyTableName(), preparedData.getSchemaName());
+            String targetPhyTbDefAfterNormalize = normalizeCreateTableIgnoreAttToString(true, true, targetPhyTbDef);
+            if (!srcPhyTbDefAfterNormalize.equalsIgnoreCase(targetPhyTbDefAfterNormalize)) {
+                throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
+                    String.format("the definition of %s and %s is not equal",
+                        preparedData.getSourceTableName(), preparedData.getTargetTableName()));
+            }
+        }
+        //validate rows
+    }
+
     public static SqlNode getSqlTemplate(String schemaName, String logicalTableName, String sqlTemplateStr,
                                          ExecutionContext executionContext) {
         return PartitionUtils.getSqlTemplate(schemaName, logicalTableName, sqlTemplateStr, executionContext);
@@ -2453,11 +2694,21 @@ public class AlterTableGroupUtils {
 
     public static String fetchCreateTableDefinition(RelNode relNode, ExecutionContext executionContext, String groupKey,
                                                     String phyTableName, String schemaName) {
+        return fetchCreateTableDefinition(relNode, executionContext, groupKey, phyTableName, schemaName, false);
+    }
+
+    // forExport: true for rebalance when enable physical backfill
+    public static String fetchCreateTableDefinition(RelNode relNode, ExecutionContext executionContext, String groupKey,
+                                                    String phyTableName, String schemaName, boolean forExport) {
         Cursor cursor = null;
         String primaryTableDefinition = null;
+        // only 8032 support show create table #tb for export
+        forExport = forExport && InstanceVersion.isMYSQL80() && executionContext.getParamManager()
+            .getBoolean(ConnectionParams.ENABLE_SHOW_CREATE_TABLE_FOR_EXPORT);
         try {
             cursor = ExecutorHelper.execute(new PhyShow(relNode.getCluster(), relNode.getTraitSet(),
-                SqlShowCreateTable.create(SqlParserPos.ZERO, new SqlIdentifier(phyTableName, SqlParserPos.ZERO)),
+                SqlShowCreateTable.create(SqlParserPos.ZERO, new SqlIdentifier(phyTableName, SqlParserPos.ZERO), false,
+                    forExport),
                 relNode.getRowType(), groupKey, phyTableName, schemaName), executionContext);
             Row row = null;
             if (cursor != null && (row = cursor.next()) != null) {
@@ -3708,6 +3959,42 @@ public class AlterTableGroupUtils {
         }
 
         return partitionSpec;
+    }
+
+    public static void validateRepartitionPermit(String tableSchema, ExecutionContext ec) {
+        if (ec.getParamManager().getBoolean(ConnectionParams.FORBID_CROSS_GROUP_WRITE_FOR_EXPLICIT_TRX)) {
+            throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
+                "It is not allowed to repartition because cross group write in trx is forbidden.");
+        }
+        boolean enableRepartition = ec.getParamManager().getBoolean(ConnectionParams.ENABLE_DBLE_TABLE_REPARTITION);
+        if (enableRepartition) {
+            return;
+        }
+        boolean useSchemaUsePhyDbConfigs = PlannerUtils.checkIfUseSchemaUsePhyDbConfigs(tableSchema);
+        if (useSchemaUsePhyDbConfigs) {
+            throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
+                "The table is in schema use physical db configs, it's not allowed to repartition");
+        }
+    }
+
+    public static Map<String, Map<String, SqlNode>> buildSqlTemplateForEachPhyTable(RelNode relDdl, String schemaName,
+                                                                                    String tableName,
+                                                                                    Map<String, Set<String>> sourcePhyTbs,
+                                                                                    ExecutionContext executionContext) {
+        Map<String, Map<String, SqlNode>> groupPhyTbDef = new TreeMap<>(String::compareToIgnoreCase);
+        for (Map.Entry<String, Set<String>> entry : sourcePhyTbs.entrySet()) {
+            Map<String, SqlNode> phyTbDef = new TreeMap<>(String::compareToIgnoreCase);
+            groupPhyTbDef.put(entry.getKey(), phyTbDef);
+            for (String phyTb : entry.getValue()) {
+                String createTableStr = AlterTableGroupUtils
+                    .fetchCreateTableDefinition(relDdl, executionContext, entry.getKey(), phyTb,
+                        schemaName, true);
+                SqlNode phyTbSqlTemplate = getSqlTemplate(schemaName, tableName,
+                    createTableStr, executionContext);
+                phyTbDef.put(phyTb, phyTbSqlTemplate);
+            }
+        }
+        return groupPhyTbDef;
     }
 }
 

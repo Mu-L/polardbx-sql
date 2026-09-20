@@ -1,0 +1,153 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+use polardbx;
+drop database if exists newttldb7_3;
+create database if not exists newttldb7_3 mode='auto';
+use newttldb7_3;
+## create table
+drop table if exists arc_date_t2;
+create table if not exists arc_date_t2(
+a int not null auto_increment,
+b date,
+primary key(a)
+)
+partition by key(a)
+partitions 4;
+show create table arc_date_t2;
+Table,Create Table
+arc_date_t2,CREATE TABLE `arc_date_t2` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`a`)
+PARTITIONS 4
+alter table arc_date_t2
+modify ttl
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 year timezone '+08:00',
+ttl_part_interval = interval(1, year),
+archive_type = 'row',
+archive_table_pre_allocate = 4,
+archive_table_post_allocate = 2;
+insert into arc_date_t2(a,b) values (1, '2020-01-01');
+insert into arc_date_t2(a,b) values (2, '2021-01-01');
+insert into arc_date_t2(a,b) values (3, '2022-01-01');
+insert into arc_date_t2(a,b) values (4, '2023-01-01');
+insert into arc_date_t2(a,b) values (5, '2024-01-01');
+insert into arc_date_t2(a,b) values (6, '2025-01-01');
+insert into arc_date_t2(a,b) values (7, '2026-01-01');
+create table arc_date_t2_arc like arc_date_t2 engine=columnar archive_mode='ttl';
+show create table arc_date_t2;
+Table,Create Table
+arc_date_t2,CREATE TABLE `arc_date_t2` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_arc_date_t2_arc` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20220101 VALUES LESS THAN ('2022-01-01') ENGINE = Columnar,
+		 PARTITION p20230101 VALUES LESS THAN ('2023-01-01') ENGINE = Columnar,
+		 PARTITION p20240101 VALUES LESS THAN ('2024-01-01') ENGINE = Columnar,
+		 PARTITION p20250101 VALUES LESS THAN ('2025-01-01') ENGINE = Columnar,
+		 PARTITION p20260101 VALUES LESS THAN ('2026-01-01') ENGINE = Columnar,
+		 PARTITION p20270101 VALUES LESS THAN ('2027-01-01') ENGINE = Columnar,
+		 PARTITION p20280101 VALUES LESS THAN ('2028-01-01') ENGINE = Columnar,
+		 PARTITION p20290101 VALUES LESS THAN ('2029-01-01') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB AUTO_INCREMENT = 8 DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 year TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, YEAR), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'arc_date_t2_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY KEY(`a`)
+PARTITIONS 4
+set TTL_DEBUG_CURRENT_DATETIME='2023-06-27 00:00:00';
+alter table arc_date_t2 cleanup expired data;
+show create table arc_date_t2;
+Table,Create Table
+arc_date_t2,CREATE TABLE `arc_date_t2` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_arc_date_t2_arc` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20220101 VALUES LESS THAN ('2022-01-01') ENGINE = Columnar,
+		 PARTITION p20230101 VALUES LESS THAN ('2023-01-01') ENGINE = Columnar,
+		 PARTITION p20240101 VALUES LESS THAN ('2024-01-01') ENGINE = Columnar,
+		 PARTITION p20250101 VALUES LESS THAN ('2025-01-01') ENGINE = Columnar,
+		 PARTITION p20260101 VALUES LESS THAN ('2026-01-01') ENGINE = Columnar,
+		 PARTITION p20270101 VALUES LESS THAN ('2027-01-01') ENGINE = Columnar,
+		 PARTITION p20280101 VALUES LESS THAN ('2028-01-01') ENGINE = Columnar,
+		 PARTITION p20290101 VALUES LESS THAN ('2029-01-01') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB AUTO_INCREMENT = 8 DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 year TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, YEAR), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'arc_date_t2_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY KEY(`a`)
+PARTITIONS 4
+select a,b from arc_date_t2 order by a;
+a,b
+3,2022-01-01
+4,2023-01-01
+5,2024-01-01
+6,2025-01-01
+7,2026-01-01
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+alter table arc_date_t2 cleanup expired data;
+show create table arc_date_t2;
+Table,Create Table
+arc_date_t2,CREATE TABLE `arc_date_t2` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_arc_date_t2_arc` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20220101 VALUES LESS THAN ('2022-01-01') ENGINE = Columnar,
+		 PARTITION p20230101 VALUES LESS THAN ('2023-01-01') ENGINE = Columnar,
+		 PARTITION p20240101 VALUES LESS THAN ('2024-01-01') ENGINE = Columnar,
+		 PARTITION p20250101 VALUES LESS THAN ('2025-01-01') ENGINE = Columnar,
+		 PARTITION p20260101 VALUES LESS THAN ('2026-01-01') ENGINE = Columnar,
+		 PARTITION p20270101 VALUES LESS THAN ('2027-01-01') ENGINE = Columnar,
+		 PARTITION p20280101 VALUES LESS THAN ('2028-01-01') ENGINE = Columnar,
+		 PARTITION p20290101 VALUES LESS THAN ('2029-01-01') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB AUTO_INCREMENT = 8 DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 year TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, YEAR), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'arc_date_t2_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY KEY(`a`)
+PARTITIONS 4
+select a,b from arc_date_t2 order by a;
+a,b
+4,2023-01-01
+5,2024-01-01
+6,2025-01-01
+7,2026-01-01
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table arc_date_t2 cleanup expired data;
+show create table arc_date_t2;
+Table,Create Table
+arc_date_t2,CREATE TABLE `arc_date_t2` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` date DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	CLUSTERED COLUMNAR INDEX `arctmp_arc_date_t2_arc` (`b`)
+		PARTITION BY RANGE COLUMNS(`b`)
+		(PARTITION p20220101 VALUES LESS THAN ('2022-01-01') ENGINE = Columnar,
+		 PARTITION p20230101 VALUES LESS THAN ('2023-01-01') ENGINE = Columnar,
+		 PARTITION p20240101 VALUES LESS THAN ('2024-01-01') ENGINE = Columnar,
+		 PARTITION p20250101 VALUES LESS THAN ('2025-01-01') ENGINE = Columnar,
+		 PARTITION p20260101 VALUES LESS THAN ('2026-01-01') ENGINE = Columnar,
+		 PARTITION p20270101 VALUES LESS THAN ('2027-01-01') ENGINE = Columnar,
+		 PARTITION p20280101 VALUES LESS THAN ('2028-01-01') ENGINE = Columnar,
+		 PARTITION p20290101 VALUES LESS THAN ('2029-01-01') ENGINE = Columnar,
+		 PARTITION p20300101 VALUES LESS THAN ('2030-01-01') ENGINE = Columnar,
+		 PARTITION pmax VALUES LESS THAN (MAXVALUE) ENGINE = Columnar)
+) ENGINE = InnoDB AUTO_INCREMENT = 8 DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `b` EXPIRE AFTER 1 year TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, YEAR), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = 'arc_date_t2_arc', ARCHIVE_TABLE_PRE_ALLOCATE = 4, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY KEY(`a`)
+PARTITIONS 4
+select a,b from arc_date_t2 order by a;
+a,b
+5,2024-01-01
+6,2025-01-01
+7,2026-01-01
+use polardbx;
+drop database if exists newttldb7_3;

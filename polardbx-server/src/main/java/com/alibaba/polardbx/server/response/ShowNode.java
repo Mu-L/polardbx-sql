@@ -125,7 +125,7 @@ public final class ShowNode {
         int i = 0;
 
         List<List<Map<String, Object>>> results =
-            SyncManagerHelper.sync(
+            SyncManagerHelper.syncIgnoreExceptions(
                 new ShowNodeSyncAction(c.getSchema()), c.getSchema(), SyncScope.CURRENT_ONLY);
 
         Map<String, Long> masterReadCounts = new HashMap();

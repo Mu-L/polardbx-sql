@@ -11,6 +11,7 @@ STATUS,varchar,YES,,NULL,
 DELETABLE,varchar,YES,,NULL,
 DELAY,varchar,YES,,NULL,
 ACTIVE,varchar,YES,,NULL,
+STORAGE_INST_LABEL,varchar,YES,,NULL,
 desc information_schema.storage_replicas;
 Field,Type,Null,Key,Default,Extra
 STORAGE_INST_ID,varchar,YES,,NULL,
@@ -38,6 +39,7 @@ ROLE,varchar,YES,,NULL,
 IS_HEALTHY,varchar,YES,,NULL,
 IS_VIP,varchar,YES,,NULL,
 INFO_FROM,varchar,YES,,NULL,
+STORAGE_INST_LABEL,varchar,YES,,NULL,
 desc information_schema.storage_status;
 Field,Type,Null,Key,Default,Extra
 STORAGE_INST_ID,varchar,YES,,NULL,

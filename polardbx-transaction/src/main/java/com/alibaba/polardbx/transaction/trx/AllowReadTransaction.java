@@ -113,7 +113,7 @@ public class AllowReadTransaction extends BaseTransaction {
                 if (inventoryMode != null && inventoryMode.isInventoryHint()) {
                     inventoryMode.resetInventoryMode();
                 }
-                throw new TddlRuntimeException(ErrorCode.ERR_ACCROSS_DB_TRANSACTION, writeGroupName, groupName);
+                throw new TddlRuntimeException(ErrorCode.ERR_CROSS_GROUP_TRANSACTION, writeGroupName, groupName);
             }
 
             this.writeConnection = conn;

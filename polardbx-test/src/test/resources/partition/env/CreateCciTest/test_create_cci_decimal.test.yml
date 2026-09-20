@@ -1,0 +1,55 @@
+# clean
+drop table if exists `t_decimal_0`;
+drop table if exists `t_decimal_1`;
+
+CREATE TABLE `t_decimal_0` (
+`id` bigint(11) NOT NULL,
+`order_id` varchar(20) DEFAULT NULL,
+`buyer_id` varchar(20) DEFAULT NULL,
+`seller_id` varchar(20) DEFAULT NULL,
+`c1` decimal(12, 3) NOT NULL,
+`c2` decimal(47, 15) NOT NULL,
+PRIMARY KEY (`c1`)
+) PARTITION BY KEY(`c1`) PARTITIONS 3;
+
+CREATE TABLE `t_decimal_1` (
+`id` bigint(11) NOT NULL,
+`order_id` varchar(20) DEFAULT NULL,
+`buyer_id` varchar(20) DEFAULT NULL,
+`seller_id` varchar(20) DEFAULT NULL,
+`c1` decimal(12, 3) NOT NULL,
+`c2` decimal(47, 15) NOT NULL,
+PRIMARY KEY (`c2`)
+) PARTITION BY KEY(`c1`) PARTITIONS 3;
+
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/
+CREATE CLUSTERED COLUMNAR INDEX `cci_t_decimal_0` ON `t_decimal_0`(`c1`) PARTITION BY HASH (`c1`) PARTITIONS 4;
+/*+TDDL:CMD_EXTRA(ALTER_CCI_STATUS=true, ALTER_CCI_STATUS_BEFORE=CREATING, ALTER_CCI_STATUS_AFTER=PUBLIC)*/
+ALTER TABLE `t_decimal_0` alter index `cci_t_decimal_0` VISIBLE;
+show full create table `t_decimal_0`;
+check columnar index `cci_t_decimal_0` on `t_decimal_0` meta;
+DROP INDEX `cci_t_decimal_0` ON `t_decimal_0`;
+
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/
+CREATE CLUSTERED COLUMNAR INDEX `cci_t_decimal_0` ON `t_decimal_0`(`c2`) PARTITION BY KEY (`c2`) PARTITIONS 4;
+show full create table `t_decimal_0`;
+check columnar index `cci_t_decimal_0` on `t_decimal_0` meta;
+DROP INDEX `cci_t_decimal_0` ON `t_decimal_0`;
+
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/
+CREATE CLUSTERED COLUMNAR INDEX `cci_t_decimal_1` ON `t_decimal_1`(`c1`) PARTITION BY KEY (`c1`) PARTITIONS 4;
+/*+TDDL:CMD_EXTRA(ALTER_CCI_STATUS=true, ALTER_CCI_STATUS_BEFORE=CREATING, ALTER_CCI_STATUS_AFTER=PUBLIC)*/
+ALTER TABLE `t_decimal_1` alter index `cci_t_decimal_1` VISIBLE;
+show full create table `t_decimal_1`;
+check columnar index `cci_t_decimal_1` on `t_decimal_1` meta;
+DROP INDEX `cci_t_decimal_1` ON `t_decimal_1`;
+
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/
+CREATE CLUSTERED COLUMNAR INDEX `cci_t_decimal_1` ON `t_decimal_1`(`c2`) PARTITION BY HASH (`c2`) PARTITIONS 4;
+show full create table `t_decimal_1`;
+check columnar index `cci_t_decimal_1` on `t_decimal_1` meta;
+DROP INDEX `cci_t_decimal_1` ON `t_decimal_1`;
+  
+# clean
+drop table if exists `t_decimal_0`;
+drop table if exists `t_decimal_1`;

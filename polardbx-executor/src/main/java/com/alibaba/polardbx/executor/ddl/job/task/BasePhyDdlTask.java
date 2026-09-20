@@ -60,7 +60,7 @@ import static com.alibaba.polardbx.common.ddl.newengine.DdlState.isRollBackRunni
 @Getter
 public abstract class BasePhyDdlTask extends BaseDdlTask {
 
-    private final static Logger LOG = SQLRecorderLogger.ddlEngineLogger;
+    protected final static Logger LOG = SQLRecorderLogger.ddlEngineLogger;
 
     protected PhysicalPlanData physicalPlanData;
 
@@ -69,11 +69,21 @@ public abstract class BasePhyDdlTask extends BaseDdlTask {
         this.physicalPlanData = physicalPlanData;
     }
 
+    public void setPhysicalPlanData(PhysicalPlanData physicalPlanData) {
+        this.physicalPlanData = physicalPlanData;
+    }
+
     @Override
     protected void beforeTransaction(ExecutionContext executionContext) {
         //may need to clean up physical tables if failed
-        updateTaskStateInNewTxn(DdlTaskState.DIRTY);
-        executeImpl(executionContext);
+        Boolean dryRunOption = executionContext.getParamManager().getBoolean(ConnectionParams.DRY_RUN_PHYSICAL_DDL);
+        if (dryRunOption) {
+            updateTaskStateInNewTxn(DdlTaskState.DIRTY);
+            executeDryRun(false);
+        } else {
+            updateTaskStateInNewTxn(DdlTaskState.DIRTY);
+            executeImpl(executionContext);
+        }
     }
 
     public void executeImpl(ExecutionContext executionContext) {
@@ -87,8 +97,13 @@ public abstract class BasePhyDdlTask extends BaseDdlTask {
     }
 
     public void rollbackImpl(ExecutionContext executionContext) {
-        List<RelNode> rollbackPhysicalPlans = genRollbackPhysicalPlans(executionContext);
-        executePhyDdl(rollbackPhysicalPlans, executionContext);
+        Boolean dryRunOption = executionContext.getParamManager().getBoolean(ConnectionParams.DRY_RUN_PHYSICAL_DDL);
+        if (dryRunOption) {
+            rollbackDryRun(false);
+        } else {
+            List<RelNode> rollbackPhysicalPlans = genRollbackPhysicalPlans(executionContext);
+            executePhyDdl(rollbackPhysicalPlans, executionContext);
+        }
     }
 
     @Override
@@ -128,6 +143,10 @@ public abstract class BasePhyDdlTask extends BaseDdlTask {
         return relNodes;
     }
 
+    protected void reloadPhyTablesDone(PhyDdlExecutionRecord phyDdlExecutionRecord) {
+        DdlJobManagerUtils.reloadPhyTablesDone(phyDdlExecutionRecord);
+    }
+
     protected void executePhyDdl(List<RelNode> inputs, ExecutionContext ec) {
         if (CollectionUtils.isEmpty(inputs)) {
             return;
@@ -135,14 +154,14 @@ public abstract class BasePhyDdlTask extends BaseDdlTask {
 
         LOG.info(String.format("[Job:%d Task:%d] Execute physical ddl: %s",
             this.jobId, this.taskId,
-            StringUtils.substring(TStringUtil.quoteString(this.physicalPlanData.toString()), 0, 5000)));
-
+            physicalPlanData != null ?
+                StringUtils.substring(TStringUtil.quoteString(this.physicalPlanData.toString()), 0, 5000) : ""));
         ExecutionContext executionContext = ec.copy();
         PhyDdlExecutionRecord phyDdlExecutionRecord = new PhyDdlExecutionRecord(jobId, taskId, inputs.size());
         executionContext.setPhyDdlExecutionRecord(phyDdlExecutionRecord);
         executionContext.setExtraDatas(new HashMap<>());
 
-        DdlJobManagerUtils.reloadPhyTablesDone(phyDdlExecutionRecord);
+        reloadPhyTablesDone(phyDdlExecutionRecord);
 
         List<Cursor> inputCursors = new ArrayList<>();
         List<Throwable> exceptions = new ArrayList<>();
@@ -177,7 +196,7 @@ public abstract class BasePhyDdlTask extends BaseDdlTask {
 
         verifyResult((PhyDdlTableOperation) inputs.get(0), exceptions, executionContext);
 
-        DdlJobManagerUtils.clearPhyTablesDone(phyDdlExecutionRecord);
+        DdlJobManagerUtils.clearPhyTablesDone(executionContext.getPhyDdlExecutionRecord());
     }
 
     protected void verifyResult(PhyDdlTableOperation ddl, List<Throwable> exceptions,
@@ -384,11 +403,76 @@ public abstract class BasePhyDdlTask extends BaseDdlTask {
     }
 
     @Override
-    public List<String> explainInfo() {
+    public List<String> explainInfo(ExecutionContext ec) {
         if (this.physicalPlanData != null) {
             return this.physicalPlanData.explainInfo();
         } else {
             return new ArrayList<>();
         }
+    }
+
+    public void executeDryRun(Boolean pauseAndCheck) {
+        if (!pauseAndCheck) {
+            return;
+        }
+//        setExceptionAction(DdlExceptionAction.PAUSE);
+//        Map<String, Set<String>> tableTopology = new HashMap();
+//        for (String phyDbName : physicalPlanData.getTableTopology().keySet()) {
+//            String groupName = phyDbName;
+//            tableTopology.put(groupName, physicalPlanData.getTableTopology().get(phyDbName).stream().
+//                flatMap(List::stream).collect(Collectors.toSet()));
+//        }
+//        if (this.physicalPlanData.phyDdlHashCodeMap == null) {
+//            this.physicalPlanData.phyDdlHashCodeMap = TwoPhaseDdlManager.calPhyTableHashCodeMap(schemaName, tableTopology);
+//            throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR,
+//                " this is expected error for dryrun mode, you can  execute physical ddl now! and then continue");
+//        } else {
+//            boolean finished = true;
+//            Map<String, String> physicalHashCode = TwoPhaseDdlManager.calPhyTableHashCodeMap(schemaName, tableTopology);
+//            List<String> physicalTables = new ArrayList<>();
+//            for (String physicalTableName : physicalHashCode.keySet()) {
+//                if (StringUtils.equals(physicalHashCode.get(physicalTableName),
+//                    this.physicalPlanData.phyDdlHashCodeMap.get(physicalTableName))) {
+//                    finished = false;
+//                    physicalTables.add(physicalTableName);
+//                }
+//            }
+//            if (!finished) {
+//                throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR,
+//                    " this is expected error for dryrun mode, you can continue to execute physical ddl on physical table: "
+//                        + StringUtils.join(physicalTables, ","));
+//            }
+//        }
+    }
+
+    public void rollbackDryRun(Boolean pauseAndCheck) {
+        if (!pauseAndCheck) {
+            return;
+        }
+        // TODO:(require serializetion phyDdlHashCodeMap in another record).
+//        Map<String, Set<String>> tableTopology = new HashMap();
+//        for (String phyDbName : physicalPlanData.getTableTopology().keySet()) {
+//            String groupName = phyDbName;
+//            tableTopology.put(groupName, physicalPlanData.getTableTopology().get(phyDbName).stream().
+//                flatMap(List::stream).collect(Collectors.toSet()));
+//        }
+//        if (this.physicalPlanData.phyDdlHashCodeMap == null) {
+//        } else {
+//            boolean recovered = true;
+//            Map<String, String> physicalHashCode = TwoPhaseDdlManager.calPhyTableHashCodeMap(schemaName, tableTopology);
+//            List<String> physicalTables = new ArrayList<>();
+//            for (String physicalTableName : physicalHashCode.keySet()) {
+//                if (!StringUtils.equals(physicalHashCode.get(physicalTableName),
+//                    this.physicalPlanData.phyDdlHashCodeMap.get(physicalTableName))) {
+//                    recovered = false;
+//                    physicalTables.add(physicalTableName);
+//                }
+//            }
+//            if (!recovered) {
+//                throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR,
+//                    " this is expected error, you can continue to recover physical ddl on physical table: "
+//                        + StringUtils.join(physicalTables, ","));
+//            }
+//        }
     }
 }

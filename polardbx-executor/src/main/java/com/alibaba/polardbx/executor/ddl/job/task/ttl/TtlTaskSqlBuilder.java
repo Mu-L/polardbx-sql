@@ -2,21 +2,25 @@ package com.alibaba.polardbx.executor.ddl.job.task.ttl;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.ConfigParam;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.ConnectionProperties;
+import com.alibaba.polardbx.druid.sql.SQLUtils;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import com.alibaba.polardbx.gms.ttl.TtlInfoRecord;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
-import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
-import com.alibaba.polardbx.optimizer.partition.common.LocalPartitionDefinitionInfo;
 import com.alibaba.polardbx.optimizer.partition.common.PartKeyLevel;
 import com.alibaba.polardbx.optimizer.ttl.TtlArchiveKind;
 import com.alibaba.polardbx.optimizer.ttl.TtlConfigUtil;
+import com.alibaba.polardbx.optimizer.ttl.TtlDatetimeNormalizer;
 import com.alibaba.polardbx.optimizer.ttl.TtlDefinitionInfo;
 import com.alibaba.polardbx.optimizer.ttl.TtlTimeUnit;
 import com.alibaba.polardbx.optimizer.ttl.TtlUtil;
 import com.alibaba.polardbx.optimizer.utils.SqlIdentifierUtil;
+import com.amazonaws.services.dynamodbv2.xspec.S;
 import org.apache.commons.lang.StringUtils;
 
 import java.time.LocalDateTime;
@@ -24,8 +28,9 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -38,7 +43,7 @@ public class TtlTaskSqlBuilder {
     protected static final String ROUND_DOWN_DATETIME_FORMAT_ON_UNIT_MINUTE = "'%Y-%m-%d %H:%i:00'";
     protected static final String ROUND_DOWN_DATETIME_FORMAT_ON_UNIT_SECOND = "'%Y-%m-%d %H:%i:%s'";
 
-    public static final DateTimeFormatter ISO_DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    public static final DateTimeFormatter ISO_DATETIME_FORMATTER = TtlDatetimeNormalizer.TTL_ISO_DATETIME_FORMATTER;
     protected static final String PART_NAME_FORMAT_ON_UNIT_YEAR = "yyyy";
     protected static final String PART_NAME_FORMAT_ON_UNIT_MONTH = "yyyyMM";
     protected static final String PART_NAME_FORMAT_ON_UNIT_DAY = "yyyyMMdd";
@@ -60,6 +65,8 @@ public class TtlTaskSqlBuilder {
     public static final String COL_NAME_FOR_SELECT_PARTITION_DATA_LENGTH = "all_data_length";
     public static final String COL_NAME_FOR_SELECT_PARTITION_TABLE_ROWS = "all_table_rows";
     public static final String COL_NAME_FOR_SELECT_UNIX_TIMESTAMP_FOR_BOUND = "bound_ts";
+    public static final String COL_NAME_FOR_SELECT_EXPIRED_DATA_PERCENT = "expired_data_percent";
+    public static final String COL_NAME_FOR_SELECT_TOTAL_ROW_COUNT = "total_row_count";
 
     public static final String COL_NAME_FOR_DDL_JOB_ID = "job_id";
     public static final String DDL_FLAG_OF_TTL_JOB = "from ttl job";
@@ -94,12 +101,13 @@ public class TtlTaskSqlBuilder {
         "SUBJOB_NAME_FOR_DROP_PARTS_FOR_ARC_TMP_CCI";
     public static final String SUBJOB_NAME_FOR_ADD_PARTS_FOR_TTL_TBL = "SUBJOB_NAME_FOR_ADD_PARTS_FOR_TTL_TBL";
     public static final String SUBJOB_NAME_FOR_DROP_PARTS_FOR_TTL_TBL = "SUBJOB_NAME_FOR_DROP_PARTS_FOR_TTL_TBL";
+    public static final String SUBJOB_NAME_FOR_CLEANUP_BY_REBUILD_TBL = "SUBJOB_NAME_FOR_CLEANUP_BY_REBUILD_TBL";
 
-    public static final String ALTER_TABLE_CLEANUP_EXPIRED_DATA_TEMPLATE =
-        "alter /* from ttl scheduled job */ table `%s`.`%s` cleanup expired data;";
+    public static final String ASYNC_ALTER_TABLE_CLEANUP_EXPIRED_DATA_TEMPLATE_WITH_DEBUG_DATETIME =
+        "/*+TDDL:cmd_extra(%s)*/ alter /* from ttl scheduled job %s_%s_%s */ table `%s`.`%s` cleanup expired data;";
 
     public static final String ASYNC_ALTER_TABLE_CLEANUP_EXPIRED_DATA_TEMPLATE =
-        "/*+TDDL:cmd_extra(ENABLE_ASYNC_DDL=true, PURE_ASYNC_DDL_MODE=true)*/ alter /* from ttl scheduled job */ table `%s`.`%s` cleanup expired data;";
+        "/*+TDDL:cmd_extra(ENABLE_ASYNC_DDL=true, PURE_ASYNC_DDL_MODE=true)*/ alter /* from ttl scheduled job %s_%s_%s */ table `%s`.`%s` cleanup expired data;";
 
     public static final String ALTER_TABLE_CLEANUP_EXPIRED_DATA_TEMPLATE_KEYWORD = "cleanup expired data";
 
@@ -107,7 +115,7 @@ public class TtlTaskSqlBuilder {
         "alter table `%s`.`%s` modify ttl set archive_table_schema = '%s', archive_table_name = '%s';";
 
     public static final String SELECT_TTL_COL_MIN_VAL_AND_LOWER_BOUND_SQL_TEMP_FORMAT =
-        "SELECT ttl_col AS min_value, DATE_FORMAT(ttl_col,%s) AS expired_lower_bound, ttl_col is null is_null, ttl_col = '0000-00-00 00:00:00.000000' is_zero FROM (SELECT %s as ttl_col FROM %s.%s %s %s ORDER BY %s ASC LIMIT 1) as ttl_tbl;";
+        "/*+TDDL:ENABLE_TRANSPARENT_TTL=FALSE*/SELECT ttl_col AS min_value, DATE_FORMAT(ttl_col,%s) AS expired_lower_bound, ttl_col is null is_null, ttl_col = '0000-00-00 00:00:00.000000' is_zero FROM (SELECT %s as ttl_col FROM `%s`.`%s` %s %s ORDER BY %s ASC LIMIT 1) as ttl_tbl;";
 
     public static final String SELECT_TTL_COL_UPPER_BOUND_SQL_TEMP_FORMAT =
         "SELECT %s as current_datetime, DATE_FORMAT( %s, %s ) as formated_current_datetime, DATE_FORMAT( DATE_SUB(%s, INTERVAL %s %s), %s ) as expired_upper_bound;";
@@ -121,44 +129,75 @@ public class TtlTaskSqlBuilder {
     public static final String SELECT_CLEANUP_UPPER_BOUND_SQL_TEMP =
         "SELECT DATE_FORMAT( '%s', %s ) as formated_current_datetime, DATE_FORMAT( DATE_SUB( '%s', INTERVAL %s %s), %s ) as expired_upper_bound;";
 
+    public static final String SELECT_TTL_REF_COL_MAX_VALUE_IN_ARCHIVE =
+        "/*+TDDL:ENABLE_TRANSPARENT_TTL=FALSE*/SELECT %s from %s.%s %s where %s < %s order by %s desc limit 1";
+
+    public static final String SELECT_TTL_REF_COL_MIN_VALUE_IN_ONLINE =
+        "/*+TDDL:ENABLE_TRANSPARENT_TTL=FALSE*/SELECT %s from %s.%s %s where %s >= %s order by %s limit 1";
+
+    //    /**
     /**
-     * <pre>
-     * SELECT
-     *  DATE_FORMAT(ttl_col,'%Y-%m-%d') as day,
-     *  COUNT(1) rows_cnt
-     * FROM tbl partition(?)
-     * WHERE ttl_col < ?
-     * GROUP BY day
-     * ORDER BY day asc;
-     * </pre>
+     * The sql template for select the ratio of expired data on one　physical partition
      */
-    public static String buildSelectForStatTemplate(TableMeta tableMeta) {
-        LocalPartitionDefinitionInfo ttlDefInfo = tableMeta.getLocalPartitionDefinitionInfo();
-        String ttlCol = ttlDefInfo.getColumnName();
-        String tblName = tableMeta.getTableName();
-        String dateFormatFuncTemp = "%Y-%m-%d";
-        String statSqlProjFormat = String.format("DATE_FORMAT(`%s`,'%s') as day", ttlCol, dateFormatFuncTemp);
+    public static final String SELECT_EXPIRED_DATA_RATIO_TEMP_ON_ONE_PHY_PART =
+        "SELECT ( SELECT COUNT(1) FROM `%s`.`%s` PARTITION (`%s`) WHERE `%s` < %s ) * 100 / (SELECT COUNT(1) FROM `%s`.`%s` partition(`%s`)) AS cleanup_ratio;";
 
-        String statSqlTemplateFormat =
-            "SELECT %s FROM `%s` partition(?) WHERE `%s` < '?' GROUP BY day ORDER BY day ASC";
-        String statSqlTemplate = String.format(statSqlTemplateFormat, statSqlProjFormat, tblName, ttlCol);
-        statSqlTemplate = statSqlTemplate.replace("?", "%s");
-        return statSqlTemplate;
-    }
+    /**
+     * The sql template for select the ratio of expired data on one partition based on min and max, expire_ratio mab by null if physical table has no data.
+     */
+    public static final String SELECT_EXPIRED_DATA_PERCENT_TEMP_BASE_ON_MIN_MAX =
+        "SELECT IF(tmp_ratio IS NULL,0,IF(tmp_ratio < 0,0,IF(tmp_ratio > 100,100,ROUND(100)))) AS expired_data_percent FROM (SELECT 100 * ((UNIX_TIMESTAMP('%s') - min_ts) / ABS(max_ts - min_ts + 1)) as tmp_ratio FROM (SELECT UNIX_TIMESTAMP(min_val) min_ts, UNIX_TIMESTAMP(max_val) max_ts FROM (SELECT MIN(%s) min_val, MAX(%s) max_val FROM %s.%s PARTITION(%s) %s) tmp1 ) tmp2) tmp3";
 
-    public static String buildSelectForStatSql(TableMeta tableMeta, String partName, String expireAfterExprStr) {
-        LocalPartitionDefinitionInfo ttlDefInfo = tableMeta.getLocalPartitionDefinitionInfo();
-        String ttlCol = ttlDefInfo.getColumnName();
-        String tblName = tableMeta.getTableName();
-        String dateFormatFuncTemp = "%Y-%m-%d";
-        String statSqlProjFormat = String.format("DATE_FORMAT(`%s`,'%s') as day", ttlCol, dateFormatFuncTemp);
-        String statSqlTemplateFormat =
-            "SELECT %s, count(1) rows_cnt FROM `%s` partition(%s) WHERE `%s` <= '%s' GROUP BY day ORDER BY day ASC";
-        String statSqlTemplate =
-            String.format(statSqlTemplateFormat, statSqlProjFormat, tblName, partName, ttlCol, expireAfterExprStr);
+    /**
+     * The sql template for select the total row count of a table from information_schema.table_details
+     */
+    public static final String SELECT_TOTAL_ROW_COUNT_FROM_INFO_SCHEMA_SQL =
+        "SELECT SUM(table_rows) total_row_count FROM INFORMATION_SCHEMA.TABLE_DETAIL WHERE TABLE_SCHEMA = '%s' AND TABLE_NAME = '%s';";
 
-        return statSqlTemplate;
-    }
+    /**
+     * The sql template for cleanup row by omc30
+     */
+    public static final String OPTIMIZE_TABLE_WITH_FILTER_SQL_TEMPLATE =
+        "/*+TDDL:CMD_EXTRA(FORCE_USING_OMC_30=TRUE,ENABLE_OMC_30=TRUE,REBUILD_TABLE_KEEP_FILTER=\"%s\")*/ ALTER TABLE /* from ttl job */ %s.%s ENGINE=INNODB,ALGORITHM=OMC ASYNC=TRUE";
+
+//    /**
+//     * <pre>
+//     * SELECT
+//     *  DATE_FORMAT(ttl_col,'%Y-%m-%d') as day,
+//     *  COUNT(1) rows_cnt
+//     * FROM tbl partition(?)
+//     * WHERE ttl_col < ?
+//     * GROUP BY day
+//     * ORDER BY day asc;
+//     * </pre>
+//     */
+//    public static String buildSelectForStatTemplate(TableMeta tableMeta) {
+//        LocalPartitionDefinitionInfo ttlDefInfo = tableMeta.getLocalPartitionDefinitionInfo();
+//        String ttlCol = ttlDefInfo.getColumnName();
+//        String tblName = tableMeta.getTableName();
+//        String dateFormatFuncTemp = "%Y-%m-%d";
+//        String statSqlProjFormat = String.format("DATE_FORMAT(`%s`,'%s') as day", ttlCol, dateFormatFuncTemp);
+//
+//        String statSqlTemplateFormat =
+//            "SELECT %s FROM `%s` partition(?) WHERE `%s` < '?' GROUP BY day ORDER BY day ASC";
+//        String statSqlTemplate = String.format(statSqlTemplateFormat, statSqlProjFormat, tblName, ttlCol);
+//        statSqlTemplate = statSqlTemplate.replace("?", "%s");
+//        return statSqlTemplate;
+//    }
+//
+//    public static String buildSelectForStatSql(TableMeta tableMeta, String partName, String expireAfterExprStr) {
+//        LocalPartitionDefinitionInfo ttlDefInfo = tableMeta.getLocalPartitionDefinitionInfo();
+//        String ttlCol = ttlDefInfo.getColumnName();
+//        String tblName = tableMeta.getTableName();
+//        String dateFormatFuncTemp = "%Y-%m-%d";
+//        String statSqlProjFormat = String.format("DATE_FORMAT(`%s`,'%s') as day", ttlCol, dateFormatFuncTemp);
+//        String statSqlTemplateFormat =
+//            "SELECT %s, count(1) rows_cnt FROM `%s` partition(%s) WHERE `%s` <= '%s' GROUP BY day ORDER BY day ASC";
+//        String statSqlTemplate =
+//            String.format(statSqlTemplateFormat, statSqlProjFormat, tblName, partName, ttlCol, expireAfterExprStr);
+//
+//        return statSqlTemplate;
+//    }
 
     /**
      * <pre>
@@ -169,30 +208,30 @@ public class TtlTaskSqlBuilder {
      * ORDER BY ttl_col ASC
      * </pre>
      */
-    public static String buildSelectForFetchPkAndSkTemplate(TableMeta tableMeta) {
-
-        LocalPartitionDefinitionInfo ttlDefInfo = tableMeta.getLocalPartitionDefinitionInfo();
-        String ttlCol = ttlDefInfo.getColumnName();
-        Set<String> pkColSet = tableMeta.getPrimaryKeyMap().keySet();
-        List<String> selectCols = new ArrayList<>();
-        selectCols.addAll(pkColSet);
-        selectCols.add(ttlCol);
-        String tblName = tableMeta.getTableName();
-        StringBuilder projectPart = new StringBuilder("");
-        for (int i = 0; i < selectCols.size(); i++) {
-            if (i > 0) {
-                projectPart.append(",");
-            }
-            projectPart.append(selectCols.get(i));
-        }
-        String filterPart = String.format(" %s <= ? AND %s >= ? ", ttlCol, ttlCol);
-
-        String selectSqlTemp =
-            String.format("SELECT %s FROM %s PARTITION(?) WHERE %s ORDER BY %s ASC LIMIT ?,?;", projectPart, tblName,
-                filterPart, ttlCol);
-        selectSqlTemp.replace("?", "%s");
-        return selectSqlTemp;
-    }
+//    public static String buildSelectForFetchPkAndSkTemplate(TableMeta tableMeta) {
+//
+//        LocalPartitionDefinitionInfo ttlDefInfo = tableMeta.getLocalPartitionDefinitionInfo();
+//        String ttlCol = ttlDefInfo.getColumnName();
+//        Set<String> pkColSet = tableMeta.getPrimaryKeyMap().keySet();
+//        List<String> selectCols = new ArrayList<>();
+//        selectCols.addAll(pkColSet);
+//        selectCols.add(ttlCol);
+//        String tblName = tableMeta.getTableName();
+//        StringBuilder projectPart = new StringBuilder("");
+//        for (int i = 0; i < selectCols.size(); i++) {
+//            if (i > 0) {
+//                projectPart.append(",");
+//            }
+//            projectPart.append(selectCols.get(i));
+//        }
+//        String filterPart = String.format(" %s <= ? AND %s >= ? ", ttlCol, ttlCol);
+//
+//        String selectSqlTemp =
+//            String.format("SELECT %s FROM %s PARTITION(?) WHERE %s ORDER BY %s ASC LIMIT ?,?;", projectPart, tblName,
+//                filterPart, ttlCol);
+//        selectSqlTemp.replace("?", "%s");
+//        return selectSqlTemp;
+//    }
 
     /**
      * Select the round-downed upper bound of expired value of ttl_col
@@ -273,7 +312,7 @@ public class TtlTaskSqlBuilder {
                                                     String ttlUnit) {
         ColumnMeta ttlCm = ttlDefInfo.getTtlColMeta(ec);
         DataType dt = ttlCm.getDataType();
-        boolean useTtlColUseFuncExpr = ttlDefInfo.isTtlColUseFuncExpr();
+        boolean useTtlColUseFuncExpr = ttlDefInfo.isTtlColUseFuncExpr();//use isTtlColUseExprEncoding
 
         boolean containTimeInfo = DataTypeUtil.isFractionalTimeType(dt);
 //        boolean timezoneDependent = DataTypeUtil.isTimezoneDependentType(dt);
@@ -283,7 +322,14 @@ public class TtlTaskSqlBuilder {
 
         String formatter = "";
         if (isDateType || (isIntType && useTtlColUseFuncExpr)) {
+
             if (containTimeInfo || (isIntType && useTtlColUseFuncExpr)) {
+                /**
+                 * Come here:
+                 * 1. datetime/timestamp/time
+                 * or
+                 * 2. int-type-based time, like unix_timestamp number / int of yyyyMMdd
+                 */
                 if (ttlUnit.equalsIgnoreCase(TtlInfoRecord.TTL_UNIT_YEAR)) {
                     formatter = TtlTaskSqlBuilder.ROUND_DOWN_DATETIME_FORMAT_ON_UNIT_YEAR;
                 } else if (ttlUnit.equalsIgnoreCase(TtlInfoRecord.TTL_UNIT_MONTH)) {
@@ -298,7 +344,19 @@ public class TtlTaskSqlBuilder {
                     formatter = TtlTaskSqlBuilder.ROUND_DOWN_DATETIME_FORMAT_ON_UNIT_SECOND;
                 }
             } else {
-                formatter = TtlTaskSqlBuilder.ROUND_DOWN_DATETIME_FORMAT_ON_UNIT_DAY;
+                /**
+                 * Come here:
+                 * ttl col datatype is  date,
+                 * so all the unit of hour/minute/second are
+                 * use the format of day
+                 */
+                if (ttlUnit.equalsIgnoreCase(TtlInfoRecord.TTL_UNIT_YEAR)) {
+                    formatter = TtlTaskSqlBuilder.ROUND_DOWN_DATETIME_FORMAT_ON_UNIT_YEAR;
+                } else if (ttlUnit.equalsIgnoreCase(TtlInfoRecord.TTL_UNIT_MONTH)) {
+                    formatter = TtlTaskSqlBuilder.ROUND_DOWN_DATETIME_FORMAT_ON_UNIT_MONTH;
+                } else {
+                    formatter = TtlTaskSqlBuilder.ROUND_DOWN_DATETIME_FORMAT_ON_UNIT_DAY;
+                }
             }
         } else {
             if (isIntType || isStrType) {
@@ -324,12 +382,12 @@ public class TtlTaskSqlBuilder {
     public static String buildSelectExpiredLowerBoundValueBySqlTemplateWithoutConcurrent(TtlDefinitionInfo ttlDefInfo,
                                                                                          ExecutionContext ec,
                                                                                          int mergeUnionSize,
-                                                                                         String forceIndexExpr,
-                                                                                         String whereCondExpr) {
+                                                                                         String forceIndexExpr) {
         String ttlTblSchema = ttlDefInfo.getTtlInfoRecord().getTableSchema();
         String ttlTblName = ttlDefInfo.getTtlInfoRecord().getTableName();
         String ttlCol = ttlDefInfo.getTtlInfoRecord().getTtlCol();
         String ttlUnit = TtlTimeUnit.of(ttlDefInfo.getTtlInfoRecord().getTtlUnit()).getUnitName();
+        String whereCondExpr = buildSelectWhereCondExpr(ttlDefInfo, ec);
         String formatter = fetchRoundDownFormatter(ec, ttlDefInfo, ttlTblSchema, ttlTblName, ttlCol, ttlUnit);
         String queryHint =
             "/*+TDDL:cmd_extra(MERGE_UNION=true, MERGE_UNION_SIZE=%s, MERGE_CONCURRENT=false, PREFETCH_SHARDS=1, SEQUENTIAL_CONCURRENT_POLICY=true)*/";
@@ -339,41 +397,145 @@ public class TtlTaskSqlBuilder {
         return selectExpiredLownerBoundValueSqlTemp;
     }
 
+    private static String buildSelectWhereCondExpr(TtlDefinitionInfo ttlDefInfo, ExecutionContext ec) {
+        String ttlCol = ttlDefInfo.getTtlInfoRecord().getTtlCol();
+        boolean onlyCleanupNotNullRows = true;
+        if (ec != null) {
+            onlyCleanupNotNullRows = ec.getParamManager().getBoolean(ConnectionParams.TTL_ONLY_CLEANUP_NOT_NULL_ROWS);
+        }
+
+        String whereCondExpr = "";
+        String whereCondExprVal = "";
+        String ttlColNotNullCondExpr = "";
+        if (onlyCleanupNotNullRows) {
+            ttlColNotNullCondExpr = String.format("(`%s` IS NOT NULL)", ttlCol);
+        }
+        whereCondExprVal = ttlColNotNullCondExpr;
+        String ttlFilter = ttlDefInfo.getTtlInfoRecord().getTtlFilter();
+        if (!StringUtils.isEmpty(ttlFilter)) {
+            if (StringUtils.isEmpty(whereCondExprVal)) {
+                whereCondExprVal = String.format("(%s)", ttlFilter);
+            } else {
+                whereCondExprVal += String.format(" AND (%s)", ttlFilter);
+            }
+        }
+        if (!StringUtils.isEmpty(whereCondExprVal)) {
+            whereCondExpr = String.format("WHERE (%s)", whereCondExprVal);
+        }
+        return whereCondExpr;
+    }
+
     public static String buildSelectExpiredLowerBoundValueSqlTemplate(TtlDefinitionInfo ttlDefInfo,
                                                                       ExecutionContext ec,
                                                                       String queryHint,
-                                                                      String forceIndexExpr,
-                                                                      String whereCondExpr) {
+                                                                      String forceIndexExpr) {
         String ttlTblSchema = ttlDefInfo.getTtlInfoRecord().getTableSchema();
         String ttlTblName = ttlDefInfo.getTtlInfoRecord().getTableName();
         String ttlCol = ttlDefInfo.getTtlInfoRecord().getTtlCol();
         String ttlUnit = TtlTimeUnit.of(ttlDefInfo.getTtlInfoRecord().getTtlUnit()).getUnitName();
         String ttlColExpr = ttlCol;
-
         String formatter = fetchRoundDownFormatter(ec, ttlDefInfo, ttlTblSchema, ttlTblName, ttlCol, ttlUnit);
-
-        boolean ttlColUseFuncExpr = ttlDefInfo.isTtlColUseFuncExpr();
+        String ttlColName = SQLUtils.encloseWithUnquote(ttlCol);
+        boolean ttlColUseFuncExpr = ttlDefInfo.isTtlColUseFuncExpr();//use isTtlColUseExprEncoding
         if (ttlColUseFuncExpr) {
-            String normalizedTtlColExpr = ttlDefInfo.getTtlColFuncExprInfo().getNormalizedTtlColFuncExprStr();
-            String ttlColFuncExpr = normalizedTtlColExpr.replace("?", ttlCol);
-            ttlColExpr = ttlColFuncExpr;
+            // normalizedTtlColExpr is the decoder expr of ttl_col which is used for decoding int_num to datetime string
+//            String normalizedTtlColExpr = ttlDefInfo.getTtlColFuncExprInfo().getTtlColDecoderStr();
+//            String ttlColFuncExpr = normalizedTtlColExpr.replace("?", ttlCol);
+            String normalizedTtlColExpr = ttlDefInfo.getTtlColFuncExprInfo().getTtlColDecoderUsingTtlColAsInputExpr();
+            ttlColExpr = normalizedTtlColExpr;
         }
 
+        String whereCondExpr = buildSelectWhereCondExpr(ttlDefInfo, ec);
         String queryHintFormatPart = "%s ";
         String selectExpiredLownerBoundValueSqlTemp = String.format(
             queryHintFormatPart + TtlTaskSqlBuilder.SELECT_TTL_COL_MIN_VAL_AND_LOWER_BOUND_SQL_TEMP_FORMAT,
-            queryHint, formatter, ttlColExpr, ttlTblSchema, ttlTblName, forceIndexExpr, whereCondExpr, ttlColExpr);
+            queryHint, formatter, ttlColExpr, ttlTblSchema, ttlTblName, forceIndexExpr, whereCondExpr, ttlColName);
         return selectExpiredLownerBoundValueSqlTemp;
+    }
+
+    public static String buildSelectExpiredDataPercentageSqlTemplate(TtlDefinitionInfo ttlDefInfo,
+                                                                     ExecutionContext ec,
+                                                                     String queryHint,
+                                                                     String forceIndexExpr,
+                                                                     String expiredBoundExpr,
+                                                                     String phyPartName) {
+        String ttlTblSchema = ttlDefInfo.getTtlInfoRecord().getTableSchema();
+        String ttlTblName = ttlDefInfo.getTtlInfoRecord().getTableName();
+        String ttlCol = ttlDefInfo.getTtlInfoRecord().getTtlCol();
+
+        String ttlColNameWithUnquotes = SQLUtils.encloseWithUnquote(ttlCol);
+        String ttlTblNameWithUnquotes = SQLUtils.encloseWithUnquote(ttlTblName);
+        String ttlTblSchemaWithUnquotes = SQLUtils.encloseWithUnquote(ttlTblSchema);
+        String phyPartNameWithUnquotes = SQLUtils.encloseWithUnquote(phyPartName);
+
+        String whereCondExpr = buildSelectWhereCondExpr(ttlDefInfo, ec);
+        String queryHintFormatPart = "%s ";
+
+        /**
+         *
+         * SELECT
+         * IF(
+         * 	    tmp_ratio IS NULL,
+         * 	    0,
+         * 	    IF(
+         * 	        tmp_ratio < 0,
+         * 	        0,
+         * 	        IF(
+         * 	            tmp_ratio > 100
+         * 	            100,
+         * 	            ROUND(tmp_ratio)
+         * 	        )
+         * 	    )
+         * 	) AS expired_data_percent
+         * FROM (
+         * 	SELECT 100 * (ABS(UNIX_TIMESTAMP('%s') - min_ts) / ABS(max_ts - min_ts + 1)) as tmp_ratio
+         * 	FROM (
+         * 		SELECT
+         * 			UNIX_TIMESTAMP(min_val) min_ts,
+         * 			UNIX_TIMESTAMP(max_val) max_ts
+         * 		FROM (
+         * 			SELECT
+         * 				MIN(`%s`) min_val,
+         * 				MAX(`%s`) max_val
+         * 			FROM `%s`.`%s` PARTITION(`%s`)
+         *
+         * 			%s
+         *
+         * 		) tmp1
+         * 	) tmp2
+         * ) tmp3
+         */
+
+        String selectExpiredDataPercentSqlTemp = String.format(
+            queryHintFormatPart + TtlTaskSqlBuilder.SELECT_EXPIRED_DATA_PERCENT_TEMP_BASE_ON_MIN_MAX,
+            queryHint,
+            expiredBoundExpr,
+            ttlColNameWithUnquotes,
+            ttlColNameWithUnquotes,
+            ttlTblSchemaWithUnquotes,
+            ttlTblNameWithUnquotes,
+            phyPartNameWithUnquotes,
+            whereCondExpr);
+        return selectExpiredDataPercentSqlTemp;
+    }
+
+    public static String buildSelectTotalRowCountSql(ExecutionContext ec,
+                                                     String tableSchema,
+                                                     String tableName) {
+        String selectTotalRowCountSql =
+            String.format(TtlTaskSqlBuilder.SELECT_TOTAL_ROW_COUNT_FROM_INFO_SCHEMA_SQL, tableSchema, tableName);
+        return selectTotalRowCountSql;
     }
 
     public static String buildDeleteTemplate(TtlDefinitionInfo ttlDefInfo,
                                              boolean needAddIntervalLowerBound,
                                              String queryHint,
-                                             String forceIndexExpr) {
+                                             String forceIndexExpr,
+                                             ExecutionContext ec) {
         String ttlTblSchema = ttlDefInfo.getTtlInfoRecord().getTableSchema();
         String ttlTblName = ttlDefInfo.getTtlInfoRecord().getTableName();
         String orderByCol = ttlDefInfo.getTtlInfoRecord().getTtlCol();
-        String filterPart = buildDeleteWhereCondExprTemplate(ttlDefInfo, needAddIntervalLowerBound);
+        String filterPart = buildDeleteWhereCondExprTemplate(ttlDefInfo, needAddIntervalLowerBound, ec);
         String deleteSqlTemp =
             String.format("%s DELETE FROM `%s`.`%s` PARTITION(?) WHERE %s ORDER BY %s ASC LIMIT ?;",
                 queryHint, ttlTblSchema, ttlTblName, filterPart, orderByCol);
@@ -382,23 +544,51 @@ public class TtlTaskSqlBuilder {
     }
 
     private static String buildDeleteWhereCondExprTemplate(TtlDefinitionInfo ttlDefInfo,
-                                                           boolean needAddIntervalLowerBound) {
+                                                           boolean needAddIntervalLowerBound,
+                                                           ExecutionContext ec) {
         String filterPart = "";
         String ttlCol = ttlDefInfo.getTtlInfoRecord().getTtlCol();
         String ttlExtFilter = ttlDefInfo.getTtlInfoRecord().getTtlFilter();
-        boolean ttlColUseFuncExpr = ttlDefInfo.isTtlColUseFuncExpr();
+        boolean onlyCleanupNotNullRows = true;
+        if (ec != null) {
+            onlyCleanupNotNullRows = ec.getParamManager().getBoolean(ConnectionParams.TTL_ONLY_CLEANUP_NOT_NULL_ROWS);
+        }
+        boolean ttlColUseFuncExpr = ttlDefInfo.isTtlColUseFuncExpr();//use isTtlColUseExprEncoding
         if (needAddIntervalLowerBound) {
-            filterPart = String.format(" `%s` < '?' and `%s` >= '?' ", ttlCol, ttlCol);
+            filterPart = String.format(" `%s` < '?' AND `%s` >= '?' ", ttlCol, ttlCol);
         } else {
-            filterPart = String.format(" (`%s` < '?' or `%s` is null) ", ttlCol, ttlCol);
+            if (onlyCleanupNotNullRows) {
+                filterPart = String.format(" (`%s` < '?') ", ttlCol);
+            } else {
+                filterPart = String.format(" (`%s` < '?' OR `%s` IS NULL) ", ttlCol, ttlCol);
+            }
         }
         if (!StringUtils.isEmpty(ttlExtFilter)) {
-            filterPart = String.format(" (%s) and (%s) ", filterPart, ttlExtFilter);
+            filterPart = String.format(" (%s) AND (%s) ", filterPart, ttlExtFilter);
         }
         String filterPartTemp = "";
         if (!ttlColUseFuncExpr) {
+            //
+            // if ttl_col do NOT use funcExpr encoding, that mean
+            // ttl_col is time-based datatype,like date/datetime/timestamp.
+            // so here only just replace "'?'" to "'%s'", so the string value of ttl_col
+            // and print into filterPart
+            //
             filterPartTemp = filterPart.replace("?", "%s");
         } else {
+            //
+            // if ttl_col use funcExpr encoding, that mean
+            // ttl_col is  int-based datatype,like int/bigint/bigint unsigned.
+            // so here need replace "'?'" to "%s", so the int value of ttl_col
+            // generated from encoding expr can and print into filterPart,
+            // and int_val does NOT need wrapping with the single quotes "'".
+            // e.g.
+            //  ttl_col_encoder: unix_timestmap(datetime_val);
+            //  ttl_col_decoder: from_unixtime(int_val);
+            //  ttl_col is a int_col.
+            //  that means
+            //  ttl_col < '2025-06-19' => ttl_col < (ts_val of unix_timestmap('2025-06-19'))
+            //
             filterPartTemp = filterPart.replace("'?'", "%s");
         }
 
@@ -407,34 +597,32 @@ public class TtlTaskSqlBuilder {
 
     public static String buildDeleteWhereCondExpr(ExecutionContext ec,
                                                   TtlDefinitionInfo ttlInfo,
-                                                  String cleanupLowerBoundStr) {
-        boolean ttlColUseFuncExpr = ttlInfo.isTtlColUseFuncExpr();
+                                                  String cleanupLowerBoundStr,
+                                                  TtlPartitionUtil.TtlColValueCalcContext calcContext) {
+        boolean ttlColUseFuncExpr = ttlInfo.isTtlColUseFuncExpr();//use isTtlColUseExprEncoding
         if (ttlColUseFuncExpr) {
-            ColumnMeta ttlColMeta = ttlInfo.getTtlColMeta(ec);
-            TtlPartitionUtil.TtlColBoundValue boundValue = new TtlPartitionUtil.TtlColBoundValue(
-                cleanupLowerBoundStr, ttlColMeta, PartKeyLevel.PARTITION_KEY, false, ttlInfo
-            );
-            cleanupLowerBoundStr = boundValue.getPartBoundValueStringByOriginalPartColDataType();
+            cleanupLowerBoundStr =
+                TtlJobUtil.getTtlColStringValueIfUseFuncExpr(ttlInfo, ec, calcContext, cleanupLowerBoundStr);
         }
-        String whereCondExprTemp = buildDeleteWhereCondExprTemplate(ttlInfo, false);
+        String whereCondExprTemp = buildDeleteWhereCondExprTemplate(ttlInfo, false, ec);
         String whereCondExprStr = String.format(whereCondExprTemp, cleanupLowerBoundStr);
         return whereCondExprStr;
     }
 
-    public static String buildSelectTtlTblByUsingDeleteWhereCondExpr(ExecutionContext ec,
-                                                                     TtlDefinitionInfo ttlDefInfo,
-                                                                     String cleanupLowerBoundStr) {
-        String whereCondExpr = buildDeleteWhereCondExpr(ec, ttlDefInfo, cleanupLowerBoundStr);
-        String ttlTblSchema = ttlDefInfo.getTtlInfoRecord().getTableSchema();
-        String ttlTblName = ttlDefInfo.getTtlInfoRecord().getTableName();
-        String ttlCol = ttlDefInfo.getTtlInfoRecord().getTtlCol();
-        String selectTtlTblByWhereCondExpr =
-            String.format("select `%s` from `%s`.`%s` force index(primary) where %s", ttlCol, ttlTblSchema, ttlTblName,
-                whereCondExpr);
-        return selectTtlTblByWhereCondExpr;
-    }
+//    public static String buildSelectTtlTblByUsingDeleteWhereCondExpr(ExecutionContext ec,
+//                                                                     TtlDefinitionInfo ttlDefInfo,
+//                                                                     String cleanupLowerBoundStr) {
+//        String whereCondExpr = buildDeleteWhereCondExpr(ec, ttlDefInfo, cleanupLowerBoundStr);
+//        String ttlTblSchema = ttlDefInfo.getTtlInfoRecord().getTableSchema();
+//        String ttlTblName = ttlDefInfo.getTtlInfoRecord().getTableName();
+//        String ttlCol = ttlDefInfo.getTtlInfoRecord().getTtlCol();
+//        String selectTtlTblByWhereCondExpr =
+//            String.format("select `%s` from `%s`.`%s` force index(primary) where %s", ttlCol, ttlTblSchema, ttlTblName,
+//                whereCondExpr);
+//        return selectTtlTblByWhereCondExpr;
+//    }
 
-    public static String addCciHint(String originalString, String... newParams) {
+    public static String addNewParamsIntoExtraCmdHint(String originalString, String... newParams) {
         StringBuilder paramBuilder = new StringBuilder();
         for (String param : newParams) {
             if (paramBuilder.length() > 0) {
@@ -612,6 +800,12 @@ public class TtlTaskSqlBuilder {
         return stmt;
     }
 
+    public static String buildSubJobTaskNameForCleanupByRebuildTableSubJobStmt() {
+        String stmt = "";
+        stmt = String.format(SUBJOB_STMT_TEMP, SUBJOB_NAME_FOR_CLEANUP_BY_REBUILD_TBL);
+        return stmt;
+    }
+
     public static final String STATS_PHY_TTL_TMP_TBL_DATA_LENGTH_BY_GROUP =
         "/*TDDL: node='%s'*/select sum(table_rows) all_table_rows, sum(data_length + index_length) all_data_length from information_schema.tables where table_schema='%s' and table_name in (%s)";
 
@@ -671,6 +865,13 @@ public class TtlTaskSqlBuilder {
         return sql;
     }
 
+    public static String buildRollbackDdlSql(Long jobId) {
+        String sql = "";
+        sql = String.format(
+            "ROLLBACK DDL /* from ttl job */ %s", jobId);
+        return sql;
+    }
+
     public static String buildAsyncContinueDdlSql(Long jobId, int optiTblParallelism) {
         String sql = "";
         sql = String.format(
@@ -721,7 +922,8 @@ public class TtlTaskSqlBuilder {
             cciHint = String.format("/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS=\"%s\")*/", skipDdlTasks);
         }
 
-        sql = String.format("%s create clustered columnar index `%s` on `%s`(`%s`) %s;",
+        sql = String.format(
+            "%s create clustered columnar index `%s` on `%s`(`%s`) %s columnar_options='{\"type\":\"archive\"}';",
             cciHint, ciNameOfArcTbl, ttlTblName, ttlColName, ciPartByStr);
         return sql;
     }
@@ -760,12 +962,23 @@ public class TtlTaskSqlBuilder {
 
     public static String buildCreateViewSqlForArcTbl(String arcTblSchema,
                                                      String arcTblName,
-                                                     TtlDefinitionInfo ttlInfo) {
+                                                     TtlDefinitionInfo ttlDefinitionInfo) {
+        return buildCreateViewSqlForArcTblByTtlTblName(
+            arcTblSchema,
+            arcTblName,
+            ttlDefinitionInfo.getTtlInfoRecord().getTableSchema(),
+            ttlDefinitionInfo.getTtlInfoRecord().getTableName());
+    }
+
+    public static String buildCreateViewSqlForArcTblByTtlTblName(String arcTblSchema,
+                                                                 String arcTblName,
+                                                                 String newTblSchema,
+                                                                 String newTblName) {
         String sql = "";
         String viewSchema = arcTblSchema;
         String viewName = arcTblName;
-        String ttlTblSchema = ttlInfo.getTtlInfoRecord().getTableSchema();
-        String ttlTblName = ttlInfo.getTtlInfoRecord().getTableName();
+        String ttlTblSchema = newTblSchema;
+        String ttlTblName = newTblName;
         String ciIndexName = TtlUtil.buildArcTmpNameByArcTblName(arcTblName);
         sql = String.format("create or replace view `%s`.`%s` as select * from `%s`.`%s` force index (`%s`);",
             viewSchema, viewName, ttlTblSchema, ttlTblName, ciIndexName);
@@ -820,10 +1033,224 @@ public class TtlTaskSqlBuilder {
         return alterModifyTtlSql;
     }
 
-    public static String buildAsyncTtTableCleanupExpiredDataSql(String ttlTblSchema, String ttlTableName) {
-        String alterTableCleanupExpiredDataSql =
-            String.format(ASYNC_ALTER_TABLE_CLEANUP_EXPIRED_DATA_TEMPLATE, ttlTblSchema, ttlTableName);
+    public static String buildAsyncTtlTableCleanupExpiredDataSql(String ttlTblSchema,
+                                                                 String ttlTableName,
+                                                                 long scheduleId,
+                                                                 long fireTime,
+                                                                 long ddlStmtRetryNum,
+                                                                 ExecutionContext ec) {
+        boolean usingEc = ec != null;
+        String alterTableCleanupExpiredDataSql = "";
+        if (usingEc) {
+            // fired by using fire schedule by `xxx_db`.`xxx_tbl`, so it will specify ec
+            alterTableCleanupExpiredDataSql =
+                buildAsyncTtlTableCleanupExpiredDataSqlWithEc(ttlTblSchema, ttlTableName, scheduleId, fireTime,
+                    ddlStmtRetryNum, ec);
+        } else {
+            // fired by auto schedule, so it will not specify ec
+            alterTableCleanupExpiredDataSql =
+                String.format(ASYNC_ALTER_TABLE_CLEANUP_EXPIRED_DATA_TEMPLATE, scheduleId, fireTime, ddlStmtRetryNum,
+                    ttlTblSchema,
+                    ttlTableName);
+        }
         return alterTableCleanupExpiredDataSql;
     }
 
+    protected static String buildAsyncTtlTableCleanupExpiredDataSqlWithEc(String ttlTblSchema,
+                                                                          String ttlTableName,
+                                                                          long scheduleId,
+                                                                          long fireTime,
+                                                                          long ddlStmtRetryNum,
+                                                                          ExecutionContext ec) {
+
+        String alterTableCleanupExpiredDataSql = "";
+
+        Map<String, String> cmdExtraMapping = new HashMap<>();
+        cmdExtraMapping.put(ConnectionProperties.ENABLE_ASYNC_DDL, "true");
+        cmdExtraMapping.put(ConnectionProperties.PURE_ASYNC_DDL_MODE, "true");
+
+        String debugCurrentDatetime = "";
+        debugCurrentDatetime = ec.getParamManager().getString(ConnectionParams.TTL_DEBUG_CURRENT_DATETIME);
+        if (!StringUtils.isEmpty(debugCurrentDatetime)) {
+            cmdExtraMapping.put(ConnectionProperties.TTL_DEBUG_CURRENT_DATETIME,
+                String.format("'%s'", debugCurrentDatetime));
+        }
+        String skipDdlTasks = ec.getParamManager().getString(ConnectionParams.SKIP_DDL_TASKS);
+        if (!StringUtils.isEmpty(skipDdlTasks)) {
+            cmdExtraMapping.put(ConnectionProperties.SKIP_DDL_TASKS, skipDdlTasks);
+        }
+        String ttlDebugCciSkipDdlTask = ec.getParamManager().getString(ConnectionParams.TTL_DEBUG_CCI_SKIP_DDL_TASKS);
+        if (!StringUtils.isEmpty(ttlDebugCciSkipDdlTask)) {
+            cmdExtraMapping.put(ConnectionProperties.TTL_DEBUG_CCI_SKIP_DDL_TASKS, ttlDebugCciSkipDdlTask);
+        }
+        String fpTtlJobSuspendTimeOnDeleteRow =
+            (String) ec.getExtraCmds().get(FailPointKey.FP_TTL_JOB_SUSPEND_TIME_ON_DELETE_ROW);
+        if (!StringUtils.isEmpty(fpTtlJobSuspendTimeOnDeleteRow)) {
+            cmdExtraMapping.put(FailPointKey.FP_TTL_JOB_SUSPEND_TIME_ON_DELETE_ROW, fpTtlJobSuspendTimeOnDeleteRow);
+        }
+        String fpTtlJobSuspendTimeOnAddPrimPart =
+            (String) ec.getExtraCmds().get(FailPointKey.FP_TTL_JOB_SUSPEND_TIME_ON_ADD_PRIM_PART);
+        if (!StringUtils.isEmpty(fpTtlJobSuspendTimeOnAddPrimPart)) {
+            cmdExtraMapping.put(FailPointKey.FP_TTL_JOB_SUSPEND_TIME_ON_ADD_PRIM_PART,
+                fpTtlJobSuspendTimeOnAddPrimPart);
+        }
+        String fpTtlJobSuspendTimeOnAddArcCciPart =
+            (String) ec.getExtraCmds().get(FailPointKey.FP_TTL_JOB_SUSPEND_TIME_ON_ADD_CCI_PART);
+        if (!StringUtils.isEmpty(fpTtlJobSuspendTimeOnAddArcCciPart)) {
+            cmdExtraMapping.put(FailPointKey.FP_TTL_JOB_SUSPEND_TIME_ON_ADD_CCI_PART,
+                fpTtlJobSuspendTimeOnAddArcCciPart);
+        }
+
+        String ttlAlterAddPartStmtExtraParams =
+            ec.getParamManager().getString(ConnectionParams.TTL_ALTER_ADD_PART_STMT_EXTRA_PARAMS);
+        if (!StringUtils.isEmpty(ttlAlterAddPartStmtExtraParams)) {
+            cmdExtraMapping.put(ConnectionProperties.TTL_ALTER_ADD_PART_STMT_EXTRA_PARAMS,
+                String.format("'%s'", ttlAlterAddPartStmtExtraParams));
+        }
+
+        String ttlAlterDropPartStmtExtraParams =
+            ec.getParamManager().getString(ConnectionParams.TTL_ALTER_DROP_PART_STMT_EXTRA_PARAMS);
+        if (!StringUtils.isEmpty(ttlAlterDropPartStmtExtraParams)) {
+            cmdExtraMapping.put(ConnectionProperties.TTL_ALTER_DROP_PART_STMT_EXTRA_PARAMS,
+                String.format("'%s'", ttlAlterDropPartStmtExtraParams));
+        }
+
+        // Propagate TTL_JOB_FOLLOW_MAINTAIN_WINDOW so the DDL engine task ec also
+        // honours the maintenance-window constraint set by the original manual hint.
+        boolean followMaintainWindow =
+            ec.getParamManager().getBoolean(ConnectionParams.TTL_JOB_FOLLOW_MAINTAIN_WINDOW);
+        if (followMaintainWindow) {
+            cmdExtraMapping.put(ConnectionProperties.TTL_JOB_FOLLOW_MAINTAIN_WINDOW, "true");
+        }
+
+        String debugHintStr = "";
+        for (Map.Entry<String, String> item : cmdExtraMapping.entrySet()) {
+            String key = item.getKey();
+            String value = item.getValue();
+            if (!StringUtils.isEmpty(debugHintStr)) {
+                debugHintStr += ",";
+            }
+            debugHintStr += String.format("%s=%s", key, value);
+        }
+
+        // Use the hint-carrying template when any debug/test param or the
+        // TTL_JOB_FOLLOW_MAINTAIN_WINDOW hint is present; otherwise fall through
+        // and return empty string so the caller uses the plain template.
+        if (!StringUtils.isEmpty(debugCurrentDatetime) || followMaintainWindow) {
+            alterTableCleanupExpiredDataSql =
+                String.format(ASYNC_ALTER_TABLE_CLEANUP_EXPIRED_DATA_TEMPLATE_WITH_DEBUG_DATETIME, debugHintStr,
+                    scheduleId, fireTime, ddlStmtRetryNum, ttlTblSchema, ttlTableName);
+        }
+        return alterTableCleanupExpiredDataSql;
+    }
+
+    public static String getTtlAddPartsStmtHint(ExecutionContext ec) {
+        String queryHintForAlterTableAddParts = TtlConfigUtil.getQueryHintForAutoAddParts();
+        if (ec == null) {
+            return queryHintForAlterTableAddParts;
+        }
+        queryHintForAlterTableAddParts = ec.getParamManager().get(ConnectionParams.TTL_ALTER_ADD_PART_STMT_HINT);
+        String extraParamsOfAddParts = ec.getParamManager().get(ConnectionParams.TTL_ALTER_ADD_PART_STMT_EXTRA_PARAMS);
+        String finalQueryHintForAlterTableAddParts = queryHintForAlterTableAddParts;
+        if (!StringUtils.isEmpty(extraParamsOfAddParts)) {
+            finalQueryHintForAlterTableAddParts =
+                addNewParamsIntoExtraCmdHint(queryHintForAlterTableAddParts, extraParamsOfAddParts);
+        }
+        return finalQueryHintForAlterTableAddParts;
+    }
+
+    public static String getTtlDropPartsStmtHint(ExecutionContext ec) {
+        String queryHintForAlterTableDropParts = TtlConfigUtil.getQueryHintForAutoDropParts();
+        if (ec == null) {
+            return queryHintForAlterTableDropParts;
+        }
+        queryHintForAlterTableDropParts = ec.getParamManager().get(ConnectionParams.TTL_ALTER_DROP_PART_STMT_HINT);
+        String extraParamsOfDropParts =
+            ec.getParamManager().get(ConnectionParams.TTL_ALTER_DROP_PART_STMT_EXTRA_PARAMS);
+        String finalQueryHintForAlterTableDropParts = queryHintForAlterTableDropParts;
+        if (!StringUtils.isEmpty(extraParamsOfDropParts)) {
+            finalQueryHintForAlterTableDropParts =
+                addNewParamsIntoExtraCmdHint(queryHintForAlterTableDropParts, extraParamsOfDropParts);
+        }
+        return finalQueryHintForAlterTableDropParts;
+    }
+
+    /**
+     * Build the sql of optimize table with expired data filter.
+     * <p>
+     * The OMC backfill tuning params (OMC_BACKFILL_PARALLELISM, OMC_BACKFILL_SPEED_MIN,
+     * OMC_BACKFILL_SPEED_LIMITATION, OMC_CATCHUP_LOOP_COUNT_BEFORE_BP) are read from
+     * ExecutionContext and injected into the sub-job SQL hint so that they survive
+     * pause/resume of both the parent DDL and the sub-job itself. Only params whose
+     * value differs from the built-in default are injected, keeping the SQL clean
+     * when defaults are used.
+     */
+    public static String buildCleanupByRebuildTable(TtlJobContext jobContext, ExecutionContext ec) {
+        String boundVal = jobContext.getCleanUpUpperBound();
+        TtlDefinitionInfo ttlInfo = jobContext.getTtlInfo();
+        String ttlTblSchema = ttlInfo.getTtlInfoRecord().getTableSchema();
+        String ttlTblName = ttlInfo.getTtlInfoRecord().getTableName();
+        String ttlColName = ttlInfo.getTtlInfoRecord().getTtlCol();
+
+        // Handle int-encoded TTL column (e.g. unix_timestamp): convert datetime boundVal to integer value
+        boolean ttlColUseFuncExpr = ttlInfo.isTtlColUseFuncExpr();
+        String filterBoundVal = boundVal;
+        if (ttlColUseFuncExpr) {
+            // Convert datetime string to corresponding int value via encoder
+            TtlPartitionUtil.TtlColValueCalcContext calcContext =
+                TtlPartitionUtil.TtlColValueCalcContext.buildBoundValueCalcContext(ttlInfo, ec);
+            filterBoundVal = TtlJobUtil.getTtlColStringValueIfUseFuncExpr(ttlInfo, ec, calcContext, boundVal);
+        }
+
+        // Build keep filter expression: retain rows where ttlCol >= boundVal (non-expired data)
+        String filterExprInOptiTbl;
+        String normalizedTtlColName = SQLUtils.normalize(ttlColName);
+        if (!ttlColUseFuncExpr) {
+            // datetime/date type: wrap value with single quotes
+            filterExprInOptiTbl = String.format("%s >= '%s'", normalizedTtlColName, filterBoundVal);
+        } else {
+            // int-encoded type: no quotes needed
+            filterExprInOptiTbl = String.format("%s >= %s", normalizedTtlColName, filterBoundVal);
+        }
+
+        // Escape double quotes in filterExpr to avoid breaking the outer hint structure
+        filterExprInOptiTbl = filterExprInOptiTbl.replace("\"", "\\\"");
+
+        // Build hint params dynamically. The base params (FORCE_USING_OMC_30,
+        // ENABLE_OMC_30, REBUILD_TABLE_KEEP_FILTER) are always present. The OMC
+        // backfill tuning params are propagated from ExecutionContext only when
+        // their value differs from the built-in default, so that the sub-job SQL
+        // is self-contained and the params survive pause/resume.
+        List<String> hintParams = new ArrayList<>();
+        hintParams.add("FORCE_USING_OMC_30=TRUE");
+        hintParams.add("ENABLE_OMC_30=TRUE");
+        hintParams.add(String.format("REBUILD_TABLE_KEEP_FILTER=\"%s\"", filterExprInOptiTbl));
+
+        if (ec != null) {
+            appendHintParamIfNonDefault(hintParams, ec, ConnectionParams.OMC_BACKFILL_PARALLELISM);
+            appendHintParamIfNonDefault(hintParams, ec, ConnectionParams.OMC_BACKFILL_SPEED_MIN);
+            appendHintParamIfNonDefault(hintParams, ec, ConnectionParams.OMC_BACKFILL_SPEED_LIMITATION);
+            appendHintParamIfNonDefault(hintParams, ec, ConnectionParams.OMC_CATCHUP_LOOP_COUNT_BEFORE_BP);
+        }
+
+        String hintParamsStr = String.join(",", hintParams);
+        String optiTblSql = String.format(
+            "/*+TDDL:CMD_EXTRA(%s)*/ ALTER TABLE /* from ttl job */ %s.%s ENGINE=INNODB,ALGORITHM=OMC ASYNC=TRUE",
+            hintParamsStr, ttlTblSchema, ttlTblName);
+        return optiTblSql;
+    }
+
+    /**
+     * Append a hint param (KEY=VALUE) to the list only when the current value
+     * from ExecutionContext differs from the param's built-in default.
+     */
+    private static void appendHintParamIfNonDefault(List<String> hintParams,
+                                                    ExecutionContext ec,
+                                                    ConfigParam param) {
+        String currentVal = ec.getParamManager().get(param);
+        String defaultVal = param.getDefault();
+        if (currentVal != null && !currentVal.equals(defaultVal)) {
+            hintParams.add(String.format("%s=%s", param.getName(), currentVal));
+        }
+    }
 }

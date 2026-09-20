@@ -227,19 +227,40 @@ public class PartitionTupleRoutingContext {
                                                List<RelDataTypeField> outputPartColRelRowTypeList) {
         for (ColumnMeta columnMeta : fullPartColMetas) {
             String partColName = columnMeta.getName();
-            if (partColName.contains(".")) {
-                partColName = partColName.split("\\.")[1]; // 避免转义
-            }
 
             List<ColumnMeta> targetColumnList = targetTupleRowColMetas;
             int index = -1;
             for (int i = 0; i < targetColumnList.size(); i++) {
+                // Null entries stand for tuple columns unknown to this table meta (e.g. a GSI
+                // backfill INSERT addresses an externalized column by its physical addr name,
+                // which the logical index meta cannot resolve). They can never be partition
+                // columns, so skip them instead of dereferencing.
+                if (targetColumnList.get(i) == null) {
+                    continue;
+                }
                 String colName = targetColumnList.get(i).getField().getOriginColumnName();
                 if (colName.equalsIgnoreCase(partColName)) {
                     index = i;
                     break;
                 }
             }
+
+            if (index < 0) {
+                if (partColName.contains(".")) {
+                    partColName = partColName.split("\\.")[1]; // 避免转义
+                }
+                for (int i = 0; i < targetColumnList.size(); i++) {
+                    if (targetColumnList.get(i) == null) {
+                        continue;
+                    }
+                    String colName = targetColumnList.get(i).getField().getOriginColumnName();
+                    if (colName.equalsIgnoreCase(partColName)) {
+                        index = i;
+                        break;
+                    }
+                }
+            }
+
             // if it's absent, it's using default value
             if (index < 0) {
                 throw new TddlRuntimeException(ErrorCode.ERR_EXECUTE_ON_MYSQL_UNKNOWN_COLUMN,

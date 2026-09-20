@@ -38,7 +38,7 @@
         <example.dir>${project.basedir}/../../examples</example.dir>
 
         <maven.version>3.6.3</maven.version>
-        <protoc.artifact>com.google.protobuf:protoc:3.17.3</protoc.artifact>
+        <junit.version>5.11.0</junit.version>
     </properties>
 
     <dependencies>
@@ -191,6 +191,24 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-params</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-core</artifactId>
             <version>1.9.5</version>
@@ -275,7 +293,7 @@
             <plugin>
                 <groupId>com.github.os72</groupId>
                 <artifactId>protoc-jar-maven-plugin</artifactId>
-                <version>3.11.4</version>
+                <version>${protoc-jar.version}</version>
                 <executions>
                     <execution>
                         <phase>generate-sources</phase>
@@ -283,8 +301,8 @@
                             <goal>run</goal>
                         </goals>
                         <configuration>
-                            <protocArtifact>${protoc.artifact}</protocArtifact>
-                            <protocVersion>3.17.3</protocVersion>
+                            <protocArtifact>com.google.protobuf:protoc:${protoc.version}</protocArtifact>
+                            <protocVersion>${protoc.version}</protocVersion>
                             <addSources>none</addSources>
                             <includeDirectories>
                                 <include>src/proto</include>

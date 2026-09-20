@@ -26,6 +26,7 @@ import com.alibaba.polardbx.optimizer.core.rel.BaseTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalModify;
 import com.alibaba.polardbx.optimizer.core.rel.dml.DistinctWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.ReplicationWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.RoutedModifyInput;
 import com.alibaba.polardbx.optimizer.partition.common.PartitionLocation;
 import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
 import org.apache.calcite.plan.RelOptTable;
@@ -54,7 +55,8 @@ public class ReplicateSingleModifyWriter extends SingleModifyWriter implements R
 
     @Override
     public List<RelNode> getInput(ExecutionContext ec, Function<DistinctWriter, List<List<Object>>> rowGenerator) {
-        List<RelNode> primaryRelNodes = super.getInput(ec, rowGenerator);
+        List<RelNode> inputs = super.getInput(ec, rowGenerator);
+        List<RelNode> primaryRelNodes = primaryWritePlans(inputs);
         boolean isNewPart = DbInfoManager.getInstance().isNewPartitionDb(tableMeta.getSchemaName());
         if (isNewPart) {
             List<RelNode> replicateRelNodes;
@@ -66,9 +68,9 @@ public class ReplicateSingleModifyWriter extends SingleModifyWriter implements R
                     (BaseQueryOperation) relNode,
                     ec);
             }
-            primaryRelNodes.addAll(replicateRelNodes);
+            inputs.addAll(replicateRelNodes);
         }
-        return primaryRelNodes;
+        return inputs;
     }
 
     private List<RelNode> getReplicateInput(List<RelNode> relNodes) {

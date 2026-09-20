@@ -5,20 +5,16 @@ import com.alibaba.polardbx.druid.sql.ast.expr.SQLCharExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLNumericLiteralExpr;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLCallStatement;
 import com.alibaba.polardbx.executor.cursor.impl.ArrayResultCursor;
+import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableStatus;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.server.ServerConnection;
-import org.apache.calcite.sql.SqlKind;
 
 import java.sql.Connection;
 import java.util.List;
-
-import static com.alibaba.polardbx.common.columnar.ColumnarUtils.AddCDCMarkEventForColumnar;
-import static com.alibaba.polardbx.server.handler.pl.inner.InnerProcedureUtils.COLUMNAR_FLUSH;
-import static com.alibaba.polardbx.server.handler.pl.inner.InnerProcedureUtils.POLARDBX_INNER_PROCEDURE;
 
 /**
  * @author lijiu
@@ -27,24 +23,17 @@ public class ColumnarFlushProcedure extends BaseInnerProcedure {
 
     @Override
     public void execute(ServerConnection c, SQLCallStatement statement, ArrayResultCursor cursor) {
-        String sql = "call " + POLARDBX_INNER_PROCEDURE + "." + COLUMNAR_FLUSH + "()";
-
+        Long tso = null;
+        long indexId = 0;
         //支持三种参数：
         // 1、columnar_flush()，实例级别
         // 2、columnar_flush(schemaName, tableName, indexName)，通过库名、表名、索引名匹配
         // 3、columnar_flush(indexId)，通过列存索引id匹配
-
-        if (statement.getParameters().size() > 0) {
-            long indexId = checkParameters(statement.getParameters(), statement);
-            //直接将参数替换成列存索引id
-            sql = "call " + POLARDBX_INNER_PROCEDURE + "." + COLUMNAR_FLUSH + "(" + indexId + ")";
+        if (!statement.getParameters().isEmpty()) {
+            indexId = checkParameters(statement.getParameters(), statement);
         }
 
-        Long tso = AddCDCMarkEventForColumnar(sql, SqlKind.PROCEDURE_CALL.name());
-
-        if (tso == null || tso <= 0) {
-            throw new RuntimeException(sql + " is failed, because tso: " + tso);
-        }
+        tso = ExecUtils.columnarFlush(indexId);
 
         //返回结果
         cursor.addColumn("COMMIT_TSO", DataTypes.LongType);

@@ -19,7 +19,7 @@ package com.alibaba.polardbx.server.response;
 import com.alibaba.polardbx.Fields;
 import com.alibaba.polardbx.executor.columnar.pruning.ColumnarPruneManager;
 import com.alibaba.polardbx.executor.operator.scan.BlockCacheManager;
-import com.alibaba.polardbx.executor.operator.scan.impl.DefaultScanPreProcessor;
+import com.alibaba.polardbx.common.orc.PreheatMetaManager;
 import com.alibaba.polardbx.gms.engine.FileStoreStatistics;
 import com.alibaba.polardbx.net.buffer.ByteBufferHolder;
 import com.alibaba.polardbx.net.compress.IPacketOutputProxy;
@@ -111,7 +111,7 @@ public class ShowCacheStats {
         List<byte[][]> resultList = new ArrayList<>();
         List<byte[][]> fileCacheStats = FileStoreStatistics.generateCacheStatsPacket();
         byte[][] blockCacheStats = BlockCacheManager.getInstance().generateCacheStatsPacket();
-        byte[][] stripeFootCache = DefaultScanPreProcessor.getCacheStat();
+        byte[][] stripeFootCache = PreheatMetaManager.getInstance().getCacheStat();
         byte[][] pruneCache = ColumnarPruneManager.getCacheStat();
         resultList.addAll(fileCacheStats);
         resultList.add(blockCacheStats);

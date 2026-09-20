@@ -31,7 +31,7 @@ import java.util.Optional;
 
 public class PurgeColumnarTsoTimerTask implements Runnable {
 
-    private static final Logger logger = LoggerFactory.getLogger("COLUMNAR_TRANS");
+    private static final Logger logger = LoggerFactory.getLogger("mpp_log");
 
     @Override
     public void run() {
@@ -69,10 +69,10 @@ public class PurgeColumnarTsoTimerTask implements Runnable {
 
             try {
                 if (hasLeadership) {
-                    SyncManagerHelper.sync(new ColumnarMinSnapshotPurgeSyncAction(minSnapshotTime),
+                    SyncManagerHelper.syncThrowExceptions(new ColumnarMinSnapshotPurgeSyncAction(minSnapshotTime),
                         SystemDbHelper.DEFAULT_DB_NAME, SyncScope.ALL);
                 } else {
-                    SyncManagerHelper.sync(new ColumnarMinSnapshotPurgeSyncAction(minSnapshotTime),
+                    SyncManagerHelper.syncThrowExceptions(new ColumnarMinSnapshotPurgeSyncAction(minSnapshotTime),
                         SystemDbHelper.DEFAULT_DB_NAME, SyncScope.CURRENT_ONLY);
                 }
 

@@ -25,7 +25,7 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.logger.MDC;
 import com.alibaba.polardbx.common.utils.thread.ServerThreadPool;
 import com.alibaba.polardbx.config.ConfigDataMode;
-import com.alibaba.polardbx.optimizer.utils.ITimestampOracle;
+import com.alibaba.polardbx.common.trx.ITimestampOracle;
 import com.alibaba.polardbx.transaction.TransactionExecutor;
 import com.alibaba.polardbx.transaction.TransactionLogger;
 import com.alibaba.polardbx.transaction.log.GlobalTxLogManager;
@@ -216,7 +216,8 @@ public class AsyncTaskQueue {
     public TimerTask scheduleMdlDeadlockDetectionTask(TransactionExecutor te, int intervalInMs,
                                                       Collection<String> allSchema,
                                                       int mdlWaitTimeoutInSec) {
-        final MdlDeadlockDetectionTask detectTask = new MdlDeadlockDetectionTask(schema, allSchema, te, mdlWaitTimeoutInSec);
+        final MdlDeadlockDetectionTask detectTask =
+            new MdlDeadlockDetectionTask(schema, allSchema, te, mdlWaitTimeoutInSec);
         final ScheduleAsyncTask task = ScheduleAsyncTask.build(detectTask);
 
         TimerTask timerTask = new TimerTask() {
@@ -256,7 +257,7 @@ public class AsyncTaskQueue {
             @Override
             public void run() {
                 if (!task.schedule()) {
-                    logger.warn("Ignore re-submit TSO heartbeat task");
+                    logger.debug("Ignore re-submit TSO heartbeat task");
                     return;
                 }
 
@@ -313,7 +314,7 @@ public class AsyncTaskQueue {
             @Override
             public void run() {
                 if (!task.schedule()) {
-                    logger.warn("Ignore re-submit TSO purge task");
+                    logger.debug("Ignore re-submit TSO purge task");
                     return;
                 }
 
@@ -340,7 +341,7 @@ public class AsyncTaskQueue {
             @Override
             public void run() {
                 if (!task.schedule()) {
-                    logger.warn("Ignore re-submit transaction statistics task");
+                    logger.debug("Ignore re-submit transaction statistics task");
                     return;
                 }
 
@@ -384,7 +385,7 @@ public class AsyncTaskQueue {
             @Override
             public void run() {
                 if (!task.schedule()) {
-                    logger.warn("Ignore re-submit sync point task");
+                    logger.debug("Ignore re-submit sync point task");
                     return;
                 }
 
@@ -420,6 +421,93 @@ public class AsyncTaskQueue {
         return timerTask;
     }
 
+    public TimerTask scheduleAcRecoverTask(final long interval, final Runnable rawTask) {
+        final ScheduleAsyncTask task = ScheduleAsyncTask.build(rawTask);
+
+        final TimerTask timerTask = new TimerTask() {
+
+            @Override
+            public void run() {
+                if (!task.schedule()) {
+                    logger.debug("Ignore re-submit AC recover task");
+                    return;
+                }
+
+                try {
+                    executor.submit(null, null, task);
+                } catch (Throwable e) {
+                    task.cancel();
+                    logger.error("Submit AC recover task failed", e);
+                }
+            }
+
+            @Override
+            public boolean cancel() {
+                try {
+                    // Cancel the async task in case that
+                    // it is already submitted but not yet executed.
+                    task.cancel();
+                } catch (Throwable t) {
+                    // Ignore.
+                    logger.error("Cancel AC recover task failed", t);
+                }
+                final boolean returnVal = super.cancel();
+                // Release space of cancelled timer task.
+                timer.purge();
+                return returnVal;
+            }
+        };
+
+        timer.scheduleAtFixedRate(timerTask, 0, interval * 1000L);
+
+        TransactionLogger.info(schema + ": Scheduled AC recover task.");
+
+        return timerTask;
+    }
+
+    public TimerTask scheduleSqlExceedMaxStatementTimeTask(final int interval, final Runnable rawTask) {
+        final ScheduleAsyncTask task = ScheduleAsyncTask.build(rawTask);
+
+        final TimerTask timerTask = new TimerTask() {
+            @Override
+            public void run() {
+                if (!task.schedule()) {
+                    logger.warn("Ignore re-submit MaxStatementTimeScanTask");
+                    return;
+                }
+
+                try {
+                    executor.submit(schema, null, task);
+                } catch (Throwable e) {
+                    task.cancel();
+                    logger.error("Submit MaxStatementTimeScanTask failed", e);
+                }
+            }
+
+            @Override
+            public boolean cancel() {
+                try {
+                    // Cancel the async task in case that
+                    // it is already submitted but not yet executed.
+                    task.cancel();
+                } catch (Throwable t) {
+                    // Ignore.
+                    logger.error("Submit MaxStatementTimeScanTask failed", t);
+                }
+                final boolean returnVal = super.cancel();
+                // Release space of cancelled timer task.
+                timer.purge();
+                return returnVal;
+            }
+        };
+
+        timer.scheduleAtFixedRate(timerTask, 0, interval * 1000L);
+
+        TransactionLogger.info(schema + ": Scheduled MaxStatementTimeScanTask.");
+
+        return timerTask;
+    }
+
     public TimerTask scheduleTransactionIdleTimeoutTask(final int interval, final Runnable rawTask) {
         final ScheduleAsyncTask task = ScheduleAsyncTask.build(rawTask);
 
@@ -428,7 +516,7 @@ public class AsyncTaskQueue {
             @Override
             public void run() {
                 if (!task.schedule()) {
-                    logger.warn("Ignore re-submit idle trx timeout task");
+                    logger.debug("Ignore re-submit idle trx timeout task");
                     return;
                 }
 

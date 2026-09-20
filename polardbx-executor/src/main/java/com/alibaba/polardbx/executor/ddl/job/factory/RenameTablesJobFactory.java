@@ -21,14 +21,14 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.ddl.job.factory.util.FactoryUtils;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameTablesCdcSyncTask;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameTablesUpdateDataIdTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameTablesFinalOperationsTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameTablesUpdateMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameTablesValidateTask;
-import com.alibaba.polardbx.executor.ddl.job.task.basic.TableListDataIdSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.columnar.RenameColumnarTablesMetaTask;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.config.table.PreemptiveTime;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -41,7 +41,7 @@ import java.util.Set;
 
 import static com.alibaba.polardbx.executor.ddl.job.validator.TableValidator.validateAllowRenameMultiTable;
 
-public class RenameTablesJobFactory extends DdlJobFactory {
+public class RenameTablesJobFactory extends OnlineDdlJobFactory {
 
     private final String schemaName;
     private final RenameTablesPreparedData preparedData;
@@ -53,6 +53,7 @@ public class RenameTablesJobFactory extends DdlJobFactory {
                                   RenameTablesPreparedData preparedData,
                                   ExecutionContext executionContext,
                                   List<Long> versionIds) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.META_ONLY);
         this.schemaName = schemaName;
         this.preparedData = preparedData;
         this.executionContext = executionContext;
@@ -87,20 +88,14 @@ public class RenameTablesJobFactory extends DdlJobFactory {
                 enablePreemptiveMdl, preemptiveTime,
                 oldNames, newNames, preparedData.getCollate(), preparedData.getCdcMetas(),
                 preparedData.getNewTableTopologies(), versionIds);
-        RenameTablesUpdateDataIdTask dataIdTask = new RenameTablesUpdateDataIdTask(schemaName, oldNames, newNames);
-        TableListDataIdSyncTask tableListDataIdSyncTask =
-            new TableListDataIdSyncTask(schemaName, preparedData.getDistinctNames());
-        TableListDataIdSyncTask tableListDataIdSyncTask0 =
-            new TableListDataIdSyncTask(schemaName, preparedData.getDistinctNames());
+        RenameTablesFinalOperationsTask dataIdTask = new RenameTablesFinalOperationsTask(schemaName, oldNames, newNames);
 
         taskList.add(validateTask);
-        taskList.add(tableListDataIdSyncTask0);
         taskList.add(metaTask);
         taskList.add(columnarTask);
         // lock + cdc + sync + unlock
         taskList.add(cdcSyncTask);
         taskList.add(dataIdTask);
-        taskList.add(tableListDataIdSyncTask);
 
         ExecutableDdlJob executableDdlJob = new ExecutableDdlJob();
         executableDdlJob.addSequentialTasks(taskList);

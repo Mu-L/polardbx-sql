@@ -1,0 +1,86 @@
+## DISABLE_FAST_SQL_PARSER
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set sql_mode=''
+drop table if exists r_alter_encoder
+create table r_alter_encoder
+(
+a int ,
+b datetime,
+c varchar(32),
+primary key(a)
+)
+partition by range(a)
+(
+partition p1 values less than(20250601),
+partition p2 values less than(20250602),
+partition p3 values less than(20250603),
+partition p4 values less than(20250604),
+partition p5 values less than(20250605)
+)
+show create table r_alter_encoder
+Table,Create Table
+r_alter_encoder,CREATE TABLE `r_alter_encoder` (
+	`a` int(11) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` varchar(32) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY RANGE(`a`)
+(PARTITION p1 VALUES LESS THAN (20250601) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (20250602) ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN (20250603) ENGINE = InnoDB,
+ PARTITION p4 VALUES LESS THAN (20250604) ENGINE = InnoDB,
+ PARTITION p5 VALUES LESS THAN (20250605) ENGINE = InnoDB)
+alter table r_alter_encoder modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr=`a` expire after 2 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+ttl_col_encoder=date_format(?, '%Y%m%d'),
+ttl_col_decoder=str_to_date(?, '%Y%m%d 01:00:00'),
+archive_type='partition',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2
+show create table r_alter_encoder
+Table,Create Table
+r_alter_encoder,CREATE TABLE `r_alter_encoder` (
+	`a` int(11) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` varchar(32) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `a` EXPIRE AFTER 2 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_COL_ENCODER = DATE_FORMAT(?, '%Y%m%d'), TTL_COL_DECODER = STR_TO_DATE(?, '%Y%m%d 01:00:00'), TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE(`a`)
+(PARTITION p1 VALUES LESS THAN (20250601) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (20250602) ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN (20250603) ENGINE = InnoDB,
+ PARTITION p4 VALUES LESS THAN (20250604) ENGINE = InnoDB,
+ PARTITION p5 VALUES LESS THAN (20250605) ENGINE = InnoDB)
+alter table r_alter_encoder modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr=`a` expire over 3 partitions timezone '+08:00',
+ttl_part_interval=interval(1,number),
+ttl_col_encoder='',
+ttl_col_decoder='',
+archive_type='partition',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2
+show create table r_alter_encoder
+Table,Create Table
+r_alter_encoder,CREATE TABLE `r_alter_encoder` (
+	`a` int(11) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` varchar(32) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `a` EXPIRE OVER 3 PARTITIONS  TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, NUMBER), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 3, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE(`a`)
+(PARTITION p1 VALUES LESS THAN (20250601) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (20250602) ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN (20250603) ENGINE = InnoDB,
+ PARTITION p4 VALUES LESS THAN (20250604) ENGINE = InnoDB,
+ PARTITION p5 VALUES LESS THAN (20250605) ENGINE = InnoDB)
+drop table r_alter_encoder;

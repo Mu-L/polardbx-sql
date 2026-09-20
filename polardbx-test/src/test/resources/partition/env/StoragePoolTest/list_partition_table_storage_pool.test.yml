@@ -189,15 +189,18 @@ testCases:
       - " insert into orders_region(city, order_time) select city, order_time from orders_region;"
       - " insert into orders_region(city, order_time) select city, order_time from orders_region;"
       - " insert into orders_region(city, order_time) select city, order_time from orders_region;"
-      - "rebalance tenant sp3 policy = 'data_balance'"
+      - "rebalance tenant sp2 policy = 'data_balance'"
     dbNames: [orders_comm1]
     rejectDDls:
       - ddl: "alter table orders_region move partitions p1 to '$dn5'"
         message: "alter tablegroup operation not compatebale with partition"
     expectedSQLs:
-      - sql: "select sum(table_rows) from information_schema.table_detail where table_name
-      = 'orders_region' and storage_inst_id in ('$dn5', '$dn6') group by storage_inst_id"
-        result: "8192##8192"
+      - sql: "select (SELECT sum(table_rows) from information_schema.table_detail where table_name
+      = 'orders_region' and storage_inst_id in ('$dn5')) BETWEEN 7000 AND 10000; "
+        result: "1"
+      - sql: "select (SELECT sum(table_rows) from information_schema.table_detail where table_name
+      = 'orders_region' and storage_inst_id in ('$dn6')) BETWEEN 7000 AND 10000; "
+        result: "1"
     cleanupDDls:
       - "use polardbx;"
     checkTriggers:

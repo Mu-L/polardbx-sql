@@ -128,8 +128,10 @@ import com.alibaba.polardbx.druid.sql.ast.expr.SQLValuesExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLVariantRefExpr;
 import com.alibaba.polardbx.druid.sql.ast.statement.DrdsAlterTableAllocateLocalPartition;
 import com.alibaba.polardbx.druid.sql.ast.statement.DrdsAlterTableCleanupExpiredData;
+import com.alibaba.polardbx.druid.sql.ast.statement.DrdsAlterTableRebuildCleanup;
 import com.alibaba.polardbx.druid.sql.ast.statement.DrdsAlterTableExpireLocalPartition;
 import com.alibaba.polardbx.druid.sql.ast.statement.DrdsArchivePartition;
+import com.alibaba.polardbx.druid.sql.ast.statement.DrdsExpandPartitions;
 import com.alibaba.polardbx.druid.sql.ast.statement.DrdsExtractHotKey;
 import com.alibaba.polardbx.druid.sql.ast.statement.DrdsMergePartition;
 import com.alibaba.polardbx.druid.sql.ast.statement.DrdsMovePartition;
@@ -191,6 +193,7 @@ import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableOptimizePartiti
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTablePartition;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTablePartitionCount;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTablePartitionSetProperties;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableRebuildIndex;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableRebuildPartition;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableRecoverPartitions;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableRename;
@@ -200,11 +203,13 @@ import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableRenamePartition
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableReorgPartition;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableRepairPartition;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableReplaceColumn;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableSecondaryEngineAttribute;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableSetComment;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableSetLifecycle;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableSetOption;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableSubpartitionAvailablePartitionNum;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableToggleFullScan;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableTouch;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableTruncatePartition;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableUnarchivePartition;
@@ -237,6 +242,7 @@ import com.alibaba.polardbx.druid.sql.ast.statement.SQLContinueReplicaCheckTable
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLCopyFromStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLCreateDatabaseStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLCreateFunctionStatement;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLCreateIndexInDatabaseStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLCreateIndexStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLCreateJavaFunctionStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLCreateJoinGroupStatement;
@@ -260,6 +266,7 @@ import com.alibaba.polardbx.druid.sql.ast.statement.SQLDropCatalogStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLDropDatabaseStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLDropEventStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLDropFunctionStatement;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLDropIndexInDatabaseStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLDropIndexStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLDropJavaFunctionStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLDropJoinGroupStatement;
@@ -305,6 +312,8 @@ import com.alibaba.polardbx.druid.sql.ast.statement.SQLInsertStatement.ValuesCla
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLJoinTableSource;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLJoinTableSource.JoinType;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLLateralViewTableSource;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLNativeQueryTableSource;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLFilesTableSource;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLLoopStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLMergeStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLMergeStatement.MergeInsertClause;
@@ -408,6 +417,7 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlExtPartit
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlKillStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlPartitionByKey;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlShowPhysicalProcesslistStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MysqlPurgeBinaryStreamStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.SQLAlterResourceGroupStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.SQLAlterTableAddRoute;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.SQLCreateResourceGroupStatement;
@@ -443,6 +453,9 @@ import static com.alibaba.polardbx.druid.sql.visitor.VisitorFeature.OutputUpperc
 import static com.alibaba.polardbx.druid.util.Utils.getBoolean;
 
 public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements ParameterizedVisitor, PrintableVisitor {
+
+    protected static final String PASSWORD_MASK_STRING = "******";
+
     public static Boolean defaultPrintStatementAfterSemi;
 
     static {
@@ -499,6 +512,8 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
     protected boolean isMySQL80 = false;
 
     protected String timezone = null;
+
+    protected boolean maskPassword = false;
 
     {
         features |= VisitorFeature.OutputPrettyFormat.mask;
@@ -1883,6 +1898,33 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
     public boolean visit(SQLCharacterDataType x) {
         visit((SQLDataType) x);
 
+        // Output CHARACTER SET and COLLATE for character data types
+        // This is needed for CAST expressions and other contexts where SQLCharacterDataType is used
+        if (x.isHasBinary()) {
+            print0(ucase ? " BINARY " : " binary ");
+        }
+
+        if (x.getCharSetName() != null) {
+            print0(ucase ? " CHARACTER SET " : " character set ");
+            print0(x.getCharSetName());
+            if (x.getCollate() != null) {
+                print0(ucase ? " COLLATE " : " collate ");
+                print0(x.getCollate());
+            }
+        } else if (x.getCollate() != null) {
+            // PostgreSQL: skip "default" collate as it means using database default collation
+            // Note: collate value may be stored with quotes (e.g., "\"default\"") for LITERAL_ALIAS tokens
+            String collateVal = x.getCollate();
+            String unquoted = collateVal;
+            if (collateVal.startsWith("\"") && collateVal.endsWith("\"")) {
+                unquoted = collateVal.substring(1, collateVal.length() - 1);
+            }
+            if (!"default".equalsIgnoreCase(unquoted)) {
+                print0(ucase ? " COLLATE " : " collate ");
+                print0(x.getCollate());
+            }
+        }
+
         List<SQLCommentHint> hints = ((SQLCharacterDataType) x).hints;
         if (hints != null) {
             print(' ');
@@ -2098,7 +2140,7 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
 
                 if (x.isNot()) {
                     print(ucase ? " NOT IN" : " not in");
-                } else if (x.isExpand()){
+                } else if (x.isExpand()) {
                     print(ucase ? " EXPAND IN" : "expand in");
                 } else {
                     print(ucase ? " IN" : " in");
@@ -4930,6 +4972,26 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
     }
 
     @Override
+    public boolean visit(SQLDropIndexInDatabaseStatement x) {
+        final List<SQLCommentHint> headHints = x.getHeadHintsDirect();
+        if (headHints != null) {
+            for (SQLCommentHint hint : headHints) {
+                hint.accept(this);
+                println();
+            }
+        }
+        print0(ucase ? "DROP COLUMNAR INDEX FOR TABLES " : "drop columnar index for tables");
+        if (x.isIn()) {
+            print0(ucase ? "IN " : "in ");
+        } else {
+            print0(ucase ? "FROM " : "from ");
+        }
+        x.getDbName().accept(this);
+
+        return false;
+    }
+
+    @Override
     public boolean visit(SQLDropLogFileGroupStatement x) {
         print0(ucase ? "DROP LOGFILE GROUP " : "drop logfile group ");
         x.getName().accept(this);
@@ -5013,9 +5075,10 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
             printlnComment(x.getBeforeCommentsDirect());
             println();
         }
-        print0("/*");
-        print0(x.getText());
-        print0("*/");
+//        print0("/*");
+        // The impl of x.toString() has been "/* + text + */"
+        print0(x.toString());
+//        print0("*/");
         return false;
     }
 
@@ -5075,7 +5138,7 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
 
         final SQLExpr locality = x.getLocality();
         if (locality != null) {
-            print0(ucase ? " LOCALITY " : " locality ");
+            print0(ucase ? " LOCALITY = " : " locality = ");
             printExpr(locality, false);
         }
 
@@ -5161,6 +5224,10 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
             println();
             print0(ucase ? "STORED AS " : "stored as ");
             printExpr(storedAs);
+        }
+
+        if (x.getDryrun() != null && x.getDryrun()) {
+            print0(ucase ? " DRYRUN = true" : " dryrun = true");
         }
 
         return false;
@@ -5296,6 +5363,22 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
     }
 
     @Override
+    public boolean visit(DrdsExpandPartitions x) {
+        if (x.isSubPartitions()) {
+            print0(ucase ? "EXPAND SUBPARTITIONS TO " : "expand subpartitions to ");
+        } else {
+            print0(ucase ? "EXPAND PARTITIONS TO " : "expand partitions to ");
+        }
+        x.getTargetCount().accept(this);
+        return false;
+    }
+
+    @Override
+    public void endVisit(DrdsExpandPartitions x) {
+
+    }
+
+    @Override
     public void endVisit(DrdsAlterTableAllocateLocalPartition x) {
 
     }
@@ -5333,6 +5416,21 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
     @Override
     public boolean visit(DrdsAlterTableCleanupExpiredData x) {
         print0("CLEANUP EXPIRED DATA ");
+        return false;
+    }
+
+    @Override
+    public void endVisit(DrdsAlterTableRebuildCleanup x) {
+
+    }
+
+    @Override
+    public boolean visit(DrdsAlterTableRebuildCleanup x) {
+        print0(ucase ? "REBUILD CLEANUP WHERE " : "rebuild cleanup where ");
+        x.getCleanupPredicate().accept(this);
+        if (x.isDryRun()) {
+            print0(ucase ? " DRY RUN" : " dry run");
+        }
         return false;
     }
 
@@ -5909,13 +6007,14 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
         x.getExpr().accept(this);
         print(')');
 
-        if (x.getEnable() != null) {
-            if (x.getEnable().booleanValue()) {
-                print0(ucase ? " ENABLE" : " enable");
+        if (x.isWithEnforced()) {
+            if (ucase) {
+                print0(x.isEnforced() ? " ENFORCED " : " NOT ENFORCED ");
             } else {
-                print0(ucase ? " DISABLE" : " disable");
+                print0(x.isEnforced() ? " enforced " : " not enforced ");
             }
         }
+
         return false;
     }
 
@@ -6032,6 +6131,13 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
         this.indentCount--;
         print(')');
 
+        String forcedHint = x.getForcedHint();
+        if (forcedHint != null) {
+            print0(" /*");
+            print0(forcedHint);
+            print0("*/");
+        }
+
         if (x.isWithEnforced()) {
             if (x.isEnforced()) {
                 print0(ucase ? " ENFORCED" : " enforced");
@@ -6039,6 +6145,7 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
                 print0(ucase ? " NOT ENFORCED" : " not enforced");
             }
         }
+
         return false;
     }
 
@@ -6104,6 +6211,17 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
     }
 
     @Override
+    public boolean visit(SQLAlterTableSecondaryEngineAttribute x) {
+        print0(ucase ? "SECONDARY_ENGINE_ATTRIBUTE = " : "secondary_engine_attribute = ");
+        if (x.getVal() != null) {
+            x.getVal().accept(this);
+        } else {
+            print0("''");
+        }
+        return false;
+    }
+
+    @Override
     public boolean visit(SQLAlterTableEnableKeys x) {
         print0(ucase ? "ENABLE KEYS" : "enable keys");
         return false;
@@ -6129,7 +6247,11 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
 
     @Override
     public boolean visit(SQLAlterTableDropConstraint x) {
-        print0(ucase ? "DROP CONSTRAINT " : "drop constraint ");
+        if (x.getConstraintType() == SQLAlterTableDropConstraint.ConstraintType.CHECK) {
+            print0(ucase ? "DROP CHECK " : "drop check ");
+        } else {
+            print0(ucase ? "DROP CONSTRAINT " : "drop constraint ");
+        }
         x.getConstraintName().accept(this);
 
         if (x.isCascade()) {
@@ -6279,9 +6401,11 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
         if (x.getTable() != null) {
             x.getTable().accept(this);
         }
-        print0(" (");
-        printIndexColumn(x.getItems());
-        print(')');
+        if (!x.getIndexDefinition().isDefaultCci()) {
+            print0(" (");
+            printIndexColumn(x.getItems());
+            print(')');
+        }
 
         List<SQLName> covering = x.getCovering();
         if (covering.size() > 0) {
@@ -6357,6 +6481,30 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
             print0(" " + (ucase ? str.toString().toUpperCase() : str.toString().toLowerCase()));
         }
 
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLCreateIndexInDatabaseStatement x) {
+        final List<SQLCommentHint> headHints = x.getHeadHintsDirect();
+        if (headHints != null) {
+            for (SQLCommentHint hint : headHints) {
+                hint.accept(this);
+                println();
+            }
+        }
+
+        print0(ucase ? "CREATE " : "create ");
+        if (x.isColumnar()) {
+            print0(ucase ? "COLUMNAR " : "columnar ");
+        }
+        print0(ucase ? "INDEX FOR TABLES " : "index for tables ");
+        if (x.isIn()) {
+            print0(ucase ? "IN " : "in ");
+        } else {
+            print0(ucase ? "FROM " : "from ");
+        }
+        x.getDbName().accept(this);
         return false;
     }
 
@@ -6669,6 +6817,10 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
     public boolean visit(SQLRevokeStatement x) {
         print0(ucase ? "REVOKE " : "revoke ");
 
+        if (x.isIfExists()) {
+            print0(ucase ? "IF EXISTS " : "if exists ");
+        }
+
         if (x.isGrantOption()) {
             print0(ucase ? "GRANT OPTION" : "grant option");
 
@@ -6724,6 +6876,10 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
             print0(ucase ? " CASCADE" : " cascade");
         }
 
+        if (x.getDryrun() != null && x.getDryrun()) {
+            print0(ucase ? " DRYRUN = true" : " dryrun = true");
+        }
+
         return false;
     }
 
@@ -6777,6 +6933,10 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
     @Override
     public boolean visit(SQLCreateJavaFunctionStatement x) {
         print0(ucase ? "CREATE JAVA FUNCTION " : "create java function ");
+
+        if (x.isIfNotExists()) {
+            print0(ucase ? "IF NOT EXISTS " : "if not exists ");
+        }
 
         x.getName().accept(this);
 
@@ -6886,6 +7046,21 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
         if (!options.isEmpty()) {
             for (SQLAssignItem option : options) {
                 print(' ');
+                // For VECTOR INDEX options, output compact format without spaces: M=6
+                SQLExpr target = option.getTarget();
+                if (target instanceof SQLIdentifierExpr) {
+                    String name = ((SQLIdentifierExpr) target).getName();
+                    if ("M".equalsIgnoreCase(name) || "DISTANCE".equalsIgnoreCase(name)
+                        || "EF_CONSTRUCTION".equalsIgnoreCase(name)) {
+                        SQLExpr value = option.getValue();
+                        if (value != null) {
+                            print0(name.toUpperCase());
+                            print0("=");
+                            printExpr(value, parameterized);
+                            continue;
+                        }
+                    }
+                }
                 option.accept(this);
             }
         }
@@ -6957,9 +7132,11 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
             print0(ucase ? "HASHMAP " : "hashmap ");
         }
 
-        print('(');
-        printIndexColumn(x.getColumns());
-        print(')');
+        if (!x.isDefaultCci()) {
+            print('(');
+            printIndexColumn(x.getColumns());
+            print(')');
+        }
 
         if (x.getAnalyzerName() != null) {
             print0(ucase ? " WITH ANALYZER " : " with analyzer ");
@@ -7059,6 +7236,15 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
             str.append("\t\t}'");
             print0(" " + (ucase ? str.toString().toUpperCase() : str.toString().toLowerCase()));
         }
+
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLAlterTableRebuildIndex x) {
+        print0(ucase ? "REBUILD  " : "rebuild ");
+
+        visit(x.getIndexDefinition());
 
         return false;
     }
@@ -7312,12 +7498,42 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
             return;
         }
 
+        if (!isPrettyFormat() && isEnabled(VisitorFeature.OutputLineCommentAsBlockComment)) {
+            if (comment.startsWith("--")) {
+                printLineCommentAsBlockComment(comment, 2, true);
+                return;
+            } else if (comment.startsWith("#")) {
+                printLineCommentAsBlockComment(comment, 1, false);
+                return;
+            }
+        }
+
         if (comment.startsWith("--") && comment.length() > 2 && comment.charAt(2) != ' ') {
             print0("-- ");
             print0(comment.substring(2));
         } else {
             print0(comment);
         }
+    }
+
+    private void printLineCommentAsBlockComment(String comment, int contentStart, boolean appendSpace) {
+        print0("/*");
+        if (appendSpace && comment.length() > contentStart && !Character.isWhitespace(comment.charAt(contentStart))) {
+            print(' ');
+        }
+        for (int i = contentStart; i < comment.length(); i++) {
+            char ch = comment.charAt(i);
+            if (ch == '\r' || ch == '\n') {
+                break;
+            }
+            if (ch == '*' && i + 1 < comment.length() && comment.charAt(i + 1) == '/') {
+                print0("* /");
+                i++;
+            } else {
+                print(ch);
+            }
+        }
+        print0("*/");
     }
 
     protected void printlnComments(List<String> comments) {
@@ -7632,6 +7848,21 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
         printAndAccept(x.getTables(), ", ");
         if (x.isForce()) {
             print0(" FORCE");
+        }
+
+        return false;
+    }
+
+    @Override
+    public boolean visit(SQLAlterTableToggleFullScan x) {
+        if (x.getParent() != null) {
+            assert x.getParent() instanceof SQLAlterTableStatement;
+        }
+
+        if (x.isEnable()) {
+            print0(ucase ? " ENABLE FULL_SCAN" : " enable full_scan");
+        } else {
+            print0(ucase ? " DISABLE FULL_SCAN" : " disable full_scan");
         }
 
         return false;
@@ -8329,6 +8560,12 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
         }
         print(')');
 
+        if (x.getSqlUdfParams() != null) {
+            print(" ");
+            SQLExpr udfParams = x.getSqlUdfParams();
+            udfParams.accept(this);
+        }
+
         printPartitionsCountAndSubPartitions(x);
 
         boolean useSubPart = x.getSubPartitionBy() != null;
@@ -8587,6 +8824,12 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
         printAndAccept(x.getColumns(), ", ");
         print(')');
 
+        if (x.getSqlUdfParams() != null) {
+            print(" ");
+            SQLExpr udfParams = x.getSqlUdfParams();
+            udfParams.accept(this);
+        }
+
         if (x.getSubPartitionsCount() != null) {
             print0(ucase ? " SUBPARTITIONS " : " subpartitions ");
             x.getSubPartitionsCount().accept(this);
@@ -8843,7 +9086,7 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
     @Override
     public boolean visit(SQLAlterTableExchangePartition x) {
         print0(ucase ? "EXCHANGE PARTITION " : "exchange partition ");
-        printAndAccept(x.getPartitions(), ", ");
+        printAndAccept(x.getSrcPartitions(), ", ");
         print0(ucase ? " WITH TABLE " : " with table ");
         x.getTable().accept(this);
 
@@ -9843,9 +10086,10 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
         this.parameterizedQuesUnMergeValuesList = isEnabled(VisitorFeature.OutputParameterizedQuesUnMergeValuesList);
         this.shardingSupport = !isEnabled(VisitorFeature.OutputParameterizedUnMergeShardingTable);
         this.printNameQuote = isEnabled(VisitorFeature.OutputNameQuote);
+        this.maskPassword = isEnabled(VisitorFeature.OutputMaskPassword);
     }
 
-    ///////////// for odps & hive
+    /// ////////// for odps & hive
     @Override
     public boolean visit(SQLLateralViewTableSource x) {
         SQLTableSource tableSource = x.getTableSource();
@@ -10314,6 +10558,11 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
         }
         print0(ucase ? "DATABASES" : "databases");
 
+        if (x.getDatabase() != null) {
+            print0(ucase ? " FROM " : " from ");
+            x.getDatabase().accept(this);
+        }
+
         if (x.getLike() != null) {
             print0(ucase ? " LIKE " : " like ");
             x.getLike().accept(this);
@@ -10431,6 +10680,9 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
             print0(ucase ? " LIKE MAPPING (" : " like mapping ");
             x.getLikeMapping().accept(this);
             print0(")");
+        }
+        if (x.isForExport()) {
+            print0(ucase ? " FOR EXPORT" : " for export");
         }
         return false;
     }
@@ -10672,6 +10924,10 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
             print0(ucase ? " SINGLE" : " single");
         }
 
+        if (x.isReplicas()) {
+            print0(ucase ? " REPLICAS" : " replicas");
+        }
+
         List<SQLAssignItem> tableOptions = x.getTableOptions();
         if (Boolean.TRUE.equals(x.getAttribute("ads.options"))) {
             if (tableOptions.size() > 0) {
@@ -10681,6 +10937,25 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
                 print(')');
             }
         } else {
+            int charSetIdx = -1, collateIdx = -1;
+            for (int i = 0; i < tableOptions.size(); i++) {
+                String key = ((SQLIdentifierExpr) tableOptions.get(i).getTarget()).getName();
+                if (key.equals("CHARACTER SET") || key.equals("CHARSET")) {
+                    if (charSetIdx == -1) {
+                        charSetIdx = i;
+                    }
+                } else if (key.equals("COLLATE")) {
+                    if (collateIdx == -1) {
+                        collateIdx = i;
+                    }
+                }
+            }
+            if (collateIdx > -1 && collateIdx < charSetIdx) {
+                // mysql57 的bug 当collate 在charset之前时会被忽略，这里调整下
+                SQLAssignItem charsetItem = tableOptions.get(charSetIdx);
+                tableOptions.set(charSetIdx, tableOptions.get(collateIdx));
+                tableOptions.set(collateIdx, charsetItem);
+            }
             for (SQLAssignItem option : tableOptions) {
                 String key = ((SQLIdentifierExpr) option.getTarget()).getName();
 
@@ -11443,6 +11718,13 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
     @Override
     public boolean visit(SQLPurgeRecyclebinStatement x) {
         print0(ucase ? "PURGE RECYCLEBIN" : "purge recyclebin");
+        return false;
+    }
+
+    @Override
+    public boolean visit(MysqlPurgeBinaryStreamStatement x) {
+        print0(ucase ? "PURGE BINARY STREAM " : "purge binary stream ");
+        x.getStreamName().accept(this);
         return false;
     }
 
@@ -12416,6 +12698,49 @@ public class SQLASTOutputVisitor extends SQLASTVisitorAdapter implements Paramet
         }
         print0(ucase ? " SHOW DIFF" : " show diff");
         return false;
+    }
+
+    @Override
+    public boolean visit(SQLNativeQueryTableSource x) {
+        print0(ucase ? "TABLE (" : "table (");
+        print0(x.getCatalogName());
+        print0(ucase ? ".NATIVE_QUERY(" : ".native_query(");
+        printChars(x.getSql());
+        print0("))");
+        if (x.getAlias() != null) {
+            print(' ');
+            print0(x.getAlias());
+        }
+        return false;
+    }
+
+    @Override
+    public void endVisit(SQLNativeQueryTableSource x) {
+    }
+
+    @Override
+    public boolean visit(SQLFilesTableSource x) {
+        print0(ucase ? "FILES(" : "files(");
+        boolean first = true;
+        for (Map.Entry<String, String> entry : x.getProperties().entrySet()) {
+            if (!first) {
+                print0(", ");
+            }
+            printChars(entry.getKey());
+            print0(" => ");
+            printChars(entry.getValue());
+            first = false;
+        }
+        print0(")");
+        if (x.getAlias() != null) {
+            print(' ');
+            print0(x.getAlias());
+        }
+        return false;
+    }
+
+    @Override
+    public void endVisit(SQLFilesTableSource x) {
     }
 
 }

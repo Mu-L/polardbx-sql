@@ -108,7 +108,7 @@ public class GroupStorageInfoManager {
             //groupName -> (tgId -> partitionId)
             HashMultimap<String, Pair<Long, Long>> groupPartitionMapping = HashMultimap.create();
             for (PartitionGroupRecord record : partitionGroupRecords) {
-                String grpKey = GroupInfoUtil.buildGroupNameFromPhysicalDb(record.getPhy_db());
+                String grpKey = record.getGroup_Name();
                 groupPartitionMapping.put(grpKey, new Pair(record.tg_id, record.id));
             }
             Map<String, String> groupStorageMapping = new ConcurrentHashMap<>();

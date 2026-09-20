@@ -17,6 +17,8 @@
 package com.alibaba.polardbx.gms.topology;
 
 import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.charset.CharsetName;
+import com.alibaba.polardbx.common.charset.CollationName;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
@@ -40,6 +42,7 @@ import com.alibaba.polardbx.gms.locality.LocalityDesc;
 import com.alibaba.polardbx.gms.locality.StoragePoolInfoAccessor;
 import com.alibaba.polardbx.gms.locality.StoragePoolInfoRecord;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
+import com.alibaba.polardbx.gms.metadb.chain.GlobalChainAccessor;
 import com.alibaba.polardbx.gms.metadb.foreign.ForeignAccessor;
 import com.alibaba.polardbx.gms.metadb.foreign.ForeignRecord;
 import com.alibaba.polardbx.gms.metadb.misc.PersistentReadWriteLock;
@@ -95,6 +98,9 @@ public class DbTopologyManager {
     public static final String CREATE_DB_IF_NOT_EXISTS_SQL_TEMPLATE = "create database if not exists `%s`";
 
     public static final String DROP_DB_IF_EXISTS_SQL_TEMPLATE = "drop database if exists `%s`";
+
+    public static final String QUERY_DB_FROM_INFO_SCHEMA_SQL_TEMPLATE =
+        "select schema_name,default_character_set_name,default_collation_name from information_schema.schemata where schema_name = '%s'";
 
     public static final String CHARSET_TEMPLATE = " character set `%s`";
 
@@ -282,7 +288,7 @@ public class DbTopologyManager {
             DbTopologyManager.createLogicalDb(createDbInfo);
 
         } catch (Throwable ex) {
-            MetaDbLogUtil.META_DB_LOG.error(ex);
+            MetaDbLogUtil.DDL_ENGINE_LOG.error(ex);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC, ex, "failed to create default db, err is " +
                 ex.getMessage());
         }
@@ -330,6 +336,7 @@ public class DbTopologyManager {
 
     public static long createLogicalDb(CreateDbInfo createDbInfo) {
         long dbId = -1;
+        boolean dryRunDdl = createDbInfo.getDryRunDdl();
         try (Connection metaDbConn = MetaDbDataSource.getInstance().getConnection();
             Connection metaDbLockConn = MetaDbDataSource.getInstance().getConnection()) {
 
@@ -342,10 +349,18 @@ public class DbTopologyManager {
 //            LockUtil.waitToAcquireMetaDbLock(String.format("Get metaDb lock interrupted during creating db[%s]",
 //                createDbInfo.getDbName()), metaDbLockConn);
 
+            String ddlDigest =
+                String.format("create_db_stmt(db=%s, ifNotExists=%s, connId=%s, traceId=%s)", createDbInfo.getDbName(),
+                    createDbInfo.isCreateIfNotExists(), createDbInfo.getConnId(), createDbInfo.getTraceId());
+            String errMsg = String.format("Get metaDb lock interrupted during exec %s", ddlDigest);
+            String succMsg = String.format("Get metaDb lock successfully during exec %s", ddlDigest);
             LockUtil.waitToAcquireMetaDbLock(
-                String.format("Get metaDb lock interrupted during creating db[%s], connId[%s], traceId[%s]",
-                    createDbInfo.getDbName(), createDbInfo.getConnId(), createDbInfo.getTraceId()), metaDbLockConn,
+                errMsg,
+                succMsg,
+                metaDbLockConn,
                 createDbInfo.getDdlContext());
+
+            MetaDbLogUtil.DDL_ENGINE_LOG.warn(String.format("Finish fetching metadb lock for %s", ddlDigest));
 
             // ---- check if logical db exists ----
             String dbName = createDbInfo.dbName;
@@ -365,7 +380,10 @@ public class DbTopologyManager {
             if (dbInfo != null) {
                 if (dbInfo.dbStatus == DbInfoRecord.DB_STATUS_RUNNING
                     || dbInfo.dbStatus == DbInfoRecord.DB_STATUS_DROPPING) {
+
                     if (dbInfo.dbStatus == DbInfoRecord.DB_STATUS_RUNNING) {
+                        MetaDbLogUtil.DDL_ENGINE_LOG.info(
+                            String.format("Found db_status is running during exec %s", ddlDigest));
                         if (createIfNotExist) {
                             return dbId;
                         }
@@ -373,6 +391,9 @@ public class DbTopologyManager {
                         throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC,
                             String.format("Create db error, db[%s] has already exist", dbName));
                     } else {
+                        MetaDbLogUtil.DDL_ENGINE_LOG.info(
+                            String.format("Found db_status is dropping during exec %s", ddlDigest));
+
                         // throw exception
                         throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC,
                             String.format(
@@ -381,6 +402,9 @@ public class DbTopologyManager {
                     }
 
                 } else if (dbInfo.dbStatus == DbInfoRecord.DB_STATUS_CREATING) {
+                    MetaDbLogUtil.DDL_ENGINE_LOG.info(
+                        String.format("Found db_status is creating during exec %s", ddlDigest));
+
                     // ignore, just continue to create phy dbs
                     hasDbConfig = true;
                 } else if (dbInfo.dbStatus == DbInfoRecord.DB_STATUS_DROPPING) {
@@ -390,16 +414,20 @@ public class DbTopologyManager {
                     ts = System.currentTimeMillis() << BITS_LOGICAL_TIME;
 
                     dropLogicalDbWithConn(dbName, true, metaDbConn, metaDbLockConn, createDbInfo.socketTimeout, ts,
-                        false, false, DEFAULT_DDL_VERSION_ID, createDbInfo.getDdlContext());
+                        false, false, DEFAULT_DDL_VERSION_ID, createDbInfo.getDdlContext(), dryRunDdl);
                     hasDbConfig = false;
                 }
+            } else {
+                MetaDbLogUtil.DDL_ENGINE_LOG.warn(String.format("No found any db_info during exec %s", ddlDigest));
             }
 
             if (!hasDbConfig) {
                 // ---- if not exists, add topology info metadb for logical db by using trx, db_status=creating ----
-                addDbTopologyConfig(createDbInfo);
+                addDbTopologyConfig(createDbInfo, metaDbConn);
                 dbInfo = dbInfoAccessor.getDbInfoByDbName(dbName);
                 dbId = dbInfo.id;
+                MetaDbLogUtil.DDL_ENGINE_LOG.warn(
+                    String.format("Finish adding new creating db_info ane groupInfo for %s", ddlDigest));
             }
 
             // ---- get lock by db_name for double check ----
@@ -411,10 +439,14 @@ public class DbTopologyManager {
                 throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC,
                     String.format("Create db error, db[%s] has already exist", dbName));
             }
+            MetaDbLogUtil.DDL_ENGINE_LOG.warn(
+                String.format("Lock creating db_info by using for update for %s", ddlDigest));
 
             // ---- create physical dbs by topology info loading from metadb ----
             String instId = InstIdUtil.getInstId();// make sure that instId is master inst id
-            createPhysicalDbsIfNotExists(instId, dbInfo.dbName, dbInfo.charset, dbInfo.collation);
+            createPhysicalDbsIfNotExists(instId, dbInfo.dbName, dbInfo.charset, dbInfo.collation, dryRunDdl, ddlDigest);
+
+            MetaDbLogUtil.DDL_ENGINE_LOG.warn(String.format("Finish creating all phydbs for %s", ddlDigest));
 
             // ---- update db_status to running by trx  ----
             dbInfoAccessor.updateDbStatusByDbName(dbName, DbInfoRecord.DB_STATUS_RUNNING);
@@ -428,20 +460,35 @@ public class DbTopologyManager {
             // commit configs
             metaDbConn.commit();
 
+            MetaDbLogUtil.DDL_ENGINE_LOG.warn(
+                String.format("Finish update db_info to creating status for %s", ddlDigest));
+
             // refresh local group topology of db topology manager
             DbTopologyManager.refreshGroupKeysIntoTopologyMapping(createDbInfo.groupNameList, new ArrayList<>(),
                 createDbInfo.dbName);
 
+            MetaDbLogUtil.DDL_ENGINE_LOG.warn(String.format("Finish refresh groupKeyMappings for %s", ddlDigest));
+
             // sync other node to reload dbInfo quickly
             MetaDbConfigManager.getInstance().sync(MetaDbDataIdBuilder.getDbInfoDataId());
+
+            MetaDbLogUtil.DDL_ENGINE_LOG.warn(
+                String.format("Finish sync dataId for db_status of creating for %s", ddlDigest));
 
             // process the hook func list for new created db(like cdc/locality e.g)
             handleHookFuncList(createDbInfo, dbId);
 
+            MetaDbLogUtil.DDL_ENGINE_LOG.warn(
+                String.format("Finish callback for perform cdcMark & locality %s", ddlDigest));
+
             // release meta db lock
             LockUtil.releaseMetaDbLockByCommit(metaDbLockConn);
+
+            MetaDbLogUtil.DDL_ENGINE_LOG.warn(String.format("Finish releasing metadb lock for %s", ddlDigest));
+
             return dbId;
         } catch (Throwable ex) {
+            MetaDbLogUtil.DDL_ENGINE_LOG.error(ex);
             throw GeneralUtil.nestedException(ex);
         } finally {
             if (createDbInfo.getDdlContext() != null) {
@@ -467,7 +514,8 @@ public class DbTopologyManager {
                                                 boolean allowDropForce,
                                                 boolean reservePhyDb,
                                                 long versionId,
-                                                DatabaseDdlContext ddlContext)
+                                                DatabaseDdlContext ddlContext,
+                                                boolean dryRunDdl)
         throws SQLException {
 
         // acquire MetaDb Lock by for update, to avoiding concurrent create & drop databases
@@ -479,10 +527,18 @@ public class DbTopologyManager {
 //            throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC, ex,
 //                String.format("Get metaDb lock timeout during drop db[%s], please retry", dbName));
 //        }
+
+        String ddlDigest =
+            String.format("drop_db_stmt(db=%s, ifExists=%s, connId=%s, traceId=%s)", dbName, isDropIfExists,
+                ddlContext.getConnId(), ddlContext.getTraceId());
+        String errMsg = String.format("Get metaDb lock timeout during exec %s", ddlDigest);
+        String succMsg = String.format("Get metaDb lock successfully during exec %s", ddlDigest);
         LockUtil.waitToAcquireMetaDbLock(
-            String.format("Get metaDb lock timeout during drop db[%s], connId[%s], traceId[%s]", dbName,
-                ddlContext.getConnId(), ddlContext.getTraceId()),
+            errMsg,
+            succMsg,
             metaDbLockConn, ddlContext);
+
+        MetaDbLogUtil.DDL_ENGINE_LOG.warn(String.format("Finish fetching metadb lock for %s", ddlDigest));
 
         if (!allowDropForce) {
             if (checkDbExists(dbName)) {
@@ -510,12 +566,18 @@ public class DbTopologyManager {
             } else if (dbInfo.dbStatus == DbInfoRecord.DB_STATUS_RUNNING) {
                 // when db_status==running, it means the db is normal
                 // so just continue to drop phy dbs and remove db topology configs
+                MetaDbLogUtil.DDL_ENGINE_LOG.info(
+                    String.format("Found db_status is running during exec %s", ddlDigest));
             } else if (dbInfo.dbStatus == DbInfoRecord.DB_STATUS_DROPPING) {
                 // when db_status==dropping, it means the db is dropping,
                 // ignore, just continue to drop phy dbs  and remove db topology configs
+                MetaDbLogUtil.DDL_ENGINE_LOG.warn(
+                    String.format("Found db_status is dropping during exec %s", ddlDigest));
             } else if (dbInfo.dbStatus == DbInfoRecord.DB_STATUS_CREATING) {
                 // when db_status==creating, it means the db has not finish creating phy dbs
                 // so ignore, just continue to drop phy dbs and remove db topology configs
+                MetaDbLogUtil.DDL_ENGINE_LOG.warn(
+                    String.format("Found db_status is creating during exec %s", ddlDigest));
                 if (!isDropIfExists) {
                     // throw exception
                     throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC,
@@ -523,6 +585,7 @@ public class DbTopologyManager {
                 }
             }
         } else {
+            MetaDbLogUtil.DDL_ENGINE_LOG.warn(String.format("No found any db_info during exec %s", ddlDigest));
             if (isDropIfExists) {
                 return;
             }
@@ -533,6 +596,15 @@ public class DbTopologyManager {
 
         // TODO(shengyu): delete cross schema ddl.
         fileStoreDestroy(dbInfo.dbName, ts);
+
+        try {
+            GlobalChainAccessor accessor = new GlobalChainAccessor();
+            accessor.setConnection(metaDbConn);
+            accessor.updateDeleteBySchema(dbName);
+        } catch (Throwable t) {
+            MetaDbLogUtil.DDL_META_LOG.error(t);
+            logger.error(t);
+        }
 
         // ---- update db_status=dropping to running by trx  ----
         dbInfoAccessor.updateDbStatusByDbName(dbName, DbInfoRecord.DB_STATUS_DROPPING);
@@ -545,14 +617,23 @@ public class DbTopologyManager {
 
         metaDbConn.commit();
 
+        MetaDbLogUtil.DDL_ENGINE_LOG.info(
+            String.format("Finish updating db_status to dropping and commit for %s", ddlDigest));
+
         // sync other node to reload dbInfo and release resources quickly
         MetaDbConfigManager.getInstance().sync(MetaDbDataIdBuilder.getDbInfoDataId());
+
+        MetaDbLogUtil.DDL_ENGINE_LOG.info(
+            String.format("Finish sync dataId for db_status of dropping for %s", ddlDigest));
 
         // ---- drop physical dbs according the topology info fo metadb ----
         String instId = InstIdUtil.getInstId();
         if (!reservePhyDb) {
-            dropPhysicalDbsIfExists(instId, dbName, socketTimeout);
+            dropPhysicalDbsIfExists(instId,
+                dbName, socketTimeout, dryRunDdl, ddlDigest);
         }
+
+        MetaDbLogUtil.DDL_ENGINE_LOG.info(String.format("Finish dropping all phydbs for %s", ddlDigest));
 
         // ---- remove topology config & group config from metadb by using trx ----
         metaDbConn.setAutoCommit(false);
@@ -569,8 +650,12 @@ public class DbTopologyManager {
         removeDbTopologyConfig(dbName, metaDbConn, versionId);
         metaDbConn.commit();
 
+        MetaDbLogUtil.DDL_ENGINE_LOG.info(String.format("Finish cleanup all metadata and commit for %s", ddlDigest));
+
         // refresh local group topology of db topology manager of memory
         DbTopologyManager.unregisterGroupKeysIntoTopologyMapping(allGrpNames);
+
+        MetaDbLogUtil.DDL_ENGINE_LOG.info(String.format("Finish refresh grpKey mappings for %s", ddlDigest));
 
     }
 
@@ -592,6 +677,7 @@ public class DbTopologyManager {
         String dbName = dropDbInfo.dbName;
         boolean isDropIfExists = dropDbInfo.isDropIfExists;
         long socketTimeout = dropDbInfo.socketTimeout;
+        boolean dryRunDdl = dropDbInfo.isDryRunDdl();
         try (Connection metaDbConn = MetaDbDataSource.getInstance().getConnection();
             Connection metaDbLockConn = MetaDbDataSource.getInstance().getConnection()) {
 
@@ -599,11 +685,21 @@ public class DbTopologyManager {
 
             dropLogicalDbWithConn(dbName, isDropIfExists, metaDbConn, metaDbLockConn, socketTimeout, dropDbInfo.getTs(),
                 dropDbInfo.isAllowDropForce(), dropDbInfo.isReservePhyDb(), dropDbInfo.getVersionId(),
-                dropDbInfo.getDdlContext());
+                dropDbInfo.getDdlContext(), dryRunDdl);
 
             // release meta db lock
             LockUtil.releaseMetaDbLockByCommit(metaDbLockConn);
+
+            DatabaseDdlContext ddlContext = dropDbInfo.getDdlContext();
+            if (ddlContext != null) {
+                String ddlDigest =
+                    String.format("drop_db_stmt(db=%s, ifExists=%s, connId=%s, traceId=%s)", dbName, isDropIfExists,
+                        ddlContext.getConnId(), ddlContext.getTraceId());
+                MetaDbLogUtil.DDL_ENGINE_LOG.warn(String.format("Finish release metadb lock for %s", ddlDigest));
+            }
+
         } catch (Throwable ex) {
+            MetaDbLogUtil.DDL_ENGINE_LOG.error(ex);
             throw GeneralUtil.nestedException(ex);
         } finally {
             if (dropDbInfo.getDdlContext() != null) {
@@ -631,7 +727,7 @@ public class DbTopologyManager {
      * Create physical db for group
      */
     public static void createPhysicalDbsIfNotExists(String masterInstId, String dbName, String charset,
-                                                    String collation) {
+                                                    String collation, boolean dryRunDdl, String ddlDigest) {
         try (Connection metaDbConn = MetaDbDataSource.getInstance().getConnection()) {
             GroupDetailInfoAccessor groupDetailInfoAccessor = new GroupDetailInfoAccessor();
             groupDetailInfoAccessor.setConnection(metaDbConn);
@@ -673,12 +769,92 @@ public class DbTopologyManager {
 
             for (Map.Entry<String, Map<String, String>> storagePhyDbInfoItem : storageInstGroupInfoListMap
                 .entrySet()) {
-                createPhysicalDbInStorageInst(charset, collation, storagePhyDbInfoItem.getKey(),
-                    storagePhyDbInfoItem.getValue());
+                if (!dryRunDdl) {
+                    createPhysicalDbInStorageInst(charset, collation, storagePhyDbInfoItem.getKey(),
+                        storagePhyDbInfoItem.getValue(), ddlDigest);
+                } else {
+                    String storageInstId = storagePhyDbInfoItem.getKey();
+                    MetaDbLogUtil.DDL_ENGINE_LOG.info(
+                        String.format("ignore exec creating phydbs[dn=%s] for %s", storageInstId, ddlDigest));
+                }
+//                if (dryRunDdl){
+//                    checkPhysicalDbInStorageInst(charset, collation, storagePhyDbInfoItem.getKey(),
+//                        storagePhyDbInfoItem.getValue());
+//                }
             }
         } catch (Throwable e) {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC, e,
                 String.format("Failed to create physical db, dbName=[%s], instId=[%s]", dbName, masterInstId));
+        }
+    }
+
+    /**
+     * Create physical db for group
+     */
+    public static void checkPhysicalDbsValid(String masterInstId,
+                                             String dbName,
+                                             String charset,
+                                             String collation,
+                                             Connection metaDbConn) {
+        try {
+            GroupDetailInfoAccessor groupDetailInfoAccessor = new GroupDetailInfoAccessor();
+            groupDetailInfoAccessor.setConnection(metaDbConn);
+
+            List<GroupDetailInfoRecord> groupDetailInfoRecords =
+                groupDetailInfoAccessor.getGroupDetailInfoByInstIdAndDbName(masterInstId, dbName);
+
+            StorageInfoAccessor storageInfoAccessor = new StorageInfoAccessor();
+            storageInfoAccessor.setConnection(metaDbConn);
+
+            DbGroupInfoAccessor dbGroupInfoAccessor = new DbGroupInfoAccessor();
+            dbGroupInfoAccessor.setConnection(metaDbConn);
+
+            /**
+             * <pre>
+             *     key: storageInstId
+             *     val: the map of grp and phydb
+             *         map key: groupName
+             *         map val: phyDbName
+             *
+             * </pre>
+             */
+            Map<String, Map<String, String>> storageInstGroupInfoListMap = Maps.newHashMap();
+            for (int i = 0; i < groupDetailInfoRecords.size(); i++) {
+                GroupDetailInfoRecord groupDetailInfoRecord = groupDetailInfoRecords.get(i);
+                DbGroupInfoRecord dbGroupInfoRecord =
+                    dbGroupInfoAccessor.getDbGroupInfoByDbNameAndGroupName(groupDetailInfoRecord.dbName,
+                        groupDetailInfoRecord.groupName);
+                String phyDbName = dbGroupInfoRecord.phyDbName;
+                String storageInstId = groupDetailInfoRecord.storageInstId;
+                Map<String, String> groupDetailAndPhyDbNameMap =
+                    storageInstGroupInfoListMap.get(storageInstId);
+                if (groupDetailAndPhyDbNameMap == null) {
+                    groupDetailAndPhyDbNameMap = new HashMap<>();
+                    storageInstGroupInfoListMap.put(storageInstId, groupDetailAndPhyDbNameMap);
+                }
+                groupDetailAndPhyDbNameMap.put(groupDetailInfoRecord.groupName, phyDbName);
+            }
+
+            for (Map.Entry<String, Map<String, String>> storagePhyDbInfoItem : storageInstGroupInfoListMap
+                .entrySet()) {
+                checkPhysicalDbInStorageInst(charset, collation, storagePhyDbInfoItem.getKey(),
+                    storagePhyDbInfoItem.getValue());
+            }
+        } catch (Throwable e) {
+            checkAndThrowDryRunExceptionIfNeed(e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC, e,
+                String.format("Failed to register db, dbName=[%s], instId=[%s], error msg is %s", dbName, masterInstId,
+                    e.getMessage()));
+        }
+    }
+
+    private static void checkAndThrowDryRunExceptionIfNeed(Throwable e) {
+        if (e instanceof TddlRuntimeException) {
+            TddlRuntimeException exception = (TddlRuntimeException) e;
+            ErrorCode code = exception.getErrorCodeType();
+            if (code == ErrorCode.ERR_INVALID_DDL_PARAMS) {
+                throw GeneralUtil.nestedException(e);
+            }
         }
     }
 
@@ -690,9 +866,11 @@ public class DbTopologyManager {
      * @param storageInstId the storage inst id of phy dbs
      * @param grpAndPhyDbMap the map of groupName and phyDbName
      */
-    public static void createPhysicalDbInStorageInst(String charset, String collation,
+    public static void createPhysicalDbInStorageInst(String charset,
+                                                     String collation,
                                                      String storageInstId,
-                                                     Map<String, String> grpAndPhyDbMap)
+                                                     Map<String, String> grpAndPhyDbMap,
+                                                     String ddlDigest)
         throws SQLException {
         HaSwitchParams haSwitchParams = StorageHaManager.getInstance().getStorageHaSwitchParams(storageInstId);
         if (haSwitchParams == null) {
@@ -714,6 +892,16 @@ public class DbTopologyManager {
                 String createDbSql = buildCreatePhyDbSql(charset, collation, phyDbName);
                 Statement stmt = targetGroupConn.createStatement();
                 stmt.execute(createDbSql);
+                int arows = stmt.getUpdateCount();
+                boolean createPhyDbSucc = arows > 0;
+                if (createPhyDbSucc) {
+                    MetaDbLogUtil.DDL_ENGINE_LOG.info(
+                        String.format("createPhyDbStmt( %s ) exec success for %s", createDbSql, ddlDigest));
+                } else {
+                    MetaDbLogUtil.DDL_ENGINE_LOG.info(
+                        String.format("createPhyDbStmt( %s ) exec success (found db exists) for %s", createDbSql,
+                            ddlDigest));
+                }
                 stmt.close();
             }
         } catch (SQLException ex) {
@@ -734,27 +922,135 @@ public class DbTopologyManager {
         return createDbSql;
     }
 
+    protected static String buildQueryPhyDbFromInfoSchemaSql(String charset, String collation, String phyDbName) {
+        String queryDbSql = String.format(QUERY_DB_FROM_INFO_SCHEMA_SQL_TEMPLATE, phyDbName);
+        return queryDbSql;
+    }
+
+    /**
+     * Check if the phydbs of storageInst are valid
+     *
+     * @param charset the charset of phy dbs
+     * @param collation the collation of phy dbs
+     * @param storageInstId the storage inst id of phy dbs
+     * @param grpAndPhyDbMap the map of groupName and phyDbName
+     */
+    public static void checkPhysicalDbInStorageInst(String charset, String collation,
+                                                    String storageInstId,
+                                                    Map<String, String> grpAndPhyDbMap)
+        throws SQLException {
+        HaSwitchParams haSwitchParams = StorageHaManager.getInstance().getStorageHaSwitchParams(storageInstId);
+        if (haSwitchParams == null) {
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC,
+                String.format("no found the storage inst for %s", storageInstId));
+        }
+        Pair<String, Integer> ipAndPort = AddressUtils.getIpPortPairByAddrStr(haSwitchParams.curAvailableAddr);
+        String host = ipAndPort.getKey();
+        int port = ipAndPort.getValue();
+        String user = haSwitchParams.userName;
+        String passwdEnc = haSwitchParams.passwdEnc;
+        String storageConnProps = haSwitchParams.storageConnPoolConfig.connProps;
+        String connProps = getJdbcConnPropsFromAtomConnPropsForGroup(-1, storageConnProps);
+        try (Connection targetGroupConn = GmsJdbcUtil
+            .buildJdbcConnection(host, port, GmsJdbcUtil.DEFAULT_PHY_DB, user, passwdEnc, connProps)) {
+            // create phy db for each group
+            for (Map.Entry<String, String> grpAndPhyDbItem : grpAndPhyDbMap.entrySet()) {
+                String phyDbName = grpAndPhyDbItem.getValue();
+                String queryDbSql = buildQueryPhyDbFromInfoSchemaSql(charset, collation, phyDbName);
+                Statement stmt = targetGroupConn.createStatement();
+                String defaultCollOfTarPhyDb = null;
+                String defaultCharsetOfTarPhyDb = null;
+                String tarPhyDbName = null;
+                // default_character_set_name,default_collation_name
+                try (ResultSet rs = stmt.executeQuery(queryDbSql)) {
+                    boolean hasNext = rs.next();
+                    if (!hasNext) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_INVALID_DDL_PARAMS,
+                            String.format("No found target phydb `%s` on the dn '%s'", phyDbName, storageInstId));
+                    }
+                    tarPhyDbName = rs.getString("schema_name");
+                    defaultCharsetOfTarPhyDb = rs.getString("default_character_set_name");
+                    defaultCollOfTarPhyDb = rs.getString("default_collation_name");
+                    if (!StringUtils.isEmpty(charset) && !StringUtils.isEmpty(defaultCharsetOfTarPhyDb)) {
+                        if (!charset.equalsIgnoreCase(defaultCharsetOfTarPhyDb)) {
+                            boolean isDiffCharsetName = true;
+                            try {
+                                CharsetName charsetNameOfLogDb = CharsetName.of(charset);
+                                CharsetName charsetNameOfPhyDb = CharsetName.of(defaultCharsetOfTarPhyDb);
+                                if (charsetNameOfPhyDb != null && charsetNameOfPhyDb != null) {
+                                    isDiffCharsetName = charsetNameOfLogDb != charsetNameOfPhyDb;
+                                }
+                            } catch (Throwable e) {
+                                // ignore
+                                logger.warn(e);
+                            }
+                            if (isDiffCharsetName) {
+                                throw new TddlRuntimeException(ErrorCode.ERR_INVALID_DDL_PARAMS,
+                                    String.format(
+                                        "Found unexpected charset `%s` of target phydb `%s` on the dn '%s', logical db charset is `%s`",
+                                        defaultCharsetOfTarPhyDb, phyDbName, storageInstId, charset));
+                            }
+                        }
+                    }
+                    if (!StringUtils.isEmpty(collation) && !StringUtils.isEmpty(defaultCollOfTarPhyDb)) {
+                        if (!collation.equalsIgnoreCase(defaultCollOfTarPhyDb)) {
+                            boolean isDiffCollationName = true;
+                            try {
+                                CollationName collationNameOfLogDb = CollationName.of(collation);
+                                CollationName collationNameOfPhyDb = CollationName.of(defaultCollOfTarPhyDb);
+                                if (collationNameOfLogDb != null && collationNameOfPhyDb != null) {
+                                    isDiffCollationName = collationNameOfLogDb != collationNameOfPhyDb;
+                                }
+                            } catch (Throwable e) {
+                                // ignore
+                                logger.warn(e);
+                            }
+                            if (isDiffCollationName) {
+                                throw new TddlRuntimeException(ErrorCode.ERR_INVALID_DDL_PARAMS,
+                                    String.format(
+                                        "Found unexpected collation `%s` of target phydb `%s` on the dn '%s', logical db collation is `%s`",
+                                        defaultCollOfTarPhyDb, phyDbName, storageInstId, collation));
+                            }
+                        }
+                    }
+                }
+                stmt.close();
+            }
+        } catch (Throwable ex) {
+            throw ex;
+        }
+    }
+
     /**
      * Create topology config for new db
      * Notice: this method must call after finishing ddl of create all phy dbs
      */
-    public static void addDbTopologyConfig(CreateDbInfo createDbInfo) {
+    public static void addDbTopologyConfig(CreateDbInfo createDbInfo, Connection metaDbConn) {
 
         String dbName = createDbInfo.dbName;
         int dbType = createDbInfo.dbType;
         Map<String, String> groupPhyDbMap = createDbInfo.groupPhyDbMap;
         Map<String, List<String>> storageInstGrpListMap = new HashMap<>();
         Map<String, List<String>> singleGroupMap = new HashMap<>();
-        createDbInfo.groupLocator.buildGroupLocationInfo(storageInstGrpListMap, singleGroupMap);
+        if (createDbInfo.locality.hasProxyConfig()) {
+            createDbInfo.groupLocator.buildGroupLocationInfo(storageInstGrpListMap, singleGroupMap,
+                createDbInfo.locality.getProxyConfig());
+        } else {
+            createDbInfo.groupLocator.buildGroupLocationInfo(storageInstGrpListMap, singleGroupMap);
+        }
         singleGroupMap.forEach((k, list) ->
             storageInstGrpListMap.computeIfAbsent(k, x -> Lists.newArrayList()).addAll(list)
         );
 
+        boolean dryRunDdl = createDbInfo.getDryRunDdl();
+        Connection conn = metaDbConn;
+        boolean needAutoCloseConn = false;
         DataSource dataSource = MetaDbDataSource.getInstance().getDataSource();
-        Connection conn = null;
         try {
-            conn = dataSource.getConnection();
-
+            if (conn == null) {
+                conn = dataSource.getConnection();
+                needAutoCloseConn = true;
+            }
             // This instId may be polardbx master instId or polardbx slave instId,
             // but only polardbx master instId allow create db
             String instId = InstIdUtil.getInstId();
@@ -868,15 +1164,25 @@ public class DbTopologyManager {
                 schemataAccessor.insert(schemataRecord);
             }
 
+            // ---- before commit db_Info meta, check if all phydbs is valid
+            if (dryRunDdl && !createDbInfo.gdnDdlLoad) {
+                String plxRwInstId = InstIdUtil.getInstId();// make sure that instId is master inst id
+                checkPhysicalDbsValid(plxRwInstId, createDbInfo.getDbName(), createDbInfo.getCharset(),
+                    createDbInfo.getCollation(), metaDbConn);
+            }
+
             // ---- commit trx ----
             conn.commit();
         } catch (Throwable ex) {
+            if (dryRunDdl) {
+                checkAndThrowDryRunExceptionIfNeed(ex);
+            }
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC, ex,
                 String.format("Failed to create db[%s], err is %s", dbName, ex.getMessage())
             );
         } finally {
             try {
-                if (conn != null) {
+                if (conn != null && needAutoCloseConn) {
                     conn.close();
                 }
             } catch (Throwable ex) {
@@ -1013,7 +1319,11 @@ public class DbTopologyManager {
     /**
      * Drop physical db for group
      */
-    protected static void dropPhysicalDbsIfExists(String masterInstId, String dbName, long socketTimeout) {
+    protected static void dropPhysicalDbsIfExists(String masterInstId,
+                                                  String dbName,
+                                                  long socketTimeout,
+                                                  boolean dryRunDdl,
+                                                  String ddlDigest) {
         try (Connection metaDbConn = MetaDbDataSource.getInstance().getConnection()) {
             GroupDetailInfoAccessor groupDetailInfoAccessor = new GroupDetailInfoAccessor();
             groupDetailInfoAccessor.setConnection(metaDbConn);
@@ -1050,8 +1360,12 @@ public class DbTopologyManager {
                     String phyDbName = dbGroupInfoRecord.phyDbName;
                     grpPhyDbMap.put(grpInfo.groupName, phyDbName);
                 }
-                dropPhysicalDbsInStorageInst(storageInstId, grpPhyDbMap, socketTimeout);
-
+                if (!dryRunDdl) {
+                    dropPhysicalDbsInStorageInst(storageInstId, grpPhyDbMap, socketTimeout, ddlDigest);
+                } else {
+                    MetaDbLogUtil.DDL_ENGINE_LOG.info(
+                        String.format("ignore exec dropping phydbs[dn=%s] for %s", storageInstId, ddlDigest));
+                }
             }
         } catch (Throwable e) {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC, e,
@@ -1180,7 +1494,9 @@ public class DbTopologyManager {
     }
 
     protected static void dropPhysicalDbsInStorageInst(String storageInstId,
-                                                       Map<String, String> grpPhyDbMap, long socketTimeout)
+                                                       Map<String, String> grpPhyDbMap,
+                                                       long socketTimeout,
+                                                       String ddlDigest)
         throws SQLException {
 
         // ----prepare conn of target inst----
@@ -1204,6 +1520,15 @@ public class DbTopologyManager {
                 String dropDbSql = String.format(DROP_DB_IF_EXISTS_SQL_TEMPLATE, phyDbName);
                 Statement stmt = targetGroupConn.createStatement();
                 stmt.execute(dropDbSql);
+                int arows = stmt.getUpdateCount();
+                boolean execDropPhyDbSucc = arows > 0;
+                if (execDropPhyDbSucc) {
+                    MetaDbLogUtil.DDL_ENGINE_LOG.info(
+                        String.format("dropPhyDbStmt( %s ) exec success for %s", dropDbSql, ddlDigest));
+                } else {
+                    MetaDbLogUtil.DDL_ENGINE_LOG.info(
+                        String.format("dropPhyDbStmt( %s ) exec success (no found db) for %s", dropDbSql, ddlDigest));
+                }
                 stmt.close();
             }
         } catch (SQLException ex) {
@@ -1323,7 +1648,7 @@ public class DbTopologyManager {
                                                 int shardDbCountEachStorageInstOfStmt) {
         return initCreateDbInfo(dbName, charset, collate, null, null, locality, localityFilter, dbType,
             isCreateIfNotExists,
-            socketTimeout, shardDbCountEachStorageInstOfStmt);
+            socketTimeout, shardDbCountEachStorageInstOfStmt, false);
     }
 
     public static CreateDbInfo initCreateDbInfo(String dbName,
@@ -1336,11 +1661,16 @@ public class DbTopologyManager {
                                                 int dbType,
                                                 boolean isCreateIfNotExists,
                                                 long socketTimeout,
-                                                int shardDbCountEachStorageInstOfStmt) {
+                                                int shardDbCountEachStorageInstOfStmt,
+                                                boolean dryRunDdl) {
 
         int shardDbCountEachStorage = DbTopologyManager.shardDbCountEachStorageInst;
         if (shardDbCountEachStorageInstOfStmt > 0) {
             shardDbCountEachStorage = shardDbCountEachStorageInstOfStmt;
+        }
+        Map<String, List<String>> proxyConfig = null;
+        if (locality.hasProxyConfig()) {
+            proxyConfig = locality.getProxyConfig();
         }
         Map<String, String> grpAndPhyDbNameMap = Maps.newHashMap();
         CreateDbInfo createDbInfo = new CreateDbInfo();
@@ -1386,16 +1716,42 @@ public class DbTopologyManager {
             for (int i = 0; i < shardDbCount; i++) {
                 String grpName = GroupInfoUtil.buildGroupName(dbName, i, false);
                 String phyDbName = GroupInfoUtil.buildPhyDbName(dbName, i, false);
+//                    if(DbGroupInfoManager.getInstance().queryPhysicalDbToGroup(phyDbName) != null){
+//                        throw new TddlRuntimeException(ErrorCode.ERR_INVALID_DDL_PARAMS, "there has been physical db " + phyDbName + " existed");
+//                    }
                 grpAndPhyDbNameMap.put(grpName, phyDbName);
             }
             createDbInfo.defaultSingle = true;
         } else if (createDbInfo.dbType == DbInfoRecord.DB_TYPE_NEW_PART_DB) {
-            for (int i = 0; i < storageInstCount; i++) {
-                String grpName = GroupInfoUtil.buildGroupName(dbName, i, true);
-                String phyDbName = GroupInfoUtil.buildPhyDbName(dbName, i, true);
-                grpAndPhyDbNameMap.put(grpName, phyDbName);
-                if (StringUtils.isEmpty(grpNameSingleGroup)) {
-                    grpNameSingleGroup = grpName;
+            if (locality.hasProxyConfig()) {
+                if (!DbGroupInfoManager.getInstance().valiateGroupAndPhyDbName(dbName, locality)) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_INVALID_DDL_PARAMS,
+                        "there has been duplicate physical db or group key " + locality.toString());
+                }
+                int i = 0;
+                for (String grpName : locality.getProxyConfig().keySet()) {
+//                    String grpName = GroupInfoUtil.buildGroupName(dbName, i, true);
+                    String phyDbName = locality.getProxyConfig().get(grpName).get(1);
+                    grpAndPhyDbNameMap.put(grpName, phyDbName);
+//                    if(DbGroupInfoManager.getInstance().queryPhysicalDbToGroup(phyDbName) != null){
+//                        throw new TddlRuntimeException(ErrorCode.ERR_INVALID_DDL_PARAMS, "there has been physical db " + phyDbName + " existed");
+//                    }
+                    i++;
+                    if (StringUtils.isEmpty(grpNameSingleGroup)) {
+                        grpNameSingleGroup = grpName;
+                    }
+                }
+            } else {
+                for (int i = 0; i < storageInstCount; i++) {
+                    String grpName = GroupInfoUtil.buildGroupName(dbName, i, true);
+                    String phyDbName = GroupInfoUtil.buildPhyDbName(dbName, i, true);
+//                    if(DbGroupInfoManager.getInstance().queryPhysicalDbToGroup(phyDbName) != null){
+//                        throw new TddlRuntimeException(ErrorCode.ERR_INVALID_DDL_PARAMS, "there has been physical db " + phyDbName + " existed");
+//                    }
+                    grpAndPhyDbNameMap.put(grpName, phyDbName);
+                    if (StringUtils.isEmpty(grpNameSingleGroup)) {
+                        grpNameSingleGroup = grpName;
+                    }
                 }
             }
             createDbInfo.defaultSingle = false;
@@ -1418,6 +1774,7 @@ public class DbTopologyManager {
         createDbInfo.isCreateIfNotExists = isCreateIfNotExists;
         createDbInfo.socketTimeout = socketTimeout;
         createDbInfo.shardDbCountEachInst = shardDbCountEachStorage;
+        createDbInfo.dryRunDdl = dryRunDdl;
 
         return createDbInfo;
     }
@@ -1510,7 +1867,8 @@ public class DbTopologyManager {
             StorageInfoAccessor storageInfoAccessor = new StorageInfoAccessor();
             storageInfoAccessor.setConnection(metaDbConn);
             List<StorageInfoRecord> storageInfoRecords = storageInfoAccessor.getStorageInfosByInstId(instId)
-                .stream().filter(o -> o.instKind == StorageInfoRecord.INST_KIND_MASTER).collect(Collectors.toList());
+                .stream().filter(o -> o.instKind == StorageInfoRecord.INST_KIND_MASTER)
+                .collect(Collectors.toList());
             Map<String, StorageInfoRecord> storageInfoRecordMap = new HashMap<>();
             for (StorageInfoRecord storageInfoRecord : storageInfoRecords) {
                 if (!storageInfoMap.containsKey(storageInfoRecord.storageMasterInstId)) {
@@ -1645,7 +2003,8 @@ public class DbTopologyManager {
                     StorageInfoRecord slaveStorageInfo = slaveStorageInfoRecords.get(i);
                     String readOnlyInstId = slaveStorageInfo.instId;
                     String slaveStorageInstId = slaveStorageInfo.storageInstId;
-                    groupDetailInfoAccessor.addNewGroupDetailInfo(readOnlyInstId, dbName, grpKey, slaveStorageInstId);
+                    groupDetailInfoAccessor.addNewGroupDetailInfo(readOnlyInstId, dbName, grpKey,
+                        slaveStorageInstId);
                 }
 
             }
@@ -1661,7 +2020,7 @@ public class DbTopologyManager {
             Map<String, String> grpPhyDbMap = new HashMap<>();
             grpPhyDbMap.putIfAbsent(newGroupName, newPhyDbName);
             createPhysicalDbInStorageInst(dbCharset, dbCollation, storageInstId,
-                grpPhyDbMap);
+                grpPhyDbMap, "addScaleOutGroupIntoDb");
         } catch (Throwable ex) {
             MetaDbLogUtil.META_DB_LOG.error(ex);
             throw GeneralUtil.nestedException(ex);
@@ -1738,12 +2097,14 @@ public class DbTopologyManager {
                     StorageInfoRecord slaveStorageInfo = slaveStorageInfoRecords.get(i);
                     String readOnlyInstId = slaveStorageInfo.instId;
                     String slaveStorageInstId = slaveStorageInfo.storageInstId;
-                    groupDetailInfoAccessor.addNewGroupDetailInfo(readOnlyInstId, dbName, grpKey, slaveStorageInstId);
+                    groupDetailInfoAccessor.addNewGroupDetailInfo(readOnlyInstId, dbName, grpKey,
+                        slaveStorageInstId);
                 }
                 MetaDbConfigManager.getInstance()
                     .register(MetaDbDataIdBuilder.getGroupConfigDataId(instId, dbName, grpKey), metaDbConn);
 
-                MetaDbConfigManager.getInstance().notify(MetaDbDataIdBuilder.getDbTopologyDataId(dbName), metaDbConn);
+                MetaDbConfigManager.getInstance()
+                    .notify(MetaDbDataIdBuilder.getDbTopologyDataId(dbName), metaDbConn);
             }
         } catch (Throwable ex) {
             MetaDbLogUtil.META_DB_LOG.error(ex);
@@ -1754,7 +2115,7 @@ public class DbTopologyManager {
             Map<String, String> grpPhyDbMap = new HashMap<>();
             grpPhyDbMap.putIfAbsent(newGroupName, newPhyDbName);
             createPhysicalDbInStorageInst(dbCharset, dbCollation, storageInstId,
-                grpPhyDbMap);
+                grpPhyDbMap, "addNewGroupIntoDb");
         } catch (Throwable ex) {
             MetaDbLogUtil.META_DB_LOG.error(ex);
             throw GeneralUtil.nestedException(ex);
@@ -1783,7 +2144,8 @@ public class DbTopologyManager {
             GroupDetailInfoRecord detailRecord =
                 groupDetailInfoAccessor.getGroupDetailInfoByInstIdAndGroupName(InstIdUtil.getInstId(), schema,
                     groupName);
-            DbGroupInfoRecord dbGroupRecord = dbGroupInfoAccessor.getDbGroupInfoByDbNameAndGroupName(schema, groupName);
+            DbGroupInfoRecord dbGroupRecord =
+                dbGroupInfoAccessor.getDbGroupInfoByDbNameAndGroupName(schema, groupName);
             if (detailRecord == null) {
                 throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR,
                     String.format("Group not exists: %s[%s] in ", schema, groupName));
@@ -1815,7 +2177,7 @@ public class DbTopologyManager {
         try {
             Map<String, String> grpPhyDbMap = new HashMap<>();
             grpPhyDbMap.put(newGroupName, newPhyDbName);
-            dropPhysicalDbsInStorageInst(storageInstId, grpPhyDbMap, socketTimeout);
+            dropPhysicalDbsInStorageInst(storageInstId, grpPhyDbMap, socketTimeout, "dropPhyDbForRemovingGroup");
         } catch (Throwable ex) {
             MetaDbLogUtil.META_DB_LOG.error(ex);
             throw GeneralUtil.nestedException(ex);
@@ -1858,7 +2220,8 @@ public class DbTopologyManager {
                 MetaDbConfigManager.getInstance().unregister(dataIdOfGroup, metaDbConn);
 
                 // upgrade op version  and notify other server nodes to reload topology by timer task
-                MetaDbConfigManager.getInstance().notify(MetaDbDataIdBuilder.getDbTopologyDataId(dbName), metaDbConn);
+                MetaDbConfigManager.getInstance()
+                    .notify(MetaDbDataIdBuilder.getDbTopologyDataId(dbName), metaDbConn);
             }
 
         } catch (Throwable ex) {
@@ -1868,7 +2231,7 @@ public class DbTopologyManager {
         try {
             Map<String, String> grpPhyDbMap = new HashMap<>();
             grpPhyDbMap.put(newGroupName, newPhyDbName);
-            dropPhysicalDbsInStorageInst(storageInstId, grpPhyDbMap, socketTimeout);
+            dropPhysicalDbsInStorageInst(storageInstId, grpPhyDbMap, socketTimeout, "removeOldGroupFromDb");
         } catch (Throwable ex) {
             MetaDbLogUtil.META_DB_LOG.error(ex);
             throw GeneralUtil.nestedException(ex);
@@ -1921,7 +2284,8 @@ public class DbTopologyManager {
                 }
                 if (groupDetailInfoRecord == null) {
                     throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC,
-                        String.format("Failed to drop group[%s] because the group detail doest NOT exists", grpKey));
+                        String.format("Failed to drop group[%s] because the group detail doest NOT exists",
+                            grpKey));
                 }
                 instIdOfGroup = groupDetailInfoRecord.instId;
                 storageInstId = groupDetailInfoRecord.storageInstId;
@@ -1932,7 +2296,8 @@ public class DbTopologyManager {
                 case DbGroupInfoRecord.GROUP_TYPE_NORMAL: {
                     throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC,
                         String
-                            .format("Failed to remove the group[%s] because the group is not scale-out group", grpKey));
+                            .format("Failed to remove the group[%s] because the group is not scale-out group",
+                                grpKey));
                 }
 
                 case DbGroupInfoRecord.GROUP_TYPE_ADDED: {
@@ -1941,7 +2306,8 @@ public class DbTopologyManager {
                             String.format("Failed to remove the group[%s] because the group is doing scale-out",
                                 grpKey));
                     } else {
-                        Map<String, Pair<String, String>> grpPhyDbMap = groupStorageInstPhyDbNameMap.get(storageInstId);
+                        Map<String, Pair<String, String>> grpPhyDbMap =
+                            groupStorageInstPhyDbNameMap.get(storageInstId);
                         if (grpPhyDbMap == null) {
                             grpPhyDbMap = new HashMap<String, Pair<String, String>>();
                             groupStorageInstPhyDbNameMap.put(storageInstId, grpPhyDbMap);
@@ -1985,7 +2351,8 @@ public class DbTopologyManager {
                 MetaDbConfigManager.getInstance().unregister(dataIdOfGroup, metaDbConn);
 
                 // upgrade op version  and notify other server nodes to reload topology by timer task
-                MetaDbConfigManager.getInstance().notify(MetaDbDataIdBuilder.getDbTopologyDataId(dbName), metaDbConn);
+                MetaDbConfigManager.getInstance()
+                    .notify(MetaDbDataIdBuilder.getDbTopologyDataId(dbName), metaDbConn);
 
                 metaDbConn.commit();
                 isSuccess = true;
@@ -2008,7 +2375,7 @@ public class DbTopologyManager {
             Map<String, String> grpPhyDbMap = new HashMap<>();
             grpPhyDbMap.put(groupName, phyDbName);
             if (dropDatabaseAfterSwitch) {
-                dropPhysicalDbsInStorageInst(storageInstId, grpPhyDbMap, socketTimeout);
+                dropPhysicalDbsInStorageInst(storageInstId, grpPhyDbMap, socketTimeout, "removeScaleOutGroupFromDb");
             } else {
                 renameOnePhysicalDbInStorageInst(storageInstId, phyDbName, socketTimeout);
             }
@@ -2193,6 +2560,17 @@ public class DbTopologyManager {
             }
         }
 
+    }
+
+    public static DbGroupInfoRecord getDbGroupInfoFromMetaDb(String dbName, String groupName) {
+
+        try (Connection metaDbConn = MetaDbDataSource.getInstance().getConnection()) {
+            DbGroupInfoAccessor dbGroupInfoAccessor = new DbGroupInfoAccessor();
+            dbGroupInfoAccessor.setConnection(metaDbConn);
+            return dbGroupInfoAccessor.getDbGroupInfoByDbNameAndGroupName(dbName, groupName);
+        } catch (Throwable ex) {
+            throw GeneralUtil.nestedException(ex);
+        }
     }
 
     public static String getPhysicalDbNameByGroupKeyFromMetaDb(String dbName, String groupName) {
@@ -2558,8 +2936,9 @@ public class DbTopologyManager {
             List<String> storageInstIdList =
                 storageInfoAccessor.getStorageIdListByInstIdAndInstKind(instId, storageKind);
             if (localityDesc.hasStoragePoolDefinition() && !localityDesc.holdEmptyDnList()) {
-                storageInstIdList = storageInstIdList.stream().filter(localityDesc::fullMatchStorageInstance).collect(
-                    Collectors.toList());
+                storageInstIdList =
+                    storageInstIdList.stream().filter(localityDesc::fullMatchStorageInstance).collect(
+                        Collectors.toList());
             } else if (!localityDesc.holdEmptyDnList()) {
                 storageInstIdList = storageInstIdList.stream().filter(localityDesc::matchStorageInstance).collect(
                     Collectors.toList());

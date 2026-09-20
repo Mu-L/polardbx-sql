@@ -79,7 +79,7 @@ public class ColumnarPredicatePruningVisitor extends RexVisitorImpl<ColumnPredic
             return null;
         }
         RexInputRef field = (RexInputRef) call.getOperands().get(0);
-        return new IsNullColumnPredicate(field.getIndex());
+        return new IsNullColumnPredicate(field.getType().getSqlTypeName(), field.getIndex());
     }
 
     private ColumnPredicatePruningInf visitIn(RexCall call) {
@@ -128,7 +128,11 @@ public class ColumnarPredicatePruningVisitor extends RexVisitorImpl<ColumnPredic
             field = (RexInputRef) call.getOperands().get(0);
             Object param = PruneUtils.getValueFromRexNode(call.getOperands().get(1), ipc);
             SqlTypeName typeName = field.getType().getSqlTypeName();
-            return new BinaryColumnPredicate(typeName, field.getIndex(), sqlKind, param);
+            if (RexUtil.isNull(call.getOperands().get(1))) {
+                return new BinaryColumnPredicate(typeName, field.getIndex(), sqlKind, param, true);
+            } else {
+                return new BinaryColumnPredicate(typeName, field.getIndex(), sqlKind, param);
+            }
         } else if (call.getOperands().get(1) instanceof RexInputRef &&
             RexUtil.isConstant(call.getOperands().get(0))) {
             field = (RexInputRef) call.getOperands().get(1);
@@ -138,7 +142,6 @@ public class ColumnarPredicatePruningVisitor extends RexVisitorImpl<ColumnPredic
         } else {
             return null;
         }
-
     }
 
     private SqlKind flipSqlKind(SqlKind sqlKind) {

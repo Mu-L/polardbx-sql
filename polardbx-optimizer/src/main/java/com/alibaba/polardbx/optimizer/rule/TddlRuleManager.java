@@ -229,6 +229,10 @@ public class TddlRuleManager extends AbstractLifecycle {
         return defaultDb;
     }
 
+    public boolean isBroadCastOrReplicas(String logicTable) {
+        return isBroadCast(logicTable) || isReplicas(logicTable);
+    }
+
     public boolean isBroadCast(String logicTable) {
         if (partitionInfoManager.isNewPartDbTable(logicTable)) {
             return partitionInfoManager.isBroadcastTable(logicTable);
@@ -236,6 +240,19 @@ public class TddlRuleManager extends AbstractLifecycle {
 
         TableRule table = getTableRule(logicTable);
         return table != null ? table.isBroadcast() : false;// 没找到表规则，默认为单库，所以不是广播表
+    }
+
+    public boolean isReplicas(String logicTable) {
+        if (partitionInfoManager.isNewPartDbTable(logicTable)) {
+            return partitionInfoManager.isReplicasTable(logicTable);
+        }
+
+        // drds库不支持复制表
+        return false;
+    }
+
+    public boolean isSingle(String logicTable) {
+        return isTableInSingleDb(logicTable);
     }
 
     public List<String> getActualSharedColumns(String logicTable) {

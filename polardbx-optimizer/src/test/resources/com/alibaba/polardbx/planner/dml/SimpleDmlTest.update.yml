@@ -97,10 +97,10 @@
   plan: |
     logicalmodify(type="update", set="test_single.id=?0")
       project(id="id", name="name", create_time="create_time", gen$0="?0")
-        semibkajoin(condition="id = id", type="semi")
+        semihashjoin(condition="id = id", type="semi", build="inner")
           logicalview(tables="optest_0000.test_single", sql="select `id`, `name`, `create_time` from `test_single` as `test_single` where (`id` > ?) for update")
           gather(concurrent=true)
-            logicalview(tables="[0000-0003].test_hash_ta", shardcount=4, sql="select `id` from `test_hash_ta` as `test_hash_ta` force index(`primary`) where ((`id` > ?) and (`id` in (...))) for update")
+            logicalview(tables="[0000-0003].test_hash_ta", shardcount=4, sql="select `id` from `test_hash_ta` as `test_hash_ta` where (`id` > ?) for update")
 - sql: |
     update optest.test_single set test_single.name = 'a' where optest.test_single.name = 'test' order by optest.test_single.name limit 10;
 

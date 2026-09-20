@@ -62,10 +62,41 @@ public class OSSInputStream extends FSInputStream {
 
     private FileSystemRateLimiter rateLimiter;
 
+    /**
+     * Whether this stream is explicitly allowed to bypass the GeneralCache
+     * guard. Set to {@code true} by callers that have a per-statement HINT
+     * override turning the cache off; they must be allowed to create a raw
+     * OSSInputStream even while {@link OSSCacheAdapter#isEnabled()} remains
+     * {@code true} (DynamicConfig still on).
+     */
+    private final boolean allowBypass;
+
     public OSSInputStream(Configuration conf,
                           ExecutorService readAheadExecutorService, int maxReadAheadPartNumber,
                           OSSFileSystemStore store, String key, Long contentLength,
                           FileSystem.Statistics statistics, FileSystemRateLimiter rateLimiter) throws IOException {
+        this(conf, readAheadExecutorService, maxReadAheadPartNumber, store, key,
+            contentLength, statistics, rateLimiter, false);
+    }
+
+    /**
+     * Variant that lets the caller opt into skipping the cache-bypass guard,
+     * used when a per-statement HINT has explicitly turned GeneralCache off.
+     */
+    public OSSInputStream(Configuration conf,
+                          ExecutorService readAheadExecutorService, int maxReadAheadPartNumber,
+                          OSSFileSystemStore store, String key, Long contentLength,
+                          FileSystem.Statistics statistics, FileSystemRateLimiter rateLimiter,
+                          boolean allowBypass) throws IOException {
+        // Guard: when cache is enabled, OSSInputStream should not be created
+        // unless the caller has explicitly requested to bypass the cache via
+        // a per-statement HINT override.
+        final OSSCacheAdapter adapter = OSSCacheAdapter.getInstanceOrNull();
+        if (!allowBypass && adapter != null && adapter.isEnabled() && OSSCacheAdapter.isBypassDetectionEnabled()) {
+            throw new IllegalStateException(
+                "[CACHE_BYPASS_DETECTED] Creating OSSInputStream while cache is enabled. "
+                    + "key=" + key + ". All reads should use CachedInputStream.");
+        }
         this.readAheadExecutorService =
             MoreExecutors.listeningDecorator(readAheadExecutorService);
         this.store = store;
@@ -85,6 +116,7 @@ public class OSSInputStream extends FSInputStream {
         this.closed = false;
         this.fetchPolicy = FetchPolicy.valueOf(conf.get(OSS_FETCH_POLICY, FetchPolicy.REQUESTED.name()));
         this.rateLimiter = rateLimiter;
+        this.allowBypass = allowBypass;
     }
 
     private synchronized void reopen(long pos, long downloadPartSize) throws IOException {
@@ -155,7 +187,7 @@ public class OSSInputStream extends FSInputStream {
                 readBuffer.setStatus(ReadBuffer.STATUS.SUCCESS);
             } else {
                 this.readAheadExecutorService.execute(
-                    new OSSFileReaderTask(key, store, readBuffer));
+                    new OSSFileReaderTask(key, store, readBuffer, allowBypass));
             }
             readBufferQueue.add(readBuffer);
             if (isRandomIO) {
@@ -232,7 +264,7 @@ public class OSSInputStream extends FSInputStream {
         }
     }
 
-    private static final int sizeFor(int cap) {
+    private static int sizeFor(int cap) {
         int n = cap - 1;
         n |= n >>> 1;
         n |= n >>> 2;
@@ -259,7 +291,8 @@ public class OSSInputStream extends FSInputStream {
 
         int bytesRead = 0;
         // Not EOF, and read not done
-        while (position < contentLength && bytesRead < len) {
+        while (!Thread.currentThread().isInterrupted()
+            && position < contentLength && bytesRead < len) {
             if (partRemaining == 0) {
                 int delta = len - bytesRead;
 
@@ -307,6 +340,10 @@ public class OSSInputStream extends FSInputStream {
                 throw new IOException("Failed to read from stream. Remaining:" +
                     partRemaining);
             }
+        }
+
+        if (Thread.currentThread().isInterrupted()) {
+            throw new IOException(FSExceptionMessages.STREAM_IS_CLOSED);
         }
 
         if (statistics != null && bytesRead > 0) {

@@ -153,7 +153,7 @@ public class Rds80DirectTest extends AutoCrudBasedLockTestCase {
             + "\t`pad` char(60) NOT NULL DEFAULT '',\n"
             + "\tPRIMARY KEY (`id`),\n"
             + "\tKEY `k_1` (`k`)\n"
-            + ") ENGINE = InnoDB AUTO_INCREMENT = 2 DEFAULT CHARSET = utf8mb4";
+            + ") ENGINE = InnoDB AUTO_INCREMENT = 2 DEFAULT CHARSET = utf8mb4 COLLATE=utf8mb4_general_ci";
 
         JdbcUtil.executeSuccess(conn, createTable);
 
@@ -184,7 +184,7 @@ public class Rds80DirectTest extends AutoCrudBasedLockTestCase {
             return;
         }
 
-        final String createTable = "create table t1(id int, name varchar(20))";
+        final String createTable = "create table t1(id int primary key, name varchar(20)) ";
         JdbcUtil.executeSuccess(conn, createTable);
 
         try (ResultSet rs = JdbcUtil.executeQuerySuccess(conn, "select hashcheck(id, name) from t1")) {

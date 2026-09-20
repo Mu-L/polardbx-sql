@@ -30,7 +30,7 @@ public final class ClearPartitionsHeatmapCache {
 
     public static boolean response(ServerConnection c, boolean hasMore) {
         VisualLayerService.clearPartitionsHeatmapCache();
-        SyncManagerHelper.sync(new ClearPartitionsHeatmapCacheSyncAction(), "information_schema", SyncScope.ALL);
+        SyncManagerHelper.syncThrowExceptions(new ClearPartitionsHeatmapCacheSyncAction(), "information_schema", SyncScope.ALL);
         PacketOutputProxyFactory.getInstance().createProxy(c)
             .writeArrayAsPacket(hasMore ? OkPacket.OK_WITH_MORE : OkPacket.OK);
         return true;

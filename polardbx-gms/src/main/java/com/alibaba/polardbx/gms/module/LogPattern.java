@@ -39,6 +39,8 @@ public enum LogPattern {
     NDV_SKETCH_NOT_READY("ndv sketch failed cause by sketch bytes not ready:%s"),
     UNEXPECTED("%s ended with unexpected error: %s"),
     CHECK_FAIL("%s check failed: %s"),
+    PLAN_BUILD("plan building, source:%s, schema:%s, bid:%s, tid:%s, params:%s, statistic:%s, digest:%s, trId:%s"),
+
     REMOVE("%s remove: %s");
 
     private final String pattern;

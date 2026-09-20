@@ -12,9 +12,28 @@ import static org.junit.Assert.assertEquals;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class InnerConnectionTest {
+    @Test
+    public void testInitAgentSessionVariables() {
+        TConnection connection = mock(TConnection.class);
+        Map<String, Object> extraServerVariables = new HashMap<>();
+        when(connection.getExtraServerVariables()).thenReturn(extraServerVariables);
+        InnerConnection target = new InnerConnection(connection);
+        Map<String, Object> sessionVariables = new HashMap<>();
+        sessionVariables.put("polardbx_server_id", 181818L);
+        sessionVariables.put("sql_mode", "STRICT_TRANS_TABLES");
+        sessionVariables.put("names", "utf8mb4");
+
+        target.initConnBySessionVariables(sessionVariables);
+
+        assertEquals(181818L, extraServerVariables.get("polardbx_server_id"));
+        verify(connection).setSqlMode("STRICT_TRANS_TABLES");
+        verify(connection).setEncoding("utf8mb4");
+    }
+
     @Test
     public void testSetExtraServerVariables() {
         TConnection connection = mock(TConnection.class);

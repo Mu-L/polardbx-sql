@@ -22,8 +22,8 @@ package org.apache.orc.impl;
  * Builds a list of buffer chunks
  */
 public class BufferChunkList {
-  private BufferChunk head;
-  private BufferChunk tail;
+  public BufferChunk head;
+  public BufferChunk tail;
 
   public void add(BufferChunk value) {
     if (head == null) {

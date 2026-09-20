@@ -234,7 +234,14 @@ public class RelToSqlConverter extends SqlImplementor
     for (int group : e.getGroupSet()) {
       final SqlNode field = builder.context.field(group);
       addSelect(selectList, field, e.getRowType());
-      groupByList.add(removeNumericLiterals(field));
+      if (SqlUtil.containsSubQuery(field)) {
+        // MySQL does not support subqueries inside GROUP BY. The field just
+        // added to selectList is at this same GROUP BY position, so refer to
+        // it by its 1-based ordinal instead of inlining the subquery.
+        groupByList.add(SqlLiteral.createExactNumeric(String.valueOf(selectList.size()), POS));
+      } else {
+        groupByList.add(removeNumericLiterals(field));
+      }
     }
     for (AggregateCall aggCall : e.getAggCallList()) {
       SqlNode aggCallSqlNode = builder.context.toSql(aggCall);

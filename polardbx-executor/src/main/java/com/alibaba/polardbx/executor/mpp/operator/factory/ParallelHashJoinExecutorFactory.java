@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.mpp.operator.factory;
 
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFItem;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFItemKey;
@@ -40,7 +41,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 public class ParallelHashJoinExecutorFactory extends ExecutorFactory {
     private boolean driverBuilder;
@@ -85,7 +85,9 @@ public class ParallelHashJoinExecutorFactory extends ExecutorFactory {
     @Override
     public Executor createExecutor(ExecutionContext context, int index) {
         createAllExecutor(context);
-        return executors.get(index);
+        Executor executor = executors.get(index);
+
+        return executor;
     }
 
     @Override
@@ -242,12 +244,14 @@ public class ParallelHashJoinExecutorFactory extends ExecutorFactory {
                     partitionOperatorIdx.put(partition, operatorIdx + 1);
                 }
 
+
                 ParallelHashJoinExec exec =
                     new ParallelHashJoinExec(
                         localPartitionCount > 0 ? synchronizers.get(assignResult.get(i)) : synchronizers.get(0),
                         outerInput, inner, join.getJoinType(), maxOneRow,
                         joinKeys, otherCondition, antiJoinOperands, driverBuilder, context, operatorIdx,
                         probeParallelism, keepPartition);
+
                 exec.setStreamJoin(streamJoin);
                 registerRuntimeStat(exec, join, context);
                 executors.add(exec);

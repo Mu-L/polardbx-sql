@@ -93,7 +93,6 @@ public class PartTupleRouteFunction extends PartRouteFunction {
 
         // build the datum of the search value
         SearchDatumInfo finalVal = buildSearchDatumInfoForTupleData(ec, pruningCtx);
-
         // Route and build bitset by tuple value
         PartitionRouter.RouterResult result = router.routePartitions(ec, cmpKind, finalVal);
 

@@ -27,7 +27,8 @@ import {
     initializeSvg,
     isQueryEnded,
     parseDataSize,
-    parseDuration
+    parseDuration,
+    getFormattedUrl, getFormattedJsonUrl
 } from "../utils";
 import {QueryHeader} from "./QueryHeader";
 
@@ -659,7 +660,7 @@ export class StageDetail extends React.Component {
             }
         }
 
-        $.get('/v1/query/' + queryId, query => {
+        $.get(getFormattedJsonUrl(queryId), query => {
             this.setState({
                 initialized: true,
                 ended: query.finalQueryInfo,

@@ -16,6 +16,10 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.chunk.Chunk;
@@ -27,21 +31,28 @@ import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.alibaba.polardbx.optimizer.memory.MemoryPoolUtils;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.calcite.rel.core.JoinRelType;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Nested-Loop Join Executor
  *
  */
 public class NestedLoopJoinExec extends AbstractBufferedJoinExec implements ConsumerExecutor {
-
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(NestedLoopJoinExec.class).instanceSize();
     private static final Logger logger = LoggerFactory.getLogger(NestedLoopJoinExec.class);
 
+    @FieldMemoryCounter(value = false)
     private Synchronizer shared;
+    private Synchronizer ownedShared = null;
     private boolean isFinished;
+
+    @FieldMemoryCounter(value = false)
     private ListenableFuture<?> blocked;
     private boolean probeInputIsFinish = false;
+    private int operatorId;
 
     public NestedLoopJoinExec(Executor outerInput,
                               Executor innerInput,
@@ -51,10 +62,62 @@ public class NestedLoopJoinExec extends AbstractBufferedJoinExec implements Cons
                               List<IExpression> antiJoinOperands,
                               IExpression antiCondition,
                               ExecutionContext context, Synchronizer synchronizer) {
+        this(outerInput, innerInput, joinType, maxOneRow, condition, antiJoinOperands, antiCondition, context, synchronizer, 0);
+    }
+
+    public NestedLoopJoinExec(Executor outerInput,
+                              Executor innerInput,
+                              JoinRelType joinType,
+                              boolean maxOneRow,
+                              IExpression condition,
+                              List<IExpression> antiJoinOperands,
+                              IExpression antiCondition,
+                              ExecutionContext context,
+                              Synchronizer synchronizer,
+                              int operatorId) {
         super(outerInput, innerInput, joinType, maxOneRow, null, condition, antiJoinOperands, antiCondition, true,
             context);
+        this.operatorId = operatorId;
         this.shared = synchronizer;
         this.blocked = ProducerExecutor.NOT_BLOCKED;
+        if (operatorId == 0) {
+            this.ownedShared = shared;
+        }
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(ownedShared)
+
+            // from AbstractBufferedJoinExec
+            + FastMemoryCounter.sizeOf(buildChunks)
+            + FastMemoryCounter.sizeOf(buildKeyChunks)
+            + FastMemoryCounter.sizeOf(probeChunk)
+            + FastMemoryCounter.sizeOf(probeJoinKeyChunk)
+            + FastMemoryCounter.sizeOf(probeOperator)
+            + FastMemoryCounter.sizeOf(antiJoinResultIterator)
+
+            // from AbstractJoinExec
+            + FastMemoryCounter.sizeOf(ignoreNullBlocks)
+            + FastMemoryCounter.sizeOf(innerKeyMapping)
+
+            // from AbstractExecutor
+            + FastMemoryCounter.sizeOf(blockBuilders)
+            + FastMemoryCounter.sizeOf(executorName);
+    }
+
+    @FieldMemoryCounter(value = false)
+    protected OperatorMemoryOwnerId consumerMemoryOwnerId;
+
+    @Override
+    public void setConsumerOperatorMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        this.consumerMemoryOwnerId = operatorMemoryOwnerId;
+    }
+
+    @Override
+    public OperatorMemoryOwnerId getConsumerMemoryOwnerId() {
+        return consumerMemoryOwnerId;
     }
 
     @Override
@@ -84,10 +147,10 @@ public class NestedLoopJoinExec extends AbstractBufferedJoinExec implements Cons
 
     @Override
     public void doOpen() {
-        if (!passThrough && passNothing) {
-            //避免初始化probe side, minor optimizer
-            return;
-        }
+//        if (!passThrough && passNothing) {
+//            //避免初始化probe side, minor optimizer
+//            return;
+//        }
         super.doOpen();
     }
 
@@ -106,7 +169,11 @@ public class NestedLoopJoinExec extends AbstractBufferedJoinExec implements Cons
         if (buildChunks != null) {
             // Copy the inner chunks from shared states into this executor
             logger.debug("complete fetching builder rows ... total count = " + buildChunks.getPositionCount());
-            this.buildChunks = shared.innerChunks;
+            this.buildChunks = shared.allocateChunkIndex();
+            if (shared.allocatedOperators.get() == 0) {
+                this.shared = null;
+                this.ownedShared = null;
+            }
             if (buildChunks.isEmpty() && joinType == JoinRelType.INNER) {
                 passNothing = true;
             }
@@ -132,8 +199,26 @@ public class NestedLoopJoinExec extends AbstractBufferedJoinExec implements Cons
         closeConsume(true);
     }
 
-    public static class Synchronizer {
+    public static class Synchronizer implements MemoryCountable {
+        private static final int INSTANCE_SIZE = ClassLayout.parseClass(Synchronizer.class).instanceSize();
         private ChunksIndex innerChunks = new ChunksIndex();
+        private AtomicInteger allocatedOperators = new AtomicInteger();
+
+        public Synchronizer(int totalOperators) {
+            allocatedOperators.set(totalOperators);
+        }
+
+        public ChunksIndex allocateChunkIndex() {
+            allocatedOperators.decrementAndGet();
+            return innerChunks;
+        }
+
+        @Override
+        public long getMemoryUsage() {
+            return INSTANCE_SIZE
+                + FastMemoryCounter.sizeOf(innerChunks)
+                + FastMemoryCounter.sizeOf(allocatedOperators);
+        }
     }
 
     @Override

@@ -30,12 +30,16 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class ColumnarPurgeHistoryRecord implements SystemTableRecord {
+    public static final long FLAG_CHECKPOINT_PURGE = 0x1;
+    public static final long FLAG_PURGE_OPTIMIZE_TABLE_SUCCESS = 0x2;
+    public static final long FLAG_PURGE_OPTIMIZE_TABLE_FAIL = 0x4;
 
     public long id;
     public long tso;
     public String status;
     public String info;
     public String extra;
+    public long flag;
 
     public Timestamp createTime;
     public Timestamp updateTime;
@@ -47,6 +51,7 @@ public class ColumnarPurgeHistoryRecord implements SystemTableRecord {
         this.status = rs.getString("status");
         this.info = rs.getString("info");
         this.extra = rs.getString("extra");
+        this.flag = rs.getLong("flag");
         this.createTime = rs.getTimestamp("gmt_created");
         this.updateTime = rs.getTimestamp("gmt_modified");
         return this;
@@ -59,7 +64,26 @@ public class ColumnarPurgeHistoryRecord implements SystemTableRecord {
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.status);
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.info);
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, this.extra);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setLong, this.flag);
         return params;
+    }
+
+    /**
+     * Get checkpoint_purge_flag (bit 0 of flag)
+     */
+    public boolean getCheckpointPurgeFlag() {
+        return (this.flag & FLAG_CHECKPOINT_PURGE) != 0;
+    }
+
+    /**
+     * Set checkpoint_purge_flag (bit 0 of flag)
+     */
+    public void setCheckpointPurgeFlag(boolean value) {
+        if (value) {
+            this.flag |= FLAG_CHECKPOINT_PURGE;
+        } else {
+            this.flag &= ~FLAG_CHECKPOINT_PURGE;
+        }
     }
 
     public enum PurgeStatus {

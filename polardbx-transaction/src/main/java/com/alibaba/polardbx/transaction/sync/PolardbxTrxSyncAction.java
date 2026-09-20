@@ -63,7 +63,7 @@ public class PolardbxTrxSyncAction implements ISyncAction {
             Collection<ITransaction> transactions = tm.getTransactions().values();
             for (ITransaction tran : transactions) {
                 final TransactionStatistics stat = tran.getStat();
-                long durationTime = stat.startTime == 0 ? 0 : (currentTime - stat.startTime) / 1000;
+                long durationTime = stat.startTime <= 0 ? 0 : (currentTime - stat.startTime) / 1000;
                 // If current transaction is executing sql, add the execution time in active time.
                 long activeTime = stat.sqlStartTime > stat.sqlFinishTime ?
                     (currentTime - stat.sqlStartTime + stat.activeTime) / 1000 : stat.activeTime / 1000;

@@ -1,25 +1,12 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.executor.operator;
 
-import com.alibaba.polardbx.optimizer.core.expression.calc.Aggregator;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.ChunkConverter;
 import com.alibaba.polardbx.executor.chunk.Converters;
+import com.alibaba.polardbx.executor.operator.spill.MemoryRevoker;
 import com.alibaba.polardbx.executor.operator.spill.SpillerFactory;
 import com.alibaba.polardbx.executor.operator.util.AggHashMap;
 import com.alibaba.polardbx.executor.operator.util.AggResultIterator;
@@ -27,41 +14,67 @@ import com.alibaba.polardbx.executor.operator.util.AggregateUtils;
 import com.alibaba.polardbx.executor.operator.util.HashWindowOpenHashMap;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
+import com.alibaba.polardbx.optimizer.core.expression.calc.Aggregator;
+import com.alibaba.polardbx.optimizer.core.expression.calc.aggfunctions.AvgV2;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
 import com.alibaba.polardbx.optimizer.memory.MemoryPoolUtils;
 import com.alibaba.polardbx.optimizer.memory.OperatorMemoryAllocatorCtx;
 import com.google.common.util.concurrent.ListenableFuture;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.List;
 
 public class HashWindowExec extends AbstractExecutor implements ConsumerExecutor {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(HashWindowExec.class).instanceSize();
 
+    @FieldMemoryCounter(value = false)
     protected final ChunkConverter inputKeyChunkGetter;
 
+    @FieldMemoryCounter(value = false)
     protected final List<Aggregator> aggregators;
 
+    @FieldMemoryCounter(value = false)
     protected final List<DataType> outputColumnMeta;
 
+    @FieldMemoryCounter(value = false)
     protected final int[] groups;
 
     protected AggHashMap hashTable;
 
     AggResultIterator resultIterator;
 
+    @FieldMemoryCounter(value = false)
     MemoryPool memoryPool;
 
+    @FieldMemoryCounter(value = false)
     OperatorMemoryAllocatorCtx memoryAllocator;
 
     protected boolean finished = false;
+    @FieldMemoryCounter(value = false)
     private final DataType[] groupKeyType;
+    @FieldMemoryCounter(value = false)
     private final DataType[] aggValueType;
+    @FieldMemoryCounter(value = false)
     private final DataType[] inputType;
 
     private final int expectedGroups;
 
+    @FieldMemoryCounter(value = false)
     private SpillerFactory spillerFactory;
 
     private long needMemoryAllocated = 0;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            // for HashWindowExec
+            + FastMemoryCounter.sizeOf(hashTable)
+            + FastMemoryCounter.sizeOf(resultIterator)
+
+            // for AbstractExecutor
+            + FastMemoryCounter.sizeOf(blockBuilders)
+            + FastMemoryCounter.sizeOf(executorName);
+    }
 
     public HashWindowExec(
         List<DataType> inputDataTypes,
@@ -81,6 +94,19 @@ public class HashWindowExec extends AbstractExecutor implements ConsumerExecutor
         this.aggValueType = AggregateUtils.collectDataTypes(outputColumns, inputDataTypes.size(), outputColumns.size());
         this.inputType = AggregateUtils.collectDataTypes(inputDataTypes);
         this.inputKeyChunkGetter = Converters.createChunkConverter(inputDataTypes, groups, groupKeyType, context);
+    }
+
+    @FieldMemoryCounter(value = false)
+    protected OperatorMemoryOwnerId consumerMemoryOwnerId;
+
+    @Override
+    public void setConsumerOperatorMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        this.consumerMemoryOwnerId = operatorMemoryOwnerId;
+    }
+
+    @Override
+    public OperatorMemoryOwnerId getConsumerMemoryOwnerId() {
+        return consumerMemoryOwnerId;
     }
 
     @Override
@@ -175,5 +201,14 @@ public class HashWindowExec extends AbstractExecutor implements ConsumerExecutor
         return outputColumnMeta;
     }
 
-   
+    private boolean spillEnabled() {
+        boolean spillEnabled = spillerFactory != null;
+        for (Aggregator aggCall : aggregators) {
+            if (aggCall.isDistinct() || aggCall instanceof AvgV2) {
+                spillEnabled = false;
+                break;
+            }
+        }
+        return spillEnabled;
+    }
 }

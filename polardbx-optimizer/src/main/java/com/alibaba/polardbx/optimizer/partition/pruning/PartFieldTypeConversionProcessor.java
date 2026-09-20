@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.optimizer.partition.pruning;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.field.TypeConversionStatus;
 import com.alibaba.polardbx.optimizer.partition.datatype.PartitionField;
@@ -141,7 +143,7 @@ public class PartFieldTypeConversionProcessor {
         status = TypeConversionStatus.TYPE_ERR_BAD_VALUE;
         actionInfos = new HashMap<>();
         actionInfos.put(PartFieldAccessType.QUERY_PRUNING, ActionType.REJECT);
-        actionInfos.put(PartFieldAccessType.DML_PRUNING, ActionType.IGNORE);
+        actionInfos.put(PartFieldAccessType.DML_PRUNING, ActionType.REJECT);
         actionInfos.put(PartFieldAccessType.DDL_EXECUTION, ActionType.REJECT);
         actionInfos.put(PartFieldAccessType.META_LOADING, ActionType.REJECT);
         action = new TypeConversionStatusAction(actionInfos);
@@ -175,7 +177,8 @@ public class PartFieldTypeConversionProcessor {
 
     public static void processTypeConversionStatus(PartFieldAccessType accessType,
                                                    DataType srcDataType, PartitionField storedField,
-                                                   boolean[] endpoints) {
+                                                   boolean[] endpoints,
+                                                   ExecutionContext ec) {
 
         TypeConversionStatus status = storedField.lastStatus();
         DataType tarDataType = storedField.dataType();
@@ -193,6 +196,15 @@ public class PartFieldTypeConversionProcessor {
             return;
         }
         if (type == ActionType.REJECT) {
+            if (status == TypeConversionStatus.TYPE_ERR_BAD_VALUE) {
+                if (accessType == PartFieldAccessType.DML_PRUNING) {
+                    boolean tupleRouteForceIgnoreBadValTypeCastStatus =
+                        ec.getParamManager().getBoolean(ConnectionParams.ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST);
+                    if (tupleRouteForceIgnoreBadValTypeCastStatus) {
+                        return;
+                    }
+                }
+            }
             throw new InvalidTypeConversionException(accessType, status, predBool, srcDataType, tarDataType);
         }
     }

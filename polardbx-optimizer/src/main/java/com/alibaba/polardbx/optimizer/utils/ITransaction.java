@@ -20,6 +20,7 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.IConnection;
 import com.alibaba.polardbx.common.jdbc.IDataSource;
 import com.alibaba.polardbx.common.jdbc.ITransactionPolicy;
+import com.alibaba.polardbx.common.oss.blob.BlobWriteTracker;
 import com.alibaba.polardbx.common.type.TransactionType;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.stats.CurrentTransactionStatistics;
@@ -52,8 +53,6 @@ public interface ITransaction {
 
     ExecutionContext getExecutionContext();
 
-    void setExecutionContext(ExecutionContext executionContext);
-
     IConnectionHolder getConnectionHolder();
 
     void tryClose(IConnection conn, String groupName) throws SQLException;
@@ -72,6 +71,8 @@ public interface ITransaction {
     boolean isClosed();
 
     void close();
+
+    void setTraceId(String traceId);
 
     void updateStatisticsWhenStatementFinished(AtomicLong rowCount);
 
@@ -113,13 +114,17 @@ public interface ITransaction {
      *
      * @return true for XA/TSO transaction
      */
-    boolean isStrongConsistent();
+    boolean isDistributedWriteTrx();
 
     State getState();
 
     ITransactionPolicy.TransactionClass getTransactionClass();
 
     long getStartTimeInMs();
+
+    default long getStartTimeInNano() {
+        return 0;
+    }
 
     boolean isBegun();
 
@@ -135,14 +140,15 @@ public interface ITransaction {
      * Handle a single statement error.
      *
      * @param t the error.
+     * @param traceId traceId
      * @return true if this statement is rolled back, or false otherwise.
      */
-    boolean handleStatementError(Throwable t);
+    boolean handleStatementError(Throwable t, String traceId);
 
     /**
      * Release auto savepoint set by this statement.
      */
-    void releaseAutoSavepoint();
+    void releaseAutoSavepoint(String traceId);
 
     /**
      * Rollback and release all dirty read connections if no write connection is used.
@@ -195,5 +201,52 @@ public interface ITransaction {
 
     default void clearFlashbackArea() {
 
+    }
+
+    default void clearAsOfCrossDdl() {
+
+    }
+
+    default long getCommitTso() {
+        return -1;
+    }
+
+    String getUser();
+
+    /**
+     * Get the BlobWriteTracker for this transaction.
+     * Lazily created on first call. Returns null for transaction types that don't support blob writes.
+     */
+    default BlobWriteTracker getBlobWriteTracker() {
+        return null;
+    }
+
+    default BlobWriteTracker getBlobWriteTrackerOrNull() {
+        return null;
+    }
+
+    /**
+     * Pin the external-column write path on first use in this transaction.
+     * Later statements must reuse the pinned value even if the dynamic configuration changes.
+     */
+    default boolean pinExternalStagingEnabled(boolean enabled) {
+        return enabled;
+    }
+
+    /**
+     * Pin the externalized-binlog compatibility contract on first use in this transaction.
+     * This is separate from the low-level staging policy because compatibility may override
+     * size, backpressure, and the staging master switch.
+     */
+    default boolean pinExternalizedBinlogCompatibility(boolean enabled) {
+        return enabled;
+    }
+
+    /**
+     * Register a callback that runs once after the transaction has released its physical connections.
+     * Distributed transaction implementations use this for resources whose lifetime must cover prepared branches.
+     */
+    default void registerCloseHook(Runnable hook) {
+        throw new UnsupportedOperationException("Transaction close hooks are not supported");
     }
 }

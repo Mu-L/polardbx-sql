@@ -38,7 +38,7 @@ import static com.alibaba.polardbx.gms.metadb.GmsSystemTables.COLUMNAR_CONFIG;
 import static com.alibaba.polardbx.gms.metadb.GmsSystemTables.COLUMNAR_TABLE_MAPPING;
 
 public class ColumnarConfigAccessor extends AbstractAccessor {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
     private static final String COLUMNAR_CONFIG_TABLE = wrap(COLUMNAR_CONFIG);
 
     private static final String GET_CHECKSUM = "checksum table " + COLUMNAR_CONFIG_TABLE;
@@ -48,6 +48,9 @@ public class ColumnarConfigAccessor extends AbstractAccessor {
     private static final String QUERY_DATA_BY_TABLE_ID =
         "select * from " + COLUMNAR_CONFIG_TABLE + " where table_id = ?";
 
+    private static final String QUERY_DATA_BY_TABLE_ID_AND_KEY =
+        "select * from " + COLUMNAR_CONFIG_TABLE + " where table_id = ? and config_key = ?";
+
     private static final String QUERY_DATA_BY_CONFIG_KEY = QUERY_DATA + " where config_key = ? and table_id = 0";
 
     private static final String QUERY_DATA_WITH_TIME = "select * from " + COLUMNAR_CONFIG_TABLE
@@ -56,8 +59,14 @@ public class ColumnarConfigAccessor extends AbstractAccessor {
     private static final String INSERT_DATA_ON_DUPLICATE_KEY = "insert into " + COLUMNAR_CONFIG_TABLE
         + "(table_id, config_key, config_value) values(?,?,?) on duplicate key update config_value=values(config_value)";
 
+    private static final String INSERT_IGNORE = "insert ignore into " + COLUMNAR_CONFIG_TABLE
+        + "(table_id, config_key, config_value) values(?,?,?) ";
+
     private static final String UPDATE_GLOBAL_CONFIG_VALUE =
         "replace into " + COLUMNAR_CONFIG_TABLE + " set table_id = 0, config_key = ?, config_value = ?";
+
+    private static final String UPDATE_CONFIG_VALUE_BY_TABLE_ID =
+        "replace into " + COLUMNAR_CONFIG_TABLE + " set config_key = ?, config_value = ?, table_id = ?";
 
     private static final String DELETE_BY_TABLE_ID =
         "delete from " + COLUMNAR_CONFIG_TABLE + " where table_id = ?";
@@ -75,7 +84,7 @@ public class ColumnarConfigAccessor extends AbstractAccessor {
             + " JOIN " + COLUMNAR_TABLE_MAPPING + " mapping "
             + " ON config.table_id = mapping.table_id "
             + " WHERE mapping.table_schema = ? AND mapping.table_name = ? "
-            + " AND mapping.status = '" + ColumnarTableStatus.PUBLIC.name() +"' "
+            + " AND mapping.status = '" + ColumnarTableStatus.PUBLIC.name() + "' "
             + " UNION SELECT null, table_id, config_key, config_value "
             + " FROM " + COLUMNAR_CONFIG_TABLE + " WHERE table_id = 0";
 
@@ -114,6 +123,18 @@ public class ColumnarConfigAccessor extends AbstractAccessor {
 
         } catch (Exception e) {
             throw GeneralUtil.nestedException(e);
+        }
+    }
+
+    public List<ColumnarConfigRecord> query(long tableId, String configKey) {
+        Map<Integer, ParameterContext> params = new HashMap<>();
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, tableId);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setString, configKey);
+        try {
+            return MetaDbUtil.query(QUERY_DATA_BY_TABLE_ID_AND_KEY, params, ColumnarConfigRecord.class, connection);
+        } catch (Exception e) {
+            LOGGER.error("Failed to query the system table " + COLUMNAR_CONFIG, e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, e.getMessage());
         }
     }
 
@@ -159,6 +180,20 @@ public class ColumnarConfigAccessor extends AbstractAccessor {
         }
     }
 
+    public int updateParamValueByTableId(long tableId, String configKey, String configValue) {
+        Map<Integer, ParameterContext> params = new HashMap<>();
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, configKey);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setString, configValue);
+        MetaDbUtil.setParameter(3, params, ParameterMethod.setLong, tableId);
+        try {
+            DdlMetaLogUtil.logSql(UPDATE_CONFIG_VALUE_BY_TABLE_ID, params);
+            return MetaDbUtil.update(UPDATE_CONFIG_VALUE_BY_TABLE_ID, params, connection);
+        } catch (Exception e) {
+            LOGGER.error("Failed to update the system table " + COLUMNAR_CONFIG, e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, e.getMessage());
+        }
+    }
+
     public int[] insert(List<ColumnarConfigRecord> records) {
         List<Map<Integer, ParameterContext>> paramsBatch = new ArrayList<>(records.size());
         for (ColumnarConfigRecord record : records) {
@@ -170,6 +205,22 @@ public class ColumnarConfigAccessor extends AbstractAccessor {
         } catch (SQLException e) {
             LOGGER.error("Failed to insert a batch of new records into " + COLUMNAR_CONFIG_TABLE, e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "batch insert into",
+                COLUMNAR_CONFIG_TABLE,
+                e.getMessage());
+        }
+    }
+
+    public int[] insertIgnore(List<ColumnarConfigRecord> records) {
+        List<Map<Integer, ParameterContext>> paramsBatch = new ArrayList<>(records.size());
+        for (ColumnarConfigRecord record : records) {
+            paramsBatch.add(record.buildInsertParams());
+        }
+        try {
+            DdlMetaLogUtil.logSql(INSERT_IGNORE, paramsBatch);
+            return MetaDbUtil.insert(INSERT_IGNORE, paramsBatch, connection);
+        } catch (SQLException e) {
+            LOGGER.error("Failed to insert a batch of new records into " + COLUMNAR_CONFIG_TABLE, e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "batch insert ignore into",
                 COLUMNAR_CONFIG_TABLE,
                 e.getMessage());
         }

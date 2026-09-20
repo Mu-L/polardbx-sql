@@ -68,10 +68,12 @@ select a, date_format(b, '%Y-%m-%d %H:%i:%s') b_val from ttl_t1_dt_empty order b
 a,b_val
 select a, date_format(b, '%Y-%m-%d %H:%i:%s') b_val from ttl_t2_dt_null order by a
 a,b_val
+1,null
 select a, date_format(b, '%Y-%m-%d %H:%i:%s') b_val from ttl_t3_dt_zero order by a
 a,b_val
 select a, date_format(b, '%Y-%m-%d %H:%i:%s') b_val from ttl_t4_dt_both order by a
 a,b_val
+1,null
 3,9999-00-00 00:00:00
 4,9999-01-01 00:00:00
 5,2024-05-05 00:00:00

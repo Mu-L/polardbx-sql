@@ -34,8 +34,9 @@ public class PushDownReplaceTest extends BasePlannerTest {
         try {
             Planner planner = new Planner();
             ExecutionPlan executionPlan = planner.getPlan(ast, plannerContext);
-            Assert.assertTrue(executionPlan.getPlan() instanceof LogicalReplace);
-            canPushReplace((LogicalReplace) executionPlan.getPlan());
+            // can push down
+            Assert.assertTrue(executionPlan.getPlan() instanceof LogicalInsert);
+            canPushInsert((LogicalInsert) executionPlan.getPlan());
         } catch (NullPointerException t) {
             t.printStackTrace();
             throw t;
@@ -66,6 +67,10 @@ public class PushDownReplaceTest extends BasePlannerTest {
         for (ReplaceRelocateWriter gsiRelocateWriter : replace.getGsiRelocateWriters()) {
             Assert.assertTrue(gsiRelocateWriter.canPushReplace(ec));
         }
+    }
+
+    private void canPushInsert(LogicalInsert insert) {
+        Assert.assertTrue(insert.isUkContainsAllSkAndGsiContainsAllUk());
     }
 
     private void canNotPushReplace(LogicalReplace replace) {

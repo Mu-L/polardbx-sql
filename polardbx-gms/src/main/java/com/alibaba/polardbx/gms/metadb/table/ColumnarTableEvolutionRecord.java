@@ -25,6 +25,7 @@ import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.metadb.record.SystemTableRecord;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
+import lombok.Getter;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -33,8 +34,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@Getter
 public class ColumnarTableEvolutionRecord implements SystemTableRecord {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     public long versionId;
     public long tableId;
@@ -46,6 +48,8 @@ public class ColumnarTableEvolutionRecord implements SystemTableRecord {
     public long commitTs;
     public List<Long> columns;
     public List<Long> partitions;
+    public List<Long> primaryKeys;
+    public List<Long> sortKeys;
     public Map<String, String> options;
 
     public ColumnarTableEvolutionRecord() {
@@ -56,7 +60,8 @@ public class ColumnarTableEvolutionRecord implements SystemTableRecord {
                                         Map<String, String> options,
                                         long ddlJobId,
                                         String ddlType, long commitTs,
-                                        List<Long> columns, List<Long> partitions) {
+                                        List<Long> columns, List<Long> partitions,
+                                        List<Long> primaryKeys, List<Long> sortKeys) {
         this.versionId = versionId;
         this.tableId = tableId;
         this.tableSchema = tableSchema;
@@ -68,6 +73,8 @@ public class ColumnarTableEvolutionRecord implements SystemTableRecord {
         this.commitTs = commitTs;
         this.columns = columns;
         this.partitions = partitions;
+        this.primaryKeys = primaryKeys;
+        this.sortKeys = sortKeys;
     }
 
     public static String serializeToJson(List<Long> ids) {
@@ -133,6 +140,10 @@ public class ColumnarTableEvolutionRecord implements SystemTableRecord {
 
         String partitions = rs.getString("partitions");
         this.partitions = deserializeListFromJson(partitions);
+        String primaryKeys = rs.getString("primary_keys");
+        this.primaryKeys = deserializeListFromJson(primaryKeys);
+        String sortKeys = rs.getString("sort_keys");
+        this.sortKeys = deserializeListFromJson(sortKeys);
 
         String options = rs.getString("options");
         this.options = deserializeMapFromJson(options);
@@ -141,7 +152,7 @@ public class ColumnarTableEvolutionRecord implements SystemTableRecord {
     }
 
     public Map<Integer, ParameterContext> buildInsertParams() {
-        Map<Integer, ParameterContext> params = new HashMap<>(16);
+        Map<Integer, ParameterContext> params = new HashMap<>(18);
         int index = 0;
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setLong, this.versionId);
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setLong, this.tableId);
@@ -153,6 +164,8 @@ public class ColumnarTableEvolutionRecord implements SystemTableRecord {
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setLong, this.commitTs);
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, serializeToJson(this.columns));
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, serializeToJson(this.partitions));
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, serializeToJson(this.primaryKeys));
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, serializeToJson(this.sortKeys));
         MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, serializeToJson(this.options));
         return params;
     }

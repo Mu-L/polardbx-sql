@@ -186,6 +186,19 @@ public class JavaFunctionManager {
         }
     }
 
+    public synchronized IScalarFunction createJavaFunction(String funcName) {
+        if (!functionAndState.containsKey(funcName)) {
+            return null;
+        }
+        Boolean noState = functionAndState.get(funcName);
+
+        if (noState) {
+            return getNoStateFunction(funcName);
+        } else {
+            return getNormalFunction(funcName);
+        }
+    }
+
     public synchronized UserDefinedJavaFunction getNoStateFunction(String funcName) {
         UserDefinedJavaFunction function = functionCaches.get(funcName);
 
@@ -235,14 +248,9 @@ public class JavaFunctionManager {
     }
 
     public synchronized void dropFunction(String funcName) {
-        Boolean noState = functionAndState.remove(funcName);
-        if (noState != null) {
-            if (noState.equals(Boolean.TRUE)) {
-                functionCaches.remove(funcName);
-            } else if (noState.equals(Boolean.FALSE)) {
-                constructorCaches.remove(funcName);
-            }
-        }
+        functionAndState.remove(funcName);
+        functionCaches.remove(funcName);
+        constructorCaches.remove(funcName);
         synchronized (TddlOperatorTable.instance()) {
             Multimap<ReflectiveSqlOperatorTable.Key, SqlOperator> operators =
                 HashMultimap.create(TddlOperatorTable.instance().getOperators());
@@ -548,6 +556,18 @@ public class JavaFunctionManager {
 
     public synchronized boolean containsFunction(String name) {
         return functionAndState.containsKey(name);
+    }
+
+    public synchronized boolean checkIfContainsFunctionByMetaDb(String name) {
+        try (Connection connection = MetaDbUtil.getConnection()) {
+            JavaFunctionAccessor functionAccessor = new JavaFunctionAccessor();
+            functionAccessor.setConnection(connection);
+            List<JavaFunctionRecord> records = functionAccessor.queryFunctionByName(name);
+            return records.size() > 0;
+        } catch (Exception ex) {
+            logger.error("get java function definition from meta db failed, function name is " + name);
+            throw GeneralUtil.nestedException(ex);
+        }
     }
 
     public synchronized long getFuncNum() {

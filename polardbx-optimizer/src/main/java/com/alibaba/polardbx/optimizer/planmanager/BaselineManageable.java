@@ -37,15 +37,19 @@ public interface BaselineManageable {
 
     void updateBaseline(Map<String, List<String>> bMap);
 
-    void deleteBaseline(String schema, String parameterSql);
-
     void deleteBaseline(String schema, Integer baselineId);
 
-    void deleteBaseline(String schema, String parameterSql, int planInfoId);
+    void deleteBaselineUnfixPlan(String schema, Integer baselineId);
 
     void deleteBaselineEvolved(String schema);
+
+    void deleteBaselineUnfixed(String schema);
 
     void deleteBaselinePlan(String schema, Integer baselineId, Integer planInfoId);
 
     boolean checkBaselineHashCodeValid(BaselineInfo baselineInfo, PlanInfo planInfo);
+
+    int grayPlan(String schema, int baselineId, int planId, int grayRatio);
+
+    void persistPlanExtendsToMeta(String instId, String schema, int baselineId, int planId);
 }

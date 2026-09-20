@@ -30,6 +30,5 @@ public class ColumnarSchemaManagerTest extends BaseColumnarManagerTest {
 
         long tso = columnarManager.latestTso();
         System.out.println(tso);
-        System.out.println(columnarManager.getSortKeyColumns(tso, schemaName, "lineitem_col_idx_$9146"));
     }
 }

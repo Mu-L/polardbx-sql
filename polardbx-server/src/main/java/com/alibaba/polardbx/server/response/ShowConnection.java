@@ -19,6 +19,7 @@ package com.alibaba.polardbx.server.response;
 import com.alibaba.polardbx.Fields;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.config.SchemaConfig;
+import com.alibaba.polardbx.executor.cursor.ResultCursor;
 import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.net.buffer.ByteBufferHolder;
 import com.alibaba.polardbx.net.compress.IPacketOutputProxy;
@@ -100,6 +101,10 @@ public final class ShowConnection {
     }
 
     public static boolean execute(ServerConnection c, boolean hasMore) {
+        return execute(c, hasMore, false);
+    }
+
+    public static boolean execute(ServerConnection c, boolean hasMore, boolean isLocal) {
         ByteBufferHolder buffer = c.allocate();
         IPacketOutputProxy proxy = PacketOutputProxyFactory.getInstance().createProxy(c, buffer);
         proxy.packetBegin();
@@ -140,8 +145,28 @@ public final class ShowConnection {
         }
 
         OptimizerContext.setContext(ds.getConfigHolder().getOptimizerContext());
-        List<List<Map<String, Object>>> results = SyncManagerHelper.sync(new ShowConnectionSyncAction(
-            c.getUser(), c.getSchema()), c.getSchema(), SyncScope.CURRENT_ONLY);
+        List<List<Map<String, Object>>> results;
+        if (isLocal) {
+            // 本地执行，仅查询当前节点
+            ShowConnectionSyncAction action = new ShowConnectionSyncAction(c.getUser(), c.getSchema());
+            ResultCursor resultCursor = action.sync();
+            List<Map<String, Object>> localResult = new java.util.ArrayList<>();
+            com.alibaba.polardbx.optimizer.core.row.Row row;
+            while ((row = resultCursor.next()) != null) {
+                Map<String, Object> rowMap = new java.util.HashMap<>();
+                List<com.alibaba.polardbx.optimizer.config.table.ColumnMeta> columns = resultCursor.getReturnColumns();
+                for (int i = 0; i < columns.size(); i++) {
+                    rowMap.put(columns.get(i).getName(), row.getObject(i));
+                }
+                localResult.add(rowMap);
+            }
+            results = new java.util.ArrayList<>();
+            results.add(localResult);
+        } else {
+            // 集群同步执行
+            results = SyncManagerHelper.syncIgnoreExceptions(new ShowConnectionSyncAction(
+                c.getUser(), c.getSchema()), c.getSchema(), SyncScope.CURRENT_ONLY);
+        }
         for (List<Map<String, Object>> rs : results) {
             if (rs == null) {
                 continue;

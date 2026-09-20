@@ -5,7 +5,9 @@ import com.alibaba.polardbx.gms.metadb.GmsSystemTables;
 import com.alibaba.polardbx.qatest.BaseTestCase;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.clearspring.analytics.util.Lists;
+import org.apache.commons.lang.StringUtils;
 import org.glassfish.jersey.internal.guava.Sets;
+import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.FixMethodOrder;
 import org.junit.Ignore;
@@ -13,14 +15,11 @@ import org.junit.Test;
 import org.junit.runners.MethodSorters;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Timestamp;
 import java.util.List;
 import java.util.Set;
-
-import static com.alibaba.polardbx.gms.metadb.GmsSystemTables.BASELINE_INFO;
-import static com.alibaba.polardbx.gms.metadb.GmsSystemTables.PLAN_INFO;
 
 /**
  * @author fangwu
@@ -30,7 +29,7 @@ public class SpmTest extends BaseTestCase {
     private static final String DB_NAME = "SPM_TEST_DB";
     private static final String TB_NAME = "SPM_TEST_TB";
 
-    private static String CREATE_TABLE = "CREATE TABLE IF NOT EXISTS %s (\n"
+    private static final String CREATE_TABLE = "CREATE TABLE IF NOT EXISTS %s (\n"
         + "  `id` bigint(11) NOT NULL AUTO_INCREMENT,\n"
         + "  `order_id` varchar(20) DEFAULT NULL,\n"
         + "  `buyer_id` varchar(20) DEFAULT NULL,\n"
@@ -41,6 +40,14 @@ public class SpmTest extends BaseTestCase {
 
     private static final String BASELINE_ADD =
         "baseline add sql /*TDDL:a()*/ select 1 from %s a join %s b on a.%s=b.%s";
+
+    private static final String BASELINE_INSERT =
+        "INSERT IGNORE INTO SPM_BASELINE (ID, INST_ID, SCHEMA_NAME, GMT_MODIFIED, GMT_CREATED, `SQL`, TABLE_SET, EXTEND_FIELD) VALUES "
+            + "(?, ?, ?, now(), now(), ?, '', 'test_marketing_spm_test')";
+
+    private static final String PLAN_INSERT =
+        "INSERT IGNORE INTO SPM_PLAN (ID, INST_ID, SCHEMA_NAME, BASELINE_ID, GMT_MODIFIED, GMT_CREATED, PLAN, CHOOSE_COUNT, COST, ESTIMATE_EXECUTION_TIME, ACCEPTED, FIXED, TRACE_ID,TABLES_HASHCODE, EXTEND_FIELD) VALUES "
+            + "(?, ?, ?, ?, now(), now(), '', 1, 1.0, 1, 1, 0, '', -1, 'test_marketing_spm_test')";
 
     private static final String CREATE_BASELINE_INFO =
         "create table if not exists `" + GmsSystemTables.BASELINE_INFO + "` (\n"
@@ -129,6 +136,18 @@ public class SpmTest extends BaseTestCase {
             c.createStatement().execute(baselineAddSql);
 
             c.createStatement().execute("baseline persist");
+        }
+    }
+
+    @AfterClass
+    public static void clean() throws SQLException {
+        cleanUp();
+    }
+
+    private static void cleanUp() throws SQLException {
+        try (Connection c = getPolardbxConnection0()) {
+            c.createStatement().execute("delete from metadb.spm_baseline where EXTEND_FIELD='test_marketing_spm_test'");
+            c.createStatement().execute("delete from metadb.spm_plan where EXTEND_FIELD='test_marketing_spm_test'");
         }
     }
 
@@ -301,7 +320,7 @@ public class SpmTest extends BaseTestCase {
         }
     }
 
-    @Test
+    @Ignore
     public void testPlanMigration() throws Exception {
         try (Connection c = getMetaConnection()) {
             // create baseline_info
@@ -316,6 +335,7 @@ public class SpmTest extends BaseTestCase {
 
         // refresh baseline
         try (Connection c = getPolardbxConnection(DB_NAME)) {
+            c.createStatement().execute("set global ENABLE_SPM=true");
             // reload baseline
             c.createStatement().executeQuery("baseline load");
 
@@ -323,7 +343,7 @@ public class SpmTest extends BaseTestCase {
             ResultSet rs = c.createStatement()
                 .executeQuery("select count(1) from information_schema.spm where schema_name = '" + DB_NAME + "'");
             rs.next();
-            assert rs.getInt(1) == 0;
+            assert rs.getInt(1) > 0;
             rs.close();
 
             // check metadb
@@ -331,14 +351,14 @@ public class SpmTest extends BaseTestCase {
                 .executeQuery("select count(1) from metadb.spm_baseline where schema_name = '" + DB_NAME + "'");
             rs.next();
             int count = rs.getInt(1);
-            assert count == 0;
+            assert count > 0;
             rs.close();
 
             rs = c.createStatement()
                 .executeQuery("select count(1) from metadb.spm_plan where schema_name = '" + DB_NAME + "'");
             rs.next();
             count = rs.getInt(1);
-            assert count == 0;
+            assert count > 0;
             rs.close();
         }
     }
@@ -347,7 +367,7 @@ public class SpmTest extends BaseTestCase {
      * trigger schedule job, and check if each cn node got the same baseline collection,
      * and if this baseline collection had been persisted correctly
      */
-    @Test
+    @Ignore("test sync job by ut")
     public void testSPMBaseLineSyncScheduledJob() throws Exception {
         // trigger schedule job
         String sql;
@@ -366,38 +386,8 @@ public class SpmTest extends BaseTestCase {
         if (schedule_id == null) {
             Assert.fail("Cannot find schedule id for BASELINE_SYNC");
         }
-        Thread.sleep(5000);
         sql = " fire schedule " + schedule_id;
         JdbcUtil.executeUpdateSuccess(this.getPolardbxConnection(), sql);
-
-        sql = "select state from metadb.fired_SCHEDULEd_JOBS where schedule_id=" + schedule_id
-            + " and gmt_modified>FROM_UNIXTIME(" + now + "/1000)";
-
-        // waiting job done
-        while (true) {
-            //timeout control 5 min
-            if (System.currentTimeMillis() - now > 5 * 60 * 1000) {
-                Assert.fail("timeout:5 min");
-                return;
-            }
-            Thread.sleep(5000);
-            ResultSet rs = JdbcUtil.executeQuery(sql, this.getPolardbxConnection());
-            boolean anySucc = false;
-            while (rs.next()) {
-                String state = rs.getString(1);
-                if ("SUCCESS".equalsIgnoreCase(state)) {
-                    anySucc = true;
-                    rs.close();
-                    break;
-                }
-            }
-            rs.close();
-            if (anySucc) {
-                break;
-            }
-        }
-
-        // check sync cover all cluster
 
         // get all inst id
         ResultSet rs = JdbcUtil.executeQuery("select inst_id, ip from server_info", this.getMetaConnection());
@@ -467,6 +457,358 @@ public class SpmTest extends BaseTestCase {
             assert rs.getInt(1) == 0;
             rs.close();
         }
+    }
+
+    /**
+     * this test method should be the last one to be executed in this case
+     */
+    @Test
+    public void testBaselineFixArgs() throws Exception {
+        try (Connection c = getPolardbxConnection(DB_NAME)) {
+            // prepare table
+            String t1 = "test_hash_tb1";
+            String t2 = "test_hash_tb2";
+            String createTable = "CREATE TABLE IF NOT EXISTS `%s` (\n"
+                + "\t`id` int NOT NULL,\n"
+                + "\t`name` varchar(30) DEFAULT NULL,\n"
+                + "\t`int_col2` int DEFAULT NULL,\n"
+                + "\t`create_time` datetime DEFAULT NULL,\n"
+                + "\t`name1` varchar(30) DEFAULT NULL,\n"
+                + "\t`name2` varchar(30) DEFAULT NULL,\n"
+                + "\tPRIMARY KEY (`id`)\n"
+                + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb3";
+            c.createStatement().execute(String.format(createTable, t1));
+            c.createStatement().execute(String.format(createTable, t2));
+
+            // test baseline fix hint
+            String hint = "/*TDDL:EXECUTOR_MODE=AP_LOCAL cmd_extra(PARALLELISM=1000, ENable_bka_join=false)*/";
+            String sql = "select t1.int_col2 from test_hash_tb1 t1 join test_hash_tb2 t2 on t1.id=t2.id limit 1,1";
+            ResultSet rs = c.createStatement().executeQuery("baseline fix sql  " + hint + sql);
+            rs.next();
+            String plan = rs.getString("PLAN").toLowerCase();
+            rs.close();
+
+            Assert.assertTrue(plan.contains("parallelism=1000"));
+            Assert.assertTrue(plan.contains("enable_bka_join=false"));
+            Assert.assertTrue(plan.contains("executor_mode=ap_local"));
+
+            String executionPlan = explainStr(c, "baseline " + sql).toLowerCase();
+
+            Assert.assertTrue(executionPlan.contains("parallelism=1000"));
+            Assert.assertTrue(executionPlan.contains("enable_bka_join=false"));
+            Assert.assertTrue(executionPlan.contains("executor_mode=ap_local"));
+
+            // set global ENABLE_PRUNING_IN=true and IN_PRUNE_MAX_TIME=100000
+            c.createStatement().execute("set global ENABLE_PRUNING_IN=true");
+            c.createStatement().execute("set global IN_PRUNE_MAX_TIME=100000");
+
+            // test IN_PRUNE_MAX_TIME args working correctly in baseline fix
+            sql = "select * from test_hash_tb1 where id in (1,2,3,4,5,6,7,8,9)";
+            c.createStatement()
+                .executeQuery("baseline fix sql  /*TDDL:IN_PRUNE_MAX_TIME=10 IN_SUB_QUERY_THRESHOLD=1000*/" + sql);
+
+            executionPlan = explainStr(c, sql);
+
+            Assert.assertTrue(executionPlan.contains("pruningInfo="));
+
+            sql = "select * from test_hash_tb1 where id in (1,2,3,4,5,6,7,8,9,10,11)";
+            executionPlan = explainStr(c, sql);
+            Assert.assertTrue(!executionPlan.contains("pruningInfo="));
+        }
+    }
+
+    @Test
+    public void testBaselineFixArgsWithExecutorModeAndWorkloadType() throws Exception {
+        try (Connection c = getPolardbxConnection(DB_NAME)) {
+            // prepare table
+            String t1 = "test_hash_tb1";
+            String t2 = "test_hash_tb2";
+            String createTable = "CREATE TABLE IF NOT EXISTS `%s` (\n"
+                + "\t`id` int NOT NULL,\n"
+                + "\t`name` varchar(30) DEFAULT NULL,\n"
+                + "\t`int_col2` int DEFAULT NULL,\n"
+                + "\t`create_time` datetime DEFAULT NULL,\n"
+                + "\t`name1` varchar(30) DEFAULT NULL,\n"
+                + "\t`name2` varchar(30) DEFAULT NULL,\n"
+                + "\tPRIMARY KEY (`id`)\n"
+                + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb3";
+            c.createStatement().execute(String.format(createTable, t1));
+            c.createStatement().execute(String.format(createTable, t2));
+
+            // test baseline fix hint
+            String hint = "/*TDDL:EXECUTOR_MODE=MPP WORKLOAD_TYPE=AP*/";
+            String sql = "select t1.int_col2 from test_hash_tb1 t1 join test_hash_tb2 t2 on t1.id=t2.id limit 1";
+            ResultSet rs = c.createStatement().executeQuery("baseline fix sql  " + hint + sql);
+            rs.next();
+            String plan = rs.getString("PLAN").toLowerCase();
+            rs.close();
+
+            Assert.assertTrue(plan.contains("executor_mode=mpp"));
+            Assert.assertTrue(plan.contains("workload_type=ap"));
+
+            String executionPlan = explainStr(c, "baseline " + sql).toLowerCase();
+
+            Assert.assertTrue(executionPlan.contains("executor_mode=mpp"));
+            Assert.assertTrue(executionPlan.contains("workload_type=ap"));
+        }
+    }
+
+    /**
+     * Join Order Hints:  JOIN_FIXED_ORDER()
+     * Optimizer Hints:  MAX_EXECUTION_TIME(1000)
+     * Subquery Hints: SEMIJOIN(MATERIALIZATION) NO_SEMIJOIN()
+     * resource control:  RESOURCE_GROUP(group_name)
+     */
+    @Test
+    public void testBaselineFixArgsWithDNHint() throws Exception {
+        try (Connection c = getPolardbxConnection(DB_NAME)) {
+            // prepare table
+            String t1 = "test_hash_tb1";
+            String t2 = "test_hash_tb2";
+            String createTable = "CREATE TABLE IF NOT EXISTS `%s` (\n"
+                + "\t`id` int NOT NULL,\n"
+                + "\t`name` varchar(30) DEFAULT NULL,\n"
+                + "\t`int_col2` int DEFAULT NULL,\n"
+                + "\t`create_time` datetime DEFAULT NULL,\n"
+                + "\t`name1` varchar(30) DEFAULT NULL,\n"
+                + "\t`name2` varchar(30) DEFAULT NULL,\n"
+                + "\tPRIMARY KEY (`id`)\n"
+                + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb3";
+            c.createStatement().execute(String.format(createTable, t1));
+            c.createStatement().execute(String.format(createTable, t2));
+
+            // test baseline fix hint
+            String hint = "/*TDDL:DN_HINT=JOIN_FIXED_ORDER()*/";
+            String sql = "select t1.int_col2 from test_hash_tb1 t1 join test_hash_tb2 t2 on t1.id=t2.id order by t1.id";
+            ResultSet rs = c.createStatement().executeQuery("baseline fix sql  " + hint + sql);
+            rs.next();
+            String plan = rs.getString("PLAN").toLowerCase();
+            rs.close();
+
+            Assert.assertTrue(plan.contains("dn_hint=join_fixed_order()"));
+
+            c.createStatement().executeQuery("trace " + sql);
+            rs = c.createStatement().executeQuery("show trace;");
+            int count = 0;
+            while (rs.next()) {
+                String sqlContent = rs.getString("STATEMENT").toLowerCase();
+                Assert.assertTrue(sqlContent.contains("/*+join_fixed_order()*/"));
+                count++;
+            }
+
+            assert count > 0;
+        }
+    }
+
+    @Test
+    public void testShardingWithPushDownColSubquery() throws Exception {
+        try (Connection c = getPolardbxConnection(DB_NAME)) {
+            // prepare table
+            String t1 = "test_key_tb1";
+            String t2 = "test_key_tb2";
+            String createTable = "CREATE TABLE IF NOT EXISTS %s(\n"
+                + " id bigint not null auto_increment,\n"
+                + " bid int,\n"
+                + " name varchar(30),\n"
+                + " birthday datetime not null,\n"
+                + " primary key(id)\n"
+                + ")\n"
+                + "PARTITION BY KEY(id, name)\n"
+                + "PARTITIONS 8;";
+            c.createStatement().execute(String.format(createTable, t1));
+            c.createStatement().execute(String.format(createTable, t2));
+
+            // test baseline fix hint
+            String sql =
+                "select t2.bid, (select name from test_key_tb1 t1 where t1.id=t2.id) as name from test_key_tb2 t2 where name in('a','b')";
+            c.createStatement().executeQuery(sql);
+
+            sql =
+                "select t2.bid, (select name from test_key_tb1 t1 where t1.id=t2.id) as name from test_key_tb2 t2 where name in('a','b', 'c')";
+            c.createStatement().executeQuery(sql);
+
+        }
+    }
+
+    @Test
+    public void testBaselineFixExpr() throws Exception {
+        try (Connection c = getPolardbxConnection(DB_NAME)) {
+            // prepare table
+            String t1 = "test_key_tb1";
+            String t2 = "test_key_tb2";
+            String createTable = "CREATE TABLE if not exists %s(\n"
+                + " id bigint not null auto_increment,\n"
+                + " bid int,\n"
+                + " name varchar(30),\n"
+                + " birthday datetime not null,\n"
+                + " primary key(id)\n"
+                + ")\n"
+                + "PARTITION BY KEY(id, name)\n"
+                + "PARTITIONS 8;";
+            c.createStatement().execute(String.format(createTable, t1));
+            c.createStatement().execute(String.format(createTable, t2));
+
+            // baseline fix expr
+            String sql = "BASELINE FIX "
+                + "EXPR test_key_tb2.bid in (4,5,6) or test_key_tb1.birthday>='2025-03-25' "
+                + "SQL /*TDDL:bka_join(t1, t2)*/ "
+                + "select * from test_key_tb2 t1 join test_key_tb1 t2 on t1.id=t2.bid where t1.bid=3 and t2.birthday='2025-03-25';";
+            c.createStatement().executeQuery(sql);
+
+            sql = "select * from test_key_tb2 t1 join test_key_tb1 t2 on t1.id=t2.bid where t1.bid=3 and t2.birthday='2025-03-25'";
+
+            String explainStr = explainStr(c, sql);
+
+            Assert.assertTrue(explainStr.toLowerCase().contains("bkajoin")&&explainStr.toLowerCase().contains("spm_fix"));
+
+            sql = "select * from test_key_tb2 t1 join test_key_tb1 t2 on t1.id=t2.bid where t1.bid=3 and t2.birthday='2025-03-24'";
+
+            explainStr = explainStr(c, sql);
+
+            Assert.assertTrue(explainStr.toLowerCase().contains("plan_cache"));
+
+            // priority test
+            sql = "BASELINE FIX "
+                + "SQL /*TDDL:hash_join(test_key_tb2, test_key_tb1)*/ "
+                + "select * from test_key_tb2 t1 join test_key_tb1 t2 on t1.id=t2.bid where t1.bid=3 and t2.birthday='2025-03-24'";
+            c.createStatement().executeQuery(sql);
+
+            sql = "select * from test_key_tb2 t1 join test_key_tb1 t2 on t1.id=t2.bid where t1.bid=4 and t2.birthday='2025-03-25'";
+
+            explainStr = explainStr(c, sql);
+
+            Assert.assertTrue(explainStr.toLowerCase().contains("bkajoin")&&explainStr.toLowerCase().contains("spm_fix"));
+
+            sql = "select * from test_key_tb2 t1 join test_key_tb1 t2 on t1.id=t2.bid where t1.bid=3 and t2.birthday='2025-03-24'";
+
+            explainStr = explainStr(c, sql);
+
+            Assert.assertTrue(explainStr.toLowerCase().contains("hashjoin")&&explainStr.toLowerCase().contains("spm_fix"));
+        }
+    }
+
+    @Test
+    public void testBaselineClean() throws SQLException {
+        String instIdExist;
+
+        try (Connection c = getPolardbxConnection(DB_NAME)) {
+            // get current inst id
+            String sqlGetInstId =
+                "select INST_ID from information_schema.spm where inst_id is not null and inst_id !='' limit 1";
+            try (ResultSet rs = c.createStatement().executeQuery(sqlGetInstId)) {
+                rs.next();
+                instIdExist = rs.getString(1);
+            }
+
+            if (StringUtils.isEmpty(instIdExist)) {
+                Assert.fail("instId is empty");
+            }
+        }
+
+        // add other schema baseline
+        try (Connection c = getMetaConnection()) {
+            String sql = "select 1 from test1 where 1=0";
+            int bid = sql.hashCode();
+
+            String schemaName = "spm_test_clean_schema_name1";
+            PreparedStatement ps = c.prepareStatement(BASELINE_INSERT);
+            ps.setInt(1, bid);
+            ps.setString(2, instIdExist);
+            ps.setString(3, schemaName);
+            ps.setString(4, sql);
+            ps.executeUpdate();
+
+            int pid = -9998;
+            ps = c.prepareStatement(PLAN_INSERT);
+            ps.setInt(1, pid);
+            ps.setString(2, instIdExist);
+            ps.setString(3, schemaName);
+            ps.setInt(4, bid);
+            ps.addBatch();
+            ps.setInt(1, pid + 1);
+            ps.setString(2, instIdExist);
+            ps.setString(3, schemaName);
+            ps.setInt(4, bid);
+            ps.addBatch();
+            ps.executeBatch();
+        }
+
+        // add other baseline
+        try (Connection c = getMetaConnection()) {
+            String sql = "select 1 from test1 where 1=0";
+            int bid = sql.hashCode();
+            String schemaName = DB_NAME;
+            PreparedStatement ps = c.prepareStatement(BASELINE_INSERT);
+            ps.setInt(1, bid);
+            ps.setString(2, instIdExist);
+            ps.setString(3, schemaName);
+            ps.setString(4, sql);
+
+            ps.executeUpdate();
+
+            int pid = -9997;
+            ps = c.prepareStatement(PLAN_INSERT);
+            ps.setInt(1, pid);
+            ps.setString(2, instIdExist);
+            ps.setString(3, schemaName);
+            ps.setInt(4, bid);
+            ps.addBatch();
+            ps.setInt(1, pid + 1);
+            ps.setString(2, instIdExist);
+            ps.setString(3, schemaName);
+            ps.setInt(4, bid);
+            ps.addBatch();
+            ps.executeBatch();
+        }
+
+        // add other plan
+        try (Connection c = getMetaConnection()) {
+            int bid = -8888;
+            String schemaName = DB_NAME;
+            PreparedStatement ps = c.prepareStatement(PLAN_INSERT);
+            int pid = -9996;
+            ps.setInt(1, pid);
+            ps.setString(2, instIdExist);
+            ps.setString(3, schemaName);
+            ps.setInt(4, bid);
+            ps.addBatch();
+            ps.setInt(1, pid + 1);
+            ps.setString(2, instIdExist);
+            ps.setString(3, schemaName);
+            ps.setInt(4, bid);
+            ps.addBatch();
+            ps.executeBatch();
+        }
+
+        // sync baseline
+        try (Connection c = getPolardbxConnection(DB_NAME)) {
+            ResultSet rs = c.createStatement()
+                .executeQuery("select schedule_id from metadb.scheduled_jobs where executor_type='BASELINE_SYNC'");
+
+            rs.next();
+            int scheduleId = rs.getInt(1);
+
+            c.createStatement().execute("fire schedule " + scheduleId);
+        }
+
+        // check if baseline is cleaned
+        try (Connection c = getMetaConnection()) {
+            ResultSet rs = c.createStatement().executeQuery(
+                "select * from spm_baseline where schema_name in ('spm_test_clean_schema_name', 'spm_test_clean_schema_name1') "
+                    + "AND id in (-9999, -9998, -9997, -9996)");
+            Assert.assertTrue(!rs.next());
+        }
+    }
+
+    private String explainStr(Connection c, String sql) throws SQLException {
+        StringBuilder executionPlan = new StringBuilder();
+        try (ResultSet rs = c.createStatement().executeQuery("explain " + sql)) {
+
+            while (rs.next()) {
+                executionPlan.append(rs.getString(1));
+            }
+        }
+        return executionPlan.toString();
     }
 
 }

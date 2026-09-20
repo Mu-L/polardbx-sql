@@ -26,14 +26,47 @@ import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableGroupAddTable;
+import org.apache.calcite.sql.SqlAlterTableGroup;
+import org.apache.calcite.sql.SqlAlterTableGroupAddTable;
+import org.apache.calcite.sql.SqlIdentifier;
+import org.apache.calcite.sql.SqlNode;
+
+import java.util.Map;
+import java.util.Set;
 
 public class LogicalAlterTableGroupAddTableHandler extends LogicalCommonDdlHandler {
 
     public LogicalAlterTableGroupAddTableHandler(IRepository repo) {
         super(repo);
+    }
+
+    @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        String schemaName = logicalDdlPlan.getSchemaName();
+
+        SqlAlterTableGroup sqlNode = (SqlAlterTableGroup) logicalDdlPlan.getNativeSqlNode();
+        String tableGroupName = ((SqlIdentifier) sqlNode.getTableGroupName()).getLastName();
+
+        SqlAlterTableGroupAddTable sqlAddTable = (SqlAlterTableGroupAddTable) sqlNode.getAlters().get(0);
+        for (SqlNode tableNode : sqlAddTable.getTables()) {
+            String tableName = ((SqlIdentifier) tableNode).getLastName();
+            TableMeta tableMeta = executionContext.getSchemaManager(schemaName).getTableWithNull(tableName);
+            if (tableMeta != null && tableMeta.isGsi()) {
+                return;
+            } else if (tableMeta != null) {
+                exclusiveResources.add(concatWithDot(schemaName, tableName));
+                tableVersions.put(tableName, tableMeta.getVersion());
+            }
+        }
+
+        exclusiveResources.add(concatWithDot(schemaName, tableGroupName));
     }
 
     @Override

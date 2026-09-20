@@ -1,19 +1,3 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.optimizer.sql.sql2rel;
 
 import com.alibaba.polardbx.common.Engine;
@@ -33,6 +17,8 @@ import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLExprUtils;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.parser.MySqlExprParser;
+import com.alibaba.polardbx.gms.locality.LocalityDesc;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.gms.metadb.table.IndexStatus;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
@@ -53,6 +39,8 @@ import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.ExecutionStrategy;
+import com.alibaba.polardbx.optimizer.core.rel.LogicalDynamicValues;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.RexHandlerCallFactory;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.RexHandlerChain;
 import com.alibaba.polardbx.optimizer.exception.SqlValidateException;
@@ -71,10 +59,12 @@ import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.RelOptUtil.InputFinder;
+import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.prepare.Prepare.CatalogReader;
 import org.apache.calcite.prepare.RelOptTableImpl;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelShuttleImpl;
+import org.apache.calcite.rel.core.DynamicValues;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.Sort;
 import org.apache.calcite.rel.core.TableModify;
@@ -106,9 +96,11 @@ import org.apache.calcite.sql.SqlBasicCall;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlCheckColumnarIndex;
 import org.apache.calcite.sql.SqlCreateIndex;
+import org.apache.calcite.sql.SqlCreateIndexInDatabase;
 import org.apache.calcite.sql.SqlCreateTable;
 import org.apache.calcite.sql.SqlDmlKeyword;
 import org.apache.calcite.sql.SqlDropIndex;
+import org.apache.calcite.sql.SqlDropIndexInDatabase;
 import org.apache.calcite.sql.SqlDynamicParam;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlIndexColumnName;
@@ -119,6 +111,7 @@ import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.SqlOperator;
+import org.apache.calcite.sql.SqlRebuildIndex;
 import org.apache.calcite.sql.SqlReplace;
 import org.apache.calcite.sql.SqlSelect;
 import org.apache.calcite.sql.SqlShow;
@@ -154,6 +147,7 @@ import java.text.MessageFormat;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.Formatter;
 import java.util.HashMap;
@@ -185,6 +179,14 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
 
     protected PlannerContext plannerContext;
 
+    /**
+     * True while converting the direct VALUES source of an INSERT/REPLACE/UPSERT. Such values
+     * are consumed by the DML handler instead of the raw-string executors, so they must never
+     * carry a raw-string mode marker. VALUES nested inside an INSERT ... SELECT are subject to
+     * normal marking, since they run through the regular query pipeline.
+     */
+    private boolean convertingDirectDmlValues;
+
     public TddlSqlToRelConverter(DrdsViewExpander viewExpander, SqlValidator validator, CatalogReader catalogReader,
                                  RelOptCluster cluster, SqlRexConvertletTable convertletTable, Config config,
                                  PlannerContext plannerContext) {
@@ -200,9 +202,39 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
         this.plannerContext = plannerContext;
     }
 
+    /**
+     * Maintains the raw-string mode marker on query VALUES: the tuple shape plus the bound
+     * RawString parameter values decide the mode. The direct VALUES source of a DML statement
+     * is consumed by the DML handler instead of the raw-string executors and stays unmarked.
+     * Stamping at the single DynamicValues construction point keeps the marker consistent no
+     * matter how the node is wrapped afterwards (e.g. inside a LogicalUnion).
+     */
+    @Override
+    protected DynamicValues createDynamicValues(RelTraitSet traits, RelDataType rowType,
+                                                ImmutableList<ImmutableList<RexNode>> tuples) {
+        if (convertingDirectDmlValues) {
+            return super.createDynamicValues(traits, rowType, tuples);
+        }
+        Map<Integer, ParameterContext> params =
+            plannerContext.getParams() == null ? null : plannerContext.getParams().getCurrentParameter();
+        DynamicValues.RawStringMode mode = LogicalDynamicValues.detectRawStringMode(params, rowType, tuples);
+        if (mode == null) {
+            return super.createDynamicValues(traits, rowType, tuples);
+        }
+        return DynamicValues.create(cluster, traits, rowType, tuples, mode);
+    }
+
     @Override
     protected RelNode convertInsert(SqlInsert call) {
-        RelNode relNode = super.convertInsert(call);
+        final boolean prevConvertingDirectDmlValues = convertingDirectDmlValues;
+        convertingDirectDmlValues =
+            call.getSource() != null && call.getSource().getKind() == SqlKind.VALUES;
+        RelNode relNode;
+        try {
+            relNode = super.convertInsert(call);
+        } finally {
+            convertingDirectDmlValues = prevConvertingDirectDmlValues;
+        }
 
         if (relNode instanceof TableModify) {
             TableModify modify = (TableModify) relNode;
@@ -232,12 +264,19 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
             // on duplicate key update
             SqlNodeList updateList = (SqlNodeList) call.getOperandList().get(4);
             if (updateList.size() > 0) {
+                if (tableMeta.hasColumnInMceMigration()) {
+                    targetTable =
+                        RelOptTableImpl.create(targetTable.getRelOptSchema(), tableMeta.getPhysicalRowType(typeFactory),
+                            tableMeta, ImmutableList.of(schema, tableName));
+                    modify.setTable(targetTable);
+                }
+
                 Map<String, Integer> valueColumnMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
                 List<String> valueColumnNames = modify.getInput().getRowType().getFieldNames();
                 Ord.zip(valueColumnNames).forEach(o -> valueColumnMap.put(o.getValue(), o.getKey()));
                 // put all columns to nameToNodeMap
                 RelDataType rowType = targetTable.getRowType();
-                if (tableMeta.hasLogicalGeneratedColumn()) {
+                if (tableMeta.hasLogicalGeneratedColumn() || tableMeta.hasColumnInMceMigration()) {
                     rowType = tableMeta.getPhysicalRowType(typeFactory);
                 }
 
@@ -310,7 +349,29 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
                     modify.getAppendedColumnIndex().add(valueColumnMap.get(columnName));
                 }
 
-                final boolean isBroadcast = oc.getRuleManager().isBroadCast(tableName);
+                List<ColumnMeta> mceAppendAddrColumns =
+                    ExternalizedDmlRewriter.getAppendAddrColumnsForUpdateSet(tableMeta, new ArrayList<>(updateColumns));
+                // Extend the UPSERT conflict after-row, not the incoming INSERT value itself. The typed NULL is only
+                // a stable physical sink slot: OptimizeLogicalInsertRule records its row position and the handler
+                // fills it from the final logical content value after VALUES()/SET evaluation. Marking it appended
+                // also keeps this internal BlobRef slot out of the logical identical-row comparison.
+                for (ColumnMeta addrColumn : mceAppendAddrColumns) {
+                    String addrColumnName = addrColumn.getName();
+                    if (updateColumns.contains(addrColumnName)) {
+                        continue;
+                    }
+                    SqlIdentifier targetColumnId = new SqlIdentifier(addrColumnName, SqlParserPos.ZERO);
+                    final SqlBasicCall sqlCall = new SqlBasicCall(SqlStdOperatorTable.EQUALS,
+                        ImmutableList.of(targetColumnId, SqlLiteral.createNull(SqlParserPos.ZERO)).toArray(
+                            new SqlNode[2]), SqlParserPos.ZERO);
+
+                    RexNode rn = bb.convertExpression(sqlCall);
+                    rexNodeSourceExpressionListBuilder.add(rn);
+                    updateColumns.add(addrColumnName);
+                    modify.getAppendedColumnIndex().add(valueColumnMap.get(addrColumnName));
+                }
+
+                final boolean isBroadcast = oc.getRuleManager().isBroadCastOrReplicas(tableName);
 
                 final List<TableMeta> gsiMetas = GlobalIndexMeta.getIndex(targetTable, ec);
                 final boolean modifyGsi = CheckModifyLimitation.checkModifyGsi(targetTable, updateColumns, ec);
@@ -628,6 +689,14 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
         String tableName = Util.last(qualifiedName);
         String schemaName = qualifiedName.size() == 2 ? qualifiedName.get(0) : null;
         final OptimizerContext oc = OptimizerContext.getContext(schemaName);
+
+        // External catalog tables have no sharding rules, GSI, auto-increment, etc.
+        // Fall back to Calcite's default column-list conversion which handles simple name mapping
+        // and default-value filling — sufficient for external table INSERT.
+        if (ExternalNameValidator.isExternalSchema(schemaName)) {
+            return super.convertColumnList(call, source, appendedColumnIndex);
+        }
+
         TableMeta tableMeta = plannerContext.getExecutionContext().getSchemaManager(schemaName).getTable(tableName);
 
         RelDataType sourceRowType = source.getRowType();
@@ -661,7 +730,7 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
         final InitializerExpressionFactory initializerFactory = getInitializerFactory(validator.getNamespace(call)
             .getTable());
 
-        final boolean isBroadcast = oc.getRuleManager().isBroadCast(tableName);
+        final boolean isBroadcast = oc.getRuleManager().isBroadCastOrReplicas(tableName);
         final boolean isPartitioned = oc.getRuleManager().isShard(tableName);
         final boolean withGsi = tableMeta.withGsi();
         final boolean withScaleOutMultiWrite = ComplexTaskPlanUtils.canWrite(tableMeta);
@@ -685,6 +754,9 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
         // Add auto_increment column to insert with value of NULL;
         final Set<String> autoIncrementColumns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
         autoIncrementColumns.addAll(tableMeta.getAutoIncrementColumns());
+
+        final Set<String> localAutoIncrementColumns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        localAutoIncrementColumns.addAll(tableMeta.getLocalAutoIncrementColumns());
 
         // Add default value for partition keys of primary and gsi
         final Set<String> partitionKeys = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
@@ -830,6 +902,9 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
             } else if (autoIncrementColumns.contains(targetFieldName)) {
                 // Add auto_increment column to insert with value of NULL;
                 node = bb.get().getRexBuilder().constantNull();
+            } else if (localAutoIncrementColumns.contains(targetFieldName)) {
+                // Add local_auto_increment column to insert with value of NULL;
+                node = bb.get().getRexBuilder().constantNull();
             } else if (logicalGeneratedColumns.contains(targetFieldName)) {
                 // Do nothing, we will add it after loop, since we may add default value later
             } else if (partitionKeys.contains(targetFieldName) || uniqueKeys.contains(targetFieldName)
@@ -867,6 +942,23 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
             fieldNames.add(targetFieldName);
         }
 
+        // MCE dual-write: append WRITE_ONLY MCE address columns with typed NULL placeholders.
+        // The normal logical-write RexCallParam pipeline parameterizes these placeholders later,
+        // after the final batch / multi-row layout is known. Planning must not mutate execution
+        // parameters because their layout can still be rebuilt before physical execution.
+        // Column-level MCE state drives which addr columns to APPEND. Only columns
+        // mid-migration (DUAL_WRITE / READ_ADDR) get their addr column appended here;
+        // terminal EXTERNALIZED columns are renamed elsewhere (WriterFactory), never appended,
+        // so APPEND and RENAME are mutually exclusive per column.
+        List<ColumnMeta> appendAddrColumns =
+            ExternalizedDmlRewriter.getAppendAddrColumns(tableMeta);
+        for (ColumnMeta cm : appendAddrColumns) {
+            if (!fieldNames.contains(cm.getName())) {
+                sourceExps.add(rexBuilder.makeNullLiteral(cm.getField().getRelType()));
+                fieldNames.add(cm.getName());
+                appendedColumnIndex.add(sourceExps.size() - 1);
+            }
+        }
         // A project with target rows must be reserved, so optimize=false.
         RelNode project = RelOptUtil.createProject(source, sourceExps, fieldNames, false);
         if (!logicalGeneratedColumns.isEmpty()) {
@@ -1251,8 +1343,8 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
     public static String unwrapPhysicalTableName(String wrappedName) {
         String ret = wrappedName;
         int len = wrappedName.length();
-        while (len > 4 && ret.startsWith("_%", len - 4)) {
-            ret = ret.substring(0, len - 4);
+        while (len > 6 && ret.startsWith("_%", len - 6)) {
+            ret = ret.substring(0, len - 6);
             len = ret.length();
         }
         return ret;
@@ -1452,9 +1544,10 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
     @Override
     protected SqlCreateTable checkAndRewriteGsiName(SqlCreateTable query) {
 
-        if (plannerContext.isExplain()) {
+        if (plannerContext.isAsyncDDLJobRecovered()) {
             return query;
         }
+        final String tableName = ((SqlIdentifier) query.getName()).getLastName();
 
         if (DbInfoManager.getInstance().isNewPartitionDb(plannerContext.getSchemaName())) {
             // Collect all local index names.
@@ -1512,7 +1605,7 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
                     .getParamManager()
                     .getBoolean(ConnectionParams.ENABLE_CCI_ON_TABLE_WITH_IMPLICIT_PK)
                     && !SqlUtil.hasExplicitPrimaryKey(query)) {
-                    throw validator.newValidationError(query.getName(), RESOURCE.createCciOnTableWithoutPk());
+                    throw validator.newValidationError(query.getName(), RESOURCE.createCciOnTableWithoutPk(tableName));
                 }
 
                 final List<Pair<SqlIdentifier, SqlIndexDefinition>> tmp =
@@ -1589,7 +1682,6 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
             });
         }
 
-        final String tableName = ((SqlIdentifier) query.getName()).getLastName();
         if (gsiNames.contains(tableName)) {
             throw validator.newValidationError(query.getName(), RESOURCE.gsiExists(tableName));
         }
@@ -1656,6 +1748,10 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
         if (tableMeta.getPartitionInfo() != null) {
             PartitionByDefinition partitionBy = tableMeta.getPartitionInfo().getPartitionBy();
             defaultPartitions = partitionBy == null ? defaultPartitions : partitionBy.getPartitions().size();
+            LocalityDesc localityDesc = LocalityDesc.parse(tableMeta.getPartitionInfo().getLocality());
+            if (localityDesc.hasGroupKeyConfig()) {
+                defaultPartitions = localityDesc.fetchPhyDbCount();
+            }
         }
         return SqlValidatorImpl.assignAutoPartitionNewPartition(concatKeys, typeNames, pks, pkTypeNames,
             defaultPartitions, global, columnar);
@@ -1680,8 +1776,7 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
                 && !Engine.isFileStore(tableMeta.getEngine());
 
         final boolean columnarIndex = query.createCci();
-        if (plannerContext.isExplain()
-            || (!query.createGsi() && !columnarIndex && !convertToGSI)) {
+        if ((!query.createGsi() && !columnarIndex && !convertToGSI) || plannerContext.isAsyncDDLJobRecovered()) {
             return query;
         }
 
@@ -1691,7 +1786,8 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
             .getParamManager()
             .getBoolean(ConnectionParams.ENABLE_CCI_ON_TABLE_WITH_IMPLICIT_PK)
             && !GlobalIndexMeta.hasExplicitPrimaryKey(tableMeta)) {
-            throw validator.newValidationError(query.getName(), RESOURCE.createCciOnTableWithoutPk());
+            throw validator.newValidationError(query.getName(),
+                RESOURCE.createCciOnTableWithoutPk(query.getOriginTableName().getLastName()));
         }
 
         if (DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
@@ -1730,13 +1826,22 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
                         "Incorrect index definition; New partition table should contain no legacy partition define.");
                 }
 
-                if (query.getColumns().isEmpty()) {
+                if (query.getColumns().isEmpty() && !columnarIndex) {
                     throw new NotSupportException(
                         "Incorrect index definition; No index column.");
                 }
 
                 final List<String> indexColNames = query.getColumns().stream()
                     .map(SqlIndexColumnName::getColumnNameStr).collect(Collectors.toList());
+
+                // For CCI, use primary keys as index columns if no index columns specified.
+                if (columnarIndex && indexColNames.isEmpty()) {
+                    indexColNames.addAll(
+                        tableMeta.getPrimaryKey().stream().map(ColumnMeta::getName).collect(Collectors.toList()));
+
+                    query = query.rebuildIndexColumns(indexColNames);
+                }
+
                 final boolean unique = query.getConstraintType() != null &&
                     SqlCreateIndex.SqlIndexConstraintType.UNIQUE == query.getConstraintType();
                 // Generate PARTITION part of index on auto partition table for cases like:
@@ -1781,6 +1886,24 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
         }
 
         return query;
+    }
+
+    @Override
+    protected void checkCreateIndexInDatabase(SqlCreateIndexInDatabase query) {
+        String schemaName = query.getDbName().getLastName();
+        OptimizerContext oc = OptimizerContext.getContext(schemaName);
+        if (oc == null) {
+            throw new TddlRuntimeException(ErrorCode.ERR_UNKNOWN_DATABASE, "unknown database: " + schemaName);
+        }
+    }
+
+    @Override
+    protected void checkDropIndexInDatabase(SqlDropIndexInDatabase query) {
+        String schemaName = query.getDbName().getLastName();
+        OptimizerContext oc = OptimizerContext.getContext(schemaName);
+        if (oc == null) {
+            throw new TddlRuntimeException(ErrorCode.ERR_UNKNOWN_DATABASE, "unknown database: " + schemaName);
+        }
     }
 
     /**
@@ -1945,14 +2068,18 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
                         && !(addIndex instanceof SqlAddForeignKey)
                         && !(addIndex instanceof SqlAddFullTextIndex)
                         && !(addIndex instanceof SqlAddSpatialIndex)
+                        && !(addIndex instanceof SqlRebuildIndex)
                         // Unexpected and unrecognized type.
                         && !(addIndex.getIndexDef().getType() != null
                         && addIndex.getIndexDef().getType().equalsIgnoreCase("fulltext"))
                         && !(addIndex.getIndexDef().getType() != null
                         && addIndex.getIndexDef().getType().equalsIgnoreCase("spatial"))
+                        // Vector index is a local DN-side HNSW index, never convert to GSI.
+                        && !(addIndex.getIndexDef().getType() != null
+                        && addIndex.getIndexDef().getType().equalsIgnoreCase("vector"))
                         && !Engine.isFileStore(tableMeta.getEngine());
 
-                if (plannerContext.isExplain() || (!query.createGsi() && !convertToGSI)) {
+                if ((!query.createGsi() && !convertToGSI) || plannerContext.isAsyncDDLJobRecovered()) {
                     continue;
                 }
 
@@ -1962,7 +2089,8 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
                     .getParamManager()
                     .getBoolean(ConnectionParams.ENABLE_CCI_ON_TABLE_WITH_IMPLICIT_PK)
                     && !GlobalIndexMeta.hasExplicitPrimaryKey(tableMeta)) {
-                    throw validator.newValidationError(query.getName(), RESOURCE.createCciOnTableWithoutPk());
+                    throw validator.newValidationError(query.getName(),
+                        RESOURCE.createCciOnTableWithoutPk(query.getOriginTableName().getLastName()));
                 }
 
                 if (query.getAlters().size() != 1) {
@@ -2081,13 +2209,21 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
                                 "Incorrect index definition; New partition table should contain no legacy partition define.");
                         }
 
-                        if (addIndex.getIndexDef().getColumns().isEmpty()) {
+                        if (addIndex.getIndexDef().getColumns().isEmpty() && !query.createCci()) {
                             throw new NotSupportException(
                                 "Incorrect index definition; No index column.");
                         }
 
                         final List<String> indexColNames = addIndex.getIndexDef().getColumns().stream()
                             .map(SqlIndexColumnName::getColumnNameStr).collect(Collectors.toList());
+
+                        // For CCI, use primary keys as index columns if no index columns specified.
+                        boolean createCciWithoutColumns = query.createCci() && indexColNames.isEmpty();
+                        if (createCciWithoutColumns) {
+                            indexColNames.addAll(tableMeta.getPrimaryKey().stream().map(ColumnMeta::getName)
+                                .collect(Collectors.toList()));
+                        }
+
                         final SqlNode newPartition =
                             null == addIndex.getIndexDef().getPartitioning() ?
                                 generateNewPartition(
@@ -2100,8 +2236,13 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
                         if (null == newPartition && null == addIndex.getIndexDef().getPartitioning()) {
                             return query; // No extra dealing needed.
                         } else {
-                            final SqlIndexDefinition newIndexDefinition = addIndex.getIndexDef()
+                            SqlIndexDefinition newIndexDefinition = addIndex.getIndexDef()
                                 .rebuildToGsiNewPartition(newNameIdentifier, newPartition);
+
+                            if (createCciWithoutColumns) {
+                                newIndexDefinition = newIndexDefinition.replaceIndexColumns(indexColNames);
+                            }
+
                             final SqlAddIndex newAddIndex;
                             if (addIndex instanceof SqlAddUniqueIndex) {
                                 newAddIndex = new SqlAddUniqueIndex(
@@ -2111,6 +2252,7 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
                                     SqlParserPos.ZERO, newIndexDefinition.getIndexName(), newIndexDefinition);
                             }
                             assert 1 == query.getAlters().size();
+
                             query.getAlters().clear();
                             query.getAlters().add(newAddIndex);
                         }
@@ -2227,6 +2369,10 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
                 final String schemaName =
                     2 == identifier.names.size() ? identifier.names.get(0) : plannerContext.getSchemaName();
 
+                if (!ConfigDataMode.isPolarDbX() && INFORMATION_SCHEMA.equalsIgnoreCase(schemaName)) {
+                    return show;
+                }
+
                 final SchemaManager schemaManager = plannerContext.getExecutionContext().getSchemaManager(schemaName);
                 if (DbInfoManager.getInstance().isNewPartitionDb(schemaName) && !schemaManager
                     .getTddlRuleManager().getPartitionInfoManager().isNewPartDbTable(tableName)) {
@@ -2291,8 +2437,37 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
         final List<SqlNode> selectList = sourceSelect.getSelectList().getList();
         final AtomicInteger ordinal = new AtomicInteger(selectList.size() - 1);
 
+        // MCE dual-write: append addr columns for content columns being SET.
+        // Must be before early-return so that simple single-table UPDATEs also get addr columns.
+        for (int i = 0; i < targetColumns.size(); i++) {
+            final int tableIndex = targetTableIndexes.get(i);
+            final TableMeta tm = CBOUtil.getTableMeta(srcTables.get(tableIndex).getRefTable());
+            if (tm == null) {
+                continue;
+            }
+            String contentColName = targetColumns.get(i);
+            // Reuse the centralized lifecycle decision used by INSERT and UPSERT. SQL-to-Rel still owns the
+            // additional row slot, but it must not independently interpret MCE state or content/addr metadata.
+            List<ColumnMeta> appendAddrColumns =
+                ExternalizedDmlRewriter.getAppendAddrColumnsForUpdateSet(tm,
+                    Collections.singletonList(contentColName));
+            if (appendAddrColumns.isEmpty()) {
+                continue;
+            }
+            String addrColName = appendAddrColumns.get(0).getName();
+            // Append an independent NULL placeholder for the addr column in the source select.
+            // Handler side (rewriteExternalizedUpdateValues) will overwrite this slot with the
+            // BlobRef derived from the content column's new value. Do NOT clone the content
+            // SET expression here — calcite would merge the two references into a single
+            // RexInputRef and the physical UPDATE would end up as `body_addr_ = body`.
+            outExtraTargetTableIndexes.add(tableIndex);
+            outExtraTargetColumns.add(addrColName);
+            selectList.add(SqlValidatorUtil.addAlias(SqlLiteral.createNull(SqlParserPos.ZERO),
+                SqlUtil.deriveAliasFromOrdinal(ordinal.getAndIncrement())));
+        }
+
         if (!modifyPartitionKey && !modifyBroadcast && !modifyGsi && !scaleOutIsRunning && !gsiHasAutoUpdateColumns
-        && !primaryHasAutoUpdatePartitionKey && !hasGeneratedColumn) {
+            && !primaryHasAutoUpdatePartitionKey && !hasGeneratedColumn) {
             sourceSelect.setSelectList(new SqlNodeList(selectList, SqlParserPos.ZERO));
             return update.getSourceSelect();
         }
@@ -2942,4 +3117,3 @@ public class TddlSqlToRelConverter extends SqlToRelConverter {
         }
     }
 }
-

@@ -17,19 +17,22 @@
 package com.alibaba.polardbx.repo.mysql.handler.ddl.newengine;
 
 import com.alibaba.polardbx.common.utils.Pair;
+import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.cursor.impl.ArrayResultCursor;
 import com.alibaba.polardbx.executor.ddl.newengine.DdlEngineStats;
 import com.alibaba.polardbx.executor.ddl.workqueue.ChangeSetThreadPool;
 import com.alibaba.polardbx.executor.ddl.workqueue.FastCheckerThreadPool;
-import com.alibaba.polardbx.executor.ddl.workqueue.OmcThreadPoll;
+import com.alibaba.polardbx.executor.ddl.workqueue.OmcThreadPool;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.executor.ddl.workqueue.BackFillThreadPool;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
+import com.alibaba.polardbx.gms.node.GmsNodeManager;
 import com.alibaba.polardbx.gms.node.GmsNodeManager.GmsNode;
 import com.alibaba.polardbx.gms.sync.GmsSyncManagerHelper;
 import com.alibaba.polardbx.gms.sync.IGmsSyncAction;
 import com.alibaba.polardbx.gms.sync.SyncScope;
+import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.dal.LogicalDal;
 import org.apache.commons.collections.CollectionUtils;
@@ -37,6 +40,9 @@ import org.apache.commons.collections.CollectionUtils;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+
+import static com.alibaba.polardbx.executor.ddl.newengine.DdlEngineStats.METRIC_BACKFILL_PARALLELISM;
+import static com.alibaba.polardbx.executor.ddl.newengine.resource.DdlEngineResources.normalizeServerKey;
 
 /**
  * Implements `show ddl stats` command
@@ -96,7 +102,7 @@ public class DdlEngineShowDdlStatsHandler extends DdlEngineJobsHandler {
             // backfill parallelism
             BackFillThreadPool.updateStats();
             ChangeSetThreadPool.updateStats();
-            OmcThreadPoll.getInstance().updateStats();
+            OmcThreadPool.getInstance().updateStats();
             DdlEngineStats.updateBackfillRowsMetric(0);
 
             //only leader update the fastchecker stats
@@ -113,6 +119,37 @@ public class DdlEngineShowDdlStatsHandler extends DdlEngineJobsHandler {
             }
             return result;
         }
+    }
+
+    public static Map<String, Integer> showBackfillParallelism() {
+        BackFillThreadPool.updateStats();
+        DdlStatsSyncAction sync = new DdlStatsSyncAction();
+        Map<String, Integer> backfillParallelism = new TreeMap<>();
+        GmsNode localNode = GmsNodeManager.getInstance().getLocalNode();
+        String localServerKey = (localNode == null) ? "" : GmsNodeManager.getInstance().getLocalNode().getServerKey();
+        GmsSyncManagerHelper.sync(sync, SystemDbHelper.DEFAULT_DB_NAME, SyncScope.MASTER_ONLY, results -> {
+            if (results == null) {
+                return;
+            }
+
+            for (Pair<GmsNode, List<Map<String, Object>>> result : results) {
+                if (CollectionUtils.isEmpty(result.getValue())) {
+                    continue;
+                }
+                for (Map<String, Object> row : result.getValue()) {
+                    DdlEngineStats.Metric m = DdlEngineStats.Metric.fromMap(row);
+                    GmsNode node = result.getKey();
+                    String serverKey = normalizeServerKey(null);
+                    if (node != null && !StringUtils.equalsIgnoreCase(node.getServerKey(), localServerKey)) {
+                        serverKey = node.getServerKey();
+                    }
+                    if (m.getName().equalsIgnoreCase(METRIC_BACKFILL_PARALLELISM.getName())) {
+                        backfillParallelism.put(serverKey, Integer.valueOf(m.getValue().intValue()));
+                    }
+                }
+            }
+        });
+        return backfillParallelism;
     }
 
 }

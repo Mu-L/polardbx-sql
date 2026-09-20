@@ -17,16 +17,15 @@
 package com.alibaba.polardbx.executor.ddl.job.task.gsi;
 
 import com.alibaba.fastjson.annotation.JSONCreator;
+import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.ddl.job.meta.GsiMetaChanger;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseGmsTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
-import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
-import com.alibaba.polardbx.executor.sync.TableMetaChangeSyncAction;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
 import com.alibaba.polardbx.gms.metadb.table.ColumnStatus;
-import com.alibaba.polardbx.gms.sync.SyncScope;
+import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import lombok.Getter;
 
@@ -109,10 +108,6 @@ public class GsiUpdateIndexColumnStatusTask extends BaseGmsTask {
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
 
-        //sync have to be successful to continue
-        SyncManagerHelper.sync(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
-        executionContext.refreshTableMeta();
-
         LOGGER.info(String
             .format("Rollback Update GSI table state. schema:%s, table:%s, index:%s, before state:%s, after state:%s",
                 schemaName,
@@ -120,6 +115,21 @@ public class GsiUpdateIndexColumnStatusTask extends BaseGmsTask {
                 indexName,
                 beforeTableStatus.name(),
                 afterTableStatus.name()));
+    }
+
+    @Override
+    protected void beforeTransaction(ExecutionContext executionContext) {
+        // 存在并发加列，不校验版本
+    }
+
+    @Override
+    protected void updateTableVersion(Connection metaDbConnection) {
+        try {
+            TableInfoManager.updateTableVersionWithoutDataId(schemaName, logicalTableName, metaDbConnection);
+            TableInfoManager.updateTableVersionWithoutDataId(schemaName, indexName, metaDbConnection);
+        } catch (Exception e) {
+            throw GeneralUtil.nestedException(e);
+        }
     }
 
     @Override

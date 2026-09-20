@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.executor.chunk;
 
 import com.alibaba.polardbx.common.datatype.UInt64;
+import com.alibaba.polardbx.common.datatype.UInt64Utils;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.XxhashUtils;
 import com.alibaba.polardbx.common.utils.hash.IStreamingHasher;
@@ -103,6 +104,21 @@ public class ULongBlock extends AbstractBlock {
             return getLong(position) == other.getInt(otherPosition);
         } else {
             throw new AssertionError();
+        }
+    }
+
+    @Override
+    public int compareAssertedSameType(int position, Block otherBlock, int otherPosition) {
+        boolean isNullLeft = isNull(position);
+        boolean isNullRight = otherBlock.isNull(otherPosition);
+        if (isNullLeft && isNullRight) {
+            return 0;
+        } else if (isNullLeft) {
+            return -1;
+        } else if (isNullRight) {
+            return 1;
+        } else {
+            return UInt64Utils.compareUnsigned(getLong(position), otherBlock.getLong(otherPosition));
         }
     }
 

@@ -20,26 +20,31 @@ import com.alibaba.polardbx.common.exception.NotSupportException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.utils.Pair;
+import com.alibaba.polardbx.common.utils.logger.Logger;
+import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.archive.schemaevolution.ColumnMetaWithTs;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarTableEvolutionAccessor;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarTableEvolutionRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingRecord;
-import com.alibaba.polardbx.gms.metadb.table.ColumnsRecord;
-import com.alibaba.polardbx.gms.metadb.table.IndexesAccessor;
-import com.alibaba.polardbx.gms.metadb.table.IndexesRecord;
-import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
+import com.google.common.base.Preconditions;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang3.tuple.Triple;
 import org.jetbrains.annotations.NotNull;
 
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.SortedMap;
+import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.locks.Lock;
 import java.util.stream.Collectors;
@@ -47,23 +52,14 @@ import java.util.stream.Collectors;
 import static com.alibaba.polardbx.executor.gms.DynamicColumnarManager.MAXIMUM_SIZE_OF_SNAPSHOT_CACHE;
 
 public class MultiVersionColumnarSchema implements Purgeable {
+    private final static Logger logger = LoggerFactory.getLogger(MultiVersionColumnarSchema.class);
 
     private final DynamicColumnarManager columnarManager;
-
-    /**
-     * Cache mapping from logical table name to table id
-     */
-    private final LoadingCache<Pair<String, String>, Long> tableMappingCache;
 
     /**
      * Cache mapping from table id to multi-version columnar table meta
      */
     private final LoadingCache<Long, MultiVersionColumnarTableMeta> columnarTableMetas;
-
-    /**
-     * Cache indexes column of logical table
-     */
-    private final LoadingCache<Pair<String, String>, List<Integer>> indexesColumnCache;
 
     public MultiVersionColumnarSchema(DynamicColumnarManager columnarManager) {
         this.columnarManager = columnarManager;
@@ -76,69 +72,27 @@ public class MultiVersionColumnarSchema implements Purgeable {
                     return new MultiVersionColumnarTableMeta(tableId);
                 }
             });
-
-        this.tableMappingCache = CacheBuilder.newBuilder()
-            .maximumSize(MAXIMUM_SIZE_OF_SNAPSHOT_CACHE)
-            .build(new CacheLoader<Pair<String, String>, Long>() {
-                @Override
-                public Long load(@NotNull Pair<String, String> key) throws Exception {
-                    String logicalSchema = key.getKey();
-                    String logicalTableName = key.getValue();
-
-                    List<ColumnarTableMappingRecord> records;
-                    try (Connection connection = MetaDbUtil.getConnection()) {
-                        ColumnarTableMappingAccessor accessor = new ColumnarTableMappingAccessor();
-                        accessor.setConnection(connection);
-
-                        // TODO(siyun): hack now, using newest table mapping
-                        records = accessor.querySchemaIndex(logicalSchema, logicalTableName);
-                    }
-
-                    if (records != null && !records.isEmpty()) {
-                        ColumnarTableMappingRecord record = records.get(0);
-                        return record.tableId;
-                    }
-
-                    return null;
-                }
-            });
-
-        this.indexesColumnCache = CacheBuilder.newBuilder()
-            .maximumSize(MAXIMUM_SIZE_OF_SNAPSHOT_CACHE)
-            .build(new CacheLoader<Pair<String, String>, List<Integer>>() {
-                @Override
-                public List<Integer> load(@NotNull Pair<String, String> key) throws Exception {
-                    String logicalSchema = key.getKey();
-                    String indexName = key.getValue();
-                    try (Connection connection = MetaDbUtil.getConnection()) {
-                        IndexesAccessor indexesAccessor = new IndexesAccessor();
-                        indexesAccessor.setConnection(connection);
-                        List<IndexesRecord> indexRecords =
-                            indexesAccessor.queryColumnarIndexColumnsByName(logicalSchema, indexName);
-                        TableInfoManager tableInfoManager = new TableInfoManager();
-                        tableInfoManager.setConnection(connection);
-                        List<ColumnsRecord> columnsRecords =
-                            tableInfoManager.queryVisibleColumns(logicalSchema, indexName);
-                        return indexRecords.stream().map(indexesRecord -> {
-                            for (int i = 0; i < columnsRecords.size(); i++) {
-                                if (indexesRecord.columnName.equalsIgnoreCase(columnsRecords.get(i).columnName)) {
-                                    return i;
-                                }
-                            }
-                            return -1;
-                        }).collect(Collectors.toList());
-                    }
-                }
-            });
     }
 
-    public List<Integer> getSortKeyColumns(long tso, String logicalSchema, String logicalTable)
+    public Long getTableId(long tso, String logicalSchema, String logicalTable, TableMeta tableMeta)
         throws ExecutionException {
-        return indexesColumnCache.get(Pair.of(logicalSchema, logicalTable));
+        TableMeta.MultiVersionedId multiVersionedId =
+            tableMeta.getTableMappingCache().get(Pair.of(logicalSchema.toLowerCase(), logicalTable.toLowerCase()));
+        return multiVersionedId.getId(tso);
     }
 
-    public Long getTableId(long tso, String logicalSchema, String logicalTable) throws ExecutionException {
-        return tableMappingCache.get(Pair.of(logicalSchema, logicalTable));
+    public List<Long> getTableIds(long tso, String logicalSchema, String logicalTable) {
+        try (Connection connection = MetaDbUtil.getConnection()) {
+            ColumnarTableMappingAccessor accessor = new ColumnarTableMappingAccessor();
+            accessor.setConnection(connection);
+            List<ColumnarTableMappingRecord> records = accessor.querySchemaTable(logicalSchema, logicalTable);
+
+            return records.stream().map(r -> r.tableId).collect(Collectors.toList());
+        } catch (Exception e) {
+            throw new TddlRuntimeException(ErrorCode.ERR_COLUMNAR_SCHEMA, e.getCause(),
+                String.format("Failed to fetch table id, tso: %d, schema name: %s, table name: %s",
+                    tso, logicalSchema, logicalTable));
+        }
     }
 
     private MultiVersionColumnarTableMeta getColumnarTableMeta(long tableId) {
@@ -250,10 +204,10 @@ public class MultiVersionColumnarSchema implements Purgeable {
     }
 
     @NotNull
-    public SortedMap<Long, PartitionInfo> getPartitionInfos(long schemaTso, long tableId) {
+    public ConcurrentNavigableMap<Long, PartitionInfo> getPartitionInfos(long schemaTso, long tableId) {
         MultiVersionColumnarTableMeta columnarTableMeta = getColumnarTableMeta(tableId);
 
-        SortedMap<Long, PartitionInfo> partitionInfos = columnarTableMeta.getPartitionInfos(schemaTso);
+        ConcurrentNavigableMap<Long, PartitionInfo> partitionInfos = columnarTableMeta.getPartitionInfos(schemaTso);
         if (partitionInfos != null) {
             return partitionInfos;
         }
@@ -265,6 +219,91 @@ public class MultiVersionColumnarSchema implements Purgeable {
             return Objects.requireNonNull(columnarTableMeta.getPartitionInfos(schemaTso));
         } finally {
             writeLock.unlock();
+        }
+    }
+
+    public ColumnarTableMeta getColumnarTableMetaByTso(long tableId, long tso) throws SQLException {
+        MultiVersionColumnarTableMeta multiSchema = getColumnarTableMeta(tableId);
+        Triple<String, String, String> triple;
+
+        try (Connection connection = MetaDbUtil.getConnection()) {
+            ColumnarTableEvolutionAccessor accessor = new ColumnarTableEvolutionAccessor();
+            accessor.setConnection(connection);
+            List<ColumnarTableEvolutionRecord> records = accessor.queryTableIdAndLessThanCommitTs(tableId, tso);
+            if (records != null && !records.isEmpty()) {
+                ColumnarTableEvolutionRecord record = records.get(0);
+                triple = Triple.of(record.tableSchema, record.tableName, record.indexName);
+            } else {
+                throw new RuntimeException("cci not found");
+            }
+        }
+
+        String tableSchema = triple.getLeft();
+        String tableName = triple.getMiddle();
+        String indexName = triple.getRight();
+
+        // always get latest
+        Lock writeLock = multiSchema.getLock();
+        writeLock.lock();
+        try {
+            multiSchema.loadUntilTso(tso);
+        } finally {
+            writeLock.unlock();
+        }
+
+        PartitionInfo partitionInfo = multiSchema.getPartitionInfoByAnyTso(tso);
+        List<ColumnMeta> columnMetas = multiSchema.getColumnMetasByAnyTso(tso);
+        List<String> primaryKeys = multiSchema.getPrimaryKeyColumnsByAnyTso(tso);
+        List<String> sortKeys = multiSchema.getSortKeyColumnsByAnyTso(tso);
+        Map<String, String> options = getColumnarIndexOptions(tableSchema, indexName);
+
+        Objects.requireNonNull(columnMetas, "columns must be specified.");
+        Objects.requireNonNull(primaryKeys, "columnTable must be specified.");
+        Objects.requireNonNull(sortKeys, "columnTable must be specified.");
+        Preconditions.checkArgument(!primaryKeys.isEmpty(), "the length of primaryKes > 0.");
+        Preconditions.checkArgument(!sortKeys.isEmpty(), "the length of sortKeys > 0.");
+
+        // first is TSO_COLUMN, second is POSITION_COLUMN
+        columnMetas = columnMetas.subList(2, columnMetas.size());
+
+        ColumnarTableMeta.Builder builder = new ColumnarTableMeta.Builder();
+
+        builder.schemaName(tableSchema).
+            tableName(tableName).
+            indexName(indexName).
+            schemaTso(tso).
+            partitionInfo(partitionInfo).
+            columns(columnMetas).
+            primaryKeys(primaryKeys).
+            sortKeys(sortKeys).
+            options(options).
+            status(getColumnarStatus(tableId));
+        return builder.build();
+    }
+
+    private Map<String, String> getColumnarIndexOptions(String schemaName,
+                                                        String indexName) throws SQLException {
+        try (Connection metaDbConn = MetaDbUtil.getConnection()) {
+            ColumnarTableEvolutionAccessor accessor = new ColumnarTableEvolutionAccessor();
+            accessor.setConnection(metaDbConn);
+            List<ColumnarTableEvolutionRecord> records =
+                accessor.querySchemaIndexLatest(schemaName, indexName);
+            if (CollectionUtils.isEmpty(records)) {
+                return null;
+            }
+            return records.get(0).options;
+        }
+    }
+
+    private String getColumnarStatus(long tableId) throws SQLException {
+        try (Connection metaDbConn = MetaDbUtil.getConnection()) {
+            ColumnarTableMappingAccessor accessor = new ColumnarTableMappingAccessor();
+            accessor.setConnection(metaDbConn);
+            List<ColumnarTableMappingRecord> records = accessor.queryTableId(tableId);
+            if (CollectionUtils.isEmpty(records)) {
+                return null;
+            }
+            return records.get(0).status;
         }
     }
 

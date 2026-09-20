@@ -1,0 +1,61 @@
+SQL:
+  # === Baseline: no hint, all pushdowns enabled (default) ===
+
+  # PROJECT + FILTER pushed down
+  - sql: |
+      select event_id from mock$$dwd.events where dt = '2026-05-26'
+    plan: |
+      ExternalTable(name=[mock$$dwd, events], source="inmemorytablesource", pushDown="sql:select `event_id` as `$f0` from `events` where (`dt` = ?)")
+
+  # SORT pushed down
+  - sql: |
+      select event_id from mock$$dwd.events order by event_id limit 10
+    plan: |
+      ExternalTable(name=[mock$$dwd, events], source="inmemorytablesource", pushDown="sql:select `event_id` as `$f0` from `events` order by `event_id` offset 0 rows fetch next ? rows only")
+
+  # AGG pushed down
+  - sql: |
+      select count(*), sum(user_id) from mock$$dwd.events
+    plan: |
+      ExternalTable(name=[mock$$dwd, events], source="inmemorytablesource", pushDown="sql:select count(*) as `count(*)`, sum(`user_id`) as `sum(user_id)` from `events`")
+
+  # === Switches disabled via hint: nodes remain on CN side ===
+
+  # Disable PROJECT push — Project node retained
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_EXTERNAL_PUSH_PROJECT=false)*/ select event_id from mock$$dwd.events
+    plan: |
+      project(event_id="event_id")
+        externaltable(name=[mock$$dwd, events], source="inmemorytablesource", pushdown="sql:select `event_id`, `user_id`, `event_type`, `dt` from `events`")
+
+  # Disable FILTER push — Filter node retained
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_EXTERNAL_PUSH_FILTER=false)*/ select * from mock$$dwd.events where dt = '2026-05-26'
+    plan: |
+      filter(condition="dt = ?0")
+        externaltable(name=[mock$$dwd, events], source="inmemorytablesource", pushdown="sql:select `event_id`, `user_id`, `event_type`, `dt` from `events`")
+
+  # Disable SORT push — Sort node retained
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_EXTERNAL_PUSH_SORT=false)*/ select event_id from mock$$dwd.events order by event_id limit 10
+    plan: |
+      topn(sort="$f0 asc", offset=0, fetch=?0)
+        externaltable(name=[mock$$dwd, events], source="inmemorytablesource", pushdown="sql:select `event_id` as `$f0` from `events`")
+
+  # Disable AGG push — Aggregate node retained
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_EXTERNAL_PUSH_AGG=false)*/ select count(*), sum(user_id) from mock$$dwd.events
+    plan: |
+      hashagg(count(*)="count()", sum(user_id)="sum($f0)")
+        externaltable(name=[mock$$dwd, events], source="inmemorytablesource", pushdown="sql:select `user_id` as `$f0` from `events`")
+
+DDL:
+  mock$$dwd.events:
+    CREATE TABLE `events` (
+    `event_id` bigint(20) NOT NULL,
+    `user_id` bigint(20) NOT NULL,
+    `event_type` varchar(32) DEFAULT NULL,
+    `dt` varchar(10) DEFAULT NULL
+    ) DEFAULT CHARSET = utf8mb4
+STATISTICS:
+CONFIG:

@@ -1,0 +1,132 @@
+SET ENABLE_PUSH_DOWN_AUTO_INCREMENT = true
+SET @sql_mode_tmp1 = @@sql_mode
+SET sql_mode = ''
+DROP TABLE IF EXISTS test_local_inc_not_as_pk
+DROP TABLE IF EXISTS test_local_inc_not_as_pk_broadcast
+DROP TABLE IF EXISTS test_local_inc_not_as_pk_single
+CREATE TABLE `test_local_inc_not_as_pk` (
+	`a` int NOT NULL,
+	`b` int DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
+PARTITION BY KEY (`b`) PARTITIONS 3
+ALTER TABLE test_local_inc_not_as_pk
+	ADD COLUMN c int UNIQUE AUTO_INCREMENT
+SHOW CREATE TABLE test_local_inc_not_as_pk
+Table,Create Table
+test_local_inc_not_as_pk,CREATE TABLE `test_local_inc_not_as_pk` (
+	`a` int NOT NULL,
+	`b` int DEFAULT NULL,
+	`c` int NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`a`),
+	UNIQUE KEY `c` (`c`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
+PARTITION BY KEY(`b`)
+PARTITIONS 3
+INSERT INTO test_local_inc_not_as_pk (a, b)
+VALUES (1, 1)
+SELECT last_insert_id()
+last_insert_id()
+1
+SELECT *
+FROM test_local_inc_not_as_pk
+WHERE a = 1
+	AND b = 1
+a,b,c
+1,1,1
+INSERT INTO test_local_inc_not_as_pk (a, b)
+VALUES (2, 1)
+SELECT last_insert_id()
+last_insert_id()
+2
+SELECT *
+FROM test_local_inc_not_as_pk
+WHERE a = 2
+	AND b = 1
+a,b,c
+2,1,2
+INSERT INTO test_local_inc_not_as_pk (a, b)
+VALUES (1, 2)
+SELECT last_insert_id()
+last_insert_id()
+1
+SELECT *
+FROM test_local_inc_not_as_pk
+WHERE a = 1
+	AND b = 2
+a,b,c
+1,2,1
+SELECT *
+FROM test_local_inc_not_as_pk
+ORDER BY a, b
+a,b,c
+1,1,1
+1,2,1
+2,1,2
+CREATE TABLE `test_local_inc_not_as_pk_broadcast` (
+	`a` int NOT NULL,
+	`b` int DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) BROADCAST
+ALTER TABLE test_local_inc_not_as_pk_broadcast
+	ADD COLUMN c int UNIQUE AUTO_INCREMENT
+SHOW CREATE TABLE test_local_inc_not_as_pk_broadcast
+Table,Create Table
+test_local_inc_not_as_pk_broadcast,CREATE TABLE `test_local_inc_not_as_pk_broadcast` (
+	`a` int NOT NULL,
+	`b` int DEFAULT NULL,
+	`c` int NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`a`),
+	UNIQUE KEY `c` (`c`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+BROADCAST
+INSERT INTO test_local_inc_not_as_pk_broadcast (a, b)
+VALUES (1, 1)
+SELECT last_insert_id()
+last_insert_id()
+1
+REPLACE INTO test_local_inc_not_as_pk_broadcast (a, b)
+VALUES (2, 1)
+SELECT last_insert_id()
+last_insert_id()
+2
+SELECT *
+FROM test_local_inc_not_as_pk_broadcast FORCE INDEX (PRIMARY)
+a,b,c
+1,1,1
+2,1,2
+CREATE TABLE `test_local_inc_not_as_pk_single` (
+	`a` int NOT NULL,
+	`b` int DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) SINGLE
+ALTER TABLE test_local_inc_not_as_pk_single
+	ADD COLUMN c int UNIQUE AUTO_INCREMENT
+SHOW CREATE TABLE test_local_inc_not_as_pk_single
+Table,Create Table
+test_local_inc_not_as_pk_single,CREATE TABLE `test_local_inc_not_as_pk_single` (
+	`a` int NOT NULL,
+	`b` int DEFAULT NULL,
+	`c` int NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`a`),
+	UNIQUE KEY `c` (`c`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+SINGLE
+INSERT INTO test_local_inc_not_as_pk_single (a, b)
+VALUES (1, 1)
+SELECT last_insert_id()
+last_insert_id()
+1
+REPLACE INTO test_local_inc_not_as_pk_single (a, b)
+VALUES (2, 1)
+SELECT last_insert_id()
+last_insert_id()
+2
+SELECT *
+FROM test_local_inc_not_as_pk_single FORCE INDEX (PRIMARY)
+a,b,c
+1,1,1
+2,1,2
+SET ENABLE_PUSH_DOWN_AUTO_INCREMENT = false
+SET sql_mode = @sql_mode_tmp1;

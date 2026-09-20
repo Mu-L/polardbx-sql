@@ -1,0 +1,70 @@
+## DISABLE_FAST_SQL_PARSER
+
+select jumpstrc5hs00('8');
+select jumpstrc5hs00('5');
+
+drop tablegroup if exists tg_dble_udf9;
+create tablegroup if not exists tg_dble_udf9
+partition by udf_hash(bigint)
+partition 6
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3),
+partition p3 values less than (4),
+partition p4 values less than (5),
+partition pm values less than (9223372036854775807)
+)
+;
+
+drop table if exists uh_t9;
+create table uh_t9(
+c1 varchar(32) not null,
+c2 varchar(32) not null
+)
+partition by udf_hash(jumpstrc5hs00(c1))
+tablegroup=tg_dble_udf9;
+
+insert into uh_t9 values ('8','8');
+insert into uh_t9 values ('5','5');
+select c1, part_route('', 'uh_t9', c1) as route_rs, part_hash('', 'uh_t9', c1) as hash_rs from uh_t9 where c1='8';
+select c1, part_route('', 'uh_t9', c1) as route_rs, part_hash('', 'uh_t9', c1) as hash_rs from uh_t9 where c1='5';
+
+show create table uh_t9;
+
+
+
+select jumpstrc4hs00('8');
+select jumpstrc4hs00('5');
+
+drop tablegroup if exists tg_dble_udf10;
+create tablegroup if not exists tg_dble_udf10
+partition by udf_hash(bigint)
+partition 6
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3),
+partition p3 values less than (4),
+partition p4 values less than (5),
+partition pm values less than (9223372036854775807)
+)
+;
+
+drop table if exists uh_t10;
+create table uh_t10(
+c1 varchar(32) not null,
+c2 varchar(32) not null
+)
+partition by udf_hash(jumpstrc4hs00(c1))
+tablegroup=tg_dble_udf10;
+
+insert into uh_t10 values ('8','8');
+insert into uh_t10 values ('5','5');
+select c1, part_route('', 'uh_t10', c1) as route_rs, part_hash('', 'uh_t10', c1) as hash_rs from uh_t10 where c1='8';
+select c1, part_route('', 'uh_t10', c1) as route_rs, part_hash('', 'uh_t10', c1) as hash_rs from uh_t10 where c1='5';
+
+show create table uh_t10;
+
+
+

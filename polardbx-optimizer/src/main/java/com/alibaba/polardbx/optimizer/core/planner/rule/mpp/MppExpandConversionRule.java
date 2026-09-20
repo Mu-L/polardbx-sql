@@ -60,11 +60,11 @@ public class MppExpandConversionRule extends RelOptRule {
         AbstractConverter converter = call.rel(0);
         RelNode child = call.rel(1);
         child = convert(child, child.getTraitSet().replace(MppConvention.INSTANCE));
-        RelNode output = enforce(child, converter.getTraitSet());
+        RelNode output = enforce(child, converter.getTraitSet(), false);
         call.transformTo(output);
     }
 
-    public static RelNode enforce(RelNode input, RelTraitSet toTraitSet) {
+    public static RelNode enforce(RelNode input, RelTraitSet toTraitSet, boolean nullIfFail) {
         assert input.getConvention() == MppConvention.INSTANCE;
         RelDistribution toDistribution = toTraitSet.getTrait(RelDistributionTraitDef.INSTANCE);
         RelCollation toCollation = toTraitSet.getTrait(RelCollationTraitDef.INSTANCE);
@@ -83,6 +83,9 @@ public class MppExpandConversionRule extends RelOptRule {
         } else {
             output = ensureDistribution(input, toDistribution);
             output = ensureCollation(output, toCollation);
+        }
+        if (output == input && nullIfFail) {
+            return null;
         }
         return output;
     }

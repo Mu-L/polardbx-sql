@@ -31,6 +31,8 @@ import org.apache.calcite.util.Pair;
 import java.util.ArrayList;
 import java.util.List;
 
+import static java.util.Objects.requireNonNull;
+
 /**
  * The name-resolution scope of a SELECT clause. The objects visible are those
  * in the FROM clause, and objects inherited from the parent scope.
@@ -223,6 +225,17 @@ public class SelectScope extends ListScope {
 
   public void setExpandedSelectList(List<SqlNode> selectList) {
     expandedSelectList = selectList;
+  }
+
+  @Override public boolean isWithin(SqlValidatorScope scope2) {
+      if (this == scope2) {
+          return true;
+      }
+      // go from the JOIN to the enclosing SELECT
+      if (scope2 instanceof JoinScope) {
+          return isWithin(requireNonNull(((JoinScope) scope2).getUsingScope(), "usingScope"));
+      }
+      return false;
   }
 }
 

@@ -1,0 +1,325 @@
+SQL:
+  - sql: |
+      select * from my_t1;
+    plan: |
+      unionall(concurrent=true)
+        logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where (`date_field` >= '2020-01-01 00:00:00')")
+        osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where (`date_field` < '2020-01-01 00:00:00')")
+
+  - sql: |
+      select * from my_t1 where id = 1;
+    plan: |
+      unionall(concurrent=true)
+        logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` force index(`primary`) where ((`id` = ?) and (`date_field` >= '2020-01-01 00:00:00'))")
+        osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`id` = ?) and (`date_field` < '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select * from my_t1 where date_field = '2019-12-01 00:00:00';
+    plan: |
+      osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` = ?) and (`date_field` < '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select * from my_t1 where date_field < '2019-12-01 00:00:00';
+    plan: |
+      osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` < '2020-01-01 00:00:00') AND (`date_field` < ?))")
+
+  - sql: |
+      select * from my_t1 where date_field = '2020-12-01 00:00:00';
+    plan: |
+      logicalview(tables="my_t1[p8]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`date_field` = ?) and (`date_field` >= '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select * from my_t1 where date_field > '2019-12-01 00:00:00';
+    plan: |
+      unionall(concurrent=true)
+        logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`date_field` >= '2020-01-01 00:00:00') AND (`date_field` > ?))")
+        osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` < '2020-01-01 00:00:00') AND (`date_field` > ?))")
+
+  - sql: |
+      select * from my_t1 where date_field < '2021-01-01 00:00:00';
+    plan: |
+      unionall(concurrent=true)
+        logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`date_field` >= '2020-01-01 00:00:00') AND (`date_field` < ?))")
+        osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` < '2020-01-01 00:00:00') AND (`date_field` < ?))")
+
+  - sql: |
+      select * from my_t1 where date_field = '2019-12-01 00:00:00' or date_field = '2019-11-01 00:00:00';
+    plan: |
+      osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` in(?, ?)) and (`date_field` < '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select * from my_t1 where date_field = '2020-12-01 00:00:00' or date_field = '2020-11-01 00:00:00';
+    plan: |
+      logicalview(tables="my_t1[p8]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`date_field` in(?, ?)) and (`date_field` >= '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select * from my_t1 where date_field = '2019-12-01 00:00:00' or date_field = '2020-12-01 00:00:00';
+    plan: |
+      unionall(concurrent=true)
+        logicalview(tables="my_t1[p8]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`date_field` in(?, ?)) and (`date_field` >= '2020-01-01 00:00:00'))")
+        osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` in(?, ?)) and (`date_field` < '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select * from my_t1 where date_field > '2019-12-01 00:00:00' and date_field < '2019-12-31 00:00:00';
+    plan: |
+      osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` < '2020-01-01 00:00:00') AND (`date_field` > ?) AND (`date_field` < ?))")
+
+  - sql: |
+      select * from my_t1 where date_field > '2020-12-01 00:00:00' and date_field < '2020-12-31 00:00:00';
+    plan: |
+      logicalview(tables="my_t1[p8]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`date_field` >= '2020-01-01 00:00:00') and (`date_field` > ?) and (`date_field` < ?))")
+
+  - sql: |
+      select * from my_t1 where date_field > '2019-12-01 00:00:00' and date_field < '2020-12-31 00:00:00';
+    plan: |
+      unionall(concurrent=true)
+        logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`date_field` >= '2020-01-01 00:00:00') and (`date_field` > ?) and (`date_field` < ?))")
+        osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` < '2020-01-01 00:00:00') and (`date_field` > ?) and (`date_field` < ?))")
+
+  - sql: |
+      select * from my_t1 where date_field in ('2019-12-01 00:00:00', '2019-11-01 00:00:00');
+    plan: |
+      osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` in(?)) and (`date_field` < '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select * from my_t1 where date_field in ('2020-12-01 00:00:00', '2020-11-01 00:00:00');
+    plan: |
+      logicalview(tables="my_t1[p8]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`date_field` in(?)) and (`date_field` >= '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select * from my_t1 where date_field in ('2019-12-01 00:00:00', '2020-12-01 00:00:00');
+    plan: |
+      unionall(concurrent=true)
+        logicalview(tables="my_t1[p8]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`date_field` in(?)) and (`date_field` >= '2020-01-01 00:00:00'))", pruninginfo="all size:2*1(part), pruning size:1")
+        osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` in(?)) and (`date_field` < '2020-01-01 00:00:00'))", pruninginfo="all size:2*1(part), pruning size:1")
+
+  - sql: |
+      select * from my_t1 where int_field = 500;
+    plan: |
+      osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`int_field` = ?) and (`date_field` < '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select * from my_t1 where int_field < 500;
+    plan: |
+      osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` < '2020-01-01 00:00:00') AND (`int_field` < ?))")
+
+  - sql: |
+      select * from my_t1 where int_field = 1500;
+    plan: |
+      logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`int_field` = ?) and (`date_field` >= '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select * from my_t1 where int_field = 1000;
+    plan: |
+      unionall(concurrent=true)
+        logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`int_field` = ?) and (`date_field` >= '2020-01-01 00:00:00'))")
+        osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`int_field` = ?) and (`date_field` < '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select * from my_t1 where int_field > 1500;
+    plan: |
+      logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`date_field` >= '2020-01-01 00:00:00') and (`int_field` > ?))")
+
+  - sql: |
+      select * from my_t1 where int_field < 2000;
+    plan: |
+      unionall(concurrent=true)
+        logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`date_field` >= '2020-01-01 00:00:00') AND (`int_field` < ?))")
+        osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` < '2020-01-01 00:00:00') AND (`int_field` < ?))")
+
+  - sql: |
+      select * from my_t1 where int_field = 500 or int_field = 300;
+    plan: |
+      osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`int_field` in(?, ?)) and (`date_field` < '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select * from my_t1 where int_field = 1500 or int_field = 1300;
+    plan: |
+      logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`int_field` in(?, ?)) and (`date_field` >= '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select * from my_t1 where int_field = 500 or int_field = 1500;
+    plan: |
+      unionall(concurrent=true)
+        logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`int_field` in(?, ?)) and (`date_field` >= '2020-01-01 00:00:00'))")
+        osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`int_field` in(?, ?)) and (`date_field` < '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select * from my_t1 where int_field > 500 and int_field < 900;
+    plan: |
+      osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` < '2020-01-01 00:00:00') AND (`int_field` > ?) AND (`int_field` < ?))")
+
+  - sql: |
+      select * from my_t1 where int_field > 1500 and int_field < 1900;
+    plan: |
+      logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`date_field` >= '2020-01-01 00:00:00') AND (`int_field` > ?) AND (`int_field` < ?))")
+
+  - sql: |
+      select * from my_t1 where int_field > 500 and int_field < 1500;
+    plan: |
+      unionall(concurrent=true)
+        logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`date_field` >= '2020-01-01 00:00:00') and (`int_field` > ?) and (`int_field` < ?))")
+        osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` < '2020-01-01 00:00:00') and (`int_field` > ?) and (`int_field` < ?))")
+
+  - sql: |
+      select * from my_t1 where int_field in (500, 300);
+    plan: |
+      osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`int_field` in(?)) and (`date_field` < '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select * from my_t1 where int_field in (1500, 1300);
+    plan: |
+      logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`int_field` in(?)) and (`date_field` >= '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select * from my_t1 where int_field in (500, 1500);
+    plan: |
+      unionall(concurrent=true)
+        logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where ((`int_field` in(?)) and (`date_field` >= '2020-01-01 00:00:00'))")
+        osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`int_field` in(?)) and (`date_field` < '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select id, int_field from my_t1 order by int_field;
+    plan: |
+      exchange(distribution=single, collation=[1 asc-nulls-first])
+        memsort(sort="int_field asc")
+          unionall(concurrent=true)
+            logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `int_field` from `my_t1` as `my_t1` where (`date_field` >= '2020-01-01 00:00:00')")
+            osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `int_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where (`date_field` < '2020-01-01 00:00:00')")
+
+  - sql: |
+      select id, int_field from my_t1 order by int_field limit 10;
+    plan: |
+      topn(sort="int_field asc", offset=0, fetch=?0)
+        exchange(distribution=single, collation=[1 asc-nulls-first])
+          topn(sort="int_field asc", fetch=?0)
+            unionall(concurrent=true)
+              limit(fetch=?0)
+                exchange(distribution=single, collation=[1 asc-nulls-first])
+                  logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `int_field` from `my_t1` as `my_t1` where (`date_field` >= '2020-01-01 00:00:00') order by `int_field` limit ?")
+              topn(sort="int_field asc", fetch=?0)
+                exchange(distribution=single, collation=[1 asc-nulls-first])
+                  topn(sort="int_field asc", fetch=?0)
+                    osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `int_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where (`date_field` < '2020-01-01 00:00:00')")
+
+  - sql: |
+      select id, int_field from my_t1 order by int_field desc limit 10;
+    plan: |
+      topn(sort="int_field desc", offset=0, fetch=?0)
+        exchange(distribution=single, collation=[1 desc-nulls-last])
+          topn(sort="int_field desc", fetch=?0)
+            unionall(concurrent=true)
+              limit(fetch=?0)
+                exchange(distribution=single, collation=[1 desc-nulls-last])
+                  logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `int_field` from `my_t1` as `my_t1` where (`date_field` >= '2020-01-01 00:00:00') order by `int_field` desc limit ?")
+              topn(sort="int_field desc", fetch=?0)
+                exchange(distribution=single, collation=[1 desc-nulls-last])
+                  topn(sort="int_field desc", fetch=?0)
+                    osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `int_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where (`date_field` < '2020-01-01 00:00:00')")
+
+  - sql: |
+      select count(*) from my_t1;
+    plan: |
+      hashagg(count(*)="sum(count(*))")
+        exchange(distribution=single, collation=[])
+          partialhashagg(count(*)="count()")
+            unionall(concurrent=true)
+              logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select 0 as `$f0` from `my_t1` as `my_t1` where (`date_field` >= '2020-01-01 00:00:00')")
+              project($f0="0")
+                osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where (`date_field` < '2020-01-01 00:00:00')")
+
+  - sql: |
+      select count(*) from my_t1 where int_field > 1000;
+    plan: |
+      hashagg(count(*)="sum(count(*))")
+        exchange(distribution=single, collation=[])
+          logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select count(*) as `count(*)` from `my_t1` as `my_t1` where ((`date_field` >= '2020-01-01 00:00:00') and (`int_field` > ?))")
+
+  - sql: |
+      select int_field, count(*) from my_t1 group by int_field having count(*) > 1;
+    plan: |
+      filter(condition="count(*) > ?0")
+        hashagg(group="int_field", count(*)="count()")
+          exchange(distribution=hash[0], collation=[])
+            unionall(concurrent=true)
+              logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `int_field` from `my_t1` as `my_t1` where (`date_field` >= '2020-01-01 00:00:00')")
+              osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `int_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where (`date_field` < '2020-01-01 00:00:00')")
+
+  - sql: |
+      select int_field, sum(float_field) from my_t1 group by int_field;
+    plan: |
+      hashagg(group="int_field", sum(float_field)="sum(float_field)")
+        exchange(distribution=hash[0], collation=[])
+          unionall(concurrent=true)
+            logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `int_field`, `float_field` from `my_t1` as `my_t1` where (`date_field` >= '2020-01-01 00:00:00')")
+            osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `int_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where (`date_field` < '2020-01-01 00:00:00')")
+
+  - sql: |
+      select *, row_number() over (partition by int_field order by date_field) as rn from my_t1;
+    plan: |
+      sortwindow(id="id", text_field="text_field", int_field="int_field", date_field="date_field", float_field="float_field", f5w0$o0="window#0row_number()", reference windows="window#0=window(partition {2} order by [3 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+        memsort(sort="int_field asc,date_field asc")
+          exchange(distribution=hash[2], collation=[])
+            unionall(concurrent=true)
+              logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where (`date_field` >= '2020-01-01 00:00:00')")
+              osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `text_field`, `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where (`date_field` < '2020-01-01 00:00:00')")
+
+  - sql: |
+      select int_field, sum(float_field) over (order by date_field rows between 2 preceding and current row) as moving_sum from my_t1;
+    plan: |
+      project(int_field="int_field", $1="f3w0$o0")
+        sortwindow(int_field="int_field", date_field="date_field", float_field="float_field", f3w0$o0="window#0sum($2)", reference windows="window#0=window(partition {} order by [1 asc-nulls-first] rows between $3 preceding and current row aggs [sum($2)])", constants="[2]")
+          exchange(distribution=single, collation=[1 asc-nulls-first])
+            memsort(sort="date_field asc")
+              unionall(concurrent=true)
+                logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `int_field`, `date_field`, `float_field` from `my_t1` as `my_t1` where (`date_field` >= '2020-01-01 00:00:00')")
+                osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `int_field`, `date_field`, `float_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where (`date_field` < '2020-01-01 00:00:00')")
+
+DDL:
+  my_t1:
+    CREATE TABLE `my_t1` (
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `text_field` varchar(2048),
+    `int_field` int NOT NULL,
+    `date_field` datetime NOT NULL,
+    `float_field` float NOT NULL,
+    PRIMARY KEY (`id`),
+    CLUSTERED COLUMNAR INDEX `arctmp_myarc_t1` (`date_field`)
+    PARTITION BY RANGE COLUMNS(`date_field`)
+    (PARTITION `p20200101` VALUES LESS THAN ('2020-01-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200201` VALUES LESS THAN ('2020-02-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200301` VALUES LESS THAN ('2020-03-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200401` VALUES LESS THAN ('2020-04-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200501` VALUES LESS THAN ('2020-05-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200601` VALUES LESS THAN ('2020-06-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200701` VALUES LESS THAN ('2020-07-01 00:00:00') ENGINE = Columnar,
+    PARTITION `pmax` VALUES LESS THAN (MAXVALUE) ENGINE = Columnar) ENGINE=OSS
+    COLUMNAR_OPTIONS='{
+    "TYPE":"ARCHIVE",
+    }',
+    LOCAL KEY `idx_df` (`date_field`)，
+    LOCAL KEY `idx_int` (`int_field`)
+    ) ENGINE = InnoDB DEFAULT CHARSET = utf8
+    TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `date_field` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00', TTL_JOB = CRON '0 1 */1 * * ?', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_PRE_ALLOCATE = 12, ARCHIVE_TABLE_POST_ALLOCATE = 12, TTL_REF_COL_LIST = 'int_field', TTL_HYBRID = 'true')
+    PARTITION BY RANGE COLUMNS(`date_field`)
+    (PARTITION `pmin` VALUES LESS THAN ('2020-01-01 00:00:00'),
+    PARTITION `p1` VALUES LESS THAN ('2020-02-01 00:00:00'),
+    PARTITION `p2` VALUES LESS THAN ('2020-03-01 00:00:00'),
+    PARTITION `p3` VALUES LESS THAN ('2020-04-01 00:00:00'),
+    PARTITION `p4` VALUES LESS THAN ('2020-05-01 00:00:00'),
+    PARTITION `p5` VALUES LESS THAN ('2020-06-01 00:00:00'),
+    PARTITION `p6` VALUES LESS THAN ('2020-07-01 00:00:00'),
+    PARTITION `p7` VALUES LESS THAN ('2020-08-01 00:00:00'),
+    PARTITION `p8` VALUES LESS THAN (MAXVALUE));
+STATISTICS:
+  my_t1:
+    10000
+CONFIG:
+  ENABLE_TRANSPARENT_TTL:
+    true
+  PLAN_CACHE:
+    false
+  WORKLOAD_TYPE:
+    ap
+  ENABLE_MPP:
+    true

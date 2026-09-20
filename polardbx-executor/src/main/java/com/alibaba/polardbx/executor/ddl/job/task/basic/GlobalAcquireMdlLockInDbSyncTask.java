@@ -47,7 +47,8 @@ public class GlobalAcquireMdlLockInDbSyncTask extends BaseSyncTask {
     @Override
     public void executeImpl(ExecutionContext executionContext) {
         try {
-            SyncManagerHelper.sync(new GlobalAcquireMdlLockInDbSyncAction(schemaNames), SyncScope.ALL);
+            SyncManagerHelper.syncThrowExceptions(new GlobalAcquireMdlLockInDbSyncAction(schemaNames),
+                SyncScope.MASTER_ONLY);
         } catch (Throwable t) {
             LOGGER.error(String.format(
                 "error occurs while lock tables meta, schemaNames:%s", schemaNames));
@@ -58,7 +59,8 @@ public class GlobalAcquireMdlLockInDbSyncTask extends BaseSyncTask {
     @Override
     protected void beforeRollbackTransaction(ExecutionContext executionContext) {
         try {
-            SyncManagerHelper.sync(new GlobalReleaseMdlLockInDbSyncAction(schemaNames), SyncScope.ALL);
+            SyncManagerHelper.syncThrowExceptions(new GlobalReleaseMdlLockInDbSyncAction(schemaNames),
+                SyncScope.MASTER_ONLY);
         } catch (Throwable t) {
             LOGGER.error(String.format(
                 "error occurs while unlock tables meta, schemaName:%s", schemaNames));

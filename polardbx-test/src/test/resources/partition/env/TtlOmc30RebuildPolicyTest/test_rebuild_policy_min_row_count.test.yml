@@ -1,0 +1,72 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+use polardbx;
+drop database if exists test_omc30_rb_minrow_db;
+create database if not exists test_omc30_rb_minrow_db mode='auto' default character set utf8mb4 default collate utf8mb4_bin;
+use test_omc30_rb_minrow_db;
+
+## case1: min_row_count threshold prevents auto rebuild - table has too few rows
+## even though expired ratio is high (4/5=80 pct), min_row_count=1000000 means table is too small -> row-delete
+drop table if exists rb_minrow_t1;
+create table rb_minrow_t1(
+  a int not null,
+  b datetime not null,
+  c varchar(32),
+  primary key(a)
+) default character set utf8mb4 default collate utf8mb4_bin
+partition by hash(a) partitions 4;
+
+alter table rb_minrow_t1 modify ttl set
+  TTL_ENABLE='on',
+  TTL_CLEANUP='on',
+  TTL_EXPR=`b` expire after 1 day timezone '+08:00';
+
+insert into rb_minrow_t1 values(1, '2020-01-01 00:00:00', 'expired1');
+insert into rb_minrow_t1 values(2, '2020-01-02 00:00:00', 'expired2');
+insert into rb_minrow_t1 values(3, '2020-01-03 00:00:00', 'expired3');
+insert into rb_minrow_t1 values(4, '2020-01-04 00:00:00', 'expired4');
+insert into rb_minrow_t1 values(5, '2030-01-01 00:00:00', 'valid1');
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-01-01 00:00:00';
+## auto mode with high min_row_count=1000000 and low threshold=10 - table only has 5 rows, below min_row_count -> row-delete path
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=true,TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY=1000000,TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY=10)*/alter table rb_minrow_t1 cleanup expired data;
+
+## verify: expired rows removed via row-delete, valid row remains
+select a, c from rb_minrow_t1 order by a;
+
+drop table if exists rb_minrow_t1;
+
+## case2: min_row_count=0 allows rebuild even for small tables - with high expired ratio -> rebuild path
+drop table if exists rb_minrow_t2;
+create table rb_minrow_t2(
+  a int not null,
+  b datetime not null,
+  c varchar(32),
+  primary key(a)
+) default character set utf8mb4 default collate utf8mb4_bin
+partition by hash(a) partitions 4;
+
+alter table rb_minrow_t2 modify ttl set
+  TTL_ENABLE='on',
+  TTL_CLEANUP='on',
+  TTL_EXPR=`b` expire after 1 day timezone '+08:00';
+
+insert into rb_minrow_t2 values(1, '2020-01-01 00:00:00', 'expired1');
+insert into rb_minrow_t2 values(2, '2020-01-02 00:00:00', 'expired2');
+insert into rb_minrow_t2 values(3, '2020-01-03 00:00:00', 'expired3');
+insert into rb_minrow_t2 values(4, '2020-01-04 00:00:00', 'expired4');
+insert into rb_minrow_t2 values(5, '2030-01-01 00:00:00', 'valid1');
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-01-01 00:00:00';
+## auto mode with min_row_count=0 and low threshold=10 - expired ratio 80 pct > threshold 10 -> rebuild path
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=true,TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY=0,TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY=10)*/alter table rb_minrow_t2 cleanup expired data;
+
+## verify: expired rows cleaned via rebuild, valid row remains
+select a, c from rb_minrow_t2 order by a;
+
+drop table if exists rb_minrow_t2;
+
+use polardbx;
+drop database if exists test_omc30_rb_minrow_db;
+use polardbx;

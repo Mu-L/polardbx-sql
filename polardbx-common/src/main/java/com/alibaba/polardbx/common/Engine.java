@@ -31,12 +31,14 @@ public enum Engine {
     FEDERATED,
     LOCAL_DISK,
     EXTERNAL_DISK,
+    EXTERNAL,
     S3,
     ABS,
     OSS,
     NFS,
+    COLUMNAR,
     MEMORY,
-    COLUMNAR;
+    ;
 
     public static final Engine DEFAULT_COLUMNAR_ENGINE = OSS;
 
@@ -65,6 +67,10 @@ public enum Engine {
         default:
             return false;
         }
+    }
+
+    public static boolean isPureColumnar(Engine engine) {
+        return engine == COLUMNAR || engine == BLACKHOLE;
     }
 
     public static boolean isFileStore(Engine engine) {

@@ -22,6 +22,8 @@ public class CheckCdcPlugin extends BasePlugin {
     private final String hint = "/*" + UUID.randomUUID() + "*/";
     private final SecureRandom random = new SecureRandom();
     private final String replicaDsn;
+    private boolean first = true;
+    private final String beforeCheckStmt;
 
     public CheckCdcPlugin() {
         super();
@@ -29,20 +31,34 @@ public class CheckCdcPlugin extends BasePlugin {
         if (null == config) {
             enabled = false;
             replicaDsn = null;
+            beforeCheckStmt = null;
             return;
         }
         enabled = config.getBoolean("enabled", false);
         threads = Math.toIntExact(config.getLong("threads", 1L));
         replicaDsn = config.getString("replica_dsn", dsn);
+        beforeCheckStmt = config.getString("before_check_stmt", null);
     }
 
     @Override
     public void runInternal() {
+        if (first) {
+            try {
+                Thread.sleep(5000);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            first = false;
+        }
+
         AtomicReference<List<Account>> slaveAccounts = new AtomicReference<>();
         String slaveHint = hint;
         getConnectionAndExecute(replicaDsn, (conn, error) -> {
             // read slave data from cdc
             try (Statement stmt = conn.createStatement()) {
+                if (null != beforeCheckStmt) {
+                    stmt.execute(beforeCheckStmt);
+                }
                 slaveAccounts.set(Utils.getAccounts(slaveHint, stmt));
             } catch (SQLException e) {
                 logger.error("Check balance with cdc error.", e);

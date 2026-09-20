@@ -4,11 +4,14 @@ import com.alibaba.fastjson.annotation.JSONCreator;
 import com.alibaba.polardbx.common.ddl.newengine.DdlConstants;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.exception.TtlJobRuntimeException;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.log.AddPartsForTtlTblTaskLogInfo;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.log.TtlAlterPartsTaskLogInfo;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.log.TtlLoggerUtil;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -36,7 +39,7 @@ public class CheckAndPrepareAddPartsForTtlTblSqlTask extends AbstractTtlJobTask 
     @JSONCreator
     public CheckAndPrepareAddPartsForTtlTblSqlTask(String schemaName, String logicalTableName) {
         super(schemaName, logicalTableName);
-        onExceptionTryRecoveryThenPause();
+        onExceptionTryRecoveryThenRollback();
     }
 
     @Override
@@ -47,8 +50,11 @@ public class CheckAndPrepareAddPartsForTtlTblSqlTask extends AbstractTtlJobTask 
     }
 
     protected void executeInner(ExecutionContext executionContext) {
-
+        FailPoint.injectSuspendFromHint(FailPointKey.FP_TTL_JOB_SUSPEND_TIME_ON_ADD_PRIM_PART, executionContext);
+        FailPoint.injectExceptionFromHint(FailPointKey.FP_TTL_JOB_FAILED_ON_ADD_PRIM_PART, executionContext);
         TtlDefinitionInfo ttlDefinitionInfo = this.jobContext.getTtlInfo();
+        TtlPartitionUtil.TtlColValueCalcContext calcContext =
+            TtlPartitionUtil.TtlColValueCalcContext.buildBoundValueCalcContext(ttlDefinitionInfo, executionContext);
         int prePartCnt = ttlDefinitionInfo.getTtlInfoRecord().getArcPrePartCnt();
         TableMeta ttlTblMeta = executionContext.getSchemaManager(schemaName).getTable(logicalTableName);
         Integer arcPartInterval = ttlDefinitionInfo.getTtlInfoRecord().getArcPartInterval();
@@ -69,7 +75,7 @@ public class CheckAndPrepareAddPartsForTtlTblSqlTask extends AbstractTtlJobTask 
         if (useExpireOver) {
             targetPivotPointValStr =
                 TtlPartitionUtil.findMaxPartBoundValStrFromNonMaxValParts(ttlTblMeta.getPartitionInfo(), tarPartLevel,
-                    ttlDefinitionInfo);
+                    ttlDefinitionInfo, calcContext);
             PartitionByDefinition tarPartBy = TtlPartitionUtil.getTargetPartBy(ttlTblMeta, tarPartLevel);
             int partCnt = tarPartBy.getPartitions().size();
             int expireOverCnt = prePartCnt;
@@ -88,6 +94,10 @@ public class CheckAndPrepareAddPartsForTtlTblSqlTask extends AbstractTtlJobTask 
             params.setPreBuildNewPartCount(finalPreBuildPartCnt);
             params.setExpiredByOverPartCount(useExpireOver);
             params.setEc(executionContext);
+            params.setCalcContext(calcContext);
+            /**
+             * Calc the new pre-build parts for ttl-tbl itself
+             */
             calcResult = TtlPartitionUtil.calcBuildPrePartSpecs(params);
         } catch (Throwable ex) {
             throw new TddlRuntimeException(ErrorCode.ERR_TTL, ex);
@@ -97,7 +107,7 @@ public class CheckAndPrepareAddPartsForTtlTblSqlTask extends AbstractTtlJobTask 
             /**
              * Build add part sql of ttl-tbl
              */
-            String queryHintForAlterTableAddParts = TtlConfigUtil.getQueryHintForAutoAddParts();
+            String queryHintForAlterTableAddParts = TtlTaskSqlBuilder.getTtlAddPartsStmtHint(executionContext);
             String addPartsSqlForTtlTbl = calcResult.generateAddPartsSql(queryHintForAlterTableAddParts);
             this.jobContext.setNeedAddPartsForTtlTbl(true);
             this.jobContext.setTtlTblNewMaxBoundValAfterAddingNewParts(

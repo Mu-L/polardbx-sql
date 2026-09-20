@@ -17,21 +17,29 @@
 package com.alibaba.polardbx.executor.utils;
 
 import com.alibaba.polardbx.executor.common.ExecutorContext;
+import com.alibaba.polardbx.executor.columnar.ExtColumnMappingManager;
 import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlJobManager;
+import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlTaskBarrierManager;
 import com.alibaba.polardbx.executor.gsi.CheckerManager;
 import com.alibaba.polardbx.executor.gsi.GsiBackfillManager;
 import com.alibaba.polardbx.executor.statistic.entity.PolarDbXSystemTableColumnStatistic;
 import com.alibaba.polardbx.executor.statistic.entity.PolarDbXSystemTableLogicalTableStatistic;
+import com.alibaba.polardbx.executor.sync.CleanBlobCacheForTableSyncAction;
+import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbConfigManager;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
+import com.alibaba.polardbx.gms.metadb.misc.ExpandPartitionTasksAccessor;
 import com.alibaba.polardbx.gms.metadb.misc.SchemaInfoCleaner;
 import com.alibaba.polardbx.gms.metadb.table.BaselineInfoAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableStatus;
 import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
 import com.alibaba.polardbx.gms.metadb.table.TablesRecord;
 import com.alibaba.polardbx.gms.scheduler.DdlPlanAccessor;
+import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.gms.tablegroup.JoinGroupUtils;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupUtils;
 import com.alibaba.polardbx.gms.topology.SchemaMetaCleaner;
@@ -60,18 +68,21 @@ public class SchemaMetaUtil {
 
     public static void cleanupSchemaMeta(String schemaName, Connection metaDbConn, long versionId) {
 
+        assert metaDbConn != null;
         TableInfoManager tableInfoManager = new TableInfoManager();
+        tableInfoManager.setConnection(metaDbConn);
+        cleanupExternalColumnMeta(schemaName, metaDbConn, tableInfoManager);
+
         SchemaInfoCleaner schemaInfoCleaner = new SchemaInfoCleaner();
         DdlPlanAccessor ddlPlanAccessor = new DdlPlanAccessor();
         TtlInfoAccessor ttlInfoAccessor = new TtlInfoAccessor();
+        ExpandPartitionTasksAccessor expandPartitionTasksAccessor = new ExpandPartitionTasksAccessor();
 
         try {
-            assert metaDbConn != null;
-
-            tableInfoManager.setConnection(metaDbConn);
             schemaInfoCleaner.setConnection(metaDbConn);
             ddlPlanAccessor.setConnection(metaDbConn);
             ttlInfoAccessor.setConnection(metaDbConn);
+            expandPartitionTasksAccessor.setConnection(metaDbConn);
 
             // If the schema has been dropped, then we have to do some cleanup.
             String tableListDataId = MetaDbDataIdBuilder.getTableListDataId(schemaName);
@@ -104,8 +115,11 @@ public class SchemaMetaUtil {
             GsiBackfillManager.deleteAll(schemaName, metaDbConn);
             CheckerManager.deleteAll(schemaName, metaDbConn);
             ddlPlanAccessor.deleteAll(schemaName);
+            expandPartitionTasksAccessor.deleteAll(schemaName);
 
             TableGroupUtils.deleteTableGroupInfoBySchema(schemaName, metaDbConn);
+            DdlTaskBarrierManager.getInstance().deleteBarrierBySchema(schemaName, metaDbConn);
+
             JoinGroupUtils.deleteJoinGroupInfoBySchema(schemaName, metaDbConn);
 
         } catch (Exception e) {
@@ -113,8 +127,30 @@ public class SchemaMetaUtil {
         } finally {
             tableInfoManager.setConnection(null);
             schemaInfoCleaner.setConnection(null);
+            expandPartitionTasksAccessor.setConnection(null);
+            ddlPlanAccessor.setConnection(null);
+            ttlInfoAccessor.setConnection(null);
         }
         deleteBaselineInformation(schemaName, new BaselineInfoAccessor(false));
+    }
+
+    private static void cleanupExternalColumnMeta(String schemaName, Connection metaDbConn,
+                                                  TableInfoManager tableInfoManager) {
+        if (!tableInfoManager.hasExternalizedColumn(schemaName)) {
+            return;
+        }
+
+        ExtColumnMappingManager manager = ExtColumnMappingManager.getInstance();
+        // Fail closed for an externalized schema: dropping it without marking mappings would leak lifecycle
+        // metadata and remote objects. checkReady() preserves the original initialization failure as cause.
+        manager.checkReady();
+
+        int droppedExternalMappings = manager.markDropBySchema(metaDbConn, schemaName);
+        if (droppedExternalMappings > 0) {
+            FailPoint.injectException(FailPointKey.FP_DROP_DATABASE_EXT_MAPPING_FAIL);
+            SyncManagerHelper.syncWithDefaultDb(
+                new CleanBlobCacheForTableSyncAction(schemaName, null, null), SyncScope.ALL);
+        }
     }
 
     public static boolean checkSupportHll(String schemaName) {

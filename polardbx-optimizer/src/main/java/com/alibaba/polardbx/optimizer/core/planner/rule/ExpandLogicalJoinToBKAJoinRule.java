@@ -122,7 +122,7 @@ public class ExpandLogicalJoinToBKAJoinRule extends RelOptRule {
             ImmutableList.copyOf(join.getSystemFieldList()),
             join.getHints()); // PK set in inner table for runtime optimize.
         inner.setIsMGetEnabled(true);
-        inner.setJoin(bkaJoin);
+        inner.setLookupInfo(bkaJoin);
         call.transformTo(bkaJoin);
     }
 

@@ -1,0 +1,165 @@
+SQL:
+  - sql: |
+      with cte as (select * from t1) select * from cte
+
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `id`, `name`, `create_time` from `t1` as `t1`")
+        cteconsumer(cte_id="0_0")
+  - sql: |
+      with a as (
+      with a as (
+      select 1 from t1) select 2 from a)
+      select 3 from a;
+    plan: |
+      cteanchor(cte_id=1)
+        cteproducer(cte_id=1)
+          cteanchor(cte_id=0)
+            cteproducer(cte_id=0)
+              gather(concurrent=true)
+                logicalview(tables="[0000-0003].t1", shardcount=4, sql="select ? as `1` from `t1` as `t1`")
+            cteconsumer(cte_id="0_0", projects=[?1])
+        cteconsumer(cte_id="1_0", projects=[?2])
+  - sql: |
+      with a as (    select        3    from        t1),
+      b as (
+      with b as (    select        1 as id    from        a) select    4+id from    b
+      ) 
+      select     * from     b;
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].t1", shardcount=4, sql="select ? as `3` from `t1` as `t1`")
+        cteanchor(cte_id=2)
+          cteproducer(cte_id=2)
+            cteanchor(cte_id=1)
+              cteproducer(cte_id=1)
+                cteconsumer(cte_id="0_0", projects=[?1])
+              cteconsumer(cte_id="1_0", projects=[+(?2, $0)])
+          cteconsumer(cte_id="2_0")
+  - sql: |
+      /*+TDDL:BKA_JOIN(t1,t2)*/
+      with cte as (select * from t1), 
+       cte2 as (select * from t2) 
+      select * from cte join cte2 on cte.id = cte2.id
+
+    plan: |
+      sql could not be implemented
+  - sql: |
+      with cte as (select * from t1), cte2 as (select count(*) from cte) select * from cte2
+
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `id` from `t1` as `t1`")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            hashagg(count(*)="count()")
+              cteconsumer(cte_id="0_0", projects=[0])
+          cteconsumer(cte_id="1_0")
+  - sql: |
+      with cte as (select id from t1), cte2 as (select id from t1) select * from cte join cte2 on cte.id = cte2.id
+
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `id` from `t1` as `t1`")
+        cteanchor(cte_id=1)
+          cteproducer(cte_id=1)
+            gather(concurrent=true)
+              logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `id` from `t1` as `t1`")
+          hashjoin(condition="id = id", type="inner")
+            cteconsumer(cte_id="0_0")
+            cteconsumer(cte_id="1_0")
+  - sql: |
+      WITH cte (col1, col2) AS (   SELECT 1, 2   UNION ALL   SELECT 3, 4 ) SELECT col1, col2 FROM cte;
+
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          dynamicvalues(tuples=[{ ?0, ?1 }, { ?2, ?3 }])
+        cteconsumer(cte_id="0_0")
+  - sql: |
+      WITH cte AS (   SELECT 1 AS col1, 2 AS col2   UNION ALL   SELECT 3, 4 ) SELECT col1, col2 FROM cte;
+
+    plan: |
+      cteanchor(cte_id=0)
+        cteproducer(cte_id=0)
+          dynamicvalues(tuples=[{ ?0, ?1 }, { ?2, ?3 }])
+        cteconsumer(cte_id="0_0")
+  - sql: |
+      WITH recursive cte1 AS (   SELECT id, name from t1), cte2 as (select id, name from t2 limit 1 union all 
+      select cte2.id, cte2.name from cte1 join cte2 on cte1.id=cte2.id)  SELECT id, name FROM cte2;
+
+    plan: |
+      recursivecte(cte_name="cte2", offset=null, fetch=null)
+        mergesort(sort="", offset=0, fetch=?0)
+          logicalview(tables="[0000-0003].t2_[0-7]", shardcount=8, sql="select `id`, `name` from `t2` as `t2` limit ?")
+        project(id="id", name="name")
+          bkajoin(condition="id = id", type="inner")
+            recursivecteanchor(cte_target="cte2")
+            gather(concurrent=true)
+              logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `id` from `t1` as `t1` force index(`primary`) where (`id` in (...))")
+  - sql: |
+      WITH recursive cte1 AS ( select * from (  SELECT id, name from t1 union all select id, name from t2) ), 
+      cte2 as (select * from (  SELECT id, name from t1 union all select id, name from t2) as b union all 
+      select cte2.id, cte2.name from cte1 join cte2 on cte1.id=cte2.id)  
+      SELECT id, name FROM cte2;
+
+    plan: |
+      recursivecte(cte_name="cte2", offset=null, fetch=null)
+        unionall(concurrent=true)
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `id`, `name` from `t1` as `t1`")
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].t2_[0-7]", shardcount=8, sql="select `id`, `name` from `t2` as `t2`")
+        project(id="id0", name="name0")
+          hashjoin(condition="id = id", type="inner")
+            unionall(concurrent=true)
+              gather(concurrent=true)
+                logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `id`, `name` from `t1` as `t1`")
+              gather(concurrent=true)
+                logicalview(tables="[0000-0003].t2_[0-7]", shardcount=8, sql="select `id`, `name` from `t2` as `t2`")
+            recursivecteanchor(cte_target="cte2")
+DDL:
+  t1:
+    CREATE TABLE `t1` (
+    `id` int(11) NOT NULL,
+    `name` varchar(30) DEFAULT NULL,
+    `create_time` datetime DEFAULT NULL,
+    PRIMARY KEY (`id`),
+    KEY `auto_shard_key_ID` (`id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 dbpartition by hash(`ID`) tbpartition by hash(`ID`) TBPARTITIONS 1;
+
+  t2:
+    CREATE TABLE `t2` (
+    `id` int(11) NOT NULL,
+    `name` varchar(30) DEFAULT NULL,
+    `create_time` datetime DEFAULT NULL,
+    PRIMARY KEY (`id`),
+    KEY `auto_shard_key_ID` (`id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 dbpartition by hash(`ID`) tbpartition by hash(`ID`) TBPARTITIONS 2;
+
+  t3:
+    CREATE TABLE `t3` (
+    `id` int(11) NOT NULL,
+    `name` varchar(30) DEFAULT NULL,
+    `create_time` datetime DEFAULT NULL,
+    PRIMARY KEY (`id`),
+    KEY `auto_shard_key_ID` (`id`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 dbpartition by hash(`ID`) tbpartition by hash(`ID`) TBPARTITIONS 3;
+STATISTICS:
+  t1:
+    100
+  t2:
+    1000
+  t3:
+    10000
+CONFIG:
+  CTE_MODE:
+    REUSE

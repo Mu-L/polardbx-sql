@@ -431,6 +431,19 @@ public class SqlConverter {
         return sqlToRelConverter.convertPartition(sqlPartitionBy);
     }
 
+    public RexNode convertBaselineExpr(SqlNode sqlExpr,
+                                       final PlannerContext plannerContext) {
+        final RelOptCluster cluster = createRelOptCluster(plannerContext);
+        final SqlToRelConverter sqlToRelConverter = new TddlSqlToRelConverter(null,
+            validator,
+            catalog,
+            cluster,
+            StandardConvertletTable.INSTANCE,
+            converterConfig,
+            plannerContext);
+        return sqlToRelConverter.convertExpression(sqlExpr);
+    }
+
     public Map<SqlNode, RexNode> getRexInfoFromSqlAlterSpec(SqlNode parentNode,
                                                             List<SqlAlterSpecification> sqlAlterSpecifications,
                                                             final PlannerContext plannerContext) {

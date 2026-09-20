@@ -21,9 +21,12 @@ import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptRuleOperand;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.logical.LogicalAggregate;
 import org.apache.calcite.rel.logical.LogicalJoin;
+import org.apache.calcite.rel.logical.LogicalProject;
 import org.apache.calcite.rel.rules.AggregateProjectMergeRule;
+import org.apache.calcite.rel.rules.ProjectJoinTransposeRule;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.tools.RelBuilderFactory;
@@ -55,15 +58,31 @@ public abstract class AbstractAggregsteJoinTransposeRule extends RelOptRule {
         final RelBuilder relBuilder = call.builder();
         final RexBuilder rexBuilder = aggregate.getCluster().getRexBuilder();
 
-        RelNode afterMergeProjectNode = OneStepTransformer.transform(aggregate, AggregateProjectMergeRule.INSTANCE);
-        if (afterMergeProjectNode == aggregate) {
+        final LogicalProject project = call.rel(1);
+        final LogicalJoin join = call.rel(2);
+
+        Join newJoin = join.copy(join.getTraitSet(), join.getCondition(), join.getLeft(),
+            join.getRight(), join.getJoinType(), join.isSemiJoinDone());
+        LogicalProject newProject = project.copy(project.getTraitSet(), newJoin,
+            project.getProjects(), project.getRowType());
+        RelNode afterPushProject = OneStepTransformer.transform(newProject, ProjectJoinTransposeRule.INSTANCE);
+        if (afterPushProject == newProject) {
             return;
         }
+        LogicalAggregate newLogicalAggregate = aggregate.copy(
+            afterPushProject, aggregate.getGroupSet(), aggregate.getAggCallList());;
+        if (afterPushProject instanceof LogicalProject) {
+            RelNode afterMergeProjectNode = OneStepTransformer.transform(aggregate, AggregateProjectMergeRule.INSTANCE);
+            if (afterMergeProjectNode == newLogicalAggregate || !(afterMergeProjectNode instanceof LogicalAggregate)) {
+                return;
+            }
+            newLogicalAggregate = (LogicalAggregate) afterMergeProjectNode;
+        }
 
-        if (afterMergeProjectNode instanceof LogicalAggregate && afterMergeProjectNode
-            .getInput(0) instanceof LogicalJoin) {
+
+        if (newLogicalAggregate.getInput(0) instanceof LogicalJoin) {
             RelNode transformReuslt =
-                transform((LogicalAggregate) afterMergeProjectNode, (LogicalJoin) afterMergeProjectNode.getInput(0),
+                transform(newLogicalAggregate, (LogicalJoin) newLogicalAggregate.getInput(0),
                     relBuilder, rexBuilder);
             if (transformReuslt != null) {
                 call.transformTo(transformReuslt);

@@ -22,12 +22,12 @@ import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.config.impl.MetaDbInstConfigManager;
 import com.alibaba.polardbx.gms.metadb.GmsSystemTables;
+import com.alibaba.polardbx.gms.metadb.table.ColumnStatus;
+import com.alibaba.polardbx.gms.metadb.table.ExtColumnMappingRecord;
+import com.alibaba.polardbx.gms.metadb.table.TableStatus;
 import com.alibaba.polardbx.optimizer.config.schema.InformationSchema;
 import com.alibaba.polardbx.optimizer.config.schema.MetaDbSchema;
-import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.planmanager.PlanManager;
-import com.google.common.collect.ImmutableList;
-import org.apache.calcite.sql.type.SqlTypeName;
 
 import java.util.Arrays;
 import java.util.List;
@@ -37,8 +37,10 @@ import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.common.TddlConstants.IMPLICIT_COL_NAME;
 import static com.alibaba.polardbx.gms.metadb.table.ColumnsRecord.FLAG_BINARY_DEFAULT;
+import static com.alibaba.polardbx.gms.metadb.table.ColumnsRecord.FLAG_EXTERNALIZED_COLUMN;
 import static com.alibaba.polardbx.gms.metadb.table.ColumnsRecord.FLAG_GENERATED_COLUMN;
 import static com.alibaba.polardbx.gms.metadb.table.ColumnsRecord.FLAG_LOGICAL_GENERATED_COLUMN;
+import static com.alibaba.polardbx.optimizer.view.InformationSchemaCclBlockers.CCL_BLOCKER_COLUMNS;
 import static com.alibaba.polardbx.optimizer.view.InformationSchemaStorageStatus.STORAGE_STATUS_ITEM;
 
 /**
@@ -128,6 +130,169 @@ public class InformationSchemaViewManager extends ViewManager {
 
         defineCaseSensitiveView(InstConfUtil.getBool(ConnectionParams.ENABLE_LOWER_CASE_TABLE_NAMES));
 
+        defineVirtualView(VirtualViewType.PHYSICAL_INDEX_USAGE, new String[] {
+            "OBJECT_SCHEMA",
+            "OBJECT_NAME",
+            "INDEX_NAME",
+            "COUNT_STAR",
+            "COUNT_FETCH",
+            "SUM_TIMER_WAIT",
+            "MAX_TIMER_WAIT"
+        });
+
+        defineVirtualView(VirtualViewType.LOGICAL_INDEX_USAGE, new String[] {
+            "OBJECT_SCHEMA",
+            "OBJECT_NAME",
+            "GSI_NAME",
+            "INDEX_NAME",
+            "TOTAL_USAGE",
+            "COUNT_FETCH",
+            "SUM_TIMER_WAIT",
+            "MAX_TIMER_WAIT"
+        });
+
+        defineVirtualView(VirtualViewType.EXT_COLUMN_STATS, new String[] {
+            "WRITE_COUNT",
+            "WRITE_AVG_LATENCY_MS",
+            "WRITE_TOTAL_BYTES",
+            "WRITE_ERROR_COUNT",
+            "WRITE_SLOW_COUNT",
+            "WRITE_CACHE_PATH_COUNT",
+            "WRITE_LEGACY_PATH_COUNT",
+            "COPY_COUNT",
+            "COPY_ERROR_COUNT",
+            "FLUSH_COUNT",
+            "FLUSH_AVG_LATENCY_MS",
+            "FLUSH_SLOW_COUNT",
+            "FLUSH_TOTAL_PENDING",
+            "READ_COUNT",
+            "READ_AVG_LATENCY_MS",
+            "READ_TOTAL_BYTES",
+            "READ_ERROR_COUNT",
+            "READ_SLOW_COUNT",
+            "READ_CACHE_PATH_COUNT",
+            "READ_LEGACY_PATH_COUNT",
+            "READ_NOT_FOUND_COUNT",
+            "SIZE_CACHE_HIT_COUNT",
+            "SIZE_CACHE_MISS_COUNT",
+            "DELETE_COUNT",
+            "DELETE_ERROR_COUNT",
+            "WRITE_SLOW_THRESHOLD_MS",
+            "READ_SLOW_THRESHOLD_MS",
+            "FLUSH_SLOW_THRESHOLD_MS",
+            "STAGING_WRITE_COUNT",
+            "STAGING_FLUSH_COUNT",
+            "STAGING_FLUSH_ROWS",
+            "STAGING_FLUSH_TOTAL_LATENCY_NS",
+            "STAGING_FLUSH_TOTAL_BYTES",
+            "STAGING_ACTIVE_SEQ_ID",
+            "STAGING_FLUSHED_WATERMARK",
+            "READ_BP_HIT_COUNT",
+            "READ_BP_MISS_COUNT",
+            "READ_SSD_READ_COUNT",
+            "READ_SSD_READ_NS",
+            "READ_RPC_READ_COUNT",
+            "READ_RPC_READ_NS",
+            "READ_OSS_READ_COUNT",
+            "READ_OSS_READ_NS",
+            "PAGE_PUT_COUNT",
+            "PAGE_LOGICAL_VALUE_COUNT",
+            "PAGE_RAW_BYTES",
+            "PAGE_STORED_PAYLOAD_BYTES",
+            "PAGE_METADATA_BYTES",
+            "PAGE_TOTAL_BYTES",
+            "PAGE_RAW_CHUNK_COUNT",
+            "PAGE_ZSTD_CHUNK_COUNT"
+        });
+
+        defineVirtualView(VirtualViewType.EXT_COLUMN_STATS_PER_NODE, new String[] {
+            "COMPUTE_NODE",
+            "WRITE_COUNT",
+            "WRITE_AVG_LATENCY_MS",
+            "WRITE_TOTAL_BYTES",
+            "WRITE_ERROR_COUNT",
+            "WRITE_SLOW_COUNT",
+            "WRITE_CACHE_PATH_COUNT",
+            "WRITE_LEGACY_PATH_COUNT",
+            "COPY_COUNT",
+            "COPY_ERROR_COUNT",
+            "FLUSH_COUNT",
+            "FLUSH_AVG_LATENCY_MS",
+            "FLUSH_SLOW_COUNT",
+            "FLUSH_TOTAL_PENDING",
+            "READ_COUNT",
+            "READ_AVG_LATENCY_MS",
+            "READ_TOTAL_BYTES",
+            "READ_ERROR_COUNT",
+            "READ_SLOW_COUNT",
+            "READ_CACHE_PATH_COUNT",
+            "READ_LEGACY_PATH_COUNT",
+            "READ_NOT_FOUND_COUNT",
+            "SIZE_CACHE_HIT_COUNT",
+            "SIZE_CACHE_MISS_COUNT",
+            "DELETE_COUNT",
+            "DELETE_ERROR_COUNT",
+            "WRITE_SLOW_THRESHOLD_MS",
+            "READ_SLOW_THRESHOLD_MS",
+            "FLUSH_SLOW_THRESHOLD_MS",
+            "STAGING_WRITE_COUNT",
+            "STAGING_FLUSH_COUNT",
+            "STAGING_FLUSH_ROWS",
+            "STAGING_FLUSH_TOTAL_LATENCY_NS",
+            "STAGING_FLUSH_TOTAL_BYTES",
+            "STAGING_ACTIVE_SEQ_ID",
+            "STAGING_FLUSHED_WATERMARK",
+            "READ_BP_HIT_COUNT",
+            "READ_BP_MISS_COUNT",
+            "READ_SSD_READ_COUNT",
+            "READ_SSD_READ_NS",
+            "READ_RPC_READ_COUNT",
+            "READ_RPC_READ_NS",
+            "READ_OSS_READ_COUNT",
+            "READ_OSS_READ_NS",
+            "PAGE_PUT_COUNT",
+            "PAGE_LOGICAL_VALUE_COUNT",
+            "PAGE_RAW_BYTES",
+            "PAGE_STORED_PAYLOAD_BYTES",
+            "PAGE_METADATA_BYTES",
+            "PAGE_TOTAL_BYTES",
+            "PAGE_RAW_CHUNK_COUNT",
+            "PAGE_ZSTD_CHUNK_COUNT"
+        });
+
+        defineVirtualView(VirtualViewType.EXT_STAGING_STATUS, new String[] {
+            "COMPUTE_NODE",
+            "ACTIVE_SEQ_ID",
+            "ACTIVE_DN_ID",
+            "ACTIVE_BY_DN",
+            "FLUSHED_WATERMARK",
+            "ACTIVE_TABLE_COUNT",
+            "CANDIDATE_DNS",
+            "DRAINING_DNS",
+            "SEQ_DN_CACHE",
+            "WRITERS_IN_FLIGHT",
+            "TRANSACTION_LEASES",
+            "LOCAL_ROW_COUNTS"
+        });
+
+        defineView("POLARDBX_GLOBAL_CHAIN",
+            new String[] {
+                "BLOCK_ID",
+                "TRACE_ID",
+                "IP",
+                "PORT",
+                "USER",
+                "SCHEMA_NAME",
+                "TABLE_NAME",
+                "OP_HASH",
+                "BLOCK_HASH",
+                "EXTRA",
+                "TSO",
+                "GMT_CREATED",
+                "GMT_MODIFIED",
+            },
+            String.format("select * from %s.POLARDBX_GLOBAL_CHAIN", MetaDbSchema.NAME));
+
         defineView("COLUMNAR_SNAPSHOTS",
             new String[] {
                 "SCHEMA_NAME",
@@ -136,27 +301,27 @@ public class InformationSchemaViewManager extends ViewManager {
                 "TSO"
             },
             String.format("select "
-                + "mapping.table_schema as schema_name, "
-                + "mapping.table_name as table_name, "
-                + "mapping.index_name as index_name, "
-                + "checkpoints.binlog_tso as tso "
-                + "from "
-                + "%s.columnar_table_mapping mapping, %s.columnar_checkpoints checkpoints "
-                + "where "
-                + "mapping.table_id = checkpoints.logical_table "
-                + "and mapping.table_schema = checkpoints.logical_schema "
-                + "and checkpoints.info = 'force' "
-                + "and mapping.status = 'PUBLIC' "
-                + "and mapping.type = 'snapshot' "
-                + "union all "
-                + "select "
-                + "'polardbx', '__global__', '__global__', checkpoints.binlog_tso as tso "
-                + "from "
-                + "%s.columnar_checkpoints checkpoints "
-                + "where "
-                + "checkpoints.info = 'force' "
-                + "and logical_schema = 'polardbx' "
-                + "and logical_table is NULL",
+                    + "mapping.table_schema as schema_name, "
+                    + "mapping.table_name as table_name, "
+                    + "mapping.index_name as index_name, "
+                    + "checkpoints.binlog_tso as tso "
+                    + "from "
+                    + "%s.columnar_table_mapping mapping, %s.columnar_checkpoints checkpoints "
+                    + "where "
+                    + "mapping.table_id = checkpoints.logical_table "
+                    + "and mapping.table_schema = checkpoints.logical_schema "
+                    + "and checkpoints.info = 'force' "
+                    + "and mapping.status = 'PUBLIC' "
+                    + "and mapping.type = 'snapshot' "
+                    + "union all "
+                    + "select "
+                    + "'polardbx', '__global__', '__global__', checkpoints.binlog_tso as tso "
+                    + "from "
+                    + "%s.columnar_checkpoints checkpoints "
+                    + "where "
+                    + "checkpoints.info = 'force' "
+                    + "and logical_schema = 'polardbx' "
+                    + "and logical_table is NULL",
                 MetaDbSchema.NAME, MetaDbSchema.NAME, MetaDbSchema.NAME));
 
         defineView("CHARACTER_SETS", null, String.format("select * from %s.CHARACTER_SETS", MetaDbSchema.NAME));
@@ -206,6 +371,15 @@ public class InformationSchemaViewManager extends ViewManager {
             "VALUE"
         });
 
+        defineVirtualView(VirtualViewType.ENGINES, new String[] {
+            "ENGINE",
+            "SUPPORT",
+            "COMMENT",
+            "TRANSACTION",
+            "XA",
+            "SAVEPOINTS"
+        });
+
         defineVirtualView(VirtualViewType.MODULE_EVENT, new String[] {
             "MODULE_NAME",
             "HOST",
@@ -218,6 +392,10 @@ public class InformationSchemaViewManager extends ViewManager {
 
         defineVirtualView(VirtualViewType.SCHEDULE_JOBS, new String[] {
             "MODULE_NAME",
+            "TABLE_SCHEMA",
+            "TABLE_NAME",
+            "SCHEDULE_ID",
+            "SCHEDULE_NAME",
             "JOB_TYPE",
             "LAST_FIRETIME",
             "NEXT_FIRETIME",
@@ -506,6 +684,18 @@ public class InformationSchemaViewManager extends ViewManager {
             "select FILE_ID, FILE_NAME, FILE_TYPE, TABLESPACE_NAME, TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, LOGFILE_GROUP_NAME, LOGFILE_GROUP_NUMBER, ENGINE, FULLTEXT_KEYS, DELETED_ROWS, UPDATE_COUNT, FREE_EXTENTS, TOTAL_EXTENTS, EXTENT_SIZE, INITIAL_SIZE, MAXIMUM_SIZE, AUTOEXTEND_SIZE, CREATION_TIME, LAST_UPDATE_TIME, LAST_ACCESS_TIME, RECOVER_TIME, TRANSACTION_COUNTER, VERSION, ROW_FORMAT, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, MAX_DATA_LENGTH, INDEX_LENGTH, DATA_FREE, CREATE_TIME, UPDATE_TIME, CHECK_TIME, CHECKSUM, STATUS, EXTRA, task_id, life_cycle, local_path, logical_schema_name, logical_table_name, commit_ts, remove_ts from "
                 + MetaDbSchema.NAME + ".files where life_cycle != 2");
 
+        defineVirtualView(VirtualViewType.ROUTING_RULES, new String[] {
+            "ID",
+            "INST_ID",
+            "RULE_NAME",
+            "USER_NAME",
+            "TEMPLATE_ID",
+            "KEYWORDS",
+            "ROUTING_TYPE",
+            "CREATE_TIME",
+            "HIT_COUNT"
+        });
+
         defineVirtualView(VirtualViewType.OPTIMIZER_ALERT, new String[] {
             "COMPUTE_NODE",
             "ALERT_TYPE",
@@ -520,11 +710,105 @@ public class InformationSchemaViewManager extends ViewManager {
             "WRITE_LOCK_COUNT"
         });
 
+        defineVirtualView(VirtualViewType.EXECUTOR_MEMORY, new String[] {
+            "QUERY_ID",
+            "QUERY_TOTAL",
+            "QUERY_USED",
+
+            "PIPELINE_ID",
+            "PIPELINE_TOTAL",
+            "PIPELINE_USED",
+
+            "DRIVER_ID",
+            "DRIVER_TOTAL",
+            "DRIVER_USED",
+
+            "OPERATOR_ID",
+            "OPERATOR_TOTAL",
+            "OPERATOR_USED",
+            "OPERATOR_NAME"
+        });
+
+        defineVirtualView(VirtualViewType.QUERY_MEMORY, new String[] {
+            "QUERY_ID",
+            "QUERY_TOTAL",
+            "QUERY_USED",
+            "QUERY_MAX_MEM",
+            "QUERY_STMT"
+        });
+
+        defineVirtualView(VirtualViewType.TOTAL_MEMORY, new String[] {
+            "MEMORY_TYPE",
+
+            "MEMORY_USAGE",
+            "MEMORY_QUOTA",
+            "USAGE_RATIO",
+
+            "ENTRIES",
+            "MAX_ENTRIES",
+            "ENTRIES_RATIO",
+        });
+
         defineVirtualView(VirtualViewType.FILE_STORAGE_FILES_META, new String[] {
             "ENGINE",
             "DATA_PATH",
             "COMMIT_TS",
             "REMOVE_TS",
+        });
+
+        defineVirtualView(VirtualViewType.WARMUP_EXECUTION_LOGS, new String[] {
+            "TASK_ID",
+            "STATUS",
+            "CRON_EXPR",
+            "CRON_EXEC_TIME",
+            "START_TIME",
+            "FINISH_TIME",
+            "TIME_COST",
+            "INST_ID",
+            "SCHEMA_NAME",
+            "SQL_DEF",
+            "IO_MESSAGE",
+            "HOST_PORT"
+        });
+
+        defineVirtualView(VirtualViewType.COLUMNAR_WARMUP, new String[] {
+            "TASK_ID",
+            "CREATE_TIME",
+            "UPDATE_TIME",
+            "INSTANCE_ID",
+            "SCHEMA_NAME",
+            "CRON_EXPRESSION",
+            "SQL_DEF",
+            "STATUS"
+        });
+
+        defineVirtualView(VirtualViewType.COLUMNAR_SCAN_MONITOR, new String[] {
+            "QUERY_ID",
+            "LOGICAL_SCHEMA",
+            "LOGICAL_TABLE",
+            "FILE_PATH",
+            "STRIPE_ID",
+            "WORK_NUMBER",
+            "SEQUENCE",
+            "SPLIT_TASK",
+            "STATUS",
+            "ERROR_MSG",
+            "START_TIME",
+            "SCHEDULE_TIME",
+            "END_TIME",
+            "QUEUE_TIME_COST",
+            "RUNNING_TIME_COST",
+            "START_ROW_GROUP_ID",
+            "GRANULARITY",
+            "THREAD_LIMIT",
+            "ACQUIRED_FILTER_IO_PERMITS",
+            "ACQUIRED_FILTER_PERMITS",
+            "ACQUIRED_PROJECT_IO_PERMITS",
+            "ACQUIRED_PROJECT_PERMITS",
+            "REMAINING_PERMITS",
+            "TOTAL_SCAN_ROWS",
+            "TOTAL_SCAN_BYTES",
+            "TOTAL_FILTERED_ROWS"
         });
 
         defineVirtualView(VirtualViewType.REPLICA_STAT, new String[] {
@@ -679,6 +963,8 @@ public class InformationSchemaViewManager extends ViewManager {
                 , MetaDbSchema.NAME, MetaDbSchema.NAME, MetaDbSchema.NAME, MetaDbSchema.NAME, MetaDbSchema.NAME)
         );
 
+        defineExternalizedColumnsView(currentEnableLower);
+
         defineView("COLUMNS", new String[] {
                 "TABLE_CATALOG",
                 "TABLE_SCHEMA",
@@ -704,9 +990,11 @@ public class InformationSchemaViewManager extends ViewManager {
             },
             String.format(
                 currentEnableLower ?
-                    "select C.TABLE_CATALOG, LOWER(C.TABLE_SCHEMA), LOWER(C.TABLE_NAME), C.COLUMN_NAME, C.ORDINAL_POSITION, "
+                    "select C.TABLE_CATALOG, LOWER(C.TABLE_SCHEMA), LOWER(C.TABLE_NAME), IF((C.FLAG & "
+                        + FLAG_EXTERNALIZED_COLUMN
+                        + "), LEFT(C.COLUMN_NAME, LENGTH(C.COLUMN_NAME) - 6), C.COLUMN_NAME) AS COLUMN_NAME, C.ORDINAL_POSITION, "
                         + "IF((C.FLAG & " + FLAG_LOGICAL_GENERATED_COLUMN + ") | (C.FLAG & " + FLAG_GENERATED_COLUMN
-                        + "),NULL,"
+                        + ") | (C.FLAG & " + FLAG_EXTERNALIZED_COLUMN + "),NULL,"
                         + "  IF(STRCMP(LOWER(C.DATA_TYPE), 'timestamp'), "
                         + "    IF((C.FLAG & " + FLAG_BINARY_DEFAULT + "),UNHEX(C.COLUMN_DEFAULT),C.COLUMN_DEFAULT), "
                         + "    IF(STRCMP(TIMEDIFF(C.COLUMN_DEFAULT, '0000-00-00 00:00:00.000000'), '00:00:00.000000'), "
@@ -718,11 +1006,19 @@ public class InformationSchemaViewManager extends ViewManager {
                         + "    )"
                         + "  )"
                         + ") AS COLUMN_DEFAULT, "
-                        + "C.IS_NULLABLE, C.DATA_TYPE, C.CHARACTER_MAXIMUM_LENGTH, C.CHARACTER_OCTET_LENGTH, "
+                        + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN + "), 'YES', C.IS_NULLABLE) AS IS_NULLABLE, "
+                        + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                        + "), LOWER(SUBSTRING_INDEX(SUBSTRING(C.COLUMN_COMMENT, 10), '|', 1)), C.DATA_TYPE) AS DATA_TYPE, "
+                        + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                        + "), 4294967295, C.CHARACTER_MAXIMUM_LENGTH) AS CHARACTER_MAXIMUM_LENGTH, "
+                        + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                        + "), 4294967295, C.CHARACTER_OCTET_LENGTH) AS CHARACTER_OCTET_LENGTH, "
                         + "C.NUMERIC_PRECISION, C.NUMERIC_SCALE, C.DATETIME_PRECISION, C.CHARACTER_SET_NAME, C.COLLATION_NAME, "
-                        + "C.COLUMN_TYPE, C.COLUMN_KEY,"
+                        + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                        + "), LOWER(SUBSTRING_INDEX(SUBSTRING(C.COLUMN_COMMENT, 10), '|', 1)), C.COLUMN_TYPE) AS COLUMN_TYPE, C.COLUMN_KEY,"
                         + "IF((C.FLAG & " + FLAG_LOGICAL_GENERATED_COLUMN + "),'LOGICAL GENERATED',C.EXTRA) AS EXTRA, "
-                        + "C.PRIVILEGES, C.COLUMN_COMMENT, "
+                        + "C.PRIVILEGES, IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                        + "), '', C.COLUMN_COMMENT) AS COLUMN_COMMENT, "
                         + "IF((C.FLAG & " + FLAG_LOGICAL_GENERATED_COLUMN
                         + "),C.COLUMN_DEFAULT,C.GENERATION_EXPRESSION) AS GENERATION_EXPRESSION "
                         + "from %s.COLUMNS AS C JOIN %s.TABLES_EXT AS E ON C"
@@ -730,9 +1026,11 @@ public class InformationSchemaViewManager extends ViewManager {
                         + "where can_access_table(C.TABLE_SCHEMA, C.TABLE_NAME) and C.status = 1 and E.TABLE_TYPE != 3 and E.TABLE_TYPE != 4 "
                         + "and C.column_name != '" + IMPLICIT_COL_NAME + "'"
                         + "UNION ALL "
-                        + "select C.TABLE_CATALOG, LOWER(C.TABLE_SCHEMA), LOWER(C.TABLE_NAME), C.COLUMN_NAME, C.ORDINAL_POSITION, "
+                        + "select C.TABLE_CATALOG, LOWER(C.TABLE_SCHEMA), LOWER(C.TABLE_NAME), IF((C.FLAG & "
+                        + FLAG_EXTERNALIZED_COLUMN
+                        + "), LEFT(C.COLUMN_NAME, LENGTH(C.COLUMN_NAME) - 6), C.COLUMN_NAME) AS COLUMN_NAME, C.ORDINAL_POSITION, "
                         + "IF((C.FLAG & " + FLAG_LOGICAL_GENERATED_COLUMN + ") | (C.FLAG & " + FLAG_GENERATED_COLUMN
-                        + "),NULL,"
+                        + ") | (C.FLAG & " + FLAG_EXTERNALIZED_COLUMN + "),NULL,"
                         + "  IF(STRCMP(LOWER(C.DATA_TYPE), 'timestamp'), "
                         + "    IF((C.FLAG & " + FLAG_BINARY_DEFAULT + "),UNHEX(C.COLUMN_DEFAULT),C.COLUMN_DEFAULT), "
                         + "    IF(STRCMP(TIMEDIFF(C.COLUMN_DEFAULT, '0000-00-00 00:00:00.000000'), '00:00:00.000000'), "
@@ -744,11 +1042,19 @@ public class InformationSchemaViewManager extends ViewManager {
                         + "    )"
                         + "  )"
                         + ") AS COLUMN_DEFAULT, "
-                        + "C.IS_NULLABLE, C.DATA_TYPE, C.CHARACTER_MAXIMUM_LENGTH, C.CHARACTER_OCTET_LENGTH, "
+                        + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN + "), 'YES', C.IS_NULLABLE) AS IS_NULLABLE, "
+                        + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                        + "), LOWER(SUBSTRING_INDEX(SUBSTRING(C.COLUMN_COMMENT, 10), '|', 1)), C.DATA_TYPE) AS DATA_TYPE, "
+                        + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                        + "), 4294967295, C.CHARACTER_MAXIMUM_LENGTH) AS CHARACTER_MAXIMUM_LENGTH, "
+                        + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                        + "), 4294967295, C.CHARACTER_OCTET_LENGTH) AS CHARACTER_OCTET_LENGTH, "
                         + "C.NUMERIC_PRECISION, C.NUMERIC_SCALE, C.DATETIME_PRECISION, C.CHARACTER_SET_NAME, C.COLLATION_NAME, "
-                        + "C.COLUMN_TYPE, C.COLUMN_KEY,"
+                        + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                        + "), LOWER(SUBSTRING_INDEX(SUBSTRING(C.COLUMN_COMMENT, 10), '|', 1)), C.COLUMN_TYPE) AS COLUMN_TYPE, C.COLUMN_KEY,"
                         + "IF((C.FLAG & " + FLAG_LOGICAL_GENERATED_COLUMN + "),'LOGICAL GENERATED',C.EXTRA) AS EXTRA, "
-                        + "C.PRIVILEGES, C.COLUMN_COMMENT, "
+                        + "C.PRIVILEGES, IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                        + "), '', C.COLUMN_COMMENT) AS COLUMN_COMMENT, "
                         + "IF((C.FLAG & " + FLAG_LOGICAL_GENERATED_COLUMN
                         + "),C.COLUMN_DEFAULT,C.GENERATION_EXPRESSION) AS GENERATION_EXPRESSION "
                         + "from %s.COLUMNS AS C JOIN (SELECT TABLE_SCHEMA,TABLE_NAME,TBL_TYPE FROM %s.TABLE_PARTITIONS WHERE PART_LEVEL=0)"
@@ -762,9 +1068,10 @@ public class InformationSchemaViewManager extends ViewManager {
                         + "NUMERIC_PRECISION, NUMERIC_SCALE, DATETIME_PRECISION, CHARACTER_SET_NAME, COLLATION_NAME, "
                         + "COLUMN_TYPE, COLUMN_KEY, EXTRA, PRIVILEGES, COLUMN_COMMENT, GENERATION_EXPRESSION "
                         + "from information_schema.information_schema_columns"
-                    : "select C.TABLE_CATALOG, C.TABLE_SCHEMA, C.TABLE_NAME, C.COLUMN_NAME, C.ORDINAL_POSITION, "
+                    : "select C.TABLE_CATALOG, C.TABLE_SCHEMA, C.TABLE_NAME, IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                    + "), LEFT(C.COLUMN_NAME, LENGTH(C.COLUMN_NAME) - 6), C.COLUMN_NAME) AS COLUMN_NAME, C.ORDINAL_POSITION, "
                     + "IF((C.FLAG & " + FLAG_LOGICAL_GENERATED_COLUMN + ") | (C.FLAG & " + FLAG_GENERATED_COLUMN
-                    + "),NULL,"
+                    + ") | (C.FLAG & " + FLAG_EXTERNALIZED_COLUMN + "),NULL,"
                     + "  IF(STRCMP(LOWER(C.DATA_TYPE), 'timestamp'), "
                     + "    IF((C.FLAG & " + FLAG_BINARY_DEFAULT + "),UNHEX(C.COLUMN_DEFAULT),C.COLUMN_DEFAULT), "
                     + "    IF(STRCMP(TIMEDIFF(C.COLUMN_DEFAULT, '0000-00-00 00:00:00.000000'), '00:00:00.000000'), "
@@ -776,11 +1083,19 @@ public class InformationSchemaViewManager extends ViewManager {
                     + "    )"
                     + "  )"
                     + ") AS COLUMN_DEFAULT, "
-                    + "C.IS_NULLABLE, C.DATA_TYPE, C.CHARACTER_MAXIMUM_LENGTH, C.CHARACTER_OCTET_LENGTH, "
+                    + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN + "), 'YES', C.IS_NULLABLE) AS IS_NULLABLE, "
+                    + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                    + "), LOWER(SUBSTRING_INDEX(SUBSTRING(C.COLUMN_COMMENT, 10), '|', 1)), C.DATA_TYPE) AS DATA_TYPE, "
+                    + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                    + "), 4294967295, C.CHARACTER_MAXIMUM_LENGTH) AS CHARACTER_MAXIMUM_LENGTH, "
+                    + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                    + "), 4294967295, C.CHARACTER_OCTET_LENGTH) AS CHARACTER_OCTET_LENGTH, "
                     + "C.NUMERIC_PRECISION, C.NUMERIC_SCALE, C.DATETIME_PRECISION, C.CHARACTER_SET_NAME, C.COLLATION_NAME, "
-                    + "C.COLUMN_TYPE, C.COLUMN_KEY,"
+                    + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                    + "), LOWER(SUBSTRING_INDEX(SUBSTRING(C.COLUMN_COMMENT, 10), '|', 1)), C.COLUMN_TYPE) AS COLUMN_TYPE, C.COLUMN_KEY,"
                     + "IF((C.FLAG & " + FLAG_LOGICAL_GENERATED_COLUMN + "),'LOGICAL GENERATED',C.EXTRA) AS EXTRA, "
-                    + "C.PRIVILEGES, C.COLUMN_COMMENT, "
+                    + "C.PRIVILEGES, IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                    + "), '', C.COLUMN_COMMENT) AS COLUMN_COMMENT, "
                     + "IF((C.FLAG & " + FLAG_LOGICAL_GENERATED_COLUMN
                     + "),C.COLUMN_DEFAULT,C.GENERATION_EXPRESSION) AS GENERATION_EXPRESSION "
                     + "from %s.COLUMNS AS C JOIN %s.TABLES_EXT AS E ON C"
@@ -788,9 +1103,10 @@ public class InformationSchemaViewManager extends ViewManager {
                     + "where can_access_table(C.TABLE_SCHEMA, C.TABLE_NAME) and C.status = 1 and E.TABLE_TYPE != 3 and E.TABLE_TYPE != 4 "
                     + "and C.column_name != '" + IMPLICIT_COL_NAME + "'"
                     + "UNION ALL "
-                    + "select C.TABLE_CATALOG, C.TABLE_SCHEMA, C.TABLE_NAME, C.COLUMN_NAME, C.ORDINAL_POSITION, "
+                    + "select C.TABLE_CATALOG, C.TABLE_SCHEMA, C.TABLE_NAME, IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                    + "), LEFT(C.COLUMN_NAME, LENGTH(C.COLUMN_NAME) - 6), C.COLUMN_NAME) AS COLUMN_NAME, C.ORDINAL_POSITION, "
                     + "IF((C.FLAG & " + FLAG_LOGICAL_GENERATED_COLUMN + ") | (C.FLAG & " + FLAG_GENERATED_COLUMN
-                    + "),NULL,"
+                    + ") | (C.FLAG & " + FLAG_EXTERNALIZED_COLUMN + "),NULL,"
                     + "  IF(STRCMP(LOWER(C.DATA_TYPE), 'timestamp'), "
                     + "    IF((C.FLAG & " + FLAG_BINARY_DEFAULT + "),UNHEX(C.COLUMN_DEFAULT),C.COLUMN_DEFAULT), "
                     + "    IF(STRCMP(TIMEDIFF(C.COLUMN_DEFAULT, '0000-00-00 00:00:00.000000'), '00:00:00.000000'), "
@@ -802,11 +1118,19 @@ public class InformationSchemaViewManager extends ViewManager {
                     + "    )"
                     + "  )"
                     + ") AS COLUMN_DEFAULT, "
-                    + "C.IS_NULLABLE, C.DATA_TYPE, C.CHARACTER_MAXIMUM_LENGTH, C.CHARACTER_OCTET_LENGTH, "
+                    + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN + "), 'YES', C.IS_NULLABLE) AS IS_NULLABLE, "
+                    + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                    + "), LOWER(SUBSTRING_INDEX(SUBSTRING(C.COLUMN_COMMENT, 10), '|', 1)), C.DATA_TYPE) AS DATA_TYPE, "
+                    + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                    + "), 4294967295, C.CHARACTER_MAXIMUM_LENGTH) AS CHARACTER_MAXIMUM_LENGTH, "
+                    + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                    + "), 4294967295, C.CHARACTER_OCTET_LENGTH) AS CHARACTER_OCTET_LENGTH, "
                     + "C.NUMERIC_PRECISION, C.NUMERIC_SCALE, C.DATETIME_PRECISION, C.CHARACTER_SET_NAME, C.COLLATION_NAME, "
-                    + "C.COLUMN_TYPE, C.COLUMN_KEY,"
+                    + "IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                    + "), LOWER(SUBSTRING_INDEX(SUBSTRING(C.COLUMN_COMMENT, 10), '|', 1)), C.COLUMN_TYPE) AS COLUMN_TYPE, C.COLUMN_KEY,"
                     + "IF((C.FLAG & " + FLAG_LOGICAL_GENERATED_COLUMN + "),'LOGICAL GENERATED',C.EXTRA) AS EXTRA, "
-                    + "C.PRIVILEGES, C.COLUMN_COMMENT, "
+                    + "C.PRIVILEGES, IF((C.FLAG & " + FLAG_EXTERNALIZED_COLUMN
+                    + "), '', C.COLUMN_COMMENT) AS COLUMN_COMMENT, "
                     + "IF((C.FLAG & " + FLAG_LOGICAL_GENERATED_COLUMN
                     + "),C.COLUMN_DEFAULT,C.GENERATION_EXPRESSION) AS GENERATION_EXPRESSION "
                     + "from %s.COLUMNS AS C JOIN (SELECT TABLE_SCHEMA,TABLE_NAME,TBL_TYPE FROM %s.TABLE_PARTITIONS WHERE PART_LEVEL=0)"
@@ -844,25 +1168,25 @@ public class InformationSchemaViewManager extends ViewManager {
             },
             currentEnableLower ?
                 "select I.TABLE_CATALOG, LOWER(I.TABLE_SCHEMA), LOWER(I.TABLE_NAME), I.NON_UNIQUE, LOWER(I.INDEX_SCHEMA), if(db_info.db_type = 4 and I.INDEX_NAME like '_local_%%', substring(I.INDEX_NAME, 8), I.INDEX_NAME), "
-                    + "I.SEQ_IN_INDEX, I.COLUMN_NAME, I.COLLATION, IFNULL(S.CARDINALITY, 0), I.SUB_PART, I.PACKED, "
+                    + "I.SEQ_IN_INDEX, I.COLUMN_NAME, I.COLLATION, IFNULL(S.CARDINALITY, 0), NULLIF(I.SUB_PART, 0), I.PACKED, "
                     + "I.NULLABLE, I.INDEX_TYPE, I.COMMENT, I.INDEX_COMMENT from "
                     + MetaDbSchema.NAME + ".indexes I "
                     + "left join " + MetaDbSchema.NAME + "." + GmsSystemTables.COLUMN_STATISTICS + " S "
                     + "on S.SCHEMA_NAME = I.TABLE_SCHEMA and S.TABLE_NAME = I.TABLE_NAME and I.COLUMN_NAME = S.COLUMN_NAME join "
                     + MetaDbSchema.NAME + ".db_info on db_info.db_name = I.table_schema "
                     + "where I.COLUMN_NAME != '" + IMPLICIT_COL_NAME
-                    + "' AND I.INDEX_TYPE IN ('BTREE', 'HASH', 'FULLTEXT') and (I.TABLE_SCHEMA, I.TABLE_NAME) IN "
+                    + "' AND I.INDEX_TABLE_NAME = '' AND I.INDEX_TYPE IN ('BTREE', 'HASH', 'FULLTEXT') and (I.TABLE_SCHEMA, I.TABLE_NAME) IN "
                     + "(select T.TABLE_SCHEMA, T.TABLE_NAME from " + InformationSchema.NAME + ".tables T)"
                 :
                 "select I.TABLE_CATALOG, I.TABLE_SCHEMA, I.TABLE_NAME, I.NON_UNIQUE, I.INDEX_SCHEMA, if(db_info.db_type = 4 and I.INDEX_NAME like '_local_%%', substring(I.INDEX_NAME, 8), I.INDEX_NAME), "
-                    + "I.SEQ_IN_INDEX, I.COLUMN_NAME, I.COLLATION, IFNULL(S.CARDINALITY, 0), I.SUB_PART, I.PACKED, "
+                    + "I.SEQ_IN_INDEX, I.COLUMN_NAME, I.COLLATION, IFNULL(S.CARDINALITY, 0), NULLIF(I.SUB_PART, 0), I.PACKED, "
                     + "I.NULLABLE, I.INDEX_TYPE, I.COMMENT, I.INDEX_COMMENT from "
                     + MetaDbSchema.NAME + ".indexes I "
                     + "left join " + MetaDbSchema.NAME + "." + GmsSystemTables.COLUMN_STATISTICS + " S "
                     + "on S.SCHEMA_NAME = I.TABLE_SCHEMA and S.TABLE_NAME = I.TABLE_NAME and I.COLUMN_NAME = S.COLUMN_NAME join "
                     + MetaDbSchema.NAME + ".db_info on db_info.db_name = I.table_schema "
                     + "where I.COLUMN_NAME != '" + IMPLICIT_COL_NAME
-                    + "' AND I.INDEX_TYPE IN ('BTREE', 'HASH', 'FULLTEXT') and (I.TABLE_SCHEMA, I.TABLE_NAME) IN "
+                    + "' AND I.INDEX_TABLE_NAME = '' AND I.INDEX_TYPE IN ('BTREE', 'HASH', 'FULLTEXT') and (I.TABLE_SCHEMA, I.TABLE_NAME) IN "
                     + "(select T.TABLE_SCHEMA, T.TABLE_NAME from " + InformationSchema.NAME + ".tables T)");
 
         defineView("TABLE_CONSTRAINTS", new String[] {
@@ -898,6 +1222,69 @@ public class InformationSchemaViewManager extends ViewManager {
             PlanManager.getInstance().invalidateSchema(TddlConstants.INFORMATION_SCHEMA);
             this.enableLower = currentEnableLower;
         }
+    }
+
+    private void defineExternalizedColumnsView(boolean currentEnableLower) {
+        final String tableSchema = currentEnableLower ? "LOWER(M.TABLE_SCHEMA)" : "M.TABLE_SCHEMA";
+        final String tableName = currentEnableLower ? "LOWER(M.TABLE_NAME)" : "M.TABLE_NAME";
+
+        defineView("EXTERNALIZED_COLUMNS", new String[] {
+                "TABLE_SCHEMA",
+                "TABLE_NAME",
+                "COLUMN_NAME",
+                "COLUMN_TYPE",
+                "PHYSICAL_COLUMN_NAME",
+                "EXTERNAL_COLUMN_ID",
+                "SOURCE",
+                "CREATED_TIME",
+                "UPDATED_TIME",
+                "RAW_BYTES_WRITTEN",
+                "STORED_PAYLOAD_BYTES_WRITTEN",
+                "TOTAL_PAGE_BYTES_WRITTEN",
+                "PAGE_COUNT",
+                "VALUE_COUNT",
+                "STATS_CREATED_TIME",
+                "STATS_UPDATED_TIME"
+            },
+            String.format(
+                "select %s AS TABLE_SCHEMA, %s AS TABLE_NAME, M.COLUMN_NAME AS COLUMN_NAME, "
+                    + "LOWER(SUBSTRING_INDEX(SUBSTRING(P.COLUMN_COMMENT, 10), '|', 1)) AS COLUMN_TYPE, "
+                    + "P.COLUMN_NAME AS PHYSICAL_COLUMN_NAME, M.TABLE_ID AS EXTERNAL_COLUMN_ID, "
+                    + "M.SOURCE AS SOURCE, M.GMT_CREATED AS CREATED_TIME, M.GMT_MODIFIED AS UPDATED_TIME, "
+                    + "COALESCE(S.RAW_BYTES_WRITTEN, 0) AS RAW_BYTES_WRITTEN, "
+                    + "COALESCE(S.STORED_PAYLOAD_BYTES_WRITTEN, 0) AS STORED_PAYLOAD_BYTES_WRITTEN, "
+                    + "COALESCE(S.TOTAL_PAGE_BYTES_WRITTEN, 0) AS TOTAL_PAGE_BYTES_WRITTEN, "
+                    + "COALESCE(S.PAGE_COUNT, 0) AS PAGE_COUNT, COALESCE(S.VALUE_COUNT, 0) AS VALUE_COUNT, "
+                    + "S.STATS_CREATED_TIME AS STATS_CREATED_TIME, S.STATS_UPDATED_TIME AS STATS_UPDATED_TIME "
+                    + "from %s.%s M "
+                    + "join %s.%s T on T.TABLE_SCHEMA = M.TABLE_SCHEMA and T.TABLE_NAME = M.TABLE_NAME "
+                    + "and T.STATUS = %s "
+                    + "join %s.%s C on C.TABLE_SCHEMA = M.TABLE_SCHEMA and C.TABLE_NAME = M.TABLE_NAME "
+                    + "and C.STATUS = %s and (C.FLAG & %s) != 0 "
+                    + "and (C.COLUMN_NAME = M.COLUMN_NAME "
+                    + "or C.COLUMN_NAME = CONCAT(M.COLUMN_NAME, '_addr_')) "
+                    + "join %s.%s P on P.TABLE_SCHEMA = M.TABLE_SCHEMA and P.TABLE_NAME = M.TABLE_NAME "
+                    + "and P.COLUMN_NAME = CONCAT(M.COLUMN_NAME, '_addr_') and P.STATUS in (%s, %s) "
+                    + "left join %s.%s S on S.TABLE_ID = M.TABLE_ID "
+                    + "where M.STATUS = '%s' and can_access_table(M.TABLE_SCHEMA, M.TABLE_NAME)",
+                tableSchema,
+                tableName,
+                MetaDbSchema.NAME,
+                GmsSystemTables.EXT_COLUMN_MAPPING,
+                MetaDbSchema.NAME,
+                GmsSystemTables.TABLES,
+                TableStatus.PUBLIC.getValue(),
+                MetaDbSchema.NAME,
+                GmsSystemTables.COLUMNS,
+                ColumnStatus.PUBLIC.getValue(),
+                FLAG_EXTERNALIZED_COLUMN,
+                MetaDbSchema.NAME,
+                GmsSystemTables.COLUMNS,
+                ColumnStatus.PUBLIC.getValue(),
+                ColumnStatus.WRITE_ONLY.getValue(),
+                MetaDbSchema.NAME,
+                GmsSystemTables.EXT_COLUMN_TABLE_STATS,
+                ExtColumnMappingRecord.STATUS_PUBLIC));
     }
 
     private void defineCommonView() {
@@ -1702,7 +2089,6 @@ public class InformationSchemaViewManager extends ViewManager {
             "DURATION",
             "VALIDATE",
             "FRONTEND",
-            "FRONTEND",
             "SQL"
         });
         defineView("POLARDBX_AUDIT_LOG", new String[] {
@@ -1732,7 +2118,47 @@ public class InformationSchemaViewManager extends ViewManager {
             "ROLE",
             "IS_HEALTHY",
             "IS_VIP",
-            "INFO_FROM"
+            "INFO_FROM",
+            "STORAGE_INST_LABEL"
+        });
+
+        defineVirtualView(VirtualViewType.NODE_STATS, new String[] {
+            "ID",
+            "HOST",
+            "PORT",
+            "STATUS",
+            "INSTANCE",
+            "INSTANCE_TYPE",
+            "CPU_CORES",
+            "CPU",
+            "FREEMEM",
+            "FULLGC",
+            "FULLGC_TIME",
+            "NET_IN",
+            "NET_OUT",
+            "QPS",
+            "PHYSICAL_QPS",
+            "SLOW_QPS",
+            "PHYSICAL_SLOW_QPS",
+            "RT",
+            "PHYSICAL_RT",
+            "ACTIVE_CONNECTIONS",
+            "THREAD_RUNNING",
+            "TRANS",
+            "TRANS_XA",
+            "TRANS_TSO",
+            "ERROR_PER_SECOND",
+            "VIOLATION_PER_SECOND",
+            "MERGE_QUERY_PER_SECOND",
+            "CONNECTION_CREATE_PER_SECOND",
+            "HINT_USED_PER_SECOND",
+            "HINT_USED_COUNT",
+            "MULTI_DB_JOIN_PER_SECOND",
+            "MULTI_DB_JOIN_COUNT",
+            "AGGREGATE_QUERY_PER_SECOND",
+            "AGGREGATE_QUERY_COUNT",
+            "TEMP_TABLE_CREATE_PER_SECOND",
+            "TEMP_TABLE_CREATE_COUNT",
         });
 
         defineVirtualView(VirtualViewType.STORAGE, new String[] {
@@ -1745,7 +2171,8 @@ public class InformationSchemaViewManager extends ViewManager {
             "STATUS",
             "DELETABLE",
             "DELAY",
-            "ACTIVE"
+            "ACTIVE",
+            "STORAGE_INST_LABEL"
         });
 
         defineVirtualView(VirtualViewType.STORAGE_STATUS, STORAGE_STATUS_ITEM);
@@ -1794,9 +2221,14 @@ public class InformationSchemaViewManager extends ViewManager {
             "TABLE_SCHEMA",
             "TABLE_NAME",
             "TTL_ENABLE",
+            "TTL_CLEANUP",
             "TTL_COL",
             "TTL_EXPR",
             "TTL_CRON",
+            "TTL_COL_ENCODER",
+            "TTL_COL_DECODER",
+            "TTL_FILTER",
+            "TTL_PART_INTERVAL",
             "ARCHIVE_TYPE",
             "ARCHIVE_TABLE_SCHEMA",
             "ARCHIVE_TABLE_NAME",
@@ -2048,6 +2480,82 @@ public class InformationSchemaViewManager extends ViewManager {
             "EXTERNALIZED_PLAN"
         });
 
+        defineVirtualView(VirtualViewType.SPM_GRAY_STATUS, new String[] {
+            "BASELINE_ID",
+            "PLAN_ID",
+            "SCHEMA_NAME",
+            "PARAMETERIZED_SQL",
+            "GRAY_PERCENTAGE",
+            "IS_GRAY_STATUS",
+            "CHOOSE_COUNT",
+            "ACTUAL_TRAFFIC_RATIO",
+            "AVG_RT",
+            "ERROR_COUNT",
+            "ERROR_RATE",
+            "DEVIATION"
+        });
+
+        defineVirtualView(VirtualViewType.CN_MEMORYPOOL, new String[] {
+            "COMPUTE_NODE",
+            "NAME",
+            "USED_BYTES",
+            "LIMIT_BYTES"
+        });
+
+        defineVirtualView(VirtualViewType.CN_THREADPOOL, new String[] {
+            "COMPUTE_NODE",
+            "NAME",
+            "POOL_SIZE",
+            "ACTIVE_COUNT",
+            "TASK_QUEUE_SIZE",
+            "COMPLETED_TASK",
+            "TOTAL_TASK"
+        });
+
+        defineVirtualView(VirtualViewType.CN_DBSTATS, new String[] {
+            "COMPUTE_NODE",
+            "NAME",
+            "NET_IN",
+            "NET_OUT",
+            "ACTIVE_CONNECTION",
+            "CONNECTION_COUNT",
+            "TIME_COST",
+            "REQUEST_COUNT",
+            "QUERY_COUNT",
+            "INSERT_COUNT",
+            "DELETE_COUNT",
+            "UPDATE_COUNT",
+            "REPLACE_COUNT",
+            "RUNNING_COUNT",
+            "PHYSICAL_REQUEST_COUNT",
+            "PHYSICAL_TIME_COST",
+            "ERROR_COUNT",
+            "VIOLATION_ERROR_COUNT",
+            "MULTI_DB_COUNT",
+            "TEMP_TABLE_COUNT",
+            "JOIN_MULTI_DB_COUNT",
+            "AGGREGATE_MULTI_DB_COUNT",
+            "HINT_COUNT",
+            "SLOW_REQUEST",
+            "PHYSICAL_SLOW_REQUEST",
+            "TRANS_COUNT_XA",
+            "TRANS_COUNT_BEST_EFFORT",
+            "TRANS_COUNT_TSO",
+            "CCL_KILL",
+            "CCL_RUN",
+            "CCL_WAIT",
+            "CCL_WAIT_KILL",
+            "CCL_RESCHEDULE",
+            "TP_WORKLOAD",
+            "AP_WORKLOAD",
+            "LOCAL_NUM",
+            "CLUSTER_NUM"
+        });
+
+        defineVirtualView(VirtualViewType.CN_STATUS, new String[] {
+            "COMPUTE_NODE",
+        });
+
         defineVirtualView(VirtualViewType.STATISTIC_TASK, new String[] {
             "COMPUTE_NODE",
             "SCHEMA_NAME",
@@ -2077,20 +2585,32 @@ public class InformationSchemaViewManager extends ViewManager {
             "CREATED_TIME"
         });
 
-        defineVirtualView(VirtualViewType.CCL_TRIGGER, new String[] {
-            "NO.",
-            "TRIGGER_NAME",
-            "CCL_RULE_COUNT",
-            "DATABASE",
-            "CONDITIONS",
-            "RULE_CONFIG",
-            "QUERY_RULE_UPGRADE",
-            "MAX_CCL_RULE",
-            "MAX_SQL_SIZE",
-            "CREATED_TIME"
-        });
+        defineVirtualView(VirtualViewType.CCL_BLOCKER, CCL_BLOCKER_COLUMNS);
 
-        defineVirtualView(VirtualViewType.REACTOR_PERF, new String[] {
+            defineVirtualView(VirtualViewType.CCL_TRIGGER, CCL_BLOCKER_COLUMNS);
+
+        defineVirtualView(VirtualViewType.DN_CCL, new String[] {
+                "STORAGE_INST_ID",
+                "INST_ID",
+                "ID",
+                "TYPE",
+                "SCHEMA",
+                "TABLE",
+                "STATE",
+                "ORDER",
+                "CONCURRENCY_COUNT",
+                "MATCHED",
+                "RUNNING",
+                "WAITTING",
+                "KEYWORDS"
+            });
+
+            defineVirtualView(VirtualViewType.DN_CCL_DRYRUN, new String[] {
+                "INST_ID",
+                "TEMPLATE_ID",
+                "COMMAND",
+                "SQL"
+            });defineVirtualView(VirtualViewType.REACTOR_PERF, new String[] {
             "CN",
             "NAME",
 
@@ -2311,7 +2831,21 @@ public class InformationSchemaViewManager extends ViewManager {
             "resource"
         });
 
-        defineVirtualView(VirtualViewType.REBALANCE_BACKFILL, new String[] {
+        defineVirtualView(VirtualViewType.DDL_PHYSICAL_LOCK_STAT, new String[] {
+                "ID",
+                "JOB_ID",
+                "DDL_TYPE",
+                "TABLE_SCHEMA",
+                "TABLE_NAME",
+                "PHYSICAL_DB",
+                "PHYSICAL_TABLE",
+                "LOCK_DURATION_MS",
+                "ROW_COUNT",
+                "START_TIME",
+                "CUR_LOCK_START_TIME",
+                "END_TIME",
+                "STATE"
+            });defineVirtualView(VirtualViewType.REBALANCE_BACKFILL, new String[] {
             "DDL_JOB_ID",
             "BACKFILL_ID",
             "TABLE_SCHEMA",
@@ -2337,6 +2871,51 @@ public class InformationSchemaViewManager extends ViewManager {
                 "START_TIME",
                 "LAST_UPDATE_TIME",
                 "DDL_STMT"
+            });// 目前仅对接 表级别的 DDL
+            defineVirtualView(VirtualViewType.DDL_PROGRESS, new String[] {
+                "JOB_ID",
+                "BACKFILL_ID",
+                "TABLE_SCHEMA",
+                "TABLE_NAME",
+                "STATE",
+                "PROGRESS",
+                "FINISHED_ROWS",
+                "APPROXIMATE_TOTAL_ROWS",
+                "CURRENT_SPEED(ROWS/SEC)",
+                "AVERAGE_SPEED(ROWS/SEC)",
+                "CHECK_PROGRESS",
+                "START_TIME",
+                "UPDATE_TIME",
+                "DDL_STMT"
+            });
+
+            defineVirtualView(VirtualViewType.DDL_INFO, new String[] {
+                "JOB_ID",
+                "STATE",
+                "DDL_STMT",
+                "START_TIME",
+                "LAST_UPDATE_TIME",
+            });defineVirtualView(VirtualViewType.OMC_PROGRESS, new String[] {
+                "JOB_ID",
+                "TASK_ID",
+                "BACKFILL_ID",
+                "TABLE_SCHEMA",
+                "TABLE_NAME",
+                "STORAGE_INST_ID",
+                "PHYSICAL_DB",
+                "PHYSICAL_TABLE",
+                "SPACE_ID",
+                "STATE",
+                "OMC_STATE",
+                "PROGRESS",
+                "FINISHED_ROWS",
+                "APPROXIMATE_TOTAL_ROWS",
+                "APPLY_SPEED",
+                "CHECKER_PROGRESS",
+                "START_TIME",
+                "LAST_UPDATE_TIME",
+                "CUT_OVER_TIME",
+                "IS_ROLLBACK"
             });defineVirtualView(VirtualViewType.CREATE_DATABASE_AS_BACKFILL, new String[] {
             "DDL_JOB_ID",
             "BACKFILL_ID",
@@ -2584,6 +3163,35 @@ public class InformationSchemaViewManager extends ViewManager {
                 "SECONDARY_TSO",
                 "CREATE_TIME"
             });
+
+            defineVirtualView(VirtualViewType.COLLECT_STATISTIC_PROGRESS, new String[] {
+                "CONNECTION_ID",
+                "COLLECT_SQL",
+                "STATUS",
+                "START_TIME",
+                "ENABLE_HLL",
+                "STATISTIC_PARALLELISM",
+                "HLL_PARALLELISM",
+                "TABLE_COUNT",
+                "SUCCESS_COUNT",
+                "FAIL_COUNT",
+                "PROGRESS",
+                "RUNNING_HLL_TASK"
+            });
+
+            defineVirtualView(VirtualViewType.TABLE_PROPERTIES, new String[] {
+                "TABLE_SCHEMA",
+                "TABLE_NAME",
+                "ALLOW_FULL_SCAN"
+            });
+
+            defineVirtualView(VirtualViewType.LOGIN_LOCKED, new String[] {
+                "LIMIT_KEY",
+                "MAX_ERROR_LIMIT",
+                "ERROR_COUNT",
+                "EXPIRE_DATE"
+            });
+
         }
 }
 

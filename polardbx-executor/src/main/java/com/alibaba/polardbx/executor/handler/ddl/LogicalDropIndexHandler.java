@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.executor.handler.ddl;
 
 import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.ddl.job.factory.DropIndexJobFactory;
 import com.alibaba.polardbx.executor.ddl.job.factory.gsi.DropGsiJobFactory;
 import com.alibaba.polardbx.executor.ddl.job.factory.gsi.columnar.DropColumnarIndexJobFactory;
@@ -29,6 +30,8 @@ import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.executor.utils.DdlUtils;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalDropIndex;
@@ -43,6 +46,7 @@ import org.apache.calcite.sql.SqlDropIndex;
 import org.apache.calcite.util.Util;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -59,6 +63,19 @@ public class LogicalDropIndexHandler extends LogicalCommonDdlHandler {
 
     public LogicalDropIndexHandler(IRepository repo) {
         super(repo);
+    }
+
+    @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        String tableName = logicalDdlPlan.getTableName();
+        String schemaName = logicalDdlPlan.getSchemaName();
+        exclusiveResources.add(concatWithDot(schemaName, tableName));
+        TableMeta tableMeta = executionContext.getSchemaManager(schemaName).getTable(tableName);
+        if (tableMeta != null) {
+            tableVersions.put(tableName, tableMeta.getVersion());
+        }
     }
 
     @Override
@@ -89,6 +106,10 @@ public class LogicalDropIndexHandler extends LogicalCommonDdlHandler {
         IndexValidator.validateIndexExistence(logicalDdlPlan.getSchemaName(), tableName, indexName);
         IndexValidator.validateDropLocalIndex(logicalDdlPlan.getSchemaName(), tableName, indexName);
         IndexValidator.validateDropPrimaryKey(indexName);
+        if (((LogicalDropIndex) logicalDdlPlan).isColumnar()) {
+            IndexValidator.validateDropLastColumnarIndex(
+                logicalDdlPlan.getSchemaName(), tableName, executionContext);
+        }
 
         return false;
     }

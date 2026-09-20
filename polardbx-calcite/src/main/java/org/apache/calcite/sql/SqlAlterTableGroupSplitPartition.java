@@ -36,6 +36,15 @@ public class SqlAlterTableGroupSplitPartition extends SqlAlterTableSplitPartitio
         super(pos, splitPartitionName, atValue, newPartitions, newPartitionPrefix, newPartitionNum, subPartitionsSplit);
     }
 
+    public SqlAlterTableGroupSplitPartition(SqlParserPos pos, SqlNode splitPartitionName,
+                                            List<SqlNode> splitPartitionNames, SqlNode atValue,
+                                            List<SqlPartition> newPartitions, SqlNode newPartitionPrefix,
+                                            SqlNode newPartitionNum,
+                                            boolean subPartitionsSplit) {
+        super(pos, splitPartitionName, splitPartitionNames, atValue, newPartitions, newPartitionPrefix,
+            newPartitionNum, subPartitionsSplit);
+    }
+
     public SqlAlterTableGroup getParent() {
         return parent;
     }

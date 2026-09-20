@@ -2,6 +2,7 @@ package com.alibaba.polardbx.executor.accumulator;
 
 import com.alibaba.polardbx.common.datatype.Decimal;
 import com.alibaba.polardbx.common.datatype.FastDecimalUtils;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.DecimalBlock;
 import com.alibaba.polardbx.executor.chunk.DecimalBlockBuilder;
@@ -28,11 +29,11 @@ public class DecimalMaxMinAccumulatorTest {
         Accumulator minAccumulator =
             AccumulatorBuilders.create(new MinV2(), DataTypes.DecimalType, new DataType[] {DataTypes.DecimalType},
                 COUNT,
-                new ExecutionContext());
+                new ExecutionContext(), null);
         Accumulator maxAccumulator =
             AccumulatorBuilders.create(new MaxV2(), DataTypes.DecimalType, new DataType[] {DataTypes.DecimalType},
                 COUNT,
-                new ExecutionContext());
+                new ExecutionContext(), null);
 
         this.minAccumulator = (DecimalMaxMinAccumulator) minAccumulator;
         this.maxAccumulator = (DecimalMaxMinAccumulator) maxAccumulator;
@@ -40,6 +41,8 @@ public class DecimalMaxMinAccumulatorTest {
 
         Assert.assertEquals(1, minAccumulator.getInputTypes().length);
         Assert.assertEquals(1, maxAccumulator.getInputTypes().length);
+        MemoryCountable.checkDeviation(minAccumulator, 0d, true);
+        MemoryCountable.checkDeviation(maxAccumulator, 0d, true);
     }
 
     /**
@@ -77,6 +80,8 @@ public class DecimalMaxMinAccumulatorTest {
             minAccumulator.accumulate(0, block, i);
             maxAccumulator.accumulate(0, block, i);
         }
+        MemoryCountable.checkDeviation(minAccumulator, 0d, true);
+        MemoryCountable.checkDeviation(maxAccumulator, 0d, true);
 
         DecimalBlockBuilder minResultBuilder = new DecimalBlockBuilder(COUNT);
         DecimalBlockBuilder maxResultBuilder = new DecimalBlockBuilder(COUNT);
@@ -99,6 +104,8 @@ public class DecimalMaxMinAccumulatorTest {
 
         Assert.assertTrue(minAccumulator.estimateSize() > 0);
         Assert.assertTrue(maxAccumulator.estimateSize() > 0);
+        MemoryCountable.checkDeviation(minAccumulator, 0d, true);
+        MemoryCountable.checkDeviation(maxAccumulator, 0d, true);
     }
 
 }

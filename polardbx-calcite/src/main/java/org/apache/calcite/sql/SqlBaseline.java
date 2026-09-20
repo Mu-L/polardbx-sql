@@ -39,6 +39,8 @@ public class SqlBaseline extends SqlDal {
     private List<Long> baselineIds = new ArrayList<>();
 
     private SqlNode select;
+    private SqlNode expr;
+    private Integer grayRatio;
     private String sql;
     private String parameterizedSql;
     private String hint;
@@ -118,6 +120,22 @@ public class SqlBaseline extends SqlDal {
     @Override
     public SqlKind getKind() {
         return SqlKind.BASELINE;
+    }
+
+    public SqlNode getExpr() {
+        return expr;
+    }
+
+    public void setExpr(SqlNode expr) {
+        this.expr = expr;
+    }
+
+    public Integer getGrayRatio() {
+        return grayRatio;
+    }
+
+    public void setGrayRatio(Integer grayRatio) {
+        this.grayRatio = grayRatio;
     }
 
     public static class SqlBaselineOperator extends SqlSpecialOperator {

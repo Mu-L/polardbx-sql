@@ -49,6 +49,7 @@ import org.apache.calcite.sql.SqlIndexHint;
 import org.apache.calcite.sql.SqlInsert;
 import org.apache.calcite.sql.SqlIntervalQualifier;
 import org.apache.calcite.sql.SqlJoin;
+import org.apache.calcite.sql.SqlJsonTable;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
@@ -57,6 +58,8 @@ import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.SqlReplace;
 import org.apache.calcite.sql.SqlSelect;
 import org.apache.calcite.sql.SqlUpdate;
+import org.apache.calcite.sql.SqlWith;
+import org.apache.calcite.sql.SqlWithItem;
 import org.apache.calcite.sql.TDDLSqlSelect;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParserPos;
@@ -67,8 +70,10 @@ import org.apache.commons.lang.StringUtils;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * @author xiaoying 2018-09-28 15:52
@@ -80,6 +85,7 @@ public abstract class ReplaceTableNameWithSomethingVisitor extends SqlShuttle {
     public final static int TABLE_NAME_PARAM_INDEX = -1;
 
     protected List<String> tableNames = new ArrayList<>();
+    protected List<String> cteNames = new ArrayList<>();
 
     protected Map<RexFieldAccess, RexNode> correlateFieldInViewMap;
     //protected Map<Integer, Object> scalarSubqueryValsMap;
@@ -132,6 +138,9 @@ public abstract class ReplaceTableNameWithSomethingVisitor extends SqlShuttle {
     @Override
     public SqlNode visit(SqlCall call) {
         SqlKind kind = call.getKind();
+        if (kind == SqlKind.JSON_TABLE) {
+            return call;
+        }
         if (kind == SqlKind.SELECT) {
             this.sqlKind = kind;
 
@@ -304,6 +313,7 @@ public abstract class ReplaceTableNameWithSomethingVisitor extends SqlShuttle {
             }
             return update;
         }
+
         if (SqlKind.SEQUENCE_DDL.contains(kind)) {
             this.sqlKind = kind;
 
@@ -360,6 +370,19 @@ public abstract class ReplaceTableNameWithSomethingVisitor extends SqlShuttle {
             return call;
         }
 
+        if (kind == SqlKind.WITH) {
+            SqlWith sqlWith = (SqlWith) call;
+            SqlNodeList items = sqlWith.withList;
+            for (SqlNode item : items) {
+                if (item instanceof SqlWithItem) {
+                    SqlWithItem sqlWithItem = (SqlWithItem) item;
+                    if (sqlWithItem.name != null) {
+                        String cteName = sqlWithItem.name.getSimple();
+                        cteNames.add(cteName.toLowerCase());
+                    }
+                }
+            }
+        }
         SqlNode rs = super.visit(call);
         if (rs instanceof SqlCall && ((SqlCall) rs).getOperandList().size() == 2) {
             for (SqlNode op : ((SqlCall) rs).getOperandList()) {
@@ -447,6 +470,8 @@ public abstract class ReplaceTableNameWithSomethingVisitor extends SqlShuttle {
             select.setFrom(visit((SqlJoin) from));
         } else if (fromKind == SqlKind.SELECT) {
             select.setFrom(visit((SqlCall) from));
+        } else if (fromKind == SqlKind.UNION) {
+            select.setFrom(visit((SqlBasicCall) from));
         }
     }
 
@@ -807,6 +832,19 @@ public abstract class ReplaceTableNameWithSomethingVisitor extends SqlShuttle {
     protected abstract <T extends SqlNode> T buildSth(SqlNode sqlNode);
 
     public List<String> getTableNames() {
+        if (cteNames.isEmpty()) {
+            return tableNames;
+        }
+        Set<String> removeSets = new HashSet<>();
+        for (String table : tableNames) {
+            if (StringUtils.isEmpty(table)) {
+                continue;
+            }
+            if (cteNames.contains(table.toLowerCase())) {
+                removeSets.add(table);
+            }
+        }
+        tableNames.removeAll(removeSets);
         return tableNames;
     }
 

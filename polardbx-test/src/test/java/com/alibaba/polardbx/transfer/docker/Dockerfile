@@ -15,7 +15,7 @@ RUN mkdir -p polardbx-transfer/src/main/java/com/alibaba/polardbx/transfer &&  \
     cd polardbx-transfer && \
     mvn clean package -DskipTests
 
-FROM pxc-registry.cn-shanghai.cr.aliyuncs.com/base/openjdk:8-jre-alpine
+FROM pxc-registry.cn-shanghai.cr.aliyuncs.com/base/openjdk11:jre-11.0.9_11.1-alpine
 COPY --from=build /root/workspace/polardbx-transfer/target/transfer-test-1.0.0-jar-with-dependencies.jar transfer-test.jar
 COPY --from=build /root/workspace/docker/logback.xml logback.xml
 COPY --from=build /root/workspace/docker/config.toml config.toml

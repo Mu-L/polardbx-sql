@@ -18,6 +18,7 @@ package com.alibaba.polardbx.executor.common;
 
 import com.alibaba.polardbx.common.IInnerConnectionManager;
 import com.alibaba.polardbx.common.trx.ISyncPointExecutor;
+import com.alibaba.polardbx.common.utils.thread.ServerThreadPool;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.executor.gms.ColumnarManager;
 import com.alibaba.polardbx.executor.gsi.GsiManager;
@@ -29,10 +30,13 @@ import com.alibaba.polardbx.optimizer.config.schema.InformationSchema;
 import com.alibaba.polardbx.optimizer.config.schema.MetaDbSchema;
 import com.alibaba.polardbx.optimizer.config.server.IServerConfigManager;
 import com.alibaba.polardbx.optimizer.utils.OptimizerHelper;
+import org.eclipse.jetty.util.thread.ThreadPool;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
+
+import static com.alibaba.polardbx.gms.topology.SystemDbHelper.DEFAULT_DB_NAME;
 
 /**
  * @author mengshi.sunmengshi 2013-12-4 下午6:16:32
@@ -164,5 +168,9 @@ public class ExecutorContext {
 
     public void setInnerConnectionManager(IInnerConnectionManager innerConnectionManager) {
         this.innerConnectionManager = innerConnectionManager;
+    }
+
+    public static ServerThreadPool getThreadPool() {
+        return getContext(DEFAULT_DB_NAME).getTopologyExecutor().getExecutorService();
     }
 }

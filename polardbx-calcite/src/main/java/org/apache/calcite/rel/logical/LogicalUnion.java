@@ -44,7 +44,7 @@ import java.util.stream.Collectors;
  * Sub-class of {@link org.apache.calcite.rel.core.Union}
  * not targeted at any particular engine or calling convention.
  */
-public final class LogicalUnion extends Union {
+public class LogicalUnion extends Union {
   //~ Constructors -----------------------------------------------------------
 
   /**
@@ -132,7 +132,7 @@ public final class LogicalUnion extends Union {
 
     return getCluster().getTypeFactory().createStructType(outputTypes, names);
   }
-  
+
 }
 
 // End LogicalUnion.java

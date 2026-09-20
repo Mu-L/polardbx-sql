@@ -16,11 +16,10 @@
 
 package com.alibaba.polardbx.executor.balancer.policy;
 
-import com.alibaba.polardbx.common.model.privilege.DbInfo;
 import com.alibaba.polardbx.executor.balancer.BalanceOptions;
 import com.alibaba.polardbx.executor.balancer.action.BalanceAction;
 import com.alibaba.polardbx.executor.balancer.stats.BalanceStats;
-import com.alibaba.polardbx.executor.ddl.job.factory.storagepool.StoragePoolUtils;
+import com.alibaba.polardbx.optimizer.locality.StoragePoolUtils;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 

@@ -368,10 +368,10 @@ public class HashWindowExecTest extends BaseExecTest {
             new BigDecimal("200000000000000000000000000000000000000000000000000.002"),
             new BigDecimal("300000000000000000000000000000000000000000000000000.003"),
             new BigDecimal("400000000000000000000000000000000000000000000000000.004")};
-        Arrays.stream(bigDecimals).map(Decimal::fromBigDecimal).forEach(d -> {
-            decimalBlockBuilder1.writeDecimal(d);
-            decimalBlockBuilder2.writeDecimal(d);
-            decimalBlockBuilder3.writeDecimal(d);
+        Arrays.stream(bigDecimals).forEach(d -> {
+            decimalBlockBuilder1.writeDecimal(Decimal.fromBigDecimal(d));
+            decimalBlockBuilder2.writeDecimal(Decimal.fromBigDecimal(d));
+            decimalBlockBuilder3.writeDecimal(Decimal.fromBigDecimal(d));
         });
         Arrays.stream(bigDecimals).map(Decimal::fromBigDecimal).forEach(decimalBlockBuilder3::writeDecimal);
 
@@ -382,7 +382,7 @@ public class HashWindowExecTest extends BaseExecTest {
             ))
             .withChunk(new Chunk(
                 IntegerBlock.of(0, 1, 2, 3),
-                decimalBlockBuilder1.build()))
+                decimalBlockBuilder2.build()))
             .build();
         /** groups */
         int[] groups = {0};

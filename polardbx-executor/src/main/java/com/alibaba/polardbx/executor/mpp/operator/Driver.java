@@ -18,19 +18,26 @@ package com.alibaba.polardbx.executor.mpp.operator;
 
 import com.alibaba.polardbx.executor.mpp.execution.TaskExecutor;
 import com.alibaba.polardbx.executor.mpp.split.OssSplit;
+import com.alibaba.polardbx.net.FrontendConnection;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
 import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
+import com.alibaba.polardbx.common.BlockingState;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.mpp.execution.ScheduledSplit;
 import com.alibaba.polardbx.executor.mpp.execution.TaskContext;
+import com.alibaba.polardbx.executor.mpp.execution.TaskExecutor;
 import com.alibaba.polardbx.executor.mpp.execution.TaskSource;
 import com.alibaba.polardbx.executor.mpp.metadata.Split;
 import com.alibaba.polardbx.executor.operator.ConsumerExecutor;
@@ -48,13 +55,11 @@ import com.google.common.util.concurrent.SettableFuture;
 
 import javax.annotation.concurrent.GuardedBy;
 import java.io.Closeable;
-import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -66,7 +71,6 @@ import java.util.stream.Collectors;
 import static com.alibaba.polardbx.executor.operator.ConsumerExecutor.NOT_BLOCKED;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
-import static com.alibaba.polardbx.executor.operator.ConsumerExecutor.NOT_BLOCKED;
 
 public class Driver implements Closeable {
 
@@ -110,6 +114,9 @@ public class Driver implements Closeable {
     private AtomicReference forceClosed = new AtomicReference(false);
 
     private boolean flagConsumerFinished;
+
+    private int memoryAdjustFrequency;
+    private int currentLoop;
 
     public Driver(DriverContext driverContext, DriverExec driverExec) {
         this.driverContext = driverContext;
@@ -276,6 +283,15 @@ public class Driver implements Closeable {
                     for (SourceExec sourceExec : sourceExecs) {
                         sourceExec.addSplit(split);
                     }
+
+                    // statistics for split
+                    driverContext.getSplitStatisticsMap()
+                        .compute(split.getConnectorSplit().getSplitType(), ((splitType, integer) -> {
+                            if (integer == null) {
+                                return 1;
+                            }
+                            return ++integer;
+                        }));
                 }
             } else {
                 // add new splits
@@ -285,6 +301,15 @@ public class Driver implements Closeable {
                         start = 0;
                     }
                     sourceExecs.get(start++).addSplit(split);
+
+                    // statistics for split
+                    driverContext.getSplitStatisticsMap()
+                        .compute(split.getConnectorSplit().getSplitType(), ((splitType, integer) -> {
+                            if (integer == null) {
+                                return 1;
+                            }
+                            return ++integer;
+                        }));
                 }
             }
 
@@ -323,6 +348,18 @@ public class Driver implements Closeable {
                 for (SourceExec sourceExec : sourceExecs) {
                     sourceExec.addSplit(newSplit.getSplit());
                 }
+
+                // statistics for split
+                if (newSplit.getSplit() != null) {
+                    driverContext.getSplitStatisticsMap()
+                        .compute(newSplit.getSplit().getConnectorSplit().getSplitType(),
+                            ((splitType, integer) -> {
+                                if (integer == null) {
+                                    return 1;
+                                }
+                                return ++integer;
+                            }));
+                }
             }
         } else {
             // add new splits
@@ -333,6 +370,18 @@ public class Driver implements Closeable {
                     start = 0;
                 }
                 sourceExecs.get(start++).addSplit(split);
+
+                // statistics for split
+                if (newSplit.getSplit() != null) {
+                    driverContext.getSplitStatisticsMap()
+                        .compute(newSplit.getSplit().getConnectorSplit().getSplitType(),
+                            ((splitType, integer) -> {
+                                if (integer == null) {
+                                    return 1;
+                                }
+                                return ++integer;
+                            }));
+                }
             }
         }
 
@@ -344,6 +393,10 @@ public class Driver implements Closeable {
 
     public ListenableFuture<?> processFor(long maxRuntime, long start) {
         checkLockNotHeld("Can not process for a duration while holding the driver lock");
+
+        memoryAdjustFrequency = DynamicConfig.getInstance().getDriverMemoryAdjustFrequency();
+        currentLoop = 0;
+
         try (DriverLockResult lockResult = tryLockAndProcessPendingStateChanges(100, TimeUnit.MILLISECONDS)) {
             if (lockResult.wasAcquired()) {
                 driverContext.startProcessTimer();
@@ -355,15 +408,42 @@ public class Driver implements Closeable {
                         if (!future.isDone()) {
                             return future;
                         }
+                        currentLoop++;
                     }
                     while (System.currentTimeMillis() - start < maxRuntime && !isFinishedInternal());
                 } finally {
+
+                    // when driver yield, re-check producer and consumer.
+                    if (driverExec.isOpened() && !driverContext.isDone() && !driverExec.isFinished()) {
+                        adjustMemoryUsage();
+                    }
+
                     driverContext.getYieldSignal().reset();
                     driverContext.recordProcessed();
                 }
             }
         }
         return NOT_BLOCKED;
+    }
+
+    // Adjust memory usage:
+    // 1. pull path: producer_n -> ... -> producer_1 -> producer_0 -> Driver.
+    // 2. push path: Driver -> consumer_0 -> consumer_1.
+    private void adjustMemoryUsage() {
+        List<Executor> producerList = driverExec.getProducerList();
+        List<ConsumerExecutor> consumerList = driverExec.getConsumerList();
+        if (producerList != null) {
+            for (int i = 0; i < producerList.size(); i++) {
+                Executor producer = producerList.get(i);
+                MemoryTrackerManager.adjustMemoryUsage(producer.getProducerMemoryOwnerId());
+            }
+        }
+        if (consumerList != null) {
+            for (int i = 0; i < consumerList.size(); i++) {
+                ConsumerExecutor consumer = consumerList.get(i);
+                MemoryTrackerManager.adjustMemoryUsage(consumer.getConsumerMemoryOwnerId());
+            }
+        }
     }
 
     private ListenableFuture<?> wakeUpOnRevokeRequest(ListenableFuture<?> sourceBlockedFuture) {
@@ -375,7 +455,7 @@ public class Driver implements Closeable {
         revokingRequestedFuturesList.add(sourceBlockedFuture);
         for (MemoryRevoker memoryRevoker : driverExec.getMemoryRevokers()) {
             if (memoryRevoker.getMemoryAllocatorCtx() != null && memoryRevoker.getMemoryAllocatorCtx().isRevocable()) {
-                SettableFuture<?> doneRevokingRequestedFuture =
+                ListenableFuture<?> doneRevokingRequestedFuture =
                     memoryRevoker.getMemoryAllocatorCtx().getMemoryRevokingRequestedFuture();
                 if (doneRevokingRequestedFuture.isDone()) {
                     return doneRevokingRequestedFuture;
@@ -437,8 +517,9 @@ public class Driver implements Closeable {
                 }
                 ListenableFuture<?> revokingBlocked = NOT_BLOCKED;
                 if (revokingExecutors.size() > 0) {
-                    revokingBlocked = Futures.allAsList(
-                        revokingExecutors.values().stream().collect(Collectors.toList()));
+                    List<ListenableFuture<?>> revokingFutures = new ArrayList<>(revokingExecutors.values());
+                    revokingBlocked = BlockingFuture.allAsListFromListenableFutures(revokingFutures,
+                        BlockingReason.WAIT_FOR_MEMORY_REVOKE);
                 }
 
                 if (!revokingBlocked.isDone()) {
@@ -491,6 +572,12 @@ public class Driver implements Closeable {
                         blocked = buildConsumerAndClose(false);
                     } else if (consumer.needsInput()) {
                         try {
+
+                            // adjust memory usage when starting or hit sample.
+                            if (currentLoop % memoryAdjustFrequency == 0) {
+                                adjustMemoryUsage();
+                            }
+
                             Chunk ret = producer.nextChunk();
                             if (ret != null) {
                                 driverContext.addOutputSize(ret.getPositionCount());
@@ -506,7 +593,11 @@ public class Driver implements Closeable {
                                 }
                             }
                         } catch (Throwable e) {
-                            log.error(driverContext.getUniqueId() + ":nextChunk error!", e);
+                            if (!FrontendConnection.isCClError(e)) {
+                                log.error(driverContext.getUniqueId() + ":nextChunk error!", e);
+                            } else {
+                                log.info(driverContext.getUniqueId() + ":nextChunk error!", e);
+                            }
                             if (!driverContext.isDone()) {
                                 throw e;
                             }

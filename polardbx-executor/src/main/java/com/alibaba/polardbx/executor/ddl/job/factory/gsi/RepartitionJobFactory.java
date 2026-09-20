@@ -38,19 +38,22 @@ import com.alibaba.polardbx.executor.ddl.job.task.gsi.RepartitionCutOverTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.RepartitionSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.ValidateTableVersionTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupSyncTask;
+import com.alibaba.polardbx.executor.ddl.job.task.ttl.TtlJobUtil;
 import com.alibaba.polardbx.executor.ddl.job.validator.GsiValidator;
 import com.alibaba.polardbx.executor.ddl.job.validator.TableValidator;
 import com.alibaba.polardbx.executor.ddl.job.validator.TtlValidator;
 import com.alibaba.polardbx.executor.ddl.job.validator.ddl.RepartitionValidator;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlExceptionAction;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4AlterTable;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4CreateGsi;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4CreatePartitionGsi;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4DropGsi;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4DropPartitionGsi;
+import com.alibaba.polardbx.executor.partitionmanagement.AlterTableGroupUtils;
 import com.alibaba.polardbx.gms.tablegroup.PartitionGroupRecord;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupDetailConfig;
@@ -91,12 +94,13 @@ import static com.alibaba.polardbx.common.cdc.CdcDdlMarkVisibility.Protected;
 import static com.alibaba.polardbx.common.ddl.newengine.DdlType.ALTER_TABLE;
 import static com.alibaba.polardbx.common.ddl.newengine.DdlType.ALTER_TABLEGROUP;
 import static com.alibaba.polardbx.common.ddl.newengine.DdlType.ALTER_TABLE_SET_TABLEGROUP;
+import static com.alibaba.polardbx.executor.gsi.GsiUtils.getAvaliableNodeList;
 import static com.alibaba.polardbx.executor.gsi.GsiUtils.getAvaliableNodeNum;
 
 /**
  * @author guxu wumu
  */
-public class RepartitionJobFactory extends DdlJobFactory {
+public class RepartitionJobFactory extends OnlineDdlJobFactory {
 
     private final String schemaName;
     private final String primaryTableName;
@@ -134,6 +138,7 @@ public class RepartitionJobFactory extends DdlJobFactory {
                                  PhysicalPlanData physicalPlanDataForLocalIndex,
                                  ExecutionContext executionContext,
                                  RelOptCluster cluster) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.OSC);
         this.schemaName = globalIndexPreparedData.getSchemaName();
         this.primaryTableName = globalIndexPreparedData.getPrimaryTableName();
         this.indexTableName = globalIndexPreparedData.getIndexTableName();
@@ -169,6 +174,7 @@ public class RepartitionJobFactory extends DdlJobFactory {
         GsiValidator.validateCreateOnGsi(schemaName, indexTableName, executionContext);
         TtlValidator.validateIfAllowPerformRepartition(schemaName, primaryTableName,
             globalIndexPreparedData.getIndexPartitionInfo(), executionContext);
+        AlterTableGroupUtils.validateRepartitionPermit(schemaName, executionContext);
     }
 
     @Override
@@ -190,7 +196,9 @@ public class RepartitionJobFactory extends DdlJobFactory {
         boolean adjustableParallelism =
             executionContext.getParamManager().getBoolean(ConnectionParams.GSI_BACKFILL_BY_PARTITION)
                 || executionContext.getParamManager().getBoolean(ConnectionParams.GSI_BACKFILL_BY_PK_RANGE);
-        int maxNodeNum = getAvaliableNodeNum(schemaName, primaryTableName, executionContext);
+        int maxNodeNum = getAvaliableNodeNum(schemaName, primaryTableName, executionContext,
+            ConnectionParams.FORBID_REMOTE_DDL_TASK);
+        List<String> mppNodes = getAvaliableNodeList(executionContext, ConnectionParams.FORBID_REMOTE_DDL_TASK);
         // if you use pk range, then control the concurrency by cpuAcquired.
         int gsiMaxParallelism = 1;
         if (executionContext.getParamManager().getInt(ConnectionParams.GSI_JOB_MAX_PARALLELISM) >= 1) {
@@ -288,40 +296,26 @@ public class RepartitionJobFactory extends DdlJobFactory {
         repartitionJob.addTask(validateTask);
         repartitionJob.addTaskRelationship(validateTableVersionTask, validateTask);
 
+        DdlTask tailTask = validateTask;
         AlterTtlInfoTask alterTtlInfoTaskForRepart =
             buildModifiedTtlInfoForRepartitionIfNeed(schemaName, primaryTableName, globalIndexPreparedData,
                 executionContext);
         if (alterTtlInfoTaskForRepart != null) {
+            TableSyncTask ttlTableSyncTask = new TableSyncTask(schemaName, primaryTableName);
             repartitionJob.addTask(alterTtlInfoTaskForRepart);
             repartitionJob.addTaskRelationship(validateTask, alterTtlInfoTaskForRepart);
+            repartitionJob.addTask(ttlTableSyncTask);
+            repartitionJob.addTaskRelationship(alterTtlInfoTaskForRepart, ttlTableSyncTask);
+            tailTask = ttlTableSyncTask;
         }
 
         // 1.gsi add column
         if (!autoPartition) {
             for (ExecutableDdlJob4AlterTable gsiAddColumnJob : gsiAddColumnJobs) {
                 repartitionJob.combineTasks(gsiAddColumnJob);
-                repartitionJob.addTaskRelationship(validateTask, gsiAddColumnJob.getTableValidateTask());
+                repartitionJob.addTaskRelationship(tailTask, gsiAddColumnJob.getTableValidateTask());
             }
-        } else {
-            if (DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
-                for (ExecutableDdlJob dropJob : dropGlobalIndexJobs) {
-                    for (DdlTask ddlTask : dropJob.getAllTasks()) {
-                        if(ddlTask instanceof DropTableRemoveMetaTask) {
-                            DropTableRemoveMetaTask dropTableRemoveMetaTask = (DropTableRemoveMetaTask)ddlTask;
-                            String tableName = dropTableRemoveMetaTask.getLogicalTableName();
-                            TableMeta gsiTableMeta = executionContext.getSchemaManager(schemaName).getTable(tableName);
-                            if(gsiTableMeta.getPartitionInfo().getTableGroupId() == targetTgId) {
-                                dropTableRemoveMetaTask.setDropEmptyTableGroup(false);
-                            }
-                        }
-                    }
-                }
-            }
-            // 默认主键拆分表，需要删除所有的gsi，无需为 gsi add column
-            dropGlobalIndexJobs.forEach(repartitionJob::appendJob2);
         }
-
-        boolean skipCheck = executionContext.getParamManager().getBoolean(ConnectionParams.REPARTITION_SKIP_CHECK);
 
         // only optimize for key partition
         // do not change topology, only change table meta
@@ -364,6 +358,7 @@ public class RepartitionJobFactory extends DdlJobFactory {
             }
 
             repartitionJob.setMaxParallelism(gsiMaxParallelism);
+            repartitionJob.setMppNodeList(mppNodes);
             return repartitionJob;
         } else if (singleTableToPartitions1) {
             String tableGroupName = FactoryUtils.getTableGroupNameByTableName(schemaName, primaryTableName);
@@ -384,6 +379,7 @@ public class RepartitionJobFactory extends DdlJobFactory {
                 PartitionGroupRecord currentPartitionGroupRecord = currentPartitionGroupRecords.get(i);
                 newPartitionGroupRecord.setLocality(currentPartitionGroupRecord.getLocality());
                 newPartitionGroupRecord.setPhy_db(currentPartitionGroupRecord.getPhy_db());
+                newPartitionGroupRecord.setGroup_Name(currentPartitionGroupRecord.getGroup_Name());
             }
 
             RepartitionSingleChangeMetaTask changeMetaTask =
@@ -443,22 +439,42 @@ public class RepartitionJobFactory extends DdlJobFactory {
 
         // 3. create gsi
         repartitionJob.appendJob2(createGsiJob);
+        tailTask = getCreateGsiLastTask(createGsiJob);
 
-        // drop cci
-//        dropColumnarClusterIndexJobs.forEach(repartitionJob::appendJob2);
+        // 4. drop gsi for auto partition table
+        if (autoPartition && GeneralUtil.isNotEmpty(dropGlobalIndexJobs)) {
+            if (DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
+                for (ExecutableDdlJob dropJob : dropGlobalIndexJobs) {
+                    for (DdlTask ddlTask : dropJob.getAllTasks()) {
+                        if (ddlTask instanceof DropTableRemoveMetaTask) {
+                            DropTableRemoveMetaTask dropTableRemoveMetaTask = (DropTableRemoveMetaTask) ddlTask;
+                            String tableName = dropTableRemoveMetaTask.getLogicalTableName();
+                            TableMeta gsiTableMeta = executionContext.getSchemaManager(schemaName).getTable(tableName);
+                            if (gsiTableMeta.getPartitionInfo().getTableGroupId() == targetTgId) {
+                                dropTableRemoveMetaTask.setDropEmptyTableGroup(false);
+                            }
+                        }
+                    }
+                }
+            }
+            // 默认主键拆分表，在完成 cut over 前删除所有的 gsi 表
+            dropGlobalIndexJobs.forEach(repartitionJob::appendJob2);
+            // 更新 tailTask
+            tailTask = getDropGsiLastTask(dropGlobalIndexJobs.get(dropGlobalIndexJobs.size() - 1));
+        }
 
-        // 4. cut over
+        // 5. cut over
         final boolean skipCutOver = StringUtils.equalsIgnoreCase(
             executionContext.getParamManager().getString(ConnectionParams.REPARTITION_SKIP_CUTOVER), "true");
         if (!skipCutOver) {
-            repartitionJob.addTaskRelationship(getCreateGsiLastTask(createGsiJob), cutOverTask);
+            repartitionJob.addTaskRelationship(tailTask, cutOverTask);
             repartitionJob.addTaskRelationship(cutOverTask, repartitionSyncTask);
             repartitionJob.addTaskRelationship(repartitionSyncTask, cdcDdlMarkTask);
         } else {
-            repartitionJob.addTaskRelationship(getCreateGsiLastTask(createGsiJob), cdcDdlMarkTask);
+            repartitionJob.addTaskRelationship(tailTask, cdcDdlMarkTask);
         }
 
-        // 5. drop gsi table which is old primary table
+        // 6. drop gsi table which is old primary table
         final boolean skipCleanUp = StringUtils.equalsIgnoreCase(
             executionContext.getParamManager().getString(ConnectionParams.REPARTITION_SKIP_CLEANUP), "true");
         if (!skipCleanUp) {
@@ -466,13 +482,10 @@ public class RepartitionJobFactory extends DdlJobFactory {
             repartitionJob.addTaskRelationship(cdcDdlMarkTask, getDropGsiHeadTask(dropGsiJob));
         }
 
-        // 6. drop gsi tables
+        // 7. drop gsi tables
         if (!autoPartition) {
             dropGlobalIndexJobs.forEach(repartitionJob::appendJob2);
         }
-
-        // create cci
-//        repartitionJob.appendJob2(createCciJob);
 
         if (rebuildCci && GeneralUtil.isNotEmpty(addCciSql)) {
             List<SubJobTask> addCciSubJobTasks = new ArrayList<>();
@@ -492,7 +505,7 @@ public class RepartitionJobFactory extends DdlJobFactory {
             }
         }
 
-        // 7. drop/create fk on related table
+        // 8. drop/create fk on related table
         if (addForeignKeySql != null && !addForeignKeySql.isEmpty()) {
             // change fk meta
             RepartitionChangeForeignKeyMetaTask repartitionChangeFkMetaTask = new RepartitionChangeForeignKeyMetaTask(
@@ -524,12 +537,13 @@ public class RepartitionJobFactory extends DdlJobFactory {
             }
         }
 
-        // 8. sync table group
+        // 9. sync table group
         if (syncTableGroup != null) {
             repartitionJob.appendTask(syncTableGroup);
         }
         repartitionJob.labelAsHead(validateTableVersionTask);
         repartitionJob.setMaxParallelism(gsiMaxParallelism);
+        repartitionJob.setMppNodeList(mppNodes);
         return repartitionJob;
     }
 
@@ -716,6 +730,7 @@ public class RepartitionJobFactory extends DdlJobFactory {
         modifyTtlInfoParams.setArchiveKind("ROW");
         modifyTtlInfoParams.setTtlTableMeta(primaryTableMeta);
         modifyTtlInfoParams.setEc(executionContext);
+        modifyTtlInfoParams.setServerConfigManager(TtlJobUtil.getServerConfigManager());
         newTtlInfo = TtlDefinitionInfo.buildModifiedTtlInfo(
             currTtlInfo,
             modifyTtlInfoParams
@@ -765,5 +780,24 @@ public class RepartitionJobFactory extends DdlJobFactory {
             return true;
         }
         return false;
+    }
+
+    @Override
+    protected void updateOnlineDdlInfo(OnlineDdlInfo onlineDdlInfo) {
+        DdlContext ddlContext = executionContext.getDdlContext();
+        if (!ddlContext.isExplainOnlineDdlAdvisor() && !ddlContext.isExplainOnlineDdl()) {
+            return;
+        }
+
+        onlineDdlInfo.setOnlineDdlType(OnlineDdlInfo.DdlType.ONLINE_DDL);
+        if (expandShardColumnsOnlyWithoutModifyLocality(executionContext, expandShardColumnsOnly, modifyLocality)) {
+            onlineDdlInfo.setOnlineDdlAlgorithm(OnlineDdlInfo.DdlAlgorithm.META_ONLY);
+        } else if (singleTableToPartitions1) {
+            onlineDdlInfo.setOnlineDdlAlgorithm(OnlineDdlInfo.DdlAlgorithm.META_ONLY);
+        } else {
+            onlineDdlInfo.setOnlineDdlAlgorithm(OnlineDdlInfo.DdlAlgorithm.OSC);
+        }
+
+        onlineDdlInfo.setAdviceOnlineDdlSql(String.format("%s", executionContext.getOriginSql()));
     }
 }

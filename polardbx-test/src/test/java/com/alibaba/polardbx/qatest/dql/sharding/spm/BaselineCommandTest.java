@@ -18,19 +18,27 @@ public class BaselineCommandTest extends BaseTestCase {
     private static final String db = "BaselineCommandTest";
     private static final String table = "BaselineCommandTest";
     private static final String table1 = "BaselineCommandTest1";
+    private static final String table2 = "BaselineCommandTest2_broadcast";
     private static final String createTbl = "CREATE TABLE `%s` (\n"
         + "`id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',\n"
         + "`creator` varchar(64) NOT NULL DEFAULT '' ,\n"
         + "`extend` varchar(128) NOT NULL DEFAULT '' ,\n"
         + "PRIMARY KEY (`id`) "
-        + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 ";
+        + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE utf8mb4_general_ci";
 
     private static final String createTbl1 = "CREATE TABLE `%s` (\n"
         + "`id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',\n"
         + "`creator` varchar(64) NOT NULL DEFAULT '' ,\n"
         + "`extend` varchar(128) NOT NULL DEFAULT '' ,\n"
         + "PRIMARY KEY (`id`) "
-        + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 dbpartition by hash(id) tbpartition by hash(id) tbpartitions 3;";
+        + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE utf8mb4_general_ci dbpartition by hash(id) tbpartition by hash(id) tbpartitions 3;";
+
+    private static final String createTbl2 = "CREATE TABLE `%s` (\n"
+        + "`id` bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键',\n"
+        + "`creator` varchar(64) NOT NULL DEFAULT '' ,\n"
+        + "`extend` varchar(128) NOT NULL DEFAULT '' ,\n"
+        + "PRIMARY KEY (`id`) "
+        + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE utf8mb4_general_ci broadcast";
 
     private static final String testSqlTemp = "baseline add sql /*TDDL:a()*/ select * from %s ";
 
@@ -42,6 +50,7 @@ public class BaselineCommandTest extends BaseTestCase {
             c.createStatement().execute("use " + db);
             c.createStatement().execute(String.format(createTbl, table));
             c.createStatement().execute(String.format(createTbl1, table1));
+            c.createStatement().execute(String.format(createTbl2, table2));
         }
     }
 
@@ -49,20 +58,6 @@ public class BaselineCommandTest extends BaseTestCase {
     public void clean() throws SQLException {
         try (Connection c = getPolardbxConnection()) {
             c.createStatement().execute("drop database if exists " + db);
-        }
-    }
-
-    @Test
-    public void testAddPlanThatBaselineNotSupported() {
-        try (Connection c = getPolardbxConnection(db)) {
-            String testSql = String.format(testSqlTemp, table);
-            // test plan in plan cache
-            c.createStatement().execute(testSql);
-            Assert.fail();
-        } catch (SQLException e) {
-            if (e.getErrorCode() != 7001) {
-                Assert.fail("not expected baseline error");
-            }
         }
     }
 
@@ -245,18 +240,25 @@ public class BaselineCommandTest extends BaseTestCase {
 
         // test delete
         try (Connection c2 = getPolardbxConnection(db)) {
-            c2.createStatement().execute(String.format("baseline delete_plan %d", planId1));
-            c2.createStatement().execute(String.format("baseline delete_plan %d", planId2));
             c2.createStatement().execute(String.format("baseline delete %d", baselineId3));
 
             try (Connection c3 = getPolardbxConnection(db)) {
                 ResultSet rs = c3.createStatement().executeQuery("baseline list");
                 while (rs.next()) {
                     int testBaselineId = rs.getInt("BASELINE_ID");
-                    Assert.assertTrue(testBaselineId != baselineId1 && testBaselineId != baselineId2
-                        && testBaselineId != baselineId3);
+                    Assert.assertTrue(testBaselineId != baselineId3);
                 }
             }
+        }
+    }
+
+    @Test
+    public void testSkipPostPlanner() throws SQLException {
+        try (Connection c = getPolardbxConnection(db)) {
+            c.createStatement().execute("select check_sum_V2(*) from " + table2);
+            c.createStatement().execute("explain select check_sum_V2(*) from " + table2);
+            c.createStatement().execute("baseline add sql /*+TDDL:cmd_extra()*/ select check_sum_V2(*) from " + table2);
+            c.createStatement().execute("select check_sum_V2(*) from " + table2);
         }
     }
 }

@@ -16,10 +16,12 @@
 
 package com.alibaba.polardbx.executor.chunk;
 
-import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.common.datatype.Decimal;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.executor.operator.util.ObjectPools;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.google.common.base.Preconditions;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.ArrayList;
 import java.util.BitSet;
@@ -27,12 +29,33 @@ import java.util.Collection;
 import java.util.List;
 
 public class MutableChunk extends Chunk {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(MutableChunk.class).instanceSize();
     private int chunkLimit;
     private int[] outputIndexes;
     private boolean isFirstAllocation;
 
     // for literal
     BitSet literalBitmap;
+
+    @Override
+    public long getMemoryUsage() {
+        long size = INSTANCE_SIZE;
+
+        size += FastMemoryCounter.sizeOf(outputIndexes);
+        size += FastMemoryCounter.sizeOf(selection);
+        size += FastMemoryCounter.sizeOf(literalBitmap);
+
+        if (blocks != null) {
+            size += FastMemoryCounter.sizeOf(blocks);
+
+            if (blockRefIndexes != null) {
+                for (int i = 0; i < blockRefIndexes.length; i++) {
+                    size -= FastMemoryCounter.sizeOf(blocks[blockRefIndexes[i]]);
+                }
+            }
+        }
+        return size;
+    }
 
     // for test
     public MutableChunk(Block... blocks) {
@@ -125,7 +148,7 @@ public class MutableChunk extends Chunk {
                 if (literalBitmap == null || !literalBitmap.get(i)) {
                     newVector = BlockUtils.createBlock(((RandomAccessBlock) vector).getType(), chunkLimit);
                     // set position count = max{selection count, batch size}
-                    newVector.resize(newBatchSize);
+                    newVector.resize(vector instanceof DecimalBlock ? chunkLimit : newBatchSize);
                 } else {
                     // lazy allocation
                     newVector.resize(0);
@@ -164,7 +187,7 @@ public class MutableChunk extends Chunk {
                     if (literalBitmap == null || !literalBitmap.get(i)) {
                         newVector = BlockUtils.createBlock(((RandomAccessBlock) vector).getType(), chunkLimit);
                         // set position count = max{selection count, batch size}
-                        newVector.resize(newBatchSize);
+                        newVector.resize(vector instanceof DecimalBlock ? chunkLimit : newBatchSize);
                     } else {
                         newVector.resize(0);
                     }

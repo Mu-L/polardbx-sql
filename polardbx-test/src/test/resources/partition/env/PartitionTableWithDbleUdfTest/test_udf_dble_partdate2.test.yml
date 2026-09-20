@@ -1,0 +1,67 @@
+## DISABLE_FAST_SQL_PARSER
+
+select Partdated0sp10d('2013-01-01');
+select Partdated0sp10d('2014-01-01');
+select Partdated0sp10d('2014-01-10');
+select Partdated0sp10d('2014-01-11');
+select Partdated0sp10d('2014-01-30');
+select Partdated0sp10d('2014-01-31');
+select Partdated0sp10d('2014-02-09');
+select Partdated0sp10d('2014-02-10');
+select Partdated0sp10d('2014-02-19');
+select Partdated0sp10d('2014-02-20');
+select Partdated0sp10d('2014-03-01');
+
+
+drop tablegroup if exists tg_dble_udf11;
+create tablegroup if not exists tg_dble_udf11
+partition by udf_hash(bigint)
+partition 4
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3),
+partition pm values less than (9223372036854775807)
+)
+;
+
+drop table if exists uh_t11;
+create table uh_t11(
+c1 datetime not null,
+c2 datetime not null
+)
+partition by udf_hash(Partdated0sp10d(c1))
+tablegroup=tg_dble_udf11;
+
+
+insert into uh_t11 values ('2013-01-01','2013-01-01');
+insert into uh_t11 values ('2014-01-01','2014-01-01');
+insert into uh_t11 values ('2014-01-10','2014-01-10');
+insert into uh_t11 values ('2014-01-11','2014-01-11');
+insert into uh_t11 values ('2014-01-30','2014-01-30');
+insert into uh_t11 values ('2014-01-31','2014-01-31');
+insert into uh_t11 values ('2014-02-09','2014-02-09');
+insert into uh_t11 values ('2014-02-10','2014-02-10');
+insert into uh_t11 values ('2014-02-19','2014-02-19');
+insert into uh_t11 values ('2014-02-20','2014-02-20');
+insert into uh_t11 values ('2014-03-01','2014-03-01');
+
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2013-01-01';
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-01-01';
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-01-10';
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-01-11';
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-01-30';
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-01-31';
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-02-09';
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-02-10';
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-02-19';
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-02-20';
+select c1, part_route('', 'uh_t11', c1) as route_rs, part_hash('', 'uh_t11', c1) as hash_rs from uh_t11 where c1='2014-03-01';
+
+explain select c1 from uh_t11 where c1 between '2014-01-09' and '2014-01-13' order by c1;
+select c1 from uh_t11 where c1 between '2014-01-09' and '2014-01-13' order by c1;
+
+show create table uh_t11;
+
+
+

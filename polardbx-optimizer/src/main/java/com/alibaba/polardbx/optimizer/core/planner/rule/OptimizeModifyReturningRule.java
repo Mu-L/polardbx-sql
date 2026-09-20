@@ -25,6 +25,8 @@ import com.alibaba.polardbx.optimizer.core.rel.LogicalModify.LogicalMultiWriteIn
 import com.alibaba.polardbx.optimizer.core.rel.LogicalModifyView;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.MergeSort;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.alibaba.polardbx.optimizer.utils.RelUtils.LogicalModifyViewBuilder;
 import com.google.common.collect.ImmutableList;
@@ -61,6 +63,9 @@ public abstract class OptimizeModifyReturningRule extends RelOptRule implements 
     public boolean matches(RelOptRuleCall call) {
         final LogicalModify modify = call.rel(0);
         if (modify.isMultiWriteCanBeOptimizedByReturning()) {
+            return false;
+        }
+        if (ExternalizedDmlRewriter.isReturningForbidden(CBOUtil.getTableMeta(modify.getTable()))) {
             return false;
         }
 

@@ -1,0 +1,49 @@
+## DISABLE_FAST_SQL_PARSER
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00'
+set sql_mode=''
+set TTL_ADD_MAXVAL_PART_ON_CCI_CREATING=true
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false
+set MAX_CCI_COUNT=2
+DROP DATABASE IF EXISTS db_ttl_rename
+CREATE DATABASE IF NOT EXISTS db_ttl_rename MODE='auto'
+use db_ttl_rename
+CREATE TABLE `myttl_with_rename_t1` (
+`a` int(11) NOT NULL AUTO_INCREMENT,
+`c` int(11) NOT NULL,
+`b` timestamp(3),
+PRIMARY KEY(a)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+ALTER TABLE myttl_with_rename_t1 MODIFY TTL SET TTL_EXPR =`b` EXPIRE AFTER 30 DAY TIMEZONE '+08:00',ARCHIVE_TABLE_PRE_ALLOCATE = 12, ARCHIVE_TABLE_POST_ALLOCATE = 12
+ALTER TABLE myttl_with_rename_t1 MODIFY TTL SET TTL_ENABLE ='ON'
+SHOW CREATE TABLE myttl_with_rename_t1
+Table,Create Table
+myttl_with_rename_t1,CREATE TABLE `myttl_with_rename_t1` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`c` int(11) NOT NULL,
+	`b` timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 30 DAY TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 12, ARCHIVE_TABLE_POST_ALLOCATE = 12 )
+PARTITION BY KEY(`a`)
+PARTITIONS 2
+SELECT table_schema,table_name,schedule_name FROM metadb.scheduled_jobs where table_name='myttl_with_rename_t1' and table_schema='db_ttl_rename'
+table_schema,table_name,schedule_name
+db_ttl_rename,myttl_with_rename_t1,TTL_JOB:db_ttl_rename.myttl_with_rename_t1
+RENAME TABLE myttl_with_rename_t1 TO myttl_with_rename_t2
+SELECT table_schema,table_name,schedule_name FROM metadb.scheduled_jobs where table_name='myttl_with_rename_t1' and table_schema='db_ttl_rename'
+table_schema,table_name,schedule_name
+SELECT table_schema,table_name,schedule_name FROM metadb.scheduled_jobs where table_name='myttl_with_rename_t2' and table_schema='db_ttl_rename'
+table_schema,table_name,schedule_name
+db_ttl_rename,myttl_with_rename_t2,TTL_JOB:db_ttl_rename.myttl_with_rename_t2
+RENAME TABLE myttl_with_rename_t2 TO myttl_with_rename_t3
+SELECT table_schema,table_name,schedule_name FROM metadb.scheduled_jobs where table_name='myttl_with_rename_t2' and table_schema='db_ttl_rename'
+table_schema,table_name,schedule_name
+SELECT table_schema,table_name,schedule_name FROM metadb.scheduled_jobs where table_name='myttl_with_rename_t3' and table_schema='db_ttl_rename'
+table_schema,table_name,schedule_name
+db_ttl_rename,myttl_with_rename_t3,TTL_JOB:db_ttl_rename.myttl_with_rename_t3
+USE polardbx
+DROP DATABASE `db_ttl_rename`;

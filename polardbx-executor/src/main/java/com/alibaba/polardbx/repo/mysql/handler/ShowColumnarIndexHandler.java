@@ -24,6 +24,9 @@ import com.alibaba.polardbx.druid.util.JdbcUtils;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.cursor.impl.ArrayResultCursor;
+import com.alibaba.polardbx.executor.gms.ColumnarManager;
+import com.alibaba.polardbx.executor.gms.ColumnarTableMeta;
+import com.alibaba.polardbx.executor.gms.DynamicColumnarManager;
 import com.alibaba.polardbx.executor.handler.HandlerCommon;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
@@ -31,6 +34,7 @@ import com.alibaba.polardbx.gms.metadb.table.ColumnarTableEvolutionAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableEvolutionRecord;
 import com.alibaba.polardbx.gms.metadb.table.IndexStatus;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager;
 import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
@@ -39,13 +43,15 @@ import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.rel.dal.LogicalDal;
 import com.alibaba.polardbx.optimizer.exception.TableNotFoundException;
 import com.alibaba.polardbx.optimizer.partition.PartitionByDefinition;
+import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
+import com.alibaba.polardbx.optimizer.partition.common.PartitionStrategy;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.sql.SqlIdentifier;
+import org.apache.calcite.sql.SqlNumericLiteral;
 import org.apache.calcite.sql.SqlShowColumnarIndex;
 import org.apache.commons.collections.CollectionUtils;
 
 import java.sql.Connection;
-import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -66,74 +72,115 @@ public class ShowColumnarIndexHandler extends HandlerCommon {
 
         SqlShowColumnarIndex showGlobalIndex = (SqlShowColumnarIndex) ((LogicalDal) logicalPlan).getNativeSqlNode();
         SqlIdentifier tableNameNode = (SqlIdentifier) showGlobalIndex.getTable();
+        SqlNumericLiteral tso = (SqlNumericLiteral) showGlobalIndex.getTso();
+
         String schemaName = (tableNameNode != null && 2 == tableNameNode.names.size()) ? tableNameNode.names.get(0) :
             executionContext.getSchemaName();
         ExecutorContext executorContext = ExecutorContext.getContext(schemaName);
+        String tableName = null;
         if (null == executionContext) {
             throw new TddlRuntimeException(ErrorCode.ERR_UNKNOWN_DATABASE, schemaName);
         }
-
-        GsiMetaManager metaManager = executorContext.getGsiManager().getGsiMetaManager();
-
-        GsiMetaManager.GsiMetaBean meta;
-        if (null == tableNameNode) {
-            meta = metaManager.getAllGsiMetaBean(schemaName);
-        } else {
-            String tableName = tableNameNode.getLastName();
-            SchemaManager sm = OptimizerContext.getContext(schemaName).getLatestSchemaManager();
-            TableMeta tableMeta = sm.getTableWithNull(tableName);
-            if (tableMeta == null) {
-                throw new TableNotFoundException(ErrorCode.ERR_TABLE_NOT_EXIST, tableName);
-            }
-            meta = metaManager.getTableAndIndexMeta(tableName, IndexStatus.ALL);
+        if (null != tableNameNode) {
+            tableName = tableNameNode.getLastName();
         }
 
-        SchemaManager schemaManager = executionContext.getSchemaManager();
-        Connection metaDbConn = null;
-        try {
-            try {
-                metaDbConn = MetaDbDataSource.getInstance().getConnection();
-            } catch (Exception e) {
-                // ignore
-                logger.warn("failed to get metadb connection: ", e);
-            }
-            for (GsiMetaManager.GsiTableMetaBean bean : meta.getTableMeta().values()) {
-                if (bean.gsiMetaBean != null && bean.gsiMetaBean.columnarIndex) {
-                    GsiMetaManager.GsiIndexMetaBean bean1 = bean.gsiMetaBean;
-                    String pkNames =
-                        bean1.indexColumns.stream().map(col -> col.columnName).collect(Collectors.joining(", "));
-                    String partitionKeyNames = pkNames;
-                    String coveringNames =
-                        bean1.coveringColumns.stream().map(col -> col.columnName).collect(Collectors.joining(", "));
-                    String partitionStrategy = "";
-                    Integer partitionCount = null;
-                    TableMeta tableMeta = schemaManager.getTable(bean1.indexName);
-                    if (tableMeta != null && tableMeta.getPartitionInfo() != null) {
-                        PartitionByDefinition partitionBy = tableMeta.getPartitionInfo().getPartitionBy();
-                        partitionStrategy = partitionBy.getStrategy().name();
-                        partitionCount = partitionBy.getPartitions().size();
-                        partitionKeyNames = String.join(", ", partitionBy.getPartitionColumnNameList());
-                    }
+        if (null == tso) {
+            // get current cci
+            GsiMetaManager metaManager = executorContext.getGsiManager().getGsiMetaManager();
 
-                    String options = null;
-                    if (metaDbConn != null) {
-                        try {
-                            options = getColumnarIndexOptions(metaDbConn, bean1.tableSchema, bean1.indexName);
-                        } catch (Exception e) {
-                            // ignore
-                            logger.warn("failed to query columnar option info", e);
-                        }
-                    }
-
-                    Object[] row = new Object[] {
-                        bean1.tableSchema, bean1.tableName, bean1.indexName, Boolean.toString(bean1.clusteredIndex),
-                        pkNames, coveringNames, partitionKeyNames, partitionStrategy, partitionCount,
-                        pkNames, options, bean1.indexStatus};
-                    resultCursor.addRow(row);
+            GsiMetaManager.GsiMetaBean meta;
+            if (null == tableNameNode) {
+                meta = metaManager.getAllGsiMetaBean(schemaName);
+            } else {
+                SchemaManager sm = OptimizerContext.getContext(schemaName).getLatestSchemaManager();
+                TableMeta tableMeta = sm.getTableWithNull(tableName);
+                if (tableMeta == null) {
+                    throw new TableNotFoundException(ErrorCode.ERR_TABLE_NOT_EXIST, tableName);
                 }
+                meta = metaManager.getTableAndIndexMeta(tableName, IndexStatus.ALL);
             }
-        } finally {
-            JdbcUtils.close(metaDbConn);
+
+            SchemaManager schemaManager = executionContext.getSchemaManager();
+            Connection metaDbConn = null;
+            try {
+                try {
+                    metaDbConn = MetaDbDataSource.getInstance().getConnection();
+                } catch (Exception e) {
+                    // ignore
+                    logger.warn("failed to get metadb connection: ", e);
+                }
+                for (GsiMetaManager.GsiTableMetaBean bean : meta.getTableMeta().values()) {
+                    if (bean.gsiMetaBean != null && bean.gsiMetaBean.columnarIndex) {
+                        GsiMetaManager.GsiIndexMetaBean bean1 = bean.gsiMetaBean;
+                        TableMeta tableMeta = schemaManager.getTable(bean1.tableName);
+                        String pkNames =
+                            tableMeta.getPrimaryIndex().getKeyColumns().stream().map(ColumnMeta::getOriginColumnName)
+                                .collect(Collectors.joining(", "));
+                        String sortKeys =
+                            bean1.indexColumns.stream().map(col -> col.columnName).collect(Collectors.joining(", "));
+                        String partitionKeyNames = pkNames;
+                        String coveringNames =
+                            bean1.coveringColumns.stream().map(col -> col.columnName).collect(Collectors.joining(", "));
+                        String partitionStrategy = "";
+                        Integer partitionCount = null;
+                        TableMeta indexTableMeta = schemaManager.getTable(bean1.indexName);
+                        if (indexTableMeta != null && indexTableMeta.getPartitionInfo() != null) {
+                            PartitionByDefinition partitionBy = indexTableMeta.getPartitionInfo().getPartitionBy();
+                            partitionStrategy = partitionBy.getStrategy().name();
+                            partitionCount = partitionBy.getPartitions().size();
+                            partitionKeyNames = String.join(", ", partitionBy.getPartitionColumnNameList());
+                        }
+
+                        String options = null;
+                        if (metaDbConn != null) {
+                            try {
+                                options = getColumnarIndexOptions(metaDbConn, bean1.tableSchema, bean1.indexName);
+                            } catch (Exception e) {
+                                // ignore
+                                logger.warn("failed to query columnar option info", e);
+                            }
+                        }
+
+                        Object[] row = new Object[] {
+                            bean1.tableSchema, bean1.tableName, bean1.indexName, Boolean.toString(bean1.clusteredIndex),
+                            pkNames, coveringNames, partitionKeyNames, partitionStrategy, partitionCount,
+                            sortKeys, options, bean1.indexStatus};
+                        resultCursor.addRow(row);
+                    }
+                }
+            } finally {
+                JdbcUtils.close(metaDbConn);
+            }
+        } else {
+            // get cci by tso
+            DynamicColumnarManager dynamicColumnarManager = (DynamicColumnarManager) ColumnarManager.getInstance();
+            List<ColumnarTableMeta> metas =
+                dynamicColumnarManager.getColumnarTableMeta(tso.longValue(true), schemaName, tableName);
+
+            for (ColumnarTableMeta meta : metas) {
+                PartitionInfo partInfo = meta.getPartitionInfo();
+                List<PartitionStrategy> allLevelPartStrategies = partInfo.getAllLevelPartitionStrategies();
+                String allLevelPartStrategiesStr = "";
+                for (int j = 0; j < allLevelPartStrategies.size(); j++) {
+                    if (!allLevelPartStrategiesStr.isEmpty()) {
+                        allLevelPartStrategiesStr += ";";
+                    }
+                    allLevelPartStrategiesStr += allLevelPartStrategies.get(j).getStrategyExplainName();
+                }
+
+                String options = ColumnarTableEvolutionRecord.serializeToJson(meta.getOptions());
+
+                Object[] row = new Object[] {
+                    schemaName, tableName, meta.getIndexName(), Boolean.toString(true),
+                    String.join(", ", meta.getPrimaryKeys()),
+                    meta.getColumns().stream().map(ColumnMeta::getOriginColumnName)
+                        .filter(c -> !meta.getSortKeys().contains(c)).collect(Collectors.joining(", ")),
+                    String.join(", ", partInfo.getPartitionColumns()),
+                    allLevelPartStrategiesStr, partInfo.getAllPhysicalPartitionCount(),
+                    String.join(", ", meta.getSortKeys()), options, meta.getStatus()};
+                resultCursor.addRow(row);
+            }
         }
 
         return resultCursor;

@@ -134,6 +134,10 @@ public enum JoinRelType {
     }
   }
 
+  public boolean projectsRight() {
+    return this != SEMI && this != ANTI;
+  }
+
   public <T> T outerSide(T left, T right) {
     return this != RIGHT ? left : right;
   }

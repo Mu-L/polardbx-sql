@@ -1,0 +1,293 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+set ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING=true;
+set ENABLE_REPLICAS_RANDOM_READ= false;
+set ENABLE_RANDOM_PHY_TABLE_NAME=false;
+set SHOW_PARTITIONS_IN_LOGICALVIEW_FOR_SHOW_CREATE_TABLE=true;
+use polardbx;
+drop database if exists repjoin48_db;
+## USE_DN_LIST_MSG
+create database if not exists `repjoin48_db` CHARSET = `utf8mb4` COLLATE = `utf8mb4_general_ci` MODE = 'auto'
+LOCALITY = 'dble_config={"group_config":{
+  "repjoin48_db_g0":["$dn1","repjoin48_db_g0"],
+  "repjoin48_db_g1":["$dn2","repjoin48_db_g1"],
+  "repjoin48_db_g2":["$dn1","repjoin48_db_g2"],
+  "repjoin48_db_g3":["$dn2","repjoin48_db_g3"],
+  "repjoin48_db_g4":["$dn1","repjoin48_db_g4"],
+  "repjoin48_db_g5":["$dn2","repjoin48_db_g5"]
+}}';
+use repjoin48_db;
+DROP TABLE IF EXISTS `rep_t1_g0g1g2`;
+CREATE TABLE IF NOT EXISTS `rep_t1_g0g1g2` (
+  `id` bigint NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin48_db_g0,repjoin48_db_g1,repjoin48_db_g2';
+DROP TABLE IF EXISTS `rep_t2_g0g1g2`;
+CREATE TABLE IF NOT EXISTS  `rep_t2_g0g1g2` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin48_db_g0,repjoin48_db_g1,repjoin48_db_g2';
+DROP TABLE IF EXISTS `rep_t3_g1g2`;
+CREATE TABLE IF NOT EXISTS `rep_t3_g1g2` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin48_db_g1,repjoin48_db_g2';
+DROP TABLE IF EXISTS `rep_t4_g2g3`;
+CREATE TABLE IF NOT EXISTS `rep_t4_g2g3` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin48_db_g2,repjoin48_db_g3';
+DROP TABLE IF EXISTS `rep_t5_g3g4`;
+CREATE TABLE IF NOT EXISTS `rep_t5_g3g4` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin48_db_g3,repjoin48_db_g4';
+DROP TABLE IF EXISTS `rep_t6_g5`;
+CREATE TABLE IF NOT EXISTS `rep_t6_g5` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin48_db_g5';
+DROP TABLE IF EXISTS `rep_t7_g0g3g4`;
+CREATE TABLE IF NOT EXISTS `rep_t7_g0g3g4` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin48_db_g0,repjoin48_db_g3,repjoin48_db_g4';
+DROP TABLE IF EXISTS `rep_t8_g1g3g4`;
+CREATE TABLE IF NOT EXISTS `rep_t8_g1g3g4` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin48_db_g1,repjoin48_db_g3,repjoin48_db_g4';
+DROP TABLE IF EXISTS `part_t1_g0g1g2`;
+CREATE TABLE IF NOT EXISTS `part_t1_g0g1g2` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 3
+LOCALITY='db_pools=repjoin48_db_g0,repjoin48_db_g1,repjoin48_db_g2';
+DROP TABLE IF EXISTS `part_t2_g0g1g2`;
+CREATE TABLE IF NOT EXISTS `part_t2_g0g1g2` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 3
+LOCALITY='db_pools=repjoin48_db_g0,repjoin48_db_g1,repjoin48_db_g2';
+DROP TABLE IF EXISTS `part_t3_g3g4`;
+CREATE TABLE IF NOT EXISTS `part_t3_g3g4` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 2
+LOCALITY='db_pools=repjoin48_db_g3,repjoin48_db_g4';
+DROP TABLE IF EXISTS `part_t4_g3g4`;
+CREATE TABLE IF NOT EXISTS `part_t4_g3g4` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 2
+LOCALITY='db_pools=repjoin48_db_g3,repjoin48_db_g4';
+DROP TABLE IF EXISTS `part_t5_g2`;
+CREATE TABLE IF NOT EXISTS `part_t5_g2` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 1
+LOCALITY='db_pools=repjoin48_db_g2';
+DROP TABLE IF EXISTS `part_t6_g5`;
+CREATE TABLE IF NOT EXISTS `part_t6_g5` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 1
+LOCALITY='db_pools=repjoin48_db_g5';
+CREATE TABLE IF NOT EXISTS `sig_t1_g1` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+SINGLE
+LOCALITY='db_set=repjoin48_db_g1';
+DROP TABLE IF EXISTS `sig_t2_g1`;
+CREATE TABLE IF NOT EXISTS `sig_t2_g1` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+SINGLE
+LOCALITY='db_set=repjoin48_db_g1';
+DROP TABLE IF EXISTS `sig_t3_g3`;
+CREATE TABLE IF NOT EXISTS `sig_t3_g3` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+SINGLE
+LOCALITY='db_set=repjoin48_db_g3';
+DROP TABLE IF EXISTS `sig_t4_g2`;
+CREATE TABLE IF NOT EXISTS `sig_t4_g2` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+SINGLE
+LOCALITY='db_set=repjoin48_db_g2';
+DROP TABLE IF EXISTS `bro_t1`;
+CREATE TABLE IF NOT EXISTS `bro_t1` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+BROADCAST;
+DROP TABLE IF EXISTS `bro_t2`;
+CREATE TABLE IF NOT EXISTS `bro_t2` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+BROADCAST;
+insert into rep_t1_g0g1g2 values (1),(2),(3),(4),(5);
+insert into rep_t2_g0g1g2 values (1),(2),(3),(4),(5);
+insert into rep_t3_g1g2 values (1),(2),(3),(4),(5);
+insert into rep_t4_g2g3 values (1),(2),(3),(4),(5);
+insert into rep_t5_g3g4 values (1),(2),(3),(4),(5);
+insert into rep_t6_g5 values (1),(2),(3),(4),(5);
+insert into rep_t7_g0g3g4 values (1),(2),(3),(4),(5);
+insert into rep_t8_g1g3g4 values (1),(2),(3),(4),(5);
+insert into part_t1_g0g1g2 values (1),(2),(3),(4),(5);
+insert into part_t2_g0g1g2 values (1),(2),(3),(4),(5);
+insert into part_t3_g3g4 values (1),(2),(3),(4),(5);
+insert into part_t4_g3g4 values (1),(2),(3),(4),(5);
+insert into part_t5_g2 values (1),(2),(3),(4),(5);
+insert into part_t6_g5 values (1),(2),(3),(4),(5);
+insert into sig_t1_g1 values (1),(2),(3),(4),(5);
+insert into sig_t2_g1 values (1),(2),(3),(4),(5);
+insert into sig_t3_g3 values (1),(2),(3),(4),(5);
+insert into sig_t4_g2 values (1),(2),(3),(4),(5);
+insert into bro_t1 values (1),(2),(3),(4),(5);
+insert into bro_t2 values (1),(2),(3),(4),(5);
+##===== mixJoinAndSubQuery1-0: all rep tbl with common group keys =====
+explain select
+t1.id,
+(select t2.id from rep_t2_g0g1g2 t2 where t2.id=t1.id) as t2_id,
+(select t3.id from bro_t1 t3 where t3.id=t1.id) as t3_id,
+(select t4.id from sig_t4_g2 t4 where t4.id=t1.id) as t4_id
+from
+rep_t1_g0g1g2 t1
+join sig_t4_g2 t2 on t1.id = t2.id
+join sig_t4_g2 t3 on t1.id = t3.id
+where
+t1.id in (select t3_2.id from sig_t4_g2 t3_2)
+and
+t1.id in (select t4_2.id from rep_t4_g2g3 t4_2)
+order by t1.id;
+Logical ExecutionPlan
+LogicalView(tables="repjoin48_db_g2.rep_t2_g0g1g2[p3],bro_t1[p3],sig_t4_g2[p1],rep_t1_g0g1g2[p3],sig_t4_g2[p1],sig_t4_g2[p1],sig_t4_g2[p1],rep_t4_g2g3[p1]", sql="SELECT `t1`.`id` AS `id`, (((SELECT `t2`.`id` AS `id` FROM `rep_t2_g0g1g2` AS `t2` WHERE (`t2`.`id` = `t1`.`id`)))) AS `t2_id`, (((SELECT `t3`.`id` AS `id` FROM `bro_t1` AS `t3` WHERE (`t3`.`id` = `t1`.`id`)))) AS `t3_id`, (((SELECT `t4`.`id` AS `id` FROM `sig_t4_g2` AS `t4` WHERE (`t4`.`id` = `t1`.`id`)))) AS `t4_id` FROM `rep_t1_g0g1g2` AS `t1` INNER JOIN `sig_t4_g2` AS `t2` ON (`t1`.`id` = `t2`.`id`) INNER JOIN `sig_t4_g2` AS `t3` ON (`t1`.`id` = `t3`.`id`) WHERE ((`t1`.`id` IN (SELECT `t3_2`.`id` AS `id` FROM `sig_t4_g2` AS `t3_2`)) AND (`t1`.`id` IN (SELECT `t4_2`.`id` AS `id` FROM `rep_t4_g2g3` AS `t4_2`))) ORDER BY `t1`.`id`")
+select
+t1.id,
+(select t2.id from rep_t2_g0g1g2 t2 where t2.id=t1.id) as t2_id,
+(select t3.id from bro_t1 t3 where t3.id=t1.id) as t3_id,
+(select t4.id from sig_t4_g2 t4 where t4.id=t1.id) as t4_id
+from
+rep_t1_g0g1g2 t1
+join sig_t4_g2 t2 on t1.id = t2.id
+join sig_t4_g2 t3 on t1.id = t3.id
+where
+t1.id in (select t3_2.id from sig_t4_g2 t3_2)
+and
+t1.id in (select t4_2.id from rep_t4_g2g3 t4_2)
+order by t1.id;
+id,t2_id,t3_id,t4_id
+1,1,1,1
+2,2,2,2
+3,3,3,3
+4,4,4,4
+5,5,5,5
+## union non-pushdown
+explain select pt1.id as pid from
+part_t1_g0g1g2 pt1
+join rep_t1_g0g1g2 rt1 on pt1.id=rt1.id
+join part_t2_g0g1g2 pt2 on pt2.id=rt1.id
+join rep_t2_g0g1g2 rt2 on rt2.id=rt1.id
+where pt1.id=3
+union all (
+select bt1.id as pid from
+rep_t1_g0g1g2 rt1
+join sig_t1_g1 st1 on st1.id=rt1.id
+join rep_t8_g1g3g4 rt8 on rt8.id=st1.id
+join bro_t1 bt1 on bt1.id=rt1.id
+)
+union all (
+select pt1.id as pid from
+sig_t4_g2 pt1
+where
+pt1.id in (
+select rt3.id from
+rep_t3_g1g2 rt3
+join bro_t2 bt2 on bt2.id=rt3.id
+)
+)
+order by pid;
+Logical ExecutionPlan
+MemSort(sort="pid ASC")
+  UnionAll(concurrent=true)
+    Gather(concurrent=true)
+      LogicalView(tables="rep_t1_g0g1g2[p1],rep_t2_g0g1g2[p1],part_t1_g0g1g2[p3],part_t2_g0g1g2[p3]", sql="SELECT `part_t1_g0g1g2`.`id` AS `pid` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` INNER JOIN `rep_t2_g0g1g2` AS `rep_t2_g0g1g2` ON ((`rep_t1_g0g1g2`.`id` = ?) AND (`rep_t2_g0g1g2`.`id` = ?) AND (`rep_t1_g0g1g2`.`id` = `rep_t2_g0g1g2`.`id`)) INNER JOIN (`part_t1_g0g1g2` AS `part_t1_g0g1g2` INNER JOIN `part_t2_g0g1g2` AS `part_t2_g0g1g2` ON ((`part_t1_g0g1g2`.`id` = ?) AND (`part_t2_g0g1g2`.`id` = ?) AND (`part_t1_g0g1g2`.`id` = `part_t2_g0g1g2`.`id`))) ON ((`rep_t1_g0g1g2`.`id` = `part_t1_g0g1g2`.`id`) AND (`rep_t2_g0g1g2`.`id` = `part_t1_g0g1g2`.`id`) AND (`rep_t1_g0g1g2`.`id` = `part_t2_g0g1g2`.`id`) AND (`rep_t2_g0g1g2`.`id` = `part_t2_g0g1g2`.`id`))")
+    LogicalView(tables="rep_t1_g0g1g2[p2],rep_t8_g1g3g4[p1],bro_t1[p2],sig_t1_g1[p1]", sql="SELECT `bro_t1`.`id` AS `pid` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` INNER JOIN `rep_t8_g1g3g4` AS `rep_t8_g1g3g4` ON (`rep_t1_g0g1g2`.`id` = `rep_t8_g1g3g4`.`id`) INNER JOIN `bro_t1` AS `bro_t1` ON ((`rep_t1_g0g1g2`.`id` = `bro_t1`.`id`) AND (`rep_t8_g1g3g4`.`id` = `bro_t1`.`id`)) INNER JOIN `sig_t1_g1` AS `sig_t1_g1` ON ((`rep_t1_g0g1g2`.`id` = `sig_t1_g1`.`id`) AND (`rep_t8_g1g3g4`.`id` = `sig_t1_g1`.`id`) AND (`bro_t1`.`id` = `sig_t1_g1`.`id`))")
+    LogicalView(tables="sig_t4_g2[p1],rep_t3_g1g2[p2],bro_t2[p3]", sql="SELECT `id` FROM `sig_t4_g2` AS `sig_t4_g2` WHERE (`id` IN (SELECT `rep_t3_g1g2`.`id` FROM `rep_t3_g1g2` AS `rep_t3_g1g2` INNER JOIN `bro_t2` AS `bro_t2` ON (`rep_t3_g1g2`.`id` = `bro_t2`.`id`)))")
+select pt1.id as pid from
+part_t1_g0g1g2 pt1
+join rep_t1_g0g1g2 rt1 on pt1.id=rt1.id
+join part_t2_g0g1g2 pt2 on pt2.id=rt1.id
+join rep_t2_g0g1g2 rt2 on rt2.id=rt1.id
+where pt1.id=3
+union all (
+select bt1.id as pid from
+rep_t1_g0g1g2 rt1
+join sig_t1_g1 st1 on st1.id=rt1.id
+join rep_t8_g1g3g4 rt8 on rt8.id=st1.id
+join bro_t1 bt1 on bt1.id=rt1.id
+)
+union all (
+select pt1.id as pid from
+sig_t4_g2 pt1
+where
+pt1.id in (
+select rt3.id from
+rep_t3_g1g2 rt3
+join bro_t2 bt2 on bt2.id=rt3.id
+)
+)
+order by pid;
+pid
+1
+1
+2
+2
+3
+3
+3
+4
+4
+5
+5
+use polardbx;
+drop database if exists repjoin48_db;

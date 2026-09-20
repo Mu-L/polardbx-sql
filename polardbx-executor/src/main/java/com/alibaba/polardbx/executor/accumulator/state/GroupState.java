@@ -16,13 +16,19 @@
 
 package com.alibaba.polardbx.executor.accumulator.state;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+
 /**
  * State of groups
  *
  * @author Eric Fu
  */
-public interface GroupState {
+public interface GroupState extends MemoryCountable {
 
     long estimateSize();
+
+    default long estimatedGrowthMemoryUsage() {
+        return 0L;
+    }
 
 }

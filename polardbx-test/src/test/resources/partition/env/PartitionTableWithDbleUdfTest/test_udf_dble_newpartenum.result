@@ -1,0 +1,10 @@
+## DISABLE_FAST_SQL_PARSER
+select newpartenumt0d0i(10000)
+newpartenumt0d0i(10000)
+0
+select newpartenumt0d0i(10010)
+newpartenumt0d0i(10010)
+1
+select newpartenumt0d0i(10020)
+newpartenumt0d0i(10020)
+0

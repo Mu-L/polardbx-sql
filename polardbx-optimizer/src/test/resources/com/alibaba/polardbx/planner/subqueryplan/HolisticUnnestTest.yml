@@ -1,0 +1,821 @@
+SQL:
+  - sql: |
+      # join on subquery
+       /*+TDDL:cmd_extra(FORCE_HOLISTIC_SUBQUERY_UNNEST=false ENABLE_JOIN_SUBQUERY_UNNEST=true)*/select c.c_custkey, o.o_orderkey from customer c
+      join orders o on c.c_custkey = o.o_custkey
+      and o.o_orderkey in (select l_orderkey from lineitem where l_quantity > c.c_acctbal)
+    plan: |
+      project(c_custkey="c_custkey", o_orderkey="o_orderkey")
+        semihashjoin(condition="c_acctbal = c_acctbal and o_orderkey = o_orderkey", type="semi", build="inner")
+          project(c_custkey="c_custkey", c_acctbal="c_acctbal", o_orderkey="o_orderkey")
+            hashjoin(condition="o_custkey = c_custkey", type="inner")
+              exchange(distribution=hash[1]20, collation=[])
+                osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index`")
+              exchange(distribution=hash[0]20, collation=[])
+                osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey`, `c_acctbal` from `customer_col_index` as `customer_col_index`")
+          exchange(distribution=broadcast, collation=[])
+            project(c_acctbal="c_acctbal", o_orderkey="o_orderkey")
+              hashjoin(condition="o_orderkey = l_orderkey and l_quantity > c_acctbal", type="inner")
+                osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                exchange(distribution=broadcast, collation=[])
+                  hashagg(group="c_acctbal,o_orderkey")
+                    exchange(distribution=hash[1]20, collation=[])
+                      project(c_acctbal="c_acctbal", o_orderkey="o_orderkey")
+                        partialhashagg(group="o_orderkey,c_acctbal")
+                          hashjoin(condition="o_custkey = c_custkey", type="inner")
+                            exchange(distribution=hash[1]20, collation=[])
+                              osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index`")
+                            exchange(distribution=hash[0]20, collation=[])
+                              osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey`, `c_acctbal` from `customer_col_index` as `customer_col_index`")
+  - sql: |
+      select l_partkey in (
+      SELECT name FROM (VALUES (1, 'John', 25),(2, 'Jane', 30),(3, 'Bob', 35)) AS t(id, name, age) where id = l_partkey) from lineitem
+    plan: |
+      project(l_partkey in ( select name from ( values (1, 'john', 25),  (2, 'jane', 30),  (3, 'bob', 35) ) as t (id, name, age) where id = l_partkey )="cast(case(or(is null($1), $2), false, $3, true, $4, null, false))")
+        hashjoin(condition="l_partkey = l_partkey", type="left")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+          exchange(distribution=broadcast, collation=[])
+            project(c="case(is null($1), 0, $1)", =="case(is null($1), 0, $1) = 0", =2="=", =3="=3", l_partkey="l_partkey")
+              hashjoin(condition="l_partkey <=> column_00", type="right")
+                exchange(distribution=broadcast, collation=[])
+                  project(column_00="column_00", c="c", =="strict = 1", =3="possible = 1")
+                    hashagg(group="column_00", c="sum(c)", strict="max(strict)", possible="max(possible)")
+                      exchange(distribution=hash[0]20, collation=[])
+                        partialhashagg(group="column_00", c="count()", strict="max(s_case)", possible="max(p_case)")
+                          project(s_case="case(is true(=($0, $1)), 1, 0)", p_case="case(or(=($0, $1), is null($1)), 1, 0)", column_00="column_0")
+                            filter(condition="column_0 = column_0")
+                              dynamicvalues(tuples=[{ ?0, ?1, ?2 }, { ?3, ?4, ?5 }, { ?6, ?7, ?8 }])
+                hashagg(group="l_partkey")
+                  exchange(distribution=hash[0]20, collation=[])
+                    partialhashagg(group="l_partkey")
+                      osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      select 1 from lineitem where l_partkey in (
+      select p_partkey from part where p_mfgr > 10 
+      union 
+      select p_partkey from part join partsupp on p_retailprice=ps_supplycost where p_mfgr + ps_partkey > l_shipdate)
+    plan: |
+      project(1="?0")
+        semihashjoin(condition="l_partkey = l_partkey and l_shipdate = l_shipdate", type="semi", build="inner")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_partkey`, `l_shipdate` from `lineitem_col_index` as `lineitem_col_index`")
+          exchange(distribution=broadcast, collation=[])
+            project(l_partkey="l_partkey", l_shipdate="l_shipdate")
+              hashagg(group="l_partkey,l_shipdate,p_partkey")
+                exchange(distribution=hash[2]20, collation=[])
+                  partialhashagg(group="l_partkey,l_shipdate,p_partkey")
+                    unionall(concurrent=true)
+                      project(l_partkey="l_partkey", l_shipdate="l_shipdate", p_partkey="p_partkey")
+                        hashjoin(condition="l_partkey = p_partkey", type="inner")
+                          osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `p_partkey` from `part_col_index` as `part_col_index` where (`p_mfgr` > ?)")
+                          exchange(distribution=broadcast, collation=[])
+                            hashagg(group="l_partkey,l_shipdate")
+                              exchange(distribution=hash[1]20, collation=[])
+                                partialhashagg(group="l_partkey,l_shipdate")
+                                  osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_shipdate` from `lineitem_col_index` as `lineitem_col_index`")
+                      project(l_partkey="l_partkey", l_shipdate="l_shipdate", p_partkey="p_partkey")
+                        hashjoin(condition="cast(p_mfgr) + ps_partkey > l_shipdate and p_retailprice = ps_supplycost", type="inner")
+                          osstablescan(tables="partsupp_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `ps_partkey`, `ps_supplycost` from `partsupp_col_index` as `partsupp_col_index`")
+                          exchange(distribution=broadcast, collation=[])
+                            project(l_partkey="l_partkey", l_shipdate="l_shipdate", p_partkey="p_partkey", p_mfgr="p_mfgr", p_retailprice="p_retailprice")
+                              hashjoin(condition="l_partkey = p_partkey", type="inner")
+                                osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `p_partkey`, `p_mfgr`, `p_retailprice` from `part_col_index` as `part_col_index`")
+                                exchange(distribution=broadcast, collation=[])
+                                  hashagg(group="l_partkey,l_shipdate")
+                                    exchange(distribution=hash[1]20, collation=[])
+                                      partialhashagg(group="l_partkey,l_shipdate")
+                                        osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_shipdate` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      # any
+       SELECT * FROM customer WHERE 
+        c_mktsegment !=  any(select o_orderkey from orders where o_comment = c_mktsegment);
+    plan: |
+      semihashjoin(condition="c_mktsegment = c_mktsegment", type="semi", build="inner")
+        osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer_col_index` as `customer_col_index`")
+        project(c_mktsegment="c_mktsegment", l="l", u="u")
+          exchange(distribution=broadcast, collation=[])
+            hashjoin(condition="c_mktsegment <=> o_comment and (c_mktsegment <> l or c_mktsegment <> u)", type="inner")
+              hashagg(group="o_comment", l="min(l)", u="max(u)")
+                exchange(distribution=hash[0]20, collation=[])
+                  partialhashagg(group="o_comment", l="min(o_orderkey)", u="max(o_orderkey)")
+                    osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_comment` from `orders_col_index` as `orders_col_index` where (`o_comment` = `o_comment`)")
+              hashagg(group="c_mktsegment")
+                exchange(distribution=hash[0]20, collation=[])
+                  partialhashagg(group="c_mktsegment")
+                    osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer_col_index` as `customer_col_index`")
+  - sql: |
+      # some
+      SELECT * FROM customer WHERE 
+        c_mktsegment >  some(select o_orderkey from orders where o_comment = c_mktsegment);
+    plan: |
+      semihashjoin(condition="c_mktsegment = c_mktsegment", type="semi", build="inner")
+        osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer_col_index` as `customer_col_index`")
+        project(c_mktsegment="c_mktsegment", m="m")
+          exchange(distribution=broadcast, collation=[])
+            hashjoin(condition="c_mktsegment <=> o_comment and c_mktsegment > m", type="inner")
+              hashagg(group="o_comment", m="min(m)")
+                exchange(distribution=hash[0]20, collation=[])
+                  partialhashagg(group="o_comment", m="min(o_orderkey)")
+                    osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_comment` from `orders_col_index` as `orders_col_index` where (`o_comment` = `o_comment`)")
+              hashagg(group="c_mktsegment")
+                exchange(distribution=hash[0]20, collation=[])
+                  partialhashagg(group="c_mktsegment")
+                    osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer_col_index` as `customer_col_index`")
+  - sql: |
+      # exists
+      SELECT * FROM customer WHERE 
+        exists (select o_orderkey from orders where o_orderkey = c_mktsegment) or c_mktsegment > 1;
+    plan: |
+      project(c_custkey="c_custkey", c_name="c_name", c_address="c_address", c_nationkey="c_nationkey", c_phone="c_phone", c_acctbal="c_acctbal", c_mktsegment="c_mktsegment", c_comment="c_comment")
+        filter(condition="is not null(i) or c_mktsegment > ?0")
+          hashjoin(condition="c_mktsegment = o_orderkey0", type="left", build="left")
+            project(c_custkey="c_custkey", c_name="c_name", c_address="c_address", c_nationkey="c_nationkey", c_phone="c_phone", c_acctbal="c_acctbal", c_mktsegment="c_mktsegment", c_comment="c_comment")
+              exchange(distribution=hash[8], collation=[])
+                project(c_custkey="c_custkey", c_name="c_name", c_address="c_address", c_nationkey="c_nationkey", c_phone="c_phone", c_acctbal="c_acctbal", c_mktsegment="c_mktsegment", c_comment="c_comment", c_mktsegment_shuffle__="cast(c_mktsegment)")
+                  osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer_col_index` as `customer_col_index`")
+            project(i="i", o_orderkey0="o_orderkey0")
+              exchange(distribution=hash[2], collation=[])
+                project(i="true", o_orderkey0="o_orderkey", o_orderkey0_shuffle__="cast(o_orderkey)")
+                  osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey` from `orders_col_index` as `orders_col_index` where (`o_orderkey` = `o_orderkey`)")
+  - sql: |
+      # not exists
+      SELECT * FROM customer WHERE 
+        not exists (select o_orderpriority from orders where o_shippriority = c_mktsegment) is true
+    plan: |
+      project(c_custkey="c_custkey", c_name="c_name", c_address="c_address", c_nationkey="c_nationkey", c_phone="c_phone", c_acctbal="c_acctbal", c_mktsegment="c_mktsegment", c_comment="c_comment")
+        filter(condition="is true(is null(i))")
+          hashjoin(condition="c_mktsegment = o_shippriority0", type="left")
+            osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer_col_index` as `customer_col_index`")
+            exchange(distribution=broadcast, collation=[])
+              hashagg(group="i,o_shippriority0")
+                exchange(distribution=hash[1]20, collation=[])
+                  partialhashagg(group="i,o_shippriority0")
+                    project(i="true", o_shippriority0="o_shippriority")
+                      osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_shippriority` from `orders_col_index` as `orders_col_index` where (`o_shippriority` = `o_shippriority`)")
+  - sql: |
+      SELECT * FROM customer WHERE c_mktsegment= 'AUTOMOBILE' AND (SELECT COUNT(*) FROM orders WHERE o_custkey=c_custkey AND (SELECT SUM(l_extendedprice) FROM lineitem WHERE l_orderkey=o_orderkey)>300000)>5;
+    plan: |
+      project(c_custkey="c_custkey", c_name="c_name", c_address="c_address", c_nationkey="c_nationkey", c_phone="c_phone", c_acctbal="c_acctbal", c_mktsegment="c_mktsegment", c_comment="c_comment")
+        hashjoin(condition="c_custkey = c_custkey", type="inner")
+          exchange(distribution=hash[0]20, collation=[])
+            osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey`, `c_name`, `c_address`, `c_nationkey`, `c_phone`, `c_acctbal`, `c_mktsegment`, `c_comment` from `customer_col_index` as `customer_col_index` where (`c_mktsegment` = ?)")
+          project(c_custkey="c_custkey")
+            filter(condition="case(is null($2), 0, $2) > ?2")
+              project(c_custkey="c_custkey", o_custkey="o_custkey", count(*)="count(*)")
+                hashjoin(condition="c_custkey <=> o_custkey", type="right")
+                  hashagg(group="o_custkey", count(*)="sum(count(*))")
+                    hashjoin(condition="o_orderkey0 <=> l_orderkey0", type="inner")
+                      exchange(distribution=hash[0]20, collation=[])
+                        hashagg(group="o_custkey,o_orderkey0", count(*)="count()")
+                          hashjoin(condition="o_orderkey = o_orderkey", type="inner")
+                            exchange(distribution=hash[0]20, collation=[])
+                              osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey`, `o_custkey` from `orders_col_index` as `orders_col_index` where (`o_custkey` = `o_custkey`)")
+                            exchange(distribution=hash[0]20, collation=[])
+                              osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey` from `orders_col_index` as `orders_col_index`")
+                      exchange(distribution=broadcast, collation=[])
+                        project(l_orderkey0="l_orderkey0")
+                          filter(condition="sum(l_extendedprice) > ?1")
+                            hashagg(group="l_orderkey0", sum(l_extendedprice)="sum(sum(l_extendedprice))")
+                              exchange(distribution=hash[0]20, collation=[])
+                                partialhashagg(group="l_orderkey", sum(l_extendedprice)="sum(l_extendedprice)")
+                                  osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_extendedprice` from `lineitem_col_index` as `lineitem_col_index` where (`l_orderkey` = `l_orderkey`)")
+                  exchange(distribution=hash[0]20, collation=[])
+                    osstablescan(tables="customer_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `c_custkey` from `customer_col_index` as `customer_col_index` where (`c_mktsegment` = ?)")
+  - sql: |
+      select 1 from
+      lineitem
+      where
+      l_partkey > ( select count(p_partkey) + max(p_partkey) from part where p_name = l_quantity) 
+      OR l_partkey in (select p_partkey from part where p_name = l_quantity or p_name = l_suppkey)
+      OR  l_partkey in (select p_partkey from part where p_name = l_quantity 
+            and exists (select o_orderkey from orders where o_orderkey = l_orderkey+p_mfgr))
+    plan: |
+      project(1="?0")
+        filter(condition="l_partkey > $f0 or cast(is not null(p_partkey)) or cast(is not null(p_partkey0))")
+          hashjoin(condition="l_orderkey = l_orderkey and l_partkey = l_partkey and l_quantity = l_quantity", type="left")
+            hashjoin(condition="l_partkey = l_partkey and l_suppkey = l_suppkey and l_quantity = l_quantity", type="left")
+              hashjoin(condition="l_quantity = l_quantity", type="left")
+                osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                project($f0="$f1", l_quantity="l_quantity")
+                  exchange(distribution=broadcast, collation=[])
+                    hashjoin(condition="l_quantity <=> l_quantity", type="left", build="left")
+                      hashagg(group="l_quantity")
+                        exchange(distribution=hash[0]20, collation=[])
+                          partialhashagg(group="l_quantity")
+                            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                      hashagg(group="l_quantity", $f1="single_value(+)")
+                        hashjoin(condition="l_quantity <=> p_name0", type="left")
+                          hashagg(group="l_quantity")
+                            exchange(distribution=hash[0]20, collation=[])
+                              partialhashagg(group="l_quantity")
+                                osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                          exchange(distribution=broadcast, collation=[])
+                            project(p_name0="p_name", +="case(is null($1), 0, $1) + $f2")
+                              hashagg(group="p_name", $f1="sum($f1)", $f2="max($f2)")
+                                exchange(distribution=hash[0]20, collation=[])
+                                  partialhashagg(group="p_name", $f1="count()", $f2="max(p_partkey)")
+                                    osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index` where (`p_name` = `p_name`)")
+              exchange(distribution=broadcast, collation=[])
+                project(p_partkey="p_partkey", l_partkey="l_partkey", l_suppkey="l_suppkey", l_quantity="l_quantity")
+                  hashjoin(condition="l_partkey = p_partkey and (p_name = l_quantity or p_name = l_suppkey)", type="inner")
+                    hashagg(group="l_partkey,l_suppkey,l_quantity")
+                      exchange(distribution=hash[0]20, collation=[])
+                        partialhashagg(group="l_partkey,l_suppkey,l_quantity")
+                          hashjoin(condition="l_quantity = l_quantity", type="left")
+                            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                            project($f0="$f1", l_quantity="l_quantity")
+                              exchange(distribution=broadcast, collation=[])
+                                hashjoin(condition="l_quantity <=> l_quantity", type="left", build="left")
+                                  hashagg(group="l_quantity")
+                                    exchange(distribution=hash[0]20, collation=[])
+                                      partialhashagg(group="l_quantity")
+                                        osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                                  hashagg(group="l_quantity", $f1="single_value(+)")
+                                    hashjoin(condition="l_quantity <=> p_name0", type="left")
+                                      hashagg(group="l_quantity")
+                                        exchange(distribution=hash[0]20, collation=[])
+                                          partialhashagg(group="l_quantity")
+                                            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                                      exchange(distribution=broadcast, collation=[])
+                                        project(p_name0="p_name", +="case(is null($1), 0, $1) + $f2")
+                                          hashagg(group="p_name", $f1="sum($f1)", $f2="max($f2)")
+                                            exchange(distribution=hash[0]20, collation=[])
+                                              partialhashagg(group="p_name", $f1="count()", $f2="max(p_partkey)")
+                                                osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index` where (`p_name` = `p_name`)")
+                    exchange(distribution=hash[0]20, collation=[])
+                      osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index`")
+            exchange(distribution=broadcast, collation=[])
+              project(p_partkey="p_partkey", l_orderkey="l_orderkey", l_partkey="l_partkey", l_quantity="l_quantity")
+                semihashjoin(condition="l_orderkey = l_orderkey and l_partkey = l_partkey and l_quantity = l_quantity and p_mfgr = p_mfgr", type="semi", build="inner")
+                  project(l_orderkey="l_orderkey", l_partkey="l_partkey", l_quantity="l_quantity", p_partkey="p_partkey", p_mfgr="p_mfgr")
+                    hashjoin(condition="p_name = l_quantity and l_partkey = p_partkey", type="inner")
+                      hashagg(group="l_orderkey,l_partkey,l_quantity")
+                        exchange(distribution=hash[1]20, collation=[])
+                          partialhashagg(group="l_orderkey,l_partkey,l_quantity")
+                            hashjoin(condition="l_partkey = l_partkey and l_suppkey = l_suppkey and l_quantity = l_quantity", type="left")
+                              hashjoin(condition="l_quantity = l_quantity", type="left")
+                                osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                                project($f0="$f1", l_quantity="l_quantity")
+                                  exchange(distribution=broadcast, collation=[])
+                                    hashjoin(condition="l_quantity <=> l_quantity", type="left", build="left")
+                                      hashagg(group="l_quantity")
+                                        exchange(distribution=hash[0]20, collation=[])
+                                          partialhashagg(group="l_quantity")
+                                            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                                      hashagg(group="l_quantity", $f1="single_value(+)")
+                                        hashjoin(condition="l_quantity <=> p_name0", type="left")
+                                          hashagg(group="l_quantity")
+                                            exchange(distribution=hash[0]20, collation=[])
+                                              partialhashagg(group="l_quantity")
+                                                osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                                          exchange(distribution=broadcast, collation=[])
+                                            project(p_name0="p_name", +="case(is null($1), 0, $1) + $f2")
+                                              hashagg(group="p_name", $f1="sum($f1)", $f2="max($f2)")
+                                                exchange(distribution=hash[0]20, collation=[])
+                                                  partialhashagg(group="p_name", $f1="count()", $f2="max(p_partkey)")
+                                                    osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index` where (`p_name` = `p_name`)")
+                              exchange(distribution=broadcast, collation=[])
+                                project(p_partkey="p_partkey", l_partkey="l_partkey", l_suppkey="l_suppkey", l_quantity="l_quantity")
+                                  hashjoin(condition="l_partkey = p_partkey and (p_name = l_quantity or p_name = l_suppkey)", type="inner")
+                                    hashagg(group="l_partkey,l_suppkey,l_quantity")
+                                      exchange(distribution=hash[0]20, collation=[])
+                                        partialhashagg(group="l_partkey,l_suppkey,l_quantity")
+                                          hashjoin(condition="l_quantity = l_quantity", type="left")
+                                            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                                            project($f0="$f1", l_quantity="l_quantity")
+                                              exchange(distribution=broadcast, collation=[])
+                                                hashjoin(condition="l_quantity <=> l_quantity", type="left", build="left")
+                                                  hashagg(group="l_quantity")
+                                                    exchange(distribution=hash[0]20, collation=[])
+                                                      partialhashagg(group="l_quantity")
+                                                        osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                                                  hashagg(group="l_quantity", $f1="single_value(+)")
+                                                    hashjoin(condition="l_quantity <=> p_name0", type="left")
+                                                      hashagg(group="l_quantity")
+                                                        exchange(distribution=hash[0]20, collation=[])
+                                                          partialhashagg(group="l_quantity")
+                                                            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                                                      exchange(distribution=broadcast, collation=[])
+                                                        project(p_name0="p_name", +="case(is null($1), 0, $1) + $f2")
+                                                          hashagg(group="p_name", $f1="sum($f1)", $f2="max($f2)")
+                                                            exchange(distribution=hash[0]20, collation=[])
+                                                              partialhashagg(group="p_name", $f1="count()", $f2="max(p_partkey)")
+                                                                osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index` where (`p_name` = `p_name`)")
+                                    exchange(distribution=hash[0]20, collation=[])
+                                      osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index`")
+                      exchange(distribution=hash[0]20, collation=[])
+                        osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name`, `p_mfgr` from `part_col_index` as `part_col_index`")
+                  exchange(distribution=hash[1]20, collation=[])
+                    project(l_orderkey="l_orderkey", l_partkey="l_partkey", l_quantity="l_quantity", p_mfgr="p_mfgr")
+                      hashjoin(condition="o_orderkey = +", type="inner")
+                        exchange(distribution=hash[4], collation=[])
+                          project(l_orderkey="l_orderkey", l_partkey="l_partkey", l_quantity="l_quantity", p_mfgr="p_mfgr", +="l_orderkey + cast(p_mfgr)")
+                            hashagg(group="l_orderkey,l_partkey,l_quantity,p_mfgr")
+                              exchange(distribution=hash[1]20, collation=[])
+                                partialhashagg(group="l_orderkey,l_partkey,l_quantity,p_mfgr")
+                                  nljoin(condition="true", type="inner")
+                                    exchange(distribution=single, collation=[])
+                                      hashagg(group="l_orderkey,l_partkey,l_quantity")
+                                        exchange(distribution=hash[0]20, collation=[])
+                                          partialhashagg(group="l_orderkey,l_partkey,l_quantity")
+                                            hashjoin(condition="l_partkey = l_partkey and l_suppkey = l_suppkey and l_quantity = l_quantity", type="left")
+                                              hashjoin(condition="l_quantity = l_quantity", type="left")
+                                                osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                                                project($f0="$f1", l_quantity="l_quantity")
+                                                  exchange(distribution=broadcast, collation=[])
+                                                    hashjoin(condition="l_quantity <=> l_quantity", type="left", build="left")
+                                                      hashagg(group="l_quantity")
+                                                        exchange(distribution=hash[0]20, collation=[])
+                                                          partialhashagg(group="l_quantity")
+                                                            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                                                      hashagg(group="l_quantity", $f1="single_value(+)")
+                                                        hashjoin(condition="l_quantity <=> p_name0", type="left")
+                                                          hashagg(group="l_quantity")
+                                                            exchange(distribution=hash[0]20, collation=[])
+                                                              partialhashagg(group="l_quantity")
+                                                                osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                                                          exchange(distribution=broadcast, collation=[])
+                                                            project(p_name0="p_name", +="case(is null($1), 0, $1) + $f2")
+                                                              hashagg(group="p_name", $f1="sum($f1)", $f2="max($f2)")
+                                                                exchange(distribution=hash[0]20, collation=[])
+                                                                  partialhashagg(group="p_name", $f1="count()", $f2="max(p_partkey)")
+                                                                    osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index` where (`p_name` = `p_name`)")
+                                              exchange(distribution=broadcast, collation=[])
+                                                project(p_partkey="p_partkey", l_partkey="l_partkey", l_suppkey="l_suppkey", l_quantity="l_quantity")
+                                                  hashjoin(condition="l_partkey = p_partkey and (p_name = l_quantity or p_name = l_suppkey)", type="inner")
+                                                    hashagg(group="l_partkey,l_suppkey,l_quantity")
+                                                      exchange(distribution=hash[0]20, collation=[])
+                                                        partialhashagg(group="l_partkey,l_suppkey,l_quantity")
+                                                          hashjoin(condition="l_quantity = l_quantity", type="left")
+                                                            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                                                            project($f0="$f1", l_quantity="l_quantity")
+                                                              exchange(distribution=broadcast, collation=[])
+                                                                hashjoin(condition="l_quantity <=> l_quantity", type="left", build="left")
+                                                                  hashagg(group="l_quantity")
+                                                                    exchange(distribution=hash[0]20, collation=[])
+                                                                      partialhashagg(group="l_quantity")
+                                                                        osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                                                                  hashagg(group="l_quantity", $f1="single_value(+)")
+                                                                    hashjoin(condition="l_quantity <=> p_name0", type="left")
+                                                                      hashagg(group="l_quantity")
+                                                                        exchange(distribution=hash[0]20, collation=[])
+                                                                          partialhashagg(group="l_quantity")
+                                                                            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                                                                      exchange(distribution=broadcast, collation=[])
+                                                                        project(p_name0="p_name", +="case(is null($1), 0, $1) + $f2")
+                                                                          hashagg(group="p_name", $f1="sum($f1)", $f2="max($f2)")
+                                                                            exchange(distribution=hash[0]20, collation=[])
+                                                                              partialhashagg(group="p_name", $f1="count()", $f2="max(p_partkey)")
+                                                                                osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index` where (`p_name` = `p_name`)")
+                                                    exchange(distribution=hash[0]20, collation=[])
+                                                      osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index`")
+                                    exchange(distribution=single, collation=[])
+                                      osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name`, `p_mfgr` from `part_col_index` as `part_col_index`")
+                        project(o_orderkey="o_orderkey")
+                          exchange(distribution=hash[1], collation=[])
+                            project(o_orderkey="o_orderkey", o_orderkey_shuffle__="cast(o_orderkey)")
+                              osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey` from `orders_col_index` as `orders_col_index`")
+  - sql: |
+      select 1 from lineitem join part on p_name = l_quantity 
+      and exists (select o_orderkey from orders where o_orderkey = l_orderkey) ;
+    plan: |
+      project(1="?0")
+        hashjoin(condition="l_quantity = p_name", type="inner")
+          exchange(distribution=hash[0], collation=[])
+            project(l_quantity="l_quantity")
+              semihashjoin(condition="l_orderkey = o_orderkey0", type="semi", build="inner")
+                exchange(distribution=hash[0]20, collation=[])
+                  osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                exchange(distribution=hash[0]20, collation=[])
+                  osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey` as `o_orderkey0` from `orders_col_index` as `orders_col_index` where (`o_orderkey` = `o_orderkey`)")
+          project(p_name="p_name")
+            exchange(distribution=hash[1], collation=[])
+              project(p_name="p_name", p_name_shuffle__="cast(p_name)")
+                osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_name` from `part_col_index` as `part_col_index`")
+  - sql: |
+      select 1 from lineitem join part on p_name = l_quantity 
+      or exists (select o_orderkey from orders where o_orderkey = l_orderkey) ;
+    plan: |
+      project(1="?0")
+        nljoin(condition="p_name = l_quantity or is not null(i)", type="inner")
+          exchange(distribution=single, collation=[])
+            project(l_quantity="l_quantity", i="i")
+              hashjoin(condition="l_orderkey = o_orderkey0", type="right")
+                project(i="true", o_orderkey0="o_orderkey")
+                  exchange(distribution=hash[0]20, collation=[])
+                    osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `o_orderkey` from `orders_col_index` as `orders_col_index` where (`o_orderkey` = `o_orderkey`)")
+                exchange(distribution=hash[0]20, collation=[])
+                  osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+          exchange(distribution=single, collation=[])
+            osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_name` from `part_col_index` as `part_col_index`")
+  - sql: |
+      select  (l_partkey,l_orderkey) in (select r_comment,r_name from region) from lineitem;
+    plan: |
+      project((l_partkey, l_orderkey) in ( select r_comment, r_name from region )="cast(case(or(is null($0), $1), false, $2, true, $3, null, false))")
+        hashjoin(condition="l_orderkey = l_orderkey and l_partkey = l_partkey", type="right")
+          exchange(distribution=broadcast, collation=[])
+            project(c="case(is null($4), 0, $4)", =="case(is null($4), 0, $4) = 0", =2="=", =3="=4", l_orderkey="l_orderkey", l_partkey="l_partkey")
+              hashjoin(condition="l_orderkey <=> l_orderkey and l_partkey <=> l_partkey", type="left", build="left")
+                hashagg(group="l_orderkey,l_partkey")
+                  exchange(distribution=hash[0]20, collation=[])
+                    partialhashagg(group="l_orderkey,l_partkey")
+                      osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+                project(l_orderkey="l_orderkey", l_partkey="l_partkey", c="c", =="strict = 1", =4="possible = 1")
+                  hashagg(group="l_orderkey,l_partkey", c="count()", strict="max(s_case)", possible="max(p_case)")
+                    project(s_case="case(and(is true(=($1, $3)), is true(=($0, $2))), 1, 0)", p_case="case(and(or(=($1, $3), is null($3)), =($0, $2)), 1, 0)", l_orderkey="l_orderkey", l_partkey="l_partkey")
+                      nljoin(condition="true", type="inner")
+                        hashagg(group="l_orderkey,l_partkey")
+                          exchange(distribution=hash[0]20, collation=[])
+                            partialhashagg(group="l_orderkey,l_partkey")
+                              osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+                        exchange(distribution=broadcast, collation=[])
+                          osstablescan(tables="region_col_index[p1]", sql="select `r_name`, `r_comment` from `region_col_index` as `region_col_index`")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      select 1 from lineitem where  l_partkey = (select r_comment from region);
+    plan: |
+      project(1="?0")
+        hashjoin(condition="$f0 = l_partkey", type="inner")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+          exchange(distribution=broadcast, collation=[])
+            hashagg($f0="single_value(r_comment)")
+              exchange(distribution=single, collation=[])
+                osstablescan(tables="region_col_index[p1]", sql="select `r_comment` from `region_col_index` as `region_col_index`")
+  - sql: |
+      select  l_partkey in (select r_comment from region) from lineitem;
+    plan: |
+      project(l_partkey in ( select r_comment from region )="cast(case(or(is null($0), $1), false, $2, true, $3, null, false))")
+        hashjoin(condition="l_partkey = l_partkey", type="right")
+          project(c="case(is null($2), 0, $2)", =="case(is null($2), 0, $2) = 0", =2="=", =3="=3", l_partkey="l_partkey")
+            exchange(distribution=broadcast, collation=[])
+              hashjoin(condition="l_partkey <=> l_partkey", type="left", build="left")
+                hashagg(group="l_partkey")
+                  exchange(distribution=hash[0]20, collation=[])
+                    partialhashagg(group="l_partkey")
+                      osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+                project(l_partkey="l_partkey", c="c", =="strict = 1", =3="possible = 1")
+                  hashagg(group="l_partkey", c="count()", strict="max(s_case)", possible="max(p_case)")
+                    project(s_case="case(is true(=($0, $1)), 1, 0)", p_case="case(or(=($0, $1), is null($1)), 1, 0)", l_partkey="l_partkey")
+                      nljoin(condition="true", type="inner")
+                        hashagg(group="l_partkey")
+                          exchange(distribution=hash[0]20, collation=[])
+                            partialhashagg(group="l_partkey")
+                              osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+                        exchange(distribution=broadcast, collation=[])
+                          osstablescan(tables="region_col_index[p1]", sql="select `r_comment` from `region_col_index` as `region_col_index`")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      select  l_partkey, exists (select p_partkey from part where p_name = l_quantity ) i from lineitem where l_orderkey > 1;
+    plan: |
+      project(l_partkey="l_partkey", i="is not null(i)")
+        hashjoin(condition="l_quantity = p_name0", type="right")
+          exchange(distribution=broadcast, collation=[])
+            hashagg(group="i,p_name0")
+              exchange(distribution=hash[1]20, collation=[])
+                partialhashagg(group="i,p_name0")
+                  project(i="true", p_name0="p_name")
+                    osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_name` from `part_col_index` as `part_col_index` where (`p_name` = `p_name`)")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index` where (`l_orderkey` > ?)")
+  - sql: |
+      select  l_partkey i from lineitem where exists (select p_partkey from part ) and l_orderkey > 1;
+    plan: |
+      seminljoin(condition="true", type="semi")
+        exchange(distribution=single, collation=[])
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey` from `lineitem_col_index` as `lineitem_col_index` where (`l_orderkey` > ?)")
+        exchange(distribution=single, collation=[])
+          osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey` from `part_col_index` as `part_col_index`")
+  - sql: |
+      select  l_partkey i from lineitem where exists (select p_partkey from part where p_name = l_quantity ) and l_orderkey > 1;
+    plan: |
+      project(i="l_partkey")
+        semihashjoin(condition="l_quantity = p_name", type="semi", build="outer")
+          exchange(distribution=hash[1], collation=[])
+            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index` where (`l_orderkey` > ?)")
+          project(p_name="p_name")
+            exchange(distribution=hash[1], collation=[])
+              project(p_name="p_name", p_name_shuffle__="cast(p_name)")
+                osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_name` from `part_col_index` as `part_col_index` where (`p_name` = `p_name`)")
+  - sql: |
+      select  l_partkey in (select p_partkey from part where p_name = l_quantity ) from lineitem;
+    plan: |
+      project(l_partkey in ( select p_partkey from part where p_name = l_quantity )="cast(case(or(is null($0), $1), false, $2, true, $3, null, false))")
+        hashjoin(condition="l_partkey = l_partkey and l_quantity = l_quantity", type="right")
+          exchange(distribution=broadcast, collation=[])
+            project(c="case(is null($4), 0, $4)", =="case(is null($4), 0, $4) = 0", =2="=", =3="=4", l_partkey="l_partkey", l_quantity="l_quantity")
+              hashjoin(condition="l_partkey <=> l_partkey and l_quantity <=> l_quantity", type="left", build="left")
+                hashagg(group="l_partkey,l_quantity")
+                  exchange(distribution=hash[0]20, collation=[])
+                    partialhashagg(group="l_partkey,l_quantity")
+                      osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                project(l_partkey="l_partkey", l_quantity="l_quantity", c="c", =="strict = 1", =4="possible = 1")
+                  hashagg(group="l_partkey,l_quantity", c="sum(c)", strict="max(strict)", possible="max(possible)")
+                    exchange(distribution=hash[0]20, collation=[])
+                      partialhashagg(group="l_partkey,l_quantity", c="count()", strict="max(s_case)", possible="max(p_case)")
+                        project(s_case="case(is true(=($2, $0)), 1, 0)", p_case="case(=($2, $0), 1, 0)", l_partkey="l_partkey", l_quantity="l_quantity")
+                          hashjoin(condition="l_quantity = p_name", type="inner")
+                            osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index`")
+                            exchange(distribution=broadcast, collation=[])
+                              hashagg(group="l_partkey,l_quantity")
+                                exchange(distribution=hash[1]20, collation=[])
+                                  partialhashagg(group="l_partkey,l_quantity")
+                                    osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      select  l_partkey in (select r_comment from region where r_regionkey = l_quantity ) from lineitem;
+    plan: |
+      project(l_partkey in ( select r_comment from region where r_regionkey = l_quantity )="cast(case(or(is null($0), $1), false, $2, true, $3, null, false))")
+        hashjoin(condition="l_partkey = l_partkey and l_quantity = l_quantity", type="right")
+          exchange(distribution=broadcast, collation=[])
+            project(c="case(is null($2), 0, $2)", =="case(is null($2), 0, $2) = 0", =2="=", =3="=4", l_partkey="l_partkey0", l_quantity="l_quantity0")
+              hashjoin(condition="l_partkey <=> l_partkey and l_quantity <=> l_quantity", type="right")
+                project(l_partkey="l_partkey", l_quantity="l_quantity", c="c", =="strict = 1", =4="possible = 1")
+                  hashagg(group="l_partkey,l_quantity", c="count()", strict="max(s_case)", possible="max(p_case)")
+                    project(s_case="case(is true(=($0, $3)), 1, 0)", p_case="case(or(=($0, $3), is null($3)), 1, 0)", l_partkey="l_partkey", l_quantity="l_quantity")
+                      hashjoin(condition="l_quantity = r_regionkey", type="inner")
+                        hashagg(group="l_partkey,l_quantity")
+                          exchange(distribution=hash[1]20, collation=[])
+                            partialhashagg(group="l_partkey,l_quantity")
+                              osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                        exchange(distribution=broadcast, collation=[])
+                          osstablescan(tables="region_col_index[p1]", sql="select `r_regionkey`, `r_comment` from `region_col_index` as `region_col_index`")
+                hashagg(group="l_partkey,l_quantity")
+                  exchange(distribution=hash[1]20, collation=[])
+                    partialhashagg(group="l_partkey,l_quantity")
+                      osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      select 1 from lineitem where l_partkey in (select p_partkey from part where p_name = l_quantity );
+    plan: |
+      project(1="?0")
+        semihashjoin(condition="l_partkey = p_partkey and l_quantity = p_name", type="semi", build="inner")
+          exchange(distribution=hash[0]20, collation=[])
+            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+          exchange(distribution=hash[0]20, collation=[])
+            osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index` where ((`p_name` = `p_name`) and (`p_partkey` = `p_partkey`))")
+  - sql: |
+      select 1 from lineitem where l_partkey in (select p_partkey from part where p_name > l_quantity order by p_mfgr desc limit 1);
+    plan: |
+      project(1="?0")
+        semihashjoin(condition="l_partkey = l_partkey and l_quantity = l_quantity", type="semi", build="inner")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+          exchange(distribution=broadcast, collation=[])
+            project(l_partkey="l_partkey", l_quantity="l_quantity")
+              filter(condition="l_partkey = p_partkey and between asymmetric($4, '1', '1')")
+                sortwindow(p_partkey="p_partkey", p_mfgr="p_mfgr", l_partkey="l_partkey", l_quantity="l_quantity", rn="window#0row_number()", reference windows="window#0=window(partition {2, 3} order by [1 desc-nulls-last] range between unbounded preceding and current row aggs [row_number()])")
+                  grouptopn(sort="p_mfgr desc", fetch='1', group={2, 3})
+                    exchange(distribution=hash[2]20, collation=[])
+                      grouptopn(sort="p_mfgr desc", fetch='1', group={2, 3}, partial=true)
+                        project(p_partkey="p_partkey", p_mfgr="p_mfgr", l_partkey="l_partkey", l_quantity="l_quantity")
+                          nljoin(condition="p_name > l_quantity", type="inner")
+                            osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name`, `p_mfgr` from `part_col_index` as `part_col_index`")
+                            exchange(distribution=broadcast, collation=[])
+                              hashagg(group="l_partkey,l_quantity")
+                                exchange(distribution=hash[0]20, collation=[])
+                                  partialhashagg(group="l_partkey,l_quantity")
+                                    osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      -- row subquery
+      select 1 from lineitem where l_orderkey = 1 or row(l_partkey, l_suppkey) in (select p_partkey,p_size from part where p_name like l_quantity+'1');
+    plan: |
+      project(1="?0")
+        filter(condition="l_orderkey = ?1 or cast(is not null(f1))")
+          hashjoin(condition="l_partkey = l_partkey and l_suppkey = l_suppkey and l_quantity = l_quantity", type="left")
+            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+            exchange(distribution=broadcast, collation=[])
+              project(f1="p_partkey", l_partkey="l_partkey", l_suppkey="l_suppkey", l_quantity="l_quantity")
+                hashjoin(condition="p_size = l_suppkey and l_partkey = p_partkey and p_name like l_quantity + cast(?2)", type="inner")
+                  osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `p_partkey`, `p_name`, `p_size` from `part_col_index` as `part_col_index`")
+                  exchange(distribution=broadcast, collation=[])
+                    hashagg(group="l_partkey,l_suppkey,l_quantity")
+                      exchange(distribution=hash[2]20, collation=[])
+                        partialhashagg(group="l_partkey,l_suppkey,l_quantity")
+                          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      -- or subquery
+      select 1 from lineitem where l_orderkey = 1 or l_partkey in (select p_partkey from part where p_name like l_quantity+'1');
+    plan: |
+      project(1="?0")
+        filter(condition="l_orderkey = ?1 or cast(is not null(p_partkey))")
+          hashjoin(condition="l_partkey = l_partkey and l_quantity = l_quantity", type="left")
+            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+            exchange(distribution=broadcast, collation=[])
+              project(p_partkey="p_partkey", l_partkey="l_partkey", l_quantity="l_quantity")
+                hashjoin(condition="l_partkey = p_partkey and p_name like l_quantity + cast(?2)", type="inner")
+                  osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index`")
+                  exchange(distribution=broadcast, collation=[])
+                    hashagg(group="l_partkey,l_quantity")
+                      exchange(distribution=hash[1]20, collation=[])
+                        partialhashagg(group="l_partkey,l_quantity")
+                          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      select 1 from lineitem where l_orderkey = 1 or l_partkey in (select p_partkey from part);
+    plan: |
+      project(1="?0")
+        filter(condition="l_orderkey = ?1 or cast(is not null(p_partkey))")
+          hashjoin(condition="l_partkey = p_partkey0", type="left")
+            exchange(distribution=hash[1]20, collation=[])
+              osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey` from `lineitem_col_index` as `lineitem_col_index`")
+            project(p_partkey="p_partkey", p_partkey0="p_partkey")
+              exchange(distribution=hash[0]20, collation=[])
+                osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey` from `part_col_index` as `part_col_index` where (`p_partkey` = `p_partkey`)")
+  - sql: |
+      select  1 from lineitem where 1 in (select p_partkey from part) or (1,l_suppkey) in (select p_partkey,p_mfgr from part);
+    plan: |
+      project(1="?0")
+        filter(condition="cast(is not null(p_partkey)) or cast(is not null(p_partkey0))")
+          hashjoin(condition="l_suppkey = p_mfgr", type="left")
+            nljoin(condition="true", type="left")
+              osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_suppkey` from `lineitem_col_index` as `lineitem_col_index`")
+              exchange(distribution=broadcast, collation=[])
+                osstablescan(tables="part_col_index[p6]", sql="select `p_partkey` from `part_col_index` as `part_col_index` where (? = `p_partkey`)")
+            exchange(distribution=broadcast, collation=[])
+              osstablescan(tables="part_col_index[p6]", sql="select `p_partkey`, `p_mfgr` from `part_col_index` as `part_col_index` where ((? = `p_partkey`) and (`p_mfgr` = `p_mfgr`))")
+  - sql: |
+      -- or subquery
+      select 1 from lineitem where l_partkey in (select p_partkey from part where UPPER(p_name) = l_quantity);
+    plan: |
+      project(1="?0")
+        semihashjoin(condition="l_partkey = l_partkey and l_quantity = l_quantity", type="semi", build="inner")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+          exchange(distribution=broadcast, collation=[])
+            project(l_partkey="l_partkey", l_quantity="l_quantity")
+              hashjoin(condition="l_quantity = upper and l_partkey = p_partkey", type="inner")
+                project(p_partkey="p_partkey", upper="upper(p_name)")
+                  osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index`")
+                exchange(distribution=broadcast, collation=[])
+                  hashagg(group="l_partkey,l_quantity")
+                    exchange(distribution=hash[0]20, collation=[])
+                      partialhashagg(group="l_partkey,l_quantity")
+                        osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      -- or in subquery
+      select 1 from lineitem where l_partkey in (select p_partkey from part where p_name = l_quantity or p_name = l_suppkey);
+    plan: |
+      project(1="?0")
+        semihashjoin(condition="l_partkey = l_partkey and l_suppkey = l_suppkey and l_quantity = l_quantity", type="semi", build="inner")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+          exchange(distribution=broadcast, collation=[])
+            project(l_partkey="l_partkey", l_suppkey="l_suppkey", l_quantity="l_quantity")
+              hashjoin(condition="l_partkey = p_partkey and (p_name = l_quantity or p_name = l_suppkey)", type="inner")
+                osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index`")
+                exchange(distribution=broadcast, collation=[])
+                  hashagg(group="l_partkey,l_suppkey,l_quantity")
+                    exchange(distribution=hash[1]20, collation=[])
+                      partialhashagg(group="l_partkey,l_suppkey,l_quantity")
+                        osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_suppkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      -- correlated scalar subquery
+      select 1 from lineitem where l_partkey > (select count(p_partkey)+ max(p_partkey) from part where p_name = l_quantity );
+    plan: |
+      project(1="?0")
+        hashjoin(condition="l_quantity = l_quantity and l_partkey > $f1", type="inner")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+          project(l_quantity="l_quantity", $f1="$f1")
+            exchange(distribution=broadcast, collation=[])
+              hashjoin(condition="l_quantity <=> l_quantity", type="left", build="left")
+                hashagg(group="l_quantity")
+                  exchange(distribution=hash[0]20, collation=[])
+                    partialhashagg(group="l_quantity")
+                      osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                hashagg(group="l_quantity", $f1="single_value(+)")
+                  hashjoin(condition="l_quantity <=> p_name0", type="left")
+                    hashagg(group="l_quantity")
+                      exchange(distribution=hash[0]20, collation=[])
+                        partialhashagg(group="l_quantity")
+                          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                    exchange(distribution=broadcast, collation=[])
+                      project(p_name0="p_name", +="case(is null($1), 0, $1) + $f2")
+                        hashagg(group="p_name", $f1="sum($f1)", $f2="max($f2)")
+                          exchange(distribution=hash[0]20, collation=[])
+                            partialhashagg(group="p_name", $f1="count()", $f2="max(p_partkey)")
+                              osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index` where (`p_name` = `p_name`)")
+  - sql: |
+      -- correlated scalar subquery
+      select 1 from lineitem where l_partkey > (select p_partkey from part where p_name = l_quantity );
+    plan: |
+      project(1="?0")
+        hashjoin(condition="l_quantity = l_quantity and l_partkey > $f1", type="inner")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+          project(l_quantity="l_quantity", $f1="$f1")
+            exchange(distribution=broadcast, collation=[])
+              hashjoin(condition="l_quantity <=> p_name", type="left", build="left")
+                hashagg(group="l_quantity")
+                  exchange(distribution=hash[0]20, collation=[])
+                    partialhashagg(group="l_quantity")
+                      osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                exchange(distribution=broadcast, collation=[])
+                  hashagg(group="p_name", $f1="single_value(p_partkey)")
+                    exchange(distribution=hash[1]20, collation=[])
+                      osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index` where (`p_name` = `p_name`)")
+  - sql: |
+      -- nested scalar subquery
+      select 1 from lineitem where l_partkey in (select p_partkey from part where p_name = l_quantity 
+      and exists (select o_orderkey from orders where o_orderkey = l_orderkey));
+    plan: |
+      project(1="?0")
+        semihashjoin(condition="l_orderkey = l_orderkey and l_partkey = l_partkey and l_quantity = l_quantity", type="semi", build="inner")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+          exchange(distribution=broadcast, collation=[])
+            semihashjoin(condition="l_orderkey <=> l_orderkey and l_partkey <=> l_partkey and l_quantity <=> l_quantity", type="semi", build="inner")
+              project(l_orderkey="l_orderkey", l_partkey="l_partkey", l_quantity="l_quantity")
+                hashjoin(condition="p_name = l_quantity and l_partkey = p_partkey", type="inner")
+                  osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `p_partkey`, `p_name` from `part_col_index` as `part_col_index`")
+                  exchange(distribution=broadcast, collation=[])
+                    hashagg(group="l_orderkey,l_partkey,l_quantity")
+                      exchange(distribution=hash[2]20, collation=[])
+                        partialhashagg(group="l_orderkey,l_partkey,l_quantity")
+                          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+              exchange(distribution=broadcast, collation=[])
+                project(l_orderkey="l_orderkey", l_partkey="l_partkey", l_quantity="l_quantity")
+                  hashjoin(condition="l_orderkey = o_orderkey", type="inner")
+                    osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `o_orderkey` from `orders_col_index` as `orders_col_index`")
+                    exchange(distribution=broadcast, collation=[])
+                      hashagg(group="l_orderkey,l_partkey,l_quantity")
+                        exchange(distribution=hash[2]20, collation=[])
+                          partialhashagg(group="l_orderkey,l_partkey,l_quantity")
+                            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+  - sql: |
+      -- nested scalar subquery
+      select 1 from lineitem where l_partkey in (select p_partkey from part where p_name = l_quantity 
+      and exists (select o_orderkey from orders where o_orderkey = l_orderkey+p_mfgr));
+    plan: |
+      project(1="?0")
+        semihashjoin(condition="l_orderkey = l_orderkey and l_partkey = l_partkey and l_quantity = l_quantity", type="semi", build="inner")
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `l_orderkey`, `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+          exchange(distribution=broadcast, collation=[])
+            project(l_orderkey="l_orderkey", l_partkey="l_partkey", l_quantity="l_quantity")
+              semihashjoin(condition="l_orderkey = l_orderkey and l_partkey = l_partkey and l_quantity = l_quantity and p_mfgr = p_mfgr", type="semi", build="inner")
+                project(l_orderkey="l_orderkey", l_partkey="l_partkey", l_quantity="l_quantity", p_mfgr="p_mfgr")
+                  hashjoin(condition="p_name = l_quantity and l_partkey = p_partkey", type="inner")
+                    osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `p_partkey`, `p_name`, `p_mfgr` from `part_col_index` as `part_col_index`")
+                    exchange(distribution=broadcast, collation=[])
+                      hashagg(group="l_orderkey,l_partkey,l_quantity")
+                        exchange(distribution=hash[2]20, collation=[])
+                          partialhashagg(group="l_orderkey,l_partkey,l_quantity")
+                            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+                exchange(distribution=broadcast, collation=[])
+                  project(l_orderkey="l_orderkey", l_partkey="l_partkey", l_quantity="l_quantity", p_mfgr="p_mfgr")
+                    hashjoin(condition="o_orderkey = +", type="inner")
+                      osstablescan(tables="orders_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, partition=[remote], sql="select `o_orderkey` from `orders_col_index` as `orders_col_index`")
+                      exchange(distribution=broadcast, collation=[])
+                        project(l_orderkey="l_orderkey", l_partkey="l_partkey", l_quantity="l_quantity", p_mfgr="p_mfgr", +="l_orderkey + cast(p_mfgr)")
+                          hashagg(group="l_orderkey,l_partkey,l_quantity,p_mfgr")
+                            exchange(distribution=hash[2]20, collation=[])
+                              project(l_orderkey="l_orderkey", l_partkey="l_partkey", l_quantity="l_quantity", p_mfgr="p_mfgr")
+                                partialhashagg(group="p_mfgr,l_orderkey,l_partkey,l_quantity")
+                                  nljoin(condition="true", type="inner")
+                                    osstablescan(tables="part_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `p_partkey`, `p_name`, `p_mfgr` from `part_col_index` as `part_col_index`")
+                                    exchange(distribution=broadcast, collation=[])
+                                      hashagg(group="l_orderkey,l_partkey,l_quantity")
+                                        exchange(distribution=hash[0]20, collation=[])
+                                          partialhashagg(group="l_orderkey,l_partkey,l_quantity")
+                                            osstablescan(tables="lineitem_col_index[p1,p2,p3,p4,p5,p6]", shardcount=6, sql="select `l_orderkey`, `l_partkey`, `l_quantity` from `lineitem_col_index` as `lineitem_col_index`")
+DDL:
+  customer:
+    CREATE TABLE IF NOT EXISTS `customer` (  `c_custkey` int(11) NOT NULL,  `c_name` varchar(25) NOT NULL,  `c_address` varchar(40) NOT NULL,  `c_nationkey` int(11) NOT NULL,  `c_phone` varchar(15) NOT NULL,  `c_acctbal` decimal(15, 2) NOT NULL,  `c_mktsegment` varchar(10) NOT NULL,  `c_comment` varchar(117) NOT NULL,  PRIMARY KEY (`c_custkey`),  CLUSTERED COLUMNAR INDEX `customer_col_index`(`c_custkey`) PARTITION BY HASH (`c_custkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`c_custkey`) PARTITIONS 8;
+  lineitem:
+    CREATE TABLE IF NOT EXISTS `lineitem` (  `l_orderkey` bigint(20) NOT NULL,  `l_partkey` int(11) NOT NULL,  `l_suppkey` int(11) NOT NULL,  `l_linenumber` bigint(20) NOT NULL,  `l_quantity` decimal(15, 2) NOT NULL,  `l_extendedprice` decimal(15, 2) NOT NULL,  `l_discount` decimal(15, 2) NOT NULL,  `l_tax` decimal(15, 2) NOT NULL,  `l_returnflag` varchar(1) NOT NULL,  `l_linestatus` varchar(1) NOT NULL,  `l_shipdate` date NOT NULL,  `l_commitdate` date NOT NULL,  `l_receiptdate` date NOT NULL,  `l_shipinstruct` varchar(25) NOT NULL,  `l_shipmode` varchar(10) NOT NULL,  `l_comment` varchar(44) NOT NULL,  PRIMARY KEY (`l_orderkey`, `l_linenumber`),  CLUSTERED COLUMNAR INDEX `lineitem_col_index`(`l_shipdate`, `l_orderkey`) PARTITION BY HASH (`l_orderkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`l_orderkey`) PARTITIONS 8;
+  orders:
+    CREATE TABLE IF NOT EXISTS `orders` (  `o_orderkey` bigint(20) NOT NULL,  `o_custkey` int(11) NOT NULL,  `o_orderstatus` varchar(1) NOT NULL,  `o_totalprice` decimal(15, 2) NOT NULL,  `o_orderdate` date NOT NULL,  `o_orderpriority` varchar(15) NOT NULL,  `o_clerk` varchar(15) NOT NULL,  `o_shippriority` bigint(20) NOT NULL,  `o_comment` varchar(79) NOT NULL,  PRIMARY KEY (`o_orderkey`),  CLUSTERED COLUMNAR INDEX `orders_col_index`(`o_orderdate`, `o_orderkey`) PARTITION BY HASH (`o_orderkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`o_orderkey`) PARTITIONS 8;
+  part:
+    CREATE TABLE IF NOT EXISTS `part` (  `p_partkey` int(11) NOT NULL,  `p_name` varchar(55) NOT NULL,  `p_mfgr` varchar(25) NOT NULL,  `p_brand` varchar(10) NOT NULL,  `p_type` varchar(25) NOT NULL,  `p_size` int(11) NOT NULL,  `p_container` varchar(10) NOT NULL,  `p_retailprice` decimal(15, 2) NOT NULL,  `p_comment` varchar(23) NOT NULL,  PRIMARY KEY (`p_partkey`),  CLUSTERED COLUMNAR INDEX `part_col_index`(`p_size`) PARTITION BY HASH (`p_partkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`p_partkey`) PARTITIONS 8;
+  partsupp:
+    CREATE TABLE IF NOT EXISTS `partsupp` (  `ps_partkey` int(11) NOT NULL,  `ps_suppkey` int(11) NOT NULL,  `ps_availqty` int(11) NOT NULL,  `ps_supplycost` decimal(15, 2) NOT NULL,  `ps_comment` varchar(199) NOT NULL,  PRIMARY KEY (`ps_partkey`, `ps_suppkey`),  CLUSTERED COLUMNAR INDEX `partsupp_col_index`(`ps_partkey`) PARTITION BY HASH (`ps_partkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`ps_partkey`) PARTITIONS 8;
+  supplier:
+    CREATE TABLE IF NOT EXISTS `supplier` (  `s_suppkey` int(11) NOT NULL,  `s_name` varchar(25) NOT NULL,  `s_address` varchar(40) NOT NULL,  `s_nationkey` int(11) NOT NULL,  `s_phone` varchar(15) NOT NULL,  `s_acctbal` decimal(15, 2) NOT NULL,  `s_comment` varchar(101) NOT NULL,  PRIMARY KEY (`s_suppkey`),  CLUSTERED COLUMNAR INDEX `supplier_col_index`(`s_suppkey`) PARTITION BY HASH (`s_suppkey`) PARTITIONS 6 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`s_suppkey`) PARTITIONS 8;
+  nation:
+    CREATE TABLE IF NOT EXISTS `nation` (  `n_nationkey` int(11) NOT NULL,  `n_name` varchar(25) NOT NULL,  `n_regionkey` int(11) NOT NULL,  `n_comment` varchar(152) DEFAULT NULL,  PRIMARY KEY (`n_nationkey`),  CLUSTERED COLUMNAR INDEX `nation_col_index`(`n_nationkey`) PARTITION BY HASH (`n_nationkey`) PARTITIONS 1 ) BROADCAST ENGINE = InnoDB DEFAULT CHARSET = latin1;
+  region:
+    CREATE TABLE IF NOT EXISTS `region` (  `r_regionkey` int(11) NOT NULL,  `r_name` varchar(25) NOT NULL,  `r_comment` varchar(152) DEFAULT NULL,  PRIMARY KEY (`r_regionkey`),  CLUSTERED COLUMNAR INDEX `region_col_index`(`r_regionkey`) PARTITION BY HASH (`r_regionkey`) PARTITIONS 1 ) BROADCAST ENGINE = InnoDB DEFAULT CHARSET = latin1;
+
+STATISTICS:
+  customer:
+    168648768
+  lineitem:
+    6860984320
+  nation:
+    25
+  orders:
+    1660557312
+  part:
+    220466800
+  partsupp:
+    883230464
+  region:
+    5
+  supplier:
+    10826645
+CONFIG:
+  ENABLE_MPP:
+    true
+  ENABLE_COLUMNAR_OPTIMIZER:
+    true
+  OPTIMIZER_TYPE:
+    columnar
+  ENABLE_REVERSE_BROADCAST_SEMI_HASH_JOIN:
+    false
+  WORKLOAD_TYPE:
+    AP
+  FORCE_HOLISTIC_SUBQUERY_UNNEST:
+    true
+  defaltxxAPPName.isNew:
+    true

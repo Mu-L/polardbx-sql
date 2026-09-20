@@ -16,13 +16,17 @@
 
 package com.alibaba.polardbx.executor.mpp.execution.scheduler;
 
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.executor.mpp.Session;
 import com.alibaba.polardbx.executor.mpp.execution.NodeTaskMap;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.gms.node.InternalNode;
 import com.alibaba.polardbx.gms.node.InternalNodeManager;
 import com.alibaba.polardbx.gms.node.MppScope;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadType;
 
 import javax.inject.Inject;
 import java.util.HashSet;
@@ -39,16 +43,14 @@ public class NodeScheduler {
         this.nodeTaskMap = nodeTaskMap;
     }
 
-    public NodeSelector createNodeSelector(Session session, int limit, RandomNodeMode randomNode) {
+    public NodeSelector createNodeSelector(Session session, int limit, RandomNodeMode randomNode,
+                                           boolean columnarMode) {
         int maxSplitsPerNode =
             session.getClientContext().getParamManager().getInt(ConnectionParams.MPP_SCHEDULE_MAX_SPLITS_PER_NODE);
 
         boolean enableOSSRoundRobin =
             session.getClientContext().getParamManager()
                 .getBoolean(ConnectionParams.ENABLE_OSS_FILE_CONCURRENT_SPLIT_ROUND_ROBIN);
-
-        boolean columnarMode = session.getClientContext().getParamManager()
-            .getBoolean(ConnectionParams.ENABLE_COLUMNAR_SCHEDULE);
 
         MppScope mppScope = ExecUtils.getMppSchedulerScope(!columnarMode);
 
@@ -67,6 +69,32 @@ public class NodeScheduler {
         } else {
             return new SimpleNodeSelector(nodeManager, nodeTaskMap, nodes, limit, maxSplitsPerNode, enableOSSRoundRobin,
                 randomNode, preferLocal);
+        }
+    }
+
+    public NodeSelector createNodeSelector(Session session, int limit, RandomNodeMode randomNode) {
+        boolean columnarMode = session.getClientContext().getParamManager()
+            .getBoolean(ConnectionParams.ENABLE_COLUMNAR_SCHEDULE);
+        boolean enableTtlHybridSchedule = session.getClientContext().getParamManager()
+            .getBoolean(ConnectionParams.ENABLE_TTL_HYBRID_SCHEDULE);
+        if (columnarMode || session.getClientContext().getTtlQueryType() == null || !enableTtlHybridSchedule) {
+            return createNodeSelector(session, limit, randomNode, columnarMode);
+        } else {
+            if (!session.getClientContext().getParamManager()
+                .getBoolean(ConnectionParams.ALLOW_TTL_HYBRID_SCHEDULE_WITHOUT_COLUMNAR_NODE)
+                && nodeManager.getAllNodes().getOtherActiveColumnarNodes().isEmpty()) {
+                throw new TddlRuntimeException(ErrorCode.ERR_EXECUTE_MPP, "No columnar node available");
+            }
+            int rowNodeLimit = limit;
+            if (ConfigDataMode.isMasterMode() && !session.getClientContext().getParamManager()
+                .getBoolean(ConnectionParams.ENABLE_MASTER_MPP)) {
+                rowNodeLimit = 1;
+            }
+            SimpleNodeSelector simpleNodeSelector =
+                (SimpleNodeSelector) createNodeSelector(session, rowNodeLimit, randomNode, false);
+            ColumnarNodeSelector columnarNodeSelector =
+                (ColumnarNodeSelector) createNodeSelector(session, limit, randomNode, true);
+            return new HybridNodeSelector(simpleNodeSelector, columnarNodeSelector);
         }
     }
 }

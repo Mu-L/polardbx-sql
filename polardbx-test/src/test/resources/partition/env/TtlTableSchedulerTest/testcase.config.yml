@@ -1,0 +1,8 @@
+#test_arc_row_part_split_queue
+#test_scheduled_job_view
+test_arc_multi_ttl_tbl
+#test_arc_multi_ttl_tbl2
+#test_ttl_job_auto_rollback
+test_arc_by_part_auto_retry
+#test_arc_by_part_auto_retry2
+#test_arc_by_part_auto_retry3

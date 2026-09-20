@@ -21,6 +21,7 @@ import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.model.Group;
 import com.alibaba.polardbx.common.model.Matrix;
 import com.alibaba.polardbx.common.model.sqljep.Comparative;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -178,12 +179,8 @@ public class DataNodeChooser {
                     RelShardInfo tableShardInfo = logicalView.getRelShardInfo(tableIndex, executionContext);
                     if (!ruleManager.getPartitionInfoManager().isNewPartDbTable(logicalTable)) {
                         final Map<String, Comparative> comparative = tableShardInfo.getAllComps();
-                        final Map<String, Comparative> fullComparative = tableShardInfo.getAllFullComps();
-                        final Map<String, Map<String, Comparative>> stringMapMap = Maps.newHashMap();
-                        stringMapMap.put(logicalTable, fullComparative);
                         Map<String, Object> calcParams = new HashMap<>();
                         calcParams.put(CalcParamsAttribute.SHARD_FOR_EXTRA_DB, false);
-                        calcParams.put(CalcParamsAttribute.COM_DB_TB, stringMapMap);
                         calcParams.put(CalcParamsAttribute.CONN_TIME_ZONE, executionContext.getTimeZone());
                         calcParams.put(CalcParamsAttribute.EXECUTION_CONTEXT, executionContext);
 
@@ -207,14 +204,13 @@ public class DataNodeChooser {
                 }
                 return result;
             } else {
-                Map<String, Map<String, Comparative>> fullCompInfo = new HashMap<>();
                 PlanShardInfo planShardInfo =
                     logicalView.getPartitionConditionCache(
                         () -> ConditionExtractor.partitioningConditionFrom(logicalView).extract()
-                    ).allShardInfo(executionContext);
-                fullCompInfo = planShardInfo.getAllTableFullComparative(logicalView.getSchemaName());
+                    ).allShardInfo(
+                        executionContext,
+                        executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_DRDS_REX_ROUTE));
                 Map<String, Object> calcParams = new HashMap<>();
-                calcParams.put(CalcParamsAttribute.COM_DB_TB, fullCompInfo);
                 calcParams.put(CalcParamsAttribute.CONN_TIME_ZONE, executionContext.getTimeZone());
                 calcParams.put(CalcParamsAttribute.EXECUTION_CONTEXT, executionContext);
 //                Map<String, Comparative> comparativeOfLv = logicalView.getRelShardInfo(executionContext).getAllComps();

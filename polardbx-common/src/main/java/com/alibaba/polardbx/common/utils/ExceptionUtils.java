@@ -18,6 +18,7 @@ package com.alibaba.polardbx.common.utils;
 
 import com.mysql.jdbc.exceptions.jdbc4.MySQLIntegrityConstraintViolationException;
 import org.apache.commons.lang.ArrayUtils;
+import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.exception.Nestable;
 
 import java.io.PrintWriter;
@@ -163,5 +164,33 @@ public class ExceptionUtils {
         PrintWriter pw = new PrintWriter(sw);
         ex.printStackTrace(pw);
         return sw.toString();
+    }
+
+    /**
+     * Transforms the given error code and message to a standardized format.
+     *
+     * @param errorCode The original error code.
+     * @param message The original error message.
+     * @return A Pair containing the transformed error code and SQL state, or null if the message is empty.
+     */
+    public static Pair<Integer, String> transformErrorCode(int errorCode, String message) {
+        if (StringUtils.isEmpty(message)) {
+            return null;
+        }
+
+        // Transform based on specific conditions.
+        if (errorCode == 4500 && message.contains("syntax error")) {
+            return new Pair<>(1064, "42000");
+        } else if (errorCode == 4006 && message.contains("ERR_TABLE_NOT_EXIST")) {
+            return new Pair<>(1146, "42S02");
+        } else if (errorCode == 4518 && message.contains("ERR_VALIDATE")) {
+            String colNotExists = "[\\s\\S]* Column [\\s\\S]+ not found in any table[\\s\\S]*";
+            if (message.matches(colNotExists)) {
+                return new Pair<>(1054, "42S22");
+            }
+        }
+
+        // Return null if no transformation matches.
+        return null;
     }
 }

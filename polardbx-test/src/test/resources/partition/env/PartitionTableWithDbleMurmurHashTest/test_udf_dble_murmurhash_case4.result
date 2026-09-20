@@ -1,0 +1,35 @@
+## DISABLE_FAST_SQL_PARSER
+select unitmurhashc4('12345678912345678912345')
+unitmurhashc4('12345678912345678912345')
+0
+select unitmurhashc4('aaa')
+unitmurhashc4('aaa')
+1
+## error_msg: $# routeKey is legal #$
+select unitmurhashc4('')
+routeKey is legal
+create table dble_t4
+(a varchar(64), b int)
+partition by udf_hash(unitmurhashc4(a))
+partitions 2
+(
+partition p1 values less than(1),
+partition p2 values less than(2)
+)
+insert into dble_t4 values ('2', 2)
+select * from dble_t4 where a='2'
+a,b
+2,2
+select part_route('','dble_t4', '2')
+part_route('', 'dble_t4', '2')
+p1
+## error_msg: $# check routeKey is legal #$
+select part_route('','dble_t4', '')
+check routeKey is legal
+select part_route('','dble_t4', '123456789012345678901')
+part_route('', 'dble_t4', '123456789012345678901')
+p2
+select part_route('','dble_t4', 'aaa')
+part_route('', 'dble_t4', 'aaa')
+p2
+drop table dble_t4;

@@ -91,7 +91,10 @@ public class AlterTableGroupMovePartitionPreparedData extends AlterTableGroupBas
                 partitionGroupRecord.partition_name = newPartitionName;
                 partitionGroupRecord.tg_id = tableGroupId;
 
-                partitionGroupRecord.phy_db = groupDetailInfoExRecordsForSpecInst.get(i % targetDbCount).phyDbName;
+                partitionGroupRecord.setPhy_db(
+                    groupDetailInfoExRecordsForSpecInst.get(i % targetDbCount).getPhyDbName());
+                partitionGroupRecord.setGroup_Name(
+                    groupDetailInfoExRecordsForSpecInst.get(i % targetDbCount).getGroupName());
 
                 partitionGroupRecord.locality = "";
                 LocalityDesc localityDesc = LocalityInfoUtils.parse(newPartitionLocalities.get(newPartitionName));

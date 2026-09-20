@@ -478,6 +478,8 @@ public class OrcFile {
     private WriterVersion writerVersion = CURRENT_WRITER;
     private boolean useUTCTimestamp;
     private boolean useDecimal64;
+    private boolean useRedundantMetadata;
+    private boolean useBinaryMetadata;
     private boolean overwrite;
     private boolean writeVariableLengthBlocks;
     private HadoopShims shims;
@@ -542,6 +544,8 @@ public class OrcFile {
           tableProperties, conf);
       useProlepticGregorian = OrcConf.PROLEPTIC_GREGORIAN.getBoolean(conf);
       useDecimal64 =  OrcConf.ENABLE_DECIMAL_64.getBoolean(tableProperties, conf);
+      useRedundantMetadata = OrcConf.USE_REDUNDANT_META_DATA.getBoolean(tableProperties, conf);
+      useBinaryMetadata = OrcConf.USE_BINARY_META_DATA.getBoolean(tableProperties, conf);
       recordFirstAndLatest = null;
     }
 
@@ -789,6 +793,16 @@ public class OrcFile {
       return this;
     }
 
+    public WriterOptions useRedundantMetadata(boolean value) {
+      useRedundantMetadata = value;
+      return this;
+    }
+
+    public WriterOptions useBinaryMetadata(boolean value) {
+      useBinaryMetadata = value;
+      return this;
+    }
+
     public WriterOptions recordFirstAndLatest(boolean[] value) {
       recordFirstAndLatest = value;
       return this;
@@ -1011,8 +1025,24 @@ public class OrcFile {
       return useDecimal64;
     }
 
+    public boolean getUseRedundantMetadata() {
+      return useRedundantMetadata;
+    }
+
+    public boolean getUseBinaryMetadata() {
+      return useBinaryMetadata;
+    }
+
     public void setUseDecimal64(boolean useDecimal64) {
       this.useDecimal64 = useDecimal64;
+    }
+
+    public void setUseRedundantMetadata(boolean useRedundantMetadata) {
+      this.useRedundantMetadata = useRedundantMetadata;
+    }
+
+    public void setUseBinaryMetadata(boolean useBinaryMetadata) {
+      this.useBinaryMetadata = useBinaryMetadata;
     }
 
     public String getDirectEncodingColumns() {

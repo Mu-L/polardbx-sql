@@ -18,9 +18,8 @@ package org.apache.calcite.sql;
 
 import com.alibaba.polardbx.common.constants.SequenceAttribute.Type;
 import com.alibaba.polardbx.druid.sql.ast.SQLPartitionByRange;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableToggleFullScan;
 import com.google.common.collect.ImmutableList;
-import com.alibaba.polardbx.common.constants.SequenceAttribute.Type;
-import groovy.sql.Sql;
 import org.apache.calcite.jdbc.CalcitePrepare;
 import org.apache.calcite.jdbc.CalciteSchema;
 import org.apache.calcite.sql.SqlAlterTable.ColumnOpt;
@@ -48,19 +47,20 @@ public class SqlDdlNodes {
                                                    String partitionMode, Boolean defaultSingle,
                                                    SqlIdentifier sourceDataBase, boolean like, boolean as,
                                                    List<SqlIdentifier> includeTables, List<SqlIdentifier> excludeTables,
-                                                   boolean withLock, boolean dryRun, boolean createTables) {
+                                                   boolean withLock, boolean dryRun, boolean createTables, Boolean dryRunDdl) {
         return new SqlCreateDatabase(pos, ifNotExists, dbName, charSet, collate, encryption, locality, partitionMode,
-            defaultSingle, sourceDataBase, like, as, includeTables, excludeTables, withLock, dryRun, createTables);
+            defaultSingle, sourceDataBase, like, as, includeTables, excludeTables, withLock, dryRun, createTables, dryRunDdl);
     }
 
-    public static SqlDropDatabase dropDatabase(SqlParserPos pos, boolean ifExists, SqlIdentifier dbName) {
-        return new SqlDropDatabase(pos, ifExists, dbName);
+    public static SqlDropDatabase dropDatabase(SqlParserPos pos, boolean ifExists, SqlIdentifier dbName, Boolean dryRunDdl) {
+        return new SqlDropDatabase(pos, ifExists, dbName, dryRunDdl);
     }
 
     public static SqlCreateJavaFunction createJavaFunction(SqlParserPos pos, String funcName,
+                                                           boolean isNotExists,
                                                            String returnType, List<String> inputTypes,
                                                            String javaCode, boolean noState) {
-        return new SqlCreateJavaFunction(pos, funcName, returnType, inputTypes, javaCode, noState);
+        return new SqlCreateJavaFunction(pos, funcName, isNotExists, returnType, inputTypes, javaCode, noState);
     }
 
     public static SqlDropJavaFunction dropJavaFunction(SqlParserPos pos, String funcName, boolean ifExists) {
@@ -193,6 +193,12 @@ public class SqlDdlNodes {
         return new SqlAlterTableSetTableGroup(objectNames, tableName, targetTableGroup, sql, pos, implicit, force);
     }
 
+    public static SqlAlterTableToggleFullScan alterTableToggleFullScan(List<SqlIdentifier> objectNames,
+                                                                       SqlIdentifier tableName,
+                                                                       String sql, boolean enable) {
+        return new SqlAlterTableToggleFullScan(objectNames, tableName, sql, enable);
+    }
+
     /**
      * Creates a column declaration.
      */
@@ -202,7 +208,7 @@ public class SqlDdlNodes {
                                  Storage storage, SqlReferenceDefinition referenceDefinition,
                                  boolean onUpdateCurrentTimestamp, Type autoIncrementType, int unitCount,
                                  int unitIndex, int innerStep, boolean generatedAlways, boolean generatedAlwaysLogical,
-                                 SqlCall generatedAlwaysExpr) {
+                                 SqlCall generatedAlwaysExpr, SqlCheck check, SqlColumnDeclaration.Constraint constraint) {
         return new SqlColumnDeclaration(pos,
             name,
             dataType,
@@ -222,7 +228,9 @@ public class SqlDdlNodes {
             innerStep,
             generatedAlways,
             generatedAlwaysLogical,
-            generatedAlwaysExpr);
+            generatedAlwaysExpr,
+            check,
+            constraint);
     }
 
     /**

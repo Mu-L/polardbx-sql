@@ -58,7 +58,7 @@ public final class ClearPlanCache {
         }
 
         OptimizerContext.setContext(ds.getConfigHolder().getOptimizerContext());
-        SyncManagerHelper.sync(new ClearPlanCacheSyncAction(db), c.getSchema(), SyncScope.CURRENT_ONLY);
+        SyncManagerHelper.syncThrowExceptions(new ClearPlanCacheSyncAction(db), c.getSchema(), SyncScope.CURRENT_ONLY);
         PacketOutputProxyFactory.getInstance().createProxy(c)
             .writeArrayAsPacket(hasMore ? OkPacket.OK_WITH_MORE : OkPacket.OK);
         return true;

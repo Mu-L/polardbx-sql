@@ -1,0 +1,36 @@
+dbName: "test_ghost_ddl"
+tableName: "gh_ost_test"
+sqlMode: "STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE"
+prepareDb:
+  - "use information_schema"
+  - "drop database if exists test_ghost_ddl "
+  - "create database test_ghost_ddl"
+  - "use test_ghost_ddl;"
+  - "set names utf8mb4"
+prepareTables:
+  - "drop table if exists gh_ost_test;"
+  - "create table gh_ost_test (
+id int unsigned auto_increment,
+  i int not null,
+  dt datetime not null default '1970-00-00 00:00:00',
+  primary key(id)
+) auto_increment=1;"
+prepareEvents:
+  - "drop event if exists gh_ost_test;"
+  - "create event gh_ost_test
+on schedule every 1 second
+starts current_timestamp
+ends current_timestamp + interval 60 second
+on completion not preserve
+enable
+do
+begin
+  insert into gh_ost_test values (null, 7, '2010-10-20 10:20:30');
+end"
+alterTableCommand:
+  - "alter table test_ghost_ddl.gh_ost_test engine=innodb"
+expectFailure: "Invalid default value for 'dt'"
+expectTableStructure:
+cleanupDDLs:
+  - "use information_schema"
+  - "drop database if exists test_ghost_ddl;"

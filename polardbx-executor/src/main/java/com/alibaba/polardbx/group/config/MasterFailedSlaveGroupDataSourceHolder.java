@@ -18,6 +18,7 @@ package com.alibaba.polardbx.group.config;
 
 import com.alibaba.polardbx.atom.TAtomDataSource;
 import com.alibaba.polardbx.common.jdbc.MasterSlave;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
@@ -41,8 +42,12 @@ public class MasterFailedSlaveGroupDataSourceHolder implements GroupDataSourceHo
         case MASTER_ONLY:
         case READ_WEIGHT:
         case SLAVE_FIRST:
-        case FOLLOWER_ONLY:
             return masterDataSource;
+        case FOLLOWER_ONLY:
+            if (DynamicConfig.getInstance().supportBackMasterForFollowRead()) {
+                return masterDataSource;
+            }
+            throw new RuntimeException("all followers shutdown, so can't continue using the follower connection!");
         case SLAVE_ONLY:
         case LOW_DELAY_SLAVE_ONLY:
             throw new RuntimeException("all slave is failed, so can't continue use slave connection!");

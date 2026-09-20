@@ -39,8 +39,6 @@ public class TableMetaChangePreemptiveSyncAction implements ISyncAction {
     public TableMetaChangePreemptiveSyncAction() {
     }
 
-
-
     public TableMetaChangePreemptiveSyncAction(String schemaName, String tableName, PreemptiveTime preemptiveTime) {
         this.schemaName = schemaName;
         this.primaryTableName = tableName;
@@ -91,7 +89,6 @@ public class TableMetaChangePreemptiveSyncAction implements ISyncAction {
     public void setPreemptiveTime(PreemptiveTime preemptiveTime) {
         this.preemptiveTime = preemptiveTime;
     }
-
 
     public Boolean getForceSyncFailed() {
         return forceSyncFailed;

@@ -16,10 +16,12 @@
 
 package com.alibaba.polardbx.executor.mpp.split;
 
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.BytesSql;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
+import com.alibaba.polardbx.common.oss.ColumnarPartitionPrunedSnapshot;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
@@ -30,7 +32,6 @@ import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.common.TopologyHandler;
 import com.alibaba.polardbx.executor.gms.ColumnarManager;
-import com.alibaba.polardbx.common.oss.ColumnarPartitionPrunedSnapshot;
 import com.alibaba.polardbx.executor.gms.DynamicColumnarManager;
 import com.alibaba.polardbx.executor.gms.util.ColumnarTransactionUtils;
 import com.alibaba.polardbx.executor.mpp.metadata.Split;
@@ -39,6 +40,7 @@ import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.executor.utils.SubqueryUtils;
 import com.alibaba.polardbx.gms.metadb.columnar.FlashbackColumnarManager;
 import com.alibaba.polardbx.group.jdbc.TGroupDataSource;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import com.alibaba.polardbx.optimizer.core.rel.BaseQueryOperation;
@@ -51,7 +53,6 @@ import com.alibaba.polardbx.optimizer.core.rel.PhyTableScanBuilder;
 import com.alibaba.polardbx.optimizer.core.rel.util.DynamicParamInfo;
 import com.alibaba.polardbx.optimizer.core.rel.util.IndexedDynamicParamInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
-import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartPrunedResult;
 import com.alibaba.polardbx.optimizer.partition.pruning.PhysicalPartitionInfo;
 import com.alibaba.polardbx.optimizer.utils.GroupConnId;
@@ -89,12 +90,11 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.SortedMap;
+import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import static com.alibaba.polardbx.executor.mpp.split.OssSplit.NO_PARTITION_INFO;
 import static com.alibaba.polardbx.group.jdbc.TGroupDataSource.LOCAL_ADDRESS;
@@ -219,6 +219,7 @@ public class SplitManagerImpl implements SplitManager {
             hint,
             sqlTemplate,
             null,
+            null,
             params,
             address,
             ImmutableList.of(logicalView.getTableNames()),
@@ -285,7 +286,7 @@ public class SplitManagerImpl implements SplitManager {
             switch (concurrencyPolicy) {
             case SEQUENTIAL:
             case CONCURRENT:
-                List<RelNode> sortInputs = ExecUtils.zigzagInputsByMysqlInst(inputs, schemaName, executionContext);
+                List<RelNode> sortInputs = ExecUtils.zigzagInputsByDnInst(inputs, schemaName, executionContext);
                 List<Split> splitList = new ArrayList<>();
                 for (RelNode input : sortInputs) {
                     JdbcSplit split =
@@ -348,7 +349,7 @@ public class SplitManagerImpl implements SplitManager {
                         splitCount, underSort, grpConnSet);
                 } else {
                     List<RelNode> sortInputByInts =
-                        ExecUtils.zigzagInputsByMysqlInst(inputs, schemaName, executionContext);
+                        ExecUtils.zigzagInputsByDnInst(inputs, schemaName, executionContext);
                     List<Split> retLists = new ArrayList<>();
                     for (RelNode input : sortInputByInts) {
                         JdbcSplit split =
@@ -405,7 +406,7 @@ public class SplitManagerImpl implements SplitManager {
                      * Come here means it is allowed to do table scan by multiple read conns
                      */
                     List<RelNode> sortInputByInts =
-                        ExecUtils.zigzagInputsByMysqlInst(inputs, schemaName, executionContext);
+                        ExecUtils.zigzagInputsByDnInst(inputs, schemaName, executionContext);
                     List<Split> retLists = new ArrayList<>();
                     for (RelNode input : sortInputByInts) {
                         JdbcSplit split =
@@ -447,9 +448,10 @@ public class SplitManagerImpl implements SplitManager {
         String schemaName = StringUtils.isEmpty(ossTableScan.getSchemaName())
             ? executionContext.getSchemaName() : ossTableScan.getSchemaName();
         String tableName = ossTableScan.getLogicalTableName();
+        TableMeta tableMeta = executionContext.getSchemaManager(schemaName).getTable(tableName);
 
-        SortedMap<Long, PartitionInfo> multiVersionPartitionInfo =
-            dynamicColumnarManager.getPartitionInfos(tso, schemaName, tableName);
+        ConcurrentNavigableMap<Long, PartitionInfo> multiVersionPartitionInfo =
+            dynamicColumnarManager.getPartitionInfos(tso, schemaName, tableName, tableMeta);
 
         // Empty partition info demonstrates that the snapshot is empty so far
         if (multiVersionPartitionInfo.isEmpty()) {
@@ -525,7 +527,9 @@ public class SplitManagerImpl implements SplitManager {
                     entry.getValue().getCsvFilesAndSchemaTsWithPos();
 
                 for (Pair<String, Long> fileAndSchemaTs : orcFileNames) {
-                    PartitionInfo currentPartitionInfo = multiVersionPartitionInfo.get(fileAndSchemaTs.getValue());
+                    String fileName = fileAndSchemaTs.getKey();
+                    Long schemaTs = fileAndSchemaTs.getValue();
+                    PartitionInfo currentPartitionInfo = multiVersionPartitionInfo.floorEntry(schemaTs).getValue();
                     OssSplit.DeltaReadOption deltaReadOption =
                         new OssSplit.DeltaReadOption(deltaTso != null ? deltaTso : tso);
                     deltaReadOption.setAllDelPositions(deletePositionMap);
@@ -537,20 +541,22 @@ public class SplitManagerImpl implements SplitManager {
 
                     splitList.add(new Split(false, new OssSplit(
                         schemaName, phySchema, results, tableName, Collections.singletonList(phyTableName),
-                        Collections.singletonList(fileAndSchemaTs.getKey()), deltaReadOption, tso, partition,
+                        Collections.singletonList(fileName), deltaReadOption, tso, partition,
                         localPairWise
                     )));
                 }
 
                 for (Pair<String, Pair<Long, Long>> fileNameAndTsWithPos : csvFileNamesAndPos) {
-                    PartitionInfo currentPartitionInfo =
-                        multiVersionPartitionInfo.get(fileNameAndTsWithPos.getValue().getKey());
+                    String fileName = fileNameAndTsWithPos.getKey();
+                    Long schemaTs = fileNameAndTsWithPos.getValue().getKey();
+                    Long pos = fileNameAndTsWithPos.getValue().getValue();
+                    PartitionInfo currentPartitionInfo = multiVersionPartitionInfo.floorEntry(schemaTs).getValue();
                     OssSplit.DeltaReadOption deltaReadOption =
                         new OssSplit.DeltaReadOption(deltaTso != null ? deltaTso : tso);
                     deltaReadOption.setAllCsvFiles(Collections.singletonMap(partName,
-                        Collections.singletonList(fileNameAndTsWithPos.getKey())));
+                        Collections.singletonList(fileName)));
                     deltaReadOption.setAllPositions(Collections.singletonMap(partName,
-                        Collections.singletonList(fileNameAndTsWithPos.getValue().getValue())));
+                        Collections.singletonList(pos)));
                     deltaReadOption.setAllDelPositions(deletePositionMap);
 
                     Pair<Integer, Pair<String, String>> partSpecInfo =
@@ -567,7 +573,7 @@ public class SplitManagerImpl implements SplitManager {
             }
         } else {
             for (Map.Entry<String, ColumnarPartitionPrunedSnapshot> entry : dynamicColumnarManager.findFileNames(
-                tso, schemaName, tableName, multiVersionPartitionResult).entrySet()) {
+                tso, schemaName, tableName, multiVersionPartitionResult, tableMeta).entrySet()) {
                 String partName = entry.getKey();
                 ColumnarPartitionPrunedSnapshot snapshotInfo = entry.getValue();
                 List<Pair<String, Long>> orcFilesAndSchemaTs = snapshotInfo.getOrcFilesAndSchemaTs();
@@ -575,7 +581,9 @@ public class SplitManagerImpl implements SplitManager {
                     snapshotInfo.getCsvFilesAndSchemaTsWithPos();
 
                 for (Pair<String, Long> fileAndSchemaTs : orcFilesAndSchemaTs) {
-                    PartitionInfo currentPartitionInfo = multiVersionPartitionInfo.get(fileAndSchemaTs.getValue());
+                    String fileName = fileAndSchemaTs.getKey();
+                    Long schemaTs = fileAndSchemaTs.getValue();
+                    PartitionInfo currentPartitionInfo = multiVersionPartitionInfo.floorEntry(schemaTs).getValue();
                     Pair<Integer, Pair<String, String>> partSpecInfo =
                         PartitionUtils.calcPartition(currentPartitionInfo, partName);
                     int partition = needPartition ? partSpecInfo.getKey() : NO_PARTITION_INFO;
@@ -583,13 +591,14 @@ public class SplitManagerImpl implements SplitManager {
                     String phyTableName = partSpecInfo.getValue().getValue();
                     splitList.add(new Split(false, new OssSplit(
                         schemaName, phySchema, results, tableName, Collections.singletonList(phyTableName),
-                        Collections.singletonList(fileAndSchemaTs.getKey()), null, tso, partition, localPairWise
+                        Collections.singletonList(fileName), null, tso, partition, localPairWise
                     )));
                 }
 
                 for (Pair<String, Pair<Long, Long>> fileNameAndTsWithPos : csvFilesAndSchemaTsWithPos) {
-                    PartitionInfo currentPartitionInfo =
-                        multiVersionPartitionInfo.get(fileNameAndTsWithPos.getValue().getKey());
+                    String fileName = fileNameAndTsWithPos.getKey();
+                    Long schemaTs = fileNameAndTsWithPos.getValue().getKey();
+                    PartitionInfo currentPartitionInfo = multiVersionPartitionInfo.floorEntry(schemaTs).getValue();
 
                     Pair<Integer, Pair<String, String>> partSpecInfo =
                         PartitionUtils.calcPartition(currentPartitionInfo, partName);
@@ -599,7 +608,7 @@ public class SplitManagerImpl implements SplitManager {
 
                     OssSplit.DeltaReadOption deltaReadOption = new OssSplit.DeltaReadOption(tso);
                     deltaReadOption.setAllCsvFiles(
-                        Collections.singletonMap(partName, Collections.singletonList(fileNameAndTsWithPos.getKey()))
+                        Collections.singletonMap(partName, Collections.singletonList(fileName))
                     );
 
                     splitList.add(new Split(false, new OssSplit(
@@ -617,7 +626,7 @@ public class SplitManagerImpl implements SplitManager {
             ImmutableList.of(splitList), new HashMap<>(), 1, splitList.size(), false);
     }
 
-    private SplitInfo ossTableScanSplit(
+    SplitInfo ossTableScanSplit(
         OSSTableScan ossTableScan, ExecutionContext executionContext, boolean highConcurrencyQuery) {
         if (ossTableScan == null) {
             throw new TddlRuntimeException(ErrorCode.ERR_GENERATE_SPLIT, "logicalView is null");
@@ -626,8 +635,15 @@ public class SplitManagerImpl implements SplitManager {
         QueryConcurrencyPolicy concurrencyPolicy =
             ExecUtils.getQueryConcurrencyPolicy(executionContext, ossTableScan);
 
-        // Before allocating splits, a certain tso must be fetched first
-        Long tso = fetchTsoAndInitTransaction(ossTableScan, executionContext);
+        Long tso = null;
+        try {
+            VersionStorageStatistics.setThreadLocalStatistics(executionContext.getVersionStorageStatistics());
+            // Before allocating splits, a certain tso must be fetched first
+            tso = fetchTsoAndInitTransaction(ossTableScan, executionContext);
+
+        } finally {
+            VersionStorageStatistics.removeThreadLocalStatistics();
+        }
 
         List<RelNode> inputs = ExecUtils.getInputs(
             ossTableScan, executionContext, !ExecUtils.isMppMode(executionContext));
@@ -665,49 +681,58 @@ public class SplitManagerImpl implements SplitManager {
 
         // if storage is columnar index, zigzag by mysql instance has no meaning
         List<RelNode> sortInputs = ossTableScan.isColumnarIndex() ? inputs :
-            ExecUtils.zigzagInputsByMysqlInst(inputs, schemaName, executionContext);
+            ExecUtils.zigzagInputsByDnInst(inputs, schemaName, executionContext);
 
         List<Split> splitList = new ArrayList<>();
 
-        switch (concurrencyPolicy) {
-        case SEQUENTIAL:
-        case CONCURRENT:
-        case FIRST_THEN_CONCURRENT:
-        case GROUP_CONCURRENT_BLOCK:
-            // split according to physical table operations.
-            for (RelNode input : sortInputs) {
-                List<OssSplit> splits = OssSplit.getTableConcurrencySplit(ossTableScan, input, executionContext, tso);
-                for (OssSplit split : splits) {
-                    shardSet.put(split.getPhysicalSchema(), split.getLogicalSchema());
-                    splitList.add(new Split(false, split));
-                    splitCount++;
-                }
-            }
-            return new SplitInfo(ossTableScan.getRelatedId(), ossTableScan.isExpandView(),
-                concurrencyPolicy == FIRST_THEN_CONCURRENT ? GROUP_CONCURRENT_BLOCK : concurrencyPolicy,
-                ImmutableList.of(splitList),
-                shardSet, 1,
-                splitCount, false);
-        case FILE_CONCURRENT:
-            // split according to all table files.
-            for (RelNode input : sortInputs) {
-                List<OssSplit> splits = OssSplit.getFileConcurrencySplit(ossTableScan, input, executionContext, tso);
-                if (splits != null) {
+        try {
+            VersionStorageStatistics.setThreadLocalStatistics(executionContext.getVersionStorageStatistics());
+
+            switch (concurrencyPolicy) {
+            case SEQUENTIAL:
+            case CONCURRENT:
+            case FIRST_THEN_CONCURRENT:
+            case GROUP_CONCURRENT_BLOCK:
+                // split according to physical table operations.
+                for (RelNode input : sortInputs) {
+                    List<OssSplit> splits =
+                        OssSplit.getTableConcurrencySplit(ossTableScan, input, executionContext, tso);
                     for (OssSplit split : splits) {
                         shardSet.put(split.getPhysicalSchema(), split.getLogicalSchema());
                         splitList.add(new Split(false, split));
                         splitCount++;
                     }
                 }
+                return new SplitInfo(ossTableScan.getRelatedId(), ossTableScan.isExpandView(),
+                    concurrencyPolicy == FIRST_THEN_CONCURRENT ? GROUP_CONCURRENT_BLOCK : concurrencyPolicy,
+                    ImmutableList.of(splitList),
+                    shardSet, 1,
+                    splitCount, false);
+            case FILE_CONCURRENT:
+                // split according to all table files.
+                for (RelNode input : sortInputs) {
+                    List<OssSplit> splits =
+                        OssSplit.getFileConcurrencySplit(ossTableScan, input, executionContext, tso);
+                    if (splits != null) {
+                        for (OssSplit split : splits) {
+                            shardSet.put(split.getPhysicalSchema(), split.getLogicalSchema());
+                            splitList.add(new Split(false, split));
+                            splitCount++;
+                        }
+                    }
+                }
+                return new SplitInfo(ossTableScan.getRelatedId(), ossTableScan.isExpandView(),
+                    FILE_CONCURRENT,
+                    ImmutableList.of(splitList),
+                    shardSet, 1,
+                    splitCount, false);
+            case INSTANCE_CONCURRENT:
+            default:
+                break;
             }
-            return new SplitInfo(ossTableScan.getRelatedId(), ossTableScan.isExpandView(),
-                FILE_CONCURRENT,
-                ImmutableList.of(splitList),
-                shardSet, 1,
-                splitCount, false);
-        case INSTANCE_CONCURRENT:
-        default:
-            break;
+
+        } finally {
+            VersionStorageStatistics.removeThreadLocalStatistics();
         }
         throw new TddlRuntimeException(ErrorCode.ERR_GENERATE_SPLIT, "getSplits error:" + concurrencyPolicy);
 
@@ -745,6 +770,7 @@ public class SplitManagerImpl implements SplitManager {
                 phyTableOperation.getDbIndex(),
                 hint,
                 lookupSql.bytesSql,
+                lookupSql.bytesSqlWithoutMget,
                 lookupSql.orderBy,
                 params,
                 address,
@@ -772,7 +798,7 @@ public class SplitManagerImpl implements SplitManager {
             PhyTableScanBuilder phyOperationBuilder =
                 (PhyTableScanBuilder) phyTableOperation.getPhyOperationBuilder();
             String orderBy = phyOperationBuilder.buildPhysicalOrderByClause();
-            lookupSql = new LookupSql(phyTableOperation.getBytesSql(), null, orderBy, null);
+            lookupSql = new LookupSql(phyTableOperation.getBytesSql(), null, null, orderBy, null);
         }
         return lookupSql;
     }
@@ -824,8 +850,6 @@ public class SplitManagerImpl implements SplitManager {
                     }
                 }
             } else {
-                LOGGER.warn("Trying to access columnar index out of IMppReadOnlyTransaction, transaction class is: "
-                    + trans.getTransactionClass().name());
                 Long flashBackQueryTso = ossTableScan.getFlashbackQueryTso(executionContext);
                 if (flashBackQueryTso != null) {
                     tso = flashBackQueryTso;
@@ -859,7 +883,7 @@ public class SplitManagerImpl implements SplitManager {
             String orderBy = phyOperationBuilder.buildPhysicalOrderByClause();
             if (existAs) {
                 BytesSql bytesSql = RelUtils.toNativeBytesSql(nativeSqlForMget);
-                return new LookupSql(bytesSql, bytesSql, orderBy, null);
+                return new LookupSql(bytesSql, null, bytesSql, orderBy, null);
             } else {
                 nativeSqlForMget = (SqlSelect) ((SqlSelect) nativeSqlForMget.clone(
                     phyTableOperation.getNativeSqlNode().getParserPosition()));
@@ -869,7 +893,7 @@ public class SplitManagerImpl implements SplitManager {
                 startSelectItems.add(SqlIdentifier.star(SqlParserPos.ZERO));
                 nativeSqlForMget.setSelectList(new SqlNodeList(startSelectItems, SqlParserPos.ZERO));
                 BytesSql startSql = RelUtils.toNativeBytesSql(nativeSqlForMget);
-                return new LookupSql(phyTableOperation.getBytesSql(), startSql, orderBy,
+                return new LookupSql(phyTableOperation.getBytesSql(), null, startSql, orderBy,
                     selectList.toString());
             }
         } else {
@@ -877,6 +901,7 @@ public class SplitManagerImpl implements SplitManager {
                 .clone(phyTableOperation.getNativeSqlNode().getParserPosition());
             nativeSqlForMget.setComputedFetch(
                 ((SqlSelect) phyTableOperation.getNativeSqlNode()).getComputedFetch());
+            BytesSql bytesSqlWithoutMget = RelUtils.toNativeBytesSql(nativeSqlForMget);
             SqlNode filter = nativeSqlForMget.getWhere();
             SqlNode customFilter;
             if (filter != null) {
@@ -892,7 +917,7 @@ public class SplitManagerImpl implements SplitManager {
             PhyTableScanBuilder phyOperationBuilder =
                 (PhyTableScanBuilder) phyTableOperation.getPhyOperationBuilder();
             String orderBy = phyOperationBuilder.buildPhysicalOrderByClause();
-            return new LookupSql(bytesSql, null, orderBy, null);
+            return new LookupSql(bytesSql, bytesSqlWithoutMget, null, orderBy, null);
         }
     }
 }

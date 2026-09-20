@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.chunk.columnar;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.operator.scan.CacheReader;
 import com.alibaba.polardbx.executor.operator.scan.ColumnReader;
@@ -27,11 +28,20 @@ import java.io.IOException;
  * A block-level loader of one column in one row group.
  * Several block-level loader will share the column reader spanning multiple row groups.
  */
-public interface BlockLoader {
+public interface BlockLoader extends MemoryCountable {
+    @Override
+    default long getMemoryUsage() {
+        return 0L;
+    }
+
     /**
      * Trigger the processing of loading.
      */
     Block load(DataType dataType, int[] selection, int selSize) throws IOException;
+
+    default void warmup(DataType dataType, int[] selection, int selSize) throws IOException {
+        load(dataType, selection, selSize);
+    }
 
     /**
      * Get the column reader inside this block loader.

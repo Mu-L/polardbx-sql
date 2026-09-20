@@ -64,6 +64,13 @@ public final class ServerParseShow {
     public static final int COMPATIBILITY_LEVEL = 35;
     public static final int FULL_COLUMNAR_STATUS = 36;
     public static final int SQL_ENGINE_ALERT = 37;
+    public static final int CLEAN_COLUMNAR_STATUS = 38;
+    public static final int DELTA_STATUS = 39;
+    public static final int DELTA_CONNECTION = 40;
+    public static final int TTL_QUERY_STAT = 41;
+    public static final int TTL_QUERY_BOUNDARY = 42;
+    public static final int CONNECTION_LOCAL = 43;
+    public static final int FULL_CONNECTION_LOCAL = 44;
     public static final char[] _COMPATIBILITY_LEVEL = "COMPATIBILITY_LEVEL".toCharArray();
 
     public static final Set<Integer> PREPARE_UNSUPPORTED_SHOW_TYPE;
@@ -116,7 +123,7 @@ public final class ServerParseShow {
                 return cCheck(stmt, i);
             case 'D':
             case 'd':
-                return dataCheck(stmt, i);
+                return dCheck(stmt, i);
             case 'N':
             case 'n':
                 return nodeCheck(stmt, i);
@@ -144,6 +151,9 @@ public final class ServerParseShow {
             case 'M':
             case 'm':
                 return memoryPoolCheck(stmt, i);
+            case 'T':
+            case 't':
+                return tCheck(stmt, i);
             case 'I':
             case 'i':
                 return internalHelpCheck(stmt, i);
@@ -198,6 +208,8 @@ public final class ServerParseShow {
             return COLUMNAR_STATUS;
         } else if (showColumnarOffsetCheck(stmt, offset) == COLUMNAR_OFFSET) {
             return COLUMNAR_OFFSET;
+        } else if (showCleanColumnarStatusCheck(stmt, offset) == CLEAN_COLUMNAR_STATUS) {
+            return CLEAN_COLUMNAR_STATUS;
         } else if (showCompatibilityLevelCheck(stmt, offset) == COMPATIBILITY_LEVEL) {
             return COMPATIBILITY_LEVEL;
         } else if (connectionCheck(stmt, offset) == CONNECTION) {
@@ -291,7 +303,6 @@ public final class ServerParseShow {
                         return statisticCheck(stmt, offset);
                     default:
                         return OTHER;
-                    //return storageCheck(stmt, offset);
                     }
                 } else {
                     return OTHER;
@@ -527,6 +538,71 @@ public final class ServerParseShow {
         return OTHER;
     }
 
+    static int showDeltaStatusCheck(ByteString stmt, int offset) {
+        if (stmt.length() >= offset + "DELTA STATUS".length()) {
+            char c1 = stmt.charAt(offset);
+            char c2 = stmt.charAt(++offset);
+            char c3 = stmt.charAt(++offset);
+            char c4 = stmt.charAt(++offset);
+            char c5 = stmt.charAt(++offset);
+            char c6 = stmt.charAt(++offset);
+            char c7 = stmt.charAt(++offset);
+            char c8 = stmt.charAt(++offset);
+            char c9 = stmt.charAt(++offset);
+            char c10 = stmt.charAt(++offset);
+            char c11 = stmt.charAt(++offset);
+            char c12 = stmt.charAt(++offset);
+            if ((c1 == 'D' || c1 == 'd') && (c2 == 'E' || c2 == 'e') && (c3 == 'L' || c3 == 'l') && (c4 == 'T'
+                || c4 == 't') && (c5 == 'A' || c5 == 'a') && (c6 == ' ' || c6 == '_') && (c7 == 'S' || c7 == 's') && (
+                c8 == 'T' || c8 == 't') && (c9 == 'A' || c9 == 'a') && (c10 == 'T' || c10 == 't') && (c11 == 'U'
+                || c11 == 'u') && (c12 == 'S' || c12 == 's') && (stmt.length() == ++offset || ParseUtil.isEOF(
+                stmt.charAt(offset)))) {
+                return DELTA_STATUS;
+            }
+        }
+        return OTHER;
+    }
+
+    static int showDeltaConnectionCheck(ByteString stmt, int offset) {
+        if (stmt.length() >= offset + "DELTA CONNECTION".length()) {
+            char c1 = stmt.charAt(offset);
+            char c2 = stmt.charAt(++offset);
+            char c3 = stmt.charAt(++offset);
+            char c4 = stmt.charAt(++offset);
+            char c5 = stmt.charAt(++offset);
+            char c6 = stmt.charAt(++offset);
+            char c7 = stmt.charAt(++offset);
+            char c8 = stmt.charAt(++offset);
+            char c9 = stmt.charAt(++offset);
+            char c10 = stmt.charAt(++offset);
+            char c11 = stmt.charAt(++offset);
+            char c12 = stmt.charAt(++offset);
+            char c13 = stmt.charAt(++offset);
+            char c14 = stmt.charAt(++offset);
+            char c15 = stmt.charAt(++offset);
+            char c16 = stmt.charAt(++offset);
+            if ((c1 == 'D' || c1 == 'd') && (c2 == 'E' || c2 == 'e') && (c3 == 'L' || c3 == 'l') && (c4 == 'T'
+                || c4 == 't') && (c5 == 'A' || c5 == 'a') && (c6 == ' ' || c6 == '_') && (c7 == 'C' || c7 == 'c') && (
+                c8 == 'O' || c8 == 'o') && (c9 == 'N' || c9 == 'n') && (c10 == 'N' || c10 == 'n') && (c11 == 'E'
+                || c11 == 'e') && (c12 == 'C' || c12 == 'c') && (c13 == 'T' || c13 == 't') && (c14 == 'I' || c14 == 'i')
+                && (c15 == 'O' || c15 == 'o') && (c16 == 'N' || c16 == 'n') && (stmt.length() == ++offset
+                || ParseUtil.isEOF(stmt.charAt(offset)))) {
+                return DELTA_CONNECTION;
+            }
+        }
+        return OTHER;
+    }
+
+    static int dCheck(ByteString stmt, int offset) {
+        if (showDeltaStatusCheck(stmt, offset) == DELTA_STATUS) {
+            return DELTA_STATUS;
+        } else if (showDeltaConnectionCheck(stmt, offset) == DELTA_CONNECTION) {
+            return DELTA_CONNECTION;
+        } else {
+            return dataCheck(stmt, offset);
+        }
+    }
+
     // SHOW DATA
     static int dataCheck(ByteString stmt, int offset) {
         if (stmt.length() > offset + "ata?".length()) {
@@ -573,7 +649,29 @@ public final class ServerParseShow {
                 (c8 == 'O' || c8 == 'o') &&
                 (c9 == 'N' || c9 == 'n')
             ) {
-                return CONNECTION;
+                // Check for _local suffix
+                ++offset;
+                if (stmt.length() > offset && stmt.charAt(offset) == '_') {
+                    if (stmt.length() >= offset + "_local".length()) {
+                        char c10 = stmt.charAt(offset);
+                        char c11 = stmt.charAt(++offset);
+                        char c12 = stmt.charAt(++offset);
+                        char c13 = stmt.charAt(++offset);
+                        char c14 = stmt.charAt(++offset);
+                        char c15 = stmt.charAt(++offset);
+                        if ((c10 == '_') &&
+                            (c11 == 'L' || c11 == 'l') &&
+                            (c12 == 'O' || c12 == 'o') &&
+                            (c13 == 'C' || c13 == 'c') &&
+                            (c14 == 'A' || c14 == 'a') &&
+                            (c15 == 'L' || c15 == 'l') &&
+                            (stmt.length() == ++offset || ParseUtil.isEOF(stmt.charAt(offset)))) {
+                            return CONNECTION_LOCAL;
+                        }
+                    }
+                } else if (stmt.length() == offset || ParseUtil.isEOF(stmt.charAt(offset))) {
+                    return CONNECTION;
+                }
             }
         }
         return OTHER;
@@ -657,6 +755,62 @@ public final class ServerParseShow {
         return OTHER;
     }
 
+    static int showCleanColumnarStatusCheck(ByteString stmt, int offset) {
+        if (stmt.length() >= offset + "CLEAN COLUMNAR STATUS".length()) {
+            char c1 = stmt.charAt(offset);
+            char c2 = stmt.charAt(++offset);
+            char c3 = stmt.charAt(++offset);
+            char c4 = stmt.charAt(++offset);
+            char c5 = stmt.charAt(++offset);
+            char c6 = stmt.charAt(++offset);
+            char c7 = stmt.charAt(++offset);
+            char c8 = stmt.charAt(++offset);
+            char c9 = stmt.charAt(++offset);
+            char c10 = stmt.charAt(++offset);
+            char c11 = stmt.charAt(++offset);
+            char c12 = stmt.charAt(++offset);
+            char c13 = stmt.charAt(++offset);
+            char c14 = stmt.charAt(++offset);
+            char c15 = stmt.charAt(++offset);
+            char c16 = stmt.charAt(++offset);
+            char c17 = stmt.charAt(++offset);
+            char c18 = stmt.charAt(++offset);
+            char c19 = stmt.charAt(++offset);
+            char c20 = stmt.charAt(++offset);
+            char c21 = stmt.charAt(++offset);
+            if (
+                // CLEAN
+                (c1 == 'C' || c1 == 'c') &&
+                    (c2 == 'L' || c2 == 'l') &&
+                    (c3 == 'E' || c3 == 'e') &&
+                    (c4 == 'A' || c4 == 'a') &&
+                    (c5 == 'N' || c5 == 'n') &&
+                    (c6 == ' ' || c6 == '_') &&
+                    // COLUMNAR
+                    (c7 == 'C' || c7 == 'c') &&
+                    (c8 == 'O' || c8 == 'o') &&
+                    (c9 == 'L' || c9 == 'l') &&
+                    (c10 == 'U' || c10 == 'u') &&
+                    (c11 == 'M' || c11 == 'm') &&
+                    (c12 == 'N' || c12 == 'n') &&
+                    (c13 == 'A' || c13 == 'a') &&
+                    (c14 == 'R' || c14 == 'r') &&
+                    (c15 == ' ' || c15 == '_') &&
+                    // STATUS
+                    (c16 == 'S' || c16 == 's') &&
+                    (c17 == 'T' || c17 == 't') &&
+                    (c18 == 'A' || c18 == 'a') &&
+                    (c19 == 'T' || c19 == 't') &&
+                    (c20 == 'U' || c20 == 'u') &&
+                    (c21 == 'S' || c21 == 's') &&
+                    (stmt.length() == ++offset || ParseUtil.isEOF(stmt.charAt(offset)))
+            ) {
+                return CLEAN_COLUMNAR_STATUS;
+            }
+        }
+        return OTHER;
+    }
+
     static int showCompatibilityLevelCheck(ByteString stmt, int offset) {
         if (stmt.length() >= offset + _COMPATIBILITY_LEVEL.length) {
             if (ParseUtil.compare(stmt, offset, _COMPATIBILITY_LEVEL)) {
@@ -674,12 +828,30 @@ public final class ServerParseShow {
             char c3 = stmt.charAt(++offset);
             char c4 = stmt.charAt(++offset);
             if ((c1 == 'A' || c1 == 'a') && (c2 == 'S' || c2 == 's') && (c3 == 'E' || c3 == 'e')
-                && (c4 == 'S' || c4 == 's') && (stmt.length() == ++offset || ParseUtil.isEOF(
-                stmt.charAt(offset)))) {
-                return DATABASES;
+                && (c4 == 'S' || c4 == 's')) {
+                ++offset;
+                if (stmt.length() == offset || ParseUtil.isEOF(stmt.charAt(offset))) {
+                    // Skip every separator isEOF() accepts, not just ' ': a client that
+                    // wraps the statement (SHOW DATABASES\nFROM cat) must still reach the
+                    // FROM branch instead of silently listing local databases. ';' ends
+                    // the statement and is therefore not skipped.
+                    while (offset < stmt.length() && isBlank(stmt.charAt(offset))) {
+                        ++offset;
+                    }
+                    if (offset < stmt.length()
+                        && (stmt.charAt(offset) == 'F' || stmt.charAt(offset) == 'f')) {
+                        return OTHER;
+                    }
+                    return DATABASES;
+                }
+                return OTHER;
             }
         }
         return OTHER;
+    }
+
+    private static boolean isBlank(char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r';
     }
 
     // SHOW DATASOURCES
@@ -787,8 +959,11 @@ public final class ServerParseShow {
                     }
                     case 'C':
                     case 'c': {
-                        if (connectionCheck(stmt, offset) == CONNECTION) {
+                        int connCheckResult = connectionCheck(stmt, offset);
+                        if (connCheckResult == CONNECTION) {
                             return FULL_CONNECTION;
+                        } else if (connCheckResult == CONNECTION_LOCAL) {
+                            return FULL_CONNECTION_LOCAL;
                         } else if (showColumnarStatusCheck(stmt, offset) == COLUMNAR_STATUS) {
                             return FULL_COLUMNAR_STATUS;
                         } else {
@@ -940,4 +1115,66 @@ public final class ServerParseShow {
         }
         return OTHER;
     }
+
+    // SHOW TTL QUERY STAT/BOUNDARY
+    private static int tCheck(ByteString stmt, int offset) {
+        if (stmt.length() > offset + "tl".length()) {
+            char c1 = stmt.charAt(++offset);
+            char c2 = stmt.charAt(++offset);
+            if ((c1 == 'T' || c1 == 't') && (c2 == 'L' || c2 == 'l')) {
+                // 跳过空格
+                while (++offset < stmt.length() && (stmt.charAt(offset) == ' ' || stmt.charAt(offset) == '\t')) {
+                }
+                // 检查是否是 "query"
+                if (stmt.length() > offset + "query".length() - 1) {
+                    char c3 = stmt.charAt(offset);
+                    char c4 = stmt.charAt(++offset);
+                    char c5 = stmt.charAt(++offset);
+                    char c6 = stmt.charAt(++offset);
+                    char c7 = stmt.charAt(++offset);
+                    if ((c3 == 'Q' || c3 == 'q') && (c4 == 'U' || c4 == 'u') && (c5 == 'E' || c5 == 'e')
+                        && (c6 == 'R' || c6 == 'r') && (c7 == 'Y' || c7 == 'y')) {
+                        // 跳过空格
+                        while (++offset < stmt.length() && (stmt.charAt(offset) == ' '
+                            || stmt.charAt(offset) == '\t')) {
+                        }
+                        int offsetSavePoint = offset;
+                        // 检查是否是 "stat"
+                        if (stmt.length() > offset + "stat".length() - 1) {
+                            char c8 = stmt.charAt(offset);
+                            char c9 = stmt.charAt(++offset);
+                            char c10 = stmt.charAt(++offset);
+                            char c11 = stmt.charAt(++offset);
+                            if ((c8 == 'S' || c8 == 's') && (c9 == 'T' || c9 == 't') && (c10 == 'A' || c10 == 'a')
+                                && (c11 == 'T' || c11 == 't') && (stmt.length() == ++offset || ParseUtil.isEOF(
+                                stmt.charAt(offset)))) {
+                                return TTL_QUERY_STAT;
+                            }
+                        }
+                        offset = offsetSavePoint;
+                        // 检查是否是 "boundary"
+                        if (stmt.length() > offset + "boundary".length() - 1) {
+                            char c8 = stmt.charAt(offset);
+                            char c9 = stmt.charAt(++offset);
+                            char c10 = stmt.charAt(++offset);
+                            char c11 = stmt.charAt(++offset);
+                            char c12 = stmt.charAt(++offset);
+                            char c13 = stmt.charAt(++offset);
+                            char c14 = stmt.charAt(++offset);
+                            char c15 = stmt.charAt(++offset);
+                            if ((c8 == 'B' || c8 == 'b') && (c9 == 'O' || c9 == 'o') && (c10 == 'U' || c10 == 'u')
+                                && (c11 == 'N' || c11 == 'n') && (c12 == 'D' || c12 == 'd') && (c13 == 'A'
+                                || c13 == 'a')
+                                && (c14 == 'R' || c14 == 'r') && (c15 == 'Y' || c15 == 'y')
+                                && (stmt.length() == ++offset || ParseUtil.isEOF(stmt.charAt(offset)))) {
+                                return TTL_QUERY_BOUNDARY;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return OTHER;
+    }
+
 }

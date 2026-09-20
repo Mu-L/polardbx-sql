@@ -31,7 +31,7 @@ public class DrdsValuesConvertRule extends ConverterRule {
     private final Convention outConvention;
 
     DrdsValuesConvertRule(Convention outConvention) {
-        super(LogicalValues.class, Convention.NONE, DrdsConvention.INSTANCE, "DrdsValuesConvertRule");
+        super(LogicalValues.class, Convention.NONE, outConvention, "DrdsValuesConvertRule");
         this.outConvention = outConvention;
     }
 

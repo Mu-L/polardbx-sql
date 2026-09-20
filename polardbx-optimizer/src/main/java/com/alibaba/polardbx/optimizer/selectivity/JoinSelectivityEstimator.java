@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.optimizer.selectivity;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.utils.DrdsRexFolder;
 import com.google.common.collect.Lists;
@@ -136,27 +137,33 @@ public class JoinSelectivityEstimator extends AbstractSelectivityEstimator {
         Boolean rightUnique = null;
         Double leftNdv = null;
         Double rightNdv = null;
-        if (leftRexNode instanceof RexInputRef) {
-            int index = ((RexInputRef) leftRexNode).getIndex();
-            if (index < leftBound) {
-                leftIndex = index;
-                leftNdv = metadataQuery.getDistinctRowCount(join.getLeft(), ImmutableBitSet.of(index), null);
-            } else {
-                rightIndex = index;
-                rightNdv =
-                    metadataQuery.getDistinctRowCount(join.getRight(), ImmutableBitSet.of(index - leftBound), null);
-            }
-        }
-
-        if (rightRexNode instanceof RexInputRef) {
-            int index = ((RexInputRef) rightRexNode).getIndex();
-            if (index < leftBound) {
-                leftIndex = index;
-                leftNdv = metadataQuery.getDistinctRowCount(join.getLeft(), ImmutableBitSet.of(index), null);
-            } else {
-                rightIndex = index;
-                rightNdv =
-                    metadataQuery.getDistinctRowCount(join.getRight(), ImmutableBitSet.of(index - leftBound), null);
+        boolean singleJoinEstOpt = PlannerContext.getPlannerContext(join).getParamManager()
+            .getBoolean(ConnectionParams.ENABLE_SINGLE_JOIN_EST);
+        for (RexNode rex : call.getOperands()) {
+            if (rex instanceof RexInputRef) {
+                int index = ((RexInputRef) rex).getIndex();
+                if (index < leftBound) {
+                    leftIndex = index;
+                    leftNdv = metadataQuery.getDistinctRowCount(join.getLeft(), ImmutableBitSet.of(index), null);
+                    if (singleJoinEstOpt) {
+                        Integer groupSize =
+                            metadataQuery.getColumnsGroupSize(join.getLeft(), ImmutableBitSet.of(index));
+                        if (groupSize != null && groupSize == 1) {
+                            leftNdv = 1D;
+                        }
+                    }
+                } else {
+                    rightIndex = index;
+                    rightNdv = metadataQuery.getDistinctRowCount(
+                        join.getRight(), ImmutableBitSet.of(index - leftBound), null);
+                    if (singleJoinEstOpt) {
+                        Integer groupSize = metadataQuery.getColumnsGroupSize(
+                            join.getRight(), ImmutableBitSet.of(index - leftBound));
+                        if (groupSize != null && groupSize == 1) {
+                            rightNdv = 1D;
+                        }
+                    }
+                }
             }
         }
 

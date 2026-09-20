@@ -13,12 +13,15 @@ import com.alibaba.polardbx.gms.node.InternalNode;
 import com.alibaba.polardbx.gms.node.InternalNodeManager;
 import com.alibaba.polardbx.gms.node.MppScope;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.config.table.GlobalIndexMeta;
 import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager;
 import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.google.common.collect.ImmutableBiMap;
-import com.sun.tools.javac.util.List;
+
+import java.util.Arrays;
+
 import org.junit.Test;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
@@ -126,7 +129,7 @@ public class SketchByColumnarTest {
             AllNodes allNodes = mock(AllNodes.class);
             when(nodeManager.getAllNodes()).thenReturn(allNodes);
             when(allNodes.getAllWorkers(any(MppScope.class))).thenAnswer(
-                invocation -> List.of(mock(InternalNode.class), mock(InternalNode.class))
+                invocation -> Arrays.asList(mock(InternalNode.class), mock(InternalNode.class))
             );
 
             String hint;
@@ -167,7 +170,8 @@ public class SketchByColumnarTest {
     @Test
     public void testGenColumnarHllMeta() {
         try (MockedStatic<OptimizerContext> optimizerContextMockedStatic = Mockito.mockStatic(OptimizerContext.class);
-            MockedStatic<InstConfUtil> instConfUtilMockedStatic = Mockito.mockStatic(InstConfUtil.class)) {
+            MockedStatic<InstConfUtil> instConfUtilMockedStatic = Mockito.mockStatic(InstConfUtil.class);
+            MockedStatic<GlobalIndexMeta> globalIndexMetaMockedStatic = Mockito.mockStatic(GlobalIndexMeta.class)) {
             String hint;
             TableMeta tableMeta = mock(TableMeta.class);
             SchemaManager schemaManager = mock(SchemaManager.class);

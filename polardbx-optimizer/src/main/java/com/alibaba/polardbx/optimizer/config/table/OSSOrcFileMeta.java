@@ -18,6 +18,8 @@ package com.alibaba.polardbx.optimizer.config.table;
 
 import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.common.TddlConstants;
+import com.alibaba.polardbx.common.orc.PreheatFileMeta;
+import com.alibaba.polardbx.common.orc.PreheatMetaManager;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
@@ -59,13 +61,12 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public class OSSOrcFileMeta extends FileMeta {
+    private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(OSSOrcFileMeta.class);
+
     private final static Configuration configuration = new Configuration();
-    /**
-     * The default function to fetch the orc tail meta from GMS.
-     */
-    protected static Function<String, OrcTail> DEFAULT_FETCH_FUNCTION = fileName -> fetchOrcTail(fileName);
-    private static Map<Engine, Cache<String, OrcTail>> ORC_TAIL_CACHE = new ConcurrentHashMap<>();
+
     private final boolean enableDecimal64;
+
     protected TypeDescription typeDescription;
     protected Map<String, ColumnStatistics> statisticsMap;
     // <column name - <stripe index - meta>>
@@ -74,21 +75,23 @@ public class OSSOrcFileMeta extends FileMeta {
     private Map<Integer, String> idxToColumnName;
     // map id to idx of typeDescription
     private Map<String, Integer> fieldIdToIdx;
-    /**
-     * The function to fetch the orc tail meta from GMS.
-     */
-    private Function<String, OrcTail> fetchFunction;
 
     public OSSOrcFileMeta(String logicalSchemaName, String logicalTableName, String physicalTableSchema,
                           String physicalTableName, String partitionName, String fileName,
-                          long fileSize, long tableRows, Function<String, OrcTail> fetchFunction,
+                          long fileSize, long tableRows,
                           String createTime, String updateTime, Engine engine,
-                          Long commitTs, Long removeTs, Long schemaTs, Long fileHash) {
+                          Long commitTs, Long removeTs, Long schemaTs, Long fileHash,
+                          byte[] fileMeta) {
         super(logicalSchemaName, logicalTableName, physicalTableSchema, physicalTableName, partitionName, fileName,
             fileSize, tableRows, commitTs, removeTs, schemaTs, createTime, updateTime, engine, fileHash);
 
-        this.fetchFunction = fetchFunction;
-        this.typeDescription = getOrcTailImpl(engine, fileName).getSchema();
+        // During construction (warmup phase), use local file_meta bytes if available
+        // to avoid OSS HTTP HEAD blocking. The bytes are consumed here and NOT retained.
+        OrcTail initTail = (fileMeta != null && fileMeta.length > 0)
+            ? OrcMetaUtils.extractFileTail(ByteBuffer.wrap(fileMeta))
+            : getOrcTailFromPreheat(engine, fileName);
+
+        this.typeDescription = initTail.getSchema();
 
         // invoke id assignment.
         this.typeDescription.getId();
@@ -98,7 +101,7 @@ public class OSSOrcFileMeta extends FileMeta {
         this.columnNameToIdx = new HashMap<>();
         this.idxToColumnName = new HashMap<>();
 
-        List<OrcProto.ColumnStatistics> fileStats = this.getOrcTail().getFooter().getStatisticsList();
+        List<OrcProto.ColumnStatistics> fileStats = initTail.getFooter().getStatisticsList();
         ColumnStatistics[] columnStatisticsArray = OrcMetaUtils.deserializeStats(this.typeDescription, fileStats);
         for (String fieldName : this.typeDescription.getFieldNames()) {
             TypeDescription subSchema = this.typeDescription.findSubtype(fieldName);
@@ -120,29 +123,9 @@ public class OSSOrcFileMeta extends FileMeta {
             fieldIdToIdx.put(fieldNames.get(i), i);
         }
 
-        this.enableDecimal64 = UserMetadataUtil.extractBooleanValue(this.getOrcTail().getFooter().getMetadataList(),
+        this.enableDecimal64 = UserMetadataUtil.extractBooleanValue(initTail.getFooter().getMetadataList(),
             UserMetadataUtil.ENABLE_DECIMAL_64,
             false);
-    }
-
-    private static OrcTail fetchOrcTail(String fileName) {
-        try (Connection connection = MetaDbUtil.getConnection()) {
-            FilesAccessor filesAccessor = new FilesAccessor();
-            filesAccessor.setConnection(connection);
-
-            // query meta db && filter table files.
-            List<FilesRecord> filesRecords = filesAccessor.queryByFileName(fileName);
-
-            if (filesRecords.isEmpty()) {
-                return null;
-            } else {
-                FilesRecord filesRecord = filesRecords.get(0);
-                ByteBuffer tailBuffer = ByteBuffer.wrap(filesRecord.getFileMeta());
-                return OrcMetaUtils.extractFileTail(tailBuffer);
-            }
-        } catch (SQLException e) {
-            throw GeneralUtil.nestedException(e);
-        }
     }
 
     public boolean isEnableDecimal64() {
@@ -171,7 +154,7 @@ public class OSSOrcFileMeta extends FileMeta {
     }
 
     public OrcTail getOrcTail() {
-        return getOrcTailImpl(engine, fileName);
+        return getOrcTailFromPreheat(engine, fileName);
     }
 
     /**
@@ -193,7 +176,7 @@ public class OSSOrcFileMeta extends FileMeta {
                         // fetch file footer
                         try (Reader reader = OrcFile.createReader(
                             new Path(ossFileUri),
-                            OrcFile.readerOptions(configuration).filesystem(fileSystem).orcTail(getOrcTail()))) {
+                            OrcFile.readerOptions(configuration).filesystem(fileSystem))) {
                             stripeStatistics = reader.getStripeStatistics();
                             stripeInformations = reader.getStripes();
                         }
@@ -296,13 +279,18 @@ public class OSSOrcFileMeta extends FileMeta {
             .build();
     }
 
-    private OrcTail getOrcTailImpl(Engine engine, String path) {
-        Cache<String, OrcTail> cache = ORC_TAIL_CACHE.computeIfAbsent(engine,
-            any -> buildCache(TddlConstants.DEFAULT_ORC_TAIL_CACHE_SIZE));
+    /**
+     * Runtime OrcTail retrieval via PreheatMetaManager.
+     * At runtime PreheatMetaManager already has the tail cached, so this is fast.
+     */
+    protected OrcTail getOrcTailFromPreheat(Engine engine, String path) {
+        FileSystem fileSystem = FileSystemManager.getFileSystemGroup(engine).getMaster();
+        Path filePath = new Path(path);
         try {
-            return cache.get(path, () -> fetchFunction.apply(path));
-        } catch (ExecutionException executionException) {
-            throw GeneralUtil.nestedException(executionException);
+            PreheatFileMeta preheatFileMeta = PreheatMetaManager.getInstance().get(filePath, fileSystem);
+            return preheatFileMeta.getPreheatTail();
+        } catch (Throwable e) {
+            throw GeneralUtil.nestedException(e);
         }
     }
 

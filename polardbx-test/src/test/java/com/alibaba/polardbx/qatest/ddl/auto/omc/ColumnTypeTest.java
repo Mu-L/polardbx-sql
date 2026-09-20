@@ -90,6 +90,7 @@ public class ColumnTypeTest extends DDLBaseNewDBTestCase {
 
     private static final String USE_OMC_ALGORITHM = " ALGORITHM=OMC ";
     private static final String OMC_FORCE_TYPE_CONVERSION = "OMC_FORCE_TYPE_CONVERSION=TRUE";
+    private static final String OMC_DISABLE_30 = "ENABLE_OMC_30=false";
     private static final String SELECT_COLUMN_TYPE = "select COLUMN_DEFAULT, IS_NULLABLE, DATA_TYPE, "
         + "CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE, DATETIME_PRECISION, "
         + "CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE "
@@ -107,15 +108,19 @@ public class ColumnTypeTest extends DDLBaseNewDBTestCase {
         dropTableIfExists(tableName);
         dropTableIfExistsInMySql(tableName);
 
-        String createTableSql = String.format("create table %s (a int primary key, b varchar(20))", tableName);
+        String createTableSql = String.format(
+            "create table %s (a int primary key, b varchar(20)) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci",
+            tableName);
         String partitionDef = " partition by hash(`a`) partitions 7";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTableSql + partitionDef);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, createTableSql);
 
+        String hint = buildCmdExtra(OMC_DISABLE_30);
         final String selectColumnType = String.format(SELECT_COLUMN_TYPE, tableName, "b");
         for (int i = 0; i < CHARSET_PARAMS.length; i++) {
             String alterSql =
-                String.format("alter table %s modify column b varchar(20) character set %s collate %s", tableName,
+                hint + String.format("alter table %s modify column b varchar(20) character set %s collate %s",
+                    tableName,
                     CHARSET_PARAMS[i][0], CHARSET_PARAMS[i][1]);
             System.out.println(CHARSET_PARAMS[i][0] + " " + CHARSET_PARAMS[i][1]);
             execDdlWithRetry(tddlDatabase1, tableName, alterSql + USE_OMC_ALGORITHM, tddlConnection);
@@ -130,12 +135,14 @@ public class ColumnTypeTest extends DDLBaseNewDBTestCase {
         dropTableIfExists(tableName);
         dropTableIfExistsInMySql(tableName);
 
-        String createTableSql = String.format("create table %s (a int primary key, b int) charset=utf8mb4", tableName);
+        String createTableSql =
+            String.format("create table %s (a int primary key, b int) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci",
+                tableName);
         String partitionDef = " partition by hash(`a`) partitions 7";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTableSql + partitionDef);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, createTableSql);
 
-        String hint = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION);
+        String hint = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30);
 
         final String selectColumnType = String.format(SELECT_COLUMN_TYPE, tableName, "b");
         for (String columnDef : COLUMN_DEF_MAP.values()) {
@@ -156,7 +163,9 @@ public class ColumnTypeTest extends DDLBaseNewDBTestCase {
         dropTableIfExists(tableName);
         dropTableIfExistsInMySql(tableName);
 
-        String createTableSql = String.format("create table %s (a int primary key, b varchar(20))", tableName);
+        String createTableSql = String.format(
+            "create table %s (a int primary key, b varchar(20)) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci",
+            tableName);
         String partitionDef = " partition by hash(`b`) partitions 3";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTableSql + partitionDef);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, createTableSql);
@@ -189,7 +198,9 @@ public class ColumnTypeTest extends DDLBaseNewDBTestCase {
         dropTableIfExists(tableName);
         dropTableIfExistsInMySql(tableName);
 
-        String createTableSql = String.format("create table %s (a int primary key, b int) charset=utf8mb4", tableName);
+        String createTableSql =
+            String.format("create table %s (a int primary key, b int) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci",
+                tableName);
         String partitionDef = " partition by hash(`b`) partitions 3";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTableSql + partitionDef);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, createTableSql);
@@ -252,7 +263,8 @@ public class ColumnTypeTest extends DDLBaseNewDBTestCase {
         String tableName = "omc_not_null_tbl_test";
         try (Connection conn = getPolardbxConnection()) {
             String createSql =
-                String.format("create table %s (a int primary key, b int not null) partition by hash(a) partitions 7",
+                String.format(
+                    "create table %s (a int primary key, b int not null) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci partition by hash(a) partitions 7",
                     tableName);
             JdbcUtil.executeUpdateSuccess(conn, createSql);
             String alterSql = String.format("alter table %s modify column b int not null", tableName);
@@ -260,10 +272,10 @@ public class ColumnTypeTest extends DDLBaseNewDBTestCase {
             String sqlMode = JdbcUtil.getSqlMode(conn);
             setSqlMode("STRICT_TRANS_TABLES", conn);
             JdbcUtil.executeUpdateSuccess(conn,
-                buildCmdExtra(OMC_FORCE_TYPE_CONVERSION) + alterSql + USE_OMC_ALGORITHM);
+                buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30) + alterSql + USE_OMC_ALGORITHM);
             setSqlMode("", conn);
             JdbcUtil.executeUpdateSuccess(conn,
-                buildCmdExtra(OMC_FORCE_TYPE_CONVERSION) + alterSql + USE_OMC_ALGORITHM);
+                buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30) + alterSql + USE_OMC_ALGORITHM);
 
             // Reset sql mode
             setSqlMode(sqlMode, conn);

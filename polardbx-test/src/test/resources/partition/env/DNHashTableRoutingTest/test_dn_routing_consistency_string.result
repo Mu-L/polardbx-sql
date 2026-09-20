@@ -1,0 +1,178 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS
+# Set SQL mode to allow invalid data insertion
+set sql_mode='';
+# Create a 3-partition table for testing with string partition key
+create table t2_string
+(
+  id varchar(64),
+  name varchar(64),
+  age int,
+  salary decimal(10,2),
+  create_time datetime,
+  is_active boolean
+)
+partition by key(id)
+partitions 3;
+# Insert test data covering various string types and edge cases
+insert into t2_string values ('', 'empty string', 25, 50000.00, '2023-01-01 00:00:00', true);
+insert into t2_string values ('0', 'zero string', 30, 60000.50, '2023-01-01 00:00:01', false);
+insert into t2_string values ('1', 'one string', 35, 70000.75, '2023-01-01 00:00:02', true);
+insert into t2_string values ('-1', 'negative one string', 40, 80000.00, '2023-01-01 00:00:03', false);
+insert into t2_string values ('null', 'null string', 45, 90000.25, '2023-01-01 00:00:04', true);
+insert into t2_string values (null, 'actual null', 50, 100000.50, '2023-01-01 00:00:05', false);
+insert into t2_string values ('abcdefghijklmnopqrstuvwxyz', 'long string', 55, 110000.75, '2023-01-01 00:00:06', true);
+insert into t2_string values ('1234567890123456789012345678901234567890123456789012345678901234', '64 char string', 60, 120000.00, '2023-01-01 00:00:07', false);
+insert into t2_string values ('中文测试', 'chinese string', 65, 130000.25, '2023-01-01 00:00:08', true);
+insert into t2_string values ('🌟emoji🌟', 'emoji string', 70, 140000.50, '2023-01-01 00:00:09', false);
+insert into t2_string values ('0', 'zero string duplicate', 75, 150000.75, '2023-01-01 00:00:10', true);
+insert into t2_string values ('1', 'one string duplicate', 80, 160000.00, '2023-01-01 00:00:11', false);
+# Insert invalid string data
+insert into t2_string values ('This is a very long string that should be truncated to fit in the varchar(64) field', 'truncated string', 85, 170000.00, '2023-01-01 00:00:12', false);
+# Test part_hash function on CN
+select id, part_hash('', 't2_string', id) as hash_value from t2_string order by id;
+id,hash_value
+null,(-2447670524089286488)
+,(19144387141682250)
+-1,(-8675257767930456906)
+0,(25495277661461982)
+0,(25495277661461982)
+1,(8290533177681263434)
+1,(8290533177681263434)
+1234567890123456789012345678901234567890123456789012345678901234,(-683621026105894815)
+abcdefghijklmnopqrstuvwxyz,(7641057448359016677)
+null,(-1898589711392029520)
+This is a very long string that should be truncated to fit in th,(-7362376018663374477)
+中文测试,(-6780121873020068026)
+🌟emoji🌟,(-2784840694238019434)
+# Test polardbx_hasher function on CN with logical table name
+/*+TDDL:scan()*/select id, polardbx_hasher(id) from t2_string order by id;
+id,polardbx_hasher(id)
+null,-2447670524089286488
+,19144387141682250
+-1,-8675257767930456906
+0,25495277661461982
+0,25495277661461982
+1,8290533177681263434
+1,8290533177681263434
+1234567890123456789012345678901234567890123456789012345678901234,-683621026105894815
+abcdefghijklmnopqrstuvwxyz,7641057448359016677
+null,-1898589711392029520
+This is a very long string that should be truncated to fit in th,-7362376018663374477
+中文测试,-6780121873020068026
+🌟emoji🌟,-2784840694238019434
+# Create tables with different charset/collation settings
+# UTF8MB4 charset with utf8mb4_general_ci collation
+create table t2_string_utf8mb4_general
+(
+  id varchar(64) charset utf8mb4 collate utf8mb4_general_ci,
+  name varchar(64),
+  age int,
+  salary decimal(10,2),
+  create_time datetime,
+  is_active boolean
+)
+partition by key(id)
+partitions 3;
+# Insert test data for UTF8MB4 general collation
+insert into t2_string_utf8mb4_general values ('', 'empty string', 25, 50000.00, '2023-01-01 00:00:00', true);
+insert into t2_string_utf8mb4_general values ('ABC', 'uppercase', 30, 60000.50, '2023-01-01 00:00:01', false);
+insert into t2_string_utf8mb4_general values ('abc', 'lowercase', 35, 70000.75, '2023-01-01 00:00:02', true);
+insert into t2_string_utf8mb4_general values ('中文测试', 'chinese string', 40, 80000.00, '2023-01-01 00:00:03', false);
+insert into t2_string_utf8mb4_general values ('🌟emoji🌟', 'emoji string', 45, 90000.25, '2023-01-01 00:00:04', true);
+# Insert invalid string data
+insert into t2_string_utf8mb4_general values ('This is a very long string that should be truncated to fit in the varchar(64) field', 'truncated string', 50, 100000.00, '2023-01-01 00:00:05', false);
+# Test part_hash function on CN for UTF8MB4 general collation table
+select id, part_hash('', 't2_string_utf8mb4_general', id) as hash_value from t2_string_utf8mb4_general order by id;
+id,hash_value
+,(19144387141682250)
+ABC,(-4326194196521601902)
+abc,(-4326194196521601902)
+This is a very long string that should be truncated to fit in th,(-7362376018663374477)
+中文测试,(-6780121873020068026)
+🌟emoji🌟,(-2784840694238019434)
+# Test polardbx_hasher function on CN with logical table name for UTF8MB4 general collation
+/*+TDDL:scan()*/select id, polardbx_hasher(id) from t2_string_utf8mb4_general order by id;
+id,polardbx_hasher(id)
+,19144387141682250
+ABC,-4326194196521601902
+abc,-4326194196521601902
+This is a very long string that should be truncated to fit in th,-7362376018663374477
+中文测试,-6780121873020068026
+🌟emoji🌟,-2784840694238019434
+# UTF8MB4 charset with utf8mb4_unicode_ci collation
+create table t2_string_utf8mb4_unicode
+(
+  id varchar(64) charset utf8mb4 collate utf8mb4_unicode_ci,
+  name varchar(64),
+  age int,
+  salary decimal(10,2),
+  create_time datetime,
+  is_active boolean
+)
+partition by key(id)
+partitions 3;
+# Insert test data for UTF8MB4 unicode collation
+insert into t2_string_utf8mb4_unicode values ('', 'empty string', 25, 50000.00, '2023-01-01 00:00:00', true);
+insert into t2_string_utf8mb4_unicode values ('ABC', 'uppercase', 30, 60000.50, '2023-01-01 00:00:01', false);
+insert into t2_string_utf8mb4_unicode values ('abc', 'lowercase', 35, 70000.75, '2023-01-01 00:00:02', true);
+insert into t2_string_utf8mb4_unicode values ('中文测试', 'chinese string', 40, 80000.00, '2023-01-01 00:00:03', false);
+insert into t2_string_utf8mb4_unicode values ('🌟emoji🌟', 'emoji string', 45, 90000.25, '2023-01-01 00:00:04', true);
+# Insert invalid string data
+insert into t2_string_utf8mb4_unicode values ('This is a very long string that should be truncated to fit in the varchar(64) field', 'truncated string', 50, 100000.00, '2023-01-01 00:00:05', false);
+# Test part_hash function on CN for UTF8MB4 unicode collation table
+select id, part_hash('', 't2_string_utf8mb4_unicode', id) as hash_value from t2_string_utf8mb4_unicode order by id;
+id,hash_value
+,(19144387141682250)
+ABC,(5562477067663514029)
+abc,(5562477067663514029)
+This is a very long string that should be truncated to fit in th,(325854453624894120)
+中文测试,(1311855300803436977)
+🌟emoji🌟,(51564136637747964)
+# Test polardbx_hasher function on CN with logical table name for UTF8MB4 unicode collation
+/*+TDDL:scan()*/select id, polardbx_hasher(id) from t2_string_utf8mb4_unicode order by id;
+id,polardbx_hasher(id)
+,19144387141682250
+ABC,5562477067663514029
+abc,5562477067663514029
+This is a very long string that should be truncated to fit in th,325854453624894120
+中文测试,1311855300803436977
+🌟emoji🌟,51564136637747964
+# Latin1 charset with latin1_swedish_ci collation
+create table t2_string_latin1
+(
+  id varchar(64) charset latin1 collate latin1_swedish_ci,
+  name varchar(64),
+  age int,
+  salary decimal(10,2),
+  create_time datetime,
+  is_active boolean
+)
+partition by key(id)
+partitions 3;
+# Insert test data for Latin1 charset
+insert into t2_string_latin1 values ('', 'empty string', 25, 50000.00, '2023-01-01 00:00:00', true);
+insert into t2_string_latin1 values ('ABC', 'uppercase', 30, 60000.50, '2023-01-01 00:00:01', false);
+insert into t2_string_latin1 values ('abc', 'lowercase', 35, 70000.75, '2023-01-01 00:00:02', true);
+insert into t2_string_latin1 values ('123', 'numbers', 40, 80000.00, '2023-01-01 00:00:03', false);
+insert into t2_string_latin1 values ('!@#', 'special chars', 45, 90000.25, '2023-01-01 00:00:04', true);
+# Insert invalid string data
+insert into t2_string_latin1 values ('This is a very long string that should be truncated to fit in the varchar(64) field', 'truncated string', 50, 100000.00, '2023-01-01 00:00:05', false);
+# Test part_hash function on CN for Latin1 table
+select id, part_hash('', 't2_string_latin1', id) as hash_value from t2_string_latin1 order by id;
+id,hash_value
+,(19144387141682250)
+!@#,(7276624572562066167)
+123,(-7578486583939256747)
+ABC,(4282853122710784245)
+abc,(4282853122710784245)
+This is a very long string that should be truncated to fit in th,(-3302224924655830243)
+# Test polardbx_hasher function on CN with logical table name for Latin1 table
+/*+TDDL:scan()*/select id, polardbx_hasher(id) from t2_string_latin1 order by id;
+id,polardbx_hasher(id)
+,19144387141682250
+!@#,7276624572562066167
+123,-7578486583939256747
+ABC,4282853122710784245
+abc,4282853122710784245
+This is a very long string that should be truncated to fit in th,-3302224924655830243

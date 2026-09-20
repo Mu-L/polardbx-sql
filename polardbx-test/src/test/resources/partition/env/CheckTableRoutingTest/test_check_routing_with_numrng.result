@@ -1,0 +1,107 @@
+## DISABLE_FAST_SQL_PARSER
+drop database if exists checkrouting_db
+create database if not exists checkrouting_db mode='auto'
+use checkrouting_db
+create table t1_r_p
+(a int, b int)
+partition by range(a)
+partitions 3
+(
+  partition p1 values less than(10),
+  partition p2 values less than(20),
+  partition p3 values less than(30)
+)
+create table t1_r_p2
+(a int, b int)
+partition by range(a)
+partitions 3
+(
+partition p1 values less than(10),
+partition p2 values less than(20),
+partition p3 values less than(30)
+)
+insert into t1_r_p values (9,9),(19,19),(29,29)
+check table routing t1_r_p explain=true
+check_table_routing
+/*+TDDL:cmd_extra(PART_ROUTE_IGNORE_EXCEPTION=TRUE)*/select route_part, real_part, a from (select part_route('checkrouting_db','t1_r_p', a) as route_part, 'p1' as real_part, a from `checkrouting_db`.`t1_r_p` partition(`p1`)) tmp_p1 where route_part != 'p1'
+ union ( select route_part, real_part, a from (select part_route('checkrouting_db','t1_r_p', a) as route_part, 'p2' as real_part, a from `checkrouting_db`.`t1_r_p` partition(`p2`)) tmp_p2 where route_part != 'p2' )
+ union ( select route_part, real_part, a from (select part_route('checkrouting_db','t1_r_p', a) as route_part, 'p3' as real_part, a from `checkrouting_db`.`t1_r_p` partition(`p3`)) tmp_p3 where route_part != 'p3' )
+check table routing t1_r_p
+route_part,real_part,a
+check table routing t1_r_p partition (p2) explain=true
+check_table_routing
+/*+TDDL:cmd_extra(PART_ROUTE_IGNORE_EXCEPTION=TRUE)*/select route_part, real_part, a from (select part_route('checkrouting_db','t1_r_p', a) as route_part, 'p2' as real_part, a from `checkrouting_db`.`t1_r_p` partition(`p2`)) tmp_p2 where route_part != 'p2'
+check table routing t1_r_p partition (p2)
+route_part,real_part,a
+check table routing t1_r_p explain=true
+check_table_routing
+/*+TDDL:cmd_extra(PART_ROUTE_IGNORE_EXCEPTION=TRUE)*/select route_part, real_part, a from (select part_route('checkrouting_db','t1_r_p', a) as route_part, 'p1' as real_part, a from `checkrouting_db`.`t1_r_p` partition(`p1`)) tmp_p1 where route_part != 'p1'
+ union ( select route_part, real_part, a from (select part_route('checkrouting_db','t1_r_p', a) as route_part, 'p2' as real_part, a from `checkrouting_db`.`t1_r_p` partition(`p2`)) tmp_p2 where route_part != 'p2' )
+ union ( select route_part, real_part, a from (select part_route('checkrouting_db','t1_r_p', a) as route_part, 'p3' as real_part, a from `checkrouting_db`.`t1_r_p` partition(`p3`)) tmp_p3 where route_part != 'p3' )
+check table routing t1_r_p
+route_part,real_part,a
+/*+TDDL:CHECK_ROUTING_TABLE_META='t1_r_p2'*/check table routing t1_r_p partition (p2) explain=true
+check_table_routing
+/*+TDDL:cmd_extra(PART_ROUTE_IGNORE_EXCEPTION=TRUE)*/select route_part, real_part, a from (select part_route('checkrouting_db','t1_r_p2', a) as route_part, 'p2' as real_part, a from `checkrouting_db`.`t1_r_p` partition(`p2`)) tmp_p2 where route_part != 'p2'
+/*+TDDL:CHECK_ROUTING_TABLE_META='t1_r_p2'*/check table routing t1_r_p partition (p2)
+route_part,real_part,a
+create table t2_k_sp
+(a int,
+ b int,
+ c int,
+ d int)
+partition by key(a,c)
+partitions 3
+subpartition by key(d,a)
+subpartitions 2
+insert into t2_k_sp values (9,9,9,9),(19,19,19,19),(29,29,29,29)
+check table routing t2_k_sp explain=true
+check_table_routing
+/*+TDDL:cmd_extra(PART_ROUTE_IGNORE_EXCEPTION=TRUE)*/select route_part, real_part, a ,c ,d ,a from (select part_route('checkrouting_db','t2_k_sp', a ,c ,d ,a) as route_part, 'p1sp1' as real_part, a ,c ,d ,a from `checkrouting_db`.`t2_k_sp` partition(`p1sp1`)) tmp_p1sp1 where route_part != 'p1sp1'
+ union ( select route_part, real_part, a ,c ,d ,a from (select part_route('checkrouting_db','t2_k_sp', a ,c ,d ,a) as route_part, 'p1sp2' as real_part, a ,c ,d ,a from `checkrouting_db`.`t2_k_sp` partition(`p1sp2`)) tmp_p1sp2 where route_part != 'p1sp2' )
+ union ( select route_part, real_part, a ,c ,d ,a from (select part_route('checkrouting_db','t2_k_sp', a ,c ,d ,a) as route_part, 'p2sp1' as real_part, a ,c ,d ,a from `checkrouting_db`.`t2_k_sp` partition(`p2sp1`)) tmp_p2sp1 where route_part != 'p2sp1' )
+ union ( select route_part, real_part, a ,c ,d ,a from (select part_route('checkrouting_db','t2_k_sp', a ,c ,d ,a) as route_part, 'p2sp2' as real_part, a ,c ,d ,a from `checkrouting_db`.`t2_k_sp` partition(`p2sp2`)) tmp_p2sp2 where route_part != 'p2sp2' )
+ union ( select route_part, real_part, a ,c ,d ,a from (select part_route('checkrouting_db','t2_k_sp', a ,c ,d ,a) as route_part, 'p3sp1' as real_part, a ,c ,d ,a from `checkrouting_db`.`t2_k_sp` partition(`p3sp1`)) tmp_p3sp1 where route_part != 'p3sp1' )
+ union ( select route_part, real_part, a ,c ,d ,a from (select part_route('checkrouting_db','t2_k_sp', a ,c ,d ,a) as route_part, 'p3sp2' as real_part, a ,c ,d ,a from `checkrouting_db`.`t2_k_sp` partition(`p3sp2`)) tmp_p3sp2 where route_part != 'p3sp2' )
+check table routing t2_k_sp
+route_part,real_part,a,c,d
+check table routing t2_k_sp partition (p1,p1sp2,p3sp1) explain=true
+check_table_routing
+/*+TDDL:cmd_extra(PART_ROUTE_IGNORE_EXCEPTION=TRUE)*/select route_part, real_part, a ,c ,d ,a from (select part_route('checkrouting_db','t2_k_sp', a ,c ,d ,a) as route_part, 'p1sp1' as real_part, a ,c ,d ,a from `checkrouting_db`.`t2_k_sp` partition(`p1sp1`)) tmp_p1sp1 where route_part != 'p1sp1'
+ union ( select route_part, real_part, a ,c ,d ,a from (select part_route('checkrouting_db','t2_k_sp', a ,c ,d ,a) as route_part, 'p1sp2' as real_part, a ,c ,d ,a from `checkrouting_db`.`t2_k_sp` partition(`p1sp2`)) tmp_p1sp2 where route_part != 'p1sp2' )
+ union ( select route_part, real_part, a ,c ,d ,a from (select part_route('checkrouting_db','t2_k_sp', a ,c ,d ,a) as route_part, 'p1sp2' as real_part, a ,c ,d ,a from `checkrouting_db`.`t2_k_sp` partition(`p1sp2`)) tmp_p1sp2 where route_part != 'p1sp2' )
+ union ( select route_part, real_part, a ,c ,d ,a from (select part_route('checkrouting_db','t2_k_sp', a ,c ,d ,a) as route_part, 'p3sp1' as real_part, a ,c ,d ,a from `checkrouting_db`.`t2_k_sp` partition(`p3sp1`)) tmp_p3sp1 where route_part != 'p3sp1' )
+check table routing t2_k_sp partition (p1,p1sp2,p3sp1)
+route_part,real_part,a,c,d
+#partMappings.add(new Pair<>("4-6", 0))
+#partMappings.add(new Pair<>("7-8", 1))
+#partMappings.add(new Pair<>("9-10", 2))
+create table t1_numrange_p
+(a bigint, b bigint)
+partition by udf_hash(pattrngip10(a))
+partitions 3
+(
+  partition p0 values less than (1),
+  partition p1 values less than (2),
+  partition p2 values less than (3)
+)
+insert into t1_numrange_p values (4,4),(7,7),(9,9)
+check table routing t1_numrange_p explain=true
+check_table_routing
+/*+TDDL:cmd_extra(PART_ROUTE_IGNORE_EXCEPTION=TRUE)*/select route_part, real_part, a from (select part_route('checkrouting_db','t1_numrange_p', a) as route_part, 'p0' as real_part, a from `checkrouting_db`.`t1_numrange_p` partition(`p0`)) tmp_p0 where route_part != 'p0'
+ union ( select route_part, real_part, a from (select part_route('checkrouting_db','t1_numrange_p', a) as route_part, 'p1' as real_part, a from `checkrouting_db`.`t1_numrange_p` partition(`p1`)) tmp_p1 where route_part != 'p1' )
+ union ( select route_part, real_part, a from (select part_route('checkrouting_db','t1_numrange_p', a) as route_part, 'p2' as real_part, a from `checkrouting_db`.`t1_numrange_p` partition(`p2`)) tmp_p2 where route_part != 'p2' )
+check table routing t1_numrange_p
+route_part,real_part,a
+check table routing t1_numrange_p partition (p1,p2) explain=true
+check_table_routing
+/*+TDDL:cmd_extra(PART_ROUTE_IGNORE_EXCEPTION=TRUE)*/select route_part, real_part, a from (select part_route('checkrouting_db','t1_numrange_p', a) as route_part, 'p1' as real_part, a from `checkrouting_db`.`t1_numrange_p` partition(`p1`)) tmp_p1 where route_part != 'p1'
+ union ( select route_part, real_part, a from (select part_route('checkrouting_db','t1_numrange_p', a) as route_part, 'p2' as real_part, a from `checkrouting_db`.`t1_numrange_p` partition(`p2`)) tmp_p2 where route_part != 'p2' )
+check table routing t1_numrange_p partition (p1,p2)
+route_part,real_part,a
+drop table t1_r_p
+drop table t1_r_p2
+drop table t2_k_sp
+drop table t1_numrange_p
+use polardbx
+drop database if exists checkrouting_db;

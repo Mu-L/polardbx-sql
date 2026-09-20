@@ -2,6 +2,7 @@ package com.alibaba.polardbx.qatest.ddl.auto.instantrepartition;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatterBuilder;
@@ -55,28 +56,42 @@ public class AddDropPartitionTest extends PartitionTestUtils {
         return true;
     }
 
-
     private void managePartitions() throws InterruptedException {
         ExecutorService executor = Executors.newFixedThreadPool(3);
         Pair<List<List<String>>, List<List<String>>> dateInfo = preparePartitionNames("2024-10-31", "2024-09-30", 30);
         AtomicBoolean stop = new AtomicBoolean(false);
         Map<PartitionTestUtils.ErrorType, Pair<AtomicLong, String>> errorRecord = new HashMap<>();
         Runnable managePartitionsTask = () -> {
+            int originLockWaitTimeout = -1;
             try (Connection connection = ConnectionManager.getInstance().newPolarDBXConnection()) {
-                int i = 0;
-                JdbcUtil.useDb(connection, currentDatabase);
-                while (!Thread.currentThread().isInterrupted()) {
-                    removeOldestPartition(dateInfo.getValue().get(i), connection);
-                    addNewestPartition(dateInfo.getKey().get(i), connection);
-                    i++;
-                    if (i >= dateInfo.getKey().size()) {
-                        stop.set(true);
-                        break;
+                try {
+                    int i = 0;
+                    ResultSet rs = JdbcUtil.executeQuerySuccess(connection, "select @@innodb_lock_wait_timeout");
+                    Assert.assertTrue(rs.next());
+                    originLockWaitTimeout = rs.getInt(1);
+                    JdbcUtil.executeUpdateSuccess(connection, "set innodb_lock_wait_timeout = 50");
+                    JdbcUtil.useDb(connection, currentDatabase);
+                    while (!Thread.currentThread().isInterrupted()) {
+                        removeOldestPartition(dateInfo.getValue().get(i), connection);
+                        addNewestPartition(dateInfo.getKey().get(i), connection);
+                        i++;
+                        if (i >= dateInfo.getKey().size()) {
+                            stop.set(true);
+                            break;
+                        }
+                        Thread.sleep(TimeUnit.SECONDS.toMillis(5));
                     }
-                    Thread.sleep(TimeUnit.SECONDS.toMillis(5));
+                } catch (Exception e) {
+                    stop.set(true);
+                    e.printStackTrace();
+                    Assert.fail(e.getMessage());
+                } finally {
+                    if (originLockWaitTimeout > 0) {
+                        JdbcUtil.executeUpdateSuccess(connection,
+                            "set innodb_lock_wait_timeout = " + originLockWaitTimeout);
+                    }
                 }
             } catch (Exception e) {
-                stop.set(true);
                 e.printStackTrace();
                 Assert.fail(e.getMessage());
             }
@@ -84,79 +99,114 @@ public class AddDropPartitionTest extends PartitionTestUtils {
 
         Runnable insertDataTask = () -> {
             try (Connection connection = ConnectionManager.getInstance().newPolarDBXConnection()) {
-                JdbcUtil.useDb(connection, currentDatabase);
-                Map<Long, Long> pkList = PartitionTestUtils.getPkList(connection, 10);
-                int executionCount = 0;
-                while (!stop.get()) {
-                    for (Map.Entry<Long, Long> pkCount : pkList.entrySet()) {
-                        executionCount++;
-                        int phySql = 0;
-                        List<List<String>> trace = null;
-                        String insertSQL = PartitionTestUtils.genInsertIntoTarForSrcSQL(pkCount.getKey(), 10);
-                        PreparedStatement ps = connection.prepareStatement("trace /*+TDDL:cmd_extra(MERGE_UNION=false)*/ " + insertSQL);
-                        try {
-                            ps.execute();
-                        } catch (Exception ex) {
-                            if (ex.getMessage().indexOf("ERR_PARTITION_NO_FOUND") != -1) {
-                                if (errorRecord.containsKey(ErrorType.UNEXPECTED_ROUTE_ERROR)) {
-                                    errorRecord.get(PartitionTestUtils.ErrorType.UNEXPECTED_ROUTE_ERROR).getKey().incrementAndGet();
-                                } else {
-                                    errorRecord.put(PartitionTestUtils.ErrorType.UNEXPECTED_ROUTE_ERROR, Pair.of(new AtomicLong(1), "ERR_PARTITION_NO_FOUND"));
-                                }
-                            } else if (ex.getMessage().indexOf("InterruptedException") != -1
-                                    || ex.getMessage().indexOf("No operations allowed after connection closed") != -1
-                                    || ex.getMessage().indexOf("Communications link failure") != -1) {
-                                if (errorRecord.containsKey(ErrorType.UNEXPECTED_KILL)) {
-                                    errorRecord.get(PartitionTestUtils.ErrorType.UNEXPECTED_KILL).getKey().incrementAndGet();
-                                } else {
-                                    errorRecord.put(PartitionTestUtils.ErrorType.UNEXPECTED_KILL, Pair.of(new AtomicLong(1), "kill"));
-                                }
-                            } else {
-                                throw new RuntimeException(ex);
-                            }
-                        }
-                        //JdbcUtil.executeUpdateSuccess(connection, "trace /*+TDDL:cmd_extra(MERGE_UNION=false)*/" + insertSQL);
-                        trace = getTrace(connection);
-                        phySql = 15 * 2 + pkCount.getValue().intValue();
-                        if (trace.size() != phySql) {
-                            if ((pkCount.getValue().intValue() > 1 && trace.size() > phySql) || (pkCount.getValue().intValue() == 1 && trace.size() != phySql)) {
-                                if (errorRecord.containsKey(PartitionTestUtils.ErrorType.UNEXPECTED_Double_Write)) {
-                                    errorRecord.get(PartitionTestUtils.ErrorType.UNEXPECTED_Double_Write).getKey().incrementAndGet();
-                                } else {
-                                    errorRecord.put(PartitionTestUtils.ErrorType.UNEXPECTED_Double_Write, Pair.of(new AtomicLong(1), "expect physical sql " + phySql + " but trace:" + trace.toString()));
-                                }
-                            }
-                            //Assert.assertThat(trace.toString(), trace.size(), pkCount.getValue().intValue() > 1 ? lessThanOrEqualTo(phySql) : is(phySql));
-                        }
-                        if (stop.get()) {
-                            break;
-                        }
-
-                        //Assert.assertThat(trace.toString(), trace.size(), pkCount.getValue().intValue() > 1 ? lessThanOrEqualTo(phySql) : is(phySql));
-                        if ((executionCount % 20 == 0) && RandomUtils.getBoolean()) {
-                            ps = connection.prepareStatement(PartitionTestUtils.genDeleteFromTarSQL(pkCount.getKey()));
+                int originLockWaitTimeout = -1;
+                try {
+                    ResultSet rs = JdbcUtil.executeQuerySuccess(connection, "select @@innodb_lock_wait_timeout");
+                    Assert.assertTrue(rs.next());
+                    originLockWaitTimeout = rs.getInt(1);
+                    JdbcUtil.executeUpdateSuccess(connection, "set innodb_lock_wait_timeout = 50");
+                    JdbcUtil.useDb(connection, currentDatabase);
+                    Map<Long, Long> pkList = PartitionTestUtils.getPkList(connection, 10);
+                    int executionCount = 0;
+                    while (!stop.get()) {
+                        for (Map.Entry<Long, Long> pkCount : pkList.entrySet()) {
+                            executionCount++;
+                            int phySql = 0;
+                            List<List<String>> trace = null;
+                            String insertSQL = PartitionTestUtils.genInsertIntoTarForSrcSQL(pkCount.getKey(), 10);
+                            PreparedStatement ps =
+                                connection.prepareStatement(
+                                    "trace /*+TDDL:cmd_extra(MERGE_UNION=false)*/ " + insertSQL);
                             try {
                                 ps.execute();
                             } catch (Exception ex) {
                                 if (ex.getMessage().indexOf("ERR_PARTITION_NO_FOUND") != -1) {
                                     if (errorRecord.containsKey(ErrorType.UNEXPECTED_ROUTE_ERROR)) {
-                                        errorRecord.get(PartitionTestUtils.ErrorType.UNEXPECTED_ROUTE_ERROR).getKey().incrementAndGet();
+                                        errorRecord.get(PartitionTestUtils.ErrorType.UNEXPECTED_ROUTE_ERROR).getKey()
+                                            .incrementAndGet();
                                     } else {
-                                        errorRecord.put(PartitionTestUtils.ErrorType.UNEXPECTED_ROUTE_ERROR, Pair.of(new AtomicLong(1), "expect physical sql " + phySql + " but trace:" + trace == null ? "" : trace.toString()));
+                                        errorRecord.put(PartitionTestUtils.ErrorType.UNEXPECTED_ROUTE_ERROR,
+                                            Pair.of(new AtomicLong(1), "ERR_PARTITION_NO_FOUND"));
                                     }
                                 } else if (ex.getMessage().indexOf("InterruptedException") != -1
-                                        || ex.getMessage().indexOf("No operations allowed after connection closed") != -1
-                                        || ex.getMessage().indexOf("Communications link failure") != -1) {
+                                    || ex.getMessage().indexOf("No operations allowed after connection closed") != -1
+                                    || ex.getMessage().indexOf("Communications link failure") != -1) {
                                     if (errorRecord.containsKey(ErrorType.UNEXPECTED_KILL)) {
-                                        errorRecord.get(PartitionTestUtils.ErrorType.UNEXPECTED_KILL).getKey().incrementAndGet();
+                                        errorRecord.get(PartitionTestUtils.ErrorType.UNEXPECTED_KILL).getKey()
+                                            .incrementAndGet();
                                     } else {
-                                        errorRecord.put(PartitionTestUtils.ErrorType.UNEXPECTED_KILL, Pair.of(new AtomicLong(1), "kill"));
+                                        errorRecord.put(PartitionTestUtils.ErrorType.UNEXPECTED_KILL,
+                                            Pair.of(new AtomicLong(1), "kill"));
                                     }
                                 } else {
                                     throw new RuntimeException(ex);
                                 }
                             }
+                            //JdbcUtil.executeUpdateSuccess(connection, "trace /*+TDDL:cmd_extra(MERGE_UNION=false)*/" + insertSQL);
+                            trace = getTrace(connection);
+                            phySql = 15 * 2 + pkCount.getValue().intValue();
+                            if (trace.size() != phySql) {
+                                if ((pkCount.getValue().intValue() > 1 && trace.size() > phySql) || (
+                                    pkCount.getValue().intValue() == 1 && trace.size() != phySql)) {
+                                    if (errorRecord.containsKey(PartitionTestUtils.ErrorType.UNEXPECTED_Double_Write)) {
+                                        errorRecord.get(PartitionTestUtils.ErrorType.UNEXPECTED_Double_Write).getKey()
+                                            .incrementAndGet();
+                                    } else {
+                                        errorRecord.put(PartitionTestUtils.ErrorType.UNEXPECTED_Double_Write,
+                                            Pair.of(new AtomicLong(1),
+                                                "expect physical sql " + phySql + " but trace:" + trace.toString()));
+                                    }
+                                }
+                                //Assert.assertThat(trace.toString(), trace.size(), pkCount.getValue().intValue() > 1 ? lessThanOrEqualTo(phySql) : is(phySql));
+                            }
+                            if (stop.get()) {
+                                break;
+                            }
+
+                            //Assert.assertThat(trace.toString(), trace.size(), pkCount.getValue().intValue() > 1 ? lessThanOrEqualTo(phySql) : is(phySql));
+                            if ((executionCount % 20 == 0) && RandomUtils.getBoolean()) {
+                                ps = connection.prepareStatement(
+                                    PartitionTestUtils.genDeleteFromTarSQL(pkCount.getKey()));
+                                try {
+                                    ps.execute();
+                                } catch (Exception ex) {
+                                    if (ex.getMessage().indexOf("ERR_PARTITION_NO_FOUND") != -1) {
+                                        if (errorRecord.containsKey(ErrorType.UNEXPECTED_ROUTE_ERROR)) {
+                                            errorRecord.get(PartitionTestUtils.ErrorType.UNEXPECTED_ROUTE_ERROR)
+                                                .getKey()
+                                                .incrementAndGet();
+                                        } else {
+                                            errorRecord.put(PartitionTestUtils.ErrorType.UNEXPECTED_ROUTE_ERROR,
+                                                Pair.of(new AtomicLong(1),
+                                                    "expect physical sql " + phySql + " but trace:" + trace == null ?
+                                                        "" :
+                                                        trace.toString()));
+                                        }
+                                    } else if (ex.getMessage().indexOf("InterruptedException") != -1
+                                        || ex.getMessage().indexOf("No operations allowed after connection closed")
+                                        != -1
+                                        || ex.getMessage().indexOf("Communications link failure") != -1) {
+                                        if (errorRecord.containsKey(ErrorType.UNEXPECTED_KILL)) {
+                                            errorRecord.get(PartitionTestUtils.ErrorType.UNEXPECTED_KILL).getKey()
+                                                .incrementAndGet();
+                                        } else {
+                                            errorRecord.put(PartitionTestUtils.ErrorType.UNEXPECTED_KILL,
+                                                Pair.of(new AtomicLong(1), "kill"));
+                                        }
+                                    } else {
+                                        throw new RuntimeException(ex);
+                                    }
+                                }
+                            }
                         }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    Assert.fail(e.getMessage());
+                } finally {
+                    if (originLockWaitTimeout > 0) {
+                        JdbcUtil.executeUpdateSuccess(connection,
+                            "set innodb_lock_wait_timeout = " + originLockWaitTimeout);
                     }
                 }
             } catch (Exception e) {
@@ -165,44 +215,61 @@ public class AddDropPartitionTest extends PartitionTestUtils {
             }
         };
 
-
         Runnable selectForUpdateTask = () -> {
 
             try (Connection connection = ConnectionManager.getInstance().newPolarDBXConnection()) {
-                JdbcUtil.useDb(connection, currentDatabase);
-                Map<Long, Long> pkList = PartitionTestUtils.getPkList(connection, 10);
-                int executionCount = 0;
-                while (!stop.get()) {
-                    for (Map.Entry<Long, Long> pkCount : pkList.entrySet()) {
-                        try {
-                            executionCount++;
-                            connection.setAutoCommit(false);
-                            PreparedStatement ps = connection.prepareStatement(PartitionTestUtils.genSelectForUpdateFromTarSQL(pkCount.getKey()));
-                            ps.execute();
-                            if (executionCount % 100 == 0) {
-                                Thread.sleep(TimeUnit.SECONDS.toMillis(RandomUtils.getIntegerBetween(10, 20)));
-                            }
-                            connection.commit();
-                            if (stop.get()) {
-                                break;
-                            }
-                        } catch (Exception ex) {
-                            if (ex.getMessage().indexOf("InterruptedException") != -1
+                int originLockWaitTimeout = -1;
+                try {
+                    ResultSet rs = JdbcUtil.executeQuerySuccess(connection, "select @@innodb_lock_wait_timeout");
+                    Assert.assertTrue(rs.next());
+                    originLockWaitTimeout = rs.getInt(1);
+                    JdbcUtil.executeUpdateSuccess(connection, "set innodb_lock_wait_timeout = 50");
+                    JdbcUtil.useDb(connection, currentDatabase);
+                    Map<Long, Long> pkList = PartitionTestUtils.getPkList(connection, 10);
+                    int executionCount = 0;
+                    while (!stop.get()) {
+                        for (Map.Entry<Long, Long> pkCount : pkList.entrySet()) {
+                            try {
+                                executionCount++;
+                                connection.setAutoCommit(false);
+                                PreparedStatement ps = connection.prepareStatement(
+                                    PartitionTestUtils.genSelectForUpdateFromTarSQL(pkCount.getKey()));
+                                ps.execute();
+                                if (executionCount % 100 == 0) {
+                                    Thread.sleep(TimeUnit.SECONDS.toMillis(RandomUtils.getIntegerBetween(10, 20)));
+                                }
+                                connection.commit();
+                                if (stop.get()) {
+                                    break;
+                                }
+                            } catch (Exception ex) {
+                                if (ex.getMessage().indexOf("InterruptedException") != -1
                                     || ex.getMessage().indexOf("No operations allowed after connection closed") != -1
                                     || ex.getMessage().indexOf("Communications link failure") != -1) {
-                                if (errorRecord.containsKey(ErrorType.UNEXPECTED_KILL)) {
-                                    errorRecord.get(PartitionTestUtils.ErrorType.UNEXPECTED_KILL).getKey().incrementAndGet();
-                                } else {
-                                    errorRecord.put(PartitionTestUtils.ErrorType.UNEXPECTED_KILL, Pair.of(new AtomicLong(1), "kill"));
+                                    if (errorRecord.containsKey(ErrorType.UNEXPECTED_KILL)) {
+                                        errorRecord.get(PartitionTestUtils.ErrorType.UNEXPECTED_KILL).getKey()
+                                            .incrementAndGet();
+                                    } else {
+                                        errorRecord.put(PartitionTestUtils.ErrorType.UNEXPECTED_KILL,
+                                            Pair.of(new AtomicLong(1), "kill"));
+                                    }
                                 }
+                            } finally {
+                                connection.setAutoCommit(true);
                             }
-                        } finally {
-                            connection.setAutoCommit(true);
                         }
                     }
+                } catch (Throwable t) {
+                    throw new RuntimeException(t);
+                } finally {
+                    if (originLockWaitTimeout > 0) {
+                        JdbcUtil.executeUpdateSuccess(connection,
+                            "set innodb_lock_wait_timeout = " + originLockWaitTimeout);
+                    }
                 }
-            } catch (Throwable t) {
-                throw new RuntimeException(t);
+            } catch (Exception e) {
+                e.printStackTrace();
+                Assert.fail(e.getMessage());
             }
         };
 
@@ -266,9 +333,9 @@ public class AddDropPartitionTest extends PartitionTestUtils {
         calendar.setTime(date);
         calendar.add(Calendar.DAY_OF_MONTH, offset);
         return "p" + new DateTimeFormatterBuilder()
-                .appendPattern("yyyyMMdd")
-                .toFormatter()
-                .format(LocalDateTime.ofInstant(calendar.toInstant(), java.time.ZoneId.systemDefault()));
+            .appendPattern("yyyyMMdd")
+            .toFormatter()
+            .format(LocalDateTime.ofInstant(calendar.toInstant(), java.time.ZoneId.systemDefault()));
     }
 
     private Date getTomorrow(Date date) {

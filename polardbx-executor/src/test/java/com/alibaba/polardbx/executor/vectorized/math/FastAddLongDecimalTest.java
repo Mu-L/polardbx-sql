@@ -4,6 +4,8 @@ import com.alibaba.polardbx.common.datatype.Decimal;
 import com.alibaba.polardbx.common.datatype.DecimalStructure;
 import com.alibaba.polardbx.common.datatype.DecimalTypeBase;
 import com.alibaba.polardbx.common.datatype.FastDecimalUtils;
+import com.alibaba.polardbx.common.properties.ConnectionProperties;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.DecimalBlock;
 import com.alibaba.polardbx.executor.chunk.DecimalBlockBuilder;
@@ -120,6 +122,7 @@ public class FastAddLongDecimalTest {
 
     @Test
     public void testAddLongConstDecimalVar() {
+        DynamicConfig.getInstance().loadValue(null, ConnectionProperties.ENABLE_DECIMAL_128, "true");
 
         final VectorizedExpression[] children = new VectorizedExpression[2];
         children[0] = new LiteralVectorizedExpression(DataTypes.LongType, leftConstVal, 1);
@@ -178,6 +181,104 @@ public class FastAddLongDecimalTest {
                     "Expect output block to be decimal_128 when overflowed from decimal_64, got: "
                         + outputBlock.getState(),
                     outputBlock.getState().isDecimal128());
+                break;
+            case DECIMAL_128:
+                Assert.assertTrue(
+                    "Expect output block to be full when overflowed from decimal_128, got: " + outputBlock.getState(),
+                    outputBlock.getState().isFull());
+                break;
+            case SIMPLE:
+                // Overflow 的 SIMPLE_3 不支持简单计算
+                Assert.assertTrue(
+                    "Expect output block to full when input is simple overflowed, got: " + outputBlock.getState(),
+                    outputBlock.getState().isFull());
+                break;
+            case FULL:
+                Assert.assertTrue("Expect output block to full when input is full, got: " + outputBlock.getState(),
+                    outputBlock.getState().isFull());
+                break;
+            }
+        }
+
+        // check result
+        Assert.assertEquals("Incorrect output block positionCount", COUNT, outputBlock.getPositionCount());
+        if (withSelection) {
+            for (int i = 0; i < sel.length; i++) {
+                int j = sel[i];
+
+                Assert.assertEquals("Incorrect value for: " + leftBlock.getDecimal(j).toString() + " at " + j,
+                    targetResult[j], outputBlock.isNull(j) ? null : outputBlock.getDecimal(j));
+            }
+        } else {
+            for (int i = 0; i < COUNT; i++) {
+                Assert.assertEquals("Incorrect value for: " + leftBlock.getDecimal(i).toString() + " at " + i,
+                    targetResult[i], outputBlock.isNull(i) ? null : outputBlock.getDecimal(i));
+            }
+        }
+
+    }
+
+    @Test
+    public void testAddLongConstDecimalVar2() {
+        DynamicConfig.getInstance().loadValue(null, ConnectionProperties.ENABLE_DECIMAL_128, "false");
+
+        final VectorizedExpression[] children = new VectorizedExpression[2];
+        children[0] = new LiteralVectorizedExpression(DataTypes.LongType, leftConstVal, 1);
+        children[1] = new InputRefVectorizedExpression(decimalType, 0, 0);
+        FastAddLongConstDecimalColVectorizedExpression expr = new FastAddLongConstDecimalColVectorizedExpression(
+            OUTPUT_INDEX, children);
+
+        MutableChunk chunk = preAllocatedChunk();
+        EvaluationContext evaluationContext = new EvaluationContext(chunk, executionContext);
+        DecimalBlock leftBlock = (DecimalBlock) Objects.requireNonNull(chunk.slotIn(0));
+        Assert.assertEquals("Expect left block to be decimal64: " + isDecimal64(),
+            leftBlock.isDecimal64(), isDecimal64());
+        Assert.assertEquals("Expect left block to be decimal128: " + isDecimal64(),
+            leftBlock.isDecimal128(), isDecimal128());
+        if (withSelection) {
+            chunk.setBatchSize(sel.length);
+            chunk.setSelection(sel);
+            chunk.setSelectionInUse(true);
+        }
+
+        DecimalBlock outputBlock = (DecimalBlock) Objects.requireNonNull(chunk.slotIn(OUTPUT_INDEX));
+
+        Assert.assertTrue("Expect to be unallocated before evaluation", outputBlock.isUnalloc());
+
+        expr.eval(evaluationContext);
+
+        Assert.assertEquals("Expect to be allocated after evaluation, otherwise it is null",
+            inputState == InputState.NULL, outputBlock.isUnalloc());
+
+        if (!overflow) {
+            switch (inputState) {
+            case DECIMAL_64:
+                Assert.assertTrue(
+                    "Expect output block to be decimal64 when not overflowed, got: " + outputBlock.getState(),
+                    outputBlock.isDecimal64());
+                break;
+            case DECIMAL_128:
+                Assert.assertTrue(
+                    "Expect output block to be decimal128 when not overflowed, got: " + outputBlock.getState(),
+                    outputBlock.isDecimal128());
+                break;
+            case SIMPLE:
+                Assert.assertTrue(
+                    "Expect output block to simple/full when input is simple, got: " + outputBlock.getState(),
+                    outputBlock.isSimple() || outputBlock.getState().isFull());
+                break;
+            case FULL:
+                Assert.assertTrue("Expect output block to full when input is full got: " + outputBlock.getState(),
+                    outputBlock.getState().isFull());
+                break;
+            }
+        } else {
+            switch (inputState) {
+            case DECIMAL_64:
+                Assert.assertTrue(
+                    "Expect output block to be decimal_128 when overflowed from decimal_64, got: "
+                        + outputBlock.getState(),
+                    outputBlock.getState().isFull());
                 break;
             case DECIMAL_128:
                 Assert.assertTrue(

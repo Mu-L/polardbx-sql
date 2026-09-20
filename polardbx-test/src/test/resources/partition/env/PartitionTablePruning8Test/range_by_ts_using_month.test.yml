@@ -1,0 +1,43 @@
+## DISABLE_FAST_SQL_PARSER
+
+set ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION=true;
+DROP TABLE IF EXISTS `rng_ts_using_month`;
+CREATE /*+TDDL:cmd_extra(ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION=true)*/ TABLE IF NOT EXISTS `rng_ts_using_month` (
+`a` varchar(8) DEFAULT NULL,
+`b` timestamp default current_timestamp
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+PARTITION BY range(month(`b`))
+(
+  PARTITION p1 VALUES LESS THAN (2),
+  PARTITION p2 VALUES LESS THAN (3),
+  PARTITION p3 VALUES LESS THAN (4),
+  PARTITION p4 VALUES LESS THAN (5),
+  PARTITION p5 VALUES LESS THAN (6),
+  PARTITION p6 VALUES LESS THAN (7),
+  PARTITION p7 VALUES LESS THAN (8),
+  PARTITION p8 VALUES LESS THAN (9),
+  PARTITION p9 VALUES LESS THAN (10),
+  PARTITION p10 VALUES LESS THAN (11),
+  PARTITION p11 VALUES LESS THAN (12),
+  PARTITION p12 VALUES LESS THAN (13)
+);
+
+set time_zone='+08:00';
+insert into rng_ts_using_month values (1,'2024-01-01 00:00:00');
+insert into rng_ts_using_month values (2,'2024-01-01 09:00:00');
+insert into rng_ts_using_month values (3,'2024-01-01 00:00:00');
+
+set time_zone='+08:00';
+select a,b, month(b),part_route('','rng_ts_using_month', b) from rng_ts_using_month order by a;
+
+set time_zone='+00:00';
+select a,b, month(b),part_route('','rng_ts_using_month', b) from rng_ts_using_month order by a;
+
+set time_zone='+08:00';
+explain select a,b from rng_ts_using_month where b='2024-02-02 02:00:00';
+
+set time_zone='+00:00';
+explain select a,b from rng_ts_using_month where b='2024-02-01 18:00:00';
+explain  select a,b from rng_ts_using_month where b between '2023-12-31 18:00:00' and '2024-04-01 18:00:00';
+
+DROP TABLE IF EXISTS `rng_ts_using_month`;

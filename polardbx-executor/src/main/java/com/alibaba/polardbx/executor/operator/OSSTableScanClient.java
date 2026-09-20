@@ -32,11 +32,9 @@ import com.alibaba.polardbx.executor.archive.reader.OSSReadOption;
 import com.alibaba.polardbx.executor.archive.reader.UnPushableORCReaderTask;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
-import com.alibaba.polardbx.executor.chunk.IntegerBlock;
 import com.alibaba.polardbx.executor.chunk.LongBlock;
 import com.alibaba.polardbx.executor.gms.ColumnarManager;
 import com.alibaba.polardbx.executor.gms.ColumnarStoreUtils;
-import com.alibaba.polardbx.executor.gms.DynamicColumnarManager;
 import com.alibaba.polardbx.executor.mpp.deploy.ServiceProvider;
 import com.alibaba.polardbx.executor.mpp.split.OssSplit;
 import com.alibaba.polardbx.optimizer.config.table.FileMeta;
@@ -57,8 +55,6 @@ import org.apache.calcite.rex.RexNode;
 import org.apache.hadoop.hive.ql.exec.vector.LongColumnVector;
 import org.apache.hadoop.hive.ql.exec.vector.VectorizedRowBatch;
 import org.apache.orc.TypeDescription;
-import org.apache.orc.UserMetadataUtil;
-import org.apache.orc.impl.OrcTail;
 import org.jetbrains.annotations.VisibleForTesting;
 
 import java.io.Closeable;
@@ -360,7 +356,7 @@ public class OSSTableScanClient implements Closeable {
 
         void foreachDeltaFile(String csvFile, long tso, ColumnarManager columnarManager,
                               List<Integer> projectColumnIndexes) {
-            Iterator<Chunk> chunkIterator = columnarManager.csvData(tso, csvFile);
+            Iterator<Chunk> chunkIterator = columnarManager.csvData(tso, csvFile, context);
             while (!isCancelled && chunkIterator.hasNext()) {
                 try {
                     Chunk chunk = chunkIterator.next();

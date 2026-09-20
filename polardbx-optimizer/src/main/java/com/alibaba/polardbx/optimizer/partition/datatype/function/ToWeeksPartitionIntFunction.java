@@ -46,6 +46,8 @@ public class ToWeeksPartitionIntFunction extends PartitionIntFunction {
     public Monotonicity getMonotonicity(DataType<?> fieldType) {
         if (fieldType.getSqlType() == Types.DATE || fieldType.getSqlType() == MySQLTimeTypeUtil.DATETIME_SQL_TYPE) {
             return MONOTONIC_INCREASING_NOT_NULL;
+        } else if (fieldType.getSqlType() == Types.TIMESTAMP) {
+            return Monotonicity.MONOTONIC_INCREASING_NOT_NULL;
         } else {
             return NON_MONOTONIC;
         }

@@ -203,6 +203,8 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
 
   public static final SqlSpecialOperator ALTER_TYPE = new SqlAlterTypeOperator();
 
+  public static final SqlSpecialOperator POLARDBX_HASHER = new SqlPolardbxHasherOperator();
+
   public static final SqlSpecialOperator GEN_COL_WRAPPER_FUNC = new SqlGenColWrapperFuncOperator();
 
   /** <code>FILTER</code> operator filters which rows are included in an
@@ -1361,6 +1363,13 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
       new SqlFunction("REPLACE", SqlKind.OTHER_FUNCTION,
           ReturnTypes.VARCHAR_2000, null,
           OperandTypes.STRING_STRING_STRING, SqlFunctionCategory.STRING);
+
+  public static SqlFunction REGEXP_REPLACE = new SqlFunction("REGEXP_REPLACE",
+      SqlKind.OTHER_FUNCTION,
+      ReturnTypes.VARCHAR_2000,
+      InferTypes.VARCHAR_2000,
+      OperandTypes.ANY_STRING_STRING,
+      SqlFunctionCategory.STRING);
 
   public static final SqlFunction CONVERT =
       new SqlConvertFunction("CONVERT");

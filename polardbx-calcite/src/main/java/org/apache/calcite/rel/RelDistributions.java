@@ -95,10 +95,10 @@ public class RelDistributions {
 
   private static ImmutableIntList normalizeKeys(Collection<? extends Number> keys) {
     ImmutableIntList list = ImmutableIntList.copyOf(keys);
-    if (list.size() > 1
-        && !Ordering.natural().isOrdered(list)) {
-      list = ImmutableIntList.copyOf(Ordering.natural().sortedCopy(list));
-    }
+//    if (list.size() > 1
+//        && !Ordering.natural().isOrdered(list)) {
+//      list = ImmutableIntList.copyOf(Ordering.natural().sortedCopy(list));
+//    }
     return list;
   }
   /**

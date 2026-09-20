@@ -18,7 +18,6 @@ import java.text.MessageFormat;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.Calendar;
-import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -159,6 +158,8 @@ public class GeneratedColumnTest extends DDLBaseNewDBTestCase {
                 "create table %s(a int primary key, b int, c int as (a+b) logical, e int) partition by hash(a)",
                 tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, createSql);
+
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "set ENABLE_OMC_30 = false");
 
         // modify ref column
         String alterSql = String.format("alter table %s modify column b bigint", tableName);
@@ -465,7 +466,7 @@ public class GeneratedColumnTest extends DDLBaseNewDBTestCase {
         String alter =
             String.format("alter table %s add column c datetime on update current_timestamp() as (b) logical",
                 tableName);
-        Assert.assertTrue(JdbcUtil.executeUpdateFailedReturn(tddlConnection, alter).contains("can not be auto update"));
+        Assert.assertTrue(JdbcUtil.executeUpdateFailedReturn(tddlConnection, alter).contains("syntax error"));
 
         String tableName1 = tableName + "_1";
         create = String.format(
@@ -1053,7 +1054,7 @@ public class GeneratedColumnTest extends DDLBaseNewDBTestCase {
         String[] columnNames = new String[] {"c", "`c`", "```c```", "`c```", "`3`", "`\"f\"`"};
         for (String columnName : columnNames) {
             String alter =
-                String.format("alter table %s add column %s int as (a) logical not null", tableName, columnName);
+                String.format("alter table %s add column %s int as (a) logical", tableName, columnName);
             JdbcUtil.executeUpdateSuccess(tddlConnection, alter);
 
             ResultSet rs = JdbcUtil.executeQuery("select * from " + tableName, tddlConnection);

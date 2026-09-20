@@ -16,13 +16,15 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.operator.spill.AsyncFileSingleStreamSpillerFactory;
 import com.alibaba.polardbx.executor.operator.spill.GenericSpillerFactory;
 import com.alibaba.polardbx.executor.operator.spill.SpillerFactory;
 import com.alibaba.polardbx.executor.operator.spill.SyncFileCleaner;
 import com.alibaba.polardbx.executor.operator.util.RowChunksBuilder;
-import com.alibaba.polardbx.executor.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.google.common.collect.ImmutableList;
 import com.google.common.io.MoreFiles;
@@ -30,6 +32,7 @@ import com.google.common.io.RecursiveDeleteOption;
 import org.apache.calcite.rel.RelFieldCollation;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runners.Parameterized;
@@ -39,7 +42,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 
@@ -72,6 +77,13 @@ public class SpilledTopNExecTest extends BaseExecTest {
         MoreFiles.deleteRecursively(tempPath, RecursiveDeleteOption.ALLOW_INSECURE);
     }
 
+    @Before
+    public void setUpContext() {
+        Map connectionMap = new HashMap();
+        connectionMap.put(ConnectionParams.ENABLE_PARALLEL_TOP_N.getName(), false);
+        context.setParamManager(new ParamManager(connectionMap));
+    }
+
     @Test
     public void testSingleFieldKey() {
         MockExec input = rowChunksBuilder(DataTypes.LongType, DataTypes.DoubleType)
@@ -89,7 +101,7 @@ public class SpilledTopNExecTest extends BaseExecTest {
 
         List<OrderByOption> orderbys =
             getOrderBys(ImmutableList.of(0), ImmutableList.of(RelFieldCollation.Direction.DESCENDING));
-        SpilledTopNExec topNExec = new SpilledTopNExec(input.getDataTypes(), orderbys, 2, context);
+        SpilledTopNExec topNExec = new SpilledTopNExec(input.getDataTypes(), orderbys, 2, context, 0);
         List<Chunk> expects = rowChunksBuilder(DataTypes.LongType, DataTypes.DoubleType)
             .row(7L, 0.7)
             .row(6L, 0.6)
@@ -115,7 +127,7 @@ public class SpilledTopNExecTest extends BaseExecTest {
         List<OrderByOption> orderbys =
             getOrderBys(ImmutableList.of(0, 1),
                 ImmutableList.of(RelFieldCollation.Direction.DESCENDING, RelFieldCollation.Direction.DESCENDING));
-        SpilledTopNExec topNExec = new SpilledTopNExec(input.getDataTypes(), orderbys, 3, context);
+        SpilledTopNExec topNExec = new SpilledTopNExec(input.getDataTypes(), orderbys, 3, context, 0);
         List<Chunk> expects = rowChunksBuilder(DataTypes.StringType, DataTypes.LongType)
             .row("f", 3L)
             .row("e", 6L)
@@ -143,7 +155,7 @@ public class SpilledTopNExecTest extends BaseExecTest {
         List<OrderByOption> orderbys =
             getOrderBys(ImmutableList.of(0),
                 ImmutableList.of(RelFieldCollation.Direction.ASCENDING));
-        SpilledTopNExec topNExec = new SpilledTopNExec(input.getDataTypes(), orderbys, 3, context);
+        SpilledTopNExec topNExec = new SpilledTopNExec(input.getDataTypes(), orderbys, 3, context, 0);
         List<Chunk> expects = rowChunksBuilder(DataTypes.LongType, DataTypes.DoubleType)
             .row(-1L, -0.1)
             .row(1L, 0.1)
@@ -171,7 +183,7 @@ public class SpilledTopNExecTest extends BaseExecTest {
         List<OrderByOption> orderbys =
             getOrderBys(ImmutableList.of(1),
                 ImmutableList.of(RelFieldCollation.Direction.DESCENDING));
-        SpilledTopNExec topNExec = new SpilledTopNExec(input.getDataTypes(), orderbys, 5, context);
+        SpilledTopNExec topNExec = new SpilledTopNExec(input.getDataTypes(), orderbys, 5, context, 0);
         List<Chunk> expects = rowChunksBuilder(DataTypes.StringType, DataTypes.DoubleType)
             .row("71023", 20023.0)
             .row("71022", 20022.0)
@@ -195,7 +207,8 @@ public class SpilledTopNExecTest extends BaseExecTest {
         List<OrderByOption> orderbys =
             getOrderBys(ImmutableList.of(0),
                 ImmutableList.of(RelFieldCollation.Direction.DESCENDING));
-        SpilledTopNExec topNExec = new SpilledTopNExec(input.getDataTypes(), orderbys, limit, context, spillerFactory);
+        SpilledTopNExec topNExec = new SpilledTopNExec(input.getDataTypes(), orderbys, limit, context, spillerFactory,
+            0);
 
         RowChunksBuilder expectRows = rowChunksBuilder(DataTypes.LongType);
         for (int i = limit * 3; i > limit * 2; i--) {
@@ -221,7 +234,8 @@ public class SpilledTopNExecTest extends BaseExecTest {
         List<OrderByOption> orderbys =
             getOrderBys(ImmutableList.of(0),
                 ImmutableList.of(RelFieldCollation.Direction.DESCENDING));
-        SpilledTopNExec topNExec = new SpilledTopNExec(input.getDataTypes(), orderbys, limit, context, spillerFactory);
+        SpilledTopNExec topNExec = new SpilledTopNExec(input.getDataTypes(), orderbys, limit, context, spillerFactory,
+            0);
 
         RowChunksBuilder expectRows = rowChunksBuilder(DataTypes.LongType);
         for (int i = limit * 3; i > limit * 2; i--) {
@@ -247,7 +261,8 @@ public class SpilledTopNExecTest extends BaseExecTest {
         List<OrderByOption> orderbys =
             getOrderBys(ImmutableList.of(0),
                 ImmutableList.of(RelFieldCollation.Direction.DESCENDING));
-        SpilledTopNExec topNExec = new SpilledTopNExec(input.getDataTypes(), orderbys, limit, context, spillerFactory);
+        SpilledTopNExec topNExec = new SpilledTopNExec(input.getDataTypes(), orderbys, limit, context, spillerFactory,
+            0);
 
         RowChunksBuilder expectRows = rowChunksBuilder(DataTypes.LongType);
         for (int i = limit * 3; i > limit * 2; i--) {
@@ -273,7 +288,8 @@ public class SpilledTopNExecTest extends BaseExecTest {
         List<OrderByOption> orderbys =
             getOrderBys(ImmutableList.of(0),
                 ImmutableList.of(RelFieldCollation.Direction.DESCENDING));
-        SpilledTopNExec topNExec = new SpilledTopNExec(input.getDataTypes(), orderbys, limit, context, spillerFactory);
+        SpilledTopNExec topNExec = new SpilledTopNExec(input.getDataTypes(), orderbys, limit, context, spillerFactory,
+            0);
 
         RowChunksBuilder expectRows = rowChunksBuilder(DataTypes.LongType);
         for (int i = limit * 3; i > limit * 2; i--) {
@@ -349,7 +365,8 @@ public class SpilledTopNExecTest extends BaseExecTest {
             .addSequenceChunk(10240, 80000, 19000);
 
         Executor input = inputBuilder.buildExec();
-        SpilledTopNExec topNExec1 = new SpilledTopNExec(input.getDataTypes(), orderbys, limit, context, spillerFactory);
+        SpilledTopNExec topNExec1 = new SpilledTopNExec(input.getDataTypes(), orderbys, limit, context, spillerFactory,
+            0);
         execForMppMode(topNExec1, input, 5, true, new Callable() {
             @Override
             public Object call() throws Exception {
@@ -365,9 +382,9 @@ public class SpilledTopNExecTest extends BaseExecTest {
         MockExec input2 = inputBuilder.buildExec();
 
         SpilledTopNExec topNExec1 = new SpilledTopNExec(
-            input1.getDataTypes(), orderbys, limit, context, spillerFactory);
+            input1.getDataTypes(), orderbys, limit, context, spillerFactory, 0);
 
-        SpilledTopNExec topNExec2 = new SpilledTopNExec(input2.getDataTypes(), orderbys, limit, context, null);
+        SpilledTopNExec topNExec2 = new SpilledTopNExec(input2.getDataTypes(), orderbys, limit, context, null, 0);
 
         List<Chunk> actuals = execForMppMode(topNExec1, input1, revokeChunkNum, revokeAfterBuild);
         List<Chunk> expects = execForMppMode(topNExec2, input2, 0, false);

@@ -33,6 +33,7 @@ public class AlterTableWithGsiPreparedData extends DdlPreparedData {
     // TODO(moyi) merge duplication on alter-table and create/drop index
     private List<AlterTablePreparedData> clusteredIndexPrepareData = new ArrayList<>();
     private List<AlterTablePreparedData> globalIndexPreparedData = new ArrayList<>();
+    private RebuildCciPreparedData rebuildCciPreparedData;
 
     private CreateIndexWithGsiPreparedData createIndexWithGsiPreparedData;
     private DropIndexWithGsiPreparedData dropIndexWithGsiPreparedData;

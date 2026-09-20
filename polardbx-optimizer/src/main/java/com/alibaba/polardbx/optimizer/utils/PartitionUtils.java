@@ -17,6 +17,7 @@ import com.alibaba.polardbx.optimizer.partition.pruning.PartPrunedResult;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPrunerUtils;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
 import org.apache.calcite.linq4j.Ord;
+import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelFieldCollation;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Sort;
@@ -146,14 +147,13 @@ public class PartitionUtils {
             partInfo = getPartitionInfoFromEC(ec, logicalSchema, logicalTableName);
         }
 
-        // Obtains the list of partition specifications
-        List<PartitionSpec> partitionSpecs = partInfo.getPartitionBy().getPhysicalPartitions();
-
-        // Streams through partition specifications to find a match where the physical schema and physical table name equal the input parameters
-        int partition = partitionSpecs.stream().filter(
-                t -> t.getLocation().getGroupKey().equalsIgnoreCase(physicalSchema)
-                    && t.getLocation().getPhyTableName().equalsIgnoreCase(physicalTableName))
-            .findFirst().map(PartSpecBase::getPosition).map(Long::intValue).orElse(-1);
+        int partition;
+        PartitionSpec partitionSpec = partInfo.getPartSpecSearcher().getPartSpec(physicalSchema, physicalTableName);
+        if (partitionSpec != null && partitionSpec.getPosition() != null) {
+            partition = partitionSpec.getPosition().intValue();
+        } else {
+            partition = -1;
+        }
 
         // Adjusts and returns the found partition number, subtracting 1 to start counting from 0
         return partition - 1;
@@ -192,7 +192,7 @@ public class PartitionUtils {
     public static boolean checkPrunedPartitionMonotonic(@NotNull LogicalView logicalView,
                                                         @NotNull List<PartPrunedResult> partitionResult) {
         final TargetTableInfo targetTableInfo =
-            PartitionPrunerUtils.buildTargetTableInfoByPartPrunedResults(partitionResult);
+            PartitionPrunerUtils.buildTargetTableInfoByPartPrunedResults(partitionResult, null, false);
 
         final TargetTableInfoOneTable tableInfo = targetTableInfo.getTargetTableInfoList().get(0);
         if (!isTablePartOrdered(tableInfo)) {

@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.operator.scan;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import org.apache.hadoop.fs.Path;
 
@@ -25,7 +26,7 @@ import org.apache.hadoop.fs.Path;
  * @param <VECTOR> the class of a column in row group (arrow block, value vector, array...)
  * @param <STATISTICS> the class of column statistics
  */
-public interface LogicalRowGroup<VECTOR, STATISTICS> {
+public interface LogicalRowGroup<VECTOR, STATISTICS> extends MemoryCountable {
     String BLOCK_LOAD_TIMER = "BlockLoadTimer";
     String BLOCK_MEMORY_COUNTER = "BlockMemoryCounter";
 
@@ -46,4 +47,6 @@ public interface LogicalRowGroup<VECTOR, STATISTICS> {
     int startRowId();
 
     RowGroupReader<Chunk> getReader();
+
+    RowGroupReader<Chunk> getReversedReader();
 }

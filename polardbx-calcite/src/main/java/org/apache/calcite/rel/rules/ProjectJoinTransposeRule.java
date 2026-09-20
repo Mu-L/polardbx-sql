@@ -19,6 +19,7 @@ package org.apache.calcite.rel.rules;
 import com.google.common.collect.Lists;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
+import org.apache.calcite.plan.RelOptRuleOperand;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.Project;
@@ -70,6 +71,15 @@ public class ProjectJoinTransposeRule extends RelOptRule {
         relFactory, null);
     this.preserveExprCondition = preserveExprCondition;
   }
+
+  public ProjectJoinTransposeRule(
+      RelOptRuleOperand operand,
+      PushProjector.ExprCondition preserveExprCondition,
+      RelBuilderFactory relFactory) {
+    super(operand, relFactory, null);
+    this.preserveExprCondition = preserveExprCondition;
+  }
+
 
   public ProjectJoinTransposeRule(int inputRefThreshold) {
     super(

@@ -15,6 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package com.alibaba.polardbx.qatest.dml.auto.basecrud;
 
 import com.alibaba.polardbx.qatest.AutoCrudBasedLockTestCase;
@@ -23,6 +24,7 @@ import com.alibaba.polardbx.qatest.validator.DataOperator;
 import com.alibaba.polardbx.qatest.validator.DataValidator;
 import com.google.common.truth.Truth;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.sql.Connection;
@@ -37,6 +39,7 @@ public class ModifyOnTopNTest extends AutoCrudBasedLockTestCase {
     private static final String OPTIMIZE_MODIFY_TOP_N_BY_RETURNING_HINT =
         "/*+TDDL:CMD_EXTRA(OPTIMIZE_MODIFY_TOP_N_BY_RETURNING=TRUE)*/";
     private static final String COMPLEX_DML_WITH_TRX_HINT = "/*+TDDL:CMD_EXTRA(COMPLEX_DML_WITH_TRX=TRUE)*/";
+    private static final String DISABLE_MERGE_UNION_HINT = "/*+TDDL:CMD_EXTRA(MERGE_UNION=FALSE)*/";
 
     private static final String TABLE_DEF = "CREATE TABLE `%s` (\n"
         + "  `id` varchar(32) NOT NULL,\n"
@@ -44,7 +47,7 @@ public class ModifyOnTopNTest extends AutoCrudBasedLockTestCase {
         + "  `c2` varchar(32) NOT NULL ,\n"
         + "  `create_time` datetime NULL DEFAULT CURRENT_TIMESTAMP,\n"
         + "  PRIMARY KEY USING BTREE (`id`)\n"
-        + "  ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4\n";
+        + "  ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE utf8mb4_general_ci\n";
     private static final List<String> CREATE_TIME = new ArrayList<>();
 
     static {
@@ -162,6 +165,7 @@ public class ModifyOnTopNTest extends AutoCrudBasedLockTestCase {
         + "  SUBPARTITION sp202404c VALUES LESS THAN('2024-05-01')\n"
         + "  );";
 
+    @Ignore("flaky test, ignore temporarily, see AONE-85437638")
     @Test
     public void testRangeSubpartition() {
         final String tableName = "test_motn_range_subpartition";
@@ -211,6 +215,7 @@ public class ModifyOnTopNTest extends AutoCrudBasedLockTestCase {
         + "  PARTITION sp202404c VALUES LESS THAN('2024-05-01')\n"
         + "  )";
 
+    @Ignore("flaky test, ignore temporarily, see AONE-85437638")
     @Test
     public void testRangeSubpartition1() {
         final String tableName = "test_motn_range_subpartition1";
@@ -301,7 +306,7 @@ public class ModifyOnTopNTest extends AutoCrudBasedLockTestCase {
         DataOperator.executeOnMysqlAndTddl(mysqlConnection,
             tddlConnection,
             modify,
-            "trace " + OPTIMIZE_MODIFY_TOP_N_BY_RETURNING_HINT + modify,
+            "trace " + OPTIMIZE_MODIFY_TOP_N_BY_RETURNING_HINT + DISABLE_MERGE_UNION_HINT + modify,
             null,
             true);
     }

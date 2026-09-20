@@ -27,6 +27,8 @@ import com.alibaba.polardbx.optimizer.core.Xplan.XPlanTemplate;
 import com.alibaba.polardbx.optimizer.core.dialect.DbType;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.google.protobuf.ByteString;
+import lombok.Getter;
+import lombok.Setter;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelTraitSet;
 import org.apache.calcite.rel.AbstractRelNode;
@@ -64,7 +66,12 @@ public abstract class BaseQueryOperation extends AbstractRelNode implements IPhy
     protected ByteString galaxyPrepareDigest = null;
 
     protected boolean replicateRelNode = false;
+    protected boolean stagingRelNode = false;
     protected Long intraGroupConnKey = null;
+
+    @Getter
+    @Setter
+    protected String returningColumns = null;
 
     public BaseQueryOperation(RelOptCluster cluster, RelTraitSet traitSet) {
         super(cluster, traitSet.replace(DrdsConvention.INSTANCE));
@@ -95,6 +102,8 @@ public abstract class BaseQueryOperation extends AbstractRelNode implements IPhy
         this.sqlDigest = baseQueryOperation.sqlDigest;
         this.supportGalaxyPrepare = baseQueryOperation.supportGalaxyPrepare;
         this.galaxyPrepareDigest = baseQueryOperation.galaxyPrepareDigest;
+        this.replicateRelNode = baseQueryOperation.replicateRelNode;
+        this.stagingRelNode = baseQueryOperation.stagingRelNode;
     }
 
     @Override
@@ -234,7 +243,25 @@ public abstract class BaseQueryOperation extends AbstractRelNode implements IPhy
     }
 
     public void setReplicateRelNode(boolean replicateRelNode) {
+        if (replicateRelNode && stagingRelNode) {
+            throw new IllegalStateException("A physical plan cannot be both replicate and staging");
+        }
         this.replicateRelNode = replicateRelNode;
+    }
+
+    public boolean isStagingRelNode() {
+        return stagingRelNode;
+    }
+
+    public void setStagingRelNode(boolean stagingRelNode) {
+        if (stagingRelNode && replicateRelNode) {
+            throw new IllegalStateException("A physical plan cannot be both staging and replicate");
+        }
+        this.stagingRelNode = stagingRelNode;
+    }
+
+    public boolean isPrimaryWriteRelNode() {
+        return !replicateRelNode && !stagingRelNode;
     }
 
     public BytesSql getBytesSql() {

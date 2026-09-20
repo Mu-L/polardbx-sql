@@ -19,12 +19,16 @@ package com.alibaba.polardbx.transaction.trx;
 import com.alibaba.polardbx.common.constants.TransactionAttribute;
 import com.alibaba.polardbx.common.eventlogger.EventLogger;
 import com.alibaba.polardbx.common.eventlogger.EventType;
+import com.alibaba.polardbx.common.jdbc.BytesSql;
 import com.alibaba.polardbx.common.jdbc.IConnection;
 import com.alibaba.polardbx.common.jdbc.ITransactionPolicy;
+import com.alibaba.polardbx.common.jdbc.MasterSlave;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.version.InstanceVersion;
+import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.rpc.pool.XConnection;
@@ -33,23 +37,21 @@ import com.alibaba.polardbx.transaction.jdbc.SavePoint;
 
 import java.sql.SQLException;
 import java.util.Properties;
-import java.util.concurrent.atomic.AtomicLong;
+
+import static com.alibaba.polardbx.transaction.connection.TransactionConnectionHolder.needReadLsn;
 
 /**
  * This transaction is the same as XA transaction, but will commit like a TSO transaction.
  *
  * @author yaozhili
  */
-public class XATsoTransaction extends TsoTransaction {
+public final class XATsoTransaction extends TsoTransaction {
 
-    private final static Logger logger = LoggerFactory.getLogger(TsoTransaction.class);
+    private final static Logger logger = LoggerFactory.getLogger(XATsoTransaction.class);
 
     private final static String TRX_LOG_PREFIX = "[" + ITransactionPolicy.TransactionClass.XA_TSO + "]";
 
     private final static String SET_INNODB_MARK_DISTRIBUTED = "set innodb_mark_distributed = true";
-
-    private static final AtomicLong xaTsoFailedLastTime = new AtomicLong(0);
-    private static final AtomicLong xaTsoFailedCnt = new AtomicLong(0);
 
     public XATsoTransaction(ExecutionContext executionContext,
                             TransactionManager manager) {
@@ -74,12 +76,8 @@ public class XATsoTransaction extends TsoTransaction {
                 throw new UnsupportedOperationException("Don't support the Inventory Hint on XA with readview! "
                     + "Try with setting share_read_view=off.");
             } else {
-                // Mark this trx as a distributed cts trx.
-                if (shareReadView) {
-                    conn.executeLater(ShareReadViewTransaction.TURN_ON_TXN_GROUP_SQL);
-                }
-                conn.executeLater("XA START " + getXid(group, conn));
-
+                // Send xa start.
+                xaStart(getXid(group, conn), conn);
                 // Send mark to DN.
                 setInnodbMarkDistributed(conn);
             }
@@ -93,8 +91,12 @@ public class XATsoTransaction extends TsoTransaction {
     }
 
     @Override
-    public void beginNonParticipant(String group, IConnection conn) throws SQLException {
-        conn.executeLater("BEGIN");
+    public void beginNonParticipant(String schema, String group, IConnection conn, MasterSlave masterSlave)
+        throws SQLException {
+        if (needReadLsn(this, schema, masterSlave, getConsistentReplicaRead())) {
+            super.sendLsn(conn, schema, group, masterSlave, () -> -1L);
+        }
+        begin(conn);
     }
 
     @Override
@@ -103,7 +105,7 @@ public class XATsoTransaction extends TsoTransaction {
     }
 
     @Override
-    public void updateSnapshotTimestamp() {
+    public void updateSnapshotTimestamp(long tso) {
         // Do nothing.
     }
 

@@ -52,22 +52,31 @@ public class BuildPartFieldStringParams {
      */
     protected boolean treatAsToDaysNumber = false;
 
+    /**
+     * The middle-type bound value calc context
+     */
+    protected TtlPartitionUtil.TtlColValueCalcContext calcContext;
+    protected boolean ttlColUseFuncExprEncoding = false;
+
     public BuildPartFieldStringParams() {
     }
 
-    public static BuildPartFieldStringParams constructPartFieldStringParams(TtlDefinitionInfo ttlInfo) {
+    public static BuildPartFieldStringParams constructPartFieldStringParams(TtlDefinitionInfo ttlInfo, TtlPartitionUtil.TtlColValueCalcContext calcContext) {
 
         BuildPartFieldStringParams params = new BuildPartFieldStringParams();
-        if (!ttlInfo.isTtlColUseFuncExpr()) {
+        if (!ttlInfo.isTtlColUseFuncExpr()) {//use isTtlColUseExprEncoding
             return params;
         }
         TtlColFuncExprInfo funcExprInfo = ttlInfo.getTtlColFuncExprInfo();
         params.setTargetTimeZone(ttlInfo.getTtlInfoRecord().getTtlTimezone());
-        params.setTreatAsUnixTimestampSec(funcExprInfo.isTreatTtlColAsUnixTimestampSeconds());
-        params.setTreatAsUnixTimestampMillsSec(funcExprInfo.isTreatTtlColAsUnixTimestampMillSeconds());
-        params.setNeedConvertNumberToDate(funcExprInfo.isTreatTtlColAsToDaysNumber());
-        params.setNeedConvertNumberToUnixTimestamp(funcExprInfo.isTreatTtlColAsUnixTimestampSeconds()
-            || funcExprInfo.isTreatTtlColAsUnixTimestampMillSeconds());
+//        params.setTreatAsUnixTimestampSec(funcExprInfo.isTreatTtlColAsUnixTimestampSeconds());
+//        params.setTreatAsUnixTimestampMillsSec(funcExprInfo.isTreatTtlColAsUnixTimestampMillSeconds());
+//        params.setNeedConvertNumberToDate(funcExprInfo.isTreatTtlColAsToDaysNumber());
+//        params.setNeedConvertNumberToUnixTimestamp(funcExprInfo.isTreatTtlColAsUnixTimestampSeconds()
+//            || funcExprInfo.isTreatTtlColAsUnixTimestampMillSeconds());
+
+        params.setTtlColUseFuncExprEncoding(funcExprInfo.isUseTtlColEncoding());
+        params.setCalcContext(calcContext);
 
         return params;
     }
@@ -130,5 +139,22 @@ public class BuildPartFieldStringParams {
 
     public void setForceReturnPartFldString(boolean forceReturnPartFldString) {
         this.forceReturnPartFldString = forceReturnPartFldString;
+    }
+
+    public TtlPartitionUtil.TtlColValueCalcContext getCalcContext() {
+        return calcContext;
+    }
+
+    public void setCalcContext(
+        TtlPartitionUtil.TtlColValueCalcContext calcContext) {
+        this.calcContext = calcContext;
+    }
+
+    public boolean isTtlColUseFuncExprEncoding() {
+        return ttlColUseFuncExprEncoding;
+    }
+
+    public void setTtlColUseFuncExprEncoding(boolean ttlColUseFuncExprEncoding) {
+        this.ttlColUseFuncExprEncoding = ttlColUseFuncExprEncoding;
     }
 }

@@ -20,9 +20,11 @@ import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
-import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
+import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
+import com.alibaba.polardbx.executor.sync.TableMetaChangeSyncAction;
 import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
 import com.alibaba.polardbx.gms.metadb.table.TablesExtRecord;
+import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.rule.TableRule;
@@ -43,8 +45,6 @@ public class AlterRuleMetaChanger {
             throw new TddlRuntimeException(ErrorCode.ERR_NOT_PASS_RULE_VALIDATE,
                 "the table rule for '" + tableName + "' doesn't exist");
         }
-
-        String tableDataId = MetaDbDataIdBuilder.getTableDataId(schemaName, tableName);
 
         TableInfoManager tableInfoManager = new TableInfoManager();
         try (Connection metaDbConn = MetaDbUtil.getConnection()) {
@@ -72,7 +72,7 @@ public class AlterRuleMetaChanger {
             } finally {
                 MetaDbUtil.endTransaction(metaDbConn, LOGGER);
             }
-            CommonMetaChanger.sync(tableDataId);
+            SyncManagerHelper.syncThrowExceptions(new TableMetaChangeSyncAction(schemaName, tableName), SyncScope.ALL);
         } catch (SQLException e) {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_GET_CONNECTION, e, e.getMessage());
         } finally {

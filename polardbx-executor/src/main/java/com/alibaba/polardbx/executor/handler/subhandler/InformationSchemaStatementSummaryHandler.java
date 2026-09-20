@@ -149,7 +149,8 @@ public class InformationSchemaStatementSummaryHandler extends BaseVirtualViewSub
             syncResult = Lists.newArrayListWithCapacity(1);
             syncResult.add(result);
         } else {
-            syncResult = SyncManagerHelper.sync(statementSummarySyncAction, schema, SyncScope.CURRENT_ONLY);
+            syncResult =
+                SyncManagerHelper.syncIgnoreExceptions(statementSummarySyncAction, schema, SyncScope.CURRENT_ONLY);
         }
 
         Map<String, StatementSummaryByDigestEntry> aggResult = Maps.newHashMap();

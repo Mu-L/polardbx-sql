@@ -17,8 +17,9 @@
 package com.alibaba.polardbx.executor.ddl.job.factory;
 
 import com.alibaba.polardbx.executor.ddl.job.task.shared.EmptyTask;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.executor.physicalbackfill.PhysicalBackfillUtils;
 import com.alibaba.polardbx.executor.scaleout.ScaleOutUtils;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -35,7 +36,7 @@ import java.util.Set;
  *
  * @author luoyanxin
  */
-public class MoveDatabasesJobFactory extends DdlJobFactory {
+public class MoveDatabasesJobFactory extends OnlineDdlJobFactory {
 
     private final DDL ddl;
     private final MoveDatabasesPreparedData preparedData;
@@ -43,6 +44,7 @@ public class MoveDatabasesJobFactory extends DdlJobFactory {
 
     public MoveDatabasesJobFactory(DDL ddl, MoveDatabasesPreparedData preparedData,
                                    ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.OSC);
         this.ddl = ddl;
         this.preparedData = preparedData;
         this.executionContext = executionContext;
@@ -75,6 +77,7 @@ public class MoveDatabasesJobFactory extends DdlJobFactory {
             executableDdlJob.combineTasks(dbExecDdlJob);
             executableDdlJob.addTaskRelationship(emptyTask, dbExecDdlJob.getHead());
             executableDdlJob.getExcludeResources().addAll(dbExecDdlJob.getExcludeResources());
+            executableDdlJob.getSharedResources().addAll(dbExecDdlJob.getSharedResources());
             executableDdlJob.addTaskRelationship(dbExecDdlJob.getTail(), tailTask);
         }
         executableDdlJob.setMaxParallelism(ScaleOutUtils.getScaleoutTaskParallelism(executionContext));

@@ -75,11 +75,18 @@ public class BackfillExecutor {
                         boolean useChangeSet, boolean canUseReturning, List<String> modifyStringColumns,
                         Pair<Map<Integer, ParameterContext>, Map<Integer, ParameterContext>> pkRange,
                         List<String> partitionList,
-                        Boolean onlineModifyColumn, int totalThreadCount,  ExecutionContext baseEc) {
-        final long batchSize = baseEc.getParamManager().getLong(ConnectionParams.GSI_BACKFILL_BATCH_SIZE);
-        final long speedLimit = baseEc.getParamManager().getLong(ConnectionParams.GSI_BACKFILL_SPEED_LIMITATION);
-        final long speedMin = baseEc.getParamManager().getLong(ConnectionParams.GSI_BACKFILL_SPEED_MIN);
-        final long parallelism = baseEc.getParamManager().getLong(ConnectionParams.GSI_BACKFILL_PARALLELISM);
+                        Boolean onlineModifyColumn, int totalThreadCount, ExecutionContext baseEc) {
+
+        // 使用BackfillParameterManager根据perfMode自动设置backfill参数
+        BackfillParameterManager.BackfillConcurrencyParameter backfillParams =
+            BackfillParameterManager.newBackfillParameter(
+                baseEc, schemaName, primaryTable);
+
+        final long batchSize = backfillParams.getBatchSize();
+        final long speedLimit = backfillParams.getSpeedLimit();
+        final long speedMin = backfillParams.getSpeedMin();
+        final long parallelism = backfillParams.getParallelism();
+        Map<String, Set<String>> sourcePhyTables = GsiUtils.getPhyTables(schemaName, primaryTable);
 
         if (null == baseEc.getServerVariables()) {
             baseEc.setServerVariables(new HashMap<>());
@@ -91,7 +98,6 @@ public class BackfillExecutor {
         final Loader loader;
 
         if (useChangeSet) {
-            Map<String, Set<String>> sourcePhyTables = GsiUtils.getPhyTables(schemaName, primaryTable);
             Map<String, String> tableNameMapping =
                 GsiUtils.getPhysicalTableMapping(schemaName, primaryTable, indexName, null, null);
 
@@ -212,12 +218,15 @@ public class BackfillExecutor {
     public int logicalTableDataMigrationBackFill(String srcSchemaName, String dstSchemaName,
                                                  String srcTableName, String dstTableName, List<String> dstGsiNames,
                                                  ExecutionContext baseEc) {
-        final long batchSize = baseEc.getParamManager().getLong(ConnectionParams.CREATE_DATABASE_AS_BATCH_SIZE);
-        final long speedLimit =
-            baseEc.getParamManager().getLong(ConnectionParams.CREATE_DATABASE_AS_BACKFILL_SPEED_LIMITATION);
-        final long speedMin = baseEc.getParamManager().getLong(ConnectionParams.CREATE_DATABASE_AS_BACKFILL_SPEED_MIN);
-        final long parallelism =
-            baseEc.getParamManager().getLong(ConnectionParams.CREATE_DATABASE_AS_BACKFILL_PARALLELISM);
+        // 使用BackfillParameterManager根据perfMode自动设置backfill参数
+        BackfillParameterManager.BackfillConcurrencyParameter backfillParams =
+            BackfillParameterManager.newBackfillParameter(
+                baseEc, srcSchemaName, srcTableName);
+
+        final long batchSize = backfillParams.getBatchSize();
+        final long speedLimit = backfillParams.getSpeedLimit();
+        final long speedMin = backfillParams.getSpeedMin();
+        final long parallelism = backfillParams.getParallelism();
         final boolean useBinary = baseEc.getParamManager().getBoolean(ConnectionParams.BACKFILL_USING_BINARY);
 
         if (null == baseEc.getServerVariables()) {

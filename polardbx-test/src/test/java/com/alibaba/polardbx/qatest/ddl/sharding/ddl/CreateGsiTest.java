@@ -68,7 +68,7 @@ public class CreateGsiTest extends DDLBaseNewDBTestCase {
         + "\t`st` set('5', '6') COLLATE utf8_bin DEFAULT NULL,\n"
         + "\t`id1` int(11) DEFAULT NULL,\n"
         + "\t`id2` int(11) DEFAULT NULL,\n"
-        + "\t`id3` varchar(100) CHARACTER SET utf8mb4 DEFAULT NULL,\n"
+        + "\t`id3` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,\n"
         + "\t`vc1` varchar(100) COLLATE utf8_bin DEFAULT NULL,\n"
         + "\t`vc3` varchar(100) COLLATE utf8_bin DEFAULT NULL,\n"
         + "\tPRIMARY KEY (`pk`),\n"
@@ -175,7 +175,7 @@ public class CreateGsiTest extends DDLBaseNewDBTestCase {
                     + "    `order_id` varchar(20) DEFAULT NULL, \n"
                     + "    `buyer_id` varchar(20) DEFAULT NULL, \n"
                     + "    `order_snapshot` longtext \n"
-                    + ") ENGINE = InnoDB CHARSET = utf8mb4 dbpartition by hash(`order_id`);\n");
+                    + ") ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_general_ci dbpartition by hash(`order_id`);\n");
 
             String gsiCreateSql =
                 "/*+TDDL:cmd_extra(STORAGE_CHECK_ON_GSI=false, ALLOW_ADD_GSI=true, GSI_IGNORE_RESTRICTION=true)*/ "
@@ -193,7 +193,7 @@ public class CreateGsiTest extends DDLBaseNewDBTestCase {
                     + "    `buyer_id` varchar(20) DEFAULT NULL, \n"
                     + "    `order_snapshot` longtext, \n"
                     + "    PRIMARY KEY (`id`) \n"
-                    + ") ENGINE = InnoDB CHARSET = utf8mb4 dbpartition by hash(`order_id`);\n");
+                    + ") ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_general_ci dbpartition by hash(`order_id`);\n");
 
             if (PropertiesUtil.enableAsyncDDL) {
                 JdbcUtil.executeUpdateSuccess(tddlConnection,
@@ -208,7 +208,7 @@ public class CreateGsiTest extends DDLBaseNewDBTestCase {
                     + "    `order_id` varchar(20) DEFAULT NULL, \n"
                     + "    `buyer_id` varchar(20) DEFAULT NULL, \n"
                     + "    `order_snapshot` longtext \n"
-                    + ") ENGINE = InnoDB CHARSET = utf8mb4 dbpartition by hash(`order_id`);\n");
+                    + ") ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_general_ci dbpartition by hash(`order_id`);\n");
 
             if (PropertiesUtil.enableAsyncDDL) {
                 JdbcUtil.executeUpdateSuccess(tddlConnection,
@@ -235,7 +235,7 @@ public class CreateGsiTest extends DDLBaseNewDBTestCase {
                     + "    `order_id` varchar(20) DEFAULT NULL, \n"
                     + "    `buyer_id` varchar(20) DEFAULT NULL, \n"
                     + "    `order_snapshot` longtext \n"
-                    + ") ENGINE = InnoDB CHARSET = utf8mb4;\n");
+                    + ") ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_general_ci;\n");
 
             executeErrorAssert(tddlConnection,
                 "/*+TDDL:cmd_extra(STORAGE_CHECK_ON_GSI=false, ALLOW_ADD_GSI=true, GSI_IGNORE_RESTRICTION=true)*/ "
@@ -253,7 +253,7 @@ public class CreateGsiTest extends DDLBaseNewDBTestCase {
                     + "    `order_id` varchar(20) DEFAULT NULL, \n"
                     + "    `buyer_id` varchar(20) DEFAULT NULL, \n"
                     + "    `order_snapshot` longtext \n"
-                    + ") ENGINE = InnoDB CHARSET = utf8mb4 broadcast;\n");
+                    + ") ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_general_ci broadcast;\n");
 
             executeErrorAssert(tddlConnection,
                 "/*+TDDL:cmd_extra(STORAGE_CHECK_ON_GSI=false, ALLOW_ADD_GSI=true, GSI_IGNORE_RESTRICTION=true)*/ "
@@ -282,7 +282,7 @@ public class CreateGsiTest extends DDLBaseNewDBTestCase {
                     + "    `order_id` varchar(20) DEFAULT NULL, \n"
                     + "    `buyer_id` varchar(20) DEFAULT NULL, \n"
                     + "    `order_snapshot` longtext \n"
-                    + ") ENGINE = InnoDB CHARSET = utf8mb4 dbpartition by hash(`order_id`);\n");
+                    + ") ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_general_ci dbpartition by hash(`order_id`);\n");
             executeErrorAssert(tddlConnection,
                 "CREATE GLOBAL INDEX " + gsiTestIndexName + " ON " + gsiTestTableName
                     + "(`buyer_id`) COVERING (`order_snapshot`) DBPARTITION BY HASH (`buyer_id`) \n", null,
@@ -309,7 +309,7 @@ public class CreateGsiTest extends DDLBaseNewDBTestCase {
                 + "    INDEX g_i_buyer_id2(`buyer_id`), \n"
                 + "    GLOBAL INDEX " + gsiTestIndexName
                 + "(`buyer_id`) COVERING (`order_snapshot`) DBPARTITION BY HASH (`buyer_id`) \n"
-                + ") ENGINE = InnoDB CHARSET = utf8mb4 dbpartition by hash(`order_id`);\n");
+                + ") ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_general_ci dbpartition by hash(`order_id`);\n");
 
             executeErrorAssert(tddlConnection, HINT_CREATE_GSI +
                     "CREATE GLOBAL INDEX " + gsiTestIndexName + " ON " + gsiTestTableName
@@ -405,7 +405,7 @@ public class CreateGsiTest extends DDLBaseNewDBTestCase {
                     + "    `order_id` varchar(20) DEFAULT NULL, \n"
                     + "    `buyer_id` varchar(20) DEFAULT NULL, \n"
                     + "    `order_snapshot` longtext \n"
-                    + ") ENGINE = InnoDB CHARSET = utf8mb4 dbpartition by hash(`order_id`);\n");
+                    + ") ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_general_ci dbpartition by hash(`order_id`);\n");
 
             String gsiCreateSql =
                 "/*+TDDL:cmd_extra(STORAGE_CHECK_ON_GSI=false, ALLOW_ADD_GSI=true, GSI_IGNORE_RESTRICTION=true)*/ "
@@ -423,7 +423,7 @@ public class CreateGsiTest extends DDLBaseNewDBTestCase {
                     + "    `buyer_id` varchar(20) DEFAULT NULL, \n"
                     + "    `order_snapshot` longtext, \n"
                     + "    PRIMARY KEY (`id`) \n"
-                    + ") ENGINE = InnoDB CHARSET = utf8mb4 dbpartition by hash(`order_id`);\n");
+                    + ") ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_general_ci dbpartition by hash(`order_id`);\n");
 
             if (PropertiesUtil.enableAsyncDDL) {
                 JdbcUtil.executeUpdateSuccess(tddlConnection,
@@ -438,7 +438,7 @@ public class CreateGsiTest extends DDLBaseNewDBTestCase {
                     + "    `order_id` varchar(20) DEFAULT NULL, \n"
                     + "    `buyer_id` varchar(20) DEFAULT NULL, \n"
                     + "    `order_snapshot` longtext \n"
-                    + ") ENGINE = InnoDB CHARSET = utf8mb4 dbpartition by hash(`order_id`);\n");
+                    + ") ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_general_ci dbpartition by hash(`order_id`);\n");
 
             if (PropertiesUtil.enableAsyncDDL) {
                 JdbcUtil.executeUpdateSuccess(tddlConnection,
@@ -464,7 +464,7 @@ public class CreateGsiTest extends DDLBaseNewDBTestCase {
                     + "    `order_id` varchar(20) DEFAULT NULL, \n"
                     + "    `buyer_id` varchar(20) DEFAULT NULL, \n"
                     + "    `order_snapshot` longtext \n"
-                    + ") ENGINE = InnoDB CHARSET = utf8mb4;\n");
+                    + ") ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_general_ci;\n");
 
             executeErrorAssert(tddlConnection,
                 "/*+TDDL:cmd_extra(STORAGE_CHECK_ON_GSI=false, ALLOW_ADD_GSI=true, GSI_IGNORE_RESTRICTION=true)*/ "
@@ -483,7 +483,7 @@ public class CreateGsiTest extends DDLBaseNewDBTestCase {
                     + "    `order_id` varchar(20) DEFAULT NULL, \n"
                     + "    `buyer_id` varchar(20) DEFAULT NULL, \n"
                     + "    `order_snapshot` longtext \n"
-                    + ") ENGINE = InnoDB CHARSET = utf8mb4 broadcast;\n");
+                    + ") ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_general_ci broadcast;\n");
 
             executeErrorAssert(tddlConnection,
                 "/*+TDDL:cmd_extra(STORAGE_CHECK_ON_GSI=false, ALLOW_ADD_GSI=true, GSI_IGNORE_RESTRICTION=true)*/ "
@@ -514,7 +514,7 @@ public class CreateGsiTest extends DDLBaseNewDBTestCase {
                     + "    `order_id` varchar(20) DEFAULT NULL, \n"
                     + "    `buyer_id` varchar(20) DEFAULT NULL, \n"
                     + "    `order_snapshot` longtext \n"
-                    + ") ENGINE = InnoDB CHARSET = utf8mb4 dbpartition by hash(`order_id`);\n");
+                    + ") ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_general_ci dbpartition by hash(`order_id`);\n");
             executeErrorAssert(tddlConnection,
                 "ALTER TABLE "
                     + gsiTestTableName
@@ -543,7 +543,7 @@ public class CreateGsiTest extends DDLBaseNewDBTestCase {
                     + "    PRIMARY KEY (`id`), \n"
                     + "    INDEX g_i_buyer_id2(`buyer_id`), \n"
                     + "    GLOBAL INDEX g_i_test_buyer(`buyer_id`) COVERING (`order_snapshot`) DBPARTITION BY HASH (`buyer_id`) \n"
-                    + ") ENGINE = InnoDB CHARSET = utf8mb4 dbpartition by hash(`order_id`);\n");
+                    + ") ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_general_ci dbpartition by hash(`order_id`);\n");
 
             executeErrorAssert(tddlConnection,
                 HINT_CREATE_GSI + "ALTER TABLE " + gsiTestTableName + " ADD GLOBAL INDEX " + gsiTestIndexName

@@ -40,6 +40,10 @@ public class ColumnarSelectionTest extends DDLBaseNewDBTestCase {
         "/*+TDDL:CMD_EXTRA(ALTER_CCI_STATUS=true, ALTER_CCI_STATUS_BEFORE=CREATING, ALTER_CCI_STATUS_AFTER=PUBLIC)*/" +
             "ALTER TABLE `%s` alter index `%s` VISIBLE;";
 
+    private static String PUB_UPCOL_IDX =
+        "/*+TDDL:CMD_EXTRA(ALTER_CCI_STATUS=true, ALTER_CCI_STATUS_BEFORE=CREATING, ALTER_CCI_STATUS_AFTER=PUBLIC)*/" +
+            "ALTER TABLE `%s` alter index `%s` INVISIBLE;";
+
     String tb1 = "tb1";
     String tb2 = "tb2";
     String tb3 = "tb3";
@@ -105,19 +109,19 @@ public class ColumnarSelectionTest extends DDLBaseNewDBTestCase {
         sql = APHINT + String.format("explain simple update %s set b = 1 where a= 1", tb1);
         checkNoOSSTableScan(sql);
         sql = String.format("explain simple delete from %s force index(%s) where a = 1", tb1, colIdxA);
+        checkCantUse(sql);
+        sql = String.format("explain simple update %s force index(%s) set b = 1 where a= 1", tb1, colIdxA);
+        checkCantUse(sql);
+        sql = APHINT + String.format("explain simple select * from %s for update", tb1);
         checkNoOSSTableScan(sql);
-//        sql = String.format("explain simple update %s force index(%s) set b = 1 where a= 1", tb1, colIdxA);
-//        checkCantUse(sql);
-//        sql = APHINT + String.format("explain simple select * from %s for update", tb1);
-//        checkNoOSSTableScan(sql);
-//        sql = APHINT + String.format("explain simple select * from %s force index(%s) for update", tb1, colA);
-//        checkCantUse(sql);
+        sql = APHINT + String.format("explain simple select * from %s force index(%s) for update", tb1, colIdxA);
+        checkCantUse(sql);
 
         // subquery
         sql = String.format("explain simple select *,(select 1 from %s limit 1) from %s", tb1, tb2);
         checkNoOSSTableScan(sql);
         sql = APHINT + String.format("explain simple select *,(select 1 from %s limit 1) from %s", tb1, tb2);
-        checkNoOSSTableScan(sql);
+        checkAllOSSTableScan(sql);
 
         // force/ignore index
         sql = String.format("explain simple select *,(select 1 from %s force index(%s) limit 1) from %s", tb1, colIdxA,
@@ -129,7 +133,7 @@ public class ColumnarSelectionTest extends DDLBaseNewDBTestCase {
         checkOSSTableScanAndLogicalView(sql);
         sql = APHINT + String.format("explain simple select *,(select 1 from %s force index(%s) limit 1) from %s", tb1,
             colIdxA, tb2);
-        checkOSSTableScanAndLogicalView(sql);
+        checkAllOSSTableScan(sql);
 
         sql =
             String.format("explain simple select *,(select 1 from %s force index(%s) limit 1) from %s force index(%s)",
@@ -156,11 +160,11 @@ public class ColumnarSelectionTest extends DDLBaseNewDBTestCase {
         sql = APHINT + String.format(
             "explain simple select *,(select 1 from %s force index(%s) limit 1) from %s ignore index(idx_c)", tb1,
             colIdxA, tb2);
-        checkOSSTableScanAndLogicalView(sql);
+        checkAllOSSTableScan(sql);
 
         sql = APHINT + String.format(
             "explain simple select *,(select 1 from %s limit 1) from %s ignore index(idx_c)", tb1, tb2);
-        checkNoOSSTableScan(sql);
+        checkAllOSSTableScan(sql);
         sql = APHINT + String.format(
             "explain simple select *,(select 1 from %s ignore index(%s) limit 1) from %s ignore index(idx_c)", tb1,
             colIdxA, tb2);
@@ -187,6 +191,10 @@ public class ColumnarSelectionTest extends DDLBaseNewDBTestCase {
         checkOSSTableScanAndLogicalView(sql);
 
         checkGsiView();
+
+        JdbcUtil.executeSuccess(getTddlConnection1(), String.format(PUB_UPCOL_IDX, tb1, colIdxA));
+        sql = APHINT + String.format("explain simple select * from %s", tb1);
+        checkNoOSSTableScan(sql);
     }
 
     private void checkGsiView() throws SQLException {
@@ -216,7 +224,7 @@ public class ColumnarSelectionTest extends DDLBaseNewDBTestCase {
     }
 
     void checkCantUse(String sql) {
-        JdbcUtil.executeQueryFaied(tddlConnection, sql, "can't use columnar");
+        JdbcUtil.executeQueryFaied(tddlConnection, sql, "ERR_FORCE_COLUMNAR_INDEX");
     }
 
     void checkOSSTableScanAndLogicalView(String sql) {

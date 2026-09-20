@@ -19,6 +19,7 @@ package com.alibaba.polardbx.gms.metadb.table;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.ParameterMethod;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 
 import java.sql.ResultSet;
@@ -105,5 +106,21 @@ public class IndexesRecord extends IndexesInfoSchemaRecord {
 
     public void clearColumnar() {
         flag &= ~FLAG_COLUMNAR;
+    }
+
+    public static boolean equalsIndexRecord(IndexesRecord left, IndexesRecord right) {
+        if (null == left || null == right) {
+            return false;
+        }
+
+        return TStringUtil.equals(left.columnName, right.columnName)
+            && TStringUtil.equals(left.indexName, right.indexName)
+            && TStringUtil.equals(left.tableName, right.tableName)
+            && TStringUtil.equals(left.indexTableName, right.indexTableName)
+            && left.seqInIndex == right.seqInIndex
+            && left.indexLocation == right.indexLocation
+            && left.visible == right.visible
+            && TStringUtil.equals(left.collation, right.collation)
+            && TStringUtil.equals(left.nullable, right.nullable);
     }
 }

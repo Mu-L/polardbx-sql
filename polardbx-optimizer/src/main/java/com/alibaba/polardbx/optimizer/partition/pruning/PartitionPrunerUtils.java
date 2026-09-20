@@ -20,12 +20,17 @@ import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.RawString;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.druid.util.StringUtils;
+import com.alibaba.polardbx.gms.partition.TablePartitionRecord;
+import com.alibaba.polardbx.gms.topology.DbInfoManager;
+import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
-import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
+import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.TddlRelDataTypeSystemImpl;
 import com.alibaba.polardbx.optimizer.core.TddlTypeFactoryImpl;
@@ -37,6 +42,8 @@ import com.alibaba.polardbx.optimizer.core.expression.calc.IExpression;
 import com.alibaba.polardbx.optimizer.core.field.FieldCheckLevel;
 import com.alibaba.polardbx.optimizer.core.field.SessionProperties;
 import com.alibaba.polardbx.optimizer.core.field.TypeConversionStatus;
+import com.alibaba.polardbx.optimizer.core.rel.util.LogicalViewCommonGroupInfo;
+import com.alibaba.polardbx.optimizer.core.rel.util.DirectPlanCommonGroupInfo;
 import com.alibaba.polardbx.optimizer.core.rel.util.TargetTableInfo;
 import com.alibaba.polardbx.optimizer.core.rel.util.TargetTableInfoOneTable;
 import com.alibaba.polardbx.optimizer.partition.PartitionByDefinition;
@@ -47,6 +54,7 @@ import com.alibaba.polardbx.optimizer.partition.boundspec.PartitionBoundVal;
 import com.alibaba.polardbx.optimizer.partition.boundspec.PartitionBoundValueKind;
 import com.alibaba.polardbx.optimizer.partition.common.PartKeyLevel;
 import com.alibaba.polardbx.optimizer.partition.common.PartitionStrategy;
+import com.alibaba.polardbx.optimizer.partition.common.PartitionTableType;
 import com.alibaba.polardbx.optimizer.partition.datatype.PartitionField;
 import com.alibaba.polardbx.optimizer.partition.datatype.PartitionFieldBuilder;
 import com.alibaba.polardbx.optimizer.partition.datatype.function.Monotonicity;
@@ -62,11 +70,16 @@ import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.sql.SqlIdentifier;
+import org.apache.calcite.sql.SqlNode;
+import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.type.SqlTypeName;
+import org.apache.commons.collections.MapUtils;
 
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -81,7 +94,7 @@ public class PartitionPrunerUtils {
     /**
      * The log for storage check ha log
      */
-    public static final Logger PRUNER_LOG = LoggerFactory.getLogger("PRUNER_LOG");
+    public static final Logger PRUNER_LOG = LoggerFactory.getLogger(PartitionPrunerUtils.class);
 
     protected static final RelDataTypeFactory typeFactory =
         new TddlTypeFactoryImpl(TddlRelDataTypeSystemImpl.getInstance());
@@ -123,111 +136,452 @@ public class PartitionPrunerUtils {
         return targetDbList;
     }
 
+//    @Data
+//    protected static class TableTopology {
+//
+//        /**
+//         * PartInfo
+//         */
+//        protected PartitionInfo partInfo;
+//
+//        /**
+//         *
+//         */
+//        protected List<PhysicalPartitionInfo> partTblPrunedParts = new ArrayList<>();
+//
+//        /**
+//         * Partition Table / Single Table PhyInfo Mappings
+//         */
+//        protected Map<String, Set<String>> partTblGrpPhyTblListMapping= new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+//
+//        /**
+//         * Broadcast Table (Including Replicas Table) PhyInfo Mappings
+//         */
+//        protected Map<String, String> broTblGrpPhyTblMappings = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+//
+//        public TableTopology() {
+//        }
+//    }
+//
+//    public static Map<String, List<List<String>>> buildTargetTablesByPartPrunedResults2(List<PartPrunedResult> results) {
+//
+//        /**
+//         * key: grpKey
+//         * val:
+//         *      List of phyTblList to be join that has different partition idx
+//         *          List of phyTbl of the same partition idx of each logTbl
+//         */
+//        Map<String, List<List<String>>> phyGrpInfoMap = new HashMap<>();
+//
+//        List<TableTopology> tableTopologyList = new ArrayList<>();
+//
+//        for (int i = 0; i < results.size(); i++) {
+//            TableTopology tblTopology = new TableTopology();
+//            PartPrunedResult prunedResult = results.get(i);
+//            PartitionInfo partInfo = prunedResult.getPartInfo();
+//            tblTopology.setPartInfo(partInfo);
+//            if (partInfo.isBroadcastTable() || partInfo.isReplicasTable()) {
+//                partInfo.getTopology();
+//            }
+//
+//            List<PhysicalPartitionInfo> prunedParts = prunedResult.getPrunedPartitions();
+//        }
+//
+//
+//        return null;
+//    }
+
+//    /**
+//     * Convert the list of PartPrunedResult to TargetTables
+//     */
+//    public static Map<String, List<List<String>>> buildTargetTablesByPartPrunedResultsBackup(List<PartPrunedResult> results) {
+//
+//        /**
+//         * key: grpKey
+//         * val:
+//         *      List of phyTblList to be join that has different partition idx
+//         *          List of phyTbl of the same partition idx of each logTbl
+//         */
+//        Map<String, List<List<String>>> phyGrpInfoMap = new HashMap<>();
+//
+//        /**
+//         * key: grpKey
+//         * val:
+//         *     partIdxPhyTbListMap:
+//         *          key: partIdx
+//         *          val: phyTbList that has same phy idx
+//         */
+//        Map<String, Map<Integer, List<String>>> allPhyInfos = new HashMap<>();
+//
+//        List<Map<String, Set<String>>> broadcastTopologyList = new ArrayList<>();
+//
+//        for (int i = 0; i < results.size(); i++) {
+//            PartPrunedResult result = results.get(i);
+//            if (result.getPrunedPartitions().isEmpty()) {
+//                return phyGrpInfoMap;
+//            }
+//        }
+//
+//        for (int i = 0; i < results.size(); i++) {
+//            PartPrunedResult result = results.get(i);
+//            if (result.getPartInfo().isBroadcastTable()) {
+//                broadcastTopologyList.add(result.getPartInfo().getTopology());
+//                continue;
+//            }
+//            List<PhysicalPartitionInfo> prunedParts = result.getPrunedPartitions();
+//            for (int j = 0; j < prunedParts.size(); j++) {
+//                PhysicalPartitionInfo prunedPart = prunedParts.get(j);
+//                String grpKey = prunedPart.getGroupKey();
+//                String phyTb = prunedPart.getPhyTable();
+//                int partBitSetIdx = prunedPart.getPartBitSetIdx();
+//
+//                // Get phyInfos of one Group
+//                Map<Integer, List<String>> phyInfosOfOneGrp = allPhyInfos.get(grpKey);
+//                if (phyInfosOfOneGrp == null) {
+//                    phyInfosOfOneGrp = new HashMap<>();
+//                    allPhyInfos.put(grpKey, phyInfosOfOneGrp);
+//                }
+//
+//                // Get phyInfos that is the same partIdx
+//                List<String> phyTbListHasSameIdx = phyInfosOfOneGrp.get(partBitSetIdx);
+//                if (phyTbListHasSameIdx == null) {
+//                    phyTbListHasSameIdx = new ArrayList<>();
+//                    phyInfosOfOneGrp.put(partBitSetIdx, phyTbListHasSameIdx);
+//                }
+//                for (int k = 0; k < broadcastTopologyList.size(); k++) {
+//                    String phyTable = broadcastTopologyList.get(k).get(grpKey).iterator().next();
+//                    phyTbListHasSameIdx.add(phyTable);
+//                }
+//                phyTbListHasSameIdx.add(phyTb);
+//            }
+//            broadcastTopologyList = new ArrayList<>();
+//        }
+//
+//        if (!broadcastTopologyList.isEmpty()) {
+//            if (allPhyInfos.isEmpty()) {
+//                // only broadcast
+//                List<String> phyInfosOfSameIdx = new ArrayList<>();
+//                List<List<String>> phyInfosOfOneGrp = new ArrayList<>();
+//                phyInfosOfOneGrp.add(phyInfosOfSameIdx);
+//                // TODO: broadcast table random access each group
+//                String groupKey = broadcastTopologyList.get(0).keySet().stream().findFirst().get();
+//                for (int i = 0; i < broadcastTopologyList.size(); i++) {
+//                    String phyTable = broadcastTopologyList.get(i).get(groupKey).iterator().next();
+//                    phyInfosOfSameIdx.add(phyTable);
+//                }
+//                phyGrpInfoMap.put(groupKey, phyInfosOfOneGrp);
+//                return phyGrpInfoMap;
+//            }
+//        }
+//        // not only broadcast
+//        for (Map.Entry<String, Map<Integer, List<String>>> phyInfosOfOneGrpItem : allPhyInfos.entrySet()) {
+//            String grpKey = phyInfosOfOneGrpItem.getKey();
+//            Map<Integer, List<String>> phyInfosOfOneGrpMap = phyInfosOfOneGrpItem.getValue();
+//            List<List<String>> phyInfosOfOneGrp = new ArrayList<>();
+//            for (Map.Entry<Integer, List<String>> phyInfosOfSameIdxItem : phyInfosOfOneGrpMap.entrySet()) {
+//                List<String> phyInfosOfSameIdx = phyInfosOfSameIdxItem.getValue();
+//                for (int i = 0; i < broadcastTopologyList.size(); i++) {
+//                    String phyTable = broadcastTopologyList.get(i).get(grpKey).iterator().next();
+//                    phyInfosOfSameIdx.add(phyTable);
+//                }
+//                phyInfosOfOneGrp.add(phyInfosOfSameIdx);
+//            }
+//            phyGrpInfoMap.put(grpKey, phyInfosOfOneGrp);
+//        }
+//        return phyGrpInfoMap;
+//    }
+//
+//    public static Map<String, List<List<String>>> buildTargetTablesByPartPrunedResultsNew(List<PartPrunedResult> results) {
+//
+////        t1: p1,p2,p3
+////        b1: p1,p2,p3,p4
+////        r1: p1,p2,p3
+////        t2: p1,p2,p3
+////        b2: p1,p2,p3,p4
+////        r2: p1,p2,p3
+////
+////            ==>
+////
+////        t1: p1,p2,p3
+////          g1: t1_p1
+////              t1_p3
+////          g2: t1_p2
+////
+////        b1: p1,p2,p3,p4
+////            g1:b1_p1,
+////            g2:b1_p2,
+////            g3:b1_p3,
+////            g4:b1_p4
+////
+////        r1: p1,p2,p3
+////           g1: r1_p1,
+////           g2: r1_p2,
+////           g3: r1_p3
+////
+////        t2: p1,p2,p3
+////          g1: t2_p1
+////              t2_p3
+////          g2: t2_p2
+////
+////
+////        b2: p1,p2,p3,p4
+////            g1:b2_p1,
+////            g2:b2_p2,
+////            g3:b2_p3,
+////            g4:b2_p4
+////
+////
+////        r2: p1,p2,p3
+////        g1: r2_p1,
+////            g2:r2_p2,
+////            g3:r2_p3
+////
+////
+////            ==>
+////
+////        g1:
+////        t1_p1,b1,r1,t2_p1,b2,r2
+////        t1_p3,b1,r1,t2_p3,b2,r2
+////
+////        g2:
+////        t1_p2,b1,r1,t2_p2,b2,r2
+//
+//        /**
+//         * key: grpKey
+//         * val:
+//         *      List of phyTblList to be join that has different partition idx
+//         *          List of phyTbl of the same partition idx of each logTbl
+//         */
+//        Map<String, List<List<String>>> phyGrpInfoMap = new HashMap<>();
+//
+//        /**
+//         * key: grpKey
+//         * val:
+//         *     partIdxPhyTbListMap:
+//         *          key: partIdx
+//         *          val: phyTbList that has same phy idx
+//         */
+//        Map<String, Map<Integer, List<String>>> allPhyInfos = new HashMap<>();
+//
+//        /**
+//         * List
+//         *    item of list:
+//         *      the topology of the ith-table of broadcast/replicas/single
+//         *          since last partitioned table in join-sql
+//         *
+//         */
+//        List<Map<String, Set<String>>> autoBroadcastTableTopologyList = new ArrayList<>();
+//
+//        /**
+//         * index list of broadcast tables topology in auto_broadcast_tbl_list
+//         */
+//        List<Integer> broadcastTableTopologyIndexList = new ArrayList<>();
+//        /**
+//         * index list of replicas tables topology in auto_broadcast_tbl_list
+//         */
+//        List<Integer> replicasTableTopologyIndexList = new ArrayList<>();
+//        /**
+//         * index list of single tables topology in auto_broadcast_tbl_list
+//         */
+//        List<Integer> singleTableTopologyIndexList = new ArrayList<>();
+//
+//        for (int i = 0; i < results.size(); i++) {
+//            PartPrunedResult result = results.get(i);
+//            if (result.getPrunedPartitions().isEmpty()) {
+//                return phyGrpInfoMap;
+//            }
+//        }
+//
+//        for (int i = 0; i < results.size(); i++) {
+//            PartPrunedResult result = results.get(i);
+//            if (result.getPartInfo().isBroadcastTable()) {
+//                /**
+//                 * Here save topologies of each bro_tbl temporality
+//                 * which are between two part_tables
+//                 */
+//                autoBroadcastTableTopologyList.add(result.getPartInfo().getTopology());
+//                broadcastTableTopologyIndexList.add(autoBroadcastTableTopologyList.size() - 1);
+//                continue;
+//            }
+//            if (result.getPartInfo().isReplicasTable()) {
+//                /**
+//                 * Here save topologies of each bro_tbl temporality
+//                 * which are between two part_tables
+//                 */
+//                autoBroadcastTableTopologyList.add(result.getPartInfo().getTopology());
+//                replicasTableTopologyIndexList.add(autoBroadcastTableTopologyList.size() - 1);
+//                continue;
+//            }
+//            if (result.getPartInfo().isSingleTable()) {
+//                /**
+//                 * Here save topologies of each bro_tbl temporality
+//                 * which are between two part_tables
+//                 */
+//                autoBroadcastTableTopologyList.add(result.getPartInfo().getTopology());
+//                singleTableTopologyIndexList.add(autoBroadcastTableTopologyList.size() - 1);
+//                continue;
+//            }
+//            boolean isSingleTbl = result.getPartInfo().isSingleTable();
+//            boolean isPartTbl = result.getPartInfo().isPartitionedTable();
+//            List<PhysicalPartitionInfo> prunedParts = result.getPrunedPartitions();
+//            for (int j = 0; j < prunedParts.size(); j++) {
+//                PhysicalPartitionInfo prunedPart = prunedParts.get(j);
+//                String grpKey = prunedPart.getGroupKey();
+//                String phyTb = prunedPart.getPhyTable();
+//
+//
+//                // Get phyInfos of one Group
+//                Map<Integer, List<String>> phyInfosOfOneGrp = allPhyInfos.get(grpKey);
+//                if (phyInfosOfOneGrp == null) {
+//                    phyInfosOfOneGrp = new HashMap<>();
+//                    allPhyInfos.put(grpKey, phyInfosOfOneGrp);
+//                }
+//
+//                int partBitSetIdx = prunedPart.getPartBitSetIdx();
+//
+//                // Get phyInfos that is the same partIdx
+//                List<String> phyTbListHasSameIdx = phyInfosOfOneGrp.get(partBitSetIdx);
+//                if (phyTbListHasSameIdx == null) {
+//                    phyTbListHasSameIdx = new ArrayList<>();
+//                    phyInfosOfOneGrp.put(partBitSetIdx, phyTbListHasSameIdx);
+//                }
+//                /**
+//                 * By using the topologies of each bro_tbl above
+//                 * which are between two part_tables,
+//                 * first put them into the result of allPhyInfos,
+//                 * and so keep the order of phytables of each group are the same as log tables in join
+//                 */
+//                if (!autoBroadcastTableTopologyList.isEmpty()) {
+//                    for (int k = 0; k < autoBroadcastTableTopologyList.size(); k++) {
+//                        String phyTable = autoBroadcastTableTopologyList.get(k).get(grpKey).iterator().next();
+//                        phyTbListHasSameIdx.add(phyTable);
+//                    }
+//                }
+//                phyTbListHasSameIdx.add(phyTb);
+//            }
+//            /**
+//             * For each part, clear all topologies above and prepare next time
+//             */
+//            autoBroadcastTableTopologyList = new ArrayList<>();
+//            broadcastTableTopologyIndexList = new ArrayList<>();
+//            replicasTableTopologyIndexList = new ArrayList<>();
+//            singleTableTopologyIndexList = new ArrayList<>();
+//        }
+//
+//        boolean containBroadcastTables = !broadcastTableTopologyIndexList.isEmpty();
+//        boolean containReplicasTables = !replicasTableTopologyIndexList.isEmpty();
+//        boolean containSingleTables = !singleTableTopologyIndexList.isEmpty();
+//
+//        if (!autoBroadcastTableTopologyList.isEmpty()) {
+//
+//            /**
+//             * Maybe bro_tbl is the last table of one join sql or bro_tbl is no join,
+//             * so here need check if broadcastTopologyList is empty and add it into
+//             * the result of allPhyInfos
+//             */
+//
+//            if (allPhyInfos.isEmpty()) {
+//
+//                String targetGrpKey = null;
+//                List<String> phyInfosOfSameIdx = new ArrayList<>();
+//                List<List<String>> phyInfosOfOneGrp = new ArrayList<>();
+//                phyInfosOfOneGrp.add(phyInfosOfSameIdx);
+//
+//
+//                if (containSingleTables) {
+//                    /**
+//                     * Find at least one single tables, so use the group key of the single first
+//                     */
+//                    int firstSingleIndex = singleTableTopologyIndexList.get(0);
+//                    targetGrpKey = autoBroadcastTableTopologyList.get(firstSingleIndex).keySet().stream().findFirst().get();
+//                } else if (containReplicasTables) {
+//                    /**
+//                     * No found single table,
+//                     * but found at least one replicas tables, so use the group key of the replicas first
+//                     */
+//                    int firstReplicasIndex = replicasTableTopologyIndexList.get(0);
+//                    targetGrpKey = autoBroadcastTableTopologyList.get(firstReplicasIndex).keySet().stream().findFirst().get();
+//                } else {
+//                    /**
+//                     * No found single tables and replicas tables,
+//                     * Here process the only broadcast, so use the group key of the broadcast first
+//                     *
+//                     */
+//                    int firstBroadcastIndex = broadcastTableTopologyIndexList.get(0);
+//                    targetGrpKey = autoBroadcastTableTopologyList.get(firstBroadcastIndex).keySet().stream().findFirst().get();
+//                }
+//                for (int i = 0; i < autoBroadcastTableTopologyList.size(); i++) {
+//                    String phyTable = autoBroadcastTableTopologyList.get(i).get(targetGrpKey).iterator().next();
+//                    phyInfosOfSameIdx.add(phyTable);
+//                }
+//                phyGrpInfoMap.put(targetGrpKey, phyInfosOfOneGrp);
+//
+////                /**
+////                 * Here process the only broadcast
+////                 */
+////                // only broadcast
+////                List<String> phyInfosOfSameIdx = new ArrayList<>();
+////                List<List<String>> phyInfosOfOneGrp = new ArrayList<>();
+////                phyInfosOfOneGrp.add(phyInfosOfSameIdx);
+////                // TODO: broadcast table random access each group
+////                String groupKey = autoBroadcastTableTopologyList.get(0).keySet().stream().findFirst().get();
+////                for (int i = 0; i < autoBroadcastTableTopologyList.size(); i++) {
+////                    String phyTable = autoBroadcastTableTopologyList.get(i).get(groupKey).iterator().next();
+////                    phyInfosOfSameIdx.add(phyTable);
+////                }
+////                phyGrpInfoMap.put(groupKey, phyInfosOfOneGrp);
+//
+//                return phyGrpInfoMap;
+//            }
+//        }
+//
+//        /**
+//         * Here process the not-only broadcast, broadcast is the last table of join sql
+//         */
+//
+//        // not only broadcast
+//        for (Map.Entry<String, Map<Integer, List<String>>> phyInfosOfOneGrpItem : allPhyInfos.entrySet()) {
+//            String grpKey = phyInfosOfOneGrpItem.getKey();
+//            Map<Integer, List<String>> phyInfosOfOneGrpMap = phyInfosOfOneGrpItem.getValue();
+//            List<List<String>> phyInfosOfOneGrp = new ArrayList<>();
+//            for (Map.Entry<Integer, List<String>> phyInfosOfSameIdxItem : phyInfosOfOneGrpMap.entrySet()) {
+//                List<String> phyInfosOfSameIdx = phyInfosOfSameIdxItem.getValue();
+//                for (int i = 0; i < autoBroadcastTableTopologyList.size(); i++) {
+//                    String phyTable = autoBroadcastTableTopologyList.get(i).get(grpKey).iterator().next();
+//                    phyInfosOfSameIdx.add(phyTable);
+//                }
+//                phyInfosOfOneGrp.add(phyInfosOfSameIdx);
+//            }
+//            phyGrpInfoMap.put(grpKey, phyInfosOfOneGrp);
+//        }
+//        return phyGrpInfoMap;
+//    }
+
     /**
-     * Convert the list of PartPrunedResult to TargetDB
+     * Convert the list of PartPrunedResult to TargetTables
      */
-    public static Map<String, List<List<String>>> buildTargetTablesByPartPrunedResults(List<PartPrunedResult> results) {
-
-        /**
-         * key: grpKey
-         * val:
-         *      List of phyTblList to be join that has different partition idx
-         *          List of phyTbl of the same partition idx of each logTbl
-         */
-        Map<String, List<List<String>>> phyGrpInfoMap = new HashMap<>();
-
-        /**
-         * key: grpKey
-         * val:
-         *     partIdxPhyTbListMap:
-         *          key: partIdx
-         *          val: phyTbList that has same phy idx
-         */
-        Map<String, Map<Integer, List<String>>> allPhyInfos = new HashMap<>();
-
-        List<Map<String, Set<String>>> broadcastTopologyList = new ArrayList<>();
-
-        for (int i = 0; i < results.size(); i++) {
-            PartPrunedResult result = results.get(i);
-            if (result.getPrunedPartitions().isEmpty()) {
-                return phyGrpInfoMap;
-            }
-        }
-
-        for (int i = 0; i < results.size(); i++) {
-            PartPrunedResult result = results.get(i);
-            if (result.getPartInfo().isBroadcastTable()) {
-                broadcastTopologyList.add(result.getPartInfo().getTopology());
-                continue;
-            }
-            List<PhysicalPartitionInfo> prunedParts = result.getPrunedPartitions();
-            for (int j = 0; j < prunedParts.size(); j++) {
-                PhysicalPartitionInfo prunedPart = prunedParts.get(j);
-                String grpKey = prunedPart.getGroupKey();
-                String phyTb = prunedPart.getPhyTable();
-                int partBitSetIdx = prunedPart.getPartBitSetIdx();
-
-                // Get phyInfos of one Group
-                Map<Integer, List<String>> phyInfosOfOneGrp = allPhyInfos.get(grpKey);
-                if (phyInfosOfOneGrp == null) {
-                    phyInfosOfOneGrp = new HashMap<>();
-                    allPhyInfos.put(grpKey, phyInfosOfOneGrp);
-                }
-
-                // Get phyInfos that is the same partIdx
-                List<String> phyTbListHasSameIdx = phyInfosOfOneGrp.get(partBitSetIdx);
-                if (phyTbListHasSameIdx == null) {
-                    phyTbListHasSameIdx = new ArrayList<>();
-                    phyInfosOfOneGrp.put(partBitSetIdx, phyTbListHasSameIdx);
-                }
-                for (int k = 0; k < broadcastTopologyList.size(); k++) {
-                    String phyTable = broadcastTopologyList.get(k).get(grpKey).iterator().next();
-                    phyTbListHasSameIdx.add(phyTable);
-                }
-                phyTbListHasSameIdx.add(phyTb);
-            }
-            broadcastTopologyList = new ArrayList<>();
-        }
-
-        if (!broadcastTopologyList.isEmpty()) {
-            if (allPhyInfos.isEmpty()) {
-                // only broadcast
-                List<String> phyInfosOfSameIdx = new ArrayList<>();
-                List<List<String>> phyInfosOfOneGrp = new ArrayList<>();
-                phyInfosOfOneGrp.add(phyInfosOfSameIdx);
-                // TODO: broadcast table random access each group
-                String groupKey = broadcastTopologyList.get(0).keySet().stream().findFirst().get();
-                for (int i = 0; i < broadcastTopologyList.size(); i++) {
-                    String phyTable = broadcastTopologyList.get(i).get(groupKey).iterator().next();
-                    phyInfosOfSameIdx.add(phyTable);
-                }
-                phyGrpInfoMap.put(groupKey, phyInfosOfOneGrp);
-                return phyGrpInfoMap;
-            }
-        }
-        // not only broadcast
-        for (Map.Entry<String, Map<Integer, List<String>>> phyInfosOfOneGrpItem : allPhyInfos.entrySet()) {
-            String grpKey = phyInfosOfOneGrpItem.getKey();
-            Map<Integer, List<String>> phyInfosOfOneGrpMap = phyInfosOfOneGrpItem.getValue();
-            List<List<String>> phyInfosOfOneGrp = new ArrayList<>();
-            for (Map.Entry<Integer, List<String>> phyInfosOfSameIdxItem : phyInfosOfOneGrpMap.entrySet()) {
-                List<String> phyInfosOfSameIdx = phyInfosOfSameIdxItem.getValue();
-                for (int i = 0; i < broadcastTopologyList.size(); i++) {
-                    String phyTable = broadcastTopologyList.get(i).get(grpKey).iterator().next();
-                    phyInfosOfSameIdx.add(phyTable);
-                }
-                phyInfosOfOneGrp.add(phyInfosOfSameIdx);
-            }
-            phyGrpInfoMap.put(grpKey, phyInfosOfOneGrp);
-        }
-        return phyGrpInfoMap;
+    public static Map<String, List<List<String>>> buildTargetTablesByPartPrunedResults(List<PartPrunedResult> results,
+                                                                                       ExecutionContext ec) {
+        TargetTableInfo targetTableInfo = buildTargetTableInfoByPartPrunedResults(results, ec, true);
+        return targetTableInfo.getTargetTables();
     }
 
     /**
-     * Convert the list of PartPrunedResult to TargetDB
+     * Convert the list of PartPrunedResult to TargetTableInfo which can be targetDbs
      */
-    public static TargetTableInfo buildTargetTableInfoByPartPrunedResults(List<PartPrunedResult> results) {
+    public static TargetTableInfo buildTargetTableInfoByPartPrunedResults(List<PartPrunedResult> prunedResults,
+                                                                          ExecutionContext executionContext,
+                                                                          boolean ignoreBuildTargetTableInfo) {
+        boolean ignoreTopologyInvalidInfo = false;
+        if (executionContext != null) {
+            ignoreTopologyInvalidInfo = executionContext.getParamManager()
+                .getBoolean(ConnectionParams.IGNORE_INVALID_TOPOLOGY_IN_POST_PLANNER);
+        }
 
+        DirectPlanCommonGroupInfo directPlanCommonGroupInfo = new DirectPlanCommonGroupInfo();
+        boolean allInOneGroup = PartitionPrunerUtils.calcCommonGroupKeySetFromAllPrunedResults(
+            prunedResults, executionContext, directPlanCommonGroupInfo);
+        Set<String> commonGroupKeyOutputOfAllPruningResults = directPlanCommonGroupInfo.getCommonGroupKeySet();
         TargetTableInfo targetTableInfo = new TargetTableInfo();
 
         /**
@@ -250,7 +604,27 @@ public class PartitionPrunerUtils {
          */
         Map<String, Map<Integer, List<String>>> allPhyInfos = new HashMap<>();
 
-        List<Map<String, Set<String>>> broadcastTopologyList = new ArrayList<>();
+        /**
+         * Temp List of tables which are need auto broadcast into each partitions
+         *    item of list:
+         *      the topology of the ith-table of broadcast/replicas/single
+         *          since last partitioned table in join-sql
+         *
+         */
+        List<Map<String, Set<String>>> autoBroadcastTableTopologyList = new ArrayList<>();
+
+        /**
+         * index list of broadcast tables topology in auto_broadcast_tbl_list
+         */
+        List<Integer> broadcastTableTopologyIndexList = new ArrayList<>();
+        /**
+         * index list of replicas tables topology in auto_broadcast_tbl_list
+         */
+        List<Integer> replicasTableTopologyIndexList = new ArrayList<>();
+        /**
+         * index list of single tables topology in auto_broadcast_tbl_list
+         */
+        List<Integer> singleTableTopologyIndexList = new ArrayList<>();
 
         /**
          * key: partName
@@ -258,34 +632,79 @@ public class PartitionPrunerUtils {
          */
         Map<String, List<String>> part2SubPartListMapping = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
 
-        for (int i = 0; i < results.size(); i++) {
-            PartPrunedResult result = results.get(i);
+        for (int i = 0; i < prunedResults.size(); i++) {
+            PartPrunedResult result = prunedResults.get(i);
             PartitionInfo partInfo = result.getPartInfo();
             if (result.getPrunedPartitions().isEmpty()) {
-                TargetTableInfoOneTable targetTableInfoOneTable = new TargetTableInfoOneTable();
-                targetTableInfoOneTable.setPartInfo(partInfo);
-                targetTableInfoOneTableList.add(targetTableInfoOneTable);
-                targetTableInfoOneTable.setUseSubPart(partInfo.getPartitionBy().getSubPartitionBy() != null);
-                targetTableInfoOneTable.setAllPartSorted(false);
-                targetTableInfoOneTable.setAllSubPartSorted(false);
-                targetTableInfoOneTable.setAllPrunedPartContainOnlyOneSubPart(false);
+                if (!ignoreBuildTargetTableInfo) {
+                    TargetTableInfoOneTable targetTableInfoOneTable = new TargetTableInfoOneTable();
+                    targetTableInfoOneTable.setPartInfo(partInfo);
+                    targetTableInfoOneTable.setUseSubPart(partInfo.getPartitionBy().getSubPartitionBy() != null);
+                    targetTableInfoOneTable.setAllPartSorted(false);
+                    targetTableInfoOneTable.setAllSubPartSorted(false);
+                    targetTableInfoOneTable.setAllPrunedPartContainOnlyOneSubPart(false);
+                    targetTableInfoOneTableList.add(targetTableInfoOneTable);
+                }
                 return targetTableInfo;
             }
         }
 
-        for (int i = 0; i < results.size(); i++) {
-            PartPrunedResult result = results.get(i);
+        boolean firstFoundPartTable = true;
+        PartPruneStepPruningExtraInfo pruningExtraInfo = null;
+        for (int i = 0; i < prunedResults.size(); i++) {
+            PartPrunedResult result = prunedResults.get(i);
             PartitionInfo partInfo = result.getPartInfo();
 
             Set<String> parentPartNameSet = new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
-            TargetTableInfoOneTable targetTableInfoOneTable = new TargetTableInfoOneTable();
-            targetTableInfoOneTable.setPartInfo(partInfo);
-            targetTableInfoOneTableList.add(targetTableInfoOneTable);
+            TargetTableInfoOneTable targetTableInfoOneTable = null;
+            if (!ignoreBuildTargetTableInfo) {
+                targetTableInfoOneTable = new TargetTableInfoOneTable();
+                targetTableInfoOneTable.setPartInfo(partInfo);
+                targetTableInfoOneTableList.add(targetTableInfoOneTable);
+            }
 
             if (partInfo.isBroadcastTable()) {
-                broadcastTopologyList.add(result.getPartInfo().getTopology());
+                autoBroadcastTableTopologyList.add(result.getPartInfo().getTopology(ignoreTopologyInvalidInfo));
+                broadcastTableTopologyIndexList.add(autoBroadcastTableTopologyList.size() - 1);
                 continue;
             }
+            if (partInfo.isReplicasTable()) {
+                Map<String, Set<String>> fullGrpToPhyTbSetMapOfReplicasTbl =
+                    result.getPartInfo().getTopology(ignoreTopologyInvalidInfo);
+                PartPruneStepPruningExtraInfo extraInfo = result.getPruningExtraInfo();
+                if (pruningExtraInfo == null) {
+                    pruningExtraInfo = extraInfo;
+                }
+                if (pruningExtraInfo != null) {
+                    /**
+                     * If found the pruningExtraInfo, that means replicas table only scan the parts on the common groupKeySet
+                     */
+                    Map<String, Set<String>> newGrpToPhyTbSetMap =
+                        new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+                    Set<String> commonGroupKeySet = pruningExtraInfo.getCommonGroupKeyInfo().getCommonGroupKeySet();
+                    for (Map.Entry<String, Set<String>> grpAndTbSetItem : fullGrpToPhyTbSetMapOfReplicasTbl.entrySet()) {
+                        String grpKey = grpAndTbSetItem.getKey();
+                        if (commonGroupKeySet.contains(grpKey)) {
+                            newGrpToPhyTbSetMap.put(grpKey, grpAndTbSetItem.getValue());
+                        }
+                    }
+                    autoBroadcastTableTopologyList.add(newGrpToPhyTbSetMap);
+                } else {
+                    /**
+                     * If no found the pruningExtraInfo,
+                     *  that means replicas table scan the parts of its topology
+                     */
+                    autoBroadcastTableTopologyList.add(fullGrpToPhyTbSetMapOfReplicasTbl);
+                }
+                replicasTableTopologyIndexList.add(autoBroadcastTableTopologyList.size() - 1);
+                continue;
+            }
+            if (partInfo.isSingleTable()) {
+                autoBroadcastTableTopologyList.add(result.getPartInfo().getTopology(ignoreTopologyInvalidInfo));
+                singleTableTopologyIndexList.add(autoBroadcastTableTopologyList.size() - 1);
+                continue;
+            }
+
             List<PhysicalPartitionInfo> prunedParts = result.getPrunedPartitions();
             PartKeyLevel phyPartLevel = null;
             for (int j = 0; j < prunedParts.size(); j++) {
@@ -299,28 +718,38 @@ public class PartitionPrunerUtils {
                 String phyTb = prunedPart.getPhyTable();
                 int partBitSetIdx = prunedPart.getPartBitSetIdx();
 
-                String parentPartName = prunedPart.getParentPartName();
-                if (!StringUtils.isEmpty(parentPartName)) {
-                    /**
-                     * When parentPartName is NOT empty, the prunedPart must be a subpart
-                     */
-                    if (!parentPartNameSet.contains(parentPartName)) {
-                        parentPartNameSet.add(parentPartName);
-                    }
+                if (!ignoreBuildTargetTableInfo) {
+                    String parentPartName = prunedPart.getParentPartName();
+                    if (!StringUtils.isEmpty(parentPartName)) {
+                        /**
+                         * When parentPartName is NOT empty, the prunedPart must be a subpart
+                         */
+                        if (!parentPartNameSet.contains(parentPartName)) {
+                            parentPartNameSet.add(parentPartName);
+                        }
 
-                    List<String> subPartNames = part2SubPartListMapping.get(parentPartName);
-                    if (subPartNames == null) {
-                        subPartNames = new ArrayList<>();
-                        part2SubPartListMapping.put(parentPartName, subPartNames);
+                        List<String> subPartNames = part2SubPartListMapping.get(parentPartName);
+                        if (subPartNames == null) {
+                            subPartNames = new ArrayList<>();
+                            part2SubPartListMapping.put(parentPartName, subPartNames);
+                        }
+                        subPartNames.add(partName);
                     }
-                    subPartNames.add(partName);
                 }
 
                 // Get phyInfos of one Group
                 Map<Integer, List<String>> phyInfosOfOneGrp = allPhyInfos.get(grpKey);
                 if (phyInfosOfOneGrp == null) {
-                    phyInfosOfOneGrp = new HashMap<>();
-                    allPhyInfos.put(grpKey, phyInfosOfOneGrp);
+                    if (firstFoundPartTable) {
+                        phyInfosOfOneGrp = new HashMap<>();
+                        allPhyInfos.put(grpKey, phyInfosOfOneGrp);
+                    } else {
+                        /**
+                         * Do not have the same group, something is wrong.
+                         */
+                        targetTableInfo.setTargetTables(MapUtils.EMPTY_MAP);
+                        return targetTableInfo;
+                    }
                 }
 
                 // Get phyInfos that is the same partIdx
@@ -329,75 +758,157 @@ public class PartitionPrunerUtils {
                     phyTbListHasSameIdx = new ArrayList<>();
                     phyInfosOfOneGrp.put(partBitSetIdx, phyTbListHasSameIdx);
                 }
-                for (int k = 0; k < broadcastTopologyList.size(); k++) {
-                    String phyTable = broadcastTopologyList.get(k).get(grpKey).iterator().next();
+                for (int k = 0; k < autoBroadcastTableTopologyList.size(); k++) {
+                    Set<String> phyTbSetOfGrpOfLogTbl = autoBroadcastTableTopologyList.get(k).get(grpKey);
+                    if (phyTbSetOfGrpOfLogTbl == null || phyTbSetOfGrpOfLogTbl.isEmpty()) {
+                        /**
+                         * Do not have the same group, something is wrong.
+                         */
+                        targetTableInfo.setTargetTables(MapUtils.EMPTY_MAP);
+                        return targetTableInfo;
+                    }
+                    String phyTable = phyTbSetOfGrpOfLogTbl.iterator().next();
                     phyTbListHasSameIdx.add(phyTable);
                 }
                 phyTbListHasSameIdx.add(phyTb);
             }
-            broadcastTopologyList = new ArrayList<>();
+            firstFoundPartTable = false;
+            autoBroadcastTableTopologyList = new ArrayList<>();
+            broadcastTableTopologyIndexList = new ArrayList<>();
+            replicasTableTopologyIndexList = new ArrayList<>();
+            singleTableTopologyIndexList = new ArrayList<>();
 
-            targetTableInfoOneTable.setPrunedFirstLevelPartCount(parentPartNameSet.size());
-            if (phyPartLevel == PartKeyLevel.SUBPARTITION_KEY) {
-                targetTableInfoOneTable.setUseSubPart(true);
-                if (targetTableInfoOneTable.getPrunedFirstLevelPartCount() == 1) {
-                    if (checkPartitionsSortedByPartitionColumns(partInfo, PartKeyLevel.SUBPARTITION_KEY, null)) {
-                        targetTableInfoOneTable.setAllPartSorted(false);
-                        targetTableInfoOneTable.setPartColList(new ArrayList<>());
-                        targetTableInfoOneTable.setAllSubPartSorted(true);
-                        targetTableInfoOneTable.setSubpartColList(
-                            partInfo.getPartitionBy().getSubPartitionBy().getPartitionColumnNameList());
+            if (!ignoreBuildTargetTableInfo && targetTableInfoOneTable != null) {
+                targetTableInfoOneTable.setPrunedFirstLevelPartCount(parentPartNameSet.size());
+                if (phyPartLevel == PartKeyLevel.SUBPARTITION_KEY) {
+                    targetTableInfoOneTable.setUseSubPart(true);
+                    if (targetTableInfoOneTable.getPrunedFirstLevelPartCount() == 1) {
+                        if (checkPartitionsSortedByPartitionColumns(partInfo, PartKeyLevel.SUBPARTITION_KEY, null)) {
+                            targetTableInfoOneTable.setAllPartSorted(false);
+                            targetTableInfoOneTable.setPartColList(new ArrayList<>());
+                            targetTableInfoOneTable.setAllSubPartSorted(true);
+                            targetTableInfoOneTable.setSubpartColList(
+                                partInfo.getPartitionBy().getSubPartitionBy().getPartitionColumnNameList());
+                        }
+                    } else if (targetTableInfoOneTable.getPrunedFirstLevelPartCount() > 1) {
+                        if (checkPartitionsSortedByPartitionColumns(partInfo, PartKeyLevel.PARTITION_KEY, null)) {
+                            targetTableInfoOneTable.setAllPartSorted(true);
+                            targetTableInfoOneTable.setPartColList(
+                                partInfo.getPartitionBy().getPartitionColumnNameList());
+                            targetTableInfoOneTable.setAllSubPartSorted(false);
+                            targetTableInfoOneTable.setSubpartColList(new ArrayList<>());
+
+                            if (partInfo.getPartitionBy().getSubPartitionBy() != null) {
+                                // use subpart
+                                boolean allPartContainOnlyOneSubPart = true;
+                                for (Map.Entry<String, List<String>> part2SubPartListItem : part2SubPartListMapping.entrySet()) {
+                                    List<String> subPartNames = part2SubPartListItem.getValue();
+                                    if (subPartNames != null && subPartNames.size() > 1) {
+                                        allPartContainOnlyOneSubPart = false;
+                                        break;
+                                    }
+                                }
+                                targetTableInfoOneTable.setAllPrunedPartContainOnlyOneSubPart(
+                                    allPartContainOnlyOneSubPart);
+                            } else {
+                                // no use subpart
+                                targetTableInfoOneTable.setAllPrunedPartContainOnlyOneSubPart(false);
+                            }
+                        }
                     }
-                } else if (targetTableInfoOneTable.getPrunedFirstLevelPartCount() > 1) {
+                } else if (phyPartLevel == PartKeyLevel.PARTITION_KEY) {
                     if (checkPartitionsSortedByPartitionColumns(partInfo, PartKeyLevel.PARTITION_KEY, null)) {
                         targetTableInfoOneTable.setAllPartSorted(true);
                         targetTableInfoOneTable.setPartColList(partInfo.getPartitionBy().getPartitionColumnNameList());
-                        targetTableInfoOneTable.setAllSubPartSorted(false);
-                        targetTableInfoOneTable.setSubpartColList(new ArrayList<>());
-
-                        if (partInfo.getPartitionBy().getSubPartitionBy() != null) {
-                            // use subpart
-                            boolean allPartContainOnlyOneSubPart = true;
-                            for (Map.Entry<String, List<String>> part2SubPartListItem : part2SubPartListMapping.entrySet()) {
-                                List<String> subPartNames = part2SubPartListItem.getValue();
-                                if (subPartNames != null && subPartNames.size() > 1) {
-                                    allPartContainOnlyOneSubPart = false;
-                                    break;
-                                }
-                            }
-                            targetTableInfoOneTable.setAllPrunedPartContainOnlyOneSubPart(allPartContainOnlyOneSubPart);
-                        } else {
-                            // no use subpart
-                            targetTableInfoOneTable.setAllPrunedPartContainOnlyOneSubPart(false);
-                        }
                     }
+                    targetTableInfoOneTable.setAllSubPartSorted(false);
+                    targetTableInfoOneTable.setSubpartColList(new ArrayList<>());
                 }
-            } else if (phyPartLevel == PartKeyLevel.PARTITION_KEY) {
-                if (checkPartitionsSortedByPartitionColumns(partInfo, PartKeyLevel.PARTITION_KEY, null)) {
-                    targetTableInfoOneTable.setAllPartSorted(true);
-                    targetTableInfoOneTable.setPartColList(partInfo.getPartitionBy().getPartitionColumnNameList());
-                }
-                targetTableInfoOneTable.setAllSubPartSorted(false);
-                targetTableInfoOneTable.setSubpartColList(new ArrayList<>());
             }
+
         }
 
-        if (!broadcastTopologyList.isEmpty()) {
+        boolean containReplicasTables = !replicasTableTopologyIndexList.isEmpty();
+        boolean containSingleTables = !singleTableTopologyIndexList.isEmpty();
+
+        if (!autoBroadcastTableTopologyList.isEmpty()) {
             if (allPhyInfos.isEmpty()) {
-                // only broadcast
+
+                String targetGrpKey = null;
                 List<String> phyInfosOfSameIdx = new ArrayList<>();
                 List<List<String>> phyInfosOfOneGrp = new ArrayList<>();
                 phyInfosOfOneGrp.add(phyInfosOfSameIdx);
-                // TODO: broadcast table random access each group
-                String groupKey = broadcastTopologyList.get(0).keySet().stream().findFirst().get();
-                for (int i = 0; i < broadcastTopologyList.size(); i++) {
-                    String phyTable = broadcastTopologyList.get(i).get(groupKey).iterator().next();
+
+                int targetTblIndexInAutoBroadcastTblList = -1;
+                if (containSingleTables) {
+                    /**
+                     * Find at least one single tables, so use the group key of the single first
+                     */
+                    int firstSingleIndex = singleTableTopologyIndexList.get(0);
+                    targetTblIndexInAutoBroadcastTblList = firstSingleIndex;
+                } else if (containReplicasTables) {
+                    /**
+                     * No found single table,
+                     * but found at least one replicas tables, so use the group key of the replicas first
+                     */
+                    int firstReplicasIndex = replicasTableTopologyIndexList.get(0);
+                    targetTblIndexInAutoBroadcastTblList = firstReplicasIndex;
+                } else {
+                    /**
+                     * No found single tables and replicas tables,
+                     * Here process the only broadcast, so use the group key of the broadcast first
+                     *
+                     */
+                    int firstBroadcastIndex = broadcastTableTopologyIndexList.get(0);
+                    targetTblIndexInAutoBroadcastTblList = firstBroadcastIndex;
+                }
+                targetGrpKey =
+                    autoBroadcastTableTopologyList.get(targetTblIndexInAutoBroadcastTblList).keySet().stream()
+                        .findFirst().get();
+
+                if (!containSingleTables && containReplicasTables) {
+                    if (pruningExtraInfo != null) {
+                        String randomReadTargetGroupKey = pruningExtraInfo.getRandomReadTargetGroupKey();
+                        if (!StringUtils.isEmpty(randomReadTargetGroupKey)) {
+                            targetGrpKey = randomReadTargetGroupKey;
+                        }
+                    } else {
+                        if (allInOneGroup) {
+                            targetGrpKey = commonGroupKeyOutputOfAllPruningResults.iterator().next();
+                        }
+                    }
+                }
+
+                for (int i = 0; i < autoBroadcastTableTopologyList.size(); i++) {
+                    Set<String> phyTbSetOfGrpOfLogTbl = autoBroadcastTableTopologyList.get(i).get(targetGrpKey);
+                    if (phyTbSetOfGrpOfLogTbl == null || phyTbSetOfGrpOfLogTbl.isEmpty()) {
+                        /**
+                         * Do not have the same group, something is wrong.
+                         */
+                        targetTableInfo.setTargetTables(MapUtils.EMPTY_MAP);
+                        return targetTableInfo;
+                    }
+                    String phyTable = phyTbSetOfGrpOfLogTbl.iterator().next();
                     phyInfosOfSameIdx.add(phyTable);
                 }
-                phyGrpInfoMap.put(groupKey, phyInfosOfOneGrp);
+                phyGrpInfoMap.put(targetGrpKey, phyInfosOfOneGrp);
+
+//                // only broadcast
+//                List<String> phyInfosOfSameIdx = new ArrayList<>();
+//                List<List<String>> phyInfosOfOneGrp = new ArrayList<>();
+//                phyInfosOfOneGrp.add(phyInfosOfSameIdx);
+//                // TODO: broadcast table random access each group
+//                String groupKey = autoBroadcastTopologyList.get(0).keySet().stream().findFirst().get();
+//                for (int i = 0; i < autoBroadcastTopologyList.size(); i++) {
+//                    String phyTable = autoBroadcastTopologyList.get(i).get(groupKey).iterator().next();
+//                    phyInfosOfSameIdx.add(phyTable);
+//                }
+//                phyGrpInfoMap.put(groupKey, phyInfosOfOneGrp);
+
                 return targetTableInfo;
             }
         }
+
         // not only broadcast
         for (Map.Entry<String, Map<Integer, List<String>>> phyInfosOfOneGrpItem : allPhyInfos.entrySet()) {
             String grpKey = phyInfosOfOneGrpItem.getKey();
@@ -405,8 +916,16 @@ public class PartitionPrunerUtils {
             List<List<String>> phyInfosOfOneGrp = new ArrayList<>();
             for (Map.Entry<Integer, List<String>> phyInfosOfSameIdxItem : phyInfosOfOneGrpMap.entrySet()) {
                 List<String> phyInfosOfSameIdx = phyInfosOfSameIdxItem.getValue();
-                for (int i = 0; i < broadcastTopologyList.size(); i++) {
-                    String phyTable = broadcastTopologyList.get(i).get(grpKey).iterator().next();
+                for (int i = 0; i < autoBroadcastTableTopologyList.size(); i++) {
+                    Set<String> phyTbSetOfGrpOfLogTbl = autoBroadcastTableTopologyList.get(i).get(grpKey);
+                    if (phyTbSetOfGrpOfLogTbl == null || phyTbSetOfGrpOfLogTbl.isEmpty()) {
+                        /**
+                         * Do not have the same group, something is wrong.
+                         */
+                        targetTableInfo.setTargetTables(MapUtils.EMPTY_MAP);
+                        return targetTableInfo;
+                    }
+                    String phyTable = phyTbSetOfGrpOfLogTbl.iterator().next();
                     phyInfosOfSameIdx.add(phyTable);
                 }
                 phyInfosOfOneGrp.add(phyInfosOfSameIdx);
@@ -1026,14 +1545,16 @@ public class PartitionPrunerUtils {
             }
         }
         // Process the TypeConversionStatus for pruning
-        processTypeConversionStatus(accessType, predExprDataType, field, endpoints);
+        processTypeConversionStatus(accessType, predExprDataType, field, endpoints, context);
         return field;
     }
 
     protected static void processTypeConversionStatus(PartFieldAccessType accessType,
                                                       DataType srcDataType, PartitionField storedField,
-                                                      boolean[] endpoints) {
-        PartFieldTypeConversionProcessor.processTypeConversionStatus(accessType, srcDataType, storedField, endpoints);
+                                                      boolean[] endpoints,
+                                                      ExecutionContext executionContext) {
+        PartFieldTypeConversionProcessor.processTypeConversionStatus(accessType, srcDataType, storedField, endpoints,
+            executionContext);
     }
 
     protected static SearchExprEvalResult evalExprValsAndBuildOneDatum(ExecutionContext context,
@@ -1243,7 +1764,7 @@ public class PartitionPrunerUtils {
             }
 
             explainBuilder.append("\n");
-            PRUNER_LOG.info(explainBuilder.toString());
+            PRUNER_LOG.warn(explainBuilder.toString());
         } catch (Throwable ex) {
             // ignore
             PRUNER_LOG.error(ex);
@@ -1435,7 +1956,196 @@ public class PartitionPrunerUtils {
         DataType partFuncReturnDataType = partFuncEvalValFld.dataType();
 
         newPartColFldReturn.store(strVal, partFuncReturnDataType);
-        processTypeConversionStatus(scenario, partFuncReturnDataType, newPartColFldReturn, endpoints);
+        processTypeConversionStatus(scenario, partFuncReturnDataType, newPartColFldReturn, endpoints, context);
         return newPartColFldReturn;
+    }
+
+    public static void filterPartitionsBySelectedPartition(PartPrunedResult partPrunedResult, SqlNode partitions) {
+        if (partitions == null) {
+            return;
+        }
+
+        PartitionInfo partInfo = partPrunedResult.getPartInfo();
+        if (partInfo.getTableType() == PartitionTableType.PARTITION_TABLE
+            || partInfo.getTableType() == PartitionTableType.GSI_TABLE
+            || partInfo.getTableType() == PartitionTableType.COLUMNAR_TABLE) {
+            SqlNodeList partNamesAst = (SqlNodeList) partitions;
+            Set<Integer> selectedPartPostSet = new HashSet<>();
+            for (SqlNode partNameAst : partNamesAst.getList()) {
+                String partName = ((SqlIdentifier) partNameAst).getLastName();
+                PartitionSpec pSpec = partInfo.getPartSpecSearcher().getPartSpecByPartName(partName);
+                if (pSpec == null || (pSpec.getStatus() != null
+                    && pSpec.getStatus() == TablePartitionRecord.PARTITION_STATUS_PARTITION_OFFLINE)) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+                        String.format("Unknown partition '%s' in table '%s'", partName,
+                            partInfo.getTableName()));
+                }
+                boolean isPhySpec = !pSpec.isLogical();
+                if (isPhySpec) {
+                    selectedPartPostSet.add(pSpec.getPhyPartPosition().intValue());
+                } else {
+                    if (pSpec.isSpecTemplate()) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+                            String.format("Not allowed to select partition by using subpartition template '%s'",
+                                pSpec.getTemplateName()));
+                    }
+
+                    List<PartitionSpec> subPartList = pSpec.getSubPartitions();
+                    for (PartitionSpec subPart : subPartList) {
+                        selectedPartPostSet.add(subPart.getPhyPartPosition().intValue());
+                    }
+                }
+
+            }
+            BitSet partSetSelected =
+                PartitionPrunerUtils.buildPhyPartsBitSetByPhyPartPostSet(partInfo, selectedPartPostSet);
+            partPrunedResult.getPartBitSet().and(partSetSelected);
+        } else if (partInfo.getTableType() == PartitionTableType.BROADCAST_TABLE) {
+            return;
+        } else if (partInfo.getTableType() == PartitionTableType.REPLICAS_TABLE) {
+            return;
+        } else {
+            throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+                "PARTITION () clause on non partitioned table");
+        }
+    }
+
+    public static PartPruneStepPruningExtraInfo preparePruningExtraInfoIfNeed(ExecutionContext ec,
+                                                                              String targetSchemaName,
+                                                                              List<String> targetTableNames) {
+        PartPruneStepPruningExtraInfo extraInfo = null;
+        if (!DbInfoManager.getInstance().isNewPartitionDb(targetSchemaName)) {
+            return extraInfo;
+        }
+        SchemaManager schemaManager = ec.getSchemaManager(targetSchemaName);
+        boolean containAnyReplicasTables = false;
+        for (int i = 0; i < targetTableNames.size(); i++) {
+            TableMeta tm = schemaManager.getTable(targetTableNames.get(i));
+            PartitionInfo partInfo = tm.getPartitionInfo();
+            if (partInfo.isReplicasTable()) {
+                containAnyReplicasTables = true;
+                break;
+            }
+        }
+        if (containAnyReplicasTables) {
+            extraInfo = PartitionPrunerUtils.buildPruningExtraInfoByTableSchemaAndTableNames(ec, targetSchemaName,
+                targetTableNames);
+        }
+        return extraInfo;
+    }
+
+    public static PartPruneStepPruningExtraInfo buildPruningExtraInfoByTableSchemaAndTableNames(
+        ExecutionContext ec,
+        String targetTableSchema,
+        List<String> targetTableNames) {
+        PartPruneStepPruningExtraInfo pruningExtraInfo = new PartPruneStepPruningExtraInfo();
+        LogicalViewCommonGroupInfo commonGroupKeyInfo =
+            PartitionPrunerUtils.fetchCommonGroupKeyInfoByTableSchemaAndTableNames(ec, targetTableSchema,
+                targetTableNames);
+        pruningExtraInfo.setCommonGroupKeyInfo(commonGroupKeyInfo);
+        return pruningExtraInfo;
+    }
+
+    public static LogicalViewCommonGroupInfo fetchCommonGroupKeyInfoByTableSchemaAndTableNames(ExecutionContext ec,
+                                                                                               String targetSchemaName,
+                                                                                               List<String> targetTableNames) {
+        LogicalViewCommonGroupInfo commonGroupKeyInfo = new LogicalViewCommonGroupInfo();
+        Set<String> tmpGroupKeySet = new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+        if (!DbInfoManager.getInstance().isNewPartitionDb(targetSchemaName)) {
+            return commonGroupKeyInfo;
+        }
+        SchemaManager sm = null;
+        if (ec != null) {
+            sm = ec.getSchemaManager(targetSchemaName);
+        } else {
+            sm = OptimizerContext.getContext(targetSchemaName).getLatestSchemaManager();
+        }
+        int logTbNum = targetTableNames.size();
+
+        DirectPlanCommonGroupInfo directPlanCommonGroupInfo = new DirectPlanCommonGroupInfo();
+        for (int i = 0; i < logTbNum; i++) {
+            String logTb = targetTableNames.get(i);
+            directPlanCommonGroupInfo.updateCommonGroupKeyByTableName(ec, targetSchemaName, logTb);
+        }
+
+        /**
+         * Check if contain any single/partitioned tables
+         */
+        boolean containAnySingledOrPartitionedTables = false;
+        Long targetTgId = null;
+        TableMeta targetTableMeta = null;
+        for (int i = 0; i < logTbNum; i++) {
+            String logTb = targetTableNames.get(i);
+            TableMeta tableMeta = null;
+            PartitionInfo partInfo = null;
+            tableMeta = sm.getTable(logTb);
+            partInfo = tableMeta.getPartitionInfo();
+            boolean isPartitioned = partInfo.isGsiOrPartitionedTable();
+            boolean isSingled = partInfo.isGsiSingleOrSingleTable();
+            if (isPartitioned || isSingled) {
+                containAnySingledOrPartitionedTables = true;
+                targetTableMeta = tableMeta;
+                targetTgId = partInfo.getTableGroupId();
+                break;
+            }
+        }
+
+        if (containAnySingledOrPartitionedTables) {
+            PartitionInfo targetPartInfo = targetTableMeta.getPartitionInfo();
+            Set<String> grpGrpKeyOfCurTbl = targetPartInfo.getPartSpecSearcher().getGroupKeySetOfAllPhyPartSpecs();
+            commonGroupKeyInfo.getCommonGroupKeySet().addAll(grpGrpKeyOfCurTbl);
+            commonGroupKeyInfo.setAllowRandomSelected(false);
+            commonGroupKeyInfo.setForceMatchTgId(targetTgId);
+            return commonGroupKeyInfo;
+        }
+
+        /**
+         * Come to here, only contains replicas/broadcast tables
+         */
+        for (int i = 0; i < logTbNum; i++) {
+            String logTb = targetTableNames.get(i);
+            TableMeta tableMeta = null;
+            PartitionInfo partInfo = null;
+            tableMeta = sm.getTable(logTb);
+            partInfo = tableMeta.getPartitionInfo();
+            Set<String> grpGrpKeyOfCurTbl = partInfo.getPartSpecSearcher().getGroupKeySetOfAllPhyPartSpecs();
+            boolean isBroadcast = partInfo.isGsiBroadcastOrBroadcast();
+            boolean isReplicas = partInfo.isReplicasTable();
+            if (isBroadcast || isReplicas) {
+                if (tmpGroupKeySet.isEmpty() && i < 1) {
+                    /**
+                     * If it is the first table, just add all group keys
+                     */
+                    tmpGroupKeySet.addAll(grpGrpKeyOfCurTbl);
+                } else {
+                    tmpGroupKeySet.retainAll(grpGrpKeyOfCurTbl);
+                }
+            }
+        }
+        commonGroupKeyInfo.setCommonGroupKeySet(tmpGroupKeySet);
+        commonGroupKeyInfo.setAllowRandomSelected(true);
+        commonGroupKeyInfo.setForceMatchTgId(null);
+        return commonGroupKeyInfo;
+    }
+
+    private static boolean calcCommonGroupKeySetFromAllPrunedResults(List<PartPrunedResult> prunedResults,
+                                                                     ExecutionContext ec,
+                                                                     DirectPlanCommonGroupInfo directPlanCommonGroupInfo) {
+
+        boolean ret = false;
+        for (int i = 0; i < prunedResults.size(); i++) {
+            PartPrunedResult prunedResult = prunedResults.get(i);
+            PartitionInfo partInfo = prunedResult.getPartInfo();
+            PartitionTableType tableType = partInfo.getTableType();
+            if (tableType == PartitionTableType.COLUMNAR_TABLE || tableType == PartitionTableType.OSS_TABLE) {
+                return false;
+            }
+            directPlanCommonGroupInfo.updateCommonGroupKeyByTablePrunedResult(partInfo.getTableSchema(),
+                partInfo.getTableName(), prunedResult);
+
+        }
+        Set<String> targetGrpKeySet = directPlanCommonGroupInfo.getCommonGroupKeySet();
+        ret = targetGrpKeySet.size() == 1;
+        return ret;
     }
 }

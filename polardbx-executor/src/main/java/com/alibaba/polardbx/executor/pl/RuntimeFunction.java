@@ -210,10 +210,10 @@ public class RuntimeFunction extends AbstractPl {
 
     public static ExecutionContext prepareExecutionContext(ExecutionContext executionContext, String traceId,
                                                            SpParameterizedStmt parameterizedStmt) {
-        // TODO check query spill monitor
         ExecutionContext.CopyOption copyOption = new ExecutionContext.CopyOption()
             .setMemoryPoolHolder(new QueryMemoryPoolHolder())
-            .setParameters(new Parameters(parameterizedStmt.getParamsForPlan()));
+            .setParameters(new Parameters(parameterizedStmt.getParamsForPlan()))
+            .setShareQuerySpillMonitor(false);
         ExecutionContext context = executionContext.copy(copyOption);
         context.setIsExecutingPreparedStmt(false);
         context.setTraceId(traceId);

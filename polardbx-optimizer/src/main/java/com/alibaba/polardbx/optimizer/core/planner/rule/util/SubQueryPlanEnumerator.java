@@ -31,6 +31,7 @@ import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rex.RexDynamicParam;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexShuttle;
+import org.apache.calcite.util.trace.OptimizerPhase;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -55,9 +56,7 @@ public class SubQueryPlanEnumerator extends RelShuttleImpl {
                 for (RexDynamicParam dynamicParam : logicalView.getScalarList()) {
                     PlannerContext newPlannerContext =
                         PlannerContext.getPlannerContext(dynamicParam.getRel()).copyWithInSubquery();
-                    RelNode optimizedRel =
-                        Planner.getInstance().optimizeByPlanEnumerator(dynamicParam.getRel(), dynamicParam.getRel(),
-                            newPlannerContext);
+                    RelNode optimizedRel = optimizeSubQueryWithTrace(dynamicParam.getRel(), newPlannerContext);
                     dynamicParam.setRel(optimizedRel);
                     modifyRel = true;
                 }
@@ -145,9 +144,7 @@ public class SubQueryPlanEnumerator extends RelShuttleImpl {
                 || dynamicParam.getIndex() == PlannerUtils.APPLY_SUBQUERY_PARAM_INDEX) {
                 PlannerContext newPlannerContext =
                     PlannerContext.getPlannerContext(dynamicParam.getRel()).copyWithInSubquery();
-                RelNode optimizedRel =
-                    Planner.getInstance().optimizeByPlanEnumerator(dynamicParam.getRel(), dynamicParam.getRel(),
-                        newPlannerContext);
+                RelNode optimizedRel = optimizeSubQueryWithTrace(dynamicParam.getRel(), newPlannerContext);
 
                 if (tryApplyCache) {
                     applyCache(optimizedRel);
@@ -158,6 +155,24 @@ public class SubQueryPlanEnumerator extends RelShuttleImpl {
             } else {
                 return dynamicParam;
             }
+        }
+    }
+
+    /**
+     * Wraps the recursive {@link Planner#optimizeByPlanEnumerator} call with a
+     * dedicated {@link OptimizerPhase#SUBQUERY_CBO} phase snapshot so that the
+     * sub-query's nested PLAN_ENUMERATE / SMP / MPP / Columnar phases are
+     * grouped under a single parent in the optimizer trace.
+     */
+    private static RelNode optimizeSubQueryWithTrace(RelNode subQueryRel, PlannerContext newPlannerContext) {
+        newPlannerContext.optimizerTrace(x -> x.beginPhaseSnapshot(OptimizerPhase.SUBQUERY_CBO));
+        RelNode optimizedRel = subQueryRel;
+        try {
+            optimizedRel = Planner.getInstance().optimizeByPlanEnumerator(subQueryRel, subQueryRel, newPlannerContext);
+            return optimizedRel;
+        } finally {
+            final RelNode endPlan = optimizedRel;
+            newPlannerContext.optimizerTrace(x -> x.endPhaseSnapshot(endPlan, newPlannerContext));
         }
     }
 

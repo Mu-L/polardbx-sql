@@ -91,7 +91,8 @@ public class AlterTableSplitPartitionByHotValueTest extends AlterTableReorgBaseT
         if (!usingNewPartDb()) {
             return;
         }
-        boolean isPublic = partitionRuleInfo.getTableStatus() == ComplexTaskMetaManager.ComplexTaskStatus.PUBLIC;
+        boolean isPublic = partitionRuleInfo.useInplaceBackfill
+            || partitionRuleInfo.getTableStatus() == ComplexTaskMetaManager.ComplexTaskStatus.PUBLIC;
         boolean isDeleteOnly =
             partitionRuleInfo.getTableStatus() == ComplexTaskMetaManager.ComplexTaskStatus.DELETE_ONLY;
         boolean isReadyToPublic =
@@ -179,7 +180,8 @@ public class AlterTableSplitPartitionByHotValueTest extends AlterTableReorgBaseT
         if (!usingNewPartDb()) {
             return;
         }
-        boolean isPublic = partitionRuleInfo.getTableStatus() == ComplexTaskMetaManager.ComplexTaskStatus.PUBLIC;
+        boolean isPublic = partitionRuleInfo.useInplaceBackfill
+            || partitionRuleInfo.getTableStatus() == ComplexTaskMetaManager.ComplexTaskStatus.PUBLIC;
 
         String sql = partitionRuleInfo.getInsertClause(true, false);
         sql = "trace " + sql;
@@ -207,7 +209,8 @@ public class AlterTableSplitPartitionByHotValueTest extends AlterTableReorgBaseT
         if (!usingNewPartDb()) {
             return;
         }
-        boolean isPublic = partitionRuleInfo.getTableStatus() == ComplexTaskMetaManager.ComplexTaskStatus.PUBLIC;
+        boolean isPublic = partitionRuleInfo.useInplaceBackfill
+            || partitionRuleInfo.getTableStatus() == ComplexTaskMetaManager.ComplexTaskStatus.PUBLIC;
         boolean isDeleteOnly =
             partitionRuleInfo.getTableStatus() == ComplexTaskMetaManager.ComplexTaskStatus.DELETE_ONLY;
 
@@ -262,6 +265,14 @@ public class AlterTableSplitPartitionByHotValueTest extends AlterTableReorgBaseT
     @Parameterized.Parameters(name = "{index}:partitionRuleInfo={0}")
     public static List<PartitionRuleInfo[]> prepareData() {
         List<PartitionRuleInfo[]> status = new ArrayList<>();
+        partitionRuleInfos.stream().forEach(o -> {
+            PartitionRuleInfo pi =
+                new PartitionRuleInfo(o.strategy, o.initDataType, o.partitionRule, o.alterCommand,
+                    o.needGenDml, o.dmlType, o.rowCount, o.targetPart, o.minVal1, o.maxVal1, o.minVal2, o.maxVal2);
+            pi.setTableStatus(ComplexTaskMetaManager.ComplexTaskStatus.PUBLIC);
+            pi.setUseInplaceBackfill(true);
+            status.add(new PartitionRuleInfo[] {pi});
+        });
         tableStatus.stream().forEach(c -> {
             partitionRuleInfos.stream().forEach(o -> {
                 PartitionRuleInfo pi =
@@ -277,7 +288,7 @@ public class AlterTableSplitPartitionByHotValueTest extends AlterTableReorgBaseT
     @Before
     public void setUpTables() {
         if (firstIn) {
-            setUp(true, partitionRuleInfo, true);
+            setUp(true, partitionRuleInfo, partitionRuleInfo.useInplaceBackfill);
             firstIn = false;
         }
         partitionRuleInfo.connection = getTddlConnection1();

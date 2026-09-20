@@ -16,39 +16,62 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.executor.chunk.BlockBuilders;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.operator.ProducerExecutor;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
-import com.alibaba.polardbx.executor.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.AbstractIterator;
 import com.google.common.util.concurrent.ListenableFuture;
+import io.airlift.slice.SizeOf;
 import it.unimi.dsi.fastutil.ints.AbstractIntComparator;
 import it.unimi.dsi.fastutil.ints.IntArrays;
 import it.unimi.dsi.fastutil.ints.IntComparator;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.Iterator;
 import java.util.List;
 
 public class MemSortor extends Sorter {
-
+    private static final int INSTANCE_SIZE = (int) ClassLayout.parseClass(MemSortor.class).instanceSize();
     private BlockBuilder[] blockBuilders;
     private ChunksIndex chunksIndex;
+
+    @FieldMemoryCounter(value = false)
     private IntComparator comparator;
     private int resultPosition;
     private int[] index;
     private boolean revokeMem;
+
+    @FieldMemoryCounter(value = false)
     private ExecutionContext context;
 
-    public MemSortor(MemoryAllocatorCtx memoryAllocator, List<OrderByOption> orderBys,
+    @FieldMemoryCounter(value = false)
+    private OperatorMemoryOwnerId operatorMemoryOwnerId;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(blockBuilders)
+            + FastMemoryCounter.sizeOf(chunksIndex)
+            + FastMemoryCounter.sizeOf(index);
+    }
+
+    public MemSortor(OperatorMemoryOwnerId operatorMemoryOwnerId, MemoryAllocatorCtx memoryAllocator,
+                     List<OrderByOption> orderBys,
                      List<DataType> columnMetas, int chunkLimit, boolean revokeMem, ExecutionContext context) {
         super(memoryAllocator, orderBys, columnMetas, chunkLimit);
+        this.operatorMemoryOwnerId = operatorMemoryOwnerId;
         this.context = context;
         this.revokeMem = revokeMem;
         blockBuilders = new BlockBuilder[columnMetas.size()];
@@ -86,6 +109,7 @@ public class MemSortor extends Sorter {
         } else {
             memoryAllocator.allocateReservedMemory(chunk.estimateSize());
         }
+        MemoryTrackerManager.tryReverseReference(operatorMemoryOwnerId, FastMemoryCounter.sizeOf(chunk));
         chunksIndex.addChunk(chunk);
     }
 
@@ -97,6 +121,11 @@ public class MemSortor extends Sorter {
         } else {
             memoryAllocator.allocateReservedMemory(chunksIndex.getPositionCount() * Integer.BYTES);
         }
+
+        MemoryTrackerManager.tryAllocate(
+            operatorMemoryOwnerId,
+            FastMemoryCounter.align((int) SizeOf.sizeOfIntArray(chunksIndex.getPositionCount()))
+        );
 
         // init index
         index = new int[chunksIndex.getPositionCount()];

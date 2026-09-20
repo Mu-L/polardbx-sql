@@ -81,4 +81,18 @@
                 ) charset=utf8mb4
         ]]></Create>
     </SystemTable>
+    <SystemTable name="rollback_task_config">
+        <Create><![CDATA[
+            create table if not exists `rollback_task_config` (
+              `id` bigint(21) unsigned not null auto_increment,
+              `root_job_id` bigint unsigned not null,
+              `task_id` bigint unsigned not null default 0,
+              `type`  int not null default 0 comment 'type 0 for DN rebuild; Other values reserved for future types',
+              `old_value` text,
+              `new_value` text,
+              primary key(`id`),
+              key `i_job_id_type`(`root_job_id`, `type`)
+            ) charset=utf8mb4
+     ]]></Create>
+    </SystemTable>
 </SystemTables>

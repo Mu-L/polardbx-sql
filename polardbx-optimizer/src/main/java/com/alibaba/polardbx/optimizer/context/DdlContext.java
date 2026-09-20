@@ -24,10 +24,15 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.gms.metadb.lease.LeaseRecord;
 import com.alibaba.polardbx.optimizer.statis.SQLRecord;
+import com.alibaba.polardbx.optimizer.utils.ExplainResult;
+import lombok.Getter;
+import lombok.Setter;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -60,6 +65,16 @@ public class DdlContext {
     private DdlState pausedPolicy = DdlState.RUNNING;
     private DdlState rollbackPausedPolicy = DdlState.ROLLBACK_RUNNING;
     private String cdcRewriteDdlStmt;
+
+    public void setSqlId(Long sqlId) {
+        this.sqlId = sqlId;
+    }
+
+    public Long getSqlId() {
+        return sqlId;
+    }
+
+    private Long sqlId = -1L;
     /**
      * subjob 中是否打标，暂时只支持普通的 CdcDdlMarkTask
      */
@@ -77,6 +92,8 @@ public class DdlContext {
      */
     private transient AtomicReference<Boolean> interrupted = new AtomicReference<>(false);
 
+    private transient AtomicReference<Long> backfillBatchSize = new AtomicReference<>(-1L);
+
     private transient AtomicReference<Boolean> rollbackToReady = new AtomicReference<>(false);
 
     private transient AtomicReference<LeaseRecord> jobLease = new AtomicReference<>();
@@ -90,6 +107,24 @@ public class DdlContext {
 
     private boolean asyncMode = false;
 
+    public Set<String> getExtraResources() {
+        return extraResources;
+    }
+
+    public void setExtraResources(Set<String> extraResources) {
+        this.extraResources = extraResources;
+    }
+
+    private Set<String> extraResources = new HashSet<>();
+
+    @Getter
+    @Setter
+    private Pair<Set<String>, Set<String>> fixedResources = Pair.of(new HashSet<String>(), new HashSet<String>());
+
+    @Getter
+    @Setter
+    private boolean hasDdlInitialJob;
+
     private boolean usingWarning = false;
 
     private Map<String, Object> dataPassed = new HashMap<>();
@@ -101,6 +136,12 @@ public class DdlContext {
     private String timeZone;
 
     private Boolean explain;
+
+    private boolean explainOnlineDdl;
+
+    private boolean explainOnlineDdlAdvisor;
+
+    private boolean explainDag;
 
     private String errorMessage;
 
@@ -120,6 +161,10 @@ public class DdlContext {
         ddlContext.setObjectName(objectName);
         ddlContext.setTraceId(executionContext.getTraceId());
         ddlContext.setEnableTrace(executionContext.isEnableTrace());
+        ddlContext.setHasDdlInitialJob(executionContext.isHasDdlInitialJob());
+        // Share the KILL signal with ExecutionContext so that setting it via either side
+        // is visible to the DDL thread during the whole two-phase locking procedure.
+        ddlContext.clientConnectionReset = executionContext.getDdlClientConnectionReset();
 
         String ddlStmt;
         MultiDdlContext multiDdlContext = executionContext.getMultiDdlContext();
@@ -168,13 +213,25 @@ public class DdlContext {
             ddlContext.setParentDdlContext(executionContext.getDdlContext().getParentDdlContext());
         }
 
-        if (executionContext.getParamManager().getBoolean(ConnectionParams.EXPLAIN_DDL_PHYSICAL_OPERATION)
-            || executionContext.getExplain() != null) {
+        ddlContext.setExplain(false);
+        ddlContext.setExplainOnlineDdl(false);
+        if (executionContext.getExplain() != null) {
+            if (executionContext.getExplain().explainMode == ExplainResult.ExplainMode.ONLINE_DDL) {
+                ddlContext.setExplainOnlineDdl(true);
+            } else if (executionContext.getExplain().explainMode == ExplainResult.ExplainMode.ADVISOR) {
+                ddlContext.setExplainOnlineDdlAdvisor(true);
+            } else if (executionContext.getExplain().explainMode == ExplainResult.ExplainMode.DDL_DAG) {
+                ddlContext.setExplainDag(true);
+            } else {
+                ddlContext.setExplain(true);
+            }
+        }
+        if (executionContext.getParamManager().getBoolean(ConnectionParams.EXPLAIN_DDL_PHYSICAL_OPERATION)) {
             ddlContext.setExplain(true);
-        } else {
-            ddlContext.setExplain(false);
         }
         ddlContext.setSqlMode(executionContext.getSqlMode());
+        Long sqlId = executionContext.getParamManager().getLong(ConnectionParams.ASYNC_LOAD_GDN_DDL_SQL_ID);
+        ddlContext.setSqlId(sqlId);
         return ddlContext;
     }
 
@@ -210,6 +267,7 @@ public class DdlContext {
 
         res.setExplain(getExplain());
         res.setSqlMode(getSqlMode());
+        res.setExtraResources(getExtraResources());
 
         GeneralUtil.addAllIfNotEmpty(getDataPassed(), res.dataPassed);
         GeneralUtil.addAllIfNotEmpty(getServerVariables(), res.serverVariables);
@@ -221,6 +279,7 @@ public class DdlContext {
         res.setTimeZone(getTimeZone());
         res.setParentDdlContext(getParentDdlContext());
         res.setSkipSubJobCdcMark(isSkipSubJobCdcMark());
+        res.setSqlId(getSqlId());
 
         return res;
     }
@@ -313,6 +372,10 @@ public class DdlContext {
         this.asyncMode = asyncMode;
     }
 
+    public void appendExtraResources(List<String> resources) {
+        this.extraResources.addAll(resources);
+    }
+
     public boolean isUsingWarning() {
         return usingWarning;
     }
@@ -381,6 +444,10 @@ public class DdlContext {
         this.clientConnectionReset.set(true);
     }
 
+    public AtomicReference<Boolean> getClientConnectionResetRef() {
+        return this.clientConnectionReset;
+    }
+
     /**
      * true:  current DDL JOB is interrupted, all tasks should stop
      * false: everything is cool
@@ -393,6 +460,13 @@ public class DdlContext {
             return true;
         }
         return false;
+    }
+
+    public long newBackfillBatchSize() {
+        if (this.backfillBatchSize == null || this.backfillBatchSize.get() == -1L) {
+            return -1L;
+        }
+        return backfillBatchSize.get();
     }
 
     public Boolean isRollbackToReady() {
@@ -542,6 +616,30 @@ public class DdlContext {
 
     public boolean isSkipSubJobCdcMark() {
         return skipSubJobCdcMark;
+    }
+
+    public boolean isExplainOnlineDdl() {
+        return explainOnlineDdl;
+    }
+
+    public void setExplainOnlineDdl(boolean explainOnlineDdl) {
+        this.explainOnlineDdl = explainOnlineDdl;
+    }
+
+    public boolean isExplainOnlineDdlAdvisor() {
+        return explainOnlineDdlAdvisor;
+    }
+
+    public void setExplainOnlineDdlAdvisor(boolean explainOnlineDdlAdvisor) {
+        this.explainOnlineDdlAdvisor = explainOnlineDdlAdvisor;
+    }
+
+    public boolean isExplainDag() {
+        return explainDag;
+    }
+
+    public void setExplainDag(boolean explainDag) {
+        this.explainDag = explainDag;
     }
 
     public String getDdlJobFactoryName() {

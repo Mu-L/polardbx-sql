@@ -8,6 +8,7 @@ import java.util.List;
 public class TtlPartitionTableTest extends PartitionAutoLoadSqlTestBase {
     public TtlPartitionTableTest(AutoLoadSqlTestCaseParams parameter) {
         super(parameter);
+        parameter.setIgnoreAutoIncrement(true);
     }
 
     @Parameterized.Parameters(name = "{index}: SubTestCase {0}")

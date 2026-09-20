@@ -1,17 +1,17 @@
 package com.alibaba.polardbx.common.memory;
 
+import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.google.common.base.Preconditions;
+import org.apache.orc.customized.ORCFieldMemoryCounter;
 import org.openjdk.jol.util.VMSupport;
 
-import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -23,11 +23,12 @@ public class AnnotationBasedMemoryCounter implements FastMemoryCounter {
     private final boolean useFieldMemoryCounter;
     private final boolean generateFieldSizeMap;
     private final boolean generateTreeStruct;
+    private final ConditionalMemoryType conditionalMemoryType;
 
     private static ThreadLocal<Set<String>> threadLocalVisitedAddressSet =
         ThreadLocal.withInitial(() -> new HashSet<>());
 
-    private Map<String, Integer> fieldSizeMap = null;
+    private Map<String, Integer> fieldSizeMap = new HashMap<>();
     private long totalSize;
 
     private TreeNode rootTreeNode;
@@ -36,7 +37,9 @@ public class AnnotationBasedMemoryCounter implements FastMemoryCounter {
     private static class TreeNode {
         final String fieldIdentifier;
         final long memorySize;
+
         boolean fieldMemoryVisible;
+        long accumulatedMemorySize = 0L;
 
         TreeNode(String fieldIdentifier, long memorySize) {
             this.fieldIdentifier = fieldIdentifier;
@@ -71,15 +74,17 @@ public class AnnotationBasedMemoryCounter implements FastMemoryCounter {
     }
 
     public AnnotationBasedMemoryCounter() {
-        this(DEFAULT_MAX_DEPTH, true, false, false);
+        this(DEFAULT_MAX_DEPTH, true, false, false, null);
     }
 
     public AnnotationBasedMemoryCounter(int maxDepth, boolean useFieldMemoryCounter, boolean generateFieldSizeMap,
-                                        boolean generateTreeStruct) {
+                                        boolean generateTreeStruct,
+                                        ConditionalMemoryType conditionalMemoryType) {
         this.maxDepth = maxDepth;
         this.useFieldMemoryCounter = useFieldMemoryCounter;
         this.generateFieldSizeMap = generateFieldSizeMap;
         this.generateTreeStruct = generateTreeStruct;
+        this.conditionalMemoryType = conditionalMemoryType;
     }
 
     private static class VisitObject {
@@ -89,6 +94,7 @@ public class AnnotationBasedMemoryCounter implements FastMemoryCounter {
 
         String identifier;
         boolean fieldMemoryVisible = false;
+        boolean shallowHeap = false;
 
         private VisitObject(Object object, int depth) {
             this.reference = object;
@@ -138,21 +144,18 @@ public class AnnotationBasedMemoryCounter implements FastMemoryCounter {
             String name = root.getClass().getSimpleName()
                 + "@" + System.identityHashCode(root);
 
-            if (generateFieldSizeMap) {
-                fieldSizeMap = new HashMap<>();
-            }
-
             List<VisitObject> curLayer = new ArrayList<>();
             List<VisitObject> newLayer = new ArrayList<>();
 
             VisitObject e = new VisitObject(root, 0);
             e.identifier = name;
+            e.shallowHeap = root.getClass().isAnnotationPresent(DefinedMemoryUsage.class);
             visitedAddressSet.add(identifier(e.reference));
             accumulateMemoryUsage(e);
 
             rootTreeNode = new TreeNode(
                 e.identifier,
-                VMSupport.sizeOf(e.reference)
+                conditionalSizeOf(e.reference)
             );
             memoryUsageTree.put(rootTreeNode, new ArrayList<>());
 
@@ -180,14 +183,14 @@ public class AnnotationBasedMemoryCounter implements FastMemoryCounter {
                                 accumulateMemoryUsage(ref);
 
                                 TreeNode newTreeNode = new TreeNode(
-                                    ref.identifier, VMSupport.sizeOf(ref.reference)
+                                    ref.identifier, conditionalSizeOf(ref.reference)
                                 );
                                 newTreeNode.fieldMemoryVisible = ref.fieldMemoryVisible;
                                 treeNodeList.add(newTreeNode);
                                 memoryUsageTree.put(newTreeNode, new ArrayList<>());
 
                                 // Don't exceed the maximum depth.
-                                if (ref.depth <= maxDepth) {
+                                if (ref.depth < maxDepth) {
                                     newLayer.add(ref);
                                 }
 
@@ -201,6 +204,7 @@ public class AnnotationBasedMemoryCounter implements FastMemoryCounter {
 
             String treeStruct = "";
             if (generateTreeStruct) {
+                collectTreeNode(rootTreeNode, 0);
 
                 StringBuilder treeNodeStringBuilder =
                     new StringBuilder().append("Total usage : ").append(totalSize).append(" bytes\n");
@@ -231,8 +235,10 @@ public class AnnotationBasedMemoryCounter implements FastMemoryCounter {
         builder.append("└ ");
         // builder.append("——");
         builder.append(treeNode.fieldIdentifier);
-        builder.append(": ");
+        builder.append(", shallow: ");
         builder.append(treeNode.memorySize);
+        builder.append(" bytes, accumulated:");
+        builder.append(treeNode.accumulatedMemorySize);
         builder.append(" bytes\n");
 
         long accumulatedMemorySize = treeNode.memorySize;
@@ -250,11 +256,31 @@ public class AnnotationBasedMemoryCounter implements FastMemoryCounter {
         return accumulatedMemorySize;
     }
 
+    private long collectTreeNode(TreeNode treeNode, int depth) {
+        List<TreeNode> treeNodeList = memoryUsageTree.get(treeNode);
+
+        long accumulatedMemorySize = treeNode.memorySize;
+        for (TreeNode childTreeNode : treeNodeList) {
+            List<TreeNode> childTreeNodeList = memoryUsageTree.get(childTreeNode);
+            if (childTreeNodeList != null) {
+                accumulatedMemorySize += collectTreeNode(childTreeNode, depth + 1);
+            }
+        }
+
+        treeNode.accumulatedMemorySize = accumulatedMemorySize;
+        if (treeNode.fieldMemoryVisible) {
+            fieldSizeMap.put(treeNode.fieldIdentifier, (int) accumulatedMemorySize);
+        }
+
+        return accumulatedMemorySize;
+    }
+
     private void accumulateMemoryUsage(VisitObject visitObject) {
         final String fieldIdentifier = visitObject.identifier;
         try {
             Object object = visitObject.reference;
-            final int size = VMSupport.sizeOf(object);
+
+            final int size = conditionalSizeOf(object);
             totalSize += size;
 
             if (generateFieldSizeMap && fieldIdentifier != null && !fieldIdentifier.isEmpty()) {
@@ -268,15 +294,68 @@ public class AnnotationBasedMemoryCounter implements FastMemoryCounter {
 
     }
 
+    private int conditionalSizeOf(Object reference) {
+        if (reference != null) {
+
+            // check ConditionalMemoryCounter in class level.
+            // ignore the class with different memory conditional type.
+            if (conditionalMemoryType != null) {
+                ConditionalMemoryCounter conditional =
+                    reference.getClass().getAnnotation(ConditionalMemoryCounter.class);
+                if (conditional != null && conditional.type() != conditionalMemoryType) {
+                    return 0;
+                }
+            }
+
+            DefinedMemoryUsage definedMemoryUsage = reference.getClass().getAnnotation(DefinedMemoryUsage.class);
+            if (definedMemoryUsage != null) {
+
+                try {
+                    // Check if the object implements the interface
+                    if (!(reference instanceof MemoryCountable)) {
+                        throw new RuntimeException(
+                            "Class " + reference.getClass().getName() + " does not implement MemoryCountable");
+                    }
+
+                    // Invoke the method
+                    long result = ((MemoryCountable) reference).getMemoryUsage();
+                    return (int) result;
+                } catch (Throwable t) {
+                    throw GeneralUtil.nestedException(t);
+                }
+            }
+
+        }
+
+        return VMSupport.sizeOf(reference);
+    }
+
+    private static boolean isMemoryCountable(Object reference) {
+        if (reference instanceof MemoryCountable) {
+            try {
+                Method method = reference.getClass().getMethod("isMemoryCountable");
+                boolean isMemoryCountable = (boolean) method.invoke(reference);
+                return isMemoryCountable;
+            } catch (Throwable e) {
+                throw new RuntimeException(e);
+            }
+        }
+        return true;
+    }
+
     private List<VisitObject> handleReferences(VisitObject r) {
         List<VisitObject> result = new ArrayList<>();
 
         Object o = r.reference;
+        boolean shallowHeap = r.shallowHeap;
+        if (shallowHeap) {
+            return result;
+        }
 
         if (o.getClass().isArray() && !o.getClass().getComponentType().isPrimitive()) {
             int c = 0;
             for (Object e : (Object[]) o) {
-                if (e != null) {
+                if (e != null && isMemoryCountable(e)) {
 
                     VisitObject newVisitObject = new VisitObject(e, r.depth + 1);
                     newVisitObject.identifier = "[" + c + "]__" + identifier(e);
@@ -287,7 +366,7 @@ public class AnnotationBasedMemoryCounter implements FastMemoryCounter {
             }
         }
 
-        for (Field f : getAllFields(o.getClass(), useFieldMemoryCounter)) {
+        for (Field f : getAllFields(o.getClass(), useFieldMemoryCounter, conditionalMemoryType)) {
             f.setAccessible(true);
             if (f.getType().isPrimitive()) {
                 continue;
@@ -299,7 +378,7 @@ public class AnnotationBasedMemoryCounter implements FastMemoryCounter {
             try {
                 Object e = f.get(o);
 
-                if (e != null) {
+                if (e != null && isMemoryCountable(e)) {
                     VisitObject visitObject = new VisitObject(e, r.depth + 1);
 
                     // identifier for field with annotation @FieldMemoryVisible
@@ -308,6 +387,9 @@ public class AnnotationBasedMemoryCounter implements FastMemoryCounter {
                         + "__" + f.getName();
 
                     visitObject.fieldMemoryVisible = f.isAnnotationPresent(FieldMemoryVisible.class);
+                    visitObject.shallowHeap = f.isAnnotationPresent(ShallowHeap.class)
+                        || f.isAnnotationPresent(DefinedMemoryUsage.class)
+                        || e.getClass().isAnnotationPresent(DefinedMemoryUsage.class);
 
                     result.add(visitObject);
                 }
@@ -319,13 +401,15 @@ public class AnnotationBasedMemoryCounter implements FastMemoryCounter {
         return result;
     }
 
-    private static Collection<Field> getAllFields(Class<?> klass, boolean useFieldMemoryCounter) {
+    private static Collection<Field> getAllFields(Class<?> klass,
+                                                  boolean useFieldMemoryCounter,
+                                                  ConditionalMemoryType conditionalMemoryType) {
         List<Field> results = new ArrayList<>();
 
         for (Field f : klass.getDeclaredFields()) {
             // Ignore static field and check field annotation.
             if (!Modifier.isStatic(f.getModifiers())
-                && (!useFieldMemoryCounter || checkAnnotation(f))) {
+                && (!useFieldMemoryCounter || checkAnnotation(f, conditionalMemoryType))) {
                 results.add(f);
             }
         }
@@ -336,7 +420,7 @@ public class AnnotationBasedMemoryCounter implements FastMemoryCounter {
                 // For supper class,
                 // ignore static field and check field annotation.
                 if (!Modifier.isStatic(f.getModifiers())
-                    && (!useFieldMemoryCounter || checkAnnotation(f))) {
+                    && (!useFieldMemoryCounter || checkAnnotation(f, conditionalMemoryType))) {
                     results.add(f);
                 }
             }
@@ -345,12 +429,24 @@ public class AnnotationBasedMemoryCounter implements FastMemoryCounter {
         return results;
     }
 
-    private static boolean checkAnnotation(Field field) {
+    private static boolean checkAnnotation(Field field, ConditionalMemoryType conditionalMemoryType) {
         // check annotation @FieldMemoryCounter
         FieldMemoryCounter annotation = field.getAnnotation(FieldMemoryCounter.class);
         if (annotation != null) {
             return annotation.value();
         }
+
+        ORCFieldMemoryCounter orcAnnotation = field.getAnnotation(ORCFieldMemoryCounter.class);
+        if (orcAnnotation != null) {
+            return orcAnnotation.value();
+        }
+
+        // check ConditionalMemoryCounter
+        ConditionalMemoryCounter conditional = field.getAnnotation(ConditionalMemoryCounter.class);
+        if (conditionalMemoryType != null && conditional != null && conditional.type() != conditionalMemoryType) {
+            return false;
+        }
+
         // no annotation, return true in default.
         return true;
     }

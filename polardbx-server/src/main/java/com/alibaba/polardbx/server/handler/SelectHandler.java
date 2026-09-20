@@ -20,15 +20,18 @@ import com.alibaba.polardbx.druid.sql.parser.ByteString;
 import com.alibaba.polardbx.server.ServerConnection;
 import com.alibaba.polardbx.server.parser.ServerParseSelect;
 import com.alibaba.polardbx.server.response.SelectColumnarFile;
+import com.alibaba.polardbx.server.response.SelectDdlPlanId;
 import com.alibaba.polardbx.server.response.SelectEncdbProcessMessage;
 import com.alibaba.polardbx.server.response.SelectCompatibilityLevel;
-import com.alibaba.polardbx.server.response.SelectPolardbVersion;
 import com.alibaba.polardbx.server.response.SelectCurrentTransId;
 import com.alibaba.polardbx.server.response.SelectCurrentTransPolicy;
 import com.alibaba.polardbx.server.response.SelectDatabase;
+import com.alibaba.polardbx.server.response.SelectDdlJobId;
+import com.alibaba.polardbx.server.response.SelectEncdbProcessMessage;
 import com.alibaba.polardbx.server.response.SelectExtractTraceId;
 import com.alibaba.polardbx.server.response.SelectLastTxcId;
 import com.alibaba.polardbx.server.response.SelectLiteralNumber;
+import com.alibaba.polardbx.server.response.SelectPolardbVersion;
 import com.alibaba.polardbx.server.response.SelectSequenceBenchmark;
 import com.alibaba.polardbx.server.response.SelectSessionTxReadOnly;
 import com.alibaba.polardbx.server.response.SelectTsoTimestamp;
@@ -84,6 +87,10 @@ public final class SelectHandler {
                 return SelectEncdbProcessMessage.response(c, hasMore, (String) exData[0]);
             case ServerParseSelect.COLUMNAR_FILE:
                 return SelectColumnarFile.execute(c, hasMore, stmt);
+            case ServerParseSelect.DDL_JOB_ID:
+                return SelectDdlJobId.response(c, hasMore);
+            case ServerParseSelect.DDL_PLAN_ID:
+                return SelectDdlPlanId.response(c, hasMore);
             default:
                 recordSql = false;
                 return c.execute(stmt, hasMore);

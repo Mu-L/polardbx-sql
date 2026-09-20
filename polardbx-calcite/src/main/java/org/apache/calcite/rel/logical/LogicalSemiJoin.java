@@ -31,6 +31,7 @@ import org.apache.calcite.rel.RelInput;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelShuttle;
 import org.apache.calcite.rel.RelWriter;
+import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.core.JoinRelType;
@@ -392,7 +393,26 @@ public class LogicalSemiJoin extends SemiJoin {
          */
         RexBuilder rb = relBuilder.getRexBuilder();
         LogicalFilter logicalFilter = null;
-        if (pushedRelNode instanceof LogicalFilter && rightFilters.size() > 0) {
+        /**
+         * Change context:
+         * - Before: any new correlated condition (rightFilters) was AND-merged into an
+         *   existing LogicalFilter on pushedRelNode regardless of what that filter sat on,
+         *   since this merge/simplification behavior predates this fix (2020, no documented
+         *   rationale for the Aggregate case specifically).
+         * - Path impact: when pushedRelNode is a Filter directly on an Aggregate (i.e. the
+         *   subquery's own HAVING condition), merging keeps the correlated condition and the
+         *   HAVING condition in one Filter above the Aggregate; RelToSqlConverter#visit(Filter)
+         *   later renders that whole merged Filter as a single HAVING clause on the pushed-down
+         *   derived table, so the correlated outer-table reference ends up inside the HAVING of
+         *   a scope where the outer table is invisible, producing illegal native SQL. Skipping
+         *   the merge here keeps the correlated condition as a separate outer Filter layered on
+         *   top of the aggregate's own Filter, which RelToSqlConverter instead renders as a WHERE
+         *   condition on the derived table. Non-aggregate pushdown paths are unaffected.
+         * - Capability regression: None; MaterializedSemiJoin/BKAJoin pushdown for non-aggregate
+         *   subqueries is unchanged, only the aggregate+correlated-condition merge is skipped.
+         */
+        if (pushedRelNode instanceof LogicalFilter && rightFilters.size() > 0
+            && !(((LogicalFilter) pushedRelNode).getInput() instanceof Aggregate)) {
             logicalFilter = (LogicalFilter) pushedRelNode;
             rightFilters.add(logicalFilter.getCondition());
             relBuilder.push(LogicalFilter

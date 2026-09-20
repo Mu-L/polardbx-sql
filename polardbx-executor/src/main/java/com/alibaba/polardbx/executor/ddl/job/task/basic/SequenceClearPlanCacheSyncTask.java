@@ -52,7 +52,7 @@ public class SequenceClearPlanCacheSyncTask extends BaseSyncTask {
     protected void executeImpl(ExecutionContext executionContext) {
         if (TStringUtil.startsWithIgnoreCase(seqName, AUTO_SEQ_PREFIX) &&
             sqlKind == SqlKind.CREATE_SEQUENCE) {
-            SyncManagerHelper.sync(new ClearPlanCacheSyncAction(schemaName), schemaName, SyncScope.ALL);
+            SyncManagerHelper.syncThrowExceptions(new ClearPlanCacheSyncAction(schemaName), schemaName, SyncScope.ALL);
         }
     }
 }

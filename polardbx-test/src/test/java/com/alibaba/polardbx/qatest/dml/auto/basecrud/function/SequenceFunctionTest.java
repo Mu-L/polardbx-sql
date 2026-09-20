@@ -18,12 +18,12 @@
 
 package com.alibaba.polardbx.qatest.dml.auto.basecrud.function;
 
+import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.qatest.AutoReadBaseTestCase;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.qatest.validator.DataOperator;
 import com.alibaba.polardbx.qatest.validator.DataValidator;
 import org.junit.After;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -66,9 +66,9 @@ public class SequenceFunctionTest extends AutoReadBaseTestCase {
 
     @After
     public void dropTable() throws Exception {
-//        JdbcUtil.executeUpdateSuccess(mysqlConnection, "DROP TABLE IF EXISTS " + TABLE_NAME);
-//        JdbcUtil.executeUpdateSuccess(tddlConnection, "DROP TABLE IF EXISTS " + TABLE_NAME);
-//        JdbcUtil.executeUpdateSuccess(tddlConnection, "DROP SEQUENCE " + SEQUENCE_NAME);
+        JdbcUtil.executeUpdateSuccess(mysqlConnection, "DROP TABLE IF EXISTS " + TABLE_NAME);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "DROP TABLE IF EXISTS " + TABLE_NAME);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "DROP SEQUENCE " + SEQUENCE_NAME);
     }
 
     @Test
@@ -88,20 +88,20 @@ public class SequenceFunctionTest extends AutoReadBaseTestCase {
             String.format("insert into %s (pk, c1, %s.`nextval`, %s.`currval`) values(3, 60, 'bgb', 'grd')", TABLE_NAME,
                 TABLE_NAME, TABLE_NAME);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
-        Assert.assertEquals("3",
+        Assert.assertEqual("3",
             JdbcUtil.executeQueryAndGetFirstStringResult(selectSql + " where pk = 3 ", tddlConnection));
 
         sql =
             String.format("insert into %s (pk, c1, %s.`nextval`, %s.`currval`) values(4, 60, 'bgb', 'grd')", TABLE_NAME,
                 TABLE_NAME, TABLE_NAME);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
-        Assert.assertEquals("4",
+        Assert.assertEqual("4",
             JdbcUtil.executeQueryAndGetFirstStringResult(selectSql + " where pk = 4 ", tddlConnection));
 
         sql = String.format("insert into %s (pk, c1, %s.nextval, %s.currval) values(5, 60, 'bgb', 'grd')", TABLE_NAME,
             TABLE_NAME, TABLE_NAME);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
-        Assert.assertEquals("5",
+        Assert.assertEqual("5",
             JdbcUtil.executeQueryAndGetFirstStringResult(selectSql + " where pk = 5 ", tddlConnection));
 
         //insert on duplicate key
@@ -124,36 +124,36 @@ public class SequenceFunctionTest extends AutoReadBaseTestCase {
                 "ON DUPLICATE KEY UPDATE %s.`nextval` = values(%s.`nextval`), %s.`currval` = values(%s.`currval`) ",
             TABLE_NAME, TABLE_NAME, TABLE_NAME, TABLE_NAME, TABLE_NAME);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
-        Assert.assertEquals("vf",
+        Assert.assertEqual("vf",
             JdbcUtil.executeQueryAndGetStringResult(selectSql + " where pk = 2 ", tddlConnection, 3));
-        Assert.assertEquals("ng",
+        Assert.assertEqual("ng",
             JdbcUtil.executeQueryAndGetStringResult(selectSql + " where pk = 2 ", tddlConnection, 4));
 
         sql = String.format("insert into %s (pk, c1, `nextval`, `currval`) values(2, 80, 'bg', 'gk') " +
                 "ON DUPLICATE KEY UPDATE %s.nextval = values(%s.`nextval`), %s.currval = values(%s.`currval`) ", TABLE_NAME,
             TABLE_NAME, TABLE_NAME, TABLE_NAME, TABLE_NAME);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
-        Assert.assertEquals("bg",
+        Assert.assertEqual("bg",
             JdbcUtil.executeQueryAndGetStringResult(selectSql + " where pk = 2 ", tddlConnection, 3));
-        Assert.assertEquals("gk",
+        Assert.assertEqual("gk",
             JdbcUtil.executeQueryAndGetStringResult(selectSql + " where pk = 2 ", tddlConnection, 4));
 
         //update
         sql = String.format("update %s set %s.`nextval` = 'tyh', %s.`currval` = 'vfs'  where pk = 2 ", TABLE_NAME,
             TABLE_NAME, TABLE_NAME);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
-        Assert.assertEquals("tyh",
+        Assert.assertEqual("tyh",
             JdbcUtil.executeQueryAndGetStringResult(selectSql + " where pk = 2 ", tddlConnection, 3));
-        Assert.assertEquals("vfs",
+        Assert.assertEqual("vfs",
             JdbcUtil.executeQueryAndGetStringResult(selectSql + " where pk = 2 ", tddlConnection, 4));
 
         sql =
             String.format("update %s set %s.nextval = 'vfd', %s.currval = 'vvb'  where pk = 2 ", TABLE_NAME, TABLE_NAME,
                 TABLE_NAME);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
-        Assert.assertEquals("vfd",
+        Assert.assertEqual("vfd",
             JdbcUtil.executeQueryAndGetStringResult(selectSql + " where pk = 2 ", tddlConnection, 3));
-        Assert.assertEquals("vvb",
+        Assert.assertEqual("vvb",
             JdbcUtil.executeQueryAndGetStringResult(selectSql + " where pk = 2 ", tddlConnection, 4));
 
         //relocate
@@ -162,33 +162,33 @@ public class SequenceFunctionTest extends AutoReadBaseTestCase {
                 TABLE_NAME,
                 TABLE_NAME);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
-        Assert.assertEquals("vfd",
+        Assert.assertEqual("vfd",
             JdbcUtil.executeQueryAndGetStringResult(selectSql + " where pk = 5 ", tddlConnection, 3));
-        Assert.assertEquals("vvb",
+        Assert.assertEqual("vvb",
             JdbcUtil.executeQueryAndGetStringResult(selectSql + " where pk = 5 ", tddlConnection, 4));
 
         //select
-        Assert.assertEquals("vfd",
+        Assert.assertEqual("vfd",
             JdbcUtil.executeQueryAndGetStringResult(String.format(" select * from %s where pk = 5 ", TABLE_NAME),
                 tddlConnection, 3));
-        Assert.assertEquals("vvb",
+        Assert.assertEqual("vvb",
             JdbcUtil.executeQueryAndGetStringResult(String.format(" select * from %s where pk = 5 ", TABLE_NAME),
                 tddlConnection, 4));
-        Assert.assertEquals("vfd", JdbcUtil.executeQueryAndGetStringResult(
+        Assert.assertEqual("vfd", JdbcUtil.executeQueryAndGetStringResult(
             String.format(" select %s.`nextval` from %s where pk = 5 ", TABLE_NAME, TABLE_NAME), tddlConnection, 1));
-        Assert.assertEquals("vvb", JdbcUtil.executeQueryAndGetStringResult(
+        Assert.assertEqual("vvb", JdbcUtil.executeQueryAndGetStringResult(
             String.format(" select %s.`currval` from %s where pk = 5 ", TABLE_NAME, TABLE_NAME), tddlConnection, 1));
     }
 
     @Test
     public void sqlSequenceTest() throws Exception {
         //nextval
-        Assert.assertEquals("1000",
+        Assert.assertEqual("1000",
             JdbcUtil.executeQueryAndGetStringResult(
                 String.format("/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ select %s.nextval", SEQUENCE_NAME),
                 tddlConnection, 1));
 
-        Assert.assertEquals("1000",
+        Assert.assertEqual("1000",
             JdbcUtil.executeQueryAndGetStringResult(
                 String.format("/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ select %s.currval", SEQUENCE_NAME),
                 tddlConnection, 1));
@@ -198,13 +198,13 @@ public class SequenceFunctionTest extends AutoReadBaseTestCase {
             "/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ insert into %s (pk, c1, nextval, currval) values(1,10, %s.nextval, %s.currval)",
             TABLE_NAME, SEQUENCE_NAME, SEQUENCE_NAME);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
-        Assert.assertEquals("1001",
+        Assert.assertEqual("1001",
             JdbcUtil.executeQueryAndGetStringResult(
                 String.format(
                     "/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ select `pk`, `c1`, `nextval`, `currval` from %s where pk = 1 ",
                     TABLE_NAME),
                 tddlConnection, 3));
-        Assert.assertEquals("1001",
+        Assert.assertEqual("1001",
             JdbcUtil.executeQueryAndGetStringResult(
                 String.format(
                     "/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ select `pk`, `c1`, `nextval`, `currval` from %s where pk = 1 ",
@@ -218,13 +218,13 @@ public class SequenceFunctionTest extends AutoReadBaseTestCase {
                 " ON DUPLICATE KEY UPDATE `nextval` = %s.nextval, `currval` = %s.currval ", TABLE_NAME, SEQUENCE_NAME,
             SEQUENCE_NAME);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
-        Assert.assertEquals("1002",
+        Assert.assertEqual("1002",
             JdbcUtil.executeQueryAndGetStringResult(
                 String.format(
                     "/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ select `pk`, `c1`, `nextval`, `currval` from %s where pk = 1 ",
                     TABLE_NAME),
                 tddlConnection, 3));
-        Assert.assertEquals("1002",
+        Assert.assertEqual("1002",
             JdbcUtil.executeQueryAndGetStringResult(
                 String.format(
                     "/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ select `pk`, `c1`, `nextval`, `currval` from %s where pk = 1 ",
@@ -237,13 +237,13 @@ public class SequenceFunctionTest extends AutoReadBaseTestCase {
             TABLE_NAME,
             SEQUENCE_NAME, SEQUENCE_NAME);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
-        Assert.assertEquals("1003",
+        Assert.assertEqual("1003",
             JdbcUtil.executeQueryAndGetStringResult(
                 String.format(
                     "/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ select `pk`, `c1`, `nextval`, `currval` from %s where pk = 1 ",
                     TABLE_NAME),
                 tddlConnection, 3));
-        Assert.assertEquals("1003",
+        Assert.assertEqual("1003",
             JdbcUtil.executeQueryAndGetStringResult(
                 String.format(
                     "/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ select `pk`, `c1`, `nextval`, `currval` from %s where pk = 1 ",
@@ -255,13 +255,13 @@ public class SequenceFunctionTest extends AutoReadBaseTestCase {
             "/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ update %s set pk = 2, `nextval` = %s.nextval, `currval` = %s.currval  where pk = 1 ",
             TABLE_NAME, SEQUENCE_NAME, SEQUENCE_NAME);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
-        Assert.assertEquals("1004",
+        Assert.assertEqual("1004",
             JdbcUtil.executeQueryAndGetStringResult(
                 String.format(
                     "/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ select `pk`, `c1`, `nextval`, `currval` from %s where pk = 2 ",
                     TABLE_NAME),
                 tddlConnection, 3));
-        Assert.assertEquals("1004",
+        Assert.assertEqual("1004",
             JdbcUtil.executeQueryAndGetStringResult(
                 String.format(
                     "/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ select `pk`, `c1`, `nextval`, `currval` from %s where pk = 2 ",
@@ -271,38 +271,38 @@ public class SequenceFunctionTest extends AutoReadBaseTestCase {
         //select
         sql = String.format("/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ select %s.nextval from %s where pk = 2 ",
             SEQUENCE_NAME, TABLE_NAME);
-        Assert.assertEquals("1005", JdbcUtil.executeQueryAndGetStringResult(sql, tddlConnection, 1));
+        Assert.assertEqual("1005", JdbcUtil.executeQueryAndGetStringResult(sql, tddlConnection, 1));
 
         sql = String.format("/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ select %s.currval from %s where pk = 2 ",
             SEQUENCE_NAME, TABLE_NAME);
-        Assert.assertEquals("1005", JdbcUtil.executeQueryAndGetStringResult(sql, tddlConnection, 1));
+        Assert.assertEqual("1005", JdbcUtil.executeQueryAndGetStringResult(sql, tddlConnection, 1));
 
         sql =
             String.format("/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ select %s.`currval`, %s.currval from %s where pk = 2 ",
                 TABLE_NAME, SEQUENCE_NAME,
                 TABLE_NAME);
-        Assert.assertEquals("1004", JdbcUtil.executeQueryAndGetStringResult(sql, tddlConnection, 1));
-        Assert.assertEquals("1005", JdbcUtil.executeQueryAndGetStringResult(sql, tddlConnection, 2));
+        Assert.assertEqual("1004", JdbcUtil.executeQueryAndGetStringResult(sql, tddlConnection, 1));
+        Assert.assertEqual("1005", JdbcUtil.executeQueryAndGetStringResult(sql, tddlConnection, 2));
 
         sql = String.format("/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ select %s.nextval where count = 4 ", SEQUENCE_NAME);
         List<String> result = JdbcUtil.executeQueryAndGetColumnResult(sql, tddlConnection, 1);
-        Assert.assertEquals(4, result.size());
-        Assert.assertEquals("1006", result.get(0));
-        Assert.assertEquals("1007", result.get(1));
-        Assert.assertEquals("1008", result.get(2));
-        Assert.assertEquals("1009", result.get(3));
+        Assert.assertEqual(4, result.size());
+        Assert.assertEqual("1006", result.get(0));
+        Assert.assertEqual("1007", result.get(1));
+        Assert.assertEqual("1008", result.get(2));
+        Assert.assertEqual("1009", result.get(3));
 
         sql = String.format("/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ select %s.nextval from dual where count = 4 ",
             SEQUENCE_NAME);
         result = JdbcUtil.executeQueryAndGetColumnResult(sql, tddlConnection, 1);
-        Assert.assertEquals(4, result.size());
-        Assert.assertEquals("1010", result.get(0));
-        Assert.assertEquals("1011", result.get(1));
-        Assert.assertEquals("1012", result.get(2));
-        Assert.assertEquals("1013", result.get(3));
+        Assert.assertEqual(4, result.size());
+        Assert.assertEqual("1010", result.get(0));
+        Assert.assertEqual("1011", result.get(1));
+        Assert.assertEqual("1012", result.get(2));
+        Assert.assertEqual("1013", result.get(3));
 
         sql = String.format("/*+TDDL:cmd_extra(ENABLE_MPP=FALSE)*/ select %s.currval from dual", SEQUENCE_NAME);
-        Assert.assertEquals("1013", JdbcUtil.executeQueryAndGetStringResult(sql, tddlConnection, 1));
+        Assert.assertEqual("1013", JdbcUtil.executeQueryAndGetStringResult(sql, tddlConnection, 1));
     }
 
     @Test

@@ -1,0 +1,77 @@
+## DISABLE_FAST_SQL_PARSER
+set ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION=true
+set time_zone='+08:00'
+DROP TABLE IF EXISTS `rng_ts_using_toseconds`
+CREATE /*+TDDL:cmd_extra(ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION=true)*/ TABLE IF NOT EXISTS `rng_ts_using_toseconds` (
+`a` varchar(8) DEFAULT NULL,
+`b` timestamp default current_timestamp
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+PARTITION BY range(to_seconds(b))
+(
+PARTITION p20250101 VALUES LESS THAN (to_seconds('2025-01-02 00:00:00')),
+PARTITION p20250102 VALUES LESS THAN (to_seconds('2025-01-03 00:00:00')),
+PARTITION p20250103 VALUES LESS THAN (to_seconds('2025-01-04 00:00:00')),
+PARTITION p20250104 VALUES LESS THAN (to_seconds('2025-01-05 00:00:00')),
+PARTITION p20250105 VALUES LESS THAN (to_seconds('2025-01-06 00:00:00')),
+PARTITION pmax VALUES LESS THAN (maxvalue)
+)
+DROP TABLE IF EXISTS `rng_dt_using_toseconds`
+CREATE /*+TDDL:cmd_extra(ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION=true)*/ TABLE IF NOT EXISTS `rng_dt_using_toseconds` (
+`a` varchar(8) DEFAULT NULL,
+`b` datetime default current_timestamp
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+PARTITION BY range(to_seconds(b))
+(
+PARTITION p20250101 VALUES LESS THAN (to_seconds('2025-01-02 00:00:00')),
+PARTITION p20250102 VALUES LESS THAN (to_seconds('2025-01-03 00:00:00')),
+PARTITION p20250103 VALUES LESS THAN (to_seconds('2025-01-04 00:00:00')),
+PARTITION p20250104 VALUES LESS THAN (to_seconds('2025-01-05 00:00:00')),
+PARTITION p20250105 VALUES LESS THAN (to_seconds('2025-01-06 00:00:00')),
+PARTITION pmax VALUES LESS THAN (maxvalue)
+)
+set time_zone='+08:00'
+explain select a,b from rng_dt_using_toseconds where b='2025-01-02 02:00:00'
+Logical ExecutionPlan
+PhyTableOperation(tables="rng_dt_using_toseconds[p20250102]", sql="SELECT `rng_dt_using_toseconds`.`a` AS `a`, `rng_dt_using_toseconds`.`b` AS `b` FROM ? AS `rng_dt_using_toseconds` WHERE (`rng_dt_using_toseconds`.`b` = ?)", params="2025-01-02 02:00:00")
+set time_zone='+00:00'
+explain select a,b from rng_dt_using_toseconds where b='2025-01-01 18:00:00'
+Logical ExecutionPlan
+PhyTableOperation(tables="rng_dt_using_toseconds[p20250101]", sql="SELECT `rng_dt_using_toseconds`.`a` AS `a`, `rng_dt_using_toseconds`.`b` AS `b` FROM ? AS `rng_dt_using_toseconds` WHERE (`rng_dt_using_toseconds`.`b` = ?)", params="2025-01-01 18:00:00")
+set time_zone='+08:00'
+explain  select a,b from rng_dt_using_toseconds where b between '2025-01-02 18:00:00' and '2025-01-05 18:00:00'
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="rng_dt_using_toseconds[p20250102,p20250103,p20250104,p20250105]", shardCount=4, sql="SELECT `a`, `b` FROM `rng_dt_using_toseconds` AS `rng_dt_using_toseconds` WHERE (`b` BETWEEN ? AND ?)")
+set time_zone='+00:00'
+explain  select a,b from rng_dt_using_toseconds where b between '2025-01-02 18:00:00' and '2025-01-05 18:00:00'
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="rng_dt_using_toseconds[p20250102,p20250103,p20250104,p20250105]", shardCount=4, sql="SELECT `a`, `b` FROM `rng_dt_using_toseconds` AS `rng_dt_using_toseconds` WHERE (`b` BETWEEN ? AND ?)")
+## All timestamp datatype roting by using time_zone of '+08:00'
+## '2025-01-02 18:00:00TZ08:00' == '2025-01-02 10:00:00TZ00:00'
+## '2025-01-05 18:00:00TZ08:00' == '2025-01-05 10:00:00TZ00:00'
+set time_zone='+08:00'
+explain  select a,b from rng_ts_using_toseconds where b between '2025-01-02 18:00:00' and '2025-01-05 18:00:00'
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="rng_ts_using_toseconds[p20250102,p20250103,p20250104,p20250105]", shardCount=4, sql="SELECT `a`, `b` FROM `rng_ts_using_toseconds` AS `rng_ts_using_toseconds` WHERE (`b` BETWEEN ? AND ?)")
+set time_zone='+00:00'
+explain  select a,b from rng_ts_using_toseconds where b between '2025-01-02 10:00:00' and '2025-01-05 10:00:00'
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="rng_ts_using_toseconds[p20250102,p20250103,p20250104,p20250105]", shardCount=4, sql="SELECT `a`, `b` FROM `rng_ts_using_toseconds` AS `rng_ts_using_toseconds` WHERE (`b` BETWEEN ? AND ?)")
+## All timestamp datatype roting by using time_zone of '+08:00'.
+## '2025-01-03 02:00:00TZ08:00' == '2025-01-02 10:00:00TZ00:00'
+## '2025-01-06 02:00:00TZ08:00' == '2025-01-05 10:00:00TZ00:00'
+set time_zone='+08:00'
+explain  select a,b from rng_ts_using_toseconds where b between '2025-01-03 02:00:00' and '2025-01-06 02:00:00'
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="rng_ts_using_toseconds[p20250103,p20250104,p20250105,pmax]", shardCount=4, sql="SELECT `a`, `b` FROM `rng_ts_using_toseconds` AS `rng_ts_using_toseconds` WHERE (`b` BETWEEN ? AND ?)")
+set time_zone='+00:00'
+explain  select a,b from rng_ts_using_toseconds where b between '2025-01-02 18:00:00' and '2025-01-05 18:00:00'
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="rng_ts_using_toseconds[p20250103,p20250104,p20250105,pmax]", shardCount=4, sql="SELECT `a`, `b` FROM `rng_ts_using_toseconds` AS `rng_ts_using_toseconds` WHERE (`b` BETWEEN ? AND ?)")
+DROP TABLE IF EXISTS `rng_ts_using_toseconds`
+DROP TABLE IF EXISTS `rng_dt_using_toseconds`;

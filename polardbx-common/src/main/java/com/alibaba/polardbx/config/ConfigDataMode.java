@@ -160,7 +160,10 @@ public class ConfigDataMode {
     }
 
     public static boolean isColumnarMode() {
-        return getInstanceRole() == InstanceRole.COLUMNAR_SLAVE;
+        // note that a node can be both master and columnar mode
+        return (getInstanceRole() == InstanceRole.COLUMNAR_SLAVE)
+            || (DynamicConfig.getInstance().getSubInstRoleType() == InstanceRole.COLUMNAR_SLAVE
+            && getInstanceRole() == InstanceRole.MASTER);
     }
 
     public static boolean isFastMock() {
@@ -183,7 +186,7 @@ public class ConfigDataMode {
     }
 
     public static boolean isReadOnlyMode() {
-        return getInstanceRole() == InstanceRole.COLUMNAR_SLAVE ||
+        return isColumnarMode() ||
             getInstanceRole() == InstanceRole.ROW_SLAVE;
     }
 

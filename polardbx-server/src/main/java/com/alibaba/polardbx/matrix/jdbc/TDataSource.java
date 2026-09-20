@@ -38,6 +38,7 @@ import com.alibaba.polardbx.common.utils.timezone.TimeZoneUtils;
 import com.alibaba.polardbx.common.utils.version.Version;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.executor.PlanExecutor;
+import com.alibaba.polardbx.executor.columnar.StagingFlushTaskScheduler;
 import com.alibaba.polardbx.executor.common.RecycleBin;
 import com.alibaba.polardbx.executor.common.RecycleBinManager;
 import com.alibaba.polardbx.gms.config.InstConfigReceiver;
@@ -123,8 +124,15 @@ public class TDataSource extends AbstractLifecycle implements ITDataSource {
 
     private boolean destroyed = false;
 
+    /**
+     * Lable if the TDataSource of db has been dropped and need to be destroyed
+     */
+    private volatile boolean dropped = false;
+    private int dsObjIdHashCode;
+
     public TDataSource() {
         this.useTryLock = true;
+        this.dsObjIdHashCode = System.identityHashCode(this);
     }
 
     @Override
@@ -134,6 +142,14 @@ public class TDataSource extends AbstractLifecycle implements ITDataSource {
 
     @Override
     public void doInit() {
+        if (dropped) {
+            String msg =
+                String.format("TDataSource[%s] of %s has been dropped and destroyed, so forbid and ignored init",
+                    dsObjIdHashCode, schemaName);
+            logger.warn(msg);
+            LoggerInit.TDDL_DYNAMIC_CONFIG.warn(msg);
+            return;
+        }
         if (destroyed) {
             logger.warn("TDataSource is destroyed, here forbid init the " + appName + "!");
             throw new RuntimeException("TDataSource is destroyed!");
@@ -227,6 +243,11 @@ public class TDataSource extends AbstractLifecycle implements ITDataSource {
                 }
             }
         }
+
+        String msg = String.format("TDataSource[%s] of %s has finished init",
+            dsObjIdHashCode, schemaName);
+        LoggerInit.TDDL_DYNAMIC_CONFIG.info(msg);
+        logger.info(msg);
     }
 
     private void afterInitConfigHolder() {
@@ -384,6 +405,10 @@ public class TDataSource extends AbstractLifecycle implements ITDataSource {
                 tm.resetAllTimerTasks();
             }
         }
+
+        // Reset staging flush task on interval or other lifecycle config changes.
+        // The write-path switch never stops draining historical staging tables.
+        StagingFlushTaskScheduler.getInstance().resetTask();
 
         logger.info("load connection properties ok");
         logger.info(String.valueOf(this.connectionProperties));
@@ -688,5 +713,43 @@ public class TDataSource extends AbstractLifecycle implements ITDataSource {
             super.destroy();
             destroyed = true;
         }
+    }
+
+    public void markDroppedAndDestroy() {
+        if (!destroyed) {
+            synchronized (lock) {
+                /**
+                 * Here by fetching lock of TDataSource,
+                 * it can avoid all others threads try to doInit DataSource.
+                 *
+                 * And once mark the dropped=true,
+                 * all others threads will NOT to doInit the DataSource.
+                 */
+                this.dropped = true;
+
+                if (isInited) {
+                    if (!destroyed) {
+                        doDestroy();
+                    }
+                }
+                isInited = false;
+                destroyed = true;
+
+                String msg =
+                    String.format("TDataSource[%s] of `%s` has finished dropping and destroying!", dsObjIdHashCode,
+                        schemaName);
+                logger.warn(msg);
+                LoggerInit.TDDL_DYNAMIC_CONFIG.warn(msg);
+            }
+        }
+
+    }
+
+    public boolean isDropped() {
+        return dropped;
+    }
+
+    public void setDropped(boolean dropped) {
+        this.dropped = dropped;
     }
 }

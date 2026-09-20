@@ -83,7 +83,7 @@ public class UpdateConcurrentPolicyTest extends CrudBasedLockTestCase {
      */
     @Test
     public void selectForUpdateOrderByTraceTest() throws Exception {
-        String sql = "TRACE /*+TDDL:MERGE_SORT_BUFFER_SIZE=0 MIN_MERGE_UNION_SIZE=1 enable_mpp=false*/SELECT * FROM "
+        String sql = "TRACE /*+TDDL:MERGE_SORT_BUFFER_SIZE=0 MAX_MERGE_UNION_SIZE=1 enable_mpp=false*/SELECT * FROM "
             + baseTwoTableName
             + " WHERE integer_test = -10086 ORDER BY pk FOR UPDATE";
 
@@ -97,7 +97,7 @@ public class UpdateConcurrentPolicyTest extends CrudBasedLockTestCase {
      */
     @Test
     public void selectLockInShareModeOrderByTraceTest() throws Exception {
-        String sql = "TRACE /*+TDDL:MERGE_SORT_BUFFER_SIZE=0 MIN_MERGE_UNION_SIZE=1 enable_mpp=false*/SELECT * FROM "
+        String sql = "TRACE /*+TDDL:MERGE_SORT_BUFFER_SIZE=0 MAX_MERGE_UNION_SIZE=1 enable_mpp=false*/SELECT * FROM "
             + baseTwoTableName
             + " WHERE integer_test = -10086 ORDER BY pk LOCK IN SHARE MODE";
 

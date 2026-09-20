@@ -16,10 +16,12 @@
 
 package com.alibaba.polardbx.executor.vectorized.build;
 
+import com.alibaba.polardbx.common.ExprStatistic;
 import com.alibaba.polardbx.common.charset.CollationName;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.chunk.MutableChunk;
 import com.alibaba.polardbx.executor.chunk.RandomAccessBlock;
@@ -75,7 +77,6 @@ import org.apache.calcite.rex.RexVisitorImpl;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlOperator;
 import org.apache.calcite.sql.fun.SqlCastFunction;
-import org.apache.calcite.sql.fun.SqlRowOperator;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.IntervalSqlType;
 import org.apache.calcite.sql.type.SqlTypeName;
@@ -97,10 +98,12 @@ import static org.apache.calcite.sql.type.SqlTypeName.BIGINT;
 import static org.apache.calcite.sql.type.SqlTypeName.BIGINT_UNSIGNED;
 import static org.apache.calcite.sql.type.SqlTypeName.BINARY;
 import static org.apache.calcite.sql.type.SqlTypeName.CHAR;
+import static org.apache.calcite.sql.type.SqlTypeName.DATE;
 import static org.apache.calcite.sql.type.SqlTypeName.DECIMAL;
 import static org.apache.calcite.sql.type.SqlTypeName.DOUBLE;
 import static org.apache.calcite.sql.type.SqlTypeName.SIGNED;
 import static org.apache.calcite.sql.type.SqlTypeName.UNSIGNED;
+import static org.apache.calcite.sql.type.SqlTypeName.VECTOR;
 
 /**
  * Visit the rational expression tree and binding to vectorized expression node-by-node.
@@ -122,7 +125,10 @@ public class Rex2VectorizedExpressionVisitor extends RexVisitorImpl<VectorizedEx
         new TddlTypeFactoryImpl(TddlRelDataTypeSystemImpl.getInstance());
     private final static RexBuilder REX_BUILDER = new RexBuilder(TYPE_FACTORY);
     private static final int MAX_VARCHAR_CODEGEN_IN_NUMS = 100;
+    private static final int MAX_VARCHAR_FAST_IN_NUMS = 10000;
+    private static final int MAX_FAST_IN_NUMS = 100000;
     private static final String CAST_TO_DECIMAL = "CastToDecimal";
+    private static final String CAST_TO_DATE = "CastToDate";
     private static final String CAST_TO_UNSIGNED = "CastToUnsigned";
     private static final String CAST_TO_SIGNED = "CastToSigned";
     /**
@@ -137,6 +143,7 @@ public class Rex2VectorizedExpressionVisitor extends RexVisitorImpl<VectorizedEx
             .put(SIGNED, CAST_TO_SIGNED)
             .put(UNSIGNED, CAST_TO_UNSIGNED)
             .put(DOUBLE, CAST_TO_DOUBLE)
+            .put(DATE, CAST_TO_DATE)
             .build();
 
     /**
@@ -351,6 +358,15 @@ public class Rex2VectorizedExpressionVisitor extends RexVisitorImpl<VectorizedEx
             }
         }
 
+        // Vec fallback for IN expressions: when codegen can't handle type mismatch,
+        // try FastIn vec before falling all the way to builtin.
+        if (!fallback && isInAllLiteralCall(rewrittenCall)) {
+            Optional<VectorizedExpression> expression = createInVecExpr(rewrittenCall);
+            if (expression.isPresent()) {
+                return expression.get();
+            }
+        }
+
         // Fallback method
         return createGeneralVectorizedExpression(call);
     }
@@ -421,6 +437,8 @@ public class Rex2VectorizedExpressionVisitor extends RexVisitorImpl<VectorizedEx
             return false;
         }
 
+        int inValueCount = call.operands.size() - 1;
+
         SqlTypeName typeName = null;
         for (int i = 0; i < call.operands.size(); i++) {
             RexNode rexNode = call.operands.get(i);
@@ -445,7 +463,41 @@ public class Rex2VectorizedExpressionVisitor extends RexVisitorImpl<VectorizedEx
         if (typeName == SqlTypeName.CHAR || typeName == SqlTypeName.VARCHAR) {
             // does not support collation compare in fast path
             boolean compatible = executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_OSS_COMPATIBLE);
-            return !compatible;
+            if (compatible) {
+                return false;
+            }
+            if (inValueCount <= MAX_VARCHAR_FAST_IN_NUMS && inValueCount > MAX_VARCHAR_CODEGEN_IN_NUMS) {
+                return true;
+            }
+            return false;
+        }
+        // for other types, limit the memory usage of FastIn
+        return inValueCount <= MAX_FAST_IN_NUMS;
+    }
+
+    /**
+     * Relaxed check: IN/NOT_IN with all-literal values (allows type mismatch).
+     * Used as vec fallback when codegen fails to find a matching expression.
+     */
+    private boolean isInAllLiteralCall(RexCall call) {
+        if (call.op != SqlStdOperatorTable.IN &&
+            call.op != SqlStdOperatorTable.NOT_IN) {
+            return false;
+        }
+
+        int inValueCount = call.operands.size() - 1;
+        if (inValueCount > MAX_FAST_IN_NUMS) {
+            return false;
+        }
+
+        for (int i = 0; i < call.operands.size(); i++) {
+            RexNode rexNode = call.operands.get(i);
+            if (i == 0 && rexNode instanceof RexInputRef) {
+                continue;
+            }
+            if (!(rexNode instanceof RexLiteral)) {
+                return false;
+            }
         }
         return true;
     }
@@ -597,8 +649,12 @@ public class Rex2VectorizedExpressionVisitor extends RexVisitorImpl<VectorizedEx
         ExpressionMode mode = callsInFilterMode.containsKey(call) ? ExpressionMode.FILTER : ExpressionMode.PROJECT;
         ExpressionSignature signature =
             new ExpressionSignature(functionName, argumentInfos.toArray(new ArgumentInfo[0]), mode);
+        Optional<ExpressionConstructor<?>> constructor = VectorizedExpressionRegistry.builderConstructorOf(signature);
 
-        return VectorizedExpressionRegistry.builderConstructorOf(signature);
+        if (DynamicConfig.getInstance().isEnableExpressionStats()) {
+            ExprStatistic.updateExprStatistic(signature.display(), constructor.isPresent());
+        }
+        return constructor;
     }
 
     private List<VectorizedExpression> visitExtraParams(RexCall call) {
@@ -606,8 +662,9 @@ public class Rex2VectorizedExpressionVisitor extends RexVisitorImpl<VectorizedEx
         if ("CAST".equalsIgnoreCase(functionName)) {
             RelDataType relDataType = call.getType();
             DataType<?> dataType = DataTypeUtil.calciteToDrdsType(relDataType);
-            if ((relDataType.getSqlTypeName() == CHAR || relDataType.getSqlTypeName() == BINARY)
-                && relDataType.getPrecision() >= 0) {
+            if (((relDataType.getSqlTypeName() == CHAR || relDataType.getSqlTypeName() == BINARY)
+                && relDataType.getPrecision() >= 0)
+                || (relDataType.getSqlTypeName() == VECTOR && relDataType.getPrecision() > 0)) {
                 return ImmutableList
                     .of(new LiteralVectorizedExpression(DataTypes.StringType, dataType.getStringSqlType(),
                             addOutput(DataTypes.StringType)),

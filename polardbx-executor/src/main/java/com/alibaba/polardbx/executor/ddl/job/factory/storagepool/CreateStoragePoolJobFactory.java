@@ -24,6 +24,7 @@ import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
 import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.CreateStoragePoolPrepareData;
+import com.alibaba.polardbx.optimizer.locality.StoragePoolUtils;
 import com.google.common.collect.Lists;
 
 import java.util.List;
@@ -42,7 +43,7 @@ public class CreateStoragePoolJobFactory extends DdlJobFactory {
         List<String> dnIds = prepareData.getDnIds();
         String instId = InstIdUtil.getMasterInstId();
         if (dnIds != null) {
-            StoragePoolValidator.validateStoragePool(instId, dnIds);
+            StoragePoolValidator.validateStoragePool(instId, dnIds, false, true, true);
         }
     }
 
@@ -59,7 +60,7 @@ public class CreateStoragePoolJobFactory extends DdlJobFactory {
         } else {
             StorageInstValidateTask
                 storageInstValidateTask = new StorageInstValidateTask(prepareData.getSchemaName(), instId,
-                prepareData.getDnIds());
+                prepareData.getDnIds(), false, true, true);
             AddStorageInfoTask addStorageInfoTask =
                 new AddStorageInfoTask(prepareData.getSchemaName(), instId, prepareData.getDnIds(),
                     prepareData.getStoragePoolName(), prepareData.getUndeletableDnId());

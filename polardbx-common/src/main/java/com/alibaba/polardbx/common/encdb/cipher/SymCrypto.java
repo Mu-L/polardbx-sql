@@ -16,7 +16,6 @@
 
 package com.alibaba.polardbx.common.encdb.cipher;
 
-import com.sun.crypto.provider.SunJCE;
 import org.bouncycastle.crypto.CryptoException;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
@@ -34,6 +33,7 @@ import java.util.Objects;
 public class SymCrypto {
     public static final int AES_BLOCK_SIZE = 16;
     public static final int AES_128_KEY_SIZE = AES_BLOCK_SIZE;
+    public static final int AES_256_KEY_SIZE = 32;
     public static final int SM4_BLOCK_SIZE = 16;
     public static final int SM4_KEY_SIZE = 16;
     public static final int CLWW_ORE_KEY_SIZE = 32;
@@ -44,9 +44,9 @@ public class SymCrypto {
     public static final int CTRIVLength = 16;
 
     static {
-        Provider sunJceProvider = new SunJCE();
-        if (Security.getProvider(sunJceProvider.getName()) == null) {
-            Security.addProvider(sunJceProvider);
+        Provider sunjceProvider = Security.getProvider("SUNJCE");
+        if (sunjceProvider != null) {
+            Security.addProvider(sunjceProvider);
         }
         if (Security.getProvider(BouncyCastleProvider.PROVIDER_NAME) == null) {
             Security.addProvider(new BouncyCastleProvider());
@@ -78,20 +78,43 @@ public class SymCrypto {
         }
     }
 
-    public static byte[] aesGcmEncrypt(byte[] key, byte[] data, byte[] iv, byte[] aad) throws CryptoException {
-        return gcmEncrypt(key, data, iv, aad, "AES");
+    /**
+     *
+     */
+    private static byte[] gcmEncrypt(byte[] key, byte[] data, byte[] iv, byte[] aad, String algorithm, Cipher cipher)
+        throws CryptoException {
+        try {
+            SecretKey secretKey = new SecretKeySpec(key, algorithm);
+            if (iv == null) {
+                throw new Exception("GCM mode IV should of length " + GCMIVLength);
+            }
+
+            GCMParameterSpec parameterSpec = new GCMParameterSpec(GCMTagLength * 8, iv);
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey, parameterSpec);
+            if (aad != null) {
+                cipher.updateAAD(aad);
+            }
+
+            return cipher.doFinal(data);
+        } catch (Exception e) {
+            throw new CryptoException("gcmEncrypt error", e);
+        }
     }
 
     public static byte[] aesGcmEncrypt(byte[] key, byte[] data, byte[] iv) throws CryptoException {
         return gcmEncrypt(key, data, iv, null, "AES");
     }
 
-    public static byte[] sm4GcmEncrypt(byte[] key, byte[] data, byte[] iv, byte[] aad) throws CryptoException {
-        return gcmEncrypt(key, data, iv, aad, "SM4");
+    public static byte[] aesGcmEncrypt(byte[] key, byte[] data, byte[] iv, Cipher cipher) throws CryptoException {
+        return gcmEncrypt(key, data, iv, null, "AES", cipher);
     }
 
     public static byte[] sm4GcmEncrypt(byte[] key, byte[] data, byte[] iv) throws CryptoException {
         return gcmEncrypt(key, data, iv, null, "SM4");
+    }
+
+    public static byte[] sm4GcmEncrypt(byte[] key, byte[] data, byte[] iv, Cipher cipher) throws CryptoException {
+        return gcmEncrypt(key, data, iv, null, "SM4", cipher);
     }
 
     /*
@@ -121,16 +144,8 @@ public class SymCrypto {
         }
     }
 
-    public static byte[] aesGcmDecrypt(byte[] key, byte[] cipherBytes, byte[] iv, byte[] aad) throws CryptoException {
-        return gcmDecrypt(key, cipherBytes, iv, aad, "AES");
-    }
-
     public static byte[] aesGcmDecrypt(byte[] key, byte[] cipherBytes, byte[] iv) throws CryptoException {
         return gcmDecrypt(key, cipherBytes, iv, null, "AES");
-    }
-
-    public static byte[] sm4GcmDecrypt(byte[] key, byte[] cipherBytes, byte[] iv, byte[] aad) throws CryptoException {
-        return gcmDecrypt(key, cipherBytes, iv, aad, "SM4");
     }
 
     public static byte[] sm4GcmDecrypt(byte[] key, byte[] cipherBytes, byte[] iv) throws CryptoException {
@@ -163,8 +178,28 @@ public class SymCrypto {
         }
     }
 
+    private static byte[] ecbPKCS7Cipher(byte[] key, byte[] data, String algorithm, boolean forEncryption,
+                                         Cipher cipher)
+        throws CryptoException {
+        try {
+            SecretKeySpec secretKey = new SecretKeySpec(key, algorithm);
+            // Note: PKCS5Padding enables SunJCE support. PKCS7Padding leads to BouncyCastle security provider,
+            //       which lacks hardware acceleration for AES.
+            cipher.init(forEncryption ? Cipher.ENCRYPT_MODE : Cipher.DECRYPT_MODE, secretKey);
+
+            return cipher.doFinal(data);
+        } catch (Exception e) {
+            String errMsg = algorithm + " ecbPKCS7Cipher " + (forEncryption ? " encryption" : " decryption") + " error";
+            throw new CryptoException(errMsg, e);
+        }
+    }
+
     public static byte[] aesECBEncrypt(byte[] key, byte[] data) throws CryptoException {
         return ecbPKCS7Cipher(key, data, "AES", true);
+    }
+
+    public static byte[] aesECBEncrypt(byte[] key, byte[] data, Cipher cipher) throws CryptoException {
+        return ecbPKCS7Cipher(key, data, "AES", true, cipher);
     }
 
     public static byte[] aesECBDecrypt(byte[] key, byte[] cipherBytes) throws CryptoException {
@@ -173,6 +208,10 @@ public class SymCrypto {
 
     public static byte[] sm4ECBEncrypt(byte[] key, byte[] data) throws CryptoException {
         return ecbPKCS7Cipher(key, data, "SM4", true);
+    }
+
+    public static byte[] sm4ECBEncrypt(byte[] key, byte[] data, Cipher cipher) throws CryptoException {
+        return ecbPKCS7Cipher(key, data, "SM4", true, cipher);
     }
 
     public static byte[] sm4ECBDecrypt(byte[] key, byte[] cipherBytes) throws CryptoException {
@@ -218,8 +257,40 @@ public class SymCrypto {
         }
     }
 
+    private static byte[] cbcPKCS7Cipher(byte[] key, byte[] data, byte[] iv, String algorithm, boolean forEncryption,
+                                         Cipher cipher)
+        throws CryptoException {
+        try {
+            SecretKeySpec secretKey = new SecretKeySpec(key, algorithm);
+            // Note: PKCS5Padding enables SunJCE support. PKCS7Padding leads to BouncyCastle security provider,
+            //       which lacks hardware acceleration for AES.
+
+            if (iv == null && forEncryption) {
+                SecureRandom secureRandom = new SecureRandom();
+                iv = new byte[CBCIVLength];
+                secureRandom.nextBytes(iv);
+            }
+
+            if (Objects.requireNonNull(iv).length != CBCIVLength) {
+                throw new InvalidAlgorithmParameterException("CBC mode IV should of length " + CBCIVLength);
+            }
+
+            IvParameterSpec ivParameterSpec = new IvParameterSpec(iv);
+            cipher.init(forEncryption ? Cipher.ENCRYPT_MODE : Cipher.DECRYPT_MODE, secretKey, ivParameterSpec);
+
+            return cipher.doFinal(data);
+        } catch (Exception e) {
+            String errMsg = algorithm + " cbcPKCS7Cipher " + (forEncryption ? " encryption" : " decryption") + " error";
+            throw new CryptoException(errMsg, e);
+        }
+    }
+
     public static byte[] sm4CBCEncrypt(byte[] key, byte[] data, byte[] iv) throws CryptoException {
         return cbcPKCS7Cipher(key, data, iv, "SM4", true);
+    }
+
+    public static byte[] sm4CBCEncrypt(byte[] key, byte[] data, byte[] iv, Cipher cipher) throws CryptoException {
+        return cbcPKCS7Cipher(key, data, iv, "SM4", true, cipher);
     }
 
     public static byte[] sm4CBCDecrypt(byte[] key, byte[] cipherBytes, byte[] iv) throws CryptoException {
@@ -228,6 +299,10 @@ public class SymCrypto {
 
     public static byte[] aesCBCEncrypt(byte[] key, byte[] data, byte[] iv) throws CryptoException {
         return cbcPKCS7Cipher(key, data, iv, "AES", true);
+    }
+
+    public static byte[] aesCBCEncrypt(byte[] key, byte[] data, byte[] iv, Cipher cipher) throws CryptoException {
+        return cbcPKCS7Cipher(key, data, iv, "AES", true, cipher);
     }
 
     public static byte[] aesCBCDecrypt(byte[] key, byte[] cipherBytes, byte[] iv) throws CryptoException {
@@ -261,8 +336,38 @@ public class SymCrypto {
         }
     }
 
+    private static byte[] ctrCipher(byte[] key, byte[] data, byte[] iv, String algorithm, boolean forEncryption,
+                                    Cipher cipher) throws CryptoException {
+        try {
+            SecretKeySpec secretKey = new SecretKeySpec(key, algorithm);
+            IvParameterSpec ivSpec = new IvParameterSpec(iv);
+            cipher.init(forEncryption ? Cipher.ENCRYPT_MODE : Cipher.DECRYPT_MODE, secretKey, ivSpec);
+
+            return cipher.doFinal(data);
+        } catch (Exception e) {
+            String errMsg = algorithm + " ctr " + (forEncryption ? " encryption" : " decryption") + " error";
+            throw new CryptoException(errMsg, e);
+        }
+    }
+
+    public static byte[] aesCTREncrypt(byte[] key, byte[] data, byte[] iv) throws CryptoException {
+        return ctrCipher(key, data, iv, "AES", true);
+    }
+
+    public static byte[] aesCTREncrypt(byte[] key, byte[] data, byte[] iv, Cipher cipher) throws CryptoException {
+        return ctrCipher(key, data, iv, "AES", true, cipher);
+    }
+
     public static byte[] aesCTRDecrypt(byte[] key, byte[] cipherBytes, byte[] iv) throws CryptoException {
         return ctrCipher(key, cipherBytes, iv, "AES", false);
+    }
+
+    public static byte[] sm4CTREncrypt(byte[] key, byte[] data, byte[] iv) throws CryptoException {
+        return ctrCipher(key, data, iv, "SM4", true);
+    }
+
+    public static byte[] sm4CTREncrypt(byte[] key, byte[] data, byte[] iv, Cipher cipher) throws CryptoException {
+        return ctrCipher(key, data, iv, "SM4", true, cipher);
     }
 
     public static byte[] sm4CTRDecrypt(byte[] key, byte[] cipherBytes, byte[] iv) throws CryptoException {

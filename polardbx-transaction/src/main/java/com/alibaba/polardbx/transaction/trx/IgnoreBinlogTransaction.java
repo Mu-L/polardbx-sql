@@ -1,5 +1,6 @@
 package com.alibaba.polardbx.transaction.trx;
 
+import com.alibaba.polardbx.common.constants.TransactionAttribute;
 import com.alibaba.polardbx.common.jdbc.IConnection;
 import com.alibaba.polardbx.common.jdbc.ITransactionPolicy;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -26,13 +27,13 @@ public class IgnoreBinlogTransaction extends TsoTransaction {
         if (conn.getTrxXid() != null) {
             return conn.getTrxXid();
         }
-        conn.setInShareReadView(shareReadView);
         String xid;
         if (shareReadView) {
             xid = XAUtils.toXidStringWithFormatId(id, group, primaryGroupUid, getReadViewSeq(group),
-                IGNORE_BINLOG_FORMAT_ID);
+                TransactionAttribute.FormatId.IGNORE_BINLOG.id());
         } else {
-            xid = XAUtils.toXidStringWithFormatId(id, group, primaryGroupUid, IGNORE_BINLOG_FORMAT_ID);
+            xid = XAUtils.toXidStringWithFormatId(id, group, primaryGroupUid,
+                TransactionAttribute.FormatId.IGNORE_BINLOG.id());
         }
         conn.setTrxXid(xid);
         return xid;

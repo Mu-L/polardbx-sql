@@ -12,6 +12,7 @@ import com.alibaba.polardbx.gms.metadb.table.ColumnarCheckpointsRecord;
 import com.alibaba.polardbx.gms.metadb.table.FilesAccessor;
 import com.alibaba.polardbx.gms.metadb.table.FilesRecordSimplified;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import org.jetbrains.annotations.NotNull;
@@ -226,6 +227,8 @@ public class ColumnarManagerTest {
             // Initialize columnar manager and set min/latest tso
             DynamicColumnarManager cm = (DynamicColumnarManager) ColumnarManager.getInstance();
 
+            TableMeta tableMeta = Mockito.mock(TableMeta.class);
+
             cm.injectForTest(mockFileVersionStorage, mockMultiVersionColumnarSchema, new AtomicLong(0L),
                 CacheBuilder.newBuilder()
                     .build(new CacheLoader<Long, Map<String, List<ColumnarAppendedFilesRecord>>>() {
@@ -238,7 +241,7 @@ public class ColumnarManagerTest {
             Assert.assertEquals(initTso, cm.latestTso());
 
             // Load and Query multi version schema
-            Pair<List<String>, List<String>> orcAndCsvFile = cm.findFileNames(initTso, "db1", "t1", "p1");
+            Pair<List<String>, List<String>> orcAndCsvFile = cm.findFileNames(initTso, "db1", "t1", "p1", tableMeta);
             Assert.assertEquals(2, orcAndCsvFile.getKey().size());
             Assert.assertEquals(2, orcAndCsvFile.getValue().size());
 
@@ -253,7 +256,7 @@ public class ColumnarManagerTest {
             cm.setLatestTso(queryTso1);
             Assert.assertEquals(queryTso1, cm.latestTso());
 
-            orcAndCsvFile = cm.findFileNames(queryTso1, "db1", "t1", "p1");
+            orcAndCsvFile = cm.findFileNames(queryTso1, "db1", "t1", "p1", tableMeta);
             Assert.assertEquals(1, orcAndCsvFile.getKey().size());
             Assert.assertEquals(1, orcAndCsvFile.getValue().size());
 
@@ -264,17 +267,17 @@ public class ColumnarManagerTest {
             cm.setLatestTso(queryTso2);
             Assert.assertEquals(queryTso2, cm.latestTso());
 
-            orcAndCsvFile = cm.findFileNames(queryTso2, "db1", "t1", "p1");
+            orcAndCsvFile = cm.findFileNames(queryTso2, "db1", "t1", "p1", tableMeta);
             Assert.assertEquals(0, orcAndCsvFile.getKey().size());
             Assert.assertEquals(0, orcAndCsvFile.getValue().size());
 
             // Test access snapshot which is already purged
             boolean snapshotFailed = false;
             try {
-                cm.findFileNames(minTso, "db1", "t1", "p1");
+                cm.findFileNames(minTso, "db1", "t1", "p1", tableMeta);
             } catch (TddlRuntimeException e) {
                 Assert.assertEquals(
-                    "ERR-CODE: [TDDL-12005][ERR_COLUMNAR_SNAPSHOT] Failed to generate columnar snapshot of tso: 1 ",
+                    "ERR-CODE: [PXC-12005][ERR_COLUMNAR_SNAPSHOT] Failed to generate columnar snapshot of tso: 1 ",
                     e.getMessage()
                 );
                 snapshotFailed = true;
@@ -317,16 +320,18 @@ public class ColumnarManagerTest {
             // Initialize columnar manager and set min/latest tso
             DynamicColumnarManager cm = (DynamicColumnarManager) ColumnarManager.getInstance();
 
+            TableMeta tableMeta = Mockito.mock(TableMeta.class);
+
             cm.injectForTest(mockFileVersionStorage, mockMultiVersionColumnarSchema, new AtomicLong(0), null, null);
             Assert.assertEquals(minTso, cm.getMinTso().longValue());
             Assert.assertEquals(initTso, cm.latestTso());
 
             // Load and Query multi version schema
-            Pair<List<String>, List<String>> orcAndCsvFile = cm.findFileNames(initTso, "db1", "t1", "p1");
+            Pair<List<String>, List<String>> orcAndCsvFile = cm.findFileNames(initTso, "db1", "t1", "p1", tableMeta);
             Assert.assertEquals(2, orcAndCsvFile.getKey().size());
             Assert.assertEquals(2, orcAndCsvFile.getValue().size());
 
-            orcAndCsvFile = cm.findFileNames(initTso, "db1", "t1", "p2");
+            orcAndCsvFile = cm.findFileNames(initTso, "db1", "t1", "p2", tableMeta);
             Assert.assertEquals(1, orcAndCsvFile.getKey().size());
             Assert.assertEquals(1, orcAndCsvFile.getValue().size());
 
@@ -336,15 +341,15 @@ public class ColumnarManagerTest {
             cm.setLatestTso(queryTso1);
             Assert.assertEquals(queryTso1, cm.latestTso());
 
-            orcAndCsvFile = cm.findFileNames(initTso, "db1", "t1", "p2");
+            orcAndCsvFile = cm.findFileNames(initTso, "db1", "t1", "p2", tableMeta);
             Assert.assertEquals(1, orcAndCsvFile.getKey().size());
             Assert.assertEquals(1, orcAndCsvFile.getValue().size());
 
-            orcAndCsvFile = cm.findFileNames(queryTso1, "db1", "t1", "p2");
+            orcAndCsvFile = cm.findFileNames(queryTso1, "db1", "t1", "p2", tableMeta);
             Assert.assertEquals(2, orcAndCsvFile.getKey().size());
             Assert.assertEquals(2, orcAndCsvFile.getValue().size());
 
-            orcAndCsvFile = cm.findFileNames(queryTso1, "db1", "t1", "p1");
+            orcAndCsvFile = cm.findFileNames(queryTso1, "db1", "t1", "p1", tableMeta);
             Assert.assertEquals(1, orcAndCsvFile.getKey().size());
             Assert.assertEquals(1, orcAndCsvFile.getValue().size());
         }

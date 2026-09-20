@@ -16,6 +16,9 @@
 
 package com.alibaba.polardbx.executor.mpp.execution.buffer;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.executor.chunk.BlockEncoding;
 import com.alibaba.polardbx.executor.chunk.BlockEncodingBuilders;
 import com.alibaba.polardbx.executor.chunk.Chunk;
@@ -80,6 +83,13 @@ public class PagesSerde {
         // length is an int
         PagesSerdeUtil.writeRawPage(page, serializationBuffer, blockEncodings);
 
+        // reverse incrementing memory usage of DynamicSliceOutput.
+        OperatorMemoryOwnerId operatorMemoryOwnerId = MemoryTrackerManager.getCurrentMemoryOwner();
+        if (operatorMemoryOwnerId != null) {
+            MemoryTrackerManager.tryReverseReference(operatorMemoryOwnerId,
+                FastMemoryCounter.sizeOf(serializationBuffer));
+        }
+
         if (!compressor.isPresent()) {
             return new SerializedChunk(serializationBuffer.slice(), ChunkCompression.UNCOMPRESSED,
                 page.getPositionCount(), serializationBuffer.size());
@@ -111,8 +121,14 @@ public class PagesSerde {
         }
 
         if (!decompressor.isPresent() || serializedChunk.getCompression() == ChunkCompression.UNCOMPRESSED) {
-            return PagesSerdeUtil.readRawPage(serializedChunk.getPositionCount(), serializedChunk.getSlice().getInput(),
-                blockEncodings);
+            Chunk chunk =
+                PagesSerdeUtil.readRawPage(serializedChunk.getPositionCount(), serializedChunk.getSlice().getInput(),
+                    blockEncodings);
+            OperatorMemoryOwnerId operatorMemoryOwnerId = MemoryTrackerManager.getCurrentMemoryOwner();
+            if (operatorMemoryOwnerId != null) {
+                MemoryTrackerManager.tryReverseReference(operatorMemoryOwnerId, FastMemoryCounter.sizeOf(chunk));
+            }
+            return chunk;
         }
 
         int uncompressedSize = serializedChunk.getUncompressedSizeInBytes();

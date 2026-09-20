@@ -4,6 +4,8 @@ import com.alibaba.polardbx.executor.operator.scan.CsvScanTestBase;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.Field;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
+import com.google.common.util.concurrent.SettableFuture;
 import org.junit.Test;
 import org.mockito.Mockito;
 import org.roaringbitmap.RoaringBitmap;
@@ -11,7 +13,7 @@ import org.roaringbitmap.RoaringBitmap;
 import java.util.Collections;
 import java.util.HashMap;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -20,7 +22,8 @@ public class FlashbackScanPreProcessorTest extends CsvScanTestBase {
 
     @Test
     public void testGenerateDeletionInColumnarMode() {
-        Mockito.doCallRealMethod().when(columnarManager).getFlashbackDeleteBitmapManager(anyLong(), anyString(), anyString(), anyString(), any());
+        Mockito.doCallRealMethod().when(columnarManager).getFlashbackDeleteBitmapManager(anyLong(), anyString(),
+            anyString(), anyString(), any());
         RoaringBitmap actualBitmap = flashbackScanPreProcessor.generateDeletion(DATA_FILE_PATH);
 
         assertEquals("Bitmaps should match in columnar mode", DELETE_COUNT, actualBitmap.getCardinality());
@@ -33,7 +36,8 @@ public class FlashbackScanPreProcessorTest extends CsvScanTestBase {
             fileSystem, SCHEMA_NAME, LOGICAL_TABLE_NAME, true, true,
             Collections.singletonList(new ColumnMeta("t1", "pk", "pk", new Field(DataTypes.LongType))),
             Collections.emptyList(), new HashMap<>(), 0.5, 0.5, columnarManager, null,
-            Collections.singletonList(1L), null);
+            Collections.singletonList(1L), Collections.singletonList(new OrderByOption(0, true, true)), null,
+            SettableFuture.create(), null);
 
         RoaringBitmap actualBitmap = flashbackScanPreProcessor.generateDeletion(DATA_FILE_PATH);
 

@@ -55,7 +55,7 @@ public class TableScanFinder extends RelShuttleImpl {
     @Override
     public RelNode visit(TableScan scan) {
         if (scan instanceof LogicalView) {
-            this.schemaName = scan.getSchemaName();
+            this.schemaName = scan.getSchemaName().toLowerCase();
             ((LogicalView) scan).getPushedRelNode().accept(this);
         }
         result.add(Pair.of(schemaName, scan));

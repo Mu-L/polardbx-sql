@@ -23,10 +23,10 @@ import com.alibaba.polardbx.optimizer.core.rel.LogicalIndexScan;
 import com.alibaba.polardbx.optimizer.hint.operator.HintType;
 import com.alibaba.polardbx.optimizer.hint.util.CheckJoinHint;
 import com.google.common.collect.ImmutableList;
+import org.apache.calcite.plan.Convention;
 import org.apache.calcite.plan.RelOptCost;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptRuleOperand;
-import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.logical.LogicalJoin;
 import org.apache.calcite.rel.logical.LogicalTableLookup;
@@ -37,7 +37,7 @@ public class SMPJoinTableLookupToBKAJoinTableLookupRule extends JoinTableLookupT
     public static final SMPJoinTableLookupToBKAJoinTableLookupRule
         TABLELOOKUP_NOT_RIGHT = new SMPJoinTableLookupToBKAJoinTableLookupRule(
         operand(LogicalJoin.class, null, JOIN_NOT_RIGHT,
-            operand(RelSubset.class, any()),
+            operand(RelNode.class, Convention.NONE, any()),
             operand(LogicalTableLookup.class, null,
                 JoinTableLookupTransposeRule.INNER_TABLE_LOOKUP_RIGHT_IS_LOGICALVIEW,
                 operand(LogicalIndexScan.class, none()))), "TABLELOOKUP:NOT_RIGHT");
@@ -47,8 +47,7 @@ public class SMPJoinTableLookupToBKAJoinTableLookupRule extends JoinTableLookupT
         operand(LogicalJoin.class, null, JOIN_RIGHT,
             operand(LogicalTableLookup.class, null,
                 JoinTableLookupTransposeRule.INNER_TABLE_LOOKUP_RIGHT_IS_LOGICALVIEW,
-                operand(LogicalIndexScan.class, none())),
-            operand(RelSubset.class, any())), "TABLELOOKUP:RIGHT");
+                operand(LogicalIndexScan.class, none()))), "TABLELOOKUP:RIGHT");
 
     SMPJoinTableLookupToBKAJoinTableLookupRule(RelOptRuleOperand operand, String desc) {
         super(operand, "SMP_" + desc);
@@ -77,7 +76,7 @@ public class SMPJoinTableLookupToBKAJoinTableLookupRule extends JoinTableLookupT
             bkaJoin.setFixedCost(fixedCost);
         }
         newLogicalIndexScan.setIsMGetEnabled(true);
-        newLogicalIndexScan.setJoin(bkaJoin);
+        newLogicalIndexScan.setLookupInfo(bkaJoin);
         call.transformTo(bkaJoin);
     }
 }

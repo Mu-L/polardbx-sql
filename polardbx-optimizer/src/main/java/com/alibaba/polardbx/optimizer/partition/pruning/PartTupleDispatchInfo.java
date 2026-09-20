@@ -73,6 +73,14 @@ public class PartTupleDispatchInfo implements PartitionPruneBase {
                 PartPrunedResult.buildPartPrunedResult(partInfo, partBitSet, PartKeyLevel.PARTITION_KEY, null, false);
             PartitionPrunerUtils.collateTupleRouteExplainInfo(this, ec, rs, pruningCtx);
             return rs;
+        } else if (tblType == PartitionTableType.REPLICAS_TABLE) {
+
+            BitSet partBitSet = null;
+            partBitSet = PartitionPrunerUtils.buildFullPhysicalPartitionsBitSet(partInfo);
+            PartPrunedResult rs =
+                PartPrunedResult.buildPartPrunedResult(partInfo, partBitSet, PartKeyLevel.PARTITION_KEY, null, false);
+            PartitionPrunerUtils.collateTupleRouteExplainInfo(this, ec, rs, pruningCtx);
+            return rs;
         }
 
         // Do pruning for partition-keys

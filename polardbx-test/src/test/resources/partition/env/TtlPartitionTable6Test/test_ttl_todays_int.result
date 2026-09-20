@@ -1,0 +1,254 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set sql_mode='';
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+drop table if exists r_todays_int;
+create table r_todays_int
+(
+a int ,
+b datetime,
+c varchar(32),
+primary key(a)
+)
+partition by range(a)
+(
+partition p20250501 values less than(739737),
+partition p20250502 values less than(739738),
+partition p20250503 values less than(739739),
+partition p20250504 values less than(739740),
+partition p20250505 values less than(739741)
+);
+alter table r_todays_int modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = `a` expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+ttl_col_encoder=to_days(?),
+ttl_col_decoder=from_days(?),
+archive_type='partition',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_todays_int cleanup expired data;
+show create table r_todays_int;
+Table,Create Table
+r_todays_int,CREATE TABLE `r_todays_int` (
+	`a` int(11) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` varchar(32) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `a` EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_COL_ENCODER = TO_DAYS(?), TTL_COL_DECODER = FROM_DAYS(?), TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE(`a`)
+(PARTITION p20250501 VALUES LESS THAN (739737) ENGINE = InnoDB,
+ PARTITION p20250502 VALUES LESS THAN (739738) ENGINE = InnoDB,
+ PARTITION p20250503 VALUES LESS THAN (739739) ENGINE = InnoDB,
+ PARTITION p20250504 VALUES LESS THAN (739740) ENGINE = InnoDB,
+ PARTITION p20250505 VALUES LESS THAN (739741) ENGINE = InnoDB,
+ PARTITION p20250627 VALUES LESS THAN (739794) ENGINE = InnoDB,
+ PARTITION p20250628 VALUES LESS THAN (739795) ENGINE = InnoDB,
+ PARTITION p20250629 VALUES LESS THAN (739796) ENGINE = InnoDB,
+ PARTITION p20250630 VALUES LESS THAN (739797) ENGINE = InnoDB)
+alter table r_todays_int cleanup expired data;
+show create table r_todays_int;
+Table,Create Table
+r_todays_int,CREATE TABLE `r_todays_int` (
+	`a` int(11) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` varchar(32) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `a` EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_COL_ENCODER = TO_DAYS(?), TTL_COL_DECODER = FROM_DAYS(?), TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE(`a`)
+(PARTITION p20250627 VALUES LESS THAN (739794) ENGINE = InnoDB,
+ PARTITION p20250628 VALUES LESS THAN (739795) ENGINE = InnoDB,
+ PARTITION p20250629 VALUES LESS THAN (739796) ENGINE = InnoDB,
+ PARTITION p20250630 VALUES LESS THAN (739797) ENGINE = InnoDB)
+alter table r_todays_int modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = `a` expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+ttl_col_encoder=to_days(?),
+ttl_col_decoder=from_days(?),
+archive_type='row',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+insert into r_todays_int(a,b,c) values (739737, from_days(739737), from_days(739737));
+insert into r_todays_int(a,b,c) values (739794, from_days(739794), from_days(739794));
+insert into r_todays_int(a,b,c) values (739795, from_days(739795), from_days(739795));
+set time_zone='+08:00';
+select a,b,c from r_todays_int order by a,b,c;
+a,b,c
+739737,2025-05-01 00:00:00.0,2025-05-01
+739794,2025-06-27 00:00:00.0,2025-06-27
+739795,2025-06-28 00:00:00.0,2025-06-28
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_todays_int cleanup expired data;
+select a,b,c from r_todays_int order by a,b,c;
+a,b,c
+739794,2025-06-27 00:00:00.0,2025-06-27
+739795,2025-06-28 00:00:00.0,2025-06-28
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-28 00:00:00';
+alter table r_todays_int cleanup expired data;
+select a,b,c from r_todays_int order by a,b,c;
+a,b,c
+739794,2025-06-27 00:00:00.0,2025-06-27
+739795,2025-06-28 00:00:00.0,2025-06-28
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-29 00:00:00';
+alter table r_todays_int cleanup expired data;
+select a,b,c from r_todays_int order by a,b,c;
+a,b,c
+739795,2025-06-28 00:00:00.0,2025-06-28
+drop table r_todays_int;
+drop table if exists r_todays_int2;
+create table r_todays_int2
+(
+a int ,
+b datetime,
+c varchar(32),
+primary key(a)
+)
+partition by range(a)
+(
+partition p20250501 values less than(739737),
+partition p20250502 values less than(739738),
+partition p20250503 values less than(739739),
+partition p20250504 values less than(739740),
+partition p20250505 values less than(739741)
+);
+alter table r_todays_int2 modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = from_days(`a`) expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='partition',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_todays_int2 cleanup expired data;
+show create table r_todays_int2;
+Table,Create Table
+r_todays_int2,CREATE TABLE `r_todays_int2` (
+	`a` int(11) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` varchar(32) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = FROM_DAYS(`a`) EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE(`a`)
+(PARTITION p20250501 VALUES LESS THAN (739737) ENGINE = InnoDB,
+ PARTITION p20250502 VALUES LESS THAN (739738) ENGINE = InnoDB,
+ PARTITION p20250503 VALUES LESS THAN (739739) ENGINE = InnoDB,
+ PARTITION p20250504 VALUES LESS THAN (739740) ENGINE = InnoDB,
+ PARTITION p20250505 VALUES LESS THAN (739741) ENGINE = InnoDB,
+ PARTITION p20250627 VALUES LESS THAN (739794) ENGINE = InnoDB,
+ PARTITION p20250628 VALUES LESS THAN (739795) ENGINE = InnoDB,
+ PARTITION p20250629 VALUES LESS THAN (739796) ENGINE = InnoDB,
+ PARTITION p20250630 VALUES LESS THAN (739797) ENGINE = InnoDB)
+alter table r_todays_int2 cleanup expired data;
+show create table r_todays_int2;
+Table,Create Table
+r_todays_int2,CREATE TABLE `r_todays_int2` (
+	`a` int(11) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` varchar(32) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = FROM_DAYS(`a`) EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE(`a`)
+(PARTITION p20250627 VALUES LESS THAN (739794) ENGINE = InnoDB,
+ PARTITION p20250628 VALUES LESS THAN (739795) ENGINE = InnoDB,
+ PARTITION p20250629 VALUES LESS THAN (739796) ENGINE = InnoDB,
+ PARTITION p20250630 VALUES LESS THAN (739797) ENGINE = InnoDB)
+insert into r_todays_int2(a,b,c) values (739737, from_days(739737), from_days(739737));
+insert into r_todays_int2(a,b,c) values (739794, from_days(739794), from_days(739794));
+insert into r_todays_int2(a,b,c) values (739795, from_days(739795), from_days(739795));
+set time_zone='+08:00';
+select a,b,c from r_todays_int2 order by a,b,c;
+a,b,c
+739737,2025-05-01 00:00:00.0,2025-05-01
+739794,2025-06-27 00:00:00.0,2025-06-27
+739795,2025-06-28 00:00:00.0,2025-06-28
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_todays_int2 cleanup expired data;
+select a,b,c from r_todays_int2 order by a,b,c;
+a,b,c
+739737,2025-05-01 00:00:00.0,2025-05-01
+739794,2025-06-27 00:00:00.0,2025-06-27
+739795,2025-06-28 00:00:00.0,2025-06-28
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-28 00:00:00';
+alter table r_todays_int2 cleanup expired data;
+select a,b,c from r_todays_int2 order by a,b,c;
+a,b,c
+739794,2025-06-27 00:00:00.0,2025-06-27
+739795,2025-06-28 00:00:00.0,2025-06-28
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-29 00:00:00';
+alter table r_todays_int2 cleanup expired data;
+select a,b,c from r_todays_int2 order by a,b,c;
+a,b,c
+739795,2025-06-28 00:00:00.0,2025-06-28
+drop table r_todays_int2;
+####################################
+drop table if exists r_todays_int3;
+create table r_todays_int3
+(
+a int ,
+b datetime,
+c varchar(32),
+primary key(a)
+)
+partition by range(to_days(`b`))
+(
+partition p20250501 values less than(739737),
+partition p20250502 values less than(739738),
+partition p20250503 values less than(739739),
+partition p20250504 values less than(739740),
+partition p20250505 values less than(739741)
+);
+alter table r_todays_int3 modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='partition',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_todays_int3 cleanup expired data;
+select a,b,c from r_todays_int3 order by a,b,c;
+a,b,c
+delete from r_todays_int3 where 1=1;
+alter table r_todays_int3 modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='row',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+insert into r_todays_int3(a,b,c) values (739737, from_days(739737), from_days(739737));
+insert into r_todays_int3(a,b,c) values (739794, from_days(739794), from_days(739794));
+insert into r_todays_int3(a,b,c) values (739795, from_days(739795), from_days(739795));
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_todays_int3 cleanup expired data;
+select a,b,c from r_todays_int3 order by a,b,c;
+a,b,c
+739794,2025-06-27 00:00:00.0,2025-06-27
+739795,2025-06-28 00:00:00.0,2025-06-28
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-28 00:00:00';
+alter table r_todays_int3 cleanup expired data;
+select a,b,c from r_todays_int3 order by a,b,c;
+a,b,c
+739794,2025-06-27 00:00:00.0,2025-06-27
+739795,2025-06-28 00:00:00.0,2025-06-28
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-29 00:00:00';
+alter table r_todays_int3 cleanup expired data;
+select a,b,c from r_todays_int3 order by a,b,c;
+a,b,c
+739795,2025-06-28 00:00:00.0,2025-06-28
+drop table r_todays_int3;

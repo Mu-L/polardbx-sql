@@ -22,6 +22,7 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
+import com.alibaba.polardbx.optimizer.config.table.IndexColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.IndexMeta;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
@@ -87,9 +88,7 @@ public class OSSMergeIndexRule extends RelOptRule {
         if (ossTableScan.isColumnarIndex()) {
             return;
         }
-        RelNode plan = ossTableScan.getPushedRelNode();
-
-        plan = CBOUtil.OssTableScanFormat(plan);
+        RelNode plan = ossTableScan.getOrcNode().getNodeForMetaQuery();
 
         LogicalProject topProject = null;
         LogicalFilter filter = null;
@@ -124,7 +123,9 @@ public class OSSMergeIndexRule extends RelOptRule {
 
         // make sure baseRelNode project includes primary key
         RelNode baseRelNode = buildBaseNode(bottomProject, tableScan, tableMeta, allColumns, relBuilder);
-
+        if (baseRelNode == null) {
+            return;
+        }
         /**
          * get all columns with bloom filter
          */
@@ -372,13 +373,16 @@ public class OSSMergeIndexRule extends RelOptRule {
                                   TableMeta table,
                                   Map<ColumnMeta, Integer> allColumns,
                                   RelBuilder relBuilder) {
+        if (table.getPrimaryIndex() == null) {
+            return null;
+        }
         if (bottomProject != null) {
             Set<Integer> recordedColumns = bottomProject.getProjects().stream().filter(s -> s instanceof RexInputRef).
                 map(ref -> ((RexInputRef) ref).getIndex()).collect(Collectors.toSet());
 
             boolean missed = false;
-            for (ColumnMeta column : table.getPrimaryIndex().getKeyColumns()) {
-                if (!recordedColumns.contains(allColumns.get(column))) {
+            for (IndexColumnMeta column : table.getPrimaryIndex().getKeyColumnsExt()) {
+                if (!recordedColumns.contains(allColumns.get(column.getColumnMeta()))) {
                     missed = true;
                     break;
                 }
@@ -386,8 +390,8 @@ public class OSSMergeIndexRule extends RelOptRule {
             List<RexNode> projects = new ArrayList<>(bottomProject.getProjects());
             List<String> names = new ArrayList<>(bottomProject.getRowType().getFieldNames());
             if (missed) {
-                for (ColumnMeta column : table.getPrimaryIndex().getKeyColumns()) {
-                    int index = allColumns.get(column);
+                for (IndexColumnMeta column : table.getPrimaryIndex().getKeyColumnsExt()) {
+                    int index = allColumns.get(column.getColumnMeta());
                     if (!recordedColumns.contains(index)) {
                         projects.add(
                             new RexInputRef(index, tableScan.getRowType().getFieldList().get(index).getType()));

@@ -29,6 +29,7 @@ import com.alibaba.polardbx.optimizer.view.InformationSchemaScheduleJobs;
 import com.alibaba.polardbx.optimizer.view.VirtualView;
 
 import java.sql.Timestamp;
+import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
 import java.util.TimeZone;
@@ -62,23 +63,33 @@ public class InformationSchemaScheduleJobsHandler extends BaseVirtualViewSubClas
                 ScheduledJobsManager.getScheduledJobResult(scheduledJob.getScheduleId());
             ExecutableScheduledJob lastEJob = findLastJob(eJobList);
 
+            ZoneId zoneId = TimeZoneUtils.zoneIdOf(scheduledJob.getTimeZone());
             String lastFireTime =
                 TimeZoneUtils.convertToDateTimeWithMills(new Timestamp(scheduledJob.getLastFireTime() * 1000),
-                    TimeZone.getTimeZone(scheduledJob.getTimeZone()));
+                    TimeZone.getTimeZone(zoneId));
 
             String nextFireTime =
                 TimeZoneUtils.convertToDateTimeWithMills(new Timestamp(scheduledJob.getNextFireTime() * 1000),
-                    TimeZone.getTimeZone(scheduledJob.getTimeZone()));
+                    TimeZone.getTimeZone(zoneId));
 
             String lastJobStartTime = null;
             if (lastEJob != null) {
                 lastJobStartTime =
                     TimeZoneUtils.convertToDateTimeWithMills(new Timestamp(lastEJob.getStartTime() * 1000),
-                        TimeZone.getTimeZone(scheduledJob.getTimeZone()));
+                        TimeZone.getTimeZone(zoneId));
             }
+
+            String tableSchema = scheduledJob.getTableSchema();
+            String tableName = scheduledJob.getTableName();
+            String scheduleName = scheduledJob.getScheduleName();
+            String scheduleId = String.valueOf(scheduledJob.getScheduleId());
 
             cursor.addRow(new Object[] {
                 executorType.module().name(),
+                tableSchema,
+                tableName,
+                scheduleId,
+                scheduleName,
                 executorType.name(),
                 lastFireTime,
                 nextFireTime,

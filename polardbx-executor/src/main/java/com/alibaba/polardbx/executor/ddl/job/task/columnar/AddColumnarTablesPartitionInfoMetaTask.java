@@ -23,7 +23,6 @@ import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
 import com.alibaba.polardbx.gms.partition.TablePartitionAccessor;
 import com.alibaba.polardbx.gms.partition.TablePartitionConfig;
-import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupDetailConfig;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import lombok.Getter;
@@ -50,9 +49,6 @@ public class AddColumnarTablesPartitionInfoMetaTask extends BaseGmsTask {
 
     @Override
     public void executeImpl(Connection metaDbConnection, ExecutionContext executionContext) {
-        if (!isCreateTableSupported(executionContext)) {
-            return;
-        }
         TableMetaChanger.addPartitionInfoMeta(metaDbConnection, tableGroupConfig, executionContext, false);
 
         FailPoint.injectRandomExceptionFromHint(executionContext);
@@ -61,17 +57,9 @@ public class AddColumnarTablesPartitionInfoMetaTask extends BaseGmsTask {
 
     @Override
     public void rollbackImpl(Connection metaDbConnection, ExecutionContext executionContext) {
-        if (!isCreateTableSupported(executionContext)) {
-            return;
-        }
-
         TableMetaChanger.removePartitionInfoMeta(metaDbConnection, schemaName, logicalTableName);
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
-    }
-
-    private boolean isCreateTableSupported(ExecutionContext executionContext) {
-        return !(executionContext.isUseHint());
     }
 
     private TablePartitionConfig getTablePartitionConfig(String primaryTable, Connection metaDbConnection) {
@@ -80,5 +68,10 @@ public class AddColumnarTablesPartitionInfoMetaTask extends BaseGmsTask {
         TablePartitionConfig
             tablePartitionConfig = tablePartitionAccessor.getTablePartitionConfig(schemaName, primaryTable, false);
         return tablePartitionConfig;
+    }
+
+    @Override
+    protected String remark() {
+        return "|tableName: " + logicalTableName;
     }
 }

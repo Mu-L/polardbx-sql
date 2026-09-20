@@ -1,0 +1,19 @@
+test_table_a:
+  CREATE TABLE `test_key_tb` (
+  `id` int NOT NULL,
+  `age` int default 0,
+  `name` varchar(30) DEFAULT NULL,
+  `create_time` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`)
+  ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb3
+  PARTITION BY KEY(`id`)
+  PARTITIONS 32
+tcc_test:
+  CREATE TABLE `tcc_test` (
+  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '类目id',
+  `parent_category_id` bigint NOT NULL COMMENT '父级类目id',
+  `deleted_flag` tinyint NOT NULL DEFAULT '0' COMMENT '删除标志（0：正常、1：删除）',
+  PRIMARY KEY (`id`),
+  KEY `idx_parent_category_id` (`parent_category_id`)
+  ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_general_ci ROW_FORMAT = DYNAMIC
+  SINGLE

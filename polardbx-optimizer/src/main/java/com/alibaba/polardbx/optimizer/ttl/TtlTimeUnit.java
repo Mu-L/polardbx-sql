@@ -10,6 +10,7 @@ public enum TtlTimeUnit {
     UNDEFINED(-1, "UNDEFINED"),
     YEAR(0, "YEAR"),
     MONTH(1, "MONTH"),
+    WEEK(6, "WEEK"),
     DAY(2, "DAY"),
     HOUR(3, "HOUR"),
     MINUTE(4, "MINUTE"),
@@ -60,6 +61,8 @@ public enum TtlTimeUnit {
             return TtlTimeUnit.YEAR;
         case 1:
             return TtlTimeUnit.MONTH;
+        case 6:
+            return TtlTimeUnit.WEEK;
         case 2:
             return TtlTimeUnit.DAY;
         case 3:
@@ -84,6 +87,8 @@ public enum TtlTimeUnit {
             return TtlTimeUnit.YEAR;
         } else if (TtlTimeUnit.MONTH.getUnitName().equalsIgnoreCase(timeUnitName)) {
             return TtlTimeUnit.MONTH;
+        } else if (TtlTimeUnit.WEEK.getUnitName().equalsIgnoreCase(timeUnitName)) {
+            return TtlTimeUnit.WEEK;
         } else if (TtlTimeUnit.DAY.getUnitName().equalsIgnoreCase(timeUnitName)) {
             return TtlTimeUnit.DAY;
         } else if (TtlTimeUnit.HOUR.getUnitName().equalsIgnoreCase(timeUnitName)) {

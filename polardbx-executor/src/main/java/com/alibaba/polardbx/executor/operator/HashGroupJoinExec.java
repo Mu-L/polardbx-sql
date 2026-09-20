@@ -16,6 +16,12 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableObjectArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.bloomfilter.ConcurrentIntBloomFilter;
@@ -58,8 +64,9 @@ import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.util.Util;
+import org.openjdk.jol.info.ClassLayout;
+import org.roaringbitmap.RoaringBitmap;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
@@ -73,6 +80,12 @@ import static com.alibaba.polardbx.executor.utils.ExecUtils.checkJoinKeysNulSafe
  * @author hongxi.chx
  */
 public class HashGroupJoinExec extends AbstractJoinExec implements ConsumerExecutor {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(HashGroupJoinExec.class).instanceSize();
+    private static final int DEFAULT_GROUP_JOIN_PROBE_OPERATOR_INSTANCE_SIZE
+        = ClassLayout.parseClass(DefaultGroupJoinProbeOperator.class).instanceSize();
+
+    private static final int INT_GROUP_JOIN_PROBE_OPERATOR_INSTANCE_SIZE
+        = ClassLayout.parseClass(IntGroupJoinProbeOperator.class).instanceSize();
 
     private static final Logger logger = LoggerFactory.getLogger(HashGroupJoinExec.class);
 
@@ -86,15 +99,20 @@ public class HashGroupJoinExec extends AbstractJoinExec implements ConsumerExecu
     protected ConcurrentIntBloomFilter bloomFilter;
 
     private TypedBuffer groupKeyBuffer;
+
+    @FieldMemoryCounter(value = false)
     private final DataType[] aggValueType;
 
-    //agg
+    // shared
+    @FieldMemoryCounter(value = false)
     protected final int[] groups;
+    @FieldMemoryCounter(value = false)
     protected final List<Aggregator> aggregators;
-    private List<Chunk> valueChunks;
+    private MemoryCountableObjectArrayList<Chunk> valueChunks;
 
     private final BlockBuilder[] valueBlockBuilders;
 
+    @FieldMemoryCounter(value = false)
     private ChunkConverter[] valueConverters;
 
     protected Accumulator[] valueAccumulators;
@@ -110,7 +128,9 @@ public class HashGroupJoinExec extends AbstractJoinExec implements ConsumerExecu
     private ChunksIndex outerChunks;
     private ChunksIndex outKeyChunks;
 
+    @FieldMemoryCounter(value = false)
     private MemoryPool memoryPool;
+    @FieldMemoryCounter(value = false)
     private MemoryAllocatorCtx memoryAllocator;
 
     private boolean passNothing;
@@ -120,11 +140,57 @@ public class HashGroupJoinExec extends AbstractJoinExec implements ConsumerExecu
     private Chunk[] inputAggregatorInputs;
 
     private boolean isFinished = false;
+
+    @FieldMemoryCounter(value = false)
     private ListenableFuture<?> blocked = ProducerExecutor.NOT_BLOCKED;
 
+    @FieldMemoryCounter(value = false)
     private List<DataType> outputRelDataTypes;
 
     private GroupJoinProbeOperator probeOperator;
+
+    @FieldMemoryCounter(value = false)
+    private RoaringBitmap objectBitmap;
+
+    @Override
+    public long getMemoryUsage() {
+        if (objectBitmap == null) {
+            objectBitmap = new RoaringBitmap();
+        }
+
+        try {
+            MemoryTrackerManager.setCurrentRoaringBitmap(objectBitmap);
+
+            return INSTANCE_SIZE
+                + FastMemoryCounter.sizeOf(hashTable)
+                + FastMemoryCounter.sizeOf(positionLinks)
+                + FastMemoryCounter.sizeOf(bloomFilter)
+                + FastMemoryCounter.sizeOf(groupKeyBuffer)
+                + FastMemoryCounter.sizeOf(valueChunks)
+                + FastMemoryCounter.sizeOf(valueBlockBuilders)
+                + FastMemoryCounter.sizeOf(valueAccumulators)
+                + FastMemoryCounter.sizeOf(distinctSets)
+                + FastMemoryCounter.sizeOf(resultIterator)
+                + FastMemoryCounter.sizeOf(nullChunk)
+                + FastMemoryCounter.sizeOf(outerChunks)
+                + FastMemoryCounter.sizeOf(outKeyChunks)
+                + FastMemoryCounter.sizeOf(keys)
+                + FastMemoryCounter.sizeOf(usedKeys)
+                + FastMemoryCounter.sizeOf(inputAggregatorInputs)
+                + FastMemoryCounter.sizeOf(probeOperator)
+
+                // from AbstractJoinExec
+                + FastMemoryCounter.sizeOf(ignoreNullBlocks)
+                + FastMemoryCounter.sizeOf(innerKeyMapping)
+
+                // from AbstractExecutor
+                + FastMemoryCounter.sizeOf(blockBuilders)
+                + FastMemoryCounter.sizeOf(executorName);
+        } finally {
+            MemoryTrackerManager.removeCurrentRoaringBitmap();
+            objectBitmap.clear();
+        }
+    }
 
     public HashGroupJoinExec(Executor outerInput,
                              Executor innerInput,
@@ -169,7 +235,7 @@ public class HashGroupJoinExec extends AbstractJoinExec implements ConsumerExecu
             final Aggregator aggregator = aggregators.get(i);
             this.valueAccumulators[i] =
                 AccumulatorBuilders
-                    .create(aggregator, aggValueType[i], aggInputType, expectedOutputRowCount, this.context);
+                    .create(aggregator, aggValueType[i], aggInputType, expectedOutputRowCount, this.context, null);
 
             DataType[] originalInputTypes = DataTypeUtils.gather(aggInputType, aggregator.getInputColumnIndexes());
             DataType[] accumulatorInputTypes = Util.first(valueAccumulators[i].getInputTypes(), originalInputTypes);
@@ -181,7 +247,7 @@ public class HashGroupJoinExec extends AbstractJoinExec implements ConsumerExecu
                 int[] distinctIndexes = aggregator.getNewForAccumulator().getAggTargetIndexes();
                 this.distinctSets[i] =
                     new DistinctSet(accumulatorInputTypes, distinctIndexes, expectedOutputRowCount, chunkLimit,
-                        context);
+                        context, null, false);
             }
         }
         this.valueBlockBuilders = new BlockBuilder[aggregators.size()];
@@ -236,6 +302,19 @@ public class HashGroupJoinExec extends AbstractJoinExec implements ConsumerExecu
             this.probeOperator = new DefaultGroupJoinProbeOperator();
         }
 
+    }
+
+    @FieldMemoryCounter(value = false)
+    protected OperatorMemoryOwnerId consumerMemoryOwnerId;
+
+    @Override
+    public void setConsumerOperatorMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        this.consumerMemoryOwnerId = operatorMemoryOwnerId;
+    }
+
+    @Override
+    public OperatorMemoryOwnerId getConsumerMemoryOwnerId() {
+        return consumerMemoryOwnerId;
     }
 
     @Override
@@ -380,7 +459,9 @@ public class HashGroupJoinExec extends AbstractJoinExec implements ConsumerExecu
             boolean inputIsFinished = false;
             if (inputChunk != null) {
                 for (int i = 0; i < aggregators.size(); i++) {
-                    inputAggregatorInputs[i] = valueConverters[i].apply(inputChunk);
+                    Chunk convertedChunk = valueConverters[i].apply(inputChunk);
+                    convertedChunk.setBlockRefIndexes(null);
+                    inputAggregatorInputs[i] = convertedChunk;
                 }
                 // Process outer rows in this input chunk
                 probeOperator.calcJoinAgg(inputChunk);
@@ -434,8 +515,8 @@ public class HashGroupJoinExec extends AbstractJoinExec implements ConsumerExecu
         return new HashAggResultIterator(groupChunks, valueChunks);
     }
 
-    private List<Chunk> buildValueChunks() {
-        List<Chunk> chunks = new ArrayList<>();
+    private MemoryCountableObjectArrayList<Chunk> buildValueChunks() {
+        MemoryCountableObjectArrayList<Chunk> chunks = new MemoryCountableObjectArrayList<>();
         switch (joinType) {
         case INNER: //for Inner , the groupId is grow from zero
             int offset = 0;
@@ -536,13 +617,18 @@ public class HashGroupJoinExec extends AbstractJoinExec implements ConsumerExecu
         return innerKeyChunkGetter;
     }
 
-    interface GroupJoinProbeOperator {
+    interface GroupJoinProbeOperator extends MemoryCountable {
         void calcJoinAgg(Chunk inputChunk);
 
         void handleNull();
     }
 
     class DefaultGroupJoinProbeOperator implements GroupJoinProbeOperator {
+
+        @Override
+        public long getMemoryUsage() {
+            return DEFAULT_GROUP_JOIN_PROBE_OPERATOR_INSTANCE_SIZE;
+        }
 
         @Override
         public void calcJoinAgg(Chunk inputChunk) {
@@ -683,6 +769,18 @@ public class HashGroupJoinExec extends AbstractJoinExec implements ConsumerExecu
         // for GroupKeyBuffer append
         protected int groupKeyBufferArrayIndex = 0;
         protected int[] groupKeyBufferArray = new int[chunkLimit];
+
+        @Override
+        public long getMemoryUsage() {
+            return INT_GROUP_JOIN_PROBE_OPERATOR_INSTANCE_SIZE
+                + FastMemoryCounter.sizeOf(sourceArray)
+                + FastMemoryCounter.sizeOf(matchedPositions)
+                + FastMemoryCounter.sizeOf(probePositions)
+                + FastMemoryCounter.sizeOf(nullBitmap)
+                + FastMemoryCounter.sizeOf(probeKeyHashCode)
+                + FastMemoryCounter.sizeOf(groupIds)
+                + FastMemoryCounter.sizeOf(groupKeyBufferArray);
+        }
 
         @Override
         public void calcJoinAgg(Chunk inputChunk) {

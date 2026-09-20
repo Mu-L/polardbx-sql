@@ -21,8 +21,11 @@ import com.alibaba.polardbx.common.eventlogger.EventLogger;
 import com.alibaba.polardbx.common.eventlogger.EventType;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.jdbc.BytesSql;
 import com.alibaba.polardbx.common.jdbc.IConnection;
 import com.alibaba.polardbx.common.jdbc.IDataSource;
+import com.alibaba.polardbx.common.jdbc.MasterSlave;
+import com.alibaba.polardbx.common.oss.blob.BlobWriteTracker;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
@@ -33,12 +36,15 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.thread.LockUtils;
 import com.alibaba.polardbx.druid.sql.ast.SqlType;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
+import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.server.IServerConfigManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.context.ReturningFlagForCdc;
 import com.alibaba.polardbx.optimizer.utils.FailureInjectionFlag;
 import com.alibaba.polardbx.optimizer.utils.GroupConnId;
 import com.alibaba.polardbx.optimizer.utils.IDistributedTransaction;
+import com.alibaba.polardbx.rpc.pool.XConnection;
 import com.alibaba.polardbx.stats.CurrentTransactionStatistics;
 import com.alibaba.polardbx.stats.TransactionStatistics;
 import com.alibaba.polardbx.transaction.TransactionLogger;
@@ -54,6 +60,7 @@ import org.apache.commons.lang3.StringUtils;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -72,9 +79,11 @@ import java.util.concurrent.locks.StampedLock;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
+import static com.alibaba.polardbx.common.exception.code.ErrorCode.ERR_CROSS_GROUP_TRANSACTION;
 import static com.alibaba.polardbx.common.exception.code.ErrorCode.ERR_GLOBAL_SECONDARY_INDEX_CONTINUE_AFTER_WRITE_FAIL;
 import static com.alibaba.polardbx.common.exception.code.ErrorCode.ERR_TRANS_CONTINUE_AFTER_WRITE_FAIL;
 import static com.alibaba.polardbx.common.exception.code.ErrorCode.ERR_TRANS_ROLLBACK_STATEMENT_FAIL;
+import static com.alibaba.polardbx.common.exception.code.ErrorCode.ERR_WRITE_FOR_READ_ONLY_DN;
 import static com.alibaba.polardbx.transaction.jdbc.DeferredConnection.INVALID_AUTO_SAVEPOINT;
 
 /**
@@ -86,57 +95,47 @@ import static com.alibaba.polardbx.transaction.jdbc.DeferredConnection.INVALID_A
 public abstract class AbstractTransaction extends BaseTransaction implements IDistributedTransaction {
 
     private final static Logger logger = LoggerFactory.getLogger(AbstractTransaction.class);
-
+    // Only rollback statement when the following errors occur.
+    private static final List<Pattern> canRollbackStatementErrors = ImmutableList.of(
+        Pattern.compile(".*Lock wait timeout exceeded; try restarting transaction.*", Pattern.DOTALL),
+        Pattern.compile(".*Duplicate entry.*", Pattern.DOTALL),
+        Pattern.compile(".*Data too long for column.*", Pattern.DOTALL),
+        Pattern.compile(".*Out of range value for column.*", Pattern.DOTALL),
+        Pattern.compile(".*\\[TDDL-4602]\\[ERR_CONVERTOR].*", Pattern.DOTALL),
+        Pattern.compile(".*Incorrect datetime value.*", Pattern.DOTALL),
+        Pattern.compile(".*Incorrect time value.*", Pattern.DOTALL),
+        Pattern.compile(".*Data truncated for column.*", Pattern.DOTALL),
+        Pattern.compile(".*doesn't have a default value.*", Pattern.DOTALL),
+        Pattern.compile(".*Cannot delete or update a parent row: a foreign key constraint fails.*", Pattern.DOTALL),
+        Pattern.compile(".*Option SET_DEFAULT.*", Pattern.DOTALL),
+        Pattern.compile(".*Column .* cannot be null.*", Pattern.DOTALL),
+        Pattern.compile(".*Transaction cross group is not supported in current transaction policy.*", Pattern.DOTALL)
+    );
     protected final TransactionConnectionHolder connectionHolder;
     protected final Map<String, IDataSource> dataSourceCache = new HashMap<>();
     protected final List<String> savepoints = new ArrayList<>();
-
+    protected final GlobalTxLogManager globalTxLogManager;
+    // Max trx duration, in seconds.
+    private final long maxTime;
     /**
      * 事务是否跨库
      */
     protected boolean isCrossGroup = false;
-
     /**
      * 事务的主库
      */
     protected String primaryGroup = null;
-
     protected long primaryGroupUid;
-    protected IConnection primaryConnection = null;
+    protected TransactionConnectionHolder.HeldConnection primaryHeldConn = null;
     protected GroupConnId primaryGrpConnId = null;
     protected ConnectionContext connectionContext = null;
-
     protected String primarySchema = null;
     protected Set<String> otherSchemas = new HashSet<>();
-
-    protected final GlobalTxLogManager globalTxLogManager;
-
     protected boolean disabled = false;
-
     protected FailureInjectionFlag failureFlag = FailureInjectionFlag.EMPTY;
-
     protected volatile boolean prepared = false;
-
     protected volatile State state = State.RUNNING;
-
-    // Max trx duration, in seconds.
-    private final long maxTime;
-
-    // Only rollback statement when the following errors occur.
-    private static final List<Pattern> canRollbackStatementErrors = ImmutableList.of(
-        Pattern.compile(".*Lock wait timeout exceeded; try restarting transaction.*"),
-        Pattern.compile(".*Duplicate entry.*"),
-        Pattern.compile(".*Data too long for column.*"),
-        Pattern.compile(".*Out of range value for column.*"),
-        Pattern.compile(".*\\[TDDL-4602]\\[ERR_CONVERTOR].*"),
-        Pattern.compile(".*Incorrect datetime value.*"),
-        Pattern.compile(".*Incorrect time value.*"),
-        Pattern.compile(".*Data truncated for column.*"),
-        Pattern.compile(".*doesn't have a default value.*"),
-        Pattern.compile(".*Cannot delete or update a parent row: a foreign key constraint fails.*"),
-        Pattern.compile(".*Option SET_DEFAULT.*"),
-        Pattern.compile(".*Column .* cannot be null.*")
-    );
+    private volatile BlobWriteTracker blobWriteTracker;
 
     public AbstractTransaction(ExecutionContext executionContext, TransactionManager manager) {
         super(executionContext, manager);
@@ -229,38 +228,50 @@ public abstract class AbstractTransaction extends BaseTransaction implements IDi
                 recordRwTransaction();
             }
 
-            IConnection conn = connectionHolder.getConnection(schema, group, grpConnId, ds, rw);
-            GroupConnId newGrpConnId = new GroupConnId(group, grpConnId);
+            if (ec.isForbiddenCrossGroupWriteForExplicitTrx()
+                && rw.equals(RW.WRITE)
+                && !group.equals(primaryGroup)) {
+                setCrucialError(ErrorCode.ERR_CROSS_GROUP_TRANSACTION, "Transaction cross group is forbidden.");
+                throw new TddlRuntimeException(ErrorCode.ERR_CROSS_GROUP_TRANSACTION, primaryGroup, group);
+            }
+
+            checkReadonlyDnList(rw, ec, ds);
+
+            // Put dataSource into cache before getConnection to ensure consistency with primaryGroup.
+            // If getConnection fails after primaryGroup is set, dataSourceCache still has the entry.
             dataSourceCache.put(group, ds);
+            TransactionConnectionHolder.HeldConnection
+                heldConnection = connectionHolder.getConnection(schema, group, grpConnId, ds, rw);
+            GroupConnId newGrpConnId = new GroupConnId(group, grpConnId);
 
             if (requirePrimaryGroup) {
                 if (!isCrossGroup) {
-                    if (primaryConnection == null) {
-                        primaryConnection = conn;
+                    if (primaryHeldConn == null) {
+                        primaryHeldConn = heldConnection;
                         primaryGrpConnId = newGrpConnId;
                     } else if (!checkIfCrossGroup(newGrpConnId)) {
-                        if (inventoryMode != null && inventoryMode.isInventoryHint()) {
-                            inventoryMode.resetInventoryMode();
-                            throw new TddlRuntimeException(ErrorCode.ERR_IVENTORY_HINT_NOT_SUPPORT_CROSS_SHARD,
-                                "Inventory hint is not allowed when the transaction involves more than one group!");
-                        }
+                        checkInventory();
                         beginCrossGroup();
                     }
                 } else {
-                    if (inventoryMode != null && inventoryMode.isInventoryHint()) {
-                        inventoryMode.resetInventoryMode();
-                        throw new TddlRuntimeException(ErrorCode.ERR_IVENTORY_HINT_NOT_SUPPORT_CROSS_SHARD,
-                            "Inventory hint is not allowed when the transaction involves more than one group!");
-                    }
+                    checkInventory();
                     if (!primarySchema.equals(schema)) {
                         otherSchemas.add(schema);
                     }
                 }
             }
 
-            return conn;
+            return heldConnection.getRawConnection();
         } finally {
             lock.unlock();
+        }
+    }
+
+    private void checkInventory() {
+        if (inventoryMode != null && inventoryMode.isInventoryHint()) {
+            inventoryMode.resetInventoryMode();
+            throw new TddlRuntimeException(ErrorCode.ERR_IVENTORY_HINT_NOT_SUPPORT_CROSS_SHARD,
+                "Inventory hint is not allowed when the transaction involves more than one group!");
         }
     }
 
@@ -311,16 +322,62 @@ public abstract class AbstractTransaction extends BaseTransaction implements IDi
         }
     }
 
-    public void beginNonParticipant(String group, IConnection conn) throws SQLException {
+    protected byte[] getTraceHintBytes() {
+        return DynamicConfig.getInstance().isenableDrdsTraceForXa() ?
+            ExecUtils.buildDRDSTraceCommentBytes(clientIp, traceId, "", 0L, ReturningFlagForCdc.NO_SPECIAL) : null;
+    }
+
+    protected String getTraceHintString() {
+        return DynamicConfig.getInstance().isenableDrdsTraceForXa() ?
+            ExecUtils.buildDRDSTraceComment(clientIp, traceId, "", 0L, ReturningFlagForCdc.NO_SPECIAL) : "";
+    }
+
+    /**
+     * Always defer begin statement.
+     */
+    protected void begin(IConnection conn) throws SQLException {
+        if (conn.isWrapperFor(XConnection.class)) {
+            // X
+            conn.flushUnsent();
+            final XConnection xConnection = conn.unwrap(XConnection.class);
+            xConnection.execUpdate(BytesSql.getBytesSql("BEGIN"), getTraceHintBytes(), null, true);
+        } else {
+            // JDBC
+            conn.executeLater("BEGIN");
+        }
+    }
+
+    protected void rollback(IConnection conn, boolean deferred) throws SQLException {
+        if (conn.isWrapperFor(XConnection.class)) {
+            // X
+            conn.flushUnsent();
+            XConnection xConnection = conn.unwrap(XConnection.class);
+            byte[] hint = getTraceHintBytes();
+            xConnection.execUpdate(BytesSql.getBytesSql("ROLLBACK"), hint, null, deferred);
+        } else {
+            // JDBC
+            if (deferred) {
+                conn.executeLater("ROLLBACK");
+            } else {
+                String hint = getTraceHintString();
+                String sql = hint + "ROLLBACK";
+                try (Statement stmt = conn.createStatement()) {
+                    stmt.execute(sql);
+                }
+            }
+        }
+    }
+
+    public void beginNonParticipant(String schema, String group, IConnection conn, MasterSlave masterSlave)
+        throws SQLException {
         // Compatible with MaxScale. MaxScale will send START TRANSACTION READ ONLY to RO,
         // then send ROLLBACK;INSERT... to RW because they cannot handle multi statement correctly.
-        conn.executeLater("BEGIN");
-        // conn.executeLater("START TRANSACTION READ ONLY");
+        begin(conn);
     }
 
     public void rollbackNonParticipant(String group, IConnection conn) {
         try {
-            conn.executeLater("ROLLBACK");
+            rollback(conn, true);
         } catch (Throwable e) {
             logger.error("Rollback non-participant group failed on " + group, e);
             conn.discard(e);
@@ -329,9 +386,10 @@ public abstract class AbstractTransaction extends BaseTransaction implements IDi
 
     protected void rollbackNonParticipantSync(String group, IConnection conn) {
         try {
-            conn.forceRollback();
+            rollback(conn, false);
         } catch (Throwable e) {
             logger.error("Rollback non-participant group failed on " + group, e);
+            conn.discard(e);
         }
     }
 
@@ -410,7 +468,7 @@ public abstract class AbstractTransaction extends BaseTransaction implements IDi
         lock.lock();
         try {
             if (isUnderCommitting()) {
-                TransactionLogger.info(id, "[TSO][Async Commit] Kill trx failed since it is committing");
+                TransactionLogger.info(id, "Kill trx failed since it is committing");
                 return;
             }
 
@@ -469,6 +527,10 @@ public abstract class AbstractTransaction extends BaseTransaction implements IDi
             } catch (Throwable t) {
                 logger.error("Close connections failed.", t);
             }
+
+            // Resources fenced by a distributed branch may only be released after all physical
+            // connections have reached their terminal cleanup path.
+            runCloseHooks();
         } finally {
             lock.unlock();
         }
@@ -567,6 +629,10 @@ public abstract class AbstractTransaction extends BaseTransaction implements IDi
 
     public abstract void begin(String schema, String group, IConnection conn) throws SQLException;
 
+    public void beginShareReadToWrite(String schema, String group, IConnection conn) throws SQLException {
+        // Do nothing by default.
+    }
+
     protected abstract void cleanup(String group, IConnection conn) throws SQLException;
 
     public void reinitializeConnection(String schema, String group, IConnection conn) throws SQLException {
@@ -595,10 +661,6 @@ public abstract class AbstractTransaction extends BaseTransaction implements IDi
     protected final void forEachHeldConnection(TransactionConnectionHolder.Action action) {
         final AsyncTaskQueue asyncQueue = getManager().getTransactionExecutor().getAsyncQueue();
         connectionHolder.forEachConnection(asyncQueue, action);
-    }
-
-    protected enum TransactionCommitState {
-        SUCCESS, FAILURE, UNKNOWN
     }
 
     protected final void beforePrimaryCommit() throws SQLException {
@@ -702,7 +764,36 @@ public abstract class AbstractTransaction extends BaseTransaction implements IDi
     }
 
     @Override
-    public boolean handleStatementError(Throwable t) {
+    public void clearAsOfCrossDdl() {
+        try {
+            AtomicReference<Throwable> error = new AtomicReference<>(null);
+            forEachHeldConnection(new TransactionConnectionHolder.Action() {
+                @Override
+                public boolean condition(TransactionConnectionHolder.HeldConnection heldConn) {
+                    // For all connections.
+                    return true;
+                }
+
+                @Override
+                public void execute(TransactionConnectionHolder.HeldConnection heldConn) {
+                    try {
+                        heldConn.getRawConnection().disableAsOfCrossDdl();
+                    } catch (Throwable t) {
+                        error.set(t);
+                    }
+                }
+            });
+            if (null != error.get()) {
+                throw error.get();
+            }
+        } catch (Throwable t) {
+            // For safety, prevent trx from continuing.
+            setCrucialError(ErrorCode.ERR_FLASHBACK_AREA, t.getMessage());
+        }
+    }
+
+    @Override
+    public boolean handleStatementError(Throwable t, String traceId) {
         lock.lock();
         try {
             if (this.isClosed()) {
@@ -725,9 +816,7 @@ public abstract class AbstractTransaction extends BaseTransaction implements IDi
 
             final ExecutionContext ec = this.getExecutionContext();
             // The trace id of the current failed statement.
-            final String traceId = ec.getTraceId();
-
-            final boolean rollbackStatement = shouldRollbackStatement(t);
+            final boolean rollbackStatement = shouldRollbackStatement(t, ec);
             final ConcurrentLinkedDeque<String> errorList = new ConcurrentLinkedDeque<>();
 
             final AtomicBoolean invalid = new AtomicBoolean(false);
@@ -831,7 +920,18 @@ public abstract class AbstractTransaction extends BaseTransaction implements IDi
         }
     }
 
-    protected boolean shouldRollbackStatement(Throwable t) {
+    protected boolean shouldRollbackStatement(Throwable t, ExecutionContext ec) {
+        /*
+         * Select for update may cause ERR_CROSS_GROUP_TRANSACTION,
+         * but no save points are set. We still perform statement-rollback to
+         * remove the crucial error, and let later sql can be executed.
+         */
+        if (this.getCrucialError() == ERR_CROSS_GROUP_TRANSACTION) {
+            return !ec.isForbidTrxContinueAfterCrossGroup();
+        }
+        if (this.getCrucialError() == ERR_WRITE_FOR_READ_ONLY_DN) {
+            return !ec.isForbidTrxContinueAfterWriteReadonly();
+        }
         /* Rollback statement when:
          * 1. the current statement is a DML;
          * 2. and it fails when it is executing in multi-shards.
@@ -850,7 +950,7 @@ public abstract class AbstractTransaction extends BaseTransaction implements IDi
     }
 
     @Override
-    public void releaseAutoSavepoint() {
+    public void releaseAutoSavepoint(String traceId) {
         lock.lock();
         try {
             if (this.isClosed() || !this.connectionHolder.isSupportAutoSavepoint()) {
@@ -864,9 +964,7 @@ public abstract class AbstractTransaction extends BaseTransaction implements IDi
 
             final List<String> errorList = new ArrayList<>();
 
-            final ExecutionContext ec = this.getExecutionContext();
             // The trace id of the current statement.
-            final String traceId = ec.getTraceId();
 
             boolean invalid = false;
             boolean setSavepoint = false;
@@ -902,7 +1000,7 @@ public abstract class AbstractTransaction extends BaseTransaction implements IDi
 
                 // Release savepoint.
                 try {
-                    deferredConn.releaseAutoSavepoint(traceId, ec.getSchemaName(), true);
+                    deferredConn.releaseAutoSavepoint(traceId, this.primarySchema, true);
                 } catch (Throwable e) {
                     errorList.add(e.getMessage());
                 } finally {
@@ -930,6 +1028,10 @@ public abstract class AbstractTransaction extends BaseTransaction implements IDi
         } finally {
             lock.unlock();
         }
+    }
+
+    protected enum TransactionCommitState {
+        SUCCESS, FAILURE, UNKNOWN
     }
 
     public void releaseDirtyReadConnections(Consumer<TransactionConnectionHolder.HeldConnection> rollback) {
@@ -984,5 +1086,24 @@ public abstract class AbstractTransaction extends BaseTransaction implements IDi
                     "Unexpected trx conn type: " + heldConn.getParticipated());
             }
         });
+    }
+
+    @Override
+    public BlobWriteTracker getBlobWriteTracker() {
+        BlobWriteTracker tracker = blobWriteTracker;
+        if (tracker == null) {
+            synchronized (this) {
+                tracker = blobWriteTracker;
+                if (tracker == null) {
+                    tracker = new BlobWriteTracker();
+                    blobWriteTracker = tracker;
+                }
+            }
+        }
+        return tracker;
+    }
+
+    public BlobWriteTracker getBlobWriteTrackerOrNull() {
+        return blobWriteTracker;
     }
 }

@@ -46,4 +46,8 @@ public interface SQLStatement extends SQLObject, SQLDbTypedObject {
     SqlType getSqlType();
 
     Boolean getAsync();
+
+    String getPerfMode();
+
+    Boolean getDryrun();
 }

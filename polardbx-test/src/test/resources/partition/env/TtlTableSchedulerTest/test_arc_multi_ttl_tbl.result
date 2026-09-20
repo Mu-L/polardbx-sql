@@ -1,0 +1,90 @@
+## DISABLE_FAST_SQL_PARSER
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00'
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false
+use polardbx
+drop database if exists test_multi_arc_tbl_db1
+create database if not exists test_multi_arc_tbl_db1 mode='auto'
+use test_multi_arc_tbl_db1
+create tablegroup if not exists ttl_tbl_tg1
+create tablegroup if not exists ttl_tbl_tg2
+## create table
+drop table if exists ttl_rng_t1
+create table ttl_rng_t1(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by range columns(`b`)
+(
+partition p0 values less than ('1970-01-01'),
+partition p1 values less than ('1970-02-01'),
+partition p2 values less than ('1970-03-01')
+)
+tablegroup=ttl_tbl_tg1
+drop table if exists ttl_rng_t2
+create table ttl_rng_t2(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by range columns(`b`)
+(
+partition p0 values less than ('1970-01-01'),
+partition p1 values less than ('1970-02-02'),
+partition p2 values less than ('1970-03-01')
+)
+tablegroup=ttl_tbl_tg2
+alter table ttl_rng_t1
+modify ttl
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_job = cron '0 */1 * * * ? *' timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='partition',
+archive_table_pre_allocate=2,
+archive_table_post_allocate=4
+alter table ttl_rng_t2
+modify ttl
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_job = cron '0 */1 * * * ? *' timezone '+08:00',
+ttl_part_interval = interval(1,day),
+archive_type='partition',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 4
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00'
+/*+TDDL:cmd_extra(ENABLE_ASYNC_DDL=true, PURE_ASYNC_DDL_MODE=true, FP_TTL_JOB_SUSPEND_TIME_ON_CREATE_ARC_CCI=10000)*/create table ttl_rng_t1_arc like ttl_rng_t1 engine=columnar archive_mode='ttl'
+/*+TDDL:cmd_extra(ENABLE_ASYNC_DDL=true, PURE_ASYNC_DDL_MODE=true, FP_TTL_JOB_SUSPEND_TIME_ON_CREATE_ARC_CCI=10000)*/create table ttl_rng_t2_arc like ttl_rng_t2 engine=columnar archive_mode='ttl'
+select sleep(30)
+sleep(30)
+0
+select table_schema,table_name, arc_tbl_schema, arc_tbl_name  from metadb.ttl_info where table_schema='test_multi_arc_tbl_db1' and table_name='ttl_rng_t1'
+table_schema,table_name,arc_tbl_schema,arc_tbl_name
+test_multi_arc_tbl_db1,ttl_rng_t1,test_multi_arc_tbl_db1,ttl_rng_t1_arc
+select table_schema,table_name, arc_tbl_schema, arc_tbl_name  from metadb.ttl_info where table_schema='test_multi_arc_tbl_db1' and table_name='ttl_rng_t2'
+table_schema,table_name,arc_tbl_schema,arc_tbl_name
+test_multi_arc_tbl_db1,ttl_rng_t2,test_multi_arc_tbl_db1,ttl_rng_t2_arc
+## error_msg: $# FP_TTL_JOB_FAILED_ON_PREPARE_CURR_DATETIME #$
+/*+TDDL:CMD_EXTRA(FP_TTL_JOB_FAILED_ON_PREPARE_CURR_DATETIME=true)*/alter table `ttl_rng_t1` cleanup expired data
+FP_TTL_JOB_FAILED_ON_PREPARE_CURR_DATETIME
+## error_msg: $# FP_TTL_JOB_FAILED_ON_PREPARE_CLEANUP_INTERVAL #$
+/*+TDDL:CMD_EXTRA(FP_TTL_JOB_FAILED_ON_PREPARE_CLEANUP_INTERVAL=true)*/alter table `ttl_rng_t1` cleanup expired data
+## error_msg: $# FP_TTL_JOB_FAILED_ON_ADD_ARC_CCI_PART #$
+/*+TDDL:CMD_EXTRA(FP_TTL_JOB_FAILED_ON_ADD_ARC_CCI_PART=true)*/alter table `ttl_rng_t1` cleanup expired data
+FP_TTL_JOB_FAILED_ON_ADD_ARC_CCI_PART
+## error_msg: $# FP_TTL_JOB_FAILED_ON_ADD_PRIM_PART #$
+/*+TDDL:CMD_EXTRA(FP_TTL_JOB_FAILED_ON_ADD_PRIM_PART=true)*/alter table `ttl_rng_t1` cleanup expired data
+FP_TTL_JOB_FAILED_ON_ADD_PRIM_PART
+## error_msg: $# FP_TTL_JOB_FAILED_ON_LOG_TASK #$
+/*+TDDL:CMD_EXTRA(FP_TTL_JOB_FAILED_ON_LOG_TASK=true)*/alter table `ttl_rng_t1` cleanup expired data
+FP_TTL_JOB_FAILED_ON_LOG_TASK
+drop table if exists ttl_rng_t1
+drop table if exists ttl_rng_t2
+use polardbx
+drop database if exists test_multi_arc_tbl_db1
+use polardbx;

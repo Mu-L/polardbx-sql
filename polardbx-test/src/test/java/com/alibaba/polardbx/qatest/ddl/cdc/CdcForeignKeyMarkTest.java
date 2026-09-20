@@ -19,6 +19,7 @@ public class CdcForeignKeyMarkTest extends CdcBaseTest {
 
     @Test
     public void testForeignKeys() throws SQLException {
+        setVariable("collation_server", "utf8mb4_general_ci", tddlConnection);
         String dbName = "cdc_fk_test";
         JdbcUtil.executeUpdate(tddlConnection, "drop database if exists " + dbName);
         JdbcUtil.executeUpdate(tddlConnection, "create database " + dbName);
@@ -32,6 +33,7 @@ public class CdcForeignKeyMarkTest extends CdcBaseTest {
 
     @Test
     public void testForeignKeysWithCci() throws SQLException {
+        setVariable("collation_server", "utf8mb4_general_ci", tddlConnection);
         String dbName = "cdc_fk_test_auto";
         JdbcUtil.executeUpdate(tddlConnection, "drop database if exists " + dbName);
         JdbcUtil.executeUpdate(tddlConnection, "create database " + dbName + " mode = auto");

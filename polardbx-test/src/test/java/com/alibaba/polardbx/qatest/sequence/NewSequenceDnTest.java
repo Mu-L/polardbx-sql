@@ -16,10 +16,10 @@
 
 package com.alibaba.polardbx.qatest.sequence;
 
-import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.qatest.BaseSequenceTestCase;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -220,21 +220,17 @@ public class NewSequenceDnTest extends BaseSequenceTestCase {
     }
 
     private void checkValue(String sql, long expectedValue) throws Exception {
-        boolean matched = false;
         sql = String.format(sql, seqName);
         try (Statement stmt = metaDbConn.createStatement();
             ResultSet rs = stmt.executeQuery(sql)) {
             if (rs.next()) {
                 long value = rs.getLong(1);
-                matched = value == expectedValue;
+                Assert.assertEquals(value, expectedValue);
             }
         }
-        Assert.assertTrue(matched);
     }
 
     private void checkNextval(int count, long[] expectedValues) throws Exception {
-        boolean matched = true;
-
         long startValue = 0;
         String sql = String.format(SELECT_NEXTVAL_BATCH, seqName, count);
         try (Statement stmt = metaDbConn.createStatement();
@@ -245,10 +241,9 @@ public class NewSequenceDnTest extends BaseSequenceTestCase {
         }
 
         for (int i = 0; i < count; i++) {
-            matched &= startValue++ == expectedValues[i];
+            Assert.assertEquals(startValue, expectedValues[i]);
+            startValue++;
         }
-
-        Assert.assertTrue(matched);
     }
 
     private long[] genExpectedValues(long base, int count) {

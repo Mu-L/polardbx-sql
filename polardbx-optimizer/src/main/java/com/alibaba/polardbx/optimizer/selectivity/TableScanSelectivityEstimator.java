@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.optimizer.selectivity;
 
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.meta.DrdsRelMdSelectivity;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
@@ -25,9 +26,9 @@ import com.alibaba.polardbx.optimizer.config.table.statistic.StatisticManager;
 import com.alibaba.polardbx.optimizer.config.table.statistic.StatisticResult;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
-import com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertUtil;
 import com.alibaba.polardbx.optimizer.utils.DrdsRexFolder;
 import com.google.common.collect.Lists;
+import io.airlift.slice.Slice;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.metadata.RelMdUtil;
@@ -246,7 +247,7 @@ public class TableScanSelectivityEstimator extends AbstractSelectivityEstimator 
                         if (result == null) {
                             result = count;
                         } else {
-                            result = (long) (result * count / tableRowCount);
+                            result = (long) (result * ((double) count / tableRowCount));
                         }
                         toRemovePredicateList.add(pred);
                         rememberSet.add(inputRef.getIndex());
@@ -256,7 +257,7 @@ public class TableScanSelectivityEstimator extends AbstractSelectivityEstimator 
                         if (result == null) {
                             result = count;
                         } else {
-                            result = (long) (result * count / tableRowCount);
+                            result = (long) (result * ((double) count / tableRowCount));
                         }
                         toRemovePredicateList.add(pred);
                         rememberSet.add(inputRef.getIndex());
@@ -292,7 +293,7 @@ public class TableScanSelectivityEstimator extends AbstractSelectivityEstimator 
                 if (result == null) {
                     result = countIn;
                 } else {
-                    result = (long) (result * countIn / tableRowCount);
+                    result = (long) (result * ((double) countIn / tableRowCount));
                 }
             }
             /** TODO:In Predicate contains more than two column */
@@ -315,67 +316,81 @@ public class TableScanSelectivityEstimator extends AbstractSelectivityEstimator 
                 int leftIndex = ((RexInputRef) leftRexNode).getIndex();
                 ColumnMeta columnMeta = findColumnMeta(tableMeta, leftIndex);
                 if (columnMeta != null) {
-
                     if (rememberSet.contains(leftIndex)) {
                         toRemovePredicateList.add(in);
                         return null;
                     }
 
-                    for (RexNode rexNode : ((RexCall) rightRexNode).operands) {
-                        Object value = DrdsRexFolder.fold(rexNode, plannerContext);
+                    if (((RexCall) rightRexNode).operands.size() > DynamicConfig.getInstance().getInDegradationNum()) {
+                        int rowSize = ((RexCall) rightRexNode).operands.size();
+                        StatisticResult statisticResult =
+                            StatisticManager.getInstance().tryFrequencyDegradation(tableMeta.getSchemaName(),
+                                tableMeta.getTableName(),
+                                columnMeta.getName(),
+                                rowSize,
+                                plannerContext.isNeedStatisticTrace());
+                        if (plannerContext.isNeedStatisticTrace()) {
+                            plannerContext.recordStatisticTrace(statisticResult.getTrace());
+                        }
+                        inCount = statisticResult.getLongValue();
+                    } else {
+                        for (RexNode rexNode : ((RexCall) rightRexNode).operands) {
+                            Object value = DrdsRexFolder.fold(rexNode, plannerContext);
 
-                        if (value instanceof List) {
-                            StatisticResult statisticResult = StatisticManager.getInstance()
-                                .getFrequency(tableMeta.getSchemaName(), tableMeta.getTableName(),
-                                    columnMeta.getName(), (List) value, plannerContext.isNeedStatisticTrace());
-                            if (plannerContext.isNeedStatisticTrace()) {
-                                plannerContext.recordStatisticTrace(statisticResult.getTrace());
-                            }
-                            long count = statisticResult.getLongValue();
-                            if (count >= 0) {
-                                if (inCount == null) {
-                                    inCount = count;
-                                } else {
-                                    inCount += count;
-                                }
-                            } else if (CBOUtil.isIndexColumn(tableMeta, columnMeta)) {
-                                // lack of statistics
-                                int rowSize = ((List<?>) value).size();
-                                count = rowSize * Math.min(LACK_OF_STATISTICS_INDEX_EQUAL_ROW_COUNT,
-                                    tableRowCount.longValue());
-                                if (inCount == null) {
-                                    inCount = count;
-                                } else {
-                                    inCount += count;
-                                }
-                            }
-                        } else if (value != null) {
-                            StatisticResult statisticResult =
-                                StatisticManager.getInstance()
+                            if (value instanceof List) {
+                                StatisticResult statisticResult = StatisticManager.getInstance()
                                     .getFrequency(tableMeta.getSchemaName(), tableMeta.getTableName(),
-                                        columnMeta.getName(), value.toString(), plannerContext.isNeedStatisticTrace());
-                            if (plannerContext.isNeedStatisticTrace()) {
-                                plannerContext.recordStatisticTrace(statisticResult.getTrace());
-                            }
-                            long count = statisticResult.getLongValue();
-                            if (count >= 0) {
-                                if (inCount == null) {
-                                    inCount = count;
-                                } else {
-                                    inCount += count;
+                                        columnMeta.getName(), (List) value, plannerContext.isNeedStatisticTrace());
+                                if (plannerContext.isNeedStatisticTrace()) {
+                                    plannerContext.recordStatisticTrace(statisticResult.getTrace());
                                 }
-                            } else if (CBOUtil.isIndexColumn(tableMeta, columnMeta)) {
-                                // lack of statistics
-                                count = Math.min(LACK_OF_STATISTICS_INDEX_EQUAL_ROW_COUNT, tableRowCount.longValue());
-                                if (inCount == null) {
-                                    inCount = count;
-                                } else {
-                                    inCount += count;
+                                long count = statisticResult.getLongValue();
+                                if (count >= 0) {
+                                    if (inCount == null) {
+                                        inCount = count;
+                                    } else {
+                                        inCount += count;
+                                    }
+                                } else if (CBOUtil.isIndexColumn(tableMeta, columnMeta)) {
+                                    // lack of statistics
+                                    int rowSize = ((List<?>) value).size();
+                                    count = rowSize * Math.min(LACK_OF_STATISTICS_INDEX_EQUAL_ROW_COUNT,
+                                        tableRowCount.longValue());
+                                    if (inCount == null) {
+                                        inCount = count;
+                                    } else {
+                                        inCount += count;
+                                    }
+                                }
+                            } else if (value != null) {
+                                StatisticResult statisticResult =
+                                    StatisticManager.getInstance()
+                                        .getFrequency(tableMeta.getSchemaName(), tableMeta.getTableName(),
+                                            columnMeta.getName(), value.toString(),
+                                            plannerContext.isNeedStatisticTrace());
+                                if (plannerContext.isNeedStatisticTrace()) {
+                                    plannerContext.recordStatisticTrace(statisticResult.getTrace());
+                                }
+                                long count = statisticResult.getLongValue();
+                                if (count >= 0) {
+                                    if (inCount == null) {
+                                        inCount = count;
+                                    } else {
+                                        inCount += count;
+                                    }
+                                } else if (CBOUtil.isIndexColumn(tableMeta, columnMeta)) {
+                                    // lack of statistics
+                                    count =
+                                        Math.min(LACK_OF_STATISTICS_INDEX_EQUAL_ROW_COUNT, tableRowCount.longValue());
+                                    if (inCount == null) {
+                                        inCount = count;
+                                    } else {
+                                        inCount += count;
+                                    }
                                 }
                             }
                         }
                     }
-
                     if (inCount != null) {
                         toRemovePredicateList.add(in);
                         rememberSet.add(leftIndex);
@@ -384,13 +399,6 @@ public class TableScanSelectivityEstimator extends AbstractSelectivityEstimator 
             }
         }
         return inCount;
-    }
-
-    private ColumnMeta findColumnMeta(TableMeta tableMeta, int index) {
-        if (index < 0 || index > tableMeta.getAllColumns().size()) {
-            return null;
-        }
-        return tableMeta.getAllColumns().get(index);
     }
 
     /**
@@ -568,6 +576,9 @@ public class TableScanSelectivityEstimator extends AbstractSelectivityEstimator 
                             likeString = String.valueOf(likeValue);
                         } else if (likeValue instanceof String) {
                             likeString = (String) likeValue;
+                        } else if (likeValue instanceof Slice) {
+                            Slice likeSlice = ((Slice) likeValue);
+                            likeString = likeSlice.toStringUtf8();
                         } else {
                             continue;
                         }

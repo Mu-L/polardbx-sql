@@ -21,6 +21,7 @@ public class BaseTtlTaskLogInfo {
     public String arcTmpTblSchema = "";
     public String arcTmpTblName = "";
     public String arcCciFullTblName = "";
+    public String invalidArcCciInfo = "";
 
     public String arcTblSchema = "";
     public String arcTblName = "";

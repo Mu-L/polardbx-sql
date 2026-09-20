@@ -193,6 +193,9 @@ public class SqlTypeAssignmentRule implements SqlTypeMappingRule {
     // BOOLEAN is assignable from...
     rules.add(SqlTypeName.BOOLEAN, EnumSet.of(SqlTypeName.BOOLEAN));
 
+    // VECTOR is assignable from...
+    rules.add(SqlTypeName.VECTOR, EnumSet.of(SqlTypeName.VECTOR));
+
     // BINARY is assignable from...
     rule.clear();
     rule.add(SqlTypeName.BINARY);
@@ -212,6 +215,13 @@ public class SqlTypeAssignmentRule implements SqlTypeMappingRule {
     rule.add(SqlTypeName.DATE);
     rule.add(SqlTypeName.TIMESTAMP);
     rules.add(SqlTypeName.DATE, rule);
+
+    // DATETIME is assignable from...
+    rule.clear();
+    rule.add(SqlTypeName.DATE);
+    rule.add(SqlTypeName.DATETIME);
+    rule.add(SqlTypeName.TIMESTAMP);
+    rules.add(SqlTypeName.DATETIME, rule);
 
     // TIME is assignable from...
     rule.clear();

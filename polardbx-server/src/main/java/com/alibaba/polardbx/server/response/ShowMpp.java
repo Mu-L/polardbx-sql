@@ -22,6 +22,8 @@ import com.alibaba.polardbx.executor.mpp.deploy.ServiceProvider;
 import com.alibaba.polardbx.gms.node.InternalNode;
 import com.alibaba.polardbx.gms.node.InternalNodeManager;
 import com.alibaba.polardbx.gms.node.MppScope;
+import com.alibaba.polardbx.gms.topology.ServerInstIdManager;
+import com.alibaba.polardbx.gms.topology.ServerInstSubManager;
 import com.alibaba.polardbx.net.buffer.ByteBufferHolder;
 import com.alibaba.polardbx.net.compress.IPacketOutputProxy;
 import com.alibaba.polardbx.net.compress.PacketOutputProxyFactory;
@@ -32,13 +34,15 @@ import com.alibaba.polardbx.net.packet.RowDataPacket;
 import com.alibaba.polardbx.server.ServerConnection;
 import com.alibaba.polardbx.server.util.PacketUtil;
 import com.alibaba.polardbx.server.util.StringUtil;
+import com.google.common.collect.Multimap;
 
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Set;
 
 public final class ShowMpp {
 
-    private static final int FIELD_COUNT = 4;
+    private static final int FIELD_COUNT = 6;
     private static final ResultSetHeaderPacket HEADER_PACKET = PacketUtil.getHeader(FIELD_COUNT);
     private static final FieldPacket[] FIELD_PACKETS = new FieldPacket[FIELD_COUNT];
     private static final byte packetId = FIELD_COUNT + 1;
@@ -59,17 +63,27 @@ public final class ShowMpp {
 
         FIELD_PACKETS[i] = PacketUtil.getField("LEADER", Fields.FIELD_TYPE_VAR_STRING);
         FIELD_PACKETS[i++].packetId = ++packetId;
+
+        FIELD_PACKETS[i] = PacketUtil.getField("SUB_CLUSTER", Fields.FIELD_TYPE_VAR_STRING);
+        FIELD_PACKETS[i++].packetId = ++packetId;
+
+        FIELD_PACKETS[i] = PacketUtil.getField("LOAD_WEIGHT", Fields.FIELD_TYPE_VAR_STRING);
+        FIELD_PACKETS[i++].packetId = ++packetId;
     }
 
     public static boolean execute(ServerConnection c) {
         ByteBufferHolder buffer = c.allocate();
         String charset = c.getResultSetCharset();
         IPacketOutputProxy proxy = PacketOutputProxyFactory.getInstance().createProxy(c, buffer);
-        return executeInternal(proxy, charset, c.getSchema());
+
+        return executeInternal(proxy, charset, c.getSchema(),
+            ServerInstSubManager.getInstance().getIdToSubcluster(),
+            ServerInstSubManager.getInstance().getIdToLoadWeight());
     }
 
-    public static boolean executeInternal(IPacketOutputProxy proxy, String charset, String schema) {
-
+    public static boolean executeInternal(IPacketOutputProxy proxy, String charset, String schema,
+                                          Multimap<String, String> idToSubcluster,
+                                          HashMap<String, String> idToLoadWeight) {
         proxy.packetBegin();
 
         // write header
@@ -90,19 +104,19 @@ public final class ShowMpp {
 
         // write master rows
         for (InternalNode node : getNodes(MppScope.CURRENT)) {
-            RowDataPacket row = getRow(charset, node, MppScope.CURRENT);
+            RowDataPacket row = getRow(charset, node, MppScope.CURRENT, idToSubcluster, idToLoadWeight);
             row.packetId = ++tmpPacketId;
             proxy = row.write(proxy);
         }
 
         for (InternalNode node : getNodes(MppScope.SLAVE)) {
-            RowDataPacket row = getRow(charset, node, MppScope.SLAVE);
+            RowDataPacket row = getRow(charset, node, MppScope.SLAVE, idToSubcluster, idToLoadWeight);
             row.packetId = ++tmpPacketId;
             proxy = row.write(proxy);
         }
 
         for (InternalNode node : getNodes(MppScope.COLUMNAR)) {
-            RowDataPacket row = getRow(charset, node, MppScope.COLUMNAR);
+            RowDataPacket row = getRow(charset, node, MppScope.COLUMNAR, idToSubcluster, idToLoadWeight);
             row.packetId = ++tmpPacketId;
             proxy = row.write(proxy);
         }
@@ -117,7 +131,9 @@ public final class ShowMpp {
         return true;
     }
 
-    protected static RowDataPacket getRow(String charset, InternalNode node, MppScope scope) {
+    protected static RowDataPacket getRow(String charset, InternalNode node, MppScope scope,
+                                          Multimap<String, String> idToSubcluster,
+                                          HashMap<String, String> idToLoadWeight) {
         String role = null;
 
         if (scope == MppScope.CURRENT) {
@@ -139,6 +155,18 @@ public final class ShowMpp {
         row.add(StringUtil.encode(node.getHostPort(), charset));
         row.add(StringUtil.encode(role, charset));
         row.add(StringUtil.encode(node.isLeader() ? "Y" : "N", charset));
+        String address = node.getInstId() + node.getHostPort();
+        if (idToSubcluster != null && idToSubcluster.get(address) != null) {
+            row.add(StringUtil.encode(String.join(",", idToSubcluster.get(address)), charset));
+        } else {
+            // we must append a empty byte array, otherwise get will return null
+            row.add(new byte[] {});
+        }
+        if (idToLoadWeight != null && idToLoadWeight.get(address) != null) {
+            row.add(StringUtil.encode(idToLoadWeight.get(address), charset));
+        } else {
+            row.add(new byte[] {});
+        }
         return row;
     }
 

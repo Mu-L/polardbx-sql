@@ -19,27 +19,40 @@ package com.alibaba.polardbx.common.model.lifecycle;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 
 public class AbstractLifecycle implements Lifecycle {
+    protected final Object lock = new Object();
+    protected volatile boolean isInited = false;
 
-    protected final Object     lock       = new Object();
-    protected volatile boolean isInited   = false;
+    protected boolean useTryLock = false;
 
-    protected boolean          useTryLock = false;
+    private volatile boolean locked = false;
+    private volatile boolean available = true;
 
-    private volatile boolean   locked     = false;
-    private volatile boolean   available  = true;
+    private volatile boolean initializing = false;
+    private volatile boolean destroying = false;
 
-    private Throwable          lastError  = null;
+    private Throwable lastError = null;
 
     @Override
     public void init() {
         boolean needReleaseLock = checkAvailableAndGetLock();
         synchronized (lock) {
             try {
+                // 检查是否同一线程已经在初始化
+                if (initializing) {
+                    throw new IllegalStateException("Recursive initialization detected");
+                }
+
+                // 检查是否同一线程已经在销毁
+                if (destroying) {
+                    throw new IllegalStateException("Cannot initialize while destroying in same thread");
+                }
+
                 if (isInited()) {
                     return;
                 }
 
                 try {
+                    initializing = true;
                     doInit();
                     isInited = true;
                     this.available = true;
@@ -47,21 +60,25 @@ public class AbstractLifecycle implements Lifecycle {
                     lastError = e;
                     this.available = false;
 
+                    // 在异常情况下尝试销毁
                     try {
+                        destroying = true;
                         doDestroy();
                     } catch (Exception e1) {
-
+                        // ignore
+                    } finally {
+                        destroying = false;
                     }
 
                     throw GeneralUtil.nestedException(e);
+                } finally {
+                    initializing = false;
                 }
-
             } finally {
                 if (needReleaseLock) {
                     clearLock();
                 }
             }
-
         }
 
     }
@@ -69,12 +86,27 @@ public class AbstractLifecycle implements Lifecycle {
     @Override
     public void destroy() {
         synchronized (lock) {
+            // 检查是否同一线程已经在销毁
+            if (destroying) {
+                // 避免重复销毁
+                return;
+            }
+
+            if (initializing) {
+                throw new IllegalStateException("Cannot destroy while initializing in same thread");
+            }
+
             if (!isInited()) {
                 return;
             }
 
-            doDestroy();
-            isInited = false;
+            try {
+                destroying = true;
+                doDestroy();
+                isInited = false;
+            } finally {
+                destroying = false;
+            }
         }
     }
 

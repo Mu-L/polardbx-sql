@@ -1,0 +1,79 @@
+## DISABLE_FAST_SQL_PARSER
+drop database if exists mypocsigdb
+create database if not exists mypocsigdb mode = auto locality = "db_config=mypocsigdb_db00:polardbx-storage-0-master,mypocsigdb_db01:polardbx-storage-1-master"
+use mypocsigdb
+create table mysig_t1(
+c1 bigint not null,
+c2 bigint not null
+)
+single
+locality="db_pools=mypocsigdb_db00"
+show create table mysig_t1
+Table,Create Table
+mysig_t1,CREATE TABLE `mysig_t1` (
+	`c1` bigint(20) NOT NULL,
+	`c2` bigint(20) NOT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+/* LOCALITY='db_pools=mypocsigdb_db00' */
+SINGLE
+create table mysig_t2(
+c1 bigint not null,
+c2 bigint not null
+)
+single
+locality="db_pools=mypocsigdb_db00"
+show create table mysig_t2
+Table,Create Table
+mysig_t2,CREATE TABLE `mysig_t2` (
+	`c1` bigint(20) NOT NULL,
+	`c2` bigint(20) NOT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+/* LOCALITY='db_pools=mypocsigdb_db00' */
+SINGLE
+/*+TDDL:node=0*/show create table mysig_t2
+Table,Create Table
+mysig_t2,CREATE TABLE `mysig_t2` (
+  `c1` bigint(20) NOT NULL,
+  `c2` bigint(20) NOT NULL,
+  `_drds_implicit_id_` bigint(20) NOT NULL AUTO_INCREMENT,
+  PRIMARY KEY (`_drds_implicit_id_`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+create table mysig_t3(
+c1 bigint not null,
+c2 bigint not null
+)
+single
+locality="db_pools=mypocsigdb_db01"
+/*+TDDL:node=1*/show create table mysig_t3
+Table,Create Table
+mysig_t3,CREATE TABLE `mysig_t3` (
+  `c1` bigint(20) NOT NULL,
+  `c2` bigint(20) NOT NULL,
+  `_drds_implicit_id_` bigint(20) NOT NULL AUTO_INCREMENT,
+  PRIMARY KEY (`_drds_implicit_id_`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+show topology from mysig_t1
+ID,GROUP_NAME,TABLE_NAME,PARTITION_NAME,SUBPARTITION_NAME,PHY_DB_NAME,DN_ID,STORAGE_POOL_NAME
+0,MYPOCSIGDB_P00000_GROUP,mysig_t1,p1,,mypocsigdb_db00,polardbx-storage-0-master,_default
+show topology from mysig_t2
+ID,GROUP_NAME,TABLE_NAME,PARTITION_NAME,SUBPARTITION_NAME,PHY_DB_NAME,DN_ID,STORAGE_POOL_NAME
+0,MYPOCSIGDB_P00000_GROUP,mysig_t2,p1,,mypocsigdb_db00,polardbx-storage-0-master,_default
+show topology from mysig_t3
+ID,GROUP_NAME,TABLE_NAME,PARTITION_NAME,SUBPARTITION_NAME,PHY_DB_NAME,DN_ID,STORAGE_POOL_NAME
+0,MYPOCSIGDB_P00001_GROUP,mysig_t3,p1,,mypocsigdb_db01,polardbx-storage-1-master,_default
+insert into mysig_t1 values (1,1)
+insert into mysig_t2 values (1,1)
+insert into mysig_t3 values (1,1)
+select * from mysig_t1 a join mysig_t2 b on a.c1=b.c1
+c1,c2,c1,c2
+1,1,1,1
+explain select * from mysig_t1 a join mysig_t3 b on a.c1=b.c1
+Logical ExecutionPlan
+HashJoin(condition="c1 = c1", type="inner")
+  LogicalView(tables="mysig_t1[p1]", sql="SELECT `c1`, `c2` FROM `mysig_t1` AS `mysig_t1`")
+  LogicalView(tables="mysig_t3[p1]", sql="SELECT `c1`, `c2` FROM `mysig_t3` AS `mysig_t3`")
+select * from mysig_t1 a join mysig_t3 b on a.c1=b.c1
+c1,c2,c1,c2
+1,1,1,1
+use polardbx
+drop database if exists mypocsigdb;

@@ -1,0 +1,33 @@
+SQL:
+  - sql: |
+      /*+TDDL:ENABLE_MERGE_LIMIT_SORT=false*/select * from lineitem force index(lineitem_col_index) where l_orderkey > 10000 order by l_orderkey limit 100;
+    plan: |
+      limit(offset=0, fetch=100)
+        memsort(sort="l_orderkey asc")
+          gather(concurrent=true)
+            osstablescan(tables="lineitem_col_index[p1,p2,p3,...p96]", shardcount=96, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem_col_index` as `lineitem_col_index` where (`l_orderkey` > 10000)")
+
+  - sql: |
+      /*+TDDL:ENABLE_MERGE_LIMIT_SORT=true*/select * from lineitem force index(lineitem_col_index) where l_orderkey > 10000 order by l_orderkey limit 100;
+    plan: |
+      topn(sort="l_orderkey asc", offset=0, fetch=100)
+        gather(concurrent=true)
+          osstablescan(tables="lineitem_col_index[p1,p2,p3,...p96]", shardcount=96, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem_col_index` as `lineitem_col_index` where (`l_orderkey` > 10000)")
+
+  - sql: |
+      /*+TDDL:ENABLE_MERGE_LIMIT_SORT=true workload_type=ap enable_mpp=true*/select * from lineitem force index(lineitem_col_index) where l_orderkey > 10000 order by l_orderkey limit 100;
+    plan: |
+      topn(sort="l_orderkey asc", offset=0, fetch=100)
+        exchange(distribution=single, collation=[0 asc-nulls-first])
+          topn(sort="l_orderkey asc", fetch=100)
+            osstablescan(tables="lineitem_col_index[p1,p2,p3,...p96]", shardcount=96, sql="select `l_orderkey`, `l_partkey`, `l_suppkey`, `l_linenumber`, `l_quantity`, `l_extendedprice`, `l_discount`, `l_tax`, `l_returnflag`, `l_linestatus`, `l_shipdate`, `l_commitdate`, `l_receiptdate`, `l_shipinstruct`, `l_shipmode`, `l_comment` from `lineitem_col_index` as `lineitem_col_index` where (`l_orderkey` > 10000)")
+
+DDL:
+  lineitem:
+    CREATE TABLE IF NOT EXISTS `lineitem` (  `l_orderkey` bigint(20) NOT NULL,  `l_partkey` int(11) NOT NULL,  `l_suppkey` int(11) NOT NULL,  `l_linenumber` bigint(20) NOT NULL,  `l_quantity` decimal(15, 2) NOT NULL,  `l_extendedprice` decimal(15, 2) NOT NULL,  `l_discount` decimal(15, 2) NOT NULL,  `l_tax` decimal(15, 2) NOT NULL,  `l_returnflag` varchar(1) NOT NULL,  `l_linestatus` varchar(1) NOT NULL,  `l_shipdate` date NOT NULL,  `l_commitdate` date NOT NULL,  `l_receiptdate` date NOT NULL,  `l_shipinstruct` varchar(25) NOT NULL,  `l_shipmode` varchar(10) NOT NULL,  `l_comment` varchar(44) NOT NULL,  PRIMARY KEY (`l_orderkey`, `l_linenumber`),  CLUSTERED COLUMNAR INDEX `lineitem_col_index`(`l_shipdate`, `l_orderkey`) PARTITION BY HASH (`l_orderkey`) PARTITIONS 96 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`l_orderkey`) PARTITIONS 128;
+
+STATISTICS:
+  lineitem:
+    1000000
+
+CONFIG:

@@ -77,6 +77,8 @@ public class GsiEmojiTest extends DDLBaseNewDBTestCase {
         // 1. Create primary table
         JdbcUtil.executeUpdateSuccess(tddlConnection, CREATE_TABLE_SQL);
 
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "set names utf8mb4");
+
         // 2. Insert some data with emoji
         JdbcUtil.executeUpdateSuccess(tddlConnection, INSERT_SQL1);
 

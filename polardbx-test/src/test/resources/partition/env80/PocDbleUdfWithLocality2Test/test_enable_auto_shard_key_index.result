@@ -1,0 +1,107 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+use polardbx;
+drop database if exists dbledb_auto_shard_key;
+## USE_DN_LIST_MSG
+create database if not exists dbledb_auto_shard_key mode = 'auto' locality='dble_config={"group_config":{"dbledb_auto_shard_key_g1":["$dn1","dbledb_auto_shard_key_00"],"dbledb_auto_shard_key_g2":["$dn2","dbledb_auto_shard_key_01"] }}';
+use dbledb_auto_shard_key;
+## -------------------------------------------------------
+## Case 1: dble mode, default on, udf_hash partition
+## should contain auto_shard_key_a
+## -------------------------------------------------------
+drop table if exists dble_t_default_on;
+create table if not exists dble_t_default_on (
+  a bigint,
+  b bigint not null auto_increment,
+  primary key(b)
+)
+partition by udf_hash(unitmurhashi2(a))
+partitions 2
+(
+partition p1 values less than (1),
+partition p2 values less than (2)
+)
+locality='db_pools=dbledb_auto_shard_key_g1,dbledb_auto_shard_key_g2';
+show create table dble_t_default_on;
+Table,Create Table
+dble_t_default_on,CREATE TABLE `dble_t_default_on` (
+	`a` bigint DEFAULT NULL,
+	`b` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`b`),
+	KEY `auto_shard_key_a` USING BTREE (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
+/* LOCALITY='db_pools=dbledb_auto_shard_key_g1,dbledb_auto_shard_key_g2' */
+PARTITION BY UDF_HASH(unitmurhashi2(`a`))
+PARTITIONS 2
+(PARTITION p1 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (2) ENGINE = InnoDB)
+drop table if exists dble_t_default_on;
+## -------------------------------------------------------
+## Case 2: dble mode, switch off, udf_hash partition
+## should NOT contain auto_shard_key_a
+## -------------------------------------------------------
+set ENABLE_AUTO_SHARD_KEY_INDEX = false;
+drop table if exists dble_t_switch_off;
+create table if not exists dble_t_switch_off (
+  a bigint,
+  b bigint not null auto_increment,
+  primary key(b)
+)
+partition by udf_hash(unitmurhashi2(a))
+partitions 2
+(
+partition p1 values less than (1),
+partition p2 values less than (2)
+)
+locality='db_pools=dbledb_auto_shard_key_g1,dbledb_auto_shard_key_g2';
+show create table dble_t_switch_off;
+Table,Create Table
+dble_t_switch_off,CREATE TABLE `dble_t_switch_off` (
+	`a` bigint DEFAULT NULL,
+	`b` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
+/* LOCALITY='db_pools=dbledb_auto_shard_key_g1,dbledb_auto_shard_key_g2' */
+PARTITION BY UDF_HASH(unitmurhashi2(`a`))
+PARTITIONS 2
+(PARTITION p1 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (2) ENGINE = InnoDB)
+drop table if exists dble_t_switch_off;
+## -------------------------------------------------------
+## Case 3: dble mode, switch back on
+## should contain auto_shard_key_a again
+## -------------------------------------------------------
+set ENABLE_AUTO_SHARD_KEY_INDEX = true;
+drop table if exists dble_t_switch_back_on;
+create table if not exists dble_t_switch_back_on (
+  a bigint,
+  b bigint not null auto_increment,
+  primary key(b)
+)
+partition by udf_hash(unitmurhashi2(a))
+partitions 2
+(
+partition p1 values less than (1),
+partition p2 values less than (2)
+)
+locality='db_pools=dbledb_auto_shard_key_g1,dbledb_auto_shard_key_g2';
+show create table dble_t_switch_back_on;
+Table,Create Table
+dble_t_switch_back_on,CREATE TABLE `dble_t_switch_back_on` (
+	`a` bigint DEFAULT NULL,
+	`b` bigint NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`b`),
+	KEY `auto_shard_key_a` USING BTREE (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
+/* LOCALITY='db_pools=dbledb_auto_shard_key_g1,dbledb_auto_shard_key_g2' */
+PARTITION BY UDF_HASH(unitmurhashi2(`a`))
+PARTITIONS 2
+(PARTITION p1 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (2) ENGINE = InnoDB)
+drop table if exists dble_t_switch_back_on;
+use polardbx;
+drop database dbledb_auto_shard_key;

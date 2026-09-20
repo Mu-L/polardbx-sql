@@ -77,7 +77,7 @@ public class DdlEngineInspectCacheHandler extends DdlEngineJobsHandler {
 //
 //        //legacy engine
 //        List<List<Map<String, Object>>> results =
-//            SyncManagerHelper.sync(new CacheCollectionSyncAction(executionContext.getSchemaName()), schemaName,
+//            SyncManagerHelper.syncThrowExceptions(new CacheCollectionSyncAction(executionContext.getSchemaName()), schemaName,
 //                SyncScope.MASTER_ONLY);
 //        if (results != null) {
 //            for (List<Map<String, Object>> result : results) {

@@ -1,0 +1,135 @@
+## DISABLE_FAST_SQL_PARSER
+
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=false;
+
+  # mapping, default 2:
+  #("5-34"->0)
+  #("30-60"->1)
+  #("64-96"->2)
+drop table if exists pttrrng_t1;
+create table pttrrng_t1(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(pattrngid2p96(c1))
+partition 3
+(
+  partition p0 values less than(1),
+  partition p1 values less than(2),
+  partition p2 values less than(3)
+);
+
+select part_route('', 'pttrrng_t1', null);
+  ## error_msg: $# invalid type conversion #$
+select part_route('', 'pttrrng_t1', '');
+  ## error_msg: $# invalid type conversion #$
+select part_route('', 'pttrrng_t1', 'a');
+  ## error_msg: $# can't find any valid data node #$
+select part_route('', 'pttrrng_t1', 3);
+select part_route('', 'pttrrng_t1', 15);
+select part_route('', 'pttrrng_t1', 15);
+select part_route('', 'pttrrng_t1', 30);
+select part_route('', 'pttrrng_t1', 35);
+select part_route('', 'pttrrng_t1', 85);
+select part_route('', 'pttrrng_t1', 125);
+  
+  
+  # mapping, default -1:
+  #("5-34"->0)
+  #("30-60"->1)
+  #("64-96"->2)
+drop table if exists pttrrng_t2;
+create table pttrrng_t2(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(pattrngip96(c1))
+partition 3
+(
+partition p0 values less than(1),
+partition p1 values less than(2),
+partition p2 values less than(3)
+);
+
+  ## error_msg: $# can't find any valid data node #$
+select part_route('', 'pttrrng_t2', null);
+  ## error_msg: $# invalid type conversion #$
+select part_route('', 'pttrrng_t2', '');
+  ## error_msg: $# invalid type conversion #$
+select part_route('', 'pttrrng_t2', 'a');
+  ## error_msg: $# can't find any valid data node #$
+select part_route('', 'pttrrng_t2', 3);
+select part_route('', 'pttrrng_t2', 15);
+select part_route('', 'pttrrng_t2', 15);
+select part_route('', 'pttrrng_t2', 30);
+select part_route('', 'pttrrng_t2', 35);
+select part_route('', 'pttrrng_t2', 85);
+select part_route('', 'pttrrng_t2', 125);
+  
+  
+  
+  # mapping, default 2:
+  #("5-34"->0)
+  #("30-60"->1)
+  #("64-96"->2)
+drop table if exists pttrrng_t3;
+create table pttrrng_t3(
+c1 varchar(32),
+c2 varchar(32)
+)
+partition by udf_hash(pattrngstrd2p96(c1))
+partition 3
+(
+partition p0 values less than(1),
+partition p1 values less than(2),
+partition p2 values less than(3)
+);
+
+
+select part_route('', 'pttrrng_t3', null);
+  ## error_msg: $# server error by For input string #$
+select part_route('', 'pttrrng_t3', '');
+select part_route('', 'pttrrng_t3', 'a');
+  ## error_msg: $# can't find any valid data node #$
+select part_route('', 'pttrrng_t3', 3);
+select part_route('', 'pttrrng_t3', 15);
+select part_route('', 'pttrrng_t3', 15);
+select part_route('', 'pttrrng_t3', 30);
+select part_route('', 'pttrrng_t3', 35);
+select part_route('', 'pttrrng_t3', 85);
+select part_route('', 'pttrrng_t3', 125);
+
+  
+  
+  # mapping, default -1:
+  #("5-34"->0)
+  #("30-60"->1)
+  #("64-96"->2)
+drop table if exists pttrrng_t4;
+create table pttrrng_t4(
+c1 varchar(32),
+c2 varchar(32)
+)
+partition by udf_hash(pattrngstrp96(c1))
+partition 3
+(
+partition p0 values less than(1),
+partition p1 values less than(2),
+partition p2 values less than(3)
+);
+
+  ## error_msg: $# can't find any valid data node #$
+select part_route('', 'pttrrng_t4', null);
+  ## error_msg: $# server error by For input string #$
+select part_route('', 'pttrrng_t4', '');
+  ## error_msg: $# can't find any valid data node #$
+select part_route('', 'pttrrng_t4', 'a');
+  ## error_msg: $# can't find any valid data node #$
+select part_route('', 'pttrrng_t4', 3);
+select part_route('', 'pttrrng_t4', 15);
+select part_route('', 'pttrrng_t4', 15);
+select part_route('', 'pttrrng_t4', 30);
+select part_route('', 'pttrrng_t4', 35);
+select part_route('', 'pttrrng_t4', 85);
+select part_route('', 'pttrrng_t4', 125);
+

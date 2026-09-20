@@ -73,12 +73,30 @@ public class Rex2VecExprTest {
         Assert.assertTrue(vectorizedExpression.getClass().getName(),
             vectorizedExpression instanceof FastInVectorizedExpression);
 
-        // diff arg types
+        // diff arg types - should still use FastIn vec path since codegen won't handle type mismatch
         nodes[1] = rexBuilder.makeLiteral("0");
         RexCall inCall4 = (RexCall) rexBuilder.makeCall(TddlOperatorTable.IN, nodes);
+        visitor = new Rex2VectorizedExpressionVisitor(context, 3);
         vectorizedExpression = visitor.visitCall(inCall4);
         Assert.assertTrue(vectorizedExpression.getClass().getName(),
-            vectorizedExpression instanceof BuiltInFunctionVectorizedExpression);
+            vectorizedExpression instanceof FastInVectorizedExpression);
+    }
+
+    @Test
+    public void testVisitInWithTypeMismatchSmallCount() {
+        // Scenario: IN expression with few values but type mismatch
+        // col(INT) IN (100, '200', 300) - mixed int and varchar literals
+        Rex2VectorizedExpressionVisitor visitor = new Rex2VectorizedExpressionVisitor(context, 3);
+        RelDataType intType = typeFactory.createSqlType(SqlTypeName.INTEGER);
+        RexCall inCall = (RexCall) rexBuilder.makeCall(TddlOperatorTable.IN,
+            rexBuilder.makeInputRef(intType, 0),
+            rexBuilder.makeIntLiteral(100),
+            rexBuilder.makeLiteral("200"),
+            rexBuilder.makeIntLiteral(300));
+        VectorizedExpression vectorizedExpression = visitor.visitCall(inCall);
+        Assert.assertTrue("Type mismatch IN with small count should use FastIn vec path, but got: "
+                + vectorizedExpression.getClass().getName(),
+            vectorizedExpression instanceof FastInVectorizedExpression);
     }
 
     @Test
@@ -114,12 +132,13 @@ public class Rex2VecExprTest {
         Assert.assertTrue(vectorizedExpression.getClass().getName(),
             vectorizedExpression instanceof FastNotInVectorizedExpression);
 
-        // diff arg types
+        // diff arg types - should still use FastNotIn vec path
         nodes[1] = rexBuilder.makeLiteral("0");
         RexCall inCall4 = (RexCall) rexBuilder.makeCall(TddlOperatorTable.NOT_IN, nodes);
+        visitor = new Rex2VectorizedExpressionVisitor(context, 3);
         vectorizedExpression = visitor.visitCall(inCall4);
         Assert.assertTrue(vectorizedExpression.getClass().getName(),
-            vectorizedExpression instanceof BuiltInFunctionVectorizedExpression);
+            vectorizedExpression instanceof FastNotInVectorizedExpression);
     }
 
     @Test

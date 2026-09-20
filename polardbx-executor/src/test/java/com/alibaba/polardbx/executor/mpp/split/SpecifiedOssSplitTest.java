@@ -32,6 +32,8 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
@@ -218,7 +220,7 @@ public class SpecifiedOssSplitTest {
         when(fileMeta.getSchemaTs()).thenReturn(100L);
         when(columnarManager.getColumnIndex(100L, 100)).thenReturn(columnIndexMap);
         when(tableMeta.getColumn("a")).thenReturn(columnMeta);
-        when(tableMeta.getColumnarFieldId(1)).thenReturn(1L);
+        when(tableMeta.getColumnarFieldId(anyLong(), anyInt())).thenReturn(1L);
         when(fileMeta.getColumnMetas()).thenReturn(columnMetas);
         when(orcTableScan.getInProjects()).thenReturn(inProjects);
         when(orcTableScan.getInputProjectName()).thenReturn(inProjectNames);

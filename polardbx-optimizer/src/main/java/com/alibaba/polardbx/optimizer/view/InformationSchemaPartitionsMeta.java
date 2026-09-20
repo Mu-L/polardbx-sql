@@ -57,7 +57,7 @@ public class InformationSchemaPartitionsMeta extends VirtualView {
         columns.add(new RelDataTypeFieldImpl("TG_NAME", ++colIdx, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
 
         columns.add(new RelDataTypeFieldImpl("PART_METHOD", ++colIdx, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
-        columns.add(new RelDataTypeFieldImpl("PART_COL", ++colIdx, typeFactory.createSqlType(SqlTypeName.BIGINT)));
+        columns.add(new RelDataTypeFieldImpl("PART_COL", ++colIdx, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
         columns.add(
             new RelDataTypeFieldImpl("PART_COL_TYPE", ++colIdx, typeFactory.createSqlType(SqlTypeName.VARCHAR)));
         columns.add(new RelDataTypeFieldImpl("PART_EXPR", ++colIdx, typeFactory.createSqlType(SqlTypeName.VARCHAR)));

@@ -31,6 +31,10 @@ public enum EventType {
      */
     DDL_INFO(EventLevel.INFO),
     /**
+     * OMC 执行信息
+     */
+    OMC_INFO(EventLevel.INFO),
+    /**
      * TwoPhaseDdl信息
      */
     TWO_PHASE_DDL_INFO(EventLevel.INFO),
@@ -57,9 +61,18 @@ public enum EventType {
      * CN发生切主，停止原先leader节点中的DDL
      */
     DDL_INTERRUPT(EventLevel.INFO),
+    /**
+     * DDL TASK 执行失败，用于记录失败的 TASK、失败原因以及 JOB 信息
+     */
+    DDL_ENGINE_TASK_FAILED(EventLevel.WARN),
     MOVE_DATABASE_PENDING(EventLevel.WARN),
-
+    /**
+     * 死锁检测
+     */
+    // for MDL deadlock detection
     DEAD_LOCK_DETECTION(EventLevel.INFO),
+    // for row-lock deadlock detection
+    ROW_LOCK_DEADLOCK_WARN(EventLevel.WARN),
 
     /**
      * DN need do ha
@@ -102,6 +115,8 @@ public enum EventType {
 
     DML_ERROR(EventLevel.WARN),
 
+    ENCDB_ERROR(EventLevel.WARN),
+
     /*
      * Usage statistics for TTL and cold-data table
      */
@@ -120,9 +135,13 @@ public enum EventType {
     CREATE_CCI_ARCHIVE_TABLE(EventLevel.INFO),
     DROP_CCI_ARCHIVE_TABLE(EventLevel.INFO),
     CLEANUP_EXPIRED_DATA(EventLevel.INFO),
+    TTL_ADD_PARTS_ALERT(EventLevel.INFO),
+    TTL_META_INVALID_ALERT(EventLevel.INFO),
+    FOUND_ARC_CCI_DELAY(EventLevel.INFO),
 
     OPTIMIZER_ALERT(EventLevel.INFO),
     STATISTIC_ALERT(EventLevel.INFO),
+    SPM_ALERT(EventLevel.INFO),
 
     AUTO_SP(EventLevel.INFO),
     AUTO_SP_OPT(EventLevel.INFO),
@@ -135,11 +154,47 @@ public enum EventType {
     COLUMNAR_ERR(EventLevel.INFO),
     CCI_SNAPSHOT(EventLevel.INFO),
     COLUMNAR_READ_ALERT(EventLevel.WARN),
+
+    // for columnar warmup task event.
+    COLUMNAR_WARMUP(EventLevel.INFO),
+
     METRICS(EventLevel.INFO),
     CDC_WARN(EventLevel.WARN),
+    AC_RECOVER(EventLevel.INFO),
 
     // Full columnar status and extra infos.
-    COLUMNAR_STATUS(EventLevel.INFO);
+    COLUMNAR_STATUS(EventLevel.INFO),
+
+    // General cache cluster status (collected daily by cache leader during maintenance window).
+    CACHE_STATUS(EventLevel.INFO),
+
+    // expression stats
+    EXPRESSION_STATS(EventLevel.INFO),
+
+    // for replace returning
+    REPLACE_RETURNING_STATS(EventLevel.INFO),
+
+    // for insert ignore returning
+    INSERT_IGNORE_RETURNING_STATS(EventLevel.INFO),
+
+    // for relocate returning
+    RELOCATE_RETURNING_STATS(EventLevel.INFO),
+
+    // for delete returning (LogicalModify)
+    MODIFY_RETURNING_STATS(EventLevel.INFO),
+
+    CCL_DETECT(EventLevel.WARN),
+
+    EXT_COL_CREATE(EventLevel.INFO),
+    EXT_COL_DROP(EventLevel.INFO),
+    EXT_COL_ERR(EventLevel.WARN),
+
+    /**
+     * NL2SQL user input and agent answer for backend observation.
+     */
+    NL2SQL_USER_INPUT(EventLevel.INFO),
+    NL2SQL_ANSWER(EventLevel.INFO),
+    NL2SQL_CONTEXT_COMPRESS(EventLevel.INFO);
 
     private final EventLevel level;
 
@@ -152,7 +207,7 @@ public enum EventType {
     }
 
     private final static EnumSet<EventType> TRX_EVENT = EnumSet.of(
-        AUTO_SP_ERR, TRX_LOG_ERR, TRX_RECOVER, TRX_ERR
+        AUTO_SP_ERR, TRX_LOG_ERR, TRX_RECOVER, TRX_ERR, AC_RECOVER
     );
 
     public static boolean isTrxEvent(EventType t) {

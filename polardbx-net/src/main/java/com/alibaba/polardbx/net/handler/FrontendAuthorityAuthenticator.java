@@ -23,6 +23,7 @@ import com.alibaba.polardbx.common.utils.encrypt.SecurityUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.config.ConfigDataMode;
+import com.alibaba.polardbx.gms.privilege.PolarAccountInfo;
 import com.alibaba.polardbx.gms.privilege.PolarPrivManager;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.net.FrontendConnection;
@@ -74,8 +75,22 @@ public class FrontendAuthorityAuthenticator extends FrontendAuthenticator implem
         if (!isTrustedIp) { // 非免登机器需要走接下来的校验逻辑。
             final String host = source.getHost();
             final String user = auth.user;
+
+            //check account lock
+            PolarAccountInfo matchAccount = PolarPrivManager.getInstance().getMatchUser(user, host);
+            if (matchAccount != null && matchAccount.getInstPriv().isAccountLocked()) {
+                failure(ErrorCode.ER_ACCESS_DENIED_ERROR,
+                    "Access denied for user '" + user + "'@'" + host + "' because account is locked", null);
+            }
+
             final boolean checkUserLoginMaxCount = checkUserLoginMaxCount(user, host);
             if (!checkUserLoginMaxCount) {
+                if (PolarPrivManager.getInstance().enableLoginBackoff(user)) {
+                    // needs to check if the password is correct
+                    if (!checkPassword(auth.password, auth.user, source.getHost())) {
+                        incrementLoginErrorCount(user, host);
+                    }
+                }
                 failure(ErrorCode.ER_PASSWORD_NOT_ALLOWED,
                     "The maximum number of login is exceeded, and the login is refused,the allowed maximum number is "
                         + PolarPrivManager.getInstance().getPolarLoginErrConfig().getPasswordMaxErrorCount(user), null);
@@ -101,6 +116,9 @@ public class FrontendAuthorityAuthenticator extends FrontendAuthenticator implem
         // of null schema
         setSchema(auth, isTrustedIp);
         checkSchemaPrivilege(isTrustedIp);
+
+        //登录成功，清除登录错误次数
+        clearLoginErrorCount(auth.user, source.getHost());
     }
 
     /**
@@ -151,7 +169,17 @@ public class FrontendAuthorityAuthenticator extends FrontendAuthenticator implem
             return false;
         }
 
+        //检查同一个user是否有太多连接
+        if (!checkUserConnectionCount(auth.user, source.getHost(), false)){
+            failure(ErrorCode.ER_CON_COUNT_ERROR, "Too many connections for current user", null);
+            return false;
+        }
+
         return true;
+    }
+
+    protected boolean checkUserConnectionCount(String user, String host, boolean ignoreHost) {
+        return source.checkUserConnectionCount(user, host, ignoreHost);
     }
 
     protected boolean checkUserMatches(String user, String host) {

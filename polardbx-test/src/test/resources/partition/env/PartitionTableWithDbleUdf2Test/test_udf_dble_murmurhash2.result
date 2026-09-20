@@ -1,0 +1,110 @@
+## DISABLE_FAST_SQL_PARSER
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=false
+## partCol: bigint
+  ## partitionCount = "4"
+## shardingValueMaxLength = "15"
+## isDigitCheck = "1"
+## leftPaddingChar = "NO"
+drop table if exists partmur_t1
+create table partmur_t1(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(unitmurhashi4(c1))
+partition 4
+(
+  partition p0 values less than(1),
+  partition p1 values less than(2),
+  partition p2 values less than(3),
+  partition p3 values less than(4)
+)
+## error_msg: $# check routeKey is legal #$
+select unitmurhashi4(null)
+check routeKey is legal
+select unitmurhashi4('')
+unitmurhashi4('')
+3
+select unitmurhashi4('a')
+unitmurhashi4('a')
+3
+select unitmurhashi4(0)
+unitmurhashi4(0)
+3
+## error_msg: $# check routeKey is legal #$
+select unitmurhashi4(1234567890123456)
+check routeKey is legal
+select unitmurhashi4(1234567890)
+unitmurhashi4(1234567890)
+3
+## error_msg: $# check routeKey is legal #$
+select part_route('', 'partmur_t1', null)
+check routeKey is legal
+## error_msg: $# invalid type conversion #$
+select part_route('', 'partmur_t1', '')
+invalid type conversion
+## error_msg: $# invalid type conversion #$
+select part_route('', 'partmur_t1', 'a')
+invalid type conversion
+select part_route('', 'partmur_t1', 3)
+part_route('', 'partmur_t1', 3)
+p0
+## partCol: varchar
+  ## partitionCount = "4"
+## shardingValueMaxLength = "15"
+## isDigitCheck = "1"
+## leftPaddingChar = "NO"
+drop table if exists partmur_t2
+create table partmur_t2 (
+c1 varchar(32) not null,
+c2 varchar(32) not null
+)
+partition by udf_hash(unitmurhashstr4(c1))
+partition 4
+(
+partition p0 values less than(1),
+partition p1 values less than(2),
+partition p2 values less than(3),
+partition p3 values less than(4)
+)
+## error_msg: $# check routeKey is legal #$
+select unitmurhashstr4(null)
+check routeKey is legal
+## error_msg: $# check routeKey is legal #$
+select unitmurhashstr4('')
+check routeKey is legal
+select unitmurhashstr4('a')
+unitmurhashstr4('a')
+3
+select unitmurhashstr4('0')
+unitmurhashstr4('0')
+0
+select unitmurhashstr4('1234567890123456')
+unitmurhashstr4('1234567890123456')
+0
+select unitmurhashstr4('1234567890')
+unitmurhashstr4('1234567890')
+1
+## error_msg: $# check routeKey is legal #$
+select part_route('', 'partmur_t2', null)
+check routeKey is legal
+## error_msg: $# check routeKey is legal #$
+select part_route('', 'partmur_t2', '')
+check routeKey is legal
+select part_route('', 'partmur_t2', 'a')
+part_route('', 'partmur_t2', 'a')
+p3
+select part_route('', 'partmur_t2', 0)
+part_route('', 'partmur_t2', 0)
+p0
+select part_route('', 'partmur_t2', 3)
+part_route('', 'partmur_t2', 3)
+p3
+select part_route('', 'partmur_t2', '0')
+part_route('', 'partmur_t2', '0')
+p0
+select part_route('', 'partmur_t2', '1234567890123456')
+part_route('', 'partmur_t2', '1234567890123456')
+p0
+select part_route('', 'partmur_t2', '1234567890')
+part_route('', 'partmur_t2', '1234567890')
+p1

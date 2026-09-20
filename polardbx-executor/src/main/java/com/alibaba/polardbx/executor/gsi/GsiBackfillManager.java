@@ -68,6 +68,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.OptionalInt;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -224,6 +225,9 @@ public class GsiBackfillManager {
         extraJson.setLogical(true);
         long approximateRowCount = 0;
         for (BackfillObjectRecord record : initBackfillObjects) {
+            if (record.columnIndex != 0) {
+                continue;
+            }
             BackfillExtraFieldJSON extra = BackfillExtraFieldJSON.fromJson(record.getExtra());
             approximateRowCount += Long.parseLong(extra.approximateRowCount);
         }
@@ -595,11 +599,25 @@ public class GsiBackfillManager {
         }
         try (Connection connection = dataSource.getConnection()) {
             String ids = Joiner.on(",").join(backFillIdList);
-            String sql = String.format(SQL_CREATE_DATABASE_AS_BACKFILL_VIEW_BY_ID, ids);
+            String sql = String.format(SQL_SELECT_BACKFILL_VIEW_BY_ID, ids);
             return MetaDbUtil.query(sql, BackFillAggInfo.class, connection);
         } catch (Exception e) {
             throw new TddlRuntimeException(ErrorCode.ERR_GLOBAL_SECONDARY_INDEX_EXECUTE,
                 e, "queryCreateDatabaseBackFillAggInfo failed!");
+        }
+    }
+
+    public List<BackFillAggInfo> queryBackFillAggInfoByTaskId(Long taskId, List<Long> backFillIdList) {
+        if (CollectionUtils.isEmpty(backFillIdList)) {
+            return new ArrayList<>();
+        }
+        try (Connection connection = dataSource.getConnection()) {
+            String ids = Joiner.on(",").join(backFillIdList);
+            String sql = String.format(SQL_SELECT_BACKFILL_VIEW_BY_TASK_ID, taskId, ids);
+            return MetaDbUtil.query(sql, BackFillAggInfo.class, connection);
+        } catch (Exception e) {
+            throw new TddlRuntimeException(ErrorCode.ERR_GLOBAL_SECONDARY_INDEX_EXECUTE,
+                e, "queryBackFillAggInfo failed!");
         }
     }
 
@@ -697,17 +715,18 @@ public class GsiBackfillManager {
         "SELECT ID,JOB_ID,TASK_ID,TABLE_SCHEMA,TABLE_NAME,INDEX_SCHEMA,INDEX_NAME,PHYSICAL_DB,PHYSICAL_TABLE,COLUMN_INDEX,PARAMETER_METHOD,`LAST_VALUE`,MAX_VALUE,STATUS,MESSAGE,SUCCESS_ROW_COUNT,START_TIME,END_TIME,EXTRA FROM "
             + SYSTABLE_BACKFILL_OBJECTS + " WHERE JOB_ID = ? AND PHYSICAL_DB IS NULL AND PHYSICAL_TABLE IS NULL";
 
-    private static final String SQL_SELECT_BACKFILL_VIEW =
-        "SELECT JOB_ID,TABLE_SCHEMA,TABLE_NAME,`STATUS`,SUM(SUCCESS_ROW_COUNT) as SUCCESS_ROW_COUNT, START_TIME, TIMESTAMPDIFF(SECOND, START_TIME, END_TIME) AS DURATION FROM "
-            + SYSTABLE_BACKFILL_OBJECTS + " WHERE `STATUS` IN (0,1) AND COLUMN_INDEX=0 GROUP BY JOB_ID";
-
     private static final String SQL_SELECT_BACKFILL_VIEW_BY_ID =
-        "select job_id, table_schema, table_name, `status`, success_row_count, start_time, duration from ( SELECT JOB_ID,TABLE_SCHEMA,TABLE_NAME,`STATUS`,SUM(SUCCESS_ROW_COUNT) as SUCCESS_ROW_COUNT, START_TIME, TIMESTAMPDIFF(SECOND, START_TIME, END_TIME) AS DURATION FROM "
-            + SYSTABLE_BACKFILL_OBJECTS + " WHERE JOB_ID IN (%s) GROUP BY JOB_ID, COLUMN_INDEX) t group by job_id";
+        "select b.job_id,b.table_schema,b.table_name,b.status, tt.success_row_count, CAST(JSON_UNQUOTE(JSON_EXTRACT(b.extra, '$.approximateRowCount')) as unsigned) as total_row_count , "
+            + "b.start_time, b.end_time, TIMESTAMPDIFF(SECOND, b.START_TIME, b.END_TIME) AS duration from "
+            + "(SELECT MIN(ID) as MIN_ID,SUM(SUCCESS_ROW_COUNT) as SUCCESS_ROW_COUNT FROM "
+            + SYSTABLE_BACKFILL_OBJECTS + " WHERE JOB_ID IN (%s) and COLUMN_INDEX = 0 GROUP BY JOB_ID) tt join "
+            + SYSTABLE_BACKFILL_OBJECTS + " as b where b.id = tt.min_id";
 
-    private static final String SQL_CREATE_DATABASE_AS_BACKFILL_VIEW_BY_ID =
-        "SELECT JOB_ID,TABLE_SCHEMA,TABLE_NAME,`STATUS`,SUM(SUCCESS_ROW_COUNT) as SUCCESS_ROW_COUNT, START_TIME, TIMESTAMPDIFF(SECOND, START_TIME, END_TIME) AS DURATION FROM "
-            + SYSTABLE_BACKFILL_OBJECTS + " WHERE JOB_ID IN (%s) GROUP BY JOB_ID";
+    private static final String SQL_SELECT_BACKFILL_VIEW_BY_TASK_ID =
+        "SELECT job_id, table_schema, table_name, `status`, SUM(SUCCESS_ROW_COUNT) as success_row_count, SUM(CAST(JSON_UNQUOTE(JSON_EXTRACT(extra, '$.approximateRowCount')) as unsigned)) as total_row_count,"
+            + "MIN(START_TIME) as start_time, MAX(END_TIME) as end_time, TIMESTAMPDIFF(SECOND, MIN(START_TIME), MAX(END_TIME)) AS duration FROM "
+            + SYSTABLE_BACKFILL_OBJECTS
+            + " WHERE TASK_ID = %s and JOB_ID IN (%s) and COLUMN_INDEX = 0 and physical_db is not null";
 
     private static final String SQL_UPDATE_BACKFILL_PROGRESS = "UPDATE "
         + SYSTABLE_BACKFILL_OBJECTS
@@ -1078,6 +1097,10 @@ public class GsiBackfillManager {
             return progress;
         }
 
+        public Integer getColumnIndex() {
+            return (int) columnIndex;
+        }
+
         public void setProgress(Integer progress) {
             this.progress = progress;
         }
@@ -1407,7 +1430,9 @@ public class GsiBackfillManager {
         private String tableName;
         private long status;
         private long successRowCount;
+        private long totalRowCount;
         private String startTime;
+        private String endTime;
         private long duration;
 
         @Override
@@ -1417,7 +1442,9 @@ public class GsiBackfillManager {
             this.tableName = resultSet.getString("TABLE_NAME");
             this.status = resultSet.getLong("STATUS");
             this.successRowCount = resultSet.getLong("SUCCESS_ROW_COUNT");
+            this.totalRowCount = resultSet.getLong("TOTAL_ROW_COUNT");
             this.startTime = resultSet.getString("START_TIME");
+            this.endTime = resultSet.getString("END_TIME");
             this.duration = resultSet.getLong("DURATION");
             return this;
         }
@@ -1458,12 +1485,20 @@ public class GsiBackfillManager {
             return successRowCount;
         }
 
+        public long getTotalRowCount() {
+            return totalRowCount;
+        }
+
         public void setSuccessRowCount(long successRowCount) {
             this.successRowCount = successRowCount;
         }
 
         public String getStartTime() {
             return startTime;
+        }
+
+        public String getEndTime() {
+            return endTime;
         }
 
         public void setStartTime(String startTime) {

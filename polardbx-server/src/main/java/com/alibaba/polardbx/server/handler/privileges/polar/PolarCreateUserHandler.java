@@ -17,9 +17,10 @@
 package com.alibaba.polardbx.server.handler.privileges.polar;
 
 import com.alibaba.polardbx.CobarServer;
-import com.alibaba.polardbx.common.cdc.CdcManagerHelper;
-import com.alibaba.polardbx.common.cdc.CdcDdlMarkVisibility;
-import com.alibaba.polardbx.common.ddl.newengine.DdlType;
+import com.alibaba.polardbx.druid.sql.visitor.VisitorFeature;
+import com.alibaba.polardbx.gms.privilege.PolarPrivilegeData;
+import com.alibaba.polardbx.gms.privilege.PolarReservedAccounts;
+import com.alibaba.polardbx.gms.privilege.PolarRolePrivilege;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLCharExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
 import com.alibaba.polardbx.druid.sql.parser.ParserException;
@@ -36,21 +37,23 @@ import com.alibaba.polardbx.common.privilege.PasswdRuleConfig;
 import com.alibaba.polardbx.common.privilege.UserPasswdChecker;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.expr.MySqlUserName;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateUserStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateUserStatement.UserSpecification;
+import com.alibaba.polardbx.druid.sql.parser.ByteString;
 import com.alibaba.polardbx.gms.privilege.AccountType;
 import com.alibaba.polardbx.gms.privilege.PolarAccount;
 import com.alibaba.polardbx.gms.privilege.PolarAccountInfo;
 import com.alibaba.polardbx.gms.privilege.PolarPrivManager;
-import com.google.common.collect.Maps;
-import groovy.sql.Sql;
+import com.alibaba.polardbx.server.ServerConnection;
 import org.apache.calcite.sql.SqlKind;
 
 import java.util.ArrayList;
 import java.util.List;
 
-import static com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcMarkUtil.buildExtendParameter;
 import static com.alibaba.polardbx.server.handler.privileges.polar.PolarHandlerCommon.checkDrdsRoot;
 import static com.alibaba.polardbx.server.handler.privileges.polar.PolarHandlerCommon.encryptPassword;
-import static com.alibaba.polardbx.gms.privilege.audit.AuditPrivilege.polarAudit;
+import static com.alibaba.polardbx.server.util.AuditPrivilege.polarAudit;
 
 /**
  * @author shicai.xsc 2020/3/5 20:49
@@ -92,6 +95,20 @@ public class PolarCreateUserHandler extends AbstractPrivilegeCommandHandler {
     private List<PolarAccountInfo> checkAndGetGrantees() {
         List<PolarAccountInfo> grantees = new ArrayList<>();
         for (UserSpecification spec : stmt.getUsers()) {
+            AccountType accountType;
+            switch (stmt.getAccountType()) {
+            case NORMAL:
+            default:
+                accountType = AccountType.USER;
+                break;
+            case DBA:
+                if (!getGranter().isGod()) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_OPERATION_NOT_ALLOWED,
+                        "Can not create DBA user.");
+                }
+                accountType = AccountType.DBA;
+                break;
+            }
             MySqlUserName user = null;
             if (spec.getUser() instanceof MySqlUserName) {
                 user = (MySqlUserName) spec.getUser();
@@ -104,7 +121,7 @@ public class PolarCreateUserHandler extends AbstractPrivilegeCommandHandler {
                 user.setIdentifiedBy(((SQLCharExpr)spec.getPassword()).getText());
             }
             PolarAccountInfo userInfo = new PolarAccountInfo(PolarAccount.newBuilder()
-                .setAccountType(AccountType.USER)
+                .setAccountType(accountType)
                 .setUsername(user.getUserName())
                 .setHost(user.getHost())
                 .setPassword(spec.getIdentifiedBy())
@@ -125,7 +142,11 @@ public class PolarCreateUserHandler extends AbstractPrivilegeCommandHandler {
         PolarAccountInfo granter = getGranter();
         PolarPrivManager.getInstance().createAccount(granter, getServerConn().getActiveRoles(),
             grantees, stmt.isIfNotExists());
-        polarAudit(getServerConn().getConnectionInfo(), getSql().toString(), AuditAction.CREATE_USER);
+        polarAudit(getServerConn(), getMaskSql(), AuditAction.CREATE_USER);
+    }
+
+    private String getMaskSql() {
+        return stmt.toString(VisitorFeature.OutputMaskPassword);
     }
 
     @Override

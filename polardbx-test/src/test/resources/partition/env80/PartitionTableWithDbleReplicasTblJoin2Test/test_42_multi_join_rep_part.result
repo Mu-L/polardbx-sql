@@ -1,0 +1,460 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+set ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING=true;
+set ENABLE_REPLICAS_RANDOM_READ= false;
+use polardbx;
+drop database if exists repjoin42_db;
+## USE_DN_LIST_MSG
+create database if not exists `repjoin42_db` CHARSET = `utf8mb4` COLLATE = `utf8mb4_general_ci` MODE = 'auto'
+LOCALITY = 'dble_config={"group_config":{
+  "repjoin42_db_g0":["$dn1","repjoin42_db_g0"],
+  "repjoin42_db_g1":["$dn2","repjoin42_db_g1"],
+  "repjoin42_db_g2":["$dn1","repjoin42_db_g2"],
+  "repjoin42_db_g3":["$dn2","repjoin42_db_g3"],
+  "repjoin42_db_g4":["$dn1","repjoin42_db_g4"],
+  "repjoin42_db_g5":["$dn2","repjoin42_db_g5"]
+}}';
+use repjoin42_db;
+DROP TABLE IF EXISTS `rep_t1_g0g1g2`;
+CREATE TABLE IF NOT EXISTS `rep_t1_g0g1g2` (
+  `id` bigint NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin42_db_g0,repjoin42_db_g1,repjoin42_db_g2';
+DROP TABLE IF EXISTS `rep_t2_g0g1g2`;
+CREATE TABLE IF NOT EXISTS  `rep_t2_g0g1g2` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin42_db_g0,repjoin42_db_g1,repjoin42_db_g2';
+DROP TABLE IF EXISTS `rep_t3_g1g2`;
+CREATE TABLE IF NOT EXISTS `rep_t3_g1g2` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin42_db_g1,repjoin42_db_g2';
+DROP TABLE IF EXISTS `rep_t4_g2g3`;
+CREATE TABLE IF NOT EXISTS `rep_t4_g2g3` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin42_db_g2,repjoin42_db_g3';
+DROP TABLE IF EXISTS `rep_t5_g3g4`;
+CREATE TABLE IF NOT EXISTS `rep_t5_g3g4` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin42_db_g3,repjoin42_db_g4';
+DROP TABLE IF EXISTS `rep_t6_g5`;
+CREATE TABLE IF NOT EXISTS `rep_t6_g5` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin42_db_g5';
+DROP TABLE IF EXISTS `rep_t7_g0g3g4`;
+CREATE TABLE IF NOT EXISTS `rep_t7_g0g3g4` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin42_db_g0,repjoin42_db_g3,repjoin42_db_g4';
+DROP TABLE IF EXISTS `rep_t8_g1g3g4`;
+CREATE TABLE IF NOT EXISTS `rep_t8_g1g3g4` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin42_db_g1,repjoin42_db_g3,repjoin42_db_g4';
+DROP TABLE IF EXISTS `part_t1_g0g1g2`;
+CREATE TABLE IF NOT EXISTS `part_t1_g0g1g2` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 3
+LOCALITY='db_pools=repjoin42_db_g0,repjoin42_db_g1,repjoin42_db_g2';
+DROP TABLE IF EXISTS `part_t2_g0g1g2`;
+CREATE TABLE IF NOT EXISTS `part_t2_g0g1g2` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 3
+LOCALITY='db_pools=repjoin42_db_g0,repjoin42_db_g1,repjoin42_db_g2';
+DROP TABLE IF EXISTS `part_t3_g3g4`;
+CREATE TABLE IF NOT EXISTS `part_t3_g3g4` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 2
+LOCALITY='db_pools=repjoin42_db_g3,repjoin42_db_g4';
+DROP TABLE IF EXISTS `part_t4_g3g4`;
+CREATE TABLE IF NOT EXISTS `part_t4_g3g4` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 2
+LOCALITY='db_pools=repjoin42_db_g3,repjoin42_db_g4';
+DROP TABLE IF EXISTS `part_t5_g2`;
+CREATE TABLE IF NOT EXISTS `part_t5_g2` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 1
+LOCALITY='db_pools=repjoin42_db_g2';
+DROP TABLE IF EXISTS `part_t6_g5`;
+CREATE TABLE IF NOT EXISTS `part_t6_g5` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 1
+LOCALITY='db_pools=repjoin42_db_g5';
+DROP TABLE IF EXISTS `bro_tbl1`;
+CREATE TABLE IF NOT EXISTS `bro_tbl1` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+BROADCAST;
+DROP TABLE IF EXISTS `bro_tbl2`;
+CREATE TABLE IF NOT EXISTS `bro_tbl2` (
+`id` bigint NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+BROADCAST;
+insert into rep_t1_g0g1g2 values (1),(2),(3),(4),(5);
+insert into rep_t2_g0g1g2 values (1),(2),(3),(4),(5);
+insert into rep_t3_g1g2 values (1),(2),(3),(4),(5);
+insert into rep_t4_g2g3 values (1),(2),(3),(4),(5);
+insert into rep_t5_g3g4 values (1),(2),(3),(4),(5);
+insert into rep_t6_g5 values (1),(2),(3),(4),(5);
+insert into rep_t7_g0g3g4 values (1),(2),(3),(4),(5);
+insert into rep_t8_g1g3g4 values (1),(2),(3),(4),(5);
+insert into part_t1_g0g1g2 values (1),(2),(3),(4),(5);
+insert into part_t2_g0g1g2 values (1),(2),(3),(4),(5);
+insert into part_t3_g3g4 values (1),(2),(3),(4),(5);
+insert into part_t4_g3g4 values (1),(2),(3),(4),(5);
+insert into part_t5_g2 values (1),(2),(3),(4),(5);
+insert into part_t6_g5 values (1),(2),(3),(4),(5);
+insert into bro_tbl1 values (1),(2),(3),(4),(5);
+insert into bro_tbl2 values (1),(2),(3),(4),(5);
+## join pushdown1-0: all rep tbl cover all groupKey of all part tbl
+explain select rt1.id
+from
+rep_t1_g0g1g2 rt1
+join part_t1_g0g1g2 pt1 on pt1.id = rt1.id
+join part_t2_g0g1g2 pt2 on pt2.id = rt1.id
+order by rt1.id;
+Logical ExecutionPlan
+MergeSort(sort="id ASC")
+  LogicalView(tables="part_t1_g0g1g2[p1,p2,p3],part_t2_g0g1g2[p1,p2,p3],rep_t1_g0g1g2", shardCount=3, sql="SELECT `rep_t1_g0g1g2`.`id` FROM `part_t1_g0g1g2` AS `part_t1_g0g1g2` INNER JOIN `part_t2_g0g1g2` AS `part_t2_g0g1g2` ON (`part_t1_g0g1g2`.`id` = `part_t2_g0g1g2`.`id`) INNER JOIN `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` ON ((`part_t1_g0g1g2`.`id` = `rep_t1_g0g1g2`.`id`) AND (`part_t2_g0g1g2`.`id` = `rep_t1_g0g1g2`.`id`)) ORDER BY `rep_t1_g0g1g2`.`id`")
+explain select rt1.id
+from
+rep_t1_g0g1g2 rt1
+join part_t1_g0g1g2 pt1 on pt1.id = rt1.id
+join part_t2_g0g1g2 pt2 on pt2.id = rt1.id
+join rep_t2_g0g1g2 rt2 on rt2.id = rt1.id
+order by rt1.id;
+Logical ExecutionPlan
+MergeSort(sort="id ASC")
+  LogicalView(tables="rep_t1_g0g1g2,rep_t2_g0g1g2,part_t1_g0g1g2[p1,p2,p3],part_t2_g0g1g2[p1,p2,p3]", shardCount=3, sql="SELECT `rep_t1_g0g1g2`.`id` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` INNER JOIN `rep_t2_g0g1g2` AS `rep_t2_g0g1g2` ON (`rep_t1_g0g1g2`.`id` = `rep_t2_g0g1g2`.`id`) INNER JOIN (`part_t1_g0g1g2` AS `part_t1_g0g1g2` INNER JOIN `part_t2_g0g1g2` AS `part_t2_g0g1g2` ON (`part_t1_g0g1g2`.`id` = `part_t2_g0g1g2`.`id`)) ON ((`rep_t1_g0g1g2`.`id` = `part_t1_g0g1g2`.`id`) AND (`rep_t1_g0g1g2`.`id` = `part_t2_g0g1g2`.`id`) AND (`rep_t2_g0g1g2`.`id` = `part_t1_g0g1g2`.`id`) AND (`rep_t2_g0g1g2`.`id` = `part_t2_g0g1g2`.`id`)) ORDER BY `rep_t1_g0g1g2`.`id`")
+explain select rt1.id
+from
+rep_t1_g0g1g2 rt1
+join part_t1_g0g1g2 pt1 on pt1.id = rt1.id
+join part_t2_g0g1g2 pt2 on pt2.id = rt1.id
+join rep_t2_g0g1g2 rt2 on rt2.id = rt1.id
+order by rt1.id;
+Logical ExecutionPlan
+MergeSort(sort="id ASC")
+  LogicalView(tables="rep_t1_g0g1g2,rep_t2_g0g1g2,part_t1_g0g1g2[p1,p2,p3],part_t2_g0g1g2[p1,p2,p3]", shardCount=3, sql="SELECT `rep_t1_g0g1g2`.`id` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` INNER JOIN `rep_t2_g0g1g2` AS `rep_t2_g0g1g2` ON (`rep_t1_g0g1g2`.`id` = `rep_t2_g0g1g2`.`id`) INNER JOIN (`part_t1_g0g1g2` AS `part_t1_g0g1g2` INNER JOIN `part_t2_g0g1g2` AS `part_t2_g0g1g2` ON (`part_t1_g0g1g2`.`id` = `part_t2_g0g1g2`.`id`)) ON ((`rep_t1_g0g1g2`.`id` = `part_t1_g0g1g2`.`id`) AND (`rep_t1_g0g1g2`.`id` = `part_t2_g0g1g2`.`id`) AND (`rep_t2_g0g1g2`.`id` = `part_t1_g0g1g2`.`id`) AND (`rep_t2_g0g1g2`.`id` = `part_t2_g0g1g2`.`id`)) ORDER BY `rep_t1_g0g1g2`.`id`")
+select rt1.id
+from
+rep_t1_g0g1g2 rt1
+join part_t1_g0g1g2 pt1 on pt1.id = rt1.id
+join part_t2_g0g1g2 pt2 on pt2.id = rt1.id
+join rep_t2_g0g1g2 rt2 on rt2.id = rt1.id
+order by rt1.id;
+id
+1
+2
+3
+4
+5
+explain select rt7.id
+from
+rep_t7_g0g3g4 rt7
+join part_t3_g3g4 pt3 on pt3.id = rt7.id
+join part_t4_g3g4 pt4 on pt4.id = rt7.id
+join rep_t8_g1g3g4 rt8 on rt8.id = rt7.id
+order by rt7.id;
+Logical ExecutionPlan
+MergeSort(sort="id ASC")
+  LogicalView(tables="rep_t7_g0g3g4,rep_t8_g1g3g4,part_t3_g3g4[p1,p2],part_t4_g3g4[p1,p2]", shardCount=2, sql="SELECT `rep_t7_g0g3g4`.`id` FROM `rep_t7_g0g3g4` AS `rep_t7_g0g3g4` INNER JOIN `rep_t8_g1g3g4` AS `rep_t8_g1g3g4` ON (`rep_t7_g0g3g4`.`id` = `rep_t8_g1g3g4`.`id`) INNER JOIN (`part_t3_g3g4` AS `part_t3_g3g4` INNER JOIN `part_t4_g3g4` AS `part_t4_g3g4` ON (`part_t3_g3g4`.`id` = `part_t4_g3g4`.`id`)) ON ((`rep_t7_g0g3g4`.`id` = `part_t3_g3g4`.`id`) AND (`rep_t7_g0g3g4`.`id` = `part_t4_g3g4`.`id`) AND (`rep_t8_g1g3g4`.`id` = `part_t3_g3g4`.`id`) AND (`rep_t8_g1g3g4`.`id` = `part_t4_g3g4`.`id`)) ORDER BY `rep_t7_g0g3g4`.`id`")
+select rt7.id
+from
+rep_t7_g0g3g4 rt7
+join part_t3_g3g4 pt3 on pt3.id = rt7.id
+join part_t4_g3g4 pt4 on pt4.id = rt7.id
+join rep_t8_g1g3g4 rt8 on rt8.id = rt7.id
+order by rt7.id;
+id
+1
+2
+3
+4
+5
+explain select rt7.id
+from
+rep_t7_g0g3g4 rt7
+join part_t3_g3g4 pt3 on pt3.id = rt7.id and rt7.id=1
+join part_t4_g3g4 pt4 on pt4.id = rt7.id
+join rep_t8_g1g3g4 rt8 on rt8.id = rt7.id
+order by rt7.id;
+Logical ExecutionPlan
+PhyTableOperation(tables="rep_t7_g0g3g4[p2],part_t3_g3g4[p1],part_t4_g3g4[p1],rep_t8_g1g3g4[p2]", sql="SELECT `rt7`.`id` AS `id` FROM ? AS `rt7` INNER JOIN ? AS `pt3` ON ((`pt3`.`id` = `rt7`.`id`) AND (`rt7`.`id` = ?)) INNER JOIN ? AS `pt4` ON (`pt4`.`id` = `rt7`.`id`) INNER JOIN ? AS `rt8` ON (`rt8`.`id` = `rt7`.`id`) ORDER BY `rt7`.`id`", params="1")
+select rt7.id
+from
+rep_t7_g0g3g4 rt7
+join part_t3_g3g4 pt3 on pt3.id = rt7.id and rt7.id=1
+join part_t4_g3g4 pt4 on pt4.id = rt7.id
+join rep_t8_g1g3g4 rt8 on rt8.id = rt7.id
+order by rt7.id;
+id
+1
+## join pushdown2-0: not all rep tbl cover all groupKey of all part tbl
+#explain select rt1.id
+#from
+#rep_t1_g0g1g2 rt1
+#join part_t1_g0g1g2 pt1 on pt1.id = rt1.id
+#join rep_t5_g3g4 rt5 on rt5.id = pt1.id
+#join part_t4_g3g4 pt4 on pt4.id = rt5.id
+#order by rt1.id;
+select rt1.id
+from
+rep_t1_g0g1g2 rt1
+join part_t1_g0g1g2 pt1 on pt1.id = rt1.id
+join rep_t5_g3g4 rt5 on rt5.id = pt1.id
+join part_t4_g3g4 pt4 on pt4.id = rt5.id
+order by rt1.id;
+id
+1
+2
+3
+4
+5
+explain select rt8.id
+from
+rep_t8_g1g3g4 rt8
+join part_t3_g3g4 pt3 on pt3.id = rt8.id
+join part_t4_g3g4 pt4 on pt4.id = rt8.id
+join rep_t6_g5 rt6 on rt6.id = pt4.id
+order by rt8.id;
+Logical ExecutionPlan
+Project(id="id")
+  HashJoin(condition="id = id0 AND id = id00 AND id = id", type="inner")
+    MergeSort(sort="id ASC")
+      LogicalView(tables="rep_t8_g1g3g4,part_t3_g3g4[p1,p2],part_t4_g3g4[p1,p2]", shardCount=2, sql="SELECT `rep_t8_g1g3g4`.`id`, `part_t3_g3g4`.`id` AS `id0`, `part_t4_g3g4`.`id` AS `id1` FROM `rep_t8_g1g3g4` AS `rep_t8_g1g3g4` INNER JOIN (`part_t3_g3g4` AS `part_t3_g3g4` INNER JOIN `part_t4_g3g4` AS `part_t4_g3g4` ON (`part_t3_g3g4`.`id` = `part_t4_g3g4`.`id`)) ON ((`rep_t8_g1g3g4`.`id` = `part_t3_g3g4`.`id`) AND (`rep_t8_g1g3g4`.`id` = `part_t4_g3g4`.`id`)) WHERE (`part_t3_g3g4`.`id` = `part_t4_g3g4`.`id`) ORDER BY `rep_t8_g1g3g4`.`id`")
+    LogicalView(tables="rep_t6_g5[p1]", sql="SELECT `id` FROM `rep_t6_g5` AS `rep_t6_g5`")
+select rt8.id
+from
+rep_t8_g1g3g4 rt8
+join part_t3_g3g4 pt3 on pt3.id = rt8.id
+join part_t4_g3g4 pt4 on pt4.id = rt8.id
+join rep_t6_g5 rt6 on rt6.id = pt4.id
+order by rt8.id;
+id
+1
+2
+3
+4
+5
+## outer-join/cross-join non-pushdown
+explain select t1.id from rep_t8_g1g3g4 t1
+left join part_t3_g3g4 t2 on t1.id = t2.id order by t1.id;
+Logical ExecutionPlan
+Project(id="id")
+  BKAJoin(condition="id = id", type="left")
+    LogicalView(tables="rep_t8_g1g3g4[p1]", sql="SELECT `id` FROM `rep_t8_g1g3g4` AS `rep_t8_g1g3g4` ORDER BY `id`")
+    Gather(concurrent=true)
+      LogicalView(tables="part_t3_g3g4[p1,p2]", shardCount=2, sql="SELECT `id` FROM `part_t3_g3g4` AS `part_t3_g3g4` WHERE (`id` IN (...))")
+## outer-join/cross-join pushdown with single_group sharding
+explain select rt1.id as rt1_id,rt2.id as rt2_id
+from rep_t1_g0g1g2 rt1
+left join rep_t1_g0g1g2 rt2  on rt2.id=rt1.id
+left join part_t1_g0g1g2 pt1 on pt1.id = rt2.id and pt1.id=1
+order by rt1_id;
+Logical ExecutionPlan
+PhyTableOperation(tables="rep_t1_g0g1g2[p1],rep_t1_g0g1g2[p1],part_t1_g0g1g2[p1]", sql="SELECT `rt1`.`id` AS `rt1_id`, `rt2`.`id` AS `rt2_id` FROM ? AS `rt1` LEFT JOIN ? AS `rt2` ON (`rt2`.`id` = `rt1`.`id`) LEFT JOIN ? AS `pt1` ON ((`pt1`.`id` = `rt2`.`id`) AND (`pt1`.`id` = ?)) ORDER BY `rt1_id`", params="1")
+explain select rt1.id as rt1_id,rt2.id as rt2_id
+from rep_t1_g0g1g2 rt1
+left join part_t1_g0g1g2 pt1 on pt1.id = rt1.id and pt1.id=1
+left join rep_t1_g0g1g2 rt2 on rt2.id=rt1.id
+order by rt1_id;
+Logical ExecutionPlan
+PhyTableOperation(tables="rep_t1_g0g1g2[p1],part_t1_g0g1g2[p1],rep_t1_g0g1g2[p1]", sql="SELECT `rt1`.`id` AS `rt1_id`, `rt2`.`id` AS `rt2_id` FROM ? AS `rt1` LEFT JOIN ? AS `pt1` ON ((`pt1`.`id` = `rt1`.`id`) AND (`pt1`.`id` = ?)) LEFT JOIN ? AS `rt2` ON (`rt2`.`id` = `rt1`.`id`) ORDER BY `rt1_id`", params="1")
+explain select rt1.id as rt1_id,rt2.id as rt2_id
+from rep_t1_g0g1g2 rt1
+left join part_t1_g0g1g2 pt1 on pt1.id = rt1.id and pt1.id=1
+right join rep_t1_g0g1g2 rt2 on rt2.id=rt1.id
+order by rt1_id;
+Logical ExecutionPlan
+PhyTableOperation(tables="rep_t1_g0g1g2[p1],part_t1_g0g1g2[p1],rep_t1_g0g1g2[p1]", sql="SELECT `rt1`.`id` AS `rt1_id`, `rt2`.`id` AS `rt2_id` FROM ? AS `rt1` LEFT JOIN ? AS `pt1` ON ((`pt1`.`id` = `rt1`.`id`) AND (`pt1`.`id` = ?)) RIGHT JOIN ? AS `rt2` ON (`rt2`.`id` = `rt1`.`id`) ORDER BY `rt1_id`", params="1")
+explain select rt1.id as rt1_id,rt2.id as rt2_id
+from rep_t1_g0g1g2 rt1
+left join part_t1_g0g1g2 pt1 on pt1.id = rt1.id and pt1.id in (1,3)
+right join rep_t1_g0g1g2 rt2 on rt2.id=rt1.id
+order by rt1_id;
+Logical ExecutionPlan
+SortMergeJoin(condition="id = id", type="right")
+  Project(id="id")
+    BKAJoin(condition="id = id", type="left")
+      LogicalView(tables="rep_t1_g0g1g2[p1]", sql="SELECT `id` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` ORDER BY `id`")
+      Gather(concurrent=true)
+        LogicalView(tables="part_t1_g0g1g2[p1,p3]", shardCount=2, sql="SELECT `id` FROM `part_t1_g0g1g2` AS `part_t1_g0g1g2` WHERE ((`id` IN(?)) AND (`id` IN (...)))")
+  LogicalView(tables="rep_t1_g0g1g2[p1]", sql="SELECT `id` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` ORDER BY `id`")
+## outer-join/cross-join non-pushdown with multi-group sharding
+explain select rt1.id as rt1_id
+from rep_t1_g0g1g2 rt1
+left join part_t1_g0g1g2 pt1 on pt1.id = rt1.id and pt1.id in (1,3)
+order by rt1_id;
+Logical ExecutionPlan
+Project(rt1_id="id")
+  BKAJoin(condition="id = id", type="left")
+    LogicalView(tables="rep_t1_g0g1g2[p1]", sql="SELECT `id` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` ORDER BY `id`")
+    Gather(concurrent=true)
+      LogicalView(tables="part_t1_g0g1g2[p1,p3]", shardCount=2, sql="SELECT `id` FROM `part_t1_g0g1g2` AS `part_t1_g0g1g2` WHERE ((`id` IN(?)) AND (`id` IN (...)))")
+## join non-pushdown because of un-full-cover group key
+explain select rt1.id from
+rep_t3_g1g2 rt1
+join part_t1_g0g1g2 pt1 on pt1.id = rt1.id
+join part_t2_g0g1g2 pt2 on pt2.id = pt1.id order by rt1.id;
+Logical ExecutionPlan
+Project(id="id")
+  HashJoin(condition="id = id AND id0 = id", type="inner")
+    LogicalView(tables="rep_t3_g1g2[p1]", sql="SELECT `id` FROM `rep_t3_g1g2` AS `rep_t3_g1g2` ORDER BY `id`")
+    Gather(concurrent=true)
+      LogicalView(tables="part_t1_g0g1g2[p1,p2,p3],part_t2_g0g1g2[p1,p2,p3]", shardCount=3, sql="SELECT `part_t1_g0g1g2`.`id`, `part_t2_g0g1g2`.`id` AS `id0` FROM `part_t1_g0g1g2` AS `part_t1_g0g1g2` INNER JOIN `part_t2_g0g1g2` AS `part_t2_g0g1g2` ON (`part_t1_g0g1g2`.`id` = `part_t2_g0g1g2`.`id`) WHERE (`part_t1_g0g1g2`.`id` = `part_t2_g0g1g2`.`id`)")
+## join non-pushdown because of un-full-cover group key
+explain select rt1.id from
+rep_t3_g1g2 rt1
+join part_t1_g0g1g2 pt1 on pt1.id = rt1.id and pt1.id in (1,3)
+join part_t2_g0g1g2 pt2 on pt2.id = pt1.id order by rt1.id;
+Logical ExecutionPlan
+Project(id="id")
+  HashJoin(condition="id = id AND id0 = id", type="inner")
+    LogicalView(tables="rep_t3_g1g2[p1]", sql="SELECT `id` FROM `rep_t3_g1g2` AS `rep_t3_g1g2` WHERE (`id` IN(?)) ORDER BY `id`")
+    Gather(concurrent=true)
+      LogicalView(tables="part_t1_g0g1g2[p1,p3],part_t2_g0g1g2[p1,p3]", shardCount=2, sql="SELECT `part_t1_g0g1g2`.`id`, `part_t2_g0g1g2`.`id` AS `id0` FROM `part_t1_g0g1g2` AS `part_t1_g0g1g2` INNER JOIN `part_t2_g0g1g2` AS `part_t2_g0g1g2` ON ((`part_t1_g0g1g2`.`id` = `part_t2_g0g1g2`.`id`) AND (`part_t1_g0g1g2`.`id` IN(?))) WHERE (`part_t1_g0g1g2`.`id` = `part_t2_g0g1g2`.`id`)", pruningInfo="all size:2*2(part), pruning size:2")
+## filterSubquery pushdown
+explain select pt1.id from part_t1_g0g1g2 pt1
+where pt1.id in (select rt1.id from rep_t1_g0g1g2 rt1)
+and pt1.id in (select rt2.id from rep_t2_g0g1g2 rt2)
+order by pt1.id;
+Logical ExecutionPlan
+MergeSort(sort="id ASC")
+  LogicalView(tables="part_t1_g0g1g2[p1,p2,p3],rep_t1_g0g1g2,rep_t2_g0g1g2", shardCount=3, sql="SELECT `id` FROM `part_t1_g0g1g2` AS `part_t1_g0g1g2` WHERE ((`id` IN (SELECT `id` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2`)) AND (`id` IN (SELECT `id` FROM `rep_t2_g0g1g2` AS `rep_t2_g0g1g2`))) ORDER BY `id`")
+## filterSubquery pushdown
+explain select pt1.id from part_t1_g0g1g2 pt1
+where exists (select rt1.id from rep_t1_g0g1g2 rt1 where pt1.id=rt1.id)
+and exists (select rt2.id from rep_t2_g0g1g2 rt2 where pt1.id=rt2.id)
+order by pt1.id;
+Logical ExecutionPlan
+MergeSort(sort="id ASC")
+  LogicalView(tables="part_t1_g0g1g2[p1,p2,p3],rep_t1_g0g1g2,rep_t2_g0g1g2", shardCount=3, sql="SELECT `id` FROM `part_t1_g0g1g2` AS `part_t1_g0g1g2` WHERE ((EXISTS (SELECT `id` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` WHERE (`part_t1_g0g1g2`.`id` = `id`))) AND (EXISTS (SELECT `id` FROM `rep_t2_g0g1g2` AS `rep_t2_g0g1g2` WHERE (`part_t1_g0g1g2`.`id` = `id`)))) ORDER BY `id`")
+## filterSubquery pushdown
+explain select pt1.id from part_t1_g0g1g2 pt1
+where exists (select rt1.id from rep_t1_g0g1g2 rt1 where pt1.id=rt1.id)
+and exists (select rt2.id from rep_t2_g0g1g2 rt2 where pt1.id=rt2.id)
+order by pt1.id;
+Logical ExecutionPlan
+MergeSort(sort="id ASC")
+  LogicalView(tables="part_t1_g0g1g2[p1,p2,p3],rep_t1_g0g1g2,rep_t2_g0g1g2", shardCount=3, sql="SELECT `id` FROM `part_t1_g0g1g2` AS `part_t1_g0g1g2` WHERE ((EXISTS (SELECT `id` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` WHERE (`part_t1_g0g1g2`.`id` = `id`))) AND (EXISTS (SELECT `id` FROM `rep_t2_g0g1g2` AS `rep_t2_g0g1g2` WHERE (`part_t1_g0g1g2`.`id` = `id`)))) ORDER BY `id`")
+## filterSubquery non-pushdown because of no correlated join column
+explain select pt1.id from part_t1_g0g1g2 pt1
+where exists (select rt1.id from bro_tbl1 rt1)
+and exists (select rt2.id from bro_tbl2 rt2)
+order by pt1.id;
+Logical ExecutionPlan
+SemiNLJoin(condition="true", type="semi")
+  SemiNLJoin(condition="true", type="semi")
+    MergeSort(sort="id ASC")
+      LogicalView(tables="part_t1_g0g1g2[p1,p2,p3]", shardCount=3, sql="SELECT `id` FROM `part_t1_g0g1g2` AS `part_t1_g0g1g2` ORDER BY `id`")
+    LogicalView(tables="bro_tbl2", shardCount=0, sql="SELECT `id` FROM `bro_tbl2` AS `bro_tbl2`")
+  LogicalView(tables="bro_tbl1", shardCount=0, sql="SELECT `id` FROM `bro_tbl1` AS `bro_tbl1`")
+## filterSubquery non-pushdown because of un-full-cover group key
+explain select pt1.id from part_t1_g0g1g2 pt1
+where exists (select rt1.id from rep_t3_g1g2 rt1 where pt1.id=rt1.id)
+and exists (select rt2.id from rep_t2_g0g1g2 rt2 where pt1.id=rt2.id)
+order by pt1.id;
+Logical ExecutionPlan
+SemiHashJoin(condition="id = id", type="semi", build="inner")
+  MergeSort(sort="id ASC")
+    LogicalView(tables="part_t1_g0g1g2[p1,p2,p3],rep_t2_g0g1g2", shardCount=3, sql="SELECT `id` FROM `part_t1_g0g1g2` AS `part_t1_g0g1g2` WHERE (EXISTS (SELECT `id` FROM `rep_t2_g0g1g2` AS `rep_t2_g0g1g2` WHERE (`part_t1_g0g1g2`.`id` = `id`))) ORDER BY `id`")
+  LogicalView(tables="rep_t3_g1g2[p1]", sql="SELECT `id` FROM `rep_t3_g1g2` AS `rep_t3_g1g2`")
+## columnSubquery pushdown
+explain select pt1.id,
+(select rt1.id from rep_t1_g0g1g2 rt1 where rt1.id=pt1.id) as rt1_id,
+(select rt2.id from rep_t2_g0g1g2 rt2 where rt2.id=pt1.id) as rt2_id
+from part_t1_g0g1g2 pt1
+order by pt1.id;
+Logical ExecutionPlan
+MergeSort(sort="id ASC")
+  LogicalView(tables="rep_t2_g0g1g2,rep_t1_g0g1g2,part_t1_g0g1g2[p1,p2,p3]", shardCount=3, sql="SELECT `id`, `id0`, (((SELECT `id` FROM `rep_t2_g0g1g2` AS `rep_t2_g0g1g2` WHERE (`id` = `t0`.`id`)))) AS `id1` FROM (SELECT `id`, (((SELECT `id` FROM `rep_t1_g0g1g2` AS `rep_t1_g0g1g2` WHERE (`id` = `part_t1_g0g1g2`.`id`)))) AS `id0` FROM `part_t1_g0g1g2` AS `part_t1_g0g1g2`) AS `t0` ORDER BY `id`")
+## columnSubquery pushdown
+explain select pt3.id,
+(select rt7.id from rep_t7_g0g3g4 rt7 where rt7.id=pt3.id) as rt7_id,
+(select rt5.id from rep_t5_g3g4 rt5 where rt5.id=pt3.id) as rt5_id
+from part_t3_g3g4 pt3
+order by pt3.id;
+Logical ExecutionPlan
+MergeSort(sort="id ASC")
+  LogicalView(tables="rep_t5_g3g4,rep_t7_g0g3g4,part_t3_g3g4[p1,p2]", shardCount=2, sql="SELECT `id`, `id0`, (((SELECT `id` FROM `rep_t5_g3g4` AS `rep_t5_g3g4` WHERE (`id` = `t0`.`id`)))) AS `id1` FROM (SELECT `id`, (((SELECT `id` FROM `rep_t7_g0g3g4` AS `rep_t7_g0g3g4` WHERE (`id` = `part_t3_g3g4`.`id`)))) AS `id0` FROM `part_t3_g3g4` AS `part_t3_g3g4`) AS `t0` ORDER BY `id`")
+## columnSubquery non-pushdown because of no correlated join column
+explain select pt3.id,
+(select rt7.id from rep_t7_g0g3g4 rt7) as rt7_id,
+(select rt5.id from rep_t5_g3g4 rt5) as rt5_id
+from part_t3_g3g4 pt3
+order by pt3.id;
+Logical ExecutionPlan
+MergeSort(sort="id ASC")
+  LogicalView(tables="part_t3_g3g4[p1,p2]", shardCount=2, sql="SELECT `id`, ? AS `$f1`, ? AS `$f2` FROM `part_t3_g3g4` AS `part_t3_g3g4` ORDER BY `id`")
+HitCache:false
+Source:
+>> individual scalar subquery
+LogicalView(tables="rep_t7_g0g3g4[p1]", sql="SELECT `id` FROM `rep_t7_g0g3g4` AS `rep_t7_g0g3g4`")
+>> individual scalar subquery
+LogicalView(tables="rep_t5_g3g4[p1]", sql="SELECT `id` FROM `rep_t5_g3g4` AS `rep_t5_g3g4`")
+## columnSubquery non-pushdown because of un-full-cover group key
+explain select pt3.id,
+(select rt7.id from rep_t7_g0g3g4 rt7 where rt7.id=pt3.id) as rt7_id,
+(select rt4.id from rep_t4_g2g3 rt4 where rt4.id=pt3.id) as rt4_id
+from part_t3_g3g4 pt3
+order by pt3.id;
+Logical ExecutionPlan
+SemiHashJoin(condition="id = id", type="left", build="inner")
+  MergeSort(sort="id ASC")
+    LogicalView(tables="rep_t7_g0g3g4,part_t3_g3g4[p1,p2]", shardCount=2, sql="SELECT `id`, (((SELECT `id` FROM `rep_t7_g0g3g4` AS `rep_t7_g0g3g4` WHERE (`id` = `part_t3_g3g4`.`id`)))) AS `id0` FROM `part_t3_g3g4` AS `part_t3_g3g4` ORDER BY `id`")
+  LogicalView(tables="rep_t4_g2g3[p1]", sql="SELECT `id` FROM `rep_t4_g2g3` AS `rep_t4_g2g3`")
+## union non-pushdown
+explain select id from part_t1_g0g1g2 where id=3
+union all (select rt1.id from rep_t1_g0g1g2 rt1)
+union all (select rt2.id from rep_t2_g0g1g2 rt2)
+order by id;
+Logical ExecutionPlan
+PhyTableOperation(tables="part_t1_g0g1g2[p3],rep_t1_g0g1g2[p3],rep_t2_g0g1g2[p3]", sql="SELECT `__ALIAS__`.`id` FROM (SELECT `part_t1_g0g1g2`.`id` AS `id` FROM ? AS `part_t1_g0g1g2` WHERE (`part_t1_g0g1g2`.`id` = ?) UNION ALL SELECT `rt1`.`id` AS `id` FROM ? AS `rt1` UNION ALL SELECT `rt2`.`id` AS `id` FROM ? AS `rt2`) AS `__ALIAS__` ORDER BY `id`", params="3")
+use polardbx;
+drop database if exists repjoin42_db;

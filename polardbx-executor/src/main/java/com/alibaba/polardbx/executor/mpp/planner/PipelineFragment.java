@@ -17,7 +17,6 @@
 package com.alibaba.polardbx.executor.mpp.planner;
 
 import com.alibaba.polardbx.executor.mpp.split.SplitInfo;
-import com.alibaba.polardbx.executor.operator.ParallelHashJoinExec;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.alibaba.polardbx.util.MoreObjects;
@@ -33,6 +32,7 @@ import java.util.stream.Collectors;
 public class PipelineFragment {
 
     protected FragmentRFManager fragmentRFManager;
+    protected EarlyStopManager earlyStopManager;
 
     protected int parallelism;
     protected List<LogicalView> logicalViews = new ArrayList<>();
@@ -43,9 +43,6 @@ public class PipelineFragment {
 
     // optimize for ResumeExec
     protected boolean containLimit;
-
-    // merge the results from this pipeline without sorting.
-    protected boolean directMerge;
 
     protected boolean holdSingleTonParallelism;
 
@@ -80,6 +77,14 @@ public class PipelineFragment {
         properties.addChild(relatedId, child.getProperties());
     }
 
+    public EarlyStopManager getEarlyStopManager() {
+        return earlyStopManager;
+    }
+
+    public void setEarlyStopManager(EarlyStopManager earlyStopManager) {
+        this.earlyStopManager = earlyStopManager;
+    }
+
     public boolean isBuildDepOnAllConsumers() {
         return buildDepOnAllConsumers;
     }
@@ -99,15 +104,6 @@ public class PipelineFragment {
                 "This PipelineFragment must keep the parallelism: " + this.parallelism);
         }
         this.parallelism = parallelism;
-    }
-
-    public boolean isDirectMerge() {
-        return directMerge;
-    }
-
-    public PipelineFragment setDirectMerge(boolean directMerge) {
-        this.directMerge = directMerge;
-        return this;
     }
 
     public PipelineFragment setPipelineId(int pipelineId) {

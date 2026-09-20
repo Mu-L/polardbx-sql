@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.gms.metadb.misc;
 
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
+import com.alibaba.polardbx.common.utils.encrypt.MD5Utils;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.druid.util.StringUtils;
@@ -29,7 +30,6 @@ import org.apache.commons.collections.CollectionUtils;
 
 import java.sql.Connection;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -303,8 +303,10 @@ public class PersistentReadWriteLock {
             protected Integer invoke() {
                 try {
                     MetaDbUtil.beginTransaction(connection);
+                    ReadWriteLockWaitingAccessor waitingAccessor = new ReadWriteLockWaitingAccessor();
+                    waitingAccessor.setConnection(connection);
+                    int c = waitingAccessor.deleteByOwner(owner);
                     List<ReadWriteLockRecord> currentLocks = accessor.query(owner);
-                    int c = 0;
                     for (ReadWriteLockRecord r : currentLocks) {
                         c += accessor.deleteByOwnerAndResourceAndType(owner, r.resource, r.type);
                     }
@@ -328,12 +330,61 @@ public class PersistentReadWriteLock {
     public int unlockReadWriteByOwner(Connection connection, String owner) {
         final ReadWriteLockAccessor accessor = new ReadWriteLockAccessor();
         accessor.setConnection(connection);
+        final ReadWriteLockWaitingAccessor waitingAccessor = new ReadWriteLockWaitingAccessor();
+        waitingAccessor.setConnection(connection);
+        int count = waitingAccessor.deleteByOwner(owner);
         List<ReadWriteLockRecord> currentLocks = accessor.query(owner);
-        int count = 0;
         for (ReadWriteLockRecord r : currentLocks) {
             count += accessor.deleteByOwnerAndResourceAndType(owner, r.resource, r.type);
         }
         return count;
+    }
+
+    public int unlockReadWriteByOwner(String owner, Set<String> locks) {
+        if (CollectionUtils.isEmpty(locks)) {
+            return 0;
+        }
+        return new ReadWriteLockAccessDelegate<Integer>() {
+            @Override
+            protected Integer invoke() {
+                try {
+                    MetaDbUtil.beginTransaction(connection);
+                    int count = unlockReadWriteByOwner(connection, owner, locks);
+                    MetaDbUtil.commit(connection);
+                    MetaDbUtil.endTransaction(connection, LOGGER);
+                    return count;
+                } catch (Exception e) {
+                    MetaDbUtil.rollback(connection, e, LOGGER, "release read write lock");
+                    return 0;
+                }
+            }
+        }.execute();
+    }
+
+    public int unlockReadWriteByOwner(String owner,
+                                      Set<String> grantedResources,
+                                      Set<String> waitingResources) {
+        if (CollectionUtils.isEmpty(grantedResources) && CollectionUtils.isEmpty(waitingResources)) {
+            return 0;
+        }
+        return new ReadWriteLockAccessDelegate<Integer>() {
+            @Override
+            protected Integer invoke() {
+                try {
+                    MetaDbUtil.beginTransaction(connection);
+                    ReadWriteLockWaitingAccessor waitingAccessor = new ReadWriteLockWaitingAccessor();
+                    waitingAccessor.setConnection(connection);
+                    int count = waitingAccessor.deleteByOwnerAndResources(owner, waitingResources);
+                    count += unlockReadWriteByOwner(connection, owner, grantedResources);
+                    MetaDbUtil.commit(connection);
+                    MetaDbUtil.endTransaction(connection, LOGGER);
+                    return count;
+                } catch (Exception e) {
+                    MetaDbUtil.rollback(connection, e, LOGGER, "release read write lock subset");
+                    return 0;
+                }
+            }
+        }.execute();
     }
 
     public int unlockReadWriteByOwner(Connection connection,
@@ -443,6 +494,28 @@ public class PersistentReadWriteLock {
         }.execute();
     }
 
+    public boolean shouldAbortForDeadlock(String owner) {
+        return new ReadWriteLockAccessDelegate<Boolean>() {
+            @Override
+            protected Boolean invoke() {
+                try {
+                    MetaDbUtil.beginTransaction(connection);
+                    ReadWriteLockWaitingAccessor waitingAccessor = new ReadWriteLockWaitingAccessor();
+                    waitingAccessor.setConnection(connection);
+                    List<ReadWriteLockRecord> holders = accessor.queryAll();
+                    List<ReadWriteLockWaitingRecord> waiters = waitingAccessor.queryAll();
+                    MetaDbUtil.commit(connection);
+                    MetaDbUtil.endTransaction(connection, LOGGER);
+                    return ReadWriteLockDeadlockDetector.shouldAbort(owner, new HashSet<>(holders),
+                        new HashSet<>(waiters));
+                } catch (Exception e) {
+                    MetaDbUtil.rollback(connection, e, LOGGER, "detect read write lock deadlock");
+                    throw new TddlNestableRuntimeException(e);
+                }
+            }
+        }.execute();
+    }
+
     public List<ReadWriteLockRecord> queryByResource(Set<String> resource) {
         return new ReadWriteLockAccessDelegate<List<ReadWriteLockRecord>>() {
             @Override
@@ -470,6 +543,171 @@ public class PersistentReadWriteLock {
         return tryReadWriteLockBatch(schemaName, owner, readLockSet, writeLockSet, (Connection conn) -> true);
     }
 
+    public ReadWriteLockAcquireResult tryReadWriteLockOneResourceWithWaitingQueue(String schemaName,
+                                                                                  String owner,
+                                                                                  String resource,
+                                                                                  boolean write,
+                                                                                  Function<Connection, Boolean> func) {
+        return tryReadWriteLockOneResourceWithWaitingQueue(schemaName, owner, resource, write, func, false);
+    }
+
+    public ReadWriteLockAcquireResult tryReadWriteLockOneResourceWithWaitingQueue(String schemaName,
+                                                                                  String owner,
+                                                                                  String resource,
+                                                                                  boolean write,
+                                                                                  Function<Connection, Boolean> func,
+                                                                                  boolean invokeCallbackOnWaiting) {
+        if (StringUtils.isEmpty(owner)) {
+            throw new IllegalArgumentException("owner is empty");
+        }
+        // MySQL GET_LOCK/RELEASE_LOCK names are capped at 64 characters; DDL resource strings
+        // (e.g. per-partition physical resource names) can exceed that and would otherwise make
+        // GET_LOCK throw "Incorrect user-level lock name" on every attempt. Hash to a fixed-length
+        // name for the advisory lock only; the full resource string is still used everywhere else.
+        final String lockName = MD5Utils.getInstance().getMD5String(resource);
+        return new ReadWriteLockAccessDelegate<ReadWriteLockAcquireResult>() {
+            @Override
+            protected ReadWriteLockAcquireResult invoke() {
+                ReadWriteLockWaitingAccessor waitingAccessor = new ReadWriteLockWaitingAccessor();
+                waitingAccessor.setConnection(connection);
+                boolean lockAcquired = false;
+                boolean funcPhase = false;
+                try {
+                    MetaDbUtil.beginTransaction(connection);
+                    if (!MetaDbUtil.tryGetLock(connection, lockName, GET_LOCK_TIMEOUT)) {
+                        MetaDbUtil.rollback(connection, null, LOGGER, "get resource lock failed");
+                        return ReadWriteLockAcquireResult.WAITING;
+                    }
+                    lockAcquired = true;
+
+                    Optional<ReadWriteLockRecord> holder = accessor.queryByOwnerAndResource(owner, resource);
+                    if (holder.isPresent()) {
+                        if (isWriteLock(holder.get().type) || !write) {
+                            if (func != null) {
+                                funcPhase = true;
+                                func.apply(connection);
+                            }
+                            MetaDbUtil.commit(connection);
+                            MetaDbUtil.endTransaction(connection, LOGGER);
+                            return ReadWriteLockAcquireResult.ALREADY_HELD;
+                        }
+                        accessor.deleteByOwnerAndResourceAndType(owner, resource, owner);
+                        upsertWaiting(waitingAccessor, schemaName, owner, resource, EXCLUSIVE, true);
+                    } else {
+                        upsertWaiting(waitingAccessor, schemaName, owner, resource, write ? EXCLUSIVE : owner,
+                            write);
+                    }
+
+                    boolean granted =
+                        tryGrantFromWaitingQueue(accessor, waitingAccessor, schemaName, owner, resource);
+                    if ((granted || invokeCallbackOnWaiting) && func != null) {
+                        funcPhase = true;
+                        func.apply(connection);
+                    }
+                    MetaDbUtil.commit(connection);
+                    MetaDbUtil.endTransaction(connection, LOGGER);
+                    return granted ? ReadWriteLockAcquireResult.NEWLY_GRANTED : ReadWriteLockAcquireResult.WAITING;
+                } catch (Exception e) {
+                    try {
+                        MetaDbUtil.rollback(connection, e, LOGGER, "acquire read write lock with waiting queue");
+                    } catch (Throwable rollbackEx) {
+                        LOGGER.error(
+                            "Failed to rollback in tryReadWriteLockOneResourceWithWaitingQueue, owner:" + owner,
+                            rollbackEx);
+                    }
+                    if (funcPhase && !isDeadlockException(e)) {
+                        throw new TddlNestableRuntimeException(e);
+                    }
+                    LOGGER.warn("acquire read write lock with waiting queue failed. owner:" + owner + ", resource:"
+                        + resource, e);
+                    return ReadWriteLockAcquireResult.WAITING;
+                } finally {
+                    if (lockAcquired) {
+                        MetaDbUtil.releaseLock(connection, lockName);
+                    }
+                }
+            }
+        }.execute();
+    }
+
+    private void upsertWaiting(ReadWriteLockWaitingAccessor waitingAccessor,
+                               String schemaName,
+                               String owner,
+                               String resource,
+                               String type,
+                               boolean requestWrite) {
+        Optional<ReadWriteLockWaitingRecord> waiting = waitingAccessor.queryByOwnerAndResource(owner, resource);
+        if (!waiting.isPresent()) {
+            ReadWriteLockWaitingRecord record = new ReadWriteLockWaitingRecord();
+            record.schemaName = schemaName;
+            record.owner = owner;
+            record.resource = resource;
+            record.type = type;
+            record.queueSeq = waitingAccessor.nextQueueSeq(resource);
+            waitingAccessor.insert(record);
+            return;
+        }
+        if (requestWrite && !isWriteLock(waiting.get().type)) {
+            waitingAccessor.updateTypeAndQueueSeq(owner, resource, EXCLUSIVE,
+                waitingAccessor.nextQueueSeq(resource));
+        }
+    }
+
+    private boolean tryGrantFromWaitingQueue(ReadWriteLockAccessor lockAccessor,
+                                             ReadWriteLockWaitingAccessor waitingAccessor,
+                                             String schemaName,
+                                             String owner,
+                                             String resource) {
+        List<ReadWriteLockWaitingRecord> waiters = waitingAccessor.queryByResourceForUpdate(resource);
+        Optional<ReadWriteLockWaitingRecord> selfOptional = waiters.stream()
+            .filter(e -> isOwner(e.owner, owner))
+            .findFirst();
+        if (!selfOptional.isPresent()) {
+            return false;
+        }
+        ReadWriteLockWaitingRecord self = selfOptional.get();
+        List<ReadWriteLockRecord> holders = lockAccessor.queryByResourceForUpdate(resource);
+        if (isWriteLock(self.type)) {
+            if (waiters.get(0).queueSeq == self.queueSeq && !hasGrantedByOtherOwner(holders, owner)) {
+                insertGrantedLock(lockAccessor, schemaName, owner, resource, EXCLUSIVE);
+                waitingAccessor.deleteByOwnerAndResource(owner, resource);
+                return true;
+            }
+            return false;
+        }
+        if (!hasGrantedWrite(holders) && !hasEarlierWaitingWrite(waiters, self.queueSeq)) {
+            insertGrantedLock(lockAccessor, schemaName, owner, resource, owner);
+            waitingAccessor.deleteByOwnerAndResource(owner, resource);
+            return true;
+        }
+        return false;
+    }
+
+    private boolean hasGrantedWrite(List<ReadWriteLockRecord> holders) {
+        return holders.stream().anyMatch(e -> isWriteLock(e.type));
+    }
+
+    private boolean hasGrantedByOtherOwner(List<ReadWriteLockRecord> holders, String owner) {
+        return holders.stream().anyMatch(e -> !isOwner(e, owner));
+    }
+
+    private boolean hasEarlierWaitingWrite(List<ReadWriteLockWaitingRecord> waiters, long queueSeq) {
+        return waiters.stream().anyMatch(e -> e.queueSeq < queueSeq && isWriteLock(e.type));
+    }
+
+    private void insertGrantedLock(ReadWriteLockAccessor lockAccessor,
+                                   String schemaName,
+                                   String owner,
+                                   String resource,
+                                   String type) {
+        ReadWriteLockRecord record = new ReadWriteLockRecord();
+        record.schemaName = schemaName;
+        record.owner = owner;
+        record.resource = resource;
+        record.type = type;
+        lockAccessor.insert(Lists.newArrayList(record));
+    }
+
     /**
      * 批量获取读锁和写锁
      * readLocks和writeLocks不允许出现交集
@@ -489,9 +727,11 @@ public class PersistentReadWriteLock {
             @Override
             protected Boolean invoke() {
                 boolean needRelease = false;
+                boolean funcPhase = false;
                 try {
                     MetaDbUtil.beginTransaction(connection);
                     if (CollectionUtils.isEmpty(readLocks) && CollectionUtils.isEmpty(writeLocks)) {
+                        funcPhase = true;
                         func.apply(connection);
                         MetaDbUtil.commit(connection);
                         MetaDbUtil.endTransaction(connection, LOGGER);
@@ -499,6 +739,7 @@ public class PersistentReadWriteLock {
                     }
                     needRelease = true;
                     if (!MetaDbUtil.tryGetLock(connection, schemaName, GET_LOCK_TIMEOUT)) {
+                        LOGGER.warn("try get lock failed. schemaName:" + schemaName + " owner:" + owner);
                         return false;
                     }
                     List<String> allLocks = Lists.newArrayList(Sets.union(readLocks, writeLocks));
@@ -508,12 +749,14 @@ public class PersistentReadWriteLock {
                     for (ReadWriteLockRecord record : currentLocks) {
                         //write lock held by other owner
                         if (isWriteLock(record.type) && !isOwner(record, owner)) {
+                            LOGGER.warn("write lock held by other owner, record:" + record);
                             return false;
                         }
                         //try to acquire the write lock, but held by other reader
                         if (isReadLock(record.type)
                             && !isOwner(record, owner)
                             && writeLocks.contains(record.resource)) {
+                            LOGGER.warn("try to acquire the write lock, but held by other reader, record:" + record);
                             return false;
                         }
                     }
@@ -534,6 +777,7 @@ public class PersistentReadWriteLock {
                         && CollectionUtils.isEmpty(needToAcquiredWriteLocks)
                         && CollectionUtils.isEmpty(needToUpgrade)) {
 
+                        funcPhase = true;
                         func.apply(connection);
 
                         MetaDbUtil.commit(connection);
@@ -566,6 +810,7 @@ public class PersistentReadWriteLock {
                         }).collect(Collectors.toList());
                     accessor.insert(writeLockRecords);
 
+                    funcPhase = true;
                     func.apply(connection);
 
                     MetaDbUtil.commit(connection);
@@ -573,7 +818,16 @@ public class PersistentReadWriteLock {
                     return true;
                 } catch (Exception e) {
                     //rollback all, if any resource is unable to acquire
-                    MetaDbUtil.rollback(connection, e, LOGGER, "acquire write lock");
+                    try {
+                        MetaDbUtil.rollback(connection, e, LOGGER, "acquire write lock");
+                    } catch (Throwable rollbackEx) {
+                        LOGGER.error("Failed to rollback in tryReadWriteLockBatch, owner:" + owner, rollbackEx);
+                    }
+                    if (funcPhase && !isDeadlockException(e)) {
+                        // func.apply() failed with non-retryable error, should not retry
+                        throw new TddlNestableRuntimeException(e);
+                    }
+                    LOGGER.warn("acquire write lock failed. owner:" + owner + ", write locks:" + writeLocks, e);
                     return false;
                 } finally {
                     if (needRelease) {
@@ -690,11 +944,26 @@ public class PersistentReadWriteLock {
         return record != null && StringUtils.equals(record.owner, owner);
     }
 
+    private boolean isOwner(String actualOwner, String expectedOwner) {
+        return StringUtils.equals(actualOwner, expectedOwner);
+    }
+
     private boolean isWriteLock(String str) {
         return StringUtils.equals(str, EXCLUSIVE);
     }
 
     private boolean isReadLock(String str) {
         return !StringUtils.equals(str, EXCLUSIVE);
+    }
+
+    public static boolean isDeadlockException(Throwable e) {
+        while (e != null) {
+            String msg = e.getMessage();
+            if (msg != null && msg.toLowerCase().contains("deadlock")) {
+                return true;
+            }
+            e = e.getCause();
+        }
+        return false;
     }
 }

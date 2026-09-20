@@ -22,7 +22,6 @@ import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.model.lifecycle.AbstractLifecycle;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
-import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.gms.listener.ConfigListener;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbConfigManager;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
@@ -39,7 +38,6 @@ import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.gms.util.MetaDbLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.gms.util.PartitionNameUtil;
-import com.aliyun.oss.common.utils.CaseInsensitiveMap;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.StringUtils;
 import org.slf4j.Logger;
@@ -72,7 +70,8 @@ public class StoragePoolManager extends AbstractLifecycle {
     public static String RECYCLE_STORAGE_POOL_NAME = "_recycle";
     public static String ALL_STORAGE_POOL = "__all_storage_pool";
     public static String INIT_STORAGE_POOL = "init_storage_pool";
-    public static int LOCK_TIME_OUT = 30;
+    public static String EMPTY_STORAGE_POOL = "";
+    public static int LOCK_TIME_OUT = 10;
     private volatile Map<Long, StoragePoolInfo> storagePoolCache;
 
     public volatile Map<String, StoragePoolInfo> storagePoolCacheByName;
@@ -97,8 +96,37 @@ public class StoragePoolManager extends AbstractLifecycle {
     private StoragePoolManager() {
     }
 
-    public Boolean inValidStoragePoolName(String storagePool) {
+    public Boolean notExistStoragePoolName(String storagePool) {
         return !storagePoolCacheByName.containsKey(storagePool);
+    }
+
+    public List<String> getStorageInstListByName(String storagePool) {
+        if (notExistStoragePoolName(storagePool)) {
+            return new ArrayList<>();
+        } else {
+            return getStoragePoolInfo(storagePool).getDnLists();
+        }
+    }
+
+    public Map<String, StorageInfoRecord> getStorageInfoMap(String storagePoolName) {
+        List<String> storageInstList = getStorageInstListByName(storagePoolName);
+        Map<String, StorageInfoRecord> storagePoolInfoMap =
+            DbTopologyManager.getStorageInfoMap(InstIdUtil.getMasterInstId());
+        Map<String, StorageInfoRecord> fileterStoragePoolInfoMap = new HashMap<>();
+        for (String storageInst : storagePoolInfoMap.keySet()) {
+            if (storageInstList.contains(storageInst)) {
+                fileterStoragePoolInfoMap.put(storageInst, storagePoolInfoMap.get(storageInst));
+            }
+        }
+        return fileterStoragePoolInfoMap;
+    }
+
+    public String getUndeletableStorageInstByName(String storagePool) {
+        if (notExistStoragePoolName(storagePool)) {
+            return "";
+        } else {
+            return getStoragePoolInfo(storagePool).getUndeletableDnId();
+        }
     }
 
     public StoragePoolInfo getStoragePoolInfo(String storagePool) {
@@ -143,8 +171,23 @@ public class StoragePoolManager extends AbstractLifecycle {
 
             MetaDbConfigManager.getInstance().register(dataId, conn);
             MetaDbConfigManager.getInstance().bindListener(dataId, listener);
+
             logger.warn("try to intialize storage pool...");
-            initializeDefaultAndRecycleStoragePool();
+
+            Boolean storagePoolStorageInitRequired = true;
+            Boolean locked = false;
+            while (!locked && storagePoolStorageInitRequired) {
+                locked = MetaDbUtil.tryGetLock(conn, INIT_STORAGE_POOL, LOCK_TIME_OUT);
+                if (!locked) {
+                    storagePoolStorageInitRequired = initializeDefaultAndRecycleStoragePool(false);
+                }
+            }
+            if (locked && storagePoolStorageInitRequired) {
+                initializeDefaultAndRecycleStoragePool(true);
+            }
+            if (locked) {
+                MetaDbUtil.releaseLock(conn, INIT_STORAGE_POOL);
+            }
             reloadStoragePoolInfoFromMetaDb();
         } catch (SQLException e) {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e,
@@ -152,111 +195,98 @@ public class StoragePoolManager extends AbstractLifecycle {
         }
     }
 
-    private void initializeDefaultAndRecycleStoragePool() {
-        Boolean notifyStoragePoolInfo = false;
-        if (!ConfigDataMode.isMasterMode()) {
-            logger.warn("skip initialize storage pool... because I am not master node");
-            return;
+    private void initializeDefaultAndRecycleStoragePoolImpl(Connection metaDbConn
+        , String instId) throws SQLException {
+        try {
+            StorageInfoAccessor storageInfoAccessor = new StorageInfoAccessor();
+            storageInfoAccessor.setConnection(metaDbConn);
+            StoragePoolInfoAccessor accessor = new StoragePoolInfoAccessor();
+            accessor.setConnection(metaDbConn);
+            metaDbConn.setAutoCommit(false);
+
+            // firstly get storage inst records
+            List<StorageInfoRecord> storageInfoRecords =
+                storageInfoAccessor.getStorageInfosByInstId(instId).stream()
+                    .filter(o -> o.instKind == StorageInfoRecord.INST_KIND_MASTER)
+                    .collect(Collectors.toList());
+            Set<String> storageInstIds =
+                storageInfoRecords.stream().map(o -> o.storageInstId).collect(Collectors.toSet());
+            // find default dn id and undeletable dn id
+            String defaultDnIds = StringUtils.join(storageInstIds, ",");
+            List<String> undeletableDnIds =
+                DbTopologyManager.getNonDeletableStorageInst(metaDbConn).stream()
+                    .filter(o -> storageInstIds.contains(o))
+                    .collect(Collectors.toList());
+            String undeletableDnId;
+            if (undeletableDnIds.isEmpty()) {
+                if (storageInstIds.size() > 0) {
+                    undeletableDnId = new ArrayList<>(storageInstIds).get(0);
+                } else {
+                    logger.warn(
+                        "initialize storage pool failed ... because there are no avaliable storage insts");
+                    return;
+                }
+            } else {
+                undeletableDnId = undeletableDnIds.get(0);
+            }
+            EventLogger.log(EventType.STORAGE_POOL_INFO,
+                String.format("initialize %s storage pool info with %s, %s", "default", defaultDnIds,
+                    undeletableDnId));
+            accessor.addNewStoragePoolInfo(DEFAULT_STORAGE_POOL_NAME, defaultDnIds, undeletableDnId);
+
+            EventLogger.log(EventType.STORAGE_POOL_INFO,
+                String.format("initialize %s storage pool info with %s, %s", "recycle", "",
+                    ""));
+            accessor.addNewStoragePoolInfo(RECYCLE_STORAGE_POOL_NAME, "", "");
+
+            for (StorageInfoRecord storageInfoRecord : storageInfoRecords) {
+                StorageInfoExtraFieldJSON extras =
+                    Optional.ofNullable(storageInfoRecord.extras).orElse(new StorageInfoExtraFieldJSON());
+                extras.setStoragePoolName(DEFAULT_STORAGE_POOL_NAME);
+                storageInfoAccessor.updateStoragePoolName(storageInfoRecord.storageInstId, extras);
+            }
+            metaDbConn.commit();
+        } catch (SQLException e) {
+            logger.error("initialize storage pool config failed.", e);
+            throw e;
         }
+    }
+
+    private Boolean initializeDefaultAndRecycleStoragePool(Boolean locked) {
         int iso = -1;
         ServerInstIdManager serverInstIdManager = ServerInstIdManager.getInstance();
         String instId = serverInstIdManager.getMasterInstId();
+        Boolean initializedSuccess = false;
         try (Connection conn = MetaDbDataSource.getInstance().getConnection()) {
+            // 1. set iso to READ_COMMITED
+            iso = conn.getTransactionIsolation();
+            StoragePoolInfoAccessor accessor = new StoragePoolInfoAccessor();
             try {
-                // 1. set iso to READ_COMMITED
-                iso = conn.getTransactionIsolation();
-                StoragePoolInfoAccessor accessor = new StoragePoolInfoAccessor();
                 conn.setTransactionIsolation(Connection.TRANSACTION_READ_COMMITTED);
                 accessor.setConnection(conn);
 
                 // 2. get all storage pool info
                 List<StoragePoolInfoRecord> records = accessor.getAllStoragePoolInfoRecord();
-                if (records.isEmpty()) {
-                    // 3. try get lock
-                    Boolean getLock = false;
-                    int retryTime = 0;
-                    while (!getLock && retryTime <= 3) {
-                        getLock = MetaDbUtil.tryGetLock(conn, INIT_STORAGE_POOL, LOCK_TIME_OUT);
-                        retryTime++;
-                    }
-                    if (!getLock) {
-                        throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, "failed to get lock when initial recycle storage pool..." + String.format(
-                            "with timeout %s seconds for 3 times" + LOCK_TIME_OUT));
-                    }
-                    // 4. double check.
-                    records = accessor.getAllStoragePoolInfoRecord();
-                    if (records.isEmpty()) {
-                        conn.setAutoCommit(false);
-                        StorageInfoAccessor storageInfoAccessor = new StorageInfoAccessor();
-                        storageInfoAccessor.setConnection(conn);
-                        List<StorageInfoRecord> storageInfoRecords =
-                            storageInfoAccessor.getStorageInfosByInstId(instId).stream()
-                                .filter(o -> o.instKind == StorageInfoRecord.INST_KIND_MASTER)
-                                .collect(Collectors.toList());
-                        Set<String> storageInstIds =
-                            storageInfoRecords.stream().map(o -> o.storageInstId).collect(Collectors.toSet());
-                        String defaultDnIds = StringUtils.join(storageInstIds, ",");
-                        List<String> undeletableDnIds =
-                            DbTopologyManager.getNonDeletableStorageInst(conn).stream()
-                                .filter(o -> storageInstIds.contains(o))
-                                .collect(Collectors.toList());
-                        String undeletableDnId;
-                        if (undeletableDnIds.isEmpty()) {
-                            if (storageInstIds.size() > 0) {
-                                undeletableDnId = new ArrayList<>(storageInstIds).get(0);
-                            } else {
-                                logger.warn(
-                                    "initialize storage pool failed ... because there are no avaliable storage insts");
-                                return;
-                            }
-                        } else {
-                            undeletableDnId = undeletableDnIds.get(0);
-                        }
-                        String initializeStoragePoolInfo =
-                            String.format("initialize %s storage pool info with %s, %s", "default", defaultDnIds,
-                                undeletableDnId);
-                        logger.warn(initializeStoragePoolInfo);
-                        EventLogger.log(EventType.STORAGE_POOL_INFO, initializeStoragePoolInfo);
-                        accessor.addNewStoragePoolInfo(DEFAULT_STORAGE_POOL_NAME, defaultDnIds, undeletableDnId);
-                        initializeStoragePoolInfo =
-                            String.format("initialize %s storage pool info with %s, %s", "recycle", "",
-                                "");
-                        logger.warn(initializeStoragePoolInfo);
-                        EventLogger.log(EventType.STORAGE_POOL_INFO, initializeStoragePoolInfo);
-                        accessor.addNewStoragePoolInfo(RECYCLE_STORAGE_POOL_NAME, "", "");
-                        for (StorageInfoRecord storageInfoRecord : storageInfoRecords) {
-                            StorageInfoExtraFieldJSON extras =
-                                Optional.ofNullable(storageInfoRecord.extras).orElse(new StorageInfoExtraFieldJSON());
-                            extras.setStoragePoolName(DEFAULT_STORAGE_POOL_NAME);
-                            storageInfoAccessor.updateStoragePoolName(storageInfoRecord.storageInstId, extras);
-                        }
-                        conn.commit();
-                        notifyStoragePoolInfo = true;
-                    }
+                if (!records.isEmpty()) {
+                    return false;
+                }
+                if (!locked) {
+                    return true;
                 } else {
-                    logger.warn("skip initialize storage pool..");
+                    // 3. initialize storage pool info
+                    initializeDefaultAndRecycleStoragePoolImpl(conn, instId);
+                    MetaDbConfigManager.getInstance().notify(MetaDbDataIdBuilder.getStoragePoolInfoDataId(), conn);
+                    initializedSuccess = true;
                 }
             } finally {
-                MetaDbUtil.releaseLock(conn, INIT_STORAGE_POOL);
-                MetaDbUtil.endTransaction(conn, PartitionNameUtil.LOGGER);
-                if (iso > 0) {
+                if (iso >= 0) {
                     conn.setTransactionIsolation(iso);
                 }
             }
-        } catch (Throwable e) {
-            logger.warn("initialize storage pool failed..." + e.getMessage());
+        } catch (SQLException ex) {
+            throw new RuntimeException(ex);
         }
-        if (notifyStoragePoolInfo) {
-            logger.warn("update storage pool info data id.");
-            try (Connection conn = MetaDbDataSource.getInstance().getConnection()) {
-                MetaDbConfigManager.getInstance()
-                    .notify(MetaDbDataIdBuilder.getStoragePoolInfoDataId(), conn);
-            } catch (SQLException e) {
-                logger.warn("update storage pool info data id failed..." + e.getMessage());
-            }
-        } else {
-            logger.warn("skip notify storage pool info ...");
-        }
+        return !initializedSuccess;
     }
 
     @Override
@@ -271,44 +301,48 @@ public class StoragePoolManager extends AbstractLifecycle {
         }
     }
 
-    public void addStoragePool(String storagePoolName, String dnIds, String undeletableDnId) {
+    public List<String> getListAfterRemoveDnIdFromOginalStoragePoolInfo(String dnIds, String storagePoolName) {
+        List<String> storageInstList = getStorageInstListByName(storagePoolName);
+        storageInstList.removeAll(StoragePoolUtils.buildStorageInstListFromString(dnIds));
+        return storageInstList;
+
+    }
+
+    public String removeDnListFromOriginalStoragePoolInfo(String dnIds, String storagePoolName) {
+        List<String> storageInstList = getListAfterRemoveDnIdFromOginalStoragePoolInfo(dnIds, storagePoolName);
+        return StoragePoolUtils.buildStringFromStorageInstList(storageInstList);
+    }
+
+    public String appendDnListFromOriginalStoragePoolInfo(String dnIds, String storagePoolName) {
+        List<String> storageInstList = getStorageInstListByName(storagePoolName);
+        storageInstList.addAll(StoragePoolUtils.buildStorageInstListFromString(dnIds));
+        return StoragePoolUtils.buildStringFromStorageInstList(storageInstList);
+    }
+
+    public void addStoragePool(Connection metaDbConnection, String storagePoolName, String dnIds,
+                               String undeletableDnId) {
         if (!storagePoolCacheByName.containsKey(storagePoolName)) {
-            storeStoragePoolInfo(storagePoolName, dnIds, undeletableDnId);
+            // store storage pool
+            storeStoragePoolInfo(metaDbConnection, storagePoolName, dnIds, undeletableDnId);
             if (storagePoolCacheByName.containsKey(RECYCLE_STORAGE_POOL_NAME)) {
                 // remove from recycle storage pool
-                StoragePoolInfo storagePoolInfo = storagePoolCacheByName.get(RECYCLE_STORAGE_POOL_NAME);
-                Set<String> dnIdList = Arrays.stream(dnIds.split(",")).collect(Collectors.toSet());
-                Set<String> targetDnIdList = storagePoolInfo.getDnLists().stream().collect(Collectors.toSet());
-                targetDnIdList.removeAll(dnIdList);
-                String targetDnIdStr = StringUtils.join(targetDnIdList, ",");
-                updateStoragePoolInfo(RECYCLE_STORAGE_POOL_NAME, targetDnIdStr, "");
+                String targetDnIdStr = removeDnListFromOriginalStoragePoolInfo(dnIds, RECYCLE_STORAGE_POOL_NAME);
+                updateStoragePoolInfo(metaDbConnection, RECYCLE_STORAGE_POOL_NAME, targetDnIdStr, "");
             }
-            reloadStoragePoolInfoFromMetaDb();
         } else {
             throw new TddlRuntimeException(ErrorCode.ERR_INVALID_DDL_PARAMS,
                 String.format("duplicate storage pool name '%s' found! " + storagePoolName));
         }
     }
 
-    public void convertDefaultStoragePool() {
-        if (!storagePoolCacheByName.containsKey("")) {
-            StoragePoolInfo storagePoolInfo = storagePoolCacheByName.get("");
-            String undeletableDnId = storagePoolInfo.getUndeletableDnId();
-            String dnIds = storagePoolInfo.getDnIds();
-            String storagePoolName = StoragePoolManager.DEFAULT_STORAGE_POOL_NAME;
-            storeStoragePoolInfo(storagePoolName, dnIds, undeletableDnId);
-            reloadStoragePoolInfoFromMetaDb();
-        }
-    }
-
-    public void deleteStoragePool(String storagePoolName) {
+    public void deleteStoragePool(Connection metadbConnection, String storagePoolName) {
         if (storagePoolCacheByName.containsKey(storagePoolName)) {
-            deleteStoragePoolInfo(storagePoolName);
-            reloadStoragePoolInfoFromMetaDb();
+            deleteStoragePoolInfo(metadbConnection, storagePoolName);
         }
     }
 
-    public void updateStoragePoolName(String originalStoragePoolName, String targetStoragePoolName) {
+    public void mergeIntoStoragePool(Connection connection, String originalStoragePoolName,
+                                     String targetStoragePoolName) {
         if (storagePoolCacheByName.containsKey(originalStoragePoolName)) {
             if (!storagePoolCacheByName.containsKey(targetStoragePoolName)) {
                 updateStoragePoolInfoName(originalStoragePoolName, targetStoragePoolName);
@@ -316,145 +350,83 @@ public class StoragePoolManager extends AbstractLifecycle {
                 StoragePoolInfo targetStoragePoolInfo = storagePoolCacheByName.get(targetStoragePoolName);
                 StoragePoolInfo originalStoragePoolInfo = storagePoolCacheByName.get(originalStoragePoolName);
                 String undeletableDnId = targetStoragePoolInfo.getUndeletableDnId();
-                Set<String> dnIdList = originalStoragePoolInfo.getDnLists().stream().collect(Collectors.toSet());
-                dnIdList.addAll(targetStoragePoolInfo.getDnLists());
-                String dnIds = StringUtils.join(dnIdList, ",");
-                updateStoragePoolInfo(targetStoragePoolName, dnIds, undeletableDnId);
-                deleteStoragePool(originalStoragePoolName);
+                List<String> dnIds =
+                    StoragePoolUtils.mergeDnIdList(originalStoragePoolInfo.getDnLists(),
+                        targetStoragePoolInfo.getDnLists());
+                String dnIdStr = StoragePoolUtils.buildStringFromStorageInstList(dnIds);
+                updateStoragePoolInfo(connection, targetStoragePoolName, dnIdStr, undeletableDnId);
+                deleteStoragePool(connection, originalStoragePoolName);
             }
-            reloadStoragePoolInfoFromMetaDb();
         }
     }
 
-    public void deleteAllStoragePoolInfo() {
-        truncateStoragePoolInfo();
-        reloadStoragePoolInfoFromMetaDb();
-    }
-
-    public void shrinkStoragePoolSimply(String storagePoolName, String dnIds) {
+    public void shrinkStoragePoolSimply(Connection connection, String storagePoolName, String dnIds) {
         if (storagePoolCacheByName.containsKey(storagePoolName)) {
             StoragePoolInfo storagePoolInfo = storagePoolCacheByName.get(storagePoolName);
-            String[] fullDnIds = storagePoolInfo.getDnIds().split(",");
-            String[] removeDnIds = dnIds.split(",");
-            Set<String> fullDnSet = Arrays.stream(fullDnIds).collect(Collectors.toSet());
-            String undeletableDnId = storagePoolInfo.getUndeletableDnId();
-            fullDnSet.removeAll(Arrays.asList(removeDnIds));
-            String aftershrinkDnIds = StringUtils.join(fullDnSet, ",");
-            updateStoragePoolInfo(storagePoolName, aftershrinkDnIds, undeletableDnId);
+            String afterShrinkDnIds = removeDnListFromOriginalStoragePoolInfo(dnIds, storagePoolName);
+            updateStoragePoolInfo(connection, storagePoolName, afterShrinkDnIds, storagePoolInfo.getUndeletableDnId());
         }
-        reloadStoragePoolInfoFromMetaDb();
     }
 
-    public void autoExpandDefaultStoragePool() {
+    public void autoExpandDefaultStoragePool(Connection connection) {
         if (storagePoolCacheByName.containsKey(DEFAULT_STORAGE_POOL_NAME)) {
             StoragePoolInfo storagePoolInfo = storagePoolCacheByName.get(DEFAULT_STORAGE_POOL_NAME);
             String undeletableDnId = storagePoolInfo.getUndeletableDnId();
-            String[] dnIds = storagePoolInfo.getDnIds().split(",");
             Set<String> fullDnSet = DbTopologyManager.getAllAliveStorageInsts(InstIdUtil.getMasterInstId());
-            String afterExpandDnIds = StringUtils.join(fullDnSet, ",");
-            updateStoragePoolInfo(DEFAULT_STORAGE_POOL_NAME, afterExpandDnIds, undeletableDnId);
+            String afterExpandDnIds = StoragePoolUtils.buildStringFromStorageInstList(fullDnSet);
+            updateStoragePoolInfo(connection, DEFAULT_STORAGE_POOL_NAME, afterExpandDnIds, undeletableDnId);
         }
-        reloadStoragePoolInfoFromMetaDb();
     }
 
-    public void appendStoragePool(String storagePoolName, String dnIds, String undeletableDnId) {
+    public void appendStoragePool(Connection connection, String storagePoolName, String dnIds, String undeletableDnId) {
         if (storagePoolCacheByName.containsKey(storagePoolName)) {
             StoragePoolInfo storagePoolInfo = storagePoolCacheByName.get(storagePoolName);
-            String afterAppendDnIds = dnIds;
-            if (!StringUtils.isEmpty(storagePoolInfo.getDnIds())) {
-                afterAppendDnIds = storagePoolInfo.getDnIds() + "," + dnIds;
-            }
+            String afterAppendDnIds = appendDnListFromOriginalStoragePoolInfo(dnIds, storagePoolName);
             String afterAppendUndeletableDnId = storagePoolInfo.getUndeletableDnId();
             if (!StringUtils.isEmpty(afterAppendUndeletableDnId)) {
                 undeletableDnId = afterAppendUndeletableDnId;
             }
-            updateStoragePoolInfo(storagePoolName, afterAppendDnIds, undeletableDnId);
-            reloadStoragePoolInfoFromMetaDb();
+            updateStoragePoolInfo(connection, storagePoolName, afterAppendDnIds, undeletableDnId);
+//            reloadStoragePoolInfoFromMetaDb();
         }
     }
 
-    public void shrinkStoragePool(String storagePoolName, String dnIds, String undeletableDnId) {
+    public void shrinkStoragePool(Connection connection, String storagePoolName, String dnIds, String undeletableDnId) {
         if (storagePoolCacheByName.containsKey(storagePoolName)) {
             StoragePoolInfo storagePoolInfo = storagePoolCacheByName.get(storagePoolName);
-            Set<String> recycleDnSet;
-            Boolean recycleExists = true;
-            if (storagePoolCacheByName.containsKey(RECYCLE_STORAGE_POOL_NAME)) {
-                recycleDnSet = new HashSet<>(storagePoolCacheByName.get(RECYCLE_STORAGE_POOL_NAME).getDnLists());
-            } else {
-                recycleDnSet = new HashSet<>();
-                recycleExists = false;
-            }
-            StoragePoolInfo recyclestoragePoolInfo = storagePoolCacheByName.get(RECYCLE_STORAGE_POOL_NAME);
-            String[] fullDnIds = storagePoolInfo.getDnIds().split(",");
-            String[] removeDnIds = dnIds.split(",");
-            Arrays.stream(removeDnIds).forEach(o -> recycleDnSet.add(o));
-            String recycleDnIds = StringUtils.join(recycleDnSet, ",");
-            Set<String> fullDnList = Arrays.stream(fullDnIds).collect(Collectors.toSet());
+            boolean recycleExists = !notExistStoragePoolName(RECYCLE_STORAGE_POOL_NAME);
+            String afterShrinkDnIds = removeDnListFromOriginalStoragePoolInfo(dnIds, storagePoolName);
+            String expandRecycleDnIds = appendDnListFromOriginalStoragePoolInfo(dnIds, RECYCLE_STORAGE_POOL_NAME);
             undeletableDnId = storagePoolInfo.getUndeletableDnId();
-            Arrays.stream(removeDnIds).forEach(o -> fullDnList.remove(o));
-            String aftershrinkDnIds = StringUtils.join(fullDnList, ",");
-            if (fullDnList.isEmpty()) {
+            List<String> dnList = getListAfterRemoveDnIdFromOginalStoragePoolInfo(dnIds, storagePoolName);
+            if (!StringUtils.isEmpty(undeletableDnId) && !dnList.contains(undeletableDnId)) {
+                throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR,
+                    "we do not expect this operation, this is dangerous because there are no undeletable dn in storage pool");
+            }
+            if (StringUtils.isEmpty(afterShrinkDnIds)) {
                 undeletableDnId = "";
             }
-            updateStoragePoolInfo(storagePoolName, aftershrinkDnIds, undeletableDnId);
+            updateStoragePoolInfo(connection, storagePoolName, afterShrinkDnIds, undeletableDnId);
             if (recycleExists) {
-                updateStoragePoolInfo(RECYCLE_STORAGE_POOL_NAME, recycleDnIds, "");
+                updateStoragePoolInfo(connection, RECYCLE_STORAGE_POOL_NAME, expandRecycleDnIds, "");
             } else {
-                storeStoragePoolInfo(RECYCLE_STORAGE_POOL_NAME, recycleDnIds, "");
+                storeStoragePoolInfo(connection, RECYCLE_STORAGE_POOL_NAME, expandRecycleDnIds, "");
             }
-            reloadStoragePoolInfoFromMetaDb();
+//            reloadStoragePoolInfoFromMetaDb();
         }
     }
 
-    public void shrinkStoragePoolBack(String storagePoolName, String dnIds, String undeletableDnId) {
-        if (storagePoolCacheByName.containsKey(storagePoolName)) {
-            StoragePoolInfo storagePoolInfo = storagePoolCacheByName.get(storagePoolName);
-            Set<String> recycleDnSet;
-            Boolean recycleExists = true;
-            if (storagePoolCacheByName.containsKey(RECYCLE_STORAGE_POOL_NAME)) {
-                recycleDnSet = new HashSet<>(storagePoolCacheByName.get(RECYCLE_STORAGE_POOL_NAME).getDnLists());
-            } else {
-                recycleDnSet = new HashSet<>();
-                recycleExists = false;
-            }
-            String[] fullDnIds = storagePoolInfo.getDnIds().split(",");
-            String[] removeDnIds = dnIds.split(",");
-            Arrays.stream(removeDnIds).forEach(o -> recycleDnSet.add(o));
-            String recycleDnIds = StringUtils.join(recycleDnSet, ",");
-            List<String> fullDnList = Arrays.stream(fullDnIds).collect(Collectors.toList());
-            undeletableDnId = storagePoolInfo.getUndeletableDnId();
-            Arrays.stream(removeDnIds).forEach(o -> fullDnList.remove(o));
-            String aftershrinkDnIds = StringUtils.join(fullDnList, ",");
-            updateStoragePoolInfo(storagePoolName, aftershrinkDnIds, undeletableDnId);
-            if (recycleExists) {
-                updateStoragePoolInfo(RECYCLE_STORAGE_POOL_NAME, recycleDnIds, "");
-            } else {
-                storeStoragePoolInfo(RECYCLE_STORAGE_POOL_NAME, recycleDnIds, "");
-            }
-            reloadStoragePoolInfoFromMetaDb();
-        }
+    public void storeStoragePoolInfo(Connection connection, String storagePoolName, String dnIds,
+                                     String undeletableDnId) {
+        StoragePoolInfoAccessor accessor = new StoragePoolInfoAccessor();
+        accessor.setConnection(connection);
+        accessor.addNewStoragePoolInfo(storagePoolName, dnIds, undeletableDnId);
     }
 
-    public void storeStoragePoolInfo(String storagePoolName, String dnIds, String undeletableDnId) {
-        try (Connection conn = MetaDbDataSource.getInstance().getConnection()) {
-            StoragePoolInfoAccessor accessor = new StoragePoolInfoAccessor();
-            accessor.setConnection(conn);
-            accessor.addNewStoragePoolInfo(storagePoolName, dnIds, undeletableDnId);
-        } catch (SQLException e) {
-            MetaDbLogUtil.META_DB_LOG.error(e);
-            throw GeneralUtil.nestedException(e);
-        }
-    }
-
-    public void deleteStoragePoolInfo(String storagePoolName) {
-        try (Connection conn = MetaDbDataSource.getInstance().getConnection()) {
-            StoragePoolInfoAccessor accessor = new StoragePoolInfoAccessor();
-            accessor.setConnection(conn);
-            accessor.deleteStoragePoolInfo(storagePoolName);
-        } catch (SQLException e) {
-            MetaDbLogUtil.META_DB_LOG.error(e);
-            throw GeneralUtil.nestedException(e);
-        }
+    public void deleteStoragePoolInfo(Connection conn, String storagePoolName) {
+        StoragePoolInfoAccessor accessor = new StoragePoolInfoAccessor();
+        accessor.setConnection(conn);
+        accessor.deleteStoragePoolInfo(storagePoolName);
     }
 
     public void truncateStoragePoolInfo() {
@@ -480,21 +452,15 @@ public class StoragePoolManager extends AbstractLifecycle {
         }
     }
 
-    public void updateStoragePoolInfo(String storagePoolName, String dnIds, String undeletableDnId) {
-        try (Connection conn = MetaDbDataSource.getInstance().getConnection()) {
-            StoragePoolInfoAccessor accessor = new StoragePoolInfoAccessor();
-            accessor.setConnection(conn);
-            accessor.updateStoragePoolInfo(storagePoolName, dnIds, undeletableDnId);
-        } catch (SQLException e) {
-            MetaDbLogUtil.META_DB_LOG.error(e);
-            throw GeneralUtil.nestedException(e);
-        }
-
+    public void updateStoragePoolInfo(Connection conn, String storagePoolName, String dnIds, String undeletableDnId) {
+        StoragePoolInfoAccessor accessor = new StoragePoolInfoAccessor();
+        accessor.setConnection(conn);
+        accessor.updateStoragePoolInfo(storagePoolName, dnIds, undeletableDnId);
     }
 
-    /**
-     * Get locality of database with inherited from default
-     */
+/**
+ * Get locality of database with inherited from default
+ */
     /**
      * Load all records in system-table to in-memory cache.
      */
@@ -502,9 +468,9 @@ public class StoragePoolManager extends AbstractLifecycle {
         try (Connection conn = MetaDbDataSource.getInstance().getConnection()) {
             StoragePoolInfoAccessor accessor = new StoragePoolInfoAccessor();
             accessor.setConnection(conn);
-            Map<String, StoragePoolInfo> newCacheByName = new CaseInsensitiveMap<>(new ConcurrentHashMap<>());
+            Map<String, StoragePoolInfo> newCacheByName = new ConcurrentHashMap<>();
             Map<Long, StoragePoolInfo> newCache = new ConcurrentHashMap<>();
-            Map<String, String> newStoragePoolMap = new CaseInsensitiveMap<>(new ConcurrentHashMap<>());
+            Map<String, String> newStoragePoolMap = new ConcurrentHashMap<>();
 
             List<StoragePoolInfoRecord> records = accessor.getAllStoragePoolInfoRecord();
             Set<String> occupiedStorageIds = new HashSet<>();

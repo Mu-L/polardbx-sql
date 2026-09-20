@@ -34,11 +34,14 @@ import java.util.Set;
 
 public class AlterTableWithCciForbidTest extends DDLBaseNewDBTestCase {
     private static final String FORBID_DDL_WITH_CCI = "FORBID_DDL_WITH_CCI=TRUE";
+    private static final String FORBID_TRUNCATE_WITH_ARCHIVE_CCI = "FORBID_TRUNCATE_WITH_ARCHIVE_CCI=TRUE";
     private static final String PRIMARY_TABLE_NAME1 = "alter_table_ddl_with_cci_err_prim_pt_1";
     private static final String INDEX_NAME1 = "alter_table_ddl_with_cci_err_cci_pt_1";
     private static final String PRIMARY_TABLE_NAME2 = "alter_table_ddl_with_cci_err_prim_pt_2";
     private static final String INDEX_NAME2 = "alter_table_ddl_with_cci_err_cci_pt_2";
     private static final String BACK_FILL = "PHYSICAL_BACKFILL_ENABLE=false";
+    private static final String ARCHIVE_CCI_NAME = "alter_table_ddl_with_archive_cci_err";
+    private static final String GSI_NAME = "alter_table_ddl_with_gsi";
 
     private static final String creatTableTmpl = "CREATE TABLE `%s` ( \n"
         + "    `id` bigint(11) NOT NULL AUTO_INCREMENT BY GROUP, \n"
@@ -49,6 +52,10 @@ public class AlterTableWithCciForbidTest extends DDLBaseNewDBTestCase {
         + ") ENGINE = InnoDB CHARSET = utf8 PARTITION BY KEY(`order_id`);\n";
     private static final String createCciTmpl =
         "ALTER TABLE %s ADD CLUSTERED clustered columnar index %s(`buyer_id`) PARTITION BY KEY(`ID`)";
+    private static final String createArchiveCciTmpl =
+        "ALTER TABLE %s ADD CLUSTERED clustered columnar index %s(`buyer_id`) PARTITION BY KEY(`ID`) columnar_options='{\"TYPE\" : \"ARCHIVE\"}'";
+    private static final String createGsi =
+        "ALTER TABLE %s ADD GLOBAL INDEX %s(`ID`) PARTITION BY KEY(`ID`)";
 
     public boolean usingNewPartDb() {
         return true;
@@ -90,10 +97,8 @@ public class AlterTableWithCciForbidTest extends DDLBaseNewDBTestCase {
 
     static List<String> unsupportedTypes =
         Arrays.asList(
-            "decimal(10,2)",
             "float",
             "double",
-            "numeric(10,2)",
             "json",
             "point",
             "enum(\"a\",\"b\",\"c\")",
@@ -716,5 +721,26 @@ public class AlterTableWithCciForbidTest extends DDLBaseNewDBTestCase {
             JdbcUtil.executeUpdateSuccess(tddlConnection,
                 String.format("%s alter table t_order_1 move partitions p1 to '%s'", hint, instIds.iterator().next()));
         }
+    }
+
+    @Test
+    public void testTruncateTableWithArchive() {
+        String hint = buildCmdExtra(FORBID_TRUNCATE_WITH_ARCHIVE_CCI);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "SET MAX_CCI_COUNT = 5");
+
+        // 允许普通CCI truncate
+        final String sql1 = String.format("TRUNCATE TABLE %s", PRIMARY_TABLE_NAME1);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, hint + sql1);
+
+        // Create cci success
+        final String sqlCreateCci = String.format(createArchiveCciTmpl, PRIMARY_TABLE_NAME1, ARCHIVE_CCI_NAME);
+        createCciSuccess(sqlCreateCci);
+        JdbcUtil.executeUpdateFailed(tddlConnection, hint + sql1,
+            "Executing this operation may result in unintended deletion of archived data");
+
+        // Create gsi
+        JdbcUtil.executeUpdateSuccess(tddlConnection, String.format(createGsi, PRIMARY_TABLE_NAME1, GSI_NAME));
+        JdbcUtil.executeUpdateFailed(tddlConnection, hint + sql1,
+            "Executing this operation may result in unintended deletion of archived data");
     }
 }

@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package orc.proto;
+
+option java_multiple_files = true;
+option java_package = "com.alibaba.polardbx.rpc.columnar";
+
+service ColumnarDeltaService {
+  rpc ColumnarDeltaStream(ColumnarDeltaRequest) returns (stream ColumnarDeltaResponse);
+  rpc ColumnarCacheFilesInfo(ColumnarCacheFilesInfoRequest) returns (ColumnarCacheFilesInfoResponse);
+}
+
+message ColumnarDeltaRequest {
+  // delta file name: csv or del
+  string file_name = 1;
+  // read offset
+  int32 offset = 2;
+  // read length
+  int32 length = 3;
+}
+
+message ColumnarDeltaResponse {
+  enum Status {
+    OK = 0;
+    INVALID_ARGUMENT = 1;   // 参数错误
+    NOT_FOUND = 2;          // 文件不存在/该文件不会被缓存
+    DATA_CORRUPTED = 3;     // 数据损坏/该部分缓存未加载
+    RATE_LIMITED = 4;       // 触发限流
+    INTERNAL_ERROR = 5;     // 服务端内部错误
+  }
+  // response status
+  Status status = 1;
+  // byte stream
+  bytes data = 2;
+  // error message
+  string error_message = 3;
+}
+
+message ColumnarCacheFilesInfoRequest {
+}
+
+message FileInfo {
+  string file_name = 1;
+  int32 file_length = 2;
+}
+
+message ColumnarCacheFilesInfoResponse {
+  repeated FileInfo files = 1;
+}

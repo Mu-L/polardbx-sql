@@ -19,7 +19,6 @@ package com.alibaba.polardbx.optimizer.core.rel;
 import com.alibaba.polardbx.optimizer.config.meta.CostModelWeight;
 import com.alibaba.polardbx.optimizer.config.meta.TableScanIOEstimator;
 import com.alibaba.polardbx.optimizer.index.Index;
-import com.alibaba.polardbx.optimizer.index.IndexUtil;
 import org.apache.calcite.plan.RelOptCost;
 import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.volcano.RelSubset;
@@ -66,10 +65,9 @@ public interface LookupJoin {
 
         if (node instanceof LogicalIndexScan) {
             LogicalIndexScan logicalIndexScan = (LogicalIndexScan) node;
-            Join join = logicalIndexScan.getJoin();
-            if (join != null) {
+            if (logicalIndexScan.isLookupTable()) {
                 // This TableLookup is lookup side of lookup join such as (BKA, Materialized Semi Join)
-                Index index = IndexUtil.selectJoinIndex(join, true);
+                Index index = logicalIndexScan.getLookupInfo().getLookupIndex();
                 RelNode mysqlRelNode = logicalIndexScan.getMysqlNode();
                 RelOptCost scanCost = mq.getCumulativeCost(mysqlRelNode);
 
@@ -94,7 +92,7 @@ public interface LookupJoin {
                     io = scanCost.getIo();
                 }
 
-                RelOptPlanner planner = join.getCluster().getPlanner();
+                RelOptPlanner planner = logicalIndexScan.getCluster().getPlanner();
                 // plus the TableLookup right side by multi by 2
                 RelOptCost indexCost = planner.getCostFactory().makeCost(rows, cpu, memory, io, 0.5)
                     .multiplyBy(2);
@@ -117,16 +115,16 @@ public interface LookupJoin {
         // the expand table lookup
         if (lookupNode instanceof LogicalProject) {
             RelNode input = ((LogicalProject) lookupNode).getInput();
-            Join joinOfTableLookup;
             if (input instanceof RelSubset) {
-                joinOfTableLookup = (Join) Util.first(((RelSubset) input).getBest(), ((RelSubset) input).getOriginal());
-            } else {
-                joinOfTableLookup = (Join) input;
+                input = Util.first(((RelSubset) input).getBest(), ((RelSubset) input).getOriginal());
             }
-            RelOptCost cost = getCostIfJoinFromTableLookup(mq, joinOfTableLookup);
-            if (cost != null) {
-                return cost;
+            if (input instanceof Join) {
+                RelOptCost cost = getCostIfJoinFromTableLookup(mq, (Join) input);
+                if (cost != null) {
+                    return cost;
+                }
             }
+            // else: FETCH_BLOB Project wrapping a LogicalView, fall through to default cost
         }
 
         // tableLookup (before expand) or logicalview
@@ -136,4 +134,6 @@ public interface LookupJoin {
     RelOptCost getLookupCost(RelMetadataQuery mq);
 
     Index getLookupIndex();
+
+    void deepVisitLookupJoin();
 }

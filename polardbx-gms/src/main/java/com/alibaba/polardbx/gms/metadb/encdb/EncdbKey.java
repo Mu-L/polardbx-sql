@@ -23,7 +23,7 @@ import java.sql.SQLException;
 
 public class EncdbKey implements SystemTableRecord {
 
-    private long id;
+    private Long id;
 
     private String key;
 
@@ -35,6 +35,15 @@ public class EncdbKey implements SystemTableRecord {
         this.key = rs.getString("key");
         this.type = KeyType.valueOf(rs.getString("type")).name();
         return this;
+    }
+
+    public EncdbKey() {
+    }
+
+    public EncdbKey(String key, KeyType type) {
+        this.id = null;
+        this.key = key;
+        this.type = type.name();
     }
 
     public String getKey() {
@@ -50,6 +59,6 @@ public class EncdbKey implements SystemTableRecord {
     }
 
     public static enum KeyType {
-        MEK_HASH, MEK_ENC;
+        MEK_HASH, KMS_ENC_MEK, KMS_IV, KMS_MEK_HASH, KMS_REGION, KMS_KEY_ID;
     }
 }

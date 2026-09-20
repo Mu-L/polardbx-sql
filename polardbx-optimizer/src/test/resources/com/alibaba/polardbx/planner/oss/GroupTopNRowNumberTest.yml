@@ -1,0 +1,525 @@
+SQL:
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_SORT_WINDOW=false ENABLE_COLUMNAR_OPTIMIZER=true WORKLOAD_TYPE=AP)*/
+      select tt from(
+        select 
+        s_suppkey+1 as tt, 
+        row_number() over(partition by s_name order by s_address) as rn 
+        from supplier where s_suppkey = 1)
+      where rn = 11;
+    plan: |
+      project(tt="$2")
+        filter(condition="f3w0$o0 = ?2")
+          sortwindow(s_name="s_name", s_address="s_address", $2="$2", f3w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(sort="s_address asc", fetch=?2, group={0})
+              exchange(distribution=hash[0]8, collation=[])
+                grouptopn(sort="s_address asc", fetch=?2, group={0}, partial=true)
+                  project(s_name="s_name", s_address="s_address", $2="s_suppkey + ?0")
+                    osstablescan(tables="supplier_col_index[p7]", sql="select `s_suppkey`, `s_name`, `s_address` from `supplier_col_index` as `supplier_col_index` where (`s_suppkey` = ?)")
+  - sql: |
+      # equal
+        select s_suppkey from(
+          select 
+          s_suppkey, 
+          row_number() over(partition by s_suppkey order by s_address) as rn 
+          from supplier)
+        where rn = 11;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="f7w0$o0 = ?0")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(sort="s_address asc", fetch=?0, group={0})
+              exchange(distribution=hash[0], collation=[])
+                logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address` from `supplier` as `supplier`")
+  - sql: |
+      # less than
+        select s_suppkey from(
+          select 
+          s_suppkey, 
+          row_number() over(partition by s_suppkey order by s_address) as rn 
+          from supplier)
+        where 11 = rn ;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="?0 = f7w0$o0")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(sort="s_address asc", fetch=?0, group={0})
+              exchange(distribution=hash[0], collation=[])
+                logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address` from `supplier` as `supplier`")
+  - sql: |
+      select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_suppkey order by s_address) as rn 
+        from supplier)
+      where rn < -11;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="f7w0$o0 < ?0")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(sort="s_address asc", fetch=?0, group={0})
+              exchange(distribution=hash[0], collation=[])
+                logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address` from `supplier` as `supplier`")
+  - sql: |
+      select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_suppkey order by s_address) as rn 
+        from supplier)
+      where 11 < rn;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="?0 < f7w0$o0")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            exchange(distribution=hash[0], collation=[0 asc-nulls-first, 1 asc-nulls-first])
+              logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address` from `supplier` as `supplier` order by `s_suppkey`, `s_address`")
+  - sql: |
+      # less than or equal
+          select s_suppkey from(
+            select 
+            s_suppkey, 
+            row_number() over(partition by s_suppkey order by s_address) as rn 
+            from supplier)
+          where rn <= -11;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="f7w0$o0 <= ?0")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(sort="s_address asc", fetch=?0, group={0})
+              exchange(distribution=hash[0], collation=[])
+                logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address` from `supplier` as `supplier`")
+  - sql: |
+      select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_suppkey order by s_address) as rn 
+        from supplier)
+      where 11 <= rn;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="?0 <= f7w0$o0")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            exchange(distribution=hash[0], collation=[0 asc-nulls-first, 1 asc-nulls-first])
+              logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address` from `supplier` as `supplier` order by `s_suppkey`, `s_address`")
+  - sql: |
+      # greater than
+      select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_suppkey order by s_address) as rn 
+        from supplier)
+      where rn > -11;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="f7w0$o0 > ?0")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            exchange(distribution=hash[0], collation=[0 asc-nulls-first, 1 asc-nulls-first])
+              logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address` from `supplier` as `supplier` order by `s_suppkey`, `s_address`")
+  - sql: |
+      select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_suppkey order by s_address) as rn 
+        from supplier)
+      where 11 > rn;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="?0 > f7w0$o0")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(sort="s_address asc", fetch=?0, group={0})
+              exchange(distribution=hash[0], collation=[])
+                logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address` from `supplier` as `supplier`")
+  - sql: |
+      # greater than or equal
+      select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_suppkey order by s_address) as rn 
+        from supplier)
+      where rn >= -11;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="f7w0$o0 >= ?0")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            exchange(distribution=hash[0], collation=[0 asc-nulls-first, 1 asc-nulls-first])
+              logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address` from `supplier` as `supplier` order by `s_suppkey`, `s_address`")
+  - sql: |
+      select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_suppkey order by s_address) as rn 
+        from supplier)
+      where 11 >= rn;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="?0 >= f7w0$o0")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(sort="s_address asc", fetch=?0, group={0})
+              exchange(distribution=hash[0], collation=[])
+                logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address` from `supplier` as `supplier`")
+  - sql: |
+      # between
+      select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_suppkey order by s_address) as rn 
+        from supplier)
+      where rn between 1+1 and 12-1
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="between asymmetric($2, +(?0, ?1), -(?2, ?3))")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(sort="s_address asc", fetch=-(?2, ?3), group={0})
+              exchange(distribution=hash[0], collation=[])
+                logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address` from `supplier` as `supplier`")
+  - sql: |
+      select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_suppkey order by s_address) as rn 
+        from supplier)
+      where rn between 1+1 and 12-1*1
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="between asymmetric($2, +(?0, ?1), -(?2, *(?3, ?4)))")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            exchange(distribution=hash[0], collation=[0 asc-nulls-first, 1 asc-nulls-first])
+              logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address` from `supplier` as `supplier` order by `s_suppkey`, `s_address`")
+  - sql: |
+      # switch
+       /*+TDDL:cmd_extra(ENABLE_GROUP_TOPN=false)*/ select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_suppkey order by s_address) as rn 
+        from supplier)
+      where rn between 1+1 and 12-1
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="between asymmetric($2, +(?0, ?1), -(?2, ?3))")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            exchange(distribution=hash[0], collation=[0 asc-nulls-first, 1 asc-nulls-first])
+              logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address` from `supplier` as `supplier` order by `s_suppkey`, `s_address`")
+  - sql: |
+      # complex condition
+      select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_suppkey order by s_address) as rn 
+        from supplier)
+      where rn > -11 and 11 < rn and rn > 10 and rn < s_suppkey and s_suppkey < 100;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="f7w0$o0 > ?0 and ?1 < f7w0$o0 and f7w0$o0 > ?2 and f7w0$o0 < s_suppkey")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            mergesort(sort="s_suppkey asc,s_address asc")
+              logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address` from `supplier` as `supplier` where (`s_suppkey` < ?) order by `s_suppkey`, `s_address`")
+  - sql: |
+      select s_suppkey from(
+        select 
+        s_suppkey, 
+        s_nationkey,
+        row_number() over(partition by s_suppkey order by s_address) as rn 
+        from supplier)
+      where rn > -11 and rn between 10 and -1 and s_nationkey < 100;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="between asymmetric($3, ?1, ?2) and f7w0$o0 > ?0 and s_nationkey < ?3")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", s_nationkey="s_nationkey", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(sort="s_address asc", fetch=?2, group={0})
+              exchange(distribution=hash[0], collation=[])
+                logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address`, `s_nationkey` from `supplier` as `supplier`")
+  - sql: |
+      select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_suppkey order by s_address) as rn 
+        from supplier)
+      where rn > -11 and 11 < rn and (rn <= 10 or s_suppkey < 100);
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="f7w0$o0 > ?0 and ?1 < f7w0$o0 and (f7w0$o0 <= ?2 or s_suppkey < ?3)")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            exchange(distribution=hash[0], collation=[0 asc-nulls-first, 1 asc-nulls-first])
+              logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address` from `supplier` as `supplier` order by `s_suppkey`, `s_address`")
+  - sql: |
+      # bad condition
+      select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_suppkey order by s_address) as rn 
+        from supplier)
+      where rn < 20.1;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="f7w0$o0 < ?0")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            exchange(distribution=hash[0], collation=[0 asc-nulls-first, 1 asc-nulls-first])
+              logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address` from `supplier` as `supplier` order by `s_suppkey`, `s_address`")
+  - sql: |
+      # bad condition
+       select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_acctbal) as rn 
+        from supplier)
+      where rn < "20";
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="f7w0$o0 < ?0")
+          sortwindow(s_suppkey="s_suppkey", s_acctbal="s_acctbal", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {1} order by [] rows between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(fetch=?0, group={1})
+              exchange(distribution=hash[1], collation=[])
+                grouptopn(fetch=?0, group={1}, partial=true)
+                  logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_acctbal` from `supplier` as `supplier`")
+  - sql: |
+      # empty window
+      select s_suppkey from(
+        select 
+        s_suppkey, 
+        s_nationkey,
+        row_number() over() as rn 
+        from supplier)
+      where rn < 100;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="f7w0$o0 < ?0")
+          sortwindow(s_suppkey="s_suppkey", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {} order by [] rows between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(fetch=?0, group={})
+              exchange(distribution=single, collation=[])
+                grouptopn(fetch=?0, group={}, partial=true)
+                  logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey` from `supplier` as `supplier`")
+  - sql: |
+      # window expression without sort
+      select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_acctbal ROWS BETWEEN unbounded preceding and current row) as rn 
+        from supplier)
+      where rn < 16;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="f7w0$o0 < ?0")
+          sortwindow(s_suppkey="s_suppkey", s_acctbal="s_acctbal", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {1} order by [] rows between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(fetch=?0, group={1})
+              exchange(distribution=hash[1], collation=[])
+                grouptopn(fetch=?0, group={1}, partial=true)
+                  logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_acctbal` from `supplier` as `supplier`")
+  - sql: |
+      select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_suppkey order by s_address ROWS BETWEEN 10 PRECEDING AND 1 following) as rn 
+        from supplier)
+      where rn < 15;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="f7w0$o0 < ?0")
+          sortwindow(s_suppkey="s_suppkey", s_address="s_address", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0} order by [1 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(sort="s_address asc", fetch=?0, group={0})
+              exchange(distribution=hash[0], collation=[])
+                logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_address` from `supplier` as `supplier`")
+  - sql: |
+      # window with multi partition and order by
+      select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_suppkey,s_name order by s_phone, s_comment) as rn 
+        from supplier)
+      where rn < 16;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="f7w0$o0 < ?0")
+          sortwindow(s_suppkey="s_suppkey", s_name="s_name", s_phone="s_phone", s_comment="s_comment", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0, 1} order by [2 asc-nulls-first, 3 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(sort="s_phone asc,s_comment asc", fetch=?0, group={0, 1})
+              exchange(distribution=hash[0, 1], collation=[])
+                logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey`, `s_name`, `s_phone`, `s_comment` from `supplier` as `supplier`")
+  - sql: |
+      # multi window
+      select mx from(
+        select 
+        s_suppkey, 
+        s_nationkey,
+        max(s_suppkey) over() as mx,
+        row_number() over() as rn 
+        from supplier)
+      where rn < 100;
+    plan: |
+      project(mx="f7w0$o0")
+        filter(condition="f8w1$o0 < ?0")
+          sortwindow(f7w0$o0="f7w0$o0", f8w1$o0="window#0row_number()", reference windows="window#0=window(partition {} order by [] rows between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(fetch=?0, group={})
+              project(f7w0$o0="f7w0$o0")
+                hashwindow(s_suppkey="s_suppkey", f7w0$o0="window#0max($0)", reference windows="window#0=window(partition {} order by [] range between unbounded preceding and unbounded following aggs [max($0)])")
+                  exchange(distribution=single, collation=[])
+                    logicalview(tables="supplier[p1,p2,p3,p4]", shardcount=4, sql="select `s_suppkey` from `supplier` as `supplier`")
+  - sql: |
+      # columnar optimizer
+       /*+TDDL:cmd_extra(enable_columnar_optimizer=true)*/select s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_acctbal,s_name order by s_phone, s_comment) as rn 
+        from supplier)
+      where rn < 16;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="f7w0$o0 < ?0")
+          sortwindow(s_suppkey="s_suppkey", s_name="s_name", s_phone="s_phone", s_acctbal="s_acctbal", s_comment="s_comment", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {1, 3} order by [2 asc-nulls-first, 4 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(sort="s_phone asc,s_comment asc", fetch=?0, group={1, 3})
+              exchange(distribution=hash[1]8, collation=[])
+                grouptopn(sort="s_phone asc,s_comment asc", fetch=?0, group={1, 3}, partial=true)
+                  osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `s_suppkey`, `s_name`, `s_phone`, `s_acctbal`, `s_comment` from `supplier_col_index` as `supplier_col_index`")
+  - sql: |
+      /*+TDDL:cmd_extra(enable_columnar_optimizer=true PREFER_PARTIAL_GROUP_TOPN=false)*/select s_suppkey from(
+       select 
+       s_suppkey, 
+       row_number() over(partition by s_acctbal,s_name order by s_phone, s_comment) as rn 
+       from supplier)
+      where rn < 16;
+    plan: |
+      project(s_suppkey="s_suppkey")
+        filter(condition="f7w0$o0 < ?0")
+          sortwindow(s_suppkey="s_suppkey", s_name="s_name", s_phone="s_phone", s_acctbal="s_acctbal", s_comment="s_comment", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {1, 3} order by [2 asc-nulls-first, 4 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(sort="s_phone asc,s_comment asc", fetch=?0, group={1, 3})
+              exchange(distribution=hash[1]8, collation=[])
+                osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `s_suppkey`, `s_name`, `s_phone`, `s_acctbal`, `s_comment` from `supplier_col_index` as `supplier_col_index`")
+  - sql: |
+      # partition wise groupTop
+      /*+TDDL:cmd_extra(enable_columnar_optimizer=true)*/select a.s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_suppkey,s_name order by s_phone desc, s_comment) as rn 
+        from supplier) a ,supplier x
+      where a.s_suppkey = x.s_suppkey and rn < 16;
+    plan: |
+      project(s_suppkey="s_suppkey0")
+        hashjoin(condition="s_suppkey = s_suppkey", type="inner")
+          osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, partition=[remote], sql="select `s_suppkey` from `supplier_col_index` as `supplier_col_index`")
+          project(s_suppkey="s_suppkey")
+            filter(condition="f7w0$o0 < ?0")
+              sortwindow(s_suppkey="s_suppkey", s_name="s_name", s_phone="s_phone", s_comment="s_comment", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {0, 1} order by [2 desc-nulls-last, 3 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+                grouptopn(sort="s_phone desc,s_comment asc", fetch=?0, group={0, 1})
+                  osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, partition=[remote], sql="select `s_suppkey`, `s_name`, `s_phone`, `s_comment` from `supplier_col_index` as `supplier_col_index`")
+  - sql: |
+      /*+TDDL:cmd_extra(enable_columnar_optimizer=true ENABLE_PARTITION_WISE_WINDOW=false)*/select a.s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(partition by s_suppkey,s_name order by s_phone desc, s_comment) as rn 
+        from supplier) a ,supplier x
+      where a.s_suppkey = x.s_suppkey and rn < 16;
+    plan: |
+      project(s_suppkey="s_suppkey0")
+        filter(condition="f7w0$o0 < ?0")
+          sortwindow(s_suppkey="s_suppkey", s_suppkey0="s_suppkey0", s_name="s_name", s_phone="s_phone", s_comment="s_comment", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {1, 2} order by [3 desc-nulls-last, 4 asc-nulls-first] range between unbounded preceding and current row aggs [row_number()])")
+            grouptopn(sort="s_phone desc,s_comment asc", fetch=?0, group={1, 2})
+              exchange(distribution=hash[1, 2], collation=[])
+                grouptopn(sort="s_phone desc,s_comment asc", fetch=?0, group={1, 2}, partial=true)
+                  hashjoin(condition="s_suppkey = s_suppkey", type="inner", partition=[local])
+                    osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, partition=[local, remote], sql="select `s_suppkey` from `supplier_col_index` as `supplier_col_index`")
+                    osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, partition=[local, remote], sql="select `s_suppkey`, `s_name`, `s_phone`, `s_comment` from `supplier_col_index` as `supplier_col_index`")
+  - sql: |
+      # single group
+      /*+TDDL:cmd_extra(enable_columnar_optimizer=true)*/select a.s_suppkey from(
+        select 
+        s_suppkey, 
+        row_number() over(order by s_phone desc, s_comment) as rn 
+        from supplier) a ,supplier x
+      where a.s_suppkey = x.s_suppkey and rn < 16;
+    plan: |
+      project(s_suppkey="s_suppkey0")
+        hashjoin(condition="s_suppkey = s_suppkey", type="inner")
+          osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, partition=[remote], sql="select `s_suppkey` from `supplier_col_index` as `supplier_col_index`")
+          exchange(distribution=hash[0]8, collation=[])
+            project(s_suppkey="s_suppkey")
+              filter(condition="f7w0$o0 < ?0")
+                sortwindow(s_suppkey="s_suppkey", s_phone="s_phone", s_comment="s_comment", f7w0$o0="window#0row_number()", reference windows="window#0=window(partition {} order by [1 desc-nulls-last, 2 asc-nulls-first] rows between unbounded preceding and current row aggs [row_number()])")
+                  grouptopn(sort="s_phone desc,s_comment asc", fetch=?0, group={})
+                    exchange(distribution=single, collation=[])
+                      grouptopn(sort="s_phone desc,s_comment asc", fetch=?0, group={}, partial=true)
+                        osstablescan(tables="supplier_col_index[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `s_suppkey`, `s_phone`, `s_comment` from `supplier_col_index` as `supplier_col_index`")
+DDL:
+  supplier:
+    CREATE TABLE IF NOT EXISTS `supplier` (  `s_suppkey` int(11) NOT NULL,  `s_name` varchar(25) NOT NULL,  `s_address` varchar(40) NOT NULL,  `s_nationkey` int(11) NOT NULL,  `s_phone` varchar(15) NOT NULL,  `s_acctbal` decimal(15, 2) NOT NULL,  `s_comment` varchar(101) NOT NULL,  PRIMARY KEY (`s_suppkey`),  CLUSTERED COLUMNAR INDEX `supplier_col_index`(`s_suppkey`) PARTITION BY HASH (`s_suppkey`) PARTITIONS 8 ) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`s_suppkey`) PARTITIONS 4;
+STATISTICS:
+  supplier:
+    100000000
+  supplier.s_acctbal.TOPN:
+    { "countArr": [ ],"valueArr": [ ],"type": "Double" }
+  supplier.s_acctbal.cardinality:
+    9907
+  supplier.s_acctbal.histogram:
+    { "buckets": [ { "ndv": 157,"upper": -828.89,"lower": -998.22,"count": 157,"preSum": 0 },{ "ndv": 157,"upper": -663.75,"lower": -828.67,"count": 157,"preSum": 157 },{ "ndv": 157,"upper": -481.91,"lower": -659.81,"count": 157,"preSum": 314 },{ "ndv": 157,"upper": -297.76,"lower": -478.87,"count": 157,"preSum": 471 },{ "ndv": 156,"upper": -122.1,"lower": -296.5,"count": 157,"preSum": 628 },{ "ndv": 156,"upper": 45.34,"lower": -121.34,"count": 157,"preSum": 785 },{ "ndv": 156,"upper": 218.47,"lower": 46.35,"count": 157,"preSum": 942 },{ "ndv": 156,"upper": 387.49,"lower": 219.47,"count": 157,"preSum": 1099 },{ "ndv": 154,"upper": 551.82,"lower": 387.55,"count": 157,"preSum": 1256 },{ "ndv": 157,"upper": 716.2,"lower": 554.01,"count": 157,"preSum": 1413 },{ "ndv": 157,"upper": 909.83,"lower": 717.59,"count": 157,"preSum": 1570 },{ "ndv": 157,"upper": 1091.98,"lower": 912.09,"count": 157,"preSum": 1727 },{ "ndv": 157,"upper": 1262.2,"lower": 1093.16,"count": 157,"preSum": 1884 },{ "ndv": 156,"upper": 1418.29,"lower": 1262.5,"count": 157,"preSum": 2041 },{ "ndv": 157,"upper": 1588.38,"lower": 1421.41,"count": 157,"preSum": 2198 },{ "ndv": 155,"upper": 1784.32,"lower": 1589.13,"count": 157,"preSum": 2355 },{ "ndv": 157,"upper": 1962.02,"lower": 1785.3,"count": 157,"preSum": 2512 },{ "ndv": 157,"upper": 2145.83,"lower": 1962.57,"count": 157,"preSum": 2669 },{ "ndv": 157,"upper": 2305.17,"lower": 2148.02,"count": 157,"preSum": 2826 },{ "ndv": 157,"upper": 2485.12,"lower": 2305.49,"count": 157,"preSum": 2983 },{ "ndv": 156,"upper": 2669.78,"lower": 2485.44,"count": 157,"preSum": 3140 },{ "ndv": 156,"upper": 2842.33,"lower": 2670.33,"count": 157,"preSum": 3297 },{ "ndv": 156,"upper": 3006.99,"lower": 2843.8,"count": 157,"preSum": 3454 },{ "ndv": 156,"upper": 3165.34,"lower": 3007.34,"count": 157,"preSum": 3611 },{ "ndv": 156,"upper": 3332.29,"lower": 3165.62,"count": 157,"preSum": 3768 },{ "ndv": 155,"upper": 3501.64,"lower": 3333.88,"count": 157,"preSum": 3925 },{ "ndv": 157,"upper": 3665.09,"lower": 3501.92,"count": 157,"preSum": 4082 },{ "ndv": 156,"upper": 3844.28,"lower": 3665.68,"count": 157,"preSum": 4239 },{ "ndv": 157,"upper": 4040.11,"lower": 3846.26,"count": 157,"preSum": 4396 },{ "ndv": 156,"upper": 4217.05,"lower": 4042.24,"count": 157,"preSum": 4553 },{ "ndv": 157,"upper": 4379.96,"lower": 4217.09,"count": 157,"preSum": 4710 },{ "ndv": 156,"upper": 4571.04,"lower": 4380.19,"count": 157,"preSum": 4867 },{ "ndv": 157,"upper": 4742.57,"lower": 4572.92,"count": 157,"preSum": 5024 },{ "ndv": 155,"upper": 4925.36,"lower": 4744.07,"count": 157,"preSum": 5181 },{ "ndv": 157,"upper": 5081.76,"lower": 4925.55,"count": 157,"preSum": 5338 },{ "ndv": 156,"upper": 5236.68,"lower": 5083.63,"count": 157,"preSum": 5495 },{ "ndv": 157,"upper": 5408.07,"lower": 5237,"count": 157,"preSum": 5652 },{ "ndv": 156,"upper": 5571.39,"lower": 5408.08,"count": 157,"preSum": 5809 },{ "ndv": 157,"upper": 5733.86,"lower": 5571.81,"count": 157,"preSum": 5966 },{ "ndv": 156,"upper": 5907.27,"lower": 5734.03,"count": 157,"preSum": 6123 },{ "ndv": 156,"upper": 6075.43,"lower": 5907.58,"count": 157,"preSum": 6280 },{ "ndv": 156,"upper": 6240.69,"lower": 6076.07,"count": 157,"preSum": 6437 },{ "ndv": 157,"upper": 6431.29,"lower": 6241.06,"count": 157,"preSum": 6594 },{ "ndv": 155,"upper": 6598.53,"lower": 6432.12,"count": 157,"preSum": 6751 },{ "ndv": 156,"upper": 6780.06,"lower": 6598.86,"count": 157,"preSum": 6908 },{ "ndv": 157,"upper": 6965.91,"lower": 6780.33,"count": 157,"preSum": 7065 },{ "ndv": 157,"upper": 7132.44,"lower": 6966.67,"count": 157,"preSum": 7222 },{ "ndv": 156,"upper": 7304.24,"lower": 7134.07,"count": 157,"preSum": 7379 },{ "ndv": 157,"upper": 7466.57,"lower": 7304.3,"count": 157,"preSum": 7536 },{ "ndv": 156,"upper": 7626.64,"lower": 7466.64,"count": 157,"preSum": 7693 },{ "ndv": 156,"upper": 7807.69,"lower": 7626.76,"count": 157,"preSum": 7850 },{ "ndv": 156,"upper": 7958.64,"lower": 7807.96,"count": 157,"preSum": 8007 },{ "ndv": 157,"upper": 8139.64,"lower": 7961.26,"count": 157,"preSum": 8164 },{ "ndv": 157,"upper": 8323.29,"lower": 8142.32,"count": 157,"preSum": 8321 },{ "ndv": 157,"upper": 8512.48,"lower": 8327.34,"count": 157,"preSum": 8478 },{ "ndv": 154,"upper": 8676.06,"lower": 8513.63,"count": 157,"preSum": 8635 },{ "ndv": 157,"upper": 8841.59,"lower": 8676.78,"count": 157,"preSum": 8792 },{ "ndv": 156,"upper": 9013.06,"lower": 8842.14,"count": 157,"preSum": 8949 },{ "ndv": 156,"upper": 9169.42,"lower": 9014.26,"count": 157,"preSum": 9106 },{ "ndv": 153,"upper": 9337.05,"lower": 9170.16,"count": 157,"preSum": 9263 },{ "ndv": 157,"upper": 9521.69,"lower": 9338.2,"count": 157,"preSum": 9420 },{ "ndv": 156,"upper": 9680.2,"lower": 9522.03,"count": 157,"preSum": 9577 },{ "ndv": 156,"upper": 9847.19,"lower": 9681.1,"count": 157,"preSum": 9734 },{ "ndv": 109,"upper": 9999.72,"lower": 9847.57,"count": 109,"preSum": 9891 } ],"maxBucketSize": 64,"type": "Double","sampleRate": 1.0 }
+  supplier.s_acctbal.null_count:
+    0
+  supplier.s_acctbal.sample_rate:
+    1.0
+  supplier.s_address.TOPN:
+    { "countArr": [ ],"valueArr": [ ],"type": "String" }
+  supplier.s_address.cardinality:
+    9940
+  supplier.s_address.histogram:
+    { "buckets": [ { "ndv": 157,"upper": ",,hFmixRsUfI","lower": "  9aW1wwnBJJPnCx,nox0MA48Y0zpI1IeVfYZ","count": 157,"preSum": 0 },{ "ndv": 157,"upper": ",zLgenfT0jr16MbjJt 9WfCU6xm2N3hQy79Migc","lower": ",,Jv41XwKEEUINXqSWOFoxiJH5Z","count": 157,"preSum": 157 },{ "ndv": 157,"upper": "1, XZttwkmbllozHYC9bp1StcxycsQ9K","lower": ",ZpiRbWDArIS7","count": 157,"preSum": 314 },{ "ndv": 157,"upper": "22J7yDqk9pnGoguOvx0x","lower": "1,3JwsvoowdMB7zoe0myv0Xk","count": 157,"preSum": 471 },{ "ndv": 157,"upper": "31DM3ZWB3t6fdBu9HQt30LmZgeHj8Cxt0G","lower": "23XaUVLYuC3tQIPHCuLLgM5UawL","count": 157,"preSum": 628 },{ "ndv": 157,"upper": "4 xClcX1vZVHyR67ZXitMln9skIjgvIotCO1","lower": "32cJBGFFpGEkEjx1sF8JZAy0A72uXL5qU","count": 157,"preSum": 785 },{ "ndv": 157,"upper": "5056ztykbhkawZOeJMKyxyv","lower": "4,ZXKxiy0TJ","count": 157,"preSum": 942 },{ "ndv": 157,"upper": "64x6vb0UkDRkp56NRHYNKEAeED3L1RDA5O5G","lower": "50EV3vyfAsWJAjTbT4qwU","count": 157,"preSum": 1099 },{ "ndv": 157,"upper": "76Xzqa8AVjFv,GXw4gK4WQbAkT,W8MEH2","lower": "658tEqXLPvRd6xpFdqC2","count": 157,"preSum": 1256 },{ "ndv": 157,"upper": "87sm8qgfLXUhrRvvaPQdHDElKll","lower": "77,1uiRw rXybJh","count": 157,"preSum": 1413 },{ "ndv": 157,"upper": "93EycC3P9tiKu5XEkgb3duqG0","lower": "888kpdqayPqPBrSZ2aKNh9fSY,aaFPQb","count": 157,"preSum": 1570 },{ "ndv": 157,"upper": "a,UE,6nRVl2fCphkOoetR1ajIzAEJ1Aa1G1HV","lower": "93NSzNRlTdFtzO6Y7YAcJVMm3k6Kejmi","count": 157,"preSum": 1727 },{ "ndv": 157,"upper": "AMxVmYjvWzBZKrrRurkk0q","lower": "A0jDz3SUnGe7 riLcwD4akLvDAqV8GtXm MM2r53","count": 157,"preSum": 1884 },{ "ndv": 157,"upper": "b6TLE65sryHFVFjTIukGqvuefvY5","lower": "aMZxdgerFmYRUivN6bot9FucS","count": 157,"preSum": 2041 },{ "ndv": 157,"upper": "bQ964wtB,GulcdbG9myQsy3CeK17iNw1oOMotM","lower": "B7 7NHK5uwQ7GRYBCiRwgHqjhYYo62cvO6so","count": 157,"preSum": 2198 },{ "ndv": 157,"upper": "c7fj5A  AZFI1CXmBVNHILDV","lower": "bQBVFaIiG46wcY4ebXtyYcAA EGEc","count": 157,"preSum": 2355 },{ "ndv": 157,"upper": "cOflLbPaDr6F9LhuG9TWQaRQmSfk mx","lower": "c7LwaiKGVuOoaP4F,OjuvEgW ","count": 157,"preSum": 2512 },{ "ndv": 157,"upper": "d7GINn8JkTi0lu9O3UtW","lower": "cOg,bCELki4zYO9h01DHD8Hv0OV8,1z 4,","count": 157,"preSum": 2669 },{ "ndv": 157,"upper": "dPRr4r43oK3EWdk1UmEmutjV6aXtcU","lower": "d7rDQneZCae9E57u3LSq7K","count": 157,"preSum": 2826 },{ "ndv": 157,"upper": "EA256SSBFlnNj6D,4dRgFrm","lower": "DpYX7p iwphihHJz7h","count": 157,"preSum": 2983 },{ "ndv": 157,"upper": "ep9O7fTWC8yUFtKOIEHotrTZQQ4Kkkptpmhy","lower": "Ea5h8EyGzY","count": 157,"preSum": 3140 },{ "ndv": 157,"upper": "FAEEZyNtDGEhZ","lower": "EpAhauHHPf9ke5","count": 157,"preSum": 3297 },{ "ndv": 157,"upper": "fQVbA9,L6tB9iFrCfk4Yt1dwT0kRWg9DV","lower": "FaJZ b KdjxA06ZdUW3sdWEAddDR","count": 157,"preSum": 3454 },{ "ndv": 157,"upper": "G9I6PPy6WcBpsOPcO4CMORttcmxvbedNG","lower": "fR,RDoFTT2Y3XCDW","count": 157,"preSum": 3611 },{ "ndv": 157,"upper": "go2c90uF4TsZEHg1aa3,Gacwm","lower": "gA20SjV3BGrB,cowC,hXTXtppX","count": 157,"preSum": 3768 },{ "ndv": 157,"upper": "h9R,KyJVzCBLgj9En5mxOd0sJL  XWE","lower": "gOBtQQlqTMmPpdlkyYRNfnYp,Dvu","count": 157,"preSum": 3925 },{ "ndv": 157,"upper": "hQuhL6zQSZmVifUzpnKvRLNEfJhShDomdbGC","lower": "HA5lbMpFJevFg10lH0,a2","count": 157,"preSum": 4082 },{ "ndv": 157,"upper": "IbPDbICEvbqGQF ","lower": "HqvL3WplaOkS","count": 157,"preSum": 4239 },{ "ndv": 157,"upper": "irhmW87hVlyK zTaSW","lower": "iBXKCWbBiwBJ1FORzNGxqTvFNvolqRexgAYA","count": 157,"preSum": 4396 },{ "ndv": 157,"upper": "JaTsYwI4yFu283q83","lower": "iri0I0IUBBVBnWMvHEPtuStMIU","count": 157,"preSum": 4553 },{ "ndv": 157,"upper": "Jq04JXYA9uPeEhE5bLyo","lower": "jaz81C2z9HKz,g,9a1z7Gdc5YWdoa","count": 157,"preSum": 4710 },{ "ndv": 157,"upper": "Ka9SQRCx8 KsA","lower": "jQ53qr,GLx7apLTqAIuHOBUkQc5Wz","count": 157,"preSum": 4867 },{ "ndv": 157,"upper": "KsYYPIw2kWP","lower": "kAcH5hHmspYh,aA","count": 157,"preSum": 5024 },{ "ndv": 157,"upper": "LBqiISwQ8,L98tE0JS7wC0gUNAzdro","lower": "KT cc4hGFVdzb8t5w6hf5","count": 157,"preSum": 5181 },{ "ndv": 157,"upper": "lRBQi9D3IWGayjQhcw","lower": "LBspOqI3Cv616,9Rv75o1c","count": 157,"preSum": 5338 },{ "ndv": 157,"upper": "ma15idU1PzO7itP67W1Rd","lower": "lRLYS1M8CXnOYJ9HITCcqk uZKPFjdmS","count": 157,"preSum": 5495 },{ "ndv": 157,"upper": "mOHKvfkuuCQXiGO1EzYJFyCqCahY5,fn sQwehh","lower": "MA4ikT9mOlgSSZu17d0hdSGNc aFsivmV4 CIAS","count": 157,"preSum": 5652 },{ "ndv": 157,"upper": "N1A48rWNnF63i,ePPBscDmOnHPRSJu","lower": "mOM9ggPwQSI1SX5lpumMLWc85u","count": 157,"preSum": 5809 },{ "ndv": 157,"upper": "nkq6 NFnEfhdy6","lower": "n1HaaAgnJXyq0uOJUPZc4OtR6dFab998dsj5ojW","count": 157,"preSum": 5966 },{ "ndv": 157,"upper": "O2ul2htH4kg1TRsn5d","lower": "NkRQYLe9d8vEXNO KKk8rxK502OI2 ","count": 157,"preSum": 6123 },{ "ndv": 157,"upper": "Onc3t57VAMchm,pmoVLaU8bONni9NsuaM PzMMFz","lower": "o2X 3GLhipvp1ReLO7EcBlz13MI","count": 157,"preSum": 6280 },{ "ndv": 157,"upper": "p5TvX4xf1n4aLh75Hw","lower": "ONda3YJiHKJOC","count": 157,"preSum": 6437 },{ "ndv": 157,"upper": "pqck2ppy758TQpZCUAjPvlU55K3QjfL7Bi","lower": "p5Ui3IGPcmotYu","count": 157,"preSum": 6594 },{ "ndv": 157,"upper": "QAjFojIKZdFJsyoE6vBZP","lower": "Pqgx1xdKu4In20 ","count": 157,"preSum": 6751 },{ "ndv": 157,"upper": "qsAMCRV3wenlgA5bjn Vh","lower": "qajkuLHgP cRkdooPutjgKa8zxnYW","count": 157,"preSum": 6908 },{ "ndv": 157,"upper": "RBpponq jRQR3,cEKMd4lYj2ZNhe7hZYrR,v J","lower": "qSEuR1Ri4Hrk LrOLGh","count": 157,"preSum": 7065 },{ "ndv": 157,"upper": "rqBhrPpxZFhTZQ8V3BjoCv8L14Wy67Jy2Y","lower": "RBqY8HVamTPASc674Eqtk3Ql,","count": 157,"preSum": 7222 },{ "ndv": 157,"upper": "s9TsiDVPstck","lower": "RQGjvRP7uFsx3pccm0H7NQ0fQp7GAUNAvtkakUid","count": 157,"preSum": 7379 },{ "ndv": 157,"upper": "SrAe60iQ8wlU6wKYnTNoL3pNp w i0X7","lower": "sa U,SZL7BsDag12dYnXvYB9Ss2qm","count": 157,"preSum": 7536 },{ "ndv": 157,"upper": "TC36OF8sxW71zzaDCR0","lower": "sRBWIIavn0AEKUn,tc","count": 157,"preSum": 7693 },{ "ndv": 157,"upper": "Trf9ItDwPlRYrAglba","lower": "TC6RpSkg5fSfi2Ika06OqHhkIxUzNCtnkMeo","count": 157,"preSum": 7850 },{ "ndv": 157,"upper": "uAjh0zBiJ0d","lower": "TrgmM5M7RbLEAMMMrPmlo9BzrSNBR","count": 157,"preSum": 8007 },{ "ndv": 157,"upper": "uoqMdf7e7Gj9dbQ53","lower": "UaL9jrvT8BqR2GB","count": 157,"preSum": 8164 },{ "ndv": 157,"upper": "V7Pk75s64GORPR1BbwN 2I1xawVm6C7OpGRa","lower": "UOvHgHsNlljfaOcztQ5f","count": 157,"preSum": 8321 },{ "ndv": 157,"upper": "vOeYAusMVN9HDeDJZuvr9nC0E1a","lower": "v8dIXRVHj36WcUF4RKLjoRq Bt X6B 68cFU","count": 157,"preSum": 8478 },{ "ndv": 157,"upper": "w7bQ4PCqVCZjaAtb","lower": "vofDxBRAvejcwdaWvU0wmYHWbiJt","count": 157,"preSum": 8635 },{ "ndv": 157,"upper": "wnar78tt,IXV","lower": "W7lP8LAhnBnDdcF","count": 157,"preSum": 8792 },{ "ndv": 157,"upper": "X3PL1AZMSUGm","lower": "wNasxwKglHa","count": 157,"preSum": 8949 },{ "ndv": 157,"upper": "xMKInuZNsJ,gLecTyT ROceYfx","lower": "x3PUGAy4lrknjrVMUeVnktwvYLBK4tjXAM","count": 157,"preSum": 9106 },{ "ndv": 157,"upper": "Y4O7cs1mRjv5ih 0nt RFI2qwNK","lower": "XMkX2032QKygvHfkFF4Hk1dvYKyhk","count": 157,"preSum": 9263 },{ "ndv": 157,"upper": "YLMgP6bJXx1ny1hXz6BFm","lower": "y4OEw7UCy05r4q4O3x,pOPD2S","count": 157,"preSum": 9420 },{ "ndv": 157,"upper": "z5Mm65PAP4m","lower": "ylo, 1pWf0xfyQmGenO4t1apcOX1","count": 157,"preSum": 9577 },{ "ndv": 157,"upper": "zohVF4 4GHOJpWy9kdytvYwm27mJEBhk","lower": "Z5oAPo57q31ygVY2IibeIZGsSA6txe3UDxOXAq","count": 157,"preSum": 9734 },{ "ndv": 109,"upper": "ZZZwPfP9X1xcLQ","lower": "ZOlKEPI,8ftemk3cAGokylKstRcZiBT0sc","count": 109,"preSum": 9891 } ],"maxBucketSize": 64,"type": "String","sampleRate": 1.0 }
+  supplier.s_address.null_count:
+    0
+  supplier.s_address.sample_rate:
+    1.0
+  supplier.s_comment.TOPN:
+    { "countArr": [ ],"valueArr": [ ],"type": "String" }
+  supplier.s_comment.cardinality:
+    9943
+  supplier.s_comment.histogram:
+    { "buckets": [ { "ndv": 157,"upper": " asymptotes nag slyly pinto beans. pending request","lower": " about the blithely express foxes. bli","count": 157,"preSum": 0 },{ "ndv": 157,"upper": " carefully final platelets use. even foxes wake. f","lower": " asymptotes wake quickly around the slyly regular ","count": 157,"preSum": 157 },{ "ndv": 157,"upper": " express requests along the quickly eve","lower": " carefully final requests. even, even deposits hag","count": 157,"preSum": 314 },{ "ndv": 157,"upper": " haggle slyly above the furiously regular pinto be","lower": " express requests sleep furiously ironic instructi","count": 157,"preSum": 471 },{ "ndv": 157,"upper": " packages use furiously ironic somas. furiously ex","lower": " haggle slyly stealthily even packages. instructio","count": 157,"preSum": 628 },{ "ndv": 157,"upper": " requests cajole furiously. fur","lower": " packages use quickly final deposits.","count": 157,"preSum": 785 },{ "ndv": 157,"upper": " special theodolites sleep carefully even ideas. f","lower": " requests cajole quickly even depe","count": 157,"preSum": 942 },{ "ndv": 157,"upper": " unusual epitaphs. blithely","lower": " special theodolites. furiously even packages cajo","count": 157,"preSum": 1099 },{ "ndv": 157,"upper": ". foxes nag slyly express, regular multipliers. re","lower": " unusual excuses. slyly ironic instructions use. r","count": 157,"preSum": 1256 },{ "ndv": 157,"upper": "accounts wake about the slyly bold platelets. furi","lower": ". frays around the special, final excuses haggle a","count": 157,"preSum": 1413 },{ "ndv": 157,"upper": "ages. furiously even instructions according t","lower": "accounts wake slyly across the pending accou","count": 157,"preSum": 1570 },{ "ndv": 157,"upper": "al Tiresias boost slyly about the slyly close pear","lower": "ages. furiously final courts boost slyly slyly iro","count": 157,"preSum": 1727 },{ "ndv": 157,"upper": "arefully ironic ideas: slyly regular deposits abou","lower": "al warthogs boost slyly id","count": 157,"preSum": 1884 },{ "ndv": 157,"upper": "blithely instructions. carefully final fox","lower": "arefully ironic packages above the special package","count": 157,"preSum": 2041 },{ "ndv": 157,"upper": "carefully ironic packages according to the fluffil","lower": "blithely ironic accounts poach blithely alongside ","count": 157,"preSum": 2198 },{ "ndv": 157,"upper": "ckly final requests. regular packages are carefull","lower": "carefully ironic packages. carefully unusual plate","count": 157,"preSum": 2355 },{ "ndv": 157,"upper": "d frets ought to haggle blithely. slyly unusual in","lower": "ckly final theodolites; furiously sp","count": 157,"preSum": 2512 },{ "ndv": 157,"upper": "dolites. even packages thrash. carefully ironic pi","lower": "d haggle. final theodolites sleep among the blithe","count": 157,"preSum": 2669 },{ "ndv": 157,"upper": "e requests haggle carefully even ideas. express, b","lower": "dolites. furiously expres","count": 157,"preSum": 2826 },{ "ndv": 157,"upper": "eep blithely even, ironic requests. carefully pend","lower": "e requests. regular accounts integrate slyly. quic","count": 157,"preSum": 2983 },{ "ndv": 157,"upper": "ely ironic instructions sleep among the carefully ","lower": "eep blithely regular dependencies. blithely regula","count": 157,"preSum": 3140 },{ "ndv": 157,"upper": "ependencies play to the blithely special requests.","lower": "ely permanent pinto beans are above the requests! ","count": 157,"preSum": 3297 },{ "ndv": 157,"upper": "es snooze. carefully express deposits boost af","lower": "ependencies shall cajole beyond the regular, regul","count": 157,"preSum": 3454 },{ "ndv": 157,"upper": "even orbits. slyly regular theodolites detect care","lower": "es unwind busily pending accounts. furiously ironi","count": 157,"preSum": 3611 },{ "ndv": 157,"upper": "final ideas. ironic, ironic requests haggle furiou","lower": "even packages according to the special asymptotes ","count": 157,"preSum": 3768 },{ "ndv": 157,"upper": "furiously fluffily ironic foxes. ironic packages a","lower": "final packages nag carefully according to the blit","count": 157,"preSum": 3925 },{ "ndv": 157,"upper": "gle blithely according to the blithe","lower": "furiously fluffily regular courts. slyly ironic pi","count": 157,"preSum": 4082 },{ "ndv": 157,"upper": "he fluffily express theodolites: Tiresias p","lower": "gle blithely blithely even accounts. always final ","count": 157,"preSum": 4239 },{ "ndv": 157,"upper": "ic accounts. unusual, express deposits hinder slyl","lower": "he fluffily final requests. slyly ironic dependenc","count": 157,"preSum": 4396 },{ "ndv": 157,"upper": "ily quiet accounts! blithe","lower": "ic dependencies. foxes wak","count": 157,"preSum": 4553 },{ "ndv": 157,"upper": "ions. furiously regular deposits will haggle again","lower": "ily silent deposits into the slyly silent request","count": 157,"preSum": 4710 },{ "ndv": 157,"upper": "ithely. regular packages detect. final foxes cajol","lower": "ions. ironic foxes haggle slyly along the furi","count": 157,"preSum": 4867 },{ "ndv": 157,"upper": "kly carefully express asymptotes. furiou","lower": "ithely. regular pinto beans sleep. even","count": 157,"preSum": 5024 },{ "ndv": 157,"upper": "lar somas. ironic requests wake furiou","lower": "kly carefully regular ideas. furiously even orbits","count": 157,"preSum": 5181 },{ "ndv": 157,"upper": "lites wake above the even deposits. carefully pend","lower": "lar theodolites around the slyly even requests wak","count": 157,"preSum": 5338 },{ "ndv": 157,"upper": "luffily. dogged deposits among the permanently iro","lower": "lites wake carefully. theodolites breach. theodoli","count": 157,"preSum": 5495 },{ "ndv": 157,"upper": "ly ironic requests. carefully bold ideas haggle qu","lower": "luffy requests wake blithely. slyly unusual fox","count": 157,"preSum": 5652 },{ "ndv": 157,"upper": "lyly pending deposits. requests wake. final pinto ","lower": "ly ironic requests. carefully regular accounts hag","count": 157,"preSum": 5809 },{ "ndv": 157,"upper": "ndencies between the doggedly pending requests ser","lower": "lyly pending ideas cajole. blithely ","count": 157,"preSum": 5966 },{ "ndv": 157,"upper": "ns cajole. fluffily express deposits cajole blithe","lower": "ndencies cajole quickly. special dinos cajole bold","count": 157,"preSum": 6123 },{ "ndv": 157,"upper": "nusual deposits sleep final, special deposits. car","lower": "ns do boost deposits. unusual instructions sleep f","count": 157,"preSum": 6280 },{ "ndv": 157,"upper": "olphins. slyly regular requ","lower": "nusual deposits. furiously special deposits integr","count": 157,"preSum": 6437 },{ "ndv": 157,"upper": "osits. furiously bold asymptotes about the ironica","lower": "olve quickly bold deposits","count": 157,"preSum": 6594 },{ "ndv": 157,"upper": "ously unusual somas. quickly regular pinto be","lower": "osits. furiously express ideas impress furiously i","count": 157,"preSum": 6751 },{ "ndv": 157,"upper": "pending requests unwind accounts. express, furious","lower": "ously. dolphins haggle before the quickly ironic d","count": 157,"preSum": 6908 },{ "ndv": 157,"upper": "quickly ironic asymptotes cajole. furiously ironic","lower": "pending requests wake quickly according to the car","count": 157,"preSum": 7065 },{ "ndv": 157,"upper": "refully express platelets; d","lower": "quickly ironic packages affix aft","count": 157,"preSum": 7222 },{ "ndv": 157,"upper": "ress deposits. special asymptotes wake blithely in","lower": "refully express requests after the pinto beans caj","count": 157,"preSum": 7379 },{ "ndv": 157,"upper": "ross the ironic pinto beans haggle packages. packa","lower": "ress excuses are along the even attainments. even ","count": 157,"preSum": 7536 },{ "ndv": 157,"upper": "s engage carefully alongside of the idly regula","lower": "ross the pending, bold accounts. ruthless, final ","count": 157,"preSum": 7693 },{ "ndv": 157,"upper": "s. accounts grow slyly regular","lower": "s excuses nag. bold ideas sleep furiously bold req","count": 157,"preSum": 7850 },{ "ndv": 157,"upper": "side of the carefully final ideas","lower": "s. accounts haggle slyly. f","count": 157,"preSum": 8007 },{ "ndv": 157,"upper": "slyly final patterns according to the requests aff","lower": "side of the carefully ironic requests. stealthy ac","count": 157,"preSum": 8164 },{ "ndv": 157,"upper": "sts. ideas sleep furiously. bold theodolites along","lower": "slyly final pinto beans solve furiously","count": 157,"preSum": 8321 },{ "ndv": 157,"upper": "tes. fluffily busy deposits wake carefully regular","lower": "sts. ironic braids sleep carefully according to th","count": 157,"preSum": 8478 },{ "ndv": 157,"upper": "theodolites. deposits are furiously theodolites. s","lower": "tes. furiously careful pains are. quickly even pla","count": 157,"preSum": 8635 },{ "ndv": 157,"upper": "ts sleep blithely above the final platelets. ironi","lower": "theodolites. foxes are: furiousl","count": 157,"preSum": 8792 },{ "ndv": 157,"upper": "uffily about the furiously even foxes. regular dec","lower": "ts sleep blithely carefully silent requests. quick","count": 157,"preSum": 8949 },{ "ndv": 157,"upper": "unts along the ironic accounts must have to haggle","lower": "uffily according to the express acco","count": 157,"preSum": 9106 },{ "ndv": 157,"upper": "usly according to the blithely regular ideas. blit","lower": "unts along the slyly regular instructions detect s","count": 157,"preSum": 9263 },{ "ndv": 157,"upper": "wake slyly blithely unusual packages; quickly regu","lower": "usly according to the slyly pending ","count": 157,"preSum": 9420 },{ "ndv": 157,"upper": "y express asymptotes haggle deposits. final deposi","lower": "wake. carefully even patterns solve slyl","count": 157,"preSum": 9577 },{ "ndv": 157,"upper": "y slow accounts. carefully express foxes are furio","lower": "y express deposits. quickly final deposits sleep f","count": 157,"preSum": 9734 },{ "ndv": 109,"upper": "zzle furiously. bold accounts haggle furiously iro","lower": "y slyly quiet deposits. quickly ironic accounts us","count": 109,"preSum": 9891 } ],"maxBucketSize": 64,"type": "String","sampleRate": 1.0 }
+  supplier.s_comment.null_count:
+    0
+  supplier.s_comment.sample_rate:
+    1.0
+  supplier.s_name.TOPN:
+    { "countArr": [ ],"valueArr": [ ],"type": "String" }
+  supplier.s_name.cardinality:
+    9948
+  supplier.s_name.histogram:
+    { "buckets": [ { "ndv": 157,"upper": "Supplier#000000157","lower": "Supplier#000000001","count": 157,"preSum": 0 },{ "ndv": 157,"upper": "Supplier#000000314","lower": "Supplier#000000158","count": 157,"preSum": 157 },{ "ndv": 157,"upper": "Supplier#000000471","lower": "Supplier#000000315","count": 157,"preSum": 314 },{ "ndv": 157,"upper": "Supplier#000000628","lower": "Supplier#000000472","count": 157,"preSum": 471 },{ "ndv": 157,"upper": "Supplier#000000785","lower": "Supplier#000000629","count": 157,"preSum": 628 },{ "ndv": 157,"upper": "Supplier#000000942","lower": "Supplier#000000786","count": 157,"preSum": 785 },{ "ndv": 157,"upper": "Supplier#000001099","lower": "Supplier#000000943","count": 157,"preSum": 942 },{ "ndv": 157,"upper": "Supplier#000001256","lower": "Supplier#000001100","count": 157,"preSum": 1099 },{ "ndv": 157,"upper": "Supplier#000001413","lower": "Supplier#000001257","count": 157,"preSum": 1256 },{ "ndv": 157,"upper": "Supplier#000001570","lower": "Supplier#000001414","count": 157,"preSum": 1413 },{ "ndv": 157,"upper": "Supplier#000001727","lower": "Supplier#000001571","count": 157,"preSum": 1570 },{ "ndv": 157,"upper": "Supplier#000001884","lower": "Supplier#000001728","count": 157,"preSum": 1727 },{ "ndv": 157,"upper": "Supplier#000002041","lower": "Supplier#000001885","count": 157,"preSum": 1884 },{ "ndv": 157,"upper": "Supplier#000002198","lower": "Supplier#000002042","count": 157,"preSum": 2041 },{ "ndv": 157,"upper": "Supplier#000002355","lower": "Supplier#000002199","count": 157,"preSum": 2198 },{ "ndv": 157,"upper": "Supplier#000002512","lower": "Supplier#000002356","count": 157,"preSum": 2355 },{ "ndv": 157,"upper": "Supplier#000002669","lower": "Supplier#000002513","count": 157,"preSum": 2512 },{ "ndv": 157,"upper": "Supplier#000002826","lower": "Supplier#000002670","count": 157,"preSum": 2669 },{ "ndv": 157,"upper": "Supplier#000002983","lower": "Supplier#000002827","count": 157,"preSum": 2826 },{ "ndv": 157,"upper": "Supplier#000003140","lower": "Supplier#000002984","count": 157,"preSum": 2983 },{ "ndv": 157,"upper": "Supplier#000003297","lower": "Supplier#000003141","count": 157,"preSum": 3140 },{ "ndv": 157,"upper": "Supplier#000003454","lower": "Supplier#000003298","count": 157,"preSum": 3297 },{ "ndv": 157,"upper": "Supplier#000003611","lower": "Supplier#000003455","count": 157,"preSum": 3454 },{ "ndv": 157,"upper": "Supplier#000003768","lower": "Supplier#000003612","count": 157,"preSum": 3611 },{ "ndv": 157,"upper": "Supplier#000003925","lower": "Supplier#000003769","count": 157,"preSum": 3768 },{ "ndv": 157,"upper": "Supplier#000004082","lower": "Supplier#000003926","count": 157,"preSum": 3925 },{ "ndv": 157,"upper": "Supplier#000004239","lower": "Supplier#000004083","count": 157,"preSum": 4082 },{ "ndv": 157,"upper": "Supplier#000004396","lower": "Supplier#000004240","count": 157,"preSum": 4239 },{ "ndv": 157,"upper": "Supplier#000004553","lower": "Supplier#000004397","count": 157,"preSum": 4396 },{ "ndv": 157,"upper": "Supplier#000004710","lower": "Supplier#000004554","count": 157,"preSum": 4553 },{ "ndv": 157,"upper": "Supplier#000004867","lower": "Supplier#000004711","count": 157,"preSum": 4710 },{ "ndv": 157,"upper": "Supplier#000005024","lower": "Supplier#000004868","count": 157,"preSum": 4867 },{ "ndv": 157,"upper": "Supplier#000005181","lower": "Supplier#000005025","count": 157,"preSum": 5024 },{ "ndv": 157,"upper": "Supplier#000005338","lower": "Supplier#000005182","count": 157,"preSum": 5181 },{ "ndv": 157,"upper": "Supplier#000005495","lower": "Supplier#000005339","count": 157,"preSum": 5338 },{ "ndv": 157,"upper": "Supplier#000005652","lower": "Supplier#000005496","count": 157,"preSum": 5495 },{ "ndv": 157,"upper": "Supplier#000005809","lower": "Supplier#000005653","count": 157,"preSum": 5652 },{ "ndv": 157,"upper": "Supplier#000005966","lower": "Supplier#000005810","count": 157,"preSum": 5809 },{ "ndv": 157,"upper": "Supplier#000006123","lower": "Supplier#000005967","count": 157,"preSum": 5966 },{ "ndv": 157,"upper": "Supplier#000006280","lower": "Supplier#000006124","count": 157,"preSum": 6123 },{ "ndv": 157,"upper": "Supplier#000006437","lower": "Supplier#000006281","count": 157,"preSum": 6280 },{ "ndv": 157,"upper": "Supplier#000006594","lower": "Supplier#000006438","count": 157,"preSum": 6437 },{ "ndv": 157,"upper": "Supplier#000006751","lower": "Supplier#000006595","count": 157,"preSum": 6594 },{ "ndv": 157,"upper": "Supplier#000006908","lower": "Supplier#000006752","count": 157,"preSum": 6751 },{ "ndv": 157,"upper": "Supplier#000007065","lower": "Supplier#000006909","count": 157,"preSum": 6908 },{ "ndv": 157,"upper": "Supplier#000007222","lower": "Supplier#000007066","count": 157,"preSum": 7065 },{ "ndv": 157,"upper": "Supplier#000007379","lower": "Supplier#000007223","count": 157,"preSum": 7222 },{ "ndv": 157,"upper": "Supplier#000007536","lower": "Supplier#000007380","count": 157,"preSum": 7379 },{ "ndv": 157,"upper": "Supplier#000007693","lower": "Supplier#000007537","count": 157,"preSum": 7536 },{ "ndv": 157,"upper": "Supplier#000007850","lower": "Supplier#000007694","count": 157,"preSum": 7693 },{ "ndv": 157,"upper": "Supplier#000008007","lower": "Supplier#000007851","count": 157,"preSum": 7850 },{ "ndv": 157,"upper": "Supplier#000008164","lower": "Supplier#000008008","count": 157,"preSum": 8007 },{ "ndv": 157,"upper": "Supplier#000008321","lower": "Supplier#000008165","count": 157,"preSum": 8164 },{ "ndv": 157,"upper": "Supplier#000008478","lower": "Supplier#000008322","count": 157,"preSum": 8321 },{ "ndv": 157,"upper": "Supplier#000008635","lower": "Supplier#000008479","count": 157,"preSum": 8478 },{ "ndv": 157,"upper": "Supplier#000008792","lower": "Supplier#000008636","count": 157,"preSum": 8635 },{ "ndv": 157,"upper": "Supplier#000008949","lower": "Supplier#000008793","count": 157,"preSum": 8792 },{ "ndv": 157,"upper": "Supplier#000009106","lower": "Supplier#000008950","count": 157,"preSum": 8949 },{ "ndv": 157,"upper": "Supplier#000009263","lower": "Supplier#000009107","count": 157,"preSum": 9106 },{ "ndv": 157,"upper": "Supplier#000009420","lower": "Supplier#000009264","count": 157,"preSum": 9263 },{ "ndv": 157,"upper": "Supplier#000009577","lower": "Supplier#000009421","count": 157,"preSum": 9420 },{ "ndv": 157,"upper": "Supplier#000009734","lower": "Supplier#000009578","count": 157,"preSum": 9577 },{ "ndv": 157,"upper": "Supplier#000009891","lower": "Supplier#000009735","count": 157,"preSum": 9734 },{ "ndv": 109,"upper": "Supplier#000010000","lower": "Supplier#000009892","count": 109,"preSum": 9891 } ],"maxBucketSize": 64,"type": "String","sampleRate": 1.0 }
+  supplier.s_name.null_count:
+    0
+  supplier.s_name.sample_rate:
+    1.0
+  supplier.s_nationkey.TOPN:
+    { "countArr": [ 397,380,402,396,405,393,377,376,373,398,399,401,390,393 ],"valueArr": [ 2,5,6,7,9,10,12,14,15,19,21,22,23,24 ],"type": "Int" }
+  supplier.s_nationkey.cardinality:
+    25
+  supplier.s_nationkey.histogram:
+    { "buckets": [ { "ndv": 1,"upper": 0,"lower": 0,"count": 420,"preSum": 0 },{ "ndv": 1,"upper": 1,"lower": 1,"count": 413,"preSum": 420 },{ "ndv": 1,"upper": 3,"lower": 3,"count": 412,"preSum": 833 },{ "ndv": 1,"upper": 4,"lower": 4,"count": 415,"preSum": 1245 },{ "ndv": 1,"upper": 8,"lower": 8,"count": 415,"preSum": 1660 },{ "ndv": 1,"upper": 11,"lower": 11,"count": 438,"preSum": 2075 },{ "ndv": 1,"upper": 13,"lower": 13,"count": 362,"preSum": 2513 },{ "ndv": 1,"upper": 16,"lower": 16,"count": 406,"preSum": 2875 },{ "ndv": 1,"upper": 17,"lower": 17,"count": 421,"preSum": 3281 },{ "ndv": 1,"upper": 18,"lower": 18,"count": 407,"preSum": 3702 },{ "ndv": 1,"upper": 20,"lower": 20,"count": 411,"preSum": 4109 } ],"maxBucketSize": 64,"type": "Int","sampleRate": 1.0 }
+  supplier.s_nationkey.null_count:
+    0
+  supplier.s_nationkey.sample_rate:
+    1.0
+  supplier.s_phone.TOPN:
+    { "countArr": [ ],"valueArr": [ ],"type": "String" }
+  supplier.s_phone.cardinality:
+    9954
+  supplier.s_phone.histogram:
+    { "buckets": [ { "ndv": 157,"upper": "10-425-901-8610","lower": "10-102-116-6785","count": 157,"preSum": 0 },{ "ndv": 157,"upper": "10-758-994-2567","lower": "10-428-575-1918","count": 157,"preSum": 157 },{ "ndv": 157,"upper": "11-231-892-1749","lower": "10-761-431-1486","count": 157,"preSum": 314 },{ "ndv": 157,"upper": "11-559-591-5678","lower": "11-235-588-6823","count": 157,"preSum": 471 },{ "ndv": 157,"upper": "11-895-219-9405","lower": "11-561-100-9470","count": 157,"preSum": 628 },{ "ndv": 157,"upper": "12-347-684-6545","lower": "11-895-494-6558","count": 157,"preSum": 785 },{ "ndv": 157,"upper": "12-714-202-7354","lower": "12-354-583-7278","count": 157,"preSum": 942 },{ "ndv": 157,"upper": "13-168-561-4489","lower": "12-714-462-8120","count": 157,"preSum": 1099 },{ "ndv": 157,"upper": "13-503-944-6248","lower": "13-169-466-8402","count": 157,"preSum": 1256 },{ "ndv": 157,"upper": "13-832-953-5827","lower": "13-504-962-1709","count": 157,"preSum": 1413 },{ "ndv": 157,"upper": "14-282-158-8397","lower": "13-837-191-7870","count": 157,"preSum": 1570 },{ "ndv": 157,"upper": "14-604-858-1037","lower": "14-284-910-3726","count": 157,"preSum": 1727 },{ "ndv": 157,"upper": "14-967-555-6641","lower": "14-606-224-3002","count": 157,"preSum": 1884 },{ "ndv": 157,"upper": "15-450-466-2595","lower": "14-968-467-7333","count": 157,"preSum": 2041 },{ "ndv": 157,"upper": "15-819-523-4605","lower": "15-451-727-3089","count": 157,"preSum": 2198 },{ "ndv": 157,"upper": "16-263-365-3876","lower": "15-820-745-6527","count": 157,"preSum": 2355 },{ "ndv": 157,"upper": "16-616-621-1011","lower": "16-263-437-5752","count": 157,"preSum": 2512 },{ "ndv": 157,"upper": "16-973-502-2217","lower": "16-618-780-7481","count": 157,"preSum": 2669 },{ "ndv": 157,"upper": "17-447-811-3282","lower": "16-974-998-8937","count": 157,"preSum": 2826 },{ "ndv": 157,"upper": "17-802-655-8002","lower": "17-448-210-2434","count": 157,"preSum": 2983 },{ "ndv": 157,"upper": "18-239-284-5694","lower": "17-804-110-6206","count": 157,"preSum": 3140 },{ "ndv": 157,"upper": "18-574-428-7441","lower": "18-239-643-9980","count": 157,"preSum": 3297 },{ "ndv": 157,"upper": "18-912-354-6265","lower": "18-577-263-9175","count": 157,"preSum": 3454 },{ "ndv": 157,"upper": "19-362-745-1503","lower": "18-914-376-1742","count": 157,"preSum": 3611 },{ "ndv": 157,"upper": "19-675-940-5244","lower": "19-364-923-8043","count": 157,"preSum": 3768 },{ "ndv": 157,"upper": "20-151-872-6299","lower": "19-682-493-2497","count": 157,"preSum": 3925 },{ "ndv": 157,"upper": "20-490-946-1389","lower": "20-152-963-1884","count": 157,"preSum": 4082 },{ "ndv": 157,"upper": "20-897-164-8136","lower": "20-491-907-4984","count": 157,"preSum": 4239 },{ "ndv": 157,"upper": "21-292-258-4757","lower": "20-898-404-4723","count": 157,"preSum": 4396 },{ "ndv": 157,"upper": "21-642-305-7144","lower": "21-299-169-1876","count": 157,"preSum": 4553 },{ "ndv": 157,"upper": "21-962-509-4762","lower": "21-643-398-5866","count": 157,"preSum": 4710 },{ "ndv": 157,"upper": "22-392-226-3266","lower": "21-963-444-7397","count": 157,"preSum": 4867 },{ "ndv": 157,"upper": "22-804-704-9601","lower": "22-394-329-1153","count": 157,"preSum": 5024 },{ "ndv": 157,"upper": "23-263-254-2472","lower": "22-806-713-2802","count": 157,"preSum": 5181 },{ "ndv": 157,"upper": "23-689-976-9856","lower": "23-264-756-2278","count": 157,"preSum": 5338 },{ "ndv": 157,"upper": "24-161-804-6338","lower": "23-696-420-8788","count": 157,"preSum": 5495 },{ "ndv": 157,"upper": "24-489-868-4574","lower": "24-168-367-6579","count": 157,"preSum": 5652 },{ "ndv": 157,"upper": "24-896-212-6974","lower": "24-495-986-2266","count": 157,"preSum": 5809 },{ "ndv": 157,"upper": "25-384-564-1345","lower": "24-904-562-9289","count": 157,"preSum": 5966 },{ "ndv": 157,"upper": "25-763-190-7789","lower": "25-384-805-6049","count": 157,"preSum": 6123 },{ "ndv": 157,"upper": "26-212-331-6862","lower": "25-765-538-7915","count": 157,"preSum": 6280 },{ "ndv": 157,"upper": "26-561-181-2965","lower": "26-217-989-9553","count": 157,"preSum": 6437 },{ "ndv": 157,"upper": "26-940-594-4852","lower": "26-562-123-8958","count": 157,"preSum": 6594 },{ "ndv": 157,"upper": "27-323-628-1319","lower": "26-940-708-5574","count": 157,"preSum": 6751 },{ "ndv": 157,"upper": "27-629-618-9634","lower": "27-326-227-8739","count": 157,"preSum": 6908 },{ "ndv": 157,"upper": "28-146-390-5101","lower": "27-639-321-9156","count": 157,"preSum": 7065 },{ "ndv": 157,"upper": "28-457-867-6302","lower": "28-147-515-6998","count": 157,"preSum": 7222 },{ "ndv": 157,"upper": "28-818-961-8706","lower": "28-458-231-8410","count": 157,"preSum": 7379 },{ "ndv": 157,"upper": "29-280-937-5732","lower": "28-821-408-8572","count": 157,"preSum": 7536 },{ "ndv": 157,"upper": "29-598-923-9264","lower": "29-281-504-6257","count": 157,"preSum": 7693 },{ "ndv": 157,"upper": "30-100-280-3565","lower": "29-600-465-5561","count": 157,"preSum": 7850 },{ "ndv": 157,"upper": "30-425-720-9255","lower": "30-101-252-7593","count": 157,"preSum": 8007 },{ "ndv": 157,"upper": "30-768-427-6008","lower": "30-427-241-8847","count": 157,"preSum": 8164 },{ "ndv": 157,"upper": "31-248-228-7667","lower": "30-768-643-9197","count": 157,"preSum": 8321 },{ "ndv": 157,"upper": "31-595-224-7696","lower": "31-253-201-4873","count": 157,"preSum": 8478 },{ "ndv": 157,"upper": "31-947-656-9051","lower": "31-596-125-8311","count": 157,"preSum": 8635 },{ "ndv": 157,"upper": "32-416-130-1867","lower": "31-950-540-3460","count": 157,"preSum": 8792 },{ "ndv": 157,"upper": "32-724-166-1125","lower": "32-417-987-3690","count": 157,"preSum": 8949 },{ "ndv": 157,"upper": "33-182-240-4174","lower": "32-731-692-4007","count": 157,"preSum": 9106 },{ "ndv": 157,"upper": "33-520-342-6702","lower": "33-182-694-8043","count": 157,"preSum": 9263 },{ "ndv": 157,"upper": "33-908-326-9389","lower": "33-522-267-9970","count": 157,"preSum": 9420 },{ "ndv": 157,"upper": "34-399-762-9864","lower": "33-912-140-2009","count": 157,"preSum": 9577 },{ "ndv": 157,"upper": "34-768-936-4723","lower": "34-401-708-8154","count": 157,"preSum": 9734 },{ "ndv": 109,"upper": "34-998-900-4911","lower": "34-774-530-4188","count": 109,"preSum": 9891 } ],"maxBucketSize": 64,"type": "String","sampleRate": 1.0 }
+  supplier.s_phone.null_count:
+    0
+  supplier.s_phone.sample_rate:
+    1.0
+  supplier.s_suppkey.TOPN:
+    { "countArr": [ ],"valueArr": [ ],"type": "Int" }
+  supplier.s_suppkey.cardinality:
+    9948
+  supplier.s_suppkey.histogram:
+    { "buckets": [ { "ndv": 157,"upper": 157,"lower": 1,"count": 157,"preSum": 0 },{ "ndv": 157,"upper": 314,"lower": 158,"count": 157,"preSum": 157 },{ "ndv": 157,"upper": 471,"lower": 315,"count": 157,"preSum": 314 },{ "ndv": 157,"upper": 628,"lower": 472,"count": 157,"preSum": 471 },{ "ndv": 157,"upper": 785,"lower": 629,"count": 157,"preSum": 628 },{ "ndv": 157,"upper": 942,"lower": 786,"count": 157,"preSum": 785 },{ "ndv": 157,"upper": 1099,"lower": 943,"count": 157,"preSum": 942 },{ "ndv": 157,"upper": 1256,"lower": 1100,"count": 157,"preSum": 1099 },{ "ndv": 157,"upper": 1413,"lower": 1257,"count": 157,"preSum": 1256 },{ "ndv": 157,"upper": 1570,"lower": 1414,"count": 157,"preSum": 1413 },{ "ndv": 157,"upper": 1727,"lower": 1571,"count": 157,"preSum": 1570 },{ "ndv": 157,"upper": 1884,"lower": 1728,"count": 157,"preSum": 1727 },{ "ndv": 157,"upper": 2041,"lower": 1885,"count": 157,"preSum": 1884 },{ "ndv": 157,"upper": 2198,"lower": 2042,"count": 157,"preSum": 2041 },{ "ndv": 157,"upper": 2355,"lower": 2199,"count": 157,"preSum": 2198 },{ "ndv": 157,"upper": 2512,"lower": 2356,"count": 157,"preSum": 2355 },{ "ndv": 157,"upper": 2669,"lower": 2513,"count": 157,"preSum": 2512 },{ "ndv": 157,"upper": 2826,"lower": 2670,"count": 157,"preSum": 2669 },{ "ndv": 157,"upper": 2983,"lower": 2827,"count": 157,"preSum": 2826 },{ "ndv": 157,"upper": 3140,"lower": 2984,"count": 157,"preSum": 2983 },{ "ndv": 157,"upper": 3297,"lower": 3141,"count": 157,"preSum": 3140 },{ "ndv": 157,"upper": 3454,"lower": 3298,"count": 157,"preSum": 3297 },{ "ndv": 157,"upper": 3611,"lower": 3455,"count": 157,"preSum": 3454 },{ "ndv": 157,"upper": 3768,"lower": 3612,"count": 157,"preSum": 3611 },{ "ndv": 157,"upper": 3925,"lower": 3769,"count": 157,"preSum": 3768 },{ "ndv": 157,"upper": 4082,"lower": 3926,"count": 157,"preSum": 3925 },{ "ndv": 157,"upper": 4239,"lower": 4083,"count": 157,"preSum": 4082 },{ "ndv": 157,"upper": 4396,"lower": 4240,"count": 157,"preSum": 4239 },{ "ndv": 157,"upper": 4553,"lower": 4397,"count": 157,"preSum": 4396 },{ "ndv": 157,"upper": 4710,"lower": 4554,"count": 157,"preSum": 4553 },{ "ndv": 157,"upper": 4867,"lower": 4711,"count": 157,"preSum": 4710 },{ "ndv": 157,"upper": 5024,"lower": 4868,"count": 157,"preSum": 4867 },{ "ndv": 157,"upper": 5181,"lower": 5025,"count": 157,"preSum": 5024 },{ "ndv": 157,"upper": 5338,"lower": 5182,"count": 157,"preSum": 5181 },{ "ndv": 157,"upper": 5495,"lower": 5339,"count": 157,"preSum": 5338 },{ "ndv": 157,"upper": 5652,"lower": 5496,"count": 157,"preSum": 5495 },{ "ndv": 157,"upper": 5809,"lower": 5653,"count": 157,"preSum": 5652 },{ "ndv": 157,"upper": 5966,"lower": 5810,"count": 157,"preSum": 5809 },{ "ndv": 157,"upper": 6123,"lower": 5967,"count": 157,"preSum": 5966 },{ "ndv": 157,"upper": 6280,"lower": 6124,"count": 157,"preSum": 6123 },{ "ndv": 157,"upper": 6437,"lower": 6281,"count": 157,"preSum": 6280 },{ "ndv": 157,"upper": 6594,"lower": 6438,"count": 157,"preSum": 6437 },{ "ndv": 157,"upper": 6751,"lower": 6595,"count": 157,"preSum": 6594 },{ "ndv": 157,"upper": 6908,"lower": 6752,"count": 157,"preSum": 6751 },{ "ndv": 157,"upper": 7065,"lower": 6909,"count": 157,"preSum": 6908 },{ "ndv": 157,"upper": 7222,"lower": 7066,"count": 157,"preSum": 7065 },{ "ndv": 157,"upper": 7379,"lower": 7223,"count": 157,"preSum": 7222 },{ "ndv": 157,"upper": 7536,"lower": 7380,"count": 157,"preSum": 7379 },{ "ndv": 157,"upper": 7693,"lower": 7537,"count": 157,"preSum": 7536 },{ "ndv": 157,"upper": 7850,"lower": 7694,"count": 157,"preSum": 7693 },{ "ndv": 157,"upper": 8007,"lower": 7851,"count": 157,"preSum": 7850 },{ "ndv": 157,"upper": 8164,"lower": 8008,"count": 157,"preSum": 8007 },{ "ndv": 157,"upper": 8321,"lower": 8165,"count": 157,"preSum": 8164 },{ "ndv": 157,"upper": 8478,"lower": 8322,"count": 157,"preSum": 8321 },{ "ndv": 157,"upper": 8635,"lower": 8479,"count": 157,"preSum": 8478 },{ "ndv": 157,"upper": 8792,"lower": 8636,"count": 157,"preSum": 8635 },{ "ndv": 157,"upper": 8949,"lower": 8793,"count": 157,"preSum": 8792 },{ "ndv": 157,"upper": 9106,"lower": 8950,"count": 157,"preSum": 8949 },{ "ndv": 157,"upper": 9263,"lower": 9107,"count": 157,"preSum": 9106 },{ "ndv": 157,"upper": 9420,"lower": 9264,"count": 157,"preSum": 9263 },{ "ndv": 157,"upper": 9577,"lower": 9421,"count": 157,"preSum": 9420 },{ "ndv": 157,"upper": 9734,"lower": 9578,"count": 157,"preSum": 9577 },{ "ndv": 157,"upper": 9891,"lower": 9735,"count": 157,"preSum": 9734 },{ "ndv": 109,"upper": 10000,"lower": 9892,"count": 109,"preSum": 9891 } ],"maxBucketSize": 64,"type": "Int","sampleRate": 1.0 }
+  supplier.s_suppkey.null_count:
+    0
+  supplier.s_suppkey.sample_rate:
+    1.0
+  lineitem.l_receiptdate.composite_cardinality:
+    -11819
+  lineitem.l_shipmode.composite_cardinality:
+    -11819
+  orders.o_orderstatus.composite_cardinality:
+    -11819
+CONFIG:
+  ENABLE_MPP:
+    true
+  defaltxxAPPName.isNew:
+    true

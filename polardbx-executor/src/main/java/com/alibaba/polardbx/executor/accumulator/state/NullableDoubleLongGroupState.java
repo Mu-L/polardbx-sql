@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.accumulator.state;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.executor.accumulator.datastruct.BooleanSegmentArrayList;
 import com.alibaba.polardbx.executor.accumulator.datastruct.DoubleSegmentArrayList;
 import com.alibaba.polardbx.executor.accumulator.datastruct.LongSegmentArrayList;
@@ -38,6 +39,14 @@ public class NullableDoubleLongGroupState implements GroupState {
         this.doubleValues = new DoubleSegmentArrayList(capacity);
         this.longValues = new LongSegmentArrayList(capacity);
         this.valueIsNull = new BooleanSegmentArrayList(capacity);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(doubleValues)
+            + FastMemoryCounter.sizeOf(longValues)
+            + FastMemoryCounter.sizeOf(valueIsNull);
     }
 
     public void set(int groupId, double doubleValue, long longValue) {

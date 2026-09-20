@@ -1,5 +1,6 @@
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.executor.chunk.Chunk;
@@ -142,8 +143,12 @@ public class GroupJoinTest extends HashJoinTest {
             expectedOutputRowCount
         );
 
+        MemoryCountable.checkDeviation(hashGroupJoinExec, 0d, true);
+
         SingleExecTest singleExecTest = new SingleExecTest.Builder(hashGroupJoinExec, outerInput).build();
         singleExecTest.exec();
+
+        MemoryCountable.checkDeviation(hashGroupJoinExec, 0d, true);
 
         Chunk expect = new Chunk(
             IntegerBlock.of(new Integer[] {
@@ -157,6 +162,8 @@ public class GroupJoinTest extends HashJoinTest {
         );
 
         assertExecResultByRow(singleExecTest.result(), ImmutableList.of(expect), false);
+
+        MemoryCountable.checkDeviation(hashGroupJoinExec, 0d, true);
     }
 
 }

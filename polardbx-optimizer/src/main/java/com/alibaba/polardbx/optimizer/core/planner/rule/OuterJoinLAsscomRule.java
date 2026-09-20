@@ -21,7 +21,6 @@ import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptRuleOperand;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.plan.Strong;
-import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinRelType;
@@ -46,16 +45,14 @@ import java.util.Map;
 public class OuterJoinLAsscomRule extends AbstractJoinLAsscomRule {
     public static final OuterJoinLAsscomRule INSTANCE = new OuterJoinLAsscomRule(
         operand(LogicalJoin.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION,
-            operand(LogicalJoin.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION, any()),
-            operand(RelSubset.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION, any())),
+            operand(LogicalJoin.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION, any())),
         RelFactories.LOGICAL_BUILDER,
         "OuterJoinReorderRule:OuterJoinLAsscomRule");
 
     public static final OuterJoinLAsscomRule PROJECT_INSTANCE = new OuterJoinLAsscomRule(
         operand(LogicalJoin.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION,
             operand(LogicalProject.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION,
-                operand(LogicalJoin.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION, any())),
-            operand(RelSubset.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION, any())),
+                operand(LogicalJoin.class, null, RelOptUtil.NO_COLLATION_AND_DISTRIBUTION, any()))),
         RelFactories.LOGICAL_BUILDER,
         "OuterJoinReorderRule:OuterJoinLAsscomRule:Project");
 

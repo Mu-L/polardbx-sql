@@ -28,6 +28,7 @@ import io.airlift.slice.Slice;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -42,6 +43,7 @@ public class EnumType extends AbstractDataType<String> {
             enumValues.put(key, value);
             enumIndexs.put(value, key);
         }
+        this.enumList = new ArrayList<>(enums);
     }
 
     public EnumType(Map<String, Integer> enumValues) {
@@ -49,10 +51,15 @@ public class EnumType extends AbstractDataType<String> {
         for (Map.Entry<String, Integer> entry : enumValues.entrySet()) {
             enumIndexs.put(entry.getValue(), entry.getKey());
         }
+        this.enumList = new ArrayList<>(enumIndexs.values());
     }
 
     private Map<String, Integer> enumValues = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-    private Map<Integer, String> enumIndexs = new TreeMap<>();
+    private final Map<Integer, String> enumIndexs = new TreeMap<>();
+    /**
+     * 有顺序的enum list
+     */
+    private final List<String> enumList;
     private final Calculator calculator = new AbstractDecimalCalculator() {
         @Override
         public Decimal convertToDecimal(Object v) {
@@ -149,6 +156,10 @@ public class EnumType extends AbstractDataType<String> {
 
     public Map<String, Integer> getEnumValues() {
         return enumValues;
+    }
+
+    public List<String> getEnumList() {
+        return enumList;
     }
 
     @Override

@@ -28,6 +28,7 @@ public class GroupByNullTest extends BaseExecTest {
 
     @Before
     public void before() {
+        checkExecutorMemory = true;
         Map connectionMap = new HashMap();
         connectionMap.put(ConnectionParams.CHUNK_SIZE.getName(), 1000);
 

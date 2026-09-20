@@ -28,7 +28,7 @@ public class ExecutionPlanPropertiesTest {
     @Test
     public void testGetPropertiesMaxValue() {
         int maxValue = ExecutionPlanProperties.getMaxPropertyValue();
-        Assert.assertEquals(maxValue, ExecutionPlanProperties.MODIFY_FOREIGN_KEY + 1);
+        Assert.assertEquals(ExecutionPlanProperties.MODIFY_EXTERNALIZED_DATA + 1, maxValue);
     }
 
     @Test

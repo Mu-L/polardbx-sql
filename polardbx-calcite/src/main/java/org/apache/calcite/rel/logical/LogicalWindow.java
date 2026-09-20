@@ -524,42 +524,35 @@ public final class LogicalWindow extends Window {
             aggWindow.getLowerBound(), aggWindow.getUpperBound());
     windowMap.put(windowKey, over);
   }
-  
+
   @Override
   public RelWriter explainTermsForDisplay(RelWriter pw) {
     pw.item(RelDrdsWriter.REL_NAME, "Window");
-    pw.item("field num", getInput().getRowType().getFieldCount());
-    for (Ord<RelDataTypeField> field : Ord.zip(getRowType().getFieldList())) {
-      String fieldName = field.e.getName();
+    int inputFieldCount = getInput().getRowType().getFieldCount();
+    for (Ord<RelDataTypeField> field : Ord.zip(getInput().getRowType().getFieldList())) {
+      String fieldName = getRowType().getFieldList().get(field.i).getName();
       if (fieldName == null) {
         fieldName = "field#" + field.i;
       }
+      pw.item(fieldName, field.e.getName());
     }
-    
-    for (Group group : groups) {
-      RexExplainVisitor visitor = new RexExplainVisitor(this);
-      List<String> groupList = new ArrayList<String>(this.groups.get(0).keys.length());
-      for (int groupIndex : group.keys.asList()) {
-        groupList.add(visitor.getField(groupIndex).getKey());
-      }
-      pw.itemIf("group", StringUtils.join(groupList, ",") + "=" + group.keys.asList(), !groupList.isEmpty());
-      for (RexWinAggCall aggCall : group.aggCalls) {
-        aggCall.accept(visitor);
-        pw.item(rowType.getFieldList().get(0).getKey(), visitor.toSqlString());
-      }
-      pw.itemIf("orders", group.orderKeys.toString(),
-          group.orderKeys.getFieldCollations() != null && group.orderKeys.getFieldCollations().size() > 0);
-      for (RexWinAggCall aggCall : group.aggCalls) {
-        aggCall.accept(visitor);
-        pw.item(rowType.getFieldList().get(0).getKey(), visitor.toSqlString());
-      }
-
-      pw.itemIf("constants", constants.toString(), constants != null && constants.size() > 0);
-      for (RexWinAggCall aggCall : group.aggCalls) {
-        aggCall.accept(visitor);
-        pw.item(rowType.getFieldList().get(0).getKey(), visitor.toSqlString());
+    for (Ord<Group> window : Ord.zip(groups)) {
+      for (int i = 0; i < window.getValue().aggCalls.size(); i++) {
+        RexWinAggCall rexWinAggCall = window.getValue().aggCalls.get(i);
+        String fieldName = getRowType().getFieldList().get(inputFieldCount + i).getName();
+        if (fieldName == null) {
+          fieldName = "f" + (i + inputFieldCount) + "w" + window.i + "$o" + i;
+        }
+        pw.item(fieldName, "window#" + window.i + rexWinAggCall.toString());
       }
     }
+    StringBuffer windowInfo = new StringBuffer();
+    for (Ord<Group> window : Ord.zip(groups)) {
+      windowInfo.append("window#" + window.i).append("=").append(window.e.toString()).append(",");
+    }
+    pw.item("Reference Windows", windowInfo.toString().substring(0, windowInfo.length() - 1));
+    pw.itemIf("constants", constants.toString(), constants != null && constants.size() > 0);
+    pw.itemIf("partition", traitSet.getPartitionWise(), !traitSet.getPartitionWise().isTop());
     return pw;
   }
   

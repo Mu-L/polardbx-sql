@@ -46,6 +46,8 @@ public class DropDbInfo {
 
     private DatabaseDdlContext ddlContext;
 
+    private boolean dryRunDdl = false;
+
     public String getDbName() {
         return dbName;
     }
@@ -124,5 +126,13 @@ public class DropDbInfo {
 
     public void setTraceId(String traceId) {
         this.traceId = traceId;
+    }
+
+    public boolean isDryRunDdl() {
+        return dryRunDdl;
+    }
+
+    public void setDryRunDdl(boolean dryRunDdl) {
+        this.dryRunDdl = dryRunDdl;
     }
 }

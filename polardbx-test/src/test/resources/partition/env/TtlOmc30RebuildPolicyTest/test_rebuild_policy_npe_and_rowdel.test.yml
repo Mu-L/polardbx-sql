@@ -1,0 +1,64 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+use polardbx;
+drop database if exists test_omc30_rb_npe_db;
+create database if not exists test_omc30_rb_npe_db mode='auto' default character set utf8mb4 default collate utf8mb4_bin;
+use test_omc30_rb_npe_db;
+
+## case1: rebuild policy path completes without NPE (defect5 fix: cleanedPhyPartSet initialized correctly)
+drop table if exists rb_npe_t1;
+create table rb_npe_t1(
+  a int not null,
+  b datetime not null,
+  c varchar(32),
+  primary key(a)
+) default character set utf8mb4 default collate utf8mb4_bin
+partition by hash(a) partitions 4;
+
+alter table rb_npe_t1 modify ttl set
+  TTL_ENABLE='on',
+  TTL_CLEANUP='on',
+  TTL_EXPR=`b` expire after 1 day timezone '+08:00';
+
+insert into rb_npe_t1 values(1, '2020-01-01 00:00:00', 'expired1');
+insert into rb_npe_t1 values(2, '2020-01-02 00:00:00', 'expired2');
+insert into rb_npe_t1 values(3, '2030-01-01 00:00:00', 'valid1');
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-01-01 00:00:00';
+## rebuild policy forced, cleanedPhyPartSet must be initialized without NPE
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=true,TTL_FORCE_USE_REBUILD_POLICY_FOR_CLEANUP_EXPIRED_DATA=true,TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY=0,TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY=0)*/alter table rb_npe_t1 cleanup expired data;
+select a, c from rb_npe_t1 order by a;
+
+drop table if exists rb_npe_t1;
+
+## case2: row-by-row delete path (rebuild policy off) - regression check
+drop table if exists rb_rowdel_t1;
+create table rb_rowdel_t1(
+  a int not null,
+  b datetime not null,
+  c varchar(32),
+  primary key(a)
+) default character set utf8mb4 default collate utf8mb4_bin
+partition by hash(a) partitions 4;
+
+alter table rb_rowdel_t1 modify ttl set
+  TTL_ENABLE='on',
+  TTL_CLEANUP='on',
+  TTL_EXPR=`b` expire after 1 day timezone '+08:00';
+
+insert into rb_rowdel_t1 values(1, '2020-01-01 00:00:00', 'expired1');
+insert into rb_rowdel_t1 values(2, '2020-01-02 00:00:00', 'expired2');
+insert into rb_rowdel_t1 values(3, '2030-01-01 00:00:00', 'valid1');
+insert into rb_rowdel_t1 values(4, '2030-01-02 00:00:00', 'valid2');
+
+set TTL_DEBUG_CURRENT_DATETIME='2025-01-01 00:00:00';
+## rebuild policy explicitly off - use normal row-delete path
+/*+TDDL:CMD_EXTRA(TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY=false)*/alter table rb_rowdel_t1 cleanup expired data;
+select a, c from rb_rowdel_t1 order by a;
+
+drop table if exists rb_rowdel_t1;
+
+use polardbx;
+drop database if exists test_omc30_rb_npe_db;
+use polardbx;

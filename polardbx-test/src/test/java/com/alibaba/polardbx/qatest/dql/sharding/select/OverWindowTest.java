@@ -68,6 +68,7 @@ public class OverWindowTest extends ReadBaseTestCase {
 
         try (Connection mysqlConnection = ConnectionManager.getInstance().getDruidMysqlConnection()) {
             JdbcUtil.useDb(mysqlConnection, mysqlDBName1());
+            setNoNeedPkIn80(mysqlConnection);
             JdbcUtil.executeUpdateSuccess(mysqlConnection, dropTable);
 
             JdbcUtil.executeUpdateSuccess(mysqlConnection, createSql);

@@ -320,6 +320,7 @@ public class TpchColumnarPruneTest extends ColumnarPruneTest {
     private static void mockSortKeyIndexForLineitem(IndexPruner.IndexPrunerBuilder indexPrunerBuilder) {
         indexPrunerBuilder.setSortKeyColId(11);
         indexPrunerBuilder.setSortKeyDataType(DataTypes.DateType);
+        indexPrunerBuilder.setSortKeyAsc(true);
         Iterator<Long> it = getShipDateIterator();
         int rgNum = 0;
         while (it.hasNext()) {

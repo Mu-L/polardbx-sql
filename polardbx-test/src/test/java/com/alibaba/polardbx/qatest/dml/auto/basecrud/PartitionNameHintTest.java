@@ -25,6 +25,9 @@ import java.util.Objects;
 import java.util.Random;
 import java.util.Set;
 
+import com.alibaba.polardbx.executor.common.StorageInfoManager;
+import com.alibaba.polardbx.qatest.util.ConnectionManager;
+
 /**
  * Partition Hint test cases
  *
@@ -410,7 +413,7 @@ public class PartitionNameHintTest extends BaseTestCase {
             connWithHint.createStatement().execute("drop sequence session_hint_test_seq");
 
             connWithHint.createStatement().execute("clear ccl_rules");
-            connWithHint.createStatement().execute("clear ccl_triggers");
+            connWithHint.createStatement().execute("clear ccl_blockers");
 
             // thread running might be different
             connWithHint.createStatement().executeQuery("show db status");
@@ -755,6 +758,68 @@ public class PartitionNameHintTest extends BaseTestCase {
             Objects.requireNonNull(c).createStatement().execute("set partition_hint=''");
             Objects.requireNonNull(c).close();
             log.info("session hint test end");
+        }
+    }
+
+    /**
+     * partition_hint 查询不存在的逻辑表时，应正确抛出 [TDDL-4006][ERR_TABLE_NOT_EXIST] 错误。
+     * 这是针对 AONE 79992219 的回归测试：当 tableRule == null 且 tb == null 时，
+     * 代码不应将表名透传给 DN，而应抛出标准异常。
+     */
+    @Test
+    public void testSessionHintWithNonExistentLogicalTableName() throws Exception {
+        Connection c = null;
+        try {
+            c = getPolardbxConnection();
+            c.createStatement().execute("use " + AUTO_DB_NAME);
+            c.createStatement().execute("set partition_hint=p2");
+
+            // 查询一个不存在的逻辑表名，应抛出 [TDDL-4006][ERR_TABLE_NOT_EXIST]
+            try {
+                c.createStatement().execute("select * from non_existent_table_hint_test");
+                Assert.fail("should report [TDDL-4006][ERR_TABLE_NOT_EXIST] for non-existent table");
+            } catch (Throwable e) {
+                log.info(e.getMessage());
+                Assert.assertTrue(e.getMessage().contains("[TDDL-4006][ERR_TABLE_NOT_EXIST]"));
+            }
+        } finally {
+            Objects.requireNonNull(c).createStatement().execute("set partition_hint=''");
+            Objects.requireNonNull(c).close();
+            log.info("testSessionHintWithNonExistentLogicalTableName test end");
+        }
+    }
+
+    /**
+     * partition_hint 与 CTE（Common Table Expression）兼容。
+     * 当 FROM 子句引用 CTE 名称时，即使 tableRule 和 TableMeta 均为 null，
+     * 也不应抛出 TableNotFoundException，因为 CTE 是合法 SQL 构造。
+     */
+    @Test
+    public void testSessionHintWithCte() throws Exception {
+        // CTE (WITH...AS) requires MySQL 8.0+ DN; skip on 5.7 where WITH syntax is not supported
+        if (!StorageInfoManager.checkRDS80(ConnectionManager.getInstance().getMysqlDataSource())) {
+            return;
+        }
+        Connection c = null;
+        try {
+            c = getPolardbxConnection();
+            c.createStatement().execute("use " + AUTO_DB_NAME);
+            c.createStatement().execute("set partition_hint=p2");
+
+            // CTE 引用一个实际存在的分区表，CTE 名称应被正确识别而非当作不存在的表
+            String sql = "with my_cte as (select id from " + AUTO_TBL_NAME1 + " limit 1) select * from my_cte";
+            ResultSet rs = c.createStatement().executeQuery(sql);
+            Assert.assertNotNull(rs);
+
+            // 嵌套 CTE 场景：CTE 定义中也引用了真实表
+            String nestedSql = "with cte1 as (select id from " + AUTO_TBL_NAME1
+                + " limit 1), cte2 as (select id from cte1) select * from cte2";
+            rs = c.createStatement().executeQuery(nestedSql);
+            Assert.assertNotNull(rs);
+        } finally {
+            Objects.requireNonNull(c).createStatement().execute("set partition_hint=''");
+            Objects.requireNonNull(c).close();
+            log.info("testSessionHintWithCte test end");
         }
     }
 
@@ -1391,8 +1456,8 @@ public class PartitionNameHintTest extends BaseTestCase {
             connWithHint.createStatement().execute("use " + AUTO_DB_NAME);
 
             connWithHint.createStatement().execute("set partition_hint=p3");
-            connWithHint.createStatement().execute("set global ENABLE_FORBID_PUSH_DML_WITH_HINT=false");
-            Thread.sleep(2000);
+            // Keep the policy change scoped to this connection so the test cannot poison later qatest classes.
+            connWithHint.createStatement().execute("set ENABLE_FORBID_PUSH_DML_WITH_HINT=false");
 
             ResultSet rs;
 
@@ -1439,8 +1504,8 @@ public class PartitionNameHintTest extends BaseTestCase {
             connWithHint.createStatement().execute("use " + AUTO_DB_NAME);
 
             connWithHint.createStatement().execute("set partition_hint=p3");
-            connWithHint.createStatement().execute("set global ENABLE_FORBID_PUSH_DML_WITH_HINT=true");
-            Thread.sleep(2000);
+            // The forbidden-path assertion is session-local; closing the connection restores the default naturally.
+            connWithHint.createStatement().execute("set ENABLE_FORBID_PUSH_DML_WITH_HINT=true");
             connWithHint.setAutoCommit(false);
 
             connWithHint.createStatement().execute("set partition_hint=p3");
@@ -1487,8 +1552,8 @@ public class PartitionNameHintTest extends BaseTestCase {
             connWithHint.createStatement().execute("use " + AUTO_DB_NAME);
 
             connWithHint.createStatement().execute("set partition_hint=p3");
-            connWithHint.createStatement().execute("set global ENABLE_FORBID_PUSH_DML_WITH_HINT=false");
-            Thread.sleep(2000);
+            // Do not mutate the instance-wide gate: BroadcastWriteWithXATest and other classes may run afterwards.
+            connWithHint.createStatement().execute("set ENABLE_FORBID_PUSH_DML_WITH_HINT=false");
 
             // test partition hint working
             connWithHint.createStatement().execute("set partition_hint=p3");

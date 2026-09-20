@@ -31,7 +31,6 @@ import com.alibaba.polardbx.executor.mpp.split.SplitInfo;
 import com.alibaba.polardbx.executor.mpp.split.SplitManager;
 import com.alibaba.polardbx.executor.mpp.split.SplitManagerImpl;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
-import com.alibaba.polardbx.executor.utils.OrderByOption;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.node.MppScope;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -46,7 +45,8 @@ import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
 import com.alibaba.polardbx.optimizer.core.rel.SemiBKAJoin;
 import com.alibaba.polardbx.optimizer.core.rel.mpp.ColumnarExchange;
 import com.alibaba.polardbx.optimizer.core.rel.mpp.MppExchange;
-import com.alibaba.polardbx.optimizer.workload.WorkloadUtil;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadUtil;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
@@ -112,7 +112,7 @@ public class PlanFragmenter {
         return new Pair<>(result, fragmenter.getMaxConcurrentParallelism());
     }
 
-    private static class Fragmenter {
+    public static class Fragmenter {
         private int nextFragmentId = 0;
         private Session session;
 
@@ -453,9 +453,11 @@ public class PlanFragmenter {
             // collect the logical table name and its split count.
             Map<String, Integer> splitCountMap = new HashMap<>();
 
+            boolean allOss = true;
             List<SplitInfo> splitInfos = new ArrayList<>();
             if (currentProperties.getLogicalViews().size() > 0 && !session.isIgnoreSplitInfo()) {
                 for (LogicalView logicalView : currentProperties.getLogicalViews()) {
+                    allOss = allOss && (logicalView instanceof OSSTableScan);
                     SplitInfo splitInfo = null;
                     if (logicalView.fromTableOperation() != null) {
                         splitInfo = splitManager.getSingleSplit(logicalView, session.getClientContext());
@@ -492,6 +494,7 @@ public class PlanFragmenter {
             Integer bkaJoinParallelism = -1;
             if (currentProperties.getExpandView().size() > 0) {
                 for (LogicalView logicalView : currentProperties.getExpandView()) {
+                    allOss = allOss && (logicalView instanceof OSSTableScan);
                     SplitInfo info;
                     if (logicalView.fromTableOperation() != null) {
                         info = splitManager.getSingleSplit(logicalView, session.getClientContext());
@@ -515,11 +518,14 @@ public class PlanFragmenter {
                 }
             }
 
+            allOss = allOss && (splitInfos.size() > 0 || expandSplitInfos.size() > 0);
+
             planFragment = new PlanFragment(nextFragmentId++, root, outputTypes,
                 currentProperties.getPartitionHandle().setPartitionCount(outerParallelism),
                 currentProperties.isRemotePairWise(), pairs.getKey(),
                 pairs.getValue(), partitioningScheme, bkaJoinParallelism, filterIds, produceFilterIds,
-                currentProperties.isLocalPairWise(), splitCountMap, currentProperties.isPruneExchangePartition());
+                currentProperties.isLocalPairWise(), splitCountMap, currentProperties.isPruneExchangePartition(),
+                allOss);
 
             int currentParallelism = currentProperties.getPartitionHandle().getPartitionCount();
             int singleChildParallelism = currentProperties.getSingleChildParallelism();
@@ -607,6 +613,8 @@ public class PlanFragmenter {
                         parallelism = Math.max(
                             parallelism, subPlan.getFragment().getBkaJoinParallelism());
                     }
+                    // in row mode, use the max parallelism of all sub plans
+                    // to avoid wastage of CN resources due to unnecessary high concurrency
                     parallelism = Math.max(
                         Math.min(parallelism, ExecUtils.getMppMaxParallelism(paramManager, isColumnar)),
                         ExecUtils.getMppMinParallelism(paramManager));
@@ -691,7 +699,7 @@ public class PlanFragmenter {
         }
 
         public <T extends RelNode> Double estimateRowCount(T relNode) {
-            double rowCount = -1;
+            double rowCount = 0;
             if (session.getClientContext().getParamManager().getBoolean(
                 ConnectionParams.MPP_PARALLELISM_AUTO_ENABLE)) {
                 RelMetadataQuery relMetadataQuery = relNode.getCluster().getMetadataQuery();
@@ -721,7 +729,7 @@ public class PlanFragmenter {
         }
     }
 
-    private static class FragmentProperties {
+    public static class FragmentProperties {
         private final List<SubPlan> children = new ArrayList<>();
         private List<LogicalView> logicalViews = new ArrayList<>();
         private List<LogicalView> expandViews = new ArrayList<>();

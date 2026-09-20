@@ -16,7 +16,9 @@
 
 package com.alibaba.polardbx.executor.accumulator.state;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
 import com.alibaba.polardbx.executor.accumulator.datastruct.BooleanSegmentArrayList;
+import com.alibaba.polardbx.executor.accumulator.datastruct.ByteArraySegmentArrayList;
 import com.alibaba.polardbx.executor.accumulator.datastruct.ObjectSegmentArrayList;
 import com.alibaba.polardbx.executor.statistic.ndv.HyperLogLogUtil;
 import org.openjdk.jol.info.ClassLayout;
@@ -33,14 +35,21 @@ public class NullableHyperLogLogGroupState implements GroupState {
     /**
      * Disaggregated stored decimal objects.
      */
-    private final ObjectSegmentArrayList<byte[]> hllList;
+    private final ByteArraySegmentArrayList hllList;
 
     private final int capacity;
 
     public NullableHyperLogLogGroupState(int capacity) {
         this.capacity = capacity;
         this.valueIsNull = new BooleanSegmentArrayList(capacity);
-        this.hllList = new ObjectSegmentArrayList(capacity, byte[].class);
+        this.hllList = new ByteArraySegmentArrayList(capacity);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(valueIsNull)
+            + FastMemoryCounter.sizeOf(hllList);
     }
 
     public void set(int groupId, byte[] value) {

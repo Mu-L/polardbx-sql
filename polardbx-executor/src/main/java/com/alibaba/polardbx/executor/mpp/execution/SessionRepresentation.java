@@ -20,11 +20,13 @@ import com.alibaba.polardbx.common.jdbc.ITransactionPolicy;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.common.utils.timezone.InternalTimeZone;
+import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.mpp.Session;
 import com.alibaba.polardbx.executor.mpp.server.TaskResource;
 import com.alibaba.polardbx.executor.spi.ITransactionManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.htaprouting.PlanType;
 import com.alibaba.polardbx.optimizer.memory.MemoryType;
 import com.alibaba.polardbx.optimizer.memory.QueryMemoryPool;
 import com.alibaba.polardbx.optimizer.parse.privilege.PrivilegeContext;
@@ -34,7 +36,7 @@ import com.alibaba.polardbx.optimizer.statis.SQLTracer;
 import com.alibaba.polardbx.optimizer.utils.IColumnarTransaction;
 import com.alibaba.polardbx.optimizer.utils.IMppReadOnlyTransaction;
 import com.alibaba.polardbx.optimizer.utils.ITransaction;
-import com.alibaba.polardbx.optimizer.workload.WorkloadType;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadType;
 import com.alibaba.polardbx.util.MoreObjects;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -42,6 +44,11 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+
+import static com.alibaba.polardbx.common.jdbc.ITransactionPolicy.TransactionClass.AUTO_COMMIT;
+import static com.alibaba.polardbx.common.jdbc.ITransactionPolicy.TransactionClass.COLUMNAR_READ_ONLY_TRANSACTION;
+import static com.alibaba.polardbx.common.jdbc.ITransactionPolicy.TransactionClass.COLUMNAR_RO_EXPLICIT_TRANSACTION;
+import static com.alibaba.polardbx.common.jdbc.ITransactionPolicy.TransactionClass.MPP_READ_ONLY_TRANSACTION;
 
 // Deliver the session Variables based this class from Server to Worker.
 public class SessionRepresentation {
@@ -68,12 +75,16 @@ public class SessionRepresentation {
     private long lastInsertId;
     private InternalTimeZone logicalTimeZone;
     private long tsoTimeStamp;
-    private boolean useColumnar;
+    private PlanType planType;
+    private String originalSql;
+    private boolean isWarmup;
     private Map<String, Long> dnLsnMap = new HashMap<>();
     private WorkloadType workloadType;
     private boolean omitTso;
     private boolean lizard1PC;
     private boolean useColumnarTracer;
+    private boolean autoCommit;
+    private long sqlStartTimeInMs;
 
     /**
      * 暂时只增加polardbx_server_id参数，避免长度增加较多；后续如有需要可以再修改
@@ -105,12 +116,16 @@ public class SessionRepresentation {
         @JsonProperty("lastInsertId") long lastInsertId,
         @JsonProperty("logicalTimeZone") InternalTimeZone logicalTimeZone,
         @JsonProperty("tsoTimeStamp") long tsoTimeStamp,
-        @JsonProperty("useColumnar") boolean useColumnar,
+        @JsonProperty("planType") PlanType planType,
+        @JsonProperty("originalSql") String originalSql,
+        @JsonProperty("isWarmup") boolean isWarmup,
         @JsonProperty("dnLsnMap") Map<String, Long> dnLsnMap,
         @JsonProperty("omitTso") boolean omitTso,
         @JsonProperty("lizard1PC") boolean lizard1PC,
         @JsonProperty("useColumnarTracer") boolean useColumnarTracer,
         @JsonProperty("workloadType") WorkloadType workloadType,
+        @JsonProperty("autoCommit") boolean autoCommit,
+        @JsonProperty("sqlStartTimeInMs") long sqlStartTimeInMs,
         @JsonProperty("extraServerVariables") Map<String, Object> extraServerVariables) {
         this.traceId = traceId;
         this.catalog = catalog;
@@ -135,12 +150,16 @@ public class SessionRepresentation {
         this.lastInsertId = lastInsertId;
         this.logicalTimeZone = logicalTimeZone;
         this.tsoTimeStamp = tsoTimeStamp;
-        this.useColumnar = useColumnar;
+        this.planType = planType;
+        this.originalSql = originalSql;
+        this.isWarmup = isWarmup;
         this.dnLsnMap = dnLsnMap;
         this.omitTso = omitTso;
         this.lizard1PC = lizard1PC;
         this.useColumnarTracer = useColumnarTracer;
         this.workloadType = workloadType;
+        this.autoCommit = autoCommit;
+        this.sqlStartTimeInMs = sqlStartTimeInMs;
         this.extraServerVariables = extraServerVariables;
     }
 
@@ -168,12 +187,16 @@ public class SessionRepresentation {
         long lastInsertId,
         InternalTimeZone logicalTimeZone,
         long tsoTimeStamp,
-        boolean useColumnar,
+        PlanType planType,
+        String originalSql,
+        boolean isWarmup,
         Map<String, Long> dnLsnMap,
         boolean omitTso,
         boolean lizard1PC,
         boolean useColumnarTracer,
         WorkloadType workloadType,
+        boolean autoCommit,
+        long sqlStartTimeInMs,
         Map<String, Object> extraServerVariables) {
         this.traceId = traceId;
         this.catalog = catalog;
@@ -198,12 +221,16 @@ public class SessionRepresentation {
         this.lastInsertId = lastInsertId;
         this.logicalTimeZone = logicalTimeZone;
         this.tsoTimeStamp = tsoTimeStamp;
-        this.useColumnar = useColumnar;
+        this.planType = planType;
+        this.originalSql = originalSql;
+        this.isWarmup = isWarmup;
         this.dnLsnMap = dnLsnMap;
         this.workloadType = workloadType;
         this.omitTso = omitTso;
         this.lizard1PC = lizard1PC;
         this.useColumnarTracer = useColumnarTracer;
+        this.autoCommit = autoCommit;
+        this.sqlStartTimeInMs = sqlStartTimeInMs;
         this.extraServerVariables = extraServerVariables;
     }
 
@@ -323,8 +350,18 @@ public class SessionRepresentation {
     }
 
     @JsonProperty
-    public boolean isUseColumnar() {
-        return useColumnar;
+    public PlanType getPlanType() {
+        return planType;
+    }
+
+    @JsonProperty
+    public boolean getIsWarmup() {
+        return isWarmup;
+    }
+
+    @JsonProperty
+    public String getOriginalSql() {
+        return originalSql;
     }
 
     @JsonProperty
@@ -345,6 +382,16 @@ public class SessionRepresentation {
     @JsonProperty
     public boolean isLizard1PC() {
         return lizard1PC;
+    }
+
+    @JsonProperty
+    public boolean isAutoCommit() {
+        return autoCommit;
+    }
+
+    @JsonProperty
+    public long getSqlStartTimeInMs() {
+        return sqlStartTimeInMs;
     }
 
     @JsonProperty
@@ -371,33 +418,56 @@ public class SessionRepresentation {
             .toString();
     }
 
+    private boolean isColumnarExplicitTransaction() {
+        return PlanType.isColumnar(planType) && tsoTimeStamp > 0 && ConfigDataMode.isColumnarMode() && !autoCommit;
+    }
+
+    private boolean isColumnarAutoCommitTransaction() {
+        return PlanType.isColumnar(planType) && (tsoTimeStamp > 0 || omitTso);
+    }
+
+    private boolean isMppReadOnlyTransaction() {
+        return !PlanType.isColumnar(planType) && (tsoTimeStamp > 0 || omitTso);
+    }
+
+    private ITransaction createTransactionForWorker(ITransactionPolicy.TransactionClass transactionClass,
+                                                    ExecutionContext ec) {
+        ITransactionManager tm = ExecutorContext.getContext(schema).getTransactionManager();
+        ITransaction trans = tm.createTransaction(transactionClass, ec);
+
+        if (trans instanceof IColumnarTransaction) {
+            ((IColumnarTransaction) trans).setTsoTimestamp(tsoTimeStamp);
+        } else if (trans instanceof IMppReadOnlyTransaction) {
+            ((IMppReadOnlyTransaction) trans).setSnapshotTimestamp(tsoTimeStamp);
+            ((IMppReadOnlyTransaction) trans).setDnLsnMap(dnLsnMap);
+            ((IMppReadOnlyTransaction) trans).enableOmitTso(omitTso, lizard1PC);
+        }
+
+        return trans;
+    }
+
     public Session toSession(TaskId taskId, QueryContext queryContext, long trxId, ColumnarTracer columnarTracer) {
         ExecutionContext ec = TaskResource.getDrdsContextHandler().makeExecutionContext(schema, hintCmds, txIsolation);
         ec.setTxId(trxId);
-        if (tsoTimeStamp > 0 || omitTso) {
-            ITransactionManager tm = ExecutorContext.getContext(schema).getTransactionManager();
+        ec.setAutoCommit(true);
 
-            if (useColumnar) {
-                IColumnarTransaction transaction = (IColumnarTransaction) tm.createTransaction(
-                    ITransactionPolicy.TransactionClass.COLUMNAR_READ_ONLY_TRANSACTION, ec);
-                transaction.setTsoTimestamp(tsoTimeStamp);
-                ec.setTransaction(transaction);
-            } else {
-                IMppReadOnlyTransaction transaction = (IMppReadOnlyTransaction) tm.createTransaction(
-                    ITransactionPolicy.TransactionClass.MPP_READ_ONLY_TRANSACTION, ec);
-                transaction.setSnapshotTimestamp(tsoTimeStamp);
-                transaction.setDnLsnMap(dnLsnMap);
-                transaction.enableOmitTso(omitTso, lizard1PC);
-                ec.setTransaction(transaction);
-            }
+        ITransaction trans;
 
-            ec.setAutoCommit(true);
+        if (isColumnarExplicitTransaction()) {
+            trans = createTransactionForWorker(COLUMNAR_RO_EXPLICIT_TRANSACTION, ec);
+
+            // only columnar explicit transaction is not auto commit
+            ec.setAutoCommit(false);
+        } else if (isColumnarAutoCommitTransaction()) {
+            trans = createTransactionForWorker(COLUMNAR_READ_ONLY_TRANSACTION, ec);
+        } else if (isMppReadOnlyTransaction()) {
+            trans = createTransactionForWorker(MPP_READ_ONLY_TRANSACTION, ec);
         } else {
-            ITransaction transaction = ExecutorContext.getContext(schema).getTransactionManager().createTransaction(
-                ITransactionPolicy.TransactionClass.AUTO_COMMIT, ec);
-            ec.setTransaction(transaction);
-            ec.setAutoCommit(true);
+            trans = createTransactionForWorker(AUTO_COMMIT, ec);
         }
+
+        ec.setTransaction(trans);
+        ec.getTransaction().setStartTimeInMs(sqlStartTimeInMs);
 
         ec.setAppName(catalog);
         //FIXME ec.setMppMode(MppMode.XXXX);
@@ -431,6 +501,7 @@ public class SessionRepresentation {
         MppMockConnection mppMockConnection = new MppMockConnection(user);
         mppMockConnection.setLastInsertId(lastInsertId);
 
+        ec.setPlanType(planType);
         ec.setConnection(mppMockConnection);
         ec.setTimeZone(logicalTimeZone);
         ec.setWorkloadType(workloadType);
@@ -462,6 +533,8 @@ public class SessionRepresentation {
         }
         ec.setTestMode(testMode);
         ec.setExtraServerVariables(extraServerVariables);
+        ec.setOriginSql(originalSql);
+        ec.setWarmup(isWarmup);
 
         return new Session(taskId.getStageId(), ec);
     }

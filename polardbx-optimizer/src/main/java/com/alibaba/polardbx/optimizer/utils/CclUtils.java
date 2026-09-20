@@ -20,10 +20,10 @@ import com.alibaba.polardbx.optimizer.ccl.common.CclContext;
 import com.alibaba.polardbx.optimizer.ccl.common.CclRuleInfo;
 import com.alibaba.polardbx.optimizer.ccl.common.RescheduleTask;
 import com.alibaba.polardbx.optimizer.parse.SqlParameterizeUtils;
-import com.google.common.base.Function;
-import com.google.common.collect.Maps;
 import com.alibaba.polardbx.optimizer.parse.bean.SqlParameterized;
 import com.alibaba.polardbx.optimizer.parse.visitor.ParamReplaceVisitor;
+import com.google.common.base.Function;
+import com.google.common.collect.Maps;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.StringUtils;
 
@@ -76,6 +76,15 @@ public class CclUtils {
 
     public static void exitRunning(CclRuleInfo cclRuleInfo) {
         cclRuleInfo.getRunningCount().decrementAndGet();
+    }
+
+    public static boolean isDryRun(CclRuleInfo cclRuleInfo) {
+        return cclRuleInfo.getCclRuleRecord().dryRun != 0;
+    }
+
+    public static void updateCountInDryRun(CclRuleInfo cclRuleInfo) {
+        CclUtils.atomicallyIncrementCount(cclRuleInfo.getRunningCount(), Integer.MAX_VALUE);
+        CclUtils.atomicallyIncrementCount(cclRuleInfo.getStayCount(), Integer.MAX_VALUE);
     }
 
     public static boolean enterStaying(CclRuleInfo cclRuleInfo) {

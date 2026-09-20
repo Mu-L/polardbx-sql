@@ -31,6 +31,7 @@ import org.apache.hadoop.hive.common.io.DiskRangeList;
 import org.apache.orc.CompressionCodec;
 import org.apache.orc.EncryptionAlgorithm;
 import org.apache.orc.customized.ORCDataOutput;
+import org.apache.orc.customized.ORCFieldMemoryCounter;
 import org.apache.orc.customized.ORCMemoryAllocator;
 import org.apache.orc.customized.ORCProfile;
 import org.apache.orc.customized.Recyclable;
@@ -44,24 +45,35 @@ import javax.crypto.ShortBufferException;
 import javax.crypto.spec.IvParameterSpec;
 
 public abstract class InStream extends InputStream {
-  private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+  private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
   private static final Logger LOG = LoggerFactory.getLogger(InStream.class);
   public static final int PROTOBUF_MESSAGE_MAX_LIMIT = 1024 << 20; // 1GB
 
+  @ORCFieldMemoryCounter(value = false)
   protected final Object name;
   protected final long offset;
   protected final long length;
+
+  @ORCFieldMemoryCounter(value = false)
   protected DiskRangeList bytes;
   // position in the stream (0..length)
   protected long position;
 
+  @ORCFieldMemoryCounter(value = false)
   protected ORCProfile memoryCounter;
+  @ORCFieldMemoryCounter(value = false)
   protected ORCProfile decompressTimer;
+
+  protected byte[] allocatedBytes = null;
 
   public InStream(Object name, long offset, long length) {
     this.name = name;
     this.offset = offset;
     this.length = length;
+  }
+
+  public byte[] getAllocated() {
+    return allocatedBytes;
   }
 
   public DiskRangeList getBytes() {
@@ -135,7 +147,9 @@ public abstract class InStream extends InputStream {
    * Implements a stream over an uncompressed stream.
    */
   public static class UncompressedStream extends InStream {
+    @ORCFieldMemoryCounter(value = false)
     protected ByteBuffer decrypted;
+    @ORCFieldMemoryCounter(value = false)
     protected DiskRangeList currentRange;
     protected long currentOffset;
 
@@ -279,15 +293,10 @@ public abstract class InStream extends InputStream {
   }
 
   protected ByteBuffer allocateBuffer(int size, boolean isDirect) {
-    if (isDirect) {
-      return ORCMemoryAllocator.getInstance().allocateOffHeap(size);
-    } else {
-      if (memoryCounter != null) {
-        return ORCMemoryAllocator.getInstance().allocateOnHeap(size, memoryCounter);
-      } else {
-        return ORCMemoryAllocator.getInstance().allocateOnHeap(size);
-      }
-    }
+    // do not support direct.
+    byte[] array = new byte[size];
+    this.allocatedBytes = array;
+    return ByteBuffer.wrap(array);
   }
 
   /**
@@ -446,14 +455,17 @@ public abstract class InStream extends InputStream {
 
   public static class CompressedStream extends InStream {
     private final int bufferSize;
+
+    @ORCFieldMemoryCounter(value = false)
     private ByteBuffer uncompressed;
+
+    @ORCFieldMemoryCounter(value = false)
     private final CompressionCodec codec;
+    @ORCFieldMemoryCounter(value = false)
     protected ByteBuffer compressed;
+    @ORCFieldMemoryCounter(value = false)
     protected DiskRangeList currentRange;
     private boolean isUncompressedOriginal;
-
-    // hold the reference of arrowBuf
-    private ConcurrentLinkedQueue<Recyclable<ByteBuffer>> recyclables = new ConcurrentLinkedQueue<>();
 
     /**
      * Create the stream without resetting the input stream.
@@ -491,12 +503,6 @@ public abstract class InStream extends InputStream {
     }
 
     private void allocateForUncompressed(int size, boolean isDirect) {
-      if (ORCMemoryAllocator.useArrow()) {
-        Recyclable<ByteBuffer> recyclable = ORCMemoryAllocator.getInstance().pooledDirect(size);
-        recyclables.add(recyclable);
-        uncompressed = recyclable.get();
-        return;
-      }
       uncompressed = allocateBuffer(size, isDirect);
     }
 
@@ -620,11 +626,7 @@ public abstract class InStream extends InputStream {
       currentRange = null;
       position = length;
       bytes = null;
-
-      // recycle the byte buffers held by arrow buf
-      if (recyclables != null && !recyclables.isEmpty()) {
-        recyclables.forEach(Recyclable::recycle);
-      }
+      allocatedBytes = null;
     }
 
     @Override
@@ -673,14 +675,7 @@ public abstract class InStream extends InputStream {
 
       // we need to consolidate 2 or more buffers into 1
       // first copy out compressed buffers
-      ByteBuffer copy;
-      if (ORCMemoryAllocator.useArrow()) {
-        Recyclable<ByteBuffer> recyclable = ORCMemoryAllocator.getInstance().pooledDirect(chunkLength);
-        recyclables.add(recyclable);
-        copy = recyclable.get();
-      } else {
-        copy = allocateBuffer(chunkLength, compressed.isDirect());
-      }
+      ByteBuffer copy = allocateBuffer(chunkLength, compressed.isDirect());
 
       position += compressed.remaining();
       len -= compressed.remaining();

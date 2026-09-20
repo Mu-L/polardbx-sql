@@ -161,6 +161,15 @@ public class LogicalShowVariablesMyHandler extends HandlerCommon {
             }
         }
 
+        if (DynamicConfig.getInstance().isCompatibleCharsetVariables()) {
+            if (executionContext.getExtraServerVariables() != null) {
+                if (executionContext.getExtraServerVariables().containsKey("character_set_connection")) {
+                    variables.put("character_set_connection",
+                        executionContext.getExtraServerVariables().get("character_set_connection"));
+                }
+            }
+        }
+
         //show the cn params which must be show.
         variables.put(
             ConnectionProperties.GROUP_CONCAT_MAX_LEN.toLowerCase(Locale.ROOT),
@@ -207,7 +216,7 @@ public class LogicalShowVariablesMyHandler extends HandlerCommon {
             ConnectionProperties.ENABLE_XA_TSO.toLowerCase(Locale.ROOT),
             InstConfUtil.getBool(ConnectionParams.ENABLE_XA_TSO));
 
-        // XA_TSO
+        // ENABLE_AUTO_COMMIT_TSO
         variables.put(
             ConnectionProperties.ENABLE_AUTO_COMMIT_TSO.toLowerCase(Locale.ROOT),
             InstConfUtil.getBool(ConnectionParams.ENABLE_AUTO_COMMIT_TSO));
@@ -222,6 +231,34 @@ public class LogicalShowVariablesMyHandler extends HandlerCommon {
         variables.put(
             ConnectionProperties.ENABLE_X_PROTO_OPT_FOR_AUTO_SP.toLowerCase(Locale.ROOT),
             DynamicConfig.getInstance().enableXProtoOptForAutoSp());
+
+        variables.put(
+            ConnectionProperties.READONLY_DN_LIST.toLowerCase(Locale.ROOT),
+            executionContext.getReadonlyDnList());
+
+        variables.put(
+            ConnectionProperties.ALLOW_BROADCAST_WRITE_FOR_READONLY_DN.toLowerCase(Locale.ROOT),
+            executionContext.isAllowBroadcastWriteForReadonlyDn());
+
+        variables.put(
+            ConnectionProperties.FORBID_TRX_CONTINUE_AFTER_WRITE_READONLY.toLowerCase(Locale.ROOT),
+            executionContext.isForbidTrxContinueAfterWriteReadonly());
+
+        variables.put(
+            ConnectionProperties.FORBID_CROSS_GROUP_WRITE_FOR_EXPLICIT_TRX.toLowerCase(Locale.ROOT),
+            executionContext.isForbiddenCrossGroupWriteForExplicitTrx());
+
+        variables.put(
+            ConnectionProperties.FORBID_TRX_CONTINUE_AFTER_CROSS_GROUP.toLowerCase(Locale.ROOT),
+            executionContext.isForbidTrxContinueAfterCrossGroup());
+
+        variables.put(
+            ConnectionProperties.OPTIMIZE_FORBID_CROSS_GROUP_CHECK_FOR_PUSH_DOWN_PLAN.toLowerCase(Locale.ROOT),
+            executionContext.isOptimizeForbidCrossGroupCheckForPushDownPlan());
+
+        variables.put(
+            ConnectionProperties.OPTIMIZE_FORBID_CROSS_GROUP_CHECK_FOR_NON_PUSH_DOWN_PLAN.toLowerCase(Locale.ROOT),
+            executionContext.isOptimizeForbidCrossGroupCheckForNonPushDownPlan());
 
         if (null != executionContext.getTransaction()) {
             // TRX_TYPE
@@ -249,6 +286,10 @@ public class LogicalShowVariablesMyHandler extends HandlerCommon {
             MetaDbInstConfigManager.getInstance().getCnVariableConfigMap()
                 .getProperty(ConnectionProperties.INSTANCE_READ_ONLY, "false"));
 
+        // DMS OMC
+        variables.put(
+            ConnectionProperties.ENABLE_DMS_OMC_V1.toLowerCase(Locale.ROOT),
+            InstConfUtil.getBool(ConnectionParams.ENABLE_DMS_OMC_V1));
     }
 
     public void updateReturnVariables(TreeMap<String, Object> variables, ExecutionContext executionContext) {
@@ -262,7 +303,11 @@ public class LogicalShowVariablesMyHandler extends HandlerCommon {
         }
 
         if (variables.containsKey("max_user_connections")) {
-            variables.put("max_user_connections", DynamicConfig.getInstance().getMaxConnections());
+            variables.put("max_user_connections", InstConfUtil.getInt(ConnectionParams.MAX_USER_CONNECTIONS));
+        }
+
+        if (variables.containsKey("wait_timeout")) {
+            variables.put("wait_timeout", InstConfUtil.getLong(ConnectionParams.WAIT_TIMEOUT));
         }
 
         if (variables.containsKey("max_connections")) {
@@ -274,6 +319,13 @@ public class LogicalShowVariablesMyHandler extends HandlerCommon {
                 variables.put("autocommit", "ON");
             } else {
                 variables.put("autocommit", "OFF");
+            }
+        }
+
+        if (variables.containsKey("foreign_key_checks")) {
+            Object fkValue = variables.get("foreign_key_checks");
+            if (fkValue instanceof Boolean) {
+                variables.put("foreign_key_checks", (Boolean) fkValue ? "ON" : "OFF");
             }
         }
 

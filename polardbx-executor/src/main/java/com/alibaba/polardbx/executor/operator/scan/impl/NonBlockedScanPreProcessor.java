@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.orc.PreheatFileMeta;
 import com.alibaba.polardbx.executor.operator.scan.ScanPreProcessor;
 import com.alibaba.polardbx.optimizer.statis.ColumnarTracer;
 import com.google.common.util.concurrent.Futures;

@@ -24,16 +24,19 @@ import com.alibaba.polardbx.executor.scheduler.ScheduledJobsManager;
 import com.alibaba.polardbx.executor.scheduler.executor.SchedulerExecutor;
 import com.alibaba.polardbx.executor.sync.BaselineLoadSyncAction;
 import com.alibaba.polardbx.executor.sync.BaselineQueryAllSyncAction;
-import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.metadb.table.BaselineInfoAccessor;
 import com.alibaba.polardbx.gms.module.LogLevel;
 import com.alibaba.polardbx.gms.module.LogPattern;
 import com.alibaba.polardbx.gms.module.Module;
 import com.alibaba.polardbx.gms.module.ModuleLogInfo;
+import com.alibaba.polardbx.gms.node.GmsNodeManager;
 import com.alibaba.polardbx.gms.scheduler.ExecutableScheduledJob;
+import com.alibaba.polardbx.gms.sync.GmsSyncManagerHelper;
 import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
+import com.alibaba.polardbx.gms.topology.SystemDbHelper;
+import com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertUtil;
 import com.alibaba.polardbx.optimizer.planmanager.BaselineInfo;
 import com.alibaba.polardbx.optimizer.planmanager.PlanInfo;
 import com.alibaba.polardbx.optimizer.planmanager.PlanManager;
@@ -45,7 +48,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
+import static com.alibaba.polardbx.common.properties.ConnectionParams.ENABLE_BASELINE_CLEAN_JOB;
 import static com.alibaba.polardbx.common.properties.ConnectionParams.ENABLE_SPM;
 import static com.alibaba.polardbx.common.scheduler.FiredScheduledJobState.FAILED;
 import static com.alibaba.polardbx.common.scheduler.FiredScheduledJobState.QUEUED;
@@ -59,6 +64,7 @@ import static com.alibaba.polardbx.gms.module.LogPattern.PROCESS_END;
 import static com.alibaba.polardbx.gms.module.LogPattern.STATE_CHANGE_FAIL;
 import static com.alibaba.polardbx.gms.module.LogPattern.UNEXPECTED;
 import static com.alibaba.polardbx.gms.scheduler.ScheduledJobExecutorType.BASELINE_SYNC;
+import static com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertType.SPM_DELETE_ERR;
 
 /**
  * load baseline job
@@ -70,6 +76,7 @@ public class SPMBaseLineSyncScheduledJob extends SchedulerExecutor {
     private static final Logger logger = LoggerFactory.getLogger(SPMBaseLineSyncScheduledJob.class);
 
     private final ExecutableScheduledJob executableScheduledJob;
+    private boolean fromScheduleJob = true;
 
     public SPMBaseLineSyncScheduledJob(final ExecutableScheduledJob executableScheduledJob) {
         this.executableScheduledJob = executableScheduledJob;
@@ -82,17 +89,19 @@ public class SPMBaseLineSyncScheduledJob extends SchedulerExecutor {
         long startTime = ZonedDateTime.now().toEpochSecond();
         StringBuilder remark = new StringBuilder();
         try {
-            //mark as RUNNING
-            boolean casSuccess =
-                ScheduledJobsManager.casStateWithStartTime(scheduleId, fireTime, QUEUED, RUNNING, startTime);
-            if (!casSuccess) {
-                ModuleLogInfo.getInstance()
-                    .logRecord(
-                        Module.SCHEDULE_JOB,
-                        STATE_CHANGE_FAIL,
-                        new String[] {BASELINE_SYNC + "," + fireTime, QUEUED.name(), RUNNING.name()},
-                        WARNING);
-                return false;
+            if (fromScheduleJob) {
+                //mark as RUNNING
+                boolean casSuccess =
+                    ScheduledJobsManager.casStateWithStartTime(scheduleId, fireTime, QUEUED, RUNNING, startTime);
+                if (!casSuccess) {
+                    ModuleLogInfo.getInstance()
+                        .logRecord(
+                            Module.SCHEDULE_JOB,
+                            STATE_CHANGE_FAIL,
+                            new String[] {BASELINE_SYNC + "," + fireTime, QUEUED.name(), RUNNING.name()},
+                            WARNING);
+                    return false;
+                }
             }
 
             // check conf
@@ -119,13 +128,61 @@ public class SPMBaseLineSyncScheduledJob extends SchedulerExecutor {
 
             // persist baseline
             try (BaselineInfoAccessor baselineInfoAccessor = new BaselineInfoAccessor(true)) {
+                try {
+                    if (checkCleanJobEnable()) {
+                        // get all inst ids
+                        List<GmsNodeManager.GmsNode> gmsNodes = GmsNodeManager.getInstance().getAllNodes();
+                        if (gmsNodes != null && !gmsNodes.isEmpty()) {
+                            Set<String> instIds = Sets.newHashSet();
+                            for (GmsNodeManager.GmsNode gmsNode : gmsNodes) {
+                                if (gmsNode != null && gmsNode.getInstId() != null) {
+                                    instIds.add(gmsNode.getInstId());
+                                }
+                            }
+                            if (!instIds.isEmpty()) {
+                                // delete plan with inst that doesn't exist
+                                baselineInfoAccessor.deleteBaselineWithInstNotExist(instIds);
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    OptimizerAlertUtil.spmAlert(SPM_DELETE_ERR, null, e);
+                }
+
                 // for each inst
                 for (String instId : fullBaseline.keySet()) {
                     Map<String, Map<String, BaselineInfo>> instBaseline = fullBaseline.get(instId);
+                    if (instBaseline.isEmpty()) {
+                        remark.append(instId).append(" is empty").append(";");
+                        continue;
+                    } else {
+                        remark.append(instId).append(":").append(instBaseline.size()).append(";");
+                    }
                     StringBuilder logStr = new StringBuilder(instId + " ");
+                    try {
+                        if (checkCleanJobEnable()) {
+                            // delete plan that schema doesn't exist
+                            baselineInfoAccessor.deleteBaselineByInstSchema(instId, instBaseline.keySet());
+                        }
+                    } catch (Exception e) {
+                        OptimizerAlertUtil.spmAlert(SPM_DELETE_ERR, null, e);
+                    }
+
                     // for each schema
                     for (Map.Entry<String, Map<String, BaselineInfo>> e : instBaseline.entrySet()) {
                         String schema = e.getKey();
+
+                        try {
+                            if (checkCleanJobEnable()) {
+                                List<Integer> baselineIds =
+                                    e.getValue().values().stream().mapToInt(BaselineInfo::getId).boxed()
+                                        .collect(Collectors.toList());
+                                // delete plan with inst that doesn't exist
+                                baselineInfoAccessor.deleteBaselineByInstSchemaBaselineId(instId, schema, baselineIds);
+                            }
+                        } catch (Exception t) {
+                            OptimizerAlertUtil.spmAlert(SPM_DELETE_ERR, null, t);
+                        }
 
                         // for each baseline
                         for (BaselineInfo baselineInfo : e.getValue().values()) {
@@ -151,6 +208,15 @@ public class SPMBaseLineSyncScheduledJob extends SchedulerExecutor {
                             new String[] {"spm merge baseline", logStr.toString()},
                             LogLevel.NORMAL);
                 }
+
+                try {
+                    if (checkCleanJobEnable()) {
+                        baselineInfoAccessor.deleteDriftPlan();
+                    }
+                } catch (Exception e) {
+                    OptimizerAlertUtil.spmAlert(SPM_DELETE_ERR, null, e);
+                }
+
             } catch (Exception e) {
                 ModuleLogInfo.getInstance()
                     .logRecord(
@@ -162,7 +228,7 @@ public class SPMBaseLineSyncScheduledJob extends SchedulerExecutor {
             }
 
             // sync merged baseline to cluster
-            SyncManagerHelper.syncWithDefaultDB(new BaselineLoadSyncAction(), SyncScope.ALL);
+            GmsSyncManagerHelper.sync(new BaselineLoadSyncAction(), SystemDbHelper.DEFAULT_DB_NAME, SyncScope.ALL);
             ModuleLogInfo.getInstance()
                 .logRecord(
                     Module.SPM,
@@ -186,9 +252,33 @@ public class SPMBaseLineSyncScheduledJob extends SchedulerExecutor {
         }
     }
 
-    private Map<String, Map<String, Map<String, BaselineInfo>>> queryBaselineFromCluster() {
-        List<List<Map<String, Object>>> results = SyncManagerHelper.syncWithDefaultDB(new BaselineQueryAllSyncAction(),
-            SyncScope.ALL);
+    /**
+     * Check if the clean job is enabled.
+     *
+     * @return true if the clean job is enabled; otherwise, false.
+     */
+    protected boolean checkCleanJobEnable() {
+        // Get the configuration value for enabling the baseline clean job
+        boolean isBaselineCleanJobEnabled = InstConfUtil.getBool(ENABLE_BASELINE_CLEAN_JOB);
+
+        // If the clean job is not enabled, return false
+        if (!isBaselineCleanJobEnabled) {
+            return false;
+        }
+
+        // Check if the job is triggered by a scheduler
+        if (fromScheduleJob) {
+            // For scheduled jobs, check if it's within the maintenance time window
+            return InstConfUtil.isInMaintenanceTimeWindow();
+        } else {
+            // Manual trigger path
+            return true;
+        }
+    }
+
+    protected Map<String, Map<String, Map<String, BaselineInfo>>> queryBaselineFromCluster() {
+        List<List<Map<String, Object>>> results =
+            GmsSyncManagerHelper.sync(new BaselineQueryAllSyncAction(), SystemDbHelper.DEFAULT_DB_NAME, SyncScope.ALL);
 
         Map<String, Map<String, Map<String, BaselineInfo>>> instSchemaSqlBaselineMap = Maps.newConcurrentMap();
         // Node
@@ -220,8 +310,8 @@ public class SPMBaseLineSyncScheduledJob extends SchedulerExecutor {
      * merge temp baseline info to current
      * temp -> current
      */
-    private void mergeBaseline(Map<String, Map<String, BaselineInfo>> current,
-                               Map<String, Map<String, BaselineInfo>> temp) {
+    public static void mergeBaseline(Map<String, Map<String, BaselineInfo>> current,
+                                     Map<String, Map<String, BaselineInfo>> temp) {
         for (Map.Entry<String, Map<String, BaselineInfo>> e : temp.entrySet()) {
             String schema = e.getKey().toLowerCase(Locale.ROOT);
             if (!DbInfoManager.getInstance().getDbList().contains(schema)) {
@@ -238,9 +328,9 @@ public class SPMBaseLineSyncScheduledJob extends SchedulerExecutor {
         }
     }
 
-    private void mergeSubBaseline(String schema,
-                                  Map<String, BaselineInfo> currentMap,
-                                  Map<String, BaselineInfo> tempMap) {
+    private static void mergeSubBaseline(String schema,
+                                         Map<String, BaselineInfo> currentMap,
+                                         Map<String, BaselineInfo> tempMap) {
         for (Map.Entry<String, BaselineInfo> e : tempMap.entrySet()) {
             String sql = e.getKey();
             if (e.getValue() != null && e.getValue().isDirty()) {
@@ -312,5 +402,13 @@ public class SPMBaseLineSyncScheduledJob extends SchedulerExecutor {
     }
 
     private void syncBaseLineInfoAndPlanInfo() {
+    }
+
+    public boolean isFromScheduleJob() {
+        return fromScheduleJob;
+    }
+
+    public void setFromScheduleJob(boolean fromScheduleJob) {
+        this.fromScheduleJob = fromScheduleJob;
     }
 }

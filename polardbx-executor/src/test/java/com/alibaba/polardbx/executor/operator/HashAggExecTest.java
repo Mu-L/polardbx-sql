@@ -34,6 +34,8 @@ import com.alibaba.polardbx.optimizer.core.expression.calc.aggfunctions.SumV2;
 import org.junit.Ignore;
 import com.google.common.collect.Lists;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
@@ -45,6 +47,7 @@ import java.util.List;
 
 import static com.alibaba.polardbx.common.datatype.DecimalTypeBase.E_DEC_DIV_ZERO;
 
+@RunWith(Parameterized.class)
 public class HashAggExecTest extends BaseExecTest {
 
     private static String TABLE_NAME = "MOCK_HASH_AGG_TABLE";
@@ -52,6 +55,34 @@ public class HashAggExecTest extends BaseExecTest {
     private static String COLUMN_PREFIX = "MOCK_HASH_AGG_COLUMN_";
 
     private static int DEFAULT_AGG_HASH_TABLE_SIZE = 1024;
+    @Parameterized.Parameter
+    public boolean isPreHashAgg;
+
+    @Parameterized.Parameters
+    public static List<Boolean[]> data() {
+        return Arrays.asList(new Boolean[][] {
+            {true},  // Test case with isPreHashAgg = true
+            {false}  // Test case with isPreHashAgg = false
+        });
+    }
+
+    AbstractHashAggExec createHashAggExec(MockExec inputExec, int[] groups, List<Aggregator> aggregators,
+                                          List<DataType> outputColumn) {
+        if (isPreHashAgg) {
+            return new PreHashAggExec(inputExec.getDataTypes(), groups, aggregators, outputColumn,
+                DEFAULT_AGG_HASH_TABLE_SIZE,
+                context);
+        } else {
+            return new HashAggExec(inputExec.getDataTypes(), groups, aggregators, outputColumn,
+                DEFAULT_AGG_HASH_TABLE_SIZE,
+                context);
+        }
+    }
+
+    @Test
+    public void setUp() {
+        checkExecutorMemory = !isPreHashAgg;
+    }
 
     // TODO  mysql客户端返回结果一致，但是单元测试结果不一致
     //非顺序情况下返回结果不一致
@@ -78,9 +109,8 @@ public class HashAggExecTest extends BaseExecTest {
         outputColumn.add(DataTypes.IntegerType);
         outputColumn.add(DataTypes.DecimalType);
 
-        HashAggExec exec =
-            new HashAggExec(inputExec.getDataTypes(), groups, aggregators, outputColumn, DEFAULT_AGG_HASH_TABLE_SIZE,
-                context);
+        AbstractHashAggExec exec = createHashAggExec(inputExec, groups, aggregators, outputColumn);
+
         SingleExecTest test = new SingleExecTest.Builder(exec, inputExec.getChunks()).build();
         test.exec();
 
@@ -112,9 +142,8 @@ public class HashAggExecTest extends BaseExecTest {
         aggregators.add(new AvgV2(1, false, context.getMemoryPool().getMemoryAllocatorCtx(), -1));
         List<DataType> outputColumn = Lists.newArrayList(DataTypes.IntegerType, DataTypes.DoubleType);
 
-        HashAggExec exec =
-            new HashAggExec(inputExec.getDataTypes(), groups, aggregators, outputColumn, DEFAULT_AGG_HASH_TABLE_SIZE,
-                context);
+        AbstractHashAggExec exec = createHashAggExec(inputExec, groups, aggregators, outputColumn);
+
         SingleExecTest test = new SingleExecTest.Builder(exec, inputExec.getChunks()).build();
         test.exec();
 
@@ -193,9 +222,8 @@ public class HashAggExecTest extends BaseExecTest {
         List<DataType> outputColumn = new ArrayList<>();
         outputColumn.add(DataTypes.LongType);
         outputColumn.add(DataTypes.LongType);
-        HashAggExec exec =
-            new HashAggExec(inputExec.getDataTypes(), groups, aggregators, outputColumn, DEFAULT_AGG_HASH_TABLE_SIZE,
-                context);
+        AbstractHashAggExec exec = createHashAggExec(inputExec, groups, aggregators, outputColumn);
+
         SingleExecTest test = new SingleExecTest.Builder(exec, inputExec.getChunks()).build();
         test.exec();
 
@@ -224,9 +252,7 @@ public class HashAggExecTest extends BaseExecTest {
         List<DataType> outputColumn = new ArrayList<>();
         outputColumn.add(DataTypes.IntegerType);
         outputColumn.add(DataTypes.DecimalType);
-        HashAggExec exec =
-            new HashAggExec(inputExec.getDataTypes(), groups, aggregators, outputColumn, DEFAULT_AGG_HASH_TABLE_SIZE,
-                context);
+        AbstractHashAggExec exec = createHashAggExec(inputExec, groups, aggregators, outputColumn);
         SingleExecTest test = new SingleExecTest.Builder(exec, inputExec.getChunks()).build();
         test.exec();
 
@@ -268,9 +294,8 @@ public class HashAggExecTest extends BaseExecTest {
         List<DataType> outputColumn = new ArrayList<>();
         outputColumn.add(DataTypes.IntegerType);
         outputColumn.add(DataTypes.DecimalType);
-        HashAggExec exec =
-            new HashAggExec(inputExec.getDataTypes(), groups, aggregators, outputColumn, DEFAULT_AGG_HASH_TABLE_SIZE,
-                context);
+        AbstractHashAggExec exec = createHashAggExec(inputExec, groups, aggregators, outputColumn);
+
         SingleExecTest test = new SingleExecTest.Builder(exec, inputExec.getChunks()).build();
         test.exec();
 
@@ -307,9 +332,8 @@ public class HashAggExecTest extends BaseExecTest {
         List<DataType> outputColumn = new ArrayList<>();
         outputColumn.add(DataTypes.IntegerType);
         outputColumn.add(DataTypes.DecimalType);
-        HashAggExec exec =
-            new HashAggExec(inputExec.getDataTypes(), groups, aggregators, outputColumn, DEFAULT_AGG_HASH_TABLE_SIZE,
-                context);
+        AbstractHashAggExec exec = createHashAggExec(inputExec, groups, aggregators, outputColumn);
+
         SingleExecTest test = new SingleExecTest.Builder(exec, inputExec.getChunks()).build();
         test.exec();
 
@@ -344,9 +368,8 @@ public class HashAggExecTest extends BaseExecTest {
         List<DataType> outputColumn = new ArrayList<>();
         outputColumn.add(DataTypes.IntegerType);
         outputColumn.add(DataTypes.DoubleType);
-        HashAggExec exec =
-            new HashAggExec(inputExec.getDataTypes(), groups, aggregators, outputColumn, DEFAULT_AGG_HASH_TABLE_SIZE,
-                context);
+        AbstractHashAggExec exec = createHashAggExec(inputExec, groups, aggregators, outputColumn);
+
         SingleExecTest test = new SingleExecTest.Builder(exec, inputExec.getChunks()).build();
         test.exec();
 
@@ -375,9 +398,7 @@ public class HashAggExecTest extends BaseExecTest {
         List<DataType> outputColumn = new ArrayList<>();
         outputColumn.add(DataTypes.IntegerType);
         outputColumn.add(DataTypes.DecimalType);
-        HashAggExec exec =
-            new HashAggExec(inputExec.getDataTypes(), groups, aggregators, outputColumn, DEFAULT_AGG_HASH_TABLE_SIZE,
-                context);
+        AbstractHashAggExec exec = createHashAggExec(inputExec, groups, aggregators, outputColumn);
         SingleExecTest test = new SingleExecTest.Builder(exec, inputExec.getChunks()).build();
         test.exec();
 
@@ -407,9 +428,8 @@ public class HashAggExecTest extends BaseExecTest {
         List<DataType> outputColumn = new ArrayList<>();
         outputColumn.add(DataTypes.LongType);
         outputColumn.add(DataTypes.LongType);
-        HashAggExec exec =
-            new HashAggExec(inputExec.getDataTypes(), groups, aggregators, outputColumn, DEFAULT_AGG_HASH_TABLE_SIZE,
-                context);
+        AbstractHashAggExec exec = createHashAggExec(inputExec, groups, aggregators, outputColumn);
+
         SingleExecTest test = new SingleExecTest.Builder(exec, inputExec.getChunks()).build();
         test.exec();
 

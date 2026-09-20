@@ -1,4 +1,5 @@
 #test_create_cci_tmp
+test_create_block_chain_cci
 test_create_cci
 test_create_cci_random_suffix
 test_create_cci_partition_by_hash
@@ -6,3 +7,7 @@ test_create_cci_partition_by_list
 test_create_cci_partition_by_range
 test_create_cci_with_options
 test_create_cci_set_columnar_config
+test_create_cci_sort_key_desc
+test_create_multi_cci
+test_create_cci_in_database
+test_create_cci_decimal

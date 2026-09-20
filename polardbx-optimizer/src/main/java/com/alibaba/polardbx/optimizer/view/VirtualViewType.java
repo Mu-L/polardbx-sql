@@ -189,6 +189,8 @@ public enum VirtualViewType {
 
     METADATA_LOCK,
 
+    NODE_STATS,
+
     STORAGE,
 
     STORAGE_STATUS,
@@ -217,6 +219,7 @@ public enum VirtualViewType {
     PLAN_CACHE,
     PLAN_CACHE_CAPACITY,
     SPM,
+    SPM_GRAY_STATUS,
 
     /**
      * statistic views
@@ -228,6 +231,7 @@ public enum VirtualViewType {
     STATISTICS,
     STATISTICS_DATA,
     COLUMN_STATISTICS,
+    COLLECT_STATISTIC_PROGRESS,
     METRIC,
 
     /**
@@ -238,7 +242,10 @@ public enum VirtualViewType {
 
     CCL_RULE,
 
+    CCL_BLOCKER,
     CCL_TRIGGER,
+    DN_CCL,
+    DN_CCL_DRYRUN,
 
     REACTOR_PERF,
 
@@ -249,6 +256,8 @@ public enum VirtualViewType {
     SESSION_PERF,
 
     DDL_PLAN,
+
+    DDL_PHYSICAL_LOCK_STAT,
 
     REBALANCE_BACKFILL,
 
@@ -264,11 +273,19 @@ public enum VirtualViewType {
 
     FILE_STORAGE_FILES_META,
 
+    WARMUP_EXECUTION_LOGS,
+
+    COLUMNAR_WARMUP,
+
+    COLUMNAR_SCAN_MONITOR,
+
     JOIN_GROUP,
 
     ARCHIVE,
 
     AFFINITY_TABLES,
+
+    ROUTING_RULES,
 
     PROCEDURE_CACHE,
 
@@ -298,11 +315,45 @@ public enum VirtualViewType {
 
     REBALANCE_PROGRESS,
 
+    DDL_PROGRESS,
+
+    DDL_INFO,
+
+    OMC_PROGRESS,
+
     SHOW_HELP,
+
+    LOGIN_LOCKED,
 
     RPL_SYNC_POINT,
 
     DDL_SCHEDULER,
 
-    DDL_ENGINE_RESOURCE
+    DDL_ENGINE_RESOURCE,
+
+    EXECUTOR_MEMORY,
+
+    QUERY_MEMORY,
+
+    TOTAL_MEMORY,
+
+    CN_STATUS,
+
+    CN_MEMORYPOOL,
+
+    CN_THREADPOOL,
+
+    CN_DBSTATS,
+
+    TABLE_PROPERTIES,
+
+    PHYSICAL_INDEX_USAGE,
+
+    LOGICAL_INDEX_USAGE,
+
+    EXT_COLUMN_STATS,
+
+    EXT_COLUMN_STATS_PER_NODE,
+
+    EXT_STAGING_STATUS,
 }

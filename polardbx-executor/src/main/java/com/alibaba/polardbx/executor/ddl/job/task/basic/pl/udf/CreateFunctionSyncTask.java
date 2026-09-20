@@ -56,13 +56,13 @@ public class CreateFunctionSyncTask extends BaseDdlTask {
         updateTaskStateInNewTxn(DdlTaskState.DIRTY);
 
         String tempCreateFunction = UdfUtils.removeFuncBody(createFunctionContent);
-        SyncManagerHelper.sync(new CreateStoredFunctionSyncAction(functionName, tempCreateFunction, canPush),
+        SyncManagerHelper.syncThrowExceptions(new CreateStoredFunctionSyncAction(functionName, tempCreateFunction, canPush),
             TddlConstants.INFORMATION_SCHEMA, SyncScope.ALL);
     }
 
     @Override
     protected void beforeRollbackTransaction(ExecutionContext executionContext) {
-        SyncManagerHelper.sync(new DropStoredFunctionSyncAction(functionName),
+        SyncManagerHelper.syncThrowExceptions(new DropStoredFunctionSyncAction(functionName),
             TddlConstants.INFORMATION_SCHEMA, SyncScope.ALL);
     }
 }

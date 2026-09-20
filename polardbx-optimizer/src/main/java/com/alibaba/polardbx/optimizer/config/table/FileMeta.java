@@ -17,6 +17,10 @@
 package com.alibaba.polardbx.optimizer.config.table;
 
 import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.common.oss.ColumnarFileType;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.TreeMaps;
@@ -24,15 +28,15 @@ import com.alibaba.polardbx.gms.engine.FileSystemUtils;
 import com.alibaba.polardbx.gms.metadb.table.FilesRecord;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import org.apache.orc.impl.OrcTail;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Function;
 
 // todo need concurrency-safe
 // read-only
-public class FileMeta {
+public class FileMeta implements MemoryCountable {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(FileMeta.class).instanceSize();
 
     protected final String logicalTableSchema;
     protected final String logicalTableName;
@@ -46,17 +50,39 @@ public class FileMeta {
 
     // number of implicit column BEFORE real physical column
     protected int implicitColumnCnt = 0;
+
+    @FieldMemoryCounter(value = false)
     protected List<ColumnMeta> columnMetas;
 
+    @FieldMemoryCounter(value = false)
     protected Map<String, ColumnMeta> columnMetaMap = TreeMaps.caseInsensitiveMap();
     protected Long commitTs;
-    protected AtomicReference<Long> removeTs;
+    protected Long removeTs;
     protected Long schemaTs;
     protected String createTime;
     protected String updateTime;
+
+    @FieldMemoryCounter(value = false)
     protected Engine engine;
     protected Long fileHash;
     protected String partitionName;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(logicalTableSchema)
+            + FastMemoryCounter.sizeOf(logicalTableName)
+            + FastMemoryCounter.sizeOf(physicalTableSchema)
+            + FastMemoryCounter.sizeOf(physicalTableName)
+            + FastMemoryCounter.sizeOf(fileName)
+            + FastMemoryCounter.sizeOf(commitTs)
+            + FastMemoryCounter.sizeOf(removeTs)
+            + FastMemoryCounter.sizeOf(schemaTs)
+            + FastMemoryCounter.sizeOf(createTime)
+            + FastMemoryCounter.sizeOf(updateTime)
+            + FastMemoryCounter.sizeOf(fileHash)
+            + FastMemoryCounter.sizeOf(partitionName);
+    }
 
     public FileMeta(String logicalSchemaName, String logicalTableName, String physicalTableSchema,
                     String physicalTableName, String partitionName, String fileName, long fileSize,
@@ -71,7 +97,7 @@ public class FileMeta {
         this.fileSize = fileSize;
         this.tableRows = tableRows;
         this.commitTs = commitTs;
-        this.removeTs = new AtomicReference<>(removeTs);
+        this.removeTs = removeTs;
         this.schemaTs = schemaTs;
         this.createTime = createTime;
         this.updateTime = updateTime;
@@ -79,17 +105,12 @@ public class FileMeta {
         this.fileHash = fileHash;
     }
 
-    public boolean updateRemoveTs(Long updateTs) {
-        // This method can only be called by columnar mode.
-        return removeTs.compareAndSet(null, updateTs);
-    }
-
     public Long getCommitTs() {
         return commitTs;
     }
 
     public Long getRemoveTs() {
-        return removeTs.get();
+        return removeTs;
     }
 
     public Long getSchemaTs() {
@@ -97,10 +118,6 @@ public class FileMeta {
     }
 
     public static FileMeta parseFrom(FilesRecord filesRecord) {
-        return parseFrom(filesRecord, OSSOrcFileMeta.DEFAULT_FETCH_FUNCTION);
-    }
-
-    public static FileMeta parseFrom(FilesRecord filesRecord, Function<String, OrcTail> fetchFunction) {
         String engineStr = filesRecord.engine;
         Engine engine = Engine.of(engineStr);
         if (engine == null) {
@@ -119,7 +136,41 @@ public class FileMeta {
 
             switch (fileType) {
             case ORC:
-                return buildOrcFileMeta(filesRecord, fetchFunction);
+                return buildOrcFileMeta(filesRecord);
+            case CSV:
+                return buildCsvFileMeta(filesRecord);
+            case DEL:
+                return buildDelFileMeta(filesRecord);
+            case SET:
+                return buildSetFileMeta(filesRecord);
+            }
+        }
+        default:
+            GeneralUtil.nestedException("Unsupported file format with engine " + engineStr);
+        }
+        return null;
+    }
+
+    public static FileMeta parseSimpleFileMetaFrom(FilesRecord filesRecord) {
+        String engineStr = filesRecord.getEngine();
+        Engine engine = Engine.of(engineStr);
+        if (engine == null) {
+            GeneralUtil.nestedException("Unknown engine: " + engineStr);
+        }
+        switch (engine) {
+        case OSS:
+        case S3:
+        case LOCAL_DISK:
+        case EXTERNAL_DISK:
+        case ABS:
+        case NFS: {
+            // Identify the file with its suffix (orc, csv or del).
+            String fileName = filesRecord.getFileName();
+            ColumnarFileType fileType = FileSystemUtils.getFileType(fileName);
+
+            switch (fileType) {
+            case ORC:
+                return buildSimpleOrcFileMeta(filesRecord);
             case CSV:
                 return buildCsvFileMeta(filesRecord);
             case DEL:
@@ -209,7 +260,7 @@ public class FileMeta {
         );
     }
 
-    private static OSSOrcFileMeta buildOrcFileMeta(FilesRecord filesRecord, Function<String, OrcTail> fetchFunction) {
+    private static OSSOrcFileMeta buildOrcFileMeta(FilesRecord filesRecord) {
         String engineStr = filesRecord.engine;
         Engine engine = Engine.of(engineStr);
         String fileName = filesRecord.getFileName();
@@ -230,7 +281,33 @@ public class FileMeta {
         Long fileHash = filesRecord.getFileHash();
         return new OSSOrcFileMeta(
             logicalSchemaName, logicalTableName, physicalTableSchema, physicalTableName, partitionName, fileName,
-            fileSize, tableRows, fetchFunction, createTime, updateTime, engine, commitTs, removeTs, schemaTs, fileHash);
+            fileSize, tableRows, createTime, updateTime, engine, commitTs, removeTs, schemaTs, fileHash,
+            filesRecord.getFileMeta());
+    }
+
+    protected static SimpleOSSOrcFileMeta buildSimpleOrcFileMeta(FilesRecord filesRecord) {
+        String engineStr = filesRecord.engine;
+        Engine engine = Engine.of(engineStr);
+        String fileName = filesRecord.getFileName();
+        String logicalSchemaName = filesRecord.getLogicalSchemaName();
+        String logicalTableName = filesRecord.getLogicalTableName();
+        String physicalTableSchema = filesRecord.getTableSchema();
+        String physicalTableName = filesRecord.getTableName();
+        String partitionName = filesRecord.getPartitionName();
+
+        long fileSize = filesRecord.getExtentSize();
+        long tableRows = filesRecord.getTableRows();
+        String createTime = filesRecord.getCreateTime();
+        String updateTime = filesRecord.getUpdateTime();
+
+        Long commitTs = filesRecord.getCommitTs();
+        Long removeTs = filesRecord.getRemoveTs();
+        Long schemaTs = filesRecord.getSchemaTs();
+        Long fileHash = filesRecord.getFileHash();
+        return new SimpleOSSOrcFileMeta(
+            logicalSchemaName, logicalTableName, physicalTableSchema, physicalTableName, partitionName, fileName,
+            fileSize, tableRows, commitTs, removeTs, schemaTs, createTime, updateTime, engine, fileHash
+        );
     }
 
     public List<ColumnMeta> getColumnMetas() {

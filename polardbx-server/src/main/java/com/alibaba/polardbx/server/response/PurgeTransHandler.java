@@ -19,6 +19,7 @@ package com.alibaba.polardbx.server.response;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.druid.sql.parser.ByteString;
 import com.alibaba.polardbx.executor.scheduler.executor.trx.CleanLogTableTask;
 import com.alibaba.polardbx.net.compress.PacketOutputProxyFactory;
 import com.alibaba.polardbx.net.packet.OkPacket;
@@ -34,13 +35,31 @@ public class PurgeTransHandler extends AbstractTransHandler {
 
     private final static Logger logger = LoggerFactory.getLogger(GlobalTxLogManager.class);
 
-    private final String stmt;
+    private final ByteString stmt;
     private final int offset;
 
-    public PurgeTransHandler(String stmt, int offset, ServerConnection c) {
+    public PurgeTransHandler(ByteString stmt, int offset, ServerConnection c) {
         super(c);
         this.stmt = stmt;
         this.offset = offset;
+    }
+
+    // Change context:
+    // - Before: this constructor accepted a char-indexed String (produced via
+    //   sql.toString()), which lost the byte-offset semantics that ServerParse's
+    //   offset was computed with, causing offset consumption to misalign whenever
+    //   the SQL prefix contained multi-byte characters.
+    // - Path impact: re-wrapping the String into a ByteString (via ByteString.from,
+    //   which re-encodes using the platform default charset) recovers the exact
+    //   byte-indexed view, since sql.toString() itself decoded with that same
+    //   default charset. Kept only for legacy/test call sites that still hand in a
+    //   String; the production call site in ServerQueryHandler now passes the
+    //   original ByteString directly via the constructor above.
+    // - Capability regression: None for ASCII-only prefixes; for multi-byte
+    //   prefixes this constructor now matches ByteString semantics instead of
+    //   silently truncating/overflowing.
+    public PurgeTransHandler(String stmt, int offset, ServerConnection c) {
+        this(ByteString.from(stmt), offset, c);
     }
 
     @Override

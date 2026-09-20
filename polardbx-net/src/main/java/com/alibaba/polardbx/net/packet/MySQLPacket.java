@@ -194,6 +194,18 @@ public abstract class MySQLPacket {
     public static final int SERVER_LAST_ROW_SENT = 0x0080;
 
     /**
+     * MySQL 5.7+ session-track 扩展状态位：当 OK 包携带会话状态变化时设置此位，
+     * 客户端在 status 后续读取 length-encoded session_state_changes payload。
+     */
+    public static final int SERVER_SESSION_STATE_CHANGED = 0x4000;
+
+    /**
+     * SESSION_TRACK_SCHEMA 类型位，用于标识 session_state_changes 中的 schema 切换记录。
+     * 参考 MySQL session_track_schema_t。
+     */
+    public static final int SESSION_TRACK_SCHEMA = 0x01;
+
+    /**
      * A COM_STMT_EXECUTE packet may set READ_ONLY_CURSOR_FLAG,
      * indicating that server should run in cursor mode.
      */

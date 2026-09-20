@@ -84,8 +84,7 @@ public class LogicalTableDataMigrationFastChecker extends FastChecker {
         if (null == tableMetaSrc || null == tableMetaDst) {
             throw new TddlRuntimeException(ErrorCode.ERR_SCALEOUT_EXECUTE, "FastChecker find no table meta");
         }
-        final List<String> allColumns =
-            tableMetaDst.getAllColumns().stream().map(ColumnMeta::getName).collect(Collectors.toList());
+        final List<String> allColumns = FastChecker.toPhysicalColumnNames(tableMetaDst);
 
         // 重要：构造planSelectSampleSrc 和 planSelectSampleDst时，传入的主键必须按原本的主键顺序!!!
         final List<String> pks = FastChecker.getOrderedPrimaryKeys(tableMetaDst);

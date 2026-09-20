@@ -40,7 +40,7 @@ public class LogicalAlterTableGroupSplitPartitionByHotValueHandler extends Logic
     protected DdlJob buildDdlJob(BaseDdlOperation logicalDdlPlan, ExecutionContext executionContext) {
         LogicalAlterTableSplitPartitionByHotValue alterTableGroupSplitPartitionByHotValue =
             (LogicalAlterTableSplitPartitionByHotValue) logicalDdlPlan;
-        alterTableGroupSplitPartitionByHotValue.preparedData(executionContext);
+        alterTableGroupSplitPartitionByHotValue.preparedData(executionContext, true);
         AlterTableGroupSplitPartitionByHotValuePreparedData preparedData =
             alterTableGroupSplitPartitionByHotValue.getPreparedData();
 

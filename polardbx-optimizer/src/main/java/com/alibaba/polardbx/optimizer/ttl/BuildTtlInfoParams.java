@@ -1,10 +1,13 @@
 package com.alibaba.polardbx.optimizer.ttl;
 
+import com.alibaba.polardbx.optimizer.config.server.IServerConfigManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlTimeToLiveExpr;
 import org.apache.calcite.sql.SqlTimeToLiveJobExpr;
+
+import java.util.List;
 
 /**
  * @author chenghui.lch
@@ -18,6 +21,8 @@ public class BuildTtlInfoParams {
     protected String ttlEnable;
     protected SqlTimeToLiveExpr ttlExpr;
     protected SqlTimeToLiveJobExpr ttlJob;
+    protected String ttlColEncoder;
+    protected String ttlColDecoder;
     protected String ttlFilter;
     protected String ttlCleanup;
     protected SqlNode ttlPartInterval;
@@ -28,6 +33,9 @@ public class BuildTtlInfoParams {
     protected Integer arcPostAllocateCount;
     protected TableMeta ttlTableMeta;
     protected ExecutionContext ec;
+    protected IServerConfigManager serverConfigManager;
+    protected SqlNode ttlRefColList;
+    protected SqlNode ttlHybrid;
 
     public BuildTtlInfoParams() {
 
@@ -159,5 +167,45 @@ public class BuildTtlInfoParams {
 
     public void setEc(ExecutionContext ec) {
         this.ec = ec;
+    }
+
+    public String getTtlColEncoder() {
+        return ttlColEncoder;
+    }
+
+    public void setTtlColEncoder(String ttlColEncoder) {
+        this.ttlColEncoder = ttlColEncoder;
+    }
+
+    public String getTtlColDecoder() {
+        return ttlColDecoder;
+    }
+
+    public void setTtlColDecoder(String ttlColDecoder) {
+        this.ttlColDecoder = ttlColDecoder;
+    }
+
+    public IServerConfigManager getServerConfigManager() {
+        return serverConfigManager;
+    }
+
+    public void setServerConfigManager(IServerConfigManager serverConfigManager) {
+        this.serverConfigManager = serverConfigManager;
+    }
+
+    public SqlNode getTtlRefColList() {
+        return ttlRefColList;
+    }
+
+    public void setTtlRefColList(SqlNode ttlRefColList) {
+        this.ttlRefColList = ttlRefColList;
+    }
+
+    public SqlNode getTtlHybrid() {
+        return ttlHybrid;
+    }
+
+    public void setTtlHybrid(SqlNode ttlHybrid) {
+        this.ttlHybrid = ttlHybrid;
     }
 }

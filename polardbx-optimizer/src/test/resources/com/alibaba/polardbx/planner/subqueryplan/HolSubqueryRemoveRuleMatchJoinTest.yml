@@ -1,0 +1,226 @@
+SQL:
+  - sql: |
+      # Case 1: left-only + left-only (both uncorrelated subqueries)
+      # Two IN subqueries referencing left-side operands, both with uncorrelated predicates.
+      # Exercises matchJoin left-only branch iterating twice.
+      select * from t0 join t1 on v1 in (select v7 from t2 where v8 = 1) and v3 in (select v7 from t2 where v8 = 2);
+    plan: |
+      logicaljoin(condition="true and true", type="inner")
+        logicalsemijoin(condition="v3 = v7", type="semi")
+          logicalsemijoin(condition="v1 = v7", type="semi")
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            project(v7="v7")
+              filter(condition="v8 = ?0")
+                project(v7="v7", v8="v8")
+                  logicalview(tables="t2[p1,p2,p3]", shardcount=3, sql="select `v7`, `v8`, `v9` from `t2` as `t2`")
+          project(v7="v7")
+            filter(condition="v8 = ?1")
+              project(v7="v7", v8="v8")
+                logicalview(tables="t2[p1,p2,p3]", shardcount=3, sql="select `v7`, `v8`, `v9` from `t2` as `t2`")
+        logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+  - sql: |
+      # Case 2: left-only + right-only (both uncorrelated subqueries)
+      # v1 IN (uncorrelated) left-only + v4 IN (uncorrelated) right-only.
+      # Exercises both left-only and right-only branches of matchJoin.
+      select * from t0 join t1 on v1 in (select v7 from t2 where v8 = 1) and v4 in (select v7 from t2 where v8 = 2);
+    plan: |
+      logicaljoin(condition="true and true", type="inner")
+        logicalsemijoin(condition="v1 = v7", type="semi")
+          logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+          project(v7="v7")
+            filter(condition="v8 = ?0")
+              project(v7="v7", v8="v8")
+                logicalview(tables="t2[p1,p2,p3]", shardcount=3, sql="select `v7`, `v8`, `v9` from `t2` as `t2`")
+        logicalsemijoin(condition="v4 = v7", type="semi")
+          logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+          project(v7="v7")
+            filter(condition="v8 = ?1")
+              project(v7="v7", v8="v8")
+                logicalview(tables="t2[p1,p2,p3]", shardcount=3, sql="select `v7`, `v8`, `v9` from `t2` as `t2`")
+  - sql: |
+      # Case 3: correlated left-only + uncorrelated right-only (IN)
+      # v1 IN (correlated to v2) processed first as left-only.
+      # v4 IN (uncorrelated) remaining - tests collectRemainingCorrelVars returns empty for remaining.
+      # This verifies variablesSet propagation works end-to-end in multi-subquery scenario.
+      select * from t0 join t1 on v1 in (select v7 from t2 where v8 = v2) and v4 in (select v7 from t2 where v8 = 1);
+    plan: |
+      logicaljoin(condition="true and true", type="inner")
+        logicalsemijoin(condition="v1 = v70 and v2 = v80", type="semi")
+          logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+          filter(condition="v70 = v7")
+            project(v7="v7", v70="v70", v80="v80")
+              filter(condition="v8 = v80")
+                project(v7="v7", v8="v8", v70="v7", v80="v8")
+                  project(v7="v7", v8="v8")
+                    logicalview(tables="t2[p1,p2,p3]", shardcount=3, sql="select `v7`, `v8`, `v9` from `t2` as `t2`")
+        logicalsemijoin(condition="v4 = v7", type="semi")
+          logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+          project(v7="v7")
+            filter(condition="v8 = ?0")
+              project(v7="v7", v8="v8")
+                logicalview(tables="t2[p1,p2,p3]", shardcount=3, sql="select `v7`, `v8`, `v9` from `t2` as `t2`")
+  - sql: |
+      select v1 from t0 where row(v1, v2) > all (select v7, v8 from t2)
+    plan: |
+      err-code: [tddl-4535][err_multi_column_quantified_comparison] multi-column quantified comparison > all is not supported: the left side has 2 column(s) while the sub-query returns 2 column(s)
+  - sql: |
+      select v1 from t0 where row(v1, v2) < some (select v7, v8 from t2)
+    plan: |
+      err-code: [tddl-4535][err_multi_column_quantified_comparison] multi-column quantified comparison < some is not supported: the left side has 2 column(s) while the sub-query returns 2 column(s)
+  - sql: |
+      # Case 4: sub-query on the side a LEFT join must preserve. TRUE logic would row-filter t0
+      # and drop rows the join has to NULL-pad, so the logic is downgraded and the rewrite keeps
+      # every t0 row behind an "is not null(i)" marker instead.
+      select * from t0 left join t1 on exists (select 1 from t2 where t2.v7 = t0.v1)
+    plan: |
+      project(v1="v1", v2="v2", v3="v3", v4="v4", v5="v5", v6="v6")
+        logicaljoin(condition="is not null(i)", type="left")
+          project(v1="v1", v2="v2", v3="v3", i="i")
+            logicaljoin(condition="v1 = v70", type="left")
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+              logicalagg(group="i,v70")
+                project(i="true", v70="v70")
+                  filter(condition="v7 = v70")
+                    project(v7="v7", v70="v7")
+                      project(v7="v7")
+                        logicalview(tables="t2[p1,p2,p3]", shardcount=3, sql="select `v7`, `v8`, `v9` from `t2` as `t2`")
+          logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+  - sql: |
+      # Case 5: mirror of Case 4 on a RIGHT join, so the preserved side is the right one. Covers
+      # the hitsRight && generatesNullsOnLeft() disjunct through rewriteRightOnly.
+      select * from t0 right join t1 on exists (select 1 from t2 where t2.v7 = t1.v4)
+    plan: |
+      project(v1="v1", v2="v2", v3="v3", v4="v4", v5="v5", v6="v6")
+        logicaljoin(condition="is not null(i)", type="right")
+          logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+          project(v4="v4", v5="v5", v6="v6", i="i")
+            logicaljoin(condition="v4 = v70", type="left")
+              logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+              logicalagg(group="i,v70")
+                project(i="true", v70="v70")
+                  filter(condition="v7 = v70")
+                    project(v7="v7", v70="v7")
+                      project(v7="v7")
+                        logicalview(tables="t2[p1,p2,p3]", shardcount=3, sql="select `v7`, `v8`, `v9` from `t2` as `t2`")
+  - sql: |
+      # Case 6: sub-query on the null-GENERATING side of a LEFT join. Dropping non-matching t1 rows
+      # before the join is sound here, so the logic must stay TRUE: a plain SEMI join with no marker
+      # column. Guards against over-downgrading.
+      select * from t0 left join t1 on exists (select 1 from t2 where t2.v7 = t1.v4)
+    plan: |
+      logicaljoin(condition="true", type="left")
+        logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+        logicalsemijoin(condition="v4 = v70", type="semi")
+          logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+          filter(condition="v7 = v70")
+            project(v7="v7", v8="v8", v9="v9", v70="v7")
+              logicalview(tables="t2[p1,p2,p3]", shardcount=3, sql="select `v7`, `v8`, `v9` from `t2` as `t2`")
+  - sql: |
+      # Case 7: IN on the preserved side of a LEFT join -> rewriteIn's UNKNOWN_AS_FALSE branch.
+      select * from t0 left join t1 on v1 in (select v7 from t2)
+    plan: |
+      project(v1="v1", v2="v2", v3="v3", v4="v4", v5="v5", v6="v6")
+        logicaljoin(condition="cast(is not null(v7))", type="left")
+          project(v1="v1", v2="v2", v3="v3", v7="v7")
+            logicaljoin(condition="v1 = v70", type="left")
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+              filter(condition="v70 = v7")
+                project(v7="v7", v70="v7")
+                  project(v7="v7")
+                    logicalview(tables="t2[p1,p2,p3]", shardcount=3, sql="select `v7`, `v8`, `v9` from `t2` as `t2`")
+          logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+  - sql: |
+      # Case 8: NOT IN on the preserved side of a LEFT join -> tri-valued CASE branch.
+      select * from t0 left join t1 on v1 not in (select v7 from t2)
+    plan: |
+      project(v1="v1", v2="v2", v3="v3", v4="v4", v5="v5", v6="v6")
+        logicaljoin(condition="cast(case(or(is null($3), =($3, 0)), true, =($4, 1), false, =($5, 1), null, true))", type="left")
+          project(v1="v1", v2="v2", v3="v3", $f1="$f1", strict="strict", possible="possible")
+            logicaljoin(condition="v1 = v1", type="left")
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+              project(v1="v1", $f1="case(is null($2), 0, $2)", strict="strict", possible="possible")
+                logicaljoin(condition="v1 <=> v1", type="left")
+                  logicalagg(group="v1")
+                    logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+                  logicalagg(group="v1", c="count()", strict="max(s_case)", possible="max(p_case)")
+                    project(s_case="case(is true(=($0, $1)), 1, 0)", p_case="case(or(=($0, $1), is null($1)), 1, 0)", v1="v1")
+                      logicaljoin(condition="true", type="inner")
+                        logicalagg(group="v1")
+                          logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+                        logicalview(tables="t2[p1,p2,p3]", shardcount=3, sql="select `v7`, `v8`, `v9` from `t2` as `t2`")
+          logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+  - sql: |
+      # Case 9: NOT EXISTS on the preserved side of a LEFT join.
+      select * from t0 left join t1 on not exists (select 1 from t2 where t2.v7 = t0.v1)
+    plan: |
+      project(v1="v1", v2="v2", v3="v3", v4="v4", v5="v5", v6="v6")
+        logicaljoin(condition="is null(i)", type="left")
+          project(v1="v1", v2="v2", v3="v3", i="i")
+            logicaljoin(condition="v1 = v70", type="left")
+              logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+              logicalagg(group="i,v70")
+                project(i="true", v70="v70")
+                  filter(condition="v7 = v70")
+                    project(v7="v7", v70="v7")
+                      project(v7="v7")
+                        logicalview(tables="t2[p1,p2,p3]", shardcount=3, sql="select `v7`, `v8`, `v9` from `t2` as `t2`")
+          logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+  - sql: |
+      # Case 10: single-column ALL on the preserved side of a LEFT join -> MAX/COUNT scalar-agg
+      # CASE. Also pins that the arity guard does not over-fire on a legal single-column comparison.
+      select * from t0 left join t1 on v1 > all (select v7 from t2)
+    plan: |
+      project(v1="v1", v2="v2", v3="v3", v4="v4", v5="v5", v6="v6")
+        logicaljoin(condition="cast(case(or(is null($4), =($4, 0)), true, and(=($4, $5), >($0, $3)), true, or(is null($3), >($0, $3)), null, false))", type="left")
+          logicaljoin(condition="true", type="left")
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            logicalagg(m="max(v7)", c="count()", d="count(v7)")
+              project(v7="v7")
+                logicalview(tables="t2[p1,p2,p3]", shardcount=3, sql="select `v7`, `v8`, `v9` from `t2` as `t2`")
+          logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+  - sql: |
+      # Case 11: single-column SOME counterpart of Case 10.
+      select * from t0 left join t1 on v1 < some (select v7 from t2)
+    plan: |
+      project(v1="v1", v2="v2", v3="v3", v4="v4", v5="v5", v6="v6")
+        logicaljoin(condition="cast(case(or(is null($4), =($4, 0)), false, <($0, $3), true, >($4, $5), null, false))", type="left")
+          logicaljoin(condition="true", type="left")
+            logicalview(tables="t0[p1,p2,p3]", shardcount=3, sql="select `v1`, `v2`, `v3` from `t0` as `t0`")
+            logicalagg(m="max(v7)", c="count()", d="count(v7)")
+              project(v7="v7")
+                logicalview(tables="t2[p1,p2,p3]", shardcount=3, sql="select `v7`, `v8`, `v9` from `t2` as `t2`")
+          logicalview(tables="t1[p1,p2,p3]", shardcount=3, sql="select `v4`, `v5`, `v6` from `t1` as `t1`")
+DDL:
+  t0:
+    CREATE TABLE `t0` (
+    `v1` int(11) NOT NULL,
+    `v2` int(11) NOT NULL,
+    `v3` int(11) NOT NULL,
+    PRIMARY KEY (`v1`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 partition by key(`v1`) PARTITIONS 3;
+  t1:
+    CREATE TABLE `t1` (
+    `v4` int(11) NOT NULL,
+    `v5` int(11) NOT NULL,
+    `v6` int(11) NOT NULL,
+    PRIMARY KEY (`v4`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 partition by key(`v4`) PARTITIONS 3;
+  t2:
+    CREATE TABLE `t2` (
+    `v7` bigint NULL COMMENT "",
+    `v8` bigint NULL COMMENT "",
+    `v9` bigint NULL,
+    PRIMARY KEY (`v7`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 partition by key(`v7`) PARTITIONS 3;
+STATISTICS:
+  t0:
+    168648768
+  t1:
+    6860984320
+  t2:
+    28609843
+CONFIG:
+  FORCE_HOLISTIC_SUBQUERY_UNNEST:
+    true
+  defaltxxAPPName.isNew:
+    true

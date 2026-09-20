@@ -6,6 +6,7 @@ import com.alibaba.polardbx.common.jdbc.ParameterMethod;
 import com.alibaba.polardbx.common.jdbc.RawString;
 import com.alibaba.polardbx.common.jdbc.UnionBytesSql;
 import com.alibaba.polardbx.executor.chunk.Chunk;
+import com.alibaba.polardbx.executor.mpp.metadata.SplitType;
 import com.alibaba.polardbx.executor.operator.LookupTableSortScanExec;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
@@ -213,5 +214,10 @@ public class ParamsDynamicJdbcSplit extends JdbcSplit {
         public int hashCode() {
             return Objects.hash(schema, parameterizedSql, select, orderBy, existLimit, unionNum);
         }
+    }
+
+    @Override
+    public SplitType getSplitType() {
+        return SplitType.DYNAMIC_JDBC;
     }
 }

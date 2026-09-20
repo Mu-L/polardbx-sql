@@ -145,6 +145,15 @@ public class CharsetFactoryImpl implements CharsetFactory {
             case GB18030_UNICODE_520_CI:
                 return CollationHandlers.COLLATION_HANDLER_GB18030_UNICODE_520_CI.getCharsetHandler();
             }
+        case GB18030_2022:
+            switch (collation) {
+            case GB18030_2022_CHINESE_CI:
+                return CollationHandlers.COLLATION_HANDLER_GB18030_2022_CHINESE_CI.getCharsetHandler();
+            case GB18030_2022_BIN:
+                return CollationHandlers.COLLATION_HANDLER_GB18030_2022_BIN.getCharsetHandler();
+            case GB18030_2022_UNICODE_520_CI:
+                return CollationHandlers.COLLATION_HANDLER_GB18030_2022_UNICODE_520_CI.getCharsetHandler();
+            }
         default:
             return DEFAULT_CHARSET_HANDLER;
         }
@@ -223,6 +232,12 @@ public class CharsetFactoryImpl implements CharsetFactory {
             return CollationHandlers.COLLATION_HANDLER_GB18030_BIN;
         case GB18030_UNICODE_520_CI:
             return CollationHandlers.COLLATION_HANDLER_GB18030_UNICODE_520_CI;
+        case GB18030_2022_CHINESE_CI:
+            return CollationHandlers.COLLATION_HANDLER_GB18030_2022_CHINESE_CI;
+        case GB18030_2022_BIN:
+            return CollationHandlers.COLLATION_HANDLER_GB18030_2022_BIN;
+        case GB18030_2022_UNICODE_520_CI:
+            return CollationHandlers.COLLATION_HANDLER_GB18030_2022_UNICODE_520_CI;
         case ASCII_GENERAL_CI:
             return CollationHandlers.COLLATION_HANDLER_ASCII_GENERAL_CI;
         case ASCII_BIN:

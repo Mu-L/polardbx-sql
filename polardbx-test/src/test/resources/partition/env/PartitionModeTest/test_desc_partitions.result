@@ -1,6 +1,6 @@
 ## DISABLE_FAST_SQL_PARSER
-use information_schema;
-desc table_group;
+use information_schema
+desc table_group
 Field,Type,Null,Key,Default,Extra
 id,bigint(20),NO,PRI,null,auto_increment
 gmt_create,timestamp,NO,,CURRENT_TIMESTAMP,
@@ -15,7 +15,7 @@ manual_create,int(11),NO,,0,
 tg_type,int(11),NO,,0,
 auto_split_policy,int(11),NO,,0,
 partition_definition,text,YES,,null,
-describe table_group;
+describe table_group
 Field,Type,Null,Key,Default,Extra
 id,bigint(20),NO,PRI,null,auto_increment
 gmt_create,timestamp,NO,,CURRENT_TIMESTAMP,
@@ -30,10 +30,10 @@ manual_create,int(11),NO,,0,
 tg_type,int(11),NO,,0,
 auto_split_policy,int(11),NO,,0,
 partition_definition,text,YES,,null,
-show create table table_group;
+show create table table_group
 View,Create View,character_set_client,collation_connection
 table_group,[VIRTUAL_VIEW] TABLE_GROUP,utf8,utf8_general_ci
-desc full_table_group;
+desc full_table_group
 Field,Type,Null,Key,Default,Extra
 TABLE_SCHEMA,varchar,YES,,NULL,
 TABLE_GROUP_ID,bigint,YES,,NULL,
@@ -43,7 +43,7 @@ PRIMARY_ZONE,varchar,YES,,NULL,
 IS_MANUAL_CREATE,integer,YES,,NULL,
 PART_INFO,varchar,YES,,NULL,
 TABLES,varchar,YES,,NULL,
-describe full_table_group;
+describe full_table_group
 Field,Type,Null,Key,Default,Extra
 TABLE_SCHEMA,varchar,YES,,NULL,
 TABLE_GROUP_ID,bigint,YES,,NULL,
@@ -53,13 +53,13 @@ PRIMARY_ZONE,varchar,YES,,NULL,
 IS_MANUAL_CREATE,integer,YES,,NULL,
 PART_INFO,varchar,YES,,NULL,
 TABLES,varchar,YES,,NULL,
-show create table full_table_group;
+show create table full_table_group
 View,Create View,character_set_client,collation_connection
 full_table_group,[VIRTUAL_VIEW] FULL_TABLE_GROUP,utf8,utf8_general_ci
-show create table table_detail;
+show create table table_detail
 View,Create View,character_set_client,collation_connection
 table_detail,[VIRTUAL_VIEW] TABLE_DETAIL,utf8,utf8_general_ci
-desc partitions_meta;
+desc partitions_meta
 Field,Type,Null,Key,Default,Extra
 PART_NUM,bigint,YES,,NULL,
 TABLE_SCHEMA,varchar,YES,,NULL,
@@ -69,7 +69,7 @@ PRIM_TABLE,varchar,YES,,NULL,
 TABLE_TYPE,varchar,YES,,NULL,
 TG_NAME,varchar,YES,,NULL,
 PART_METHOD,varchar,YES,,NULL,
-PART_COL,bigint,YES,,NULL,
+PART_COL,varchar,YES,,NULL,
 PART_COL_TYPE,varchar,YES,,NULL,
 PART_EXPR,varchar,YES,,NULL,
 PART_NAME,varchar,YES,,NULL,
@@ -90,7 +90,7 @@ PHY_GROUP,varchar,YES,,NULL,
 PHY_DB,varchar,YES,,NULL,
 PHY_TB,varchar,YES,,NULL,
 RW_DN,varchar,YES,,NULL,
-describe partitions_meta;
+describe partitions_meta
 Field,Type,Null,Key,Default,Extra
 PART_NUM,bigint,YES,,NULL,
 TABLE_SCHEMA,varchar,YES,,NULL,
@@ -100,7 +100,7 @@ PRIM_TABLE,varchar,YES,,NULL,
 TABLE_TYPE,varchar,YES,,NULL,
 TG_NAME,varchar,YES,,NULL,
 PART_METHOD,varchar,YES,,NULL,
-PART_COL,bigint,YES,,NULL,
+PART_COL,varchar,YES,,NULL,
 PART_COL_TYPE,varchar,YES,,NULL,
 PART_EXPR,varchar,YES,,NULL,
 PART_NAME,varchar,YES,,NULL,
@@ -121,7 +121,7 @@ PHY_GROUP,varchar,YES,,NULL,
 PHY_DB,varchar,YES,,NULL,
 PHY_TB,varchar,YES,,NULL,
 RW_DN,varchar,YES,,NULL,
-desc partitions;
+desc partitions
 Field,Type,Null,Key,Default,Extra
 TABLE_CATALOG,varchar,YES,,NULL,
 TABLE_SCHEMA,varchar,YES,,NULL,

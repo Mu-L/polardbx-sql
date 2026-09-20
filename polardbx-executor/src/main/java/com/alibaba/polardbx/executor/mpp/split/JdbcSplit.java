@@ -24,6 +24,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.executor.mpp.metadata.SplitType;
 import com.alibaba.polardbx.executor.mpp.spi.ConnectorSplit;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableScanBuilder;
@@ -51,6 +52,7 @@ public class JdbcSplit implements ConnectorSplit {
 
     protected final byte[] hint;
     protected final BytesSql sqlTemplate;
+    protected final BytesSql sqlTemplateWithoutMget;
     protected final String orderBy;
     protected transient List<ParameterContext> flattenParams;
     protected transient String hintSql;
@@ -71,6 +73,7 @@ public class JdbcSplit implements ConnectorSplit {
         String dbIndex,
         byte[] hint,
         BytesSql sqlTemplate,
+        BytesSql sqlTemplateWithoutMget,
         String orderBy,
         List<List<ParameterContext>> params,
         String hostAddress,
@@ -91,6 +94,7 @@ public class JdbcSplit implements ConnectorSplit {
         this.tableNames = tableNames;
         this.rw = rw;
         this.sqlTemplate = sqlTemplate;
+        this.sqlTemplateWithoutMget = sqlTemplateWithoutMget;
         this.orderBy = orderBy;
         this.containSelect = containSelect;
         this.intraGroupSortKey = intraGroupSortKey;
@@ -107,6 +111,7 @@ public class JdbcSplit implements ConnectorSplit {
         @JsonProperty("dbIndex") String dbIndex,
         @JsonProperty("hint") byte[] hint,
         @JsonProperty("sqlTemplate") BytesSql sqlTemplate,
+        @JsonProperty("sqlTemplateWithoutMget") BytesSql sqlTemplateWithoutMget,
         @JsonProperty("orderBy") String orderBy,
         @JsonProperty("params") List<List<ParameterContext>> params,
         @JsonProperty("hostAddress") String hostAddress,
@@ -126,6 +131,7 @@ public class JdbcSplit implements ConnectorSplit {
         this.tableNames = tableNames;
         this.rw = ITransaction.RW.valueOf(rw.toUpperCase());
         this.sqlTemplate = sqlTemplate;
+        this.sqlTemplateWithoutMget = sqlTemplateWithoutMget;
         this.orderBy = orderBy;
         this.containSelect = containSelect;
         this.galaxyDigest = galaxyDigest;
@@ -136,7 +142,7 @@ public class JdbcSplit implements ConnectorSplit {
 
     public JdbcSplit(JdbcSplit jdbcSplit) {
         this(jdbcSplit.getCatalogName(), jdbcSplit.getSchemaName(), jdbcSplit.getDbIndex(), jdbcSplit.getHint(),
-            jdbcSplit.getSqlTemplate(), jdbcSplit.getOrderBy(),
+            jdbcSplit.getSqlTemplate(), jdbcSplit.getSqlTemplateWithoutMget(), jdbcSplit.getOrderBy(),
             jdbcSplit.getParams(), jdbcSplit.getHostAddress(), jdbcSplit.getTableNames(), jdbcSplit.getTransactionRw(),
             jdbcSplit.isContainSelect(), jdbcSplit.getIntraGroupSortKey(), jdbcSplit.getGalaxyDigest(),
             jdbcSplit.isSupportGalaxyPrepare(), jdbcSplit.getSelect(), jdbcSplit.startSql);
@@ -164,6 +170,12 @@ public class JdbcSplit implements ConnectorSplit {
         return this;
     }
 
+    @Override
+    @JsonIgnore
+    public SplitType getSplitType() {
+        return SplitType.JDBC;
+    }
+
     @JsonProperty
     public String getCatalogName() {
         return catalogName;
@@ -172,6 +184,11 @@ public class JdbcSplit implements ConnectorSplit {
     @JsonProperty
     public String getSchemaName() {
         return schemaName;
+    }
+
+    @JsonProperty
+    public BytesSql getSqlTemplateWithoutMget() {
+        return sqlTemplateWithoutMget;
     }
 
     @JsonProperty

@@ -1,0 +1,44 @@
+## DISABLE_FAST_SQL_PARSER
+select unitmurhashc1('1')
+unitmurhashc1('1')
+1
+## error_msg: $# check routeKey #$
+select unitmurhashc1('')
+check routeKey
+## error_msg: $# check routeKey #$
+select unitmurhashc1(null)
+check routeKey
+## error_msg: $# check routeKey #$
+select unitmurhashc1('1234567890123456')
+check routeKey
+## error_msg: $# check routeKey #$
+select unitmurhashc1('aa')
+check routeKey
+create table dble_t1
+(a varchar(64), b int)
+partition by udf_hash(unitmurhashc1(a))
+partitions 2
+(
+  partition p1 values less than(1),
+  partition p2 values less than(2)
+)
+insert into dble_t1 values ('1', 1)
+select * from dble_t1 where a='1'
+a,b
+1,1
+select part_route('','dble_t1', '1')
+part_route('', 'dble_t1', '1')
+p2
+## error_msg: $# check routeKey #$
+select part_route('','dble_t1', '')
+check routeKey
+## error_msg: $# check routeKey #$
+select part_route('','dble_t1', null)
+check routeKey
+## error_msg: $# check routeKey #$
+select part_route('','dble_t1', '1234567890123456')
+check routeKey
+## error_msg: $# check routeKey #$
+select part_route('','dble_t1', 'aa')
+check routeKey
+drop table dble_t1;

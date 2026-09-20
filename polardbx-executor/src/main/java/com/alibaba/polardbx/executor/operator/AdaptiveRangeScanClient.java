@@ -5,6 +5,7 @@ import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.executor.mpp.operator.RangeScanMode;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.CursorMeta;
+import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 
 /**
  * @author yuehan.wcf
@@ -15,8 +16,8 @@ public class AdaptiveRangeScanClient extends NormalRangeScanClient {
     private final AdaptivePolicy adaptivePolicy;
 
     public AdaptiveRangeScanClient(ExecutionContext context, CursorMeta meta,
-                                   boolean useTransaction, int prefetchNum) {
-        super(context, meta, useTransaction, 1, RangeScanMode.ADAPTIVE);
+                                   boolean useTransaction, int prefetchNum, LogicalView logicalView) {
+        super(context, meta, useTransaction, 1, RangeScanMode.ADAPTIVE, logicalView);
         this.originPrefetch = prefetchNum;
         this.adaptivePolicy =
             AdaptivePolicy.getPolicy(context.getParamManager().getString(ConnectionParams.RANGE_SCAN_ADAPTIVE_POLICY));
@@ -29,7 +30,8 @@ public class AdaptiveRangeScanClient extends NormalRangeScanClient {
      *
      * @return Returns the calculated next prefetch value. The returned value is an integer representing the amount of data to be prefetched.
      */
-    public int calcNextPrefetch() {
+    @Override
+    public int getPrefetchNum() {
         // If using the constant policy, directly return the original prefetch value
         if (adaptivePolicy == AdaptivePolicy.CONSTANT) {
             return originPrefetch;

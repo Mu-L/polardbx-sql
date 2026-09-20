@@ -54,9 +54,6 @@ public interface IConnection extends Connection {
     default void setGlobalServerVariables(Map<String, Object> GlobalServerVariables) throws SQLException {
     }
 
-    default void setConnectionVariables(Map<String, Object> connectionVariables) throws SQLException {
-    }
-
     /**
      * Run a SQL later within the next execution.
      *
@@ -86,8 +83,20 @@ public interface IConnection extends Connection {
         throw new UnsupportedOperationException("Connection does not support trx xid.");
     }
 
-    default void setInShareReadView(boolean inShareReadView) {
-        throw new UnsupportedOperationException("Connection does not support share read view.");
+    default long getSeq() {
+        throw new UnsupportedOperationException("Connection does not support seq.");
+    }
+
+    default void setSeq(long seq) {
+        throw new UnsupportedOperationException("Connection does not support seq.");
+    }
+
+    default String getDnId() {
+        throw new UnsupportedOperationException("Connection does not support dn id.");
+    }
+
+    default void setDnId(String dnId) {
+        throw new UnsupportedOperationException("Connection does not support dn id.");
     }
 
     default boolean isInShareReadView() {
@@ -125,6 +134,23 @@ public interface IConnection extends Connection {
     default void disableFlashbackArea() throws SQLException {
         try (Statement stmt = createStatement()) {
             stmt.execute("SET query_via_flashback_area = 0");
+        } catch (Throwable t) {
+            // For safety, discard connection.
+            discard(t);
+            throw t;
+        }
+    }
+
+    default IConnection enableAsOfCrossDdl(boolean enable) throws SQLException {
+        if (enable) {
+            this.executeLater("SET as_of_cross_ddl_enabled = 1");
+        }
+        return this;
+    }
+
+    default void disableAsOfCrossDdl() throws SQLException {
+        try (Statement stmt = createStatement()) {
+            stmt.execute("SET as_of_cross_ddl_enabled = 0");
         } catch (Throwable t) {
             // For safety, discard connection.
             discard(t);

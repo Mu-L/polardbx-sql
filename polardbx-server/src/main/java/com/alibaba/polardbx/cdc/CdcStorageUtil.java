@@ -73,6 +73,8 @@ public class CdcStorageUtil {
         "select group_name from `binlog_storage_history` where instruction_id= '%s' and cluster_id = '%s'";
     private static final String SELECT_STREAM_BY_GROUP_NAME =
         "select stream_name from `binlog_x_stream` where group_name = '%s'";
+    private static final String SELECT_STREAM_BY_GROUP_NAME_V2 =
+        "select stream_name,status from `binlog_x_stream` where group_name = '%s'";
     private static final String SELECT_BINLOG_CLUSTER_ID =
         "select distinct cluster_id from `binlog_node_info` where cluster_type='BINLOG'";
     private static final String SELECT_BINLOG_X_CLUSTER_ID =
@@ -185,6 +187,25 @@ public class CdcStorageUtil {
                 throw new TddlNestableRuntimeException("", ex);
             }
         }
+    }
+
+    static boolean isCdcStreamStatusColumnExists(Connection connection) {
+        try (Statement stmt = connection.createStatement()) {
+            try (ResultSet rs = stmt.executeQuery("SHOW COLUMNS FROM binlog_x_stream")) {
+                while (rs.next()) {
+                    if ("status".equalsIgnoreCase(rs.getString("Field"))) {
+                        return true;
+                    }
+                }
+            }
+        } catch (SQLException ex) {
+            if (ex.getErrorCode() == ErrorCode.ER_NO_SUCH_TABLE.getCode()) {
+                return false;
+            } else {
+                throw new TddlNestableRuntimeException("", ex);
+            }
+        }
+        return false;
     }
 
     private static int waitInitialCommand(BinlogCommandAccessor commandAccessor, BinlogCommandRecord commandRecord)
@@ -302,19 +323,35 @@ public class CdcStorageUtil {
         return null;
     }
 
-    private static Set<String> getStreamSetByGroup(Connection connection, String groupName) {
+    static Set<String> getStreamSetByGroup(Connection connection, String groupName) {
         Set<String> streams = new HashSet<>();
-        String querySql = String.format(SELECT_STREAM_BY_GROUP_NAME, groupName);
-        try (Statement stmt = connection.createStatement()) {
-            try (ResultSet rs = stmt.executeQuery(querySql)) {
-                while (rs.next()) {
-                    streams.add(rs.getString(1));
+        if (isCdcStreamStatusColumnExists(connection)) {
+            String querySql = String.format(SELECT_STREAM_BY_GROUP_NAME_V2, groupName);
+            try (Statement stmt = connection.createStatement()) {
+                try (ResultSet rs = stmt.executeQuery(querySql)) {
+                    while (rs.next()) {
+                        if (rs.getInt(2) == 0) {
+                            streams.add(rs.getString(1));
+                        }
+                    }
                 }
+            } catch (SQLException e) {
+                throw new TddlNestableRuntimeException("SQL Error", e);
             }
-        } catch (SQLException e) {
-            throw new TddlNestableRuntimeException("SQL Error", e);
+            return streams;
+        } else {
+            String querySql = String.format(SELECT_STREAM_BY_GROUP_NAME, groupName);
+            try (Statement stmt = connection.createStatement()) {
+                try (ResultSet rs = stmt.executeQuery(querySql)) {
+                    while (rs.next()) {
+                        streams.add(rs.getString(1));
+                    }
+                }
+            } catch (SQLException e) {
+                throw new TddlNestableRuntimeException("SQL Error", e);
+            }
+            return streams;
         }
-        return streams;
     }
 
     private static Set<String> getStreamSetFromStorageHistoryDetail(Connection connection, String instructionId,
@@ -346,7 +383,7 @@ public class CdcStorageUtil {
                         + "instruction id :" + instructionId);
             }
             Set<String> storageStreams = getStreamSetFromStorageHistoryDetail(connection, instructionId, clusterId);
-            if (expectedStreams.equals(storageStreams)) {
+            if (storageStreams.containsAll(expectedStreams)) {
                 return;
             }
 

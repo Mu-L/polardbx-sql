@@ -24,6 +24,9 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.pl.udf.DropJavaFunctionS
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcDropJavaFunctionMarkTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.TransientDdlJob;
+import com.alibaba.polardbx.executor.utils.PolarPrivilegeUtils;
+import com.alibaba.polardbx.gms.privilege.PrivilegeKind;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.expression.JavaFunctionManager;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalDropJavaFunction;
@@ -67,10 +70,18 @@ public class DropJavaFunctionJobFactory extends AbstractFunctionJobFactory {
     }
 
     public static ExecutableDdlJob dropFunction(LogicalDropJavaFunction dropFunction, ExecutionContext ec) {
-        if (!ec.isSuperUserOrAllPrivileges()) {
+        if (!ec.isSuperUserOrAllPrivileges() && !PolarPrivilegeUtils.checkPolardbxPrivilege(ec, PrivilegeKind.DROP)) {
             PrivilegeContext pc = ec.getPrivilegeContext();
             throw new TddlRuntimeException(ErrorCode.ERR_CHECK_PRIVILEGE_FAILED,
-                "drop java udf should be super user or has all privileges", pc.getUser(), pc.getHost());
+                "drop java udf on polardbx", pc.getUser(), pc.getHost());
+        }
+        boolean forceDropJavaUdf = ec.getParamManager().getBoolean(ConnectionParams.FORCE_DROP_JAVA_UDF);
+        SqlDropJavaFunction sqlDropFunction = dropFunction.getSqlDropFunction();
+        String javaFuncName = sqlDropFunction.getFuncName();
+        boolean isIfExists = sqlDropFunction.isIfExists();
+        boolean udfFuncExists = JavaFunctionManager.getInstance().checkIfContainsFunctionByMetaDb(javaFuncName);
+        if (!forceDropJavaUdf && !udfFuncExists && isIfExists) {
+            return new TransientDdlJob();
         }
         return new DropJavaFunctionJobFactory(dropFunction, ec.getSchemaName(), ec.getParamManager().getBoolean(
             ConnectionParams.FORCE_DROP_JAVA_UDF)).create();

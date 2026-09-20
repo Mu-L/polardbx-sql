@@ -37,8 +37,8 @@ public class Gb18030Unicode520CiCollationHandler extends AbstractUCA520Collation
         super(charsetHandler);
     }
 
-    private static final int[] TAB_GB18030_2_UNI;
-    private static final int[] TAB_GB18030_4_UNI;
+    protected static final int[] TAB_GB18030_2_UNI;
+    protected static final int[] TAB_GB18030_4_UNI;
 
     static {
         Yaml yaml = new Yaml();

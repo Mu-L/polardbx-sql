@@ -38,15 +38,17 @@ import static com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcMarkUtil.buildEx
 @TaskName(name = "CdcCreateColumnarIndexTask")
 public class CdcCreateColumnarIndexTask extends BaseDdlTask {
     private final String logicalTableName;
-    private final String createIndexSql;
+    private String createIndexSql;
     private final String columnarIndexTableName;
     private final String originIndexName;
     private final Long versionId;
     private final CciSchemaEvolutionTask cciSchemaEvolutionTask;
+    private final Long taskMarkSeq;
+    private final boolean markByHint;
 
     public CdcCreateColumnarIndexTask(String schemaName, String logicalTableName, String columnarIndexTableName,
                                       String originIndexName, Map<String, String> options,
-                                      String createIndexSql, Long versionId) {
+                                      String createIndexSql, Long versionId, Long taskMarkSeq, boolean markByHint) {
         this(schemaName,
             logicalTableName,
             columnarIndexTableName,
@@ -57,13 +59,16 @@ public class CdcCreateColumnarIndexTask extends BaseDdlTask {
                 logicalTableName,
                 columnarIndexTableName,
                 options,
-                versionId));
+                versionId),
+            taskMarkSeq,
+            markByHint);
     }
 
     @JSONCreator
     private CdcCreateColumnarIndexTask(String schemaName, String logicalTableName, String columnarIndexTableName,
                                        String originIndexName, String createIndexSql, Long versionId,
-                                       CciSchemaEvolutionTask cciSchemaEvolutionTask) {
+                                       CciSchemaEvolutionTask cciSchemaEvolutionTask, Long taskMarkSeq,
+                                       boolean markByHint) {
         super(schemaName);
         this.logicalTableName = logicalTableName;
         this.createIndexSql = createIndexSql;
@@ -71,6 +76,8 @@ public class CdcCreateColumnarIndexTask extends BaseDdlTask {
         this.originIndexName = originIndexName;
         this.versionId = versionId;
         this.cciSchemaEvolutionTask = cciSchemaEvolutionTask;
+        this.taskMarkSeq = taskMarkSeq;
+        this.markByHint = markByHint;
     }
 
     @Override
@@ -78,13 +85,16 @@ public class CdcCreateColumnarIndexTask extends BaseDdlTask {
         cciSchemaEvolutionTask.duringTransaction(jobId, metaDbConnection, executionContext);
 
         DdlContext ddlContext = executionContext.getDdlContext();
+        if (markByHint) {
+            createIndexSql = CdcMarkUtil.getExtraDdlHint(createIndexSql);
+        }
         String markSql = CdcMarkUtil.buildVersionIdHint(versionId) + createIndexSql;
         CdcMarkUtil.useDdlVersionId(executionContext, versionId);
         CdcMarkUtil.useOriginalDDL(executionContext);
         final Map<String, Object> extParam = buildExtendParameter(executionContext, createIndexSql);
         // Set TASK_MARK_SEQ=0, so that CdcDdlMark for rollback task, with same jobId and taskId,
         // will not be ignored in com.alibaba.polardbx.cdc.CdcManager.recordDdl
-        extParam.put(ICdcManager.TASK_MARK_SEQ, 1);
+        extParam.put(ICdcManager.TASK_MARK_SEQ, taskMarkSeq);
 
         CdcManagerHelper.getInstance()
             .notifyDdlNew(schemaName, logicalTableName, SqlKind.CREATE_INDEX.name(),
@@ -97,14 +107,17 @@ public class CdcCreateColumnarIndexTask extends BaseDdlTask {
         cciSchemaEvolutionTask.duringRollbackTransaction(jobId, metaDbConnection, executionContext);
 
         // DDL_ID for ext will be added in front of sql in CdcMarkUtil.buildExtendParameter()
-        final String rollbackSql = "DROP INDEX `" + originIndexName + "` ON `" + logicalTableName + "`";
+        String rollbackSql = "DROP INDEX `" + originIndexName + "` ON `" + logicalTableName + "`";
+        if (markByHint) {
+            rollbackSql = CdcMarkUtil.getExtraDdlHint(rollbackSql);
+        }
         final String markSql = CdcMarkUtil.buildVersionIdHint(versionId) + rollbackSql;
         CdcMarkUtil.useDdlVersionId(executionContext, versionId);
         CdcMarkUtil.useOriginalDDL(executionContext);
         final Map<String, Object> extParam = buildExtendParameter(executionContext, rollbackSql);
         // Set TASK_MARK_SEQ=1, so that CdcDdlMark for rollback task will not be ignored
         // in com.alibaba.polardbx.cdc.CdcManager.recordDdl
-        extParam.put(ICdcManager.TASK_MARK_SEQ, 2);
+        extParam.put(ICdcManager.TASK_MARK_SEQ, taskMarkSeq + 1);
 
         final DdlContext ddlContext = executionContext.getDdlContext();
         CdcManagerHelper.getInstance()

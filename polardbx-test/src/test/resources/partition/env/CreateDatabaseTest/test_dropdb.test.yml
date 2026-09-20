@@ -1,0 +1,47 @@
+## DISABLE_FAST_SQL_PARSER
+
+
+create database mydropdb mode='auto';
+
+  
+  ## error_msg: $# Not allowed #$
+create table mydropdb.mydropdb_k_t1 (a bigint)
+partition by key(unix_timestamp(a))
+partitions 2
+;
+  
+  ## error_msg: $# not allowed #$
+create table mydropdb.mydropdb_r_t1 (a bigint)
+partition by range(unix_timestamp(a))
+(
+partition p1 values less than(maxvalue)
+)
+;
+  
+  ## error_msg: $# not allowed #$
+create table mydropdb.mydropdb_l_t1 (a bigint)
+partition by list(unix_timestamp(a))
+(
+partition p1 values in (default)
+);
+
+create table mydropdb.mydropdb_k_t1 (a bigint)
+partition by key(a)
+partitions 2
+;
+
+create table mydropdb.mydropdb_r_t1 (a bigint)
+partition by range(a)
+(
+partition p1 values less than(maxvalue)
+)
+;
+
+create table mydropdb.mydropdb_l_t1 (a bigint)
+partition by list(a)
+(
+partition p1 values in (default)
+);
+
+use polardbx;
+drop database mydropdb;

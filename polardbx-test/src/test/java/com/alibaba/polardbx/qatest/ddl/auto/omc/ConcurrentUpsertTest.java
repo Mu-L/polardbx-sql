@@ -3,6 +3,7 @@ package com.alibaba.polardbx.qatest.ddl.auto.omc;
 import com.alibaba.polardbx.executor.common.StorageInfoManager;
 import com.alibaba.polardbx.qatest.CdcIgnore;
 import com.alibaba.polardbx.qatest.util.ConnectionManager;
+import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -12,11 +13,10 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
 
     private final boolean supportsAlterType =
         StorageInfoManager.checkSupportAlterType(ConnectionManager.getInstance().getMysqlDataSource());
-    private final boolean isRDS80 = StorageInfoManager.checkRDS80(ConnectionManager.getInstance().getMysqlDataSource());
 
     @Before
     public void beforeMethod() {
-        org.junit.Assume.assumeTrue(supportsAlterType && !isRDS80);
+        org.junit.Assume.assumeTrue(supportsAlterType);
     }
 
     @Override
@@ -28,7 +28,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void modifyWithUpsert1() throws Exception {
         String tableName = "omc_with_upsert_1";
         String colDef = "int";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s modify column b bigint, modify column c longtext";
         String selectSql = "select * from %s order by a";
         Function<Integer, String> generator =
@@ -46,7 +46,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void modifyWithUpsert2() throws Exception {
         String tableName = "omc_with_upsert_2";
         String colDef = "int";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s modify column b bigint, modify column d char(20) character set gbk";
         String selectSql = "select * from %s order by a desc";
         Function<Integer, String> generator =
@@ -64,7 +64,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void modifyWithUpsert3() throws Exception {
         String tableName = "omc_with_upsert_3";
         String colDef = "int unique key";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s modify column b bigint";
         String selectSql = "select * from %s order by a desc";
         Function<Integer, String> generator =
@@ -83,7 +83,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void modifyWithUpsert4() throws Exception {
         String tableName = "omc_with_upsert_4";
         String colDef = "int unique key";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s modify column b char(20)";
         String selectSql = "select * from %s order by a";
         Function<Integer, String> generator =
@@ -101,7 +101,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void modifyWithUpsert5() throws Exception {
         String tableName = "omc_with_upsert_5";
         String colDef = "int default 3";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s modify column b bigint default 4, modify column c varchar(20) default 'xyz'";
         String selectSql = "select * from %s order by a";
         Function<Integer, String> generator =
@@ -121,7 +121,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void modifyWithUpsert6() throws Exception {
         String tableName = "omc_with_upsert_6";
         String colDef = "int default 3";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s modify column b bigint default 4, modify column d char(10) default 'xyz'";
         String selectSql = "select * from %s order by a";
         Function<Integer, String> generator =
@@ -141,7 +141,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void modifyWithUpsert4PartitionKey1() throws Exception {
         String tableName = "omc_with_upsert_1";
         String colDef = "int unique key";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s modify column b bigint";
         String selectSql = "select * from %s order by a";
         Function<Integer, String> generator =
@@ -160,7 +160,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void modifyWithUpsert4PartitionKey2() throws Exception {
         String tableName = "omc_with_upsert_2";
         String colDef = "int unique key";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s modify column b bigint";
         String selectSql = "select * from %s order by a desc";
         Function<Integer, String> generator =
@@ -179,7 +179,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void changeWithUpsert1() throws Exception {
         String tableName = "omc_with_upsert_1";
         String colDef = "int";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s change column b e bigint, change column c f char(10)";
         String selectSql = "select * from %s order by a";
         Function<Integer, String> generator1 =
@@ -200,7 +200,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void changeWithUpsert2() throws Exception {
         String tableName = "omc_with_upsert_2";
         String colDef = "int";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s change column b e bigint";
         String selectSql = "select * from %s order by a desc";
         Function<Integer, String> generator1 =
@@ -221,7 +221,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void changeWithUpsert3() throws Exception {
         String tableName = "omc_with_upsert_3";
         String colDef = "int unique key";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s change column b e bigint";
         String selectSql = "select * from %s order by a desc";
         Function<Integer, String> generator1 =
@@ -243,7 +243,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void changeWithUpsert4() throws Exception {
         String tableName = "omc_with_upsert_4";
         String colDef = "int unique key";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s change column b e bigint";
         String selectSql = "select * from %s order by a";
         Function<Integer, String> generator1 =
@@ -264,7 +264,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void changeWithUpsert5() throws Exception {
         String tableName = "omc_with_upsert_5";
         String colDef = "int default 3";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s change column b e bigint default 4, change column c f char(10) default 'xyz'";
         String selectSql = "select * from %s order by a";
         Function<Integer, String> generator1 =
@@ -288,7 +288,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void changeWithUpsert6() throws Exception {
         String tableName = "omc_with_upsert_6";
         String colDef = "int default 3";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s change column b e bigint default 4, change column c f varchar(7) default 'aaa', change column d g int default '123'";
         String selectSql = "select * from %s order by a";
         Function<Integer, String> generator1 =
@@ -312,7 +312,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void changeWithUpsert7() throws Exception {
         String tableName = "omc_with_upsert_7";
         String colDef = "int default 3";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s change column b e bigint default 4, change column c f varchar(7) default 'aaa', drop column d, add column g char(10) not null default 'xyz'";
         String selectSql = "select * from %s order by a";
         Function<Integer, String> generator1 =
@@ -336,7 +336,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void singleChangeWithUpsert() throws Exception {
         String tableName = "omc_single_with_upsert";
         String colDef = "int default 3";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s change column b e bigint default 4, change column c f varchar(7) default 'aaa', drop column d, add column g char(10) not null default 'xyz'";
         String selectSql = "select * from %s order by a";
         String createSql = String.format(
@@ -366,7 +366,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void broadcastChangeWithUpsert() throws Exception {
         String tableName = "omc_broadcast_with_upsert";
         String colDef = "int default 3";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s change column b e bigint default 4, change column c f varchar(7) default 'aaa', drop column d, add column g char(10) not null default 'xyz'";
         String selectSql = "select * from %s order by a";
         String createSql = String.format(
@@ -397,7 +397,7 @@ public class ConcurrentUpsertTest extends ConcurrentDMLBaseTest {
     public void changeWithUpsert8() throws Exception {
         String tableName = "omc_with_update_8";
         String colDef = "float(8,2)";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s change column b e decimal(9,3)";
         String selectSql = "select * from %s order by a";
         Function<Integer, String> generator1 =

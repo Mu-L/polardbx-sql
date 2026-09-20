@@ -222,6 +222,11 @@ public class SqlPrettyWriter implements SqlWriter {
         || (frame.frameType == FrameTypeEnum.SETOP);
   }
 
+  @Override
+  public boolean forView() {
+    return false;
+  }
+
   public boolean isQuoteAllIdentifiers() {
     return quoteAllIdentifiers;
   }

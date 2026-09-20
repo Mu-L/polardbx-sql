@@ -16,7 +16,6 @@
  */
 package org.apache.calcite.sql;
 
-import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import org.apache.calcite.linq4j.function.Function1;
@@ -29,6 +28,7 @@ import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.SqlOperandTypeChecker;
 import org.apache.calcite.sql.type.SqlOperandTypeInference;
 import org.apache.calcite.sql.type.SqlReturnTypeInference;
+import org.apache.calcite.sql.util.ReflectiveSqlOperatorTable;
 import org.apache.calcite.sql.validate.SqlUserDefinedFunction;
 import org.apache.calcite.sql.validate.SqlValidator;
 import org.apache.calcite.sql.validate.SqlValidatorScope;
@@ -88,6 +88,7 @@ public class SqlFunction extends SqlOperator {
         NON_PUSHDOWN_FUNCTION.add("SCHEMA");
         NON_PUSHDOWN_FUNCTION.add("SESSION_USER");
         NON_PUSHDOWN_FUNCTION.add("SYSTEM_USER");
+        NON_PUSHDOWN_FUNCTION.add("NODE_ID");
         NON_PUSHDOWN_FUNCTION.add("USER");
         NON_PUSHDOWN_FUNCTION.add("VERSION");
         NON_PUSHDOWN_FUNCTION.add("TSO_TIMESTAMP");
@@ -100,6 +101,8 @@ public class SqlFunction extends SqlOperator {
         NON_PUSHDOWN_FUNCTION.add("IS_USED_LOCK");
         NON_PUSHDOWN_FUNCTION.add("HYPERLOGLOG");
         NON_PUSHDOWN_FUNCTION.add("PART_HASH");
+        NON_PUSHDOWN_FUNCTION.add("DDL_JOB_ID");
+        NON_PUSHDOWN_FUNCTION.add("DDL_PLAN_ID");
         NON_PUSHDOWN_FUNCTION.add("CARTESIAN");
         NON_PUSHDOWN_FUNCTION.add("LIST");
         SqlFunction.NON_PUSHDOWN_FUNCTION.add("LBAC_CHECK");
@@ -107,6 +110,32 @@ public class SqlFunction extends SqlOperator {
         SqlFunction.NON_PUSHDOWN_FUNCTION.add("LBAC_WRITE");
         SqlFunction.NON_PUSHDOWN_FUNCTION.add("LBAC_WRITE_STRICT_CHECK");
         SqlFunction.NON_PUSHDOWN_FUNCTION.add("LBAC_USER_WRITE_LABEL");
+        NON_PUSHDOWN_FUNCTION.add("ENCDB_IMPORT_RULE");
+        NON_PUSHDOWN_FUNCTION.add("ENCDB_DELETE_RULE");
+        NON_PUSHDOWN_FUNCTION.add("ENCDB_MODIFY_RULE");
+        NON_PUSHDOWN_FUNCTION.add("ENCDB_DESCRIBE_RULE");
+        NON_PUSHDOWN_FUNCTION.add("ENCDB_GRANT_USER");
+        NON_PUSHDOWN_FUNCTION.add("ENCDB_DESCRIBE_USER");
+        NON_PUSHDOWN_FUNCTION.add("FETCH_BLOB");
+
+        // AI Model Management Functions
+        NON_PUSHDOWN_FUNCTION.add("AI_REGISTER_MODEL");
+        NON_PUSHDOWN_FUNCTION.add("AI_UPDATE_MODEL");
+        NON_PUSHDOWN_FUNCTION.add("AI_DROP_MODEL");
+        NON_PUSHDOWN_FUNCTION.add("AI_LIST_MODELS");
+        NON_PUSHDOWN_FUNCTION.add("AI_DESCRIBE_MODEL");
+
+        // AI Inference Functions
+        NON_PUSHDOWN_FUNCTION.add("AI_PROMPT");
+        NON_PUSHDOWN_FUNCTION.add("AI_EMBEDDING");
+        NON_PUSHDOWN_FUNCTION.add("AI_RANK");
+        NON_PUSHDOWN_FUNCTION.add("AI_CLASSIFY");
+        NON_PUSHDOWN_FUNCTION.add("AI_SIMILARITY");
+        NON_PUSHDOWN_FUNCTION.add("AI_EXTRACT");
+        NON_PUSHDOWN_FUNCTION.add("AI_SUMMARIZE");
+        NON_PUSHDOWN_FUNCTION.add("AI_TEXT2SQL");
+        NON_PUSHDOWN_FUNCTION.add("AI_VL_EMBEDDING");
+        NON_PUSHDOWN_FUNCTION.add("AI_PARSE_DOCUMENT");
 
         // Time Function
         DYNAMIC_FUNCTION.add("CURDATE");
@@ -141,7 +170,10 @@ public class SqlFunction extends SqlOperator {
         DYNAMIC_FUNCTION.add("SESSION_USER");
         DYNAMIC_FUNCTION.add("SYSTEM_USER");
         DYNAMIC_FUNCTION.add("USER");
+        DYNAMIC_FUNCTION.add("NODE_ID");
         DYNAMIC_FUNCTION.add("VERSION");
+        DYNAMIC_FUNCTION.add("DDL_JOB_ID");
+        DYNAMIC_FUNCTION.add("DDL_PLAN_ID");
 
         DYNAMIC_FUNCTION.add("GET_LOCK");
         DYNAMIC_FUNCTION.add("IS_FREE_LOCK");
@@ -398,14 +430,28 @@ public class SqlFunction extends SqlOperator {
         final List<RelDataType> argTypes = constructArgTypeList(validator, scope,
             call, args, convertRowArgToColumnList);
 
-        SqlFunction function;
+        SqlFunction function = null;
         if (call != null && call.getOperator() == SqlStdOperatorTable.IMPLICIT_CAST) {
             function = SqlStdOperatorTable.IMPLICIT_CAST;
         } else {
-            function = (SqlFunction) SqlUtil.lookupRoutine(validator.getOperatorTable(),
-                getNameAsId(), argTypes, argNames, getFunctionType(),
-                SqlSyntax.FUNCTION, getKind(),
-                validator.getCatalogReader().nameMatcher(), false);
+            SqlFunctionCategory funcType = getFunctionType();
+            boolean useDefineFunc = funcType == SqlFunctionCategory.USER_DEFINED_FUNCTION;
+            if (!useDefineFunc) {
+//                useDefineFunc = Udfu
+            }
+            try {
+                function = (SqlFunction) SqlUtil.lookupRoutine(validator.getOperatorTable(),
+                    getNameAsId(), argTypes, argNames, getFunctionType(),
+                    SqlSyntax.FUNCTION, getKind(),
+                    validator.getCatalogReader().nameMatcher(), false);
+            } catch (Throwable ex) {
+                if (useDefineFunc && ex.getMessage().contains("assign rules")) {
+                    // ignore
+                } else {
+                    throw ex;
+                }
+            }
+
         }
 
         try {

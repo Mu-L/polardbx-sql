@@ -373,7 +373,8 @@ public class TableGroupInfoManager extends AbstractLifecycle {
                 partitionInfo.setTableGroupId(maxExistGroupId);
                 partitionGroupRecords =
                     PartitionInfoUtil
-                        .prepareRecordForPartitionGroups(partitionInfo.getPartitionBy().getPhysicalPartitions());
+                        .prepareRecordForPartitionGroups(partitionInfo.getTableSchema(),
+                            partitionInfo.getPartitionBy().getPhysicalPartitions(), true);
                 for (PartitionGroupRecord partitionGroupRecord : partitionGroupRecords) {
                     partitionGroupRecord.id = maxPartGroupId + 1;
                     maxPartGroupId = maxPartGroupId + 1;

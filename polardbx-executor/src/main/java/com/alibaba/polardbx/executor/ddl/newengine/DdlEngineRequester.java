@@ -16,15 +16,19 @@
 
 package com.alibaba.polardbx.executor.ddl.newengine;
 
+import com.alibaba.polardbx.common.IdGenerator;
 import com.alibaba.polardbx.common.ddl.newengine.DdlState;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.SubJobTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlEngineResourceManager;
 import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlEngineSchedulerManager;
 import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlJobManager;
 import com.alibaba.polardbx.executor.ddl.newengine.sync.DdlRequest;
@@ -33,21 +37,31 @@ import com.alibaba.polardbx.executor.ddl.newengine.sync.DdlResponse;
 import com.alibaba.polardbx.executor.ddl.newengine.sync.DdlResponse.Response;
 import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineRecord;
 import com.alibaba.polardbx.gms.sync.GmsSyncManagerHelper;
 import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.Lists;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.StringUtils;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.common.TddlConstants.INFORMATION_SCHEMA;
@@ -112,7 +126,11 @@ public class DdlEngineRequester {
         ddlContext.setResources(ddlJob.getExcludeResources());
 
         // Create a new job and put it in the queue.
-        ddlJobManager.storeJob(ddlJob, ddlContext);
+        ddlJobManager.storeJob(ddlJob, ddlContext, executionContext);
+
+        // Failpoint: suspend after the job is stored and before the leader is notified,
+        // so that the job stays in the QUEUED state during the suspension.
+        FailPoint.injectSuspendFromHint(FailPointKey.FP_DDL_AFTER_STORE_JOB, executionContext);
 
         // Request the leader to perform the job.
         DdlRequest ddlRequest = notifyLeader(ddlContext.getSchemaName(), Lists.newArrayList(ddlContext.getJobId()));
@@ -122,6 +140,27 @@ public class DdlEngineRequester {
             return;
         }
         respond(ddlRequest, ddlJobManager, executionContext, true, false, ddlContext.isEnableTrace());
+    }
+
+    /**
+     * Generate job_id and task_id for the DDL job without actually executing it.
+     * This is used by EXPLAIN DDL_DAG to simulate ID assignment for visualization.
+     */
+    public void generateIds() {
+        AtomicLong jobIdGenerator = new AtomicLong(0);
+        long jobId = jobIdGenerator.incrementAndGet();
+        ddlContext.setJobId(jobId);
+
+        // Assign task IDs to all tasks in the job
+        List<com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask> allTasks = ddlJob.getAllTasks();
+        if (allTasks != null) {
+            for (com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask task : allTasks) {
+                task.setJobId(jobId);
+                if (task.getTaskId() == null) {
+                    task.setTaskId(jobIdGenerator.incrementAndGet());
+                }
+            }
+        }
     }
 
     public static DdlRequest notifyLeader(String schemaName, List<Long> jobId) {
@@ -254,17 +293,74 @@ public class DdlEngineRequester {
         jobIds.stream().forEach(jobId -> RESPONSES.invalidate(jobId));
     }
 
-    public static void pauseJob(Long jobId, ExecutionContext executionContext) {
-        if (jobId == null) {
-            return;
+    /**
+     * used by kill connection, ignore jobId not found
+     */
+    public static Boolean tryRollbackOrContinueJob(Long jobId, ExecutionContext executionContext) {
+        if (jobId != null) {
+            DdlJobManager ddlJobManager = new DdlJobManager();
+            DdlEngineRecord record = ddlJobManager.fetchRecordByJobId(jobId);
+            if (record != null) {
+                try {
+                    if (DdlState.valueOf(record.state) == DdlState.INITIAL) {
+                        DdlEngineResourceManager.getAllDdlAcquiringLocks(record.schemaName).stream()
+                            .filter(ddlContext -> jobId.equals(ddlContext.getJobId()))
+                            .forEach(DdlContext::setClientConnectionResetAsTrue);
+                        // Set the reset signal before removing the INITIAL record, within the
+                        // critical section shared with storeJobImpl, so that the DDL thread
+                        // observing a missing record always sees the signal as well.
+                        boolean removed;
+                        synchronized (executionContext.getDdlClientConnectionReset()) {
+                            executionContext.setDdlClientConnectionResetAsTrue();
+                            removed = ddlJobManager.removeInitialJob(jobId);
+                        }
+                        if (removed) {
+                            LOGGER.info(String.format("Remove INITIAL job: %d", jobId));
+                            return true;
+                        }
+                        // The INITIAL record has been upgraded to a formal job by storeJobImpl;
+                        // re-fetch it and fall through to the normal cancel path.
+                        record = ddlJobManager.fetchRecordByJobId(jobId);
+                        if (record == null) {
+                            return true;
+                        }
+                    }
+                    if (record.isSupportCancel()) {
+                        pauseJob(record, true, false, false, executionContext);
+                        LOGGER.info(String.format(
+                            "Trying to roll back job %d", jobId));
+                    } else {
+                        LOGGER.info(String.format(
+                            "Cannot roll back, keep job %d running", jobId));
+                    }
+                } catch (Exception exception) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC, exception, exception.getMessage());
+                }
+                LOGGER.info(String.format(
+                    "Has notified the leader CN to kill the job %d", jobId));
+                return true;
+            } else {
+                // The DDL may still be before/inside phase-1 lock acquisition and has no
+                // record yet; set the signal on ExecutionContext directly (its DdlContext
+                // may not exist in this window). Do it within the critical section shared
+                // with storeJobImpl, then re-fetch: if the DDL managed to persist its job
+                // before the signal was set, cancel it via the normal path.
+                synchronized (executionContext.getDdlClientConnectionReset()) {
+                    executionContext.setDdlClientConnectionResetAsTrue();
+                }
+                record = ddlJobManager.fetchRecordByJobId(jobId);
+                if (record != null) {
+                    return tryRollbackOrContinueJob(jobId, executionContext);
+                }
+                LOGGER.info(String.format("DDL %d has been canceled before get phase 1 resources.", jobId));
+            }
         }
-        DdlJobManager ddlJobManager = new DdlJobManager();
-        DdlEngineRecord record = ddlJobManager.fetchRecordByJobId(jobId);
-        pauseJob(record, false, false, executionContext);
+        return false;
     }
 
     public static int pauseJob(DdlEngineRecord record, boolean enableOperateSubJob,
-                               boolean enableContinueRunningSubJob, ExecutionContext executionContext) {
+                               boolean enableContinueRunningSubJob, boolean pauseElseTransition,
+                               ExecutionContext executionContext) {
         if (record == null) {
             throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, "The ddl job does not exist");
         }
@@ -277,9 +373,9 @@ public class DdlEngineRequester {
         List<String> traceIds = new ArrayList<>();
 
         if (enableOperateSubJob && enableContinueRunningSubJob) {
-            pauseJob(record, true, pausedJobs, traceIds, true, executionContext);
+            pauseJob(record, true, pausedJobs, traceIds, true, pauseElseTransition, executionContext);
         } else {
-            pauseJob(record, true, pausedJobs, traceIds, false, executionContext);
+            pauseJob(record, true, pausedJobs, traceIds, false, pauseElseTransition, executionContext);
         }
 
         Collections.reverse(pausedJobs);
@@ -288,13 +384,110 @@ public class DdlEngineRequester {
         return pausedJobs.size();
     }
 
+    /**
+     * Reload job parameters from a JSON string format.
+     * <p>
+     * Expected format:
+     * {
+     * "jobIds": [12345, 67890],
+     * "parameters": {
+     * "param1": "value1",
+     * "param2": "value2"
+     * }
+     * }
+     * copy:
+     * {"jobIds":[12345,67890],"parameters":{"param1":"value1","param2":"235","param3":"true"}}
+     *
+     * @param value JSON string containing job IDs and parameters to reload
+     */
+    public static void reloadJobParameter(String value) {
+        if (StringUtils.isBlank(value)) {
+            LOGGER.warn("Empty value provided for reloadJobParameter");
+            return;
+        }
+
+        try {
+            ObjectMapper objectMapper = new ObjectMapper();
+            JsonNode rootNode = objectMapper.readTree(value);
+
+            // Parse job IDs
+            JsonNode jobIdsNode = rootNode.get("jobIds");
+            List<Long> jobIds = new ArrayList<>();
+            if (jobIdsNode != null && jobIdsNode.isArray()) {
+                for (JsonNode jobIdNode : jobIdsNode) {
+                    jobIds.add(jobIdNode.asLong());
+                }
+            }
+
+            // Parse parameters
+            Map<String, Object> parameters = new HashMap<>();
+            JsonNode parametersNode = rootNode.get("parameters");
+            if (parametersNode != null && parametersNode.isObject()) {
+                Iterator<Map.Entry<String, JsonNode>> fields = parametersNode.fields();
+                while (fields.hasNext()) {
+                    Map.Entry<String, JsonNode> field = fields.next();
+                    // Change from asText() to asText() for backward compatibility with string values
+                    // But now we store as Object to support different types
+                    if (field.getValue().isTextual()) {
+                        parameters.put(field.getKey(), field.getValue().asText());
+                    } else if (field.getValue().isNumber()) {
+                        // Handle numeric values as Number objects
+                        parameters.put(field.getKey(), field.getValue().numberValue());
+                    } else if (field.getValue().isBoolean()) {
+                        // Handle boolean values
+                        parameters.put(field.getKey(), field.getValue().booleanValue());
+                    } else {
+                        // Default to text representation for other types
+                        parameters.put(field.getKey(), field.getValue().asText());
+                    }
+                }
+            }
+
+            // Call the overloaded method with Object parameters
+            reloadJobParameter(jobIds, parameters);
+
+            // Log the parsed values
+            LOGGER.warn("Reloading parameters for jobs: " + jobIds + " with parameters: " + parameters);
+
+        } catch (IOException e) {
+            LOGGER.error("Failed to parse reloadJobParameter value: " + value, e);
+            throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, e, e.getMessage());
+        }
+    }
+
+    private static void reloadJobParameter(List<Long> reloadParametersJobs,
+                                           Map<String, Object> reloadValues) {
+        String msg = String.format("reload parameter %s for jobId %s", reloadValues, reloadParametersJobs);
+        LOGGER.info(msg);
+
+        for (Long jobId : reloadParametersJobs) {
+            DdlEngineRecord record = schedulerManager.fetchRecordByJobId(jobId);
+            if (record == null) {
+                throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, "The ddl job does not exist");
+            }
+            schedulerManager.tryUpdateDdlContext(jobId, reloadValues);
+        }
+    }
+
     private static void pauseJob(DdlEngineRecord record, boolean subJob, List<Long> pausedJobs, List<String> traceIds,
-                                 Boolean continueRunningSubJob, ExecutionContext executionContext) {
+                                 Boolean continueRunningSubJob, boolean pauseElseTransition,
+                                 ExecutionContext executionContext) {
         DdlState before = DdlState.valueOf(record.state);
-        DdlState after = DdlState.PAUSE_JOB_STATE_TRANSFER.get(before);
+        DdlState after = pauseElseTransition ? DdlState.PAUSE_JOB_STATE_TRANSFER.get(before) :
+            DdlState.TRANSITION_JOB_STATE_TRANSFER.get(before);
+
+        String errMsgTransition =
+            String.format("Only RUNNING jobs can be transitioned, but job %s is in %s state",
+                record.jobId, before);
+
+        if (!pauseElseTransition && before != DdlState.RUNNING) {
+            buildWarning(errMsgTransition, executionContext);
+            return;
+        }
 
         String errMsg =
-            String.format("Only RUNNING/ROLLBACK_RUNNING/QUEUED jobs can be paused, but job %s is in %s state",
+            String.format(
+                "Only RUNNING/ROLLBACK_RUNNING/QUEUED/TRANSITIONING jobs can be paused, but job %s is in %s state",
                 record.jobId, before);
 
         if (before == DdlState.PAUSED || before == DdlState.ROLLBACK_PAUSED ||
@@ -303,7 +496,8 @@ public class DdlEngineRequester {
             return;
         }
 
-        if (!(before == DdlState.RUNNING || before == DdlState.ROLLBACK_RUNNING || before == DdlState.QUEUED)) {
+        if (!(before == DdlState.RUNNING || before == DdlState.ROLLBACK_RUNNING || before == DdlState.QUEUED
+            || before == DdlState.TRANSITIONING)) {
             throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, errMsg);
         }
 
@@ -319,30 +513,42 @@ public class DdlEngineRequester {
                 traceIds.add(record.traceId);
 
                 // 中断子任务
-                DdlHelper.interruptJobs(record.schemaName, Collections.singletonList(record.jobId));
+                DdlHelper.interruptJobs(record.schemaName, Collections.singletonList(record.jobId),
+                    pauseElseTransition);
                 DdlHelper.killActivePhyDDLs(record.schemaName, record.traceId);
             }
             return;
         }
 
         if (schedulerManager.tryPauseDdl(record.jobId, before, after)) {
-            LOGGER.info(String.format("pause job %d", record.jobId));
-
+            if (pauseElseTransition) {
+                LOGGER.info(String.format(
+                    "Pausing DDL job: JobId:[%d], before:[%s], after:[%s]",
+                    record.jobId, before, after));
+            } else {
+                LOGGER.info(String.format(
+                    "Transitioning DDL job: JobId:[%d], before:[%s], after:[%s]",
+                    record.jobId, before, after));
+            }
             pausedJobs.add(record.jobId);
             traceIds.add(record.traceId);
 
             // 先中断父任务
-            DdlHelper.interruptJobs(record.schemaName, Collections.singletonList(record.jobId));
+            DdlHelper.interruptJobs(record.schemaName, Collections.singletonList(record.jobId), pauseElseTransition);
             DdlHelper.killActivePhyDDLs(record.schemaName, record.traceId);
 
             if (subJob) {
-                pauseSubJobs(record.jobId, pausedJobs, traceIds, continueRunningSubJob, executionContext);
+                LOGGER.info(String.format(
+                    "Now Pausing sub jobs of job %d", record.jobId));
+                pauseSubJobs(record.jobId, pausedJobs, traceIds, continueRunningSubJob,
+                    pauseElseTransition, executionContext);
             }
         }
     }
 
     private static void pauseSubJobs(long jobId, List<Long> pausedJobs, List<String> traceIds,
-                                     Boolean continueRunningSubJob, ExecutionContext executionContext) {
+                                     Boolean continueRunningSubJob, Boolean pauseElseTransition,
+                                     ExecutionContext executionContext) {
         List<SubJobTask> subJobs = schedulerManager.fetchSubJobsRecursive(jobId, continueRunningSubJob);
 
         List<Long> subJobIds = GeneralUtil.emptyIfNull(subJobs)
@@ -355,7 +561,8 @@ public class DdlEngineRequester {
         List<DdlEngineRecord> records = schedulerManager.fetchRecords(subJobIds);
 
         for (DdlEngineRecord record : GeneralUtil.emptyIfNull(records)) {
-            pauseJob(record, false, pausedJobs, traceIds, false, executionContext);
+            pauseJob(record, false, pausedJobs, traceIds, false,
+                pauseElseTransition, executionContext);
         }
     }
 

@@ -95,7 +95,7 @@ public class SelectColumnarFileTest extends ColumnarReadBaseTestCase {
                 }
             }
 
-            Assert.assertNotNull(csvFileName);
+            // CSV file may have been merged into ORC by compaction, so it is optional
             Assert.assertNotNull(orcFileName);
             Assert.assertNotNull(delFileName);
 
@@ -103,15 +103,17 @@ public class SelectColumnarFileTest extends ColumnarReadBaseTestCase {
             JdbcUtil.executeSuccess(tddlConnection, String.format("select columnar_file('%s')", orcFileName));
 
             int lineCount = 0;
-            try (ResultSet rs =
-                JdbcUtil.executeQuery(String.format("select columnar_file('%s')", csvFileName), tddlConnection)) {
-                while (rs.next()) {
-                    int position = Integer.parseInt(rs.getString(2));
-                    Assert.assertEquals(lineCount++, position);
-                    Assert.assertEquals(rs.getString(3), rs.getString(4));
+            if (csvFileName != null) {
+                try (ResultSet rs =
+                    JdbcUtil.executeQuery(String.format("select columnar_file('%s')", csvFileName), tddlConnection)) {
+                    while (rs.next()) {
+                        int position = Integer.parseInt(rs.getString(2));
+                        Assert.assertEquals(lineCount++, position);
+                        Assert.assertEquals(rs.getString(3), rs.getString(4));
+                    }
                 }
+                Assert.assertTrue(lineCount > 0);
             }
-            Assert.assertTrue(lineCount > 0);
 
             lineCount = 0;
             try (ResultSet rs =

@@ -36,7 +36,8 @@ public class DistinctSetTest {
     @Test
     public void test() {
         DataType[] dataTypes = new DataType[] {DataTypes.StringType};
-        DistinctSet distinctSet = new DistinctSet(dataTypes, new int[] {0}, 100, 10, new ExecutionContext());
+        DistinctSet distinctSet =
+            new DistinctSet(dataTypes, new int[] {0}, 100, 10, new ExecutionContext(), null, false);
 
         {
             IntegerBlock groupIdBlock = IntegerBlock.of(1, 2, 3, 4, 1, 2, 3, 4);

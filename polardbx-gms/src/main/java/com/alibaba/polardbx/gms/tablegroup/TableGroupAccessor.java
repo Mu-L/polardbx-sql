@@ -50,7 +50,7 @@ public class TableGroupAccessor extends AbstractAccessor {
     private static final String ALL_COLUMNS =
         "`id`,`gmt_create`,`gmt_modified`,`schema_name`,`tg_name`,`locality`, `primary_zone`,`inited`,`meta_version`, `manual_create`, `tg_type`, `auto_split_policy`, `partition_definition`";
 
-    private static final String ALL_VALUES = "(null,null,now(),?,?,?,?,?,?,?,?,?,?)";
+    private static final String ALL_VALUES = "(null,now(),now(),?,?,?,?,?,?,?,?,?,?)";
 
     private static final String INSERT_IGNORE_TABLE_GROUP =
         "insert ignore into " + GmsSystemTables.TABLE_GROUP + " (" + ALL_COLUMNS + ") VALUES " + ALL_VALUES;
@@ -65,6 +65,9 @@ public class TableGroupAccessor extends AbstractAccessor {
         "update " + GmsSystemTables.TABLE_GROUP + " set locality = ? where id = ?";
     private static final String GET_TABLE_GROUP_BY_ID =
         "select " + ALL_COLUMNS + " from " + GmsSystemTables.TABLE_GROUP + " where id=?";
+
+    private static final String GET_TABLE_GROUP_BY_ID_FOR_UPDATE =
+        "select " + ALL_COLUMNS + " from " + GmsSystemTables.TABLE_GROUP + " where id=? for update";
 
     private static final String GET_TABLE_GROUP_BY_SCHEMA_GROUP_NAME =
         "select " + ALL_COLUMNS + " from " + GmsSystemTables.TABLE_GROUP + " where schema_name=? and tg_name=?";
@@ -98,6 +101,10 @@ public class TableGroupAccessor extends AbstractAccessor {
         "update " + GmsSystemTables.TABLE_GROUP + " set auto_split_policy = ? where id = ?";
 
     public List<TableGroupRecord> getTableGroupsByID(Long id) {
+        return getTableGroupsByIdForUpdate(id, false);
+    }
+
+    public List<TableGroupRecord> getTableGroupsByIdForUpdate(Long id, boolean forUpdate) {
         try {
 
             List<TableGroupRecord> records;
@@ -105,7 +112,8 @@ public class TableGroupAccessor extends AbstractAccessor {
 
             MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, id);
             records =
-                MetaDbUtil.query(GET_TABLE_GROUP_BY_ID, params, TableGroupRecord.class, connection);
+                MetaDbUtil.query(forUpdate ? GET_TABLE_GROUP_BY_ID_FOR_UPDATE : GET_TABLE_GROUP_BY_ID, params,
+                    TableGroupRecord.class, connection);
 
             return records;
         } catch (Exception e) {

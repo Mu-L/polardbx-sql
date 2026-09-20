@@ -20,9 +20,11 @@ import com.alibaba.fastjson.JSON;
 import com.alibaba.polardbx.common.cdc.CdcConstants;
 import com.alibaba.polardbx.common.cdc.ResultCode;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.PooledHttpHelper;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.metadb.cdc.BinlogDumperAccessor;
 import com.alibaba.polardbx.gms.metadb.cdc.BinlogDumperRecord;
 import com.alibaba.polardbx.gms.metadb.cdc.BinlogNodeInfoAccessor;
@@ -47,6 +49,7 @@ import java.util.Optional;
  **/
 public class CdcTargetUtil {
     private static final Logger cdcLogger = LoggerFactory.getLogger("cdc_log");
+
     public static String getDumperMasterTarget() {
         BinlogDumperAccessor binlogDumperAccessor = new BinlogDumperAccessor();
         try (Connection metaDbConn = MetaDbUtil.getConnection()) {
@@ -71,8 +74,11 @@ public class CdcTargetUtil {
         params.put("instId", InstIdUtil.getInstId());
         String url = "http://" + daemonEndpoint + "/dumper/getTarget";
         try {
+            int socketTimeOut = InstConfUtil.getInt(ConnectionParams.BINLOG_GET_DUMPER_SOCKET_TIME_MILLISECOND);
+            cdcLogger.info("try get dumper target from " + url + "with params: " + params + " socketTimeOut value: "
+                + socketTimeOut);
             result =
-                PooledHttpHelper.doPost(url, ContentType.APPLICATION_JSON, JSON.toJSONString(params), 10000);
+                PooledHttpHelper.doPost(url, ContentType.APPLICATION_JSON, JSON.toJSONString(params), socketTimeOut);
             ResultCode<String> httpResult = JSON.parseObject(result, ResultCode.class);
             if (httpResult.getCode() != CdcConstants.SUCCESS_CODE) {
                 cdcLogger.error(
@@ -81,7 +87,7 @@ public class CdcTargetUtil {
                 return getDumperMasterTarget();
             }
             address = httpResult.getData();
-        } catch (Exception e) {
+        } catch (Throwable e) {
             cdcLogger.error(
                 "can not find dumper target endpoint by get " + url + " with params:" + params
                     + ", will try get dumper master directly", e);

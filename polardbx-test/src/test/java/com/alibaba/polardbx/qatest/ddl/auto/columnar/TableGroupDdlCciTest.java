@@ -27,6 +27,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.sql.ResultSet;
 import java.util.List;
 
 public class TableGroupDdlCciTest extends DDLBaseNewDBTestCase {
@@ -121,6 +122,7 @@ public class TableGroupDdlCciTest extends DDLBaseNewDBTestCase {
         testAlterTableGroupDropPartition();
         testAlterTableGroupRenamePartition();
         testAlterTableGroupModifyPartition();
+        testColumnarTableGroupNotAllowOtherColumnarTable();
     }
 
     private void testAlterTableSetTableGroup() {
@@ -205,5 +207,59 @@ public class TableGroupDdlCciTest extends DDLBaseNewDBTestCase {
     private void testAlterTableGroupModifyPartition() {
         String sql = String.format("alter tablegroup %s modify partition p2 add values(10001, 10002)", columnarTgName);
         JdbcUtil.executeUpdateFailed(tddlConnection, sql, "involves file storage. not support yet!");
+    }
+
+    /**
+     * 测试列存表组不允许其他列存表加入
+     * 验证逻辑：创建两个 CCI，由于列存表组不允许其他列存表加入，
+     * 这两个 CCI 应该被自动分配到不同的表组中
+     */
+    private void testColumnarTableGroupNotAllowOtherColumnarTable() {
+        // 创建第二个带有 CCI 的表
+        String tableWithCci2 = PRIMARY_TABLE_NAME3;
+        String cciName2 = INDEX_NAME2;
+
+        dropTableIfExists(tableWithCci2);
+
+        // 创建第二个表并添加 CCI
+        String sql = String.format(CREATE_TABLE, tableWithCci2);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+
+        sql = String.format(CREATE_CCI, cciName2, tableWithCci2, CCI_SORT_KEY_C1);
+        createCciSuccess(sql);
+
+        String cciName2WithSuffix = getRealCciName(tableWithCci2, cciName2);
+
+        // 获取第二个 CCI 的表组名
+        // 通过 show full tablegroup 查询 CCI 所属的表组
+        String columnarTgName2 = null;
+        try (ResultSet rs = JdbcUtil.executeQuerySuccess(tddlConnection, "show full tablegroup")) {
+            while (rs.next()) {
+                String tgName = rs.getString("TABLE_GROUP_NAME");
+                String tables = rs.getString("TABLES");
+                // 检查该表组是否包含第二个 CCI
+                if (tables != null && tables.toLowerCase().contains(cciName2.toLowerCase())) {
+                    columnarTgName2 = tgName;
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to query table group name for second CCI", e);
+        }
+
+        Truth
+            .assertWithMessage("No columnar table group found for second CCI")
+            .that(columnarTgName2)
+            .isNotEmpty();
+
+        // 验证两个 CCI 不在同一个表组中
+        // 因为列存表组不允许其他列存表加入，每个 CCI 应该有自己独立的表组
+        Truth
+            .assertWithMessage("Two CCIs should be in different table groups")
+            .that(columnarTgName2)
+            .isNotEqualTo(columnarTgName);
+
+        // 清理
+        dropTableIfExists(tableWithCci2);
     }
 }

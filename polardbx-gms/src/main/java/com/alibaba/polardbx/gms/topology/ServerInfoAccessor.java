@@ -27,6 +27,7 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.metadb.GmsSystemTables;
 import com.alibaba.polardbx.gms.metadb.accessor.AbstractAccessor;
 import com.alibaba.polardbx.gms.metadb.record.NextIdRecord;
+import com.alibaba.polardbx.gms.util.DdlMetaLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.google.common.collect.Maps;
@@ -41,6 +42,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * @author chenghui.lch
@@ -99,6 +101,11 @@ public class ServerInfoAccessor extends AbstractAccessor {
     private static final String SELECT_HTAP_LEADRNER_INSTS =
         "select distinct inst_id from " + SERVER_INFO_TABLE + " where status!=2 and inst_type="
             + ServerInfoRecord.INST_TYPE_HTAP_SLAVE;
+
+    private static final String SELECT_COLUMNAR_HOST_PORT =
+        "select `ip`, `port` from `" + SERVER_INFO_TABLE + "` where `status`!=2 and `inst_type`="
+            + ServerInfoRecord.INST_TYPE_COLUMNAR_SLAVE
+            + " and `inst_id` = ?";
 
     private static final String SELECT_COLUMNAR_INSTS =
         "select distinct inst_id from " + SERVER_INFO_TABLE + " where status!=2 and inst_type="
@@ -220,6 +227,33 @@ public class ServerInfoAccessor extends AbstractAccessor {
         }
     }
 
+    public TreeSet<String> loadColumnarHostPort(String instId) {
+        TreeSet<String> allColumnarROHostPort = new TreeSet<>();
+        try {
+
+            try (PreparedStatement ps = connection.prepareStatement(SELECT_COLUMNAR_HOST_PORT)) {
+
+                ps.setString(1, instId);
+
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        String ip = rs.getString("ip");
+                        int port = rs.getInt("port");
+                        allColumnarROHostPort.add(ip + ":" + port);
+                    }
+                }
+            } catch (Throwable ex) {
+                MetaDbLogUtil.META_DB_LOG.error(ex);
+                throw GeneralUtil.nestedException(ex);
+            }
+            return allColumnarROHostPort;
+        } finally {
+            if (allColumnarROHostPort.size() == 0) {
+                DynamicConfig.getInstance().existColumnarNodes(false);
+            }
+        }
+    }
+
     public List<String> getAllRemovedColumnarReadOnlyInstIdList() {
         String instId = null;
         List<String> allRemovedRoInstIdList = new ArrayList<>();
@@ -321,6 +355,9 @@ public class ServerInfoAccessor extends AbstractAccessor {
             MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, newId);
             MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, origId);
 
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.SERVER_INFO)) {
+                DdlMetaLogUtil.logSql(UPDATE_CURRENT_ID, params);
+            }
             int updateCount = MetaDbUtil.update(UPDATE_CURRENT_ID, params, connection);
 
             if (updateCount <= 0) {
@@ -374,6 +411,9 @@ public class ServerInfoAccessor extends AbstractAccessor {
         try {
             Map<Integer, ParameterContext> insertParams = Maps.newHashMap();
             MetaDbUtil.setParameter(1, insertParams, ParameterMethod.setString, instId);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.SERVER_INFO)) {
+                DdlMetaLogUtil.logSql(DELETE_REMOVED_RO_SERVER_INFOS, insertParams);
+            }
             MetaDbUtil.delete(DELETE_REMOVED_RO_SERVER_INFOS, insertParams, connection);
             return;
         } catch (Exception e) {
@@ -389,6 +429,9 @@ public class ServerInfoAccessor extends AbstractAccessor {
             MetaDbUtil.setParameter(1, updateParams, ParameterMethod.setInt, status);
             MetaDbUtil.setParameter(2, updateParams, ParameterMethod.setString, ip);
             MetaDbUtil.setParameter(3, updateParams, ParameterMethod.setInt, port);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.SERVER_INFO)) {
+                DdlMetaLogUtil.logSql(SQL_UPDATE_SERVER_STATUS, updateParams);
+            }
             MetaDbUtil.update(SQL_UPDATE_SERVER_STATUS, updateParams, connection);
         } catch (Exception e) {
             MetaDbLogUtil.META_DB_LOG.error("Failed to update the system table '" + SERVER_INFO_TABLE + "'", e);

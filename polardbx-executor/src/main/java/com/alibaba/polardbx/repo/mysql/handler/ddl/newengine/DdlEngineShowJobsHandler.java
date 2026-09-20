@@ -148,6 +148,10 @@ public class DdlEngineShowJobsHandler extends DdlEngineJobsHandler {
 
             // If the jobs on new DDL engine, then show them.
             for (DdlEngineRecord record : records) {
+                // skip jobs still in INITIAL state on the new DDL engine
+                if (DdlState.INITIAL.name().equalsIgnoreCase(record.state)) {
+                    continue;
+                }
                 // show ddl will also show subjob
 //                if (!isFull && record.isSubJob()) {
 //                    continue;

@@ -16,6 +16,7 @@
 
 package org.apache.calcite.sql;
 
+import lombok.Getter;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeFieldImpl;
@@ -32,10 +33,13 @@ public class SqlShowColumnarIndex extends SqlShow {
     private SqlShowGlobalIndexOperator operator;
 
     private SqlNode table;
+    @Getter
+    private SqlNode tso;
 
-    public SqlShowColumnarIndex(SqlParserPos pos, List<SqlSpecialIdentifier> specialIdentifiers, SqlNode table){
+    public SqlShowColumnarIndex(SqlParserPos pos, List<SqlSpecialIdentifier> specialIdentifiers, SqlNode table, SqlNode tso){
         super(pos, specialIdentifiers);
         this.table = table;
+        this.tso = tso;
     }
 
     public SqlNode getTable() {

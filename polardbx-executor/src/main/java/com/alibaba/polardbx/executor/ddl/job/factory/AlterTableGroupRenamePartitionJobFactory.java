@@ -23,9 +23,10 @@ import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterTableGroupRena
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterTableGroupValidateTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.validator.TableValidator;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.TransientDdlJob;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
@@ -46,7 +47,7 @@ import java.util.TreeMap;
 /**
  * @author luoyanxin
  */
-public class AlterTableGroupRenamePartitionJobFactory extends DdlJobFactory {
+public class AlterTableGroupRenamePartitionJobFactory extends OnlineDdlJobFactory {
 
     @Deprecated
     protected final DDL ddl;
@@ -55,6 +56,7 @@ public class AlterTableGroupRenamePartitionJobFactory extends DdlJobFactory {
 
     public AlterTableGroupRenamePartitionJobFactory(DDL ddl, AlterTableGroupRenamePartitionPreparedData preparedData,
                                                     ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.META_ONLY);
         this.preparedData = preparedData;
         this.ddl = ddl;
         this.executionContext = executionContext;

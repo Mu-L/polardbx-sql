@@ -29,6 +29,7 @@ import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.RandomAccessBlock;
 import com.alibaba.polardbx.executor.operator.MockExec;
 import com.alibaba.polardbx.gms.config.impl.MetaDbInstConfigManager;
+import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
@@ -125,10 +126,13 @@ public class BaseVectorizedExpressionTest {
         ConfigDataMode.setMode(ConfigDataMode.Mode.MOCK);
         parser = new FastsqlParser();
         MetaDbInstConfigManager.setConfigFromMetaDb(false);
+        // Ensure our test schema is not treated as a new-partition-db
+        // (other tests like ExplainKeywordTest may register it via BasePlannerTest)
+        DbInfoManager.getInstance().removeMockPartitionDb(getAppName());
         initOptimizerContext();
         buildTable();
         initTableData();
-        executionContext = new ExecutionContext();
+        executionContext = new ExecutionContext(getAppName());
     }
 
     private void initOptimizerContext() {

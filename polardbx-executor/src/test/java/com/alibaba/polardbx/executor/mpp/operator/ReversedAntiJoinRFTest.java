@@ -1,5 +1,7 @@
 package com.alibaba.polardbx.executor.mpp.operator;
 
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.common.utils.ExecutorMode;
 import com.alibaba.polardbx.executor.mpp.operator.factory.PipelineFactory;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFItem;
@@ -7,9 +9,11 @@ import com.alibaba.polardbx.executor.mpp.planner.FragmentRFItemKey;
 import com.alibaba.polardbx.executor.mpp.planner.FragmentRFManager;
 import com.alibaba.polardbx.executor.mpp.planner.PlanUtils;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runners.Parameterized;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -30,6 +34,11 @@ public class ReversedAntiJoinRFTest extends PlanFragmentTestBase {
     @Parameterized.Parameters(name = "{0}:{1}")
     public static List<Object[]> prepare() {
         return loadWithFragment(ReversedAntiJoinRFTest.class);
+    }
+
+    @Before
+    public void setUpContext() {
+        configMaps.put(ConnectionParams.ENABLE_PARALLEL_TOP_N.getName(), false);
     }
 
     @Test

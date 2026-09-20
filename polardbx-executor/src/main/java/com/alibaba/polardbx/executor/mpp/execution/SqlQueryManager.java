@@ -40,7 +40,6 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Queue;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledExecutorService;
@@ -58,10 +57,11 @@ public class SqlQueryManager implements QueryManager {
 
     private final SqlQueryExecution.SqlQueryExecutionFactory queryExecutionFactory;
     private final SqlQueryLocalExecution.SqlQueryLocalExecutionFactory localExecutionFactory;
-    private final ConcurrentMap<String, QueryExecution> queries = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, QueryExecution> queries = new QueryExecutionMap();
 
     private int maxQueryHistory;
     private long minQueryExpireAge;
+    private long reservedSlowQueryTime;
     private long maxQueryExpiredReservationAge;
     private long clientTimeout;
 
@@ -264,9 +264,13 @@ public class SqlQueryManager implements QueryManager {
             // around for a while in case clients come back asking for status
             String queryId = query.getQueryId();
 
-            if (query.getState() == FAILED || query.isNeedReserveAfterExpired()) {
+            if (query.getState() == FAILED || query.isNeedReserveAfterExpired() ||
+                query.queryStateMachine().getFinishTime().roundTo(TimeUnit.MILLISECONDS) > reservedSlowQueryTime) {
                 // record the need keep reservation's querys.
-                //两种情况需要保留：1. 失败的查询 2. 开启最高级别采样（explain analyze table 也会开启高级别采样）
+                //两种情况需要保留：
+                // 1. 失败的查询
+                // 2. 开启最高级别采样（explain analyze table 也会开启高级别采样）
+                // 3. 指定的慢SQL
                 expiredReservationQueue.add(query);
                 expirationQueue.remove();
             } else {
@@ -496,11 +500,12 @@ public class SqlQueryManager implements QueryManager {
     @Override
     public void reloadConfig() {
         this.minQueryExpireAge = MppConfig.getInstance().getMinQueryExpireTime();
+        this.reservedSlowQueryTime = MppConfig.getInstance().getReservedSlowQueryTime();
         this.maxQueryExpiredReservationAge = MppConfig.getInstance().getMaxQueryExpiredReservationTime();
         this.maxQueryHistory = MppConfig.getInstance().getMaxQueryHistory();
         this.clientTimeout = MppConfig.getInstance().getClientTimeout();
         if (ServiceProvider.getInstance().clusterMode() && this.queryExecutionFactory != null) {
-            //动态调整cluster模式配置
+            //dynamic adjust cluster mode config
             queryExecutionFactory.setThreadPoolExecutor(MppConfig.getInstance().getQueryExecutionThreadPoolSize());
         }
     }
@@ -508,5 +513,9 @@ public class SqlQueryManager implements QueryManager {
     @Override
     public long getTotalQueries() {
         return totalQuery.get();
+    }
+
+    public SqlQueryExecution.SqlQueryExecutionFactory getQueryExecutionFactory() {
+        return queryExecutionFactory;
     }
 }

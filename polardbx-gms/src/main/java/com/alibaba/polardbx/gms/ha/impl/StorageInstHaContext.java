@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.gms.ha.impl;
 
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.gms.topology.StorageInfoRecord;
 import lombok.val;
 import org.apache.commons.lang.StringUtils;
@@ -23,6 +24,7 @@ import org.apache.commons.lang.StringUtils;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -54,6 +56,7 @@ public class StorageInstHaContext {
      * For PolarDB-X slave, currAvailableNodeAddr is learner
      * <pre>
      *      The available addr is checked and refreshed by StorageHaManager.CheckStorageHaTask at intervals of 5 seconds
+     *      if no found any leader, currAvailableNodeAddr will null
      * </pre>
      */
     protected volatile String currAvailableNodeAddr;
@@ -128,6 +131,8 @@ public class StorageInstHaContext {
 
     protected String storageMasterInstId;
 
+    protected String storageInstLabel;
+
     protected boolean isMasterMode = false;
 
     /**
@@ -185,6 +190,9 @@ public class StorageInstHaContext {
         if (vipInfo != null) {
             storageInstHaContext.storageVipUser = vipInfo.user;
             storageInstHaContext.storageVipEncPasswd = vipInfo.passwdEnc;
+            if (vipInfo.extras != null) {
+                storageInstHaContext.storageInstLabel = vipInfo.extras.getStorageInstLabel();
+            }
         }
 
         boolean isMasterMode = storageInstHaContext.storageKind != StorageInfoRecord.INST_KIND_SLAVE;
@@ -300,6 +308,10 @@ public class StorageInstHaContext {
         return storageMasterInstId;
     }
 
+    public String getStorageInstLabel() {
+        return storageInstLabel;
+    }
+
     public Map<String, StorageNodeHaInfo> getAllStorageNodeHaInfoMap() {
         return allStorageNodeHaInfoMap;
     }
@@ -324,6 +336,19 @@ public class StorageInstHaContext {
             }
         }
         return null;
+    }
+
+    public Map<String, StorageNodeHaInfo> getAvailableFollowerNodes() {
+        Map<String, StorageNodeHaInfo> nodeHaInfoMap = new HashMap<>();
+        for (Map.Entry<String, StorageNodeHaInfo> node : allStorageNodeHaInfoMap.entrySet()) {
+            String key = node.getKey();
+            StorageNodeHaInfo info = node.getValue();
+            if (info.getRole() == StorageRole.FOLLOWER && info.electionWeight > DynamicConfig.getInstance()
+                .minThresholdForFollowRead()) {
+                nodeHaInfoMap.put(key, info);
+            }
+        }
+        return nodeHaInfoMap;
     }
 
     public List<StorageInfoRecord> getReplicaByZone(String zone) {
@@ -393,6 +418,12 @@ public class StorageInstHaContext {
             ", currIsVip=" + currIsVip +
             ", storageVipAddr=" + storageVipAddr +
             ", storageVipUser=" + storageVipUser +
+            '}';
+    }
+
+    public String toBriefString() {
+        return "DN{" +
+            "storageInstId='" + storageInstId + '\'' +
             '}';
     }
 

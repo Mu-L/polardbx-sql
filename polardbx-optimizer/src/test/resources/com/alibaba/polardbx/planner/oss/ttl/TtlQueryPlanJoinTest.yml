@@ -1,0 +1,171 @@
+SQL:
+  - sql: |
+      select my_t1.id, my_t2.id, my_t1.int_field, my_t2.int_field from my_t1 join my_t2 on my_t1.id = my_t2.id;
+    plan: |
+      project(id="id0", id0="id", int_field="int_field0", int_field0="int_field")
+        hashjoin(condition="id = id", type="inner")
+          exchange(distribution=hash[0], collation=[])
+            unionall(concurrent=true)
+              logicalview(tables="my_t2[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `int_field` from `my_t2` as `my_t2` where (`date_field` >= '2020-01-01 00:00:00')")
+              osstablescan(tables="arctmp_myarc_t2[p20200101]", sql="select `id`, `int_field` from `arctmp_myarc_t2` as `arctmp_myarc_t2` where (`date_field` < '2020-01-01 00:00:00')")
+          exchange(distribution=hash[0], collation=[])
+            unionall(concurrent=true)
+              logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `int_field` from `my_t1` as `my_t1` where (`date_field` >= '2020-01-01 00:00:00')")
+              osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `int_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where (`date_field` < '2020-01-01 00:00:00')")
+
+  - sql: |
+      select my_t1.id, my_t2.id, my_t1.int_field, my_t2.int_field from my_t1 join my_t2 on my_t1.id = my_t2.id where my_t1.date_field < '2020-01-01 00:00:00';
+    plan: |
+      project(id="id0", id0="id", int_field="int_field0", int_field0="int_field")
+        hashjoin(condition="id = id", type="inner")
+          exchange(distribution=hash[0], collation=[])
+            unionall(concurrent=true)
+              logicalview(tables="my_t2[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `int_field` from `my_t2` as `my_t2` where (`date_field` >= '2020-01-01 00:00:00')")
+              osstablescan(tables="arctmp_myarc_t2[p20200101]", sql="select `id`, `int_field` from `arctmp_myarc_t2` as `arctmp_myarc_t2` where (`date_field` < '2020-01-01 00:00:00')")
+          exchange(distribution=hash[0], collation=[])
+            osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `int_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` < '2020-01-01 00:00:00') and (`date_field` < ?))")
+
+  - sql: |
+      select my_t1.id, my_t2.id, my_t1.int_field, my_t2.int_field from my_t1 join my_t2 on my_t1.id = my_t2.id where my_t1.date_field >= '2020-01-01 00:00:00';
+    plan: |
+      project(id="id0", id0="id", int_field="int_field0", int_field0="int_field")
+        hashjoin(condition="id = id", type="inner")
+          exchange(distribution=hash[0], collation=[])
+            unionall(concurrent=true)
+              logicalview(tables="my_t2[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `int_field` from `my_t2` as `my_t2` where (`date_field` >= '2020-01-01 00:00:00')")
+              osstablescan(tables="arctmp_myarc_t2[p20200101]", sql="select `id`, `int_field` from `arctmp_myarc_t2` as `arctmp_myarc_t2` where (`date_field` < '2020-01-01 00:00:00')")
+          exchange(distribution=hash[0], collation=[])
+            logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `int_field` from `my_t1` as `my_t1` where ((`date_field` >= '2020-01-01 00:00:00') and (`date_field` >= ?))")
+
+  - sql: |
+      select my_t1.id, my_t2.id, my_t1.int_field, my_t2.int_field from my_t1 join my_t2 on my_t1.id = my_t2.id where my_t2.date_field >= '2020-01-01 00:00:00';
+    plan: |
+      project(id="id", id0="id0", int_field="int_field", int_field0="int_field0")
+        hashjoin(condition="id = id", type="inner")
+          exchange(distribution=hash[0], collation=[])
+            unionall(concurrent=true)
+              logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `int_field` from `my_t1` as `my_t1` where (`date_field` >= '2020-01-01 00:00:00')")
+              osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `int_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where (`date_field` < '2020-01-01 00:00:00')")
+          exchange(distribution=hash[0], collation=[])
+            logicalview(tables="my_t2[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `int_field` from `my_t2` as `my_t2` where ((`date_field` >= '2020-01-01 00:00:00') and (`date_field` >= ?))")
+
+  - sql: |
+      select my_t1.id, my_t2.id, my_t1.int_field, my_t2.int_field from my_t1 join my_t2 on my_t1.id = my_t2.id where my_t2.date_field < '2020-01-01 00:00:00';
+    plan: |
+      project(id="id", id0="id0", int_field="int_field", int_field0="int_field0")
+        hashjoin(condition="id = id", type="inner")
+          exchange(distribution=hash[0], collation=[])
+            unionall(concurrent=true)
+              logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `int_field` from `my_t1` as `my_t1` where (`date_field` >= '2020-01-01 00:00:00')")
+              osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `int_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where (`date_field` < '2020-01-01 00:00:00')")
+          exchange(distribution=hash[0], collation=[])
+            osstablescan(tables="arctmp_myarc_t2[p20200101]", sql="select `id`, `int_field` from `arctmp_myarc_t2` as `arctmp_myarc_t2` where ((`date_field` < '2020-01-01 00:00:00') and (`date_field` < ?))")
+       
+  - sql: |
+      select my_t1.id, my_t2.id, my_t1.int_field, my_t2.int_field from my_t1 join my_t2 on my_t1.id = my_t2.id where my_t1.date_field < '2020-01-01 00:00:00' and my_t2.date_field < '2020-01-01 00:00:00';
+    plan: |
+      project(id="id0", id0="id", int_field="int_field0", int_field0="int_field")
+        hashjoin(condition="id = id", type="inner")
+          exchange(distribution=hash[0], collation=[])
+            osstablescan(tables="arctmp_myarc_t2[p20200101]", sql="select `id`, `int_field` from `arctmp_myarc_t2` as `arctmp_myarc_t2` where ((`date_field` < '2020-01-01 00:00:00') and (`date_field` < ?))")
+          exchange(distribution=hash[0], collation=[])
+            osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `int_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` < '2020-01-01 00:00:00') and (`date_field` < ?))")
+
+  - sql: |
+      select my_t1.id, my_t2.id, my_t1.int_field, my_t2.int_field from my_t1 join my_t2 on my_t1.id = my_t2.id where my_t1.date_field < '2020-01-01 00:00:00' and my_t2.date_field >= '2020-01-01 00:00:00';
+    plan: |
+      project(id="id0", id0="id", int_field="int_field0", int_field0="int_field")
+        hashjoin(condition="id = id", type="inner")
+          exchange(distribution=hash[0], collation=[])
+            logicalview(tables="my_t2[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `int_field` from `my_t2` as `my_t2` where ((`date_field` >= '2020-01-01 00:00:00') and (`date_field` >= ?))")
+          exchange(distribution=hash[0], collation=[])
+            osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `int_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` < '2020-01-01 00:00:00') and (`date_field` < ?))")
+
+  - sql: |
+      select my_t1.id, my_t2.id, my_t1.int_field, my_t2.int_field from my_t1 join my_t2 on my_t1.id = my_t2.id where my_t2.date_field >= '2020-01-01 00:00:00' and my_t1.date_field >= '2020-01-01 00:00:00';
+    plan: |
+      logicalview(tables="my_t1[p1,p2,p3,p4,p5,p6,p7,p8],my_t2[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `my_t1`.`id`, `my_t2`.`id` as `id0`, `my_t1`.`int_field`, `my_t2`.`int_field` as `int_field0` from `my_t1` as `my_t1` inner join `my_t2` as `my_t2` on ((`my_t1`.`id` = `my_t2`.`id`) and (`my_t2`.`date_field` >= ?) and (`my_t1`.`date_field` >= ?)) where ((`my_t2`.`date_field` >= '2020-01-01 00:00:00') and (`my_t1`.`date_field` >= '2020-01-01 00:00:00'))")
+
+  - sql: |
+      select my_t1.id, my_t2.id, my_t1.int_field, my_t2.int_field from my_t1 join my_t2 on my_t1.id = my_t2.id where my_t2.date_field >= '2020-01-01 00:00:00' and my_t1.date_field < '2020-01-01 00:00:00';
+    plan: |
+      project(id="id0", id0="id", int_field="int_field0", int_field0="int_field")
+        hashjoin(condition="id = id", type="inner")
+          exchange(distribution=hash[0], collation=[])
+            logicalview(tables="my_t2[p1,p2,p3,p4,p5,p6,p7,p8]", shardcount=8, sql="select `id`, `int_field` from `my_t2` as `my_t2` where ((`date_field` >= '2020-01-01 00:00:00') and (`date_field` >= ?))")
+          exchange(distribution=hash[0], collation=[])
+            osstablescan(tables="arctmp_myarc_t1[p20200101]", sql="select `id`, `int_field` from `arctmp_myarc_t1` as `arctmp_myarc_t1` where ((`date_field` < '2020-01-01 00:00:00') and (`date_field` < ?))")
+
+DDL:
+  my_t1:
+    CREATE TABLE `my_t1` (
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `text_field` varchar(2048),
+    `int_field` int NOT NULL,
+    `date_field` datetime NOT NULL,
+    `float_field` float NOT NULL,
+    PRIMARY KEY (`id`),
+    CLUSTERED COLUMNAR INDEX `arctmp_myarc_t1` (`date_field`)
+    PARTITION BY RANGE COLUMNS(`date_field`)
+    (PARTITION `p20200101` VALUES LESS THAN ('2020-01-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200201` VALUES LESS THAN ('2020-02-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200301` VALUES LESS THAN ('2020-03-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200401` VALUES LESS THAN ('2020-04-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200501` VALUES LESS THAN ('2020-05-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200601` VALUES LESS THAN ('2020-06-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200701` VALUES LESS THAN ('2020-07-01 00:00:00') ENGINE = Columnar,
+    PARTITION `pmax` VALUES LESS THAN (MAXVALUE) ENGINE = Columnar) ENGINE=OSS
+    COLUMNAR_OPTIONS='{
+    "TYPE":"ARCHIVE",
+    }',
+    LOCAL KEY `idx_df` (`date_field`)，
+    LOCAL KEY `idx_int` (`int_field`),
+    GLOBAL INDEX `gsi_text` (`text_field`) covering (`date_field`) partition by hash(`text_field`)
+    ) ENGINE = InnoDB DEFAULT CHARSET = utf8
+    TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `date_field` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00', TTL_JOB = CRON '0 1 */1 * * ?', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_PRE_ALLOCATE = 12, ARCHIVE_TABLE_POST_ALLOCATE = 12, TTL_REF_COL_LIST = 'int_field')
+    PARTITION BY KEY(`id`)
+    PARTITIONS 8;
+  my_t2:
+    CREATE TABLE `my_t2` (
+    `id` bigint NOT NULL AUTO_INCREMENT,
+    `text_field` varchar(2048),
+    `int_field` int NOT NULL,
+    `date_field` datetime NOT NULL,
+    `float_field` float NOT NULL,
+    PRIMARY KEY (`id`),
+    CLUSTERED COLUMNAR INDEX `arctmp_myarc_t2` (`date_field`)
+    PARTITION BY RANGE COLUMNS(`date_field`)
+    (PARTITION `p20200101` VALUES LESS THAN ('2020-01-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200201` VALUES LESS THAN ('2020-02-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200301` VALUES LESS THAN ('2020-03-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200401` VALUES LESS THAN ('2020-04-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200501` VALUES LESS THAN ('2020-05-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200601` VALUES LESS THAN ('2020-06-01 00:00:00') ENGINE = Columnar,
+    PARTITION `p20200701` VALUES LESS THAN ('2020-07-01 00:00:00') ENGINE = Columnar,
+    PARTITION `pmax` VALUES LESS THAN (MAXVALUE) ENGINE = Columnar) ENGINE=OSS
+    COLUMNAR_OPTIONS='{
+    "TYPE":"ARCHIVE",
+    }',
+    LOCAL KEY `idx_df` (`date_field`)，
+    LOCAL KEY `idx_int` (`int_field`),
+    GLOBAL INDEX `gsi_text` (`text_field`) covering (`date_field`) partition by hash(`text_field`)
+    ) ENGINE = InnoDB DEFAULT CHARSET = utf8
+    TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `date_field` EXPIRE AFTER 2 MONTH TIMEZONE '+08:00', TTL_JOB = CRON '0 1 */1 * * ?', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, MONTH), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_PRE_ALLOCATE = 12, ARCHIVE_TABLE_POST_ALLOCATE = 12, TTL_REF_COL_LIST = 'int_field')
+    PARTITION BY KEY(`id`)
+    PARTITIONS 8;
+STATISTICS:
+  my_t1:
+    10000
+  my_t2:
+    10000
+CONFIG:
+  ENABLE_TRANSPARENT_TTL:
+    true
+  PLAN_CACHE:
+    false
+  WORKLOAD_TYPE:
+    ap
+  ENABLE_MPP:
+    true
+  TTL_QUERY_TYPE:
+    HOT_AND_COLD

@@ -2,6 +2,7 @@ package com.alibaba.polardbx.executor.gms;
 
 import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.gms.engine.FileSystemManager;
 import com.alibaba.polardbx.gms.engine.FileSystemUtils;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarAppendedFilesAccessor;
@@ -239,9 +240,9 @@ public abstract class FileVersionStorageTestBase {
 
         Mockito.when(mockDynamicColumnarManager.fileMetaOf(anyString())).thenReturn(FILE_META);
         Mockito.when(
-            mockDynamicColumnarManager.delFileNames(anyLong(), anyString(), anyString(), anyString())
+            mockDynamicColumnarManager.delFileNames(anyString(), anyString(), anyString())
         ).thenReturn(
-            Collections.singletonList(DEL_FILE_NAME)
+            Pair.of(0L, Collections.singletonList(DEL_FILE_NAME))
         );
         Mockito.when(
             mockDynamicColumnarManager.fileNameOf(anyString(), anyLong(), anyString(), eq(CSV_FILE_ID))
@@ -262,6 +263,13 @@ public abstract class FileVersionStorageTestBase {
         mockFsUtils.when(
             () -> FileSystemUtils.readFile(
                 anyString(), anyInt(), anyInt(), any(byte[].class), any(Engine.class), anyBoolean()
+            )
+        ).thenAnswer(
+            mockFileReadAnswer
+        );
+        mockFsUtils.when(
+            () -> FileSystemUtils.readFile(
+                anyString(), anyInt(), anyInt(), any(byte[].class), any(Engine.class), anyBoolean(), any()
             )
         ).thenAnswer(
             mockFileReadAnswer

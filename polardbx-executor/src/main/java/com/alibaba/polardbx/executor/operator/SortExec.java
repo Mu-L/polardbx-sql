@@ -16,30 +16,40 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.operator.spill.MemoryRevoker;
 import com.alibaba.polardbx.executor.operator.spill.SpillerFactory;
 import com.alibaba.polardbx.executor.operator.util.ExternalSorter;
 import com.alibaba.polardbx.executor.operator.util.MemSortor;
 import com.alibaba.polardbx.executor.operator.util.Sorter;
-import com.alibaba.polardbx.executor.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
 import com.alibaba.polardbx.optimizer.memory.MemoryPoolUtils;
 import com.alibaba.polardbx.optimizer.memory.OperatorMemoryAllocatorCtx;
 import com.google.common.util.concurrent.ListenableFuture;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.List;
 
 public class SortExec extends AbstractExecutor implements ConsumerExecutor, MemoryRevoker {
+    private static final int INSTANCE_SIZE = (int) ClassLayout.parseClass(SortExec.class).instanceSize();
 
+    @FieldMemoryCounter(value = false)
     private final List<DataType> inputDataTypes;
+    @FieldMemoryCounter(value = false)
     private final List<OrderByOption> orderBys;
+    @FieldMemoryCounter(value = false)
     private SpillerFactory spillerFactory;
     private boolean spillEnabled;
 
+    @FieldMemoryCounter(value = false)
     private MemoryPool memoryPool;
+    @FieldMemoryCounter(value = false)
     private OperatorMemoryAllocatorCtx memoryAllocator;
 
     private Sorter sorter = null;
@@ -53,7 +63,24 @@ public class SortExec extends AbstractExecutor implements ConsumerExecutor, Memo
         this.orderBys = orderBys;
         this.spillerFactory = spillerFactory;
         this.spillEnabled = spillerFactory != null;
+    }
 
+    @FieldMemoryCounter(value = false)
+    protected OperatorMemoryOwnerId consumerMemoryOwnerId;
+
+    @Override
+    public void setConsumerOperatorMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        this.consumerMemoryOwnerId = operatorMemoryOwnerId;
+    }
+
+    @Override
+    public OperatorMemoryOwnerId getConsumerMemoryOwnerId() {
+        return consumerMemoryOwnerId;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(sorter);
     }
 
     @Override
@@ -86,7 +113,8 @@ public class SortExec extends AbstractExecutor implements ConsumerExecutor, Memo
                 memoryAllocator, orderBys, columns, chunkLimit, spillerFactory, context.getQuerySpillSpaceMonitor(),
                 context);
         } else {
-            this.sorter = new MemSortor(memoryAllocator, orderBys, columns, chunkLimit, false, context);
+            this.sorter = new MemSortor(
+                producerMemoryOwnerId, memoryAllocator, orderBys, columns, chunkLimit, false, context);
         }
     }
 

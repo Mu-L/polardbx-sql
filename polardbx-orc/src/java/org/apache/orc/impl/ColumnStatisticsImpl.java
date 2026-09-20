@@ -25,6 +25,7 @@ import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.WritableComparator;
 import org.apache.orc.BinaryColumnStatistics;
 import org.apache.orc.BooleanColumnStatistics;
+import org.apache.orc.CollationCompactor;
 import org.apache.orc.CollectionColumnStatistics;
 import org.apache.orc.ColumnStatistics;
 import org.apache.orc.DateColumnStatistics;
@@ -834,9 +835,11 @@ public class ColumnStatisticsImpl implements ColumnStatistics {
 
     private boolean firstBound = false;
     private boolean latestBound = false;
+    private CollationCompactor compactor;
 
-    StringStatisticsImpl(boolean recordFirstAndLatest) {
+    StringStatisticsImpl(boolean recordFirstAndLatest, CollationCompactor compactor) {
       this.recordFirstAndLatest = recordFirstAndLatest;
+      this.compactor = compactor;
     }
 
     StringStatisticsImpl(OrcProto.ColumnStatistics stats) {
@@ -910,7 +913,7 @@ public class ColumnStatisticsImpl implements ColumnStatistics {
           isLowerBoundSet = false;
           isUpperBoundSet = false;
         }
-      } else if (WritableComparator.compareBytes(minimum.getBytes(), 0,
+      } else if (compare(minimum.getBytes(), 0,
           minimum.getLength(), bytes, offset, length) > 0) {
         if(length > MAX_BYTES_RECORDED) {
           minimum = truncateLowerBound(bytes, offset);
@@ -920,7 +923,7 @@ public class ColumnStatisticsImpl implements ColumnStatistics {
           minimum.set(bytes, offset, length);
           isLowerBoundSet = false;
         }
-      } else if (WritableComparator.compareBytes(maximum.getBytes(), 0,
+      } else if (compare(maximum.getBytes(), 0,
           maximum.getLength(), bytes, offset, length) < 0) {
         if(length > MAX_BYTES_RECORDED) {
           maximum = truncateUpperBound(bytes, offset);
@@ -959,6 +962,14 @@ public class ColumnStatisticsImpl implements ColumnStatistics {
       }
     }
 
+    private int compare(byte[] b1, int s1, int l1, byte[] b2, int s2, int l2) {
+      if (compactor != null) {
+        return compactor.compare(b1, s1, l1, b2, s2, l2);
+      } else {
+        return WritableComparator.compareBytes(b1, s1, l1, b2, s2, l2);
+      }
+    }
+
     @Override
     public void updateNull() {
       if (recordFirstAndLatest) {
@@ -989,11 +1000,13 @@ public class ColumnStatisticsImpl implements ColumnStatistics {
             isUpperBoundSet = false;
           }
         } else if (str.count != 0) {
-          if (minimum.compareTo(str.minimum) > 0) {
+          if (compare(minimum.getBytes(), 0,
+              minimum.getLength(), str.minimum.getBytes(), 0, str.minimum.getLength()) > 0) {
             minimum = new Text(str.minimum);
             isLowerBoundSet = str.isLowerBoundSet;
           }
-          if (maximum.compareTo(str.maximum) < 0) {
+          if (compare(maximum.getBytes(), 0,
+              maximum.getLength(), str.maximum.getBytes(), 0, str.maximum.getLength()) < 0) {
             maximum = new Text(str.maximum);
             isUpperBoundSet = str.isUpperBoundSet;
           }
@@ -2396,6 +2409,10 @@ public class ColumnStatisticsImpl implements ColumnStatistics {
     return builder;
   }
 
+  public static ColumnStatisticsImpl create(TypeDescription schema) {
+    return create(schema, false, false, false);
+  }
+
   public static ColumnStatisticsImpl create(TypeDescription schema,
                                             boolean convertToProleptic,
                                             boolean enableDecimal64,
@@ -2417,13 +2434,20 @@ public class ColumnStatisticsImpl implements ColumnStatistics {
       case STRING:
       case CHAR:
       case VARCHAR:
-        return new StringStatisticsImpl(recordFirstAndLatest);
+        if (schema.getAttributeValue(TypeDescription.CHARSET_ATTRIBUTE) != null && schema.getAttributeValue(TypeDescription.COLLATION_ATTRIBUTE) != null) {
+          CollationCompactor
+              compactor = new CollationCompactor(schema.getAttributeValue(TypeDescription.CHARSET_ATTRIBUTE),
+              schema.getAttributeValue(TypeDescription.COLLATION_ATTRIBUTE));
+          return new StringStatisticsImpl(recordFirstAndLatest, compactor);
+        } else {
+          return new StringStatisticsImpl(recordFirstAndLatest, null);
+        }
       case DECIMAL:
         if (enableDecimal64 && TypeUtils.isDecimal64Precision(schema.getPrecision())) {
           return new IntegerStatisticsImpl(recordFirstAndLatest);
         } else {
             // decimal stored as bytes
-            return new StringStatisticsImpl(recordFirstAndLatest);
+            return new StringStatisticsImpl(recordFirstAndLatest, null);
         }
       case DATE:
         return new DateStatisticsImpl(convertToProleptic, recordFirstAndLatest);

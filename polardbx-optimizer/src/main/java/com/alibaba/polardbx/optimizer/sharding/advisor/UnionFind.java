@@ -31,7 +31,7 @@ public class UnionFind {
     int[] father;
     int[] rank;
 
-    UnionFind(int n) {
+    public UnionFind(int n) {
         father = new int[n];
         rank = new int[n];
         for (int i = 0; i < n; i++) {
@@ -40,14 +40,14 @@ public class UnionFind {
         }
     }
 
-    int find(int u) {
+    public int find(int u) {
         if (father[u] != u) {
             father[u] = find(father[u]);
         }
         return father[u];
     }
 
-    void union(int u, int v) {
+    public void union(int u, int v) {
         int ru = find(u);
         int rv = find(v);
         if (ru == rv) {

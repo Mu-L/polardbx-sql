@@ -152,6 +152,9 @@ public class AutoPartitionCreateWithGSI extends AutoPartitionTestBase {
     }
 
     @Test
+    // Ignored because after two-phase DDL locking is enabled, the second DROP INDEX in the double-drop case
+    // always rebuilds the plan after the first DROP INDEX finishes, then fails with "GSI not found".
+    @Ignore
     public void testCreateIndexDoubleDrop0() {
         final String primaryTable = "t_idx_order";
         final String indexTable = "g_i_idx_seller";

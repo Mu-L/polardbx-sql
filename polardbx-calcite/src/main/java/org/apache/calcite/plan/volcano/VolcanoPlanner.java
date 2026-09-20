@@ -173,7 +173,7 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
 
   boolean enableDerive = true;
 
-  boolean enableColumnar = false;
+  boolean converterInOneRelSet = false;
 
   /**
    * Extra roots for explorations.
@@ -1768,11 +1768,11 @@ public class VolcanoPlanner extends AbstractRelOptPlanner {
     this.enableDerive = enableDerive;
   }
 
-  public boolean isEnableColumnar() {
-    return enableColumnar;
-  }
+    public boolean isConverterInOneRelSet() {
+        return converterInOneRelSet;
+    }
 
-  public void setEnableColumnar(boolean enableColumnar) {
-    this.enableColumnar = enableColumnar;
-  }
+    public void setConverterInOneRelSet(boolean converterInOneRelSet) {
+        this.converterInOneRelSet = converterInOneRelSet;
+    }
 }

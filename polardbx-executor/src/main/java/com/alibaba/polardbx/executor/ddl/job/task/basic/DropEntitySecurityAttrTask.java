@@ -20,6 +20,7 @@ import com.alibaba.fastjson.annotation.JSONCreator;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseGmsTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
+import com.alibaba.polardbx.executor.utils.DdlUtils;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbConfigManager;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
@@ -43,6 +44,10 @@ public class DropEntitySecurityAttrTask extends BaseGmsTask {
     public DropEntitySecurityAttrTask(String schemaName, String logicalTableName, List<LBACSecurityEntity> esaList) {
         super(schemaName, logicalTableName);
         this.esaList = esaList;
+    }
+
+    @Override
+    protected void beforeTransaction(ExecutionContext executionContext) {
     }
 
     @Override
@@ -87,6 +92,9 @@ public class DropEntitySecurityAttrTask extends BaseGmsTask {
         for (LBACSecurityEntity esa : esaList) {
             esaAccessor.replace(esa);
         }
+    }
+
+    protected void updateTableVersion(Connection metaDbConnection) {
     }
 
     public List<LBACSecurityEntity> getEsaList() {

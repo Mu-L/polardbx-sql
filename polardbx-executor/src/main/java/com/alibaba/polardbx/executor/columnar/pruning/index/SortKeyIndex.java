@@ -16,8 +16,12 @@
 
 package com.alibaba.polardbx.executor.columnar.pruning.index;
 
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
+import com.alibaba.polardbx.optimizer.index.Index;
 import org.roaringbitmap.RoaringBitmap;
+
+import java.util.Objects;
 
 public abstract class SortKeyIndex extends BaseColumnIndex {
 
@@ -31,15 +35,18 @@ public abstract class SortKeyIndex extends BaseColumnIndex {
      */
     protected final DataType dt;
 
-    protected SortKeyIndex(long rgNum, int colId, DataType dt) {
+    protected final boolean isAsc;
+
+    protected SortKeyIndex(long rgNum, int colId, DataType dt, boolean isAsc) {
         super(rgNum);
         this.colId = colId;
         this.dt = dt;
+        this.isAsc = isAsc;
     }
 
-    abstract public void pruneEqual(Object param, RoaringBitmap cur);
+    abstract public void pruneEqual(Object param, RoaringBitmap cur, IndexPruneContext ipc);
 
-    abstract public void pruneRange(Object startObj, Object endObj, RoaringBitmap cur);
+    abstract public void pruneRange(Object startObj, Object endObj, RoaringBitmap cur, IndexPruneContext ipc);
 
     @Override
     public DataType getColumnDataType(int colId) {
@@ -52,6 +59,44 @@ public abstract class SortKeyIndex extends BaseColumnIndex {
 
     public DataType getDt() {
         return dt;
+    }
+
+    protected Pair<Integer, Integer> handleInterval(Pair<Integer, Boolean> sIndex, Pair<Integer, Boolean> eIndex) {
+        int startRgIndex;
+        int endRgIndex;
+
+        if (!isAsc) {
+            //step1: (startRgIndex, endRgIndex]
+            if (!eIndex.getValue() && !Objects.equals(sIndex.getKey(), eIndex.getKey())) {
+                endRgIndex = eIndex.getKey() - 1;
+            } else {
+                endRgIndex = eIndex.getKey();
+            }
+
+            if (sIndex.getValue()) {
+                startRgIndex = sIndex.getKey() - 1;
+            } else {
+                startRgIndex = sIndex.getKey();
+            }
+            //step2: [startRgIndex', endRgIndex')
+            int preStartRgIndex = startRgIndex;
+            startRgIndex = (int) rgNum() - endRgIndex - 1;
+            endRgIndex = (int) rgNum() - preStartRgIndex - 1;
+        } else {
+            // if lower rg index was not included, plus it was different from upper index, then add 1 to lower rg index
+            //  [startRgIndex, endRgIndex)
+            if (!sIndex.getValue() && !Objects.equals(sIndex.getKey(), eIndex.getKey())) {
+                startRgIndex = sIndex.getKey() + 1;
+            } else {
+                startRgIndex = sIndex.getKey();
+            }
+            if (eIndex.getValue()) {
+                endRgIndex = eIndex.getKey() + 1;
+            } else {
+                endRgIndex = eIndex.getKey();
+            }
+        }
+        return Pair.of(startRgIndex, endRgIndex);
     }
 
 }

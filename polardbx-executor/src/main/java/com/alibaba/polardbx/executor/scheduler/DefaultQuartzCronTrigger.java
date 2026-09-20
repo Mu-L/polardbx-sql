@@ -18,6 +18,7 @@ package com.alibaba.polardbx.executor.scheduler;
 
 import com.alibaba.polardbx.common.scheduler.FiredScheduledJobState;
 import com.alibaba.polardbx.common.utils.timezone.TimeZoneUtils;
+import com.alibaba.polardbx.executor.scheduler.executor.TtlArchivedDataScheduledJob;
 import com.alibaba.polardbx.gms.scheduler.FiredScheduledJobsAccessor;
 import com.alibaba.polardbx.gms.scheduler.FiredScheduledJobsRecord;
 import com.alibaba.polardbx.gms.scheduler.ScheduledJobsAccessor;
@@ -30,6 +31,7 @@ import com.google.common.base.Preconditions;
 
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.Map;
 import java.util.Optional;
 
 import static com.alibaba.polardbx.gms.scheduler.ScheduleDateTimeConverter.secondToZonedDateTime;
@@ -105,6 +107,32 @@ public class DefaultQuartzCronTrigger implements ScheduledJobsTrigger {
         firedScheduledJobsRecord.setTableName(record.getTableName());
         firedScheduledJobsRecord.setFireTime(epochSeconds);
         firedScheduledJobsRecord.setState(FiredScheduledJobState.QUEUED.name());
+        firedScheduledJobsScanner.fire(firedScheduledJobsRecord);
+        return true;
+    }
+
+    @Override
+    public boolean forceFireOnceNow(Long firedTimeTs, Map<String, Object> hintCmdParams) {
+        ZoneId zoneId = TimeZoneUtils.zoneIdOf(record.getTimeZone());
+        ZonedDateTime now = ZonedDateTime.now(zoneId);
+        long epochSeconds = now.toEpochSecond();
+        if (firedTimeTs != null) {
+            epochSeconds = firedTimeTs;
+        }
+        FiredScheduledJobsRecord firedScheduledJobsRecord = new FiredScheduledJobsRecord();
+        firedScheduledJobsRecord.setScheduleId(record.getScheduleId());
+        firedScheduledJobsRecord.setTableSchema(record.getTableSchema());
+        firedScheduledJobsRecord.setTableGroupName(record.getTableGroupName());
+        firedScheduledJobsRecord.setTableName(record.getTableName());
+        firedScheduledJobsRecord.setFireTime(epochSeconds);
+        firedScheduledJobsRecord.setState(FiredScheduledJobState.QUEUED.name());
+
+        TtlArchivedDataScheduledJob.JobRemarkFieldJson remarkFieldJsonInfo =
+            new TtlArchivedDataScheduledJob.JobRemarkFieldJson();
+        remarkFieldJsonInfo.setHintCmdParams(hintCmdParams);
+        remarkFieldJsonInfo.setJobLogMsg("");
+        firedScheduledJobsRecord.setRemark(TtlArchivedDataScheduledJob.JobRemarkFieldJson.toJson(remarkFieldJsonInfo));
+
         firedScheduledJobsScanner.fire(firedScheduledJobsRecord);
         return true;
     }

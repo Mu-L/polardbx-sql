@@ -91,28 +91,33 @@ public class MppHashJoinConvertRule extends RelOptRule {
         keyPairList.add(Pair.of(joinInfo.leftKeys, joinInfo.rightKeys));
 
         if (PlannerContext.getPlannerContext(hashJoin).getParamManager()
-            .getBoolean(ConnectionParams.ENABLE_SHUFFLE_BY_PARTIAL_KEY) && joinInfo.leftKeys.size() > 1) {
-            for (IntPair pair : joinInfo.pairs()) {
-                keyPairList.add(Pair.of(ImmutableIntList.of(pair.source), ImmutableIntList.of(pair.target)));
+            .getBoolean(ConnectionParams.ENABLE_SHUFFLE_JOIN)) {
+
+            if (PlannerContext.getPlannerContext(hashJoin).getParamManager()
+                .getBoolean(ConnectionParams.ENABLE_SHUFFLE_BY_PARTIAL_KEY) && joinInfo.leftKeys.size() > 1) {
+                for (IntPair pair : joinInfo.pairs()) {
+                    keyPairList.add(Pair.of(ImmutableIntList.of(pair.source), ImmutableIntList.of(pair.target)));
+                }
             }
+
+            int leftFieldCount = left.getRowType().getFieldCount();
+            int rightFiledCount = right.getRowType().getFieldCount();
+            Mappings.TargetMapping mapping =
+                Mappings.createShiftMapping(rightFiledCount, leftFieldCount, 0, rightFiledCount);
+
+            for (Pair<List<Integer>, List<Integer>> keyPair : keyPairList) {
+                RelDataType keyDataType = CalciteUtils.getJoinKeyDataType(
+                    hashJoin.getCluster().getTypeFactory(), hashJoin, keyPair.left, keyPair.right);
+                RelNode hashLeft = RuleUtils.ensureKeyDataTypeDistribution(left, keyDataType, keyPair.left);
+                RelNode hashRight = RuleUtils.ensureKeyDataTypeDistribution(right, keyDataType, keyPair.right);
+
+                implementationList.add(Pair.of(hashLeft.getTraitSet().getDistribution(), Pair.of(hashLeft, hashRight)));
+                implementationList
+                    .add(Pair.of(hashRight.getTraitSet().getDistribution().apply(mapping),
+                        Pair.of(hashLeft, hashRight)));
+            }
+
         }
-
-        int leftFieldCount = left.getRowType().getFieldCount();
-        int rightFiledCount = right.getRowType().getFieldCount();
-        Mappings.TargetMapping mapping =
-            Mappings.createShiftMapping(rightFiledCount, leftFieldCount, 0, rightFiledCount);
-
-        for (Pair<List<Integer>, List<Integer>> keyPair : keyPairList) {
-            RelDataType keyDataType = CalciteUtils.getJoinKeyDataType(
-                hashJoin.getCluster().getTypeFactory(), hashJoin, keyPair.left, keyPair.right);
-            RelNode hashLeft = RuleUtils.ensureKeyDataTypeDistribution(left, keyDataType, keyPair.left);
-            RelNode hashRight = RuleUtils.ensureKeyDataTypeDistribution(right, keyDataType, keyPair.right);
-
-            implementationList.add(Pair.of(hashLeft.getTraitSet().getDistribution(), Pair.of(hashLeft, hashRight)));
-            implementationList
-                .add(Pair.of(hashRight.getTraitSet().getDistribution().apply(mapping), Pair.of(hashLeft, hashRight)));
-        }
-
         if (PlannerContext.getPlannerContext(call).getParamManager()
             .getBoolean(ConnectionParams.ENABLE_BROADCAST_JOIN)) {
             // Broadcast Shuffle

@@ -201,8 +201,8 @@ public class ServerThreadPool extends AbstractExecutorService {
         return ftask;
     }
 
-    public <T> ListenableFuture<T> submitListenableFuture(
-        String schemaName, String traceId, int bucketIndex, Callable<T> task, CpuCollector cpuCollector) {
+    public ListenableFuture<?> submitListenableFuture(
+        String schemaName, String traceId, int bucketIndex, Callable task, CpuCollector cpuCollector) {
         if (task == null) {
             throw new NullPointerException();
         }
@@ -218,13 +218,14 @@ public class ServerThreadPool extends AbstractExecutorService {
             AppStats.nodeTaskCount.incrementAndGet();
         }
         try {
+            ListenableFuture<?> future = null;
             if (executorBuckets != null) {
-                return MoreExecutors.listeningDecorator(executorBuckets[bucketIndex])
-                    .submit(new ListenCallableAdapter(schemaName, task, traceId, cpuCollector));
+                future = MoreExecutors.listeningDecorator(executorBuckets[bucketIndex]).submit(task);
             } else {
-                return MoreExecutors.listeningDecorator(executor)
-                    .submit(new ListenCallableAdapter(schemaName, task, traceId, cpuCollector));
+                future = MoreExecutors.listeningDecorator(executor).submit(task);
             }
+            future.addListener(() -> afterTaskDone(schemaName), MoreExecutors.directExecutor());
+            return future;
         } catch (Throwable e) {
 
             decreTaskCount(stat);
@@ -710,28 +711,6 @@ public class ServerThreadPool extends AbstractExecutorService {
             }
 
             return task.call();
-        }
-    }
-
-    public class ListenCallableAdapter implements Callable {
-
-        final Callable task;
-        final String traceId;
-        final String schemaName;
-
-        ListenCallableAdapter(String schemaName, Callable task, String traceId, CpuCollector cpuCollector) {
-            this.task = new CallableWithCpuCollector(task, cpuCollector);
-            this.traceId = traceId;
-            this.schemaName = schemaName;
-        }
-
-        @Override
-        public Object call() throws Exception {
-            try {
-                return task.call();
-            } finally {
-                afterTaskDone(schemaName);
-            }
         }
     }
 

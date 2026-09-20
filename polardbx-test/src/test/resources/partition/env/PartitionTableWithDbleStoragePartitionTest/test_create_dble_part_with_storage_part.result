@@ -1,0 +1,112 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+set ENABLE_SHOW_STORAGE_PARTITIONS=true;
+## ======== hash =========
+drop table if exists key_storage_part;
+create table key_storage_part (
+  a bigint not null，
+  b bigint,
+  primary key(a)
+) charset utf8mb4 collate utf8mb4_general_ci
+/*!storage
+partition by key(a)
+partitions 8
+*/
+partition by key(b)
+partitions 4;
+show create table key_storage_part;
+Table,Create Table
+key_storage_part,CREATE TABLE `key_storage_part` (
+	`a` bigint(20) NOT NULL,
+	`b` bigint(20) DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+/*!STORAGE
+PARTITION BY KEY (a)
+PARTITIONS 8
+*/
+PARTITION BY KEY(`b`)
+PARTITIONS 4
+create table dble_storage_part_with_sp(
+  a bigint not null,
+  b bigint,
+  primary key(a,b)
+) charset utf8mb4 collate utf8mb4_general_ci
+/*!storage
+partition by range(a)
+subpartition by key(b)
+(
+  partition p1 values less than(1) (
+ 	subpartition sp1,
+ 	subpartition sp2
+  ),
+  partition p2 values less than(10) (
+ 	subpartition sp3,
+ 	subpartition sp4
+  )
+)
+*/
+partition by udf_hash(
+ `a` with udf_params(
+ 	'dble/hash',
+  '{
+ 		"partitionCount" : "4",
+ 		"partitionLength" : "1"
+ 	}'
+  )
+  )
+partitions 4
+subpartition by udf_hash(
+  `b` with udf_params(
+  'dble/hash',
+  '{
+ 		"partitionCount" : "4",
+ 		"partitionLength" : "1"
+ 	}'
+  )
+)
+subpartitions 4;
+show create table dble_storage_part_with_sp;
+Table,Create Table
+dble_storage_part_with_sp,CREATE TABLE `dble_storage_part_with_sp` (
+	`a` bigint(20) NOT NULL,
+	`b` bigint(20) NOT NULL,
+	PRIMARY KEY (`a`, `b`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+/*!STORAGE
+PARTITION BY RANGE (a)
+SUBPARTITION BY KEY (b)
+(PARTITION p1 VALUES LESS THAN (1)
+ (SUBPARTITION sp1 ENGINE = InnoDB,
+  SUBPARTITION sp2 ENGINE = InnoDB),
+ PARTITION p2 VALUES LESS THAN (10)
+ (SUBPARTITION sp3 ENGINE = InnoDB,
+  SUBPARTITION sp4 ENGINE = InnoDB))
+*/
+PARTITION BY UDF_HASH(`a` WITH UDF_PARAMS (
+'dble/hash',
+'{
+ 		"partitionCount" : "4",
+ 		"partitionLength" : "1"
+ 	}'
+))
+PARTITIONS 4
+SUBPARTITION BY UDF_HASH(`b` WITH UDF_PARAMS (
+'dble/hash',
+'{
+ 		"partitionCount" : "4",
+ 		"partitionLength" : "1"
+ 	}'
+))
+SUBPARTITIONS 4
+(SUBPARTITION sp1 VALUES LESS THAN (1),
+ SUBPARTITION sp2 VALUES LESS THAN (2),
+ SUBPARTITION sp3 VALUES LESS THAN (3),
+ SUBPARTITION sp4 VALUES LESS THAN (9223372036854775807))
+(PARTITION p1 VALUES LESS THAN (1),
+ PARTITION p2 VALUES LESS THAN (2),
+ PARTITION p3 VALUES LESS THAN (3),
+ PARTITION p4 VALUES LESS THAN (9223372036854775807))

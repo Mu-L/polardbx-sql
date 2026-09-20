@@ -32,6 +32,10 @@ public final class BitFieldReader {
     this.input = new RunLengthByteReader(input);
   }
 
+  public RunLengthByteReader getInput() {
+    return input;
+  }
+
   private void readByte() throws IOException {
     if (input.hasNext()) {
       current = 0xff & input.next();

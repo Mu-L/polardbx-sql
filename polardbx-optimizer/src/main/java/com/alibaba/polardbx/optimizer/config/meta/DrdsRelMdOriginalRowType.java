@@ -17,19 +17,25 @@
 package com.alibaba.polardbx.optimizer.config.meta;
 
 import com.alibaba.polardbx.optimizer.core.rel.BroadcastTableModify;
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
+import com.alibaba.polardbx.optimizer.core.rel.ExternalTableScan;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.MysqlTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.PhysicalCTEConsumer;
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.SingleRel;
 import org.apache.calcite.rel.core.Aggregate;
+import org.apache.calcite.rel.core.CTEAnchor;
+import org.apache.calcite.rel.core.CTEProducer;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.core.SemiJoin;
 import org.apache.calcite.rel.core.SetOp;
 import org.apache.calcite.rel.core.TableLookup;
+import org.apache.calcite.rel.logical.LogicalCTEConsumer;
 import org.apache.calcite.rel.logical.LogicalProject;
 import org.apache.calcite.rel.metadata.BuiltInMetadata;
 import org.apache.calcite.rel.metadata.MetadataDef;
@@ -121,6 +127,27 @@ public class DrdsRelMdOriginalRowType implements MetadataHandler<BuiltInMetadata
 
     public RelDataType getOriginalRowType(MysqlTableScan rel, RelMetadataQuery mq) {
         return mq.getOriginalRowType(rel.getNodeForMetaQuery());
+    }
+
+    public RelDataType getOriginalRowType(CTEAnchor rel, RelMetadataQuery mq) {
+        return mq.getOriginalRowType(rel.getRight());
+    }
+
+    public RelDataType getOriginalRowType(CTEProducer rel, RelMetadataQuery mq) {
+        return mq.getOriginalRowType(rel.getInput());
+    }
+
+    public RelDataType getOriginalRowType(LogicalCTEConsumer rel, RelMetadataQuery mq) {
+        return mq.getOriginalRowType(rel.getInnerRel());
+    }
+
+    public RelDataType getOriginalRowType(PhysicalCTEConsumer rel, RelMetadataQuery mq) {
+        return mq.getOriginalRowType(CBOUtil.getCteProducer(rel));
+    }
+
+    public RelDataType getOriginalRowType(
+        ExternalTableScan rel, RelMetadataQuery mq) {
+        return rel.getOriginalRowType(mq);
     }
 
     public RelDataType getOriginalRowType(BroadcastTableModify rel, RelMetadataQuery mq) {

@@ -18,6 +18,7 @@ package com.alibaba.polardbx.optimizer.partition.pruning;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.optimizer.core.TddlOperatorTable;
 import com.alibaba.polardbx.optimizer.partition.PartitionByDefinition;
@@ -48,6 +49,8 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
+import static com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruneStepBuilder.checkIfNeedGiveUpPruning;
+import static com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruneStepBuilder.genFullScanPruneStepInfoInner;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.EQUALS;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.OR;
 import static org.apache.calcite.sql.fun.SqlStdOperatorTable.ROW;
@@ -62,12 +65,18 @@ public class PartPredRewriter {
     protected static RexNode rewritePartPredicate(PartitionInfo partInfo,
                                                   RelDataType relRowType,
                                                   RexNode partPred,
-                                                  PartPruneStepBuildingContext context) {
+                                                  PartPruneStepBuildingContext context,
+                                                  Map<Integer, ParameterContext> params) {
         RexNode newPartPred = null;
         RexNode finalPartPred = null;
         try {
             newPartPred = rewritePredExpr(context, partInfo, relRowType, partPred);
             if (newPartPred == null) {
+                return null;
+            }
+            // check predicate expr, if is too complex then give up pruning
+            boolean needGiveUpPruning = checkIfNeedGiveUpPruning(context, newPartPred, params);
+            if (needGiveUpPruning) {
                 return null;
             }
             RexBuilder rexBuilder = PartitionPrunerUtils.getRexBuilder();

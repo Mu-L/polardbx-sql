@@ -69,12 +69,10 @@ public class DropDbGroupHideMetaTask extends BaseDdlTask {
         for (String groupName : targetGroupNames) {
             DbGroupInfoRecord groupInfo = dgm.queryGroupInfo(schemaName, groupName);
             if (groupInfo != null) {
-                String phyDbName = groupInfo.phyDbName;
-
                 for (TableGroupConfig tg : tableGroupConfigs) {
                     for (PartitionGroupRecord pg : tg.getPartitionGroupRecords()) {
-                        String phyDb = pg.getPhy_db();
-                        if (TStringUtil.equalsIgnoreCase(phyDb, phyDbName)) {
+                        String gName = pg.getGroup_Name();
+                        if (TStringUtil.equalsIgnoreCase(gName, groupName)) {
                             throw DdlHelper.logAndThrowError(LOG,
                                 String.format(
                                     "Non-Empty group could not be hide: schema=%s,group=%s,tg=%d, pg=%s,pgId=%d",

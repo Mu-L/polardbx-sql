@@ -41,6 +41,7 @@ import org.apache.calcite.sql.SqlNodeList;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -83,6 +84,10 @@ public class LogicalInsertIgnore extends LogicalInsert {
     // localIndexPhyName contains physical index name used in ukGroupByTable
     // map[tableName, list[LocalIndexName]]
     protected final Map<String, List<String>> localIndexPhyName = new HashMap<>();
+
+    // Candidate duplicate-check plan for partition-local UK pruning.
+    // map[tableName, list[UK check entry]]
+    protected final Map<String, List<UkCheckEntry>> candidateUkChecks = new LinkedHashMap<>();
 
     // All columns in UK and ColumnMeta
     protected final Map<String, ColumnMeta> columnMetaMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
@@ -139,6 +144,7 @@ public class LogicalInsertIgnore extends LogicalInsert {
             insert.isPushableForeignConstraintCheck(),
             insert.isModifyForeignKey(),
             insert.isUkContainsAllSkAndGsiContainsAllUk(),
+            insert.isCanSkipPkCheck(),
             insert.getDynamicImplicitDefaultParams(),
             insert.getUnoptimizedDynamicImplicitDefaultParams()
         );
@@ -159,7 +165,7 @@ public class LogicalInsertIgnore extends LogicalInsert {
                                List<ColumnMeta> defaultExprColMetas, List<RexNode> defaultExprColRexNodes,
                                List<Integer> defaultExprEvalFieldsMapping, boolean pushablePrimaryKeyCheck,
                                boolean pushableForeignConstraintCheck, boolean modifyForeignKey,
-                               boolean ukContainsAllSkAndGsiContainsAllUk,
+                               boolean ukContainsAllSkAndGsiContainsAllUk, boolean canSkipPkCheck,
                                List<RexCallParam> dynamicImplicitDefaultParams,
                                List<RexCallParam> unoptimizedDynamicImplicitDefaultParams) {
         super(cluster, traitSet, table, catalogReader, input, operation, flattened, insertRowType, keywords,
@@ -167,7 +173,8 @@ public class LogicalInsertIgnore extends LogicalInsert {
             gsiInsertWriters, autoIncParamIndex, logicalDynamicValues, unOpitimizedDuplicateKeyUpdateList,
             evalRowColMetas, genColRexNodes, inputToEvalFieldsMapping, defaultExprColMetas, defaultExprColRexNodes,
             defaultExprEvalFieldsMapping, pushablePrimaryKeyCheck, pushableForeignConstraintCheck, modifyForeignKey,
-            ukContainsAllSkAndGsiContainsAllUk, dynamicImplicitDefaultParams, unoptimizedDynamicImplicitDefaultParams);
+            ukContainsAllSkAndGsiContainsAllUk, canSkipPkCheck, dynamicImplicitDefaultParams,
+            unoptimizedDynamicImplicitDefaultParams);
         ExecutionContext ec = PlannerContext.getPlannerContext(cluster).getExecutionContext();
 
         // Ignore DELETE_ONLY UK
@@ -217,6 +224,7 @@ public class LogicalInsertIgnore extends LogicalInsert {
                                List<RexNode> defaultExprColRexNodes, List<Integer> defaultExprEvalFieldsMapping,
                                boolean pushablePrimaryKeyCheck, boolean pushableForeignConstraintCheck,
                                boolean modifyForeignKey, boolean ukContainsAllSkAndGsiContainsAllUk,
+                               boolean canSkipPkCheck,
                                List<RexCallParam> dynamicImplicitDefaultParams,
                                List<RexCallParam> unoptimizedDynamicImplicitDefaultParams) {
         super(cluster, traitSet, table, catalogReader, input, operation, flattened, insertRowType, keywords,
@@ -224,7 +232,8 @@ public class LogicalInsertIgnore extends LogicalInsert {
             gsiInsertWriters, autoIncParamIndex, logicalDynamicValues, unOpitimizedDuplicateKeyUpdateList,
             evalRowColMetas, genColRexNodes, inputToEvalFieldsMapping, defaultExprColMetas, defaultExprColRexNodes,
             defaultExprEvalFieldsMapping, pushablePrimaryKeyCheck, pushableForeignConstraintCheck, modifyForeignKey,
-            ukContainsAllSkAndGsiContainsAllUk, dynamicImplicitDefaultParams, unoptimizedDynamicImplicitDefaultParams);
+            ukContainsAllSkAndGsiContainsAllUk, canSkipPkCheck, dynamicImplicitDefaultParams,
+            unoptimizedDynamicImplicitDefaultParams);
 
         this.ukColumnNamesList = ukColumnNamesList;
         this.beforeUkMapping = beforeUkMapping;
@@ -309,9 +318,11 @@ public class LogicalInsertIgnore extends LogicalInsert {
             isPushableForeignConstraintCheck(),
             isModifyForeignKey(),
             isUkContainsAllSkAndGsiContainsAllUk(),
+            isCanSkipPkCheck(),
             getDynamicImplicitDefaultParams(),
             getUnoptimizedDynamicImplicitDefaultParams()
         );
+        newInsertIgnore.getCandidateUkChecks().putAll(getCandidateUkChecks());
         return newInsertIgnore;
     }
 
@@ -371,9 +382,11 @@ public class LogicalInsertIgnore extends LogicalInsert {
             isPushableForeignConstraintCheck(),
             isModifyForeignKey(),
             isUkContainsAllSkAndGsiContainsAllUk(),
+            isCanSkipPkCheck(),
             dynamicImplicitDefaultParams,
             getUnoptimizedDynamicImplicitDefaultParams()
         );
+        newInsertIgnore.getCandidateUkChecks().putAll(getCandidateUkChecks());
         return newInsertIgnore;
     }
 
@@ -506,7 +519,7 @@ public class LogicalInsertIgnore extends LogicalInsert {
 
     @Override
     public <R extends LogicalInsert> List<RelNode> getPhyPlanForDisplay(ExecutionContext executionContext,
-                                                                           R insertIgnore) {
+                                                                        R insertIgnore) {
         final InsertWriter primaryWriter = getPrimaryInsertWriter();
         final LogicalInsert insert = primaryWriter.getInsert();
         final Set<String> keywords = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
@@ -523,7 +536,8 @@ public class LogicalInsertIgnore extends LogicalInsert {
             insert.getInputToEvalFieldsMapping(), insert.getDefaultExprColMetas(), insert.getDefaultExprColRexNodes(),
             insert.getDefaultExprEvalFieldsMapping(), insert.isPushablePrimaryKeyCheck(),
             insert.isPushableForeignConstraintCheck(), insert.isModifyForeignKey(),
-            insert.isUkContainsAllSkAndGsiContainsAllUk(), insert.getDynamicImplicitDefaultParams(),
+            insert.isUkContainsAllSkAndGsiContainsAllUk(), insert.isCanSkipPkCheck(),
+            insert.getDynamicImplicitDefaultParams(),
             insert.getUnoptimizedDynamicImplicitDefaultParams());
 
         final InsertWriter insertIgnoreWriter = new InsertWriter(primaryWriter.getTargetTable(), copied);
@@ -626,6 +640,10 @@ public class LogicalInsertIgnore extends LogicalInsert {
 
     public Map<String, Map<String, Set<String>>> getTableUkMap() {
         return tableUkMap;
+    }
+
+    public Map<String, List<UkCheckEntry>> getCandidateUkChecks() {
+        return candidateUkChecks;
     }
 
     public Map<String, List<List<String>>> getUkGroupByTable() {

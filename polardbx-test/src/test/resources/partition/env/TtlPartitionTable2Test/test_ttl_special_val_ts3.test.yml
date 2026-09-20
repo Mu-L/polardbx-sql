@@ -1,0 +1,36 @@
+## DISABLE_FAST_SQL_PARSER
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set sql_mode='';
+set TTL_ADD_MAXVAL_PART_ON_CCI_CREATING=true;
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+
+drop table if exists myt1_ts;
+create table myt1_ts (a bigint, b timestamp)
+partition by key(a)
+partitions 4
+;
+
+alter table myt1_ts
+modify ttl
+set
+ttl_cleanup='on',
+ttl_expr = `b` expire after 30 day timezone '+00:00';
+
+delete from myt1_ts where 1=1;
+set time_zone='+00:00';
+insert into myt1_ts values (1, '2025-06-23 00:00:00');
+insert into myt1_ts values (2, '2025-06-23 00:00:00');
+insert into myt1_ts values (3, '2025-06-20 00:00:00');
+insert into myt1_ts values (4, '2025-06-20 00:00:00');
+select * from myt1_ts order by a,b;
+set TTL_DEBUG_CURRENT_DATETIME='2025-08-22 19:23:50';
+alter table myt1_ts cleanup expired data;
+
+select * from myt1_ts order by a,b;
+drop table if exists myt1_ts;
+
+
+

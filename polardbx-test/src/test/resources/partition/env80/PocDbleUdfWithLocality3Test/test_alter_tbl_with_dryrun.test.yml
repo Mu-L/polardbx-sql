@@ -1,0 +1,84 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+  ## test dble_db
+
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+
+use polardbx;
+drop database if exists dbledb3;
+  ## USE_DN_LIST_MSG
+create database if not exists dbledb3 mode = 'auto' locality='db_config={"g1":["set1","dbledb3_00"],"g2":["set2","dbledb3_01"] }';
+show create database dbledb3;
+use dbledb3;
+show tables;
+use polardbx;
+unregister database if exists dbledb3;
+  ## USE_DN_LIST_MSG
+register database if not exists dbledb3 mode = 'auto' locality='db_config={"g1":["set1","dbledb3_00"],"g2":["set2","dbledb3_01"] }';
+show create database dbledb3;
+use dbledb3;
+show tables;
+  
+  ## test unregister table
+drop table if exists dbledb3_t1;
+create table if not exists dbledb3_t1 (
+    a bigint , 
+    b bigint not null auto_increment,
+    primary key(b)
+) 
+partition by key(a)
+partitions 2
+locality='db_pools=g1,g2';
+unregister table if exists dbledb3_t1;
+show tables;
+
+  ## test register table 
+register table if not exists dbledb3_t1 (a int , b bigint not null auto_increment, primary key(b)) 
+partition by udf_hash(
+  `a` with udf_params(
+    'dble/hash',
+    '{"partitionCount": "2", "partitionLength" : "100"}'
+  )
+) 
+partitions 2
+locality='db_pools=g1,g2';
+show create table dbledb3_t1;
+show tables;
+select a,b from dbledb3_t1 order by a,b;
+check table routing dbledb3_t1;
+
+show create table dbledb3_t1;
+insert into dbledb3_t1 (a,b) values (100, null),(120,null);
+select a,b from dbledb3_t1 order by a,b;
+
+ ## test alter table add column with dryrun=true
+/*+TDDL:node=p1*/alter table dbledb3_t1 add column c int;
+check table dbledb3_t1;
+/*+TDDL:node=p2*/alter table dbledb3_t1 add column c int;
+check table dbledb3_t1;
+modify table dbledb3_t1 add column c int;
+check table dbledb3_t1;
+  
+  ## test alter table modify column with dryrun=true
+/*+TDDL:node=p1*/alter table dbledb3_t1 modify column c bigint;
+check table dbledb3_t1;
+/*+TDDL:node=p2*/alter table dbledb3_t1 modify column c bigint;
+check table dbledb3_t1;
+modify table dbledb3_t1 modify column c bigint;
+check table dbledb3_t1;
+
+  ## test alter table drop column with dryrun=true
+/*+TDDL:node=p1*/alter table dbledb3_t1 drop column c;
+check table dbledb3_t1;
+/*+TDDL:node=p2*/alter table dbledb3_t1 drop column c;
+check table dbledb3_t1;
+modify table dbledb3_t1 drop column c;
+check table dbledb3_t1;
+
+use polardbx;
+drop database dbledb3;
+

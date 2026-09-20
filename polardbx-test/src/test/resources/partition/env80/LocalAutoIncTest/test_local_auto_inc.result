@@ -1,0 +1,125 @@
+SET ENABLE_PUSH_DOWN_AUTO_INCREMENT = true
+SET sql_mode = 'STRICT_TRANS_TABLES,NO_AUTO_VALUE_ON_ZERO'
+CREATE TABLE `test_local_inc_as_pk` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` int(11) DEFAULT NULL,
+	`c` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB AUTO_INCREMENT = 1 DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY (`b`) PARTITIONS 3
+INSERT INTO test_local_inc_as_pk (b, c)
+VALUES (1, 1)
+SELECT last_insert_id()
+last_insert_id()
+1
+SELECT *
+FROM test_local_inc_as_pk
+WHERE a = last_insert_id()
+	AND b = 1
+a,b,c
+1,1,1
+INSERT INTO test_local_inc_as_pk (b, c)
+VALUES (2, 1)
+SELECT *
+FROM test_local_inc_as_pk
+WHERE a = last_insert_id()
+	AND b = 2
+a,b,c
+1,2,1
+SELECT last_insert_id()
+last_insert_id()
+1
+INSERT INTO test_local_inc_as_pk (b)
+VALUES (1),
+	(1),
+	(1),
+	(1),
+	(1)
+SELECT last_insert_id()
+last_insert_id()
+2
+CREATE TABLE `test_local_inc_not_as_pk` (
+	`a` int(11) NOT NULL,
+	`b` int(11) DEFAULT NULL,
+	`c` int(11) NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (`a`),
+	INDEX(c)
+) ENGINE = InnoDB AUTO_INCREMENT = 1 DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY (`b`) PARTITIONS 3
+INSERT INTO test_local_inc_not_as_pk (a, b)
+VALUES (1, 1)
+SELECT last_insert_id()
+last_insert_id()
+1
+SELECT *
+FROM test_local_inc_not_as_pk
+WHERE a = 1
+	AND b = 1
+a,b,c
+1,1,1
+INSERT INTO test_local_inc_not_as_pk (a, b)
+VALUES (2, 1)
+SELECT last_insert_id()
+last_insert_id()
+2
+SELECT *
+FROM test_local_inc_not_as_pk
+WHERE a = 2
+	AND b = 1
+a,b,c
+2,1,2
+INSERT INTO test_local_inc_not_as_pk (a, b)
+VALUES (1, 2)
+SELECT last_insert_id()
+last_insert_id()
+1
+SELECT *
+FROM test_local_inc_not_as_pk
+WHERE a = 1
+	AND b = 2
+a,b,c
+1,2,1
+CREATE TABLE `test_local_inc_as_pk_broadcast` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` int(11) DEFAULT NULL,
+	`c` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) BROADCAST
+INSERT INTO test_local_inc_as_pk_broadcast (b)
+VALUES (1)
+SELECT last_insert_id()
+last_insert_id()
+1
+REPLACE INTO test_local_inc_as_pk_broadcast (b)
+VALUES (1)
+SELECT last_insert_id()
+last_insert_id()
+2
+SELECT *
+FROM test_local_inc_as_pk_broadcast FORCE INDEX (PRIMARY)
+a,b,c
+1,1,null
+2,1,null
+CREATE TABLE `test_local_inc_as_pk_single` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` int(11) DEFAULT NULL,
+	`c` int(11) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) SINGLE
+INSERT INTO test_local_inc_as_pk_single (b)
+VALUES (1)
+SELECT last_insert_id()
+last_insert_id()
+1
+REPLACE INTO test_local_inc_as_pk_single (b)
+VALUES (1)
+SELECT last_insert_id()
+last_insert_id()
+2
+SELECT *
+FROM test_local_inc_as_pk_single FORCE INDEX (PRIMARY)
+a,b,c
+1,1,null
+2,1,null
+SET ENABLE_PUSH_DOWN_AUTO_INCREMENT = false
+SET sql_mode = '';

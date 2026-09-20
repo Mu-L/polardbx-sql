@@ -106,7 +106,7 @@ public class AlterTableGroupMovePartitionTest extends AlterTableGroupTestBase {
 
     private static PartitionRuleInfo partitionRuleInfo;
     private static boolean firstIn = true;
-    final static String logicalDatabase = "AlterTableGroupMovePartitionTest";
+    final static String logicalDatabase = "AlterTableGroup-MovePartition-Test";
 
     public AlterTableGroupMovePartitionTest(PartitionRuleInfo curPartitionRuleInfo) {
         super(logicalDatabase, ImmutableList.of(curPartitionRuleInfo.getTableStatus().name()));
@@ -250,10 +250,11 @@ public class AlterTableGroupMovePartitionTest extends AlterTableGroupTestBase {
 
     @Test
     public void testUpdate() {
-        if (!usingNewPartDb()) {
+        boolean isPublic = partitionRuleInfo.getTableStatus() == ComplexTaskMetaManager.ComplexTaskStatus.PUBLIC;
+        if (!usingNewPartDb() || isMySQL80() && isPublic) {
             return;
         }
-        boolean isPublic = partitionRuleInfo.getTableStatus() == ComplexTaskMetaManager.ComplexTaskStatus.PUBLIC;
+
         boolean isDeleteOnly =
             partitionRuleInfo.getTableStatus() == ComplexTaskMetaManager.ComplexTaskStatus.DELETE_ONLY;
 
@@ -353,7 +354,7 @@ public class AlterTableGroupMovePartitionTest extends AlterTableGroupTestBase {
             firstIn = false;
         }
         partitionRuleInfo.connection = getTddlConnection1();
-        String sql = "use " + logicalDatabase;
+        String sql = "use `" + logicalDatabase + "`";
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
     }
 }

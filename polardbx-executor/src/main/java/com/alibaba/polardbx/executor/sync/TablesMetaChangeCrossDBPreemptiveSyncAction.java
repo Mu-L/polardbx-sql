@@ -134,7 +134,7 @@ public class TablesMetaChangeCrossDBPreemptiveSyncAction implements ISyncAction 
                     DbInfoManager.getInstance().isNewPartitionDb(entry.getKey()), false, (x) -> {
                         oldSchemaManager.expire();
                         return null;
-                    },1L);
+                    });
             }
             return;
         }

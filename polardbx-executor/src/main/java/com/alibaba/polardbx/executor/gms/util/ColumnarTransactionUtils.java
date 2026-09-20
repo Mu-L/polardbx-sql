@@ -21,7 +21,6 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.oss.ColumnarFileType;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
-import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.gms.ColumnarManager;
@@ -31,13 +30,14 @@ import com.alibaba.polardbx.gms.engine.FileSystemUtils;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarAppendedFilesAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarAppendedFilesRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarCheckpointsAccessor;
-import com.alibaba.polardbx.gms.metadb.table.ColumnarCheckpointsRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarConfigAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarConfigRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableStatus;
 import com.alibaba.polardbx.gms.metadb.table.FilesAccessor;
 import com.alibaba.polardbx.gms.metadb.table.OrcFileStatusRecord;
+import com.alibaba.polardbx.gms.metadb.table.TablesAccessor;
+import com.alibaba.polardbx.gms.metadb.table.TablesRecord;
 import com.alibaba.polardbx.gms.partition.TablePartitionAccessor;
 import com.alibaba.polardbx.gms.partition.TablePartitionConfig;
 import com.alibaba.polardbx.gms.sync.IGmsSyncAction;
@@ -66,7 +66,7 @@ public class ColumnarTransactionUtils {
     public static Long getMinColumnarSnapshotTime() {
         IGmsSyncAction action = new RequestColumnarSnapshotSeqSyncAction();
         List<List<Map<String, Object>>> results =
-            SyncManagerHelper.sync(action, SystemDbHelper.DEFAULT_DB_NAME, SyncScope.ALL);
+            SyncManagerHelper.syncThrowExceptions(action, SystemDbHelper.DEFAULT_DB_NAME, SyncScope.ALL);
 
         // must >= 0
         long minSnapshotKeepTime = Math.max(DynamicConfig.getInstance().getMinSnapshotKeepTime(), 0L);
@@ -88,6 +88,10 @@ public class ColumnarTransactionUtils {
         return minSnapshotTime;
     }
 
+    public static long getTsoBeforeSeconds(long tso, long seconds) {
+        return tso - ((seconds * 1000L) << 22);
+    }
+
     public static Long getLatestTsoFromGms() {
         try (Connection connection = MetaDbUtil.getConnection()) {
             ColumnarCheckpointsAccessor checkpointsAccessor = new ColumnarCheckpointsAccessor();
@@ -106,22 +110,6 @@ public class ColumnarTransactionUtils {
             checkpointsAccessor.setConnection(connection);
 
             return checkpointsAccessor.queryLatestTsoWithDelay(delayMicroseconds);
-        } catch (SQLException e) {
-            throw new TddlRuntimeException(ErrorCode.ERR_COLUMNAR_SNAPSHOT, e,
-                "Failed to fetch latest columnar tso");
-        }
-    }
-
-    /**
-     * @return latest tso of checkpoint that only contains orc files but not csv files,
-     * in format (Innodb tso, Columnar tso)
-     */
-    public static Pair<Long, Long> getLatestOrcCheckpointTsoFromGms() {
-        try (Connection connection = MetaDbUtil.getConnection()) {
-            ColumnarCheckpointsAccessor checkpointsAccessor = new ColumnarCheckpointsAccessor();
-            checkpointsAccessor.setConnection(connection);
-
-            return checkpointsAccessor.queryLatestTsoPair();
         } catch (SQLException e) {
             throw new TddlRuntimeException(ErrorCode.ERR_COLUMNAR_SNAPSHOT, e,
                 "Failed to fetch latest columnar tso");
@@ -190,6 +178,10 @@ public class ColumnarTransactionUtils {
         public long delFileNum;
         public long delRows;
         public long delFileSize;
+
+        //有需要的话调用接口才会更新
+        public long dnTableSize;
+        public double compressionRate;
     }
 
     public static List<ColumnarIndexStatusRow> queryColumnarIndexStatus(Long tso,
@@ -304,35 +296,10 @@ public class ColumnarTransactionUtils {
             if (record.status.equalsIgnoreCase(ColumnarTableStatus.CREATING.name())) {
                 StringBuilder str = new StringBuilder();
                 str.append(ColumnarTableStatus.CREATING.name()).append(" -> { ");
-                try (Connection metaDbConn = MetaDbUtil.getConnection()) {
-
-                    ColumnarCheckpointsAccessor checkpointsAccessor = new ColumnarCheckpointsAccessor();
-                    checkpointsAccessor.setConnection(metaDbConn);
-                    //获取select进度
-                    List<ColumnarCheckpointsRecord> selectRecords =
-                        checkpointsAccessor.queryLastRecordByTableAndTsoAndTypes(schemaName, tableId.toString(), tso,
-                            ImmutableList.of(
-                                ColumnarCheckpointsAccessor.CheckPointType.SNAPSHOT,
-                                ColumnarCheckpointsAccessor.CheckPointType.SNAPSHOT_END));
-                    if (selectRecords.isEmpty()) {
-                        //说明还未开始，或者第一次提交都还没有
-                        str.append("select: 0/1(0%);");
-                    } else {
-                        str.append(selectRecords.get(0).extra).append(";");
-                    }
-                    //获取compaction完成进度
-                    List<ColumnarCheckpointsRecord> compactionRecords =
-                        checkpointsAccessor.queryRecordsByTableAndTsoAndTypes(schemaName, tableId.toString(), tso,
-                            ImmutableList.of(ColumnarCheckpointsAccessor.CheckPointType.SNAPSHOT_FINISHED));
-                    int finishedCompaction = Math.min(compactionRecords.size(), partitionNameList.size());
-                    int percent = 100 * finishedCompaction / partitionNameList.size();
-                    str.append(" compaction: ").append(finishedCompaction).append('/').append(partitionNameList.size());
-                    str.append("(").append(percent).append("%)");
-
-                } catch (SQLException e) {
-                    throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC,
-                        "fail to fetch create status by columnar index: " + record.tableSchema + "." + record.tableName
-                            + "(" + record.indexName + "(" + record.tableId + "))", e);
+                if (record.info == null) {
+                    str.append("none");
+                } else {
+                    str.append(record.info);
                 }
                 str.append(" }");
                 status = str.toString();
@@ -341,5 +308,37 @@ public class ColumnarTransactionUtils {
             result.add(row);
         }
         return result;
+    }
+
+    public static void queryTableSizeAndCompressionRatio(List<ColumnarIndexStatusRow> indexStatusRows) {
+        if (indexStatusRows == null || indexStatusRows.isEmpty()) {
+            return;
+        }
+        ColumnarIndexStatusRow current = null;
+        try (Connection metaDbConn = MetaDbUtil.getConnection()) {
+            TablesAccessor accessor = new TablesAccessor();
+            accessor.setConnection(metaDbConn);
+            for (ColumnarIndexStatusRow record : indexStatusRows) {
+                current = record;
+                TablesRecord tablesRecord = accessor.query(record.tableSchema, record.tableName, false);
+                if (tablesRecord == null) {
+                    continue;
+                }
+                //暂时只统计dataLength和indexLength，不统计dataFree
+                record.dnTableSize = tablesRecord.dataLength + tablesRecord.indexLength;
+                if (record.status != null && !record.status.equalsIgnoreCase("PUBLIC")) {
+                    //正在创建的表不计算压缩倍率
+                    continue;
+                }
+                if ((record.csvFileSize + record.orcFileSize + record.delFileSize) > 0) {
+                    record.compressionRate =
+                        (double) record.dnTableSize / (record.csvFileSize + record.orcFileSize + record.delFileSize);
+                }
+            }
+        } catch (SQLException e) {
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC,
+                "Fail to fetch table size: " + (current == null ? "" : current.tableSchema + "." + current.tableName),
+                e);
+        }
     }
 }

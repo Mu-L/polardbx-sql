@@ -35,6 +35,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import java.net.URI;
 import java.util.Objects;
 
+import static com.alibaba.polardbx.common.utils.AddressUtils.getAddrStrByIpPort;
 import static com.alibaba.polardbx.util.MoreObjects.toStringHelper;
 import static java.util.Objects.requireNonNull;
 
@@ -50,6 +51,7 @@ public class InternalNode implements Node {
     private final URI httpUri;
     private final NodeVersion nodeVersion;
     private final String instId;
+    private final String subInstId;
     private boolean leader;
     private final boolean coordinator;
     private final boolean worker;
@@ -61,9 +63,18 @@ public class InternalNode implements Node {
     public InternalNode(String nodeIdentifier, String cluster, String instId, String host, int port, int rpcPort,
                         NodeVersion nodeVersion, boolean coordinator, boolean worker, boolean inBlacklist,
                         boolean htap) {
+        this(nodeIdentifier, cluster, instId, instId, host, port, rpcPort, nodeVersion, coordinator, worker,
+            inBlacklist, htap);
+    }
+
+    public InternalNode(String nodeIdentifier, String cluster, String instId, String subInstId, String host, int port,
+                        int rpcPort,
+                        NodeVersion nodeVersion, boolean coordinator, boolean worker, boolean inBlacklist,
+                        boolean htap) {
         this.nodeIdentifier = requireNonNull(nodeIdentifier, "nodeIdentifier is null");
         this.cluster = cluster;
         this.instId = instId;
+        this.subInstId = subInstId;
         this.host = host;
         this.port = port;
         this.rpcPort = rpcPort;
@@ -80,6 +91,7 @@ public class InternalNode implements Node {
     public InternalNode(@JsonProperty("nodeIdentifier") String nodeIdentifier,
                         @JsonProperty("cluster") String cluster,
                         @JsonProperty("instId") String instId,
+                        @JsonProperty("subInstId") String subInstId,
                         @JsonProperty("host") String host,
                         @JsonProperty("port") int port,
                         @JsonProperty("rpcPort") int rpcPort,
@@ -94,6 +106,7 @@ public class InternalNode implements Node {
         this.nodeIdentifier = nodeIdentifier;
         this.cluster = cluster;
         this.instId = instId;
+        this.subInstId = subInstId;
         this.host = host;
         this.port = port;
         this.rpcPort = rpcPort;
@@ -219,6 +232,12 @@ public class InternalNode implements Node {
     }
 
     @Override
+    @JsonProperty
+    public String getSubInstId() {
+        return subInstId;
+    }
+
+    @Override
     public boolean equals(Object o) {
         if (this == o) {
             return true;
@@ -255,7 +274,7 @@ public class InternalNode implements Node {
 
     @Override
     public String getHostPort() {
-        return host + ":" + port;
+        return getAddrStrByIpPort(host, port);
     }
 
     public boolean isMaster() {

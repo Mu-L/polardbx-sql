@@ -1,0 +1,44 @@
+SQL:
+  - sql: |
+     alter table t1 split partition p1, p2 into partitions 4;
+    plan: |
+      logicalddl(sql="alter table t1 	split partition p1, p2 into partitions 4;")
+  - sql: |
+     alter table t1 split partition p1, p2, p3 into np partitions 3;
+    plan: |
+      logicalddl(sql="alter table t1 	split partition p1, p2, p3 into np partitions 3;")
+  - sql: |
+     alter table t2 split partition p1, p2 into partitions 4;
+    plan: |
+      logicalddl(sql="alter table t2 	split partition p1, p2 into partitions 4;")
+  - sql: |
+     alter table t2 split partition p1, p2, p3 into np partitions 3;
+    plan: |
+      logicalddl(sql="alter table t2 	split partition p1, p2, p3 into np partitions 3;")
+  - sql: |
+     alter table t2 split subpartition sp1, sp2 into subpartitions 3;
+    plan: |
+      logicalddl(sql="alter table t2 	split subpartition sp1, sp2 into subpartitions 3;")
+  - sql: |
+     alter table t2 split subpartition sp1, sp2 into xsp subpartitions 2;
+    plan: |
+      logicalddl(sql="alter table t2 	split subpartition sp1, sp2 into xsp subpartitions 2;")
+DDL:
+  t1:
+    create table `t1` (`a` int, b int, primary key (a))
+    partition by key(a) partitions 8;
+  t2:
+    create table `t2` (`a` int, b int, primary key (a))
+    partition by key(a) partitions 8
+    subpartition by key(b) subpartitions 2;
+
+STATISTICS:
+  t1:
+    595915652
+  t2:
+    595915652
+CONFIG:
+  ENABLE_BKA_JOIN:
+    null
+  defaltxxAPPName.isNew:
+    true

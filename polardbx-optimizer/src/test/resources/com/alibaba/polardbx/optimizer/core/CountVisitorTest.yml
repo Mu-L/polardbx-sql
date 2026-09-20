@@ -1,0 +1,56 @@
+SQL:
+  - sql: |
+      select 1 from customer union
+      select 1 from customer union
+      select 1 from customer union
+      (select 1 from customer ,customer b, customer c)
+    plan: |
+      2
+  - sql: |
+      select 1 from customer ,customer b union all
+      select 1 from customer union
+      select 1 from customer union
+      (select 1 from customer ,customer b left join customer c on b.c_custkey = c.c_phone)
+    plan: |
+      2
+  - sql: |
+      select 1 from (select 1 from customer ,customer b union all
+      select 1 from customer union
+      (select 1 from customer ,customer b, customer c)) A
+    plan: |
+      2
+  - sql: |
+      select 1 from 
+            (select 1 from customer ,customer b union all
+            select 1 from customer union
+            select 1 from 
+            ( select 1 from customer ,customer b, customer c, customer d limit 1
+              union (select 1 from customer))) 
+            A, customer, customer b
+    plan: |
+      3
+  - sql: |
+      select 1 from 
+            (select 1 from customer ,customer b union all
+            select 1 from customer union
+            select 1 from 
+            ( select 1 from customer ,customer b, customer c, customer d limit 1
+              union (select 1 from customer))) 
+            A, customer, customer b, customer c, customer d
+    plan: |
+      4
+  - sql: |
+      select 1 from customer where c_custkey in (select 1 from customer)
+    plan: |
+      1
+  - sql: |
+      select 1 from customer where c_custkey not in (select 1 from customer)
+    plan: |
+      1
+DDL:
+  customer:
+    CREATE TABLE IF NOT EXISTS `customer` (  `c_custkey` int(11) NOT NULL,  `c_name` varchar(25) NOT NULL,  `c_address` varchar(40) NOT NULL,  `c_nationkey` int(11) NOT NULL,  `c_phone` varchar(15) NOT NULL,  `c_acctbal` decimal(15, 2) NOT NULL,  `c_mktsegment` varchar(10) NOT NULL,  `c_comment` varchar(117) NOT NULL,  PRIMARY KEY (`c_custkey`)) ENGINE = InnoDB DEFAULT CHARSET = latin1 PARTITION BY KEY (`c_custkey`) PARTITIONS 3;
+STATISTICS:
+CONFIG:
+  defaltxxAPPName.isNew:
+    true

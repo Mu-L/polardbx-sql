@@ -34,7 +34,4 @@ public class CTEPlanTest extends PlanTestCommon {
     public static List<Object[]> prepare() {
         return loadSqls(CTEPlanTest.class);
     }
-
 }
-
-

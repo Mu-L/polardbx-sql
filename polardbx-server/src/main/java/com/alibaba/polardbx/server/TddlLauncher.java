@@ -143,6 +143,7 @@ public final class TddlLauncher {
                     }
                 }
             });
+            waitForever();
         } catch (Throwable e) {
             logger.error(String.format("## Something goes wrong when starting up the tddl server:\n %s",
                 ExceptionUtils.getFullStackTrace(e)));
@@ -413,6 +414,28 @@ public final class TddlLauncher {
             ConfigListenerAccessor configListenerAccessor = new ConfigListenerAccessor();
             configListenerAccessor.setConnection(conn);
             configListenerAccessor.updateOpVersion(MetaDbDataIdBuilder.getFileStorageInfoDataId());
+        }
+    }
+
+    public static void waitForever() {
+        // Check if autoVirtualTransition is enabled whitch meaning jdk21 is used and auto looming is opening
+        // , then we should wait to keep main thread alive(main thread is the parent of all virtual daemon threads)
+        String autoVirtualTransition = System.getProperty("java.lang.VirtualThreadConfig.autoVirtualTransition");
+        boolean shouldWait = "true".equalsIgnoreCase(autoVirtualTransition);
+
+        if (!shouldWait) {
+            logger.info("java.lang.VirtualThreadConfig.autoVirtualTransition is not set to true, skipping wait");
+            return;
+        }
+
+        try {
+            // Use Thread.currentThread().join() to wait indefinitely
+            // This is cleaner than creating a local lock object
+            Thread.currentThread().join();
+        } catch (InterruptedException e) {
+            // Restore the interrupted status
+            Thread.currentThread().interrupt();
+            logger.warn("Main thread was interrupted, server will shutdown", e);
         }
     }
 }

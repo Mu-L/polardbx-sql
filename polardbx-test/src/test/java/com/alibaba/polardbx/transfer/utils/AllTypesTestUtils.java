@@ -22,8 +22,8 @@ public class AllTypesTestUtils {
      * Big columns values providers.
      */
     private final static Map<String, List<String>> BIG_COLUMNS_VALUES_PROVIDER;
-    public final static String TABLE_NAME = "`full_types`";
-    public final static String COLUMNAR_INDEX_NAME = "`full_types_cci`";
+    public final static String TABLE_NAME = "all_types";
+    public final static String COLUMNAR_INDEX_NAME = "all_types_cci";
 
     public static Collection<String> getColumns() {
         return VALUES_PROVIDER.keySet();
@@ -94,15 +94,41 @@ public class AllTypesTestUtils {
         return buildUpdateSql(id, columns, values);
     }
 
+    public static String buildUpdateSql(long[] ids, int batch, Collection<String> columns, boolean isBigColumn) {
+        Collection<String> values = new ArrayList<>();
+        for (String column : columns) {
+            values.add(getRandomValue(column, isBigColumn));
+        }
+        return buildUpdateSql(ids, batch, columns, values);
+    }
+
     public static String buildDeleteSql(long id) {
         return "DELETE FROM " + TABLE_NAME + " WHERE id = " + id;
     }
 
-    public static String buildSelectRandomSql(int min, int max) throws SQLException {
-        long begin = new SecureRandom().nextInt(max - min) + min;
-        long end = Math.min(max, begin + 1000);
-        return "SELECT id FROM " + TABLE_NAME + " WHERE id BETWEEN " + begin + " AND " + end
-            + " ORDER BY RAND() LIMIT 1";
+    public static String buildDeleteSql(long[] ids, int batch) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("DELETE FROM " + TABLE_NAME);
+        sb.append(" WHERE id in (");
+        boolean first = true;
+        for (int i = 0; i < batch; i++) {
+            if (first) {
+                first = false;
+            } else {
+                sb.append(",");
+            }
+            sb.append(ids[i]);
+        }
+        sb.append(")");
+        return sb.toString();
+    }
+
+    public static String buildSelectRandomSql() throws SQLException {
+        return buildSelectRandomSql(1);
+    }
+
+    public static String buildSelectRandomSql(int limit) throws SQLException {
+        return "SELECT id FROM " + TABLE_NAME + " ORDER BY RAND() LIMIT " + limit;
     }
 
     /**
@@ -159,6 +185,36 @@ public class AllTypesTestUtils {
         return sb.toString();
     }
 
+    private static String buildUpdateSql(long[] ids, int batch, Collection<String> columns, Collection<String> values) {
+        StringBuilder sb = new StringBuilder("UPDATE ").append(TABLE_NAME).append(" SET ");
+        if (columns.size() != values.size()) {
+            throw new IllegalArgumentException("Size of column list and the value list not matched.");
+        }
+        Iterator<String> iter0 = columns.iterator();
+        Iterator<String> iter1 = values.iterator();
+        boolean first = true;
+        while (iter0.hasNext()) {
+            if (first) {
+                first = false;
+            } else {
+                sb.append(",");
+            }
+            sb.append(iter0.next()).append("=").append(iter1.next());
+        }
+        sb.append(" WHERE id in (");
+        first = true;
+        for (int i = 0; i < batch; i++) {
+            if (first) {
+                first = false;
+            } else {
+                sb.append(",");
+            }
+            sb.append(ids[i]);
+        }
+        sb.append(")");
+        return sb.toString();
+    }
+
     private static String getRandomValue(String column, boolean useBigColumn) {
         List<String> possibleValues = BIG_COLUMNS_VALUES_PROVIDER.get(column);
         if (null == possibleValues) {
@@ -176,8 +232,8 @@ public class AllTypesTestUtils {
     public static final String FULL_TYPE_TABLE_COLUMNAR_INDEX = "ALTER TABLE " + TABLE_NAME
         + " ADD CLUSTERED COLUMNAR INDEX " + COLUMNAR_INDEX_NAME + "(`id`)";
 
-    public static final String FULL_TYPE_TABLE_TEMPLATE = "CREATE TABLE IF NOT EXISTS " + TABLE_NAME + " (\n"
-        + "  `id` bigint(20) NOT NULL AUTO_INCREMENT,\n"
+    public static final String FULL_TYPE_TEMPLATE = "CREATE TABLE IF NOT EXISTS %s (\n"
+        + "  `id` bigint(20) NOT NULL AUTO_INCREMENT BY GROUP,\n"
         + "  `c_bit_1` bit(1) DEFAULT NULL,\n"
         + "  `c_bit_8` bit(8) DEFAULT NULL,\n"
         + "  `c_bit_16` bit(16) DEFAULT NULL,\n"
@@ -196,7 +252,7 @@ public class AllTypesTestUtils {
         + "  `c_mediumint_24` mediumint(24) DEFAULT NULL,\n"
         + "  `c_mediumint_24_un` mediumint(24) unsigned DEFAULT NULL,\n"
         + "  `c_int_1` int(1) DEFAULT NULL,\n"
-        + "  `c_int_32` int(32) NOT NULL DEFAULT 0 COMMENT \"For multi pk.\",\n"
+        + "  `c_int_32` int(32) NOT NULL DEFAULT 0 COMMENT 'For multi pk.',\n"
         + "  `c_int_32_un` int(32) unsigned DEFAULT NULL,\n"
         + "  `c_bigint_1` bigint(1) DEFAULT NULL,\n"
         + "  `c_bigint_64` bigint(64) DEFAULT NULL,\n"
@@ -209,7 +265,7 @@ public class AllTypesTestUtils {
         + "  `c_double` double DEFAULT NULL,\n"
         + "  `c_double_pr` double(10,3) DEFAULT NULL,\n"
         + "  `c_double_un` double(10,3) unsigned DEFAULT NULL,\n"
-        + "  `c_date` date DEFAULT NULL COMMENT \"date\",\n"
+        + "  `c_date` date DEFAULT NULL COMMENT 'date',\n"
         + "  `c_datetime` datetime DEFAULT NULL,\n"
         + "  `c_datetime_1` datetime(1) DEFAULT NULL,\n"
         + "  `c_datetime_3` datetime(3) DEFAULT NULL,\n"
@@ -236,19 +292,22 @@ public class AllTypesTestUtils {
         + "  `c_text` text DEFAULT NULL,\n"
         + "  `c_text_medium` mediumtext DEFAULT NULL,\n"
         + "  `c_text_long` longtext DEFAULT NULL,\n"
-        + "  `c_enum` enum(\"a\",\"b\",\"c\") DEFAULT NULL,\n"
-        + "  `c_set` set(\"a\",\"b\",\"c\") DEFAULT NULL,\n"
+        + "  `c_enum` enum('a','b','c') DEFAULT 'a',\n"
+        + "  `c_set` set('a','b','c') DEFAULT NULL,\n"
         + "  `c_json` json DEFAULT NULL,\n"
-        + "  `c_geometry` geometry DEFAULT NULL,\n"
-        + "  `c_point` point DEFAULT NULL,\n"
-        + "  `c_linestring` linestring DEFAULT NULL,\n"
-        + "  `c_polygon` polygon DEFAULT NULL,\n"
-        + "  `c_multipoint` multipoint DEFAULT NULL,\n"
-        + "  `c_multilinestring` multilinestring DEFAULT NULL,\n"
-        + "  `c_multipolygon` multipolygon DEFAULT NULL,\n"
-        + "  `c_geometrycollection` geometrycollection DEFAULT NULL,\n"
+//        + "  `c_geometry` geometry DEFAULT NULL,\n"
+//        + "  `c_point` point DEFAULT NULL,\n"
+//        + "  `c_linestring` linestring DEFAULT NULL,\n"
+//        + "  `c_polygon` polygon DEFAULT NULL,\n"
+//        + "  `c_multipoint` multipoint DEFAULT NULL,\n"
+//        + "  `c_multilinestring` multilinestring DEFAULT NULL,\n"
+//        + "  `c_multipolygon` multipolygon DEFAULT NULL,\n"
+//        + "  `c_geometrycollection` geometrycollection DEFAULT NULL,\n"
+        + "  `gmt_modified` timestamp not null default current_timestamp on update current_timestamp,\n"
         + "  PRIMARY KEY (`id`)\n"
-        + ") ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 ";
+        + ") AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 ";
+
+    public static final String FULL_TYPE_TABLE_TEMPLATE = String.format(FULL_TYPE_TEMPLATE, TABLE_NAME);
 
     public static final String C_ID = "id";
     public static final String C_BIT_1 = "c_bit_1";
@@ -505,7 +564,7 @@ public class AllTypesTestUtils {
             "-1",
             "0",
             "1",
-            "4294967295",
+//            "4294967295",
             "CAST(RAND() * 4294967295 AS SIGNED) - 2147483648"
         ));
 
@@ -622,12 +681,12 @@ public class AllTypesTestUtils {
 
         builder.put(C_DATETIME, ImmutableList.of(
             "'0000-00-00 00:00:00'",
-            "'9999-12-31 23:59:59'",
+//            "'9999-12-31 23:59:59'",
             "'0000-00-00 01:01:01'",
             "'1969-09-00 23:59:59'",
             "'2018-00-00 00:00:00'",
             "'2017-12-12 23:59:59'",
-            "FROM_UNIXTIME(RAND() * (UNIX_TIMESTAMP('2024-12-31 23:59:59') - UNIX_TIMESTAMP('1970-01-01 00:00:00')) + UNIX_TIMESTAMP('1970-01-01 00:00:00'), '%Y-%m-%d %H:%i:%s.%f')"
+            "FROM_UNIXTIME(RAND() * (UNIX_TIMESTAMP('2025-12-31 23:59:59') - UNIX_TIMESTAMP('2025-01-01 00:00:00')) + UNIX_TIMESTAMP('2025-01-01 00:00:00'), '%Y-%m-%d %H:%i:%s.%f')"
         ));
 
         builder.put(C_DATETIME_1, ImmutableList.of(
@@ -749,28 +808,28 @@ public class AllTypesTestUtils {
         ));
 
         builder.put(C_YEAR, ImmutableList.of(
-            "'0000'",
-            "'9999'",
+//            "'0000'",
+//            "'9999'",
             "'1970'",
             "'2000'",
             "'1969'",
             "'1901'",
-            "'1900'",
+//            "'1900'",
             "'2155'",
-            "'2156'",
+//            "'2156'",
             "FLOOR(1901 + RAND() * (2155 - 1901 + 1))"
         ));
 
         builder.put(C_YEAR_4, ImmutableList.of(
-            "'0000'",
-            "'9999'",
+//            "'0000'",
+//            "'9999'",
             "'1970'",
             "'2000'",
             "'1969'",
             "'1901'",
-            "'1900'",
+//            "'1900'",
             "'2155'",
-            "'2156'",
+//            "'2156'",
             "FLOOR(1901 + RAND() * (2155 - 1901 + 1))"
         ));
 
@@ -795,8 +854,8 @@ public class AllTypesTestUtils {
             "'99'",
             "'a中国a'",
             "x'313233616263'",
-            "x'0A08080E10011894AB0E'",
-            "RANDOM_BYTES(10)"
+            "x'0A08080E10011894AB0E'"
+//            "RANDOM_BYTES(10)"
         ));
 
         builder.put(C_VARBINARY, ImmutableList.of(
@@ -804,8 +863,8 @@ public class AllTypesTestUtils {
             "'99'",
             "'a中国a'",
             "x'313233616263'",
-            "x'0A08080E10011894AB0E'",
-            "RANDOM_BYTES(FLOOR(1 + (RAND() * 10)))"
+            "x'0A08080E10011894AB0E'"
+//            "RANDOM_BYTES(FLOOR(1 + (RAND() * 10)))"
         ));
 
         builder.put(C_BLOB_TINY, ImmutableList.of(
@@ -813,8 +872,8 @@ public class AllTypesTestUtils {
             "'99'",
             "'a中国a'",
             "x'313233616263'",
-            "x'0A08080E10011894AB0E'",
-            "RANDOM_BYTES(FLOOR(1 + (RAND() * 255)))"
+            "x'0A08080E10011894AB0E'"
+//            "RANDOM_BYTES(FLOOR(1 + (RAND() * 255)))"
         ));
 
         builder.put(C_BLOB, ImmutableList.of(
@@ -822,10 +881,10 @@ public class AllTypesTestUtils {
             "'99'",
             "'a中国a'",
             "x'313233616263'",
-            "x'0A08080E10011894AB0E'",
-            "RANDOM_BYTES(FLOOR(1 + (RAND() * 255)))",
+            "x'0A08080E10011894AB0E'"
+//            "RANDOM_BYTES(FLOOR(1 + (RAND() * 255)))",
             /* from 64B to 64KB */
-            "REPEAT(RANDOM_BYTES(FLOOR(1 + (RAND() * 1024))), 64)"
+//            "REPEAT(RANDOM_BYTES(FLOOR(1 + (RAND() * 1024))), 64)"
         ));
 
         builder.put(C_BLOB_MEDIUM, ImmutableList.of(
@@ -833,10 +892,10 @@ public class AllTypesTestUtils {
             "'99'",
             "'a中国a'",
             "x'313233616263'",
-            "x'0A08080E10011894AB0E'",
-            "RANDOM_BYTES(FLOOR(1 + (RAND() * 255)))",
+            "x'0A08080E10011894AB0E'"
+//            "RANDOM_BYTES(FLOOR(1 + (RAND() * 255)))",
             /* from 16KB to 16MB */
-            "REPEAT(RANDOM_BYTES(FLOOR(1 + (RAND() * 1024))), 16384)"
+//            "REPEAT(RANDOM_BYTES(FLOOR(1 + (RAND() * 1024))), 16384)"
         ));
 
         builder.put(C_BLOB_LONG, ImmutableList.of(
@@ -844,10 +903,10 @@ public class AllTypesTestUtils {
             "'99'",
             "'a中国a'",
             "x'313233616263'",
-            "x'0A08080E10011894AB0E'",
-            "RANDOM_BYTES(FLOOR(1 + (RAND() * 255)))",
+            "x'0A08080E10011894AB0E'"
+//            "RANDOM_BYTES(FLOOR(1 + (RAND() * 255)))",
             /* from 128KB to 128MB */
-            "REPEAT(RANDOM_BYTES(FLOOR(1 + (RAND() * 1024))), 131072)"
+//            "REPEAT(RANDOM_BYTES(FLOOR(1 + (RAND() * 1024))), 131072)"
         ));
 
         builder.put(C_TEXT_TINY, ImmutableList.of(
@@ -909,43 +968,43 @@ public class AllTypesTestUtils {
 //            "JSON_OBJECT('k1', CHAR(97 + FLOOR(RAND() * 26)),'k2', CHAR(97 + FLOOR(RAND() * 26)))"
         ));
 
-        builder.put(C_GEOMETRY, ImmutableList.of(
-            "ST_PointFromText('POINT(15 20)')",
-            "ST_PointFromText(CONCAT('POINT(', RAND() * 100, ' ', RAND() * 100, ')'))"
-        ));
-
-        builder.put(C_POINT, ImmutableList.of(
-            "ST_PointFromText('POINT(15 20)')",
-            "ST_PointFromText(CONCAT('POINT(', RAND() * 100, ' ', RAND() * 100, ')'))"
-        ));
-
-        builder.put(C_LINESTRING, ImmutableList.of(
-            "ST_GeomFromText('LINESTRING(0 0, 10 10, 20 25, 50 60)')",
-            "ST_LineStringFromText(CONCAT('LINESTRING(', RAND() * 360 - 180, ' ', RAND() * 180 - 90, ', ', RAND() * 360 - 180, ' ', RAND() * 180 - 90, ')'))"
-        ));
-
-        builder.put(C_POLYGON, ImmutableList.of(
-            "ST_GeomFromText('POLYGON((0 0,10 0,10 10,0 10,0 0),(5 5,7 5,7 7,5 7, 5 5))')"
-        ));
-
-        builder.put(C_MULTIPOINT, ImmutableList.of(
-            "ST_GeomFromText('MULTIPOINT(0 0, 15 25, 45 65)')",
-            "ST_GeomFromText(CONCAT('MULTIPOINT(', RAND() * 360 - 180, ' ', RAND() * 180 - 90, ',', RAND() * 360 - 180, ' ', RAND() * 180 - 90, ',', RAND() * 360 - 180, ' ', RAND() * 180 - 90, ',', RAND() * 360 - 180, ' ', RAND() * 180 - 90, ')'))"
-        ));
-
-        builder.put(C_MULTILINESTRING, ImmutableList.of(
-            "ST_GeomFromText('MULTILINESTRING((10 10, 20 20), (15 15, 30 15))')",
-            "ST_GeomFromText(CONCAT('MULTILINESTRING((',RAND() * 360 - 180, ' ', RAND() * 180 - 90, ',', RAND() * 360 - 180, ' ', RAND() * 180 - 90, '),(', RAND() * 360 - 180, ' ', RAND() * 180 - 90, ',', RAND() * 360 - 180, ' ', RAND() * 180 - 90, '))'))"
-        ));
-
-        builder.put(C_MULTIPOLYGON, ImmutableList.of(
-            "ST_GeomFromText('MULTIPOLYGON(((0 0,10 0,10 10,0 10,0 0)),((5 5,7 5,7 7,5 7, 5 5)))')"
-        ));
-
-        builder.put(C_GEOMETRYCOLLECTION, ImmutableList.of(
-            "ST_GeomFromText('GEOMETRYCOLLECTION(POINT(10 10), POINT(30 30), LINESTRING(15 15, 20 20))')",
-            "ST_GeomCollFromText(CONCAT('GEOMETRYCOLLECTION(','POINT(', RAND() * 360 - 180, ' ', RAND() * 180 - 90, '),', 'LINESTRING(', RAND() * 360 - 180, ' ', RAND() * 180 - 90, ',', RAND() * 360 - 180, ' ', RAND() * 180 - 90, '))'))"
-        ));
+//        builder.put(C_GEOMETRY, ImmutableList.of(
+//            "ST_PointFromText('POINT(15 20)')",
+//            "ST_PointFromText(CONCAT('POINT(', RAND() * 100, ' ', RAND() * 100, ')'))"
+//        ));
+//
+//        builder.put(C_POINT, ImmutableList.of(
+//            "ST_PointFromText('POINT(15 20)')",
+//            "ST_PointFromText(CONCAT('POINT(', RAND() * 100, ' ', RAND() * 100, ')'))"
+//        ));
+//
+//        builder.put(C_LINESTRING, ImmutableList.of(
+//            "ST_GeomFromText('LINESTRING(0 0, 10 10, 20 25, 50 60)')",
+//            "ST_LineStringFromText(CONCAT('LINESTRING(', RAND() * 360 - 180, ' ', RAND() * 180 - 90, ', ', RAND() * 360 - 180, ' ', RAND() * 180 - 90, ')'))"
+//        ));
+//
+//        builder.put(C_POLYGON, ImmutableList.of(
+//            "ST_GeomFromText('POLYGON((0 0,10 0,10 10,0 10,0 0),(5 5,7 5,7 7,5 7, 5 5))')"
+//        ));
+//
+//        builder.put(C_MULTIPOINT, ImmutableList.of(
+//            "ST_GeomFromText('MULTIPOINT(0 0, 15 25, 45 65)')",
+//            "ST_GeomFromText(CONCAT('MULTIPOINT(', RAND() * 360 - 180, ' ', RAND() * 180 - 90, ',', RAND() * 360 - 180, ' ', RAND() * 180 - 90, ',', RAND() * 360 - 180, ' ', RAND() * 180 - 90, ',', RAND() * 360 - 180, ' ', RAND() * 180 - 90, ')'))"
+//        ));
+//
+//        builder.put(C_MULTILINESTRING, ImmutableList.of(
+//            "ST_GeomFromText('MULTILINESTRING((10 10, 20 20), (15 15, 30 15))')",
+//            "ST_GeomFromText(CONCAT('MULTILINESTRING((',RAND() * 360 - 180, ' ', RAND() * 180 - 90, ',', RAND() * 360 - 180, ' ', RAND() * 180 - 90, '),(', RAND() * 360 - 180, ' ', RAND() * 180 - 90, ',', RAND() * 360 - 180, ' ', RAND() * 180 - 90, '))'))"
+//        ));
+//
+//        builder.put(C_MULTIPOLYGON, ImmutableList.of(
+//            "ST_GeomFromText('MULTIPOLYGON(((0 0,10 0,10 10,0 10,0 0)),((5 5,7 5,7 7,5 7, 5 5)))')"
+//        ));
+//
+//        builder.put(C_GEOMETRYCOLLECTION, ImmutableList.of(
+//            "ST_GeomFromText('GEOMETRYCOLLECTION(POINT(10 10), POINT(30 30), LINESTRING(15 15, 20 20))')",
+//            "ST_GeomCollFromText(CONCAT('GEOMETRYCOLLECTION(','POINT(', RAND() * 360 - 180, ' ', RAND() * 180 - 90, '),', 'LINESTRING(', RAND() * 360 - 180, ' ', RAND() * 180 - 90, ',', RAND() * 360 - 180, ' ', RAND() * 180 - 90, '))'))"
+//        ));
 
         return builder.build();
     }

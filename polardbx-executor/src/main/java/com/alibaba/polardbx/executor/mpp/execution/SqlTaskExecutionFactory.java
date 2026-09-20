@@ -16,21 +16,17 @@
 
 package com.alibaba.polardbx.executor.mpp.execution;
 
-import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.mpp.Session;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.OutputBuffer;
 import com.alibaba.polardbx.executor.mpp.operator.ExchangeClientSupplier;
 import com.alibaba.polardbx.executor.mpp.operator.LocalExecutionPlanner;
 import com.alibaba.polardbx.executor.mpp.planner.PlanFragment;
-import com.alibaba.polardbx.executor.mpp.split.OssSplit;
 import com.alibaba.polardbx.executor.mpp.split.SplitManagerImpl;
 import com.alibaba.polardbx.executor.operator.spill.SpillerFactory;
 import io.airlift.http.client.HttpClient;
 
 import java.net.URI;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Executor;
 
 import static java.util.Objects.requireNonNull;
@@ -92,5 +88,9 @@ public class SqlTaskExecutionFactory {
             taskExecutor,
             taskNotificationExecutor,
             planner.getBloomFilterExpressionMap());
+    }
+
+    public ExchangeClientSupplier getExchangeClientSupplier() {
+        return exchangeClientSupplier;
     }
 }

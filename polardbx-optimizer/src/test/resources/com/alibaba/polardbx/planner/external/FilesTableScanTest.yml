@@ -1,0 +1,49 @@
+SQL:
+  # FILES() basic scan
+  - sql: |
+      select * from FILES('connector'=>'mock', 'mock.columns'=>'id:int,name:varchar') f
+    plan: |
+      externaltable(name=[__files_ep, __files_0], source="inmemorytablesource", pushdown="sql:select `id`, `name` from `__files_0`")
+  - sql: |
+      select f.name from FILES('connector'=>'mock', 'mock.columns'=>'id:int,name:varchar') f
+    plan: |
+      externaltable(name=[__files_ep, __files_0], source="inmemorytablesource", pushdown="sql:select `name` as `$f0` from `__files_0`")
+  - sql: |
+      select * from FILES('connector'=>'mock', 'mock.columns'=>'id:int,name:varchar') f where id > 1
+    plan: |
+      externaltable(name=[__files_ep, __files_0], source="inmemorytablesource", pushdown="sql:select `id`, `name` from `__files_0` where (`id` > ?)")
+  - sql: |
+      select * from FILES('connector'=>'mock', 'mock.columns'=>'id:int,name:varchar') f limit 5
+    plan: |
+      limit(offset=0, fetch=?0)
+        externaltable(name=[__files_ep, __files_0], source="inmemorytablesource", pushdown="sql:select `id`, `name` from `__files_0`")
+  - sql: |
+      select * from FILES('CONNECTOR'=>'mock', 'MOCK.COLUMNS'=>'id:int,name:varchar') f
+    plan: |
+      externaltable(name=[__files_ep, __files_0], source="inmemorytablesource", pushdown="sql:select `id`, `name` from `__files_0`")
+  # FILES() JOIN FILES()
+  - sql: |
+      select f.id, g.name from FILES('connector'=>'mock', 'mock.columns'=>'id:int') f join FILES('connector'=>'mock', 'mock.columns'=>'id:int,name:varchar') g on f.id = g.id
+    plan: |
+      project(id="id0", name="name")
+        hashjoin(condition="id = id", type="inner")
+          externaltable(name=[__files_ep, __files_1], source="inmemorytablesource", pushdown="sql:select `id`, `name` from `__files_1`")
+          externaltable(name=[__files_ep, __files_0], source="inmemorytablesource", pushdown="sql:select `id` from `__files_0`")
+  # FILES() LEFT JOIN FILES()
+  - sql: |
+      select * from FILES('connector'=>'mock', 'mock.columns'=>'id:int,name:varchar') f left join FILES('connector'=>'mock', 'mock.columns'=>'id:int,val:varchar') g on f.id = g.id
+    plan: |
+      hashjoin(condition="id = id", type="left")
+        externaltable(name=[__files_ep, __files_0], source="inmemorytablesource", pushdown="sql:select `id`, `name` from `__files_0`")
+        externaltable(name=[__files_ep, __files_1], source="inmemorytablesource", pushdown="sql:select `id`, `val` from `__files_1`")
+  # FILES() comma join
+  - sql: |
+      select f.id, g.name from FILES('connector'=>'mock', 'mock.columns'=>'id:int') f, FILES('connector'=>'mock', 'mock.columns'=>'id:int,name:varchar') g where f.id = g.id
+    plan: |
+      project(id="id0", name="name")
+        hashjoin(condition="id = id", type="inner")
+          externaltable(name=[__files_ep, __files_1], source="inmemorytablesource", pushdown="sql:select `id`, `name` from `__files_1`")
+          externaltable(name=[__files_ep, __files_0], source="inmemorytablesource", pushdown="sql:select `id` from `__files_0`")
+DDL:
+STATISTICS:
+CONFIG:

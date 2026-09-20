@@ -16,6 +16,7 @@
  */
 package org.apache.calcite.sql.validate;
 
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.google.common.collect.ImmutableMap;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
@@ -84,7 +85,7 @@ public abstract class ListScope extends DelegatingScope {
   }
 
   private ScopeChild findChild(List<String> names,
-      SqlNameMatcher nameMatcher) {
+      SqlNameMatcher nameMatcher, boolean origin) {
     for (ScopeChild child : children) {
       String lastName = Util.last(names);
       if (child.name != null) {
@@ -111,6 +112,22 @@ public abstract class ListScope extends DelegatingScope {
             && resolved.only().namespace.getTable().getQualifiedName().equals(
                 table.getQualifiedName())) {
           return child;
+        }
+      }
+    }
+
+    if (names.size() != 1) {
+        return null;
+    }
+    if (origin) {
+      for (ScopeChild child : children) {
+        String lastName = Util.last(names);
+        if (child.name != null) {
+          SqlValidatorTable table = child.namespace.getTable();
+          if (table != null &&
+              nameMatcher.matches(Util.last(table.getQualifiedName()), lastName)) {
+            return child;
+          }
         }
       }
     }
@@ -196,9 +213,18 @@ public abstract class ListScope extends DelegatingScope {
   }
 
   @Override public void resolve(List<String> names, SqlNameMatcher nameMatcher,
-      boolean deep, Resolved resolved) {
+                                boolean deep, Resolved resolved) {
+    resolve(names, nameMatcher, deep, resolved, false);
+    if (resolved.count() == 0 && DynamicConfig.getInstance().parseOriginTable()) {
+      // If not found, try to find using origin table name.
+      resolve(names, nameMatcher, deep, resolved, true);
+    }
+  }
+
+  public void resolve(List<String> names, SqlNameMatcher nameMatcher,
+      boolean deep, Resolved resolved, boolean origin) {
     // First resolve by looking through the child namespaces.
-    final ScopeChild child0 = findChild(names, nameMatcher);
+    final ScopeChild child0 = findChild(names, nameMatcher, origin);
     if (child0 != null) {
       final Step path =
           Path.EMPTY.plus(child0.namespace.getRowType(), child0.ordinal,
@@ -226,7 +252,9 @@ public abstract class ListScope extends DelegatingScope {
 
     // Then call the base class method, which will delegate to the
     // parent scope.
-    super.resolve(names, nameMatcher, deep, resolved);
+    if (!origin) {
+      super.resolve(names, nameMatcher, deep, resolved);
+    }
   }
 
   public RelDataType resolveColumn(String columnName, SqlNode ctx) {

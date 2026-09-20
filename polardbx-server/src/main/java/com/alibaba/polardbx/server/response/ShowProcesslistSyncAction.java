@@ -39,8 +39,9 @@ import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
 import com.alibaba.polardbx.optimizer.core.planner.PlanCache;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import com.alibaba.polardbx.optimizer.utils.ExplainResult;
-import com.alibaba.polardbx.optimizer.workload.WorkloadType;
-import com.alibaba.polardbx.optimizer.workload.WorkloadUtil;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadType;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadUtil;
+import com.alibaba.polardbx.optimizer.secret.SecretMaskUtils;
 import com.alibaba.polardbx.server.ServerConnection;
 import com.alibaba.polardbx.server.conn.InnerConnection;
 import com.alibaba.polardbx.server.conn.InnerConnectionManager;
@@ -277,6 +278,7 @@ public class ShowProcesslistSyncAction implements ISyncAction {
                 }
             }
         }
+        info = SecretMaskUtils.mask(info);
         result.addRow(new Object[] {
             sc.getId(), sc.getUser(), sc.getHost() + ":" + sc.getPort(),
             sc.getSchema(), command, time, allTcStr, memStr, memPctStr, "", info, sqlTid, sqlType,
@@ -375,6 +377,7 @@ public class ShowProcesslistSyncAction implements ISyncAction {
             }
         }
 
+        info = SecretMaskUtils.mask(info);
         result.addRow(new Object[] {
             innerConnection.getId(), innerConnection.getUser(), "127.0.0.1:1111",
             innerConnection.getSchemaName(), command, time, allTcStr, memStr, memPctStr, "", info, sqlTid, sqlType,
@@ -387,6 +390,7 @@ public class ShowProcesslistSyncAction implements ISyncAction {
     }
 
     private String addProcedureInfo(long connId, String info) {
+        info = SecretMaskUtils.mask(info);
         if (info == null || "NULL".equalsIgnoreCase(info)) {
             info = "executing pl logic";
         }

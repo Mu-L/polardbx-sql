@@ -187,13 +187,13 @@ SQL:
           mergesort(sort="modify_time desc", offset=?4, fetch=?5)
             logicalview(tables="pm_order_finish[p1p202308,p1p202310,p1p202311,...p1p202411],pm_order_finish[p1p202308,p1p202310,p1p202311,...p1p202411]", shardcount=15, sql="select (`pm_order_finish0`.`id` + ?) as `id`, `pm_order_finish0`.`user_id` as `user_id`, `pm_order_finish0`.`partition_time` as `partition_time`, `pm_order_finish0`.`modify_time` from (select `id`, `user_id`, `partition_time` from `pm_order_finish` as `pm_order_finish` force index(`indx1`) where ((((`s_id` + `source`)) in(?)) and (`user_id` = ?) and (`broker_id` = ?)) order by `modify_time` desc limit (? + ?)) as `t2` inner join `pm_order_finish` as `pm_order_finish0` on ((`t2`.`id` = `pm_order_finish0`.`id`) and (`t2`.`user_id` = `pm_order_finish0`.`user_id`) and (`t2`.`partition_time` = `pm_order_finish0`.`partition_time`)) order by `pm_order_finish0`.`modify_time` desc limit (? + ?)")
           gather(concurrent=true)
-            logicalview(tables="pm_order_finish[p1p202308,p1p202310,p1p202311,...p1p202411]", shardcount=15, sql="select `id`, `user_id`, `s_id`, `partition_time` from `pm_order_finish` as `pm_order_finish` where ((`user_id` = ?) and (((`user_id`, `partition_time`, `id`)) in (...)))")
+            logicalview(tables="pm_order_finish[p1p202308,p1p202310,p1p202311,...p1p202411]", shardcount=15, sql="select `id`, `user_id`, `s_id`, `partition_time` from `pm_order_finish` as `pm_order_finish` where ((`user_id` = ?) and (((`partition_time`, `id`)) in (...)))")
   - sql: |
       select id from t_order paging_force index(auto_shard_key_seller_id)
       where seller_id= 1 order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?1)
-        logicalview(tables="t_order[p1,p2,p3,p4]", shardcount=4, sql="select `id` from `t_order` as `t_order` force index(`auto_shard_key_seller_id`) where (`seller_id` = ?) order by `id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p2,p3,p4]", shardcount=4, sql="select `id` from `t_order` as `t_order` force index(`auto_shard_key_seller_id`) where (`seller_id` = ?) order by `id` limit ?")
   - sql: |
       select id from t_order paging_force index(auto_shard_key_order_id)
       where order_id= 1 order by id limit 10,100;
@@ -210,7 +210,7 @@ SQL:
       where order_id is null and id> -1 and order_id = 'tt%' order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?2)
-        logicalview(tables="t_order[],t_order[]", shardcount=0, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where ((`order_id` is null) and (`id` > ?) and (`order_id` = ?)) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[],t_order[]", shardcount=0, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where ((`order_id` is null) and (`id` > ?) and (`order_id` = ?)) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit ?")
   - sql: |
       # and all fail
       select id from t_order paging_force index(auto_shard_key_order_id)
@@ -223,112 +223,112 @@ SQL:
       where order_id= 1 or order_id= 2 order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?2)
-        logicalview(tables="t_order[p1,p4],t_order[p1,p4]", shardcount=2, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`order_id` in(?, ?)) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p4],t_order[p1,p4]", shardcount=2, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`order_id` in(?, ?)) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit ?")
   - sql: |
       # or complex
       select id from t_order paging_force index(auto_shard_key_order_id)
       where (order_id= 1 and id = 1)or (order_id= 2 and id = 2) order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?4)
-        logicalview(tables="t_order[p1,p4],t_order[p1,p4]", shardcount=2, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (((`order_id` = ?) and (`id` = ?)) or ((`order_id` = ?) and (`id` = ?))) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p4],t_order[p1,p4],t_order[p1,p4],t_order[p1,p4]", shardcount=2, sql="select `t15`.`id` from ((select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where ((`order_id` = ?) and (`id` = ?)) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit ? ) union (select `t_order2`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order1` force index(`auto_shard_key_order_id`) where ((`order_id` = ?) and (`id` = ?)) order by `id` limit ?) as `t10` inner join `t_order` as `t_order2` on ((`t10`.`id` = `t_order2`.`id`) and (`t10`.`order_id` = `t_order2`.`order_id`)) order by `t_order2`.`id` limit ? )) as `t15` order by `t15`.`id` limit ?")
   - sql: |
       # or two success
       select id from t_order paging_force index(auto_shard_key_order_id)
       where (order_id= 1 and id = 1)or (order_id= 2 and id < order_id) order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?3)
-        logicalview(tables="t_order[p1,p4],t_order[p1,p4]", shardcount=2, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (((`order_id` = ?) and (`id` = ?)) or ((`order_id` = ?) and (`id` < `order_id`))) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p4],t_order[p1,p4],t_order[p1,p4],t_order[p1,p4]", shardcount=2, sql="select `t15`.`id` from ((select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where ((`order_id` = ?) and (`id` = ?)) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit ? ) union (select `t_order2`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order1` force index(`auto_shard_key_order_id`) where ((`order_id` = ?) and (`id` < `order_id`)) order by `id` limit ?) as `t10` inner join `t_order` as `t_order2` on ((`t10`.`id` = `t_order2`.`id`) and (`t10`.`order_id` = `t_order2`.`order_id`)) order by `t_order2`.`id` limit ? )) as `t15` order by `t15`.`id` limit ?")
   - sql: |
       # or one success
       select id from t_order paging_force index(auto_shard_key_order_id)
       where (order_id= 1 and id = 1)or (id < order_id) order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?2)
-        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (((`order_id` = ?) and (`id` = ?)) or (`id` < `order_id`)) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` <=> `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (((`order_id` = ?) and (`id` = ?)) or (`id` < `order_id`)) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` <=> `t_order0`.`order_id`)) order by `t_order0`.`id` limit ?")
   - sql: |
       -- binary op two ref
       select id from t_order paging_force index(auto_shard_key_order_id)
       where  id > order_id order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?0)
-        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`id` > `order_id`) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` <=> `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`id` > `order_id`) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` <=> `t_order0`.`order_id`)) order by `t_order0`.`id` limit ?")
   - sql: |
       -- binary op
       select id from t_order paging_force index(auto_shard_key_order_id)
       where  1 != order_id order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?1)
-        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (? <> `order_id`) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (? <> `order_id`) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit ?")
   - sql: |
       -- in
       select id from t_order paging_force index(auto_shard_key_order_id)
       where  not order_id in (1,2,3, null) order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?1)
-        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`order_id` not in(?)) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`order_id` not in(?)) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit ?")
   - sql: |
       -- in
       select id from t_order paging_force index(auto_shard_key_order_id)
       where  not order_id in (1,2,"3"+1) order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?4)
-        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`order_id` not in(?, ?, (? + ?))) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`order_id` not in(?, ?, (? + ?))) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit ?")
   - sql: |
       -- multi in
       select id from t_order paging_force index(auto_shard_key_order_id)
       where  (id,order_id) in ((1,2),(3,2),(3,'g')) order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?1)
-        logicalview(tables="t_order[p1],t_order[p1]", sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (((`id`, `order_id`)) in(?)) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1],t_order[p1]", sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (((`id`, `order_id`)) in(?)) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit ?")
   - sql: |
       -- multi in
       select id from t_order paging_force index(auto_shard_key_order_id)
       where  (id+1,order_id) in ((1,2),(3,2),(3+5,'g')) order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?8)
-        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where ((((`id` + ?), `order_id`)) in((?, ?),(?, ?),((? + ?), ?))) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` <=> `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where ((((`id` + ?), `order_id`)) in((?, ?),(?, ?),((? + ?), ?))) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` <=> `t_order0`.`order_id`)) order by `t_order0`.`id` limit ?")
   - sql: |
       -- multi in
       select id from t_order paging_force index(auto_shard_key_order_id)
       where  (id,order_id+1) in ((1,2),(3,2),(3+5,'g')) order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?8)
-        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (((`id`, (`order_id` + ?))) in((?, ?),(?, ?),((? + ?), ?))) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` <=> `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (((`id`, (`order_id` + ?))) in((?, ?),(?, ?),((? + ?), ?))) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` <=> `t_order0`.`order_id`)) order by `t_order0`.`id` limit ?")
   - sql: |
       -- between
       select id from t_order paging_force index(auto_shard_key_order_id)
       where  order_id between 1 and 2 order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?2)
-        logicalview(tables="t_order[p1,p4],t_order[p1,p4]", shardcount=2, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`order_id` between ? and ?) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p4],t_order[p1,p4]", shardcount=2, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`order_id` between ? and ?) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit ?")
   - sql: |
       -- between expr 
       select id from t_order paging_force index(auto_shard_key_order_id)
       where  order_id between 1 and 2+1 order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?3)
-        logicalview(tables="t_order[p1,p4],t_order[p1,p4]", shardcount=2, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`order_id` between ? and (? + ?)) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p4],t_order[p1,p4]", shardcount=2, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`order_id` between ? and (? + ?)) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit ?")
   - sql: |
       -- is not null
       select id from t_order paging_force index(auto_shard_key_order_id)
       where  order_id is not null order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?0)
-        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`order_id` is not null) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`order_id` is not null) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit ?")
   - sql: |
       -- not
       select id from t_order paging_force index(auto_shard_key_order_id)
       where  not (order_id is not null) order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?0)
-        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (not (`order_id` is not null)) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (not (`order_id` is not null)) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` = `t_order0`.`order_id`)) order by `t_order0`.`id` limit ?")
   - sql: |
       -- is null
       select id from t_order paging_force index(auto_shard_key_order_id)
       where  not (order_id is null) order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?0)
-        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (not (`order_id` is null)) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` <=> `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (not (`order_id` is null)) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` <=> `t_order0`.`order_id`)) order by `t_order0`.`id` limit ?")
   - sql: |
       -- is null
       select id from t_order paging_force index(auto_shard_key_order_id)
@@ -341,14 +341,14 @@ SQL:
       where  (order_id <=> 1) order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?1)
-        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`order_id` <=> ?) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` <=> `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`order_id` <=> ?) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` <=> `t_order0`.`order_id`)) order by `t_order0`.`id` limit ?")
   - sql: |
       -- like
       select id from t_order paging_force index(auto_shard_key_order_id)
       where  (order_id like "tt%") order by id limit 10;
     plan: |
       mergesort(sort="id asc", offset=0, fetch=?1)
-        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`order_id` like ?) order by `id` limit (? + 0)) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` <=> `t_order0`.`order_id`)) order by `t_order0`.`id` limit (? + 0)")
+        logicalview(tables="t_order[p1,p2,p3,p4],t_order[p1,p2,p3,p4]", shardcount=4, sql="select `t_order0`.`id` as `id` from (select `id`, `order_id` from `t_order` as `t_order` force index(`auto_shard_key_order_id`) where (`order_id` like ?) order by `id` limit ?) as `t2` inner join `t_order` as `t_order0` on ((`t2`.`id` = `t_order0`.`id`) and (`t2`.`order_id` <=> `t_order0`.`order_id`)) order by `t_order0`.`id` limit ?")
   - sql: |
       select id from t_order paging_force index(auto_shard_key_buyer_id)
       where buyer_id= 1 order by id limit 10;
@@ -502,6 +502,10 @@ DDL:
 STATISTICS:
   pm_order_finish:
     100
+  t_order:
+    100
 CONFIG:
+  ENABLE_AUTO_PAGINATION_UNION:
+    true
   defaltxxAPPName.isNew:
     true

@@ -35,14 +35,14 @@ public class TransactionLimitTest extends ReadBaseTestCase {
         + "  c1 varchar(128) default null,\n"
         + "  c2 varchar(128) default null,\n"
         + "  PRIMARY KEY (id)\n"
-        + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 dbpartition by hash(id);";
+        + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci dbpartition by hash(id);";
 
     private final static String CREATE_TABLE_TMPL_FOR_NEW_PART_TBL = "create table `{0}` (\n"
         + "  id bigint not null,\n"
         + "  c1 varchar(128) default null,\n"
         + "  c2 varchar(128) default null,\n"
         + "  PRIMARY KEY (id)\n"
-        + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 partition by key(id) partitions 3;";
+        + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci partition by key(id) partitions 3;";
 
     public void reset() {
         JdbcUtil.executeUpdateSuccess(tddlConnection, "set @@max_trx_duration = 28800");

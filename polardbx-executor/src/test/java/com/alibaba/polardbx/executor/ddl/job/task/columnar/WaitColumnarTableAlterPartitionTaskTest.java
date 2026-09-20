@@ -82,9 +82,11 @@ public class WaitColumnarTableAlterPartitionTaskTest {
                 Mockito.when(mock.queryColumnarTableMapping(Mockito.anyString(), Mockito.anyString())).thenAnswer(
                     invocation -> Collections.singletonList(mappingRecord)
                 );
-                Mockito.when(mock.queryColumnarTableEvolutionByVersionId(Mockito.anyLong())).thenAnswer(
-                    invocation -> evolutionRecord
-                );
+                Mockito.when(
+                        mock.queryColumnarTableEvolutionByVersionIdAndTableId(Mockito.anyLong(), Mockito.anyLong()))
+                    .thenAnswer(
+                        invocation -> evolutionRecord
+                    );
                 Mockito.when(mock.queryColumnarCheckpointsByCommitTs(Mockito.anyLong())).thenAnswer(
                     invocation -> Collections.singletonList(checkpointRecord)
                 );

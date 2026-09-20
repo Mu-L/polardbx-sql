@@ -18,14 +18,16 @@ package com.alibaba.polardbx.executor.operator.scan.impl;
 
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.Parameters;
+import com.alibaba.polardbx.common.orc.PreheatFileMeta;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.columnar.pruning.ColumnarPruneManager;
 import com.alibaba.polardbx.executor.columnar.pruning.index.IndexPruneContext;
 import com.alibaba.polardbx.executor.columnar.pruning.index.IndexPruner;
 import com.alibaba.polardbx.executor.columnar.pruning.predicate.ColumnPredicatePruningInf;
-import com.alibaba.polardbx.executor.operator.scan.ORCMetaReader;
+import com.alibaba.polardbx.common.orc.ORCMetaReader;
 import com.alibaba.polardbx.executor.operator.scan.ScanPreProcessor;
 import com.alibaba.polardbx.optimizer.statis.ColumnarTracer;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.google.common.base.Preconditions;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
@@ -41,7 +43,9 @@ import org.apache.orc.impl.OrcTail;
 import org.roaringbitmap.RoaringBitmap;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -172,7 +176,7 @@ public class MockScanPreProcessor implements ScanPreProcessor {
                             generateFullMatrix(filePath);
                         } else {
                             IndexPruner indexPruner = ColumnarPruneManager.getIndexPruner(filePath, preheat,
-                                Collections.emptyList(), 1,
+                                Collections.emptyList(), Arrays.asList(new OrderByOption(1, true, false)),
                                 IntStream.range(0, preheat.getPreheatTail().getTypes().size()).boxed().collect(
                                     Collectors.toList()), enableOssCompatible);
                             // prune stripe&row groups

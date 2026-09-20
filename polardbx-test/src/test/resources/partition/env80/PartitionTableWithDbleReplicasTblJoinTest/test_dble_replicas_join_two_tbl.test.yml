@@ -1,0 +1,260 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+## test dble_db
+
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+set ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING=true;
+set ENABLE_RANDOM_PHY_TABLE_NAME=false;
+set ENABLE_REPLICAS_RANDOM_READ= false;
+
+use polardbx;
+drop database if exists mydbledb2;
+ 
+  ## USE_DN_LIST_MSG
+create database if not exists mydbledb2 mode = 'auto' locality='dble_config={"group_config":{"mydbledb2_g1":["$dn1","mydbledb2_00"],"mydbledb2_g2":["$dn2","mydbledb2_01"] }}';
+
+use mydbledb2;
+
+#bro   sig   part
+#bro     ok     ok    ok
+#sig     ok     ok    no
+#part    ok     no    maybe
+#
+#
+#
+#bro   sig   	part      rep
+#bro     ok     ok    	ok        ok
+#sig     ok     ok    	no		  maybe
+#part    ok     no    	maybe     maybe*
+#rep     ok     maybe  	maybe*	  maybe*
+#
+#
+#rep-rep
+
+
+CREATE TABLE `k_t1` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+PARTITION BY KEY(a)
+PARTITIONS 2
+LOCALITY='db_pools=mydbledb2_g1,mydbledb2_g2';
+
+CREATE TABLE `k_t2` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+PARTITION BY KEY(a)
+PARTITIONS 2
+LOCALITY='db_pools=mydbledb2_g1,mydbledb2_g2';
+
+CREATE TABLE `s_t_g1` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+SINGLE
+LOCALITY='db_pools=mydbledb2_g1';
+
+CREATE TABLE `s_t_g2` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+SINGLE
+LOCALITY='db_pools=mydbledb2_g2';
+
+CREATE TABLE `b_t1` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+BROADCAST
+LOCALITY='db_pools=mydbledb2_g1,mydbledb2_g2';
+
+CREATE TABLE `r_t_all` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb2_g1,mydbledb2_g2';
+
+CREATE TABLE `r_t2_all` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb2_g2,mydbledb2_g1';
+
+CREATE TABLE `r_t_all2` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb2_g1,mydbledb2_g2';
+
+CREATE TABLE `r_t_g1` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb2_g1';
+
+CREATE TABLE `r_t2_g1` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb2_g1';
+
+CREATE TABLE `r_t_g2` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb2_g2';
+
+CREATE TABLE `r_t2_g2` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb2_g2';
+
+
+CREATE TABLE `t3_g2` (
+`a` int(11) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb2_g2';
+
+select t1.a from t3_g2 t1 join k_t1 t2 on t1.a=t2.a where t2.a=100;
+  
+
+  ## push join
+explain select t1.a from r_t_g1 t1 join s_t_g1 t2 on t1.a=t2.a where t2.a=100;
+  
+  ## push join
+explain select t1.a from r_t_g2 t1 join s_t_g2 t2 on t1.a=t2.a where t2.a=100;
+
+  ## push join
+explain select t1.a from r_t_all t1 join s_t_g1 t2 on t1.a=t2.a where t2.a=100;
+
+  ## push join
+explain select t1.a from r_t_all t1 join s_t_g2 t2 on t1.a=t2.a where t2.a=100;
+
+  ## push join
+explain select t1.a from r_t_all t1 join k_t1 t2 on t1.a=t2.a where t2.a=100;
+
+  ## push join
+explain select t1.a from r_t_all t1 join k_t1 t2 on t1.a=t2.a where t2.a=100;
+
+  ## push join
+explain select t1.a from r_t_all t1 join k_t1 t2 on t1.a=t2.a where t2.a in (100);
+
+  ## push join
+explain select t1.a from r_t_all t1 join k_t1 t2 on t1.a=t2.a where t2.a=100;
+
+  ## push join
+explain select t1.a from b_t1 t1 inner join k_t1 t2 on t1.a=t2.a where t2.a=100;
+
+  ## push join
+explain select t1.a from r_t_all t3 
+    inner join b_t1 t1 on t1.a=t3.a
+    inner join k_t1 t2 on t1.a=t2.a 
+where t2.a=100;
+
+
+
+  ## no push join
+explain select t1.a from r_t_g2 t1 join k_t1 t2 on t1.a=t2.a where t2.a=100;
+  
+  ## no push join
+explain select t1.a from r_t_g1 t1 join k_t1 t2 on t1.a=t2.a where t2.a=100;
+  
+  
+  ##  == replicas_tbl & single_tbl ===
+  ##  push join for replicas_tbl at g1 join single_tbl at g1
+explain select t1.a from r_t_g1 t1 join s_t_g1 t2 on t1.a=t2.a where t2.a=100;
+  ## push join for replicas_tbl at all join single_tbl at g1
+explain select t1.a from r_t_all t1 join s_t_g1 t2 on t1.a=t2.a where t2.a=100;
+  ## push join for replicas_tbl at all join single_tbl at g2
+explain select t1.a from r_t_all t1 join s_t_g2 t2 on t1.a=t2.a where t2.a=100;
+  ## no push join for replicas_tbl at g2 join single_tbl at g1
+explain select t1.a from r_t_g2 t1 join s_t_g1 t2 on t1.a=t2.a where t2.a=100;
+  
+  ##  push join for replicas_tbl at g1 join single_tbl at g1
+explain select t1.a from s_t_g1 t1 join r_t_g1 t2 on t1.a=t2.a where t2.a=100;
+  ## push join for replicas_tbl at all join single_tbl at g1
+explain select t1.a from s_t_g1 t1 join r_t_all t2 on t1.a=t2.a where t2.a=100;
+  ## push join for replicas_tbl at all join single_tbl at g2
+explain select t1.a from s_t_g2 t1 join r_t_all t2 on t1.a=t2.a where t2.a=100;
+  ## no push join for replicas_tbl at g2 join single_tbl at g1
+explain select t1.a from s_t_g1 t1 join r_t_g2 t2 on t1.a=t2.a where t2.a=100;
+  
+  
+  ##  == replicas_tbl & broadcast_tbl ===
+  ## push join for replicas_tbl at g1 join broadcast_tbl
+explain select t1.a from r_t_g1 t1 join b_t1 t2 on t1.a=t2.a where t2.a=100;
+  ## push join for replicas_tbl at g2 join broadcast_tbl
+explain select t1.a from r_t_g2 t1 join b_t1 t2 on t1.a=t2.a where t2.a=100;
+  ## push join for replicas_tbl at all join broadcast_tbl
+explain select t1.a from r_t_all t1 join b_t1 t2 on t1.a=t2.a where t2.a=100;
+
+  ## push join for replicas_tbl at g1 join broadcast_tbl
+explain select t1.a from b_t1 t1 join r_t_g1 t2 on t1.a=t2.a where t2.a=100;
+  ## push join for replicas_tbl at g2 join broadcast_tbl
+explain select t1.a from b_t1 t1 join r_t_g2 t2 on t1.a=t2.a where t2.a=100;
+  ## push join for replicas_tbl at all join broadcast_tbl
+explain select t1.a from b_t1 t1 join r_t_all t2 on t1.a=t2.a where t2.a=100;
+
+
+
+  ##  == replicas_tbl & replicas_tbl ===
+  ## push join for replicas_tbl at g1 join replicas_tbl at g1
+explain select t1.a from r_t_g1 t1 join r_t2_g1 t2 on t1.a=t2.a where t2.a=100;
+  ## no push join for replicas_tbl at g1 join replicas_tbl at g2
+explain select t1.a from r_t_g1 t1 join r_t_g2 t2 on t1.a=t2.a where t2.a=100;
+  ## push join for replicas_tbl at g1,g2 join replicas_tbl at g2,g1
+explain select t1.a from r_t_all t1 join r_t2_all t2 on t1.a=t2.a where t2.a=100;
+  ## push join for replicas_tbl at g2,g1 join replicas_tbl at g1,g2
+explain select t1.a from r_t2_all t1 join r_t_all t2 on t1.a=t2.a where t2.a=100;
+  ## no push join for replicas_tbl at g1 join replicas_tbl at all 
+explain select t1.a from r_t_g1 t1 join r_t_all t2 on t1.a=t2.a where t2.a=100; 
+  ## no push join for replicas_tbl at g2 join replicas_tbl at all
+explain select t1.a from r_t_g2 t1 join r_t_all t2 on t1.a=t2.a where t2.a=100;
+
+  ##  == replicas_tbl & partition_tbl ===
+  ## no push join for replicas_tbl at g1 join part_tbl at g1,g2
+explain select t1.a from r_t_g1 t1 join k_t1 t2 on t1.a=t2.a where t2.a>100;
+  ## no push join for replicas_tbl at g2 join part_tbl at g1,g2
+explain select t1.a from r_t_g2 t1 join k_t1 t2 on t1.a=t2.a where t2.a>100;
+  ## push join for replicas_tbl at all join part_tbl at g1,g2
+explain select t1.a from r_t_all t1 join k_t1 t2 on t1.a=t2.a where t2.a>100;
+  ## no push join for replicas_tbl at g1 join part_tbl at g1,g2
+explain select t1.a from k_t1 t1 join r_t_g1 t2 on t1.a=t2.a where t2.a>100;
+  ## no push join for replicas_tbl at g2 join part_tbl at g1,g2
+explain select t1.a from k_t1 t1 join r_t_g2 t2 on t1.a=t2.a where t2.a>100;
+  ## push join for replicas_tbl at all join part_tbl at g1,g2
+explain select t1.a from k_t1 t1 join r_t_all t2 on t1.a=t2.a where t2.a>100;
+
+  ##  == replicas_tbl & partition_tbl with point-select ===
+  ## push join for replicas_tbl at g1 join part_tbl at g1(a=100)
+explain select t1.a from r_t_g1 t1 join k_t1 t2 on t1.a=t2.a where t2.a = 100;
+  ## no push join for replicas_tbl at g1 join part_tbl at g2(a=200)
+explain select t1.a from r_t_g2 t1 join k_t1 t2 on t1.a=t2.a where t2.a = 100;
+  ## no push join for replicas_tbl at g2 join part_tbl at g1(a=100)
+explain select t1.a from r_t_g2 t1 join k_t1 t2 on t1.a=t2.a where t2.a = 100;
+  ## push join for replicas_tbl at g2 join part_tbl at g2(a=200)
+explain select t1.a from r_t_g2 t1 join k_t1 t2 on t1.a=t2.a where t2.a = 200;
+  ## push join for replicas_tbl at all join part_tbl at at g1(a=100)
+explain select t1.a from r_t_all t1 join k_t1 t2 on t1.a=t2.a where t2.a = 100;
+  ## push join for replicas_tbl at all join part_tbl at at g1(a in 100)
+explain select t1.a from r_t_all t1 join k_t1 t2 on t1.a=t2.a where t2.a in(100);
+
+  ##  == replicas_tbl & partition_tbl with select partitions  ===
+  ## push join for replicas_tbl at g1 join part_tbl at g1(p1)
+explain select t1.a from r_t_g1 t1 join k_t1 partition(p1) t2 on t1.a=t2.a;
+  ## push join for part_tbl at g1(p1) join replicas_tbl at g1 
+explain select t1.a from k_t1 partition(p1) t1 join r_t_g1 t2 on t1.a=t2.a;
+
+
+  ##  == replicas_tbl & partition_tbl with select partitions  ===
+  ## no push join for replicas_tbl at g1 join part_tbl at g1(p2)
+explain select t1.a from r_t_g1 t1 join k_t1 partition(p2) t2 on t1.a=t2.a;
+  ## no push join for part_tbl at g1(p2) join replicas_tbl at g1
+explain select t1.a from k_t1 partition(p2) t1 join r_t_g1 t2 on t1.a=t2.a;
+
+
+
+use polardbx;
+drop database mydbledb2;

@@ -96,7 +96,8 @@ public class FileConfig {
                 mergeCacheConfig.setCacheTtl(new Duration(parseValue(value, Long.class, 2L), DAYS));
                 break;
             case ConnectionProperties.OSS_FS_MAX_CACHED_ENTRIES:
-                mergeCacheConfig.setMaxCachedEntries(parseValue(value, Integer.class, 2048));
+                mergeCacheConfig.setMaxCachedEntries(
+                    parseValue(value, Integer.class, FileMergeCacheConfig.DEFAULT_MAX_CACHED_ENTRIES));
                 break;
             case ConnectionProperties.OSS_FS_ENABLE_CACHED:
                 mergeCacheConfig.setEnableCache(parseValue(value, Boolean.class, true));

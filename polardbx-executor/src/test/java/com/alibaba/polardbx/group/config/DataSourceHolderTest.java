@@ -199,7 +199,7 @@ public class DataSourceHolderTest {
         Assert.assertTrue((ret == master));
 
         ret = slaveGroupDataSourceHolder.getDataSource(MasterSlave.SLAVE_ONLY);
-        Assert.assertTrue((ret == ob1 || ret == ob2));
+        Assert.assertTrue((ret == master));
 
         Map<String, StorageStatus> map = new HashMap<>();
         map.put("1", new StorageStatus("1", 1, 1, true, false));
@@ -228,5 +228,21 @@ public class DataSourceHolderTest {
 
         ret = slaveGroupDataSourceHolder.getDataSource(MasterSlave.SLAVE_ONLY);
         Assert.assertTrue((ret != ob4 && ret != master));
+    }
+
+    @Test(expected = RuntimeException.class)
+    public void testMasterOnlyGroupDataSourceHolder() {
+        MasterOnlyGroupDataSourceHolder masterOnlyGroupDataSourceHolder =
+            new MasterOnlyGroupDataSourceHolder(master, false);
+        masterOnlyGroupDataSourceHolder.getDataSource(MasterSlave.FOLLOWER_ONLY);
+
+    }
+
+    @Test(expected = RuntimeException.class)
+    public void testMasterFailedSlaveGroupDataSourceHolder() {
+        MasterFailedSlaveGroupDataSourceHolder masterOnlyGroupDataSourceHolder =
+            new MasterFailedSlaveGroupDataSourceHolder(master);
+        masterOnlyGroupDataSourceHolder.getDataSource(MasterSlave.FOLLOWER_ONLY);
+
     }
 }

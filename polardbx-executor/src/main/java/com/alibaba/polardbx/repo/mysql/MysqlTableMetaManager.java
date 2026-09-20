@@ -30,8 +30,11 @@ import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.time.MySQLTimeTypeUtil;
 import com.alibaba.polardbx.executor.spi.IDataSourceGetter;
+import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
 import com.alibaba.polardbx.gms.metadb.table.TableStatus;
+import com.alibaba.polardbx.gms.metadb.table.VectorIndexMeta;
+import com.alibaba.polardbx.gms.metadb.table.VectorIndexMetaParser;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.Field;
 import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager;
@@ -474,6 +477,10 @@ public class MysqlTableMetaManager extends RepoSchemaManager {
                                 meta.unique = sirs.getInt("Non_unique") == 0;
                                 secondaryIndexMetaMap.put(indexName, meta);
                             }
+                            if ("VECTOR".equalsIgnoreCase(sirs.getString("Index_type"))) {
+                                meta.indexType = IndexType.VECTOR;
+                                setVectorIndexMetadata(meta, sirs.getString("Index_comment"));
+                            }
                             meta.keys.add(sirs.getString("Column_name"));
                         }
                         for (SecondaryIndexMeta meta : secondaryIndexMetaMap.values()) {
@@ -675,6 +682,8 @@ public class MysqlTableMetaManager extends RepoSchemaManager {
         Boolean unique;
         List<String> keys;
         List<String> values;
+        IndexType indexType = IndexType.BTREE;
+        VectorIndexMeta vectorIndexMeta;
     }
 
     private static IndexMeta convertFromSecondaryIndexMeta(SecondaryIndexMeta secondaryIndexMeta,
@@ -684,12 +693,18 @@ public class MysqlTableMetaManager extends RepoSchemaManager {
         return new IndexMeta(tableName,
             toColumnMeta(secondaryIndexMeta.keys, columnMetas, tableName),
             toColumnMeta(secondaryIndexMeta.values, columnMetas, tableName),
-            IndexType.BTREE,
+            secondaryIndexMeta.indexType,
             Relationship.NONE,
             strongConsistent,
             false,
             secondaryIndexMeta.unique,
-            secondaryIndexMeta.name);
+            secondaryIndexMeta.name,
+            secondaryIndexMeta.vectorIndexMeta);
+    }
+
+    private static void setVectorIndexMetadata(SecondaryIndexMeta meta, String indexComment) {
+        meta.vectorIndexMeta =
+            VectorIndexMetaParser.mergeVectorIndexMeta(meta.vectorIndexMeta, indexComment, meta.name);
     }
 
     private static IndexMeta buildPrimaryIndexMeta(String tableName, Map<String, ColumnMeta> columnMetas,
@@ -728,6 +743,8 @@ public class MysqlTableMetaManager extends RepoSchemaManager {
     @Override
     public GsiMetaManager getGsiMetaManager() {
         DataSource dataSource = MetaDbDataSource.getInstance().getDataSource();
-        return new GsiMetaManager(dataSource, getSchemaName());
+        final boolean lowerCaseTableNames =
+            ExecutorContext.getContext(getSchemaName()).getStorageInfoManager().isLowerCaseTableNames();
+        return new GsiMetaManager(dataSource, getGroup().getAppName(), getSchemaName(), lowerCaseTableNames);
     }
 }

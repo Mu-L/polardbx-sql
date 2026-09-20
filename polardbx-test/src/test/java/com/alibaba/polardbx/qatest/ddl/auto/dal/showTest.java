@@ -30,16 +30,19 @@ public class showTest extends DDLBaseNewDBTestCase {
     private static final Logger logger = LoggerFactory.getLogger(showTest.class);
 
     static String databaseName = "auto_show_test";
-    private Map<String, String> tableDefs = Arrays.asList(new Object[][]{
-                    {"t1", "create table t1(id bigint auto_increment, name varchar(20), primary key(id)) partition by key(id) partitions 3"},
-                    {"t2", "create table t2(id bigint auto_increment, name varchar(20), primary key(id)) single"},
-                    {"t3", "create table t3(id bigint auto_increment, name varchar(20), primary key(id)) broadcast"}
-            }).stream()
-            .collect(Collectors.toMap(
-                    pair -> (String) pair[0],
-                    pair -> (String) pair[1]
-            ));
+    private Map<String, String> tableDefs = Arrays.asList(new Object[][] {
+            {
+                "t1",
+                "create table t1(id bigint auto_increment, name varchar(20), primary key(id)) partition by key(id) partitions 3"},
+            {"t2", "create table t2(id bigint auto_increment, name varchar(20), primary key(id)) single"},
+            {"t3", "create table t3(id bigint auto_increment, name varchar(20), primary key(id)) broadcast"}
+        }).stream()
+        .collect(Collectors.toMap(
+            pair -> (String) pair[0],
+            pair -> (String) pair[1]
+        ));
     private int maxRows = 10000;
+
     @Override
     public boolean usingNewPartDb() {
         return true;
@@ -64,24 +67,26 @@ public class showTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateSuccess(tddlConnection, useDb);
         Map<String, Long> tableRows = new HashMap<>();
         String queryTableDetail = "select sum(table_rows) from information_schema.table_detail " +
-                "where table_schema='%s' and table_name='%s'";
+            "where table_schema='%s' and table_name='%s'";
         String insertSql = "insert into %s(name) values(?)";
         for (Map.Entry<String, String> entry : tableDefs.entrySet()) {
             String dropTable = String.format("drop table if exists %s", entry.getKey());
             JdbcUtil.executeUpdateSuccess(tddlConnection, dropTable);
             String createTable = entry.getValue();
             JdbcUtil.executeUpdateSuccess(tddlConnection, createTable);
-            ResultSet rs = JdbcUtil.executeQuery(String.format(queryTableDetail, databaseName, entry.getKey()), tddlConnection);
+            ResultSet rs =
+                JdbcUtil.executeQuery(String.format(queryTableDetail, databaseName, entry.getKey()), tddlConnection);
             if (rs.next()) {
                 tableRows.put(entry.getKey(), rs.getLong(1));
             }
         }
         prepareData();
         for (Map.Entry<String, String> entry : tableDefs.entrySet()) {
-            ResultSet rs = JdbcUtil.executeQuery(String.format(queryTableDetail, databaseName, entry.getKey()), tddlConnection);
+            ResultSet rs =
+                JdbcUtil.executeQuery(String.format(queryTableDetail, databaseName, entry.getKey()), tddlConnection);
             if (rs.next()) {
                 Assert.assertTrue(rs.getLong(1) > tableRows.get(entry.getKey()),
-                        String.format("before insert:%d, after insert:%d", tableRows.get(entry.getKey()), rs.getLong(1)));
+                    String.format("before insert:%d, after insert:%d", tableRows.get(entry.getKey()), rs.getLong(1)));
             }
         }
     }
@@ -107,7 +112,7 @@ public class showTest extends DDLBaseNewDBTestCase {
             ResultSet rs = JdbcUtil.executeQuery(String.format(queryTableDetail, entry.getKey()), tddlConnection);
             while (rs.next()) {
                 Assert.assertTrue(rs.getLong(5) > tableRows.get(rs.getString(3)),
-                        String.format("before insert:%d, after insert:%d", tableRows.get(rs.getString(3)), rs.getLong(5)));
+                    String.format("before insert:%d, after insert:%d", tableRows.get(rs.getString(3)), rs.getLong(5)));
             }
         }
     }
@@ -133,7 +138,7 @@ public class showTest extends DDLBaseNewDBTestCase {
         rs = JdbcUtil.executeQuery(queryDbStatus, tddlConnection);
         if (rs.next()) {
             Assert.assertTrue(rs.getDouble(5) >= dbSize,
-                    String.format("before insert:%f, after insert:%f", dbSize, rs.getDouble(5)));
+                String.format("before insert:%f, after insert:%f", dbSize, rs.getDouble(5)));
         }
     }
 
@@ -158,7 +163,7 @@ public class showTest extends DDLBaseNewDBTestCase {
         rs = JdbcUtil.executeQuery(showTableStatus, tddlConnection);
         while (rs.next()) {
             Assert.assertTrue(rs.getLong(5) > tableRows.get(rs.getString(1)),
-                    String.format("before insert:%d, after insert:%d", tableRows.get(rs.getString(1)), rs.getLong(5)));
+                String.format("before insert:%d, after insert:%d", tableRows.get(rs.getString(1)), rs.getLong(5)));
         }
     }
 
@@ -166,7 +171,8 @@ public class showTest extends DDLBaseNewDBTestCase {
         String insertSql = "insert into %s(name) values(?)";
         for (Map.Entry<String, String> entry : tableDefs.entrySet()) {
             int i = 0;
-            try (PreparedStatement ps = JdbcUtil.preparedStatement(String.format(insertSql, entry.getKey()), tddlConnection)) {
+            try (PreparedStatement ps = JdbcUtil.preparedStatement(String.format(insertSql, entry.getKey()),
+                tddlConnection)) {
                 while (i < maxRows) {
                     ps.setString(1, RandomUtils.getStringBetween(10, 19));
                     ps.addBatch();

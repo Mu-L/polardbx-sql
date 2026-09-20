@@ -31,4 +31,4 @@ WHERE nation.n_name <= 'FEGYPT'
 	AND nation.n_name > 'DEGYPT'
 GROUP BY nation.n_nationkey, nation.n_regionkey, nation.n_comment, nation.n_name
 ORDER BY nation.n_nationkey, nation.n_regionkey, nation.n_comment, nation.n_name;
-n_nationkey,n_regionkey,n_comment,n_name
+N_NATIONKEY,N_REGIONKEY,N_COMMENT,N_NAME

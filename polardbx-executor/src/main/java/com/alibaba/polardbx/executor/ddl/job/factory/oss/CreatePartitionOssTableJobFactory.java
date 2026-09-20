@@ -55,6 +55,7 @@ import com.alibaba.polardbx.gms.ttl.TtlInfoRecord;
 import com.alibaba.polardbx.gms.util.LockUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.CreateTablePreparedData;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.data.LikeTableInfo;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import org.apache.calcite.sql.SqlIndexColumnName;
 import org.eclipse.jetty.util.StringUtil;
@@ -79,9 +80,10 @@ public class CreatePartitionOssTableJobFactory extends CreateTableJobFactory {
                                              Map<String, Long> specialDefaultValueFlags,
                                              PhysicalPlanData physicalPlanData, ExecutionContext executionContext,
                                              CreateTablePreparedData preparedData, Engine tableEngine,
-                                             ArchiveMode archiveMode, List<String> dictColumns) {
+                                             ArchiveMode archiveMode, List<String> dictColumns,
+                                             LikeTableInfo likeTableInfo) {
         super(autoPartition, hasTimestampColumnDefault, specialDefaultValues, specialDefaultValueFlags, null,
-            physicalPlanData, preparedData.getDdlVersionId(), executionContext, null);
+            physicalPlanData, preparedData.getDdlVersionId(), executionContext, likeTableInfo);
         this.preparedData = preparedData;
         this.tableEngine = tableEngine;
         this.archiveMode = archiveMode;
@@ -178,6 +180,7 @@ public class CreatePartitionOssTableJobFactory extends CreateTableJobFactory {
     @Override
     protected void sharedResources(Set<String> resources) {
         // lock load schema if the ddl is cross-schema
+        super.sharedResources(resources);
         if (preparedData != null) {
             if (!StringUtils.isEmpty(preparedData.getLoadTableSchema())) {
                 if (!preparedData.getLoadTableName().equalsIgnoreCase(schemaName)) {
@@ -317,9 +320,9 @@ public class CreatePartitionOssTableJobFactory extends CreateTableJobFactory {
         if (archiveMode == ArchiveMode.TTL
             && preparedData.getLoadTableSchema() != null
             && preparedData.getLoadTableName() != null) {
-            CreateTableShowTableMetaTask showLoadTableMetaTask =
-                new CreateTableShowTableMetaTask(preparedData.getLoadTableSchema(), preparedData.getLoadTableName());
-            taskList.add(showLoadTableMetaTask);
+//            CreateTableShowTableMetaTask showLoadTableMetaTask =
+//                new CreateTableShowTableMetaTask(preparedData.getLoadTableSchema(), preparedData.getLoadTableName());
+//            taskList.add(showLoadTableMetaTask);
 
             TableSyncTask loadTableSyncTask =
                 new TableSyncTask(preparedData.getLoadTableSchema(), preparedData.getLoadTableName());

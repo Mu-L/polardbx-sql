@@ -27,17 +27,17 @@ import com.alibaba.polardbx.gms.listener.impl.MetaDbConfigManager;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
 import com.alibaba.polardbx.gms.metadb.ccl.CclRuleAccessor;
 import com.alibaba.polardbx.gms.metadb.ccl.CclRuleRecord;
-import com.alibaba.polardbx.gms.metadb.ccl.CclTriggerAccessor;
-import com.alibaba.polardbx.gms.metadb.ccl.CclTriggerRecord;
+import com.alibaba.polardbx.gms.metadb.ccl.CclBlockerAccessor;
+import com.alibaba.polardbx.gms.metadb.ccl.CclBlockerRecord;
 import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.ccl.common.CclRuleInfo;
 import com.alibaba.polardbx.optimizer.ccl.common.CclRuleRecordsWrapper;
-import com.alibaba.polardbx.optimizer.ccl.common.CclTriggerInfo;
+import com.alibaba.polardbx.optimizer.ccl.common.CclBlockerInfo;
 import com.alibaba.polardbx.optimizer.ccl.common.RescheduleTask;
 import com.alibaba.polardbx.optimizer.ccl.service.ICclConfigService;
 import com.alibaba.polardbx.optimizer.ccl.service.ICclService;
-import com.alibaba.polardbx.optimizer.ccl.service.ICclTriggerService;
+import com.alibaba.polardbx.optimizer.ccl.service.ICclBlockerService;
 import com.alibaba.polardbx.optimizer.utils.CclUtils;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -75,7 +75,7 @@ public class CclConfigService implements ICclConfigService {
 
     protected volatile ICclService cclService;
 
-    protected volatile ICclTriggerService cclTriggerService;
+    protected volatile ICclBlockerService cclBlockerService;
 
     private volatile BloomFilter<String> bloomFilter;
 
@@ -83,7 +83,7 @@ public class CclConfigService implements ICclConfigService {
 
     private volatile boolean hasRescheduleRule;
 
-    private volatile List<CclTriggerInfo> cclTriggerInfoList;
+    private volatile List<CclBlockerInfo> cclBlockerInfoList;
 
     private volatile List<CclRuleRecord> latestCclRuleRecords;
     private volatile long latestVersion;
@@ -104,7 +104,7 @@ public class CclConfigService implements ICclConfigService {
         this.cclRuleInfoList = Lists.newArrayListWithCapacity(0);
         bloomFilter = newBloomFilter(1);
 
-        this.cclTriggerInfoList = Lists.newArrayListWithCapacity(0);
+        this.cclBlockerInfoList = Lists.newArrayListWithCapacity(0);
     }
 
     private void startRescheduleTimeoutCheckTask() {
@@ -292,17 +292,17 @@ public class CclConfigService implements ICclConfigService {
         TRIGGER_TASK_EXECUTOR =
             new ScheduledThreadPoolExecutor(1, new NamedThreadFactory("ccl-process-trigger-task-thread-pool", true));
 
-        int processCclTriggerPeriod = 2;
-        String processCclTriggerPeriodPropValue = System.getProperty("processCclTriggerPeriod");
-        if (!StringUtils.isNotEmpty(processCclTriggerPeriodPropValue)) {
-            processCclTriggerPeriod = Integer.parseInt(processCclTriggerPeriodPropValue);
+        int processCclBlockerPeriod = 2;
+        String processCclBlockerPeriodPropValue = System.getProperty("processCclBlockerPeriod");
+        if (!StringUtils.isNotEmpty(processCclBlockerPeriodPropValue)) {
+            processCclBlockerPeriod = Integer.parseInt(processCclBlockerPeriodPropValue);
         }
         TRIGGER_TASK_EXECUTOR.scheduleAtFixedRate(() -> {
             try {
                 long startTs = System.nanoTime();
                 LOGGER.debug("begin process ccl trigger samples");
 
-                this.cclTriggerService.processSamples();
+                this.cclBlockerService.processSamples();
 
                 long endTs = System.nanoTime();
                 if (LOGGER.isDebugEnabled()) {
@@ -312,7 +312,7 @@ public class CclConfigService implements ICclConfigService {
             } catch (Throwable throwable) {
                 LOGGER.error("Failed to process ccl trigger samples", throwable);
             }
-        }, 0, processCclTriggerPeriod, TimeUnit.SECONDS);
+        }, 0, processCclBlockerPeriod, TimeUnit.SECONDS);
     }
 
     private void endProcessTriggerTask() {
@@ -325,58 +325,58 @@ public class CclConfigService implements ICclConfigService {
             }
             TRIGGER_TASK_EXECUTOR = null;
         }
-        this.cclTriggerService.clearSamples();
+        this.cclBlockerService.clearSamples();
     }
 
     @Override
-    public synchronized void refreshWithTrigger(Set<CclTriggerRecord> cclTriggerRecords) {
-        if (CollectionUtils.isEmpty(cclTriggerRecords)) {
-            cclTriggerRecords = Sets.newHashSet();
+    public synchronized void refreshWithTrigger(Set<CclBlockerRecord> cclBlockerRecords) {
+        if (CollectionUtils.isEmpty(cclBlockerRecords)) {
+            cclBlockerRecords = Sets.newHashSet();
         }
 
         long startTime = System.nanoTime();
-        Set<CclTriggerInfo> latestCclTriggerInfoSet = Sets.newHashSet();
-        for (CclTriggerRecord cclTriggerRecord : cclTriggerRecords) {
+        Set<CclBlockerInfo> latestCclBlockerInfoSet = Sets.newHashSet();
+        for (CclBlockerRecord cclBlockerRecord : cclBlockerRecords) {
             try {
-                CclTriggerInfo cclTriggerInfo = CclTriggerInfo.create(cclTriggerRecord);
-                latestCclTriggerInfoSet.add(cclTriggerInfo);
+                CclBlockerInfo cclBlockerInfo = CclBlockerInfo.create(cclBlockerRecord);
+                latestCclBlockerInfoSet.add(cclBlockerInfo);
             } catch (Throwable throwable) {
                 LOGGER.error(MessageFormat
                     .format("Fail to create ccl trigger info using the ccl trigger record whose name is {0}",
-                        cclTriggerRecord.id), throwable);
+                        cclBlockerRecord.id), throwable);
             }
         }
 
-        Set<CclTriggerInfo> oldCclTriggerInfoSet = Sets.newHashSet(this.cclTriggerInfoList);
+        Set<CclBlockerInfo> oldCclBlockerInfoSet = Sets.newHashSet(this.cclBlockerInfoList);
 
-        Set<CclTriggerInfo> droppedTriggerInfoSet = Sets.difference(oldCclTriggerInfoSet, latestCclTriggerInfoSet);
-        for (CclTriggerInfo cclTriggerInfo : droppedTriggerInfoSet) {
-            disableTrigger(cclTriggerInfo);
+        Set<CclBlockerInfo> droppedTriggerInfoSet = Sets.difference(oldCclBlockerInfoSet, latestCclBlockerInfoSet);
+        for (CclBlockerInfo cclBlockerInfo : droppedTriggerInfoSet) {
+            disableTrigger(cclBlockerInfo);
         }
         log.info("recycle trigger info {}",
             droppedTriggerInfoSet.stream().map((e) -> e.getTriggerRecord().id).collect(Collectors.toList()));
 
-        Set<CclTriggerInfo> createdTriggerInfoSet = Sets.difference(latestCclTriggerInfoSet, oldCclTriggerInfoSet);
-        for (CclTriggerInfo cclTriggerInfo : createdTriggerInfoSet) {
-            enableTrigger(cclTriggerInfo);
+        Set<CclBlockerInfo> createdTriggerInfoSet = Sets.difference(latestCclBlockerInfoSet, oldCclBlockerInfoSet);
+        for (CclBlockerInfo cclBlockerInfo : createdTriggerInfoSet) {
+            enableTrigger(cclBlockerInfo);
         }
         log.info("create trigger info {}",
             createdTriggerInfoSet.stream().map((e) -> e.getTriggerRecord().id).collect(Collectors.toList()));
 
         //根据priority排序
-        Set<CclTriggerInfo> resultSet = Sets.newHashSet(createdTriggerInfoSet);
-        resultSet.addAll(Sets.intersection(oldCclTriggerInfoSet, latestCclTriggerInfoSet));
-        List<CclTriggerInfo> resultList = Lists.newArrayList(resultSet);
-        resultList.sort(Comparator.comparing(CclTriggerInfo::getOrderValue));
+        Set<CclBlockerInfo> resultSet = Sets.newHashSet(createdTriggerInfoSet);
+        resultSet.addAll(Sets.intersection(oldCclBlockerInfoSet, latestCclBlockerInfoSet));
+        List<CclBlockerInfo> resultList = Lists.newArrayList(resultSet);
+        resultList.sort(Comparator.comparing(CclBlockerInfo::getOrderValue));
 
-        if (CollectionUtils.isNotEmpty(this.cclTriggerInfoList) && CollectionUtils.isEmpty(resultList)) {
+        if (CollectionUtils.isNotEmpty(this.cclBlockerInfoList) && CollectionUtils.isEmpty(resultList)) {
             endProcessTriggerTask();
-        } else if (CollectionUtils.isEmpty(this.cclTriggerInfoList) && CollectionUtils.isNotEmpty(resultList)) {
-            this.cclTriggerService.startWorking();
+        } else if (CollectionUtils.isEmpty(this.cclBlockerInfoList) && CollectionUtils.isNotEmpty(resultList)) {
+            this.cclBlockerService.startWorking();
             startProcessTriggerTask();
         }
 
-        this.cclTriggerInfoList = resultList;
+        this.cclBlockerInfoList = resultList;
 
         log.info("refresh ccl trigger config cost {} ms", (System.nanoTime() - startTime) / 1000000);
     }
@@ -413,8 +413,8 @@ public class CclConfigService implements ICclConfigService {
     }
 
     @Override
-    public List<CclTriggerInfo> getCclTriggerInfos() {
-        return this.cclTriggerInfoList;
+    public List<CclBlockerInfo> getCclBlockerInfos() {
+        return this.cclBlockerInfoList;
     }
 
     @Override
@@ -444,12 +444,12 @@ public class CclConfigService implements ICclConfigService {
         cclService.invalidateCclRule(cclRuleInfo);
     }
 
-    private void enableTrigger(CclTriggerInfo cclTriggerInfo) {
-        cclTriggerInfo.setEnabled(true);
+    private void enableTrigger(CclBlockerInfo cclBlockerInfo) {
+        cclBlockerInfo.setEnabled(true);
     }
 
-    private void disableTrigger(CclTriggerInfo cclTriggerInfo) {
-        cclTriggerInfo.setEnabled(false);
+    private void disableTrigger(CclBlockerInfo cclBlockerInfo) {
+        cclBlockerInfo.setEnabled(false);
     }
 
     @Override
@@ -463,9 +463,9 @@ public class CclConfigService implements ICclConfigService {
             LOGGER.info("finish reload ccl rules");
 
             //refresh ccl triggers
-            CclTriggerAccessor cclTriggerAccessor = new CclTriggerAccessor();
-            cclTriggerAccessor.setConnection(metaDbConn);
-            List<CclTriggerRecord> allTriggerRecords = cclTriggerAccessor.query();
+            CclBlockerAccessor cclBlockerAccessor = new CclBlockerAccessor();
+            cclBlockerAccessor.setConnection(metaDbConn);
+            List<CclBlockerRecord> allTriggerRecords = cclBlockerAccessor.query();
             refreshWithTrigger(Sets.newHashSet(allTriggerRecords));
             LOGGER.info("finish reload ccl trigger");
         } catch (Exception e) {
@@ -475,9 +475,9 @@ public class CclConfigService implements ICclConfigService {
     }
 
     @Override
-    public void init(ICclService cclService, ICclTriggerService cclTriggerService) {
+    public void init(ICclService cclService, ICclBlockerService cclBlockerService) {
         this.cclService = cclService;
-        this.cclTriggerService = cclTriggerService;
+        this.cclBlockerService = cclBlockerService;
         this.dataId = MetaDbDataIdBuilder.getCclRuleDataId(InstIdUtil.getInstId());
         registerConfigListener();
         reloadConfig();

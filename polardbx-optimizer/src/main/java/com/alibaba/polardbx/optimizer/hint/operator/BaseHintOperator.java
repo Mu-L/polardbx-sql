@@ -348,7 +348,7 @@ public abstract class BaseHintOperator implements HintOperator {
         Map<String, Map<String, Comparative>> comparative = new HashMap<>();
         if (null == maxParamIndex) {
             ConditionExtractor.partitioningConditionFrom(rel).extract()
-                .allCondition(comparative, null, ec);
+                .allCondition(comparative, ec, false);
         } else {
             // Replace scalar function with RexCallParam
             final AtomicBoolean replaced = new AtomicBoolean(false);
@@ -362,12 +362,12 @@ public abstract class BaseHintOperator implements HintOperator {
                 ConditionExtractor
                     .partitioningConditionFrom(rel)
                     .extract()
-                    .allCondition(comparative, null, ec);
+                    .allCondition(comparative, ec, false);
             } else {
                 ConditionExtractor
                     .partitioningConditionFrom(rel)
                     .extract()
-                    .allConditionWithScalarFunctionReplaced(comparative, null, maxParamIndex, ec);
+                    .allConditionWithScalarFunctionReplaced(comparative, maxParamIndex, ec);
             }
         }
 

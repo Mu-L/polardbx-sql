@@ -72,7 +72,7 @@ public class GsiRollbackTest extends DDLBaseNewDBTestCase {
         + "        KEY `batch_id_status_index` USING BTREE (`batch_id`, `coupon_status`),\n"
         + "        KEY `batch_stock_id_index` USING BTREE (`batch_stock_id`),\n"
         + "        KEY `resource_id_index` USING BTREE (`resource_id`)\n"
-        + ") ENGINE = InnoDB AUTO_INCREMENT = 668800049 DEFAULT CHARSET = utf8mb4 ROW_FORMAT = DYNAMIC  dbpartition by hash(`id`)";
+        + ") ENGINE = InnoDB AUTO_INCREMENT = 668800049 DEFAULT CHARSET = utf8mb4 COLLATE utf8mb4_general_ci ROW_FORMAT = DYNAMIC  dbpartition by hash(`id`)";
     private static final String BAD_GSI =
         "CREATE UNIQUE GLOBAL INDEX `" + ROLLBACK_INDEX_NAME + "` ON `" + ROLLBACK_TABLE_NAME
             + "`(`coupon_passwd`(101))\n"

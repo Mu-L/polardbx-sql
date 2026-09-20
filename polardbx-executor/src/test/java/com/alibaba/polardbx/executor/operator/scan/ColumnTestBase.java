@@ -1,5 +1,7 @@
 package com.alibaba.polardbx.executor.operator.scan;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.orc.ORCMetaReader;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.chunk.BigIntegerBlock;
@@ -40,7 +42,7 @@ import com.alibaba.polardbx.executor.operator.scan.impl.IntegerColumnReader;
 import com.alibaba.polardbx.executor.operator.scan.impl.DirectJsonColumnReader;
 import com.alibaba.polardbx.executor.operator.scan.impl.LongColumnReader;
 import com.alibaba.polardbx.executor.operator.scan.impl.PackedTimeColumnReader;
-import com.alibaba.polardbx.executor.operator.scan.impl.PreheatFileMeta;
+import com.alibaba.polardbx.common.orc.PreheatFileMeta;
 import com.alibaba.polardbx.executor.operator.scan.impl.ShortColumnReader;
 import com.alibaba.polardbx.executor.operator.scan.impl.StaticStripePlanner;
 import com.alibaba.polardbx.executor.operator.scan.impl.TimestampColumnReader;
@@ -58,7 +60,8 @@ import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.memory.MemoryManager;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
 import com.alibaba.polardbx.optimizer.memory.MemoryPoolUtils;
-import com.alibaba.polardbx.optimizer.workload.WorkloadUtil;
+import com.alibaba.polardbx.optimizer.statis.OperatorStatistics;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadUtil;
 import com.google.common.base.Preconditions;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
@@ -76,6 +79,7 @@ import org.apache.orc.TypeDescription;
 import org.apache.orc.impl.InStream;
 import org.apache.orc.impl.OrcIndex;
 import org.apache.orc.impl.OrcTail;
+import org.apache.orc.impl.PositionProviderBuilder;
 import org.apache.orc.impl.StreamName;
 import org.apache.orc.impl.TypeUtils;
 import org.apache.orc.impl.reader.ReaderEncryption;
@@ -213,10 +217,7 @@ public abstract class ColumnTestBase {
         Arrays.fill(columnIncluded, true);
         encodingMap = stripeInformationList.stream().collect(Collectors.toMap(
             stripe -> (int) stripe.getStripeId(),
-            stripe -> StaticStripePlanner.buildEncodings(
-                encryption,
-                columnIncluded,
-                preheatFileMeta.getStripeFooter((int) stripe.getStripeId())),
+            stripe -> preheatFileMeta.buildEncodings((int) stripe.getStripeId(), columnIncluded),
             (s1, s2) -> s1,
             () -> new TreeMap<>()
         ));
@@ -246,7 +247,7 @@ public abstract class ColumnTestBase {
         throws IOException {
 
         final StripeInformation stripeInformation = stripeInformationMap.get(stripeId);
-        final OrcIndex orcIndex = preheatFileMeta.getOrcIndex(
+        final PositionProviderBuilder orcIndex = preheatFileMeta.getPositionProviderBuilder(
             stripeInformation.getStripeId()
         );
         final OrcProto.ColumnEncoding[] encodings = encodingMap.get(stripeId);
@@ -282,7 +283,12 @@ public abstract class ColumnTestBase {
 
             // Use async mode and wait for completion of stripe loader.
             columnReader = createColumnReader(columnId, orcIndex, runtimeMetrics, stripeLoader, encodings);
+
+            MemoryCountable.checkDeviation(columnReader, 0d, true);
+
             columnReader.open(loadFuture, false, rowGroupIncluded);
+
+            MemoryCountable.checkDeviation(columnReader, 0d, true);
 
             for (ScanTestBase.BlockLocation location : locationList) {
                 // block builder matched with raw orc data.
@@ -291,7 +297,12 @@ public abstract class ColumnTestBase {
 
                 // move index of column-reader and start reading from this index.
                 columnReader.startAt(location.rowGroupId, location.startPosition);
+
+                MemoryCountable.checkDeviation(columnReader, 0d, true);
+
                 columnReader.next((RandomAccessBlock) block, location.positionCount);
+
+                MemoryCountable.checkDeviation(columnReader, 0d, true);
 
                 // Check block
                 doValidate(block, columnId, stripeId, orcTail.getStripes(), location);
@@ -470,7 +481,7 @@ public abstract class ColumnTestBase {
     }
 
     @NotNull
-    protected ColumnReader createColumnReader(int colId, OrcIndex orcIndex, RuntimeMetrics metrics,
+    protected ColumnReader createColumnReader(int colId, PositionProviderBuilder orcIndex, RuntimeMetrics metrics,
                                               StripeLoader stripeLoader,
                                               OrcProto.ColumnEncoding[] encodings) {
 
@@ -709,9 +720,7 @@ public abstract class ColumnTestBase {
     protected StripeLoader createStripeLoader(int stripeId, boolean[] columnIncluded, RuntimeMetrics runtimeMetrics) {
         StripeLoader stripeLoader;
 
-        OrcProto.ColumnEncoding[] encodings = StaticStripePlanner.buildEncodings(
-            encryption, columnIncluded, preheatFileMeta.getStripeFooter(stripeId)
-        );
+        OrcProto.ColumnEncoding[] encodings = preheatFileMeta.getColumnEncodings(stripeId);
 
         stripeLoader = new AsyncStripeLoader(
             IO_EXECUTOR,
@@ -729,7 +738,7 @@ public abstract class ColumnTestBase {
             encodings, ignoreNonUtf8BloomFilter,
             maxBufferSize,
             maxDiskRangeChunkLimit, maxMergeDistance, runtimeMetrics,
-            true, memoryAllocatorCtx);
+            true, memoryAllocatorCtx, new OperatorStatistics());
         return stripeLoader;
     }
 

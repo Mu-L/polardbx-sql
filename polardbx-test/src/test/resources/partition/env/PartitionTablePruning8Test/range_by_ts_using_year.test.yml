@@ -1,0 +1,63 @@
+## DISABLE_FAST_SQL_PARSER
+
+set ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION=true;
+
+set time_zone='+08:00';
+DROP TABLE IF EXISTS `rng_ts_using_year`;
+CREATE /*+TDDL:cmd_extra(ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION=true)*/ TABLE IF NOT EXISTS `rng_ts_using_year` (
+`a` varchar(8) DEFAULT NULL,
+`b` timestamp default current_timestamp
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+PARTITION BY range(year(b))
+(
+PARTITION p2021 VALUES LESS THAN (year('2022-01-01 00:00:00')),
+PARTITION p2022 VALUES LESS THAN (year('2023-01-01 00:00:00')),
+PARTITION p2023 VALUES LESS THAN (year('2024-01-01 00:00:00')),
+PARTITION p2024 VALUES LESS THAN (year('2025-01-01 00:00:00')),
+PARTITION p2025 VALUES LESS THAN (year('2026-01-01 00:00:00')),
+PARTITION pmax VALUES LESS THAN (maxvalue)
+);
+
+DROP TABLE IF EXISTS `rng_dt_using_year`;
+CREATE /*+TDDL:cmd_extra(ALLOW_USING_TIMESTAMP_IN_RANGE_LIST_PARTITION=true)*/ TABLE IF NOT EXISTS`rng_dt_using_year` (
+`a` varchar(8) DEFAULT NULL,
+`b` datetime default current_timestamp
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+PARTITION BY range(year(b))
+(
+PARTITION p2021 VALUES LESS THAN (year('2022-01-01 00:00:00')),
+PARTITION p2022 VALUES LESS THAN (year('2023-01-01 00:00:00')),
+PARTITION p2023 VALUES LESS THAN (year('2024-01-01 00:00:00')),
+PARTITION p2024 VALUES LESS THAN (year('2025-01-01 00:00:00')),
+PARTITION p2025 VALUES LESS THAN (year('2026-01-01 00:00:00')),
+PARTITION pmax VALUES LESS THAN (maxvalue)
+);
+
+set time_zone='+08:00';
+explain select a,b from rng_dt_using_year where b='2025-01-01 02:00:00';
+set time_zone='+00:00';
+explain select a,b from rng_dt_using_year where b='2024-12-31 18:00:00';
+  
+## All timestamp datatype roting by using time_zone of '+08:00'
+## '2025-01-01 02:00:00TZ08:00' == '2024-12-31 18:00:00TZ00:00'
+set time_zone='+08:00';
+explain select a,b from rng_ts_using_year where b='2025-01-01 02:00:00';
+set time_zone='+00:00';
+explain select a,b from rng_ts_using_year where b='2024-12-31 18:00:00';
+
+
+set time_zone='+08:00';
+explain  select a,b from rng_dt_using_year where b between '2022-01-01 02:00:00' and '2025-01-01 02:00:00';
+set time_zone='+00:00';
+explain  select a,b from rng_dt_using_year where b between '2021-12-31 18:00:00' and '2024-12-31 18:00:00';
+  
+## All timestamp datatype roting by using time_zone of '+08:00'
+## '2022-01-01 02:00:00TZ08:00' == '2021-12-31 18:00:00TZ00:00'
+## '2025-01-01 02:00:00TZ08:00' == '2024-12-31 18:00:00TZ00:00'
+set time_zone='+08:00';
+explain  select a,b from rng_ts_using_year where b between '2022-01-01 02:00:00' and '2025-01-01 02:00:00';
+set time_zone='+00:00';
+explain  select a,b from rng_ts_using_year where b between '2021-12-31 18:00:00' and '2024-12-31 18:00:00';
+
+DROP TABLE IF EXISTS `rng_ts_using_year`;
+DROP TABLE IF EXISTS `rng_dt_using_year`;

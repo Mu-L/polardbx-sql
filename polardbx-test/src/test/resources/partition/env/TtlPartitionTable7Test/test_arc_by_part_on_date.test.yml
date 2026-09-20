@@ -1,0 +1,63 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+
+use polardbx;
+drop database if exists newttldb7_2;
+create database if not exists newttldb7_2 mode='auto';
+use newttldb7_2;
+  
+## create table
+drop table if exists arc_date_t1;
+create table if not exists arc_date_t1(
+a int not null auto_increment,
+b date,
+primary key(a)
+)
+partition by range columns(`b`)
+(
+partition p1 values less than ('2026-01-01'),
+partition p2 values less than ('2027-01-01'),
+partition p3 values less than ('2028-01-01')
+)
+;
+show create table arc_date_t1;
+
+alter table arc_date_t1
+modify ttl
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 year timezone '+08:00',
+ttl_part_interval = interval(1, year),
+archive_type = 'partition',
+archive_table_pre_allocate = 4
+archive_table_post_allocate = 2
+;
+
+set TTL_DEBUG_CURRENT_DATETIME='2026-06-27 00:00:00';
+alter table arc_date_t1 cleanup expired data;
+show create table arc_date_t1;
+
+create table arc_date_t1_arc like arc_date_t1 engine=columnar archive_mode='ttl';
+
+alter table arc_date_t1
+modify ttl
+ttl_cleanup = 'on';
+
+set TTL_DEBUG_CURRENT_DATETIME='2028-06-27 00:00:00';
+alter table arc_date_t1 cleanup expired data;
+show create table arc_date_t1;
+
+
+set TTL_DEBUG_CURRENT_DATETIME='2029-06-27 00:00:00';
+alter table arc_date_t1 cleanup expired data;
+show create table arc_date_t1;
+
+use polardbx;
+drop database if exists newttldb7_2;
+

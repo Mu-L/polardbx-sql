@@ -22,13 +22,17 @@ import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.sync.AlterStoragePoolSyncAction;
 import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
 import com.alibaba.polardbx.gms.sync.SyncScope;
+import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.config.schema.DefaultDbSchema;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.locality.StoragePoolManager;
+import com.alibaba.polardbx.optimizer.locality.StoragePoolUtils;
 import lombok.Getter;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.List;
 
 @Getter
@@ -45,13 +49,19 @@ public class SyncStoragePoolTask extends BaseValidateTask {
     @Override
     public void executeImpl(ExecutionContext executionContext) {
         StoragePoolManager storagePoolManager = StoragePoolManager.getInstance();
-        if (!CollectionUtils.isEmpty(dnIds)) {
-            String dnIdStr = StringUtils.join(dnIds, ",");
-            storagePoolManager.shrinkStoragePoolSimply(StoragePoolManager.DEFAULT_STORAGE_POOL_NAME, dnIdStr);
-        } else {
-            storagePoolManager.autoExpandDefaultStoragePool();
+        try (Connection connection = MetaDbUtil.getConnection()) {
+            if (!CollectionUtils.isEmpty(dnIds)) {
+                String dnIdStr = StoragePoolUtils.buildStringFromStorageInstList(dnIds);
+                storagePoolManager.shrinkStoragePoolSimply(connection, StoragePoolManager.DEFAULT_STORAGE_POOL_NAME,
+                    dnIdStr);
+            } else {
+                storagePoolManager.autoExpandDefaultStoragePool(connection);
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
         }
-        SyncManagerHelper.sync(new AlterStoragePoolSyncAction("", ""), SyncScope.ALL);
+        StoragePoolManager.getInstance().reloadStoragePoolInfoFromMetaDb();
+        SyncManagerHelper.syncThrowExceptions(new AlterStoragePoolSyncAction("", ""), SyncScope.ALL);
     }
 
 }

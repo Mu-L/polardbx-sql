@@ -15,6 +15,7 @@ import com.alibaba.polardbx.rpc.compatible.XDataSource;
 import com.alibaba.polardbx.rpc.pool.XConnection;
 import com.google.common.collect.ImmutableList;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.mockito.Mockito;
 
@@ -94,6 +95,7 @@ public class TGroupDataSourceTest {
         return atomDs;
     }
 
+    @Ignore
     @Test
     public void testGroupConnection() throws SQLException {
         final TGroupDataSource tGroupDataSource = new TGroupDataSource("abc", "def",

@@ -9,7 +9,7 @@
     hashagg(count(1)="sum(count(1))")
       exchange(distribution=single, collation=[])
         partialhashagg(count(1)="count()")
-          hashwindow(c1="c1", c2="c2", f2w0$o0="window#0sum($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [sum($1)])")
+          hashwindow(c1="c1", c2="c2", f3w0$o0="window#0sum($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [sum($1)])")
             exchange(distribution=hash[0], collation=[])
               indexscan(tables="[0000-0003].g_t_gsi", shardcount=4, sql="select `c1`, `c2` from `g_t_gsi` as `g_t_gsi`")
 - sql: |
@@ -21,7 +21,7 @@
     hashagg(count(*)="sum(count(*))")
       exchange(distribution=single, collation=[])
         partialhashagg(count(*)="count()")
-          sortwindow(c1="c1", f1w0$o0="window#0row_number()", reference windows="window#0=window(partition {} order by [] rows between unbounded preceding and current row aggs [row_number()])")
+          sortwindow(c1="c1", f3w0$o0="window#0row_number()", reference windows="window#0=window(partition {} order by [] rows between unbounded preceding and current row aggs [row_number()])")
             exchange(distribution=single, collation=[])
               indexscan(tables="[0000-0003].g_t_gsi", shardcount=4, sql="select `c1` from `g_t_gsi` as `g_t_gsi`")
 - sql: |
@@ -46,13 +46,11 @@
         from t1;
 
   plan: |
-
-    hashwindow(c1="c1", c2="c2", f2w0$o0="f2w0$o0", f3w0$o0="window#0avg($1)", reference windows="window#0=window(partition {1} order by [] range between unbounded preceding and unbounded following aggs [avg($1)])")
+    hashwindow(c1="c1", c2="c2", f2w0$o0="f2w0$o0", f3w1$o0="window#0avg($1)", reference windows="window#0=window(partition {1} order by [] range between unbounded preceding and unbounded following aggs [avg($1)])")
       exchange(distribution=hash[1], collation=[])
         hashwindow(c1="c1", c2="c2", f2w0$o0="window#0sum($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [sum($1)])")
           exchange(distribution=hash[0], collation=[])
             logicalview(tables="[0000-0003].t1", shardcount=4, sql="select `c1`, `c2` from `t1` as `t1`")
-
 # with pruning
 - sql: |
     /*+TDDL:cmd_extra(ENABLE_SORT_WINDOW=FALSE)*/
@@ -333,11 +331,9 @@
     from t_gsi;
 
   plan: |
-
-    hashwindow(c1="c1", c2="c2", f2w0$o0="window#0sum($1)", f3w0$o1="window#0avg($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [sum($1), avg($1)])")
+    hashwindow(c1="c1", c2="c2", f3w0$o0="window#0sum($1)", f4w0$o1="window#0avg($1)", reference windows="window#0=window(partition {0} order by [] range between unbounded preceding and unbounded following aggs [sum($1), avg($1)])")
       exchange(distribution=hash[0], collation=[])
         indexscan(tables="[0000-0003].g_t_gsi", shardcount=4, sql="select `c1`, `c2` from `g_t_gsi` as `g_t_gsi`")
-
 - sql: |
     /*+TDDL:cmd_extra(ENABLE_SORT_WINDOW=FALSE)*/
     select *,

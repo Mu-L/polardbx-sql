@@ -353,4 +353,9 @@ public class AsyncOSSTableScanExec extends AbstractOSSTableScanExec {
         }
         isFinished = true;
     }
+
+    @Override
+    public String getSourceName() {
+        return ossTableScan.getSchemaName() + "." + ossTableScan.getLogicalTableName();
+    }
 }

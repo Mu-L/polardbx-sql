@@ -18,10 +18,13 @@
 
 package com.alibaba.polardbx.common.cdc;
 
+import com.alibaba.fastjson.JSONObject;
+import com.alibaba.polardbx.common.cdc.entity.DDLExtInfo;
 import lombok.Data;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 
 @Data
 public class CdcDdlRecord {
@@ -30,7 +33,7 @@ public class CdcDdlRecord {
     public final String sqlKind;
     public final String schemaName;
     public final String tableName;
-    public final String gmtCreated;
+    public final Timestamp gmtCreated;
     public final String ddlSql;
     public final String metaInfo;
     public final int visibility;
@@ -43,11 +46,15 @@ public class CdcDdlRecord {
             rs.getString("SQL_KIND"),
             rs.getString("SCHEMA_NAME"),
             rs.getString("TABLE_NAME"),
-            rs.getString("GMT_CREATED"),
+            rs.getTimestamp("GMT_CREATED"),
             rs.getString("DDL_SQL"),
             rs.getString("META_INFO"),
             rs.getInt("VISIBILITY"),
             rs.getString("EXT")
         );
+    }
+
+    public DDLExtInfo getDdlExtInfo() {
+        return JSONObject.parseObject(ext, DDLExtInfo.class);
     }
 }

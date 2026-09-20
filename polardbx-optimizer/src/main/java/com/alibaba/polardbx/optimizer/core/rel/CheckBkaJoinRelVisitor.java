@@ -20,6 +20,7 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelShuttleImpl;
 import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.logical.LogicalAggregate;
+import org.apache.calcite.rel.logical.LogicalCTEConsumer;
 import org.apache.calcite.rel.logical.LogicalCorrelate;
 import org.apache.calcite.rel.logical.LogicalFilter;
 import org.apache.calcite.rel.logical.LogicalJoin;
@@ -108,6 +109,12 @@ public class CheckBkaJoinRelVisitor extends RelShuttleImpl {
         this.isSupportUseBkaJoin = false;
         return correlate;
 
+    }
+
+    @Override
+    public RelNode visit(LogicalCTEConsumer cteConsumer) {
+        this.isSupportUseBkaJoin = false;
+        return cteConsumer;
     }
 
     @Override

@@ -36,7 +36,7 @@ import java.util.List;
 import java.util.Map;
 
 public class FileStorageFilesMetaAccessor extends AbstractAccessor {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     private static final String TABLE_NAME = wrap(GmsSystemTables.FILE_STORAGE_FILES_META);
 
@@ -45,7 +45,8 @@ public class FileStorageFilesMetaAccessor extends AbstractAccessor {
 
     private static final String QUERY_BY_ENGINE = "select * from " + TABLE_NAME + " where engine = ? ";
 
-    private static final String QUERY_TABLE_NEED_TO_PURGE = "select * from " + TABLE_NAME + " where engine = ? and remove_ts < ?";
+    private static final String QUERY_TABLE_NEED_TO_PURGE =
+        "select * from " + TABLE_NAME + " where engine = ? and remove_ts < ?";
 
     private static final String QUERY_BY_FILE_NAME = "select * from " + TABLE_NAME + " where file_name = ? ";
 

@@ -86,7 +86,7 @@ public class COLLogicalSortToSortRule extends LogicalSortToSortRule {
             return;
         }
         ParamManager pm = PlannerContext.getPlannerContext(call).getParamManager();
-        if (!pm.getBoolean(ConnectionParams.ENABLE_LIMIT)) {
+        if (hasOrdering && !pm.getBoolean(ConnectionParams.ENABLE_LIMIT)) {
             return;
         }
 

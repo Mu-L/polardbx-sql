@@ -323,6 +323,12 @@ public abstract class BaseDdlOperation extends BaseQueryOperation {
             return DdlType.ALTER_TABLEGROUP_ADD_TABLE;
         case MERGE_TABLEGROUP:
             return DdlType.MERGE_TABLEGROUP;
+        case OPTIMIZE_TABLE:
+            return DdlType.OPTIMIZE_TABLE;
+        case ANALYZE_TABLE:
+            return DdlType.ANALYZE_TABLE;
+        case CREATE_INDEX_IN_DATABASE:
+            return DdlType.CREATE_INDEX_IN_DATABASE;
         default:
             return DdlType.UNSUPPORTED;
         }

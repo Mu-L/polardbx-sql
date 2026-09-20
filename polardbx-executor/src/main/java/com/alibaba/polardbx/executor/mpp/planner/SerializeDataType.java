@@ -31,6 +31,7 @@ import com.alibaba.polardbx.optimizer.core.datatype.FloatType;
 import com.alibaba.polardbx.optimizer.core.datatype.TimeType;
 import com.alibaba.polardbx.optimizer.core.datatype.TimestampType;
 import com.alibaba.polardbx.optimizer.core.datatype.VarcharType;
+import com.alibaba.polardbx.optimizer.core.datatype.VectorType;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.calcite.rel.type.RelDataType;
@@ -348,6 +349,9 @@ public class SerializeDataType {
             break;
         case ENUM:
             dataType = new EnumType(enumValues);
+            break;
+        case VECTOR:
+            dataType = precision > 0 ? new VectorType(precision) : new VectorType();
             break;
         default:
             dataType = null;

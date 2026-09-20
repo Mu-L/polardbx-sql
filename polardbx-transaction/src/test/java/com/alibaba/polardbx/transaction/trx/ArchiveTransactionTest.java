@@ -26,9 +26,9 @@ public class ArchiveTransactionTest {
             .contains(ITransactionPolicy.TransactionClass.ARCHIVE.name()));
         IConnection connection = mock(IConnection.class);
         String xid = ((ArchiveTransaction) trx).getXid("group", connection);
-        Assert.assertTrue(xid.endsWith("'group@0000', 3"));
-        xid = ((ArchiveTransaction) trx).getXid("group", connection);
         Assert.assertTrue(xid.endsWith("'group@0001', 3"));
+        xid = ((ArchiveTransaction) trx).getXid("group", connection);
+        Assert.assertTrue(xid.endsWith("'group@0002', 3"));
     }
 
     @Test

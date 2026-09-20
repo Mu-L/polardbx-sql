@@ -34,9 +34,8 @@
     add_un() */ * from test_table_a
 
   plan: |
-
-    err-code: [pxc-4528][err_table_empty_with_hint] sql with hint is not used correctly, no physical table will execute sql.
-
+    gather(concurrent=true)
+      logicalview(tables="optest_0001.test_table_a_13,test_table_b_13", sql="select `pk`, `bigint_test`, `varchar_test_p255`, `datetime_test`, `text_test`, `timestamp_test` from `test_table_a` as `test_table_a` where (`pk` = some (select `b`.`pk` from `test_table_b` as `b` where (`b`.`pk` = 100001)))")
 - sql: |
     select /* +TDDL: construct()
     push_ft("pk >= any(select pk from test_table_b b WHERE b.pk >= 100001)")

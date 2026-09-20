@@ -4,10 +4,14 @@ import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.oss.ColumnarFileType;
 import com.alibaba.polardbx.common.oss.ColumnarPartitionPrunedSnapshot;
+import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarAppendedFilesAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarAppendedFilesRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarCheckpointsAccessor;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarCheckpointsRecord;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarTableIdVersionAccessor;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarTableIdVersionRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingRecord;
 import com.alibaba.polardbx.gms.metadb.table.FilesAccessor;
@@ -17,11 +21,14 @@ import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.SortedMap;
+import java.util.TreeSet;
 
 public class FlashbackColumnarManager {
 
@@ -33,32 +40,43 @@ public class FlashbackColumnarManager {
     public FlashbackColumnarManager(long flashbackTso, String logicalSchema, String logicalTable,
                                     boolean autoPosition) {
         try (Connection connection = MetaDbUtil.getConnection()) {
-            ColumnarTableMappingAccessor accessor = new ColumnarTableMappingAccessor();
-            accessor.setConnection(connection);
 
-            List<ColumnarTableMappingRecord> records = accessor.querySchemaIndex(logicalSchema, logicalTable);
+            List<Long> tableIds = getAllTableIds(connection, logicalSchema, logicalTable);
+            long actualTableId = -1;
 
-            Long tableId;
-            if (records != null && !records.isEmpty()) {
-                ColumnarTableMappingRecord record = records.get(0);
-                tableId = record.tableId;
-            } else {
-                throw new TddlRuntimeException(ErrorCode.ERR_COLUMNAR_SNAPSHOT,
-                    String.format("Columnar index not found, schema: %s, table: %s", logicalSchema, logicalTable));
-            }
             FilesAccessor filesAccessor = new FilesAccessor();
             filesAccessor.setConnection(connection);
 
-            List<FilesRecordSimplified> snapshotFiles = filesAccessor
-                .queryColumnarSnapshotFilesByTsoAndTableId(flashbackTso, logicalSchema, String.valueOf(tableId));
+            List<FilesRecordSimplified> snapshotFiles = new ArrayList<>();
+            for (Long tableId : tableIds) {
+                snapshotFiles = filesAccessor
+                    .queryColumnarSnapshotFilesByTsoAndTableId(flashbackTso, logicalSchema, String.valueOf(tableId));
+                // tableId从大到小，直到找到对应版本的tableId
+                if (GeneralUtil.isNotEmpty(snapshotFiles)) {
+                    actualTableId = tableId;
+                    break;
+                }
+            }
+
+            if (actualTableId == -1) {
+                throw new TddlRuntimeException(ErrorCode.ERR_COLUMNAR_SNAPSHOT,
+                    String.format("Columnar index not found, schema: %s, table: %s", logicalSchema, logicalTable));
+            }
 
             if (autoPosition) {
                 ColumnarCheckpointsAccessor checkpointsAccessor = new ColumnarCheckpointsAccessor();
                 checkpointsAccessor.setConnection(connection);
 
-                this.columnarDeltaCheckpointTso =
-                    checkpointsAccessor.queryColumnarTsoByBinlogTsoAndCheckpointTsoAsc(flashbackTso)
-                        .get(0).checkpointTso;
+                List<ColumnarCheckpointsRecord> checkpoints =
+                    checkpointsAccessor.queryColumnarTsoByBinlogTsoAndCheckpointTsoAsc(flashbackTso);
+                if (checkpoints == null || checkpoints.isEmpty()) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_COLUMNAR_SNAPSHOT,
+                        String.format(
+                            "No valid columnar checkpoint found for binlog tso %d, schema: %s, table: %s. "
+                                + "Please check if columnar delta checkpoint has been triggered.",
+                            flashbackTso, logicalSchema, logicalTable));
+                }
+                this.columnarDeltaCheckpointTso = checkpoints.get(0).checkpointTso;
             }
 
             for (FilesRecordSimplified record : snapshotFiles) {
@@ -103,7 +121,7 @@ public class FlashbackColumnarManager {
 
             List<ColumnarAppendedFilesRecord> appendedFilesRecords =
                 appendedFilesAccessor.queryLastValidAppendByTsoAndTableId(flashbackTso, logicalSchema,
-                    String.valueOf(tableId));
+                    String.valueOf(actualTableId));
 
             for (ColumnarAppendedFilesRecord record : appendedFilesRecords) {
                 String fileName = record.fileName;
@@ -131,6 +149,46 @@ public class FlashbackColumnarManager {
                 String.format("Failed to generate columnar snapshot, tso: %d, schema: %s, table: %s",
                     flashbackTso, logicalSchema, logicalTable));
         }
+    }
+
+    /**
+     * @return all versioned table ids, order from large to small
+     */
+    public List<Long> getAllTableIds(Connection connection, String logicalSchema, String logicalTable) {
+        ColumnarTableMappingAccessor mappingAccessor = new ColumnarTableMappingAccessor();
+        ColumnarTableIdVersionAccessor versionAccessor = new ColumnarTableIdVersionAccessor();
+        mappingAccessor.setConnection(connection);
+        versionAccessor.setConnection(connection);
+
+        Set<Long> tableIdsSet = new TreeSet<>(Collections.reverseOrder());
+        List<ColumnarTableMappingRecord> records = mappingAccessor.querySchemaIndex(logicalSchema, logicalTable);
+        if (GeneralUtil.isNotEmpty(records)) {
+            long tableId = records.get(0).tableId;
+            // 已访问的tableId集合
+            Set<Long> visitedTableIds = new HashSet<>();
+            List<ColumnarTableIdVersionRecord> tableIdVersionRecords = versionAccessor.queryByNewTableId(tableId);
+            if (GeneralUtil.isNotEmpty(tableIdVersionRecords)) {
+                while (GeneralUtil.isNotEmpty(tableIdVersionRecords)) {
+                    ColumnarTableIdVersionRecord tableIdVersionRecord = tableIdVersionRecords.get(0);
+                    // 检查是否存在循环引用
+                    if (!visitedTableIds.add(tableIdVersionRecord.newTableId)) {
+                        throw new RuntimeException("Detected cycle in tableIdVersion for tableId: "
+                            + tableIdVersionRecord.newTableId);
+                    }
+                    tableIdsSet.add(tableIdVersionRecord.newTableId);
+                    tableIdsSet.add(tableIdVersionRecord.oldTableId);
+                    tableId = tableIdVersionRecord.oldTableId;
+                    tableIdVersionRecords = versionAccessor.queryByNewTableId(tableId);
+                }
+            } else {
+                tableIdsSet.add(tableId);
+            }
+        } else {
+            throw new TddlRuntimeException(ErrorCode.ERR_COLUMNAR_SNAPSHOT,
+                String.format("Columnar index not found, schema: %s, table: %s", logicalSchema, logicalTable));
+        }
+
+        return new ArrayList<>(tableIdsSet);
     }
 
     /**

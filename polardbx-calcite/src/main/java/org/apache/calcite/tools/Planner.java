@@ -36,84 +36,84 @@ import org.apache.calcite.util.Pair;
  * query.
  */
 public interface Planner extends AutoCloseable {
-  /**
-   * Parses and validates a SQL statement.
-   *
-   * @param sql The SQL statement to parse.
-   * @return The root node of the SQL parse tree.
-   * @throws org.apache.calcite.sql.parser.SqlParseException on parse error
-   */
-  SqlNode parse(String sql) throws SqlParseException;
+    /**
+     * Parses and validates a SQL statement.
+     *
+     * @param sql The SQL statement to parse.
+     * @return The root node of the SQL parse tree.
+     * @throws org.apache.calcite.sql.parser.SqlParseException on parse error
+     */
+    SqlNode parse(String sql) throws SqlParseException;
 
-  /**
-   * Validates a SQL statement.
-   *
-   * @param sqlNode Root node of the SQL parse tree.
-   * @return Validated node
-   * @throws ValidationException if not valid
-   */
-  SqlNode validate(SqlNode sqlNode) throws ValidationException;
+    /**
+     * Validates a SQL statement.
+     *
+     * @param sqlNode Root node of the SQL parse tree.
+     * @return Validated node
+     * @throws ValidationException if not valid
+     */
+    SqlNode validate(SqlNode sqlNode) throws ValidationException;
 
-  /**
-   * Validates a SQL statement.
-   *
-   * @param sqlNode Root node of the SQL parse tree.
-   * @return Validated node and its validated type.
-   * @throws ValidationException if not valid
-   */
-  Pair<SqlNode, RelDataType> validateAndGetType(SqlNode sqlNode) throws ValidationException;
+    /**
+     * Validates a SQL statement.
+     *
+     * @param sqlNode Root node of the SQL parse tree.
+     * @return Validated node and its validated type.
+     * @throws ValidationException if not valid
+     */
+    Pair<SqlNode, RelDataType> validateAndGetType(SqlNode sqlNode) throws ValidationException;
 
-  /**
-   * Converts a SQL parse tree into a tree of relational expressions.
-   *
-   * <p>You must call {@link #validate(org.apache.calcite.sql.SqlNode)} first.
-   *
-   * @param sql The root node of the SQL parse tree.
-   * @return The root node of the newly generated RelNode tree.
-   * @throws org.apache.calcite.tools.RelConversionException if the node
-   * cannot be converted or has not been validated
-   */
-  RelRoot rel(SqlNode sql) throws RelConversionException;
+    /**
+     * Converts a SQL parse tree into a tree of relational expressions.
+     *
+     * <p>You must call {@link #validate(org.apache.calcite.sql.SqlNode)} first.
+     *
+     * @param sql The root node of the SQL parse tree.
+     * @return The root node of the newly generated RelNode tree.
+     * @throws org.apache.calcite.tools.RelConversionException if the node
+     * cannot be converted or has not been validated
+     */
+    RelRoot rel(SqlNode sql) throws RelConversionException;
 
-  /** @deprecated Use {@link #rel}. */
-  @Deprecated // to removed before 2.0
-  RelNode convert(SqlNode sql) throws RelConversionException;
+    /** @deprecated Use {@link #rel}. */
+    @Deprecated // to removed before 2.0
+    RelNode convert(SqlNode sql) throws RelConversionException;
 
-  /** Returns the type factory. */
-  RelDataTypeFactory getTypeFactory();
+    /** Returns the type factory. */
+    RelDataTypeFactory getTypeFactory();
 
-  /**
-   * Converts one relational expression tree into another relational expression
-   * based on a particular rule set and requires set of traits.
-   *
-   * @param ruleSetIndex The RuleSet to use for conversion purposes.  Note that
-   *                     this is zero-indexed and is based on the list and order
-   *                     of RuleSets provided in the construction of this
-   *                     Planner.
-   * @param requiredOutputTraits The set of RelTraits required of the root node
-   *                             at the termination of the planning cycle.
-   * @param rel The root of the RelNode tree to convert.
-   * @return The root of the new RelNode tree.
-   * @throws org.apache.calcite.tools.RelConversionException on conversion
-   *     error
-   */
-  RelNode transform(int ruleSetIndex,
-      RelTraitSet requiredOutputTraits, RelNode rel)
-      throws RelConversionException;
+    /**
+     * Converts one relational expression tree into another relational expression
+     * based on a particular rule set and requires set of traits.
+     *
+     * @param ruleSetIndex The RuleSet to use for conversion purposes.  Note that
+     *                     this is zero-indexed and is based on the list and order
+     *                     of RuleSets provided in the construction of this
+     *                     Planner.
+     * @param requiredOutputTraits The set of RelTraits required of the root node
+     *                             at the termination of the planning cycle.
+     * @param rel The root of the RelNode tree to convert.
+     * @return The root of the new RelNode tree.
+     * @throws org.apache.calcite.tools.RelConversionException on conversion
+     *     error
+     */
+    RelNode transform(int ruleSetIndex,
+                      RelTraitSet requiredOutputTraits, RelNode rel)
+        throws RelConversionException;
 
-  /**
-   * Resets this {@code Planner} to be used with a new query. This
-   * should be called between each new query.
-   */
-  void reset();
+    /**
+     * Resets this {@code Planner} to be used with a new query. This
+     * should be called between each new query.
+     */
+    void reset();
 
-  /**
-   * Releases all internal resources utilized while this {@code Planner}
-   * exists.  Once called, this Planner object is no longer valid.
-   */
-  void close();
+    /**
+     * Releases all internal resources utilized while this {@code Planner}
+     * exists.  Once called, this Planner object is no longer valid.
+     */
+    void close();
 
-  RelTraitSet getEmptyTraitSet();
+    RelTraitSet getEmptyTraitSet();
 }
 
 // End Planner.java

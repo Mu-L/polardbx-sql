@@ -33,7 +33,8 @@ public enum SqlSpecialIdentifier {
     VERSION, PHYSICAL_PROCESSLIST, DB, OUTLINES, BINARY, LOGS, CHARACTER, SET, FROM, PROCEDURE, FOR, QUERY, LIMIT,
     OFFSET, CHANGESET, LOCALITY, PHYSICAL_DDL,
     RELAYLOG, IN, TABLE, CREATE, DATABASE, IF, NOT, EXISTS, TRIGGER, KEYS, SLOW, RECYCLEBIN, DATABASES, CCL_RULE, INFO,
-    CONVERT, WITH, STREAMS, CDC, DUMP, CHECK_TABLEGROUP;
+    CONVERT, WITH, STREAMS, CDC, DUMP, CHECK_TABLEGROUP, ROUTING_RULES,
+    EXTERNAL_CATALOGS, SECRETS, CONNECTORS;
     private static final Map<String, SqlSpecialIdentifier> specialIdentifiers = new HashMap<>();
 
     static {
@@ -148,6 +149,10 @@ public enum SqlSpecialIdentifier {
         specialIdentifiers.put("INFO", SqlSpecialIdentifier.INFO);
         specialIdentifiers.put("CONVERT", SqlSpecialIdentifier.CONVERT);
         specialIdentifiers.put("CDC", SqlSpecialIdentifier.CDC);
+        specialIdentifiers.put("ROUTING_RULES", SqlSpecialIdentifier.ROUTING_RULES);
+        specialIdentifiers.put("EXTERNAL_CATALOGS", SqlSpecialIdentifier.EXTERNAL_CATALOGS);
+        specialIdentifiers.put("SECRETS", SqlSpecialIdentifier.SECRETS);
+        specialIdentifiers.put("CONNECTORS", SqlSpecialIdentifier.CONNECTORS);
         specialIdentifiers.put("DUMP", SqlSpecialIdentifier.DUMP);
     }
 

@@ -28,6 +28,7 @@ import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcAnalyzeTableMarkTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJob;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
 import com.alibaba.polardbx.executor.handler.ddl.LogicalCommonDdlHandler;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
@@ -104,6 +105,9 @@ public class LogicalAnalyzeTableDdlHandler extends LogicalCommonDdlHandler {
                 final String fullTableName = DdlJobFactory.concatWithDot(targetTable.getKey(), targetTable.getValue());
                 result.addExcludeResources(Sets.newHashSet(fullTableName));
             }
+            result.getExplainOnlineDdlInfo().setOnlineDdlAlgorithm(OnlineDdlInfo.DdlAlgorithm.INPLACE);
+            result.getExplainOnlineDdlInfo().setOnlineDdlType(OnlineDdlInfo.DdlType.ONLINE_DDL);
+            result.getExplainOnlineDdlInfo().setAdviceOnlineDdlSql(executionContext.getOriginSql());
         }
 
         CdcAnalyzeTableMarkTask cdcAnalyzeTableMarkTask = new CdcAnalyzeTableMarkTask(executionContext.getSchemaName(),
@@ -152,7 +156,7 @@ public class LogicalAnalyzeTableDdlHandler extends LogicalCommonDdlHandler {
             }
         } catch (Throwable ex) {
             // 从 metadb 获取结果失败，但是实际上 DDL 任务执行成功
-            logger.info("analyze table get result failed", ex);
+            logger.warn("analyze table get result failed", ex);
         }
 
         return result;

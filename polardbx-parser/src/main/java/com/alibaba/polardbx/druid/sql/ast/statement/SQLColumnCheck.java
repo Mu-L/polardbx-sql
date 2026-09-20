@@ -23,6 +23,8 @@ import com.alibaba.polardbx.druid.sql.visitor.SQLASTVisitor;
 public class SQLColumnCheck extends SQLConstraintImpl implements SQLColumnConstraint, SQLReplaceable {
 
     private SQLExpr expr;
+    private boolean withEnforced;
+    private boolean enforced;
 
     public SQLColumnCheck() {
 
@@ -60,6 +62,8 @@ public class SQLColumnCheck extends SQLConstraintImpl implements SQLColumnConstr
         if (expr != null) {
             x.setExpr(expr.clone());
         }
+        x.enforced = enforced;
+        x.withEnforced = withEnforced;
 
         return x;
     }
@@ -81,5 +85,21 @@ public class SQLColumnCheck extends SQLConstraintImpl implements SQLColumnConstr
             return true;
         }
         return false;
+    }
+
+    public boolean isWithEnforced() {
+        return withEnforced;
+    }
+
+    public void setWithEnforced(boolean withEnforced) {
+        this.withEnforced = withEnforced;
+    }
+
+    public boolean isEnforced() {
+        return enforced;
+    }
+
+    public void setEnforced(boolean enforced) {
+        this.enforced = enforced;
     }
 }

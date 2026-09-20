@@ -1,0 +1,56 @@
+## DISABLE_FAST_SQL_PARSER
+
+select pattrngd2p256i(0);
+select pattrngd2p256i(64);
+select pattrngd2p256i(98);
+select pattrngd2p256i(128);
+select pattrngd2p256i(129);
+select pattrngd2p256i(257);
+select pattrngd2p256i(289);
+
+drop tablegroup if exists tg_dble_udf7;
+create tablegroup if not exists tg_dble_udf7
+partition by udf_hash(bigint)
+partition 9
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3),
+partition p3 values less than (4),
+partition p4 values less than (5),
+partition p5 values less than (6),
+partition p6 values less than (7),
+partition p7 values less than (8),
+partition pm values less than (9223372036854775807)
+)
+;
+
+drop table if exists uh_t7;
+create table uh_t7(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(pattrngd2p256i(c1))
+tablegroup=tg_dble_udf7;
+
+insert into uh_t7 values (0,0);
+insert into uh_t7 values (64,2000000);
+insert into uh_t7 values (98,2000001);
+insert into uh_t7 values (128,4000000);
+insert into uh_t7 values (129,4000001);
+insert into uh_t7 values (257,6000000);
+insert into uh_t7 values (289,6000001);
+
+select c1, part_route('', 'uh_t7', c1) as route_rs, part_hash('', 'uh_t7', c1) as hash_rs from uh_t7 where c1=0;
+select c1, part_route('', 'uh_t7', c1) as route_rs, part_hash('', 'uh_t7', c1) as hash_rs from uh_t7 where c1=64;
+select c1, part_route('', 'uh_t7', c1) as route_rs, part_hash('', 'uh_t7', c1) as hash_rs from uh_t7 where c1=98;
+select c1, part_route('', 'uh_t7', c1) as route_rs, part_hash('', 'uh_t7', c1) as hash_rs from uh_t7 where c1=128;
+select c1, part_route('', 'uh_t7', c1) as route_rs, part_hash('', 'uh_t7', c1) as hash_rs from uh_t7 where c1=129;
+select c1, part_route('', 'uh_t7', c1) as route_rs, part_hash('', 'uh_t7', c1) as hash_rs from uh_t7 where c1=257;
+select c1, part_route('', 'uh_t7', c1) as route_rs, part_hash('', 'uh_t7', c1) as hash_rs from uh_t7 where c1=289;
+
+
+show create table uh_t7;
+
+
+

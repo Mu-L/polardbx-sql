@@ -17,7 +17,7 @@
 package com.alibaba.polardbx.qatest.ddl.auto.partition;
 
 import com.alibaba.polardbx.qatest.BinlogIgnore;
-import org.junit.Ignore;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import org.junit.runners.Parameterized;
 
 import java.util.List;
@@ -25,6 +25,7 @@ import java.util.List;
 /**
  * @version 1.0
  */
+@IcbcIgnore(ignoreReason = "explicit_defaults_for_timestamp")
 @BinlogIgnore(ignoreReason = "用例涉及很多主键冲突问题，即不同分区有相同主键，复制到下游Mysql时出现Duplicate Key")
 public class AutoPartitionTest extends PartitionAutoLoadSqlTestBase {
 

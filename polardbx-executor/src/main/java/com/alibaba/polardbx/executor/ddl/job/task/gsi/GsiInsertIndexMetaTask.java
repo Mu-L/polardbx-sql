@@ -117,7 +117,7 @@ public class GsiInsertIndexMetaTask extends BaseGmsTask {
         final String appName = AppNameUtil.buildAppNameByInstAndDbName(InstIdUtil.getInstId(), schemaName);
         final TableMeta primaryTableMeta =
             GmsTableMetaManager.fetchTableMeta(metaDbConnection,
-                schemaName, logicalTableName, null, null, true, true);
+                schemaName, appName, logicalTableName, null, null, true, true);
 
         FailPoint.assertNotNull(primaryTableMeta);
         primaryTableMeta.setSchemaName(schemaName);
@@ -126,6 +126,7 @@ public class GsiInsertIndexMetaTask extends BaseGmsTask {
             primaryTableMeta,
             indexName,
             columns,
+            null,
             subParts,
             coverings,
             !unique,
@@ -196,7 +197,7 @@ public class GsiInsertIndexMetaTask extends BaseGmsTask {
 
         //sync have to be successful to continue
         if (needOnlineSchemaChange) {
-            SyncManagerHelper.sync(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
+            SyncManagerHelper.syncThrowExceptions(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
             executionContext.refreshTableMeta();
         }
 

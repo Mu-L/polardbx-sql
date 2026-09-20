@@ -22,20 +22,30 @@ import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.version.InstanceVersion;
+import com.alibaba.polardbx.druid.sql.SQLUtils;
+import com.alibaba.polardbx.druid.sql.ast.SQLDataTypeImpl;
 import com.alibaba.polardbx.druid.sql.ast.SQLPartitionByRange;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLCharExpr;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLIntegerExpr;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLColumnDefinition;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLSelectOrderByItem;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.MySqlKey;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlCreateTableStatement;
+import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlTableIndex;
 import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.gms.lbac.LBACSecurityEntity;
 import com.alibaba.polardbx.gms.lbac.LBACSecurityManager;
 import com.alibaba.polardbx.gms.lbac.PolarSecurityLabelColumn;
 import com.alibaba.polardbx.gms.locality.LocalityDesc;
 import com.alibaba.polardbx.gms.metadb.table.ColumnsRecord;
+import com.alibaba.polardbx.gms.metadb.table.ExternalizedColumnInfo;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.lbac.LBACException;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.table.DefaultExprUtil;
 import com.alibaba.polardbx.optimizer.config.table.GeneratedColumnUtil;
+import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.CreateLocalIndexPreparedData;
@@ -59,8 +69,11 @@ import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlColumnDeclaration;
 import org.apache.calcite.sql.SqlCreateTable;
 import org.apache.calcite.sql.SqlIdentifier;
+import org.apache.calcite.sql.SqlJoin;
+import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.SqlIndexDefinition;
 import org.apache.calcite.sql.SqlKind;
+import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlPartitionByRange;
 import org.apache.calcite.sql.SqlSelect;
@@ -139,6 +152,10 @@ public class LogicalCreateTable extends LogicalTableOperation {
 
     public boolean isBroadCastTable() {
         return sqlCreateTable.isBroadCast();
+    }
+
+    public boolean isReplicasTable() {
+        return sqlCreateTable.isReplicas();
     }
 
     public boolean isPartitionTable() {
@@ -313,6 +330,22 @@ public class LogicalCreateTable extends LogicalTableOperation {
                     throw new TddlRuntimeException(ERR_CREATE_SELECT_FUNCTION_ALIAS,
                         "must alias all function calls or expressions in the query");
                 }
+            } else if (c instanceof SqlLiteral) {
+                // Change context:
+                // - Before: unaliased SqlLiteral select items matched neither branch above and were
+                //   silently skipped (the generic c.unparse fallback below was disabled long ago,
+                //   historical rationale not confirmed), leaving the backfill INSERT column list
+                //   empty/misaligned; InsertIntoTask validation then reported the misleading
+                //   "Unknown target column '<table name>'" and the DDL job rolled back.
+                // - Path impact: only affects CTAS INSERT generation for unaliased literal items;
+                //   bare identifiers, AS-aliased items and unaliased expressions keep their
+                //   existing behavior, and non-CTAS paths never call generateInsert.
+                // - Capability regression: unaliased-literal CTAS now fails fast at plan time with
+                //   an explicit alias-required error instead of reaching InsertIntoTask; this is
+                //   consistent with the existing rejection of unaliased expressions and users can
+                //   recover by adding an AS alias.
+                throw new TddlRuntimeException(ERR_CREATE_SELECT_FUNCTION_ALIAS,
+                    "must alias all literals, function calls or expressions in the query");
             }
             // c.unparse(writer, 0, 0);
         }
@@ -345,11 +378,31 @@ public class LogicalCreateTable extends LogicalTableOperation {
         }
         String selectSql = null;
         if (sqlCreateTable.isSelect()) {
+            // CTAS silently loses externalized columns: the dest column type collapses
+            // to varchar(0) and content goes empty. Block until CTAS understands ext cols.
+            rejectCtasOnExternalizedSource(executionContext);
             selectSql = generateInsert(executionContext);
         }
         // for mysql8.0
         MySqlCreateTableStatement stmt =
             (MySqlCreateTableStatement) FastsqlUtils.parseSql(sqlCreateTable.getSourceSql()).get(0);
+
+        Set<String> requestedExternalizedColumns = collectExternalizedColumnNames(stmt.getColumnDefinitions());
+        boolean hasExternalizedColumns = !requestedExternalizedColumns.isEmpty();
+        boolean isDrds = !DbInfoManager.getInstance().isNewPartitionDb(schemaName);
+
+        if (hasExternalizedColumns && isDrds) {
+            validateNoDrdsShardKeyOnExternalizedColumn(requestedExternalizedColumns);
+        }
+
+        // Transform externalized columns: replace EXTERNALIZE columns with physical addr columns
+        rewriteExternalizedColumns(stmt);
+
+        if (hasExternalizedColumns && sqlCreateTable.isBroadCast()) {
+            throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
+                "EXTERNALIZE column on BROADCAST table");
+        }
+
         boolean useDbCharset = executionContext.getParamManager().getBoolean(CREATE_TABLE_WITH_CHARSET_COLLATE);
         String defaultCharset = sqlCreateTable.getDefaultCharset();
         String defaultCollation = sqlCreateTable.getDefaultCollation();
@@ -396,6 +449,12 @@ public class LogicalCreateTable extends LogicalTableOperation {
             if (sqlCreateTable.getQuery() == null) {
                 sqlCreateTable.setSourceSql(stmt.toString() + builder);
             }
+        } else if (hasExternalizedColumns && sqlCreateTable.getQuery() == null) {
+            // When useDbCharset=false, the original code doesn't update sourceSql.
+            // But externalized columns have been physicalized in stmt (EXTERNALIZE -> addr columns),
+            // so we must write the physicalized DDL back; otherwise DN receives EXTERNALIZE keywords.
+            stmt.setAfterSemi(false);
+            sqlCreateTable.setSourceSql(stmt.toString());
         }
 
         String tableName = ((SqlIdentifier) sqlCreateTable.getName()).getLastName();
@@ -460,6 +519,7 @@ public class LogicalCreateTable extends LogicalTableOperation {
         Set<String> autoIncColumns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
         Set<String> autoUpdateColumns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
         Set<String> mysqlGenColumns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        Set<String> externalizedColumns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
 
         for (Pair<SqlIdentifier, SqlColumnDeclaration> colDef : GeneralUtil.emptyIfNull(sqlCreateTable.getColDefs())) {
             String columnName = colDef.getKey().getLastName();
@@ -516,6 +576,24 @@ public class LogicalCreateTable extends LogicalTableOperation {
                 specialDefaultValues.put(columnName, expr.toString());
                 specialDefaultValueFlags.put(columnName, ColumnsRecord.FLAG_DEFAULT_EXPR);
             }
+
+            // Track externalized columns — use the physical addr column name for MetaDB flag
+            if (colDef.getValue().isExternalize()) {
+                externalizedColumns.add(columnName);
+                String addrColumnName = ExternalizedColumnInfo.toAddrColumnName(columnName);
+                specialDefaultValues.put(addrColumnName, "''");
+                specialDefaultValueFlags.put(addrColumnName, ColumnsRecord.FLAG_EXTERNALIZED_COLUMN);
+            }
+        }
+
+        for (Map.Entry<String, Set<String>> generatedColumn : genColRefs.entrySet()) {
+            for (String referencedColumn : generatedColumn.getValue()) {
+                if (externalizedColumns.contains(referencedColumn)) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER,
+                        String.format("Cannot create generated column [%s] referencing externalized column [%s].",
+                            generatedColumn.getKey(), referencedColumn));
+                }
+            }
         }
 
         for (String referencedColumn : allReferencedColumns) {
@@ -551,7 +629,7 @@ public class LogicalCreateTable extends LogicalTableOperation {
         res.setSpecialDefaultValueFlags(specialDefaultValueFlags);
 
         // create table with locality
-        LocalityDesc desc = LocalityDesc.parse(sqlCreateTable.getLocality());
+        LocalityDesc desc = LocalityDesc.parse(sqlCreateTable.getLocality(), schemaName);
         res.setLocality(desc);
 
         /**
@@ -734,6 +812,23 @@ public class LogicalCreateTable extends LogicalTableOperation {
                 ((CreateTable) relDdl).getPartBoundExprInfo(),
                 createTablePreparedData.getSourceSql());
 
+        // Propagate externalized column flags from primary table to inline GSI.
+        // The primaryTableMeta here is parsed from AST (not loaded from MetaDB),
+        // so columnMeta.isExternalizedColumn() is always false. We must copy the
+        // flags from the primary table's specialDefaultValueFlags instead.
+        Map<String, Long> primaryFlags = createTablePreparedData.getSpecialDefaultValueFlags();
+        Map<String, String> primaryDefaults = createTablePreparedData.getSpecialDefaultValues();
+        if (primaryFlags != null) {
+            CreateTablePreparedData indexTablePreparedData = preparedData.getIndexTablePreparedData();
+            for (Map.Entry<String, Long> entry : primaryFlags.entrySet()) {
+                if (entry.getValue() == ColumnsRecord.FLAG_EXTERNALIZED_COLUMN) {
+                    indexTablePreparedData.getSpecialDefaultValues().put(entry.getKey(),
+                        primaryDefaults.get(entry.getKey()));
+                    indexTablePreparedData.getSpecialDefaultValueFlags().put(entry.getKey(), entry.getValue());
+                }
+            }
+        }
+
         preparedData.setIndexDefinition(indexDef);
         if (indexDef.getOptions() != null) {
             final String indexComment = indexDef.getOptions()
@@ -777,6 +872,241 @@ public class LogicalCreateTable extends LogicalTableOperation {
         }
         if (null != getCreateTableWithGsiPreparedData()) {
             getCreateTableWithGsiPreparedData().setDdlVersionId(ddlVersionId);
+        }
+    }
+
+    /**
+     * Block CREATE TABLE AS SELECT (CTAS) whose SELECT references any table that has
+     * externalized columns. Without this, the dest table column type collapses to
+     * varchar(0) and content is silently lost.
+     */
+    private void rejectCtasOnExternalizedSource(ExecutionContext executionContext) {
+        // The SELECT used by CTAS is set on `this.sqlSelect` (not sqlCreateTable.getQuery()).
+        if (sqlSelect == null) {
+            return;
+        }
+        SchemaManager sm = OptimizerContext.getContext(schemaName).getLatestSchemaManager();
+        Set<String> seen = new java.util.HashSet<>();
+        collectSourceTableNames(sqlSelect, seen);
+        for (String t : seen) {
+            TableMeta tm = sm.getTableWithNull(t);
+            if (tm != null && tm.hasExternalizedColumn()) {
+                throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER,
+                    "CREATE TABLE AS SELECT is not supported when the source table '" + t
+                        + "' contains externalized columns. "
+                        + "Use INSERT INTO new_table SELECT ... with an explicit schema instead.");
+            }
+        }
+    }
+
+    /**
+     * Walk a SqlNode tree collecting identifiers that appear in FROM clauses
+     * (the only place a real table reference can sit). Schema-qualified names get
+     * stripped to the table portion since SchemaManager lookups go by table name.
+     */
+    private static void collectSourceTableNames(SqlNode node, Set<String> out) {
+        if (node == null) {
+            return;
+        }
+        if (node instanceof SqlSelect) {
+            SqlSelect sel = (SqlSelect) node;
+            collectFromForTables(sel.getFrom(), out);
+            collectSourceTableNames(sel.getWhere(), out);
+            collectSourceTableNames(sel.getHaving(), out);
+        } else if (node instanceof SqlBasicCall) {
+            for (SqlNode op : ((SqlBasicCall) node).getOperandList()) {
+                collectSourceTableNames(op, out);
+            }
+        } else if (node instanceof SqlNodeList) {
+            for (SqlNode child : (SqlNodeList) node) {
+                collectSourceTableNames(child, out);
+            }
+        }
+    }
+
+    private static void collectFromForTables(SqlNode from, Set<String> out) {
+        if (from == null) {
+            return;
+        }
+        if (from instanceof SqlIdentifier) {
+            String name = ((SqlIdentifier) from).getLastName();
+            if (name != null && !name.isEmpty()) {
+                out.add(name);
+            }
+        } else if (from instanceof SqlJoin) {
+            SqlJoin j = (SqlJoin) from;
+            collectFromForTables(j.getLeft(), out);
+            collectFromForTables(j.getRight(), out);
+        } else if (from instanceof SqlBasicCall) {
+            // AS, table function, etc — recurse into operands so identifiers underneath are caught
+            SqlBasicCall bc = (SqlBasicCall) from;
+            for (SqlNode op : bc.getOperandList()) {
+                collectFromForTables(op, out);
+            }
+            // also catch nested SELECT in the source
+            for (SqlNode op : bc.getOperandList()) {
+                collectSourceTableNames(op, out);
+            }
+        } else if (from instanceof SqlSelect) {
+            // sub-select in FROM
+            collectSourceTableNames(from, out);
+        }
+    }
+
+    /**
+     * Rewrite externalized columns in the physical CREATE TABLE statement.
+     * Transforms: col LONGTEXT EXTERNALIZE
+     * Into:       col_addr_ VARCHAR(128) COMMENT 'ext_type:LONGTEXT'
+     */
+    private boolean rewriteExternalizedColumns(MySqlCreateTableStatement stmt) {
+        Set<String> externalizedCols = rewriteExternalizedColumnDefs(stmt.getColumnDefinitions());
+
+        // Validate no inline indexes (INDEX/KEY/UNIQUE) reference externalized columns.
+        // CCI (columnar indexes) are excluded since they are required for blob mapping.
+        if (!externalizedCols.isEmpty()) {
+            checkNoIndexOnExternalizedColumns(stmt, externalizedCols);
+        }
+        return !externalizedCols.isEmpty();
+    }
+
+    private Set<String> collectExternalizedColumnNames(Iterable<SQLColumnDefinition> columnDefs) {
+        Set<String> externalizedColumns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        for (SQLColumnDefinition columnDef : columnDefs) {
+            if (columnDef.isExternalize()) {
+                externalizedColumns.add(SQLUtils.normalizeNoTrim(columnDef.getColumnName()));
+            }
+        }
+        return externalizedColumns;
+    }
+
+    private void validateNoDrdsShardKeyOnExternalizedColumn(Set<String> externalizedColumns) {
+        Set<String> shardColumns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        SqlCreateTable.getShardingKeys(sqlCreateTable.getDbpartitionBy(), shardColumns, false);
+        SqlCreateTable.getShardingKeys(sqlCreateTable.getTbpartitionBy(), shardColumns, false);
+        shardColumns.retainAll(externalizedColumns);
+        if (!shardColumns.isEmpty()) {
+            throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
+                "EXTERNALIZE column cannot be a DBPARTITION or TBPARTITION key: "
+                    + String.join(", ", shardColumns));
+        }
+    }
+
+    /**
+     * Validate an EXTERNALIZE column definition without mutating its AST.
+     *
+     * @return the normalized original SQL type name
+     */
+    public static String validateExternalizedColumnDef(SQLColumnDefinition colDef) {
+        if (colDef == null || colDef.getDataType() == null || colDef.getDataType().getName() == null) {
+            throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER,
+                "EXTERNALIZE column must declare a data type");
+        }
+
+        String originalName = colDef.getColumnName();
+        if (colDef.getGeneratedAlawsAs() != null) {
+            throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER,
+                String.format("Generated column [%s] cannot be EXTERNALIZE.", originalName));
+        }
+        String originalType = colDef.getDataType().getName().toUpperCase();
+        if (!ExternalizedColumnInfo.isSupportedType(originalType)) {
+            throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER,
+                String.format("Column [%s] with type [%s] does not support EXTERNALIZE. "
+                        + "Only TEXT/BLOB family types are supported.",
+                    originalName, originalType));
+        }
+
+        boolean isTextFamily = !originalType.endsWith("BLOB");
+        if (isTextFamily) {
+            String userCharset = null;
+            if (colDef.getDataType() instanceof com.alibaba.polardbx.druid.sql.ast.statement.SQLCharacterDataType) {
+                userCharset = ((com.alibaba.polardbx.druid.sql.ast.statement.SQLCharacterDataType)
+                    colDef.getDataType()).getCharSetName();
+            }
+            if (userCharset == null && colDef.getCharsetExpr() != null) {
+                userCharset = SQLUtils.normalizeNoTrim(colDef.getCharsetExpr().toString());
+            }
+            if (!ExternalizedColumnInfo.isAcceptableCharset(userCharset)) {
+                throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER,
+                    String.format("Externalized TEXT column [%s] only supports utf8/utf8mb3/utf8mb4 charset, "
+                            + "got [%s]. Use LONGBLOB if you need raw bytes in a different encoding.",
+                        originalName, userCharset));
+            }
+        }
+
+        if (colDef.getDefaultExpr() != null) {
+            throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER,
+                String.format("DEFAULT value is not supported on EXTERNALIZE column [%s].",
+                    originalName));
+        }
+        return originalType;
+    }
+
+    /**
+     * Rewrite an iterable of column definitions in place: any def with isExternalize()
+     * becomes its physical addr representation (VARCHAR(128) + ext_type comment).
+     * Returns the set of original (logical) column names that were rewritten.
+     * <p>Used by both CREATE TABLE and ALTER TABLE ADD COLUMN paths.
+     */
+    public static Set<String> rewriteExternalizedColumnDefs(Iterable<SQLColumnDefinition> columnDefs) {
+        Set<String> externalizedCols = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+
+        for (SQLColumnDefinition colDef : columnDefs) {
+            if (!colDef.isExternalize()) {
+                continue;
+            }
+
+            String originalName = colDef.getColumnName();
+            String originalType = validateExternalizedColumnDef(colDef);
+
+            externalizedCols.add(SQLUtils.normalizeNoTrim(originalName));
+
+            String cleanName = SQLUtils.normalizeNoTrim(originalName);
+            String addrName = ExternalizedColumnInfo.toAddrColumnName(cleanName);
+
+            String userComment = null;
+            if (colDef.getComment() instanceof SQLCharExpr) {
+                userComment = ((SQLCharExpr) colDef.getComment()).getText();
+            }
+
+            colDef.setName(SqlIdentifier.surroundWithBacktick(addrName));
+            SQLDataTypeImpl varcharType = new SQLDataTypeImpl("varchar");
+            varcharType.addArgument(new SQLIntegerExpr(ExternalizedColumnInfo.ADDR_VARCHAR_LENGTH));
+            colDef.setDataType(varcharType);
+            colDef.setExternalize(false);
+            colDef.setCharsetExpr(null);
+            colDef.setCollateExpr(null);
+            colDef.getConstraints().clear();
+            colDef.setDefaultExpr(null);
+            colDef.setComment(new SQLCharExpr(
+                ExternalizedColumnInfo.buildComment(originalType, userComment)));
+        }
+
+        return externalizedCols;
+    }
+
+    private void checkNoIndexOnExternalizedColumns(MySqlCreateTableStatement stmt, Set<String> externalizedCols) {
+        // Check MySqlTableIndex (INDEX idx(col)) - skip columnar indexes (CCI)
+        for (MySqlTableIndex index : stmt.getMysqlIndexes()) {
+            if (index.isColumnar()) {
+                continue;
+            }
+            for (SQLSelectOrderByItem item : index.getColumns()) {
+                String colName = SQLUtils.normalizeNoTrim(item.getExpr().toString());
+                if (externalizedCols.contains(colName)) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER,
+                        String.format("Cannot create index on externalized column '%s'.", colName));
+                }
+            }
+        }
+        // Check MySqlKey (KEY/UNIQUE KEY) - MySqlUnique extends MySqlKey
+        for (MySqlKey key : stmt.getMysqlKeys()) {
+            for (SQLSelectOrderByItem item : key.getColumns()) {
+                String colName = SQLUtils.normalizeNoTrim(item.getExpr().toString());
+                if (externalizedCols.contains(colName)) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER,
+                        String.format("Cannot create index on externalized column '%s'.", colName));
+                }
+            }
         }
     }
 

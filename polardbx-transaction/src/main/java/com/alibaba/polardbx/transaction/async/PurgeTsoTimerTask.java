@@ -74,8 +74,13 @@ public class PurgeTsoTimerTask implements Runnable {
             return;
         }
 
+        if (!DynamicConfig.getInstance().isEnableTsoPurgeTask()) {
+            logger.info("PurgeTsoTimerTask skipped because ENABLE_TSO_PURGE_TASK is false");
+            return;
+        }
+
         IGmsSyncAction action = new RequestSnapshotSeqSyncAction();
-        List<List<Map<String, Object>>> results = SyncManagerHelper.sync(
+        List<List<Map<String, Object>>> results = SyncManagerHelper.syncIgnoreExceptions(
             action, SystemDbHelper.DEFAULT_DB_NAME, SyncScope.NOT_COLUMNAR_SLAVE);
 
         Long minSnapshotTime = null;

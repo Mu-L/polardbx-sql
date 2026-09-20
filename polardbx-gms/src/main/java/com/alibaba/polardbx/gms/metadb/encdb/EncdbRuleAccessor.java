@@ -38,9 +38,9 @@ public class EncdbRuleAccessor extends AbstractAccessor {
 
     public static final String ENCDB_RULE = wrap(GmsSystemTables.ENCDB_RULE);
 
-    private static final String COLUMNS = "`name`, `enable`, `meta`,`users`,`description`";
+    private static final String COLUMNS = "`name`, `enable`, `meta`,`users`,`description`, `type`,`algo`";
 
-    private static final String VALUES = "?,?,?,?,?";
+    private static final String VALUES = "?,?,?,?,?,?,?";
 
     private static final String REPLACE_RULE =
         "replace into " + ENCDB_RULE + "(" + COLUMNS + ") values (" + VALUES + ")";
@@ -48,7 +48,10 @@ public class EncdbRuleAccessor extends AbstractAccessor {
     private static final String INSERT_RULE = "insert into " + ENCDB_RULE + "(" + COLUMNS + ") values (" + VALUES + ")";
 
     private static final String SELECT_ALL_ENABLED_RULE =
-        "select " + COLUMNS + " from " + ENCDB_RULE + " where enable=1";
+        "select " + COLUMNS + " from " + ENCDB_RULE + " where enable=1 order by gmt_modified";
+
+    private static final String SELECT_ALL_RULE =
+            "select " + COLUMNS + " from " + ENCDB_RULE + " order by gmt_modified";
 
     private static final String DELETE_RULE_BY_NAME = "delete from " + ENCDB_RULE + " where name=?";
 
@@ -62,6 +65,10 @@ public class EncdbRuleAccessor extends AbstractAccessor {
 
     public List<EncdbRule> queryAllEnabledRules() {
         return query(SELECT_ALL_ENABLED_RULE, ENCDB_RULE, EncdbRule.class, (Map<Integer, ParameterContext>) null);
+    }
+
+    public List<EncdbRule> queryAllRules() {
+        return query(SELECT_ALL_RULE, ENCDB_RULE, EncdbRule.class, (Map<Integer, ParameterContext>) null);
     }
 
     public int deleteRuleByName(String ruleName) {

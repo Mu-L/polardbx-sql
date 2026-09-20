@@ -1,0 +1,8 @@
+test_udf_dble_jumpstr2
+test_udf_dble_murmurhash2
+test_udf_dble_numrng2
+test_udf_dble_partdate2
+test_udf_dble_partenum2
+test_udf_dble_partlong2
+test_udf_dble_pattrng2
+test_udf_dble_partstr2

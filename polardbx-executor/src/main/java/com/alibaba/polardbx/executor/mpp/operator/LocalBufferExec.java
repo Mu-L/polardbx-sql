@@ -16,10 +16,15 @@
 
 package com.alibaba.polardbx.executor.mpp.operator;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.SettableFuture;
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
+import com.alibaba.polardbx.common.BlockingState;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
+import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.executor.chunk.Chunk;
@@ -27,10 +32,16 @@ import com.alibaba.polardbx.executor.mpp.execution.buffer.OutputBufferMemoryMana
 import com.alibaba.polardbx.executor.operator.ConsumerExecutor;
 import com.alibaba.polardbx.executor.operator.Executor;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
+import com.google.common.collect.ImmutableList;
+import com.google.common.util.concurrent.ListenableFuture;
 
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import static com.alibaba.polardbx.common.BlockingReason.LOCAL_BUFFER_NOT_EMPTY;
 
 public class LocalBufferExec implements Executor, ConsumerExecutor {
 
@@ -38,11 +49,14 @@ public class LocalBufferExec implements Executor, ConsumerExecutor {
 
     public static final Chunk END = new Chunk();
 
-    public static final SettableFuture<?> NOT_EMPTY;
+    public static final BlockingFuture<?> NOT_EMPTY = BlockingFuture.create(BlockingReason.LOCAL_BUFFER_NOT_EMPTY);
+    public static final BlockingState NOT_EMPTY_BLOCKING_STATE;
 
     static {
-        NOT_EMPTY = SettableFuture.create();
-        NOT_EMPTY.set(null);
+        NOT_EMPTY_BLOCKING_STATE = BlockingState.create(
+            LOCAL_BUFFER_NOT_EMPTY, 0L
+        );
+        NOT_EMPTY.complete(null);
     }
 
     protected BlockingQueue<Chunk> buffer = new LinkedBlockingQueue<>();
@@ -50,19 +64,27 @@ public class LocalBufferExec implements Executor, ConsumerExecutor {
 
     protected boolean closed = false;
 
-    protected SettableFuture<?> notEmptyFuture = SettableFuture.create();
+    protected BlockingFuture<?> notEmptyFuture = BlockingFuture.create(BlockingReason.LOCAL_BUFFER_NOT_EMPTY);
+    protected long notEmptyFutureStartTime = 0L;
 
     protected boolean noData = false;
     protected final Object lock = new Object();
     protected final List<DataType> columnMetaList;
     protected final boolean syncMode;
 
+    protected long waitNotEmptyInMillis;
+
+    @FieldMemoryCounter(value = false)
+    protected OperatorMemoryOwnerId consumerMemoryOwnerId;
+
     public LocalBufferExec(
-        OutputBufferMemoryManager outputBufferMemoryManager, List<DataType> columnMetaList, boolean syncMode) {
+        OutputBufferMemoryManager outputBufferMemoryManager, List<DataType> columnMetaList,
+        boolean syncMode, long waitNotEmptyInMillis) {
         this.columnMetaList = columnMetaList;
         this.bufferMemoryManager = outputBufferMemoryManager;
-        this.notEmptyFuture.set(null);
+        this.notEmptyFuture.complete(null);
         this.syncMode = syncMode;
+        this.waitNotEmptyInMillis = waitNotEmptyInMillis;
     }
 
     //--------------------- consume ---------------------
@@ -73,7 +95,7 @@ public class LocalBufferExec implements Executor, ConsumerExecutor {
 
     @Override
     public void closeConsume(boolean force) {
-        SettableFuture<?> notEmptyFuture;
+        BlockingFuture<?> notEmptyFuture;
         synchronized (lock) {
             this.putEnd();
             if (closed) {
@@ -90,12 +112,16 @@ public class LocalBufferExec implements Executor, ConsumerExecutor {
             notEmptyFuture = this.notEmptyFuture;
             this.notEmptyFuture = NOT_EMPTY;
         }
-        notEmptyFuture.set(null);
+        if (notEmptyFuture == NOT_EMPTY) {
+            notEmptyFuture.complete(null);
+        } else {
+            notEmptyFuture.complete(null);
+        }
     }
 
     @Override
     public void consumeChunk(Chunk chunk) {
-        SettableFuture<?> notEmptyFuture;
+        BlockingFuture<?> notEmptyFuture;
         synchronized (lock) {
             // ignore pages after finish
             if (!noData) {
@@ -113,12 +139,16 @@ public class LocalBufferExec implements Executor, ConsumerExecutor {
             this.notEmptyFuture = NOT_EMPTY;
         }
         // notify readers outside of lock since this may result in a callback
-        notEmptyFuture.set(null);
+        if (notEmptyFuture == NOT_EMPTY) {
+            notEmptyFuture.complete(null);
+        } else {
+            notEmptyFuture.complete(null);
+        }
     }
 
     @Override
     public void buildConsume() {
-        SettableFuture<?> notEmptyFuture;
+        BlockingFuture<?> notEmptyFuture;
         synchronized (lock) {
             if (noData) {
                 this.putEnd();
@@ -131,7 +161,11 @@ public class LocalBufferExec implements Executor, ConsumerExecutor {
         }
 
         // notify readers outside of lock since this may result in a callback
-        notEmptyFuture.set(null);
+        if (notEmptyFuture == NOT_EMPTY) {
+            notEmptyFuture.complete(null);
+        } else {
+            notEmptyFuture.complete(null);
+        }
 
         this.putEnd();
     }
@@ -168,6 +202,23 @@ public class LocalBufferExec implements Executor, ConsumerExecutor {
     //--------------------- produce-----------------
     @Override
     public Chunk nextChunk() {
+        if (!closed && buffer.isEmpty() && waitNotEmptyInMillis > 0) {
+            ListenableFuture<?> produceIsBlocked = produceIsBlocked();
+            try {
+                produceIsBlocked.get(waitNotEmptyInMillis, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException timeoutException) {
+                return null;
+            } catch (Throwable t) {
+                throw GeneralUtil.nestedException(t);
+            }
+
+            Chunk ret = buffer.poll();
+            if (ret != null) {
+                bufferMemoryManager.updateMemoryUsage(-ret.estimateSize());
+            }
+            return ret;
+        }
+
         if (closed || buffer.isEmpty()) {
             return null;
         } else {
@@ -226,7 +277,8 @@ public class LocalBufferExec implements Executor, ConsumerExecutor {
         synchronized (lock) {
             // if we need to block readers, and the current future is complete, create a new one
             if (!noData && buffer.isEmpty() && notEmptyFuture.isDone()) {
-                notEmptyFuture = SettableFuture.create();
+                notEmptyFuture = BlockingFuture.create(BlockingReason.LOCAL_BUFFER_NOT_EMPTY);
+                notEmptyFutureStartTime = System.nanoTime();
             }
             return notEmptyFuture;
         }
@@ -240,5 +292,20 @@ public class LocalBufferExec implements Executor, ConsumerExecutor {
     @Override
     public void forceClose() {
         closeConsume(true);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return bufferMemoryManager.getBufferedBytes();
+    }
+
+    @Override
+    public void setConsumerOperatorMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        this.consumerMemoryOwnerId = operatorMemoryOwnerId;
+    }
+
+    @Override
+    public OperatorMemoryOwnerId getConsumerMemoryOwnerId() {
+        return consumerMemoryOwnerId;
     }
 }

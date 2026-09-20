@@ -397,6 +397,8 @@ public enum BuiltInMethod {
       "cumulativeMemoryWithinPhaseSplit"),
   COLUMN_UNIQUENESS(ColumnUniqueness.class, "areColumnsUnique",
       ImmutableBitSet.class, boolean.class),
+  COLUMN_GROUP_SIZE(BuiltInMetadata.ColumnGroupSize.class, "getColumnsGroupSize",
+      ImmutableBitSet.class),
   GET_PK(BuiltInMetadata.CompositePk.class, "getPrimaryKey"),
   COLLATIONS(Collation.class, "collations"),
   DISTRIBUTION(Distribution.class, "distribution"),

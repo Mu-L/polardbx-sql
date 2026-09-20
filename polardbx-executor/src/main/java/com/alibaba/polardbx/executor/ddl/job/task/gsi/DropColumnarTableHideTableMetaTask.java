@@ -36,8 +36,8 @@ public class DropColumnarTableHideTableMetaTask extends BaseGmsTask {
     protected final String indexName;
 
     @JSONCreator
-    public DropColumnarTableHideTableMetaTask(String schemaName, String logicalTableName, String indexName) {
-        super(schemaName, logicalTableName);
+    public DropColumnarTableHideTableMetaTask(String schemaName, String indexName) {
+        super(schemaName, indexName);
         this.indexName = indexName;
     }
 
@@ -45,7 +45,7 @@ public class DropColumnarTableHideTableMetaTask extends BaseGmsTask {
     public void executeImpl(Connection metaDbConnection, ExecutionContext executionContext) {
         updateSupportedCommands(true, false, metaDbConnection);
         TableMetaChanger.hideTableMeta(metaDbConnection, schemaName, indexName);
-        TableMetaChanger.notifyDropColumnarIndex(metaDbConnection, schemaName, logicalTableName);
+        // TableMetaChanger.notifyDropColumnarIndex(metaDbConnection, schemaName, logicalTableName);
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
     }
@@ -53,11 +53,11 @@ public class DropColumnarTableHideTableMetaTask extends BaseGmsTask {
     @Override
     public void rollbackImpl(Connection metaDbConnection, ExecutionContext executionContext) {
         TableMetaChanger.showTableMeta(metaDbConnection, schemaName, indexName);
-        TableMetaChanger.notifyCreateColumnarIndex(metaDbConnection, schemaName, logicalTableName);
+        // TableMetaChanger.notifyCreateColumnarIndex(metaDbConnection, schemaName, logicalTableName);
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
         //sync have to be successful to continue
-        SyncManagerHelper.sync(new TableMetaChangeSyncAction(schemaName, indexName), SyncScope.ALL);
+        SyncManagerHelper.syncThrowExceptions(new TableMetaChangeSyncAction(schemaName, indexName), SyncScope.ALL);
     }
 
 }

@@ -1,0 +1,99 @@
+## DISABLE_FAST_SQL_PARSER
+select jumpstrc5hs00('8')
+jumpstrc5hs00('8')
+1
+select jumpstrc5hs00('5')
+jumpstrc5hs00('5')
+4
+drop tablegroup if exists tg_dble_udf9
+create tablegroup if not exists tg_dble_udf9
+partition by udf_hash(bigint)
+partition 6
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3),
+partition p3 values less than (4),
+partition p4 values less than (5),
+partition pm values less than (9223372036854775807)
+)
+drop table if exists uh_t9
+create table uh_t9(
+c1 varchar(32) not null,
+c2 varchar(32) not null
+)
+partition by udf_hash(jumpstrc5hs00(c1))
+tablegroup=tg_dble_udf9
+insert into uh_t9 values ('8','8')
+insert into uh_t9 values ('5','5')
+select c1, part_route('', 'uh_t9', c1) as route_rs, part_hash('', 'uh_t9', c1) as hash_rs from uh_t9 where c1='8'
+c1,route_rs,hash_rs
+8,p1,(1)
+select c1, part_route('', 'uh_t9', c1) as route_rs, part_hash('', 'uh_t9', c1) as hash_rs from uh_t9 where c1='5'
+c1,route_rs,hash_rs
+5,p4,(4)
+show create table uh_t9
+Table,Create Table
+uh_t9,CREATE TABLE `uh_t9` (
+	`c1` varchar(32) NOT NULL,
+	`c2` varchar(32) NOT NULL,
+	KEY `auto_shard_key_c1` USING BTREE (`c1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY UDF_HASH(jumpstrc5hs00(`c1`))
+PARTITIONS 6
+(PARTITION p0 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p1 VALUES LESS THAN (2) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (3) ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN (4) ENGINE = InnoDB,
+ PARTITION p4 VALUES LESS THAN (5) ENGINE = InnoDB,
+ PARTITION pm VALUES LESS THAN (9223372036854775807) ENGINE = InnoDB)
+tablegroup = `tg_dble_udf9`
+select jumpstrc4hs00('8')
+jumpstrc4hs00('8')
+1
+select jumpstrc4hs00('5')
+jumpstrc4hs00('5')
+0
+drop tablegroup if exists tg_dble_udf10
+create tablegroup if not exists tg_dble_udf10
+partition by udf_hash(bigint)
+partition 6
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3),
+partition p3 values less than (4),
+partition p4 values less than (5),
+partition pm values less than (9223372036854775807)
+)
+drop table if exists uh_t10
+create table uh_t10(
+c1 varchar(32) not null,
+c2 varchar(32) not null
+)
+partition by udf_hash(jumpstrc4hs00(c1))
+tablegroup=tg_dble_udf10
+insert into uh_t10 values ('8','8')
+insert into uh_t10 values ('5','5')
+select c1, part_route('', 'uh_t10', c1) as route_rs, part_hash('', 'uh_t10', c1) as hash_rs from uh_t10 where c1='8'
+c1,route_rs,hash_rs
+8,p1,(1)
+select c1, part_route('', 'uh_t10', c1) as route_rs, part_hash('', 'uh_t10', c1) as hash_rs from uh_t10 where c1='5'
+c1,route_rs,hash_rs
+5,p0,(0)
+show create table uh_t10
+Table,Create Table
+uh_t10,CREATE TABLE `uh_t10` (
+	`c1` varchar(32) NOT NULL,
+	`c2` varchar(32) NOT NULL,
+	KEY `auto_shard_key_c1` USING BTREE (`c1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY UDF_HASH(jumpstrc4hs00(`c1`))
+PARTITIONS 6
+(PARTITION p0 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p1 VALUES LESS THAN (2) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (3) ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN (4) ENGINE = InnoDB,
+ PARTITION p4 VALUES LESS THAN (5) ENGINE = InnoDB,
+ PARTITION pm VALUES LESS THAN (9223372036854775807) ENGINE = InnoDB)
+tablegroup = `tg_dble_udf10`

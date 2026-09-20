@@ -21,8 +21,8 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.druid.sql.ast.SqlType;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.parse.SqlTypeUtils;
-import com.alibaba.polardbx.optimizer.workload.WorkloadType;
-import com.alibaba.polardbx.optimizer.workload.WorkloadUtil;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadType;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadUtil;
 import org.apache.calcite.rel.RelNode;
 
 import java.util.UUID;
@@ -44,6 +44,9 @@ public class MemoryPoolUtils {
             mp = new MemoryPool(name, limit, parent, MemoryType.OPERATOR);
         } else if (memoryType == MemoryType.SUBQUERY) {
             //子查询不要做做SPILL
+            mp = new QueryMemoryPool(name, limit, parent);
+        } else if (memoryType == MemoryType.CTE) {
+            //CTE不要做做SPILL
             mp = new QueryMemoryPool(name, limit, parent);
         } else if (memoryType == MemoryType.GENERAL_TP) {
             mp = new TpMemoryPool(name, limit, limit, parent);

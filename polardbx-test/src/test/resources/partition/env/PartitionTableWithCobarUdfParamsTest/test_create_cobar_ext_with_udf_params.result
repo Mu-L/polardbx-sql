@@ -1,0 +1,39 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+create table cobar_myhash_tbl (a bigint，b bigint)
+partition by udf_hash(
+    `a` with
+    udf_params (
+      'cobar_ext/mycobarhash',
+      '{
+        "partitionCount" : "8",　
+        "partitionLength" : "360"
+      }'
+  )
+)
+partitions 8;
+show create table cobar_myhash_tbl;
+Table,Create Table
+cobar_myhash_tbl,CREATE TABLE `cobar_myhash_tbl` (
+	`a` bigint(20) DEFAULT NULL,
+	`b` bigint(20) DEFAULT NULL,
+	KEY `auto_shard_key_a` USING BTREE (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY UDF_HASH(`a` WITH UDF_PARAMS (
+'cobar_ext/mycobarhash',
+'{
+        "partitionCount" : "8",　
+        "partitionLength" : "360"
+      }'
+))
+PARTITIONS 8
+(PARTITION p1 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (2) ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN (3) ENGINE = InnoDB,
+ PARTITION p4 VALUES LESS THAN (4) ENGINE = InnoDB,
+ PARTITION p5 VALUES LESS THAN (5) ENGINE = InnoDB,
+ PARTITION p6 VALUES LESS THAN (6) ENGINE = InnoDB,
+ PARTITION p7 VALUES LESS THAN (7) ENGINE = InnoDB,
+ PARTITION p8 VALUES LESS THAN (9223372036854775807) ENGINE = InnoDB)
+drop table cobar_myhash_tbl;

@@ -33,7 +33,7 @@ public class CheckTableTest extends DDLBaseNewDBTestCase {
 
     enum ErrorType {
         DROP_LOCAL_INDEX, DROP_GLOBAL_INDEX, DROP_PRIMARY_TABLE, MODIFY_LOCAL_INDEX, MODIFY_GLOBAL_INDEX,
-        MODIFY_PRIMARY_TABLE, REBUILD_LOCAL_INDEX_WITHOUT_GPP
+        MODIFY_PRIMARY_TABLE, REBUILD_LOCAL_INDEX_WITHOUT_GPP, SET_READONLY
     }
 
     static class ErrorInjection {
@@ -64,6 +64,10 @@ public class CheckTableTest extends DDLBaseNewDBTestCase {
             case REBUILD_LOCAL_INDEX_WITHOUT_GPP:
                 this.sqlStmts = new String[] {"alter table `%s` drop index " + this.objectName, sql};
                 break;
+            case SET_READONLY:
+                this.sqlStmts =
+                    new String[] {"alter table `%s` SECONDARY_ENGINE_ATTRIBUTE='{\"polarx.readonly\": true}'"};
+                break;
             }
 
         }
@@ -86,6 +90,10 @@ public class CheckTableTest extends DDLBaseNewDBTestCase {
                 break;
             case MODIFY_LOCAL_INDEX:
                 this.sqlStmts = new String[] {"alter table `%s` drop index " + this.objectName, ""};
+                break;
+            case SET_READONLY:
+                this.sqlStmts =
+                    new String[] {"alter table `%s` SECONDARY_ENGINE_ATTRIBUTE='{\"polarx.readonly\": true}'"};
                 break;
             }
         }
@@ -149,6 +157,7 @@ public class CheckTableTest extends DDLBaseNewDBTestCase {
         case DROP_PRIMARY_TABLE:
         case MODIFY_LOCAL_INDEX:
         case MODIFY_PRIMARY_TABLE:
+        case SET_READONLY:
             objectInfo = getFullObjectName(connection, tableName, tableName, errorInjection.index);
             break;
         case DROP_GLOBAL_INDEX:
@@ -165,7 +174,9 @@ public class CheckTableTest extends DDLBaseNewDBTestCase {
             groupIndex = objectInfo.getKey();
             fullObjectName = objectInfo.getValue();
         }
-        if (errorInjection.errorType == ErrorType.REBUILD_LOCAL_INDEX_WITHOUT_GPP) {
+        if (errorInjection.errorType == ErrorType.REBUILD_LOCAL_INDEX_WITHOUT_GPP
+            || errorInjection.errorType == ErrorType.SET_READONLY) {
+            // Execute DDL directly on MySQL physical database
             Connection connection1 =
                 chooseConnection(databaseName, GroupInfoUtil.buildPhyDbName(databaseName, groupIndex, true));
             String physicalDb = GroupInfoUtil.buildPhyDbName(databaseName, groupIndex, true);
@@ -370,9 +381,80 @@ public class CheckTableTest extends DDLBaseNewDBTestCase {
             Arrays.stream(result).map(o -> Arrays.stream(o).collect(Collectors.toList())).collect(Collectors.toList());
         ErrorInjection[] errorInjections = {
             new ErrorInjection(
-                "set opt_index_format_gpp_enabled=false;alter table `%s` add index `" + localIndexName + "`(a);set opt_index_format_gpp_enabled=true;",
+                "set opt_index_format_gpp_enabled=false;alter table `%s` add index `" + localIndexName
+                    + "`(a);set opt_index_format_gpp_enabled=true;",
                 localIndexName, 0, ErrorType.REBUILD_LOCAL_INDEX_WITHOUT_GPP),};
         runTestCase(tableName, createTableSql, expectedResult, errorInjections,
             "/*+TDDL:cmd_extra(ENABLE_CHECK_GPP_FOR_LOCAL_INDEX=true)*/");
+    }
+
+    @Test
+    public void testReadOnlyPhysicalTable() throws SQLException {
+        String tableName = "t8";
+        String version =
+            JdbcUtil.getAllResult(JdbcUtil.executeQuery("select @@version", getMysqlConnection())).get(0).get(0)
+                .toString();
+        Boolean is80Version = version.startsWith("8.0");
+        if (!is80Version) {
+            // SECONDARY_ENGINE_ATTRIBUTE is only available in MySQL 8.0
+            return;
+        }
+
+        try {
+            JdbcUtil.executeUpdateSuccess(tddlConnection, "drop database if exists " + databaseName);
+            JdbcUtil.executeUpdateSuccess(tddlConnection,
+                "create database if not exists " + databaseName + " mode = 'auto'");
+            JdbcUtil.executeUpdateSuccess(tddlConnection, "use " + databaseName);
+
+            String createTableSql =
+                "CREATE TABLE `" + tableName + "` (`a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL, "
+                    + "KEY `auto_shard_key_a` USING BTREE (`a`)) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 "
+                    + "PARTITION BY KEY(`a`) PARTITIONS 4";
+            JdbcUtil.executeUpdate(tddlConnection, createTableSql);
+
+            // Get physical table info for partition 0 and partition 2
+            Pair<Integer, String> partition0Info = getFullObjectName(tddlConnection, tableName, tableName, 0);
+            Pair<Integer, String> partition2Info = getFullObjectName(tddlConnection, tableName, tableName, 2);
+
+            // Set partition 0 as readonly via physical DDL
+            String physicalDb0 = GroupInfoUtil.buildPhyDbName(databaseName, partition0Info.getKey(), true);
+            Connection mysqlConn0 = chooseConnection(databaseName, physicalDb0);
+            JdbcUtil.executeQuerySuccess(mysqlConn0, "use " + physicalDb0);
+            String setReadOnlySql0 = "ALTER TABLE `" + partition0Info.getValue()
+                + "` SECONDARY_ENGINE_ATTRIBUTE='{\"polarx.readonly\": true}'";
+            logger.info("Set readonly on physical table: " + setReadOnlySql0);
+            JdbcUtil.executeUpdateSuccess(mysqlConn0, setReadOnlySql0);
+
+            // Set partition 2 as readonly via physical DDL
+            String physicalDb2 = GroupInfoUtil.buildPhyDbName(databaseName, partition2Info.getKey(), true);
+            Connection mysqlConn2 = chooseConnection(databaseName, physicalDb2);
+            JdbcUtil.executeQuerySuccess(mysqlConn2, "use " + physicalDb2);
+            String setReadOnlySql2 = "ALTER TABLE `" + partition2Info.getValue()
+                + "` SECONDARY_ENGINE_ATTRIBUTE='{\"polarx.readonly\": true}'";
+            logger.info("Set readonly on physical table: " + setReadOnlySql2);
+            JdbcUtil.executeUpdateSuccess(mysqlConn2, setReadOnlySql2);
+
+            // Execute check table and verify readonly status is detected
+            String checkTableSql = String.format("check table `%s`.`%s`", databaseName, tableName);
+            ResultSet resultSet = JdbcUtil.executeQuery(checkTableSql, tddlConnection);
+            List<List<Object>> result = JdbcUtil.getAllResult(resultSet);
+
+            // Expected: Topology OK, Columns OK, Local Index OK, ReadOnly Status warning
+            Assert.assertTrue(result.size() == 4,
+                "Expected 4 rows (Topology, Columns, LocalIndex, ReadOnlyStatus), but get " + result);
+
+            // Verify the last row is ReadOnly Status warning
+            List<Object> readOnlyRow = result.get(3);
+            Assert.assertTrue(readOnlyRow.get(0).toString().toLowerCase().contains("readonly status"),
+                "Expected ReadOnly Status check, but get " + readOnlyRow);
+            Assert.assertTrue(readOnlyRow.get(2).toString().toLowerCase().contains("warning"),
+                "Expected warning type, but get " + readOnlyRow);
+            Assert.assertTrue(readOnlyRow.get(3).toString().toLowerCase().contains("readonly physical partition"),
+                "Expected readonly physical partition message, but get " + readOnlyRow);
+
+            logger.info("testReadOnlyPhysicalTable passed, result: " + result);
+        } finally {
+            JdbcUtil.executeUpdateSuccess(tddlConnection, "drop database if exists " + databaseName);
+        }
     }
 }

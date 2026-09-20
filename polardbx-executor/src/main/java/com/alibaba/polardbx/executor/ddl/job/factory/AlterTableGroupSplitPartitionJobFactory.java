@@ -106,12 +106,13 @@ public class AlterTableGroupSplitPartitionJobFactory extends AlterTableGroupBase
                 }
             }
         }
-        List<String> targetDbList = new ArrayList<>();
+        List<Pair<String, String>> targetDbList = new ArrayList<>();
         List<String> newPartitions = getNewPartitions(partitionInfo);
 
-        Map<String, String> partAndDbMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        Map<String, Pair<String, String>> partAndDbMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         for (PartitionGroupRecord partitionGroupRecord : preparedData.getInvisiblePartitionGroups()) {
-            partAndDbMap.put(partitionGroupRecord.partition_name, partitionGroupRecord.phy_db);
+            partAndDbMap.put(partitionGroupRecord.partition_name,
+                new Pair<>(partitionGroupRecord.getPhy_db(), partitionGroupRecord.getGroup_Name()));
         }
         List<String> localities = new ArrayList<>();
         for (int i = 0; i < newPartitions.size(); i++) {
@@ -139,7 +140,7 @@ public class AlterTableGroupSplitPartitionJobFactory extends AlterTableGroupBase
         ));
         List<DdlTask> bringUpAlterTableGroupTasks =
             ComplexTaskFactory.bringUpAlterTableGroup(schemaName, tableGroupName, null,
-                taskType, preparedData.getDdlVersionId(), executionContext);
+                preparedData.getOldPartitionNames(), taskType, preparedData.getDdlVersionId(), executionContext);
 
         final String finalStatus =
             executionContext.getParamManager().getString(ConnectionParams.TABLEGROUP_REORG_FINAL_TABLE_STATUS_DEBUG);

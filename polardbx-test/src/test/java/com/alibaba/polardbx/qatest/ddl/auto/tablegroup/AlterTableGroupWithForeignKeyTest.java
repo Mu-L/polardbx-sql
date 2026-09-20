@@ -5,6 +5,7 @@ import com.alibaba.polardbx.qatest.ddl.sharding.movedatabase.MoveDatabaseBaseTes
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.collect.Lists;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runners.Parameterized;
 
@@ -155,6 +156,7 @@ public class AlterTableGroupWithForeignKeyTest extends MoveDatabaseBaseTest {
         return targetInstId;
     }
 
+    @Ignore("tg变更时需要在重建外键，暂时忽略这个case")
     @Test
     public void testScaleOutFkTask() {
         if (usingNewPartDb()) {

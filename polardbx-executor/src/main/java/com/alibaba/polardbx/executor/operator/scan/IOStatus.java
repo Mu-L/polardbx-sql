@@ -16,11 +16,24 @@
 
 package com.alibaba.polardbx.executor.operator.scan;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.executor.chunk.Chunk;
+import com.alibaba.polardbx.executor.operator.scan.impl.IOStatusImpl;
+import com.alibaba.polardbx.executor.operator.scan.impl.RingBufferIOStatus;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import java.util.List;
 
-public interface IOStatus<BATCH> {
+public interface IOStatus<BATCH> extends MemoryCountable {
+
+    static IOStatus<Chunk> createUnBounded(String workId) {
+        return new IOStatusImpl(workId);
+    }
+
+    static IOStatus<Chunk> createBounded(String workId, int boundSize) {
+        return new RingBufferIOStatus(workId, boundSize);
+    }
+
     /**
      * The unique identifier of the scan work.
      */
@@ -30,9 +43,13 @@ public interface IOStatus<BATCH> {
 
     ListenableFuture<?> isBlocked();
 
-    void addResult(BATCH batch);
+    ListenableFuture<?> waitForEmpty();
 
-    void addResults(List<BATCH> batches);
+    boolean addResult(BATCH batch);
+
+    // void addResults(List<BATCH> batches);
+
+    void addResult(Integer rowGroupId, Runnable evictable, List<BATCH> batches);
 
     BATCH popResult();
 

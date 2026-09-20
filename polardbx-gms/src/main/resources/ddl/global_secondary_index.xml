@@ -26,7 +26,8 @@
               unique key `i_job_db_tb_column` (`job_id`, `physical_db`, `physical_table`, `column_index`),
               key `i_job_id` (`job_id`),
               key `i_job_id_status` (`job_id`, `status`),
-              key `i_job_id_task_id`(`job_id`, `task_id`)
+              key `i_job_id_task_id`(`job_id`, `task_id`),
+              key `i_task_id_job_id`(`task_id`,`job_id`,`column_index`)
             ) charset=utf8mb4
         ]]></Create>
         <Change><![CDATA[
@@ -37,6 +38,9 @@
         ]]></Change>
         <Change><![CDATA[
             ALTER TABLE `backfill_objects` add column task_id bigint unsigned not null after job_id, add key `i_job_id_task_id`(`job_id`, `task_id`);
+        ]]></Change>
+        <Change><![CDATA[
+            ALTER TABLE `backfill_objects` add key `i_task_id_job_id`(`task_id`,`job_id`,`column_index`);
         ]]></Change>
     </SystemTable>
     <SystemTable name="file_storage_backfill_objects">
@@ -233,5 +237,27 @@
         <Change><![CDATA[
             ALTER TABLE `import_tablespace_info_stat` modify column physical_table varchar(128) default null comment 'Physical table name'
         ]]></Change>
+    </SystemTable>
+    <SystemTable name="ddl_physical_lock_stat">
+        <Create><![CDATA[
+        create table `ddl_physical_lock_stat` (
+	     `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+         `job_id` bigint(20) unsigned NOT NULL,
+         `ddl_type` int DEFAULT 0 COMMENT '0:split, 1:other',
+         `table_schema` varchar(64) NOT NULL,
+         `table_name` varchar(64) NOT NULL,
+         `physical_db` varchar(128) DEFAULT NULL COMMENT 'Physical database name',
+         `physical_table` varchar(128) DEFAULT NULL COMMENT 'Physical table name',
+         `lock_duration_ms` bigint unsigned DEFAULT 0,
+         `row_count` bigint(20) NOT NULL COMMENT 'backfill rows',
+         `start_time` bigint unsigned not null,
+         `cur_lock_start_time` bigint unsigned not null,
+         `end_time` bigint unsigned not null,
+         `state` int DEFAULT 0 COMMENT '0:writable, 1:readonly',
+          PRIMARY KEY (`id`),
+          key (`job_id`,`table_schema`, `table_name`),
+          key (`table_schema`, `table_name`)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        ]]></Create>
     </SystemTable>
 </SystemTables>

@@ -12,7 +12,7 @@ CREATE TABLE `tbl_bro`(
 `data_update_user` varchar(32) DEFAULT NULL COMMENT 'data update user',
 `data_version` bigint(19) DEFAULT NULL COMMENT 'data version',
 PRIMARY KEY (`min_score`,`max_score`,`org_id`) USING BTREE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4  broadcast;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4  DEFAULT COLLATE = utf8mb4_bin broadcast;
 show create table tbl_bro;
 select count(1) from tbl_bro;
 
@@ -28,6 +28,6 @@ CREATE TABLE `tbl_single`(
 `data_update_user` varchar(32) DEFAULT NULL COMMENT 'data update user',
 `data_version` bigint(19) DEFAULT NULL COMMENT 'data version',
 PRIMARY KEY (`min_score`,`max_score`,`org_id`) USING BTREE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4  single;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 DEFAULT COLLATE = utf8mb4_bin  single;
 show create table tbl_single;
 select count(1) from tbl_single;

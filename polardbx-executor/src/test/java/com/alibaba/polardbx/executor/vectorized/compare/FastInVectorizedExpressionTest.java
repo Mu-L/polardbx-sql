@@ -11,6 +11,8 @@ import com.alibaba.polardbx.executor.chunk.RandomAccessBlock;
 import com.alibaba.polardbx.executor.chunk.SliceBlock;
 import com.alibaba.polardbx.executor.chunk.SliceBlockBuilder;
 import com.alibaba.polardbx.executor.chunk.TimestampBlockBuilder;
+import com.alibaba.polardbx.executor.operator.scan.BlockDictionary;
+import com.alibaba.polardbx.executor.operator.scan.impl.LocalBlockDictionary;
 import com.alibaba.polardbx.executor.vectorized.EvaluationContext;
 import com.alibaba.polardbx.executor.vectorized.InValuesVectorizedExpression;
 import com.alibaba.polardbx.executor.vectorized.InputRefVectorizedExpression;
@@ -22,7 +24,10 @@ import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.datatype.DateTimeType;
+import com.alibaba.polardbx.optimizer.core.datatype.SliceType;
 import com.google.common.collect.ImmutableList;
+import io.airlift.slice.Slice;
+import io.airlift.slice.Slices;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rex.RexBuilder;
@@ -238,6 +243,30 @@ public class FastInVectorizedExpressionTest {
     }
 
     @Test
+    public void testDictInString() {
+        LongBlock longBlock = LongBlock.of(1L, 2L, 100L, null, 200L, 1000L, null, 100L, -1000L);
+
+        Slice[] slices = new Slice[] {
+            Slices.utf8Slice("1"),
+            Slices.utf8Slice("2"),
+            Slices.utf8Slice("100"),
+            Slices.utf8Slice("200"),
+            Slices.utf8Slice("1000"),
+            Slices.utf8Slice("-1000")
+        };
+        BlockDictionary dictionary = new LocalBlockDictionary(slices);
+        int[] dictId = new int[] {0, 1, 2, -1, 3, 4, -1, 2, 5};
+        SliceBlock sliceBlock = new SliceBlock(new SliceType(), 0, longBlock.getPositionCount(), longBlock.nulls(),
+            dictionary, dictId, null, false);
+
+        Chunk inputChunk = new Chunk(sliceBlock.getPositionCount(), sliceBlock);
+        String[] inValues = {"1", "100", "1000"};
+        LongBlock expectBlock = LongBlock.of(1L, 0L, 1L, null, 0L, 1L, null, 1L, 0L);
+
+        doTest(DataTypes.VarcharType, inputChunk, convertInValues(inValues, varcharRelType), expectBlock);
+    }
+
+    @Test
     public void testStringInStringWithSelection() {
         int[] sel = new int[] {0, 3, 5, 8};
         LongBlock longBlock = LongBlock.of(1L, 2L, 100L, null, 200L, 1000L, null, 100L, -1000L);
@@ -260,6 +289,31 @@ public class FastInVectorizedExpressionTest {
         doTest(DataTypes.VarcharType, inputChunk, convertInValues(inValues, varcharRelType), expectBlock, sel);
     }
 
+    @Test
+    public void testDictInStringWithSelection() {
+        int[] sel = new int[] {0, 3, 5, 8};
+        LongBlock longBlock = LongBlock.of(1L, 2L, 100L, null, 200L, 1000L, null, 100L, -1000L);
+
+        Slice[] slices = new Slice[] {
+            Slices.utf8Slice("1"),
+            Slices.utf8Slice("2"),
+            Slices.utf8Slice("100"),
+            Slices.utf8Slice("200"),
+            Slices.utf8Slice("1000"),
+            Slices.utf8Slice("-1000")
+        };
+        BlockDictionary dictionary = new LocalBlockDictionary(slices);
+        int[] dictId = new int[] {0, 1, 2, -1, 3, 4, -1, 2, 5};
+        SliceBlock sliceBlock = new SliceBlock(new SliceType(), 0, longBlock.getPositionCount(), longBlock.nulls(),
+            dictionary, dictId, null, false);
+
+        Chunk inputChunk = new Chunk(sliceBlock.getPositionCount(), sliceBlock);
+        String[] inValues = {"1", "100", "1000"};
+        LongBlock expectBlock = LongBlock.of(1L, 0L, 1L, null, 0L, 1L, null, 1L, 0L);
+
+        doTest(DataTypes.VarcharType, inputChunk, convertInValues(inValues, varcharRelType), expectBlock, sel);
+    }
+
     /**
      * null in (null) is null
      */
@@ -271,6 +325,79 @@ public class FastInVectorizedExpressionTest {
         LongBlock expectBlock = LongBlock.of(1L, 0L, 1L, null, 0L, 0L, null, 1L, 0L);
 
         doTest(DataTypes.LongType, inputChunk, convertInValues(inValues, longRelType), expectBlock);
+    }
+
+    /**
+     * Test Long column IN (Long, String, Long) - mixed types
+     * Verifies MySQL implicit type conversion compatibility:
+     * String '100' should be converted to Long 100 for comparison.
+     */
+    @Test
+    public void testLongInMixedLongAndString() {
+        LongBlock longBlock = LongBlock.of(1L, 2L, 100L, null, 200L, 1000L, null, 100L, -1000L);
+        Chunk inputChunk = new Chunk(longBlock.getPositionCount(), longBlock);
+        // IN values: 1 (Long), '100' (String), 1000 (Long)
+        List<RexNode> rexNodeList = new ArrayList<>();
+        rexNodeList.add(new RexInputRef(1, longRelType));
+        rexNodeList.add(REX_BUILDER.makeLiteral(1L,
+            TYPE_FACTORY.createSqlType(SqlTypeName.BIGINT), false));
+        rexNodeList.add(REX_BUILDER.makeLiteral("100",
+            TYPE_FACTORY.createSqlType(SqlTypeName.VARCHAR), false));
+        rexNodeList.add(REX_BUILDER.makeLiteral(1000L,
+            TYPE_FACTORY.createSqlType(SqlTypeName.BIGINT), false));
+
+        // Expected: 1->true, 2->false, 100->true, null->null, 200->false, 1000->true, null->null, 100->true, -1000->false
+        LongBlock expectBlock = LongBlock.of(1L, 0L, 1L, null, 0L, 1L, null, 1L, 0L);
+
+        doTest(DataTypes.LongType, inputChunk, rexNodeList, expectBlock);
+    }
+
+    /**
+     * Test Int column IN (Int, String, Int) - mixed types
+     * Verifies that string-to-int conversion works correctly in FastIn path.
+     */
+    @Test
+    public void testIntInMixedIntAndString() {
+        IntegerBlock integerBlock = IntegerBlock.of(1, 2, 100, null, 200, 1000, null, 100, -1000);
+        Chunk inputChunk = new Chunk(integerBlock.getPositionCount(), integerBlock);
+        // IN values: 1 (Integer), '100' (String), 1000 (Integer)
+        List<RexNode> rexNodeList = new ArrayList<>();
+        rexNodeList.add(new RexInputRef(1, intRelType));
+        rexNodeList.add(REX_BUILDER.makeLiteral(1L,
+            TYPE_FACTORY.createSqlType(SqlTypeName.INTEGER), false));
+        rexNodeList.add(REX_BUILDER.makeLiteral("100",
+            TYPE_FACTORY.createSqlType(SqlTypeName.VARCHAR), false));
+        rexNodeList.add(REX_BUILDER.makeLiteral(1000L,
+            TYPE_FACTORY.createSqlType(SqlTypeName.INTEGER), false));
+
+        // Expected: 1->true, 2->false, 100->true, null->null, 200->false, 1000->true, null->null, 100->true, -1000->false
+        LongBlock expectBlock = LongBlock.of(1L, 0L, 1L, null, 0L, 1L, null, 1L, 0L);
+
+        doTest(DataTypes.IntegerType, inputChunk, rexNodeList, expectBlock);
+    }
+
+    /**
+     * Test Long column IN (Long, String, null) - mixed types with null
+     * Verifies null handling in mixed-type scenario.
+     */
+    @Test
+    public void testLongInMixedTypesWithNull() {
+        LongBlock longBlock = LongBlock.of(1L, 2L, 100L, null, 200L);
+        Chunk inputChunk = new Chunk(longBlock.getPositionCount(), longBlock);
+        // IN values: 1 (Long), '100' (String), null
+        List<RexNode> rexNodeList = new ArrayList<>();
+        rexNodeList.add(new RexInputRef(1, longRelType));
+        rexNodeList.add(REX_BUILDER.makeLiteral(1L,
+            TYPE_FACTORY.createSqlType(SqlTypeName.BIGINT), false));
+        rexNodeList.add(REX_BUILDER.makeLiteral("100",
+            TYPE_FACTORY.createSqlType(SqlTypeName.VARCHAR), false));
+        rexNodeList.add(REX_BUILDER.makeLiteral((Long) null,
+            TYPE_FACTORY.createSqlType(SqlTypeName.BIGINT), false));
+
+        // Expected: 1->true, 2->false, 100->true, null->null, 200->false
+        LongBlock expectBlock = LongBlock.of(1L, 0L, 1L, null, 0L);
+
+        doTest(DataTypes.LongType, inputChunk, rexNodeList, expectBlock);
     }
 
     private List<RexNode> convertInValues(long[] inValues, RelDataType dataType) {

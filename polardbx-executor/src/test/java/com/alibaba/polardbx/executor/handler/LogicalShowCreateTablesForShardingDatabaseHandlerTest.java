@@ -39,6 +39,10 @@ import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
 import org.mockito.junit.MockitoJUnitRunner;
 
+import org.junit.Assert;
+
+import static com.alibaba.polardbx.common.properties.ConnectionParams.ENABLE_LOWER_CASE_TABLE_NAME_OUTPUT;
+import static com.alibaba.polardbx.common.properties.ConnectionParams.ENABLE_LOWER_CASE_TABLE_NAMES;
 import static com.alibaba.polardbx.common.properties.ConnectionParams.OUTPUT_MYSQL_INDENT;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -111,6 +115,130 @@ public class LogicalShowCreateTablesForShardingDatabaseHandlerTest extends Logic
             row = result.next();
             Truth.assertThat(row.getString(0));
             Truth.assertThat(row.getString(1)).isEqualTo(CREATE_TABLE_WITH_SPACE);
+        }
+    }
+
+    @Test
+    public void testTableNameShouldBeLowerCaseWhenEnableLowerCaseShowCreateTable() {
+        String mixedCaseTableName = "MyUpperTable";
+        String showCreateTableSql = "show create table " + mixedCaseTableName;
+        final SqlNodeList showCreateTableNode = new FastsqlParser().parse(showCreateTableSql);
+
+        String physicalDdl = "CREATE TABLE `" + mixedCaseTableName + "` (\n"
+            + "\t`id` varchar(128) NOT NULL,\n"
+            + "\t`c1` varchar(50) NOT NULL,\n"
+            + "\t`c2` longblob,\n"
+            + "\t`c3` longblob,\n"
+            + "\tPRIMARY KEY (`id`)\n"
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4  ";
+
+        final ArrayRow mockRow = mock(ArrayRow.class);
+        when(mockRow.getString(eq(0))).thenReturn(mixedCaseTableName);
+        when(mockRow.getString(eq(1))).thenReturn(physicalDdl);
+        final ArrayResultCursor physicalResultCursor = mock(ArrayResultCursor.class);
+        when(physicalResultCursor.next()).thenReturn(mockRow).thenReturn(null);
+
+        final CursorFactoryMyImpl cursorFactoryMyImpl = mock(CursorFactoryMyImpl.class);
+        when(cursorFactoryMyImpl.repoCursor(any(), any())).thenReturn(physicalResultCursor);
+        final MyRepository mockRepo = mock(MyRepository.class);
+        when(mockRepo.getCursorFactory()).thenReturn(cursorFactoryMyImpl);
+
+        try (final MockedStatic<OptimizerContext> mockOptimizerContextStatic = mockStatic(OptimizerContext.class);
+            final MockedConstruction<PhyShow> phyShowMockedConstruction = mockConstruction(PhyShow.class);
+            final MockedStatic<ExecutorContext> mockExecutorContextStatic = mockStatic(ExecutorContext.class);
+        ) {
+            mockMetaSystem(SCHEMA_NAME, mixedCaseTableName, mockOptimizerContextStatic, mockExecutorContextStatic);
+
+            final LogicalShowCreateTablesForShardingDatabaseHandler showHandler =
+                new LogicalShowCreateTablesForShardingDatabaseHandler(mockRepo);
+
+            final LogicalShow show = mock(LogicalShow.class);
+            when(show.getNativeSqlNode()).thenReturn(showCreateTableNode.get(0));
+
+            final CursorMeta cursorMeta = createCursorMeta();
+            when(show.getCursorMeta()).thenReturn(cursorMeta);
+
+            final ExecutionContext ec = new ExecutionContext();
+            ec.setSchemaName(SCHEMA_NAME);
+            ParamManager.setBooleanVal(ec.getParamManager().getProps(),
+                ENABLE_LOWER_CASE_TABLE_NAME_OUTPUT, true, true);
+
+            Cursor result = showHandler.handle(show, ec);
+            Row row = result.next();
+
+            Assert.assertEquals("Table name should be lowercase when ENABLE_LOWER_CASE_TABLE_NAME_OUTPUT=true",
+                mixedCaseTableName.toLowerCase(), row.getString(0));
+
+            String ddl = row.getString(1);
+            Assert.assertTrue("DDL should contain lowercase table name",
+                ddl.contains("`" + mixedCaseTableName.toLowerCase() + "`"));
+            Assert.assertFalse("DDL should not contain mixed-case table name",
+                ddl.contains("`" + mixedCaseTableName + "`"));
+        }
+    }
+
+    @Test
+    public void testTableNameShouldPreserveCaseWhenSwitchOffEvenIfEnableLowerCaseTableNamesOn() {
+        String mixedCaseTableName = "MyUpperTable";
+        String showCreateTableSql = "show create table " + mixedCaseTableName;
+        final SqlNodeList showCreateTableNode = new FastsqlParser().parse(showCreateTableSql);
+
+        String physicalDdl = "CREATE TABLE `" + mixedCaseTableName + "` (\n"
+            + "\t`id` varchar(128) NOT NULL,\n"
+            + "\t`c1` varchar(50) NOT NULL,\n"
+            + "\t`c2` longblob,\n"
+            + "\t`c3` longblob,\n"
+            + "\tPRIMARY KEY (`id`)\n"
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4  ";
+
+        final ArrayRow mockRow = mock(ArrayRow.class);
+        when(mockRow.getString(eq(0))).thenReturn(mixedCaseTableName);
+        when(mockRow.getString(eq(1))).thenReturn(physicalDdl);
+        final ArrayResultCursor physicalResultCursor = mock(ArrayResultCursor.class);
+        when(physicalResultCursor.next()).thenReturn(mockRow).thenReturn(null);
+
+        final CursorFactoryMyImpl cursorFactoryMyImpl = mock(CursorFactoryMyImpl.class);
+        when(cursorFactoryMyImpl.repoCursor(any(), any())).thenReturn(physicalResultCursor);
+        final MyRepository mockRepo = mock(MyRepository.class);
+        when(mockRepo.getCursorFactory()).thenReturn(cursorFactoryMyImpl);
+
+        try (final MockedStatic<OptimizerContext> mockOptimizerContextStatic = mockStatic(OptimizerContext.class);
+            final MockedConstruction<PhyShow> phyShowMockedConstruction = mockConstruction(PhyShow.class);
+            final MockedStatic<ExecutorContext> mockExecutorContextStatic = mockStatic(ExecutorContext.class);
+        ) {
+            mockMetaSystem(SCHEMA_NAME, mixedCaseTableName, mockOptimizerContextStatic, mockExecutorContextStatic);
+
+            final LogicalShowCreateTablesForShardingDatabaseHandler showHandler =
+                new LogicalShowCreateTablesForShardingDatabaseHandler(mockRepo);
+
+            final LogicalShow show = mock(LogicalShow.class);
+            when(show.getNativeSqlNode()).thenReturn(showCreateTableNode.get(0));
+
+            final CursorMeta cursorMeta = createCursorMeta();
+            when(show.getCursorMeta()).thenReturn(cursorMeta);
+
+            final ExecutionContext ec = new ExecutionContext();
+            ec.setSchemaName(SCHEMA_NAME);
+            // ENABLE_LOWER_CASE_TABLE_NAMES defaults to true on CN, but the dedicated
+            // SHOW CREATE TABLE switch defaults to false. Existing instances must keep
+            // the original-case DDL after upgrade.
+            ParamManager.setBooleanVal(ec.getParamManager().getProps(),
+                ENABLE_LOWER_CASE_TABLE_NAMES, true, true);
+            ParamManager.setBooleanVal(ec.getParamManager().getProps(),
+                ENABLE_LOWER_CASE_TABLE_NAME_OUTPUT, false, true);
+
+            Cursor result = showHandler.handle(show, ec);
+            Row row = result.next();
+
+            Assert.assertEquals(
+                "Table name must preserve original case when ENABLE_LOWER_CASE_TABLE_NAME_OUTPUT=false",
+                mixedCaseTableName, row.getString(0));
+
+            String ddl = row.getString(1);
+            Assert.assertTrue("DDL must preserve original-case table name",
+                ddl.contains("`" + mixedCaseTableName + "`"));
+            Assert.assertFalse("DDL must not lowercase the table name when switch is off",
+                ddl.contains("`" + mixedCaseTableName.toLowerCase() + "`"));
         }
     }
 }

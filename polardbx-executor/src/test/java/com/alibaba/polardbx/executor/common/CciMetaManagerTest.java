@@ -20,9 +20,12 @@ package com.alibaba.polardbx.executor.common;
 
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarIndexEvolutionAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarPartitionEvolutionAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableEvolutionAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableEvolutionRecord;
+import com.alibaba.polardbx.gms.metadb.table.IndexesAccessor;
+import com.alibaba.polardbx.gms.metadb.table.IndexesRecord;
 import com.alibaba.polardbx.gms.partition.TablePartitionAccessor;
 import com.alibaba.polardbx.gms.partition.TablePartitionRecord;
 import org.junit.Before;
@@ -50,6 +53,8 @@ public class CciMetaManagerTest {
 
     List<ColumnarTableEvolutionRecord> evolutionRecords = new ArrayList<>();
     List<TablePartitionRecord> partitionRecords = new ArrayList<>();
+    List<IndexesRecord> primaryKeys = new ArrayList<>();
+    List<IndexesRecord> sortKeys = new ArrayList<>();
 
     @Before
     public void setUp() {
@@ -63,11 +68,40 @@ public class CciMetaManagerTest {
         record.versionId = 100L;
         record.ddlJobId = 101L;
         record.partitions = new java.util.ArrayList<>();
+        record.primaryKeys = new java.util.ArrayList<>();
+        record.sortKeys = new java.util.ArrayList<>();
         evolutionRecords.add(record);
+
+        ColumnarTableEvolutionRecord record1 = new ColumnarTableEvolutionRecord();
+        record1.tableId = 1L;
+        record1.tableName = "test_table";
+        record1.tableSchema = "test_schema";
+        record1.indexName = "test_index";
+        record1.versionId = 101L;
+        record1.ddlJobId = 102L;
+        record1.partitions = new java.util.ArrayList<>();
+        record1.primaryKeys = new java.util.ArrayList<>();
+        record1.sortKeys = new java.util.ArrayList<>();
+        evolutionRecords.add(record1);
+
+        ColumnarTableEvolutionRecord record2 = new ColumnarTableEvolutionRecord();
+        record2.tableId = 2L;
+        record2.tableName = "test_table_1";
+        record2.tableSchema = "test_schema";
+        record2.indexName = "test_index_1";
+        record2.versionId = 102L;
+        record2.ddlJobId = 103L;
+        record2.partitions = new java.util.ArrayList<>();
+        record2.primaryKeys = new java.util.ArrayList<>();
+        record2.sortKeys = new java.util.ArrayList<>();
+        evolutionRecords.add(record2);
 
         TablePartitionRecord partitionRecord = new TablePartitionRecord();
         partitionRecords.add(partitionRecord);
-
+        IndexesRecord primaryKey = new IndexesRecord();
+        primaryKeys.add(primaryKey);
+        IndexesRecord sortKey = new IndexesRecord();
+        sortKeys.add(sortKey);
     }
 
     @Test
@@ -75,14 +109,23 @@ public class CciMetaManagerTest {
         ColumnarTableEvolutionAccessor columnarTableEvolutionAccessor = mock(ColumnarTableEvolutionAccessor.class);
         ColumnarPartitionEvolutionAccessor columnarPartitionEvolutionAccessor =
             mock(ColumnarPartitionEvolutionAccessor.class);
+        ColumnarIndexEvolutionAccessor columnarIndexEvolutionAccessor =
+            mock(ColumnarIndexEvolutionAccessor.class);
         TablePartitionAccessor tablePartition = mock(TablePartitionAccessor.class);
+        IndexesAccessor indexes = mock(IndexesAccessor.class);
         when(columnarTableEvolutionAccessor.queryPartitionEmptyRecords()).thenReturn(evolutionRecords);
+        when(columnarTableEvolutionAccessor.queryPrimaryKeyEmptyRecords()).thenReturn(evolutionRecords);
+        when(columnarTableEvolutionAccessor.querySortKeyEmptyRecords()).thenReturn(evolutionRecords);
         when(tablePartition.getTablePartitionsByDbNameTbName(anyString(), anyString(), anyBoolean())).thenReturn(
             partitionRecords);
+        when(indexes.queryPrimaryKeyBySchemaAndTable(anyString(), anyString())).thenReturn(primaryKeys);
+        when(indexes.queryColumnarIndexColumnsByName(anyString(), anyString())).thenReturn(sortKeys);
 
         when(cciMetaManagerSpy.getColumnarTableEvolution()).thenReturn(columnarTableEvolutionAccessor);
         when(cciMetaManagerSpy.getColumnarPartitionEvolution()).thenReturn(columnarPartitionEvolutionAccessor);
+        when(cciMetaManagerSpy.getColumnarIndexEvolution()).thenReturn(columnarIndexEvolutionAccessor);
         when(cciMetaManagerSpy.getTablePartition()).thenReturn(tablePartition);
+        when(cciMetaManagerSpy.getIndexes()).thenReturn(indexes);
 
         try (MockedStatic<ConfigDataMode> configDataModeMockedStatic = mockStatic(ConfigDataMode.class)) {
             configDataModeMockedStatic.when(ConfigDataMode::isPolarDbX).thenReturn(true);
@@ -95,7 +138,7 @@ public class CciMetaManagerTest {
 
                 cciMetaManagerSpy.init();
                 verify(cciMetaManagerSpy, times(1)).doInit();
-                verify(cciMetaManagerSpy, times(1)).loadPartitions();
+                verify(cciMetaManagerSpy, times(1)).loadCciEvolutionMeta();
             }
 
         }
@@ -108,7 +151,7 @@ public class CciMetaManagerTest {
 
             cciMetaManagerSpy.init();
             verify(cciMetaManagerSpy, times(1)).doInit();
-            verify(cciMetaManagerSpy, times(0)).loadPartitions(); // 验证是否没有调用loadPartitions
+            verify(cciMetaManagerSpy, times(0)).loadCciEvolutionMeta(); // 验证是否没有调用loadPartitions
         }
     }
 }

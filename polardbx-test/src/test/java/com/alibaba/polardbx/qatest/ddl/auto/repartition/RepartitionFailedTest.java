@@ -81,7 +81,7 @@ public class RepartitionFailedTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 
         sql = "explain alter table tb12345 partition by key(a, b)";
-        checkExplainCount(sql, 2);
+        checkExplainCount(sql, 3);
     }
 
     public void checkExplainCount(String sql, int expected) {

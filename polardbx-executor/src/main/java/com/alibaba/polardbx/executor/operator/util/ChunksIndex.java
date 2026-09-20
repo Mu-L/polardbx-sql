@@ -16,6 +16,11 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableIntArrayList;
+import com.alibaba.polardbx.common.collection.MemoryCountableObjectArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.google.common.collect.AbstractIterator;
 import com.alibaba.polardbx.common.utils.memory.SizeOf;
 import com.alibaba.polardbx.executor.chunk.Block;
@@ -32,23 +37,32 @@ import java.util.List;
  * Index of several chunks
  *
  */
-public final class ChunksIndex {
+public final class ChunksIndex implements MemoryCountable {
 
     private static final long INSTANCE_SIZE = ClassLayout.parseClass(ChunksIndex.class).instanceSize();
 
-    private final List<Chunk> chunks;
-    private final IntArrayList offsets; // offsets.size() always equals to chunks.size() + 1
+    private final MemoryCountableObjectArrayList<Chunk> chunks;
+    private final MemoryCountableIntArrayList offsets; // offsets.size() always equals to chunks.size() + 1
 
     public ChunksIndex() {
-        chunks = new ArrayList<>();
-        offsets = new IntArrayList();
+        chunks = new MemoryCountableObjectArrayList<>();
+        offsets = new MemoryCountableIntArrayList();
         offsets.add(0);
     }
 
     // type-specific
+    @FieldMemoryCounter(value = false)
     protected TypedListHandle typedListHandle;
     protected TypedList[] typedLists = null;
     protected int dataTypeSize = 0;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE
+            + FastMemoryCounter.sizeOf(chunks)
+            + FastMemoryCounter.sizeOf(offsets)
+            + FastMemoryCounter.sizeOf(typedLists);
+    }
 
     public void merge(List<ChunksIndex> chunksIndexList) {
         for (int i = 0; i < chunksIndexList.size(); i++) {

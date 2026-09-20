@@ -59,11 +59,13 @@ import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.table.TruncateUtil;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
 import com.alibaba.polardbx.optimizer.core.planner.Planner;
 import com.alibaba.polardbx.optimizer.core.rel.PhyDdlTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.dal.LogicalShow;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalCreateTable;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalTruncateTable;
@@ -86,6 +88,7 @@ import com.google.common.collect.Lists;
 import org.apache.calcite.sql.SqlCreateTable;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlIndexDefinition;
+import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlShowCreateTable;
 import org.apache.calcite.sql.parser.SqlParserPos;
@@ -96,6 +99,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.TreeMap;
 
 import static com.alibaba.polardbx.common.cdc.ICdcManager.DEFAULT_DDL_VERSION_ID;
@@ -107,6 +111,24 @@ public class LogicalTruncateTableHandler extends LogicalCommonDdlHandler {
 
     public LogicalTruncateTableHandler(IRepository repo) {
         super(repo);
+    }
+
+    @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        boolean enableBin = executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_RECYCLEBIN);
+        boolean isPurge = ((LogicalTruncateTable) logicalDdlPlan).isPurge();
+        if (enableBin && !isPurge) {
+            return;
+        }
+        String tableName = logicalDdlPlan.getTableName();
+        exclusiveResources.add(concatWithDot(logicalDdlPlan.getSchemaName(), tableName));
+        TableMeta tableMeta =
+            executionContext.getSchemaManager(logicalDdlPlan.getSchemaName()).getTableWithNull(tableName);
+        if (tableMeta != null) {
+            tableVersions.put(tableName, tableMeta.getVersion());
+        }
     }
 
     @Override
@@ -137,8 +159,8 @@ public class LogicalTruncateTableHandler extends LogicalCommonDdlHandler {
                 }
                 return buildTruncateTableWithGsiJob(logicalTruncateTable, false, executionContext);
             } else {
-                if (isAvailableForRecycleBin(logicalTruncateTable.getTableName(), executionContext) &&
-                    !logicalTruncateTable.isPurge()) {
+                if (isAvailableForRecycleBin(logicalTruncateTable.getSchemaName(), logicalTruncateTable.getTableName(),
+                    executionContext) && !logicalTruncateTable.isPurge()) {
                     return handleRecycleBin(logicalTruncateTable, executionContext);
                 } else {
                     if (enableBin && !logicalTruncateTable.isPurge()) {
@@ -151,17 +173,17 @@ public class LogicalTruncateTableHandler extends LogicalCommonDdlHandler {
                 }
             }
         } else {
-            if (logicalTruncateTable.isWithGsi()) {
+            if (logicalTruncateTable.isWithGsi() || logicalTruncateTable.isWithCci()) {
                 if (enableBin) {
                     throw new TddlRuntimeException(ERR_RECYCLEBIN_EXECUTE,
-                        "truncate table with gsi is not supported in recycle bin;"
+                        "truncate table with gsi/cci is not supported in recycle bin;"
                             + "use hint /*TDDL:ENABLE_RECYCLEBIN=false*/ "
                             + "to disable recycle bin");
                 }
                 return buildTruncateTableWithGsiJob(logicalTruncateTable, true, executionContext);
             } else {
-                if (isAvailableForRecycleBin(logicalTruncateTable.getTableName(), executionContext) &&
-                    !logicalTruncateTable.isPurge()) {
+                if (isAvailableForRecycleBin(logicalTruncateTable.getSchemaName(), logicalTruncateTable.getTableName(),
+                    executionContext) && !logicalTruncateTable.isPurge()) {
                     return handleRecycleBin(logicalTruncateTable, executionContext);
                 } else {
                     if (enableBin && !logicalTruncateTable.isPurge()) {
@@ -184,7 +206,8 @@ public class LogicalTruncateTableHandler extends LogicalCommonDdlHandler {
         return false;
     }
 
-    protected DdlJob buildTruncateTableJob(LogicalTruncateTable logicalTruncateTable, ExecutionContext executionContext) {
+    protected DdlJob buildTruncateTableJob(LogicalTruncateTable logicalTruncateTable,
+                                           ExecutionContext executionContext) {
         TruncateTablePreparedData truncateTablePreparedData =
             logicalTruncateTable.getTruncateTableWithGsiPreparedData().getPrimaryTablePreparedData();
 
@@ -195,10 +218,12 @@ public class LogicalTruncateTableHandler extends LogicalCommonDdlHandler {
 
         return new TruncateTableJobFactory(physicalPlanData,
             logicalTruncateTable.getTruncateTableWithGsiPreparedData().getTableVersion(), DEFAULT_DDL_VERSION_ID,
-            false).create();
+            false, executionContext).create();
     }
 
-    private DdlJob handleRecycleBin(LogicalTruncateTable logicalTruncateTable, ExecutionContext executionContext) {
+    protected DdlJob handleRecycleBin(LogicalTruncateTable logicalTruncateTable, ExecutionContext executionContext) {
+        TableValidator.validateTableWithExternalizedColumn(logicalTruncateTable.getSchemaName(),
+            logicalTruncateTable.getTableName(), SqlKind.TRUNCATE_TABLE);
         RecycleBin recycleBin = RecycleBinManager.instance.getByAppName(executionContext.getAppName());
         String tmpBinName = recycleBin.genName();
 
@@ -290,7 +315,7 @@ public class LogicalTruncateTableHandler extends LogicalCommonDdlHandler {
         ).create();
     }
 
-    protected static PartitionTableType getType(LogicalCreateTable logicalCreateTable) {
+    public static PartitionTableType getType(LogicalCreateTable logicalCreateTable) {
         PartitionTableType partitionTableType = PartitionTableType.SINGLE_TABLE;
         if (logicalCreateTable.isPartitionTable()) {
             partitionTableType = PartitionTableType.PARTITION_TABLE;
@@ -325,7 +350,8 @@ public class LogicalTruncateTableHandler extends LogicalCommonDdlHandler {
                 createTablePreparedData.isAutoPartition(), createTablePreparedData.isTimestampColumnDefault(),
                 createTablePreparedData.getSpecialDefaultValues(),
                 createTablePreparedData.getSpecialDefaultValueFlags(),
-                physicalPlanData, executionContext, createTablePreparedData, tableEngine, archiveMode, dictColumns);
+                physicalPlanData, executionContext, createTablePreparedData, tableEngine, archiveMode, dictColumns,
+                likeTableInfo);
             if (createTablePreparedData.getSelectSql() != null) {
                 ret.setSelectSql(createTablePreparedData.getSelectSql());
             }
@@ -402,8 +428,8 @@ public class LogicalTruncateTableHandler extends LogicalCommonDdlHandler {
         ).create();
     }
 
-    private DdlJob buildTruncatePartitionTableJob(LogicalTruncateTable logicalTruncateTable,
-                                                  ExecutionContext executionContext) {
+    protected DdlJob buildTruncatePartitionTableJob(LogicalTruncateTable logicalTruncateTable,
+                                                    ExecutionContext executionContext) {
         long versionId = DdlUtils.generateVersionId(executionContext);
 
         TruncateTablePreparedData truncateTablePreparedData =
@@ -416,7 +442,7 @@ public class LogicalTruncateTableHandler extends LogicalCommonDdlHandler {
 
         return new TruncateTableJobFactory(physicalPlanData,
             logicalTruncateTable.getTruncateTableWithGsiPreparedData().getTableVersion(), versionId,
-            logicalTruncateTable.isWithCci()).create();
+            logicalTruncateTable.isWithCci(), executionContext).create();
     }
 
     public LogicalCreateTable generateLogicalCreateTmpTable(String schemaName, String targetTableName,

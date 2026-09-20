@@ -59,6 +59,7 @@ import org.apache.calcite.sql.SqlIndexHint;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
+import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.Util;
 
 import java.util.ArrayList;
@@ -168,8 +169,11 @@ public class IndexUtil {
                     // MPP Planner will enter this branch
                     lookupNode = Util.first(((RelSubset) lookupNode).getBest(), ((RelSubset) lookupNode).getOriginal());
                 }
-                Join joinFromTableLookup = (Join) lookupNode;
-                lookupNode = joinFromTableLookup.getLeft();
+                if (lookupNode instanceof Join) {
+                    Join joinFromTableLookup = (Join) lookupNode;
+                    lookupNode = joinFromTableLookup.getLeft();
+                }
+                // else: FETCH_BLOB Project wrapping a LogicalView, use lookupNode as-is
             }
             if (lookupNode instanceof RelSubset) {
                 lookupNode = Util.first(((RelSubset) lookupNode).getBest(), ((RelSubset) lookupNode).getOriginal());
@@ -243,10 +247,11 @@ public class IndexUtil {
         PriorityQueue<Index> priorityQueue = new PriorityQueue<>(new Comparator<Index>() {
             @Override
             public int compare(Index o1, Index o2) {
-                if (o1.getIndexMeta().isPrimaryKeyIndex() && o1.getPrefixLen() == o1.getIndexMeta().getKeyColumns()
+                if (o1.getIndexMeta().isPrimaryKeyIndex() && o1.getPrefixLen() == o1.getIndexMeta().getKeyColumnsExt()
                     .size()) {
                     return -1;
-                } else if (o1.getIndexMeta().isUniqueIndex() && o1.getPrefixLen() == o1.getIndexMeta().getKeyColumns()
+                } else if (o1.getIndexMeta().isUniqueIndex() && o1.getPrefixLen() == o1.getIndexMeta()
+                    .getKeyColumnsExt()
                     .size()) {
                     return -1;
                 } else {
@@ -284,7 +289,8 @@ public class IndexUtil {
                     boolean isNeedTrace = pc.isNeedStatisticTrace();
                     StatisticResult statisticResult =
                         StatisticManager.getInstance()
-                            .getCardinality(tableMeta.getSchemaName(), tableMeta.getTableName(), columnMeta.getName(), true, isNeedTrace);
+                            .getCardinality(tableMeta.getSchemaName(), tableMeta.getTableName(), columnMeta.getName(),
+                                true, isNeedTrace);
                     if (isNeedTrace) {
                         pc.recordStatisticTrace(statisticResult.getTrace());
                     }
@@ -309,7 +315,7 @@ public class IndexUtil {
                 for (int i = 0; i < prefixLen; i++) {
                     prefixTypeList.add(Index.PredicateType.EQUAL);
                 }
-                if (prefixLen == indexMeta.getKeyColumns().size() &&
+                if (prefixLen == indexMeta.getKeyColumnsExt().size() &&
                     (indexMeta.isPrimaryKeyIndex() || indexMeta.isUniqueIndex())) {
                     long cardinality = (long) tableMeta.getRowCount(null);
                     if (cardinality <= 0) {
@@ -345,7 +351,7 @@ public class IndexUtil {
                                               List<Integer> orderByColumn) {
         OUTER:
         for (int eachPrefixLen = 0; eachPrefixLen <= prefixTypeList.size(); eachPrefixLen++) {
-            if (indexMeta.getKeyColumns().size() < eachPrefixLen + orderByColumn.size()) {
+            if (indexMeta.getKeyColumnsExt().size() < eachPrefixLen + orderByColumn.size()) {
                 return null;
             }
 
@@ -475,12 +481,8 @@ public class IndexUtil {
     }
 
     public static Set<String> getIndex(SqlNode indexNode, IndexHintType indexHintType) {
-        Set<String> useNameSet = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-        Set<String> ignoreNameSet = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-        Set<String> forceNameSet = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-        Set<String> pagingForceNameSet = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-
-        if (indexNode != null && indexNode instanceof SqlNodeList && ((SqlNodeList) indexNode).size() > 0) {
+        Set<String> resultSet = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        if (indexNode instanceof SqlNodeList && ((SqlNodeList) indexNode).size() > 0) {
             for (SqlNode subNode : ((SqlNodeList) indexNode).getList()) {
                 if (subNode instanceof SqlIndexHint) {
                     SqlIndexHint indexHint = (SqlIndexHint) subNode;
@@ -495,35 +497,48 @@ public class IndexUtil {
                             }
                             if (indexHint.ignoreIndex() && indexHintType == IndexHintType.IGNORE_INDEX) {
                                 // ignore index hint
-                                ignoreNameSet.add(indexName);
+                                resultSet.add(indexName);
                             } else if (indexHint.useIndex() && indexHintType == IndexHintType.USE_INDEX) {
                                 // use index hint
-                                useNameSet.add(indexName);
+                                resultSet.add(indexName);
                             } else if (indexHint.forceIndex() && indexHintType == IndexHintType.FORCE_INDEX) {
                                 // force index hint
-                                forceNameSet.add(indexName);
+                                resultSet.add(indexName);
                             } else if (indexHint.pagingForceIndex()
                                 && indexHintType == IndexHintType.PAGING_FORCE_INDEX) {
                                 // force index hint
-                                pagingForceNameSet.add(indexName);
+                                resultSet.add(indexName);
                             }
                         }
                     }
                 }
             }
         }
-        switch (indexHintType) {
-        case USE_INDEX:
-            return useNameSet;
-        case IGNORE_INDEX:
-            return ignoreNameSet;
-        case FORCE_INDEX:
-            return forceNameSet;
-        case PAGING_FORCE_INDEX:
-            return pagingForceNameSet;
-        default:
-            return new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        return resultSet;
+    }
+
+    public static ImmutableBitSet buildAvailableIndex(SqlNode indexNode, List<IndexMeta> indexes,
+                                                      ImmutableBitSet.Builder usableIndexBuilder) {
+        Set<String> useNameSet = getUseIndex(indexNode);
+        Set<String> ignoreNameSet = getIgnoreIndex(indexNode);
+        Set<String> forceNameSet = getForceIndex(indexNode);
+        Set<String> pagingForceNameSet = getPagingForceIndex(indexNode);
+
+        ImmutableBitSet.Builder forceBuilder = ImmutableBitSet.builder();
+        for (int i = 0; i < indexes.size(); i++) {
+            String name = indexes.get(i).getPhysicalIndexName();
+            if (useNameSet.contains(name) || forceNameSet.contains(name) || pagingForceNameSet.contains(name)) {
+                forceBuilder.set(i);
+            }
+            if (ignoreNameSet.contains(name)) {
+                usableIndexBuilder.clear(i);
+            }
         }
+        ImmutableBitSet force = forceBuilder.build();
+        if (!force.isEmpty()) {
+            usableIndexBuilder.intersect(force);
+        }
+        return usableIndexBuilder.build();
     }
 
     public static Set<String> getUseIndex(SqlNode indexNode) {

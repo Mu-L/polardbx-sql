@@ -27,7 +27,9 @@ import com.alibaba.polardbx.optimizer.core.rel.BaseTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalInsert;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableModifyBuilder;
 import com.alibaba.polardbx.optimizer.core.rel.dml.DistinctWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.DmlWriteContext;
 import com.alibaba.polardbx.optimizer.core.rel.dml.ReplicationWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.RoutedModifyInput;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.util.mapping.Mapping;
@@ -56,12 +58,16 @@ public class ReplicateDistinctInsertWriter extends DistinctInsertWriter implemen
     @Override
     public List<RelNode> getInput(ExecutionContext ec, Function<DistinctWriter, List<List<Object>>> rowGenerator) {
 
-        List<RelNode> primaryRelNodes = super.getInput(ec, rowGenerator);
+        List<RelNode> inputs = super.getInput(ec, rowGenerator);
+        List<RelNode> primaryRelNodes = primaryWritePlans(inputs);
+        final DmlWriteContext writeContext = ec.getDmlWriteContext();
+        final List<List<Object>> preparedRows = writeContext == null ? null
+            : writeContext.getPreparedModifyRows(this, ec);
         boolean isNewPart = DbInfoManager.getInstance().isNewPartitionDb(tableMeta.getSchemaName());
         List<RelNode> replicateRelNodes;
         if (isNewPart) {
             // Deduplicate
-            final List<List<Object>> distinctRows = rowGenerator.apply(this);
+            final List<List<Object>> distinctRows = preparedRows == null ? rowGenerator.apply(this) : preparedRows;
             replicateRelNodes = PhyTableModifyBuilder.buildInsert(insert, distinctRows, ec, true);
         } else {
             replicateRelNodes = getInputForMoveDatabase(primaryRelNodes, ec);
@@ -72,8 +78,8 @@ public class ReplicateDistinctInsertWriter extends DistinctInsertWriter implemen
                 (BaseQueryOperation) relNode,
                 ec);
         }
-        primaryRelNodes.addAll(replicateRelNodes);
-        return primaryRelNodes;
+        inputs.addAll(replicateRelNodes);
+        return inputs;
     }
 
     private List<RelNode> getInputForMoveDatabase(List<RelNode> relNodes, ExecutionContext executionContext) {

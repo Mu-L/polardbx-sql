@@ -129,6 +129,20 @@ public abstract class BuiltInMetadata {
     }
   }
 
+  /** Metadata about whether a set of columns forms a single group. */
+  public interface ColumnGroupSize extends Metadata {
+    MetadataDef<ColumnGroupSize> DEF = MetadataDef.of(ColumnGroupSize.class,
+        ColumnGroupSize.Handler.class, BuiltInMethod.COLUMN_GROUP_SIZE.method);
+
+    Integer getColumnsGroupSize(ImmutableBitSet columns);
+
+    /** Handler API. */
+    interface Handler extends MetadataHandler<ColumnGroupSize> {
+      Integer getColumnsGroupSize(RelNode r, RelMetadataQuery mq,
+                               ImmutableBitSet columns);
+    }
+  }
+
   /** Metadata about the composite primary key. */
   public interface CompositePk extends Metadata {
     MetadataDef<CompositePk> DEF = MetadataDef.of(CompositePk.class,

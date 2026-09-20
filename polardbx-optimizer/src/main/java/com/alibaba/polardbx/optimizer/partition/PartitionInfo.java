@@ -23,8 +23,10 @@ import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.druid.util.StringUtils;
+import com.alibaba.polardbx.gms.locality.LocalityDesc;
 import com.alibaba.polardbx.gms.partition.TablePartitionRecord;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
+import com.alibaba.polardbx.optimizer.config.table.SkipSerializeInDdlDumpInfo;
 import com.alibaba.polardbx.optimizer.partition.common.PartInfoSessionVars;
 import com.alibaba.polardbx.optimizer.partition.common.PartKeyLevel;
 import com.alibaba.polardbx.optimizer.partition.common.PartitionByNormalizationParams;
@@ -50,6 +52,8 @@ import static com.alibaba.polardbx.gms.partition.TablePartitionRecord.PARTITION_
  *
  * @author chenghui.lch
  */
+@SkipSerializeInDdlDumpInfo({
+    "tableId", "metaVersion", "partInfoHashCode", "tableGroupId", "columnarSchemaTso"})
 public class PartitionInfo {
 
     private static final Logger logger = LoggerFactory.getLogger(PartitionInfo.class);
@@ -122,6 +126,19 @@ public class PartitionInfo {
      * the locality Info
      */
     protected String locality;
+
+    public LocalityDesc getLocalityDesc() {
+        return localityDesc;
+    }
+
+    public void setLocalityDesc(LocalityDesc localityDesc) {
+        this.localityDesc = localityDesc;
+    }
+
+    /**
+     * only for poc
+     */
+    protected LocalityDesc localityDesc = null;
     /**
      * the table type of partitioned table, may be primary table or gsi table
      * tableType=0: partition table
@@ -141,7 +158,7 @@ public class PartitionInfo {
     /**
      * The hashCode of partInfo
      */
-    protected volatile Integer partInfoHashCode = null;
+    protected transient volatile Integer partInfoHashCode = null;
 
     /**
      * The session variables during creating partitioned table
@@ -152,6 +169,8 @@ public class PartitionInfo {
      * use the search the partSpec by phyDb and phyTbl
      */
     protected PartSpecSearcher partSpecSearcher;
+
+    private Long columnarSchemaTso;
 
     public PartitionInfo() {
     }
@@ -188,6 +207,15 @@ public class PartitionInfo {
     public boolean isGsiBroadcastOrBroadcast() {
         return this.tableType == PartitionTableType.BROADCAST_TABLE
             || this.tableType == PartitionTableType.GSI_BROADCAST_TABLE;
+    }
+
+    public boolean isReplicasTable() {
+        return this.tableType == PartitionTableType.REPLICAS_TABLE;
+    }
+
+    public boolean isBroadcastOrReplicas() {
+        return this.tableType == PartitionTableType.BROADCAST_TABLE
+            || this.tableType == PartitionTableType.REPLICAS_TABLE;
     }
 
     public boolean isPartitionedGsiTable() {
@@ -320,12 +348,32 @@ public class PartitionInfo {
         return (this.partFlags & TablePartitionRecord.FLAG_TTL_TEMPORARY_TABLE) != 0;
     }
 
+    public Boolean isNoPartitionKeyTable() {
+        return (this.partFlags & TablePartitionRecord.FLAG_NO_PARTITION_KEY_TABLE) != 0;
+    }
+
+    public Boolean isBlockFullTableScan() {
+        return (this.partFlags & TablePartitionRecord.FLAG_BLOCK_FULL_TABLE_SCAN) != 0;
+    }
+
     public Long getPartFlags() {
         return partFlags;
     }
 
     public void setPartFlags(Long partFlags) {
         this.partFlags = partFlags;
+    }
+
+    public List<PhysicalPartitionInfo> getAllPhysicalPartitionInfos(List<String> partitionNames,
+                                                                    boolean throwException,
+                                                                    boolean ignoreInvalid) {
+        List<PhysicalPartitionInfo> returnRs = new ArrayList<>();
+        Map<String, List<PhysicalPartitionInfo>> grpToPhyPartInfoMappings =
+            getPhysicalPartitionTopology(partitionNames, throwException, ignoreInvalid);
+        for (Map.Entry<String, List<PhysicalPartitionInfo>> item : grpToPhyPartInfoMappings.entrySet()) {
+            returnRs.addAll(item.getValue());
+        }
+        return returnRs;
     }
 
     public Map<String, List<PhysicalPartitionInfo>> getPhysicalPartitionTopology(List<String> partitionNames,
@@ -341,6 +389,146 @@ public class PartitionInfo {
         this.locality = locality;
     }
 
+    public Long getColumnarSchemaTso() {
+        return columnarSchemaTso;
+    }
+
+    public void setColumnarSchemaTso(long columnarSchemaTso) {
+        this.columnarSchemaTso = columnarSchemaTso;
+    }
+
+//    /**
+//     * <pre>
+//     *  key:    groupKey
+//     *  value:  the list of physical partition info
+//     *      if partitionNames is empty,
+//     *          return all the partitions topology
+//     *      else
+//     *          return the dedicated partitions(given by the input parameter) topology
+//     * </pre>
+//     */
+//    public Map<String, List<PhysicalPartitionInfo>> getPhysicalPartitionTopologyBackup(List<String> partitionNames,
+//                                                                                       boolean throwException,
+//                                                                                       boolean ignoreInvalidLocation) {
+//
+//        /**
+//         * Key: phy group
+//         * val: physical partition list
+//         */
+//        Map<String, List<PhysicalPartitionInfo>> topology = new HashMap<>();
+//
+//        boolean needFilterParts = !GeneralUtil.isEmpty(partitionNames);
+//        Set<String> targetPartNameSet = new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+//
+//        if (partitionNames != null) {
+//            targetPartNameSet.addAll(partitionNames);
+//        }
+//
+//        for (PartitionSpec partitionSpec : partitionBy.getPartitions()) {
+//            final String name = partitionSpec.getName();
+//            boolean isLogicalPart = partitionSpec.isLogical();
+//            if (isLogicalPart) {
+//                List<PartitionSpec> subParts = partitionSpec.getSubPartitions();
+//                for (int i = 0; i < subParts.size(); i++) {
+//                    PartitionSpec subpartSpec = subParts.get(i);
+//                    final String subPartName = subpartSpec.getName();
+//                    boolean findTargetPart = true;
+//                    if (needFilterParts) {
+//                        if (!targetPartNameSet.contains(subPartName)) {
+//                            findTargetPart = false;
+//                        }
+//                    }
+//
+//                    if (!findTargetPart) {
+//                        continue;
+//                    }
+//
+//                    final PartitionLocation spLocation = subpartSpec.getLocation();
+//                    if (spLocation != null && (!throwException || spLocation.isValidLocation())) {
+//                        PhysicalPartitionInfo phyPartInfo = new PhysicalPartitionInfo();
+//                        phyPartInfo.setPartId(subpartSpec.getId());
+//                        phyPartInfo.setGroupKey(spLocation.getGroupKey());
+//                        phyPartInfo.setPhyTable(spLocation.getPhyTableName());
+//                        phyPartInfo.setPartName(subpartSpec.getName());
+//                        phyPartInfo.setParentPartName(name);
+//                        phyPartInfo.setPartLevel(subpartSpec.getPartLevel());
+//                        phyPartInfo.setPartBitSetIdx(subpartSpec.getPosition().intValue());
+//
+//                        if (topology.containsKey(spLocation.getGroupKey())) {
+//                            topology.get(spLocation.getGroupKey()).add(phyPartInfo);
+//                        } else {
+//                            List<PhysicalPartitionInfo> phyPartInfos = new ArrayList<>();
+//                            phyPartInfos.add(phyPartInfo);
+//                            topology.put(spLocation.getGroupKey(), phyPartInfos);
+//                        }
+//                    } else {
+//                        if (ignoreInvalidLocation && spLocation != null && !spLocation.isValidLocation()) {
+//                            continue;
+//                        }
+//                        try {
+//                            logger.error("Found invalid location info of " + this.getTableName() + " " + this.getDigest(
+//                                MOCK_TABLE_VERSION));
+//                        } catch (Exception e) {
+//                            //pass
+//                        }
+//                        throw GeneralUtil
+//                            .nestedException(new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+//                                "Found invalid location info of " + this.getTableName() + "." + subPartName + (
+//                                    (spLocation == null) ?
+//                                        "location is null" : "")));
+//                    }
+//
+//                }
+//            } else {
+//                boolean findTargetPart = true;
+//                if (needFilterParts) {
+//                    if (!targetPartNameSet.contains(name)) {
+//                        findTargetPart = false;
+//                    }
+//                }
+//
+//                if (!findTargetPart) {
+//                    continue;
+//                }
+//
+//                final PartitionLocation location = partitionSpec.getLocation();
+//                if (location != null && (!throwException || location.isValidLocation())) {
+//                    PhysicalPartitionInfo phyPartInfo = new PhysicalPartitionInfo();
+//                    phyPartInfo.setPartId(partitionSpec.getId());
+//                    phyPartInfo.setGroupKey(location.getGroupKey());
+//                    phyPartInfo.setPhyTable(location.getPhyTableName());
+//                    phyPartInfo.setPartName(partitionSpec.getName());
+//                    phyPartInfo.setParentPartName(null);
+//                    phyPartInfo.setPartLevel(partitionSpec.getPartLevel());
+//                    phyPartInfo.setPartBitSetIdx(partitionSpec.getPosition().intValue());
+//
+//                    if (topology.containsKey(location.getGroupKey())) {
+//                        topology.get(location.getGroupKey()).add(phyPartInfo);
+//                    } else {
+//                        List<PhysicalPartitionInfo> phyPartInfos = new ArrayList<>();
+//                        phyPartInfos.add(phyPartInfo);
+//                        topology.put(location.getGroupKey(), phyPartInfos);
+//                    }
+//                } else {
+//                    if (ignoreInvalidLocation && (location != null && !location.isValidLocation())) {
+//                        continue;
+//                    }
+//                    try {
+//                        logger.error("Found invalid location info of " + this.getTableName() + " " + this.getDigest(
+//                            MOCK_TABLE_VERSION));
+//                    } catch (Exception e) {
+//                        //pass
+//                    }
+//                    throw GeneralUtil
+//                        .nestedException(new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+//                            "Found invalid location info of " + this.getTableName() + "." + name + ((location == null) ?
+//                                "location is null" : "")));
+//                }
+//            }
+//        }
+//        return topology;
+//    }
+
     /**
      * <pre>
      *  key:    groupKey
@@ -353,8 +541,7 @@ public class PartitionInfo {
      */
     public Map<String, List<PhysicalPartitionInfo>> getPhysicalPartitionTopology(List<String> partitionNames,
                                                                                  boolean throwException,
-                                                                                 boolean ignoreInvalid) {
-
+                                                                                 boolean ignoreInvalidLocation) {
         /**
          * Key: phy group
          * val: physical partition list
@@ -387,26 +574,39 @@ public class PartitionInfo {
                         continue;
                     }
 
-                    final PartitionLocation location = subpartSpec.getLocation();
-                    if (location != null && (!throwException || location.isValidLocation())) {
+                    final PartitionLocation spLocation = subpartSpec.getLocation();
+                    boolean locationIsNull = false;
+                    boolean locationInvalid = false;
+                    if (spLocation != null) {
+                        locationInvalid = !spLocation.isValidLocation();
                         PhysicalPartitionInfo phyPartInfo = new PhysicalPartitionInfo();
                         phyPartInfo.setPartId(subpartSpec.getId());
-                        phyPartInfo.setGroupKey(subpartSpec.getLocation().getGroupKey());
-                        phyPartInfo.setPhyTable(subpartSpec.getLocation().getPhyTableName());
+                        phyPartInfo.setGroupKey(spLocation.getGroupKey());
+                        phyPartInfo.setPhyTable(spLocation.getPhyTableName());
                         phyPartInfo.setPartName(subpartSpec.getName());
                         phyPartInfo.setParentPartName(name);
                         phyPartInfo.setPartLevel(subpartSpec.getPartLevel());
                         phyPartInfo.setPartBitSetIdx(subpartSpec.getPosition().intValue());
 
-                        if (topology.containsKey(location.getGroupKey())) {
-                            topology.get(location.getGroupKey()).add(phyPartInfo);
+                        if (topology.containsKey(spLocation.getGroupKey())) {
+                            topology.get(spLocation.getGroupKey()).add(phyPartInfo);
                         } else {
                             List<PhysicalPartitionInfo> phyPartInfos = new ArrayList<>();
                             phyPartInfos.add(phyPartInfo);
-                            topology.put(location.getGroupKey(), phyPartInfos);
+                            topology.put(spLocation.getGroupKey(), phyPartInfos);
+                        }
+
+                        if (locationInvalid) {
+                            if (ignoreInvalidLocation) {
+                                continue;
+                            }
                         }
                     } else {
-                        if (ignoreInvalid && location != null && !location.isValidLocation()) {
+                        locationIsNull = true;
+                    }
+
+                    if (locationIsNull || (locationInvalid && !ignoreInvalidLocation)) {
+                        if (!throwException) {
                             continue;
                         }
                         try {
@@ -418,10 +618,9 @@ public class PartitionInfo {
                         throw GeneralUtil
                             .nestedException(new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
                                 "Found invalid location info of " + this.getTableName() + "." + subPartName + (
-                                    (location == null) ?
+                                    (spLocation == null) ?
                                         "location is null" : "")));
                     }
-
                 }
             } else {
                 boolean findTargetPart = true;
@@ -436,11 +635,14 @@ public class PartitionInfo {
                 }
 
                 final PartitionLocation location = partitionSpec.getLocation();
-                if (location != null && (!throwException || location.isValidLocation())) {
+                boolean locationIsNull = false;
+                boolean locationInvalid = false;
+                if (location != null) {
+                    locationInvalid = !location.isValidLocation();
                     PhysicalPartitionInfo phyPartInfo = new PhysicalPartitionInfo();
                     phyPartInfo.setPartId(partitionSpec.getId());
-                    phyPartInfo.setGroupKey(partitionSpec.getLocation().getGroupKey());
-                    phyPartInfo.setPhyTable(partitionSpec.getLocation().getPhyTableName());
+                    phyPartInfo.setGroupKey(location.getGroupKey());
+                    phyPartInfo.setPhyTable(location.getPhyTableName());
                     phyPartInfo.setPartName(partitionSpec.getName());
                     phyPartInfo.setParentPartName(null);
                     phyPartInfo.setPartLevel(partitionSpec.getPartLevel());
@@ -454,7 +656,10 @@ public class PartitionInfo {
                         topology.put(location.getGroupKey(), phyPartInfos);
                     }
                 } else {
-                    if (ignoreInvalid && location != null && !location.isValidLocation()) {
+                    locationIsNull = true;
+                }
+                if (locationIsNull || (locationInvalid && !ignoreInvalidLocation)) {
+                    if (!throwException) {
                         continue;
                     }
                     try {
@@ -465,8 +670,9 @@ public class PartitionInfo {
                     }
                     throw GeneralUtil
                         .nestedException(new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
-                            "Found invalid location info of " + this.getTableName() + "." + name + ((location == null) ?
-                                "location is null" : "")));
+                            "Found invalid location info of " + this.getTableName() + "." + name + (
+                                (location == null) ?
+                                    "location is null" : "")));
                 }
             }
         }
@@ -481,6 +687,56 @@ public class PartitionInfo {
         return getPhysicalPartitionTopology(partitionNames, true, false);
     }
 
+    /**
+     * Get the list of physical partitionSpec by specifying partNames,
+     * the partNames maybe 1st-level-partition name or 2nd-level-partition name
+     */
+    public List<PartitionSpec> getPhysicalPartitionSpecsByPartitionNames(List<String> tarPartNames) {
+        PartSpecSearcher specSearcher = getPartSpecSearcher();
+        Set<String> phyPartNameSet = new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+        boolean useSubPartBy = this.getPartitionBy().getSubPartitionBy() != null;
+        boolean isPartTbl = this.tableType.isA(PartitionTableType.PARTITIONED_TABLE);
+        List<PartitionSpec> tarPhySpecs = new ArrayList<>();
+        if (!isPartTbl) {
+            return tarPhySpecs;
+        }
+        if (tarPartNames == null || tarPartNames.isEmpty()) {
+            return tarPhySpecs;
+        }
+        for (int i = 0; i < tarPartNames.size(); i++) {
+            String tarPartName = tarPartNames.get(i);
+            PartitionSpec tarPartSpec = specSearcher.getPartSpecByPartName(tarPartName);
+            if (tarPartSpec != null) {
+                List<PartitionSpec> tmpPhyPartSpecList = new ArrayList<>();
+                if (tarPartSpec.getPartLevel() == PartKeyLevel.PARTITION_KEY) {
+                    if (useSubPartBy) {
+                        tmpPhyPartSpecList.addAll(tarPartSpec.getSubPartitions());
+                    } else {
+                        tmpPhyPartSpecList.add(tarPartSpec);
+                    }
+                } else if (tarPartSpec.getPartLevel() == PartKeyLevel.SUBPARTITION_KEY) {
+                    tmpPhyPartSpecList.add(tarPartSpec);
+                }
+
+                for (int j = 0; j < tmpPhyPartSpecList.size(); j++) {
+                    PartitionSpec tmpPhySpec = tmpPhyPartSpecList.get(j);
+                    String tmpPhySpecName = tmpPhySpec.getName();
+                    if (phyPartNameSet.contains(tmpPhySpecName)) {
+                        continue;
+                    }
+                    phyPartNameSet.add(tarPartName);
+                    tarPhySpecs.add(tmpPhySpec);
+                }
+            }
+        }
+        return tarPhySpecs;
+    }
+
+    /**
+     * Key: grp
+     * Val:
+     * set of phyTable in one group
+     */
     public Map<String, Set<String>> getTopology() {
         return getTopology(false);
     }
@@ -509,6 +765,17 @@ public class PartitionInfo {
         return tableType == PartitionTableType.GSI_TABLE || tableType == PartitionTableType.PARTITION_TABLE;
     }
 
+    public boolean isGsiOrPartitionedTableWithOnlyOnePhyPartition() {
+        if (!isGsiOrPartitionedTable()) {
+            return false;
+        }
+        int phyCnt = getPartSpecSearcher().getGroupKeySetOfAllPhyPartSpecs().size();
+        if (phyCnt == 1) {
+            return true;
+        }
+        return false;
+    }
+
     public String showCreateTablePartitionDefInfo(boolean showHashByRange) {
         return showCreateTablePartitionDefInfo(showHashByRange, "");
     }
@@ -519,6 +786,10 @@ public class PartitionInfo {
             partByDef += "SINGLE";
         } else if (tableType == PartitionTableType.BROADCAST_TABLE) {
             partByDef += "BROADCAST";
+        } else if (tableType == PartitionTableType.REPLICAS_TABLE) {
+            partByDef += "REPLICAS";
+        } else if (this.isNoPartitionKeyTable()) {
+            partByDef += "PARTITION BY UDF_HASH()";
         } else {
             PartitionByNormalizationParams params = new PartitionByNormalizationParams();
             params.setShowHashByRange(showHashByRange);
@@ -700,6 +971,7 @@ public class PartitionInfo {
 
         if (this.locality != null) {
             newPartInfo.setLocality(this.locality);
+            newPartInfo.setLocalityDesc(this.localityDesc);
         }
 
         if (this.partSpecSearcher != null) {
@@ -756,8 +1028,10 @@ public class PartitionInfo {
     public List<List<String>> getAllLevelActualPartCols() {
         PartitionTableType tableType = this.tableType;
         List<List<String>> result = new ArrayList<>();
-        if (tableType != PartitionTableType.PARTITION_TABLE && tableType != PartitionTableType.GSI_TABLE
-            && tableType != PartitionTableType.COLUMNAR_TABLE) {
+        if ((tableType != PartitionTableType.PARTITION_TABLE
+            && tableType != PartitionTableType.GSI_TABLE
+            && tableType != PartitionTableType.COLUMNAR_TABLE)
+            || this.isNoPartitionKeyTable()) {
             result.add(Lists.newArrayList());
             result.add(Lists.newArrayList());
             return result;
@@ -979,6 +1253,10 @@ public class PartitionInfo {
 
         PartitionInfo objPartInfo = (PartitionInfo) obj;
         if (!StringUtils.equals(locality, (objPartInfo.getLocality()))) {
+            return false;
+        }
+        if (this.isNoPartitionKeyTable() || objPartInfo.isNoPartitionKeyTable()) {
+            // always create new tablegroup for each noPartitionKeyTable
             return false;
         }
         if (objPartInfo.getTableType() != this.tableType) {

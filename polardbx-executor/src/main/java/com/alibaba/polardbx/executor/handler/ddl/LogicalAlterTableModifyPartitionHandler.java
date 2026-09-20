@@ -22,6 +22,7 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
 import com.alibaba.polardbx.executor.ddl.job.factory.AlterTableModifyPartitionJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJob;
+import com.alibaba.polardbx.executor.partitionmanagement.AlterTableGroupUtils;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.executor.utils.DdlUtils;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
@@ -97,6 +98,7 @@ public class LogicalAlterTableModifyPartitionHandler extends LogicalCommonDdlHan
             useSubPartTemp = targetPartBy.isUseSubPartTemplate();
         }
 
+        AlterTableGroupUtils.validateRepartitionPermit(schemaName, executionContext);
         if (targetPartBy.getStrategy() != PartitionStrategy.LIST
             && targetPartBy.getStrategy() != PartitionStrategy.LIST_COLUMNS) {
             throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,

@@ -26,6 +26,8 @@ public class FullTypeTest extends ColumnarReadBaseTestCase {
     public static String PRIMARY_TABLE_NAME = "full_type_create_test";
     public static String COLUMNAR_INDEX_NAME = "full_type_index";
 
+    private static final String DELETE_SQL_LIMIT = "delete from %s limit %d";
+
     @Before
     public void prepareTable() {
         JdbcUtil.dropTable(tddlConnection, PRIMARY_TABLE_NAME);
@@ -60,6 +62,16 @@ public class FullTypeTest extends ColumnarReadBaseTestCase {
         String primarySql = "select * from " + PRIMARY_TABLE_NAME + " force index (primary) order by id";
         DataValidator.selectContentSameAssertWithDiffSql(columnarSql, primarySql, null, tddlConnection, tddlConnection,
             false, false, false);
+
+        JdbcUtil.executeUpdateSuccess(tddlConnection, String.format(DELETE_SQL_LIMIT, PRIMARY_TABLE_NAME, 10));
+
+        waitForRowCountEquals(tddlConnection, PRIMARY_TABLE_NAME, COLUMNAR_INDEX_NAME);
+
+        checkColumnOneByOne();
+        columnarSql = "select * from " + PRIMARY_TABLE_NAME + " force index (" + COLUMNAR_INDEX_NAME + ") order by id";
+        primarySql = "select * from " + PRIMARY_TABLE_NAME + " force index (primary) order by id";
+        DataValidator.selectContentSameAssertWithDiffSql(columnarSql, primarySql, null, tddlConnection, tddlConnection,
+            false, false, false);
     }
 
     @Test
@@ -80,6 +92,16 @@ public class FullTypeTest extends ColumnarReadBaseTestCase {
         String columnarSql =
             "select * from " + PRIMARY_TABLE_NAME + " force index (" + COLUMNAR_INDEX_NAME + ") order by id";
         String primarySql = "select * from " + PRIMARY_TABLE_NAME + " force index (primary) order by id";
+        DataValidator.selectContentSameAssertWithDiffSql(columnarSql, primarySql, null, tddlConnection, tddlConnection,
+            false, false, false);
+
+        JdbcUtil.executeUpdateSuccess(tddlConnection, String.format(DELETE_SQL_LIMIT, PRIMARY_TABLE_NAME, 10));
+
+        waitForRowCountEquals(tddlConnection, PRIMARY_TABLE_NAME, COLUMNAR_INDEX_NAME);
+
+        checkColumnOneByOne();
+        columnarSql = "select * from " + PRIMARY_TABLE_NAME + " force index (" + COLUMNAR_INDEX_NAME + ") order by id";
+        primarySql = "select * from " + PRIMARY_TABLE_NAME + " force index (primary) order by id";
         DataValidator.selectContentSameAssertWithDiffSql(columnarSql, primarySql, null, tddlConnection, tddlConnection,
             false, false, false);
     }

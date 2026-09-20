@@ -507,15 +507,27 @@ public class PartitionDataTypeUtils {
 
         dataType.getSqlType();
         Object result = null;
+        if (partFld.isNull()) {
+            return result;
+        }
         if (DataTypeUtil.isStringType(dataType)) {
             result = partFld.stringValue(sessionProperties).toStringUtf8();
-        } else if (DataTypeUtil.isUnderLongType(dataType)) {
-            result = partFld.longValue();
         } else if (DataTypeUtil.isDateType(dataType)) {
             result = partFld.stringValue(sessionProperties).toStringUtf8();
+        } else if (DataTypeUtil.isUnderBigintType(dataType)
+            && !DataTypeUtil.isBigintUnsigned(dataType)) {
+            result = partFld.longValue();
+        } else if (DataTypeUtil.isBigintUnsigned(dataType)) {
+            String uBigintStr = partFld.stringValue().toStringUtf8();
+            BigInteger bigIntegerVal = new BigInteger(uBigintStr);
+            result = bigIntegerVal;
+        } else if (DataTypeUtil.isZeroScaledDecimalType(dataType)) {
+            String bigDeciStr = partFld.stringValue().toStringUtf8();
+            BigDecimal decimalVal = new BigDecimal(bigDeciStr);
+            result = decimalVal;
         } else {
             throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
-                "Unsupported to fetch java object from datatype of ");
+                String.format("Unsupported to fetch java object from datatype of %s", dataType.getStringSqlType()));
         }
         return result;
     }

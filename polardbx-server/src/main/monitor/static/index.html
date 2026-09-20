@@ -1,0 +1,1049 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PolarDB-X Cache Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+:root {
+  --bg-primary: #0f1923;
+  --bg-secondary: #1a2a3a;
+  --bg-card: #1e3044;
+  --border: #2a4a6a;
+  --text-primary: #e0e8f0;
+  --text-secondary: #8899aa;
+  --accent-blue: #3b9eff;
+  --accent-green: #00e676;
+  --accent-orange: #ff9100;
+  --accent-red: #ff5252;
+  --accent-purple: #b388ff;
+  --accent-cyan: #18ffff;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:var(--bg-primary); color:var(--text-primary); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,monospace; }
+
+/* Header */
+.header { background:linear-gradient(135deg,#0d1b2a,#1b3a5c); padding:16px 24px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--border); }
+.header h1 { font-size:20px; font-weight:600; letter-spacing:1px; }
+.header h1 span { color:var(--accent-blue); }
+.header-right { display:flex; align-items:center; gap:16px; font-size:13px; color:var(--text-secondary); }
+.status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:4px; }
+.status-dot.ok { background:var(--accent-green); box-shadow:0 0 6px var(--accent-green); }
+.status-dot.err { background:var(--accent-red); box-shadow:0 0 6px var(--accent-red); }
+
+/* Controls */
+.controls { padding:12px 24px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+.controls label { font-size:13px; color:var(--text-secondary); }
+.controls select, .controls input { background:var(--bg-secondary); border:1px solid var(--border); color:var(--text-primary); padding:4px 10px; border-radius:4px; font-size:13px; }
+.btn { padding:5px 14px; border:1px solid var(--accent-blue); background:transparent; color:var(--accent-blue); border-radius:4px; cursor:pointer; font-size:13px; transition:all .2s; }
+.btn:hover { background:var(--accent-blue); color:#fff; }
+.btn.active { background:var(--accent-blue); color:#fff; }
+
+/* Layout */
+.container { padding:16px 24px; }
+.section-title { font-size:15px; font-weight:600; color:var(--accent-blue); margin:18px 0 10px; padding-left:8px; border-left:3px solid var(--accent-blue); }
+
+/* Peer table */
+.peer-table { width:100%; border-collapse:collapse; margin-bottom:16px; font-size:13px; }
+.peer-table th { background:var(--bg-secondary); padding:8px 12px; text-align:left; color:var(--text-secondary); font-weight:500; border-bottom:1px solid var(--border); white-space:nowrap; }
+.peer-table td { padding:8px 12px; border-bottom:1px solid rgba(42,74,106,.3); white-space:nowrap; }
+.peer-table tr:hover td { background:rgba(59,158,255,.05); }
+.badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+.badge-leader { background:rgba(0,230,118,.15); color:var(--accent-green); }
+.badge-follower { background:rgba(136,153,170,.15); color:var(--text-secondary); }
+.badge-role { background:rgba(59,158,255,.15); color:var(--accent-blue); }
+
+/* Metric cards */
+.metric-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px; margin-bottom:16px; }
+.metric-card { background:var(--bg-card); border:1px solid var(--border); border-radius:6px; padding:12px; }
+.metric-card .label { font-size:11px; color:var(--text-secondary); margin-bottom:4px; }
+.metric-card .value { font-size:22px; font-weight:700; }
+.metric-card .sub { font-size:11px; color:var(--text-secondary); margin-top:2px; }
+
+/* Chart grid */
+.chart-grid { display:grid; grid-template-columns:1fr; gap:16px; margin-bottom:20px; }
+.chart-box { background:var(--bg-card); border:1px solid var(--border); border-radius:6px; padding:12px; }
+.chart-box .chart-title { font-size:13px; color:var(--text-secondary); margin-bottom:8px; }
+.chart-container { width:100%; height:280px; }
+
+/* Tabs for peer detail */
+.peer-tabs { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; }
+.peer-tab { position:relative; padding:5px 14px; border:1px solid var(--border); border-radius:4px; cursor:pointer; font-size:13px; color:var(--text-secondary); transition:all .2s; }
+.peer-tab:hover { border-color:var(--accent-blue); color:var(--text-primary); }
+.peer-tab.active { background:var(--accent-blue); border-color:var(--accent-blue); color:#fff; }
+.peer-tab .tip-card { display:none; position:absolute; left:0; top:calc(100% + 6px); z-index:100; min-width:340px; max-width:420px; background:var(--bg-card); border:1px solid var(--accent-blue); border-radius:6px; padding:12px; box-shadow:0 4px 20px rgba(0,0,0,.5); pointer-events:none; }
+.peer-tab:hover .tip-card { display:block; }
+.tip-card .tip-title { font-size:12px; font-weight:600; color:var(--accent-cyan); margin-bottom:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tip-card .tip-section { margin-bottom:6px; }
+.tip-card .tip-section-title { font-size:11px; font-weight:600; color:var(--accent-blue); margin-bottom:3px; text-transform:uppercase; letter-spacing:.3px; }
+.tip-card .tip-row { display:flex; justify-content:space-between; gap:12px; font-size:11px; padding:1px 0; }
+.tip-card .tip-key { color:var(--text-secondary); white-space:nowrap; }
+.tip-card .tip-val { color:var(--text-primary); font-weight:600; font-family:monospace; white-space:nowrap; }
+
+/* Stat panel - cumulative totals for selected peer */
+.stat-panel { background:var(--bg-card); border:1px solid var(--border); border-radius:6px; padding:16px; margin-bottom:16px; display:none; }
+.stat-panel.visible { display:block; }
+.stat-panel-header { font-size:14px; font-weight:600; color:var(--accent-cyan); margin-bottom:12px; }
+.stat-sections { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:16px; }
+.stat-section { background:var(--bg-secondary); border-radius:4px; padding:12px; }
+.stat-section-title { font-size:12px; font-weight:600; color:var(--accent-blue); margin-bottom:8px; text-transform:uppercase; letter-spacing:.5px; }
+.stat-row { display:flex; justify-content:space-between; padding:3px 0; font-size:12px; border-bottom:1px solid rgba(42,74,106,.15); }
+.stat-row:last-child { border-bottom:none; }
+.stat-key { color:var(--text-secondary); }
+.stat-val { color:var(--text-primary); font-weight:600; font-family:monospace; }
+
+/* Chart section tabs */
+.chart-tabs { display:flex; gap:0; margin-bottom:16px; border-bottom:2px solid var(--border); }
+.chart-tab { padding:8px 18px; font-size:13px; font-weight:600; color:var(--text-secondary); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-2px; transition:all .2s; white-space:nowrap; }
+.chart-tab:hover { color:var(--text-primary); }
+.chart-tab.active { color:var(--accent-cyan); border-bottom-color:var(--accent-cyan); }
+.chart-panel { display:none; }
+.chart-panel.active { display:block; }
+
+/* Footer */
+.footer { text-align:center; padding:16px; font-size:12px; color:var(--text-secondary); border-top:1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>&#9608; <span>PolarDB-X</span> Cache Peer Monitor</h1>
+  <div class="header-right">
+    <span><span class="status-dot ok" id="statusDot"></span><span id="statusText">Connecting...</span></span>
+    <span id="lastUpdate">--</span>
+  </div>
+</div>
+
+<div class="controls">
+  <label>Refresh:</label>
+  <select id="refreshInterval">
+    <option value="5" selected>5s</option>
+    <option value="10">10s</option>
+    <option value="30">30s</option>
+    <option value="60">60s</option>
+  </select>
+  <label>History:</label>
+  <select id="historyMinutes">
+    <option value="10">10 min</option>
+    <option value="30">30 min</option>
+    <option value="60" selected>1 hour</option>
+    <option value="180">3 hours</option>
+    <option value="360">6 hours</option>
+  </select>
+  <button class="btn" onclick="refreshNow()">Refresh Now</button>
+  <button class="btn" id="pauseBtn" onclick="togglePause()">Pause</button>
+</div>
+
+<div class="container">
+  <!-- Peer overview table -->
+  <div class="section-title">Node Overview</div>
+  <table class="peer-table" id="peerTable">
+    <thead><tr>
+      <th>Peer Name</th><th>Host</th><th>Role</th><th>Leader</th>
+      <th>Arena Mem</th><th>BP Loaded</th><th>Local Cache</th><th>Status</th><th>Last Modified</th>
+    </tr></thead>
+    <tbody id="peerTableBody"></tbody>
+  </table>
+
+  <!-- Quick metric cards -->
+  <div class="section-title">Cluster Summary</div>
+  <div class="metric-grid" id="metricGrid"></div>
+
+  <!-- Per-peer detail tabs + charts -->
+  <div class="section-title">Node Detail</div>
+  <div class="peer-tabs" id="peerTabs"></div>
+
+  <!-- Per-peer cumulative totals panel -->
+  <div class="stat-panel" id="statPanel">
+    <div class="stat-panel-header" id="statPanelHeader">Node Cumulative Statistics</div>
+    <div class="stat-sections" id="statSections"></div>
+  </div>
+
+  <!-- Chart section tabs -->
+  <div class="chart-tabs" id="chartSectionTabs">
+    <div class="chart-tab active" onclick="switchChartTab('tab-bp')">Buffer Pool</div>
+    <div class="chart-tab" onclick="switchChartTab('tab-lc')">Local Cache</div>
+    <div class="chart-tab" onclick="switchChartTab('tab-rpc')">RPC Statistics</div>
+    <div class="chart-tab" onclick="switchChartTab('tab-cn')">CN Cache</div>
+    <div class="chart-tab" onclick="switchChartTab('tab-push')">Page Push</div>
+    <div class="chart-tab" onclick="switchChartTab('tab-hit')">Hit Rate</div>
+  </div>
+
+  <!-- Tab: Buffer Pool Memory -->
+  <div class="chart-panel active" id="tab-bp">
+    <div class="chart-grid">
+      <div class="chart-box"><div class="chart-title">BP Memory Usage (loadedCount &times; blockSize)</div><div class="chart-container" id="chartBPMem"></div></div>
+      <div class="chart-box"><div class="chart-title">BP Referred Count (pages held by BPRefer)</div><div class="chart-container" id="chartBPReferred"></div></div>
+    </div>
+  </div>
+
+  <!-- Tab: Local Cache -->
+  <div class="chart-panel" id="tab-lc">
+    <div class="chart-grid">
+      <div class="chart-box"><div class="chart-title">Cached Size</div><div class="chart-container" id="chartLocalCachedSize"></div></div>
+      <div class="chart-box"><div class="chart-title">Cache Usage (%)</div><div class="chart-container" id="chartLocalUsage"></div></div>
+      <div class="chart-box"><div class="chart-title">Cache Utilization (%)</div><div class="chart-container" id="chartLocalUtil"></div></div>
+      <div class="chart-box"><div class="chart-title">Referred Slot Count (slots held by active refs)</div><div class="chart-container" id="chartLocalReferred"></div></div>
+    </div>
+  </div>
+
+  <!-- Tab: RPC Statistics -->
+  <div class="chart-panel" id="tab-rpc">
+    <div class="chart-grid">
+      <div class="chart-box"><div class="chart-title">Read Ops/s (stacked: hit / local / rpc / remote / evict)</div><div class="chart-container" id="chartRpcOps"></div></div>
+      <div class="chart-box"><div class="chart-title">Read Bytes/s (stacked: hit / local / rpc / remote)</div><div class="chart-container" id="chartRpcBytesBar"></div></div>
+    </div>
+  </div>
+
+  <!-- Tab: CN Cache -->
+  <div class="chart-panel" id="tab-cn">
+    <div class="chart-grid">
+      <div class="chart-box"><div class="chart-title">CN Read Ops/s (stacked: hit / local / rpc / remote / evict)</div><div class="chart-container" id="chartCnOps"></div></div>
+      <div class="chart-box"><div class="chart-title">CN Read Bytes/s (stacked: hit / local / rpc / remote)</div><div class="chart-container" id="chartCnBytesBar"></div></div>
+    </div>
+  </div>
+
+  <!-- Tab: Page Push -->
+  <div class="chart-panel" id="tab-push">
+    <div class="chart-grid">
+      <div class="chart-box"><div class="chart-title">Push Ops/s (cluster-wide: call / attempt / success / received)</div><div class="chart-container" id="chartPushOps"></div></div>
+      <div class="chart-box"><div class="chart-title">Push Bytes/s (cluster-wide: sent / received)</div><div class="chart-container" id="chartPushBytes"></div></div>
+      <div class="chart-box"><div class="chart-title">Push Success Rate (%)</div><div class="chart-container" id="chartPushSuccessRate"></div></div>
+      <div class="chart-box"><div class="chart-title">Push Avg Latency (ms, per call)</div><div class="chart-container" id="chartPushAvgMs"></div></div>
+    </div>
+  </div>
+
+  <!-- Tab: Hit Rate -->
+  <div class="chart-panel" id="tab-hit">
+    <div class="chart-grid">
+      <div class="chart-box"><div class="chart-title">RPC Buffer Pool Hit Rate (%)</div><div class="chart-container" id="chartHitRate"></div></div>
+      <div class="chart-box"><div class="chart-title">CN Buffer Pool Hit Rate (%)</div><div class="chart-container" id="chartCnHitRate"></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">PolarDB-X Cache Peer Monitor &middot; Auto-refresh enabled</div>
+
+<script>
+// =========================================================================
+// State
+// =========================================================================
+let paused = false;
+let refreshTimer = null;
+let selectedPeer = null; // null = all peers
+let activeChartTab = 'tab-bp';
+const charts = {};
+const COLORS = ['#3b9eff','#00e676','#ff9100','#ff5252','#b388ff','#18ffff','#ffd740','#69f0ae'];
+
+// =========================================================================
+// Chart tab switching
+// =========================================================================
+function switchChartTab(tabId) {
+  activeChartTab = tabId;
+  document.querySelectorAll('.chart-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.chart-tab').forEach(t => t.classList.remove('active'));
+  const panel = document.getElementById(tabId);
+  if (panel) panel.classList.add('active');
+  // find the matching tab button
+  document.querySelectorAll('.chart-tab').forEach(t => {
+    if (t.getAttribute('onclick')?.includes(tabId)) t.classList.add('active');
+  });
+  // resize charts in the newly visible panel so ECharts recalculates layout
+  if (panel) {
+    panel.querySelectorAll('.chart-container').forEach(dom => {
+      const c = charts[dom.id];
+      if (c) c.resize();
+    });
+  }
+}
+
+// =========================================================================
+// Utilities
+// =========================================================================
+function fmt(n) {
+  if (n == null) return '--';
+  if (typeof n === 'number') {
+    if (n >= 1e12) return (n/1e12).toFixed(2)+'T';
+    if (n >= 1e9) return (n/1e9).toFixed(2)+'G';
+    if (n >= 1e6) return (n/1e6).toFixed(2)+'M';
+    if (n >= 1e3) return (n/1e3).toFixed(1)+'K';
+    return n.toFixed ? (n % 1 === 0 ? n.toString() : n.toFixed(2)) : n;
+  }
+  return n;
+}
+function fmtBytes(b) {
+  if (b == null) return '--';
+  if (b >= 1099511627776) return (b/1099511627776).toFixed(1)+' TB';
+  if (b >= 1073741824) return (b/1073741824).toFixed(1)+' GB';
+  if (b >= 1048576) return (b/1048576).toFixed(1)+' MB';
+  if (b >= 1024) return (b/1024).toFixed(1)+' KB';
+  return Math.round(b)+' B';
+}
+function pct(a,b) { return b>0 ? (a/b*100).toFixed(1)+'%' : '--'; }
+function safe(obj,...keys) { let v=obj; for(const k of keys){ if(!v) return null; v=v[k]; } return v; }
+/** Format timestamp for X axis: show HH:MM:SS only */
+function fmtTime(ts) { return ts && ts.length >= 19 ? ts.substring(11, 19) : ts; }
+function shortPeer(name) { const i=name.indexOf('@'); return i>=0?name.substring(i+1):name; }
+
+// =========================================================================
+// Chart factory
+// =========================================================================
+function initChart(domId) {
+  const dom = document.getElementById(domId);
+  if (!dom) return null;
+  const c = echarts.init(dom, 'dark');
+  charts[domId] = c;
+  return c;
+}
+function getChart(domId) { return charts[domId] || initChart(domId); }
+
+function makeTimeSeriesOption(title, legends, xData, seriesData) {
+  return {
+    backgroundColor: 'transparent',
+    tooltip: { trigger:'axis', axisPointer:{type:'cross'}, textStyle:{fontSize:12} },
+    legend: { data:legends, textStyle:{fontSize:11,color:'#8899aa'}, top:0, type:'scroll' },
+    grid: { left:60, right:20, top:35, bottom:30 },
+    xAxis: { type:'category', data:xData, axisLabel:{fontSize:10,color:'#667788',rotate:30,formatter:fmtTime},
+             axisLine:{lineStyle:{color:'#2a4a6a'}} },
+    yAxis: { type:'value', axisLabel:{fontSize:10,color:'#667788'},
+             splitLine:{lineStyle:{color:'rgba(42,74,106,.3)'}}, axisLine:{show:false} },
+    series: seriesData.map((s,i) => ({
+      name:s.name, type:'line', data:s.data, smooth:true, symbol:'none', lineStyle:{width:2},
+      itemStyle:{color:COLORS[i%COLORS.length]},
+      areaStyle: seriesData.length<=2 ? {opacity:0.08} : undefined,
+    })),
+  };
+}
+
+// =========================================================================
+// Render peer table
+// =========================================================================
+function renderTable(peers) {
+  const tbody = document.getElementById('peerTableBody');
+  let html = '';
+  for (const p of peers) {
+    const s = p.status_json ? (typeof p.status_json==='string' ? JSON.parse(p.status_json||'{}') : p.status_json) : {};
+    const arena = s.arena||{};
+    const bp = s.bp||{};
+    const lc = s.localCache||{};
+    const isLeader = p.leader===1||p.leader==='1';
+    const arenaMem = arena.totalMemory!=null ? fmtBytes(arena.totalMemory) : '--';
+    const arenaUsed = arena.reservedBlockCount!=null && arena.restReservedBlockCount!=null
+      ? pct(arena.reservedBlockCount-arena.restReservedBlockCount, arena.reservedBlockCount) : '';
+    const bpLoaded = bp.loadedCount!=null && arena.blockSize ? fmtBytes(bp.loadedCount * arena.blockSize) : (bp.loadedCount!=null ? fmt(bp.loadedCount) : '--');
+    const lcUsage = lc.cachedSize!=null ? fmtBytes(lc.cachedSize) : '--';
+    const hasStatus = p.status_json && p.status_json!=='null' && p.status_json!=='NULL';
+
+    html += `<tr>
+      <td style="color:var(--accent-blue)">${p.peer_name||''}</td>
+      <td>${p.host||''}</td>
+      <td><span class="badge badge-role">${p.role||''}</span></td>
+      <td><span class="badge ${isLeader?'badge-leader':'badge-follower'}">${isLeader?'Leader':'Follower'}</span></td>
+      <td>${arenaMem} ${arenaUsed?'('+arenaUsed+')':''}</td>
+      <td>${bpLoaded}</td>
+      <td>${lcUsage}</td>
+      <td><span class="status-dot ${hasStatus?'ok':'err'}"></span>${hasStatus?'OK':'No Data'}</td>
+      <td>${p.gmt_modified||''}</td>
+    </tr>`;
+  }
+  tbody.innerHTML = html;
+}
+
+// =========================================================================
+// Render metric summary cards
+// =========================================================================
+function renderMetrics(peers) {
+  const grid = document.getElementById('metricGrid');
+  let totalArena=0, totalBpMem=0, totalLcCached=0, totalLcSize=0;
+  let totalRpcHit=0, totalRpcMiss=0, totalCnHit=0, totalCnMiss=0;
+  let totalPushAttempt=0, totalPushSuccess=0, totalPushBytes=0, totalPushReceivedBytes=0;
+  let activePeers=0;
+  for (const p of peers) {
+    const s = p.status_json ? (typeof p.status_json==='string'?JSON.parse(p.status_json||'{}'):p.status_json) : {};
+    if (!s || !s.arena) continue;
+    activePeers++;
+    totalArena += (s.arena.totalMemory||0);
+    const bs = s.arena.blockSize||0;
+    totalBpMem += (s.bp?.loadedCount||0) * bs;
+    totalLcCached += (s.localCache?.cachedSize||0);
+    totalLcSize += (s.localCache?.configuredSize||0);
+    totalRpcHit += (s.rpc?.bufferPoolHit||0);
+    totalRpcMiss += (s.rpc?.bufferPoolMiss||0);
+    totalCnHit += (s.cnCache?.bufferPoolHit||0);
+    totalCnMiss += (s.cnCache?.bufferPoolMiss||0);
+    totalPushAttempt += (s.rpc?.pushAttemptPeers||0);
+    totalPushSuccess += (s.rpc?.pushSuccessPeers||0);
+    totalPushBytes += (s.rpc?.pushBytes||0);
+    totalPushReceivedBytes += (s.rpc?.pushReceivedBytes||0);
+  }
+  const cards = [
+    {label:'Total Peers', value:peers.length, sub:`${activePeers} reporting`},
+    {label:'Total Arena Memory', value:fmtBytes(totalArena)},
+    {label:'Total BP Memory', value:fmtBytes(totalBpMem)},
+    {label:'Total Local Cache', value:fmtBytes(totalLcCached), sub:totalLcSize?'of '+fmtBytes(totalLcSize):''},
+    {label:'RPC BP Hit Rate', value:pct(totalRpcHit,totalRpcHit+totalRpcMiss)},
+    {label:'CN BP Hit Rate', value:pct(totalCnHit,totalCnHit+totalCnMiss)},
+    {label:'Push Success Rate', value:pct(totalPushSuccess,totalPushAttempt),
+      sub:totalPushAttempt?`${fmt(totalPushSuccess)}/${fmt(totalPushAttempt)} peers`:''},
+    {label:'Push Bytes (out/in)', value:fmtBytes(totalPushBytes),
+      sub:totalPushReceivedBytes?'in '+fmtBytes(totalPushReceivedBytes):''},
+  ];
+  grid.innerHTML = cards.map(c=>
+    `<div class="metric-card"><div class="label">${c.label}</div><div class="value">${c.value}</div>${c.sub?'<div class="sub">'+c.sub+'</div>':''}</div>`
+  ).join('');
+}
+
+// =========================================================================
+// Render peer tabs
+// =========================================================================
+function renderPeerTabs(peers) {
+  const container = document.getElementById('peerTabs');
+  let html = `<div class="peer-tab ${!selectedPeer?'active':''}" onclick="selectPeer(null)">All Nodes</div>`;
+  for (const p of peers) {
+    const name = p.peer_name||'unknown';
+    const short = shortPeer(name);
+    const s = p.status_json ? (typeof p.status_json==='string'?JSON.parse(p.status_json||'{}'):p.status_json) : null;
+    const tip = buildTipCard(name, p, s);
+    html += `<div class="peer-tab ${selectedPeer===name?'active':''}" onclick="selectPeer('${name}')">${short}${tip}</div>`;
+  }
+  container.innerHTML = html;
+}
+
+function buildTipCard(name, p, s) {
+  if (!s) return '<div class="tip-card"><div class="tip-title">No status data</div></div>';
+  const a = s.arena||{}, bp = s.bp||{}, lc = s.localCache||{}, cfg = s.config||{}, rpc = s.rpc||{};
+  const isLeader = p.leader===1||p.leader==='1';
+  const bs = a.blockSize||0;
+
+  let h = `<div class="tip-card"><div class="tip-title">${name}</div>`;
+
+  // Basic info
+  h += `<div class="tip-section"><div class="tip-section-title">Node</div>`;
+  h += tipRow('Host', p.host||'--');
+  h += tipRow('Role', p.role||'--');
+  h += tipRow('Leader', isLeader?'Yes':'No');
+  h += `</div>`;
+
+  // Arena (static config)
+  h += `<div class="tip-section"><div class="tip-section-title">Arena</div>`;
+  h += tipRow('Total Memory', fmtBytes(a.totalMemory));
+  h += tipRow('Dynamic Arena', fmtBytes(a.dynamicArenaMemory));
+  h += tipRow('BP Reserve', fmtBytes(a.bpReserveMemory));
+  h += tipRow('Block Size', fmtBytes(a.blockSize));
+  h += tipRow('Reserved Blocks', fmt(a.reservedBlockCount));
+  h += tipRow('Rest Reserved', fmt(a.restReservedBlockCount));
+  h += `</div>`;
+
+  // BP
+  h += `<div class="tip-section"><div class="tip-section-title">Buffer Pool</div>`;
+  h += tipRow('Loaded Count', fmt(bp.loadedCount));
+  h += tipRow('BP Memory', bp.loadedCount!=null&&bs? fmtBytes(bp.loadedCount*bs) : '--');
+  h += tipRow('Referred Count', fmt(bp.referredCount));
+  h += `</div>`;
+
+  // Local cache
+  h += `<div class="tip-section"><div class="tip-section-title">Local Cache</div>`;
+  h += tipRow('Configured Size', fmtBytes(lc.configuredSize));
+  h += tipRow('Cached Size', fmtBytes(lc.cachedSize));
+  h += tipRow('Usage', lc.cacheUsage!=null?(lc.cacheUsage*100).toFixed(1)+'%':'--');
+  h += tipRow('Utilization', lc.cacheUtilization!=null?(lc.cacheUtilization*100).toFixed(1)+'%':'--');
+  h += tipRow('Referred Slots', fmt(lc.referredSlotCount));
+  h += `</div>`;
+
+  // Page Push (cumulative; from rpc-side CacheStatisticsCollector)
+  if (rpc.pushCallCount != null || rpc.pushAttemptPeers != null || rpc.pushReceived != null) {
+    h += `<div class="tip-section"><div class="tip-section-title">Page Push</div>`;
+    h += tipRow('Calls', fmt(rpc.pushCallCount));
+    h += tipRow('Attempt / Success Peers',
+      `${fmt(rpc.pushAttemptPeers)} / ${fmt(rpc.pushSuccessPeers)}`);
+    h += tipRow('Success Rate', pct(rpc.pushSuccessPeers, rpc.pushAttemptPeers));
+    h += tipRow('Received', fmt(rpc.pushReceived));
+    h += tipRow('Sent / Recv Bytes',
+      `${fmtBytes(rpc.pushBytes)} / ${fmtBytes(rpc.pushReceivedBytes)}`);
+    const avgPushMs = (rpc.pushCallCount && rpc.pushCallCount > 0)
+      ? (rpc.pushNanos / rpc.pushCallCount / 1e6).toFixed(2) + ' ms' : '--';
+    h += tipRow('Avg Latency', avgPushMs);
+    h += `</div>`;
+  }
+
+  // Config
+  if (cfg.peerTag || cfg.cacheRpcPort) {
+    h += `<div class="tip-section"><div class="tip-section-title">Config</div>`;
+    h += tipRow('Peer Tag', cfg.peerTag||'--');
+    h += tipRow('RPC Port', cfg.cacheRpcPort||'--');
+    h += tipRow('Cache Threads', cfg.cacheThreads||'--');
+    h += tipRow('Query Threads', cfg.queryThreads||'--');
+    h += `</div>`;
+  }
+
+  h += `</div>`;
+  return h;
+}
+
+function tipRow(k, v) {
+  return `<div class="tip-row"><span class="tip-key">${k}</span><span class="tip-val">${v!=null?v:'--'}</span></div>`;
+}
+function selectPeer(name) { selectedPeer=name; refreshNow(); }
+
+// =========================================================================
+// Render charts from history (DELTA mode for counters, interval hit rate)
+// =========================================================================
+
+/**
+ * Build ordered entries + tsMap for a single peer.
+ */
+function buildPeerData(entries) {
+  const sorted = [...entries].sort((a,b)=>a.ts<b.ts?-1:1);
+  const tsMap = {};
+  sorted.forEach(e => tsMap[e.ts] = e);
+  return { sorted, tsMap };
+}
+
+/**
+ * Compute delta array: for each timestamp in xData, compute value[i] - value[i-1].
+ * First point is null (no previous).
+ */
+function deltaArray(xData, tsMap, section, key) {
+  const result = [];
+  let prev = null;
+  for (const t of xData) {
+    const e = tsMap[t];
+    const cur = e ? safe(e, 'status', section, key) : null;
+    if (cur != null && prev != null && cur >= prev) {
+      result.push(cur - prev);
+    } else {
+      result.push(null);
+    }
+    if (cur != null) prev = cur;
+  }
+  return result;
+}
+
+/**
+ * Compute interval hit rate: deltaHit / (deltaHit + deltaMiss) * 100.
+ */
+function intervalHitRateArray(xData, tsMap, section) {
+  const result = [];
+  let prevHit = null, prevMiss = null;
+  for (const t of xData) {
+    const e = tsMap[t];
+    const curHit = e ? safe(e, 'status', section, 'bufferPoolHit') : null;
+    const curMiss = e ? safe(e, 'status', section, 'bufferPoolMiss') : null;
+    if (curHit != null && curMiss != null && prevHit != null && prevMiss != null) {
+      const dHit = curHit - prevHit;
+      const dMiss = curMiss - prevMiss;
+      const total = dHit + dMiss;
+      result.push(total > 0 ? +((dHit / total) * 100).toFixed(2) : null);
+    } else {
+      result.push(null);
+    }
+    if (curHit != null) prevHit = curHit;
+    if (curMiss != null) prevMiss = curMiss;
+  }
+  return result;
+}
+
+function renderCharts(history, peers, collectInterval) {
+  const histPeers = selectedPeer ? {[selectedPeer]:history[selectedPeer]||[]} : history;
+  const peerNames = Object.keys(histPeers);
+
+  // Resolve blockSize from latest peer snapshot
+  let blockSize = 0;
+  for (const p of peers) {
+    const s = p.status_json ? (typeof p.status_json==='string'?JSON.parse(p.status_json||'{}'):p.status_json) : {};
+    if (s && s.arena && s.arena.blockSize) { blockSize = s.arena.blockSize; break; }
+  }
+
+  const ci = collectInterval || 5; // seconds
+
+  // --- BP Memory Usage: loadedCount * blockSize ---
+  renderBPMemChart('chartBPMem', histPeers, peerNames, blockSize);
+
+  // --- BP Referred Count: pages currently held by BPRefer ---
+  renderAbsoluteLineChart('chartBPReferred', histPeers, peerNames,
+    (e)=>safe(e,'status','bp','referredCount'), ['referred'], fmt);
+
+  // --- Local Cache: cachedSize (bytes) ---
+  renderAbsoluteLineChart('chartLocalCachedSize', histPeers, peerNames,
+    (e)=>safe(e,'status','localCache','cachedSize'), ['cachedSize'], fmtBytes);
+
+  // --- Local Cache: cacheUsage (0-1 -> %) ---
+  renderAbsoluteLineChart('chartLocalUsage', histPeers, peerNames,
+    (e)=>{ const v=safe(e,'status','localCache','cacheUsage'); return v!=null?v*100:null; },
+    ['cacheUsage'], (v)=>v!=null?v.toFixed(1)+'%':'--');
+
+  // --- Local Cache: cacheUtilization (0-1 -> %) ---
+  renderAbsoluteLineChart('chartLocalUtil', histPeers, peerNames,
+    (e)=>{ const v=safe(e,'status','localCache','cacheUtilization'); return v!=null?v*100:null; },
+    ['utilization'], (v)=>v!=null?v.toFixed(1)+'%':'--');
+
+  // --- Local Cache: referredSlotCount (slots held by active refs) ---
+  renderAbsoluteLineChart('chartLocalReferred', histPeers, peerNames,
+    (e)=>safe(e,'status','localCache','referredSlotCount'), ['referredSlots'], fmt);
+
+  // --- RPC stacked bar (ops & bytes) ---
+  renderStackedBar('chartRpcOps', histPeers, peerNames, 'rpc', 'ops', blockSize, ci);
+  renderStackedBar('chartRpcBytesBar', histPeers, peerNames, 'rpc', 'bytes', blockSize, ci);
+
+  // --- CN stacked bar (ops & bytes) ---
+  renderStackedBar('chartCnOps', histPeers, peerNames, 'cnCache', 'ops', blockSize, ci);
+  renderStackedBar('chartCnBytesBar', histPeers, peerNames, 'cnCache', 'bytes', blockSize, ci);
+
+  // --- Page push charts (rpc-side cumulative counters) ---
+  renderPushOpsChart('chartPushOps', histPeers, peerNames, ci);
+  renderPushBytesChart('chartPushBytes', histPeers, peerNames, ci);
+  renderPushSuccessRateChart('chartPushSuccessRate', histPeers, peerNames);
+  renderPushAvgMsChart('chartPushAvgMs', histPeers, peerNames);
+
+  // --- Interval hit rate ---
+  renderIntervalHitRate('chartHitRate', histPeers, peerNames, 'rpc');
+  renderIntervalHitRate('chartCnHitRate', histPeers, peerNames, 'cnCache');
+}
+
+// ---- Stacked bar color scheme ----
+const STACK_COLORS = { hit:'#00e676', local:'#3b9eff', rpc:'#ff9100', remote:'#b388ff', evict:'#ff5252' };
+
+// ---- Stacked bar option builder ----
+function makeStackedBarOption(legends, xData, seriesData, isBytes, ci) {
+  return {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger:'axis', axisPointer:{type:'shadow'}, textStyle:{fontSize:12},
+      formatter: function(params) {
+        let totalRate = 0;
+        let lines = [params[0].axisValueLabel];
+        for (const p of params) {
+          const v = p.value || 0;
+          totalRate += v;
+          const display = isBytes ? fmtBytes(v)+'/s' : v.toFixed(1)+' ops/s';
+          lines.push(`${p.marker} ${p.seriesName}: ${display}`);
+        }
+        const totalAbs = totalRate * ci;
+        lines.push(`<b>Rate: ${isBytes ? fmtBytes(totalRate)+'/s' : totalRate.toFixed(1)+' ops/s'}</b>`);
+        lines.push(`<b>Total(${ci}s): ${isBytes ? fmtBytes(totalAbs) : Math.round(totalAbs)+' ops'}</b>`);
+        return lines.join('<br/>');
+      }
+    },
+    legend: { data:legends, textStyle:{fontSize:11,color:'#8899aa'}, top:0 },
+    grid: { left:60, right:20, top:35, bottom:30 },
+    xAxis: { type:'category', data:xData, axisLabel:{fontSize:10,color:'#667788',rotate:30,formatter:fmtTime},
+             axisLine:{lineStyle:{color:'#2a4a6a'}} },
+    yAxis: { type:'value',
+             axisLabel:{fontSize:10,color:'#667788', formatter: isBytes ? (v)=>fmtBytes(v)+'/s' : (v)=>fmt(v)+'/s' },
+             splitLine:{lineStyle:{color:'rgba(42,74,106,.3)'}}, axisLine:{show:false} },
+    series: seriesData.map(s => ({
+      name:s.name, type:'bar', stack:'total', data:s.data,
+      itemStyle:{color:STACK_COLORS[s.name]||'#888'},
+      emphasis:{focus:'series'},
+    })),
+  };
+}
+
+// ---- Sum arrays element-wise (nulls treated as 0 when at least one non-null) ----
+function sumArrays(...arrays) {
+  const len = arrays[0]?.length || 0;
+  const result = [];
+  for (let i = 0; i < len; i++) {
+    let sum = null;
+    for (const arr of arrays) {
+      if (arr[i] != null) { sum = (sum || 0) + arr[i]; }
+    }
+    result.push(sum);
+  }
+  return result;
+}
+
+// ---- Aggregate delta arrays across peers (sum per timestamp) ----
+function aggregateAcrossPeers(peerArrays) {
+  if (peerArrays.length === 0) return [];
+  const len = peerArrays[0].length;
+  const result = [];
+  for (let i = 0; i < len; i++) {
+    let sum = null;
+    for (const arr of peerArrays) {
+      if (arr[i] != null) sum = (sum || 0) + arr[i];
+    }
+    result.push(sum);
+  }
+  return result;
+}
+
+// ---- Compute stacked bar category data for one peer (per-second rate) ----
+function computeCategories(xData, tsMap, section, mode, blockSize, ci) {
+  const perSec = (arr) => arr.map(v => v != null ? v / ci : null);
+  if (mode === 'ops') {
+    const hit = perSec(deltaArray(xData, tsMap, section, 'bufferPoolHit'));
+    const local = perSec(sumArrays(
+      deltaArray(xData, tsMap, section, 'localBatchRead'),
+      deltaArray(xData, tsMap, section, 'localPageRead')));
+    const rpc = perSec(sumArrays(
+      deltaArray(xData, tsMap, section, 'rpcBatchRead'),
+      deltaArray(xData, tsMap, section, 'rpcPageRead')));
+    const remote = perSec(sumArrays(
+      deltaArray(xData, tsMap, section, 'remoteBatchRead'),
+      deltaArray(xData, tsMap, section, 'remotePageRead'),
+      deltaArray(xData, tsMap, section, 'remotePatchRead')));
+    const evict = perSec(deltaArray(xData, tsMap, section, 'localEvict'));
+    return { hit, local, rpc, remote, evict };
+  } else { // bytes
+    const hitOps = deltaArray(xData, tsMap, section, 'bufferPoolHit');
+    const hit = perSec(hitOps.map(v => v != null && blockSize > 0 ? v * blockSize : null));
+    const local = perSec(deltaArray(xData, tsMap, section, 'localReadDataBytes'));
+    const rpc = perSec(deltaArray(xData, tsMap, section, 'rpcReadBytes'));
+    const remote = perSec(deltaArray(xData, tsMap, section, 'remoteReadBytes'));
+    return { hit, local, rpc, remote };
+  }
+}
+
+// ---- Render stacked bar chart ----
+function renderStackedBar(chartId, peers, peerNames, section, mode, blockSize, ci) {
+  const chart = getChart(chartId);
+  if (!chart) return;
+  let allTs = new Set();
+  for (const name of peerNames) for (const e of (peers[name]||[])) allTs.add(e.ts);
+  const xData = [...allTs].sort();
+
+  // Compute per-peer categories then aggregate
+  const isBytes = mode === 'bytes';
+  const catKeys = isBytes ? ['hit','local','rpc','remote'] : ['hit','local','rpc','remote','evict'];
+  const allCats = {};
+  catKeys.forEach(k => allCats[k] = []);
+  for (const name of peerNames) {
+    const { tsMap } = buildPeerData(peers[name]||[]);
+    const cats = computeCategories(xData, tsMap, section, mode, blockSize, ci);
+    for (const k of catKeys) if (cats[k]) allCats[k].push(cats[k]);
+  }
+
+  const legends = catKeys;
+  const seriesData = legends.map(k => ({
+    name: k,
+    data: aggregateAcrossPeers(allCats[k]),
+  }));
+
+  chart.setOption(makeStackedBarOption(legends, xData, seriesData, isBytes, ci), true);
+}
+
+// ---- BP Memory chart: loadedCount * blockSize, auto unit on yAxis ----
+function renderBPMemChart(chartId, peers, peerNames, blockSize) {
+  const chart = getChart(chartId);
+  if (!chart) return;
+  let allTs = new Set();
+  for (const name of peerNames) for (const e of (peers[name]||[])) allTs.add(e.ts);
+  const xData = [...allTs].sort();
+  const series = [];
+  for (const name of peerNames) {
+    const entries = peers[name]||[];
+    const tsMap = {}; entries.forEach(e=>tsMap[e.ts]=e);
+    const shortName = shortPeer(name);
+    series.push({
+      name: shortName,
+      data: xData.map(t=>{
+        const e = tsMap[t];
+        const loaded = e ? safe(e,'status','bp','loadedCount') : null;
+        const bs = (e ? safe(e,'status','arena','blockSize') : null) || blockSize;
+        return loaded != null && bs > 0 ? loaded * bs : null;
+      }),
+    });
+  }
+  const opt = makeTimeSeriesOption('', series.map(s=>s.name), xData, series);
+  opt.yAxis.axisLabel.formatter = (v) => fmtBytes(v);
+  opt.tooltip.formatter = function(params) {
+    let lines = [params[0].axisValueLabel];
+    for (const p of params) lines.push(`${p.marker} ${p.seriesName}: ${fmtBytes(p.value)}`);
+    return lines.join('<br/>');
+  };
+  chart.setOption(opt, true);
+}
+
+// ---- Generic absolute-value line chart (1 or 2 extractors) ----
+function renderAbsoluteLineChart(chartId, peers, peerNames, ext1, leg1, yFmt, ext2, leg2) {
+  const chart = getChart(chartId);
+  if (!chart) return;
+  let allTs = new Set();
+  for (const name of peerNames) for (const e of (peers[name]||[])) allTs.add(e.ts);
+  const xData = [...allTs].sort();
+  const series = [];
+  for (const name of peerNames) {
+    const entries = peers[name]||[];
+    const tsMap = {}; entries.forEach(e=>tsMap[e.ts]=e);
+    const shortName = shortPeer(name);
+    series.push({ name:shortName+' '+leg1[0], data:xData.map(t=>{ const e=tsMap[t]; return e?ext1(e):null; }) });
+    if (ext2) {
+      series.push({ name:shortName+' '+leg2[0], data:xData.map(t=>{ const e=tsMap[t]; return e?ext2(e):null; }) });
+    }
+  }
+  const opt = makeTimeSeriesOption('', series.map(s=>s.name), xData, series);
+  if (yFmt) {
+    opt.yAxis.axisLabel.formatter = (v) => yFmt(v);
+    opt.tooltip.formatter = function(params) {
+      let lines = [params[0].axisValueLabel];
+      for (const p of params) lines.push(`${p.marker} ${p.seriesName}: ${yFmt(p.value)}`);
+      return lines.join('<br/>');
+    };
+  }
+  chart.setOption(opt, true);
+}
+
+// ---- Interval hit rate charts (unchanged logic) ----
+function renderIntervalHitRate(chartId, peers, peerNames, section) {
+  const chart = getChart(chartId);
+  if (!chart) return;
+  let allTs = new Set();
+  for (const name of peerNames) for (const e of (peers[name]||[])) allTs.add(e.ts);
+  const xData = [...allTs].sort();
+  const series = [];
+  for (const name of peerNames) {
+    const { tsMap } = buildPeerData(peers[name]||[]);
+    const shortName = shortPeer(name);
+    series.push({ name:shortName, data:intervalHitRateArray(xData, tsMap, section) });
+  }
+  const opt = makeTimeSeriesOption('', series.map(s=>s.name), xData, series);
+  opt.yAxis.max = 100; opt.yAxis.min = 0;
+  chart.setOption(opt, true);
+}
+
+// ---- Page push charts ----
+// All push counters live under the `rpc` section (server-side CacheStatisticsCollector).
+// Each chart aggregates per-second deltas across peers and exposes one series per metric.
+
+function pushDeltaPerSec(peers, peerNames, key, ci, xData) {
+  const perPeer = [];
+  for (const name of peerNames) {
+    const { tsMap } = buildPeerData(peers[name]||[]);
+    perPeer.push(deltaArray(xData, tsMap, 'rpc', key));
+  }
+  const agg = aggregateAcrossPeers(perPeer);
+  return agg.map(v => v != null ? v / ci : null);
+}
+
+function renderPushOpsChart(chartId, peers, peerNames, ci) {
+  const chart = getChart(chartId);
+  if (!chart) return;
+  const allTs = new Set();
+  for (const name of peerNames) for (const e of (peers[name]||[])) allTs.add(e.ts);
+  const xData = [...allTs].sort();
+  const legends = ['call','attempt','success','received'];
+  const series = [
+    { name:'call',     data: pushDeltaPerSec(peers, peerNames, 'pushCallCount',    ci, xData) },
+    { name:'attempt',  data: pushDeltaPerSec(peers, peerNames, 'pushAttemptPeers', ci, xData) },
+    { name:'success',  data: pushDeltaPerSec(peers, peerNames, 'pushSuccessPeers', ci, xData) },
+    { name:'received', data: pushDeltaPerSec(peers, peerNames, 'pushReceived',     ci, xData) },
+  ];
+  const opt = makeTimeSeriesOption('', legends, xData, series);
+  opt.yAxis.axisLabel.formatter = (v) => fmt(v) + '/s';
+  opt.tooltip.formatter = function(params) {
+    const lines = [params[0].axisValueLabel];
+    for (const p of params) lines.push(`${p.marker} ${p.seriesName}: ${p.value != null ? p.value.toFixed(1) + ' ops/s' : '--'}`);
+    return lines.join('<br/>');
+  };
+  chart.setOption(opt, true);
+}
+
+function renderPushBytesChart(chartId, peers, peerNames, ci) {
+  const chart = getChart(chartId);
+  if (!chart) return;
+  const allTs = new Set();
+  for (const name of peerNames) for (const e of (peers[name]||[])) allTs.add(e.ts);
+  const xData = [...allTs].sort();
+  const legends = ['sent','received'];
+  const series = [
+    { name:'sent',     data: pushDeltaPerSec(peers, peerNames, 'pushBytes',         ci, xData) },
+    { name:'received', data: pushDeltaPerSec(peers, peerNames, 'pushReceivedBytes', ci, xData) },
+  ];
+  const opt = makeTimeSeriesOption('', legends, xData, series);
+  opt.yAxis.axisLabel.formatter = (v) => fmtBytes(v) + '/s';
+  opt.tooltip.formatter = function(params) {
+    const lines = [params[0].axisValueLabel];
+    for (const p of params) lines.push(`${p.marker} ${p.seriesName}: ${p.value != null ? fmtBytes(p.value) + '/s' : '--'}`);
+    return lines.join('<br/>');
+  };
+  chart.setOption(opt, true);
+}
+
+function renderPushSuccessRateChart(chartId, peers, peerNames) {
+  const chart = getChart(chartId);
+  if (!chart) return;
+  const allTs = new Set();
+  for (const name of peerNames) for (const e of (peers[name]||[])) allTs.add(e.ts);
+  const xData = [...allTs].sort();
+
+  // Aggregate per-interval deltas across peers, then compute ratio per timestamp
+  const attemptPerPeer = [], successPerPeer = [];
+  for (const name of peerNames) {
+    const { tsMap } = buildPeerData(peers[name]||[]);
+    attemptPerPeer.push(deltaArray(xData, tsMap, 'rpc', 'pushAttemptPeers'));
+    successPerPeer.push(deltaArray(xData, tsMap, 'rpc', 'pushSuccessPeers'));
+  }
+  const aggAttempt = aggregateAcrossPeers(attemptPerPeer);
+  const aggSuccess = aggregateAcrossPeers(successPerPeer);
+  const data = aggAttempt.map((a, i) => {
+    const s = aggSuccess[i];
+    if (a == null || s == null || a <= 0) return null;
+    return +((s / a) * 100).toFixed(2);
+  });
+  const opt = makeTimeSeriesOption('', ['successRate'], xData, [{ name:'successRate', data }]);
+  opt.yAxis.max = 100; opt.yAxis.min = 0;
+  opt.yAxis.axisLabel.formatter = (v) => v + '%';
+  chart.setOption(opt, true);
+}
+
+function renderPushAvgMsChart(chartId, peers, peerNames) {
+  const chart = getChart(chartId);
+  if (!chart) return;
+  const allTs = new Set();
+  for (const name of peerNames) for (const e of (peers[name]||[])) allTs.add(e.ts);
+  const xData = [...allTs].sort();
+
+  // Per-interval avg latency = sum(deltaPushNanos) / sum(deltaPushCallCount) across peers
+  const nanosPerPeer = [], callsPerPeer = [];
+  for (const name of peerNames) {
+    const { tsMap } = buildPeerData(peers[name]||[]);
+    nanosPerPeer.push(deltaArray(xData, tsMap, 'rpc', 'pushNanos'));
+    callsPerPeer.push(deltaArray(xData, tsMap, 'rpc', 'pushCallCount'));
+  }
+  const aggNanos = aggregateAcrossPeers(nanosPerPeer);
+  const aggCalls = aggregateAcrossPeers(callsPerPeer);
+  const data = aggNanos.map((n, i) => {
+    const c = aggCalls[i];
+    if (n == null || c == null || c <= 0) return null;
+    return +(n / c / 1e6).toFixed(2);
+  });
+  const opt = makeTimeSeriesOption('', ['avgMs'], xData, [{ name:'avgMs', data }]);
+  opt.yAxis.axisLabel.formatter = (v) => v + ' ms';
+  chart.setOption(opt, true);
+}
+
+// =========================================================================
+// Render per-node cumulative stats panel
+// =========================================================================
+function renderPeerStats(peers) {
+  const panel = document.getElementById('statPanel');
+  const header = document.getElementById('statPanelHeader');
+  const sections = document.getElementById('statSections');
+
+  if (!selectedPeer) {
+    panel.classList.remove('visible');
+    return;
+  }
+
+  const peer = peers.find(p => p.peer_name === selectedPeer);
+  if (!peer || !peer.status_json) {
+    panel.classList.remove('visible');
+    return;
+  }
+
+  const s = typeof peer.status_json === 'string' ? JSON.parse(peer.status_json || '{}') : peer.status_json;
+  if (!s) { panel.classList.remove('visible'); return; }
+
+  panel.classList.add('visible');
+  header.textContent = 'Cumulative Statistics — ' + selectedPeer;
+
+  const bytesFields = ['totalMemory','dynamicArenaMemory','bpReserveMemory','effectiveSize','configuredSize','cachedSize',
+    'batchedReadBytes','localReadDataBytes','rpcReadBytes','remoteReadBytes',
+    'localWriteMetaBytes','localWriteDataBytes','remoteWriteBytes',
+    'pushBytes','pushReceivedBytes'];
+  const nanosFields = ['getFileIdNanos','localOpenDataNanos','localAllocateMemoryNanos',
+    'localReadDataNanos','localCrcNanos','localOpenMetaNanos','localWriteMetaNanos',
+    'localWaitContextNanos','localWaitSlotNanos','localLookupNanos','localEvictNanos',
+    'localWriteDataNanos','localPutNanos','localVerifyNanos','localWaitFileNanos',
+    'localScheduleAsyncWriteNanos','localWriteCleanupNanos','localUpdateMetaNanos',
+    'localLoadNanos','rpcNanos','remoteReadNanos','remoteWriteNanos','notifyNanos',
+    'pushNanos'];
+
+  const makeRows = (obj) => {
+    if (!obj) return '<div class="stat-row"><span class="stat-key">No data</span></div>';
+    return Object.entries(obj).map(([k,v]) => {
+      let display;
+      if (bytesFields.includes(k)) display = fmtBytes(v);
+      else if (nanosFields.includes(k)) display = (v / 1e6).toFixed(2) + ' ms';
+      else display = fmt(v);
+      return `<div class="stat-row"><span class="stat-key">${k}</span><span class="stat-val">${display}</span></div>`;
+    }).join('');
+  };
+
+  let html = '';
+  const sectionDefs = [
+    { title:'Arena', data:s.arena },
+    { title:'Buffer Pool', data:s.bp },
+    { title:'Local Cache', data:s.localCache },
+    { title:'RPC (Peer Cache Service)', data:s.rpc },
+    { title:'CN Cache (CachedInputStream)', data:s.cnCache },
+    { title:'Config', data:s.config },
+  ];
+  for (const sec of sectionDefs) {
+    if (!sec.data) continue;
+    html += `<div class="stat-section"><div class="stat-section-title">${sec.title}</div>${makeRows(sec.data)}</div>`;
+  }
+  sections.innerHTML = html;
+}
+
+// =========================================================================
+// Data fetching
+// =========================================================================
+async function fetchPeers() {
+  const res = await fetch('/api/peers');
+  return res.json();
+}
+async function fetchHistory() {
+  const mins = document.getElementById('historyMinutes').value;
+  const url = selectedPeer
+    ? `/api/history?minutes=${mins}&peer=${encodeURIComponent(selectedPeer)}`
+    : `/api/history?minutes=${mins}`;
+  const res = await fetch(url);
+  return res.json();
+}
+
+async function refreshNow() {
+  try {
+    const [peersData, histData] = await Promise.all([fetchPeers(), fetchHistory()]);
+    const peers = peersData.peers || [];
+
+    document.getElementById('statusDot').className = 'status-dot ok';
+    document.getElementById('statusText').textContent = 'Connected';
+    document.getElementById('lastUpdate').textContent = peersData.collected_at || '--';
+
+    renderTable(peers);
+    renderMetrics(peers);
+    renderPeerTabs(peers);
+    renderPeerStats(peers);
+    renderCharts(histData.history || {}, peers, histData.collect_interval || 5);
+  } catch(e) {
+    console.error('Refresh error:', e);
+    document.getElementById('statusDot').className = 'status-dot err';
+    document.getElementById('statusText').textContent = 'Error';
+  }
+}
+
+// =========================================================================
+// Auto-refresh & controls
+// =========================================================================
+function startAutoRefresh() {
+  stopAutoRefresh();
+  if (paused) return;
+  const interval = parseInt(document.getElementById('refreshInterval').value) * 1000;
+  refreshTimer = setInterval(refreshNow, interval);
+}
+function stopAutoRefresh() { if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null;} }
+function togglePause() {
+  paused = !paused;
+  document.getElementById('pauseBtn').textContent = paused ? 'Resume' : 'Pause';
+  document.getElementById('pauseBtn').classList.toggle('active', paused);
+  if(paused) stopAutoRefresh(); else startAutoRefresh();
+}
+document.getElementById('refreshInterval').addEventListener('change', startAutoRefresh);
+document.getElementById('historyMinutes').addEventListener('change', refreshNow);
+
+// Handle window resize
+window.addEventListener('resize', ()=>{
+  Object.values(charts).forEach(c=>c.resize());
+});
+
+// =========================================================================
+// Init
+// =========================================================================
+refreshNow();
+startAutoRefresh();
+</script>
+</body>
+</html>

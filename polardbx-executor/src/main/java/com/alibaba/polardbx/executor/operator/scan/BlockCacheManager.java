@@ -39,14 +39,17 @@ public interface BlockCacheManager<VECTOR> {
      */
     long MAXIMUM_IN_FLIGHT_ENTRIES = 1 << 12;
 
-    float RATIO = DynamicConfig.getInstance().getBlockCacheMemoryFactor();
-    long MAXIMUM_MEMORY_SIZE = (long) (Runtime.getRuntime().maxMemory() * RATIO);
-
     BlockCacheManager<Block> INSTANCE = new SimpleBlockCacheManager();
 
     static BlockCacheManager<Block> getInstance() {
         return INSTANCE;
     }
+
+    float getMemoryRatio();
+
+    long getMaximumMemorySize();
+
+    void resetBlockCacheMemoryFactor(float memoryRatio);
 
     /**
      * Get memory size in bytes held by block cache.
@@ -66,6 +69,8 @@ public interface BlockCacheManager<VECTOR> {
      * @return cache stats packet
      */
     byte[][] generateCacheStatsPacket();
+
+    Object[] dumpMemoryUsage();
 
     /**
      * We consider {group_id, column_id} has already been cached only if all blocks in row-group are cached.

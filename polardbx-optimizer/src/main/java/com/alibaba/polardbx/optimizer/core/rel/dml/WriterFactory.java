@@ -19,7 +19,7 @@ package com.alibaba.polardbx.optimizer.core.rel.dml;
 import com.alibaba.polardbx.common.TddlConstants;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
-import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.utils.BlackHoleUtils;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.PlannerContext;
@@ -43,6 +43,8 @@ import com.alibaba.polardbx.optimizer.core.rel.dml.writer.DistinctInsertWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.DistinctWriterWrapper;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.InsertGsiWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.InsertWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.writer.RelocateByReturningWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.writer.RelocateGsiByReturningWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.RelocateGsiWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.RelocateWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.ReplaceRelocateGsiWriter;
@@ -63,6 +65,7 @@ import com.alibaba.polardbx.optimizer.core.rel.dml.writer.SingleInsertGsiWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.SingleInsertWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.SingleModifyGsiWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.SingleModifyWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.writer.UpdateGsiByReturningWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.UpsertGsiWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.UpsertRelocateGsiWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.UpsertRelocateWriter;
@@ -87,12 +90,12 @@ import org.apache.calcite.rel.core.TableModify.TableInfo;
 import org.apache.calcite.rel.core.TableModify.TableInfoNode;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
+import org.apache.calcite.rel.type.RelDataTypeFieldImpl;
 import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexDynamicParam;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.sql.OptimizerHint;
-import org.apache.calcite.sql.SqlBasicCall;
 import org.apache.calcite.sql.SqlDelete;
 import org.apache.calcite.sql.SqlDmlKeyword;
 import org.apache.calcite.sql.SqlDynamicParam;
@@ -102,7 +105,6 @@ import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.SqlUpdate;
-import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.util.BitSets;
@@ -219,22 +221,12 @@ public class WriterFactory {
             throw new TddlRuntimeException(ERR_PK_WRITER_ON_TABLE_WITHOUT_PK, "Update", targetMeta.getTableName());
         }, false, withoutPk);
 
-        final TableColumnMeta tableColumnMeta = targetMeta.getTableColumnMeta();
-        Map<String, String> columnMultiWriteMapping = TableColumnUtils.getColumnMultiWriteMapping(tableColumnMeta);
-        boolean needColumnMapping = MapUtils.isNotEmpty(columnMultiWriteMapping);
-
         final AtomicInteger paramIndex = new AtomicInteger(0);
         final List<SqlIdentifier> targetColumns = new ArrayList<>();
         final List<SqlNode> sourceExpressions = new ArrayList<>();
         final List<RexNode> sourceExpressionList = new ArrayList<>();
 
-        List<String> updateColumnListLocal = updateColumnList.stream().map(c -> {
-            if (needColumnMapping && columnMultiWriteMapping.containsKey(c.toLowerCase())) {
-                return columnMultiWriteMapping.get(c.toLowerCase());
-            } else {
-                return c;
-            }
-        }).collect(Collectors.toList());
+        List<String> updateColumnListLocal = rewritePhysicalUpdateColumns(updateColumnList, targetMeta);
 
         updateColumnListLocal.forEach(c -> {
             final int index = paramIndex.getAndIncrement();
@@ -297,11 +289,46 @@ public class WriterFactory {
             updateSourceMapping, offset, updateSourceSize, withoutPk.get(), ec);
     }
 
+    /**
+     * Resolve writer-local physical UPDATE target names without changing the logical SET layout.
+     *
+     * <p>Column multi-write keeps its existing precedence. Terminal externalized columns then rename their one
+     * logical content slot to the physical addr column. MCE DUAL_WRITE/READ_ADDR columns are deliberately absent from
+     * the rename mapping because SQL-to-Rel has already appended their independent addr slot.</p>
+     */
+    private static List<String> rewritePhysicalUpdateColumns(List<String> updateColumnList, TableMeta targetMeta) {
+        final TableColumnMeta tableColumnMeta = targetMeta.getTableColumnMeta();
+        final Map<String, String> columnMultiWriteMapping =
+            TableColumnUtils.getColumnMultiWriteMapping(tableColumnMeta);
+        final boolean needColumnMapping = MapUtils.isNotEmpty(columnMultiWriteMapping);
+
+        final Map<String, String> externalizedColumnMapping = targetMeta.hasExternalizedColumn()
+            ? TableColumnUtils.buildExternalizedColumnMapping(targetMeta) : null;
+        final boolean needExternalizedColumnMapping = MapUtils.isNotEmpty(externalizedColumnMapping);
+
+        return updateColumnList.stream().map(column -> {
+            if (needColumnMapping && columnMultiWriteMapping.containsKey(column.toLowerCase())) {
+                return columnMultiWriteMapping.get(column.toLowerCase());
+            }
+            if (needExternalizedColumnMapping && externalizedColumnMapping.containsKey(column)) {
+                return externalizedColumnMapping.get(column);
+            }
+            return column;
+        }).collect(Collectors.toList());
+    }
+
     private static RelDataType getUpdateColumnType(TableModify parent, String targetColumnName, Integer sourceIndex) {
         if (parent.isInsert()) {
             // Update source is ON DUPLICATE KEY UPDATE part of INSERT
             final LogicalInsert insert = (LogicalInsert) parent;
-            return insert.getTable().getRowType().getField(targetColumnName, true, false).getType();
+            RelDataTypeField field = insert.getTable().getRowType().getField(targetColumnName, true, false);
+            if (field == null) {
+                // MCE addr columns are WRITE_ONLY during DUAL_WRITE / READ_ADDR migration, so they
+                // are invisible in RelOptTable's logical rowType. Fall back to insertRowType, which
+                // TddlSqlToRelConverter.convertColumnList already appended the addr column field to.
+                field = insert.getInsertRowType().getField(targetColumnName, true, false);
+            }
+            return field.getType();
         } else {
             // Update source is selected row
             final RelNode input = RelUtils.getRelInput(parent);
@@ -309,6 +336,232 @@ public class WriterFactory {
 
             return inputFields.get(sourceIndex).getType();
         }
+    }
+
+    /**
+     * create update writer for update gsi by returning
+     * <p>
+     * Input row looks like below
+     * <p>
+     * after values from update returning
+     * |
+     * [c1, ..., cn][u1, ..., un]
+     * |
+     * before values from update returning
+     */
+    public static UpdateGsiByReturningWriter createUpdateGsiByReturningWriter(TableModify parent,
+                                                                              RelOptTable targetTable,
+                                                                              Integer primaryTableIndex,
+                                                                              List<String> updateColumnList,
+                                                                              List<Integer> updateSourceMapping,
+                                                                              TableMeta gsiMeta,
+                                                                              ExecutionContext ec) {
+        final RelNode input = RelUtils.getRelInput(parent);
+
+        final SqlUpdate originUpdate = (SqlUpdate) ((LogicalModify) parent).getOriginalSqlNode();
+        SqlNodeList keywords = getKeywords(originUpdate.getKeywords());
+
+        // In case of logical table appear more than once
+        final Map<String, Integer> columnIndexMap = parent.getSourceColumnIndexMap().get(primaryTableIndex);
+        // Use max index + 1 as targetSize to handle multi-table UPDATE where column indices
+        // are offset-based (e.g., second table columns at positions 3,4,5 with map size 3)
+        final int returningTargetSize =
+            columnIndexMap.values().stream().mapToInt(Integer::intValue).max().orElse(-1) + 1;
+        final MappingBuilder mappingBuilder = MappingBuilder.create(columnIndexMap, returningTargetSize, false);
+
+        final RexBuilder rexBuilder = parent.getCluster().getRexBuilder();
+
+        /*
+         * Build update
+         */
+        final Pair<String, String> targetSchemaTable = RelUtils.getQualifiedTableName(targetTable);
+        final String targetSchema = targetSchemaTable.left;
+        final String targetTableName = targetSchemaTable.right;
+
+        final OptimizerContext oc = OptimizerContext.getContext(targetSchema);
+        final TableMeta targetMeta = ec.getSchemaManager(targetSchema).getTable(targetTableName);
+
+        final List<String> skNames = oc.getRuleManager().getSharedColumns(targetTableName);
+        final List<ColumnMeta> updateSkMetas = skNames.stream().map(targetMeta::getColumn).collect(Collectors.toList());
+
+        final List<String> conditionColumns = new ArrayList<>();
+        final AtomicBoolean withoutPk = new AtomicBoolean(false);
+        final String indexName = getUniqueConditionColumns(targetMeta, conditionColumns, () -> {
+            throw new TddlRuntimeException(ERR_PK_WRITER_ON_TABLE_WITHOUT_PK, "Update", targetMeta.getTableName());
+        }, false, withoutPk);
+
+        final AtomicInteger paramIndex = new AtomicInteger(0);
+        final List<SqlIdentifier> targetColumns = new ArrayList<>();
+        final List<SqlNode> sourceExpressions = new ArrayList<>();
+        final List<RexNode> sourceExpressionList = new ArrayList<>();
+
+        List<String> updateColumnListLocal = rewritePhysicalUpdateColumns(updateColumnList, targetMeta);
+
+        updateColumnListLocal.forEach(c -> {
+            final int index = paramIndex.getAndIncrement();
+            targetColumns.add(new SqlIdentifier(ImmutableList.of(c), SqlParserPos.ZERO));
+            sourceExpressions.add(new SqlDynamicParam(index + 2, SqlParserPos.ZERO));
+            sourceExpressionList.add(rexBuilder.makeDynamicParam(
+                getUpdateColumnType(parent, updateColumnList.get(index), updateSourceMapping.get(index)), index));
+        });
+
+        /**
+         * <pre>
+         * UPDATE ? AS xx FORCE INDEX(PRIMARY) SET xx.a = ?, ...
+         * WHERE pk0 = ? AND pk1 = ? AND ...
+         * </pre>
+         */
+        final SqlUpdate sqlUpdate = withoutPk.get() ? RelUtils.buildUpdateWithAndNotDistinctCondition(targetTableName,
+            targetColumns,
+            sourceExpressions,
+            conditionColumns,
+            keywords,
+            indexName,
+            new AtomicInteger(paramIndex.get() + 2), ec) :
+            RelUtils.buildUpdateWithAndCondition(targetTableName,
+                targetColumns,
+                sourceExpressions,
+                conditionColumns,
+                keywords,
+                indexName,
+                new AtomicInteger(paramIndex.get() + 2), ec);
+
+        final TableInfo updateTableInfo = buildUpdateTableInfo(sqlUpdate, targetTable, updateColumnListLocal);
+
+        final LogicalModify update = new LogicalModify(parent.getCluster(),
+            parent.getTraitSet(),
+            targetTable,
+            parent.getCatalogReader(),
+            input,
+            Operation.UPDATE,
+            updateColumnListLocal,
+            sourceExpressionList,
+            false,
+            parent.getKeywords(),
+            parent.getHints(),
+            parent.getHintContext(),
+            updateTableInfo);
+
+        update.setOriginalSqlNode(sqlUpdate);
+
+        final Mapping pkMapping = mappingBuilder.source(conditionColumns).buildMapping();
+        final Mapping skMapping = mappingBuilder.source(skNames).buildMapping();
+        /**
+         * updateColumnMapping constitution
+         * e.g.
+         * update t set b1 = a1,b3 = a3
+         *                                  6
+         *                                  |
+         * target row = (b1,b2,b3,b4,a1,a2,a3,a4)
+         *                            |
+         *                            4
+         * updateColumnMapping = [4,6]
+         *
+         */
+        // Use original updateColumnList (before OMC multi-write mapping) for mapping lookup,
+        // because columnIndexMap uses primary table's original column names.
+        // updateColumnListLocal (after OMC mapping, e.g. c -> c$tmd0) is only for building physical SQL.
+        final Mapping updateColumnMapping =
+            mappingBuilder.source(updateColumnList).buildMapping(mappingBuilder.getTargetSize());
+        final List<String> deduplicateColumns =
+            Stream.concat(conditionColumns.stream(), skNames.stream()).map(String::toLowerCase).sorted().distinct()
+                .collect(Collectors.toList());
+        final Mapping deduplicateMapping = mappingBuilder.source(deduplicateColumns).buildMapping();
+
+        return new UpdateGsiByReturningWriter(update
+            .getTable(), update, updateSkMetas, pkMapping, skMapping, updateColumnMapping, deduplicateMapping,
+            withoutPk.get(),
+            gsiMeta);
+    }
+
+    /**
+     * DeleteWriter for LogicalRelocate executed by returning
+     * create delete writer from returning value as source
+     */
+    public static ShardingModifyWriter createDeleteWriterFromReturningValue(TableModify parent,
+                                                                            RelOptTable targetTable,
+                                                                            Integer primaryTableIndex,
+                                                                            Boolean isGsi,
+                                                                            ExecutionContext ec) {
+        final RelNode input = RelUtils.getRelInput(parent);
+
+        /*
+         * Build delete
+         */
+        final Pair<String, String> targetSchemaTable = RelUtils.getQualifiedTableName(targetTable);
+        final String targetSchema = targetSchemaTable.left;
+        final String targetTableName = targetSchemaTable.right;
+
+        final OptimizerContext oc = OptimizerContext.getContext(targetSchema);
+        assert oc != null;
+        final TableMeta targetMeta = ec.getSchemaManager(targetSchema).getTable(targetTableName);
+
+        final List<String> skNames = oc.getRuleManager().getSharedColumns(targetTableName);
+        final List<ColumnMeta> deleteSkMetas = skNames.stream().map(targetMeta::getColumn).collect(Collectors.toList());
+
+        final List<String> conditionColumns = new ArrayList<>();
+        final boolean isInsertIgnore = parent instanceof LogicalInsert && ((LogicalInsert) parent).isInsertIgnore();
+        final AtomicBoolean withoutPk = new AtomicBoolean(false);
+        final String indexName = getUniqueConditionColumns(targetMeta, conditionColumns, () -> {
+            throw new TddlRuntimeException(ERR_PK_WRITER_ON_TABLE_WITHOUT_PK, "Delete", targetMeta.getTableName());
+        }, isInsertIgnore, withoutPk);
+
+        /**
+         * <pre>
+         * DELETE yy FROM xx AS yy FORCE INDEX(PRIMARY)
+         * WHERE (pk0, pk1, ...) IN ((, ...), ...)
+         * </pre>
+         */
+        final SqlDelete sqlDelete =
+            RelUtils.buildDeleteWithInCondition(targetTableName, conditionColumns, indexName, new AtomicInteger(2), ec);
+
+        final TableInfo deleteTableInfo = buildDeleteTableInfo(sqlDelete, targetTable);
+
+        /*
+         * Should create LogicalModifyView here, but it is impossible to build a
+         * LogicalView with correct Filter at this time because we do not know how many
+         * rows will be deleted. So just create LogicalModify with parent as input
+         * instead
+         */
+        final LogicalModify delete = new LogicalModify(parent.getCluster(),
+            parent.getTraitSet(),
+            targetTable,
+            parent.getCatalogReader(),
+            input,
+            Operation.DELETE,
+            null,
+            null,
+            false,
+            null,
+            null,
+            new OptimizerHint(),
+            deleteTableInfo);
+
+        delete.setOriginalSqlNode(sqlDelete);
+
+        // Column index map for target table
+        final Map<String, Integer> beforeColumnIndexMap = parent.getSourceColumnIndexMap().get(primaryTableIndex);
+        // Use max index + 1 as targetSize to handle multi-table UPDATE where column indices
+        // are offset-based (e.g., second table columns at positions 3,4,5 with map size 3)
+        final int targetSize =
+            beforeColumnIndexMap.values().stream().mapToInt(Integer::intValue).max().orElse(-1) + 1;
+        final MappingBuilder mappingBuilder =
+            MappingBuilder.create(beforeColumnIndexMap, targetSize, false);
+
+        final Mapping pkMapping = isGsi ? mappingBuilder.source(conditionColumns).buildMapping() :
+            mappingBuilder.source(conditionColumns).buildMapping(mappingBuilder.getTargetSize());
+        final Mapping skMapping = mappingBuilder.source(skNames).buildMapping();
+
+        final List<String> deduplicateColumns =
+            Stream.concat(conditionColumns.stream(), skNames.stream()).map(String::toLowerCase).sorted().distinct()
+                .collect(Collectors.toList());
+        final Mapping deduplicateMapping = mappingBuilder.source(deduplicateColumns).buildMapping();
+
+        Mapping updateSetMapping = null;
+
+        return new ShardingModifyWriter(delete
+            .getTable(), delete, deleteSkMetas, pkMapping, skMapping, updateSetMapping, deduplicateMapping,
+            withoutPk.get());
     }
 
     /**
@@ -454,7 +707,7 @@ public class WriterFactory {
         final TableRule tableRule = oc.getRuleManager().getTableRule(targetTableName);
 
         if (isBroadcast) {
-            Preconditions.checkState(oc.getRuleManager().isBroadCast(targetTableName));
+            Preconditions.checkState(oc.getRuleManager().isBroadCastOrReplicas(targetTableName));
         } else if (isSingle) {
             Preconditions.checkState(oc.getRuleManager().isTableInSingleDb(targetTableName));
         }
@@ -486,22 +739,12 @@ public class WriterFactory {
             throw new TddlRuntimeException(ERR_PK_WRITER_ON_TABLE_WITHOUT_PK, "Update", targetMeta.getTableName());
         }
 
-        final TableColumnMeta tableColumnMeta = targetMeta.getTableColumnMeta();
-        Map<String, String> columnMultiWriteMapping = TableColumnUtils.getColumnMultiWriteMapping(tableColumnMeta);
-        boolean needColumnMapping = MapUtils.isNotEmpty(columnMultiWriteMapping);
-
         final AtomicInteger paramIndex = new AtomicInteger(0);
         final List<SqlIdentifier> targetColumns = new ArrayList<>();
         final List<SqlNode> sourceExpressions = new ArrayList<>();
         final List<RexNode> sourceExpressionList = new ArrayList<>();
 
-        List<String> updateColumnListLocal = updateColumnList.stream().map(c -> {
-            if (needColumnMapping && columnMultiWriteMapping.containsKey(c.toLowerCase())) {
-                return columnMultiWriteMapping.get(c.toLowerCase());
-            } else {
-                return c;
-            }
-        }).collect(Collectors.toList());
+        List<String> updateColumnListLocal = rewritePhysicalUpdateColumns(updateColumnList, targetMeta);
 
         updateColumnListLocal.forEach(c -> {
             final int index = paramIndex.getAndIncrement();
@@ -625,7 +868,7 @@ public class WriterFactory {
         final TableRule tableRule = oc.getRuleManager().getTableRule(targetTableName);
 
         if (isBroadcast) {
-            Preconditions.checkState(oc.getRuleManager().isBroadCast(targetTableName));
+            Preconditions.checkState(oc.getRuleManager().isBroadCastOrReplicas(targetTableName));
         } else if (isSingle) {
             Preconditions.checkState(oc.getRuleManager().isTableInSingleDb(targetTableName));
         }
@@ -723,7 +966,8 @@ public class WriterFactory {
                                                       List<Integer> updateSourceMapping, TableMeta gsiMeta,
                                                       boolean isGsi, String primaryTableName,
                                                       Set<String> addedAutoUpdateColumns, PlannerContext plannerContext,
-                                                      ExecutionContext ec, boolean forceGsiRelocate) {
+                                                      ExecutionContext ec, boolean forceGsiRelocate,
+                                                      boolean modifyBlackHole) {
         final Pair<String, String> qn = RelUtils.getQualifiedTableName(targetTable);
         final OptimizerContext oc = OptimizerContext.getContext(qn.left);
         assert oc != null;
@@ -731,7 +975,11 @@ public class WriterFactory {
         final boolean isSingle = oc.getRuleManager().isTableInSingleDb(qn.right);
 
         DistinctWriter deleteWriter;
-        if (isBroadcast || isSingle) {
+        if (modifyBlackHole) {
+            // For black hole, delete one record in primary table meaning insert one in shadow table.
+            // Therefore, delete writer performs insert instead of delete here.
+            deleteWriter = createBlackHoleDeleteWriter(parent, targetTable, primaryTableIndex, ec);
+        } else if (isBroadcast || isSingle) {
             deleteWriter =
                 createBroadcastOrSingleDeleteWriter(parent, targetTable, primaryTableIndex, isBroadcast, isSingle, ec);
         } else {
@@ -779,7 +1027,213 @@ public class WriterFactory {
             forceGsiRelocate,
             addedAutoUpdateColumns,
             plannerContext,
+            ec,
+            modifyBlackHole
+        );
+    }
+
+    public static DistinctWriter createBlackHoleDeleteWriter(TableModify parent, RelOptTable targetTable,
+                                                             Integer primaryTableIndex,
+                                                             ExecutionContext ec) {
+        final RelNode input = RelUtils.getRelInput(parent);
+        final List<Map<String, Integer>> sourceColumnIndexMap = parent.getSourceColumnIndexMap();
+
+        /*
+         * Build insert into shadow table for delete on pure columnar table.
+         * The shadow table has different columns than the main table:
+         * shadow table = PK columns + partition key columns + _drds_implicit_pid_ + _drds_implicit_seq_
+         * We only include columns that are available in the SELECT result (columnIndexMap).
+         */
+        final Pair<String, String> targetSchemaTable = RelUtils.getQualifiedTableName(targetTable);
+        final String targetSchema = targetSchemaTable.left;
+        final String shadowTableName = BlackHoleUtils.getInsertToDeleteBlackHoleTableName(targetSchemaTable.right);
+
+        final OptimizerContext oc = OptimizerContext.getContext(targetSchema);
+        final TableMeta shadowTableMeta = ec.getSchemaManager(targetSchema).getTable(shadowTableName);
+        final List<String> skNames = oc.getRuleManager().getSharedColumns(shadowTableName);
+
+        if (!shadowTableMeta.isHasPrimaryKey() && !shadowTableMeta.hasGsiImplicitPrimaryKey()) {
+            throw new TddlRuntimeException(ERR_PK_WRITER_ON_TABLE_WITHOUT_PK, "INSERT", shadowTableName);
+        }
+
+        final List<String> pkNames = ImmutableList
+            .copyOf((shadowTableMeta.isHasPrimaryKey() ? shadowTableMeta.getPrimaryKey() :
+                shadowTableMeta.getGsiImplicitPrimaryKey())
+                .stream().map(ColumnMeta::getName).collect(Collectors.toList()));
+
+        // Build column index map from source (main table SELECT result)
+        final Map<String, Integer> columnIndexMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        columnIndexMap.putAll(sourceColumnIndexMap.get(primaryTableIndex));
+        final int fieldCount = input.getRowType().getFieldCount();
+
+        final TreeSet<String> deduplicateColumns = Stream.concat(pkNames.stream(), skNames.stream())
+            .collect(Collectors.toCollection(TreeSet::new));
+        final Mapping deduplicateMapping = Mappings
+            .source(deduplicateColumns.stream().map(columnIndexMap::get).collect(Collectors.toList()), fieldCount);
+
+        final List<RelDataTypeField> sourceFields = input.getRowType().getFieldList();
+
+        // Build field names from shadow table columns, only include columns
+        // that are available in the SELECT result (i.e., exist in columnIndexMap)
+        List<String> fieldNames = new ArrayList<>();
+        for (ColumnMeta col : shadowTableMeta.getPhysicalColumns()) {
+            String colName = col.getName();
+            if (columnIndexMap.containsKey(colName)) {
+                fieldNames.add(colName);
+            }
+        }
+
+        // Build mapping from insert columns to select result
+        final List<Integer> valuePermute = fieldNames.stream()
+            .map(columnIndexMap::get)
+            .collect(Collectors.toList());
+
+        final LogicalInsert insert =
+            buildInsertOrReplace(parent, targetTable, sourceFields, valuePermute, fieldNames, Operation.INSERT, null,
+                null, false, targetSchema, shadowTableName, ec, false);
+        insert.getTargetTableNames().clear();
+        insert.getTargetTableNames().add(shadowTableName);
+
+        return ComplexTaskPlanUtils.canWrite(shadowTableMeta) ?
+            new ReplicateDistinctInsertWriter(targetTable, insert, deduplicateMapping, shadowTableMeta) :
+            new DistinctInsertWriter(targetTable, insert, deduplicateMapping);
+    }
+
+    /**
+     * create relocate by returning writer, both for primary table and gsi
+     * table should not be broadcast or single
+     */
+    public static RelocateByReturningWriter createRelocateByReturningWriter(TableModify parent, RelOptTable targetTable,
+                                                                            Integer primaryTableIndex,
+                                                                            List<String> updateColumnList,
+                                                                            List<Integer> updateSourceMapping,
+                                                                            TableMeta gsiMeta,
+                                                                            boolean isGsi, String primaryTableName,
+                                                                            Set<String> addedAutoUpdateColumns,
+                                                                            PlannerContext plannerContext,
+                                                                            ExecutionContext ec,
+                                                                            boolean forceGsiRelocate) {
+        final Pair<String, String> qn = RelUtils.getQualifiedTableName(targetTable);
+        final OptimizerContext oc = OptimizerContext.getContext(qn.left);
+        assert oc != null;
+        final boolean isBroadcastOrReplicas = oc.getRuleManager().isBroadCastOrReplicas(qn.right);
+        final boolean isSingle = oc.getRuleManager().isTableInSingleDb(qn.right);
+
+        final TableMeta targetMeta = ec.getSchemaManager(qn.left).getTable(qn.right);
+
+        DistinctWriter deleteWriter;
+        if (isBroadcastOrReplicas || isSingle || ComplexTaskPlanUtils.canWrite(targetMeta)) {
+            // should not be executed by returning
+            return null;
+        }
+
+        deleteWriter = createDeleteWriterFromReturningValue(parent, targetTable, primaryTableIndex, isGsi, ec);
+
+        final DistinctWriter insertWriter = createDistinctInsertWriterFromReturningValue(parent,
+            targetTable,
+            primaryTableIndex,
+            primaryTableName,
             ec);
+
+        // For rows whose sharding column will not be modified
+        DistinctWriter updateWriter = null;
+        if (isGsi) {
+            // primary relocateByReturningWriter does not need updateWriter
+            updateWriter = createUpdateGsiByReturningWriter(parent, targetTable,
+                primaryTableIndex, updateColumnList,
+                updateSourceMapping, gsiMeta, ec);
+        }
+
+        // Build column index map for target table
+        final List<Map<String, Integer>> sourceColumnIndexMap = parent.getSourceColumnIndexMap();
+        final Map<String, Integer> columnIndexMap = sourceColumnIndexMap.get(primaryTableIndex);
+
+        // Expressions in SET are at the end of row
+        final RelDataType srcRowType = parent.getInput().getRowType();
+        final int fieldCount = srcRowType.getFieldCount();
+        final int offset = fieldCount - parent.getUpdateColumnList().size();
+        final List<Integer> setSrc = updateSourceMapping.stream().map(i -> offset + i).collect(Collectors.toList());
+
+        final Set<String> identifierKeyNames = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        identifierKeyNames.addAll(oc.getRuleManager().getSharedColumns(qn.right));
+
+        final boolean allGsiPublished =
+            !isGsi || GlobalIndexMeta.isPublished(plannerContext.getExecutionContext(), gsiMeta);
+
+        final boolean isGsiTableCanScaleOutWrite = (gsiMeta != null && ComplexTaskPlanUtils.canWrite(gsiMeta));
+
+        if (!allGsiPublished || ComplexTaskPlanUtils.canWrite(targetMeta) || isGsiTableCanScaleOutWrite) {
+            final List<String> pkNames = ImmutableList
+                .copyOf(targetMeta.getPrimaryKey().stream().map(ColumnMeta::getName).collect(Collectors.toList()));
+            identifierKeyNames.addAll(pkNames);
+        }
+
+        // Take set more than once into consideration
+        final Map<String, Integer> identifierKeyTargetMap = new LinkedHashMap<>();
+        final Map<String, Integer> identifierKeySourceMap = new LinkedHashMap<>();
+        final AtomicBoolean modifySkOnly = new AtomicBoolean(true);
+        Ord.zip(updateColumnList).forEach(o -> {
+            if (identifierKeyNames.contains(o.e)) {
+                identifierKeySourceMap.put(o.e, setSrc.get(o.i));
+                identifierKeyTargetMap.put(o.e, columnIndexMap.get(o.e));
+            } else if (!addedAutoUpdateColumns.contains(o.e)) {
+                modifySkOnly.set(false);
+            }
+        });
+
+        // Add missing partition columns needed for routing (not in updateColumnList)
+        Set<String> addedColumns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        addedColumns.addAll(identifierKeyTargetMap.keySet());
+
+        for (String colName : identifierKeyNames) {
+            if (!addedColumns.contains(colName)) {
+                Integer colIdx = columnIndexMap.get(colName);
+                if (colIdx != null) {
+                    identifierKeyTargetMap.put(colName, colIdx);
+                    identifierKeySourceMap.put(colName, colIdx);
+                    addedColumns.add(colName);
+                }
+            }
+        }
+
+        final Mapping identifierKeyTargetMapping =
+            Mappings.source(ImmutableList.copyOf(identifierKeySourceMap.values()), fieldCount);
+        final Mapping identifierKeySourceMapping =
+            Mappings.source(ImmutableList.copyOf(identifierKeyTargetMap.values()), fieldCount);
+        final List<ColumnMeta> identifierKeyMetas =
+            identifierKeyTargetMap.keySet().stream().map(targetMeta::getColumn).collect(
+                Collectors.toList());
+
+        final boolean allSupportPartField = allColumnsSupportPartField(identifierKeyMetas);
+        final boolean isNewPartDb = DbInfoManager.getInstance().isNewPartitionDb(qn.left);
+        final boolean usePartFieldChecker = isNewPartDb && allSupportPartField;
+
+        final List<String> identifierKeyNameList = new ArrayList<>(identifierKeyTargetMap.keySet());
+        if (!isGsi) {
+            return new RelocateByReturningWriter(targetTable,
+                deleteWriter,
+                insertWriter,
+                updateWriter,
+                identifierKeyTargetMapping,
+                identifierKeySourceMapping,
+                identifierKeyMetas,
+                identifierKeyNameList,
+                modifySkOnly.get(),
+                usePartFieldChecker);
+        } else {
+            return new RelocateGsiByReturningWriter(targetTable,
+                deleteWriter,
+                insertWriter,
+                updateWriter,
+                identifierKeyTargetMapping,
+                identifierKeySourceMapping,
+                identifierKeyMetas,
+                identifierKeyNameList,
+                modifySkOnly.get(),
+                usePartFieldChecker,
+                gsiMeta,
+                forceGsiRelocate);
+        }
     }
 
     public static DistinctWriter createUpdateGsiWriter(TableModify parent, RelOptTable targetTable,
@@ -860,7 +1314,8 @@ public class WriterFactory {
                                                        boolean isGsi, boolean forceGsiRelocate,
                                                        Set<String> addedAutoUpdateColumns,
                                                        PlannerContext plannerContext,
-                                                       ExecutionContext ec) {
+                                                       ExecutionContext ec,
+                                                       boolean modifyBlackHole) {
         // Build column index map for target table
         final List<Map<String, Integer>> sourceColumnIndexMap = parent.getSourceColumnIndexMap();
         final Map<String, Integer> columnIndexMap = sourceColumnIndexMap.get(primaryTableIndex);
@@ -923,7 +1378,8 @@ public class WriterFactory {
                 identifierKeySourceMapping,
                 identifierKeyMetas,
                 modifySkOnly.get(),
-                usePartFieldChecker);
+                usePartFieldChecker,
+                modifyBlackHole);
         } else {
             return new RelocateGsiWriter(targetTable,
                 deleteWriter,
@@ -1061,6 +1517,91 @@ public class WriterFactory {
     }
 
     /**
+     * DistinctWriter for LogicalRelocate executed by returning
+     * create distinct insert writer from returning value as source
+     */
+    public static DistinctWriter createDistinctInsertWriterFromReturningValue(TableModify parent,
+                                                                              RelOptTable targetTable,
+                                                                              Integer primaryTableIndex,
+                                                                              String primaryTableName,
+                                                                              ExecutionContext ec) {
+        final RelNode input = parent.getInput();
+        final List<Map<String, Integer>> sourceColumnIndexMap = parent.getSourceColumnIndexMap();
+
+        final Pair<String, String> targetSchemaTable = RelUtils.getQualifiedTableName(targetTable);
+        final String targetSchema = targetSchemaTable.left;
+        final String targetTableName = targetSchemaTable.right;
+        final OptimizerContext oc = OptimizerContext.getContext(targetSchema);
+        final TableMeta targetMeta = ec.getSchemaManager(targetSchema).getTable(targetTableName);
+        final List<String> skNames = oc.getRuleManager().getSharedColumns(targetTableName);
+
+        if (!targetMeta.isHasPrimaryKey() && !targetMeta.hasGsiImplicitPrimaryKey()) {
+            throw new TddlRuntimeException(ERR_PK_WRITER_ON_TABLE_WITHOUT_PK, "INSERT", targetTableName);
+        }
+
+        final List<String> pkNames = ImmutableList
+            .copyOf((targetMeta.isHasPrimaryKey() ? targetMeta.getPrimaryKey() : targetMeta.getGsiImplicitPrimaryKey())
+                .stream().map(ColumnMeta::getName).collect(Collectors.toList()));
+
+        // Build column index map for target table
+        // In case of logical table appear more than once
+        final Map<String, Integer> columnIndexMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        columnIndexMap.putAll(sourceColumnIndexMap.get(primaryTableIndex));
+
+        // Use max index + 1 as fieldCount to handle multi-table UPDATE where column indices
+        // are offset-based (e.g., second table columns at positions 3,4,5 with map size 3)
+        final int fieldCount =
+            columnIndexMap.values().stream().mapToInt(Integer::intValue).max().orElse(-1) + 1;
+
+        final TreeSet<String> deduplicateColumns = Stream.concat(pkNames.stream(), skNames.stream())
+            .collect(Collectors.toCollection(TreeSet::new));
+        final Mapping deduplicateMapping = Mappings
+            .source(deduplicateColumns.stream().map(columnIndexMap::get).collect(Collectors.toList()), fieldCount);
+
+        /*
+         * Build insert
+         */
+        final RelDataType targetRowType = RelOptTableImpl.realRowType(targetTable);
+        final List<RelDataTypeField> targetFields = targetRowType.getFieldList();
+        final List<RelDataTypeField> sourceFields = input.getRowType().getFieldList();
+
+        TableColumnMeta tableColumnMeta = targetMeta.getTableColumnMeta();
+        Map<String, String> columnMapping = TableColumnUtils.getColumnMultiWriteMapping(tableColumnMeta);
+        boolean needColumnMapping = MapUtils.isNotEmpty(columnMapping);
+
+        TableMeta primaryTableMeta = ec.getSchemaManager(targetSchema).getTable(primaryTableName);
+        // During drop column, we drop gsi column first, so it is possible that gsi contain column that does not exist
+        // on primary table
+        List<String> fieldNames =
+            targetFields.stream().map(RelDataTypeField::getName)
+                .filter(name -> primaryTableMeta.getColumnIgnoreCase(name) != null
+                    || (needColumnMapping && columnMapping.containsValue(name.toLowerCase())))
+                .collect(Collectors.toCollection(ArrayList::new));
+
+        // don't Replace insert value reference
+
+        final Map<String, Integer> columnIndexTmp = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        if (needColumnMapping) {
+            columnIndexMap.forEach((k, v) -> {
+                columnIndexTmp.put(columnMapping.getOrDefault(k, k), v);
+            });
+            columnIndexMap.clear();
+            columnIndexMap.putAll(columnIndexTmp);
+        }
+
+        // Build mapping from insert columns to select result
+        final List<Integer> valuePermute = fieldNames.stream()
+            .map(columnIndexMap::get)
+            .collect(Collectors.toList());
+
+        final LogicalInsert insert =
+            buildInsertOrReplace(parent, targetTable, sourceFields, valuePermute, fieldNames, Operation.INSERT, null,
+                null, false, targetSchema, primaryTableName, ec, false);
+
+        return new DistinctInsertWriter(targetTable, insert, deduplicateMapping);
+    }
+
+    /**
      * DistinctWriter for LogicalRelocate
      *
      * @param parent Original update operator
@@ -1111,7 +1652,8 @@ public class WriterFactory {
          */
         final RelDataType targetRowType = RelOptTableImpl.realRowType(targetTable);
         final List<RelDataTypeField> targetFields = targetRowType.getFieldList();
-        final List<RelDataTypeField> sourceFields = input.getRowType().getFieldList();
+        final List<RelDataTypeField> sourceFields =
+            new ArrayList<>(input.getRowType().getFieldList());
 
         TableColumnMeta tableColumnMeta = targetMeta.getTableColumnMeta();
         Map<String, String> columnMapping = TableColumnUtils.getColumnMultiWriteMapping(tableColumnMeta);
@@ -1137,6 +1679,32 @@ public class WriterFactory {
             });
             columnIndexMap.clear();
             columnIndexMap.putAll(columnIndexTmp);
+        }
+
+        // LogicalRelocate INSERT is built from the complete after-image. Mid-migration MCE addr
+        // columns are write-only and may be absent from the logical target row type, so append an
+        // exact physical sink slot. The executor fills this branch-local slot with a BlobRef after
+        // relocation classification; the shared logical row remains untouched.
+        for (ColumnMeta addrColumn : ExternalizedDmlRewriter.getAppendAddrColumns(targetMeta)) {
+            final String addrColumnName = addrColumn.getName();
+            final String contentColumnName = targetMeta.getMceContentColumnByAddr(addrColumnName);
+            if (contentColumnName == null || columnIndexMap.get(contentColumnName) == null) {
+                throw new TddlRuntimeException(com.alibaba.polardbx.common.exception.code.ErrorCode.ERR_OPTIMIZER,
+                    "Missing MCE content row mapping for relocate INSERT column " + targetSchema + "."
+                        + targetTableName + "." + addrColumnName);
+            }
+
+            final boolean fieldAlreadyPresent =
+                fieldNames.stream().anyMatch(name -> name.equalsIgnoreCase(addrColumnName));
+            if (!fieldAlreadyPresent) {
+                fieldNames.add(addrColumnName);
+            }
+            if (columnIndexMap.get(addrColumnName) == null) {
+                final int syntheticRowIndex = sourceFields.size();
+                sourceFields.add(new RelDataTypeFieldImpl(addrColumnName, syntheticRowIndex,
+                    addrColumn.getField().getRelType()));
+                columnIndexMap.put(addrColumnName, syntheticRowIndex);
+            }
         }
 
         // Build mapping from insert columns to select result
@@ -1340,8 +1908,7 @@ public class WriterFactory {
         }
     }
 
-    public static ReplaceRelocateWriter createReplaceRelocateWriter(LogicalInsert parent, RelOptTable
-        targetTable,
+    public static ReplaceRelocateWriter createReplaceRelocateWriter(LogicalInsert parent, RelOptTable targetTable,
                                                                     List<Integer> valuePermute, TableMeta gsiMeta,
                                                                     boolean containsAllUk,
                                                                     boolean isGsi,
@@ -1410,8 +1977,7 @@ public class WriterFactory {
         }
     }
 
-    public static InsertWriter createInsertOrReplaceWriter(LogicalInsert parent, RelOptTable
-        targetTable,
+    public static InsertWriter createInsertOrReplaceWriter(LogicalInsert parent, RelOptTable targetTable,
                                                            List<Integer> valuePermute, TableMeta gsiMeta,
                                                            List<String> keyWords, List<RexNode> duplicateKeyUpdateList,
                                                            boolean isReplace, boolean isBroadcast, boolean isSingle,
@@ -1603,6 +2169,16 @@ public class WriterFactory {
                 SqlInsert sqlInsert = (SqlInsert) result.getSqlTemplate();
                 TableColumnUtils.rewriteSqlTemplate(sqlInsert, columnMultiWriteMapping);
             }
+
+            // Externalized column mapping: rewrite logical column names to physical
+            // (e.g. content -> content_addr_)
+            if (targetMeta.hasExternalizedColumn()) {
+                Map<String, String> extColMapping = TableColumnUtils.buildExternalizedColumnMapping(targetMeta);
+                if (MapUtils.isNotEmpty(extColMapping)) {
+                    SqlInsert sqlInsert = (SqlInsert) result.getSqlTemplate();
+                    TableColumnUtils.rewriteSqlTemplate(sqlInsert, extColMapping);
+                }
+            }
         }
 
         return result;
@@ -1722,4 +2298,3 @@ public class WriterFactory {
             });
     }
 }
-

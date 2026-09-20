@@ -38,6 +38,7 @@ import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
 import com.alibaba.polardbx.optimizer.core.planner.Planner;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalDropMaterializedView;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalDropTable;
 import com.alibaba.polardbx.optimizer.parse.FastsqlParser;
@@ -48,6 +49,8 @@ import org.apache.calcite.sql.SqlDropTable;
 import org.apache.calcite.sql.SqlKind;
 
 import java.util.ArrayList;
+import java.util.Map;
+import java.util.Set;
 
 import static com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcMarkUtil.buildExtendParameter;
 
@@ -55,6 +58,12 @@ public class LogicalDropMaterializedViewHandler extends LogicalDropTableHandler 
 
     public LogicalDropMaterializedViewHandler(IRepository repo) {
         super(repo);
+    }
+
+    @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
     }
 
     @Override
@@ -133,7 +142,8 @@ public class LogicalDropMaterializedViewHandler extends LogicalDropTableHandler 
 
         ArrayList<String> viewList = new ArrayList<>();
         viewList.add(viewName);
-        SyncManagerHelper.sync(new DropViewSyncAction(schemaName, viewList), schemaName, SyncScope.CURRENT_ONLY);
+        SyncManagerHelper.syncThrowExceptions(new DropViewSyncAction(schemaName, viewList), schemaName,
+            SyncScope.CURRENT_ONLY);
     }
 
     //TODO cdc@shengyu

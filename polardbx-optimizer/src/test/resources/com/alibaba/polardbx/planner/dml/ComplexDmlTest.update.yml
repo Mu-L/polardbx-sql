@@ -1,0 +1,391 @@
+# one sharding table
+- sql: |
+    update test_hash_ta a set a.name = "a" where a.id = 1;
+
+  plan: |
+
+    logicalmodifyview(tables="optest_0001.test_hash_ta", sql="update `test_hash_ta` as `test_hash_ta` set `name` = ? where (`id` = ?)")
+
+- sql: |
+    update test_hash_ta a, test_hash_ta b set b.name = "a" where a.id = b.id and a.id = 1;
+
+  plan: |
+
+    logicalmodifyview(tables="optest_0001.test_hash_ta", sql="update `test_hash_ta` as `test_hash_ta` inner join `test_hash_ta` as `test_hash_ta0` on ((`test_hash_ta`.`id` = ?) and (`test_hash_ta0`.`id` = ?) and (`test_hash_ta`.`id` = `test_hash_ta0`.`id`)) set `test_hash_ta0`.`name` = ?")
+
+- sql: |
+    update test_broadcast a, test_broadcast b set b.name = "a" where a.id = b.id and a.id = 1;
+
+  plan: |
+
+    logicalview(tables="optest_0000.test_broadcast,test_broadcast", sql="update `test_broadcast` as `a`, `test_broadcast` as `b` set `b`.`name` = ? where ((`a`.`id` = `b`.`id`) and (`a`.`id` = ?))", params="a,1")
+
+- sql: |
+    update test_hash_tb, test_hash_ta set test_hash_ta.name = "a" where test_hash_ta.id = test_hash_tb.id;
+
+  plan: |
+
+    logicalmodifyview(tables="[0000-0003].test_hash_tb,test_hash_ta", shardcount=4, sql="update `test_hash_tb` as `test_hash_tb` inner join `test_hash_ta` as `test_hash_ta` on (`test_hash_tb`.`id` = `test_hash_ta`.`id`) set `test_hash_ta`.`name` = ?")
+
+- sql: |
+    update test_hash_tb b, test_hash_ta a set a.name = "a" where a.id = b.id and a.id = 1;
+
+  plan: |
+
+    logicalmodifyview(tables="optest_0001.test_hash_tb,test_hash_ta", sql="update `test_hash_tb` as `test_hash_tb` inner join `test_hash_ta` as `test_hash_ta` on ((`test_hash_tb`.`id` = ?) and (`test_hash_ta`.`id` = ?) and (`test_hash_tb`.`id` = `test_hash_ta`.`id`)) set `test_hash_ta`.`name` = ?")
+
+- sql: |
+    update test_hash_tb as test_hash_ta, test_hash_ta as test_hash_tb set test_hash_tb.name = "a" where test_hash_ta.id = test_hash_tb.id and test_hash_tb.id = 1;
+
+  plan: |
+
+    logicalmodifyview(tables="optest_0001.test_hash_tb,test_hash_ta", sql="update `test_hash_tb` as `test_hash_tb` inner join `test_hash_ta` as `test_hash_ta` on ((`test_hash_tb`.`id` = ?) and (`test_hash_ta`.`id` = ?) and (`test_hash_tb`.`id` = `test_hash_ta`.`id`)) set `test_hash_ta`.`name` = ?")
+
+- sql: |
+    /*+PXC:CMD_EXTRA(ENABLE_COMPLEX_DML_CROSS_DB=true,FORBID_EXECUTE_DML_ALL=false)*/
+    update test_hash_tb a, test_hash_ta b set a.name = "a";
+
+  plan: |
+
+    logicalmodify(type="update", set="test_hash_tb.name=?0")
+      project(id="id0", name="name0", create_time="create_time0", id0="id", name0="name", create_time0="create_time", gen$0="?0")
+        nljoin(condition="true", type="inner")
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].test_hash_ta", shardcount=4, sql="select `id`, `name`, `create_time` from `test_hash_ta` as `test_hash_ta` for update")
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id`, `name`, `create_time` from `test_hash_tb` as `test_hash_tb` for update")
+
+- sql: |
+    update test_hash_tc a set a.key = last_insert_id(a.key + 1) where a.key = 1;
+
+  plan: |
+
+    logicalmodify(type="update", set="test_hash_tc.key=last_insert_id(+($1, ?0))")
+      project(id="id", key="key", create_time="create_time", gen$0="last_insert_id(key + ?0)")
+        gather(concurrent=true)
+          logicalview(tables="[0000-0003].test_hash_tc", shardcount=4, sql="select `id`, `key`, `create_time` from `test_hash_tc` as `test_hash_tc` where (`key` = ?) for update")
+
+- sql: |
+    /*+PXC:CMD_EXTRA(ENABLE_COMPLEX_DML_CROSS_DB=true)*/
+    update test_broadcast a, test_hash_tb b set a.name = "a" where a.id = b.id and a.id = 1;
+
+  plan: |
+
+    logicalmodify(type="update", set="test_broadcast.name=?0")
+      logicalview(tables="optest_0001.test_hash_tb,test_broadcast", sql="select `test_broadcast`.`id`, `test_broadcast`.`name`, `test_broadcast`.`create_time`, `test_hash_tb`.`id` as `id0`, `test_hash_tb`.`name` as `name0`, `test_hash_tb`.`create_time` as `create_time0`, ? from `test_hash_tb` as `test_hash_tb` inner join `test_broadcast` as `test_broadcast` on ((`test_broadcast`.`id` = ?) and (`test_hash_tb`.`id` = ?) and (`test_hash_tb`.`id` = `test_broadcast`.`id`)) for update")
+
+- sql: |
+    update test_broadcast a, test_hash_tb b set b.name = "a" where a.id = b.id and a.id = 1;
+
+  plan: |
+
+    logicalmodifyview(tables="optest_0001.test_hash_tb,test_broadcast", sql="update `test_hash_tb` as `test_hash_tb` inner join `test_broadcast` as `test_broadcast` on ((`test_broadcast`.`id` = ?) and (`test_hash_tb`.`id` = ?) and (`test_hash_tb`.`id` = `test_broadcast`.`id`)) set `test_hash_tb`.`name` = ?")
+
+- sql: |
+    /*+PXC:CMD_EXTRA(ENABLE_COMPLEX_DML_CROSS_DB=true)*/
+    update test_broadcast a, test_hash_tb b set a.name = "a", b.name = "b" where a.id = b.id and a.id = 1;
+
+  plan: |
+
+    logicalmodify(type="update", set="test_broadcast.name=?0, test_hash_tb.name=?1")
+      logicalview(tables="optest_0001.test_hash_tb,test_broadcast", sql="select `test_broadcast`.`id`, `test_broadcast`.`name`, `test_broadcast`.`create_time`, `test_hash_tb`.`id` as `id0`, `test_hash_tb`.`name` as `name0`, `test_hash_tb`.`create_time` as `create_time0`, ?, ? as `gen$1` from `test_hash_tb` as `test_hash_tb` inner join `test_broadcast` as `test_broadcast` on ((`test_broadcast`.`id` = ?) and (`test_hash_tb`.`id` = ?) and (`test_hash_tb`.`id` = `test_broadcast`.`id`)) for update")
+
+- sql: |
+    update test_broadcast a set a.id = last_insert_id(a.id + 1) where a.id = 1;
+
+  plan: |
+
+    logicalmodify(type="update", set="test_broadcast.id=last_insert_id(+($0, ?0))")
+      project(id="id", name="name", create_time="create_time", gen$0="last_insert_id(id + ?0)")
+        logicalview(tables="optest_0000.test_broadcast", sql="select `id`, `name`, `create_time` from `test_broadcast` as `test_broadcast` where (`id` = ?) for update")
+
+- sql: |
+    update test_broadcast a, test_hash_tb b set a.id = last_insert_id(a.id + 1), b.name = "b" where a.id = b.id and a.id = 1;
+
+  plan: |
+
+    logicalmodify(type="update", set="test_broadcast.id=last_insert_id(+($0, ?0)), test_hash_tb.name=?1")
+      project(id="id", name="name", create_time="create_time", id0="id0", name0="name0", create_time0="create_time0", gen$0="last_insert_id(id + ?0)", gen$1="?1")
+        logicalview(tables="optest_0001.test_hash_tb,test_broadcast", sql="select `test_broadcast`.`id`, `test_broadcast`.`name`, `test_broadcast`.`create_time`, `test_hash_tb`.`id` as `id0`, `test_hash_tb`.`name` as `name0`, `test_hash_tb`.`create_time` as `create_time0` from `test_hash_tb` as `test_hash_tb` inner join `test_broadcast` as `test_broadcast` on ((`test_broadcast`.`id` = ?) and (`test_hash_tb`.`id` = ?) and (`test_hash_tb`.`id` = `test_broadcast`.`id`)) for update")
+
+- sql: |
+    /*+PXC:CMD_EXTRA(ENABLE_COMPLEX_DML_CROSS_DB=true)*/
+    update test_single a, test_hash_tb b set b.name = "a" where a.id = b.id and a.id = 1;
+
+  plan: |
+
+    logicalmodify(type="update", set="test_hash_tb.name=?0")
+      project(id="id0", name="name0", create_time="create_time0", id0="id", name0="name", create_time0="create_time", gen$0="?0")
+        hashjoin(condition="id = id", type="inner")
+          logicalview(tables="optest_0001.test_hash_tb", sql="select `id`, `name`, `create_time` from `test_hash_tb` as `test_hash_tb` where (`id` = ?) for update")
+          logicalview(tables="optest_0000.test_single", sql="select `id`, `name`, `create_time` from `test_single` as `test_single` where (`id` = ?) for update")
+
+- sql: |
+    update test_single a join test_hash_tb b set b.name = "a" where a.id = b.id and a.id = 0;
+
+  plan: |
+
+    phytableoperation(tables="optest_0000.[test_single, test_hash_tb]", sql="update ? as `a` inner join ? as `b` set `b`.`name` = ? where ((`a`.`id` = `b`.`id`) and (`a`.`id` = ?))", params="`test_single`,`test_hash_tb`,a,0")
+
+- sql: |
+    /*+PXC:CMD_EXTRA(ENABLE_COMPLEX_DML_CROSS_DB=true)*/
+    update test_single a, test_hash_tb b set a.name = "a", b.name = "b" where a.id = b.id and a.id = 1;
+
+  plan: |
+
+    logicalmodify(type="update", set="test_single.name=?0, test_hash_tb.name=?1")
+      project(id="id0", name="name0", create_time="create_time0", id0="id", name0="name", create_time0="create_time", gen$0="?0", gen$1="?1")
+        hashjoin(condition="id = id", type="inner")
+          logicalview(tables="optest_0001.test_hash_tb", sql="select `id`, `name`, `create_time` from `test_hash_tb` as `test_hash_tb` where (`id` = ?) for update")
+          logicalview(tables="optest_0000.test_single", sql="select `id`, `name`, `create_time` from `test_single` as `test_single` where (`id` = ?) for update")
+
+- sql: |
+    update test_broadcast set name = "a" where id in (select id from test_single);
+
+  plan: |
+
+    logicalmodify(type="update", set="test_broadcast.name=?0")
+      logicalview(tables="optest_0000.test_broadcast,test_single", sql="select `id`, `name`, `create_time`, ? from `test_broadcast` as `test_broadcast` where (`id` in (select `id` from `test_single` as `test_single`)) for update")
+
+- sql: |
+    update test_single set name = "a" where id in (select id from test_broadcast);
+
+  plan: |
+
+    logicalmodifyview(tables="optest_0000.test_single,test_broadcast", sql="update `test_single` as `test_single` set `name` = ? where (`id` in (select `id` from `test_broadcast` as `test_broadcast`))")
+
+- sql: |
+    update test_broadcast set name = "a" where id in (select id from test_broadcast);
+
+  plan: |
+
+    logicalview(tables="optest_0000.test_broadcast,test_broadcast", sql="update `test_broadcast` as `test_broadcast` set `name` = ? where (`id` in (select `test_broadcast`.`id` as `id` from `test_broadcast` as `test_broadcast`))", params="a")
+
+- sql: |
+    update test_single set name = "a" where id in (select id from test_single);
+
+  plan: |
+
+    logicalview(tables="optest_0000.test_single,test_single", sql="update `test_single` as `test_single` set `name` = ? where (`id` in (select `test_single`.`id` as `id` from `test_single` as `test_single`))", params="a")
+
+- sql: |
+    update test_broadcast a, test_broadcast_b b set a.name = "a" where a.id = b.id and a.id = 1;
+
+  plan: |
+
+    logicalview(tables="optest_0000.test_broadcast,test_broadcast_b", sql="update `test_broadcast` as `a`, `test_broadcast_b` as `b` set `a`.`name` = ? where ((`a`.`id` = `b`.`id`) and (`a`.`id` = ?))", params="a,1")
+
+- sql: |
+    update test_broadcast a, test_broadcast_b b set b.name = "b" where a.id = b.id and a.id = 1;
+
+  plan: |
+
+    logicalview(tables="optest_0000.test_broadcast,test_broadcast_b", sql="update `test_broadcast` as `a`, `test_broadcast_b` as `b` set `b`.`name` = ? where ((`a`.`id` = `b`.`id`) and (`a`.`id` = ?))", params="b,1")
+
+- sql: |
+    update test_hash_ta a join (select name, id from test_hash_tb b where b.name = "c" and b.id = 1) b set a.name = b.name where a.id = b.id;
+
+  plan: |
+
+    phytableoperation(tables="optest_0001.[test_hash_ta, test_hash_tb]", sql="update ? as `a` inner join (select `b`.`name` as `name`, `b`.`id` as `id` from ? as `b` where ((`b`.`name` = ?) and (`b`.`id` = ?))) as `b` set `a`.`name` = `b`.`name` where (`a`.`id` = `b`.`id`)", params="`test_hash_ta`,`test_hash_tb`,c,1")
+
+- sql: |
+    update test_broadcast a join (select name, id from test_broadcast b where b.name = "c" and b.id = 1) b set a.name = b.name where a.id = b.id;
+
+  plan: |
+
+    logicalview(tables="optest_0000.test_broadcast,test_broadcast", sql="update `test_broadcast` as `a` inner join (select `b`.`name` as `name`, `b`.`id` as `id` from `test_broadcast` as `b` where ((`b`.`name` = ?) and (`b`.`id` = ?))) as `b` set `a`.`name` = `b`.`name` where (`a`.`id` = `b`.`id`)", params="c,1")
+
+- sql: |
+    update test_hash_tb a join (select name, id from test_broadcast b where b.name = "c" and b.id = 1) b set a.name = b.name where a.id = b.id;
+
+  plan: |
+
+    phytableoperation(tables="optest_0001.[test_hash_tb, test_broadcast]", sql="update ? as `a` inner join (select `b`.`name` as `name`, `b`.`id` as `id` from ? as `b` where ((`b`.`name` = ?) and (`b`.`id` = ?))) as `b` set `a`.`name` = `b`.`name` where (`a`.`id` = `b`.`id`)", params="`test_hash_tb`,`test_broadcast`,c,1")
+
+- sql: |
+    update test_hash_tb a join (select name, id from test_broadcast b where b.name = "c" and b.id = 1) b set a.id = last_insert_id(a.id + 1) where a.id = b.id;
+
+  plan: |
+
+    logicalrelocate(type=update, set="test_hash_tb.id=last_insert_id(+($0, ?2))", relocate="test_hash_tb")
+      project(id="id", name="name", create_time="create_time", name0="name0", id0="id0", gen$0="last_insert_id(id + ?2)")
+        logicalview(tables="optest_0001.test_broadcast,test_hash_tb", sql="select `test_hash_tb`.`id`, `test_hash_tb`.`name`, `test_hash_tb`.`create_time`, `test_broadcast`.`name` as `name0`, `test_broadcast`.`id` as `id0` from `test_broadcast` as `test_broadcast` inner join `test_hash_tb` as `test_hash_tb` on (`test_broadcast`.`id` = `test_hash_tb`.`id`) where ((`test_broadcast`.`id` = ?) and (`test_broadcast`.`name` = ?)) for update")
+
+- sql: |
+    update test_broadcast a join (select name, id from test_hash_ta b where b.name = "c" and b.id = 1) b set a.name = b.name where a.id = b.id;
+
+  plan: |
+
+    logicalmodify(type="update", set="test_broadcast.name=$3")
+      logicalview(tables="optest_0001.test_hash_ta,test_broadcast", sql="select `test_broadcast`.`id`, `test_broadcast`.`name`, `test_broadcast`.`create_time`, `test_hash_ta`.`name` as `name0`, `test_hash_ta`.`id` as `id0`, `test_hash_ta`.`name` as `gen$0` from `test_hash_ta` as `test_hash_ta` inner join `test_broadcast` as `test_broadcast` on (`test_hash_ta`.`id` = `test_broadcast`.`id`) where ((`test_hash_ta`.`id` = ?) and (`test_hash_ta`.`name` = ?)) for update")
+
+- sql: |
+    update test_broadcast a join (select name, id from test_hash_ta b where b.name = "c" and b.id = 1) b set a.id = last_insert_id(a.id + 1) where a.id = b.id;
+
+  plan: |
+
+    logicalmodify(type="update", set="test_broadcast.id=last_insert_id(+($0, ?2))")
+      project(id="id", name="name", create_time="create_time", name0="name0", id0="id0", gen$0="last_insert_id(id + ?2)")
+        logicalview(tables="optest_0001.test_hash_ta,test_broadcast", sql="select `test_broadcast`.`id`, `test_broadcast`.`name`, `test_broadcast`.`create_time`, `test_hash_ta`.`name` as `name0`, `test_hash_ta`.`id` as `id0` from `test_hash_ta` as `test_hash_ta` inner join `test_broadcast` as `test_broadcast` on (`test_hash_ta`.`id` = `test_broadcast`.`id`) where ((`test_hash_ta`.`id` = ?) and (`test_hash_ta`.`name` = ?)) for update")
+
+- sql: |
+    /*+PXC:CMD_EXTRA(ENABLE_MODIFY_SHARDING_COLUMN = true)*/
+    update test_hash_tb a set a.id = "3", a.name = "b" where a.id = 1;
+
+  plan: |
+
+    logicalrelocate(type=update, set="test_hash_tb.id=?0, test_hash_tb.name=?1", relocate="test_hash_tb")
+      logicalview(tables="optest_0001.test_hash_tb", sql="select `id`, `name`, `create_time`, ?, ? as `gen$1` from `test_hash_tb` as `test_hash_tb` where (`id` = ?) for update")
+
+- sql: |
+    update test_hash_tc a set a.id = last_insert_id(a.id + 1) where a.id = 1;
+
+  plan: |
+
+    logicalrelocate(type=update, set="test_hash_tc.id=last_insert_id(+($0, ?0))", relocate="test_hash_tc")
+      project(id="id", key="key", create_time="create_time", gen$0="last_insert_id(id + ?0)")
+        logicalview(tables="optest_0001.test_hash_tc", sql="select `id`, `key`, `create_time` from `test_hash_tc` as `test_hash_tc` where (`id` = ?) for update")
+
+- sql: |
+    /*+PXC:CMD_EXTRA(ENABLE_MODIFY_SHARDING_COLUMN = true)*/
+    update t1 a set a.c1 = 1 where a.c1 = 3;
+
+  plan: |
+
+    logicalrelocate(type=update, set="t1.c1=?0, t1.c8=current_timestamp(0)", relocate="t1", update="t1_i_a, t1_i_b")
+      logicalview(tables="optest_0000.t1_03", sql="select `pk`, `c1`, `c2`, `c3`, `c4`, `c5`, `c6`, `c7`, `c8`, ?, current_timestamp(0) from `t1` as `t1` where (`c1` = ?) for update")
+
+- sql: |
+    /*+PXC:CMD_EXTRA(ENABLE_MODIFY_SHARDING_COLUMN = true)*/
+    update t1 a set a.c1 = last_insert_id(a.c1 + 1) where a.c1 = 3;
+
+  plan: |
+
+    logicalrelocate(type=update, set="t1.c1=last_insert_id(+($1, ?0)), t1.c8=current_timestamp(0)", relocate="t1", update="t1_i_a, t1_i_b")
+      project(pk="pk", c1="c1", c2="c2", c3="c3", c4="c4", c5="c5", c6="c6", c7="c7", c8="c8", gen$0="last_insert_id(c1 + ?0)", expr$9="current_timestamp(0)")
+        logicalview(tables="optest_0000.t1_03", sql="select `pk`, `c1`, `c2`, `c3`, `c4`, `c5`, `c6`, `c7`, `c8` from `t1` as `t1` where (`c1` = ?) for update")
+
+- sql: |
+    /*+PXC:CMD_EXTRA(ENABLE_MODIFY_SHARDING_COLUMN = true)*/
+    update t1 a set a.c1 = 1, a.c2 = 2 where a.c1 = 3;
+
+  plan: |
+
+    logicalrelocate(type=update, set="t1.c1=?0, t1.c2=?1, t1.c8=current_timestamp(0)", relocate="t1, t1_i_b", update="t1_i_a")
+      logicalview(tables="optest_0000.t1_03", sql="select `pk`, `c1`, `c2`, `c3`, `c4`, `c5`, `c6`, `c7`, `c8`, ?, ? as `gen$1`, current_timestamp(0) from `t1` as `t1` where (`c1` = ?) for update")
+
+- sql: |
+    /*+PXC:CMD_EXTRA(ENABLE_MODIFY_SHARDING_COLUMN = true)*/
+    update t1 a set a.c1 = 1, a.c2 = last_insert_id(a.c2 + 1) where a.c1 = 3;
+
+  plan: |
+
+    logicalrelocate(type=update, set="t1.c1=?0, t1.c2=last_insert_id(+($2, ?1)), t1.c8=current_timestamp(0)", relocate="t1, t1_i_b", update="t1_i_a")
+      project(pk="pk", c1="c1", c2="c2", c3="c3", c4="c4", c5="c5", c6="c6", c7="c7", c8="c8", gen$0="?0", gen$1="last_insert_id(c2 + ?1)", expr$10="current_timestamp(0)")
+        logicalview(tables="optest_0000.t1_03", sql="select `pk`, `c1`, `c2`, `c3`, `c4`, `c5`, `c6`, `c7`, `c8` from `t1` as `t1` where (`c1` = ?) for update")
+
+- sql: |
+    /*+PXC:CMD_EXTRA(ENABLE_MODIFY_SHARDING_COLUMN = true)*/
+    update t1 a set a.c3 = 1, a.c6 = 2 where a.c3 = 3;
+
+  plan: |
+    logicalrelocate(type=update, set="t1.c3=?0, t1.c6=?1, t1.c8=current_timestamp(0)", relocate="t1_i_a", update="t1")
+      project(pk="pk0", c1="c10", c2="c2", c3="c3", c4="c4", c5="c5", c6="c6", c7="c7", c8="c8", gen$0="?0", gen$1="?1", expr$10="current_timestamp(0)")
+        bkajoin(condition="pk = pk and c1 <=> c1", type="inner")
+          indexscan(tables="optest_0000.t1_i_a_03", sql="select `pk`, `c1` from `t1_i_a` as `t1_i_a` where (`c3` = ?) for update")
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].t1_[00-27]", shardcount=28, sql="select `pk`, `c1`, `c2`, `c4`, `c7`, `c8`, `c3`, `c5`, `c6` from `t1` as `t1` where ((`c3` = ?) and (`pk` in (...))) for update")
+
+- sql: |
+    /*+PXC:CMD_EXTRA(ENABLE_MODIFY_SHARDING_COLUMN = true)*/
+    update t1 a set a.c3 = last_insert_id(a.c3 + 1), a.c6 = last_insert_id(a.c6 + 2) where a.c3 = 3;
+
+  plan: |
+    logicalrelocate(type=update, set="t1.c3=last_insert_id(+($3, ?0)), t1.c6=last_insert_id(+(cast($6):bigint, ?1)), t1.c8=current_timestamp(0)", relocate="t1_i_a", update="t1")
+      project(pk="pk0", c1="c10", c2="c2", c3="c3", c4="c4", c5="c5", c6="c6", c7="c7", c8="c8", gen$0="last_insert_id(c3 + ?0)", gen$1="last_insert_id(cast(c6) + ?1)", expr$10="current_timestamp(0)")
+        bkajoin(condition="pk = pk and c1 <=> c1", type="inner")
+          indexscan(tables="optest_0000.t1_i_a_03", sql="select `pk`, `c1` from `t1_i_a` as `t1_i_a` where (`c3` = ?) for update")
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].t1_[00-27]", shardcount=28, sql="select `pk`, `c1`, `c2`, `c4`, `c7`, `c8`, `c3`, `c5`, `c6` from `t1` as `t1` where ((`c3` = ?) and (`pk` in (...))) for update")
+
+- sql: |
+    /*+PXC:CMD_EXTRA(ENABLE_MODIFY_SHARDING_COLUMN = true)*/
+    update test_hash_ta a join test_hash_tb b on a.id = b.id set a.id = b.id * 2;
+
+  plan: |
+
+    logicalrelocate(type=update, set="test_hash_ta.id=*($3, ?0)", relocate="test_hash_ta")
+      gather(concurrent=true)
+        logicalview(tables="[0000-0003].test_hash_ta,test_hash_tb", shardcount=4, sql="select `test_hash_ta`.`id`, `test_hash_ta`.`name`, `test_hash_ta`.`create_time`, `test_hash_tb`.`id` as `id0`, `test_hash_tb`.`name` as `name0`, `test_hash_tb`.`create_time` as `create_time0`, (`test_hash_tb`.`id` * ?) from `test_hash_ta` as `test_hash_ta` inner join `test_hash_tb` as `test_hash_tb` on (`test_hash_ta`.`id` = `test_hash_tb`.`id`) for update")
+
+- sql: |
+    UPDATE gx_brand_votelist SET itemid= "3674133",brandid= "1527519",name= "章丘市万源有色金属铸造有限公司",introduce= "<span style="color:#333333;font-family:"background-color:#FFFFFF;">铜</span>" WHERE itemid = 3674133 AND brandid = 1527519
+
+  plan: |
+
+    err-code: [pxc-4500][err_parser] syntax error, error in :'"<span style="color:#333333;font-family:"bac, pos 150, line 1, column 146, token identifier color
+
+- sql: |
+    UPDATE gx_brand_votelist SET itemid= "3674133",brandid= "1527519",name= "章丘市万源有色金属铸造有限公司",introduce= "<span style="
+
+  plan: |
+
+    ERR-CODE: [PXC-4620][ERR_FORBID_EXECUTE_DML_ALL] Forbid to execute DELETE ALL or UPDATE ALL sql. To execute this sql, must use the HINT /*PXC:FORBID_EXECUTE_DML_ALL=FALSE*/.
+
+- sql: |
+    update self_join_t1 a join self_join_t1 b on a.c1 = b.c1 and a.pk > b.pk set a.pk = a.pk * 2, b.pk = b.pk * 5
+
+  plan: |
+
+    logicalmodifyview(tables="[0000-0003].self_join_t1", shardcount=4, sql="update `self_join_t1` as `self_join_t1` inner join `self_join_t1` as `self_join_t10` on ((`self_join_t1`.`c1` = `self_join_t10`.`c1`) and (`self_join_t1`.`pk` > `self_join_t10`.`pk`)) set `self_join_t1`.`pk` = (`self_join_t1`.`pk` * ?) , `self_join_t10`.`pk` = (`self_join_t10`.`pk` * ?)")
+
+- sql: |
+    update deliver_task task join( select ot.deliver_task_id, count(1) outbound_quantity from deliver_task dt join outbound_transaction ot on dt.relation_bill= ot.relation_bill and dt.id= ot.deliver_task_id where dt.status= 'UN_EXECUTE' and dt.deliver_type= 'ALLOCATION' group by ot.deliver_task_id) org on task.id= org.deliver_task_id set task.actual_deliver_quantity= org.outbound_quantity where task.actual_deliver_quantity!= org.outbound_quantity
+
+  plan: |
+
+    logicalmodify(type="update", set="deliver_task.actual_deliver_quantity=$34")
+      project(id="id", approve_id="approve_id", status="status", relation_bill="relation_bill", deliver_date="deliver_date", material_type_code="material_type_code", material_type_name="material_type_name", unit="unit", deliver_type="deliver_type", deliver_site_code="deliver_site_code", deliver_site_name="deliver_site_name", deliver_site_type="deliver_site_type", to_site_code="to_site_code", to_site_name="to_site_name", to_site_type="to_site_type", execute_employee_no="execute_employee_no", execute_employee_name="execute_employee_name", execute_date="execute_date", deliver_quantity="deliver_quantity", actual_deliver_quantity="actual_deliver_quantity", deploy_employee_no="deploy_employee_no", deploy_employee_name="deploy_employee_name", deploy_date="deploy_date", remarks="remarks", creator="creator", gmt_create="gmt_create", modifier="modifier", gmt_modified="gmt_modified", requisition_no="requisition_no", display_flag="display_flag", operate_machine_type="operate_machine_type", operate_machine_serial="operate_machine_serial", cancel_remarks="cancel_remarks", deliver_task_id="deliver_task_id", outbound_quantity="outbound_quantity", gen$0="outbound_quantity")
+        bkajoin(condition="deliver_task_id = id and actual_deliver_quantity <> outbound_quantity", type="inner")
+          hashagg(group="deliver_task_id", outbound_quantity="count()")
+            bkajoin(condition="deliver_task_id = id and relation_bill = relation_bill", type="inner")
+              logicalview(tables="optest_0000.deliver_task", sql="select `id`, `relation_bill` from `deliver_task` as `deliver_task` where ((`status` = ?) and (`deliver_type` = ?)) for update")
+              gather(concurrent=true)
+                logicalview(tables="[0000-0003].outbound_transaction_[000-511]", shardcount=512, sql="select `relation_bill`, `deliver_task_id` from `outbound_transaction` as `outbound_transaction` where (((`deliver_task_id`, `relation_bill`)) in (...)) for update")
+          logicalview(tables="optest_0000.deliver_task", sql="select `id`, `approve_id`, `status`, `relation_bill`, `deliver_date`, `material_type_code`, `material_type_name`, `unit`, `deliver_type`, `deliver_site_code`, `deliver_site_name`, `deliver_site_type`, `to_site_code`, `to_site_name`, `to_site_type`, `execute_employee_no`, `execute_employee_name`, `execute_date`, `deliver_quantity`, `actual_deliver_quantity`, `deploy_employee_no`, `deploy_employee_name`, `deploy_date`, `remarks`, `creator`, `gmt_create`, `modifier`, `gmt_modified`, `requisition_no`, `display_flag`, `operate_machine_type`, `operate_machine_serial`, `cancel_remarks` from `deliver_task` as `deliver_task` where ((`id` is not null) and (`id` in (...))) for update")
+
+- sql: |
+    update `optest`.`img` set `optest`.`img`.`ding_count` = (`optest`.`img`.`ding_count` + 1), `optest`.`img`.`is_ding` = 1 where `optest`.`img`.`imgid` in (1618372744)
+
+  plan: |
+
+    logicalmodifyview(tables="optest_0003.img_40", sql="update `img` as `img` set `ding_count` = (`ding_count` + ?) , `is_ding` = ? where (`imgid` in(?))")
+
+- sql: |
+    update test_hash_tb m,( select 'byname1' as name,'2024-05-10 11:50:00' as create_time, 1 as id union all select 'byname2' ,'2024-05-10 11:51:00', 2 ) r set m.name = r.name, m.create_time=r.create_time where m.id = r.id
+
+  plan: |
+
+    logicalmodify(type="update", set="test_hash_tb.name=$3, test_hash_tb.create_time=$4")
+      project(id="id0", name="name0", create_time="create_time0", name0="name", create_time0="create_time", id0="id", gen$0="name", gen$1="create_time")
+        bkajoin(condition="id = id", type="inner")
+          dynamicvalues(tuples=[{ ?0, ?1, ?2 }, { ?3, ?4, ?5 }])
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id`, `name`, `create_time` from `test_hash_tb` as `test_hash_tb` where (`id` in (...)) for update")
+
+- sql: |
+    update test_hash_tb m,( select 'byname1' as name,'2024-05-10 11:50:00' as create_time, 1 as id union all select name, create_time, id from test_hash_ta ) r set m.name = r.name, m.create_time=r.create_time where m.id = r.id
+
+  plan: |
+
+    logicalmodify(type="update", set="test_hash_tb.name=$3, test_hash_tb.create_time=$4")
+      project(id="id", name="name", create_time="create_time", name0="name0", create_time0="create_time0", id0="id0", gen$0="name0", gen$1="create_time0")
+        hashjoin(condition="id = id", type="inner")
+          gather(concurrent=true)
+            logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id`, `name`, `create_time` from `test_hash_tb` as `test_hash_tb` for update")
+          unionall(concurrent=true)
+            project(name="?0", create_time="?1", id="?2")
+              values(table="dual")
+            gather(concurrent=true)
+              logicalview(tables="[0000-0003].test_hash_ta", shardcount=4, sql="select `name`, `create_time`, `id` from `test_hash_ta` as `test_hash_ta` for update")

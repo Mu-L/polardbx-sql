@@ -46,6 +46,8 @@ public class COLLogicalAggToHashAggRule extends LogicalAggToHashAggRule {
 
     public static final LogicalAggToHashAggRule INSTANCE = new COLLogicalAggToHashAggRule("INSTANCE");
 
+    private static final int AGG_THRESHOLD = 15;
+
     public COLLogicalAggToHashAggRule(String desc) {
         super("COL_" + desc);
         this.outConvention = CBOUtil.getColConvention();
@@ -60,18 +62,28 @@ public class COLLogicalAggToHashAggRule extends LogicalAggToHashAggRule {
         if (groupIndex.cardinality() == 0) {
             implementationList.add(Pair.of(RelDistributions.SINGLETON, RelDistributions.SINGLETON));
         } else {
+            boolean added = false;
             if (PlannerContext.getPlannerContext(agg).getParamManager()
+                .getBoolean(ConnectionParams.ENABLE_PARTITION_WISE)
+                && PlannerContext.getPlannerContext(agg).getParamManager()
                 .getBoolean(ConnectionParams.ENABLE_PARTITION_WISE_AGG)) {
                 int inputLoc = -1;
-                for (int i = 0; i < groupIndex.cardinality(); i++) {
+                for (int i = 0; i < Math.min(groupIndex.cardinality(), AGG_THRESHOLD); i++) {
                     inputLoc = groupIndex.nextSetBit(inputLoc + 1);
-                    RelDistribution aggDistribution = RelDistributions.hashOss(ImmutableList.of(i),
+                    if (CBOUtil.groupSmall(newInput, ImmutableList.of(inputLoc))) {
+                        continue;
+                    }
+                    added = true;
+                    RelDistribution aggDistribution = RelDistributions.hashOss(
+                        ImmutableList.of(i),
                         PlannerContext.getPlannerContext(agg).getColumnarMaxShardCnt());
-                    RelDistribution inputDistribution = RelDistributions.hashOss(ImmutableList.of(inputLoc),
+                    RelDistribution inputDistribution = RelDistributions.hashOss(
+                        ImmutableList.of(inputLoc),
                         PlannerContext.getPlannerContext(agg).getColumnarMaxShardCnt());
                     implementationList.add(Pair.of(aggDistribution, inputDistribution));
                 }
-            } else {
+            }
+            if (!added) {
                 RelDistribution aggDistribution =
                     RelDistributions.hash(ImmutableIntList.identity(groupIndex.cardinality()));
                 RelDistribution inputDistribution = RelDistributions.hash(groupIndex.toList());
@@ -121,15 +133,23 @@ public class COLLogicalAggToHashAggRule extends LogicalAggToHashAggRule {
         }
         // pairwise agg
         if (PlannerContext.getPlannerContext(agg).getParamManager()
+            .getBoolean(ConnectionParams.ENABLE_PARTITION_WISE)
+            && PlannerContext.getPlannerContext(agg).getParamManager()
             .getBoolean(ConnectionParams.ENABLE_PARTITION_WISE_AGG)) {
-            for (int i = 0; i < groupIndex.cardinality(); i++) {
-                RelDistribution aggDistribution = RelDistributions.hashOss(ImmutableList.of(i),
+            for (int i = 0; i < Math.min(groupIndex.cardinality(), AGG_THRESHOLD); i++) {
+                if (CBOUtil.groupSmall(partialHashAgg, ImmutableList.of(i))) {
+                    continue;
+                }
+                RelDistribution aggDistribution = RelDistributions.hashOss(
+                    ImmutableList.of(i),
                     PlannerContext.getPlannerContext(agg).getColumnarMaxShardCnt());
-                RelDistribution inputDistribution = RelDistributions.hashOss(ImmutableList.of(i),
+                RelDistribution inputDistribution = RelDistributions.hashOss(
+                    ImmutableList.of(i),
                     PlannerContext.getPlannerContext(agg).getColumnarMaxShardCnt());
                 implementationList.add(Pair.of(aggDistribution, inputDistribution));
             }
-        } else {
+        }
+        if (implementationList.isEmpty()) {
             implementationList.add(Pair.of(
                 RelDistributions.hash(ImmutableIntList.identity(groupIndex.cardinality())),
                 RelDistributions.hash(ImmutableIntList.identity(groupIndex.cardinality()))));
@@ -180,7 +200,9 @@ public class COLLogicalAggToHashAggRule extends LogicalAggToHashAggRule {
         double outputRowCount = metadataQuery.getRowCount(hashAgg);
         double inputRowCount = metadataQuery.getRowCount(hashAgg.getInput());
         double partialAggSelectivityThreshold =
-            plannerContext.getParamManager().getFloat(ConnectionParams.PARTIAL_AGG_SELECTIVITY_THRESHOLD);
+            plannerContext
+                .getParamManager()
+                .getFloat(ConnectionParams.PARTIAL_AGG_SELECTIVITY_THRESHOLD);
         if (inputRowCount * partialAggSelectivityThreshold < outputRowCount) {
             return false;
         }

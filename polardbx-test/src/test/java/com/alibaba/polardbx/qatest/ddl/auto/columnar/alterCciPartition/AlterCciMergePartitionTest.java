@@ -19,15 +19,18 @@
 package com.alibaba.polardbx.qatest.ddl.auto.columnar.alterCciPartition;
 
 import com.alibaba.polardbx.optimizer.partition.common.PartitionStrategy;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runners.Parameterized;
 
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+@IcbcIgnore(ignoreReason = "icbc not support cci")
 public class AlterCciMergePartitionTest extends AlterCciPartitionBaseTest {
     final static String logicalDatabase = "AlterCciMergePartition";
 
@@ -81,8 +84,9 @@ public class AlterCciMergePartitionTest extends AlterCciPartitionBaseTest {
     }
 
     @Test
-    public void testDDLOnly() {
-
+    public void testDDLOnly() throws SQLException {
+        // 验证所有 CCI 的分区记录
+        compareTablePartitionRecords(logicalDatabase, tableName, cciNames);
     }
 
     @Parameterized.Parameters(name = "{index}:partitionRuleInfo={0}")

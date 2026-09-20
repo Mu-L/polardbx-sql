@@ -50,6 +50,11 @@ public class LookupTableSortScanExec extends TableScanSortExec implements MultiU
     }
 
     @Override
+    public void switchNoMgetSql() {
+
+    }
+
+    @Override
     public void updateLookupPredicate(Chunk chunk) {
         if (!scanClient.noMoreSplit()) {
             throw new TddlRuntimeException(ERR_EXECUTE_ON_MYSQL, "input split not ready");

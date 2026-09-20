@@ -115,7 +115,7 @@ public class MyPhyQueryCursor extends ResultCursor {
             String groupName = this.plan.getDbIndex();
             if (!groupName
                 .equalsIgnoreCase(MetaDbDataSource.DEFAULT_META_DB_GROUP_NAME)) {
-                if (HintUtil.forbidPushDmlWithHint()) {
+                if (HintUtil.forbidPushDmlWithHint(executionContext)) {
                     throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
                         "Unsupported to push physical dml by hint");
                 }

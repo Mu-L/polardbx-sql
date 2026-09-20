@@ -1,0 +1,6 @@
+#test_create_tbl_with_dryrun
+#test_create_tbl_with_dryrun2
+#test_alter_tbl_with_dryrun
+#test_alter_tbl_with_dryrun2
+#test_create_all_type_tbl
+test_create_all_type_tbl

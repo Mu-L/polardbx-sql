@@ -1,0 +1,60 @@
+## DISABLE_FAST_SQL_PARSER
+
+CREATE TABLE `sbtest1` (
+`id` int NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY UDF_HASH(unitmurhash8cd(`id`))
+PARTITION 8
+(
+  PARTITION p1 VALUES LESS THAN(1),
+  PARTITION p2 VALUES LESS THAN(2),
+  PARTITION p3 VALUES LESS THAN(3),
+  PARTITION p4 VALUES LESS THAN(4),
+  PARTITION p5 VALUES LESS THAN(5),
+  PARTITION p6 VALUES LESS THAN(6),
+  PARTITION p7 VALUES LESS THAN(7),
+  PARTITION p8 VALUES LESS THAN(8)
+);
+
+## p1, 14 rows
+insert into sbtest1 (id) values 
+(11),(17),(20),(25),(28),(35),(39),(47),(55),(66),(71),(88),(92),(95);
+select count(1) from sbtest1 partition(p1);
+
+## p2, 19 rows
+insert into sbtest1 (id) values
+(3),(14),(27),(30),(41),(52),(56),(64),(65),(67),(70),(74),(94),(107),(108),(112),(114),(134),(142);
+select count(1) from sbtest1 partition(p2);
+
+## p3, 20 rows
+insert into sbtest1 (id) values 
+(12),(16),(19),(33),(36),(46),(48),(57),(63),(77),(80),(93),(99),(104),(111),(138),(152),(154),(158),(159);
+select count(1) from sbtest1 partition(p3);
+
+## p4, 24 rows
+insert into sbtest1 (id) values 
+(5),(6),(7),(9),(18),(24),(29),(31),(59),(68),(73),(75),(79),(86),(91),(106),(109),(122),(125),(126),(129),(130),(143),(150);
+select count(1) from sbtest1 partition(p4);
+
+## p5, 7 rows
+insert into sbtest1 (id) values 
+(1),(43),(45),(49),(81),(96),(101);
+select count(1) from sbtest1 partition(p5);
+
+## p6 16 rows
+insert into sbtest1 (id) values 
+(13),(26),(37),(40),(42),(44),(51),(58),(72),(78),(82),(83),(89),(90),(100),(123);
+select count(1) from sbtest1 partition(p6);
+
+## p7,  8 rows
+insert into sbtest1 (id) values 
+(2),(4),(8),(10),(15),(21),(22),(32);
+select count(1) from sbtest1 partition(p7);
+
+## p8, 11 rows
+insert into sbtest1 (id) values 
+(23),(38),(50),(54),(61),(85),(118),(124),(131),(141),(145);
+select count(1) from sbtest1 partition(p8);
+
+check table routing sbtest1;

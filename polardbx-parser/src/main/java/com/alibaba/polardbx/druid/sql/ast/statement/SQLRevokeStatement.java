@@ -21,6 +21,7 @@ import com.alibaba.polardbx.druid.sql.visitor.SQLASTVisitor;
 
 public class SQLRevokeStatement extends SQLPrivilegeStatement {
     private boolean grantOption;
+    private boolean ifExists;
 
     public SQLRevokeStatement() {
 
@@ -45,6 +46,14 @@ public class SQLRevokeStatement extends SQLPrivilegeStatement {
 
     public void setGrantOption(boolean grantOption) {
         this.grantOption = grantOption;
+    }
+
+    public boolean isIfExists() {
+        return ifExists;
+    }
+
+    public void setIfExists(boolean ifExists) {
+        this.ifExists = ifExists;
     }
 
     @Override

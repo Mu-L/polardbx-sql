@@ -1,43 +1,21 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.qatest.dql.auto.select;
 
 import com.alibaba.polardbx.qatest.AutoReadBaseTestCase;
+import com.alibaba.polardbx.qatest.ColumnarIgnore;
 import com.alibaba.polardbx.qatest.FileStoreIgnore;
-import com.alibaba.polardbx.qatest.AutoReadBaseTestCase;
-import com.alibaba.polardbx.qatest.CommonCaseRunner;
-import com.alibaba.polardbx.qatest.FileStoreIgnore;
-import com.alibaba.polardbx.qatest.FileStoreIgnore;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.data.ColumnDataGenerator;
 import com.alibaba.polardbx.qatest.data.ExecuteTableSelect;
 import com.alibaba.polardbx.qatest.util.ConfigUtil;
-import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.qatest.util.PropertiesUtil;
-import com.alibaba.polardbx.qatest.validator.DataValidator;
 import org.junit.Ignore;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized.Parameters;
 
 import java.sql.SQLException;
 import java.text.MessageFormat;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import static com.alibaba.polardbx.qatest.validator.DataValidator.assertShardCount;
 import static com.alibaba.polardbx.qatest.validator.DataValidator.explainAllResultMatchAssert;
@@ -53,8 +31,6 @@ import static com.alibaba.polardbx.qatest.validator.DataValidator.selectStringCo
  */
 
 public class SelectSubQueryTest extends AutoReadBaseTestCase {
-
-    private static AtomicBoolean shardingAdvise = new AtomicBoolean(false);
 
     long pk = 12l;
     ColumnDataGenerator columnDataGenerator = new ColumnDataGenerator();
@@ -129,6 +105,13 @@ public class SelectSubQueryTest extends AutoReadBaseTestCase {
         selectContentSameAssert(sql, null, mysqlConnection, tddlConnection);
 
         sql = "select *  from " + baseOneTableName + " where integer_test >(select pk from " + baseTwoTableName
+            + " where varchar_test like '" + columnDataGenerator.varchar_testValue + "' order by  pk limit 1)";
+        selectContentSameAssert(sql, null, mysqlConnection, tddlConnection);
+
+        sql = "select  pk,varchar_test,integer_test   from " + baseOneTableName
+            + " where integer_test in (select pk from " + baseTwoTableName
+            + " where varchar_test like '" + columnDataGenerator.varchar_testValue + "') or "
+            + " integer_test >(select pk from " + baseTwoTableName
             + " where varchar_test like '" + columnDataGenerator.varchar_testValue + "' order by  pk limit 1)";
         selectContentSameAssert(sql, null, mysqlConnection, tddlConnection);
     }
@@ -361,9 +344,11 @@ public class SelectSubQueryTest extends AutoReadBaseTestCase {
         if (baseOneTableName.contains("one_db_one_tb") && baseTwoTableName.contains("one_db_one_tb")) {
             return;
         }
-        String sql = "explain select   pk,varchar_test,integer_test   from " + baseOneTableName
-            + " as host where pk = (select pk from " + baseTwoTableName
-            + " as info where info.integer_test=host.integer_test order by pk limit 1)";
+        String sql =
+            "explain /*+TDDL:cmd_extra(COL_HOLISTIC_SUBQUERY_UNNEST=false)*/ select   pk,varchar_test,integer_test   from "
+                + baseOneTableName
+                + " as host where pk = (select pk from " + baseTwoTableName
+                + " as info where info.integer_test=host.integer_test order by pk limit 1)";
         explainAllResultMatchAssert(sql, null, tddlConnection,
             "[\\s\\S]*" + "CorrelateApply" + "[\\s\\S]*");
     }
@@ -383,9 +368,11 @@ public class SelectSubQueryTest extends AutoReadBaseTestCase {
         if (baseOneTableName.contains("one_db_one_tb") && baseTwoTableName.contains("one_db_one_tb")) {
             return;
         }
-        String sql = "explain select   pk,varchar_test,integer_test   from " + baseOneTableName
-            + " as host where pk in (select pk from " + baseTwoTableName
-            + " as info where info.integer_test=host.integer_test order by pk limit 1)";
+        String sql =
+            "explain /*+TDDL:cmd_extra(COL_HOLISTIC_SUBQUERY_UNNEST=false)*/ select   pk,varchar_test,integer_test   from "
+                + baseOneTableName
+                + " as host where pk in (select pk from " + baseTwoTableName
+                + " as info where info.integer_test=host.integer_test order by pk limit 1)";
         explainAllResultMatchAssert(sql, null, tddlConnection,
             "[\\s\\S]*" + "CorrelateApply" + "[\\s\\S]*");
     }
@@ -398,9 +385,11 @@ public class SelectSubQueryTest extends AutoReadBaseTestCase {
         if (baseOneTableName.contains("one_db_one_tb") && baseTwoTableName.contains("one_db_one_tb")) {
             return;
         }
-        String sql = "explain select pk,varchar_test, pk = (select pk from " + baseTwoTableName
-            + " as info where info.integer_test=host.integer_test order by pk limit 1) from " + baseOneTableName
-            + " as host ";
+        String sql =
+            "explain /*+TDDL:cmd_extra(COL_HOLISTIC_SUBQUERY_UNNEST=false)*/ select pk,varchar_test, pk = (select pk from "
+                + baseTwoTableName
+                + " as info where info.integer_test=host.integer_test order by pk limit 1) from " + baseOneTableName
+                + " as host ";
         explainAllResultMatchAssert(sql, null, tddlConnection,
             "[\\s\\S]*" + "CorrelateApply" + "[\\s\\S]*");
     }
@@ -413,9 +402,11 @@ public class SelectSubQueryTest extends AutoReadBaseTestCase {
         if (baseOneTableName.contains("one_db_one_tb") && baseTwoTableName.contains("one_db_one_tb")) {
             return;
         }
-        String sql = "explain select pk,varchar_test, pk in (select pk from " + baseTwoTableName
-            + " as info where info.integer_test=host.integer_test order by pk limit 1) from " + baseOneTableName
-            + " as host ";
+        String sql =
+            "explain /*+TDDL:cmd_extra(COL_HOLISTIC_SUBQUERY_UNNEST=false)*/ select pk,varchar_test, pk in (select pk from "
+                + baseTwoTableName
+                + " as info where info.integer_test=host.integer_test order by pk limit 1) from " + baseOneTableName
+                + " as host ";
         explainAllResultMatchAssert(sql, null, tddlConnection,
             "[\\s\\S]*" + "CorrelateApply" + "[\\s\\S]*");
     }
@@ -660,6 +651,14 @@ public class SelectSubQueryTest extends AutoReadBaseTestCase {
     }
 
     @Test
+    public void testJoinOnScalarSubquery() {
+        String sql = "select * from " + baseOneTableName + " a join " + baseTwoTableName + " b"
+            + " on a.pk = (select count(*) from " + baseTwoTableName + " b2 where a.integer_test = b2.integer_test)"
+            + " and b.pk = (select max(c.pk) from " + baseThreeTableName + " c where c.integer_test = a.pk)";
+        selectContentSameAssert(sql, null, mysqlConnection, tddlConnection);
+    }
+
+    @Test
     public void SubqueryNest1Test() throws SQLException {
         String sql = "SELECT *\n"
             + "FROM tbl1\n"
@@ -677,19 +676,19 @@ public class SelectSubQueryTest extends AutoReadBaseTestCase {
             + "\t`a` int(11) NOT NULL,\n"
             + "\t`b` int(11) DEFAULT NULL,\n"
             + "\tPRIMARY KEY (`a`)\n"
-            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4");
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE utf8mb4_general_ci");
         tddlConnection.createStatement().execute("CREATE TABLE if not exists `tbl` (\n"
             + "\t`a` int(11) NOT NULL,\n"
             + "\t`b` int(11) DEFAULT NULL,\n"
             + "\t`USE_TIME` datetime DEFAULT NULL,\n"
             + "\tPRIMARY KEY (`a`)\n"
-            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4  dbpartition by hash(`a`)");
+            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE utf8mb4_general_ci dbpartition by hash(`a`)");
 
         // prepare data
         tddlConnection.createStatement().execute("delete from tbl");
         tddlConnection.createStatement().execute("delete from tbl1");
         tddlConnection.createStatement().execute("insert into tbl values(3,2,null)");
-        tddlConnection.createStatement().execute("insert into tbl values(1,2,now())");
+        tddlConnection.createStatement().execute("insert into tbl values(1,3,now())");
         tddlConnection.createStatement().execute("insert into tbl1 values(1,3)");
         tddlConnection.createStatement().execute("insert into tbl1 values(12,11)");
         tddlConnection.createStatement().executeQuery(sql);
@@ -1162,6 +1161,8 @@ public class SelectSubQueryTest extends AutoReadBaseTestCase {
         selectContentSameAssert(sql, null, mysqlConnection, tddlConnection);
     }
 
+    @IcbcIgnore(ignoreReason = "SQL_MODE=ONLY_FULL_GROUP_BY")
+    @ColumnarIgnore()
     @Test
     public void testCorrelateJoin() {
         String sql =

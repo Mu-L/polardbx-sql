@@ -39,13 +39,13 @@ import java.util.List;
 import java.util.Map;
 
 public class ColumnarTableMappingAccessor extends AbstractAccessor {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     private static final String COLUMNAR_TABLE_MAPPING_TABLE = wrap(GmsSystemTables.COLUMNAR_TABLE_MAPPING);
     private static final String FILES_TABLE = wrap(GmsSystemTables.FILES);
 
     private static final String INSERT_COLUMNAR_TABLE_MAPPING_RECORDS = "insert into " + COLUMNAR_TABLE_MAPPING_TABLE +
-        "(`table_schema`, `table_name`, `index_name`, `latest_version_id`, `status`, `extra`, `type`) values (?, ?, ?, ?, ?, ?, ?)";
+        "(`table_schema`, `table_name`, `index_name`, `latest_version_id`, `status`, `info`, `extra`, `type`) values (?, ?, ?, ?, ?, ?, ?, ?)";
 
     private static final String FROM_TABLE = " from " + COLUMNAR_TABLE_MAPPING_TABLE;
 
@@ -78,12 +78,25 @@ public class ColumnarTableMappingAccessor extends AbstractAccessor {
     private static final String WHERE_BY_SCHEMA_TABLE_INDEX_LIKE_AND_STATUS =
         " where `table_schema` = ? and `table_name` = ? and `index_name` like ? and status = ? ";
 
+    private static final String WHERE_BY_TYPE = " where `type`=? ";
+
+    private static final String WHERE_BY_TYPE_AND_STATUS = " where `type`=? and `status`=? ";
+
+    private static final String WHERE_BY_SCHEMA_TABLE_AND_TYPE =
+        " where `table_schema` = ? and `table_name` = ? and `type` = ?";
+
     private static final String DELETE_SCHEMA_TABLE_INDEX = "delete " + FROM_TABLE + WHERE_BY_SCHEMA_TABLE_INDEX;
+
+    private static final String DELETE_BY_SCHEMA_TABLE_AND_TYPE =
+        "delete " + FROM_TABLE + WHERE_BY_SCHEMA_TABLE_AND_TYPE;
+
+    private static final String UPDATE_STATUS_BY_SCHEMA_TABLE_AND_TYPE =
+        "update " + COLUMNAR_TABLE_MAPPING_TABLE + " set `status` = ? " + WHERE_BY_SCHEMA_TABLE_AND_TYPE;
 
     private static final String DELETE_SCHEMA = "delete " + FROM_TABLE + WHERE_BY_SCHEMA;
 
     private static final String SELECT_ALL_COLUMNS =
-        "select `table_id`, `table_schema`, `table_name`, `index_name`, `latest_version_id`, `status`, `extra`, `type`";
+        "select `table_id`, `table_schema`, `table_name`, `index_name`, `latest_version_id`, `status`, `info`, `extra`, `type`";
 
     private static final String UPDATE_TYPE_BY_ID =
         "update " + COLUMNAR_TABLE_MAPPING_TABLE + " set `type` = ? " + WHERE_BY_TABLE_ID;
@@ -124,6 +137,13 @@ public class ColumnarTableMappingAccessor extends AbstractAccessor {
 
     private static final String SELECT_TABLE_BY_SCHEMA_TABLE_INDEX_LIKE_AND_STATUS = SELECT_ALL_COLUMNS + FROM_TABLE +
         WHERE_BY_SCHEMA_TABLE_INDEX_LIKE_AND_STATUS;
+
+    private static final String SELECT_BY_TYPE = SELECT_ALL_COLUMNS + FROM_TABLE + WHERE_BY_TYPE;
+
+    private static final String SELECT_BY_TYPE_AND_STATUS = SELECT_ALL_COLUMNS + FROM_TABLE + WHERE_BY_TYPE_AND_STATUS;
+
+    private static final String SELECT_BY_SCHEMA_TABLE_AND_TYPE =
+        SELECT_ALL_COLUMNS + FROM_TABLE + WHERE_BY_SCHEMA_TABLE_AND_TYPE;
 
     private static final String DELETE_TABLE_ID = "delete " + FROM_TABLE + WHERE_BY_TABLE_ID;
 
@@ -166,21 +186,31 @@ public class ColumnarTableMappingAccessor extends AbstractAccessor {
     private static final String UPDATE_EXTRA_BY_TABLE_ID =
         "update " + COLUMNAR_TABLE_MAPPING_TABLE + " set `extra` = ? " + WHERE_BY_TABLE_ID;
 
+    private static final String UPDATE_INFO_BY_TABLE_ID =
+        "update " + COLUMNAR_TABLE_MAPPING_TABLE + " set `info` = ? " + WHERE_BY_TABLE_ID;
+
     private static final String SELECT_PURGE_TABLE_BY_TSO =
         SELECT_ALL_COLUMNS
             + FROM_TABLE
             + " where `status` = '" + ColumnarTableStatus.PURGE.name() + "' and  `latest_version_id` < ? ";
 
+    private static final String SELECT_DROPPED_EXTERNAL_COLUMN_MAPPINGS =
+        SELECT_ALL_COLUMNS
+            + FROM_TABLE
+            + " where `status` = '" + ColumnarTableStatus.DROP.name() + "'"
+            + " and `type` = '" + ColumnarTableMappingRecord.TYPE_EXTERNAL_COLUMN + "'"
+            + " and `gmt_modified` < DATE_SUB(NOW(), INTERVAL ? SECOND)";
+
     private static final String SELECT_PURGE_TABLE_WHICH_HAVE_PURGE_FILE_BY_TSO =
-        "select DISTINCT a.`table_id`, a.`table_schema`, a.`table_name`, a.`index_name`, a.`latest_version_id`, a.`status`, a.`extra`, a.`type` "
+        "select DISTINCT a.`table_id`, a.`table_schema`, a.`table_name`, a.`index_name`, a.`latest_version_id`, a.`status`, a.`info`, a.`extra`, a.`type` "
             + FROM_TABLE + " as a inner join "
             + FILES_TABLE
             + " as b on a.`table_schema` = b.`logical_schema_name` and a.`table_id` = b.`logical_table_name` "
             + " where a.`status` = '" + ColumnarTableStatus.PUBLIC.name()
-            + "' and b.`remove_ts` is not null and b.`remove_ts` < ? and ( a.`type` is null or a.`type` != 'snapshot' ) ";
+            + "' and b.`file_type` = 'TABLE_FILE' and b.`remove_ts` is not null and b.`remove_ts` < ? and ( a.`type` is null or a.`type` != 'snapshot' ) ";
 
     private static final String SELECT_PURGE_TABLE_WHICH_HAVE_PURGE_FILE_BY_TSO_AND_TYPE =
-        "select DISTINCT a.`table_id`, a.`table_schema`, a.`table_name`, a.`index_name`, a.`latest_version_id`, a.`status`, a.`extra`, a.`type` "
+        "select DISTINCT a.`table_id`, a.`table_schema`, a.`table_name`, a.`index_name`, a.`latest_version_id`, a.`status`, a.`info`, a.`extra`, a.`type` "
             + FROM_TABLE + " as a inner join "
             + FILES_TABLE
             + " as b on a.`table_schema` = b.`logical_schema_name` and a.`table_id` = b.`logical_table_name` "
@@ -304,6 +334,15 @@ public class ColumnarTableMappingAccessor extends AbstractAccessor {
         return query(SELECT_TABLE_BY_SCHEMA_TABLE_INDEX_LIKE_AND_STATUS, COLUMNAR_TABLE_MAPPING_TABLE,
             ColumnarTableMappingRecord.class,
             schemaName, tableName, indexName, status);
+    }
+
+    public List<ColumnarTableMappingRecord> queryByType(String type) {
+        return query(SELECT_BY_TYPE, COLUMNAR_TABLE_MAPPING_TABLE, ColumnarTableMappingRecord.class, type);
+    }
+
+    public List<ColumnarTableMappingRecord> queryByTypeAndStatus(String type, String status) {
+        return query(SELECT_BY_TYPE_AND_STATUS, COLUMNAR_TABLE_MAPPING_TABLE, ColumnarTableMappingRecord.class,
+            type, status);
     }
 
     public int deleteTableSchemaIndex(String schemaName, String tableName, String indexName) {
@@ -431,11 +470,30 @@ public class ColumnarTableMappingAccessor extends AbstractAccessor {
         update(UPDATE_EXTRA_BY_TABLE_ID, COLUMNAR_TABLE_MAPPING_TABLE, params);
     }
 
+    public int updateInfoByTableId(long tableId, String info) {
+        Map<Integer, ParameterContext> params = new HashMap<>(2);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, info);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, tableId);
+
+        return update(UPDATE_INFO_BY_TABLE_ID, COLUMNAR_TABLE_MAPPING_TABLE, params);
+    }
+
     public List<ColumnarTableMappingRecord> queryPurgeTablesByTso(long tso) {
         Map<Integer, ParameterContext> params = new HashMap<>(2);
         MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, tso);
         return query(SELECT_PURGE_TABLE_BY_TSO, COLUMNAR_TABLE_MAPPING_TABLE, ColumnarTableMappingRecord.class,
             params);
+    }
+
+    /**
+     * External-column mapping rows still in DROP, with safeAge delay.
+     * See {@code ColumnarTableInfoManager.queryDroppedExternalColumnMappings} for context.
+     */
+    public List<ColumnarTableMappingRecord> queryDroppedExternalColumnMappings(long safeAgeSeconds) {
+        Map<Integer, ParameterContext> params = new HashMap<>(1);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, safeAgeSeconds);
+        return query(SELECT_DROPPED_EXTERNAL_COLUMN_MAPPINGS, COLUMNAR_TABLE_MAPPING_TABLE,
+            ColumnarTableMappingRecord.class, params);
     }
 
     public List<ColumnarTableMappingRecord> queryPurgeTablesWhichHavePurgeFilesByTso(long tso) {
@@ -451,6 +509,29 @@ public class ColumnarTableMappingAccessor extends AbstractAccessor {
         MetaDbUtil.setParameter(2, params, ParameterMethod.setString, type);
         return query(SELECT_PURGE_TABLE_WHICH_HAVE_PURGE_FILE_BY_TSO_AND_TYPE, COLUMNAR_TABLE_MAPPING_TABLE,
             ColumnarTableMappingRecord.class, params);
+    }
+
+    public List<ColumnarTableMappingRecord> queryBySchemaTableAndType(String schemaName, String tableName,
+                                                                      String type) {
+        return query(SELECT_BY_SCHEMA_TABLE_AND_TYPE, COLUMNAR_TABLE_MAPPING_TABLE,
+            ColumnarTableMappingRecord.class, schemaName, tableName, type);
+    }
+
+    public int deleteBySchemaTableAndType(String schemaName, String tableName, String type) {
+        Map<Integer, ParameterContext> params = new HashMap<>(3);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, schemaName);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setString, tableName);
+        MetaDbUtil.setParameter(3, params, ParameterMethod.setString, type);
+        return delete(DELETE_BY_SCHEMA_TABLE_AND_TYPE, COLUMNAR_TABLE_MAPPING_TABLE, params);
+    }
+
+    public int updateStatusBySchemaTableAndType(String schemaName, String tableName, String type, String status) {
+        Map<Integer, ParameterContext> params = new HashMap<>(4);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, status);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setString, schemaName);
+        MetaDbUtil.setParameter(3, params, ParameterMethod.setString, tableName);
+        MetaDbUtil.setParameter(4, params, ParameterMethod.setString, type);
+        return update(UPDATE_STATUS_BY_SCHEMA_TABLE_AND_TYPE, COLUMNAR_TABLE_MAPPING_TABLE, params);
     }
 
 }

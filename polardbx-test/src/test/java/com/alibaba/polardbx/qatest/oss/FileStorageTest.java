@@ -61,9 +61,15 @@ public class FileStorageTest extends BaseTestCase {
     static public void DropDatabase() {
         try (Connection conn = ConnectionManager.getInstance().getDruidPolardbxConnection()) {
             Statement statement = conn.createStatement();
-            statement.execute(String.format("drop database if exists %s ", testDataBase));
-            statement.execute(String.format("drop database if exists %s ", testDataBase2));
-            statement.execute(String.format("drop database if exists %s ", testDataBase3));
+            statement.execute(
+                String.format("/*+TDDL:cmd_extra(ALLOW_DROP_DATABASE_FORCE=true)*/drop database if exists %s ",
+                    testDataBase));
+            statement.execute(
+                String.format("/*+TDDL:cmd_extra(ALLOW_DROP_DATABASE_FORCE=true)*/drop database if exists %s ",
+                    testDataBase2));
+            statement.execute(
+                String.format("/*+TDDL:cmd_extra(ALLOW_DROP_DATABASE_FORCE=true)*/drop database if exists %s ",
+                    testDataBase3));
         } catch (Throwable t) {
             throw new RuntimeException(t);
         }
@@ -81,7 +87,9 @@ public class FileStorageTest extends BaseTestCase {
     public void initTestDatabase() {
         try (Connection conn = getConnectionNoDefaultDb()) {
             Statement statement = conn.createStatement();
-            statement.execute(String.format("drop database if exists %s ", testDataBase));
+            statement.execute(
+                String.format("/*+TDDL:cmd_extra(ALLOW_DROP_DATABASE_FORCE=true)*/drop database if exists %s ",
+                    testDataBase));
             statement.execute(String.format("create database %s mode = 'auto'", testDataBase));
             statement.execute(String.format("use %s", testDataBase));
         } catch (Throwable t) {
@@ -90,7 +98,9 @@ public class FileStorageTest extends BaseTestCase {
 
         try (Connection conn = getConnectionNoDefaultDb()) {
             Statement statement = conn.createStatement();
-            statement.execute(String.format("drop database if exists %s ", testDataBase2));
+            statement.execute(
+                String.format("/*+TDDL:cmd_extra(ALLOW_DROP_DATABASE_FORCE=true)*/drop database if exists %s ",
+                    testDataBase2));
             statement.execute(String.format("create database %s mode = 'auto'", testDataBase2));
             statement.execute(String.format("use %s", testDataBase2));
         } catch (Throwable t) {
@@ -99,7 +109,9 @@ public class FileStorageTest extends BaseTestCase {
 
         try (Connection conn = getConnectionNoDefaultDb()) {
             Statement statement = conn.createStatement();
-            statement.execute(String.format("drop database if exists %s ", testDataBase3));
+            statement.execute(
+                String.format("/*+TDDL:cmd_extra(ALLOW_DROP_DATABASE_FORCE=true)*/drop database if exists %s ",
+                    testDataBase3));
             statement.execute(String.format("create database %s mode = 'auto'", testDataBase3));
             statement.execute(String.format("use %s", testDataBase3));
         } catch (Throwable t) {

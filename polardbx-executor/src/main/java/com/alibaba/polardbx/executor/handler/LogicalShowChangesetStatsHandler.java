@@ -26,7 +26,6 @@ import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.rel.dal.LogicalShow;
-import com.alibaba.polardbx.repo.mysql.handler.LogicalShowDbStatusHandler;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.sql.validate.SqlShowChangeSetStats;
 
@@ -48,13 +47,13 @@ public class LogicalShowChangesetStatsHandler extends HandlerCommon {
 
         String schemaName = showChangeSetStats.getSchema();
         if (schemaName == null || schemaName.equalsIgnoreCase("information_schema")) {
-            return getChangeSetResultCursor();
+            return getChangeSetResultCursor(executionContext);
         }
 
         return handleChangeSetResult(executionContext, schemaName);
     }
 
-    private ArrayResultCursor getChangeSetResultCursor() {
+    private ArrayResultCursor getChangeSetResultCursor(ExecutionContext executionContext) {
         ArrayResultCursor result = new ArrayResultCursor("CHANGESET_STATS");
         result.addColumn("STORAGE_INST_ID", DataTypes.StringType);
         result.addColumn("PHY_SCHEMA_NAME", DataTypes.StringType);
@@ -64,12 +63,18 @@ public class LogicalShowChangesetStatsHandler extends HandlerCommon {
         result.addColumn("NUM_DELETES", DataTypes.IntegerType);
         result.addColumn("NUM_FILES", DataTypes.IntegerType);
         result.addColumn("MEMORY_SIZE", DataTypes.DoubleType);
+        if (ChangeSetUtils.supportChangeSetBackPressure(executionContext)) {
+            result.addColumn("CURRENT_PRIMARY_KEY_NUM", DataTypes.IntegerType);
+            result.addColumn("BACKPRESSURE_TRIGGER", DataTypes.StringType);
+            result.addColumn("AVAILABLE_TOKENS", DataTypes.StringType);
+            result.addColumn("FILL_RATE", DataTypes.StringType);
+        }
         result.initMeta();
         return result;
     }
 
     private ArrayResultCursor handleChangeSetResult(ExecutionContext executionContext, String schemaName) {
-        ArrayResultCursor result = getChangeSetResultCursor();
+        ArrayResultCursor result = getChangeSetResultCursor(executionContext);
 
         Map<String, String> storageInstIdGroupNames = StatsUtils.queryGroupNameAndInstId(schemaName);
 
@@ -77,8 +82,8 @@ public class LogicalShowChangesetStatsHandler extends HandlerCommon {
             String storageInstId = item.getKey();
             String groupName = item.getValue();
 
-            List<List<Object>> res = ChangeSetUtils.queryGroup(executionContext, schemaName, groupName,
-                ChangeSetUtils.SQL_CALL_CHANGESET_STATS);
+            List<List<Object>> res =
+                ChangeSetUtils.queryGroup(schemaName, groupName, null, ChangeSetUtils.SQL_CALL_CHANGESET_STATS);
 
             for (List<Object> row : res) {
                 row.add(0, storageInstId);

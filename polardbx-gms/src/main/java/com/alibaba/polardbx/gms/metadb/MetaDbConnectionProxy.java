@@ -439,15 +439,22 @@ public class MetaDbConnectionProxy implements IConnection {
 
     @Override
     public void discard(Throwable error) {
+        discardConnection(conn, error);
+    }
+
+    /**
+     * Marks a MetaDB connection as non-reusable for both X Protocol and JDBC connection pools.
+     */
+    public static void discardConnection(Connection connection, Throwable error) {
         if (ConfigDataMode.isFastMock()) {
             return;
         }
         try {
-            if (conn.isWrapperFor(XConnection.class)) {
-                conn.unwrap(XConnection.class).setLastException(new Exception("discard"), true);
+            if (connection.isWrapperFor(XConnection.class)) {
+                connection.unwrap(XConnection.class).setLastException(new Exception("discard"), true);
             } else {
                 // Discard pooled connection.
-                DruidPooledConnection druidConn = conn.unwrap(DruidPooledConnection.class);
+                DruidPooledConnection druidConn = connection.unwrap(DruidPooledConnection.class);
                 // If druidConn is null, NPE is expected.
                 DruidConnectionHolder holder = druidConn.getConnectionHolder();
                 // Ignore if connection is already discard.

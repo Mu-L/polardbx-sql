@@ -79,18 +79,27 @@ public class ReloadTableMetaAfterChangeTableGroupTask extends BaseGmsTask {
             (AlterTableSetTableGroupChangeMetaOnlyTask) prevTasks.get(0);
         //get the targetTableGroup from AlterTableSetTableGroupChangeMetaOnlyTask in the some job
         targetTableGroup = setTableGroupChangeMetaOnlyTask.getTargetTableGroup();
+        String sourceTableGroup = setTableGroupChangeMetaOnlyTask.getCurTableGroup();
 
-        syncTableGroup();
+        syncTableGroup(sourceTableGroup);
     }
 
-    private void syncTableGroup() {
+    private void syncTableGroup(String sourceTableGroup) {
         try {
-            SyncManagerHelper
-                .sync(new TableGroupSyncAction(schemaName, targetTableGroup), SyncScope.ALL);
+            SyncManagerHelper.syncThrowExceptions(new TableGroupSyncAction(schemaName, targetTableGroup),
+                SyncScope.ALL);
         } catch (Throwable t) {
             LOGGER.error(String.format(
                 "error occurs while sync table group, schemaName:%s, tableGroupName:%s", schemaName, targetTableGroup));
-            throw GeneralUtil.nestedException(t);
+            // Change-context: AONE-85096607
+            // Before: the raw cause was wrapped without context, and when the cause carried no message
+            // (e.g. an NPE from a missing OptimizerContext), clients only saw "Caused by: null".
+            // Path impact: the DDL task failure now reports schema and both table groups involved
+            // in the change, so the error is actionable without digging into CN logs.
+            // Capability regression: none; only the failure message gains context.
+            throw GeneralUtil.nestedException(
+                String.format("failed to sync table group [%s] (changed from table group [%s]) in schema [%s]",
+                    targetTableGroup, sourceTableGroup, schemaName), t);
         }
     }
 

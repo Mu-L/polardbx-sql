@@ -19,10 +19,12 @@ package com.alibaba.polardbx.executor;
 import com.alibaba.polardbx.common.model.lifecycle.AbstractLifecycle;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.cursor.ResultCursor;
 import com.alibaba.polardbx.executor.cursor.impl.GatherCursor;
+import com.alibaba.polardbx.executor.cursor.impl.InformationSchemaResultCursor;
 import com.alibaba.polardbx.executor.cursor.impl.OutFileStatisticsCursor;
 import com.alibaba.polardbx.executor.mpp.client.MppResultCursor;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
@@ -33,6 +35,7 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.CursorMeta;
 import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
 import com.alibaba.polardbx.optimizer.core.planner.SqlConverter;
+import com.alibaba.polardbx.optimizer.core.rel.GroupTopN;
 import com.alibaba.polardbx.optimizer.core.rel.HashAgg;
 import com.alibaba.polardbx.optimizer.core.rel.HashGroupJoin;
 import com.alibaba.polardbx.optimizer.core.rel.HashWindow;
@@ -40,7 +43,7 @@ import com.alibaba.polardbx.optimizer.core.rel.SortWindow;
 import com.alibaba.polardbx.optimizer.memory.MemoryPoolUtils;
 import com.alibaba.polardbx.optimizer.planmanager.PlanManagerUtil;
 import com.alibaba.polardbx.optimizer.utils.ExplainResult;
-import com.alibaba.polardbx.optimizer.workload.WorkloadUtil;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadUtil;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelVisitor;
 import org.apache.calcite.rel.logical.LogicalUnion;
@@ -53,6 +56,10 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 public class PlanExecutor extends AbstractLifecycle {
+
+    public static PlanExecutor create() {
+        return new PlanExecutor();
+    }
 
     public static ResultCursor execute(ExecutionPlan plan, ExecutionContext context) {
         final ExplainResult explain = context.getExplain();
@@ -69,7 +76,7 @@ public class PlanExecutor extends AbstractLifecycle {
             if (enableProfileStat) {
                 context.getRuntimeStatistics().setPlanTree(plan.getPlan());
             }
-            if (PlanManagerUtil.useSPM(context.getSchemaName(), plan, null, context)
+            if (PlanManagerUtil.useBaseline(context.getSchemaName(), plan, null, context)
                 && context.getParamManager().getBoolean(ConnectionParams.PLAN_EXTERNALIZE_TEST)
                 && PlanManagerUtil.serializableSpmPlan(context.getSchemaName(), plan)) {
                 String serialPlan = PlanManagerUtil.relNodeToJson(plan.getPlan());
@@ -115,7 +122,7 @@ public class PlanExecutor extends AbstractLifecycle {
         }
     }
 
-    static Map<String, Object> getColumnarParams(ExecutionContext context) {
+    public static Map<String, Object> getColumnarParams(ExecutionContext context) {
         Map<String, Object> columnarParams = new HashMap<>();
         // Basic connection params in query of columnar index for MPP mode.
         if (ExecUtils.needPutIfAbsent(context, ConnectionProperties.OSS_FILE_CONCURRENT)) {
@@ -193,7 +200,8 @@ public class PlanExecutor extends AbstractLifecycle {
                 public void visit(RelNode node, int ordinal, RelNode parent) {
                     if (node instanceof HashAgg || node instanceof SortWindow || node instanceof HashWindow
                         || node instanceof LogicalUnion
-                        || node instanceof HashGroupJoin) {
+                        || node instanceof HashGroupJoin
+                        || node instanceof GroupTopN) {
                         if (mq == null) {
                             ec.getRecordRowCnt().put(node.getRelatedId(), 100);
                         } else {
@@ -228,8 +236,17 @@ public class PlanExecutor extends AbstractLifecycle {
             }
             Cursor sc = ExecutorHelper.execute(relNode, ec, true, false);
             //explain and show prune trace need the latest TaskInfo
-            if (sc instanceof MppResultCursor && (executionPlan.isExplain() || ec.isEnableTrace())) {
-                ((MppResultCursor) sc).waitQueryInfo(true);
+            if (sc instanceof MppResultCursor && (executionPlan.isExplain() || ec.isEnableTrace() || ec.isWarmup())) {
+
+                ((MppResultCursor) sc).waitQueryInfo(true,
+                    ((MppResultCursor) sc).EXPLAIN_SQL_WAIT_QUERY_INFO_TIME_IN_MILLIS);
+
+            } else if (sc instanceof MppResultCursor
+                && DynamicConfig.getInstance().getMppWaitQueryInfoTimeInMillis() > 0) {
+
+                ((MppResultCursor) sc).waitQueryInfo(true,
+                    DynamicConfig.getInstance().getMppWaitQueryInfoTimeInMillis());
+
             }
             return wrapResultCursor(sc, executionPlan.getCursorMeta());
         } catch (Exception e) {
@@ -242,6 +259,10 @@ public class PlanExecutor extends AbstractLifecycle {
         // 包装为可以传输的ResultCursor
         if (cursor instanceof ResultCursor) {
             resultCursor = (ResultCursor) cursor;
+            // for information_schema.alias
+            if (cursor instanceof InformationSchemaResultCursor) {
+                resultCursor.setCursorMeta(cursorMeta);
+            }
         } else if (cursor instanceof GatherCursor) {
             resultCursor = new ResultCursor(cursor);
             if (cursorMeta == null) {

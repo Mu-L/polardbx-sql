@@ -31,14 +31,6 @@ public abstract class BasePlugin implements IPlugin {
     // set it to true and invoke FAIL.notifyAll() to terminate the test runner immediately
     private static final AtomicBoolean FAIL = new AtomicBoolean(false);
 
-    static {
-        try {
-            Class.forName("com.mysql.jdbc.Driver");
-        } catch (Throwable t) {
-            // ignore
-        }
-    }
-
     protected final String dsn;
     protected final String props;
     protected final int rowCount;
@@ -99,7 +91,7 @@ public abstract class BasePlugin implements IPlugin {
         }
         worker = new Worker(threads, name);
         worker.run(() -> {
-            while (!Thread.currentThread().isInterrupted()) {
+            while (!Thread.currentThread().isInterrupted() && !FAIL.get()) {
                 runInternal();
                 finishOp();
             }
@@ -145,7 +137,8 @@ public abstract class BasePlugin implements IPlugin {
             if (null != error.get()) {
                 throw error.get();
             }
-        } catch (SQLException e) {
+        } catch (Exception e) {
+            logger.error("error occurred and connection discarded", e);
             if (null != conn) {
                 try {
                     conn.discard();
@@ -241,7 +234,7 @@ public abstract class BasePlugin implements IPlugin {
         logger.error(sb.toString());
     }
 
-    protected void errorAllTypesTest1(List<String> checkResults, String errorMsg) {
+    protected static void errorAllTypesTest1(List<String> checkResults, Throwable t) {
         if (Thread.currentThread().isInterrupted()) {
             // already interrupt
             return;
@@ -250,8 +243,9 @@ public abstract class BasePlugin implements IPlugin {
         for (String checkResult : checkResults) {
             sb.append(checkResult).append("\n");
         }
+        logger.error("{}, {}", sb, t.getMessage());
         fail();
-        throw new RuntimeException(errorMsg);
+        throw new RuntimeException(t);
     }
 
     public static boolean success() {
@@ -314,6 +308,7 @@ public abstract class BasePlugin implements IPlugin {
             MyConnection conn;
             if (null == (conn = connections.poll())) {
                 // poll is empty, create new connection
+                logger.info("connection pool empty, create new connection");
                 conn = new MyConnection(this, dsn, props);
             }
             return conn;

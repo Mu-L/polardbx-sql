@@ -1,0 +1,28 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+use polardbx;
+drop database if exists test_query_part_view;
+create database if not exists test_query_part_view mode='auto';
+use test_query_part_view;
+create table sig(a int) single;
+create table bro(a int) broadcast;
+select 
+  table_schema,
+  table_name,
+  partition_name,
+  subpartition_name,
+  partition_ordinal_position,
+  subpartition_ordinal_position,
+  partition_method,
+  subpartition_method,
+  partition_expression,
+  subpartition_expression,
+  partition_description,
+  subpartition_description
+from information_schema.partitions 
+where table_schema='test_query_part_view' and table_name in ('sig', 'bro')
+order by table_name, partition_name;
+
+drop database if exists test_query_part_view;
+use polardbx;

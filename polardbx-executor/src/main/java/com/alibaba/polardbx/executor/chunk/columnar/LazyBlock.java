@@ -33,6 +33,8 @@ public interface LazyBlock extends RandomAccessBlock, Block {
      */
     void load();
 
+    void warmup();
+
     /**
      * whether the array is already materialized.
      */

@@ -44,6 +44,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Date;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.gms.topology.SystemDbHelper.DEFAULT_DB_NAME;
@@ -94,8 +95,12 @@ public class RebalanceDdlPlanManager {
                 throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, "already exist executing rebalance DDL");
             }
             String clusterLock = ActionUtils.genRebalanceClusterName();
+            Set<String> resources = Sets.newHashSet(clusterLock);
+            if (!StringUtils.isEmpty(ddlPlanRecord.getResource())) {
+                resources.add(ddlPlanRecord.getResource());
+            }
             boolean ok =
-                ddlJobManager.getResourceManager().checkResource(Sets.newHashSet(), Sets.newHashSet(clusterLock));
+                ddlJobManager.getResourceManager().checkResource(Sets.newHashSet(), resources);
             if (!ok) {
                 throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, "already exist executing rebalance DDL");
             }

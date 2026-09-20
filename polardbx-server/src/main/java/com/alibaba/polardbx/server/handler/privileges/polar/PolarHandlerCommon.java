@@ -36,9 +36,13 @@ import com.alibaba.polardbx.gms.privilege.PolarInstPriv;
 import com.alibaba.polardbx.gms.privilege.PolarPrivManager;
 import com.alibaba.polardbx.gms.privilege.PolarPrivUtil;
 import com.alibaba.polardbx.gms.privilege.PolarTbPriv;
+import com.alibaba.polardbx.gms.privilege.AccountType;
 import com.alibaba.polardbx.gms.privilege.PrivManageCode;
 import com.alibaba.polardbx.gms.privilege.PrivManageResult;
 import com.alibaba.polardbx.gms.privilege.PrivManageType;
+import com.alibaba.polardbx.gms.metadb.external.ExternalCatalogManager;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameNormalizer;
 import org.apache.commons.lang.StringUtils;
 
 import java.sql.SQLSyntaxErrorException;
@@ -150,7 +154,8 @@ public class PolarHandlerCommon {
     }
 
     protected static List<PolarAccountInfo> getGrantees(SQLExprTableSource sqlExprTableSource, List<SQLExpr> users,
-                                                        List<SQLPrivilegeItem> privilegeItems, ServerConnection c)
+                                                        List<SQLPrivilegeItem> privilegeItems, ServerConnection c,
+                                                        boolean requireCatalogExists)
         throws Exception {
         List<PolarAccountInfo> grantees = new ArrayList<>();
         PolarInstPriv instPriv = null;
@@ -168,7 +173,59 @@ public class PolarHandlerCommon {
             tbPriv.setTbName(sqlExprTableSource.getExpr().toString());
         } else if (sqlExprTableSource.getExpr() instanceof SQLPropertyExpr) {
             SQLPropertyExpr propertyExpr = (SQLPropertyExpr) sqlExprTableSource.getExpr();
-            if (propertyExpr.getOwner().toString().equals("*")) {
+            SQLExpr owner = propertyExpr.getOwner();
+
+            if (owner instanceof SQLPropertyExpr) {
+                // Three-segment: catalog.db.* or catalog.db.table
+                ExternalNameNormalizer.ThreePartName parsed =
+                    ExternalNameNormalizer.parseThreePartName(propertyExpr);
+                if (parsed == null) {
+                    throw new SQLSyntaxErrorException(SQL_SYNTAX_ERROR);
+                }
+                String catalogName = toLowerUnlessWildcard(parsed.getCatalogName());
+                String extDbName = toLowerUnlessWildcard(parsed.getDbName());
+                String tableName = toLowerUnlessWildcard(parsed.getTableName());
+
+                // Reject mixed wildcard patterns. The grammar already forbids a
+                // concrete db under a wildcard catalog, so only the db-wildcard case
+                // needs a handler check: a wildcard db must carry a wildcard table,
+                // otherwise the table row is keyed by a wildcard db and can never be
+                // matched by lookups keyed on a concrete db.
+                if (ExternalNameNormalizer.WILDCARD.equals(extDbName)
+                    && !ExternalNameNormalizer.WILDCARD.equals(tableName)) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
+                        "Mixed wildcard pattern '" + catalogName + ".*." + tableName
+                            + "' is not supported. Use catalog.*.* for catalog-level wildcard.");
+                }
+
+                // Validate catalog existence (skip wildcard). REVOKE deliberately skips
+                // this: DROP CATALOG leaves db_priv/table_priv rows behind, so refusing
+                // here would make those residual grants unreachable from SQL.
+                if (requireCatalogExists
+                    && !ExternalNameNormalizer.WILDCARD.equals(catalogName)
+                    && !ExternalCatalogManager.getInstance().exists(catalogName)) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_EXTERNAL_TABLE,
+                        "External catalog '" + catalogName + "' does not exist");
+                }
+
+                if (!ExternalNameNormalizer.WILDCARD.equals(extDbName)) {
+                    ExternalNameValidator.validateExternalDbName(extDbName);
+                }
+                if (!ExternalNameNormalizer.WILDCARD.equals(tableName)) {
+                    ExternalNameValidator.validateExternalTableName(tableName);
+                }
+
+                if (ExternalNameNormalizer.WILDCARD.equals(tableName)) {
+                    dbPriv = new PolarDbPriv();
+                    dbPriv.setCatalogName(catalogName);
+                    dbPriv.setDbName(extDbName);
+                } else {
+                    tbPriv = new PolarTbPriv();
+                    tbPriv.setCatalogName(catalogName);
+                    tbPriv.setDbName(extDbName);
+                    tbPriv.setTbName(tableName);
+                }
+            } else if (propertyExpr.getOwner().toString().equals("*")) {
                 if (propertyExpr.getName().equals("*")) {
                     // Inst priv
                     instPriv = new PolarInstPriv();
@@ -222,13 +279,31 @@ public class PolarHandlerCommon {
             grantees.add(userInfo);
         }
 
+        // Reject granting catalog privileges to roles
+        if ((dbPriv != null && StringUtils.isNotBlank(dbPriv.getCatalogName()))
+            || (tbPriv != null && StringUtils.isNotBlank(tbPriv.getCatalogName()))) {
+            for (PolarAccountInfo grantee : grantees) {
+                PolarAccountInfo resolved = PolarPrivManager.getInstance()
+                    .getExactUser(grantee.getUsername(), grantee.getHost());
+                if (resolved != null && resolved.getAccountType() == AccountType.ROLE) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
+                        "Granting catalog privileges to roles is not supported. "
+                            + "Catalog privileges can only be granted directly to users.");
+                }
+            }
+        }
+
         for (SQLPrivilegeItem privItem : privilegeItems) {
             String privStr = privItem.getAction().toString().toUpperCase();
             for (PolarAccountInfo grantee : grantees) {
                 if (grantee.getFirstDbPriv() != null) {
                     grantee.getFirstDbPriv().updatePrivilege(privStr, true);
+                } else if (grantee.getFirstCatalogDbPriv() != null) {
+                    grantee.getFirstCatalogDbPriv().updatePrivilege(privStr, true);
                 } else if (grantee.getFirstTbPriv() != null) {
                     grantee.getFirstTbPriv().updatePrivilege(privStr, true);
+                } else if (grantee.getFirstCatalogTbPriv() != null) {
+                    grantee.getFirstCatalogTbPriv().updatePrivilege(privStr, true);
                 } else {
                     grantee.getInstPriv().updatePrivilege(privStr, true);
                 }
@@ -236,6 +311,10 @@ public class PolarHandlerCommon {
         }
 
         return grantees;
+    }
+
+    private static String toLowerUnlessWildcard(String name) {
+        return ExternalNameNormalizer.WILDCARD.equals(name) ? name : name.toLowerCase();
     }
 
     public static void encryptPassword(List<PolarAccountInfo> users) {

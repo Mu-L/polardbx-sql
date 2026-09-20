@@ -4,6 +4,7 @@ import com.alibaba.polardbx.common.jdbc.BytesSql;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.UnionBytesSql;
 import com.alibaba.polardbx.common.utils.TStringUtil;
+import com.alibaba.polardbx.executor.mpp.metadata.SplitType;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.google.common.base.Preconditions;
 import org.apache.calcite.sql.SqlNode;
@@ -103,5 +104,10 @@ public class DynamicJdbcSplit extends JdbcSplit {
     public void reset() {
         this.hintSql = null;
         this.lookupConditions = null;
+    }
+
+    @Override
+    public SplitType getSplitType() {
+        return SplitType.DYNAMIC_JDBC;
     }
 }

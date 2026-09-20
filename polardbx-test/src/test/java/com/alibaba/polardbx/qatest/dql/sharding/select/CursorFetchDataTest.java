@@ -20,15 +20,12 @@ import com.alibaba.polardbx.qatest.BaseTestCase;
 import com.alibaba.polardbx.qatest.constant.GsiConstant;
 import com.alibaba.polardbx.qatest.constant.TableConstant;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
-import com.alibaba.polardbx.qatest.util.RandomUtils;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
-import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -41,13 +38,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.BiFunction;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.qatest.constant.GsiConstant.COLUMN_DEF_MAP;
@@ -149,7 +142,7 @@ public class CursorFetchDataTest extends BaseTestCase {
         } catch (Throwable e) {
             // If fetch size <= 0 and is not equal to Integer.MIN_VAL,
             // an illegal-value exception will be thrown.
-            // If fetch size is exceeds JVM memory limit,
+            // If fetch size exceeds JVM memory limit,
             // an OOM exception will be thrown.
             return e.getMessage();
         } finally {
@@ -307,6 +300,44 @@ public class CursorFetchDataTest extends BaseTestCase {
     }
 
     @Test
+    public void testOneValue() throws SQLException {
+        final String tableName = "cursor_fetch_data_test_all_type";
+        final String createTable = "create table if not exists " + tableName + " ("
+            + "id int primary key auto_increment,"
+            + "a bit(16) "
+            + ")";
+        final String dropTable = "drop table if exists " + tableName;
+        // prepare data
+        JdbcUtil.executeUpdateSuccess(tddlConnection, dropTable);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, createTable);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "insert into " + tableName
+            + " (a) values (0)");
+        // non-cursor fetch
+        try (final Connection conn = getPolardbxConnectionWithExtraParams("&useServerPrepStmts=true");
+            final PreparedStatement stmt = conn.prepareStatement("select id, a from " + tableName + " order by id")) {
+            final ResultSet rs1 = stmt.executeQuery();
+            while (rs1.next()) {
+                final int id = rs1.getInt("id");
+                final String a = rs1.getString("a");
+                System.out.println(id + " " + a);
+            }
+        }
+        // cursor fetch
+        try (final Connection conn = getPolardbxConnectionWithExtraParams("&useCursorFetch=true");
+            final Statement stmt = conn
+                .createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
+            stmt.setFetchSize(1);
+            final ResultSet rs2 = stmt.executeQuery("select id, a from " + tableName + " order by id");
+            while (rs2.next()) {
+                final int id = rs2.getInt("id");
+                final String a = rs2.getString("a");
+                System.out.println(id + " " + a);
+            }
+        }
+        JdbcUtil.executeUpdateSuccess(tddlConnection, dropTable);
+    }
+
+    @Test
     public void testFetchAllTypeData() {
         final String tableName = "cursor_fetch_data_test_all_type";
         // The pk is also the partitioned key.
@@ -418,9 +449,14 @@ public class CursorFetchDataTest extends BaseTestCase {
                         throw e;
                     } catch (Throwable t) {
                         // Other exception.
-                        System.out.println("Error occurs, expected is : " + expectedError);
-                        System.out.println("Error occurs, actual is : " + t.getMessage());
-                        Assert.assertEquals("wrong exception ", expectedError, t.getMessage());
+                        System.out.println("Non-cursor-fetch error: " + expectedError);
+                        System.out.println("Cursor-fetch error: " + t.getMessage());
+                        if (expectedError == null) {
+                            Assert.fail("no expected error");
+                        }
+                        String truncateError = expectedError.substring(expectedError.indexOf("ERR-CODE:"));
+                        String truncateError2 = t.getMessage().substring(t.getMessage().indexOf("ERR-CODE:"));
+                        Assert.assertEquals("wrong exception ", truncateError, truncateError2);
                     }
                 } catch (Throwable e) {
                     errors.add(e.getMessage());

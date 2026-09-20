@@ -17,6 +17,8 @@
 package com.alibaba.polardbx.repo.mysql.handler.execute;
 
 import com.alibaba.polardbx.common.constants.SequenceAttribute;
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
@@ -24,6 +26,7 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.BaseQueryOperation;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalInsert;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableInsertSharder;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.InsertWriter;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
 import com.alibaba.polardbx.optimizer.utils.PhyTableOperationUtil;
@@ -47,7 +50,7 @@ public class InsertSelectExecuteJob extends ExecuteJob {
     private final Map<Integer, Integer> duplicateKeyParamMapping;
 
     public InsertSelectExecuteJob(ExecutionContext executionContext, ParallelExecutor parallelExecutor,
-                                  LogicalInsert logicalInsert, Map<Integer, Integer> duplicateKeyParamMapping){
+                                  LogicalInsert logicalInsert, Map<Integer, Integer> duplicateKeyParamMapping) {
         super(executionContext, parallelExecutor);
         this.logicalInsert = logicalInsert;
         this.duplicateKeyParamMapping = duplicateKeyParamMapping;
@@ -56,7 +59,7 @@ public class InsertSelectExecuteJob extends ExecuteJob {
         if (StringUtils.isEmpty(this.schemaName)) {
             this.schemaName = executionContext.getSchemaName();
         }
-        PhyTableOperationUtil.enableIntraGroupParallelism(this.schemaName,this.executionContext);
+        PhyTableOperationUtil.enableIntraGroupParallelism(this.schemaName, this.executionContext);
     }
 
     /**
@@ -64,6 +67,11 @@ public class InsertSelectExecuteJob extends ExecuteJob {
      */
     @Override
     public void execute(List<List<Object>> values, long memorySize) throws Exception {
+        if (ExternalizedDmlRewriter.needsHandling(
+            LogicalInsertHandler.getInsertTargetTableMeta(logicalInsert, executionContext))) {
+            throw new TddlRuntimeException(ErrorCode.ERR_INSERT_SELECT,
+                "Parallel INSERT SELECT cannot safely write externalized columns");
+        }
         if (executionContext.getParams() != null) {
             executionContext.getParams().getSequenceSize().set(0);
             executionContext.getParams().getSequenceIndex().set(0);
@@ -91,7 +99,7 @@ public class InsertSelectExecuteJob extends ExecuteJob {
             final InsertWriter primaryWriter = logicalInsert.getPrimaryInsertWriter();
             List<RelNode> inputs = primaryWriter.getInput(executionContext);
             final List<RelNode> primaryPhyPlan =
-                inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
+                inputs.stream().filter(o -> ((BaseQueryOperation) o).isPrimaryWriteRelNode()).collect(
                     Collectors.toList());
 
             final List<RelNode> allPhyPlan = new ArrayList<>(primaryPhyPlan);

@@ -1,0 +1,32 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+
+use polardbx;
+drop database if exists mydbledb2;
+
+  ## error_msg: $# No found target phydb #$
+  ## USE_DN_LIST_MSG
+register database if not exists mydbledb2 charset = utf8 collate = utf8_general_ci mode = 'auto' locality='db_config={"g1":["set1","mydbledb2_00"],"g2":["set2","mydbledb2_01"] }';
+
+  ## USE_DN_LIST_MSG
+create database if not exists mydbledb2 charset = utf8 collate = utf8_general_ci mode = 'auto' locality='db_config={"g1":["set1","mydbledb2_00"],"g2":["set2","mydbledb2_01"] }';
+unregister database if exists mydbledb2;
+
+  ## error_msg: $# unexpected charset #$
+  ## USE_DN_LIST_MSG
+register database if not exists mydbledb2 charset = utf8mb4 mode = 'auto' locality='db_config={"g1":["set1","mydbledb2_00"],"g2":["set2","mydbledb2_01"] }';
+
+  ## error_msg: $# unexpected collation #$
+  ## USE_DN_LIST_MSG
+register database if not exists mydbledb2 collate = utf8_bin mode = 'auto' locality='db_config={"mydbledb2_g1":["set1","mydbledb2_00"],"g2":["set2","mydbledb2_01"] }';
+
+  ## USE_DN_LIST_MSG
+register database if not exists mydbledb2 charset = utf8 collate = utf8_general_ci mode = 'auto' locality='db_config={"mydbledb2_g1":["set1","mydbledb2_00"],"g2":["set2","mydbledb2_01"] }';
+
+use mydbledb2;
+show tables;
+
+use polardbx;
+drop database mydbledb2;

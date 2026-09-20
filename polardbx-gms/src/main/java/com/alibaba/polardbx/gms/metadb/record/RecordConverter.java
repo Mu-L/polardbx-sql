@@ -16,14 +16,17 @@
 
 package com.alibaba.polardbx.gms.metadb.record;
 
+import com.alibaba.polardbx.common.type.ConstraintType;
 import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.gms.metadb.table.ColumnStatus;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarIndexesRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnsAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnsInfoSchemaRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnsRecord;
 import com.alibaba.polardbx.gms.metadb.table.IndexStatus;
 import com.alibaba.polardbx.gms.metadb.table.IndexesInfoSchemaRecord;
 import com.alibaba.polardbx.gms.metadb.table.IndexesRecord;
+import com.alibaba.polardbx.gms.metadb.table.TableConstraintsRecord;
 import com.alibaba.polardbx.gms.metadb.table.TableStatus;
 import com.alibaba.polardbx.gms.metadb.table.TablesInfoSchemaRecord;
 import com.alibaba.polardbx.gms.metadb.table.TablesRecord;
@@ -99,13 +102,27 @@ public class RecordConverter {
             record.jdbcType = (int) jdbcExtInfo.get(infoSchemaRecord.columnName).get(ColumnsAccessor.JDBC_TYPE);
             record.jdbcTypeName = (String) jdbcExtInfo.get(infoSchemaRecord.columnName).get(
                 ColumnsAccessor.JDBC_TYPE_NAME);
-            record.fieldLength = (long) jdbcExtInfo.get(infoSchemaRecord.columnName).get(ColumnsAccessor.FIELD_LENGTH);
+            record.fieldLength = Long.parseLong(
+                jdbcExtInfo.get(infoSchemaRecord.columnName).get(ColumnsAccessor.FIELD_LENGTH).toString());
             record.status = ColumnStatus.ABSENT.getValue();
             record.version = 1;
             record.flag = 0;
             records.add(record);
         }
         return records;
+    }
+
+    public static void convertCheck(List<TableConstraintsRecord> tableConstraintsRecords,
+                                    String logicalTableSchema, String logicalTableName) {
+        for (TableConstraintsRecord tableConstraintsRecord : tableConstraintsRecords) {
+            tableConstraintsRecord.tableSchema = logicalTableSchema;
+            tableConstraintsRecord.tableName = logicalTableName;
+            tableConstraintsRecord.constraintSchema = logicalTableSchema;
+            if (tableConstraintsRecord.constraintType.equalsIgnoreCase(ConstraintType.CHECK.name())) {
+                int len = tableConstraintsRecord.constraintName.length();
+                tableConstraintsRecord.constraintName = tableConstraintsRecord.constraintName.substring(0, len - 9);
+            }
+        }
     }
 
     public static List<IndexesRecord> convertIndex(List<IndexesInfoSchemaRecord> infoSchemaRecords,
@@ -140,6 +157,44 @@ public class RecordConverter {
             record.flag = 0;
             records.add(record);
         }
+        return records;
+    }
+
+    public static List<ColumnarIndexesRecord> convertColumnarIndex(List<IndexesRecord> indexesRecords) {
+        List<ColumnarIndexesRecord> records = new ArrayList<>(indexesRecords.size());
+        for (IndexesRecord indexesRecord : indexesRecords) {
+            ColumnarIndexesRecord record = new ColumnarIndexesRecord();
+
+            // 行存字段
+            record.tableSchema = indexesRecord.tableSchema;
+            record.tableName = indexesRecord.tableName;
+            record.nonUnique = indexesRecord.nonUnique;
+            record.indexSchema = indexesRecord.indexSchema;
+            record.indexName = indexesRecord.indexName;
+            record.seqInIndex = indexesRecord.seqInIndex;
+            record.columnName = indexesRecord.columnName;
+            record.collation = indexesRecord.collation;
+            record.cardinality = indexesRecord.cardinality;
+            record.subPart = indexesRecord.subPart;
+            record.packed = indexesRecord.packed;
+            record.nullable = indexesRecord.nullable;
+            record.indexType = indexesRecord.indexType;
+            record.comment = indexesRecord.comment;
+            record.indexComment = indexesRecord.indexComment;
+            record.indexColumnType = indexesRecord.indexColumnType;
+            record.indexLocation = indexesRecord.indexLocation;
+            record.indexTableName = indexesRecord.indexTableName;
+            record.indexStatus = indexesRecord.indexStatus;
+            record.version = indexesRecord.version;
+            record.flag = indexesRecord.flag;
+            record.visible = indexesRecord.visible;
+            record.visitFrequency = indexesRecord.visitFrequency;
+            record.lastAccessTime = indexesRecord.lastAccessTime;
+
+            // 列存特殊字段
+            records.add(record);
+        }
+
         return records;
     }
 

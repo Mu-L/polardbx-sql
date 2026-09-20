@@ -16,8 +16,8 @@ public class ExecutorContextTest {
     private static class MockSyncPointExecutor implements ISyncPointExecutor {
 
         @Override
-        public boolean execute() {
-            return false;
+        public long execute(long tableId) {
+            return -1;
         }
     }
 }

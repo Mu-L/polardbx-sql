@@ -41,6 +41,12 @@ public class SumV2 extends Aggregator {
         super(new int[] {targetIndex}, isDistinct, allocator, filterArg);
     }
 
+    public SumV2(int targetIndex, boolean isDistinct, MemoryAllocatorCtx allocator, int filterArg,
+                 DataType returnType) {
+        super(new int[] {targetIndex}, isDistinct, allocator, filterArg);
+        this.returnType = returnType;
+    }
+
     public void setSum(BigDecimal sum) {
         this.sum = sum;
     }
@@ -60,7 +66,7 @@ public class SumV2 extends Aggregator {
 
     @Override
     public Aggregator getNew() {
-        return new SumV2(aggTargetIndexes[0], isDistinct, memoryAllocator, filterArg);
+        return new SumV2(aggTargetIndexes[0], isDistinct, memoryAllocator, filterArg, returnType);
     }
 
     @Override

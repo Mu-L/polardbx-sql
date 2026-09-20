@@ -96,6 +96,7 @@ public class BalanceOptions {
      */
     public boolean debug = false;
 
+    public long ddlPlanId = -1L;
     /**
      * Async or sync
      */
@@ -160,6 +161,9 @@ public class BalanceOptions {
         if (!TStringUtil.isBlank(sqlNode.getDrainNode())) {
             res.drainNode = sqlNode.getDrainNode();
         }
+        if (sqlNode.getDdlPlanId() != null && sqlNode.getDdlPlanId() > 0) {
+            res.ddlPlanId = sqlNode.getDdlPlanId();
+        }
         return res;
     }
 
@@ -179,6 +183,11 @@ public class BalanceOptions {
 
     public BalanceOptions withDrainStoragePool(String drainStoragePool) {
         this.drainStoragePool = drainStoragePool;
+        return this;
+    }
+
+    public BalanceOptions withSolveLevel(String solveLevel) {
+        this.solveLevel = solveLevel;
         return this;
     }
 

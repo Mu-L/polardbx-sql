@@ -78,6 +78,8 @@ public class SqlIndexDefinition extends SqlCall {
     // Key should be lowercase.
     private final Map<String, String> columnarOptions;
 
+    private final SqlVectorIndexOptions vectorOptions;
+
     public SqlIndexDefinition(SqlParserPos pos,
                               boolean hasConstraint,
                               SqlIdentifier uniqueConstraint,
@@ -104,7 +106,8 @@ public class SqlIndexDefinition extends SqlCall {
                               List<SqlIndexColumnName> dictColumns,
                               boolean withImplicitTableGroup,
                               boolean visible,
-                              Map<String, String> columnarOptions) {
+                              Map<String, String> columnarOptions,
+                              SqlVectorIndexOptions vectorOptions) {
         super(pos);
         this.hasConstraint = hasConstraint;
         this.uniqueConstraint = uniqueConstraint;
@@ -132,6 +135,41 @@ public class SqlIndexDefinition extends SqlCall {
         this.withImplicitTableGroup = withImplicitTableGroup;
         this.visible = visible;
         this.columnarOptions = columnarOptions;
+        this.vectorOptions = vectorOptions;
+    }
+
+    // Backward-compatible constructor without vector options.
+    public SqlIndexDefinition(SqlParserPos pos,
+                              boolean hasConstraint,
+                              SqlIdentifier uniqueConstraint,
+                              SqlIndexResiding indexResiding,
+                              String type,
+                              SqlIndexType indexType,
+                              SqlIdentifier indexName,
+                              SqlIdentifier originIndexName,
+                              SqlIdentifier table,
+                              List<SqlIndexColumnName> columns,
+                              List<SqlIndexColumnName> covering,
+                              List<SqlIndexColumnName> originCovering,
+                              SqlNode dbPartitionBy,
+                              SqlNode tbPartitionBy,
+                              SqlNode tbPartitions,
+                              SqlNode partitioning,
+                              SqlNode originPartitioning,
+                              List<SqlIndexColumnName> clusteredKeys,
+                              List<SqlIndexOption> options,
+                              boolean clusteredIndex,
+                              boolean columnarIndex,
+                              SqlNode tableGroupName,
+                              SqlNode engineName,
+                              List<SqlIndexColumnName> dictColumns,
+                              boolean withImplicitTableGroup,
+                              boolean visible,
+                              Map<String, String> columnarOptions) {
+        this(pos, hasConstraint, uniqueConstraint, indexResiding, type, indexType, indexName, originIndexName,
+            table, columns, covering, originCovering, dbPartitionBy, tbPartitionBy, tbPartitions,
+            partitioning, originPartitioning, clusteredKeys, options, clusteredIndex, columnarIndex,
+            tableGroupName, engineName, dictColumns, withImplicitTableGroup, visible, columnarOptions, null);
     }
 
     public SqlIndexDefinition(SqlParserPos pos,
@@ -163,6 +201,43 @@ public class SqlIndexDefinition extends SqlCall {
                               boolean withImplicitTableGroup,
                               boolean visible,
                               Map<String, String> columnarOptions) {
+        this(pos, hasConstraint, uniqueConstraint, indexResiding, type, indexType, indexName, originIndexName,
+            table, columns, covering, originCovering, dbPartitionBy, tbPartitionBy, tbPartitions,
+            partitioning, originPartitioning, clusteredKeys, options, primaryTableDefinition, primaryTableNode,
+            clusteredIndex, columnarIndex, tableGroupName, engineName, dictColumns, withImplicitTableGroup,
+            visible, columnarOptions, null);
+    }
+
+    private SqlIndexDefinition(SqlParserPos pos,
+                               boolean hasConstraint,
+                               SqlIdentifier uniqueConstraint,
+                               SqlIndexResiding indexResiding,
+                               String type,
+                               SqlIndexType indexType,
+                               SqlIdentifier indexName,
+                               SqlIdentifier originIndexName,
+                               SqlIdentifier table,
+                               List<SqlIndexColumnName> columns,
+                               List<SqlIndexColumnName> covering,
+                               List<SqlIndexColumnName> originCovering,
+                               SqlNode dbPartitionBy,
+                               SqlNode tbPartitionBy,
+                               SqlNode tbPartitions,
+                               SqlNode partitioning,
+                               SqlNode originPartitioning,
+                               List<SqlIndexColumnName> clusteredKeys,
+                               List<SqlIndexOption> options,
+                               String primaryTableDefinition,
+                               SqlCreateTable primaryTableNode,
+                               boolean clusteredIndex,
+                               boolean columnarIndex,
+                               SqlNode tableGroupName,
+                               SqlNode engineName,
+                               List<SqlIndexColumnName> dictColumns,
+                               boolean withImplicitTableGroup,
+                               boolean visible,
+                               Map<String, String> columnarOptions,
+                               SqlVectorIndexOptions vectorOptions) {
         super(pos);
         this.hasConstraint = hasConstraint;
         this.uniqueConstraint = uniqueConstraint;
@@ -192,6 +267,7 @@ public class SqlIndexDefinition extends SqlCall {
         this.withImplicitTableGroup = withImplicitTableGroup;
         this.visible = visible;
         this.columnarOptions = columnarOptions;
+        this.vectorOptions = vectorOptions;
     }
 
     public static SqlIndexDefinition localIndex(SqlParserPos pos, boolean hasConstraint,
@@ -259,6 +335,47 @@ public class SqlIndexDefinition extends SqlCall {
             withImplicitTableGroup,
             true,
             null);
+    }
+
+    /**
+     * Create a local vector index definition with vector-specific options.
+     * Vector options include: DISTANCE (EUCLIDEAN/COSINE), M (HNSW parameter).
+     */
+    public static SqlIndexDefinition vectorIndex(SqlParserPos pos, boolean hasConstraint,
+                                                 SqlIdentifier uniqueConstraint, boolean explicit, String type,
+                                                 SqlIndexType indexType, SqlIdentifier indexName, SqlIdentifier table,
+                                                 List<SqlIndexColumnName> columns, List<SqlIndexOption> options,
+                                                 SqlNode tableGroupName, boolean withImplicitTableGroup,
+                                                 Map<String, String> vectorOptions) {
+        SqlVectorIndexOptions parsedVectorOptions = SqlVectorIndexOptions.from(vectorOptions);
+        return new SqlIndexDefinition(pos,
+            hasConstraint,
+            uniqueConstraint,
+            explicit ? SqlIndexResiding.LOCAL : null,
+            type,
+            indexType,
+            indexName,
+            indexName,
+            table,
+            columns,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            options,
+            false,
+            false,
+            tableGroupName,
+            null,
+            null,
+            withImplicitTableGroup,
+            true,
+            null,
+            parsedVectorOptions);
     }
 
     public static SqlIndexDefinition globalIndexForRebuild(SqlParserPos pos, boolean hasConstraint,
@@ -506,6 +623,19 @@ public class SqlIndexDefinition extends SqlCall {
             }
         }
 
+        // DN expects compact vector options with no spaces around '='.
+        if ("VECTOR".equalsIgnoreCase(type)) {
+            if (getDistance() != null) {
+                writer.keyword("DISTANCE=" + getDistance());
+            }
+            if (getM() != null) {
+                writer.keyword("M=" + getM());
+            }
+            if (getEfConstruction() != null) {
+                writer.keyword("EF_CONSTRUCTION=" + getEfConstruction());
+            }
+        }
+
         writer.endList(frame);
     }
 
@@ -539,6 +669,10 @@ public class SqlIndexDefinition extends SqlCall {
 
     public boolean isColumnar() {
         return columnarIndex;
+    }
+
+    public boolean isVectorIndex() {
+        return "VECTOR".equalsIgnoreCase(type);
     }
 
     public boolean isHasConstraint() {
@@ -658,6 +792,21 @@ public class SqlIndexDefinition extends SqlCall {
         return primaryTableDefinition;
     }
 
+    public String getDistance() {
+        return vectorOptions == null || vectorOptions.getDistance() == null
+            ? null : vectorOptions.getDistance().name();
+    }
+
+    public String getM() {
+        return vectorOptions == null || vectorOptions.getM() == null
+            ? null : String.valueOf(vectorOptions.getM());
+    }
+
+    public String getEfConstruction() {
+        return vectorOptions == null || vectorOptions.getEfConstruction() == null
+            ? null : String.valueOf(vectorOptions.getEfConstruction());
+    }
+
     public void setPrimaryTableDefinition(String primaryTableDefinition) {
         this.primaryTableDefinition = primaryTableDefinition;
     }
@@ -715,7 +864,51 @@ public class SqlIndexDefinition extends SqlCall {
             dictColumns,
             withImplicitTableGroup,
             visible,
-            columnarOptions);
+            columnarOptions,
+            vectorOptions);
+    }
+
+    public SqlIndexDefinition replaceIndexColumns(Collection<String> indexColumns) {
+        if (GeneralUtil.isEmpty(indexColumns)) {
+            return this;
+        }
+
+        List<SqlIndexColumnName> newIndexColumns = new ArrayList<>();
+        for (String coveringColumn : indexColumns) {
+            newIndexColumns.add(new SqlIndexColumnName(SqlParserPos.ZERO, new SqlIdentifier(coveringColumn,
+                SqlParserPos.ZERO), null, null));
+        }
+
+        return new SqlIndexDefinition(pos,
+            hasConstraint,
+            uniqueConstraint,
+            indexResiding,
+            type,
+            indexType,
+            indexName,
+            originIndexName,
+            table,
+            newIndexColumns,
+            covering,
+            originCovering,
+            dbPartitionBy,
+            tbPartitionBy,
+            tbPartitions,
+            partitioning,
+            originPartitioning,
+            clusteredKeys,
+            options,
+            primaryTableDefinition,
+            primaryTableNode,
+            clusteredIndex,
+            columnarIndex,
+            tableGroupName,
+            engineName,
+            dictColumns,
+            withImplicitTableGroup,
+            this.visible,
+            columnarOptions,
+            vectorOptions);
     }
 
     public SqlIndexDefinition replaceCovering(Collection<String> coveringColumns) {
@@ -757,7 +950,8 @@ public class SqlIndexDefinition extends SqlCall {
             dictColumns,
             withImplicitTableGroup,
             this.visible,
-            columnarOptions);
+            columnarOptions,
+            vectorOptions);
     }
 
     public SqlIndexDefinition mergeCovering(Collection<String> coveringColumns) {
@@ -813,7 +1007,8 @@ public class SqlIndexDefinition extends SqlCall {
                 dictColumns,
                 withImplicitTableGroup,
                 visible,
-                columnarOptions);
+                columnarOptions,
+                vectorOptions);
         }
 
     }
@@ -854,7 +1049,8 @@ public class SqlIndexDefinition extends SqlCall {
             dictColumns,
             withImplicitTableGroup,
             visible,
-            columnarOptions);
+            columnarOptions,
+            vectorOptions);
     }
 
     /**
@@ -893,7 +1089,47 @@ public class SqlIndexDefinition extends SqlCall {
             dictColumns,
             withImplicitTableGroup,
             visible,
-            columnarOptions);
+            columnarOptions,
+            vectorOptions);
+    }
+
+    /**
+     * Rebuild cci definition with new index name
+     *
+     * @param newName New index name, with random suffix
+     * @return Copied SqlIndexDefinition
+     */
+    public SqlIndexDefinition rebuildToCci(SqlIdentifier newName, SqlIdentifier newOriginIndexName) {
+        return new SqlIndexDefinition(pos,
+            hasConstraint,
+            uniqueConstraint,
+            SqlIndexResiding.GLOBAL,
+            type,
+            indexType,
+            null == newName ? indexName : newName,
+            null == newOriginIndexName ? originIndexName : newOriginIndexName,
+            table,
+            columns,
+            covering,
+            originCovering,
+            dbPartitionBy,
+            tbPartitionBy,
+            tbPartitions,
+            partitioning,
+            originPartitioning,
+            columnarIndex ? clusteredKeys : null,
+            options,
+            primaryTableDefinition,
+            primaryTableNode,
+            clusteredIndex,
+            columnarIndex,
+            tableGroupName,
+            engineName,
+            dictColumns,
+            withImplicitTableGroup,
+            visible,
+            columnarOptions,
+            vectorOptions);
     }
 
     public SqlIndexDefinition rebuildToExplicitLocal(SqlIdentifier newName) {
@@ -925,7 +1161,8 @@ public class SqlIndexDefinition extends SqlCall {
             dictColumns,
             withImplicitTableGroup,
             visible,
-            columnarOptions);
+            columnarOptions,
+            vectorOptions);
     }
 
     public SqlNode getPartitioning() {

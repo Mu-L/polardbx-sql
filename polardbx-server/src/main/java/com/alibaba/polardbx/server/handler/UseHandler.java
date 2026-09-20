@@ -17,12 +17,13 @@
 package com.alibaba.polardbx.server.handler;
 
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.config.ConfigDataMode;
+import com.alibaba.polardbx.druid.sql.parser.ByteString;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.net.FrontendConnection;
 import com.alibaba.polardbx.net.compress.PacketOutputProxyFactory;
 import com.alibaba.polardbx.net.handler.Privileges;
 import com.alibaba.polardbx.net.packet.OkPacket;
-import com.alibaba.polardbx.druid.sql.parser.ByteString;
-import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.optimizer.parse.mysql.lexer.MySQLLexer;
 import com.alibaba.polardbx.optimizer.parse.mysql.lexer.MySQLToken;
 
@@ -80,6 +81,14 @@ public final class UseHandler {
         Privileges privileges = c.getPrivileges();
         if (schema == null || !privileges.schemaExists(schema)) {
             c.writeErrMessage(ErrorCode.ER_BAD_DB_ERROR, "Unknown database '" + schema + "'");
+            return false;
+        }
+
+        // Reject USE for external catalog schema — not supported, guide user to three-segment syntax
+        if (ExternalNameValidator.isExternalSchema(schema)) {
+            c.writeErrMessage(ErrorCode.ERR_EXTERNAL_TABLE,
+                "USE is not supported for external catalog schema '" + schema
+                    + "'. Use three-segment syntax instead: SELECT * FROM catalog.db.table");
             return false;
         }
         String user = c.getUser();

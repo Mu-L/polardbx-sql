@@ -49,8 +49,8 @@ public final class ServerParseSelect {
     public static final int COMPATIBILITY_LEVEL = 17;
     public static final int ENCDB_PROCESS_MESSAGE = 18;
     public static final int COLUMNAR_FILE = 19;
-    public static final int SESSION_TRANSACTION_READ_ONLY = 20;
-
+    public static final int DDL_JOB_ID = 20;
+    public static final int DDL_PLAN_ID = 21;
     public static final Set<Integer> PREPARE_UNSUPPORTED_SELECT_TYPE;
     private static final char[] _VERSION_COMMENT = "VERSION_COMMENT".toCharArray();
     private static final char[] _IDENTITY = "IDENTITY".toCharArray();
@@ -87,6 +87,8 @@ public final class ServerParseSelect {
         PREPARE_UNSUPPORTED_SELECT_TYPE.add(COMPATIBILITY_LEVEL);
         PREPARE_UNSUPPORTED_SELECT_TYPE.add(ENCDB_PROCESS_MESSAGE);
         PREPARE_UNSUPPORTED_SELECT_TYPE.add(COLUMNAR_FILE);
+        PREPARE_UNSUPPORTED_SELECT_TYPE.add(DDL_JOB_ID);
+        PREPARE_UNSUPPORTED_SELECT_TYPE.add(DDL_PLAN_ID);
     }
 
     public static int parse(String stmt, int offset, Object[] exData) {
@@ -107,6 +109,12 @@ public final class ServerParseSelect {
                 return select2Check(stmt, i);
             case 'D':
             case 'd':
+                if (ddlJobIdCheck(stmt, i)) {
+                    return DDL_JOB_ID;
+                }
+                if (ddlPlanIdCheck(stmt, i)) {
+                    return DDL_PLAN_ID;
+                }
                 return databaseCheck(stmt, i);
             case 'U':
             case 'u':
@@ -648,12 +656,6 @@ public final class ServerParseSelect {
                 return OTHER;
             }
             return SESSION_TX_READ_ONLY;
-        } else if (ParseUtil.compare(stmt, offset, _SESSION_TRANSACTION_READ_ONLY)) {
-            int length = offset + _SESSION_TRANSACTION_READ_ONLY.length;
-            if (stmt.length() > length && stmt.charAt(length) != ' ') {
-                return OTHER;
-            }
-            return SESSION_TRANSACTION_READ_ONLY;
         }
         return OTHER;
     }
@@ -717,6 +719,56 @@ public final class ServerParseSelect {
             }
         }
         return OTHER;
+    }
+
+    /**
+     * select next ddl jobid
+     */
+    static boolean ddlJobIdCheck(ByteString stmt, int offset) {
+        if (stmt.length() > offset + "DL_JOB_ID()".length()) {
+            char c1 = stmt.charAt(++offset);
+            char c2 = stmt.charAt(++offset);
+            char c3 = stmt.charAt(++offset);
+            char c4 = stmt.charAt(++offset);
+            char c5 = stmt.charAt(++offset);
+            char c6 = stmt.charAt(++offset);
+            char c7 = stmt.charAt(++offset);
+            char c8 = stmt.charAt(++offset);
+            char c9 = stmt.charAt(++offset);
+            char c10 = stmt.charAt(++offset);
+            char c11 = stmt.charAt(++offset);
+            if ((c1 == 'D' || c1 == 'd') && (c2 == 'L' || c2 == 'l') && (c3 == '_') && (c4 == 'J' || c4 == 'j')
+                && (c5 == 'O' || c5 == 'o') && (c6 == 'B' || c6 == 'b') && (c7 == '_') && (c8 == 'I'
+                || c8 == 'i') && (c9 == 'D' || c9 == 'd') && (c10 == '(') && (c11 == ')')
+                && (stmt.length() == ++offset || ParseUtil.isEOF(stmt.charAt(offset)))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static Boolean checkCharacterMatch(ByteString stmt, int offset, String target) {
+        offset += 1;
+        for (int i = 0; i < target.length(); i++) {
+            char expected = target.charAt(i);
+            char actual = Character.toLowerCase(stmt.charAt(offset + i));
+            if (actual != expected) {
+                return false;
+            }
+        }
+        int nextPos = offset + target.length();
+        return nextPos == stmt.length() || ParseUtil.isEOF(stmt.charAt(nextPos));
+    }
+
+    /**
+     * select next plan id
+     */
+    static boolean ddlPlanIdCheck(ByteString stmt, int offset) {
+        String target = "dl_plan_id()";
+        if (stmt.length() < offset + target.length()) {
+            return false;
+        }
+        return checkCharacterMatch(stmt, offset, target);
     }
 
     private static int extractTraceIdCheck(ByteString stmt, int offset, Object[] exData) {

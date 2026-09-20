@@ -31,7 +31,7 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.common.model.Group.GroupType;
-import com.alibaba.polardbx.common.model.Group;
+import com.alibaba.polardbx.common.oss.blob.BlobWriteTracker;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.TStringUtil;
@@ -81,6 +81,7 @@ import com.alibaba.polardbx.optimizer.core.rel.dml.DistinctWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.Writer;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.SourceRows;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.BroadcastModifyWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.writer.RelocateByReturningWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.RelocateWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.ShardingModifyWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.SingleModifyWriter;
@@ -99,6 +100,8 @@ import com.alibaba.polardbx.repo.mysql.handler.execute.ParallelExecutor;
 import com.alibaba.polardbx.repo.mysql.spi.MyPhyDdlTableCursor;
 import com.alibaba.polardbx.statistics.RuntimeStatHelper;
 import com.alibaba.polardbx.util.RexMemoryLimitHelper;
+import com.amazonaws.services.dynamodbv2.xspec.S;
+import com.google.common.collect.ImmutableList;
 import org.apache.calcite.linq4j.Ord;
 import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.rel.RelNode;
@@ -109,6 +112,7 @@ import org.apache.calcite.sql.SqlDynamicParam;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlUpdate;
 import org.apache.calcite.util.Pair;
+import org.apache.calcite.util.mapping.Mapping;
 import org.apache.calcite.util.mapping.Mappings;
 import org.apache.commons.lang3.StringUtils;
 
@@ -116,7 +120,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Queue;
@@ -162,10 +169,18 @@ public abstract class HandlerCommon implements PlanHandler {
 
     public abstract Cursor handle(RelNode logicalPlan, ExecutionContext executionContext);
 
-    private void executeSubNodesBlockConcurrent(ExecutionContext executionContext, List<RelNode> subNodes,
-                                                List<Cursor> subCursors, String schemaName) {
+    protected String getTableNameForOutput(String tableName, ExecutionContext executionContext) {
+        if (tableName == null) {
+            return null;
+        }
+        return executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_LOWER_CASE_TABLE_NAME_OUTPUT)
+            ? tableName.toLowerCase(Locale.ROOT) : tableName;
+    }
+
+    protected List<RelNode> executeSubNodesBlockConcurrent(ExecutionContext executionContext, List<RelNode> subNodes,
+                                                           List<Cursor> subCursors, String schemaName) {
         if (subNodes != null && subNodes.isEmpty()) {
-            return;
+            return null;
         }
         checkExecMemCost(executionContext, subNodes);
         RelNode firstOp = subNodes.get(0);
@@ -185,7 +200,7 @@ public abstract class HandlerCommon implements PlanHandler {
                 ExecUtils.zigzagInputsByBothDnInstAndGroupConnId(subNodes, schemaName, executionContext, groupConnIdSet,
                     groupedInputs);
         } else {
-            newInputsAfterZigzag = ExecUtils.zigzagInputsByMysqlInst(subNodes, schemaName, executionContext);
+            newInputsAfterZigzag = ExecUtils.zigzagInputsByDnInst(subNodes, schemaName, executionContext);
         }
 
         int prefetch = executionContext.getParamManager().getInt(ConnectionParams.PREFETCH_SHARDS);
@@ -268,6 +283,8 @@ public abstract class HandlerCommon implements PlanHandler {
         if (!GeneralUtil.isEmpty(exceptions)) {
             throw GeneralUtil.mergeException(exceptions);
         }
+
+        return newInputsAfterZigzag;
     }
 
     private void executeSubNodesBlockConcurrentAmongShards(ExecutionContext executionContext, List<RelNode> subNodes,
@@ -316,11 +333,7 @@ public abstract class HandlerCommon implements PlanHandler {
         // For DDL only
         Map<String, GenericPhyObjectRecorder> phyObjectRecorderMap = new ConcurrentHashMap<>();
 
-        FailPoint.injectFromHint(FailPointKey.FP_PHYSICAL_DDL_INTERRUPTED, executionContext, () -> {
-            DdlContext ddlContext = executionContext.getDdlContext();
-            throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_INTERRUPTED, String.valueOf(ddlContext.getJobId()),
-                ddlContext.getSchemaName(), ddlContext.getObjectName());
-        });
+        injectFailPointPhysicalDdlInterrupted(executionContext);
 
         int emitPhyDdlDelay = executionContext.getParamManager().getInt(ConnectionParams.EMIT_PHY_TABLE_DDL_DELAY);
 
@@ -406,8 +419,7 @@ public abstract class HandlerCommon implements PlanHandler {
 
     private void executeFirstThenBlockConcurrent(ExecutionContext executionContext, List<RelNode> subNodes,
                                                  List<Cursor> subCursors, String schemaName) {
-
-        List<RelNode> newSubNodes = ExecUtils.zigzagInputsByMysqlInst(subNodes, schemaName, executionContext);
+        List<RelNode> newSubNodes = ExecUtils.zigzagInputsByDnInst(subNodes, schemaName, executionContext);
         HashSet<Integer> cursorIndexSet = new HashSet<>();
         for (int i = 0; i < newSubNodes.size(); i++) {
             cursorIndexSet.add(i);
@@ -582,7 +594,7 @@ public abstract class HandlerCommon implements PlanHandler {
                                              ExecutionContext ec, String schemaName, List<Throwable> exceptions) {
         ExecutorContext executorContext = ExecutorContext.getContext(schemaName);
         OptimizerContext optimizerContext = OptimizerContext.getContext(schemaName);
-        IRepository myRepo = executorContext.getRepositoryHolder().get(Group.GroupType.MYSQL_JDBC.name());
+        IRepository myRepo = executorContext.getRepositoryHolder().get(GroupType.MYSQL_JDBC.name());
 
         Map<String, List<RelNode>> plansByInstance = new HashMap<>();
         for (RelNode subNode : subNodes) {
@@ -620,6 +632,7 @@ public abstract class HandlerCommon implements PlanHandler {
     protected void executeWithConcurrentPolicy(ExecutionContext executionContext, List<RelNode> inputs,
                                                QueryConcurrencyPolicy queryConcurrencyPolicy,
                                                List<Cursor> inputCursors, String schemaName) {
+        awaitBlobWritesBeforePhysicalExecution(executionContext);
         switch (queryConcurrencyPolicy) {
         case GROUP_CONCURRENT_BLOCK:
             executeGroupConcurrent(executionContext, inputs, inputCursors, schemaName);
@@ -646,12 +659,7 @@ public abstract class HandlerCommon implements PlanHandler {
                 GenericPhyObjectRecorder phyObjectRecorder =
                     CrossEngineValidator.getPhyObjectRecorder(relNode, executionContext);
                 if (!phyObjectRecorder.checkIfDone()) {
-                    FailPoint.injectFromHint(FailPointKey.FP_PHYSICAL_DDL_INTERRUPTED, executionContext, () -> {
-                        DdlContext ddlContext = executionContext.getDdlContext();
-                        throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_INTERRUPTED,
-                            String.valueOf(ddlContext.getJobId()),
-                            ddlContext.getSchemaName(), ddlContext.getObjectName());
-                    });
+                    injectFailPointPhysicalDdlInterrupted(executionContext);
                     try {
                         inputCursors.add(executor.execByExecPlanNode(relNode, executionContext));
                         phyObjectRecorder.recordDone();
@@ -662,6 +670,47 @@ public abstract class HandlerCommon implements PlanHandler {
                     }
                 }
             }
+        }
+    }
+
+    private static void injectFailPointPhysicalDdlInterrupted(ExecutionContext executionContext) {
+        FailPoint.injectFromHint(FailPointKey.FP_PHYSICAL_DDL_INTERRUPTED, executionContext, () -> {
+            DdlContext ddlContext = executionContext.getDdlContext();
+            throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_INTERRUPTED,
+                String.valueOf(ddlContext.getJobId()),
+                ddlContext.getSchemaName(), ddlContext.getObjectName());
+        });
+    }
+
+    private static void injectFailPointBlobFlushTimeout() {
+        FailPoint.inject(FailPointKey.FP_BLOB_FLUSH_TIMEOUT, () -> {
+            throw new RuntimeException("failpoint: blob flush timeout");
+        });
+    }
+
+    /**
+     * Do not publish a BlobRef to any physical DML before its staging row or remote Page is durable.
+     * Placing the barrier at the shared physical-dispatch boundary also covers INSERT/IGNORE/REPLACE
+     * RETURNING and GSI executor paths that do not call {@link #executePhysicalPlan}.
+     */
+    protected void awaitBlobWritesBeforePhysicalExecution(ExecutionContext executionContext) {
+        if (executionContext.getTransaction() == null) {
+            return;
+        }
+        BlobWriteTracker tracker = executionContext.getTransaction().getBlobWriteTrackerOrNull();
+        if (tracker == null) {
+            return;
+        }
+        try {
+            if (tracker.hasPendingWrites()) {
+                injectFailPointBlobFlushTimeout();
+            }
+            // Always call awaitAll(): an exceptionally completed future is no longer pending, but its
+            // sticky failure must still prevent BlobRef publication.
+            tracker.awaitAll();
+        } catch (Throwable t) {
+            tracker.poison(t);
+            throw t;
         }
     }
 
@@ -696,12 +745,13 @@ public abstract class HandlerCommon implements PlanHandler {
                           Function<DistinctWriter, List<List<Object>>> rowGenerator,
                           ExecutionContext executionContext) {
         final RelOptTable targetTable = writer.getTargetTable();
-
-        List<RelNode> inputs = writer.getInput(executionContext, rowGenerator);
-        final List<RelNode> primaryPhyPlan =
-            inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                Collectors.toList());
-        final List<RelNode> allPhyPlan = new ArrayList<>(primaryPhyPlan);
+        final List<RelNode> inputs = writer.getInput(executionContext, rowGenerator);
+        final List<RelNode> primaryPhyPlan = inputs.stream()
+            .filter(o -> ((BaseQueryOperation) o).isPrimaryWriteRelNode()).collect(Collectors.toList());
+        final List<RelNode> allPhyPlan = inputs.stream()
+            .filter(o -> ((BaseQueryOperation) o).isStagingRelNode()
+                || ((BaseQueryOperation) o).isPrimaryWriteRelNode())
+            .collect(Collectors.toCollection(ArrayList::new));
         final List<RelNode> replicatePlans =
             inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                 Collectors.toList());
@@ -802,6 +852,138 @@ public abstract class HandlerCommon implements PlanHandler {
 
         // Execute insert
         insertPlans.addAll(replicateInsertPlans);
+        final boolean hasStaging = insertPlans.stream().anyMatch(plan ->
+            plan instanceof BaseQueryOperation && ((BaseQueryOperation) plan).isStagingRelNode());
+        if (hasStaging && insertEc.getDmlWriteContext() == null) {
+            throw new IllegalStateException("Externalized staging plans require a statement DML write context");
+        }
+
+        final QueryConcurrencyPolicy queryConcurrencyPolicy;
+        if (insertPlans.size() <= 1) {
+            queryConcurrencyPolicy = QueryConcurrencyPolicy.SEQUENTIAL;
+        } else if (hasStaging) {
+            queryConcurrencyPolicy = ExecUtils.getQueryConcurrencyPolicy(insertEc, null, insertPlans);
+        } else {
+            queryConcurrencyPolicy = getQueryConcurrencyPolicy(insertEc);
+        }
+
+        Long phySqlId = executionContext.getPhySqlId();
+        insertEc.setPhySqlId(phySqlId++);
+
+        final List<Cursor> inputCursors = new ArrayList<>(insertPlans.size());
+        executeWithConcurrentPolicy(insertEc,
+            insertPlans,
+            queryConcurrencyPolicy,
+            inputCursors,
+            schemaName);
+
+        // Update physical sql id for next physical sql group
+        executionContext.setPhySqlId(phySqlId);
+
+        if (relocateWriter.getOperation() == TableModify.Operation.UPDATE && updatePlans.size() == 0) {
+            executionContext.getConnection().setLastInsertId(oldLastInsertId);
+        }
+
+        // Physical DML cursors are lazy. Complete the staging batch only after every insert-phase
+        // cursor has been consumed successfully.
+        ExecUtils.getAffectRowsByCursors(inputCursors, false);
+        if (hasStaging) {
+            insertEc.getDmlWriteContext().afterExecutionSuccess(insertPlans);
+        }
+
+        return distinctRows.selectedRows;
+    }
+
+    /**
+     * Execute relocate by returning
+     */
+    protected List<List<Object>> execute(RelocateByReturningWriter relocateWriter, RowSet rowSet,
+                                         ExecutionContext executionContext) {
+        final ExecutionContext insertEc = executionContext.copy();
+        final String schemaName = RelUtils.getSchemaName(relocateWriter.getTargetTable());
+
+        final BiPredicate<Writer, Pair<List<Object>, Map<Integer, ParameterContext>>> skComparatorForReturning =
+            (w, p) -> {
+                // Use PartitionField to compare in new partition table
+                final List<Object> row = p.getKey();
+                final RelocateByReturningWriter rw = w.unwrap(RelocateByReturningWriter.class);
+                final boolean usePartFieldChecker = rw.isUsePartFieldChecker() &&
+                    executionContext.getParamManager().getBoolean(ConnectionParams.DML_USE_NEW_SK_CHECKER);
+                final boolean checkJsonByStringCompare =
+                    executionContext.getParamManager().getBoolean(ConnectionParams.DML_CHECK_JSON_BY_STRING_COMPARE);
+
+                // use identifierKeySourceMapping to get before-sks and after-sks
+                final List<Object> skSources = Mappings.permute(row, rw.getIdentifierKeySourceMapping());
+                List<Object> rowAfter = row.subList(row.size() / 2, row.size());
+                final List<Object> skTargets = Mappings.permute(rowAfter, rw.getIdentifierKeySourceMapping());
+
+                if (usePartFieldChecker) {
+                    final List<ColumnMeta> sourceColMetas =
+                        Mappings.permute(rowSet.getMetas(), rw.getIdentifierKeySourceMapping());
+//                    final List<ColumnMeta> targetColMetas =
+//                        Mappings.permute(rowSet.getMetas(), rw.getIdentifierKeyTargetMapping());
+
+                    try {
+                        final NewGroupKey skSourceKey = new NewGroupKey(skSources,
+                            sourceColMetas.stream().map(ColumnMeta::getDataType).collect(Collectors.toList()),
+                            rw.getIdentifierKeyMetas(), true, executionContext);
+                        final NewGroupKey skTargetKey = new NewGroupKey(skTargets,
+                            sourceColMetas.stream().map(ColumnMeta::getDataType).collect(Collectors.toList()),
+                            rw.getIdentifierKeyMetas(), true, executionContext);
+
+                        return skSourceKey.equals(skTargetKey);
+                    } catch (Throwable e) {
+                        if (!relocateWriter.printed &&
+                            executionContext.getParamManager().getBoolean(ConnectionParams.DML_PRINT_CHECKER_ERROR)) {
+                            // Maybe value can not be cast, just use DELETE + INSERT to be safe
+                            EventLogger.log(EventType.DML_ERROR,
+                                executionContext.getTraceId() + " new sk checker failed, cause by " + e);
+                            LoggerFactory.getLogger(HandlerCommon.class).warn(e);
+                            relocateWriter.printed = true;
+                        }
+                    }
+                    return false;
+                } else {
+                    final RelOptTable targetTable = rw.getTargetTable();
+                    final Pair<String, String> qn = RelUtils.getQualifiedTableName(targetTable);
+
+                    final Pair<String, String> shardingBefore =
+                        BuildPlanUtils.shardSingleRow(skSources, rw.getIdentifierKeyMetas(), rw.getIdentifierKeyNames(),
+                            qn.right, qn.left, executionContext, false,
+                            executionContext.getSchemaManager(schemaName).getTable(qn.right));
+
+                    final Pair<String, String> shardingAfter =
+                        BuildPlanUtils.shardSingleRow(skTargets, rw.getIdentifierKeyMetas(), rw.getIdentifierKeyNames(),
+                            qn.right, qn.left, executionContext, false,
+                            executionContext.getSchemaManager(schemaName).getTable(qn.right));
+                    return shardingAfter.equals(shardingBefore);
+                }
+            };
+
+        final List<RelNode> deletePlans = new ArrayList<>();
+        final List<RelNode> insertPlans = new ArrayList<>();
+        final List<RelNode> updatePlans = new ArrayList<>();
+        final List<RelNode> replicateDeletePlans = new ArrayList<>();
+        final List<RelNode> replicateInsertPlans = new ArrayList<>();
+        final List<RelNode> replicateUpdatePlans = new ArrayList<>();
+        final SourceRows distinctRows = relocateWriter.getInput(executionContext, insertEc,
+            (w) -> SourceRows.createFromSelect(rowSet.distinctRowSetWithoutNull(w)),
+            (writer, selectedRows, result) -> writer.classify(skComparatorForReturning,
+                selectedRows, executionContext, result),
+            deletePlans, insertPlans, updatePlans, replicateDeletePlans, replicateInsertPlans, replicateUpdatePlans);
+
+        long oldLastInsertId = executionContext.getConnection().getLastInsertId();
+
+        // Execute update
+        updatePlans.addAll(replicateUpdatePlans);
+        executePhysicalPlan(updatePlans, executionContext, schemaName, false);
+
+        // Execute delete
+        deletePlans.addAll(replicateDeletePlans);
+        executePhysicalPlan(deletePlans, executionContext, schemaName, false);
+
+        // Execute insert
+        insertPlans.addAll(replicateInsertPlans);
         final QueryConcurrencyPolicy queryConcurrencyPolicy = insertPlans.size() > 1 ? getQueryConcurrencyPolicy(
             insertEc) : QueryConcurrencyPolicy.SEQUENTIAL;
 
@@ -851,12 +1033,18 @@ public abstract class HandlerCommon implements PlanHandler {
      */
     protected int executePhysicalPlan(List<RelNode> physicalPlans, ExecutionContext executionContext, String schemaName,
                                       boolean isBroadcast) {
-        QueryConcurrencyPolicy queryConcurrencyPolicy = ExecUtils.getQueryConcurrencyPolicy(executionContext);
+        final boolean hasStaging = physicalPlans.stream().anyMatch(plan ->
+            plan instanceof BaseQueryOperation && ((BaseQueryOperation) plan).isStagingRelNode());
+        if (hasStaging && executionContext.getDmlWriteContext() == null) {
+            throw new IllegalStateException("Externalized staging plans require a statement DML write context");
+        }
+        QueryConcurrencyPolicy queryConcurrencyPolicy =
+            ExecUtils.getQueryConcurrencyPolicy(executionContext, null, physicalPlans);
         // If there's a broadcast table, the concurrency will be set to
         // FIRST_THEN. But when modifying multi tb, the concurrency can't be
         // FIRST_THEN, which causes concurrent transaction error.
 
-        if (queryConcurrencyPolicy == QueryConcurrencyPolicy.FIRST_THEN_CONCURRENT && (!isBroadcast
+        if (queryConcurrencyPolicy == QueryConcurrencyPolicy.FIRST_THEN_CONCURRENT && (!(isBroadcast && !hasStaging)
             || !canUseFirstThenConcurrent(physicalPlans))) {
             queryConcurrencyPolicy = QueryConcurrencyPolicy.GROUP_CONCURRENT_BLOCK;
             if (executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_GROUP_PARALLELISM)) {
@@ -870,10 +1058,17 @@ public abstract class HandlerCommon implements PlanHandler {
         final List<Cursor> inputCursors = new ArrayList<>(physicalPlans.size());
         executeWithConcurrentPolicy(executionContext, physicalPlans, queryConcurrencyPolicy, inputCursors, schemaName);
 
-        int affectRows = ExecUtils.getAffectRowsByCursors(inputCursors, isBroadcast);
+        final int cursorAffectedRows = ExecUtils.getAffectRowsByCursors(inputCursors, isBroadcast);
+        final int affectRows = hasStaging
+            ? physicalPlans.stream().filter(plan -> ((BaseQueryOperation) plan).isPrimaryWriteRelNode())
+            .mapToInt(plan -> ((BaseQueryOperation) plan).getAffectedRows()).sum()
+            : cursorAffectedRows;
 
         // Increase physical sql id
         executionContext.setPhySqlId(executionContext.getPhySqlId() + 1);
+        if (hasStaging) {
+            executionContext.getDmlWriteContext().afterExecutionSuccess(physicalPlans);
+        }
         return affectRows;
     }
 
@@ -1625,7 +1820,8 @@ public abstract class HandlerCommon implements PlanHandler {
 
             conditionValueList = conditionValueList.stream().distinct().collect(Collectors.toList());
 
-            boolean isBroadcast = OptimizerContext.getContext(schemaName).getRuleManager().isBroadCast(tableName);
+            boolean isBroadcast =
+                OptimizerContext.getContext(schemaName).getRuleManager().isBroadCastOrReplicas(tableName);
 
             Map<String, Map<String, List<Pair<Integer, List<Object>>>>> shardResults = isBroadcast ?
                 BuildPlanUtils.buildResultForBroadcastTable(schemaName, tableName, conditionValueList, null,

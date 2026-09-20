@@ -80,7 +80,7 @@ public class ActionDropBroadcastTable implements BalanceAction {
         List<String> removedPgList = new ArrayList<>();
         Map<String, GroupDetailInfoRecord> groupMap = PolicyUtils.getGroupDetails(schema);
         for (PartitionGroupRecord pg : GeneralUtil.emptyIfNull(broadcastTg.getPartitionGroupRecords())) {
-            String groupName = GroupInfoUtil.buildGroupNameFromPhysicalDb(pg.getPhy_db());
+            String groupName = pg.getGroup_Name();
             GroupDetailInfoRecord group = groupMap.get(groupName);
 
             if (storageInstList.contains(group.getStorageInstId())) {

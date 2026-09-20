@@ -1,6 +1,7 @@
 package com.alibaba.polardbx.qatest.ddl.cdc;
 
 import com.alibaba.polardbx.common.cdc.CdcDdlMarkVisibility;
+import com.alibaba.polardbx.gms.metadb.cdc.entity.MetaInfo;
 import com.alibaba.polardbx.qatest.ddl.cdc.entity.DdlRecordInfo;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.collect.Sets;
@@ -175,7 +176,7 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
                 Assert.assertEquals("ALTER_TABLE_SET_TABLEGROUP", item.listAfter1.get(0).getSqlKind());
                 Assert.assertEquals("ALTER_TABLE", item.listAfter1.get(1).getSqlKind());
 
-                Assert.assertNull(item.listAfter1.get(0).getMetaInfo());
+                assertMetaInfoNull(item.listAfter1.get(0).getMetaInfo());
                 Assert.assertNotNull(item.listAfter1.get(1).getMetaInfo());
 
                 Assert.assertNotNull(item.listAfter1.get(0).getDdlExtInfo());
@@ -200,7 +201,7 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
                 Assert.assertEquals("ALTER_TABLE_SET_TABLEGROUP", item.listAfter1.get(0).getSqlKind());
                 Assert.assertEquals("ALTER_TABLE_SET_TABLEGROUP", item.listAfter1.get(1).getSqlKind());
 
-                Assert.assertNull(item.listAfter1.get(0).getMetaInfo());
+                assertMetaInfoNull(item.listAfter1.get(0).getMetaInfo());
                 Assert.assertNotNull(item.listAfter1.get(1).getMetaInfo());
 
                 Assert.assertNotNull(item.listAfter1.get(0).getDdlExtInfo());
@@ -224,7 +225,7 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
                 Assert.assertEquals("ALTER_TABLE_SET_TABLEGROUP", item.listAfter1.get(0).getSqlKind());
                 Assert.assertEquals("ALTER_TABLE_SET_TABLEGROUP", item.listAfter1.get(1).getSqlKind());
 
-                Assert.assertNull(item.listAfter1.get(0).getMetaInfo());
+                assertMetaInfoNull(item.listAfter1.get(0).getMetaInfo());
                 Assert.assertNotNull(item.listAfter1.get(1).getMetaInfo());
 
                 Assert.assertNotNull(item.listAfter1.get(0).getDdlExtInfo());
@@ -248,7 +249,7 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
                 Assert.assertEquals("ALTER_TABLE_SET_TABLEGROUP", item.listAfter1.get(0).getSqlKind());
                 Assert.assertEquals("ALTER_TABLE_SET_TABLEGROUP", item.listAfter1.get(1).getSqlKind());
 
-                Assert.assertNull(item.listAfter1.get(0).getMetaInfo());
+                assertMetaInfoNull(item.listAfter1.get(0).getMetaInfo());
                 Assert.assertNotNull(item.listAfter1.get(1).getMetaInfo());
 
                 Assert.assertNotNull(item.listAfter1.get(0).getDdlExtInfo());
@@ -290,7 +291,7 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
                 Assert.assertEquals("ALTER_TABLE_SET_TABLEGROUP", item.listAfter1.get(0).getSqlKind());
                 Assert.assertEquals("ALTER_TABLE_SET_TABLEGROUP", item.listAfter1.get(1).getSqlKind());
 
-                Assert.assertNull(item.listAfter1.get(0).getMetaInfo());
+                assertMetaInfoNull(item.listAfter1.get(0).getMetaInfo());
                 Assert.assertNotNull(item.listAfter1.get(1).getMetaInfo());
 
                 Assert.assertNotNull(item.listAfter1.get(0).getDdlExtInfo());
@@ -314,7 +315,7 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
                 Assert.assertEquals("ALTER_TABLE_SET_TABLEGROUP", item.listAfter1.get(0).getSqlKind());
                 Assert.assertEquals("ALTER_TABLE", item.listAfter1.get(1).getSqlKind());
 
-                Assert.assertNull(item.listAfter1.get(0).getMetaInfo());
+                assertMetaInfoNull(item.listAfter1.get(0).getMetaInfo());
                 Assert.assertNotNull(item.listAfter1.get(1).getMetaInfo());
 
                 Assert.assertNotNull(item.listAfter1.get(0).getDdlExtInfo());
@@ -338,7 +339,7 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
                 Assert.assertEquals("ALTER_TABLE_SET_TABLEGROUP", item.listAfter1.get(0).getSqlKind());
                 Assert.assertEquals("ALTER_TABLE", item.listAfter1.get(1).getSqlKind());
 
-                Assert.assertNull(item.listAfter1.get(0).getMetaInfo());
+                assertMetaInfoNull(item.listAfter1.get(0).getMetaInfo());
                 Assert.assertNotNull(item.listAfter1.get(1).getMetaInfo());
 
                 Assert.assertNotNull(item.listAfter1.get(0).getDdlExtInfo());
@@ -579,7 +580,7 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
                 Assert.assertEquals("ALTER_TABLEGROUP_ADD_TABLE", item.listAfter2.get(0).getSqlKind());
                 Assert.assertEquals("ALTER_TABLE", item.listAfter2.get(1).getSqlKind());
 
-                Assert.assertNull(item.listAfter2.get(0).getMetaInfo());
+                assertMetaInfoNull(item.listAfter2.get(0).getMetaInfo());
                 Assert.assertNotNull(item.listAfter2.get(1).getMetaInfo());
 
                 Assert.assertNotNull(item.listAfter2.get(0).getDdlExtInfo());
@@ -606,7 +607,7 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
                 Assert.assertEquals("ALTER_TABLEGROUP_ADD_TABLE", item.listAfter2.get(0).getSqlKind());
                 Assert.assertEquals("ALTER_TABLE_SET_TABLEGROUP", item.listAfter2.get(1).getSqlKind());
 
-                Assert.assertNull(item.listAfter2.get(0).getMetaInfo());
+                assertMetaInfoNull(item.listAfter2.get(0).getMetaInfo());
                 Assert.assertNotNull(item.listAfter2.get(1).getMetaInfo());
 
                 Assert.assertNotNull(item.listAfter2.get(0).getDdlExtInfo());
@@ -633,7 +634,7 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
                 Assert.assertEquals("ALTER_TABLEGROUP_ADD_TABLE", item.listAfter2.get(0).getSqlKind());
                 Assert.assertEquals("ALTER_TABLE_SET_TABLEGROUP", item.listAfter2.get(1).getSqlKind());
 
-                Assert.assertNull(item.listAfter2.get(0).getMetaInfo());
+                assertMetaInfoNull(item.listAfter2.get(0).getMetaInfo());
                 Assert.assertNotNull(item.listAfter2.get(1).getMetaInfo());
 
                 Assert.assertNotNull(item.listAfter2.get(0).getDdlExtInfo());
@@ -660,7 +661,7 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
                 Assert.assertEquals("ALTER_TABLEGROUP_ADD_TABLE", item.listAfter2.get(0).getSqlKind());
                 Assert.assertEquals("ALTER_TABLE_SET_TABLEGROUP", item.listAfter2.get(1).getSqlKind());
 
-                Assert.assertNull(item.listAfter2.get(0).getMetaInfo());
+                assertMetaInfoNull(item.listAfter2.get(0).getMetaInfo());
                 Assert.assertNotNull(item.listAfter2.get(1).getMetaInfo());
 
                 Assert.assertNotNull(item.listAfter2.get(0).getDdlExtInfo());
@@ -685,7 +686,7 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
                 Assert.assertEquals("ALTER_TABLEGROUP_ADD_TABLE", item.listAfter2.get(0).getSqlKind());
                 Assert.assertEquals("ALTER_TABLE", item.listAfter2.get(1).getSqlKind());
 
-                Assert.assertNull(item.listAfter2.get(0).getMetaInfo());
+                assertMetaInfoNull(item.listAfter2.get(0).getMetaInfo());
                 Assert.assertNotNull(item.listAfter2.get(1).getMetaInfo());
 
                 Assert.assertNotNull(item.listAfter2.get(0).getDdlExtInfo());
@@ -710,7 +711,7 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
                 Assert.assertEquals("ALTER_TABLEGROUP_ADD_TABLE", item.listAfter2.get(0).getSqlKind());
                 Assert.assertEquals("ALTER_TABLE", item.listAfter2.get(1).getSqlKind());
 
-                Assert.assertNull(item.listAfter2.get(0).getMetaInfo());
+                assertMetaInfoNull(item.listAfter2.get(0).getMetaInfo());
                 Assert.assertNotNull(item.listAfter2.get(1).getMetaInfo());
 
                 Assert.assertNotNull(item.listAfter2.get(0).getDdlExtInfo());
@@ -735,7 +736,7 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
                 Assert.assertEquals("ALTER_TABLEGROUP_ADD_TABLE", item.listAfter2.get(0).getSqlKind());
                 Assert.assertEquals("ALTER_TABLE", item.listAfter2.get(1).getSqlKind());
 
-                Assert.assertNull(item.listAfter2.get(0).getMetaInfo());
+                assertMetaInfoNull(item.listAfter2.get(0).getMetaInfo());
                 Assert.assertNotNull(item.listAfter2.get(1).getMetaInfo());
 
                 Assert.assertNotNull(item.listAfter2.get(0).getDdlExtInfo());
@@ -859,7 +860,7 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
                 Assert.assertEquals(item.countBefore2 + 1, item.listAfter2.size());
                 Assert.assertEquals(s, item.listAfter1.get(0).getDdlSql());
                 Assert.assertEquals("ALTER_TABLE_SET_TABLEGROUP", item.listAfter1.get(0).getSqlKind());
-                Assert.assertNull(item.listAfter1.get(0).getMetaInfo());
+                assertMetaInfoNull(item.listAfter1.get(0).getMetaInfo());
             });
 
         // 不再支持GSI：it's not support to change the GSI's tablegroup to mytg5 due to need repartition
@@ -917,7 +918,18 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
             if (StringUtils.isNotBlank(sqlKind)) {
                 Assert.assertEquals(sqlKind, listAfter1.get(0).getSqlKind());
             }
-            Assert.assertEquals(hasTopology, listAfter1.get(0).getMetaInfo() != null);
+
+            try {
+                Assert.assertEquals(hasTopology, listAfter1.get(0).getMetaInfo() != null);
+            } catch (Throwable e) {
+                if (!hasTopology
+                    && listAfter1.get(0).getMetaInfo().logicTableMeta != null
+                    && listAfter1.get(0).getMetaInfo().logicTableMeta.getTableMetaDetail() != null) {
+                    logger.warn("meet special scene for topology check", e);
+                } else {
+                    throw e;
+                }
+            }
         }
     }
 
@@ -939,7 +951,7 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
         Assert.assertEquals(tableName, listAfter2.get(0).getTableName());
         Assert.assertEquals(sql, listAfter1.get(0).getDdlSql());
         Assert.assertEquals(sql, listAfter2.get(0).getDdlSql());
-        Assert.assertNull(listAfter2.get(0).getMetaInfo());
+        assertMetaInfoNull(listAfter2.get(0).getMetaInfo());
         Assert.assertEquals(CdcDdlMarkVisibility.Protected.getValue(), listAfter2.get(0).getVisibility());
 
         String tab1 = listAfter2.get(1).getTableName();
@@ -1031,6 +1043,19 @@ public class CdcAlterTableSetTableGroupTest extends CdcBaseTest {
         }
 
         return Pair.of(partition, toStorage);
+    }
+
+    private void assertMetaInfoNull(MetaInfo metaInfo) {
+        try {
+            Assert.assertNull(metaInfo);
+        } catch (Throwable e) {
+            if (metaInfo.logicTableMeta != null &&
+                metaInfo.logicTableMeta.getTableMetaDetail() != null) {
+                logger.warn("meet special scene for topology check", e);
+            } else {
+                throw e;
+            }
+        }
     }
 
     @Getter

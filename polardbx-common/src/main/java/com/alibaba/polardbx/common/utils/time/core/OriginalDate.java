@@ -16,10 +16,14 @@
 
 package com.alibaba.polardbx.common.utils.time.core;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import org.openjdk.jol.info.ClassLayout;
+
 import java.sql.Date;
 import java.sql.Types;
 
 public class OriginalDate extends Date implements OriginalTemporalValue {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(OriginalDate.class).instanceSize();
     private final MysqlDateTime mysqlDateTime;
 
     public OriginalDate(MysqlDateTime t) {
@@ -31,6 +35,11 @@ public class OriginalDate extends Date implements OriginalTemporalValue {
         mysqlDateTime.setSecond(0L);
         mysqlDateTime.setSecondPart(0L);
         mysqlDateTime.setSqlType(Types.DATE);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(mysqlDateTime);
     }
 
     @Override

@@ -85,7 +85,7 @@ public class StringBlock extends AbstractCommonBlock {
                 Arrays.copyOf(other.data, other.data.length));
         } else {
             StringBlockBuilder stringBlockBuilder = new StringBlockBuilder(other.dataType, selSize,
-                other.data.length / (other.positionCount + 1) * selSize);
+                other.data.length / (other.positionCount + 1));
             for (int i = 0; i < selSize; i++) {
                 if (other.isNull(selection[i])) {
                     stringBlockBuilder.appendNull();

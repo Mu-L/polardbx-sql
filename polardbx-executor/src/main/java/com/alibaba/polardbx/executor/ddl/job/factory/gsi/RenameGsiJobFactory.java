@@ -29,18 +29,21 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameTableAddMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.RenameTableValidateTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.SubJobTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.TablesSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcDdlMarkTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcGsiDdlMarkTask;
 import com.alibaba.polardbx.executor.ddl.job.validator.GsiValidator;
 import com.alibaba.polardbx.executor.ddl.job.validator.TableValidator;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.RenameLocalIndexPreparedData;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.RenameTablePreparedData;
+import com.google.common.collect.ImmutableList;
 import org.apache.calcite.sql.SqlAlterTable;
 import org.apache.calcite.sql.SqlAlterTableRenameIndex;
 import org.apache.calcite.sql.SqlKind;
@@ -52,7 +55,10 @@ import java.util.Set;
 import static com.alibaba.polardbx.common.cdc.ICdcManager.DEFAULT_DDL_VERSION_ID;
 import static org.apache.calcite.sql.SqlIdentifier.surroundWithBacktick;
 
-public class RenameGsiJobFactory extends DdlJobFactory {
+/**
+ * @author wumu
+ */
+public class RenameGsiJobFactory extends OnlineDdlJobFactory {
 
     private final String schemaName;
     private final String gsiName;
@@ -60,6 +66,7 @@ public class RenameGsiJobFactory extends DdlJobFactory {
     private final ExecutionContext executionContext;
 
     public RenameGsiJobFactory(RenameTablePreparedData preparedData, ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.META_ONLY);
         this.schemaName = preparedData.getSchemaName();
         this.gsiName = preparedData.getTableName();
         this.newGsiName = preparedData.getNewTableName();
@@ -84,7 +91,8 @@ public class RenameGsiJobFactory extends DdlJobFactory {
         DdlTask addMetaTask = new RenameTableAddMetaTask(schemaName, gsiName, newGsiName);
 
         DdlTask updateMetaTask = new RenameGsiUpdateMetaTask(schemaName, primaryTableName, gsiName, newGsiName, false);
-        DdlTask syncTask = new TableSyncTask(schemaName, primaryTableName);
+        DdlTask syncTask =
+            new TablesSyncTask(schemaName, ImmutableList.of(primaryTableName, gsiName, newGsiName), true);
 
         List<DdlTask> taskList = new ArrayList<>();
         taskList.add(validateTask);

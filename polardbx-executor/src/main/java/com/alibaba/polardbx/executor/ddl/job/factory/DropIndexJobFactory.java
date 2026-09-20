@@ -25,9 +25,10 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.DropIndexRemoveMetaTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.DropIndexValidateTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcDdlMarkTask;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -46,11 +47,12 @@ import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.common.cdc.ICdcManager.DEFAULT_DDL_VERSION_ID;
 
-public class DropIndexJobFactory extends DdlJobFactory {
+public class DropIndexJobFactory extends OnlineDdlJobFactory {
 
     private final List<PhysicalPlanData> physicalPlanDataList;
 
-    public DropIndexJobFactory(List<PhysicalPlanData> physicalPlanDataList) {
+    public DropIndexJobFactory(List<PhysicalPlanData> physicalPlanDataList, ExecutionContext ec) {
+        super(ec, OnlineDdlInfo.DdlAlgorithm.INPLACE);
         this.physicalPlanDataList = physicalPlanDataList;
     }
 
@@ -150,7 +152,7 @@ public class DropIndexJobFactory extends DdlJobFactory {
             preparedDataList.stream()
                 .map(x -> buildSingleLocalIndexData(ddl, x, implicit, sqlNode, ec))
                 .collect(Collectors.toList());
-        return new DropIndexJobFactory(physicalPlanDataList).create();
+        return new DropIndexJobFactory(physicalPlanDataList, ec).create();
     }
 
 }

@@ -17,6 +17,8 @@
 package com.alibaba.polardbx.executor.mpp.execution;
 
 import com.alibaba.polardbx.common.TrxIdGenerator;
+import com.alibaba.polardbx.common.columnar.ColumnarScanMetrics;
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.MetricLevel;
 import com.alibaba.polardbx.common.utils.bloomfilter.BloomFilterInfo;
@@ -39,6 +41,7 @@ import com.alibaba.polardbx.executor.mpp.planner.PlanFragment;
 import com.alibaba.polardbx.executor.mpp.util.Failures;
 import com.alibaba.polardbx.executor.spi.ITransactionManager;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
+import com.alibaba.polardbx.gms.node.InternalNode;
 import com.alibaba.polardbx.gms.node.InternalNodeManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
@@ -203,7 +206,8 @@ public class SqlTask {
     }
 
     public TaskStatus getTaskStatus() {
-        return createTaskStatus(taskHolderReference.get(), Optional.of(getTaskStats(taskHolderReference.get())));
+        TaskHolder taskHolder = taskHolderReference.get();
+        return createTaskStatus(taskHolder, Optional.of(getTaskStats(taskHolder)));
     }
 
     public QueryContext getQueryContext() {
@@ -257,28 +261,40 @@ public class SqlTask {
         TaskMemoryStatisticsGroup memoryStatistics = null;
         if (state.isDone()) {
             if (taskHolder.getTaskExecution() != null) {
-                ExecutionContext context =
-                    taskHolder.getTaskExecution().getTaskContext().getContext();
+                try {
+                    ExecutionContext context =
+                        taskHolder.getTaskExecution().getTaskContext().getContext();
 
-                if (context.getTracer() != null) {
-                    sqlTracer = new ArrayList<>();
-                    List<SQLOperation> ops = context.getTracer().getOperations();
-                    for (SQLOperation op : ops) {
-                        if (op instanceof ExecuteSQLOperation) {
-                            sqlTracer.add((ExecuteSQLOperation) op);
+                    if (context.getTracer() != null) {
+                        sqlTracer = new ArrayList<>();
+                        List<SQLOperation> ops = context.getTracer().getOperations();
+                        // Must synchronize on synchronizedList when iterating to avoid CME
+                        synchronized (ops) {
+                            for (SQLOperation op : ops) {
+                                if (op instanceof ExecuteSQLOperation) {
+                                    sqlTracer.add((ExecuteSQLOperation) op);
+                                }
+                            }
                         }
                     }
-                }
-                if (ExecUtils.isSQLMetricEnabled(context) && context.getRuntimeStatistics() != null) {
-                    runtimeStatistics = ((RuntimeStatistics) context.getRuntimeStatistics()).getRelationToStatistics();
-                    if (context.getMemoryPool() instanceof TaskMemoryPool) {
-                        TaskMemoryPool taskMemoryPool = (TaskMemoryPool) context.getMemoryPool();
-
-                        //TODO spill Statistics
-                        memoryStatistics = new TaskMemoryStatisticsGroup(0, taskMemoryPool.getMaxMemoryUsage(), 0,
-                            0, taskMemoryPool.getQueryMemoryPool().getMaxMemoryUsage(),
-                            taskMemoryPool.getMemoryStatistics());
+                    if (ExecUtils.isSQLMetricEnabled(context) && context.getRuntimeStatistics() != null) {
+                        // Make a defensive copy to avoid CME during Jackson serialization
+                        runtimeStatistics = new HashMap<>(
+                            ((RuntimeStatistics) context.getRuntimeStatistics()).getRelationToStatistics());
+                        if (context.getMemoryPool() instanceof TaskMemoryPool) {
+                            TaskMemoryPool taskMemoryPool = (TaskMemoryPool) context.getMemoryPool();
+                            long queryMemoryPoolMax = 0;
+                            if (taskMemoryPool.getQueryMemoryPool() != null) {
+                                queryMemoryPoolMax = taskMemoryPool.getQueryMemoryPool().getMaxMemoryUsage();
+                            }
+                            //TODO spill Statistics
+                            memoryStatistics = new TaskMemoryStatisticsGroup(0, taskMemoryPool.getMaxMemoryUsage(), 0,
+                                0, queryMemoryPoolMax,
+                                taskMemoryPool.getMemoryStatistics());
+                        }
                     }
+                } catch (Throwable e) {
+                    log.warn("Failed to collect task status details for task " + taskId + ", state=" + state, e);
                 }
             } else if (taskHolder.getFinalTaskInfo() != null) {
                 sqlTracer = taskHolder.getFinalTaskInfo().getTaskStatus().getSqlTracer();
@@ -431,8 +447,9 @@ public class SqlTask {
         Set<Integer> noMoreSplits = getNoMoreSplits(taskHolder);
         TaskStatus taskStatus =
             createTaskStatus(taskHolder, isMPPMetricEnabled ? Optional.of(taskStats) : Optional.empty());
+        TaskInfo taskInfo;
         if (isMPPMetricEnabled) {
-            return new TaskInfo(
+            taskInfo = new TaskInfo(
                 taskStatus,
                 lastHeartbeat.get(),
                 outputBuffer.getInfo(),
@@ -452,7 +469,7 @@ public class SqlTask {
                 taskStateMachine.getPullDataTime(),
                 taskStats.getDeliveryTimeMillis());
         } else {
-            return new TaskInfo(
+            taskInfo = new TaskInfo(
                 taskStatus,
                 lastHeartbeat.get(),
                 outputBuffer.getInfo(),
@@ -472,6 +489,12 @@ public class SqlTask {
                 taskStateMachine.getPullDataTime(),
                 taskStats.getDeliveryTimeMillis());
         }
+
+        if (session != null) {
+            taskInfo.collectNodeStatistics(session.getClientContext(), taskId);
+        }
+
+        return taskInfo;
     }
 
     protected TaskInfo createTaskInfoWithTaskStats(TaskHolder taskHolder) {
@@ -497,6 +520,10 @@ public class SqlTask {
             taskStats.getTotalScheduledTimeNanos(),
             taskStateMachine.getPullDataTime(),
             taskStats.getDeliveryTimeMillis());
+
+        if (session != null) {
+            taskInfo.collectNodeStatistics(session.getClientContext(), taskId);
+        }
         return taskInfo;
     }
 
@@ -540,9 +567,9 @@ public class SqlTask {
 
                 if (session == null) {
                     schema = sessionRepresentation.getSchema();
-                    if (sessionRepresentation.isUseColumnar()) {
-                        InternalNodeManager manager = ServiceProvider.getInstance().getServer().getNodeManager();
-                        this.columnarTracer = new ColumnarTracer(manager.getCurrentNode().getHostPort());
+                    if (sessionRepresentation.getUseColumnarTracer()) {
+                        InternalNode localNode = ServiceProvider.getInstance().getServer().getLocalNode();
+                        this.columnarTracer = new ColumnarTracer(localNode.getHostPort());
                     }
                     synchronized (trxGuard) {
                         if (isDone()) {
@@ -592,6 +619,16 @@ public class SqlTask {
             session.getClientContext().getParamManager().getInt(ConnectionParams.MPP_METRIC_LEVEL))) {
             session.getClientContext()
                 .setRuntimeStatistics(RuntimeStatHelper.buildRuntimeStat(session.getClientContext()));
+
+            // initialize version storage statistics here.
+            ExecutionContext executionContext = session.getClientContext();
+            if (executionContext.getVersionStorageStatistics() == null) {
+                executionContext.setVersionStorageStatistics(new VersionStorageStatistics());
+            }
+            // initialize columnar scan metrics here.
+            if (executionContext.getColumnarScanMetrics() == null) {
+                executionContext.setColumnarScanMetrics(new ColumnarScanMetrics());
+            }
         }
 
         taskExecution = sqlTaskExecutionFactory.create(session, queryContext, taskStateMachine,
@@ -752,7 +789,7 @@ public class SqlTask {
                         OperatorStats operatorStats =
                             new OperatorStats(Optional.empty(), driverContext.getPipelineContext().getPipelineId(),
                                 Optional.of(idToName.get(operatorId)), operatorId, ret.getRowCount(),
-                                ret.getRuntimeFilteredRowCount(),
+                                ret.getIoBytesCount(), ret.getRuntimeFilteredRowCount(),
                                 ret.getOutputBytes(), ret.getStartupDuration(),
                                 ret.getDuration(), ret.getMemory(), ret.getInstances(), ret.getSpillCnt());
                         operatorStatsList.add(operatorStats);
@@ -773,7 +810,7 @@ public class SqlTask {
                             OperatorStats operatorStats =
                                 new OperatorStats(Optional.empty(), driverContext.getPipelineContext().getPipelineId(),
                                     Optional.of(idToName.get(operatorId)), operatorId, ret.getRowCount(),
-                                    ret.getRuntimeFilteredRowCount(),
+                                    ret.getIoBytesCount(), ret.getRuntimeFilteredRowCount(),
                                     ret.getOutputBytes(), ret.getStartupDuration(),
                                     ret.getDuration(), ret.getMemory(), ret.getInstances(), ret.getSpillCnt());
                             operatorStatsList.add(operatorStats);
@@ -858,9 +895,9 @@ public class SqlTask {
         }
 
         MemoryPool taskMemoryPool = context.getContext().getMemoryPool();
-        long peakMemory = taskMemoryPool.getMaxMemoryUsage();
+        long peakMemory = taskMemoryPool != null ? taskMemoryPool.getMaxMemoryUsage() : 0;
 
-        long memoryReservation = taskMemoryPool.getMemoryUsage();
+        long memoryReservation = taskMemoryPool != null ? taskMemoryPool.getMemoryUsage() : 0;
         Map<Integer, List<Integer>> pipelineDeps = buildPipelineDeps(context.getPipelineDepTree());
 
         return new TaskStats(taskStateMachine.getCreatedTime(), context.getStartTime(),

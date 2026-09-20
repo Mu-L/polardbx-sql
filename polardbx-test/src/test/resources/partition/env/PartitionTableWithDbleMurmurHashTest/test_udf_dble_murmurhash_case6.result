@@ -1,0 +1,37 @@
+## DISABLE_FAST_SQL_PARSER
+## normal
+select unitmurhashc6('1234567891234567891234567')
+unitmurhashc6('1234567891234567891234567')
+1
+## normal
+select unitmurhashc6('c')
+unitmurhashc6('c')
+1
+## error_msg: $# routeKey is legal #$
+select unitmurhashc6('')
+routeKey is legal
+create table dble_t6
+(a varchar(64), b int)
+partition by udf_hash(unitmurhashc6(a))
+partitions 2
+(
+partition p1 values less than(1),
+partition p2 values less than(2)
+)
+insert into dble_t6 values ('2', 2)
+select * from dble_t6 where a='2'
+a,b
+2,2
+select part_route('','dble_t6', '2')
+part_route('', 'dble_t6', '2')
+p1
+## error_msg: $# routeKey is legal #$
+select part_route('','dble_t6', '')
+routeKey is legal
+select part_route('','dble_t6', '123456789012345678901')
+part_route('', 'dble_t6', '123456789012345678901')
+p2
+select part_route('','dble_t6', 'aaa')
+part_route('', 'dble_t6', 'aaa')
+p2
+drop table dble_t6;

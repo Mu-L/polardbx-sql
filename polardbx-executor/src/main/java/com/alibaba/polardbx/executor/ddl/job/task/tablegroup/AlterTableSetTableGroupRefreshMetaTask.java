@@ -59,7 +59,7 @@ public class AlterTableSetTableGroupRefreshMetaTask extends AlterTableGroupRefre
      * 3、cleanup table_partition_delta
      */
     @Override
-    public void refreshTableGroupMeta(Connection metaDbConnection) {
+    public void refreshTableGroupMeta(Connection metaDbConnection, ExecutionContext ec) {
 
         TableGroupConfig newTableGroupConfig = OptimizerContext.getContext(schemaName).getTableGroupInfoManager()
             .getTableGroupConfigByName(tableGroupName);

@@ -16,10 +16,13 @@
 
 package com.alibaba.polardbx.optimizer.rel.rel2sql;
 
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.core.dialect.DbType;
 import com.alibaba.polardbx.optimizer.core.rel.Gather;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalDynamicValues;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
 import com.alibaba.polardbx.optimizer.core.rel.mpp.MppExchange;
+import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import org.apache.calcite.linq4j.tree.Expressions;
@@ -28,6 +31,7 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.rel2sql.RelToSqlConverter;
 import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlDialect;
@@ -55,7 +59,13 @@ public class TddlRelToSqlConverter extends RelToSqlConverter {
     }
 
     /**
-     * remove table prefix
+     * Unparse a TableScan into SQL, resolving externalized column names at the source.
+     * <p>
+     * For tables with externalized columns, we produce a physical-name RowType so that
+     * all upstream column references (via AliasContext.field()) naturally use the physical
+     * name (e.g. "payload_addr_"), while alias labels (from the Project's own RowType)
+     * remain as logical names (e.g. "payload"). Only names change here: keeping the logical
+     * type lets the FETCH_BLOB Project above the scan define the CN-visible TEXT/BLOB contract.
      */
     @Override
     public Result visit(TableScan e) {
@@ -64,6 +74,10 @@ public class TddlRelToSqlConverter extends RelToSqlConverter {
             SqlParserPos.ZERO,
             null,
             e.getIndexNode());
+
+        // Resolve names at the source instead of rewriting a finished SqlNode. This keeps qualified columns in
+        // joins table-specific and makes ordinary tables return the exact original RowType.
+        RelDataType rowType = resolvePhysicalRowType(e);
 
         Result result;
         final RexNode flashback = e.getFlashback();
@@ -84,20 +98,45 @@ public class TddlRelToSqlConverter extends RelToSqlConverter {
             final SqlIdentifier tsIdentifier =
                 new SqlIdentifier(identifier.names, null, SqlParserPos.ZERO, null, identifier.indexNode,
                     identifier.partitions, flashbackSqlNode, e.getFlashbackOperator());
-            result = result(tsIdentifier, ImmutableList.of(Clause.FROM), e, null);
+            result = result(tsIdentifier, ImmutableList.of(Clause.FROM), e, rowType, null);
         } else {
-            result = result(identifier, ImmutableList.of(Clause.FROM), e, null);
+            result = result(identifier, ImmutableList.of(Clause.FROM), e, rowType, null);
         }
 
         final List<SqlNode> selectList = new ArrayList<>();
-
-        for (RelDataTypeField field : e.getRowType().getFieldList()) {
+        for (RelDataTypeField field : rowType.getFieldList()) {
             addSelect(selectList, new SqlIdentifier(ImmutableList.of(field.getName()), SqlParserPos.ZERO),
-                e.getRowType());
+                rowType);
         }
 
         result.setExpandStar(new SqlNodeList(selectList, POS));
         return result;
+    }
+
+    /**
+     * If the TableScan targets a table with externalized columns, returns a RowType
+     * whose field names are physical (e.g. "payload_addr_"). Otherwise returns the
+     * original logical RowType unchanged.
+     */
+    private RelDataType resolvePhysicalRowType(TableScan e) {
+        RelDataType logical = e.getRowType();
+        TableMeta tm = RelUtils.getTableMeta(e);
+        if (tm == null || !tm.hasExternalizedColumn()) {
+            return logical;
+        }
+        Map<String, String> mapping = ExternalizedDmlRewriter.buildReadMapping(tm);
+        if (mapping.isEmpty()) {
+            return logical;
+        }
+        RelDataTypeFactory typeFactory = e.getCluster().getTypeFactory();
+        List<String> names = new ArrayList<>();
+        List<RelDataType> types = new ArrayList<>();
+        for (RelDataTypeField f : logical.getFieldList()) {
+            String physical = mapping.get(f.getName());
+            names.add(physical != null ? physical : f.getName());
+            types.add(f.getType());
+        }
+        return typeFactory.createStructType(types, names);
     }
 
     public static RelToSqlConverter createInstance(DbType dbType) {

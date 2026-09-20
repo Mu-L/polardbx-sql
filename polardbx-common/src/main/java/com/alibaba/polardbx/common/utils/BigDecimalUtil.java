@@ -155,7 +155,7 @@ public class BigDecimalUtil {
         }
         int cmpBytesLen = cmpBytes.length - offset;
         long adjusted = -(long) scale + (cmpBytesLen - 1);
-        if ((scale >= 0) && (adjusted >= -6)) { // plain number
+        if (scale >= 0) { // Always use plain number format, never scientific notation (matches MySQL behavior)
             int pad = scale - cmpBytesLen;         // count of padding zeros
             if (pad >= 0) {                     // 0.xxx form
                 byteBuffer.write('0');
@@ -170,17 +170,16 @@ public class BigDecimalUtil {
                 byteBuffer.write(cmpBytes, -pad + offset, scale);
             }
         } else {
-            byteBuffer.write(cmpBytes[offset]);   // first character
-            if (cmpBytesLen > 1) {          // more to come
-                byteBuffer.write('.');
-                byteBuffer.write(cmpBytes, offset + 1, cmpBytesLen - 1);
+            // scale < 0: negative scale means digits after decimal point
+            // Write the number with trailing zeros after decimal point
+            byteBuffer.write(cmpBytes, offset, cmpBytesLen);
+            for (int i = 0; i > scale; i--) {
+                byteBuffer.write('0');
             }
-            if (adjusted != 0) {
-                byteBuffer.write('E');
-                if (adjusted > 0) {
-                    byteBuffer.write('+');
-                }
-                byteBuffer.write(LongUtil.toBytes(adjusted));
+            byteBuffer.write('.');
+            // Add zeros to match the scale
+            for (int i = 0; i < -scale; i++) {
+                byteBuffer.write('0');
             }
         }
         return byteBuffer.toByteArray();

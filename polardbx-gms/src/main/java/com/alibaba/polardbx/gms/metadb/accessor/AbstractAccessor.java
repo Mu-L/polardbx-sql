@@ -25,19 +25,23 @@ import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.gms.listener.impl.MetaDbConfigManager;
 import com.alibaba.polardbx.gms.metadb.record.SystemTableRecord;
 import com.alibaba.polardbx.gms.util.DdlMetaLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.google.common.collect.Maps;
 
+import javax.annotation.Nullable;
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 
 public abstract class AbstractAccessor extends AbstractLifecycle {
 
@@ -68,6 +72,17 @@ public abstract class AbstractAccessor extends AbstractLifecycle {
         StringBuilder sb = new StringBuilder();
         for (String name : names) {
             sb.append(COMMA).append(SINGLE_QUOTE).append(name).append(SINGLE_QUOTE);
+        }
+        return sb.deleteCharAt(0).toString();
+    }
+
+    protected String concatInt(Collection<Integer> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (Integer id : ids) {
+            sb.append(COMMA).append(id);
         }
         return sb.deleteCharAt(0).toString();
     }
@@ -413,4 +428,23 @@ public abstract class AbstractAccessor extends AbstractLifecycle {
             TStringUtil.equalsIgnoreCase(SQLSTATE_DUP_ENTRY, e.getSQLState());
     }
 
+    private boolean isDuplicateOnParamKey(SQLException e) {
+        return checkIfDuplicate(e) && !e.getMessage().contains("for key 'PRIMARY'");
+    }
+
+    public void upsertConfigValue(@Nullable String instId, Properties props, String systemTable, String replaceSql,
+                                  String dataId) {
+        List<Map<Integer, ParameterContext>> paramsList = new LinkedList<>();
+        for (String paramKey : props.stringPropertyNames()) {
+            Map<Integer, ParameterContext> params = new HashMap<>(3);
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setString, props.getProperty(paramKey));
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setString, paramKey);
+            if (instId != null) {
+                MetaDbUtil.setParameter(3, params, ParameterMethod.setString, instId);
+            }
+            paramsList.add(params);
+        }
+        update(replaceSql, systemTable, paramsList);
+        MetaDbConfigManager.getInstance().notify(dataId, connection);
+    }
 }

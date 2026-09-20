@@ -54,7 +54,8 @@ public class SqlCreateDatabase extends SqlDdl {
 
     //for create database like/as lock=true/false
     final boolean withLock;
-    final boolean dryRun;
+    // dryrun is for show convert table result for create database newdb as olddb
+    final boolean dryRunCreateAs;
     final boolean createTables;
 
     public SqlCreateDatabase(SqlParserPos pos, boolean ifNotExists, SqlIdentifier dbName, String charSet,
@@ -62,7 +63,7 @@ public class SqlCreateDatabase extends SqlDdl {
                              String locality, String partitionMode, Boolean defaultSingle, SqlIdentifier sourceDatabaseName,
                              boolean like, boolean as, List<SqlIdentifier> includeTables,
                              List<SqlIdentifier> excludeTables,
-                             boolean withLock, boolean dryRun, boolean createTables) {
+                             boolean withLock, boolean dryRunCreateAs, boolean createTables, Boolean dryRunDdl) {
         super(OPERATOR, pos);
         this.ifNotExists = ifNotExists;
         this.dbName = dbName;
@@ -78,8 +79,9 @@ public class SqlCreateDatabase extends SqlDdl {
         this.includeTables = includeTables;
         this.excludeTables = excludeTables;
         this.withLock = withLock;
-        this.dryRun = dryRun;
+        this.dryRunCreateAs = dryRunCreateAs;
         this.createTables = createTables;
+        this.dryrun = dryRunDdl;
     }
 
     private String trim(String str) {
@@ -145,7 +147,7 @@ public class SqlCreateDatabase extends SqlDdl {
                 writer.keyword("LOCK = FALSE");
             }
 
-            if (this.dryRun) {
+            if (this.dryRunCreateAs) {
                 writer.keyword("DRY_RUN = TRUE");
             } else {
                 writer.keyword("DRY_RUN = FALSE");
@@ -174,6 +176,11 @@ public class SqlCreateDatabase extends SqlDdl {
                     excludeTables.get(excludeTables.size() - 1).unparse(writer, leftPrec, rightPrec);
                 }
             }
+        }
+
+        Boolean dryRun = getDryrun();
+        if (dryRun != null && dryRun) {
+            writer.keyword(" DRYRUN = TRUE");
         }
     }
 
@@ -243,8 +250,8 @@ public class SqlCreateDatabase extends SqlDdl {
         return this.withLock;
     }
 
-    public boolean isDryRun() {
-        return dryRun;
+    public boolean isDryRunCreateAs() {
+        return dryRunCreateAs;
     }
 
     public boolean isCreateTables() {

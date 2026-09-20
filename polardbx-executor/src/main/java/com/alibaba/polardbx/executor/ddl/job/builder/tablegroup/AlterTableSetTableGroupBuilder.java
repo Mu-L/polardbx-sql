@@ -21,11 +21,9 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.ddl.job.builder.DdlPhyPlanBuilder;
 import com.alibaba.polardbx.executor.partitionmanagement.AlterTableGroupUtils;
-import com.alibaba.polardbx.gms.partition.TablePartRecordInfoContext;
 import com.alibaba.polardbx.gms.tablegroup.PartitionGroupRecord;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupRecord;
-import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
@@ -40,7 +38,6 @@ import org.apache.calcite.rel.core.DDL;
 import org.apache.commons.lang.StringUtils;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -329,18 +326,17 @@ public class AlterTableSetTableGroupBuilder extends DdlPhyPlanBuilder {
                 throw new TddlRuntimeException(ErrorCode.ERR_PARTITION_MANAGEMENT,
                     "can't find the partition:" + partitionGroupRecord.getPartition_name());
             }
-            String targetPhyDb = partitionGroupRecord.getPhy_db();
-            String targetGroupKey = GroupInfoUtil.buildGroupNameFromPhysicalDb(targetPhyDb);
+            String targetGroupKey = partitionGroupRecord.getGroup_Name();
             if (!partitionSpec.getLocation().getGroupKey().equalsIgnoreCase(targetGroupKey)) {
                 String targetGroupName = targetGroupKey;
                 String sourceGroupName = partitionSpec.getLocation().getGroupKey();
                 String phyTable = partitionSpec.getLocation().getPhyTableName();
-                if(!sourceTableTopology.containsKey(sourceGroupName)) {
+                if (!sourceTableTopology.containsKey(sourceGroupName)) {
                     sourceTableTopology.put(sourceGroupName, new HashSet<>());
                 }
                 sourceTableTopology.get(sourceGroupName)
                     .add(partitionSpec.getLocation().getPhyTableName());
-                if(!targetTableTopology.containsKey(targetGroupName)) {
+                if (!targetTableTopology.containsKey(targetGroupName)) {
                     targetTableTopology.put(targetGroupName, new HashSet<>());
                 }
                 targetTableTopology.get(targetGroupName)
@@ -348,7 +344,7 @@ public class AlterTableSetTableGroupBuilder extends DdlPhyPlanBuilder {
 
                 List<String> phyTables = new ArrayList<>();
                 phyTables.add(phyTable);
-                if(!tableTopology.containsKey(targetGroupName)) {
+                if (!tableTopology.containsKey(targetGroupName)) {
                     tableTopology.put(targetGroupName, new ArrayList<>());
                 }
                 tableTopology.get(targetGroupName).add(phyTables);

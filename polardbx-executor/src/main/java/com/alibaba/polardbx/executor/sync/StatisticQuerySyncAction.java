@@ -20,6 +20,7 @@ import com.alibaba.polardbx.common.TddlNode;
 import com.alibaba.polardbx.executor.cursor.ResultCursor;
 import com.alibaba.polardbx.executor.cursor.impl.ArrayResultCursor;
 import com.alibaba.polardbx.executor.gms.util.StatisticUtils;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.statistic.Histogram;
@@ -60,6 +61,12 @@ public class StatisticQuerySyncAction implements ISyncAction {
         for (Map.Entry<String, Map<String, StatisticManager.CacheLine>> entrySchema : statisticCache.entrySet()) {
             String schema = entrySchema.getKey();
             if (SystemDbHelper.isDBBuildIn(schema)) {
+                continue;
+            }
+            // External row counts are cached for cost estimation only. This action runs on
+            // every CN, so resolving those keys would multiply remote metadata requests and
+            // report remote tables as local statistics.
+            if (ExternalNameValidator.isExternalSchema(schema)) {
                 continue;
             }
             for (Map.Entry<String, StatisticManager.CacheLine> entryTable : entrySchema.getValue().entrySet()) {

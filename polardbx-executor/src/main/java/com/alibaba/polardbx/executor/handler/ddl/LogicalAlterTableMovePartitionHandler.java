@@ -110,7 +110,8 @@ public class LogicalAlterTableMovePartitionHandler extends LogicalCommonDdlHandl
 
         AlterTableGroupUtils.alterTableGroupMovePartitionCheck(sqlAlterTableMovePartition,
             tableGroupConfig,
-            schemaName);
+            schemaName,
+            executionContext);
         return super.validatePlan(logicalDdlPlan, executionContext);
     }
 

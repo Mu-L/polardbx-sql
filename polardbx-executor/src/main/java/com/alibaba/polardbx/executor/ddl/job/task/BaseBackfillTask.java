@@ -21,6 +21,15 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import java.sql.Connection;
 
 public abstract class BaseBackfillTask extends BaseDdlTask {
+    public int getSubtaskCount() {
+        return subtaskCount;
+    }
+
+    public void setSubtaskCount(int subtaskCount) {
+        this.subtaskCount = subtaskCount;
+    }
+
+    public int subtaskCount = 1;
 
     public BaseBackfillTask(String schemaName) {
         super(schemaName);

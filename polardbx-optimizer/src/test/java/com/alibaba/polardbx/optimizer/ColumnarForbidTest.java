@@ -19,8 +19,11 @@
 package com.alibaba.polardbx.optimizer;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTable;
 import com.alibaba.polardbx.optimizer.utils.MetaUtils;
 import org.apache.calcite.sql.SqlAlterSpecification;
@@ -68,6 +71,8 @@ public class ColumnarForbidTest {
 
                 TableMeta tableMeta = mock(TableMeta.class);
                 SqlAlterTable sqlAlterTable = mock(SqlAlterTable.class);
+                ExecutionContext ec = mock(ExecutionContext.class);
+                ParamManager pm = mock(ParamManager.class);
 
                 List<SqlAlterSpecification> alters = new ArrayList<>();
                 SqlAlterSpecification alterSpecification1 = mock(SqlAlterSpecification.class);
@@ -82,6 +87,8 @@ public class ColumnarForbidTest {
                 when(tableMeta.withCci()).thenReturn(true);
                 when(alterTable.getSqlAlterTable()).thenReturn(sqlAlterTable);
                 when(sqlAlterTable.getAlters()).thenReturn(alters);
+                when(ec.getParamManager()).thenReturn(pm);
+                when(pm.getInt(ConnectionParams.REBUILD_CCI_STRATEGY)).thenReturn(-1);
 
                 alters.add(alterSpecification1);
                 alters.add(alterSpecification2);
@@ -89,8 +96,8 @@ public class ColumnarForbidTest {
                 thrown.expect(TddlRuntimeException.class);
                 thrown.expectMessage(
                     "Do not support multiple ALTER TABLE statements on table with clustered columnar index");
-                doCallRealMethod().when(alterTable).validateColumnar();
-                alterTable.validateColumnar();
+                doCallRealMethod().when(alterTable).validateColumnar(ec);
+                alterTable.validateColumnar(ec);
             }
         }
     }
@@ -111,6 +118,8 @@ public class ColumnarForbidTest {
 
                 List<SqlAlterSpecification> alters = new ArrayList<>();
                 SqlModifyColumn modifyColumn = mock(SqlModifyColumn.class);
+                ExecutionContext ec = mock(ExecutionContext.class);
+                ParamManager pm = mock(ParamManager.class);
 
                 LogicalAlterTable alterTable = mock(LogicalAlterTable.class);
                 SqlIdentifier sqlIdentifier = mock(SqlIdentifier.class);
@@ -125,13 +134,15 @@ public class ColumnarForbidTest {
                 when(modifyColumn.getColDef()).thenReturn(sqlColumnDeclaration);
                 when(sqlColumnDeclaration.getDataType()).thenReturn(sqlDataTypeSpec);
                 when(sqlDataTypeSpec.getTypeName()).thenReturn(sqlIdentifier);
-                when(sqlIdentifier.getLastName()).thenReturn("binary");
+                when(sqlIdentifier.getLastName()).thenReturn("point");
 
                 when(optimizerContext.getLatestSchemaManager()).thenReturn(schemaManager);
                 when(schemaManager.getTable(any())).thenReturn(tableMeta);
                 when(tableMeta.withCci()).thenReturn(true);
                 when(alterTable.getSqlAlterTable()).thenReturn(sqlAlterTable);
                 when(sqlAlterTable.getAlters()).thenReturn(alters);
+                when(ec.getParamManager()).thenReturn(pm);
+                when(pm.getInt(ConnectionParams.REBUILD_CCI_STRATEGY)).thenReturn(-1);
 
                 alters.add(modifyColumn);
 
@@ -142,8 +153,8 @@ public class ColumnarForbidTest {
 
 //                    thrown.expect(TddlRuntimeException.class);
 //                    thrown.expectMessage("is not supported by CCI");
-                    doCallRealMethod().when(alterTable).validateColumnar();
-                    alterTable.validateColumnar();
+                    doCallRealMethod().when(alterTable).validateColumnar(ec);
+                    alterTable.validateColumnar(ec);
                 }
             }
         }
@@ -162,6 +173,8 @@ public class ColumnarForbidTest {
 
                 TableMeta tableMeta = mock(TableMeta.class);
                 SqlAlterTable sqlAlterTable = mock(SqlAlterTable.class);
+                ExecutionContext ec = mock(ExecutionContext.class);
+                ParamManager pm = mock(ParamManager.class);
 
                 List<SqlAlterSpecification> alters = new ArrayList<>();
                 SqlChangeColumn changeColumn = mock(SqlChangeColumn.class);
@@ -186,6 +199,8 @@ public class ColumnarForbidTest {
                 when(tableMeta.withCci()).thenReturn(true);
                 when(alterTable.getSqlAlterTable()).thenReturn(sqlAlterTable);
                 when(sqlAlterTable.getAlters()).thenReturn(alters);
+                when(ec.getParamManager()).thenReturn(pm);
+                when(pm.getInt(ConnectionParams.REBUILD_CCI_STRATEGY)).thenReturn(-1);
 
                 alters.add(changeColumn);
 
@@ -196,8 +211,8 @@ public class ColumnarForbidTest {
 
 //                    thrown.expect(TddlRuntimeException.class);
 //                    thrown.expectMessage("is not supported by CCI");
-                    doCallRealMethod().when(alterTable).validateColumnar();
-                    alterTable.validateColumnar();
+                    doCallRealMethod().when(alterTable).validateColumnar(ec);
+                    alterTable.validateColumnar(ec);
                 }
             }
         }

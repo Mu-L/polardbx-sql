@@ -35,6 +35,7 @@ import java.util.List;
 @AllArgsConstructor
 public class CclSqlMetric {
 
+    public final static String METRIC_NAME_EXECUTION_TIME = "execution_time".toUpperCase();
     public final static String METRIC_NAME_RESPONSE_TIME = "response_time".toUpperCase();
     public final static String METRIC_NAME_AFFECTED_ROWS = "affected_rows".toUpperCase();
     public final static String METRIC_NAME_FETCH_ROWS = "fetch_rows".toUpperCase();
@@ -42,11 +43,16 @@ public class CclSqlMetric {
     public final static String METRIC_NAME_PHYSICAL_SQL_COUNT = "physical_sql_count".toUpperCase();
     public final static String METRIC_NAME_ACTIVE_SESSION = "active_session".toUpperCase();
     public final static String METRIC_SQL_TYPE = "sql_type".toUpperCase();
+    public final static String METRIC_USERNAME = "username".toUpperCase();
+    public final static String METRIC_HOST = "host".toUpperCase();
 
     public final static long DEFAULT_VALUE = Long.MIN_VALUE;
 
     private String originalSql;
     private String schemaName;
+    private String userName;
+    private String host;
+    private long executionTime = DEFAULT_VALUE;
     private long responseTime = DEFAULT_VALUE;
     private long affectedRows = DEFAULT_VALUE;
     private long fetchRows = DEFAULT_VALUE;

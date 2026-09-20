@@ -1,0 +1,10 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+select myudf1(1);
+myudf1(1)
+1
+select myudf2(1,1);
+myudf2(1, 1)
+2
+drop java function if exists myudf2;
+drop java function if exists myudf1;

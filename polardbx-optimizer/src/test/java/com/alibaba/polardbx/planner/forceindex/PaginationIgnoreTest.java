@@ -1,5 +1,6 @@
 package com.alibaba.polardbx.planner.forceindex;
 
+import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.planner.common.ParameterizedTestCommon;
 import org.junit.runners.Parameterized;
 
@@ -15,4 +16,13 @@ public class PaginationIgnoreTest extends ParameterizedTestCommon {
         return loadSqls(PaginationIgnoreTest.class);
     }
 
+    @Override
+    protected String getPlan(String testSql) {
+        try {
+            InstanceVersion.setMYSQL80(true);
+            return super.getPlan(testSql);
+        } finally {
+            InstanceVersion.setMYSQL80(false);
+        }
+    }
 }

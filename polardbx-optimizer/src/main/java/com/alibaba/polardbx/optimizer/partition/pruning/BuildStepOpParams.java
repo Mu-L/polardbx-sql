@@ -19,6 +19,8 @@ package com.alibaba.polardbx.optimizer.partition.pruning;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.common.PartKeyLevel;
 
+import java.util.Set;
+
 /**
  * @author chenghui.lch
  */
@@ -117,4 +119,5 @@ public class BuildStepOpParams {
     public void setEnableRangeMerge(boolean enableRangeMerge) {
         this.enableRangeMerge = enableRangeMerge;
     }
+
 }

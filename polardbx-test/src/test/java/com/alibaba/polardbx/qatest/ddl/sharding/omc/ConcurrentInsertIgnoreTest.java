@@ -3,6 +3,7 @@ package com.alibaba.polardbx.qatest.ddl.sharding.omc;
 import com.alibaba.polardbx.executor.common.StorageInfoManager;
 import com.alibaba.polardbx.qatest.ddl.sharding.omc.ConcurrentDMLBaseTest;
 import com.alibaba.polardbx.qatest.util.ConnectionManager;
+import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -29,7 +30,7 @@ public class ConcurrentInsertIgnoreTest extends ConcurrentDMLBaseTest {
     public void modifyWithInsertIgnore1() throws Exception {
         String tableName = "omc_with_insert_ignore_1";
         String colDef = "int";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s modify column b bigint";
         String selectSql = "select * from %s order by a";
         Function<Integer, String> generator = (count) -> String.format(
@@ -47,7 +48,7 @@ public class ConcurrentInsertIgnoreTest extends ConcurrentDMLBaseTest {
     public void modifyWithInsertIgnore2() throws Exception {
         String tableName = "omc_with_insert_ignore_2";
         String colDef = "int unique key";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s modify column b bigint, modify column c char(10) after d";
         String selectSql = "select * from %s order by a desc";
         Function<Integer, String> generator = (count) -> String.format(
@@ -65,7 +66,7 @@ public class ConcurrentInsertIgnoreTest extends ConcurrentDMLBaseTest {
     public void changeWithInsertIgnore1() throws Exception {
         String tableName = "omc_with_insert_ignore_1";
         String colDef = "int";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s change column b e bigint";
         String selectSql = "select * from %s order by a";
         Function<Integer, String> generator = (count) -> String.format(
@@ -83,7 +84,7 @@ public class ConcurrentInsertIgnoreTest extends ConcurrentDMLBaseTest {
     public void changeWithInsertIgnore2() throws Exception {
         String tableName = "omc_with_insert_ignore_2";
         String colDef = "int unique key";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s change column b e bigint";
         String selectSql = "select * from %s order by a desc";
         Function<Integer, String> generator = (count) -> String.format(
@@ -101,7 +102,7 @@ public class ConcurrentInsertIgnoreTest extends ConcurrentDMLBaseTest {
     public void changeMultiWithInsertIgnore1() throws Exception {
         String tableName = "omc_multi_with_insert_ignore_1";
         String colDef = "int unique key";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s change column b e bigint, change column c d char(10), change column d c varchar(20)";
         String selectSql = "select * from %s order by a desc";
         Function<Integer, String> generator = (count) -> String.format(
@@ -119,7 +120,7 @@ public class ConcurrentInsertIgnoreTest extends ConcurrentDMLBaseTest {
     public void changeMultiWithInsertIgnore2() throws Exception {
         String tableName = "omc_multi_with_insert_ignore_2";
         String colDef = "int unique key";
-        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION)
+        String alterSql = buildCmdExtra(OMC_FORCE_TYPE_CONVERSION, OMC_DISABLE_30)
             + " alter table %s change column b e bigint, drop column d, add column f char(10) default 'xyz'";
         String selectSql = "select * from %s order by a desc";
         Function<Integer, String> generator = (count) -> String.format(

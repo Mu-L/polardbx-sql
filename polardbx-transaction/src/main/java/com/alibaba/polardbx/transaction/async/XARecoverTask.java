@@ -85,7 +85,7 @@ public class XARecoverTask implements Runnable {
 
     private static final Logger logger = LoggerFactory.getLogger(XARecoverTask.class);
 
-    private static final long RETRY_PERIOD = TimeUnit.SECONDS.toNanos(60 * 60);
+    public static final long RETRY_PERIOD = TimeUnit.SECONDS.toNanos(60 * 60);
 
     /**
      * When we encounter a branch with this gtrid, it is an XA trx created by recover task.
@@ -129,6 +129,10 @@ public class XARecoverTask implements Runnable {
     public void run() {
         boolean hasLeadership = ExecUtils.hasLeadership(schema);
 
+        if (TransactionManager.getInstance(schema).isFirstRecover()) {
+            TransactionManager.getInstance(schema).setFirstRecover(false);
+        }
+
         if (!hasLeadership) {
             logger.debug("Skip XA recovery task since I am not the leader");
             return;
@@ -159,8 +163,6 @@ public class XARecoverTask implements Runnable {
             for (IDataSource dataSource : instanceDataSources.values()) {
                 recoverInstance(dataSource, groupSet);
             }
-
-            TransactionManager.getInstance(schema).setFirstRecover(false);
         } catch (Throwable ex) {
             logger.error("Failed to check XA RECOVER transactions", ex);
         } finally {
@@ -215,12 +217,13 @@ public class XARecoverTask implements Runnable {
                 Pair<String, String> schemaAndGroup =
                     serverConfigManager.findGroupByUniqueId(transInfo.primaryGroupUid, schemaAndGroupsCache);
 
-                TransactionAttribute.FormatId id = TransactionAttribute.FormatId.fromId((int) formatID);
+                TransactionAttribute.FormatId id = TransactionAttribute.FormatId.fromId(transInfo.formatId);
                 if (null == id) {
                     continue;
                 }
                 switch (id) {
                 case NORMAL:
+                case NORMAL_V2:
                 case ARCHIVE:
                 case IGNORE_BINLOG:
                     if (groups.contains(transInfo.getGroup()) || null == schemaAndGroup) {
@@ -269,7 +272,7 @@ public class XARecoverTask implements Runnable {
      */
     private void handleRecoverTrans(Statement stmt, List<PreparedXATrans> recoverTrans) throws SQLException {
         for (PreparedXATrans recoverTran : recoverTrans) {
-            tryCommitXA(stmt, recoverTran);
+            tryCommitXA(stmt, recoverTran, "polardbx");
         }
     }
 
@@ -455,8 +458,6 @@ public class XARecoverTask implements Runnable {
                 b. It is an async commit transaction, and not all of its branches are prepared;
                 c. It did not write any async commit log, neither normal commit log;
                  */
-                Optional.ofNullable(OptimizerContext.getTransStat(schema))
-                    .ifPresent(s -> s.countRecoverRollback.incrementAndGet());
                 return appendLogAndRollback(trans, stmt, transInfo, primaryGroupTxLogMgr, primaryGroup,
                     noLogDataSources, schema);
             } else {
@@ -473,7 +474,7 @@ public class XARecoverTask implements Runnable {
                 Optional.ofNullable(OptimizerContext.getTransStat(schema))
                     .ifPresent(s -> s.countRecoverCommit.incrementAndGet());
                 return tryCommitTSO(stmt, trans, AsyncCommitTransaction.convertFromMinCommitSeq(commitTimeStamp),
-                    transInfo.transId, supportAsyncCommit);
+                    transInfo.transId, supportAsyncCommit, schema);
             }
         }
     }
@@ -487,10 +488,10 @@ public class XARecoverTask implements Runnable {
             String info = "roll forward TSO transaction " + transInfo.toXidString();
             logger.warn(info);
             TransactionLogger.warn(txLog.getTxid(), info);
-            return tryCommitTSO(stmt, trans, txLog.getCommitTimestamp(), transInfo.transId, supportAsyncCommit);
+            return tryCommitTSO(stmt, trans, txLog.getCommitTimestamp(), transInfo.transId, supportAsyncCommit, schema);
         } else if (txLog.getType() == TransactionType.XA) {
             TransactionLogger.warn(txLog.getTxid(), "roll forward XA transaction");
-            return tryCommitXA(stmt, trans);
+            return tryCommitXA(stmt, trans, schema);
         } else {
             String err = "[RECOVER] found unexpected trx type " + txLog.getType();
             EventLogger.log(EventType.TRX_RECOVER, schema + err);
@@ -755,12 +756,12 @@ public class XARecoverTask implements Runnable {
         }
     }
 
-    private static boolean tryCommitXA(Statement stmt, PreparedXATrans trans) {
-        return tryCommit0(stmt, "XA COMMIT " + trans.toXid());
+    private static boolean tryCommitXA(Statement stmt, PreparedXATrans trans, String schema) {
+        return tryCommit0(stmt, "XA COMMIT " + trans.toXid(), schema);
     }
 
     private static boolean tryCommitTSO(Statement stmt, PreparedXATrans trans, long commitTimestamp, long id,
-                                        boolean supportAsyncCommit)
+                                        boolean supportAsyncCommit, String schema)
         throws SQLException {
         if (supportAsyncCommit) {
             setAsyncCommitCleanVar(stmt, id);
@@ -773,9 +774,9 @@ public class XARecoverTask implements Runnable {
                 stmt.getConnection().unwrap(DeferredConnection.class).flushUnsent();
             }
             xConnection.setLazyCommitSeq(commitTimestamp);
-            return tryCommit0(stmt, "XA COMMIT " + trans.toXid());
+            return tryCommit0(stmt, "XA COMMIT " + trans.toXid(), schema);
         }
-        return tryCommit0(stmt, "SET innodb_commit_seq = " + commitTimestamp + "; XA COMMIT " + trans.toXid());
+        return tryCommit0(stmt, "SET innodb_commit_seq = " + commitTimestamp + "; XA COMMIT " + trans.toXid(), schema);
     }
 
     private static void setAsyncCommitCleanVar(Statement stmt, long id) {
@@ -798,9 +799,11 @@ public class XARecoverTask implements Runnable {
         }
     }
 
-    private static boolean tryCommit0(Statement stmt, String sql) {
+    private static boolean tryCommit0(Statement stmt, String sql, String schema) {
         try {
             stmt.execute(sql);
+            Optional.ofNullable(OptimizerContext.getTransStat(schema))
+                .ifPresent(s -> s.countRecoverCommit.incrementAndGet());
             return true;
         } catch (SQLException ex) {
             logger.error("XA COMMIT error", ex);
@@ -818,7 +821,11 @@ public class XARecoverTask implements Runnable {
     }
 
     private String getRecoverXid(Long trxId, String bqual) {
-        return String.format("'%s@%s', '%s', 2", RECOVER_GTRID_PREFIX, Long.toHexString(trxId), bqual);
+        return String.format("'%s@%s', '%s', %s",
+            RECOVER_GTRID_PREFIX,
+            Long.toHexString(trxId),
+            bqual,
+            TransactionAttribute.FormatId.RECOVER.id());
     }
 
     /**

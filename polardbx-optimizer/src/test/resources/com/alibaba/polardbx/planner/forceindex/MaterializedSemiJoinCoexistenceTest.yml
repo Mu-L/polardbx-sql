@@ -1,0 +1,122 @@
+SQL:
+  - sql: |
+      select * from t_msj_coexist force index(idx_lookup) where user_id = 1 and biz_id expand in (2, 3, 4) and pre_filter(modify_time) and modify_time > '2024-01-01 00:00:00' and modify_time < '2024-12-31 00:00:00' order by modify_time desc limit 10;
+    plan: |
+      materializedsemijoin(condition="biz_id = biz_id", type="semi")
+        mergesort(sort="modify_time desc", offset=0, fetch=?4)
+          logicalview(tables="t_msj_coexist[p1],t_msj_coexist[p1],t_msj_coexist[p1]", sql="select `id`, `user_id`, `biz_id`, `modify_time`, `status` from `t_msj_coexist` as `t_msj_coexist` force index(idx_lookup) where ((`biz_id` in(?)) and (`user_id` = ?) and (`modify_time` > ?) and (`modify_time` < ?) and ((((select max(`modify_time`) as `modify_time` from `t_msj_coexist` as `t_msj_coexist0` force index(`idx_modify_time`)))) >= ?) and ((((select min(`modify_time`) as `modify_time` from `t_msj_coexist` as `t_msj_coexist1` force index(`idx_modify_time`)))) <= ?)) order by `modify_time` desc limit ?")
+        dynamicvalues(tuples=[{ cartesian(list(?1)) }])
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_PRE_FILTER_LOOKUP=false)*/select * from t_msj_coexist force index(idx_lookup) where user_id = 1 and biz_id expand in (2, 3, 4) and pre_filter(modify_time) and modify_time > '2024-01-01 00:00:00' and modify_time < '2024-12-31 00:00:00' order by modify_time desc limit 10;
+    plan: |
+      materializedsemijoin(condition="biz_id = biz_id", type="semi")
+        mergesort(sort="modify_time desc", offset=0, fetch=?4)
+          logicalview(tables="t_msj_coexist[p1]", sql="select `id`, `user_id`, `biz_id`, `modify_time`, `status` from `t_msj_coexist` as `t_msj_coexist` force index(idx_lookup) where ((`biz_id` in(?)) and (`user_id` = ?) and (`modify_time` > ?) and (`modify_time` < ?) and (true)) order by `modify_time` desc limit ?")
+        dynamicvalues(tuples=[{ cartesian(list(?1)) }])
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_IN_TO_EXPAND_IN=false)*/select * from t_msj_coexist force index(idx_lookup) where user_id = 1 and biz_id in (2, 3, 4) and pre_filter(modify_time) and modify_time > '2024-01-01 00:00:00' and modify_time < '2024-12-31 00:00:00' order by modify_time desc limit 10;
+    plan: |
+      logicalview(tables="t_msj_coexist[p1],t_msj_coexist[p1],t_msj_coexist[p1]", sql="select `id`, `user_id`, `biz_id`, `modify_time`, `status` from `t_msj_coexist` as `t_msj_coexist` force index(idx_lookup) where ((`user_id` = ?) and (`biz_id` in(?)) and (`modify_time` > ?) and (`modify_time` < ?) and ((((select max(`modify_time`) as `modify_time` from `t_msj_coexist` as `t_msj_coexist0` force index(`idx_modify_time`)))) >= ?) and ((((select min(`modify_time`) as `modify_time` from `t_msj_coexist` as `t_msj_coexist1` force index(`idx_modify_time`)))) <= ?)) order by `modify_time` desc limit ?")
+  - sql: |
+      select * from t_msj_coexist paging_force index(idx_lookup) where user_id = 1 and biz_id expand in (2, 3, 4) and pre_filter(modify_time) and modify_time > '2024-01-01 00:00:00' and modify_time < '2024-12-31 00:00:00' order by modify_time desc limit 10;
+    plan: |
+      materializedsemijoin(condition="biz_id = biz_id", type="semi")
+        mergesort(sort="modify_time desc", offset=0, fetch=?4)
+          logicalview(tables="t_msj_coexist[p1],t_msj_coexist[p1],t_msj_coexist[p1],t_msj_coexist[p1]", sql="select `t_msj_coexist2`.`id` as `id0`, `t_msj_coexist2`.`user_id` as `user_id0`, `t_msj_coexist2`.`biz_id`, `t_msj_coexist2`.`modify_time`, `t_msj_coexist2`.`status` from (select `id`, `user_id` from `t_msj_coexist` as `t_msj_coexist` force index(`idx_lookup`) where ((`biz_id` in(?)) and (`user_id` = ?) and (`modify_time` > ?) and (`modify_time` < ?) and ((((select max(`modify_time`) as `modify_time` from `t_msj_coexist` as `t_msj_coexist0` force index(`idx_modify_time`)))) >= ?) and ((((select min(`modify_time`) as `modify_time` from `t_msj_coexist` as `t_msj_coexist1` force index(`idx_modify_time`)))) <= ?)) order by `modify_time` desc limit ?) as `t4` inner join `t_msj_coexist` as `t_msj_coexist2` on ((`t4`.`id` = `t_msj_coexist2`.`id`) and (`t4`.`user_id` = `t_msj_coexist2`.`user_id`)) order by `t_msj_coexist2`.`modify_time` desc limit ?")
+        dynamicvalues(tuples=[{ cartesian(list(?1)) }])
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_PAGING_FORCE_LOOKUP=false)*/select * from t_msj_coexist force index(idx_lookup) where user_id = 1 and biz_id expand in (2, 3, 4) and pre_filter(modify_time) and modify_time > '2024-01-01 00:00:00' and modify_time < '2024-12-31 00:00:00' order by modify_time desc limit 10;
+    plan: |
+      materializedsemijoin(condition="biz_id = biz_id", type="semi")
+        mergesort(sort="modify_time desc", offset=0, fetch=?4)
+          logicalview(tables="t_msj_coexist[p1],t_msj_coexist[p1],t_msj_coexist[p1]", sql="select `id`, `user_id`, `biz_id`, `modify_time`, `status` from `t_msj_coexist` as `t_msj_coexist` force index(idx_lookup) where ((`biz_id` in(?)) and (`user_id` = ?) and (`modify_time` > ?) and (`modify_time` < ?) and ((((select max(`modify_time`) as `modify_time` from `t_msj_coexist` as `t_msj_coexist0` force index(`idx_modify_time`)))) >= ?) and ((((select min(`modify_time`) as `modify_time` from `t_msj_coexist` as `t_msj_coexist1` force index(`idx_modify_time`)))) <= ?)) order by `modify_time` desc limit ?")
+        dynamicvalues(tuples=[{ cartesian(list(?1)) }])
+  - sql: |
+      select t2.* from (select id, user_id, modify_time from t_msj_coexist force index(idx_lookup) where user_id = 1 and biz_id expand in (2, 3, 4) and pre_filter(modify_time) and modify_time > '2024-01-01 00:00:00' and modify_time < '2024-12-31 00:00:00' order by modify_time desc limit 10) t1 join t_msj_coexist t2 on t1.id = t2.id;
+    plan: |
+      project(id="id0", user_id="user_id", biz_id="biz_id0", modify_time="modify_time0", status="status")
+        bkajoin(condition="id = id", type="inner")
+          materializedsemijoin(condition="biz_id = biz_id", type="semi")
+            mergesort(sort="modify_time desc", offset=0, fetch=?4)
+              logicalview(tables="t_msj_coexist[p1],t_msj_coexist[p1],t_msj_coexist[p1]", sql="select `id`, `biz_id`, `modify_time` from `t_msj_coexist` as `t_msj_coexist` force index(idx_lookup) where ((`biz_id` in(?)) and (`user_id` = ?) and (`modify_time` > ?) and (`modify_time` < ?) and ((((select max(`modify_time`) as `modify_time` from `t_msj_coexist` as `t_msj_coexist0` force index(`idx_modify_time`)))) >= ?) and ((((select min(`modify_time`) as `modify_time` from `t_msj_coexist` as `t_msj_coexist1` force index(`idx_modify_time`)))) <= ?)) order by `modify_time` desc limit ?")
+            dynamicvalues(tuples=[{ cartesian(list(?1)) }])
+          gather(concurrent=true)
+            logicalview(tables="t_msj_coexist[p1,p2,p3,p4]", shardcount=4, sql="select `id`, `user_id`, `biz_id`, `modify_time`, `status` from `t_msj_coexist` as `t_msj_coexist` force index(`primary`) where (`id` in (...))")
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_HASH_JOIN=false,ENABLE_SORT_MERGE_JOIN=false) BKA_JOIN(t_msj_coexist,t_msj_extra)*/select t3.* from (select id, user_id, modify_time from t_msj_coexist force index(idx_lookup) where user_id = 1 and biz_id expand in (2, 3, 4) and pre_filter(modify_time) and modify_time > '2024-01-01 00:00:00' and modify_time < '2024-12-31 00:00:00' order by modify_time desc limit 10) t1 join t_msj_coexist t2 on t1.id = t2.id join t_msj_extra t3 on t1.id = t3.id;
+    plan: |
+      project(id="id1", user_id="user_id", biz_id="biz_id0", modify_time="modify_time0", status="status")
+        bkajoin(condition="id = id and id = id0", type="inner")
+          bkajoin(condition="id = id", type="inner")
+            materializedsemijoin(condition="biz_id = biz_id", type="semi")
+              mergesort(sort="modify_time desc", offset=0, fetch=?4)
+                logicalview(tables="t_msj_coexist[p1],t_msj_coexist[p1],t_msj_coexist[p1]", sql="select `id`, `biz_id`, `modify_time` from `t_msj_coexist` as `t_msj_coexist` force index(idx_lookup) where ((`biz_id` in(?)) and (`user_id` = ?) and (`modify_time` > ?) and (`modify_time` < ?) and ((((select max(`modify_time`) as `modify_time` from `t_msj_coexist` as `t_msj_coexist0` force index(`idx_modify_time`)))) >= ?) and ((((select min(`modify_time`) as `modify_time` from `t_msj_coexist` as `t_msj_coexist1` force index(`idx_modify_time`)))) <= ?)) order by `modify_time` desc limit ?")
+              dynamicvalues(tuples=[{ cartesian(list(?1)) }])
+            gather(concurrent=true)
+              logicalview(tables="t_msj_coexist[p1,p2,p3,p4]", shardcount=4, sql="select `id` from `t_msj_coexist` as `t_msj_coexist` force index(`primary`) where (`id` in (...))")
+          gather(concurrent=true)
+            logicalview(tables="t_msj_extra[p1,p2,p3,p4]", shardcount=4, sql="select `id`, `user_id`, `biz_id`, `modify_time`, `status` from `t_msj_extra` as `t_msj_extra` force index(`primary`) where (`id` in (...))")
+  - sql: |
+      /*+TDDL:cmd_extra(ENABLE_HASH_JOIN=false,ENABLE_SORT_MERGE_JOIN=false)*/select t3.* from (select id, user_id, modify_time from t_msj_coexist force index(idx_lookup) where user_id = 1 and biz_id expand in (2, 3, 4) and pre_filter(modify_time) and modify_time > '2024-01-01 00:00:00' and modify_time < '2024-12-31 00:00:00' order by modify_time desc limit 10) t1 join (select id, user_id, modify_time from t_msj_extra force index(idx_lookup) where user_id = 1 and biz_id expand in (5, 6, 7) and pre_filter(modify_time) and modify_time > '2024-01-01 00:00:00' and modify_time < '2024-12-31 00:00:00' order by modify_time desc limit 10) t2 on t1.id = t2.id join t_msj_extra t3 on t1.id = t3.id;
+    plan: |
+      project(id="id0", user_id="user_id", biz_id="biz_id0", modify_time="modify_time0", status="status")
+        nljoin(condition="id0 = id and id = id", type="inner")
+          bkajoin(condition="id = id", type="inner")
+            materializedsemijoin(condition="biz_id = biz_id", type="semi")
+              mergesort(sort="modify_time desc", offset=0, fetch=?9)
+                logicalview(tables="t_msj_extra[p1],t_msj_extra[p1],t_msj_extra[p1]", sql="select `id`, `biz_id`, `modify_time` from `t_msj_extra` as `t_msj_extra` force index(idx_lookup) where ((`biz_id` in(?)) and (`user_id` = ?) and (`modify_time` > ?) and (`modify_time` < ?) and ((((select max(`modify_time`) as `modify_time` from `t_msj_extra` as `t_msj_extra0` force index(`idx_modify_time`)))) >= ?) and ((((select min(`modify_time`) as `modify_time` from `t_msj_extra` as `t_msj_extra1` force index(`idx_modify_time`)))) <= ?)) order by `modify_time` desc limit ?")
+              dynamicvalues(tuples=[{ cartesian(list(?6)) }])
+            gather(concurrent=true)
+              logicalview(tables="t_msj_extra[p1,p2,p3,p4]", shardcount=4, sql="select `id`, `user_id`, `biz_id`, `modify_time`, `status` from `t_msj_extra` as `t_msj_extra` force index(`primary`) where (`id` in (...))")
+          materializedsemijoin(condition="biz_id = biz_id", type="semi")
+            mergesort(sort="modify_time desc", offset=0, fetch=?4)
+              logicalview(tables="t_msj_coexist[p1],t_msj_coexist[p1],t_msj_coexist[p1]", sql="select `id`, `biz_id`, `modify_time` from `t_msj_coexist` as `t_msj_coexist` force index(idx_lookup) where ((`biz_id` in(?)) and (`user_id` = ?) and (`modify_time` > ?) and (`modify_time` < ?) and ((((select max(`modify_time`) as `modify_time` from `t_msj_coexist` as `t_msj_coexist0` force index(`idx_modify_time`)))) >= ?) and ((((select min(`modify_time`) as `modify_time` from `t_msj_coexist` as `t_msj_coexist1` force index(`idx_modify_time`)))) <= ?)) order by `modify_time` desc limit ?")
+            dynamicvalues(tuples=[{ cartesian(list(?1)) }])
+
+DDL:
+  t_msj_coexist:
+    CREATE TABLE `t_msj_coexist` (
+    `id` bigint(20) NOT NULL,
+    `user_id` bigint(20) DEFAULT NULL,
+    `biz_id` int(11) DEFAULT NULL,
+    `modify_time` timestamp NULL DEFAULT NULL,
+    `status` int(11) DEFAULT NULL,
+    INDEX `idx_lookup` (`user_id`, `biz_id`, `modify_time`, `id`),
+    INDEX `idx_modify_time` (`modify_time`),
+    PRIMARY KEY (`id`)
+    ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+    PARTITION BY KEY(`user_id`)
+    PARTITIONS 4;
+
+  t_msj_extra:
+    CREATE TABLE `t_msj_extra` (
+    `id` bigint(20) NOT NULL,
+    `user_id` bigint(20) DEFAULT NULL,
+    `biz_id` int(11) DEFAULT NULL,
+    `modify_time` timestamp NULL DEFAULT NULL,
+    `status` int(11) DEFAULT NULL,
+    INDEX `idx_lookup` (`user_id`, `biz_id`, `modify_time`, `id`),
+    INDEX `idx_modify_time` (`modify_time`),
+    PRIMARY KEY (`id`)
+    ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+    PARTITION BY KEY(`user_id`)
+    PARTITIONS 4;
+
+STATISTICS:
+  t_msj_coexist:
+    100
+  t_msj_extra:
+    100
+
+CONFIG:
+  ENABLE_IN_TO_UNION_ALL:
+    true
+
+  ENABLE_IN_TO_EXPAND_IN:
+    true
+
+  ENABLE_PAGING_FORCE_TO_JOIN:
+    true
+
+  defaltxxAPPName.isNew:
+    true

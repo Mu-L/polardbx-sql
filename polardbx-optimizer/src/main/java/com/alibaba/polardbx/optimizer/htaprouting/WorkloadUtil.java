@@ -1,0 +1,118 @@
+/*
+ * Copyright [2013-2021], Alibaba Group Holding Limited
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package com.alibaba.polardbx.optimizer.htaprouting;
+
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.optimizer.PlannerContext;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
+import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
+import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.RemoveFixedCostVisitor;
+import com.alibaba.polardbx.optimizer.planmanager.LogicalViewFinder;
+import org.apache.calcite.plan.RelOptCost;
+import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.metadata.RelMetadataQuery;
+import org.apache.calcite.sql.SqlKind;
+
+/**
+ * @author dylan
+ */
+public class WorkloadUtil {
+
+    public static WorkloadType determineWorkloadType(RelNode rel, RelMetadataQuery mq) {
+        PlannerContext pc = PlannerContext.getPlannerContext(rel);
+        if (CBOUtil.isInsertSelectFromColumnar(rel)) {
+            HtapTrace.traceWorkloadType(pc.getHtapTrace(), WorkloadType.AP,
+                "insert select from columnar");
+            return WorkloadType.AP;
+        }
+
+        if (!pc.getSqlKind().belongsTo(SqlKind.QUERY)) {
+            HtapTrace.traceWorkloadType(pc.getHtapTrace(), WorkloadType.TP, "NON query");
+            return WorkloadType.TP;
+        }
+        rel.accept(new RemoveFixedCostVisitor());
+        LogicalViewFinder logicalViewFinder = new LogicalViewFinder();
+        rel.accept(logicalViewFinder);
+        double ossNetThreshold = pc.getParamManager().getLong(ConnectionParams.WORKLOAD_OSS_NET_THRESHOLD);
+        long columnarRowThreshold =
+            pc.getParamManager().getLong(ConnectionParams.WORKLOAD_COLUMNAR_ROW_THRESHOLD);
+        for (LogicalView logicalView : logicalViewFinder.getResult()) {
+            if (logicalView instanceof OSSTableScan) {
+                RelOptCost ossTableScanCost = mq.getCumulativeCost(logicalView);
+                if (((OSSTableScan) logicalView).isColumnarIndex()) {
+                    if (ossTableScanCost.getRows() > columnarRowThreshold) {
+                        HtapTrace.traceWorkloadType(pc.getHtapTrace(), WorkloadType.AP,
+                            "columnar scan row big enough");
+                        return WorkloadType.AP;
+                    }
+                } else {
+                    if (ossTableScanCost.getNet() > ossNetThreshold) {
+                        HtapTrace.traceWorkloadType(pc.getHtapTrace(), WorkloadType.AP,
+                            "archive scan net big enough");
+                        return WorkloadType.AP;
+                    }
+                }
+            }
+        }
+        RelOptCost cost = mq.getCumulativeCost(rel);
+        double ioThreshold = pc.getParamManager().getLong(ConnectionParams.WORKLOAD_IO_THRESHOLD);
+        HtapTrace.traceWorkloadType(pc.getHtapTrace(),
+            cost.getIo() < ioThreshold ? WorkloadType.TP : WorkloadType.AP, "io");
+        return cost.getIo() < ioThreshold ? WorkloadType.TP : WorkloadType.AP;
+    }
+
+    public static WorkloadType getWorkloadType(ExecutionContext executionContext) {
+        if (executionContext.getWorkloadType() != null) {
+            return executionContext.getWorkloadType();
+        }
+        return WorkloadType.TP;
+    }
+
+    public static WorkloadType getAndSetWorkloadType(ExecutionContext executionContext, ExecutionPlan executionPlan) {
+        RelNode plan;
+        if (executionPlan == null) {
+            plan = null;
+        } else {
+            plan = executionPlan.getPlan();
+        }
+        return getAndSetWorkloadType(executionContext, plan);
+    }
+
+    public static WorkloadType getAndSetWorkloadType(ExecutionContext executionContext, RelNode plan) {
+        if (executionContext.getWorkloadType() != null) {
+            return executionContext.getWorkloadType();
+        }
+        WorkloadType targetWorkType;
+        if (plan == null) {
+            targetWorkType = WorkloadType.TP;
+        } else {
+            targetWorkType = PlannerContext.getPlannerContext(plan).getWorkloadType();
+        }
+        if (targetWorkType == null) {
+            targetWorkType = WorkloadType.TP;
+        }
+        executionContext.setWorkloadType(targetWorkType);
+        return targetWorkType;
+    }
+
+    public static boolean isApWorkload(WorkloadType workloadType) {
+        return workloadType == WorkloadType.AP;
+    }
+}

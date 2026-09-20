@@ -22,12 +22,15 @@ import com.alibaba.polardbx.server.parser.ServerParseShow;
 import com.alibaba.polardbx.server.response.ShowArchive;
 import com.alibaba.polardbx.server.response.ShowCacheFileStats;
 import com.alibaba.polardbx.server.response.ShowCacheStats;
+import com.alibaba.polardbx.server.response.ShowCleanColumnarStatus;
 import com.alibaba.polardbx.server.response.ShowColumnarOffset;
 import com.alibaba.polardbx.server.response.ShowColumnarStatus;
 import com.alibaba.polardbx.server.response.ShowColumnarVersion;
 import com.alibaba.polardbx.server.response.ShowCompatibilityLevel;
 import com.alibaba.polardbx.server.response.ShowConnection;
 import com.alibaba.polardbx.server.response.ShowDatabases;
+import com.alibaba.polardbx.server.response.ShowDeltaConnection;
+import com.alibaba.polardbx.server.response.ShowDeltaStatus;
 import com.alibaba.polardbx.server.response.ShowErrors;
 import com.alibaba.polardbx.server.response.ShowFileStorage;
 import com.alibaba.polardbx.server.response.ShowFullConnection;
@@ -45,6 +48,8 @@ import com.alibaba.polardbx.server.response.ShowNode;
 import com.alibaba.polardbx.server.response.ShowParametric;
 import com.alibaba.polardbx.server.response.ShowSqlEngineAlert;
 import com.alibaba.polardbx.server.response.ShowStatistic;
+import com.alibaba.polardbx.server.response.ShowTtlQueryStat;
+import com.alibaba.polardbx.server.response.ShowTtlQueryBoundary;
 import com.alibaba.polardbx.server.response.ShowWarnings;
 import com.alibaba.polardbx.server.response.ShowWorkload;
 import com.alibaba.polardbx.server.util.LogUtils;
@@ -69,6 +74,8 @@ public final class ShowHandler {
                 return ShowNode.execute(c);
             case ServerParseShow.CONNECTION:
                 return ShowConnection.execute(c, hasMore);
+            case ServerParseShow.CONNECTION_LOCAL:
+                return ShowConnection.execute(c, hasMore, true);
             case ServerParseShow.WARNINGS:
                 return ShowWarnings.execute(c, hasMore);
             case ServerParseShow.ERRORS:
@@ -101,18 +108,30 @@ public final class ShowHandler {
                 return ShowFullDatabases.response(c, hasMore);
             case ServerParseShow.FULL_CONNECTION:
                 return ShowFullConnection.execute(c, hasMore);
+            case ServerParseShow.FULL_CONNECTION_LOCAL:
+                return ShowFullConnection.execute(c, hasMore, true);
             case ServerParseShow.COLUMNAR_VERSION:
                 return ShowColumnarVersion.execute(c);
             case ServerParseShow.COLUMNAR_STATUS:
                 return ShowColumnarStatus.execute(c, stmt, offset, false);
             case ServerParseShow.FULL_COLUMNAR_STATUS:
                 return ShowColumnarStatus.execute(c, stmt, offset, true);
-                case ServerParseShow.SQL_ENGINE_ALERT:
+            case ServerParseShow.SQL_ENGINE_ALERT:
                 return ShowSqlEngineAlert.execute(c);
             case ServerParseShow.COLUMNAR_OFFSET:
                 return ShowColumnarOffset.execute(c);
+            case ServerParseShow.CLEAN_COLUMNAR_STATUS:
+                return ShowCleanColumnarStatus.execute(c);
+            case ServerParseShow.DELTA_STATUS:
+                return ShowDeltaStatus.execute(c);
+            case ServerParseShow.DELTA_CONNECTION:
+                return ShowDeltaConnection.execute(c);
             case ServerParseShow.COMPATIBILITY_LEVEL:
                 return ShowCompatibilityLevel.execute(c, stmt);
+            case ServerParseShow.TTL_QUERY_STAT:
+                return ShowTtlQueryStat.execute(c, hasMore);
+            case ServerParseShow.TTL_QUERY_BOUNDARY:
+                return ShowTtlQueryBoundary.execute(c, hasMore);
             default:
                 recordSql = false;
                 return c.execute(stmt, hasMore);

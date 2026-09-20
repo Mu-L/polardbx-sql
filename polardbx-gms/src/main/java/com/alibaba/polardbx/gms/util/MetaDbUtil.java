@@ -29,7 +29,11 @@ import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
 import com.alibaba.polardbx.gms.metadb.record.SystemTableRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarConfigAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarConfigWithIndexNameRecord;
+import com.alibaba.polardbx.gms.metadb.table.DdlLoadMetaInfoAccessor;
+import com.alibaba.polardbx.gms.metadb.table.DdlLoadMetaInfoRecord;
+import com.alibaba.polardbx.gms.topology.DbInfoAccessor;
 import com.alibaba.polardbx.gms.topology.InstConfigAccessor;
+import com.alibaba.polardbx.gms.topology.InstConfigRecord;
 import com.alibaba.polardbx.rpc.pool.XConnection;
 
 import java.sql.Connection;
@@ -45,7 +49,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.TreeMap;
+import java.util.function.Consumer;
 import java.util.function.Function;
+
+import static com.alibaba.polardbx.common.cdc.CdcConstants.DDL_LOAD_CHECKPOINT_KEY;
 
 public class MetaDbUtil {
 
@@ -114,6 +121,40 @@ public class MetaDbUtil {
             }
         }
         return records;
+    }
+
+    /**
+     * 流式查询，逐行回调consumer，避免大结果集在内存中全量物化。
+     * 私有协议连接设置流式模式，JDBC连接设置fetchSize=Integer.MIN_VALUE。
+     */
+    public static <T extends SystemTableRecord>
+    void queryStream(String selectSql, Map<Integer, ParameterContext> params, Class<T> clazz, Connection connection,
+                     Consumer<T> consumer) throws Exception {
+        validate(selectSql);
+        boolean xStreamMode = false;
+        try (PreparedStatement ps = connection.prepareStatement(selectSql, ResultSet.TYPE_FORWARD_ONLY,
+            ResultSet.CONCUR_READ_ONLY)) {
+            if (connection.isWrapperFor(XConnection.class)) {
+                connection.unwrap(XConnection.class).setStreamMode(true);
+                xStreamMode = true;
+            } else {
+                ps.setFetchSize(Integer.MIN_VALUE);
+            }
+            if (params != null && params.size() > 0) {
+                for (ParameterContext param : params.values()) {
+                    param.getParameterMethod().setParameter(ps, param.getArgs());
+                }
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    consumer.accept(clazz.newInstance().fill(rs));
+                }
+            }
+        } finally {
+            if (xStreamMode) {
+                connection.unwrap(XConnection.class).setStreamMode(false);
+            }
+        }
     }
 
     public static int insert(String insertSql, Map<Integer, ParameterContext> params, Connection connection)
@@ -224,11 +265,12 @@ public class MetaDbUtil {
                 ps.addBatch();
             }
             ps.executeBatch();
-            ResultSet resultSet = ps.getGeneratedKeys();
-            if (resultSet.next()) {
-                return resultSet.getLong(1);
-            } else {
-                return null;
+            try (ResultSet resultSet = ps.getGeneratedKeys()) {
+                if (resultSet.next()) {
+                    return resultSet.getLong(1);
+                } else {
+                    return null;
+                }
             }
         }
     }
@@ -437,6 +479,21 @@ public class MetaDbUtil {
         }
     }
 
+    public static void setGlobal(Connection connection, Properties properties) throws SQLException {
+        InstConfigAccessor instConfigAccessor = new InstConfigAccessor();
+        instConfigAccessor.setConnection(connection);
+        instConfigAccessor.updateInstConfigValue(InstIdUtil.getInstId(), properties);
+    }
+
+    public static InstConfigRecord getGlobal(String key) throws SQLException {
+        try (Connection metaDbConn = getConnection()) {
+            InstConfigAccessor instConfigAccessor = new InstConfigAccessor();
+            instConfigAccessor.setConnection(metaDbConn);
+            List<InstConfigRecord> records = instConfigAccessor.queryByParamKey(InstIdUtil.getInstId(), key);
+            return !records.isEmpty() ? records.get(0) : null;
+        }
+    }
+
     public static boolean hasTable(String tableName) throws SQLException {
         String sql = String.format("SHOW TABLES LIKE '%s'", tableName);
 
@@ -474,6 +531,24 @@ public class MetaDbUtil {
         }
     }
 
+    public static boolean isNewInstance() {
+        try (Connection metaDbConn = MetaDbDataSource.getInstance().getConnection()) {
+            InstConfigAccessor instConfigAccessor = new InstConfigAccessor();
+            instConfigAccessor.setConnection(metaDbConn);
+            int result = instConfigAccessor.isOldestRecordCreatedWithinOneDay();
+            if (1 == result) {
+                return true;
+            }
+            // Use db_info to check.
+            DbInfoAccessor dbInfoAccessor = new DbInfoAccessor();
+            dbInfoAccessor.setConnection(metaDbConn);
+            return !dbInfoAccessor.existsUserDb();
+        } catch (Throwable t) {
+            MetaDbLogUtil.META_DB_LOG.warn("Check if is new instance failed", t);
+        }
+        return false;
+    }
+
     /**
      * Generate columnar config for all columnar indexes of a single logical table.
      */
@@ -500,5 +575,52 @@ public class MetaDbUtil {
             records.computeIfAbsent(record.indexName, k -> new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER))
                 .put(record.configKey.toUpperCase(), record.configValue);
         }
+    }
+
+    public static void upsertDdlLoadCheckPoint(Long checkPoint) throws SQLException {
+        try (Connection metaDBConn = MetaDbUtil.getConnection()) {
+            upsertDdlLoadCheckPoint(metaDBConn, checkPoint);
+        }
+    }
+
+    public static void upsertDdlLoadCheckPoint(Connection connection, Long checkPoint) {
+        DdlLoadMetaInfoRecord record = new DdlLoadMetaInfoRecord(DDL_LOAD_CHECKPOINT_KEY, String.valueOf(checkPoint));
+        DdlLoadMetaInfoAccessor accessor = new DdlLoadMetaInfoAccessor();
+        accessor.setConnection(connection);
+        accessor.upsert(record);
+    }
+
+    public static void updateDdlLoadCheckPointWithCheck(Long checkPoint) throws SQLException {
+        try (Connection metaDBConn = MetaDbUtil.getConnection()) {
+            DdlLoadMetaInfoAccessor accessor = new DdlLoadMetaInfoAccessor();
+            accessor.setConnection(metaDBConn);
+            accessor.updateValueByCheckValue(DDL_LOAD_CHECKPOINT_KEY, String.valueOf(checkPoint), checkPoint);
+        }
+    }
+
+    public static Long queryDdlLoadCheckPoint() throws SQLException {
+        try (Connection metaDBConn = MetaDbUtil.getConnection()) {
+            DdlLoadMetaInfoAccessor accessor = new DdlLoadMetaInfoAccessor();
+            accessor.setConnection(metaDBConn);
+            List<DdlLoadMetaInfoRecord> list = accessor.queryByConfigKey(DDL_LOAD_CHECKPOINT_KEY);
+            return list.isEmpty() ? null : Long.parseLong(list.get(0).configValue);
+        }
+    }
+
+    public static long getMaxId(Connection connection, String tableName) throws SQLException {
+        String sql = String.format("select id from %s order by id desc limit 1", tableName);
+        try (Statement stmt = connection.createStatement();
+            ResultSet rs = stmt.executeQuery(sql)) {
+            if (rs.next()) {
+                return rs.getLong(1);
+            } else {
+                return Long.MIN_VALUE;
+            }
+        }
+    }
+
+    public static void alterAutoIncrement(Connection connection, String tableName, long newId) throws SQLException {
+        String ALTER_AUTO_INCREMENT = "alter table `" + tableName + "` auto_increment = %s";
+        MetaDbUtil.executeDDL(String.format(ALTER_AUTO_INCREMENT, newId), connection);
     }
 }

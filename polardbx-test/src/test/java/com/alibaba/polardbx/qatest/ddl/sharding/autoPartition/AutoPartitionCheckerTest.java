@@ -66,15 +66,12 @@ public class AutoPartitionCheckerTest extends AutoPartitionTestBase {
                 JdbcUtil.executeUpdateSuccess(tddlConnection, updateStatus);
             }
 
+            String refresh = String.format("reload table %s.%s preemptive", schemaName, tableName);
+            JdbcUtil.executeUpdateSuccess(tddlConnection, refresh);
+
             String updateTableVersion = String.format(
                 "/*+TDDL:node('__META_DB__')*/ update tables set version=version+1 where table_schema='%s' and table_name='%s'",
                 schemaName, tableName);
-            JdbcUtil.executeUpdateSuccess(tddlConnection, updateTableVersion);
-            String refresh = String.format(
-                "/*+TDDL:node('__META_DB__')*/ update config_listener set op_version=op_version+1 where data_id = 'polardbx.meta.table.%s.%s'",
-                schemaName, tableName);
-            JdbcUtil.executeUpdateSuccess(tddlConnection, refresh);
-
             int cnt = 0;
             while (cnt < 60) {
                 rs = JdbcUtil.executeQuery("select * from " + tableName, tddlConnection);

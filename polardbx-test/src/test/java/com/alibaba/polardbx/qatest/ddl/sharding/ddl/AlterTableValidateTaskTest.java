@@ -18,6 +18,7 @@ package com.alibaba.polardbx.qatest.ddl.sharding.ddl;
 
 import com.alibaba.polardbx.qatest.AsyncDDLBaseNewDBTestCase;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class AlterTableValidateTaskTest extends AsyncDDLBaseNewDBTestCase {
@@ -98,6 +99,7 @@ public class AlterTableValidateTaskTest extends AsyncDDLBaseNewDBTestCase {
             "Unknown column");
     }
 
+    @Ignore("multi-phase DDL is force-disabled")
     @Test
     public void testAlterTableDropUnknownColumn() {
         dropTableIfExists(tddlConnection, "mengshi1");

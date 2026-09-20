@@ -106,6 +106,10 @@ public final class KillHandler {
             if (nodeIndex >= 0) {
                 node = GmsNodeManager.getInstance().getAllNodes().get(nodeIndex);
             }
+            logger.info(
+                String.format("Performing kill action on node index %d. The connId is %d.",
+                    nodeIndex,
+                    connId));
 
             if (node != null) {
                 List<Map<String, Object>> result = SyncManagerHelper.sync(action, c.getSchema(),
@@ -118,7 +122,7 @@ public final class KillHandler {
 
         if (count == 0) {
             List<List<Map<String, Object>>> results =
-                SyncManagerHelper.sync(action, c.getSchema(), SyncScope.CURRENT_ONLY);
+                SyncManagerHelper.syncIgnoreExceptions(action, c.getSchema(), SyncScope.CURRENT_ONLY);
 
             for (List<Map<String, Object>> result : results) {
                 if (result != null) {

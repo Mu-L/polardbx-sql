@@ -38,6 +38,7 @@ public class Throttle {
     private long minRate;
     private long maxRate;
     private double rate;
+    private long batchSize;
     private Queue<FeedbackStats> statsQueue;
     ReentrantLock lock = new ReentrantLock();
     private volatile Long backFillId;
@@ -93,11 +94,12 @@ public class Throttle {
     private int degrowthFactor = 0;
     private int cyclePeriod = 3;
 
-    public Throttle(long minRate, long maxRate, String schema) {
+    public Throttle(long minRate, long maxRate, String schema, Long batchSize) {
         synchronized (THROTTLE_INSTANCES) {
             THROTTLE_INSTANCES.add(this);
             this.minRate = minRate;
             this.maxRate = maxRate;
+            this.batchSize = batchSize;
             reset();
             this.statsQueue = new ArrayDeque<>();
             this.timerTaskExecutor
@@ -159,11 +161,24 @@ public class Throttle {
                                         .log(2));
                                 growthFactor = 0;
                             } else if (actualRateLastCycle <= rate * 0.7) {
-                                degrowthFactor++;
-                                rate =
-                                    rate - rate * 0.1 * (Math.log(degrowthFactor) / Math
-                                        .log(2));
-                                growthFactor = 0;
+                                // Protection: Do not reduce rate if actualRate is too low (possibly due to sampling issue)
+                                // Only reduce rate if actualRate is between minRate and rate*0.7, indicating genuine slowness
+                                if (actualRateLastCycle > minRate * 0.5) {
+                                    degrowthFactor++;
+                                    rate =
+                                        rate - rate * 0.1 * (Math.log(degrowthFactor) / Math
+                                            .log(2));
+                                    growthFactor = 0;
+                                } else {
+                                    // actualRate is extremely low or zero, likely a sampling/checkpoint issue
+                                    // Reset degrowth factor to prevent continuous rate reduction
+                                    degrowthFactor = 0;
+                                    SQLRecorderLogger.ddlLogger.warn(
+                                        "Throttle: actualRate (" + (long) actualRateLastCycle
+                                            + " rows/s) is too low, skipping rate reduction to prevent incorrect throttling. "
+                                            + "Current rate: " + (long) rate + " rows/s, minRate: " + minRate
+                                            + " rows/s");
+                                }
                             } else {
                                 growthFactor = 0;
                                 degrowthFactor = 0;
@@ -216,6 +231,10 @@ public class Throttle {
         return this.actualRateLastCycle;
     }
 
+    public long getTotalRows() {
+        return totalRows;
+    }
+
     public void resetMaxRate(long maxRate) {
         this.maxRate = maxRate;
     }
@@ -233,7 +252,11 @@ public class Throttle {
         }
 
         baseTimeCost = Long.MAX_VALUE;
-        rate = Math.min(Math.max(minRate * 3, rate * 0.8), maxRate);
+        // Improved reset logic: ensure rate doesn't fall below a reasonable threshold
+        // Use max of (minRate * 3) or (rate * 0.8) or (maxRate * 0.3), whichever is higher
+        // This prevents rate from being too conservative after reset
+        double resetRate = Math.max(minRate * 3, Math.max(rate * 0.8, batchSize * 2));
+        rate = Math.min(resetRate, maxRate);
         growthFactor = 0;
         degrowthFactor = 0;
         state = State.INIT;

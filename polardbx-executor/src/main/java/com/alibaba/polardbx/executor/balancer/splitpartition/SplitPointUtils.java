@@ -116,25 +116,6 @@ public class SplitPointUtils {
         return result;
     }
 
-    /**
-     * Query a physical partition of a table, the sql should use physical table name
-     */
-    public static List<SearchDatumInfo> queryTablePartition(PartitionStat partition, String sql) {
-        String schema = partition.getSchema();
-        String physicalDatabase = partition.getPhysicalDatabase();
-        List<DataType> columnTypes = partition.getPartitionBy().getPartitionColumnTypeList();
-
-        return StatsUtils.queryGroupTyped(schema, physicalDatabase, columnTypes, sql);
-    }
-
-    public static boolean supportSampling(PartitionStat partition) {
-        String schema = partition.getSchema();
-        String physicalDb = partition.getPhysicalDatabase();
-        List<List<Object>> res = StatsUtils.queryGroupByPhyDb(schema, physicalDb, SQL_CHECK_FEATURE_SUPPORTED);
-        return res.stream().anyMatch(row -> row.size() >= 2 && "ON".equals(row.get(1)));
-
-    }
-
     public static boolean supportStatistics(PartitionStat partition) {
         return DdlHelper.getInstConfigAsBoolean(SQLRecorderLogger.ddlEngineLogger, ENABLE_AUTO_SPLIT_PARTITION, true);
     }

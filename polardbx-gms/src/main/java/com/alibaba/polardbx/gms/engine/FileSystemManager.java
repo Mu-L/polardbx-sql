@@ -33,6 +33,8 @@ import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
 import com.alibaba.polardbx.gms.topology.ServerInstIdManager;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.gms.util.PasswdUtil;
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONObject;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
@@ -148,19 +150,24 @@ public class FileSystemManager {
                 if (fileSystemGroup == null) {
                     continue;
                 }
-                FileMergeCachingFileSystem masterFs = (FileMergeCachingFileSystem) fileSystemGroup.getMaster();
-                reloadRateLimiter(readRate, writeRate, masterFs);
+                reloadRateLimiter(readRate, writeRate, fileSystemGroup.getMaster());
                 for (FileSystem fs : fileSystemGroup.getSlaves()) {
-                    FileMergeCachingFileSystem slaveFs = (FileMergeCachingFileSystem) fs;
-                    reloadRateLimiter(readRate, writeRate, slaveFs);
+                    reloadRateLimiter(readRate, writeRate, fs);
                 }
             }
         }
     }
 
-    private static void reloadRateLimiter(Long readRate, Long writeRate, FileMergeCachingFileSystem cachingFileSystem) {
-        if (cachingFileSystem.getDataTier() instanceof RateLimitable) {
-            FileSystemRateLimiter rateLimiter = ((RateLimitable) cachingFileSystem.getDataTier()).getRateLimiter();
+    private static void reloadRateLimiter(Long readRate, Long writeRate, FileSystem fileSystem) {
+        if (fileSystem instanceof FileMergeCachingFileSystem) {
+            FileSystem dataTier = ((FileMergeCachingFileSystem) fileSystem).getDataTier();
+            if (dataTier instanceof RateLimitable) {
+                FileSystemRateLimiter rateLimiter = ((RateLimitable) dataTier).getRateLimiter();
+                rateLimiter.setReadRate(readRate);
+                rateLimiter.setWriteRate(writeRate);
+            }
+        } else if (fileSystem instanceof RateLimitable) {
+            FileSystemRateLimiter rateLimiter = ((RateLimitable) fileSystem).getRateLimiter();
             rateLimiter.setReadRate(readRate);
             rateLimiter.setWriteRate(writeRate);
         }
@@ -243,6 +250,7 @@ public class FileSystemManager {
                 PasswdUtil.existsAkSkInEnv() ? PasswdUtil.decryptByKey(System.getenv(PasswdUtil.OSS_ACCESS_KEY_SECRET),
                     System.getenv(PasswdUtil.CIPHER_KEY)) :
                     PasswdUtil.decrypt(record.accessKeySecret);
+            boolean isPrivateCloud = parsePrivateCloudFromConf(record.fileSystemConf);
             FileSystem ossFileSystem =
                 OSSInstanceInitializer.newBuilder()
                     .accessKeyIdValue(accessKeyId)
@@ -250,6 +258,7 @@ public class FileSystemManager {
                     .bucketName(record.fileUri)
                     .cachePolicy(CachePolicy.MAP.get(record.cachePolicy))
                     .endpointValue(endpoints.get(endpointOrdinal))
+                    .privateCloud(isPrivateCloud)
                     .initialize();
             return fileSystemWithDefaultDirectory(record.fileUri, ossFileSystem);
         }
@@ -301,6 +310,22 @@ public class FileSystemManager {
         default:
             throw new TddlRuntimeException(ErrorCode.ERR_EXECUTE_ON_OSS, "bad engine = " + engine);
         }
+    }
+
+    private static boolean parsePrivateCloudFromConf(String fileSystemConf) {
+        if (fileSystemConf == null || fileSystemConf.isEmpty()) {
+            return false;
+        }
+        try {
+            JSONObject json = JSON.parseObject(fileSystemConf);
+            if (json != null && json.containsKey("is_private_cloud")) {
+                return json.getIntValue("is_private_cloud") == 1;
+            }
+        } catch (Exception e) {
+            throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, e,
+                "Failed to parse file_system_conf: " + fileSystemConf);
+        }
+        return false;
     }
 
     @NotNull

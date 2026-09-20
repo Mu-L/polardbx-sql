@@ -27,7 +27,7 @@ import org.apache.calcite.rel.core.Correlate;
  */
 public class PushCorrelateDirectRule extends PushCorrelateRule {
     public PushCorrelateDirectRule(RelOptRuleOperand operand, String description) {
-        super(operand, "PushCorrelateDirectRule:" + description);
+        super(operand, "PushCorrelateDirectRule:" + description, false);
     }
 
     public static final PushCorrelateDirectRule INSTANCE = new PushCorrelateDirectRule(

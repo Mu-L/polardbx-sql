@@ -35,16 +35,27 @@ public class SqlFireSchedule extends SqlDal {
     private static final SqlSpecialOperator OPERATOR = new SqlFireSchedule.SqlFireScheduleOperator();
 
     final long scheduleId;
+    protected boolean byScheduleName = false;
+    protected boolean byTableName = false;
+    protected SqlNode targetExpr;
 
     public SqlFireSchedule(SqlParserPos pos, long scheduleId) {
         super(pos);
-        this.scheduleId= scheduleId;
+        this.scheduleId = scheduleId;
     }
 
     @Override
     public void unparse(SqlWriter writer, int leftPrec, int rightPrec) {
         writer.keyword("FIRE SCHEDULE");
-        writer.keyword(String.valueOf(scheduleId));
+        if (isByScheduleName()) {
+            writer.keyword("BY NAME");
+            targetExpr.unparse(writer, leftPrec, rightPrec);
+        } else if (isByTableName()) {
+            writer.keyword("BY TABLE");
+            targetExpr.unparse(writer, leftPrec, rightPrec);
+        } else {
+            writer.keyword(String.valueOf(scheduleId));
+        }
     }
 
     @Override
@@ -64,6 +75,30 @@ public class SqlFireSchedule extends SqlDal {
     @Override
     public List<SqlNode> getOperandList() {
         return ImmutableList.of();
+    }
+
+    public boolean isByScheduleName() {
+        return byScheduleName;
+    }
+
+    public void setByScheduleName(boolean byScheduleName) {
+        this.byScheduleName = byScheduleName;
+    }
+
+    public boolean isByTableName() {
+        return byTableName;
+    }
+
+    public void setByTableName(boolean byTableName) {
+        this.byTableName = byTableName;
+    }
+
+    public SqlNode getTargetExpr() {
+        return targetExpr;
+    }
+
+    public void setTargetExpr(SqlNode targetExpr) {
+        this.targetExpr = targetExpr;
     }
 
     public static class SqlFireScheduleOperator extends SqlSpecialOperator {

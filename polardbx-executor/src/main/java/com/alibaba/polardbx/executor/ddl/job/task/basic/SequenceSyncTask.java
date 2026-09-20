@@ -50,7 +50,7 @@ public class SequenceSyncTask extends BaseSyncTask {
 
     @Override
     protected void executeImpl(ExecutionContext executionContext) {
-        SyncManagerHelper.sync(new SequenceSyncAction(schemaName, seqName), schemaName, SyncScope.CURRENT_ONLY);
+        SyncManagerHelper.syncThrowExceptions(new SequenceSyncAction(schemaName, seqName), schemaName, SyncScope.CURRENT_ONLY);
     }
 
     @Override

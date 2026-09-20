@@ -16,6 +16,7 @@
  */
 package org.apache.calcite.rel.rules;
 
+import com.google.common.base.Predicate;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptUtil;
@@ -27,8 +28,6 @@ import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.runtime.PredicateImpl;
 import org.apache.calcite.tools.RelBuilderFactory;
-
-import com.google.common.base.Predicate;
 
 import java.util.List;
 

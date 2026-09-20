@@ -41,6 +41,7 @@ public class TruncateTableWithGsiValidateTask extends DropPartitionTableWithGsiV
     protected void executeImpl(ExecutionContext executionContext) {
         GsiValidator.validateAllowTruncateOnTable(schemaName, primaryTable, executionContext);
         TableValidator.validateTableNotReferenceFk(schemaName, primaryTable, executionContext);
+        TableValidator.validateTruncateOnExternalizedTable(schemaName, primaryTable, executionContext);
 
         super.executeImpl(executionContext);
     }

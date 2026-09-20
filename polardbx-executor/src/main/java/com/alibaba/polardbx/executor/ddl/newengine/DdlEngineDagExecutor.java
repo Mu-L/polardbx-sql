@@ -17,13 +17,17 @@
 package com.alibaba.polardbx.executor.ddl.newengine;
 
 import com.alibaba.polardbx.common.async.AsyncCallableTask;
-import com.alibaba.polardbx.common.async.AsyncTask;
+import com.alibaba.polardbx.common.cdc.CdcDdlRecord;
+import com.alibaba.polardbx.common.cdc.CdcManagerHelper;
+import com.alibaba.polardbx.common.ddl.Attribute;
 import com.alibaba.polardbx.common.ddl.newengine.DdlConstants;
 import com.alibaba.polardbx.common.ddl.newengine.DdlState;
 import com.alibaba.polardbx.common.ddl.newengine.DdlTaskState;
 import com.alibaba.polardbx.common.eventlogger.EventLogger;
 import com.alibaba.polardbx.common.eventlogger.EventType;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.Parameters;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
@@ -33,8 +37,6 @@ import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.logger.MDC;
-import com.alibaba.polardbx.common.utils.thread.ExecutorUtil;
-import com.alibaba.polardbx.common.utils.thread.NamedThreadFactory;
 import com.alibaba.polardbx.common.utils.thread.ServerThreadPool;
 import com.alibaba.polardbx.common.utils.timezone.InternalTimeZone;
 import com.alibaba.polardbx.common.utils.timezone.TimeZoneUtils;
@@ -50,6 +52,7 @@ import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJob;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlEngineSchedulerManager;
 import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlJobManager;
+import com.alibaba.polardbx.executor.ddl.newengine.meta.TableMetaDumper;
 import com.alibaba.polardbx.executor.ddl.newengine.sync.DdlResponse;
 import com.alibaba.polardbx.executor.ddl.newengine.sync.DdlResponse.Response;
 import com.alibaba.polardbx.executor.ddl.newengine.sync.DdlResponseSyncAction;
@@ -57,17 +60,19 @@ import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
 import com.alibaba.polardbx.executor.ddl.newengine.utils.TaskHelper;
 import com.alibaba.polardbx.executor.ddl.sync.JobRequest;
 import com.alibaba.polardbx.executor.ddl.workqueue.FastCheckerThreadPool;
-import com.alibaba.polardbx.executor.ddl.newengine.utils.TaskHelper;
-import com.alibaba.polardbx.executor.sync.ddl.RemoteDdlTaskSyncAction;
+import com.alibaba.polardbx.executor.physicalbackfill.PhysicalBackfillUtils;
+import com.alibaba.polardbx.executor.sync.DestroyPhysicalBackfillDataSourcesSyncAction;
 import com.alibaba.polardbx.executor.sync.ddl.RemoteDdlTaskSyncAction;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
-import com.alibaba.polardbx.gms.config.impl.MetaDbInstConfigManager;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import com.alibaba.polardbx.gms.metadb.lease.LeaseRecord;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineRecord;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineTaskRecord;
 import com.alibaba.polardbx.gms.sync.GmsSyncManagerHelper;
 import com.alibaba.polardbx.gms.sync.SyncScope;
+import com.alibaba.polardbx.gms.topology.SystemDbHelper;
+import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.DdlEventLogJson;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -81,11 +86,11 @@ import com.google.common.collect.Lists;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -93,28 +98,25 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Future;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Semaphore;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.common.properties.ConnectionProperties.SKIP_DDL_RESPONSE;
-import static com.alibaba.polardbx.common.properties.ConnectionProperties.SKIP_DDL_RESPONSE;
-import static com.alibaba.polardbx.common.ddl.newengine.DdlConstants.DDL_LEADER_ELECTION_NAME;
-import static com.alibaba.polardbx.common.ddl.newengine.DdlConstants.DDL_LEADER_TTL_IN_MILLIS;
 import static com.alibaba.polardbx.common.utils.logger.MDC.MDC_KEY_JOB_ID;
 import static com.alibaba.polardbx.common.utils.logger.MDC.MDC_KEY_TASK_ID;
 import static com.alibaba.polardbx.executor.ddl.newengine.DdlEngineDagExecutorMap.DdlJobResult;
 import static com.alibaba.polardbx.executor.ddl.newengine.sync.DdlResponse.ResponseType;
-import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_DDL_INTERNAL_MAX_PARALLELISM;
+import static com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper.getPerfMode;
 import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_DDL_RESTORE_JOB_SUSPEND;
 import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_DDL_TASK_SUSPEND_WHEN_FAILED;
 import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_EACH_DDL_TASK_BACK_AND_FORTH;
 import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_EACH_DDL_TASK_EXECUTE_TWICE;
 import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_PAUSE_AFTER_DDL_TASK_EXECUTION;
+import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_RANDOM_SUSPEND;
 import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_ROLLBACK_AFTER_DDL_TASK_EXECUTION;
+import static com.alibaba.polardbx.gms.metadb.table.TableInfoManager.PhyInfoSchemaContext.isValidSqlId;
 
 /**
  * execute ddl tasks
@@ -125,6 +127,9 @@ import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_ROLL
  * *             \------> (PAUSED)
  * *             \------> ROLLBACK_RUNNING -> (ROLLBACK_COMPLETED)
  * *                             \----------> (ROLLBACK_PAUSED)
+ * <p>
+ * for complete DdlState automation machine, see https://yuque.antfin-inc.com/coronadb/design/hl7g8t#FkzX1
+ * <p>
  * DdlTasks can check ddlContext.isInterrupted() to know whether they should terminate
  *
  * @author guxu
@@ -183,13 +188,8 @@ public class DdlEngineDagExecutor {
         this.executor = executionContext.getExecutorService();
         this.futures = new ConcurrentLinkedQueue<>();
         this.taskScheduler = this.ddlJob.createTaskScheduler();
+        this.taskScheduler.setPerfMode(getPerfMode(this.executionContext));
         this.maxParallelism = this.ddlJob.getMaxParallelism();
-        FailPoint.injectFromHint(FP_DDL_INTERNAL_MAX_PARALLELISM, executionContext, (k, v) -> {
-            try {
-                maxParallelism = Integer.parseInt(v);
-            } catch (Throwable e) {
-            }
-        });
         this.semaphore = new Semaphore(maxParallelism);
     }
 
@@ -256,6 +256,9 @@ public class DdlEngineDagExecutor {
 
             // Handle the terminated states.
             switch (ddlContext.getState()) {
+            case TRANSITIONING:
+                onTransitioned();
+                break;
             case RUNNING:
             case ROLLBACK_PAUSED:
             case PAUSED:
@@ -304,6 +307,9 @@ public class DdlEngineDagExecutor {
 
             // Handle the terminated states.
             switch (ddlContext.getState()) {
+            case TRANSITIONING:
+                onTransitioned();
+                break;
             case RUNNING:
             case ROLLBACK_PAUSED:
             case PAUSED:
@@ -355,11 +361,13 @@ public class DdlEngineDagExecutor {
         while (true) {
             if (hasFailureOnState(DdlState.RUNNING)) {
                 if (waitForAllTasksToStop(50L, TimeUnit.MILLISECONDS)) {
-                    // Build a response for failure.
-                    Response response = buildResponse(ResponseType.ERROR, errorMessage);
-                    // Save the response as the DDL result for show.
-                    ddlJobManager.saveResult(ddlContext.getJobId(), response);
-
+                    // If the state is TRANSITIONING, do not return an error.
+                    if (ddlContext.getState() != DdlState.TRANSITIONING) {
+                        // Build a response for failure.
+                        Response response = buildResponse(ResponseType.ERROR, errorMessage);
+                        // Save the response as the DDL result for show.
+                        ddlJobManager.saveResult(ddlContext.getJobId(), response);
+                    }
                     LOGGER.info(String.format("JobId:[%s], all tasks stopped", ddlContext.getJobId()));
                     return;
                 } else {
@@ -367,7 +375,16 @@ public class DdlEngineDagExecutor {
                 }
             }
             if (executingTaskScheduler.isAllTaskDone()) {
-                updateDdlState(DdlState.RUNNING, DdlState.COMPLETED);
+                List<DdlEngineRecord> records = ddlJobManager.fetchRecords(Lists.newArrayList(ddlContext.getJobId()));
+                DdlEngineRecord record = records.get(0);
+                if (DdlState.valueOf(record.state) == DdlState.TRANSITIONING) {
+                    updateDdlState(DdlState.TRANSITIONING, DdlState.COMPLETED);
+                } else {
+                    updateDdlState(DdlState.RUNNING, DdlState.COMPLETED);
+                }
+                LOGGER.info(
+                    String.format("JobId:[%d] end all tasks with state: %s.",
+                        ddlContext.getJobId(), ddlContext.getState()));
                 return;
             }
             if (executingTaskScheduler.hasMoreExecutable()) {
@@ -509,7 +526,65 @@ public class DdlEngineDagExecutor {
         }
     }
 
+    private void onTransitioned() {
+        List<DdlEngineRecord> records = ddlJobManager.fetchRecords(Lists.newArrayList(ddlContext.getJobId()));
+        FailPoint.assertTrue(() -> CollectionUtils.isNotEmpty(records) && CollectionUtils.size(records) == 1);
+        DdlEngineRecord record = records.get(0);
+        LOGGER.info(
+            String.format("Starting execution of onTransitioned method. "
+                    + "Attempting to rollback or continue DDL. Job ID: %s",
+                ddlContext.getJobId()));
+
+        try {
+            if (!record.isSupportCancel()) {
+                ddlContext.setInterruptedAsFalse();
+                updateDdlState(DdlState.TRANSITIONING, DdlState.RUNNING);
+                LOGGER.info(String.format(
+                    "JobId:[%d] state transitioned from TRANSITIONING to RUNNING.",
+                    ddlContext.getJobId()));
+                Thread.sleep(Attribute.MEDIAN_JOB_IDLE_WAITING_TIME * 2);
+                onRunning();
+            } else {
+                updateDdlState(DdlState.TRANSITIONING, DdlState.ROLLBACK_RUNNING);
+                LOGGER.info(String.format(
+                    "JobId:[%d] state transitioned from TRANSITIONING to ROLLBACK_RUNNING.",
+                    ddlContext.getJobId()));
+                onRollingBack();
+            }
+        } catch (TddlNestableRuntimeException | InterruptedException e) {
+            updateDdlContextFromRecord();
+            onTerminated();
+            throw new TddlNestableRuntimeException(e);
+        }
+
+        switch (ddlContext.getState()) {
+        case TRANSITIONING:
+            onTransitioned();
+            break;
+        case RUNNING:
+        case ROLLBACK_PAUSED:
+        case PAUSED:
+            onTerminated();
+            break;
+        case ROLLBACK_COMPLETED:
+        case COMPLETED:
+            if (record.isSubJob()) {
+                onSubjobFinished();
+            } else {
+                onFinished();
+            }
+            break;
+        default:
+            break;
+        }
+
+        LOGGER.info(
+            String.format("Finished execution of onTransitioned method. Job ID: %s, DdlState is %s",
+                ddlContext.getJobId(), ddlContext.getState()));
+    }
+
     private void onTerminated() {
+        ddlContext.setErrorMessage(errorMessage);
         LOGGER.warn(String.format("execute DDL JOB error, JobId: [%s], final DDL State:[%s], task graph:\n%s\n",
             ddlContext.getJobId(), ddlContext.getState(), ddlJob.visualizeTasks()));
         LOGGER.info(String.format("Task Execution Sequence:\n%s", genTaskExecutionSequence()));
@@ -561,16 +636,44 @@ public class DdlEngineDagExecutor {
             response = buildResponse(ResponseType.SUCCESS, "SUCCESS");
             EventLogger.log(EventType.DDL_COMPLETED, DdlEventLogJson.toJson(ddlEventLogJson));
         }
+
+        Boolean dumpTableMeta =
+            executionContext.getParamManager().getBoolean(ConnectionParams.ASYNC_LOAD_GDN_DDL_DEBUG_DUMP_TABLE_META);
+
+        // try update gdn check point
+        if (ddlContext.getState() == DdlState.COMPLETED) {
+            Long sqlId = ddlContext.getSqlId();
+            if (isValidSqlId(sqlId)) {
+                try {
+                    MetaDbUtil.updateDdlLoadCheckPointWithCheck(sqlId);
+                } catch (SQLException e) {
+                    throw new TddlNestableRuntimeException(e);
+                }
+            }
+
+            if (dumpTableMeta) {
+                long jobId = getJobId();
+                long sourceJobId = 0L;
+                if (isValidSqlId(sqlId)) {
+                    CdcDdlRecord cdcDdlRecord = CdcManagerHelper.getInstance().queryDdlById(sqlId);
+                    sourceJobId = cdcDdlRecord.getDdlExtInfo().getRootJobId();
+                }
+                List<DdlEngineRecord> ddlEngineRecords = ddlJobManager.fetchRecords(Lists.newArrayList(jobId));
+                TableMetaDumper.dumpTableMetaWithJobRecord(ddlEngineRecords.get(0), sourceJobId);
+            }
+        }
+
         response.setTracer(executionContext.getTracer());
         response.setDdlStmt(executionContext.getDdlContext().getDdlStmt());
         response.setStartTime(beginTs.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
         response.setEndTime(DdlEngineShowResultsHandler.convertTimeMillisToDate(System.currentTimeMillis()));
-
         // Save the result in memory as the last result.
         saveLastResult(response);
 
         //clean fastchecker info
         FastCheckerThreadPool.getInstance().invalidateTaskInfo(ddlContext.getJobId());
+
+        destroyPhysicalBackfillDataSources(ddlJobManager, ddlContext.getJobId());
 
         // Clean the job up.
         try {
@@ -586,9 +689,38 @@ public class DdlEngineDagExecutor {
                 throw new TddlNestableRuntimeException(ex);
             }
         }
-
         // Respond to the worker.
         respond(response);
+    }
+
+    static void destroyPhysicalBackfillDataSources(DdlJobManager ddlJobManager, Long rootJobId) {
+        boolean containsPhysicalBackfillTask = true;
+        try {
+            // Physical backfill may run in a dynamic subjob, so inspect all persisted tasks under the root job.
+            containsPhysicalBackfillTask = ddlJobManager.existPhysicalBackfillTask(rootJobId);
+        } catch (Throwable t) {
+            DdlHelper.errorLogDual(LOGGER, ROOT_LOGGER,
+                "Failed to check physical backfill tasks for job " + rootJobId
+                    + ", broadcast data source cleanup as a fallback", t);
+        }
+
+        if (containsPhysicalBackfillTask) {
+            try {
+                GmsSyncManagerHelper.sync(new DestroyPhysicalBackfillDataSourcesSyncAction(rootJobId),
+                    SystemDbHelper.DEFAULT_DB_NAME, SyncScope.MASTER_ONLY, false);
+            } catch (Throwable t) {
+                DdlHelper.errorLogDual(LOGGER, ROOT_LOGGER,
+                    "Failed to destroy physical backfill data sources on all CNs for job " + rootJobId, t);
+            }
+        }
+
+        // Keep local cleanup as a fallback if cluster sync is unavailable or fails before local execution.
+        try {
+            PhysicalBackfillUtils.destroyDataSources(rootJobId);
+        } catch (Throwable t) {
+            DdlHelper.errorLogDual(LOGGER, ROOT_LOGGER,
+                "Failed to destroy physical backfill data sources on the local CN for job " + rootJobId, t);
+        }
     }
 
     private Response buildResponse(ResponseType type, String responseContent) {
@@ -666,6 +798,9 @@ public class DdlEngineDagExecutor {
 
                     // execute task
                     long startTs = System.currentTimeMillis();
+                    LOGGER.info(String.format(
+                        "start to execute the task which taskId is [%s], name is [%s]",
+                        task.getTaskId(), task.getName()));
                     boolean isSuccess = executeElseRollback ? executeTask(task) :
                         ddlContext.isRollbackToReady() ? rollbackTaskToReady(task) : rollbackTask(task);
                     FailPoint.injectFromHint(FP_EACH_DDL_TASK_EXECUTE_TWICE, executionContext, (k, v) -> {
@@ -683,7 +818,17 @@ public class DdlEngineDagExecutor {
                         // mark current task as done
                         scheduler.markAsDone(task);
                         statTaskDone(task);
+                        LOGGER.info(String.format(
+                            "Mark the task as success which taskId is [%s], name is [%s]",
+                            task.getTaskId(), task.getName()));
+                    } else if (ddlContext.getState() == DdlState.TRANSITIONING) {
+                        // mark current task as redo
+                        scheduler.markAsRedo(task);
+                        LOGGER.info(String.format(
+                            "Mark the task as redo which taskId is [%s], name is [%s]",
+                            task.getTaskId(), task.getName()));
                     } else {
+                        // mark current task as failed
                         ddlContext.setInterruptedAsTrue();
                         scheduler.markAsFail(task);
                         statTaskFail(task);
@@ -694,6 +839,7 @@ public class DdlEngineDagExecutor {
                 } catch (Throwable e) {
                     // may throw exception again in the catch clause of executeTask()/rollbackTask()
                     // typically while DdlState is inconsistent
+                    DdlHelper.errorLogDual(LOGGER, ROOT_LOGGER, e);
                     ddlContext.setInterruptedAsTrue();
                     scheduler.markAsFail(task);
                     statTaskFail(task);
@@ -756,6 +902,10 @@ public class DdlEngineDagExecutor {
                 recordTaskExecutionInfo(taskExecutionQueue, task, true, null);
             } catch (Exception e) {
                 synchronized (this) {
+                    LOGGER.info("Task execution failed, task ID: " + task.getTaskId() +
+                        "\nTask name: " + task.getName() +
+                        "\nException type: " + e.getClass().getName() +
+                        "\nException message: " + e.getMessage());
                     task.handleError(executionContext);
                     recordTaskExecutionInfo(taskExecutionQueue, task, true, e);
                     FailPoint.injectSuspend(FP_DDL_TASK_SUSPEND_WHEN_FAILED);
@@ -773,13 +923,32 @@ public class DdlEngineDagExecutor {
                         DdlHelper.errorLogDual(LOGGER, ROOT_LOGGER, "force pause current DDL");
                     }
                     switch (task.getExceptionAction()) {
+                    case TRY_WAIT_AND_RECOVERY_THEN_PAUSE:
                     case TRY_RECOVERY_THEN_PAUSE:
+                        Long initialWaitTime =
+                            executionContext.getParamManager().getLong(ConnectionParams.DDL_TASK_ERROR_RETRY_WAIT_TIME);
+                        Boolean wait =
+                            (task.getExceptionAction() == DdlExceptionAction.TRY_WAIT_AND_RECOVERY_THEN_PAUSE
+                                && initialWaitTime > 0L);
                         String errMsg = String.format(ERROR_MSG, e.getMessage());
                         DdlHelper.errorLogDual(LOGGER, ROOT_LOGGER, errMsg, e);
                         if (++recoveryRetryTimes <= DdlConstants.RECOVER_MAX_RETRY_TIMES) {
                             DdlHelper.errorLogDual(LOGGER, ROOT_LOGGER,
                                 String.format("fail to execute task:[%s], current recovery times:[%d/%d]. try again...",
                                     task.getName(), recoveryRetryTimes, DdlConstants.RECOVER_MAX_RETRY_TIMES));
+                            if (wait) {
+                                Long waitTime = initialWaitTime * recoveryRetryTimes;
+                                DdlHelper.errorLogDual(LOGGER, ROOT_LOGGER,
+                                    String.format(
+                                        "since this task [%s] exceptionAction is [%s], we will wait for [%s] seconds, and try again...",
+                                        task.getName(), DdlExceptionAction.TRY_WAIT_AND_RECOVERY_THEN_PAUSE.name(),
+                                        waitTime));
+                                try {
+                                    Thread.sleep(waitTime * 1000);
+                                } catch (InterruptedException ex) {
+                                    throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, "try wait ddl failed");
+                                }
+                            }
                             continue;
                         } else {
                             DdlHelper.errorLogDual(LOGGER, ROOT_LOGGER,
@@ -824,6 +993,46 @@ public class DdlEngineDagExecutor {
                             updateDdlState(DdlState.RUNNING, DdlState.ROLLBACK_RUNNING);
                             return false;
                         }
+                    case TRY_WAIT_AND_RECOVERY_THEN_ROLLBACK: {
+                        Long initialWaitTimeOfErrorRetry =
+                            executionContext.getParamManager().getLong(ConnectionParams.DDL_TASK_ERROR_RETRY_WAIT_TIME);
+                        Boolean needWaitOfCurrTime =
+                            (task.getExceptionAction() == DdlExceptionAction.TRY_WAIT_AND_RECOVERY_THEN_ROLLBACK
+                                && initialWaitTimeOfErrorRetry > 0L);
+                        String errMsgOfCurrTime = String.format(ERROR_MSG, e.getMessage());
+                        DdlHelper.errorLogDual(LOGGER, ROOT_LOGGER, errMsgOfCurrTime, e);
+                        if (++recoveryRetryTimes <= DdlConstants.RECOVER_MAX_RETRY_TIMES) {
+                            DdlHelper.errorLogDual(LOGGER, ROOT_LOGGER,
+                                String.format("fail to execute task:[%s], current recovery times:[%d/%d]. try again...",
+                                    task.getName(), recoveryRetryTimes, DdlConstants.RECOVER_MAX_RETRY_TIMES));
+                            if (needWaitOfCurrTime) {
+                                Long waitTime = initialWaitTimeOfErrorRetry * recoveryRetryTimes;
+                                DdlHelper.errorLogDual(LOGGER, ROOT_LOGGER,
+                                    String.format(
+                                        "since this task [%s] exceptionAction is [%s], we will wait for [%s] seconds, and try again...",
+                                        task.getName(), DdlExceptionAction.TRY_WAIT_AND_RECOVERY_THEN_ROLLBACK.name(),
+                                        waitTime));
+                                try {
+                                    Thread.sleep(waitTime * 1000);
+                                } catch (InterruptedException ex) {
+                                    throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, "try wait ddl failed");
+                                }
+                            }
+                            continue;
+                        } else {
+                            DdlHelper.errorLogDual(LOGGER, ROOT_LOGGER,
+                                String.format("fail to execute task:[%s], try rollback DDL JOB:[%s]", task.getName(),
+                                    ddlContext.getJobId()));
+                            errorMessage = errMsgOfCurrTime;
+                            errorTaskName = task.getName();
+                            if (!allowRollback()) {
+                                updateDdlState(DdlState.RUNNING, DdlState.PAUSED);
+                                return false;
+                            }
+                            updateDdlState(DdlState.RUNNING, DdlState.ROLLBACK_RUNNING);
+                            return false;
+                        }
+                    }
                     case PAUSE:
                     default:
                         errorMessage = String.format(ERROR_MSG, e.getMessage());
@@ -849,6 +1058,7 @@ public class DdlEngineDagExecutor {
                 });
             }
         }
+        FailPoint.injectRandomSuspendFromHint(executionContext);
         return DdlTaskState.success(task.getState());
     }
 
@@ -1198,7 +1408,7 @@ public class DdlEngineDagExecutor {
             context.setConnId((Long) connId);
         }
 
-        Object testMode = dataPassed.get(DdlConstants.TEST_MODE);
+        Object testMode = dataPassed.get(JobRequest.TEST_MODE);
         if (testMode != null) {
             context.setTestMode((Boolean) testMode);
         }
@@ -1226,6 +1436,7 @@ public class DdlEngineDagExecutor {
             context.setEnableDdlTrace(true);
             context.setTracer(new SQLTracer());
         }
+
     }
 
     private static void prepareTimezone(ExecutionContext context, DdlContext ddlContext) {
@@ -1275,6 +1486,14 @@ public class DdlEngineDagExecutor {
 
     public void interrupt() {
         ddlContext.setInterruptedAsTrue();
+    }
+
+    public void updateDdlContextFromRecord() {
+        List<DdlEngineRecord> records = ddlJobManager.fetchRecords(Lists.newArrayList(ddlContext.getJobId()));
+        DdlEngineRecord record = records.get(0);
+        ddlContext.unSafeSetDdlState(DdlState.valueOf(record.state));
+        LOGGER.info(String.format(
+            "JobId:[%d] is already in %s state.", ddlContext.getJobId(), ddlContext.getState()));
     }
 
     public void rollbackToReady() {
@@ -1403,5 +1622,4 @@ public class DdlEngineDagExecutor {
     public DdlJob getDdlJob() {
         return ddlJob;
     }
-
 }

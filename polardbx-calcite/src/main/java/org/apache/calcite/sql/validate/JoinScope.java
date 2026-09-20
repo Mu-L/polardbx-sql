@@ -20,6 +20,8 @@ import org.apache.calcite.sql.SqlJoin;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlWindow;
 
+import static java.util.Objects.requireNonNull;
+
 /**
  * The name-resolution context for expression inside a JOIN clause. The objects
  * visible are the joined table expressions, and those inherited from the parent
@@ -91,6 +93,14 @@ public class JoinScope extends ListScope {
    */
   public SqlValidatorScope getUsingScope() {
     return usingScope;
+  }
+
+  @Override public boolean isWithin(SqlValidatorScope scope2) {
+      if (this == scope2) {
+          return true;
+      }
+      // go from the JOIN to the enclosing SELECT
+      return requireNonNull(usingScope, "usingScope").isWithin(scope2);
   }
 }
 

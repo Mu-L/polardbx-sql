@@ -132,7 +132,7 @@ public class DdlEngineSkipRebalanceSubjobHandler extends DdlEngineCancelJobsHand
         }
 
         DdlHelper.waitToContinue(DdlConstants.MEDIAN_WAITING_TIME);
-        DdlHelper.interruptJobs(record.schemaName, Collections.singletonList(jobId));
+        DdlHelper.interruptJobs(record.schemaName, Collections.singletonList(jobId), true);
         DdlHelper.killActivePhyDDLs(record.schemaName, record.traceId);
         DdlEngineRequester.notifyLeader(record.schemaName, Collections.singletonList(jobId));
 

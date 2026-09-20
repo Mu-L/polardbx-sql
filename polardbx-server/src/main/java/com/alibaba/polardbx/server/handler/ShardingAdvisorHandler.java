@@ -41,10 +41,10 @@ public class ShardingAdvisorHandler {
         try {
             Preconditions.checkArgument(c.getSchema() != null);
             // fetch plan caches
-            List<List<Map<String, Object>>> results = SyncManagerHelper.sync(
+            List<List<Map<String, Object>>> results = SyncManagerHelper.syncThrowExceptions(
                 new FetchPlanCacheSyncAction(c.getSchema(), false, true),
                 c.getSchema(),
-                SyncScope.ALL);
+                SyncScope.CURRENT_ONLY);
             Map<String, ShardingAdvisor.AdvisorCache> caches = new TreeMap<>(String::compareToIgnoreCase);
             for (List<Map<String, Object>> nodeRows : results) {
                 if (nodeRows == null) {

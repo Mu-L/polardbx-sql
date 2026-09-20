@@ -1,0 +1,212 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+
+
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+set ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING=true;
+set ENABLE_REPLICAS_RANDOM_READ= false;
+  
+use polardbx;
+drop database if exists repjoin12_db;
+## USE_DN_LIST_MSG
+create database if not exists `repjoin12_db` CHARSET = `utf8mb4` COLLATE = `utf8mb4_general_ci` MODE = 'auto'
+LOCALITY = 'dble_config={"group_config":{
+  "repjoin12_db_g0":["$dn1","repjoin12_db_g0"],
+  "repjoin12_db_g1":["$dn2","repjoin12_db_g1"],
+  "repjoin12_db_g2":["$dn1","repjoin12_db_g2"],
+  "repjoin12_db_g3":["$dn2","repjoin12_db_g3"],
+  "repjoin12_db_g4":["$dn1","repjoin12_db_g4"],
+  "repjoin12_db_g5":["$dn2","repjoin12_db_g5"]
+}}';
+use repjoin12_db;
+  
+
+DROP TABLE IF EXISTS `rep_tbl1`;
+CREATE TABLE IF NOT EXISTS `rep_tbl1` (
+  `id` bigint(20) NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin12_db_g0,repjoin12_db_g1,repjoin12_db_g2'
+;
+  
+DROP TABLE IF EXISTS `rep_tbl2`;
+CREATE TABLE IF NOT EXISTS  `rep_tbl2` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin12_db_g0,repjoin12_db_g1,repjoin12_db_g2'
+;
+  
+DROP TABLE IF EXISTS `rep_tbl3`;
+CREATE TABLE IF NOT EXISTS `rep_tbl3` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin12_db_g1,repjoin12_db_g2'
+;
+  
+DROP TABLE IF EXISTS `rep_tbl4`;
+CREATE TABLE IF NOT EXISTS `rep_tbl4` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin12_db_g2,repjoin12_db_g3'
+;
+  
+DROP TABLE IF EXISTS `rep_tbl5`;
+CREATE TABLE IF NOT EXISTS `rep_tbl5` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+REPLICAS
+LOCALITY='db_set=repjoin12_db_g3,repjoin12_db_g4'
+;
+  
+DROP TABLE IF EXISTS `part_tbl1`;
+CREATE TABLE IF NOT EXISTS `part_tbl1` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 3
+LOCALITY='db_pools=repjoin12_db_g0,repjoin12_db_g1,repjoin12_db_g2'
+;
+  
+DROP TABLE IF EXISTS `part_tbl2`;
+CREATE TABLE IF NOT EXISTS `part_tbl2` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 3
+LOCALITY='db_pools=repjoin12_db_g0,repjoin12_db_g1,repjoin12_db_g2'
+;
+  
+DROP TABLE IF EXISTS `part_tbl3`;
+CREATE TABLE IF NOT EXISTS `part_tbl3` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 2
+LOCALITY='db_pools=repjoin12_db_g0,repjoin12_db_g1'
+;
+
+DROP TABLE IF EXISTS `part_tbl4`;
+CREATE TABLE IF NOT EXISTS `part_tbl4` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 2
+LOCALITY='db_pools=repjoin12_db_g3,repjoin12_db_g4'
+;
+  
+DROP TABLE IF EXISTS `part_tbl5`;
+CREATE TABLE IF NOT EXISTS `part_tbl5` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 1
+LOCALITY='db_pools=repjoin12_db_g2'
+;
+  
+DROP TABLE IF EXISTS `part_tbl6`;
+CREATE TABLE IF NOT EXISTS `part_tbl6` (
+`id` bigint(20) NOT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(id)
+PARTITIONS 1
+LOCALITY='db_pools=repjoin12_db_g5'
+;
+
+  
+insert into rep_tbl1 values (1),(2),(3),(4),(5);
+insert into rep_tbl2 values (1),(2),(3),(4),(5);
+insert into rep_tbl3 values (1),(2),(3),(4),(5);
+insert into rep_tbl4 values (1),(2),(3),(4),(5);
+insert into rep_tbl5 values (1),(2),(3),(4),(5);
+  
+insert into part_tbl1 values (1),(2),(3),(4),(5);
+insert into part_tbl2 values (1),(2),(3),(4),(5);
+insert into part_tbl3 values (1),(2),(3),(4),(5);
+insert into part_tbl4 values (1),(2),(3),(4),(5);
+insert into part_tbl5 values (1),(2),(3),(4),(5);
+insert into part_tbl6 values (1),(2),(3),(4),(5);
+
+  ## join pushdown
+explain select t1.id from rep_tbl1 t1 join part_tbl1 t2 on t1.id = t2.id order by t1.id;
+select t1.id from rep_tbl1 t1 join rep_tbl2 t2 on t1.id = t2.id order by t1.id;
+explain select t1.id from rep_tbl1 t1 join part_tbl3 t2 on t1.id = t2.id order by t1.id;
+select t1.id from rep_tbl1 t1 join rep_tbl2 t2 on t1.id = t2.id order by t1.id;
+explain select t1.id from rep_tbl1 t1 join part_tbl3 t2 on t1.id = t2.id order by t1.id;
+select t1.id from rep_tbl1 t1 join part_tbl3 t2 on t1.id = t2.id order by t1.id;
+  ## outer-join/cross-join pushdown with single_group sharding
+explain select t1.id,t2.id from rep_tbl1 t1 left join part_tbl3 t2 on t1.id = t2.id and t2.id=1 order by t1.id;
+select t1.id,t2.id from rep_tbl1 t1 left join part_tbl3 t2 on t1.id = t2.id and t2.id=1 order by t1.id;  
+explain select t1.id,t2.id from part_tbl3 t2 right join rep_tbl1 t1 on t1.id = t2.id and t2.id=1 order by t1.id;
+select t1.id,t2.id from part_tbl3 t2 right join rep_tbl1 t1 on t1.id = t2.id and t2.id=1 order by t1.id;
+explain select t1.id,t2.id from rep_tbl1 t1 left join part_tbl3 t2 on t1.id = t2.id where t2.id=1 order by t1.id;
+select t1.id,t2.id from rep_tbl1 t1 left join part_tbl3 t2 on t1.id = t2.id where t2.id=1 order by t1.id;  
+explain select t1.id,t2.id from part_tbl3 t2 right join rep_tbl1 t1 on t1.id = t2.id where t2.id=1 order by t1.id;
+select t1.id,t2.id from part_tbl3 t2 right join rep_tbl1 t1 on t1.id = t2.id where t2.id=1 order by t1.id;
+explain select t1.id,t2.id from rep_tbl1 t1 right join part_tbl3 t2 on t1.id = t2.id and t2.id=1  order by t2.id;
+select t1.id,t2.id from rep_tbl1 t1 right join part_tbl3 t2 on t1.id = t2.id and t2.id=1 order by t2.id;  
+explain select t1.id,t2.id from part_tbl3 t2 left join rep_tbl1 t1 on t1.id = t2.id and t2.id=1 order by t2.id;
+select t1.id,t2.id from part_tbl3 t2 left join rep_tbl1 t1 on t1.id = t2.id and t2.id=1 order by t2.id;
+explain select t1.id,t2.id from rep_tbl1 t1 right join part_tbl3 t2 on t1.id = t2.id where t2.id=1  order by t2.id;
+select t1.id,t2.id from rep_tbl1 t1 right join part_tbl3 t2 on t1.id = t2.id where t2.id=1 order by t2.id;  
+explain select t1.id,t2.id from part_tbl3 t2 left join rep_tbl1 t1 on t1.id = t2.id where t2.id=1  order by t2.id;
+select t1.id,t2.id from part_tbl3 t2 left join rep_tbl1 t1 on t1.id = t2.id where t2.id=1  order by t2.id;
+  
+  ## outer-join/cross-join non-pushdown without sharding
+explain select t1.id from rep_tbl1 t1 left join part_tbl3 t2 on t1.id = t2.id order by t1.id;
+select t1.id from rep_tbl3 t1 left join part_tbl3 t2 on t1.id = t2.id order by t1.id;
+explain select t1.id from rep_tbl3 t1 right join part_tbl3 t2 on t1.id = t2.id order by t1.id;
+select t1.id from rep_tbl3 t1 right join part_tbl3 t2 on t1.id = t2.id order by t1.id;
+explain select t1.id from rep_tbl3 t1 cross join part_tbl3 t2 on t1.id = t2.id order by t1.id;
+select t1.id from rep_tbl3 t1 cross join part_tbl3 t2 on t1.id = t2.id order by t1.id;
+
+  ## join non-pushdown because of un-full-cover group key
+explain select t1.id from rep_tbl3 t1 join part_tbl2 t2 on t1.id = t2.id order by t1.id;
+select t1.id from rep_tbl3 t1 join part_tbl2 t2 on t1.id = t2.id order by t1.id;
+
+  
+  ## filterSubquery pushdown 
+explain select t1.id from part_tbl3 t1 where t1.id in (select t2.id from rep_tbl1 t2) order by t1.id;
+select t1.id from part_tbl3 t1 where t1.id in (select t2.id from rep_tbl1 t2) order by t1.id;
+explain select t1.id from part_tbl3 t1 where exists (select t2.id from rep_tbl1 t2 where t1.id=t2.id) order by t1.id;
+select t1.id from part_tbl3 t1 where exists (select t2.id from rep_tbl1 t2 where t1.id=t2.id) order by t1.id;
+  ## filterSubquery non-pushdown because of no correlated join column
+explain select t1.id from part_tbl3 t1 where exists (select t2.id from rep_tbl1 t2 limit 1) order by t1.id;
+select t1.id from part_tbl3 t1 where exists (select t2.id from rep_tbl1 t2 limit 1) order by t1.id;
+  ## filterSubquery non-pushdown because of un-full-cover group key
+explain select t1.id from part_tbl2 t1 where t1.id in (select t2.id from rep_tbl3 t2) order by t1.id;
+select t1.id from part_tbl2 t1 where t1.id in (select t2.id from rep_tbl3 t2) order by t1.id;
+
+
+  ## columnSubquery pushdown 
+explain select t1.id,(select t2.id from rep_tbl1 t2 where t2.id=t1.id) as t2_id from part_tbl3 t1 order by t1.id; 
+select t1.id,(select t2.id from rep_tbl1 t2 where t2.id=t1.id) as t2_id from part_tbl3 t1 order by t1.id;
+  ## columnSubquery non-pushdown because of no correlated join column
+explain select t1.id,(select t2.id from rep_tbl1 t2 limit 1) as t2_id from part_tbl3 t1 order by t1.id;
+select t1.id,(select t2.id from rep_tbl1 t2 limit 1) as t2_id from part_tbl3 t1 order by t1.id;
+  ## columnSubquery non-pushdown because of un-full-cover group key
+explain select t1.id,(select t2.id from rep_tbl3 t2 where t2.id=t1.id) as t2_id from part_tbl2 t1 order by t1.id;
+select t1.id,(select t2.id from rep_tbl3 t2 where t2.id=t1.id) as t2_id from part_tbl2 t1 order by t1.id;
+
+  ## union non-pushdown
+explain select id from part_tbl5 union all (select t2.id from rep_tbl1 t2) order by id;
+select id from part_tbl5 union all (select t2.id from rep_tbl1 t2) order by id;
+
+use polardbx;
+drop database if exists repjoin12_db;

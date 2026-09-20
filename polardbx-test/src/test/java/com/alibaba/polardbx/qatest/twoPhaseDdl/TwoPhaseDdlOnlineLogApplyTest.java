@@ -61,6 +61,7 @@ public class TwoPhaseDdlOnlineLogApplyTest extends DDLBaseNewDBTestCase {
 
     @Before
     public void init() {
+        this.schemaPrefix = "online_log_apply_";
         this.tableName = schemaPrefix + randomTableName("two_phase", 4);
     }
 

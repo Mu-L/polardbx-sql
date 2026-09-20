@@ -25,6 +25,10 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalAlterTableGroupDropPartition;
 import org.apache.calcite.sql.SqlAlterTableGroup;
+import org.apache.calcite.sql.SqlIdentifier;
+
+import java.util.Map;
+import java.util.Set;
 
 public class LogicalAlterTableGroupDropPartitionHandler extends LogicalCommonDdlHandler {
 
@@ -33,9 +37,18 @@ public class LogicalAlterTableGroupDropPartitionHandler extends LogicalCommonDdl
     }
 
     @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan, ExecutionContext executionContext,
+                                      Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        SqlAlterTableGroup sqlNode = (SqlAlterTableGroup) logicalDdlPlan.getNativeSqlNode();
+        String tableGroupName = ((SqlIdentifier) sqlNode.getTableGroupName()).getLastName();
+        exclusiveResources.add(concatWithDot(logicalDdlPlan.getSchemaName(), tableGroupName));
+    }
+
+    @Override
     protected DdlJob buildDdlJob(BaseDdlOperation logicalDdlPlan, ExecutionContext executionContext) {
         executionContext.getParamManager().getProps()
-                .put(ConnectionProperties.ENABLE_PREEMPTIVE_MDL, Boolean.FALSE.toString());
+            .put(ConnectionProperties.ENABLE_PREEMPTIVE_MDL, Boolean.FALSE.toString());
         LogicalAlterTableGroupDropPartition logicalAlterTableGroupDropPartition =
             (LogicalAlterTableGroupDropPartition) logicalDdlPlan;
         logicalAlterTableGroupDropPartition.preparedData(executionContext);

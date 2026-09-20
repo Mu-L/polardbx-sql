@@ -19,7 +19,8 @@ import {
     addToHistory,
     formatCount,
     formatDataSizeBytes,
-    precisionRound
+    precisionRound,
+    getFormattedUrl
 } from "../utils";
 
 const SPARKLINE_PROPERTIES = {
@@ -64,7 +65,7 @@ export class ClusterHUD extends React.Component {
 
     refreshLoop() {
         clearTimeout(this.timeoutId); // to stop multiple series of refreshLoop from going on simultaneously
-        $.get('/v1/cluster', function (clusterState) {
+        $.get(getFormattedUrl('/v1/cluster'), function (clusterState) {
             this.setState({
                 // instantaneous stats
                 totalQueries: addToHistory(clusterState.totalQueries, this.state.totalQueries),

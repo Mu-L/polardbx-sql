@@ -49,6 +49,7 @@ public class AlterDatabaseLocalityTask extends BaseDdlTask {
     }
 
     public void executeImpl(Connection metaDbConnection, ExecutionContext executionContext) {
+        updateSupportedCommands(true, false, metaDbConnection);
         long dbId = DbInfoManager.getInstance().getDbInfo(schemaName).id;
         LocalityManager.getInstance().setLocalityOfDb(dbId, targetLocality);
     }

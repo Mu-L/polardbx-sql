@@ -16,11 +16,19 @@
 
 package com.alibaba.polardbx.executor.operator;
 
+import com.alibaba.polardbx.common.memory.ConditionalMemoryType;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.alibaba.polardbx.executor.chunk.Chunk;
+import org.junit.Assert;
 
+import java.text.MessageFormat;
 import java.util.List;
 
+import static com.alibaba.polardbx.executor.operator.BaseExecTest.checkExecutorMemory;
 import static io.airlift.concurrent.MoreFutures.getFutureValue;
 import static java.lang.Integer.min;
 
@@ -48,7 +56,7 @@ public class ExecTestDriver {
         }
     }
 
-    abstract static class ConsumeTask {
+    public abstract static class ConsumeTask {
         protected final ConsumerExecutor exec;
         protected final List<Chunk> inputChunks;
 
@@ -57,10 +65,10 @@ public class ExecTestDriver {
             this.inputChunks = inputChunks;
         }
 
-        abstract void exec();
+        public abstract void exec();
     }
 
-    abstract static class ProduceTask {
+    public abstract static class ProduceTask {
         protected final Executor exec;
         protected ImmutableList.Builder<Chunk> resultChunks = ImmutableList.builder();
 
@@ -68,14 +76,14 @@ public class ExecTestDriver {
             this.exec = exec;
         }
 
-        List<Chunk> result() {
+        public List<Chunk> result() {
             return resultChunks.build();
         }
 
-        abstract void exec();
+        public abstract void exec();
     }
 
-    static class Builder {
+    public static class Builder {
         protected ImmutableList.Builder<ConsumeTask> consumeTasks = ImmutableList.builder();
         protected ImmutableList.Builder<ProduceTask> produceTasks = ImmutableList.builder();
 
@@ -94,31 +102,62 @@ public class ExecTestDriver {
         }
     }
 
-    static class SerialConsumeTask extends ConsumeTask {
+    public static class SerialConsumeTask extends ConsumeTask {
 
         public SerialConsumeTask(ConsumerExecutor exec, List<Chunk> inputChunks) {
             super(exec, inputChunks);
         }
 
         @Override
-        void exec() {
+        public void exec() {
             exec.openConsume();
             for (Chunk c : inputChunks) {
                 exec.consumeChunk(c);
                 getFutureValue(exec.consumeIsBlocked());
             }
+            if (checkExecutorMemory && !(exec instanceof HybridHashJoinExec)) {
+                MemoryCountable.checkDeviation(exec, 0d, true);
+
+//                OperatorMemoryOwnerId operatorMemoryOwnerId = exec.getConsumerMemoryOwnerId();
+//                MemoryTrackerManager.adjustMemoryUsage(operatorMemoryOwnerId);
+//                long memoryUsage = exec.getMemoryUsage();
+//                long memoryWatermark = MemoryTrackerManager.memoryWatermark(operatorMemoryOwnerId);
+//                double deviation = (memoryUsage - memoryWatermark) / (memoryUsage * 1.0d);
+//                System.out.println(MessageFormat.format(
+//                    "memoryWatermark = {0}, memoryUsage = {1}, deviation = {2}",
+//                    memoryWatermark, memoryUsage, deviation
+//                ));
+//                Assert.assertTrue("watermark deviation = " + deviation, Math.abs(deviation) < 0.1d);
+            }
+
             exec.buildConsume();
+
+            if (checkExecutorMemory && !(exec instanceof HybridHashJoinExec)) {
+                MemoryCountable.checkDeviation(exec, 0d, true);
+
+//                OperatorMemoryOwnerId operatorMemoryOwnerId = exec.getConsumerMemoryOwnerId();
+//                MemoryTrackerManager.adjustMemoryUsage(operatorMemoryOwnerId);
+//                long memoryUsage = exec.getMemoryUsage();
+//                long memoryWatermark = MemoryTrackerManager.memoryWatermark(operatorMemoryOwnerId);
+//                double deviation = (memoryUsage - memoryWatermark) / (memoryUsage * 1.0d);
+//                System.out.println(MessageFormat.format(
+//                    "memoryWatermark = {0}, memoryUsage = {1}, deviation = {2}",
+//                    memoryWatermark, memoryUsage, deviation
+//                ));
+//                Assert.assertTrue("watermark deviation = " + deviation, Math.abs(deviation) < 0.1d);
+
+            }
         }
     }
 
-    static class SerialProduceTask extends ProduceTask {
+    public static class SerialProduceTask extends ProduceTask {
 
         public SerialProduceTask(Executor exec) {
             super(exec);
         }
 
         @Override
-        void exec() {
+        public void exec() {
             Executor exec = this.exec;
             exec.open();
             // TODO: remove ProducerExecutor
@@ -171,7 +210,7 @@ public class ExecTestDriver {
         }
 
         @Override
-        void exec() {
+        public void exec() {
             exec.openConsume();
             startAndJoinThreadsList(threads);
             exec.buildConsume();
@@ -204,7 +243,7 @@ public class ExecTestDriver {
         }
 
         @Override
-        void exec() {
+        public void exec() {
             //TODO: only use producerExecutor interface
             Executor exec = this.exec;
             exec.open();
@@ -216,7 +255,7 @@ public class ExecTestDriver {
     static class TaskFactory {
         static ConsumeTask NULL_CONSUME_TASK = new ConsumeTask(null, null) {
             @Override
-            void exec() {
+            public void exec() {
                 return;
             }
         };

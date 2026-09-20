@@ -44,7 +44,8 @@ public class InformationSchemaProcedureCacheHandler extends BaseVirtualViewSubCl
     @Override
     public Cursor handle(VirtualView virtualView, ExecutionContext executionContext, ArrayResultCursor cursor) {
 
-        List<List<Map<String, Object>>> results = SyncManagerHelper.sync(new FetchProcedureCacheSyncAction(),
+        List<List<Map<String, Object>>> results = SyncManagerHelper.syncIgnoreExceptions(
+            new FetchProcedureCacheSyncAction(),
             TddlConstants.INFORMATION_SCHEMA, SyncScope.ALL);
 
         for (List<Map<String, Object>> nodeRows : results) {

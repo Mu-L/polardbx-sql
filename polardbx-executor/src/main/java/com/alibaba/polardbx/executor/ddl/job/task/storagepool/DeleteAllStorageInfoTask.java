@@ -30,39 +30,31 @@ import com.alibaba.polardbx.optimizer.locality.StoragePoolManager;
 import lombok.Getter;
 
 import java.sql.Connection;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+import static com.alibaba.polardbx.optimizer.locality.StoragePoolManager.EMPTY_STORAGE_POOL;
+
 @Getter
 @TaskName(name = "DeleteAllStorageInfoTask")
-public class DeleteAllStorageInfoTask extends BaseDdlTask {
-
-    String instId;
+public class DeleteAllStorageInfoTask extends BaseStoragePoolInfoTask {
 
     @JSONCreator
     public DeleteAllStorageInfoTask(String instId, String schemaName) {
-        super(schemaName);
-        this.instId = instId;
+        super(schemaName, instId, new ArrayList<>(), "", "");
     }
 
     @Override
     public void duringTransaction(Connection metaDbConnection, ExecutionContext executionContext) {
-        StorageInfoAccessor storageInfoAccessor = new StorageInfoAccessor();
-        storageInfoAccessor.setConnection(metaDbConnection);
-        List<StorageInfoRecord> originalInfoRecords =
-            storageInfoAccessor.getStorageInfosByInstId(instId);
-        for (StorageInfoRecord record : originalInfoRecords) {
-            StorageInfoExtraFieldJSON extras =
-                Optional.ofNullable(record.extras).orElse(new StorageInfoExtraFieldJSON());
-            extras.setStoragePoolName("");
-            storageInfoAccessor.updateStoragePoolName(record.storageInstId, extras);
-//            if(record.storageInstId.equals(undeletableDnId)){
-//                storageInfoAccessor.updateStorageInfoDeletable(undeletableDnId, false);
-//            }
-        }
-        StoragePoolManager storagePoolManager = StoragePoolManager.getInstance();
-        storagePoolManager.truncateStoragePoolInfo();
+        updateSupportedCommands(true, false, metaDbConnection);
 
+        initBaseStoragePoolInfoTask(metaDbConnection);
+
+        // update all storage pool.
+        StoragePoolTaskUtils.updateStoragePoolName(storageInfoAccessor, storageInfoRecords, EMPTY_STORAGE_POOL);
+        // truncate storage pool
+        storagePoolManager.truncateStoragePoolInfo();
     }
 
     @Override
@@ -73,12 +65,12 @@ public class DeleteAllStorageInfoTask extends BaseDdlTask {
 
     @Override
     protected void onRollbackSuccess(ExecutionContext executionContext) {
-        SyncManagerHelper.sync(new AlterStoragePoolSyncAction("", ""), SyncScope.ALL);
+        SyncManagerHelper.syncThrowExceptions(new AlterStoragePoolSyncAction("", ""), SyncScope.ALL);
     }
 
     @Override
     protected void onExecutionSuccess(ExecutionContext executionContext) {
-        SyncManagerHelper.sync(new AlterStoragePoolSyncAction("", ""),
+        SyncManagerHelper.syncThrowExceptions(new AlterStoragePoolSyncAction("", ""),
             SyncScope.ALL);
     }
 

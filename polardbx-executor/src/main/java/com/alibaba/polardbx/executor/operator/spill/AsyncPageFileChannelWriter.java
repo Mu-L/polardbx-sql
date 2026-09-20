@@ -29,12 +29,13 @@
  */
 package com.alibaba.polardbx.executor.operator.spill;
 
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.PagesSerde;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.PagesSerdeUtil;
 import com.alibaba.polardbx.optimizer.spill.SpillMonitor;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.SettableFuture;
 import io.airlift.slice.OutputStreamSliceOutput;
 import io.airlift.slice.SliceOutput;
 
@@ -57,7 +58,7 @@ public class AsyncPageFileChannelWriter {
     private final Object lock = new Object();
 
     @GuardedBy("lock")
-    private SettableFuture<?> writeFuture = null;
+    private BlockingFuture<?> writeFuture = null;
     @GuardedBy("lock")
     private IOException iex;
     /**
@@ -170,7 +171,7 @@ public class AsyncPageFileChannelWriter {
     }
 
     private void notifyListener(IOException ioe) {
-        SettableFuture toSetFuture = null;
+        BlockingFuture<?> toSetFuture = null;
         synchronized (lock) {
             if (writeFuture != null) {
                 toSetFuture = writeFuture;
@@ -178,7 +179,7 @@ public class AsyncPageFileChannelWriter {
             }
         }
         if (toSetFuture != null) {
-            toSetFuture.set(ioe);
+            toSetFuture.complete(null);
         }
     }
 
@@ -232,7 +233,7 @@ public class AsyncPageFileChannelWriter {
         synchronized (lock) {
             checkIOException();
             checkState(writeFuture == null, "writeFuture already set");
-            writeFuture = SettableFuture.create();
+            writeFuture = BlockingFuture.create(BlockingReason.WAIT_FOR_SPILL_WRITE);
             returnFuture = writeFuture;
         }
         return returnFuture;

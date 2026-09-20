@@ -29,6 +29,7 @@
  */
 package com.alibaba.polardbx.executor.mpp.execution;
 
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -39,6 +40,8 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static com.alibaba.polardbx.executor.mpp.execution.TaskState.FAILED;
+import static com.alibaba.polardbx.executor.mpp.execution.TaskState.FINISHED;
 import static com.alibaba.polardbx.executor.mpp.execution.TaskState.TERMINAL_TASK_STATES;
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.base.Preconditions.checkArgument;
@@ -68,6 +71,32 @@ public class TaskStateMachine implements StateMachineBase<TaskState> {
             taskState.addStateChangeListener(newState -> {
                 log.debug(String.format("Task %s is %s", TaskStateMachine.this.taskId, newState));
             });
+        }
+
+        taskState.addStateChangeListener(new ReleaseMemoryListener());
+    }
+
+    private class ReleaseMemoryListener implements StateMachine.StateChangeListener<TaskState> {
+
+        @Override
+        public void stateChanged(TaskState newState) {
+            switch (newState) {
+            case FINISHED:
+            case ABORTED:
+            case CANCELED:
+            case FAILED: {
+                // release stage level memory.
+                int stageId = taskId.getStageId().getId();
+                String queryId = taskId.getQueryId();
+
+                MemoryTrackerManager.getGlobalMemoryTrackerManager()
+                    .releaseStageMemory(queryId, stageId, newState == FAILED);
+                break;
+            }
+
+            default:
+                return;
+            }
         }
     }
 

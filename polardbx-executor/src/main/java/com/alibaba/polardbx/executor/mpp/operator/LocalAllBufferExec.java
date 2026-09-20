@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.mpp.operator;
 
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.logger.Logger;
@@ -29,7 +31,6 @@ import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.spill.SpillMonitor;
 import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.SettableFuture;
 
 import java.util.Iterator;
 import java.util.List;
@@ -55,10 +56,10 @@ public class LocalAllBufferExec extends LocalBufferExec {
         ExecutionContext context,
         OutputBufferMemoryManager outputBufferMemoryManager, List<DataType> columnMetaList,
         SpillerFactory spillerFactory) {
-        super(outputBufferMemoryManager, columnMetaList, false);
+        super(outputBufferMemoryManager, columnMetaList, false, 0L);
         Preconditions.checkNotNull(spillerFactory, "The spillerFactory is null!");
         this.spillerFactory = spillerFactory;
-        this.notEmptyFuture = SettableFuture.create();
+        this.notEmptyFuture = BlockingFuture.create(BlockingReason.WAIT_FOR_PRODUCER);
         this.supportSpill = context.getParamManager().getBoolean(ConnectionParams.ENABLE_SPILL_OUTPUT);
         this.spillMonitor = context.getQuerySpillSpaceMonitor();
     }
@@ -91,7 +92,7 @@ public class LocalAllBufferExec extends LocalBufferExec {
                 }
                 buffer.clear();
             } finally {
-                this.notEmptyFuture.set(null);
+                this.notEmptyFuture.complete(null);
             }
         }
     }
@@ -131,7 +132,7 @@ public class LocalAllBufferExec extends LocalBufferExec {
             if (spiller != null) {
                 spill(true);
             } else {
-                this.notEmptyFuture.set(null);
+                this.notEmptyFuture.complete(null);
             }
         }
     }
@@ -153,7 +154,7 @@ public class LocalAllBufferExec extends LocalBufferExec {
                 if (build) {
                     //这里的读需要等写完成，目前这样操作没有问题，注意一下用法
                     iterator = spiller.getSpills().get(0);
-                    notEmptyFuture.set(null);
+                    notEmptyFuture.complete(null);
                 }
             }
         }, directExecutor());

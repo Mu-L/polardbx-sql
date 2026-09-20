@@ -1,0 +1,21 @@
+DROP DATABASE IF EXISTS d_single_part_ddl_omc;
+CREATE DATABASE d_single_part_ddl_omc MODE 'auto';
+USE d_single_part_ddl_omc;
+DROP TABLE IF EXISTS test_single_change_column1;
+CREATE TABLE test_single_change_column1 (
+	c1 int,
+	c2 double,
+	c3 varchar(10),
+	c4 varchar(40)
+);
+ALTER TABLE test_single_change_column1
+	ADD LOCAL INDEX i_c1c2 (c1, C2), algorithm = omc;
+ALTER TABLE test_single_change_column1
+	CHANGE COLUMN c1 C7 int AFTER C3, algorithm = omc;
+ALTER TABLE test_single_change_column1
+    MODIFY COLUMN C4 varchar(60), algorithm = omc;
+/*+TDDL:cmd_extra(SUPPORT_INSTANT_ADD_COLUMN=false)*/ALTER TABLE test_single_change_column1
+    ADD COLUMN C5 varchar(60) after C2;
+ALTER TABLE test_single_change_column1
+    RENAME INDEX i_C1c2 to i_c1c5, algorithm = omc;
+/*+TDDL:CMD_EXTRA(CHECK_LOGICAL_COLUMN_ORDER=true)*/CHECK TABLE test_single_change_column1;

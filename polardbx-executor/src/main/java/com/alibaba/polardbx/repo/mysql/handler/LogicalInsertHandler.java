@@ -57,8 +57,10 @@ import com.alibaba.polardbx.optimizer.core.rel.LogicalInsert.HandlerParams;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableInsertSharder;
 import com.alibaba.polardbx.optimizer.core.rel.ReplaceTableNameWithSomethingVisitor;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.writer.InsertWriter;
 import com.alibaba.polardbx.optimizer.core.rel.mpp.MppExchange;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadType;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.memory.MemoryControlByBlocked;
 import com.alibaba.polardbx.optimizer.memory.MemoryEstimator;
@@ -72,7 +74,6 @@ import com.alibaba.polardbx.optimizer.utils.PhyTableOperationUtil;
 import com.alibaba.polardbx.optimizer.utils.QueryConcurrencyPolicy;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.alibaba.polardbx.optimizer.utils.RexUtils;
-import com.alibaba.polardbx.optimizer.workload.WorkloadType;
 import com.alibaba.polardbx.repo.mysql.handler.execute.ExecuteJob;
 import com.alibaba.polardbx.repo.mysql.handler.execute.InsertSelectExecuteJob;
 import com.alibaba.polardbx.repo.mysql.handler.execute.ParallelExecutor;
@@ -137,6 +138,7 @@ public class LogicalInsertHandler extends HandlerCommon {
         HandlerParams handlerParams = new HandlerParams();
 
         LogicalInsert logicalInsert = (LogicalInsert) logicalPlan;
+
         checkInsertLimitation(logicalInsert, executionContext);
         if (!logicalInsert.isSourceSelect()) {
             RexUtils.calculateAndUpdateAllRexCallParams(logicalInsert, executionContext);
@@ -218,7 +220,7 @@ public class LogicalInsertHandler extends HandlerCommon {
         }
         final TddlRuleManager or = OptimizerContext.getContext(schemaName).getRuleManager();
         final String tableName = logicalInsert.getLogicalTableName();
-        final boolean isBroadcast = or.isBroadCast(tableName);
+        final boolean isBroadCastOrReplicas = or.isBroadCastOrReplicas(tableName);
 
         if (TStringUtil.isEmpty(schemaName)) {
             schemaName = DefaultSchema.getSchemaName();
@@ -241,19 +243,29 @@ public class LogicalInsertHandler extends HandlerCommon {
                 beforeInsertCheck(logicalInsert, checkPrimaryKey, checkForeignKey, executionContext);
             }
 
-            // Get plan for primary
+            // Keep primary routing, external-value materialization and writer-specific expansion in one Writer flow.
             final InsertWriter primaryWriter = logicalInsert.getPrimaryInsertWriter();
+            boolean needsExternalWrite = ExternalizedDmlRewriter.needsHandling(tableMeta)
+                || GeneralUtil.isNotEmpty(logicalInsert.getExternalizedUpsertPushdownBindings());
+            if (needsExternalWrite) {
+                executionContext.setDmlWriteContext(new ExternalizedDmlWriteContext(
+                    logicalInsert, tableMeta, Collections.emptyMap(), executionContext));
+            }
             List<RelNode> inputs = primaryWriter.getInput(executionContext);
-            final List<RelNode> primaryPhyPlan =
-                inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                    Collectors.toList());
 
-            final List<RelNode> allPhyPlan = new ArrayList<>(primaryPhyPlan);
-            final List<RelNode> replicatePhyPlan =
-                inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                    Collectors.toList());
+            final List<RelNode> stagingPlans = inputs.stream()
+                .filter(o -> ((BaseQueryOperation) o).isStagingRelNode()).collect(Collectors.toList());
+            final List<RelNode> primaryPhyPlan = inputs.stream()
+                .filter(o -> ((BaseQueryOperation) o).isPrimaryWriteRelNode()).collect(Collectors.toList());
+            final List<RelNode> replicatePhyPlan = inputs.stream()
+                .filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(Collectors.toList());
+            final List<RelNode> businessPlans = new ArrayList<>(primaryPhyPlan);
+            businessPlans.addAll(replicatePhyPlan);
+            ExecUtils.checkCrossGroupPushDown(executionContext, businessPlans);
 
-            allPhyPlan.addAll(replicatePhyPlan);
+            final List<RelNode> allPhyPlan = new ArrayList<>(inputs.size());
+            allPhyPlan.addAll(stagingPlans);
+            allPhyPlan.addAll(businessPlans);
 
             // Get plan for gsi
             final AtomicInteger writableGsiCount = new AtomicInteger(0);
@@ -266,29 +278,17 @@ public class LogicalInsertHandler extends HandlerCommon {
                     allPhyPlan.addAll(w);
                 });
 
-            // Test Code for test shardValues of partition table
-            /*
-            try {
-                String logTbName = logicalInsert.getLogicalTableName();
-                TableMeta meta = OptimizerContext.getContext(schemaName).getSchemaManager().getTable(logTbName);
-                Map<String, Map<String, List<Integer>>> rs = BuildPlanUtils
-                    .shardValues((SqlInsert) logicalInsert.getSqlTemplate(), meta, executionContext, schemaName, null);
-                System.out.print(rs);
-            } catch (Throwable ex) {
-                ex.printStackTrace();
-            }
-            */
-
             // Enable gsi concurrent write
             executionContext.getExtraCmds().put(ConnectionProperties.GSI_CONCURRENT_WRITE, true);
 
             try {
                 // Default concurrent policy is group concurrent
-                final int totalAffectRows = executePhysicalPlan(allPhyPlan, executionContext, schemaName, isBroadcast);
+                final int totalAffectRows =
+                    executePhysicalPlan(allPhyPlan, executionContext, schemaName, isBroadCastOrReplicas);
                 boolean multiWriteWithoutBroadcast =
-                    (writableGsiCount.get() > 0 || GeneralUtil.isNotEmpty(replicatePhyPlan)) && !isBroadcast;
+                    (writableGsiCount.get() > 0 || GeneralUtil.isNotEmpty(replicatePhyPlan)) && !isBroadCastOrReplicas;
                 boolean multiWriteWithBroadcast =
-                    (writableGsiCount.get() > 0 || GeneralUtil.isNotEmpty(replicatePhyPlan)) && isBroadcast;
+                    (writableGsiCount.get() > 0 || GeneralUtil.isNotEmpty(replicatePhyPlan)) && isBroadCastOrReplicas;
 
                 if (multiWriteWithoutBroadcast) {
                     return primaryPhyPlan.stream().mapToInt(plan -> ((BaseQueryOperation) plan).getAffectedRows())
@@ -312,11 +312,28 @@ public class LogicalInsertHandler extends HandlerCommon {
         }
 
         // TODO(qianjing): should we check PK and FK when GSI_CONCURRENT_WRITE is false?
+
+        // Externalized/MCE INSERT is served exclusively by the concurrent writer path above:
+        // OptimizeLogicalInsertRule always builds a primary writer for such tables (direct plan
+        // and pushdown are intercepted by needsHandling), hinted INSERT is rejected, and
+        // GSI_CONCURRENT_WRITE_OPTIMIZE must stay enabled. LOAD DATA batches re-enter through
+        // super.executeInsert and take the writer branch as well (verified by
+        // MceStressTest#testLoadDataFallsBackAtEachWriteRewriteState). Reaching this tail with an
+        // externalized/MCE table therefore always signals a degenerate configuration; fail close
+        // instead of writing without staging binding. Ordinary tables keep the baseline tail.
+        if (ExternalizedDmlRewriter.needsHandling(tableMeta)) {
+            throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
+                "externalized/MCE INSERT outside the concurrent writer path"
+                    + " (GSI_CONCURRENT_WRITE_OPTIMIZE disabled or target-table hint); after"
+                    + " re-enabling the switch run CLEAR PLANCACHE to drop plans compiled without a writer");
+        }
+
         List<PhyTableInsertSharder.PhyTableShardResult> shardResults = new ArrayList<>();
         PhyTableInsertSharder insertSharder = new PhyTableInsertSharder(logicalInsert,
             executionContext.getParams(),
             SequenceAttribute.getAutoValueOnZero(executionContext.getSqlMode()));
         List<RelNode> inputs = logicalInsert.getInput(insertSharder, shardResults, executionContext);
+        ExecUtils.makeZeroGroupAsBroadcastFirstGroup(executionContext, inputs);
 
         handlerParams.usingSequence = insertSharder.isUsingSequence();
         handlerParams.lastInsertId = insertSharder.getLastInsertId();
@@ -337,7 +354,7 @@ public class LogicalInsertHandler extends HandlerCommon {
             QueryConcurrencyPolicy queryConcurrencyPolicy =
                 inputs.size() > 1 ? getQueryConcurrencyPolicy(executionContext) : QueryConcurrencyPolicy.SEQUENTIAL;
             executeWithConcurrentPolicy(executionContext, inputs, queryConcurrencyPolicy, inputCursors, schemaName);
-            return ExecUtils.getAffectRowsByCursors(inputCursors, isBroadcast);
+            return ExecUtils.getAffectRowsByCursors(inputCursors, isBroadCastOrReplicas);
         }
     }
 
@@ -559,19 +576,29 @@ public class LogicalInsertHandler extends HandlerCommon {
             fkColumnNumbers.add(new Pair<>(columnNames.indexOf(data.columns.get(i).toLowerCase()),
                 columnNames.indexOf(data.refColumns.get(i))));
         }
-        for (Pair<Integer, Integer> fkColumnNumber : fkColumnNumbers) {
-            Set<GroupKey> refCol = new HashSet<>();
-            values.forEach(value -> refCol.add(new GroupKey(
-                Collections.singletonList(value.get(fkColumnNumber.right)).toArray(),
-                Collections.singletonList(tableMeta.getAllColumns().get(fkColumnNumber.right)))));
-            for (List<Object> value : values) {
-                final GroupKey leftValueGroupKey = new GroupKey(
-                    Collections.singletonList(value.get(fkColumnNumber.left)).toArray(),
-                    Collections.singletonList(tableMeta.getAllColumns().get(fkColumnNumber.left)));
-                if (!refCol.contains(leftValueGroupKey)) {
-                    skipFkSameTable = false;
-                    break;
-                }
+        Set<GroupKey> refKeys = values.stream()
+            .map(row -> {
+                Object[] keyValues = fkColumnNumbers.stream()
+                    .map(fkColumn -> row.get(fkColumn.right))
+                    .toArray();
+                List<ColumnMeta> keyColumns = fkColumnNumbers.stream()
+                    .map(fkColumn -> tableMeta.getAllColumns().get(fkColumn.right))
+                    .collect(Collectors.toList());
+                return new GroupKey(keyValues, keyColumns);
+            })
+            .collect(Collectors.toSet());
+
+        for (List<Object> row : values) {
+            Object[] keyValues = fkColumnNumbers.stream()
+                .map(fkColumn -> row.get(fkColumn.left))
+                .toArray();
+            List<ColumnMeta> keyColumns = fkColumnNumbers.stream()
+                .map(fkColumn -> tableMeta.getAllColumns().get(fkColumn.left))
+                .collect(Collectors.toList());
+            GroupKey leftKey = new GroupKey(keyValues, keyColumns);
+
+            if (!refKeys.contains(leftKey)) {
+                return false; // 如果有任何一行的外键不在引用集合中，返回false
             }
         }
         return skipFkSameTable;
@@ -982,8 +1009,11 @@ public class LogicalInsertHandler extends HandlerCommon {
     protected int insertSelectHandle(LogicalInsert logicalInsert, ExecutionContext executionContext,
                                      HandlerParams handlerParams) {
         int affectRows;
+        final TableMeta tableMeta = getInsertTargetTableMeta(logicalInsert, executionContext);
+        final boolean requiresWriteRewrite = ExternalizedDmlRewriter.needsHandling(tableMeta);
         //在优化器OptimizeLogicalInsertRule进行了判断，选择执行模式
-        if (logicalInsert.getInsertSelectMode() == LogicalInsert.InsertSelectMode.MPP) {
+        if (logicalInsert.getInsertSelectMode() == LogicalInsert.InsertSelectMode.MPP
+            && !requiresWriteRewrite) {
             final boolean useTrans = executionContext.getTransaction() instanceof IDistributedTransaction;
             if (useTrans) {
                 //MPP暂不支持在事务下运行
@@ -1059,7 +1089,8 @@ public class LogicalInsertHandler extends HandlerCommon {
             //todo: 目前无法读写连接同时存在，为后续实现读写并行作准备
             executionContext.setModifySelectParallel(true);
         }
-        boolean canInsertByMulti = logicalInsert.getInsertSelectMode() == LogicalInsert.InsertSelectMode.MULTI;
+        boolean canInsertByMulti = logicalInsert.getInsertSelectMode() == LogicalInsert.InsertSelectMode.MULTI
+            && !ExternalizedDmlRewriter.needsHandling(getInsertTargetTableMeta(logicalInsert, executionContext));
         // How many records to insert each time in "insert ... select"
         long batchSize = executionContext.getParamManager().getLong(ConnectionParams.INSERT_SELECT_BATCH_SIZE);
 
@@ -1147,6 +1178,15 @@ public class LogicalInsertHandler extends HandlerCommon {
 
             selectValuesPool.destroy();
         }
+    }
+
+    public static TableMeta getInsertTargetTableMeta(LogicalInsert logicalInsert,
+                                                     ExecutionContext executionContext) {
+        String schemaName = logicalInsert.getSchemaName();
+        if (StringUtils.isEmpty(schemaName)) {
+            schemaName = executionContext.getSchemaName();
+        }
+        return executionContext.getSchemaManager(schemaName).getTable(logicalInsert.getLogicalTableName());
     }
 
     private int doInsertSelectExecuteMulti(LogicalInsert logicalInsert, ExecutionContext executionContext,
@@ -1267,7 +1307,7 @@ public class LogicalInsertHandler extends HandlerCommon {
             handlerParams.autoIncrementUsingSeq
         );
         List<RelNode> inputs = insert.getInput(insertPartitioner, shardResults, executionContext);
-        if(!sequenceAlreadyFetched){
+        if (!sequenceAlreadyFetched) {
             handlerParams.usingSequence = insertPartitioner.isUsingSequence();
             handlerParams.lastInsertId = insertPartitioner.getLastInsertId();
             handlerParams.returnedLastInsertId = insertPartitioner.getReturnedLastInsertId();

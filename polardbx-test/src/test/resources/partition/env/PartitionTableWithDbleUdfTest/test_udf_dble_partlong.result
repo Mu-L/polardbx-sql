@@ -1,0 +1,164 @@
+## DISABLE_FAST_SQL_PARSER
+select Partlongc8l360('0')
+Partlongc8l360('0')
+0
+select Partlongc8l360('359')
+Partlongc8l360('359')
+0
+select Partlongc8l360('360')
+Partlongc8l360('360')
+1
+select Partlongc8l360('719')
+Partlongc8l360('719')
+1
+select Partlongc8l360('720')
+Partlongc8l360('720')
+2
+select Partlongc8l360('2879')
+Partlongc8l360('2879')
+7
+select Partlongc8l360('2880')
+Partlongc8l360('2880')
+0
+drop tablegroup if exists tg_dble_udf1
+create tablegroup if not exists tg_dble_udf1
+partition by udf_hash(bigint)
+partition 9
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3),
+partition p3 values less than (4),
+partition p4 values less than (5),
+partition p5 values less than (6),
+partition p6 values less than (7),
+partition p7 values less than (8),
+partition pm values less than (9223372036854775807)
+)
+drop table if exists uh_t1
+create table uh_t1(
+c1 varchar(32) not null,
+c2 varchar(32) not null
+)
+partition by udf_hash(Partlongc8l360(c1))
+tablegroup=tg_dble_udf1
+insert into uh_t1 values ('0','0')
+insert into uh_t1 values ('359','359')
+insert into uh_t1 values ('360','360')
+insert into uh_t1 values ('719','719')
+insert into uh_t1 values ('720','720')
+insert into uh_t1 values ('2879','2879')
+insert into uh_t1 values ('2880','2880')
+select c1, part_route('', 'uh_t1', c1) as route_rs, part_hash('', 'uh_t1', c1) as hash_rs from uh_t1 where c1=0
+c1,route_rs,hash_rs
+0,p0,(0)
+select c1, part_route('', 'uh_t1', c1) as route_rs, part_hash('', 'uh_t1', c1) as hash_rs from uh_t1 where c1=359
+c1,route_rs,hash_rs
+359,p0,(0)
+select c1, part_route('', 'uh_t1', c1) as route_rs, part_hash('', 'uh_t1', c1) as hash_rs from uh_t1 where c1=360
+c1,route_rs,hash_rs
+360,p1,(1)
+select c1, part_route('', 'uh_t1', c1) as route_rs, part_hash('', 'uh_t1', c1) as hash_rs from uh_t1 where c1=719
+c1,route_rs,hash_rs
+719,p1,(1)
+select c1, part_route('', 'uh_t1', c1) as route_rs, part_hash('', 'uh_t1', c1) as hash_rs from uh_t1 where c1=720
+c1,route_rs,hash_rs
+720,p2,(2)
+select c1, part_route('', 'uh_t1', c1) as route_rs, part_hash('', 'uh_t1', c1) as hash_rs from uh_t1 where c1=2879
+c1,route_rs,hash_rs
+2879,p7,(7)
+select c1, part_route('', 'uh_t1', c1) as route_rs, part_hash('', 'uh_t1', c1) as hash_rs from uh_t1 where c1=2880
+c1,route_rs,hash_rs
+2880,p0,(0)
+show create table uh_t1
+Table,Create Table
+uh_t1,CREATE TABLE `uh_t1` (
+	`c1` varchar(32) NOT NULL,
+	`c2` varchar(32) NOT NULL,
+	KEY `auto_shard_key_c1` USING BTREE (`c1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY UDF_HASH(partlongc8l360(`c1`))
+PARTITIONS 9
+(PARTITION p0 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p1 VALUES LESS THAN (2) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (3) ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN (4) ENGINE = InnoDB,
+ PARTITION p4 VALUES LESS THAN (5) ENGINE = InnoDB,
+ PARTITION p5 VALUES LESS THAN (6) ENGINE = InnoDB,
+ PARTITION p6 VALUES LESS THAN (7) ENGINE = InnoDB,
+ PARTITION p7 VALUES LESS THAN (8) ENGINE = InnoDB,
+ PARTITION pm VALUES LESS THAN (9223372036854775807) ENGINE = InnoDB)
+tablegroup = `tg_dble_udf1`
+select partlongc1c2l1l2i(0)
+partlongc1c2l1l2i(0)
+0
+select partlongc1c2l1l2i(1)
+partlongc1c2l1l2i(1)
+1
+select partlongc1c2l1l2i(2)
+partlongc1c2l1l2i(2)
+1
+select partlongc1c2l1l2i(3)
+partlongc1c2l1l2i(3)
+2
+select partlongc1c2l1l2i(4)
+partlongc1c2l1l2i(4)
+2
+select partlongc1c2l1l2i(5)
+partlongc1c2l1l2i(5)
+0
+drop tablegroup if exists tg_dble_udf2
+create tablegroup if not exists tg_dble_udf2
+partition by udf_hash(bigint)
+partition 4
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3),
+partition pm values less than (9223372036854775807)
+)
+drop table if exists uh_t2
+create table uh_t2(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(partlongc1c2l1l2i(c1))
+tablegroup=tg_dble_udf2
+insert into uh_t2 values (0,0)
+insert into uh_t2 values (1,1)
+insert into uh_t2 values (2,2)
+insert into uh_t2 values (3,3)
+insert into uh_t2 values (4,4)
+insert into uh_t2 values (5,5)
+select c1, part_route('', 'uh_t2', c1) as route_rs, part_hash('', 'uh_t2', c1) as hash_rs from uh_t2 where c1=0
+c1,route_rs,hash_rs
+0,p0,(0)
+select c1, part_route('', 'uh_t2', c1) as route_rs, part_hash('', 'uh_t2', c1) as hash_rs from uh_t2 where c1=1
+c1,route_rs,hash_rs
+1,p1,(1)
+select c1, part_route('', 'uh_t2', c1) as route_rs, part_hash('', 'uh_t2', c1) as hash_rs from uh_t2 where c1=2
+c1,route_rs,hash_rs
+2,p1,(1)
+select c1, part_route('', 'uh_t2', c1) as route_rs, part_hash('', 'uh_t2', c1) as hash_rs from uh_t2 where c1=3
+c1,route_rs,hash_rs
+3,p2,(2)
+select c1, part_route('', 'uh_t2', c1) as route_rs, part_hash('', 'uh_t2', c1) as hash_rs from uh_t2 where c1=4
+c1,route_rs,hash_rs
+4,p2,(2)
+select c1, part_route('', 'uh_t2', c1) as route_rs, part_hash('', 'uh_t2', c1) as hash_rs from uh_t2 where c1=5
+c1,route_rs,hash_rs
+5,p0,(0)
+show create table uh_t2
+Table,Create Table
+uh_t2,CREATE TABLE `uh_t2` (
+	`c1` bigint(20) NOT NULL,
+	`c2` bigint(20) NOT NULL,
+	KEY `auto_shard_key_c1` USING BTREE (`c1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY UDF_HASH(partlongc1c2l1l2i(`c1`))
+PARTITIONS 4
+(PARTITION p0 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p1 VALUES LESS THAN (2) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (3) ENGINE = InnoDB,
+ PARTITION pm VALUES LESS THAN (9223372036854775807) ENGINE = InnoDB)
+tablegroup = `tg_dble_udf2`

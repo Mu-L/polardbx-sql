@@ -17,17 +17,21 @@
 package com.alibaba.polardbx.executor.ddl.job.factory;
 
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.executor.ddl.job.builder.tablegroup.AlterTableGroupTruncatePartitionBuilder;
 import com.alibaba.polardbx.executor.ddl.job.converter.PhysicalPlanData;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TruncateTablePhyDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcDdlMarkTask;
+import com.alibaba.polardbx.executor.ddl.job.task.columnar.PrimaryTblCleanColumnarDataUtils;
+import com.alibaba.polardbx.executor.ddl.job.task.columnar.TruncatePrimaryTblPartitionCleanColumnarDataTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.ValidateTableVersionTask;
 import com.alibaba.polardbx.executor.ddl.job.task.shared.EmptyTask;
 import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterTableGroupValidateTask;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.executor.scaleout.ScaleOutUtils;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
 import com.alibaba.polardbx.gms.metadb.table.TablesAccessor;
@@ -38,18 +42,17 @@ import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableGroupTruncatePartitionPreparedData;
 import com.alibaba.polardbx.statistics.SQLRecorderLogger;
-import com.google.common.collect.Lists;
 import org.apache.calcite.rel.core.DDL;
 
 import java.sql.Connection;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 
-import static com.alibaba.polardbx.common.cdc.ICdcManager.DEFAULT_DDL_VERSION_ID;
-
-public class AlterTableGroupTruncatePartitionJobFactory extends DdlJobFactory {
+public class AlterTableGroupTruncatePartitionJobFactory extends OnlineDdlJobFactory {
 
     private final static Logger LOG = SQLRecorderLogger.ddlEngineLogger;
 
@@ -62,6 +65,7 @@ public class AlterTableGroupTruncatePartitionJobFactory extends DdlJobFactory {
                                                       AlterTableGroupTruncatePartitionPreparedData preparedData,
                                                       ExecutionContext executionContext,
                                                       Long versionId) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.INPLACE);
         this.ddl = ddl;
         this.preparedData = preparedData;
         this.executionContext = executionContext;
@@ -113,6 +117,7 @@ public class AlterTableGroupTruncatePartitionJobFactory extends DdlJobFactory {
             executableDdlJob.addTaskRelationship(tailTask, subTasks.getHead());
 
             executableDdlJob.getExcludeResources().addAll(subTasks.getExcludeResources());
+            executableDdlJob.getSharedResources().addAll(subTasks.getSharedResources());
         }
     }
 
@@ -132,11 +137,16 @@ public class AlterTableGroupTruncatePartitionJobFactory extends DdlJobFactory {
         }
         DdlTask cdcDdlMarkTask = new CdcDdlMarkTask(schemaName, physicalPlanData, false, false, versionId);
 
-        subTasks.addSequentialTasks(Lists.newArrayList(
-            validateTableVersionTask,
-            phyDdlTask,
-            cdcDdlMarkTask
-        ));
+        // Add clean columnar data tasks if needed
+        List<DdlTask> cleanColumnarDataTasks = cleanColumnarDataTask(schemaName, tableName);
+
+        List<DdlTask> taskList = new ArrayList<>();
+        taskList.add(validateTableVersionTask);
+        taskList.addAll(cleanColumnarDataTasks);
+        taskList.add(phyDdlTask);
+        taskList.add(cdcDdlMarkTask);
+
+        subTasks.addSequentialTasks(taskList);
 
         subTasks.labelAsHead(validateTableVersionTask);
 
@@ -193,5 +203,42 @@ public class AlterTableGroupTruncatePartitionJobFactory extends DdlJobFactory {
 
     @Override
     protected void sharedResources(Set<String> resources) {
+    }
+
+    public List<DdlTask> cleanColumnarDataTask(String schemaName, String tableName) {
+        List<DdlTask> ddlTasks = new ArrayList<>();
+        TableMeta tableMeta = OptimizerContext.getContext(schemaName).getLatestSchemaManager()
+            .getTable(tableName);
+        if (tableMeta.withCci() && executionContext.getParamManager()
+            .getBoolean(ConnectionParams.ENABLE_SHADOW_INSERT_ON_DROP_PARTITION)) {
+            String shadowTableName =
+                PrimaryTblCleanColumnarDataUtils.getBlackHoleTableName(preparedData.getTableName());
+
+            // 创建影子表
+            List<DdlTask> createShadowTableTasks =
+                PrimaryTblCleanColumnarDataUtils.generateCreateShadowTableTasks(schemaName, shadowTableName,
+                    preparedData.getTableName(), executionContext);
+            ddlTasks.addAll(createShadowTableTasks);
+
+            // 清理列存数据
+            DdlTask cleanColumnarDataTask = new TruncatePrimaryTblPartitionCleanColumnarDataTask(
+                schemaName,
+                tableName,
+                new ArrayList<>(preparedData.getTruncatePartitionNames()),
+                preparedData.isOperateOnSubPartition(),
+                executionContext.getParamManager().getLong(ConnectionParams.SHADOW_INSERT_BATCH_SIZE),
+                executionContext.getParamManager().getLong(ConnectionParams.SHADOW_INSERT_BATCH_INTERVAL)
+            );
+            ddlTasks.add(cleanColumnarDataTask);
+
+            // 删除影子表
+            List<DdlTask> dropShadowTableTasks =
+                PrimaryTblCleanColumnarDataUtils.generateDropShadowTableTasks(schemaName, shadowTableName,
+                    preparedData.getTableName(), executionContext);
+            ddlTasks.addAll(dropShadowTableTasks);
+
+            return ddlTasks;
+        }
+        return ddlTasks;
     }
 }

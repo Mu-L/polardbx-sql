@@ -16,9 +16,12 @@
 
 package com.alibaba.polardbx.optimizer.parse;
 
-import com.alibaba.polardbx.druid.sql.SQLUtils;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.jdbc.ParameterContext;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
+import com.alibaba.polardbx.druid.sql.SQLUtils;
+import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
 import com.alibaba.polardbx.druid.sql.ast.SQLStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLDeleteStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLInsertStatement;
@@ -31,13 +34,11 @@ import com.alibaba.polardbx.druid.sql.parser.SQLStatementParser;
 import com.alibaba.polardbx.druid.sql.visitor.ParameterizedVisitor;
 import com.alibaba.polardbx.druid.sql.visitor.VisitorFeature;
 import com.alibaba.polardbx.druid.util.JdbcConstants;
-import com.google.common.collect.Lists;
-import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.parse.bean.SqlParameterized;
 import com.alibaba.polardbx.optimizer.parse.visitor.DrdsParameterizeSqlVisitor;
 import com.alibaba.polardbx.optimizer.parse.visitor.ParamCountVisitor;
-import org.apache.calcite.sql.SqlBaseline;
+import com.google.common.collect.Lists;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -95,6 +96,21 @@ public class SqlParameterizeUtils {
     public static String parameterizeSqlMergeIn(String sql, ExecutionContext executionContext) {
         SqlParameterized sqlParameterized = parameterize(sql);
         return parameterizeStmtMergeIn(sqlParameterized.getStmt(), executionContext);
+    }
+
+    public static SQLExpr parameterizeExpr(String expr) {
+        SQLStatementParser parser = SQLParserUtils.createSQLStatementParser("WHERE " + expr, JdbcConstants.MYSQL,
+            SQLUtils.parserFeatures);
+
+        try {
+            return parser.parseExpr();
+        } catch (Throwable t) {
+            if (ErrorCode.match(t.getMessage())) {
+                throw t;
+            } else {
+                throw new TddlRuntimeException(ErrorCode.ERR_PARSER, t, t.getMessage());
+            }
+        }
     }
 
     public static SqlParameterized parameterize(String sql) {
@@ -163,7 +179,6 @@ public class SqlParameterizeUtils {
     private static SqlParameterized parameterizeStmt(SQLStatement stmt, ByteString sql,
                                                      ExecutionContext executionContext, boolean isPrepare) {
         if (!needCache(stmt)) {
-            // use sql instead of stmt.toString(), because fastsql special sql toString is buggy.
             return new SqlParameterized(sql, sql.toString(), new ArrayList<>(), stmt, true);
         }
 
@@ -175,12 +190,15 @@ public class SqlParameterizeUtils {
         StringBuilder out = new StringBuilder();
         DrdsParameterizeSqlVisitor visitor = new DrdsParameterizeSqlVisitor(out, true, executionContext);
         visitor.setOutputParameters(outParameters);
+
         // for parameterize in expr
         if (isPrepare) {
             configVisitorFeatures(visitor, parameterizeFeaturesForPrepare);
         } else {
             configVisitorFeatures(visitor, parameterizeFeatures);
             visitor.setParameterizedMergeInList(true);
+            visitor.setEnableDynamicValuesOptimization(
+                DynamicConfig.getInstance().isEnableDynamicValuesOptimization());
         }
 
         stmt.accept(visitor);

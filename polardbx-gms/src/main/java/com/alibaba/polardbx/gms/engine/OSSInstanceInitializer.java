@@ -16,33 +16,24 @@
 
 package com.alibaba.polardbx.gms.engine;
 
-import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.orc.FileStatusManager;
+import com.alibaba.polardbx.common.orc.PreheatMetaManager;
 import com.alibaba.polardbx.common.oss.filesystem.FetchPolicy;
 import com.alibaba.polardbx.common.oss.filesystem.FileSystemRateLimiter;
-import com.alibaba.polardbx.common.oss.filesystem.GuavaFileSystemRateLimiter;
 import com.alibaba.polardbx.common.oss.filesystem.OSSFileSystem;
-import com.alibaba.polardbx.common.oss.filesystem.cache.CacheManager;
-import com.alibaba.polardbx.common.oss.filesystem.cache.CacheType;
-import com.alibaba.polardbx.common.oss.filesystem.cache.FileMergeCacheManager;
-import com.alibaba.polardbx.common.oss.filesystem.cache.FileMergeCachingFileSystem;
-import com.alibaba.polardbx.common.properties.ConnectionParams;
-import com.alibaba.polardbx.common.properties.ConnectionProperties;
-import com.alibaba.polardbx.common.properties.FileConfig;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
-import com.alibaba.polardbx.common.utils.time.parser.StringNumericParser;
-import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 
 import java.io.IOException;
 import java.net.URI;
-import java.util.Map;
-import java.util.Optional;
 
 import static com.alibaba.polardbx.common.oss.filesystem.Constants.ACCESS_KEY_ID;
 import static com.alibaba.polardbx.common.oss.filesystem.Constants.ACCESS_KEY_SECRET;
 import static com.alibaba.polardbx.common.oss.filesystem.Constants.ENDPOINT_KEY;
+import static com.alibaba.polardbx.common.oss.filesystem.Constants.GENERAL_CACHE_WORKING_DIR;
 import static com.alibaba.polardbx.common.oss.filesystem.Constants.OSS_FETCH_POLICY;
+import static com.alibaba.polardbx.common.oss.filesystem.Constants.PRIVATE_CLOUD_KEY;
 
 public class OSSInstanceInitializer {
     /**
@@ -55,6 +46,7 @@ public class OSSInstanceInitializer {
     public String bucketUri;
     public String endpointValue;
     public CachePolicy cachePolicy;
+    public boolean privateCloud;
 
     public OSSInstanceInitializer() {
     }
@@ -88,33 +80,18 @@ public class OSSInstanceInitializer {
         return this;
     }
 
-    public FileSystem initialize() {
-        CacheManager cacheManager = null;
-        FileSystem ossFileSystem = null;
-        try {
-            cacheManager = FileMergeCacheManager.createMergeCacheManager(Engine.OSS);
-            URI ossFileUri = URI.create(this.bucketUri);
-            ossFileSystem = createOSSFileSystem(ossFileUri,
-                cachePolicy == CachePolicy.META_CACHE || cachePolicy == CachePolicy.META_AND_DATA_CACHE);
-            URI fsUri = ossFileSystem.getUri();
-            Configuration factoryConfig = new Configuration();
-            final boolean validationEnabled = FileConfig.getInstance().getCacheConfig().isValidationEnabled();
+    public OSSInstanceInitializer privateCloud(boolean privateCloud) {
+        this.privateCloud = privateCloud;
+        return this;
+    }
 
-            return new FileMergeCachingFileSystem(
-                fsUri,
-                factoryConfig,
-                cacheManager,
-                ossFileSystem,
-                validationEnabled,
-                true);
+    public FileSystem initialize() {
+        OSSFileSystem ossFileSystem = null;
+        try {
+            URI ossFileUri = URI.create(this.bucketUri);
+            ossFileSystem = createOSSFileSystem(ossFileUri);
+            return new DynamicCacheFileSystem(ossFileSystem);
         } catch (Throwable t) {
-            if (cacheManager != null) {
-                try {
-                    cacheManager.close();
-                } catch (Throwable t1) {
-                    // ignore
-                }
-            }
             if (ossFileSystem != null) {
                 try {
                     ossFileSystem.close();
@@ -126,17 +103,20 @@ public class OSSInstanceInitializer {
         }
     }
 
-    private synchronized OSSFileSystem createOSSFileSystem(URI ossFileUri, boolean enableCache) throws
+    private synchronized OSSFileSystem createOSSFileSystem(URI ossFileUri) throws
         IOException {
         FileSystemRateLimiter rateLimiter = FileSystemUtils.newRateLimiter();
+        FileStatusManager fileStatusManager = PreheatMetaManager.getInstance();
         // oss file system
         // oss://[accessKeyId:accessKeySecret@]bucket[.endpoint]/object/path
-        OSSFileSystem OSS_FILE_SYSTEM = new OSSFileSystem(enableCache, rateLimiter);
+        OSSFileSystem OSS_FILE_SYSTEM = new OSSFileSystem(fileStatusManager, rateLimiter);
         Configuration fsConf = new Configuration();
         fsConf.set(ACCESS_KEY_ID, this.accessKeyIdValue);
         fsConf.set(ACCESS_KEY_SECRET, this.accessKeySecretValue);
         fsConf.set(ENDPOINT_KEY, this.endpointValue);
         fsConf.set(OSS_FETCH_POLICY, FetchPolicy.REQUESTED.name());
+        fsConf.setBoolean(PRIVATE_CLOUD_KEY, this.privateCloud);
+        fsConf.set(GENERAL_CACHE_WORKING_DIR, FileSystemUtils.getColumnarDirectory());
         OSS_FILE_SYSTEM.initialize(ossFileUri, fsConf);
         return OSS_FILE_SYSTEM;
 

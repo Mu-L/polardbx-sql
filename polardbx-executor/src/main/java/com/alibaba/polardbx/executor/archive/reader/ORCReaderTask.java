@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.executor.archive.reader;
 
+import com.alibaba.polardbx.common.oss.filesystem.OSSCacheAdapter;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.archive.columns.ColumnProvider;
@@ -26,8 +27,10 @@ import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.executor.chunk.BlockBuilders;
 import com.alibaba.polardbx.executor.chunk.Chunk;
+import com.alibaba.polardbx.gms.engine.DynamicCacheFileSystem;
 import com.alibaba.polardbx.gms.engine.FileSystemManager;
 import com.alibaba.polardbx.gms.engine.FileSystemUtils;
+import com.alibaba.polardbx.gms.engine.OssGeneralCacheOverrideFileSystem;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.FileMeta;
 import com.alibaba.polardbx.optimizer.config.table.OSSOrcFileMeta;
@@ -137,8 +140,14 @@ public class ORCReaderTask {
             }
 
             // fetch file footer
+            FileSystem effectiveFs = fileSystem;
+            Boolean ossCacheOverride = OSSCacheAdapter.extractStatementOverride(context.getExtraCmds());
+            if (ossCacheOverride != null && fileSystem instanceof DynamicCacheFileSystem) {
+                effectiveFs = new OssGeneralCacheOverrideFileSystem(
+                    (DynamicCacheFileSystem) fileSystem, ossCacheOverride);
+            }
             this.reader = OrcFile.createReader(new Path(ossFileUri),
-                OrcFile.readerOptions(configuration).filesystem(fileSystem).orcTail(fileMeta.getOrcTail()));
+                OrcFile.readerOptions(configuration).filesystem(effectiveFs));
 
             // reader filter options
             Reader.Options readerOptions = createOption();

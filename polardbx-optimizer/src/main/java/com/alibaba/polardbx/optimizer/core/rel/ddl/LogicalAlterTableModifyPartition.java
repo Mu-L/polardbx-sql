@@ -241,7 +241,7 @@ public class LogicalAlterTableModifyPartition extends BaseDdlOperation {
             for (int j = 0; j < newPartitionGroups.size(); j++) {
                 String mockTableName = "";
                 mockOrderedTargetTableLocations.put(newPartitionGroups.get(j).partition_name, new Pair<>(mockTableName,
-                    GroupInfoUtil.buildGroupNameFromPhysicalDb(newPartitionGroups.get(j).phy_db)));
+                    newPartitionGroups.get(j).getGroup_Name()));
             }
 
             /**

@@ -51,6 +51,8 @@ public class TableGroupRecord implements SystemTableRecord {
     public static final int TG_TYPE_BROADCAST_TBL_TG = 3;
     public static final int TG_TYPE_OSS_TBL_TG = 4;
     public static final int TG_TYPE_COLUMNAR_TBL_TG = 5;
+    public static final int TG_TYPE_REPLICAS_TBL_TG = 6;
+
 
     public Long id;
     public Date gmt_create;
@@ -178,6 +180,10 @@ public class TableGroupRecord implements SystemTableRecord {
 
     public boolean isBroadCastTableGroup() {
         return tg_type == TG_TYPE_BROADCAST_TBL_TG;
+    }
+
+    public boolean isReplicasTableGroup() {
+        return tg_type == TG_TYPE_REPLICAS_TBL_TG;
     }
 
     public boolean isSingleTableGroup() {

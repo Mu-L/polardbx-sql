@@ -1,0 +1,124 @@
+SQL:
+  - sql: |
+      select * from x
+    plan: |
+      {0}
+      {1, 4, 5}
+      {3}
+  - sql: |
+      select * from y
+    plan: |
+      {0, 1}
+      {1, 5}
+      {3, 4}
+  - sql: |
+      select id+1 from x
+    plan: |
+      empty
+  - sql: |
+      select order_detail, id +1, order_detail from x group by order_detail
+    plan: |
+      {2}
+  - sql: |
+      select * from x group by order_snapshot,buyer_id
+    plan: |
+      {2, 4}
+  - sql: |
+      select count(*) from x group by order_snapshot,buyer_id
+    plan: |
+      empty
+  - sql: |
+      select *,row_number() over() from y
+    plan: |
+      null
+  - sql: |
+      select * from x join y on 
+      x.id = y.id;
+    plan: |
+      {0, 6, 7}
+      {0, 7, 11}
+      {0, 9, 10}
+      {1, 4, 5, 6, 7}
+      {1, 4, 5, 7, 11}
+      {1, 4, 5, 9, 10}
+      {3, 6, 7}
+      {3, 7, 11}
+      {3, 9, 10}
+      {6, 7}
+  - sql: |
+      select * from x left join y on 
+      x.id = y.id;
+    plan: |
+      {0, 6, 7}
+      {0, 7, 11}
+      {0, 9, 10}
+      {1, 4, 5, 6, 7}
+      {1, 4, 5, 7, 11}
+      {1, 4, 5, 9, 10}
+      {3, 6, 7}
+      {3, 7, 11}
+      {3, 9, 10}
+  - sql: |
+      select x.id, y.id from x join y on 
+      x.id = y.id;
+    plan: |
+      empty
+  - sql: |
+      select x.id, y.id from x join y;
+    plan: |
+      empty
+  - sql: |
+      select * from x 
+      where x.id in (select id from y);
+    plan: |
+      {0}
+      {1, 4, 5}
+      {3}
+  - sql: |
+      select id from x 
+      where x.order_id in (select order_id from y);
+    plan: |
+      {0}
+  - sql: |
+      select id from x 
+      where x.order_id not in (select order_id from y);
+    plan: |
+      {0}
+DDL:
+  x:
+    CREATE TABLE `x` (
+    `id` bigint(11) NOT NULL AUTO_INCREMENT,
+    `order_id` varchar(20) DEFAULT NULL,
+    `buyer_id` varchar(20) DEFAULT NULL,
+    `seller_id` varchar(20) DEFAULT NULL,
+    `order_snapshot` varchar(20) DEFAULT NULL,
+    `order_detail` varchar(20) DEFAULT NULL ,
+    PRIMARY KEY (`id`),
+    KEY `auto_shard_key_order_id` USING BTREE (`order_id`),
+    GLOBAL INDEX `g_i_buyer`(`buyer_id`) COVERING (`id`, `order_id`, `seller_id`, `order_snapshot`) PARTITION BY HASH(`buyer_id`) PARTITIONS 3,
+    UNIQUE GLOBAL KEY `g_i_seller` (`seller_id`) COVERING (`id`, `order_id`, `buyer_id`, `order_snapshot`) PARTITION BY HASH(`seller_id`) PARTITIONS 3,
+    UNIQUE KEY `u1` (`order_detail`,`order_snapshot`)
+    ) ENGINE = InnoDB AUTO_INCREMENT = 2300006 CHARSET = utf8 partition by hash(`order_id`) PARTITIONS 3
+  y:
+    CREATE TABLE `y` (
+    `id` bigint(11) NOT NULL,
+    `order_id` varchar(20) DEFAULT NULL,
+    `buyer_id` varchar(20) DEFAULT NULL,
+    `seller_id` varchar(20) DEFAULT NULL,
+    `order_snapshot` varchar(20) DEFAULT NULL,
+    `order_detail` varchar(20) DEFAULT NULL ,
+    PRIMARY KEY (`id`),
+    KEY `auto_shard_key_order_id` USING BTREE (`order_id`),
+    GLOBAL INDEX `g_i_buyer`(`buyer_id`) COVERING (`id`, `order_id`, `seller_id`, `order_snapshot`) PARTITION BY HASH(`buyer_id`) PARTITIONS 3,
+    UNIQUE GLOBAL KEY `g_i_seller` (`seller_id`,`order_snapshot`) COVERING (`id`, `order_id`, `buyer_id`) PARTITION BY key(`seller_id`,`order_snapshot`) PARTITIONS 3,
+    UNIQUE KEY `u1` (`order_detail`,`order_id`)
+    ) ENGINE = InnoDB AUTO_INCREMENT = 2300006 CHARSET = utf8 partition by hash(`order_id`) PARTITIONS 3
+
+STATISTICS:
+  x:
+    10
+  y:
+    10
+CONFIG:
+  defaltxxAPPName.isNew:
+    true

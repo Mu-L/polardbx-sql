@@ -5,7 +5,7 @@ set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreatio
 set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI=false;
 set ENABLE_DROP_TRUNCATE_CCI_PARTITION=true;
 create table rng_dt_tc11_t1(
-a int not null auto_increment,
+a int not null,
 b datetime not null,
 c varchar(32),
 primary key(a)
@@ -28,7 +28,7 @@ archive_table_pre_allocate=4;
 show create table rng_dt_tc11_t1;
 Table,Create Table
 rng_dt_tc11_t1,CREATE TABLE `rng_dt_tc11_t1` (
-	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`a` int(11) NOT NULL,
 	`b` datetime NOT NULL,
 	`c` varchar(32) DEFAULT NULL,
 	PRIMARY KEY (`a`),

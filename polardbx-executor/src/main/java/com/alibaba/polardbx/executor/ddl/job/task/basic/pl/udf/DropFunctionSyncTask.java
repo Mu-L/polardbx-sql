@@ -40,7 +40,7 @@ public class DropFunctionSyncTask extends BaseSyncTask {
 
     @Override
     protected void executeImpl(ExecutionContext executionContext) {
-        SyncManagerHelper.sync(new DropStoredFunctionSyncAction(functionName),
+        SyncManagerHelper.syncThrowExceptions(new DropStoredFunctionSyncAction(functionName),
             TddlConstants.INFORMATION_SCHEMA, SyncScope.ALL);
     }
 

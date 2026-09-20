@@ -38,7 +38,7 @@ public class ResetSequence4TruncateTableTask extends BaseDdlTask {
         final String sequenceName = AUTO_SEQ_PREFIX + logicalTableName;
         try {
             SequenceUtil.resetSequence4TruncateTable(schemaName, logicalTableName, metaDbConn, executionContext);
-            SyncManagerHelper.sync(new SequenceSyncAction(schemaName, sequenceName), schemaName,
+            SyncManagerHelper.syncThrowExceptions(new SequenceSyncAction(schemaName, sequenceName), schemaName,
                 SyncScope.CURRENT_ONLY);
         } catch (Exception e) {
             LOGGER.error(String.format(

@@ -16,16 +16,20 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.google.common.base.Preconditions;
+import io.airlift.slice.SizeOf;
 import it.unimi.dsi.fastutil.Hash;
 import it.unimi.dsi.fastutil.HashCommon;
 import org.openjdk.jol.info.ClassLayout;
+import org.openjdk.jol.util.VMSupport;
 
 /**
  * An concurrent hash table implementation mapping a hash code to an integer value
  *
  */
-public class ConcurrentRawHashTable implements Hash {
+public class ConcurrentRawHashTable implements Hash, MemoryCountable {
 
     private static final long INSTANCE_SIZE = ClassLayout.parseClass(ConcurrentRawHashTable.class).instanceSize();
 
@@ -114,10 +118,16 @@ public class ConcurrentRawHashTable implements Hash {
     }
 
     public static long estimateSizeInBytes(int size) {
-        long lengthOfHashTable = HashCommon.arraySize(
+        int lengthOfHashTable = HashCommon.arraySize(
             size, ConcurrentRawHashTable.selectLoadFactor(size));
 
-        return INSTANCE_SIZE + lengthOfHashTable * Integer.BYTES;
+        return INSTANCE_SIZE + AtomicIntegerArray.INSTANCE_SIZE + VMSupport.align(
+            (int) SizeOf.sizeOfIntArray(lengthOfHashTable));
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(keys);
     }
 
     public int size() {

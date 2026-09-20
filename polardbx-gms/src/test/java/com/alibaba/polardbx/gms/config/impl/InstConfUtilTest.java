@@ -17,10 +17,12 @@
 package com.alibaba.polardbx.gms.config.impl;
 
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
+import com.alibaba.polardbx.common.properties.StringConfigParam;
 import org.junit.Assert;
 import org.junit.Test;
 import org.mockito.MockedStatic;
 
+import java.util.Calendar;
 import java.util.Properties;
 
 import static org.mockito.Mockito.mock;
@@ -40,6 +42,25 @@ public class InstConfUtilTest {
                 .thenReturn(metaDbInstConfigManager);
             Assert.assertTrue(InstConfUtil.getValBool(ConnectionProperties.ALERT_STATISTIC_INTERRUPT));
         }
+    }
+
+    @Test
+    public void testRemainTimeInMaintenanceTimeWindow(){
+
+        String MAINTENANCE_TIME_START = "02:00";
+
+        String MAINTENANCE_TIME_END = "05:00";
+
+        Assert.assertEquals(InstConfUtil.remainTimeInMaintenanceTimeWindow(new Calendar.Builder().setTimeOfDay(3,30,0).build(),
+                MAINTENANCE_TIME_START, MAINTENANCE_TIME_END), 90 * 60);
+
+        Assert.assertEquals(InstConfUtil.remainTimeInMaintenanceTimeWindow(new Calendar.Builder().setTimeOfDay(23,30,0).build(),
+                MAINTENANCE_TIME_END, MAINTENANCE_TIME_START), 150 * 60);
+        Assert.assertEquals(InstConfUtil.remainTimeInMaintenanceTimeWindow(new Calendar.Builder().setTimeOfDay(1,30,0).build(),
+                MAINTENANCE_TIME_END, MAINTENANCE_TIME_START), 30 * 60);
+        Assert.assertEquals(InstConfUtil.remainTimeInMaintenanceTimeWindow(new Calendar.Builder().setTimeOfDay(3,30,0).build(),
+                "", ""), 0);
+
     }
 
 }

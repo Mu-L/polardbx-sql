@@ -193,7 +193,6 @@ public class StatisticUtils {
 
     public static boolean isBinaryOrJsonColumn(ColumnMeta columnMeta) {
         switch (columnMeta.getDataType().getSqlType()) {
-        case Types.BIT:
         case Types.BLOB:
         case Types.CLOB:
         case Types.BINARY:
@@ -241,11 +240,14 @@ public class StatisticUtils {
         }
 
         if (tableMeta == null) {
-            logger.info("no tableMeta for schemaName = " + schemaName + ", logicalTableName = " + logicalTableName);
+            logger.warn("no tableMeta for schemaName = " + schemaName + ", logicalTableName = " + logicalTableName);
             return null;
         }
 
-        return tableMeta.getAllColumns().stream().filter(x -> !isBinaryOrJsonColumn(x)).collect(Collectors.toList());
+        return tableMeta.getAllColumns().stream()
+            .filter(x -> !isBinaryOrJsonColumn(x))
+            .filter(x -> !x.isExternalizedColumn())
+            .collect(Collectors.toList());
     }
 
     /**

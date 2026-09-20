@@ -1,0 +1,18 @@
+drop table if exists t_enum_tb1;
+
+create table t_enum_tb1(
+    id int not null,
+    e1 enum('a', 'c', 'b') not null,
+    e2 enum('a@1', 'a-b-c', 'eric,fu', '''hello''world', 'fu,eric')
+);
+
+show create table t_enum_tb1;
+
+insert into t_enum_tb1 values(1, 'a', 'a@1'),
+(2, 'b', 'a-b-c'),
+(3, 'c', 3),
+(4, 'a', 'fu,eric'),
+(5, 'b', '''hello''world');
+
+
+select * from t_enum_tb1 order by id;

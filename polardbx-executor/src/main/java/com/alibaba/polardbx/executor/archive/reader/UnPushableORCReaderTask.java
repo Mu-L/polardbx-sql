@@ -16,12 +16,15 @@
 
 package com.alibaba.polardbx.executor.archive.reader;
 
+import com.alibaba.polardbx.common.oss.filesystem.OSSCacheAdapter;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.archive.pruning.PruningResult;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
+import com.alibaba.polardbx.gms.engine.DynamicCacheFileSystem;
 import com.alibaba.polardbx.gms.engine.FileSystemManager;
 import com.alibaba.polardbx.gms.engine.FileSystemUtils;
+import com.alibaba.polardbx.gms.engine.OssGeneralCacheOverrideFileSystem;
 import com.alibaba.polardbx.optimizer.config.table.FileMeta;
 import com.alibaba.polardbx.optimizer.config.table.OSSOrcFileMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -89,12 +92,29 @@ public class UnPushableORCReaderTask {
         this.context = context;
     }
 
+    /**
+     * Wrap {@link #fileSystem} with {@link OssGeneralCacheOverrideFileSystem} when the
+     * current statement carries an ENABLE_OSS_GENERAL_CACHE HINT/session override and
+     * the underlying FileSystem is a {@link DynamicCacheFileSystem}. Otherwise returns
+     * the raw FileSystem unchanged. Shared by subclasses so the override is enforced on
+     * every archive read path.
+     */
+    protected FileSystem wrapWithStatementOverride() {
+        Boolean ossCacheOverride = OSSCacheAdapter.extractStatementOverride(
+            context == null ? null : context.getExtraCmds());
+        if (ossCacheOverride != null && fileSystem instanceof DynamicCacheFileSystem) {
+            return new OssGeneralCacheOverrideFileSystem(
+                (DynamicCacheFileSystem) fileSystem, ossCacheOverride);
+        }
+        return fileSystem;
+    }
+
     public void init() {
         try {
             startTime = System.nanoTime() / 1000_000;
-            // fetch file footer
+            // fetch file footer — honor per-statement GeneralCache override (HINT/session).
             this.reader = OrcFile.createReader(new Path(ossFileUri),
-                OrcFile.readerOptions(configuration).filesystem(fileSystem).orcTail(fileMeta.getOrcTail()));
+                OrcFile.readerOptions(configuration).filesystem(wrapWithStatementOverride()));
 
             // reader filter options
             Reader.Options readerOptions = createOption();

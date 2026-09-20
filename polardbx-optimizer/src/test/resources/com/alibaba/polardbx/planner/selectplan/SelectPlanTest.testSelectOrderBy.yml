@@ -5,8 +5,8 @@
 
   plan: |
 
-    MergeSort(sort="id ASC")
-      LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id` FROM `test_hash_tb` AS `test_hash_tb` WHERE (`name` = 'xx') ORDER BY `id`")
+    mergesort(sort="id asc")
+      logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id` from `test_hash_tb` as `test_hash_tb` where (`name` = 'xx') order by `id`")
 
 - sql: |
     select id
@@ -15,9 +15,9 @@
 
   plan: |
 
-    Project(id="id")
-      MergeSort(sort="name ASC")
-        LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id`, `name` FROM `test_hash_tb` AS `test_hash_tb` WHERE (`name` = 'xx') ORDER BY `name`")
+    project(id="id")
+      mergesort(sort="name asc")
+        logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id`, `name` from `test_hash_tb` as `test_hash_tb` where (`name` = 'xx') order by `name`")
 
 - sql: |
     select id
@@ -26,8 +26,8 @@
 
   plan: |
 
-    MergeSort(sort="id DESC")
-      LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id` FROM `test_hash_tb` AS `test_hash_tb` WHERE (`name` = 'xx') ORDER BY `id` DESC")
+    mergesort(sort="id desc")
+      logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id` from `test_hash_tb` as `test_hash_tb` where (`name` = 'xx') order by `id` desc")
 
 - sql: |
     select id
@@ -36,9 +36,9 @@
 
   plan: |
 
-    Project(id="id")
-      MergeSort(sort="name DESC")
-        LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id`, `name` FROM `test_hash_tb` AS `test_hash_tb` WHERE (`name` = 'xx') ORDER BY `name` DESC")
+    project(id="id")
+      mergesort(sort="name desc")
+        logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id`, `name` from `test_hash_tb` as `test_hash_tb` where (`name` = 'xx') order by `name` desc")
 
 - sql: |
     select id
@@ -47,9 +47,9 @@
 
   plan: |
 
-    Project(id="id")
-      MergeSort(sort="id ASC,name ASC")
-        LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id`, `name` FROM `test_hash_tb` AS `test_hash_tb` WHERE (`name` = 'xx') ORDER BY `id`, `name`")
+    project(id="id")
+      mergesort(sort="id asc,name asc")
+        logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id`, `name` from `test_hash_tb` as `test_hash_tb` where (`name` = 'xx') order by `id`, `name`")
 
 - sql: |
     select id
@@ -58,9 +58,9 @@
 
   plan: |
 
-    Project(id="id")
-      MergeSort(sort="name DESC,id ASC")
-        LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id`, `name` FROM `test_hash_tb` AS `test_hash_tb` WHERE (`name` = 'xx') ORDER BY `name` DESC, `id`")
+    project(id="id")
+      mergesort(sort="name desc,id asc")
+        logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id`, `name` from `test_hash_tb` as `test_hash_tb` where (`name` = 'xx') order by `name` desc, `id`")
 
 - sql: |
     select id
@@ -80,7 +80,6 @@
 
     phytableoperation(tables="optest_0001.[test_hash_tb]", sql="select `a`.`id` from ? as `a` where (`a`.`id` = 1) order by `a`.`name`")
 
-
 - sql: |
     select id
     from test_hash_tb a
@@ -89,7 +88,6 @@
   plan: |
 
     phytableoperation(tables="optest_0001.[test_hash_tb]", sql="select `a`.`id` from ? as `a` where (`a`.`id` = 1) order by `id`, `a`.`name`")
-
 
 - sql: |
     select id

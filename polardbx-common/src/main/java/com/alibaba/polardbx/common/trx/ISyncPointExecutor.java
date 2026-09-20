@@ -5,7 +5,7 @@ package com.alibaba.polardbx.common.trx;
  */
 public interface ISyncPointExecutor {
     /**
-     * @return true if success
+     * @return -1 if failed, or commit TSO if success.
      */
-    boolean execute();
+    long execute(long tableId);
 }

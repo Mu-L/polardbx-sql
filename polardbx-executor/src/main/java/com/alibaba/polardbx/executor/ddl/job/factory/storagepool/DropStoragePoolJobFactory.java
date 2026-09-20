@@ -19,24 +19,27 @@ package com.alibaba.polardbx.executor.ddl.job.factory.storagepool;
 import com.alibaba.polardbx.common.DefaultSchema;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.executor.balancer.action.ActionUtils;
+import com.alibaba.polardbx.executor.ddl.job.task.basic.DrainCDCTask;
 import com.alibaba.polardbx.executor.ddl.job.task.storagepool.DeleteAllStorageInfoTask;
 import com.alibaba.polardbx.executor.ddl.job.task.storagepool.DeleteStorageInfoTask;
 import com.alibaba.polardbx.executor.ddl.job.task.storagepool.StorageInstValidateTask;
 import com.alibaba.polardbx.executor.ddl.job.validator.StoragePoolValidator;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.DropStoragePoolPrepareData;
 import com.alibaba.polardbx.optimizer.locality.StoragePoolInfo;
 import com.alibaba.polardbx.optimizer.locality.StoragePoolManager;
+import com.alibaba.polardbx.optimizer.locality.StoragePoolUtils;
 import com.google.common.collect.Lists;
 import org.apache.commons.lang.StringUtils;
 
 import java.util.List;
 import java.util.Set;
-
-import static com.alibaba.polardbx.common.constants.ExecutorAttribute.DEFAULT_DB;
 
 public class DropStoragePoolJobFactory extends DdlJobFactory {
     private DropStoragePoolPrepareData prepareData;
@@ -77,8 +80,7 @@ public class DropStoragePoolJobFactory extends DdlJobFactory {
                 StoragePoolManager.getInstance().getStoragePoolInfo(prepareData.getStoragePoolName());
             String undeletableDnId = storagePoolInfo.getUndeletableDnId();
             List<String> dnIdList = storagePoolInfo.getDnLists();
-            String dnIds = StringUtils.join(dnIdList, ",");
-            if (dnIds.isEmpty()) {
+            if (GeneralUtil.isEmpty(dnIdList)) {
                 DeleteStorageInfoTask deleteStorageInfoTask =
                     new DeleteStorageInfoTask(prepareData.getSchemaName(), instId, dnIdList, undeletableDnId,
                         prepareData.getStoragePoolName());
@@ -93,13 +95,16 @@ public class DropStoragePoolJobFactory extends DdlJobFactory {
                 DeleteStorageInfoTask deleteStorageInfoTask =
                     new DeleteStorageInfoTask(prepareData.getSchemaName(), instId, dnIdList, undeletableDnId,
                         prepareData.getStoragePoolName());
+                DrainCDCTask drainCDCTask = new DrainCDCTask(
+                    SystemDbHelper.DEFAULT_DB_NAME,
+                    dnIdList);
                 ddlJob.addSequentialTasks(Lists.newArrayList(
                     storageInstValidateTask,
+                    drainCDCTask,
                     deleteStorageInfoTask
                 ));
             }
         }
-//        ddlJob.appendTask(syncTask);
         return ddlJob;
     }
 
@@ -107,6 +112,8 @@ public class DropStoragePoolJobFactory extends DdlJobFactory {
     protected void excludeResources(Set<String> resources) {
         resources.add(concatWithDot(StoragePoolUtils.LOCK_PREFIX, prepareData.getStoragePoolName()));
         resources.add(concatWithDot(StoragePoolUtils.LOCK_PREFIX, StoragePoolUtils.FULL_LOCK_NAME));
+        // rebalance tenant resource
+        resources.add(ActionUtils.genRebalanceTenantResourceName(prepareData.getStoragePoolName()));
     }
 
     @Override

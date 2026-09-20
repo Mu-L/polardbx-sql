@@ -18,6 +18,8 @@ package com.alibaba.polardbx.executor.operator;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.bloomfilter.ConcurrentIntBloomFilter;
 import com.alibaba.polardbx.common.utils.logger.Logger;
@@ -77,8 +79,20 @@ public class HybridHashJoinExec extends AbstractJoinExec implements MemoryRevoke
         }
     }
 
-    ;
     AntiJoinContext antiJoinContext;
+
+    @FieldMemoryCounter(value = false)
+    protected OperatorMemoryOwnerId consumerMemoryOwnerId;
+
+    @Override
+    public void setConsumerOperatorMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        this.consumerMemoryOwnerId = operatorMemoryOwnerId;
+    }
+
+    @Override
+    public OperatorMemoryOwnerId getConsumerMemoryOwnerId() {
+        return consumerMemoryOwnerId;
+    }
 
     public enum BucketState {
         /**
@@ -318,6 +332,11 @@ public class HybridHashJoinExec extends AbstractJoinExec implements MemoryRevoke
         }
         outerInput.close();
         closeConsume(true);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return memoryContext.getAllAllocated();
     }
 
     @Override

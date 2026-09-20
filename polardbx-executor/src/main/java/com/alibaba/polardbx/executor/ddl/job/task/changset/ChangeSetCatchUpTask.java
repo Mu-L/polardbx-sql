@@ -42,16 +42,44 @@ public class ChangeSetCatchUpTask extends BaseBackfillTask {
     final private String indexTableName;
     final private Map<String, Set<String>> sourcePhyTableNames;
     final private Map<String, String> orderedTargetTableLocations;
+    final private Map<String, Set<String>> srcTargetTableMap;
     final private ChangeSetManager.ChangeSetCatchUpStatus catchUpStatus;
     final private ComplexTaskMetaManager.ComplexTaskType taskType;
     final private Long changeSetId;
     final private List<String> notUsingBinaryStringColumns;
     final private Boolean loop;
+    final private Boolean useNewPartitionInfo;
 
     @JSONCreator
     public ChangeSetCatchUpTask(String schemaName, String logicalTableName, String indexTableName,
                                 Map<String, Set<String>> sourcePhyTableNames,
                                 Map<String, String> orderedTargetTableLocations,
+                                Map<String, Set<String>> srcTargetTableMap,
+                                ChangeSetManager.ChangeSetCatchUpStatus catchUpStatus,
+                                ComplexTaskMetaManager.ComplexTaskType taskType,
+                                Long changeSetId, List<String> notUsingBinaryStringColumns,
+                                Boolean loop,
+                                Boolean useNewPartitionInfo
+    ) {
+        super(schemaName);
+        this.logicalTableName = logicalTableName;
+        this.indexTableName = indexTableName;
+        this.sourcePhyTableNames = sourcePhyTableNames;
+        this.orderedTargetTableLocations = orderedTargetTableLocations;
+        this.srcTargetTableMap = srcTargetTableMap;
+        this.catchUpStatus = catchUpStatus;
+        this.changeSetId = changeSetId;
+        this.taskType = taskType;
+        this.notUsingBinaryStringColumns = notUsingBinaryStringColumns;
+        this.loop = loop;
+        this.useNewPartitionInfo = useNewPartitionInfo;
+        onExceptionTryRollback();
+    }
+
+    public ChangeSetCatchUpTask(String schemaName, String logicalTableName, String indexTableName,
+                                Map<String, Set<String>> sourcePhyTableNames,
+                                Map<String, String> orderedTargetTableLocations,
+                                Map<String, Set<String>> srcTargetTableMap,
                                 ChangeSetManager.ChangeSetCatchUpStatus catchUpStatus,
                                 ComplexTaskMetaManager.ComplexTaskType taskType,
                                 Long changeSetId, List<String> notUsingBinaryStringColumns,
@@ -62,11 +90,13 @@ public class ChangeSetCatchUpTask extends BaseBackfillTask {
         this.indexTableName = indexTableName;
         this.sourcePhyTableNames = sourcePhyTableNames;
         this.orderedTargetTableLocations = orderedTargetTableLocations;
+        this.srcTargetTableMap = srcTargetTableMap;
         this.catchUpStatus = catchUpStatus;
         this.changeSetId = changeSetId;
         this.taskType = taskType;
         this.notUsingBinaryStringColumns = notUsingBinaryStringColumns;
         this.loop = loop;
+        this.useNewPartitionInfo = false;
         onExceptionTryRollback();
     }
 
@@ -76,6 +106,7 @@ public class ChangeSetCatchUpTask extends BaseBackfillTask {
         executionContext.setSchemaName(schemaName);
 
         ChangeSetManager changeSetManager = new ChangeSetManager(schemaName);
+        changeSetManager.setUseNewPartitionInfo(useNewPartitionInfo);
 
         DdlContext ddlContext = executionContext.getDdlContext();
 
@@ -92,9 +123,14 @@ public class ChangeSetCatchUpTask extends BaseBackfillTask {
             catchUpStatus,
             changeSetId,
             notUsingBinaryStringColumns,
+            false,
+            srcTargetTableMap,
+            null,
+            null,
+            null,
+            false,
             executionContext
         );
-
         if (ddlContext.isInterrupted()) {
             throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR,
                 "The job '" + jobId + "' has been cancelled");

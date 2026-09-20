@@ -175,7 +175,7 @@ public class TransactionExecutor extends TopologyExecutor {
                 && ex.getCause() instanceof SQLException
                 && ex.getErrorCode() == ErrorCode.ER_LOCK_DEADLOCK.getCode()) {
                 // Prevent this transaction from committing
-                transaction.setCrucialError(ErrorCode.ERR_TRANS_DEADLOCK, ex.getMessage());
+                transaction.setCrucialError(ErrorCode.ER_LOCK_DEADLOCK, ex.getMessage());
             }
             throw ex;
         }

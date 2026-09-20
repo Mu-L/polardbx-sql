@@ -1,0 +1,30 @@
+CREATE PARTITION TABLE `test_sk` (
+`id` int NOT NULL AUTO_INCREMENT,
+`c1` varchar(256) DEFAULT NULL,
+PRIMARY KEY (`id`)
+) ENGINE = InnoDB DEFAULT CHARSET = gb18030_2022
+PARTITION BY KEY(`c1`)
+PARTITIONS 3;
+
+show full create table `test_sk`;
+
+insert into `test_sk`(`c1`) values ('𬺰𬺱'),
+('𬺲𬺳𬺴𬺵𬺶𬺷𬺸𬺹𬺺𬺻'),
+('𬺼𬺽𬺾𬺿𬻀𬻁𬻂𬻃𬻄𬻅'),
+('𬻆𬻇𬻈𬻉𬻊𬻋𬻌𬻍𬻎𬻏');
+
+select `c1` from `test_sk` order by `c1`;
+select `c1` from `test_sk` where `c1` = '𬺰𬺱';
+
+CREATE TABLE `test_sk_2` (
+`id` int NOT NULL AUTO_INCREMENT,
+`c1` varchar(256) CHARACTER SET gb18030_2022 DEFAULT NULL,
+PRIMARY KEY (`id`)
+) DEFAULT CHARSET = gb18030_2022
+PARTITION BY KEY(`c1`)
+PARTITION 3;
+
+show full create table `test_sk_2`;
+
+drop table `test_sk`;
+drop table `test_sk_2`;

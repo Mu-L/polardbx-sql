@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.gms.metadb.table;
 
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
@@ -33,6 +34,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.gms.metadb.GmsSystemTables.COLUMNAR_APPENDED_FILES;
@@ -40,7 +42,7 @@ import static com.alibaba.polardbx.gms.metadb.GmsSystemTables.COLUMNAR_TABLE_MAP
 import static com.alibaba.polardbx.gms.metadb.GmsSystemTables.FILES;
 
 public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     private static final String COLUMNAR_APPENDED_FILES_TABLE = wrap(COLUMNAR_APPENDED_FILES);
 
@@ -95,6 +97,14 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
         + " on a.`file_name` = c.`file_name` and a.`checkpoint_tso` = c.`max_checkpoint_tso`"
         + " ";
 
+    private static final String QUERY_FILE_BY_TSO_LIMIT_TWO = "select * from " + COLUMNAR_APPENDED_FILES_TABLE
+        + " force index (`file_name_tso_index`) where `file_name` = ? and `checkpoint_tso` < ? order by `checkpoint_tso` desc limit 2";
+
+    //检查file_name = ? 是否存在n行，不必全扫描
+    private static final String QUERY_HAVE_ROWS_BY_FILE_LIMIT =
+        "select IF(COUNT(*) >= ?, 1, 0) as have from ( select 1 from " + COLUMNAR_APPENDED_FILES_TABLE
+            + " force index (`file_name_index`) where `file_name` = ? limit ? ) as file_limit";
+
     /**
      * The parameters must be consistent with ColumnarAppendedFilesRecord.buildInsertParams()
      */
@@ -125,6 +135,10 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
     private static final String DELETE_BY_SCHEMA_AND_TABLE_AND_FILE_NAME_LIMIT =
         "delete from " + COLUMNAR_APPENDED_FILES_TABLE
             + " where `logical_schema` = ? and `logical_table` = ? and `file_name` = ? limit ? ";
+
+    private static final String DELETE_BY_FILE_NAME_AND_TSO_LIMIT =
+        "delete from " + COLUMNAR_APPENDED_FILES_TABLE
+            + " where `file_name` = ? and `checkpoint_tso` < ? limit ? ";
 
     /**
      * For PK index log, meta and locks.
@@ -427,6 +441,7 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
 
     // range: (-inf, tso]
     public List<ColumnarAppendedFilesRecord> queryByFileNameAndMaxTso(String fileName, long tso) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(4);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, fileName);
@@ -439,12 +454,18 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_APPENDED_FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     // range: (lowerTso, upperTso]
     public List<ColumnarAppendedFilesRecord> queryLatestByFileNameBetweenTso(String fileName, long lowerTso,
                                                                              long upperTso) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(3);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, fileName);
@@ -458,11 +479,17 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_APPENDED_FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     // range: (lowerTso, upperTso]
     public List<ColumnarAppendedFilesRecord> queryByFileNameBetweenTso(String fileName, long lowerTso, long upperTso) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(3);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, fileName);
@@ -476,6 +503,11 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_APPENDED_FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
@@ -520,9 +552,31 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
 
     }
 
+    public List<ColumnarAppendedFilesRecord> queryFilesByTsoLimitTwo(String fileName, long tso) {
+        Map<Integer, ParameterContext> params = new HashMap<>(2);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, fileName);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, tso);
+        return query(QUERY_FILE_BY_TSO_LIMIT_TWO, COLUMNAR_APPENDED_FILES_TABLE, ColumnarAppendedFilesRecord.class,
+            params);
+    }
+
+    public boolean queryFileHaveRows(String fileName, long limit) {
+        Map<Integer, ParameterContext> params = new HashMap<>(4);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, limit);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setString, fileName);
+        MetaDbUtil.setParameter(3, params, ParameterMethod.setLong, limit);
+        List<CommonIntegerRecord> records =
+            query(QUERY_HAVE_ROWS_BY_FILE_LIMIT, COLUMNAR_APPENDED_FILES_TABLE, CommonIntegerRecord.class, params);
+        if (records == null || records.isEmpty()) {
+            return false;
+        }
+        return records.get(0).value == 1;
+    }
+
     // range: (lowerTso, upperTso]
     public List<ColumnarAppendedFilesRecord> queryDelByPartitionBetweenTso(
         String logicalSchema, String logicalTable, String partName, long lowerTso, long upperTso) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(5);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, logicalSchema);
@@ -538,6 +592,11 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_APPENDED_FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
@@ -582,6 +641,7 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
 
     public List<ColumnarAppendedFilesRecord> queryLastValidAppendByTsoAndTableId(long tso, String schemaName,
                                                                                  String tableId) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(8);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, tso);
@@ -599,11 +659,17 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_APPENDED_FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<ColumnarAppendedFilesRecord> queryLastValidAppendByTsoAndTableIdSubQuery(long tso, String schemaName,
                                                                                          String tableId) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(8);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, tso);
@@ -620,11 +686,17 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_APPENDED_FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<ColumnarAppendedFilesRecord> queryLastValidCSVAppendByTsoAndTableId(long tso, String schemaName,
                                                                                     String tableId) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(8);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, tso);
@@ -641,10 +713,16 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_APPENDED_FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<ColumnarAppendedFilesRecord> queryLastValidAppendByStartTsoAndEndTso(long startTso, long endTso) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(4);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, endTso);
@@ -658,6 +736,38 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_APPENDED_FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
+        }
+    }
+
+    /**
+     * 流式查询有效追加写文件（csv/del/set）的最后一条append记录，逐行回调consumer
+     */
+    public void streamLastValidAppendByStartTsoAndEndTso(long startTso, long endTso,
+                                                         Consumer<ColumnarAppendedFilesRecord> consumer) {
+        long startMillis = System.currentTimeMillis();
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>(4);
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setLong, endTso);
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, startTso);
+            MetaDbUtil.setParameter(3, params, ParameterMethod.setLong, endTso);
+
+            MetaDbUtil.queryStream(SELECT_CSV_DEL_SET_LAST_APPEND_BY_START_TSO_AND_END_TSO, params,
+                ColumnarAppendedFilesRecord.class, connection, consumer);
+        } catch (Exception e) {
+            LOGGER.error("Failed to query the system table " + COLUMNAR_APPENDED_FILES_TABLE, e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
+                COLUMNAR_APPENDED_FILES_TABLE,
+                e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
@@ -697,6 +807,7 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
     }
 
     public List<ColumnarAppendedFilesRecord> queryFilesByFileType(String fileType) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(1);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, fileType);
@@ -707,6 +818,35 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_APPENDED_FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
+        }
+    }
+
+    /**
+     * 流式查询指定文件类型的append记录，逐行回调consumer
+     */
+    public void streamFilesByFileType(String fileType, Consumer<ColumnarAppendedFilesRecord> consumer) {
+        long startMillis = System.currentTimeMillis();
+        try {
+            Map<Integer, ParameterContext> params = new HashMap<>(1);
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setString, fileType);
+
+            MetaDbUtil.queryStream(QUERY_ALL_BY_FILE_TYPE, params, ColumnarAppendedFilesRecord.class, connection,
+                consumer);
+        } catch (Exception e) {
+            LOGGER.error("Failed to query the system table " + COLUMNAR_APPENDED_FILES_TABLE, e);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
+                COLUMNAR_APPENDED_FILES_TABLE,
+                e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
@@ -925,8 +1065,17 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
         }
     }
 
+    public int deleteLimitByFileNameAndTso(String fileName, long tso, long limit) {
+        Map<Integer, ParameterContext> params = new HashMap<>(4);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, fileName);
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setLong, tso);
+        MetaDbUtil.setParameter(3, params, ParameterMethod.setLong, limit);
+        return delete(DELETE_BY_FILE_NAME_AND_TSO_LIMIT, COLUMNAR_APPENDED_FILES_TABLE, params);
+    }
+
     public List<ColumnarAppendedFilesRecord> queryByFileNamesAndTsoRange(Collection<String> files,
                                                                          long tso0, long tso1) {
+        long startMillis = System.currentTimeMillis();
         try {
             if (files.isEmpty()) {
                 return Collections.emptyList();
@@ -940,10 +1089,16 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_APPENDED_FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
     public List<ColumnarAppendedFilesRecord> queryByFileNamesAndTso(Collection<String> files, long tso) {
+        long startMillis = System.currentTimeMillis();
         try {
             if (files.isEmpty()) {
                 return Collections.emptyList();
@@ -957,6 +1112,11 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_APPENDED_FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
     }
 
@@ -991,6 +1151,7 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
     }
 
     public List<ColumnarAppendedFilesRecord> queryFileLastAppendedRecord(String fileName) {
+        long startMillis = System.currentTimeMillis();
         try {
             Map<Integer, ParameterContext> params = new HashMap<>(2);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, fileName);
@@ -1001,6 +1162,11 @@ public class ColumnarAppendedFilesAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",
                 COLUMNAR_APPENDED_FILES_TABLE,
                 e.getMessage());
+        } finally {
+            VersionStorageStatistics versionStorageStatistics = VersionStorageStatistics.getThreadLocalStatistics();
+            if (versionStorageStatistics != null) {
+                versionStorageStatistics.updateGmsStatistics(System.currentTimeMillis() - startMillis);
+            }
         }
 
     }

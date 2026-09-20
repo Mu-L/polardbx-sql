@@ -42,10 +42,14 @@
               `io` double default null,
               `net` double default null,
               `tables_hashcode` bigint not null,
+              `version` int not null,
               `extend_field` longtext default null comment 'json string extend field',
               primary key `primary_key` (`inst_id`, `schema_name`, `id`, `baseline_id`)
             ,  key `baseline_id_key` (`schema_name`, `baseline_id`)
             ) engine=innodb default charset=utf8;
         ]]></Create>
+        <Change><![CDATA[
+            alter table `spm_plan` add column `version` int not null default 0 after `tables_hashcode`;
+        ]]></Change>
     </SystemTable>
 </SystemTables>

@@ -20,10 +20,8 @@ import com.alibaba.polardbx.qatest.AutoCrudBasedLockTestCase;
 import com.alibaba.polardbx.qatest.data.ExecuteTableName;
 import com.alibaba.polardbx.qatest.data.TableColumnGenerator;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
-import com.alibaba.polardbx.qatest.util.PropertiesUtil;
 import com.alibaba.polardbx.qatest.validator.DataOperator;
 import com.alibaba.polardbx.qatest.validator.DataValidator;
-import com.google.common.collect.ImmutableSet;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Ignore;
@@ -1029,35 +1027,33 @@ public class UpdateTest extends AutoCrudBasedLockTestCase {
 
     @Test
     public void updateWithView() {
-        final String viewName = "update_with_view_test_view";
+        final String viewName = randomTableName("update_with_view_test_view", 12);
+        dropViewOnMysqlAndTddl(viewName);
+        try {
+            String sql = String.format("create view %s as\n"
+                + "(\n"
+                + "    select integer_test, varchar_test from %s as a where a.pk < 11 \n"
+                + ")\n", viewName, baseOneTableName);
+            executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
 
-        // Recreate view
-        String sql = "drop view " + viewName;
-        JdbcUtil.executeUpdateSuccessIgnoreErr(tddlConnection, sql, ImmutableSet.of("Unknown view"));
-        JdbcUtil.executeUpdateSuccessIgnoreErr(mysqlConnection, sql, ImmutableSet.of("Unknown table"));
-
-        sql = String.format("create view %s as\n"
-            + "(\n"
-            + "    select integer_test, varchar_test from %s as a where a.pk < 11 \n"
-            + ")\n", viewName, baseOneTableName);
-        executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
-
-        // Execute update
-        sql =
-            String.format("update %s a, %s v set a.bigint_test = v.integer_test where a.varchar_test = v.varchar_test",
+            // Execute update
+            sql = String.format(
+                "update %s a, %s v set a.bigint_test = v.integer_test where a.varchar_test = v.varchar_test",
                 baseOneTableName, viewName);
-        executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
+            executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
 
-        // Check update result
-        sql = "SELECT bigint_test FROM " + baseOneTableName;
-        selectContentSameAssert(sql, null, mysqlConnection, tddlConnection, true);
+            // Check update result
+            sql = "SELECT bigint_test FROM " + baseOneTableName;
+            selectContentSameAssert(sql, null, mysqlConnection, tddlConnection, true);
 
-        // Check error message
-        sql =
-            String.format("update %s a, %s v set v.integer_test = a.bigint_test where a.varchar_test = v.varchar_test",
+            // Check error message
+            sql = String.format(
+                "update %s a, %s v set v.integer_test = a.bigint_test where a.varchar_test = v.varchar_test",
                 baseOneTableName, viewName);
-        executeErrorAssert(tddlConnection, sql, null,
-            MessageFormat.format("{0}'' of the {1} is not updatable", viewName, "UPDATE"));
+            executeErrorAssert(tddlConnection, sql, null,
+                MessageFormat.format("{0}'' of the {1} is not updatable", viewName, "UPDATE"));
+        } finally {
+            dropViewOnMysqlAndTddl(viewName);
+        }
     }
 }
-

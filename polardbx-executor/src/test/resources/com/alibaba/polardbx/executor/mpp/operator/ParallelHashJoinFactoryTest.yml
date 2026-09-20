@@ -1,5 +1,5 @@
 - sql: |
-    select * from lineitem, partsupp where ps_partkey = l_partkey and l_orderkey < 10000;
+    /*+TDDL:cmd_extra(PARTITION_WISE_THRESHOLD=4)*/select * from lineitem, partsupp where ps_partkey = l_partkey and l_orderkey < 10000;
   plan: |
     hashjoin(condition="l_partkey = ps_partkey", type="inner")
       exchange(distribution=hash[1]4, collation=[])

@@ -128,12 +128,41 @@ public abstract class Converters {
         @Override
         public Block apply(Block block) {
             BlockBuilder blockBuilder = BlockBuilders.create(targetType, context, block.getPositionCount());
+            //add some type specified optimization to avoid DataTypesUtils.convert
+            if (blockBuilder instanceof DecimalBlockBuilder) {
+               if (block instanceof LongBlock) {
+                   for (int i = 0; i < block.getPositionCount(); i++) {
+                       if (block.isNull(i)) {
+                           blockBuilder.appendNull();
+                       } else {
+                           blockBuilder.writeLong(block.getLong(i));
+                       }
+                   }
+                   return blockBuilder.build();
+               } else if (block instanceof ShortBlock) {
+                   for (int i = 0; i < block.getPositionCount(); i++) {
+                       if (block.isNull(i)) {
+                           blockBuilder.appendNull();
+                       } else {
+                           blockBuilder.writeLong(block.getShort(i));
+                       }
+                   }
+                   return blockBuilder.build();
+               }
+            }
+
             for (int i = 0; i < block.getPositionCount(); i++) {
                 //enum convert value from enumValues
                 Object converted = DataTypeUtils.convert(targetType, block.getObject(i));
                 blockBuilder.writeObject(converted);
             }
+
             return blockBuilder.build();
+        }
+
+        @Override
+        public boolean isIdentity() {
+            return false;
         }
     }
 
@@ -151,6 +180,11 @@ public abstract class Converters {
                 block.cast(SliceBlock.class).resetCollation(collationName);
             }
             return block;
+        }
+
+        @Override
+        public boolean isIdentity() {
+            return true;
         }
     }
 

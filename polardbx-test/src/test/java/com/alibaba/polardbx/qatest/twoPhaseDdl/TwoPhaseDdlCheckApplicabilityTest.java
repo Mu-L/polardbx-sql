@@ -41,6 +41,7 @@ public class TwoPhaseDdlCheckApplicabilityTest extends DDLBaseNewDBTestCase {
 
     @Before
     public void init() {
+        this.schemaPrefix = "check_applicability_";
         this.tableName = schemaPrefix + randomTableName("two_phase", 4);
     }
 
@@ -209,6 +210,40 @@ public class TwoPhaseDdlCheckApplicabilityTest extends DDLBaseNewDBTestCase {
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
         Assert.assertTrue("the result contains no two phase task!", !checkIfExecuteTwoPhaseDdl(tddlConnection, sql));
         log.info("expected succeed, and DO NOT contain two phase task");
+    }
+
+    @Test
+    public void testModifyColumnTimeZone() throws SQLException {
+        // Maybe this case should be run on host with American timezone settings.
+        // because in storage node we fetch the timestamp from system call, not mysql timestamp with time_zone.
+        // but there is no way, we can only test it in a special host
+        String mytable = schemaPrefix + randomTableName("time_zone", 4);
+        try {
+            dropTableIfExists(mytable);
+        } catch (Exception e) {
+            log.info(e.getMessage());
+        }
+        String createTableStmt = "create table " + createOption + " %s(a int,b char, d int, primary key(d))";
+        String sql = String.format(createTableStmt, mytable);
+        log.info("execute sql: " + sql);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+
+        String enableTwoPhaseDdlHint = String.format("/*+TDDL:CMD_EXTRA(ENABLE_DRDS_MULTI_PHASE_DDL=true)*/");
+        sql = String.format(
+            enableTwoPhaseDdlHint + "ALTER TABLE %s MODIFY COLUMN a int comment \"hello\"",
+            mytable);
+        log.info("execute sql: " + sql);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        Assert.assertTrue("the result contains two phase task!", checkIfExecuteTwoPhaseDdl(tddlConnection, sql));
+        log.info("expected succeed, and contain two phase task");
+
+        sql = String.format(
+            enableTwoPhaseDdlHint + "ALTER TABLE %s MODIFY COLUMN a bigint",
+            mytable);
+        log.info("execute sql: " + sql);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
+        Assert.assertTrue("the result contains two phase task!", checkIfExecuteTwoPhaseDdl(tddlConnection, sql));
+        log.info("expected succeed, and contain two phase task");
     }
 
 }

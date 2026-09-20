@@ -1,10 +1,13 @@
 package com.alibaba.polardbx.qatest.ddl.auto.omc;
 
+import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.qatest.ddl.auto.movepartition.MovePartitionDmlBaseTest;
 import com.alibaba.polardbx.qatest.util.ConnectionManager;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
+import com.google.common.collect.ImmutableList;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runners.Parameterized;
 
 import java.security.SecureRandom;
 import java.sql.Connection;
@@ -38,8 +41,16 @@ public class UpsertWithHotValueTest extends MovePartitionDmlBaseTest {
 
     private static final int batchSize = 1024;
 
-    public UpsertWithHotValueTest() {
+    private Boolean useOmc30 = false;
+
+    @Parameterized.Parameters(name = "{index}:useOmc30={0}")
+    public static List<Object[]> prepareDate() {
+        return ImmutableList.of(new Object[] {Boolean.FALSE}, new Object[] {Boolean.TRUE});
+    }
+
+    public UpsertWithHotValueTest(Boolean useOmc30) {
         super(DATABASE_NAME);
+        this.useOmc30 = useOmc30;
     }
 
     @Before
@@ -47,10 +58,21 @@ public class UpsertWithHotValueTest extends MovePartitionDmlBaseTest {
         doReCreateDatabase();
 
         JdbcUtil.executeUpdateSuccess(mysqlConnection, "DROP TABLE IF EXISTS `test_upsert_with_hot_value`");
+
+        if (useOmc30) {
+            JdbcUtil.executeUpdateSuccess(tddlConnection, "set ENABLE_OMC_30 = true");
+            JdbcUtil.executeSuccess(tddlConnection, "set FORCE_USING_OMC_30 = true");
+        } else {
+            JdbcUtil.executeUpdateSuccess(tddlConnection, "set ENABLE_OMC_30 = false");
+        }
     }
 
     @Test
     public void testUpsertWithHotValue() {
+        if (useOmc30 && !isMySQL80()) {
+            return;
+        }
+
         // create table
         JdbcUtil.executeSuccess(tddlConnection, createTableSql);
 

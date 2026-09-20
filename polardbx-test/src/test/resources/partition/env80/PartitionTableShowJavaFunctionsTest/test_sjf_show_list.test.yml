@@ -1,0 +1,16 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+SHOW JAVA FUNCTIONS LIKE 'sjf_func%';
+
+SHOW JAVA FUNCTIONS LIKE 'sjf_func_alpha';
+
+SHOW JAVA FUNCTIONS LIKE 'sjf_func_b%';
+
+SHOW JAVA FUNCTIONS LIKE '%gamma';
+
+SHOW JAVA FUNCTIONS LIKE 'sjf_no_match%';
+
+drop java function if exists sjf_func_alpha;
+drop java function if exists sjf_func_beta;
+drop java function if exists sjf_func_gamma;

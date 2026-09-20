@@ -1,0 +1,50 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+set ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC=true;
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=true;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+#允许值测试
+create table two_node_hash_int(id int)
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/hash',
+  '{
+"partitionCount" : "2",
+"partitionLength" : "1"
+}'
+  )
+  )
+  partitions 2;
+select part_route('','two_node_hash_int',-1);
+part_route('', 'two_node_hash_int', -1)
+p2
+select part_route('','two_node_hash_int',1);
+part_route('', 'two_node_hash_int', 1)
+p2
+select part_route('','two_node_hash_int',0);
+part_route('', 'two_node_hash_int', 0)
+p1
+select part_route('','two_node_hash_int',2147483647);
+part_route('', 'two_node_hash_int', 2147483647)
+p2
+select part_route('','two_node_hash_int',-2147483648);
+part_route('', 'two_node_hash_int', -2147483648)
+p1
+create table two_node_hash_bigint(id bigint)
+partition by udf_hash(
+  `id` with udf_params(
+    'dble/hash',
+  '{
+"partitionCount" : "2",
+"partitionLength" : "1"
+}'
+  )
+)
+partitions 2;
+select part_route('','two_node_hash_bigint',-9223372036854775808);
+part_route('', 'two_node_hash_bigint', -9223372036854775808)
+p1
+select part_route('','two_node_hash_bigint',9223372036854775807);
+part_route('', 'two_node_hash_bigint', 9223372036854775807)
+p2

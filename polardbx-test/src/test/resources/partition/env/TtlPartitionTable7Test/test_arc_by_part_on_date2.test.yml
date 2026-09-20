@@ -1,0 +1,156 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+
+use polardbx;
+drop database if exists newttldb7_4;
+create database if not exists newttldb7_4 mode='auto';
+use newttldb7_4;
+  
+
+drop table if exists arc_date_by_year;
+create table if not exists arc_date_by_year(
+a int not null auto_increment,
+b date,
+primary key(a)
+)
+partition by range columns(`b`)
+(
+partition p1 values less than ('2025-01-01'),
+partition p2 values less than ('2026-01-01'),
+partition p3 values less than ('2027-01-01')
+)
+;
+
+alter table arc_date_by_year
+modify ttl
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 year timezone '+08:00',
+ttl_part_interval = interval(1, year),
+archive_type = 'partition',
+archive_table_pre_allocate = 4
+archive_table_post_allocate = 2
+;
+show create table arc_date_by_year;
+set TTL_DEBUG_CURRENT_DATETIME='2026-06-27 00:00:00';
+alter table arc_date_by_year cleanup expired data;
+show create table arc_date_by_year;
+set TTL_DEBUG_CURRENT_DATETIME='2027-06-27 00:00:00';
+alter table arc_date_by_year cleanup expired data;
+show create table arc_date_by_year;
+set TTL_DEBUG_CURRENT_DATETIME='2028-06-27 00:00:00';
+alter table arc_date_by_year cleanup expired data;
+show create table arc_date_by_year;
+
+drop table if exists arc_date_by_month;
+create table if not exists arc_date_by_month(
+a int not null auto_increment,
+b date,
+primary key(a)
+)
+partition by range columns(`b`)
+(
+partition p1 values less than ('2025-01-01'),
+partition p2 values less than ('2025-02-01'),
+partition p3 values less than ('2025-03-01')
+)
+;
+alter table arc_date_by_month
+modify ttl
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 month timezone '+08:00',
+ttl_part_interval = interval(1, month),
+archive_type = 'partition',
+archive_table_pre_allocate = 4
+archive_table_post_allocate = 2
+;
+show create table arc_date_by_month;
+set TTL_DEBUG_CURRENT_DATETIME='2025-02-20 00:00:00';
+alter table arc_date_by_month cleanup expired data;
+show create table arc_date_by_month;
+set TTL_DEBUG_CURRENT_DATETIME='2025-03-20 00:00:00';
+alter table arc_date_by_month cleanup expired data;
+show create table arc_date_by_month;
+set TTL_DEBUG_CURRENT_DATETIME='2025-04-20 00:00:00';
+alter table arc_date_by_month cleanup expired data;
+show create table arc_date_by_month;
+
+drop table if exists arc_date_by_week;
+create table if not exists arc_date_by_week(
+a int not null auto_increment,
+b date,
+primary key(a)
+)
+partition by range columns(`b`)
+(
+partition p1 values less than ('2025-05-04'),
+partition p2 values less than ('2025-05-11'),
+partition p3 values less than ('2025-05-18')
+)
+;
+alter table arc_date_by_week
+modify ttl
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 7 day timezone '+08:00',
+ttl_part_interval = interval(1, week),
+archive_type = 'partition',
+archive_table_pre_allocate = 4
+archive_table_post_allocate = 2
+;
+show create table arc_date_by_week;
+set TTL_DEBUG_CURRENT_DATETIME='2025-05-14 00:00:00';
+alter table arc_date_by_week cleanup expired data;
+show create table arc_date_by_week;
+set TTL_DEBUG_CURRENT_DATETIME='2025-05-21 00:00:00';
+alter table arc_date_by_week cleanup expired data;
+show create table arc_date_by_week;
+set TTL_DEBUG_CURRENT_DATETIME='2025-05-28 00:00:00';
+alter table arc_date_by_week cleanup expired data;
+show create table arc_date_by_week;
+
+
+drop table if exists arc_date_by_day;
+create table if not exists arc_date_by_day(
+a int not null auto_increment,
+b date,
+primary key(a)
+)
+partition by range columns(`b`)
+(
+partition p1 values less than ('2025-05-01'),
+partition p2 values less than ('2025-05-02'),
+partition p3 values less than ('2025-05-03')
+)
+;
+alter table arc_date_by_day
+modify ttl
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_part_interval = interval(1, day),
+archive_type = 'partition',
+archive_table_pre_allocate = 4
+archive_table_post_allocate = 2
+;
+show create table arc_date_by_day;
+set TTL_DEBUG_CURRENT_DATETIME='2025-05-02 10:00:00';
+alter table arc_date_by_day cleanup expired data;
+show create table arc_date_by_day;
+set TTL_DEBUG_CURRENT_DATETIME='2025-05-03 10:00:00';
+alter table arc_date_by_day cleanup expired data;
+show create table arc_date_by_day;
+set TTL_DEBUG_CURRENT_DATETIME='2025-05-04 10:00:00';
+alter table arc_date_by_day cleanup expired data;
+show create table arc_date_by_day;
+
+use polardbx;
+drop database if exists newttldb7_4;
+

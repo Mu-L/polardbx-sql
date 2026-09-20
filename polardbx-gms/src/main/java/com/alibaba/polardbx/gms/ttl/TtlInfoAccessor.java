@@ -8,6 +8,7 @@ import com.alibaba.polardbx.common.jdbc.ParameterMethod;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.metadb.accessor.AbstractAccessor;
+import com.alibaba.polardbx.gms.partition.ExtraFieldJSON;
 import com.alibaba.polardbx.gms.util.DdlMetaLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 
@@ -24,13 +25,13 @@ public class TtlInfoAccessor extends AbstractAccessor {
 
     private static final String ALL_COLUMNS =
         "`id`,`gmt_created`,`gmt_modified`"
-            + ",`table_schema`,`table_name`,`ttl_status`,`ttl_expr`,`ttl_filter`,`ttl_interval`,`ttl_unit`,`ttl_col`,`ttl_tz`,`ttl_cron`,`ttl_binlog`"
+            + ",`table_schema`,`table_name`,`ttl_status`,`ttl_expr`,`ttl_col_encoder`,`ttl_col_decoder`,`ttl_filter`,`ttl_interval`,`ttl_unit`,`ttl_col`,`ttl_tz`,`ttl_cron`,`ttl_binlog`"
             + ",`arc_kind`,`arc_status`,`arc_tmp_tbl_schema`,`arc_tmp_tbl_name`,`arc_tbl_schema`, `arc_tbl_name`"
             + ",`arc_part_mode`,`arc_part_interval`,`arc_part_unit`,`arc_pre_part_cnt`,`arc_post_part_cnt`"
             + ",`extra`";
     private static final String ALL_VALUES = "("
         + "null,now(),now()"
-        + ",?,?,?,?,?,?,?,?,?,?,?"
+        + ",?,?,?,?,?,?,?,?,?,?,?,?,?"
         + ",?,?,?,?,?,?"
         + ",?,?,?,?,?"
         + ",?"
@@ -44,6 +45,8 @@ public class TtlInfoAccessor extends AbstractAccessor {
 
         + "`ttl_status`=?,"
         + "`ttl_expr`=?,"
+        + "`ttl_col_encoder`=?,"
+        + "`ttl_col_decoder`=?,"
         + "`ttl_filter`=?,"
         + "`ttl_interval`=?,"
         + "`ttl_unit`=?,"
@@ -117,6 +120,9 @@ public class TtlInfoAccessor extends AbstractAccessor {
 
     private static final String UNBIND_ARC_TBL_TTL_INFO_BY_ARC_DB_ARC_TB =
         "update ttl_info set arc_kind=0,arc_tbl_schema=null,arc_tbl_name=null,arc_tmp_tbl_schema=null,arc_tmp_tbl_name=null where arc_tbl_schema=? and arc_tbl_name=?";
+
+    private static final String UPDATE_TTL_EXTRA_BY_DB_TB =
+        "update ttl_info set extra=? where table_schema=? and table_name=?";
 
     public TtlInfoRecord queryTtlInfoByDbAndTb(String tableSchema, String tableName) {
 
@@ -224,6 +230,8 @@ public class TtlInfoAccessor extends AbstractAccessor {
 
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setInt, ttlInfo.getTtlStatus());
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, ttlInfo.getTtlExpr());
+            MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, ttlInfo.getTtlColEncoder());
+            MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, ttlInfo.getTtlColDecoder());
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, ttlInfo.getTtlFilter());
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setInt, ttlInfo.getTtlInterval());
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setInt, ttlInfo.getTtlUnit());
@@ -246,7 +254,8 @@ public class TtlInfoAccessor extends AbstractAccessor {
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setInt, ttlInfo.getArcPostPartCnt());
 
             JSONObject extra = new JSONObject();
-            MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, extra.toJSONString());
+            MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString,
+                ttlInfo.getExtra() == null ? extra.toJSONString() : ttlInfo.getExtra().toString());
 
             res = MetaDbUtil.insert(INSERT_TTL_INFO, params, connection);
             DdlMetaLogUtil.logSql(INSERT_TTL_INFO, params);
@@ -291,7 +300,8 @@ public class TtlInfoAccessor extends AbstractAccessor {
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setInt, ttlInfo.getArcPostPartCnt());
 
             JSONObject extra = new JSONObject();
-            MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, extra.toJSONString());
+            MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString,
+                ttlInfo.getExtra() == null ? extra.toJSONString() : ttlInfo.getExtra().toString());
 
             res = MetaDbUtil.insert(REPLACE_TTL_INFO, params, connection);
             DdlMetaLogUtil.logSql(REPLACE_TTL_INFO, params);
@@ -314,6 +324,8 @@ public class TtlInfoAccessor extends AbstractAccessor {
 
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setInt, ttlInfo.getTtlStatus());
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, ttlInfo.getTtlExpr());
+            MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, ttlInfo.getTtlColEncoder());
+            MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, ttlInfo.getTtlColDecoder());
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, ttlInfo.getTtlFilter());
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setInt, ttlInfo.getTtlInterval());
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setInt, ttlInfo.getTtlUnit());
@@ -336,7 +348,8 @@ public class TtlInfoAccessor extends AbstractAccessor {
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setInt, ttlInfo.getArcPostPartCnt());
 
             JSONObject extra = new JSONObject();
-            MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, extra.toJSONString());
+            MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString,
+                ttlInfo.getExtra() == null ? extra.toJSONString() : ttlInfo.getExtra().toString());
 
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, ttlTblSchema);
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, ttlTblName);
@@ -362,6 +375,8 @@ public class TtlInfoAccessor extends AbstractAccessor {
 
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setInt, ttlInfo.getTtlStatus());
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, ttlInfo.getTtlExpr());
+            MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, ttlInfo.getTtlColEncoder());
+            MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, ttlInfo.getTtlColDecoder());
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, ttlInfo.getTtlFilter());
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setInt, ttlInfo.getTtlInterval());
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setInt, ttlInfo.getTtlUnit());
@@ -384,7 +399,8 @@ public class TtlInfoAccessor extends AbstractAccessor {
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setInt, ttlInfo.getArcPostPartCnt());
 
             JSONObject extra = new JSONObject();
-            MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString, extra.toJSONString());
+            MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setString,
+                ttlInfo.getExtra() == null ? extra.toJSONString() : ttlInfo.getExtra().toString());
 
             MetaDbUtil.setParameter(++paramIndex, params, ParameterMethod.setLong, id);
 
@@ -507,6 +523,19 @@ public class TtlInfoAccessor extends AbstractAccessor {
             MetaDbUtil.update(UNBIND_ARC_TBL_TTL_INFO_BY_ARC_DB_ARC_TB, params, connection);
         } catch (Exception e) {
             logAndThrow(e.getMessage(), "unbind ttl_info by arc_db and arc_tb", e);
+        }
+    }
+
+    public void updateArcBoundByByDbAndTb(ExtraFieldJSON extra, String tableSchema, String tableName) {
+        Map<Integer, ParameterContext> params = new HashMap<>(3);
+        MetaDbUtil.setParameter(1, params, ParameterMethod.setString, extra.toString());
+        MetaDbUtil.setParameter(2, params, ParameterMethod.setString, tableSchema);
+        MetaDbUtil.setParameter(3, params, ParameterMethod.setString, tableName);
+        try {
+            DdlMetaLogUtil.logSql(UPDATE_TTL_EXTRA_BY_DB_TB, params);
+            MetaDbUtil.update(UPDATE_TTL_EXTRA_BY_DB_TB, params, connection);
+        } catch (Exception e) {
+            logAndThrow(e.getMessage(), "update ttl_info by db and tb", e);
         }
     }
 

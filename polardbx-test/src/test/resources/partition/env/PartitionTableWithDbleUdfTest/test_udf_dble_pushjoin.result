@@ -1,0 +1,215 @@
+## DISABLE_FAST_SQL_PARSER
+select pattrngd0p1024i(0)
+pattrngd0p1024i(0)
+0
+select pattrngd0p1024i(1)
+pattrngd0p1024i(1)
+0
+select pattrngd0p1024i(255)
+pattrngd0p1024i(255)
+0
+select pattrngd0p1024i(256)
+pattrngd0p1024i(256)
+0
+select pattrngd0p1024i(257)
+pattrngd0p1024i(257)
+1
+select pattrngd0p1024i(511)
+pattrngd0p1024i(511)
+1
+select pattrngd0p1024i(512)
+pattrngd0p1024i(512)
+1
+select pattrngd0p1024i(513)
+pattrngd0p1024i(513)
+2
+select pattrngd0p1024i(767)
+pattrngd0p1024i(767)
+2
+select pattrngd0p1024i(768)
+pattrngd0p1024i(768)
+2
+select pattrngd0p1024i(769)
+pattrngd0p1024i(769)
+3
+select pattrngd0p1024i(1023)
+pattrngd0p1024i(1023)
+3
+select pattrngd0p1024i(1024)
+pattrngd0p1024i(1024)
+0
+select pattrngd0p1024i(1025)
+pattrngd0p1024i(1025)
+0
+drop tablegroup if exists tg_dble_udf_join
+create tablegroup if not exists tg_dble_udf_join
+partition by udf_hash(bigint)
+partition 5
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3),
+partition p3 values less than (4),
+partition pm values less than (9223372036854775807)
+)
+drop table if exists myuh_t1
+create table myuh_t1(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(pattrngd0p1024i(c1))
+tablegroup=tg_dble_udf_join
+drop table if exists myuh_t2
+create table myuh_t2(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(pattrngd0p1024i(c1))
+tablegroup=tg_dble_udf_join
+drop table if exists myuh_t3
+create table myuh_t3(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(pattrngd0p1024i(c1))
+tablegroup=tg_dble_udf_join
+show create table myuh_t1
+Table,Create Table
+myuh_t1,CREATE TABLE `myuh_t1` (
+	`c1` bigint(20) NOT NULL,
+	`c2` bigint(20) NOT NULL,
+	KEY `auto_shard_key_c1` USING BTREE (`c1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY UDF_HASH(pattrngd0p1024i(`c1`))
+PARTITIONS 5
+(PARTITION p0 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p1 VALUES LESS THAN (2) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (3) ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN (4) ENGINE = InnoDB,
+ PARTITION pm VALUES LESS THAN (9223372036854775807) ENGINE = InnoDB)
+tablegroup = `tg_dble_udf_join`
+show create table myuh_t2
+Table,Create Table
+myuh_t2,CREATE TABLE `myuh_t2` (
+	`c1` bigint(20) NOT NULL,
+	`c2` bigint(20) NOT NULL,
+	KEY `auto_shard_key_c1` USING BTREE (`c1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY UDF_HASH(pattrngd0p1024i(`c1`))
+PARTITIONS 5
+(PARTITION p0 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p1 VALUES LESS THAN (2) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (3) ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN (4) ENGINE = InnoDB,
+ PARTITION pm VALUES LESS THAN (9223372036854775807) ENGINE = InnoDB)
+tablegroup = `tg_dble_udf_join`
+show create table myuh_t3
+Table,Create Table
+myuh_t3,CREATE TABLE `myuh_t3` (
+	`c1` bigint(20) NOT NULL,
+	`c2` bigint(20) NOT NULL,
+	KEY `auto_shard_key_c1` USING BTREE (`c1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY UDF_HASH(pattrngd0p1024i(`c1`))
+PARTITIONS 5
+(PARTITION p0 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p1 VALUES LESS THAN (2) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (3) ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN (4) ENGINE = InnoDB,
+ PARTITION pm VALUES LESS THAN (9223372036854775807) ENGINE = InnoDB)
+tablegroup = `tg_dble_udf_join`
+insert into myuh_t1 values (0,0)
+insert into myuh_t1 values (255,255)
+insert into myuh_t1 values (256,256)
+insert into myuh_t1 values (257,257)
+insert into myuh_t1 values (511,511)
+insert into myuh_t1 values (512,512)
+insert into myuh_t1 values (513,513)
+insert into myuh_t1 values (767,767)
+insert into myuh_t1 values (768,768)
+insert into myuh_t1 values (769,769)
+insert into myuh_t1 values (1023,1023)
+insert into myuh_t1 values (1024,1024)
+insert into myuh_t1 values (1025,1025)
+insert into myuh_t2 values (0,0)
+insert into myuh_t2 values (255,255)
+insert into myuh_t2 values (256,256)
+insert into myuh_t2 values (257,257)
+insert into myuh_t2 values (511,511)
+insert into myuh_t2 values (512,512)
+insert into myuh_t2 values (513,513)
+insert into myuh_t2 values (767,767)
+insert into myuh_t2 values (768,768)
+insert into myuh_t2 values (769,769)
+insert into myuh_t2 values (1023,1023)
+insert into myuh_t2 values (1024,1024)
+insert into myuh_t2 values (1025,1025)
+insert into myuh_t3 values (0,0)
+insert into myuh_t3 values (255,255)
+insert into myuh_t3 values (256,256)
+insert into myuh_t3 values (257,257)
+insert into myuh_t3 values (511,511)
+insert into myuh_t3 values (512,512)
+insert into myuh_t3 values (513,513)
+insert into myuh_t3 values (767,767)
+insert into myuh_t3 values (768,768)
+insert into myuh_t3 values (769,769)
+insert into myuh_t3 values (1023,1023)
+insert into myuh_t3 values (1024,1024)
+insert into myuh_t3 values (1025,1025)
+explain select a.c1 from myuh_t1 a where a.c1 between 510 and 515 order by a.c1
+Logical ExecutionPlan
+MergeSort(sort="c1 ASC")
+  LogicalView(tables="myuh_t1[p1,p2]", shardCount=2, sql="SELECT `c1` FROM `myuh_t1` AS `myuh_t1` WHERE (`c1` BETWEEN ? AND ?) ORDER BY `c1`")
+select a.c1 from myuh_t1 a where a.c1 between 510 and 515 order by a.c1
+c1
+511
+512
+513
+explain select a.c1 from myuh_t1 a join myuh_t2 b on a.c1=b.c1 where a.c1=257
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="myuh_t1[p1],myuh_t2[p1]", sql="SELECT `myuh_t1`.`c1` FROM `myuh_t1` AS `myuh_t1` INNER JOIN `myuh_t2` AS `myuh_t2` ON ((`myuh_t1`.`c1` = ?) AND (`myuh_t2`.`c1` = ?) AND (`myuh_t1`.`c1` = `myuh_t2`.`c1`))")
+select a.c1 from myuh_t1 a join myuh_t2 b on a.c1=b.c1 where a.c1=257
+c1
+257
+explain select a.c1 from myuh_t2 a join myuh_t3 b on a.c1=b.c1 where a.c1=257
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="myuh_t2[p1],myuh_t3[p1]", sql="SELECT `myuh_t2`.`c1` FROM `myuh_t2` AS `myuh_t2` INNER JOIN `myuh_t3` AS `myuh_t3` ON ((`myuh_t2`.`c1` = ?) AND (`myuh_t3`.`c1` = ?) AND (`myuh_t2`.`c1` = `myuh_t3`.`c1`))")
+select a.c1 from myuh_t2 a join myuh_t3 b on a.c1=b.c1 where a.c1=257
+c1
+257
+explain select a.c1 from myuh_t1 a join myuh_t2 b on a.c1=b.c1 join myuh_t3 c on a.c1=c.c1 where a.c1=257
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="myuh_t1[p1],myuh_t2[p1],myuh_t3[p1]", sql="SELECT `myuh_t1`.`c1` FROM `myuh_t1` AS `myuh_t1` INNER JOIN `myuh_t2` AS `myuh_t2` ON ((`myuh_t1`.`c1` = ?) AND (`myuh_t2`.`c1` = ?) AND (`myuh_t1`.`c1` = `myuh_t2`.`c1`)) INNER JOIN `myuh_t3` AS `myuh_t3` ON ((`myuh_t3`.`c1` = ?) AND (`myuh_t1`.`c1` = `myuh_t3`.`c1`) AND (`myuh_t2`.`c1` = `myuh_t3`.`c1`))")
+select a.c1 from myuh_t1 a join myuh_t2 b on a.c1=b.c1 join myuh_t3 c on a.c1=c.c1 where a.c1=257
+c1
+257
+explain select a.c1 from myuh_t1 a join myuh_t2 b on a.c1=b.c1 join myuh_t3 c on a.c1=c.c1 where a.c1<1024 order by a.c1
+Logical ExecutionPlan
+MergeSort(sort="c1 ASC")
+  LogicalView(tables="myuh_t1[p0,p1,p2,p3,pm],myuh_t2[p0,p1,p2,p3,pm],myuh_t3[p0,p1,p2,p3,pm]", shardCount=5, sql="SELECT `myuh_t1`.`c1` FROM `myuh_t1` AS `myuh_t1` INNER JOIN `myuh_t2` AS `myuh_t2` ON ((`myuh_t1`.`c1` = `myuh_t2`.`c1`) AND (`myuh_t1`.`c1` < ?)) INNER JOIN `myuh_t3` AS `myuh_t3` ON ((`myuh_t1`.`c1` = `myuh_t3`.`c1`) AND (`myuh_t2`.`c1` = `myuh_t3`.`c1`)) ORDER BY `myuh_t1`.`c1`")
+select a.c1 from myuh_t1 a join myuh_t2 b on a.c1=b.c1 join myuh_t3 c on a.c1=c.c1 where a.c1<1024 order by a.c1
+c1
+0
+255
+256
+257
+511
+512
+513
+767
+768
+769
+1023
+explain select a.c1 from myuh_t1 a join myuh_t2 b on a.c1=b.c1 join myuh_t3 c on a.c1=c.c1 where a.c1 between 510 and 515 order by a.c1
+Logical ExecutionPlan
+MergeSort(sort="c1 ASC")
+  LogicalView(tables="myuh_t1[p1,p2],myuh_t2[p1,p2],myuh_t3[p1,p2]", shardCount=2, sql="SELECT `myuh_t1`.`c1` FROM `myuh_t1` AS `myuh_t1` INNER JOIN `myuh_t2` AS `myuh_t2` ON ((`myuh_t1`.`c1` = `myuh_t2`.`c1`) AND (`myuh_t1`.`c1` BETWEEN ? AND ?)) INNER JOIN `myuh_t3` AS `myuh_t3` ON ((`myuh_t1`.`c1` = `myuh_t3`.`c1`) AND (`myuh_t2`.`c1` = `myuh_t3`.`c1`)) ORDER BY `myuh_t1`.`c1`")
+select a.c1 from myuh_t1 a join myuh_t2 b on a.c1=b.c1 join myuh_t3 c on a.c1=c.c1 where a.c1 between 510 and 515 order by a.c1
+c1
+511
+512
+513

@@ -68,7 +68,6 @@ public class LogicalAlterTableRenamePartition extends BaseDdlOperation {
         SqlAlterTable sqlAlterTable = (SqlAlterTable) alterTable.getSqlNode();
         assert sqlAlterTable.getAlters().size() == 1;
 
-        assert sqlAlterTable.getAlters().get(0) instanceof SqlAlterTableMovePartition;
         SqlAlterTableRenamePartition sqlAlterTableRenamePartition =
             (SqlAlterTableRenamePartition) sqlAlterTable.getAlters().get(0);
 

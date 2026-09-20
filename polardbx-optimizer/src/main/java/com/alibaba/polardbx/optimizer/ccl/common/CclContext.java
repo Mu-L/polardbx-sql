@@ -39,6 +39,7 @@ public class CclContext {
     private boolean reschedule;
 
     private CclMetric metric;
+    private boolean isDryRun;
 
     public CclContext(CclRuleInfo cclRule, Thread thread) {
         this.cclRule = cclRule;

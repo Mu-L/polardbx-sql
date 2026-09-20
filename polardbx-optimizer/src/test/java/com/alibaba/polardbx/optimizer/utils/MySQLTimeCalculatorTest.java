@@ -1,7 +1,6 @@
 package com.alibaba.polardbx.optimizer.utils;
 
 import com.alibaba.polardbx.common.utils.Assert;
-import com.alibaba.polardbx.common.utils.time.calculator.MySQLTimeCalculator;
 import com.alibaba.polardbx.common.utils.time.calculator.PartitionFunctionTimeCaculator;
 import com.alibaba.polardbx.common.utils.time.core.MysqlDateTime;
 import org.junit.Test;

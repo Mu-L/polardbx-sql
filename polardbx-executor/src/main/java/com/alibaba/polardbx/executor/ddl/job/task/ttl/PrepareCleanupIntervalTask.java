@@ -7,18 +7,27 @@ import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.logger.MDC;
 import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.log.FetchCleanupLowerBoundTaskLogInfo;
+import com.alibaba.polardbx.executor.ddl.job.task.ttl.log.FetchExpiredDataPercentTaskLogInfo;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.log.TtlLoggerUtil;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.scheduler.TtlScheduledJobStatManager;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import com.alibaba.polardbx.optimizer.config.server.IServerConfigManager;
+import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
+import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
 import com.alibaba.polardbx.optimizer.ttl.TtlArchiveKind;
 import com.alibaba.polardbx.optimizer.ttl.TtlConfigUtil;
 import com.alibaba.polardbx.optimizer.ttl.TtlDefinitionInfo;
 import com.alibaba.polardbx.optimizer.ttl.TtlTimeUnit;
 import lombok.Data;
 import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.collections.MapUtils;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -33,6 +42,7 @@ import java.util.concurrent.Future;
 /**
  * @author chenghui.lch
  */
+@Slf4j
 @Getter
 @TaskName(name = "PrepareCleanupIntervalTask")
 public class PrepareCleanupIntervalTask extends AbstractTtlJobTask {
@@ -53,18 +63,23 @@ public class PrepareCleanupIntervalTask extends AbstractTtlJobTask {
     public PrepareCleanupIntervalTask(String schemaName,
                                       String logicalTableName) {
         super(schemaName, logicalTableName);
-        onExceptionTryRecoveryThenPause();
+        onExceptionTryRecoveryThenRollback();
     }
 
     public void executeImpl(ExecutionContext executionContext) {
+        FailPoint.injectExceptionFromHint(FailPointKey.FP_TTL_JOB_FAILED_ON_PREPARE_CLEANUP_INTERVAL, executionContext);
         resetTtlJobStat();
         TtlJobUtil.updateJobStage(this.jobContext, "PreparingCleanupContext");
         prepareExpiredCleanUpBound(executionContext);
+        prepareAndDecideCleanupPolicy(executionContext);
     }
 
     protected void resetTtlJobStat() {
         String ttlDb = this.jobContext.getTtlInfo().getTtlInfoRecord().getTableSchema();
         String ttlTb = this.jobContext.getTtlInfo().getTtlInfoRecord().getTableName();
+        // Re-register if not present: covers the case where the CN leader switched and the new
+        // leader's TtlScheduledJobStatManager is empty (in-memory stat is not migrated across nodes).
+        TtlScheduledJobStatManager.getInstance().registerTtlTableIfNeed(ttlDb, ttlTb);
         TtlScheduledJobStatManager.TtlJobStatInfo jobStatInfo =
             TtlScheduledJobStatManager.getInstance().getTtlJobStatInfo(ttlDb, ttlTb);
         if (jobStatInfo != null) {
@@ -125,6 +140,7 @@ public class PrepareCleanupIntervalTask extends AbstractTtlJobTask {
         protected Boolean ttlTblIsEmpty = false;
         protected String minBoundToBeCleanUp = null;
         protected boolean stopTask = false;
+
         protected IntraTaskStatInfo statInfo = new IntraTaskStatInfo();
 
         public FetchMinExpiredDataUpperBoundTask(DdlTask parentDdlTask,
@@ -435,27 +451,15 @@ public class PrepareCleanupIntervalTask extends AbstractTtlJobTask {
             int mergeUnionSize = TtlConfigUtil.getMergeUnionSizeForSelectLowerBound();
             String queryHint = TtlConfigUtil.getQueryHintForSelectLowerBound();
             String forceIndexExpr = this.jobContext.getTtlColForceIndexExpr();
-            String whereCondExpr = "";
-            String ttlFilter = ttlInfo.getTtlInfoRecord().getTtlFilter();
-            if (!StringUtils.isEmpty(ttlFilter)) {
-                whereCondExpr = String.format("WHERE (%s)", ttlFilter);
-            }
             String selectSql =
-                TtlTaskSqlBuilder.buildSelectExpiredLowerBoundValueSqlTemplate(ttlInfo, ec, queryHint, forceIndexExpr,
-                    whereCondExpr);
+                TtlTaskSqlBuilder.buildSelectExpiredLowerBoundValueSqlTemplate(ttlInfo, ec, queryHint, forceIndexExpr);
             if (!useMergeConcurrent) {
                 selectSql =
                     TtlTaskSqlBuilder.buildSelectExpiredLowerBoundValueBySqlTemplateWithoutConcurrent(ttlInfo, ec,
-                        mergeUnionSize, forceIndexExpr, whereCondExpr);
+                        mergeUnionSize, forceIndexExpr);
             }
             return selectSql;
         }
-
-//        protected String buildSelectExpiredUpperBoundSql() {
-//            TtlDefinitionInfo ttlInfo = this.jobContext.getTtlInfo();
-//            String selectSql = TtlTaskSqlBuilder.buildSelectExpiredUpperBoundValueSqlTemplate(ttlInfo, ec);
-//            return selectSql;
-//        }
 
         @Override
         public String getDnId() {
@@ -512,6 +516,393 @@ public class PrepareCleanupIntervalTask extends AbstractTtlJobTask {
             this.logicalTableName
         );
         this.jobContext = jobContext;
+    }
+
+    protected static class FetchExpiredDataPercentTaskSubmitter implements TtlWorkerTaskSubmitter {
+        protected DdlTask parentDdlTask;
+        protected ExecutionContext ec;
+        protected TtlJobContext ttlJobContext;
+
+        public FetchExpiredDataPercentTaskSubmitter(DdlTask parentDdlTask, ExecutionContext ec,
+                                                    TtlJobContext ttlJobContext) {
+            this.parentDdlTask = parentDdlTask;
+            this.ec = ec;
+            this.ttlJobContext = ttlJobContext;
+        }
+
+        @Override
+        public List<Pair<Future, TtlIntraTaskRunner>> submitWorkerTasks() {
+            List<Pair<Future, TtlIntraTaskRunner>> futureInfos = new ArrayList<>();
+            FetchExpiredDataPercentIntraTask task =
+                new FetchExpiredDataPercentIntraTask(parentDdlTask, ec, ttlJobContext);
+            List<TtlIntraTaskRunner> runners = new ArrayList<>();
+            runners.add(task);
+            futureInfos = TtlIntraTaskExecutor.getInstance().submitSelectTaskRunners(runners);
+            return futureInfos;
+        }
+    }
+
+    @Data
+    protected static class FetchExpiredDataPercentIntraTask extends TtlIntraTaskRunner {
+
+        protected DdlTask parentDdlTask;
+        protected TtlJobContext jobContext;
+        protected ExecutionContext ec;
+        protected Object transConn;
+
+        protected String ttlColMinValue = null;
+        protected Boolean ttlColMinValueIsNull = false;
+        protected Boolean ttlColMinValueIsZero = false;
+        protected Boolean ttlTblIsEmpty = false;
+        /**
+         * Label if need use rebuild-policy to perform expired data cleaning up instead of row-level deleting.
+         */
+        protected Boolean useRebuildPolicy = false;
+        protected Long expiredDataPercentAvg = 0L;
+        protected Long ttlTableTotalRowCount = 0L;
+        protected String selectExpiredDataPercentSql = "";
+        protected boolean stopTask = false;
+        protected IntraTaskStatInfo statInfo = new IntraTaskStatInfo();
+
+        public FetchExpiredDataPercentIntraTask(DdlTask parentDdlTask,
+                                                ExecutionContext ec,
+                                                TtlJobContext jobContext) {
+            this.parentDdlTask = parentDdlTask;
+            this.jobContext = jobContext;
+            this.ec = ec;
+        }
+
+        @Override
+        public void runTask() {
+            final Map savedMdcContext = MDC.getCopyOfContextMap();
+            try {
+                String schemaName = jobContext.getTtlInfo().getTtlInfoRecord().getTableSchema().toLowerCase();
+                MDC.put(MDC.MDC_KEY_APP, schemaName);
+                runInner();
+            } finally {
+                MDC.setContextMap(savedMdcContext);
+            }
+        }
+
+        protected void runInner() {
+
+            long taskStartTsNano = System.nanoTime();
+
+            final IServerConfigManager serverConfigManager = TtlJobUtil.getServerConfigManager();
+            final String ttlTblSchemaName = this.jobContext.getTtlInfo().getTtlInfoRecord().getTableSchema();
+
+            TtlArchiveKind archiveKind =
+                TtlArchiveKind.of(this.jobContext.getTtlInfo().getTtlInfoRecord().getArcKind());
+            boolean archivedByPartitions = archiveKind.archivedByPartitions();
+            boolean enableTtlCleanup = this.jobContext.getTtlInfo().isCleanupEnabled();
+//            boolean needPerformArchivingByOssTbl = this.jobContext.getTtlInfo().needPerformExpiredDataArchiving();
+
+            TtlDefinitionInfo ttlInfo = this.jobContext.getTtlInfo();
+            String ttlTimezoneStr = ttlInfo.getTtlInfoRecord().getTtlTimezone();
+            String charsetEncoding = TtlConfigUtil.getDefaultCharsetEncodingOnTransConn();
+            String sqlModeSetting = TtlConfigUtil.getDefaultSqlModeOnTransConn();
+            String groupParallelismForConnStr = String.valueOf(TtlConfigUtil.getDefaultGroupParallelismOnDqlConn());
+            Map<String, Object> sessionVariables = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+            sessionVariables.put("time_zone", ttlTimezoneStr);
+            sessionVariables.put("names", charsetEncoding);
+            sessionVariables.put("sql_mode", sqlModeSetting);
+            sessionVariables.put("group_parallelism", groupParallelismForConnStr);
+
+            /**
+             * query the lower bound value of ttl_col of ttl_tbl
+             * <pre>
+             * </pre>
+             *
+             */
+            if (!archivedByPartitions && enableTtlCleanup) {
+
+                fetchExpiredDataPercentageForPhyPart(serverConfigManager, ttlTblSchemaName, sessionVariables);
+                fetchTtlTableTotalRowCount(serverConfigManager, ttlTblSchemaName, sessionVariables);
+
+                /**
+                 * <pre>
+                 *     decide the cleanup policy of row-level ttl-tbl: delete or omc-based rebuild
+                 * </pre>
+                 */
+                useRebuildPolicy = decideRowLevelCleanupPolicy();
+
+                /**
+                 * Init the info of jobContext
+                 */
+                this.jobContext.setUseRebuildPolicy(useRebuildPolicy);
+                this.jobContext.setExpiredDataPercentAvg(expiredDataPercentAvg);
+                this.jobContext.setTtlPrimTblTotalRowCount(ttlTableTotalRowCount);
+            }
+
+            long taskEndTsNano = System.nanoTime();
+            long statTimeCost = taskEndTsNano - taskStartTsNano;
+            this.statInfo.getTotalExecTimeCostNano().addAndGet(statTimeCost);
+
+            FetchExpiredDataPercentTaskLogInfo logInfo = new FetchExpiredDataPercentTaskLogInfo();
+            logInfo.intraTaskStatInfo = this.statInfo;
+            logInfo.useRebuildPolicy = String.valueOf(useRebuildPolicy);
+            logInfo.ttlExpiredDataPercent = String.valueOf(expiredDataPercentAvg);
+            logInfo.ttlPrimTotalRowCount = String.valueOf(ttlTableTotalRowCount);
+            logInfo.fetchTtlExpiredDataPercentTimeCost = String.valueOf(statTimeCost);
+            logInfo.selectExpiredDataPercentSql = selectExpiredDataPercentSql;
+            logInfo.logTaskExecResult(parentDdlTask, jobContext);
+
+        }
+
+        private void fetchExpiredDataPercentageForPhyPart(IServerConfigManager serverConfigManager,
+                                                          String ttlTblSchemaName,
+                                                          Map<String, Object> sessionVariables) {
+            String tblTblSchema = jobContext.getTtlInfo().getTtlInfoRecord().getTableSchema();
+            String ttlTblName = jobContext.getTtlInfo().getTtlInfoRecord().getTableName();
+            TtlJobUtil.wrapWithDistributedTrx(
+                serverConfigManager,
+                ttlTblSchemaName,
+                sessionVariables,
+                (transConn) -> {
+
+                    /**
+                     * Save the reference of transConn on IntraTask to use to do force closing
+                     */
+                    this.transConn = transConn;
+
+                    TableMeta ttlTblMeta = ec.getSchemaManager(ttlTblSchemaName).getTable(ttlTblName);
+                    PartitionInfo partInfo = ttlTblMeta.getPartitionInfo();
+                    List<PartitionSpec> phyPartSpecs = partInfo.getPartitionBy().getPhysicalPartitions();
+
+                    String selectExpiredDataPercentOnOnePhyPartSql = "";
+                    Long expiredDataPercentSum = 0L;
+                    Long expiredDataPercentAvg = 0L;
+
+                    long selectExpiredDataPercentBeginNano = System.nanoTime();
+                    for (int i = 0; i < phyPartSpecs.size(); i++) {
+                        String phyPartName = phyPartSpecs.get(i).getName();
+
+                        // build sql for selecting expired data percentage
+                        selectExpiredDataPercentOnOnePhyPartSql =
+                            buildSelectExpiredDataPercentOnOnePhyPartSql(phyPartName);
+                        if (StringUtils.isEmpty(selectExpiredDataPercentSql)) {
+                            selectExpiredDataPercentSql = selectExpiredDataPercentOnOnePhyPartSql;
+                        }
+
+                        // query the expired data percentage
+                        List<Map<String, Object>> queryResult = new ArrayList<>();
+                        try {
+                            queryResult =
+                                TtlJobUtil.execLogicalQueryOnInnerConnection(serverConfigManager,
+                                    ttlTblSchemaName,
+                                    transConn,
+                                    ec,
+                                    selectExpiredDataPercentOnOnePhyPartSql);
+                            if (queryResult != null && !queryResult.isEmpty()) {
+                                Object expiredDataPercentValOfOnePart =
+                                    queryResult.get(0).get(TtlTaskSqlBuilder.COL_NAME_FOR_SELECT_EXPIRED_DATA_PERCENT);
+                                if (expiredDataPercentValOfOnePart != null) {
+                                    expiredDataPercentSum +=
+                                        Long.parseLong(String.valueOf(expiredDataPercentValOfOnePart));
+                                }
+                            }
+                        } catch (Throwable ex) {
+                            TtlLoggerUtil.TTL_TASK_LOGGER.warn(ex);
+                        }
+                    }
+                    expiredDataPercentAvg = Math.round(expiredDataPercentSum.doubleValue() / phyPartSpecs.size());
+                    this.expiredDataPercentAvg = expiredDataPercentAvg;
+
+                    long selectExpiredDataPercentEndNano = System.nanoTime();
+                    this.statInfo.getTotalSelectTimeCostNano()
+                        .addAndGet(selectExpiredDataPercentEndNano - selectExpiredDataPercentBeginNano);
+
+                    return 0;
+                }
+            );
+        }
+
+        private void fetchTtlTableTotalRowCount(IServerConfigManager serverConfigManager,
+                                                String ttlTblSchemaName,
+                                                Map<String, Object> sessionVariables) {
+            String tblTblSchema = jobContext.getTtlInfo().getTtlInfoRecord().getTableSchema();
+            String ttlTblName = jobContext.getTtlInfo().getTtlInfoRecord().getTableName();
+            TtlJobUtil.wrapWithDistributedTrx(
+                serverConfigManager,
+                ttlTblSchemaName,
+                sessionVariables,
+                (transConn) -> {
+
+                    /**
+                     * Save the reference of transConn on IntraTask to use to do force closing
+                     */
+                    this.transConn = transConn;
+
+                    TableMeta ttlTblMeta = ec.getSchemaManager(ttlTblSchemaName).getTable(ttlTblName);
+                    PartitionInfo partInfo = ttlTblMeta.getPartitionInfo();
+
+                    String selectTotalRowCountSql =
+                        TtlTaskSqlBuilder.buildSelectTotalRowCountSql(ec, ttlTblSchemaName, ttlTblName);
+                    Long totalRowCount = 0L;
+
+                    long selectRowCountBeginNano = System.nanoTime();
+                    List<Map<String, Object>> queryResult = new ArrayList<>();
+                    try {
+                        queryResult =
+                            TtlJobUtil.execLogicalQueryOnInnerConnection(serverConfigManager,
+                                ttlTblSchemaName,
+                                transConn,
+                                ec,
+                                selectTotalRowCountSql);
+                        if (queryResult != null && !queryResult.isEmpty()) {
+                            Object selectResult =
+                                queryResult.get(0).get(TtlTaskSqlBuilder.COL_NAME_FOR_SELECT_TOTAL_ROW_COUNT);
+                            if (selectResult != null) {
+                                totalRowCount +=
+                                    Long.parseLong(String.valueOf(selectResult));
+                            }
+                        }
+                    } catch (Throwable ex) {
+                        TtlLoggerUtil.TTL_TASK_LOGGER.warn(ex);
+                    }
+                    this.ttlTableTotalRowCount = totalRowCount;
+                    long selectTotalRowCountEndNano = System.nanoTime();
+                    this.statInfo.getTotalSelectTimeCostNano()
+                        .addAndGet(selectTotalRowCountEndNano - selectRowCountBeginNano);
+
+                    return 0;
+                }
+            );
+        }
+
+        protected boolean decideRowLevelCleanupPolicy() {
+            boolean enableUseRebuildPolicy =
+                ec.getParamManager().getBoolean(ConnectionParams.TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY);
+            Integer expiredDataPercentLimit =
+                ec.getParamManager().getInt(ConnectionParams.TTL_EXPIRED_DATA_PERCENT_FOR_AUTO_USING_REBUILD_POLICY);
+            Integer minRowCountForAutoUseRebuildPolicy = ec.getParamManager()
+                .getInt(ConnectionParams.TTL_MIN_ROW_COUNT_FOR_AUTO_USING_REBUILD_POLICY);
+
+            if (!enableUseRebuildPolicy) {
+                return false;
+            }
+
+            /**
+             * Compare the expired data percentage
+             */
+            if (expiredDataPercentAvg != null && expiredDataPercentAvg < expiredDataPercentLimit) {
+                return false;
+            }
+
+            if (ttlTableTotalRowCount < minRowCountForAutoUseRebuildPolicy) {
+                return false;
+            }
+
+            /**
+             * Compare the expired data row count
+             */
+            return true;
+        }
+
+        protected String buildSelectExpiredDataPercentOnOnePhyPartSql(String phyPartName) {
+            TtlDefinitionInfo ttlInfo = this.jobContext.getTtlInfo();
+            String queryHint = TtlConfigUtil.getQueryHintForSelectLowerBound();
+            String forceIndexExpr = this.jobContext.getTtlColForceIndexExpr();
+            String upperBoundToCleanup = this.jobContext.getCleanUpUpperBound();
+
+            // Null/empty check: if cleanUpUpperBound is not ready, skip expired percent calculation
+            if (StringUtils.isEmpty(upperBoundToCleanup)) {
+                TtlLoggerUtil.TTL_TASK_LOGGER.warn(
+                    "cleanUpUpperBound is empty, skip expired data percent calculation");
+                return null;
+            }
+
+            String selectSql =
+                TtlTaskSqlBuilder.buildSelectExpiredDataPercentageSqlTemplate(ttlInfo, ec, queryHint, forceIndexExpr,
+                    upperBoundToCleanup, phyPartName);
+            return selectSql;
+        }
+
+        @Override
+        public String getDnId() {
+            return "";
+        }
+
+        @Override
+        public void notifyStopTask() {
+            this.stopTask = true;
+        }
+
+        @Override
+        public void forceStopTask() {
+            this.stopTask = true;
+            if (transConn != null) {
+                IServerConfigManager serverMgr = TtlJobUtil.getServerConfigManager();
+                try {
+                    serverMgr.closeTransConnection(transConn);
+                } catch (Throwable ex) {
+                    // ignore ex
+                    TtlLoggerUtil.TTL_TASK_LOGGER.info(ex);
+                }
+            }
+        }
+    }
+
+    protected void prepareAndDecideCleanupPolicy(ExecutionContext ec) {
+
+        boolean enableUseRebuildPolicy =
+            ec.getParamManager().getBoolean(ConnectionParams.TTL_ENABLE_CLEANUP_EXPIRED_DATA_BY_REBUILD_POLICY);
+        if (!enableUseRebuildPolicy) {
+            return;
+        }
+
+        boolean forceUseRebuildPolicyForCleanupData =
+            ec.getParamManager().getBoolean(ConnectionParams.TTL_FORCE_USE_REBUILD_POLICY_FOR_CLEANUP_EXPIRED_DATA);
+
+        String ttlTableSchema = this.jobContext.getTtlInfo().getTtlInfoRecord().getTableSchema();
+        String ttlTableName = this.jobContext.getTtlInfo().getTtlInfoRecord().getTableName();
+        String ttlFilter = this.jobContext.getTtlInfo().getTtlInfoRecord().getTtlFilter();
+        TableMeta ttlTblMeta = ec.getSchemaManager(ttlTableSchema).getTable(ttlTableName);
+
+        boolean usingTtlFilter = !StringUtils.isEmpty(ttlFilter);
+
+        boolean allowedUseRebuildPolicy = enableUseRebuildPolicy;
+        Map<String, GsiMetaManager.GsiIndexMetaBean> nonArcCciInfo = ttlTblMeta.getNonArchiveColumnarIndexPublished();
+        Map<String, GsiMetaManager.GsiIndexMetaBean> gsiInfo = ttlTblMeta.getGsiPublished();
+
+        if (nonArcCciInfo != null && !nonArcCciInfo.isEmpty()) {
+            /**
+             * When ttl table contains any non-archive columnar index, we should not use rebuild policy
+             */
+            allowedUseRebuildPolicy = false;
+        }
+        if (gsiInfo != null && !gsiInfo.isEmpty()) {
+            /**
+             * When ttl table contains any gsi, we should not use rebuild policy
+             */
+            allowedUseRebuildPolicy = false;
+        }
+        if (usingTtlFilter) {
+            /**
+             * When ttl table contains any gsi, we should not use rebuild policy
+             */
+            allowedUseRebuildPolicy = false;
+        }
+
+        if (!allowedUseRebuildPolicy) {
+            this.jobContext.setUseRebuildPolicy(false);
+            return;
+        }
+
+        if (!forceUseRebuildPolicyForCleanupData) {
+            /**
+             * Fetch min bound of expired data to be cleanup
+             */
+            FetchExpiredDataPercentTaskSubmitter fetchExpiredDataRatioTaskSubmitter =
+                new FetchExpiredDataPercentTaskSubmitter(this, ec, this.jobContext);
+            TtlIntraTaskManager fetchExpiredRatioDelegate =
+                new TtlIntraTaskManager(this, ec, this.jobContext, fetchExpiredDataRatioTaskSubmitter);
+            fetchExpiredRatioDelegate.submitAndRunIntraTasks();
+        } else {
+            if (allowedUseRebuildPolicy) {
+                this.jobContext.setUseRebuildPolicy(true);
+            }
+        }
     }
 
 }

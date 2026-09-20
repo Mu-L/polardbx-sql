@@ -59,6 +59,7 @@
         <dependency>
             <groupId>com.alibaba.polardbx</groupId>
             <artifactId>polardbx-calcite</artifactId>
+            <version>${project.version}</version>
             <exclusions>
                 <exclusion>
                     <artifactId>commons-logging</artifactId>
@@ -121,14 +122,6 @@
         <dependency>
             <groupId>com.google.guava</groupId>
             <artifactId>guava</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>${project.groupId}</groupId>
-            <artifactId>polardbx-optimizer</artifactId>
-            <version>${project.version}</version>
-            <scope>test</scope>
-            <type>test-jar</type>
         </dependency>
 
         <dependency>
@@ -357,4 +350,31 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!--
+            polardbx-optimizer 的 test-jar 仅在执行测试编译时需要。
+            当使用 -Dmaven.test.skip=true 构建（例如 code-scan 流水线）时，
+            polardbx-optimizer 不会产出 test-jar，此处若声明依赖会导致
+            Maven 去远程仓库解析 polardbx-optimizer:jar:tests 失败。
+            通过 profile 条件激活，避开此场景下的依赖解析。
+        -->
+        <profile>
+            <id>optimizer-test-jar</id>
+            <activation>
+                <property>
+                    <name>!maven.test.skip</name>
+                </property>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>${project.groupId}</groupId>
+                    <artifactId>polardbx-optimizer</artifactId>
+                    <version>${project.version}</version>
+                    <scope>test</scope>
+                    <type>test-jar</type>
+                </dependency>
+            </dependencies>
+        </profile>
+    </profiles>
 </project>

@@ -33,7 +33,6 @@ import com.alibaba.polardbx.executor.ddl.job.task.basic.oss.OSSTaskUtils;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
-import com.alibaba.polardbx.executor.handler.ddl.LogicalRenameTableHandler;
 import com.alibaba.polardbx.gms.engine.FileStorageFilesMetaRecord;
 import com.alibaba.polardbx.gms.engine.FileStorageMetaStore;
 import com.alibaba.polardbx.gms.metadb.GmsSystemTables;
@@ -45,7 +44,7 @@ import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.optimizer.config.schema.DefaultDbSchema;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterFileStoragePreparedData;
-import com.alibaba.polardbx.optimizer.utils.ITimestampOracle;
+import com.alibaba.polardbx.common.trx.ITimestampOracle;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -63,11 +62,11 @@ import static com.alibaba.polardbx.executor.common.RecycleBin.FILE_STORAGE_PREFI
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.executor.common.RecycleBin.FILE_STORAGE_PREFIX;
-import static com.alibaba.polardbx.optimizer.utils.ITimestampOracle.BITS_LOGICAL_TIME;
+import static com.alibaba.polardbx.common.trx.ITimestampOracle.BITS_LOGICAL_TIME;
 
 public class AlterFileStoragePurgeBeforeTimestampJobFactory extends DdlJobFactory {
 
-    private static final Logger logger = LoggerFactory.getLogger("oss");
+    private static final Logger logger = LoggerFactory.getLogger("mpp_log");
 
     private ExecutionContext executionContext;
     private AlterFileStoragePreparedData alterFileStoragePreparedData;
@@ -246,7 +245,7 @@ public class AlterFileStoragePurgeBeforeTimestampJobFactory extends DdlJobFactor
     private static List<DdlTask> buildPurgeOssRecycleBin(Engine engine, String schemaName, String binName,
                                                          ExecutionContext executionContext) {
         // TODO: improve makeTableVisible
-        LogicalRenameTableHandler.makeTableVisible(schemaName, binName, executionContext);
+        // LogicalRenameTableHandler.makeTableVisible(schemaName, binName, executionContext);
         List<DdlTask> taskList = new ArrayList<>();
         taskList.addAll(OSSTaskUtils.dropTableTasks(engine, schemaName, binName, true, executionContext));
         DeleteRecycleBinTask deleteRecycleBinTask = new DeleteRecycleBinTask(schemaName, binName);

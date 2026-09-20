@@ -18,10 +18,13 @@ package com.alibaba.polardbx.manager.response;
 
 import com.alibaba.polardbx.CobarServer;
 import com.alibaba.polardbx.Fields;
+import com.alibaba.polardbx.common.oss.filesystem.OSSFileSystem;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.thread.ServerThreadPool;
 import com.alibaba.polardbx.executor.mpp.deploy.ServiceProvider;
 import com.alibaba.polardbx.executor.mpp.execution.PriorityExecutorInfo;
 import com.alibaba.polardbx.executor.mpp.execution.TaskExecutor;
+import com.alibaba.polardbx.executor.operator.ColumnarScanExec;
 import com.alibaba.polardbx.manager.ManagerConnection;
 import com.alibaba.polardbx.net.buffer.ByteBufferHolder;
 import com.alibaba.polardbx.net.compress.IPacketOutputProxy;
@@ -34,9 +37,14 @@ import com.alibaba.polardbx.server.util.IntegerUtil;
 import com.alibaba.polardbx.server.util.LongUtil;
 import com.alibaba.polardbx.server.util.PacketUtil;
 import com.alibaba.polardbx.server.util.StringUtil;
+import org.apache.hadoop.util.BlockingThreadPoolExecutorService;
 
 import java.util.LinkedList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
+
+import static com.alibaba.polardbx.manager.response.ShowColumnarRead.getOssFileSystem;
 
 /**
  * 查看线程池状态
@@ -118,6 +126,27 @@ public final class ShowThreadPool {
             proxy = highRow.write(proxy);
         }
 
+        ExecutorService ioExecutor = ColumnarScanExec.getIoExecutor();
+        if (ioExecutor instanceof ThreadPoolExecutor) {
+            RowDataPacket row = getRow((ThreadPoolExecutor) ioExecutor, c.getResultSetCharset(), "scan-io");
+            row.packetId = ++packetId;
+            proxy = row.write(proxy);
+        }
+
+        ExecutorService scanExecutor = ColumnarScanExec.getScanExecutor();
+        if (scanExecutor instanceof ThreadPoolExecutor) {
+            RowDataPacket row = getRow((ThreadPoolExecutor) scanExecutor, c.getResultSetCharset(), "scan-exec");
+            row.packetId = ++packetId;
+            proxy = row.write(proxy);
+        }
+
+        OSSFileSystem ossFs = getOssFileSystem();
+        if (ossFs != null) {
+            RowDataPacket row = getRow(ossFs, c.getResultSetCharset());
+            row.packetId = ++packetId;
+            proxy = row.write(proxy);
+        }
+
         // write last eof
         EOFPacket lastEof = new EOFPacket();
         lastEof.packetId = ++packetId;
@@ -135,6 +164,29 @@ public final class ShowThreadPool {
         row.add(IntegerUtil.toBytes(exec.getQueuedCount()));
         row.add(LongUtil.toBytes(exec.getCompletedTaskCount()));
         row.add(LongUtil.toBytes(exec.getTaskCount()));
+        return row;
+    }
+
+    private static RowDataPacket getRow(ThreadPoolExecutor exec, String charset, String name) {
+        RowDataPacket row = new RowDataPacket(FIELD_COUNT);
+        row.add(StringUtil.encode(name, charset));
+        row.add(IntegerUtil.toBytes(exec.getPoolSize()));
+        row.add(IntegerUtil.toBytes(exec.getActiveCount()));
+        row.add(IntegerUtil.toBytes(exec.getQueue().size()));
+        row.add(LongUtil.toBytes(exec.getCompletedTaskCount()));
+        row.add(LongUtil.toBytes(exec.getTaskCount()));
+        return row;
+    }
+
+    private static RowDataPacket getRow(OSSFileSystem ossFs, String charset) {
+        BlockingThreadPoolExecutorService service = ossFs.getBoundedThreadPool();
+        RowDataPacket row = new RowDataPacket(FIELD_COUNT);
+        row.add(StringUtil.encode("oss-transfer", charset));
+        row.add(IntegerUtil.toBytes(DynamicConfig.getInstance().ossTransferPoolSize()));
+        row.add(IntegerUtil.toBytes(service.getPermitCount() - service.getAvailablePermits()));
+        row.add(IntegerUtil.toBytes(service.getWaitingCount()));
+        row.add(LongUtil.toBytes(-1));
+        row.add(LongUtil.toBytes(-1));
         return row;
     }
 

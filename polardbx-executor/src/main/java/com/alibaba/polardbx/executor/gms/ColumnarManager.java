@@ -21,6 +21,8 @@ import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.LongBlock;
 import com.alibaba.polardbx.gms.metadb.columnar.ColumnarSnapshotCacheManager;
 import com.alibaba.polardbx.optimizer.config.table.FileMeta;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import org.apache.hadoop.hive.ql.exec.vector.LongColumnVector;
 import org.roaringbitmap.RoaringBitmap;
 
@@ -84,7 +86,7 @@ public interface ColumnarManager extends ColumnarSchemaTransformer, Purgeable, C
      */
     @Deprecated
     Pair<List<FileMeta>, List<FileMeta>> findFiles(long tso, String logicalSchema, String logicalTable,
-                                                   String partName);
+                                                   String partName, TableMeta tableMeta);
 
     /**
      * Get all the visible files at the version whose tso <= given tso
@@ -96,7 +98,7 @@ public interface ColumnarManager extends ColumnarSchemaTransformer, Purgeable, C
      * @return Collection of file names
      */
     Pair<List<String>, List<String>> findFileNames(long tso, String logicalSchema, String logicalTable,
-                                                   String partName);
+                                                   String partName, TableMeta tableMeta);
 
     /**
      * Get csv data cache of given file name in snapshot of tso.
@@ -105,7 +107,7 @@ public interface ColumnarManager extends ColumnarSchemaTransformer, Purgeable, C
      * @param csvFileName csv file name.
      * @return Collection of csv cache data (in format of chunk)
      */
-    Iterator<Chunk> csvData(long tso, String csvFileName);
+    Iterator<Chunk> csvData(long tso, String csvFileName, ExecutionContext executionContext);
 
     /**
      * Get csv data cache of given file name for flashback query
@@ -146,13 +148,25 @@ public interface ColumnarManager extends ColumnarSchemaTransformer, Purgeable, C
      */
     RoaringBitmap getDeleteBitMapOf(long tso, String fileName);
 
+    /**
+     * Variant of {@link #getDeleteBitMapOf(long, String)} honoring a per-statement
+     * GeneralCache override (HINT/session).
+     *
+     * @param cacheOverride non-null forces GeneralCache on/off for the underlying .del read; null uses dynamic config
+     */
+    default RoaringBitmap getDeleteBitMapOf(long tso, String fileName, Boolean cacheOverride) {
+        return getDeleteBitMapOf(tso, fileName);
+    }
+
+    List<Object[]> dumpMemoryUsage();
+
+    public static enum ReloadType {
+        ALL, SCHEMA_ONLY, CACHE_ONLY, SNAPSHOT_ONLY
+    }
+
     default FlashbackDeleteBitmapManager getFlashbackDeleteBitmapManager(long flashbackTso, String logicalSchema,
                                                                          String logicalTable, String partName,
                                                                          List<Pair<String, Long>> delPositions) {
         return null;
-    }
-
-    enum ReloadType {
-        ALL, SCHEMA_ONLY, CACHE_ONLY, SNAPSHOT_ONLY
     }
 }

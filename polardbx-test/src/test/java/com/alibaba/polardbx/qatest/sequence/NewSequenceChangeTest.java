@@ -16,11 +16,11 @@
 
 package com.alibaba.polardbx.qatest.sequence;
 
-import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.gms.metadb.seq.SequenceOptNewAccessor;
 import com.alibaba.polardbx.qatest.BaseSequenceTestCase;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -277,22 +277,17 @@ public class NewSequenceChangeTest extends BaseSequenceTestCase {
     }
 
     private void checkNextval(String seqName, long expectedValue) throws Exception {
-        boolean matched = false;
-
         String sql = String.format(SELECT_NEXTVAL, seqName);
         try (Statement stmt = testConn.createStatement();
             ResultSet rs = stmt.executeQuery(sql)) {
             if (rs.next()) {
                 long value = rs.getLong(1);
-                matched = value == expectedValue;
+                Assert.assertEquals(value, expectedValue);
             }
         }
-
-        Assert.assertTrue(matched);
     }
 
     private void checkNextval(String seqName, int count, long expectedMaxValue) throws Exception {
-        boolean matched = false;
         List<Long> values = new ArrayList<>();
 
         String sql = String.format(SELECT_NEXTVAL_BATCH, seqName, count);
@@ -304,11 +299,7 @@ public class NewSequenceChangeTest extends BaseSequenceTestCase {
         }
 
         Optional<Long> max = values.stream().max(Long::compare);
-        if (max.isPresent()) {
-            matched = max.get() == expectedMaxValue;
-        }
-
-        Assert.assertTrue(matched);
+        max.ifPresent(aLong -> Assert.assertEquals(aLong, Long.valueOf(expectedMaxValue)));
     }
 
     private void convertSequences(String fromType, String toType) throws Exception {
@@ -329,7 +320,7 @@ public class NewSequenceChangeTest extends BaseSequenceTestCase {
 
         Set<SeqInfo> actualSequences = fetchSequences(sql, ignoreValueCheck);
 
-        Assert.assertTrue(actualSequences.size() == expectedSequences.size(), "different sequence size");
+        Assert.assertEquals("different sequence size", actualSequences.size(), expectedSequences.size());
 
         for (SeqInfo actual : actualSequences) {
             boolean existing = false;
@@ -344,12 +335,11 @@ public class NewSequenceChangeTest extends BaseSequenceTestCase {
             matched &= existing;
         }
 
-        StringBuilder buf = new StringBuilder();
-        buf.append("Unmatched Sequence Result:\n");
-        buf.append("Expected: " + expectedSequences).append("\n");
-        buf.append("Actual: " + actualSequences);
+        String buf = "Unmatched Sequence Result:\n"
+            + "Expected: " + expectedSequences + "\n"
+            + "Actual: " + actualSequences;
 
-        Assert.assertTrue(matched, buf.toString());
+        Assert.assertTrue(buf, matched);
     }
 
     private Set<SeqInfo> fetchSequences(String sql, boolean ignoreValueCheck) throws Exception {

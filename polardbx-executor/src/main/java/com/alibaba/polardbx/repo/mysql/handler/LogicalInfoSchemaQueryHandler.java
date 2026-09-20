@@ -306,7 +306,8 @@ public abstract class LogicalInfoSchemaQueryHandler extends HandlerCommon {
             useDataBase = false;
         }
 
-        if (!showFromRuleOnly || useDataBase) {
+        if ((!showFromRuleOnly || useDataBase) && (!executionContext.getParamManager()
+            .getBoolean(ConnectionParams.ENABLE_LOGICAL_TABLE_META)) && (!ConfigDataMode.isColumnarMode())) {
             // Retrieve table names from the default database if needed.
             Cursor cursor = null;
             try {
@@ -1031,7 +1032,7 @@ public abstract class LogicalInfoSchemaQueryHandler extends HandlerCommon {
                                     maxDataLength.compareTo(newMaxDataLength) < 0 ? newMaxDataLength : maxDataLength;
 
                             indexLength = indexLength.add(getDecimalValue(rs, "Index_length"));
-                            dataFree = getDecimalValue(rs, "Data_free");
+                            dataFree = dataFree.add(getDecimalValue(rs, "Data_free"));
 
                             if (autoIncrement < 0) {
                                 autoIncrement = rs.getLong("Auto_increment");

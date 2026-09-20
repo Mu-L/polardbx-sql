@@ -26,7 +26,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.ReentrantLock;
 
-public class OptimizerAlertLoggerBaseImpl implements OptimizerAlertLogger {
+public abstract class OptimizerAlertLoggerBaseImpl implements OptimizerAlertLogger {
     protected final static Logger logger = LoggerFactory.getLogger("STATISTICS", true);
 
     protected ReentrantLock lock;
@@ -66,9 +66,9 @@ public class OptimizerAlertLoggerBaseImpl implements OptimizerAlertLogger {
                 if (currentTime >= lastTime + DynamicConfig.getInstance().getOptimizerAlertLogInterval()) {
                     lastAccessTime.set(currentTime);
                     if (ec == null) {
-                        logger.info(optimizerAlertType.name());
+                        logger.warn(optimizerAlertType.name());
                     } else {
-                        logger.info(String.format("alert_type{ %s }: schema{ %s } trace_id { %s }",
+                        logger.warn(String.format("alert_type{ %s }: schema{ %s } trace_id { %s }",
                             optimizerAlertType.name(),
                             ec.getSchemaName(),
                             ec.getTraceId()));

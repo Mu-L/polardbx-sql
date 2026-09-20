@@ -18,9 +18,8 @@ package com.alibaba.polardbx.executor.operator;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.alibaba.polardbx.common.properties.MppConfig;
-import com.alibaba.polardbx.common.utils.logger.Logger;
-import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.ChunkConverter;
@@ -33,8 +32,8 @@ import com.alibaba.polardbx.optimizer.core.expression.calc.IExpression;
 import com.alibaba.polardbx.optimizer.core.join.EquiJoinKey;
 import com.alibaba.polardbx.optimizer.memory.MemoryAllocatorCtx;
 import com.alibaba.polardbx.optimizer.memory.MemoryPool;
-import com.clearspring.analytics.util.Preconditions;
 import org.apache.calcite.rel.core.JoinRelType;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.List;
 
@@ -51,15 +50,16 @@ abstract class AbstractBufferedJoinExec extends AbstractJoinExec {
      */
     public static final int LIST_END = ConcurrentRawHashTable.NOT_EXISTS;
 
-    private static final Logger logger = LoggerFactory.getLogger(AbstractBufferedJoinExec.class);
+    // ----- 1. shared references -----
+    @FieldMemoryCounter(value = false)
+    MemoryPool memoryPool;
+    @FieldMemoryCounter(value = false)
+    MemoryAllocatorCtx memoryAllocator;
 
-    protected final boolean isEquiJoin;
-
+    // ----- 2. owned references -----
     ChunksIndex buildChunks;
     ChunksIndex buildKeyChunks;
-
-    MemoryPool memoryPool;
-    MemoryAllocatorCtx memoryAllocator;
+    protected final boolean isEquiJoin;
 
     // Internal states
     protected Chunk probeChunk;
@@ -75,7 +75,7 @@ abstract class AbstractBufferedJoinExec extends AbstractJoinExec {
     protected boolean matched;
     protected boolean streamJoin;
 
-    // TODO all anti join use anticondition instead of antiJoinOperands
+    // all anti join use anti-condition instead of antiJoinOperands
     protected boolean useAntiCondition = false;
 
     protected ProbeOperator probeOperator;
@@ -358,6 +358,9 @@ abstract class AbstractBufferedJoinExec extends AbstractJoinExec {
         this.streamJoin = streamJoin;
     }
 
+    private static final int DEFAULT_PROBE_INSTANCE_SIZE =
+        ClassLayout.parseClass(DefaultProbeOperator.class).instanceSize();
+
     class DefaultProbeOperator implements ProbeOperator {
         protected final boolean useBloomFilter;
 
@@ -481,194 +484,10 @@ abstract class AbstractBufferedJoinExec extends AbstractJoinExec {
             // no extra memory usage.
             return 0;
         }
-    }
-
-    class SimpleReverseSemiProbeOperator implements ProbeOperator {
-        protected final Synchronizer synchronizer;
-
-        // for hash code.
-        protected final int[] probeKeyHashCode = new int[chunkLimit];
-        protected final int[] intermediates = new int[chunkLimit];
-        protected final int[] blockHashCodes = new int[chunkLimit];
-
-        protected SimpleReverseSemiProbeOperator(Synchronizer synchronizer) {
-            Preconditions.checkArgument(condition == null,
-                "simple reverse semi probe operator not support other join condition");
-            this.synchronizer = synchronizer;
-        }
 
         @Override
-        public void nextRows() {
-            final int positionCount = probeChunk.getPositionCount();
-
-            // build hash code vector
-            probeJoinKeyChunk.hashCodeVector(probeKeyHashCode, intermediates, blockHashCodes, positionCount);
-
-            for (; probePosition < positionCount; probePosition++) {
-
-                // reset matched flag unless it's still during matching
-                if (!isMatching) {
-                    matchedPosition = matchInit(probeJoinKeyChunk, probeKeyHashCode, probePosition);
-                    isMatching = true;
-                } else {
-                    // continue from the last processed match
-                    matchedPosition = matchNext(matchedPosition, probeJoinKeyChunk, probePosition);
-                }
-
-                // if condition not match or mark failed, just return
-                if (!matchValid(matchedPosition) || !synchronizer.getMatchedPosition().markAndGet(matchedPosition)) {
-                    isMatching = false;
-                    continue;
-                }
-
-                for (; matchValid(matchedPosition);
-                     matchedPosition = matchNext(matchedPosition, probeJoinKeyChunk, probePosition)) {
-
-                    buildReverseSemiJoinRow(buildChunks, matchedPosition);
-
-                    // check buffered data is full
-                    if (currentPosition() >= chunkLimit) {
-                        isMatching = true;
-                        return;
-                    }
-                }
-
-                isMatching = false;
-            }
-        }
-
-        @Override
-        public void close() {
-
-        }
-
-        @Override
-        public int estimateSize() {
-            // no extra memory usage.
-            return 0;
+        public long getMemoryUsage() {
+            return DEFAULT_PROBE_INSTANCE_SIZE;
         }
     }
-
-    class ReverseSemiProbeOperator implements ProbeOperator {
-
-        protected final Synchronizer synchronizer;
-        // for hash code.
-        protected final int[] probeKeyHashCode = new int[chunkLimit];
-        protected final int[] intermediates = new int[chunkLimit];
-        protected final int[] blockHashCodes = new int[chunkLimit];
-
-        protected ReverseSemiProbeOperator(Synchronizer synchronizer) {
-            this.synchronizer = synchronizer;
-        }
-
-        @Override
-        public void nextRows() {
-            final int positionCount = probeChunk.getPositionCount();
-
-            // build hash code vector
-            probeJoinKeyChunk.hashCodeVector(probeKeyHashCode, intermediates, blockHashCodes, positionCount);
-
-            for (; probePosition < positionCount; probePosition++) {
-
-                // reset matched flag unless it's still during matching
-                if (!isMatching) {
-                    matchedPosition = matchInit(probeJoinKeyChunk, probeKeyHashCode, probePosition);
-                    isMatching = true;
-                } else {
-                    // continue from the last processed match
-                    matchedPosition = matchNext(matchedPosition, probeJoinKeyChunk, probePosition);
-                }
-
-                // if condition not match, just return
-                if (!matchValid(matchedPosition)) {
-                    isMatching = false;
-                    continue;
-                }
-
-                for (; matchValid(matchedPosition);
-                     matchedPosition = matchNext(matchedPosition, probeJoinKeyChunk, probePosition)) {
-
-                    if (!checkJoinCondition(buildChunks, probeChunk, probePosition, matchedPosition)) {
-                        continue;
-                    }
-
-                    // if cas failed, another thread has output this record, but cannot stop
-                    if (!synchronizer.getMatchedPosition().markAndGet(matchedPosition)) {
-                        continue;
-                    }
-
-                    buildReverseSemiJoinRow(buildChunks, matchedPosition);
-
-                    // check buffered data is full
-                    if (currentPosition() >= chunkLimit) {
-                        isMatching = true;
-                        return;
-                    }
-                }
-
-                isMatching = false;
-            }
-        }
-
-        @Override
-        public void close() {
-
-        }
-
-        @Override
-        public int estimateSize() {
-            // no extra memory usage.
-            return 0;
-        }
-
-    }
-
-    class SimpleReverseAntiProbeOperator implements ProbeOperator {
-
-        protected final Synchronizer synchronizer;
-
-        // for hash code.
-        protected final int[] probeKeyHashCode = new int[chunkLimit];
-        protected final int[] intermediates = new int[chunkLimit];
-        protected final int[] blockHashCodes = new int[chunkLimit];
-
-        protected SimpleReverseAntiProbeOperator(Synchronizer synchronizer) {
-            this.synchronizer = synchronizer;
-        }
-
-        @Override
-        public void nextRows() {
-            final int positionCount = probeChunk.getPositionCount();
-
-            // build hash code vector
-            probeJoinKeyChunk.hashCodeVector(probeKeyHashCode, intermediates, blockHashCodes, positionCount);
-
-            for (; probePosition < positionCount; probePosition++) {
-                matchedPosition = matchInit(probeJoinKeyChunk, probeKeyHashCode, probePosition);
-                // if cas failed, another thread has marked all matched records
-                if (!matchValid(matchedPosition) || !synchronizer.getMatchedPosition().markAndGet(matchedPosition)) {
-                    continue;
-                }
-
-                for (;
-                     matchValid(matchedPosition);
-                     matchedPosition = matchNext(matchedPosition, probeJoinKeyChunk, probePosition)) {
-                    synchronizer.getMatchedPosition().rawMark(matchedPosition);
-                }
-            }
-        }
-
-        @Override
-        public void close() {
-
-        }
-
-        @Override
-        public int estimateSize() {
-            // no extra memory usage.
-            return 0;
-        }
-
-    }
-
 }

@@ -23,7 +23,7 @@ import com.alibaba.polardbx.executor.chunk.ChunkBuilder;
 import com.alibaba.polardbx.executor.mpp.operator.WorkProcessor;
 import com.alibaba.polardbx.executor.operator.spill.Spiller;
 import com.alibaba.polardbx.executor.operator.spill.SpillerFactory;
-import com.alibaba.polardbx.executor.utils.OrderByOption;
+import com.alibaba.polardbx.optimizer.utils.OrderByOption;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.memory.OperatorMemoryAllocatorCtx;
@@ -71,8 +71,13 @@ public class ExternalSorter extends Sorter {
         super(memoryAllocator, orderBys, columnMetas, chunkLimit);
         this.context = context;
         this.spillerFactory = spillerFactory;
-        this.memSortor = new MemSortor(memoryAllocator, orderBys, columnMetas, chunkLimit, true, context);
+        this.memSortor = new MemSortor(null, memoryAllocator, orderBys, columnMetas, chunkLimit, true, context);
         this.spillMonitor = spillMonitor;
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return 0;
     }
 
     @Override

@@ -34,6 +34,7 @@ import com.alibaba.polardbx.util.MoreObjects;
 import com.google.common.collect.ImmutableList;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 import static java.util.Objects.requireNonNull;
 
@@ -68,6 +69,27 @@ public class StageExecutionPlan {
 
     public List<StageExecutionPlan> getSubStages() {
         return subStages;
+    }
+
+    /**
+     * Create a deep copy of this StageExecutionPlan.
+     * - subStages are recursively deep copied
+     * - fragment's partitioning is deep copied
+     * - expandSplitInfos and splitInfos are shallow copied
+     */
+    public StageExecutionPlan copy() {
+        // Deep copy subStages recursively
+        List<StageExecutionPlan> copiedSubStages = subStages.stream()
+            .map(StageExecutionPlan::copy)
+            .collect(Collectors.toList());
+
+        // Shallow copy splitInfos and expandSplitInfos
+        return new StageExecutionPlan(
+            this.fragment.copy(),
+            this.splitInfos,
+            this.expandSplitInfos,
+            copiedSubStages
+        );
     }
 
     @Override

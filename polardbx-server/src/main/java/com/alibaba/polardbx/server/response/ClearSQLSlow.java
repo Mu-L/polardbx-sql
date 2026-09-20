@@ -58,7 +58,7 @@ public final class ClearSQLSlow {
         }
 
         OptimizerContext.setContext(ds.getConfigHolder().getOptimizerContext());
-        SyncManagerHelper.sync(new ClearSQLSlowSyncAction(db), c.getSchema(), SyncScope.CURRENT_ONLY);
+        SyncManagerHelper.syncThrowExceptions(new ClearSQLSlowSyncAction(db), c.getSchema(), SyncScope.CURRENT_ONLY);
         PacketOutputProxyFactory.getInstance().createProxy(c)
             .writeArrayAsPacket(hasMore ? OkPacket.OK_WITH_MORE : OkPacket.OK);
         return true;

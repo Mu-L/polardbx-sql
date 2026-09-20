@@ -1,0 +1,53 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set sql_mode='';
+drop table if exists r_check_encoder;
+create table r_check_encoder
+(
+a int ,
+b datetime,
+c varchar(32),
+primary key(a)
+)
+partition by range(to_days(b))
+(
+partition p20250601 values less than(to_days('2025-06-01')),
+partition p20250602 values less than(to_days('2025-06-02')),
+partition p20250603 values less than(to_days('2025-06-03')),
+partition p20250604 values less than(to_days('2025-06-04')),
+partition p20250605 values less than(to_days('2025-06-05'))
+);
+drop table if exists r_check_encoder1;
+create table r_check_encoder1 (
+  a bigint ,
+  b datetime,
+  c varchar(32),
+  primary key(a)
+)
+partition by range columns(a) (
+  partition p20250601 values less than(63915955200),
+  partition p20250602 values less than(63916128000),
+  partition p20250603 values less than(63916214400),
+  partition p20250604 values less than(63916300800),
+  partition p20250605 values less than(63916387200)
+);
+alter table r_check_encoder1 modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = `a` expire after 2 day timezone '+00:00',
+ttl_part_interval=interval(1,day),
+ttl_col_encoder=to_seconds(?),
+ttl_col_decoder=from_unixtime(? - to_seconds('1970-01-01 00:00:00')),
+archive_type='partition',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+## error_msg: $# does not match #$
+alter table r_check_encoder1 modify ttl
+set
+ttl_col_encoder=to_seconds(?),
+ttl_col_decoder=from_unixtime(? - to_seconds('1970-01-01 10:00:00'));
+does not match

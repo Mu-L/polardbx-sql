@@ -204,6 +204,12 @@ public class PartitionFunctionMetaImpl implements PartitionFunctionMeta {
             return false;
         }
 
+        PartitionIntFunction localPartFunc = localMeta.getPartitionFunction();
+        PartitionIntFunction otherPartFunc = otherMeta.getPartitionFunction();
+        if (!localPartFunc.equals(otherPartFunc)) {
+            return false;
+        }
+
         List<PartitionField> constExprParamFldsOfOtherMeta = otherMeta.getConstExprParamsFields();
         List<PartitionField> constExprParamFldsOfLocalMeta = localMeta.getConstExprParamsFields();
 

@@ -68,6 +68,10 @@ public enum SemiJoinType {
       return INNER;
     case LEFT:
       return LEFT;
+    case SEMI:
+      return SEMI;
+    case ANTI:
+      return ANTI;
     }
     throw new IllegalArgumentException(
         "Unsupported join type for semi-join " + joinType);

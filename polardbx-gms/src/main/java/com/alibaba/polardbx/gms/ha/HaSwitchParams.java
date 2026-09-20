@@ -33,6 +33,13 @@ public class HaSwitchParams {
     public String curAvailableAddr;
     public int xport = -1; // <0 means not available. =0 means default. >0 means selected.
     public ConnPoolConfig storageConnPoolConfig;
+
+    /**
+     * <pre>
+     *     key: the addr of one node of the dn
+     *     val: the checking roleInfo of one node of the dn
+     * </pre>
+     */
     public Map<String, StorageNodeHaInfo> storageHaInfoMap;
     public int storageKind;
     public String storageInstId;

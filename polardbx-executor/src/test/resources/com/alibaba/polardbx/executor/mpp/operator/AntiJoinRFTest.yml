@@ -1,5 +1,5 @@
 - sql: |
-    select ps_suppkey from partsupp where ps_partkey not in ( select p_partkey from part where p_comment like '%c%' );
+    /*+TDDL:cmd_extra(PARTITION_WISE_THRESHOLD=4)*/select ps_suppkey from partsupp where ps_partkey not in ( select p_partkey from part where p_comment like '%c%' );
   plan: |
     project(ps_suppkey="ps_suppkey")
       semihashjoin(condition="ps_partkey = p_partkey", type="anti", build="inner", partition=[local])

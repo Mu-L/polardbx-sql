@@ -65,6 +65,9 @@ public class RexSubQuery extends RexCall {
   public static RexSubQuery some(RelNode rel, ImmutableList<RexNode> nodes,
       SqlQuantifyOperator op) {
     assert op.kind == SqlKind.SOME;
+    if (op == SqlStdOperatorTable.SOME_EQ) {
+      return RexSubQuery.in(rel, nodes);
+    }
     final RelDataType type = type(rel, nodes);
     return new RexSubQuery(type, op, nodes, rel);
   }
@@ -72,6 +75,9 @@ public class RexSubQuery extends RexCall {
   public static RexNode all(RelNode rel, ImmutableList<RexNode> nodes,
                             SqlQuantifyOperator op) {
     assert op.kind == SqlKind.ALL;
+    if (op == SqlStdOperatorTable.ALL_NE) {
+      return RexSubQuery.not_in(rel, nodes);
+    }
     final RelDataType type = type(rel, nodes);
     return new RexSubQuery(type, op, nodes, rel);
   }

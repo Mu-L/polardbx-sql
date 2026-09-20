@@ -1,0 +1,36 @@
+## DISABLE_FAST_SQL_PARSER
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+
+drop table if exists test_invalid_modify_ttl;
+## create table
+create table test_invalid_modify_ttl(
+a int not null,
+b datetime,
+c int,
+primary key(a)
+)
+partition by key(`a`)
+partitions 4;
+
+alter table test_invalid_modify_ttl
+modify ttl set
+ttl_enable = 'off',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00'
+archive_table_pre_allocate=1,
+archive_table_post_allocate=8
+;
+show create table test_invalid_modify_ttl;
+
+alter table test_invalid_modify_ttl
+modify ttl set
+archive_table_pre_allocate=3,
+;
+show create table test_invalid_modify_ttl;
+
+drop table test_invalid_modify_ttl;

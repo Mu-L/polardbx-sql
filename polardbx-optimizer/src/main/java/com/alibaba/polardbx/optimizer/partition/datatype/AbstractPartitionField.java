@@ -25,7 +25,6 @@ import com.alibaba.polardbx.optimizer.core.field.SessionProperties;
 import com.alibaba.polardbx.optimizer.core.field.StorageField;
 import com.alibaba.polardbx.optimizer.core.field.TypeConversionStatus;
 import com.google.common.base.Preconditions;
-import com.google.common.primitives.UnsignedLong;
 import com.google.common.primitives.UnsignedLongs;
 import io.airlift.slice.Slice;
 import org.apache.calcite.sql.SqlKind;
@@ -44,6 +43,7 @@ public abstract class AbstractPartitionField implements PartitionField {
         {LESS_THAN, LESS_THAN_OR_EQUAL},
         {GREATER_THAN, GREATER_THAN_OR_EQUAL}
     };
+    protected Object rawValueToBeforeStore;
     protected StorageField field;
     protected PredicateBoolean lastPredicateBoolean;
 
@@ -64,7 +64,8 @@ public abstract class AbstractPartitionField implements PartitionField {
 
     @Override
     public TypeConversionStatus store(Object value, DataType<?> resultType, SessionProperties sessionProperties) {
-        return cacheEqualPredicateBoolean(field.store(value, resultType, sessionProperties));
+//        return cacheEqualPredicateBoolean(field.store(value, resultType, sessionProperties));
+        return cacheEqualPredicateBoolean(storeRawValueIntoStorageField(value, resultType, sessionProperties));
     }
 
     @Override
@@ -83,7 +84,8 @@ public abstract class AbstractPartitionField implements PartitionField {
         Preconditions.checkArgument(endpoints.length == 2);
 
         // store to field.
-        TypeConversionStatus typeConversionStatus = field.store(value, resultType, sessionProperties);
+//        TypeConversionStatus typeConversionStatus = field.store(value, resultType, sessionProperties);
+        TypeConversionStatus typeConversionStatus = storeRawValueIntoStorageField(value, resultType, sessionProperties);
 
         SqlKind comparisonKind = COMPARISON_KINDS[endpoints[0] ? 1 : 0][endpoints[1] ? 1 : 0];
 
@@ -157,12 +159,13 @@ public abstract class AbstractPartitionField implements PartitionField {
 
     @Override
     public TypeConversionStatus store(ResultSet rs, int columnIndex, SessionProperties sessionProperties) {
-        return cacheEqualPredicateBoolean(field.store(rs, columnIndex, sessionProperties));
+        return cacheEqualPredicateBoolean(storeRawValueIntoStorageField(rs, columnIndex, sessionProperties));
     }
 
     @Override
     public TypeConversionStatus store(ResultSet rs, int columnIndex) {
-        return cacheEqualPredicateBoolean(field.store(rs, columnIndex));
+//        return cacheEqualPredicateBoolean(field.store(rs, columnIndex));
+        return cacheEqualPredicateBoolean(storeRawValueIntoStorageField(rs, columnIndex));
     }
 
     @Override
@@ -178,6 +181,7 @@ public abstract class AbstractPartitionField implements PartitionField {
     @Override
     public void reset() {
         field.reset();
+        rawValueToBeforeStore = null;
     }
 
     @Override
@@ -293,6 +297,7 @@ public abstract class AbstractPartitionField implements PartitionField {
     @Override
     public void setNull(boolean isNull) {
         field.setNull(isNull);
+        rawValueToBeforeStore = null;
     }
 
     @Override
@@ -314,10 +319,33 @@ public abstract class AbstractPartitionField implements PartitionField {
         return 0;
     }
 
+    private TypeConversionStatus storeRawValueIntoStorageField(Object value, DataType<?> resultType, SessionProperties sessionProperties) {
+        /**
+         * All the PartField.store for do partition pruning must come here
+         */
+        TypeConversionStatus typeConversionStatus = field.store(value, resultType, sessionProperties);
+        this.rawValueToBeforeStore = value;
+        return typeConversionStatus;
+    }
+
+    private TypeConversionStatus storeRawValueIntoStorageField(ResultSet rs, int columnIndex, SessionProperties sessionProperties) {
+        TypeConversionStatus typeConversionStatus = field.store(rs, columnIndex, sessionProperties);
+        return typeConversionStatus;
+    }
+
+    private TypeConversionStatus storeRawValueIntoStorageField(ResultSet rs, int columnIndex) {
+        TypeConversionStatus typeConversionStatus = field.store(rs, columnIndex);
+        return typeConversionStatus;
+    }
+
     private TypeConversionStatus cacheEqualPredicateBoolean(TypeConversionStatus conversionStatus) {
         PredicateBoolean isAlwaysTrueOrFalse =
             PartitionDataTypeUtils.isAlwaysTrueOrFalse(this, conversionStatus, EQUALS);
         this.lastPredicateBoolean = isAlwaysTrueOrFalse;
         return conversionStatus;
+    }
+
+    public Object getRawValueToBeforeStore() {
+        return rawValueToBeforeStore;
     }
 }

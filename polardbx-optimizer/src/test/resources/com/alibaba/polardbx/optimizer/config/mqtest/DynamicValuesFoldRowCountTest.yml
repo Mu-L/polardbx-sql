@@ -1,0 +1,24 @@
+SQL:
+  - sql: |
+      select * from (values row(cast(1 as bigint)), row(cast(2 as bigint)), row(cast(3 as bigint))) as v(a)
+    plan: |
+      3
+  - sql: |
+      select * from (values row(cast(1 as bigint), cast('a' as char(1))), row(cast(2 as bigint), cast('b' as char(1))), row(cast(3 as bigint), cast('c' as char(1))), row(cast(4 as bigint), cast('d' as char(1)))) as v(a, b)
+    plan: |
+      4
+  - sql: |
+      select * from (values row(cast(null as int)), row(cast(7 as int))) as v(a)
+    plan: |
+      2
+  - sql: |
+      select * from (values row(1)) as v(a)
+    plan: |
+      1
+  - sql: |
+      select * from (values row(1), row(2)) as v(a)
+    plan: |
+      2
+DDL: { }
+STATISTICS: { }
+CONFIG: { }

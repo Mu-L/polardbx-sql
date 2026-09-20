@@ -30,7 +30,6 @@ import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.join.LookupEquiJoinKey;
 import com.alibaba.polardbx.optimizer.core.join.LookupPredicate;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
-import com.alibaba.polardbx.optimizer.core.rel.MaterializedSemiJoin;
 import com.alibaba.polardbx.optimizer.core.row.Row;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfoManager;
@@ -278,7 +277,7 @@ public class LookupConditionBuilder {
      * Is MaterializedSemiJoin?
      */
     boolean isMaterializedSemiJoin() {
-        return v.getJoin() instanceof MaterializedSemiJoin;
+        return v.isLookupTable() && v.getLookupInfo().isMaterializedSemiJoin();
     }
 
     /**

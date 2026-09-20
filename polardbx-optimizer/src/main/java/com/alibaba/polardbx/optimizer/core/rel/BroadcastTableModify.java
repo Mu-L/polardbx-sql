@@ -17,8 +17,11 @@
 package com.alibaba.polardbx.optimizer.core.rel;
 
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.gms.locality.LocalityDesc;
+import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.hint.util.HintUtil;
+import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import org.apache.calcite.rel.AbstractRelNode;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelWriter;
@@ -40,7 +43,16 @@ public class BroadcastTableModify extends AbstractRelNode {
     }
 
     public List<RelNode> getInputs(ExecutionContext executionContext) {
-        List<String> groupNames = HintUtil.allGroup(directTableOperation.getSchemaName());
+        String schemaName = directTableOperation.getSchemaName();
+        String tableName = directTableOperation.getLogicalTableNames().get(0);
+        PartitionInfo partitionInfo = executionContext.getSchemaManager(schemaName).getTable(tableName).getPartitionInfo();
+        List<String> groupNames = null;
+        if(partitionInfo != null) {
+            LocalityDesc localityDesc = partitionInfo.getLocalityDesc();
+            groupNames = HintUtil.allGroup(schemaName, localityDesc);
+        }else{
+            groupNames = HintUtil.allGroup(schemaName);
+        }
 
         // May use jingwei to sync broadcast table
         boolean enableBroadcast =

@@ -2,14 +2,10 @@ package com.alibaba.polardbx.executor.ddl.job.task.basic;
 
 import com.alibaba.fastjson.annotation.JSONCreator;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
-import com.alibaba.polardbx.executor.ddl.job.builder.DdlPhyPlanBuilder;
-import com.alibaba.polardbx.executor.ddl.job.builder.DropPhyTableBuilder;
 import com.alibaba.polardbx.executor.ddl.job.converter.PhysicalPlanData;
-import com.alibaba.polardbx.executor.ddl.job.task.BasePhyDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.scaleout.ScaleOutUtils;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
-import com.alibaba.polardbx.optimizer.core.rel.PhyDdlTableOperation;
 import lombok.Getter;
 import org.apache.calcite.rel.RelNode;
 

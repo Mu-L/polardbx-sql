@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<SystemTables>
+    <SystemTable name="routing_rule">
+        <Create><![CDATA[
+            CREATE TABLE IF NOT EXISTS `routing_rule`(
+                `id` bigint not null auto_increment,
+                `inst_id` varchar(128) NOT NULL,
+                `rule_name` varchar(100) NOT NULL,
+                `user_name` varchar(32) NOT NULL,
+                `template_id` varchar(8) DEFAULT NULL,
+                `keywords` varchar(512) DEFAULT NULL,
+                `routing_type` varchar(10) NOT NULL,
+                `gmt_created` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `gmt_updated` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                 PRIMARY KEY (`id`),
+                 UNIQUE KEY (`inst_id`,`rule_name`)
+            ) charset=utf8mb4
+        ]]></Create>
+    </SystemTable>
+</SystemTables>

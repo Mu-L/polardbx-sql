@@ -16,12 +16,17 @@
 
 package com.alibaba.polardbx.executor.ddl.job.validator;
 
+import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.common.charset.MySQLCharsetDDLValidator;
 import com.alibaba.polardbx.common.ddl.foreignkey.ForeignKeyData;
+import com.alibaba.polardbx.common.eventlogger.EventLogger;
+import com.alibaba.polardbx.common.eventlogger.EventType;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalCreateTable;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ParamManager;
+import com.alibaba.polardbx.common.type.ConstraintType;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
@@ -38,7 +43,6 @@ import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupRecord;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupUtils;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
-import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.gms.util.MetaDbLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
@@ -46,6 +50,7 @@ import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.ComplexTaskMetaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.locality.LocalityInfo;
@@ -61,7 +66,6 @@ import com.alibaba.polardbx.rule.TableRule;
 import com.google.common.base.Preconditions;
 import org.apache.calcite.sql.SqlAlterSpecification;
 import org.apache.calcite.sql.SqlAlterTable;
-import org.apache.calcite.sql.SqlAlterTableOptimizePartition;
 import org.apache.calcite.sql.SqlAlterTableTruncatePartition;
 import org.apache.calcite.sql.SqlColumnDeclaration;
 import org.apache.calcite.sql.SqlCreateTable;
@@ -222,7 +226,7 @@ public class TableValidator {
             for (PartitionGroupRecord record : GeneralUtil.emptyIfNull(
                 saveTableGroupConfig.getPartitionGroupRecords())) {
                 if (record.id == TableGroupRecord.INVALID_TABLE_GROUP_ID) {
-                    physicalGroups.add(GroupInfoUtil.buildGroupNameFromPhysicalDb(record.phy_db));
+                    physicalGroups.add(record.getGroup_Name());
                 }
             }
             for (String group : physicalGroups) {
@@ -252,8 +256,8 @@ public class TableValidator {
                     .filter(o -> o.partition_name.equalsIgnoreCase(curParGroupRecord.partition_name)).findFirst()
                     .orElse(null);
                 invalid = (partitionGroupRecord == null) || (partitionGroupRecord.id.longValue()
-                    != curParGroupRecord.id.longValue()) || (!partitionGroupRecord.phy_db.equalsIgnoreCase(
-                    curParGroupRecord.phy_db));
+                    != curParGroupRecord.id.longValue()) || (!partitionGroupRecord.getGroup_Name().equalsIgnoreCase(
+                    curParGroupRecord.getGroup_Name()));
                 if (invalid) {
                     throw new TddlRuntimeException(ErrorCode.ERR_TABLEGROUP_META_TOO_OLD,
                         String.format("the metadata of tableGroup[%s] is too old, please retry this command",
@@ -362,6 +366,78 @@ public class TableValidator {
         }
     }
 
+    public static void validateTableWithPureColumnar(String schemaName, String logicalTableName,
+                                                     ExecutionContext executionContext, SqlKind sqlKind) {
+        TableMeta tableMeta =
+            OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTableWithNull(logicalTableName);
+        boolean forbid = executionContext.getParamManager()
+            .getBoolean(ConnectionParams.FORBID_DDL_WITH_PURE_COLUMNAR);
+        if (forbid && tableMeta != null && Engine.isPureColumnar(tableMeta.getEngine())) {
+            throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
+                "DDL operation " + sqlKind.name() + " is not supported on pure columnar table '" + logicalTableName
+                    + "'");
+        }
+    }
+
+    public static void validateTableWithExternalizedColumn(String schemaName, String logicalTableName,
+                                                           SqlKind sqlKind) {
+        TableMeta tableMeta =
+            OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTableWithNull(logicalTableName);
+        if (tableMeta != null && tableMeta.hasExternalizedColumn()) {
+            throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
+                "DDL operation " + sqlKind.name() + " is not supported on table '" + logicalTableName
+                    + "' with externalized columns");
+        }
+    }
+
+    /**
+     * TRUNCATE on an externalized table is refused by default. The escape hatch
+     * ALLOW_TRUNCATE_EXTERNALIZED_TABLE force-truncates the physical shards and accepts the
+     * table's staged/published blobs becoming orphans until purge reclaims them. The recycle-bin
+     * truncate path must NOT use this method: it renames the table and breaks address resolution
+     * by name, which is a correctness hazard rather than an operational trade-off.
+     */
+    public static void validateTruncateOnExternalizedTable(String schemaName, String logicalTableName,
+                                                           ExecutionContext executionContext) {
+        TableMeta tableMeta =
+            OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTableWithNull(logicalTableName);
+        if (tableMeta == null || !tableMeta.hasExternalizedColumn()) {
+            return;
+        }
+        if (executionContext != null && executionContext.getParamManager()
+            .getBoolean(ConnectionParams.ALLOW_TRUNCATE_EXTERNALIZED_TABLE)) {
+            EventLogger.log(EventType.EXT_COL_DROP, String.format(
+                "Force TRUNCATE on externalized table %s.%s (ALLOW_TRUNCATE_EXTERNALIZED_TABLE=true);"
+                    + " its blob objects become orphans until purge", schemaName, logicalTableName));
+            return;
+        }
+        throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
+            "TRUNCATE TABLE on table '" + logicalTableName + "' with externalized columns; set"
+                + " ALLOW_TRUNCATE_EXTERNALIZED_TABLE=true to force-truncate (orphaned blob objects"
+                + " remain until purge)");
+    }
+
+    public static void validateTableWitchArchiveCci(String schemaName, String logicalTableName,
+                                                    ExecutionContext executionContext, SqlKind sqlKind) {
+        TableMeta tableMeta =
+            OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTableWithNull(logicalTableName);
+        boolean forbidTruncateWithArchiveCci =
+            executionContext.getParamManager().getBoolean(ConnectionParams.FORBID_TRUNCATE_WITH_ARCHIVE_CCI);
+        if (forbidTruncateWithArchiveCci && tableMeta != null && GeneralUtil.isNotEmpty(
+            tableMeta.getArchiveColumnarIndexPublished())) {
+            throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+                String.format(
+                    "Operation %s is not allowed: table '%s.%s' has archive columnar index (Archive CCI) enabled. " +
+                        "Executing this operation may result in unintended deletion of archived data. " +
+                        "Please use conditional DELETE (e.g., DELETE WHERE) or other safe alternatives.",
+                    sqlKind.name(),
+                    schemaName,
+                    logicalTableName
+                )
+            );
+        }
+    }
+
     /**
      * Expect the logical table to exist, such as DROP TABLE.
      */
@@ -371,18 +447,31 @@ public class TableValidator {
             return;
         }
 
+        validateNotColumnarShadowTable(logicalTableName, executionContext);
+
         if (!checkIfTableExists(schemaName, logicalTableName)) {
             throw new TddlRuntimeException(ErrorCode.ERR_UNKNOWN_TABLE, schemaName, logicalTableName);
+        }
+    }
+
+    /**
+     * Forbid any DDL on columnar shadow tables (prefixed with "__$_") unless
+     * the current DDL is a subjob (e.g. drop shadow table triggered by drop main table).
+     */
+    public static void validateNotColumnarShadowTable(String logicalTableName, ExecutionContext executionContext) {
+        if (logicalTableName != null && logicalTableName.startsWith("__$_")) {
+            DdlContext ddlContext = executionContext.getDdlContext();
+            if (ddlContext == null || !ddlContext.isSubJob()) {
+                throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
+                    "DDL operation on columnar shadow table '" + logicalTableName
+                        + "' is not allowed. Please operate on the main table instead");
+            }
         }
     }
 
     public static void validateTableNotReferenceFk(String schemaName,
                                                    String logicalTableName,
                                                    ExecutionContext executionContext) {
-        if (executionContext.isUseHint()) {
-            return;
-        }
-
         final boolean checkForeignKey =
             executionContext.foreignKeyChecks();
         if (!checkForeignKey) {
@@ -547,7 +636,7 @@ public class TableValidator {
         }
         for (SqlAlterSpecification item : sqlAlterTable.getAlters()) {
             if ((item instanceof SqlAlterTableTruncatePartition)) {
-                if (tableMeta.withGsi()) {
+                if (tableMeta.withGsiExcludingPureCci()) {
                     throw new TddlRuntimeException(ErrorCode.ERR_GLOBAL_SECONDARY_INDEX_TRUNCATE_PRIMARY_TABLE,
                         tableName);
                 }
@@ -604,6 +693,17 @@ public class TableValidator {
     }
 
     public static void validateTableEngine(BaseDdlOperation ddlOperation, ExecutionContext executionContext) {
+        // Reject ENGINE=EXTERNAL — external tables must go through EXTERNAL CATALOG
+        if (ddlOperation instanceof LogicalCreateTable) {
+            LogicalCreateTable createTable = (LogicalCreateTable) ddlOperation;
+            SqlCreateTable sqlCreate = (SqlCreateTable) createTable.relDdl.sqlNode;
+            if (sqlCreate != null && sqlCreate.getEngine() == Engine.EXTERNAL) {
+                throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
+                    "CREATE TABLE with ENGINE=EXTERNAL is not supported. "
+                        + "Use CREATE EXTERNAL CATALOG to access external data sources.");
+            }
+        }
+
         // ddl on file storage table
         if (executionContext.getParamManager().getBoolean(ConnectionParams.ENABLE_CHECK_DDL_FILE_STORAGE)
             && ddlOperation.checkIfFileStorage(executionContext)) {
@@ -767,6 +867,37 @@ public class TableValidator {
         if (!canRename) {
             throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT,
                 "Rename of multiple tables together is not supported yet.");
+        }
+    }
+
+    public static void validateConstraintName(String schemaName, String tableName, String newTableName,
+                                              ExecutionContext executionContext) {
+        TableMeta tableMeta =
+            OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTableWithNull(tableName);
+        if (tableMeta == null) {
+            return;
+        }
+        for (Map.Entry<String, Set<String>> entry : tableMeta.getConstraints().entrySet()) {
+            String type = entry.getKey();
+            Set<String> constraints = entry.getValue();
+            if (type.equals(ConstraintType.CHECK.name())) {
+                // TODO: change phy check generated name
+//                for (String constraint : constraints) {
+//                    if (constraint.contains(tableName + "_chk_")) {
+//                        String newConstraintName = newTableName + "_chk_" + constraint.substring(
+//                            constraint.lastIndexOf("_") + 1);
+//                        LimitValidator.validateCheckPhyConstraintNameLength(newConstraintName);
+//                    }
+//                }
+            } else if (type.equals(ConstraintType.FOREIGN_KEY.name())) {
+                for (String constraint : constraints) {
+                    if (constraint.contains(tableName + "_ibfk_")) {
+                        String newConstraintName = newTableName + "_ibfk_" + constraint.substring(
+                            constraint.lastIndexOf("_") + 1);
+                        LimitValidator.validateConstraintNameLength(newConstraintName);
+                    }
+                }
+            }
         }
     }
 }

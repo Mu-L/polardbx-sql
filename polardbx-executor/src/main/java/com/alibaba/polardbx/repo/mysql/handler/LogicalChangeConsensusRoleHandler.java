@@ -18,6 +18,8 @@ package com.alibaba.polardbx.repo.mysql.handler;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.cursor.impl.ArrayResultCursor;
 import com.alibaba.polardbx.executor.handler.HandlerCommon;
@@ -59,8 +61,8 @@ public class LogicalChangeConsensusRoleHandler extends HandlerCommon {
             if (role == StorageRole.LOGGER) {
                 throw new TddlRuntimeException(ErrorCode.ERR_NOT_SUPPORT, String.format("change role to %s", role));
             }
-
-            shm.changeRoleByAddress(target, role);
+            boolean forceChangeRole = executionContext.getParamManager().getBoolean(ConnectionParams.FORCE_CHANGE_ROLE);
+            shm.changeRoleByAddress(target, role, forceChangeRole);
         } else if ("zone".equalsIgnoreCase(targetType)) {
             shm.changeRoleByZone(target, role);
         } else {

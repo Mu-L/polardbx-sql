@@ -169,6 +169,10 @@ public class LimitValidator {
         validateIdentifierNameLength(constraintName, Limits.MAX_LENGTH_OF_CONSTRAINT_NAME);
     }
 
+    public static void validateCheckPhyConstraintNameLength(String constraintName) {
+        validateIdentifierNameLength(constraintName, Limits.MAX_LENGTH_OF_CONSTRAINT_NAME - 9);
+    }
+
     public static void validateIndexNameLength(String indexName) {
         validateIdentifierNameLength(indexName, Limits.MAX_LENGTH_OF_INDEX_NAME);
     }

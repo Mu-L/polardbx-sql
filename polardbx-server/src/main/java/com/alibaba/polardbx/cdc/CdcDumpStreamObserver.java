@@ -2,6 +2,8 @@ package com.alibaba.polardbx.cdc;
 
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
+import com.alibaba.polardbx.common.cdc.BinlogDumpMetrics;
+import com.alibaba.polardbx.common.cdc.BinlogDumpMetricsManager;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.net.FrontendConnection;
 import com.alibaba.polardbx.net.compress.PacketOutputProxyFactory;
@@ -24,18 +26,48 @@ public class CdcDumpStreamObserver implements StreamObserver<DumpStream> {
     private final String host;
     private final int port;
     private final CountDownLatch countDownLatch;
+    private final BinlogDumpMetrics metrics;
 
-    public CdcDumpStreamObserver(FrontendConnection conn, CountDownLatch countDownLatch) {
+    public CdcDumpStreamObserver(FrontendConnection conn, CountDownLatch countDownLatch,
+                                 BinlogDumpMetrics metrics) {
         this.connection = conn;
         this.host = conn.getHost();
         this.port = conn.getPort();
         this.countDownLatch = countDownLatch;
+        this.metrics = metrics;
     }
 
     @Override
     public void onNext(DumpStream dumpStream) {
+        long onNextStartNanos = System.nanoTime();
+
+        // 计算等待 CDC 数据的时间（从上次 onNext 结束到本次 onNext 开始）
+        long fetchWaitNanos = 0;
+        long lastEnd = metrics.getLastOnNextEndNanos();
+        if (lastEnd > 0) {
+            fetchWaitNanos = onNextStartNanos - lastEnd;
+            if (fetchWaitNanos < 0) {
+                fetchWaitNanos = 0;
+            }
+        }
+
+        // CN 处理：将 payload 转为 byte 数组
+        byte[] payload = dumpStream.getPayload().toByteArray();
+
+        // 检测是否为心跳包：payload[9] == HEARTBEAT_LOG_EVENT(27)
+        boolean isHeartbeat = BinlogDumpMetrics.isHeartbeatPacket(payload);
+
+        long processEndNanos = System.nanoTime();
+        long processNanos = processEndNanos - onNextStartNanos;
+
+        // 写入下游网络
         PacketOutputProxyFactory.getInstance().createProxy(connection)
-            .writeArrayAsPacket(dumpStream.getPayload().toByteArray());
+            .writeArrayAsPacket(payload);
+        long writeEndNanos = System.nanoTime();
+        long writeNanos = writeEndNanos - processEndNanos;
+
+        // 记录指标
+        metrics.recordOnNext(fetchWaitNanos, processNanos, writeNanos, isHeartbeat);
     }
 
     /**
@@ -59,9 +91,7 @@ public class CdcDumpStreamObserver implements StreamObserver<DumpStream> {
             if (t instanceof StatusRuntimeException) {
                 final Status status = ((StatusRuntimeException) t).getStatus();
                 if (status.getCode() == Status.Code.CANCELLED && status.getCause() == null) {
-                    if (cdcLogger.isInfoEnabled()) {
-                        cdcLogger.info("binlog dump canceled by remote [" + host + ":" + port + "]...");
-                    }
+                    cdcLogger.warn("binlog dump canceled by remote [" + host + ":" + port + "]...");
                     return;
                 }
                 cdcLogger.error("[" + host + ":" + port + "] binlog dump from cdc failed", t);
@@ -90,6 +120,7 @@ public class CdcDumpStreamObserver implements StreamObserver<DumpStream> {
             cdcLogger.error("binlog dump from cdc failed with Throwable", th);
             connection.writeErrMessage(ErrorCode.ER_MASTER_FATAL_ERROR_READING_BINLOG, th.getMessage());
         } finally {
+            BinlogDumpMetricsManager.getInstance().unregister(connection.getId());
             countDownLatch.countDown();
         }
     }
@@ -103,9 +134,8 @@ public class CdcDumpStreamObserver implements StreamObserver<DumpStream> {
      */
     @Override
     public void onCompleted() {
-        if (cdcLogger.isInfoEnabled()) {
-            cdcLogger.info("binlog dump finished at this time");
-        }
+        cdcLogger.warn("binlog dump finished at this time");
+        BinlogDumpMetricsManager.getInstance().unregister(connection.getId());
         countDownLatch.countDown();
     }
 }

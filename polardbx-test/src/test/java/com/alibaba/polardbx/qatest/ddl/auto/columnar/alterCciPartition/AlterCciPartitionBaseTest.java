@@ -18,6 +18,13 @@
 
 package com.alibaba.polardbx.qatest.ddl.auto.columnar.alterCciPartition;
 
+import com.alibaba.polardbx.common.utils.Assert;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarPartitionEvolutionRecord;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarTableEvolutionRecord;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingAccessor;
+import com.alibaba.polardbx.gms.metadb.table.ColumnarTableStatus;
+import com.alibaba.polardbx.gms.partition.TablePartitionAccessor;
+import com.alibaba.polardbx.gms.partition.TablePartitionRecord;
 import com.alibaba.polardbx.optimizer.config.table.ComplexTaskMetaManager;
 import com.alibaba.polardbx.optimizer.partition.common.PartitionStrategy;
 import com.alibaba.polardbx.qatest.DDLBaseNewDBTestCase;
@@ -31,10 +38,15 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 public class AlterCciPartitionBaseTest extends DDLBaseNewDBTestCase {
 
@@ -46,7 +58,9 @@ public class AlterCciPartitionBaseTest extends DDLBaseNewDBTestCase {
     protected static boolean printExecutedSqlLog = false;
     protected static String tableGroupName = "alter_cci_table_tg";
     protected static String tableName = "tT1";
-    protected static String cciName = "cci_tT1";
+    protected static String cciName = "cci_tT1"; // 保留用于向后兼容
+    // 支持多个 CCI 测试：在同一个表上创建多个具有相同分区结构的 CCI
+    protected static List<String> cciNames = Arrays.asList("cci_tT1", "cci_tT2");
 
     protected static String pk = "id";
 
@@ -221,9 +235,13 @@ public class AlterCciPartitionBaseTest extends DDLBaseNewDBTestCase {
     private void prepareDdlAndData(boolean recreateDB, PartitionRuleInfo partitionRuleInfo) {
         if (recreateDB) {
             reCreateDatabase(partitionRuleInfo.connection, this.logicalDatabase);
+            JdbcUtil.executeUpdateSuccess(tddlConnection, "SET MAX_CCI_COUNT = 10");
             for (String tableName : partitionRuleInfo.getLogicalTableNames()) {
                 createTable(tableName, partitionRuleInfo.getPartitionRule());
-                createCci(tableName, cciName, partitionRuleInfo.getPartitionRule());
+                // 为同一个表创建多个具有相同分区结构的 CCI，以测试多 CCI 场景
+                for (String cciName : cciNames) {
+                    createCci(tableName, cciName, partitionRuleInfo.getPartitionRule());
+                }
             }
         }
     }
@@ -237,7 +255,13 @@ public class AlterCciPartitionBaseTest extends DDLBaseNewDBTestCase {
         String ignoreErr = "The DDL job has been cancelled or interrupted";
         Set<String> ignoreErrs = new HashSet<>();
         ignoreErrs.add(ignoreErr);
-        JdbcUtil.executeUpdateSuccessIgnoreErr(tddlConnection, sqlHint + command, ignoreErrs);
+
+        // 对每个 CCI 执行相同的分区操作（支持多 CCI 测试）
+        for (String currentCciName : cciNames) {
+            // 将命令中的 cciName 替换为当前的 CCI 名称
+            String actualCommand = command.replace("." + cciName, "." + currentCciName);
+            JdbcUtil.executeUpdateSuccessIgnoreErr(tddlConnection, sqlHint + actualCommand, ignoreErrs);
+        }
     }
 
     @Getter
@@ -281,5 +305,211 @@ public class AlterCciPartitionBaseTest extends DDLBaseNewDBTestCase {
 
     public boolean usingNewPartDb() {
         return true;
+    }
+
+    protected void compareTablePartitionRecords(String schemaName, String tableName, List<String> indexNames)
+        throws SQLException {
+        for (String indexName : indexNames) {
+            String fullIndexName = getFullIndexName(schemaName, tableName, indexName);
+            List<TablePartitionRecord> sysTablePartitionRecords =
+                fetchTablePartitionRecordsFromSysTable(schemaName, fullIndexName);
+            List<TablePartitionRecord> evolutionTableColumnRecords =
+                fetchTablePartitionRecordsFromEvolutionTable(schemaName, tableName, indexName);
+            compareColumnRecords(sysTablePartitionRecords, evolutionTableColumnRecords);
+        }
+    }
+
+    protected String getFullIndexName(String schemaName, String tableName, String indexName) throws SQLException {
+        try (Connection metaDbConn = getMetaConnection();) {
+            ColumnarTableMappingAccessor columnarTableMappingAccessor = new ColumnarTableMappingAccessor();
+            columnarTableMappingAccessor.setConnection(metaDbConn);
+            return columnarTableMappingAccessor.queryBySchemaTableIndexLike(schemaName, tableName, indexName + "%",
+                ColumnarTableStatus.PUBLIC.name()).get(0).indexName;
+        }
+    }
+
+    protected List<TablePartitionRecord> fetchTablePartitionRecordsFromSysTable(String schemaName, String tableName)
+        throws SQLException {
+        List<TablePartitionRecord> tablePartitionRecords;
+        try (Connection metaDbConn = getMetaConnection();) {
+            TablePartitionAccessor tablePartitionAccessor = new TablePartitionAccessor();
+            tablePartitionAccessor.setConnection(metaDbConn);
+            tablePartitionRecords =
+                tablePartitionAccessor.getTablePartitionsByDbNameTbName(schemaName, tableName, false);
+        }
+        return tablePartitionRecords;
+    }
+
+    protected List<TablePartitionRecord> fetchTablePartitionRecordsFromEvolutionTable(String schemaName,
+                                                                                      String tableName,
+                                                                                      String indexName)
+        throws SQLException {
+        List<TablePartitionRecord> partitionRecords = new ArrayList<>();
+        String sql1 = "select partitions from columnar_table_evolution "
+            + "where table_schema='%s' and table_name='%s' and index_name like '%s' order by `version_id` desc limit 1";
+        String sql2 = "select partition_record from columnar_partition_evolution where id=%s";
+        try (Connection metaDbConn = getMetaConnection();
+            Statement stmt = metaDbConn.createStatement();
+            ResultSet rs = stmt.executeQuery(String.format(sql1, schemaName, tableName, indexName + '%'))) {
+            Assert.assertTrue(rs.next());
+            List<Long> partitionIds = ColumnarTableEvolutionRecord.deserializeListFromJson(rs.getString(1));
+            for (Long partitionId : partitionIds) {
+                ResultSet rs1 = stmt.executeQuery(String.format(sql2, partitionId));
+                Assert.assertTrue(rs1.next());
+                partitionRecords.add(ColumnarPartitionEvolutionRecord.deserializeFromJson(rs1.getString(1)));
+            }
+
+        }
+        return partitionRecords;
+    }
+
+    protected void compareColumnRecords(List<TablePartitionRecord> sysTablePartitionRecords,
+                                        List<TablePartitionRecord> evolutionTablePartitionRecords) {
+
+        if (sysTablePartitionRecords == null || sysTablePartitionRecords.isEmpty() ||
+            evolutionTablePartitionRecords == null || evolutionTablePartitionRecords.isEmpty()) {
+            Assert.fail("Invalid partition records");
+        }
+
+        if (sysTablePartitionRecords.size() != evolutionTablePartitionRecords.size()) {
+            Assert.fail("Different partition sizes");
+        }
+
+        for (int i = 0; i < sysTablePartitionRecords.size(); i++) {
+            TablePartitionRecord sysRecord = sysTablePartitionRecords.get(i);
+            TablePartitionRecord evolutionRecord = evolutionTablePartitionRecords.get(i);
+            if (!TablePartitionRecord.isPartitionRecordEqual(sysRecord, evolutionRecord)) {
+                Assert.fail("Different partition records in '" + sysTablePartitionRecords.get(i).partName);
+            }
+        }
+    }
+
+    // 表组类型常量
+    protected static final int TG_TYPE_COLUMNAR_TBL_TG = 1; // columnar表组类型
+
+    // 组类型常量
+    protected static final int GROUP_TYPE_BEFORE_REMOVE = 1; // 待删除的组类型
+
+    /**
+     * 验证新加分区的partition_group信息是否正确
+     */
+    protected void validatePartitionGroupInfo(String schemaName, String tableName, String cciName,
+                                              List<String> newPartitionNames) {
+        String sql = String.format(
+            "SELECT pg.partition_name, pg.group_name, pg.phy_db, pg.locality, tg.tg_type " +
+                "FROM partition_group pg " +
+                "JOIN table_group tg ON pg.tg_id = tg.id " +
+                "JOIN table_partitions tp ON pg.id = tp.group_id " +
+                "WHERE tp.table_schema = '%s' AND tp.table_name like '%s%%' " +
+                "AND pg.partition_name IN (%s) " +
+                "ORDER BY pg.partition_name",
+            schemaName, cciName,
+            newPartitionNames.stream().map(name -> "'" + name + "'").collect(Collectors.joining(","))
+        );
+
+        try (ResultSet rs = JdbcUtil.executeQuery(sql, getMetaConnection())) {
+            Map<String, PartitionGroupInfo> partitionGroups = new HashMap<>();
+            while (rs.next()) {
+                String partitionName = rs.getString("partition_name");
+                String groupName = rs.getString("group_name");
+                String phyDb = rs.getString("phy_db");
+                String locality = rs.getString("locality");
+                int tgType = rs.getInt("tg_type");
+
+                partitionGroups.put(partitionName,
+                    new PartitionGroupInfo(partitionName, groupName, phyDb, locality, tgType));
+            }
+
+            // 验证每个新分区
+            for (String partitionName : newPartitionNames) {
+                PartitionGroupInfo info = partitionGroups.get(partitionName);
+                org.junit.Assert.assertNotNull("Partition group not found for: " + partitionName, info);
+
+                // 对于columnar表组，验证使用了NonDeletable分配器的逻辑
+                if (info.tgType == TG_TYPE_COLUMNAR_TBL_TG) {
+                    // 验证group_name不为空且符合命名规范
+                    org.junit.Assert.assertNotNull("Group name should not be null for columnar partition",
+                        info.groupName);
+                    org.junit.Assert.assertTrue("Group name should follow naming convention",
+                        info.groupName.contains(schemaName.toUpperCase()));
+
+                    // 验证phy_db与group_name匹配
+                    org.junit.Assert.assertNotNull("Physical DB should not be null", info.phyDb);
+                    String expectedPhyDbPrefix = schemaName.toLowerCase() + "_";
+                    org.junit.Assert.assertTrue("Physical DB should match group naming pattern",
+                        info.phyDb.startsWith(expectedPhyDbPrefix));
+
+                    // 验证locality字段（可能为空字符串或null，但不应该是无效值）
+                    // 根据之前的分析，locality可能是空字符串或null，都是有效的
+                    System.out.println(String.format("Partition %s: group=%s, phy_db=%s, locality=%s",
+                        partitionName, info.groupName, info.phyDb, info.locality));
+                }
+            }
+        } catch (SQLException e) {
+            Assert.fail("Failed to validate partition group info: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 验证columnar表的分区是否使用了NonDeletable组
+     */
+    protected void validateColumnarPartitionUsesNonDeletableGroups(String schemaName, String cciName) {
+        // 查询当前可删除的组（即将被缩容的组）
+        String deletableGroupsSql = String.format(
+            "SELECT DISTINCT gdi.group_name " +
+                "FROM group_detail_info gdi " +
+                "JOIN db_group_info dgi ON gdi.group_name = dgi.group_name " +
+                "WHERE gdi.db_name = '%s' AND dgi.group_type = %d",
+            schemaName, GROUP_TYPE_BEFORE_REMOVE
+        );
+
+        Set<String> deletableGroups = new HashSet<>();
+        try (ResultSet rs = JdbcUtil.executeQuery(deletableGroupsSql, getMetaConnection())) {
+            while (rs.next()) {
+                deletableGroups.add(rs.getString("group_name"));
+            }
+        } catch (SQLException e) {
+            // 如果查询失败，说明没有待删除的组，测试继续
+        }
+
+        // 查询columnar表的分区组
+        String columnarPartitionsSql = String.format(
+            "SELECT pg.group_name " +
+                "FROM partition_group pg " +
+                "JOIN table_group tg ON pg.tg_id = tg.id " +
+                "JOIN table_partitions tp ON pg.id = tp.group_id " +
+                "WHERE tp.table_schema = '%s' AND tp.table_name like '%s%%' " +
+                "AND tg.tg_type = %d",
+            schemaName, cciName, TG_TYPE_COLUMNAR_TBL_TG
+        );
+
+        try (ResultSet rs = JdbcUtil.executeQuery(columnarPartitionsSql, getMetaConnection())) {
+            while (rs.next()) {
+                String groupName = rs.getString("group_name");
+                org.junit.Assert.assertFalse(
+                    String.format("Columnar partition should not use deletable group: %s", groupName),
+                    deletableGroups.contains(groupName)
+                );
+            }
+        } catch (SQLException e) {
+            Assert.fail("Failed to validate columnar partition groups: " + e.getMessage());
+        }
+    }
+
+    // 内部类用于存储分区组信息
+    protected static class PartitionGroupInfo {
+        final String partitionName;
+        final String groupName;
+        final String phyDb;
+        final String locality;
+        final int tgType;
+
+        PartitionGroupInfo(String partitionName, String groupName, String phyDb, String locality, int tgType) {
+            this.partitionName = partitionName;
+            this.groupName = groupName;
+            this.phyDb = phyDb;
+            this.locality = locality;
+            this.tgType = tgType;
+        }
     }
 }

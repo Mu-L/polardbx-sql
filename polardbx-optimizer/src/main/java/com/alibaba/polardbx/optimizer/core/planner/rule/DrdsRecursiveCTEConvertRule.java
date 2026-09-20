@@ -16,7 +16,6 @@
 
 package com.alibaba.polardbx.optimizer.core.planner.rule;
 
-import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.core.DrdsConvention;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import org.apache.calcite.plan.Convention;
@@ -46,7 +45,6 @@ public class DrdsRecursiveCTEConvertRule extends ConverterRule {
     @Override
     public RelNode convert(RelNode rel) {
         final RecursiveCTE recursiveCTE = (RecursiveCTE) rel;
-        rel.getCluster().getPlanner().getContext().unwrap(PlannerContext.class).setHasRecursiveCte(true);
         return new RecursiveCTE(recursiveCTE.getCluster(),
             recursiveCTE.getTraitSet().simplify().replace(outConvention),
             convert(recursiveCTE.getLeft(), recursiveCTE.getLeft().getTraitSet().simplify()

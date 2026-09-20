@@ -24,6 +24,7 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.convert.ConverterRule;
 import org.apache.calcite.util.Pair;
 
+import org.apache.calcite.util.PlannerContextWithParam;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -104,6 +105,10 @@ class TopDownRuleDriver implements RuleDriver {
     try {
       // Iterates until the root is fully optimized.
       while (!tasks.isEmpty()) {
+        PlannerContextWithParam plannerContext = planner.getContext().unwrap(PlannerContextWithParam.class);
+        if (plannerContext != null) {
+          plannerContext.checkTimeOut();
+        }
         Task task = tasks.pop();
         description.log(task);
         task.perform();

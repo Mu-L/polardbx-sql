@@ -1,16 +1,12 @@
 package com.alibaba.polardbx.executor.columnar.checker;
 
-import com.alibaba.polardbx.common.utils.Pair;
-import com.alibaba.polardbx.common.utils.logger.Logger;
-import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.statistics.SQLRecorderLogger;
 
 /**
  * @author yaozhili
  */
 public class CciSnapshotFastChecker extends CciFastChecker {
-    private static final Logger logger = LoggerFactory.getLogger(CciSnapshotFastChecker.class);
-
     private static final String CALCULATE_PRIMARY_HASH =
         "select check_sum_v2(*) as checksum from %s as of tso %s force index(primary)";
 
@@ -25,14 +21,19 @@ public class CciSnapshotFastChecker extends CciFastChecker {
     }
 
     @Override
-    protected Pair<Long, Long> getCheckTso() {
-        return new Pair<>(primaryTso, columnarTso);
+    protected void log(String msg) {
+        SQLRecorderLogger.ddlLogger.warn("[CCI Snapshot Fast Checker] " + msg);
+    }
+
+    @Override
+    protected void error(String msg, Throwable t) {
+        SQLRecorderLogger.ddlLogger.error("[CCI Snapshot Fast Checker] " + msg, t);
     }
 
     @Override
     protected String getPrimarySql(ExecutionContext baseEc, long tso) {
         StringBuilder sb = new StringBuilder();
-        ICciChecker.setBasicHint(baseEc, sb);
+        setBasicHint(baseEc, sb);
 
         sb.append(" TRANSACTION_POLICY=TSO");
         String hint = String.format(PRIMARY_HINT, sb);

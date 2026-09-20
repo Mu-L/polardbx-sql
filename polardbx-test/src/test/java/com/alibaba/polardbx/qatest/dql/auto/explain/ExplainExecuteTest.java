@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.qatest.dql.auto.explain;
 
+import com.alibaba.polardbx.common.utils.Assert;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.qatest.ReadBaseTestCase;
 import com.alibaba.polardbx.qatest.data.ExecuteTableSelect;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
@@ -24,8 +26,16 @@ import org.apache.commons.lang.StringUtils;
 import org.junit.Test;
 import org.junit.runners.Parameterized;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 
 import static com.google.common.truth.Truth.assertThat;
 
@@ -123,4 +133,97 @@ public class ExplainExecuteTest extends ReadBaseTestCase {
         }
         return useXplan;
     }
+
+    @Test
+    public void explainExecuteAllPhyTbForSelect() throws Exception {
+        String tableName = "explain_execute_all_phy_tb";
+        int partitionNum = ThreadLocalRandom.current().nextInt(20, 50);
+        String createTableSql = String.format(
+            "create table %s (id int primary key auto_increment, col1 int, col2 int, col3 int, key idx_col2(col2)) partition by hash(col1) partitions "
+                + partitionNum
+            , tableName);
+        com.alibaba.polardbx.qatest.dql.sharding.explain.ExplainExecuteTest.testExplainExecuteAllPhyTb(
+            getPolardbxConnection(), tableName, createTableSql,
+            String.format("select col2 from %s where col2 < 6 order by col2;", tableName), "idx_col2", true);
+    }
+
+    @Test
+    public void explainExecuteAllPhyTbForSelect1() throws Exception {
+        String tableName = "explain_execute_all_phy_tb";
+        int partitionNum = ThreadLocalRandom.current().nextInt(20, 50);
+        String createTableSql = String.format(
+            "create table %s (id int primary key auto_increment, col1 int, col2 int, col3 int, key idx_col2(col2)) partition by hash(col1) partitions "
+                + partitionNum
+                + " SUBPARTITION BY RANGE(col3) (\n" +
+                "  SUBPARTITION sp1 VALUES LESS THAN(1000),\n" +
+                "  SUBPARTITION sp2 VALUES LESS THAN(5000),\n" +
+                "  SUBPARTITION sp3 VALUES LESS THAN(10000),\n" +
+                "  SUBPARTITION sp4 VALUES LESS THAN(MAXVALUE)\n" +
+                ")"
+            , tableName);
+        com.alibaba.polardbx.qatest.dql.sharding.explain.ExplainExecuteTest.testExplainExecuteAllPhyTb(
+            getPolardbxConnection(), tableName, createTableSql,
+            String.format("select col2 from %s where col2 < 6 order by col2;", tableName), "idx_col2", true);
+    }
+
+    @Test
+    public void explainExecuteAllPhyTbForUpdate() throws Exception {
+        String tableName = "explain_execute_all_phy_tb";
+        int partitionNum = ThreadLocalRandom.current().nextInt(20, 50);
+        String createTableSql = String.format(
+            "create table %s (id int primary key auto_increment, col1 int, col2 int, col3 int, key idx_col2(col2)) partition by hash(col1) partitions "
+                + partitionNum
+            , tableName);
+        com.alibaba.polardbx.qatest.dql.sharding.explain.ExplainExecuteTest.testExplainExecuteAllPhyTb(
+            getPolardbxConnection(), tableName, createTableSql,
+            String.format("update %s set col1 = 1 where col2 < 6;", tableName), "idx_col2", true);
+    }
+
+    @Test
+    public void explainExecuteAllPhyTbForDelete() throws Exception {
+        String tableName = "explain_execute_all_phy_tb";
+        int partitionNum = ThreadLocalRandom.current().nextInt(20, 50);
+        String createTableSql = String.format(
+            "create table %s (id int primary key auto_increment, col1 int, col2 int, col3 int, key idx_col2(col2)) partition by hash(col1) partitions "
+                + partitionNum
+            , tableName);
+        com.alibaba.polardbx.qatest.dql.sharding.explain.ExplainExecuteTest.testExplainExecuteAllPhyTb(
+            getPolardbxConnection(), tableName, createTableSql,
+            String.format("delete %s  where col2 < 6;", tableName), "idx_col2", true);
+    }
+
+    @Test
+    public void testExplainExecuteAllPhyTbWithPrunePartition() throws Exception {
+        String tableName = "explain_execute_all_phy_tb";
+        int partitionNum = ThreadLocalRandom.current().nextInt(20, 50);
+        String createTableSql = String.format(
+            "create table %s (id int primary key auto_increment, col1 int, col2 int, col3 int, key idx_col2(col2)) partition by hash(col2) partitions "
+                + partitionNum
+                + " SUBPARTITION BY RANGE(col3) (\n" +
+                "  SUBPARTITION sp1 VALUES LESS THAN(1000),\n" +
+                "  SUBPARTITION sp2 VALUES LESS THAN(5000),\n" +
+                "  SUBPARTITION sp3 VALUES LESS THAN(10000),\n" +
+                "  SUBPARTITION sp4 VALUES LESS THAN(MAXVALUE)\n" +
+                ")"
+            , tableName);
+        JdbcUtil.dropTable(tddlConnection, tableName);
+        JdbcUtil.executeSuccess(tddlConnection, createTableSql);
+
+        List<String> sqlList = new ArrayList<>();
+        sqlList.add(String.format("select * from %s where col2 = 1", tableName));
+        sqlList.add(String.format("select * from %s where col2 in (1,2,3)", tableName));
+        sqlList.add(String.format("select * from %s where col3 > 2000", tableName));
+        sqlList.add(String.format("select * from %s where col3 < 6000 and col3 > 2000", tableName));
+        sqlList.add(String.format("select * from %s where col3 < 6000 and col3 > 2000 and col2 = 1", tableName));
+        sqlList.add(String.format("select * from %s where col3 < 6000 and col3 > 2000 and col2 in (1,2,3)", tableName));
+
+        for (String sql : sqlList) {
+            com.alibaba.polardbx.qatest.dql.sharding.explain.ExplainExecuteTest.testExplainExecuteAllPhyTbWithPrunePartition(
+                tddlConnection, tableName, sql, true);
+        }
+
+        JdbcUtil.dropTable(tddlConnection, tableName);
+
+    }
+
 }

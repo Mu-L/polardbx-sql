@@ -63,6 +63,7 @@ public class PhyDdlTableOperation extends BaseTableOperation {
     private List<Pair<String, String>> logicalTablePairs;
     private boolean isHint;
     private PartitionInfo partitionInfo;
+    private String phyTableHash;
 
     /**
      * better not to rely on DDL.class
@@ -297,4 +298,11 @@ public class PhyDdlTableOperation extends BaseTableOperation {
         this.partitionInfo = partitionInfo;
     }
 
+    public void setPhyTableHash(String phyTableHash) {
+        this.phyTableHash = phyTableHash;
+    }
+
+    public String getPhyTableHash() {
+        return phyTableHash;
+    }
 }

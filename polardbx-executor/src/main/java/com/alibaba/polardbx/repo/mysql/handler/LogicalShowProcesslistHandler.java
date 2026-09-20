@@ -115,7 +115,7 @@ public class LogicalShowProcesslistHandler extends HandlerCommon {
 
         }
 
-        List<List<Map<String, Object>>> results = SyncManagerHelper.sync(showProcesslistSyncAction,
+        List<List<Map<String, Object>>> results = SyncManagerHelper.syncIgnoreExceptions(showProcesslistSyncAction,
             executionContext.getSchemaName(), SyncScope.CURRENT_ONLY);
 
         for (List<Map<String, Object>> nodeRows : results) {

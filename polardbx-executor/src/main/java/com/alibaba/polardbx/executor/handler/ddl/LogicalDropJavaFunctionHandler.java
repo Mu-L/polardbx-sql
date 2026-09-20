@@ -24,7 +24,6 @@ import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.BaseDdlOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalDropJavaFunction;
-import org.apache.calcite.sql.SqlDropFunction;
 import org.apache.calcite.sql.SqlDropJavaFunction;
 
 public class LogicalDropJavaFunctionHandler extends LogicalCommonDdlHandler {

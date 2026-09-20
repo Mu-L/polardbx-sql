@@ -70,6 +70,7 @@ public class SqlRebalance extends SqlDdl {
     public final static String OPTION_ASYNC = "async";
     public final static String OPTION_DEBUG = "debug";
     public final static String OPTION_DISK_INFO = "disk_info";
+    public final static String OPTION_DDL_PLAN_ID = "ddl_plan_id";
 
     /**
      * Policies
@@ -128,6 +129,7 @@ public class SqlRebalance extends SqlDdl {
     private String diskInfo;
     private String drainNode;
     private String drainStoragePool = "";
+    private Long ddlPlanId = -1L;
     private boolean logicalDdl = false;
 
     public SqlRebalance(SqlParserPos pos, SqlNode tableName) {
@@ -190,6 +192,9 @@ public class SqlRebalance extends SqlDdl {
         } else if (name.equalsIgnoreCase(OPTION_SOLVE_LEVEL)) {
             validateValue(3, value);
             this.solveLevel = ((SqlCharStringLiteral) value).getNlsString().getValue();
+        }else if(name.equalsIgnoreCase(OPTION_DDL_PLAN_ID)){
+            validateValue(1, value);
+            this.ddlPlanId =  ((SqlLiteral) value).longValue(false);
 
         } else {
             throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, name + " not supported");
@@ -308,6 +313,15 @@ public class SqlRebalance extends SqlDdl {
         }
         if (TStringUtil.isNotBlank(this.diskInfo)) {
             writer.print(" DISK_INFO=" + TStringUtil.quoteString(this.diskInfo));
+        }
+        if (this.ddlPlanId > 0L) {
+            writer.print(" DDL_PLAN_ID=" + this.ddlPlanId);
+        }
+        if(this.shuffleDataDist != 0){
+            writer.print(" SHUFFLE_DATA_DIST=" + this.shuffleDataDist);
+        }
+        if (TStringUtil.isNotBlank(this.solveLevel)) {
+            writer.print(" SOLVE_LEVEL=" + TStringUtil.quoteString(this.solveLevel));
         }
 
         writer.print(" EXPLAIN=" + BooleanUtils.toStringTrueFalse(this.explain));

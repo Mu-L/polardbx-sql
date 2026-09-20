@@ -1,0 +1,59 @@
+SQL:
+  # External catalog: single table scan with filter + project pushdown
+  - sql: |
+      select event_id, event_type from mock$$dwd.events where dt = '2026-05-26'
+    plan: |
+      ExternalTable(name=[mock$$dwd, events], source="inmemorytablesource", pushDown="sql:select `event_id` as `$f0`, `event_type` as `$f1` from `events` where (`dt` = ?)")
+  - sql: |
+      select user_id, city from mock$$dwd.user_profile where age > 18
+    plan: |
+      ExternalTable(name=[mock$$dwd, user_profile], source="inmemorytablesource", pushDown="sql:select `user_id` as `$f0`, `city` as `$f1` from `user_profile` where (`age` > ?)")
+  # External catalog: project only (no filter)
+  - sql: |
+      select event_id from mock$$dwd.events
+    plan: |
+      ExternalTable(name=[mock$$dwd, events], source="inmemorytablesource", pushDown="sql:select `event_id` as `$f0` from `events`")
+  # External catalog: filter only (select all columns)
+  - sql: |
+      select * from mock$$dwd.events where event_type = 'click'
+    plan: |
+      ExternalTable(name=[mock$$dwd, events], source="inmemorytablesource", pushDown="sql:select `event_id`, `user_id`, `event_type`, `dt` from `events` where (`event_type` = ?)")
+  # External catalog: sort + limit pushdown
+  - sql: |
+      select event_id from mock$$dwd.events order by event_id limit 10
+    plan: |
+      ExternalTable(name=[mock$$dwd, events], source="inmemorytablesource", pushDown="sql:select `event_id` as `$f0` from `events` order by `event_id` offset 0 rows fetch next ? rows only")
+  # External catalog: aggregate pushdown
+  - sql: |
+      select count(*), sum(user_id) from mock$$dwd.events
+    plan: |
+      ExternalTable(name=[mock$$dwd, events], source="inmemorytablesource", pushDown="sql:select count(*) as `count(*)`, sum(`user_id`) as `sum(user_id)` from `events`")
+  # External catalog: force index is rejected before the local index paths are entered
+  - sql: |
+      select event_id from mock$$dwd.events force index(idx_dt)
+    plan: |
+      ERR-CODE: [PXC-4672][ERR_EXTERNAL_TABLE] Index hint is not supported on external table 'events'
+
+DDL:
+  orders:
+    CREATE TABLE `orders` (
+    `id` bigint(20) NOT NULL AUTO_INCREMENT,
+    `user_id` bigint(20) NOT NULL,
+    `amount` decimal(10,2) DEFAULT NULL,
+    PRIMARY KEY (`id`)
+    ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+  mock$$dwd.events:
+    CREATE TABLE `events` (
+    `event_id` bigint(20) NOT NULL,
+    `user_id` bigint(20) NOT NULL,
+    `event_type` varchar(32) DEFAULT NULL,
+    `dt` varchar(10) DEFAULT NULL
+    ) DEFAULT CHARSET = utf8mb4
+  mock$$dwd.user_profile:
+    CREATE TABLE `user_profile` (
+    `user_id` bigint(20) NOT NULL,
+    `age` int(11) DEFAULT NULL,
+    `city` varchar(64) DEFAULT NULL
+    ) DEFAULT CHARSET = utf8mb4
+STATISTICS:
+CONFIG:

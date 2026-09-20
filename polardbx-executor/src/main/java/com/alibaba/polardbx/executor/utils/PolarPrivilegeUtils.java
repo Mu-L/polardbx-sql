@@ -25,20 +25,25 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
-import com.alibaba.polardbx.druid.sql.ast.SqlType;
 import com.alibaba.polardbx.druid.sql.ast.SQLStatement;
+import com.alibaba.polardbx.druid.sql.ast.SqlType;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
+import com.alibaba.polardbx.gms.lbac.LBACPrivilegeCheckUtils;
+import com.alibaba.polardbx.gms.metadb.GmsSystemTables;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
+import com.alibaba.polardbx.gms.privilege.AccountType;
 import com.alibaba.polardbx.gms.privilege.Permission;
 import com.alibaba.polardbx.gms.privilege.PermissionCheckContext;
 import com.alibaba.polardbx.gms.privilege.PolarAccount;
+import com.alibaba.polardbx.gms.privilege.PolarAccountInfo;
 import com.alibaba.polardbx.gms.privilege.PolarPrivManager;
 import com.alibaba.polardbx.gms.privilege.PolarPrivUtil;
 import com.alibaba.polardbx.gms.privilege.PrivilegeKind;
-import com.alibaba.polardbx.gms.lbac.LBACPrivilegeCheckUtils;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
-import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.lbac.LBACException;
 import com.alibaba.polardbx.optimizer.config.schema.DefaultDbSchema;
+import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
+import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
 import com.alibaba.polardbx.optimizer.parse.FastsqlUtils;
@@ -179,6 +184,117 @@ public class PolarPrivilegeUtils {
             }
         }
 
+        // check for meta db
+        if (StringUtils.equalsIgnoreCase(SystemDbHelper.DEFAULT_META_DB_NAME, db)) {
+            // Allow SELECT on cache tables for any user
+            if (StringUtils.equalsIgnoreCase(tb, GmsSystemTables.CACHE_PEER) && priv == PrivilegePoint.SELECT) {
+                return;
+            }
+            if (StringUtils.equals(tb, GmsSystemTables.BLOCK_GLOBAL_CHAIN)) {
+                AccountType accountType = executionContext.getPrivilegeContext()
+                    .getPolarUserInfo().getAccountType();
+                if (accountType == AccountType.GOD) {
+                    return;
+                }
+                if (priv != PrivilegePoint.SELECT) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_CHECK_PRIVILEGE_FAILED_ON_TABLE,
+                        priv.name(),
+                        tb,
+                        pc.getUser(),
+                        pc.getHost(),
+                        db);
+                }
+                if (accountType != AccountType.DBA && accountType != AccountType.AUDITOR) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_CHECK_PRIVILEGE_FAILED_ON_TABLE,
+                        priv.name(),
+                        tb,
+                        pc.getUser(),
+                        pc.getHost(),
+                        db);
+                }
+                return;
+            }
+        }
+
+        SchemaManager sm = null;
+        try {
+            sm = executionContext.getSchemaManager(db);
+        } catch (Exception e) {
+            // ignore
+        }
+
+        // check for block chain history
+        if (sm != null && StringUtils.isNotEmpty(tb)) {
+            try {
+                TableMeta tableMeta = sm.getTable(tb);
+                if (tableMeta != null) {
+                    if ("information_schema".equalsIgnoreCase(db) && "polardbx_global_chain".equalsIgnoreCase(tb)) {
+                        AccountType accountType = executionContext.getPrivilegeContext()
+                            .getPolarUserInfo().getAccountType();
+                        if (accountType == AccountType.GOD) {
+                            return;
+                        }
+                        if (accountType != AccountType.DBA && accountType != AccountType.AUDITOR) {
+                            throw new TddlRuntimeException(ErrorCode.ERR_CHECK_PRIVILEGE_FAILED_ON_TABLE,
+                                priv.name(),
+                                tb,
+                                pc.getUser(),
+                                pc.getHost(),
+                                db);
+                        }
+                    }
+                    if (tableMeta.isBlockChainHistory()) {
+                        AccountType accountType = executionContext.getPrivilegeContext()
+                            .getPolarUserInfo().getAccountType();
+                        if (accountType == AccountType.GOD) {
+                            return;
+                        }
+                        if (priv != PrivilegePoint.SELECT) {
+                            // also prevent DDL here
+                            throw new TddlRuntimeException(ErrorCode.ERR_CHECK_PRIVILEGE_FAILED_ON_TABLE,
+                                priv.name(),
+                                tb,
+                                pc.getUser(),
+                                pc.getHost(),
+                                db);
+                        }
+                        if (accountType != AccountType.DBA && accountType != AccountType.AUDITOR) {
+                            throw new TddlRuntimeException(ErrorCode.ERR_CHECK_PRIVILEGE_FAILED_ON_TABLE,
+                                priv.name(),
+                                tb,
+                                pc.getUser(),
+                                pc.getHost(),
+                                db);
+                        }
+                        return;
+                    }
+                    if (tableMeta.isPolardbxBlockChain()) {
+                        // no DDL on blockchain table
+                        switch (priv) {
+                        case SELECT:
+                        case INSERT:
+                        case DELETE:
+                        case UPDATE:
+                        case DROP:
+                            // goto normal permission check
+                            break;
+                        default:
+                            throw new TddlRuntimeException(ErrorCode.ERR_CHECK_PRIVILEGE_FAILED_ON_TABLE,
+                                priv.name(),
+                                tb,
+                                pc.getUser(),
+                                pc.getHost(),
+                                db);
+                        }
+                    }
+                }
+
+            } catch (Throwable e) {
+                // we do not check table existence here
+                // ignore
+            }
+        }
+
         PrivilegeKind privilege;
         switch (priv) {
         case INSERT:
@@ -221,6 +337,35 @@ public class PolarPrivilegeUtils {
             return;
         }
 
+        // External catalog short-circuit: check before Permission.from()
+        if (ExternalNameValidator.isExternalSchema(db)) {
+            // GOD + DBA exemption
+            if (pc.getPolarUserInfo().getAccountType().isSuperUser()) {
+                return;
+            }
+            String[] parts = ExternalNameValidator.splitSchemaName(db);
+            if (parts == null) {
+                throw new TddlRuntimeException(ErrorCode.ERR_CHECK_PRIVILEGE_FAILED_ON_DB,
+                    pc.getUser(), pc.getHost(), db);
+            }
+            String catalogName = parts[0];
+            String realDbName = parts[1];
+
+            PolarAccountInfo latestAccount = PolarPrivManager.getInstance()
+                .getAccountPrivilegeData().getMatchUser(pc.getUser(), pc.getHost());
+            if (latestAccount == null
+                || !PolarPrivManager.checkExternalPrivilege(latestAccount, catalogName, realDbName, tb, privilege)) {
+                if (StringUtils.isNotBlank(tb)) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_CHECK_PRIVILEGE_FAILED_ON_TABLE,
+                        priv.name(), tb, pc.getUser(), pc.getHost(), db);
+                } else {
+                    throw new TddlRuntimeException(ErrorCode.ERR_CHECK_PRIVILEGE_FAILED_ON_DB,
+                        pc.getUser(), pc.getHost(), db);
+                }
+            }
+            return;
+        }
+
         Permission permission = Permission.from(db, tb, isAnyTable, privilege);
         PermissionCheckContext context = new PermissionCheckContext(pc.getPolarUserInfo().getAccountId(),
             pc.getActiveRoles(), permission);
@@ -243,21 +388,20 @@ public class PolarPrivilegeUtils {
         }
     }
 
-
     public static boolean checkPrivilegeForPreparedStmt() {
         int mode = InstConfUtil.getInt(ConnectionParams.CHECK_PRIVILEGE_IN_PREPARE_MODE);
         if (mode == 0) {
             return true;
-        }else if (mode == 1) {
-            return false;
-        }else {
-            // 5419全部都是老实例，所以默认不check
-            return false;
-//            if (MetaDbUtil.isNewInstance()) {
-//                return true;
-//            }else {
-//                return false;
-//            }
         }
+        return false;
+    }
+
+    public static boolean checkPolardbxPrivilege(ExecutionContext ec, PrivilegeKind privilegeKind) {
+        Permission permission = Permission.databasePermission("polardbx", privilegeKind);
+        PrivilegeContext pc = ec.getPrivilegeContext();
+        PermissionCheckContext context = new PermissionCheckContext(pc.getPolarUserInfo().getAccountId(),
+            pc.getActiveRoles(), permission);
+        boolean hasPrivilege = PolarPrivManager.getInstance().checkPermission(context);
+        return hasPrivilege;
     }
 }

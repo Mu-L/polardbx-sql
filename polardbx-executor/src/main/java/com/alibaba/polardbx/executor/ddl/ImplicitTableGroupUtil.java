@@ -22,18 +22,24 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.druid.DbType;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
+import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
 import com.alibaba.polardbx.druid.sql.ast.SQLName;
 import com.alibaba.polardbx.druid.sql.ast.SQLStatement;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLCharExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLPropertyExpr;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableAddConstraint;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableAddIndex;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableGroupItem;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableItem;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTablePartitionCount;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableSetOption;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableStatement;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableTruncatePartition;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLAssignItem;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLConstraint;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLCreateIndexStatement;
+import com.alibaba.polardbx.druid.sql.ast.statement.SQLExprTableSource;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLTableElement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.MySqlKey;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.MySqlPrimaryKey;
@@ -85,12 +91,14 @@ public class ImplicitTableGroupUtil {
     @Setter
     private static TableGroupConfigProvider tableGroupConfigProvider = new DefaultTableGroupConfigProvider();
     public static final ThreadLocal<Map<String, String>> exchangeNamesMapping = new ThreadLocal<>();
+    public static final ThreadLocal<Boolean> isGsiDdl = new ThreadLocal<>();
 
     public static String tryAttachImplicitTableGroup(String schemaName, String tableName, String sql) {
         try {
             return tryAttachImplicitTableGroupInternal(schemaName, tableName, sql);
         } finally {
             exchangeNamesMapping.set(null);
+            isGsiDdl.set(null);
         }
     }
 
@@ -279,6 +287,10 @@ public class ImplicitTableGroupUtil {
                     MySqlAlterTableModifyColumn modifyColumn = (MySqlAlterTableModifyColumn) item;
                     changed |= process4ModifyColumn(schemaName, tableName, alterTableStatement, modifyColumn,
                         forCheck, tgGroups);
+                } else if (isAlterTableSetTableGroup(item)) {
+                    SQLAlterTableSetOption alterTableSetOption = (SQLAlterTableSetOption) item;
+                    changed |= process4SetTableGroup(schemaName, tableName, alterTableStatement,
+                        alterTableSetOption, forCheck, tgGroups);
                 } else if (isAlterTableWithPartition(item)) {
                     changed |= process4Repartition(schemaName, tableName, alterTableStatement, forCheck, tgGroups);
                 }
@@ -292,11 +304,94 @@ public class ImplicitTableGroupUtil {
         return changed;
     }
 
+    private static boolean isAlterTableSetTableGroup(SQLAlterTableItem item) {
+        if (item instanceof SQLAlterTableSetOption) {
+            SQLAlterTableSetOption alterTableSetOption = (SQLAlterTableSetOption) item;
+            if (alterTableSetOption.isAlterTableGroup() && alterTableSetOption.getOptions().size() == 1) {
+                SQLAssignItem assignItem = alterTableSetOption.getOptions().get(0);
+                return ((SQLAlterTableSetOption) item).isImplicit() || (
+                    StringUtils.equalsIgnoreCase(assignItem.getTarget().toString(), "tablegroup")
+                        && StringUtils.equalsIgnoreCase(assignItem.getValue().toString(), "''"));
+            }
+        }
+        return false;
+    }
+
     private static boolean isAlterTableWithPartition(SQLAlterTableItem item) {
         return (item instanceof SQLAlterTableGroupItem && !(item instanceof SQLAlterTableTruncatePartition))
             || item instanceof DrdsAlterTableSingle
             || item instanceof DrdsAlterTableBroadcast
             || item instanceof SQLAlterTablePartitionCount;
+    }
+
+    private static boolean process4SetTableGroup(String schemaName,
+                                                 String tableName,
+                                                 SQLAlterTableStatement alterTableStatement,
+                                                 SQLAlterTableSetOption alterTableSetOption,
+                                                 boolean forCheck,
+                                                 Set<String> tgGroups) {
+
+        boolean changed = false;
+        String gsiName = tryParseGSIName4SetTableGroup(tableName, alterTableStatement);
+
+        TableGroupConfig tableGroupConfig;
+        if (StringUtils.isNotBlank(gsiName)) {
+            tableGroupConfig = tableGroupConfigProvider.getTableGroupConfig(schemaName, tableName, gsiName, true);
+            if (forCheck || tableGroupConfig == null) {
+                tableGroupConfig = tableGroupConfigProvider.getTableGroupConfig(schemaName, tableName, gsiName, false);
+            }
+        } else {
+            tableGroupConfig = tableGroupConfigProvider.getTableGroupConfig(schemaName, tableName, true);
+            if (forCheck || tableGroupConfig == null) {
+                tableGroupConfig = tableGroupConfigProvider.getTableGroupConfig(schemaName, tableName, false);
+            }
+        }
+
+        if (tableGroupConfig != null && !tableGroupConfig.isManuallyCreated()) {
+            SQLAssignItem assignItem = alterTableSetOption.getOptions().get(0);
+
+            String tgNameInSql = null;
+            if (assignItem.getValue() instanceof SQLCharExpr) {
+                tgNameInSql = ((SQLCharExpr) assignItem.getValue()).getText();
+            } else if (assignItem.getValue() instanceof SQLIdentifierExpr) {
+                tgNameInSql = SQLUtils.normalize(((SQLIdentifierExpr) assignItem.getValue()).getSimpleName());
+            }
+
+            if (forCheck) {
+                forceCheckTgName(tgNameInSql, tableGroupConfig.getTableGroupRecord().getTg_name());
+                tgGroups.add(tgNameInSql);
+            } else {
+                if (alterTableSetOption.isImplicit()) {
+                    doCheckTgName(tgNameInSql, tableGroupConfig.getTableGroupRecord().getTg_name());
+                }
+                assignItem.setValue(new SQLCharExpr(tableGroupConfig.getTableGroupRecord().getTg_name()));
+                alterTableSetOption.setImplicit(true);
+                changed = true;
+            }
+        }
+        return changed;
+    }
+
+    private static String tryParseGSIName4SetTableGroup(String tableName,
+                                                        SQLAlterTableStatement alterTableStatement) {
+        Boolean isGsiDdl = ImplicitTableGroupUtil.isGsiDdl.get();
+        if (isGsiDdl != null && isGsiDdl) {
+            SQLExprTableSource tableSource = alterTableStatement.getTableSource();
+            SQLExpr sqlExpr = tableSource.getExpr();
+            if (sqlExpr instanceof SQLPropertyExpr) {
+                SQLPropertyExpr sqlPropertyExpr = (SQLPropertyExpr) sqlExpr;
+
+                SQLExpr ownerSqlExpr = sqlPropertyExpr.getOwner();
+                if (ownerSqlExpr instanceof SQLIdentifierExpr) {
+                    String ownerName = ((SQLIdentifierExpr) ownerSqlExpr).getName();
+                    if (StringUtils.equalsIgnoreCase(ownerName, tableName)) {
+                        return sqlPropertyExpr.getName();
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     private static boolean process4Repartition(String schemaName, String tableName,
@@ -644,10 +739,14 @@ public class ImplicitTableGroupUtil {
         if (expectValue != null && StringUtils.isNotBlank(expectValue.getSimpleName())) {
             String expectName = SQLUtils.normalize(expectValue.getSimpleName());
             String actualName = actualValue.getTableGroupRecord().getTg_name();
-            Assert.assertTrue(StringUtils.equalsIgnoreCase(actualName, expectName),
-                String.format("try check tg_name failed, expect tg name is %s, actual tg name is %s.",
-                    expectName, actualName));
+            doCheckTgName(expectName, actualName);
         }
+    }
+
+    private static void doCheckTgName(String expectName, String actualName) {
+        Assert.assertTrue(StringUtils.equalsIgnoreCase(actualName, expectName),
+            String.format("try check tg_name failed, expect tg name is %s, actual tg name is %s.",
+                expectName, actualName));
     }
 
     private static String buildQueryTableName(String tableName) {

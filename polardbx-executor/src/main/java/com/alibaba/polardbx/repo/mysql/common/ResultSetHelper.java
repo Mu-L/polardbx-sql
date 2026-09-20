@@ -21,9 +21,11 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.executor.cursor.impl.ArrayResultCursor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnsRecord;
+import com.alibaba.polardbx.gms.metadb.table.ExternalizedColumnInfo;
 import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
 import com.alibaba.polardbx.gms.metadb.table.TablesRecord;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
+import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.TableColumnUtils;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -31,7 +33,10 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 
 public class ResultSetHelper {
 
@@ -39,8 +44,52 @@ public class ResultSetHelper {
                                                     ExecutionContext ec) {
         List<Object[]> result = new ArrayList<>();
         TableMeta tableMeta = ec.getSchemaManager(schemaName).getTable(tableName);
+
+        // Build reverse mapping: physical addr name -> ColumnMeta for externalized columns
+        // e.g. "content_addr_" -> ColumnMeta(name="content", type=longtext, ...)
+        Map<String, ColumnMeta> physicalToLogical = Collections.emptyMap();
+        if (tableMeta.hasExternalizedColumn()) {
+            physicalToLogical = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+            for (ColumnMeta cm : tableMeta.getAllColumns()) {
+                if (cm.isExternalizedColumn() && cm.getMappingName() != null) {
+                    physicalToLogical.put(cm.getMappingName(), cm);
+                }
+            }
+        }
+
         for (Object[] row : rows) {
             String columnName = String.valueOf(row[0]);
+
+            // Transform externalized column: physical addr column -> logical column
+            ColumnMeta extCol = physicalToLogical.get(columnName);
+            if (extCol != null) {
+                String logicalType = extCol.getOriginalTypeName() != null
+                    ? extCol.getOriginalTypeName()
+                    : extCol.getField().getDataType().getStringSqlType().toLowerCase();
+                if (row.length == 9) {
+                    // SHOW FULL COLUMNS: [Field, Type, Collation, Null, Key, Default, Extra, Privileges, Comment]
+                    row[0] = extCol.getName();
+                    row[1] = logicalType;
+                    row[2] = null;   // Collation
+                    row[3] = "YES";  // Null
+                    // row[4] Key - keep as is
+                    row[5] = null;   // Default
+                    row[6] = "";     // Extra
+                    // row[7] Privileges - keep as is
+                    row[8] = "";     // Comment - clear physical ext_type comment
+                } else {
+                    // DESCRIBE / SHOW COLUMNS: [Field, Type, Null, Key, Default, Extra]
+                    row[0] = extCol.getName();
+                    row[1] = logicalType;
+                    row[2] = "YES";  // Null
+                    // row[3] Key - keep as is
+                    row[4] = null;   // Default
+                    row[5] = "";     // Extra
+                }
+                result.add(row);
+                continue;
+            }
+
             // Filter out hidden columns
             if (TableColumnUtils.isHiddenColumn(ec, schemaName, tableName, columnName)) {
                 continue;
@@ -62,8 +111,15 @@ public class ResultSetHelper {
         if (logicalColumnsInOrder != null && !logicalColumnsInOrder.isEmpty()) {
             List<Object[]> newRows = new ArrayList<>();
             for (ColumnsRecord logicalColumn : logicalColumnsInOrder) {
+                // For externalized columns, the GMS record stores the physical name (e.g. "content_addr_"),
+                // but processColumnInfos() has already transformed row[0] to the logical name (e.g. "content").
+                String matchName = logicalColumn.columnName;
+                if (logicalColumn.isExternalizedColumn()
+                    && ExternalizedColumnInfo.isAddrColumn(matchName)) {
+                    matchName = ExternalizedColumnInfo.toLogicalColumnName(matchName);
+                }
                 for (Object[] row : rows) {
-                    if (TStringUtil.equalsIgnoreCase(String.valueOf(row[0]), logicalColumn.columnName)) {
+                    if (TStringUtil.equalsIgnoreCase(String.valueOf(row[0]), matchName)) {
                         newRows.add(row);
                         break;
                     }

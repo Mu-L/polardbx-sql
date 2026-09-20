@@ -1,3 +1,4 @@
+package com.alibaba.polardbx.server.response;
 /*
  * Copyright [2013-2021], Alibaba Group Holding Limited
  *
@@ -14,7 +15,6 @@
  * limitations under the License.
  */
 
-package com.alibaba.polardbx.server.response;
 
 import com.alibaba.polardbx.CobarServer;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
@@ -134,8 +134,9 @@ public class KillSyncAction implements ISyncAction {
                 found = true;
                 if (fc instanceof ServerConnection && hasAccess(fc)) {
                     TConnection tc = ((ServerConnection) fc).getTddlConnection();
+                    boolean disableCancelQuery = false;
                     if (tc != null) {
-                        pauseDdlJobIfNecessary(tc);
+                        disableCancelQuery = rollbackOrContinueDdlJobIfNecessary(tc);
                         ExecutionContext executionContext = tc.getExecutionContext();
                         traceId = executionContext.getTraceId();
                         if (ServiceProvider.getInstance().getServer() != null
@@ -149,7 +150,9 @@ public class KillSyncAction implements ISyncAction {
                         DbTopologyManager.killDdlQueryByConnId(connId);
                     }
                     if (killQuery) {
-                        ((ServerConnection) fc).cancelQuery(cause);
+                        if (!disableCancelQuery) {
+                            ((ServerConnection) fc).cancelQuery(cause);
+                        }
                     } else {
                         fc.close();
                     }
@@ -169,7 +172,7 @@ public class KillSyncAction implements ISyncAction {
                 count++;
                 TConnection tc = innerConnection.getTConnection();
                 if (tc != null) {
-                    pauseDdlJobIfNecessary(tc);
+                    rollbackOrContinueDdlJobIfNecessary(tc);
                     ExecutionContext executionContext = tc.getExecutionContext();
                     traceId = executionContext.getTraceId();
                     if (ServiceProvider.getInstance().getServer() != null
@@ -262,18 +265,26 @@ public class KillSyncAction implements ISyncAction {
         return false;
     }
 
-    private void pauseDdlJobIfNecessary(TConnection conn) {
-        if (conn == null || conn.getExecutionContext() == null) {
-            return;
-        }
-        if (!conn.isDdlStatement()) {
-            return;
-        }
-        Long jobId = conn.getExecutionContext().getDdlJobId();
-        if (jobId == null) {
-            return;
-        }
-        DdlEngineRequester.pauseJob(jobId, conn.getExecutionContext());
-    }
+    private Boolean rollbackOrContinueDdlJobIfNecessary(TConnection conn) {
+        if (conn != null && conn.getExecutionContext() != null && conn.isDdlStatement()) {
+            Long jobId = conn.getExecutionContext().getDdlInitialJobId();
+            if (jobId == null) {
+                jobId = conn.getExecutionContext().getDdlJobId();
+            }
+            String traceId = conn.getExecutionContext().getTraceId();
 
+            if (jobId != null) {
+                logger.info(String.format(
+                    "DDL statement detected with jobId=%d, traceId=%s, triggering rollback or continue",
+                    jobId, traceId));
+                DdlEngineRequester.tryRollbackOrContinueJob(jobId, conn.getExecutionContext());
+            } else {
+                logger.info(String.format(
+                    "DDL statement detected but jobId is null (TOCTOU window), traceId=%s, "
+                        + "skip cancelQuery to avoid traceId poisoning", traceId));
+            }
+            return true;
+        }
+        return false;
+    }
 }

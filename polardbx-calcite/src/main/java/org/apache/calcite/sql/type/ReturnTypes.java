@@ -412,6 +412,20 @@ public abstract class ReturnTypes {
             }
         }
     };
+    public static final SqlReturnTypeInference NULL_PLUS_NULL = new SqlReturnTypeInference() {
+        public RelDataType inferReturnType(SqlOperatorBinding opBinding) {
+
+            if (opBinding.getOperandCount() == 2) {
+                RelDataType type1 = opBinding.getOperandType(0);
+                RelDataType type2 = opBinding.getOperandType(1);
+
+                if (SqlTypeName.NULL == type1.getSqlTypeName() && SqlTypeName.NULL == type2.getSqlTypeName()) {
+                    return opBinding.getTypeFactory().createSqlType(SqlTypeName.NULL);
+                }
+            }
+            return null;
+        }
+    };
     public static final SqlReturnTypeInference LEAST_RESTRICTIVE_VARCHAR = chain(LEAST_RESTRICTIVE, VARCHAR_2000);
 
     /**
@@ -797,6 +811,7 @@ public abstract class ReturnTypes {
             ARITHMETIC_NON_DECIMAL_NULLABLE,
             DECIMAL_SUM_NULLABLE,
             NUMERIC_LEAST_RESTRICTIVE,
+            NULL_PLUS_NULL,
             DECIMAL_DEFAULT);
     public static final SqlReturnTypeInference NULLABLE_SUB = new SqlReturnTypeInferenceChain(LEAST_RESTRICTIVE,
             DECIMAL_DEFAULT);

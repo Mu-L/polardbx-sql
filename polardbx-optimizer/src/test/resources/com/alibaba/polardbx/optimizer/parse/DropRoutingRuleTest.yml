@@ -1,0 +1,39 @@
+SQL:
+  - sql: |
+      # if exists
+      DROP ROUTING_RULE IF EXISTS `rule_name`,'a','a'
+    plan: |
+      logicalroutingrule(sql="drop routing_rule if exists rule_name, a, a")
+  - sql: |
+      DROP ROUTING_RULE IF EXISTS 'xx'
+    plan: |
+      logicalroutingrule(sql="drop routing_rule if exists xx")
+  - sql: |
+      DROP ROUTING_RULE IF EXISTS ''
+    plan: |
+      logicalroutingrule(sql="drop routing_rule if exists ''")
+  - sql: |
+      DROP ROUTING_RULE `rule_name`,'a',a
+    plan: |
+      logicalroutingrule(sql="drop routing_rule rule_name, a, a")
+  - sql: |
+      DROP ROUTING_RULE 'xx'
+    plan: |
+      logicalroutingrule(sql="drop routing_rule xx")
+  - sql: |
+      DROP ROUTING_RULE ''
+    plan: |
+      logicalroutingrule(sql="drop routing_rule ''")
+  - sql: |
+      DROP ROUTING_RULE 'a',b,'a,b'
+    plan: |
+      logicalroutingrule(sql="drop routing_rule a, b, a,b")
+  - sql: |
+      DROP ROUTING_RULE 1
+    plan: |
+      err-code: [pxc-4500][err_parser] illegal name, pos 19, line 1, column 19, token literal_int
+DDL:
+STATISTICS:
+CONFIG:
+  defaltxxAPPName.isNew:
+    true

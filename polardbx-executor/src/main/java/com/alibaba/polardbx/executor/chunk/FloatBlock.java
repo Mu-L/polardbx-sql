@@ -90,6 +90,21 @@ public class FloatBlock extends AbstractBlock {
     }
 
     @Override
+    public int compareAssertedSameType(int position, Block otherBlock, int otherPosition) {
+        boolean isNullLeft = isNull(position);
+        boolean isNullRight = otherBlock.isNull(otherPosition);
+        if (isNullLeft && isNullRight) {
+            return 0;
+        } else if (isNullLeft) {
+            return -1;
+        } else if (isNullRight) {
+            return 1;
+        } else {
+            return Float.compare(getFloat(position), otherBlock.getFloat(otherPosition));
+        }
+    }
+
+    @Override
     public void writePositionTo(int position, BlockBuilder blockBuilder) {
         if (isNull(position)) {
             blockBuilder.appendNull();

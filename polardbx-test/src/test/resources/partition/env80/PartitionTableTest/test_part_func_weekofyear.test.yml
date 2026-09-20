@@ -2,7 +2,7 @@
 ## test create table(date)
 CREATE TABLE `w1` (
 `d` date DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY HASH(WEEKOFYEAR(`d`))
 PARTITIONS 16;
 show create table w1;
@@ -32,7 +32,7 @@ explain select * from w1 where d > '0000-01-01' and d < '0000-01-24' order by d;
 ## test range
 CREATE TABLE `w2` (
 `dt` datetime DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY RANGE(WEEKOFYEAR(`dt`))
 (PARTITION p0 VALUES LESS THAN(2),
 PARTITION p1 VALUES LESS THAN(3),
@@ -49,7 +49,7 @@ select * from w2 where dt <= '0000-01-01 00:00:00' order by dt;
 ## test list
 CREATE TABLE `w3` (
 `dt` datetime DEFAULT NULL
-) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
 PARTITION BY LIST(WEEKOFYEAR(`dt`))
 (PARTITION p0 VALUES IN(1,2),
 PARTITION p1 VALUES IN(3,4),

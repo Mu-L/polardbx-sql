@@ -116,7 +116,7 @@ public class LogicalMergeTableGroup extends BaseDdlOperation {
             groupTablesVersion.put(targetTableGroup, tableVersions);
 
             for (PartitionGroupRecord record : GeneralUtil.emptyIfNull(tableGroupConfig.getPartitionGroupRecords())) {
-                physicalGroups.add(GroupInfoUtil.buildGroupNameFromPhysicalDb(record.getPhy_db()));
+                physicalGroups.add(record.getGroup_Name());
             }
         }
         for (String sourceGroup : sourceTableGroups) {
@@ -141,12 +141,12 @@ public class LogicalMergeTableGroup extends BaseDdlOperation {
             groupTablesVersion.put(sourceGroup, tableVersions);
         }
         List<GroupDetailInfoExRecord> detailInfoExRecords = TableGroupLocation.getOrderedGroupList(schemaName);
-        Map<String, String> dbInstMap = new TreeMap<>(String::compareToIgnoreCase);
-        detailInfoExRecords.stream().forEach(o -> dbInstMap.put(o.phyDbName, o.storageInstId));
+        Map<String, String> GroupInstMap = new TreeMap<>(String::compareToIgnoreCase);
+        detailInfoExRecords.stream().forEach(o -> GroupInstMap.put(o.groupName, o.storageInstId));
 
         preparedData =
             new MergeTableGroupPreparedData(schemaName, targetTableGroup, sourceTableGroups, tableGroupConfigMap,
-                groupTablesVersion, physicalGroups, dbInstMap,
+                groupTablesVersion, physicalGroups, GroupInstMap,
                 mergeTableGroup.isForce());
 
     }

@@ -28,11 +28,13 @@ import com.alibaba.polardbx.executor.ddl.newengine.utils.TaskHelper;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineRecord;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineTaskAccessor;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineTaskRecord;
+import com.alibaba.polardbx.gms.metadb.misc.DdlInfoRecord;
 import com.alibaba.polardbx.optimizer.context.DdlContext;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public class DdlEngineSchedulerManager {
@@ -76,6 +78,15 @@ public class DdlEngineSchedulerManager {
             @Override
             protected List<DdlEngineTaskRecord> invoke() {
                 return engineTaskAccessor.query(jobId, name);
+            }
+        }.execute();
+    }
+
+    public List<DdlEngineTaskRecord> fetchAllTaskRecord(long jobId, String name) {
+        return new DdlEngineAccessorDelegate<List<DdlEngineTaskRecord>>() {
+            @Override
+            protected List<DdlEngineTaskRecord> invoke() {
+                return engineTaskAccessor.queryAllTaskRecord(jobId, name);
             }
         }.execute();
     }
@@ -125,11 +136,38 @@ public class DdlEngineSchedulerManager {
         }.execute();
     }
 
+    public DdlEngineRecord fetchArchiveRecordByJobIdOrSchemaTableDdlStmtKeyWord(Long ddlJobId,
+                                                                                String schemaName,
+                                                                                String tableName,
+                                                                                String ddlStmtKeyWord) {
+        return new DdlEngineAccessorDelegate<DdlEngineRecord>() {
+            @Override
+            protected DdlEngineRecord invoke() {
+                DdlEngineRecord ret = null;
+                if (ddlJobId != null) {
+                    ret = engineAccessor.queryArchive(ddlJobId);
+                } else {
+                    ret = engineAccessor.queryArchiveBySchemaTableDdlStmt(schemaName, tableName, ddlStmtKeyWord);
+                }
+                return ret;
+            }
+        }.execute();
+    }
+
     public List<DdlEngineRecord> fetchRecords(Set<DdlState> states) {
         return new DdlEngineAccessorDelegate<List<DdlEngineRecord>>() {
             @Override
             protected List<DdlEngineRecord> invoke() {
                 return engineAccessor.query(states);
+            }
+        }.execute();
+    }
+
+    public long getMaxId() {
+        return new DdlEngineAccessorDelegate<Long>() {
+            @Override
+            protected Long invoke() {
+                return engineAccessor.maxId();
             }
         }.execute();
     }
@@ -148,6 +186,42 @@ public class DdlEngineSchedulerManager {
             @Override
             protected List<DdlEngineRecord> invoke() {
                 return engineAccessor.query(schemaName);
+            }
+        }.execute();
+    }
+
+    public DdlInfoRecord fetchDdlInfoRecordByJobId(long jobId) {
+        return new DdlEngineAccessorDelegate<DdlInfoRecord>() {
+            @Override
+            protected DdlInfoRecord invoke() {
+                return engineAccessor.queryDdlInfo(jobId);
+            }
+        }.execute();
+    }
+
+    public DdlInfoRecord fetchDdlInfoArchiveRecordByJobId(long jobId) {
+        return new DdlEngineAccessorDelegate<DdlInfoRecord>() {
+            @Override
+            protected DdlInfoRecord invoke() {
+                return engineAccessor.queryArchiveDdlInfo(jobId);
+            }
+        }.execute();
+    }
+
+    public List<DdlInfoRecord> fetchAllCurrentDdlInfoRecord() {
+        return new DdlEngineAccessorDelegate<List<DdlInfoRecord>>() {
+            @Override
+            protected List<DdlInfoRecord> invoke() {
+                return engineAccessor.queryAllCurrentDdlInfo();
+            }
+        }.execute();
+    }
+
+    public List<DdlInfoRecord> fetchAllArchiveDdlInfoRecord() {
+        return new DdlEngineAccessorDelegate<List<DdlInfoRecord>>() {
+            @Override
+            protected List<DdlInfoRecord> invoke() {
+                return engineAccessor.queryAllArchiveDdlInfo();
             }
         }.execute();
     }
@@ -218,6 +292,15 @@ public class DdlEngineSchedulerManager {
             @Override
             protected List<DdlEngineTaskRecord> invoke() {
                 return engineTaskAccessor.queryTaskPartialInfoByJobId(jobId, false);
+            }
+        }.execute();
+    }
+
+    public List<DdlEngineTaskRecord> fetchAllSuccessiveTaskLessPartialInfoByJobId(long jobId) {
+        return new DdlEngineAccessorDelegate<List<DdlEngineTaskRecord>>() {
+            @Override
+            protected List<DdlEngineTaskRecord> invoke() {
+                return engineTaskAccessor.queryTaskLessPartialInfoByJobId(jobId, false);
             }
         }.execute();
     }
@@ -329,11 +412,40 @@ public class DdlEngineSchedulerManager {
                     return originState;
                 }
                 engineAccessor.compareAndSetDdlState(jobId, update, expect);
-                engineAccessor.updatePausedPolicy(jobId, DdlState.PAUSED, DdlState.ROLLBACK_PAUSED);
+                engineAccessor.updatePausedPolicy(jobId, DdlState.PAUSED,
+                    com.alibaba.polardbx.common.ddl.newengine.DdlState.ROLLBACK_PAUSED);
                 return originState;
             }
         }.execute();
         return originState == expect;
+    }
+
+    public void tryUpdateDdlContext(long jobId,
+                                    Map<String, Object> context) {
+        Boolean result = new DdlEngineAccessorDelegate<Boolean>() {
+
+            @Override
+            protected Boolean invoke() {
+                DdlEngineRecord record = engineAccessor.queryForUpdate(jobId);
+                DdlContext ddlContext = (DdlContext) DdlSerializer.deserializeJSON(record.context);
+                ddlContext.getExtraCmds().putAll(context);
+                for (Map.Entry<String, Object> entry : context.entrySet()) {
+                    String key = entry.getKey();
+                    if (ddlContext.getServerVariables().containsKey(key)) {
+                        ddlContext.getServerVariables().put(key, entry.getValue());
+                    }
+                    if (ddlContext.getExtraServerVariables().containsKey(key)) {
+                        ddlContext.getExtraServerVariables().put(key, entry.getValue());
+                    }
+                }
+                if (record == null || record.state == null) {
+                    return null;
+                }
+                String content = DdlSerializer.serializeToJSON(ddlContext);
+                engineAccessor.update(jobId, content, true);
+                return true;
+            }
+        }.execute();
     }
 
     public int saveContext(DdlContext ddlContext) {

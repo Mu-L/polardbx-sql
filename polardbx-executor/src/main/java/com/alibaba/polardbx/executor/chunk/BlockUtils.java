@@ -18,6 +18,9 @@ package com.alibaba.polardbx.executor.chunk;
 
 import com.alibaba.polardbx.common.datatype.Decimal;
 import com.alibaba.polardbx.common.datatype.UInt64;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.executor.operator.util.ObjectPools;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 
@@ -26,54 +29,82 @@ import java.util.TimeZone;
 
 public class BlockUtils {
     public static <T> RandomAccessBlock createBlock(DataType<T> dataType, int positionCount) {
-        Class<?> clazz = dataType.getDataClass();
-        if (clazz == Byte.class) {
-            return new ByteBlock(dataType, positionCount);
-        } else if (clazz == Short.class) {
-            return new ShortBlock(dataType, positionCount);
-        } else if (clazz == Integer.class) {
-            return new IntegerBlock(dataType, positionCount);
-        } else if (clazz == Long.class) {
-            return new LongBlock(dataType, positionCount);
-        } else if (clazz == Float.class) {
-            return new FloatBlock(dataType, positionCount);
-        } else if (clazz == Double.class) {
-            return new DoubleBlock(dataType, positionCount);
-        } else if (clazz == Boolean.class) {
-            return new BooleanBlock(dataType, positionCount);
-        } else if (clazz == Decimal.class) {
-            return new DecimalBlock(dataType, positionCount);
-        } else if (clazz == UInt64.class) {
-            return new ULongBlock(dataType, positionCount);
-        } else {
-            return new ReferenceBlock<T>(dataType, positionCount);
+        // record stack level memory usage.
+        OperatorMemoryOwnerId operatorMemoryOwnerId = MemoryTrackerManager.getCurrentMemoryOwner();
+        RandomAccessBlock block = null;
+        try {
+            Class<?> clazz = dataType.getDataClass();
+            if (clazz == Byte.class) {
+                block = new ByteBlock(dataType, positionCount);
+            } else if (clazz == Short.class) {
+                block = new ShortBlock(dataType, positionCount);
+            } else if (clazz == Integer.class) {
+                block = new IntegerBlock(dataType, positionCount);
+            } else if (clazz == Long.class) {
+                block = new LongBlock(dataType, positionCount);
+            } else if (clazz == Float.class) {
+                block = new FloatBlock(dataType, positionCount);
+            } else if (clazz == Double.class) {
+                block = new DoubleBlock(dataType, positionCount);
+            } else if (clazz == Boolean.class) {
+                block = new BooleanBlock(dataType, positionCount);
+            } else if (clazz == Decimal.class) {
+                block = new DecimalBlock(dataType, positionCount);
+            } else if (clazz == UInt64.class) {
+                block = new ULongBlock(dataType, positionCount);
+            } else {
+                block = new ReferenceBlock<T>(dataType, positionCount);
+            }
+        } finally {
+            if (operatorMemoryOwnerId != null && block instanceof Block) {
+                MemoryTrackerManager.tryReverseReference(
+                    operatorMemoryOwnerId,
+                    FastMemoryCounter.sizeOf((Block) block)
+                );
+            }
         }
+
+        return block;
     }
 
     public static <T> RandomAccessBlock createBlock(DataType<T> dataType, int positionCount, ObjectPools objectPools,
                                                     int chunkLimit) {
+        // record stack level memory usage.
+        OperatorMemoryOwnerId operatorMemoryOwnerId = MemoryTrackerManager.getCurrentMemoryOwner();
+        RandomAccessBlock block = null;
         Class<?> clazz = dataType.getDataClass();
-        if (clazz == Byte.class) {
-            return new ByteBlock(dataType, positionCount);
-        } else if (clazz == Short.class) {
-            return new ShortBlock(dataType, positionCount);
-        } else if (clazz == Integer.class) {
-            return new IntegerBlock(dataType, positionCount, objectPools.getIntArrayPool(), chunkLimit);
-        } else if (clazz == Long.class) {
-            return new LongBlock(dataType, positionCount, objectPools.getLongArrayPool(), chunkLimit);
-        } else if (clazz == Float.class) {
-            return new FloatBlock(dataType, positionCount);
-        } else if (clazz == Double.class) {
-            return new DoubleBlock(dataType, positionCount);
-        } else if (clazz == Boolean.class) {
-            return new BooleanBlock(dataType, positionCount);
-        } else if (clazz == Decimal.class) {
-            return new DecimalBlock(dataType, positionCount, objectPools.getLongArrayPool(), chunkLimit);
-        } else if (clazz == UInt64.class) {
-            return new ULongBlock(dataType, positionCount);
-        } else {
-            return new ReferenceBlock<T>(dataType, positionCount);
+        try {
+            if (clazz == Byte.class) {
+                block = new ByteBlock(dataType, positionCount);
+            } else if (clazz == Short.class) {
+                block = new ShortBlock(dataType, positionCount);
+            } else if (clazz == Integer.class) {
+                block = new IntegerBlock(dataType, positionCount, objectPools.getIntArrayPool(), chunkLimit);
+            } else if (clazz == Long.class) {
+                block = new LongBlock(dataType, positionCount, objectPools.getLongArrayPool(), chunkLimit);
+            } else if (clazz == Float.class) {
+                block = new FloatBlock(dataType, positionCount);
+            } else if (clazz == Double.class) {
+                block = new DoubleBlock(dataType, positionCount);
+            } else if (clazz == Boolean.class) {
+                block = new BooleanBlock(dataType, positionCount);
+            } else if (clazz == Decimal.class) {
+                block = new DecimalBlock(dataType, positionCount, objectPools.getLongArrayPool(), chunkLimit);
+            } else if (clazz == UInt64.class) {
+                block = new ULongBlock(dataType, positionCount);
+            } else {
+                block = new ReferenceBlock<T>(dataType, positionCount);
+            }
+        } finally {
+            if (operatorMemoryOwnerId != null && block instanceof Block) {
+                MemoryTrackerManager.tryReverseReference(
+                    operatorMemoryOwnerId,
+                    FastMemoryCounter.sizeOf((Block) block)
+                );
+            }
         }
+
+        return block;
     }
 
     public static void copySelectedInCommon(boolean selectedInUse, int[] sel, int size, RandomAccessBlock srcVector,

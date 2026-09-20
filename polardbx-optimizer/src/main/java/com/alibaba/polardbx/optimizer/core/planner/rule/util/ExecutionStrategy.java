@@ -29,6 +29,7 @@ import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.BuildFinalPlanVisitor;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalInsert;
+import com.alibaba.polardbx.optimizer.core.rel.dml.ExternalizedDmlRewriter;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
 import com.alibaba.polardbx.optimizer.utils.CheckModifyLimitation;
@@ -109,7 +110,7 @@ public enum ExecutionStrategy {
         assert null != oc;
 
         // Table detail
-        final boolean isBroadcast = oc.getRuleManager().isBroadCast(targetTable);
+        final boolean isBroadcastOrReplicas = oc.getRuleManager().isBroadCastOrReplicas(targetTable);
         final boolean isSingleTable = oc.getRuleManager().isTableInSingleDb(targetTable);
         final boolean isPartitioned = oc.getRuleManager().isShard(targetTable);
 
@@ -142,7 +143,8 @@ public enum ExecutionStrategy {
         Collection<ColumnMeta> pk = primaryTableMeta.getPrimaryKey();
         boolean skipCheckingPk = false;
         if (pk.size() == 1 && autoIncColumns.size() == 1) {
-            skipCheckingPk = ec.getParamManager().getBoolean(ConnectionParams.DML_SKIP_DUPLICATE_CHECK_FOR_PK)
+            skipCheckingPk = insert.isCanSkipPkCheck() && ec.getParamManager()
+                .getBoolean(ConnectionParams.DML_SKIP_DUPLICATE_CHECK_FOR_PK)
                 && StringUtils.equalsIgnoreCase(pk.iterator().next().getName(), autoIncColumns.get(0));
         }
         final boolean ukContainsAllSkAndGsiContainsAllUk = skipCheckingPk ?
@@ -151,7 +153,7 @@ public enum ExecutionStrategy {
 
         // Statement detail
         final boolean canPushDuplicateCheck =
-            withoutPkAndUk || (ukContainsPartitionKey && allGsiPublished
+            withoutPkAndUk || (ukContainsAllSkAndGsiContainsAllUk && allGsiPublished
                 && replicateConsistentBaseData);
         final boolean canPushDuplicateIgnoreScaleOutCheck =
             withoutPkAndUk || (ukContainsPartitionKey && allGsiPublished);
@@ -205,23 +207,37 @@ public enum ExecutionStrategy {
 
             canPush = canPush && !(checkUpsertDynamicImplicitWithColumnRef
                 && checkUpdateDynamicImplicitValueColumnWithColumnRef(insert));
+
+            if (canPush && ExternalizedDmlRewriter.needsHandling(primaryTableMeta)) {
+                // Externalized columns keep the original DN UPSERT path only when the conflict SET can be
+                // represented by already-materialized incoming slots or statement-constant parameter bindings:
+                //   body = VALUES(body) reuses the incoming body/addr pair;
+                //   body = 'literal', NULL, or ? materializes a conflict-only BlobRef parameter.
+                // Current-row or cross-column shapes such as body = CONCAT(body, '-tail'),
+                // body = VALUES(note), and note = VALUES(body) return false and keep CN duplicate checking.
+                canPush = ExternalizedDmlRewriter.canUseExternalizedUpsertPushdown(insert, primaryTableMeta);
+            }
         } else if (insert.isReplace()) {
             // For REPLACE, do DELETE when DELETE_ONLY, do REPLACE when WRITE_ONLY
             multiWriteForReplication = replicateCanWrite;
             canPush = pushDuplicateCheck || canPushDuplicateCheck;
             canPush = canPush && (!foreignKeyChecks || !CheckModifyLimitation.checkModifyFkReferenced(insert,
                 context.getExecutionContext()));
+            // REPLACE has no conflict SET expression that needs a logical current row. Externalized/MCE incoming
+            // values are materialized before InsertWriter consumption, so keep the original pushdown decision.
         } else if (insert.isInsertIgnore()) {
             // For INSERT IGNORE, DO NOT push down it even for DELETE_ONLY, because the table meta could change when reload
             multiWriteForReplication = replicateCanWrite;
             canPush = pushDuplicateCheck || canPushDuplicateCheck;
+            // INSERT IGNORE only needs DN duplicate filtering after incoming materialization. Externalized/MCE tables
+            // therefore use the same duplicate-check pushdown conditions as ordinary tables.
         } else {
             // For INSERT, do nothing when DELETE_ONLY, do INSERT when WRITE_ONLY
             multiWriteForReplication = (replicateCanWrite && !replicateDeleteOnly);
             canPush = true;
         }
 
-        final boolean doMultiWrite = isBroadcast || withGsi || multiWriteForReplication;
+        final boolean doMultiWrite = isBroadcastOrReplicas || withGsi || multiWriteForReplication;
         canPush = canPush && (!primaryKeyCheck || pushablePrimaryKeyCheck);
         canPush = canPush && (!foreignKeyChecks || pushableFkCheck);
 
@@ -231,6 +247,7 @@ public enum ExecutionStrategy {
         result.pushablePrimaryKeyCheck = pushablePrimaryKeyCheck;
         result.pushableForeignConstraintCheck = pushableFkCheck;
         result.ukContainsAllSkAndGsiContainsAllUk = ukContainsAllSkAndGsiContainsAllUk;
+        insert.setUkContainsAllSkAndGsiContainsAllUk(ukContainsAllSkAndGsiContainsAllUk);
 
         // Pushdown dml on single/partition table without replica for performance
         if (!doMultiWrite && canPush) {
@@ -251,9 +268,9 @@ public enum ExecutionStrategy {
     public static boolean pushablePrimaryKeyConstraint(PlannerContext context, String schemaName, String tableName) {
         final OptimizerContext oc = OptimizerContext.getContext(schemaName);
         final TddlRuleManager rm = oc.getRuleManager();
-        final boolean isBroadcast = rm.isBroadCast(tableName);
+        final boolean isBroadCastOrReplicas = rm.isBroadCastOrReplicas(tableName);
         final boolean isSingleTable = rm.isTableInSingleDb(tableName);
-        if (isBroadcast || isSingleTable) {
+        if (isBroadCastOrReplicas || isSingleTable) {
             return true;
         }
 
@@ -344,7 +361,7 @@ public enum ExecutionStrategy {
             final PartitionInfo rightPartitionInfo =
                 orRight.getPartitionInfoManager().getPartitionInfo(refTable.left);
 
-            if (leftPartitionInfo.isBroadcastTable() && rightPartitionInfo.isBroadcastTable()) {
+            if (leftPartitionInfo.isBroadcastOrReplicas() && rightPartitionInfo.isBroadcastOrReplicas()) {
                 return true;
             }
 
@@ -422,4 +439,5 @@ public enum ExecutionStrategy {
                 });
         return updateDynamicImplicitValueColumnWithColumnRef;
     }
+
 }

@@ -1,0 +1,176 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set sql_mode='';
+drop table if exists r_unix_ts_ms;
+create table r_unix_ts_ms
+(
+a bigint ,
+b datetime,
+c varchar(32),
+primary key(a)
+)
+partition by range(a)
+(
+partition p20250501 values less than(1746028800000),
+partition p20250502 values less than(1746115200000),
+partition p20250503 values less than(1746201600000),
+partition p20250504 values less than(1746288000000),
+partition p20250505 values less than(1746374400000)
+);
+alter table r_unix_ts_ms modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = `a` expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+ttl_col_encoder=unix_timestamp(?) * 1000,
+ttl_col_decoder=from_unixtime(? / 1000),
+archive_type='partition',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_unix_ts_ms cleanup expired data;
+show create table r_unix_ts_ms;
+Table,Create Table
+r_unix_ts_ms,CREATE TABLE `r_unix_ts_ms` (
+	`a` bigint(20) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` varchar(32) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `a` EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_COL_ENCODER = UNIX_TIMESTAMP(?) * 1000, TTL_COL_DECODER = FROM_UNIXTIME(? / 1000), TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE(`a`)
+(PARTITION p20250501 VALUES LESS THAN (1746028800000) ENGINE = InnoDB,
+ PARTITION p20250502 VALUES LESS THAN (1746115200000) ENGINE = InnoDB,
+ PARTITION p20250503 VALUES LESS THAN (1746201600000) ENGINE = InnoDB,
+ PARTITION p20250504 VALUES LESS THAN (1746288000000) ENGINE = InnoDB,
+ PARTITION p20250505 VALUES LESS THAN (1746374400000) ENGINE = InnoDB,
+ PARTITION p20250627 VALUES LESS THAN (1750953600000) ENGINE = InnoDB,
+ PARTITION p20250628 VALUES LESS THAN (1751040000000) ENGINE = InnoDB,
+ PARTITION p20250629 VALUES LESS THAN (1751126400000) ENGINE = InnoDB,
+ PARTITION p20250630 VALUES LESS THAN (1751212800000) ENGINE = InnoDB)
+alter table r_unix_ts_ms cleanup expired data;
+show create table r_unix_ts_ms;
+Table,Create Table
+r_unix_ts_ms,CREATE TABLE `r_unix_ts_ms` (
+	`a` bigint(20) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` varchar(32) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `a` EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_COL_ENCODER = UNIX_TIMESTAMP(?) * 1000, TTL_COL_DECODER = FROM_UNIXTIME(? / 1000), TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE(`a`)
+(PARTITION p20250627 VALUES LESS THAN (1750953600000) ENGINE = InnoDB,
+ PARTITION p20250628 VALUES LESS THAN (1751040000000) ENGINE = InnoDB,
+ PARTITION p20250629 VALUES LESS THAN (1751126400000) ENGINE = InnoDB,
+ PARTITION p20250630 VALUES LESS THAN (1751212800000) ENGINE = InnoDB)
+alter table r_unix_ts_ms modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = `a` expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+ttl_col_encoder=unix_timestamp(?) * 1000,
+ttl_col_decoder=from_unixtime(? / 1000),
+archive_type='row',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+insert into r_unix_ts_ms(a,b,c) values (1746028800000, from_unixtime(1746028800), from_unixtime(1746028800));
+insert into r_unix_ts_ms(a,b,c) values (1750953600000, from_unixtime(1750953600), from_unixtime(1750953600));
+insert into r_unix_ts_ms(a,b,c) values (1751040000000, from_unixtime(1751040000), from_unixtime(1751040000));
+set time_zone='+08:00';
+select a,b,c from r_unix_ts_ms order by a,b,c;
+a,b,c
+1746028800000,2025-05-01 00:00:00.0,2025-05-01 00:00:00
+1750953600000,2025-06-27 00:00:00.0,2025-06-27 00:00:00
+1751040000000,2025-06-28 00:00:00.0,2025-06-28 00:00:00
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_unix_ts_ms cleanup expired data;
+select a,b,c from r_unix_ts_ms order by a,b,c;
+a,b,c
+1750953600000,2025-06-27 00:00:00.0,2025-06-27 00:00:00
+1751040000000,2025-06-28 00:00:00.0,2025-06-28 00:00:00
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-28 00:00:00';
+alter table r_unix_ts_ms cleanup expired data;
+select a,b,c from r_unix_ts_ms order by a,b,c;
+a,b,c
+1750953600000,2025-06-27 00:00:00.0,2025-06-27 00:00:00
+1751040000000,2025-06-28 00:00:00.0,2025-06-28 00:00:00
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-29 00:00:00';
+alter table r_unix_ts_ms cleanup expired data;
+select a,b,c from r_unix_ts_ms order by a,b,c;
+a,b,c
+1751040000000,2025-06-28 00:00:00.0,2025-06-28 00:00:00
+drop table r_unix_ts_ms;
+drop table if exists r_unix_ts_ms2;
+create table r_unix_ts_ms2
+(
+a bigint ,
+b datetime,
+c varchar(32),
+primary key(a)
+)
+partition by range(a)
+(
+partition p20250501 values less than(1746028800000),
+partition p20250502 values less than(1746115200000),
+partition p20250503 values less than(1746201600000),
+partition p20250504 values less than(1746288000000),
+partition p20250505 values less than(1746374400000)
+);
+alter table r_unix_ts_ms2 modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = from_unixtime(`a` / 1000) expire after 1 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='partition',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2;
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_unix_ts_ms2 cleanup expired data;
+show create table r_unix_ts_ms2;
+Table,Create Table
+r_unix_ts_ms2,CREATE TABLE `r_unix_ts_ms2` (
+	`a` bigint(20) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` varchar(32) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = FROM_UNIXTIME(`a` / 1000) EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE(`a`)
+(PARTITION p20250501 VALUES LESS THAN (1746028800000) ENGINE = InnoDB,
+ PARTITION p20250502 VALUES LESS THAN (1746115200000) ENGINE = InnoDB,
+ PARTITION p20250503 VALUES LESS THAN (1746201600000) ENGINE = InnoDB,
+ PARTITION p20250504 VALUES LESS THAN (1746288000000) ENGINE = InnoDB,
+ PARTITION p20250505 VALUES LESS THAN (1746374400000) ENGINE = InnoDB,
+ PARTITION p20250627 VALUES LESS THAN (1750953600000) ENGINE = InnoDB,
+ PARTITION p20250628 VALUES LESS THAN (1751040000000) ENGINE = InnoDB,
+ PARTITION p20250629 VALUES LESS THAN (1751126400000) ENGINE = InnoDB,
+ PARTITION p20250630 VALUES LESS THAN (1751212800000) ENGINE = InnoDB)
+insert into r_unix_ts_ms2(a,b,c) values (1746028800000, from_unixtime(1746028800), from_unixtime(1746028800));
+insert into r_unix_ts_ms2(a,b,c) values (1750953600000, from_unixtime(1750953600), from_unixtime(1750953600));
+insert into r_unix_ts_ms2(a,b,c) values (1751040000000, from_unixtime(1751040000), from_unixtime(1751040000));
+set time_zone='+08:00';
+select a,b,c from r_unix_ts_ms2 order by a,b,c;
+a,b,c
+1746028800000,2025-05-01 00:00:00.0,2025-05-01 00:00:00
+1750953600000,2025-06-27 00:00:00.0,2025-06-27 00:00:00
+1751040000000,2025-06-28 00:00:00.0,2025-06-28 00:00:00
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-27 00:00:00';
+alter table r_unix_ts_ms2 cleanup expired data;
+select a,b,c from r_unix_ts_ms2 order by a,b,c;
+a,b,c
+1750953600000,2025-06-27 00:00:00.0,2025-06-27 00:00:00
+1751040000000,2025-06-28 00:00:00.0,2025-06-28 00:00:00
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-28 00:00:00';
+alter table r_unix_ts_ms2 cleanup expired data;
+select a,b,c from r_unix_ts_ms2 order by a,b,c;
+a,b,c
+1750953600000,2025-06-27 00:00:00.0,2025-06-27 00:00:00
+1751040000000,2025-06-28 00:00:00.0,2025-06-28 00:00:00
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-29 00:00:00';
+alter table r_unix_ts_ms2 cleanup expired data;
+select a,b,c from r_unix_ts_ms2 order by a,b,c;
+a,b,c
+1751040000000,2025-06-28 00:00:00.0,2025-06-28 00:00:00

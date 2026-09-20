@@ -1,0 +1,120 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+use polardbx;
+drop database if exists onedn_db;
+## USE_DN_LIST_MSG
+create database if not exists onedn_db mode = 'auto' locality='dn=$dn1';
+use onedn_db;
+set ENABLE_SHOW_STORAGE_PARTITIONS=true;
+set ENABLE_RANDOM_PHY_TABLE_NAME=false;
+create table part_with_sp_hash(
+a bigint not null,
+b bigint,
+primary key(a))
+charset utf8mb4 collate utf8mb4_bin
+/*!storage
+partition by key(a)
+partitions 4
+*/
+partition by key(b)
+partitions 1;
+show create table part_with_sp_hash;
+Table,Create Table
+part_with_sp_hash,CREATE TABLE `part_with_sp_hash` (
+	`a` bigint NOT NULL,
+	`b` bigint DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
+/*!STORAGE
+PARTITION BY KEY (a)
+PARTITIONS 4
+*/
+PARTITION BY KEY(`b`)
+PARTITIONS 1
+/*+TDDL:node(0)*/show create table part_with_sp_hash_00000;
+Table,Create Table
+part_with_sp_hash_00000,CREATE TABLE `part_with_sp_hash_00000` (
+  `a` bigint NOT NULL,
+  `b` bigint DEFAULT NULL,
+  PRIMARY KEY (`a`),
+  KEY `auto_shard_key_b` (`b`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+/*!50100 PARTITION BY KEY (a)
+PARTITIONS 4 */
+create table part_with_sp_rng(
+  a bigint not null,
+  b bigint,
+  primary key(a))
+charset utf8mb4 collate utf8mb4_bin
+/*!storage
+partition by key(a)
+partitions 4
+*/
+partition by key(b)
+partitions 1;
+show create table part_with_sp_rng;
+Table,Create Table
+part_with_sp_rng,CREATE TABLE `part_with_sp_rng` (
+	`a` bigint NOT NULL,
+	`b` bigint DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
+/*!STORAGE
+PARTITION BY KEY (a)
+PARTITIONS 4
+*/
+PARTITION BY KEY(`b`)
+PARTITIONS 1
+/*+TDDL:node(0)*/show create table part_with_sp_rng_00000;
+Table,Create Table
+part_with_sp_rng_00000,CREATE TABLE `part_with_sp_rng_00000` (
+  `a` bigint NOT NULL,
+  `b` bigint DEFAULT NULL,
+  PRIMARY KEY (`a`),
+  KEY `auto_shard_key_b` (`b`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+/*!50100 PARTITION BY KEY (a)
+PARTITIONS 4 */
+create table part_with_sp_list(
+a bigint not null,
+b bigint,
+primary key(a))
+charset utf8mb4 collate utf8mb4_bin
+/*!storage
+partition by list columns(a)
+(
+partition p1 values in(1),
+partition p2 values in(10)
+)
+*/
+partition by key(b)
+partitions 1;
+show create table part_with_sp_list;
+Table,Create Table
+part_with_sp_list,CREATE TABLE `part_with_sp_list` (
+	`a` bigint NOT NULL,
+	`b` bigint DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 DEFAULT COLLATE = utf8mb4_bin
+/*!STORAGE
+PARTITION BY LIST  COLUMNS(a)
+(PARTITION p1 VALUES IN (1) ENGINE = InnoDB,
+ PARTITION p2 VALUES IN (10) ENGINE = InnoDB)
+*/
+PARTITION BY KEY(`b`)
+PARTITIONS 1
+/*+TDDL:node(0)*/show create table part_with_sp_list_00000;
+Table,Create Table
+part_with_sp_list_00000,CREATE TABLE `part_with_sp_list_00000` (
+  `a` bigint NOT NULL,
+  `b` bigint DEFAULT NULL,
+  PRIMARY KEY (`a`),
+  KEY `auto_shard_key_b` (`b`) USING BTREE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+/*!50500 PARTITION BY LIST  COLUMNS(a)
+(PARTITION p1 VALUES IN (1) ENGINE = InnoDB,
+ PARTITION p2 VALUES IN (10) ENGINE = InnoDB) */

@@ -1,0 +1,25 @@
+SQL:
+  - sql: |
+      select * from (values row(cast(1 as bigint)), row(cast(2 as bigint)), row(cast(3 as bigint))) as v(a)
+    plan: |
+      dynamicvalues(tuples=[{ cast(?0):bigint }], rawStringMode="COLUMN_ARRAY")
+  - sql: |
+      select * from (values row(cast(1 as bigint), cast('2026-08-18 08:00:00.000' as timestamp(3))), row(cast('2' as bigint), cast(null as timestamp(3)))) as v(id, cutoff_time)
+    plan: |
+      dynamicvalues(tuples=[{ cast(?0):bigint, cast(?1):timestamp(3) }], rawStringMode="COLUMN_ARRAY")
+  - sql: |
+      select a from (values row(cast(1 as bigint)), row(cast(2 as bigint)), row(cast(3 as bigint))) as v(a) where a > 1
+    plan: |
+      filter(condition="column_0 > ?1")
+        dynamicvalues(tuples=[{ cast(?0):bigint }], rawStringMode="COLUMN_ARRAY")
+  - sql: |
+      select * from (values row(cast(1 as bigint)), row(cast(2 as decimal(10, 2)))) as v(a)
+    plan: |
+      dynamicvalues(tuples=[{ cast(?0):bigint }, { cast(?1):decimal(10, 2) }])
+  - sql: |
+      select * from (values row(cast(1 as bigint)), row(cast(2 as bigint))) as v(a)
+    plan: |
+      dynamicvalues(tuples=[{ cast(?0):bigint }], rawStringMode="COLUMN_ARRAY")
+DDL: { }
+STATISTICS: { }
+CONFIG: { }

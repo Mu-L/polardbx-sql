@@ -9,6 +9,7 @@ import org.junit.Test;
 import org.junit.runners.MethodSorters;
 
 import java.sql.SQLException;
+import java.util.Arrays;
 
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
 public class InterruptAlterTableTest extends InterruptDDLByLockTest {
@@ -136,11 +137,14 @@ public class InterruptAlterTableTest extends InterruptDDLByLockTest {
         waitForSeconds(2);
         killLogicalProcess(ALTER_PREFIX);
         waitForSeconds(2);
+        waitUntilJobCompletedOrPaused();
         checkPhyProcess(job);
-        checkJobPaused();
-        cancelDDLFailed(job, "the DDL operations cannot be rolled back. Please try: continue ddl");
-        continueUntilComplete(job);
-        checkPhyProcess(job);
+        MultiClientTestCase.checkJobState(tddlConnection, job.parentJob.jobId,
+            Arrays.asList("ROLLBACK_COMPLETED", "COMPLETED"));
+        //checkJobPaused();
+        //cancelDDLFailed(job, "the DDL operations cannot be rolled back. Please try: continue ddl");
+        //continueUntilComplete(job);
+        //checkPhyProcess(job);
         checkJobGone();
         checkColumnConsistency(columnInfo, true);
     }
@@ -155,10 +159,12 @@ public class InterruptAlterTableTest extends InterruptDDLByLockTest {
         JobInfo job = executeSeparateDDL(sql, ALTER_PREFIX, false);
         killLogicalProcess(ALTER_PREFIX);
         waitForSeconds(2);
+        waitUntilJobCompletedOrPaused();
         checkPhyProcess(job);
-        checkJobPaused();
-        cancelUntilComplete(job);
-        checkPhyProcess(job);
+        MultiClientTestCase.checkJobState(tddlConnection, job.parentJob.jobId,
+            Arrays.asList("ROLLBACK_COMPLETED", "COMPLETED"));
+        //cancelUntilComplete(job);
+        //checkPhyProcess(job);
         checkJobGone();
         checkColumnConsistency(columnInfo, false);
     }

@@ -45,6 +45,10 @@ public class ColumnsRecord extends ColumnsInfoSchemaRecord {
 
     public static final long FLAG_DEFAULT_EXPR = 0x10; // If this column is default expression
 
+    public static final long FLAG_LOCAL_AUTO_INCREMENT = 0x20;
+
+    public static final long FLAG_EXTERNALIZED_COLUMN = 0x40;
+
     @Override
     public ColumnsRecord fill(ResultSet rs) throws SQLException {
         super.fill(rs);
@@ -140,6 +144,18 @@ public class ColumnsRecord extends ColumnsInfoSchemaRecord {
 
     public void clearDefaultExpr() {
         flag &= ~FLAG_DEFAULT_EXPR;
+    }
+
+    public boolean isExternalizedColumn() {
+        return (flag & FLAG_EXTERNALIZED_COLUMN) != 0L;
+    }
+
+    public void setExternalizedColumn() {
+        flag |= FLAG_EXTERNALIZED_COLUMN;
+    }
+
+    public void clearExternalizedColumn() {
+        flag &= ~FLAG_EXTERNALIZED_COLUMN;
     }
 
     public static boolean equalsColumnRecord(ColumnsRecord left, ColumnsRecord right) {

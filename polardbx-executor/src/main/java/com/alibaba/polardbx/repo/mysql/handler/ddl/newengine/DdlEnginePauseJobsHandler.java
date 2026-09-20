@@ -63,7 +63,8 @@ public class DdlEnginePauseJobsHandler extends DdlEngineJobsHandler {
         DdlEngineRecord record = schedulerManager.fetchRecordByJobId(jobId);
 
         int countDone =
-            DdlEngineRequester.pauseJob(record, enableOperateSubJob, enableContinueRunningSubJob, executionContext);
+            DdlEngineRequester.pauseJob(record, enableOperateSubJob, enableContinueRunningSubJob, true,
+                executionContext);
 
         boolean asyncPause = executionContext.getParamManager().getBoolean(ConnectionParams.PURE_ASYNC_DDL_MODE)
             || executionContext.getParamManager().getBoolean(ConnectionParams.ASYNC_PAUSE);

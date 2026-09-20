@@ -29,9 +29,10 @@ import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.validator.GsiValidator;
 import com.alibaba.polardbx.executor.ddl.job.validator.TableValidator;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlExceptionAction;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4CreatePartitionGsi;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4DropPartitionGsi;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
@@ -47,15 +48,13 @@ import org.apache.commons.lang.StringUtils;
 import java.util.*;
 import java.util.stream.Collectors;
 
-import static com.alibaba.polardbx.common.cdc.CdcDdlMarkVisibility.Private;
-import static com.alibaba.polardbx.common.cdc.CdcDdlMarkVisibility.Protected;
 import static com.alibaba.polardbx.common.ddl.newengine.DdlType.*;
 import static com.alibaba.polardbx.common.ddl.newengine.DdlType.ALTER_TABLE;
 
 /**
  * @author wumu
  */
-public class RemovePartitioningJobFactory extends DdlJobFactory {
+public class RemovePartitioningJobFactory extends OnlineDdlJobFactory {
     private final String schemaName;
     private final String primaryTableName;
     private final String indexTableName;
@@ -69,6 +68,7 @@ public class RemovePartitioningJobFactory extends DdlJobFactory {
                                         Map<CreateGlobalIndexPreparedData, PhysicalPlanData> globalIndexPrepareDataForLocalIndex,
                                         Map<String, List<String>> dropColumns,
                                         ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.OSC);
         this.schemaName = schemaName;
         this.primaryTableName = primaryTableName;
         this.indexTableName = indexTableName;

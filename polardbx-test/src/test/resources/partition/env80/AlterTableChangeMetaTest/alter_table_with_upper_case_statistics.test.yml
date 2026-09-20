@@ -1,0 +1,32 @@
+drop database if exists test_statistics3;
+
+create database test_statistics3 mode = auto;
+use test_statistics3;
+
+drop table if exists t_statistics3;
+
+create table t_statistics3(
+id int,
+name varchar(60),
+NAME2 varchar(60),
+Name3 varchar(60),
+primary key(id)
+) partition by key(id) partitions 4;
+
+alter table T_statistics3 add index IDX_name(Name, NAME2(10), namE3);
+alter table t_STATISTICS3 add index idx_NAME2(nAme(10), naMe2(10), name3(10));
+
+alter table t_statistics3 add global index idx_Name3(Name, NAME2(10), namE3) partition by key(name);
+alter table t_statistics3 add global index idx_name4(nAme(10), naMe2(10), name3(10)) partition by key(name);
+
+show create table t_statistics3;
+
+SELECT * FROM INFORMATION_SCHEMA.STATISTICS  WHERE TABLE_SCHEMA = 'test_statistics3' and table_name = "t_statistics3"
+order by index_name, seq_in_index;
+
+alter table t_statistics3 modify column NAME varchar(5), modify column name2 text, modify column name3 bigint;
+
+show create table t_statistics3;
+
+SELECT * FROM INFORMATION_SCHEMA.STATISTICS  WHERE TABLE_SCHEMA = 'test_statistics3' and table_name = "t_statistics3"
+order by index_name, seq_in_index;

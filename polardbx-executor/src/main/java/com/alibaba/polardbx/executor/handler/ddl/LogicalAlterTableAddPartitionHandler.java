@@ -22,6 +22,7 @@ import com.alibaba.polardbx.common.properties.ConnectionProperties;
 import com.alibaba.polardbx.executor.ddl.job.factory.AlterTableAddPartitionJobFactory;
 import com.alibaba.polardbx.executor.ddl.job.validator.TableValidator;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJob;
+import com.alibaba.polardbx.executor.partitionmanagement.AlterTableGroupUtils;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.executor.utils.DdlUtils;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
@@ -74,6 +75,7 @@ public class LogicalAlterTableAddPartitionHandler extends LogicalCommonDdlHandle
                 "can't execute the add partition command in a non-auto mode database");
         }
 
+        AlterTableGroupUtils.validateRepartitionPermit(schemaName, executionContext);
         TableValidator.validateTableExistence(schemaName, logicalTableName, executionContext);
 
         final SchemaManager schemaManager = executionContext.getSchemaManager(schemaName);

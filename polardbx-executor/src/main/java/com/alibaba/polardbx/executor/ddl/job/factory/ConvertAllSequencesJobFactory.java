@@ -16,14 +16,14 @@
 
 package com.alibaba.polardbx.executor.ddl.job.factory;
 
-import com.alibaba.polardbx.common.constants.SequenceAttribute;
 import com.alibaba.polardbx.common.constants.SequenceAttribute.Type;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.ConvertAllSequenceValidateTask;
 import com.alibaba.polardbx.executor.ddl.job.task.basic.ConvertSequenceInSchemasTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcLogicalSequenceMarkTask;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.google.common.collect.ImmutableList;
@@ -37,7 +37,7 @@ import java.util.Set;
  *
  * @author zhuqiwei
  */
-public class ConvertAllSequencesJobFactory extends DdlJobFactory {
+public class ConvertAllSequencesJobFactory extends OnlineDdlJobFactory {
     final List<String> schemaNames;
     final Type fromType;
     final Type toType;
@@ -47,6 +47,7 @@ public class ConvertAllSequencesJobFactory extends DdlJobFactory {
 
     public ConvertAllSequencesJobFactory(List<String> schemaNames, Type fromType, Type toType, boolean onlySingleSchema,
                                          ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.META_ONLY);
         this.schemaNames = schemaNames;
         this.fromType = fromType;
         this.toType = toType;

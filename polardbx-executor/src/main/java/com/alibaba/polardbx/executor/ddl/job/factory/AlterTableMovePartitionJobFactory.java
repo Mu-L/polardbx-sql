@@ -37,6 +37,7 @@ import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterTableGroupVali
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
 import com.alibaba.polardbx.executor.ddl.util.ChangeSetUtils;
+import com.alibaba.polardbx.executor.physicalbackfill.PhysicalBackfillUtils;
 import com.alibaba.polardbx.executor.scaleout.ScaleOutUtils;
 import com.alibaba.polardbx.gms.tablegroup.PartitionGroupRecord;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
@@ -49,6 +50,7 @@ import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.PhyDdlTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableGroupItemPreparedData;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTableMovePartitionPreparedData;
+import com.alibaba.polardbx.statistics.SQLRecorderLogger;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import org.apache.calcite.rel.core.DDL;
@@ -147,12 +149,12 @@ public class AlterTableMovePartitionJobFactory extends AlterTableGroupBaseJobFac
                 }
             }
         }
-        List<String> targetDbList = new ArrayList<>();
+        List<Pair<String, String>> targetDbList = new ArrayList<>();
         List<String> newPartitions = new ArrayList<>();
         List<String> localities = new ArrayList<>();
         for (int i = 0; i < preparedData.getNewPartitionNames().size(); i++) {
-            targetDbList.add(preparedData.getInvisiblePartitionGroups().get(i)
-                .getPhy_db());
+            targetDbList.add(new Pair<>(preparedData.getInvisiblePartitionGroups().get(i).getPhy_db(),
+                preparedData.getInvisiblePartitionGroups().get(i).getGroup_Name()));
             newPartitions.add(preparedData.getNewPartitionNames().get(i));
             localities.add(preparedData.getInvisiblePartitionGroups().get(i)
                 .getLocality());
@@ -172,7 +174,8 @@ public class AlterTableMovePartitionJobFactory extends AlterTableGroupBaseJobFac
         DdlBackfillCostRecordTask costRecordTask = null;
         if (ddlContext != null && !ddlContext.isSubJob()) {
             costRecordTask = new DdlBackfillCostRecordTask(schemaName);
-            final BalanceStats balanceStats = Balancer.collectBalanceStatsOfTable(schemaName, tableName, executionContext);
+            final BalanceStats balanceStats =
+                Balancer.collectBalanceStatsOfTable(schemaName, tableName, executionContext);
             List<PartitionStat> partitionStats = balanceStats.getPartitionStats();
             Long diskSize = 0L;
             Long rows = 0L;
@@ -201,7 +204,7 @@ public class AlterTableMovePartitionJobFactory extends AlterTableGroupBaseJobFac
 
         List<DdlTask> bringUpAlterTableGroupTasks =
             ComplexTaskFactory.bringUpAlterTableChangeTopology(schemaName, targetTableGroup, tableName, taskType,
-                executionContext);
+                preparedData.getDdlVersionId(), executionContext);
 
         final String finalStatus =
             executionContext.getParamManager().getString(ConnectionParams.TABLEGROUP_REORG_FINAL_TABLE_STATUS_DEBUG);
@@ -281,7 +284,8 @@ public class AlterTableMovePartitionJobFactory extends AlterTableGroupBaseJobFac
         DdlBackfillCostRecordTask costRecordTask = null;
         if (ddlContext != null && !ddlContext.isSubJob()) {
             costRecordTask = new DdlBackfillCostRecordTask(schemaName);
-            final BalanceStats balanceStats = Balancer.collectBalanceStatsOfTable(schemaName, tableName, executionContext);
+            final BalanceStats balanceStats =
+                Balancer.collectBalanceStatsOfTable(schemaName, tableName, executionContext);
             List<PartitionStat> partitionStats = balanceStats.getPartitionStats();
             Long diskSize = 0L;
             Long rows = 0L;
@@ -308,12 +312,12 @@ public class AlterTableMovePartitionJobFactory extends AlterTableGroupBaseJobFac
                 }
             }
         }
-        List<String> targetDbList = new ArrayList<>();
+        List<Pair<String, String>> targetDbList = new ArrayList<>();
         List<String> newPartitions = new ArrayList<>();
         List<String> localities = new ArrayList<>();
         for (int i = 0; i < preparedData.getNewPartitionNames().size(); i++) {
-            targetDbList.add(preparedData.getInvisiblePartitionGroups().get(i)
-                .getPhy_db());
+            targetDbList.add(new Pair<>(preparedData.getInvisiblePartitionGroups().get(i).getPhy_db(),
+                preparedData.getInvisiblePartitionGroups().get(i).getGroup_Name()));
             newPartitions.add(preparedData.getNewPartitionNames().get(i));
             localities.add(preparedData.getInvisiblePartitionGroups().get(i)
                 .getLocality());
@@ -337,8 +341,8 @@ public class AlterTableMovePartitionJobFactory extends AlterTableGroupBaseJobFac
         executableDdlJob.labelAsHead(validateTask);
 
         List<DdlTask> bringUpAlterTableGroupTasks =
-            ComplexTaskFactory.bringUpAlterTableGroup(schemaName, tableGroupName, null, taskType,
-                preparedData.getDdlVersionId(), executionContext);
+            ComplexTaskFactory.bringUpAlterTableGroup(schemaName, tableGroupName, null,
+                preparedData.getOldPartitionNames(), taskType, preparedData.getDdlVersionId(), executionContext);
 
         final String finalStatus =
             executionContext.getParamManager().getString(ConnectionParams.TABLEGROUP_REORG_FINAL_TABLE_STATUS_DEBUG);
@@ -371,11 +375,15 @@ public class AlterTableMovePartitionJobFactory extends AlterTableGroupBaseJobFac
         TableMeta tm = OptimizerContext.getContext(schemaName).getLatestSchemaManager().getTable(logicalTableName);
         final boolean useChangeSet = ChangeSetUtils.isChangeSetProcedure(executionContext);
         AlterTableGroupSubTaskJobFactory subTaskJobFactory;
+        AlterTableGroupItemPreparedData itemPreparedData = tablesPrepareData.get(preparedData.getTableName());
+        boolean usePhysicalBackfill =
+            preparedData.isUsePhysicalBackfill() && !tm.containFullTextIndex()
+                && !itemPreparedData.isContainPhysicalPartition();
         if (useChangeSet && ChangeSetUtils.supportUseChangeSet(taskType, tm) && !tm.containFullTextIndex()) {
             subTaskJobFactory =
                 new AlterTableMovePartitionChangeSetSubTaskJobFactory(ddl,
                     (AlterTableMovePartitionPreparedData) preparedData,
-                    tablesPrepareData.get(preparedData.getTableName()),
+                    itemPreparedData,
                     newPartitionsPhysicalPlansMap.get(preparedData.getTableName()),
                     discardTableSpacePhysicalPlansMap.get(preparedData.getTableName()),
                     tbPtbGroupMap.get(preparedData.getTableName()),
@@ -384,7 +392,11 @@ public class AlterTableMovePartitionJobFactory extends AlterTableGroupBaseJobFac
                     tablesTopologyMap.get(preparedData.getTableName()),
                     targetTablesTopology.get(preparedData.getTableName()),
                     sourceTablesTopology.get(preparedData.getTableName()),
-                    orderedTargetTablesLocations.get(preparedData.getTableName()), targetPartitionName, false, taskType,
+                    orderedTargetTablesLocations.get(preparedData.getTableName()),
+                    targetPartitionName,
+                    false,
+                    taskType,
+                    usePhysicalBackfill,
                     executionContext);
         } else {
             subTaskJobFactory =
@@ -399,7 +411,21 @@ public class AlterTableMovePartitionJobFactory extends AlterTableGroupBaseJobFac
                     executionContext);
         }
 
-        ExecutableDdlJob subTask = subTaskJobFactory.create();
+        ExecutableDdlJob subTask;
+        try {
+            subTask = subTaskJobFactory.create();
+        } finally {
+            if (preparedData.isUsePhysicalBackfill()) {
+                try {
+                    PhysicalBackfillUtils.destroyDataSources(preparedData.getTempJobId());
+                } catch (RuntimeException e) {
+                    SQLRecorderLogger.ddlLogger.error("fail to destroy data sources", e);
+                } catch (Exception e) {
+                    SQLRecorderLogger.ddlLogger.error("fail to destroy data sources: " + e.getMessage(), e);
+                }
+
+            }
+        }
         executableDdlJob.combineTasks(subTask);
         executableDdlJob.addTaskRelationship(tailTask, subTask.getHead());
 
@@ -485,17 +511,28 @@ public class AlterTableMovePartitionJobFactory extends AlterTableGroupBaseJobFac
 
         if (bringUpAlterTableGroupTasks.size() > 1 && !(bringUpAlterTableGroupTasks.get(
             0) instanceof PauseCurrentJobTask)) {
+            List<DdlTask> dropForeignKeyTasksBeforeRename = new ArrayList<>();
             DdlTask dropUselessTableTask =
-                ComplexTaskFactory.CreateDropUselessPhyTableTask(schemaName, preparedData.getTableName(),
+                ComplexTaskFactory.cleanUpUselessPhyTableTask(schemaName, preparedData.getTableName(),
                     sourceTablesTopology.get(preparedData.getTableName()),
-                    targetTablesTopology.get(preparedData.getTableName()), executionContext);
+                    targetTablesTopology.get(preparedData.getTableName()),
+                    dropForeignKeyTasksBeforeRename, executionContext);
             executableDdlJob.addTask(dropUselessTableTask);
             executableDdlJob.labelAsTail(dropUselessTableTask);
-            executableDdlJob.addTaskRelationship(
-                bringUpAlterTableGroupTasks.get(bringUpAlterTableGroupTasks.size() - 1), dropUselessTableTask);
+            if (GeneralUtil.isNotEmpty(dropForeignKeyTasksBeforeRename)) {
+                for (DdlTask task : dropForeignKeyTasksBeforeRename) {
+                    executableDdlJob.addTaskRelationship(
+                        bringUpAlterTableGroupTasks.get(bringUpAlterTableGroupTasks.size() - 1), task);
+                    executableDdlJob.addTaskRelationship(task, dropUselessTableTask);
+                }
+            } else {
+                executableDdlJob
+                    .addTaskRelationship(bringUpAlterTableGroupTasks.get(bringUpAlterTableGroupTasks.size() - 1),
+                        dropUselessTableTask);
+            }
         }
         executableDdlJob.getExcludeResources().addAll(subTask.getExcludeResources());
-
+        executableDdlJob.getSharedResources().addAll(subTask.getSharedResources());
     }
 
     public static ExecutableDdlJob create(@Deprecated DDL ddl, AlterTableMovePartitionPreparedData preparedData,

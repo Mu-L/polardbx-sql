@@ -53,6 +53,7 @@ DROP TABLE t1;
 #echo #
 #echo # Test with TIMESTAMP with and without ON UPDATE
 #echo #
+SET SQL_MODE='';
 CREATE TABLE t1 (a INT, b TIMESTAMP NOT NULL DEFAULT (TIMESTAMPADD(MINUTE, 1,'2003-01-02')));
 SHOW CREATE TABLE t1;
 Table,Create Table

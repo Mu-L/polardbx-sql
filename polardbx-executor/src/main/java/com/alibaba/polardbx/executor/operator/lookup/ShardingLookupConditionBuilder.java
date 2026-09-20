@@ -280,11 +280,8 @@ public class ShardingLookupConditionBuilder extends LookupConditionBuilder {
                 shardingKeyMeta, values, shardingKeyMeta.getName());
 
             // fullComparative保障了分表条件可见
-
-            Map<String, Comparative> fullComparative = partitioner.getInsertFullComparative(comparatives);
             Map<String, Object> calcParams = new HashMap<>();
             calcParams.put(CalcParamsAttribute.SHARD_FOR_EXTRA_DB, false);
-            calcParams.put(CalcParamsAttribute.COM_DB_TB, fullComparative);
             calcParams.put(CalcParamsAttribute.CONN_TIME_ZONE, context.getTimeZone());
             calcParams.put(CalcParamsAttribute.EXECUTION_CONTEXT, context);
             targetDbList = tddlRuleManager.shard(v.getShardingTable(), false, false,
@@ -428,7 +425,6 @@ public class ShardingLookupConditionBuilder extends LookupConditionBuilder {
         });
         Map<String, Object> calcParams = new HashMap<>();
         calcParams.put(CalcParamsAttribute.SHARD_FOR_EXTRA_DB, false);
-        calcParams.put(CalcParamsAttribute.COM_DB_TB, new Object());
         calcParams.put(CalcParamsAttribute.CONN_TIME_ZONE, context.getTimeZone());
         calcParams.put(CalcParamsAttribute.EXECUTION_CONTEXT, context);
         for (Tuple tuple : joinKeyTuples) {
@@ -472,10 +468,6 @@ public class ShardingLookupConditionBuilder extends LookupConditionBuilder {
             if (!v.isNewPartDbTbl()) {
                 Map<String, Comparative> comparatives =
                     Partitioner.getLookupComparative(shardingKeyValues, shardingKeyMetas);
-
-                // fullComparative保障了分表条件可见
-                Map<String, Comparative> fullComparative = partitioner.getInsertFullComparative(comparatives);
-                calcParams.put(CalcParamsAttribute.COM_DB_TB, fullComparative);
 
                 targetDbs = tddlRuleManager.shard(v.getShardingTable(), false, false,
                     comparatives, params, calcParams, context);

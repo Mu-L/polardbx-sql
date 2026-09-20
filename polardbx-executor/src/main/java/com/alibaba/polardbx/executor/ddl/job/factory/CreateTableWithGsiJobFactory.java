@@ -162,6 +162,7 @@ public class CreateTableWithGsiJobFactory extends DdlJobFactory {
 
                 // Add exclusive resources
                 result.addExcludeResources(cciJob.getExcludeResources());
+                result.addExcludeResources(cciJob.getExcludeResources());
             } else {
                 // Global secondary index
                 ExecutableDdlJob4CreateGsi gsiJob = (ExecutableDdlJob4CreateGsi)

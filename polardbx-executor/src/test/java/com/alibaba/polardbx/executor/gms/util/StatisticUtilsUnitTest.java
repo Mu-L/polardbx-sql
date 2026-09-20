@@ -15,6 +15,7 @@ import com.alibaba.polardbx.optimizer.config.table.GsiMetaManager;
 import com.alibaba.polardbx.optimizer.config.table.IndexMeta;
 import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
+import com.alibaba.polardbx.optimizer.config.table.statistic.Histogram;
 import com.alibaba.polardbx.optimizer.config.table.statistic.StatisticManager;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.google.common.collect.ImmutableList;
@@ -543,6 +544,45 @@ public class StatisticUtilsUnitTest {
 
             StatisticUtils.buildTopnAndHistogram(schema, table, analyzeColumnList, Lists.newArrayList(), null, 1.0f,
                 1.0, 10, false);
+        }
+
+    }
+
+    @Test
+    public void testBuildTopnAndHistogram2() {
+        MetaDbInstConfigManager.setConfigFromMetaDb(false);
+
+        String schema = "test_schema";
+        String table = "test_table";
+        String columnName = "id";
+        StatisticManager statisticManager = mock(StatisticManager.class);
+        StatisticManager.CacheLine cacheLine = mock(StatisticManager.CacheLine.class);
+        Map<String, Histogram> histogramMap = Maps.newHashMap();
+        histogramMap.put(columnName, mock(Histogram.class));
+
+        when(statisticManager.getCacheLine(anyString(), anyString())).thenReturn(cacheLine);
+        when(cacheLine.getHistogramMap()).thenReturn(histogramMap);
+
+        List<ColumnMeta> analyzeColumnList = Lists.newArrayList();
+        analyzeColumnList.add(
+            new ColumnMeta("schema", "table", "column", new Field("1", columnName,
+                TYPE_FACTORY.createSqlType(SqlTypeName.BIGINT))));
+
+        try (MockedStatic<StatisticManager> statisticManagerMockedStatic = mockStatic(StatisticManager.class);
+            MockedStatic<StatisticUtils> statisticUtilsMockedStatic = mockStatic(StatisticUtils.class);) {
+            statisticManagerMockedStatic.when(StatisticManager::getInstance).thenReturn(statisticManager);
+            statisticUtilsMockedStatic.when(() -> StatisticUtils.canUseNewTopN(anyString(), anyString(), anyString()))
+                .thenReturn(true);
+            statisticUtilsMockedStatic.when(
+                () -> StatisticUtils.buildTopnAndHistogram(anyString(), anyString(), anyList(), anyList(),
+                    any(), anyFloat(), anyDouble(), anyInt(), anyBoolean())).thenCallRealMethod();
+            statisticUtilsMockedStatic.when(() -> StatisticUtils.removeHistogramIfPresent(any(), anyString()))
+                .thenCallRealMethod();
+
+            StatisticUtils.buildTopnAndHistogram(schema, table, analyzeColumnList, Lists.newArrayList(), null, 1.0f,
+                1.0, 10, false);
+
+            Assert.assertTrue(histogramMap.isEmpty());
         }
 
     }

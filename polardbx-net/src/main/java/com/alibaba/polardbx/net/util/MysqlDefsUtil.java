@@ -371,7 +371,7 @@ public final class MysqlDefsUtil {
         StringBuilder sb = new StringBuilder();
         sb.append(year).append('-').append(month).append('-').append(day).append(' ');
         sb.append(hour).append(':').append(minute).append(':').append(second).append('.');
-        sb.append(millisecond);
+        sb.append(millisecond < 100000 ? String.format("%06d", millisecond) : millisecond);
 
         return sb.toString();
     }

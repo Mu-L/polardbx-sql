@@ -1,0 +1,91 @@
+## DISABLE_FAST_SQL_PARSER
+select pattrngd2p256i(0)
+pattrngd2p256i(0)
+7
+select pattrngd2p256i(64)
+pattrngd2p256i(64)
+1
+select pattrngd2p256i(98)
+pattrngd2p256i(98)
+3
+select pattrngd2p256i(128)
+pattrngd2p256i(128)
+3
+select pattrngd2p256i(129)
+pattrngd2p256i(129)
+4
+select pattrngd2p256i(257)
+pattrngd2p256i(257)
+0
+select pattrngd2p256i(289)
+pattrngd2p256i(289)
+1
+drop tablegroup if exists tg_dble_udf7
+create tablegroup if not exists tg_dble_udf7
+partition by udf_hash(bigint)
+partition 9
+(
+partition p0 values less than (1),
+partition p1 values less than (2),
+partition p2 values less than (3),
+partition p3 values less than (4),
+partition p4 values less than (5),
+partition p5 values less than (6),
+partition p6 values less than (7),
+partition p7 values less than (8),
+partition pm values less than (9223372036854775807)
+)
+drop table if exists uh_t7
+create table uh_t7(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(pattrngd2p256i(c1))
+tablegroup=tg_dble_udf7
+insert into uh_t7 values (0,0)
+insert into uh_t7 values (64,2000000)
+insert into uh_t7 values (98,2000001)
+insert into uh_t7 values (128,4000000)
+insert into uh_t7 values (129,4000001)
+insert into uh_t7 values (257,6000000)
+insert into uh_t7 values (289,6000001)
+select c1, part_route('', 'uh_t7', c1) as route_rs, part_hash('', 'uh_t7', c1) as hash_rs from uh_t7 where c1=0
+c1,route_rs,hash_rs
+0,p7,(7)
+select c1, part_route('', 'uh_t7', c1) as route_rs, part_hash('', 'uh_t7', c1) as hash_rs from uh_t7 where c1=64
+c1,route_rs,hash_rs
+64,p1,(1)
+select c1, part_route('', 'uh_t7', c1) as route_rs, part_hash('', 'uh_t7', c1) as hash_rs from uh_t7 where c1=98
+c1,route_rs,hash_rs
+98,p3,(3)
+select c1, part_route('', 'uh_t7', c1) as route_rs, part_hash('', 'uh_t7', c1) as hash_rs from uh_t7 where c1=128
+c1,route_rs,hash_rs
+128,p3,(3)
+select c1, part_route('', 'uh_t7', c1) as route_rs, part_hash('', 'uh_t7', c1) as hash_rs from uh_t7 where c1=129
+c1,route_rs,hash_rs
+129,p4,(4)
+select c1, part_route('', 'uh_t7', c1) as route_rs, part_hash('', 'uh_t7', c1) as hash_rs from uh_t7 where c1=257
+c1,route_rs,hash_rs
+257,p0,(0)
+select c1, part_route('', 'uh_t7', c1) as route_rs, part_hash('', 'uh_t7', c1) as hash_rs from uh_t7 where c1=289
+c1,route_rs,hash_rs
+289,p1,(1)
+show create table uh_t7
+Table,Create Table
+uh_t7,CREATE TABLE `uh_t7` (
+	`c1` bigint(20) NOT NULL,
+	`c2` bigint(20) NOT NULL,
+	KEY `auto_shard_key_c1` USING BTREE (`c1`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY UDF_HASH(pattrngd2p256i(`c1`))
+PARTITIONS 9
+(PARTITION p0 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p1 VALUES LESS THAN (2) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (3) ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN (4) ENGINE = InnoDB,
+ PARTITION p4 VALUES LESS THAN (5) ENGINE = InnoDB,
+ PARTITION p5 VALUES LESS THAN (6) ENGINE = InnoDB,
+ PARTITION p6 VALUES LESS THAN (7) ENGINE = InnoDB,
+ PARTITION p7 VALUES LESS THAN (8) ENGINE = InnoDB,
+ PARTITION pm VALUES LESS THAN (9223372036854775807) ENGINE = InnoDB)
+tablegroup = `tg_dble_udf7`

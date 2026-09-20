@@ -1,0 +1,188 @@
+SQL:
+  - sql: |
+      # if not exists
+      CREATE ROUTING_RULE IF NOT EXISTS `rule_name` TO 'user_name' WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule if not exists `rule_name` to 'user_name' with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE `rule_name` TO 'user_name' WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule `rule_name` to 'user_name' with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE IF EXISTS `rule_name` TO 'user_name' WITH TYPE="HTAP"
+    plan: |
+      err-code: [pxc-4500][err_parser] syntax error, error in :'e if exists `rule_name` to 'user_na', expect not, actual exists, pos 29, line 1, column 24, token exists
+  - sql: |
+      # rule name 
+      CREATE ROUTING_RULE `rule_name,xx` TO 'user_name' WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule `rule_name,xx` to 'user_name' with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE "rule_name" TO 'user_name' WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule `rule_name` to 'user_name' with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE rule_name,gg TO 'user_name' WITH TYPE="HTAP"
+    plan: |
+      err-code: [pxc-4500][err_parser] syntax error, error in :'routing_rule rule_name,gg to 'user_name' wi', expect to, actual ,, pos 30, line 1, column 30, token ,
+  - sql: |
+      CREATE ROUTING_RULE rule_name TO 'user_name' WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule `rule_name` to 'user_name' with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE 'rule_name,123' TO 'user_name' WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule `rule_name,123` to 'user_name' with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE rule_name TO '\`user_name\'\\' WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule `rule_name` to '`user_name''\' with `type` = 'htap'")
+  - sql: |
+      # user name
+      CREATE ROUTING_RULE rule_name TO 'user_name' WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule `rule_name` to 'user_name' with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE rule_name TO "user_name" WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule `rule_name` to 'user_name' with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE rule_name TO "user_name%" WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule `rule_name` to 'user_name%' with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE rule_name TO `user_name%` WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule `rule_name` to 'user_name%' with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE IF NOT EXISTS  rule_name TO `%` WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule if not exists `rule_name` to '%' with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE IF NOT EXISTS  rule_name TO `%`@`%` WITH TYPE="HTAP"
+    plan: |
+      err-code: [pxc-4500][err_parser] syntax error, error in :'o `%`@`%` with type="htap"
+      ', expect with, actual null, pos 55, line 1, column 52, token variant
+  - sql: |
+      CREATE ROUTING_RULE rule_name TO % WITH TYPE="HTAP"
+    plan: |
+      err-code: [pxc-4500][err_parser] illegal name, pos 34, line 1, column 34, token %
+  - sql: |
+      CREATE ROUTING_RULE rule_name TO 123 WITH TYPE="HTAP"
+    plan: |
+      err-code: [pxc-4500][err_parser] illegal name, pos 36, line 1, column 34, token literal_int
+  - sql: |
+      CREATE ROUTING_RULE rule_name TO ggg WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule `rule_name` to 'ggg' with `type` = 'htap'")
+  - sql: |
+      # template
+      CREATE ROUTING_RULE IF NOT EXISTS `rule_name` TO 'user_name' FILTER BY TEMPLATE('gg') WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule if not exists `rule_name` to 'user_name' filter by template('gg') with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE `rule_name` TO 'user_name' FILTER BY TEMPLATE 'gg' WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule `rule_name` to 'user_name' filter by template('gg') with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE `rule_name` TO 'user_name' FILTER BY TEMPLATE 1231 WITH TYPE="HTAP"
+    plan: |
+      err-code: [pxc-4500][err_parser] syntax error, failed to parse values of filter by template, pos 75, line 1, column 72, token with
+  - sql: |
+      CREATE ROUTING_RULE `rule_name` TO 'user_name' FILTER BY template ("1231") WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule `rule_name` to 'user_name' filter by template('1231') with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE IF NOT EXISTS `rule_name` TO 'user_name' FILTER BY TEMPLATE('gg','gg') WITH TYPE="HTAP"
+    plan: |
+      err-code: [pxc-4500][err_parser] syntax error, failed to parse values of filter by template, pos 95, line 1, column 92, token with
+  - sql: |
+      CREATE ROUTING_RULE `rule_name` TO 'user_name' FILTER BY TEMPLATE ('1231') WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule `rule_name` to 'user_name' filter by template('1231') with `type` = 'htap'")
+  - sql: |
+      # keywords
+      CREATE ROUTING_RULE IF NOT EXISTS `rule_name` TO 'user_name' FILTER BY KEYWORD('gg') WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule if not exists `rule_name` to 'user_name' filter by keyword('gg') with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE IF NOT EXISTS `rule_name` TO 'user_name' FILTER BY KEYWORD('gg',"aa",`g@ege`) WITH TYPE="HTAP"
+    plan: |
+      err-code: [pxc-4500][err_parser] syntax error, failed to parse values of filter by keyword, pos 102, line 1, column 99, token with
+  - sql: |
+      CREATE ROUTING_RULE IF NOT EXISTS `rule_name` TO 'user_name' FILTER BY KEYWORD 123,"aa" WITH TYPE="HTAP"
+    plan: |
+      err-code: [pxc-4500][err_parser] syntax error, failed to parse values of filter by keyword, pos 83, line 1, column 83, token ,
+  - sql: |
+      CREATE ROUTING_RULE IF NOT EXISTS `rule_name` TO 'user_name' FILTER BY KEYWORD('gg',"aa",'g@ege') WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule if not exists `rule_name` to 'user_name' filter by keyword('gg', 'aa', 'g@ege') with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE IF NOT EXISTS `rule_name` TO 'user_name' FILTER BY KEYWORD 'gg',"aa",'g@ege' WITH TYPE="HTAP"
+    plan: |
+      err-code: [pxc-4500][err_parser] syntax error, error in :'filter by keyword 'gg',"aa",'g@ege' with', expect with, actual ,, pos 84, line 1, column 84, token ,
+  - sql: |
+      # type
+      CREATE ROUTING_RULE IF NOT EXISTS `rule_name` TO 'user_name' FILTER BY TEMPLATE('gg') WITH TYPE="HTAP"
+    plan: |
+      logicalroutingrule(sql="create routing_rule if not exists `rule_name` to 'user_name' filter by template('gg') with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE IF NOT EXISTS `rule_name` TO 'user_name' FILTER BY TEMPLATE('gg') WITH TYPE=HTAP
+    plan: |
+      logicalroutingrule(sql="create routing_rule if not exists `rule_name` to 'user_name' filter by template('gg') with `type` = 'htap'")
+  - sql: |
+      CREATE ROUTING_RULE IF NOT EXISTS `rule_name` TO 'user_name' FILTER BY TEMPLATE('gg') WITH gg=kk
+    plan: |
+      err-code: [pxc-4500][err_parser] unknown with gg, expected type
+  - sql: |
+      CREATE ROUTING_RULE IF NOT EXISTS `rule_name` TO 'user_name' FILTER BY TEMPLATE('gg') WITH type=1
+    plan: |
+      err-code: [pxc-4500][err_parser] unknown type 1, expected follower | stale | row | columnar | htap
+  - sql: |
+      CREATE ROUTING_RULE IF NOT EXISTS `rule_name` TO 'user_name' FILTER BY TEMPLATE('gg') WITH gg=1, TYPE=HTAP
+    plan: |
+      err-code: [pxc-4500][err_parser] syntax error, error in :'h gg=1, type=htap
+      , pos 96, line 1, column 96, token ,
+  - sql: |
+      CREATE ROUTING_RULE `rule_name` TO 'user_name' FILTER BY TEMPLATE('gg') WITH TYPE=row
+    plan: |
+      logicalroutingrule(sql="create routing_rule `rule_name` to 'user_name' filter by template('gg') with `type` = 'row'")
+  - sql: |
+      CREATE ROUTING_RULE `rule_name` TO 'user_name' FILTER BY TEMPLATE('gg') WITH TYPE=COLUMNAR
+    plan: |
+      logicalroutingrule(sql="create routing_rule `rule_name` to 'user_name' filter by template('gg') with `type` = 'columnar'")
+  - sql: |
+      CREATE ROUTING_RULE `rule_name` TO 'user_name' FILTER BY TEMPLATE('gg') keyword('kk') WITH TYPE=COLUMNAR
+    plan: |
+      err-code: [tddl-4500][err_parser] syntax error, error in :'gg') keyword('kk') with type=column', expect with, actual null, pos 79, line 1, column 73, token identifier keyword
+  - sql: |
+      CREATE ROUTING_RULE `rule_name` TO 'user_name' FILTER BY TEMPLATE('gg') WITH null=null
+    plan: |
+      err-code: [pxc-4500][err_parser] unknown with null, expected type
+  - sql: |
+      # lower case
+      create routing_rule if not exists `rule_name` to 'user_name' filter by template('gg') with type=columnar
+    plan: |
+      logicalroutingrule(sql="create routing_rule if not exists `rule_name` to 'user_name' filter by template('gg') with `type` = 'columnar'")
+  - sql: |
+      # follower
+      create routing_rule if not exists `rule_name` to 'user_name' filter by template('gg') with type=follower
+    plan: |
+      err-code: [tddl-4500][err_parser] follower type doesn't support templateid
+  - sql: |
+      create routing_rule if not exists `rule_name` to 'user_name' filter by keyword('kk') with type=FOLLOWER
+    plan: |
+      err-code: [tddl-4500][err_parser] follower type doesn't support keywords
+  - sql: |
+      create routing_rule `rule_name` to 'user_name' with type=FOLLOWER
+    plan: |
+      logicalroutingrule(sql="create routing_rule `rule_name` to 'user_name' with `type` = 'follower'")
+  - sql: |
+      create routing_rule if not exists `$inner$_user_name` to 'user_name' with type=FOLLOWER
+    plan: |
+      logicalroutingrule(sql="create routing_rule if not exists `$inner$_user_name` to 'user_name' with `type` = 'follower'")
+DDL:
+STATISTICS:
+CONFIG:
+  defaltxxAPPName.isNew:
+    true

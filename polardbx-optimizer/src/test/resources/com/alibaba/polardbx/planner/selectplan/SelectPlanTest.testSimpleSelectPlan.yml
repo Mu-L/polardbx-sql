@@ -6,8 +6,8 @@
 
   plan: |
 
-    Gather(concurrent=true)
-      LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id` FROM `test_hash_tb` AS `test_hash_tb` WHERE (`name` = 'xx')")
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id` from `test_hash_tb` as `test_hash_tb` where (`name` = 'xx')")
 
 - sql: |
     SELECT COUNT(*)
@@ -16,51 +16,57 @@
 
   plan: |
 
-    HashAgg(COUNT(*)="SUM(COUNT(*))")
-      Gather(concurrent=true)
-        LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT COUNT(*) AS `COUNT(*)` FROM `test_hash_tb` AS `test_hash_tb` WHERE (NOT (`id` BETWEEN `name` AND 62))")
+    hashagg(count(*)="sum(count(*))")
+      gather(concurrent=true)
+        logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select count(*) as `count(*)` from `test_hash_tb` as `test_hash_tb` where (not (`id` between `name` and 62))")
 
 - sql: |
     SELECT * FROM func_group_t1_68 WHERE pk<2
 
   plan: |
 
-    Gather(concurrent=true)
-      LogicalView(tables="[0000-0003].func_group_t1_68_[00-14]", shardCount=15, sql="SELECT `pk`, `i` FROM `func_group_t1_68` AS `func_group_t1_68` WHERE (`pk` < 2)")
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].func_group_t1_68_[00-14]", shardcount=15, sql="select `pk`, `i` from `func_group_t1_68` as `func_group_t1_68` where (`pk` < 2)")
 
 - sql: |
     /*+TDDL:enable_broadcast_random_read=false*/ select((yearweek(timestamp_test  ))  >(66) )as A, null as B  from corona_select_broadcast   GROUP BY  1, 2     order by 1,2  limit 24,15 ;
 
   plan: |
+
     logicalview(tables="optest_0000.corona_select_broadcast", sql="select (yearweek(`corona_select_broadcast`.`timestamp_test`) > 66) as `a`, null as `b` from `corona_select_broadcast` as `corona_select_broadcast` group by (yearweek(`corona_select_broadcast`.`timestamp_test`) > 66), null order by 1, 2 limit 15 offset 24")
 
 - sql: |
     select * from  performance_schema.global_variables;
 
   plan: |
-    VirtualView(virtualViewType="GLOBAL_VARIABLES")
+
+    virtualview(virtualviewtype="global_variables")
 
 - sql: |
     select * from  performance_schema.session_variables;
 
   plan: |
-    VirtualView(virtualViewType="SESSION_VARIABLES")
+
+    virtualview(virtualviewtype="session_variables")
 
 - sql: |
     select * from  performance_schema.global_status;
 
   plan: |
-    VirtualView(virtualViewType="GLOBAL_STATUS")
+
+    virtualview(virtualviewtype="global_status")
 
 - sql: |
     select * from  performance_schema.session_status;
 
   plan: |
-    VirtualView(virtualViewType="SESSION_STATUS")
+
+    virtualview(virtualviewtype="session_status")
 
 - sql: |
     select * from test_hash_tb where name not REGEXP '^.+_[0-9]+$'
 
   plan: |
-    Gather(concurrent=true)
-      LogicalView(tables="[0000-0003].test_hash_tb", shardCount=4, sql="SELECT `id`, `name`, `create_time` FROM `test_hash_tb` AS `test_hash_tb` WHERE (`name` NOT REGEXP '^.+_[0-9]+$')")
+
+    gather(concurrent=true)
+      logicalview(tables="[0000-0003].test_hash_tb", shardcount=4, sql="select `id`, `name`, `create_time` from `test_hash_tb` as `test_hash_tb` where (`name` not regexp '^.+_[0-9]+$')")

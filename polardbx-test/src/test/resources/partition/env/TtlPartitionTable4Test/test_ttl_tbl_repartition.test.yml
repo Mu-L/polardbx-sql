@@ -29,12 +29,18 @@ ttl_cleanup='on',
 archive_table_post_allocate=2,
 archive_table_pre_allocate=4;
   
-## error_msg: $# not allowed #$
 alter table ttl_repart_t1 single;
-  
+show create table ttl_repart_t1;
+
+alter table ttl_repart_t1
+partition by range columns(b)
+(
+partition p1 values less than ('2024-01-01'),
+partition p2 values less than ('2024-02-01')
+);
+
 ## error_msg: $# not allowed #$
 alter table ttl_repart_t1 broadcast;
-
 
 show create table ttl_repart_t1;
 alter table ttl_repart_t1 partition by key(a) partitions 3;

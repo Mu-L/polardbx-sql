@@ -33,7 +33,6 @@ public interface MultiUnionAllLookupTableExec extends LookupTableExec {
             ParamsDynamicJdbcSplit dynamicSplit = new ParamsDynamicJdbcSplit(
                 jdbcSplit, chunk, true);
             dynamicSplit.setLimit(jdbcSplit.getLimit());
-            dynamicSplit.setLimit(jdbcSplit.getLimit());
             reserveSize += jdbcSplit.getSqlTemplate().size() * chunk.getPositionCount();
             scanClient.addSplit(split.copyWithSplit(dynamicSplit));
         }

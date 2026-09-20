@@ -238,6 +238,12 @@ public class SqlShow extends SqlDal {
             }
         }
 
+        if (this instanceof SqlShowCreateTable) {
+            if (((SqlShowCreateTable) this).isForExport()) {
+                writer.print("FOR EXPORT");
+            }
+        }
+
         if (selectList.size() != 0) {
             selectList.unparse(writer, leftPrec, rightPrec);
         }

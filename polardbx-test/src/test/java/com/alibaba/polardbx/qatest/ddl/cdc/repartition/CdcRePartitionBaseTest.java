@@ -1487,6 +1487,11 @@ public class CdcRePartitionBaseTest extends CdcBaseTest {
 
     protected void checkAfterAlterTablePartition(DdlCheckContext ddlCheckContext, String sql,
                                                  String tableName) {
+        checkAfterAlterTablePartition(ddlCheckContext, sql, tableName, 1);
+    }
+
+    protected void checkAfterAlterTablePartition(DdlCheckContext ddlCheckContext, String sql,
+                                                 String tableName, int incrementCount) {
         commonCheckExistsAfterDdlWithCallback(ddlCheckContext, dbName, tableName, sql, p -> {
             List<DdlRecordInfo> afterList = p.getValue();
 
@@ -1496,7 +1501,7 @@ public class CdcRePartitionBaseTest extends CdcBaseTest {
 
             checkImplicitTableGroup(ddlCheckContext, dbName, tableName,
                 Sets.newHashSet(queryTableGroup(dbName, tableName)), afterList.get(0).getEffectiveSql());
-        });
+        }, incrementCount);
     }
 
     protected void checkAfterAlterTableGroup(DdlCheckContext ddlCheckContext, String tableGroup, String expectSql,
@@ -1568,16 +1573,23 @@ public class CdcRePartitionBaseTest extends CdcBaseTest {
             Assert.assertEquals("CREATE_TABLE", afterList.get(0).getSqlKind());
             Assert.assertEquals(queryTopology(tableName), afterList.get(0).getTopology());
             Assert.assertNotEquals(expectSql, afterList.get(0).getEffectiveSql());
-            Assert.assertTrue(StringUtils.containsIgnoreCase(afterList.get(0).getEffectiveSql(), "implicit"));
-
-            checkImplicitTableGroup(checkContext, dbName, tableName,
-                Sets.newHashSet(queryTableGroup(dbName, tableName)), afterList.get(0).getEffectiveSql());
-        });
+            if (supportImplicitTableGroup()) {
+                logger.warn("check implicit table group");
+                Assert.assertTrue(StringUtils.containsIgnoreCase(afterList.get(0).getEffectiveSql(), "implicit"));
+                checkImplicitTableGroup(checkContext, dbName, tableName,
+                    Sets.newHashSet(queryTableGroup(dbName, tableName)), afterList.get(0).getEffectiveSql());
+            }
+        }, 1);
     }
 
     @SneakyThrows
     protected void checkImplicitTableGroup(DdlCheckContext checkContext, String dbName, String tableName,
                                            Set<String> expectTableGroups, String markSql) {
+        if (!supportImplicitTableGroup()) {
+            logger.warn("skip check implicit table group");
+            return;
+        }
+
         Set<String> tableGroups = new HashSet<>();
         implicitTableGroupChecker.checkSql(dbName, tableName, markSql, tableGroups);
         Assert.assertEquals(expectTableGroups, tableGroups);

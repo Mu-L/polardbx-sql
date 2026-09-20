@@ -16,21 +16,22 @@
 
 package com.alibaba.polardbx.qatest.ddl.auto.partition;
 
+import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.druid.sql.ast.SQLStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlHintStatement;
 import com.alibaba.polardbx.optimizer.parse.FastsqlUtils;
 import com.alibaba.polardbx.qatest.ddl.auto.columnar.CreateCciTest;
 import com.alibaba.polardbx.qatest.util.ConnectionManager;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
+import com.alibaba.polardbx.qatest.util.PropertiesUtil;
 import com.alibaba.polardbx.server.util.StringUtil;
-import lombok.Data;
+import org.apache.commons.lang.BooleanUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
@@ -40,16 +41,15 @@ import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Map;
+import java.util.Properties;
+import java.util.TreeMap;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 
@@ -71,6 +71,8 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
 
     protected static final String DISABLE_FAST_SQL_PARSER_FALG = "DISABLE_FAST_SQL_PARSER";
     protected static final String RESERVE_SEMICOLONS_FLAG = "RESERVE_SEMICOLONS";
+    protected static final String LOCALITY_DN_LIST_FLAG = "LOCALITY_DN_LIST";
+    protected static final String USE_DN_LIST_MSG = "## USE_DN_LIST_MSG";
     protected static final String SQL_ERROR_MSG = "## ERROR_MSG";
     protected static final String SQL_ERROR_MSG_BEGIN_FLAG = "$#";
     protected static final String SQL_ERROR_MSG_END_FLAG = "#$";
@@ -79,6 +81,9 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
 
     protected static final String DISABLE_AUTO_PART = "set @auto_partition=0;";
     protected static final String ENABLE_AUTO_PART = "set @auto_partition=1;";
+
+    protected static final String DEFAULT_UDF_DELIMITER = "|";
+    protected static final String NEW_UDF_DELIMITER = "$";
 
     static {
         if (isMySQL80()) {
@@ -92,6 +97,9 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
     }
 
     protected AutoLoadSqlTestCaseParams params;
+    protected String udfDelimiter = DEFAULT_UDF_DELIMITER;
+
+    protected boolean columnNameUpperCase = false;
 
     public static class AutoLoadSqlTestCaseParams {
         public boolean supportAutoPart = false;
@@ -105,6 +113,12 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
         public String tcName;
         public String testDbName;
         public Class testClass;
+
+        /**
+         * 只输出测试用例的执行结果到某个文件内，不和预期内容进行比较
+         */
+        public boolean debugPrint = false;
+        public boolean dropDbAfterCheck = true;
 
         public AutoLoadSqlTestCaseParams(String tcName,
                                          Class testClass,
@@ -171,6 +185,9 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
 
         public boolean reserveSemiColons = false;
         public boolean disableFastSqlParser = false;
+        public boolean useLocalityDnList = false;
+        public List<String> localityDnList = new ArrayList<>();
+        public Map<String, String> dnIdMappings = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
     }
 
     protected void runOneTestCaseInner(AutoLoadSqlTestCaseParams params) {
@@ -188,6 +205,7 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
             exceptedResult = exceptedResult.trim();
             try {
                 conn = ConnectionManager.getInstance().newPolarDBXConnection();
+                JdbcUtil.disableExplainShowPhysicalPlan(conn);
                 JdbcUtil.dropDatabase(conn, dbName);
                 if ("PartitionTablePartRouteTest".equalsIgnoreCase(testClassName)
                     || "TableReorgTest".equalsIgnoreCase(testClassName)) {
@@ -195,11 +213,13 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
                 } else {
                     JdbcUtil.createPartDatabase(conn, dbName);
                 }
-                applyResourceFileIfExists(dbName, tcName.toLowerCase(), testClass);
+                applyResourceFileIfExists(conn, dbName, tcName.toLowerCase(), udfDelimiter, testClass);
                 JdbcUtil.disableAutoForceIndex(conn);
                 testResult = runTestBySourceSql(tcName.toLowerCase(), supportAutoPart, testClass, dbName, conn,
-                    s -> applySubstitute(s), resultOptions);
-                JdbcUtil.dropDatabase(conn, dbName);
+                    s -> applySubstitute(s), resultOptions, columnNameUpperCase);
+                if (params.dropDbAfterCheck) {
+                    JdbcUtil.dropDatabase(conn, dbName);
+                }
             } catch (Throwable ex) {
                 throw ex;
             }
@@ -223,7 +243,9 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
                 .replaceAll("tablegroup = `single_tg[0-9]{1,}` \\*/", "tablegroup = `single_tg` */");
 
             testResult = (params.ignoreAutoIncrement ?
-                testResult.replaceAll("AUTO_INCREMENT = [0-9]{1,}", "AUTO_INCREMENT = ignore_val") : testResult);
+                testResult.replaceAll(" ?AUTO_INCREMENT = [0-9]+", "") : testResult);
+            exceptedResult = (params.ignoreAutoIncrement ?
+                exceptedResult.replaceAll(" ?AUTO_INCREMENT = (ignore_val|[0-9]+)", "") : exceptedResult);
 
             exceptedResult =
                 params.supportAutoPart ? exceptedResult.replaceAll("#@#", "" + params.defaultPartitions) :
@@ -233,6 +255,14 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
             // Remove locality
             testResult =
                 params.ignoreLocality ? testResult.replaceAll("LOCALITY='dn=.*'", "LOCALITY='dn=\\$dn1'") : testResult;
+
+            // remove PlanInfo Id ;
+            testResult = testResult.replaceAll("PlanInfo Id:\\s+-?\\d+\n", "");
+            exceptedResult = exceptedResult.replaceAll("PlanInfo Id:\\s+-?\\d+\n", "");
+
+            // remove BaselineInfo Id ;
+            testResult = testResult.replaceAll("BaselineInfo Id:\\s+-?\\d+\n", "");
+            exceptedResult = exceptedResult.replaceAll("BaselineInfo Id:\\s+-?\\d+\n", "");
 
             // remove HitCache and ;
             if (!needReserveSemiColons) {
@@ -265,10 +295,15 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
                     tmpRs = tmpRs.replace(" CHARSET `utf8mb4` COLLATE `utf8mb4_general_ci`", "");
                     tmpRs = tmpRs.replace(" CHARACTER SET utf8mb4", "");
 
+                    tmpRs = tmpRs.replace(" DEFAULT CHARSET = utf8mb3", " DEFAULT CHARSET = utf8");
+
                     tmpRs = tmpRs.replace("DEFAULT_GENERATED ", "");
                     tmpRs = tmpRs.replace("DEFAULT_GENERATED", "");
 
                     tmpRs = tmpRs.replace("USING HASH ", "");
+
+                    tmpRs = tmpRs.replace("Source:SPM_ACCEPT", "Source:");
+                    tmpRs = tmpRs.replace("Source:PLAN_CACHE", "Source:");
 
                     tmpRs = tmpRs.replace("bigint(20)", "bigint");
                     tmpRs = tmpRs.replace("bigint(11)", "bigint");
@@ -305,11 +340,20 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
 
             buildAndPrintTestInfo(testClassName, tcName, testResult, exceptedResult);
             // Want to generate expected result? Uncommented it. Run your test case. Find results in /tmp/xxx.result
-//            Files.write(Paths.get("/tmp/" + tcName + ".result"), testResult.getBytes(StandardCharsets.UTF_8));
+            writeFileContent(testResult, "/tmp/" + tcName + ".result", false);
+            if (params.debugPrint) {
+                //只输出测试结果到文件，不比较
+                String fileName = "/tmp/" + tcName + ".result";
+                System.out.println("OutFile: " + fileName);
+                writeFileContent(testResult, fileName, false);
+                return;
+            }
             // The result of ShowDalTest is variable in different environment(e.g. show status)
             // therefore we only guarantee the result do not contain ERROR
-            if ("ShowDalTest".equalsIgnoreCase(testClassName)) {
+            if ("ShowDalVariableTest".equalsIgnoreCase(testClassName)) {
                 Assert.assertTrue(!testResult.startsWith("ERROR"));
+            } else if ("ShowDalTest".equalsIgnoreCase(testClassName)) {
+                Assert.assertTrue(exceptedResult.length() == testResult.length());
             } else {
                 if (CreateCciTest.class.getSimpleName().equalsIgnoreCase(testClassName)) {
                     testResult = testResult.replaceAll("ENGINE=EXTERNAL_DISK", "ENGINE=OSS");
@@ -336,7 +380,12 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
         }
     }
 
-    void applyResourceFileIfExists(String dbName, String testCaseName, Class testClass) throws IOException {
+    public void applyResourceFileIfExists(Connection conn,
+                                          String dbName,
+                                          String testCaseName,
+                                          String delimiter,
+                                          Class testClass)
+        throws IOException {
         String fileName = String.format(RESOURCE_FILE_TEMPLATE, testClass.getSimpleName(), testCaseName);
         URL in = testClass.getClassLoader().getResource(fileName);
         if (in == null) {
@@ -347,14 +396,16 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
         // Execute each SQL statement
         StringBuilder sb = new StringBuilder();
         String line;
+        Connection tarConn = conn;
         while ((line = br.readLine()) != null) {
             // Ignore comments and empty lines
-            if (!line.startsWith("--") && !line.trim().isEmpty()) {
+            if (!line.startsWith("--") && !line.trim().isEmpty() && !line.toLowerCase().startsWith("delimiter")) {
                 sb.append(line).append("\n");
-                if (line.endsWith("|")) { // End of statement
+                if (line.endsWith(delimiter)) { // End of statement
                     String sql = sb.toString();
-                    JdbcUtil.useDb(tddlConnection, dbName);
-                    JdbcUtil.executeSuccess(tddlConnection, sql.substring(0, sql.length() - 2));
+                    JdbcUtil.useDb(tarConn, dbName);
+                    String realSql = sql.substring(0, sql.length() - 2);
+                    JdbcUtil.executeSuccessWithoutEscape(tarConn, realSql);
                     sb.setLength(0); // Clear the StringBuilder
                 }
             }
@@ -433,13 +484,10 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
         return "";
     }
 
-    private boolean writeFileContent(String newResult, String fileName) {
+    private boolean writeFileContent(String newResult, String fileName, boolean append) {
         OutputStream out = null;
-        File file = null;
         try {
-            URL url = this.getClass().getClassLoader().getResource(fileName);
-            file = new File(url.toURI());
-            FileOutputStream fileOutputStream = new FileOutputStream(file);
+            FileOutputStream fileOutputStream = new FileOutputStream(fileName, append);
             out = fileOutputStream;
             OutputStreamWriter outputStreamWriter = new OutputStreamWriter(out);
             outputStreamWriter.write(newResult);
@@ -520,7 +568,8 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
                                                String db,
                                                Connection testConn,
                                                Function<String, String> applySubstitute,
-                                               TestCaseResultOptions resultOptions) throws Exception {
+                                               TestCaseResultOptions resultOptions,
+                                               boolean columnNameUpperCase) throws Exception {
 
         try {
 
@@ -529,7 +578,7 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
             sql = sql.replace("$db_name$", db);
 
             return runTestBySql(testCaseName, sql, isSupportAutoPart, testClass, db, testConn, applySubstitute,
-                resultOptions);
+                resultOptions, columnNameUpperCase);
         } catch (Throwable e) {
             e.printStackTrace();
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -543,16 +592,64 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
 
     public static String runTestBySql(String testCaseName, String sql, boolean isSupportAutoPart, Class testClass,
                                       String db, Connection testConn, Function<String, String> applySubstitute,
-                                      TestCaseResultOptions resultOptions)
+                                      TestCaseResultOptions resultOptions, boolean columnNameUpperCase)
         throws Throwable {
 
         String testClassName = testClass.getSimpleName();
         List<String> sqlList = new ArrayList<>();
         boolean needDisableFastSqlParserFlag = sql.contains(DISABLE_FAST_SQL_PARSER_FALG);
         boolean needReserveSemiColons = sql.contains(RESERVE_SEMICOLONS_FLAG);
+        boolean useLocalityDnList = sql.contains(LOCALITY_DN_LIST_FLAG);
         if (resultOptions != null) {
             resultOptions.reserveSemiColons = needReserveSemiColons;
             resultOptions.disableFastSqlParser = needDisableFastSqlParserFlag;
+            String localityDnListDefHint = "";
+            if (useLocalityDnList) {
+                List<String> tmpSqlList = new ArrayList<>();
+                extractSqlListByDelimiter(sql, tmpSqlList, ";");
+                for (int i = 0; i < tmpSqlList.size(); i++) {
+                    String tmpSql = tmpSqlList.get(i);
+                    if (tmpSql.contains(LOCALITY_DN_LIST_FLAG)) {
+                        localityDnListDefHint = tmpSql;
+                        break;
+                    }
+                }
+                if (!StringUtil.isEmpty(localityDnListDefHint)) {
+
+                    String[] localityDnListDefArr = localityDnListDefHint.split(":");
+                    String localityDnListStr = null;
+                    String[] localityDnListArr = null;
+                    List<String> localityDnListOfTestFiles = new ArrayList<>();
+                    if (localityDnListDefArr.length >= 2) {
+                        localityDnListStr = localityDnListDefArr[1].trim();
+                        if (localityDnListStr.contains(";")) {
+                            localityDnListStr = localityDnListStr.substring(0, localityDnListStr.length() - 1);
+                        }
+                        localityDnListArr = localityDnListStr.split(",");
+                    }
+                    for (int i = 0; i < localityDnListArr.length; i++) {
+                        localityDnListOfTestFiles.add(localityDnListArr[i].trim());
+                    }
+                    List<String> dnListDef = resultOptions.localityDnList;
+                    Map<String, String> dnIdMappings = resultOptions.dnIdMappings;
+                    try {
+                        dnListDef.addAll(localityDnListOfTestFiles);
+                        List<DnNodeInfo> dnInfos = getMasterDataNodesOrderByDnId(testConn);
+                        int realDnCnt = dnInfos.size();
+                        if (dnListDef.size() > realDnCnt) {
+                            Assert.fail("too more dnId defined");
+                        }
+                        for (int i = 0; i < dnListDef.size(); i++) {
+                            DnNodeInfo dnInfo = dnInfos.get(i);
+                            String defDnId = dnListDef.get(i);
+                            String realDnId = dnInfo.dnId;
+                            dnIdMappings.put(defDnId, realDnId);
+                        }
+                    } catch (Throwable ex) {
+                        Assert.fail(ex.getMessage());
+                    }
+                }
+            }
         }
         if (needDisableFastSqlParserFlag) {
             extractSqlListByDelimiter(sql, sqlList, ";");
@@ -582,8 +679,9 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
             JdbcUtil.useDb(conn, db);
             JdbcUtil.executeUpdate(conn, "clear plancache");
             JdbcUtil.executeUpdate(conn, "set ENABLE_MPP=false");
+            setVariable("collation_server", "utf8mb4_general_ci", conn);
             if (!isSupportAutoPart) {
-                execSqlAndPrintResult(DISABLE_AUTO_PART, false, conn, false);
+                execSqlAndPrintResult(DISABLE_AUTO_PART, false, conn, false, columnNameUpperCase);
             }
             for (int i = 0; i < sqlList.size(); i++) {
                 String sqlStmt = sqlList.get(i);
@@ -600,7 +698,18 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
                 if (applySubstitute != null) {
                     targetSqlStmt = applySubstitute.apply(sqlStmt);
                 }
-                String oneSqlResult = execSqlAndPrintResult(targetSqlStmt, false, conn, false);
+                if (targetSqlStmt.toUpperCase().contains(USE_DN_LIST_MSG)) {
+                    if (useLocalityDnList) {
+                        List<String> dnDefList = resultOptions.localityDnList;
+                        Map<String, String> dnMappings = resultOptions.dnIdMappings;
+                        for (int j = 0; j < dnDefList.size(); j++) {
+                            String defDn = dnDefList.get(j);
+                            String realDn = dnMappings.get(defDn);
+                            targetSqlStmt = targetSqlStmt.replace(defDn, realDn);
+                        }
+                    }
+                }
+                String oneSqlResult = execSqlAndPrintResult(targetSqlStmt, false, conn, false, columnNameUpperCase);
 
                 if (expectErrMsg != null && oneSqlResult.contains(expectErrMsg)) {
                     oneSqlResult = expectErrMsg;
@@ -613,7 +722,6 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
                     sb.append(printMsg).append('\n');
                     continue;
                 }
-
                 sb.append(sqlStmt);
                 sb.append('\n');
                 sb.append(oneSqlResult);
@@ -621,8 +729,15 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
                     sb.append('\n');
                 }
 
+                boolean isTestForMysql80 = isMySQL80();
+                String mysqlVer = "mysql57";
+                if (isTestForMysql80) {
+                    mysqlVer = "mysql80";
+                }
                 log.info(String
-                    .format("testClass[%s]/testCase[%s]-sql[%s]: sql:[%s], result:[%s]", testClassName,
+                    .format("%s:testClass[%s]/testCase[%s]-sql[%s]: sql:[%s], result:[%s]",
+                        mysqlVer,
+                        testClassName,
                         testCaseName, i,
                         sqlStmt, oneSqlResult));
             }
@@ -646,9 +761,10 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
     }
 
     protected static String execSqlAndPrintResult(String sql, boolean needGetErrMsg, Connection conn,
-                                                  boolean ignoredException)
+                                                  boolean ignoredException, boolean columnNameUpperCase)
         throws Throwable {
 
+        boolean ignoreRs = sql.toLowerCase().contains("ignore_result_set");
         StringBuilder sb = new StringBuilder("");
         try {
             if (sql.toLowerCase().contains("explain ")) {
@@ -669,7 +785,8 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
                         sb.append('\n');
                     }
                     ResultSet rs = stmt.getResultSet();
-                    List<List<String>> rsInfo = JdbcUtil.getAllStringResultWithColumnNames(rs, ignoredException, null);
+                    List<List<String>> rsInfo =
+                        JdbcUtil.getAllStringResultWithColumnNames(rs, ignoredException, null, columnNameUpperCase);
 
                     if (rsInfo != null &&
                         rsInfo.size() >= 1 &&
@@ -710,6 +827,9 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
 //            }
         }
 
+        if (ignoreRs) {
+            return "";
+        }
         return sb.toString();
     }
 
@@ -754,5 +874,58 @@ public abstract class PartitionAutoLoadSqlTestBase extends PartitionTestBase {
             rsInfo.get(i).set(0, explainContext);
         }
         return rsInfo;
+    }
+
+    /**
+     * A simplified representation of StorageNode
+     */
+    public static class DnNodeInfo {
+        public String dnId;
+        public String status;
+        public String instKind;
+        public boolean deletable;
+
+        public DnNodeInfo() {
+        }
+
+        public DnNodeInfo(String dbId, String instKind,
+                          String status, boolean deletable) {
+            this.dnId = dbId;
+            this.instKind = instKind;
+            this.status = status;
+            this.deletable = deletable;
+        }
+    }
+
+    public static List<DnNodeInfo> getMasterDataNodesOrderByDnId(Connection tddlConnection) {
+        final String showStorageSql = "show storage where INST_KIND='MASTER' order by STORAGE_INST_ID;";
+        /**
+         +---------------------------+----------------+------------+-----------+----------+-------------+--------+-----------+-------+--------+
+         | STORAGE_INST_ID           | LEADER_NODE    | IS_HEALTHY | INST_KIND | DB_COUNT | GROUP_COUNT | STATUS | DELETABLE | DELAY | ACTIVE |
+         +---------------------------+----------------+------------+-----------+----------+-------------+--------+-----------+-------+--------+
+         */
+        List<DnNodeInfo> res = new ArrayList<>();
+        try (ResultSet result = JdbcUtil.executeQuerySuccess(tddlConnection, showStorageSql)) {
+            while (result.next()) {
+                String dbId = result.getString("STORAGE_INST_ID");
+                String dnKind = result.getString("INST_KIND");
+                String status = result.getString("STATUS");
+                boolean deletable = BooleanUtils.toBoolean(result.getString("DELETABLE"));
+                DnNodeInfo dnNodeInfo = new DnNodeInfo();
+                dnNodeInfo.dnId = dbId;
+                dnNodeInfo.instKind = dnKind;
+                dnNodeInfo.status = status;
+                dnNodeInfo.deletable = deletable;
+                res.add(dnNodeInfo);
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException(e);
+        }
+//        LOG.info("getStorageInfo: " + res);
+        return res;
+    }
+
+    public synchronized Connection getPolardbxConnection() {
+        return getPolardbxConnection(PropertiesUtil.polardbXDBName1(usingNewPartDb()));
     }
 }

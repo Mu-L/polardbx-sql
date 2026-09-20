@@ -1,7 +1,7 @@
 ## DISABLE_FAST_SQL_PARSER
-## error_msg: $#failed with state PAUSED#$
+## error_msg: $#Simulation cdc mark task failed#$
 /*+TDDL:cmd_extra(SIM_CDC_FAILED=true)*/create table t_i1(a int, b int, c int) partition by key(a) partitions 4 with tablegroup = 'tg_i1' implicit;
-failed with state PAUSED
+Simulation cdc mark task failed
 create table t_i1(a int, b int, c int) partition by key(a) partitions 4 with tablegroup = 'tg_i1' implicit;
 show create table t_i1;
 Table,Create Table

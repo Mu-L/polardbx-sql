@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.operator.scan;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import org.apache.hadoop.fs.Path;
 import org.jetbrains.annotations.Nullable;
 
@@ -29,7 +31,9 @@ import java.util.Iterator;
  * @param <VECTOR> the class of a column in row group (value vector, array...)
  * @param <STATISTICS> the class of column statistics
  */
-public interface RowGroupIterator<VECTOR, STATISTICS> extends Iterator<Void> {
+public interface RowGroupIterator<VECTOR, STATISTICS> extends Iterator<Void>, MemoryCountable {
+    void open(OperatorMemoryOwnerId operatorMemoryOwnerId);
+
     Path filePath();
 
     int stripeId();
@@ -44,6 +48,9 @@ public interface RowGroupIterator<VECTOR, STATISTICS> extends Iterator<Void> {
      * @return bitmap of row groups
      */
     boolean[] rgIncluded();
+
+    // for reversed row-group iterator.
+    void reverse();
 
     /**
      * Seek to the first row group matched the clustering key range conjuncts.
@@ -88,6 +95,14 @@ public interface RowGroupIterator<VECTOR, STATISTICS> extends Iterator<Void> {
      */
     @Nullable
     CacheReader<VECTOR> getCacheReader(int columnId);
+
+    RowGroupIterator<VECTOR, STATISTICS> rebuild();
+
+    int getStartRowGroupId();
+
+    int getEffectiveGroupCount();
+
+    boolean enableBlockCache();
 
     void close(boolean force);
 }

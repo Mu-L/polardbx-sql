@@ -1,0 +1,49 @@
+DROP TABLE IF EXISTS `account_0`
+/*+TDDL:CMD_EXTRA(SKIP_DDL_TASKS="WaitColumnarTableCreationTask")*/CREATE TABLE `account_0` (
+	`id` BIGINT NOT NULL,
+	`balance` DECIMAL(10, 2) NOT NULL,
+	PRIMARY KEY (`id`)
+) COMMENT '__POLARDBX_BLOCK_CHAIN__'
+PARTITION BY KEY (`id`)
+SHOW FULL CREATE TABLE `account_0`
+Table,Create Table
+account_0,CREATE TABLE `account_0` (
+	`id` bigint(20) NOT NULL,
+	`balance` decimal(10, 2) NOT NULL,
+	`_polardbx_hash_digest_` char(64) GENERATED ALWAYS AS (sha2(concat_ws('|', `id`, `balance`), 256)) STORED,
+	PRIMARY KEY (`id`),
+	CLUSTERED COLUMNAR INDEX /* _cci_account_0_$ */ `_cci_account_0` (`id`)
+		PARTITION BY HASH(`id`)
+		PARTITIONS 16 ENGINE=OSS
+		COLUMNAR_OPTIONS='{
+			"TYPE":"HISTORY",
+		}'
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT '__POLARDBX_BLOCK_CHAIN__'
+PARTITION BY KEY(`id`)
+PARTITIONS 3
+/* tablegroup = `tg` */
+SHOW FULL CREATE TABLE `__account_0_hist`
+Table,Create Table
+__account_0_hist,CREATE TABLE `__account_0_hist` (
+	`block_id` bigint(20) NOT NULL AUTO_INCREMENT,
+	`trace_id` varchar(64) DEFAULT NULL,
+	`start_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+	`rec_num` bigint(20) DEFAULT '0',
+	`op_type` varchar(64) DEFAULT NULL,
+	`hash_ins` char(64) DEFAULT NULL,
+	`hash_del` char(64) DEFAULT NULL,
+	`block_hash` char(64) DEFAULT NULL,
+	`long_pk` bigint(20) DEFAULT NULL,
+	`bytes_pk` blob,
+	`tso` bigint(20) DEFAULT NULL,
+	`extra` longtext,
+	`gmt_created` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	`gmt_modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+	PRIMARY KEY (`block_id`),
+	LOCAL KEY `idx_trace_id_rec_num` (`trace_id`, `rec_num`),
+	LOCAL KEY `idx_tso` (`tso`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY KEY(`block_id`)
+PARTITIONS 16
+/* tablegroup = `tg` */
+DROP TABLE IF EXISTS `account_0`;

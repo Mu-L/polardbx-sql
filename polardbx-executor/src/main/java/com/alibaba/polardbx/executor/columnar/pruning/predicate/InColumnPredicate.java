@@ -19,6 +19,7 @@ package com.alibaba.polardbx.executor.columnar.pruning.predicate;
 import com.alibaba.polardbx.executor.columnar.pruning.index.BitMapRowGroupIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.BloomFilterIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.IndexPruneContext;
+import com.alibaba.polardbx.executor.columnar.pruning.index.MultiSortKeyIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.SortKeyIndex;
 import com.alibaba.polardbx.executor.columnar.pruning.index.ZoneMapIndex;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
@@ -70,7 +71,7 @@ public class InColumnPredicate extends ColumnPredicate {
         RoaringBitmap rb = new RoaringBitmap();
         for (Object arg : args) {
             RoaringBitmap tmp = cur.clone();
-            sortKeyIndex.pruneEqual(arg, tmp);
+            sortKeyIndex.pruneEqual(arg, tmp, ipc);
             rb.or(tmp);
         }
         cur.and(rb);
@@ -113,7 +114,29 @@ public class InColumnPredicate extends ColumnPredicate {
         RoaringBitmap rb = new RoaringBitmap();
         for (Object arg : args) {
             RoaringBitmap tmp = cur.clone();
-            zoneMapIndex.prune(colId, arg, true, arg, true, tmp);
+            zoneMapIndex.prune(colId, arg, true, arg, true, tmp, ipc);
+            rb.or(tmp);
+        }
+        cur.and(rb);
+    }
+
+    @Override
+    public void multiSortKey(@NotNull MultiSortKeyIndex multiSortKeyIndex, IndexPruneContext ipc,
+                             @NotNull RoaringBitmap cur) {
+        if (!multiSortKeyIndex.checkSupport(colId, type)) {
+            return;
+        }
+        // get args
+        Object[] args = getArgs(multiSortKeyIndex.getColumnDataType(colId), type, paramIndex, ipc);
+
+        if (args == null) {
+            return;
+        }
+
+        RoaringBitmap rb = new RoaringBitmap();
+        for (Object arg : args) {
+            RoaringBitmap tmp = cur.clone();
+            multiSortKeyIndex.prune(colId, arg, true, arg, true, tmp, ipc);
             rb.or(tmp);
         }
         cur.and(rb);

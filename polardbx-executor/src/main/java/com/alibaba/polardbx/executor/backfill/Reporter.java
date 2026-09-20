@@ -127,4 +127,7 @@ public class Reporter {
         backfillManager.updateLogicalBackfillProcess(backfillBean.extra, String.valueOf(progress), ec.getBackfillId());
     }
 
+    public long getSuccessRowCount() {
+        return backfillCount.get();
+    }
 }

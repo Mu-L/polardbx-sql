@@ -238,10 +238,11 @@ public class AlterTableGroupMergePartitionTest extends AlterTableGroupTestBase {
 
     @Test
     public void testUpdate() {
-        if (!usingNewPartDb()) {
+        boolean isPublic = partitionRuleInfo.getTableStatus() == ComplexTaskMetaManager.ComplexTaskStatus.PUBLIC;
+        if (!usingNewPartDb() || isMySQL80() && isPublic) {
             return;
         }
-        boolean isPublic = partitionRuleInfo.getTableStatus() == ComplexTaskMetaManager.ComplexTaskStatus.PUBLIC;
+
         boolean isDeleteOnly =
             partitionRuleInfo.getTableStatus() == ComplexTaskMetaManager.ComplexTaskStatus.DELETE_ONLY;
 

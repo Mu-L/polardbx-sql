@@ -42,16 +42,15 @@ public class TtlValidator {
         if (ttlInfo == null) {
             return;
         }
-        boolean isChangeToBroTblOrSigTbl =
-            newPartInfo.isGsiSingleOrSingleTable() || newPartInfo.isGsiBroadcastOrBroadcast();
-        if (!isChangeToBroTblOrSigTbl) {
+        boolean isChangeToBroTbl = newPartInfo.isGsiBroadcastOrBroadcast();
+        if (!isChangeToBroTbl) {
             return;
         }
         /**
          * Come here, that means the part_tbl with ttl-def will be changed to single/broadcast
          */
         throw new TddlRuntimeException(ErrorCode.ERR_TTL,
-            String.format("Repartition `%s`.`%s` to single/broadcast with ttl-definition is not allowed", tableSchema,
+            String.format("Repartition `%s`.`%s` to broadcast with ttl-definition is not allowed", tableSchema,
                 tableName));
     }
 }

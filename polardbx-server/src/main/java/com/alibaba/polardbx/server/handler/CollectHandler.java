@@ -25,7 +25,7 @@ import com.alibaba.polardbx.server.response.CollectStatistic;
 import com.alibaba.polardbx.server.util.LogUtils;
 
 public class CollectHandler {
-    private static final Logger logger = LoggerFactory.getLogger("STATISTICS");
+    private static final Logger logger = LoggerFactory.getLogger(CollectHandler.class);
 
     public static boolean handle(ByteString stmt, ServerConnection c, int offset) {
         int rs = ServerParseCollect.parse(stmt, offset);
@@ -33,8 +33,6 @@ public class CollectHandler {
         Throwable sqlEx = null;
         try {
             switch (rs & 0xff) {
-            case ServerParseCollect.STATISTIC:
-                return CollectStatistic.response(c);
             default:
                 recordSql = false;
                 return c.execute(stmt, false);

@@ -16,6 +16,7 @@
 
 package com.alibaba.polardbx.gms.ha.impl;
 
+import com.alibaba.polardbx.common.constants.TransactionAttribute;
 import com.alibaba.polardbx.common.eventlogger.EventLogger;
 import com.alibaba.polardbx.common.eventlogger.EventType;
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
@@ -23,6 +24,7 @@ import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.model.lifecycle.AbstractLifecycle;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
+import com.alibaba.polardbx.common.trx.ITimestampOracle;
 import com.alibaba.polardbx.common.utils.AddressUtils;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
@@ -32,6 +34,7 @@ import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.thread.ExecutorUtil;
 import com.alibaba.polardbx.common.utils.thread.NamedThreadFactory;
+import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.gms.config.impl.ConnPoolConfig;
 import com.alibaba.polardbx.gms.config.impl.ConnPoolConfigManager;
@@ -59,13 +62,18 @@ import com.alibaba.polardbx.gms.util.PasswdUtil;
 import com.alibaba.polardbx.rpc.XConfig;
 import com.alibaba.polardbx.rpc.perf.SwitchoverPerfCollection;
 import com.alibaba.polardbx.rpc.pool.XConnectionManager;
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
 import com.google.common.collect.Sets;
+import lombok.Data;
 import lombok.val;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang.StringUtils;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -73,6 +81,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -120,9 +129,31 @@ public class StorageHaManager extends AbstractLifecycle {
     /**
      * The log for storage check ha log
      */
-    public static final Logger CHECK_HA_LOGGER = LoggerFactory.getLogger("CHECK_HA_LOG");
+    public static final Logger CHECK_HA_LOGGER = LoggerFactory.getLogger("META_DB_LOG");
 
     private static final Logger logger = LoggerFactory.getLogger(StorageHaManager.class);
+
+    private static long MIN_PUSHED_INTERVAL = 5_000_000_000L;
+    private static final LoadingCache<String, Long> PUSHED_DN = CacheBuilder.newBuilder()
+        .expireAfterWrite(10, TimeUnit.MINUTES)
+        .build(new CacheLoader<String, Long>() {
+            @Override
+            public Long load(String key) {
+                return System.nanoTime() - MIN_PUSHED_INTERVAL;
+            }
+        });
+
+    private static Class checkDataSourcesTaskClass;
+
+    static {
+        try {
+            checkDataSourcesTaskClass =
+                Class.forName("com.alibaba.polardbx.group.utils.CheckDataSourcesTask");
+        } catch (ClassNotFoundException e) {
+            //ignore
+        }
+    }
+
     /**
      * <pre>
      *     Key: storageInstId
@@ -155,6 +186,11 @@ public class StorageHaManager extends AbstractLifecycle {
      * a Scheduler for Scheduling CheckStorageHaTask by the interval of 5 second
      */
     protected ScheduledExecutorService checkStorageHaTaskExecutor = null;
+
+    /**
+     * The executor for task of CheckFollowerTask.
+     */
+    protected ScheduledExecutorService checkFollowerTaskExecutor = null;
 
     /**
      * The executor for task of RefreshMasterStorageInfosTask
@@ -190,6 +226,15 @@ public class StorageHaManager extends AbstractLifecycle {
     protected int checkDnRoleTaskExecutorPoolSize = 16;
     protected int checkDnRoleTaskExecutorQueueSize = 40960;
 
+    /**
+     * The executor for subtask ScanOnePaxosNodeRoleTask of CheckStorageRoleInfoTask of CheckStorageHaTask,
+     * one ScanOnePaxosNodeRoleTask handles the scanning node role for one paxos node of one dn
+     * default pool size is 16
+     */
+    protected ThreadPoolExecutor scanOnePaxosNodeRoleTaskExecutor = null;
+    protected int scanOnePaxosNodeRoleTaskExecutorPoolSize = 16;
+    protected int scanOnePaxosNodeRoleTaskExecutorQueueSize = 40960 * 5;
+
     protected int parallelSwitchDsCountPerStorageInst = 4;
     protected CheckStorageHaTask checkStorageHaTask = new CheckStorageHaTask(this);
     protected RefreshMasterStorageInfosTask refreshMasterStorageInfosTask = new RefreshMasterStorageInfosTask(this);
@@ -208,7 +253,7 @@ public class StorageHaManager extends AbstractLifecycle {
 
     private Set<String> listenerReadOnlyInstIdSet = new HashSet<>();
 
-    private boolean allowFollowRead;
+    public AtomicBoolean needRefreshFollowSources = new AtomicBoolean(false);
 
     public interface StorageInfoConfigSubListener extends ConfigListener {
         String getSubListenerName();
@@ -304,10 +349,9 @@ public class StorageHaManager extends AbstractLifecycle {
         storageHaManagerTaskExecutor =
             ExecutorUtil.createBufferedExecutor("StorageHaManagerTaskExecutor", storageHaManagerExecutorPoolSize,
                 storageHaManagerExecutorQueueSize);
-        checkStorageHaTaskExecutor =
-            Executors.newSingleThreadScheduledExecutor(new NamedThreadFactory("CheckStorageHaTaskExecutor", true));
 
         checkStorageHaTaskExecutor = initStorageHaCheckTaskExecutor(checkStorageHaTask);
+        checkFollowerTaskExecutor = initCheckFollowerTaskExecutor();
 
         groupHaTaskExecutor =
             ExecutorUtil.createBufferedExecutor("GroupHaTaskExecutor", groupHaTaskExecutorPoolSize,
@@ -316,6 +360,11 @@ public class StorageHaManager extends AbstractLifecycle {
         checkDnRoleTaskExecutor =
             ExecutorUtil.createBufferedExecutor("CheckDnRoleTaskExecutor", checkDnRoleTaskExecutorPoolSize,
                 checkDnRoleTaskExecutorQueueSize);
+
+        scanOnePaxosNodeRoleTaskExecutor =
+            ExecutorUtil.createBufferedExecutor("ScanOnePaxosNodeRoleTaskExecutor",
+                scanOnePaxosNodeRoleTaskExecutorPoolSize,
+                scanOnePaxosNodeRoleTaskExecutorQueueSize);
 
         if (ConfigDataMode.isMasterMode()) {
             registerStorageInfoConfigListener(InstIdUtil.getInstId());
@@ -345,7 +394,7 @@ public class StorageHaManager extends AbstractLifecycle {
             new StorageInfoConfigListener());
     }
 
-    public synchronized void adjustStorageHaTaskPeriod(int newPeriod) {
+    public void adjustStorageHaTaskPeriod(int newPeriod) {
         MetaDbLogUtil.META_DB_DYNAMIC_CONFIG.info(String
             .format("Successful to adjust the HA task period, old period/new period is %s/%s",
                 this.checkStorageTaskPeriod, newPeriod));
@@ -363,6 +412,24 @@ public class StorageHaManager extends AbstractLifecycle {
         return checkStorageHaTaskExecutor;
     }
 
+    protected ScheduledExecutorService initCheckFollowerTaskExecutor() {
+        final Runnable checkDataSources;
+        try {
+            checkDataSources =
+                (Runnable) checkDataSourcesTaskClass.getConstructor().newInstance();
+        } catch (Exception e) {
+            throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, e, e.getMessage());
+        }
+        ScheduledExecutorService checkFollowerTaskExecutor =
+            Executors.newSingleThreadScheduledExecutor(new NamedThreadFactory("CheckFollowerTaskExecutor", true));
+        checkFollowerTaskExecutor.scheduleAtFixedRate(
+            checkDataSources,
+            500,
+            500,
+            TimeUnit.MILLISECONDS);
+        return checkFollowerTaskExecutor;
+    }
+
     public void registerHaSwitcher(String storageInstId, String dbName, String groupKey, HaSwitcher haSwitcher) {
         String haGroupKey = GroupInfoUtil.buildHaGroupKey(storageInstId, groupKey);
         Set<HaSwitcher> switcherSet = groupSwitcherMap.get(haGroupKey);
@@ -376,12 +443,13 @@ public class StorageHaManager extends AbstractLifecycle {
         }
     }
 
-    public void unregisterHaSwitcher(String storageInstId, String groupKey, HaSwitcher haSwitcher) {
+    public void unregisterHaSwitcher(String storageInstId, String dbName, String groupKey, HaSwitcher haSwitcher) {
         String haGroupKey = GroupInfoUtil.buildHaGroupKey(storageInstId, groupKey);
+        HaSwitcher groupSwitchProxy = new GroupHaSwitcherProxy(storageInstId, dbName, groupKey, haSwitcher, this);
         Set<HaSwitcher> switcherSet = groupSwitcherMap.get(haGroupKey);
         if (switcherSet != null) {
-            if (switcherSet.contains(haSwitcher)) {
-                switcherSet.remove(haSwitcher);
+            if (switcherSet.contains(groupSwitchProxy)) {
+                switcherSet.remove(groupSwitchProxy);
             }
             if (switcherSet.isEmpty()) {
                 groupSwitcherMap.remove(haGroupKey);
@@ -438,11 +506,11 @@ public class StorageHaManager extends AbstractLifecycle {
                 MetaDbLogUtil.META_DB_LOG.info("Xport is vip: " + addr);
                 return nodeIpPort.getValue();
             } else if (XConfig.GALAXY_X_PROTOCOL) {
-                final int expected = haInfo.getXPort();
+                final int expected = haInfo != null ? haInfo.getXPort() : -1;
                 MetaDbLogUtil.META_DB_LOG.info("Got xport of galaxy vip node " + addr + " is " + expected);
                 return expected;
             } else if (XConfig.OPEN_XRPC_PROTOCOL) {
-                final int expected = haInfo.getXPort();
+                final int expected = haInfo != null ? haInfo.getXPort() : -1;
                 MetaDbLogUtil.META_DB_LOG.info("Got xport of xrpc vip node " + addr + " is " + expected);
                 return expected;
             }
@@ -490,6 +558,9 @@ public class StorageHaManager extends AbstractLifecycle {
     public HaSwitchParams getStorageHaSwitchParamsWithReadLock(String storageInstId, boolean autoUnlock) {
         StorageInstHaContext storageInstHaContext = storageHaCtxCache.get(storageInstId);
         if (storageInstHaContext == null) {
+            /**
+             * Try auto load StorageInstHaContext the new dn-id if need
+             */
             List<String> newStorageInstIdList = new ArrayList<>();
             newStorageInstIdList.add(storageInstId);
             addStorageInsts(newStorageInstIdList);
@@ -500,15 +571,30 @@ public class StorageHaManager extends AbstractLifecycle {
                 String.format("No found storage inst id for %s", storageInstId));
         }
         HaSwitchParams params = null;
+        Throwable getParamsEx = null;
         try {
             storageInstHaContext.getHaLock().readLock().lock();
             params = getStorageHaSwitchParams(storageInstId);
             params.autoUnlock = autoUnlock;
+        } catch (Throwable ex) {
+            getParamsEx = ex;
+            throw ex;
         } finally {
             if (autoUnlock) {
                 storageInstHaContext.getHaLock().readLock().unlock();
             } else {
-                params.haLock = storageInstHaContext.getHaLock();
+                if (params == null && getParamsEx != null) {
+                    /**
+                     * If "params = getStorageHaSwitchParams" throw some error and params will be null,
+                     * so here need to auto release readLock of storageInstHaContext,
+                     * or else will block the exec of ha HaSwitcherTask
+                     */
+                    if (storageInstHaContext != null) {
+                        storageInstHaContext.getHaLock().readLock().unlock();
+                    }
+                } else {
+                    params.haLock = storageInstHaContext.getHaLock();
+                }
             }
         }
         return params;
@@ -533,10 +619,14 @@ public class StorageHaManager extends AbstractLifecycle {
         haSwitchParams.storageConnPoolConfig = StorageHaManager.getConnPoolConfigFromManager();
         haSwitchParams.storageHaInfoMap = storageInstHaContext.allStorageNodeHaInfoMap;
         haSwitchParams.curAvailableAddr = storageInstHaContext.currAvailableNodeAddr;
+
         haSwitchParams.xport =
             getAndCheckXport(storageInstHaContext.currAvailableNodeAddr, storageInstHaContext.currIsVip,
                 storageInstHaContext,
-                storageInstHaContext.allStorageNodeHaInfoMap.get(storageInstHaContext.currAvailableNodeAddr));
+                storageInstHaContext.currAvailableNodeAddr != null ?
+                    storageInstHaContext.allStorageNodeHaInfoMap.get(storageInstHaContext.currAvailableNodeAddr) :
+                    null);
+
         haSwitchParams.phyDbName = null;
         haSwitchParams.storageKind = storageInstHaContext.storageKind;
         haSwitchParams.instId = storageInstHaContext.instId;
@@ -758,6 +848,9 @@ public class StorageHaManager extends AbstractLifecycle {
     }
 
     public synchronized void reloadStorageInstsBySpecifyingStorageInstIdList(List<String> targetDnIdList) {
+        if (ConfigDataMode.isColumnarMode()) {
+            return;
+        }
         List<String> tmpDnIdList = new ArrayList<>();
         boolean isReloadAll = targetDnIdList.isEmpty();
         Set<String> allDnSet = this.storageHaCtxCache.keySet();
@@ -884,6 +977,38 @@ public class StorageHaManager extends AbstractLifecycle {
 
     protected synchronized void addStorageInsts(List<String> storageInstIdListToBeAdded) {
 
+        /**
+         * Here only allowed one thread into here to add new storage and load its StorageInstHaContext into cache
+         */
+
+        /**
+         * Double check for newStorageInsts to be Added here
+         */
+        boolean allDnCtxAlreadyExists = true;
+        if (storageInstIdListToBeAdded != null) {
+            for (int i = 0; i < storageInstIdListToBeAdded.size(); i++) {
+                String newDnId = storageInstIdListToBeAdded.get(i);
+                StorageInstHaContext ctx = this.storageHaCtxCache.get(newDnId);
+                if (ctx == null) {
+                    allDnCtxAlreadyExists = false;
+                    break;
+                }
+            }
+        }
+        if (allDnCtxAlreadyExists) {
+            /**
+             * Found all new-added dn already exits in storageHaCtxCache, so return
+             */
+            try {
+                String dnIdList = StringUtils.join(storageInstIdListToBeAdded, ",");
+                MetaDbLogUtil.META_DB_LOG.warn(String.format(
+                    "Found all dnList[%s] already exists in storageHaCtxCache, so ignore add storageInsts.", dnIdList));
+            } catch (Throwable ex) {
+                // igniore
+            }
+            return;
+        }
+
         try (Connection metaDbConn = MetaDbDataSource.getInstance().getConnection()) {
             StorageInfoAccessor storageInfoAccessor = new StorageInfoAccessor();
             storageInfoAccessor.setConnection(metaDbConn);
@@ -917,7 +1042,9 @@ public class StorageHaManager extends AbstractLifecycle {
      */
     protected synchronized void refreshStorageInsts(List<String> storageInstIdListToBeUpdated,
                                                     Map<String, List<StorageInfoRecord>> newStorageInstNodeInfoMap) {
-
+        if (ConfigDataMode.isColumnarMode()) {
+            return;
+        }
         for (int i = 0; i < storageInstIdListToBeUpdated.size(); i++) {
             String storageInstId = storageInstIdListToBeUpdated.get(i);
             StorageInstHaContext storageInstHaContext = this.storageHaCtxCache.get(storageInstId);
@@ -925,8 +1052,12 @@ public class StorageHaManager extends AbstractLifecycle {
             List<StorageInfoRecord> newStorageNodes = newStorageInstNodeInfoMap.get(storageInstId);
             String vipAddr = null;
             StorageInfoRecord vipRecInfo = null;
+            String newStorageInstLabel = null;
             for (int j = 0; j < newStorageNodes.size(); j++) {
                 StorageInfoRecord storageInfo = newStorageNodes.get(j);
+                if (storageInfo.extras != null) {
+                    newStorageInstLabel = storageInfo.extras.getStorageInstLabel();
+                }
                 String ip = storageInfo.ip;
                 Integer port = storageInfo.port;
                 int isVip = storageInfo.isVip;
@@ -934,9 +1065,7 @@ public class StorageHaManager extends AbstractLifecycle {
                 if (isVip == StorageInfoRecord.IS_VIP_TRUE) {
                     vipAddr = addrStr;
                     vipRecInfo = storageInfo;
-                    if (storageInfo.storageType == StorageInfoRecord.STORAGE_TYPE_XCLUSTER ||
-                        storageInfo.storageType == StorageInfoRecord.STORAGE_TYPE_RDS80_XCLUSTER ||
-                        storageInfo.storageType == StorageInfoRecord.STORAGE_TYPE_GALAXY_CLUSTER) {
+                    if (StorageInfoRecord.isXcluster(storageInfo.storageType)) {
                         // if current storage inst is a xcluster inst,
                         // then its vip info should be ignored in storageInfos of storageInstHaContext
                         continue;
@@ -946,6 +1075,7 @@ public class StorageHaManager extends AbstractLifecycle {
             }
 
             storageInstHaContext.storageNodeInfos = newStorageNodeInfos;
+            storageInstHaContext.storageInstLabel = newStorageInstLabel;
             List<Pair<String, Pair<String, String>>> setItems = new ArrayList<>();
             if (vipAddr != null) {
 
@@ -1063,9 +1193,7 @@ public class StorageHaManager extends AbstractLifecycle {
             if (storageNode.isVip == StorageInfoRecord.IS_VIP_TRUE) {
                 storageVipAddrStr = AddressUtils.getAddrStrByIpPort(storageNode.ip, storageNode.port);
                 storageVipInfo = storageNode;
-                if (storageNode.storageType == StorageInfoRecord.STORAGE_TYPE_XCLUSTER ||
-                    storageNode.storageType == StorageInfoRecord.STORAGE_TYPE_RDS80_XCLUSTER ||
-                    storageNode.storageType == StorageInfoRecord.STORAGE_TYPE_GALAXY_CLUSTER) {
+                if (StorageInfoRecord.isXcluster(storageNode.storageType)) {
                     // if current storage inst is a xcluster inst,
                     // then its vip info should be ignored in getStorageRole info
                     continue;
@@ -1104,9 +1232,7 @@ public class StorageHaManager extends AbstractLifecycle {
         if (instKind == StorageInfoRecord.INST_KIND_SLAVE) {
             allowFetchRoleOnlyFromLeader = false;
         }
-        final boolean noCluster = storageType != StorageInfoRecord.STORAGE_TYPE_XCLUSTER &&
-            storageType != StorageInfoRecord.STORAGE_TYPE_RDS80_XCLUSTER &&
-            storageType != StorageInfoRecord.STORAGE_TYPE_GALAXY_CLUSTER;
+        final boolean noCluster = !StorageInfoRecord.isXcluster(storageType);
         Map<String, StorageNodeHaInfo> storageNodeHaInfoMap =
             StorageHaChecker
                 .checkAndFetchRole(addrList, (noCluster && noVipAddr) ? null : storageVipAddrStr,
@@ -1142,7 +1268,16 @@ public class StorageHaManager extends AbstractLifecycle {
 
         @Override
         public boolean equals(Object obj) {
-            return haSwitcher.equals(obj);
+            if (!(obj instanceof HaSwitcher)) {
+                return false;
+            }
+            if (obj instanceof GroupHaSwitcherProxy) {
+                GroupHaSwitcherProxy otherProxy = (GroupHaSwitcherProxy) obj;
+                HaSwitcher otherHaSwitcher = otherProxy.haSwitcher;
+                return haSwitcher.equals(otherHaSwitcher);
+            }
+            HaSwitcher otherHaSwitcher = (HaSwitcher) obj;
+            return haSwitcher.equals(otherHaSwitcher);
         }
 
         @Override
@@ -1259,6 +1394,11 @@ public class StorageHaManager extends AbstractLifecycle {
         private String oldAddress;
         private int newXport = 0;
         private List<String> allGrpListToBeSwitched = new ArrayList<>();
+        private Long checkDnHaTaskId = 0L;
+        private boolean haForLeaderChange = false;
+        private boolean haForFollowsChange = false;
+        private boolean haForUsrPwdChange = false;
+        private boolean haForLearnerChange = false;
 
         public StorageHaSwitchTask(StorageInstHaContext haContext,
                                    StorageHaManager storageHaManager,
@@ -1276,6 +1416,7 @@ public class StorageHaManager extends AbstractLifecycle {
             this.newAvailableAddrEncPasswd = newAvailableAddrEncPasswd;
             this.newStorageNodeHaInfoMap = newStorageNodeHaInfoMap;
             this.oldAddress = haContext.currAvailableNodeAddr;
+            this.haForLearnerChange = !(haContext.isDNMaster() || haContext.isMetaDb());
         }
 
         @Override
@@ -1309,13 +1450,40 @@ public class StorageHaManager extends AbstractLifecycle {
                         startTs, switchEndTs, this.oldAddress, this.newAvailableAddr, this.newIsVip, this.newXport);
                 }
 
-                // record smooth switchover events
-                if (success && DynamicConfig.getInstance().isEnableSmoothSwitchover()) {
-                    final SwitchoverPerfCollection collector =
-                        XConnectionManager.getInstance().getSwitchoverPerfCollector(storageInstId);
-                    if (collector != null) {
-                        EventLogger.log(EventType.SMOOTH_SWITCHOVER_SUMMARY,
-                            storageInstId + ',' + oldAddress + ',' + newAvailableAddrEncPasswd + ',' + collector);
+                if (success) {
+                    // We need to push max_gcn for new leader DN,
+                    // to ensure single-shared-read "read your own write" consistency.
+                    // For meta-db, skip pushing.
+                    if (InstanceVersion.isMYSQL80() && !haContext.isMetaDb()) {
+                        try {
+                            // If we just processed this DN in 5 seconds, skip it.
+                            long lastCheckTime = PUSHED_DN.getUnchecked(haContext.storageInstId);
+                            if (System.nanoTime() - lastCheckTime > MIN_PUSHED_INTERVAL) {
+                                ITimestampOracle tso = ITimestampOracle.getInstance();
+                                if (tso != null) {
+                                    long maxSeq = tso.nextTimestamp();
+                                    try (Connection connection = DbTopologyManager.getConnectionForStorage(haContext);
+                                        Statement statement = connection.createStatement()) {
+                                        statement.execute(TransactionAttribute.getPushMaxSeqMemory(maxSeq));
+                                    }
+                                    PUSHED_DN.put(haContext.storageInstId, System.nanoTime());
+                                }
+                            }
+                        } catch (Throwable t) {
+                            logger.warn(t);
+                            EventLogger.log(EventType.TRX_ERR,
+                                "Push max gcn after HA failed. Caused by " + t.getMessage());
+                        }
+                    }
+
+                    // record smooth switchover events
+                    if (DynamicConfig.getInstance().isEnableSmoothSwitchover()) {
+                        final SwitchoverPerfCollection collector =
+                            XConnectionManager.getInstance().getSwitchoverPerfCollector(storageInstId);
+                        if (collector != null) {
+                            EventLogger.log(EventType.SMOOTH_SWITCHOVER_SUMMARY,
+                                storageInstId + ',' + oldAddress + ',' + newAvailableAddr + ',' + collector);
+                        }
                     }
                 }
             } catch (Throwable ex) {
@@ -1359,11 +1527,13 @@ public class StorageHaManager extends AbstractLifecycle {
             synchronized (haContext) {
                 if (haContext.haStatus == StorageInstHaContext.StorageHaStatus.SWITCHING) {
                     if (success) {
-                        haContext.currAvailableNodeAddr = this.newAvailableAddr;
-                        haContext.currIsVip = this.newIsVip;
-                        haContext.currXport = this.newXport;
-                        haContext.user = this.newAvailableAddrUser;
-                        haContext.encPasswd = this.newAvailableAddrEncPasswd;
+                        if ((this.isHaForLeaderChange() || this.isHaForUsrPwdChange())) {
+                            haContext.currAvailableNodeAddr = this.newAvailableAddr;
+                            haContext.currIsVip = this.newIsVip;
+                            haContext.currXport = this.newXport;
+                            haContext.user = this.newAvailableAddrUser;
+                            haContext.encPasswd = this.newAvailableAddrEncPasswd;
+                        }
                     } else {
                         if (!StringUtils.isEmpty(newAvailableAddr) && this.newAvailableAddr.equalsIgnoreCase(
                             UNAVAILABLE_ACCESS_FOR_LEARNER)) {
@@ -1408,7 +1578,7 @@ public class StorageHaManager extends AbstractLifecycle {
 
             haSwitchParams.xport = newXport =
                 getAndCheckXport(this.newAvailableAddr, this.newIsVip, haContext,
-                    addrWithRoleMap.get(this.newAvailableAddr));
+                    newAvailableAddr != null ? addrWithRoleMap.get(this.newAvailableAddr) : null);
             haSwitchParams.storageKind = haContext.storageKind;
             haSwitchParams.instId = haContext.instId;
             int storageInstKind = haContext.storageKind;
@@ -1504,51 +1674,111 @@ public class StorageHaManager extends AbstractLifecycle {
 
             String allGrpListStr = String.join(",", allGrpListToBeSwitched);
             String allRoleInfoStr = buildStorageNodeHaInfoLogMsg(this.newStorageNodeHaInfoMap);
+            String leaderHaMsg = haForLeaderChange ? "newLeader" : "nonLeader";
+            long fullTc = endTs - checkDnHaTaskId; // checkDnHaTaskId is the timestamp of the starTime of HaCheckerTask
             if (isSucc) {
                 storageInstHaLog =
                     String.format(
-                        "StorageInst[%s] do HA switch successfully, SwitchInfo is [timeCost(ms)=%s, groupCnt=%s, taskCnt=%s, beginTime=%s, endTime=%s, newAddr=%s, newIsVip=%s, oldAddr=%s, newXport=%s, allGrpList=[%s], roleInfos=[%s]]",
-                        storageInstId, endTs - beginTs, groupCnt, taskCnt, beginTs, endTs, newAddr,
+                        "StorageInst[%s] do %s HA switch successfully for CheckHaTask[%s] with shouldHa=true, SwitchInfo is [fullTc(ms)=%s, switchTc(ms)=%s, groupCnt=%s, taskCnt=%s, beginTime=%s, endTime=%s, newAddr=%s, newIsVip=%s, oldAddr=%s, newXport=%s, leaderHa=%s, followsHa=%s, usrPwdHa=%s, learnerHa=%s, allGrpList=[%s], roleInfos=[%s]]",
+                        storageInstId, leaderHaMsg, checkDnHaTaskId, fullTc, endTs - beginTs, groupCnt,
+                        taskCnt, beginTs, endTs,
+                        newAddr,
                         newIsVip ? "true" : "false", oldAddr,
-                        Xport, allGrpListStr, allRoleInfoStr);
+                        Xport, haForLeaderChange, haForFollowsChange, haForUsrPwdChange, haForLearnerChange,
+                        allGrpListStr, allRoleInfoStr);
+                EventLogger.log(EventType.DN_HA,
+                    String.format("DN[%s] HA is completed, allTimeCost is [%s]ms, info is [%s]", storageInstId,
+                        fullTc, storageInstHaLog));
             } else {
                 storageInstHaLog =
                     String.format(
-                        "StorageInst[%s] do HA switch failed, SwitchInfo is [timeCost(ms)=%s, groupCnt=%s, taskCnt=%s, beginTime=%s, endTime=%s, newAddr=%s, newIsVip=%s, oldAddr=%s, newXport=%s, allGrpList=[%s], roleInfos=[%s]]",
-                        storageInstId, endTs - beginTs, groupCnt, taskCnt, beginTs, endTs, newAddr,
+                        "StorageInst[%s] do %s HA switch failed for checkHaTask[%s] with shouldHa=true, SwitchInfo is [fullTc(ms)=%s, switchTc(ms)=%s, groupCnt=%s, taskCnt=%s, beginTime=%s, endTime=%s, newAddr=%s, newIsVip=%s, oldAddr=%s, newXport=%s, leaderHa=%s, followsHa=%s, usrPwdHa=%s, learnerHa=%s, allGrpList=[%s], roleInfos=[%s]]",
+                        storageInstId, leaderHaMsg, checkDnHaTaskId, fullTc, endTs - beginTs, groupCnt,
+                        taskCnt, beginTs, endTs,
+                        newAddr,
                         newIsVip ? "true" : "false", oldAddr,
-                        Xport, allGrpListStr, allRoleInfoStr);
+                        Xport, haForLeaderChange, haForFollowsChange, haForUsrPwdChange, haForLearnerChange,
+                        allGrpListStr, allRoleInfoStr);
+                EventLogger.log(EventType.DN_HA,
+                    String.format("DN[%s] HA is NOT completed, allTimeCost is [%s]ms, info is [%s]",
+                        storageInstId, fullTc, storageInstHaLog));
             }
             logger.info(storageInstHaLog);
-            MetaDbLogUtil.META_DB_LOG.info(storageInstHaLog);
+            MetaDbLogUtil.CHECK_HA_LOG.info(storageInstHaLog);
             MetaDbLogUtil.META_DB_DYNAMIC_CONFIG.info(storageInstHaLog);
         }
+
+        public Long getCheckDnHaTaskId() {
+            return checkDnHaTaskId;
+        }
+
+        public void setCheckDnHaTaskId(Long checkDnHaTaskId) {
+            this.checkDnHaTaskId = checkDnHaTaskId;
+        }
+
+        public boolean isHaForLeaderChange() {
+            return haForLeaderChange;
+        }
+
+        public void setHaForLeaderChange(boolean haForLeaderChange) {
+            this.haForLeaderChange = haForLeaderChange;
+        }
+
+        public boolean isHaForFollowsChange() {
+            return haForFollowsChange;
+        }
+
+        public void setHaForFollowsChange(boolean haForFollowsChange) {
+            this.haForFollowsChange = haForFollowsChange;
+        }
+
+        public boolean isHaForUsrPwdChange() {
+            return haForUsrPwdChange;
+        }
+
+        public void setHaForUsrPwdChange(boolean haForUsrPwdChange) {
+            this.haForUsrPwdChange = haForUsrPwdChange;
+        }
+
     }
 
     protected static class CheckStorageRoleInfoTask implements Runnable {
 
         protected String storageInstId;
         protected StorageInstHaContext haContext;
+
         /**
-         * key: availableAddrStr
-         * val: nodeRoleInfos
-         * key: nodeAddr
-         * val: nodeRole
+         * <pre>
+         *     key: storageInstId
+         *     val:
+         *         Pair.left: availableAddr(maybe null if no found leader)
+         *         Pair.right: the checking results of all node of the dn
+         * </pre>
          */
         protected Map<String, Pair<String, Map<String, StorageNodeHaInfo>>> checkResults;
 
+        protected ThreadPoolExecutor scanPaxosNodeRoleExecutor;
+
+        /**
+         * The checkHaTimestamp of one check ha task
+         */
+        protected Long checkDnHaTaskId = System.currentTimeMillis();
+
         public CheckStorageRoleInfoTask(String storageInstId,
                                         StorageInstHaContext haContext,
+                                        ThreadPoolExecutor executor,
                                         Map<String, Pair<String, Map<String, StorageNodeHaInfo>>> checkResults) {
             this.storageInstId = storageInstId;
             this.haContext = haContext;
             this.checkResults = checkResults;
+            this.scanPaxosNodeRoleExecutor = executor;
         }
 
         @Override
         public void run() {
             try {
-                doCheckRoleForStorageNodes();
+//                doCheckRoleForStorageNodes();
+                doParallelCheckRoleForForStorageNodes();
             } catch (Throwable ex) {
                 MetaDbLogUtil.META_DB_LOG.error(ex);
             }
@@ -1625,6 +1855,165 @@ public class StorageHaManager extends AbstractLifecycle {
             }
             checkResults.put(storageInstId, new Pair<>(availableAddr, addrWithRoleMap));
         }
+
+        protected void doParallelCheckRoleForForStorageNodes() {
+            int storageType = haContext.storageType;
+            int storageKind = haContext.storageKind;
+
+            String user = haContext.user;
+            String encPasswd = haContext.encPasswd;
+            String vipAddr = haContext.storageVipAddr;
+            if (haContext.storageVipInfo != null) {
+                /**
+                 * If dn has vip info, then use its vip user & vip passwd
+                 */
+
+                user = haContext.storageVipInfo.user;
+                if (!StringUtils.isEmpty(haContext.getStorageVipUser()) && !haContext.getStorageVipUser()
+                    .equals(user)) {
+                    /**
+                     * Maybe the value of vip_user has been refresh by 'altery system refresh storage' cmd
+                     */
+                    user = haContext.getStorageVipUser();
+                }
+                encPasswd = haContext.storageVipInfo.passwdEnc;
+                if (!StringUtils.isEmpty(haContext.getStorageVipEncPasswd()) && !haContext.getStorageVipEncPasswd()
+                    .equals(encPasswd)) {
+                    /**
+                     * Maybe the value of vip_encPasswd has been refresh by 'altery system refresh storage' cmd
+                     */
+                    encPasswd = haContext.getStorageVipEncPasswd();
+                }
+            }
+
+            List<Pair<String, Boolean>> addrList = haContext.storageNodeInfos.entrySet().stream()
+                .map(pair -> new Pair<>(pair.getKey(), pair.getValue().isVip == StorageInfoRecord.IS_VIP_TRUE))
+                .collect(Collectors.toList());
+
+            Map<String, StorageNodeHaInfo> addrWithRoleMap = null;
+            boolean allowFetchRoleOnlyFromLeader = true;
+            if (storageKind == StorageInfoRecord.INST_KIND_SLAVE) {
+                allowFetchRoleOnlyFromLeader = false;
+            }
+            final StorageInfoRecord vipInfo = haContext.getNodeInfoByAddress(
+                null == vipAddr ? (addrList.isEmpty() ? null : addrList.get(0).getKey()) : vipAddr);
+
+            addrWithRoleMap =
+                StorageHaChecker
+                    .parallelCheckAndFetchRole(scanPaxosNodeRoleExecutor, addrList, vipAddr,
+                        null == vipInfo ? -1 : vipInfo.xport, user,
+                        PasswdUtil.decrypt(encPasswd), storageType, storageKind, allowFetchRoleOnlyFromLeader);
+
+            boolean isStorageMasterInst = storageKind != StorageInfoRecord.INST_KIND_SLAVE;
+            String availableAddr = null;
+            for (Map.Entry<String, StorageNodeHaInfo> addrWithRoleItem : addrWithRoleMap.entrySet()) {
+                String addr = addrWithRoleItem.getKey();
+                StorageNodeHaInfo haInfo = addrWithRoleItem.getValue();
+                if (isStorageMasterInst) {
+                    if (haInfo.role == StorageRole.LEADER && haInfo.isHealthy) {
+                        availableAddr = addr;
+                        break;
+                    }
+                } else {
+                    if (haInfo.role == StorageRole.LEARNER) {
+                        if (haInfo.isHealthy) {
+                            availableAddr = addr;
+                        } else if (ConfigDataMode.isMasterMode()) {
+                            //the learner storage is set by unhealthy access url in master instId.
+                            availableAddr = UNAVAILABLE_ACCESS_FOR_LEARNER;
+                        }
+                        break;
+                    }
+                }
+            }
+            checkResults.put(storageInstId, new Pair<>(availableAddr, addrWithRoleMap));
+        }
+
+        public Long getCheckDnHaTaskId() {
+            return checkDnHaTaskId;
+        }
+
+        public void setCheckDnHaTaskId(Long checkDnHaTaskId) {
+            this.checkDnHaTaskId = checkDnHaTaskId;
+        }
+
+    }
+
+    @Data
+    protected static class ScanTaskCommonContext {
+
+        protected List<Pair<String, Boolean>> addrListInMetaDb = new ArrayList<>();
+        protected Set<String> alreadyFoundLeaderAddrSet = new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+
+        public ScanTaskCommonContext() {
+        }
+
+        /**
+         * Use to check if need to scan all roles for a new leader addr in the parallel nodeRole scan tasks
+         * <pre>
+         *      for example,
+         *
+         *      a DN-X has 3 nodes:
+         *      nodeA , nodeB and nodeC
+         *
+         *      now nodeA、nodeB and nodeC are scanning roles,
+         *         if ScanOnePaxosNodeRoleTask of nodeB found a new leaderAddr(current_leader col)
+         *              by query the view information_schema.alisql_cluster_local,
+         *         then ScanOnePaxosNodeRoleTask of nodeB and nodeC will not scan all roles for the new leader addr
+         *  </pre>
+         */
+        public synchronized boolean checkIfNeedScanAllRolesForLeaderAddr(String newLeaderAddr) {
+            if (alreadyFoundLeaderAddrSet.contains(newLeaderAddr)) {
+                return false;
+            }
+            alreadyFoundLeaderAddrSet.add(newLeaderAddr);
+            return true;
+        }
+    }
+
+    @Data
+    protected static class ScanOnePaxosNodeRoleTask implements Runnable {
+
+        protected String nodeAddr;
+        protected boolean isVip = false;
+        protected String user;
+        protected String passwd;
+        protected int storageType;
+        protected boolean isMasterStorage;
+        protected boolean allowFetchRoleOnlyFromLeader;
+
+        protected Map<String, StorageNodeHaInfo> addrHaInfoMapOutput =
+            new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+        protected AtomicBoolean isSuccFetchLeaderOutput = new AtomicBoolean(false);
+        protected long checkHaTaskId;
+        protected ScanTaskCommonContext scanTaskCommon;
+
+        public ScanOnePaxosNodeRoleTask() {
+
+        }
+
+        @Override
+        public void run() {
+            try {
+                doScanPaxosNodeRule();
+            } catch (Throwable ex) {
+                MetaDbLogUtil.META_DB_LOG.error(ex);
+            }
+        }
+
+        public boolean isMasterStorage() {
+            return isMasterStorage;
+        }
+
+        public void setMasterStorage(boolean masterStorage) {
+            isMasterStorage = masterStorage;
+        }
+
+        protected void doScanPaxosNodeRule() {
+            StorageHaChecker.fetchPaxosRoleInfosByAddr(nodeAddr, isVip, user, passwd, storageType, isMasterStorage,
+                allowFetchRoleOnlyFromLeader, addrHaInfoMapOutput, isSuccFetchLeaderOutput, scanTaskCommon);
+        }
+
     }
 
     public List<StorageInstHaContext> getMasterStorageList() {
@@ -1663,27 +2052,65 @@ public class StorageHaManager extends AbstractLifecycle {
      * @param address replica address of a datanode
      * @param newRole new role
      */
-    public void changeRoleByAddress(String address, StorageRole newRole) {
-        Set<String> instances = getStorageNodesAndMetaDB().stream()
-            .filter(x -> x.hasReplica(address))
-            .filter(x -> !x.getNodeHaInfoByAddress(address).getRole().equals(newRole))
-            .map(x -> x.getStorageInstId())
-            .collect(Collectors.toSet());
+    public void changeRoleByAddress(String address, StorageRole newRole, boolean forceChangeRole) {
+//        Set<String> instances = getStorageNodesAndMetaDB().stream()
+//            .filter(x -> x.hasReplica(address))
+//            .filter(x -> !x.getNodeHaInfoByAddress(address).getRole().equals(newRole))
+//            .map(x -> x.getStorageInstId())
+//            .collect(Collectors.toSet());
+        List<StorageInstHaContext> dnCtxList = getStorageNodesAndMetaDB();
+        Set<String> instances = new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+        for (int i = 0; i < dnCtxList.size(); i++) {
+            StorageInstHaContext dnCtx = dnCtxList.get(i);
+            if (!dnCtx.hasReplica(address)) {
+                // dn does not contain the addr, so ignore
+                continue;
+            }
+            if (dnCtx.getNodeHaInfoByAddress(address).getRole().equals(newRole)) {
+                // the address is already the role ,so ignore
+                continue;
+            }
+
+            if (dnCtx.getStorageKind() == StorageInfoRecord.INST_KIND_SLAVE) {
+                // only for rw-dn/metadb-dn
+                continue;
+            }
+            instances.add(dnCtx.getStorageInstId());
+        }
         if (instances.isEmpty()) {
-            throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC, "could not find replica " + address);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC,
+                String.format("no found target dn to change %s to the role %s", address, newRole));
         }
 
         List<String> targetDnIdList = new ArrayList<>();
         if (instances.size() > 1 && newRole == StorageRole.LEADER) {
+            List<String> tmpDnIdList = new ArrayList<>();
             for (String instance : instances) {
                 StorageInstHaContext haCtx = storageHaCtxCache.get(instance);
                 if (haCtx != null && haCtx.isMasterMode()) {
-                    targetDnIdList.add(instance);
+                    tmpDnIdList.add(instance);
                 }
             }
-            if (targetDnIdList.size() == 0) {
+            if (tmpDnIdList.size() == 0) {
                 throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC,
                     String.format("no found target rw-storage for node[%s]", address));
+            }
+            if (tmpDnIdList.size() > 1) {
+                if (!forceChangeRole) {
+                    throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC,
+                        String.format("find more than one rw-storage for node[%s]", address));
+                } else {
+                    /**
+                     * Maybe gms-dn and other-dn are using the common ip_port
+                     */
+                    String dnIdListStr = String.join(",", tmpDnIdList);
+                    String logMsg = String.format(
+                        "find more than one rw-storage[%s] for node[%s] to change leader, but ignore and use the first dn_id to change the new role [%s]",
+                        dnIdListStr, address, newRole);
+                    logger.warn(logMsg);
+                    MetaDbLogUtil.META_DB_LOG.warn(logMsg);
+                    targetDnIdList.add(tmpDnIdList.get(0));
+                }
             }
         } else {
             targetDnIdList.addAll(instances);
@@ -1805,6 +2232,10 @@ public class StorageHaManager extends AbstractLifecycle {
         logger.info(String.format("%s primaryZoneMaintain", enable ? "enable" : "disable"));
     }
 
+    public void setNeedRefreshFollowSources(boolean needRefreshFollowSources) {
+        this.needRefreshFollowSources.set(needRefreshFollowSources);
+    }
+
     /**
      * Change primary zone of the cluster
      * It has two effects:
@@ -1848,9 +2279,7 @@ public class StorageHaManager extends AbstractLifecycle {
 
     private void changeElectionWeight(StorageInstHaContext storage, PrimaryZoneInfo primaryZoneInfo) {
         for (StorageInfoRecord replica : storage.getStorageInfo()) {
-            if (replica.storageType != StorageInfoRecord.STORAGE_TYPE_XCLUSTER &&
-                replica.storageType != StorageInfoRecord.STORAGE_TYPE_RDS80_XCLUSTER &&
-                replica.storageType != StorageInfoRecord.STORAGE_TYPE_GALAXY_CLUSTER) {
+            if (!StorageInfoRecord.isXcluster(replica.storageType)) {
                 logger.warn("storage is not xcluster, should not set election_weight");
                 continue;
             }
@@ -1904,8 +2333,9 @@ public class StorageHaManager extends AbstractLifecycle {
     }
 
     protected static void logHaTask(long timeCost,
+                                    Long checkHaTaskId,
                                     Map<String, Pair<String, Map<String, StorageNodeHaInfo>>> allDnRoleInfos,
-                                    Map<String, Pair<Boolean, String>> shouldHaFlags,
+                                    Map<String, CheckStorageHaTask.HaDnLogInfo> shouldHaFlags,
                                     Throwable haCheckEx) {
 
         if (!StorageHaChecker.enablePrintHaCheckTaskLog) {
@@ -1915,29 +2345,74 @@ public class StorageHaManager extends AbstractLifecycle {
         boolean logWarning = false;
         for (Map.Entry<String, Pair<String, Map<String, StorageNodeHaInfo>>> oneDnRoleInfo : allDnRoleInfos
             .entrySet()) {
-            if (StringUtils.isEmpty(haStorageInstInfo)) {
+            if (!StringUtils.isEmpty(haStorageInstInfo)) {
                 haStorageInstInfo += ",";
             }
             String storageInstId = oneDnRoleInfo.getKey();
 
-            Pair<Boolean, String> checkHaRs = shouldHaFlags.get(storageInstId);
-            if (checkHaRs == null) {
+            CheckStorageHaTask.HaDnLogInfo haDnLogInfo = shouldHaFlags.get(storageInstId);
+            if (haDnLogInfo == null) {
                 haStorageInstInfo +=
                     String.format("{dnId=%s,noFoundHaResult}", storageInstId);
                 continue;
             }
 
-            Boolean shouldHa = checkHaRs.getKey();
-            String oldLeader = checkHaRs.getValue();
+            Boolean shouldHa = haDnLogInfo.getShouldHa();
+            Boolean haForLeaderChange = haDnLogInfo.getHaForLeaderChange();
+            Boolean haForFollowChange = haDnLogInfo.getHaForFollowsChange();
+            Boolean haForUsrPwdChange = haDnLogInfo.getHaForUsrPwdChange();
+            Boolean haForFollowRead = haDnLogInfo.getHaForFollowRead();
+            String oldLeader = haDnLogInfo.getOldLeaderAddr();
 
             Pair<String, Map<String, StorageNodeHaInfo>> roleInfosPair = oneDnRoleInfo.getValue();
             String newLeader = roleInfosPair.getKey();
             if (shouldHa) {
-                logWarning = false;
+                logWarning = true;
                 String allRolInfos = buildStorageNodeHaInfoLogMsg(roleInfosPair.getValue());
+                String haChangeInfo = "";
+                if (haForLeaderChange) {
+                    haChangeInfo +=
+                        String.format("newLeader=%s,oldLeader=%s", newLeader, oldLeader);
+                }
+                if (haForFollowChange) {
+                    if (!StringUtils.isEmpty(haChangeInfo)) {
+                        haChangeInfo += ",";
+                    }
+                    String newFollows = haDnLogInfo.getNewFollowers();
+                    String oldFollows = haDnLogInfo.getOldFollowers();
+                    String currLeader = oldLeader == null ? "noAvailableAddr" : oldLeader;
+                    haChangeInfo +=
+                        String.format("curLeader=%s,newFollows=%s,oldFollows=%s", currLeader, newFollows, oldFollows);
+                }
+                if (haForUsrPwdChange) {
+                    if (!StringUtils.isEmpty(haChangeInfo)) {
+                        haChangeInfo += ",";
+                    }
+                    String newUsrPwd = haDnLogInfo.getNewUsrPwdEncStr();
+                    String oldUsrPwd = haDnLogInfo.getOldUsrPwdEncStr();
+                    String newUsrPwdPrefix = newUsrPwd;
+                    if (newUsrPwd.length() > 4) {
+                        newUsrPwdPrefix = newUsrPwd.substring(0, newUsrPwd.length() - 4);
+                    }
+                    String oldUsrPwdPrefix = oldUsrPwd;
+                    if (oldUsrPwd.length() > 4) {
+                        oldUsrPwdPrefix = oldUsrPwd.substring(0, oldUsrPwd.length() - 4);
+                    }
+                    String currLeader = oldLeader == null ? "noAvailableAddr" : oldLeader;
+                    haChangeInfo +=
+                        String.format("curLeader=%s,newUsrPwd=%s****,oldUsrPwd=%s****", currLeader, newUsrPwdPrefix,
+                            oldUsrPwdPrefix);
+                }
+                if (haForFollowRead) {
+                    if (!StringUtils.isEmpty(haChangeInfo)) {
+                        haChangeInfo += ",";
+                    }
+                    haChangeInfo += "refresh for follower read";
+                }
                 haStorageInstInfo +=
-                    String.format("{dnId=%s,shouldHa=%s,newLeader=%s,oldLeader=%s,roleInfos=[%s]}", storageInstId,
-                        shouldHa, newLeader, oldLeader, allRolInfos);
+                    String.format("{dnId=%s,shouldHa=%s,%s,roleInfos=[%s]}",
+                        storageInstId, shouldHa, haChangeInfo, allRolInfos);
+
             } else {
                 haStorageInstInfo +=
                     String.format("{dnId=%s,shouldHa=%s,leader=%s}", storageInstId, shouldHa, newLeader);
@@ -1945,22 +2420,24 @@ public class StorageHaManager extends AbstractLifecycle {
         }
 
         String logMsg = String
-            .format("HaCheckTimeCost(ms): [%s], isSucc:[%s], allDnRoleInfo: [%s]", timeCost / (1000000),
+            .format("CheckHaTask:[%s], HaCheckTimeCost(ms): [%s], isSucc: [%s], allDnRoleInfo: [%s]", checkHaTaskId,
+                timeCost / (1000000),
                 haCheckEx == null, haStorageInstInfo);
         if (logWarning) {
             CHECK_HA_LOGGER.warn(logMsg);
-            MetaDbLogUtil.META_DB_LOG.warn(logMsg);
-            EventLogger.log(EventType.DN_HA, String.format("Find dn is to do ha, haInfo is [%s]", logMsg));
+            EventLogger.log(EventType.DN_HA, String.format("Found dn roles has changed, haInfo is { %s }", logMsg));
         } else {
             CHECK_HA_LOGGER.info(logMsg);
         }
     }
 
     /**
+     * <pre>
      * 1. If the actual leader of a StorageInstance(get from xpaxos) is different from primary_zone configuration,
      * change the actual leader
      * 2. If the actual leader of a StorageInstance(get from xpaxos) is different from in-memory setting,
      * change in-memory setting and any related datasources.
+     * </pre>
      */
     protected static class CheckStorageHaTask implements Runnable {
 
@@ -2006,14 +2483,141 @@ public class StorageHaManager extends AbstractLifecycle {
             }
         }
 
+        public static class HaDnLogInfo {
+
+            protected Long checkDnHaTaskId;
+            protected String dnId;
+            protected Boolean shouldHa = true;
+            protected Boolean haForLeaderChange = false;
+            protected Boolean haForUsrPwdChange = false;
+            protected Boolean haForFollowsChange = false;
+            protected Boolean haForFollowRead = false;
+            protected String newLeaderAddr;
+            protected String oldLeaderAddr;
+            protected String newFollowers;
+            protected String oldFollowers;
+            protected String newUsrPwdEncStr;
+            protected String oldUsrPwdEncStr;
+
+            public HaDnLogInfo() {
+            }
+
+            public String getDnId() {
+                return dnId;
+            }
+
+            public void setDnId(String dnId) {
+                this.dnId = dnId;
+            }
+
+            public Boolean getShouldHa() {
+                return shouldHa;
+            }
+
+            public void setShouldHa(Boolean shouldHa) {
+                this.shouldHa = shouldHa;
+            }
+
+            public Boolean getHaForLeaderChange() {
+                return haForLeaderChange;
+            }
+
+            public void setHaForLeaderChange(Boolean haForLeaderChange) {
+                this.haForLeaderChange = haForLeaderChange;
+            }
+
+            public Boolean getHaForFollowsChange() {
+                return haForFollowsChange;
+            }
+
+            public void setHaForFollowsChange(Boolean haForFollowsChange) {
+                this.haForFollowsChange = haForFollowsChange;
+            }
+
+            public Boolean getHaForFollowRead() {
+                return haForFollowRead;
+            }
+
+            public void setHaForFollowRead(Boolean haForFollowRead) {
+                this.haForFollowRead = haForFollowRead;
+            }
+
+            public String getNewLeaderAddr() {
+                return newLeaderAddr;
+            }
+
+            public void setNewLeaderAddr(String newLeaderAddr) {
+                this.newLeaderAddr = newLeaderAddr;
+            }
+
+            public String getOldLeaderAddr() {
+                return oldLeaderAddr;
+            }
+
+            public void setOldLeaderAddr(String oldLeaderAddr) {
+                this.oldLeaderAddr = oldLeaderAddr;
+            }
+
+            public String getNewFollowers() {
+                return newFollowers;
+            }
+
+            public void setNewFollowers(String newFollowers) {
+                this.newFollowers = newFollowers;
+            }
+
+            public String getOldFollowers() {
+                return oldFollowers;
+            }
+
+            public void setOldFollowers(String oldFollowers) {
+                this.oldFollowers = oldFollowers;
+            }
+
+            public Boolean getHaForUsrPwdChange() {
+                return haForUsrPwdChange;
+            }
+
+            public void setHaForUsrPwdChange(Boolean haForUsrPwdChange) {
+                this.haForUsrPwdChange = haForUsrPwdChange;
+            }
+
+            public String getNewUsrPwdEncStr() {
+                return newUsrPwdEncStr;
+            }
+
+            public void setNewUsrPwdEncStr(String newUsrPwdEncStr) {
+                this.newUsrPwdEncStr = newUsrPwdEncStr;
+            }
+
+            public String getOldUsrPwdEncStr() {
+                return oldUsrPwdEncStr;
+            }
+
+            public void setOldUsrPwdEncStr(String oldUsrPwdEncStr) {
+                this.oldUsrPwdEncStr = oldUsrPwdEncStr;
+            }
+
+            public Long getCheckDnHaTaskId() {
+                return checkDnHaTaskId;
+            }
+
+            public void setCheckDnHaTaskId(Long checkDnHaTaskId) {
+                this.checkDnHaTaskId = checkDnHaTaskId;
+            }
+        }
+
         protected void doCheckAndSubmitTaskIfNeed(Map<String, StorageInstHaContext> storageInstIdAndHaContextMap) {
 
             long beginTs = System.nanoTime();
             long endTs = -1;
             Map<String, Pair<String, Map<String, StorageNodeHaInfo>>> storageInstNewRoleInfoMap =
                 new ConcurrentHashMap<>();
-            Map<String, Pair<Boolean, String>> shouldHaFlags = new HashMap<>();
+            Map<String, HaDnLogInfo> shouldHaLogInfos = new HashMap<>();
             Throwable haCheckEx = null;
+            Long checkHaTaskId = System.currentTimeMillis();
+            Map<String, CheckStorageRoleInfoTask> dnToCheckHaTaskMapping =
+                new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
             try {
 
                 // Check role for all storage node of curr inst (can optimise to use multi-thread to speed up )
@@ -2022,8 +2626,11 @@ public class StorageHaManager extends AbstractLifecycle {
                 for (Map.Entry<String, StorageInstHaContext> storageInstItem : storageHaCache.entrySet()) {
                     CheckStorageRoleInfoTask checkRoleInfoTask =
                         new CheckStorageRoleInfoTask(storageInstItem.getKey(), storageInstItem.getValue(),
+                            this.storageHaManager.scanOnePaxosNodeRoleTaskExecutor,
                             storageInstNewRoleInfoMap);
+                    checkRoleInfoTask.setCheckDnHaTaskId(checkHaTaskId);
                     checkHaTasks.add(checkRoleInfoTask);
+                    dnToCheckHaTaskMapping.put(storageInstItem.getKey(), checkRoleInfoTask);
                 }
                 CountDownLatch countDownLatch = new CountDownLatch(checkHaTasks.size());
                 for (int i = 0; i < checkHaTasks.size(); i++) {
@@ -2041,17 +2648,22 @@ public class StorageHaManager extends AbstractLifecycle {
                 ExecutorUtil.awaitCountDownLatch(countDownLatch);
 
                 // Submit HA switch ds tasks
-                boolean forceHa =
-                    ConfigDataMode.isMasterMode() && DynamicConfig.getInstance().enableFollowReadForPolarDBX()
-                        != this.storageHaManager.allowFollowRead;
+                boolean forceHaForFollowRead = this.storageHaManager.needRefreshFollowSources.getAndSet(false);
 
                 Map<String, Throwable> haSubmitExceptionMap = new TreeMap<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
                 for (String storageInstIdVal : storageInstNewRoleInfoMap.keySet()) {
+                    HaDnLogInfo haDnLogInfo = new HaDnLogInfo();
                     try {
                         String newAvailableAddr = storageInstNewRoleInfoMap.get(storageInstIdVal).getKey();
                         String newAvailableAddrUser = null;
                         String newAvailableAddrEncPasswd = null;
 
+                        /**
+                         * <pre>
+                         *     key: the addr of one node of the dn
+                         *     val: the checking roleInfo of one node of the dn
+                         * </pre>
+                         */
                         Map<String, StorageNodeHaInfo> addrWithRoleMap =
                             storageInstNewRoleInfoMap.get(storageInstIdVal).getValue();
                         StorageInstHaContext haCache = storageHaCache.get(storageInstIdVal);
@@ -2078,9 +2690,11 @@ public class StorageHaManager extends AbstractLifecycle {
 
                         boolean isMasterStorageInst = haCache.getStorageKind() != StorageInfoRecord.INST_KIND_SLAVE;
                         boolean shouldHa = false;
+                        boolean shouldHaForFollowsChange = false;
                         if (checkIfAvailableAddrChanged(newAvailableAddr, haCache.currAvailableNodeAddr)) {
                             if (haCache.haStatus == StorageInstHaContext.StorageHaStatus.NORMAL) {
                                 shouldHa = true;
+                                haDnLogInfo.setHaForLeaderChange(true);
                             }
                         }
 
@@ -2088,6 +2702,12 @@ public class StorageHaManager extends AbstractLifecycle {
                             haCache.encPasswd, newAvailableAddrEncPasswd)) {
                             if (haCache.haStatus == StorageInstHaContext.StorageHaStatus.NORMAL) {
                                 shouldHa = true;
+                                haDnLogInfo.setHaForUsrPwdChange(true);
+                                haDnLogInfo.setNewUsrPwdEncStr(
+                                    StringUtils.join(new String[] {newAvailableAddrUser, newAvailableAddrEncPasswd},
+                                        "/"));
+                                haDnLogInfo.setOldUsrPwdEncStr(
+                                    StringUtils.join(new String[] {haCache.user, haCache.encPasswd}, "/"));
                             }
                         }
 
@@ -2113,13 +2733,26 @@ public class StorageHaManager extends AbstractLifecycle {
                                     }
                                 }
                             }
+
                             if (!newFollows.equals(oldFollows)) {
                                 shouldHa = true;
+                                shouldHaForFollowsChange = true;
                                 MetaDbLogUtil.META_DB_LOG.warn(String.format(
                                     "Force HA due to the follows change from old follow storages [%s] to new follow storages [%s]",
                                     oldFollows, newFollows));
+                                haDnLogInfo.setHaForFollowsChange(true);
+                                haDnLogInfo.setOldFollowers(StringUtils.join(oldFollows, "/"));
+                                haDnLogInfo.setNewFollowers(StringUtils.join(newFollows, "/"));
                             }
-                            shouldHa = shouldHa || forceHa;
+                        }
+                        haDnLogInfo.setHaForFollowsChange(shouldHaForFollowsChange);
+
+                        if (!shouldHa && ConfigDataMode.isMasterMode()
+                            && haCache.storageKind == StorageInfoRecord.INST_KIND_MASTER) {
+                            if (forceHaForFollowRead) {
+                                shouldHa = true;
+                                haDnLogInfo.setHaForFollowRead(true);
+                            }
                         }
 
                         // Refresh all the HaInfos for all storageNode in memory
@@ -2151,8 +2784,21 @@ public class StorageHaManager extends AbstractLifecycle {
                         }
 
                         // shouldHaFlags is used for doing HA logs
-                        shouldHaFlags.put(storageInstIdVal, new Pair<>(shouldHa,
-                            haCache.currAvailableNodeAddr == null ? "noAvailableAddr" : haCache.currAvailableNodeAddr));
+                        haDnLogInfo.setShouldHa(shouldHa);
+                        haDnLogInfo.setOldLeaderAddr(
+                            haCache.currAvailableNodeAddr == null ? "noAvailableAddr" : haCache.currAvailableNodeAddr);
+                        haDnLogInfo.setNewLeaderAddr(newAvailableAddr);
+                        haDnLogInfo.setDnId(storageInstIdVal);
+
+                        CheckStorageRoleInfoTask checkHaTaskOfTarDn = dnToCheckHaTaskMapping.get(storageInstIdVal);
+                        Long checkTaskId = checkHaTaskOfTarDn == null ? 0 : checkHaTaskOfTarDn.getCheckDnHaTaskId();
+                        haDnLogInfo.setCheckDnHaTaskId(checkTaskId);
+
+                        shouldHaLogInfos.put(storageInstIdVal, haDnLogInfo);
+
+//                        shouldHaFlags.put(storageInstIdVal, new Pair<>(shouldHa,
+//                            haCache.currAvailableNodeAddr == null ? "noAvailableAddr" : haCache.currAvailableNodeAddr));
+
                         if (shouldHa) {
                             // check newAvailableAddr is vip address or not
                             boolean isVipAddr = true;
@@ -2170,7 +2816,7 @@ public class StorageHaManager extends AbstractLifecycle {
                                     + (
                                     isVipAddr ? "true" : "false"));
 
-                            submitHaSwitchTask(newAvailableAddr, isVipAddr, newAvailableAddrUser,
+                            submitHaSwitchTask(haDnLogInfo, newAvailableAddr, isVipAddr, newAvailableAddrUser,
                                 newAvailableAddrEncPasswd,
                                 addrWithRoleMap, haCache);
                         }
@@ -2182,21 +2828,24 @@ public class StorageHaManager extends AbstractLifecycle {
                         haCheckEx = ex;
                     }
                 }
-                this.storageHaManager.allowFollowRead = DynamicConfig.getInstance().enableFollowReadForPolarDBX();
                 endTs = System.nanoTime();
+
             } catch (Throwable ex) {
                 haCheckEx = ex;
                 MetaDbLogUtil.META_DB_LOG.error(ex);
             } finally {
                 try {
-                    StorageHaManager.logHaTask(endTs - beginTs, storageInstNewRoleInfoMap, shouldHaFlags, haCheckEx);
+                    StorageHaManager.logHaTask(endTs - beginTs, checkHaTaskId, storageInstNewRoleInfoMap,
+                        shouldHaLogInfos,
+                        haCheckEx);
                 } catch (Throwable ex) {
                     MetaDbLogUtil.META_DB_LOG.error(ex);
                 }
             }
         }
 
-        private void submitHaSwitchTask(String newAvailableAddr,
+        private void submitHaSwitchTask(HaDnLogInfo dnHaLogInfo,
+                                        String newAvailableAddr,
                                         boolean newIsVip,
                                         String newAvailableAddrUser,
                                         String newAvailableAddrEncPasswd,
@@ -2210,17 +2859,26 @@ public class StorageHaManager extends AbstractLifecycle {
                         new StorageHaSwitchTask(haCache, storageHaManager,
                             newAvailableAddr, newIsVip, newAvailableAddrUser, newAvailableAddrEncPasswd,
                             addrWithRoleMap);
+
+                    Long checkDnHaTaskId = dnHaLogInfo.getCheckDnHaTaskId();
+                    storageHaSwitchTask.setCheckDnHaTaskId(checkDnHaTaskId);
+
+                    storageHaSwitchTask.setHaForLeaderChange(dnHaLogInfo.getHaForLeaderChange());
+                    storageHaSwitchTask.setHaForFollowsChange(dnHaLogInfo.getHaForFollowsChange());
+                    storageHaSwitchTask.setHaForUsrPwdChange(dnHaLogInfo.getHaForUsrPwdChange());
                 }
             }
-            if (doHaAsync) {
-                this.storageHaManager.storageHaManagerTaskExecutor.submit(storageHaSwitchTask);
-            } else {
-                storageHaSwitchTask.run();
+            if (storageHaSwitchTask != null) {
+                if (doHaAsync) {
+                    this.storageHaManager.storageHaManagerTaskExecutor.submit(storageHaSwitchTask);
+                } else {
+                    storageHaSwitchTask.run();
+                }
             }
         }
 
         protected boolean checkIfAvailableAddrChanged(String availableAddr, String currAvailableNodeAddr) {
-            if (availableAddr != null && !availableAddr.equalsIgnoreCase(currAvailableNodeAddr)) {
+            if (!StringUtils.isEmpty(availableAddr) && !availableAddr.equalsIgnoreCase(currAvailableNodeAddr)) {
                 return true;
             } else {
                 return false;
@@ -2280,9 +2938,7 @@ public class StorageHaManager extends AbstractLifecycle {
             for (int i = 0; i < masterStorageInstIdSet.size(); i++) {
                 String storageInstId = masterStorageInstIdSet.get(i);
                 StorageInstHaContext haContext = manager.storageHaCtxCache.get(storageInstId);
-                if (haContext.storageType != StorageInfoRecord.STORAGE_TYPE_XCLUSTER &&
-                    haContext.storageType != StorageInfoRecord.STORAGE_TYPE_RDS80_XCLUSTER &&
-                    haContext.storageType != StorageInfoRecord.STORAGE_TYPE_GALAXY_CLUSTER) {
+                if (!StorageInfoRecord.isXcluster(haContext.storageType)) {
                     continue;
                 }
                 if (haContext.storageKind == StorageInfoRecord.INST_KIND_SLAVE) {
@@ -2497,4 +3153,15 @@ public class StorageHaManager extends AbstractLifecycle {
         return allRoleInfoStr;
     }
 
+    public static Set<String> getAllDnId(boolean ignoreSameAddress) {
+        Set<String> dnIds = new HashSet<>();
+        Set<String> addresses = new HashSet<>();
+        for (StorageInstHaContext ctx : StorageHaManager.getInstance().getMasterStorageList()) {
+            // Filter same host:port.
+            if (!ignoreSameAddress || addresses.add(ctx.getCurrAvailableNodeAddr())) {
+                dnIds.add(ctx.getStorageInstId());
+            }
+        }
+        return dnIds;
+    }
 }

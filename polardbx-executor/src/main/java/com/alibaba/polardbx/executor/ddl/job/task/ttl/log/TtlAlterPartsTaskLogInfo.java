@@ -107,6 +107,7 @@ public class TtlAlterPartsTaskLogInfo extends BaseTtlTaskLogInfo {
             logMsg += String.format("ttlTblSchema: %s, ttlTblName: %s\n", ttlTblSchema, ttlTblName);
             logMsg += String.format("arcTmpTblSchema: %s, arcTmpTblName: %s\n", arcTmpTblSchema, arcTmpTblName);
             logMsg += String.format("cciFullTable: %s\n", arcCciFulLTblName);
+            logMsg += String.format("invalidArcCciInfo: %s\n", logInfo.invalidArcCciInfo);
 
             logMsg += msgPrefix;
             logMsg += String.format("ttlInterval: %s, ttlTimeUnit: %s\n", ttlInterval, ttlTimeUnit);

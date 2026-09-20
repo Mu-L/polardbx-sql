@@ -30,6 +30,7 @@ import com.alibaba.polardbx.gms.node.Node;
 import com.alibaba.polardbx.gms.node.NodeStatusManager;
 import com.alibaba.polardbx.gms.topology.ServerInfoRecord;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
+import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import org.apache.commons.lang.StringUtils;
 
@@ -59,17 +60,19 @@ public class PolarDBXNodeStatusManager extends NodeStatusManager {
 
             doExecuteUpdate(deleteOldNodeSql, conn);
 
-            doExecuteUpdate(insertOrUpdateTableMetaSql(localNode, 0), conn);
+            if (checkValidNode(localNode)) {
+                doExecuteUpdate(insertOrUpdateTableMetaSql(localNode, 0), conn);
+            }
 
             ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor(
                 new NamedThreadFactory("Mpp-Leader-Factory", true));
             injectFuture = scheduledExecutorService
-                .scheduleWithFixedDelay(new Notify0dbTask(), 0L, KEEPALIVE_INTERVAR,
+                .scheduleWithFixedDelay(new Notify0dbTask(), KEEPALIVE_INTERVAR * 2, KEEPALIVE_INTERVAR,
                     TimeUnit.SECONDS);
 
             checkFuture =
                 scheduledExecutorService.scheduleWithFixedDelay(
-                    new CheckAllNodeTask(), 0L, ACTIVE_LEASE, TimeUnit.SECONDS);
+                    new CheckAllNodeTask(), ACTIVE_LEASE * 2, ACTIVE_LEASE, TimeUnit.SECONDS);
             logger.warn("injectNode " + localNode + " over");
         } catch (Throwable t) {
             logger.error("init PolarDBXNodeStatusManager error:", t);
@@ -77,7 +80,7 @@ public class PolarDBXNodeStatusManager extends NodeStatusManager {
             throw new TddlNestableRuntimeException(t);
         }
 
-        ExecUtils.syncNodeStatus(SystemDbHelper.DEFAULT_DB_NAME);
+        ExecUtils.syncNodeStatus(SystemDbHelper.DEFAULT_DB_NAME, false);
     }
 
     @Override
@@ -93,20 +96,23 @@ public class PolarDBXNodeStatusManager extends NodeStatusManager {
         }
         updateLocalNode(STATUS_SHUTDOWN);
         //触发SYNC服务通知别的节点删除本节点
-        ExecUtils.syncNodeStatus(SystemDbHelper.DEFAULT_DB_NAME);
+        ExecUtils.syncNodeStatus(SystemDbHelper.DEFAULT_DB_NAME, false);
         if (localNode.isLeader()) {
             localNode.setLeader(false);
         }
     }
 
-    private class Notify0dbTask implements Runnable {
+    protected class Notify0dbTask implements Runnable {
         @Override
         public void run() {
             GmsNodeManager.GmsNode gmsNode = GmsNodeManager.getInstance().getLocalNode();
             //FIXME 现在server_info节点中不存在的节点，也允许使用
-            if (gmsNode == null || gmsNode.status == ServerInfoRecord.SERVER_STATUS_READY) {
-                updateLocalNode(STATUS_ACTIVE);
+            if (checkValidNode(localNode)) {
+                if (gmsNode == null || gmsNode.status == ServerInfoRecord.SERVER_STATUS_READY) {
+                    updateLocalNode(STATUS_ACTIVE);
+                }
             }
+
         }
     }
 
@@ -207,7 +213,7 @@ public class PolarDBXNodeStatusManager extends NodeStatusManager {
             }
 
             //notify all nodes
-            ExecUtils.syncNodeStatus(SystemDbHelper.DEFAULT_DB_NAME);
+            ExecUtils.syncNodeStatus(SystemDbHelper.DEFAULT_DB_NAME, true);
         }
         if (localNode.isLeader()) {
             ret = true;
@@ -217,8 +223,8 @@ public class PolarDBXNodeStatusManager extends NodeStatusManager {
 
     @Override
     protected void checkLeader(Connection conn, String leaderId) {
-        //只有PolarDB-X主实例才选主
-        if (ConfigDataMode.isMasterMode()) {
+        //只有PolarDB-X主实例才选主, 同时避免子实例CN选主
+        if (ConfigDataMode.isMasterMode() && InstIdUtil.isClusterInstId()) {
             if (StringUtils.isEmpty(leaderId)) {
                 //先清除自己leader角色,重新竞选
                 resetLeaderStatus();
@@ -243,11 +249,15 @@ public class PolarDBXNodeStatusManager extends NodeStatusManager {
 
     private void resetLeaderStatus() {
         localNode.setLeader(false);
-        List<Node> coordinators = nodeManager.getAllNodes().getAllCoordinators();
-        if (coordinators != null && !coordinators.isEmpty()) {
-            for (Node node : coordinators) {
-                if (node.isLeader() && node.getNodeIdentifier().equalsIgnoreCase(localNode.getNodeIdentifier())) {
-                    node.setLeader(false);
+        // 添加空指针检查，防止在测试环境下出现NPE
+        if (nodeManager != null && nodeManager.getAllNodes() != null) {
+            List<InternalNode> coordinators = nodeManager.getAllNodes().getAllCoordinators();
+            if (coordinators != null && !coordinators.isEmpty()) {
+                for (Node node : coordinators) {
+                    if (node != null && node.isLeader() && node.getNodeIdentifier() != null &&
+                        node.getNodeIdentifier().equalsIgnoreCase(localNode.getNodeIdentifier())) {
+                        node.setLeader(false);
+                    }
                 }
             }
         }
@@ -290,7 +300,7 @@ public class PolarDBXNodeStatusManager extends NodeStatusManager {
             conn.commit();
             if (beLeader) {
                 //竞选成功广而告之
-                ExecUtils.syncNodeStatus(SystemDbHelper.DEFAULT_DB_NAME);
+                ExecUtils.syncNodeStatus(SystemDbHelper.DEFAULT_DB_NAME, false);
                 localNode.setLeader(true);
             }
         } catch (Throwable t) {
@@ -300,11 +310,16 @@ public class PolarDBXNodeStatusManager extends NodeStatusManager {
         }
     }
 
-    private void markLeader(Statement statement) throws SQLException {
+    protected void markLeader(Statement statement) throws SQLException {
         logger.warn("setLeader:" + localNode);
         statement.executeUpdate(deleteLeaderSql);
-        synchronized (this) {
-            statement.executeUpdate(insertOrUpdateTableMetaSql(localNode, ROLE_LEADER));
+        if (checkValidNode(localNode)) {
+            synchronized (this) {
+                statement.executeUpdate(insertOrUpdateTableMetaSql(localNode, ROLE_LEADER));
+            }
+        } else {
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC, "node is not valid:" + localNode);
         }
+
     }
 }

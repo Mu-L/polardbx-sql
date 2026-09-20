@@ -1,0 +1,29 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2 ;
+set ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC=true;
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=true;
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+  
+create table dblemurhash_exam1 (
+  id varchar(32) not null primary key,
+  name varchar(20)
+  )
+  partition by UDF_HASH(
+  `id` with udf_params(
+  'dble/unitmurmurhash',
+  '{
+"partitionCount" : "2"
+}'
+  )
+) 
+partitions 2;
+insert into dblemurhash_exam1(id,name) values('1','a');
+select * from dblemurhash_exam1 where id='1';
+## error_msg: $# routeField is null or "" ! #$
+insert into dblemurhash_exam1(id,name) values('','a');
+## error_msg: $# routeField is too long, over 15 #$
+insert into dblemurhash_exam1(id,name) values('123456789123456789','a');
+## error_msg: $# routeField is not digit ! #$
+insert into dblemurhash_exam1(id,name) values('aa','a');
+

@@ -103,6 +103,11 @@ public class FixedExpandSourceScheduler implements StageScheduler {
     }
 
     @Override
+    public Map<Node, Multimap<Integer, Split>> getSplitAssignments() {
+        return splitAssignments;
+    }
+
+    @Override
     public int getTaskNum() {
         return splitAssignments.size();
     }

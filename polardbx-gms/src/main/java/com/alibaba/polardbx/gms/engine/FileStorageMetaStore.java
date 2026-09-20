@@ -43,7 +43,7 @@ import java.util.List;
 
 public class FileStorageMetaStore {
 
-    private static final Logger logger = LoggerFactory.getLogger("oss");
+    private static final Logger logger = LoggerFactory.getLogger("mpp_log");
 
     public static String MATA_STORE_FILE_PATH = "meta/files_meta.txt";
 
@@ -83,8 +83,6 @@ public class FileStorageMetaStore {
                 FileMergeCachingFileSystem fileMergeCachingFileSystem = (FileMergeCachingFileSystem) fileSystem;
                 if (fileMergeCachingFileSystem.getDataTier() instanceof OSSFileSystem) {
                     OSSFileSystem ossFileSystem = (OSSFileSystem) fileMergeCachingFileSystem.getDataTier();
-                    // NOTE: invalidate meta cache
-                    ossFileSystem.getMetaCache().invalidate(path);
                     // NOTE: replace filesystem, bypass data cache
                     fileSystem = ossFileSystem;
                 } else if (fileMergeCachingFileSystem.getDataTier() instanceof NFSFileSystem) {

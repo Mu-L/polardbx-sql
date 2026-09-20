@@ -19,7 +19,7 @@ import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
 import com.alibaba.polardbx.druid.sql.ast.SQLObjectImpl;
 import com.alibaba.polardbx.druid.sql.visitor.SQLASTVisitor;
 
-public class SQLAlterTableCoalescePartition extends SQLObjectImpl implements SQLAlterTableItem {
+public class SQLAlterTableCoalescePartition extends SQLObjectImpl implements SQLAlterTableItem,SQLAlterTableGroupItem {
 
     private SQLExpr count;
 

@@ -52,7 +52,7 @@ public class DropIndexHideMetaTask extends BaseGmsTask {
     protected void rollbackImpl(Connection metaDbConnection, ExecutionContext executionContext) {
         TableMetaChanger.showIndexMeta(metaDbConnection, schemaName, logicalTableName, indexName);
         // Refresh table meta to make hidden columns visible after rollback.
-        SyncManagerHelper.sync(new TableMetaChangeSyncAction(schemaName, logicalTableName),
+        SyncManagerHelper.syncThrowExceptions(new TableMetaChangeSyncAction(schemaName, logicalTableName),
             SyncScope.ALL);
         executionContext.refreshTableMeta();
     }

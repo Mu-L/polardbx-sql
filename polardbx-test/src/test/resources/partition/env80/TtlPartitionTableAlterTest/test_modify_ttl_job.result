@@ -1,0 +1,43 @@
+## DISABLE_FAST_SQL_PARSER
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00'
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false
+drop table if exists test_ttl_job
+## create table
+create table test_ttl_job(
+a int not null,
+b datetime,
+primary key(a)
+)
+partition by key(`a`)
+partitions 4
+alter table test_ttl_job
+modify ttl
+ttl_enable = 'on'
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_job = cron '0 0 1 */2 * ? *' timezone '+08:00'
+show create table test_ttl_job
+Table,Create Table
+test_ttl_job,CREATE TABLE `test_ttl_job` (
+	`a` int(11) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 1 */2 * ? *', TTL_CLEANUP = 'OFF', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 12, ARCHIVE_TABLE_POST_ALLOCATE = 64 )
+PARTITION BY KEY(`a`)
+PARTITIONS 4
+select * from information_schema.schedule_jobs where job_type like '%TTL_JOB%' limit 0
+MODULE_NAME,TABLE_SCHEMA,TABLE_NAME,SCHEDULE_ID,SCHEDULE_NAME,JOB_TYPE,LAST_FIRETIME,NEXT_FIRETIME,LASTJOB_STARTTIME,LASTJOB_STATE,LASTJOB_RESULT,LASTJOB_REMARK,STATE,SCHEDULE_EXPR,COMMENT
+select table_name,next_fire_time > 0 from metadb.scheduled_jobs where table_name='test_ttl_job'
+table_name,next_fire_time > 0
+test_ttl_job,0
+alter table test_ttl_job
+modify ttl
+ttl_job = cron '0 0 2 */2 * ? *' timezone '+08:00'
+select table_name,next_fire_time > 0 from metadb.scheduled_jobs where table_name='test_ttl_job'
+table_name,next_fire_time > 0
+test_ttl_job,0
+select table_name,fire_time from metadb.fired_scheduled_jobs where table_name='test_ttl_job' limit 1
+table_name,fire_time
+drop table if exists test_ttl_job;

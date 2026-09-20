@@ -31,6 +31,9 @@ public class DropGlobalIndexPreparedData extends DdlPreparedData {
     private boolean isColumnar;
     private String originalIndexName;
 
+    // rebuild CCI
+    public boolean markByHint = false;
+
     public DropGlobalIndexPreparedData(final String schemaName,
                                        final String primaryTableName,
                                        final String indexTableName,
@@ -106,5 +109,13 @@ public class DropGlobalIndexPreparedData extends DdlPreparedData {
 
     public void setOriginalIndexName(String originalIndexName) {
         this.originalIndexName = originalIndexName;
+    }
+
+    public boolean isMarkByHint() {
+        return markByHint;
+    }
+
+    public void setMarkByHint(boolean markByHint) {
+        this.markByHint = markByHint;
     }
 }

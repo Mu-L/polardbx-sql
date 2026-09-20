@@ -23,6 +23,7 @@ import com.google.common.collect.ImmutableList;
 import org.apache.calcite.util.Pair;
 import org.hamcrest.Matchers;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.sql.Connection;
@@ -53,6 +54,11 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
         return "/*+TDDL:CMD_EXTRA(" + String.join(",", params) + ")*/";
     }
 
+    @Before
+    public void before() {
+        JdbcUtil.executeQuery("set global OPTIMIZE_REPLACE_BY_RETURNING=FALSE", tddlConnection);
+    }
+
     /**
      * 无 PK 无 UK
      * REPLACE 转 INSERT 直接下发
@@ -73,7 +79,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c6` datetime DEFAULT NULL,\n"
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -114,7 +120,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  UNIQUE KEY u_id(`id`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -124,7 +130,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
 
         final String hint = "/*+TDDL:CMD_EXTRA(DML_EXECUTION_STRATEGY=LOGICAL,DML_FORCE_PUSHDOWN_RC_REPLACE=TRUE)*/ ";
         final String insert = "replace into " + tableName
-                + "(id, c1, c5, c8) values(1, 1, 'a', '2020-06-16 06:49:32'), (2, 2, 'b', '2020-06-16 06:49:32'), (3, 3, 'c', '2020-06-16 06:49:32')";
+            + "(id, c1, c5, c8) values(1, 1, 'a', '2020-06-16 06:49:32'), (2, 2, 'b', '2020-06-16 06:49:32'), (3, 3, 'c', '2020-06-16 06:49:32')";
 
         // DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN = true
         executeTwiceThenCheckDataAndTraceResult(
@@ -167,7 +173,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  UNIQUE KEY u_id(`id`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -216,7 +222,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  UNIQUE KEY u_id(`id`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -226,7 +232,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
 
         final String hint = "/*+TDDL:CMD_EXTRA(DML_EXECUTION_STRATEGY=LOGICAL,DML_FORCE_PUSHDOWN_RC_REPLACE=TRUE)*/ ";
         final String insert = "replace into " + tableName
-                + "(c1, c5, c8) values(3, 'a', '2020-06-16 06:49:32'), (3, 'b', '2020-06-16 06:49:32'), (3, 'c', '2020-06-16 06:49:32')";
+            + "(c1, c5, c8) values(3, 'a', '2020-06-16 06:49:32'), (3, 'b', '2020-06-16 06:49:32'), (3, 'c', '2020-06-16 06:49:32')";
         // VALUES 中有重复，affected rows 可能会比 MySQL 返回的小 1
         // DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN = true
         executeTwiceThenCheckDataAndTraceResult(
@@ -266,7 +272,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  UNIQUE KEY u_id(`id`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`id`) tbpartition by hash(`id`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -308,7 +314,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  UNIQUE KEY u_id_c1(`id`, `c1`),"
             + "  UNIQUE KEY u_id_c2(`c4`, `id`, `c2`),"
             + "  UNIQUE KEY u_id_c3(`c3`, `id`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`id`) tbpartition by hash(`id`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -348,7 +354,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -389,7 +395,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -432,7 +438,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY (`pk`),"
             + "  UNIQUE KEY u_id(`c1`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -440,9 +446,10 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
 
         final List<Pair<String, String>> topology = JdbcUtil.getTopology(tddlConnection, tableName);
 
-        final String hint = "/*+TDDL:CMD_EXTRA(DML_EXECUTION_STRATEGY=LOGICAL,DML_SKIP_DUPLICATE_CHECK_FOR_PK=FALSE,DML_FORCE_PUSHDOWN_RC_REPLACE=TRUE)*/ ";
+        final String hint =
+            "/*+TDDL:CMD_EXTRA(DML_EXECUTION_STRATEGY=LOGICAL,DML_SKIP_DUPLICATE_CHECK_FOR_PK=FALSE,DML_FORCE_PUSHDOWN_RC_REPLACE=TRUE)*/ ";
         final String insert = "replace into " + tableName
-                + "(c1, c5, c8) values(1, 'a', '2020-06-16 06:49:32'), (null, 'b', '2020-06-16 06:49:32'), (3, 'c', '2020-06-16 06:49:32')";
+            + "(c1, c5, c8) values(1, 'a', '2020-06-16 06:49:32'), (null, 'b', '2020-06-16 06:49:32'), (3, 'c', '2020-06-16 06:49:32')";
 
         // DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN = true
         executeTwiceThenCheckDataAndTraceResult(
@@ -484,7 +491,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY (`pk`),"
             + "  UNIQUE KEY u_id(`c1`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -534,7 +541,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY (`pk`),"
             + "  UNIQUE KEY u_c1_c2(`c1`,`c2`),"
             + "  UNIQUE KEY u_c2_c3(`c2`,`c3`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -544,13 +551,13 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
 
         final String hint = "/*+TDDL:CMD_EXTRA(DML_EXECUTION_STRATEGY=LOGICAL,DML_FORCE_PUSHDOWN_RC_REPLACE=TRUE)*/ ";
         final String insert = "replace into " + tableName
-                + "(c1, c2, c3, c5, c8) values"
-                + "(1, 2, 3, 'a', '2020-06-16 06:49:32'), "
-                + "(null, 2, 3, 'b', '2020-06-16 06:49:32'), " // u_c2_c3 冲突, replace
-                + "(1, null, 3, 'c', '2020-06-16 06:49:32'), " // 不冲突
-                + "(1, 2, null, 'd', '2020-06-16 06:49:32')," // u_c1_c2 与第一行冲突，但是第一行被 replace, 这行保留
-                + "(1, 2, 4, 'e', '2020-06-16 06:49:32')," // u_c1_c2 冲突，replace
-                + "(2, 2, 4, 'f', '2020-06-16 06:49:32')"; // u_c2_c3 冲突，replace
+            + "(c1, c2, c3, c5, c8) values"
+            + "(1, 2, 3, 'a', '2020-06-16 06:49:32'), "
+            + "(null, 2, 3, 'b', '2020-06-16 06:49:32'), " // u_c2_c3 冲突, replace
+            + "(1, null, 3, 'c', '2020-06-16 06:49:32'), " // 不冲突
+            + "(1, 2, null, 'd', '2020-06-16 06:49:32')," // u_c1_c2 与第一行冲突，但是第一行被 replace, 这行保留
+            + "(1, 2, 4, 'e', '2020-06-16 06:49:32')," // u_c1_c2 冲突，replace
+            + "(2, 2, 4, 'f', '2020-06-16 06:49:32')"; // u_c2_c3 冲突，replace
 
         final List<String> columnNames = ImmutableList.of("c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8");
         // DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN = true
@@ -595,7 +602,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "g_replace_c2";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -611,7 +618,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`c1`),\n"
             + "  GLOBAL INDEX " + gsiName
             + "(`c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -660,7 +667,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "g_replace_c2";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -676,7 +683,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`c1`),\n"
             + "  GLOBAL INDEX " + gsiName
             + "(`c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -723,7 +730,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "g_replace_c2";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -739,7 +746,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`c1`),\n"
             + "  GLOBAL INDEX " + gsiName
             + "(`c1`) COVERING(`c5`) DBPARTITION BY HASH(`c1`) TBPARTITION BY HASH(`c1`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -784,7 +791,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName1 = "g_replace_two_c1";
         final String gsiName2 = "g_replace_two_c2";
@@ -803,7 +810,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "(`c1`) COVERING(`c5`) DBPARTITION BY HASH(`c1`) TBPARTITION BY HASH(`c1`) TBPARTITIONS 3,\n"
             + "  GLOBAL INDEX " + gsiName2
             + "(`c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -854,7 +861,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName1 = "g_replace_two_c1";
         final String gsiName2 = "g_replace_two_c2";
@@ -873,7 +880,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "(`c1`) COVERING(`c5`) DBPARTITION BY HASH(`c1`) TBPARTITION BY HASH(`c1`) TBPARTITIONS 3,\n"
             + "  GLOBAL INDEX " + gsiName2
             + "(`c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -922,7 +929,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`id`, `c1`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName1 = "g_replace_two_c1";
         final String gsiName2 = "g_replace_two_c2";
@@ -941,7 +948,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "(`c1`) COVERING(`c5`) DBPARTITION BY HASH(`c1`) TBPARTITION BY HASH(`c1`) TBPARTITIONS 3,\n"
             + "  GLOBAL INDEX " + gsiName2
             + "(`id`) COVERING(`c4`) DBPARTITION BY HASH(`id`) TBPARTITION BY HASH(`id`) TBPARTITIONS 5\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -992,7 +999,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`),\n"
             + "  UNIQUE KEY u_c2(`c2`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_one_c2";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -1008,7 +1015,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`c1`),\n"
             + "  UNIQUE GLOBAL INDEX " + gsiName
             + "(`c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -1058,7 +1065,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`),\n"
             + "  UNIQUE KEY u_c2(`c2`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_one_c2";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -1074,7 +1081,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`c1`),\n"
             + "  UNIQUE GLOBAL INDEX " + gsiName
             + "(`c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -1124,7 +1131,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`),\n"
             + "  UNIQUE KEY u_c1(`c1`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_one_c1";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -1140,7 +1147,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`c1`),\n"
             + "  UNIQUE GLOBAL INDEX " + gsiName
             + "(`c1`) COVERING(`c5`) DBPARTITION BY HASH(`c1`) TBPARTITION BY HASH(`c1`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -1190,7 +1197,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`id`, `c1`, `c2`),\n"
             + "  UNIQUE KEY u_c1_c2_3(`c1`, `c2`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_c1_c2_3";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -1206,7 +1213,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`id`, `c1`, `c2`),\n"
             + "  UNIQUE GLOBAL INDEX " + gsiName
             + "(`c1`, `c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -1262,7 +1269,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`id`, `c1`, `c2`),\n"
             + "  UNIQUE KEY u_c1_c2_3(`c1`, `c2`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_c1_c2_3";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -1278,7 +1285,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`id`, `c1`, `c2`),\n"
             + "  UNIQUE GLOBAL INDEX " + gsiName
             + "(`c1`, `c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -1332,7 +1339,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`id`, `c1`, `c2`),\n"
             + "  UNIQUE KEY u_c1_c2_3(`c1`, `c2`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_c1_c2_3";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -1348,7 +1355,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`id`, `c1`, `c2`),\n"
             + "  UNIQUE GLOBAL INDEX " + gsiName
             + "(`c1`, `c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -1402,7 +1409,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`id`, `c1`, `c2`),\n"
             + "  UNIQUE KEY u_c1_c2_3(`c1`, `c2`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_c1_c2_3";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -1418,7 +1425,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`id`, `c1`, `c2`),\n"
             + "  UNIQUE GLOBAL INDEX " + gsiName
             + "(`c1`, `c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -1471,7 +1478,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`id`, `c1`, `c2`),\n"
             + "  UNIQUE KEY u_c1_c2_3(`c1`, `c2`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_c1_c2_4";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -1487,7 +1494,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`id`, `c1`, `c2`),\n"
             + "  UNIQUE CLUSTERED INDEX " + gsiName
             + "(`c1`, `c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -1540,7 +1547,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`),\n"
             + "  UNIQUE KEY(`c2`,`c4`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "g_replace_with_uk_c2";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -1557,7 +1564,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  UNIQUE KEY i_c2_c4(`c2`,`c4`),\n"
             + "  GLOBAL INDEX " + gsiName
             + "(`c1`) COVERING(`c5`) DBPARTITION BY HASH(`c1`) TBPARTITION BY HASH(`c1`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -1605,7 +1612,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`,`c2`),\n"
             + "  UNIQUE KEY u_c2(`c2`,`c1`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_one_c2_c1";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -1622,7 +1629,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  UNIQUE KEY u_c2(`c2`,`c1`),\n"
             + "  UNIQUE GLOBAL INDEX " + gsiName
             + "(`c2`, `c1`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -1673,7 +1680,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY (`pk`),"
             + "  UNIQUE KEY u_c1_c2_1(`c1`,`c2`),"
             + "  UNIQUE KEY u_g_c2_c3(`c2`,`c3`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_c2_c3";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -1689,7 +1696,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY (`pk`),"
             + "  UNIQUE KEY u_c1_c2_1(`c1`,`c2`),"
             + "  UNIQUE GLOBAL INDEX " + gsiName + "(`c2`,`c3`) COVERING(`c5`) DBPARTITION BY HASH(`c2`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -1746,7 +1753,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY (`pk`),"
             + "  UNIQUE KEY u_c1_c2_1(`c1`,`c2`),"
             + "  UNIQUE KEY u_g_c2_c3(`c2`,`c3`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_c2_c3";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -1762,7 +1769,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY (`pk`),"
             + "  UNIQUE KEY u_c1_c2_1(`c1`,`c2`),"
             + "  UNIQUE GLOBAL INDEX " + gsiName + "(`c2`,`c3`) COVERING(`c5`) DBPARTITION BY HASH(`c2`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -1820,7 +1827,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "g_replace_c2_delete_only";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -1836,7 +1843,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`c1`),\n"
             + "  GLOBAL INDEX " + gsiName
             + "(`c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -1891,7 +1898,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "g_replace_c2_delete_only";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -1907,7 +1914,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`c1`),\n"
             + "  GLOBAL INDEX " + gsiName
             + "(`c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -1967,7 +1974,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY (`pk`),"
             + "  UNIQUE KEY u_c1_c2_1(`c1`,`c2`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_c2_c3_delete_only";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -1983,7 +1990,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY (`pk`),"
             + "  UNIQUE KEY u_c1_c2_1(`c1`,`c2`),"
             + "  UNIQUE GLOBAL INDEX " + gsiName + "(`c2`,`c3`) COVERING(`c5`) DBPARTITION BY HASH(`c2`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -2049,7 +2056,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY (`pk`),"
             + "  UNIQUE KEY u_c1_c2_1(`c1`,`c2`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_c2_c3_delete_only";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -2065,7 +2072,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY (`pk`),"
             + "  UNIQUE KEY u_c1_c2_1(`c1`,`c2`),"
             + "  UNIQUE GLOBAL INDEX " + gsiName + "(`c2`,`c3`) COVERING(`c5`) DBPARTITION BY HASH(`c2`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -2125,7 +2132,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`, `c2`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "g_replace_c2_write_only";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -2141,7 +2148,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`c1`, `c2`),\n"
             + "  GLOBAL INDEX " + gsiName
             + "(`c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -2192,7 +2199,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`, `c2`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "g_replace_c2_write_only";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -2208,7 +2215,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`c1`, `c2`),\n"
             + "  GLOBAL INDEX " + gsiName
             + "(`c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -2261,7 +2268,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY (`pk`),"
             + "  UNIQUE KEY u_c1_c2_1(`c1`,`c2`),"
             + "  UNIQUE KEY u_g_c2_c3(`c2`,`c3`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_c2_c3_write_only";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -2277,7 +2284,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY (`pk`),"
             + "  UNIQUE KEY u_c1_c2_1(`c1`,`c2`),"
             + "  UNIQUE GLOBAL INDEX " + gsiName + "(`c2`,`c3`) COVERING(`c5`) DBPARTITION BY HASH(`c2`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -2335,7 +2342,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY (`pk`),"
             + "  UNIQUE KEY u_c1_c2_1(`c1`,`c2`),"
             + "  UNIQUE KEY u_g_c2_c3(`c2`,`c3`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_c2_c3_write_only";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -2351,7 +2358,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY (`pk`),"
             + "  UNIQUE KEY u_c1_c2_1(`c1`,`c2`),"
             + "  UNIQUE GLOBAL INDEX " + gsiName + "(`c2`,`c3`) COVERING(`c5`) DBPARTITION BY HASH(`c2`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -2413,7 +2420,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`id`),\n"
             + "  UNIQUE KEY u_c2(`c2`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_two_c2";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -2429,7 +2436,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`id`),\n"
             + "  UNIQUE GLOBAL INDEX " + gsiName
             + "(`c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -2445,8 +2452,9 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
 
         final String replace =
             "replace into " + tableName + "(id, c1, c2, c5, c8) values(2, 1, 1, 'd', '2020-06-16 06:49:32')";
+        final String hint = "/*+TDDL:CMD_EXTRA(DML_PARTITION_LOCAL_PK_DUP_CHECK=FALSE)*/ ";
 
-        executeOnMysqlAndTddl(mysqlConnection, tddlConnection, replace, "trace " + replace, null, true);
+        executeOnMysqlAndTddl(mysqlConnection, tddlConnection, replace, "trace " + hint + replace, null, true);
         final List<List<String>> trace = getTrace(tddlConnection);
 
         final List<Pair<String, String>> primaryTopology = JdbcUtil.getTopology(tddlConnection, tableName);
@@ -2484,7 +2492,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`id`),\n"
             + "  UNIQUE KEY u_c2(`c2`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_two_c2";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -2500,7 +2508,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`id`),\n"
             + "  UNIQUE GLOBAL INDEX " + gsiName
             + "(`c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -2556,7 +2564,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`id`),\n"
             + "  UNIQUE KEY u_c2(`c2`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_three_c2";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -2572,7 +2580,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`id`),\n"
             + "  UNIQUE GLOBAL INDEX " + gsiName
             + "(`c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -2631,7 +2639,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`id`),\n"
             + "  UNIQUE KEY u_c2(`c2`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "ug_replace_three_c2";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -2647,7 +2655,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`id`),\n"
             + "  UNIQUE GLOBAL INDEX " + gsiName
             + "(`c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -2705,7 +2713,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c7` text,\n"
             + "  `c8` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,\n"
             + "  PRIMARY KEY(`c1`)\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
 
         final String gsiName = "g_replace_result_c2";
         final String createTable = "CREATE TABLE IF NOT EXISTS `" + tableName + "` (\n"
@@ -2721,7 +2729,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY(`c1`),\n"
             + "  GLOBAL INDEX " + gsiName
             + "(`c2`) COVERING(`c5`) DBPARTITION BY HASH(`c2`) TBPARTITION BY HASH(`c2`) TBPARTITIONS 3\n"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`) tbpartition by hash(`c1`) tbpartitions 7";
 
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
@@ -2769,7 +2777,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  UNIQUE KEY `c` (`c`),\n"
             + "  KEY `auto_shard_key_d` USING BTREE (`d`),\n"
             + "  GLOBAL INDEX `g`(`c`) COVERING (`a`, `d`) DBPARTITION BY HASH(`c`)\n"
-            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4  dbpartition by hash(`d`)";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci  dbpartition by hash(`d`)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable);
         String insert = "insert into " + tableName + " values (1,2,3,4)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, insert);
@@ -2809,7 +2817,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  UNIQUE KEY `c` (`c`),\n"
             + "  KEY `auto_shard_key_d` USING BTREE (`d`),\n"
             + "  GLOBAL INDEX `g`(`c`) COVERING (`a`, `d`) DBPARTITION BY HASH(`c`)\n"
-            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8mb4  dbpartition by hash(`d`)";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci  dbpartition by hash(`d`)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable);
         String insert = "insert into " + tableName + " values (1,2,3,4)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, insert);
@@ -2846,7 +2854,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
         final String createTable = "create table " + tableName + " (\n"
             + "  `a` int(11) primary key,\n"
             + "  `b` varchar(20) unique key\n"
-            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`a`)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, createTable);
@@ -2885,7 +2893,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `a` int primary key,\n"
             + "  `b` int,\n"
             + "  `c` varchar(1024) \n"
-            + ") ENGINE = InnoDB DEFAULT CHARSET = utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`a`)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, createTable);
@@ -2936,7 +2944,8 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
 
     @Test
     public void testLogicalReplace() throws SQLException {
-        String hint = "/*+TDDL:CMD_EXTRA(DML_EXECUTION_STRATEGY=LOGICAL,DML_USE_RETURNING=FALSE,DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=TRUE)*/";
+        String hint =
+            "/*+TDDL:CMD_EXTRA(DML_EXECUTION_STRATEGY=LOGICAL,DML_USE_RETURNING=FALSE,DML_GET_DUP_FOR_LOCAL_UK_WITH_FULL_TABLE_SCAN=TRUE)*/";
 
         testComplexDmlInternal(hint + "replace into", "replace_test_tbl", " dbpartition by hash(id)", false, true, true,
             REPLACE_PARAMS);
@@ -2957,7 +2966,9 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
         // Create source table for insert select
         dropTableIfExists(SOURCE_TABLE_NAME);
         String createSourceTableSql =
-            String.format("create table if not exists %s (id int primary key, a int, b int)", SOURCE_TABLE_NAME);
+            String.format(
+                "create table if not exists %s (id int primary key, a int, b int)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci",
+                SOURCE_TABLE_NAME);
         JdbcUtil.executeUpdateSuccess(tddlConnection, createSourceTableSql);
         JdbcUtil.executeUpdateSuccess(tddlConnection,
             "insert into " + SOURCE_TABLE_NAME + " values(100,101,101),(101,102,102),(102,103,103)");
@@ -2967,7 +2978,9 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
         String primaryDef = withPk ? "primary key" : "";
         String uniqueDef = withUk ? "unique key" : "";
         String createTableSql =
-            String.format("create table if not exists %s (id int %s, a int default 1, b int default 0 %s)", tableName,
+            String.format(
+                "create table if not exists %s (id int %s, a int default 1, b int default 0 %s)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci",
+                tableName,
                 primaryDef, uniqueDef);
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTableSql + partitionDef);
         JdbcUtil.executeUpdateSuccess(mysqlConnection, createTableSql);
@@ -3066,7 +3079,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c2` bigint(20) DEFAULT NULL ,\n"
             + "  PRIMARY KEY (`pk`),"
             + "  GLOBAL INDEX " + gsiName + "(`c1`) DBPARTITION BY HASH(`c1`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
 
@@ -3098,7 +3111,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  `c2` bigint(20) DEFAULT NULL ,\n"
             + "  PRIMARY KEY (`pk`),"
             + "  GLOBAL INDEX " + gsiName + "(`c1`) DBPARTITION BY HASH(`c1`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c1`)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
 
@@ -3140,7 +3153,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY (`pk`),"
             + "  LOCAL UNIQUE KEY (`c2`),"
             + "  GLOBAL INDEX " + gsiName + "(`c1`) DBPARTITION BY HASH(`c1`)"
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`pk`)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
 
@@ -3220,7 +3233,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY (`pk`), \n"
             + "  GLOBAL INDEX " + gsiName + "(`c1`) covering(`c2`) DBPARTITION BY HASH(`c1`), \n"
             + "  UNIQUE INDEX l1 on g1(`c2`) "
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c3`)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
 
@@ -3245,7 +3258,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
 
         String create =
             String.format(
-                "create table %s (a int primary key, b int, c json, global index %s(b) dbpartition by hash(b)) dbpartition by hash(a)",
+                "create table %s (a int primary key, b int, c json, global index %s(b) dbpartition by hash(b))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci dbpartition by hash(a)",
                 tableName, indexName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, create);
 
@@ -3276,7 +3289,7 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
 
         String create =
             String.format(
-                "create table %s (a int primary key, b int, c json, global index %s(b) dbpartition by hash(b)) dbpartition by hash(a)",
+                "create table %s (a int primary key, b int, c json, global index %s(b) dbpartition by hash(b))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci dbpartition by hash(a)",
                 tableName, indexName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, create);
 
@@ -3307,23 +3320,27 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
         dropTableIfExists(tableName2);
         dropTableIfExists(tableName3);
 
-        String create = String.format("create table %s(e int primary key) dbpartition by hash(e)", tableName1);
+        String create = String.format(
+            "create table %s(e int primary key) dbpartition by hash(e)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci",
+            tableName1);
         JdbcUtil.executeUpdateSuccess(tddlConnection, create);
 
         create = String.format("CREATE TABLE %s (\n"
-            + "  a bigint(20) NOT NULL, \n"
-            + "  b bigint(20) NOT NULL, \n"
-            + "  c bigint(20) NOT NULL, \n"
-            + "  d int(11) NOT NULL, \n"
-            + "  PRIMARY KEY (`a`)\n"
-            + ") DBPARTITION BY hash(`d`)", tableName2);
+                + "  a bigint(20) NOT NULL, \n"
+                + "  b bigint(20) NOT NULL, \n"
+                + "  c bigint(20) NOT NULL, \n"
+                + "  d int(11) NOT NULL, \n"
+                + "  PRIMARY KEY (`a`)\n"
+                + ")ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci DBPARTITION BY hash(`d`)",
+            tableName2);
         JdbcUtil.executeUpdateSuccess(tddlConnection, create);
 
         create = String.format("CREATE TABLE %s (\n"
-            + "  b bigint(20) NOT NULL, \n"
-            + "  d int(11) NOT NULL, \n"
-            + "  PRIMARY KEY (`b`)\n"
-            + ") DBPARTITION BY hash(`d`);", tableName3);
+                + "  b bigint(20) NOT NULL, \n"
+                + "  d int(11) NOT NULL, \n"
+                + "  PRIMARY KEY (`b`)\n"
+                + ")ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci DBPARTITION BY hash(`d`);",
+            tableName3);
         JdbcUtil.executeUpdateSuccess(tddlConnection, create);
 
         String insert = String.format("insert into %s values (1,1,1,1)", tableName2);
@@ -3360,13 +3377,14 @@ public class ReplaceTest extends DDLBaseNewDBTestCase {
             + "  PRIMARY KEY (`pk`), \n"
             + "  UNIQUE GLOBAL INDEX " + gsiName + "(`c1`) covering(`c2`) DBPARTITION BY HASH(`c1`), \n"
             + "  UNIQUE INDEX l1 on g1(`c2`) "
-            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8";
+            + ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE = utf8mb4_general_ci";
         final String partitionDef = " dbpartition by hash(`c3`)";
         JdbcUtil.executeUpdateSuccess(tddlConnection, createTable + partitionDef);
 
         String sql = String.format("insert into %s values (1,1,1,1,null)", tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
-        sql = String.format("replace into %s values (1,2,3,4,'{\"a\":\"b\"}')", tableName);
+        sql = "/*+TDDL:CMD_EXTRA(DML_PARTITION_LOCAL_PK_DUP_CHECK=FALSE)*/ "
+            + String.format("replace into %s values (1,2,3,4,'{\"a\":\"b\"}')", tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, sql);
 
         checkGsi(tddlConnection, gsiName);

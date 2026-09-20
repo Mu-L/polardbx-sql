@@ -240,12 +240,25 @@ public class RelJsonReader {
         return ((Number) jsonRel.get(tag)).intValue();
       }
 
+      public RelNode getCTERef(Integer integer) {
+        return null;
+      }
+
       public boolean getBoolean(String tag, boolean default_) {
         final Boolean b = (Boolean) jsonRel.get(tag);
         return b != null ? b : default_;
       }
 
       public <E extends Enum<E>> E getEnum(String tag, Class<E> enumClass) {
+        return Util.enumVal(enumClass,
+            getString(tag).toUpperCase(Locale.ROOT));
+      }
+
+      @Override
+      public <E extends Enum<E>> E getEnum(String tag, Class<E> enumClass, E default_) {
+        if (get(tag) == null) {
+          return default_;
+        }
         return Util.enumVal(enumClass,
             getString(tag).toUpperCase(Locale.ROOT));
       }
@@ -258,6 +271,18 @@ public class RelJsonReader {
           nodes.add(relJson.toRex(this, jsonNode));
         }
         return nodes;
+      }
+
+      public List<RexNode> getExpressionList(String tag, List<RelNode> inputs) {
+          @SuppressWarnings("unchecked") final List<Object> jsonNodes = (List) jsonRel.get(tag);
+          if (jsonNodes == null) {
+              return null;
+          }
+          final List<RexNode> nodes = new ArrayList<>();
+          for (Object jsonNode : jsonNodes) {
+              nodes.add(relJson.toRex(this, jsonNode, inputs));
+          }
+          return nodes;
       }
 
       public List<List<RexNode>> getExpressionListList(String tag) {
@@ -294,6 +319,11 @@ public class RelJsonReader {
                 return names.size();
               }
             });
+      }
+
+      public RelCollation getInnerCollation() {
+        //noinspection unchecked
+        return relJson.toCollation((List) get("innercollation"));
       }
 
       public RelCollation getCollation() {

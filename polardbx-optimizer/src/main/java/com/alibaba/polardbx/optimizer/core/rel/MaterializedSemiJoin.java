@@ -145,22 +145,7 @@ public class MaterializedSemiJoin extends SemiJoin implements LookupJoin {
             this.operands = relInput.getExpressionList("operands");
         }
         this.distinctInput = relInput.getBoolean("distinctInput", true);
-        if (this.getLeft() instanceof Gather) {
-            ((Gather) this.getLeft()).setJoin(this);
-        } else if (this.getLeft() instanceof LogicalView) {
-            ((LogicalView) this.getLeft()).setJoin(this);
-        } else if (this.getLeft() instanceof MergeSort) {
-            RelNode rootNode = ((MergeSort) this.getLeft()).getInput();
-            if (rootNode instanceof LogicalView) {
-                ((LogicalView) rootNode).setJoin(this);
-            }
-        } else if (this.getLeft() instanceof Project) {
-            RelNode node = ((BKAJoin) ((Project) this.getLeft()).getInput()).getOuter();
-            if (node instanceof Gather) {
-                node = ((Gather) node).getInput();
-            }
-            ((LogicalIndexScan) node).setJoin(this);
-        }
+        this.deepVisitLookupJoin();
     }
 
     @Override
@@ -191,6 +176,26 @@ public class MaterializedSemiJoin extends SemiJoin implements LookupJoin {
                 distinctInput);
         materializedSemiJoin.setFixedCost(this.fixedCost);
         return materializedSemiJoin;
+    }
+
+    @Override
+    public void deepVisitLookupJoin() {
+        if (this.getLeft() instanceof Gather) {
+            ((Gather) this.getLeft()).setJoin(this);
+        } else if (this.getLeft() instanceof LogicalView) {
+            ((LogicalView) this.getLeft()).setLookupInfo(this);
+        } else if (this.getLeft() instanceof MergeSort) {
+            RelNode rootNode = ((MergeSort) this.getLeft()).getInput();
+            if (rootNode instanceof LogicalView) {
+                ((LogicalView) rootNode).setLookupInfo(this);
+            }
+        } else if (this.getLeft() instanceof Project) {
+            RelNode node = ((BKAJoin) ((Project) this.getLeft()).getInput()).getOuter();
+            if (node instanceof Gather) {
+                node = ((Gather) node).getInput();
+            }
+            ((LogicalIndexScan) node).setLookupInfo(this);
+        }
     }
 
     public void setFixedCost(RelOptCost fixedCost) {

@@ -57,8 +57,16 @@ public class SimpleHttpResponseHandler<T>
                 callback.success(response.getValue());
             } else if (response.getStatusCode() == HttpStatus.SERVICE_UNAVAILABLE.code()) {
                 callback.failed(new ServiceUnavailableException(uri));
+            } else if (response.getStatusCode() == HttpStatus.INTERNAL_SERVER_ERROR.code()) {
+                // HTTP 500 may be transient (e.g., task status poll hits cleanup window),
+                // treat as retriable error instead of fatal
+                callback.failed(new TddlRuntimeException(ERR_REMOTE_TASK,
+                    format("Expected response code from %s to be %s, but was %s",
+                        uri,
+                        HttpStatus.OK.code(),
+                        response.getStatusCode())));
             } else {
-                // Something is broken in the server or the client, so fail the task immediately (includes 500 errors)
+                // Something is broken in the server or the client, so fail the task immediately
                 Exception cause = response.getException();
                 if (cause == null) {
                     if (response.getStatusCode() == HttpStatus.OK.code()) {

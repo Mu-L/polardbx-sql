@@ -10,34 +10,25 @@
         </encoder>
     </appender>
 
-    <appender name="ROOT" class="ch.qos.logback.classic.sift.SiftingAppender">
-        <discriminator>
-            <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
-        </discriminator>
-        <sift>
-            <appender name="ROOT-{app}"
-                      class="ch.qos.logback.core.rolling.RollingFileAppender">
-                <File>${loggerRoot:-..}/logs/${app}/tddl.log</File>
-                <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-                    <!-- rollover daily -->
-                    <fileNamePattern>${loggerRoot:-..}/logs/${app}/%d{yyyy-MM-dd}/tddl-%d{yyyy-MM-dd}-%i.log.gz
-                    </fileNamePattern>
-                    <timeBasedFileNamingAndTriggeringPolicy
-                            class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                        <!-- or whenever the file size reaches 100MB -->
-                        <maxFileSize>512MB</maxFileSize>
-                    </timeBasedFileNamingAndTriggeringPolicy>
-                    <maxHistory>30</maxHistory>
-                    <totalSizeCap>60GB</totalSizeCap>
-                </rollingPolicy>
-                <encoder>
-                    <pattern>
-                        %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{56} - [%X{CONNECTION}] %msg%n
-                    </pattern>
-                </encoder>
-            </appender>
-        </sift>
+    <appender name="ROOT" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <File>${loggerRoot:-..}/logs/tddl/tddl.log</File>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <!-- rollover daily -->
+            <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/tddl-%d{yyyy-MM-dd}-%i.log.gz
+            </fileNamePattern>
+            <timeBasedFileNamingAndTriggeringPolicy
+                    class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
+                <!-- or whenever the file size reaches 100MB -->
+                <maxFileSize>512MB</maxFileSize>
+            </timeBasedFileNamingAndTriggeringPolicy>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>60GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>
+                %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{56} - [%X{CONNECTION}] %msg%n
+            </pattern>
+        </encoder>
     </appender>
 
     <appender name="MPP_LOG" class="ch.qos.logback.core.rolling.RollingFileAppender">
@@ -45,6 +36,27 @@
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
             <!-- rollover daily -->
             <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/tddl-executor-%d{yyyy-MM-dd}-%i.log.gz
+            </fileNamePattern>
+            <timeBasedFileNamingAndTriggeringPolicy
+                    class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
+                <!-- or whenever the file size reaches 100MB -->
+                <maxFileSize>512MB</maxFileSize>
+            </timeBasedFileNamingAndTriggeringPolicy>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>10GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>
+                %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{56} - [%X{CONNECTION}] %msg%n
+            </pattern>
+        </encoder>
+    </appender>
+
+    <appender name="CACHE_LOG" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <File>${loggerRoot:-..}/logs/tddl/cache.log</File>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <!-- rollover daily -->
+            <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/cache-%d{yyyy-MM-dd}-%i.log.gz
             </fileNamePattern>
             <timeBasedFileNamingAndTriggeringPolicy
                     class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
@@ -85,7 +97,7 @@
     <appender name="SLOW_DETAIL" class="ch.qos.logback.classic.sift.SiftingAppender">
         <discriminator>
             <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
+            <DefaultValue>polardbx</DefaultValue>
         </discriminator>
         <sift>
             <appender name="SLOW_DETAIL-{app}"
@@ -115,7 +127,7 @@
     <appender name="SQL" class="ch.qos.logback.classic.sift.SiftingAppender">
         <discriminator>
             <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
+            <DefaultValue>polardbx</DefaultValue>
         </discriminator>
         <sift>
             <appender name="SQL-{app}"
@@ -144,184 +156,32 @@
         </sift>
     </appender>
 
-    <appender name="DDL" class="ch.qos.logback.classic.sift.SiftingAppender">
-        <discriminator>
-            <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
-        </discriminator>
-        <sift>
-            <appender name="DDL-{app}"
-                      class="ch.qos.logback.core.rolling.RollingFileAppender">
-                <File>${loggerRoot:-..}/logs/${app}/ddl.log</File>
-                <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-                    <!-- rollover daily -->
-
-                    <fileNamePattern>${loggerRoot:-..}/logs/${app}/%d{yyyy-MM-dd}/ddl-%d{yyyy-MM-dd}-%i.log.gz
-                    </fileNamePattern>
-                    <timeBasedFileNamingAndTriggeringPolicy
-                            class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                        <!-- or whenever the file size reaches 100MB -->
-                        <maxFileSize>512MB</maxFileSize>
-                    </timeBasedFileNamingAndTriggeringPolicy>
-                    <maxHistory>30</maxHistory>
-                    <totalSizeCap>10GB</totalSizeCap>
-                </rollingPolicy>
-                <encoder>
-                    <pattern>
-                        %d{yyyy-MM-dd HH:mm:ss.SSS} - [%X{CONNECTION}] %msg%n
-                    </pattern>
-                </encoder>
-            </appender>
-        </sift>
-    </appender>
-
-    <appender name="DDL_STATS"
-              class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <File>${loggerRoot:-..}/logs/tddl/ddl-stats.log</File>
+    <appender name="DDL" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <File>${loggerRoot:-..}/logs/tddl/ddl.log</File>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
             <!-- rollover daily -->
-            <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/ddl-stats-%d{yyyy-MM-dd}-%i.log.gz
+
+            <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/ddl-%d{yyyy-MM-dd}-%i.log.gz
             </fileNamePattern>
             <timeBasedFileNamingAndTriggeringPolicy
                     class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
                 <!-- or whenever the file size reaches 100MB -->
                 <maxFileSize>512MB</maxFileSize>
             </timeBasedFileNamingAndTriggeringPolicy>
-            <maxHistory>180</maxHistory>
+            <maxHistory>30</maxHistory>
             <totalSizeCap>10GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %p %m%n</pattern>
+            <pattern>
+                %d{yyyy-MM-dd HH:mm:ss.SSS} - [%X{CONNECTION}] %msg%n
+            </pattern>
         </encoder>
-    </appender>
-
-    <appender name="SCALE_OUT_SQL" class="ch.qos.logback.classic.sift.SiftingAppender">
-        <discriminator>
-            <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
-        </discriminator>
-        <sift>
-            <appender name="SCALE_OUT_SQL-{app}"
-                      class="ch.qos.logback.core.rolling.RollingFileAppender">
-                <File>${loggerRoot:-..}/logs/${app}/scale_out_sql.log</File>
-                <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-                    <!-- rollover daily -->
-
-                    <fileNamePattern>${loggerRoot:-..}/logs/${app}/%d{yyyy-MM-dd}/scale_out_sql-%d{yyyy-MM-dd}-%i.log.gz
-                    </fileNamePattern>
-                    <timeBasedFileNamingAndTriggeringPolicy
-                            class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                        <!-- or whenever the file size reaches 100MB -->
-                        <maxFileSize>512MB</maxFileSize>
-                    </timeBasedFileNamingAndTriggeringPolicy>
-                    <maxHistory>30</maxHistory>
-                    <totalSizeCap>20GB</totalSizeCap>
-                </rollingPolicy>
-                <encoder>
-                    <pattern>
-                        %d{yyyy-MM-dd HH:mm:ss.SSS} - [%X{CONNECTION}] %msg%n
-                    </pattern>
-                </encoder>
-            </appender>
-        </sift>
-    </appender>
-    <appender name="SCALE_OUT_TASK" class="ch.qos.logback.classic.sift.SiftingAppender">
-        <discriminator>
-            <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
-        </discriminator>
-        <sift>
-            <appender name="SCALE_OUT_TASK-{app}"
-                      class="ch.qos.logback.core.rolling.RollingFileAppender">
-                <File>${loggerRoot:-..}/logs/${app}/scale_out_task.log</File>
-                <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-                    <!-- rollover daily -->
-
-                    <fileNamePattern>
-                        ${loggerRoot:-..}/logs/${app}/%d{yyyy-MM-dd}/scale_out_task-%d{yyyy-MM-dd}-%i.log.gz
-                    </fileNamePattern>
-                    <timeBasedFileNamingAndTriggeringPolicy
-                            class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                        <!-- or whenever the file size reaches 100MB -->
-                        <maxFileSize>512MB</maxFileSize>
-                    </timeBasedFileNamingAndTriggeringPolicy>
-                    <maxHistory>30</maxHistory>
-                    <totalSizeCap>10GB</totalSizeCap>
-                </rollingPolicy>
-                <encoder>
-                    <pattern>
-                        %d{yyyy-MM-dd HH:mm:ss.SSS} - [%X{CONNECTION}] %msg%n
-                    </pattern>
-                </encoder>
-            </appender>
-        </sift>
-    </appender>
-    <appender name="TTL_TASK" class="ch.qos.logback.classic.sift.SiftingAppender">
-        <discriminator>
-            <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
-        </discriminator>
-        <sift>
-            <appender name="TTL_TASK-{app}"
-                      class="ch.qos.logback.core.rolling.RollingFileAppender">
-                <File>${loggerRoot:-..}/logs/${app}/ttl-task.log</File>
-                <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-                    <!-- rollover daily -->
-
-                    <fileNamePattern>
-                        ${loggerRoot:-..}/logs/${app}/%d{yyyy-MM-dd}/ttl-task-%d{yyyy-MM-dd}-%i.log.gz
-                    </fileNamePattern>
-                    <timeBasedFileNamingAndTriggeringPolicy
-                            class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                        <!-- or whenever the file size reaches 100MB -->
-                        <maxFileSize>512MB</maxFileSize>
-                    </timeBasedFileNamingAndTriggeringPolicy>
-                    <maxHistory>30</maxHistory>
-                    <totalSizeCap>10GB</totalSizeCap>
-                </rollingPolicy>
-                <encoder>
-                    <pattern>
-                        %d{yyyy-MM-dd HH:mm:ss.SSS} - [%X{CONNECTION}] %msg%n
-                    </pattern>
-                </encoder>
-            </appender>
-        </sift>
-    </appender>
-    <appender name="BIG_SQL" class="ch.qos.logback.classic.sift.SiftingAppender">
-        <discriminator>
-            <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
-        </discriminator>
-        <sift>
-            <appender name="BIG_SQL-{app}"
-                      class="ch.qos.logback.core.rolling.RollingFileAppender">
-                <File>${loggerRoot:-..}/logs/${app}/big_sql.log</File>
-                <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-                    <!-- rollover daily -->
-
-                    <fileNamePattern>${loggerRoot:-..}/logs/${app}/%d{yyyy-MM-dd}/big_sql-%d{yyyy-MM-dd}-%i.log.gz
-                    </fileNamePattern>
-                    <timeBasedFileNamingAndTriggeringPolicy
-                            class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                        <!-- or whenever the file size reaches 100MB -->
-                        <maxFileSize>512MB</maxFileSize>
-                    </timeBasedFileNamingAndTriggeringPolicy>
-                    <maxHistory>30</maxHistory>
-                    <totalSizeCap>5GB</totalSizeCap>
-                </rollingPolicy>
-                <encoder>
-                    <pattern>
-                        %d{yyyy-MM-dd HH:mm:ss.SSS} - [%X{CONNECTION}] %msg%n
-                    </pattern>
-                </encoder>
-            </appender>
-        </sift>
     </appender>
 
     <appender name="PHYSICAL_SLOW" class="ch.qos.logback.classic.sift.SiftingAppender">
         <discriminator>
             <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
+            <DefaultValue>polardbx</DefaultValue>
         </discriminator>
         <sift>
             <appender name="PHYSICAL_SLOW-{app}"
@@ -329,7 +189,8 @@
                 <File>${loggerRoot:-..}/logs/${app}/physical_slow.log</File>
                 <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
                     <!-- rollover daily -->
-                    <fileNamePattern>${loggerRoot:-..}/logs/${app}/%d{yyyy-MM-dd}/physical_slow-%d{yyyy-MM-dd}-%i.log.gz
+                    <fileNamePattern>
+                        ${loggerRoot:-..}/logs/${app}/%d{yyyy-MM-dd}/physical_slow-%d{yyyy-MM-dd}-%i.log.gz
                     </fileNamePattern>
                     <timeBasedFileNamingAndTriggeringPolicy
                             class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
@@ -351,12 +212,12 @@
     <appender name="XProtocol" class="ch.qos.logback.classic.sift.SiftingAppender">
         <discriminator>
             <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
+            <DefaultValue>polardbx</DefaultValue>
         </discriminator>
         <sift>
             <appender name="XProtocol-{app}"
                       class="ch.qos.logback.core.rolling.RollingFileAppender">
-                <File>${loggerRoot:-..}/logs/${app}/XProtocol.log</File>
+                <File>${loggerRoot:-..}/logs/${app}/xprotocol.log</File>
                 <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
                     <!-- rollover daily -->
                     <fileNamePattern>${loggerRoot:-..}/logs/${app}/%d{yyyy-MM-dd}/XProtocol-%d{yyyy-MM-dd}-%i.log.gz
@@ -377,55 +238,8 @@
         </sift>
     </appender>
 
-    <appender name="XRequest" class="ch.qos.logback.classic.sift.SiftingAppender">
-        <discriminator>
-            <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
-        </discriminator>
-        <sift>
-            <appender name="XRequest-{app}"
-                      class="ch.qos.logback.core.rolling.RollingFileAppender">
-                <File>${loggerRoot:-..}/logs/${app}/XRequest.log</File>
-                <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-                    <!-- rollover daily -->
-                    <fileNamePattern>${loggerRoot:-..}/logs/${app}/%d{yyyy-MM-dd}/XRequest-%d{yyyy-MM-dd}-%i.log.gz
-                    </fileNamePattern>
-                    <timeBasedFileNamingAndTriggeringPolicy
-                            class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                        <!-- or whenever the file size reaches 100MB -->
-                        <maxFileSize>512MB</maxFileSize>
-                    </timeBasedFileNamingAndTriggeringPolicy>
-                    <maxHistory>30</maxHistory>
-                </rollingPolicy>
-                <encoder>
-                    <pattern>
-                        %d{yyyy-MM-dd HH:mm:ss.SSS} - [%X{CONNECTION}] %msg%n
-                    </pattern>
-                </encoder>
-            </appender>
-        </sift>
-    </appender>
-
-    <appender name="XPerf" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <File>${loggerRoot:-..}/logs/tddl/XPerf.log</File>
-        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-            <!-- rollover daily -->
-            <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/XPerf-%d{yyyy-MM-dd}-%i.log.gz
-            </fileNamePattern>
-            <timeBasedFileNamingAndTriggeringPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                <!-- or whenever the file size reaches 100MB -->
-                <maxFileSize>512MB</maxFileSize>
-            </timeBasedFileNamingAndTriggeringPolicy>
-            <maxHistory>14</maxHistory>
-            <totalSizeCap>10GB</totalSizeCap>
-        </rollingPolicy>
-        <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %p %m%n</pattern>
-        </encoder>
-    </appender>
-
     <appender name="XLog" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <File>${loggerRoot:-..}/logs/tddl/XLog.log</File>
+        <File>${loggerRoot:-..}/logs/tddl/xrpc.log</File>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
             <!-- rollover daily -->
             <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/XLog-%d{yyyy-MM-dd}-%i.log.gz
@@ -442,36 +256,6 @@
         </encoder>
     </appender>
 
-    <appender name="NET_ERROR" class="ch.qos.logback.classic.sift.SiftingAppender">
-        <discriminator>
-            <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
-        </discriminator>
-        <sift>
-            <appender name="NET-ERROR-{app}"
-                      class="ch.qos.logback.core.rolling.RollingFileAppender">
-                <File>${loggerRoot:-..}/logs/${app}/net_error.log</File>
-                <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-                    <!-- rollover daily -->
-                    <fileNamePattern>${loggerRoot:-..}/logs/${app}/%d{yyyy-MM-dd}/net_error-%d{yyyy-MM-dd}-%i.log.gz
-                    </fileNamePattern>
-                    <timeBasedFileNamingAndTriggeringPolicy
-                            class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                        <!-- or whenever the file size reaches 100MB -->
-                        <maxFileSize>512MB</maxFileSize>
-                    </timeBasedFileNamingAndTriggeringPolicy>
-                    <maxHistory>2</maxHistory>
-                    <totalSizeCap>10GB</totalSizeCap>
-                </rollingPolicy>
-                <encoder>
-                    <pattern>
-                        %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{56} - [%X{CONNECTION}] %msg%n
-                    </pattern>
-                </encoder>
-            </appender>
-        </sift>
-    </appender>
-
     <appender name="TDDL_Dynamic_Config"
               class="ch.qos.logback.core.rolling.RollingFileAppender">
         <File>${loggerRoot:-..}/logs/tddl/tddl-dynamic.log</File>
@@ -486,26 +270,6 @@
             </timeBasedFileNamingAndTriggeringPolicy>
             <maxHistory>180</maxHistory>
             <totalSizeCap>20GB</totalSizeCap>
-        </rollingPolicy>
-        <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %p %m%n</pattern>
-        </encoder>
-    </appender>
-
-    <appender name="TDDL_Sequence_Change"
-              class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <File>${loggerRoot:-..}/logs/tddl/tddl-sequence.log</File>
-        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-            <!-- rollover daily -->
-            <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/tddl-sequence-%d{yyyy-MM-dd}-%i.log.gz
-            </fileNamePattern>
-            <timeBasedFileNamingAndTriggeringPolicy
-                    class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                <!-- or whenever the file size reaches 100MB -->
-                <maxFileSize>512MB</maxFileSize>
-            </timeBasedFileNamingAndTriggeringPolicy>
-            <maxHistory>180</maxHistory>
-            <totalSizeCap>10GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
             <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %p %m%n</pattern>
@@ -532,163 +296,57 @@
         </encoder>
     </appender>
 
-    <appender name="DDL_ENGINE_LOG" class="ch.qos.logback.classic.sift.SiftingAppender">
-        <discriminator>
-            <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
-        </discriminator>
-        <sift>
-            <appender name="DDL-ENGINE-{app}"
-                      class="ch.qos.logback.core.rolling.RollingFileAppender">
-                <File>${loggerRoot:-..}/logs/${app}/ddl-engine.log</File>
-                <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-                    <!-- rollover daily -->
-                    <fileNamePattern>${loggerRoot:-..}/logs/${app}/%d{yyyy-MM-dd}/ddl-engine-%d{yyyy-MM-dd}-%i.log.gz
-                    </fileNamePattern>
-                    <timeBasedFileNamingAndTriggeringPolicy
-                            class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                        <!-- or whenever the file size reaches 100MB -->
-                        <maxFileSize>512MB</maxFileSize>
-                    </timeBasedFileNamingAndTriggeringPolicy>
-                    <maxHistory>30</maxHistory>
-                    <totalSizeCap>10GB</totalSizeCap>
-                </rollingPolicy>
-                <encoder>
-                    <pattern>
-                        %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{56} - [%X{JOB_ID}] [%X{TASK_ID}] %msg%n
-                    </pattern>
-                </encoder>
-            </appender>
-        </sift>
-    </appender>
-
-    <appender name="DDL_META_LOG" class="ch.qos.logback.classic.sift.SiftingAppender">
-        <discriminator>
-            <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
-        </discriminator>
-        <sift>
-            <appender name="DDL-META-{app}"
-                      class="ch.qos.logback.core.rolling.RollingFileAppender">
-                <File>${loggerRoot:-..}/logs/${app}/ddl-meta.log</File>
-                <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-                    <!-- rollover daily -->
-
-                    <fileNamePattern>${loggerRoot:-..}/logs/${app}/%d{yyyy-MM-dd}/ddl-meta-%d{yyyy-MM-dd}-%i.log.gz
-                    </fileNamePattern>
-                    <timeBasedFileNamingAndTriggeringPolicy
-                            class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                        <!-- or whenever the file size reaches 100MB -->
-                        <maxFileSize>512MB</maxFileSize>
-                    </timeBasedFileNamingAndTriggeringPolicy>
-                    <maxHistory>30</maxHistory>
-                    <totalSizeCap>10GB</totalSizeCap>
-                </rollingPolicy>
-                <encoder>
-                    <pattern>
-                        %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{56} - [%X{JOB_ID}] [%X{TASK_ID}] %msg%n
-                    </pattern>
-                </encoder>
-            </appender>
-        </sift>
-    </appender>
-
-    <appender name="START_UP_LOG"
-              class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <File>${loggerRoot:-..}/logs/tddl/start-up.log</File>
+    <appender name="DDL_ENGINE_LOG" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <File>${loggerRoot:-..}/logs/tddl/ddl-engine.log</File>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
             <!-- rollover daily -->
-            <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/tddl-start-up-%d{yyyy-MM-dd}-%i.log.gz
+            <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/ddl-engine-%d{yyyy-MM-dd}-%i.log.gz
             </fileNamePattern>
             <timeBasedFileNamingAndTriggeringPolicy
                     class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
                 <!-- or whenever the file size reaches 100MB -->
                 <maxFileSize>512MB</maxFileSize>
             </timeBasedFileNamingAndTriggeringPolicy>
-            <maxHistory>180</maxHistory>
-            <totalSizeCap>2GB</totalSizeCap>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>10GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %p %m%n</pattern>
+            <pattern>
+                %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{56} - [%X{JOB_ID}] [%X{TASK_ID}] %msg%n
+            </pattern>
         </encoder>
     </appender>
 
-    <appender name="CHECK_HA_LOG"
-              class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <File>${loggerRoot:-..}/logs/tddl/check-ha.log</File>
+    <appender name="DDL_META_LOG" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <File>${loggerRoot:-..}/logs/tddl/ddl-meta.log</File>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
             <!-- rollover daily -->
-            <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/tddl-check-ha-%d{yyyy-MM-dd}-%i.log.gz
+
+            <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/ddl-meta-%d{yyyy-MM-dd}-%i.log.gz
             </fileNamePattern>
             <timeBasedFileNamingAndTriggeringPolicy
                     class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
                 <!-- or whenever the file size reaches 100MB -->
-                <maxFileSize>128MB</maxFileSize>
+                <maxFileSize>512MB</maxFileSize>
             </timeBasedFileNamingAndTriggeringPolicy>
-            <maxHistory>180</maxHistory>
-            <totalSizeCap>2GB</totalSizeCap>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>10GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %p %m%n</pattern>
+            <pattern>
+                %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{56} - [%X{JOB_ID}] [%X{TASK_ID}] %msg%n
+            </pattern>
         </encoder>
     </appender>
 
-    <appender name="PRUNER_LOG"
-              class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <File>${loggerRoot:-..}/logs/tddl/pruner.log</File>
+    <appender name="TRANS" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <File>${loggerRoot:-..}/logs/tddl/trans.log</File>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
             <!-- rollover daily -->
-            <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/tddl-pruner-%d{yyyy-MM-dd}-%i.log.gz
+            <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/trans-%d{yyyy-MM-dd}-%i.log.gz
             </fileNamePattern>
             <timeBasedFileNamingAndTriggeringPolicy
                     class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                <!-- or whenever the file size reaches 100MB -->
-                <maxFileSize>128MB</maxFileSize>
-            </timeBasedFileNamingAndTriggeringPolicy>
-            <maxHistory>180</maxHistory>
-            <totalSizeCap>2GB</totalSizeCap>
-        </rollingPolicy>
-        <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %p %m%n</pattern>
-        </encoder>
-    </appender>
-
-    <appender name="TRANS" class="ch.qos.logback.classic.sift.SiftingAppender">
-        <discriminator>
-            <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
-        </discriminator>
-        <sift>
-            <appender name="TRANS-{app}"
-                      class="ch.qos.logback.core.rolling.RollingFileAppender">
-                <File>${loggerRoot:-..}/logs/${app}/trans.log</File>
-                <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-                    <!-- rollover daily -->
-                    <fileNamePattern>${loggerRoot:-..}/logs/${app}/%d{yyyy-MM-dd}/trans-%d{yyyy-MM-dd}-%i.log.gz
-                    </fileNamePattern>
-                    <timeBasedFileNamingAndTriggeringPolicy
-                            class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                        <!-- or whenever the file size reaches 100MB -->
-                        <maxFileSize>512MB</maxFileSize>
-                    </timeBasedFileNamingAndTriggeringPolicy>
-                    <maxHistory>30</maxHistory>
-                    <totalSizeCap>20GB</totalSizeCap>
-                </rollingPolicy>
-                <encoder>
-                    <pattern>
-                        %d{yyyy-MM-dd HH:mm:ss.SSS} - [%X{CONNECTION}] %msg%n
-                    </pattern>
-                </encoder>
-            </appender>
-        </sift>
-    </appender>
-    <appender name="SPM" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <File>${loggerRoot:-..}/logs/tddl/spm.log</File>
-        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-            <!-- rollover daily -->
-            <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/spm-%d{yyyy-MM-dd}-%i.log.gz
-            </fileNamePattern>
-            <timeBasedFileNamingAndTriggeringPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
                 <!-- or whenever the file size reaches 100MB -->
                 <maxFileSize>512MB</maxFileSize>
             </timeBasedFileNamingAndTriggeringPolicy>
@@ -697,73 +355,15 @@
         </rollingPolicy>
         <encoder>
             <pattern>
-                %d{yyyy-MM-dd HH:mm:ss.SSS} %m%n
+                %d{yyyy-MM-dd HH:mm:ss.SSS} - [%X{CONNECTION}] %msg%n
             </pattern>
         </encoder>
-    </appender>
-
-    <appender name="STATISTIC" class="ch.qos.logback.classic.sift.SiftingAppender">
-        <discriminator>
-            <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
-        </discriminator>
-        <sift>
-            <appender name="STATISTICS" class="ch.qos.logback.core.rolling.RollingFileAppender">
-                <File>${loggerRoot:-..}/logs/tddl/statistics.log</File>
-                <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-                    <!-- rollover daily -->
-                    <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/statistics-%d{yyyy-MM-dd}-%i.log.gz
-                    </fileNamePattern>
-                    <timeBasedFileNamingAndTriggeringPolicy
-                            class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                        <!-- or whenever the file size reaches 100MB -->
-                        <maxFileSize>512MB</maxFileSize>
-                    </timeBasedFileNamingAndTriggeringPolicy>
-                    <maxHistory>30</maxHistory>
-                    <totalSizeCap>20GB</totalSizeCap>
-                </rollingPolicy>
-                <encoder>
-                    <pattern>
-                        %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %m%n
-                    </pattern>
-                </encoder>
-            </appender>
-        </sift>
-    </appender>
-
-    <appender name="OSS" class="ch.qos.logback.classic.sift.SiftingAppender">
-        <discriminator>
-            <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
-        </discriminator>
-        <sift>
-            <appender name="OSS-{app}"
-                      class="ch.qos.logback.core.rolling.RollingFileAppender">
-                <File>${loggerRoot:-..}/logs/${app}/oss.log</File>
-                <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-                    <!-- rollover daily -->
-                    <fileNamePattern>${loggerRoot:-..}/logs/${app}/%d{yyyy-MM-dd}/oss-%d{yyyy-MM-dd}-%i.log.gz
-                    </fileNamePattern>
-                    <timeBasedFileNamingAndTriggeringPolicy
-                            class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                        <maxFileSize>512MB</maxFileSize>
-                    </timeBasedFileNamingAndTriggeringPolicy>
-                    <maxHistory>30</maxHistory>
-                    <totalSizeCap>20GB</totalSizeCap>
-                </rollingPolicy>
-                <encoder>
-                    <pattern>
-                        %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %m%n
-                    </pattern>
-                </encoder>
-            </appender>
-        </sift>
     </appender>
 
     <appender name="SLOW_TRANS" class="ch.qos.logback.classic.sift.SiftingAppender">
         <discriminator>
             <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
+            <DefaultValue>polardbx</DefaultValue>
         </discriminator>
         <sift>
             <appender name="SLOW-TRANS-{app}"
@@ -792,76 +392,20 @@
         </sift>
     </appender>
 
-    <appender name="INNER_SQL" class="ch.qos.logback.classic.sift.SiftingAppender">
-        <discriminator>
-            <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
-        </discriminator>
-        <sift>
-            <appender name="INNER-SQL-{app}"
-                      class="ch.qos.logback.core.rolling.RollingFileAppender">
-                <File>${loggerRoot:-..}/logs/${app}/inner_sql.log</File>
-                <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-                    <!-- rollover daily -->
-
-                    <fileNamePattern>${loggerRoot:-..}/logs/${app}/%d{yyyy-MM-dd}/inner_sql-%d{yyyy-MM-dd}-%i.log.gz
-                    </fileNamePattern>
-                    <timeBasedFileNamingAndTriggeringPolicy
-                            class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                        <!-- or whenever the file size reaches 100MB -->
-                        <maxFileSize>512MB</maxFileSize>
-                    </timeBasedFileNamingAndTriggeringPolicy>
-                    <maxHistory>7</maxHistory>
-                    <totalSizeCap>100GB</totalSizeCap>
-                </rollingPolicy>
-                <encoder>
-                    <immediateFlush>true</immediateFlush>
-                    <pattern>
-                        %d{yyyy-MM-dd HH:mm:ss.SSS} - [%X{CONNECTION}] %msg%n
-                    </pattern>
-                </encoder>
-            </appender>
-        </sift>
-    </appender>
-
-
-    <appender name="COLUMNAR_TRANS" class="ch.qos.logback.classic.sift.SiftingAppender">
-        <discriminator>
-            <Key>app</Key>
-            <DefaultValue>tddl</DefaultValue>
-        </discriminator>
-        <sift>
-            <appender name="COLUMNAR_TRANS-{app}"
-                      class="ch.qos.logback.core.rolling.RollingFileAppender">
-                <File>${loggerRoot:-..}/logs/${app}/columnar-trans.log</File>
-                <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-                    <!-- rollover daily -->
-                    <fileNamePattern>
-                        ${loggerRoot:-..}/logs/${app}/%d{yyyy-MM-dd}/columnar-trans-%d{yyyy-MM-dd}-%i.log.gz
-                    </fileNamePattern>
-                    <timeBasedFileNamingAndTriggeringPolicy
-                            class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                        <maxFileSize>512MB</maxFileSize>
-                    </timeBasedFileNamingAndTriggeringPolicy>
-                    <maxHistory>30</maxHistory>
-                    <totalSizeCap>20GB</totalSizeCap>
-                </rollingPolicy>
-                <encoder>
-                    <pattern>
-                        %d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %m%n
-                    </pattern>
-                </encoder>
-            </appender>
-        </sift>
-    </appender>
-
     <appender name="asyncROOT" class="com.alibaba.polardbx.common.utils.logger.logback.AsyncAppender">
         <queueSize>100000</queueSize>
         <maxFlushTime>3000</maxFlushTime>
         <discardingThreshold>0</discardingThreshold>
-        <!-- 错误日志包含堆栈，内容太大，超过直接丢 -->
         <neverBlock>true</neverBlock>
         <appender-ref ref="ROOT"/>
+    </appender>
+
+    <appender name="asyncTRANS" class="com.alibaba.polardbx.common.utils.logger.logback.AsyncAppender">
+        <queueSize>100000</queueSize>
+        <maxFlushTime>3000</maxFlushTime>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="TRANS"/>
     </appender>
 
     <appender name="asyncSQL" class="com.alibaba.polardbx.common.utils.logger.logback.AsyncAppender">
@@ -879,25 +423,19 @@
         <appender-ref ref="SQL"/>
     </appender>
 
-    <appender name="asyncTRANS" class="com.alibaba.polardbx.common.utils.logger.logback.AsyncAppender">
-        <queueSize>100000</queueSize>
-        <maxFlushTime>3000</maxFlushTime>
-        <discardingThreshold>0</discardingThreshold>
-        <neverBlock>true</neverBlock>
-        <appender-ref ref="TRANS"/>
-    </appender>
-
-    <appender name="CDC_LOG" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <File>${loggerRoot:-..}/logs/tddl/cdc.log</File>
+    <!-- RPC Statistics File Appender: daily rolling -->
+    <appender name="RPC_CACHE_STATISTICS" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <File>${loggerRoot:-..}/logs/__cache__/rpc_statistics.log</File>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
             <!-- rollover daily -->
-            <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/cdc-%d{yyyy-MM-dd}-%i.log.gz
+            <fileNamePattern>${loggerRoot:-..}/logs/__cache__/%d{yyyy-MM-dd}/rpc_statistics-%d{yyyy-MM-dd}-%i.log.gz
             </fileNamePattern>
-            <timeBasedFileNamingAndTriggeringPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                <!-- or whenever the file size reaches 100MB -->
+            <timeBasedFileNamingAndTriggeringPolicy
+                    class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
+                <!-- or whenever the file size reaches 512MB -->
                 <maxFileSize>512MB</maxFileSize>
             </timeBasedFileNamingAndTriggeringPolicy>
-            <maxHistory>14</maxHistory>
+            <maxHistory>30</maxHistory>
             <totalSizeCap>10GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
@@ -905,10 +443,65 @@
         </encoder>
     </appender>
 
-    <logger name="slow" additivity="false">
-        <level value="info"/>
-        <appender-ref ref="SLOW"/>
-    </logger>
+    <!-- RPC Query File Appender: daily rolling -->
+    <appender name="RPC_CACHE_QUERY" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <File>${loggerRoot:-..}/logs/__cache__/rpc_query.log</File>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <!-- rollover daily -->
+            <fileNamePattern>${loggerRoot:-..}/logs/__cache__/%d{yyyy-MM-dd}/rpc_query-%d{yyyy-MM-dd}-%i.log.gz
+            </fileNamePattern>
+            <timeBasedFileNamingAndTriggeringPolicy
+                    class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
+                <!-- or whenever the file size reaches 512MB -->
+                <maxFileSize>512MB</maxFileSize>
+            </timeBasedFileNamingAndTriggeringPolicy>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>10GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %p %m%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Statistics File Appender: daily rolling -->
+    <appender name="CACHE_STATISTICS" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <File>${loggerRoot:-..}/logs/__cache__/statistics.log</File>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <!-- rollover daily -->
+            <fileNamePattern>${loggerRoot:-..}/logs/__cache__/%d{yyyy-MM-dd}/statistics-%d{yyyy-MM-dd}-%i.log.gz
+            </fileNamePattern>
+            <timeBasedFileNamingAndTriggeringPolicy
+                    class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
+                <!-- or whenever the file size reaches 512MB -->
+                <maxFileSize>512MB</maxFileSize>
+            </timeBasedFileNamingAndTriggeringPolicy>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>10GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %p %m%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- Query File Appender: daily rolling -->
+    <appender name="CACHE_QUERY" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <File>${loggerRoot:-..}/logs/__cache__/query.log</File>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <!-- rollover daily -->
+            <fileNamePattern>${loggerRoot:-..}/logs/__cache__/%d{yyyy-MM-dd}/query-%d{yyyy-MM-dd}-%i.log.gz
+            </fileNamePattern>
+            <timeBasedFileNamingAndTriggeringPolicy
+                    class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
+                <!-- or whenever the file size reaches 512MB -->
+                <maxFileSize>512MB</maxFileSize>
+            </timeBasedFileNamingAndTriggeringPolicy>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>10GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %p %m%n</pattern>
+        </encoder>
+    </appender>
 
     <logger name="slow_detail" additivity="false">
         <level value="info"/>
@@ -923,30 +516,14 @@
         <level value="warn"/>
         <appender-ref ref="XProtocol"/>
     </logger>
-    <logger name="XRequest" additivity="false">
-        <level value="info"/>
-        <appender-ref ref="XRequest"/>
-    </logger>
-    <logger name="XPerf" additivity="false">
-        <level value="info"/>
-        <appender-ref ref="XPerf"/>
-    </logger>
     <logger name="XLog" additivity="false">
         <level value="info"/>
         <appender-ref ref="XLog"/>
     </logger>
 
-    <logger name="net_error" additivity="false">
-        <level value="warn"/>
-        <appender-ref ref="NET_ERROR"/>
-    </logger>
     <logger name="TDDL_DYNAMIC_CONFIG" additivity="false">
         <level value="info"/>
         <appender-ref ref="TDDL_Dynamic_Config"/>
-    </logger>
-    <logger name="TDDL_SEQUENCE_LOG" additivity="false">
-        <level value="info"/>
-        <appender-ref ref="TDDL_Sequence_Change"/>
     </logger>
     <logger name="META_DB_LOG" additivity="false">
         <level value="info"/>
@@ -960,25 +537,6 @@
         <level value="info"/>
         <appender-ref ref="DDL_META_LOG"/>
     </logger>
-    <logger name="START_UP_LOG" additivity="false">
-        <level value="info"/>
-        <appender-ref ref="START_UP_LOG"/>
-    </logger>
-    <logger name="CHECK_HA_LOG" additivity="false">
-        <level value="info"/>
-        <appender-ref ref="CHECK_HA_LOG"/>
-    </logger>
-    <logger name="PRUNER_LOG" additivity="false">
-        <level value="info"/>
-        <appender-ref ref="PRUNER_LOG"/>
-    </logger>
-    <logger name="TDDL_STATUS" additivity="true">
-        <level value="info"/>
-    </logger>
-    <logger name="com.alibaba.polardbx.rpc" additivity="false">
-        <level value="info"/>
-        <appender-ref ref="RPC"/>
-    </logger>
     <logger name="com.alibaba.polardbx.CobarServer" additivity="true">
         <level value="info"/>
     </logger>
@@ -988,12 +546,10 @@
     <logger name="com.alibaba.polardbx.net.handler.FrontendAuthenticator" additivity="true">
         <level value="info"/>
     </logger>
-    <logger name="com.alibaba.polardbx.common.utils.AddressUtils" additivity="true">
-        <level value="info"/>
-    </logger>
     <logger name="com.alibaba.polardbx.config.manager" additivity="true">
         <level value="warn"/>
     </logger>
+
     <logger name="sql" additivity="false">
         <level value="INFO"/>
         <appender-ref ref="asyncSQL"/>
@@ -1002,88 +558,34 @@
         <level value="info"/>
         <appender-ref ref="DDL"/>
     </logger>
-    <logger name="ddl_stats" additivity="false">
-        <level value="info"/>
-        <appender-ref ref="DDL_STATS"/>
-    </logger>
-    <logger name="big_sql" additivity="false">
-        <level value="info"/>
-        <appender-ref ref="BIG_SQL"/>
-    </logger>
-    <logger name="scale_out_sql" additivity="false">
-        <level value="info"/>
-        <appender-ref ref="SCALE_OUT_SQL"/>
-    </logger>
-    <logger name="scale_out_task" additivity="false">
-        <level value="info"/>
-        <appender-ref ref="SCALE_OUT_TASK"/>
-    </logger>
-    <logger name="ttl_task" additivity="false">
-        <level value="info"/>
-        <appender-ref ref="TTL_TASK"/>
-    </logger>
-    <logger name="diagnose" additivity="false">
-        <level value="INFO"/>
-        <appender-ref ref="DIAGNOSE"/>
-    </logger>
     <logger name="trans" additivity="false">
         <level value="WARN"/>
         <appender-ref ref="asyncTRANS"/>
     </logger>
-
     <logger name="slow_trans" additivity="false">
         <level value="INFO"/>
         <appender-ref ref="SLOW_TRANS"/>
     </logger>
-
-    <logger name="inner_sql" additivity="false">
-        <level value="INFO"/>
-        <appender-ref ref="INNER_SQL"/>
-    </logger>
-
     <logger name="event" additivity="false">
         <level value="INFO"/>
         <appender-ref ref="EVENT"/>
     </logger>
-
-    <logger name="spm" additivity="false">
-        <level value="INFO"/>
-        <appender-ref ref="SPM"/>
-    </logger>
-    <logger name="STATISTICS" additivity="false">
-        <level value="INFO"/>
-        <appender-ref ref="STATISTIC"/>
-    </logger>
-    <logger name="com.alibaba.polardbx.executor.whatIf" additivity="false">
-        <level value="info"/>
-        <appender-ref ref="STATISTIC"/>
-    </logger>
-    <logger name="com.alibaba.polardbx.optimizer.sharding.advisor" additivity="false">
-        <level value="info"/>
-        <appender-ref ref="STATISTIC"/>
-    </logger>
-    <logger name="oss" additivity="false">
-        <level value="info"/>
-        <appender-ref ref="OSS"/>
-    </logger>
     <logger name="com.alibaba.polardbx.common.oss" additivity="false">
         <level value="info"/>
-        <appender-ref ref="OSS"/>
+        <appender-ref ref="MPP_LOG"/>
     </logger>
     <logger name="com.alibaba.polardbx.executor.archive" additivity="false">
         <level value="info"/>
-        <appender-ref ref="OSS"/>
+        <appender-ref ref="MPP_LOG"/>
     </logger>
     <logger name="org.apache.orc" additivity="false">
         <level value="info"/>
-        <appender-ref ref="OSS"/>
+        <appender-ref ref="MPP_LOG"/>
     </logger>
-
-    <logger name="COLUMNAR_TRANS" additivity="false">
+    <logger name="com.alibaba.polardbx.gms.engine" additivity="false">
         <level value="info"/>
-        <appender-ref ref="COLUMNAR_TRANS"/>
+        <appender-ref ref="MPP_LOG"/>
     </logger>
-
     <logger name="com.alibaba.polardbx.executor.mpp.discover" additivity="false">
         <level value="info"/>
         <appender-ref ref="MPP_LOG"/>
@@ -1092,8 +594,7 @@
         <level value="info"/>
         <appender-ref ref="MPP_LOG"/>
     </logger>
-
-    <logger name="com.alibaba.polardbx.executor.mpp.execution" additivity="false">
+    <logger name="com.alibaba.polardbx.executor.mpp.deploy" additivity="false">
         <level value="info"/>
         <appender-ref ref="MPP_LOG"/>
     </logger>
@@ -1109,10 +610,58 @@
         <level value="info"/>
         <appender-ref ref="MPP_LOG"/>
     </logger>
-    <logger name="cdc_log" additivity="false">
+    <logger name="mpp_log" additivity="false">
         <level value="info"/>
-        <appender-ref ref="CDC_LOG"/>
+        <appender-ref ref="MPP_LOG"/>
     </logger>
+    <logger name="com.alibaba.polardbx.cache" additivity="false">
+        <level value="info"/>
+        <appender-ref ref="CACHE_LOG"/>
+    </logger>
+
+    <!-- RpcCacheDeltaCounter logs only to file, not to console -->
+    <logger name="RPC_CACHE_STATISTICS" level="INFO" additivity="false">
+        <appender-ref ref="RPC_CACHE_STATISTICS"/>
+    </logger>
+
+    <!-- CacheCollector logs only to file, not to console -->
+    <logger name="RPC_CACHE_QUERY" level="INFO" additivity="false">
+        <appender-ref ref="RPC_CACHE_QUERY"/>
+    </logger>
+
+    <!-- CnCacheDeltaCounter logs only to file, not to console -->
+    <logger name="CACHE_STATISTICS" level="INFO" additivity="false">
+        <appender-ref ref="CACHE_STATISTICS"/>
+    </logger>
+
+    <!-- CacheCollector logs only to file, not to console -->
+    <logger name="CACHE_QUERY" level="INFO" additivity="false">
+        <appender-ref ref="CACHE_QUERY"/>
+    </logger>
+
+    <appender name="NL2SQL_LOG" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <File>${loggerRoot:-..}/logs/tddl/nl2sql.log</File>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${loggerRoot:-..}/logs/tddl/%d{yyyy-MM-dd}/nl2sql-%d{yyyy-MM-dd}-%i.log.gz
+            </fileNamePattern>
+            <timeBasedFileNamingAndTriggeringPolicy
+                    class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
+                <maxFileSize>128MB</maxFileSize>
+            </timeBasedFileNamingAndTriggeringPolicy>
+            <maxHistory>7</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <immediateFlush>true</immediateFlush>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <logger name="NL2SQL" additivity="false">
+        <level value="DEBUG"/>
+        <appender-ref ref="NL2SQL_LOG"/>
+    </logger>
+
     <root level="WARN">
         <appender-ref ref="asyncROOT"/>
     </root>

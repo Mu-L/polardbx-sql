@@ -30,6 +30,7 @@ public enum MemoryType {
     SCHEMA_CACHE("schema_cache"),
     QUERY("query"),
     SUBQUERY("subquery"),
+    CTE("cte"),
     PLANER("planer"),
     EXECUTOR("executor"),
     TASK("task"),

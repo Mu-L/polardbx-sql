@@ -1,0 +1,88 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+## test dble_db
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+set ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING=true;
+set ROUTE_TUPLE_USE_PRECHECK_BY_UDF_FUNC=true;
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=true;
+drop table if exists date_table_1_1;
+## error_msg: $# invalid init params #$
+create table date_table_1_1(id date)
+  partition by udf_hash(
+  `id` with udf_params(
+  'dble/date',
+  '{
+"sEndDate" : "2018-01-31",
+"sPartionDay" : "10",
+"dateFormat" : "yyyy-MM-dd"
+}'
+  )
+)
+partitions 4;
+invalid init params
+drop table if exists date_table_1_2;
+## error_msg: $#  make sure table datanode size #$
+create table date_table_1_2(id date)
+partition by udf_hash(
+  `id` with udf_params(
+    'dble/date',
+      '{
+    "sBeginDate" : "2017-01-31",
+    "sEndDate" : "2018-01-31",
+    "sPartionDay" : "10",
+    "dateFormat" : "yyyy-MM-dd"
+    }'
+  )
+  )
+  partitions 2;
+make sure table datanode size
+drop table if exists date_table_1_3;
+create table date_table_1_3(id date)
+partition by udf_hash(
+  `id` with udf_params(
+    'dble/date',
+  '{
+    　　　 "dateFormat" : "yyyy-MM-dd",
+          "sBeginDate" : "2017-12-01",
+          "sEndDate" : "2018-01-08",
+          "sPartionDay" : "10",
+        　"defaultNode" : "3"
+    }'
+  )
+  )
+  partitions 4;
+insert into date_table_1_3(id) values(null)  /*dest_node:p4*/;
+select part_route('', 'date_table_1_3', null) as dest_node;
+dest_node
+p4
+insert into date_table_1_3(id) values('2017-11-11') /*dest_node:p4*/;
+select part_route('', 'date_table_1_3', '2017-11-11') as dest_node;
+dest_node
+p4
+insert into date_table_1_3(id) values('2017-12-01') /*dest_node:p1*/;
+select part_route('', 'date_table_1_3', '2017-12-01') as dest_node;
+dest_node
+p1
+insert into date_table_1_3(id) values('2017-12-11') /*dest_node:p2*/;
+select part_route('', 'date_table_1_3', '2017-12-11') as dest_node;
+dest_node
+p2
+insert into date_table_1_3(id) values('2017-12-21') /*dest_node:p3*/;
+select part_route('', 'date_table_1_3', '2017-12-21') as dest_node;
+dest_node
+p3
+insert into date_table_1_3(id) values('2017-12-31') /*dest_node:p4*/;
+select part_route('', 'date_table_1_3', '2017-12-31') as dest_node;
+dest_node
+p4
+insert into date_table_1_3(id) values('2018-1-8') /*dest_node:p4*/;
+select part_route('', 'date_table_1_3', '2018-1-8') as dest_node;
+dest_node
+p4
+insert into date_table_1_3(id) values('2018-01-9') /*dest_node:p4*/;
+select part_route('', 'date_table_1_3', '2018-01-9') as dest_node;
+dest_node
+p4

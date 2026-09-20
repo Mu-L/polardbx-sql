@@ -21,6 +21,7 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.BytesSql;
 import com.alibaba.polardbx.common.jdbc.StreamBytesSql;
 import com.alibaba.polardbx.executor.mpp.metadata.Split;
+import com.alibaba.polardbx.executor.mpp.metadata.SplitType;
 import com.alibaba.polardbx.executor.mpp.split.JdbcSplit;
 import com.alibaba.polardbx.executor.operator.spill.SpillerFactory;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -144,6 +145,11 @@ public class ResumeTableScanExec extends TableScanExec implements ResumeExec {
             return new StreamBytesSql(sqlTemplate.getBytesArray(), sqlTemplate.isParameterLast(),
                 getTableNames().size(),
                 orderBy == null ? null : orderBy.getBytes(), null, limit, isContainSelect());
+        }
+
+        @Override
+        public SplitType getSplitType() {
+            return SplitType.STREAM_JDBC;
         }
 
         protected void increaseFetchNth() {

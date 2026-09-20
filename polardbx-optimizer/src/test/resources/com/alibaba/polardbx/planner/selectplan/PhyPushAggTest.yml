@@ -1,5 +1,10 @@
 SQL:
   - sql: |
+      /*+TDDL:cmd_extra(enable_hash_agg=false)*/select a,b,c from test_td
+      union select a,b,c from test_td group by c->>'$.category'
+    plan: |
+      sql could not be implemented
+  - sql: |
       select count(*) from test_tc group by a,b
     plan: |
       gather(concurrent=true)
@@ -44,7 +49,7 @@ SQL:
 
     plan: |
       gather(concurrent=true)
-        logicalview(tables="[0000-0003].user_log_[0-6]", shardcount=28, sql="select count(`userid`) as `count(userid)`, group_concat(`operation`, ','  ) as `group_concat(operation, ',')` from `user_log` as `user_log` group by `userid`, `name`, `actiondate`")
+        logicalview(tables="[0000-0003].user_log_[0-6]", shardcount=28, sql="select count(`userid`) as `count(userid)`, group_concat(`operation`, ',') as `group_concat(operation, ',')` from `user_log` as `user_log` group by `userid`, `name`, `actiondate`")
   - sql: |
       select count(*) from user_log
 
@@ -139,6 +144,13 @@ DDL:
     unique key(b,a),
     unique key(c)
     ) dbpartition by hash(a) tbpartition by HASH(a) tbpartitions 7;
+
+  test_td:
+    CREATE TABLE test_td(
+    a int,
+    b bigint,
+    c json
+    ) dbpartition by hash(a) tbpartition by HASH(a) tbpartitions 7;
 STATISTICS:
   user_log:
     10000
@@ -146,6 +158,8 @@ STATISTICS:
     10000
   test_tc:
     10000
+  test_td:
+    1000000
 CONFIG:
   PUSH_AGG_INPUT_ROW_COUNT_THRESHOLD:
     -1

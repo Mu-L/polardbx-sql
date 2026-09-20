@@ -25,8 +25,6 @@ import com.google.common.util.concurrent.ListenableFuture;
 
 import javax.annotation.concurrent.GuardedBy;
 
-import java.util.function.Supplier;
-
 import static java.util.Objects.requireNonNull;
 
 public class DriverSplitRunner implements SplitRunner {

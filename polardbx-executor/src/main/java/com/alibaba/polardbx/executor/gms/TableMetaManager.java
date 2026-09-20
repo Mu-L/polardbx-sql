@@ -11,7 +11,6 @@ import TStringUtil;
 import Logger;
 import LoggerFactory;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
-import com.alibaba.polardbx.executor.ddl.engine.AsyncDDLManager;
 import MetaDbDataSource;
 import ColumnsRecord;
 import IndexStatus;
@@ -78,9 +77,7 @@ public class TableMetaManager extends RepoSchemaManager {
 
     @Override
     public void checkOngoingDDL(String logicalTableName, TableMeta tableMeta) {
-        boolean objectHidden = Optional.ofNullable(tableMeta)
-            .map(meta -> AsyncDDLManager.getInstance().isObjectHidden(schemaName, schemaName, logicalTableName, meta))
-            .orElse(AsyncDDLManager.getInstance().isObjectHiddenForTableMeta(schemaName, schemaName, logicalTableName));
+        boolean objectHidden = false;
         if (objectHidden) {
             throw new TddlRuntimeException(ErrorCode.ERR_UNKNOWN_TABLE, schemaName, logicalTableName);
         }

@@ -1,0 +1,119 @@
+## DISABLE_FAST_SQL_PARSER
+
+DROP TABLE IF EXISTS `product_success_order`;
+CREATE TABLE  `product_success_order` (
+`id` bigint NOT NULL AUTO_INCREMENT COMMENT '订单id',
+`product_type` int NOT NULL COMMENT 'Product type',
+`data_date` varchar(10) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci NOT NULL DEFAULT '' COMMENT '数据日期yyyyMMddHH',
+`user_id` bigint NOT NULL DEFAULT '0' COMMENT '用户id',
+`broker_id` int NOT NULL DEFAULT '0' COMMENT '券商ID',
+`source_id` varchar(100) NOT NULL DEFAULT '',
+`currency_id` int NOT NULL DEFAULT '0' COMMENT '币种',
+`amount` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000' COMMENT '出借金额',
+`min_amount` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000' COMMENT '小时内最低申购金额',
+`user_rate` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000' COMMENT '用户设置最低利率',
+`rate` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000' COMMENT '成交利率',
+`status` tinyint NOT NULL DEFAULT '0' COMMENT '状态 0未赎回发息 1 已通知资金利息 2: 资金发息成功 3: 资金发息失败',
+`interest` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000' COMMENT '利息',
+`user_interest` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000' COMMENT '用户最终可收利息',
+`sys_interest` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000' COMMENT '系统最终可收利息',
+`create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+`modify_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+PRIMARY KEY (`id`),
+UNIQUE KEY `idx_u_c_b_date_s` (`product_type`, `user_id`, `currency_id`, `broker_id`, `data_date`, `source_id`, `create_time`),
+KEY `idx_data_date_status` (`data_date`, `status`),
+KEY `idx_product_currency_date_status` (`product_type`, `currency_id`, `data_date`, `status`),
+KEY `idx_product_date_status` (`product_type`, `data_date`, `status`),
+KEY `idx_product_date_currency_status_optimized` (`product_type`, `data_date`, `currency_id`, `status`, `user_id`, `broker_id`, `source_id`),
+KEY `auto_shard_key_user_id` USING BTREE (`user_id`),
+KEY `auto_shard_key_create_time` USING BTREE (`create_time`)
+) ENGINE = InnoDB DEFAULT COLLATE = utf8mb4_bin
+PARTITION BY KEY(`user_id`)
+PARTITIONS 2
+SUBPARTITION BY RANGE COLUMNS(`create_time`)
+(SUBPARTITION `sp20251108` VALUES LESS THAN ('2025-11-08 00:00:00'),
+SUBPARTITION `sp20251109` VALUES LESS THAN ('2025-11-09 00:00:00'),
+SUBPARTITION `sp20251110` VALUES LESS THAN ('2025-11-10 00:00:00'),
+SUBPARTITION `sp20251111` VALUES LESS THAN ('2025-11-11 00:00:00'),
+SUBPARTITION `sp20251112` VALUES LESS THAN ('2025-11-12 00:00:00'),
+SUBPARTITION `sp20251113` VALUES LESS THAN ('2025-11-13 00:00:00'),
+SUBPARTITION `sp20251114` VALUES LESS THAN ('2025-11-14 00:00:00'),
+SUBPARTITION `sp20251115` VALUES LESS THAN ('2025-11-15 00:00:00'),
+SUBPARTITION `sp20251116` VALUES LESS THAN ('2025-11-16 00:00:00'),
+SUBPARTITION `sp20251117` VALUES LESS THAN ('2025-11-17 00:00:00'),
+SUBPARTITION `sp20251118` VALUES LESS THAN ('2025-11-18 00:00:00'),
+SUBPARTITION `sp20251119` VALUES LESS THAN ('2025-11-19 00:00:00'),
+SUBPARTITION `sp20251120` VALUES LESS THAN ('2025-11-20 00:00:00'),
+SUBPARTITION `sp20251121` VALUES LESS THAN ('2025-11-21 00:00:00'),
+SUBPARTITION `sp20251122` VALUES LESS THAN ('2025-11-22 00:00:00'))
+;
+  
+DROP TABLE IF EXISTS `product_currency_mapped_fund_snapshot`;
+CREATE TABLE `product_currency_mapped_fund_snapshot` (
+`product_type` int NOT NULL COMMENT 'Product type',
+`batch_id` varchar(200) NOT NULL COMMENT 'batch id for snapshot request',
+`data_date` varchar(12) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci NOT NULL DEFAULT '' COMMENT '数据日期yyyyMMddHHmm',
+`user_id` bigint NOT NULL COMMENT '用户id',
+`broker_id` int NOT NULL DEFAULT '0',
+`source_id` bigint NOT NULL DEFAULT '0',
+`currency_id` int NOT NULL DEFAULT '0' COMMENT '币种id',
+`available` decimal(32, 16) NOT NULL DEFAULT '0.0000000000000000' COMMENT '余额（总申购数量）',
+`rate` decimal(32, 16) NOT NULL DEFAULT '0.0100000000000000' COMMENT '（申购设置的利率）',
+`queue_time` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '队列更新时间（仅新增申购或修改利率时修改）',
+`sync_balance_time` datetime DEFAULT CURRENT_TIMESTAMP COMMENT 'sync balance time',
+`create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+`modify_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+PRIMARY KEY (`product_type`, `batch_id`, `data_date`, `source_id`, `user_id`, `broker_id`, `currency_id`),
+KEY `idx_b` (`batch_id`),
+KEY `idx_product_broker_currency_batch` (`product_type`, `broker_id`, `currency_id`, `batch_id`),
+KEY `idx_batch_product_currency_date` (`batch_id`, `product_type`, `currency_id`, `data_date`),
+KEY `auto_shard_key_user_id` USING BTREE (`user_id`),
+KEY `auto_shard_key_create_time` USING BTREE (`create_time`)
+) ENGINE = InnoDB DEFAULT COLLATE = utf8mb4_bin
+PARTITION BY KEY(`user_id`)
+PARTITIONS 2
+SUBPARTITION BY RANGE COLUMNS(`create_time`)
+(SUBPARTITION `sp20251108` VALUES LESS THAN ('2025-11-08 00:00:00'),
+SUBPARTITION `sp20251109` VALUES LESS THAN ('2025-11-09 00:00:00'),
+SUBPARTITION `sp20251110` VALUES LESS THAN ('2025-11-10 00:00:00'),
+SUBPARTITION `sp20251111` VALUES LESS THAN ('2025-11-11 00:00:00'),
+SUBPARTITION `sp20251112` VALUES LESS THAN ('2025-11-12 00:00:00'),
+SUBPARTITION `sp20251113` VALUES LESS THAN ('2025-11-13 00:00:00'),
+SUBPARTITION `sp20251114` VALUES LESS THAN ('2025-11-14 00:00:00'),
+SUBPARTITION `sp20251115` VALUES LESS THAN ('2025-11-15 00:00:00'),
+SUBPARTITION `sp20251116` VALUES LESS THAN ('2025-11-16 00:00:00'),
+SUBPARTITION `sp20251117` VALUES LESS THAN ('2025-11-17 00:00:00'),
+SUBPARTITION `sp20251118` VALUES LESS THAN ('2025-11-18 00:00:00'),
+SUBPARTITION `sp20251119` VALUES LESS THAN ('2025-11-19 00:00:00'),
+SUBPARTITION `sp20251120` VALUES LESS THAN ('2025-11-20 00:00:00'),
+SUBPARTITION `sp20251121` VALUES LESS THAN ('2025-11-21 00:00:00'),
+SUBPARTITION `sp20251122` VALUES LESS THAN ('2025-11-22 00:00:00'))
+;
+
+explain
+UPDATE product_success_order so
+LEFT
+JOIN (
+SELECT fs.product_type, fs.user_id, fs.broker_id, fs.source_id, fs.currency_id, fs.available, fs.create_time
+FROM product_currency_mapped_fund_snapshot fs
+WHERE fs.batch_id     = "TRADING_AUTO_LEND:202511110000:283:779"
+AND fs.product_type = 3
+AND fs.currency_id  = 283
+) fs_filtered
+ON so.product_type = fs_filtered.product_type
+AND so.user_id      = fs_filtered.user_id
+AND so.broker_id    = fs_filtered.broker_id
+AND so.source_id    = fs_filtered.source_id
+AND so.currency_id  = fs_filtered.currency_id
+AND so.create_time = fs_filtered.create_time
+SET so.min_amount   = LEAST(so.min_amount, COALESCE(fs_filtered.available, 0)),
+so.user_interest = TRUNCATE(LEAST(so.min_amount, COALESCE(fs_filtered.available, 0)) / so.amount * so.interest, 16),
+so.sys_interest = so.interest - TRUNCATE((LEAST(so.min_amount, COALESCE(fs_filtered.available, 0)) / so.amount * so.interest), 16)
+WHERE so.data_date    = "2025110700"
+AND so.currency_id  = 283
+AND so.product_type = 3
+AND so.status       = 0
+;
+
+
+

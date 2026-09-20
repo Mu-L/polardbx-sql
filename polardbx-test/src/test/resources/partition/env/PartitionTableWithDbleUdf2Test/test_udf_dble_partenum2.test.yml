@@ -1,0 +1,95 @@
+## DISABLE_FAST_SQL_PARSER
+
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=false;
+drop table if exists partenumstr_t1;
+create table partenumstr_t1(
+c1 varchar(32),
+c2 varchar(32)
+)
+partition by udf_hash(partenumstr(c1))
+(
+partition p1 values less than(1),
+partition p2 values less than(2)
+);
+
+select part_route('','partenumstr_t1', null);
+select part_route('','partenumstr_t1', '');
+select part_route('','partenumstr_t1', 'x');
+select part_route('','partenumstr_t1', '0');
+select part_route('','partenumstr_t1', 'A');
+select part_route('','partenumstr_t1', 'B');
+select part_route('','partenumstr_t1', 'C');
+
+drop table if exists partenumstr2_t1;
+create table partenumstr2_t1(
+c1 varchar(32),
+c2 varchar(32)
+)
+partition by udf_hash(partenumstr2(c1))
+(
+partition p1 values less than(1),
+partition p2 values less than(2)
+);
+
+  ## error_msg: $# can't find any valid data node #$
+select part_route('','partenumstr2_t1', null);
+  ## error_msg: $# can't find any valid data node #$
+select part_route('','partenumstr2_t1', '');
+  ## error_msg: $# can't find any valid data node #$
+select part_route('','partenumstr2_t1', 'x');
+  ## error_msg: $# can't find any valid data node #$
+select part_route('','partenumstr2_t1', '0');
+select part_route('','partenumstr2_t1', 'A');
+select part_route('','partenumstr2_t1', 'B');
+  ## error_msg: $# can't find any valid data node #$
+select part_route('','partenumstr2_t1', 'C');
+
+
+drop table if exists partenumi_t1;
+create table partenumi_t1(
+c1 bigint,
+c2 bigint
+)
+partition by udf_hash(partenumi(c1))
+(
+partition p1 values less than(1),
+partition p2 values less than(2)
+);
+  
+
+select part_route('','partenumi_t1', null);
+  ## error_msg: $# invalid type conversion #$
+select part_route('','partenumi_t1', '');
+  ## error_msg: $# invalid type conversion #$
+select part_route('','partenumi_t1', 'a');
+select part_route('','partenumi_t1', 0);
+select part_route('','partenumi_t1', 10000);
+select part_route('','partenumi_t1', 10010);
+select part_route('','partenumi_t1', 20000);
+
+drop table if exists partenumi2_t1;
+create table partenumi2_t1(
+c1 bigint,
+c2 bigint
+)
+partition by udf_hash(partenumi2(c1))
+(
+partition p1 values less than(1),
+partition p2 values less than(2)
+);
+  ## error_msg: $# can't find any valid data node #$
+select part_route('','partenumi2_t1', null);
+  ## error_msg: $# invalid type conversion #$
+select part_route('','partenumi2_t1', '');
+  ## error_msg: $# invalid type conversion #$
+select part_route('','partenumi2_t1', 'a');
+  ## error_msg: $# can't find any valid data node #$
+select part_route('','partenumi2_t1', 0);
+select part_route('','partenumi2_t1', 10000);
+select part_route('','partenumi2_t1', 10010);
+  ## error_msg: $# can't find any valid data node #$
+select part_route('','partenumi2_t1', 20000);
+
+
+select partenumstr(null);
+select partenumstr('');

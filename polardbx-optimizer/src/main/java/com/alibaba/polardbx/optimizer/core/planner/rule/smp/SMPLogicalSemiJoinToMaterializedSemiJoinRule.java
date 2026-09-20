@@ -24,7 +24,6 @@ import com.alibaba.polardbx.optimizer.hint.util.CheckJoinHint;
 import org.apache.calcite.plan.RelOptCost;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.plan.RelOptRuleOperand;
-import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.logical.LogicalSemiJoin;
 import org.apache.calcite.rex.RexNode;
@@ -34,8 +33,7 @@ public class SMPLogicalSemiJoinToMaterializedSemiJoinRule extends LogicalSemiJoi
     public static final LogicalSemiJoinToMaterializedSemiJoinRule INSTANCE =
         new SMPLogicalSemiJoinToMaterializedSemiJoinRule(
             operand(LogicalSemiJoin.class,
-                operand(LogicalView.class, any()),
-                operand(RelSubset.class, any())), "INSTANCE");
+                operand(LogicalView.class, any())), "INSTANCE");
 
     SMPLogicalSemiJoinToMaterializedSemiJoinRule(RelOptRuleOperand operand, String desc) {
         super(operand, "SMP_" + desc);
@@ -58,7 +56,7 @@ public class SMPLogicalSemiJoinToMaterializedSemiJoinRule extends LogicalSemiJoi
             materializedSemiJoin.setFixedCost(fixedCost);
         }
         left.setIsMGetEnabled(true);
-        left.setJoin(materializedSemiJoin);
+        left.setLookupInfo(materializedSemiJoin);
         call.transformTo(materializedSemiJoin);
     }
 }

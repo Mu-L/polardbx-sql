@@ -23,6 +23,7 @@ import com.alibaba.polardbx.optimizer.core.rel.BaseQueryOperation;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalInsert;
 import com.alibaba.polardbx.optimizer.core.rel.dml.CaseWhenWriter;
 import com.alibaba.polardbx.optimizer.core.rel.dml.DistinctWriter;
+import com.alibaba.polardbx.optimizer.core.rel.dml.DmlWriteContext;
 import com.alibaba.polardbx.optimizer.core.rel.dml.Writer;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.ClassifyResult;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.DuplicateCheckResult;
@@ -100,8 +101,7 @@ public class UpsertWriter extends AbstractSingleWriter implements CaseWhenWriter
 
             final DistinctWriter updateWriter = getUpdaterWriter();
             List<RelNode> inputs = updateWriter.getInput(updateEc, (w) -> updateAfterRows);
-            outModifyPlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                Collectors.toList()));
+            RelocateWriter.addPhaseExecutionPlans(inputs, outModifyPlans);
             replicateOutModifyPlans
                 .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                     Collectors.toList()));
@@ -113,8 +113,7 @@ public class UpsertWriter extends AbstractSingleWriter implements CaseWhenWriter
             final InsertWriter insertWriter = getInsertWriter().unwrap(InsertWriter.class);
 
             List<RelNode> inputs = insertWriter.getInput(insertEc);
-            outInsertPlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                Collectors.toList()));
+            RelocateWriter.addPhaseExecutionPlans(inputs, outInsertPlans);
             replicateOutInsertPlans
                 .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                     Collectors.toList()));
@@ -127,9 +126,13 @@ public class UpsertWriter extends AbstractSingleWriter implements CaseWhenWriter
 
             final InsertWriter insertWriter = getInsertThenUpdateWriter();
 
+            final DmlWriteContext writeContext = insertEc.getDmlWriteContext();
+            if (writeContext != null) {
+                writeContext.prepareInsertRows(insertWriter, insertThenUpdateRows, insertEc);
+            }
+
             List<RelNode> inputs = insertWriter.getInput(insertEc);
-            outInsertPlans.addAll(inputs.stream().filter(o -> !((BaseQueryOperation) o).isReplicateRelNode()).collect(
-                Collectors.toList()));
+            RelocateWriter.addPhaseExecutionPlans(inputs, outInsertPlans);
             replicateOutInsertPlans
                 .addAll(inputs.stream().filter(o -> ((BaseQueryOperation) o).isReplicateRelNode()).collect(
                     Collectors.toList()));

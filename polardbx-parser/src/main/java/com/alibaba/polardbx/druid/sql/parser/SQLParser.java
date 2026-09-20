@@ -16,6 +16,7 @@
 package com.alibaba.polardbx.druid.sql.parser;
 
 import com.alibaba.polardbx.druid.DbType;
+import com.alibaba.polardbx.druid.sql.SQLUtils;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLCreateTableStatement;
 import com.alibaba.polardbx.druid.util.FnvHash;
 import com.alibaba.polardbx.druid.util.StringUtils;
@@ -555,6 +556,70 @@ public class SQLParser {
             throw new ParserException("syntax error, expect int, actual " + lexer.token + " "
                 + lexer.info());
         }
+    }
+
+    /**
+     * Reads one key of an external property list (CREATE/ALTER SECRET, ALTER EXTERNAL
+     * CATALOG, FILES(...)). Token type must be checked before calling stringVal():
+     * for non-string tokens stringVal() silently returns the previous token's text.
+     */
+    protected String parsePropertyKey() {
+        Token token = lexer.token();
+        if (token != Token.IDENTIFIER && token != Token.LITERAL_CHARS && token != Token.LITERAL_ALIAS) {
+            throw new ParserException(
+                "syntax error, property key must be an identifier or string literal, actual "
+                    + token + ", " + lexer.info());
+        }
+        String key = token == Token.LITERAL_CHARS
+            ? lexer.stringVal()
+            : SQLUtils.normalizeNoTrim(lexer.stringVal());
+        lexer.nextToken();
+        return key;
+    }
+
+    /**
+     * Parse the value following a COMMENT keyword in CREATE/ALTER EXTERNAL CATALOG.
+     * LITERAL_CHARS stringVal() is already unquoted by the lexer; IDENTIFIER (including
+     * backtick-quoted) and LITERAL_ALIAS stringVal() retain surrounding quote chars
+     * and need normalizeNoTrim to strip them.
+     */
+    protected String parseCommentValue() {
+        Token token = lexer.token();
+        if (token != Token.LITERAL_CHARS && token != Token.IDENTIFIER && token != Token.LITERAL_ALIAS) {
+            throw new ParserException("syntax error, expect comment text, actual "
+                + token + ", " + lexer.info());
+        }
+        String value = token == Token.LITERAL_CHARS
+            ? lexer.stringVal()
+            : SQLUtils.normalizeNoTrim(lexer.stringVal());
+        lexer.nextToken();
+        return value;
+    }
+
+    protected String parsePropertyValue() {
+        String value;
+        Token token = lexer.token();
+        switch (token) {
+        case LITERAL_ALIAS:
+        case IDENTIFIER:
+            value = SQLUtils.normalizeNoTrim(lexer.stringVal());
+            break;
+        case LITERAL_CHARS:
+        case TRUE:
+        case FALSE:
+            value = lexer.stringVal();
+            break;
+        case LITERAL_INT:
+        case LITERAL_FLOAT:
+            value = lexer.numberString();
+            break;
+        default:
+            throw new ParserException(
+                "syntax error, property value must be a string literal, number, identifier or boolean, actual "
+                    + token + ", " + lexer.info());
+        }
+        lexer.nextToken();
+        return value;
     }
 
     public void match(Token token) {

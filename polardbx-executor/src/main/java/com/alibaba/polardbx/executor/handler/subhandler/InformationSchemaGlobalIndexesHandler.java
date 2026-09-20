@@ -48,7 +48,6 @@ import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -197,7 +196,7 @@ public class InformationSchemaGlobalIndexesHandler extends BaseVirtualViewSubCla
 
         if (GsiStatisticsManager.enableGsiStatisticsCollection()) {
             for (String schemaToSync : schemaAndGsis.keySet()) {
-                SyncManagerHelper.sync(
+                SyncManagerHelper.syncIgnoreExceptions(
                     new GsiStatisticsSyncAction(schemaToSync, null, null, GsiStatisticsSyncAction.QUERY_RECORD),
                     SyncScope.ALL);
             }

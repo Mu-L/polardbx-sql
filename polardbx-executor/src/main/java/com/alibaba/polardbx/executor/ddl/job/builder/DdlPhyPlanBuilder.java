@@ -26,12 +26,9 @@ import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.BytesSql;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.model.Group;
-import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
-import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
 import com.alibaba.polardbx.druid.sql.ast.SQLIndexDefinition;
-import com.alibaba.polardbx.druid.sql.ast.SQLStatement;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableAddConstraint;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLAlterTableAddIndex;
@@ -66,16 +63,21 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import org.apache.calcite.rel.core.DDL;
 import org.apache.calcite.sql.SequenceBean;
+import org.apache.calcite.sql.SqlAlterTable;
 import org.apache.calcite.sql.SqlCreateTable;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
-import org.apache.calcite.sql.SqlTable;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.validate.SqlValidatorImpl;
 import org.apache.commons.collections.CollectionUtils;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * Build physical plan for ddl node
@@ -122,7 +124,6 @@ public abstract class DdlPhyPlanBuilder {
         }
         return physicalPlanDataForLocalIndex;
     }
-
 
     public DdlPhyPlanBuilder(@Deprecated DDL ddl, DdlPreparedData preparedData, ExecutionContext executionContext) {
         this.relDdl = ddl;
@@ -263,18 +264,20 @@ public abstract class DdlPhyPlanBuilder {
             for (List<String> subTableNames : tableNames) {
                 // 这里是为每个分表 构建 mysql 物理执行计划 （建物理表）
                 // 需要替换为 oss 表构建计划
+                SqlNode targetSqlTemplate = getSqlTemplate(group, subTableNames);
                 PhyDdlTableOperation phyDdlTable =
                     PhyDdlTableOperation.create(ddlPreparedData.getSchemaName(), tableName, executionContext);
+                rebuildSqlTemplateForCheckConstraint(targetSqlTemplate, subTableNames, phyDdlTable);
                 phyDdlTable.setDbIndex(group);
                 phyDdlTable.setLogicalTableName(tableName);
                 if (newTableName != null) {
                     phyDdlTable.setRenameLogicalTableName(((SqlIdentifier) newTableName).getLastName());
                 }
                 phyDdlTable.setTableNames(ImmutableList.of(subTableNames));
-                phyDdlTable.setKind(sqlTemplate.getKind());
-                Pair<BytesSql, Map<Integer, ParameterContext>> sqlAndParam = buildSqlAndParam(subTableNames);
+                phyDdlTable.setKind(targetSqlTemplate.getKind());
+                Pair<BytesSql, Map<Integer, ParameterContext>> sqlAndParam = buildSqlAndParam(group, subTableNames);
                 phyDdlTable.setBytesSql(sqlAndParam.getKey());
-                phyDdlTable.setNativeSqlNode(sqlTemplate);
+                phyDdlTable.setNativeSqlNode(targetSqlTemplate);
                 phyDdlTable.setDbType(DbType.MYSQL);
                 phyDdlTable.setParam(sqlAndParam.getValue());
                 phyDdlTable.setTableRule(tableRule);
@@ -288,6 +291,17 @@ public abstract class DdlPhyPlanBuilder {
             }
         }
         this.physicalPlans = physicalPlans;
+    }
+
+    protected void rebuildSqlTemplateForCheckConstraint(SqlNode sqlTemplate, List<String> subTableNames,
+                                                        PhyDdlTableOperation phyDdlTable) {
+        String phyTableHash = String.format("%08x", subTableNames.get(0).hashCode());
+        if (sqlTemplate instanceof SqlCreateTable) {
+            ((SqlCreateTable) sqlTemplate).setPhyTableHash(phyTableHash);
+        } else if (sqlTemplate instanceof SqlAlterTable) {
+            ((SqlAlterTable) sqlTemplate).setPhyTableHash(phyTableHash);
+        }
+        phyDdlTable.setPhyTableHash(phyTableHash);
     }
 
     protected void buildPhysicalPlansForLocalIndex(String tableName) {
@@ -360,18 +374,19 @@ public abstract class DdlPhyPlanBuilder {
         this.originSqlTemplate = this.sqlTemplate;
     }
 
-    private Pair<BytesSql, Map<Integer, ParameterContext>> buildSqlAndParam(List<String> tableNames) {
+    protected Pair<BytesSql, Map<Integer, ParameterContext>> buildSqlAndParam(String group, List<String> tableNames) {
         Preconditions.checkArgument(CollectionUtils.isNotEmpty(tableNames));
         String sql;
         Engine engine;
-        if (this.sqlTemplate instanceof SqlCreateTable
-            && Engine.isFileStore(engine = ((SqlCreateTable) this.sqlTemplate).getEngine())) {
+        SqlNode targetSqlTemplate = getSqlTemplate(group, tableNames);
+        if (targetSqlTemplate instanceof SqlCreateTable
+            && Engine.isFileStore(engine = ((SqlCreateTable) targetSqlTemplate).getEngine())) {
             // for file-store engine, avoid to generate MySQL physical sql with engine info.
-            ((SqlCreateTable) this.sqlTemplate).setEngine(Engine.INNODB);
-            sql = RelUtils.toNativeSql(sqlTemplate);
-            ((SqlCreateTable) this.sqlTemplate).setEngine(engine);
+            ((SqlCreateTable) targetSqlTemplate).setEngine(Engine.INNODB);
+            sql = RelUtils.toNativeSql(targetSqlTemplate);
+            ((SqlCreateTable) targetSqlTemplate).setEngine(engine);
         } else {
-            sql = RelUtils.toNativeSql(sqlTemplate, DbType.MYSQL);
+            sql = RelUtils.toNativeSql(targetSqlTemplate, DbType.MYSQL);
         }
         Map<Integer, ParameterContext> params = buildParams(tableNames);
         return new Pair<>(BytesSql.getBytesSql(sql), params);
@@ -406,7 +421,7 @@ public abstract class DdlPhyPlanBuilder {
                 sqlAlterTableAddIndexes.add(sqlAlterTableAddIndex);
             } else if (index instanceof MySqlKey) {
                 SQLAlterTableAddIndex sqlAlterTableAddKey = (SQLAlterTableAddIndex) alterTableAddKey.clone();
-                SQLIndexDefinition sqlIndexDefinition = (SQLIndexDefinition)((MySqlKey) index).getIndexDefinition();
+                SQLIndexDefinition sqlIndexDefinition = (SQLIndexDefinition) ((MySqlKey) index).getIndexDefinition();
                 sqlIndexDefinition.setKey(true);
                 sqlAlterTableAddKey.setIndexDefinition(sqlIndexDefinition);
                 sqlAlterTableAddIndexes.add(sqlAlterTableAddKey);
@@ -425,17 +440,18 @@ public abstract class DdlPhyPlanBuilder {
                 JdbcConstants.MYSQL).get(0);
         List<String> localIndexes = new ArrayList<>();
         List<SQLAlterTableItem> items = alterStatement.getItems();
-        for (SQLAlterTableItem item:items){
+        for (SQLAlterTableItem item : items) {
             if (item instanceof SQLAlterTableAddIndex) {
                 String index = ((SQLAlterTableAddIndex) item).getIndexDefinition().getName().toString();
                 localIndexes.add(SQLUtils.normalize(index));
-            }else if(item instanceof SQLAlterTableAddConstraint){
-                String index = ((SQLAlterTableAddConstraint)item).getConstraint().getName().toString();
+            } else if (item instanceof SQLAlterTableAddConstraint) {
+                String index = ((SQLAlterTableAddConstraint) item).getConstraint().getName().toString();
                 localIndexes.add(SQLUtils.normalize(index));
             }
         }
         return localIndexes;
     }
+
     private Map<Integer, ParameterContext> buildParams(List<String> tableNames) {
         Preconditions.checkArgument(CollectionUtils.isNotEmpty(tableNames));
         return PlannerUtils.buildParam(tableNames, this.params, paramIndex);
@@ -480,5 +496,9 @@ public abstract class DdlPhyPlanBuilder {
 
     public SqlNode getSqlTemplate() {
         return sqlTemplate;
+    }
+
+    public SqlNode getSqlTemplate(String groupKey, List<String> phyTableNames) {
+        return getSqlTemplate();
     }
 }

@@ -1,0 +1,72 @@
+SQL:
+  - sql: |
+      /*+TDDL:workload_type=ap ENABLE_SHUFFLE_BY_PARTIAL_KEY=false enable_bka_join=false enable_cbo_push_join=false 
+      enable_post_planner=false enable_push_cbo_join=false enable_push_join=false 
+      hash_join(OR_UD_TICKET_EXPAND_ET, ( or_payway_two_record_et,OR_UD_TICKET_ET)) 
+      hash_join(or_payway_two_record_et,OR_UD_TICKET_ET) 
+      enable_master_mpp=false enable_broadcast_join=false*/
+      SELECT
+        expanda.`UD_TICKET_EXPAND_ID` as pk,
+        expanda.COLUMN11 AS prepaidDiscountMoney,
+        m.TICKET_ID,
+        m.org_id,
+        m.ticket_id,
+        p.TICKET_ID,
+        p.org_id,
+        p.ticket_id,
+        expanda.TICKET_ID,
+        expanda.org_id,
+        expanda.ticket_id
+      FROM
+        OR_UD_TICKET_ET m
+        LEFT JOIN or_payway_two_record_et p ON p.org_id = m.org_id
+        AND p.ticket_id = m.ticket_id
+        AND p.shop_id = m.shop_id
+        AND p.ORG_ID = 47
+        left JOIN OR_UD_TICKET_EXPAND_ET expanda ON m.ORG_ID = expanda.ORG_ID
+        AND m.SHOP_ID = expanda.SHOP_ID
+        AND m.TICKET_ID = expanda.TICKET_ID
+        AND expanda.column11 IS NOT NULL
+        AND expanda.ORG_ID = 47
+      WHERE
+        m.ORG_ID = 47
+        AND m.REPORT_DATE >= '2025-08-01 00:00:00.0'
+        AND m.REPORT_DATE < date_add('2025-08-31 00:00:00.0', INTERVAL 1 DAY)
+        AND m.TICKET_ID = 'X131121422331021009'
+        AND m.WAREHOUSE_ID IN (1286)
+      order by
+        prepaidDiscountMoney desc
+    plan: |
+      project(pk="ud_ticket_expand_id", prepaiddiscountmoney="column11", ticket_id="ticket_id0", org_id="org_id0", ticket_id0="ticket_id0", ticket_id00="ticket_id00", org_id0="org_id00", ticket_id01="ticket_id00", ticket_id1="ticket_id", org_id1="org_id", ticket_id10="ticket_id")
+        exchange(distribution=single, collation=[4 desc-nulls-last])
+          memsort(sort="column11 desc")
+            hashjoin(condition="org_id = org_id and shop_id = shop_id and ticket_id = ticket_id", type="right")
+              exchange(distribution=hash[1, 2, 3], collation=[])
+                logicalview(tables="or_ud_ticket_expand_et[p32]", sql="select `ud_ticket_expand_id`, `org_id`, `shop_id`, `ticket_id`, `column11` from `or_ud_ticket_expand_et` as `or_ud_ticket_expand_et` where ((`org_id` = ?) and (`org_id` = ?) and (`ticket_id` = ?) and (`column11` is not null))")
+              project(org_id="org_id0", shop_id="shop_id0", ticket_id="ticket_id0", ticket_id0="ticket_id", org_id0="org_id", shop_id0="shop_id")
+                exchange(distribution=hash[3, 4, 5], collation=[])
+                  hashjoin(condition="org_id = org_id and ticket_id = ticket_id and shop_id = shop_id", type="right")
+                    exchange(distribution=hash[1, 0, 2], collation=[])
+                      logicalview(tables="or_payway_two_record_et[p32]", sql="select `ticket_id`, `org_id`, `shop_id` from `or_payway_two_record_et` as `or_payway_two_record_et` where ((`org_id` = ?) and (`org_id` = ?) and (`ticket_id` = ?))")
+                    exchange(distribution=hash[0, 2, 1], collation=[])
+                      logicalview(tables="or_ud_ticket_et[p32]", sql="select `org_id`, `shop_id`, `ticket_id` from `or_ud_ticket_et` as `or_ud_ticket_et` where ((`org_id` = ?) and (`ticket_id` = ?) and (`warehouse_id` in(?)) and (`report_date` >= ?) and (`report_date` < date_add(?, interval 1 day)))")
+DDL:
+  or_ud_ticket_et:
+    CREATE TABLE `or_ud_ticket_et` ( 	`UD_TICKET_ID` bigint(20) NOT NULL, 	`ORG_ID` bigint(20) NOT NULL, 	`WAREHOUSE_ID` bigint(20) NOT NULL, 	`WAREHOUSE_CODE` varchar(20) NOT NULL, 	`WAREHOUSE_NAME` varchar(200) NOT NULL, 	`SOURCE_TYPE` varchar(32) DEFAULT NULL, 	`SOURCE_NO` varchar(64) DEFAULT NULL, 	`BILL_TYPE` varchar(32) DEFAULT NULL, 	`TICKET_NO` varchar(32) DEFAULT NULL, 	`REPORT_DATE` datetime(3) DEFAULT NULL, 	`SHOP_ID` bigint(20) NOT NULL, 	`SHOP_CODE` varchar(20) NOT NULL, 	`SHOP_NAME` varchar(200) DEFAULT NULL, 	`IS_TRANSMIT` tinyint(4) DEFAULT NULL, 	`BILL_STATUS` varchar(32) NOT NULL, 	`CASHIER_ID` varchar(20) DEFAULT NULL, 	`CASHIER_NAME` varchar(50) DEFAULT NULL, 	`CASH_REGISTER_NO` varchar(20) DEFAULT NULL, 	`WORK_CLASS_ID` varchar(32) DEFAULT NULL, 	`WORK_CLASS_NO` varchar(32) DEFAULT NULL, 	`TOTAL_COUNT` decimal(18, 2) DEFAULT NULL, 	`TOTAL_MONEY` decimal(18, 6) DEFAULT NULL, 	`TOTAL_DISCOUNT_MONEY` decimal(18, 6) DEFAULT NULL, 	`TOTAL_SINGLEPRO_MONEY` decimal(18, 6) DEFAULT NULL, 	`TOTAL_TOTALPRO_MONEY` decimal(18, 6) DEFAULT NULL, 	`TOTAL_REDUCE_MONEY` decimal(18, 6) DEFAULT NULL, 	`MONEY_DIFFER` decimal(18, 6) DEFAULT NULL, 	`RECEIVABLE_MONEY` decimal(18, 6) DEFAULT NULL, 	`ACTUAL_MONEY` decimal(18, 6) DEFAULT NULL, 	`CHANGE_MONEY` decimal(18, 6) DEFAULT NULL, 	`APPROVE_STAFF_NO` varchar(20) DEFAULT NULL, 	`VIP_CARD_NO` varchar(20) DEFAULT NULL, 	`VIP_LEVEL` varchar(32) DEFAULT NULL, 	`VIP_TEL` varchar(100) DEFAULT NULL, 	`CASH_RMB_MONEY` decimal(18, 6) DEFAULT NULL, 	`BANK_CARD_MONEY` decimal(18, 6) DEFAULT NULL, 	`CASH_COUPON_MONEY` decimal(18, 6) DEFAULT NULL, 	`THIRD_PARTY_MONEY` decimal(18, 6) DEFAULT NULL, 	`FACETOFACE_MONEY` decimal(18, 6) DEFAULT NULL, 	`STORED_VALUE_CARD_MONEY` decimal(18, 6) DEFAULT NULL, 	`POINTS_MONEY` decimal(18, 6) DEFAULT NULL, 	`OUT_POINTS` decimal(18, 2) DEFAULT NULL, 	`CASH_FOREIGN_MONEY` decimal(18, 6) DEFAULT NULL, 	`CURRENCY` varchar(32) DEFAULT NULL, 	`EXCHANGE_RATE` decimal(18, 6) DEFAULT NULL, 	`IN_POINTS` decimal(18, 2) DEFAULT NULL, 	`SELF_STAFF_NO` varchar(20) DEFAULT NULL, 	`TRANSFER_ITEMS_FLG` tinyint(4) DEFAULT NULL, 	`TRANSFER_ITEMS_DATE` datetime DEFAULT NULL, 	`SELF_STAFF_FLG` tinyint(4) DEFAULT NULL, 	`TICKET_ID` varchar(32) DEFAULT NULL, 	`UD_DAYLY_ID` bigint(20) DEFAULT NULL, 	`DAYLY_NO` varchar(32) DEFAULT NULL, 	`VIP_SCORD_UP` varchar(32) DEFAULT NULL, 	`DAYLY_FLAG` tinyint(4) DEFAULT NULL, 	`DESCRIPTION` varchar(1024) DEFAULT NULL, 	`RECEIVE_TIME` datetime DEFAULT NULL, 	`CREATE_USER` varchar(32) NOT NULL, 	`CREATE_USER_NAME` varchar(50) DEFAULT NULL, 	`CREATE_TIME` datetime NOT NULL, 	`MODIFY_USER` varchar(32) DEFAULT NULL, 	`MODIFY_USER_NAME` varchar(50) DEFAULT NULL, 	`MODIFY_TIME` datetime DEFAULT NULL, 	`REMARKS` varchar(1024) DEFAULT NULL, 	`TIMESTAMP` bigint(20) NOT NULL, 	`SOURCE_ID` bigint(20) DEFAULT NULL, 	`M_PAYMENT_DISCOUNT_PLATFORM_MONEY` decimal(18, 6) DEFAULT NULL, 	`M_PAYMENT_DISCOUNT_CORPORATE_MONEY` decimal(18, 6) DEFAULT NULL, 	`M_PAYMENT_ACTUAL_CUSTOMER_MONEY` decimal(18, 6) DEFAULT NULL, 	`TAX_AMOUNT` decimal(18, 6) DEFAULT NULL, 	`CGST` decimal(18, 6) DEFAULT NULL, 	`DGST` decimal(18, 6) DEFAULT NULL, 	`O2O_ORDER_CODE` varchar(32) DEFAULT NULL, 	`O2O_DEAL_CODE` varchar(255) DEFAULT NULL, 	`COMPANY_CODE` varchar(32) DEFAULT NULL, 	`SHOP_TYPE` varchar(32) DEFAULT NULL, 	`PRINT_NUM` tinyint(4) DEFAULT NULL, 	PRIMARY KEY (`UD_TICKET_ID`), 	CLUSTERED COLUMNAR INDEX `cci_or_ud_ticket_et`(`org_id`) PARTITION BY HASH (`ORG_ID`) PARTITIONS 32, 	KEY `auto_shard_key_org_id_ud_ticket_id` USING BTREE (`ORG_ID`, `UD_TICKET_ID`) ) ENGINE = InnoDB DEFAULT CHARSET = utf8 PARTITION BY KEY (`ORG_ID`, `UD_TICKET_ID`) PARTITIONS 32;
+  or_payway_two_record_et:
+    CREATE TABLE `or_payway_two_record_et` ( 	`ID` bigint(20) DEFAULT NULL, 	`PAY_WAY_TWO_ID` bigint(20) NOT NULL, 	`TICKET_ID` varchar(32) NOT NULL, 	`PAY_WAY_ONE_ID` bigint(20) NOT NULL, 	`COUPON_NUM` varchar(20) NOT NULL, 	`PAY_WAY_TWO_NAME` varchar(100) DEFAULT NULL, 	`PAY_WAY_TWO_MONEY` decimal(18, 6) DEFAULT NULL, 	`PAY_WAY_TWO_COUNT` decimal(18, 2) DEFAULT NULL, 	`TOTAL_MONEY` decimal(18, 6) DEFAULT NULL, 	`COUPON_FACE_VALUE` decimal(18, 6) DEFAULT NULL, 	`ORG_ID` bigint(20) NOT NULL, 	`SHOP_CODE` varchar(20) NOT NULL, 	`SHOP_NAME` varchar(200) DEFAULT NULL, 	`SHOP_ID` bigint(20) NOT NULL, 	`CREATE_USER` varchar(32) NOT NULL, 	`CREATE_USER_NAME` varchar(50) DEFAULT NULL, 	`CREATE_TIME` datetime NOT NULL, 	`MODIFY_USER` varchar(32) DEFAULT NULL, 	`MODIFY_USER_NAME` varchar(50) DEFAULT NULL, 	`MODIFY_TIME` datetime DEFAULT NULL, 	`REMARKS` varchar(1024) DEFAULT NULL, 	`TIMESTAMP` bigint(20) NOT NULL, 	`SV_CARD_NO` varchar(32) DEFAULT NULL, 	`coupon_type` varchar(10) DEFAULT NULL, 	PRIMARY KEY (`PAY_WAY_TWO_ID`, `TICKET_ID`, `PAY_WAY_ONE_ID`, `COUPON_NUM`), 	KEY `auto_shard_key_SHOP_ID` (`SHOP_ID`), 	KEY `IX_OR_PAYWAY_TWO_RECORD_ET_COUPON_NUM` USING BTREE (`COUPON_NUM`), 	KEY `IX_or_payway_two_record_et_ticket_id` USING BTREE (`TICKET_ID`), 	KEY `IX_or_payway_two_record_et_pay_way_two_name` USING BTREE (`PAY_WAY_TWO_NAME`), 	KEY `PAY_WAY_ONE_ID` (`PAY_WAY_ONE_ID`), 	KEY `PAY_WAY_TWO_ID` (`PAY_WAY_TWO_ID`), 	KEY `coupon_type` (`coupon_type`), 	KEY `auto_shard_key_org_id_pay_way_two_id` USING BTREE (`ORG_ID`, `PAY_WAY_TWO_ID`, `TICKET_ID`, `PAY_WAY_ONE_ID`) ) ENGINE = InnoDB DEFAULT CHARSET = utf8 PARTITION BY KEY (`ORG_ID`, `PAY_WAY_TWO_ID`, `TICKET_ID`, `PAY_WAY_ONE_ID`) PARTITIONS 32;
+  or_ud_ticket_expand_et:
+    CREATE TABLE `or_ud_ticket_expand_et` ( 	`UD_TICKET_EXPAND_ID` bigint(20) NOT NULL, 	`ORG_ID` bigint(20) NOT NULL, 	`SHOP_ID` bigint(20) NOT NULL, 	`SHOP_CODE` varchar(32) NOT NULL, 	`CASH_REGISTER_NO` varchar(32) NOT NULL, 	`TICKET_ID` varchar(32) NOT NULL, 	`INVOICE_NO` varchar(32) DEFAULT NULL, 	`ASS_INVOICE_NO` varchar(32) DEFAULT NULL, 	`ORDER_TYPE` char(1) NOT NULL, 	`ORDER_STATUS` char(1) NOT NULL, 	`MSG` varchar(2048) DEFAULT NULL, 	`CREATE_TIME` datetime DEFAULT NULL, 	`UPDATE_TIME` datetime DEFAULT NULL, 	`column1` varchar(20) DEFAULT NULL, 	`column2` varchar(20) DEFAULT NULL, 	`column3` varchar(20) DEFAULT NULL, 	`column4` varchar(20) DEFAULT NULL, 	`column5` varchar(20) DEFAULT NULL, 	`column6` varchar(20) DEFAULT NULL, 	`column7` varchar(20) DEFAULT NULL, 	`column8` varchar(20) DEFAULT NULL, 	`column9` varchar(20) DEFAULT NULL, 	`column10` varchar(20) DEFAULT NULL, 	`column11` decimal(18, 2) DEFAULT NULL, 	`column12` decimal(18, 2) DEFAULT NULL, 	`column13` decimal(18, 2) DEFAULT NULL, 	`column14` decimal(18, 2) DEFAULT NULL, 	`column15` decimal(18, 2) DEFAULT NULL, 	`column16` decimal(18, 2) DEFAULT NULL, 	`column17` decimal(18, 2) DEFAULT NULL, 	`column18` decimal(18, 2) DEFAULT NULL, 	`column19` decimal(18, 2) DEFAULT NULL, 	`column20` decimal(18, 2) DEFAULT NULL, 	`RECEIVER_NAME` varchar(512) DEFAULT NULL, 	`RECEIVER_MOBILE` varchar(512) DEFAULT NULL, 	`PROVINCE_NAME` varchar(200) DEFAULT NULL, 	`CITY_NAME` varchar(200) DEFAULT NULL, 	`DISTRICT_NAME` varchar(200) DEFAULT NULL, 	`ADDRESS` varchar(1000) DEFAULT NULL, 	`EXPAND_SOURCE_TYPE` varchar(32) DEFAULT NULL, 	`IS_REFUND` varchar(20) DEFAULT NULL, 	`E3_SHOP_NAME` varchar(200) DEFAULT NULL, 	PRIMARY KEY (`UD_TICKET_EXPAND_ID`), 	CLUSTERED COLUMNAR INDEX `cci_or_ud_ticket_expand_et`(`org_id`) PARTITION BY HASH (`ORG_ID`) PARTITIONS 32, 	KEY `auto_shard_key_org_id_ud_ticket_expand_id` USING BTREE (`ORG_ID`, `UD_TICKET_EXPAND_ID`) ) ENGINE = InnoDB DEFAULT CHARSET = utf8 PARTITION BY KEY (`ORG_ID`, `UD_TICKET_EXPAND_ID`) PARTITIONS 32;
+STATISTICS:
+  or_payway_two_record_et:
+    47940922
+  or_ud_ticket_et:
+    301935288
+  or_ud_ticket_expand_et:
+    150162022
+CONFIG:
+  ENABLE_MPP:
+    true
+  defaltxxAPPName.isNew:
+    true
+

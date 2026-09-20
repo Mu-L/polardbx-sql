@@ -17,6 +17,7 @@
 package com.alibaba.polardbx.qatest.dql.sharding.functions;
 
 import com.alibaba.polardbx.qatest.CrudBasedLockTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import org.junit.Before;
 import org.junit.Test;
@@ -100,8 +101,11 @@ public class MatchAgainstTest extends CrudBasedLockTestCase {
         JdbcUtil.executeSuccess(tddlConnection, String.format("truncate table %s", baseOneTableName));
     }
 
+    @IcbcIgnore(ignoreReason = "case is sensitive for ICBC")
     @Test
     public void test() throws SQLException {
+        setVariable("collation_server", "utf8mb4_general_ci", mysqlConnection);
+        setVariable("collation_server", "utf8mb4_general_ci", tddlConnection);
         JdbcUtil.executeUpdate(mysqlConnection, String.format(INSERT_SQL_FORMAT, baseOneTableName));
         JdbcUtil.executeUpdate(tddlConnection, String.format(INSERT_SQL_FORMAT, baseOneTableName));
         Arrays.stream(QUERY_SQL_FORMATS)

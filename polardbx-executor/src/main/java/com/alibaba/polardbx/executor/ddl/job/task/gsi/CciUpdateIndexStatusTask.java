@@ -137,11 +137,6 @@ public class CciUpdateIndexStatusTask extends BaseGmsTask {
             beforeIndexStatus
         );
 
-        //sync have to be successful to continue
-        if (needOnlineSchemaChange) {
-            SyncManagerHelper.sync(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
-        }
-
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
 

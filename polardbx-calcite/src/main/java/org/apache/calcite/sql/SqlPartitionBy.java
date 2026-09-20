@@ -18,7 +18,6 @@ package org.apache.calcite.sql;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
-import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlPartitionByKey;
 import com.google.common.base.Preconditions;
 import org.apache.calcite.rel.type.RelDataType;
@@ -34,7 +33,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * Created by luoyanxin.
@@ -100,8 +98,11 @@ public class SqlPartitionBy extends SqlCall {
 
         for (SqlNode partCol : this.getColumns()) {
             SqlCreateTable.PartitionColumnFinder columnFinder = new SqlCreateTable.PartitionColumnFinder();
-            partCol.accept(columnFinder);
-            if (columnFinder.getPartColumn() == null) {
+//            partCol.accept(columnFinder);
+            columnFinder.find(partCol);
+            SqlIdentifier partColId = columnFinder.getPartColumn();
+            boolean isUseUdfParams = columnFinder.isUseUdfParams();
+            if (partColId == null) {
                 throw new TddlRuntimeException(ErrorCode.ERR_VALIDATE, String
                     .format("Not allowed to use unknown column[%s] as partition column", partCol.toString()));
             } else {
@@ -121,6 +122,9 @@ public class SqlPartitionBy extends SqlCall {
                 }
             }
 
+            if (isUseUdfParams) {
+                partCol = partColId;
+            }
             RelDataType dataType = validator.deriveType(scope, partCol);
             if (dataType == null) {
                 throw new TddlRuntimeException(ErrorCode.ERR_VALIDATE,

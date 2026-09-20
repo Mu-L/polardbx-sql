@@ -22,6 +22,7 @@ import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.ParameterMethod;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.gms.util.DdlMetaLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.gms.metadb.GmsSystemTables;
 import com.alibaba.polardbx.gms.metadb.accessor.AbstractAccessor;
@@ -77,6 +78,9 @@ public class DbGroupInfoAccessor extends AbstractAccessor {
         try {
             Map<Integer, ParameterContext> params = new HashMap<>();
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, dbName);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.DB_GROUP_INFO)) {
+                DdlMetaLogUtil.logSql(DELETE_DB_GROUP_INFO_BY_DB_NAME, params);
+            }
             int affectedRows = MetaDbUtil.delete(DELETE_DB_GROUP_INFO_BY_DB_NAME, params, connection);
             return affectedRows;
         } catch (Exception e) {
@@ -92,6 +96,9 @@ public class DbGroupInfoAccessor extends AbstractAccessor {
             Map<Integer, ParameterContext> params = new HashMap<>();
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, dbName);
             MetaDbUtil.setParameter(2, params, ParameterMethod.setString, groupName);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.DB_GROUP_INFO)) {
+                DdlMetaLogUtil.logSql(DELETE_DB_GROUP_INFO_BY_DB_AND_GROUP, params);
+            }
             int affectedRows = MetaDbUtil.delete(DELETE_DB_GROUP_INFO_BY_DB_AND_GROUP, params, connection);
             return affectedRows;
         } catch (Exception e) {
@@ -154,6 +161,9 @@ public class DbGroupInfoAccessor extends AbstractAccessor {
         MetaDbUtil.setParameter(4, params, ParameterMethod.setInt, groupType);
 
         try {
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.DB_GROUP_INFO)) {
+                DdlMetaLogUtil.logSql(INSERT_IGNORE_NEW_DB_GROUP, params);
+            }
             MetaDbUtil.insert(INSERT_IGNORE_NEW_DB_GROUP, params, this.connection);
         } catch (Exception e) {
             logger.error("Failed to query the system table '" + DB_GROUP_INFO_TABLE + "'", e);
@@ -170,6 +180,9 @@ public class DbGroupInfoAccessor extends AbstractAccessor {
         MetaDbUtil.setParameter(3, params, ParameterMethod.setString, groupName);
 
         try {
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.DB_GROUP_INFO)) {
+                DdlMetaLogUtil.logSql(UPDATE_GROUP_TYPE_BY_DB_AND_GROUP, params);
+            }
             MetaDbUtil.update(UPDATE_GROUP_TYPE_BY_DB_AND_GROUP, params, this.connection);
         } catch (Exception e) {
             logger.error("Failed to query the system table '" + DB_GROUP_INFO_TABLE + "'", e);
@@ -186,6 +199,9 @@ public class DbGroupInfoAccessor extends AbstractAccessor {
         MetaDbUtil.setParameter(3, params, ParameterMethod.setString, groupName);
 
         try {
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.DB_GROUP_INFO)) {
+                DdlMetaLogUtil.logSql(UPDATE_PHY_DB_BY_DB_AND_GROUP, params);
+            }
             MetaDbUtil.update(UPDATE_PHY_DB_BY_DB_AND_GROUP, params, this.connection);
         } catch (Exception e) {
             logger.error("Failed to query the system table '" + DB_GROUP_INFO_TABLE + "'", e);
@@ -200,6 +216,9 @@ public class DbGroupInfoAccessor extends AbstractAccessor {
             List<DbGroupInfoRecord> records;
             Map<Integer, ParameterContext> params = new HashMap<>();
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, targetDbName);
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.DB_GROUP_INFO)) {
+//                DdlMetaLogUtil.logSql(SELECT_GROUPS_BY_DB_NAME, params);
+            }
             records = MetaDbUtil.query(SELECT_GROUPS_BY_DB_NAME, params, DbGroupInfoRecord.class, connection);
             return records;
         } catch (Exception e) {
@@ -219,6 +238,9 @@ public class DbGroupInfoAccessor extends AbstractAccessor {
             MetaDbUtil.setParameter(2, params, ParameterMethod.setInt, groupType);
             String updateSql = isForUpdate ? SELECT_DB_GROUP_INFO_BY_DB_NAME_AND_GROUP_TYPE_FOR_UPDATE :
                 SELECT_DB_GROUP_INFO_BY_DB_NAME_AND_GROUP_TYPE;
+            if (DdlMetaLogUtil.isDdlTable(GmsSystemTables.DB_GROUP_INFO)) {
+                DdlMetaLogUtil.logSql(updateSql, params);
+            }
             records = MetaDbUtil.query(updateSql, params, DbGroupInfoRecord.class, connection);
             return records;
         } catch (Exception e) {

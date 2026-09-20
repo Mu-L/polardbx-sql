@@ -16,8 +16,8 @@
 
 package com.alibaba.polardbx.executor.chunk;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableBooleanArrayList;
 import com.google.common.base.Preconditions;
-import it.unimi.dsi.fastutil.booleans.BooleanArrayList;
 import org.openjdk.jol.info.ClassLayout;
 
 /**

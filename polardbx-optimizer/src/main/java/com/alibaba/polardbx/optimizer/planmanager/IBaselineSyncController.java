@@ -23,5 +23,7 @@ public interface IBaselineSyncController {
 
     void deletePlan(String schemaName, Integer baselineId, Integer planId);
 
+    void grayPlan(String schemaName, Integer baselineId, Integer planId, int grayRatio);
+
     String scheduledJobsInfo();
 }

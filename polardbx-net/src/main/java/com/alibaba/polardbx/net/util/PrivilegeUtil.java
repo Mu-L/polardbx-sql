@@ -17,8 +17,11 @@
 package com.alibaba.polardbx.net.util;
 
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
+import com.alibaba.polardbx.common.utils.encrypt.SecurityUtil;
 import com.alibaba.polardbx.config.ConfigDataMode;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.net.handler.Privileges;
+import com.taobao.tddl.common.privilege.EncrptPassword;
 
 import java.util.Set;
 
@@ -41,6 +44,10 @@ public class PrivilegeUtil {
             return ErrorCode.ER_BAD_DB_ERROR;
         }
 
+        if (ExternalNameValidator.isExternalSchema(schema)) {
+            return ErrorCode.ER_DBACCESS_DENIED_ERROR;
+        }
+
         if (trustLogin || ConfigDataMode.isFastMock()) {
             return null;
         }
@@ -51,5 +58,9 @@ public class PrivilegeUtil {
         } else {
             return ErrorCode.ER_DBACCESS_DENIED_ERROR;
         }
+    }
+
+    public static boolean isPasswordEmpty(byte[] password) {
+        return password == null || password.length == 0;
     }
 }

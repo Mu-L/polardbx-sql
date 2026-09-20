@@ -22,14 +22,11 @@ import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.common.jdbc.ParameterMethod;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
-import com.alibaba.polardbx.gms.listener.impl.MetaDbConfigManager;
 import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
 import com.alibaba.polardbx.gms.metadb.accessor.AbstractAccessor;
-import com.alibaba.polardbx.gms.util.MetaDbLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
+import com.google.common.collect.ImmutableMap;
 
-import java.util.HashMap;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -48,39 +45,15 @@ public class CdcConfigAccessor extends AbstractAccessor {
 
     private static final String SELECT_ALL = "select * from " + CDC_SYSETM_CONFIG_TABLE;
 
-    private final static String UPDATE_CONFIG_VALUE =
-        "replace into " + CDC_SYSETM_CONFIG_TABLE + " set config_key=?, config_value=?";
+    private final static String REPLACE_CONFIG_VALUE =
+        "replace into " + CDC_SYSETM_CONFIG_TABLE + " set config_value=?, config_key=?";
 
-    public int[] updateInstConfigValue(Properties props) {
-        try {
-            List<Map<Integer, ParameterContext>> paramsList = new LinkedList<>();
-            for (String paramKey : props.stringPropertyNames()) {
-                Map<Integer, ParameterContext> params = new HashMap<>();
-                MetaDbUtil.setParameter(1, params, ParameterMethod.setString, paramKey);
-                MetaDbUtil.setParameter(2, params, ParameterMethod.setString, props.getProperty(paramKey));
-                paramsList.add(params);
+    private static final String QUERY_BY_KEY =
+        "select * from " + CDC_SYSETM_CONFIG_TABLE + " where config_key=?";
 
-            }
-            int[] updateResult = updateBySql(UPDATE_CONFIG_VALUE, paramsList);
-            MetaDbConfigManager.getInstance().notify(MetaDbDataIdBuilder.getCdcSystemConfigDataId(), connection);
-            return updateResult;
-        } catch (Exception e) {
-            MetaDbLogUtil.META_DB_LOG
-                .error("Failed to insert the system table '" + BINLOG_SYSTEM_CONFIG_TABLE + "'", e);
-            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "insert",
-                BINLOG_SYSTEM_CONFIG_TABLE,
-                e.getMessage());
-        }
-    }
-
-    public int[] updateBySql(String sql, List<Map<Integer, ParameterContext>> paramsList) {
-        try {
-            return MetaDbUtil.update(sql, paramsList, connection);
-        } catch (Throwable t) {
-            logger.error("Failed to update system table " + BINLOG_SYSTEM_CONFIG_TABLE + " sql: " + sql, t);
-            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, t, "update",
-                BINLOG_SYSTEM_CONFIG_TABLE, t.getMessage());
-        }
+    public void updateInstConfigValue(Properties props) {
+        upsertConfigValue(null, props, BINLOG_SYSTEM_CONFIG_TABLE, REPLACE_CONFIG_VALUE,
+            MetaDbDataIdBuilder.getCdcSystemConfigDataId());
     }
 
     public List<CdcConfigRecord> queryAll() {
@@ -95,6 +68,11 @@ public class CdcConfigAccessor extends AbstractAccessor {
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, t, "query",
                 BINLOG_SYSTEM_CONFIG_TABLE, t.getMessage());
         }
+    }
+
+    public List<CdcConfigRecord> queryByKey(String key) throws Exception {
+        return MetaDbUtil.query(QUERY_BY_KEY, ImmutableMap.of(1, new ParameterContext(ParameterMethod.setString,
+            new Object[] {1, key})), CdcConfigRecord.class, connection);
     }
 
 }

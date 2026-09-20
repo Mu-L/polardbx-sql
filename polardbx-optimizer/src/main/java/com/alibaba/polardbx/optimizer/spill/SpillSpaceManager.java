@@ -31,6 +31,11 @@ package com.alibaba.polardbx.optimizer.spill;
 
 import com.alibaba.polardbx.common.properties.FileConfig;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+
 public class SpillSpaceManager extends SpillSpaceMonitor {
 
     public static final SpillSpaceMonitor getInstance() {
@@ -51,5 +56,24 @@ public class SpillSpaceManager extends SpillSpaceMonitor {
     @Override
     public String tag() {
         return SpillSpaceManager.class.getSimpleName();
+    }
+
+    // get ../spill dir total space
+    @Override
+    public long getTotalSpillSpace() {
+        try {
+            Path path = FileConfig.getInstance().getRootPath();
+            return getDirectorySize(path.toString());
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public static long getDirectorySize(String directoryPath) throws IOException {
+        Path path = Paths.get(directoryPath);
+        return Files.walk(path)
+            .filter(p -> p.toFile().isFile())
+            .mapToLong(p -> p.toFile().length())
+            .sum();
     }
 }

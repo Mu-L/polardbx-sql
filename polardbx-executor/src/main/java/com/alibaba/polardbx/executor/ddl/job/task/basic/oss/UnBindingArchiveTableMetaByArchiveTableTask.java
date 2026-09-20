@@ -17,13 +17,19 @@
 package com.alibaba.polardbx.executor.ddl.job.task.basic.oss;
 
 import com.alibaba.fastjson.annotation.JSONCreator;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseGmsTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
+import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
+import com.alibaba.polardbx.executor.sync.TableMetaChangePreemptiveSyncAction;
 import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
 import com.alibaba.polardbx.gms.partition.TableLocalPartitionRecord;
+import com.alibaba.polardbx.gms.sync.SyncScope;
+import com.alibaba.polardbx.optimizer.config.table.PreemptiveTime;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import lombok.Getter;
+import org.apache.commons.lang3.StringUtils;
 
 import java.sql.Connection;
 
@@ -74,6 +80,12 @@ public class UnBindingArchiveTableMetaByArchiveTableTask extends BaseGmsTask {
     @Override
     protected void onExecutionSuccess(ExecutionContext executionContext) {
         // don't sync here, leave it to latter task
+        PreemptiveTime preemptiveTime = PreemptiveTime.getPreemptiveTimeFromExecutionContext(executionContext,
+            ConnectionParams.PREEMPTIVE_MDL_INITWAIT, ConnectionParams.PREEMPTIVE_MDL_INTERVAL);
+        if (!StringUtils.isEmpty(originTableName)) {
+            SyncManagerHelper.syncThrowExceptions(
+                new TableMetaChangePreemptiveSyncAction(schemaName, originTableName, preemptiveTime), SyncScope.ALL);
+        }
     }
 
     @Override

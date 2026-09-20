@@ -77,8 +77,16 @@ public abstract class AbstractPrivilegeCommandHandler implements PrivilegeComman
     public void handle(boolean hasMore) {
         beforeHandle();
         doHandle();
-        markDdlForCdc(getSqlKind());
+        if (!isCatalog()) {
+            markDdlForCdc(getSqlKind());
+        }
         afterHandle();
+    }
+
+    // Catalog privilege statements use three-part-name syntax that downstream instances
+    // may not support, so subclasses override this to skip CDC marking.
+    protected boolean isCatalog() {
+        return false;
     }
 
     public ByteString getSql() {

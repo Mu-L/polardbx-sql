@@ -10,8 +10,8 @@
 
   plan: |
 
-    Project(c1="c1", text_test="text_test")
-      BKAJoin(condition="pk = pk", type="inner")
-        IndexScan(tables="optest_0001.d_i_2_3", sql="SELECT `pk`, `c1` FROM `d_i_2` AS `d_i_2` WHERE (`c1` = ?)")
-        Gather(concurrent=true)
-          LogicalView(tables="[0000-0003].test_table_d_[00-27]", shardCount=28, sql="SELECT `pk`, `text_test` FROM `test_table_d` AS `test_table_d` WHERE ((`c1` = ?) AND (`pk` IN (...)))")
+    project(c1="c1", text_test="text_test")
+      bkajoin(condition="pk = pk", type="inner")
+        indexscan(tables="optest_0001.d_i_2_3", sql="select `pk` from `d_i_2` as `d_i_2` where (`c1` = ?)")
+        gather(concurrent=true)
+          logicalview(tables="[0000-0003].test_table_d_[00-27]", shardcount=28, sql="select `pk`, `text_test`, `c1` from `test_table_d` as `test_table_d` where ((`c1` = ?) and (`pk` in (...)))")

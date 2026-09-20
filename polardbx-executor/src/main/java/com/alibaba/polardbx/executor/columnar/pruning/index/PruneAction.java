@@ -28,6 +28,7 @@ public enum PruneAction {
     }),
     SORT_KEY_INDEX_PRUNE((pred, columnIndex, ipc, cur) -> pred.sortKey((SortKeyIndex) columnIndex, ipc, cur)),
     ZONE_MAP_INDEX_PRUNE((pred, columnIndex, ipc, cur) -> pred.zoneMap((ZoneMapIndex) columnIndex, ipc, cur)),
+    MULTI_SORT_KEY_INDEX_PRUNE((pred, columnIndex, ipc, cur) -> pred.multiSortKey((MultiSortKeyIndex) columnIndex, ipc, cur)),
     BITMAP_INDEX_PRUNE((pred, columnIndex, ipc, cur) -> pred.bitmap((BitMapRowGroupIndex) columnIndex, ipc, cur)),
     BLOOM_FILTER_INDEX_PRUNE(
         (pred, columnIndex, ipc, cur) -> pred.bloomFilter((BloomFilterIndex) columnIndex, ipc, cur));

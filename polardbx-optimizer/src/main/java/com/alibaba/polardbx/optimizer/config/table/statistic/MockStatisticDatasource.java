@@ -113,7 +113,9 @@ public class MockStatisticDatasource implements StatisticDataSource {
                     if (columnList != null) {
                         for (Pair<String, Object> columnInfo : columnList) {
                             Map<String, Object> histMap = (Map<String, Object>) columnInfo.getValue();
-
+                            if (histMap == null) {
+                                continue;
+                            }
                             JSONObject histogramJson = new JSONObject();
                             histogramJson.put("type", histMap.get("type"));
                             histogramJson.put("maxBucketSize", histMap.get("maxBucketSize"));

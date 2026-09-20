@@ -21,6 +21,8 @@ import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import org.apache.commons.lang3.StringUtils;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 
 import static com.alibaba.polardbx.executor.utils.failpoint.FailPointKey.FP_HIJACK_DDL_JOB;
@@ -46,6 +48,7 @@ public abstract class DdlJobFactory {
         ExecutableDdlJob executableDdlJob = doCreate();
         excludeResources(executableDdlJob.getExcludeResources());
         sharedResources(executableDdlJob.getSharedResources());
+        updateOnlineDdlInfo(executableDdlJob.getExplainOnlineDdlInfo());
         executableDdlJob.setDdlJobFactoryName(this.getClass().getSimpleName());
 
         //this is a quite interesting injection
@@ -87,6 +90,9 @@ public abstract class DdlJobFactory {
      */
     protected abstract void sharedResources(Set<String> resources);
 
+    protected void updateOnlineDdlInfo(OnlineDdlInfo onlineDdlInfo) {
+    }
+
     public static String concatWithDot(String schemaName, String tableName) {
         if (StringUtils.isEmpty(schemaName)) {
             return tableName;
@@ -94,4 +100,7 @@ public abstract class DdlJobFactory {
         return schemaName + "." + tableName;
     }
 
+    public List<String> getPerfParameter() {
+        return new ArrayList<>();
+    }
 }

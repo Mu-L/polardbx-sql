@@ -29,6 +29,8 @@ import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.druid.sql.ast.SqlType;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.group.jdbc.TGroupDataSource;
 import com.alibaba.polardbx.group.jdbc.TGroupDirectConnection;
@@ -43,6 +45,7 @@ import com.alibaba.polardbx.transaction.jdbc.DeferredConnection;
 import com.alibaba.polardbx.transaction.trx.AbstractTransaction;
 import com.alibaba.polardbx.transaction.utils.TransactionAsyncUtils;
 import lombok.Getter;
+import lombok.Setter;
 import org.apache.commons.lang3.StringUtils;
 
 import java.sql.Connection;
@@ -141,13 +144,17 @@ public class TransactionConnectionHolder implements IConnectionHolder {
         private final String schema;
         private final String group;
         private final long connectionId;
+        // whether the connection is on master node for FOLLOWER_READ
+        private final boolean onDnMaster;
 
         private ConnectionState state;
         private ParticipatedState participated;
 
         // For async commit.
-        private String DnInstId;
+        private String dnInstId;
+        // leader flag for async commit to make sure that there is only one DN leader
         private boolean dnLeader = false;
+        private boolean prepared = false;
         private boolean committed = false;
 
         private HeldConnection(IConnection connection,
@@ -155,11 +162,13 @@ public class TransactionConnectionHolder implements IConnectionHolder {
                                String group,
                                long connectionId,
                                RW rw,
+                               MasterSlave masterSlave,
                                boolean shouldParticipate) {
             this.connection = connection;
             this.schema = schema;
             this.group = group;
             this.connectionId = connectionId;
+            this.onDnMaster = (masterSlave == MasterSlave.MASTER_ONLY);
             setState(rw);
             setParticipated(rw, shouldParticipate);
         }
@@ -228,20 +237,24 @@ public class TransactionConnectionHolder implements IConnectionHolder {
             return group;
         }
 
-        public String getDnInstId() {
-            return DnInstId;
-        }
-
         public ParticipatedState getParticipated() {
             return participated;
         }
 
-        public void setDnInstId(String dnInstId) {
-            DnInstId = dnInstId;
+        public String getDnInstId() {
+            return dnInstId;
         }
 
         public void setDnLeader(boolean dnLeader) {
             this.dnLeader = dnLeader;
+        }
+
+        public void setDnInstId(String dnInstId) {
+            this.dnInstId = dnInstId;
+        }
+
+        public boolean isOnDnMaster() {
+            return onDnMaster;
         }
 
         public boolean isDnLeader() {
@@ -255,10 +268,34 @@ public class TransactionConnectionHolder implements IConnectionHolder {
         public void setCommitted(boolean committed) {
             this.committed = committed;
         }
+
+        public boolean isPrepared() {
+            return prepared;
+        }
+
+        public void setPrepared(boolean prepared) {
+            this.prepared = prepared;
+        }
+
+        @Override
+        public String toString() {
+            return "HeldConnection{" +
+                "connection=" + connection +
+                ", schema='" + schema + '\'' +
+                ", group='" + group + '\'' +
+                ", connectionId=" + connectionId +
+                ", onDnMaster=" + onDnMaster +
+                ", state=" + state +
+                ", participated=" + participated +
+                ", dnInstId='" + dnInstId + '\'' +
+                ", dnLeader=" + dnLeader +
+                ", prepared=" + prepared +
+                ", committed=" + committed +
+                '}';
+        }
     }
 
     private final static Logger logger = LoggerFactory.getLogger(TransactionConnectionHolder.class);
-
     /**
      * key: grp
      * val: {
@@ -267,14 +304,16 @@ public class TransactionConnectionHolder implements IConnectionHolder {
      * }
      */
     private final Map<String, WriteHeldConnectionContext> groupWriteHeldConnCtxMap = new HashMap<>();
-
     /**
      * 物理库的读连接集合
      */
     @Getter
     private final Map<String, List<HeldConnection>> groupHeldReadConns = new HashMap<>();
+    /**
+     * 所有物理连接的集合
+     * 作为兜底的管理
+     */
     private final Set<IConnection> connections = new HashSet<>();
-
     private final ReentrantLock lock;
     private final AbstractTransaction trx;
     private final ExecutionContext executionContext;
@@ -282,17 +321,19 @@ public class TransactionConnectionHolder implements IConnectionHolder {
     private final boolean reuseReadConn;
     private final boolean supportAutoSavepoint;
     private final boolean xProtoOptForAutoSp;
-
-    private boolean closed = false;
-    @Getter
-    protected volatile boolean killed = false;
-
     /**
      * DN instance id -> number of branches in this DN.
      */
     private final ConcurrentHashMap<String, AtomicInteger> dnBranchMap = new ConcurrentHashMap<>();
-
+    @Getter
+    protected volatile boolean killed = false;
     protected Set<String> heldSchema = Collections.synchronizedSet(new HashSet<>());
+    /**
+     * 物理库上不可复用的读连接集合
+     * 如备库读连接转主库写连接
+     */
+    private Map<String, List<HeldConnection>> groupDiscardReadConns = null;
+    private boolean closed = false;
 
     public TransactionConnectionHolder(AbstractTransaction trx, ReentrantLock lock, ExecutionContext ctx) {
         this.lock = lock;
@@ -367,10 +408,10 @@ public class TransactionConnectionHolder implements IConnectionHolder {
     }
 
     public IConnection getConnection(String schema, String group, IDataSource ds, RW rw) throws SQLException {
-        return getConnection(schema, group, null, ds, rw);
+        return getConnection(schema, group, null, ds, rw).connection;
     }
 
-    public IConnection getConnection(String schema, String group, Long grpConnId, IDataSource ds, RW rw)
+    public HeldConnection getConnection(String schema, String group, Long grpConnId, IDataSource ds, RW rw)
         throws SQLException {
         Lock lock = this.lock;
         lock.lock();
@@ -381,41 +422,40 @@ public class TransactionConnectionHolder implements IConnectionHolder {
                 // Force using a new connection
                 IConnection conn = ds.getConnection();
                 connections.add(conn);
-                return conn;
+                return new HeldConnection(conn, schema, group, 0, rw, MasterSlave.MASTER_ONLY, false);
             }
 
-//            HeldConnection groupWriteConn = groupHeldWriteConn.get(group);
-//            boolean hasParticipant = (groupWriteConn != null);      // 该库上已有写连接
-
+            // Whether the <group, connId> pair already maps to a write connection.
             boolean hasParticipant = hasParticipant(group, grpConnId);
+            // Whether the requested connection should involve in the distributed transaction.
             boolean shouldParticipate = shouldParticipateTransaction(rw, hasParticipant);
             boolean supportGroupMultiWrite = supportGroupMultiWriteConns();
             boolean needSetFlashbackArea = executionContext.isFlashbackArea() && rw == ITransaction.RW.READ
                 && executionContext.getStorageInfo(schema).isSupportFlashbackArea();
+            boolean needSetAsOfCrossDdl = executionContext.isAsOfCrossDdl() && rw == ITransaction.RW.READ
+                && executionContext.getStorageInfo(schema).isSupportAsOfCrossDdl();
             if (hasParticipant) {
-
-//                // 如果已存在写连接 优先复用写连接
-//                if (reuseWriteConn(schema, group, rw, groupWriteConn)) {
-//                    return wrapWithAutoSavepoint(groupWriteConn.connection, rw);
-//                }
-
                 HeldConnection groupWriteConn = null;
                 WriteHeldConnectionContext writeConnCtx =
-                    this.groupWriteHeldConnCtxMap.computeIfAbsent(group, (k) -> new WriteHeldConnectionContext(k));
+                    this.groupWriteHeldConnCtxMap.computeIfAbsent(group, WriteHeldConnectionContext::new);
                 if (!supportGroupMultiWrite) {
-                    //groupWriteConn = writeConns.get(0);
                     groupWriteConn = writeConnCtx.getDefaultWriteConn();
                     if (reuseWriteConn(schema, group, rw, groupWriteConn)) {
-                        return wrapWithAutoSavepoint(groupWriteConn.connection, rw)
-                            .enableFlashbackArea(needSetFlashbackArea);
+                        wrapWithAutoSavepoint(groupWriteConn.connection, rw)
+                            .enableFlashbackArea(needSetFlashbackArea)
+                            .enableAsOfCrossDdl(needSetAsOfCrossDdl);
+                        return groupWriteConn;
                     }
                 } else {
                     HeldConnection freeWriteConn = findFreeWriteConn(group, grpConnId, writeConnCtx);
-                    if (freeWriteConn != null) {
+                    if (freeWriteConn != null
+                        && !FailPoint.isKeyEnable(FailPointKey.FP_FORBID_REUSE_WRITE_CONNECTION)) {
                         // Find free write conn from write conns
                         if (reuseWriteConn(group, schema, rw, freeWriteConn)) {
-                            return wrapWithAutoSavepoint(freeWriteConn.connection, rw)
-                                .enableFlashbackArea(needSetFlashbackArea);
+                            wrapWithAutoSavepoint(freeWriteConn.connection, rw)
+                                .enableFlashbackArea(needSetFlashbackArea)
+                                .enableAsOfCrossDdl(needSetAsOfCrossDdl);
+                            return freeWriteConn;
                         }
                     } else {
                         // No find any free conn from write conns, all writeConns are using
@@ -427,25 +467,27 @@ public class TransactionConnectionHolder implements IConnectionHolder {
             // 尝试复用已有的读连接
             List<HeldConnection> groupHeldReadConns =
                 this.groupHeldReadConns.computeIfAbsent(group, (k) -> new ArrayList<>());
-            HeldConnection freeReadConn = findFreeReadConn(group, groupHeldReadConns);
+            HeldConnection freeReadConn = findFreeReadConn(group, groupHeldReadConns, rw);
             if (freeReadConn != null) {
                 final IConnection conn =
                     reuseFreeReadConn(schema, group, grpConnId, groupHeldReadConns, freeReadConn, rw,
                         shouldParticipate, ds);
-                return wrapWithAutoSavepoint(conn, rw)
-                    .enableFlashbackArea(needSetFlashbackArea);
+                wrapWithAutoSavepoint(conn, rw).enableFlashbackArea(needSetFlashbackArea)
+                    .enableAsOfCrossDdl(needSetAsOfCrossDdl);
+                return freeReadConn;
             }
 
             // Try to create new connection.
             if (!supportGroupMultiWrite) {
                 if (canUseExtraReadConn(rw)) {
                     // Using extra connection
-                    final IConnection conn = beginTrxInNewConn(schema, group, null, ds, rw, groupHeldReadConns,
-                        shouldParticipate);
-                    return wrapWithAutoSavepoint(conn, rw)
-                        .enableFlashbackArea(needSetFlashbackArea);
+                    final HeldConnection heldConnection = beginTrxInNewConn(schema, group, null,
+                        ds, rw, groupHeldReadConns, shouldParticipate);
+                    wrapWithAutoSavepoint(heldConnection.connection, rw).enableFlashbackArea(needSetFlashbackArea)
+                        .enableAsOfCrossDdl(needSetAsOfCrossDdl);
+                    return heldConnection;
                 }
-                if (groupHeldReadConns.size() >= 1) {
+                if (!groupHeldReadConns.isEmpty()) {
                     if (shouldParticipate) {
                         // 已有使用中的读连接不能再开新的写连接
                         throw new TddlRuntimeException(ErrorCode.ERR_CONCURRENT_TRANSACTION, group,
@@ -458,10 +500,11 @@ public class TransactionConnectionHolder implements IConnectionHolder {
                 }
             }
 
-            final IConnection conn =
+            final HeldConnection heldConnection =
                 beginTrxInNewConn(schema, group, grpConnId, ds, rw, groupHeldReadConns, shouldParticipate);
-            return wrapWithAutoSavepoint(conn, rw)
-                .enableFlashbackArea(needSetFlashbackArea);
+            wrapWithAutoSavepoint(heldConnection.connection, rw).enableFlashbackArea(needSetFlashbackArea)
+                .enableAsOfCrossDdl(needSetAsOfCrossDdl);
+            return heldConnection;
         } finally {
             lock.unlock();
         }
@@ -469,10 +512,15 @@ public class TransactionConnectionHolder implements IConnectionHolder {
 
     private void updateDnInTrx(IDataSource ds, HeldConnection heldConn) {
         if (ds instanceof TGroupDataSource && !((TGroupDataSource) ds).mock) {
-            final String instId = ((TGroupDataSource) ds).getMasterSourceAddress();
+            final String instId = ds.getMasterDNId();
             heldConn.setDnInstId(instId);
-            final AtomicInteger cnt = this.dnBranchMap.computeIfAbsent(instId, o -> new AtomicInteger(0));
-            cnt.incrementAndGet();
+            final AtomicInteger cnt = this.dnBranchMap.computeIfAbsent(instId, o -> {
+                // It is the first write conn on this DN, make it the DN leader.
+                heldConn.setDnLeader(true);
+                return new AtomicInteger(0);
+            });
+            heldConn.getRawConnection().setSeq(cnt.getAndIncrement());
+            heldConn.getRawConnection().setDnId(instId);
         }
     }
 
@@ -499,11 +547,30 @@ public class TransactionConnectionHolder implements IConnectionHolder {
         return false;
     }
 
-    private HeldConnection findFreeReadConn(String group, List<HeldConnection> groupReadHeldConns) {
+    HeldConnection findFreeReadConn(String group, List<HeldConnection> groupReadHeldConns, RW rw) {
         HeldConnection freeReadConn = null;
-        for (HeldConnection heldReadConn : groupReadHeldConns) {
-            if (freeReadConn == null && heldReadConn.isIdle()) {
-                freeReadConn = heldReadConn;
+        Iterator<HeldConnection> groupHeldIter = groupReadHeldConns.iterator();
+        while (groupHeldIter.hasNext()) {
+            HeldConnection heldReadConn = groupHeldIter.next();
+            if (heldReadConn.isIdle()) {
+                if (rw == RW.WRITE && !heldReadConn.isOnDnMaster()) {
+                    // the connection to be reused is on DN Follower
+                    // should switch to DN Master for write
+                    if (this.groupDiscardReadConns == null) {
+                        this.groupDiscardReadConns = new HashMap<>(groupHeldReadConns.size() + 1);
+                    }
+
+                    List<HeldConnection> discardReadConns =
+                        this.groupDiscardReadConns.computeIfAbsent(group, (k) -> new ArrayList<>(4));
+                    // discard all read connections on this group when they are on DN follower
+                    discardReadConns.add(heldReadConn);
+                    // and remove from groupReadHeldConns
+                    groupHeldIter.remove();
+                } else if (freeReadConn == null) {
+                    // when current is read or connection is on DN master,
+                    // we can reuse the read conn
+                    freeReadConn = heldReadConn;
+                }
             }
             if (heldReadConn.participated == ParticipatedState.WRITTEN) {
                 throw new TddlRuntimeException(ErrorCode.ERR_CONCURRENT_TRANSACTION, group,
@@ -547,12 +614,14 @@ public class TransactionConnectionHolder implements IConnectionHolder {
             throw new TddlRuntimeException(ErrorCode.ERR_CONCURRENT_TRANSACTION, group,
                 "illegal read connection state: found illegal free read connection");
         }
-        //groupHeldWriteConn.put(group, freeReadConn);
+
         addGroupHeldWriteConn(group, grpConnId, freeReadConn, ds);
 
         if (freeReadConn.participated == ParticipatedState.NONE) {
             trx.rollbackNonParticipant(group, freeReadConn.connection);
             trx.begin(schema, freeReadConn.group, freeReadConn.connection);
+        } else if (freeReadConn.participated == ParticipatedState.SHARE_READVIEW_READ) {
+            trx.beginShareReadToWrite(schema, freeReadConn.group, freeReadConn.connection);
         }
         freeReadConn.activateWriting();
         return freeReadConn.connection;
@@ -571,7 +640,7 @@ public class TransactionConnectionHolder implements IConnectionHolder {
 
     private void addGroupHeldWriteConn(String grp, Long grpConnId, HeldConnection newHeldConn, IDataSource ds) {
         WriteHeldConnectionContext ctx =
-            groupWriteHeldConnCtxMap.computeIfAbsent(grp, g -> new WriteHeldConnectionContext(g));
+            groupWriteHeldConnCtxMap.computeIfAbsent(grp, WriteHeldConnectionContext::new);
         if (grpConnId == null || grpConnId.equals(PhyTableOperationUtil.DEFAULT_WRITE_CONN_ID)) {
             ctx.setDefaultWriteConn(newHeldConn);
         } else {
@@ -582,7 +651,6 @@ public class TransactionConnectionHolder implements IConnectionHolder {
     }
 
     private boolean hasParticipant(String group, Long connId) {
-        //List<HeldConnection> heldConnections = groupHeldWriteConns.get(group);
         WriteHeldConnectionContext ctx = groupWriteHeldConnCtxMap.get(group);
         if (ctx == null || !ctx.containWriteConns()) {
             return false;
@@ -633,14 +701,14 @@ public class TransactionConnectionHolder implements IConnectionHolder {
         return rw == RW.WRITE && SqlType.isDML(executionContext.getSqlType());
     }
 
-    private IConnection beginTrxInNewConn(String schema, String group,
-                                          Long grpConnId,
-                                          IDataSource ds, RW rw,
-                                          List<HeldConnection> groupHeldConns,
-                                          boolean shouldParticipate) throws SQLException {
+    private HeldConnection beginTrxInNewConn(String schema, String group,
+                                             Long grpConnId,
+                                             IDataSource ds, RW rw,
+                                             List<HeldConnection> groupHeldConns,
+                                             boolean shouldParticipate) throws SQLException {
 
         MasterSlave masterSlave = ExecUtils.getMasterSlave(
-            true, rw.equals(ITransaction.RW.WRITE), executionContext);
+            true, rw == RW.WRITE, rw == RW.READ, executionContext);
         TGroupDirectConnection.threadParam.set(executionContext.getTraceId());
         // only wait when not wait when reschedule
         IConnection newConnection =
@@ -651,9 +719,8 @@ public class TransactionConnectionHolder implements IConnectionHolder {
             xProtoOptForAutoSp);
         connections.add(conn);
         HeldConnection heldConn =
-            new HeldConnection(conn, schema, group, conn.getId(), rw, shouldParticipate);
+            new HeldConnection(conn, schema, group, conn.getId(), rw, masterSlave, shouldParticipate);
         if (rw == RW.WRITE && shouldParticipate) {
-            //groupHeldWriteConn.put(group, heldConn);
             addGroupHeldWriteConn(group, grpConnId, heldConn, ds);
         } else {
             groupHeldConns.add(heldConn);
@@ -663,12 +730,12 @@ public class TransactionConnectionHolder implements IConnectionHolder {
             conn.unwrap(XConnection.class).setTransactionIsolation(executionContext.getTxIsolation());
         }
 
-        beginTrx(shouldParticipate, schema, group, conn);
-        return conn;
+        beginTrx(shouldParticipate, schema, group, conn, masterSlave);
+        return heldConn;
     }
 
     private void beginTrx(boolean shouldParticipate, String schema, String group,
-                          IConnection conn)
+                          IConnection conn, MasterSlave masterSlave)
         throws SQLException {
         if (shouldParticipate) {
             // Using write connection
@@ -676,7 +743,7 @@ public class TransactionConnectionHolder implements IConnectionHolder {
             // BEGIN / XA START (with ReadView)/ SET snapshot
             trx.begin(schema, group, conn);
         } else {
-            trx.beginNonParticipant(group, conn);
+            trx.beginNonParticipant(schema, group, conn, masterSlave);
         }
     }
 
@@ -771,6 +838,14 @@ public class TransactionConnectionHolder implements IConnectionHolder {
                     consumer.accept(entry.getKey(), heldConn.connectionId);
                 }
             }
+
+            if (groupDiscardReadConns != null) {
+                for (Map.Entry<String, List<HeldConnection>> entry : groupDiscardReadConns.entrySet()) {
+                    for (HeldConnection heldConn : entry.getValue()) {
+                        consumer.accept(entry.getKey(), heldConn.connectionId);
+                    }
+                }
+            }
         } finally {
             lock.unlock();
         }
@@ -800,7 +875,11 @@ public class TransactionConnectionHolder implements IConnectionHolder {
         for (final WriteHeldConnectionContext ctx : groupWriteHeldConnCtxMap.values()) {
             allWriteConnCount += ctx.allWriteConns().size();
         }
-        List<Runnable> tasks = new ArrayList<>(groupHeldReadConns.size() + allWriteConnCount);
+        int discardReadConnCount = 0;
+        if (this.groupDiscardReadConns != null) {
+            discardReadConnCount = groupDiscardReadConns.size();
+        }
+        List<Runnable> tasks = new ArrayList<>(groupHeldReadConns.size() + allWriteConnCount + discardReadConnCount);
         for (final WriteHeldConnectionContext ctx : groupWriteHeldConnCtxMap.values()) {
             for (HeldConnection heldConn : ctx.allWriteConns()) {
                 if (action.condition(heldConn)) {
@@ -813,6 +892,16 @@ public class TransactionConnectionHolder implements IConnectionHolder {
             for (HeldConnection heldConn : groupHeldConns) {
                 if (action.condition(heldConn)) {
                     tasks.add(() -> action.execute(heldConn));
+                }
+            }
+        }
+
+        if (groupDiscardReadConns != null) {
+            for (final List<HeldConnection> groupHeldConns : groupDiscardReadConns.values()) {
+                for (HeldConnection heldConn : groupHeldConns) {
+                    if (action.condition(heldConn)) {
+                        tasks.add(() -> action.execute(heldConn));
+                    }
                 }
             }
         }
@@ -846,6 +935,7 @@ public class TransactionConnectionHolder implements IConnectionHolder {
                     }
                 }
             }
+            // do not count groupDiscardReadConns which are not in use
             return groups;
         } finally {
             this.lock.unlock();
@@ -881,6 +971,9 @@ public class TransactionConnectionHolder implements IConnectionHolder {
 
             groupWriteHeldConnCtxMap.clear();
             groupHeldReadConns.clear();
+            if (groupDiscardReadConns != null) {
+                groupDiscardReadConns.clear();
+            }
             heldSchema.clear();
             this.closed = true;
         } finally {

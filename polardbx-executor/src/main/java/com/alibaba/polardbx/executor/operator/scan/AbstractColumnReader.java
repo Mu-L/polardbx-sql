@@ -16,7 +16,10 @@
 
 package com.alibaba.polardbx.executor.operator.scan;
 
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
 import com.google.common.base.Preconditions;
+import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.SettableFuture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -29,16 +32,16 @@ import java.util.concurrent.locks.StampedLock;
  * The abstract implement of column reader for management of reference.
  */
 public abstract class AbstractColumnReader implements ColumnReader {
-    protected static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    protected static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     protected final int columnId;
 
-    private final boolean isPrimaryKey;
+    protected final boolean isPrimaryKey;
 
     /**
      * The count of reference initialized by zero.
      */
-    private final AtomicInteger refCount;
+    protected final AtomicInteger refCount;
 
     /**
      * To ensure the idempotency of the close method
@@ -47,7 +50,11 @@ public abstract class AbstractColumnReader implements ColumnReader {
 
     protected final AtomicBoolean hasNoMoreBlocks;
 
+    @FieldMemoryCounter(value = false)
     protected final StampedLock stampedLock;
+
+    @FieldMemoryCounter(value = false)
+    protected final SettableFuture closeFuture;
 
     protected AbstractColumnReader(int columnId, boolean isPrimaryKey) {
         this.columnId = columnId;
@@ -56,6 +63,12 @@ public abstract class AbstractColumnReader implements ColumnReader {
         this.isClosed = new AtomicBoolean(false);
         this.hasNoMoreBlocks = new AtomicBoolean(false);
         this.stampedLock = new StampedLock();
+        this.closeFuture = SettableFuture.create();
+    }
+
+    @Override
+    public ListenableFuture<?> getClosedFuture() {
+        return closeFuture;
     }
 
     @Override

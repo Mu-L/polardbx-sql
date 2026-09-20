@@ -1,35 +1,20 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.executor.handler;
 
 import com.alibaba.polardbx.common.exception.NotSupportException;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
-import com.alibaba.polardbx.config.ConfigDataMode;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.cursor.Cursor;
 import com.alibaba.polardbx.executor.cursor.impl.ArrayResultCursor;
 import com.alibaba.polardbx.executor.spi.IRepository;
 import com.alibaba.polardbx.executor.sync.ISyncAction;
 import com.alibaba.polardbx.executor.sync.SyncManagerHelper;
+import com.alibaba.polardbx.gms.node.GmsNodeManager.GmsNode;
+import com.alibaba.polardbx.gms.sync.ISyncResultHandler;
 import com.alibaba.polardbx.gms.sync.SyncScope;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
 import com.alibaba.polardbx.optimizer.core.rel.dal.LogicalShow;
-import com.alibaba.polardbx.stats.MatrixStatistics;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.sql.SqlShowStats;
 
@@ -42,7 +27,7 @@ import java.util.Map;
  */
 public class LogicalShowStatsHandler extends HandlerCommon {
 
-    private static Class showStatsSyncActionClass;
+    private static final Class<?> showStatsSyncActionClass;
 
     static {
         // 只有server支持，这里是暂时改法，后续要将这段逻辑解耦
@@ -72,16 +57,262 @@ public class LogicalShowStatsHandler extends HandlerCommon {
                 .newInstance(executionContext.getSchemaName());
         } catch (Exception e) {
             throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, e, e.getMessage());
-
         }
+
+        int ddlJobCount = 0;
+
+        ArrayResultCursor cursor = new ArrayResultCursor("STATS");
+        buildColumn(cursor, showStats.isFull(), showStats.isList());
+        cursor.initMeta();
+
+        if (showStats.isList()) {
+            SyncManagerHelper.syncIgnoreExceptions(showStatsAction, executionContext.getSchemaName(), SyncScope.ALL,
+                new ISyncResultHandler() {
+
+                    @Override
+                    public void handle(List<Pair<GmsNode, List<Map<String, Object>>>> results) {
+                        for (Pair<GmsNode, List<Map<String, Object>>> nodeRows : results) {
+                            buildDetail(cursor, nodeRows.getKey(), nodeRows.getValue(), 0, showStats.isFull());
+                        }
+                    }
+                });
+        } else {
+            List<List<Map<String, Object>>> results =
+                SyncManagerHelper.syncIgnoreExceptions(showStatsAction, executionContext.getSchemaName(),
+                    SyncScope.ALL);
+
+            buildTotal(cursor, results, ddlJobCount, showStats.isFull());
+        }
+        return cursor;
+    }
+
+    private static void buildColumn(ArrayResultCursor cursor, boolean isFull, boolean isList) {
+        if (isList) {
+            cursor.addColumn("NODE", DataTypes.VarcharType);
+        }
+
+        if (isFull) {
+            cursor.addColumn("QPS", DataTypes.DoubleType);
+            cursor.addColumn("RDS_QPS", DataTypes.DoubleType);
+            cursor.addColumn("SLOW_QPS", DataTypes.DoubleType);
+            cursor.addColumn("PHYSICAL_SLOW_QPS", DataTypes.DoubleType);
+            cursor.addColumn("ERROR_PER_SECOND", DataTypes.DoubleType);
+            cursor.addColumn("VIOLATION_PER_SECOND", DataTypes.DoubleType);
+            cursor.addColumn("MERGE_QUERY_PER_SECOND", DataTypes.DoubleType);
+            cursor.addColumn("ACTIVE_CONNECTIONS", DataTypes.LongType);
+            cursor.addColumn("CONNECTION_CREATE_PER_SECOND", DataTypes.DoubleType);
+            cursor.addColumn("RT(ms)", DataTypes.DoubleType);
+            cursor.addColumn("RDS_RT(ms)", DataTypes.DoubleType);
+            cursor.addColumn("NET_IN(KB/S)", DataTypes.DoubleType);
+            cursor.addColumn("NET_OUT(KB/S)", DataTypes.DoubleType);
+            cursor.addColumn("THREAD_RUNNING", DataTypes.LongType);
+            cursor.addColumn("HINT_USED_PER_SECOND", DataTypes.DoubleType);
+            cursor.addColumn("HINT_USED_COUNT", DataTypes.LongType);
+            cursor.addColumn("AGGREGATE_QUERY_PER_SECOND", DataTypes.DoubleType);
+            cursor.addColumn("AGGREGATE_QUERY_COUNT", DataTypes.LongType);
+            cursor.addColumn("TEMP_TABLE_CREATE_PER_SECOND", DataTypes.DoubleType);
+            cursor.addColumn("TEMP_TABLE_CREATE_COUNT", DataTypes.LongType);
+            cursor.addColumn("MULTI_DB_JOIN_PER_SECOND", DataTypes.DoubleType);
+            cursor.addColumn("MULTI_DB_JOIN_COUNT", DataTypes.LongType);
+
+            cursor.addColumn("CPU", DataTypes.StringType);
+            cursor.addColumn("FREEMEM", DataTypes.StringType);
+            cursor.addColumn("FULLGCCOUNT", DataTypes.LongType);
+            cursor.addColumn("FULLGCTIME", DataTypes.LongType);
+
+            cursor.addColumn("TRANS_COUNT_XA", DataTypes.LongType);
+            cursor.addColumn("TRANS_COUNT_2PC", DataTypes.LongType);
+            cursor.addColumn("TRANS_COUNT_TSO", DataTypes.LongType);
+
+            cursor.addColumn("DDL_JOB_COUNT", DataTypes.IntegerType);
+
+            cursor.addColumn("BACKFILL_ROWS", DataTypes.IntegerType);
+            cursor.addColumn("CHANGE_SET_DELETE_ROWS", DataTypes.IntegerType);
+            cursor.addColumn("CHANGE_SET_REPLACE_ROWS", DataTypes.IntegerType);
+            cursor.addColumn("CHECKED_ROWS", DataTypes.IntegerType);
+        } else {
+            cursor.addColumn("QPS", DataTypes.DoubleType);
+            cursor.addColumn("RDS_QPS", DataTypes.DoubleType);
+            cursor.addColumn("SLOW_QPS", DataTypes.DoubleType);
+            cursor.addColumn("PHYSICAL_SLOW_QPS", DataTypes.DoubleType);
+            cursor.addColumn("ERROR_PER_SECOND", DataTypes.DoubleType);
+            cursor.addColumn("MERGE_QUERY_PER_SECOND", DataTypes.DoubleType);
+            cursor.addColumn("ACTIVE_CONNECTIONS", DataTypes.LongType);
+            cursor.addColumn("RT(ms)", DataTypes.DoubleType);
+            cursor.addColumn("RDS_RT(ms)", DataTypes.DoubleType);
+            cursor.addColumn("NET_IN(KB/S)", DataTypes.DoubleType);
+            cursor.addColumn("NET_OUT(KB/S)", DataTypes.DoubleType);
+            cursor.addColumn("THREAD_RUNNING", DataTypes.LongType);
+
+            cursor.addColumn("DDL_JOB_COUNT", DataTypes.IntegerType);
+
+            cursor.addColumn("BACKFILL_ROWS", DataTypes.LongType);
+            cursor.addColumn("CHANGE_SET_DELETE_ROWS", DataTypes.IntegerType);
+            cursor.addColumn("CHANGE_SET_REPLACE_ROWS", DataTypes.IntegerType);
+            cursor.addColumn("CHECKED_ROWS", DataTypes.LongType);
+        }
+    }
+
+    private static void buildDetail(ArrayResultCursor cursor, GmsNode node, List<Map<String, Object>> nodeRows,
+                                    int ddlJobCount, boolean isFull) {
+        if (nodeRows == null) {
+            return;
+        }
+
+        String nodeId = (node != null) ? node.getHostPort() : "localhost";
+
+        Map<String, Object> currentRow = nodeRows.get(0);
+        Map<String, Object> historyRow = nodeRows.get(1);
+
+        long currentRecordTime = DataTypes.LongType.convertFrom(currentRow.get("RECORDTIME"));
+        long historyRecordTime = DataTypes.LongType.convertFrom(historyRow.get("RECORDTIME"));
+
+        double timePeriod = (((currentRecordTime - historyRecordTime) / 1000D) == 0 ? 1 :
+            ((currentRecordTime - historyRecordTime) / 1000D));
+
+        double qps = (DataTypes.LongType.convertFrom(currentRow.get("REQUEST")) - DataTypes.LongType
+            .convertFrom(historyRow.get("REQUEST")))
+            / timePeriod;
+
+        double mergeQPS = (DataTypes.LongType.convertFrom(currentRow.get("MULTIDBCOUNT")) - DataTypes.LongType
+            .convertFrom(historyRow.get("MULTIDBCOUNT")))
+            / timePeriod;
+
+        double rdsQps = (DataTypes.LongType.convertFrom(currentRow.get("PHYSICALREQUEST")) - DataTypes.LongType
+            .convertFrom(historyRow.get("PHYSICALREQUEST")))
+            / timePeriod;
+
+        long totalRequest = (DataTypes.LongType.convertFrom(currentRow.get("REQUEST")) - DataTypes.LongType
+            .convertFrom(historyRow.get("REQUEST")));
+        long totalTimeCost = (DataTypes.LongType.convertFrom(currentRow.get("TIMECOST")) - DataTypes.LongType
+            .convertFrom(historyRow.get("TIMECOST")));
+
+        long totalPhysicalRequest =
+            (DataTypes.LongType.convertFrom(currentRow.get("PHYSICALREQUEST")) - DataTypes.LongType
+                .convertFrom(historyRow.get("PHYSICALREQUEST")));
+        long totalPhysicalTimeCost =
+            (DataTypes.LongType.convertFrom(currentRow.get("PHYSICALTIMECOST")) - DataTypes.LongType
+                .convertFrom(historyRow.get("PHYSICALTIMECOST")));
+
+        double errorPerSecond = (DataTypes.LongType.convertFrom(currentRow.get("ERRORCOUNT")) - DataTypes.LongType
+            .convertFrom(historyRow.get("ERRORCOUNT")))
+            / timePeriod;
+
+        double connectionCreatePerSecond =
+            (DataTypes.LongType.convertFrom(currentRow.get("CONNECTIONCOUNT")) - DataTypes.LongType
+                .convertFrom(historyRow.get("CONNECTIONCOUNT")))
+                / timePeriod;
+        long activeConnection = DataTypes.LongType.convertFrom(currentRow.get("ACTIVECONNECTION"));
+
+        long totalHintQuery = DataTypes.LongType.convertFrom(currentRow.get("HINTCOUNT"));
+        double hintQPS = (DataTypes.LongType.convertFrom(currentRow.get("HINTCOUNT")) - DataTypes.LongType
+            .convertFrom(historyRow.get("HINTCOUNT")))
+            / timePeriod;
+
+        double tempTableCreatePerSecond =
+            (DataTypes.LongType.convertFrom(currentRow.get("TEMPTABLECOUNT")) - DataTypes.LongType
+                .convertFrom(historyRow.get("TEMPTABLECOUNT")))
+                / timePeriod;
+        long totalTempTableQuery = DataTypes.LongType.convertFrom(currentRow.get("TEMPTABLECOUNT"));
+
+        double multiDbJoinQPS =
+            (DataTypes.LongType.convertFrom(currentRow.get("JOINMULTIDBCOUNT")) - DataTypes.LongType
+                .convertFrom(historyRow.get("JOINMULTIDBCOUNT")))
+                / timePeriod;
+
+        double slowQPS = (DataTypes.LongType.convertFrom(currentRow.get("SLOWREQUEST")) - DataTypes.LongType
+            .convertFrom(historyRow.get("SLOWREQUEST")))
+            / timePeriod;
+        double physicalSlowQPS =
+            (DataTypes.LongType.convertFrom(currentRow.get("PHYSICALSLOWREQUEST")) - DataTypes.LongType
+                .convertFrom(historyRow.get("PHYSICALSLOWREQUEST")))
+                / timePeriod;
+        long totalMultiDbJoinQuery = DataTypes.LongType.convertFrom(currentRow.get("JOINMULTIDBCOUNT"));
+
+        double multiDbAggregateQPS =
+            (DataTypes.LongType.convertFrom(currentRow.get("AGGREGATEMULTIDBCOUNT")) - DataTypes.LongType
+                .convertFrom(historyRow.get("AGGREGATEMULTIDBCOUNT")))
+                / timePeriod;
+        long totalMultiDbAggregateQuery = DataTypes.LongType.convertFrom(currentRow.get("AGGREGATEMULTIDBCOUNT"));
+
+        double netIn = (DataTypes.LongType.convertFrom(currentRow.get("NETIN")) - DataTypes.LongType
+            .convertFrom(historyRow.get("NETIN")))
+            / timePeriod;
+
+        double netOut = (DataTypes.LongType.convertFrom(currentRow.get("NETOUT")) - DataTypes.LongType
+            .convertFrom(historyRow.get("NETOUT")))
+            / timePeriod;
+
+        double violationPerSecond =
+            (DataTypes.LongType.convertFrom(currentRow.get("integrityConstraintViolationErrorCount".toUpperCase()))
+                - DataTypes.LongType
+                .convertFrom(historyRow.get("integrityConstraintViolationErrorCount".toUpperCase())))
+                / timePeriod;
+
+        long threadRunning = DataTypes.LongType.convertFrom(currentRow.get("THREADRUNNING"));
+
+        double cpu = DataTypes.DoubleType.convertFrom(currentRow.get("CPU"));
+        double mem = DataTypes.DoubleType.convertFrom(currentRow.get("FREEMEM"));
+
+        long fullgcCount = DataTypes.LongType.convertFrom(currentRow.get("FULLGCCOUNT"));
+        long fullgcTime = DataTypes.LongType.convertFrom(currentRow.get("FULLGCTIME"));
+
+        long transCountXA = DataTypes.LongType.convertFrom(currentRow.get("transCountXA"));
+        long transCountBestEffort = DataTypes.LongType.convertFrom(currentRow.get("transCountBestEffort"));
+        long transCountTSO = DataTypes.LongType.convertFrom(currentRow.get("transCountTSO"));
+
+        long backfillRows = DataTypes.LongType.convertFrom(currentRow.get("backfillRows"));
+        long changeSetDeleteRows = DataTypes.LongType.convertFrom(currentRow.get("changeSetDeleteRows"));
+        long changeSetReplaceRows = DataTypes.LongType.convertFrom(currentRow.get("changeSetReplaceRows"));
+        long checkedRows = DataTypes.LongType.convertFrom(currentRow.get("checkedRows"));
+
+        cpu = cpu * 100D;
+        mem = mem * 100D;
+
+        double rt = (totalRequest == 0 ? 0 : (totalTimeCost / (double) totalRequest)) / 1000;
+        double physicalRt =
+            (totalPhysicalRequest == 0 ? 0 : (totalPhysicalTimeCost / (double) totalPhysicalRequest)) / 1000;
+
+        if (isFull) {
+            cursor.addRow(new Object[] {
+                nodeId,
+                new DecimalFormat("0.00").format(qps),
+                new DecimalFormat("0.00").format(rdsQps), new DecimalFormat("0.00").format(slowQPS),
+                new DecimalFormat("0.00").format(physicalSlowQPS),
+                new DecimalFormat("0.00").format(errorPerSecond),
+                new DecimalFormat("0.00").format(violationPerSecond), new DecimalFormat("0.00").format(mergeQPS),
+                activeConnection, new DecimalFormat("0.00").format(connectionCreatePerSecond),
+                new DecimalFormat("0.00").format(rt), new DecimalFormat("0.00").format(physicalRt),
+                new DecimalFormat("0.00").format(netIn / 1000), new DecimalFormat("0.00").format(netOut / 1000),
+                threadRunning, new DecimalFormat("0.00").format(hintQPS), totalHintQuery,
+                new DecimalFormat("0.00").format(multiDbAggregateQPS), totalMultiDbAggregateQuery,
+                new DecimalFormat("0.00").format(tempTableCreatePerSecond), totalTempTableQuery,
+                new DecimalFormat("0.00").format(multiDbJoinQPS), totalMultiDbJoinQuery,
+                new DecimalFormat("0.00").format(cpu) + "%", new DecimalFormat("0.00").format(mem) + "%",
+                fullgcCount, fullgcTime, transCountXA, transCountBestEffort, transCountTSO, ddlJobCount,
+                backfillRows, changeSetDeleteRows, changeSetReplaceRows, checkedRows});
+        } else {
+            cursor.addRow(new Object[] {
+                nodeId,
+                new DecimalFormat("0.00").format(qps),
+                new DecimalFormat("0.00").format(rdsQps), new DecimalFormat("0.00").format(slowQPS),
+                new DecimalFormat("0.00").format(physicalSlowQPS),
+                new DecimalFormat("0.00").format(errorPerSecond), new DecimalFormat("0.00").format(mergeQPS),
+                activeConnection, new DecimalFormat("0.00").format(rt),
+                new DecimalFormat("0.00").format(physicalRt), new DecimalFormat("0.00").format(netIn / 1000),
+                new DecimalFormat("0.00").format(netOut / 1000), threadRunning, ddlJobCount,
+                backfillRows, changeSetDeleteRows, changeSetReplaceRows, checkedRows});
+        }
+    }
+
+    private static void buildTotal(ArrayResultCursor cursor, List<List<Map<String, Object>>> results, int ddlJobCount,
+                                   boolean isFull) {
 
         double qps = 0;
         double rdsQps = 0;
         double errorPerSecond = 0;
 
         double connectionCreatePerSecond = 0;
-        List<List<Map<String, Object>>> results =
-            SyncManagerHelper.sync(showStatsAction, executionContext.getSchemaName(), SyncScope.ALL);
 
         long activeConnection = 0;
         long totalRequest = 0;
@@ -135,12 +366,14 @@ public class LogicalShowStatsHandler extends HandlerCommon {
                 continue;
             }
             size++;
+
             Map<String, Object> currentRow = nodeRows.get(0);
             Map<String, Object> historyRow = nodeRows.get(1);
             long currentRecordTime = DataTypes.LongType.convertFrom(currentRow.get("RECORDTIME"));
             long historyRecordTime = DataTypes.LongType.convertFrom(historyRow.get("RECORDTIME"));
-            double timePeriod = (((currentRecordTime - historyRecordTime) / (double) 1000) == 0 ? 1 :
-                ((currentRecordTime - historyRecordTime) / (double) 1000));
+
+            double timePeriod = (((currentRecordTime - historyRecordTime) / 1000D) == 0 ? 1 :
+                ((currentRecordTime - historyRecordTime) / 1000D));
 
             qps += (DataTypes.LongType.convertFrom(currentRow.get("REQUEST")) - DataTypes.LongType
                 .convertFrom(historyRow.get("REQUEST")))
@@ -243,56 +476,12 @@ public class LogicalShowStatsHandler extends HandlerCommon {
         cpu = cpu / size * 100D;
         mem = (mem / size) * 100D;
 
-        int ddlJobCount = 0;
-
         double rt = (totalRequest == 0 ? 0 : (totalTimeCost / (double) totalRequest)) / 1000;
         double physicalRt =
             (totalPhysicalRequest == 0 ? 0 : (totalPhysicalTimeCost / (double) totalPhysicalRequest)) / 1000;
-        ArrayResultCursor result = null;
-        if (showStats.isFull()) {
-            result = new ArrayResultCursor("STATS");
-            result.addColumn("QPS", DataTypes.DoubleType);
-            result.addColumn("RDS_QPS", DataTypes.DoubleType);
-            result.addColumn("SLOW_QPS", DataTypes.DoubleType);
-            result.addColumn("PHYSICAL_SLOW_QPS", DataTypes.DoubleType);
-            result.addColumn("ERROR_PER_SECOND", DataTypes.DoubleType);
-            result.addColumn("VIOLATION_PER_SECOND", DataTypes.DoubleType);
-            result.addColumn("MERGE_QUERY_PER_SECOND", DataTypes.DoubleType);
-            result.addColumn("ACTIVE_CONNECTIONS", DataTypes.LongType);
-            result.addColumn("CONNECTION_CREATE_PER_SECOND", DataTypes.DoubleType);
-            result.addColumn("RT(ms)", DataTypes.DoubleType);
-            result.addColumn("RDS_RT(ms)", DataTypes.DoubleType);
-            result.addColumn("NET_IN(KB/S)", DataTypes.DoubleType);
-            result.addColumn("NET_OUT(KB/S)", DataTypes.DoubleType);
-            result.addColumn("THREAD_RUNNING", DataTypes.LongType);
-            result.addColumn("HINT_USED_PER_SECOND", DataTypes.DoubleType);
-            result.addColumn("HINT_USED_COUNT", DataTypes.LongType);
-            result.addColumn("AGGREGATE_QUERY_PER_SECOND", DataTypes.DoubleType);
-            result.addColumn("AGGREGATE_QUERY_COUNT", DataTypes.LongType);
-            result.addColumn("TEMP_TABLE_CREATE_PER_SECOND", DataTypes.DoubleType);
-            result.addColumn("TEMP_TABLE_CREATE_COUNT", DataTypes.LongType);
-            result.addColumn("MULTI_DB_JOIN_PER_SECOND", DataTypes.DoubleType);
-            result.addColumn("MULTI_DB_JOIN_COUNT", DataTypes.LongType);
 
-            result.addColumn("CPU", DataTypes.StringType);
-            result.addColumn("FREEMEM", DataTypes.StringType);
-            result.addColumn("FULLGCCOUNT", DataTypes.LongType);
-            result.addColumn("FULLGCTIME", DataTypes.LongType);
-
-            result.addColumn("TRANS_COUNT_XA", DataTypes.LongType);
-            result.addColumn("TRANS_COUNT_2PC", DataTypes.LongType);
-            result.addColumn("TRANS_COUNT_TSO", DataTypes.LongType);
-
-            result.addColumn("DDL_JOB_COUNT", DataTypes.IntegerType);
-
-            result.addColumn("BACKFILL_ROWS", DataTypes.IntegerType);
-            result.addColumn("CHANGE_SET_DELETE_ROWS", DataTypes.IntegerType);
-            result.addColumn("CHANGE_SET_REPLACE_ROWS", DataTypes.IntegerType);
-            result.addColumn("CHECKED_ROWS", DataTypes.IntegerType);
-
-            result.initMeta();
-
-            result.addRow(new Object[] {
+        if (isFull) {
+            cursor.addRow(new Object[] {
                 new DecimalFormat("0.00").format(qps),
                 new DecimalFormat("0.00").format(rdsQps), new DecimalFormat("0.00").format(slowQPS),
                 new DecimalFormat("0.00").format(physicalSlowQPS),
@@ -309,30 +498,7 @@ public class LogicalShowStatsHandler extends HandlerCommon {
                 fullgcCount, fullgcTime, transCountXA, transCountBestEffort, transCountTSO, ddlJobCount,
                 backfillRows, changeSetDeleteRows, changeSetReplaceRows, checkedRows});
         } else {
-            result = new ArrayResultCursor("STATS");
-            result.addColumn("QPS", DataTypes.DoubleType);
-            result.addColumn("RDS_QPS", DataTypes.DoubleType);
-            result.addColumn("SLOW_QPS", DataTypes.DoubleType);
-            result.addColumn("PHYSICAL_SLOW_QPS", DataTypes.DoubleType);
-            result.addColumn("ERROR_PER_SECOND", DataTypes.DoubleType);
-            result.addColumn("MERGE_QUERY_PER_SECOND", DataTypes.DoubleType);
-            result.addColumn("ACTIVE_CONNECTIONS", DataTypes.LongType);
-            result.addColumn("RT(ms)", DataTypes.DoubleType);
-            result.addColumn("RDS_RT(ms)", DataTypes.DoubleType);
-            result.addColumn("NET_IN(KB/S)", DataTypes.DoubleType);
-            result.addColumn("NET_OUT(KB/S)", DataTypes.DoubleType);
-            result.addColumn("THREAD_RUNNING", DataTypes.LongType);
-
-            result.addColumn("DDL_JOB_COUNT", DataTypes.IntegerType);
-
-            result.addColumn("BACKFILL_ROWS", DataTypes.LongType);
-            result.addColumn("CHANGE_SET_DELETE_ROWS", DataTypes.IntegerType);
-            result.addColumn("CHANGE_SET_REPLACE_ROWS", DataTypes.IntegerType);
-            result.addColumn("CHECKED_ROWS", DataTypes.LongType);
-
-            result.initMeta();
-
-            result.addRow(new Object[] {
+            cursor.addRow(new Object[] {
                 new DecimalFormat("0.00").format(qps),
                 new DecimalFormat("0.00").format(rdsQps), new DecimalFormat("0.00").format(slowQPS),
                 new DecimalFormat("0.00").format(physicalSlowQPS),
@@ -342,6 +508,5 @@ public class LogicalShowStatsHandler extends HandlerCommon {
                 new DecimalFormat("0.00").format(netOut / 1000), threadRunning, ddlJobCount,
                 backfillRows, changeSetDeleteRows, changeSetReplaceRows, checkedRows});
         }
-        return result;
     }
 }

@@ -31,6 +31,7 @@ import com.alibaba.polardbx.gms.util.DdlMetaLogUtil;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 
 import javax.sql.DataSource;
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Date;
@@ -107,6 +108,24 @@ public class IndexesAccessor extends AbstractAccessor {
             + "`column_name`, `collation`, `cardinality`, `sub_part`, `packed`, `nullable`, `index_type`, "
             + "`comment`, `index_comment`";
 
+    private static final String SELECT_INDEX_NAME_ANY_VALUE =
+        "SELECT " +
+            "ANY_VALUE(`table_schema`) AS `table_schema`, " +
+            "ANY_VALUE(`table_name`) AS `table_name`, " +
+            "ANY_VALUE(`non_unique`) AS `non_unique`, " +
+            "ANY_VALUE(`index_schema`) AS `index_schema`, " +
+            "`index_name`, " +
+            "ANY_VALUE(`seq_in_index`) AS `seq_in_index`, " +
+            "ANY_VALUE(`column_name`) AS `column_name`, " +
+            "ANY_VALUE(`collation`) AS `collation`, " +
+            "ANY_VALUE(`cardinality`) AS `cardinality`, " +
+            "ANY_VALUE(`sub_part`) AS `sub_part`, " +
+            "ANY_VALUE(`packed`) AS `packed`, " +
+            "ANY_VALUE(`nullable`) AS `nullable`, " +
+            "ANY_VALUE(`index_type`) AS `index_type`, " +
+            "ANY_VALUE(`comment`) AS `comment`, " +
+            "ANY_VALUE(`index_comment`) AS `index_comment`";
+
     private static final String SELECT_CLAUSE_EXT =
         ", `index_column_type`, `index_location`, `index_table_name`, `index_status`, `version`, `flag`, `visible`, `visit_frequency`, `last_access_time`";
 
@@ -141,7 +160,8 @@ public class IndexesAccessor extends AbstractAccessor {
         SELECT_CLAUSE + SELECT_CLAUSE_EXT + FROM_INDEXES_TABLE + WHERE_SCHEMA_COLUMNAR_INDEX;
 
     private static final String SELECT_ALL_COLUMNAR_INDEXES_BY_SCHEMA =
-        SELECT_CLAUSE + SELECT_CLAUSE_EXT + FROM_INDEXES_TABLE + WHERE_COLUMNAR_INDEX_SCHEMA + GROUP_BY_INDEX_NAME;
+        SELECT_INDEX_NAME_ANY_VALUE + SELECT_CLAUSE_EXT + FROM_INDEXES_TABLE + WHERE_COLUMNAR_INDEX_SCHEMA
+            + GROUP_BY_INDEX_NAME;
 
     private static final String SELECT_PRIMARY_KEY_BY_SCHEMA_TABLE =
         SELECT_CLAUSE + SELECT_CLAUSE_EXT + FROM_INDEXES_TABLE + WHERE_SCHEMA_TABLE_PRIMARY_KEY + ORDER_BY_SEQ;
@@ -157,10 +177,10 @@ public class IndexesAccessor extends AbstractAccessor {
             + " where `index_status` = 4 and `index_location` = 1 and `seq_in_index` = 1";
 
     private static final String SELECT_FK_REF_INDEX =
-        SELECT_CLAUSE + " from (" + SELECT_CLAUSE + ", GROUP_CONCAT(`column_name`" +
+        SELECT_CLAUSE + " from (" + SELECT_INDEX_NAME_ANY_VALUE + ", GROUP_CONCAT(`column_name`" +
             ORDER_BY_SEQ + ") as `column_names`" +
-            FROM_INDEXES_TABLE + WHERE_SCHEMA_TABLE +
-            " group by `index_name`) as `t` where `t`.`column_names` like ";
+            FROM_INDEXES_TABLE + WHERE_SCHEMA_TABLE + GROUP_BY_INDEX_NAME +
+            " ) as `t` where `t`.`column_names` like ";
 
     private static final String UPDATE_INDEXES = "update " + INDEXES_TABLE + " set ";
 
@@ -328,6 +348,12 @@ public class IndexesAccessor extends AbstractAccessor {
             phyTableName, dataSource);
     }
 
+    public List<IndexesInfoSchemaRecord> queryInfoSchemaForPrimaryKey(String phyTableSchema, String phyTableName,
+                                                                      Connection connection) {
+        return query(SELECT_INFO_SCHEMA_PRIMARY_KEY, INDEXES_INFO_SCHEMA, IndexesInfoSchemaRecord.class, phyTableSchema,
+            phyTableName, connection);
+    }
+
     public List<IndexesInfoSchemaRecord> queryForeignKeyRefIndexes(String tableSchema, String tableName,
                                                                    List<String> columnNames) {
         String c = generateFkReferenceTableColumNames(columnNames);
@@ -477,7 +503,12 @@ public class IndexesAccessor extends AbstractAccessor {
         List<IndexesRecord> records = query(tableSchema, tableName);
 
         if (records != null) {
-            return records.stream().filter(IndexesRecord::isColumnar).count();
+            return records.stream()
+                .filter(IndexesRecord::isColumnar)
+                .filter(r -> r.indexStatus == IndexStatus.PUBLIC.getValue())
+                .map(r -> r.indexName)
+                .distinct()
+                .count();
         }
         return 0L;
     }

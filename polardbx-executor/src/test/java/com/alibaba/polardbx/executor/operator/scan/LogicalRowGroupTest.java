@@ -1,6 +1,6 @@
 package com.alibaba.polardbx.executor.operator.scan;
 
-import com.alibaba.polardbx.common.utils.Pair;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.archive.reader.OSSColumnTransformer;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
@@ -13,7 +13,7 @@ import com.alibaba.polardbx.executor.operator.scan.metrics.ProfileUnit;
 import com.alibaba.polardbx.executor.operator.scan.metrics.RuntimeMetrics;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
-import com.alibaba.polardbx.optimizer.core.datatype.DataType;
+import com.alibaba.polardbx.optimizer.statis.OperatorStatistics;
 import org.apache.orc.ColumnStatistics;
 import org.apache.orc.OrcProto;
 import org.apache.orc.StripeInformation;
@@ -106,9 +106,7 @@ public class LogicalRowGroupTest extends ScanTestBase {
         metrics.addDerivedCounter(LogicalRowGroup.BLOCK_MEMORY_COUNTER,
             null, ProfileUnit.BYTES, ProfileAccumulatorType.SUM);
 
-        OrcProto.ColumnEncoding[] encodings = StaticStripePlanner.buildEncodings(
-            encryption, columnIncluded, preheatFileMeta.getStripeFooter(stripeId)
-        );
+        OrcProto.ColumnEncoding[] encodings = preheatFileMeta.getColumnEncodings(stripeId);
 
         memoryAllocatorCtx = memoryAllocatorCtx;
         RowGroupIterator<Block, ColumnStatistics> rgIterator = new RowGroupIteratorImpl(
@@ -137,10 +135,18 @@ public class LogicalRowGroupTest extends ScanTestBase {
             maxBufferSize, maxDiskRangeChunkLimit, maxMergeDistance, DEFAULT_CHUNK_LIMIT, blockCacheManager,
             new OSSColumnTransformer(columnMetas, columnMetas, null, null, locInOrc),
             context, columnIncluded, indexStride,
-            enableDecimal64, memoryAllocatorCtx);
+            enableDecimal64, memoryAllocatorCtx, new OperatorStatistics());
+
+        MemoryCountable.checkDeviation(rgIterator, 0d, true);
+
+        rgIterator.open(null);
+
+        MemoryCountable.checkDeviation(rgIterator, 0d, true);
 
         while (rgIterator.hasNext()) {
             rgIterator.next();
+            MemoryCountable.checkDeviation(rgIterator, 0d, true);
+
             LogicalRowGroup<Block, ColumnStatistics> logicalRowGroup = rgIterator.current();
 
             // check logical row-group:
@@ -212,9 +218,7 @@ public class LogicalRowGroupTest extends ScanTestBase {
         metrics.addDerivedCounter(LogicalRowGroup.BLOCK_MEMORY_COUNTER,
             null, ProfileUnit.BYTES, ProfileAccumulatorType.SUM);
 
-        OrcProto.ColumnEncoding[] encodings = StaticStripePlanner.buildEncodings(
-            encryption, columnIncluded, preheatFileMeta.getStripeFooter(stripeId)
-        );
+        OrcProto.ColumnEncoding[] encodings = preheatFileMeta.getColumnEncodings(stripeId);
 
         RowGroupIterator<Block, ColumnStatistics> rgIterator = new RowGroupIteratorImpl(
             metrics,
@@ -242,7 +246,13 @@ public class LogicalRowGroupTest extends ScanTestBase {
             maxBufferSize, maxDiskRangeChunkLimit, maxMergeDistance, DEFAULT_CHUNK_LIMIT, blockCacheManager,
             new OSSColumnTransformer(columnMetas, columnMetas, null, null, locInOrc),
             context, columnIncluded, indexStride,
-            enableDecimal64, memoryAllocatorCtx);
+            enableDecimal64, memoryAllocatorCtx, new OperatorStatistics());
+
+        MemoryCountable.checkDeviation(rgIterator, 0d, true);
+
+        rgIterator.open(null);
+
+        MemoryCountable.checkDeviation(rgIterator, 0d, true);
 
         CacheReader<Block> cacheReader = rgIterator.getCacheReader(loadColumnIndex);
         if (cacheReader != null && !cacheReader.isInitialized()) {
@@ -266,6 +276,8 @@ public class LogicalRowGroupTest extends ScanTestBase {
         final SortedMap<Integer, List<Chunk>> chunkBuffer = new TreeMap<>();
         while (rgIterator.hasNext()) {
             rgIterator.next();
+
+            MemoryCountable.checkDeviation(rgIterator, 0d, true);
             LogicalRowGroup<Block, ColumnStatistics> logicalRowGroup = rgIterator.current();
             final int rowGroupId = logicalRowGroup.groupId();
 
@@ -284,7 +296,7 @@ public class LogicalRowGroupTest extends ScanTestBase {
                 // Get selection array of this range [n * 1000, (n+1) * 1000] in row group,
                 // and then evaluate the filter.
                 int[] batchRange = rowGroupReader.batchRange();
-                System.out.println("loaded batch range: " + batchRange);
+                System.out.println("loaded batch range: " + Arrays.toString(batchRange));
 
                 List<Chunk> chunksInGroup = chunkBuffer.computeIfAbsent(rowGroupId, any -> new ArrayList<>());
                 chunksInGroup.add(chunk);

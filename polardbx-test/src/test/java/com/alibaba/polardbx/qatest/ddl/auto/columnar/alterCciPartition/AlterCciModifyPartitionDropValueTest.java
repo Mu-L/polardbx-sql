@@ -19,29 +19,30 @@
 package com.alibaba.polardbx.qatest.ddl.auto.columnar.alterCciPartition;
 
 import com.alibaba.polardbx.optimizer.partition.common.PartitionStrategy;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import net.jcip.annotations.NotThreadSafe;
 import org.junit.Before;
 import org.junit.Test;
-import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-@RunWith(Parameterized.class)
+@IcbcIgnore(ignoreReason = "icbc not support cci")
 @NotThreadSafe
 public class AlterCciModifyPartitionDropValueTest extends AlterCciPartitionBaseTest {
     static List<PartitionRuleInfo> partitionRuleInfos = new ArrayList<>(Arrays
         .asList(new PartitionRuleInfo(PartitionStrategy.LIST,
                 1,
                 PARTITION_BY_BIGINT_LIST,
-                "alter table " + tableName + " modify partition p2 drop values(100010, 100011)"),
+                "alter table " + tableName + "." + cciName + " modify partition p2 drop values(100010, 100011)"),
             new PartitionRuleInfo(PartitionStrategy.LIST_COLUMNS,
                 4,
                 PARTITION_BY_INT_BIGINT_LIST,
-                "alter table " + tableName + " modify partition p2 drop values((1,100011),(1,100012))"))
+                "alter table " + tableName + "." + cciName + " modify partition p2 drop values((1,100011),(1,100012))"))
     );
 
     private static PartitionRuleInfo partitionRuleInfo;
@@ -55,8 +56,9 @@ public class AlterCciModifyPartitionDropValueTest extends AlterCciPartitionBaseT
     }
 
     @Test
-    public void testDDLOnly() {
-
+    public void testDDLOnly() throws SQLException {
+        // 验证所有 CCI 的分区记录
+        compareTablePartitionRecords(logicalDatabase, tableName, cciNames);
     }
 
     @Parameterized.Parameters(name = "{index}:partitionRuleInfo={0}")

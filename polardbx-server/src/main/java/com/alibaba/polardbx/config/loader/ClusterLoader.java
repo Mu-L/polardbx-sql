@@ -19,8 +19,7 @@ package com.alibaba.polardbx.config.loader;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.alibaba.polardbx.CobarServer;
-import com.alibaba.polardbx.common.audit.AuditUtils;
-import com.alibaba.polardbx.common.constants.IsolationLevel;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
 import com.alibaba.polardbx.common.privilege.PasswdRuleConfig;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
@@ -33,21 +32,30 @@ import com.alibaba.polardbx.config.SystemConfig;
 import com.alibaba.polardbx.executor.common.GsiStatisticsManager;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.TtlDataCleanupRateLimiter;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.TtlIntraTaskExecutor;
+import com.alibaba.polardbx.executor.ddl.job.task.ttl.scheduler.TtlScanWarningManager;
+import com.alibaba.polardbx.executor.ddl.job.task.ttl.scheduler.TtlScheduledJobManager;
 import com.alibaba.polardbx.executor.ddl.workqueue.BackFillThreadPool;
 import com.alibaba.polardbx.executor.ddl.workqueue.ChangeSetThreadPool;
+import com.alibaba.polardbx.executor.ddl.workqueue.FastCheckerSampleThreadPool;
 import com.alibaba.polardbx.executor.ddl.workqueue.FastCheckerThreadPool;
-import com.alibaba.polardbx.executor.ddl.workqueue.OmcThreadPoll;
+import com.alibaba.polardbx.executor.ddl.workqueue.OmcCheckerThreadPool;
+import com.alibaba.polardbx.executor.ddl.workqueue.OmcThreadPool;
+import com.alibaba.polardbx.executor.operator.scan.BlockCacheManager;
 import com.alibaba.polardbx.executor.gms.ColumnarManager;
 import com.alibaba.polardbx.executor.gms.DynamicColumnarManager;
+import com.alibaba.polardbx.executor.operator.scan.ColumnarScanMonitor;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.executor.ddl.workqueue.PriorityWorkQueue;
 import com.alibaba.polardbx.gms.ha.impl.StorageHaChecker;
 import com.alibaba.polardbx.gms.ha.impl.StorageHaManager;
 import com.alibaba.polardbx.gms.lbac.LBACSecurityManager;
+import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
 import com.alibaba.polardbx.gms.privilege.PolarLoginErrConfig;
 import com.alibaba.polardbx.gms.privilege.PolarPrivManager;
+import com.alibaba.polardbx.gms.sqlaudit.SqlAuditInterceptor;
 import com.alibaba.polardbx.gms.topology.DbTopologyManager;
 import com.alibaba.polardbx.gms.util.GmsJdbcUtil;
+import com.alibaba.polardbx.optimizer.config.meta.CostModelWeight;
 import com.alibaba.polardbx.optimizer.core.planner.PlanCache;
 import com.alibaba.polardbx.optimizer.core.profiler.RuntimeStat;
 import com.alibaba.polardbx.optimizer.hint.util.HintUtil;
@@ -57,6 +65,8 @@ import com.alibaba.polardbx.optimizer.partition.FullScanTableBlackListManager;
 import com.alibaba.polardbx.optimizer.planmanager.PlanManager;
 import com.alibaba.polardbx.optimizer.ttl.TtlConfigUtil;
 import com.alibaba.polardbx.optimizer.view.InformationSchemaViewManager;
+import com.alibaba.polardbx.rpc.ColumnarDeltaRpcClient;
+import com.alibaba.polardbx.server.util.AuditUtils;
 import com.alibaba.polardbx.server.util.LogUtils;
 import com.alibaba.polardbx.transaction.ColumnarTsoManager;
 import com.alibaba.polardbx.util.RexMemoryLimitHelper;
@@ -227,8 +237,8 @@ public abstract class ClusterLoader extends BaseClusterLoader {
             }
         }
 
-        if (p.containsKey(ConnectionProperties.CHANGE_SET_APPLY_PARALLELISM)) {
-            int parallelism = Integer.parseInt(p.getProperty(ConnectionProperties.CHANGE_SET_APPLY_PARALLELISM));
+        if (p.containsKey(ConnectionProperties.CHANGE_SET_THREAD_POOL_SIZE)) {
+            int parallelism = Integer.parseInt(p.getProperty(ConnectionProperties.CHANGE_SET_THREAD_POOL_SIZE));
             if (parallelism > 0) {
                 if (parallelism > ChangeSetThreadPool.getInstance().getMaximumPoolSize()) {
                     ChangeSetThreadPool.getInstance().setMaximumPoolSize(parallelism);
@@ -240,14 +250,29 @@ public abstract class ClusterLoader extends BaseClusterLoader {
             }
         }
 
+        if (p.containsKey(ConnectionProperties.OMC_CHECKER_THREAD_POOL_SIZE)) {
+            int parallelism = Integer.parseInt(p.getProperty(ConnectionProperties.OMC_CHECKER_THREAD_POOL_SIZE));
+            if (parallelism > 0) {
+                if (parallelism > OmcCheckerThreadPool.getInstance().getMaximumPoolSize()) {
+                    OmcCheckerThreadPool.getInstance().setMaximumPoolSize(parallelism);
+                    OmcCheckerThreadPool.getInstance().setCorePoolSize(parallelism);
+                } else {
+                    OmcCheckerThreadPool.getInstance().setCorePoolSize(parallelism);
+                    OmcCheckerThreadPool.getInstance().setMaximumPoolSize(parallelism);
+                }
+            }
+        }
+
         if (p.containsKey(ConnectionProperties.FASTCHECKER_THREAD_POOL_SIZE)) {
             int parallelism = Integer.parseInt(p.getProperty(ConnectionProperties.FASTCHECKER_THREAD_POOL_SIZE));
             FastCheckerThreadPool.getInstance().setParallelism(parallelism);
+            int sampleParallelism = FastCheckerSampleThreadPool.calThreadPoolNum(parallelism);
+            FastCheckerSampleThreadPool.getInstance().setParallelism(sampleParallelism);
         }
 
         if (p.containsKey(ConnectionProperties.OMC_THREAD_POOL_SIZE)) {
             int parallelism = Integer.parseInt(p.getProperty(ConnectionProperties.OMC_THREAD_POOL_SIZE));
-            OmcThreadPoll.getInstance().setParallelism(parallelism);
+            OmcThreadPool.getInstance().setParallelism(parallelism);
         }
 
         if (p.containsKey(ConnectionProperties.GLOBAL_MEMORY_LIMIT)) {
@@ -442,6 +467,12 @@ public abstract class ClusterLoader extends BaseClusterLoader {
             }
         }
 
+        /* ========MetaDBProps======== */
+        if (p.containsKey(ConnectionProperties.META_DB_PROPS)) {
+            String newMetaDbProps = p.getProperty(ConnectionProperties.META_DB_PROPS);
+            MetaDbDataSource.getInstance().rebuildMetaDataDataSourceIfNeed(newMetaDbProps);
+        }
+
         /* ========ttl job config======== */
         if (p.containsKey(ConnectionProperties.TTL_GLOBAL_SELECT_WORKER_COUNT)) {
             String valStr = p.getProperty(ConnectionProperties.TTL_GLOBAL_SELECT_WORKER_COUNT);
@@ -457,6 +488,25 @@ public abstract class ClusterLoader extends BaseClusterLoader {
             TtlIntraTaskExecutor.getInstance()
                 .adjustTaskExecutorWorkerCount(TtlIntraTaskExecutor.DELETE_TASK_EXECUTOR_TYPE,
                     DynamicConfig.getInstance().getTtlGlobalDeleteWorkerCount());
+        }
+
+        if (p.containsKey(ConnectionProperties.TTL_ENABLE_SCAN_ADD_PARTS_WARNING)) {
+            String valStr = p.getProperty(ConnectionProperties.TTL_ENABLE_SCAN_ADD_PARTS_WARNING);
+            DynamicConfig.getInstance()
+                .loadValue(logger, ConnectionProperties.TTL_ENABLE_SCAN_ADD_PARTS_WARNING, valStr);
+        }
+
+        if (p.containsKey(ConnectionProperties.TTL_ADD_PARTS_WARNING_SCAN_INTERVAL_SECONDS)) {
+            String valStr = p.getProperty(ConnectionProperties.TTL_ADD_PARTS_WARNING_SCAN_INTERVAL_SECONDS);
+            DynamicConfig.getInstance()
+                .loadValue(logger, ConnectionProperties.TTL_ADD_PARTS_WARNING_SCAN_INTERVAL_SECONDS, valStr);
+            TtlScanWarningManager.getInstance().resetWarningScannerScheduleInterval();
+        }
+
+        if (p.containsKey(ConnectionProperties.TTL_ONLY_WARNING_FOR_THE_LAST_PART)) {
+            String valStr = p.getProperty(ConnectionProperties.TTL_ONLY_WARNING_FOR_THE_LAST_PART);
+            DynamicConfig.getInstance()
+                .loadValue(logger, ConnectionProperties.TTL_ONLY_WARNING_FOR_THE_LAST_PART, valStr);
         }
 
         if (p.containsKey(ConnectionProperties.TTL_TMP_TBL_MAX_DATA_LENGTH)) {
@@ -512,10 +562,50 @@ public abstract class ClusterLoader extends BaseClusterLoader {
                 DynamicConfig.getInstance().getTtlScheduledJobMaxParallelism());
         }
 
+        if (p.containsKey(ConnectionProperties.TTL_SCHEDULE_JOB_ARCHIVED_BY_PARTITION_ONE_BY_ONE)) {
+            String valStr = p.getProperty(ConnectionProperties.TTL_SCHEDULE_JOB_ARCHIVED_BY_PARTITION_ONE_BY_ONE);
+            DynamicConfig.getInstance()
+                .loadValue(logger, ConnectionProperties.TTL_SCHEDULE_JOB_ARCHIVED_BY_PARTITION_ONE_BY_ONE, valStr);
+            TtlConfigUtil.setTtlScheduleJobOneByOneForArcByPart(
+                DynamicConfig.getInstance().isTtlScheduleJobArchivedByPartitionOneByOne());
+        }
+
+        if (p.containsKey(ConnectionProperties.TTL_MAX_RETRY_TIME_FOR_PAUSED_CLEANUP_DDL_JOB)) {
+            String valStr = p.getProperty(ConnectionProperties.TTL_MAX_RETRY_TIME_FOR_PAUSED_CLEANUP_DDL_JOB);
+            DynamicConfig.getInstance()
+                .loadValue(logger, ConnectionProperties.TTL_MAX_RETRY_TIME_FOR_PAUSED_CLEANUP_DDL_JOB, valStr);
+            TtlConfigUtil.setTtlMaxRetryTimeForPausedCleanupDdlJob(
+                DynamicConfig.getInstance().getTtlMaxRetryTimeForPausedDdlJob());
+        }
+
+        if (p.containsKey(ConnectionProperties.TTL_WAIT_TIME_BEFORE_EACH_DDL_STMT_RETRY)) {
+            String valStr = p.getProperty(ConnectionProperties.TTL_WAIT_TIME_BEFORE_EACH_DDL_STMT_RETRY);
+            DynamicConfig.getInstance()
+                .loadValue(logger, ConnectionProperties.TTL_WAIT_TIME_BEFORE_EACH_DDL_STMT_RETRY, valStr);
+            TtlConfigUtil.setTtlWaitTimeBeforeEachDdlStmtRetry(
+                DynamicConfig.getInstance().getTtlWaitTimeBeforeEachDdlStmtRetry());
+        }
+
         if (p.containsKey(ConnectionProperties.TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL)) {
             String valStr = p.getProperty(ConnectionProperties.TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL);
             DynamicConfig.getInstance()
                 .loadValue(logger, ConnectionProperties.TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL, valStr);
+        }
+
+        if (p.containsKey(ConnectionProperties.TTL_ENABLE_CCI_SPLIT_FROM_NEAREST_PART)) {
+            String valStr = p.getProperty(ConnectionProperties.TTL_ENABLE_CCI_SPLIT_FROM_NEAREST_PART);
+            DynamicConfig.getInstance()
+                .loadValue(logger, ConnectionProperties.TTL_ENABLE_CCI_SPLIT_FROM_NEAREST_PART, valStr);
+            TtlConfigUtil.setEnableCciSplitFromNearestPart(
+                DynamicConfig.getInstance().isTtlEnableCciSplitFromNearestPart());
+        }
+
+        if (p.containsKey(ConnectionProperties.TTL_CCI_RESERVED_PART_GAP_COUNT)) {
+            String valStr = p.getProperty(ConnectionProperties.TTL_CCI_RESERVED_PART_GAP_COUNT);
+            DynamicConfig.getInstance()
+                .loadValue(logger, ConnectionProperties.TTL_CCI_RESERVED_PART_GAP_COUNT, valStr);
+            TtlConfigUtil.setCciReservedPartGapCount(
+                DynamicConfig.getInstance().getTtlCciReservedPartGapCount());
         }
 
         if (p.containsKey(ConnectionProperties.TTL_JOB_DEFAULT_BATCH_SIZE)) {
@@ -596,6 +686,13 @@ public abstract class ClusterLoader extends BaseClusterLoader {
             DynamicConfig.getInstance()
                 .loadValue(logger, ConnectionProperties.TTL_ALTER_ADD_PART_STMT_HINT, valStr);
             TtlConfigUtil.setQueryHintForAutoAddParts(DynamicConfig.getInstance().getTtlAlterTableAddPartsStmtHint());
+        }
+
+        if (p.containsKey(ConnectionProperties.TTL_ALTER_DROP_PART_STMT_HINT)) {
+            String valStr = p.getProperty(ConnectionProperties.TTL_ALTER_DROP_PART_STMT_HINT);
+            DynamicConfig.getInstance()
+                .loadValue(logger, ConnectionProperties.TTL_ALTER_DROP_PART_STMT_HINT, valStr);
+            TtlConfigUtil.setQueryHintForAutoDropParts(DynamicConfig.getInstance().getTtlAlterTableDropPartsStmtHint());
         }
 
         if (p.containsKey(ConnectionProperties.TTL_GROUP_PARALLELISM_ON_DQL_CONN)) {
@@ -734,10 +831,21 @@ public abstract class ClusterLoader extends BaseClusterLoader {
             InformationSchemaViewManager.getInstance().defineCaseSensitiveView(enableLowerCase);
         }
 
+        if (p.containsKey(ConnectionProperties.COST_MODEL_VERSION)) {
+            String version = p.getProperty(ConnectionProperties.COST_MODEL_VERSION);
+            CostModelWeight.setVersion(version);
+        }
+
         if (p.containsKey(ConnectionProperties.MAPPING_TO_MYSQL_ERROR_CODE)) {
             DynamicConfig.getInstance().loadValue(logger,
                 ConnectionProperties.MAPPING_TO_MYSQL_ERROR_CODE,
                 p.getProperty(ConnectionProperties.MAPPING_TO_MYSQL_ERROR_CODE));
+        }
+
+        if (p.containsKey(ConnectionProperties.ENABLE_DBLE_ROUTE_RESULT_CHECK)) {
+            DynamicConfig.getInstance().loadValue(logger,
+                ConnectionProperties.ENABLE_DBLE_ROUTE_RESULT_CHECK,
+                p.getProperty(ConnectionProperties.ENABLE_DBLE_ROUTE_RESULT_CHECK));
         }
 
         if (p.containsKey(ConnectionProperties.COLUMNAR_TSO_UPDATE_INTERVAL)) {
@@ -751,10 +859,38 @@ public abstract class ClusterLoader extends BaseClusterLoader {
             ((DynamicColumnarManager) ColumnarManager.getInstance()).resetCsvCacheSize(newSize);
         }
 
+        if (p.containsKey(ConnectionProperties.COLUMNAR_VERSION_CHAIN_PRUNER)) {
+            String prunerString = p.getProperty(ConnectionProperties.COLUMNAR_VERSION_CHAIN_PRUNER);
+            ((DynamicColumnarManager) ColumnarManager.getInstance()).reloadColumnarVersionChainPruner(prunerString);
+        }
+
         if (p.containsKey(ConnectionProperties.COLUMNAR_TSO_PURGE_INTERVAL)) {
             int columnarTsoPurgeInterval =
                 Integer.parseInt(p.getProperty(ConnectionProperties.COLUMNAR_TSO_PURGE_INTERVAL));
             ColumnarTsoManager.getInstance().resetColumnarTsoPurgeInterval(columnarTsoPurgeInterval);
+        }
+
+        if (p.containsKey(ConnectionProperties.COLUMNAR_RPC_MAX_MESSAGE_SIZE)) {
+            int newMaxMessageSize = Integer.parseInt(p.getProperty(ConnectionProperties.COLUMNAR_RPC_MAX_MESSAGE_SIZE));
+            ColumnarDeltaRpcClient.getInstance().resetColumnarRpcMaxMessageSize(newMaxMessageSize);
+        }
+
+        if (p.containsKey(ConnectionProperties.BLOCK_CACHE_MEMORY_SIZE_FACTOR)) {
+            float ratio = Float.parseFloat(p.getProperty(ConnectionProperties.BLOCK_CACHE_MEMORY_SIZE_FACTOR));
+            BlockCacheManager.getInstance().resetBlockCacheMemoryFactor(ratio);
+        }
+
+        if (p.containsKey(ConnectionProperties.TOTAL_QUERY_MEMORY_QUATO_RATIO)) {
+            double queryMemoryQuotaRatio =
+                Double.parseDouble(p.getProperty(ConnectionProperties.TOTAL_QUERY_MEMORY_QUATO_RATIO));
+            long memoryQuota = (long) (Runtime.getRuntime().maxMemory() * queryMemoryQuotaRatio);
+            MemoryTrackerManager.getGlobalMemoryTrackerManager().resize(memoryQuota);
+        }
+
+        if (p.containsKey(ConnectionProperties.ADAPTIVE_COLUMNAR_SCAN_MONITOR_MAXIMUM_SIZE)) {
+            int newSize =
+                Integer.parseInt(p.getProperty(ConnectionProperties.ADAPTIVE_COLUMNAR_SCAN_MONITOR_MAXIMUM_SIZE));
+            ColumnarScanMonitor.getInstance().resize(newSize);
         }
 
         if (p.containsKey(ConnectionProperties.COLUMNAR_SNAPSHOT_CACHE_TTL_MS)) {
@@ -772,6 +908,40 @@ public abstract class ClusterLoader extends BaseClusterLoader {
                 LBACSecurityManager.getInstance().getAllTableWithPolicy()) {
                 PlanManager.getInstance().invalidateTable(pair.getKey(), pair.getValue(), true);
             }
+        }
+
+        if (p.containsKey(ConnectionProperties.SQL_AUDIT_RULE)) {
+            try {
+                SqlAuditInterceptor.updateAuditLogConfig(p.getProperty(ConnectionProperties.SQL_AUDIT_RULE));
+            } catch (Exception e) {
+                logger.warn("set audit rule fail " + e.getMessage());
+            }
+        }
+
+        if (p.containsKey(ConnectionProperties.LOGIN_ERROR_DEFAULT_MAX_COUNT)) {
+            PolarLoginErrConfig.UserLoginErrConfig defaultLoginErrConfig =
+                PolarPrivManager.getInstance().getPolarLoginErrConfig().getDefaultLoginErrConfig();
+            PolarLoginErrConfig.UserLoginErrConfig newDefaultLoginErrConfig =
+                new PolarLoginErrConfig.UserLoginErrConfig(
+                    Integer.parseInt(p.getProperty(ConnectionProperties.LOGIN_ERROR_DEFAULT_MAX_COUNT)),
+                    defaultLoginErrConfig.getExpireSeconds(),
+                    defaultLoginErrConfig.getPasswordExpireDate(),
+                    defaultLoginErrConfig.getInitialExpireSeconds()
+                );
+            PolarPrivManager.getInstance().getPolarLoginErrConfig().setDefaultLoginErrConfig(newDefaultLoginErrConfig);
+        }
+
+        if (p.containsKey(ConnectionProperties.LOGIN_ERROR_DEFAULT_EXPIRE_SECONDS)) {
+            PolarLoginErrConfig.UserLoginErrConfig defaultLoginErrConfig =
+                PolarPrivManager.getInstance().getPolarLoginErrConfig().getDefaultLoginErrConfig();
+            PolarLoginErrConfig.UserLoginErrConfig newDefaultLoginErrConfig =
+                new PolarLoginErrConfig.UserLoginErrConfig(
+                    defaultLoginErrConfig.getPasswordMaxErrorCount(),
+                    Integer.parseInt(p.getProperty(ConnectionProperties.LOGIN_ERROR_DEFAULT_EXPIRE_SECONDS)),
+                    defaultLoginErrConfig.getPasswordExpireDate(),
+                    defaultLoginErrConfig.getInitialExpireSeconds()
+                );
+            PolarPrivManager.getInstance().getPolarLoginErrConfig().setDefaultLoginErrConfig(newDefaultLoginErrConfig);
         }
 
         logger.info("load instance properties ok");

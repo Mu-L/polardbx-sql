@@ -20,6 +20,7 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.executor.mpp.execution.buffer.OutputBufferMemoryManager;
 import com.alibaba.polardbx.executor.mpp.operator.BroadcastExchanger;
 import com.alibaba.polardbx.executor.mpp.operator.DirectExchanger;
+import com.alibaba.polardbx.executor.mpp.operator.DriverContext;
 import com.alibaba.polardbx.executor.mpp.operator.LocalExchanger;
 import com.alibaba.polardbx.executor.mpp.operator.LocalExchangersStatus;
 import com.alibaba.polardbx.executor.mpp.operator.PartitioningBucketExchanger;
@@ -35,7 +36,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class LocalExchangeConsumerFactory implements ConsumeExecutorFactory {
-
     private ExecutorFactory parentExecutorFactory;
     private LocalExchange localExchange;
     private List<ConsumerExecutor> consumerExecutors = new ArrayList<>();
@@ -62,20 +62,23 @@ public class LocalExchangeConsumerFactory implements ConsumeExecutorFactory {
             }
         }
 
+        long waitNotFullInMillis = context.getParamManager().getLong(ConnectionParams.WAIT_FOR_NOT_FULL_MS);
+
         LocalExchanger localExchanger = null;
         switch (localExchange.getMode()) {
         case SINGLE:
             localExchanger = new SingleExchanger(outputBufferMemoryManager, consumerExecutors,
-                this.status, localExchange.isAsyncConsume());
+                this.status, localExchange.isAsyncConsume(), waitNotFullInMillis);
             break;
         case RANDOM:
             localExchanger = new RandomExchanger(outputBufferMemoryManager, consumerExecutors,
                 this.status, localExchange.isAsyncConsume(), index,
-                context.getParamManager().getBoolean(ConnectionParams.ENABLE_OPTIMIZE_RANDOM_EXCHANGE));
+                context.getParamManager().getBoolean(ConnectionParams.ENABLE_OPTIMIZE_RANDOM_EXCHANGE),
+                waitNotFullInMillis);
             break;
         case BORADCAST:
             localExchanger = new BroadcastExchanger(outputBufferMemoryManager, consumerExecutors,
-                this.status, localExchange.isAsyncConsume());
+                this.status, localExchange.isAsyncConsume(), waitNotFullInMillis);
             break;
         case PARTITION:
             if (localExchange.getBucketNum() > 1) {
@@ -86,13 +89,14 @@ public class LocalExchangeConsumerFactory implements ConsumeExecutorFactory {
                     localExchange
                         .getPartitionChannels(),
                     localExchange.getKeyTypes(), localExchange.getBucketNum(),
-                    chunkLimit, context);
+                    chunkLimit, context, waitNotFullInMillis);
             } else {
                 localExchanger = new PartitioningExchanger(outputBufferMemoryManager, consumerExecutors,
                     this.status,
                     localExchange.isAsyncConsume(), localExchange.getTypes(),
                     localExchange.getPartitionChannels(),
-                    localExchange.getKeyTypes(), context, false);
+                    localExchange.getKeyTypes(), context, false,
+                    waitNotFullInMillis);
             }
             break;
         case CHUNK_PARTITION:
@@ -100,11 +104,11 @@ public class LocalExchangeConsumerFactory implements ConsumeExecutorFactory {
                 this.status,
                 localExchange.isAsyncConsume(), localExchange.getTypes(),
                 localExchange.getPartitionChannels(),
-                localExchange.getKeyTypes(), context, true);
+                localExchange.getKeyTypes(), context, true, waitNotFullInMillis);
             break;
         case DIRECT:
             localExchanger = new DirectExchanger(
-                outputBufferMemoryManager, consumerExecutors.get(index), this.status);
+                outputBufferMemoryManager, consumerExecutors.get(index), this.status, waitNotFullInMillis);
             break;
         default:
             throw new IllegalArgumentException();

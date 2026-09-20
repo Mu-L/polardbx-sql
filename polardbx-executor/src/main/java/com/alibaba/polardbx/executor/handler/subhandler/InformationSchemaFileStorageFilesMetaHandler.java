@@ -40,7 +40,7 @@ import java.util.List;
  */
 public class InformationSchemaFileStorageFilesMetaHandler extends BaseVirtualViewSubClassHandler {
 
-    private static final Logger logger = LoggerFactory.getLogger("oss");
+    private static final Logger logger = LoggerFactory.getLogger("mpp_log");
 
     public InformationSchemaFileStorageFilesMetaHandler(VirtualViewHandler virtualViewHandler) {
         super(virtualViewHandler);

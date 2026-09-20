@@ -19,16 +19,13 @@ package com.alibaba.polardbx.optimizer.partition.pruning;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.utils.CaseInsensitive;
-import com.alibaba.polardbx.optimizer.partition.PartSpecSearcher;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
 import com.alibaba.polardbx.optimizer.partition.common.BitSetLevel;
 import com.alibaba.polardbx.optimizer.partition.common.PartKeyLevel;
-import com.amazonaws.services.dynamodbv2.xspec.S;
 
 import java.util.ArrayList;
 import java.util.BitSet;
-import java.util.Calendar;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
@@ -46,6 +43,7 @@ public class PartPrunedResult {
     protected Integer parentSpecPosi;
     protected volatile List<PhysicalPartitionInfo> cache;
     protected boolean useSubPart = false;
+    protected PartPruneStepPruningExtraInfo pruningExtraInfo;
 
     private PartPrunedResult(PartitionInfo partInfo,
                              BitSet partBitSet,
@@ -178,6 +176,20 @@ public class PartPrunedResult {
 
     public List<PhysicalPartitionInfo> getPrunedPartitions() {
         return getPrunedPartInfosFromBitSet();
+    }
+
+    public Set<String> getGroupKeySetFromPrunedPartitions() {
+        List<PhysicalPartitionInfo> phyPsList = getPrunedPartitions();
+        Set<String> groupKeySet = new TreeSet<>(CaseInsensitive.CASE_INSENSITIVE_ORDER);
+        for (int i = 0; i < phyPsList.size(); i++) {
+            PhysicalPartitionInfo ps = phyPsList.get(i);
+            String grpKey = ps.getGroupKey();
+            if (groupKeySet.contains(grpKey)) {
+                continue;
+            }
+            groupKeySet.add(grpKey);
+        }
+        return groupKeySet;
     }
 
     public List<String> getPrunedPartitionNamesOfPartLevel(PartKeyLevel targetPartLevel,
@@ -319,4 +331,12 @@ public class PartPrunedResult {
         this.parentSpecPosi = parentSpecPosi;
     }
 
+    public PartPruneStepPruningExtraInfo getPruningExtraInfo() {
+        return pruningExtraInfo;
+    }
+
+    public void setPruningExtraInfo(
+        PartPruneStepPruningExtraInfo pruningExtraInfo) {
+        this.pruningExtraInfo = pruningExtraInfo;
+    }
 }

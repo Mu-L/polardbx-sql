@@ -365,6 +365,8 @@ public class InformationSchemaTablesHandler extends BaseVirtualViewSubClassHandl
                 if (null != gsiStat && null != primaryStat) {
                     primaryStat.indexLength += gsiStat.indexLength;
                     gsiStat.indexLength = 0;
+                    primaryStat.dataFree += gsiStat.dataFree;
+                    gsiStat.dataFree = 0;
                 }
             }
 
@@ -529,7 +531,8 @@ public class InformationSchemaTablesHandler extends BaseVirtualViewSubClassHandl
         for (PartitionSpec partition : partitions) {
             PartitionLocation location = partition.getLocation();
             String groupName = location.getGroupKey();
-            String phyDb = GroupInfoUtil.buildPhysicalDbNameFromGroupName(groupName).toLowerCase();
+            String phyDb =
+                GroupInfoUtil.buildPhysicalDbNameFromGroupName(partitionInfo.getTableSchema(), groupName).toLowerCase();
             String phyTb = location.getPhyTableName().toLowerCase();
             TGroupDataSource dataSource = (TGroupDataSource) executor.getGroupExecutor(groupName).getDataSource();
             String address = dataSource.getMasterSourceAddress().toLowerCase();

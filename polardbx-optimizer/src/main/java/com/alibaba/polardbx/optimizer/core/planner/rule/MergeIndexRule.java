@@ -434,7 +434,7 @@ public class MergeIndexRule extends RelOptRule {
         final LogicalTableScan indexTableScan =
             LogicalTableScan.create(logicalTableScan.getCluster(), index, logicalTableScan.getHints(), null,
                 logicalTableScan.getFlashback(), logicalTableScan.getFlashbackOperator(), null);
-        final LogicalIndexScan indexScan = new LogicalIndexScan(index, indexTableScan, lockMode);
+        final LogicalIndexScan indexScan = new LogicalIndexScan(primaryTableName, index, indexTableScan, lockMode);
 
         // filter, the predicate must be cover by indexScan
         RelOptUtil.InputReferencedVisitor inputReferencedVisitor = new RelOptUtil.InputReferencedVisitor();

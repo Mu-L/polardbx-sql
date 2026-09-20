@@ -1,6 +1,8 @@
 package com.alibaba.polardbx.optimizer.core.planner.rule;
 
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.ParamManager;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
 import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.optimizer.PlannerContext;
@@ -14,7 +16,6 @@ import com.alibaba.polardbx.optimizer.core.planner.rule.util.ForceIndexUtil;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.ForceIndexUtil.SargAbleHandler;
 import com.alibaba.polardbx.optimizer.index.IndexUtil;
 import com.clearspring.analytics.util.Lists;
-import com.google.common.base.Predicate;
 import com.google.common.collect.Sets;
 import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
@@ -22,7 +23,6 @@ import org.apache.calcite.plan.RelOptRuleOperand;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelFieldCollation;
-import org.apache.calcite.rel.RelFieldCollation.Direction;
 import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.logical.LogicalFilter;
@@ -33,50 +33,37 @@ import org.apache.calcite.rex.RexCall;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexUtil;
-import org.apache.calcite.runtime.PredicateImpl;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.tools.RelBuilderFactory;
 import org.apache.calcite.util.ImmutableBitSet;
-import org.apache.calcite.util.ImmutableIntList;
 import org.apache.calcite.util.mapping.Mappings;
 import org.apache.commons.collections.CollectionUtils;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
-import static com.alibaba.polardbx.optimizer.core.planner.rule.PagingForceToJoinRule.FILTER_NO_SUBQUERY;
-import static com.alibaba.polardbx.optimizer.core.planner.rule.PagingForceToJoinRule.PROJECT_NO_SUBQUERY;
-
 public class AutoPaginationRule extends RelOptRule {
 
-    static final Predicate<LogicalSort> ORDER_BY_LIMIT = new PredicateImpl<LogicalSort>() {
-        @Override
-        public boolean test(LogicalSort logicalSort) {
-            return logicalSort != null && logicalSort.fetch != null && logicalSort.withOrderBy();
-        }
-    };
-
     public static final AutoPaginationRule INSTANCE = new AutoPaginationRule(
-        operand(LogicalSort.class, null, ORDER_BY_LIMIT,
-            operand(LogicalFilter.class, null, FILTER_NO_SUBQUERY,
+        operand(LogicalSort.class, null, ForceIndexUtil.ORDER_BY_LIMIT,
+            operand(LogicalFilter.class, null, ForceIndexUtil.FILTER_NO_SUBQUERY,
                 operand(TableScan.class, null, none()))),
         RelFactories.LOGICAL_BUILDER, "INSTANCE"
     );
 
     public static final AutoPaginationRule PROJECT = new AutoPaginationRule(
-        operand(LogicalSort.class, null, ORDER_BY_LIMIT,
-            operand(LogicalProject.class, null, PROJECT_NO_SUBQUERY,
-                operand(LogicalFilter.class, null, FILTER_NO_SUBQUERY,
+        operand(LogicalSort.class, null, ForceIndexUtil.ORDER_BY_LIMIT,
+            operand(LogicalProject.class, null, ForceIndexUtil.PROJECT_NO_SUBQUERY,
+                operand(LogicalFilter.class, null, ForceIndexUtil.FILTER_NO_SUBQUERY,
                     operand(TableScan.class, null, none())))),
         RelFactories.LOGICAL_BUILDER, "PROJECT"
     );
 
     public AutoPaginationRule(RelOptRuleOperand operand, RelBuilderFactory relBuilderFactory,
                               String description) {
-        super(operand, relBuilderFactory, "AutoPaginationRule" + description);
+        super(operand, relBuilderFactory, "AutoPaginationRule:" + description);
     }
 
     @Override
@@ -168,32 +155,51 @@ public class AutoPaginationRule extends RelOptRule {
         if (CollectionUtils.isEmpty(sortCollation.getFieldCollations())) {
             return null;
         }
+
+        TableMeta tm = ForceIndexUtil.getIndexableTableMeta(scan.getTable());
+        if (tm == null) {
+            return null;
+        }
+        final ImmutableBitSet.Builder builder = ImmutableBitSet.builder();
+        builder.set(0, tm.getIndexes().size());
+        usedCols.forEach(x -> {
+            ColumnMeta columnMeta = tm.getAllColumns().get(x);
+            builder.intersect(columnMeta.getPartOfKey().union(columnMeta.getPartOfPrefixKey()));
+        });
+        ImmutableBitSet usableIndexes = IndexUtil.buildAvailableIndex(scan.getIndexNode(), tm.getIndexes(), builder);
+
+        // unusable indexes for paging force
+        final ImmutableBitSet.Builder unusableBuilder = ImmutableBitSet.builder();
+        unusableBuilder.set(0, tm.getIndexes().size());
+        outputCols.forEach(x -> unusableBuilder.intersect(tm.getAllColumns().get(x).getPartOfKey()));
+        ImmutableBitSet unusableIndexes = unusableBuilder.build();
+
         // Attempt to use the force index specified by the user, if any.
         SqlNode node = scan.getIndexNode();
         // if force index is used, try to convert it to paging force
         if (node != null) {
-            return genPagingForceIndexNode(node, sortCollation, filter, usedCols, outputCols, scan);
+            return genPagingForceIndexNode(node, sortCollation, filter, usableIndexes, unusableIndexes, scan);
         }
 
         // Auto select force index when user did not specify a force index.
         node = genForceIndexNode(sortCollation, filter, usedCols, scan);
         // try to auto ignore index if auto force index failed
         if (node == null) {
-            return genIgnoreIndexNode(sortCollation, filter, scan);
+            return genIgnoreIndexNode(sortCollation, filter, usableIndexes, scan);
         }
         // try to auto paging_force index if auto force index succeed
-        SqlNode pagingNode = genPagingForceIndexNode(node, sortCollation, filter, usedCols, outputCols, scan);
+        SqlNode pagingNode = genPagingForceIndexNode(node, sortCollation, filter, usableIndexes, unusableIndexes, scan);
         return pagingNode != null ? pagingNode : node;
     }
 
     /**
      * Generates a SqlNode object for a force index hint based on the given conditions.
      * This method decides whether to force the use of a specific index for a query based on the sort order,
-     * filter conditions, and columns used in the query.
+     * filter conditions, and indexes covering all columns used in the query.
      *
      * @param sortCollation The sort information of the query.
      * @param filter The filter conditions of the query.
-     * @param usedCols The columns used in the query.
+     * @param usedCols Columns used in the query for filter and sort, used to evaluate index usability.
      * @param scan The table scan node.
      * @return Returns the SqlNode object for the force index hint, or null if no suitable index is found.
      */
@@ -207,72 +213,104 @@ public class AutoPaginationRule extends RelOptRule {
         if (tm == null) {
             return null;
         }
+
+        ImmutableBitSet.Builder sortColBuilder = ImmutableBitSet.builder();
+        for (int key : sortCollation.getKeys()) {
+            sortColBuilder.set(key);
+        }
+        ImmutableBitSet sortCols = sortColBuilder.build();
+
+        ParamManager paramManager = PlannerContext.getPlannerContext(scan).getParamManager();
+        List<ColumnMeta> columns = tm.getAllColumns();
         // Build a map of column ordinals.
         Map<String, Integer> columnOrd = ForceIndexUtil.buildColumnarOrdinalMap(tm);
         // Get the shard key column ordinals.
         List<Integer> skList = ForceIndexUtil.getSkList(tm, columnOrd);
-        ImmutableBitSet skBitSet = skList == null ? ImmutableBitSet.of() : ImmutableBitSet.of(skList);
+        ImmutableBitSet.Builder shardKeyBuilder = ImmutableBitSet.builder();
+        shardKeyBuilder.set(0, tm.getIndexes().size());
+        skList.forEach(x -> shardKeyBuilder.intersect(columns.get(x).getPartOfKey()));
+        ImmutableBitSet skBitSet = shardKeyBuilder.build();
+
         // Initialize the best index for skipping sort.
-        ForceIndexUtil.BestIndex bestSkipSortIndex = new ForceIndexUtil.BestIndex(null, -1, -1D, false);
+        ForceIndexUtil.BestIndex bestSkipSortIndex = new ForceIndexUtil.BestIndex(null, -1, -1D, -1, false);
         // Initialize the best index for sort.
-        ForceIndexUtil.BestIndex bestSortIndex = new ForceIndexUtil.BestIndex(null, -1, -1D, false);
+        ForceIndexUtil.BestIndex bestSortIndex = new ForceIndexUtil.BestIndex(null, -1, -1D, -1, false);
+        int usedLen = usedCols.cardinality();
+        int sortLen = sortCols.cardinality();
+        int uncoverColLimit = paramManager.getInt(ConnectionParams.PAGINATION_UNCOVER_COL);
         // Iterate through all indexes of the table to find the best index.
-        for (IndexMeta indexMeta : tm.getIndexes()) {
-            // Get the list of key column ordinals for the current index.
-            List<Integer> indexColumns = keyColumnOrdList(columnOrd, tm, indexMeta);
-            if (CollectionUtils.isEmpty(indexColumns)) {
+        for (int skIndex = 0; skIndex < tm.getIndexes().size(); skIndex++) {
+            IndexMeta indexMeta = tm.getIndexes().get(skIndex);
+            int coverUsedLen = calcCoverColLen(tm, skIndex, usedCols);
+            int coverSortLen = calcCoverColLen(tm, skIndex, sortCols);
+            if (coverSortLen != sortLen) {
                 continue;
             }
-            // If the number of index columns exceeds the maximum limit, skip the current index.
-            if (indexColumns.size() >= ForceIndexUtil.INDEX_MAX_LEN) {
-                continue;
-            }
-            ImmutableBitSet indexBitSet = ImmutableBitSet.of(indexColumns);
-            // Only covering index is considered
-            if (!indexBitSet.contains(usedCols)) {
-                continue;
+            if (uncoverColLimit <= 0) {
+                if (usedLen > coverUsedLen) {
+                    continue;
+                }
+            } else {
+                if (usedLen - coverUsedLen > uncoverColLimit) {
+                    continue;
+                }
             }
             // Check if the current index covers the shard keys.
-            boolean coverSk = indexBitSet.contains(skBitSet);
+            boolean coverSk = skBitSet.get(skIndex);
             // If the current index can skip the sort, update the best index for skipping sort.
-            if (testIfSkipSortOrder(columnOrd, indexMeta, sortCollation, filter, scan, tm)) {
-                int startLoc = sortLocInIndex(indexColumns, sortCollation.getKeys());
-                bestSkipSortIndex = bestSkipSortIndex.findBetterIndex(indexMeta, startLoc,
-                    calcCardinality(startLoc, indexColumns, tm), coverSk);
+            Pair<Boolean, Integer> pair =
+                ForceIndexUtil.testIfSkipSortOrder(sortCollation, scan, columnOrd, indexMeta, skIndex, filter, true);
+            if (pair.getKey()) {
+                int constKeyPartLen = pair.getValue();
+                bestSkipSortIndex = bestSkipSortIndex.findBetterIndex(indexMeta, constKeyPartLen,
+                    calcCardinality(constKeyPartLen, indexMeta, tm), coverUsedLen, coverSk);
             } else {
                 // If the current index cannot skip the sort, update the best index for sort.
-                Set<Integer> equalColumnsSet = equalColumnsSetForFilter(columnOrd, filter, scan);
+                Set<String> equalColumnsSet = ForceIndexUtil.equalOrInColumnsSetForFilter(filter, scan);
                 int loc;
-                for (loc = 0; loc < indexColumns.size(); loc++) {
-                    if (!equalColumnsSet.contains(indexColumns.get(loc))) {
+                for (loc = 0; loc < indexMeta.getUserDefinedKeyParts(); loc++) {
+                    ColumnMeta columnMeta = indexMeta.getKeyColumnsExt().get(loc).getColumnMeta();
+                    if (columnMeta == null) {
+                        continue;
+                    }
+                    if (!equalColumnsSet.contains(columnMeta.getName())) {
                         break;
                     }
                 }
                 bestSortIndex = bestSortIndex.findBetterIndex(indexMeta, loc,
-                    calcCardinality(loc, indexColumns, tm), coverSk);
+                    calcCardinality(loc, indexMeta, tm), coverUsedLen, coverSk);
             }
         }
 
         // If a suitable index for skipping sort is found, generate and return the corresponding SqlNode object.
         // prefer skip sort index
         if (bestSkipSortIndex.getIndexMeta() != null
-            && bestSkipSortIndex.getEqPreLen() >= PlannerContext.getPlannerContext(scan).getParamManager()
-            .getInt(ConnectionParams.SKIP_SORT_EQ_PRE_COL)) {
+            && bestSkipSortIndex.getEqPreLen() >= paramManager.getInt(ConnectionParams.SKIP_SORT_EQ_PRE_COL)) {
             return ForceIndexUtil.genForceSqlNode(bestSkipSortIndex.getIndexMeta().getPhysicalIndexName());
         }
 
         // If a suitable index for sort is found, generate and return the corresponding SqlNode object.
         if (bestSortIndex.getIndexMeta() != null
-            && bestSortIndex.getEqPreLen() >= PlannerContext.getPlannerContext(scan).getParamManager()
-            .getInt(ConnectionParams.SORT_EQ_PRE_COL)) {
+            && bestSortIndex.getEqPreLen() >= paramManager.getInt(ConnectionParams.SORT_EQ_PRE_COL)) {
             return ForceIndexUtil.genForceSqlNode(bestSortIndex.getIndexMeta().getPhysicalIndexName());
         }
         // If no suitable index is found, return null.
         return null;
     }
 
+    int calcCoverColLen(TableMeta tm, int skIndex, ImmutableBitSet colBit) {
+        int len = 0;
+        for (int x = colBit.nextSetBit(0); x >= 0; x = colBit.nextSetBit(x + 1)) {
+            ColumnMeta columnMeta = tm.getAllColumns().get(x);
+            if (columnMeta.getPartOfKey().get(skIndex) || columnMeta.getPartOfPrefixKey().get(skIndex)) {
+                len++;
+            }
+        }
+        return len;
+    }
+
     SqlNode genPagingForceIndexNode(SqlNode node, RelCollation sortCollation, LogicalFilter filter,
-                                    ImmutableBitSet usedCols, ImmutableBitSet outputCols, TableScan scan) {
+                                    ImmutableBitSet coveringIndexes, ImmutableBitSet unusableIndexes, TableScan scan) {
         TableMeta tm = ForceIndexUtil.getIndexableTableMeta(scan.getTable());
         if (tm == null) {
             return null;
@@ -287,38 +325,40 @@ public class AutoPaginationRule extends RelOptRule {
             return null;
         }
         Map<String, Integer> columnOrd = ForceIndexUtil.buildColumnarOrdinalMap(tm);
-        IndexMeta indexMeta = tm.getIndexMeta(indexName);
+
+        IndexMeta indexMeta = null;
+        int keyIndex = -1;
+        for (IndexMeta meta : tm.getIndexes()) {
+            keyIndex++;
+            if (meta.getPhysicalIndexName().equalsIgnoreCase(indexName)) {
+                indexMeta = meta;
+                break;
+            }
+        }
         if (indexMeta == null) {
             return null;
         }
 
-        // Only covering index is considered
-        List<Integer> indexColumns = keyColumnOrdList(columnOrd, tm, indexMeta);
-        ImmutableBitSet indexBitSet = ImmutableBitSet.of(indexColumns);
-        if (CollectionUtils.isEmpty(indexColumns) || !indexBitSet.contains(usedCols)
-            || indexBitSet.contains(outputCols)) {
+        // index must cover all columns used in filter and sort
+        if (!coveringIndexes.get(keyIndex)) {
             return null;
-        }
-        if (!testIfSkipSortOrder(columnOrd, indexMeta, sortCollation, filter, scan, tm)) {
-            return ForceIndexUtil.genPagingForceSqlNode(indexName);
         }
 
-        // can't skip sort order, check reverse ref scan
-        if (sortDirection(indexMeta, sortCollation) == Direction.ASCENDING) {
+        // index can't cover all output columns
+        if (unusableIndexes.get(keyIndex)) {
             return null;
         }
-        ImmutableBitSet filterCols = RelOptUtil.InputFinder.bits(filter.getCondition());
-        ImmutableIntList sortCol = sortCollation.getKeys();
-        if (sortCol.isEmpty()) {
-            return null;
-        }
-        if (!filterCols.get(sortCol.get(0))) {
+
+        // index can't skip sort
+        if (!ForceIndexUtil.testIfSkipSortOrder(sortCollation, scan, columnOrd, indexMeta, keyIndex, filter, true)
+            .getKey()) {
             return ForceIndexUtil.genPagingForceSqlNode(indexName);
         }
         return null;
     }
 
-    SqlNode genIgnoreIndexNode(RelCollation sortCollation, LogicalFilter filter, TableScan scan) {
+    SqlNode genIgnoreIndexNode(RelCollation sortCollation, LogicalFilter filter, ImmutableBitSet coveringIndexes,
+                               TableScan scan) {
         TableMeta tm = ForceIndexUtil.getIndexableTableMeta(scan.getTable());
         if (tm == null) {
             return null;
@@ -372,18 +412,28 @@ public class AutoPaginationRule extends RelOptRule {
         Map<String, Integer> columnOrd = ForceIndexUtil.buildColumnarOrdinalMap(tm);
         boolean useAbleIndex = false;
         // ignore index starting with sort column if there are any other index usable
-        for (IndexMeta indexMeta : tm.getIndexes()) {
-            List<Integer> indexColumns = keyColumnOrdList(columnOrd, tm, indexMeta);
-            if (CollectionUtils.isEmpty(indexColumns)) {
+        for (int skIndex = 0; skIndex < tm.getIndexes().size(); skIndex++) {
+            IndexMeta indexMeta = tm.getIndexes().get(skIndex);
+            if (indexMeta.getUserDefinedKeyParts() <= 0) {
                 continue;
             }
-            int startLoc = sortLocInIndex(indexColumns, sortCollation.getKeys());
-            if (startLoc == 0 && !filterColumnBits.get(indexColumns.get(0))) {
-                ignoreIndexSet.add(indexMeta.getPhysicalIndexName());
+            int columnIndex;
+            String firstColumn = indexMeta.getKeyColumnsExt().get(0).getName();
+            if (firstColumn == null || !columnOrd.containsKey(firstColumn)) {
                 continue;
             }
-            if (sargBits.get(indexColumns.get(0))) {
+            columnIndex = columnOrd.get(firstColumn);
+            if (sargBits.get(columnIndex)) {
                 useAbleIndex = true;
+            }
+            if (filterColumnBits.get(columnIndex)) {
+                continue;
+            }
+            Pair<Boolean, Integer> pair =
+                ForceIndexUtil.testIfSkipSortOrder(sortCollation, scan, columnOrd, indexMeta, skIndex, filter,
+                    coveringIndexes.get(skIndex));
+            if (pair.getKey() && pair.getValue() == 0) {
+                ignoreIndexSet.add(indexMeta.getPhysicalIndexName());
             }
         }
         if (useAbleIndex && !CollectionUtils.isEmpty(ignoreIndexSet)) {
@@ -392,142 +442,16 @@ public class AutoPaginationRule extends RelOptRule {
         return null;
     }
 
-    /**
-     * Determines if the sorting order can be skipped based on specific conditions.
-     * The test returns true doesn't mean the index can skip sort necessarily,
-     * but false means the index can't skip sort definitely.
-     *
-     * @param columnOrd Map of column names to their ordinal positions, used to obtain column positions.
-     * @param indexMeta Index metadata, containing information about the index.
-     * @param sortCollation Collation of Logical sort object.
-     * @param filter Logical filter object, representing the filtering operation.
-     * @param scan Table scan object, representing the table scanning operation.
-     * @return true if the sorting order can be skipped; otherwise, false.
-     */
-    protected boolean testIfSkipSortOrder(Map<String, Integer> columnOrd,
-                                          IndexMeta indexMeta, RelCollation sortCollation,
-                                          LogicalFilter filter, TableScan scan, TableMeta tm) {
-        if (sortCollation == null) {
-            return false;
-        }
-        // Get the sort column list
-        ImmutableIntList sortCol = sortCollation.getKeys();
-        // If the sort column list is empty, return true
-        if (sortCol.isEmpty()) {
-            return true;
-        }
-        if (sortDirection(indexMeta, sortCollation) == null) {
-            return false;
-        }
-
-        List<Integer> indexColumns = keyColumnOrdList(columnOrd, tm, indexMeta);
-        if (indexColumns == null) {
-            return false;
-        }
-        int startLoc = sortLocInIndex(indexColumns, sortCol);
-        if (startLoc < 0) {
-            return false;
-        }
-        // check prev columns are equality
-        Set<Integer> equalColumnsSet = equalColumnsSetForFilter(columnOrd, filter, scan);
-        // Check if the columns before the start location are all in the equal columns set
-        for (int i = 0; i < startLoc; i++) {
-            if (!equalColumnsSet.contains(indexColumns.get(i))) {
-                return false;
-            }
-        }
-
-        // If all checks pass, return true
-        return true;
-    }
-
-    private int sortLocInIndex(List<Integer> indexColumns, ImmutableIntList sortCol) {
-        // Find the starting position of the sort column in the index columns
-        int startLoc = indexColumns.indexOf(sortCol.get(0));
-        // If the starting position is not found, return -1
-        if (startLoc < 0) {
-            return startLoc;
-        }
-        // check sort columns are continuous in index
-        for (int i = 1, indexLoc = startLoc; i < sortCol.size(); i++, indexLoc++) {
-            // If the index column list is shorter than the current index location, return -1
-            if (indexColumns.size() <= indexLoc) {
-                return -1;
-            }
-            // If the current sort column does not match the index column at the current index location, return -1
-            if (!Objects.equals(indexColumns.get(indexLoc), sortCol.get(i))) {
-                return -1;
-            }
-        }
-        return startLoc;
-    }
-
-    private Direction sortDirection(IndexMeta indexMeta, RelCollation sortCollation) {
-        Direction direction = null;
-        for (RelFieldCollation relFieldCollation : sortCollation.getFieldCollations()) {
-            if (direction == null) {
-                direction = relFieldCollation.direction;
-                continue;
-            }
-            if (direction.isDescending() != relFieldCollation.direction.isDescending()) {
-                return null;
-            }
-        }
-        // todo: support index direction
-        return direction;
-    }
-
-    private List<Integer> keyColumnOrdList(Map<String, Integer> columnOrd, TableMeta tm, IndexMeta indexMeta) {
-        // Initialize the list of index columns
-        List<Integer> indexColumns = Lists.newArrayList();
-        // Populate the indexColumns list with the ordinal positions of the index columns
-        for (IndexColumnMeta indexColumnMeta : indexMeta.getKeyColumnsExt()) {
-            if (indexColumnMeta.getSubPart() != 0) {
-                return null;
-            }
-            Integer ord = columnOrd.getOrDefault(indexColumnMeta.getColumnMeta().getName().toLowerCase(), -1);
-            if (ord < 0) {
-                return null;
-            }
-            indexColumns.add(ord);
-        }
-        if (tm.isHasPrimaryKey()) {
-            for (ColumnMeta columnMeta : tm.getPrimaryIndex().getKeyColumns()) {
-                Integer ord = columnOrd.getOrDefault(columnMeta.getName().toLowerCase(), -1);
-                if (ord < 0) {
-                    return null;
-                }
-                if (!indexColumns.contains(ord)) {
-                    indexColumns.add(ord);
-                }
-            }
-        }
-        return indexColumns;
-    }
-
-    private Set<Integer> equalColumnsSetForFilter(Map<String, Integer> columnOrd, LogicalFilter filter,
-                                                  TableScan scan) {
-        ForceIndexUtil.RequiredUniqueColumnsCollector equalColumnsCollector =
-            new ForceIndexUtil.RequiredUniqueColumnsCollector(
-                scan, scan.getCluster().getMetadataQuery(), null);
-        Set<Integer> equalColumnsSet = Sets.newHashSet();
-        // Collect columns that are constant
-        filter.accept(equalColumnsCollector);
-        for (List<String> equalColumns : equalColumnsCollector.getEqualColumnsList()) {
-            for (String equalColumn : equalColumns) {
-                equalColumnsSet.add(columnOrd.getOrDefault(equalColumn.toLowerCase(), -1));
-            }
-        }
-        return equalColumnsSet;
-    }
-
-    private double calcCardinality(int startLoc, List<Integer> indexColumns, TableMeta tm) {
+    private double calcCardinality(int startLoc, IndexMeta indexMeta, TableMeta tm) {
         double cardinality = 1D;
-        for (int i = 0; i < startLoc; i++) {
-            StatisticResult statisticResult1 =
-                StatisticManager.getInstance().getCardinality(tm.getSchemaName(), tm.getTableName(),
-                    tm.getAllColumns().get(indexColumns.get(i)).getName(), true, true);
-            cardinality *= statisticResult1.getLongValue();
+        List<IndexColumnMeta> columns = indexMeta.getKeyColumnsExt();
+        for (int i = 0; i < Math.min(startLoc, columns.size()); i++) {
+            if (columns.get(i).hasColumn()) {
+                StatisticResult statisticResult1 =
+                    StatisticManager.getInstance().getCardinality(tm.getSchemaName(), tm.getTableName(),
+                        columns.get(i).getName(), true, true);
+                cardinality *= statisticResult1.getLongValue();
+            }
         }
         return cardinality;
     }

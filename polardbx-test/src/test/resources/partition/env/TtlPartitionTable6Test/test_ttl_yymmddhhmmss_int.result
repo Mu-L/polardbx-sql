@@ -1,0 +1,83 @@
+## DISABLE_FAST_SQL_PARSER
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set sql_mode=''
+drop table if exists r_yymmddhhmmss
+create table r_yymmddhhmmss
+(
+a bigint,
+b datetime,
+c varchar(32),
+primary key(a)
+)
+partition by range columns(a)
+(
+partition p1 values less than(250601000000),
+partition p2 values less than(250602000000),
+partition p3 values less than(250603000000),
+partition p4 values less than(250604000000),
+partition p5 values less than(250605000000)
+)
+alter table r_yymmddhhmmss modify ttl
+set
+ttl_enable='off',
+ttl_cleanup='on',
+ttl_expr = `a` expire after 2 day timezone '+08:00',
+ttl_part_interval=interval(1,day),
+ttl_col_encoder=date_format(?, '%y%m%d%s%H%i%s'),
+ttl_col_decoder=str_to_date(?, '%y%m%d%H%i%s'),
+archive_type='partition',
+archive_table_pre_allocate = 2,
+archive_table_post_allocate = 2
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-04 00:00:00'
+alter table r_yymmddhhmmss cleanup expired data
+show create table r_yymmddhhmmss
+Table,Create Table
+r_yymmddhhmmss,CREATE TABLE `r_yymmddhhmmss` (
+	`a` bigint(20) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` varchar(32) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `a` EXPIRE AFTER 2 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_COL_ENCODER = DATE_FORMAT(?, '%y%m%d%s%H%i%s'), TTL_COL_DECODER = STR_TO_DATE(?, '%y%m%d%H%i%s'), TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`a`)
+(PARTITION p1 VALUES LESS THAN (250601000000) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (250602000000) ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN (250603000000) ENGINE = InnoDB,
+ PARTITION p4 VALUES LESS THAN (250604000000) ENGINE = InnoDB,
+ PARTITION p5 VALUES LESS THAN (250605000000) ENGINE = InnoDB,
+ PARTITION p20250604 VALUES LESS THAN (25060400000000) ENGINE = InnoDB,
+ PARTITION p20250605 VALUES LESS THAN (25060500000000) ENGINE = InnoDB,
+ PARTITION p20250606 VALUES LESS THAN (25060600000000) ENGINE = InnoDB,
+ PARTITION p20250607 VALUES LESS THAN (25060700000000) ENGINE = InnoDB)
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-04 00:00:00'
+alter table r_yymmddhhmmss cleanup expired data
+show create table r_yymmddhhmmss
+Table,Create Table
+r_yymmddhhmmss,CREATE TABLE `r_yymmddhhmmss` (
+	`a` bigint(20) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` varchar(32) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `a` EXPIRE AFTER 2 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_COL_ENCODER = DATE_FORMAT(?, '%y%m%d%s%H%i%s'), TTL_COL_DECODER = STR_TO_DATE(?, '%y%m%d%H%i%s'), TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`a`)
+(PARTITION p20250604 VALUES LESS THAN (25060400000000) ENGINE = InnoDB,
+ PARTITION p20250605 VALUES LESS THAN (25060500000000) ENGINE = InnoDB,
+ PARTITION p20250606 VALUES LESS THAN (25060600000000) ENGINE = InnoDB,
+ PARTITION p20250607 VALUES LESS THAN (25060700000000) ENGINE = InnoDB)
+set TTL_DEBUG_CURRENT_DATETIME='2025-06-04 00:00:00'
+alter table r_yymmddhhmmss cleanup expired data
+show create table r_yymmddhhmmss
+Table,Create Table
+r_yymmddhhmmss,CREATE TABLE `r_yymmddhhmmss` (
+	`a` bigint(20) NOT NULL,
+	`b` datetime DEFAULT NULL,
+	`c` varchar(32) DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'OFF', TTL_EXPR = `a` EXPIRE AFTER 2 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 2 * * ? *', TTL_COL_ENCODER = DATE_FORMAT(?, '%y%m%d%s%H%i%s'), TTL_COL_DECODER = STR_TO_DATE(?, '%y%m%d%H%i%s'), TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 2 )
+PARTITION BY RANGE COLUMNS(`a`)
+(PARTITION p20250604 VALUES LESS THAN (25060400000000) ENGINE = InnoDB,
+ PARTITION p20250605 VALUES LESS THAN (25060500000000) ENGINE = InnoDB,
+ PARTITION p20250606 VALUES LESS THAN (25060600000000) ENGINE = InnoDB,
+ PARTITION p20250607 VALUES LESS THAN (25060700000000) ENGINE = InnoDB)
+drop table if exists r_yymmddhhmmss;

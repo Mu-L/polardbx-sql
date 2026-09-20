@@ -162,6 +162,10 @@ public class PolarAccount {
         return String.format("'%s'@'%s'", username, host);
     }
 
+    public String getIdentifierWithoutQuote() {
+        return String.format("%s@%s", username, host);
+    }
+
     public static String identifierOf(MySqlUserName mysqlUsername) {
         String host = Optional.ofNullable(mysqlUsername.getHost())
             .orElse("%");

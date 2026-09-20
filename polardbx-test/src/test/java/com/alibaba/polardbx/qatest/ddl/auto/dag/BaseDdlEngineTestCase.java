@@ -50,7 +50,6 @@ import java.util.regex.Pattern;
 /**
  * NOTE THAT the test cases inherited from this class must be run for New DDL Engine in the PolarDB-X mode.
  */
-@Ignore
 public class BaseDdlEngineTestCase extends DDLBaseNewDBTestCase {
 
     protected static final Logger LOGGER = LoggerFactory.getLogger(BaseDdlEngineTestCase.class);

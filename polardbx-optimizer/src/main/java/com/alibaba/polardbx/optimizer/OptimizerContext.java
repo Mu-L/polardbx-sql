@@ -17,22 +17,30 @@
 package com.alibaba.polardbx.optimizer;
 
 import com.alibaba.polardbx.common.DefaultSchema;
+import com.alibaba.polardbx.common.exception.TddlRuntimeException;
+import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.model.Group;
 import com.alibaba.polardbx.common.model.Matrix;
 import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.common.utils.TStringUtil;
+import com.alibaba.polardbx.gms.metadb.external.ExternalCatalogManager;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.gms.topology.DbGroupInfoManager;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
 import com.alibaba.polardbx.optimizer.config.schema.DefaultDbSchema;
 import com.alibaba.polardbx.optimizer.config.schema.InformationSchema;
 import com.alibaba.polardbx.optimizer.config.schema.MetaDbSchema;
 import com.alibaba.polardbx.optimizer.config.server.IServerConfigManager;
+import com.alibaba.polardbx.optimizer.config.table.ExternalSchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.statistic.StatisticManager;
+import com.alibaba.polardbx.optimizer.external.catalog.ExternalSchemaBootstrap;
+import com.alibaba.polardbx.optimizer.external.files.EphemeralFilesSchemaManager;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfoManager;
 import com.alibaba.polardbx.optimizer.rule.Partitioner;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
+import com.alibaba.polardbx.optimizer.secret.SecretManager;
 import com.alibaba.polardbx.optimizer.tablegroup.TableGroupInfoManager;
 import com.alibaba.polardbx.optimizer.utils.OptimizerHelper;
 import com.alibaba.polardbx.optimizer.variable.VariableManager;
@@ -40,7 +48,9 @@ import com.alibaba.polardbx.optimizer.view.ViewManager;
 import com.alibaba.polardbx.stats.MatrixStatistics;
 import com.alibaba.polardbx.stats.SchemaTransactionStatistics;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -87,6 +97,19 @@ public class OptimizerContext {
     private static Map<String, OptimizerContext> optimizerContextMap =
         new ConcurrentHashMap<String, OptimizerContext>();
 
+    /**
+     * External catalog schemas (key {@code catalog$$db}) are kept apart from
+     * {@link #optimizerContextMap} so that resolving a local schema stays a plain map
+     * read, without paying for the external self-healing check on every lookup.
+     * <p>
+     * Membership is decided by entry point, never by name shape: {@link #loadContext}
+     * always targets the local map, and only {@code ExternalSchemaBootstrap} writes
+     * here. A local database whose name happens to contain the {@code $$} separator
+     * therefore remains a local schema.
+     */
+    private static final Map<String, OptimizerContext> externalContextMap =
+        new ConcurrentHashMap<>();
+
     public static Set<String> getActiveSchemaNames() {
         return optimizerContextMap.keySet().stream()
             .filter(x -> !x.equalsIgnoreCase(DefaultDbSchema.NAME) &&
@@ -109,6 +132,26 @@ public class OptimizerContext {
         DefaultSchema.setSchemaName(context.getSchemaName());
     }
 
+    /**
+     * Atomically loads an external schema context into the external map using putIfAbsent.
+     * Prevents duplicate bootstrap: if another thread already loaded the same schema,
+     * returns the existing context so the caller can clean up its own resources.
+     *
+     * @return the existing context if already present (caller should close its resources),
+     * or null if successfully inserted
+     */
+    public static OptimizerContext loadExternalContext(OptimizerContext context) {
+        // Sole insertion point of the external map, so the invariant that every external
+        // context carries an ExternalSchemaManager is enforced here once. The eviction and
+        // reclaim paths rely on it to cast without re-checking.
+        if (!(context.getLatestSchemaManager() instanceof ExternalSchemaManager)) {
+            throw new TddlRuntimeException(ErrorCode.ERR_EXTERNAL_TABLE,
+                "External context '" + context.getSchemaName()
+                    + "' must carry an ExternalSchemaManager");
+        }
+        return externalContextMap.putIfAbsent(context.getSchemaName().toLowerCase(), context);
+    }
+
     public static void setContext(OptimizerContext context) {
         DefaultSchema.setSchemaName(context.getSchemaName());
     }
@@ -125,12 +168,23 @@ public class OptimizerContext {
         }
         String schemaNameLowerCase = schemaName.toLowerCase();
         OptimizerContext optimizerContext = optimizerContextMap.get(schemaNameLowerCase);
+        if (optimizerContext == null) {
+            // A local schema wins over an external one on key collision, so the external
+            // map is only consulted after the local lookup misses.
+            optimizerContext = evictExternalSchema(externalContextMap.get(schemaNameLowerCase),
+                schemaNameLowerCase);
+        }
+
         if (optimizerContext == null || !optimizerContext.isFinishInit()) {
+            if (ExternalNameValidator.isExternalSchema(schemaNameLowerCase)) {
+                optimizerContext = ExternalSchemaBootstrap.tryBootstrap(schemaNameLowerCase);
+                if (optimizerContext != null) {
+                    return optimizerContext;
+                }
+            }
             IServerConfigManager serverConfigManager = OptimizerHelper.getServerConfigManager();
             if (serverConfigManager != null) {
-                // When running unit test, ServerConfigManager could be null
                 serverConfigManager.getAndInitDataSourceByDbName(schemaName);
-                // In case of specified context has not been initialized.
             }
             optimizerContext = optimizerContextMap.get(schemaNameLowerCase);
         }
@@ -138,8 +192,78 @@ public class OptimizerContext {
         return optimizerContext;
     }
 
+    private static OptimizerContext evictExternalSchema(OptimizerContext optimizerContext, String schemaNameLowerCase) {
+        // Self-healing: evict external schema if secret version has changed or catalog no longer exists
+        if (optimizerContext != null && optimizerContext.isFinishInit()) {
+            ExternalSchemaManager esm = (ExternalSchemaManager) optimizerContext.getLatestSchemaManager();
+            long currentVersion = SecretManager.getInstance().getGeneration(esm.getSecretName());
+            boolean secretChanged = currentVersion != esm.getSecretVersion();
+            boolean catalogGone = !ExternalCatalogManager.getInstance().exists(esm.getCatalogName());
+            if (secretChanged || catalogGone) {
+                esm.close();
+                externalContextMap.remove(schemaNameLowerCase, optimizerContext);
+                return null;
+            }
+        }
+        return optimizerContext;
+    }
+
     public static void clearContext(String schemaName) {
-        optimizerContextMap.remove(schemaName.toLowerCase());
+        String schemaNameLowerCase = schemaName.toLowerCase();
+        optimizerContextMap.remove(schemaNameLowerCase);
+        externalContextMap.remove(schemaNameLowerCase);
+    }
+
+    public static void removeExternalSchemas(String catalogName) {
+        List<String> keysToRemove = new ArrayList<>();
+        for (String key : externalContextMap.keySet()) {
+            if (ExternalNameValidator.belongsToCatalog(key, catalogName)) {
+                keysToRemove.add(key);
+            }
+        }
+        for (String key : keysToRemove) {
+            externalContextMap.computeIfPresent(key, (k, ctx) -> {
+                ((ExternalSchemaManager) ctx.getLatestSchemaManager()).close();
+                return null;
+            });
+        }
+        StatisticManager.removeExternalSchemaStatistics(catalogName);
+    }
+
+    /**
+     * Evicts every external schema context and closes its ConnectorMetadata.
+     * Called on RELOAD CONNECTORS: metadata instances were created from the old
+     * plugin classloaders and would otherwise pin them (and their connections /
+     * threads) forever; next access re-creates metadata from the new registry.
+     */
+    public static void evictAllExternalSchemas() {
+        List<String> keysToRemove = new ArrayList<>(externalContextMap.keySet());
+        Set<String> catalogNames = new HashSet<>();
+        for (String key : keysToRemove) {
+            externalContextMap.computeIfPresent(key, (k, ctx) -> {
+                ExternalSchemaManager esm = (ExternalSchemaManager) ctx.getLatestSchemaManager();
+                catalogNames.add(esm.getCatalogName());
+                esm.close();
+                return null;
+            });
+        }
+        for (String catalogName : catalogNames) {
+            StatisticManager.removeExternalSchemaStatistics(catalogName);
+        }
+    }
+
+    /**
+     * Snapshot of the external schema managers currently held, for idle reclaim.
+     * Entries are deliberately never removed on reclaim: they are cheap once their
+     * metadata is released, they carry the secret version that read-path self-healing
+     * compares against, and keeping them spares the next query a re-bootstrap round trip.
+     */
+    public static List<ExternalSchemaManager> getExternalSchemaManagers() {
+        List<ExternalSchemaManager> managers = new ArrayList<>();
+        for (OptimizerContext ctx : externalContextMap.values()) {
+            managers.add((ExternalSchemaManager) ctx.getLatestSchemaManager());
+        }
+        return managers;
     }
 
     public OptimizerContext(String schemaName) {
@@ -163,11 +287,17 @@ public class OptimizerContext {
         return schemaManager;
     }
 
+    public boolean isExternalSchema() {
+        return schemaManager instanceof ExternalSchemaManager
+            || schemaManager instanceof EphemeralFilesSchemaManager;
+    }
+
     public void setSchemaManager(SchemaManager schemaManager) {
         this.schemaManager = schemaManager;
     }
 
     public TddlRuleManager getRuleManager() {
+        rejectIfExternalSchema(rule, "sharding rule");
         return rule;
     }
 
@@ -199,6 +329,7 @@ public class OptimizerContext {
     }
 
     public ViewManager getViewManager() {
+        rejectIfExternalSchema(viewManager, "view");
         return viewManager;
     }
 
@@ -235,6 +366,7 @@ public class OptimizerContext {
     }
 
     public Partitioner getPartitioner() {
+        rejectIfExternalSchema(partitioner, "partitioning");
         return partitioner;
     }
 
@@ -243,7 +375,22 @@ public class OptimizerContext {
     }
 
     public ParamManager getParamManager() {
+        rejectIfExternalSchema(paramManager, "connection parameter");
         return paramManager;
+    }
+
+    /**
+     * An external context carries only a SchemaManager, so these components stay null.
+     * Returning null would surface far from here as an NPE, and installing no-op
+     * implementations would answer sharding or view questions with fabricated defaults.
+     * Reaching this point means a local-only code path was entered with an external
+     * schema, which is a routing bug, so it is reported where it happens.
+     */
+    private void rejectIfExternalSchema(Object component, String feature) {
+        if (component == null && isExternalSchema()) {
+            throw new TddlRuntimeException(ErrorCode.ERR_EXTERNAL_TABLE,
+                feature + " is not supported on external catalog schema '" + schemaName + "'");
+        }
     }
 
     public void setParamManager(ParamManager paramManager) {
@@ -260,7 +407,8 @@ public class OptimizerContext {
 
     public static SchemaTransactionStatistics getTransStat(String schema) {
         OptimizerContext context = getContext(schema);
-        if (DynamicConfig.getInstance().isEnableTransactionStatistics() && null != context) {
+        if (DynamicConfig.getInstance().isEnableTransactionStatistics()
+            && null != context && !context.isExternalSchema()) {
             return context.statistics.getTransactionStats();
         }
         return null;

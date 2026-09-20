@@ -48,6 +48,7 @@ import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.GeneratedColumnUtil;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.planner.ExecutionPlan;
 import com.alibaba.polardbx.optimizer.core.planner.Planner;
@@ -80,6 +81,19 @@ public class LogicalCreateIndexHandler extends LogicalCommonDdlHandler {
 
     public LogicalCreateIndexHandler(IRepository repo) {
         super(repo);
+    }
+
+    @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
+        String tableName = logicalDdlPlan.getTableName();
+        exclusiveResources.add(concatWithDot(logicalDdlPlan.getSchemaName(), tableName));
+        TableMeta tableMeta =
+            executionContext.getSchemaManager(logicalDdlPlan.getSchemaName()).getTableWithNull(tableName);
+        if (tableMeta != null) {
+            tableVersions.put(tableName, tableMeta.getVersion());
+        }
     }
 
     @Override
@@ -130,6 +144,13 @@ public class LogicalCreateIndexHandler extends LogicalCommonDdlHandler {
         final String indexName = sqlCreateIndex.getIndexName().getLastName();
         IndexValidator.validateIndexNameLength(indexName);
         IndexValidator.validateIndexNonExistence(logicalDdlPlan.getSchemaName(), tableName, indexName);
+        if (((LogicalCreateIndex) logicalDdlPlan).isColumnar()) {
+            IndexValidator.validateNoColumnarIndexOnExternalizedTable(
+                logicalDdlPlan.getSchemaName(), tableName);
+        } else {
+            IndexValidator.validateNoExternalizedColumnsInIndex(
+                logicalDdlPlan.getSchemaName(), tableName, sqlCreateIndex.getColumns());
+        }
 
         return false;
     }

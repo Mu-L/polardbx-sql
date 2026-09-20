@@ -27,6 +27,8 @@ import com.alibaba.polardbx.optimizer.core.rel.util.PartitionPlanExplainUtil;
 import com.alibaba.polardbx.optimizer.exception.OptimizerException;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
+import com.alibaba.polardbx.optimizer.utils.ExplainResult;
+import com.alibaba.polardbx.optimizer.utils.RelUtils;
 import com.google.common.collect.ImmutableList;
 import com.googlecode.protobuf.format.JsonFormat;
 import com.mysql.cj.x.protobuf.PolarxExecPlan;
@@ -247,6 +249,14 @@ public class SingleTableOperation extends BaseTableOperation {
             } else {
                 pw.item("XPlan", format.printToString(plan));
             }
+        }
+
+        if (executionContext != null && executionContext.getParamManager().getBoolean(ConnectionParams.EXPLAIN_SHOW_PHYSICAL_PLAN)
+                && executionContext.getExplain() != null
+                && (executionContext.getExplain().explainMode == ExplainResult.ExplainMode.DETAIL
+                || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.COST
+                || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.ANALYZE)){
+            RelUtils.displayPhysicalPlan(this, pw, executionContext);
         }
         return pw;
     }

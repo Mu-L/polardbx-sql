@@ -23,6 +23,7 @@ import com.alibaba.polardbx.common.jdbc.ParameterMethod;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.metadb.accessor.AbstractAccessor;
 import com.alibaba.polardbx.gms.module.LogLevel;
@@ -33,9 +34,11 @@ import com.alibaba.polardbx.gms.topology.ServerInstIdManager;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 
 import java.sql.SQLException;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import static com.alibaba.polardbx.gms.metadb.GmsSystemTables.BASELINE_INFO;
@@ -47,7 +50,7 @@ import static com.alibaba.polardbx.gms.metadb.GmsSystemTables.SPM_PLAN;
  * @author jilong.ljl
  */
 public class BaselineInfoAccessor extends AbstractAccessor implements AutoCloseable {
-    private static final Logger LOGGER = LoggerFactory.getLogger("spm");
+    private static final Logger LOGGER = LoggerFactory.getLogger(BaselineInfoAccessor.class);
 
     private static final String BASELINE_INFO_TABLE = wrap(SPM_BASELINE);
 
@@ -70,6 +73,7 @@ public class BaselineInfoAccessor extends AbstractAccessor implements AutoClosea
             + "PLAN_INFO.TRACE_ID, "
             + "PLAN_INFO.ORIGIN, "
             + "PLAN_INFO.EXTEND_FIELD AS PLAN_EXTEND, "
+            + "PLAN_INFO.VERSION AS VERSION, "
             + "UNIX_TIMESTAMP(PLAN_INFO.GMT_MODIFIED), "
             + "UNIX_TIMESTAMP(PLAN_INFO.GMT_CREATED) FROM " + BASELINE_INFO_TABLE + " AS BASELINE_INFO LEFT JOIN "
             + PLAN_INFO_TABLE + " AS PLAN_INFO ON "
@@ -117,6 +121,49 @@ public class BaselineInfoAccessor extends AbstractAccessor implements AutoClosea
             + "BASELINE_INFO.ID = PLAN_INFO.BASELINE_ID "
             + "WHERE BASELINE_INFO.SCHEMA_NAME  = ? AND BASELINE_INFO.ID = ? AND BASELINE_INFO.INST_ID=?";
 
+    private static final String DELETE_BASELINE_BY_NOT_IN_INST =
+        "DELETE BASELINE_INFO, PLAN_INFO FROM " + BASELINE_INFO_TABLE + " AS BASELINE_INFO LEFT JOIN "
+            + PLAN_INFO_TABLE + " AS PLAN_INFO ON "
+            + "BASELINE_INFO.SCHEMA_NAME = PLAN_INFO.SCHEMA_NAME AND "
+            + "BASELINE_INFO.INST_ID = PLAN_INFO.INST_ID AND "
+            + "BASELINE_INFO.ID = PLAN_INFO.BASELINE_ID "
+            + "WHERE BASELINE_INFO.INST_ID NOT IN (%s) "
+            + "AND PLAN_INFO.FIXED!=1";
+
+    private static final String DELETE_BASELINE_BY_NOT_IN_SCHEMA =
+        "DELETE BASELINE_INFO, PLAN_INFO FROM " + BASELINE_INFO_TABLE + " AS BASELINE_INFO LEFT JOIN "
+            + PLAN_INFO_TABLE + " AS PLAN_INFO ON "
+            + "BASELINE_INFO.SCHEMA_NAME = PLAN_INFO.SCHEMA_NAME AND "
+            + "BASELINE_INFO.INST_ID = PLAN_INFO.INST_ID AND "
+            + "BASELINE_INFO.ID = PLAN_INFO.BASELINE_ID "
+            + "WHERE BASELINE_INFO.INST_ID ='%s' AND BASELINE_INFO.SCHEMA_NAME NOT IN (%s) "
+            + "AND PLAN_INFO.FIXED!=1";
+
+    private static final String DELETE_BASELINE_BY_NOT_IN_BASELINE_ID =
+        "DELETE BASELINE_INFO, PLAN_INFO FROM " + BASELINE_INFO_TABLE + " AS BASELINE_INFO LEFT JOIN "
+            + PLAN_INFO_TABLE + " AS PLAN_INFO ON "
+            + "BASELINE_INFO.SCHEMA_NAME = PLAN_INFO.SCHEMA_NAME AND "
+            + "BASELINE_INFO.INST_ID = PLAN_INFO.INST_ID AND "
+            + "BASELINE_INFO.ID = PLAN_INFO.BASELINE_ID "
+            + "WHERE BASELINE_INFO.INST_ID ='%s' AND BASELINE_INFO.SCHEMA_NAME ='%s' AND BASELINE_INFO.ID NOT IN(%s) "
+            + "AND PLAN_INFO.FIXED!=1";
+
+    private static final String DELETE_BASELINE_BY_INST_SCHEMA =
+        "DELETE BASELINE_INFO, PLAN_INFO FROM " + BASELINE_INFO_TABLE + " AS BASELINE_INFO LEFT JOIN "
+            + PLAN_INFO_TABLE + " AS PLAN_INFO ON "
+            + "BASELINE_INFO.SCHEMA_NAME = PLAN_INFO.SCHEMA_NAME AND "
+            + "BASELINE_INFO.INST_ID = PLAN_INFO.INST_ID AND "
+            + "BASELINE_INFO.ID = PLAN_INFO.BASELINE_ID "
+            + "WHERE BASELINE_INFO.INST_ID ='%s' AND BASELINE_INFO.SCHEMA_NAME ='%s' "
+            + "AND PLAN_INFO.FIXED!=1";
+
+    private static final String DELETE_DRIFT_PLAN =
+        "DELETE FROM " + PLAN_INFO_TABLE + " WHERE BASELINE_ID NOT IN(SELECT ID FROM " + BASELINE_INFO_TABLE + ")";
+
+    private static final String DELETE_DRIFT_BASELINE =
+        "DELETE FROM " + BASELINE_INFO_TABLE + " WHERE ID NOT IN(SELECT BASELINE_ID FROM " + PLAN_INFO_TABLE
+            + ") AND EXTEND_FIELD NOT LIKE '%REBUILD_AT_LOAD%'";
+
     private static final String REPLACE_BASELINE =
         "REPLACE INTO " + BASELINE_INFO_TABLE
             + "(`SCHEMA_NAME`,`INST_ID`, `ID`, `SQL`, `TABLE_SET`, `EXTEND_FIELD`) "
@@ -138,8 +185,32 @@ public class BaselineInfoAccessor extends AbstractAccessor implements AutoClosea
             + "`TRACE_ID`, "
             + "`ORIGIN`, "
             + "`TABLES_HASHCODE`, "
-            + "`EXTEND_FIELD`)"
-            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            + "`EXTEND_FIELD`, "
+            + "`VERSION`)"
+            + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
+    /*
+     * Change context:
+     * - Before: only LAST_EXECUTE_TIME/CHOOSE_COUNT were refreshed here, because this branch was
+     *   originally meant for plan usage statistics only, on the assumption that a plan's shape
+     *   (and therefore its TABLES_HASHCODE) never changes while its plan id stays the same.
+     * - Path impact: fixed plans rebuilt in-memory by PlanManager.tryUpdatePlan() after a DDL bumps
+     *   the table version keep the same plan id, so persist() takes this UPDATE_PLAN_STATS branch;
+     *   without TABLES_HASHCODE here the new hashcode never reaches metadb.spm_plan, causing the
+     *   hourly BASELINE_SYNC load to see the stale hashcode and rebuild the same fixed plan again.
+     *   Non-fixed/normal plan persistence paths (REPLACE_PLAN, full insert) are unaffected.
+     * - Capability regression: None; TABLES_HASHCODE is now kept in sync with the in-memory value
+     *   on every persist(), matching the value already written by REPLACE_PLAN.
+     */
+    private static final String UPDATE_PLAN_STATS =
+        "UPDATE " + PLAN_INFO_TABLE
+            + " SET `LAST_EXECUTE_TIME` = ?, `CHOOSE_COUNT` = ?, `TABLES_HASHCODE` = ?"
+            + " WHERE `INST_ID` = ? AND `SCHEMA_NAME` = ? AND `BASELINE_ID` = ? AND `ID` = ?";
+
+    private static final String UPDATE_PLAN_EXTEND_FIELD =
+        "UPDATE " + PLAN_INFO_TABLE
+            + " SET `EXTEND_FIELD` = ?"
+            + " WHERE `INST_ID` = ? AND `SCHEMA_NAME` = ? AND `BASELINE_ID` = ? AND `ID` = ?";
 
     private static final String GET_PLAN_IDS_BY_BASELINE_ID =
         "SELECT ID FROM " + PLAN_INFO_TABLE + " WHERE SCHEMA_NAME = ? AND BASELINE_ID=? AND INST_ID=?";
@@ -194,9 +265,8 @@ public class BaselineInfoAccessor extends AbstractAccessor implements AutoClosea
         }
     }
 
-    public void deletePlan(String schemaName, int baselineInfoId, int planInfoId) {
+    public void deletePlan(String instId, String schemaName, int baselineInfoId, int planInfoId) {
         try {
-            String instId = ServerInstIdManager.getInstance().getInstId();
             Map<Integer, ParameterContext> params = new HashMap<>(1);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, schemaName);
             MetaDbUtil.setParameter(2, params, ParameterMethod.setInt, baselineInfoId);
@@ -207,6 +277,32 @@ public class BaselineInfoAccessor extends AbstractAccessor implements AutoClosea
             ModuleLogInfo.getInstance()
                 .logRecord(Module.SPM, LogPattern.PROCESS_END,
                     new String[] {"spm delete plan", schemaName + "," + baselineInfoId + "," + planInfoId},
+                    LogLevel.NORMAL);
+        } catch (Exception e) {
+            ModuleLogInfo.getInstance()
+                .logRecord(Module.SPM, LogPattern.UNEXPECTED, new String[] {"deletePlan", e.getMessage()},
+                    LogLevel.CRITICAL);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "delete",
+                PLAN_INFO_TABLE,
+                e.getMessage());
+        }
+    }
+
+    public void deletePlans(String instId, String schemaName, int baselineInfoId, Set<Integer> planInfoIds) {
+        try {
+            for (Integer planInfoId : planInfoIds) {
+                Map<Integer, ParameterContext> params = new HashMap<>(1);
+                MetaDbUtil.setParameter(1, params, ParameterMethod.setString, schemaName);
+                MetaDbUtil.setParameter(2, params, ParameterMethod.setInt, baselineInfoId);
+                MetaDbUtil.setParameter(3, params, ParameterMethod.setInt, planInfoId);
+                MetaDbUtil.setParameter(4, params, ParameterMethod.setString, instId);
+                MetaDbUtil.delete(DELETE_PLAN, params, connection);
+            }
+            String pIdsForLog = planInfoIds.stream().map(String::valueOf).collect(Collectors.joining(","));
+            ModuleLogInfo.getInstance()
+                .logRecord(Module.SPM, LogPattern.PROCESS_END,
+                    new String[] {
+                        "spm delete plan", schemaName + "," + baselineInfoId + "," + pIdsForLog},
                     LogLevel.NORMAL);
         } catch (Exception e) {
             ModuleLogInfo.getInstance()
@@ -252,7 +348,7 @@ public class BaselineInfoAccessor extends AbstractAccessor implements AutoClosea
             Map<Integer, ParameterContext> params = baseline.buildInsertParamsForBaseline();
             MetaDbUtil.insert(REPLACE_BASELINE, params, connection);
 
-            List<Integer> planIdsCurrent = getPlanIds(schemaName, baseline.getId());
+            List<Integer> planIdsCurrent = getPlanIds(baseline.getInstId(), schemaName, baseline.getId());
 
             // insert plans
             for (BaselineInfoRecord plan : plans) {
@@ -262,13 +358,16 @@ public class BaselineInfoAccessor extends AbstractAccessor implements AutoClosea
                 if (!planIdsCurrent.contains(plan.getPlanId()) || persistPlanStats) {
                     Map<Integer, ParameterContext> planParams = plan.buildInsertParamsForPlan();
                     MetaDbUtil.insert(REPLACE_PLAN, planParams, connection);
+                } else {
+                    Map<Integer, ParameterContext> planParams = plan.buildInsertParamsForPlanStats();
+                    MetaDbUtil.update(UPDATE_PLAN_STATS, planParams, connection);
                 }
                 planIdsCurrent.remove(new Integer(plan.getPlanId()));
             }
-            if (planIdsCurrent.size() > 0) {
+            if (!planIdsCurrent.isEmpty()) {
                 // remove other plan
                 for (Integer planId : planIdsCurrent) {
-                    deletePlan(schemaName, baseline.getId(), planId);
+                    deletePlan(baseline.getInstId(), schemaName, baseline.getId(), planId);
                 }
             }
             ModuleLogInfo.getInstance()
@@ -288,9 +387,48 @@ public class BaselineInfoAccessor extends AbstractAccessor implements AutoClosea
         }
     }
 
-    private List<Integer> getPlanIds(String schemaName, int baselineId) {
+    public int updateExtendField(String instId, String schema, int baselineId, int planId, String extend) {
+        // Validate required parameters
+        if (StringUtils.isEmpty(instId) || StringUtils.isEmpty(schema)) {
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_CHECK_ARGUMENTS,
+                "updateExtendField: instId=" + instId + ", schema=" + schema);
+        }
+
         try {
-            String instId = ServerInstIdManager.getInstance().getInstId();
+            Map<Integer, ParameterContext> params = new HashMap<>(5);
+            MetaDbUtil.setParameter(1, params, ParameterMethod.setString, extend);
+            MetaDbUtil.setParameter(2, params, ParameterMethod.setString, instId);
+            MetaDbUtil.setParameter(3, params, ParameterMethod.setString, schema);
+            MetaDbUtil.setParameter(4, params, ParameterMethod.setInt, baselineId);
+            MetaDbUtil.setParameter(5, params, ParameterMethod.setInt, planId);
+
+            int affectedRows = MetaDbUtil.update(UPDATE_PLAN_EXTEND_FIELD, params, connection);
+
+            ModuleLogInfo.getInstance()
+                .logRecord(Module.SPM, LogPattern.PROCESS_END,
+                    new String[] {
+                        "spm updateExtendField",
+                        String.format("schema=%s, baselineId=%d, planId=%d, affectedRows=%d",
+                            schema, baselineId, planId, affectedRows)},
+                    LogLevel.NORMAL);
+
+            return affectedRows;
+        } catch (Exception e) {
+            ModuleLogInfo.getInstance()
+                .logRecord(Module.SPM, LogPattern.UNEXPECTED,
+                    new String[] {
+                        "spm updateExtendField failed",
+                        String.format("instId=%s, schema=%s, baselineId=%d, planId=%d, error=%s",
+                            instId, schema, baselineId, planId, e.getMessage())},
+                    LogLevel.CRITICAL);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "update",
+                PLAN_INFO_TABLE,
+                e.getMessage());
+        }
+    }
+
+    private List<Integer> getPlanIds(String instId, String schemaName, int baselineId) {
+        try {
             Map<Integer, ParameterContext> params = new HashMap<>(3);
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, schemaName);
             MetaDbUtil.setParameter(2, params, ParameterMethod.setInt, baselineId);
@@ -372,6 +510,112 @@ public class BaselineInfoAccessor extends AbstractAccessor implements AutoClosea
             ModuleLogInfo.getInstance()
                 .logRecord(Module.SPM, LogPattern.UNEXPECTED, new String[] {"plan migration", e.getMessage()},
                     LogLevel.WARNING);
+        }
+    }
+
+    public void deleteBaselineWithInstNotExist(Set<String> instSet) {
+        try {
+            String instStr = concat(instSet);
+            if (StringUtils.isEmpty(instStr)) {
+                throw new TddlRuntimeException(ErrorCode.ERR_GMS_CHECK_ARGUMENTS, "deleteBaselineWithInstNotExist");
+            }
+            String sql = String.format(DELETE_BASELINE_BY_NOT_IN_INST, instStr);
+
+            int num = MetaDbUtil.delete(sql, connection);
+            ModuleLogInfo.getInstance()
+                .logRecord(Module.SPM, LogPattern.PROCESS_END,
+                    new String[] {"spm delete baseline by not in inst", instStr + ", deleted num:" + num},
+                    LogLevel.NORMAL);
+        } catch (Exception e) {
+            ModuleLogInfo.getInstance()
+                .logRecord(Module.SPM, LogPattern.UNEXPECTED, new String[] {"deleteBaseline", e.getMessage()},
+                    LogLevel.CRITICAL);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "delete",
+                BASELINE_INFO_TABLE + "/" + PLAN_INFO_TABLE,
+                e.getMessage());
+        }
+    }
+
+    public void deleteBaselineByInstSchema(String instId, Set<String> schemas) {
+        try {
+            String schemaStr = concat(schemas);
+            String sql = String.format(DELETE_BASELINE_BY_NOT_IN_SCHEMA, instId, schemaStr);
+
+            if (StringUtils.isEmpty(instId) || StringUtils.isEmpty(schemaStr)) {
+                throw new TddlRuntimeException(ErrorCode.ERR_GMS_CHECK_ARGUMENTS,
+                    "deleteBaselineWithInstAndSchema:" + instId + "," + schemaStr);
+            }
+
+            int num = MetaDbUtil.delete(sql, connection);
+            ModuleLogInfo.getInstance()
+                .logRecord(Module.SPM, LogPattern.PROCESS_END,
+                    new String[] {
+                        "spm delete baseline by not in schema", instId + "," + schemaStr + ", deleted num:" + num},
+                    LogLevel.NORMAL);
+        } catch (Exception e) {
+            ModuleLogInfo.getInstance()
+                .logRecord(Module.SPM, LogPattern.UNEXPECTED, new String[] {"deleteBaseline", e.getMessage()},
+                    LogLevel.CRITICAL);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "delete",
+                BASELINE_INFO_TABLE + "/" + PLAN_INFO_TABLE,
+                e.getMessage());
+        }
+    }
+
+    public void deleteBaselineByInstSchemaBaselineId(String instId, String schema, Collection<Integer> baselineIds) {
+        try {
+            // Change context:
+            // - Before: an empty kept-id list was formatted into "BASELINE_INFO.ID NOT IN(null)"
+            //   because concatInt() returns null for an empty collection; by SQL three-valued
+            //   logic the predicate is UNKNOWN for every row, so the BASELINE_SYNC clean job
+            //   never deleted stale schema-level baselines.
+            // - Path impact: only the empty/null list branch changes to a full clean of the
+            //   inst+schema; the non-empty NOT IN path used by the same scheduled job is
+            //   unchanged, and fixed baselines remain protected by FIXED!=1 in both branches.
+            // - Capability regression: None, the empty-list case previously deleted no rows,
+            //   which contradicted the intended "keep nothing" semantics of the clean job.
+            final String sql;
+            if (baselineIds == null || baselineIds.isEmpty()) {
+                sql = String.format(DELETE_BASELINE_BY_INST_SCHEMA, instId, schema);
+            } else {
+                sql = String
+                    .format(DELETE_BASELINE_BY_NOT_IN_BASELINE_ID, instId, schema, concatInt(baselineIds));
+            }
+
+            int num = MetaDbUtil.delete(sql, connection);
+            ModuleLogInfo.getInstance()
+                .logRecord(Module.SPM, LogPattern.PROCESS_END,
+                    new String[] {
+                        "spm delete baseline by not in schema",
+                        instId + "," + schema + "," + (baselineIds == null ? 0 : baselineIds.size())
+                            + ", deleted num:" + num},
+                    LogLevel.NORMAL);
+        } catch (Exception e) {
+            ModuleLogInfo.getInstance()
+                .logRecord(Module.SPM, LogPattern.UNEXPECTED, new String[] {"deleteBaseline", e.getMessage()},
+                    LogLevel.CRITICAL);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "delete",
+                BASELINE_INFO_TABLE + "/" + PLAN_INFO_TABLE,
+                e.getMessage());
+        }
+    }
+
+    public void deleteDriftPlan() {
+        try {
+            int planNum = MetaDbUtil.delete(DELETE_DRIFT_PLAN, connection);
+            int baselineNum = MetaDbUtil.delete(DELETE_DRIFT_BASELINE, connection);
+            ModuleLogInfo.getInstance()
+                .logRecord(Module.SPM, LogPattern.PROCESS_END,
+                    new String[] {
+                        "spm delete drift plan in meta", "baseline:" + baselineNum + ",plan:" + planNum},
+                    LogLevel.NORMAL);
+        } catch (Exception e) {
+            ModuleLogInfo.getInstance()
+                .logRecord(Module.SPM, LogPattern.UNEXPECTED, new String[] {"deleteDriftPlan", e.getMessage()},
+                    LogLevel.CRITICAL);
+            throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "delete",
+                BASELINE_INFO_TABLE + "/" + PLAN_INFO_TABLE,
+                e.getMessage());
         }
     }
 }

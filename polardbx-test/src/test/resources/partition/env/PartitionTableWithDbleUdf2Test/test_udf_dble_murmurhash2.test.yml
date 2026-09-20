@@ -1,0 +1,79 @@
+## DISABLE_FAST_SQL_PARSER
+
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=false;
+
+  ## partCol: bigint
+  ## partitionCount = "4";
+  ## shardingValueMaxLength = "15";
+  ## isDigitCheck = "1";
+  ## leftPaddingChar = "NO";
+drop table if exists partmur_t1;
+create table partmur_t1(
+c1 bigint not null,
+c2 bigint not null
+)
+partition by udf_hash(unitmurhashi4(c1))
+partition 4
+(
+  partition p0 values less than(1),
+  partition p1 values less than(2),
+  partition p2 values less than(3),
+  partition p3 values less than(4)
+);
+
+  ## error_msg: $# check routeKey is legal #$
+select unitmurhashi4(null);
+
+select unitmurhashi4('');
+select unitmurhashi4('a');
+select unitmurhashi4(0);
+  ## error_msg: $# check routeKey is legal #$
+select unitmurhashi4(1234567890123456);
+select unitmurhashi4(1234567890);
+
+  ## error_msg: $# check routeKey is legal #$
+select part_route('', 'partmur_t1', null);
+  ## error_msg: $# invalid type conversion #$
+select part_route('', 'partmur_t1', '');
+  ## error_msg: $# invalid type conversion #$
+select part_route('', 'partmur_t1', 'a');
+select part_route('', 'partmur_t1', 3);
+
+  ## partCol: varchar
+  ## partitionCount = "4";
+  ## shardingValueMaxLength = "15";
+  ## isDigitCheck = "1";
+  ## leftPaddingChar = "NO";
+drop table if exists partmur_t2;
+create table partmur_t2 (
+c1 varchar(32) not null,
+c2 varchar(32) not null
+)
+partition by udf_hash(unitmurhashstr4(c1))
+partition 4
+(
+partition p0 values less than(1),
+partition p1 values less than(2),
+partition p2 values less than(3),
+partition p3 values less than(4)
+);
+
+  ## error_msg: $# check routeKey is legal #$
+select unitmurhashstr4(null);
+  ## error_msg: $# check routeKey is legal #$
+select unitmurhashstr4('');
+select unitmurhashstr4('a');
+select unitmurhashstr4('0');
+select unitmurhashstr4('1234567890123456');
+select unitmurhashstr4('1234567890');
+
+  ## error_msg: $# check routeKey is legal #$
+select part_route('', 'partmur_t2', null);
+  ## error_msg: $# check routeKey is legal #$
+select part_route('', 'partmur_t2', '');
+select part_route('', 'partmur_t2', 'a');
+select part_route('', 'partmur_t2', 0);
+select part_route('', 'partmur_t2', 3);
+select part_route('', 'partmur_t2', '0');
+select part_route('', 'partmur_t2', '1234567890123456');
+select part_route('', 'partmur_t2', '1234567890');

@@ -212,4 +212,43 @@ public class PolarDBXCciTest extends MysqlTest {
             SQLUtils.toMySqlString(result, SQLUtils.DEFAULT_LCASE_FORMAT_OPTION));
     }
 
+    public void test_14() {
+        String sql = "show columnar indexes from tb as of tso 7244952534094184514;";
+        SQLStatementParser parser =
+            new MySqlStatementParser(sql, SQLParserFeature.TDDLHint, SQLParserFeature.EnableCurrentUserExpr,
+                SQLParserFeature.DRDSAsyncDDL, SQLParserFeature.DRDSBaseline, SQLParserFeature.DrdsGSI);
+        List<SQLStatement> stmtList = parser.parseStatementList();
+
+        SQLStatement result = stmtList.get(0);
+        Assert.assertEquals("SHOW COLUMNAR INDEX FROM tb AS OF TSO 7244952534094184514;", SQLUtils.toMySqlString(result));
+        Assert.assertEquals("show columnar index from tb as of tso 7244952534094184514;",
+            SQLUtils.toMySqlString(result, SQLUtils.DEFAULT_LCASE_FORMAT_OPTION));
+    }
+
+    public void test_15() {
+        String sql = "show columnar index from `tb` as of tso 7244952534094184514";
+        SQLStatementParser parser =
+            new MySqlStatementParser(sql, SQLParserFeature.TDDLHint, SQLParserFeature.EnableCurrentUserExpr,
+                SQLParserFeature.DRDSAsyncDDL, SQLParserFeature.DRDSBaseline, SQLParserFeature.DrdsGSI);
+        List<SQLStatement> stmtList = parser.parseStatementList();
+
+        SQLStatement result = stmtList.get(0);
+        Assert.assertEquals("SHOW COLUMNAR INDEX FROM `tb` AS OF TSO 7244952534094184514", SQLUtils.toMySqlString(result));
+        Assert.assertEquals("show columnar index from `tb` as of tso 7244952534094184514",
+            SQLUtils.toMySqlString(result, SQLUtils.DEFAULT_LCASE_FORMAT_OPTION));
+    }
+
+    public void test_16() {
+        String sql = "show columnar index from `app`.`tb` as of tso 7244952534094184514";
+        SQLStatementParser parser =
+            new MySqlStatementParser(sql, SQLParserFeature.TDDLHint, SQLParserFeature.EnableCurrentUserExpr,
+                SQLParserFeature.DRDSAsyncDDL, SQLParserFeature.DRDSBaseline, SQLParserFeature.DrdsGSI);
+        List<SQLStatement> stmtList = parser.parseStatementList();
+
+        SQLStatement result = stmtList.get(0);
+        Assert.assertEquals("SHOW COLUMNAR INDEX FROM `app`.`tb` AS OF TSO 7244952534094184514", SQLUtils.toMySqlString(result));
+        Assert.assertEquals("show columnar index from `app`.`tb` as of tso 7244952534094184514",
+            SQLUtils.toMySqlString(result, SQLUtils.DEFAULT_LCASE_FORMAT_OPTION));
+    }
+
 }

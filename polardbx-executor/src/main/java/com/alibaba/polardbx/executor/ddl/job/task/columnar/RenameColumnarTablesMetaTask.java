@@ -59,4 +59,8 @@ public class RenameColumnarTablesMetaTask extends BaseGmsTask {
             versionIds, jobId);
     }
 
+    @Override
+    protected void updateTableVersion(Connection metaDbConnection) {
+        // 不修改版本，后续 qihua 会废弃该 task，和主表元数据一同提交修改，保证原子性
+    }
 }

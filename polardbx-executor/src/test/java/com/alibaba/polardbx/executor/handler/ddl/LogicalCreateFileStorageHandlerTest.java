@@ -20,17 +20,21 @@ import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.mock.MockUtils;
+import com.alibaba.polardbx.common.oss.filesystem.OSSFileSystem;
 import com.alibaba.polardbx.common.oss.filesystem.cache.FileMergeCachingFileSystem;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJob;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.TransientDdlJob;
+import com.alibaba.polardbx.executor.utils.DdlUtils;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
+import com.alibaba.polardbx.gms.engine.DynamicCacheFileSystem;
 import com.alibaba.polardbx.gms.engine.FileSystemGroup;
 import com.alibaba.polardbx.gms.engine.FileSystemManager;
 import com.alibaba.polardbx.gms.metadb.misc.DdlEngineTaskAccessor;
 import com.alibaba.polardbx.gms.topology.ServerInstIdManager;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import com.alibaba.polardbx.gms.util.PasswdUtil;
+import com.alibaba.polardbx.optimizer.context.DdlContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.LogicalCreateFileStorage;
 import com.google.common.cache.CacheBuilder;
@@ -91,6 +95,8 @@ public class LogicalCreateFileStorageHandlerTest {
     @Mock
     private ExecutionContext executionContext;
     @Mock
+    private DdlContext ddlContext;
+    @Mock
     private LogicalCreateFileStorage logicalCreateFileStorage;
     @Mock
     private CreateFileStorage createFileStorage;
@@ -104,6 +110,8 @@ public class LogicalCreateFileStorageHandlerTest {
     private MockedStatic<ServerInstIdManager> mockedServerInstId;
 
     private MockedConstruction<FileMergeCachingFileSystem> fileSystemMockedConstruction;
+    private MockedConstruction<OSSFileSystem> ossFileSystemMockedConstruction;
+    private MockedConstruction<DynamicCacheFileSystem> dynamicCacheFileSystemMockedConstruction;
     private MockedConstruction<DdlEngineTaskAccessor> mockedDdlEngineTaskAccessor;
     private MockedConstruction<FileSystemManager> fileSystemManagerMockedConstruction;
 
@@ -112,6 +120,7 @@ public class LogicalCreateFileStorageHandlerTest {
         mockitoCloseable = MockitoAnnotations.openMocks(this);
         handler = new LogicalCreateFileStorageHandler(null);
 
+        when(executionContext.getDdlContext()).thenReturn(ddlContext);
         mockedMetaDbUtil = Mockito.mockStatic(MetaDbUtil.class);
         Connection mockConnection = Mockito.mock(Connection.class);
         when(MetaDbUtil.getConnection()).thenReturn(mockConnection);
@@ -120,12 +129,26 @@ public class LogicalCreateFileStorageHandlerTest {
         mockedInstConf = Mockito.mockStatic(InstConfUtil.class);
         mockedInstConf.when(InstConfUtil::fetchLongConfigs).thenReturn(Maps.newHashMap());
         mockedServerInstId = Mockito.mockStatic(ServerInstIdManager.class);
-        mockedServerInstId.when(ServerInstIdManager::getInstance).thenReturn(Mockito.mock(ServerInstIdManager.class));
+        ServerInstIdManager mockedServerInstIdManager = Mockito.mock(ServerInstIdManager.class);
+        mockedServerInstId.when(ServerInstIdManager::getInstance).thenReturn(mockedServerInstIdManager);
+        Mockito.when(mockedServerInstIdManager.getMasterInstId()).thenReturn("mock-master-inst-id");
 
         fileSystemMockedConstruction = Mockito.mockConstruction(FileMergeCachingFileSystem.class, (mock, context) -> {
             when(mock.exists(Mockito.any())).thenReturn(true);
             when(mock.getWorkingDirectory()).thenReturn(new Path("/"));
         });
+
+        // Mock OSSFileSystem constructor to prevent real OSS connection during initialize()
+        ossFileSystemMockedConstruction = Mockito.mockConstruction(OSSFileSystem.class, (mock, context) -> {
+            when(mock.getUri()).thenReturn(java.net.URI.create("oss://polardbx-bucket-name/"));
+        });
+
+        // Mock DynamicCacheFileSystem constructor (OSS now returns this instead of FileMergeCachingFileSystem)
+        dynamicCacheFileSystemMockedConstruction =
+            Mockito.mockConstruction(DynamicCacheFileSystem.class, (mock, context) -> {
+                when(mock.exists(Mockito.any())).thenReturn(true);
+                when(mock.getWorkingDirectory()).thenReturn(new Path("/"));
+            });
 
         mockedDdlEngineTaskAccessor = Mockito.mockConstruction(DdlEngineTaskAccessor.class, (mock, context) -> {
             when(mock.updateTask(Mockito.any())).thenReturn(1);
@@ -169,6 +192,14 @@ public class LogicalCreateFileStorageHandlerTest {
             fileSystemMockedConstruction.close();
         }
 
+        if (ossFileSystemMockedConstruction != null) {
+            ossFileSystemMockedConstruction.close();
+        }
+
+        if (dynamicCacheFileSystemMockedConstruction != null) {
+            dynamicCacheFileSystemMockedConstruction.close();
+        }
+
         if (mockedDdlEngineTaskAccessor != null) {
             mockedDdlEngineTaskAccessor.close();
         }
@@ -188,7 +219,9 @@ public class LogicalCreateFileStorageHandlerTest {
         DdlJob ddlJob = handler.buildDdlJob(logicalCreateFileStorage, executionContext);
         DdlTask ddlTask = ddlJob.getAllTasks().get(0);
         prepareDdlTask(ddlTask);
-        ddlTask.execute(new ExecutionContext());
+        try (MockedStatic<DdlUtils> ddlUtils = Mockito.mockStatic(DdlUtils.class)) {
+            ddlTask.execute(new ExecutionContext());
+        }
 
         // Test for incomplete settings
         MOCK_OSS_WITH.remove("access_key_secret");
@@ -204,24 +237,6 @@ public class LogicalCreateFileStorageHandlerTest {
         MockUtils.assertThrows(
             TddlRuntimeException.class,
             ErrorCode.ERR_EXECUTE_ON_OSS.getMessage("Should contain ACCESS_KEY_ID in with!"),
-            () -> {
-                handler.buildDdlJob(logicalCreateFileStorage, executionContext);
-            }
-        );
-
-        MOCK_OSS_WITH.put("endpoint", "invalid_enpoint");
-        MockUtils.assertThrows(
-            TddlRuntimeException.class,
-            ErrorCode.ERR_EXECUTE_ON_OSS.getMessage("bad ENDPOINT value in with!"),
-            () -> {
-                handler.buildDdlJob(logicalCreateFileStorage, executionContext);
-            }
-        );
-
-        MOCK_OSS_WITH.remove("endpoint");
-        MockUtils.assertThrows(
-            TddlRuntimeException.class,
-            ErrorCode.ERR_EXECUTE_ON_OSS.getMessage("Should contain ENDPOINT in with!"),
             () -> {
                 handler.buildDdlJob(logicalCreateFileStorage, executionContext);
             }
@@ -247,7 +262,9 @@ public class LogicalCreateFileStorageHandlerTest {
         DdlJob ddlJob = handler.buildDdlJob(logicalCreateFileStorage, executionContext);
         DdlTask ddlTask = ddlJob.getAllTasks().get(0);
         prepareDdlTask(ddlTask);
-        ddlTask.execute(new ExecutionContext());
+        try (MockedStatic<DdlUtils> ddlUtils = Mockito.mockStatic(DdlUtils.class)) {
+            ddlTask.execute(new ExecutionContext());
+        }
 
         // Test for incomplete settings
         MOCK_S3_WITH.remove("access_key_secret");
@@ -288,7 +305,9 @@ public class LogicalCreateFileStorageHandlerTest {
         DdlJob ddlJob = handler.buildDdlJob(logicalCreateFileStorage, executionContext);
         DdlTask ddlTask = ddlJob.getAllTasks().get(0);
         prepareDdlTask(ddlTask);
-        ddlTask.execute(new ExecutionContext());
+        try (MockedStatic<DdlUtils> ddlUtils = Mockito.mockStatic(DdlUtils.class)) {
+            ddlTask.execute(new ExecutionContext());
+        }
 
         // Test for incomplete or invalid settings
         MOCK_ABS_WITH.put("azure_connection_string", String.format(

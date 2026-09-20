@@ -18,7 +18,7 @@ package com.alibaba.polardbx.executor.ddl.job.validator;
 
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
-import com.alibaba.polardbx.executor.ddl.job.factory.storagepool.StoragePoolUtils;
+import com.alibaba.polardbx.optimizer.locality.StoragePoolUtils;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
 import com.alibaba.polardbx.gms.topology.*;
 import com.alibaba.polardbx.optimizer.locality.StoragePoolManager;

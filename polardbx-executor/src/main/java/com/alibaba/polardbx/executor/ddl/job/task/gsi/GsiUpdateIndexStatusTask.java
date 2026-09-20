@@ -94,7 +94,8 @@ public class GsiUpdateIndexStatusTask extends BaseGmsTask {
 
         //sync have to be successful to continue
         if (needOnlineSchemaChange) {
-            SyncManagerHelper.sync(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
+            SyncManagerHelper.syncThrowExceptions(new TableMetaChangeSyncAction(schemaName, logicalTableName),
+                SyncScope.ALL);
         }
 
         FailPoint.injectRandomExceptionFromHint(executionContext);

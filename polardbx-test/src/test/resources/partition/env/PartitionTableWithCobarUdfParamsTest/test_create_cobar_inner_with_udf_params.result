@@ -1,0 +1,216 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+## ======== hash =========
+drop table if exists cobar_hash_0_p8;
+create table cobar_hash_0_p8 (a bigint，b bigint)
+partition by udf_hash (
+    `a` with udf_params (
+      'cobar/PartitionByLong',
+      '{
+          "partitionCount" : "8",
+          "partitionLength" : "128"
+       }'
+    )
+)
+partitions 8;
+show create table cobar_hash_0_p8;
+Table,Create Table
+cobar_hash_0_p8,CREATE TABLE `cobar_hash_0_p8` (
+	`a` bigint(20) DEFAULT NULL,
+	`b` bigint(20) DEFAULT NULL,
+	KEY `auto_shard_key_a` USING BTREE (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY UDF_HASH(`a` WITH UDF_PARAMS (
+'cobar/PartitionByLong',
+'{
+          "partitionCount" : "8",
+          "partitionLength" : "128"
+       }'
+))
+PARTITIONS 8
+(PARTITION p1 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (2) ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN (3) ENGINE = InnoDB,
+ PARTITION p4 VALUES LESS THAN (4) ENGINE = InnoDB,
+ PARTITION p5 VALUES LESS THAN (5) ENGINE = InnoDB,
+ PARTITION p6 VALUES LESS THAN (6) ENGINE = InnoDB,
+ PARTITION p7 VALUES LESS THAN (7) ENGINE = InnoDB,
+ PARTITION p8 VALUES LESS THAN (9223372036854775807) ENGINE = InnoDB)
+insert into cobar_hash_0_p8 values (100,100),(200,200),(300,300);
+select a,b from cobar_hash_0_p8 where a=200;
+a,b
+200,200
+drop table if exists cobar_hash_0_p8;
+### ======== stringhash =========
+drop table if exists cobar_strhash_0_p8;
+create table cobar_strhash_0_p8(a varchar(32)，b bigint)
+partition by udf_hash (
+    `a` with udf_params (
+      'cobar/PartitionByString',
+      '{
+          "partitionCount" : "8",
+          "partitionLength" : "128",
+          "hashSlice" : "0:8"
+      }'
+    )
+)
+partitions 8;
+show create table cobar_strhash_0_p8;
+Table,Create Table
+cobar_strhash_0_p8,CREATE TABLE `cobar_strhash_0_p8` (
+	`a` varchar(32) DEFAULT NULL,
+	`b` bigint(20) DEFAULT NULL,
+	KEY `auto_shard_key_a` USING BTREE (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY UDF_HASH(`a` WITH UDF_PARAMS (
+'cobar/PartitionByString',
+'{
+          "partitionCount" : "8",
+          "partitionLength" : "128",
+          "hashSlice" : "0:8"
+      }'
+))
+PARTITIONS 8
+(PARTITION p1 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (2) ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN (3) ENGINE = InnoDB,
+ PARTITION p4 VALUES LESS THAN (4) ENGINE = InnoDB,
+ PARTITION p5 VALUES LESS THAN (5) ENGINE = InnoDB,
+ PARTITION p6 VALUES LESS THAN (6) ENGINE = InnoDB,
+ PARTITION p7 VALUES LESS THAN (7) ENGINE = InnoDB,
+ PARTITION p8 VALUES LESS THAN (9223372036854775807) ENGINE = InnoDB)
+insert into cobar_strhash_0_p8 values ('100',100),('200',200),('300',300);
+select a,b from cobar_strhash_0_p8 where a='200';
+a,b
+200,200
+drop table if exists cobar_strhash_0_p8;
+### ======== enum =========
+drop table if exists cobar_enum_0_p5;
+create table cobar_enum_0_p5
+ (a bigint，b bigint)
+partition by udf_hash(
+  `a` with udf_params (
+  'cobar/PartitionByFileMap',
+  '{
+      "defaultNode" : "0",
+      "type" : "0",　
+      "mapFile" :
+      "
+        10000=0
+        10010=1
+        10020=2
+        10030=3
+        10040=4
+      "
+    }')
+)
+partitions 5;
+show create table cobar_enum_0_p5;
+Table,Create Table
+cobar_enum_0_p5,CREATE TABLE `cobar_enum_0_p5` (
+	`a` bigint(20) DEFAULT NULL,
+	`b` bigint(20) DEFAULT NULL,
+	KEY `auto_shard_key_a` USING BTREE (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY UDF_HASH(`a` WITH UDF_PARAMS (
+'cobar/PartitionByFileMap',
+'{
+      "defaultNode" : "0",
+      "type" : "0",　
+      "mapFile" :
+      "
+        10000=0
+        10010=1
+        10020=2
+        10030=3
+        10040=4
+      "
+    }'
+))
+PARTITIONS 5
+(PARTITION p1 VALUES LESS THAN (1) ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN (2) ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN (3) ENGINE = InnoDB,
+ PARTITION p4 VALUES LESS THAN (4) ENGINE = InnoDB,
+ PARTITION p5 VALUES LESS THAN (9223372036854775807) ENGINE = InnoDB)
+insert into cobar_enum_0_p5 values (10000,10000),(10020,10020),(10030,10030);
+select a,b from cobar_enum_0_p5 where a=10030;
+a,b
+10030,10030
+drop table if exists cobar_enum_0_p5;
+### ======== multi-dimension =========
+drop table if exists cobar_hash_strhash;
+create table cobar_hash_strhash (a bigint，b varchar(32))
+partition by udf_hash (
+  `a` with udf_params (
+  'cobar/PartitionByLong',
+  '{
+          "partitionCount" : "4",
+          "partitionLength" : "128"
+   }'
+  )
+)
+partitions 4
+subpartition by udf_hash (
+  `b` with udf_params (
+  'cobar/PartitionByString',
+  '{
+          "partitionCount" : "8",
+          "partitionLength" : "128",
+          "hashSlice" : "0:8"
+  }'
+  )
+)
+subpartitions 8;
+show create table cobar_hash_strhash;
+Table,Create Table
+cobar_hash_strhash,CREATE TABLE `cobar_hash_strhash` (
+	`a` bigint(20) DEFAULT NULL,
+	`b` varchar(32) DEFAULT NULL,
+	KEY `auto_shard_key_a` USING BTREE (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY UDF_HASH(`a` WITH UDF_PARAMS (
+'cobar/PartitionByLong',
+'{
+          "partitionCount" : "4",
+          "partitionLength" : "128"
+   }'
+))
+PARTITIONS 4
+SUBPARTITION BY UDF_HASH(`b` WITH UDF_PARAMS (
+'cobar/PartitionByString',
+'{
+          "partitionCount" : "8",
+          "partitionLength" : "128",
+          "hashSlice" : "0:8"
+  }'
+))
+SUBPARTITIONS 8
+(SUBPARTITION sp1 VALUES LESS THAN (1),
+ SUBPARTITION sp2 VALUES LESS THAN (2),
+ SUBPARTITION sp3 VALUES LESS THAN (3),
+ SUBPARTITION sp4 VALUES LESS THAN (4),
+ SUBPARTITION sp5 VALUES LESS THAN (5),
+ SUBPARTITION sp6 VALUES LESS THAN (6),
+ SUBPARTITION sp7 VALUES LESS THAN (7),
+ SUBPARTITION sp8 VALUES LESS THAN (9223372036854775807))
+(PARTITION p1 VALUES LESS THAN (1),
+ PARTITION p2 VALUES LESS THAN (2),
+ PARTITION p3 VALUES LESS THAN (3),
+ PARTITION p4 VALUES LESS THAN (9223372036854775807))
+## error_msg: $# not supported #$
+create table cobar_jumpstrhash(a varchar(32)，b bigint)
+partition by udf_hash (
+  `a` with udf_params (
+  'cobar/jumpstringhash',
+  '{
+          "partitionCount" : "8",
+          "partitionLength" : "128",
+          "hashSlice" : "0:8"
+  }'
+  )
+)
+partitions 8;
+not supported

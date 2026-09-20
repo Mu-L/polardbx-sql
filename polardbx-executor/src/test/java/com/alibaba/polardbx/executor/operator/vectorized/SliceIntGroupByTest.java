@@ -2,10 +2,14 @@ package com.alibaba.polardbx.executor.operator.vectorized;
 
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ParamManager;
+import com.alibaba.polardbx.executor.chunk.AbstractBlock;
+import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
 import com.alibaba.polardbx.executor.chunk.IntegerBlock;
 import com.alibaba.polardbx.executor.chunk.SliceBlock;
 import com.alibaba.polardbx.executor.chunk.SliceBlockBuilder;
+import com.alibaba.polardbx.executor.chunk.columnar.CommonLazyBlock;
+import com.alibaba.polardbx.executor.chunk.columnar.LazyBlock;
 import com.alibaba.polardbx.executor.operator.BaseExecTest;
 import com.alibaba.polardbx.executor.operator.HashAggExec;
 import com.alibaba.polardbx.executor.operator.MockExec;
@@ -36,6 +40,8 @@ public class SliceIntGroupByTest extends BaseExecTest {
 
     @Before
     public void before() {
+        checkExecutorMemory = true;
+
         Map connectionMap = new HashMap();
         connectionMap.put(ConnectionParams.CHUNK_SIZE.getName(), 1000);
 
@@ -314,5 +320,166 @@ public class SliceIntGroupByTest extends BaseExecTest {
             IntegerBlock.of(0, 1, 2, 3, 7, 6, 9, 4),
             IntegerBlock.of(9, 12, 27, 21, 15, 9, 24, 3)
         )), false);
+    }
+
+    @Test
+    public void testLazyBlockWrappedSliceWithoutDictionary() {
+        SliceBlock rawSlice = sliceOf(context,
+            Slices.utf8Slice("abc"), Slices.utf8Slice("a"),
+            Slices.utf8Slice("ab"), Slices.utf8Slice("abc"),
+            Slices.utf8Slice("abc"), Slices.utf8Slice("a"),
+            Slices.utf8Slice("ab"), Slices.utf8Slice("abc"),
+            Slices.utf8Slice("abc"), Slices.utf8Slice("a"),
+            Slices.utf8Slice("ab"), Slices.utf8Slice("abc")
+        );
+
+        TestLazyBlockWrapper lazyBlock = new TestLazyBlockWrapper(rawSlice);
+
+        MockExec inputExec = MockExec.builder(DataTypes.VarcharType, DataTypes.IntegerType, DataTypes.IntegerType)
+            .withChunk(new Chunk(
+                lazyBlock,
+                IntegerBlock.of(0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3),
+                IntegerBlock.of(3, 4, 9, 7, 3, 4, 9, 7, 3, 4, 9, 7))
+            )
+            .build();
+
+        int[] groups = {0, 1};
+
+        List<Aggregator> aggregators = new ArrayList<>();
+        aggregators.add(new SumV2(2, false, context.getMemoryPool().getMemoryAllocatorCtx(), -1));
+
+        List<DataType> outputColumn = new ArrayList<>();
+        outputColumn.add(DataTypes.VarcharType);
+        outputColumn.add(DataTypes.IntegerType);
+        outputColumn.add(DataTypes.IntegerType);
+
+        HashAggExec exec =
+            new HashAggExec(inputExec.getDataTypes(), groups, aggregators, outputColumn, aggHashTableSize, context);
+
+        SingleExecTest test = new SingleExecTest.Builder(exec, inputExec.getChunks()).build();
+        test.exec();
+
+        assertExecResultByRow(test.result(), Collections.singletonList(new Chunk(
+            sliceOf(context,
+                Slices.utf8Slice("abc"), Slices.utf8Slice("a"),
+                Slices.utf8Slice("ab"), Slices.utf8Slice("abc")
+            ),
+            IntegerBlock.of(0, 1, 2, 3),
+            IntegerBlock.of(9, 12, 27, 21)
+        )), false);
+    }
+
+    @Test
+    public void testBothBlocksLazyWrapped() {
+        SliceBlock rawSlice = sliceOf(context,
+            Slices.utf8Slice("abc"), Slices.utf8Slice("a"),
+            Slices.utf8Slice("ab"), Slices.utf8Slice("abc"),
+            Slices.utf8Slice("abc"), Slices.utf8Slice("a"),
+            Slices.utf8Slice("ab"), Slices.utf8Slice("abc"),
+            Slices.utf8Slice("abc"), Slices.utf8Slice("a"),
+            Slices.utf8Slice("ab"), Slices.utf8Slice("abc")
+        );
+
+        TestLazyBlockWrapper lazySlice = new TestLazyBlockWrapper(rawSlice);
+        TestLazyBlockWrapper lazyInt = new TestLazyBlockWrapper(
+            IntegerBlock.of(0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3));
+
+        MockExec inputExec = MockExec.builder(DataTypes.VarcharType, DataTypes.IntegerType, DataTypes.IntegerType)
+            .withChunk(new Chunk(
+                lazySlice,
+                lazyInt,
+                IntegerBlock.of(3, 4, 9, 7, 3, 4, 9, 7, 3, 4, 9, 7))
+            )
+            .build();
+
+        int[] groups = {0, 1};
+
+        List<Aggregator> aggregators = new ArrayList<>();
+        aggregators.add(new SumV2(2, false, context.getMemoryPool().getMemoryAllocatorCtx(), -1));
+
+        List<DataType> outputColumn = new ArrayList<>();
+        outputColumn.add(DataTypes.VarcharType);
+        outputColumn.add(DataTypes.IntegerType);
+        outputColumn.add(DataTypes.IntegerType);
+
+        HashAggExec exec =
+            new HashAggExec(inputExec.getDataTypes(), groups, aggregators, outputColumn, aggHashTableSize, context);
+
+        SingleExecTest test = new SingleExecTest.Builder(exec, inputExec.getChunks()).build();
+        test.exec();
+
+        assertExecResultByRow(test.result(), Collections.singletonList(new Chunk(
+            sliceOf(context,
+                Slices.utf8Slice("abc"), Slices.utf8Slice("a"),
+                Slices.utf8Slice("ab"), Slices.utf8Slice("abc")
+            ),
+            IntegerBlock.of(0, 1, 2, 3),
+            IntegerBlock.of(9, 12, 27, 21)
+        )), false);
+    }
+
+    @Test
+    public void testLazyBlockRecycleSafety() {
+        SliceBlock rawSlice = sliceOf(context,
+            Slices.utf8Slice("abc"), Slices.utf8Slice("a"));
+
+        TestLazyBlockWrapper wrapper = new TestLazyBlockWrapper(rawSlice);
+
+        wrapper.recycle();
+        org.junit.Assert.assertFalse(wrapper.isRecyclable());
+        wrapper.setRecycler(null);
+    }
+
+    @Test
+    public void testLazyBlockNonNullBranches() throws Exception {
+        SliceBlock rawSlice = sliceOf(context,
+            Slices.utf8Slice("abc"), Slices.utf8Slice("a"));
+
+        TestLazyBlockWrapper wrapper = new TestLazyBlockWrapper(rawSlice);
+
+        java.lang.reflect.Field blockField = CommonLazyBlock.class.getDeclaredField("block");
+        blockField.setAccessible(true);
+        blockField.set(wrapper, rawSlice);
+
+        org.junit.Assert.assertFalse(wrapper.isRecyclable());
+
+        rawSlice.setRecycler(new com.alibaba.polardbx.executor.operator.util.DriverObjectPool.Recycler<Object>() {
+            @Override
+            public void recycle(Object entry) {
+            }
+        });
+        org.junit.Assert.assertTrue(wrapper.isRecyclable());
+
+        wrapper.setRecycler(null);
+        wrapper.recycle();
+    }
+
+    private static class TestLazyBlockWrapper extends CommonLazyBlock {
+        private final AbstractBlock innerBlock;
+
+        TestLazyBlockWrapper(AbstractBlock innerBlock) {
+            super(innerBlock.getType(), null, null, false, false, null, null, 0, null);
+            this.innerBlock = innerBlock;
+        }
+
+        @Override
+        public void load() {
+        }
+
+        @Override
+        public Block getLoaded() {
+            return innerBlock;
+        }
+
+        @Override
+        public int getPositionCount() {
+            return innerBlock.getPositionCount();
+        }
+
+        @SuppressWarnings("unchecked")
+        @Override
+        public <T extends com.alibaba.polardbx.executor.chunk.CastableBlock> T cast(Class<T> clazz) {
+            return (T) innerBlock;
+        }
     }
 }

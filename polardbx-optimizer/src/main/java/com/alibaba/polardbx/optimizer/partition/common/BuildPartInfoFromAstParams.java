@@ -43,6 +43,7 @@ public class BuildPartInfoFromAstParams {
     protected ExecutionContext ec;
     protected LocalityDesc locality;
     protected boolean ttlTemporary = false;
+    protected boolean noPartitionKeyTable = false;
 
     public BuildPartInfoFromAstParams() {
     }
@@ -149,5 +150,13 @@ public class BuildPartInfoFromAstParams {
 
     public void setTtlTemporary(boolean ttlTemporary) {
         this.ttlTemporary = ttlTemporary;
+    }
+
+    public boolean isNoPartitionKeyTable() {
+        return noPartitionKeyTable;
+    }
+
+    public void setNoPartitionKeyTable(boolean noPartitionKeyTable) {
+        this.noPartitionKeyTable = noPartitionKeyTable;
     }
 }

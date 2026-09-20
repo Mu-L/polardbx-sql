@@ -1,0 +1,7 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+
+
+use polardbx;
+select table_schema, table_name from information_schema.partitions_meta where TABLE_NAME='' limit 1;
+desc information_schema.partitions_meta;

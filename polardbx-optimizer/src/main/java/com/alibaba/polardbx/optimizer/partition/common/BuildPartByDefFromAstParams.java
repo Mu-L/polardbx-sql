@@ -52,6 +52,7 @@ public class BuildPartByDefFromAstParams {
     protected boolean containNextLevelPartSpec;
 
     protected boolean ttlTemporary = false;
+    protected boolean noPartitionKeyTable = false;
 
     public BuildPartByDefFromAstParams() {
     }
@@ -226,6 +227,14 @@ public class BuildPartByDefFromAstParams {
 
     public void setTtlTemporary(boolean ttlTemporary) {
         this.ttlTemporary = ttlTemporary;
+    }
+
+    public boolean isNoPartitionKeyTable() {
+        return noPartitionKeyTable;
+    }
+
+    public void setNoPartitionKeyTable(boolean noPartitionKeyTable) {
+        this.noPartitionKeyTable = noPartitionKeyTable;
     }
 
     public void setBuildSubpartBy(boolean buildSubpartBy) {

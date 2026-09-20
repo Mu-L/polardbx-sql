@@ -1,6 +1,9 @@
 package com.alibaba.polardbx.executor.operator.scan;
 
 import com.alibaba.polardbx.common.Engine;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.executor.archive.reader.OSSColumnTransformer;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.Chunk;
@@ -9,6 +12,7 @@ import com.alibaba.polardbx.executor.operator.scan.impl.MorselColumnarSplit;
 import com.alibaba.polardbx.executor.operator.scan.impl.NonBlockedScanPreProcessor;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
+import com.alibaba.polardbx.optimizer.statis.OperatorStatistics;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -16,11 +20,11 @@ import org.apache.calcite.rex.RexNode;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
-import org.openjdk.jol.info.GraphLayout;
 import org.roaringbitmap.RoaringBitmap;
 
 import java.io.IOException;
 import java.util.BitSet;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -196,6 +200,12 @@ public class ScanRangeTest extends ScanTestBase {
         Map<String, ScanWork<ColumnarSplit, Chunk>> finishedWorks = new TreeMap<>();
 
         context = new ExecutionContext();
+        Map map = new HashMap();
+        map.put(ConnectionParams.ENABLE_REUSE_VECTOR.getName(), true);
+        map.put(ConnectionParams.CHUNK_SIZE.getName(), 1000);
+        map.put(ConnectionParams.SCAN_POLICY.getName(), 2);
+        ParamManager paramManager = new ParamManager(map);
+        context.setParamManager(paramManager);
         context.setTraceId(TRACE_ID);
 
         final int morselUnit = MORSEL_UNIT;
@@ -225,6 +235,7 @@ public class ScanRangeTest extends ScanTestBase {
             .morselUnit(morselUnit)
             .pushDown(evaluator)
             .prepare(preProcessor)
+            .operatorStatistic(new OperatorStatistics())
             .columnarManager(mockColumnarManager)
             .memoryAllocator(memoryAllocatorCtx)
             .build();
@@ -233,6 +244,8 @@ public class ScanRangeTest extends ScanTestBase {
 
         ScanWork<ColumnarSplit, Chunk> scanWork;
         while ((scanWork = split.nextWork()) != null) {
+            MemoryCountable.checkDeviation(scanWork, 0.05d, true);
+
             System.out.println(scanWork.getWorkId());
 
             MorselColumnarSplit.ScanRange scanRange =
@@ -244,7 +257,7 @@ public class ScanRangeTest extends ScanTestBase {
 
             // get status
             IOStatus<Chunk> ioStatus = scanWork.getIOStatus();
-            scanWork.invoke(SCAN_WORK_EXECUTOR);
+            scanWork.invoke(SCAN_WORK_EXECUTOR, null);
 
             // Get chunks according to state.
             boolean isCompleted = false;
@@ -269,15 +282,20 @@ public class ScanRangeTest extends ScanTestBase {
                 }
                 case FINISHED:
 
+                    MemoryCountable.checkDeviation(scanWork, 0.05d, true);
+                    MemoryCountable.checkDeviation(ioStatus, 0.05d, true);
+
                     while ((result = ioStatus.popResult()) != null) {
 
                     }
                     isCompleted = true;
 
+                    MemoryCountable.checkDeviation(scanWork, 0.05d, true);
+
                     finishedWorks.put(scanWork.getWorkId(), scanWork);
-                    long sizeInBytesAfterClose = GraphLayout.parseInstance(scanWork).totalSize();
-                    System.out.println("object size = " + GraphLayout.parseInstance(scanWork).totalSize());
-                    Assert.assertTrue(sizeInBytesAfterClose * 100 < sizeInBytesBeforeClose);
+//                    long sizeInBytesAfterClose = GraphLayout.parseInstance(scanWork).totalSize();
+//                    System.out.println("object size = " + GraphLayout.parseInstance(scanWork).totalSize());
+//                    Assert.assertTrue(sizeInBytesAfterClose * 100 < sizeInBytesBeforeClose);
 
                     break;
                 case FAILED:

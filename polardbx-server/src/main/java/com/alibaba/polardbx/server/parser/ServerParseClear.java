@@ -41,6 +41,9 @@ public final class ServerParseClear {
     public static final int NFS_CACHE = 9;
     public static final int S3_CACHE = 10;
     public static final int ABS_CACHE = 11;
+    public static final int TTL_QUERY_STAT = 12;
+    public static final int INDEX_USAGE = 13;
+    public static final int CONTEXT = 14;
 
     public static final Set<Integer> PREPARE_UNSUPPORTED_CLEAR_TYPE;
 
@@ -58,6 +61,8 @@ public final class ServerParseClear {
         PREPARE_UNSUPPORTED_CLEAR_TYPE.add(NFS_CACHE);
         PREPARE_UNSUPPORTED_CLEAR_TYPE.add(S3_CACHE);
         PREPARE_UNSUPPORTED_CLEAR_TYPE.add(ABS_CACHE);
+        PREPARE_UNSUPPORTED_CLEAR_TYPE.add(TTL_QUERY_STAT);
+        PREPARE_UNSUPPORTED_CLEAR_TYPE.add(INDEX_USAGE);
     }
 
     public static int parse(ByteString stmt, int offset) {
@@ -102,6 +107,15 @@ public final class ServerParseClear {
             case 'F':
             case 'f':
                 return functionCheck(stmt, i);
+            case 'T':
+            case 't':
+                return ttlQueryStatCheck(stmt, i);
+            case 'I':
+            case 'i':
+                return indexUsageCheck(stmt, i);
+            case 'C':
+            case 'c':
+                return contextCheck(stmt, i);
             default:
                 return OTHER;
             }
@@ -114,6 +128,28 @@ public final class ServerParseClear {
         if (stmt.length() >= offset + expect.length()) {
             if (stmt.substring(offset, offset + expect.length()).equalsIgnoreCase(expect)) {
                 return FUNCTION_CACHE;
+            }
+        }
+        return OTHER;
+    }
+
+    // CLEAR TTL QUERY STAT
+    private static int ttlQueryStatCheck(ByteString stmt, int offset) {
+        final String expect = "TTL QUERY STAT";
+        if (stmt.length() >= offset + expect.length()) {
+            if (stmt.substring(offset, offset + expect.length()).equalsIgnoreCase(expect)) {
+                return TTL_QUERY_STAT;
+            }
+        }
+        return OTHER;
+    }
+
+    // CLEAR INDEX_USAGE
+    private static int indexUsageCheck(ByteString stmt, int offset) {
+        final String expect = "INDEX_USAGE";
+        if (stmt.length() >= offset + expect.length()) {
+            if (stmt.substring(offset, offset + expect.length()).equalsIgnoreCase(expect)) {
+                return INDEX_USAGE;
             }
         }
         return OTHER;
@@ -224,6 +260,17 @@ public final class ServerParseClear {
         if (stmt.length() >= offset + expect.length()) {
             if (stmt.substring(offset, offset + expect.length()).equalsIgnoreCase(expect)) {
                 return HEATMAP_CACHE;
+            }
+        }
+        return OTHER;
+    }
+
+    // CLEAR CONTEXT
+    private static int contextCheck(ByteString stmt, int offset) {
+        final String expect = "CONTEXT";
+        if (stmt.length() >= offset + expect.length()) {
+            if (stmt.substring(offset, offset + expect.length()).equalsIgnoreCase(expect)) {
+                return CONTEXT;
             }
         }
         return OTHER;

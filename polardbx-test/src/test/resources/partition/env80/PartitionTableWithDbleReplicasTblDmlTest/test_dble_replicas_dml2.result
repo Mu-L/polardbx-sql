@@ -1,0 +1,113 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## LOCALITY_DN_LIST: $dn1, $dn2;
+## test dble_db
+set ENABLE_PUSH_DOWN_AUTO_INCREMENT=true;
+set DEFAULT_COLLATION_FOR_UTF8MB4='utf8mb4_bin';
+set COLLATION_SERVER='utf8mb4_bin';
+set ENABLE_POST_PLANNER_PARTITION_HINT_PRUNING=true;
+set GROUP_PARALLELISM=1;
+use polardbx;
+drop database if exists mydbledb5;
+## USE_DN_LIST_MSG
+create database if not exists mydbledb5 mode = 'auto'
+locality='dble_config={"group_config":{ "mydbledb5_g1":["$dn1","mydbledb5_01"],"mydbledb5_g2":["$dn2","mydbledb5_02"],"mydbledb5_g3":["$dn1","mydbledb5_03"],"mydbledb5_g4":["$dn2","mydbledb5_04"] }}';
+use mydbledb5;
+CREATE TABLE `r_dml_g1g2_t1` (
+`a` int not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb5_g1,mydbledb5_g2';
+CREATE TABLE `r_dml_g1g2_t2` (
+`a` int not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb5_g1,mydbledb5_g2';
+CREATE TABLE `r_dml_g2g3_t1` (
+`a` int not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb5_g2,mydbledb5_g3';
+CREATE TABLE `r_dml_g2g3_t2` (
+`a` int not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb5_g2,mydbledb5_g3';
+unregister table r_dml_g1g2_t1;
+unregister table r_dml_g1g2_t2;
+unregister table r_dml_g2g3_t1;
+unregister table r_dml_g2g3_t2;
+REGISTER TABLE `r_dml_g1g2_t1` (
+`a` int not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb5_g1,mydbledb5_g2';
+REGISTER TABLE `r_dml_g1g2_t2` (
+`a` int not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb5_g1,mydbledb5_g2';
+REGISTER TABLE `r_dml_g2g3_t1` (
+`a` int not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb5_g2,mydbledb5_g3';
+REGISTER TABLE `r_dml_g2g3_t2` (
+`a` int not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+REPLICAS
+LOCALITY='db_set=mydbledb5_g2,mydbledb5_g3';
+CREATE TABLE `b_t1` (
+`a` int not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+BROADCAST;
+CREATE TABLE `b_t2` (
+`a` int not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+BROADCAST;
+CREATE TABLE `b_t3` (
+`a` int not null auto_increment,
+`b` int,
+primary key(`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8
+BROADCAST;
+insert r_dml_g1g2_t1 values (1,100),(2,200),(3,300);
+insert r_dml_g1g2_t2 values (1,100),(2,200),(3,300);
+insert r_dml_g2g3_t1 values (1,100),(2,200),(3,300);
+insert r_dml_g2g3_t2 values (1,100),(2,200),(3,300);
+insert b_t1 values (1,100),(2,200),(3,300);
+insert b_t2 values (1,100),(2,200),(3,300);
+insert b_t3 values (1,100),(2,200),(3,300);
+DELETE b_t1, b_t2 FROM b_t1 INNER JOIN b_t2 ON b_t1.a=b_t2.a;
+DELETE r_dml_g1g2_t1, r_dml_g1g2_t2 FROM r_dml_g1g2_t1 INNER JOIN r_dml_g1g2_t2 ON r_dml_g1g2_t1.a=r_dml_g1g2_t2.a;
+EXPLAIN DELETE r_dml_g1g2_t1, r_dml_g1g2_t2,r_dml_g2g3_t1 FROM r_dml_g1g2_t1 INNER JOIN r_dml_g1g2_t2 ON r_dml_g1g2_t1.a=r_dml_g1g2_t2.a  INNER JOIN r_dml_g2g3_t1 ON r_dml_g1g2_t1.a=r_dml_g2g3_t1.a;
+Logical ExecutionPlan
+LogicalModify(TYPE="DELETE", TABLES="mydbledb5.r_dml_g1g2_t1, mydbledb5.r_dml_g1g2_t2, mydbledb5.r_dml_g2g3_t1")
+  LogicalView(tables="r_dml_g1g2_t1[p2],r_dml_g1g2_t2[p2],r_dml_g2g3_t1[p1]", sql="SELECT `r_dml_g1g2_t1`.`a`, `r_dml_g1g2_t1`.`b`, `r_dml_g1g2_t2`.`a` AS `a0`, `r_dml_g1g2_t2`.`b` AS `b0`, `r_dml_g2g3_t1`.`a` AS `a1`, `r_dml_g2g3_t1`.`b` AS `b1` FROM `r_dml_g1g2_t1` AS `r_dml_g1g2_t1` INNER JOIN `r_dml_g1g2_t2` AS `r_dml_g1g2_t2` ON (`r_dml_g1g2_t1`.`a` = `r_dml_g1g2_t2`.`a`) INNER JOIN `r_dml_g2g3_t1` AS `r_dml_g2g3_t1` ON ((`r_dml_g1g2_t1`.`a` = `r_dml_g2g3_t1`.`a`) AND (`r_dml_g1g2_t2`.`a` = `r_dml_g2g3_t1`.`a`)) FOR UPDATE")
+EXPLAIN DELETE r_dml_g1g2_t1, r_dml_g1g2_t2,r_dml_g2g3_t1 FROM r_dml_g1g2_t1 INNER JOIN r_dml_g1g2_t2 ON r_dml_g1g2_t1.a=r_dml_g1g2_t2.a  INNER JOIN r_dml_g2g3_t1 ON r_dml_g1g2_t1.a=r_dml_g2g3_t1.a;
+Logical ExecutionPlan
+LogicalModify(TYPE="DELETE", TABLES="mydbledb5.r_dml_g1g2_t1, mydbledb5.r_dml_g1g2_t2, mydbledb5.r_dml_g2g3_t1")
+  LogicalView(tables="r_dml_g1g2_t1[p2],r_dml_g1g2_t2[p2],r_dml_g2g3_t1[p1]", sql="SELECT `r_dml_g1g2_t1`.`a`, `r_dml_g1g2_t1`.`b`, `r_dml_g1g2_t2`.`a` AS `a0`, `r_dml_g1g2_t2`.`b` AS `b0`, `r_dml_g2g3_t1`.`a` AS `a1`, `r_dml_g2g3_t1`.`b` AS `b1` FROM `r_dml_g1g2_t1` AS `r_dml_g1g2_t1` INNER JOIN `r_dml_g1g2_t2` AS `r_dml_g1g2_t2` ON (`r_dml_g1g2_t1`.`a` = `r_dml_g1g2_t2`.`a`) INNER JOIN `r_dml_g2g3_t1` AS `r_dml_g2g3_t1` ON ((`r_dml_g1g2_t1`.`a` = `r_dml_g2g3_t1`.`a`) AND (`r_dml_g1g2_t2`.`a` = `r_dml_g2g3_t1`.`a`)) FOR UPDATE")
+DELETE r_dml_g1g2_t1, r_dml_g1g2_t2 FROM r_dml_g1g2_t1 INNER JOIN r_dml_g1g2_t2 ON r_dml_g1g2_t1.a=r_dml_g1g2_t2.a  INNER JOIN r_dml_g2g3_t1 ON r_dml_g1g2_t1.a=r_dml_g2g3_t1.a;
+use polardbx;
+drop database mydbledb5;

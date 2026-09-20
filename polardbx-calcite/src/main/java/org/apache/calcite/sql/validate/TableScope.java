@@ -17,6 +17,7 @@
 package org.apache.calcite.sql.validate;
 
 import org.apache.calcite.sql.SqlNode;
+import org.apache.calcite.sql.SqlSelect;
 
 /**
  * The name-resolution scope of a LATERAL TABLE clause.
@@ -62,6 +63,14 @@ class TableScope extends ListScope {
 
   public void meetLateral() {
     this.beforeLateral = false;
+  }
+
+  @Override public boolean isWithin(SqlValidatorScope scope2) {
+      if (this == scope2) {
+          return true;
+      }
+      SqlValidatorScope s = getValidator().getSelectScope((SqlSelect) node);
+      return s.isWithin(scope2);
   }
 }
 

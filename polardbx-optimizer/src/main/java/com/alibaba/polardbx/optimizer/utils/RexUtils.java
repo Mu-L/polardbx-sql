@@ -37,6 +37,7 @@ import com.alibaba.polardbx.common.utils.time.core.MySQLTimeVal;
 import com.alibaba.polardbx.common.utils.time.core.MysqlDateTime;
 import com.alibaba.polardbx.common.utils.time.core.OriginalDate;
 import com.alibaba.polardbx.common.utils.time.core.OriginalTimestamp;
+import com.alibaba.polardbx.common.utils.time.core.TimeStorage;
 import com.alibaba.polardbx.common.utils.time.parser.TimeParserFlags;
 import com.alibaba.polardbx.common.utils.version.InstanceVersion;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
@@ -135,6 +136,7 @@ import org.apache.calcite.util.Util;
 import org.jetbrains.annotations.NotNull;
 
 import java.math.BigInteger;
+import java.sql.Timestamp;
 import java.sql.Types;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -156,6 +158,7 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
+import static com.alibaba.polardbx.common.properties.ConnectionParams.ENABLE_NEW_SEQ_BATCH;
 import static org.apache.calcite.sql.SqlKind.ALL;
 import static org.apache.calcite.sql.SqlKind.IS_NOT_DISTINCT_FROM;
 import static org.apache.calcite.sql.SqlKind.LITERAL;
@@ -383,6 +386,7 @@ public class RexUtils {
             }
         }
 
+        long startSeqTime = System.nanoTime();
         // Handle sequence
         final int seqColumnIndex = insert.getSeqColumnIndex();
         final boolean usingSequence = seqColumnIndex >= 0;
@@ -407,7 +411,9 @@ public class RexUtils {
             autoValueOnZero);
 
         if (usingSequence) {
-            boolean autoIncrementUsingSeq = replaceSequenceWithLiteralParam(insert, values, params, visitor);
+            boolean enableNewSeqBatchOptimization = ec.getParamManager().getBoolean(ENABLE_NEW_SEQ_BATCH);
+            boolean autoIncrementUsingSeq =
+                replaceSequenceWithLiteralParam(insert, values, params, enableNewSeqBatchOptimization, visitor);
 
             if (null != handlerParams) {
                 handlerParams.autoIncrementUsingSeq = autoIncrementUsingSeq;
@@ -416,6 +422,10 @@ public class RexUtils {
 
         final Long lastInsertId = visitor.getLastInsertId();
         final Long returnedLastInsertId = null != lastInsertId ? lastInsertId : visitor.getReturnedLastInsertId();
+
+        if (ec.getRuntimeStatistics() != null) {
+            ec.getRuntimeStatistics().addFetchSequenceTimecost(System.nanoTime() - startSeqTime);
+        }
 
         if (null != handlerParams) {
             if (null != lastInsertId) {
@@ -434,15 +444,7 @@ public class RexUtils {
 
             // Compute value only once
             Object value = RexUtils.getValueFromRexNode(rexNode, ec, new HashMap<>());
-            if (value instanceof Slice) {
-                if (isBinaryReturnType(rexNode)) {
-                    value = ((Slice) value).getBytes();
-                } else {
-                    value = ((Slice) value).toString(CharsetName.DEFAULT_STORAGE_CHARSET_IN_CHUNK);
-                }
-            } else if (value instanceof ByteString) {
-                value = ((ByteString) value).getBytes();
-            }
+            value = convertValueForDml(value, rexNode);
 
             // Add value to ExecutionContext
             final Parameters params = ec.getParams();
@@ -479,15 +481,7 @@ public class RexUtils {
                 try {
                     Object value = evalFunc.apply(rexNode);
 
-                    if (value instanceof Slice) {
-                        if (isBinaryReturnType(rexNode)) {
-                            value = ((Slice) value).getBytes();
-                        } else {
-                            value = ((Slice) value).toString(CharsetName.DEFAULT_STORAGE_CHARSET_IN_CHUNK);
-                        }
-                    } else if (value instanceof ByteString) {
-                        value = ((ByteString) value).getBytes();
-                    }
+                    value = convertValueForDml(value, rexNode);
                     if (!columnMeta.isNullable() && value == null) {
                         throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
                             String.format("Column `%s` cannot be null", columnMeta.getName()));
@@ -610,15 +604,7 @@ public class RexUtils {
                 // RexCallParams ->  RexCall (the real expr call) -> IExpr.eval() -> obj
                 RexNode rexNode = getRexCall.apply(callParam);
                 Object value = evalFunc.apply(rexNode);
-                if (value instanceof Slice) {
-                    if (isBinaryReturnType(rexNode)) {
-                        value = ((Slice) value).getBytes();
-                    } else {
-                        value = ((Slice) value).toString(CharsetName.DEFAULT_STORAGE_CHARSET_IN_CHUNK);
-                    }
-                } else if (value instanceof ByteString) {
-                    value = ((ByteString) value).getBytes();
-                }
+                value = convertValueForDml(value, rexNode);
                 final ParameterContext newPc = new ParameterContext(ParameterMethod.setObject1, new Object[] {
                     paramIndex + 1, value});
 
@@ -632,20 +618,33 @@ public class RexUtils {
             final int paramIndex = callParam.getIndex();
             RexNode rexNode = getRexCall.apply(callParam);
             Object value = evalFunc.apply(rexNode);
-            if (value instanceof Slice) {
-                if (isBinaryReturnType(rexNode)) {
-                    value = ((Slice) value).getBytes();
-                } else {
-                    value = ((Slice) value).toString(CharsetName.DEFAULT_STORAGE_CHARSET_IN_CHUNK);
-                }
-            } else if (value instanceof ByteString) {
-                value = ((ByteString) value).getBytes();
-            }
+            value = convertValueForDml(value, rexNode);
             final ParameterContext newPc = new ParameterContext(ParameterMethod.setObject1, new Object[] {
                 paramIndex + 1, value});
 
             param.put(paramIndex + 1, newPc);
         }
+    }
+
+    public static Object convertValueForDml(Object value, RexNode rexNode) {
+        Object result = null;
+        if (value instanceof Decimal) {
+            result = ((Decimal) value).toBigDecimal();
+        } else if (value instanceof Slice) {
+            if (isBinaryReturnType(rexNode)) {
+                result = ((Slice) value).getBytes();
+            } else {
+                result = ((Slice) value).toString(CharsetName.DEFAULT_STORAGE_CHARSET_IN_CHUNK);
+            }
+        } else if (value instanceof ByteString) {
+            result = ((ByteString) value).getBytes();
+        } else if (value instanceof OriginalTimestamp && TimeStorage.isZero((Timestamp) value)) {
+            // Convert OriginalTimestamp with value of "000-00-00 00:00:00.000" to string, for JDBC
+            result = value.toString();
+        } else {
+            result = value;
+        }
+        return result;
     }
 
     public static boolean isBinaryReturnType(RexNode rexNode) {
@@ -704,7 +703,7 @@ public class RexUtils {
     }
 
     public static boolean replaceSequenceWithLiteralParam(LogicalInsert insert, LogicalDynamicValues values,
-                                                          Parameters params,
+                                                          Parameters params, boolean enableNewSeqBatchOptimization,
                                                           ReplaceSequenceWithLiteralVisitor visitor) {
         final boolean isBatch = params.isBatch();
 
@@ -739,8 +738,13 @@ public class RexUtils {
         boolean autoIncrementUsingSeq = true;
         if (isBatch) {
             // The number of parameter value is larger than RexDynamicParam
-            for (Map<Integer, ParameterContext> curParam : params.getBatchParameters()) {
-                autoIncrementUsingSeq &= visitor.replaceDynamicParam(mergeRow, curParam, autoIncColumnIndex);
+            if (enableNewSeqBatchOptimization && (SequenceAttribute.Type.NEW == visitor.getSeqType())) {
+                autoIncrementUsingSeq =
+                    visitor.replaceDynamicParamBatch(mergeRow, params.getBatchParameters(), autoIncColumnIndex);
+            } else {
+                for (Map<Integer, ParameterContext> curParam : params.getBatchParameters()) {
+                    autoIncrementUsingSeq &= visitor.replaceDynamicParam(mergeRow, curParam, autoIncColumnIndex);
+                }
             }
         } else {
             // The number of parameter value is equal to RexDynamicParam
@@ -776,27 +780,19 @@ public class RexUtils {
                                              Map<Integer, ParameterContext> rowParameters) {
         final ExecutionContext copy = executionContext.copy(new Parameters(rowParameters));
 
-        Object value = null;
+        Object result = null;
         if (rexNode instanceof RexDynamicParam) {
             final int valueIndex = ((RexDynamicParam) rexNode).getIndex() + 1;
-            value = rowParameters.get(valueIndex).getValue();
+            result = rowParameters.get(valueIndex).getValue();
         } else if (rexNode instanceof RexLiteral) {
-            value = RexLiteralTypeUtils.getJavaObjectFromRexLiteral((RexLiteral) rexNode, true);
+            result = RexLiteralTypeUtils.getJavaObjectFromRexLiteral((RexLiteral) rexNode, true);
         } else if (rexNode instanceof RexCall) {
-            value = buildRexNode(rexNode, copy).eval(null);
-            if (value instanceof Decimal) {
-                value = ((Decimal) value).toBigDecimal();
-            } else if (value instanceof Slice) {
-                if (isBinaryReturnType(rexNode)) {
-                    value = ((Slice) value).getBytes();
-                } else {
-                    value = ((Slice) value).toString(CharsetName.DEFAULT_STORAGE_CHARSET_IN_CHUNK);
-                }
-            }
+            Object value = buildRexNode(rexNode, copy).eval(null);
+            result = convertValueForDml(value, rexNode);
         } else {
             throw new UnsupportedOperationException("Get value from " + rexNode.getClass() + " is not supported");
         }
-        return value;
+        return result;
     }
 
     public static Object getValueFromRexNode(RexNode rexNode, Row row, ExecutionContext ec) {
@@ -810,17 +806,7 @@ public class RexUtils {
             result = RexLiteralTypeUtils.getJavaObjectFromRexLiteral((RexLiteral) rexNode, true);
         } else {
             final Object value = buildRexNode(rexNode, ec).eval(row);
-            if (value instanceof Decimal) {
-                result = ((Decimal) value).toBigDecimal();
-            } else if (value instanceof Slice) {
-                if (isBinaryReturnType(rexNode)) {
-                    result = ((Slice) value).getBytes();
-                } else {
-                    result = ((Slice) value).toString(CharsetName.DEFAULT_STORAGE_CHARSET_IN_CHUNK);
-                }
-            } else {
-                result = value;
-            }
+            result = convertValueForDml(value, rexNode);
         }
         return result;
     }
@@ -1612,14 +1598,17 @@ public class RexUtils {
         public RexNode transform() {
             RexNode rex = transformer.transform();
 
-            if (filter.test(rex)) {
-                final Long currentScale = scaleOpFinder.apply(rex);
-                if (currentScale >= 0L && currentScale < maxScale) {
-                    rex = rexBuilder.makeCastForConvertlet(rex.getType(), replacedRex);
-                } else {
-                    rex = replacedRex;
+            rex = RexCallReplacer.analyze(rex, (rexCall) -> {
+                if (filter.test(rexCall)) {
+                    final Long currentScale = scaleOpFinder.apply(rexCall);
+                    if (currentScale >= 0L && currentScale < maxScale) {
+                        return rexBuilder.makeCastForConvertlet(rexCall.getType(), replacedRex);
+                    } else {
+                        return replacedRex;
+                    }
                 }
-            }
+                return rexCall;
+            });
 
             return rex;
         }
@@ -1951,6 +1940,10 @@ public class RexUtils {
             return Boolean.TRUE.equals(rex.accept(this));
         }
 
+        public static boolean analyze(RexNode rex, Predicate<RexCall> checker) {
+            return Boolean.TRUE.equals(rex.accept(new RexCallChecker(checker)));
+        }
+
         @Override
         public Boolean visitCall(RexCall call) {
             if (checker.test(call)) {
@@ -1966,6 +1959,60 @@ public class RexUtils {
                 }
             }
             return r;
+        }
+    }
+
+    public static class RexCallReplacer extends RexShuttle {
+        private final Function<RexCall, RexNode> replacer;
+        private RelShuttle relShuttle;
+        private int replacedCount = 0;
+
+        public RexCallReplacer(Function<RexCall, RexNode> replacer) {
+            this.replacer = replacer;
+        }
+
+        /**
+         * 遍历RexNode表达式树，对每个RexCall节点应用replacer函数进行替换
+         *
+         * @return 经过替换处理后的RexNode
+         */
+        public static RexNode analyze(RexNode rex, Function<RexCall, RexNode> replacer) {
+            final RexCallReplacer finder = new RexCallReplacer(replacer);
+            final RexNodeRelShuttle relShuttle = new RexNodeRelShuttle(finder);
+            finder.setRelShuttle(relShuttle);
+
+            return rex.accept(finder);
+        }
+
+        public RexCallReplacer setRelShuttle(RelShuttle relShuttle) {
+            this.relShuttle = relShuttle;
+            return this;
+        }
+
+        @Override
+        public RexNode visitCall(RexCall call) {
+            RexNode replaced = super.visitCall(call);
+
+            if (replaced instanceof RexCall) {
+                final RexNode replacedCall = replacer.apply((RexCall) replaced);
+                if (replacedCall != replaced) {
+                    replaced = replacedCall;
+                    replacedCount++;
+                }
+            }
+
+            return replaced;
+        }
+
+        @Override
+        public RexNode visitSubQuery(RexSubQuery subQuery) {
+            if (null != relShuttle) {
+                final RelNode newRel = subQuery.rel.accept(relShuttle);
+                if (newRel != subQuery.rel) {
+                    subQuery = subQuery.clone(newRel);
+                }
+            }
+            return super.visitSubQuery(subQuery);
         }
     }
 
@@ -2040,6 +2087,174 @@ public class RexUtils {
                 }
             }
             return super.visitSubQuery(subQuery);
+        }
+    }
+
+    /**
+     * 检查指定列的值是否来自用户输入。
+     * 沿着逻辑计划树向下遍历，追踪 RexInputRef 引用链，直到找到最终的值来源。
+     * <p>
+     * 用于判断自增列是否可以跳过 PK 检查：
+     * - 如果来源是 RexDynamicParam，表示用户输入，不能跳过
+     * - 如果来源是 RexLiteral(null)，表示会使用自增值，可以跳过
+     */
+    public static class ColumnSourceShuttle extends RexShuttle {
+
+        /**
+         * 值来源类型
+         */
+        public enum ValueSource {
+            USER_INPUT,      // 来自用户参数 (RexDynamicParam)
+            NULL_LITERAL,    // null 字面量，将使用自增值
+            NON_NULL_VALUE,  // 非 null 的确定值
+            UNKNOWN          // 无法确定
+        }
+
+        private int targetColumnIndex;
+        private ValueSource result = ValueSource.UNKNOWN;
+        private boolean analyzed = false;
+        private ColumnSourceRelShuttle relShuttle;
+
+        public ColumnSourceShuttle(int targetColumnIndex) {
+            this.targetColumnIndex = targetColumnIndex;
+        }
+
+        /**
+         * 检查指定列的值来源
+         *
+         * @param input 输入节点
+         * @param columnIndex 列索引
+         * @return 值来源类型
+         */
+        public static ValueSource analyze(RelNode input, int columnIndex) {
+            final ColumnSourceShuttle rexShuttle = new ColumnSourceShuttle(columnIndex);
+            final ColumnSourceRelShuttle relShuttle = new ColumnSourceRelShuttle(rexShuttle);
+            rexShuttle.setRelShuttle(relShuttle);
+
+            input.accept(relShuttle);
+            return rexShuttle.result;
+        }
+
+        public ColumnSourceShuttle setRelShuttle(ColumnSourceRelShuttle relShuttle) {
+            this.relShuttle = relShuttle;
+            return this;
+        }
+
+        public int getTargetColumnIndex() {
+            return targetColumnIndex;
+        }
+
+        public boolean isAnalyzed() {
+            return analyzed;
+        }
+
+        public void setResult(ValueSource result) {
+            this.result = result;
+            this.analyzed = true;
+        }
+
+        @Override
+        public RexNode visitDynamicParam(RexDynamicParam dynamicParam) {
+            setResult(ValueSource.USER_INPUT);
+            return dynamicParam;
+        }
+
+        @Override
+        public RexNode visitLiteral(RexLiteral literal) {
+            if (literal.isNull()) {
+                setResult(ValueSource.NULL_LITERAL);
+            } else {
+                setResult(ValueSource.NON_NULL_VALUE);
+            }
+            return literal;
+        }
+
+        @Override
+        public RexNode visitInputRef(RexInputRef inputRef) {
+            // 记录需要追踪的上游列索引，由 RelShuttle 继续向下追踪
+            this.targetColumnIndex = inputRef.getIndex();
+            this.analyzed = false;
+            return inputRef;
+        }
+
+        @Override
+        public RexNode visitCall(RexCall call) {
+            // 处理 CAST(x AS type)
+            if (call.isA(SqlKind.CAST) && !call.getOperands().isEmpty()) {
+                return call.getOperands().get(0).accept(this);
+            }
+            // 其他函数调用，保守返回 UNKNOWN
+            setResult(ValueSource.UNKNOWN);
+            return call;
+        }
+    }
+
+    /**
+     * 配合 ColumnSourceShuttle 使用的 RelShuttle。
+     * 负责从 RelNode 中提取指定列位置的 RexNode，并追踪 RexInputRef 引用链。
+     */
+    public static class ColumnSourceRelShuttle extends RelShuttleImpl {
+
+        private final ColumnSourceShuttle rexShuttle;
+
+        public ColumnSourceRelShuttle(ColumnSourceShuttle rexShuttle) {
+            this.rexShuttle = rexShuttle;
+        }
+
+        @Override
+        public RelNode visit(LogicalProject project) {
+            int colIndex = rexShuttle.getTargetColumnIndex();
+            List<RexNode> projects = project.getProjects();
+
+            if (colIndex >= 0 && colIndex < projects.size()) {
+                projects.get(colIndex).accept(rexShuttle);
+
+                // 如果是 RexInputRef，需要继续向下追踪
+                if (!rexShuttle.isAnalyzed()) {
+                    return super.visit(project);
+                }
+            }
+            return project;
+        }
+
+        @Override
+        public RelNode visit(LogicalValues values) {
+            int colIndex = rexShuttle.getTargetColumnIndex();
+            if (!values.getTuples().isEmpty()) {
+                ImmutableList<RexLiteral> firstRow = values.getTuples().get(0);
+                if (colIndex >= 0 && colIndex < firstRow.size()) {
+                    firstRow.get(colIndex).accept(rexShuttle);
+                }
+            }
+            return values;
+        }
+
+        @Override
+        public RelNode visit(RelNode other) {
+            // 处理 LogicalDynamicValues
+            if (other instanceof LogicalDynamicValues) {
+                LogicalDynamicValues dynamicValues = (LogicalDynamicValues) other;
+                int colIndex = rexShuttle.getTargetColumnIndex();
+
+                if (!dynamicValues.getTuples().isEmpty()) {
+                    ImmutableList<RexNode> firstRow = dynamicValues.getTuples().get(0);
+                    if (colIndex >= 0 && colIndex < firstRow.size()) {
+                        firstRow.get(colIndex).accept(rexShuttle);
+
+                        // 如果是 RexInputRef，需要继续向下追踪
+                        if (!rexShuttle.isAnalyzed()) {
+                            for (RelNode input : dynamicValues.getInputs()) {
+                                input.accept(this);
+                                if (rexShuttle.isAnalyzed()) {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                return other;
+            }
+            return super.visit(other);
         }
     }
 

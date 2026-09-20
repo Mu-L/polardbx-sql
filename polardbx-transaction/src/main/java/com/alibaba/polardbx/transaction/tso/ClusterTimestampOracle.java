@@ -23,7 +23,7 @@ import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
-import com.alibaba.polardbx.optimizer.utils.ITimestampOracle;
+import com.alibaba.polardbx.common.trx.ITimestampOracle;
 import com.alibaba.polardbx.rpc.XLog;
 import com.alibaba.polardbx.rpc.pool.XConnection;
 
@@ -144,7 +144,7 @@ public class ClusterTimestampOracle extends AbstractLifecycle implements ITimest
             } catch (Exception e) {
                 XLog.XLogLogger.error(e);
                 // Retry if HA occurs and not timeout.
-                if (e instanceof SQLException ||
+                if (containsSQLException(e) ||
                     (e.getMessage() != null &&
                         (e.getMessage().contains("Failed to get TSO") ||
                             e.getMessage().contains("channel inactive") ||
@@ -152,7 +152,8 @@ public class ClusterTimestampOracle extends AbstractLifecycle implements ITimest
                             e.getMessage().contains("timeout") ||
                             e.getMessage().contains("Client removed") ||
                             e.getMessage().contains("closed") ||
-                            e.getMessage().contains("EOF")))) {
+                            e.getMessage().contains("EOF") ||
+                            e.getMessage().contains("interrupt")))) {
                     if (System.currentTimeMillis() - startTime < totalFetchTimeout) {
                         continue;
                     }
@@ -173,6 +174,17 @@ public class ClusterTimestampOracle extends AbstractLifecycle implements ITimest
                 future.setTso(tso += (1 << BitReserved));
             }
         }
+    }
+
+    private static boolean containsSQLException(Throwable t) {
+        Throwable current = t;
+        while (current != null) {
+            if (current instanceof SQLException) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     static {

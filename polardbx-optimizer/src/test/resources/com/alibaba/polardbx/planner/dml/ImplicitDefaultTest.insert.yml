@@ -193,7 +193,7 @@
     LogicalInsert(table="t1_default", columns=recordtype(bigint id, bigint c1), mode=multi)
       Project(id="null", c1="ifnull(a.c2 + null, current_timestamp(6))")
         MergeSort(sort="c3 asc", offset=0, fetch=?1)
-          LogicalView(tables="t1_default[p1,p2,p3,p4,p5,p6,p7,p8],t1_default[p1,p2,p3,p4,p5,p6,p7,p8]", ShardCount=8, sql="select (`t1_default`.`c2` + null) as `a.c2 + null`, `t1_default0`.`c3` from `t1_default` as `t1_default` inner join `t1_default` as `t1_default0` on ((`t1_default0`.`c2` = ?) and (`t1_default`.`c1` = `t1_default0`.`c1`)) order by `t1_default0`.`c3` limit (? + 0)")
+          LogicalView(tables="t1_default[p1,p2,p3,p4,p5,p6,p7,p8],t1_default[p1,p2,p3,p4,p5,p6,p7,p8]", ShardCount=8, sql="select (`t1_default`.`c2` + null) as `a.c2 + null`, `t1_default0`.`c3` from `t1_default` as `t1_default` inner join `t1_default` as `t1_default0` on ((`t1_default0`.`c2` = ?) and (`t1_default`.`c1` = `t1_default0`.`c1`)) order by `t1_default0`.`c3` limit ?")
 
 - sql: |
     insert into t1_default(c1) select "2024-11-25 17:49:57.846790" + null from t1_default a join (select c1, c2 from t1_default b where b.c2 = 1) c on a.c2 = c.c2 

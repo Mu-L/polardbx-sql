@@ -141,6 +141,6 @@ public class PreemptiveMdlContextStamped extends MdlContextStamped {
         } catch (Exception e) {
             throw new TddlRuntimeException(ErrorCode.ERR_CONFIG, e, e.getMessage());
         }
-        SyncManagerHelper.sync(killSyncAction, schemaName, SyncScope.ALL);
+        SyncManagerHelper.syncIgnoreExceptions(killSyncAction, schemaName, SyncScope.ALL);
     }
 }

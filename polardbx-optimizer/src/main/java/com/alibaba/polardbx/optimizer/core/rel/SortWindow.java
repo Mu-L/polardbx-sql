@@ -113,7 +113,10 @@ public class SortWindow extends Window implements PhysicalNode {
         for (Ord<Group> window : Ord.zip(groups)) {
             for (int i = 0; i < window.getValue().aggCalls.size(); i++) {
                 RexWinAggCall rexWinAggCall = window.getValue().aggCalls.get(i);
-                String fieldName = "f" + (i + inputFieldCount) + "w" + window.i + "$o" + i;
+                String fieldName = getRowType().getFieldList().get(inputFieldCount + i).getName();
+                if (fieldName == null) {
+                    fieldName = "f" + (i + inputFieldCount) + "w" + window.i + "$o" + i;
+                }
                 pw.item(fieldName, "window#" + window.i + rexWinAggCall.toString());
             }
         }

@@ -34,6 +34,24 @@ import static java.util.Objects.requireNonNull;
 public class MergeSortedChunks {
 
     public static WorkProcessor<Chunk> mergeSortedPages(List<WorkProcessor<Chunk>> chunkProducers,
+                                                        Comparator<ChunkWithPosition> chunkWithPositionComparator,
+                                                        List<DataType> types,
+                                                        int chunkLimit,
+                                                        BiPredicate<ChunkBuilder, ChunkWithPosition> chunkBreakPredicate,
+                                                        DriverYieldSignal yieldSignal,
+                                                        ExecutionContext context) {
+        requireNonNull(chunkProducers, "chunkProducers is null");
+        requireNonNull(chunkWithPositionComparator, "comparator is null");
+        requireNonNull(chunkBreakPredicate, "chunkBreakPredicate is null");
+
+        List<WorkProcessor<ChunkWithPosition>> ChunkWithPositionProducers =
+            chunkProducers.stream().map(pageProducer -> chunkWithPositions(pageProducer)).collect(toImmutableList());
+
+        return buildPage(mergeSorted(ChunkWithPositionProducers, chunkWithPositionComparator), types, chunkLimit,
+            chunkBreakPredicate, yieldSignal, context);
+    }
+
+    public static WorkProcessor<Chunk> mergeSortedPages(List<WorkProcessor<Chunk>> chunkProducers,
                                                         ChunkWithPositionComparator comparator,
                                                         List<DataType> types,
                                                         int chunkLimit,

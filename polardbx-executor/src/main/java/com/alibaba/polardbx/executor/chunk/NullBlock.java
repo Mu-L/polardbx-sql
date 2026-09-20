@@ -50,7 +50,13 @@ public class NullBlock implements Block {
 
     @Override
     public long getElementUsedBytes() {
-        return 4;
+        return INSTANCE_SIZE;
+    }
+
+    @Override
+    public int compareAssertedSameType(int position, Block otherBlock, int otherPosition) {
+        // null == null
+        return 0;
     }
 
     @Override

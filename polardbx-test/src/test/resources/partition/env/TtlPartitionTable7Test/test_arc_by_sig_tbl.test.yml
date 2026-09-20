@@ -1,0 +1,76 @@
+## DISABLE_FAST_SQL_PARSER
+
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false;
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask";
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false;
+
+use polardbx;
+drop database if exists newttldb1;
+create database if not exists newttldb1 mode='auto';
+use newttldb1;
+  
+## create table
+drop table if exists ttl_tbl_p1;
+create table ttl_tbl_p1(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by key(`a`)
+partitions 1;
+
+alter table ttl_tbl_p1 modify ttl set ttl_expr = `b` expire after 1 day timezone '+08:00', ttl_cleanup='on';
+
+create table ttl_tbl_p1_arc like ttl_tbl_p1 engine='columnar' archive_mode='ttl';
+
+insert into ttl_tbl_p1(a,b) values (1, '2022-01-01'),(2,'2022-02-01'),(3,'2025-03-01');
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+alter table ttl_tbl_p1 cleanup expired data;
+
+drop table if exists ttl_tbl_sig;
+create table ttl_tbl_sig(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+single;
+
+alter table ttl_tbl_sig modify ttl set ttl_expr = `b` expire after 1 day timezone '+08:00', ttl_cleanup='on';
+
+insert into ttl_tbl_sig(a,b) values (1, '2022-01-01'),(2,'2022-02-01'),(3,'2025-03-01');
+select * from ttl_tbl_sig order by a,b;
+create table ttl_tbl_sig_arc like ttl_tbl_sig engine='columnar' archive_mode='ttl';
+
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00';
+alter table ttl_tbl_sig cleanup expired data;
+
+show create table ttl_tbl_sig;
+
+alter table ttl_tbl_sig partition by key(a) partitions 8;
+show create table ttl_tbl_sig;
+
+alter table ttl_tbl_sig single;
+show create table ttl_tbl_sig;
+
+## error_msg: $# not supported #$
+alter table ttl_tbl_sig 
+modify ttl 
+set 
+ttl_expr = `b` expire after 1 day timezone '+08:00', 
+archive_type='partition', 
+archive_table_pre_allocate=3;
+
+drop table if exists ttl_tbl_bro;
+create table ttl_tbl_bro(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+broadcast;
+## error_msg: $# not allowed #$
+alter table ttl_tbl_bro modify ttl set ttl_expr = `b` expire after 1 day timezone '+08:00', ttl_cleanup='on';
+
+use polardbx;
+drop database if exists newttldb1;

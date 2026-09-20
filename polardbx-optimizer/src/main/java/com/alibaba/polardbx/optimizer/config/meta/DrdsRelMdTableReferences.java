@@ -16,13 +16,20 @@
 
 package com.alibaba.polardbx.optimizer.config.meta;
 
-import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
-import com.google.common.collect.Sets;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
+import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
+import com.alibaba.polardbx.optimizer.core.rel.ExternalTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.GroupTopN;
+import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
+import com.alibaba.polardbx.optimizer.core.rel.PhysicalCTEConsumer;
 import com.alibaba.polardbx.optimizer.view.ViewPlan;
+import com.google.common.collect.Sets;
 import org.apache.calcite.plan.volcano.RelSubset;
+import org.apache.calcite.rel.core.CTEAnchor;
+import org.apache.calcite.rel.core.CTEProducer;
 import org.apache.calcite.rel.core.TableLookup;
+import org.apache.calcite.rel.logical.LogicalCTEConsumer;
 import org.apache.calcite.rel.logical.LogicalTableScan;
 import org.apache.calcite.rel.metadata.ReflectiveRelMetadataProvider;
 import org.apache.calcite.rel.metadata.RelMdTableReferences;
@@ -51,6 +58,47 @@ public class DrdsRelMdTableReferences extends RelMdTableReferences {
     public Set<RexTableInputRef.RelTableRef> getTableReferences(LogicalTableScan rel, RelMetadataQuery mq,
                                                                 boolean logicalViewLevel) {
         return Sets.newHashSet(RexTableInputRef.RelTableRef.of(rel.getTable(), 0));
+    }
+
+    public Set<RexTableInputRef.RelTableRef> getTableReferences(
+        ExternalTableScan rel,
+        RelMetadataQuery mq, boolean logicalViewLevel) {
+        return rel.getTableReferences(mq);
+    }
+
+    public Set<RexTableInputRef.RelTableRef> getTableReferences(GroupTopN rel, RelMetadataQuery mq,
+                                                                boolean logicalViewLevel) {
+        return logicalViewLevel ?
+            mq.getLogicalViewReferences(rel.getInput()) :
+            mq.getTableReferences(rel.getInput());
+    }
+
+    public Set<RexTableInputRef.RelTableRef> getTableReferences(CTEAnchor rel, RelMetadataQuery mq,
+                                                                boolean logicalViewLevel) {
+        return logicalViewLevel ?
+            mq.getLogicalViewReferences(rel.getRight()) :
+            mq.getTableReferences(rel.getRight());
+    }
+
+    public Set<RexTableInputRef.RelTableRef> getTableReferences(CTEProducer rel, RelMetadataQuery mq,
+                                                                boolean logicalViewLevel) {
+        return logicalViewLevel ?
+            mq.getLogicalViewReferences(rel.getInput()) :
+            mq.getTableReferences(rel.getInput());
+    }
+
+    public Set<RexTableInputRef.RelTableRef> getTableReferences(LogicalCTEConsumer rel, RelMetadataQuery mq,
+                                                                boolean logicalViewLevel) {
+        return logicalViewLevel ?
+            mq.getLogicalViewReferences(rel.getInnerRel()) :
+            mq.getTableReferences(rel.getInnerRel());
+    }
+
+    public Set<RexTableInputRef.RelTableRef> getTableReferences(PhysicalCTEConsumer rel, RelMetadataQuery mq,
+                                                                boolean logicalViewLevel) {
+        return logicalViewLevel ?
+            mq.getLogicalViewReferences(CBOUtil.getCteProducer(rel)) :
+            mq.getTableReferences(CBOUtil.getCteProducer(rel));
     }
 
     public Set<RexTableInputRef.RelTableRef> getTableReferences(RelSubset rel, RelMetadataQuery mq,

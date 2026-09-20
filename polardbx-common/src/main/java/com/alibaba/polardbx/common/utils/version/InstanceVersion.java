@@ -37,6 +37,10 @@ public class InstanceVersion {
      * 不影响版本号前缀
      */
     private static boolean MYSQL80 = false;
+    /**
+     * Whether all storage nodes expose information_schema.VECTOR_INDEXES.
+     */
+    private static volatile boolean SUPPORTS_VECTOR_INDEXES = false;
     private String VERSION_PREFIX = DEFAULT_VERSION_PREFIX;
 
     public InstanceVersion() {
@@ -87,6 +91,14 @@ public class InstanceVersion {
 
     public static void setMYSQL80(boolean MYSQL80) {
         InstanceVersion.MYSQL80 = MYSQL80;
+    }
+
+    public static boolean supportsVectorIndexes() {
+        return SUPPORTS_VECTOR_INDEXES;
+    }
+
+    public static void setSupportsVectorIndexes(boolean supportsVectorIndexes) {
+        InstanceVersion.SUPPORTS_VECTOR_INDEXES = supportsVectorIndexes;
     }
 
     private void initialVersion() {

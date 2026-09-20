@@ -111,6 +111,9 @@ public class AlterMultiTableChangeMetaTask extends MultiTableGmsTask {
 
         boolean fileStore;
 
+        List<String> addConstraints;
+        List<String> dropConstraints;
+
         public TableChange(String schemaName, String logicalTableName, String dbIndex, String phyTableName,
                            SqlKind sqlKind,
                            boolean isPartitioned, List<String> droppedColumns, List<String> addedColumns,
@@ -124,7 +127,7 @@ public class AlterMultiTableChangeMetaTask extends MultiTableGmsTask {
                            List<Pair<String, String>> columnAfterAnother, boolean requireLogicalColumnOrder,
                            String tableComment, String tableRowFormat, SequenceBean sequenceBean,
                            boolean onlineModifyColumnIndexTask,
-                           boolean fileStore) {
+                           boolean fileStore, List<String> addConstraints, List<String> dropConstraints) {
             this.schemaName = schemaName;
             this.logicalTableName = logicalTableName;
             this.dbIndex = dbIndex;
@@ -151,6 +154,8 @@ public class AlterMultiTableChangeMetaTask extends MultiTableGmsTask {
             this.sequenceBean = sequenceBean;
             this.onlineModifyColumnIndexTask = onlineModifyColumnIndexTask;
             this.fileStore = fileStore;
+            this.addConstraints = addConstraints;
+            this.dropConstraints = dropConstraints;
         }
 
         public static TableChange build(String schemaName, String logicalTableName,
@@ -182,7 +187,9 @@ public class AlterMultiTableChangeMetaTask extends MultiTableGmsTask {
                 prepareData.getTableRowFormat(),
                 physicalPlanData.getSequence(),
                 prepareData.isOnlineModifyColumnIndexTask(),
-                isFileStore
+                isFileStore,
+                prepareData.getAddConstraints(),
+                prepareData.getDropConstraints()
             );
         }
 
@@ -192,7 +199,7 @@ public class AlterMultiTableChangeMetaTask extends MultiTableGmsTask {
                 hasTimestampColumnDefault, specialDefaultValues, specialDefaultValueFlags, droppedIndexes, addedIndexes,
                 addedIndexesWithoutNames, renamedIndexes, primaryKeyDropped,
                 addedPrimaryKeyColumns, columnAfterAnother, requireLogicalColumnOrder, tableComment, tableRowFormat,
-                sequenceBean, onlineModifyColumnIndexTask, fileStore, executionContext);
+                sequenceBean, onlineModifyColumnIndexTask, addConstraints, dropConstraints, fileStore, executionContext);
             List<String> alterColumnList = new ArrayList<>();
             if (updatedColumns != null) {
                 alterColumnList.addAll(updatedColumns);

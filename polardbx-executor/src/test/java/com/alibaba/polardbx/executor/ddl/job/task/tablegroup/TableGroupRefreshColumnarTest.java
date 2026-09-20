@@ -15,8 +15,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package com.alibaba.polardbx.executor.ddl.job.task.tablegroup;
 
-import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.AlterTableGroupRefreshMetaBaseTask;
+import com.alibaba.polardbx.executor.ddl.job.task.columnar.ColumnarTaskUtil;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarPartitionEvolutionAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarPartitionEvolutionRecord;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableEvolutionAccessor;
@@ -25,22 +26,25 @@ import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingAccessor;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableMappingRecord;
 import com.alibaba.polardbx.gms.partition.TablePartitionAccessor;
 import com.alibaba.polardbx.gms.partition.TablePartitionRecord;
+import com.alibaba.polardbx.optimizer.OptimizerContext;
+import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.junit.MockitoJUnitRunner;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -57,84 +61,86 @@ public class TableGroupRefreshColumnarTest {
     @Mock
     private ColumnarTableEvolutionAccessor columnarTableEvolutionAccessor;
 
-    @InjectMocks
-    private AlterTableGroupRefreshMetaBaseTask task;
-
     private final static String TABLE_GROUP_NAME = "tg_test";
     private final static String SCHEMA_NAME = "db_test";
     private final static String TABLE_NAME = "tb_test";
     private final static long VERSION_ID = 1L;
     private final static long JOB_ID = 2L;
 
-    @Before
-    public void setUp() {
-        task = new AlterTableGroupRefreshMetaBaseTask(SCHEMA_NAME, TABLE_GROUP_NAME, VERSION_ID);
-    }
-
     @Test
     public void testUpdateColumnarEvolutionSysTables() {
-        TableMeta tableMeta = mock(TableMeta.class);
-        when(tableMeta.isColumnar()).thenReturn(true);
+        try (MockedStatic<OptimizerContext> mockedStatic = mockStatic(OptimizerContext.class)) {
+            OptimizerContext optimizerContext = mock(OptimizerContext.class);
+            SchemaManager mockSchemaManager = mock(SchemaManager.class);
+            TableMeta tableMeta = mock(TableMeta.class);
 
-        List<ColumnarPartitionEvolutionRecord> evolutionRecords = new ArrayList<>();
-        ColumnarPartitionEvolutionRecord record = new ColumnarPartitionEvolutionRecord();
-        record.id = 3L;
-        evolutionRecords.add(record);
+            mockedStatic.when(() -> OptimizerContext.getContext(SCHEMA_NAME)).thenReturn(optimizerContext);
 
-        when(columnarPartitionEvolutionAccessor.queryIdsWithOrder(anyList())).thenReturn(evolutionRecords);
+            when(optimizerContext.getLatestSchemaManager()).thenReturn(mockSchemaManager);
+            when(mockSchemaManager.getTable(any())).thenReturn(tableMeta);
 
-        List<TablePartitionRecord> partitionRecords = new ArrayList<>();
-        TablePartitionRecord partitionRecord1 = new TablePartitionRecord();
-        TablePartitionRecord partitionRecord2 = new TablePartitionRecord();
-        TablePartitionRecord partitionRecordOld1 = new TablePartitionRecord();
-        TablePartitionRecord partitionRecordOld2 = new TablePartitionRecord();
-        partitionRecord1.partName = "";
-        // rename partition name
-        partitionRecord2.partName = "p10";
-        partitionRecords.add(partitionRecord1);
-        partitionRecords.add(partitionRecord2);
-        partitionRecordOld1.partName = "";
-        partitionRecordOld2.partName = "p1";
+            when(tableMeta.isColumnar()).thenReturn(true);
+            List<ColumnarPartitionEvolutionRecord> evolutionRecords = new ArrayList<>();
+            ColumnarPartitionEvolutionRecord record = new ColumnarPartitionEvolutionRecord();
+            record.id = 3L;
+            evolutionRecords.add(record);
 
-        when(tablePartitionAccessor.getTablePartitionsByDbNameTbName(eq(SCHEMA_NAME), eq(TABLE_NAME), eq(false)))
-            .thenReturn(partitionRecords);
+            when(columnarPartitionEvolutionAccessor.queryIdsWithOrder(anyList())).thenReturn(evolutionRecords);
 
-        List<ColumnarTableMappingRecord> columnarTableMappingRecords = new ArrayList<>();
-        ColumnarTableMappingRecord columnarTableMappingRecord = new ColumnarTableMappingRecord();
-        columnarTableMappingRecord.tableId = 1L;
-        columnarTableMappingRecords.add(columnarTableMappingRecord);
+            List<TablePartitionRecord> partitionRecords = new ArrayList<>();
+            TablePartitionRecord partitionRecord1 = new TablePartitionRecord();
+            TablePartitionRecord partitionRecord2 = new TablePartitionRecord();
+            TablePartitionRecord partitionRecordOld1 = new TablePartitionRecord();
+            TablePartitionRecord partitionRecordOld2 = new TablePartitionRecord();
+            partitionRecord1.partName = "";
+            // rename partition name
+            partitionRecord2.partName = "p10";
+            partitionRecords.add(partitionRecord1);
+            partitionRecords.add(partitionRecord2);
+            partitionRecordOld1.partName = "";
+            partitionRecordOld2.partName = "p1";
 
-        ColumnarTableEvolutionRecord columnarTableEvolutionRecord = new ColumnarTableEvolutionRecord();
-        columnarTableEvolutionRecord.partitions = new ArrayList<>();
-        columnarTableEvolutionRecord.partitions.add(0L);
-        columnarTableEvolutionRecord.partitions.add(1L);
+            when(tablePartitionAccessor.getTablePartitionsByDbNameTbName(eq(SCHEMA_NAME), eq(TABLE_NAME), eq(false)))
+                .thenReturn(partitionRecords);
 
-        List<ColumnarPartitionEvolutionRecord> columnarPartitionEvolutionRecords = new ArrayList<>();
-        ColumnarPartitionEvolutionRecord record1 =
-            new ColumnarPartitionEvolutionRecord(1L, "", 1L, 1L, partitionRecordOld1, 1);
-        ColumnarPartitionEvolutionRecord record2 =
-            new ColumnarPartitionEvolutionRecord(1L, "p1", 1L, 1L, partitionRecordOld2, 1);
-        columnarPartitionEvolutionRecords.add(record1);
-        columnarPartitionEvolutionRecords.add(record2);
+            List<ColumnarTableMappingRecord> columnarTableMappingRecords = new ArrayList<>();
+            ColumnarTableMappingRecord columnarTableMappingRecord = new ColumnarTableMappingRecord();
+            columnarTableMappingRecord.tableId = 1L;
+            columnarTableMappingRecords.add(columnarTableMappingRecord);
 
-        when(columnarTableMappingAccessor.querySchemaIndex(eq(SCHEMA_NAME), eq(TABLE_NAME))).thenReturn(
-            columnarTableMappingRecords);
+            ColumnarTableEvolutionRecord columnarTableEvolutionRecord = new ColumnarTableEvolutionRecord();
+            columnarTableEvolutionRecord.partitions = new ArrayList<>();
+            columnarTableEvolutionRecord.partitions.add(0L);
+            columnarTableEvolutionRecord.partitions.add(1L);
 
-        when(columnarPartitionEvolutionAccessor.queryIdsWithOrder(anyList())).thenReturn(
-            columnarPartitionEvolutionRecords);
+            List<ColumnarPartitionEvolutionRecord> columnarPartitionEvolutionRecords = new ArrayList<>();
+            ColumnarPartitionEvolutionRecord record1 =
+                new ColumnarPartitionEvolutionRecord(1L, "", 1L, 1L, partitionRecordOld1, 1);
+            ColumnarPartitionEvolutionRecord record2 =
+                new ColumnarPartitionEvolutionRecord(1L, "p1", 1L, 1L, partitionRecordOld2, 1);
+            columnarPartitionEvolutionRecords.add(record1);
+            columnarPartitionEvolutionRecords.add(record2);
 
-        when(columnarTableEvolutionAccessor.queryTableIdLatest(eq(1L))).thenReturn(
-            Collections.singletonList(columnarTableEvolutionRecord));
+            when(columnarTableMappingAccessor.querySchemaIndex(eq(SCHEMA_NAME), eq(TABLE_NAME))).thenReturn(
+                columnarTableMappingRecords);
 
-        when(columnarPartitionEvolutionAccessor.queryTableIdAndNotInStatus(anyLong(), anyLong(), anyLong())).thenReturn(
-            columnarPartitionEvolutionRecords);
+            when(columnarPartitionEvolutionAccessor.queryIdsWithOrder(anyList())).thenReturn(
+                columnarPartitionEvolutionRecords);
 
-        task.updateColumnarEvolutionSysTables(tableMeta, TABLE_NAME, tablePartitionAccessor,
-            columnarTableMappingAccessor, columnarPartitionEvolutionAccessor, columnarTableEvolutionAccessor,
-            VERSION_ID, JOB_ID);
+            when(columnarTableEvolutionAccessor.queryTableIdLatest(eq(1L))).thenReturn(
+                Collections.singletonList(columnarTableEvolutionRecord));
 
-        verify(columnarPartitionEvolutionAccessor, times(1)).insert(anyList());
-        verify(columnarTableMappingAccessor, times(1)).updateVersionId(eq(VERSION_ID), anyLong());
+            when(columnarPartitionEvolutionAccessor.queryTableIdAndNotInStatus(anyLong(), anyLong(),
+                anyLong())).thenReturn(
+                columnarPartitionEvolutionRecords);
+
+            ColumnarTaskUtil.updateColumnarEvolutionSysTables(SCHEMA_NAME, TABLE_NAME, tablePartitionAccessor,
+                columnarTableMappingAccessor, columnarPartitionEvolutionAccessor, columnarTableEvolutionAccessor,
+                VERSION_ID, JOB_ID);
+
+            verify(columnarPartitionEvolutionAccessor, times(1)).insert(anyList());
+            verify(columnarTableMappingAccessor, times(1)).updateVersionId(eq(VERSION_ID), anyLong());
+        }
     }
 }
 

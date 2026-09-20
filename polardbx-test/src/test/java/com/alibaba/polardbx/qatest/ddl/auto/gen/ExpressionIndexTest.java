@@ -369,4 +369,21 @@ public class ExpressionIndexTest extends DDLBaseNewDBTestCase {
             tableName);
         JdbcUtil.executeUpdateSuccess(tddlConnection, hint + alter);
     }
+
+    @Test
+    public void testNullExprInGeneratedKey() {
+        if (isMySQL80()) {
+            return;
+        }
+        String tableName = "test_null_expr";
+        String createTable = String.format("CREATE TABLE %s (\n"
+            + "    `id` INT AUTO_INCREMENT PRIMARY KEY,\n"
+            + "    `col1` varchar(64) DEFAULT NULL,\n"
+            + "    `col2` varchar(128) GENERATED ALWAYS AS (CASE WHEN `col1` IS NOT NULL THEN `col1` ELSE NULL END) LOGICAL\n"
+            + ") PARTITION BY HASH(id) PARTITIONS 16", tableName);
+
+        dropTableIfExists(tableName);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, createTable);
+        JdbcUtil.executeUpdateSuccess(tddlConnection, "insert into " + tableName + " (col1) values ('test'), (null)");
+    }
 }

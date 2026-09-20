@@ -33,7 +33,7 @@ public class ResizeStoredFunctionCache {
         String newSizeStr = stmt.substring(offset).trim();
         try {
             int newSize = Integer.parseInt(newSizeStr);
-            SyncManagerHelper.sync(new ResizeStoredFunctionCacheSyncAction(newSize), TddlConstants.INFORMATION_SCHEMA,
+            SyncManagerHelper.syncThrowExceptions(new ResizeStoredFunctionCacheSyncAction(newSize), TddlConstants.INFORMATION_SCHEMA,
                 SyncScope.NOT_COLUMNAR_SLAVE);
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException(String.format("'%s is illegal'", newSizeStr));

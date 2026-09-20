@@ -1,3 +1,4 @@
 test_createdb_64len
 test_createdb_64len_2
 test_createdb_invalid_dbname
+test_dropdb

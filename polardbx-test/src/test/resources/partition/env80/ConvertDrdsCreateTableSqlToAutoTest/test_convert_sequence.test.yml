@@ -39,15 +39,38 @@ global index `tb4_c1`(`col1`) dbpartition by hash(col1),
 primary key(`col1`)
 ) auto_increment= 200 dbpartition by hash(`col2`);
 
+## group sequence with unit index
+CREATE TABLE `tb5` (
+`id` bigint NOT NULL AUTO_INCREMENT by GROUP unit COUNT 2 index 1,
+`ename` varchar(20) DEFAULT NULL,
+`deptno` int DEFAULT NULL,
+PRIMARY KEY (`id`),
+KEY `idx_emp_ename` (`ename`)
+) ENGINE = InnoDB dbpartition by hash (id);
+
 ## explicit sequence
 create group sequence seq1;
 create time sequence seq2;
 create simple sequence seq3 start with 400 increment by 5 maxvalue 100000;
+create group sequence seq4 unit count 5 index 1;
 
 create database testConvertDbAuto as testConvertDrdsDb;
 use testConvertDbAuto;
 show sequence where name = 'seq1';
 show sequence where name = 'seq3';
+show sequence where name = 'seq4';
 show sequence where name like '%tb1';
 show sequence where name like '%tb2';
 show sequence where name like '%tb4';
+
+/*+TDDL:cmd_extra(GROUP_SEQ_AS_DEFAULT=TRUE)*/create database testConvertDbAuto2 as testConvertDrdsDb;
+use testConvertDbAuto2;
+show sequence where name = 'seq1' and type='NEW';
+show sequence where name like '%tb1' and type='NEW';
+show sequence where name like '%tb2' and type='NEW';
+/*+TDDL:cmd_extra(GROUP_SEQ_AS_DEFAULT=TRUE)*/create database testConvertDbAuto2 as testConvertDrdsDb create_tables=false;
+show sequence where name = 'seq1' and type='NEW';
+use polardbx;
+drop database if exists `testConvertDrdsDb`;
+drop database if exists `testConvertDbAuto`;
+drop database if exists `testConvertDbAuto2`;

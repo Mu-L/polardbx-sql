@@ -1,0 +1,244 @@
+## DISABLE_FAST_SQL_PARSER
+set TTL_DEBUG_USE_GSI_FOR_COLUMNAR_ARC_TBL = false
+set TTL_DEBUG_CCI_SKIP_DDL_TASKS = "WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set TTL_DEBUG_CURRENT_DATETIME='2024-06-27 00:00:00'
+set SKIP_DDL_TASKS="WaitColumnarTableAlterPartitionTask,WaitColumnarTableCreationTask"
+set TTL_FORBID_DROP_TTL_TBL_WITH_ARC_CCI = false
+use polardbx
+drop database if exists test_arc_row_part_split_db
+create database if not exists test_arc_row_part_split_db mode='auto'
+use test_arc_row_part_split_db
+## create table ttl_row_t1
+drop table if exists ttl_row_t1
+create table ttl_row_t1(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by key(a)
+partitions 8
+alter table ttl_row_t1
+modify ttl
+ttl_enable = 'on',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_job = cron '0 0 0 1 1 ? */1' timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='row',
+archive_table_pre_allocate=2,
+archive_table_post_allocate=4
+show create table ttl_row_t1
+Table,Create Table
+ttl_row_t1,CREATE TABLE `ttl_row_t1` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 0 1 1 ? */1', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 4 )
+PARTITION BY KEY(`a`)
+PARTITIONS 8
+insert into ttl_row_t1(b) values('2024-02-27 00:00:00')
+insert into ttl_row_t1(b) values('2024-03-27 00:00:00')
+insert into ttl_row_t1(b) values('2024-04-27 00:00:00')
+insert into ttl_row_t1(b) values('2024-06-27 00:00:00')
+insert into ttl_row_t1(b) values('2024-06-28 00:00:00')
+## create table ttl_row_t2
+drop table if exists ttl_row_t2
+create table ttl_row_t2(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by key(a)
+partitions 8
+alter table ttl_row_t2
+modify ttl
+ttl_enable = 'on',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_job = cron '0 0 0 1 1 ? */1' timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='row',
+archive_table_pre_allocate=2,
+archive_table_post_allocate=4
+show create table ttl_row_t2
+Table,Create Table
+ttl_row_t2,CREATE TABLE `ttl_row_t2` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT NULL,
+	PRIMARY KEY (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 0 1 1 ? */1', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'ROW', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 4 )
+PARTITION BY KEY(`a`)
+PARTITIONS 8
+insert into ttl_row_t2(b) values('2024-02-27 00:00:00')
+insert into ttl_row_t2(b) values('2024-03-27 00:00:00')
+insert into ttl_row_t2(b) values('2024-04-27 00:00:00')
+insert into ttl_row_t2(b) values('2024-06-27 00:00:00')
+insert into ttl_row_t2(b) values('2024-06-28 00:00:00')
+## create table ttl_rng_t1
+drop table if exists ttl_rng_t1
+create table ttl_rng_t1(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by range columns(b)
+(
+  partition p1 values less than('2024-06-24'),
+  partition p2 values less than('2024-06-25'),
+  partition p3 values less than('2024-06-26'),
+  partition p4 values less than('2024-06-27'),
+  partition p5 values less than('2024-06-28'),
+  partition p6 values less than('2024-06-29'),
+  partition p7 values less than('2024-06-30')
+)
+alter table ttl_rng_t1
+modify ttl
+ttl_enable = 'on',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_job = cron '0 0 0 1 1 ? */1' timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='partition',
+archive_table_pre_allocate=2,
+archive_table_post_allocate=4
+show create table ttl_rng_t1
+Table,Create Table
+ttl_rng_t1,CREATE TABLE `ttl_rng_t1` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 0 1 1 ? */1', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 4 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p1 VALUES LESS THAN ('2024-06-24 00:00:00') ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN ('2024-06-25 00:00:00') ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN ('2024-06-26 00:00:00') ENGINE = InnoDB,
+ PARTITION p4 VALUES LESS THAN ('2024-06-27 00:00:00') ENGINE = InnoDB,
+ PARTITION p5 VALUES LESS THAN ('2024-06-28 00:00:00') ENGINE = InnoDB,
+ PARTITION p6 VALUES LESS THAN ('2024-06-29 00:00:00') ENGINE = InnoDB,
+ PARTITION p7 VALUES LESS THAN ('2024-06-30 00:00:00') ENGINE = InnoDB)
+insert into ttl_rng_t1(b) values('2024-02-27 00:00:00')
+insert into ttl_rng_t1(b) values('2024-03-27 00:00:00')
+insert into ttl_rng_t1(b) values('2024-04-27 00:00:00')
+insert into ttl_rng_t1(b) values('2024-06-27 00:00:00')
+## create table ttl_rng_t2
+drop table if exists ttl_rng_t2
+create table ttl_rng_t2(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by range columns(b)
+(
+partition p1 values less than('2024-06-24'),
+partition p2 values less than('2024-06-25'),
+partition p3 values less than('2024-06-26'),
+partition p4 values less than('2024-06-27'),
+partition p5 values less than('2024-06-28'),
+partition p6 values less than('2024-06-29'),
+partition p7 values less than('2024-06-30')
+)
+alter table ttl_rng_t2
+modify ttl
+ttl_enable = 'on',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_job = cron '0 0 0 1 1 ? */1' timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='partition',
+archive_table_pre_allocate=2,
+archive_table_post_allocate=4
+show create table ttl_rng_t2
+Table,Create Table
+ttl_rng_t2,CREATE TABLE `ttl_rng_t2` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 0 1 1 ? */1', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 4 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p1 VALUES LESS THAN ('2024-06-24 00:00:00') ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN ('2024-06-25 00:00:00') ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN ('2024-06-26 00:00:00') ENGINE = InnoDB,
+ PARTITION p4 VALUES LESS THAN ('2024-06-27 00:00:00') ENGINE = InnoDB,
+ PARTITION p5 VALUES LESS THAN ('2024-06-28 00:00:00') ENGINE = InnoDB,
+ PARTITION p6 VALUES LESS THAN ('2024-06-29 00:00:00') ENGINE = InnoDB,
+ PARTITION p7 VALUES LESS THAN ('2024-06-30 00:00:00') ENGINE = InnoDB)
+insert into ttl_rng_t2(b) values('2024-02-27 00:00:00')
+insert into ttl_rng_t2(b) values('2024-03-27 00:00:00')
+insert into ttl_rng_t2(b) values('2024-04-27 00:00:00')
+insert into ttl_rng_t2(b) values('2024-06-27 00:00:00')
+## create table ttl_rng_t3
+drop table if exists ttl_rng_t3
+create table ttl_rng_t3(
+a int not null auto_increment,
+b datetime,
+primary key(a)
+)
+partition by range columns(b)
+(
+partition p1 values less than('2024-06-24'),
+partition p2 values less than('2024-06-25'),
+partition p3 values less than('2024-06-26'),
+partition p4 values less than('2024-06-27'),
+partition p5 values less than('2024-06-28'),
+partition p6 values less than('2024-06-29'),
+partition p7 values less than('2024-06-30')
+)
+alter table ttl_rng_t3
+modify ttl
+ttl_enable = 'on',
+ttl_cleanup = 'on',
+ttl_expr = `b` expire after 1 day timezone '+08:00',
+ttl_job = cron '0 0 0 1 1 ? */1' timezone '+08:00',
+ttl_part_interval=interval(1,day),
+archive_type='partition',
+archive_table_pre_allocate=2,
+archive_table_post_allocate=4
+show create table ttl_rng_t3
+Table,Create Table
+ttl_rng_t3,CREATE TABLE `ttl_rng_t3` (
+	`a` int(11) NOT NULL AUTO_INCREMENT,
+	`b` datetime DEFAULT NULL,
+	PRIMARY KEY (`a`),
+	KEY `auto_shard_key_b` USING BTREE (`b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 TTL = TTL_DEFINITION ( TTL_ENABLE = 'ON', TTL_EXPR = `b` EXPIRE AFTER 1 day TIMEZONE '+08:00', TTL_JOB = CRON '0 0 0 1 1 ? */1', TTL_CLEANUP = 'ON', TTL_PART_INTERVAL = INTERVAL(1, DAY), ARCHIVE_TYPE = 'PARTITION', ARCHIVE_TABLE_NAME = '', ARCHIVE_TABLE_PRE_ALLOCATE = 2, ARCHIVE_TABLE_POST_ALLOCATE = 4 )
+PARTITION BY RANGE COLUMNS(`b`)
+(PARTITION p1 VALUES LESS THAN ('2024-06-24 00:00:00') ENGINE = InnoDB,
+ PARTITION p2 VALUES LESS THAN ('2024-06-25 00:00:00') ENGINE = InnoDB,
+ PARTITION p3 VALUES LESS THAN ('2024-06-26 00:00:00') ENGINE = InnoDB,
+ PARTITION p4 VALUES LESS THAN ('2024-06-27 00:00:00') ENGINE = InnoDB,
+ PARTITION p5 VALUES LESS THAN ('2024-06-28 00:00:00') ENGINE = InnoDB,
+ PARTITION p6 VALUES LESS THAN ('2024-06-29 00:00:00') ENGINE = InnoDB,
+ PARTITION p7 VALUES LESS THAN ('2024-06-30 00:00:00') ENGINE = InnoDB)
+insert into ttl_rng_t3(b) values('2024-02-27 00:00:00')
+insert into ttl_rng_t3(b) values('2024-03-27 00:00:00')
+insert into ttl_rng_t3(b) values('2024-04-27 00:00:00')
+insert into ttl_rng_t3(b) values('2024-06-27 00:00:00')
+explain select t1.a from ttl_rng_t1 t1 join ttl_rng_t2 t2 on t1.b=t2.b join ttl_rng_t3 t3 on t1.b=t3.b where t1.b='2024-06-27 00:00:00'
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="ttl_rng_t1[p5],ttl_rng_t2[p5],ttl_rng_t3[p5]", sql="SELECT `ttl_rng_t1`.`a` FROM `ttl_rng_t1` AS `ttl_rng_t1` INNER JOIN `ttl_rng_t2` AS `ttl_rng_t2` ON ((`ttl_rng_t1`.`b` = ?) AND (`ttl_rng_t2`.`b` = ?) AND (`ttl_rng_t1`.`b` = `ttl_rng_t2`.`b`)) INNER JOIN `ttl_rng_t3` AS `ttl_rng_t3` ON ((`ttl_rng_t3`.`b` = ?) AND (`ttl_rng_t1`.`b` = `ttl_rng_t3`.`b`) AND (`ttl_rng_t2`.`b` = `ttl_rng_t3`.`b`))")
+/*+TDDL:cmd_extra(TTL_JOB_MAINTENANCE_ENABLE=true,TTL_DEBUG_CURRENT_DATETIME='2024-06-27 02:00:00',TTL_JOB_MAINTENANCE_TIME_START='00:00:01',TTL_JOB_MAINTENANCE_TIME_END='23:59:59',FP_TTL_JOB_SUSPEND_TIME_ON_DELETE_ROW=15000)*/fire schedule by table ttl_row_t1
+/*+TDDL:cmd_extra(TTL_JOB_MAINTENANCE_ENABLE=true,TTL_DEBUG_CURRENT_DATETIME='2024-06-27 02:00:00',TTL_JOB_MAINTENANCE_TIME_START='00:00:01',TTL_JOB_MAINTENANCE_TIME_END='23:59:59',FP_TTL_JOB_SUSPEND_TIME_ON_DELETE_ROW=15000)*/fire schedule by table ttl_row_t2
+select sleep(1)
+sleep(1)
+0
+/*+TDDL:cmd_extra(TTL_JOB_MAINTENANCE_ENABLE=true,TTL_DEBUG_CURRENT_DATETIME='2024-06-27 02:00:00',TTL_JOB_MAINTENANCE_TIME_START='00:00:01',TTL_JOB_MAINTENANCE_TIME_END='23:59:59',FP_TTL_JOB_SUSPEND_TIME_ON_ADD_PRIM_PART=5000)*/fire schedule by table ttl_rng_t1
+select sleep(1)
+sleep(1)
+0
+/*+TDDL:cmd_extra(TTL_JOB_MAINTENANCE_ENABLE=true,TTL_DEBUG_CURRENT_DATETIME='2024-06-27 02:00:00',TTL_JOB_MAINTENANCE_TIME_START='00:00:01',TTL_JOB_MAINTENANCE_TIME_END='23:59:59',FP_TTL_JOB_SUSPEND_TIME_ON_ADD_PRIM_PART=10000)*/fire schedule by table ttl_rng_t2
+select sleep(3)
+sleep(3)
+0
+/*+TDDL:cmd_extra(TTL_JOB_MAINTENANCE_ENABLE=true,TTL_DEBUG_CURRENT_DATETIME='2024-06-27 02:00:00',TTL_JOB_MAINTENANCE_TIME_START='00:00:01',TTL_JOB_MAINTENANCE_TIME_END='23:59:59',FP_TTL_JOB_SUSPEND_TIME_ON_ADD_PRIM_PART=10000)*/fire schedule by table ttl_rng_t3
+select sleep(240)
+sleep(240)
+0
+explain select t1.a from ttl_rng_t1 t1 join ttl_rng_t2 t2 on t1.b=t2.b join ttl_rng_t3 t3 on t1.b=t3.b where t1.b='2024-06-27 00:00:00'
+Logical ExecutionPlan
+Gather(concurrent=true)
+  LogicalView(tables="ttl_rng_t1[p5],ttl_rng_t2[p5],ttl_rng_t3[p5]", sql="SELECT `ttl_rng_t1`.`a` FROM `ttl_rng_t1` AS `ttl_rng_t1` INNER JOIN `ttl_rng_t2` AS `ttl_rng_t2` ON ((`ttl_rng_t1`.`b` = ?) AND (`ttl_rng_t2`.`b` = ?) AND (`ttl_rng_t1`.`b` = `ttl_rng_t2`.`b`)) INNER JOIN `ttl_rng_t3` AS `ttl_rng_t3` ON ((`ttl_rng_t3`.`b` = ?) AND (`ttl_rng_t1`.`b` = `ttl_rng_t3`.`b`) AND (`ttl_rng_t2`.`b` = `ttl_rng_t3`.`b`))")
+use polardbx
+drop database if exists test_arc_row_part_split_db;

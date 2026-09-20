@@ -17,7 +17,6 @@
 package com.alibaba.polardbx.cdc;
 
 import com.alibaba.fastjson.JSONObject;
-import com.alibaba.polardbx.cdc.entity.LogicMeta;
 import com.alibaba.polardbx.cdc.entity.StorageChangeEntity;
 import com.alibaba.polardbx.cdc.entity.StorageRemoveRequest;
 import com.alibaba.polardbx.common.cdc.CdcDDLContext;
@@ -28,6 +27,7 @@ import com.alibaba.polardbx.common.cdc.ICdcManager;
 import com.alibaba.polardbx.common.cdc.TableMode;
 import com.alibaba.polardbx.common.cdc.TablesExtInfo;
 import com.alibaba.polardbx.common.cdc.entity.DDLExtInfo;
+import com.alibaba.polardbx.common.cdc.entity.DdlLoadStatusInfo;
 import com.alibaba.polardbx.common.ddl.Attribute;
 import com.alibaba.polardbx.common.ddl.Job;
 import com.alibaba.polardbx.common.ddl.newengine.DdlConstants;
@@ -40,7 +40,6 @@ import com.alibaba.polardbx.common.model.sqljep.Comparative;
 import com.alibaba.polardbx.common.model.sqljep.ComparativeMapChoicer;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
-import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.properties.ParamManager;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.common.utils.Pair;
@@ -65,6 +64,8 @@ import com.alibaba.polardbx.gms.listener.impl.MetaDbDataIdBuilder;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
 import com.alibaba.polardbx.gms.metadb.cdc.BinlogCommandAccessor;
 import com.alibaba.polardbx.gms.metadb.cdc.BinlogCommandRecord;
+import com.alibaba.polardbx.gms.metadb.cdc.entity.LogicMeta;
+import com.alibaba.polardbx.gms.metadb.cdc.entity.MetaInfo;
 import com.alibaba.polardbx.gms.metadb.limit.LimitValidator;
 import com.alibaba.polardbx.gms.metadb.table.TablesExtAccessor;
 import com.alibaba.polardbx.gms.metadb.table.TablesExtRecord;
@@ -103,7 +104,7 @@ import com.alibaba.polardbx.rule.model.TargetDB;
 import com.alibaba.polardbx.rule.utils.CalcParamsAttribute;
 import com.alibaba.polardbx.server.conn.InnerConnection;
 import com.google.common.collect.Lists;
-import lombok.Data;
+import lombok.SneakyThrows;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.commons.lang3.StringUtils;
 import org.glassfish.jersey.internal.guava.Sets;
@@ -111,6 +112,7 @@ import org.glassfish.jersey.internal.guava.Sets;
 import java.rmi.UnexpectedException;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -171,7 +173,11 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
      */
     private final ScheduledExecutorService commandScanExecutor;
 
+    private final ExecutorService asyncReloadDdlExecutor;
+
     private final Set<String> orginalAcceptSet;
+
+    private int serverPort;
 
     public CdcManager() {
         managerCoreExecutor = Executors.newCachedThreadPool(
@@ -180,6 +186,9 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
             new NamedThreadFactory("cdc-storage-check-executor", true));
         commandScanExecutor = Executors.newSingleThreadScheduledExecutor(
             new NamedThreadFactory("cdc-command-scan-executor", true));
+        asyncReloadDdlExecutor = Executors.newSingleThreadExecutor(
+            new NamedThreadFactory("cdc-async-load-ddl-executor", true));
+
         orginalAcceptSet = Sets.newHashSet();
         orginalAcceptSet.addAll(Arrays.asList(SqlKind.CREATE_TABLE.name(),
             SqlKind.ALTER_TABLE.name(),
@@ -223,6 +232,11 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
                     logger.error("something goes wrong when do storage check for cdc db.", t);
                 }
             }, commandScanInterval * 3, commandScanInterval, TimeUnit.MILLISECONDS);
+
+            // init async reload ddl executor
+            DdlSqlAsyncLoader.getInstance().init();
+            DdlSqlAsyncLoader.getInstance().setServerPort(serverPort);
+            asyncReloadDdlExecutor.submit(DdlSqlAsyncLoader.getInstance());
         }
     }
 
@@ -237,6 +251,11 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
         if (commandScanExecutor != null) {
             commandScanExecutor.shutdownNow();
         }
+    }
+
+    @Override
+    public void setServerPort(int serverPort) {
+        this.serverPort = serverPort;
     }
 
     @Override
@@ -257,6 +276,21 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
             future.get();
         } catch (Throwable t) {
             MetaDbLogUtil.META_DB_LOG.error(t);
+            throw new TddlRuntimeException(ErrorCode.ERR_CDC_GENERIC, t, t.getMessage());
+        }
+    }
+
+    @Override
+    public CdcDdlRecord getDdlRecordById(CdcDDLContext cdcDDLContext, Long id) {
+        try (Connection connection = prepareConnection()) {
+            return queryDdlById(connection, id);
+        } catch (Throwable t) {
+            String errorMsg = String.format(
+                "get ddl record error , the detail info as below : \n"
+                    + " id is : %s \n",
+                id);
+            logger.error(errorMsg, t);
+            MetaDbLogUtil.META_DB_LOG.error(errorMsg, t);
             throw new TddlRuntimeException(ErrorCode.ERR_CDC_GENERIC, t, t.getMessage());
         }
     }
@@ -320,7 +354,8 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
                         DDLExtInfo extInfo = buildExtInfo(schemaName, tableName, ddlSql, cdcDDLContext, extendParams);
                         boolean recordCommitTso = false;
                         if (extendParams.containsKey(CDC_MARK_RECORD_COMMIT_TSO)) {
-                            recordCommitTso = Boolean.parseBoolean(extendParams.get(CDC_MARK_RECORD_COMMIT_TSO).toString());
+                            recordCommitTso =
+                                Boolean.parseBoolean(extendParams.get(CDC_MARK_RECORD_COMMIT_TSO).toString());
                         }
                         CdcDdlMarkSyncAction syncAction = new CdcDdlMarkSyncAction(
                             getJobId(cdcDDLContext), sqlKind, schemaName, tableName, ddlSql,
@@ -475,6 +510,48 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
         CdcStorageUtil.checkCdcBeforeStorageRemove(storageInstIds, identifier);
     }
 
+    @Override
+    public CdcDdlRecord getMaxDdlIdCdcDdlRecord() {
+        return CdcTableUtil.getInstance().getMaxIdCdcDdlRecord();
+    }
+
+    @Override
+    public DdlLoadStatusInfo getDdlLoadStatusInfo() {
+        if (ExecUtils.hasLeadership(null)) {
+            return DdlSqlAsyncLoader.getInstance().getDdlLoadStatusInfo();
+        } else {
+            CdcDdlLoadStatusSyncAction syncAction = new CdcDdlLoadStatusSyncAction();
+            String leaderKey = ExecUtils.getLeaderKey(null);
+            List<Map<String, Object>> result =
+                SyncManagerHelper.sync(syncAction, SystemDbHelper.CDC_DB_NAME, leaderKey);
+            if (result == null || result.isEmpty()) {
+                return null;
+            } else {
+                Map<String, Object> item = result.get(0);
+                return new DdlLoadStatusInfo(
+                    (Long) item.get("MAX_DDL_ID"),
+                    (Long) item.get("EXEC_DDL_ID"),
+                    (Long) item.get("DELAY_TIME"),
+                    (Long) item.get("DELAY_COUNT"),
+                    (String) item.get("STATUS"),
+                    (String) item.get("ERROR_INFO"));
+            }
+        }
+    }
+
+    @SneakyThrows
+    @Override
+    public void resetCdcDdlRecordAutoIncrementSeq() {
+        CdcDdlRecord cdcDdlRecord = CdcTableUtil.getInstance().getMaxIdCdcDdlRecord();
+        if (cdcDdlRecord != null) {
+            try (InnerConnection conn = new InnerConnection(CDC_DB_NAME);
+                Statement statement = conn.createStatement()) {
+                statement.executeUpdate(
+                    "ALTER TABLE `__cdc__`.`__cdc_ddl_record__` AUTO_INCREMENT = " + (cdcDdlRecord.getId() + 1));
+            }
+        }
+    }
+
     private void checkState() {
         // 我们无法完全保证在CdcManager初始化的过程中，不会收到操作请求，但我们知道这种概率非常低，所以引入一个状态检测机制
         // 当发现Manager还处在初始化状态时，进行轮询等待，超过最大等待时间抛异常处理
@@ -512,17 +589,24 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
             return false;
         }
 
+        if (DdlSqlAsyncLoader.getInstance().enableDdlLoad() ||
+            extendParams.containsKey(ConnectionProperties.ASYNC_LOAD_GDN_DDL_SQL_ID) ||
+            StringUtils.contains(ddlSql, ConnectionProperties.ASYNC_LOAD_GDN_DDL_SQL_ID)) {
+            logger.warn("ignore ddl mark for loading gdn ddl sql, with record id " + extendParams.get(
+                ConnectionProperties.ASYNC_LOAD_GDN_DDL_SQL_ID));
+            return false;
+        }
+
         // 全局二级索引(即：GSI)，如果没有特殊标识，忽略打标
         Boolean isGSI = (Boolean) extendParams.get(CDC_IS_GSI);
-        if (isGSI == null) {
-            isGSI = false;
-        }
+        isGSI = isGSI != null && isGSI;
         if (!extendParams.containsKey(ICdcManager.NOT_IGNORE_GSI_JOB_TYPE_FLAG) && isGSI) {
             logger.warn(String.format("ddl sql is related to global index, is ignored, ddl sql is : %s", ddlSql));
             return false;
         }
-        SqlKind sqlKind = SqlKind.valueOf(cdcDDLContext.getSqlKind());
 
+        // ignore flush logs
+        SqlKind sqlKind = SqlKind.valueOf(cdcDDLContext.getSqlKind());
         if (sqlKind == SqlKind.FLUSH_LOGS) {
             return true;
         }
@@ -628,6 +712,12 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
             context.getJobId());
     }
 
+    private CdcDdlRecord queryDdlById(Connection connection, Long id) throws SQLException {
+        return CdcTableUtil.getInstance().queryDdlRecordById(
+            connection,
+            id);
+    }
+
     public void recordDdl(Connection connection, String schema, String tableName, String sqlKind, String ddlSql,
                           CdcDDLContext cdcDDLContext,
                           CdcDdlMarkVisibility visibility,
@@ -692,6 +782,10 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
         if (extendParams.containsKey(CDC_ORIGINAL_DDL)) {
             extInfo.setOriginalDdl(extendParams.get(CDC_ORIGINAL_DDL).toString());
         }
+        if (extendParams.containsKey(ICdcManager.CDC_EXTERNAL_COLUMN_DDL)) {
+            extInfo.setExternalColumnDdl(
+                Boolean.parseBoolean(extendParams.get(ICdcManager.CDC_EXTERNAL_COLUMN_DDL).toString()));
+        }
         if (extendParams.containsKey(CDC_IS_GSI)) {
             extInfo.setGsi((Boolean) extendParams.get(CDC_IS_GSI));
         }
@@ -729,7 +823,7 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
         }
 
         if (extendParams.containsKey(CDC_DDL_SCOPE)) {
-            extInfo.setDdlScope(((DdlScope) extendParams.get(CDC_DDL_SCOPE)).getValue());
+            extInfo.setDdlScope((DdlScope.valueOf(String.valueOf(extendParams.get(CDC_DDL_SCOPE)))).getValue());
         }
 
         if (extendParams.containsKey(FP_OVERRIDE_NOW)) {
@@ -738,6 +832,14 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
 
         if (extendParams.containsKey(FP_OVERRIDE_NOW)) {
             extInfo.addPolarxVariable(FP_OVERRIDE_NOW, extendParams.get(FP_OVERRIDE_NOW).toString());
+        }
+
+        if (extendParams.containsKey(CDC_MARK_ROOT_DDL_JOB_ID)) {
+            extInfo.setRootJobId((Long) extendParams.get(CDC_MARK_ROOT_DDL_JOB_ID));
+        }
+
+        if (extendParams.containsKey(CDC_PUSH_DOWN_AUTO_INCREMENT_FLAG)) {
+            extInfo.setPushDownAutoIncrement((Boolean) extendParams.get(CDC_PUSH_DOWN_AUTO_INCREMENT_FLAG));
         }
 
         tryAttachImplicitTableGroupInfo(schema, tableName, ddlSql, extInfo, extendParams);
@@ -801,6 +903,11 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
             ImplicitTableGroupUtil.exchangeNamesMapping.set(exchangeNamesMapping);
         }
 
+        if (extendParams.containsKey(CDC_IS_GSI)) {
+            Boolean isGSI = (Boolean) extendParams.get(CDC_IS_GSI);
+            ImplicitTableGroupUtil.isGsiDdl.set(isGSI);
+        }
+
         if (StringUtils.isNotBlank(ddlExtInfo.getOriginalDdl())) {
             String sql = tryAttachImplicitTableGroup(schema, tableName, ddlExtInfo.getOriginalDdl());
             if (!StringUtils.equals(sql, ddlExtInfo.getOriginalDdl())) {
@@ -829,7 +936,7 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
         throws SQLException {
         if (shouldRebuildCreatSql4PhyTable(cdcDDLContext, extendParams)) {
             MetaInfo metaInfo = buildMetaForTable(schema, tableName, extendParams,
-                tryBuildTargetDBs(cdcDDLContext.getNewTableTopology()), cdcDDLContext.getTablesExtInfoPair());
+                tryBuildTargetDBs(cdcDDLContext.getNewTableTopology()), cdcDDLContext.getTablesExtInfoPair(), false);
             LogicMeta.LogicTableMeta tableMeta = metaInfo.getLogicTableMeta();
             String phyCreateSql = MetaBuilder.getPhyCreateSql(schema, tableMeta);
 
@@ -839,6 +946,10 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
             MySqlCreateTableStatement phyCreateStmt = (MySqlCreateTableStatement) phyStatementList.get(0);
             phyCreateStmt.setTableName("`" + MetaBuilder.escape(tableName) + "`");
             filterColumns(phyCreateStmt, schema, tableName);
+            Object mceExcludeColumn = extendParams.get(ICdcManager.MCE_CREATE_SQL_EXCLUDE_COLUMN);
+            if (mceExcludeColumn != null && StringUtils.isNotBlank(mceExcludeColumn.toString())) {
+                filterColumns(phyCreateStmt, Lists.newArrayList(StringUtils.lowerCase(mceExcludeColumn.toString())));
+            }
             return phyCreateStmt.toUnformattedString();
         }
         return "";
@@ -846,7 +957,10 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
 
     private boolean shouldRebuildCreatSql4PhyTable(CdcDDLContext cdcDDLContext, Map<String, Object> extendParams) {
         Object refreshCreateSql4PhyFlag = extendParams.get(REFRESH_CREATE_SQL_4_PHY_TABLE);
-        return "true".equals(refreshCreateSql4PhyFlag) || cdcDDLContext.isRefreshTableMetaInfo() ||
+        boolean externalColumnCreate = SqlKind.CREATE_TABLE.name().equals(cdcDDLContext.getSqlKind())
+            && Boolean.parseBoolean(String.valueOf(extendParams.get(ICdcManager.CDC_EXTERNAL_COLUMN_DDL)));
+        return externalColumnCreate || "true".equals(refreshCreateSql4PhyFlag)
+            || cdcDDLContext.isRefreshTableMetaInfo() ||
             ((SqlKind.valueOf(cdcDDLContext.getSqlKind()) == SqlKind.ALTER_TABLE
                 || SqlKind.valueOf(cdcDDLContext.getSqlKind()) == SqlKind.ALTER_TABLE_SET_TABLEGROUP) && extendParams
                 .containsKey(ICdcManager.ALTER_TRIGGER_TOPOLOGY_CHANGE_FLAG));
@@ -887,27 +1001,39 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
                                  Pair<String, TablesExtInfo> tableMetaRecords)
         throws SQLException {
         SqlKind kind = SqlKind.valueOf(sqlKind);
-
         List<TargetDB> targetDBList = tryBuildTargetDBs(newTableTopology);
+
+        // check if dry run
+        boolean dryRunDdl = extendParams.containsKey(ICdcManager.CDC_DRY_RUN_DDL_FLAG) &&
+            Boolean.parseBoolean(extendParams.get(ICdcManager.CDC_DRY_RUN_DDL_FLAG).toString());
+        ParamManager paramManager = new ParamManager(extendParams);
+        dryRunDdl |= paramManager.getBoolean(ConnectionParams.CDC_DDL_MARK_WITH_DETAIL_META_ENABLE);
 
         // 如果外部显示指定了需要刷新元数据，则直接构建即可
         if (refreshTableMetaInfo) {
-            return JSONObject.toJSONString(
-                buildMetaForTable(schemaName, tableName, extendParams, targetDBList, tableMetaRecords));
+            return JSONObject.toJSONString(buildMetaForTable(
+                schemaName, tableName, extendParams, targetDBList, tableMetaRecords, dryRunDdl));
         }
 
         if (kind == SqlKind.CREATE_DATABASE || kind == SqlKind.MOVE_DATABASE) {
             return JSONObject.toJSONString(buildMetaForDb(schemaName));
         } else if (kind == SqlKind.CREATE_TABLE || kind == SqlKind.RENAME_TABLE) {
-            return JSONObject
-                .toJSONString(buildMetaForTable(schemaName, tableName, extendParams, targetDBList, tableMetaRecords));
-        } else if ((kind == SqlKind.ALTER_TABLE || kind == SqlKind.ALTER_TABLE_SET_TABLEGROUP) && extendParams
-            .containsKey(ICdcManager.ALTER_TRIGGER_TOPOLOGY_CHANGE_FLAG)) {
-            return JSONObject
-                .toJSONString(buildMetaForTable(schemaName, tableName, extendParams, targetDBList, tableMetaRecords));
+            return JSONObject.toJSONString(buildMetaForTable
+                (schemaName, tableName, extendParams, targetDBList, tableMetaRecords, dryRunDdl));
+        } else if ((kind == SqlKind.ALTER_TABLE || kind == SqlKind.ALTER_TABLE_SET_TABLEGROUP)
+            && buildMetaInfoForAlterTable(extendParams, dryRunDdl)) {
+            return JSONObject.toJSONString(buildMetaForTable(
+                schemaName, tableName, extendParams, targetDBList, tableMetaRecords, dryRunDdl));
+        } else if ((kind == SqlKind.CREATE_INDEX || kind == SqlKind.DROP_INDEX) & dryRunDdl) {
+            return JSONObject.toJSONString(buildMetaForTable(
+                schemaName, tableName, extendParams, targetDBList, tableMetaRecords, dryRunDdl));
         } else {
             return null;
         }
+    }
+
+    private boolean buildMetaInfoForAlterTable(Map<String, Object> extendParams, boolean dryRunDdl) {
+        return extendParams.containsKey(ICdcManager.ALTER_TRIGGER_TOPOLOGY_CHANGE_FLAG) || dryRunDdl;
     }
 
     private List<TargetDB> tryBuildTargetDBs(Map<String, Set<String>> newTableTopology) {
@@ -934,7 +1060,8 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
     private MetaInfo buildMetaForTable(String schemaName, String tableName,
                                        Map<String, Object> extendParams,
                                        List<TargetDB> assignedTargetDBList,
-                                       Pair<String, TablesExtInfo> tableMetaRecords)
+                                       Pair<String, TablesExtInfo> tableMetaRecords,
+                                       boolean buildDetailMeta)
         throws SQLException {
         MetaInfo metaInfo = new MetaInfo();
 
@@ -943,13 +1070,13 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
                 getTargetDBs(schemaName, tableName, extendParams);
             metaInfo.logicTableMeta =
                 MetaBuilder.buildLogicTableMeta(TableMode.SHARDING, schemaName, tableName, targetDbList,
-                    tableMetaRecords);
+                    tableMetaRecords, buildDetailMeta);
         } else {
             List<TargetDB> targetDbList = !assignedTargetDBList.isEmpty() ? assignedTargetDBList :
                 getTargetDBs(schemaName, tableName, extendParams);
             metaInfo.logicTableMeta =
                 MetaBuilder.buildLogicTableMeta(TableMode.PARTITION, schemaName, tableName, targetDbList,
-                    tableMetaRecords);
+                    tableMetaRecords, buildDetailMeta);
         }
 
         if (extendParams.containsKey(ICdcManager.TABLE_NEW_NAME)) {
@@ -1249,7 +1376,7 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
             Map<String, String> grpPhyDbMap = new HashMap<>();
             grpPhyDbMap.putIfAbsent(pair.getKey(), pair.getValue());
             DbTopologyManager.createPhysicalDbInStorageInst(dbCharset, dbCollation, storageInstId,
-                grpPhyDbMap);
+                grpPhyDbMap, "createDbAndTables");
 
             //create tables
             try (Connection metaDbConn = MetaDbDataSource.getInstance().getConnection()) {
@@ -1474,11 +1601,5 @@ public class CdcManager extends AbstractLifecycle implements ICdcManager {
             }
             Runtime.getRuntime().halt(1);
         });
-    }
-
-    @Data
-    public static class MetaInfo {
-        private LogicMeta.LogicDbMeta logicDbMeta;
-        private LogicMeta.LogicTableMeta logicTableMeta;
     }
 }

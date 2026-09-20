@@ -119,7 +119,8 @@ public class NormalConditionResult extends ColumnEqualityConditionResult {
     }
 
     @Override
-    public Map<String, Comparative> toPartitionCondition(ExecutionContext executionContext) {
+    public Map<String, Comparative> toPartitionCondition(
+        ExecutionContext executionContext, boolean enableConstExpr) {
         final Map<String, Comparative> result = new HashMap<>();
         if (null == label || GeneralUtil.isEmpty(predicates)) {
             return result;
@@ -140,7 +141,8 @@ public class NormalConditionResult extends ColumnEqualityConditionResult {
         if (null != comparison) {
             try {
                 RexNode dnf = RexUtil.toDnf(builder, comparison);
-                PlannerUtils.buildComparative(result, dnf, tableRowType, tableName, schema, executionContext);
+                PlannerUtils.buildComparative(
+                    result, dnf, tableRowType, tableName, schema, executionContext, enableConstExpr);
             } catch (TddlRuntimeException e) {
                 if (e.getErrorCode() == ErrorCode.ERR_TODNF_LIMIT_EXCEED.getCode()) {
                     // do nothing, just skip this condition
@@ -153,7 +155,7 @@ public class NormalConditionResult extends ColumnEqualityConditionResult {
     }
 
     @Override
-    public Map<String, Comparative> toColumnCondition(List<String> columns) {
+    public Map<String, Comparative> toColumnCondition(List<String> columns, ExecutionContext context) {
         final Map<String, Comparative> result = new HashMap<>();
         if (null == label || GeneralUtil.isEmpty(predicates) || columns == null) {
             return result;
@@ -176,42 +178,8 @@ public class NormalConditionResult extends ColumnEqualityConditionResult {
                 final String schema = qualifiedName.size() > 1 ? qualifiedName.get(qualifiedName.size() - 2) : null;
                 Partitioner partitioner = OptimizerContext.getContext(schema).getPartitioner();
 
-                PlannerUtils.buildColumnsComparative(result, dnf, tableRowType, columns, partitioner);
-            } catch (TddlRuntimeException e) {
-                if (e.getErrorCode() == ErrorCode.ERR_TODNF_LIMIT_EXCEED.getCode()) {
-                    // do nothing, just skip this condition
-                } else {
-                    throw e;
-                }
-            }
-        }
-        return result;
-    }
-
-    @Override
-    public Map<String, Comparative> toFullPartitionCondition(ExecutionContext executionContext) {
-        Map<String, Comparative> result = new HashMap<>();
-        if (null == label || GeneralUtil.isEmpty(predicates)) {
-            return result;
-        }
-
-        Preconditions.checkArgument(label instanceof TableScanLabel);
-
-        final List<String> qualifiedName = ((TableScanLabel) label).getTable().getQualifiedName();
-        final String tableName = Util.last(qualifiedName);
-        final String schema = qualifiedName.size() > 1 ? qualifiedName.get(qualifiedName.size() - 2) : null;
-        final RelDataType tableRowType = label.getRel().getRowType();
-
-        final RexBuilder builder = this.label.getRel().getCluster().getRexBuilder();
-
-        final List<RexNode> sorted = PredicateUtil.sortPredicates(predicates);
-
-        final RexNode comparison = RexUtil.composeConjunction(builder, sorted, true);
-        if (null != comparison) {
-            try {
-                RexNode dnf = RexUtil.toDnf(builder, comparison);
-                result = PlannerUtils
-                    .buildComparativeWithAllColumn(result, dnf, tableRowType, tableName, schema, executionContext);
+                PlannerUtils.buildColumnsComparative(
+                    result, dnf, tableRowType, columns, partitioner, context, false);
             } catch (TddlRuntimeException e) {
                 if (e.getErrorCode() == ErrorCode.ERR_TODNF_LIMIT_EXCEED.getCode()) {
                     // do nothing, just skip this condition

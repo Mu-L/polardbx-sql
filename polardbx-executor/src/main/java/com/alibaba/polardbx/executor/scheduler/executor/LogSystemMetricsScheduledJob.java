@@ -1,5 +1,9 @@
 package com.alibaba.polardbx.executor.scheduler.executor;
 
+import com.alibaba.polardbx.common.dmlStats.GlobalInsertIgnoreReturningStatsSingleton;
+import com.alibaba.polardbx.common.dmlStats.GlobalModifyReturningStatsSingleton;
+import com.alibaba.polardbx.common.dmlStats.GlobalRelocateReturningStatsSingleton;
+import com.alibaba.polardbx.common.dmlStats.GlobalReplaceReturningStatsSingleton;
 import com.alibaba.polardbx.common.eventlogger.EventLogger;
 import com.alibaba.polardbx.common.eventlogger.EventType;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
@@ -38,6 +42,7 @@ import static com.alibaba.polardbx.common.scheduler.FiredScheduledJobState.QUEUE
 import static com.alibaba.polardbx.common.scheduler.FiredScheduledJobState.RUNNING;
 import static com.alibaba.polardbx.common.scheduler.FiredScheduledJobState.SUCCESS;
 import static com.alibaba.polardbx.executor.statistic.RealStatsLog.statLog;
+import static com.alibaba.polardbx.executor.utils.ExecUtils.isMysql80Version;
 import static com.alibaba.polardbx.gms.module.LogLevel.CRITICAL;
 import static com.alibaba.polardbx.gms.module.LogLevel.NORMAL;
 import static com.alibaba.polardbx.gms.module.LogLevel.WARNING;
@@ -115,6 +120,28 @@ public class LogSystemMetricsScheduledJob extends SchedulerExecutor {
             for (final String status : columnarStatus()) {
                 EventLogger.log(EventType.COLUMNAR_STATUS, status);
             }
+
+            // for replace returning
+            if (isMysql80Version()) {
+                EventLogger.log(EventType.REPLACE_RETURNING_STATS,
+                    GlobalReplaceReturningStatsSingleton.getInstance().log());
+            }
+
+            // for insert ignore returning
+            EventLogger.log(EventType.INSERT_IGNORE_RETURNING_STATS,
+                GlobalInsertIgnoreReturningStatsSingleton.getInstance()
+                    .log());
+
+            // for relocate returning
+            if (isMysql80Version()) {
+                EventLogger.log(EventType.RELOCATE_RETURNING_STATS,
+                    GlobalRelocateReturningStatsSingleton.getInstance().log());
+            }
+
+            // for delete returning (LogicalModify)
+            EventLogger.log(EventType.MODIFY_RETURNING_STATS,
+                GlobalModifyReturningStatsSingleton.getInstance().log());
+
             //mark as SUCCESS
             succeedExit(scheduleId, fireTime, remark);
         } catch (Throwable t) {
@@ -162,6 +189,7 @@ public class LogSystemMetricsScheduledJob extends SchedulerExecutor {
             columnarRecords.addAll(tableMappingAccessor.queryByStatus(ColumnarTableStatus.CREATING.name()));
 
             final ColumnarDuplicatesAccessor duplicatesAccessor = new ColumnarDuplicatesAccessor();
+            duplicatesAccessor.setConnection(metaDbConn);
             for (final ColumnarTableMappingRecord record : columnarRecords) {
                 final long count = duplicatesAccessor.countDuplicates(record.tableId);
                 duplicates.put(record.tableId, count);

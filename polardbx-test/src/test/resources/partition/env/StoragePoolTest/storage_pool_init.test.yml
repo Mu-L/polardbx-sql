@@ -11,8 +11,13 @@ testCases:
       - "drop database if exists test_db2;"
       - "drop database if exists test_db3;"
       - "drop database if exists test_db4;"
+      - "drop database if exists random_sql;"
       - "drop storage pool __all_storage_pool"
       - "create database if not exists old_auto_database mode = auto;"
+      - "create database if not exists keep_still_auto_database mode = auto;"
+      - "set global DDL_PLAN_SCHEDULER_DELAY=10;"
+      - "set global PHYSICAL_BACKFILL_ENABLE=false;"
+      - "set global REBALANCE_CLUSTER_PARALLELISM=8;"
     dbNames: []
     rejectDDls:
     expectedSQLs:
@@ -90,10 +95,10 @@ testCases:
         - old_auto_database.t1 table "$dn1,$dn2"
       #  auto generate by locality value check.
       #  auto generate by partition locality check. with each table.
+      # here now we have 3 storage pool.
   - prepareDDls:
       - "alter storage pool sp1 append node '$dn3,$dn4'"
-      - "create storage pool sp2;"
-      - "alter storage pool sp2 append node '$dn5,$dn6'"
+      - "create storage pool sp2 dn_list = '$dn5,$dn6' undeletable_dn= '$dn5'"
       - "create storage pool sp3;"
       - "alter storage pool sp3 append node '$dn7'"
     dbNames: ["old_auto_database"]

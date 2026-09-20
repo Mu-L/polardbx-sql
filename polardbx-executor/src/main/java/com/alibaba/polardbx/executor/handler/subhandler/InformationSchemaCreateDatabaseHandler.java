@@ -433,7 +433,7 @@ public class InformationSchemaCreateDatabaseHandler extends BaseVirtualViewSubCl
     private static Map<Long, ThrottleInfo> collectThrottleInfoMap() {
         Map<Long, ThrottleInfo> throttleInfoMap = new HashMap<>();
         try {
-            List<List<Map<String, Object>>> result = SyncManagerHelper.sync(
+            List<List<Map<String, Object>>> result = SyncManagerHelper.syncIgnoreExceptions(
                 new DdlBackFillSpeedSyncAction(), SystemDbHelper.DEFAULT_DB_NAME, SyncScope.MASTER_ONLY);
             for (List<Map<String, Object>> list : GeneralUtil.emptyIfNull(result)) {
                 for (Map<String, Object> map : GeneralUtil.emptyIfNull(list)) {

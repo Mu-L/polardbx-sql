@@ -33,7 +33,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static com.alibaba.polardbx.server.handler.privileges.polar.PolarHandlerCommon.checkDrdsRoot;
-import static com.alibaba.polardbx.gms.privilege.audit.AuditPrivilege.polarAudit;
+import static com.alibaba.polardbx.server.util.AuditPrivilege.polarAudit;
 
 /**
  * @author shicai.xsc 2020/3/5 20:49
@@ -80,7 +80,7 @@ public class PolarDropUserHandler extends AbstractPrivilegeCommandHandler {
         PolarAccountInfo granter = getGranter();
 
         PolarPrivManager.getInstance().dropAccount(granter, getServerConn().getActiveRoles(), grantees, true);
-        polarAudit(getServerConn().getConnectionInfo(), getSql().toString(), AuditAction.DROP_USER);
+        polarAudit(getServerConn(), getSql().toString(), AuditAction.DROP_USER);
         logger.info(String.format("DROP USER succeed, sql: %s, granter: %s", getSql(), granter.getIdentifier()));
     }
 

@@ -35,6 +35,10 @@ public class RecycleBinManager {
     public static RecycleBinManager instance = new RecycleBinManager();
     public Map<String, RecycleBin> apps;
 
+    public static RecycleBinManager getInstance() {
+        return instance;
+    }
+
     private RecycleBinManager() {
         apps = new ConcurrentHashMap<>();
 

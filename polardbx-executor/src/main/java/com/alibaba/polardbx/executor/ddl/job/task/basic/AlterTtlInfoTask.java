@@ -4,7 +4,6 @@ import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.scheduler.SchedulerJobStatus;
 import com.alibaba.polardbx.executor.ddl.job.meta.TableMetaChanger;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseGmsTask;
-import com.alibaba.polardbx.executor.ddl.job.task.ttl.TtlJobUtil;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.exception.TtlJobRuntimeException;
 import com.alibaba.polardbx.executor.ddl.job.task.ttl.log.TtlLoggerUtil;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
@@ -21,9 +20,9 @@ import com.cronutils.model.Cron;
 import com.cronutils.model.definition.CronDefinitionBuilder;
 import com.cronutils.parser.CronParser;
 import lombok.Getter;
+import org.apache.commons.lang.StringUtils;
 
 import java.sql.Connection;
-import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Locale;
@@ -68,6 +67,7 @@ public class AlterTtlInfoTask extends BaseGmsTask {
                 oldTtlTblName);
             boolean enableTtlScheduleOnOldTtlInfo = oldTtlInfo.isEnableTtlSchedule();
             boolean enableTtlScheduleOnNewTtlInfo = newTtlInfo.isEnableTtlSchedule();
+
             String cronExpr = newTtlInfo.getTtlInfoRecord().getTtlCron();
             if (cronExpr == null) {
                 cronExpr =
@@ -91,7 +91,8 @@ public class AlterTtlInfoTask extends BaseGmsTask {
                 cron.validate();
 
                 String oldCronExpr = scheduledJobsRecord.getScheduleExpr();
-                boolean modifiedCronExpr = !(cronExpr.equalsIgnoreCase(oldCronExpr));
+//                boolean modifiedCronExpr = !(cronExpr.equalsIgnoreCase(oldCronExpr));
+                boolean modifiedCronExpr = !(StringUtils.equals(cronExpr, oldCronExpr));
                 boolean openTtlJobSchedule = !enableTtlScheduleOnOldTtlInfo && enableTtlScheduleOnNewTtlInfo;
 
                 String cronTimeZoneStr = TtlInfoRecord.TTL_JOB_CRON_DEFAULT_TIME_ZONE;
@@ -102,14 +103,28 @@ public class AlterTtlInfoTask extends BaseGmsTask {
                 scheduledJobsRecord.setTimeZone(cronTimeZoneStr);
 
                 if (modifiedCronExpr || openTtlJobSchedule) {
-                    Optional<ZonedDateTime> newNextFiredTime =
-                        DefaultQuartzCronTrigger.calcNextFireTimeByNow(scheduledJobsRecord);
-                    long nextFiredTimeSec = newNextFiredTime.get().toEpochSecond();
-                    scheduledJobsRecord.setNextFireTime(nextFiredTimeSec);
+//                    Optional<ZonedDateTime> newNextFiredTime = DefaultQuartzCronTrigger.calcNextFireTimeByNow(scheduledJobsRecord);
+//                    long nextFiredTimeSec = newNextFiredTime.get().toEpochSecond();
+//                    scheduledJobsRecord.setNextFireTime(nextFiredTimeSec);
+
+                    /**
+                     * <pre>
+                     * When the nexFireTime of the scheduledJobsRecord of ttl_job is set to zero,
+                     * The SchedulerExecutorScanner will scan it per minute and auto gen new
+                     * FiredScheduledJobs for the scheduledJobsRecord of ttl_job.
+                     * see: com.alibaba.polardbx.gms.scheduler.ScheduledJobsAccessor#POLL_SQL
+                     * </pre>
+                     */
+                    scheduledJobsRecord.setNextFireTime(0);
                 }
 
                 TableMetaChanger.updateScheduledJob(metaDbConnection, scheduledJobsRecord);
-                if (!enableTtlScheduleOnNewTtlInfo) {
+                if (modifiedCronExpr || !enableTtlScheduleOnNewTtlInfo) {
+                    /**
+                     * if ttL_enable = false or ttl_job is modified,
+                     * should clear all the-QUEUED-state FiredScheduledJobs for the scheduledJobsRecord of ttl_job.
+                     * because if tt_enable = true, FiredScheduledJobs will be auto generated after 1 minute
+                     */
                     TableMetaChanger.removeTtlFiredScheduledJobs(metaDbConnection, schemaName, logicalTableName);
                 }
                 TableInfoManager.updateTableVersion(schemaName, logicalTableName, metaDbConnection);

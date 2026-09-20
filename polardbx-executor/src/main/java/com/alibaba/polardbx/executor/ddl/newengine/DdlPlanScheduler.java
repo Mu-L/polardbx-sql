@@ -23,6 +23,7 @@ import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.thread.ExecutorUtil;
 import com.alibaba.polardbx.common.utils.thread.NamedThreadFactory;
+import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.executor.ddl.newengine.meta.DdlPlanManager;
 import com.alibaba.polardbx.executor.partitionmanagement.rebalance.RebalanceDdlPlanManager;
 import com.alibaba.polardbx.executor.utils.ExecUtils;
@@ -33,6 +34,7 @@ import java.util.List;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper.getInstConfigAsLong;
 
@@ -55,11 +57,10 @@ public class DdlPlanScheduler {
             new ThreadPoolExecutor.DiscardPolicy());
 
     private DdlPlanScheduler() {
-        Long DELAY = getInstConfigAsLong(LOGGER, ConnectionProperties.DDL_PLAN_SCHEDULER_DELAY, 60L);
         scannerThread.scheduleWithFixedDelay(
             AsyncTask.build(new DdlPlanScanner()),
             0L,
-            DELAY,
+            10,
             TimeUnit.SECONDS
         );
     }
@@ -68,10 +69,18 @@ public class DdlPlanScheduler {
 
         DdlPlanManager ddlPlanManager = new DdlPlanManager();
 
+        AtomicLong lastSchedulerMoment = new AtomicLong(0L);
+
         @Override
         public void run() {
             try {
-                if (!ExecUtils.hasLeadership(null)) {
+                Long currentMoment = System.currentTimeMillis();
+                Long DELAY = getInstConfigAsLong(LOGGER, ConnectionProperties.DDL_PLAN_SCHEDULER_DELAY, 60L) - 1;
+                if (currentMoment - lastSchedulerMoment.get() < DELAY * 1000) {
+                    return;
+                }
+                lastSchedulerMoment.set(currentMoment);
+                if (!ExecUtils.hasLeadership(null) || ConfigDataMode.isFastMock()) {
                     return;
                 }
                 List<DdlPlanRecord> ddlPlanRecordList = ddlPlanManager.getExecutableDdlPlan(DdlType.REBALANCE);

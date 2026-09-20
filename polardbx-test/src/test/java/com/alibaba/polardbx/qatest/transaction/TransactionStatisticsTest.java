@@ -67,7 +67,7 @@ public class TransactionStatisticsTest extends CrudBasedLockTestCase {
             }
         }
 
-        String trxId = getTrxId(conn0);
+        String trxId = JdbcUtil.getTrxId(conn0);
 
         try (ResultSet rs = JdbcUtil.executeQuerySuccess(conn0,
             "SELECT * FROM INFORMATION_SCHEMA.polardbx_trx WHERE trx_id = '" + trxId + "'")) {
@@ -136,7 +136,7 @@ public class TransactionStatisticsTest extends CrudBasedLockTestCase {
             }
         }
 
-        String trxId = getTrxId(conn0);
+        String trxId = JdbcUtil.getTrxId(conn0);
 
         try (ResultSet rs = JdbcUtil.executeQuerySuccess(conn0,
             "SELECT * FROM INFORMATION_SCHEMA.polardbx_trx WHERE trx_id = '" + trxId + "'")) {
@@ -202,7 +202,7 @@ public class TransactionStatisticsTest extends CrudBasedLockTestCase {
             }
         }
 
-        String trxId = getTrxId(conn0);
+        String trxId = JdbcUtil.getTrxId(conn0);
 
         try (ResultSet rs = JdbcUtil.executeQuerySuccess(conn0,
             "SELECT * FROM INFORMATION_SCHEMA.polardbx_trx WHERE trx_id = '" + trxId + "'")) {
@@ -267,7 +267,7 @@ public class TransactionStatisticsTest extends CrudBasedLockTestCase {
             }
         }
 
-        String trxId = getTrxId(conn0);
+        String trxId = JdbcUtil.getTrxId(conn0);
 
         try (ResultSet rs = JdbcUtil.executeQuerySuccess(conn0,
             "SELECT * FROM INFORMATION_SCHEMA.polardbx_trx WHERE trx_id = '" + trxId + "'")) {
@@ -336,7 +336,7 @@ public class TransactionStatisticsTest extends CrudBasedLockTestCase {
             }
         }
 
-        String trxId = getTrxId(conn0);
+        String trxId = JdbcUtil.getTrxId(conn0);
 
         try (ResultSet rs = JdbcUtil.executeQuerySuccess(conn0,
             "SELECT * FROM INFORMATION_SCHEMA.polardbx_trx WHERE trx_id = '" + trxId + "'")) {
@@ -411,7 +411,7 @@ public class TransactionStatisticsTest extends CrudBasedLockTestCase {
             }
         }
 
-        String trxId = getTrxId(conn0);
+        String trxId = JdbcUtil.getTrxId(conn0);
 
         try (ResultSet rs = JdbcUtil.executeQuerySuccess(conn0,
             "SELECT * FROM INFORMATION_SCHEMA.polardbx_trx WHERE trx_id = '" + trxId + "'")) {
@@ -442,13 +442,6 @@ public class TransactionStatisticsTest extends CrudBasedLockTestCase {
                 Assert.assertTrue("after.TRANS_COUNT_CROSS_GROUP should > before.TRANS_COUNT_CROSS_GROUP",
                     afterCrossGroup > beforeCrossGroup);
             }
-        }
-    }
-
-    private static String getTrxId(Connection connection) throws SQLException {
-        try (ResultSet rs = JdbcUtil.executeQuerySuccess(connection, "select current_trans_id()")) {
-            Assert.assertTrue(rs.next());
-            return rs.getString(1);
         }
     }
 }

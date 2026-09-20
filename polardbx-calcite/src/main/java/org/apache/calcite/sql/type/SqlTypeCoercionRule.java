@@ -154,8 +154,16 @@ public class SqlTypeCoercionRule implements SqlTypeMappingRule {
     coerceRules.add(SqlTypeName.YEAR, rule);
     coerceRules.add(SqlTypeName.JSON, rule);
     coerceRules.add(SqlTypeName.BLOB, rule);
-    
+
     coerceRules.add(SqlTypeName.ENUM, rule);
+
+    // VECTOR is castable from CHARACTERS, JSON and BINARY TYPES.
+    coerceRules.add(SqlTypeName.VECTOR,
+        coerceRules.copyValues(SqlTypeName.VECTOR)
+            .addAll(SqlTypeName.CHAR_TYPES)
+            .add(SqlTypeName.JSON)
+            .addAll(SqlTypeName.BINARY_TYPES)
+            .build());
 
     // Exact numeric types are castable from intervals
     for (SqlTypeName exactType : SqlTypeName.EXACT_TYPES) {

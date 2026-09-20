@@ -50,7 +50,6 @@ public class XATsoTransactionTest extends CrudBasedLockTestCase {
 
     @Before
     public void initData() throws Exception {
-        JdbcUtil.executeUpdate(tddlConnection, "SET GLOBAL CONN_POOL_XPROTO_SLOW_THRESH = 0");
         JdbcUtil.executeUpdateSuccess(tddlConnection, "set global ENABLE_TRX_DEBUG_MODE = true");
         String sql = "DELETE FROM  " + baseOneTableName;
         executeOnMysqlAndTddl(mysqlConnection, tddlConnection, sql, null);
@@ -58,7 +57,6 @@ public class XATsoTransactionTest extends CrudBasedLockTestCase {
 
     @After
     public void after() throws SQLException {
-        JdbcUtil.executeUpdate(tddlConnection, "SET GLOBAL CONN_POOL_XPROTO_SLOW_THRESH = 1000");
         JdbcUtil.executeUpdateSuccess(tddlConnection, "set global ENABLE_TRX_DEBUG_MODE = false");
         tddlConnection.setAutoCommit(true);
         mysqlConnection.setAutoCommit(true);

@@ -31,14 +31,21 @@ import org.apache.calcite.sql.SqlSelect.LockMode;
  * @author chenmo.cm
  */
 public class LogicalIndexScan extends LogicalView {
-    public LogicalIndexScan(RelOptTable indexTable, TableScan primaryScan, LockMode lockMode) {
+
+    private String mainTableName;
+    private boolean projectSwitched = false;
+
+    public LogicalIndexScan(String mainTableName, RelOptTable indexTable, TableScan primaryScan, LockMode lockMode) {
         super(primaryScan, indexTable, primaryScan.getHints(), lockMode, null);
+        this.mainTableName = mainTableName;
         this.flashback = primaryScan.getFlashback();
     }
 
-    public LogicalIndexScan(RelNode rel, RelOptTable table, SqlNodeList hints, LockMode lockMode, RexNode flashback,
+    public LogicalIndexScan(String mainTableName, RelNode rel, RelOptTable table, SqlNodeList hints, LockMode lockMode,
+                            RexNode flashback,
                             boolean aggIsPushed) {
         super(rel, table, hints, lockMode, null);
+        this.mainTableName = mainTableName;
         this.flashback = flashback;
         this.pushDownOpt.calculateRowType();
         this.pushDownOpt.setAggIsPushed(aggIsPushed);
@@ -64,6 +71,8 @@ public class LogicalIndexScan extends LogicalView {
     @Override
     public LogicalIndexScan copy(RelTraitSet traitSet) {
         LogicalIndexScan newIndexScan = new LogicalIndexScan(this);
+        newIndexScan.mainTableName = mainTableName;
+        newIndexScan.projectSwitched = projectSwitched;
         newIndexScan.traitSet = traitSet;
         newIndexScan.pushDownOpt = pushDownOpt.copy(newIndexScan, this.getPushedRelNode());
         return newIndexScan;
@@ -71,7 +80,11 @@ public class LogicalIndexScan extends LogicalView {
 
     @Override
     public RelNode clone() {
-        return new LogicalIndexScan(this, lockMode).setScalarList(scalarList);
+        LogicalIndexScan scan = new LogicalIndexScan(this, lockMode);
+        scan.setScalarList(scalarList);
+        scan.mainTableName = this.mainTableName;
+        scan.projectSwitched = this.projectSwitched;
+        return scan;
     }
 
     /**
@@ -80,5 +93,17 @@ public class LogicalIndexScan extends LogicalView {
     public boolean isUniqueGsi() {
         GsiMetaManager.GsiIndexMetaBean gsiIndexMetaBean = RelUtils.getGsiIndexMetaBean(this);
         return null != gsiIndexMetaBean && !gsiIndexMetaBean.nonUnique;
+    }
+
+    public String getMainTableName() {
+        return mainTableName;
+    }
+
+    public boolean isProjectSwitched() {
+        return projectSwitched;
+    }
+
+    public void setProjectSwitched(boolean projectSwitched) {
+        this.projectSwitched = projectSwitched;
     }
 }

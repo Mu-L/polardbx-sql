@@ -17,7 +17,6 @@
 package com.alibaba.polardbx.gms.tablegroup;
 
 import com.alibaba.polardbx.common.utils.GeneralUtil;
-import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.gms.locality.LocalityDesc;
 import com.alibaba.polardbx.gms.metadb.MetaDbDataSource;
@@ -85,9 +84,16 @@ public class TableGroupLocation {
 
     public static GroupAllocator buildGroupAllocatorByLocality(String schema, LocalityDesc localityDesc) {
         List<GroupDetailInfoExRecord> groups = getOrderedGroupList(schema);
-        groups = groups.stream()
-            .filter(x -> localityDesc.matchStorageInstance(x.getStorageInstId()))
-            .collect(Collectors.toList());
+        if (localityDesc.hasGroupKeyConfig()) {
+            groups = groups.stream()
+                .filter(x -> localityDesc.matchGroupKey(x.groupName))
+                .collect(Collectors.toList());
+            groups.sort(Comparator.comparingInt(o -> localityDesc.getGroupKeyList().indexOf(o.groupName)));
+        } else {
+            groups = groups.stream()
+                .filter(x -> localityDesc.matchStorageInstance(x.getStorageInstId()))
+                .collect(Collectors.toList());
+        }
         return new GroupAllocator(groups);
     }
 
@@ -114,6 +120,10 @@ public class TableGroupLocation {
         return storageGroupList;
     }
 
+    /**
+     * 访问 metadb 操作较重，谨慎使用
+     */
+    @Deprecated
     public static List<GroupDetailInfoExRecord> getOrderedGroupList(String logicalDbName) {
         return getOrderedGroupList(logicalDbName, false);
     }
@@ -133,68 +143,10 @@ public class TableGroupLocation {
         return dnList == null ? new ArrayList<>() : dnList;
     }
 
-    public static List<Pair<GroupDetailInfoExRecord, TableGroupRecord>> getOrderedGroupListForSingleTable(
-        String logicalDbName,
-        LocalityDesc dbLocalityDesc,
-        boolean includeToBeRemoveGroup) {
-        List<GroupDetailInfoExRecord> storageGroupList;
-        List<PartitionGroupExtRecord> partitionGroupList;
-
-        TableGroupAccessor tableGroupAccessor = new TableGroupAccessor();
-        final Map<Long, Long> tableCountMap;
-        List<TableGroupRecord> singleTableGroups = new ArrayList<>();
-        // query metadb for physical group and all partition-groups
-        try (Connection conn = MetaDbDataSource.getInstance().getConnection()) {
-            String instId = InstIdUtil.getInstId();
-            tableGroupAccessor.setConnection(conn);
-            singleTableGroups = tableGroupAccessor.getAllTableGroups(logicalDbName).stream()
-                .filter(tableGroupRecord -> tableGroupRecord.isSingleTableGroup()
-                    && tableGroupRecord.withBalanceSingleTableLocality())
-                .collect(Collectors.toList());
-            List<Long> singleTableGroupIds = singleTableGroups.stream()
-                .map(tableGroupRecord -> tableGroupRecord.getId()).collect(Collectors.toList());
-            partitionGroupList = queryMetaDbPartitionGroupList(logicalDbName, conn);
-            storageGroupList = queryMetaDbGroupList(conn, instId).stream()
-                .filter(storageGroup -> storageGroup.dbName.equals(logicalDbName))
-                .filter(r -> (includeToBeRemoveGroup || DbGroupInfoManager.isNormalGroup(r.dbName,
-                    r.groupName))) //exclude GROUP_TYPE_BEFORE_REMOVE if includeToBeRemoveGroup=false
-                .filter(o -> dbLocalityDesc.matchStorageInstance(o.storageInstId))
-                .collect(Collectors.toList());
-            if (singleTableGroupIds.size() > 0) {
-                tableCountMap = tableGroupAccessor.getTableCountPerGroup(singleTableGroupIds);
-            } else {
-                tableCountMap = new HashMap<>();
-            }
-        } catch (Throwable ex) {
-            MetaDbLogUtil.META_DB_LOG.error(ex);
-            throw GeneralUtil.nestedException(ex);
-        }
-        Map<Long, TableGroupRecord> tableGroupMap =
-            singleTableGroups.stream().collect(Collectors.toMap(TableGroupRecord::getId, x -> {
-                return x;
-            }));
-        Map<String, Long> tableGroupPhyDbMap = partitionGroupList.stream()
-            .filter(partitionGroupExtRecord -> tableCountMap.containsKey(partitionGroupExtRecord.getTg_id()))
-            .collect(Collectors.toMap(PartitionGroupRecord::getPhy_db, PartitionGroupRecord::getTg_id));
-        // group partitions by storage-instance
-        List<Pair<GroupDetailInfoExRecord, TableGroupRecord>> storageGroupTableGroupMap = new ArrayList<>();
-        Map<GroupDetailInfoExRecord, Long> groupCountMap = new HashMap<>();
-        for (GroupDetailInfoExRecord storageGroup : storageGroupList) {
-            Long tableGroupId = tableGroupPhyDbMap.get(storageGroup.getPhyDbName());
-            if (tableGroupId == null) {
-                storageGroupTableGroupMap.add(new Pair(storageGroup, null));
-                groupCountMap.put(storageGroup, 0L);
-            } else {
-                storageGroupTableGroupMap.add(new Pair(storageGroup, tableGroupMap.get(tableGroupId)));
-                groupCountMap.put(storageGroup, tableCountMap.getOrDefault(tableGroupId, 0L));
-            }
-        }
-        storageGroupTableGroupMap =
-            storageGroupTableGroupMap.stream().sorted(Comparator.comparingLong(x -> groupCountMap.get(x.getKey())))
-                .collect(Collectors.toList());
-        return storageGroupTableGroupMap;
-    }
-
+    /**
+     * 访问 metadb 操作较重，谨慎使用
+     */
+    @Deprecated
     public static List<GroupDetailInfoExRecord> getOrderedGroupList(String logicalDbName,
                                                                     boolean includeToBeRemoveGroup) {
         if (ConfigDataMode.isMock() || ConfigDataMode.isFastMock()) {
@@ -215,12 +167,12 @@ public class TableGroupLocation {
         }
 
         // group partitions by storage-instance
-        Map<String, String> physicalDbToInstance =
-            storageGroupList.stream().collect(Collectors.toMap(x -> x.phyDbName, x -> x.storageInstId));
+        Map<String, String> groupToInstance =
+            storageGroupList.stream().collect(Collectors.toMap(x -> x.groupName, x -> x.storageInstId));
         Map<String, Integer> instanceTableCount = new HashMap<>();
-        physicalDbToInstance.values().forEach(x -> instanceTableCount.put(x, 0));
+        groupToInstance.values().forEach(x -> instanceTableCount.put(x, 0));
         for (PartitionGroupExtRecord partitionGroup : partitionGroupList) {
-            String instance = physicalDbToInstance.get(partitionGroup.phy_db);
+            String instance = groupToInstance.get(partitionGroup.getGroup_Name());
             instanceTableCount.compute(instance,
                 (k, v) -> v == null ? partitionGroup.phy_tb_cnt.intValue() : v + partitionGroup.phy_tb_cnt.intValue());
         }
@@ -284,10 +236,17 @@ public class TableGroupLocation {
 
         private int allocatedCount;
 
+        public boolean isAllocateByGroup() {
+            return allocateByGroup;
+        }
+
+        private boolean allocateByGroup;
+
         GroupAllocator(List<GroupDetailInfoExRecord> groupList) {
             this.groupList = groupList;
             this.nextToAllocate = 0;
             this.partNum = 0;
+            this.allocateByGroup = false;
         }
 
         GroupAllocator(List<GroupDetailInfoExRecord> groupList, int partNum) {
@@ -296,6 +255,7 @@ public class TableGroupLocation {
             this.partNum = partNum;
             this.avgPartNum = Math.max(partNum / groupList.size(), 1);
             this.allocatedCount = 0;
+            this.allocateByGroup = true;
         }
 
         /**

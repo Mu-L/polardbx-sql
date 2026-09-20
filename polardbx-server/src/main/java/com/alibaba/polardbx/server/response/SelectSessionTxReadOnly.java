@@ -99,22 +99,6 @@ public final class SelectSessionTxReadOnly {
     }
 
     private static boolean getValue(ServerConnection c) {
-        Object o = c.isReadOnly();
-        if (o == null) {
-            return false;
-        }
-
-        if (o instanceof Boolean) {
-            return (boolean) o;
-        }
-
-        if (o instanceof Integer) {
-            /**
-             * Only 1 is true, else is false.
-             */
-            return 1 == (Integer) o;
-        }
-
-        return BooleanUtils.toBoolean(o.toString());
+        return c.isTxReadOnly();
     }
 }

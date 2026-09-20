@@ -54,11 +54,7 @@ public class COLLogicalJoinToNLJoinRule extends LogicalJoinToNLJoinRule {
             return;
         }
         List<Pair<RelDistribution, Pair<RelNode, RelNode>>> implementationList = Lists.newArrayList();
-        CBOUtil.columnarBroadcastDistribution(
-            join,
-            left,
-            right,
-            implementationList);
+        CBOUtil.columnarBroadcastDistribution(join, left, right, implementationList);
 
         // default single join
         RelNode singletonLeft = convert(left, left.getTraitSet().replace(RelDistributions.SINGLETON));

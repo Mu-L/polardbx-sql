@@ -56,6 +56,10 @@ public class SchemaTransactionStatistics implements ITransactionStatistics {
      */
     public final AtomicLong countCrossGroup = new AtomicLong();
 
+    public final AtomicLong countXATSO = new AtomicLong();
+    public final AtomicLong countAsyncCommit = new AtomicLong();
+    public final AtomicLong countTsoOpt = new AtomicLong();
+
     /**
      * Number of local deadlock.
      */

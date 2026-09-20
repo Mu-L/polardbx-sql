@@ -73,4 +73,14 @@ public class AlterStoragePoolPrepareData extends DdlPreparedData {
         this.operationType = operationType;
     }
 
+    public Long getPlanId() {
+        return planId;
+    }
+
+    public void setPlanId(Long planId) {
+        this.planId = planId;
+    }
+
+    public Long planId;
+
 }

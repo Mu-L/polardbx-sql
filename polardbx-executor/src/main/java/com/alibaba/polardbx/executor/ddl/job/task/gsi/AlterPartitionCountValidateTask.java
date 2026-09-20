@@ -69,6 +69,7 @@ public class AlterPartitionCountValidateTask extends BaseValidateTask {
         TableValidator.validateTableExistence(schemaName, primaryTable, executionContext);
         GsiValidator.validateGsiSupport(schemaName, executionContext);
         TableValidator.validateTableWithCCI(schemaName, primaryTable, executionContext, SqlKind.ALTER_TABLE);
+        TableValidator.validateTableWithPureColumnar(schemaName, primaryTable, executionContext, SqlKind.ALTER_TABLE);
 
         // validate current gsi existence
         tableNameMap.keySet().stream()

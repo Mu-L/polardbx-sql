@@ -24,6 +24,7 @@ import com.alibaba.polardbx.gms.metadb.GmsSystemTables;
 import com.alibaba.polardbx.gms.metadb.accessor.AbstractAccessor;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,7 +48,7 @@ public class EncdbKeyAccessor extends AbstractAccessor {
     private static final String SELECT_KEY =
         "select " + COLUMNS + " from " + ENCDB_KEY + " where type=?";
 
-    private static final String DELETE_ALL_KEY = "delete from " + ENCDB_KEY + " where `type` = ?";
+    private static final String DELETE_ALL_KEY_BY_TYPE = "delete from " + ENCDB_KEY + " where `type` = ?";
 
     private static final String DELETE_BY_KEY = "delete from " + ENCDB_KEY + " where `type` = ? and `key_hash` = ?";
 
@@ -75,20 +76,27 @@ public class EncdbKeyAccessor extends AbstractAccessor {
         return keyList.isEmpty() ? null : keyList.get(0);
     }
 
-    public int insertMekEnc(String keyEnc) {
-        Map<Integer, ParameterContext> params = new HashMap<>(2);
-        int index = 0;
-        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, keyEnc);
-        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, EncdbKey.KeyType.MEK_ENC.name());
-        return insert(INSERT_KEY, ENCDB_KEY, params);
+    public int[] replace(List<EncdbKey> keyList) {
+        List<Map<Integer, ParameterContext>> paramsBatch = new ArrayList<>(keyList.size());
+        for (EncdbKey key : keyList) {
+            Map<Integer, ParameterContext> params = new HashMap<>(2);
+            int index = 0;
+            MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, key.getKey());
+            MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, key.getType());
+            paramsBatch.add(params);
+        }
+        return insert(REPLACE_KEY, ENCDB_KEY, paramsBatch);
     }
 
-    public EncdbKey getMekEnc() {
+    public List<EncdbKey> selectAll() {
+        return query(SELECT_ALL_KEY, ENCDB_KEY, EncdbKey.class);
+    }
+
+    public int deleteByType(String type) {
         Map<Integer, ParameterContext> params = new HashMap<>(1);
         int index = 0;
-        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, EncdbKey.KeyType.MEK_ENC.name());
-        List<EncdbKey> keyList = query(SELECT_KEY, ENCDB_KEY, EncdbKey.class, params);
-        return keyList.isEmpty() ? null : keyList.get(0);
+        MetaDbUtil.setParameter(++index, params, ParameterMethod.setString, type);
+        return delete(DELETE_ALL_KEY_BY_TYPE, ENCDB_KEY, params);
     }
 
 }

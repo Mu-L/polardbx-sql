@@ -16,12 +16,6 @@
 
 package com.alibaba.polardbx.optimizer.core.rel;
 
-import com.alibaba.polardbx.gms.topology.DbInfoManager;
-import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
-import com.alibaba.polardbx.optimizer.rule.Partitioner;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
@@ -30,24 +24,32 @@ import com.alibaba.polardbx.common.model.sqljep.Comparative;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.config.ConfigDataMode;
+import com.alibaba.polardbx.gms.locality.LocalityDesc;
+import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
+import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.TddlRelDataTypeSystemImpl;
 import com.alibaba.polardbx.optimizer.core.TddlTypeFactoryImpl;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.hint.util.HintUtil;
+import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfoManager;
 import com.alibaba.polardbx.optimizer.partition.exception.NoFoundPartitionsException;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartPrunedResult;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruner;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartitionTupleRouteInfo;
 import com.alibaba.polardbx.optimizer.partition.pruning.PhysicalPartitionInfo;
+import com.alibaba.polardbx.optimizer.rule.Partitioner;
 import com.alibaba.polardbx.optimizer.rule.TddlRuleManager;
 import com.alibaba.polardbx.rule.TableRule;
 import com.alibaba.polardbx.rule.model.TargetDB;
 import com.alibaba.polardbx.rule.utils.CalcParamsAttribute;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.logical.LogicalValues;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
@@ -158,12 +160,13 @@ public class PhyTableInsertSharder {
     public List<PhyTableShardResult> shard(ExecutionContext executionContext,
                                            boolean isGetShardResultForReplicationTable) {
 
-        String schemaName = executionContext.getSchemaName();
+        String schemaName = parent.getSchemaName();
         Map<String, Object> extraCmd = executionContext.getExtraCmds();
         String logicalTableName = parent.getLogicalTableName();
 
         TddlRuleManager or = OptimizerContext.getContext(parent.getSchemaName()).getRuleManager();
         List<PhyTableShardResult> shardResults = null;
+        LocalityDesc localityDesc = null;
         // single db, single table
         if (or.isTableInSingleDb(logicalTableName)) {
 
@@ -174,9 +177,11 @@ public class PhyTableInsertSharder {
             String groupIndex = "";
             String physicalTableName;
             if (DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
-                PartitionInfo partitionInfo = OptimizerContext.getContext(schemaName).
-                    getPartitionInfoManager().getPartitionInfo(logicalTableName);
+                SchemaManager schemaManager = executionContext.getSchemaManager(schemaName);
+                TableMeta tableMeta = schemaManager.getTable(logicalTableName);
+                PartitionInfo partitionInfo = tableMeta.getPartitionInfo();
                 physicalTableName = partitionInfo.getPrefixTableName();
+                localityDesc = LocalityDesc.parse(partitionInfo.getLocality());
 
                 Map<String, Set<String>> topology = partitionInfo.getTopology();
                 assert (topology.size() == 1);
@@ -196,26 +201,28 @@ public class PhyTableInsertSharder {
             PhyTableShardResult shardResult = new PhyTableShardResult(groupIndex, physicalTableName, null);
             shardResults = Lists.newArrayList(shardResult);
 
-        } else if (or.isBroadCast(logicalTableName)) {
+        } else if (or.isBroadCastOrReplicas(logicalTableName)) {
 
             handleWithSequence(schemaName, true);
-            List<String> groupNames = HintUtil.allGroup(parent.getSchemaName());
+
+            String physicalTableName;
+            if (DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
+                PartitionInfo partitionInfo =
+                    executionContext.getSchemaManager(schemaName).getTable(logicalTableName).getPartitionInfo();
+                physicalTableName = partitionInfo.getPrefixTableName();
+                localityDesc = partitionInfo.getLocalityDesc();
+            } else {
+                TableRule tr = or.getTableRule(logicalTableName);
+                physicalTableName = tr.getTbNamePattern();
+            }
+
+            List<String> groupNames = HintUtil.allGroup(parent.getSchemaName(), localityDesc);
 
             // May use jingwei to sync broadcast table
             boolean enableBroadcast =
                 executionContext.getParamManager().getBoolean(ConnectionParams.CHOOSE_BROADCAST_WRITE);
             if (!enableBroadcast && groupNames != null) {
                 groupNames = groupNames.subList(0, 1);
-            }
-
-            String physicalTableName;
-            if (DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
-                PartitionInfo partitionInfo = OptimizerContext.getContext(schemaName).
-                    getPartitionInfoManager().getPartitionInfo(logicalTableName);
-                physicalTableName = partitionInfo.getPrefixTableName();
-            } else {
-                TableRule tr = or.getTableRule(logicalTableName);
-                physicalTableName = tr.getTbNamePattern();
             }
 
             shardResults = new ArrayList<>();
@@ -486,6 +493,7 @@ public class PhyTableInsertSharder {
         if (!partitionInfoManager.isNewPartDbTable(logicalTableName)) {
 
             Map<String, Comparative> comparatives;
+
             comparatives = partitioner.getInsertComparative(rowValues,
                 shardColumns,
                 params,
@@ -494,11 +502,6 @@ public class PhyTableInsertSharder {
 
             Map<String, Object> calcParams = new HashMap<>();
             calcParams.put(CalcParamsAttribute.SHARD_FOR_EXTRA_DB, false);
-            final Map<String, Comparative> insertFullComparative =
-                partitioner.getInsertFullComparative(comparatives);
-            final Map<String, Map<String, Comparative>> stringMapMap = Maps.newHashMap();
-            stringMapMap.put(logicalTableName, insertFullComparative);
-            calcParams.put(CalcParamsAttribute.COM_DB_TB, stringMapMap);
             calcParams.put(CalcParamsAttribute.CONN_TIME_ZONE, executionContext.getTimeZone());
             calcParams.put(CalcParamsAttribute.EXECUTION_CONTEXT, executionContext);
             List<TargetDB> dbs = ruleManager.shard(logicalTableName,

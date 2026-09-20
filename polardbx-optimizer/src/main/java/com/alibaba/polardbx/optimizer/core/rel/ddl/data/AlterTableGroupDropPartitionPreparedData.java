@@ -121,7 +121,9 @@ public class AlterTableGroupDropPartitionPreparedData extends AlterTableGroupBas
         partitionGroupRecord.visible = 0;
         partitionGroupRecord.partition_name = partName;
         partitionGroupRecord.tg_id = tableGroupId;
-        partitionGroupRecord.phy_db = getTargetGroupDetailInfoExRecords().get(index % targetDbCount).phyDbName;
+        partitionGroupRecord.setPhy_db(getTargetGroupDetailInfoExRecords().get(index % targetDbCount).getPhyDbName());
+        partitionGroupRecord.setGroup_Name(
+            getTargetGroupDetailInfoExRecords().get(index % targetDbCount).getGroupName());
         partitionGroupRecord.locality = "";
         partitionGroupRecord.pax_group_id = 0L;
         return partitionGroupRecord;

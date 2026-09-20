@@ -1,19 +1,3 @@
-/*
- * Copyright [2013-2021], Alibaba Group Holding Limited
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.alibaba.polardbx.group.config;
 
 import com.alibaba.polardbx.atom.TAtomDataSource;
@@ -53,6 +37,8 @@ import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.gms.util.MetaDbLogUtil;
 import com.alibaba.polardbx.group.jdbc.DataSourceWrapper;
 import com.alibaba.polardbx.group.jdbc.TGroupDataSource;
+import com.alibaba.polardbx.optimizer.utils.OptimizerUtils;
+import com.alibaba.polardbx.rpc.compatible.XDataSource;
 import com.alibaba.polardbx.stats.MatrixStatistics;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -101,6 +87,10 @@ public class OptimizedGroupConfigManager extends AbstractLifecycle implements Li
         this.groupDsSwithcer = new GroupDataSourceSwitcher(groupDataSource);
     }
 
+    protected void setDataSourceWrapperMap(Map<String, DataSourceWrapper> dataSourceWrapperMap) {
+        this.dataSourceWrapperMap = dataSourceWrapperMap;
+    }
+
     /**
      * 从Diamond配置中心提取信息，构造TAtomDataSource、构造有优先级信息的读写DBSelector ---add by
      * mazhidan.pt
@@ -112,7 +102,6 @@ public class OptimizedGroupConfigManager extends AbstractLifecycle implements Li
             mockDataSourceWrapper();
             return;
         }
-
         // To be load by MetaDB
         initGroupDataSourceByMetaDb();
     }
@@ -197,6 +186,7 @@ public class OptimizedGroupConfigManager extends AbstractLifecycle implements Li
                                 String.format("Failed to release read lock of dn[%s], err is %s",
                                     haParams.storageInstId, ex.getMessage()), ex);
                         }
+
                     }
                 }
             } catch (Throwable ex) {
@@ -411,8 +401,9 @@ public class OptimizedGroupConfigManager extends AbstractLifecycle implements Li
 
     protected synchronized void unregisterHaSwitcher() {
         String groupName = groupDataSource.getDbGroupKey();
+        String dbName = groupDataSource.getSchemaName();
         for (String storageInstId : registeredHAstorageIds) {
-            StorageHaManager.getInstance().unregisterHaSwitcher(storageInstId, groupName, groupDsSwithcer);
+            StorageHaManager.getInstance().unregisterHaSwitcher(storageInstId, dbName, groupName, groupDsSwithcer);
         }
     }
 
@@ -428,8 +419,6 @@ public class OptimizedGroupConfigManager extends AbstractLifecycle implements Li
                 .unbindListener(dataId);
         }
     }
-
-
 
     protected synchronized List<DataSourceWrapper> switchGroupDs(HaSwitchParams haSwitchParams) {
 
@@ -479,62 +468,13 @@ public class OptimizedGroupConfigManager extends AbstractLifecycle implements Li
                     dswList.add(dsw);
                     needDoSwitch = true;
                 }
-                if (ConfigDataMode.isMasterMode() && haSwitchParams.storageKind == INST_KIND_MASTER) {
-                    //follower node
-                    if (haSwitchParams.storageHaInfoMap != null) {
-                        String slaveWeightStr = GroupInfoUtil.buildWeightStr(10, 0);
-                        int dataSourceIndex = 1;
-                        for (StorageNodeHaInfo haInfo : haSwitchParams.storageHaInfoMap.values()) {
-                            if (haInfo.getRole() == StorageRole.FOLLOWER) {
-                                String slaveKey =
-                                    GroupInfoUtil
-                                        .buildAtomKey(groupName, haSwitchParams.storageInstId, haInfo.getAddr(),
-                                            haSwitchParams.phyDbName);
-                                DataSourceWrapper newSlaveVal = curDsWrappers.get(slaveKey);
-                                if (newSlaveVal != null && newSlaveVal.getWeightStr()
-                                    .equalsIgnoreCase(slaveWeightStr)) {
-                                    if (!SystemDbHelper.isDBBuildIn(groupDataSource.getSchemaName())
-                                        && DynamicConfig.getInstance().enableFollowReadForPolarDBX()) {
-                                        dswList.add(curDsWrappers.get(slaveKey));
-                                    } else {
-                                        //need remove slave datasources;
-                                        needDoSwitch = true;
-                                    }
-                                } else {
-                                    //只有leader节点开启xport后, slave节点才开启
-                                    if (!SystemDbHelper.isDBBuildIn(groupDataSource.getSchemaName())
-                                        && DynamicConfig.getInstance().enableFollowReadForPolarDBX()) {
-                                        int xport = -1;
-                                        if (haSwitchParams.xport > 0) {
-                                            xport = haInfo.getXPort();
-                                        }
-                                        TAtomDsConfDO slaveAtomDsConf = TAtomDsGmsConfigHelper
-                                            .buildAtomDsConfByGms(haInfo.getAddr(), xport,
-                                                haSwitchParams.userName,
-                                                haSwitchParams.passwdEnc, haSwitchParams.phyDbName,
-                                                haSwitchParams.storageConnPoolConfig, phyDbName);
-                                        //the follower datasource
-                                        TAtomDataSource slaveAtomDs = new TAtomDataSource(
-                                            TAtomDataSource.AtomSourceFrom.FOLLOWER_DB, haSwitchParams.storageInstId);
 
-                                        slaveAtomDs.init(appName, groupName, slaveKey, "", slaveAtomDsConf);
-
-                                        DataSourceWrapper slave =
-                                            new DataSourceWrapper(
-                                                haSwitchParams.storageInstId, slaveKey, slaveWeightStr, slaveAtomDs,
-                                                dataSourceIndex++);
-                                        dswList.add(slave);
-                                        needDoSwitch = true;
-                                    }
-
-                                }
-                            }
-
-                        }
-                    }
+                if (ConfigDataMode.isMasterMode() && haSwitchParams.storageKind == INST_KIND_MASTER
+                    && !SystemDbHelper.isDBBuildIn(groupDataSource.getSchemaName())) {
+                    needDoSwitch =
+                        switchFollowGroupDs(haSwitchParams, appName, groupName, curDsWrappers, dswList) || needDoSwitch;
                 }
             }
-
             if (!dswList.isEmpty() && needDoSwitch) {
                 resetByPolarDBXDataSourceWrapper(dswList);
             }
@@ -542,6 +482,75 @@ public class OptimizedGroupConfigManager extends AbstractLifecycle implements Li
             throw GeneralUtil.nestedException(ex);
         }
         return dswList;
+    }
+
+    private synchronized boolean switchFollowGroupDs(HaSwitchParams haSwitchParams, String appName, String groupName,
+                                                     Map<String, DataSourceWrapper> curDsWrappers,
+                                                     List<DataSourceWrapper> dswList) {
+        //fetch current follower DataSource
+        int curFollowerCount = 0;
+        for (Map.Entry<String, DataSourceWrapper> cur : curDsWrappers.entrySet()) {
+            if (cur.getValue().getStorageId().equalsIgnoreCase(haSwitchParams.storageInstId) && !cur.getValue()
+                .hasWriteWeight()) {
+                curFollowerCount++;
+            }
+        }
+
+        int followerCount = 0;
+        boolean needDoSwitch = false;
+        //follower node
+        if (haSwitchParams.storageHaInfoMap != null) {
+            String slaveWeightStr = GroupInfoUtil.buildWeightStr(10, 0);
+            int dataSourceIndex = 1;
+            for (StorageNodeHaInfo haInfo : haSwitchParams.storageHaInfoMap.values()) {
+                if (haInfo.getRole() == StorageRole.FOLLOWER && haInfo.getElectionWeight() > DynamicConfig.getInstance()
+                    .minThresholdForFollowRead() && OptimizerUtils.enableFollowRead()) {
+                    String slaveKey =
+                        GroupInfoUtil.buildAtomKey(groupName, haSwitchParams.storageInstId, haInfo.getAddr(),
+                            haSwitchParams.phyDbName);
+                    DataSourceWrapper newSlaveVal = curDsWrappers.get(slaveKey);
+                    if (newSlaveVal != null && newSlaveVal.getWeightStr().equalsIgnoreCase(slaveWeightStr)) {
+                        dswList.add(curDsWrappers.get(slaveKey));
+                        followerCount++;
+                    } else {
+                        //只有leader节点开启xport后, slave节点才开启
+                        int xport = -1;
+                        if (haSwitchParams.xport > 0) {
+                            xport = haInfo.getXPort();
+                        }
+                        TAtomDsConfDO slaveAtomDsConf =
+                            TAtomDsGmsConfigHelper.buildAtomDsConfByGms(haInfo.getAddr(), xport,
+                                haSwitchParams.userName, haSwitchParams.passwdEnc, haSwitchParams.phyDbName,
+                                haSwitchParams.storageConnPoolConfig, haSwitchParams.phyDbName);
+                        //the follower datasource
+                        TAtomDataSource slaveAtomDs = new TAtomDataSource(TAtomDataSource.AtomSourceFrom.FOLLOWER_DB,
+                            haSwitchParams.storageInstId);
+
+                        try {
+                            slaveAtomDs.init(appName, groupName, slaveKey, "", slaveAtomDsConf);
+                            if (slaveAtomDs.getDataSource().isWrapperFor(XDataSource.class)) {
+                                XDataSource xDataSource = slaveAtomDs.getDataSource().unwrap(XDataSource.class);
+                                xDataSource.getClientPool().reloadForLeaderChange();
+                            }
+                        } catch (Throwable t) {
+                            //catch the Exception in order to avoid effect the master connections.
+                            logger.error("init the follow datasource failed for " + slaveKey, t);
+                            continue;
+                        }
+                        followerCount++;
+
+                        DataSourceWrapper slave =
+                            new DataSourceWrapper(haSwitchParams.storageInstId, slaveKey, slaveWeightStr, slaveAtomDs,
+                                dataSourceIndex++);
+                        dswList.add(slave);
+                        needDoSwitch = true;
+                    }
+                }
+            }
+        }
+
+        needDoSwitch = needDoSwitch || (followerCount != curFollowerCount);
+        return needDoSwitch;
     }
 
     protected List<Pair<HaSwitchParams, List<DataSourceWrapper>>> buildDataSource(
@@ -643,49 +652,61 @@ public class OptimizedGroupConfigManager extends AbstractLifecycle implements Li
                 throw new TddlRuntimeException(ErrorCode.ERR_GMS_GENERIC,
                     String.format("instId[%s] is NOT available", instIds));
             }
+            buildFollowerDataSource(appName, unitName, dbName, groupName, dataSourceWrapperLists);
+        } catch (Throwable ex) {
+            throw GeneralUtil.nestedException(ex);
+        }
+        return dataSourceWrapperLists;
+    }
 
-            if (!SystemDbHelper.isDBBuildIn(groupDataSource.getSchemaName()) && DynamicConfig.getInstance()
-                .enableFollowReadForPolarDBX() && ConfigDataMode.isMasterMode()) {
-                for (Pair<HaSwitchParams, List<DataSourceWrapper>> dataSourceWrapperPair : dataSourceWrapperLists) {
-                    HaSwitchParams haSwitchParams = dataSourceWrapperPair.getKey();
-                    if (haSwitchParams.storageKind == INST_KIND_MASTER) {
-                        //在PolarDb-X下如果curAvailableAddr 节点为非空，且HaSwitchParams表名该地址是主库地址，则允许备库一致性读
-                        if (haSwitchParams.storageHaInfoMap != null) {
-                            //build DatasourceWrapper for follower
-                            for (StorageNodeHaInfo haInfo : haSwitchParams.storageHaInfoMap.values()) {
-                                if (haInfo.getRole() == StorageRole.FOLLOWER) {
-                                    String slaveKey =
-                                        GroupInfoUtil
-                                            .buildAtomKey(groupName, haSwitchParams.storageInstId, haInfo.getAddr(),
-                                                haSwitchParams.phyDbName);
-                                    //只有leader节点开启xport后, slave节点才开启
-                                    int xport = -1;
-                                    if (haSwitchParams.xport > 0) {
-                                        xport = haInfo.getXPort();
-                                    }
-                                    TAtomDsConfDO slaveAtomDsConf = TAtomDsGmsConfigHelper
-                                        .buildAtomDsConfByGms(haInfo.getAddr(), xport, haSwitchParams.userName,
-                                            haSwitchParams.passwdEnc, haSwitchParams.phyDbName,
-                                            haSwitchParams.storageConnPoolConfig, dbName);
-                                    String slaveWeightStr = GroupInfoUtil.buildWeightStr(10, 0);
-                                    //the follower datasource.
-                                    TAtomDataSource slaveAtomDs = new TAtomDataSource(
-                                        TAtomDataSource.AtomSourceFrom.FOLLOWER_DB, haSwitchParams.storageInstId);
-
-                                    slaveAtomDs.init(appName, groupName, slaveKey, unitName, slaveAtomDsConf);
-                                    DataSourceWrapper follower = new DataSourceWrapper(
-                                        haSwitchParams.storageInstId, slaveKey, slaveWeightStr, slaveAtomDs, 1);
-                                    dataSourceWrapperPair.getValue().add(follower);
+    private synchronized void buildFollowerDataSource(String appName, String unitName, String dbName, String groupName,
+                                                      List<Pair<HaSwitchParams, List<DataSourceWrapper>>> dataSourceWrapperLists) {
+        if (!SystemDbHelper.isDBBuildIn(groupDataSource.getSchemaName()) && OptimizerUtils.enableFollowRead()
+            && ConfigDataMode.isMasterMode()) {
+            for (Pair<HaSwitchParams, List<DataSourceWrapper>> dataSourceWrapperPair : dataSourceWrapperLists) {
+                HaSwitchParams haSwitchParams = dataSourceWrapperPair.getKey();
+                if (haSwitchParams.storageKind == INST_KIND_MASTER) {
+                    //在PolarDb-X下如果curAvailableAddr 节点为非空，且HaSwitchParams表名该地址是主库地址，则允许备库一致性读
+                    if (haSwitchParams.storageHaInfoMap != null) {
+                        //build DatasourceWrapper for follower
+                        for (StorageNodeHaInfo haInfo : haSwitchParams.storageHaInfoMap.values()) {
+                            if (haInfo.getRole() == StorageRole.FOLLOWER
+                                && haInfo.getElectionWeight() > DynamicConfig.getInstance()
+                                .minThresholdForFollowRead()) {
+                                String slaveKey = GroupInfoUtil.buildAtomKey(groupName, haSwitchParams.storageInstId,
+                                    haInfo.getAddr(), haSwitchParams.phyDbName);
+                                //只有leader节点开启xport后, slave节点才开启
+                                int xport = -1;
+                                if (haSwitchParams.xport > 0) {
+                                    xport = haInfo.getXPort();
                                 }
+                                TAtomDsConfDO slaveAtomDsConf =
+                                    TAtomDsGmsConfigHelper.buildAtomDsConfByGms(haInfo.getAddr(), xport,
+                                        haSwitchParams.userName, haSwitchParams.passwdEnc, haSwitchParams.phyDbName,
+                                        haSwitchParams.storageConnPoolConfig, dbName);
+                                String slaveWeightStr = GroupInfoUtil.buildWeightStr(10, 0);
+                                //the follower datasource.
+                                TAtomDataSource slaveAtomDs =
+                                    new TAtomDataSource(TAtomDataSource.AtomSourceFrom.FOLLOWER_DB,
+                                        haSwitchParams.storageInstId);
+                                try {
+                                    slaveAtomDs.init(appName, groupName, slaveKey, unitName, slaveAtomDsConf);
+                                } catch (Throwable t) {
+                                    //catch the Exception in order to avoid effect the master connections.
+                                    logger.error("init the follow datasource failed for " + slaveKey, t);
+                                    continue;
+                                }
+
+                                DataSourceWrapper follower =
+                                    new DataSourceWrapper(haSwitchParams.storageInstId, slaveKey, slaveWeightStr,
+                                        slaveAtomDs, 1);
+                                dataSourceWrapperPair.getValue().add(follower);
                             }
                         }
                     }
                 }
             }
-        } catch (Throwable ex) {
-            throw GeneralUtil.nestedException(ex);
         }
-        return dataSourceWrapperLists;
     }
 
     private synchronized void resetByPolarDBXDataSourceWrapper(List<DataSourceWrapper> changeDswList) {
@@ -753,7 +774,8 @@ public class OptimizedGroupConfigManager extends AbstractLifecycle implements Li
             } else {
                 this.groupDataSourceHolder = failedSlave ?
                     new MasterFailedSlaveGroupDataSourceHolder(masterDataSource) :
-                    new MasterOnlyGroupDataSourceHolder(masterDataSource);
+                    new MasterOnlyGroupDataSourceHolder(
+                        masterDataSource, SystemDbHelper.isDBBuildIn(groupDataSource.getSchemaName()));
             }
         } else {
             this.groupDataSourceHolder = new MasterSlaveGroupDataSourceHolder(masterDataSource, slaveDataSources);

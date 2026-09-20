@@ -18,6 +18,7 @@ package com.alibaba.polardbx.common.cdc.entity;
 
 import com.alibaba.polardbx.common.cdc.DdlScope;
 import lombok.Getter;
+import lombok.Setter;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -54,6 +55,9 @@ public class DDLExtInfo {
      */
     private String sqlMode = null;
     private String originalDdl = null;
+    @Getter
+    @Setter
+    private Boolean externalColumnDdl;
     private Boolean isGsi = false;
     private Boolean isCci = false;
     private Boolean isArchiveDropPart = false;
@@ -68,6 +72,14 @@ public class DDLExtInfo {
 
     @Getter
     private Long ddlId;
+
+    @Getter
+    @Setter
+    private Long rootJobId;
+
+    @Getter
+    @Setter
+    private boolean pushDownAutoIncrement;
 
     private Map<String, Object> polarxVariables = new HashMap<>();
 

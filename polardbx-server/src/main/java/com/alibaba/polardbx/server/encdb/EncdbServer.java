@@ -17,22 +17,22 @@
 package com.alibaba.polardbx.server.encdb;
 
 import com.alibaba.polardbx.common.encdb.EncdbException;
+import com.alibaba.polardbx.common.encdb.cipher.AsymCrypto;
+import com.alibaba.polardbx.common.encdb.cipher.CipherSuite;
 import com.alibaba.polardbx.common.encdb.enums.AsymmAlgo;
 import com.alibaba.polardbx.common.encdb.enums.CCFlags;
-import com.alibaba.polardbx.common.encdb.cipher.CipherSuite;
+import com.alibaba.polardbx.common.encdb.enums.Constants;
 import com.alibaba.polardbx.common.encdb.enums.HashAlgo;
 import com.alibaba.polardbx.common.encdb.enums.Symmetric;
-import com.alibaba.polardbx.common.encdb.cipher.AsymCrypto;
-import com.alibaba.polardbx.common.encdb.enums.Constants;
+import com.alibaba.polardbx.common.encdb.enums.TeeType;
 import com.alibaba.polardbx.common.encdb.utils.HKDF;
 import com.alibaba.polardbx.common.encdb.utils.HashUtil;
-import com.alibaba.polardbx.common.encdb.enums.TeeType;
 import com.alibaba.polardbx.common.encdb.utils.Utils;
 import com.alibaba.polardbx.common.model.lifecycle.AbstractLifecycle;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
-import com.alibaba.polardbx.gms.metadb.encdb.EncdbKeyManager;
 import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
+import org.bouncycastle.util.Arrays;
 
 import java.io.IOException;
 import java.io.StringWriter;
@@ -50,6 +50,10 @@ public class EncdbServer extends AbstractLifecycle {
     private static final Logger logger = LoggerFactory.getLogger(EncdbServer.class);
 
     public static final String ENCDB_VERSION = "1.1.13";
+
+    public static final String ENCJDBC_KMS_MIN_VERSION = "1.2.22";
+
+    public static final int DEFAULT_MEK_LENGTH = 16;
 
     private static final int ASYMM_ENC_ALGO_KEY_LEN = 4096;
 
@@ -121,19 +125,31 @@ public class EncdbServer extends AbstractLifecycle {
         }
     }
 
-    public static byte[] createDEK(HashAlgo hashAlgo, byte[] mek, byte[] nonce) {
+    /**
+     * Create DEK with specified encryption algorithm.
+     * For AES_256 algorithms, a 32-byte DEK is derived; otherwise, 16-byte.
+     */
+    public static byte[] createDEK(HashAlgo hashAlgo, byte[] mek, byte[] nonce, Constants.EncAlgo encAlgo) {
         if (mek == null) {
             throw new EncdbException("the mek can not be null");
         }
         byte[] dek;
         if (hashAlgo == HashAlgo.SM3) {
-            dek = HKDF.deriveWithSM3(Symmetric.Params.SM4_128_KEY_SIZE.getVal(), mek, nonce, null);
+            dek = HKDF.deriveWithSM3(Symmetric.Params.MAX_KEY_SIZE.getVal(), mek, nonce, null);
         } else if (hashAlgo == HashAlgo.SHA256) {
-            dek = HKDF.deriveWithSHA256(Symmetric.Params.AES_128_KEY_SIZE.getVal(), mek, nonce, null);
+            dek = HKDF.deriveWithSHA256(Symmetric.Params.MAX_KEY_SIZE.getVal(), mek, nonce, null);
         } else {
             throw new InvalidParameterException("Invalid Hash Alg");
         }
-        return dek;
+        switch (encAlgo) {
+        case AES_256_CBC:
+        case AES_256_GCM:
+        case AES_256_CTR:
+        case AES_256_ECB:
+            return dek;
+        default:
+            return Arrays.copyOf(dek, 16);
+        }
     }
 
     public static byte[] createNonce() {

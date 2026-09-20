@@ -23,6 +23,7 @@ import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.partitionmanagement.AlterTableGroupUtils;
 import com.alibaba.polardbx.executor.utils.failpoint.FailPoint;
+import com.alibaba.polardbx.executor.utils.failpoint.FailPointKey;
 import com.alibaba.polardbx.gms.metadb.table.TableInfoManager;
 import com.alibaba.polardbx.gms.partition.TablePartitionAccessor;
 import com.alibaba.polardbx.gms.tablegroup.JoinGroupInfoAccessor;
@@ -82,12 +83,15 @@ public class AlterTableSetTableGroupChangeMetaOnlyTask extends BaseDdlTask {
         changeMeta(metaDbConnection, executionContext);
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
+        FailPoint.injectSuspendFromHint(FailPointKey.FP_SUSPEND_ON_SET_TABLE_GROUP_CHANGE_META, executionContext);
+        FailPoint.injectExceptionFromHint(FailPointKey.FP_FAIL_ON_SET_TABLE_GROUP_CHANGE_META, executionContext);
     }
 
     public void rollbackImpl(Connection metaDbConnection, ExecutionContext executionContext) {
         restoreMeta(metaDbConnection, executionContext);
         FailPoint.injectRandomExceptionFromHint(executionContext);
         FailPoint.injectRandomSuspendFromHint(executionContext);
+
     }
 
     @Override
@@ -381,8 +385,9 @@ public class AlterTableSetTableGroupChangeMetaOnlyTask extends BaseDdlTask {
         partitionGroupRecord.visible = 1;
         partitionGroupRecord.partition_name = partitionSpec.getName();
         partitionGroupRecord.tg_id = tableGroupId;
-        partitionGroupRecord.phy_db =
-            GroupInfoUtil.buildPhysicalDbNameFromGroupName(partitionSpec.getLocation().getGroupKey());
+        partitionGroupRecord.setPhy_db(
+            GroupInfoUtil.buildPhysicalDbNameFromGroupName(schemaName, partitionSpec.getLocation().getGroupKey()));
+        partitionGroupRecord.setGroup_Name(partitionSpec.getLocation().getGroupKey());
         partitionGroupRecord.locality = "";
         partitionGroupRecord.pax_group_id = 0L;
 

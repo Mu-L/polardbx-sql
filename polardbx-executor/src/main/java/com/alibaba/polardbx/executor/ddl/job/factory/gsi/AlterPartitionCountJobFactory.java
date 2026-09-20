@@ -29,9 +29,10 @@ import com.alibaba.polardbx.executor.ddl.job.task.tablegroup.TableGroupsSyncTask
 import com.alibaba.polardbx.executor.ddl.job.validator.GsiValidator;
 import com.alibaba.polardbx.executor.ddl.job.validator.TableValidator;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlExceptionAction;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4CreatePartitionGsi;
 import com.alibaba.polardbx.executor.ddl.newengine.job.wrapper.ExecutableDdlJob4DropPartitionGsi;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
@@ -58,7 +59,7 @@ import static com.alibaba.polardbx.common.ddl.newengine.DdlType.ALTER_TABLE_SET_
 /**
  * @author wumu
  */
-public class AlterPartitionCountJobFactory extends DdlJobFactory {
+public class AlterPartitionCountJobFactory extends OnlineDdlJobFactory {
     private final String schemaName;
     private final String primaryTableName;
     private final Map<String, String> tableNameMap;
@@ -70,6 +71,7 @@ public class AlterPartitionCountJobFactory extends DdlJobFactory {
                                          Map<CreateGlobalIndexPreparedData, PhysicalPlanData> globalIndexPrepareData,
                                          Map<CreateGlobalIndexPreparedData, PhysicalPlanData> globalIndexPrepareDataForLocalIndex,
                                          ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.OSC);
         this.schemaName = schemaName;
         this.primaryTableName = primaryTableName;
         this.tableNameMap = tableNameMap;

@@ -58,5 +58,8 @@ public class ErrorCodeTest {
 
         String msg5 = "";
         Assert.assertTrue(ErrorCode.extract(msg5) == -1);
+
+        String msg6 = "java.lang.RuntimeException: ERR-CODE: [PXC-4599][ERR_OPTIMIZER] Table 'tg1' doesn't exist";
+        Assert.assertTrue(ErrorCode.extract(msg6) == 4599);
     }
 }

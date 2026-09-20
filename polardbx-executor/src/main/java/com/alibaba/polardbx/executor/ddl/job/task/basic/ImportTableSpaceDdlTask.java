@@ -22,7 +22,7 @@ import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.executor.ddl.job.task.BaseDdlTask;
-import com.alibaba.polardbx.executor.ddl.job.task.RemoteExecutableDdlTask;
+import com.alibaba.polardbx.executor.ddl.job.task.RemoteExecutableDdlRebalanceTask;
 import com.alibaba.polardbx.executor.ddl.job.task.util.TaskName;
 import com.alibaba.polardbx.executor.ddl.newengine.resource.DdlEngineResources;
 import com.alibaba.polardbx.executor.physicalbackfill.PhysicalBackfillUtils;
@@ -36,10 +36,10 @@ import com.alibaba.polardbx.statistics.SQLRecorderLogger;
 import com.google.common.collect.ImmutableList;
 import io.airlift.slice.DataSize;
 import lombok.Getter;
+import org.apache.calcite.sql.SqlKind;
 import org.apache.commons.lang3.StringUtils;
 
 import java.sql.Connection;
-import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -53,7 +53,7 @@ import static com.alibaba.polardbx.executor.ddl.newengine.utils.DdlResourceManag
 
 @Getter
 @TaskName(name = "ImportTableSpaceDdlTask")
-public class ImportTableSpaceDdlTask extends BaseDdlTask implements RemoteExecutableDdlTask {
+public class ImportTableSpaceDdlTask extends BaseDdlTask implements RemoteExecutableDdlRebalanceTask {
 
     private String logicalTableName;
     private String phyDbName;
@@ -116,7 +116,7 @@ public class ImportTableSpaceDdlTask extends BaseDdlTask implements RemoteExecut
         String importTableSpace =
             String.format("alter table %s import tablespace", SqlIdentifierUtil.escapeIdentifierString(phyTableName));
         try (
-            XConnection conn = (XConnection) (PhysicalBackfillUtils.getXConnectionForStorage(phyDbName,
+            XConnection conn = (XConnection) (PhysicalBackfillUtils.getXConnectionForStorage(getRootJobId(), phyDbName,
                 targetHost.getKey(), targetHost.getValue(), userAndPasswd.getKey(), userAndPasswd.getValue(), -1))) {
             try {
                 conn.setLastException(new Exception("discard connection due to change SQL_LOG_BIN in this session"),
@@ -172,8 +172,10 @@ public class ImportTableSpaceDdlTask extends BaseDdlTask implements RemoteExecut
             + " dataSize: " + DataSize.succinctBytes(dataSize);
     }
 
-    public List<String> explainInfo() {
-        String importTableSpace = "alter table " + phyTableName + " import tablespace";
+    public List<String> explainInfo(ExecutionContext ec) {
+        String importTableSpace =
+            SqlKind.ALTER_TABLE_IMPORT_TABLESPACE.name() + "(alter table " + phyDbName + "." + phyTableName
+                + " import tablespace)";
         List<String> command = new ArrayList<>(1);
         command.add(importTableSpace);
         return command;

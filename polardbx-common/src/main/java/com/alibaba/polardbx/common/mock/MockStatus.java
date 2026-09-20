@@ -1,13 +1,23 @@
 package com.alibaba.polardbx.common.mock;
 
-public class MockStatus {
+import lombok.Getter;
+
+import java.io.Closeable;
+
+public class MockStatus implements Closeable {
+    @Getter
     private static volatile boolean mock = false;
 
-    public static boolean isMock() {
-        return mock;
+    public MockStatus() {
+        setMock(true);
     }
 
-    public static void setMock(boolean mock) {
+    private static void setMock(boolean mock) {
         MockStatus.mock = mock;
+    }
+
+    @Override
+    public void close() {
+        setMock(false);
     }
 }

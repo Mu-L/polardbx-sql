@@ -18,15 +18,21 @@ package com.alibaba.polardbx.optimizer.config.meta;
 
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
+import com.alibaba.polardbx.optimizer.core.rel.ExternalTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.GroupTopN;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.MysqlTableScan;
+import com.alibaba.polardbx.optimizer.core.rel.PhysicalCTEConsumer;
 import com.alibaba.polardbx.optimizer.view.ViewPlan;
 import org.apache.calcite.plan.volcano.RelSubset;
 import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.core.CTEAnchor;
+import org.apache.calcite.rel.core.CTEProducer;
 import org.apache.calcite.rel.core.Exchange;
 import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.Sort;
+import org.apache.calcite.rel.logical.LogicalCTEConsumer;
 import org.apache.calcite.rel.logical.LogicalTableScan;
 import org.apache.calcite.rel.metadata.BuiltInMetadata;
 import org.apache.calcite.rel.metadata.MetadataDef;
@@ -41,6 +47,7 @@ import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.Util;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -74,6 +81,46 @@ public class DrdsRelMdCompositePk implements MetadataHandler<BuiltInMetadata.Com
 
     public ImmutableBitSet getPrimaryKey(MysqlTableScan rel, RelMetadataQuery mq) {
         return mq.getPrimaryKey(rel.getNodeForMetaQuery());
+    }
+
+    public ImmutableBitSet getPrimaryKey(GroupTopN rel, RelMetadataQuery mq) {
+        // Bypass group topn.
+        return mq.getPrimaryKey(rel.getInput());
+    }
+
+    public ImmutableBitSet getPrimaryKey(CTEAnchor rel, RelMetadataQuery mq) {
+        return mq.getPrimaryKey(rel.getRight());
+    }
+
+    public ImmutableBitSet getPrimaryKey(CTEProducer rel, RelMetadataQuery mq) {
+        return mq.getPrimaryKey(rel.getInput());
+    }
+
+    public ImmutableBitSet getPrimaryKey(LogicalCTEConsumer rel, RelMetadataQuery mq) {
+        return mq.getPrimaryKey(rel.getInnerRel());
+    }
+
+    public ImmutableBitSet getPrimaryKey(PhysicalCTEConsumer rel, RelMetadataQuery mq) {
+        final ImmutableBitSet pks = mq.getPrimaryKey(CBOUtil.getCteProducer(rel));
+        List<RexNode> projects = rel.getProjects();
+        if (pks == null || projects == null || projects.isEmpty()) {
+            return pks;
+        }
+        // Reverse-map PK columns through projects (same logic as Project handler)
+        final Map<Integer, Integer> maps = new HashMap<>();
+        for (int outputIdx = 0; outputIdx < projects.size(); ++outputIdx) {
+            final RexNode rexNode = projects.get(outputIdx);
+            if (rexNode instanceof RexInputRef) {
+                final RexInputRef ref = (RexInputRef) rexNode;
+                if (pks.get(ref.getIndex())) {
+                    maps.put(ref.getIndex(), outputIdx);
+                }
+            }
+        }
+        if (maps.size() == pks.cardinality()) {
+            return ImmutableBitSet.of(maps.values());
+        }
+        return null;
     }
 
     public ImmutableBitSet getPrimaryKey(Filter rel, RelMetadataQuery mq) {
@@ -128,5 +175,10 @@ public class DrdsRelMdCompositePk implements MetadataHandler<BuiltInMetadata.Com
 
     public ImmutableBitSet getPrimaryKey(RelNode subset, RelMetadataQuery mq) {
         return null;
+    }
+
+    public ImmutableBitSet getPrimaryKey(
+        ExternalTableScan rel, RelMetadataQuery mq) {
+        return rel.getPrimaryKey(mq);
     }
 }

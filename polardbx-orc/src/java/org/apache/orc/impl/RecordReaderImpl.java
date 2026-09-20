@@ -290,6 +290,73 @@ public class RecordReaderImpl implements RecordReader {
     }
   }
 
+  /**
+   * Implementation of PositionProvider using a long array for positions.
+   */
+  public static final class LongArrayPositionProviderImpl implements PositionProvider {
+    /**
+     * Array containing position values.
+     */
+    private final long[] positions;
+    
+    /**
+     * Current index into the positions array.
+     */
+    private int index;
+
+    /**
+     * Constructor initializing the positions array and starting index.
+     *
+     * @param positions the array of positions
+     * @param startPos the initial index position
+     */
+    public LongArrayPositionProviderImpl(long[] positions, int startPos) {
+      this.positions = positions;
+      this.index = startPos;
+    }
+
+    /**
+     * Returns the next position from the positions array and increments the index.
+     *
+     * @return the next position value
+     */
+    @Override
+    public long getNext() {
+      return positions[index++];
+    }
+  }
+
+  public static final class IntArrayPositionProviderImpl implements PositionProvider {
+    /**
+     * Array containing position values.
+     */
+    private final int[] positions;
+
+    /**
+     * Current index into the positions array.
+     */
+    private int index;
+    /**
+     * Constructor initializing the positions array and starting index.
+     *
+     * @param positions the array of positions
+     * @param startPos the initial index position
+     */
+    public IntArrayPositionProviderImpl(int[] positions, int startPos) {
+      this.positions = positions;
+      this.index = startPos;
+    }
+    /**
+     * Returns the next position from the positions array and increments the index.
+     *
+     * @return the next position value
+     */
+    @Override
+    public long getNext() {
+      return positions[index++];
+    }
+  }
+
   public static final class ZeroPositionProvider implements PositionProvider {
     @Override
     public long getNext() {

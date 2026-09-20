@@ -123,6 +123,8 @@ public class DataTypeFactoryImpl implements DataTypeFactory {
         case VARBINARY:
         case GEOMETRY:
             return DataTypes.BinaryType;
+        case VECTOR:
+            return precision > 0 ? new VectorType(precision) : new VectorType();
         case BINARY_VARCHAR:
             return DataTypes.BinaryStringType;
         case BIT:

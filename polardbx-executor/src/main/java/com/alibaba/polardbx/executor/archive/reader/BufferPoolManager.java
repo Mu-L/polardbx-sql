@@ -17,15 +17,17 @@
 package com.alibaba.polardbx.executor.archive.reader;
 
 import com.alibaba.polardbx.common.exception.TddlNestableRuntimeException;
-import com.alibaba.polardbx.common.utils.GeneralUtil;
+import com.alibaba.polardbx.common.oss.filesystem.OSSCacheAdapter;
 import com.alibaba.polardbx.executor.archive.columns.ColumnProvider;
 import com.alibaba.polardbx.executor.archive.columns.ColumnProviders;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.executor.chunk.BlockBuilders;
 import com.alibaba.polardbx.executor.chunk.Chunk;
+import com.alibaba.polardbx.gms.engine.DynamicCacheFileSystem;
 import com.alibaba.polardbx.gms.engine.FileSystemManager;
 import com.alibaba.polardbx.gms.engine.FileSystemUtils;
+import com.alibaba.polardbx.gms.engine.OssGeneralCacheOverrideFileSystem;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
 import com.alibaba.polardbx.optimizer.config.table.OSSOrcFileMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
@@ -138,8 +140,20 @@ public class BufferPoolManager {
                 configuration.setLong(OrcConf.MAX_MERGE_DISTANCE.getAttribute(),
                     ossReadOption.getMaxMergeDistance());
 
+                // Honor per-statement GeneralCache override (HINT/session takes precedence over
+                // DynamicConfig). NOTE: results are cached by (schema,table,file,column) across
+                // statements, so only the very first load uses the current statement's override;
+                // subsequent reads hit the in-memory block cache and skip OSS entirely.
+                FileSystem effectiveFs = fileSystem;
+                Boolean ossCacheOverride = OSSCacheAdapter.extractStatementOverride(
+                    executionContext == null ? null : executionContext.getExtraCmds());
+                if (ossCacheOverride != null && fileSystem instanceof DynamicCacheFileSystem) {
+                    effectiveFs = new OssGeneralCacheOverrideFileSystem(
+                        (DynamicCacheFileSystem) fileSystem, ossCacheOverride);
+                }
+
                 Reader reader = OrcFile.createReader(new Path(URI.create(orcPath)),
-                    OrcFile.readerOptions(configuration).filesystem(fileSystem).orcTail(fileMeta.getOrcTail()));
+                    OrcFile.readerOptions(configuration).filesystem(effectiveFs));
 
                 ColumnMeta columnMeta = ossReadOption.getOssColumnTransformer().getTargetColumnMeta(column);
 

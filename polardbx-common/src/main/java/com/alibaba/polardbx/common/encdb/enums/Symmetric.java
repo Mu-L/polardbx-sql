@@ -29,8 +29,9 @@ public class Symmetric {
         MAX_BLOCK_SIZE(16),
 
         AES_128_KEY_SIZE(16),
+        AES_256_KEY_SIZE(32),
         SM4_128_KEY_SIZE(16),
-        MAX_KEY_SIZE(16),
+        MAX_KEY_SIZE(32),
 
         GCM_IV_SIZE(12),
         CBC_IV_SIZE(16),

@@ -164,7 +164,7 @@ public class AlterTableGroupBackfillHandler extends HandlerCommon {
 
     boolean fastCheck(ExecutionContext executionContext,
                       String schemaName, String logicalTable,
-                      Map<String, Pair<String, String>> ptbGroupMap,
+                      Map<String, List<String>> ptbGroupMap,
                       Map<String, Set<String>> srcPhyDbAndTables,
                       Map<String, Set<String>> dstPhyDbAndTables,
                       boolean isMirrorCopy) {
@@ -175,13 +175,20 @@ public class AlterTableGroupBackfillHandler extends HandlerCommon {
             schemaName, logicalTable));
         Map<Pair<String, String>, List<Pair<String, String>>> srcTarPhyTableMap = null;
         if (isMirrorCopy && GeneralUtil.isNotEmpty(ptbGroupMap)) {
-            Map<String, String> srcTargetGroupMap = new HashMap<>();
-            ptbGroupMap.forEach((ptbName, pair) -> {
-                srcTargetGroupMap.put(pair.getKey(), pair.getValue());
-            });
-            srcTarPhyTableMap =
-                ScaleOutPlanUtil.generateSrcTarPhyTableMapForMoveTable(srcPhyDbAndTables, dstPhyDbAndTables,
-                    srcTargetGroupMap);
+            // For move partition, source and target have the same physical table name
+            // but in different groups. Build the mapping directly from ptbGroupMap.
+            srcTarPhyTableMap = new HashMap<>();
+            for (Map.Entry<String, List<String>> entry : ptbGroupMap.entrySet()) {
+                String phyTable = entry.getKey();
+                String srcGroup = entry.getValue().get(0);
+                String tarGroup = entry.getValue().get(1);
+                if (srcGroup != null && tarGroup != null) {
+                    Pair<String, String> srcKey = Pair.of(srcGroup, phyTable);
+                    List<Pair<String, String>> tarList = new ArrayList<>();
+                    tarList.add(Pair.of(tarGroup, phyTable));
+                    srcTarPhyTableMap.put(srcKey, tarList);
+                }
+            }
         }
         FastChecker fastChecker = AlterTableGroupFastChecker
             .create(schemaName, logicalTable,

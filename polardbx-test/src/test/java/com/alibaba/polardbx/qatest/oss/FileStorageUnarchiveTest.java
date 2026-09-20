@@ -18,6 +18,7 @@ package com.alibaba.polardbx.qatest.oss;
 
 import com.alibaba.polardbx.common.Engine;
 import com.alibaba.polardbx.qatest.BaseTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.ConnectionManager;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.alibaba.polardbx.qatest.util.PropertiesUtil;
@@ -80,7 +81,7 @@ public class FileStorageUnarchiveTest extends BaseTestCase {
                 "    gmt_modified DATETIME NOT NULL,\n" +
                 "    gg int(11) NOT NULL,\n" +
                 "    PRIMARY KEY (id, gmt_modified)\n" +
-                ")ENGINE = InnoDB DEFAULT CHARSET = utf8mb4\n" +
+                ")ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE=utf8mb4_general_ci\n" +
                 "PARTITION BY RANGE(id)" +
                 "(PARTITION p0 VALUES LESS THAN (1990) ENGINE = InnoDB," +
                 "PARTITION p1 VALUES LESS THAN (2000) ENGINE = InnoDB," +

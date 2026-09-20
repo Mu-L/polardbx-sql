@@ -1,0 +1,158 @@
+## DISABLE_FAST_SQL_PARSER
+## RESERVE_SEMICOLONS_FLAG
+## error_msg: $# same constant in list #$
+CREATE TABLE `list_esc_route_t0` (
+`a` varchar(8) DEFAULT NULL,
+`b` varchar(8) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST COLUMNS(`a`)
+(
+PARTITION p1 VALUES IN(''),
+PARTITION p2 VALUES IN('\''),
+PARTITION p3 VALUES IN(''''),
+PARTITION p4 VALUES IN('\\r'),
+PARTITION p5 VALUES IN('\\n'),
+PARTITION p6 VALUES IN('\\'),
+PARTITION p7 VALUES IN('\\\\'),
+PARTITION p8 VALUES IN('"'),
+PARTITION p9 VALUES IN(DEFAULT)
+);
+same constant in list
+CREATE TABLE `list_esc_route_t1` (
+`a` varchar(8) DEFAULT NULL,
+`b` varchar(8) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST COLUMNS(`a`)
+(
+PARTITION p1 VALUES IN(''),
+PARTITION p2 VALUES IN('\''),
+PARTITION p3 VALUES IN('\\t'),
+PARTITION p4 VALUES IN('\\r'),
+PARTITION p5 VALUES IN('\\n'),
+PARTITION p6 VALUES IN('\\'),
+PARTITION p7 VALUES IN('\\\\'),
+PARTITION p8 VALUES IN('"'),
+PARTITION p9 VALUES IN(DEFAULT)
+);
+show create table list_esc_route_t1;
+Table,Create Table
+list_esc_route_t1,CREATE TABLE `list_esc_route_t1` (
+	`a` varchar(8) DEFAULT NULL,
+	`b` varchar(8) DEFAULT NULL,
+	KEY `auto_shard_key_a` USING BTREE (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST COLUMNS(`a`)
+(PARTITION p1 VALUES IN ('') ENGINE = InnoDB,
+ PARTITION p8 VALUES IN ('"') ENGINE = InnoDB,
+ PARTITION p2 VALUES IN ('''') ENGINE = InnoDB,
+ PARTITION p6 VALUES IN ('\\') ENGINE = InnoDB,
+ PARTITION p5 VALUES IN ('\\n') ENGINE = InnoDB,
+ PARTITION p4 VALUES IN ('\\r') ENGINE = InnoDB,
+ PARTITION p3 VALUES IN ('\\t') ENGINE = InnoDB,
+ PARTITION p7 VALUES IN ('\\\\') ENGINE = InnoDB,
+ PARTITION p9 VALUES IN (DEFAULT) ENGINE = InnoDB)
+insert into list_esc_route_t1
+(a,b)
+values
+('',''),
+('\'',''''),
+('\\t','\\t'),
+('\\r','\\r'),
+('\\n','\\n'),
+('\\','\\'),
+('\\\\','\\\\'),
+('"','"');
+select a, part_route('','list_esc_route_t1', a) part from list_esc_route_t1 order by a;
+a,part
+,p1
+",p8
+',p2
+\,p6
+\n,p5
+\r,p4
+\t,p3
+\\,p7
+CREATE TABLE `list_esc_route_t2` (
+`a` varchar(8) DEFAULT NULL,
+`b` varchar(8) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST COLUMNS(`a`)
+(
+PARTITION p1 VALUES IN(''),
+PARTITION p2 VALUES IN('\'\"'),
+PARTITION p3 VALUES IN('\\t\\r\\n')
+);
+show create table list_esc_route_t2;
+Table,Create Table
+list_esc_route_t2,CREATE TABLE `list_esc_route_t2` (
+	`a` varchar(8) DEFAULT NULL,
+	`b` varchar(8) DEFAULT NULL,
+	KEY `auto_shard_key_a` USING BTREE (`a`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST COLUMNS(`a`)
+(PARTITION p1 VALUES IN ('') ENGINE = InnoDB,
+ PARTITION p2 VALUES IN ('''"') ENGINE = InnoDB,
+ PARTITION p3 VALUES IN ('\\t\\r\\n') ENGINE = InnoDB)
+insert into list_esc_route_t2
+(a,b)
+values
+('',''),
+('\'"','''\"'),
+('\\t\\r\\n','\\t\\r\\n');
+select a, part_route('','list_esc_route_t2', a) part from list_esc_route_t2 order by a;
+a,part
+,p1
+'",p2
+\t\r\n,p3
+CREATE TABLE `list_esc_route_t3` (
+`a` varchar(8) DEFAULT NULL,
+`b` varchar(8) DEFAULT NULL
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST COLUMNS(`a`,`b`)
+(
+PARTITION p1 VALUES IN(('','')),
+PARTITION p2 VALUES IN(('\'','''')),
+PARTITION p3 VALUES IN(('\\t','\\t')),
+PARTITION p4 VALUES IN(('\\r','\\r')),
+PARTITION p5 VALUES IN(('\\n','\\n')),
+PARTITION p6 VALUES IN(('\\','\\')),
+PARTITION p7 VALUES IN(('\\\\','\\\\')),
+PARTITION p8 VALUES IN(('"','"'))
+);
+show create table list_esc_route_t3;
+Table,Create Table
+list_esc_route_t3,CREATE TABLE `list_esc_route_t3` (
+	`a` varchar(8) DEFAULT NULL,
+	`b` varchar(8) DEFAULT NULL,
+	KEY `auto_shard_key_a_b` USING BTREE (`a`, `b`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4
+PARTITION BY LIST COLUMNS(`a`,`b`)
+(PARTITION p1 VALUES IN (('','')) ENGINE = InnoDB,
+ PARTITION p8 VALUES IN (('"','"')) ENGINE = InnoDB,
+ PARTITION p2 VALUES IN (('''','''')) ENGINE = InnoDB,
+ PARTITION p6 VALUES IN (('\\','\\')) ENGINE = InnoDB,
+ PARTITION p5 VALUES IN (('\\n','\\n')) ENGINE = InnoDB,
+ PARTITION p4 VALUES IN (('\\r','\\r')) ENGINE = InnoDB,
+ PARTITION p3 VALUES IN (('\\t','\\t')) ENGINE = InnoDB,
+ PARTITION p7 VALUES IN (('\\\\','\\\\')) ENGINE = InnoDB)
+insert into list_esc_route_t3
+(a,b)
+values
+('',''),
+('\'',''''),
+('\\t','\\t'),
+('\\r','\\r'),
+('\\n','\\n'),
+('\\','\\'),
+('\\\\','\\\\'),
+('"','"');
+select a,b, part_route('','list_esc_route_t3', a,b) part from list_esc_route_t3 order by a;
+a,b,part
+,,p1
+",",p8
+',',p2
+\,\,p6
+\n,\n,p5
+\r,\r,p4
+\t,\t,p3
+\\,\\,p7

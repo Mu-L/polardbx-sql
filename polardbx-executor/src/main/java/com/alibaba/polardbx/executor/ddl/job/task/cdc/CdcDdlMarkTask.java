@@ -52,6 +52,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import static com.alibaba.polardbx.common.cdc.ICdcManager.DDL_ID;
 import static com.alibaba.polardbx.common.cdc.ICdcManager.REFRESH_CREATE_SQL_4_PHY_TABLE;
 import static com.alibaba.polardbx.common.properties.ConnectionParams.SIM_CDC_FAILED;
 import static com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcDropTableIfExistsMarkTask.checkTableName;
@@ -72,6 +73,7 @@ public class CdcDdlMarkTask extends BaseCdcTask {
     private boolean useOriginalDDl;
     private boolean foreignKeys;
     private boolean isCci = false;
+    private boolean externalColumnDdl;
 
     /**
      * For statement like CREATE TABLE with CCI,
@@ -118,6 +120,9 @@ public class CdcDdlMarkTask extends BaseCdcTask {
             return;
         }
 
+        Map<String, Object> param = buildExtendParameter(executionContext);
+        param.put(DDL_ID, versionId);
+
         prepareExtraCmdsKey(executionContext);
         if (physicalPlanData.getKind() == SqlKind.CREATE_TABLE) {
             if (executionContext.getDdlContext() != null &&
@@ -152,6 +157,9 @@ public class CdcDdlMarkTask extends BaseCdcTask {
     }
 
     private void prepareExtraCmdsKey(ExecutionContext executionContext) {
+        if (externalColumnDdl) {
+            CdcMarkUtil.useExternalColumnDdl(executionContext);
+        }
         if (useOriginalDDl) {
             executionContext.getExtraCmds().put(ICdcManager.USE_ORIGINAL_DDL, "true");
         }

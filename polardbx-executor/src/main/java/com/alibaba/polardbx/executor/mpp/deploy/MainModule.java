@@ -32,8 +32,12 @@ import com.alibaba.polardbx.executor.mpp.operator.ExchangeClientSupplier;
 import com.alibaba.polardbx.executor.mpp.operator.ForExchange;
 import com.alibaba.polardbx.executor.mpp.operator.ForScheduler;
 import com.alibaba.polardbx.executor.mpp.server.ForAsyncHttp;
+import com.alibaba.polardbx.executor.mpp.server.ForAsyncHttpControl;
+import com.alibaba.polardbx.executor.mpp.server.ForAsyncHttpData;
+import com.alibaba.polardbx.executor.mpp.server.MonitoredBoundedExecutor;
 import com.alibaba.polardbx.executor.mpp.server.PagesResponseWriter;
 import com.alibaba.polardbx.executor.mpp.server.TaskUpdateRequest;
+import com.alibaba.polardbx.executor.mpp.server.UnhandledExceptionMapper;
 import com.alibaba.polardbx.executor.mpp.server.remotetask.HttpLocationFactory;
 import com.alibaba.polardbx.executor.mpp.spi.ConnectorSplit;
 import com.alibaba.polardbx.executor.mpp.web.FailureDetectorModule;
@@ -103,6 +107,7 @@ public class MainModule extends BaseModule {
         jsonCodecBinder(binder).bindJsonCodec(InternalNode.class);
         jsonCodecBinder(binder).bindJsonCodec(AllNodes.class);
         jaxrsBinder(binder).bind(PagesResponseWriter.class);
+        jaxrsBinder(binder).bind(UnhandledExceptionMapper.class);
 
         // task executor
         binder.bind(TaskExecutor.class).in(Scopes.SINGLETON);
@@ -114,30 +119,13 @@ public class MainModule extends BaseModule {
         httpClientBinder(binder).bindHttpClient("exchange", ForExchange.class)
 //				.withTracing()
             .withConfigDefaults(config -> {
-                config.setIdleTimeout(new Duration(10, TimeUnit.HOURS));
-                config.setRequestTimeout(new Duration(60 * 5, SECONDS));
-                config.setConnectTimeout(new Duration(60 * 5, SECONDS));
-                config.setMaxContentLength(new DataSize(512, MEGABYTE));
-                config.setMaxThreads(MppConfig.getInstance().getHttpClientMaxThreads());
-                config.setMinThreads(MppConfig.getInstance().getHttpClientMinThreads());
-                config.setMaxRequestsQueuedPerDestination(MppConfig.getInstance().getHttpMaxRequestsPerDestination());
-                config.setMaxConnectionsPerServer(
-                    MppConfig.getInstance().getDefaultMppHttpClientMaxConnectionsPerServer());
-                config.setMaxConnections(MppConfig.getInstance().getHttpClientMaxConnections());
+                HttpClientConfigUtils.configureExchangeHttpClient(config);
             });
 
         // http client
         httpClientBinder(binder).bindHttpClient("scheduler", ForScheduler.class)
             .withConfigDefaults(config -> {
-                config.setIdleTimeout(new Duration(10, TimeUnit.HOURS));
-                config.setRequestTimeout(new Duration(60 * 60, SECONDS));
-                config.setConnectTimeout(new Duration(60 * 60, SECONDS));
-                config.setMaxThreads(MppConfig.getInstance().getHttpClientMaxThreads());
-                config.setMinThreads(MppConfig.getInstance().getHttpClientMinThreads());
-                config.setMaxRequestsQueuedPerDestination(MppConfig.getInstance().getHttpMaxRequestsPerDestination());
-                config.setMaxConnectionsPerServer(
-                    MppConfig.getInstance().getDefaultMppHttpClientMaxConnectionsPerServer());
-                config.setMaxConnections(MppConfig.getInstance().getHttpClientMaxConnections());
+                HttpClientConfigUtils.configureSchedulerHttpClient(config);
             });
 
         httpClientBinder(binder).bindHttpClient("node-manager", ForNodeManager.class)
@@ -199,11 +187,23 @@ public class MainModule extends BaseModule {
 
     @Provides
     @Singleton
-    @ForAsyncHttp
-    public static BoundedExecutor createAsyncHttpResponseExecutor() {
-        int poolSize = MppConfig.getInstance().getHttpResponseThreads();
+    @ForAsyncHttpData
+    public static MonitoredBoundedExecutor createDataResponseExecutor() {
+        int poolSize = MppConfig.getInstance().getHttpDataResponseThreads();
         ExecutorService coreExecutor = newFixedThreadPool(poolSize,
-            Threads.daemonThreadsNamed("async-http-response"));
-        return new BoundedExecutor(coreExecutor, MppConfig.getInstance().getHttpResponseThreads());
+            Threads.daemonThreadsNamed("async-http-data-response"));
+        BoundedExecutor bounded = new BoundedExecutor(coreExecutor, poolSize);
+        return new MonitoredBoundedExecutor(bounded, "dataplane", poolSize);
+    }
+
+    @Provides
+    @Singleton
+    @ForAsyncHttpControl
+    public static MonitoredBoundedExecutor createControlResponseExecutor() {
+        int poolSize = MppConfig.getInstance().getHttpControlResponseThreads();
+        ExecutorService coreExecutor = newFixedThreadPool(poolSize,
+            Threads.daemonThreadsNamed("async-http-control-response"));
+        BoundedExecutor bounded = new BoundedExecutor(coreExecutor, poolSize);
+        return new MonitoredBoundedExecutor(bounded, "controlplane", poolSize);
     }
 }

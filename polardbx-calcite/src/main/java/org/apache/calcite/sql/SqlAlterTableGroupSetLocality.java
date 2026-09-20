@@ -16,6 +16,10 @@
 
 package org.apache.calcite.sql;
 
+import com.alibaba.polardbx.common.utils.Pair;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLCharExpr;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
+import com.alibaba.polardbx.gms.locality.LocalityDesc;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.commons.lang.StringUtils;
 

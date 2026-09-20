@@ -33,7 +33,9 @@ import com.alibaba.polardbx.config.ConfigDataMode;
 import com.alibaba.polardbx.druid.sql.SQLUtils;
 import com.alibaba.polardbx.druid.sql.ast.SQLExpr;
 import com.alibaba.polardbx.druid.sql.ast.SQLStatement;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLHexExpr;
 import com.alibaba.polardbx.druid.sql.ast.expr.SQLIdentifierExpr;
+import com.alibaba.polardbx.druid.sql.ast.expr.SQLMethodInvokeExpr;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLExprTableSource;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLInsertStatement.ValuesClause;
 import com.alibaba.polardbx.druid.sql.ast.statement.SQLReplaceStatement;
@@ -41,6 +43,7 @@ import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlInsertSta
 import com.alibaba.polardbx.druid.sql.parser.ByteString;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.metadb.encdb.EncdbRuleManager;
+import com.alibaba.polardbx.gms.metadb.external.ExternalNameValidator;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
 import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.config.schema.InformationSchema;
@@ -57,6 +60,10 @@ import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
 import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
 import com.alibaba.polardbx.optimizer.core.rel.dml.util.LogicalWriteUtil;
 import com.alibaba.polardbx.optimizer.exception.OptimizerException;
+import com.alibaba.polardbx.optimizer.htaprouting.HtapTrace;
+import com.alibaba.polardbx.optimizer.htaprouting.RoutingType;
+import com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertType;
+import com.alibaba.polardbx.optimizer.optimizeralert.OptimizerAlertUtil;
 import com.alibaba.polardbx.optimizer.parse.FastsqlParser;
 import com.alibaba.polardbx.optimizer.parse.bean.SqlParameterized;
 import com.alibaba.polardbx.optimizer.parse.privilege.PrivilegeContext;
@@ -65,6 +72,7 @@ import com.alibaba.polardbx.optimizer.planmanager.PlanManagerUtil;
 import com.alibaba.polardbx.optimizer.planmanager.hotevolution.HotGsiCapture;
 import com.alibaba.polardbx.optimizer.planmanager.hotevolution.HotGsiEvolution;
 import com.alibaba.polardbx.optimizer.statis.XplanStat;
+import com.alibaba.polardbx.optimizer.ttl.query.TtlQueryType;
 import com.alibaba.polardbx.optimizer.utils.CalciteUtils;
 import com.alibaba.polardbx.optimizer.utils.ForeignKeyUtils;
 import com.alibaba.polardbx.optimizer.utils.OptimizerUtils;
@@ -80,6 +88,7 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
+import org.apache.calcite.sql.validate.SqlValidatorException;
 import org.apache.commons.lang.StringUtils;
 
 import java.util.ArrayList;
@@ -101,6 +110,8 @@ import static com.alibaba.polardbx.common.eventlogger.EventType.XPLAN_FEEDBACK_D
 import static com.alibaba.polardbx.common.properties.ConnectionParams.ENABLE_ENCDB;
 import static com.alibaba.polardbx.common.properties.ConnectionParams.PLAN_CACHE_SIZE;
 import static com.alibaba.polardbx.optimizer.parse.bean.SqlParameterized.VARCHAR_CODE;
+import static com.alibaba.polardbx.optimizer.planmanager.PlanManagerUtil.PlanBuildPath.PLAN_CACHE;
+import static com.alibaba.polardbx.optimizer.planmanager.PlanManagerUtil.loggerSpm;
 
 /**
  * @author lingce.ldm 2017-11-22 14:38
@@ -160,6 +171,7 @@ public final class PlanCache {
             if (ex.getCause() instanceof RuntimeException) {
                 throw (RuntimeException) ex.getCause();
             } else {
+                OptimizerAlertUtil.spmAlert(OptimizerAlertType.SPM_PLAN_BUILD_ERR, ec, ex);
                 throw ex;
             }
         }
@@ -173,7 +185,7 @@ public final class PlanCache {
             ExecutionPlan plan =
                 getFromCache(schema, sqlParameterized, sqlParameterized.getParameters(), ec, testMode);
 
-            if (plan == null) {
+            if (plan == null || plan.getPlan() == null) {
                 return null;
             }
 
@@ -187,9 +199,22 @@ public final class PlanCache {
             }
 
             boolean valid = ensureValid(plan.getCacheKey(), plan);
-            return valid ? plan : null;
+            if (valid) {
+                if (plan != PlaceHolderExecutionPlan.INSTANCE && plan.isHitCache()) {
+                    PlannerContext pc = PlannerContext.getPlannerContext(plan.getPlan());
+                    ec.setRoutingType(pc.getRoutingType());
+                    HtapTrace.traceFromPlanCache(ec, pc);
+                }
+                return plan;
+            }
+            return null;
         } catch (Throwable e) {
-            logger.debug("Error: get from plan cache fail. Cause by " + e.getMessage());
+            if (e instanceof TddlRuntimeException) {
+                throw (TddlRuntimeException) e;
+            } else {
+                OptimizerAlertUtil.spmAlert(OptimizerAlertType.SPM_PLAN_BUILD_ERR, ec, e);
+            }
+            loggerSpm.error("Error: get from plan cache fail. Cause by " + e.getMessage(), e);
             throw e;
         }
     }
@@ -268,6 +293,7 @@ public final class PlanCache {
                 Map<String, TableMeta> tableMetaSet =
                     PlanManagerUtil.getTableMetaSetByTableSet(tableSet, ec);
                 executionPlan.saveCacheState(tableSet, tablesVersion, cacheKey, tableMetaSet);
+                PlanManagerUtil.checkBlockChain(tableMetaSet, executionPlan);
 
                 //get origin column names for encdb
                 if (InstConfUtil.getBool(ENABLE_ENCDB)) {
@@ -299,28 +325,60 @@ public final class PlanCache {
                     false);
 
                 executionPlan.setFlashbackArea(ec.isFlashbackArea());
-
+                executionPlan.setAsOfCrossDdl(ec.isAsOfCrossDdl());
                 return executionPlan;
             }
         };
         return valueLoader;
     }
 
-    protected ExecutionPlan getPlanWithLoader(CacheKey cacheKey, Callable<ExecutionPlan> valueLoader)
+    protected ExecutionPlan getPlanWithLoader(CacheKey cacheKey, Callable<ExecutionPlan> valueLoader,
+                                              ExecutionContext ec)
         throws ExecutionException {
         try {
             return cache.get(cacheKey, valueLoader);
         } catch (UncheckedExecutionException ex) {
+            // try unwrap validator exception
+            SqlValidatorException validatorException = unwrapValidatorException(ex);
+            if (validatorException != null) {
+                throw new TddlRuntimeException(ErrorCode.ERR_VALIDATE, validatorException,
+                    validatorException.getMessage());
+            }
             if (ErrorCode.match(ex.getMessage())) {
-                if (ex.getCause() instanceof TddlRuntimeException) {
-                    // Assuming the caused TddlRuntimeException has correctly encapsulated the ErrorCode.
-                    throw (TddlRuntimeException) ex.getCause();
+                // unwrap TddlRuntimeException
+                TddlRuntimeException tddlRuntimeException = unwrapTddlException(ex);
+                if (tddlRuntimeException != null) {
+                    throw tddlRuntimeException;
                 }
                 // There may be an issue of excessive encapsulation
                 throw ex;
             } else {
+                // unhandled exception
+                OptimizerAlertUtil.spmAlert(OptimizerAlertType.SPM_PLAN_BUILD_ERR, ec, ex);
                 throw new TddlRuntimeException(ErrorCode.ERR_OPTIMIZER, ex, ex.getMessage());
             }
+        }
+    }
+
+    public static SqlValidatorException unwrapValidatorException(Throwable ex) {
+        if (ex.getCause() instanceof SqlValidatorException) {
+            return (SqlValidatorException) ex.getCause();
+        } else if (ex.getCause() == null) {
+            return null;
+        } else {
+            return unwrapValidatorException(ex.getCause());
+        }
+    }
+
+    public static TddlRuntimeException unwrapTddlException(Throwable ex) {
+        if (ex instanceof TddlRuntimeException) {
+            return (TddlRuntimeException) ex;
+        } else if (ex.getCause() instanceof TddlRuntimeException) {
+            return (TddlRuntimeException) ex.getCause();
+        } else if (ex.getCause() == null) {
+            return null;
+        } else {
+            return unwrapTddlException(ex.getCause());
         }
     }
 
@@ -335,18 +393,27 @@ public final class PlanCache {
         if (ec != null) {
             ec.setColumnarPlanCache(DynamicConfig.getInstance().colPlanCache());
         }
-        ExecutionPlan plan = getPlanWithLoader(cacheKey, valueLoader);
+        ExecutionPlan plan = getPlanWithLoader(cacheKey, valueLoader, ec);
+
+        if (!beCached.get() && !isPlanCacheNearlyFull()) {
+            PlanManagerUtil.logPlanBuild(
+                PLAN_CACHE,
+                cacheKey.parameterizedSql,
+                ec,
+                plan.getPlan());
+        }
+
         if (plan.getPlan() == null || PlannerContext.getPlannerContext(plan.getPlan()) == null) {
             return savePlanCachedKey(ec, plan, cacheKey, beCached);
         }
         PlannerContext pc = PlannerContext.getPlannerContext(plan.getPlan());
 
-        // row plan
-        if (!pc.isUseColumnar()) {
+        // not generate by columnar optimizer
+        if (!pc.isColumnarOptimizer()) {
             return savePlanCachedKey(ec, plan, cacheKey, beCached);
         }
 
-        // check whether columnar optimizer closed
+        // now the plan must be generated by columnar optimizer, check whether columnar optimizer closed
         ExecutionPlan newPlan = checkColumnarDisable(pc, ec, cacheKey, beCached, valueLoader);
         if (newPlan != null) {
             return newPlan;
@@ -359,10 +426,14 @@ public final class PlanCache {
             return savePlanCachedKey(ec, plan, cacheKey, beCached);
         }
         pc = PlannerContext.getPlannerContext(plan.getPlan());
-        if (pc.isUseColumnar() && !pc.isUseColumnarPlanCache()) {
+        if (pc.isColumnarOptimizer() && !pc.isUseColumnarPlanCache()) {
             return beCached.get() ? null : plan;
         }
         return savePlanCachedKey(ec, plan, cacheKey, beCached);
+    }
+
+    public static boolean isPlanCacheNearlyFull() {
+        return PlanCache.getInstance().getCache().size() >= PlanCache.getInstance().getCurrentCapacity() - 20;
     }
 
     /**
@@ -373,25 +444,26 @@ public final class PlanCache {
      * @param cacheKey cache key of current query
      * @param beCached cache state of current query
      * @param valueLoader cache loader
-     * @return plan generated, none otherwise
+     * @return plan generated, null otherwise
      */
     ExecutionPlan checkColumnarDisable(PlannerContext pc,
                                        ExecutionContext ec,
                                        CacheKey cacheKey,
                                        AtomicBoolean beCached,
                                        Callable<ExecutionPlan> valueLoader) throws ExecutionException {
-        // row plan
-        if (!pc.isUseColumnar()) {
-            return null;
-        }
-        // columnar node
+        // columnar mode
         if (ConfigDataMode.isColumnarMode()) {
             return null;
         }
-        // columnar optimizer disabled
+        // generated by manual routing, ignore columnar optimizer switch
+        if (pc.getRoutingType() != null) {
+            return null;
+        }
+        // columnar optimizer enabled
         if (OptimizerUtils.enableColumnarOptimizer(ec.getParamManager())) {
             return null;
         }
+
         // invalidate col plan cache if columnar optimizer closed
         beCached.set(true);
         invalidateByCacheKey(cacheKey);
@@ -399,7 +471,7 @@ public final class PlanCache {
             ec.setColumnarPlanCache(DynamicConfig.getInstance().colPlanCache());
         }
         // optimize again
-        return savePlanCachedKey(ec, getPlanWithLoader(cacheKey, valueLoader), cacheKey, beCached);
+        return savePlanCachedKey(ec, getPlanWithLoader(cacheKey, valueLoader, ec), cacheKey, beCached);
     }
 
     ExecutionPlan checkColumnarPlanCache(PlannerContext pc,
@@ -420,7 +492,7 @@ public final class PlanCache {
             ec.setColumnarPlanCache(DynamicConfig.getInstance().colPlanCache());
         }
         // optimize again
-        return getPlanWithLoader(cacheKey, valueLoader);
+        return getPlanWithLoader(cacheKey, valueLoader, ec);
     }
 
     private boolean ensureValid(CacheKey cacheKey, ExecutionPlan executionPlan) {
@@ -538,16 +610,34 @@ public final class PlanCache {
                 versionInfo.append(',');
             }
 
-            TableMeta table = ec
+            try {
+                TableMeta table = ec
                 .getSchemaManager(t.getKey()).getTableWithNull(t.getValue());
-            if (table != null) {
-                tables.add(table);
-                versionInfo.append(table.getVersion());
+                if (table != null) {
+                    tables.add(table);
+                    versionInfo.append(table.getVersion());
+                }
+            } catch (TddlRuntimeException e) {
+                // an external schema (catalog$$db) may resolve to an unknown database after its catalog is
+                // dropped or the catalog cache is empty; skip its version instead of failing the cache key
+                if (e.getErrorCodeType() == ErrorCode.ERR_UNKNOWN_DATABASE
+                    && ExternalNameValidator.isExternalSchema(t.getKey())) {
+                    continue;
+                }
+                throw e;
             }
         }
+        ec.setRoutingType(
+            RoutingType.determineRoutingType(ec,
+                CacheKey.getTemplateId(sqlParameterized.getSql()),
+                sqlParameterized));
+        final long implicitDefaultDigest =
+            ImplicitDefaultDigestGenerator.of(sqlParameterized, tables, ec).computeDigest();
 
+        TtlQueryType ttlQueryType = ec.getTtlQueryType();
         return new CacheKey(schema, sqlParameterized, versionInfo.toString(), tables, testMode, ec.isAutoCommit(),
-            ec.foreignKeyChecks(), ec);
+            ec.foreignKeyChecks(), ec.getRoutingType(), implicitDefaultDigest, ec.dmlReplaceImplicitDefault(),
+            ec.dmlReplaceDynamicImplicitDefault(), ttlQueryType);
     }
 
     /**
@@ -565,6 +655,32 @@ public final class PlanCache {
             if (cacheKey.getTableMetas().stream().anyMatch(
                 meta -> EagleeyeHelper.rebuildTableName(meta.getTableName(), cacheKey.testing).toLowerCase()
                     .equals(tableNameLowercase))) {
+                cache.invalidate(cacheKey);
+            }
+        }
+    }
+
+    /**
+     * Invalidate cache entries by temporary ID.
+     *
+     * @param schemaName The schema name
+     * @param tempId The temporary identifier
+     */
+    public void invalidateByTempId(String schemaName, String tempId) {
+        // Check if input parameters are empty
+        if (TStringUtil.isEmpty(schemaName) || TStringUtil.isEmpty(tempId)) {
+            return;
+        }
+
+        // Create a new HashSet to store all cache keys
+        Set<CacheKey> cacheKeys = Sets.newHashSet();
+
+        // Add all current cache keys to the new set
+        cacheKeys.addAll(cache.asMap().keySet());
+
+        // Iterate through all cache keys and invalidate those with matching template ID
+        for (CacheKey cacheKey : cacheKeys) {
+            if (cacheKey.getTemplateId().equals(tempId)) {
                 cache.invalidate(cacheKey);
             }
         }
@@ -596,6 +712,10 @@ public final class PlanCache {
 
         private final boolean foreignKeyChecks;
 
+        RoutingType routingType;
+
+        TtlQueryType ttlQueryType;
+
         public CacheKey(String schema, String parameterizedSql, String versionInfo, List<TableMeta> metas,
                         boolean testing,
                         boolean autoCommit, boolean foreignKeyChecks) {
@@ -608,30 +728,36 @@ public final class PlanCache {
             this.testing = testing;
             this.metas = metas;
             this.autoCommit = autoCommit;
-            parameters = null;
+            this.parameters = null;
+            this.routingType = null;
             this.dmlReplaceImplicitDefault = false;
-            this.dmlReplaceDynamicImplicitDefault= false;
+            this.dmlReplaceDynamicImplicitDefault = false;
+            this.ttlQueryType = null;
         }
 
         public CacheKey(String schema, SqlParameterized sqlParameterized, String versionInfo, List<TableMeta> metas,
-                        boolean testing, boolean autoCommit, boolean foreignKeyChecks, ExecutionContext ec) {
+                        boolean testing, boolean autoCommit, boolean foreignKeyChecks, RoutingType type,
+                        long implicitDefaultDigest, boolean dmlReplaceImplicitDefault,
+                        boolean dmlReplaceDynamicImplicitDefault, TtlQueryType ttlQueryType) {
             this.schema = schema.toLowerCase(Locale.ROOT);
             this.parameterizedSql = sqlParameterized.getSql();
             this.typeDigest = sqlParameterized.getDigest();
-            this.implicitDefaultDigest = ImplicitDefaultDigestGenerator.of(sqlParameterized, metas, ec).computeDigest();
+            this.implicitDefaultDigest = implicitDefaultDigest;
             this.versionInfo = versionInfo;
             this.testing = testing;
             this.metas = metas;
             this.autoCommit = autoCommit;
             // record the parameters when it is small enough
             if (sqlParameterized.getParaMemory() >= 0) {
-                parameters = sqlParameterized.getParameters();
+                this.parameters = sqlParameterized.getParameters();
             } else {
-                parameters = null;
+                this.parameters = null;
             }
             this.foreignKeyChecks = foreignKeyChecks;
-            this.dmlReplaceImplicitDefault = ec.dmlReplaceImplicitDefault();
-            this.dmlReplaceDynamicImplicitDefault = ec.dmlReplaceDynamicImplicitDefault();
+            this.routingType = type;
+            this.dmlReplaceImplicitDefault = dmlReplaceImplicitDefault;
+            this.dmlReplaceDynamicImplicitDefault = dmlReplaceDynamicImplicitDefault;
+            this.ttlQueryType = ttlQueryType;
         }
 
         @Override
@@ -654,15 +780,18 @@ public final class PlanCache {
                 versionInfo.equals(cacheKey.versionInfo) &&
                 autoCommit == cacheKey.autoCommit &&
                 schema.equals(cacheKey.schema) &&
-                foreignKeyChecks == cacheKey.foreignKeyChecks
+                foreignKeyChecks == cacheKey.foreignKeyChecks &&
+                routingType == cacheKey.routingType
                 && this.dmlReplaceImplicitDefault == cacheKey.dmlReplaceImplicitDefault
-                && this.dmlReplaceDynamicImplicitDefault == cacheKey.dmlReplaceDynamicImplicitDefault;
+                && this.dmlReplaceDynamicImplicitDefault == cacheKey.dmlReplaceDynamicImplicitDefault
+                && ttlQueryType == cacheKey.ttlQueryType;
         }
 
         @Override
         public int hashCode() {
             return Objects.hash(schema, parameterizedSql, typeDigest, implicitDefaultDigest, versionInfo, testing,
-                autoCommit, foreignKeyChecks, dmlReplaceImplicitDefault, dmlReplaceDynamicImplicitDefault);
+                autoCommit, foreignKeyChecks, routingType, dmlReplaceImplicitDefault, dmlReplaceDynamicImplicitDefault,
+                ttlQueryType);
         }
 
         public List<TableMeta> getTableMetas() {
@@ -687,6 +816,10 @@ public final class PlanCache {
         public String getTemplateId() {
             int hashCode = getTemplateHash();
             return TStringUtil.int2FixedLenHexStr(hashCode);
+        }
+
+        public static String getTemplateId(String parameterizedSql) {
+            return TStringUtil.int2FixedLenHexStr(parameterizedSql.hashCode());
         }
 
         /**
@@ -834,36 +967,49 @@ public final class PlanCache {
                 }
             }
 
-            if (!validStmt) {
+            if (!validStmt || valuesList.isEmpty() || params.isEmpty()) {
                 return digest;
             }
 
+            // Check if there is a scalar function parameter
+            // e.g. insert into t values(1, current_date()), (2, '2023-01-01');
+            final boolean withScalarFunctionParam = (params.size() / valuesList.size()) != columnMetas.size();
+
             // Get index of string type column with implicit default and inserted with hex string param
             final Set<String> hexImplicitDefaultStringColumns = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+            // List<Map<columnIndex, param>>
             final List<Map<Integer, Object>> hexParamMaps = new ArrayList<>();
             int paramIndex = 0;
-            for (int j = 0; j < valuesList.size(); j++) {
-                final ValuesClause valuesClause = valuesList.get(j);
+            for (int rowIndex = 0; rowIndex < valuesList.size(); rowIndex++) {
+                final List<SQLExpr> rowValues = valuesList.get(rowIndex).getValues();
                 final Map<Integer, Object> hexParamMap = new HashMap<>();
 
-                for (int i = 0; i < valuesClause.getValues().size(); i++) {
+                for (int valueIndex = 0; valueIndex < rowValues.size(); valueIndex++) {
                     if (paramIndex >= params.size()) {
                         validStmt = false;
                         break;
                     }
 
+                    final SQLExpr valueExpr = rowValues.get(valueIndex);
+                    final boolean isScalarFunctionCall = withScalarFunctionParam
+                        && valueExpr instanceof SQLMethodInvokeExpr
+                        && ((SQLMethodInvokeExpr) valueExpr).getArguments().isEmpty();
+
                     // The parameter is a byte array or a hex string
-                    if (params.get(paramIndex) instanceof byte[]) {
-                        final ColumnMeta columnMeta = columnMetas.get(i);
+                    if ((!isScalarFunctionCall && params.get(paramIndex) instanceof byte[])
+                        || valueExpr instanceof SQLHexExpr) {
+                        final ColumnMeta columnMeta = columnMetas.get(valueIndex);
 
                         if (columnMeta.withImplicitDefault(true)
                             && DataTypeUtil.isStringType(columnMeta.getDataType())) {
                             hexImplicitDefaultStringColumns.add(columnMeta.getName());
-                            hexParamMap.put(paramIndex, params.get(paramIndex));
+                            hexParamMap.put(valueIndex, params.get(paramIndex));
                         }
                     }
 
-                    paramIndex++;
+                    if (!isScalarFunctionCall) {
+                        paramIndex++;
+                    }
                 }
 
                 hexParamMaps.add(hexParamMap);
@@ -880,8 +1026,8 @@ public final class PlanCache {
                     ec);
 
                 if (literalColumnNames.stream().anyMatch(hexImplicitDefaultStringColumns::contains)) {
-                    for (int valueIndex = 0; valueIndex < hexParamMaps.size(); valueIndex++) {
-                        final Map<Integer, Object> hexParamMap = hexParamMaps.get(valueIndex);
+                    for (int rowIndex = 0; rowIndex < hexParamMaps.size(); rowIndex++) {
+                        final Map<Integer, Object> hexParamMap = hexParamMaps.get(rowIndex);
 
                         for (int columnIndex = 0; columnIndex < columnMetas.size(); columnIndex++) {
                             if (!literalColumnNames.contains(columnMetas.get(columnIndex).getName())) {
@@ -893,7 +1039,7 @@ public final class PlanCache {
                                 typeCode = SqlParameterized.getTypeCode(hexParamMap.get(columnIndex));
                             }
 
-                            // digest = Objects.hash(digest, valueIndex, columnIndex, typeCode);
+                            // digest = Objects.hash(digest, rowIndex, columnIndex, typeCode);
                             digest = 63 * digest + typeCode;
                         }
                     }
@@ -923,6 +1069,10 @@ public final class PlanCache {
 
         // GSI can not build final plan
         if (plan instanceof LogicalIndexScan || plan instanceof OSSTableScan) {
+            return false;
+        }
+
+        if (plannerContext.isDuplicateColumnName()) {
             return false;
         }
 
@@ -973,7 +1123,7 @@ public final class PlanCache {
 
     public ExecutionPlan savePlanCachedKey(ExecutionContext ec, ExecutionPlan plan, CacheKey cacheKey,
                                            AtomicBoolean beCached) {
-        if (beCached.get()) {
+        if (beCached.get() && ec.getExplain() == null) {
             plan.getHitCount().incrementAndGet();
         }
         plan.setHitCache(beCached.get());

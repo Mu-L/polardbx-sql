@@ -24,23 +24,30 @@ import com.alibaba.polardbx.executor.scheduler.executor.statistic.StatisticInfoS
 import com.alibaba.polardbx.executor.scheduler.executor.statistic.StatisticSampleCollectionScheduledJob;
 import com.alibaba.polardbx.executor.scheduler.executor.trx.CleanLogTableScheduledJob;
 import com.alibaba.polardbx.executor.scheduler.executor.trx.GenerateColumnarSnapshotScheduledJob;
+import com.alibaba.polardbx.executor.scheduler.executor.warmup.ColumnarWarmupScheduleJob;
 import com.alibaba.polardbx.gms.config.impl.InstConfUtil;
 import com.alibaba.polardbx.gms.scheduler.ExecutableScheduledJob;
 import com.alibaba.polardbx.gms.scheduler.ScheduledJobExecutorType;
 import com.alibaba.polardbx.optimizer.config.server.DefaultServerConfigManager;
 import com.alibaba.polardbx.optimizer.config.server.IServerConfigManager;
+import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.utils.OptimizerHelper;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 
 public abstract class SchedulerExecutor {
+
+    protected ExecutionContext ec;
 
     public static SchedulerExecutor createSchedulerExecutor(ExecutableScheduledJob job) {
         if (job == null || StringUtils.isEmpty(job.getExecutorType())) {
             return null;
+        }
+
+        if (StringUtils.equalsIgnoreCase(job.getExecutorType(), ScheduledJobExecutorType.COLUMNAR_WARMUP.name())) {
+            return new ColumnarWarmupScheduleJob(job);
         }
 
         if (StringUtils.equalsIgnoreCase(job.getExecutorType(), ScheduledJobExecutorType.LOCAL_PARTITION.name())) {
@@ -120,6 +127,15 @@ public abstract class SchedulerExecutor {
             ScheduledJobExecutorType.LOG_SYSTEM_METRICS.name())) {
             return new LogSystemMetricsScheduledJob(job);
         }
+
+        if (StringUtils.equalsIgnoreCase(job.getExecutorType(), ScheduledJobExecutorType.PURGE_RECYLE_BIN.name())) {
+            return new PurgeRecycleBinScheduledJob(job);
+        }
+
+        if (StringUtils.equalsIgnoreCase(job.getExecutorType(),
+            ScheduledJobExecutorType.CLEAN_CACHE_FILE_MAPPING.name())) {
+            return new CleanCacheFileMappingScheduledJob(job);
+        }
         return null;
     }
 
@@ -158,7 +174,7 @@ public abstract class SchedulerExecutor {
     /**
      * invoked by ScheduledJobsAutoInterrupter
      *
-     * @return if interruption succeeds
+     * @return if interruption succeedsneedInterrupted
      */
     public boolean interrupt() {
         return false;
@@ -167,5 +183,13 @@ public abstract class SchedulerExecutor {
     public boolean inMaintenanceWindow() {
         // TODO support timezone
         return InstConfUtil.isInMaintenanceTimeWindow();
+    }
+
+    public ExecutionContext getEc() {
+        return ec;
+    }
+
+    public void setEc(ExecutionContext ec) {
+        this.ec = ec;
     }
 }

@@ -16,7 +16,12 @@
 
 package com.alibaba.polardbx.executor.operator.scan.impl;
 
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryTrackerManager;
+import com.alibaba.polardbx.common.memory.OperatorMemoryOwnerId;
 import com.alibaba.polardbx.common.properties.ConnectionParams;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.GeneralUtil;
 import com.alibaba.polardbx.executor.chunk.AbstractBlock;
 import com.alibaba.polardbx.executor.chunk.BigIntegerBlock;
@@ -54,6 +59,7 @@ import com.codahale.metrics.Counter;
 import com.google.common.base.Preconditions;
 import org.apache.orc.ColumnStatistics;
 import org.apache.orc.OrcProto;
+import org.openjdk.jol.info.ClassLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -67,7 +73,10 @@ import java.util.TimeZone;
  * 2. These modules are shared in stripe-level on given column.
  */
 public class ReactiveBlockLoader implements BlockLoader {
-    protected static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(ReactiveBlockLoader.class).instanceSize();
+    protected static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
+
+    @FieldMemoryCounter(value = false)
     protected final LogicalRowGroup<Block, ColumnStatistics> logicalRowGroup;
 
     /**
@@ -93,36 +102,52 @@ public class ReactiveBlockLoader implements BlockLoader {
     /**
      * Column-level encoding type.
      */
+    @FieldMemoryCounter(value = false)
     protected final OrcProto.ColumnEncoding encoding;
 
     /**
      * A column-level reader responsible for all blocks of all row groups in the stripe.
      */
+    @FieldMemoryCounter(value = false)
     protected final ColumnReader columnReader;
 
     /**
      * A column-level cache reader holding the available cached blocks in the stripe
      */
+    @FieldMemoryCounter(value = false)
     private final CacheReader<Block> cacheReader;
 
     /**
      * The global block cache manager shared by all files.
      */
+    @FieldMemoryCounter(value = false)
     private final BlockCacheManager<Block> blockCacheManager;
 
+    @FieldMemoryCounter(value = false)
     private final ExecutionContext context;
     private final boolean useBlockCache;
     protected final boolean enableColumnReaderLock;
     private final int chunkLimit;
 
+    @FieldMemoryCounter(value = false)
     protected final Counter loadTimer;
+    @FieldMemoryCounter(value = false)
     protected final Counter memoryCounter;
+    @FieldMemoryCounter(value = false)
     private final TimeZone timeZone;
 
     private final boolean onlyCachePrimaryKey;
     protected final boolean enableSkipCompression;
 
     protected int lastSkipCount;
+
+    @FieldMemoryCounter(value = false)
+    protected OperatorMemoryOwnerId operatorMemoryOwnerId;
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE;
+    }
 
     public ReactiveBlockLoader(LogicalRowGroup<Block, ColumnStatistics> logicalRowGroup, int columnId,
                                int startPosition,
@@ -153,6 +178,64 @@ public class ReactiveBlockLoader implements BlockLoader {
         this.enableSkipCompression = enableSkipCompression;
     }
 
+    public void setOperatorMemoryOwnerId(OperatorMemoryOwnerId operatorMemoryOwnerId) {
+        this.operatorMemoryOwnerId = operatorMemoryOwnerId;
+    }
+
+    @Override
+    public void warmup(DataType dataType, int[] selection, int selSize) throws IOException {
+        // In this case, we need to proactively open column-reader before this method.
+        if (!columnReader.isOpened()) {
+            throw GeneralUtil.nestedException("column reader has not already been opened.");
+        }
+
+        if (!cacheReader.isInitialized()) {
+            throw GeneralUtil.nestedException("cache reader has not already been initialized.");
+        }
+
+        long start = System.nanoTime();
+        try {
+            // skip when block is cached in block-cache.
+            if (cacheReader.getCache(rowGroupId, startPosition) != null) {
+                return;
+            }
+
+            if (!useBlockCache) {
+                // Synchronously wait for IO to complete.
+                columnReader.init();
+                return;
+            }
+
+            // cache miss, decoding from raw bytes.
+            Block block = parseBlock(dataType, selection, selSize);
+            block.cast(AbstractBlock.class).updateSizeInfo();
+            if (memoryCounter != null) {
+                memoryCounter.inc(block.estimateSize());
+            }
+
+            // write back to cache manager
+            // condition1: use block cache
+            // condition2: there is no compression block has been skipped.
+            // condition3: the column is primary key.
+            if (useBlockCache
+                && !enableSkipCompression
+                && (!onlyCachePrimaryKey || columnReader.needCache())) {
+                blockCacheManager.putCache(
+                    block, // cache entity
+                    chunkLimit,
+                    logicalRowGroup.rowCount(), // for boundary check
+                    logicalRowGroup.path(), logicalRowGroup.stripeId(), logicalRowGroup.groupId(), // base info
+                    columnId, startPosition, positionCount // location of block in row-group
+                );
+            }
+
+        } finally {
+            if (loadTimer != null) {
+                loadTimer.inc(System.nanoTime() - start);
+            }
+        }
+    }
+
     @Override
     public Block load(DataType dataType, int[] selection, int selSize) throws IOException {
         // In this case, we need to proactively open column-reader before this method.
@@ -178,6 +261,10 @@ public class ReactiveBlockLoader implements BlockLoader {
             // cache miss, decoding from raw bytes.
             Block block = parseBlock(dataType, selection, selSize);
             block.cast(AbstractBlock.class).updateSizeInfo();
+
+            // reverse after parse and allocate because memory usage will change during parse.
+            MemoryTrackerManager.tryReverseReference(operatorMemoryOwnerId, FastMemoryCounter.sizeOf(block));
+
             if (memoryCounter != null) {
                 memoryCounter.inc(block.estimateSize());
             }
@@ -196,6 +283,9 @@ public class ReactiveBlockLoader implements BlockLoader {
                     logicalRowGroup.path(), logicalRowGroup.stripeId(), logicalRowGroup.groupId(), // base info
                     columnId, startPosition, positionCount // location of block in row-group
                 );
+
+                // It will not be release here, because the block is caching in in-flight cache firstly.
+                // And the cached memory usage will be adjusted in time-slice.
             }
             if (loadTimer != null) {
                 loadTimer.inc(System.nanoTime() - start);

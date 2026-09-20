@@ -110,6 +110,8 @@ public class AlterTableRepartitionValidateTask extends BaseValidateTask {
         GsiValidator.validateGsiSupport(schemaName, executionContext);
         GsiValidator.validateCreateOnGsi(schemaName, indexName, executionContext);
         TableValidator.validateTableWithCCI(schemaName, primaryTableName, executionContext, SqlKind.ALTER_TABLE);
+        TableValidator.validateTableWithPureColumnar(schemaName, primaryTableName, executionContext,
+            SqlKind.ALTER_TABLE);
 
         // validate gsi add columns
         if (addColumnsIndexes != null) {

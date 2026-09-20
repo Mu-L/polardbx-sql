@@ -20,6 +20,7 @@ package com.alibaba.polardbx.gms.metadb.columnar;
 
 import com.alibaba.polardbx.gms.metadb.table.FileInfoRecord;
 import com.alibaba.polardbx.gms.metadb.table.FilesAccessor;
+import com.alibaba.polardbx.gms.metadb.table.FilesRecord;
 import com.alibaba.polardbx.gms.metadb.table.OrcFileStatusRecord;
 import com.alibaba.polardbx.gms.util.MetaDbUtil;
 import org.junit.Assert;
@@ -63,6 +64,21 @@ public class FilesAccessorTest {
             Assert.assertEquals(1, result.size());
 
             result = accessor.queryCSVFileInfoByLogicalSchemaTableRangeTsoLimitOne("schema", "table", 123L, 234L);
+            Assert.assertEquals(1, result.size());
+
+            result = accessor.queryDelFileInfoByLogicalSchemaTableRangeTso("schema", "table", 123L, 234L);
+            Assert.assertEquals(1, result.size());
+
+            result = accessor.queryDelFileInfoByLogicalSchemaTableRangeTsoLimitOne("schema", "table", 123L, 234L);
+            Assert.assertEquals(1, result.size());
+
+            result = accessor.queryFileInfoByLogicalSchemaTableRangeTso("schema", "table", 123L);
+            Assert.assertEquals(1, result.size());
+
+            result = accessor.queryExpiredTableFileBySchemaTableTsoLimitOne("schema", "table", 123L);
+            Assert.assertEquals(1, result.size());
+
+            result = accessor.querySnapshotCsvDelFileInfoByTso(123L, 234L);
             Assert.assertEquals(1, result.size());
         }
     }
@@ -219,6 +235,213 @@ public class FilesAccessorTest {
             List<OrcFileStatusRecord> result =
                 accessor.querySnapshotCSVFileStatusByTsoAndTableId(30, "schema", "table");
             Assert.assertEquals(1, result.size());
+        }
+    }
+
+    @Test
+    public void testSelectFilesRecord() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            List<FilesRecord> recordList = new ArrayList<>();
+            recordList.add(new FilesRecord());
+
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.eq(FilesRecord.class), Mockito.any())).thenReturn(recordList);
+            FilesAccessor accessor = new FilesAccessor();
+            List<FilesRecord> result = accessor.queryCsvByRemoveTso(123L);
+            Assert.assertEquals(1, result.size());
+        }
+    }
+
+    public void testQueryByPartitionAndTypeOrderByCommitTsDescWithLimitOffset() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            List<FilesRecord> recordList = new ArrayList<>();
+            FilesRecord record1 = new FilesRecord();
+            FilesRecord record2 = new FilesRecord();
+            recordList.add(record1);
+            recordList.add(record2);
+
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.eq(FilesRecord.class), Mockito.any())).thenReturn(recordList);
+
+            FilesAccessor accessor = new FilesAccessor();
+            List<FilesRecord> result = accessor.queryByPartitionAndTypeOrderByCommitTsDesc(
+                "test_schema", "test_table", "p0", "CSV", "COLUMNAR", 10L, 5L);
+            Assert.assertEquals(2, result.size());
+
+            // verify with different parameters
+            recordList.clear();
+            recordList.add(new FilesRecord());
+            result = accessor.queryByPartitionAndTypeOrderByCommitTsDesc(
+                "schema2", "table2", "p1", "ORC", "OSS", 100L, 0L);
+            Assert.assertEquals(1, result.size());
+        }
+    }
+
+    @Test
+    public void testQueryByPartitionAndTypeOrderByCommitTsDescWithLimitOffsetEmpty() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.eq(FilesRecord.class), Mockito.any())).thenReturn(new ArrayList<>());
+
+            FilesAccessor accessor = new FilesAccessor();
+            List<FilesRecord> result = accessor.queryByPartitionAndTypeOrderByCommitTsDesc(
+                "test_schema", "test_table", "p0", "CSV", "COLUMNAR", 10L, 0L);
+            Assert.assertTrue(result.isEmpty());
+        }
+    }
+
+    @Test
+    public void testQueryByPartitionAndTypeOrderByCommitTsDescWithLimitOffsetException() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(),
+                    Mockito.eq(FilesRecord.class), Mockito.any()))
+                .thenThrow(new RuntimeException("query_failed_test"));
+
+            FilesAccessor accessor = new FilesAccessor();
+            try {
+                accessor.queryByPartitionAndTypeOrderByCommitTsDesc(
+                    "test_schema", "test_table", "p0", "CSV", "COLUMNAR", 10L, 5L);
+                Assert.fail("Expected exception was not thrown");
+            } catch (Exception e) {
+                Assert.assertTrue(e.getMessage().contains("query_failed_test"));
+            }
+        }
+    }
+
+    @Test
+    public void testQueryByPartitionAndTypeOrderByVersionDescAfter() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            final String[] capturedSql = new String[1];
+            List<FilesRecord> recordList = new ArrayList<>();
+            recordList.add(new FilesRecord());
+            recordList.add(new FilesRecord());
+
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.eq(FilesRecord.class), Mockito.any())).thenAnswer(invocation -> {
+                capturedSql[0] = invocation.getArgument(0);
+                return recordList;
+            });
+
+            FilesAccessor accessor = new FilesAccessor();
+            List<FilesRecord> result = accessor.queryByPartitionAndTypeOrderByVersionDescAfter(
+                "test_schema", "test_table", "p0", "CSV", "COLUMNAR", Long.MAX_VALUE, 10L);
+            Assert.assertEquals(2, result.size());
+            // keyset/seek pagination must use `version` < ? as the seek boundary, never offset
+            Assert.assertTrue(capturedSql[0].contains("`version` < ?"));
+            Assert.assertFalse(capturedSql[0].contains("offset"));
+        }
+    }
+
+    @Test
+    public void testQueryByPartitionAndTypeOrderByVersionDescAfterEmpty() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.eq(FilesRecord.class), Mockito.any())).thenReturn(new ArrayList<>());
+
+            FilesAccessor accessor = new FilesAccessor();
+            List<FilesRecord> result = accessor.queryByPartitionAndTypeOrderByVersionDescAfter(
+                "test_schema", "test_table", "p0", "CSV", "COLUMNAR", 100L, 10L);
+            Assert.assertTrue(result.isEmpty());
+        }
+    }
+
+    @Test
+    public void testQueryByPartitionAndTypeOrderByVersionDescAfterException() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            metaDbUtilMockedStatic.when(
+                () -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(), Mockito.eq(FilesRecord.class),
+                    Mockito.any())).thenThrow(new RuntimeException("query_failed_test"));
+
+            FilesAccessor accessor = new FilesAccessor();
+            try {
+                accessor.queryByPartitionAndTypeOrderByVersionDescAfter(
+                    "test_schema", "test_table", "p0", "CSV", "COLUMNAR", Long.MAX_VALUE, 10L);
+                Assert.fail("Expected exception was not thrown");
+            } catch (Exception e) {
+                Assert.assertTrue(e.getMessage().contains("query_failed_test"));
+            }
+        }
+    }
+
+    @Test
+    public void testQueryValidDelInfoByLogicalSchemaTableRangeTso() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            List<FileInfoRecord> recordList = new ArrayList<>();
+            recordList.add(new FileInfoRecord());
+            recordList.add(new FileInfoRecord());
+
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.eq(FileInfoRecord.class), Mockito.any())).thenReturn(recordList);
+
+            FilesAccessor accessor = new FilesAccessor();
+            List<FileInfoRecord> result =
+                accessor.queryValidDelInfoByLogicalSchemaTableRangeTso("schema", "table", 500L);
+            Assert.assertEquals(2, result.size());
+        }
+    }
+
+    @Test
+    public void testQueryValidDelInfoByLogicalSchemaTableRangeTsoEmpty() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.eq(FileInfoRecord.class), Mockito.any())).thenReturn(new ArrayList<>());
+
+            FilesAccessor accessor = new FilesAccessor();
+            List<FileInfoRecord> result =
+                accessor.queryValidDelInfoByLogicalSchemaTableRangeTso("schema", "table", 100L);
+            Assert.assertNotNull(result);
+            Assert.assertTrue(result.isEmpty());
+        }
+    }
+
+    @Test
+    public void testQuerySnapshotCsvDelFileInfoByTsoError() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(),
+                    Mockito.eq(FileInfoRecord.class), Mockito.any()))
+                .thenThrow(new RuntimeException("snapshot_csv_del_error"));
+
+            FilesAccessor accessor = new FilesAccessor();
+            try {
+                accessor.querySnapshotCsvDelFileInfoByTso(100L, 200L);
+                Assert.fail("Expected exception was not thrown");
+            } catch (Exception e) {
+                Assert.assertTrue(e.getMessage().contains("snapshot_csv_del_error"));
+            }
+        }
+    }
+
+    @Test
+    public void testQueryDelFileInfoByLogicalSchemaTableRangeTsoLimitOneSingleResult() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            List<FileInfoRecord> oneRecord = new ArrayList<>();
+            oneRecord.add(new FileInfoRecord());
+
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.eq(FileInfoRecord.class), Mockito.any())).thenReturn(oneRecord);
+
+            FilesAccessor accessor = new FilesAccessor();
+            List<FileInfoRecord> result =
+                accessor.queryDelFileInfoByLogicalSchemaTableRangeTsoLimitOne("schema", "table", 100L, 200L);
+            Assert.assertEquals(1, result.size());
+        }
+    }
+
+    @Test
+    public void testQueryFileInfoByLogicalSchemaTableRangeTsoMultipleResults() {
+        try (final MockedStatic<MetaDbUtil> metaDbUtilMockedStatic = mockStatic(MetaDbUtil.class)) {
+            List<FileInfoRecord> records = new ArrayList<>();
+            records.add(new FileInfoRecord());
+            records.add(new FileInfoRecord());
+            records.add(new FileInfoRecord());
+
+            metaDbUtilMockedStatic.when(() -> MetaDbUtil.query(Mockito.anyString(), Mockito.anyMap(),
+                Mockito.eq(FileInfoRecord.class), Mockito.any())).thenReturn(records);
+
+            FilesAccessor accessor = new FilesAccessor();
+            List<FileInfoRecord> result =
+                accessor.queryFileInfoByLogicalSchemaTableRangeTso("myschema", "mytable", 999L);
+            Assert.assertEquals(3, result.size());
         }
     }
 

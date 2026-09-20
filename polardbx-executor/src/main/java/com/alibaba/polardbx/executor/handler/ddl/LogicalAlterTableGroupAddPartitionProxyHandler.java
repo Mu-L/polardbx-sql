@@ -31,6 +31,9 @@ import org.apache.calcite.sql.SqlAlterTableAddPartition;
 import org.apache.calcite.sql.SqlAlterTableGroup;
 import org.apache.calcite.sql.SqlPartition;
 
+import java.util.Map;
+import java.util.Set;
+
 public class LogicalAlterTableGroupAddPartitionProxyHandler extends LogicalAlterTableGroupAddPartitionHandler {
 
     final public static String DEFAULT_ALGORITHM = "default";
@@ -38,6 +41,12 @@ public class LogicalAlterTableGroupAddPartitionProxyHandler extends LogicalAlter
 
     public LogicalAlterTableGroupAddPartitionProxyHandler(IRepository repo) {
         super(repo);
+    }
+
+    @Override
+    public void prepareFixedResources(BaseDdlOperation logicalDdlPlan,
+                                      ExecutionContext executionContext, Set<String> sharedResources,
+                                      Set<String> exclusiveResources, Map<String, Long> tableVersions) {
     }
 
     @Override

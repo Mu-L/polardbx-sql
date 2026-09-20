@@ -1,6 +1,6 @@
 ## DISABLE_FAST_SQL_PARSER
 ## test create table(date)
-
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=true;
 DROP TABLE IF EXISTS `hash_dayofmonth`;
 CREATE TABLE IF NOT EXISTS`hash_dayofmonth` (
 `d` date DEFAULT NULL

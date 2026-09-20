@@ -50,7 +50,7 @@ public class ComplexTaskPlanUtils {
         return sqlKind.belongsTo(MODIFY_DML);
     }
 
-    public static final String REPLICATE_SQL_LOG = "scale_out_sql";
+    public static final String REPLICATE_SQL_LOG = "DDL";
 
     public static boolean canWrite(TableMeta tableMeta) {
         ComplexTaskMetaManager.ComplexTaskTableMetaBean complexTaskTableMetaBean =

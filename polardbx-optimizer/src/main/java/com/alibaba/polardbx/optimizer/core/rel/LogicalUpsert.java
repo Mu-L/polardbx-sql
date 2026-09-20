@@ -34,6 +34,7 @@ import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlNodeList;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -130,6 +131,7 @@ public class LogicalUpsert extends LogicalInsertIgnore {
                          List<RexNode> defaultExprColRexNodes, List<Integer> defaultExprEvalFieldsMapping,
                          boolean pushablePrimaryKeyCheck, boolean isPushableForeignConstraintCheck,
                          boolean modifyForeignKey, boolean ukContainsAllSkAndGsiContainsAllUk,
+                         boolean canSkipPkCheck,
                          List<RexCallParam> dynamicImplicitDefaultParams,
                          List<RexCallParam> unoptimizedDynamicImplicitDefaultParams) {
         super(cluster, traitSet, table, catalogReader, input, operation, flattened, insertRowType, keywords,
@@ -142,7 +144,8 @@ public class LogicalUpsert extends LogicalInsertIgnore {
             gsiDeleteWriters, usePartFieldChecker, columnMetaMap, ukContainGeneratedColumn, evalRowColMetas,
             genColRexNodes, inputToEvalFieldsMapping, defaultExprColMetas, defaultExprColRexNodes,
             defaultExprEvalFieldsMapping, pushablePrimaryKeyCheck, isPushableForeignConstraintCheck, modifyForeignKey,
-            ukContainsAllSkAndGsiContainsAllUk, dynamicImplicitDefaultParams, unoptimizedDynamicImplicitDefaultParams);
+            ukContainsAllSkAndGsiContainsAllUk, canSkipPkCheck, dynamicImplicitDefaultParams,
+            unoptimizedDynamicImplicitDefaultParams);
         this.primaryRelocateWriter = primaryRelocateWriter;
         this.gsiRelocateWriters = gsiRelocateWriters;
         this.primaryUpsertWriter = primaryUpsertWriter;
@@ -223,8 +226,10 @@ public class LogicalUpsert extends LogicalInsertIgnore {
             isPushableForeignConstraintCheck(),
             isModifyForeignKey(),
             isUkContainsAllSkAndGsiContainsAllUk(),
+            isCanSkipPkCheck(),
             getDynamicImplicitDefaultParams(),
             getUnoptimizedDynamicImplicitDefaultParams());
+        newLogicalUpsert.getCandidateUkChecks().putAll(getCandidateUkChecks());
         return newLogicalUpsert;
     }
 
@@ -295,8 +300,10 @@ public class LogicalUpsert extends LogicalInsertIgnore {
             isPushableForeignConstraintCheck(),
             isModifyForeignKey(),
             isUkContainsAllSkAndGsiContainsAllUk(),
+            isCanSkipPkCheck(),
             dynamicImplicitDefaultParams,
             getUnoptimizedDynamicImplicitDefaultParams());
+        newLogicalUpsert.getCandidateUkChecks().putAll(getCandidateUkChecks());
         return newLogicalUpsert;
     }
 
@@ -342,7 +349,7 @@ public class LogicalUpsert extends LogicalInsertIgnore {
 
     @Override
     public <R extends LogicalInsert> List<RelNode> getPhyPlanForDisplay(ExecutionContext executionContext,
-                                                                           R upsert) {
+                                                                        R upsert) {
         final InsertWriter primaryWriter = getPrimaryInsertWriter();
         final LogicalInsert insert = primaryWriter.getInsert();
         final LogicalInsert copied = new LogicalInsert(insert.getCluster(), insert.getTraitSet(), insert.getTable(),
@@ -354,7 +361,8 @@ public class LogicalUpsert extends LogicalInsertIgnore {
             insert.getInputToEvalFieldsMapping(), insert.getDefaultExprColMetas(), insert.getDefaultExprColRexNodes(),
             insert.getDefaultExprEvalFieldsMapping(), insert.isPushablePrimaryKeyCheck(),
             insert.isPushableForeignConstraintCheck(), insert.isModifyForeignKey(),
-            insert.isUkContainsAllSkAndGsiContainsAllUk(), insert.getDynamicImplicitDefaultParams(),
+            insert.isUkContainsAllSkAndGsiContainsAllUk(), insert.isCanSkipPkCheck(),
+            insert.getDynamicImplicitDefaultParams(),
             insert.getUnoptimizedDynamicImplicitDefaultParams());
 
         final InsertWriter upsertWriter = new InsertWriter(primaryWriter.getTargetTable(), copied);
@@ -375,4 +383,5 @@ public class LogicalUpsert extends LogicalInsertIgnore {
     public boolean isHasJsonColumn() {
         return hasJsonColumn;
     }
+
 }

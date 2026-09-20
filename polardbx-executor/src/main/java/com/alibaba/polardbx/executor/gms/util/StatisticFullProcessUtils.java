@@ -55,13 +55,13 @@ public class StatisticFullProcessUtils {
 
             StatisticSubProcessUtils.collectRowCount(schema, logicalTableName, ec);
             long endNanos = System.nanoTime();
-            StatisticUtils.logger.info(String.format("Collecting row count of %s.%s consumed %.2fs",
+            StatisticUtils.logger.warn(String.format("Collecting row count of %s.%s consumed %.2fs",
                 schema, logicalTableName, (endNanos - startNanos) / 1_000_000_000D));
 
             startNanos = endNanos;
             StatisticSubProcessUtils.sampleTableDdl(schema, logicalTableName, ec);
             endNanos = System.nanoTime();
-            StatisticUtils.logger.info(String.format("Sampling %s.%s consumed %.2fs",
+            StatisticUtils.logger.warn(String.format("Sampling %s.%s consumed %.2fs",
                 schema, logicalTableName, (endNanos - startNanos) / 1_000_000_000D));
 
             startNanos = endNanos;
@@ -69,7 +69,7 @@ public class StatisticFullProcessUtils {
             StatisticSubProcessUtils.sketchTableDdl(schema, logicalTableName,
                 !ec.getParamManager().getBoolean(ConnectionParams.ANALYZE_TEST_UPDATE), ec);
             endNanos = System.nanoTime();
-            StatisticUtils.logger.info(String.format("HLL sketch of %s.%s consumed %.2fs",
+            StatisticUtils.logger.warn(String.format("HLL sketch of %s.%s consumed %.2fs",
                 schema, logicalTableName, (endNanos - startNanos) / 1_000_000_000D));
 
             /** persist */
@@ -111,13 +111,13 @@ public class StatisticFullProcessUtils {
 
             StatisticSubProcessUtils.collectRowCount(schema, logicalTableName, ec);
             long endNanos = System.nanoTime();
-            StatisticUtils.logger.info(String.format("Collecting row count of %s.%s consumed %.2fs",
+            StatisticUtils.logger.warn(String.format("Collecting row count of %s.%s consumed %.2fs",
                 schema, logicalTableName, (endNanos - startNanos) / 1_000_000_000D));
 
             startNanos = endNanos;
             StatisticSubProcessUtils.sampleTableDdl(schema, logicalTableName, ec);
             endNanos = System.nanoTime();
-            StatisticUtils.logger.info(String.format("Sampling %s.%s consumed %.2fs",
+            StatisticUtils.logger.warn(String.format("Sampling %s.%s consumed %.2fs",
                 schema, logicalTableName, (endNanos - startNanos) / 1_000_000_000D));
 
             if (enableHll) {
@@ -125,7 +125,7 @@ public class StatisticFullProcessUtils {
                 StatisticSubProcessUtils.sketchTableDdl(schema, logicalTableName,
                     !ec.getParamManager().getBoolean(ConnectionParams.ANALYZE_TEST_UPDATE), ec);
                 endNanos = System.nanoTime();
-                StatisticUtils.logger.info(String.format("HLL sketch of %s.%s consumed %.2fs",
+                StatisticUtils.logger.warn(String.format("HLL sketch of %s.%s consumed %.2fs",
                     schema, logicalTableName, (endNanos - startNanos) / 1_000_000_000D));
             }
 

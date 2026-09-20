@@ -41,7 +41,7 @@ public class CreateViewSyncTask extends BaseDdlTask {
     @Override
     protected void onExecutionSuccess(ExecutionContext executionContext) {
         try {
-            SyncManagerHelper.sync(new CreateViewSyncAction(schemaName, viewName), schemaName, SyncScope.ALL);
+            SyncManagerHelper.syncThrowExceptions(new CreateViewSyncAction(schemaName, viewName), schemaName, SyncScope.ALL);
         } catch (Throwable ignore) {
             LOGGER.error(
                 "error occurs while execute GsiStatisticsSyncAction"

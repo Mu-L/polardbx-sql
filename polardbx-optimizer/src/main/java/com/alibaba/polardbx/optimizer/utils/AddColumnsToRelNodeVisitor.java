@@ -16,11 +16,11 @@
 
 package com.alibaba.polardbx.optimizer.utils;
 
+import com.alibaba.polardbx.common.exception.NotSupportException;
 import com.alibaba.polardbx.optimizer.core.rel.Gather;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
-import com.alibaba.polardbx.common.exception.NotSupportException;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelCollations;
 import org.apache.calcite.rel.RelFieldCollation;
@@ -28,6 +28,9 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelShuttleImpl;
 import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.logical.LogicalAggregate;
+import org.apache.calcite.rel.logical.LogicalCTEAnchor;
+import org.apache.calcite.rel.logical.LogicalCTEConsumer;
+import org.apache.calcite.rel.logical.LogicalCTEProducer;
 import org.apache.calcite.rel.logical.LogicalFilter;
 import org.apache.calcite.rel.logical.LogicalJoin;
 import org.apache.calcite.rel.logical.LogicalProject;
@@ -353,6 +356,13 @@ public class AddColumnsToRelNodeVisitor extends RelShuttleImpl {
         return r;
     }
 
+    @Override
+    public RelNode visit(LogicalCTEConsumer cteConsumer) {
+        LogicalCTEConsumer r = (LogicalCTEConsumer) super.visit(cteConsumer);
+        passNode(r, r.getInnerRel());
+        return r;
+    }
+
     /**
      * sort donot add
      */
@@ -452,16 +462,24 @@ public class AddColumnsToRelNodeVisitor extends RelShuttleImpl {
             RelNode child = other.getInput(0);
             RelNode newChild = visit(child);
             RelNode r = Gather.create(newChild);
-
-            /**
-             * delivery add and shift
-             */
-            childAddMap.put(r, childAddMap.get(newChild));
-            shiftMap.put(r, shiftMap.get(newChild));
-            anchor.put(r, anchor.get(newChild));
+            passNode(r, newChild);
+            return r;
+        } else if (other instanceof LogicalCTEAnchor) {
+            RelNode r = visitChildren(other);
+            passNode(r, r.getInput(1));
+            return r;
+        } else if (other instanceof LogicalCTEProducer) {
+            RelNode r = visitChildren(other);
+            passNode(r, r.getInput(0));
             return r;
         }
         return visitChildren(other);
+    }
+
+    private void passNode(RelNode r, RelNode child) {
+        childAddMap.put(r, childAddMap.get(child));
+        shiftMap.put(r, shiftMap.get(child));
+        anchor.put(r, anchor.get(child));
     }
 
     private List<Integer> shiftListAll(List<Integer> list, int size) {

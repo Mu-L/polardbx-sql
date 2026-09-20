@@ -31,7 +31,6 @@ import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.config.ConfigDataMode;
-import com.alibaba.polardbx.gms.partition.TablePartitionRecord;
 import com.alibaba.polardbx.gms.topology.DbInfoManager;
 import com.alibaba.polardbx.gms.util.GroupInfoUtil;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
@@ -40,16 +39,15 @@ import com.alibaba.polardbx.optimizer.config.meta.CostModelWeight;
 import com.alibaba.polardbx.optimizer.config.meta.DrdsRelOptCostImpl;
 import com.alibaba.polardbx.optimizer.config.meta.TableScanIOEstimator;
 import com.alibaba.polardbx.optimizer.config.table.ColumnMeta;
+import com.alibaba.polardbx.optimizer.config.table.SchemaManager;
+
 import com.alibaba.polardbx.optimizer.config.table.TableMeta;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.Xplan.XPlanTemplate;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypeUtil;
 import com.alibaba.polardbx.optimizer.core.dialect.DbType;
-import com.alibaba.polardbx.optimizer.core.join.EquiJoinUtils;
-import com.alibaba.polardbx.optimizer.core.join.LookupEquiJoinKey;
 import com.alibaba.polardbx.optimizer.core.join.LookupPredicate;
-import com.alibaba.polardbx.optimizer.core.join.LookupPredicateBuilder;
 import com.alibaba.polardbx.optimizer.core.planner.Planner;
 import com.alibaba.polardbx.optimizer.core.planner.PostPlanner;
 import com.alibaba.polardbx.optimizer.core.planner.SqlConverter;
@@ -62,13 +60,13 @@ import com.alibaba.polardbx.optimizer.core.planner.rule.SubQueryToSemiJoinRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.TddlFilterJoinRule;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.CBOUtil;
 import com.alibaba.polardbx.optimizer.core.planner.rule.util.ForceIndexUtil;
+import com.alibaba.polardbx.optimizer.core.rel.util.LogicalViewCommonGroupInfo;
 import com.alibaba.polardbx.optimizer.core.rel.util.TargetTableInfo;
 import com.alibaba.polardbx.optimizer.index.Index;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfoManager;
 import com.alibaba.polardbx.optimizer.partition.PartitionSpec;
 import com.alibaba.polardbx.optimizer.partition.common.PartKeyLevel;
-import com.alibaba.polardbx.optimizer.partition.common.PartitionTableType;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartPrunedResult;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruneStep;
 import com.alibaba.polardbx.optimizer.partition.pruning.PartitionPruner;
@@ -82,6 +80,7 @@ import com.alibaba.polardbx.optimizer.selectivity.TableScanSelectivityUpperLimit
 import com.alibaba.polardbx.optimizer.sharding.DataNodeChooser;
 import com.alibaba.polardbx.optimizer.sharding.result.ExtractionResult;
 import com.alibaba.polardbx.optimizer.sharding.result.RelShardInfo;
+import com.alibaba.polardbx.optimizer.utils.ExplainResult;
 import com.alibaba.polardbx.optimizer.utils.ExplainUtils;
 import com.alibaba.polardbx.optimizer.utils.OptimizerUtils;
 import com.alibaba.polardbx.optimizer.utils.PlannerUtils;
@@ -97,7 +96,6 @@ import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.InvalidProtocolBufferException;
@@ -155,14 +153,17 @@ import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.runtime.PredicateImpl;
 import org.apache.calcite.sql.SqlBasicCall;
 import org.apache.calcite.sql.SqlCall;
+import org.apache.calcite.sql.SqlDelete;
 import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlKind;
 import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlNodeList;
 import org.apache.calcite.sql.SqlOperator;
+import org.apache.calcite.sql.OptimizerHint;
 import org.apache.calcite.sql.SqlSelect;
 import org.apache.calcite.sql.SqlSelect.LockMode;
+import org.apache.calcite.sql.SqlUpdate;
 import org.apache.calcite.sql.fun.SqlRuntimeFilterFunction;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParserPos;
@@ -181,7 +182,6 @@ import java.util.BitSet;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
@@ -228,7 +228,7 @@ public class LogicalView extends TableScan {
     protected boolean isMGetEnabled = false;
     protected boolean inToUnionAll = false;
     protected boolean isOnePhaseAgg = false;
-    protected Join join;
+    protected LookupInfo lookupInfo;
     protected String schemaName;
     protected List<RexDynamicParam> scalarList = Lists.newArrayList();
     protected List<RexFieldAccess> correlateVariableScalar = Lists.newArrayList();
@@ -248,6 +248,13 @@ public class LogicalView extends TableScan {
     private XPlanTemplate XPlan = null;
 
     /**
+     * When true, XPlan is disabled because the table has externalized columns
+     * whose physical column names differ from the logical names in the RelNode.
+     * XPlan would push the original (logical) column names to DN, causing errors.
+     */
+    private volatile boolean xplanDisabledForExternalizedColumns = false;
+
+    /**
      * For galaxy prepare.
      */
     private RelNode galaxyPrepareRel = null;
@@ -263,10 +270,9 @@ public class LogicalView extends TableScan {
 
     private BytesSql bytesSql;
 
-    private RelOptCost selfCost;
-    private List<String> columnOrigins = Lists.newArrayList();
-
     private boolean isFromForceIndex = false;
+
+    private boolean isSingleGroup = false;
 
     /**
      * for json serialization
@@ -287,6 +293,7 @@ public class LogicalView extends TableScan {
         this.isMGetEnabled = relInput.getBoolean("isMGetEnabled", false);
         this.inToUnionAll = relInput.getBoolean("inToUnionAll", false);
         this.flashbackOperator = relInput.getSqlOperator("flashbackOperator");
+        this.lockMode = relInput.getEnum("lockMode", LockMode.class, LockMode.UNDEF);
         Map<String, Object> xplanMap = (Map) relInput.get("xplan");
         try {
             this.XPlan = DRDSRelJson.fromJsonToXPlan(xplanMap);
@@ -305,11 +312,11 @@ public class LogicalView extends TableScan {
             pushDownOpt = new PushDownOpt(this, pushRel, getDbType(),
                 PlannerContext.getPlannerContext(relInput.getCluster()).getExecutionContext());
             this.rebuildPartRoutingPlanInfo();
+            this.isSingleGroup = relInput.getBoolean("isSingleGroup", false);
         } catch (IOException e) {
             throw new RuntimeException("PLAN EXTERNALIZE TEST error:" + e.getMessage(), e);
         }
         buildApply();
-        rebuildOriginColumnNames();
     }
 
     public LogicalView(TableScan scan, LockMode lockMode) {
@@ -351,7 +358,7 @@ public class LogicalView extends TableScan {
         this.isMGetEnabled = newLogicalView.isMGetEnabled;
         this.inToUnionAll = newLogicalView.inToUnionAll;
         this.isOnePhaseAgg = newLogicalView.isOnePhaseAgg;
-        this.join = newLogicalView.join;
+        this.lookupInfo = newLogicalView.lookupInfo;
         this.scalarList = newLogicalView.scalarList;
         this.correlateVariableScalar = newLogicalView.correlateVariableScalar;
         if (traitSet == null) {
@@ -360,7 +367,8 @@ public class LogicalView extends TableScan {
             this.traitSet = traitSet;
         }
         this.fromMergeIndex = newLogicalView.fromMergeIndex;
-        this.columnOrigins = newLogicalView.columnOrigins;
+        this.isSingleGroup = newLogicalView.isSingleGroup;
+        this.xplanDisabledForExternalizedColumns = newLogicalView.xplanDisabledForExternalizedColumns;
     }
 
     /**
@@ -495,8 +503,10 @@ public class LogicalView extends TableScan {
             .itemIf("inToUnionAll", inToUnionAll, inToUnionAll)
             .item("partitions", convertPartitionsToStrList())
             .item("flashback", flashback)
+            .item("isSingleGroup", isSingleGroup)
             .itemIf("flashbackOperator", flashbackOperator, flashbackOperator != null)
             .itemIf("xplan", XPlan, XPlan != null)
+            .itemIf("lockMode", lockMode, lockMode != LockMode.UNDEF)
             ;
     }
 
@@ -653,7 +663,8 @@ public class LogicalView extends TableScan {
 
     protected Map<String, List<List<String>>> buildTargetTablesForPartitionTb(ExecutionContext executionContext) {
         final List<PartPrunedResult> resultList = getPartPrunedResults(executionContext);
-        Map<String, List<List<String>>> rs = PartitionPrunerUtils.buildTargetTablesByPartPrunedResults(resultList);
+        Map<String, List<List<String>>> rs =
+            PartitionPrunerUtils.buildTargetTablesByPartPrunedResults(resultList, executionContext);
         return rs;
     }
 
@@ -675,20 +686,30 @@ public class LogicalView extends TableScan {
     public TargetTableInfo buildTargetTableInfosForPartitionTb(ExecutionContext executionContext) {
         List<PartPrunedResult> resultList = PartitionPruner.prunePartitions(this, executionContext);
         filterPrunedResultBySelectedPartitions(resultList);
-        TargetTableInfo targetTableInfo = PartitionPrunerUtils.buildTargetTableInfoByPartPrunedResults(resultList);
+        TargetTableInfo targetTableInfo =
+            PartitionPrunerUtils.buildTargetTableInfoByPartPrunedResults(resultList, executionContext, false);
         return targetTableInfo;
     }
 
-    private void validateSelectedPartitions(boolean isNewPartDb, PartitionInfo partInfo, boolean isJoin) {
+    private void validateSelectedPartitions(boolean isNewPartDb, PartitionInfo partInfo, boolean isJoin,
+                                            ExecutionContext ec) {
         if (this.partitions != null) {
             if (!isNewPartDb) {
                 throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR, "Do not support table with mysql partition.");
             } else {
+                boolean allowUsingSpecifyPartitionsOnSingleTable = false;
+                if (ec != null) {
+                    allowUsingSpecifyPartitionsOnSingleTable = ec.getParamManager()
+                        .getBoolean(ConnectionParams.ALLOW_USING_SPECIFY_PARTITIONS_ON_SINGLE_TABLE);
+                }
                 boolean singleTbl = partInfo.isSingleTable();
                 boolean broadcastTbl = partInfo.isBroadcastTable();
                 if (singleTbl || (!isJoin && broadcastTbl)) {
-                    throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
-                        "PARTITION () clause on non partitioned table");
+                    if (!allowUsingSpecifyPartitionsOnSingleTable) {
+                        throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+                            "PARTITION () clause on non partitioned table");
+                    }
+
                 }
             }
 
@@ -717,8 +738,12 @@ public class LogicalView extends TableScan {
                     }
                 }
             }
+            PartKeyLevel partKeyLevel = PartKeyLevel.PARTITION_KEY;
+            if (partInfo.getPartitionBy().getSubPartitionBy() != null) {
+                partKeyLevel = PartKeyLevel.SUBPARTITION_KEY;
+            }
             PartPrunedResult prunedResult =
-                PartPrunedResult.buildPartPrunedResult(partInfo, partBitSet, PartKeyLevel.PARTITION_KEY, null, false);
+                PartPrunedResult.buildPartPrunedResult(partInfo, partBitSet, partKeyLevel, null, true);
             prunedResults.add(prunedResult);
         }
 
@@ -737,51 +762,126 @@ public class LogicalView extends TableScan {
     }
 
     public void filterBySelectedPartition(PartPrunedResult partPrunedResult) {
-        if (this.partitions == null) {
-            return;
+        PartitionPrunerUtils.filterPartitionsBySelectedPartition(partPrunedResult, this.partitions);
+    }
+//    public void filterBySelectedPartition(PartPrunedResult partPrunedResult) {
+//        if (this.partitions == null) {
+//            return;
+//        }
+//
+//        PartitionInfo partInfo = partPrunedResult.getPartInfo();
+//        if (partInfo.getTableType() == PartitionTableType.PARTITION_TABLE
+//            || partInfo.getTableType() == PartitionTableType.GSI_TABLE
+//            || partInfo.getTableType() == PartitionTableType.COLUMNAR_TABLE) {
+//            SqlNodeList partNamesAst = (SqlNodeList) this.partitions;
+//            Set<Integer> selectedPartPostSet = new HashSet<>();
+//            for (SqlNode partNameAst : partNamesAst.getList()) {
+//                String partName = ((SqlIdentifier) partNameAst).getLastName();
+//                PartitionSpec pSpec = partInfo.getPartSpecSearcher().getPartSpecByPartName(partName);
+//                if (pSpec == null || (pSpec.getStatus() != null
+//                    && pSpec.getStatus() == TablePartitionRecord.PARTITION_STATUS_PARTITION_OFFLINE)) {
+//                    throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+//                        String.format("Unknown partition '%s' in table '%s'", partName,
+//                            partInfo.getTableName()));
+//                }
+//                boolean isPhySpec = !pSpec.isLogical();
+//                if (isPhySpec) {
+//                    selectedPartPostSet.add(pSpec.getPhyPartPosition().intValue());
+//                } else {
+//                    if (pSpec.isSpecTemplate()) {
+//                        throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+//                            String.format("Not allowed to select partition by using subpartition template '%s'",
+//                                pSpec.getTemplateName()));
+//                    }
+//
+//                    List<PartitionSpec> subPartList = pSpec.getSubPartitions();
+//                    for (PartitionSpec subPart : subPartList) {
+//                        selectedPartPostSet.add(subPart.getPhyPartPosition().intValue());
+//                    }
+//                }
+//
+//            }
+//            BitSet partSetSelected =
+//                PartitionPrunerUtils.buildPhyPartsBitSetByPhyPartPostSet(partInfo, selectedPartPostSet);
+//            partPrunedResult.getPartBitSet().and(partSetSelected);
+//        } else if (partInfo.getTableType() == PartitionTableType.BROADCAST_TABLE) {
+//            return;
+//        } else {
+//            throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
+//                "PARTITION () clause on non partitioned table");
+//        }
+//    }
+
+    protected boolean allTableReplicas(ExecutionContext ec) {
+        int logTbNum = this.tableNames.size();
+        String schemaName = this.schemaName;
+        if (!DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
+            return false;
         }
-
-        PartitionInfo partInfo = partPrunedResult.getPartInfo();
-        if (partInfo.getTableType() == PartitionTableType.PARTITION_TABLE
-            || partInfo.getTableType() == PartitionTableType.GSI_TABLE
-            || partInfo.getTableType() == PartitionTableType.COLUMNAR_TABLE) {
-            SqlNodeList partNamesAst = (SqlNodeList) this.partitions;
-            Set<Integer> selectedPartPostSet = new HashSet<>();
-            for (SqlNode partNameAst : partNamesAst.getList()) {
-                String partName = ((SqlIdentifier) partNameAst).getLastName();
-                PartitionSpec pSpec = partInfo.getPartSpecSearcher().getPartSpecByPartName(partName);
-                if (pSpec == null || (pSpec.getStatus() != null
-                    && pSpec.getStatus() == TablePartitionRecord.PARTITION_STATUS_PARTITION_OFFLINE)) {
-                    throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
-                        String.format("Unknown partition '%s' in table '%s'", partName,
-                            partInfo.getTableName()));
-                }
-                boolean isPhySpec = !pSpec.isLogical();
-                if (isPhySpec) {
-                    selectedPartPostSet.add(pSpec.getPhyPartPosition().intValue());
-                } else {
-                    if (pSpec.isSpecTemplate()) {
-                        throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
-                            String.format("Not allowed to select partition by using subpartition template '%s'",
-                                pSpec.getTemplateName()));
-                    }
-
-                    List<PartitionSpec> subPartList = pSpec.getSubPartitions();
-                    for (PartitionSpec subPart : subPartList) {
-                        selectedPartPostSet.add(subPart.getPhyPartPosition().intValue());
-                    }
-                }
-
-            }
-            BitSet partSetSelected =
-                PartitionPrunerUtils.buildPhyPartsBitSetByPhyPartPostSet(partInfo, selectedPartPostSet);
-            partPrunedResult.getPartBitSet().and(partSetSelected);
-        } else if (partInfo.getTableType() == PartitionTableType.BROADCAST_TABLE) {
-            return;
+        SchemaManager sm = null;
+        if (ec != null) {
+            sm = ec.getSchemaManager(schemaName);
         } else {
-            throw new TddlRuntimeException(ErrorCode.ERR_EXECUTOR,
-                "PARTITION () clause on non partitioned table");
+            sm = OptimizerContext.getContext(schemaName).getLatestSchemaManager();
         }
+        for (int t = 0; t < logTbNum; t++) {
+            String logTb = this.tableNames.get(t);
+            TableMeta tableMeta = null;
+            PartitionInfo partInfo = null;
+            tableMeta = sm.getTable(logTb);
+            partInfo = tableMeta.getPartitionInfo();
+            if (!partInfo.isReplicasTable()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public boolean containAnyReplicasTables(ExecutionContext ec) {
+        int logTbNum = this.tableNames.size();
+        String schemaName = this.schemaName;
+        if (!DbInfoManager.getInstance().isNewPartitionDb(schemaName)) {
+            return false;
+        }
+        SchemaManager sm = null;
+        if (ec != null) {
+            sm = ec.getSchemaManager(schemaName);
+        } else {
+            sm = OptimizerContext.getContext(schemaName).getLatestSchemaManager();
+        }
+        for (int t = 0; t < logTbNum; t++) {
+            String logTb = this.tableNames.get(t);
+            TableMeta tableMeta = null;
+            PartitionInfo partInfo = null;
+            tableMeta = sm.getTable(logTb);
+            partInfo = tableMeta.getPartitionInfo();
+            if (partInfo.isReplicasTable()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * <pre>
+     *     calc the common groupKeySet by the topology of tables of auto db
+     *     case 1: all tables are replicas/broadcast
+     *          calc and return the common groupKeySet of all replicas/broadcast tables
+     *     case 2: contain any single/partitioned tables , and also contains some replicas/broadcast tables
+     *          first, calc the common groupKeySet of all replicas/broadcast tables
+     *          second, make sure that the common groupKeySet cover all the groupKeySet of all the single/partitioned tables
+     *                  if true, return the common groupKeySet that cover all the groupKeySet of all the single/partitioned tables;
+     *                  if not, return emptySet of groupKeySet
+     *     case 3: only contains single/partitioned tables
+     *          return the common groupKeySet cover all the groupKeySet of all the single/partitioned tables
+     *
+     * </pre>
+     */
+    public LogicalViewCommonGroupInfo calcCommonGroupKeyInfoForAutoDbTables(ExecutionContext ec) {
+        String targetSchemaName = this.schemaName;
+        List<String> targetTableNames = this.tableNames;
+        return PartitionPrunerUtils.fetchCommonGroupKeyInfoByTableSchemaAndTableNames(ec, targetSchemaName,
+            targetTableNames);
     }
 
     protected Map<String, List<List<String>>> buildTargetTablesForShardDbTb(ExecutionContext executionContext) {
@@ -942,11 +1042,28 @@ public class LogicalView extends TableScan {
         return bytesSql;
     }
 
+    /**
+     * Build the physical SQL template for this LogicalView.
+     * <p>
+     * Three-phase pipeline:
+     * 1. Unparse the internal RelNode tree to a SqlNode (via RelToSqlConverter). During this phase,
+     * TddlRelToSqlConverter resolves externalized logical fields to physical addr column names.
+     * 2. Replace logical table names with '?' placeholders for parameterized execution.
+     * 3. Disable XPlan when externalized columns are present because XPlan bypasses phase 1.
+     * <p>
+     * Source-level resolution uses per-table metadata to
+     * avoid rewriting same-named columns on non-externalized tables in multi-table JOINs.
+     * For example, if ext_table.content is externalized but normal_table.content is not,
+     * only ext_table.content gets rewritten to content_addr_.
+     * <p>
+     * The result is cached as BytesSql, so this method runs once per plan, not per execution.
+     */
     protected SqlNode buildSqlTemplate(ReplaceCallWithLiteralVisitor replaceCallWithLiteralVisitor,
                                        ExecutionContext ec) {
+        // Phase 1: RelNode -> SqlNode
         SqlNode sqlTemplate = getNativeSqlNode(replaceCallWithLiteralVisitor);
 
-        // process optimizer hint
+        // Attach optimizer / user / DN hints to the SqlSelect
         if (sqlTemplate instanceof SqlSelect) {
             float samplePercentage =
                 PlannerContext.getPlannerContext(this).getParamManager().getFloat(ConnectionParams.SAMPLE_PERCENTAGE);
@@ -955,13 +1072,11 @@ public class LogicalView extends TableScan {
                     .addHint("+sample_percentage(" + formatSampleRate(samplePercentage) + ")");
             }
 
-            // Pass through dn hint control by optimizer
             String dnHint = ec.getParamManager().getString(ConnectionParams.DN_HINT);
             if (ec != null && StringUtils.isNotEmpty(dnHint)) {
                 ((SqlSelect) sqlTemplate).getOptimizerHint().addHint("+" + dnHint);
             }
 
-            // Pass through user hint.
             if (getHintContext() != null && !getHintContext().getHints().isEmpty()) {
                 for (String hint : getHintContext().getHints()) {
                     ((SqlSelect) sqlTemplate).getOptimizerHint().addHint(hint);
@@ -970,13 +1085,27 @@ public class LogicalView extends TableScan {
         }
 
         if (ec == null) {
-            /**
-             *  If phy sql contains any scalar subquery, then ec should NOT be null
-             */
             ec = PlannerContext.getPlannerContext(this).getExecutionContext();
         }
+
+        // Phase 2: Replace logical table names with '?' for parameterized physical table routing
         ReplaceTableNameWithQuestionMarkVisitor visitor = new ReplaceTableNameWithQuestionMarkVisitor(schemaName, ec);
-        return sqlTemplate.accept(visitor);
+        SqlNode result = sqlTemplate.accept(visitor);
+
+        // Phase 3: Disable XPlan for externalized columns.
+        // Column name rewriting (logical -> physical) is now handled at the source in
+        // TddlRelToSqlConverter.visit(TableScan) via resolvePhysicalRowType(), so no
+        // post-hoc SqlNode rewriting is needed here. However, XPlan bypasses the
+        // RelToSqlConverter path and pushes RelNode field names directly to DN, so it
+        // must still be disabled.
+        for (String tblName : getTableNames()) {
+            TableMeta tm = ec.getSchemaManager(schemaName).getTableWithNull(tblName);
+            if (tm != null && tm.hasExternalizedColumn()) {
+                this.xplanDisabledForExternalizedColumns = true;
+                break;
+            }
+        }
+        return result;
     }
 
     public SqlNode getNativeSqlNode() {
@@ -997,13 +1126,28 @@ public class LogicalView extends TableScan {
     }
 
     public XPlanTemplate getXPlanDirect() {
+        if (xplanDisabledForExternalizedColumns) {
+            return null;
+        }
         return XPlan;
+    }
+
+    /**
+     * Disable XPlan for this LogicalView because the table has externalized columns.
+     * Called from LogicalViewHandler before ExecUtils.getInputs() to ensure
+     * the flag is set before PhyTableScanBuilder reads the XPlan.
+     */
+    public void disableXPlanForExternalizedColumns() {
+        this.xplanDisabledForExternalizedColumns = true;
     }
 
     public XPlanTemplate getXPlan() {
         // Always generate the XPlan in case of switching connection pool.
         if (lockMode != LockMode.UNDEF || this.getFlashbackOperator() != null) {
             return null; // TODO: lock not supported now.
+        }
+        if (xplanDisabledForExternalizedColumns) {
+            return null;
         }
         final RelNode pushedRel = getPushedRelNode();
         if (XPlanRel != pushedRel) { // Compare the value to check whether the plan changed.
@@ -1227,8 +1371,8 @@ public class LogicalView extends TableScan {
 
     public RelWriter explainLogicalView(RelWriter pw) {
         pw.item(RelDrdsWriter.REL_NAME, explainNodeName());
-        if (join != null) {
-            Index index = getLookupJoin().getLookupIndex();
+        if (isLookupTable()) {
+            Index index = getLookupInfo().getLookupIndex();
             if (index != null) {
                 pw.item("joinIndex", index.getIndexMeta().getPhysicalIndexName());
             }
@@ -1275,6 +1419,9 @@ public class LogicalView extends TableScan {
         }
         executionContext.getExtraCmds().put(ConnectionProperties.ALLOW_FULL_TABLE_SCAN, true);
 
+        boolean usePartitionsOfTablesInLvForShowCreateTable =
+            executionContext.getParamManager()
+                .getBoolean(ConnectionParams.SHOW_PARTITIONS_IN_LOGICALVIEW_FOR_SHOW_CREATE_TABLE);
         String phyTableString = null;
 
         if (!newPartDbTbl) {
@@ -1307,6 +1454,7 @@ public class LogicalView extends TableScan {
                 shardCount = 0;
                 phyTableString = "[]";
             } else {
+                boolean isAllReplicas = this.allTableReplicas(executionContext);
                 phyTableString = "";
                 for (int i = 0; i < resultList.size(); i++) {
                     if (i > 0) {
@@ -1316,8 +1464,19 @@ public class LogicalView extends TableScan {
                     String logTbName = rs.getLogicalTableName();
                     phyTableString += logTbName;
                     if (rs.getPartInfo().isBroadcastTable()) {
-                        continue;
+                        if (!usePartitionsOfTablesInLvForShowCreateTable) {
+                            continue;
+                        }
                     }
+
+                    if (rs.getPartInfo().isReplicasTable()) {
+                        if (!isAllReplicas) {
+                            if (!usePartitionsOfTablesInLvForShowCreateTable) {
+                                continue;
+                            }
+                        }
+                    }
+
                     phyTableString += "[";
                     List<PhysicalPartitionInfo> prunedParts = rs.getPrunedPartitions();
                     shardCount = prunedParts.size();
@@ -1349,11 +1508,8 @@ public class LogicalView extends TableScan {
 
         pw.itemIf("partition", traitSet.getPartitionWise(), !traitSet.getPartitionWise().isTop());
 
-        if (isMGetEnabled && join != null && !inToUnionAll) {
-            List<LookupEquiJoinKey> joinKeys =
-                EquiJoinUtils.buildLookupEquiJoinKeys(join, join.getOuter(), join.getInner(),
-                    (RexCall) join.getCondition(), join.getJoinType());
-            LookupPredicate predicate = new LookupPredicateBuilder(join, columnOrigins).build(joinKeys);
+        if (isMGetEnabled && isLookupTable() && !inToUnionAll) {
+            LookupPredicate predicate = getLookupInfo().getPredicates();
             SqlNode lookupPredicate = predicate.explain();
 
             SqlNode filter = ((SqlSelect) nativeSql).getWhere();
@@ -1406,6 +1562,16 @@ public class LogicalView extends TableScan {
         // }
         // pw.item("params", builder.toString());
         // }
+
+        if (!(this instanceof OSSTableScan) && !(this instanceof LogicalModifyView)
+            && executionContext != null && executionContext.getParamManager()
+            .getBoolean(ConnectionParams.EXPLAIN_SHOW_PHYSICAL_PLAN)
+            && executionContext.getExplain() != null
+            && (executionContext.getExplain().explainMode == ExplainResult.ExplainMode.DETAIL
+            || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.COST
+            || executionContext.getExplain().explainMode == ExplainResult.ExplainMode.ANALYZE)) {
+            RelUtils.displayPhysicalPlan(this, pw, executionContext);
+        }
 
         return pw;
     }
@@ -1620,27 +1786,6 @@ public class LogicalView extends TableScan {
         return pushDownOpt.getComparative(0);
     }
 
-    public Map<String, Comparative> getComparative(int tableIndex) {
-        return pushDownOpt.getComparative(tableIndex);
-    }
-
-    public Map<String, Comparative> getFullComparative(int tableIndex) {
-        return pushDownOpt.getFullComparative(tableIndex);
-    }
-
-    public Map<String, Comparative> getFullComparativeCopy(int tableIndex) {
-        Map<String, Comparative> originalOne = getFullComparative(tableIndex);
-        if (originalOne == null) {
-            return null;
-        } else {
-            Map<String, Comparative> copyOne = new HashMap<>();
-            for (Entry<String, Comparative> entry : originalOne.entrySet()) {
-                copyOne.put(entry.getKey(), entry.getValue().clone());
-            }
-            return copyOne;
-        }
-    }
-
     public void setTableName(List<String> tableNames) {
         this.tableNames = tableNames;
     }
@@ -1649,18 +1794,18 @@ public class LogicalView extends TableScan {
         return tableNames.size() > 1;
     }
 
-    public void setJoin(Join join) {
+    public void setLookupInfo(Join join) {
         assert join instanceof LookupJoin;
-        this.join = join;
-        rebuildOriginColumnNames();
+        this.lookupInfo = LookupInfo.EMPTY;
+        this.lookupInfo = LookupInfo.buildLookupInfo(this, join);
     }
 
-    public Join getJoin() {
-        return join;
+    public boolean isLookupTable() {
+        return lookupInfo != null;
     }
 
-    public LookupJoin getLookupJoin() {
-        return (LookupJoin) join;
+    public LookupInfo getLookupInfo() {
+        return lookupInfo;
     }
 
     public DbType getDbType() {
@@ -1744,9 +1889,6 @@ public class LogicalView extends TableScan {
                     Map<String, Comparative> comps = relShardInfo.getAllComps();
                     Map<String, Object> calcParams = new HashMap<>();
                     calcParams.put(CalcParamsAttribute.SHARD_FOR_EXTRA_DB, false);
-                    Map<String, Map<String, Comparative>> m = Maps.newHashMap();
-                    m.put(relShardInfo.getTableName(), relShardInfo.getAllFullComps());
-                    calcParams.put(CalcParamsAttribute.COM_DB_TB, m);
                     calcParams.put(CalcParamsAttribute.CONN_TIME_ZONE, executionContext.getTimeZone());
                     calcParams.put(CalcParamsAttribute.EXECUTION_CONTEXT, executionContext);
                     List<TargetDB> tdbs =
@@ -1854,8 +1996,10 @@ public class LogicalView extends TableScan {
                 }
                 shardColumns = tr.getShardColumns();
             } else {
-
-                if (onlySelectOnePhysicalPartition(ec)) {
+//                if (onlySelectOnePhysicalPartition(ec)) {
+//                    return true;
+//                }
+                if (onlyScanOneGroupKey(ec)) {
                     return true;
                 }
 
@@ -1902,12 +2046,16 @@ public class LogicalView extends TableScan {
                         continue;
                     } else if (partitionInfo.isBroadcastTable()) {
                         continue;
+                    } else if (partitionInfo.isReplicasTable()) {
+                        continue;
                     }
 
                     shardColumns = partitionInfo.getPartitionColumns();
                 }
 
-                if (!PlannerUtils.atSingleGroup(shardColumns, getRelShardInfo(ec), allowFalseCondition)) {
+                int tableIndexInLv = i;
+                if (!PlannerUtils.atSingleGroup(shardColumns, getRelShardInfo(tableIndexInLv, ec),
+                    allowFalseCondition)) {
                     return false;
                 }
                 if (hasMul || hasOne) {
@@ -1967,15 +2115,39 @@ public class LogicalView extends TableScan {
             /*
              * else If not all table are broadcast table, return first non-broadcast table name
              */
-            .orElseGet(() -> this.tableNames
-                .stream()
-                .filter(tableName -> !rule.isBroadCast(tableName))
-                .findFirst()
-                /*
-                 * else return getLogicalTableName()
-                 * which is the first one in the tableNames
+            .orElseGet(
+                /**
+                 * If found partitioned table,
+                 * then return partitioned table first
                  */
-                .orElseGet(this::getLogicalTableName));
+                () -> this.tableNames
+                    .stream()
+//                    .filter(tableName -> !rule.isBroadCast(tableName)).findFirst()
+//                    /**
+//                     * else return getLogicalTableName()
+//                     * which is the first one in the tableNames
+//                     */
+//                    .orElseGet(this::getLogicalTableName)
+                    .filter(tableName -> rule.isShard(tableName)).findFirst()
+                    .orElseGet(
+                        /**
+                         * If found single table,
+                         * then return single table first
+                         */
+                        () -> this.tableNames.stream().filter(tableName -> rule.isSingle(tableName)).findFirst()
+                            .orElseGet(
+                                () -> this.tableNames.stream().filter(tableName -> rule.isReplicas(tableName))
+                                    .findFirst().orElseGet(
+                                        /**
+                                         * else return getLogicalTableName()
+                                         * which is the first one in the tableNames
+                                         */
+                                        this::getLogicalTableName
+                                    )
+                            )
+
+                    )
+            );
     }
 
     @Override
@@ -2015,8 +2187,8 @@ public class LogicalView extends TableScan {
             .getBoolean(ConnectionParams.ENABLE_LOGICALVIEW_COST)) {
             return DrdsRelOptCostImpl.TINY;
         }
-        if (join != null) {
-            Index index = getLookupJoin().getLookupIndex();
+        if (isLookupTable()) {
+            Index index = getLookupInfo().getLookupIndex();
             RelNode mysqlRelNode = getMysqlNode();
             RelOptCost scanCost = mq.getCumulativeCost(mysqlRelNode);
 
@@ -2112,25 +2284,6 @@ public class LogicalView extends TableScan {
         getPushDownOpt().optimize();
         tableNames = collectTableNames();
         rebuildPartRoutingPlanInfo();
-        rebuildOriginColumnNames();
-    }
-
-    /**
-     * rebuild origin columns info for lookup executor building its LookupPredicate condition.
-     */
-    private void rebuildOriginColumnNames() {
-        if (this.getJoin() != null) {
-            Join join = this.getJoin();
-            RelMetadataQuery mq = join.getCluster().getMetadataQuery();
-            for (int i = 0; i < this.getRowType().getFieldCount(); i++) {
-                RelColumnOrigin columnOrigin = mq.getColumnOrigin(this, i);
-                if (columnOrigin == null) {
-                    columnOrigins.add(this.getRowType().getFieldNames().get(i));
-                } else {
-                    columnOrigins.add(columnOrigin.getColumnName());
-                }
-            }
-        }
     }
 
     public List<RelNode> getInput(UnionOptHelper helper, ExecutionContext executionContext,
@@ -2144,13 +2297,16 @@ public class LogicalView extends TableScan {
     }
 
     public boolean isSingleGroup() {
-        final boolean singleGroup = isSingleGroup(false);
-        return singleGroup;
+        isSingleGroup = isSingleGroup(false);
+        return isSingleGroup;
+    }
+
+    public boolean isSingleGroupForExecutor() {
+        return isSingleGroup;
     }
 
     public String explainNodeName() {
-        String name = "LogicalView";
-        return name;
+        return "LogicalView";
     }
 
     public List<Integer> getBloomFilters() {
@@ -2191,7 +2347,7 @@ public class LogicalView extends TableScan {
         logicalView.flashback = this.flashback;
         logicalView.flashbackOperator = this.flashbackOperator;
         logicalView.isOnePhaseAgg = this.isOnePhaseAgg();
-        logicalView.columnOrigins = this.getColumnOrigins();
+        logicalView.lookupInfo = this.getLookupInfo();
         logicalView.isFromForceIndex = this.isFromForceIndex();
         return logicalView;
     }
@@ -2208,7 +2364,6 @@ public class LogicalView extends TableScan {
         newLogicalView.pushDownOpt = pushDownOpt.copy(newLogicalView, this.getPushedRelNode());
         newLogicalView.flashback = this.flashback;
         newLogicalView.flashbackOperator = this.flashbackOperator;
-        newLogicalView.columnOrigins = this.getColumnOrigins();
         newLogicalView.isFromForceIndex = this.isFromForceIndex();
         return newLogicalView;
     }
@@ -2334,10 +2489,6 @@ public class LogicalView extends TableScan {
         return partitionConditionCache;
     }
 
-    public List<String> getColumnOrigins() {
-        return columnOrigins;
-    }
-
     public boolean isFromForceIndex() {
         return isFromForceIndex;
     }
@@ -2358,22 +2509,22 @@ public class LogicalView extends TableScan {
 
     protected boolean checkIfNewPartDbTbl(List<String> tableNames) {
         boolean isNewPartDb = DbInfoManager.getInstance().isNewPartitionDb(schemaName);
+        ExecutionContext ec = PlannerContext.getPlannerContext(this).getExecutionContext();
         if (isNewPartDb) {
-            PartitionInfoManager partInfoMgr =
-                PlannerContext.getPlannerContext(this).getExecutionContext().getSchemaManager(schemaName)
-                    .getTddlRuleManager()
-                    .getPartitionInfoManager();
+            PartitionInfoManager partInfoMgr = ec.getSchemaManager(schemaName)
+                .getTddlRuleManager()
+                .getPartitionInfoManager();
 
             boolean isJoin = tableNames.size() > 1;
             for (int i = 0; i < tableNames.size(); i++) {
                 String tb = tableNames.get(i);
                 PartitionInfo partInfo = partInfoMgr.getPartitionInfo(tb);
-                validateSelectedPartitions(true, partInfo, isJoin);
+                validateSelectedPartitions(true, partInfo, isJoin, ec);
             }
             return true;
         } else {
             boolean isJoin = tableNames.size() > 1;
-            validateSelectedPartitions(false, null, isJoin);
+            validateSelectedPartitions(false, null, isJoin, ec);
             return false;
         }
     }
@@ -2668,6 +2819,10 @@ public class LogicalView extends TableScan {
         return mq.areColumnsUnique(getPushedRelNode(), columns, ignoreNulls);
     }
 
+    public synchronized Set<ImmutableBitSet> getUniqueKeys(RelMetadataQuery mq, boolean ignoreNulls) {
+        return mq.getUniqueKeys(getPushedRelNode(), ignoreNulls);
+    }
+
     public synchronized List<Set<RelColumnOrigin>> isCoveringIndex(RelMetadataQuery mq, RelOptTable table,
                                                                    String index) {
         return mq.isCoveringIndex(getPushedRelNode(), table, index);
@@ -2716,8 +2871,44 @@ public class LogicalView extends TableScan {
         return false;
     }
 
-    public boolean onlySelectOnePhysicalPartition(ExecutionContext ec) {
-        if (!useSelectPartitions() || isJoin()) {
+//    public boolean onlySelectOnePhysicalPartition(ExecutionContext ec) {
+//        if (!useSelectPartitions() || isJoin()) {
+//            return false;
+//        }
+//
+//        try {
+//            List<PartPrunedResult> resultList = PartitionPruner.prunePartitions(this, ec);
+//            filterPrunedResultBySelectedPartitions(resultList);
+//            if (!resultList.isEmpty()) {
+//                List<PhysicalPartitionInfo> prunedResult = resultList.get(0).getPrunedPartitions();
+//                if (prunedResult.size() == 1) {
+//                    return true;
+//                }
+//            }
+//        } catch (Throwable ex) {
+//            logger.warn(ex);
+//        }
+//
+//        return false;
+//    }
+
+    public boolean onlyScanOneGroupKey(ExecutionContext ec) {
+
+        if (containAnyReplicasTables(ec)) {
+            LogicalViewCommonGroupInfo commonGroupKeyInfo = calcCommonGroupKeyInfoForAutoDbTables(ec);
+            if (!commonGroupKeyInfo.isAllowRandomSelected()) {
+                return false;
+            }
+            if (!commonGroupKeyInfo.getCommonGroupKeySet().isEmpty()) {
+                return true;
+            }
+        }
+
+        if (isJoin()) {
+            return false;
+        }
+
+        if (!useSelectPartitions()) {
             return false;
         }
 

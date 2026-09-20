@@ -1,0 +1,27 @@
+## DISABLE_FAST_SQL_PARSER
+
+set ROUTE_TUPLE_IGNORE_BAD_VALUE_TYPE_CAST=false;
+
+select partstrc4l256sm40('aaaabbb0000');
+select partstrc4l256sm40('aaaabbb2359');
+select partstrc4l256sm40('');
+select partstrc4l256sm40(null);
+
+drop table if exists partstr_t1;
+create table partstr_t1(
+c1 varchar(32),
+c2 varchar(32)
+)
+partition by udf_hash(partstrc4l256sm40(c1))
+(
+  partition p1 values less than(1),
+  partition p2 values less than(2)  
+);
+
+insert into partstr_t1 values ('','');
+insert into partstr_t1 values (null,null);
+select c1, part_route('', 'partstr_t1', c1) as route_rs, part_hash('', 'partstr_t1', c1) as hash_rs from partstr_t1 where c1='';
+select c1, part_route('', 'partstr_t1', c1) as route_rs, part_hash('', 'partstr_t1', c1) as hash_rs from partstr_t1 where c1 is null;
+
+show create table partstr_t1;
+drop table partstr_t1;

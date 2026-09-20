@@ -16,26 +16,38 @@ import com.alibaba.polardbx.druid.util.StringUtils;
 import com.alibaba.polardbx.executor.ddl.job.task.backfill.LogicalTableGsiPkRangeBackfillTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.AlterGsiAddLocalIndexTask;
 import com.alibaba.polardbx.executor.ddl.newengine.utils.DdlHelper;
+import com.alibaba.polardbx.gms.topology.DbTopologyManager;
+import com.alibaba.polardbx.gms.topology.StorageInfoAccessor;
+import com.alibaba.polardbx.gms.topology.StorageInfoRecord;
+import com.alibaba.polardbx.gms.util.GmsJdbcUtil;
 import com.alibaba.polardbx.qatest.ddl.auto.dal.CheckTableTest;
+import com.alibaba.polardbx.qatest.util.ConnectionManager;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.collect.Lists;
 import io.grpc.netty.shaded.io.netty.util.internal.StringUtil;
 import org.apache.commons.logging.Log;
-import org.junit.Test;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Queue;
 import java.util.Random;
+import java.util.Set;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public class DdlStateCheckUtil {
 
@@ -104,6 +116,22 @@ public class DdlStateCheckUtil {
             }
         }
         return statusMap;
+    }
+
+    public static Boolean waitTillDdlDone(Log logger, Connection tddlConnection)
+        throws InterruptedException {
+        String checkFinishSql =
+            "select (select count(*) from metadb.ddl_engine ) = 0 and (select count(1) from metadb.ddl_plan where state != 'SUCCESS') = 0 as is_done;";
+        for (int time = 0; time < 1000; time++) {
+            Object result =
+                JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(tddlConnection, checkFinishSql)).get(0).get(0);
+            if (result.toString().equalsIgnoreCase("1")) {
+                return true;
+            }
+            logger.info("wait for " + time + " times");
+            Thread.sleep(1000);
+        }
+        throw new TddlRuntimeException(ErrorCode.ERR_DDL_JOB_ERROR, "time wait timeout");
     }
 
     public static Boolean waitTillDdlDone(Connection tddlConnection, Long jobId, String tableName)
@@ -359,6 +387,117 @@ public class DdlStateCheckUtil {
         return waitDone;
     }
 
+    public static List<List<String>> fetchDagAfterTopologySort(Connection tddlConnection, Long jobId) {
+        String sql1 =
+            "select task_graph from metadb.ddl_engine_archive where job_id =  " + jobId;
+        List<List<Object>> results1 = JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(tddlConnection, sql1));
+        Map<Long, List<Long>> dag = new HashMap<>();
+        String result = results1.get(0).get(0).toString();
+
+        dag = JSON.parseObject(result, dag.getClass());
+        List<List<Long>> dagAfterTopologySort = getDagAfterTopologySort(dag);
+
+        Map<Long, String> taskIdToTaskInfoMap = new HashMap<>();
+        String sql2 =
+            "select task_id, value from metadb.ddl_engine_task_archive where job_id =  " + jobId;
+        List<List<Object>> results2 = JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(tddlConnection, sql2));
+        for (List<Object> row : results2) {
+            Long taskId = Long.valueOf(row.get(0).toString());
+            String value = row.get(1).toString();
+            taskIdToTaskInfoMap.put(taskId, value);
+        }
+        List<List<String>> taskInfoAfterTopologySort = dagAfterTopologySort.stream()
+            .map(o -> o.stream().map(taskId -> taskIdToTaskInfoMap.get(taskId)).collect(Collectors.toList()))
+            .collect(Collectors.toList());
+        return taskInfoAfterTopologySort;
+    }
+
+    public static List<List<Long>> getDagAfterTopologySort(Map<Long, List<Long>> dag) {
+        if (dag == null || dag.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 使用Stream计算入度
+        Map<Long, Integer> inDegree = Stream.concat(
+            // 所有父节点，入度初始化为0
+            dag.keySet().stream().collect(Collectors.toMap(Function.identity(), k -> 0)).entrySet().stream(),
+            // 所有子节点，计算入度
+            dag.values().stream()
+                .flatMap(Collection::stream)
+                .collect(Collectors.groupingBy(Function.identity(), Collectors.summingInt(k -> 1)))
+                .entrySet().stream()
+        ).collect(Collectors.toMap(
+            Map.Entry::getKey,
+            Map.Entry::getValue,
+            Integer::sum
+        ));
+
+        // 初始化队列
+        Queue<Long> queue = inDegree.entrySet().stream()
+            .filter(entry -> entry.getValue() == 0)
+            .map(Map.Entry::getKey)
+            .collect(Collectors.toCollection(ArrayDeque::new));
+
+        List<List<Long>> result = new ArrayList<>();
+
+        while (!queue.isEmpty()) {
+            // 处理当前层
+            List<Long> currentLevel = new ArrayList<>();
+            int levelSize = queue.size();
+
+            for (int i = 0; i < levelSize; i++) {
+                Long node = queue.poll();
+                currentLevel.add(node);
+
+                // 更新子节点入度
+                Optional.ofNullable(dag.get(node))
+                    .orElse(Collections.emptyList())
+                    .forEach(child -> {
+                        int newInDegree = inDegree.merge(child, -1, Integer::sum);
+                        if (newInDegree == 0) {
+                            queue.offer(child);
+                        }
+                    });
+            }
+
+            result.add(currentLevel);
+        }
+        // 环检测
+        int totalProcessed = result.stream().mapToInt(List::size).sum();
+        if (totalProcessed != inDegree.size()) {
+            throw new IllegalArgumentException("Graph contains a cycle - cannot perform topological sort");
+        }
+        return result;
+    }
+
+    public static Boolean waitTillPhysicalDdlProgess(Connection tddlConnection, Long jobId) {
+        Boolean waitRunning = false;
+        String sql = String.format("show ddl  %d", jobId);
+        int i = 0;
+        while (i < 1000) {
+            try (ResultSet resultSet = JdbcUtil.executeQuery(sql, tddlConnection)) {
+                while (resultSet.next()) {
+                    String physicalDdlProgress = resultSet.getString("CURRENT_PHY_DDL_PROGRESS");
+                    if (physicalDdlProgress != null) {
+                        int progess =
+                            Integer.parseInt(physicalDdlProgress.substring(0, physicalDdlProgress.length() - 1));
+                        if (progess > 0) {
+                            return true;
+                        }
+                    }
+                }
+                Thread.sleep(1 * 1000);
+                i++;
+            } catch (SQLException e) {
+                throw new RuntimeException(e);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        }
+        return waitRunning;
+
+    }
+
     public static Boolean waitTillDdlRunning(Connection tddlConnection, Long jobId, String tableName)
         throws InterruptedException {
         Boolean waitRunning = false;
@@ -506,7 +645,7 @@ public class DdlStateCheckUtil {
         List<List<Object>> results1 = JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(tddlConnection, sql1));
         int time = 0;
         Long jobId = -1L;
-        while (results1.isEmpty() && time > 2000) {
+        while (results1.isEmpty() && time < 2000) {
             Thread.sleep(100);
             results1 = JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(tddlConnection, sql1));
             time++;
@@ -522,6 +661,11 @@ public class DdlStateCheckUtil {
 
     public static Long getDdlJobIdFromPattern(Connection tddlConnection, String originalDdl)
         throws InterruptedException {
+        return getDdlJobIdFromPattern(tddlConnection, originalDdl, false);
+    }
+
+    public static Long getDdlJobIdFromPattern(Connection tddlConnection, String originalDdl, boolean dontWait)
+        throws InterruptedException {
         String sql1 =
             "select job_id from metadb.ddl_engine where ddl_stmt like '%" + convertString(originalDdl)
                 + "%' order by id desc limit 1";
@@ -529,7 +673,7 @@ public class DdlStateCheckUtil {
         List<List<Object>> results1 = JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(tddlConnection, sql1));
         int time = 0;
         Long jobId = -1L;
-        while (results1.isEmpty() && time > 2000) {
+        while (results1.isEmpty() && time < 2000 && !dontWait) {
             Thread.sleep(100);
             results1 = JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(tddlConnection, sql1));
             time++;
@@ -542,31 +686,38 @@ public class DdlStateCheckUtil {
         LOG.info(String.format("fetch ddl job_id %d, %s", jobId, originalDdl));
         List<List<Object>> results2 = JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(tddlConnection, sql2 + jobId));
         // for subJob
-        while (results2.size() < 3) {
+        int maxTryTime = 100;
+        while (results2.size() < 3 && maxTryTime > 0) {
             Thread.sleep(50);
-            jobId = Long.valueOf(
-                JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(tddlConnection, sql1)).get(0).get(0)
-                    .toString());
-            results2 = JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(tddlConnection, sql2 + jobId));
+            List<List<Object>> curRs = JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(tddlConnection, sql1));
+            if (!curRs.isEmpty()) {
+                jobId = Long.parseLong(curRs.get(0).get(0).toString());
+                results2 = JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(tddlConnection, sql2 + jobId));
+            }
+            maxTryTime--;
         }
         return jobId;
     }
 
+    public static String TOPOLOGY_DN_ID = "DN_ID";
+
     // partition_name => dn_id
-    public static Map<String, List<String>> getTableTopology(Connection connection, String tableName)
+    public static Map<String, Map<String, String>> getTableTopology(Connection connection, String tableName)
         throws SQLException {
         String fetchTopology = String.format("show topology %s", tableName);
         ResultSet resultSet2 = JdbcUtil.executeQuery(fetchTopology, connection);
-        Map<String, List<String>> tableTopology = new HashMap<>();
+        Map<String, Map<String, String>> tableTopology = new HashMap<>();
         while (resultSet2.next()) {
             String partitionName = resultSet2.getString("PARTITION_NAME");
             String storageInst = resultSet2.getString("DN_ID");
             String groupName = resultSet2.getString("GROUP_NAME");
             String physicalTableName = resultSet2.getString("TABLE_NAME");
-            List<String> topology = new ArrayList<>();
-            topology.add(storageInst);
-            topology.add(groupName);
-            topology.add(physicalTableName);
+            String physicalDbName = resultSet2.getString("PHY_DB_NAME");
+            Map<String, String> topology = new HashMap<>();
+            topology.put(TOPOLOGY_DN_ID, storageInst);
+            topology.put("GROUP_NAME", groupName);
+            topology.put("PHY_TABLE_NAME", physicalTableName);
+            topology.put("PHY_DB_NAME", physicalDbName);
             tableTopology.put(partitionName, topology);
         }
 //            +----+-----------------+---------------+----------------+-------------+---------------------------------+
@@ -576,26 +727,40 @@ public class DdlStateCheckUtil {
         return tableTopology;
     }
 
-    public static List<String> getStorageList(Connection connection) throws SQLException {
+    public static List<Pair<String, Boolean>> getStorageList(Connection connection) throws SQLException {
         String showStorage = "show storage";
         ResultSet resultSet2 = JdbcUtil.executeQuery(showStorage, connection);
-        List<String> storageInsts = new ArrayList<>();
-        List<String> undeletableStorages = new ArrayList<>();
+        List<Pair<String, Boolean>> storageInsts = new ArrayList<>();
         while (resultSet2.next()) {
             String storageInst = resultSet2.getString("STORAGE_INST_ID");
             String instKind = resultSet2.getString("INST_KIND");
             String deletable = resultSet2.getString("DELETABLE");
             if (instKind.equalsIgnoreCase("MASTER")) {
-                storageInsts.add(storageInst);
-                if (deletable.equalsIgnoreCase("FALSE")) {
-                    undeletableStorages.add(storageInst);
-                }
+                storageInsts.add(Pair.of(storageInst, Boolean.valueOf(deletable)));
             }
         }
-        storageInsts.removeAll(undeletableStorages);
-        for (String storageInst : undeletableStorages) {
-            storageInsts.add(0, storageInst);
+        storageInsts.sort(Comparator.comparing(Pair::getValue, Comparator.reverseOrder()));
+        return storageInsts;
+    }
+
+    public static List<Pair<String, Boolean>> getRealStorageList() {
+        List<Pair<String, Boolean>> storageInsts = new ArrayList<>();
+        try (Connection conn = ConnectionManager.getInstance().getDruidMetaConnection()) {
+            Set<String> nonDeletableStorage = DbTopologyManager.getNonDeletableStorageInst(conn);
+            StorageInfoAccessor accessor = new StorageInfoAccessor();
+            accessor.setConnection(conn);
+            List<StorageInfoRecord> storageInfos = accessor.getAliveStorageInfos();
+            for (int i = 0; i < storageInfos.size(); i++) {
+                StorageInfoRecord storageInfo = storageInfos.get(i);
+                if (StorageInfoRecord.getInstKind(storageInfo.instKind).equalsIgnoreCase("MASTER")) {
+                    storageInsts.add(
+                        Pair.of(storageInfo.storageInstId, !nonDeletableStorage.contains(storageInfo.storageInstId)));
+                }
+            }
+        } catch (SQLException ex) {
+            org.junit.Assert.fail(ex.getMessage());
         }
+        storageInsts.sort(Comparator.comparing(Pair::getValue, Comparator.reverseOrder()));
         return storageInsts;
     }
 
@@ -660,12 +825,13 @@ public class DdlStateCheckUtil {
             }
         }
         Assert.assertTrue(errorReportNum == expectedErrorNum,
-            " expected error, but get ### " + expectedErrorNum + " ### " + errorReportNum + " ### " + JSON.toJSONString(topologys) + " ### " + JSON.toJSONString(pks)
+            " expected error, but get ### " + expectedErrorNum + " ### " + errorReportNum + " ### " + JSON.toJSONString(
+                topologys) + " ### " + JSON.toJSONString(pks)
                 + " ### "
                 + JSON.toJSONString(errors));
     }
 
-    public void testAfterAll(){
+    public void testAfterAll() {
         List<Pair<String, String>> topologys = new ArrayList<>();
         List<List<String>> pks = new ArrayList<>();
         Map<Pair<String, String>, List<String>> errors = new HashMap<>();
@@ -677,9 +843,12 @@ public class DdlStateCheckUtil {
         String pkString = fullErrorString.split(" ### ")[4];
         String errorString = fullErrorString.split(" ### ")[5];
         expectedErrorNum = Integer.parseInt(expectedErrorNumString);
-        pks = JSON.parseObject(pkString, new TypeReference<List<List<String>>>() {});
-        errors = JSON.parseObject(errorString, new TypeReference<Map<Pair<String, String>, List<String>>>() {});
-        topologys = JSON.parseObject(topologyString, new TypeReference<List<Pair<String, String>>>(){});
+        pks = JSON.parseObject(pkString, new TypeReference<List<List<String>>>() {
+        });
+        errors = JSON.parseObject(errorString, new TypeReference<Map<Pair<String, String>, List<String>>>() {
+        });
+        topologys = JSON.parseObject(topologyString, new TypeReference<List<Pair<String, String>>>() {
+        });
 
         int errorReportNum = 0;
         for (int i = 0; i < topologys.size(); i++) {
@@ -696,6 +865,7 @@ public class DdlStateCheckUtil {
                 + " but get"
                 + JSON.toJSONString(errors));
     }
+
     public static boolean checkErrorExists(List<String> error, List<String> pk) {
         Boolean batchErrorFound = false;
         int pkErrorFound = 0;
@@ -841,12 +1011,13 @@ public class DdlStateCheckUtil {
         return jobCompleted;
     }
 
-    public static Boolean checkIfPauseSuccessful(Connection tddlConnection, Long jobId) {
+    public static Boolean checkIfPauseSuccessful(Connection tddlConnection, Long jobId, Log logger) {
         Boolean jobPaused = false;
         List<List<Object>> results =
             JdbcUtil.getAllResult(JdbcUtil.executeQuerySuccess(tddlConnection, " show ddl " + jobId));
         // state
         String state = results.get(0).get(5).toString();
+        logger.info(" state is " + results.get(0).stream().map(o -> o.toString()).collect(Collectors.toList()));
         // current_phy_ddl_progress
         String ddlProcess = results.get(0).get(7).toString();
         if (state.equalsIgnoreCase("PAUSED") && !ddlProcess.equalsIgnoreCase("100%") && !ddlProcess.equalsIgnoreCase(
@@ -917,7 +1088,8 @@ public class DdlStateCheckUtil {
     public static void waitPlanIdOrSchemaNameFinish(Connection tddlConnection, String schemaName)
         throws InterruptedException {
         final String querySql =
-            String.format("select count(1),max(plan_id) from metadb.ddl_plan where table_schema = '%s' and state != 'SUCCESS'",
+            String.format(
+                "select count(1),max(plan_id) from metadb.ddl_plan where table_schema = '%s' and state != 'SUCCESS'",
                 schemaName);
         boolean waitOk = false;
         for (int i = 0; i < 1000; i++) {
@@ -1112,7 +1284,14 @@ public class DdlStateCheckUtil {
     }
 
     public static int fetchProgress(String progess) {
-        return Integer.parseInt(progess.substring(0, progess.length() - 1));
+        if (progess == null || progess.isEmpty() || progess.equals("-") || progess.equals("--")) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(progess.substring(0, progess.length() - 1));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     public static Boolean checkIfBackfillSampleRowsDelete(Connection tddlConnection, String schemaName)

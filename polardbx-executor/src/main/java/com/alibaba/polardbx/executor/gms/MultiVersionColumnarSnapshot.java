@@ -40,6 +40,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Multi-version columnar snapshot of certain partition
@@ -64,6 +66,9 @@ public class MultiVersionColumnarSnapshot implements Purgeable {
      * part_name -> (file_name -> (commit_ts, remove_ts, schema_ts))
      */
     private final Map<String, Map<String, ColumnarTsoInfo>> allPartsTsoInfo = new ConcurrentHashMap<>();
+
+    // 添加互斥锁以确保 generateMinSnapshot 和 purge 方法互斥执行
+    private final Lock purgeLock = new ReentrantLock();
 
     public MultiVersionColumnarSnapshot(DynamicColumnarManager columnarManager, String logicalSchema, Long tableId) {
         this.columnarManager = columnarManager;
@@ -244,6 +249,140 @@ public class MultiVersionColumnarSnapshot implements Purgeable {
         return snapshot;
     }
 
+    public Pair<Long, ColumnarSnapshot> generateMinSnapshot(final String partitionName) {
+        purgeLock.lock();
+        try {
+            long ioCost = 0L;
+            long totalCost = 0L;
+            long startTime = System.nanoTime();
+            long latestTsoBackUp = latestLoadedTso;
+
+            long minTso = columnarManager.getMinTso();
+
+            if (latestLoadedTso < minTso) {
+                long startIOTime = System.nanoTime();
+                synchronized (this) {
+                    // In case the tso has not been loaded
+                    // Assuming that the tso is reliable
+                    if (latestLoadedTso < minTso) {
+                        loadUntilTso(minTso, minTso);
+                    }
+                }
+                ioCost = System.nanoTime() - startIOTime;
+            }
+
+            ColumnarSnapshot snapshot = new ColumnarSnapshot();
+            Map<String, ColumnarTsoInfo> tsoInfo =
+                allPartsTsoInfo.computeIfAbsent(partitionName, s -> new ConcurrentHashMap<>());
+            tsoInfo.forEach((fileName, fileTsoInfo) -> {
+                Long commitTs = fileTsoInfo.commitTso;
+                Long removeTs = fileTsoInfo.removeTso;
+
+                if (commitTs <= minTso && (removeTs == null || removeTs > minTso)) {
+                    ColumnarFileType columnarFileType = FileSystemUtils.getFileType(fileName);
+
+                    switch (columnarFileType) {
+                    case ORC:
+                        snapshot.getOrcFiles().add(fileName);
+                        break;
+                    case CSV:
+                        snapshot.getCsvFiles().add(fileName);
+                        break;
+                    case DEL:
+                        snapshot.getDelFiles().add(fileName);
+                        break;
+                    case SET:
+                    default:
+                        // ignore.
+                    }
+                }
+            });
+
+            totalCost = System.nanoTime() - startTime;
+
+            if (SPLIT_MANAGER_LOGGER.isDebugEnabled()) {
+                SPLIT_MANAGER_LOGGER.debug(MessageFormat.format("generateSnapshot for "
+                        + "tableId = {0}, partName = {1}, "
+                        + "tso = {2}, lastTso = {3}, "
+                        + "totalCost = {4}, ioCost = {5}",
+                    tableId, partitionName, minTso, latestTsoBackUp, totalCost, ioCost
+                ));
+            }
+
+            return Pair.of(minTso, snapshot);
+        } finally {
+            purgeLock.unlock();
+        }
+    }
+
+    public ColumnarSnapshot generateSnapshot(final String partitionName, final long lowerTso, final long tso) {
+        long ioCost = 0L;
+        long totalCost = 0L;
+        long startTime = System.nanoTime();
+        long latestTsoBackUp = latestLoadedTso;
+
+        long minTso = columnarManager.getMinTso();
+        if (tso < minTso) {
+            throw new TddlRuntimeException(ErrorCode.ERR_COLUMNAR_SNAPSHOT,
+                String.format("Snapshot of tso[%d] has been purged!", tso));
+        }
+
+        if (latestLoadedTso < tso) {
+            long startIOTime = System.nanoTime();
+            synchronized (this) {
+                // In case the tso has not been loaded
+                // Assuming that the tso is reliable
+                if (latestLoadedTso < tso) {
+                    loadUntilTso(tso, minTso);
+                }
+            }
+            ioCost = System.nanoTime() - startIOTime;
+        }
+
+        ColumnarSnapshot snapshot = new ColumnarSnapshot();
+        Map<String, ColumnarTsoInfo> tsoInfo =
+            allPartsTsoInfo.computeIfAbsent(partitionName, s -> new ConcurrentHashMap<>());
+        tsoInfo.forEach((fileName, fileTsoInfo) -> {
+            Long commitTs = fileTsoInfo.commitTso;
+            Long removeTs = fileTsoInfo.removeTso;
+
+            if (commitTs <= tso && (removeTs == null || removeTs > tso)) {
+                ColumnarFileType columnarFileType = FileSystemUtils.getFileType(fileName);
+
+                switch (columnarFileType) {
+                case ORC:
+                    if (commitTs >= lowerTso) {
+                        // only read orc files which are newer than lowerTso
+                        snapshot.getOrcFiles().add(fileName);
+                    }
+                    break;
+                case CSV:
+                    snapshot.getCsvFiles().add(fileName);
+                    break;
+                case DEL:
+                    snapshot.getDelFiles().add(fileName);
+                    break;
+                case SET:
+                default:
+                    // ignore.
+                }
+            }
+        });
+
+        totalCost = System.nanoTime() - startTime;
+
+        if (SPLIT_MANAGER_LOGGER.isDebugEnabled()) {
+            SPLIT_MANAGER_LOGGER.debug(MessageFormat.format("generateSnapshot for "
+                    + "tableId = {0}, partName = {1}, "
+                    + "tso = {2}, lastTso = {3}, "
+                    + "totalCost = {4}, ioCost = {5}",
+                tableId, partitionName, tso, latestTsoBackUp, totalCost, ioCost
+            ));
+        }
+
+        return snapshot;
+    }
+
     public Map<String, ColumnarPartitionPrunedSnapshot> generateSnapshot(
         final SortedMap<Long, Set<String>> partitionResult, final long tso) {
         long minTso = columnarManager.getMinTso();
@@ -311,25 +450,32 @@ public class MultiVersionColumnarSnapshot implements Purgeable {
         return latestSchemaTso;
     }
 
-    public synchronized void purge(long tso) {
-        if (latestLoadedTso < tso) {
+    public void purge(long tso) {
+        purgeLock.lock();
+        try {
             synchronized (this) {
                 if (latestLoadedTso < tso) {
-                    loadUntilTso(tso, tso);
+                    synchronized (this) {
+                        if (latestLoadedTso < tso) {
+                            loadUntilTso(tso, tso);
+                        }
+                    }
                 }
-            }
-        }
 
-        allPartsTsoInfo.forEach((partName, snapshot) -> {
-            snapshot.entrySet().removeIf(entry -> {
-                Long removeTs = entry.getValue().removeTso;
-                if (removeTs != null && removeTs <= tso) {
-                    columnarManager.putPurgedFile(entry.getKey());
-                    return true;
-                } else {
-                    return false;
-                }
-            });
-        });
+                allPartsTsoInfo.forEach((partName, snapshot) -> {
+                    snapshot.entrySet().removeIf(entry -> {
+                        Long removeTs = entry.getValue().removeTso;
+                        if (removeTs != null && removeTs <= tso) {
+                            columnarManager.putPurgedFile(entry.getKey());
+                            return true;
+                        } else {
+                            return false;
+                        }
+                    });
+                });
+            }
+        } finally {
+            purgeLock.unlock();
+        }
     }
 }

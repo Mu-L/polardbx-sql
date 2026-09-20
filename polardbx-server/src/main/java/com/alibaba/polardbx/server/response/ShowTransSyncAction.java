@@ -24,8 +24,8 @@ import com.alibaba.polardbx.executor.cursor.impl.ArrayResultCursor;
 import com.alibaba.polardbx.executor.sync.ISyncAction;
 import com.alibaba.polardbx.matrix.jdbc.TDataSource;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
+import com.alibaba.polardbx.optimizer.utils.IColumnarTransaction;
 import com.alibaba.polardbx.optimizer.utils.ITransaction;
-import com.alibaba.polardbx.transaction.ColumnarTransaction;
 import com.alibaba.polardbx.transaction.TransactionManager;
 import com.alibaba.polardbx.transaction.trx.BaseTransaction;
 
@@ -84,7 +84,7 @@ public class ShowTransSyncAction implements ISyncAction {
 
         long currentTimeMs = System.currentTimeMillis();
         for (ITransaction transaction : transactions) {
-            if (isColumnar() && !(transaction instanceof ColumnarTransaction)) {
+            if (isColumnar() && !(transaction instanceof IColumnarTransaction)) {
                 continue;
             }
             if (transaction.isBegun() && !transaction.isClosed()) {
@@ -105,7 +105,7 @@ public class ShowTransSyncAction implements ISyncAction {
                 }
 
                 if (isColumnar()) {
-                    final long tso = ((ColumnarTransaction) tx).getSnapshotSeq();
+                    final long tso = ((IColumnarTransaction) tx).getSnapshotSeq();
                     result.addRow(new Object[] {transId, type, duration, state, processId, tso});
                 } else {
                     result.addRow(new Object[] {transId, type, duration, state, processId});

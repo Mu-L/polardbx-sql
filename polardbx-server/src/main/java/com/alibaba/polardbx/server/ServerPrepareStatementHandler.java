@@ -267,7 +267,7 @@ public class ServerPrepareStatementHandler implements StatementHandler {
             if (stmt.isSetQuery()) {
                 SetHandler.handleV2(stmt.getRawSql(), c, -1, false, false);
             } else {
-                c.execute(stmt.getRawSql(), preparedStmtCache, params, packet.stmt_id, packet.flags);
+                c.execute(stmt.getRawSql(), params, packet.stmt_id, packet.flags, preparedStmtCache);
             }
         } catch (SQLException e) {
             c.writeErrMessage(e.getErrorCode(), null, e.getMessage());

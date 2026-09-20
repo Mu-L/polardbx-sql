@@ -181,7 +181,7 @@ t3,CREATE TABLE `t3` (
 	`char_test` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL COMMENT 'select key',
 	`blob_test` blob COMMENT 'select key',
 	`tinyint_test` tinyint DEFAULT NULL COMMENT 'select key',
-	`tinyint_1bit_test` tinyint(1) DEFAULT NULL COMMENT 'select key',
+	`tinyint_1bit_test` tinyint DEFAULT NULL COMMENT 'select key',
 	`smallint_test` smallint DEFAULT NULL COMMENT 'select key',
 	`mediumint_test` mediumint DEFAULT NULL COMMENT 'select key',
 	`bit_test` bit(1) DEFAULT NULL COMMENT 'select key',

@@ -19,6 +19,7 @@ package com.alibaba.polardbx.optimizer.utils;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.polardbx.common.charset.CharsetName;
 import com.alibaba.polardbx.common.charset.CollationName;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.optimizer.OptimizerContext;
@@ -42,7 +43,6 @@ import com.alibaba.polardbx.optimizer.core.rel.TableId;
 import com.alibaba.polardbx.optimizer.exception.OptimizerException;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
-import org.apache.calcite.plan.RelOptTable;
 import org.apache.calcite.plan.RelOptUtil;
 import org.apache.calcite.prepare.RelOptTableImpl;
 import org.apache.calcite.rel.RelNode;
@@ -294,7 +294,7 @@ public class CalciteUtils {
         return columnMeta;
     }
 
-    public static List<ColumnMeta> buildColumnMeta(RelDataType dataType, List<String> tableNames,
+    public static List<ColumnMeta> buildColumnMeta(RelDataType dataType, RelNode plan, List<String> tableNames,
                                                    List<TableMeta> tableMetas) {
         if (tableNames == null) {
             return buildColumnMeta(dataType, "");
@@ -308,14 +308,37 @@ public class CalciteUtils {
         if (tableMetas != null && tableMetas.size() != tableNames.size()) {
             return buildColumnMeta(dataType, "");
         }
-
+        RelMetadataQuery mq = plan.getCluster().getMetadataQuery();
         for (int i = 0; i < relDataTypeList.size(); i++) {
             final RelDataTypeField relDataTypeField = relDataTypeList.get(i);
             final RelDataType relDataType = relDataTypeField.getType();
             final boolean isPrimary = tableMetas != null && tableMetas.get(i) != null
                 && tableMetas.get(i).getPrimaryKeyMap().containsKey(relDataTypeField.getName());
-            Field field = new Field(tableNames.get(i), relDataTypeField.getName(), relDataType, isPrimary);
-            columnMeta.add(new ColumnMeta(tableNames.get(i), relDataTypeField.getName(), null, field));
+            RelColumnOrigin columnOrigin = mq.getColumnOrigin(plan, i);
+            // getColumnOrigin returns null for derived columns, so only a direct JSON column uses binary(63).
+            final boolean useBinaryJsonCollation =
+                DynamicConfig.getInstance().isEnableJsonResultCharsetCompatibility()
+                    && columnOrigin != null && relDataType.getSqlTypeName() == SqlTypeName.JSON;
+            if (DynamicConfig.getInstance().isStrictColumnMeta() && columnOrigin != null) {
+                String oriColName = columnOrigin.getColumnName();
+                Field field;
+                if (useBinaryJsonCollation) {
+                    field = new Field(tableNames.get(i), oriColName, 63, null, null, relDataType, false, isPrimary);
+                } else {
+                    field = new Field(tableNames.get(i), oriColName, relDataType, isPrimary);
+                }
+                columnMeta.add(new ColumnMeta(tableNames.get(i), oriColName, relDataTypeField.getName(), field));
+            } else {
+                Field field;
+                if (useBinaryJsonCollation) {
+                    field = new Field(tableNames.get(i), relDataTypeField.getName(), 63, null, null, relDataType,
+                        false, isPrimary);
+                } else {
+                    field = new Field(tableNames.get(i), relDataTypeField.getName(), relDataType, isPrimary);
+                }
+                columnMeta.add(new ColumnMeta(tableNames.get(i), relDataTypeField.getName(), null, field));
+            }
+
         }
         return columnMeta;
     }
@@ -691,6 +714,22 @@ public class CalciteUtils {
                 return new DateType();
             } else if (DataTypeUtil.equalsSemantically(leftDt, DataTypes.BlobType)) {
                 return DataTypes.BlobType;
+            } else if (DataTypeUtil.isBinaryType(leftDt)) {
+                // Change context:
+                // - Before: binary(N)/varbinary(N) join keys (both DataTypeFactoryImpl-created
+                //   BinaryType) fell through this branch because only Time/Datetime/Date/Blob were
+                //   handled here; they then hit TypeUtils.getMathLevel(), which only recognizes the
+                //   exact BytesType class (not its BinaryType subclass) and classifies them as
+                //   MathLevel.OTHER, so the unified type ended up as StringType.
+                // - Path impact: fixes GSI lookup join re-fetch on binary/varbinary primary keys,
+                //   where the wrong StringType caused ChunkConverter to mangle the byte[] value and
+                //   LookupConditionBuilder to build a char-string literal instead of X'...' binary
+                //   literal, breaking partition routing and the pushed-down predicate. Other unified
+                //   type paths (numeric/date/time/decimal) are unaffected since this branch only
+                //   triggers when both sides are binary.
+                // - Capability regression: None; binary/varbinary join keys previously resolved to
+                //   StringType, which was itself the bug, not an intended behavior.
+                return DataTypes.BinaryType;
             }
         } else if (DataTypeUtil.anyMatchSemantically(leftDt, DataTypes.DatetimeType, DataTypes.DateType)
             && DataTypeUtil.anyMatchSemantically(rightDt, DataTypes.DatetimeType, DataTypes.DateType)) {
@@ -747,12 +786,22 @@ public class CalciteUtils {
         RelMetadataQuery mq = PlannerUtils.newMetadataQuery();
         List<Set<RelColumnOrigin>> originsList = mq.getColumnOriginNames(relNode);
         List<List<String[]>> originColumnNames = new ArrayList<>();
+        if (originsList == null) {
+            return null;
+        }
         for (int i = 0; i < originsList.size(); i++) {
             Set<RelColumnOrigin> origins = originsList.get(i);
+            if (origins == null) {
+                originColumnNames.add(new ArrayList<>());
+                continue;
+            }
             List<String[]> originColumnName = new ArrayList<>(origins.size());
             for (RelColumnOrigin origin : origins) {
+                if (origin.getOriginTable() == null) {
+                    continue;
+                }
                 List<String> tableNames = origin.getOriginTable().getQualifiedName();
-                if (tableNames.size() != 2) {
+                if (tableNames == null || tableNames.size() != 2) {
                     continue;
                 }
                 //change gsi table name to primary table name
@@ -760,7 +809,8 @@ public class CalciteUtils {
                     RelOptTableImpl originTable = (RelOptTableImpl) origin.getOriginTable();
                     if (originTable.getImplTable() instanceof TableMeta) {
                         TableMeta originTableMeta = (TableMeta) originTable.getImplTable();
-                        if (originTableMeta.isGsi()) {
+                        if (originTableMeta.isGsi() || originTableMeta.isColumnar()
+                            || originTableMeta.isColumnarArchive() || originTableMeta.isColumnarSnapshot()) {
                             tableNames = new ArrayList<>();
                             tableNames.add(originTableMeta.getGsiTableMetaBean().gsiMetaBean.tableSchema);
                             tableNames.add(originTableMeta.getGsiTableMetaBean().gsiMetaBean.tableName);

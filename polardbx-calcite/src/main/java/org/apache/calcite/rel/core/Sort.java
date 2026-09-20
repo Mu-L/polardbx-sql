@@ -28,6 +28,7 @@ import org.apache.calcite.rel.RelInput;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelWriter;
 import org.apache.calcite.rel.SingleRel;
+import org.apache.calcite.rel.metadata.RelColumnOrigin;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexShuttle;
@@ -35,6 +36,7 @@ import org.apache.calcite.util.Util;
 
 import com.google.common.collect.ImmutableList;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -48,6 +50,8 @@ public abstract class Sort extends SingleRel {
   protected final ImmutableList<RexNode> fieldExps;
   public final RexNode offset;
   public final RexNode fetch;
+
+  public List<String> sortColumnNameList;
   //~ Constructors -----------------------------------------------------------
 
   /**
@@ -101,6 +105,26 @@ public abstract class Sort extends SingleRel {
       builder.add(cluster.getRexBuilder().makeInputRef(child, index));
     }
     fieldExps = builder.build();
+
+    List<RelFieldCollation> sortList = getCollation().getFieldCollations();
+    List<String> sortColumnNames = null;
+    RelMetadataQuery mq = cluster.getMetadataQuery();
+    if (mq != null) {
+      sortColumnNames = new ArrayList<>(sortList.size());
+      for (int i = 0, n = sortList.size(); i < n; i++) {
+        RelFieldCollation field = sortList.get(i);
+
+        int colIndex = field.getFieldIndex();
+        RelColumnOrigin origin = mq.getColumnOrigin(this, colIndex);
+
+        if (origin == null) {
+          sortColumnNames = null;
+          break;
+        }
+        sortColumnNames.add(origin.getColumnName());
+      }
+    }
+    this.sortColumnNameList = sortColumnNames;
   }
 
   /**
@@ -114,6 +138,10 @@ public abstract class Sort extends SingleRel {
   }
 
   //~ Methods ----------------------------------------------------------------
+
+  public List<String> getSortColumnNameList() {
+    return sortColumnNameList;
+  }
 
   @Override public final Sort copy(RelTraitSet traitSet, List<RelNode> inputs) {
     return copy(traitSet, sole(inputs), collation, offset, fetch);

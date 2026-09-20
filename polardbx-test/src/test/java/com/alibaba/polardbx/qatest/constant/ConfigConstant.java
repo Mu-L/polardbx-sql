@@ -46,11 +46,19 @@ public class ConfigConstant {
     public static final String MYSQL_PORT_SECOND = "mysqlPortSecond";
     public static final String MYSQL_ADDRESS_SECOND = "mysqlAddrSecond";
 
+    public static final String SKIP_INIT_POLARDBX = "skipInitPolarDBX";
     public static final String POLARDBX_USER = "polardbxUserName";
     public static final String POLARDBX_PASSWORD = "polardbxPassword";
     public static final String POLARDBX_PORT = "polardbxPort";
     public static final String POLARDBX_ADDRESS = "polardbxAddr";
 
+    public static final String GDN_SLAVE_USER = "gdnSlaveUserName";
+    public static final String GDN_SLAVE_PASSWORD = "gdnSlavePassword";
+    public static final String GDN_SLAVE_PORT = "gdnSlavePort";
+    public static final String GDN_SLAVE_ADDRESS = "gdnSlaveAddr";
+    public static final String CREATE_TABLE_SUFFIX = "createTableSuffix";
+
+    public static final String SKIP_INIT_META_DB = "skipInitMetaDb";
     public static final String META_DB = "metaDbName";
     public static final String META_USER = "metaDbUser";
     public static final String META_PASSWORD = "metaDbPasswd";
@@ -58,6 +66,7 @@ public class ConfigConstant {
     public static final String META_ADDRESS = "metaDbAddr";
 
     public static final String URL_PATTERN = "jdbc:mysql://%s:%s?";
+    public static final String URL_DB_PATTERN = "jdbc:mysql://%s:%s/%s?";
     public static final String X_DRIVER_URL_PATTERN = "jdbc:polardbx://%s:%s/%s?";
     public static final String URL_PATTERN_WITH_DB = "jdbc:mysql://%s:%s/%s?";
 

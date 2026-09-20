@@ -16,8 +16,10 @@
 
 package com.alibaba.polardbx.optimizer.memory;
 
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
+import com.alibaba.polardbx.common.BlockingState;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.common.util.concurrent.SettableFuture;
 import com.alibaba.polardbx.common.properties.MppConfig;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
@@ -30,6 +32,10 @@ public abstract class BlockingMemoryPool extends MemoryPool {
 
     protected static final Logger logger = LoggerFactory.getLogger(BlockingMemoryPool.class);
 
+    private static final BlockingState MEMORY_BLOCKING_STATE = BlockingState.create(
+        BlockingReason.WAIT_FOR_MEMORY, 0L
+    );
+
     @GuardedBy("this")
     private long tryMinRequestSize = 0;
 
@@ -37,10 +43,10 @@ public abstract class BlockingMemoryPool extends MemoryPool {
     private long minRequestSize = 0;
 
     @GuardedBy("this")
-    private SettableFuture<?> settableFuture;
+    private BlockingFuture<?> settableFuture;
 
     @GuardedBy("this")
-    private SettableFuture<?> trySettableFuture;
+    private BlockingFuture<?> trySettableFuture;
 
     @GuardedBy("this")
     private boolean needMemoryRevoking = false;
@@ -82,7 +88,7 @@ public abstract class BlockingMemoryPool extends MemoryPool {
                     //存在可释放的内存的时候，才阻塞
                     //return the blocked future after the allocated memory exceed the maxElasticMemory.
                     if (settableFuture == null || settableFuture.isDone()) {
-                        settableFuture = SettableFuture.create();
+                        settableFuture = BlockingFuture.create(BlockingReason.WAIT_FOR_MEMORY);
                         this.blockFlag = true;
                     }
                     checkState(!settableFuture.isDone(), "future is already completed");
@@ -113,7 +119,7 @@ public abstract class BlockingMemoryPool extends MemoryPool {
             logger.info("The query use much more memory for the memory pool: " + name);
             //存在可释放的内存的时候，才阻塞
             if (trySettableFuture == null || trySettableFuture.isDone()) {
-                trySettableFuture = SettableFuture.create();
+                trySettableFuture = BlockingFuture.create(BlockingReason.WAIT_FOR_MEMORY);
                 this.blockFlag = true;
             }
             allocFuture.setAllocateFuture(trySettableFuture);
@@ -134,11 +140,11 @@ public abstract class BlockingMemoryPool extends MemoryPool {
         long availableBytes = maxElasticMemory - reservedBytes - revocableBytes;
         if (availableBytes >= minRequestSize && settableFuture != null && !settableFuture.isDone()) {
             minRequestSize = 0;
-            settableFuture.set(null);
+            settableFuture.complete(null);
         }
         if (availableBytes >= tryMinRequestSize && trySettableFuture != null && !trySettableFuture.isDone()) {
             tryMinRequestSize = 0;
-            trySettableFuture.set(null);
+            trySettableFuture.complete(null);
         }
     }
 
@@ -154,11 +160,11 @@ public abstract class BlockingMemoryPool extends MemoryPool {
     @Override
     public void destroy() {
         if (settableFuture != null) {
-            settableFuture.set(null);
+            settableFuture.complete(null);
         }
 
         if (trySettableFuture != null) {
-            trySettableFuture.set(null);
+            trySettableFuture.complete(null);
         }
         super.destroy();
     }
@@ -175,7 +181,7 @@ public abstract class BlockingMemoryPool extends MemoryPool {
         return settableFuture;
     }
 
-    public SettableFuture<?> getTrySettableFuture() {
+    public BlockingFuture<?> getTrySettableFuture() {
         return trySettableFuture;
     }
 

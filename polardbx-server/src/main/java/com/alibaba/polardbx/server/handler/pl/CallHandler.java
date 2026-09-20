@@ -77,7 +77,9 @@ public class CallHandler implements PlCommandHandler {
             procedure.getHandler().writeAffectRows();
             procedure.getHandler().writeBackToClient();
         } catch (Exception ex) {
-            if (handler != null && handler.getProxy() != null) {
+            // Raw proxies remain registered for ServerConnection.handleError() to clean up;
+            // compressed proxies are not centrally tracked, so release them here.
+            if (handler != null && handler.getProxy() != null && c.isCompressProto()) {
                 handler.getProxy().close();
             }
             throw ex;
@@ -143,8 +145,8 @@ public class CallHandler implements PlCommandHandler {
     }
 
     public static void handleProcedure(RuntimeProcedure procedure,
-                                        SQLCallStatement callStatement, Map<String, SpParameter> parentParams,
-                                        ServerConnection connection, MemoryPool parentPool) {
+                                       SQLCallStatement callStatement, Map<String, SpParameter> parentParams,
+                                       ServerConnection connection, MemoryPool parentPool) {
         // set current memory pool to pl context
         procedure.getPlContext().setCurrentMemoryPool(procedure.getMemoryPool());
         long lastActiveTime = connection.getLastActiveTime();

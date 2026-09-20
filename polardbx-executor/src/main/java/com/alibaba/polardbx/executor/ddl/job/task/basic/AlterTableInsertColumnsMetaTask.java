@@ -67,7 +67,7 @@ public class AlterTableInsertColumnsMetaTask extends BaseGmsTask {
             null, addedColumns);
 
         //sync have to be successful to continue
-        SyncManagerHelper.sync(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
+        SyncManagerHelper.syncThrowExceptions(new TableMetaChangeSyncAction(schemaName, logicalTableName), SyncScope.ALL);
         executionContext.refreshTableMeta();
 
         LOGGER.info(String.format("Rollback Insert GSI columns meta. schema:%s, table:%s, index:%s",
@@ -75,6 +75,11 @@ public class AlterTableInsertColumnsMetaTask extends BaseGmsTask {
             logicalTableName,
             dbIndex
         ));
+    }
+
+    @Override
+    protected void beforeTransaction(ExecutionContext executionContext) {
+        // 存在并发加列，不校验版本
     }
 
     @Override

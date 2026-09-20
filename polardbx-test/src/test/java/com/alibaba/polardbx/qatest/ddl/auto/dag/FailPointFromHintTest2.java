@@ -50,7 +50,7 @@ public class FailPointFromHintTest2 {
     @Test
     public void testInject1() {
 
-        String key = "key1";
+        String key = "FailPointFromHintTest2Key1";
 
         /**
          * haven't register any key, so no error will be thrown
@@ -62,20 +62,20 @@ public class FailPointFromHintTest2 {
         thrown.expect(RuntimeException.class);
         addHint(key, key);
         /**
-         * since key1 registered, RuntimeException will be thrown
+         * since FailPointFromHintTest2Key1 registered, RuntimeException will be thrown
          */
         FailPoint.injectFromHint(key, executionContext, () -> {
             throw new RuntimeException("injected error message");
         });
         /**
-         * since key2 is not registered, IllegalArgumentException won't be thrown
+         * since FailPointFromHintTest2Key2 is not registered, IllegalArgumentException won't be thrown
          */
-        FailPoint.injectFromHint("key2", executionContext, () -> {
+        FailPoint.injectFromHint("FailPointFromHintTest2Key2", executionContext, () -> {
             throw new IllegalArgumentException("injected error message");
         });
 
         /**
-         * since key1 deRegistered, RuntimeException won't be thrown
+         * since FailPointFromHintTest2Key1 deRegistered, RuntimeException won't be thrown
          */
         clearHint();
         FailPoint.injectFromHint(key, executionContext, () -> {
@@ -87,7 +87,7 @@ public class FailPointFromHintTest2 {
     @Test
     public void testInject2() {
 
-        String key = "key1";
+        String key = "FailPointFromHintTest2Key1";
 
         FailPoint.injectFromHint(key, executionContext, () -> {
             throw new RuntimeException("injected error message");
@@ -107,7 +107,7 @@ public class FailPointFromHintTest2 {
     @Test
     public void testInject3() {
 
-        String key = "key1";
+        String key = "FailPointFromHintTest2Key1";
 
         long start = System.currentTimeMillis();
 
@@ -128,9 +128,9 @@ public class FailPointFromHintTest2 {
     @Test
     public void testReadValue() {
 
-        addHint("key1", "value1");
-        FailPoint.inject("key1", (k, v) -> {
-            Assert.assertEquals(k, "key1");
+        addHint("FailPointFromHintTest2Key1", "value1");
+        FailPoint.inject("FailPointFromHintTest2Key1", (k, v) -> {
+            Assert.assertEquals(k, "FailPointFromHintTest2Key1");
             Assert.assertEquals(v, "value1");
         });
     }

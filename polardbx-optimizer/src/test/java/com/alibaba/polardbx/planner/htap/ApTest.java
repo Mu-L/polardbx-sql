@@ -17,7 +17,7 @@
 package com.alibaba.polardbx.planner.htap;
 
 import com.alibaba.polardbx.optimizer.PlannerContext;
-import com.alibaba.polardbx.optimizer.workload.WorkloadType;
+import com.alibaba.polardbx.optimizer.htaprouting.WorkloadType;
 import com.alibaba.polardbx.planner.common.PlanTestCommon;
 import org.apache.calcite.rel.RelNode;
 import org.junit.Assert;
@@ -32,6 +32,7 @@ public class ApTest extends PlanTestCommon {
 
     public ApTest(String caseName, int sqlIndex, String sql, String expectedPlan, String lineNum) {
         super(caseName, sqlIndex, sql, expectedPlan, lineNum);
+        enableMpp = true;
     }
 
     @Parameterized.Parameters(name = "{0}:{1}")

@@ -1,12 +1,12 @@
 package com.alibaba.polardbx.qatest.ddl.cdc;
 
 import com.alibaba.fastjson.JSONObject;
-import com.alibaba.polardbx.cdc.CdcManager;
 import com.alibaba.polardbx.cdc.CdcTableUtil;
 import com.alibaba.polardbx.cdc.SQLHelper;
 import com.alibaba.polardbx.common.cdc.entity.DDLExtInfo;
 import com.alibaba.polardbx.druid.sql.ast.SQLStatement;
 import com.alibaba.polardbx.druid.sql.dialect.mysql.ast.statement.MySqlHintStatement;
+import com.alibaba.polardbx.gms.metadb.cdc.entity.MetaInfo;
 import com.alibaba.polardbx.optimizer.partition.common.PartitionTableType;
 import com.alibaba.polardbx.qatest.AsyncDDLBaseNewDBTestCase;
 import com.alibaba.polardbx.qatest.ddl.cdc.entity.DdlCheckContext;
@@ -15,6 +15,7 @@ import com.alibaba.polardbx.qatest.ddl.cdc.entity.PartitionType;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import com.google.common.collect.Lists;
 import lombok.SneakyThrows;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.calcite.util.Pair;
 import org.apache.commons.lang.StringUtils;
 import org.junit.Assert;
@@ -47,6 +48,7 @@ import static com.alibaba.polardbx.qatest.ddl.cdc.util.CdcTestUtil.removeImplici
 /**
  * Created by ziyang.lb
  **/
+@Slf4j
 public class CdcBaseTest extends AsyncDDLBaseNewDBTestCase {
     //Sharding表，建表时不指定gsi
     protected final static String CREATE_T_DDL_TEST_TABLE =
@@ -61,7 +63,7 @@ public class CdcBaseTest extends AsyncDDLBaseNewDBTestCase {
             + "  `DDL_SQL`  TEXT NOT NULL,\n"
             + "   PRIMARY KEY (`ID`),\n"
             + "   KEY `idx1` (`SCHEMA_NAME`)\n"
-            + "   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 dbpartition by hash(ID) tbpartition by hash(JOB_ID) tbpartitions 16\n";
+            + "   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 DEFAULT COLLATE = `utf8mb4_general_ci` dbpartition by hash(ID) tbpartition by hash(JOB_ID) tbpartitions 16\n";
 
     //Sharding表，建表时指定gsi
     protected final static String CREATE_T_DDL_TEST_TABLE_GSI =
@@ -78,7 +80,7 @@ public class CdcBaseTest extends AsyncDDLBaseNewDBTestCase {
             + "   KEY `idx1` (`SCHEMA_NAME`),\n"
             + "   GLOBAL INDEX `%s`(`TV_ID`) COVERING(`JOB_ID`,`GMT_CREATED`) DBPARTITION BY HASH(`TV_ID`),\n"
             + "   GLOBAL INDEX `%s`(`EXT_ID`) DBPARTITION BY HASH(`EXT_ID`)"
-            + "   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 dbpartition by hash(ID) tbpartition by hash(JOB_ID) tbpartitions 16\n";
+            + "   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 DEFAULT COLLATE = `utf8mb4_general_ci` dbpartition by hash(ID) tbpartition by hash(JOB_ID) tbpartitions 16\n";
 
     //Sharding表，建表时指定gsi
     protected final static String CREATE_T_DDL_TEST_TABLE_CLUSTER_GSI =
@@ -99,7 +101,7 @@ public class CdcBaseTest extends AsyncDDLBaseNewDBTestCase {
             + "   clustered index gsi_idx2(c2) dbpartition by hash(c2),\n"
             + "   GLOBAL INDEX `%s`(`TV_ID`) COVERING(`JOB_ID`,`GMT_CREATED`) DBPARTITION BY HASH(`TV_ID`),\n"
             + "   GLOBAL INDEX `%s`(`EXT_ID`) DBPARTITION BY HASH(`EXT_ID`)"
-            + "   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 dbpartition by hash(ID) tbpartition by hash(JOB_ID) tbpartitions 16\n";
+            + "   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 DEFAULT COLLATE = `utf8mb4_general_ci` dbpartition by hash(ID) tbpartition by hash(JOB_ID) tbpartitions 16\n";
 
     //广播表
     //这个语句不指定charset，验证一下下游是否对字符编码有妥善处理
@@ -175,17 +177,25 @@ public class CdcBaseTest extends AsyncDDLBaseNewDBTestCase {
         stmt.execute(sql);
     }
 
-    protected void commonCheckExistsAfterDdlWithCallback(DdlCheckContext checkContext, String schemaName,
+    protected void commonCheckExistsAfterDdlWithCallback(DdlCheckContext checkContext,
+                                                         String schemaName,
                                                          String tableName, String sql,
-                                                         Consumer<Pair<List<DdlRecordInfo>, List<DdlRecordInfo>>> consumer) {
+                                                         Consumer<Pair<List<DdlRecordInfo>,
+                                                             List<DdlRecordInfo>>> consumer,
+                                                         int incrementCount) {
         List<DdlRecordInfo> beforeMarkList = checkContext.getMarkList(schemaName);
-        commonCheckExistsAfterDdl(checkContext, schemaName, tableName, sql);
+        commonCheckExistsAfterDdl(checkContext, schemaName, tableName, sql, incrementCount);
         List<DdlRecordInfo> afterMarkList = checkContext.updateAndGetMarkList(schemaName);
         consumer.accept(Pair.of(beforeMarkList, afterMarkList));
     }
 
     protected void commonCheckExistsAfterDdl(DdlCheckContext checkContext, String schemaName, String tableName,
                                              String sql) {
+        commonCheckExistsAfterDdl(checkContext, schemaName, tableName, sql, 1);
+    }
+
+    protected void commonCheckExistsAfterDdl(DdlCheckContext checkContext, String schemaName, String tableName,
+                                             String sql, int incrementCount) {
         List<DdlRecordInfo> beforeMarkList = checkContext.getMarkList(schemaName);
         List<DdlRecordInfo> beforeMarkListTable = beforeMarkList.stream()
             .filter(i -> StringUtils.equals(tableName, i.getTableName()))
@@ -196,8 +206,8 @@ public class CdcBaseTest extends AsyncDDLBaseNewDBTestCase {
             .filter(i -> StringUtils.equals(tableName, i.getTableName()))
             .collect(Collectors.toList());
 
-        Assert.assertEquals(beforeMarkList.size() + 1, afterMarkList.size());
-        Assert.assertEquals(beforeMarkListTable.size() + 1, afterMarkListTable.size());
+        Assert.assertEquals(beforeMarkList.size() + incrementCount, afterMarkList.size());
+        Assert.assertEquals(beforeMarkListTable.size() + incrementCount, afterMarkListTable.size());
         Assert.assertEquals(tableName, afterMarkList.get(0).getTableName());
         Assert.assertEquals(getServerId4Check(serverId), afterMarkList.get(0).getDdlExtInfo().getServerId());
 
@@ -340,7 +350,7 @@ public class CdcBaseTest extends AsyncDDLBaseNewDBTestCase {
 
         String metaInfoStr = r.get("META_INFO");
         if (StringUtils.isNotBlank(metaInfoStr)) {
-            CdcManager.MetaInfo metaInfo = JSONObject.parseObject(metaInfoStr, CdcManager.MetaInfo.class);
+            MetaInfo metaInfo = JSONObject.parseObject(metaInfoStr, MetaInfo.class);
             ddlRecordInfo.setMetaInfo(metaInfo);
         }
 
@@ -586,5 +596,22 @@ public class CdcBaseTest extends AsyncDDLBaseNewDBTestCase {
         // 2. 我们的parser对带hints的sql进行parse处理时，还有不完善的地方，其它场景也会有会类似不符合预期的行为，这里加一个判断
         ///*+TDDL:CMD_EXTRA(CDC_RANDOM_DDL_TOKEN="8f4ccd00-3999-4b22-8160-57dc7e2ec56c")*/GRANT SELECT,UPDATE ON `null`.* TO 'cdc_user_6516803699950266368'@'127.0.0.1'
         Assert.assertNotEquals(markStmt.getClass(), MySqlHintStatement.class);
+    }
+
+    @SneakyThrows
+    protected boolean supportImplicitTableGroup() {
+        try (Statement statement = tddlConnection.createStatement()) {
+            ResultSet resultSet = statement.executeQuery(
+                "select param_val from metadb.inst_config where param_key = 'ENABLE_IMPLICIT_TABLE_GROUP'");
+            if (resultSet.next()) {
+                String value = resultSet.getString(1);
+                if (org.apache.commons.lang3.StringUtils.equalsIgnoreCase(value, "false")) {
+                    log.info("ENABLE_IMPLICIT_TABLE_GROUP is false, skip test.");
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 }

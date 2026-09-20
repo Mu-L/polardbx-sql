@@ -31,9 +31,10 @@ import com.alibaba.polardbx.transaction.TransactionManager;
 import com.alibaba.polardbx.transaction.jdbc.DeferredConnection;
 import org.apache.commons.lang.StringUtils;
 
+import static com.alibaba.polardbx.transaction.connection.TransactionConnectionHolder.needReadLsn;
+
 import java.sql.Connection;
 import java.sql.SQLException;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * @author zhuangtianyi
@@ -43,7 +44,6 @@ public class ReadOnlyTsoTransaction extends AutoCommitTransaction implements ITs
 
     private long snapshotTimestamp = -1;
     private boolean useExternalSnapshotTimestamp = false;
-    private final ConcurrentHashMap<String, Long> dnLsnMap = new ConcurrentHashMap<>();
 
     public ReadOnlyTsoTransaction(ExecutionContext executionContext,
                                   TransactionManager manager) {
@@ -84,8 +84,11 @@ public class ReadOnlyTsoTransaction extends AutoCommitTransaction implements ITs
     }
 
     @Override
-    public void updateSnapshotTimestamp() {
-        if (!this.autoCommit && isolationLevel == Connection.TRANSACTION_READ_COMMITTED
+    public void updateSnapshotTimestamp(long tso) {
+        if (tso > 0) {
+            snapshotTimestamp = tso;
+            useExternalSnapshotTimestamp = true;
+        } else if (!this.autoCommit && isolationLevel == Connection.TRANSACTION_READ_COMMITTED
             && !useExternalSnapshotTimestamp) {
             snapshotTimestamp = nextTimestamp(t -> stat.getTsoTime += t);
         }
@@ -107,19 +110,45 @@ public class ReadOnlyTsoTransaction extends AutoCommitTransaction implements ITs
             ConnectionParams.USING_RDS_RESULT_SKIP));
 
         /**
-         * Here must get TSO for slave connection before fetch the LSN!
+         * Decide whether to send TSO (innodb_snapshot_seq) and LSN (read_lsn) to DN.
+         * SEND_TSO_FOR_NON_CONSISTENT_REPLICA_READ: default true (old instances), default false (new instances).
+         *
+         * Route       | consistentReplicaRead | SEND_TSO | sendTso | sendLsn
+         * ----------- | --------------------- | -------- | ------- | -------
+         * Master      | any                   | any      | Y       | N
+         * Follower    | true                  | any      | Y       | Y
+         * Follower    | false                 | true     | Y       | N
+         * Follower    | false                 | false    | N       | N
          */
-        lock.lock();
-        try {
-            getSnapshotSeq();
-        } finally {
-            lock.unlock();
-        }
-        conn = sendLsn(conn, schemaName, group, masterSlave, this::getSnapshotSeq);
-        sendSnapshotSeq(conn);
+        boolean needLsn = needReadLsn(this, schemaName, masterSlave, getConsistentReplicaRead());
+        boolean sendTso = masterSlave == MasterSlave.MASTER_ONLY
+            || needLsn
+            || ec.getParamManager().getBoolean(ConnectionParams.SEND_TSO_FOR_NON_CONSISTENT_REPLICA_READ);
 
-        boolean needSetFlashbackArea = executionContext.isFlashbackArea() && rw == ITransaction.RW.READ;
-        return conn.enableFlashbackArea(needSetFlashbackArea);
+        if (sendTso) {
+            /**
+             * Here must get TSO for slave connection before fetch the LSN!
+             */
+            lock.lock();
+            try {
+                getSnapshotSeq();
+            } finally {
+                lock.unlock();
+            }
+        }
+        if (needLsn) {
+            super.sendLsn(conn, schemaName, group, masterSlave, this::getSnapshotSeq);
+        }
+        if (sendTso) {
+            sendSnapshotSeq(conn);
+        }
+
+        boolean needSetFlashbackArea = executionContext.isFlashbackArea() && rw == ITransaction.RW.READ
+            && executionContext.getStorageInfo(schemaName).isSupportFlashbackArea();
+        boolean needSetAsOfCrossDdl = executionContext.isAsOfCrossDdl() && rw == ITransaction.RW.READ
+            && executionContext.getStorageInfo(schemaName).isSupportAsOfCrossDdl();
+        return conn.enableFlashbackArea(needSetFlashbackArea)
+            .enableAsOfCrossDdl(needSetAsOfCrossDdl);
     }
 
     @Override

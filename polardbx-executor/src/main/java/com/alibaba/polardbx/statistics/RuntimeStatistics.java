@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.statistics;
 
+import com.alibaba.polardbx.common.columnar.ColumnarScanMetrics;
+import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
 import com.alibaba.polardbx.common.utils.thread.CpuCollector;
@@ -26,6 +28,7 @@ import com.alibaba.polardbx.executor.cursor.impl.FirstThenOtherCursor;
 import com.alibaba.polardbx.executor.cursor.impl.GroupConcurrentUnionCursor;
 import com.alibaba.polardbx.executor.cursor.impl.LogicalViewResultCursor;
 import com.alibaba.polardbx.executor.cursor.impl.MyPhysicalCursor;
+import com.alibaba.polardbx.common.columnar.VersionStorageStatistics;
 import com.alibaba.polardbx.executor.mpp.execution.TaskId;
 import com.alibaba.polardbx.executor.mpp.execution.TaskStatus;
 import com.alibaba.polardbx.executor.operator.AbstractExecutor;
@@ -39,6 +42,7 @@ import com.alibaba.polardbx.optimizer.core.rel.BaseTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.Gather;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalInsert;
 import com.alibaba.polardbx.optimizer.core.rel.LogicalView;
+import com.alibaba.polardbx.optimizer.core.rel.OSSTableScan;
 import com.alibaba.polardbx.optimizer.core.rel.PhyTableOperation;
 import com.alibaba.polardbx.optimizer.core.rel.SingleTableOperation;
 import com.alibaba.polardbx.optimizer.memory.MemoryManager;
@@ -107,8 +111,18 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
     private AtomicLong totalPhyFetchRows = new AtomicLong(0L);
     private AtomicLong totalPhySqlTimecost = new AtomicLong(0L);
     private AtomicLong totalPhyConnTimecost = new AtomicLong(0L);
+    private AtomicLong totalFetchTSOTimecost = new AtomicLong(0L);
+    private AtomicLong totalFetchSequenceTimecost = new AtomicLong(0L);
+    private String trxType = null;
+    private AtomicLong commitPrepareTimecost = new AtomicLong(0L);
+    private AtomicLong commitTsoTimecost = new AtomicLong(0L);
+    private AtomicLong commitLoggerTimecost = new AtomicLong(0L);
+    private AtomicLong commitCommitTimecost = new AtomicLong(0L);
     private AtomicLong columnarSnapshotTimecost = new AtomicLong(0L);
     private AtomicLong spillCnt = new AtomicLong(0L);
+
+    // Per-SQL external column latency breakdown (set from ExecutionContext before toMetrics)
+    private volatile com.alibaba.polardbx.common.columnar.ExternalColumnStatistics extColStats;
 
     /**
      * When the whole plan is a logicalView only, it is call simpleLvPlan
@@ -127,6 +141,18 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
     private boolean isFromAllAtOnePhyTable = false;
 
     private Set<TaskId> taskTraceSet = new HashSet<>();
+
+    /**
+     * Query-Level memory usage info for MPP mode.
+     */
+    private Map<String, Long> maxMemoryUsageForEachNode = new HashMap<>();
+
+    /**
+     * Records the number of external network communications and their durations for the version storage.
+     */
+    private Map<TaskId, VersionStorageStatistics> versionStorageStatisticsMap = new HashMap<>();
+
+    private Map<TaskId, ColumnarScanMetrics> columnarScanMetricsMap = new HashMap<>();
 
     public RuntimeStatistics(String traceId, ExecutionContext executionContext) {
         this.traceId = traceId;
@@ -399,6 +425,13 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
         totalPhySqlTimecost.set(0);
         sqlLogCpuTime.set(0);
         totalPhyConnTimecost.set(0);
+        totalFetchTSOTimecost.set(0);
+        totalFetchSequenceTimecost.set(0);
+        trxType = null;
+        commitPrepareTimecost.set(0);
+        commitTsoTimecost.set(0);
+        commitLoggerTimecost.set(0);
+        commitCommitTimecost.set(0);
         columnarSnapshotTimecost.set(0);
     }
 
@@ -414,7 +447,10 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
         Map<RelNode, RuntimeStatisticsSketch> results = new IdentityHashMap<>();
         for (Map.Entry<Integer, OperatorStatisticsGroup> entry : relationToStatistics.entrySet()) {
             final OperatorStatisticsGroup stats = entry.getValue();
-            results.put(relationIdToNode.get(entry.getKey()), stats.toSketch());
+            RelNode node = relationIdToNode.get(entry.getKey());
+            if (node != null) {
+                results.put(node, stats.toSketch());
+            }
         }
         return results;
     }
@@ -578,6 +614,27 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
         // plan
         long phyConnTc = 0;
 
+        // the time cost sum of fetching TSO
+        long fetchTSOTc = 0;
+
+        // the time cost sum of fetching Sequence
+        long fetchSeqTc = 0;
+
+        // trx type
+        String trxType = null;
+
+        // the time cost of commit prepare phase
+        long commitPrepareTc = 0;
+
+        // the time cost of commit get tso phase
+        long commitTsoTc = 0;
+
+        // the time cost of commit logger phase
+        long commitLoggerTc = 0;
+
+        // the time cost of commit commit phase
+        long commitCommitTc = 0;
+
         // the time cost of generate columnar snapshot in SplitManager
         long columnarSnapshotTc = 0;
 
@@ -624,6 +681,17 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
         // ====== Cpu ========
         logCpuTc = this.sqlLogCpuTime.get();
         execSqlTc = this.totalPhySqlTimecost.get();
+        fetchTSOTc = this.totalFetchTSOTimecost.get();
+        fetchSeqTc = this.totalFetchSequenceTimecost.get();
+        if (this.trxType != null) {
+            trxType = this.trxType;
+        } else {
+            trxType = "UNKNOWN";
+        }
+        commitPrepareTc = this.commitPrepareTimecost.get();
+        commitTsoTc = this.commitTsoTimecost.get();
+        commitLoggerTc = this.commitLoggerTimecost.get();
+        commitCommitTc = this.commitCommitTimecost.get();
         columnarSnapshotTc = this.columnarSnapshotTimecost.get();
         execPlanTc = logCpuTc - sqlToPlanTc;
         if (fetchRsTc > NOT_SUPPORT_VALUE) {
@@ -680,6 +748,13 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
         metrics.execSqlTc = execSqlTc;
         metrics.fetchRsTc = fetchRsTc;
         metrics.phyConnTc = phyConnTc;
+        metrics.fetchTSOTc = fetchTSOTc;
+        metrics.fetchSeqTc = fetchSeqTc;
+        metrics.trxType = trxType;
+        metrics.commitPrepareTc = commitPrepareTc;
+        metrics.commitTsoTc = commitTsoTc;
+        metrics.commitLoggerTc = commitLoggerTc;
+        metrics.commitCommitTc = commitCommitTc;
         metrics.columnarSnapshotTc = columnarSnapshotTc;
 
         metrics.queryMemPct = queryMemPct;
@@ -688,6 +763,9 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
         metrics.planTmpTbMem = planTmpTbMem;
 
         metrics.spillCnt = spillCnt;
+        if (extColStats != null && !extColStats.isEmpty()) {
+            metrics.extColStatsStr = extColStats.toPrintable();
+        }
         if (memBlockedFlag) {
             metrics.memBlockedFlag = 1;
         }
@@ -724,6 +802,89 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
             return 0;
         }
         return memoryPool.getMaxMemoryUsage();
+    }
+
+    public void updateSqlMemoryMaxUsageInfo(Map<String, Long> maxQueryMemoryUsage) {
+        if (maxQueryMemoryUsage == null) {
+            return;
+        }
+        for (Map.Entry<String, Long> entry : maxQueryMemoryUsage.entrySet()) {
+            final String hostPort = entry.getKey();
+            final Long memoryUsage = entry.getValue();
+            maxMemoryUsageForEachNode.compute(hostPort, (k, v) -> {
+                if (v == null) {
+                    return memoryUsage;
+                }
+                return Math.max(memoryUsage, v);
+            });
+        }
+    }
+
+    public Map<String, Long> getMaxMemoryUsageForEachNode() {
+        return maxMemoryUsageForEachNode;
+    }
+
+    public String getMppMaxMemoryUsageInfo() {
+        if (maxMemoryUsageForEachNode == null || maxMemoryUsageForEachNode.isEmpty()) {
+            return "0";
+        }
+
+        long min = Long.MAX_VALUE;
+        long max = Long.MIN_VALUE;
+        long sum = 0;
+        int count = 0;
+
+        for (Long value : maxMemoryUsageForEachNode.values()) {
+            if (value < min) {
+                min = value;
+            }
+            if (value > max) {
+                max = value;
+            }
+            sum += value;
+            count++;
+        }
+
+        long average = count != 0 ? (sum / count) : 0;
+
+        return String.format("cnt-%s/max-%s/min-%s/avg-%s/sum-%s",
+            count,
+            toMemorySizeString(max),
+            toMemorySizeString(min),
+            toMemorySizeString(average),
+            toMemorySizeString(sum)
+        );
+    }
+
+    private static String toMemorySizeString(long bytes) {
+        if (bytes < 1024) {
+            return String.format("%.1fB", bytes * 1.0d);
+        } else if (bytes < 1024 * 1024) {
+            return String.format("%.1fKB", bytes / 1024.0d);
+        } else if (bytes < 1024 * 1024 * 1024) {
+            return String.format("%.1fMB", bytes / 1024.0d / 1024);
+        } else {
+            return String.format("%.1fGB", bytes / 1024.0d / 1024 / 1024);
+        }
+    }
+
+    public void updateVersionStorageStatistics(Map<TaskId, VersionStorageStatistics> versionStorageStatistics) {
+        // Overwrite with the latest VersionStorageStatistics
+        versionStorageStatisticsMap.putAll(versionStorageStatistics);
+    }
+
+    public String getVersionStorageStatisticsInfo() {
+        VersionStorageStatistics result = VersionStorageStatistics.from(versionStorageStatisticsMap.values());
+        return result.toPrintable();
+    }
+
+    public void updateColumnarScanMetrics(Map<TaskId, ColumnarScanMetrics> columnarScanMetrics) {
+        columnarScanMetricsMap.putAll(columnarScanMetrics);
+    }
+
+    public String getColumnarScanMetricsInfo() {
+        ColumnarScanMetrics result = ColumnarScanMetrics.from(columnarScanMetricsMap.values());
+        return result.toPrintable();
     }
 
     public double getSqlMemoryMaxUsagePct() {
@@ -880,6 +1041,9 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
         @JsonProperty
         public AtomicLong phyResultSetRowCount = new AtomicLong(0);
 
+        @JsonProperty
+        public AtomicLong ioBytesCount = new AtomicLong(0);
+
         /**
          * The parallelism for the fetching result set of logical view
          */
@@ -911,6 +1075,7 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
             @JsonProperty("fetchJdbcResultSetDuration") long fetchJdbcResultSetDuration,
             @JsonProperty("closeAndClearJdbcEnv") long closeAndClearJdbcEnv,
             @JsonProperty("phyResultSetRowCount") long phyResultSetRowCount,
+            @JsonProperty("ioBytesCount") long ioBytesCount,
             @JsonProperty("fetchJdbcResultSetParallelism")
             int fetchJdbcResultSetParallelism) {
             this.statistics = statistics;
@@ -931,6 +1096,7 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
             this.fetchJdbcResultSetDuration.set(fetchJdbcResultSetDuration);
             this.closeAndClearJdbcEnv.set(closeAndClearJdbcEnv);
             this.phyResultSetRowCount.set(phyResultSetRowCount);
+            this.ioBytesCount.set(ioBytesCount);
             this.fetchJdbcResultSetParallelism = fetchJdbcResultSetParallelism;
         }
 
@@ -940,10 +1106,11 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
             }
         }
 
-        RuntimeStatisticsSketch toSketch() {
+        synchronized RuntimeStatisticsSketch toSketch() {
             long startupDuration = 0;
             long duration = 0;
             long rowCount = 0;
+            long ioBytesCount = 0;
             long runtimeFilteredCount = 0;
             long memory = 0;
             int spillCnt = 0;
@@ -953,6 +1120,7 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
                 startupDuration += statistic.getStartupDuration();
                 duration += statistic.getProcessDuration();
                 rowCount += statistic.getRowCount();
+                ioBytesCount += statistic.getIOReadBytes();
                 runtimeFilteredCount += statistic.getRuntimeFilteredCount();
                 memory += statistic.getMemory();
                 workerDuration += statistic.getWorkerDuration();
@@ -963,22 +1131,23 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
             double workerDurationSeconds = (double) workerDuration / 1e9;
 
             int n = statistics.size();
-            if (targetRel instanceof LogicalView) {
+            if (targetRel instanceof LogicalView && !(targetRel instanceof OSSTableScan)) {
                 n = this.fetchJdbcResultSetParallelism;
             }
 
             return new RuntimeStatisticsSketch(durationSeconds, startupDurationSeconds,
-                workerDurationSeconds, rowCount, runtimeFilteredCount,
+                workerDurationSeconds, rowCount, ioBytesCount, runtimeFilteredCount,
                 outputBytes, memory, n, spillCnt);
         }
 
-        RuntimeStatisticsSketch toSketchExt() {
+        synchronized RuntimeStatisticsSketch toSketchExt() {
 
             int n = statistics.size();
             long startupDuration = 0;
             long duration = 0;
             long closeDuration = 0;
             long rowCount = 0;
+            long ioBytesCount = 0;
             long runtimeFilteredCount = 0;
             long memory = 0;
             int spillCnt = 0;
@@ -1002,6 +1171,7 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
                 duration += os.getProcessDuration();
                 closeDuration += os.getCloseDuration();
                 rowCount += os.getRowCount();
+                ioBytesCount += os.getIOReadBytes();
                 runtimeFilteredCount += os.getRuntimeFilteredCount();
                 memory += os.getMemory();
                 spillCnt += os.getSpillCnt();
@@ -1029,10 +1199,11 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
                 }
                 duration = this.runtimeStat.sqlLogCpuTime.get() - sqlToPlanTc;
                 rowCount = this.phyResultSetRowCount.get();
+                ioBytesCount = this.ioBytesCount.get();
             }
             rsse = new RuntimeStatisticsSketchExt(
                 startupDuration, duration, closeDuration, 0,
-                rowCount, runtimeFilteredCount, outputBytes,
+                rowCount, ioBytesCount, runtimeFilteredCount, outputBytes,
                 memory, n, hasInputOperator, spillCnt);
 
             rsse.setCreateConnDurationNanoSum(createConnDurationSum);
@@ -1052,6 +1223,9 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
     }
 
     public static class Metrics {
+
+        // Connection Id
+        public long connectionId;
 
         // How much rows was processed in total
         public long affectedPhyRows;
@@ -1106,6 +1280,30 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
         // plan
         public long phyConnTc;
 
+        // the time cost sum of fetching tso
+        public long fetchTSOTc;
+
+        // the time cost sum of fetching sequence
+        public long fetchSeqTc;
+
+        // the transaction type
+        public String trxType;
+
+        // the time cost sum of commit prepare
+        public long commitPrepareTc;
+
+        // the time cost sum of commit logger
+        public long commitLoggerTc;
+
+        // the time cost sum of commit tso
+        public long commitTsoTc;
+
+        // the time cost sum of commit commit
+        public long commitCommitTc;
+
+        // the time cost sum of fetching auto commit
+        public long fetchAutoCommitTc;
+
         // the time cost of generate columnar snapshot in SplitManager
         public long columnarSnapshotTc;
 
@@ -1115,6 +1313,9 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
         public int memBlockedFlag = 0;
 
         public long spillCnt;
+
+        // External column latency breakdown (null if no ext col involved)
+        public String extColStatsStr;
     }
 
     public CpuStat getSqlWholeStageCpuStat() {
@@ -1149,6 +1350,61 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
     @Override
     public void addPhyConnTimecost(long totalPhyConnTimecost) {
         this.totalPhyConnTimecost.addAndGet(totalPhyConnTimecost);
+    }
+
+    @Override
+    public void addFetchTSOTimecost(long totalFetchTSOTimecost) {
+        this.totalFetchTSOTimecost.addAndGet(totalFetchTSOTimecost);
+    }
+
+    @Override
+    public void addFetchSequenceTimecost(long totalFetchSequenceTimecost) {
+        this.totalFetchSequenceTimecost.addAndGet(totalFetchSequenceTimecost);
+    }
+
+    @Override
+    public void setTrxType(String trxType) {
+        this.trxType = trxType;
+    }
+
+    public String getTrxType() {
+        return trxType;
+    }
+
+    @Override
+    public void addCommitPrepareTimecost(long commitPrepareTimecost) {
+        this.commitPrepareTimecost.addAndGet(commitPrepareTimecost);
+    }
+
+    public long getCommitPrepareTimecost() {
+        return this.commitPrepareTimecost.get();
+    }
+
+    @Override
+    public void addCommitLoggerTimecost(long commitLoggerTimecost) {
+        this.commitLoggerTimecost.addAndGet(commitLoggerTimecost);
+    }
+
+    public long getCommitLoggerTimecost() {
+        return this.commitLoggerTimecost.get();
+    }
+
+    @Override
+    public void addCommitTsoTimecost(long commitTsoTimecost) {
+        this.commitTsoTimecost.addAndGet(commitTsoTimecost);
+    }
+
+    public long getCommitTsoTimecost() {
+        return this.commitTsoTimecost.get();
+    }
+
+    @Override
+    public void addCommitCommitTimecost(long commitCommitTimecost) {
+        this.commitCommitTimecost.addAndGet(commitCommitTimecost);
+    }
+
+    public long getCommitCommitTimecost() {
+        return this.commitCommitTimecost.get();
     }
 
     @Override
@@ -1208,5 +1464,9 @@ public class RuntimeStatistics extends RuntimeStat implements CpuCollector {
 
     public void setStoredMetrics(Metrics storedMetrics) {
         this.storedMetrics = storedMetrics;
+    }
+
+    public void setExtColStats(com.alibaba.polardbx.common.columnar.ExternalColumnStatistics extColStats) {
+        this.extColStats = extColStats;
     }
 }

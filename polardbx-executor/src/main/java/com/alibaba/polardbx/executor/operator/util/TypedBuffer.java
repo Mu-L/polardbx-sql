@@ -16,6 +16,8 @@
 
 package com.alibaba.polardbx.executor.operator.util;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableObjectArrayList;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.common.type.MySQLStandardFieldType;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.executor.chunk.BlockBuilders;
@@ -24,10 +26,7 @@ import com.alibaba.polardbx.executor.chunk.ChunkBuilder;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
 
-import java.util.BitSet;
-import java.util.List;
-
-public interface TypedBuffer<T> {
+public interface TypedBuffer<T> extends MemoryCountable {
     void appendRow(T array, int nullPosition, int positionCount);
 
     default void appendRow(T array, int positionCount) {
@@ -36,7 +35,7 @@ public interface TypedBuffer<T> {
 
     void appendRow(Chunk chunk, int position);
 
-    List<Chunk> buildChunks();
+    MemoryCountableObjectArrayList<Chunk> buildChunks();
 
     boolean equals(int position, Chunk otherChunk, int otherPosition);
 

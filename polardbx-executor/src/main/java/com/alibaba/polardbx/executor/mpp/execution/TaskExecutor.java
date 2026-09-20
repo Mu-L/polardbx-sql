@@ -16,6 +16,9 @@
 
 package com.alibaba.polardbx.executor.mpp.execution;
 
+import com.alibaba.polardbx.common.BlockingFuture;
+import com.alibaba.polardbx.common.BlockingReason;
+import com.alibaba.polardbx.common.BlockingState;
 import com.alibaba.polardbx.common.exception.TddlRuntimeException;
 import com.alibaba.polardbx.common.exception.code.ErrorCode;
 import com.alibaba.polardbx.common.properties.MppConfig;
@@ -26,6 +29,9 @@ import com.alibaba.polardbx.common.utils.thread.ThreadCpuStatUtil;
 import com.alibaba.polardbx.executor.mpp.Threads;
 import com.alibaba.polardbx.executor.mpp.deploy.ServiceProvider;
 import com.alibaba.polardbx.executor.mpp.operator.DriverContext;
+import com.alibaba.polardbx.executor.mpp.server.ForAsyncHttpControl;
+import com.alibaba.polardbx.executor.mpp.server.ForAsyncHttpData;
+import com.alibaba.polardbx.executor.mpp.server.MonitoredBoundedExecutor;
 import com.alibaba.polardbx.optimizer.memory.ApMemoryPool;
 import com.alibaba.polardbx.optimizer.memory.MemoryManager;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -91,7 +97,7 @@ public class TaskExecutor {
     /**
      * Splits blocked by the driver (typically output buffer is full or input buffer is empty).
      */
-    protected final Map<PrioritizedSplitRunner, Future<?>> blockedSplits = new ConcurrentHashMap<>();
+    protected final Map<PrioritizedSplitRunner, ListenableFuture<?>> blockedSplits = new ConcurrentHashMap<>();
 
     private volatile boolean closed;
 
@@ -107,8 +113,16 @@ public class TaskExecutor {
     private AtomicInteger highBlockedSplitNum = new AtomicInteger(0);
     private AtomicInteger lowBlockedSplitNum = new AtomicInteger(0);
 
+    private final MonitoredBoundedExecutor dataResponseExecutor;
+    private final MonitoredBoundedExecutor controlResponseExecutor;
+
     @Inject
-    public TaskExecutor() {
+    public TaskExecutor(
+        @ForAsyncHttpData MonitoredBoundedExecutor dataResponseExecutor,
+        @ForAsyncHttpControl MonitoredBoundedExecutor controlResponseExecutor) {
+
+        this.dataResponseExecutor = dataResponseExecutor;
+        this.controlResponseExecutor = controlResponseExecutor;
 
         this.lowRunnerThreads = Math.min(MppConfig.getInstance().getMaxWorkerThreads(),
             ThreadCpuStatUtil.NUM_CORES * MppConfig.getInstance().getTaskWorkerThreadsRatio());
@@ -293,7 +307,7 @@ public class TaskExecutor {
 
         private final AtomicInteger nextSplitId = new AtomicInteger();
 
-        private TaskHandle(TaskId taskId) {
+        public TaskHandle(TaskId taskId) {
             this.taskId = taskId;
         }
 
@@ -320,7 +334,7 @@ public class TaskExecutor {
         }
     }
 
-    private static class PrioritizedSplitRunner
+    public static class PrioritizedSplitRunner
         implements Comparable<PrioritizedSplitRunner> {
 
         private static final AtomicLongFieldUpdater<PrioritizedSplitRunner> cpuTimeUpdater =
@@ -348,13 +362,17 @@ public class TaskExecutor {
 
         private DriverContext.DriverRuntimeStatisticsUpdater driverRuntimeStatisticsUpdater;
 
-        private PrioritizedSplitRunner(TaskHandle taskHandle, SplitRunner split) {
+        public PrioritizedSplitRunner(TaskHandle taskHandle, SplitRunner split) {
             this.taskHandle = taskHandle;
             this.splitId = taskHandle.getNextSplitId();
             this.split = split;
             this.workerId = NEXT_WORKER_ID.getAndIncrement();
             this.splitRunQuanta = MppConfig.getInstance().getSplitRunQuanta();
             this.driverRuntimeStatisticsUpdater = split.getUpdater();
+        }
+
+        public void updateBlockingState(BlockingState blockingState) {
+            driverRuntimeStatisticsUpdater.updateBlockingState(blockingState);
         }
 
         public void markStartTimestamp() {
@@ -531,6 +549,10 @@ public class TaskExecutor {
                         }
 
                     }
+
+                    // Check HTTP response pool watermark
+                    checkPoolWatermark(dataResponseExecutor);
+                    checkPoolWatermark(controlResponseExecutor);
                 } catch (Exception e) {
                     log.error(e.getMessage());
                 }
@@ -541,6 +563,22 @@ public class TaskExecutor {
                     log.error(e.getMessage());
                 }
             }
+        }
+    }
+
+    void checkPoolWatermark(MonitoredBoundedExecutor executor) {
+        if (executor == null) {
+            return;
+        }
+        long pending = executor.getPendingCount();
+        int maxConcurrency = executor.getMaxConcurrency();
+        if (maxConcurrency > 0 && pending > maxConcurrency * 0.95) {
+            log.warn(String.format("[MPP Pool Alert] %s: pending=%d/%d (%d%%), submitted=%d, completed=%d",
+                executor.getName(),
+                pending, maxConcurrency,
+                (pending * 100) / maxConcurrency,
+                executor.getSubmittedCount(),
+                executor.getCompletedCount()));
         }
     }
 
@@ -562,6 +600,8 @@ public class TaskExecutor {
                         runningCounted = false;
                         runningLowSplits.decrementAndGet();
                         split = lowPendingSplits.take();
+                        // Decrement pending queue count
+                        MppTaskMetrics.updatePendingQueueCount(-1);
                         // time cost statistics
                         split.finishPending();
                         split.buildMDC();
@@ -610,19 +650,45 @@ public class TaskExecutor {
                                     // time cost statistics
                                     split.startPending();
                                     lowPendingSplits.put(split);
+                                    // Increment pending queue count
+                                    MppTaskMetrics.updatePendingQueueCount(1);
                                 } else {
                                     if (log.isDebugEnabled()) {
-                                        log.debug(String.format("%s is bloked", split.getInfo()));
+                                        log.debug(String.format("%s is blocked", split.getInfo()));
                                     }
+
+                                    // Extract BlockingReason using polymorphism
+                                    BlockingReason reason = extractBlockingReason(blocked);
+
+                                    // Increment blocked count immediately
+                                    MppTaskMetrics.incrementBlockedCount(reason);
+
                                     // time cost statistics
                                     split.startBlocked();
                                     lowBlockedSplitNum.getAndIncrement();
                                     blockedSplits.put(split, blocked);
                                     split.recordBlocked();
+
                                     blocked.addListener(() -> {
-                                        if (log.isDebugEnabled()) {
-                                            log.debug(String.format("%s is pending", split.getInfo()));
+                                        try {
+                                            if (log.isDebugEnabled()) {
+                                                log.debug(
+                                                    String.format("%s is pending", split.getInfo()));
+                                            }
+
+                                            if (blocked instanceof BlockingFuture) {
+                                                BlockingState state = ((BlockingFuture<?>) blocked).getBlockingState();
+                                                if (state != null) {
+                                                    split.updateBlockingState(state);
+                                                }
+                                            }
+                                        } catch (Throwable t) {
+                                            // Ignore the exception
                                         }
+
+                                        // Decrement blocked count using the same reason
+                                        MppTaskMetrics.decrementBlockedCount(reason);
+
                                         split.recordBlockedFinished();
                                         // time cost statistics
                                         split.finishBlocked();
@@ -632,6 +698,8 @@ public class TaskExecutor {
                                             // time cost statistics
                                             split.startPending();
                                             lowPendingSplits.put(split);
+                                            // Increment pending queue count
+                                            MppTaskMetrics.updatePendingQueueCount(1);
                                         } catch (Exception e) {
                                             log.error("error", e);
                                         }
@@ -655,6 +723,8 @@ public class TaskExecutor {
                         isRunning = false;
                     }
                 }
+            } catch (Throwable unknownThrowable) {
+                log.error("Find unknown exception in task executor runner: ", unknownThrowable);
             } finally {
                 if (runningCounted) {
                     runningLowSplits.decrementAndGet();
@@ -669,6 +739,19 @@ public class TaskExecutor {
         public boolean isRunning() {
             return isRunning;
         }
+    }
+
+    /**
+     * Extract BlockingReason from a ListenableFuture
+     * If it's a BlockingFuture, get the reason directly using polymorphism
+     * Otherwise, use a default reason for compatibility
+     */
+    private BlockingReason extractBlockingReason(ListenableFuture<?> future) {
+        if (future instanceof BlockingFuture) {
+            return ((BlockingFuture<?>) future).getReason();
+        }
+        // For non-BlockingFuture (legacy code), use default reason
+        return BlockingReason.WAIT_FOR_SPLIT;
     }
 
     private class TpRunner implements Runnable {
@@ -732,15 +815,27 @@ public class TaskExecutor {
                                     }
                                 } else {
                                     if (log.isDebugEnabled()) {
-                                        log.debug(String.format("%s is bloked", split.getInfo()));
+                                        log.debug(String.format("%s is blocked", split.getInfo()));
                                     }
+
+                                    // Extract BlockingReason using polymorphism
+                                    BlockingReason reason = extractBlockingReason(blocked);
+
+                                    // Increment blocked count immediately
+                                    MppTaskMetrics.incrementBlockedCount(reason);
+
                                     highBlockedSplitNum.getAndIncrement();
                                     blockedSplits.put(split, blocked);
                                     split.recordBlocked();
+
                                     blocked.addListener(() -> {
                                         if (log.isDebugEnabled()) {
                                             log.debug(String.format("%s is pending", split.getInfo()));
                                         }
+
+                                        // Decrement blocked count using the same reason
+                                        MppTaskMetrics.decrementBlockedCount(reason);
+
                                         split.recordBlockedFinished();
                                         highBlockedSplitNum.getAndDecrement();
                                         blockedSplits.remove(split);

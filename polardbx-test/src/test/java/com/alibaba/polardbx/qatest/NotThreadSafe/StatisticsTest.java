@@ -139,7 +139,8 @@ public class StatisticsTest extends BaseTestCase {
             Map<String, String> rsMap = GeneralUtil.decode(result.toString());
             System.out.println(rsMap);
             assert "50000".equals(rsMap.get(
-                "Catalog:STAT_TEST_DB,STAT_TEST_TB,create_time,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...\nAction:getFrequency".toLowerCase())
+                "catalog:stat_test_db,stat_test_tb,create_time, in(10000)\n"
+                    + "action:getfrequency".toLowerCase())
             );
         }
     }

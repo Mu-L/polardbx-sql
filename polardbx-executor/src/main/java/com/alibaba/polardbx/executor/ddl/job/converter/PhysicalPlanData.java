@@ -20,12 +20,10 @@ import com.alibaba.polardbx.common.jdbc.ParameterContext;
 import com.alibaba.polardbx.executor.TddlGroupExecutor;
 import com.alibaba.polardbx.executor.common.ExecutorContext;
 import com.alibaba.polardbx.executor.common.TopologyHandler;
-import com.alibaba.polardbx.executor.spi.IGroupExecutor;
+import com.alibaba.polardbx.gms.lbac.LBACSecurityEntity;
 import com.alibaba.polardbx.gms.locality.LocalityDesc;
 import com.alibaba.polardbx.gms.metadb.table.TablesExtRecord;
-import com.alibaba.polardbx.gms.lbac.LBACSecurityEntity;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupDetailConfig;
-import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.rel.ddl.data.AlterTablePreparedData;
 import com.alibaba.polardbx.optimizer.partition.PartitionInfo;
 import com.alibaba.polardbx.optimizer.partition.pruning.PhysicalPartitionInfo;
@@ -63,6 +61,8 @@ public class PhysicalPlanData {
 
     private String sqlTemplate;
     private List<Map<Integer, ParameterContext>> paramsList;
+    // 用于对每个物理分片下发不一样的物理sql <物理表名，物理sql>
+    private Map<String, String> sqlTemplateMap = new HashMap<>();
 
     private boolean explain;
     private boolean partitioned;
@@ -93,6 +93,7 @@ public class PhysicalPlanData {
 
     private LBACSecurityEntity tableESA;
     private List<LBACSecurityEntity> colEsaList;
+    public Map<String, String> phyDdlHashCodeMap = null;
 
     @Override
     public String toString() {
@@ -131,7 +132,9 @@ public class PhysicalPlanData {
         clone.renamePhyTable = this.renamePhyTable;
         clone.tableESA = this.tableESA;
         clone.colEsaList = colEsaList == null ? null : new ArrayList<>(colEsaList);
+        clone.sqlTemplateMap = this.sqlTemplateMap;
         clone.popLocalIndex = this.popLocalIndex;
+        clone.phyDdlHashCodeMap = this.phyDdlHashCodeMap;
         return clone;
     }
 

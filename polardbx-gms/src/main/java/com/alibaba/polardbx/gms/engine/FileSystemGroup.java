@@ -38,7 +38,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 
 public class FileSystemGroup {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger("oss");
+    private static final Logger LOGGER = LoggerFactory.getLogger("mpp_log");
 
     private FileSystem master;
     private List<FileSystem> slaves;

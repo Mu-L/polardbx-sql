@@ -21,15 +21,14 @@ import com.alibaba.polardbx.executor.ddl.job.task.AlterGsiVisibilityValidateTask
 import com.alibaba.polardbx.executor.ddl.job.task.basic.TableSyncTask;
 import com.alibaba.polardbx.executor.ddl.job.task.cdc.CdcAlterIndexVisibilityMarkTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.CciUpdateIndexStatusTask;
-import com.alibaba.polardbx.executor.ddl.job.task.gsi.GsiUpdateIndexStatusTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.GsiUpdateIndexVisibilityTask;
 import com.alibaba.polardbx.executor.ddl.job.task.gsi.ValidateTableVersionTask;
 import com.alibaba.polardbx.executor.ddl.job.validator.GsiValidator;
-import com.alibaba.polardbx.executor.ddl.newengine.job.DdlJobFactory;
 import com.alibaba.polardbx.executor.ddl.newengine.job.DdlTask;
 import com.alibaba.polardbx.executor.ddl.newengine.job.ExecutableDdlJob;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlInfo;
+import com.alibaba.polardbx.executor.ddl.newengine.job.OnlineDdlJobFactory;
 import com.alibaba.polardbx.gms.metadb.table.ColumnarTableStatus;
-import com.alibaba.polardbx.gms.metadb.table.IndexStatus;
 import com.alibaba.polardbx.gms.metadb.table.IndexVisibility;
 import com.alibaba.polardbx.gms.metadb.table.LackLocalIndexStatus;
 import com.alibaba.polardbx.gms.tablegroup.TableGroupConfig;
@@ -55,7 +54,7 @@ import java.util.Set;
  *
  * @author zhuqiwei
  */
-public class AlterGsiVisibilityJobFactory extends DdlJobFactory {
+public class AlterGsiVisibilityJobFactory extends OnlineDdlJobFactory {
     private static final Logger LOGGER = LoggerFactory.getLogger(AlterGsiVisibilityJobFactory.class);
     protected final String schemaName;
     protected final String primaryTableName;
@@ -66,6 +65,7 @@ public class AlterGsiVisibilityJobFactory extends DdlJobFactory {
 
     public AlterGsiVisibilityJobFactory(AlterTableWithGsiPreparedData alterTableWithGsiPreparedData,
                                         ExecutionContext executionContext) {
+        super(executionContext, OnlineDdlInfo.DdlAlgorithm.META_ONLY);
         this.preparedData = alterTableWithGsiPreparedData.getGlobalIndexVisibilityPreparedData();
         this.schemaName = preparedData.getSchemaName();
         this.primaryTableName = preparedData.getPrimaryTableName();
@@ -119,7 +119,7 @@ public class AlterGsiVisibilityJobFactory extends DdlJobFactory {
                 primaryTableName,
                 indexTableName,
                 IndexVisibility.INVISIBLE,
-                 IndexVisibility.VISIBLE);
+                IndexVisibility.VISIBLE);
         } else {
             changeGsiStatusTask = new GsiUpdateIndexVisibilityTask(schemaName,
                 primaryTableName,
@@ -135,22 +135,24 @@ public class AlterGsiVisibilityJobFactory extends DdlJobFactory {
         );
 
         DdlTask syncTask = new TableSyncTask(schemaName, primaryTableName);
+        DdlTask syncTask2 = new TableSyncTask(schemaName, primaryTableName);
 
         List<DdlTask> taskList = (null != changeCciStatusTask) ?
             ImmutableList.of(
                 validateTask,
                 validateTableVersionTask,
                 changeGsiStatusTask,
+                syncTask,
                 changeCciStatusTask,
-                cdcAlterIndexVisibilityMarkTask,
-                syncTask
+                syncTask2,
+                cdcAlterIndexVisibilityMarkTask
             ) :
             ImmutableList.of(
                 validateTask,
                 validateTableVersionTask,
                 changeGsiStatusTask,
-                cdcAlterIndexVisibilityMarkTask,
-                syncTask
+                syncTask,
+                cdcAlterIndexVisibilityMarkTask
             );
         ExecutableDdlJob executableDdlJob = new ExecutableDdlJob();
         executableDdlJob.addSequentialTasks(taskList);

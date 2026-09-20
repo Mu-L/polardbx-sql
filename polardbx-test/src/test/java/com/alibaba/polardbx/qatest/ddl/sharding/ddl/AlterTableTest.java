@@ -22,6 +22,7 @@ import com.alibaba.polardbx.common.utils.Assert;
 import com.alibaba.polardbx.common.utils.Pair;
 import com.alibaba.polardbx.common.utils.TStringUtil;
 import com.alibaba.polardbx.qatest.AsyncDDLBaseNewDBTestCase;
+import com.alibaba.polardbx.qatest.IcbcIgnore;
 import com.alibaba.polardbx.qatest.util.JdbcUtil;
 import net.jcip.annotations.NotThreadSafe;
 import org.apache.commons.collections.MapUtils;
@@ -727,6 +728,7 @@ public class AlterTableTest extends AsyncDDLBaseNewDBTestCase {
      */
     @Test
     public void testAlterSeqDeleteAutoIncrement() throws Exception {
+        setSqlMode("STRICT_TRANS_TABLES", tddlConnection);
         String tableName = schemaPrefix + "alter_table_test_2";
         dropTableIfExists(tableName);
         String sql = String.format(
@@ -2254,6 +2256,7 @@ public class AlterTableTest extends AsyncDDLBaseNewDBTestCase {
         }
     }
 
+    @IcbcIgnore(ignoreReason = "NO_ZERO_DATE")
     @Test
     public void testTimeZoneZeroValue() throws SQLException {
         String schemaName = TStringUtil.isBlank(tddlDatabase2) ? tddlDatabase1 : tddlDatabase2;

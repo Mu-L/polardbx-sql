@@ -25,6 +25,19 @@ import java.util.function.Function;
  */
 public interface BlockConverter extends Function<Block, Block> {
 
-    BlockConverter IDENTITY = (b -> b);
+    BlockConverter IDENTITY = new BlockConverter() {
+
+        @Override
+        public Block apply(Block block) {
+            return block;
+        }
+
+        @Override
+        public boolean isIdentity() {
+            return true;
+        }
+    };
+
+    boolean isIdentity();
 
 }

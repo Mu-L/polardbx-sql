@@ -14,7 +14,7 @@
 
 import React from "react";
 
-import {getFirstParameter} from "../utils";
+import {getFirstParameter, getFormattedUrl} from "../utils";
 
 const ALL_THREADS = "All Threads";
 const QUERY_THREADS = "Running Queries";
@@ -44,7 +44,7 @@ export class WorkerThreadList extends React.Component {
     captureSnapshot() {
         const nodeId = getFirstParameter(window.location.search);
         if (nodeId) {
-            $.get('/v1/worker/' + nodeId + '/thread', function (threads) {
+            $.get(getFormattedUrl('/v1/worker/' + nodeId + '/thread'), function (threads) {
                 this.setState({
                     threads: WorkerThreadList.processThreads(threads),
                     snapshotTime: new Date(),
@@ -57,7 +57,7 @@ export class WorkerThreadList extends React.Component {
                     });
                 }.bind(this));
         } else {
-            $.get('/v1/thread', function (threads) {
+            $.get(getFormattedUrl('/v1/thread'), function (threads) {
                 this.setState({
                     threads: WorkerThreadList.processThreads(threads),
                     snapshotTime: new Date(),

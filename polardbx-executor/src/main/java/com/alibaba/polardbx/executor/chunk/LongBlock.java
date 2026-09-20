@@ -737,6 +737,21 @@ public class LongBlock extends AbstractBlock {
         estimatedSize = elementUsedBytes;
     }
 
+    @Override
+    public int compareAssertedSameType(int position, Block otherBlock, int otherPosition) {
+        boolean isNullLeft = isNull(position);
+        boolean isNullRight = otherBlock.isNull(otherPosition);
+        if (isNullLeft && isNullRight) {
+            return 0;
+        } else if (isNullLeft) {
+            return -1;
+        } else if (isNullRight) {
+            return 1;
+        } else {
+            return Long.compare(getLong(position), otherBlock.getLong(otherPosition));
+        }
+    }
+
     private int realPositionOf(int position) {
         if (selection == null) {
             return position;

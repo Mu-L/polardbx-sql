@@ -16,23 +16,28 @@
 
 package com.alibaba.polardbx.executor.accumulator;
 
+import com.alibaba.polardbx.common.collection.MemoryCountableObjectArrayList;
+import com.alibaba.polardbx.common.memory.FastMemoryCounter;
+import com.alibaba.polardbx.common.memory.FieldMemoryCounter;
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.executor.chunk.Block;
 import com.alibaba.polardbx.executor.chunk.BlockBuilder;
 import com.alibaba.polardbx.executor.chunk.BlockBuilders;
 import com.alibaba.polardbx.executor.chunk.NullBlock;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.datatype.DataType;
+import org.openjdk.jol.info.ClassLayout;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class FirstValueAccumulator extends AbstractAccumulator {
+    private static final int INSTANCE_SIZE = ClassLayout.parseClass(FirstValueAccumulator.class).instanceSize();
 
+    @FieldMemoryCounter(value = false)
     private final DataType[] inputTypes;
 
     private TypedBlockBuffer typedBlockBuffer;
-
-    private ExecutionContext context;
 
     private static final int SEGMENT_SIZE = 1024;
 
@@ -65,12 +70,17 @@ public class FirstValueAccumulator extends AbstractAccumulator {
      * <p>
      * so we need non-null first value to fix scalar agg
      */
-    private Object fixScalarAggValue;
+    @FieldMemoryCounter(value = false)
+    private Object fixScalarAggValue; // todo
 
     FirstValueAccumulator(DataType type, ExecutionContext context) {
         this.inputTypes = new DataType[] {type};
-        this.context = context;
-        this.typedBlockBuffer = new TypedBlockBuffer(type, SEGMENT_SIZE);
+        this.typedBlockBuffer = new TypedBlockBuffer(type, SEGMENT_SIZE, context);
+    }
+
+    @Override
+    public long getMemoryUsage() {
+        return INSTANCE_SIZE + FastMemoryCounter.sizeOf(typedBlockBuffer);
     }
 
     @Override
@@ -122,18 +132,26 @@ public class FirstValueAccumulator extends AbstractAccumulator {
         return typedBlockBuffer.estimateSize();
     }
 
-    public class TypedBlockBuffer {
+    public static class TypedBlockBuffer implements MemoryCountable {
+        private static final int INSTANCE_SIZE = ClassLayout.parseClass(TypedBlockBuffer.class).instanceSize();
 
         private BlockBuilder blockBuilder;
         private final int blockSize;
 
         private int currentSize;
-        private final List<Block> blocks = new ArrayList<>();
+        private final MemoryCountableObjectArrayList<Block> blocks = new MemoryCountableObjectArrayList<>();
         private long estimateSize = 0;
 
-        private TypedBlockBuffer(DataType dataType, int blockSize) {
+        private TypedBlockBuffer(DataType dataType, int blockSize, ExecutionContext context) {
             this.blockBuilder = BlockBuilders.create(dataType, context);
             this.blockSize = blockSize;
+        }
+
+        @Override
+        public long getMemoryUsage() {
+            return INSTANCE_SIZE
+                + FastMemoryCounter.sizeOf(blockBuilder)
+                + FastMemoryCounter.sizeOf(blocks);
         }
 
         public Object get(int position) {

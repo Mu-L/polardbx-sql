@@ -1,8 +1,14 @@
 package com.alibaba.polardbx.executor.vectorized;
 
+import com.alibaba.polardbx.common.memory.MemoryCountable;
 import com.alibaba.polardbx.optimizer.core.datatype.DataTypes;
+import io.airlift.slice.Slices;
+import org.apache.commons.lang.RandomStringUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public class InValuesExpressionTest {
 
@@ -48,5 +54,31 @@ public class InValuesExpressionTest {
         Assert.assertFalse(intValueSet.contains(new Long(3)));
         Assert.assertFalse(intValueSet.contains(Integer.MAX_VALUE + 1L));
 
+        // check memory
+        MemoryCountable.checkDeviation(intValueSet, .05d, true);
+        MemoryCountable.checkDeviation(longValueSet, .05d, true);
+    }
+
+    @Test
+    public void testSliceTest() {
+        final int count = 3000;
+        final int len = 10;
+        InValuesVectorizedExpression.InValueSet sliceValueSet =
+            new InValuesVectorizedExpression.InValueSet(DataTypes.CharType, count);
+        List<String> result = new ArrayList<>(100);
+        for (int i = 0; i < count; i++) {
+            String val = RandomStringUtils.randomAlphabetic(len);
+            sliceValueSet.add(Slices.utf8Slice(val));
+            if (i < 100) {
+                result.add(val);
+            }
+        }
+        for (String s : result) {
+            Assert.assertTrue(sliceValueSet.contains(s));
+        }
+        for (int i = 0; i < 10; i++) {
+            Assert.assertFalse(sliceValueSet.contains(RandomStringUtils.randomAlphabetic(len - 1)));
+        }
+        MemoryCountable.checkDeviation(sliceValueSet, .05d, true);
     }
 }

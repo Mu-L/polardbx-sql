@@ -164,4 +164,9 @@ public class BlackHoleBlockBuilder implements BlockBuilder {
     public long getMemoryUsage() {
         return getElementUsedBytes();
     }
+
+    @Override
+    public int compareAssertedSameType(int position, Block otherBlock, int otherPosition) {
+        throw new UnsupportedOperationException();
+    }
 }

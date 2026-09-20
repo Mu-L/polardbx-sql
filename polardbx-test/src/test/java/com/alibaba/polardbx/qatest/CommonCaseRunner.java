@@ -132,6 +132,32 @@ public class CommonCaseRunner extends Parameterized implements Filterable, Sorta
         }
     }
 
+    /**
+     * Ignore some test case in ICBC environment.
+     */
+    public static class IcbcCaseFilter extends Filter {
+        private final IcbcIgnore typeAnnotation;
+
+        public IcbcCaseFilter(IcbcIgnore typeAnnotation) {
+            this.typeAnnotation = typeAnnotation;
+        }
+
+        static Class<IcbcIgnore> clazz = IcbcIgnore.class;
+
+        @Override
+        public boolean shouldRun(Description description) {
+            if (PropertiesUtil.icbcTest()) {
+                return !(typeAnnotation != null || description.getAnnotation(clazz) != null);
+            }
+            return true;
+        }
+
+        @Override
+        public String describe() {
+            return "Ignore some test case in ICBC environment.";
+        }
+    }
+
     // 不管是binlog实验室，还是replica实验室，使用该注解的用例，都会被ignore
     public static class CdcIgnoreCaseFilter extends Filter {
 
@@ -293,6 +319,17 @@ public class CommonCaseRunner extends Parameterized implements Filterable, Sorta
                 } catch (NoTestsRemainException ex) {
                     // ignore the whole case.
                 }
+            }
+        }
+
+        if (PropertiesUtil.icbcTest()) {
+            // use icbc case filter if configured.
+            try {
+                IcbcIgnore typeAnnotation = this.testClass.getAnnotation(IcbcIgnore.class);
+                Filter icbcCaseFilter = new IcbcCaseFilter(typeAnnotation);
+                icbcCaseFilter.apply(this.internalRunner);
+            } catch (NoTestsRemainException ex) {
+                // ignore the whole case.
             }
         }
 

@@ -19,6 +19,7 @@ package com.alibaba.polardbx.config.loader;
 import com.alibaba.polardbx.CobarServer;
 import com.alibaba.polardbx.common.TrxIdGenerator;
 import com.alibaba.polardbx.common.properties.ConnectionProperties;
+import com.alibaba.polardbx.common.properties.DynamicConfig;
 import com.alibaba.polardbx.common.properties.MppConfig;
 import com.alibaba.polardbx.common.utils.logger.Logger;
 import com.alibaba.polardbx.common.utils.logger.LoggerFactory;
@@ -27,7 +28,9 @@ import com.alibaba.polardbx.config.SchemaConfig;
 import com.alibaba.polardbx.config.ServerConfigManager;
 import com.alibaba.polardbx.config.SystemConfig;
 import com.alibaba.polardbx.executor.mdl.MdlManager;
+import com.alibaba.polardbx.gms.engine.OSSBlobObjectUploader;
 import com.alibaba.polardbx.gms.topology.SystemDbHelper;
+import com.alibaba.polardbx.gms.util.InstIdUtil;
 import com.alibaba.polardbx.matrix.jdbc.TDataSource;
 import com.alibaba.polardbx.matrix.jdbc.utils.TDataSourceInitUtils;
 import com.alibaba.polardbx.optimizer.config.schema.InformationSchema;
@@ -88,7 +91,7 @@ public abstract class AppLoader extends BaseAppLoader {
         ds.putConnectionProperties(ConnectionProperties.SCALE_OUT_DROP_DATABASE_AFTER_SWITCH_DATASOURCE,
             system.getDropOldDataBaseAfterSwitchDataSource());
 
-        if (ConfigDataMode.isColumnarMode()) {
+        if (ConfigDataMode.isColumnarMode() && InstIdUtil.isClusterInstId()) {
             ds.putConnectionProperties(ConnectionProperties.ENABLE_COLUMNAR_OPTIMIZER, true);
         }
 
@@ -106,6 +109,8 @@ public abstract class AppLoader extends BaseAppLoader {
 
         // 共享一个线程池
         ds.setGlobalExecutorService(CobarServer.getInstance().getServerExecutor());
+        // Inject global executor for OSS blob upload path
+        OSSBlobObjectUploader.setGlobalExecutor(CobarServer.getInstance().getServerExecutor());
         ds.setSharding(false);// 允许非sharding启动
         ds.setAppName(appName);
         ds.setSchemaName(dbName);
@@ -128,12 +133,26 @@ public abstract class AppLoader extends BaseAppLoader {
 
     @Override
     protected synchronized void unLoadSchema(final String dbName, final String appName) {
+        /**
+         * Here the removing the SchemaConfig of the dbName from the Mapping of schemas,
+         * can avoid new conn to access the dbName
+         */
         SchemaConfig schema = schemas.remove(dbName);
+
         if (schema != null) {
+            /**
+             * Here the setting Dropped of the SchemaConfig of the dbName,
+             * can avoid new sqlQuery of old conn to init adn access the dbName
+             */
             schema.setDropped(true);
+
             TDataSource dataSource = schema.getDataSource();
             if (dataSource != null) {
-                dataSource.destroy();
+                /**
+                 * Here the setting Dropped of the TDataSource of the dbName,
+                 * can avoid new sqlQuery of old conn to init adn access the dbName
+                 */
+                dataSource.markDroppedAndDestroy();
             }
         }
     }

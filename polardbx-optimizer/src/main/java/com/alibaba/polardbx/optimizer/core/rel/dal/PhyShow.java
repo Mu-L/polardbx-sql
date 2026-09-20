@@ -18,7 +18,9 @@ package com.alibaba.polardbx.optimizer.core.rel.dal;
 
 import com.alibaba.polardbx.common.jdbc.BytesSql;
 import com.alibaba.polardbx.common.jdbc.ParameterContext;
+import com.alibaba.polardbx.common.properties.ConnectionParams;
 import com.alibaba.polardbx.common.utils.Pair;
+import com.alibaba.polardbx.optimizer.PlannerContext;
 import com.alibaba.polardbx.optimizer.context.ExecutionContext;
 import com.alibaba.polardbx.optimizer.core.dialect.DbType;
 import com.alibaba.polardbx.optimizer.utils.RelUtils;
@@ -41,10 +43,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 
+import static com.alibaba.polardbx.optimizer.core.rel.dal.LogicalShow.DB_INDEX_MODE_NORMAL;
+import static com.alibaba.polardbx.optimizer.core.rel.dal.LogicalShow.getNodeMode;
+
 /**
  * @author chenmo.cm
  */
 public class PhyShow extends BaseDalOperation {
+
+    private int dbIndexMode = DB_INDEX_MODE_NORMAL;
 
     public PhyShow(RelOptCluster cluster, RelTraitSet traitSet, SqlNode nativeSqlNode, RelDataType rowType,
                    String dbIndex, String phyTable, String schemaName) {
@@ -164,7 +171,12 @@ public class PhyShow extends BaseDalOperation {
 
     @Override
     public RelWriter explainTermsForDisplay(RelWriter pw) {
+        ExecutionContext ec = PlannerContext.getPlannerContext(this).getExecutionContext();
+        boolean isShowDbIndexMode = ec.getParamManager().getBoolean(ConnectionParams.EXPLAIN_SHOW_DB_INDEX_MODE);
         pw.item(RelDrdsWriter.REL_NAME, getExplainName());
+        if (isShowDbIndexMode) {
+            pw.item("node_mode", getNodeMode(dbIndexMode));
+        }
         if (single()) {
             pw.item("node", dbIndex);
         } else {
@@ -190,7 +202,7 @@ public class PhyShow extends BaseDalOperation {
 
     @Override
     public PhyShow copy(RelTraitSet traitSet, List<RelNode> inputs) {
-        return new PhyShow(getCluster(),
+        PhyShow show = new PhyShow(getCluster(),
             traitSet,
             bytesSql,
             nativeSqlNode,
@@ -201,5 +213,11 @@ public class PhyShow extends BaseDalOperation {
             dbIndex,
             phyTable,
             schemaName);
+        show.dbIndexMode = this.dbIndexMode;
+        return show;
+    }
+
+    public void setDbIndexMode(int dbIndexMode) {
+        this.dbIndexMode = dbIndexMode;
     }
 }

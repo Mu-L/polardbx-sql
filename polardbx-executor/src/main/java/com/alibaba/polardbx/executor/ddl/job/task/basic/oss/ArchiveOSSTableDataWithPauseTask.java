@@ -60,7 +60,7 @@ public class ArchiveOSSTableDataWithPauseTask extends ArchiveOSSTableDataTask {
     }
 
     @Override
-    protected void executeImpl(Connection metaDbConnection, ExecutionContext executionContext) {
+    protected void duringTransaction(Connection metaDbConnection, ExecutionContext executionContext) {
         executionContext.setBackfillId(getTaskId());
         executionContext.setTaskId(getTaskId());
 
@@ -82,7 +82,8 @@ public class ArchiveOSSTableDataWithPauseTask extends ArchiveOSSTableDataTask {
         loadTable(executionContext, true);
     }
 
-    protected void rollbackImpl(Connection metaDbConnection, ExecutionContext executionContext) {
+    @Override
+    protected void duringRollbackTransaction(Connection metaDbConnection, ExecutionContext executionContext) {
         rollbackFileStorage(metaDbConnection, executionContext);
 
         // delete file_storage_backfill_object

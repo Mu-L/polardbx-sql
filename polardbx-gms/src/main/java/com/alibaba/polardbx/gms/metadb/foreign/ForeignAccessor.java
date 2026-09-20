@@ -167,13 +167,13 @@ public class ForeignAccessor extends AbstractAccessor {
         }
     }
 
-    public ForeignRecord queryForeignKey(String tableSchema, String tableName, String indexName) {
+    public List<ForeignRecord> queryForeignKey(String tableSchema, String tableName, String indexName) {
         try {
             Map<Integer, ParameterContext> params = new HashMap<>();
             MetaDbUtil.setParameter(1, params, ParameterMethod.setString, tableSchema);
             MetaDbUtil.setParameter(2, params, ParameterMethod.setString, tableName);
             MetaDbUtil.setParameter(3, params, ParameterMethod.setString, indexName);
-            return MetaDbUtil.query(SELECT_FK_WITH_INDEX, params, ForeignRecord.class, connection).get(0);
+            return MetaDbUtil.query(SELECT_FK_WITH_INDEX, params, ForeignRecord.class, connection);
         } catch (Exception e) {
             logger.error("Failed to query the system table '" + FOREIGN_TABLE + "'", e);
             throw new TddlRuntimeException(ErrorCode.ERR_GMS_ACCESS_TO_SYSTEM_TABLE, e, "query",

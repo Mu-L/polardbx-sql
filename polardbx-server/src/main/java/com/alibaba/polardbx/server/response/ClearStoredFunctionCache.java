@@ -25,7 +25,7 @@ import com.alibaba.polardbx.server.ServerConnection;
 
 public class ClearStoredFunctionCache {
     public static boolean response(ServerConnection c, boolean hasMore) {
-        SyncManagerHelper.sync(new ClearStoredFunctionCacheSyncAction(), TddlConstants.INFORMATION_SCHEMA,
+        SyncManagerHelper.syncThrowExceptions(new ClearStoredFunctionCacheSyncAction(), TddlConstants.INFORMATION_SCHEMA,
             SyncScope.ALL);
         PacketOutputProxyFactory.getInstance().createProxy(c)
             .writeArrayAsPacket(hasMore ? OkPacket.OK_WITH_MORE : OkPacket.OK);
